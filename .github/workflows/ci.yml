@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-core:
+    name: Rust core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Workspace tests
+        run: cargo test --workspace
+      - name: Independent deterministic semantics
+        run: python3 tools/validate_core.py
+
+  feature-matrix:
+    name: qx-cli features (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - sqlite
+          - postgres
+          - nats
+          - postgres,nats
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.features }}
+      - name: Check feature build
+        run: cargo check -p qx-cli --features "${{ matrix.features }}"
+      - name: Test feature build
+        run: cargo test -p qx-cli --features "${{ matrix.features }}"
+
+  runtime-contracts:
+    name: Runtime and Paper contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Validate baseline runtime config
+        run: cargo run -p qx-cli --features sqlite -- runtime-check deploy/qianxing.runtime.example.json
+      - name: Validate production runtime config
+        run: cargo run -p qx-cli --features sqlite -- runtime-check deploy/qianxing.runtime.production.example.json
+      - name: Validate Paper strategy runtime config
+        run: cargo run -p qx-cli --features sqlite -- runtime-check deploy/qianxing.runtime.paper-strategy.example.json
+      - name: Paper process-boundary E2E
+        run: cargo run -p qx-cli --features sqlite -- paper-e2e deploy/qianxing.runtime.paper-strategy.example.json
+
+  cpp-sdk:
+    name: C++ SDK smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure C++ SDK
+        run: cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release
+      - name: Build C++ SDK smoke
+        run: cmake --build build/cpp --config Release --parallel
+      - name: Run C++ ring smoke
+        run: ./build/cpp/qianxing_ring_smoke
