@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "environment": "production",
-  "config_fingerprint": "4d6de963a27fae4b255a8d24ab39dde99369a4dfc4a9327330a1bdd76eadaaaf",
+  "config_fingerprint": null,
   "api": {
     "bind": "0.0.0.0:8443",
     "transport": "mtls",
@@ -81,7 +81,7 @@
         "api_key": "QX_BINANCE_API_KEY",
         "secret": "QX_BINANCE_API_SECRET"
       },
-      "instrument_spec_path": "deploy/qianxing.binance.spot.spec.json"
+      "instrument_spec_path": "qianxing.binance.spot.spec.json"
     },
     {
       "id": "scheduler",
@@ -106,7 +106,7 @@
   ],
   "scheduler": {
     "state_path": "scheduler.json",
-    "jobs_path": "deploy/qianxing.scheduler.jobs.example.json",
+    "jobs_path": "qianxing.scheduler.jobs.example.json",
     "job_queue_path": "job-queue",
     "tick_interval_ms": 1000
   },
