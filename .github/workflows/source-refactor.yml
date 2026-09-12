@@ -1,0 +1,76 @@
+name: One-shot source refactor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/source-refactor.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-runtime-path-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply exact source refactor
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("crates/qx-cli/src/main.rs")
+          source = path.read_text(encoding="utf-8")
+          old = '''fn resolve_runtime_relative_path(runtime_path: &Path, configured: &str) -> PathBuf {
+              let path = Path::new(configured);
+              if path.is_absolute() {
+                  path.to_path_buf()
+              } else {
+                  runtime_path
+                      .parent()
+                      .unwrap_or_else(|| Path::new("."))
+                      .join(path)
+              }
+          }'''
+          new = '''fn is_explicit_absolute_path(configured: &str) -> bool {
+              let bytes = configured.as_bytes();
+              Path::new(configured).is_absolute()
+                  || (bytes.len() >= 3
+                      && bytes[0].is_ascii_alphabetic()
+                      && bytes[1] == b':'
+                      && matches!(bytes[2], b'/' | b'\\\\'))
+                  || configured.starts_with("\\\\\\\\")
+          }
+
+          fn resolve_runtime_relative_path(runtime_path: &Path, configured: &str) -> PathBuf {
+              if is_explicit_absolute_path(configured) {
+                  PathBuf::from(configured)
+              } else {
+                  runtime_path
+                      .parent()
+                      .unwrap_or_else(|| Path::new("."))
+                      .join(configured)
+              }
+          }'''
+          if old not in source:
+              raise SystemExit("expected resolve_runtime_relative_path source block not found")
+          if source.count(old) != 1:
+              raise SystemExit("resolve_runtime_relative_path source block is not unique")
+          path.write_text(source.replace(old, new, 1), encoding="utf-8")
+      - name: Format
+        run: cargo fmt --all -- --check || (cargo fmt --all && cargo fmt --all -- --check)
+      - name: Verify runtime path contract
+        run: cargo test -p qx-cli runtime_relative_paths_resolve_from_runtime_config_directory
+      - name: Commit verified refactor
+        run: |
+          git config user.name "qianxing-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add crates/qx-cli/src/main.rs
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: normalize cross-platform runtime paths [source-refactor]"
+          git push origin HEAD:main
