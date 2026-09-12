@@ -52,12 +52,13 @@
       "endpoint": null,
       "symbols": [],
       "credential_env": null,
+      "instrument_spec_path": "qianxing.binance.spot.spec.json",
       "paper_initial_cash_raw": 100000000000000
     }
   ],
   "scheduler": {
     "state_path": "scheduler.json",
-    "jobs_path": "deploy/qianxing.scheduler.paper-order-smoke.json",
+    "jobs_path": "qianxing.scheduler.paper-order-smoke.json",
     "job_queue_path": "job-queue",
     "tick_interval_ms": 1000
   },
@@ -67,8 +68,8 @@
     "account_id": "main",
     "venue_id": "paper",
     "instrument": "BTCUSDT.BINANCE",
-    "target_qty": 1,
-    "target_snapshot_path": "deploy/qianxing.strategy-target.paper.json",
+    "target_qty": 1000000,
+    "target_snapshot_path": "qianxing.strategy-target.paper.json",
     "python_timeout_ms": 2000
   },
   "shutdown_timeout_ms": 30000
