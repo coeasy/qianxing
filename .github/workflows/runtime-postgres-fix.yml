@@ -52,8 +52,7 @@ jobs:
               f'{indent}    && self.storage.backend != StorageBackend::Postgres\n'
               f'{indent}{{\n'
               f'{indent}    return Err(\n'
-              f'{indent}        "{marker}"\n'
-              f'{indent}            .into(),\n'
+              f'{indent}        "{marker}".into(),\n'
               f'{indent}    );\n'
               f'{indent}}}\n'
           )
