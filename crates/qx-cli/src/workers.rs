@@ -19,7 +19,7 @@ pub(crate) fn run_scheduler_worker(path: &Path, worker_id: &str, once: bool) -> 
     }
     let root = Path::new(&config.storage.data_dir).to_path_buf();
     let queue = configured_job_queue(&config, &root)?;
-    let (state_store, scheduler, state_path) = load_scheduler_state(&config, &root)?;
+    let (state_store, scheduler, state_path) = load_scheduler_state(&config, &root, path)?;
     let interval_ms = config.scheduler.tick_interval_ms;
     let supervisor = RuntimeSupervisor::new(config)?;
     let registered_id = worker.id.clone();
@@ -89,7 +89,7 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
     let queue = configured_job_queue(&config, &root)?;
     let control_store = configured_control_store(&config)?;
     let command_queue = configured_command_queue(&config, &root)?;
-    let (state_store, _, state_path) = load_scheduler_state(&config, &root)?;
+    let (state_store, _, state_path) = load_scheduler_state(&config, &root, path)?;
     let mut strategy_config = config.strategy_for_worker(worker_id)?;
     resolve_strategy_runtime_paths(&mut strategy_config, path);
     verify_strategy_artifact(&strategy_config)?;

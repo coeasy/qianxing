@@ -1674,19 +1674,15 @@ fn scheduler_manifest(worker_id: &str, trading_day: &str, now: u64) -> qx_core::
     }
 }
 
-fn scheduler_jobs_path(root: &Path, configured: &str) -> std::path::PathBuf {
-    let candidate = runtime_path(root, configured);
-    if candidate.exists() {
-        candidate
-    } else {
-        Path::new(configured).to_path_buf()
-    }
+fn scheduler_jobs_path(runtime_config_path: &Path, configured: &str) -> PathBuf {
+    resolve_runtime_relative_path(runtime_config_path, configured)
 }
 
 fn load_scheduler_state(
     config: &RuntimeConfig,
     root: &Path,
-) -> Result<(JsonStateStore, Scheduler, std::path::PathBuf), String> {
+    runtime_config_path: &Path,
+) -> Result<(JsonStateStore, Scheduler, PathBuf), String> {
     let store = JsonStateStore::new(root.to_path_buf());
     let state_reference = Path::new(&config.scheduler.state_path).to_path_buf();
     let state_path = runtime_path(root, &config.scheduler.state_path);
@@ -1696,7 +1692,7 @@ fn load_scheduler_state(
             .map_err(|error| format!("加载 Scheduler 状态失败: {error:?}"))?
     } else {
         let mut scheduler = Scheduler::default();
-        let jobs_path = scheduler_jobs_path(root, &config.scheduler.jobs_path);
+        let jobs_path = scheduler_jobs_path(runtime_config_path, &config.scheduler.jobs_path);
         if jobs_path.exists() {
             let jobs: Vec<JobSpec> = serde_json::from_str(
                 &std::fs::read_to_string(&jobs_path)
