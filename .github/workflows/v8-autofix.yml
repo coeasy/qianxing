@@ -22,20 +22,27 @@ jobs:
       - name: Normalize fee multiplier semantics
         shell: python
         run: |
+          import re
           from pathlib import Path
+
           path = Path('crates/qx-xingban/src/backtest.rs')
           text = path.read_text(encoding='utf-8')
-          old = '''        let fee_price_multiplier = derivative_spec
-              .map(|spec| spec.contract_size)
-              .unwrap_or(multiplier);'''
-          new = '''        let fee_price_multiplier = derivative_spec
+          pattern = re.compile(
+              r'let fee_price_multiplier = derivative_spec\s*'
+              r'\.map\(\|spec\| spec\.contract_size\)\s*'
+              r'\.unwrap_or\(multiplier\);'
+          )
+          replacement = '''let fee_price_multiplier = derivative_spec
               .map(|spec| spec.contract_size)
               .unwrap_or_else(|| multiplier.saturating_mul(qx_core::SCALE));'''
-          if old not in text:
-              raise SystemExit('expected fee multiplier block not found')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'expected exactly one fee multiplier block, got {count}')
+          path.write_text(text, encoding='utf-8')
       - name: Format workspace
         run: cargo fmt --all
+      - name: Verify focused backtest tests
+        run: cargo test -p qx-guanxing -p qx-xingban
       - name: Commit normalized sources
         run: |
           if git diff --quiet; then
