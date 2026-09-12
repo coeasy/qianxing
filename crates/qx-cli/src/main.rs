@@ -1795,9 +1795,19 @@ fn resolve_ccxt_config_path(runtime_path: &Path, configured: &str) -> String {
         .into_owned()
 }
 
+fn is_portable_absolute_path(configured: &str) -> bool {
+    let bytes = configured.as_bytes();
+    Path::new(configured).is_absolute()
+        || configured.starts_with("\\")
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'/' | b'\\'))
+}
+
 fn resolve_runtime_relative_path(runtime_path: &Path, configured: &str) -> PathBuf {
     let path = Path::new(configured);
-    if path.is_absolute() {
+    if is_portable_absolute_path(configured) {
         path.to_path_buf()
     } else {
         runtime_path
@@ -1813,7 +1823,7 @@ fn resolve_runtime_asset_path(
     configured: &str,
 ) -> PathBuf {
     let config_candidate = resolve_runtime_relative_path(runtime_config_path, configured);
-    if Path::new(configured).is_absolute() || config_candidate.exists() {
+    if is_portable_absolute_path(configured) || config_candidate.exists() {
         return config_candidate;
     }
     let storage_candidate = runtime_path(storage_root, configured);
@@ -4481,6 +4491,12 @@ fn run_paper_execution_worker(path: &Path, worker_id: &str, once: bool) -> Resul
                 queue
                     .ack_command_at(command.command_id, context.id(), lease.fencing_token, now)
                     .map_err(|error| format!("确认 Paper SubmitOrder 失败: {error:?}"))?;
+                if once && record.status == qx_control::CommandStatus::Failed {
+                    return Err(format!(
+                        "Paper SubmitOrder command_id={} 执行失败: {}",
+                        command.command_id, record.result_code
+                    ));
+                }
                 processed += 1;
                 context.mark(
                     if record.status == qx_control::CommandStatus::Executed {
@@ -4547,6 +4563,44 @@ fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
 
     run_scheduler_worker(path, &scheduler_id, true)?;
     run_strategy_worker(path, &strategy_id, true)?;
+
+    // The offline Paper E2E owns an explicit deterministic market-data fixture.
+    // Do not let RiskContext invent a reference price: market orders may execute
+    // only after the standard live pipeline has observed a MarketQuote fact.
+    {
+        let root = Path::new(&config.storage.data_dir);
+        let worker = config
+            .workers
+            .iter()
+            .find(|worker| worker.id == execution_id)
+            .ok_or_else(|| "Paper Execution worker 配置在行情注入前消失".to_string())?;
+        let strategy = config.strategy_for_worker(&strategy_id)?;
+        let instrument = strategy
+            .instrument
+            .as_deref()
+            .and_then(InstrumentId::parse)
+            .ok_or_else(|| "Paper E2E Strategy 缺少合法 instrument".to_string())?;
+        let log_name = format!(
+            "paper-{}-{}-events",
+            worker.account_id.as_deref().unwrap_or("unknown"),
+            worker.venue_id.as_deref().unwrap_or("paper")
+        );
+        let now = runtime_timestamp_ms();
+        let mut pipeline = open_runtime_pipeline(&config, root, &log_name, "USDT")
+            .map_err(|error| format!("打开 Paper E2E 行情 EventLog 失败: {error}"))?;
+        pipeline
+            .ingest(RuntimeEventEnvelope::market_quote(
+                instrument,
+                Price::from_i64(99),
+                Price::from_i64(100),
+                now,
+                now,
+                0,
+                "paper-e2e-market-fixture",
+            ))
+            .map_err(|error| format!("写入 Paper E2E 行情事实失败: {error:?}"))?;
+    }
+
     run_paper_execution_worker(path, &execution_id, true)?;
 
     let root = Path::new(&config.storage.data_dir);
@@ -8966,6 +9020,18 @@ mod tests {
         let mut config = read_runtime_config(&template).unwrap();
         config.storage.data_dir = data_dir.to_string_lossy().into_owned();
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+        let execution = config
+            .workers
+            .iter_mut()
+            .find(|worker| worker.id == "paper-execution")
+            .unwrap();
+        execution.instrument_spec_path = Some(
+            workspace_root
+                .join("deploy")
+                .join("qianxing.binance.spot.spec.json")
+                .to_string_lossy()
+                .into_owned(),
+        );
         config.scheduler.jobs_path = workspace_root
             .join("deploy")
             .join("qianxing.scheduler.paper-order-smoke.json")

@@ -1474,15 +1474,9 @@ impl RuntimeConfig {
             if worker.role == WorkerRole::Api {
                 enabled_api_workers = enabled_api_workers.saturating_add(1);
             }
-            if worker.role == WorkerRole::Execution
-                && !worker
-                    .venue_id
-                    .as_deref()
-                    .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
-                && worker.instrument_spec_path.is_none()
-            {
+            if worker.role == WorkerRole::Execution && worker.instrument_spec_path.is_none() {
                 return Err(format!(
-                    "{} 非 Paper Execution worker 必须配置 instrument_spec_path",
+                    "{} Execution worker 必须配置冻结的 instrument_spec_path",
                     worker.id
                 ));
             }
@@ -1892,7 +1886,7 @@ impl RuntimeSupervisor {
                 }
                 Ok(Err(error)) => {
                     let _ = context.mark(ServiceStatus::Failed, error.clone(), None);
-                    Err(format!("worker {thread_id} failed"))
+                    Err(format!("worker {thread_id} failed: {error}"))
                 }
                 Err(_) => {
                     let _ = context.mark(ServiceStatus::Failed, "worker panicked", None);
@@ -2111,6 +2105,16 @@ mod tests {
             strategy: StrategyRuntimeConfig::default(),
             strategies: Vec::new(),
         }
+    }
+
+    #[test]
+    fn supervisor_propagates_worker_failure_cause() {
+        let supervisor = RuntimeSupervisor::new(config()).unwrap();
+        let handle = supervisor
+            .spawn_worker("market", |_| Err("sentinel worker failure".into()))
+            .unwrap();
+        let error = handle.join().unwrap().unwrap_err();
+        assert!(error.contains("sentinel worker failure"));
     }
 
     #[test]
@@ -2523,6 +2527,30 @@ mod tests {
             api_key: "/run/secrets/api-key".into(),
             secret: "/run/secrets/secret".into(),
         });
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn paper_execution_requires_a_frozen_instrument_spec_even_without_limits() {
+        let mut config = config();
+        config.workers.push(WorkerConfig {
+            id: "paper-execution".into(),
+            role: WorkerRole::Execution,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("paper".into()),
+            endpoint: None,
+            symbols: Vec::new(),
+            settlement_currency: Some("USDT".into()),
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: Some(100_000_000_000_000),
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        assert!(config.validate().is_err());
+        config.workers.last_mut().unwrap().instrument_spec_path = Some("market-spec.json".into());
         assert!(config.validate().is_ok());
     }
 

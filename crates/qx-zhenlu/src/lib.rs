@@ -40,15 +40,9 @@ impl RiskContext {
     pub fn validate_order(&self, order: &Order, position: &PositionSnapshot) -> QxResult<()> {
         order.validate().map_err(QxError::BusinessViolation)?;
         let Some(spec) = self.instrument_spec.as_ref() else {
-            if self.available_margin_raw.is_some()
-                || self.max_order_notional_raw.is_some()
-                || self.max_position_notional_raw.is_some()
-            {
-                return Err(QxError::BusinessViolation(
-                    "账户级 RiskContext 缺少 TradingInstrumentSpec".into(),
-                ));
-            }
-            return Ok(());
+            return Err(QxError::BusinessViolation(
+                "账户级 RiskContext 缺少 TradingInstrumentSpec".into(),
+            ));
         };
         if order.instrument != spec.instrument {
             return Err(QxError::BusinessViolation(
@@ -1601,6 +1595,14 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn risk_context_without_instrument_spec_is_always_rejected() {
+        let candidate = order(1, Side::Buy);
+        assert!(RiskContext::default()
+            .validate_order(&candidate, &PositionSnapshot::default())
+            .is_err());
     }
 
     #[test]
