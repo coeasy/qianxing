@@ -1249,6 +1249,13 @@ impl RuntimeConfig {
         if self.storage.data_dir.trim().is_empty() {
             return Err("storage.data_dir 不能为空".into());
         }
+        if self.environment.eq_ignore_ascii_case("production")
+            && self.storage.backend != StorageBackend::Postgres
+        {
+            return Err(
+                "production 环境 EventLog/Outbox 必须使用 PostgreSQL transactional backend".into(),
+            );
+        }
         if self
             .storage
             .event_log_segment_events
