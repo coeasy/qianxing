@@ -1,0 +1,12 @@
+[package]
+name = "qx-plugin"
+description = "卯眼/榫头：插件体系，扩展点贡献、manifest 契约、依赖求解、Profile/Bundle/Patch 装配"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ring = "0.17.14"

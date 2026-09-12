@@ -1,0 +1,50 @@
+[
+  {
+    "job_id": "strategy-heartbeat",
+    "job_version": "v1",
+    "owner": "strategy-main",
+    "enabled": true,
+    "trigger": {
+      "Cron": "*/5 * * * *"
+    },
+    "window": "Any",
+    "depends_on": [],
+    "input_refs": ["market:BTCUSDT.BINANCE"],
+    "output_refs": ["strategy:signal"],
+    "timeout_seconds": 60,
+    "retry_policy": {
+      "max_attempts": 1,
+      "backoff_seconds": 0,
+      "retryable_codes": []
+    },
+    "concurrency_key": "strategy-heartbeat",
+    "idempotency_key": "strategy-heartbeat-v1",
+    "permission_scope": "strategy",
+    "audit_reason": "scheduled strategy heartbeat",
+    "dry_run": true
+  },
+  {
+    "job_id": "strategy-hedge-heartbeat",
+    "job_version": "v1",
+    "owner": "strategy-hedge",
+    "enabled": true,
+    "trigger": {
+      "Cron": "*/5 * * * *"
+    },
+    "window": "Any",
+    "depends_on": [],
+    "input_refs": ["market:BTC/USDT.OKX"],
+    "output_refs": ["strategy:hedge-signal"],
+    "timeout_seconds": 60,
+    "retry_policy": {
+      "max_attempts": 1,
+      "backoff_seconds": 0,
+      "retryable_codes": []
+    },
+    "concurrency_key": "strategy-hedge-heartbeat",
+    "idempotency_key": "strategy-hedge-heartbeat-v1",
+    "permission_scope": "strategy",
+    "audit_reason": "scheduled hedge strategy heartbeat",
+    "dry_run": true
+  }
+]

@@ -1,0 +1,14 @@
+[package]
+name = "qx-xingban"
+description = "星板：撮合与仿真，FillModel × 数据档位矩阵、成本、延迟、保证金"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { path = "../qx-core" }
+qx-guanxing = { path = "../qx-guanxing" }
+qx-fenye = { path = "../qx-fenye" }
+qx-zhenlu = { path = "../qx-zhenlu" }
+qx-strategy = { path = "../qx-strategy" }
+serde = { workspace = true }

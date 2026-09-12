@@ -1,0 +1,10 @@
+/target
+/data/
+/dist/
+**/*.rs.bk
+*.pdb
+.DS_Store
+.idea/
+.vscode/
+__pycache__/
+*.pyc

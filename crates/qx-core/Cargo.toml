@@ -1,0 +1,10 @@
+[package]
+name = "qx-core"
+description = "牵星内核：确定性时钟、因果事件队列、事件溯源、重放校验"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

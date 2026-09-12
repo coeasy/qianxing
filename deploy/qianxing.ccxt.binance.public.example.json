@@ -1,0 +1,13 @@
+{
+  "exchange_id": "binance",
+  "account_id": "public",
+  "sandbox": true,
+  "enable_rate_limit": true,
+  "timeout_ms": 30000,
+  "ws_max_retries": 3,
+  "ws_retry_backoff_ms": 250,
+  "default_type": "spot",
+  "credential_env": null,
+  "options": {},
+  "instruments": ["BTC/USDT.BINANCE", "ETH/USDT.BINANCE"]
+}

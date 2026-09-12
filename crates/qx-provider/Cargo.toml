@@ -1,0 +1,12 @@
+[package]
+name = "qx-provider"
+description = "多源数据 ProviderRegistry 与确定性选择策略"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { path = "../qx-core" }
+qx-guanxing = { path = "../qx-guanxing" }
+serde = { workspace = true }
+serde_json = { workspace = true }

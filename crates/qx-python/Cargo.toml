@@ -1,0 +1,14 @@
+[package]
+name = "qx-python"
+description = "牵星 Python 原生扩展与 Arrow C Data Interface 边界"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "_qianxing_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+qx-datastruct = { path = "../qx-datastruct" }
+pyo3 = { version = "0.29.2", features = ["extension-module", "abi3-py310"] }

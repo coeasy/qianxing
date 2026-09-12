@@ -1,0 +1,20 @@
+[package]
+name = "qx-runtime"
+description = "牵星运行时配置、服务编排与健康状态契约"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+postgres = ["qx-storage/postgres"]
+
+[dependencies]
+qx-core = { path = "../qx-core" }
+qx-oms = { path = "../qx-oms" }
+qx-factor = { path = "../qx-factor" }
+qx-strategy = { path = "../qx-strategy" }
+qx-control = { path = "../qx-control" }
+qx-storage = { path = "../qx-storage" }
+serde = { workspace = true }
+serde_json = { workspace = true }

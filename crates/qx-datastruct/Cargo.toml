@@ -1,0 +1,12 @@
+[package]
+name = "qx-datastruct"
+description = "确定性 Bar/Quote 列式数据边界与 DataView facade"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { path = "../qx-core" }
+qx-guanxing = { path = "../qx-guanxing" }
+serde = { workspace = true }
+serde_json = { workspace = true }

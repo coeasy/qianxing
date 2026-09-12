@@ -1,0 +1,9 @@
+[package]
+name = "qx-genglu"
+description = "更路：审计与对账，绩效指标、归因、五类对账"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { path = "../qx-core" }

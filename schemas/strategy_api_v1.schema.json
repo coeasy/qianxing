@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-api-v1.json",
+  "title": "Qianxing Strategy API v1",
+  "type": "object",
+  "required": ["schema_version", "request_id", "strategy_id", "signal_id", "intents"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string", "minLength": 1},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "signal_id": {"type": "integer", "minimum": 1},
+    "confidence": {"type": "integer"},
+    "priority": {"type": "integer"},
+    "expires_at": {"type": "integer", "minimum": 0},
+    "intents": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["intent_id", "instrument", "side", "qty_raw"],
+        "properties": {
+          "intent_id": {"type": "integer", "minimum": 1},
+          "instrument": {"type": "string", "minLength": 1},
+          "side": {"enum": ["buy", "sell"]},
+          "qty_raw": {"type": "integer", "exclusiveMinimum": 0},
+          "limit_price_raw": {"type": ["integer", "null"], "exclusiveMinimum": 0},
+          "reduce_only": {"type": "boolean"},
+          "post_only": {"type": "boolean"},
+          "position_side": {"enum": ["net", "long", "short", null]}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

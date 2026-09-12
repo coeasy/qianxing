@@ -1,0 +1,12 @@
+[package]
+name = "qx-factor"
+description = "因子与特征版本流水线：PIT、分析、版本和候选配置"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { path = "../qx-core" }
+qx-guanxing = { path = "../qx-guanxing" }
+serde = { workspace = true }
+serde_json = { workspace = true }

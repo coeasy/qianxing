@@ -1,0 +1,21 @@
+[package]
+name = "qx-adapter"
+description = "可替换传输层上的 REST Provider/Venue 适配器"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { path = "../qx-core" }
+qx-guanxing = { path = "../qx-guanxing" }
+qx-provider = { path = "../qx-provider" }
+qx-zhenlu = { path = "../qx-zhenlu" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ring = "0.17.14"
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = "1.15.1"
+webpki-roots = "1.0.9"
+
+[dev-dependencies]
+qx-runtime = { path = "../qx-runtime" }

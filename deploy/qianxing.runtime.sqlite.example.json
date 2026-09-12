@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "environment": "paper",
+  "api": {
+    "bind": "127.0.0.1:18080",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {}
+  },
+  "storage": {
+    "backend": "sqlite",
+    "data_dir": "data/qianxing-sqlite",
+    "sqlite_path": "data/qianxing-sqlite/runtime.sqlite3"
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "scheduler-smoke",
+      "role": "scheduler",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "strategy-smoke",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "binance-testnet",
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": null
+    }
+  ],
+  "scheduler": {
+    "state_path": "scheduler.json",
+    "jobs_path": "deploy/qianxing.scheduler.jobs.smoke.json",
+    "job_queue_path": "job-queue",
+    "tick_interval_ms": 1000
+  },
+  "strategy": {
+    "version": "sqlite-smoke-v1",
+    "max_orders": 100,
+    "account_id": "main",
+    "venue_id": "binance-testnet",
+    "instrument": "BTCUSDT.BINANCE",
+    "target_qty": 1
+  },
+  "shutdown_timeout_ms": 30000
+}

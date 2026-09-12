@@ -1,0 +1,27 @@
+[package]
+name = "qx-storage"
+description = "EventLog 与运行事实的可恢复文件存储边界"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+sqlite = ["dep:rusqlite"]
+postgres = ["dep:postgres", "dep:postgres-native-tls", "dep:native-tls"]
+nats = ["dep:async-nats", "dep:futures-util", "dep:tokio"]
+
+[dependencies]
+qx-core = { path = "../qx-core" }
+qx-control = { path = "../qx-control" }
+qx-scheduler = { path = "../qx-scheduler" }
+qx-protocol = { path = "../qx-protocol" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { version = "0.32.1", optional = true, features = ["bundled"] }
+postgres = { version = "0.19.10", optional = true }
+postgres-native-tls = { version = "0.5.0", optional = true }
+native-tls = { version = "0.2.14", optional = true }
+async-nats = { version = "0.50.0", optional = true, features = ["jetstream"] }
+futures-util = { version = "0.3", optional = true, default-features = false, features = ["std", "sink"] }
+tokio = { version = "1", optional = true, features = ["rt-multi-thread"] }

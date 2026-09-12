@@ -1,0 +1,13 @@
+{
+  "command_id": 2001,
+  "request_id": "paper-submit-2001",
+  "operator_id": "paper-operator",
+  "reason": "local execution pipeline acceptance",
+  "kind": "SubmitOrder",
+  "target": "2001",
+  "payload": {
+    "order_json": "{\"client_id\":2001,\"instrument\":{\"symbol\":\"BTCUSDT\",\"venue\":\"BINANCE\"},\"side\":\"Buy\",\"qty\":1000000000,\"limit\":100000000000,\"status\":\"PendingSubmit\",\"filled\":0,\"account_id\":\"main\",\"trace\":null}"
+  },
+  "permission": "Trading",
+  "dry_run": false
+}

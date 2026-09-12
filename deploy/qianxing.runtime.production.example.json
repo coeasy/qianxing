@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "environment": "production",
+  "config_fingerprint": "4d6de963a27fae4b255a8d24ab39dde99369a4dfc4a9327330a1bdd76eadaaaf",
+  "api": {
+    "bind": "0.0.0.0:8443",
+    "transport": "mtls",
+    "tls": {
+      "certificate_chain": "/run/secrets/qianxing/server-chain.pem",
+      "private_key": "/run/secrets/qianxing/server-key.pem",
+      "client_ca": "/run/secrets/qianxing/operator-ca.pem"
+    },
+    "operators": {
+      "ops": {
+        "permission": "Admin",
+        "certificate": "/run/secrets/qianxing/ops-client-chain.pem"
+      }
+    }
+  },
+  "storage": {
+    "backend": "sqlite",
+    "data_dir": "/var/lib/qianxing",
+    "sqlite_path": "/var/lib/qianxing/runtime.sqlite3"
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": null
+    },
+    {
+      "id": "binance-market",
+      "role": "market_data",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": "binance",
+      "endpoint": "wss://data-stream.binance.vision/ws",
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": null
+    },
+    {
+      "id": "binance-user-main",
+      "role": "user_stream",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "binance",
+      "endpoint": "wss://ws-api.binance.com:443/ws-api/v3",
+      "symbols": [],
+      "credential_env": {
+        "api_key": "QX_BINANCE_API_KEY",
+        "secret": "QX_BINANCE_API_SECRET"
+      }
+    },
+    {
+      "id": "reconciler-main",
+      "role": "reconciler",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "binance",
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": {
+        "api_key": "QX_BINANCE_API_KEY",
+        "secret": "QX_BINANCE_API_SECRET"
+      }
+    },
+    {
+      "id": "binance-execution-main",
+      "role": "execution",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "binance",
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": {
+        "api_key": "QX_BINANCE_API_KEY",
+        "secret": "QX_BINANCE_API_SECRET"
+      },
+      "instrument_spec_path": "deploy/qianxing.binance.spot.spec.json"
+    },
+    {
+      "id": "scheduler",
+      "role": "scheduler",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "strategy-main",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "binance",
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": null
+    }
+  ],
+  "scheduler": {
+    "state_path": "scheduler.json",
+    "jobs_path": "deploy/qianxing.scheduler.jobs.example.json",
+    "job_queue_path": "job-queue",
+    "tick_interval_ms": 1000
+  },
+  "strategy": {
+    "version": "production-strategy-v1",
+    "max_orders": 1000,
+    "account_id": "main",
+    "venue_id": "binance",
+    "instrument": "BTCUSDT.BINANCE",
+    "target_qty": 0,
+    "research_snapshot_required": true,
+    "research_snapshot_path": "/var/lib/qianxing/research/production-strategy-v1.json",
+    "research_data_fingerprint": "replace-with-published-snapshot-fingerprint"
+  },
+  "shutdown_timeout_ms": 60000
+}

@@ -1,0 +1,9 @@
+[package]
+name = "qx-oms"
+description = "牵星 OMS：可重放的本地订单状态与成交归约"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { path = "../qx-core" }

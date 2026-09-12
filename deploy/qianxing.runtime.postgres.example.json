@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "environment": "paper",
+  "api": {
+    "bind": "127.0.0.1:18080",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {}
+  },
+  "storage": {
+    "backend": "postgres",
+    "data_dir": "data/qianxing-postgres",
+    "sqlite_path": null,
+    "postgres_dsn_env": "QX_POSTGRES_DSN",
+    "postgres_pool_size": 4
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "scheduler-postgres",
+      "role": "scheduler",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "strategy-postgres",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "paper",
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": null
+    }
+  ],
+  "scheduler": {
+    "state_path": "scheduler.json",
+    "jobs_path": "deploy/qianxing.scheduler.jobs.smoke.json",
+    "job_queue_path": "job-queue",
+    "tick_interval_ms": 1000
+  },
+  "strategy": {
+    "version": "postgres-smoke-v1",
+    "max_orders": 100,
+    "account_id": "main",
+    "venue_id": "paper",
+    "instrument": "BTCUSDT.BINANCE",
+    "target_qty": 1
+  },
+  "shutdown_timeout_ms": 30000
+}

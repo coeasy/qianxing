@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "environment": "paper",
+  "api": {
+    "bind": "127.0.0.1:18082",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {}
+  },
+  "storage": {
+    "backend": "files",
+    "data_dir": "data/qianxing-consumer",
+    "sqlite_path": null
+  },
+  "messaging": {
+    "enabled": true,
+    "nats_url": "nats://127.0.0.1:4222",
+    "subject_prefix": "qianxing",
+    "relay_interval_ms": 250,
+    "relay_batch_size": 100,
+    "lease_seconds": 30,
+    "consumer_stream": "QIANXING_EVENTS",
+    "consumer_name": "ledger-reducer",
+    "consumer_group_id": "ledger-reducer",
+    "consumer_batch_size": 100,
+    "consumer_max_attempts": 3,
+    "consumer_handler_executable": "python",
+    "consumer_handler_args": ["tools/event_consumer_example.py"],
+    "consumer_handler_timeout_ms": 5000,
+    "worker_stale_after_ms": 30000
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "ledger-reducer",
+      "role": "event_consumer",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    }
+  ],
+  "shutdown_timeout_ms": 30000
+}

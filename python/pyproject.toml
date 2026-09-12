@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel>=0.42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qianxing-bridge"
+version = "0.1.0"
+description = "Qianxing JSON/DataStruct bridge"
+requires-python = ">=3.10"
+dependencies = [
+    "ccxt>=4.4.0",
+]
+
+[project.optional-dependencies]
+ccxt-pro = [
+    "ccxtpro>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+qianxing_bridge = [
+    "_qianxing_native*.pyd",
+    "_qianxing_native*.so",
+    "_qianxing_native*.dll",
+    "_qianxing_native*.dylib",
+]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"

@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/qx-core",
+    "crates/qx-fenye",
+    "crates/qx-guanxing",
+    "crates/qx-xingban",
+    "crates/qx-zhenlu",
+    "crates/qx-oms",
+    "crates/qx-orchestrator",
+    "crates/qx-genglu",
+    "crates/qx-plugin",
+    "crates/qx-factor",
+    "crates/qx-protocol",
+    "crates/qx-provider",
+    "crates/qx-scheduler",
+    "crates/qx-control",
+    "crates/qx-datastruct",
+    "crates/qx-storage",
+    "crates/qx-api",
+    "crates/qx-adapter",
+    "crates/qx-runtime",
+    "crates/qx-execution",
+    "crates/qx-python",
+    "crates/qx-strategy",
+    "crates/qx-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Qianxing Quant"]
+repository = "https://github.com/qianxing/qianxing"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+qx-core = { path = "crates/qx-core" }
+qx-fenye = { path = "crates/qx-fenye" }
+qx-guanxing = { path = "crates/qx-guanxing" }
+qx-xingban = { path = "crates/qx-xingban" }
+qx-zhenlu = { path = "crates/qx-zhenlu" }
+qx-oms = { path = "crates/qx-oms" }
+qx-orchestrator = { path = "crates/qx-orchestrator" }
+qx-genglu = { path = "crates/qx-genglu" }
+qx-plugin = { path = "crates/qx-plugin" }
+qx-factor = { path = "crates/qx-factor" }
+qx-protocol = { path = "crates/qx-protocol" }
+qx-provider = { path = "crates/qx-provider" }
+qx-scheduler = { path = "crates/qx-scheduler" }
+qx-control = { path = "crates/qx-control" }
+qx-datastruct = { path = "crates/qx-datastruct" }
+qx-storage = { path = "crates/qx-storage" }
+qx-api = { path = "crates/qx-api" }
+qx-adapter = { path = "crates/qx-adapter" }
+qx-execution = { path = "crates/qx-execution" }
+qx-python = { path = "crates/qx-python" }
+qx-strategy = { path = "crates/qx-strategy" }
+
+[profile.release]
+opt-level = 3
+lto = true

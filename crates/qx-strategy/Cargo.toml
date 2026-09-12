@@ -1,0 +1,13 @@
+[package]
+name = "qx-strategy"
+description = "牵星跨语言策略 SDK 与统一 Strategy API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { path = "../qx-core" }
+libloading = "0.8.9"
+memmap2 = "0.9.9"
+ring = "0.17.14"
+serde = { workspace = true }

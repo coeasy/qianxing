@@ -1,0 +1,62 @@
+groups:
+  - name: qianxing-runtime
+    rules:
+      - alert: QianxingWorkerDown
+        expr: qx_worker_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing worker is down"
+          description: "worker={{ $labels.worker }} reported down or has a stale heartbeat."
+
+      - alert: QianxingWorkerHeartbeatStale
+        expr: time() - qx_worker_heartbeat_timestamp_seconds > 30
+        for: 30s
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing worker heartbeat is stale"
+          description: "worker={{ $labels.worker }} has not written a heartbeat within 30 seconds."
+
+      - alert: QianxingWorkerMetricsStale
+        expr: qx_worker_metrics_stale == 1
+        for: 30s
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing worker metrics file is stale"
+          description: "worker={{ $labels.worker }} has no fresh metrics sample."
+
+      - alert: QianxingOutboxPublishFailures
+        expr: increase(qx_outbox_relay_publish_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: qianxing
+        annotations:
+          summary: "Qianxing Outbox publish failures"
+          description: "worker={{ $labels.worker }} has publish failures in the last 5 minutes."
+
+      - alert: QianxingConsumerDeadLetters
+        expr: increase(qx_event_consumer_dead_lettered_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing consumer produced dead letters"
+          description: "worker={{ $labels.worker }} dead-lettered events in the last 5 minutes."
+
+      - alert: QianxingConsumerAckFailures
+        expr: increase(qx_event_consumer_ack_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing consumer ACK failures"
+          description: "worker={{ $labels.worker }} could not acknowledge JetStream messages."

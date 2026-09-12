@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schema/account-snapshot-v1.json",
+  "title": "Qianxing Canonical Account Snapshot v1",
+  "type": "object",
+  "required": ["protocol", "schema_version", "header", "cash_raw", "positions", "orders", "fills", "transfers", "reconcile"],
+  "properties": {
+    "protocol": {"const": "QIANXING_ACCOUNT"},
+    "schema_version": {"const": 1},
+    "header": {
+      "type": "object",
+      "required": ["snapshot_id", "account_id", "portfolio_id", "venue_id", "as_of", "event_seq", "state_hash"]
+    },
+    "cash_raw": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "positions": {"type": "object", "additionalProperties": {"type": "object"}},
+    "orders": {"type": "object", "additionalProperties": {"type": "object"}},
+    "fills": {"type": "object", "additionalProperties": {"type": "object"}},
+    "transfers": {"type": "object", "additionalProperties": {"type": "object"}},
+    "reconcile": {"type": "object"}
+  },
+  "additionalProperties": true
+}

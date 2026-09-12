@@ -1,0 +1,9 @@
+[package]
+name = "qx-fenye"
+description = "分野：身份与市场，双向版本化符号映射表"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { path = "../qx-core" }

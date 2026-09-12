@@ -1,0 +1,20 @@
+[package]
+name = "qx-execution"
+description = "牵星统一执行事实归约边界"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+postgres = ["qx-runtime/postgres"]
+
+[dependencies]
+qx-core = { path = "../qx-core" }
+qx-control = { path = "../qx-control" }
+qx-guanxing = { path = "../qx-guanxing" }
+qx-runtime = { path = "../qx-runtime" }
+qx-zhenlu = { path = "../qx-zhenlu" }
+
+[dev-dependencies]
+serde_json = { workspace = true }

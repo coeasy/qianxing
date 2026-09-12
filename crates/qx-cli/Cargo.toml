@@ -1,0 +1,35 @@
+[package]
+name = "qx-cli"
+description = "牵星 CLI：端到端回测演示与确定性自校验"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+sqlite = ["qx-api/sqlite", "qx-storage/sqlite"]
+postgres = ["qx-storage/postgres", "qx-runtime/postgres", "qx-execution/postgres"]
+nats = ["qx-storage/nats"]
+
+[dependencies]
+qx-api = { path = "../qx-api" }
+qx-adapter = { path = "../qx-adapter" }
+qx-core = { path = "../qx-core" }
+qx-datastruct = { path = "../qx-datastruct" }
+qx-fenye = { path = "../qx-fenye" }
+qx-guanxing = { path = "../qx-guanxing" }
+qx-xingban = { path = "../qx-xingban" }
+qx-zhenlu = { path = "../qx-zhenlu" }
+qx-genglu = { path = "../qx-genglu" }
+qx-plugin = { path = "../qx-plugin" }
+qx-factor = { path = "../qx-factor" }
+qx-protocol = { path = "../qx-protocol" }
+qx-provider = { path = "../qx-provider" }
+qx-scheduler = { path = "../qx-scheduler" }
+qx-control = { path = "../qx-control" }
+qx-execution = { path = "../qx-execution" }
+qx-runtime = { path = "../qx-runtime" }
+qx-strategy = { path = "../qx-strategy" }
+qx-orchestrator = { path = "../qx-orchestrator" }
+qx-storage = { path = "../qx-storage" }
+serde_json = { workspace = true }

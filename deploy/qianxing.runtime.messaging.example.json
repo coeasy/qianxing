@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "environment": "paper",
+  "api": {
+    "bind": "127.0.0.1:18081",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {}
+  },
+  "storage": {
+    "backend": "files",
+    "data_dir": "data/qianxing-messaging",
+    "sqlite_path": null
+  },
+  "messaging": {
+    "enabled": true,
+    "nats_url": "nats://127.0.0.1:4222",
+    "subject_prefix": "qianxing",
+    "relay_interval_ms": 250,
+    "relay_batch_size": 100,
+    "lease_seconds": 30,
+    "worker_stale_after_ms": 30000
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "outbox-relay",
+      "role": "outbox_relay",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    }
+  ],
+  "shutdown_timeout_ms": 30000
+}

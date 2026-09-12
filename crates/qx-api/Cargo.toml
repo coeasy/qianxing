@@ -1,0 +1,20 @@
+[package]
+name = "qx-api"
+description = "牵星本地查询、控制命令、事件流与 WebSocket 边界"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+sqlite = ["qx-storage/sqlite"]
+
+[dependencies]
+qx-control = { path = "../qx-control" }
+qx-core = { path = "../qx-core" }
+qx-protocol = { path = "../qx-protocol" }
+qx-storage = { path = "../qx-storage" }
+qx-scheduler = { path = "../qx-scheduler" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
