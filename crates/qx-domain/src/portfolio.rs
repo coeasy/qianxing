@@ -12,7 +12,11 @@ impl Portfolio {
         if self.id.trim().is_empty() {
             return Err("portfolio id is required".into());
         }
-        if self.positions.keys().any(|instrument| instrument.trim().is_empty()) {
+        if self
+            .positions
+            .keys()
+            .any(|instrument| instrument.trim().is_empty())
+        {
             return Err("portfolio contains an empty instrument id".into());
         }
         Ok(())
