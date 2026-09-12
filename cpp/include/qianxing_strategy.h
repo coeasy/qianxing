@@ -26,6 +26,14 @@ typedef struct qx_raw128 {
     int64_t hi;
 } qx_raw128;
 
+/* Lossless helper for the common signed 64-bit subset of qx_raw128. */
+static inline qx_raw128 qx_raw128_from_i64(int64_t value) {
+    qx_raw128 out;
+    out.lo = (uint64_t)value;
+    out.hi = value < 0 ? -1 : 0;
+    return out;
+}
+
 typedef enum qx_market_event_kind {
     QX_MARKET_BAR = 1,
     QX_MARKET_TICK = 2,

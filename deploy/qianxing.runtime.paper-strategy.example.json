@@ -58,7 +58,7 @@
   ],
   "scheduler": {
     "state_path": "scheduler.json",
-    "jobs_path": "qianxing.scheduler.paper-order-smoke.json",
+    "jobs_path": "deploy/qianxing.scheduler.paper-order-smoke.json",
     "job_queue_path": "job-queue",
     "tick_interval_ms": 1000
   },

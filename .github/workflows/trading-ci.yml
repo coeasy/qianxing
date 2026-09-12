@@ -50,8 +50,8 @@ jobs:
       - name: Compile qx-cli feature set
         run: cargo check -p qx-cli --all-targets --features "${{ matrix.features }}"
 
-  runtime-contracts:
-    name: runtime-contracts
+  runtime-configs:
+    name: runtime-configs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,12 +65,36 @@ jobs:
             echo "checking ${file}"
             cargo run -p qx-cli --features sqlite,postgres,nats -- runtime-check "${file}"
           done
+
+  runtime-smoke:
+    name: runtime-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Deterministic ecosystem smoke
         run: cargo run -p qx-cli -- ecosystem
       - name: Paper smoke
         run: cargo run -p qx-cli -- paper
+
+  paper-e2e:
+    name: paper-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Scheduler to strategy to Paper E2E
         run: cargo run -p qx-cli -- paper-e2e deploy/qianxing.runtime.paper-strategy.example.json
+
+  process-recovery:
+    name: process-recovery
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Cross-process lease recovery
         run: cargo test -p qx-cli --test process_recovery
 

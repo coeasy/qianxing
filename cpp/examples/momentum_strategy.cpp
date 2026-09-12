@@ -39,7 +39,7 @@ int on_event(qx_strategy_handle raw,
     decision->request_id = state->request_id.c_str();
     decision->strategy_id = context->strategy_id;
     decision->signal_id = event->ts;
-    decision->confidence = 500;
+    decision->confidence = qx_raw128_from_i64(500);
     decision->priority = 0;
     decision->expires_at = event->ts;
     decision->intents = nullptr;
