@@ -1,12 +1,13 @@
 //! 仿真撮合引擎（bar 级）。
 //!
-//! **结构性防作弊**：在 bar t 提交的订单，在 bar t+1 的 open 成交。
-//! 这从结构上杜绝了 cheat-on-close（用本根 bar 的收盘价成交本根 bar 的决策）。
+//! **结构性防作弊**：策略只基于已结束的可见 bar 做决策，订单随后进入下一可执行
+//! bar 的撮合。Bar 级数据无法证明真实队列位置或 maker 身份，因此费用按未知流动性
+//! 处理，并采用费用模型的保守规则。
 
 use qx_core::{Fill, Money, Order, OrderStatus, Price, Quantity};
 use qx_guanxing::Bar;
 
-use crate::cost::{FeeModel, LatencyModel, ZeroLatency};
+use crate::cost::{FeeContext, FeeModel, LatencyModel, LiquidityRole, ZeroLatency};
 use crate::fill::{FillContext, FillModel};
 use crate::rng::DeterministicRng;
 
@@ -71,7 +72,7 @@ impl BarMatchingEngine {
         &self.all_fills
     }
 
-    /// 用本根 bar 撮合上一根 bar 提交的挂单，返回本轮成交。
+    /// 用当前可执行 bar 撮合已进入队列的订单，返回本轮成交。
     pub fn on_bar(&mut self, bar: &Bar, ts: u64) -> Vec<Fill> {
         let pending = std::mem::take(&mut self.pending);
         let mut out = Vec::new();
@@ -81,6 +82,14 @@ impl BarMatchingEngine {
                 self.pending.push(pending_order);
                 continue;
             }
+
+            // OHLCV 的 volume=0 只能说明当前 bar 没有可观测成交容量。无论具体
+            // FillModel 是否读取 halted，都不能在这种 bar 上凭空制造成交。
+            if bar.volume <= 0 {
+                self.pending.push(pending_order);
+                continue;
+            }
+
             let eligible_ts = pending_order.eligible_ts;
             let mut o = pending_order.order;
             let ctx = FillContext {
@@ -97,7 +106,19 @@ impl BarMatchingEngine {
                         .checked_mul(self.fee_price_multiplier)
                         .and_then(|value| value.checked_div(qx_core::SCALE))
                         .unwrap_or(px);
-                    let fee = self.fee_model.commission(q, fee_price, o.limit.is_some());
+                    // Bar 数据无法证明限价单是否真实挂在簿上并成为 maker。
+                    // 市价单确定是主动成交；限价单标为 Unknown，由费率模型保守处理。
+                    let liquidity = if o.limit.is_some() {
+                        LiquidityRole::Unknown
+                    } else {
+                        LiquidityRole::Taker
+                    };
+                    let fee = self.fee_model.commission_for(&FeeContext {
+                        side: o.side,
+                        qty: q,
+                        price: fee_price,
+                        liquidity,
+                    });
                     o.filled = Quantity::from_raw(o.filled.raw() + q);
                     o.status = if o.filled.raw() >= o.qty.raw() {
                         OrderStatus::Filled
@@ -117,7 +138,7 @@ impl BarMatchingEngine {
                     self.all_fills.push(f.clone());
                     out.push(f);
 
-                    // 部分成交的订单继续挂单
+                    // 部分成交的订单继续挂单。
                     if o.status != OrderStatus::Filled {
                         self.pending.push(PendingOrder {
                             order: o,
@@ -126,7 +147,7 @@ impl BarMatchingEngine {
                     }
                 }
                 None => {
-                    // 未成交：继续挂单（真实排队语义）
+                    // 未成交：继续挂单（真实排队语义）。
                     self.pending.push(PendingOrder {
                         order: o,
                         eligible_ts,
@@ -165,28 +186,31 @@ impl BarMatchingEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qx_core::InstrumentId;
+    use qx_core::{InstrumentId, Side, SCALE};
 
-    #[test]
-    fn order_fills_on_next_bar_open() {
-        let mut e = BarMatchingEngine::new(
-            Box::new(crate::fill::NextBarOpenFillModel),
-            Box::new(crate::cost::ZeroFeeModel),
-            1,
-        );
-        let o = Order {
-            client_id: 1,
+    fn order(client_id: u64, limit: Option<Price>) -> Order {
+        Order {
+            client_id,
             instrument: InstrumentId::parse("TEST.V").unwrap(),
-            side: qx_core::Side::Buy,
-            qty: Quantity::from_i64(10),
-            limit: None,
+            side: Side::Buy,
+            qty: Quantity::from_i64(1),
+            limit,
             status: OrderStatus::Submitted,
             filled: Quantity::ZERO,
             account_id: "a".into(),
             trace: None,
             policy: None,
-        };
-        e.submit(o);
+        }
+    }
+
+    #[test]
+    fn order_fills_on_next_visible_bar_open() {
+        let mut e = BarMatchingEngine::new(
+            Box::new(crate::fill::NextBarOpenFillModel),
+            Box::new(crate::cost::ZeroFeeModel),
+            1,
+        );
+        e.submit(order(1, None));
         let bar = Bar::new(20, 100, 110, 90, 105, 1000);
         let fills = e.on_bar(&bar, 20);
         assert_eq!(fills.len(), 1);
@@ -204,21 +228,54 @@ mod tests {
             }),
             1,
         );
-        let o = Order {
-            client_id: 2,
-            instrument: InstrumentId::parse("TEST.V").unwrap(),
-            side: qx_core::Side::Buy,
-            qty: Quantity::from_i64(1),
-            limit: None,
-            status: OrderStatus::Submitted,
-            filled: Quantity::ZERO,
-            account_id: "a".into(),
-            trace: None,
-            policy: None,
-        };
-        e.submit_at(o, 0);
+        e.submit_at(order(2, None), 0);
         assert!(e.on_bar(&Bar::new(4, 100, 100, 100, 100, 1), 4).is_empty());
         assert_eq!(e.on_bar(&Bar::new(5, 101, 101, 101, 101, 1), 5).len(), 1);
+    }
+
+    #[test]
+    fn zero_volume_bar_never_creates_a_fill() {
+        let mut e = BarMatchingEngine::new(
+            Box::new(crate::fill::BestPriceFillModel),
+            Box::new(crate::cost::ZeroFeeModel),
+            1,
+        );
+        e.submit(order(3, None));
+        assert!(e
+            .on_bar(&Bar::new(10, 100, 101, 99, 100, 0), 10)
+            .is_empty());
+        assert_eq!(e.pending_count(), 1);
+        assert_eq!(
+            e.on_bar(&Bar::new(11, 101, 102, 100, 101, 1), 11)
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn bar_limit_order_does_not_get_unproven_maker_discount() {
+        let mut e = BarMatchingEngine::new(
+            Box::new(crate::fill::NextBarOpenFillModel),
+            Box::new(crate::cost::MakerTakerFeeModel {
+                maker_bp: 1,
+                taker_bp: 10,
+            }),
+            1,
+        );
+        e.submit(order(4, Some(Price::from_i64(110))));
+        let fills = e.on_bar(
+            &Bar::new(
+                10,
+                100 * SCALE,
+                101 * SCALE,
+                99 * SCALE,
+                100 * SCALE,
+                SCALE,
+            ),
+            10,
+        );
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].fee.raw(), crate::cost::bp_amount(100 * SCALE, 10));
     }
 }
 
