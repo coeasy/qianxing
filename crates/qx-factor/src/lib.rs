@@ -9,6 +9,13 @@ use qx_guanxing::{CandidateConfig, DataView, ParameterSet};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod execution_plan;
+
+pub use execution_plan::{
+    FactorExecutionPlan, FactorIncrementalProvenance, FactorPlanNode,
+    FACTOR_EXECUTION_PLAN_SCHEMA_VERSION,
+};
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct FeatureDefinition {
     pub name: String,

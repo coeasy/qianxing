@@ -249,7 +249,10 @@ impl FactorCatalog {
 
         let mut cache_keys = BTreeMap::<String, u64>::new();
         let mut nodes = Vec::with_capacity(required.len());
-        for key in execution_order.into_iter().filter(|key| required.contains(key)) {
+        for key in execution_order
+            .into_iter()
+            .filter(|key| required.contains(key))
+        {
             let definition = self
                 .definitions
                 .get(&key)
@@ -396,18 +399,10 @@ mod tests {
     fn plan_reuses_shared_dependency_and_is_request_order_independent() {
         let catalog = shared_dependency_catalog();
         let first = catalog
-            .compile_execution_plan(
-                &["right@v1".into(), "left@v1".into()],
-                "bars-sha256",
-                100,
-            )
+            .compile_execution_plan(&["right@v1".into(), "left@v1".into()], "bars-sha256", 100)
             .unwrap();
         let second = catalog
-            .compile_execution_plan(
-                &["left@v1".into(), "right@v1".into()],
-                "bars-sha256",
-                100,
-            )
+            .compile_execution_plan(&["left@v1".into(), "right@v1".into()], "bars-sha256", 100)
             .unwrap();
 
         assert_eq!(first, second);
@@ -436,8 +431,14 @@ mod tests {
             .unwrap();
 
         assert_ne!(original.digest().unwrap(), later.digest().unwrap());
-        assert_ne!(original.nodes[0].cache_key_digest, later.nodes[0].cache_key_digest);
-        assert_ne!(original.nodes[0].cache_key_digest, new_data.nodes[0].cache_key_digest);
+        assert_ne!(
+            original.nodes[0].cache_key_digest,
+            later.nodes[0].cache_key_digest
+        );
+        assert_ne!(
+            original.nodes[0].cache_key_digest,
+            new_data.nodes[0].cache_key_digest
+        );
 
         let mut changed_catalog = FactorCatalog::default();
         changed_catalog
@@ -449,8 +450,14 @@ mod tests {
         let changed = changed_catalog
             .compile_execution_plan(&["left@v1".into()], "bars-a", 100)
             .unwrap();
-        assert_ne!(original.nodes[0].definition_digest, changed.nodes[0].definition_digest);
-        assert_ne!(original.nodes[1].cache_key_digest, changed.nodes[1].cache_key_digest);
+        assert_ne!(
+            original.nodes[0].definition_digest,
+            changed.nodes[0].definition_digest
+        );
+        assert_ne!(
+            original.nodes[1].cache_key_digest,
+            changed.nodes[1].cache_key_digest
+        );
     }
 
     #[test]
@@ -492,11 +499,7 @@ mod tests {
             Err(FactorError::MissingDefinition(_))
         ));
         assert!(matches!(
-            catalog.compile_execution_plan(
-                &["left@v1".into(), "left@v1".into()],
-                "bars-a",
-                100
-            ),
+            catalog.compile_execution_plan(&["left@v1".into(), "left@v1".into()], "bars-a", 100),
             Err(FactorError::Duplicate(_))
         ));
         assert!(catalog
