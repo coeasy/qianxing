@@ -1,0 +1,70 @@
+name: One-shot CLI dry-run fixture fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/cli-dryrun-fixture-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Make Files-backed dry-run explicitly non-production
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("crates/qx-cli/src/main.rs")
+          text = path.read_text(encoding="utf-8")
+          needle = '''        config.config_fingerprint = None;
+          config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+          config.storage.event_log_segment_events = Some(2);
+          config.storage.backend = StorageBackend::Files;
+          '''
+          replacement = '''        config.config_fingerprint = None;
+          config.environment = "test".into();
+          config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+          config.storage.event_log_segment_events = Some(2);
+          config.storage.backend = StorageBackend::Files;
+          '''
+          if text.count(needle) != 1:
+              raise SystemExit(f"expected one dry-run fixture anchor, found {text.count(needle)}")
+          path.write_text(text.replace(needle, replacement), encoding="utf-8")
+          PY
+
+      - name: Verify exact diff shape
+        shell: bash
+        run: |
+          git diff --check
+          test "$(git diff --name-only | wc -l)" -eq 1
+          test "$(git diff --name-only)" = "crates/qx-cli/src/main.rs"
+          git diff --numstat crates/qx-cli/src/main.rs | awk '$1 == 1 && $2 == 0 {ok=1} END {exit ok ? 0 : 1}'
+
+      - name: Verify formatting
+        run: cargo fmt --all -- --check
+
+      - name: Verify failing dry-run contract across feature set
+        run: cargo test -p qx-cli --features "sqlite,postgres,nats" --bin qx-cli tests::dry_run_submit_order_is_audited_without_credentials_or_network -- --exact
+
+      - name: Commit minimal fixture correction
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/qx-cli/src/main.rs
+          git diff --cached --check
+          git commit -m "test: make files-backed dry-run explicitly non-production"
+          git push origin HEAD:main
