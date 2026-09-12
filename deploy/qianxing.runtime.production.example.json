@@ -18,9 +18,11 @@
     }
   },
   "storage": {
-    "backend": "sqlite",
+    "backend": "postgres",
     "data_dir": "/var/lib/qianxing",
-    "sqlite_path": "/var/lib/qianxing/runtime.sqlite3"
+    "sqlite_path": null,
+    "postgres_dsn_env": "QX_POSTGRES_DSN",
+    "postgres_pool_size": 8
   },
   "workers": [
     {
@@ -82,9 +84,9 @@
         "secret": "QX_BINANCE_API_SECRET"
       },
       "instrument_spec_path": "qianxing.binance.spot.spec.json",
-    "settlement_currency": "USDT",
-    "max_order_notional_raw": 10000000000000,
-    "max_position_notional_raw": 50000000000000
+      "settlement_currency": "USDT",
+      "max_order_notional_raw": 10000000000000,
+      "max_position_notional_raw": 50000000000000
     },
     {
       "id": "scheduler",
