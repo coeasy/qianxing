@@ -10,6 +10,13 @@ struct State {
     std::string request_id;
 };
 
+constexpr qx_raw128 raw128_from_i64(int64_t value) {
+    return qx_raw128{
+        static_cast<uint64_t>(value),
+        value < 0 ? -1 : 0,
+    };
+}
+
 qx_strategy_handle create_strategy(const char*) {
     return new State{};
 }
@@ -39,7 +46,7 @@ int on_event(qx_strategy_handle raw,
     decision->request_id = state->request_id.c_str();
     decision->strategy_id = context->strategy_id;
     decision->signal_id = event->ts;
-    decision->confidence = 500;
+    decision->confidence = raw128_from_i64(500);
     decision->priority = 0;
     decision->expires_at = event->ts;
     decision->intents = nullptr;
