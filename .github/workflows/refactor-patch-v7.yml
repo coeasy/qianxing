@@ -23,6 +23,7 @@ jobs:
         run: |
           python tools/refactor_patch_v7.py
           python tools/refactor_patch_v7_round2.py
+          python tools/refactor_patch_v7_round3.py
       - name: Format
         run: cargo fmt --all -- --check
       - name: Targeted safety tests
