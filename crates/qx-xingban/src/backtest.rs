@@ -175,7 +175,7 @@ pub struct BacktestConfig {
 pub struct BacktestReport {
     pub fills: Vec<qx_core::Fill>,
     pub equity: Vec<i128>,
-    /// 现金基准曲线；没有外部基准序列时显式标记为 flat-cash。
+    /// 初始账户权益基准曲线；没有外部基准序列时显式标记为 flat-initial-equity。
     pub benchmark_equity: Vec<i128>,
     pub positions: Vec<i128>,
     pub fees_raw: i128,
@@ -358,8 +358,6 @@ impl BacktestEngine {
         let mut positions = Vec::new();
         let mut fees_raw = 0_i128;
         let mut turnover_raw = 0_i128;
-        let mut peak_equity = initial_cash.raw();
-        let mut max_drawdown_raw = 0_i128;
         let mut next_id = 1_u64;
         validate_virtual_events(&virtual_trading)?;
         let deposit_entry = ledger
@@ -401,20 +399,38 @@ impl BacktestEngine {
             ));
         }
 
+        // 收益、基准和回撤必须以“实际初始账户权益”为基线，而不是只看
+        // initial_cash。这样同币种附加抵押品以及有显式 FX 的衍生品抵押品
+        // 不会被错误地算成策略收益。
+        let first_bar = bars
+            .first()
+            .ok_or_else(|| qx_core::QxError::Permanent("回测输入为空".into()))?;
+        let initial_marks = BTreeMap::from([(
+            instrument.clone(),
+            Price::from_raw(first_bar.close),
+        )]);
+        let initial_equity = equity_for(
+            &ledger,
+            &account_id,
+            &initial_marks,
+            &currency,
+            multiplier,
+            derivative_spec,
+            &virtual_trading.fx_rates,
+        )?;
+        let mut peak_equity = initial_equity;
+        let mut max_drawdown_raw = 0_i128;
+        let mut max_drawdown_bps = 0_u32;
+
         for (i, bar) in bars.iter().enumerate() {
-            let mut virtual_state = VirtualExecution {
-                instrument: &instrument,
-                account_id: &account_id,
-                currency: &currency,
-                multiplier,
-                spec: derivative_spec,
-                ledger: &mut ledger,
-                log: &mut log,
-                fills: &mut fills,
-            };
-            apply_virtual_events(&virtual_trading, bar, &mut virtual_state)?;
+            // 决策只允许读取上一根已经结束的 bar。预交易风控同样只能使用
+            // 这个可见时点的价格和账户状态，不能偷看当前执行 bar 的 close。
             if i > 0 {
                 let history = view.as_of(bars[i - 1].ts);
+                let visible = history.last().ok_or_else(|| {
+                    qx_core::QxError::Invariant("回测决策缺少上一根可见 Bar".into())
+                })?;
+                let visible_close = visible.close;
                 let position = ledger.position_for(&account_id, &instrument).quantity.raw();
                 for mut order in
                     strategy.on_bar_orders_checked(history, &instrument, bar.ts, position)?
@@ -443,7 +459,10 @@ impl BacktestEngine {
                         } else {
                             1
                         };
-                        let reference_price = order.limit.map(|p| p.raw()).unwrap_or(bar.close);
+                        let reference_price = order
+                            .limit
+                            .map(|p| p.raw())
+                            .unwrap_or(visible_close);
                         let order_qty = checked_abs(order.qty.raw())?;
                         let reduce_only_allowed = !product_policy.reduce_only
                             || reduce_only_order_allowed(
@@ -531,11 +550,11 @@ impl BacktestEngine {
                                 multiplier,
                             )?)
                         };
-                        let marks = std::collections::BTreeMap::from([(
+                        let marks = BTreeMap::from([(
                             instrument.clone(),
-                            Price::from_raw(bar.close),
+                            Price::from_raw(visible_close),
                         )]);
-                        let equity = equity_for(
+                        let pretrade_equity = equity_for(
                             &ledger,
                             &account_id,
                             &marks,
@@ -551,7 +570,7 @@ impl BacktestEngine {
                                 order.client_id,
                                 "reduce-only order would open or exceed the existing position",
                             );
-                        } else if required_margin > equity {
+                        } else if required_margin > pretrade_equity {
                             append_rejection(
                                 &mut log,
                                 bar.ts,
@@ -562,7 +581,7 @@ impl BacktestEngine {
                             let gross_notional = notional_for(
                                 derivative_spec,
                                 checked_abs(position)?,
-                                checked_abs(bar.close)?,
+                                checked_abs(visible_close)?,
                                 multiplier,
                             )?;
                             if matches!(order.status, OrderStatus::PendingSubmit) {
@@ -626,6 +645,7 @@ impl BacktestEngine {
                     }
                 }
             }
+
             for mut fill in matcher.on_bar(bar, bar.ts) {
                 let order = oms
                     .get(fill.order_id)
@@ -675,7 +695,23 @@ impl BacktestEngine {
                     .ok_or_else(|| qx_core::QxError::Invariant("换手累计溢出".into()))?;
                 fills.push(fill);
             }
-            let mut marks = std::collections::BTreeMap::new();
+
+            // Funding/interest/delivery 使用当前 bar close 或结算价，因此只能在
+            // 当前 bar 执行结束后应用。放在策略决策前会把当前 bar 的未来信息
+            // 通过现金/持仓变化泄漏给策略。
+            let mut virtual_state = VirtualExecution {
+                instrument: &instrument,
+                account_id: &account_id,
+                currency: &currency,
+                multiplier,
+                spec: derivative_spec,
+                ledger: &mut ledger,
+                log: &mut log,
+                fills: &mut fills,
+            };
+            apply_virtual_events(&virtual_trading, bar, &mut virtual_state)?;
+
+            let mut marks = BTreeMap::new();
             marks.insert(instrument.clone(), Price::from_raw(bar.close));
             let mut marked_equity = equity_for(
                 &ledger,
@@ -768,29 +804,29 @@ impl BacktestEngine {
                 }
             }
             peak_equity = peak_equity.max(marked_equity);
-            max_drawdown_raw = max_drawdown_raw.max(peak_equity.saturating_sub(marked_equity));
+            let drawdown_raw = peak_equity.saturating_sub(marked_equity);
+            max_drawdown_raw = max_drawdown_raw.max(drawdown_raw);
+            if peak_equity > 0 {
+                let drawdown_bps = drawdown_raw
+                    .saturating_mul(10_000)
+                    .checked_div(peak_equity)
+                    .unwrap_or(0)
+                    .clamp(0, 10_000) as u32;
+                max_drawdown_bps = max_drawdown_bps.max(drawdown_bps);
+            }
             equity.push(marked_equity);
-            benchmark_equity.push(initial_cash.raw());
+            benchmark_equity.push(initial_equity);
             positions.push(ledger.position_for(&account_id, &instrument).quantity.raw());
         }
         log.validate()?;
-        let final_equity = *equity.last().unwrap_or(&initial_cash.raw());
-        let return_bps = if initial_cash.raw() > 0 {
+        let final_equity = *equity.last().unwrap_or(&initial_equity);
+        let return_bps = if initial_equity > 0 {
             final_equity
-                .saturating_sub(initial_cash.raw())
+                .saturating_sub(initial_equity)
                 .saturating_mul(10_000)
-                .checked_div(initial_cash.raw())
+                .checked_div(initial_equity)
                 .unwrap_or(0)
                 .clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32
-        } else {
-            0
-        };
-        let max_drawdown_bps = if peak_equity > 0 {
-            max_drawdown_raw
-                .saturating_mul(10_000)
-                .checked_div(peak_equity)
-                .unwrap_or(0)
-                .clamp(0, 10_000) as u32
         } else {
             0
         };
@@ -806,8 +842,10 @@ impl BacktestEngine {
             max_drawdown_bps,
             assumptions: vec![
                 format!("data_tier={data_tier:?}"),
-                "benchmark=flat-cash".into(),
+                "benchmark=flat-initial-equity".into(),
                 "metrics=raw-fixed-point".into(),
+                "pretrade_reference=last-visible-close".into(),
+                "bar_close_account_events=post-execution".into(),
                 format!(
                     "virtual_trading=funding:{} interest:{} delivery:{} liquidation:{}",
                     virtual_trading.funding.len(),
@@ -869,7 +907,7 @@ fn reduce_only_order_allowed(
 fn equity_for(
     ledger: &Ledger,
     account_id: &str,
-    marks: &std::collections::BTreeMap<InstrumentId, Price>,
+    marks: &BTreeMap<InstrumentId, Price>,
     currency: &str,
     multiplier: i128,
     spec: Option<&TradingInstrumentSpec>,
@@ -1464,7 +1502,7 @@ mod tests {
         assert!(report
             .assumptions
             .iter()
-            .any(|item| item == "benchmark=flat-cash"));
+            .any(|item| item == "benchmark=flat-initial-equity"));
         let manifest = report
             .run_manifest(
                 "run-1",
@@ -1498,6 +1536,121 @@ mod tests {
             replayed.cash_for("main", "USD"),
             report.ledger.cash_for("main", "USD")
         );
+    }
+
+    #[test]
+    fn pretrade_margin_uses_previous_visible_close_not_current_bar_close() {
+        let instrument = InstrumentId::parse("BTC/USDT:USDT.SIM").unwrap();
+        let spec = TradingInstrumentSpec {
+            instrument: instrument.clone(),
+            product: qx_core::TradingProduct::Perpetual,
+            base_currency: "BTC".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: qx_core::SCALE,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            max_leverage: 10,
+            maintenance_margin_bps: 500,
+            valid_from: 1,
+            valid_to: None,
+        };
+        let mut config = simple_config();
+        config.instrument = instrument;
+        config.instrument_spec = Some(spec);
+        config.initial_cash = Money::from_i64(10);
+        let bars = vec![
+            Bar::new(
+                1,
+                100 * qx_core::SCALE,
+                100 * qx_core::SCALE,
+                100 * qx_core::SCALE,
+                100 * qx_core::SCALE,
+                qx_core::SCALE,
+            ),
+            Bar::new(
+                2,
+                100 * qx_core::SCALE,
+                1_000 * qx_core::SCALE,
+                100 * qx_core::SCALE,
+                1_000 * qx_core::SCALE,
+                qx_core::SCALE,
+            ),
+        ];
+        let report = BacktestEngine::new(config)
+            .run(
+                &bars,
+                &mut LeveragedBuyOnce {
+                    done: false,
+                    leverage: 10,
+                },
+            )
+            .unwrap();
+        assert_eq!(report.fills.len(), 1);
+        assert!(report
+            .assumptions
+            .iter()
+            .any(|item| item == "pretrade_reference=last-visible-close"));
+    }
+
+    #[test]
+    fn drawdown_bps_uses_peak_at_drawdown_not_later_global_peak() {
+        let bars = vec![
+            Bar::new(
+                1,
+                100 * qx_core::SCALE,
+                100 * qx_core::SCALE,
+                100 * qx_core::SCALE,
+                100 * qx_core::SCALE,
+                qx_core::SCALE,
+            ),
+            Bar::new(
+                2,
+                100 * qx_core::SCALE,
+                100 * qx_core::SCALE,
+                50 * qx_core::SCALE,
+                50 * qx_core::SCALE,
+                qx_core::SCALE,
+            ),
+            Bar::new(
+                3,
+                50 * qx_core::SCALE,
+                200 * qx_core::SCALE,
+                50 * qx_core::SCALE,
+                200 * qx_core::SCALE,
+                qx_core::SCALE,
+            ),
+        ];
+        let report = BacktestEngine::new(simple_config())
+            .run(&bars, &mut BuyOnce { done: false })
+            .unwrap();
+        assert_eq!(report.max_drawdown_raw, Money::from_i64(50).raw());
+        assert_eq!(report.max_drawdown_bps, 500);
+        assert!(report.final_equity() > report.benchmark_equity[0]);
+    }
+
+    #[test]
+    fn initial_same_currency_collateral_is_part_of_return_baseline() {
+        let mut config = simple_config();
+        config.virtual_trading.collateral.insert(
+            "USD".into(),
+            Money::from_i64(500),
+        );
+        let bars = vec![
+            Bar::new(1, 100, 100, 100, 100, 10),
+            Bar::new(2, 100, 100, 100, 100, 10),
+        ];
+        struct NoOrders;
+        impl BarStrategy for NoOrders {}
+        let report = BacktestEngine::new(config)
+            .run(&bars, &mut NoOrders)
+            .unwrap();
+        assert_eq!(report.benchmark_equity[0], Money::from_i64(1500).raw());
+        assert_eq!(report.final_equity(), Money::from_i64(1500).raw());
+        assert_eq!(report.return_bps, 0);
     }
 
     #[test]
