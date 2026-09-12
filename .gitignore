@@ -3,6 +3,9 @@
 /dist/
 **/*.rs.bk
 *.pdb
+*.obj
+*.o
+qianxing-ring-smoke.bin
 .DS_Store
 .idea/
 .vscode/

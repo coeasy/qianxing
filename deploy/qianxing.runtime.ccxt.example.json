@@ -43,7 +43,7 @@
       "symbols": [],
       "settlement_currency": "USDT",
       "credential_env": null,
-      "instrument_spec_path": "deploy/qianxing.ccxt.okx.perpetual.spec.json"
+      "instrument_spec_path": "qianxing.ccxt.okx.perpetual.spec.json"
     },
     {
       "id": "ccxt-reconciler-main",
@@ -79,7 +79,7 @@
   ],
   "scheduler": {
     "state_path": "scheduler.json",
-    "jobs_path": "deploy/qianxing.scheduler.jobs.example.json",
+    "jobs_path": "qianxing.scheduler.jobs.example.json",
     "job_queue_path": "job-queue",
     "tick_interval_ms": 1000
   },
