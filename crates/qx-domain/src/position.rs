@@ -1,16 +1,3 @@
-use serde::{Deserialize, Serialize};
+//! Canonical position state from the deterministic ledger.
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Position {
-    pub instrument: String,
-    pub quantity: i128,
-}
-
-impl Position {
-    pub fn validate(&self) -> Result<(), String> {
-        if self.instrument.trim().is_empty() {
-            return Err("position instrument is required".into());
-        }
-        Ok(())
-    }
-}
+pub use qx_core::PositionState as Position;

@@ -1,7 +1,8 @@
-//! Qianxing domain contracts.
+//! Qianxing stable domain boundary.
 //!
-//! This crate defines stable business facts and intentionally does not depend
-//! on providers, strategies, execution venues, or storage implementations.
+//! qx-core remains the single source of truth for deterministic trading
+//! facts. qx-domain re-exports those canonical facts and owns only upper-layer
+//! read models/metadata that do not mutate kernel state.
 
 pub mod asset;
 pub mod event;
@@ -13,10 +14,10 @@ pub mod position;
 pub mod trade;
 
 pub use asset::{AssetClass, Instrument};
-pub use event::{DomainEvent, EventId};
-pub use ledger::{Ledger, LedgerEntry, LedgerEntryKind};
+pub use event::{DomainEvent, EventId, EventKind, Priority};
+pub use ledger::{Ledger, LedgerEntry, LedgerEntryKind, PositionState};
 pub use manifest::RunManifest;
-pub use order::{Order, OrderSide, OrderStatus};
+pub use order::{Fill, Order, OrderSide, OrderStatus, OrderTrace, Side};
 pub use portfolio::Portfolio;
 pub use position::Position;
 pub use trade::Trade;

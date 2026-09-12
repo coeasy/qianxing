@@ -1,10 +1,11 @@
 [package]
 name = "qx-domain"
-description = "牵星统一领域模型：资产、事件、订单、成交、持仓与运行清单契约"
+description = "牵星稳定领域边界：复用 qx-core 交易事实并补充跨模块读模型"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+qx-core = { path = "../qx-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
