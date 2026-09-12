@@ -335,7 +335,7 @@ impl BacktestEngine {
         let input_data_hash = view.metadata().data_hash;
         let fee_price_multiplier = derivative_spec
             .map(|spec| spec.contract_size)
-            .unwrap_or(multiplier);
+            .unwrap_or_else(|| multiplier.saturating_mul(qx_core::SCALE));
         let mut matcher = BarMatchingEngine::new_with_latency_and_fee_multiplier(
             fill,
             fee,
@@ -405,10 +405,8 @@ impl BacktestEngine {
         let first_bar = bars
             .first()
             .ok_or_else(|| qx_core::QxError::Permanent("回测输入为空".into()))?;
-        let initial_marks = BTreeMap::from([(
-            instrument.clone(),
-            Price::from_raw(first_bar.close),
-        )]);
+        let initial_marks =
+            BTreeMap::from([(instrument.clone(), Price::from_raw(first_bar.close))]);
         let initial_equity = equity_for(
             &ledger,
             &account_id,
@@ -459,10 +457,7 @@ impl BacktestEngine {
                         } else {
                             1
                         };
-                        let reference_price = order
-                            .limit
-                            .map(|p| p.raw())
-                            .unwrap_or(visible_close);
+                        let reference_price = order.limit.map(|p| p.raw()).unwrap_or(visible_close);
                         let order_qty = checked_abs(order.qty.raw())?;
                         let reduce_only_allowed = !product_policy.reduce_only
                             || reduce_only_order_allowed(
@@ -550,10 +545,8 @@ impl BacktestEngine {
                                 multiplier,
                             )?)
                         };
-                        let marks = BTreeMap::from([(
-                            instrument.clone(),
-                            Price::from_raw(visible_close),
-                        )]);
+                        let marks =
+                            BTreeMap::from([(instrument.clone(), Price::from_raw(visible_close))]);
                         let pretrade_equity = equity_for(
                             &ledger,
                             &account_id,
@@ -1635,10 +1628,10 @@ mod tests {
     #[test]
     fn initial_same_currency_collateral_is_part_of_return_baseline() {
         let mut config = simple_config();
-        config.virtual_trading.collateral.insert(
-            "USD".into(),
-            Money::from_i64(500),
-        );
+        config
+            .virtual_trading
+            .collateral
+            .insert("USD".into(), Money::from_i64(500));
         let bars = vec![
             Bar::new(1, 100, 100, 100, 100, 10),
             Bar::new(2, 100, 100, 100, 100, 10),

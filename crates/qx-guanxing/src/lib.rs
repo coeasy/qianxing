@@ -781,7 +781,10 @@ mod tests {
             Quantity::from_i64(1),
             1,
         );
-        assert_eq!(QualityGate::check_quotes(&[zero_bid]).verdict(), Verdict::Fail);
+        assert_eq!(
+            QualityGate::check_quotes(&[zero_bid]).verdict(),
+            Verdict::Fail
+        );
         let negative_qty = QuoteTick::new(
             1,
             Price::from_i64(99),
