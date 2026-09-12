@@ -81,12 +81,7 @@ mod tests {
             }
         }
 
-        fn load_bars(
-            &self,
-            instrument: &str,
-            start: u64,
-            end: u64,
-        ) -> Result<Vec<Bar>, String> {
+        fn load_bars(&self, instrument: &str, start: u64, end: u64) -> Result<Vec<Bar>, String> {
             Ok((start..=end)
                 .rev()
                 .map(|timestamp| Bar {

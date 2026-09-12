@@ -82,9 +82,7 @@ mod tests {
             .unwrap();
         let all = storage.load_bars("daily").unwrap();
         assert_eq!(all[0].timestamp, 1);
-        let range = storage
-            .load_range("daily", "XSHG:600000", 2, 3)
-            .unwrap();
+        let range = storage.load_range("daily", "XSHG:600000", 2, 3).unwrap();
         assert_eq!(range.len(), 2);
         assert_eq!(range[0].timestamp, 2);
     }
@@ -93,7 +91,9 @@ mod tests {
     fn upsert_replaces_existing_identity() {
         let mut storage = MemoryDataStorage::default();
         storage.save_bars("daily", &[bar(1, 10)]).unwrap();
-        storage.upsert_bars("daily", &[bar(1, 11), bar(2, 20)]).unwrap();
+        storage
+            .upsert_bars("daily", &[bar(1, 11), bar(2, 20)])
+            .unwrap();
         let bars = storage.load_bars("daily").unwrap();
         assert_eq!(bars.len(), 2);
         assert_eq!(bars[0].close_raw, 11);
