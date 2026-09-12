@@ -61,13 +61,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Validate baseline runtime config
-        run: cargo run -p qx-cli --features sqlite -- runtime-check deploy/qianxing.runtime.example.json
+        run: cargo run -p qx-cli --features sqlite,postgres -- runtime-check deploy/qianxing.runtime.example.json
       - name: Validate production runtime config
-        run: cargo run -p qx-cli --features sqlite -- runtime-check deploy/qianxing.runtime.production.example.json
+        run: cargo run -p qx-cli --features sqlite,postgres -- runtime-check deploy/qianxing.runtime.production.example.json
       - name: Validate Paper strategy runtime config
-        run: cargo run -p qx-cli --features sqlite -- runtime-check deploy/qianxing.runtime.paper-strategy.example.json
+        run: cargo run -p qx-cli --features sqlite,postgres -- runtime-check deploy/qianxing.runtime.paper-strategy.example.json
       - name: Paper process-boundary E2E
-        run: cargo run -p qx-cli --features sqlite -- paper-e2e deploy/qianxing.runtime.paper-strategy.example.json
+        run: cargo run -p qx-cli --features sqlite,postgres -- paper-e2e deploy/qianxing.runtime.paper-strategy.example.json
 
   cpp-sdk:
     name: C++ SDK smoke
