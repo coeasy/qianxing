@@ -1,8 +1,8 @@
 use qx_core::{InstrumentId, Money, Order, OrderStatus, Quantity, Side};
 use qx_guanxing::Bar;
 use qx_xingban::{
-    BacktestConfig, BacktestEngine, BarStrategy, DataTier, MakerTakerFeeModel, NextBarOpenFillModel,
-    NoMargin, VirtualTradingConfig, ZeroLatency,
+    BacktestConfig, BacktestEngine, BarStrategy, DataTier, MakerTakerFeeModel,
+    NextBarOpenFillModel, NoMargin, VirtualTradingConfig, ZeroLatency,
 };
 use qx_zhenlu::{MaxNotionalRule, RiskGate};
 
@@ -74,6 +74,10 @@ fn pre_trade_risk_uses_last_visible_close_not_current_bar_close() {
         .run(&bars, &mut BuyOnce { done: false })
         .expect("causal backtest should complete");
 
-    assert_eq!(report.fills.len(), 1, "future close must not reject the order");
+    assert_eq!(
+        report.fills.len(),
+        1,
+        "future close must not reject the order"
+    );
     assert_eq!(report.fills[0].price.raw(), 110);
 }
