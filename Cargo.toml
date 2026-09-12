@@ -13,6 +13,8 @@ members = [
     "crates/qx-genglu",
     "crates/qx-plugin",
     "crates/qx-factor",
+    "crates/qx-portfolio",
+    "crates/qx-risk",
     "crates/qx-protocol",
     "crates/qx-provider",
     "crates/qx-scheduler",
@@ -41,26 +43,8 @@ serde_json = "1"
 qx-core = { path = "crates/qx-core" }
 qx-domain = { path = "crates/qx-domain" }
 qx-data = { path = "crates/qx-data" }
-qx-fenye = { path = "crates/qx-fenye" }
-qx-guanxing = { path = "crates/qx-guanxing" }
-qx-xingban = { path = "crates/qx-xingban" }
-qx-zhenlu = { path = "crates/qx-zhenlu" }
-qx-oms = { path = "crates/qx-oms" }
-qx-orchestrator = { path = "crates/qx-orchestrator" }
-qx-genglu = { path = "crates/qx-genglu" }
-qx-plugin = { path = "crates/qx-plugin" }
-qx-factor = { path = "crates/qx-factor" }
-qx-protocol = { path = "crates/qx-protocol" }
-qx-provider = { path = "crates/qx-provider" }
-qx-scheduler = { path = "crates/qx-scheduler" }
-qx-control = { path = "crates/qx-control" }
-qx-datastruct = { path = "crates/qx-datastruct" }
-qx-storage = { path = "crates/qx-storage" }
-qx-api = { path = "crates/qx-api" }
-qx-adapter = { path = "crates/qx-adapter" }
-qx-execution = { path = "crates/qx-execution" }
-qx-python = { path = "crates/qx-python" }
-qx-strategy = { path = "crates/qx-strategy" }
+qx-portfolio = { path = "crates/qx-portfolio" }
+qx-risk = { path = "crates/qx-risk" }
 
 [profile.release]
 opt-level = 3
