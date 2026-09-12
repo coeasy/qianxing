@@ -27,8 +27,8 @@ pub struct BarMatchingEngine {
     fill_model: Box<dyn FillModel>,
     fee_model: Box<dyn FeeModel>,
     latency_model: Box<dyn LatencyModel>,
-    /// 费用模型仍接收 qty/price；这里将合约乘数折算到 fee price，避免
-    /// contractSize != 1 时手续费仍按现货名义额计算。
+    /// 定点合约乘数。`SCALE` 表示 1.0；这样 fee price 始终保持和
+    /// `Price` 相同的定点尺度，避免现货 1x 被额外除以 SCALE 后费用变成 0。
     fee_price_multiplier: i128,
     rng: DeterministicRng,
     all_fills: Vec<Fill>,
@@ -41,7 +41,7 @@ impl BarMatchingEngine {
             fill_model: fill,
             fee_model: fee,
             latency_model: Box::new(ZeroLatency),
-            fee_price_multiplier: 1,
+            fee_price_multiplier: qx_core::SCALE,
             rng: DeterministicRng::new(seed),
             all_fills: Vec::new(),
         }
@@ -170,6 +170,7 @@ impl BarMatchingEngine {
         engine
     }
 
+    /// `fee_price_multiplier` 使用固定点：`SCALE == 1.0`。
     pub fn new_with_latency_and_fee_multiplier(
         fill: Box<dyn FillModel>,
         fee: Box<dyn FeeModel>,
@@ -241,15 +242,9 @@ mod tests {
             1,
         );
         e.submit(order(3, None));
-        assert!(e
-            .on_bar(&Bar::new(10, 100, 101, 99, 100, 0), 10)
-            .is_empty());
+        assert!(e.on_bar(&Bar::new(10, 100, 101, 99, 100, 0), 10).is_empty());
         assert_eq!(e.pending_count(), 1);
-        assert_eq!(
-            e.on_bar(&Bar::new(11, 101, 102, 100, 101, 1), 11)
-                .len(),
-            1
-        );
+        assert_eq!(e.on_bar(&Bar::new(11, 101, 102, 100, 101, 1), 11).len(), 1);
     }
 
     #[test]
@@ -264,14 +259,7 @@ mod tests {
         );
         e.submit(order(4, Some(Price::from_i64(110))));
         let fills = e.on_bar(
-            &Bar::new(
-                10,
-                100 * SCALE,
-                101 * SCALE,
-                99 * SCALE,
-                100 * SCALE,
-                SCALE,
-            ),
+            &Bar::new(10, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, SCALE),
             10,
         );
         assert_eq!(fills.len(), 1);
