@@ -471,10 +471,14 @@ pub enum QualityIssue {
     EmptyInput,
     NonMonotonic { at: usize, prev_ts: u64, ts: u64 },
     HighLessThanLow { at: usize },
+    OpenOutOfRange { at: usize },
     CloseOutOfRange { at: usize },
     ZeroVolume { at: usize },
     DuplicateTimestamp { at: usize },
     NegativePrice { at: usize },
+    NonPositivePrice { at: usize },
+    NegativeVolume { at: usize },
+    NegativeQuantity { at: usize },
     CrossedBook { at: usize },
     QuoteNonMonotonic { at: usize },
     InvalidMetadata,
@@ -508,7 +512,11 @@ impl QualityReport {
                     | QualityIssue::MetadataHashMismatch
                     | QualityIssue::NonMonotonic { .. }
                     | QualityIssue::NegativePrice { .. }
+                    | QualityIssue::NonPositivePrice { .. }
+                    | QualityIssue::NegativeVolume { .. }
+                    | QualityIssue::NegativeQuantity { .. }
                     | QualityIssue::HighLessThanLow { .. }
+                    | QualityIssue::OpenOutOfRange { .. }
                     | QualityIssue::CloseOutOfRange { .. }
                     | QualityIssue::CrossedBook { .. }
                     | QualityIssue::QuoteNonMonotonic { .. }
@@ -537,11 +545,19 @@ impl QualityGate {
             issues.push(QualityIssue::EmptyInput);
         }
         for (i, b) in bars.iter().enumerate() {
-            if b.open < 0 || b.high < 0 || b.low < 0 || b.close < 0 || b.volume < 0 {
+            if b.open < 0 || b.high < 0 || b.low < 0 || b.close < 0 {
                 issues.push(QualityIssue::NegativePrice { at: i });
+            } else if b.open == 0 || b.high == 0 || b.low == 0 || b.close == 0 {
+                issues.push(QualityIssue::NonPositivePrice { at: i });
+            }
+            if b.volume < 0 {
+                issues.push(QualityIssue::NegativeVolume { at: i });
             }
             if b.high < b.low {
                 issues.push(QualityIssue::HighLessThanLow { at: i });
+            }
+            if b.open > b.high || b.open < b.low {
+                issues.push(QualityIssue::OpenOutOfRange { at: i });
             }
             if b.close > b.high || b.close < b.low {
                 issues.push(QualityIssue::CloseOutOfRange { at: i });
@@ -574,8 +590,13 @@ impl QualityGate {
             if q.is_crossed() {
                 issues.push(QualityIssue::CrossedBook { at: i });
             }
-            if q.bid.raw() < 0 || q.ask.raw() < 0 || q.bid_qty.raw() < 0 || q.ask_qty.raw() < 0 {
+            if q.bid.raw() < 0 || q.ask.raw() < 0 {
                 issues.push(QualityIssue::NegativePrice { at: i });
+            } else if q.bid.raw() == 0 || q.ask.raw() == 0 {
+                issues.push(QualityIssue::NonPositivePrice { at: i });
+            }
+            if q.bid_qty.raw() < 0 || q.ask_qty.raw() < 0 {
+                issues.push(QualityIssue::NegativeQuantity { at: i });
             }
             if i > 0 && q.ts <= quotes[i - 1].ts {
                 issues.push(QualityIssue::QuoteNonMonotonic { at: i });
@@ -688,6 +709,25 @@ mod tests {
     }
 
     #[test]
+    fn non_positive_price_and_invalid_open_are_fatal() {
+        let zero_price = vec![Bar::new(1, 0, 1, 1, 1, 1)];
+        assert_eq!(QualityGate::check(&zero_price).verdict(), Verdict::Fail);
+        let open_outside = vec![Bar::new(1, 120, 110, 90, 100, 1)];
+        assert_eq!(QualityGate::check(&open_outside).verdict(), Verdict::Fail);
+    }
+
+    #[test]
+    fn negative_volume_is_not_misclassified_as_price() {
+        let input = vec![Bar::new(1, 100, 110, 90, 100, -1)];
+        let report = QualityGate::check(&input);
+        assert_eq!(report.verdict(), Verdict::Fail);
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| matches!(issue, QualityIssue::NegativeVolume { .. })));
+    }
+
+    #[test]
     fn catalog_is_point_in_time() {
         let instrument = qx_core::InstrumentId::parse("T.V").unwrap();
         let mut c = DataCatalog::new();
@@ -729,6 +769,31 @@ mod tests {
             1,
         );
         assert_eq!(QualityGate::check_quotes(&[q]).verdict(), Verdict::Fail);
+    }
+
+    #[test]
+    fn zero_quote_price_and_negative_quantity_are_fatal() {
+        let zero_bid = QuoteTick::new(
+            1,
+            Price::ZERO,
+            Quantity::from_i64(1),
+            Price::from_i64(100),
+            Quantity::from_i64(1),
+            1,
+        );
+        assert_eq!(QualityGate::check_quotes(&[zero_bid]).verdict(), Verdict::Fail);
+        let negative_qty = QuoteTick::new(
+            1,
+            Price::from_i64(99),
+            Quantity::from_raw(-1),
+            Price::from_i64(100),
+            Quantity::from_i64(1),
+            1,
+        );
+        assert_eq!(
+            QualityGate::check_quotes(&[negative_qty]).verdict(),
+            Verdict::Fail
+        );
     }
 
     #[test]
