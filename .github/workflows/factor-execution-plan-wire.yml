@@ -1,0 +1,73 @@
+name: One-shot Factor ExecutionPlan wiring
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/factor-execution-plan-wire.yml
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Wire execution plan module into qx-factor
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("crates/qx-factor/src/lib.rs")
+          text = path.read_text(encoding="utf-8")
+          if "mod execution_plan;" in text:
+              raise SystemExit("execution_plan module already wired")
+          anchor = "use std::collections::{BTreeMap, BTreeSet};\n"
+          if text.count(anchor) != 1:
+              raise SystemExit(f"expected one import anchor, found {text.count(anchor)}")
+          export = (
+              "\nmod execution_plan;\n\n"
+              "pub use execution_plan::{\n"
+              "    FactorExecutionPlan, FactorIncrementalProvenance, FactorPlanNode,\n"
+              "    FACTOR_EXECUTION_PLAN_SCHEMA_VERSION,\n"
+              "};\n"
+          )
+          path.write_text(text.replace(anchor, anchor + export, 1), encoding="utf-8")
+          PY
+
+      - name: Format factor crate
+        run: cargo fmt --all
+
+      - name: Verify bounded diff
+        shell: bash
+        run: |
+          git diff --check
+          test -n "$(git diff --name-only)"
+          unexpected="$(git diff --name-only | grep -Ev '^crates/qx-factor/src/(lib.rs|execution_plan.rs)$' || true)"
+          test -z "$unexpected"
+          git diff --numstat crates/qx-factor/src/lib.rs | awk '$1 <= 8 && $2 == 0 {ok=1} END {exit ok ? 0 : 1}'
+
+      - name: Clippy qx-factor
+        run: cargo clippy -p qx-factor --all-targets -- -D warnings
+
+      - name: Test qx-factor
+        run: cargo test -p qx-factor
+
+      - name: Commit verified wiring
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/qx-factor/src/lib.rs crates/qx-factor/src/execution_plan.rs
+          git diff --cached --check
+          git commit -m "feat: wire deterministic factor execution plans"
+          git push origin HEAD:main
