@@ -68,7 +68,7 @@
     "account_id": "main",
     "venue_id": "paper",
     "instrument": "BTCUSDT.BINANCE",
-    "target_qty": 1,
+    "target_qty": 1000000,
     "target_snapshot_path": "qianxing.strategy-target.paper.json",
     "python_timeout_ms": 2000
   },
