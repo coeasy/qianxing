@@ -1,7 +1,8 @@
 use crate::catalog::DatasetManifest;
 use crate::registry::DatasetRegistry;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatasetRef {
     pub dataset_id: String,
     pub version: String,
@@ -19,13 +20,18 @@ impl DatasetRef {
             version: version.into(),
             fingerprint: fingerprint.into(),
         };
-        if value.dataset_id.trim().is_empty()
-            || value.version.trim().is_empty()
-            || value.fingerprint.trim().is_empty()
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.dataset_id.trim().is_empty()
+            || self.version.trim().is_empty()
+            || self.fingerprint.trim().is_empty()
         {
             return Err("dataset reference requires id, version and fingerprint".into());
         }
-        Ok(value)
+        Ok(())
     }
 }
 
@@ -35,6 +41,7 @@ pub trait DatasetResolver {
 
 impl DatasetResolver for DatasetRegistry {
     fn resolve(&self, reference: &DatasetRef) -> Result<DatasetManifest, String> {
+        reference.validate()?;
         self.verify(
             &reference.dataset_id,
             &reference.version,
@@ -66,5 +73,9 @@ mod tests {
         let reference = DatasetRef::new("bars.daily", "v1", "abc").unwrap();
         let resolved = DatasetResolver::resolve(&registry, &reference).unwrap();
         assert_eq!(resolved.fingerprint, "abc");
+        assert_eq!(
+            serde_json::from_str::<DatasetRef>(&serde_json::to_string(&reference).unwrap()).unwrap(),
+            reference
+        );
     }
 }
