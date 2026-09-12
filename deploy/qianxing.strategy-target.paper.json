@@ -4,6 +4,6 @@
   "data_fingerprint": "paper-target-v1",
   "as_of": 1,
   "targets": {
-    "BTCUSDT.BINANCE": 1
+    "BTCUSDT.BINANCE": 1000000
   }
 }
