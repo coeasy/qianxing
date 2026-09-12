@@ -1,0 +1,10 @@
+[package]
+name = "qx-domain"
+description = "牵星统一领域模型：资产、事件、订单、成交、持仓与运行清单契约"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
