@@ -29,20 +29,22 @@ jobs:
 
           path = Path("crates/qx-cli/src/main.rs")
           text = path.read_text(encoding="utf-8")
-          needle = '''        config.config_fingerprint = None;
-          config.storage.data_dir = data_dir.to_string_lossy().into_owned();
-          config.storage.event_log_segment_events = Some(2);
-          config.storage.backend = StorageBackend::Files;
-          '''
-          replacement = '''        config.config_fingerprint = None;
-          config.environment = "test".into();
-          config.storage.data_dir = data_dir.to_string_lossy().into_owned();
-          config.storage.event_log_segment_events = Some(2);
-          config.storage.backend = StorageBackend::Files;
-          '''
-          if text.count(needle) != 1:
-              raise SystemExit(f"expected one dry-run fixture anchor, found {text.count(needle)}")
-          path.write_text(text.replace(needle, replacement), encoding="utf-8")
+          function = "    fn dry_run_submit_order_is_audited_without_credentials_or_network() {"
+          start = text.find(function)
+          if start < 0:
+              raise SystemExit("dry-run test function not found")
+          end = text.find("\n    #[test]\n", start + len(function))
+          if end < 0:
+              raise SystemExit("dry-run test function end not found")
+          block = text[start:end]
+          needle = "        config.config_fingerprint = None;\n"
+          if block.count(needle) != 1:
+              raise SystemExit(f"expected one fingerprint anchor in dry-run test, found {block.count(needle)}")
+          if 'config.environment = "test".into();' in block:
+              raise SystemExit("dry-run fixture is already non-production")
+          replacement = needle + '        config.environment = "test".into();\n'
+          block = block.replace(needle, replacement, 1)
+          path.write_text(text[:start] + block + text[end:], encoding="utf-8")
           PY
 
       - name: Verify exact diff shape
