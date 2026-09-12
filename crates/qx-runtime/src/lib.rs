@@ -1487,6 +1487,22 @@ impl RuntimeConfig {
                     worker.id
                 ));
             }
+            if worker.role == WorkerRole::Execution
+                && self.environment.eq_ignore_ascii_case("production")
+            {
+                if worker.max_order_notional_raw.is_none() {
+                    return Err(format!(
+                        "{} production Execution worker 必须配置 max_order_notional_raw",
+                        worker.id
+                    ));
+                }
+                if worker.max_position_notional_raw.is_none() {
+                    return Err(format!(
+                        "{} production Execution worker 必须配置 max_position_notional_raw",
+                        worker.id
+                    ));
+                }
+            }
             match worker.role {
                 WorkerRole::UserStream | WorkerRole::Execution | WorkerRole::Reconciler => {
                     if worker

@@ -81,7 +81,10 @@
         "api_key": "QX_BINANCE_API_KEY",
         "secret": "QX_BINANCE_API_SECRET"
       },
-      "instrument_spec_path": "qianxing.binance.spot.spec.json"
+      "instrument_spec_path": "qianxing.binance.spot.spec.json",
+    "settlement_currency": "USDT",
+    "max_order_notional_raw": 10000000000000,
+    "max_position_notional_raw": 50000000000000
     },
     {
       "id": "scheduler",
