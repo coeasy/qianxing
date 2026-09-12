@@ -1,0 +1,72 @@
+name: One-shot Runtime data binding wiring
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/runtime-data-binding-wire.yml
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Wire runtime data binding module
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("crates/qx-runtime/src/lib.rs")
+          text = path.read_text(encoding="utf-8")
+          if "mod data_binding;" in text:
+              raise SystemExit("data_binding module already wired")
+          anchor = "mod pipeline;\n\npub use pipeline::{"
+          if text.count(anchor) != 1:
+              raise SystemExit(f"expected one runtime module anchor, found {text.count(anchor)}")
+          replacement = (
+              "mod data_binding;\n"
+              "mod pipeline;\n\n"
+              "pub use data_binding::{RuntimeDatasetBinding, RuntimeResearchBinding};\n"
+              "pub use pipeline::{"
+          )
+          path.write_text(text.replace(anchor, replacement, 1), encoding="utf-8")
+          PY
+
+      - name: Format workspace
+        run: cargo fmt --all
+
+      - name: Verify bounded diff
+        shell: bash
+        run: |
+          git diff --check
+          test -n "$(git diff --name-only)"
+          unexpected="$(git diff --name-only | grep -Ev '^crates/(qx-runtime/src/(lib.rs|data_binding.rs)|qx-data/src/resolver.rs)$' || true)"
+          test -z "$unexpected"
+          git diff --numstat crates/qx-runtime/src/lib.rs | awk '$1 <= 4 && $2 == 0 {ok=1} END {exit ok ? 0 : 1}'
+
+      - name: Clippy data and runtime
+        run: cargo clippy -p qx-data -p qx-runtime --all-targets -- -D warnings
+
+      - name: Test data and runtime
+        run: cargo test -p qx-data -p qx-runtime
+
+      - name: Commit verified runtime binding
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/qx-data/src/resolver.rs crates/qx-runtime/src/lib.rs crates/qx-runtime/src/data_binding.rs
+          git diff --cached --check
+          git commit -m "feat: bind runtime research to immutable datasets"
+          git push origin HEAD:main
