@@ -11,7 +11,9 @@ pub struct DataSchemaVersion {
 
 impl Default for DataSchemaVersion {
     fn default() -> Self {
-        Self { major: DATA_SCHEMA_VERSION }
+        Self {
+            major: DATA_SCHEMA_VERSION,
+        }
     }
 }
 
