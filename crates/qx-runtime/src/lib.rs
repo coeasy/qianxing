@@ -2176,6 +2176,8 @@ mod tests {
     fn production_bound_strategy_requires_research_snapshot() {
         let mut config = config();
         config.environment = "production".into();
+        config.storage.backend = StorageBackend::Postgres;
+        config.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
         config.api.transport = ApiTransport::Mtls;
         config.api.tls = Some(TlsPaths {
             certificate_chain: "server.pem".into(),
@@ -2244,6 +2246,8 @@ mod tests {
     fn production_c_abi_strategy_requires_detached_signature() {
         let mut config = config();
         config.environment = "production".into();
+        config.storage.backend = StorageBackend::Postgres;
+        config.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
         config.api.transport = ApiTransport::Mtls;
         config.api.tls = Some(TlsPaths {
             certificate_chain: "server.pem".into(),
@@ -2269,6 +2273,8 @@ mod tests {
     fn production_external_strategy_requires_artifact_lock() {
         let mut config = config();
         config.environment = "production".into();
+        config.storage.backend = StorageBackend::Postgres;
+        config.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
         config.api.transport = ApiTransport::Mtls;
         config.api.tls = Some(TlsPaths {
             certificate_chain: "server.pem".into(),
