@@ -1,4 +1,4 @@
-use qx_runtime::{RuntimeConfig, WorkerRole};
+use qx_runtime::{RuntimeConfig, StorageBackend, WorkerRole};
 
 fn production_config() -> RuntimeConfig {
     serde_json::from_str(include_str!(
@@ -48,6 +48,26 @@ fn production_execution_requires_explicit_order_and_position_notional_limits() {
             .validate()
             .expect_err("production execution without explicit notional limits must fail closed");
         assert!(error.contains(field), "unexpected validation error: {error}");
+    }
+}
+
+#[test]
+fn production_requires_postgres_transactional_event_store() {
+    for backend in [StorageBackend::Files, StorageBackend::Sqlite] {
+        let mut config = production_config();
+        config.storage.backend = backend;
+        if backend == StorageBackend::Sqlite {
+            config.storage.sqlite_path = Some("runtime.sqlite3".into());
+        }
+        config.storage.postgres_dsn_env = None;
+
+        let error = config
+            .validate()
+            .expect_err("production must reject non-transactional EventLog/Outbox backends");
+        assert!(
+            error.contains("PostgreSQL") || error.contains("postgres"),
+            "unexpected validation error: {error}"
+        );
     }
 }
 
