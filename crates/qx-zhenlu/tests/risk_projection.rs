@@ -2,7 +2,7 @@ use qx_core::{
     InstrumentId, MarginMode, Order, OrderPolicy, OrderStatus, PositionMode, PositionSide, Price,
     Quantity, Side, TradingInstrumentSpec, TradingProduct, SCALE,
 };
-use qx_zhenlu::{MaxNotionalRule, PositionSnapshot, RiskContext, RiskRule};
+use qx_zhenlu::{MaxNotionalRule, PositionSnapshot, RiskContext, RiskGate, RiskRule};
 
 fn perpetual_spec() -> TradingInstrumentSpec {
     TradingInstrumentSpec {
@@ -46,6 +46,19 @@ fn order(side: Side, qty: i128, reduce_only: bool) -> Order {
     }
 }
 
+fn hedge_order(side: Side, qty: i128, position_side: PositionSide) -> Order {
+    let mut order = order(side, qty, true);
+    order.policy = Some(OrderPolicy {
+        reduce_only: true,
+        position_side,
+        margin_mode: MarginMode::Cross,
+        position_mode: PositionMode::Hedge,
+        leverage: 10,
+        post_only: false,
+    });
+    order
+}
+
 #[test]
 fn reduce_only_close_uses_projected_exposure_instead_of_gross_plus_order() {
     let context = RiskContext {
@@ -78,6 +91,65 @@ fn reduce_only_cannot_increase_or_flip_a_one_way_position() {
         .is_err());
     assert!(context
         .validate_order(&order(Side::Sell, 3 * SCALE, true), &position)
+        .is_err());
+}
+
+#[test]
+fn hedge_reduce_only_uses_the_selected_leg_and_cannot_cross_zero() {
+    let context = RiskContext {
+        available_margin_raw: Some(0),
+        reference_price: Some(Price::from_raw(100 * SCALE)),
+        instrument_spec: Some(perpetual_spec()),
+        max_order_notional_raw: None,
+        max_position_notional_raw: Some(500 * SCALE),
+    };
+    let position = PositionSnapshot::new_with_multiplier(0, 400 * SCALE, SCALE)
+        .with_hedge_legs(2 * SCALE, -2 * SCALE);
+
+    context
+        .validate_order(
+            &hedge_order(Side::Sell, SCALE, PositionSide::Long),
+            &position,
+        )
+        .expect("selling a long hedge leg must reduce risk");
+    context
+        .validate_order(
+            &hedge_order(Side::Buy, SCALE, PositionSide::Short),
+            &position,
+        )
+        .expect("buying a short hedge leg must reduce risk");
+    assert!(context
+        .validate_order(
+            &hedge_order(Side::Buy, SCALE, PositionSide::Long),
+            &position,
+        )
+        .is_err());
+    assert!(context
+        .validate_order(
+            &hedge_order(Side::Sell, 3 * SCALE, PositionSide::Long),
+            &position,
+        )
+        .is_err());
+}
+
+#[test]
+fn empty_risk_gate_still_enforces_reduce_only_account_invariant() {
+    let gate = RiskGate::new();
+    let position = PositionSnapshot::new_with_multiplier(0, 400 * SCALE, SCALE)
+        .with_hedge_legs(2 * SCALE, -2 * SCALE);
+
+    gate.check_with_price(
+        &hedge_order(Side::Sell, SCALE, PositionSide::Long),
+        &position,
+        Some(Price::from_raw(100 * SCALE)),
+    )
+    .expect("RiskGate must allow a valid reduce-only close");
+    assert!(gate
+        .check_with_price(
+            &hedge_order(Side::Buy, SCALE, PositionSide::Long),
+            &position,
+            Some(Price::from_raw(100 * SCALE)),
+        )
         .is_err());
 }
 
