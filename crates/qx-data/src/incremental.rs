@@ -12,7 +12,10 @@ pub struct IncrementalMergeReport {
     pub output_rows: usize,
 }
 
-pub fn merge_bars(existing: &[Bar], incoming: &[Bar]) -> Result<(Vec<Bar>, IncrementalMergeReport), String> {
+pub fn merge_bars(
+    existing: &[Bar],
+    incoming: &[Bar],
+) -> Result<(Vec<Bar>, IncrementalMergeReport), String> {
     let mut merged: BTreeMap<(String, u64), Bar> = BTreeMap::new();
 
     for bar in existing {
