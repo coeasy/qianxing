@@ -31,6 +31,13 @@ jobs:
               ['git', 'show', 'HEAD^:.github/workflows/v8-risk-refactor.yml'],
               text=True,
           )
+          # HEAD^ is the short retry workflow; its parent contains the full audited
+          # refactor script. Walk one more parent when necessary.
+          if 'Refactor risk projection semantics' not in old:
+              old = subprocess.check_output(
+                  ['git', 'show', 'HEAD^^:.github/workflows/v8-risk-refactor.yml'],
+                  text=True,
+              )
           start_marker = '      - name: Refactor risk projection semantics\n        shell: python\n        run: |\n'
           end_marker = '      - name: Format workspace\n'
           if start_marker not in old or end_marker not in old:
@@ -40,18 +47,12 @@ jobs:
               line[10:] if line.startswith('          ') else line
               for line in block.splitlines()
           )
-          needle = '''                  if position.net_qty == 0
-                      || position.net_qty.signum() == delta.signum()
-                      || projected_abs >= current_abs
-                  {'''
-          replacement = '''                  if position.net_qty == 0
-                      || position.net_qty.signum() == delta.signum()
-                      || projected_abs >= current_abs
+          needle = '|| projected_abs >= current_abs'
+          replacement = '''|| projected_abs >= current_abs
                       || (projected != 0
-                          && projected.signum() != position.net_qty.signum())
-                  {'''
-          if needle not in script:
-              raise SystemExit('reduce-only guard not found in recovered script')
+                          && projected.signum() != position.net_qty.signum())'''
+          if script.count(needle) != 1:
+              raise SystemExit(f'expected one reduce-only guard, got {script.count(needle)}')
           script = script.replace(needle, replacement, 1)
           Path('/tmp/refactor_risk.py').write_text(script, encoding='utf-8')
           subprocess.run(['python', '/tmp/refactor_risk.py'], check=True)
