@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   patch:
-    if: ${{ !contains(github.event.head_commit.message, '[v7-patch]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,12 +28,13 @@ jobs:
           def replace_once(path, old, new):
               p = Path(path)
               text = p.read_text()
+              if new in text:
+                  return
               count = text.count(old)
               if count != 1:
                   raise SystemExit(f"{path}: expected exactly one guarded match, got {count}")
               p.write_text(text.replace(old, new, 1))
 
-          # 1) Paper E2E must have an auditable market fact before a market order can pass risk.
           main = "crates/qx-cli/src/main.rs"
           old = '''    run_scheduler_worker(path, &scheduler_id, true)?;
     run_strategy_worker(path, &strategy_id, true)?;
@@ -88,8 +88,6 @@ jobs:
 '''
           replace_once(main, old, new)
 
-          # 2) A one-shot execution worker must surface the real failed command instead
-          # of reporting processed=1 and letting E2E fail later with an empty OMS.
           old = '''                queue
                     .ack_command_at(command.command_id, context.id(), lease.fencing_token, now)
                     .map_err(|error| format!("确认 Paper SubmitOrder 失败: {error:?}"))?;
@@ -110,7 +108,6 @@ jobs:
 '''
           replace_once(main, old, new)
 
-          # 3) Every enabled execution worker is fail-closed on a frozen instrument spec.
           runtime = "crates/qx-runtime/src/lib.rs"
           old = '''            if worker.role == WorkerRole::Execution
                 && !worker
@@ -166,8 +163,6 @@ jobs:
 '''
           replace_once(runtime, marker, addition)
 
-          # RiskContext is itself fail-closed; a caller cannot create a default context
-          # and accidentally bypass product/risk validation.
           risk = "crates/qx-zhenlu/src/lib.rs"
           old = '''        let Some(spec) = self.instrument_spec.as_ref() else {
             if self.available_margin_raw.is_some()
