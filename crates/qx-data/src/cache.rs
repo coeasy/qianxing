@@ -10,7 +10,10 @@ pub struct CacheKey {
 }
 
 impl CacheKey {
-    pub fn new(dataset_id: impl Into<String>, fingerprint: impl Into<String>) -> Result<Self, String> {
+    pub fn new(
+        dataset_id: impl Into<String>,
+        fingerprint: impl Into<String>,
+    ) -> Result<Self, String> {
         let key = Self {
             dataset_id: dataset_id.into(),
             fingerprint: fingerprint.into(),
