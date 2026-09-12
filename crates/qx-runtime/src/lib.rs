@@ -1475,14 +1475,15 @@ impl RuntimeConfig {
                 enabled_api_workers = enabled_api_workers.saturating_add(1);
             }
             if worker.role == WorkerRole::Execution
-                && !worker
-                    .venue_id
-                    .as_deref()
-                    .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
                 && worker.instrument_spec_path.is_none()
+                && (self.environment.eq_ignore_ascii_case("production")
+                    || !worker
+                        .venue_id
+                        .as_deref()
+                        .is_some_and(|venue| venue.eq_ignore_ascii_case("paper")))
             {
                 return Err(format!(
-                    "{} 非 Paper Execution worker 必须配置 instrument_spec_path",
+                    "{} Execution worker 必须配置 instrument_spec_path；仅非 production 的 Paper smoke 允许兼容省略",
                     worker.id
                 ));
             }
