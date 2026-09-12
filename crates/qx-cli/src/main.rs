@@ -1795,15 +1795,24 @@ fn resolve_ccxt_config_path(runtime_path: &Path, configured: &str) -> String {
         .into_owned()
 }
 
+fn is_explicit_absolute_path(configured: &str) -> bool {
+    let bytes = configured.as_bytes();
+    Path::new(configured).is_absolute()
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'/' | b'\\'))
+        || configured.starts_with("\\\\")
+}
+
 fn resolve_runtime_relative_path(runtime_path: &Path, configured: &str) -> PathBuf {
-    let path = Path::new(configured);
-    if path.is_absolute() {
-        path.to_path_buf()
+    if is_explicit_absolute_path(configured) {
+        PathBuf::from(configured)
     } else {
         runtime_path
             .parent()
             .unwrap_or_else(|| Path::new("."))
-            .join(path)
+            .join(configured)
     }
 }
 
