@@ -11,6 +11,8 @@ postgres = ["qx-storage/postgres"]
 
 [dependencies]
 qx-core = { path = "../qx-core" }
+qx-domain = { path = "../qx-domain" }
+qx-data = { path = "../qx-data" }
 qx-oms = { path = "../qx-oms" }
 qx-factor = { path = "../qx-factor" }
 qx-strategy = { path = "../qx-strategy" }
