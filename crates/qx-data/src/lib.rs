@@ -7,7 +7,11 @@ pub mod schema;
 pub mod catalog;
 pub mod validation;
 pub mod provider;
+pub mod storage;
+pub mod pipeline;
 
 pub use catalog::DatasetManifest;
 pub use schema::{Bar, DataSchemaVersion};
 pub use validation::ValidationReport;
+pub use storage::{DataStorage, MemoryDataStorage};
+pub use pipeline::{process_bars, DataPipelineReport};
