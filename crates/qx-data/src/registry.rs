@@ -98,6 +98,8 @@ mod tests {
         let mut registry = DatasetRegistry::default();
         registry.register(manifest("fp1")).unwrap();
         assert!(registry.verify("bars.daily", "2026-09-12", "fp1").is_ok());
-        assert!(registry.verify("bars.daily", "2026-09-12", "wrong").is_err());
+        assert!(registry
+            .verify("bars.daily", "2026-09-12", "wrong")
+            .is_err());
     }
 }
