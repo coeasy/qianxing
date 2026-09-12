@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/qx-core",
+    "crates/qx-domain",
+    "crates/qx-data",
     "crates/qx-fenye",
     "crates/qx-guanxing",
     "crates/qx-xingban",
@@ -37,6 +39,8 @@ repository = "https://github.com/coeasy/qianxing"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 qx-core = { path = "crates/qx-core" }
+qx-domain = { path = "crates/qx-domain" }
+qx-data = { path = "crates/qx-data" }
 qx-fenye = { path = "crates/qx-fenye" }
 qx-guanxing = { path = "crates/qx-guanxing" }
 qx-xingban = { path = "crates/qx-xingban" }
