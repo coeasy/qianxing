@@ -1,14 +1,19 @@
 use crate::schema::Bar;
 use crate::validation::ValidationReport;
 
-pub fn validate_bars(bars: &[Bar]) -> ValidationReport {
-    let mut report = ValidationReport::default();
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataPipelineReport {
+    pub rows: usize,
+    pub validation: ValidationReport,
+}
 
-    for window in bars.windows(2) {
-        if window[0].timestamp >= window[1].timestamp {
-            report.errors.push("timestamps must be increasing".to_string());
-        }
+pub fn process_bars(mut bars: Vec<Bar>) -> Result<(Vec<Bar>, DataPipelineReport), String> {
+    let validation = validate_bars(&bars);
+    if !validation.errors.is_empty() {
+        return Err(validation.errors.join("; "));
     }
 
-    report
+    bars.sort_by_key(|bar| bar.timestamp);
+    let rows = bars.len();
+    Ok((bars, DataPipelineReport { rows, validation }))
 }
