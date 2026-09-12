@@ -16,9 +16,13 @@ use std::collections::{BTreeMap, VecDeque};
 /// 持仓快照：风控判定所需的最小信息。
 #[derive(Clone, Copy, Default, Debug)]
 pub struct PositionSnapshot {
+    /// One-way/net position only. Hedge-mode long/short legs are stored separately.
     pub net_qty: i128,
+    /// Gross notional across one-way and both hedge legs at the snapshot mark.
     pub gross_notional: i128,
     pub multiplier: i128,
+    pub long_qty: i128,
+    pub short_qty: i128,
 }
 
 /// 订单进入 OMS/Venue 前的账户级风控上下文。
@@ -70,6 +74,8 @@ impl RiskContext {
             return Err(QxError::BusinessViolation("订单名义额超过账户限额".into()));
         }
 
+        validate_reduce_only(order, position)?;
+        let current_qty = position.active_qty_for(order);
         let signed_delta = match order.side {
             Side::Buy => order.qty.raw(),
             Side::Sell => order
@@ -78,40 +84,21 @@ impl RiskContext {
                 .checked_neg()
                 .ok_or_else(|| QxError::Invariant("订单数量取反溢出".into()))?,
         };
-        let projected_net_qty = position
-            .net_qty
+        let projected_qty = current_qty
             .checked_add(signed_delta)
             .ok_or_else(|| QxError::Invariant("投影持仓数量溢出".into()))?;
-
-        if policy.reduce_only {
-            let current_abs = position
-                .net_qty
-                .checked_abs()
-                .ok_or_else(|| QxError::Invariant("当前持仓绝对值溢出".into()))?;
-            let reduces_direction = (position.net_qty > 0 && order.side == Side::Sell)
-                || (position.net_qty < 0 && order.side == Side::Buy);
-            if current_abs == 0 || !reduces_direction || order.qty.raw() > current_abs {
-                return Err(QxError::BusinessViolation(
-                    "reduce_only 订单必须只减少现有持仓且不得反向穿仓".into(),
-                ));
-            }
-        }
-
         if let Some(limit) = self.max_position_notional_raw {
-            let current_abs = position
-                .net_qty
+            let current_abs = current_qty
                 .checked_abs()
                 .ok_or_else(|| QxError::Invariant("当前持仓绝对值溢出".into()))?;
-            let projected_abs = projected_net_qty
+            let projected_abs = projected_qty
                 .checked_abs()
                 .ok_or_else(|| QxError::Invariant("投影持仓绝对值溢出".into()))?;
-            let current_instrument_notional = spec.notional(current_abs, price.raw())?;
-            let projected_instrument_notional = spec.notional(projected_abs, price.raw())?;
-            let other_notional = position
-                .gross_notional
-                .saturating_sub(current_instrument_notional);
+            let current_leg_notional = spec.notional(current_abs, price.raw())?;
+            let projected_leg_notional = spec.notional(projected_abs, price.raw())?;
+            let other_notional = position.gross_notional.saturating_sub(current_leg_notional);
             let projected_gross_notional = other_notional
-                .checked_add(projected_instrument_notional)
+                .checked_add(projected_leg_notional)
                 .ok_or_else(|| QxError::Invariant("投影持仓名义额溢出".into()))?;
             if projected_gross_notional > limit {
                 return Err(QxError::BusinessViolation(
@@ -143,6 +130,8 @@ impl PositionSnapshot {
             net_qty,
             gross_notional,
             multiplier: 1,
+            long_qty: 0,
+            short_qty: 0,
         }
     }
 
@@ -151,8 +140,48 @@ impl PositionSnapshot {
             net_qty,
             gross_notional,
             multiplier: multiplier.max(1),
+            long_qty: 0,
+            short_qty: 0,
         }
     }
+
+    pub fn with_hedge_legs(mut self, long_qty: i128, short_qty: i128) -> Self {
+        self.long_qty = long_qty;
+        self.short_qty = short_qty;
+        self
+    }
+
+    pub fn active_qty_for(&self, order: &Order) -> i128 {
+        let policy = order.policy.unwrap_or_default();
+        if policy.position_mode == qx_core::PositionMode::Hedge {
+            match policy.position_side {
+                qx_core::PositionSide::Long => self.long_qty,
+                qx_core::PositionSide::Short => self.short_qty,
+                qx_core::PositionSide::Net => self.net_qty,
+            }
+        } else {
+            self.net_qty
+        }
+    }
+}
+
+fn validate_reduce_only(order: &Order, position: &PositionSnapshot) -> QxResult<()> {
+    let policy = order.policy.unwrap_or_default();
+    if !policy.reduce_only {
+        return Ok(());
+    }
+    let current = position.active_qty_for(order);
+    let current_abs = current
+        .checked_abs()
+        .ok_or_else(|| QxError::Invariant("当前持仓绝对值溢出".into()))?;
+    let reduces_direction =
+        (current > 0 && order.side == Side::Sell) || (current < 0 && order.side == Side::Buy);
+    if current_abs == 0 || !reduces_direction || order.qty.raw() > current_abs {
+        return Err(QxError::BusinessViolation(
+            "reduce_only 订单必须只减少目标持仓腿且不得反向穿仓".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub trait RiskRule {
@@ -213,12 +242,13 @@ impl RiskRule for MaxNotionalRule {
             .limit
             .or(reference_price)
             .ok_or_else(|| QxError::BusinessViolation("市价单缺少名义额风控参考价".into()))?;
+        let current_qty = pos.active_qty_for(o);
         let signed_delta = match o.side {
             Side::Buy => o.qty.raw(),
             Side::Sell => o.qty.raw().saturating_neg(),
         };
-        let projected_qty = pos.net_qty.saturating_add(signed_delta);
-        let current_abs = pos.net_qty.saturating_abs();
+        let projected_qty = current_qty.saturating_add(signed_delta);
+        let current_abs = current_qty.saturating_abs();
         let projected_abs = projected_qty.saturating_abs();
         let multiplier = pos.multiplier.max(1);
         let current_notional =
@@ -280,6 +310,9 @@ impl RiskGate {
         reference_price: Option<Price>,
     ) -> QxResult<()> {
         let mut errs = Vec::new();
+        if let Err(error) = validate_reduce_only(o, pos) {
+            errs.push(format!("ReduceOnly: {error}"));
+        }
         for r in &self.rules {
             if let Err(e) = r.check_with_price(o, pos, reference_price) {
                 errs.push(format!("{}: {}", r.name(), e));

@@ -563,24 +563,69 @@ impl BacktestEngine {
                                 "initial margin exceeds equity",
                             );
                         } else {
-                            let gross_notional = notional_for(
+                            let long_qty = ledger
+                                .position_for_side(
+                                    &account_id,
+                                    &instrument,
+                                    qx_core::PositionSide::Long,
+                                )
+                                .quantity
+                                .raw();
+                            let short_qty = ledger
+                                .position_for_side(
+                                    &account_id,
+                                    &instrument,
+                                    qx_core::PositionSide::Short,
+                                )
+                                .quantity
+                                .raw();
+                            let one_way_qty = position
+                                .checked_sub(long_qty)
+                                .and_then(|value| value.checked_sub(short_qty))
+                                .ok_or_else(|| {
+                                    qx_core::QxError::Invariant(
+                                        "拆分回测 one-way/hedge 持仓数量溢出".into(),
+                                    )
+                                })?;
+                            let mark_abs = checked_abs(visible_close)?;
+                            let one_way_notional = notional_for(
                                 derivative_spec,
-                                checked_abs(position)?,
-                                checked_abs(visible_close)?,
+                                checked_abs(one_way_qty)?,
+                                mark_abs,
                                 multiplier,
                             )?;
+                            let long_notional = notional_for(
+                                derivative_spec,
+                                checked_abs(long_qty)?,
+                                mark_abs,
+                                multiplier,
+                            )?;
+                            let short_notional = notional_for(
+                                derivative_spec,
+                                checked_abs(short_qty)?,
+                                mark_abs,
+                                multiplier,
+                            )?;
+                            let gross_notional = one_way_notional
+                                .checked_add(long_notional)
+                                .and_then(|value| value.checked_add(short_notional))
+                                .ok_or_else(|| {
+                                    qx_core::QxError::Invariant(
+                                        "回测 hedge gross notional 溢出".into(),
+                                    )
+                                })?;
                             if matches!(order.status, OrderStatus::PendingSubmit) {
-                                // Protocol-level strategy orders enter the same
-                                // submit transition as live execution before OMS.
                                 order.status = OrderStatus::Submitted;
                             }
+                            let risk_position = PositionSnapshot::new_with_multiplier(
+                                one_way_qty,
+                                gross_notional,
+                                multiplier,
+                            )
+                            .with_hedge_legs(long_qty, short_qty);
                             let risk_result = risk.check_with_price(
                                 &order,
-                                &PositionSnapshot::new_with_multiplier(
-                                    position,
-                                    gross_notional,
-                                    multiplier,
-                                ),
+                                &risk_position,
                                 Some(Price::from_raw(reference_price)),
                             );
                             if let Err(error) = risk_result {

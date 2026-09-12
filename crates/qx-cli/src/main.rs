@@ -4066,20 +4066,41 @@ fn worker_risk_context(
             worker.id, settlement
         ));
     };
-    let state = pipeline
+    let aggregate = pipeline
         .ledger()
         .position_for(account_id, &order.instrument);
-    let position_qty = state
+    let long_qty = pipeline
+        .ledger()
+        .position_for_side(account_id, &order.instrument, qx_core::PositionSide::Long)
+        .quantity
+        .raw();
+    let short_qty = pipeline
+        .ledger()
+        .position_for_side(account_id, &order.instrument, qx_core::PositionSide::Short)
+        .quantity
+        .raw();
+    let one_way_qty = aggregate
         .quantity
         .raw()
-        .checked_abs()
-        .ok_or_else(|| "当前持仓数量绝对值溢出".to_string())?;
+        .checked_sub(long_qty)
+        .and_then(|value| value.checked_sub(short_qty))
+        .ok_or_else(|| "拆分 one-way/hedge 持仓数量溢出".to_string())?;
     let gross_notional = reference_price
-        .map(|price| spec.notional(position_qty, price.raw()))
+        .map(|price| {
+            let one_way = spec.notional(one_way_qty.saturating_abs(), price.raw())?;
+            let long = spec.notional(long_qty.saturating_abs(), price.raw())?;
+            let short = spec.notional(short_qty.saturating_abs(), price.raw())?;
+            one_way
+                .checked_add(long)
+                .and_then(|value| value.checked_add(short))
+                .ok_or_else(|| qx_core::QxError::Invariant("当前 gross notional 溢出".into()))
+        })
         .transpose()
         .map_err(|error| format!("计算当前持仓名义额失败: {error:?}"))?
         .unwrap_or(0);
-    let position = PositionSnapshot::new(state.quantity.raw(), gross_notional);
+    let position =
+        PositionSnapshot::new_with_multiplier(one_way_qty, gross_notional, spec.contract_size)
+            .with_hedge_legs(long_qty, short_qty);
     Ok(Some((
         RiskContext {
             available_margin_raw: Some(available_margin_raw),

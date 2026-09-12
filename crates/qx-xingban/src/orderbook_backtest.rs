@@ -333,16 +333,44 @@ impl OrderBookBacktestEngine {
                         }
                     }
                 }
+                let long_qty = ledger
+                    .position_for_side(&account_id, &instrument, qx_core::PositionSide::Long)
+                    .quantity
+                    .raw();
+                let short_qty = ledger
+                    .position_for_side(&account_id, &instrument, qx_core::PositionSide::Short)
+                    .quantity
+                    .raw();
+                let one_way_qty = position
+                    .checked_sub(long_qty)
+                    .and_then(|value| value.checked_sub(short_qty))
+                    .ok_or_else(|| {
+                        qx_core::QxError::Invariant("拆分订单簿 one-way/hedge 持仓数量溢出".into())
+                    })?;
                 let position_snapshot = if let Some(spec) = instrument_spec.as_ref() {
+                    let gross_notional = if let Some(price) = reference_price {
+                        let one_way = spec.notional(one_way_qty.saturating_abs(), price.raw())?;
+                        let long = spec.notional(long_qty.saturating_abs(), price.raw())?;
+                        let short = spec.notional(short_qty.saturating_abs(), price.raw())?;
+                        one_way
+                            .checked_add(long)
+                            .and_then(|value| value.checked_add(short))
+                            .ok_or_else(|| {
+                                qx_core::QxError::Invariant(
+                                    "订单簿 hedge gross notional 溢出".into(),
+                                )
+                            })?
+                    } else {
+                        0
+                    };
                     PositionSnapshot::new_with_multiplier(
-                        position,
-                        reference_price
-                            .map(|price| spec.notional(position.abs(), price.raw()).unwrap_or(0))
-                            .unwrap_or(0),
+                        one_way_qty,
+                        gross_notional,
                         spec.contract_size,
                     )
+                    .with_hedge_legs(long_qty, short_qty)
                 } else {
-                    PositionSnapshot::new(position, 0)
+                    PositionSnapshot::new(one_way_qty, 0).with_hedge_legs(long_qty, short_qty)
                 };
                 if let Err(error) =
                     risk.check_with_price(&order, &position_snapshot, reference_price)
