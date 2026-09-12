@@ -1,0 +1,86 @@
+name: One-shot production risk-limit refactor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/production-risk-limits-refactor.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-production-risk-limits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply exact production risk-limit refactor
+        shell: python
+        run: |
+          from pathlib import Path
+
+          runtime_path = Path("crates/qx-runtime/src/lib.rs")
+          source = runtime_path.read_text(encoding="utf-8")
+          anchor = '''            if worker.role == WorkerRole::Execution
+                          && worker.instrument_spec_path.is_none()
+                          && (self.environment.eq_ignore_ascii_case("production")
+                              || !worker
+                                  .venue_id
+                                  .as_deref()
+                                  .is_some_and(|venue| venue.eq_ignore_ascii_case("paper")))
+                      {
+                          return Err(format!(
+                              "{} Execution worker 必须配置 instrument_spec_path；仅非 production 的 Paper smoke 允许兼容省略",
+                              worker.id
+                          ));
+                      }'''
+          replacement = anchor + '''
+                      if worker.role == WorkerRole::Execution
+                          && self.environment.eq_ignore_ascii_case("production")
+                      {
+                          if worker.max_order_notional_raw.is_none() {
+                              return Err(format!(
+                                  "{} production Execution worker 必须配置 max_order_notional_raw",
+                                  worker.id
+                              ));
+                          }
+                          if worker.max_position_notional_raw.is_none() {
+                              return Err(format!(
+                                  "{} production Execution worker 必须配置 max_position_notional_raw",
+                                  worker.id
+                              ));
+                          }
+                      }'''
+          if source.count(anchor) != 1:
+              raise SystemExit("expected unique production execution safety block not found")
+          runtime_path.write_text(source.replace(anchor, replacement, 1), encoding="utf-8")
+
+          config_path = Path("deploy/qianxing.runtime.production.example.json")
+          config = config_path.read_text(encoding="utf-8")
+          old = '''      "instrument_spec_path": "qianxing.binance.spot.spec.json"'''
+          new = '''      "instrument_spec_path": "qianxing.binance.spot.spec.json",
+              "settlement_currency": "USDT",
+              "max_order_notional_raw": 10000000000000,
+              "max_position_notional_raw": 50000000000000'''
+          if config.count(old) != 1:
+              raise SystemExit("expected unique production instrument_spec_path entry not found")
+          config_path.write_text(config.replace(old, new, 1), encoding="utf-8")
+      - name: Format
+        run: cargo fmt --all
+      - name: Verify production risk-limit contracts
+        run: |
+          cargo test -p qx-runtime --test production_safety
+          cargo run -p qx-cli --features sqlite -- runtime-check deploy/qianxing.runtime.production.example.json
+      - name: Commit verified production risk-limit refactor
+        run: |
+          git config user.name "qianxing-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add crates/qx-runtime/src/lib.rs deploy/qianxing.runtime.production.example.json
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: require explicit production notional risk limits [production-risk]"
+          git push origin HEAD:main
