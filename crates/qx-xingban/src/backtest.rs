@@ -443,7 +443,11 @@ impl BacktestEngine {
                         } else {
                             1
                         };
-                        let reference_price = order.limit.map(|p| p.raw()).unwrap_or(bar.close);
+                        // Strategy decisions at Bar(t) only observe data through Bar(t-1).
+                        // Pre-trade risk and margin therefore use the last visible mark,
+                        // never the current bar close, which is future information here.
+                        let visible_close = bars[i - 1].close;
+                        let reference_price = order.limit.map(|p| p.raw()).unwrap_or(visible_close);
                         let order_qty = checked_abs(order.qty.raw())?;
                         let reduce_only_allowed = !product_policy.reduce_only
                             || reduce_only_order_allowed(
@@ -533,7 +537,7 @@ impl BacktestEngine {
                         };
                         let marks = std::collections::BTreeMap::from([(
                             instrument.clone(),
-                            Price::from_raw(bar.close),
+                            Price::from_raw(visible_close),
                         )]);
                         let equity = equity_for(
                             &ledger,
@@ -562,7 +566,7 @@ impl BacktestEngine {
                             let gross_notional = notional_for(
                                 derivative_spec,
                                 checked_abs(position)?,
-                                checked_abs(bar.close)?,
+                                checked_abs(visible_close)?,
                                 multiplier,
                             )?;
                             if matches!(order.status, OrderStatus::PendingSubmit) {
