@@ -909,6 +909,9 @@ impl RuntimeConfig {
         serde_json::to_string_pretty(self).map_err(|error| format!("运行时配置编码失败: {error}"))
     }
 
+    /// 计算规范化运行时配置指纹；指纹字段自身被清空后再编码，保证发布值
+    /// 可以稳定地写回同一份 JSON，并覆盖策略、worker、凭据引用、存储和 API
+    /// 等全部运行时参数。
     pub fn fingerprint(&self) -> Result<String, String> {
         let mut canonical = self.clone();
         canonical.config_fingerprint = None;
@@ -1245,14 +1248,6 @@ impl RuntimeConfig {
         }
         if self.storage.data_dir.trim().is_empty() {
             return Err("storage.data_dir 不能为空".into());
-        }
-        if self.environment.eq_ignore_ascii_case("production")
-            && self.storage.backend != StorageBackend::Postgres
-        {
-            return Err(
-                "production 环境 EventLog/Outbox 必须使用 PostgreSQL transactional backend"
-                    .into(),
-            );
         }
         if self
             .storage
@@ -1875,6 +1870,9 @@ impl RuntimeSupervisor {
         self.shutdown.is_requested()
     }
 
+    /// 启动一个由调用方注入的 worker；worker 不允许直接改 Kernel 状态，必须通过
+    /// 已有的 Adapter/Control/Storage 契约提交事实。线程异常被转换为 Failed 状态，
+    /// 返回 `Err` 的正常退出也会留下可查询的失败原因。
     pub fn spawn_worker<F>(
         &self,
         id: &str,
@@ -1919,5 +1917,783 @@ impl RuntimeSupervisor {
                 }
             }
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn python_strategy_contract_is_versioned_pit_bounded_and_identity_bound() {
+        let input = StrategyContractInput {
+            schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
+            request_id: "request-1".into(),
+            strategy_id: "strategy-1".into(),
+            strategy_version: "v1".into(),
+            data_fingerprint: "bars-1".into(),
+            as_of: 10,
+            instrument: "BTCUSDT.BINANCE".into(),
+            positions: BTreeMap::from([("BTCUSDT.BINANCE".into(), 2)]),
+            cash: BTreeMap::from([("USDT".into(), 100)]),
+            available_margin_raw: Some(90),
+            risk_state: "verified".into(),
+            research_targets: BTreeMap::from([("BTCUSDT.BINANCE".into(), 3)]),
+            bars: Some(StrategyContractBars {
+                source: "snapshot-1".into(),
+                ts: vec![9, 10],
+                open_raw: vec![1, 2],
+                high_raw: vec![2, 3],
+                low_raw: vec![1, 2],
+                close_raw: vec![2, 3],
+                volume_raw: vec![10, 11],
+            }),
+        };
+        let restored = StrategyContractInput::from_json(&input.to_json().unwrap()).unwrap();
+        assert_eq!(restored, input);
+        let output = StrategyContractOutput {
+            schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
+            request_id: "request-1".into(),
+            strategy_id: "strategy-1".into(),
+            signal_id: 1,
+            instrument: "BTCUSDT.BINANCE".into(),
+            target_qty: 3,
+            confidence: 900,
+            priority: 1,
+            expires_at: 10,
+            intents: Vec::new(),
+        };
+        let encoded = output.to_json_for(&input).unwrap();
+        assert_eq!(
+            StrategyContractOutput::from_json_for(&encoded, &input).unwrap(),
+            output
+        );
+        let mut mismatched = output;
+        mismatched.request_id = "other".into();
+        assert!(mismatched.validate_for(&input).is_err());
+    }
+
+    #[test]
+    fn strategy_columnar_input_preserves_metadata_and_fixed_width_columns() {
+        let input = StrategyContractInput {
+            schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
+            request_id: "columnar-1".into(),
+            strategy_id: "strategy-1".into(),
+            strategy_version: "v1".into(),
+            data_fingerprint: "bars-1".into(),
+            as_of: 10,
+            instrument: "BTCUSDT.BINANCE".into(),
+            positions: BTreeMap::new(),
+            cash: BTreeMap::new(),
+            available_margin_raw: Some(90),
+            risk_state: "verified".into(),
+            research_targets: BTreeMap::from([("BTCUSDT.BINANCE".into(), 3)]),
+            bars: Some(StrategyContractBars {
+                source: "snapshot-1".into(),
+                ts: vec![9, 10],
+                open_raw: vec![1, 2],
+                high_raw: vec![2, 3],
+                low_raw: vec![1, 2],
+                close_raw: vec![2, 3],
+                volume_raw: vec![10, 11],
+            }),
+        };
+        let encoded = encode_strategy_columnar_input(&input).unwrap();
+        assert_eq!(&encoded[..4], b"QXCB");
+        assert_eq!(u16::from_le_bytes([encoded[4], encoded[5]]), 1);
+        let metadata_len = u32::from_le_bytes(encoded[8..12].try_into().unwrap()) as usize;
+        let metadata: serde_json::Value = serde_json::from_slice(
+            &encoded[STRATEGY_COLUMNAR_HEADER_LEN..STRATEGY_COLUMNAR_HEADER_LEN + metadata_len],
+        )
+        .unwrap();
+        assert!(metadata["bars"].is_null());
+        assert_eq!(metadata["__qx_bars_source"], "snapshot-1");
+        assert_eq!(
+            encoded.len(),
+            STRATEGY_COLUMNAR_HEADER_LEN + metadata_len + 2 * (8 + 5 * 16)
+        );
+    }
+
+    #[test]
+    fn strategy_contract_accepts_multiple_order_intents() {
+        let input = StrategyContractInput {
+            schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
+            request_id: "request-intents".into(),
+            strategy_id: "strategy-portfolio".into(),
+            strategy_version: "v1".into(),
+            data_fingerprint: "bars-1".into(),
+            as_of: 10,
+            instrument: "BTCUSDT.BINANCE".into(),
+            positions: BTreeMap::new(),
+            cash: BTreeMap::new(),
+            available_margin_raw: Some(100),
+            risk_state: "ready".into(),
+            research_targets: BTreeMap::new(),
+            bars: None,
+        };
+        let output = StrategyContractOutput {
+            schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
+            request_id: input.request_id.clone(),
+            strategy_id: input.strategy_id.clone(),
+            signal_id: 99,
+            instrument: input.instrument.clone(),
+            target_qty: 0,
+            confidence: 500,
+            priority: 1,
+            expires_at: 10,
+            intents: vec![
+                StrategyContractIntent {
+                    intent_id: 1001,
+                    instrument: "BTCUSDT.BINANCE".into(),
+                    side: "buy".into(),
+                    qty_raw: 2,
+                    limit_price_raw: Some(100),
+                    reduce_only: false,
+                    post_only: true,
+                    position_side: Some("net".into()),
+                },
+                StrategyContractIntent {
+                    intent_id: 1002,
+                    instrument: "ETHUSDT.BINANCE".into(),
+                    side: "sell".into(),
+                    qty_raw: 1,
+                    limit_price_raw: None,
+                    reduce_only: true,
+                    post_only: false,
+                    position_side: Some("net".into()),
+                },
+            ],
+        };
+        let encoded = output.to_json_for(&input).unwrap();
+        let restored = StrategyContractOutput::from_json_for(&encoded, &input).unwrap();
+        assert_eq!(restored, output);
+    }
+
+    fn config() -> RuntimeConfig {
+        RuntimeConfig {
+            schema_version: RUNTIME_SCHEMA_VERSION,
+            environment: "paper".into(),
+            config_fingerprint: None,
+            api: ApiRuntimeConfig {
+                bind: "127.0.0.1:19090".into(),
+                transport: ApiTransport::Plaintext,
+                tls: None,
+                operators: BTreeMap::new(),
+            },
+            storage: StorageRuntimeConfig {
+                backend: StorageBackend::Files,
+                data_dir: "data".into(),
+                sqlite_path: None,
+                postgres_dsn_env: None,
+                postgres_pool_size: default_postgres_pool_size(),
+                event_log_segment_events: None,
+            },
+            messaging: MessagingRuntimeConfig::default(),
+            workers: vec![
+                WorkerConfig {
+                    id: "api".into(),
+                    role: WorkerRole::Api,
+                    enabled: true,
+                    account_id: None,
+                    venue_id: None,
+                    endpoint: None,
+                    symbols: Vec::new(),
+                    settlement_currency: None,
+                    credential_env: None,
+                    credential_files: None,
+                    instrument_spec_path: None,
+                    paper_initial_cash_raw: None,
+                    max_order_notional_raw: None,
+                    max_position_notional_raw: None,
+                },
+                WorkerConfig {
+                    id: "market".into(),
+                    role: WorkerRole::MarketData,
+                    enabled: true,
+                    account_id: None,
+                    venue_id: None,
+                    endpoint: Some("https://example.test".into()),
+                    symbols: vec!["BTCUSDT.BINANCE".into()],
+                    settlement_currency: None,
+                    credential_env: None,
+                    credential_files: None,
+                    instrument_spec_path: None,
+                    paper_initial_cash_raw: None,
+                    max_order_notional_raw: None,
+                    max_position_notional_raw: None,
+                },
+            ],
+            shutdown_timeout_ms: 10_000,
+            scheduler: SchedulerRuntimeConfig::default(),
+            strategy: StrategyRuntimeConfig::default(),
+            strategies: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn runtime_config_round_trips_and_rejects_production_plaintext() {
+        let encoded = config().to_json().unwrap();
+        assert_eq!(RuntimeConfig::from_json(&encoded).unwrap(), config());
+        let mut production = config();
+        production.environment = "production".into();
+        assert!(production.validate().is_err());
+
+        let mut mtls = config();
+        mtls.api.transport = ApiTransport::Mtls;
+        assert!(mtls.validate().is_err());
+        mtls.api.tls = Some(TlsPaths {
+            certificate_chain: "server.pem".into(),
+            private_key: "server.key".into(),
+            client_ca: "clients.pem".into(),
+        });
+        assert!(mtls.validate().is_err());
+    }
+
+    #[test]
+    fn runtime_config_fingerprint_locks_published_configuration() {
+        let mut locked = config();
+        let fingerprint = locked.fingerprint().unwrap();
+        assert_eq!(fingerprint.len(), 64);
+        locked.config_fingerprint = Some(fingerprint);
+        let encoded = locked.to_json().unwrap();
+        assert_eq!(RuntimeConfig::from_json(&encoded).unwrap(), locked);
+
+        let mut tampered = locked.clone();
+        tampered.storage.data_dir = "data/tampered".into();
+        let tampered_payload = serde_json::to_string(&tampered).unwrap();
+        let error = RuntimeConfig::from_json(&tampered_payload).unwrap_err();
+        assert!(error.contains("配置指纹不匹配"));
+    }
+
+    #[test]
+    fn production_bound_strategy_requires_research_snapshot() {
+        let mut config = config();
+        config.environment = "production".into();
+        config.api.transport = ApiTransport::Mtls;
+        config.api.tls = Some(TlsPaths {
+            certificate_chain: "server.pem".into(),
+            private_key: "server.key".into(),
+            client_ca: "clients.pem".into(),
+        });
+        config.api.operators.insert(
+            "ops".into(),
+            OperatorConfig {
+                permission: Permission::Admin,
+                certificate: "ops.pem".into(),
+            },
+        );
+        config.workers.push(WorkerConfig {
+            id: "strategy-main".into(),
+            role: WorkerRole::Strategy,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("binance".into()),
+            endpoint: None,
+            symbols: vec!["BTCUSDT.BINANCE".into()],
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        config.strategy.account_id = Some("main".into());
+        config.strategy.venue_id = Some("binance".into());
+        config.strategy.instrument = Some("BTCUSDT.BINANCE".into());
+        assert!(config.validate().is_err());
+
+        config.strategy.research_snapshot_required = true;
+        config.strategy.research_snapshot_path = Some("research.json".into());
+        config.strategy.research_data_fingerprint = Some("bars-sha256".into());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn research_snapshot_required_rejects_missing_path() {
+        let mut config = config();
+        config.strategy.research_snapshot_required = true;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn c_abi_strategy_requires_digest_and_exclusive_source() {
+        let mut config = config();
+        config.strategy.c_abi_library = Some("strategy.dll".into());
+        assert!(config.validate().is_err());
+
+        config.strategy.c_abi_sha256 = Some("ab".repeat(32));
+        assert!(config.validate().is_ok());
+
+        config.strategy.python_module = Some("example_strategy".into());
+        assert!(config.validate().is_err());
+
+        config.strategy.python_module = None;
+        config.strategy.c_abi_ed25519_public_key = Some("00".repeat(32));
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn production_c_abi_strategy_requires_detached_signature() {
+        let mut config = config();
+        config.environment = "production".into();
+        config.api.transport = ApiTransport::Mtls;
+        config.api.tls = Some(TlsPaths {
+            certificate_chain: "server.pem".into(),
+            private_key: "server.key".into(),
+            client_ca: "clients.pem".into(),
+        });
+        config.api.operators.insert(
+            "ops".into(),
+            OperatorConfig {
+                permission: Permission::Admin,
+                certificate: "ops.pem".into(),
+            },
+        );
+        config.strategy.c_abi_library = Some("strategy.dll".into());
+        config.strategy.c_abi_sha256 = Some("ab".repeat(32));
+        assert!(config.validate().is_err());
+        config.strategy.c_abi_ed25519_public_key = Some("00".repeat(32));
+        config.strategy.c_abi_ed25519_signature = Some("00".repeat(64));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn production_external_strategy_requires_artifact_lock() {
+        let mut config = config();
+        config.environment = "production".into();
+        config.api.transport = ApiTransport::Mtls;
+        config.api.tls = Some(TlsPaths {
+            certificate_chain: "server.pem".into(),
+            private_key: "server.key".into(),
+            client_ca: "clients.pem".into(),
+        });
+        config.api.operators.insert(
+            "ops".into(),
+            OperatorConfig {
+                permission: Permission::Admin,
+                certificate: "ops.pem".into(),
+            },
+        );
+        config.strategy.python_module = Some("strategy.production".into());
+        let error = config.validate().unwrap_err();
+        assert!(error.contains("strategy_artifact_sha256"));
+        config.strategy.strategy_artifact_sha256 = Some("00".repeat(32));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn multi_strategy_instances_are_bound_to_workers_and_jobs_can_select_them() {
+        let mut config = config();
+        config.workers.push(WorkerConfig {
+            id: "strategy-alpha".into(),
+            role: WorkerRole::Strategy,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("okx".into()),
+            endpoint: None,
+            symbols: vec!["BTC/USDT.OKX".into()],
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        config.strategies.push(StrategyRuntimeConfig {
+            id: Some("strategy-alpha".into()),
+            version: "alpha-v1".into(),
+            max_orders: 10,
+            account_id: Some("main".into()),
+            venue_id: Some("okx".into()),
+            instrument: Some("BTC/USDT.OKX".into()),
+            target_qty: 0,
+            target_snapshot_path: None,
+            research_snapshot_path: None,
+            research_snapshot_required: false,
+            research_data_fingerprint: None,
+            product: None,
+            margin_mode: None,
+            position_mode: None,
+            leverage: None,
+            allow_short: None,
+            python_module: None,
+            transport: StrategyTransport::Jsonl,
+            shared_memory_capacity: default_strategy_shared_memory_capacity(),
+            shared_memory_slot_bytes: default_strategy_shared_memory_slot_bytes(),
+            python_timeout_ms: default_strategy_python_timeout_ms(),
+            external_executable: None,
+            strategy_artifact_sha256: None,
+            external_args: Vec::new(),
+            external_env: BTreeMap::new(),
+            c_abi_library: None,
+            c_abi_sha256: None,
+            c_abi_max_library_bytes: default_strategy_c_abi_max_library_bytes(),
+            c_abi_ed25519_public_key: None,
+            c_abi_ed25519_signature: None,
+        });
+        config.validate().unwrap();
+        assert_eq!(
+            config
+                .strategy_for_worker("strategy-alpha")
+                .unwrap()
+                .version,
+            "alpha-v1"
+        );
+        assert!(config.strategy_for_worker("strategy-missing").is_err());
+    }
+
+    #[test]
+    fn strategy_process_configuration_is_exclusive_and_validated() {
+        let mut config = config();
+        config.strategy.python_module = Some("demo_strategy".into());
+        config.strategy.external_executable = Some("strategy.exe".into());
+        assert!(config.validate().is_err());
+
+        config.strategy.python_module = None;
+        config.strategy.external_executable = Some("strategy.exe".into());
+        config.strategy.external_args = vec!["--mode".into(), "jsonl".into()];
+        config
+            .strategy
+            .external_env
+            .insert("QX_MODE".into(), "paper".into());
+        assert!(config.validate().is_ok());
+        config
+            .strategy
+            .external_env
+            .insert("EXCHANGE_API_KEY".into(), "must-not-pass".into());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn segmented_event_log_storage_configuration_is_positive_and_optional() {
+        let mut config = config();
+        assert_eq!(config.storage.event_log_segment_events, None);
+        config.storage.event_log_segment_events = Some(1024);
+        assert!(config.validate().is_ok());
+        config.storage.event_log_segment_events = Some(0);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn messaging_worker_requires_valid_runtime_contract() {
+        let mut relay_config = config();
+        relay_config.workers.push(WorkerConfig {
+            id: "outbox-relay".into(),
+            role: WorkerRole::OutboxRelay,
+            enabled: true,
+            account_id: None,
+            venue_id: None,
+            endpoint: None,
+            symbols: Vec::new(),
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        assert!(relay_config.validate().is_err());
+        relay_config.messaging.enabled = true;
+        assert!(relay_config.validate().is_ok());
+        relay_config.messaging.relay_batch_size = 0;
+        assert!(relay_config.validate().is_err());
+        relay_config.messaging.relay_batch_size = 100;
+        relay_config.messaging.worker_stale_after_ms = 0;
+        assert!(relay_config.validate().is_err());
+
+        let mut consumer = config();
+        consumer.messaging.enabled = true;
+        consumer.messaging.consumer_stream = Some("QIANXING_EVENTS".into());
+        consumer.messaging.consumer_name = Some("ledger-reducer".into());
+        consumer.messaging.consumer_group_id = Some("ledger-reducer".into());
+        consumer.messaging.consumer_handler_executable = Some("python".into());
+        consumer.workers.push(WorkerConfig {
+            id: "ledger-reducer".into(),
+            role: WorkerRole::EventConsumer,
+            enabled: true,
+            account_id: None,
+            venue_id: None,
+            endpoint: None,
+            symbols: Vec::new(),
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        assert!(consumer.validate().is_ok());
+        consumer.messaging.consumer_handler_timeout_ms = 0;
+        assert!(consumer.validate().is_err());
+    }
+
+    #[test]
+    fn worker_ids_are_safe_for_runtime_artifact_names() {
+        let mut invalid = config();
+        invalid.messaging.enabled = true;
+        invalid.workers.push(WorkerConfig {
+            id: "relay/primary".into(),
+            role: WorkerRole::OutboxRelay,
+            enabled: true,
+            account_id: None,
+            venue_id: None,
+            endpoint: None,
+            symbols: Vec::new(),
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn postgres_storage_requires_secret_manager_environment_name() {
+        let mut config = config();
+        config.storage.backend = StorageBackend::Postgres;
+        assert!(config.validate().is_err());
+        config.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
+        assert!(config.validate().is_ok());
+        config.storage.postgres_pool_size = 0;
+        assert!(config.validate().is_err());
+        config.storage.postgres_pool_size = 8;
+        assert!(config.validate().is_ok());
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(!json.contains("postgresql://"));
+    }
+
+    #[test]
+    fn binance_private_workers_require_one_valid_credential_source() {
+        let mut invalid = config();
+        invalid.workers.push(WorkerConfig {
+            id: "user".into(),
+            role: WorkerRole::UserStream,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("binance-testnet".into()),
+            endpoint: Some("wss://ws-api.testnet.binance.vision/ws-api/v3".into()),
+            symbols: Vec::new(),
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        assert!(invalid.validate().is_err());
+        invalid.workers.last_mut().unwrap().credential_env = Some(CredentialEnv {
+            api_key: "QX_BINANCE_TESTNET_API_KEY".into(),
+            secret: "QX_BINANCE_TESTNET_API_SECRET".into(),
+        });
+        assert!(invalid.validate().is_ok());
+        invalid.workers.last_mut().unwrap().credential_files = Some(CredentialFiles {
+            api_key: "/run/secrets/api-key".into(),
+            secret: "/run/secrets/secret".into(),
+        });
+        assert!(invalid.validate().is_err());
+        invalid.workers.last_mut().unwrap().credential_env = None;
+        assert!(invalid.validate().is_ok());
+        invalid.workers.last_mut().unwrap().credential_files = None;
+        invalid.workers.last_mut().unwrap().credential_env = Some(CredentialEnv {
+            api_key: "QX-BAD".into(),
+            secret: "QX_SECRET".into(),
+        });
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn execution_worker_requires_account_venue_and_credentials() {
+        let mut config = config();
+        config.workers.push(WorkerConfig {
+            id: "execution".into(),
+            role: WorkerRole::Execution,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("binance-testnet".into()),
+            endpoint: None,
+            symbols: Vec::new(),
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        assert!(config.validate().is_err());
+        config.workers.last_mut().unwrap().credential_env = Some(CredentialEnv {
+            api_key: "QX_BINANCE_TESTNET_API_KEY".into(),
+            secret: "QX_BINANCE_TESTNET_API_SECRET".into(),
+        });
+        config.workers.last_mut().unwrap().instrument_spec_path = Some("market-spec.json".into());
+        assert!(config.validate().is_ok());
+        config.workers.last_mut().unwrap().credential_env = None;
+        config.workers.last_mut().unwrap().credential_files = Some(CredentialFiles {
+            api_key: "/run/secrets/api-key".into(),
+            secret: "/run/secrets/secret".into(),
+        });
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn execution_risk_limits_require_a_frozen_instrument_spec() {
+        let mut config = config();
+        config.workers.push(WorkerConfig {
+            id: "paper-execution".into(),
+            role: WorkerRole::Execution,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("paper".into()),
+            endpoint: None,
+            symbols: Vec::new(),
+            settlement_currency: Some("USDT".into()),
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: Some(1_000),
+            max_position_notional_raw: None,
+        });
+        assert!(config.validate().is_err());
+        config.workers.last_mut().unwrap().instrument_spec_path = Some("market-spec.json".into());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn strategy_binding_requires_a_matching_enabled_worker_and_nonnegative_target() {
+        let mut config = config();
+        config.strategy.account_id = Some("main".into());
+        config.strategy.venue_id = Some("paper".into());
+        config.strategy.instrument = Some("BTCUSDT.BINANCE".into());
+        assert!(config.validate().is_err());
+
+        config.workers.push(WorkerConfig {
+            id: "strategy".into(),
+            role: WorkerRole::Strategy,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("paper".into()),
+            endpoint: None,
+            symbols: vec!["BTCUSDT.BINANCE".into()],
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        assert!(config.validate().is_ok());
+        config.strategy.target_qty = -1;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn strategy_target_snapshot_is_bound_to_runtime_version_and_time() {
+        let snapshot = StrategyTargetSnapshot {
+            schema_version: StrategyTargetSnapshot::SCHEMA_VERSION,
+            strategy_version: "strategy-runtime-v1".into(),
+            data_fingerprint: "data-1".into(),
+            as_of: 10,
+            targets: BTreeMap::from([("BTCUSDT.BINANCE".into(), 1)]),
+        };
+        assert!(snapshot.validate_for("strategy-runtime-v1", 10).is_ok());
+        assert!(snapshot.validate_for("strategy-runtime-v2", 10).is_err());
+        assert!(snapshot.validate_for("strategy-runtime-v1", 9).is_err());
+    }
+
+    #[test]
+    fn health_snapshot_detects_stale_ready_service() {
+        let mut health = HealthRegistry::default();
+        health.register("market", WorkerRole::MarketData).unwrap();
+        health.heartbeat("market", 10).unwrap();
+        assert_eq!(health.snapshot(20, 100).overall, OverallHealth::Ready);
+        assert_eq!(health.snapshot(200, 100).overall, OverallHealth::Degraded);
+    }
+
+    #[test]
+    fn supervisor_registers_only_enabled_workers_and_exposes_shutdown() {
+        let mut config = config();
+        config.workers.push(WorkerConfig {
+            id: "disabled".into(),
+            role: WorkerRole::Scheduler,
+            enabled: false,
+            account_id: None,
+            venue_id: None,
+            endpoint: None,
+            symbols: Vec::new(),
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        let supervisor = RuntimeSupervisor::new(config).unwrap();
+        assert_eq!(
+            supervisor
+                .health()
+                .lock()
+                .unwrap()
+                .snapshot(0, 100)
+                .services
+                .len(),
+            2
+        );
+        assert!(!supervisor.is_shutdown_requested());
+        supervisor.request_shutdown();
+        assert!(supervisor.is_shutdown_requested());
+    }
+
+    #[test]
+    fn supervisor_runs_worker_and_records_terminal_state() {
+        let supervisor = RuntimeSupervisor::new(config()).unwrap();
+        let worker = supervisor
+            .spawn_worker("market", |context| {
+                context.heartbeat(10)?;
+                assert!(!context.should_stop());
+                Ok(())
+            })
+            .unwrap();
+        assert!(worker.join().unwrap().is_ok());
+        supervisor
+            .health()
+            .lock()
+            .unwrap()
+            .mark("api", ServiceStatus::Stopped, "test", None)
+            .unwrap();
+        let snapshot = supervisor.health().lock().unwrap().snapshot(10, 100);
+        assert_eq!(snapshot.overall, OverallHealth::Stopped);
+        assert_eq!(snapshot.services[0].status, ServiceStatus::Stopped);
+    }
+
+    #[test]
+    fn supervisor_converts_worker_panic_to_failed_health() {
+        let supervisor = RuntimeSupervisor::new(config()).unwrap();
+        let worker = supervisor
+            .spawn_worker("market", |_context| -> Result<(), String> {
+                panic!("injected worker panic");
+            })
+            .unwrap();
+        assert!(worker.join().unwrap().is_err());
+        supervisor
+            .health()
+            .lock()
+            .unwrap()
+            .mark("api", ServiceStatus::Stopped, "test", None)
+            .unwrap();
+        assert_eq!(
+            supervisor.health().lock().unwrap().snapshot(0, 100).overall,
+            OverallHealth::Failed
+        );
     }
 }
