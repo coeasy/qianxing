@@ -1,0 +1,108 @@
+name: One-shot scheduler path contract refactor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/scheduler-path-refactor.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-scheduler-path-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply exact scheduler path refactor
+        shell: python
+        run: |
+          from pathlib import Path
+
+          main_path = Path("crates/qx-cli/src/main.rs")
+          source = main_path.read_text(encoding="utf-8")
+
+          old_jobs = '''fn scheduler_jobs_path(root: &Path, configured: &str) -> std::path::PathBuf {
+              let candidate = runtime_path(root, configured);
+              if candidate.exists() {
+                  candidate
+              } else {
+                  Path::new(configured).to_path_buf()
+              }
+          }'''
+          new_jobs = '''fn scheduler_jobs_path(runtime_config_path: &Path, configured: &str) -> PathBuf {
+              resolve_runtime_relative_path(runtime_config_path, configured)
+          }'''
+          if source.count(old_jobs) != 1:
+              raise SystemExit("expected unique scheduler_jobs_path block not found")
+          source = source.replace(old_jobs, new_jobs, 1)
+
+          old_sig = '''fn load_scheduler_state(
+              config: &RuntimeConfig,
+              root: &Path,
+          ) -> Result<(JsonStateStore, Scheduler, std::path::PathBuf), String> {'''
+          new_sig = '''fn load_scheduler_state(
+              config: &RuntimeConfig,
+              root: &Path,
+              runtime_config_path: &Path,
+          ) -> Result<(JsonStateStore, Scheduler, PathBuf), String> {'''
+          if source.count(old_sig) != 1:
+              raise SystemExit("expected unique load_scheduler_state signature not found")
+          source = source.replace(old_sig, new_sig, 1)
+
+          old_call = '''        let jobs_path = scheduler_jobs_path(root, &config.scheduler.jobs_path);'''
+          new_call = '''        let jobs_path = scheduler_jobs_path(runtime_config_path, &config.scheduler.jobs_path);'''
+          if source.count(old_call) != 1:
+              raise SystemExit("expected unique scheduler_jobs_path call not found")
+          source = source.replace(old_call, new_call, 1)
+          main_path.write_text(source, encoding="utf-8")
+
+          workers_path = Path("crates/qx-cli/src/workers.rs")
+          workers = workers_path.read_text(encoding="utf-8")
+          old_worker_call = '''load_scheduler_state(&config, &root)?'''
+          new_worker_call = '''load_scheduler_state(&config, &root, path)?'''
+          if workers.count(old_worker_call) != 2:
+              raise SystemExit(f"expected 2 worker scheduler-state calls, found {workers.count(old_worker_call)}")
+          workers_path.write_text(workers.replace(old_worker_call, new_worker_call), encoding="utf-8")
+
+          replacements = {
+              Path("deploy/qianxing.runtime.production.example.json"): (
+                  '"jobs_path": "deploy/qianxing.scheduler.jobs.example.json"',
+                  '"jobs_path": "qianxing.scheduler.jobs.example.json"',
+              ),
+              Path("deploy/qianxing.runtime.paper-strategy.example.json"): (
+                  '"jobs_path": "deploy/qianxing.scheduler.paper-order-smoke.json"',
+                  '"jobs_path": "qianxing.scheduler.paper-order-smoke.json"',
+              ),
+              Path("deploy/qianxing.runtime.example.json"): (
+                  '"jobs_path": "deploy/qianxing.scheduler.jobs.example.json"',
+                  '"jobs_path": "qianxing.scheduler.jobs.example.json"',
+              ),
+          }
+          for path, (old, new) in replacements.items():
+              text = path.read_text(encoding="utf-8")
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected unique jobs_path in {path}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+      - name: Format
+        run: cargo fmt --all
+      - name: Verify scheduler and runtime path contracts
+        run: |
+          cargo test -p qx-cli runtime_relative_paths_resolve_from_runtime_config_directory
+          cargo run -p qx-cli --features sqlite -- runtime-check deploy/qianxing.runtime.example.json
+          cargo run -p qx-cli --features sqlite -- runtime-check deploy/qianxing.runtime.production.example.json
+          cargo run -p qx-cli --features sqlite -- runtime-check deploy/qianxing.runtime.paper-strategy.example.json
+          cargo run -p qx-cli --features sqlite -- paper-e2e deploy/qianxing.runtime.paper-strategy.example.json
+      - name: Commit verified scheduler path refactor
+        run: |
+          git config user.name "qianxing-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add crates/qx-cli/src/main.rs crates/qx-cli/src/workers.rs deploy/qianxing.runtime.example.json deploy/qianxing.runtime.production.example.json deploy/qianxing.runtime.paper-strategy.example.json
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: unify runtime-relative scheduler asset paths [scheduler-path]"
+          git push origin HEAD:main
