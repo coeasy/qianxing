@@ -162,7 +162,10 @@ impl RuntimeResearchBinding {
 impl StrategyContext {
     /// Verify that this strategy decision context is backed by one resolved,
     /// immutable dataset and the exact factor plan compiled for that dataset.
-    pub fn validate_research_binding(&self, binding: &RuntimeResearchBinding) -> Result<(), String> {
+    pub fn validate_research_binding(
+        &self,
+        binding: &RuntimeResearchBinding,
+    ) -> Result<(), String> {
         binding.validate_for_strategy_context(self)
     }
 }

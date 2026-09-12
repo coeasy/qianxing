@@ -14,8 +14,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+mod data_binding;
 mod pipeline;
 
+pub use data_binding::{RuntimeDatasetBinding, RuntimeResearchBinding};
 pub use pipeline::{
     order_from_submit_command, pipeline_path, LiveEventPipeline, LivePipelineSnapshot,
     PipelineMetricsSnapshot, RuntimeBalanceDiscrepancy, RuntimeEventEnvelope, RuntimeExternalEvent,

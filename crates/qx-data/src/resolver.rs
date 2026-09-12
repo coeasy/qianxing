@@ -74,7 +74,8 @@ mod tests {
         let resolved = DatasetResolver::resolve(&registry, &reference).unwrap();
         assert_eq!(resolved.fingerprint, "abc");
         assert_eq!(
-            serde_json::from_str::<DatasetRef>(&serde_json::to_string(&reference).unwrap()).unwrap(),
+            serde_json::from_str::<DatasetRef>(&serde_json::to_string(&reference).unwrap())
+                .unwrap(),
             reference
         );
     }
