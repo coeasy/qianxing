@@ -1,0 +1,98 @@
+name: V8 CLI Correctness Refactor
+
+on:
+  push:
+    branches:
+      - refactor/quant-system-v8
+    paths:
+      - .github/workflows/v8-cli-correctness.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/quant-system-v8
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Fix cross-platform runtime paths and paper fixture assets
+        shell: python
+        run: |
+          import re
+          from pathlib import Path
+
+          path = Path('crates/qx-cli/src/main.rs')
+          text = path.read_text(encoding='utf-8')
+
+          pattern = re.compile(
+              r'fn resolve_runtime_relative_path\(runtime_path: &Path, configured: &str\) -> PathBuf \{.*?\n\}',
+              re.S,
+          )
+          replacement = r'''fn resolve_runtime_relative_path(runtime_path: &Path, configured: &str) -> PathBuf {
+              let path = Path::new(configured);
+              let bytes = configured.as_bytes();
+              let windows_drive_absolute = bytes.len() >= 3
+                  && bytes[0].is_ascii_alphabetic()
+                  && bytes[1] == b':'
+                  && matches!(bytes[2], b'/' | b'\\');
+              let unc_absolute = configured.starts_with("\\\\") || configured.starts_with("//");
+              if path.is_absolute() || windows_drive_absolute || unc_absolute {
+                  path.to_path_buf()
+              } else {
+                  runtime_path
+                      .parent()
+                      .unwrap_or_else(|| Path::new("."))
+                      .join(path)
+              }
+          }'''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'expected one runtime path helper, got {count}')
+
+          marker = '''        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+                  config.scheduler.jobs_path = workspace_root'''
+          if marker not in text:
+              raise SystemExit('paper e2e workspace marker not found')
+          insertion = '''        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+                  if let Some(execution) = config
+                      .workers
+                      .iter_mut()
+                      .find(|worker| worker.role == WorkerRole::Execution && worker.venue_id.as_deref() == Some("paper"))
+                  {
+                      execution.instrument_spec_path = Some(
+                          workspace_root
+                              .join("deploy")
+                              .join("qianxing.binance.spot.spec.json")
+                              .to_string_lossy()
+                              .into_owned(),
+                      );
+                  }
+                  config.scheduler.jobs_path = workspace_root'''
+          text = text.replace(marker, insertion, 1)
+          path.write_text(text, encoding='utf-8')
+      - name: Format
+        run: cargo fmt --all
+      - name: Verify CLI regression tests
+        run: >-
+          cargo test -p qx-cli
+          runtime_relative_paths_resolve_from_runtime_config_directory
+          -- --exact
+      - name: Verify Paper E2E regression
+        run: >-
+          cargo test -p qx-cli
+          paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger
+          -- --exact
+      - name: Verify full CLI tests
+        run: cargo test -p qx-cli
+      - name: Commit corrections
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add crates/qx-cli/src/main.rs
+          git commit -m "fix(cli): make runtime paths portable and keep paper fixture valid"
+          git push origin HEAD:refactor/quant-system-v8
