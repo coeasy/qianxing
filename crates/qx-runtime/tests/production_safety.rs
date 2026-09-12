@@ -47,7 +47,10 @@ fn production_execution_requires_explicit_order_and_position_notional_limits() {
         let error = config
             .validate()
             .expect_err("production execution without explicit notional limits must fail closed");
-        assert!(error.contains(field), "unexpected validation error: {error}");
+        assert!(
+            error.contains(field),
+            "unexpected validation error: {error}"
+        );
     }
 }
 
