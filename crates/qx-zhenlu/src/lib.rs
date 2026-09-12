@@ -69,11 +69,55 @@ impl RiskContext {
         {
             return Err(QxError::BusinessViolation("订单名义额超过账户限额".into()));
         }
-        if self
-            .max_position_notional_raw
-            .is_some_and(|limit| position.gross_notional.saturating_add(notional) > limit)
-        {
-            return Err(QxError::BusinessViolation("持仓名义额超过账户限额".into()));
+
+        let signed_delta = match order.side {
+            Side::Buy => order.qty.raw(),
+            Side::Sell => order
+                .qty
+                .raw()
+                .checked_neg()
+                .ok_or_else(|| QxError::Invariant("订单数量取反溢出".into()))?,
+        };
+        let projected_net_qty = position
+            .net_qty
+            .checked_add(signed_delta)
+            .ok_or_else(|| QxError::Invariant("投影持仓数量溢出".into()))?;
+
+        if policy.reduce_only {
+            let current_abs = position
+                .net_qty
+                .checked_abs()
+                .ok_or_else(|| QxError::Invariant("当前持仓绝对值溢出".into()))?;
+            let reduces_direction = (position.net_qty > 0 && order.side == Side::Sell)
+                || (position.net_qty < 0 && order.side == Side::Buy);
+            if current_abs == 0 || !reduces_direction || order.qty.raw() > current_abs {
+                return Err(QxError::BusinessViolation(
+                    "reduce_only 订单必须只减少现有持仓且不得反向穿仓".into(),
+                ));
+            }
+        }
+
+        if let Some(limit) = self.max_position_notional_raw {
+            let current_abs = position
+                .net_qty
+                .checked_abs()
+                .ok_or_else(|| QxError::Invariant("当前持仓绝对值溢出".into()))?;
+            let projected_abs = projected_net_qty
+                .checked_abs()
+                .ok_or_else(|| QxError::Invariant("投影持仓绝对值溢出".into()))?;
+            let current_instrument_notional = spec.notional(current_abs, price.raw())?;
+            let projected_instrument_notional = spec.notional(projected_abs, price.raw())?;
+            let other_notional = position
+                .gross_notional
+                .saturating_sub(current_instrument_notional);
+            let projected_gross_notional = other_notional
+                .checked_add(projected_instrument_notional)
+                .ok_or_else(|| QxError::Invariant("投影持仓名义额溢出".into()))?;
+            if projected_gross_notional > limit {
+                return Err(QxError::BusinessViolation(
+                    "投影持仓名义额超过账户限额".into(),
+                ));
+            }
         }
         if let Some(available) = self.available_margin_raw {
             if available < 0 {
@@ -169,10 +213,21 @@ impl RiskRule for MaxNotionalRule {
             .limit
             .or(reference_price)
             .ok_or_else(|| QxError::BusinessViolation("市价单缺少名义额风控参考价".into()))?;
-        let add = (o.qty.raw().saturating_mul(px.raw()) / 1_000_000_000)
-            .saturating_mul(pos.multiplier.max(1));
-        if pos.gross_notional + add > self.max_notional {
-            return Err(QxError::BusinessViolation("超过最大名义额".into()));
+        let signed_delta = match o.side {
+            Side::Buy => o.qty.raw(),
+            Side::Sell => o.qty.raw().saturating_neg(),
+        };
+        let projected_qty = pos.net_qty.saturating_add(signed_delta);
+        let current_abs = pos.net_qty.saturating_abs();
+        let projected_abs = projected_qty.saturating_abs();
+        let multiplier = pos.multiplier.max(1);
+        let current_notional =
+            (current_abs.saturating_mul(px.raw()) / 1_000_000_000).saturating_mul(multiplier);
+        let projected_notional =
+            (projected_abs.saturating_mul(px.raw()) / 1_000_000_000).saturating_mul(multiplier);
+        let other_notional = pos.gross_notional.saturating_sub(current_notional);
+        if other_notional.saturating_add(projected_notional) > self.max_notional {
+            return Err(QxError::BusinessViolation("投影持仓超过最大名义额".into()));
         }
         Ok(())
     }
