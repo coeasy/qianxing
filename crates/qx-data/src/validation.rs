@@ -37,7 +37,9 @@ pub fn validate_bars(bars: &[Bar]) -> ValidationReport {
             continue;
         }
         if bar.volume_raw < 0 {
-            report.errors.push(format!("row {index}: volume must be non-negative"));
+            report
+                .errors
+                .push(format!("row {index}: volume must be non-negative"));
         }
         if bar.high_raw < bar.low_raw
             || bar.high_raw < bar.open_raw
@@ -45,7 +47,9 @@ pub fn validate_bars(bars: &[Bar]) -> ValidationReport {
             || bar.low_raw > bar.open_raw
             || bar.low_raw > bar.close_raw
         {
-            report.errors.push(format!("row {index}: invalid OHLC range"));
+            report
+                .errors
+                .push(format!("row {index}: invalid OHLC range"));
         }
         if let Some(previous) = last_timestamp.insert(bar.instrument.as_str(), bar.timestamp) {
             if previous >= bar.timestamp {
