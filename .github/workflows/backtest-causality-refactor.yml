@@ -1,0 +1,80 @@
+name: One-shot backtest causality refactor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/backtest-causality-refactor.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-backtest-causality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply exact pre-trade causality refactor
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("crates/qx-xingban/src/backtest.rs")
+          source = path.read_text(encoding="utf-8")
+
+          old_reference = '''                        let reference_price = order.limit.map(|p| p.raw()).unwrap_or(bar.close);
+                          let order_qty = checked_abs(order.qty.raw())?;'''
+          new_reference = '''                        // Strategy decisions at Bar(t) only observe data through Bar(t-1).
+                          // Pre-trade risk and margin therefore must use the last visible mark,
+                          // never the current bar close, which is future information at decision time.
+                          let visible_close = bars[i - 1].close;
+                          let reference_price = order.limit.map(|p| p.raw()).unwrap_or(visible_close);
+                          let order_qty = checked_abs(order.qty.raw())?;'''
+          if source.count(old_reference) != 1:
+              raise SystemExit("expected unique market-order reference-price block not found")
+          source = source.replace(old_reference, new_reference, 1)
+
+          old_marks = '''                        let marks = std::collections::BTreeMap::from([(
+                              instrument.clone(),
+                              Price::from_raw(bar.close),
+                          )]);'''
+          new_marks = '''                        let marks = std::collections::BTreeMap::from([(
+                              instrument.clone(),
+                              Price::from_raw(visible_close),
+                          )]);'''
+          if source.count(old_marks) != 1:
+              raise SystemExit("expected unique pre-trade equity marks block not found")
+          source = source.replace(old_marks, new_marks, 1)
+
+          old_gross = '''                                checked_abs(bar.close)?,
+                                  multiplier,
+                              )?;
+                              if matches!(order.status, OrderStatus::PendingSubmit) {'''
+          new_gross = '''                                checked_abs(visible_close)?,
+                                  multiplier,
+                              )?;
+                              if matches!(order.status, OrderStatus::PendingSubmit) {'''
+          if source.count(old_gross) != 1:
+              raise SystemExit("expected unique pre-trade gross-notional mark block not found")
+          source = source.replace(old_gross, new_gross, 1)
+
+          path.write_text(source, encoding="utf-8")
+      - name: Format
+        run: cargo fmt --all
+      - name: Verify backtest causality and regression suite
+        run: |
+          cargo test -p qx-xingban --test no_lookahead
+          cargo test -p qx-xingban
+      - name: Commit verified backtest causality refactor
+        run: |
+          git config user.name "qianxing-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add crates/qx-xingban/src/backtest.rs
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: remove current-bar close lookahead from pre-trade risk [backtest-causality]"
+          git push origin HEAD:main
