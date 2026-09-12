@@ -1,0 +1,48 @@
+name: V8 One-time Source Normalization
+
+on:
+  push:
+    branches:
+      - refactor/quant-system-v8
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/quant-system-v8
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Normalize fee multiplier semantics
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('crates/qx-xingban/src/backtest.rs')
+          text = path.read_text(encoding='utf-8')
+          old = '''        let fee_price_multiplier = derivative_spec
+              .map(|spec| spec.contract_size)
+              .unwrap_or(multiplier);'''
+          new = '''        let fee_price_multiplier = derivative_spec
+              .map(|spec| spec.contract_size)
+              .unwrap_or_else(|| multiplier.saturating_mul(qx_core::SCALE));'''
+          if old not in text:
+              raise SystemExit('expected fee multiplier block not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+      - name: Format workspace
+        run: cargo fmt --all
+      - name: Commit normalized sources
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add crates/qx-xingban/src/backtest.rs crates/qx-xingban/src/venue.rs crates/qx-guanxing/src/lib.rs
+          git commit -m "fix(backtest): normalize fee scale and formatting"
+          git push origin HEAD:refactor/quant-system-v8
