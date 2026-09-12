@@ -3,15 +3,23 @@
 //! Data providers are kept outside the runtime kernel. All external sources
 //! must be converted into canonical schemas before entering research/runtime.
 
-pub mod schema;
+pub mod cache;
+pub mod calendar;
 pub mod catalog;
-pub mod validation;
-pub mod provider;
-pub mod storage;
+pub mod corporate_action;
+pub mod incremental;
 pub mod pipeline;
+pub mod provider;
+pub mod schema;
+pub mod storage;
+pub mod validation;
 
+pub use cache::{CacheKey, DataCache};
+pub use calendar::{TradingCalendar, TradingSession};
 pub use catalog::DatasetManifest;
-pub use schema::{Bar, DataSchemaVersion};
-pub use validation::ValidationReport;
-pub use storage::{DataStorage, MemoryDataStorage};
+pub use corporate_action::{CorporateAction, CorporateActionType};
+pub use incremental::{merge_bars, IncrementalMergeReport};
 pub use pipeline::{process_bars, DataPipelineReport};
+pub use schema::{Bar, DataSchemaVersion};
+pub use storage::{DataStorage, MemoryDataStorage};
+pub use validation::ValidationReport;
