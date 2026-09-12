@@ -1,0 +1,373 @@
+name: V8 Replayable L1 Market Facts
+
+on:
+  push:
+    branches:
+      - refactor/quant-system-v8
+    paths:
+      - .github/workflows/v8-l1-runtime.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/quant-system-v8
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Add complete L1 facts without changing legacy quote digest
+        shell: python
+        run: |
+          from pathlib import Path
+
+          event = Path('crates/qx-core/src/event.rs')
+          text = event.read_text(encoding='utf-8')
+          old = '''    MarketQuote {
+                  instrument: InstrumentId,
+                  bid: Price,
+                  ask: Price,
+              },'''
+          new = old + '''
+              /// 可执行 L1 报价事实。与历史 MarketQuote 并存，避免改变旧日志摘要；
+              /// Paper/Live 执行只允许使用该完整事实，不得凭空补流动性。
+              MarketQuoteL1 {
+                  instrument: InstrumentId,
+                  bid: Price,
+                  bid_qty: Quantity,
+                  ask: Price,
+                  ask_qty: Quantity,
+                  /// 供应商业务发生时间，独立于单调化后的 engine time。
+                  source_ts: u64,
+              },'''
+          if text.count(old) != 1:
+              raise SystemExit('legacy EventKind::MarketQuote definition not found exactly once')
+          text = text.replace(old, new, 1)
+          digest_old = '''            EventKind::MarketQuote {
+                          instrument,
+                          bid,
+                          ask,
+                      } => {
+                          h.write_u64(7);
+                          h.write_text(&instrument.to_string());
+                          h.write_i128(bid.raw());
+                          h.write_i128(ask.raw());
+                      }'''
+          digest_new = digest_old + '''
+                      EventKind::MarketQuoteL1 {
+                          instrument,
+                          bid,
+                          bid_qty,
+                          ask,
+                          ask_qty,
+                          source_ts,
+                      } => {
+                          h.write_u64(17);
+                          h.write_text(&instrument.to_string());
+                          h.write_i128(bid.raw());
+                          h.write_i128(bid_qty.raw());
+                          h.write_i128(ask.raw());
+                          h.write_i128(ask_qty.raw());
+                          h.write_u64(*source_ts);
+                      }'''
+          if text.count(digest_old) != 1:
+              raise SystemExit('legacy quote digest arm not found exactly once')
+          event.write_text(text.replace(digest_old, digest_new, 1), encoding='utf-8')
+
+          pipeline = Path('crates/qx-runtime/src/pipeline.rs')
+          text = pipeline.read_text(encoding='utf-8')
+          text = text.replace(
+              'QxError, QxResult, ReplayVerifier, TradingInstrumentSpec,',
+              'Quantity, QxError, QxResult, ReplayVerifier, TradingInstrumentSpec,',
+              1,
+          )
+          ext_old = '''    MarketQuote {
+                  instrument: InstrumentId,
+                  bid: Price,
+                  ask: Price,
+              },'''
+          ext_new = ext_old + '''
+              MarketQuoteL1 {
+                  instrument: InstrumentId,
+                  bid: Price,
+                  bid_qty: Quantity,
+                  ask: Price,
+                  ask_qty: Quantity,
+              },'''
+          if text.count(ext_old) != 1:
+              raise SystemExit('RuntimeExternalEvent MarketQuote definition not found')
+          text = text.replace(ext_old, ext_new, 1)
+
+          constructor_marker = '''    pub fn venue(
+                  event: RuntimeExternalEvent,'''
+          constructor = '''    pub fn market_quote_l1(
+                  instrument: InstrumentId,
+                  bid: Price,
+                  bid_qty: Quantity,
+                  ask: Price,
+                  ask_qty: Quantity,
+                  event_ts: u64,
+                  receive_ts: u64,
+                  source_seq: u64,
+                  correlation_id: impl Into<String>,
+              ) -> Self {
+                  Self {
+                      event: RuntimeExternalEvent::MarketQuoteL1 {
+                          instrument,
+                          bid,
+                          bid_qty,
+                          ask,
+                          ask_qty,
+                      },
+                      event_ts,
+                      receive_ts,
+                      source_seq,
+                      correlation_id: correlation_id.into(),
+                  }
+              }
+
+          ''' + constructor_marker
+          if text.count(constructor_marker) != 1:
+              raise SystemExit('RuntimeEventEnvelope venue constructor marker missing')
+          text = text.replace(constructor_marker, constructor, 1)
+
+          struct_marker = '''#[derive(Clone, PartialEq, Eq, Debug)]
+          pub struct RuntimeIngestReceipt {'''
+          quote_struct = '''#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+          pub struct RuntimeTopOfBook {
+              pub bid: Price,
+              pub bid_qty: Quantity,
+              pub ask: Price,
+              pub ask_qty: Quantity,
+              pub source_ts: u64,
+              pub receive_ts: u64,
+              pub source_seq: u64,
+          }
+
+          impl RuntimeTopOfBook {
+              pub fn validate(&self) -> QxResult<()> {
+                  if self.bid.raw() <= 0 || self.ask.raw() <= 0 {
+                      return Err(QxError::BusinessViolation("L1 bid/ask 必须为正".into()));
+                  }
+                  if self.bid.raw() > self.ask.raw() {
+                      return Err(QxError::BusinessViolation("L1 报价不能 crossed".into()));
+                  }
+                  if self.bid_qty.raw() < 0 || self.ask_qty.raw() < 0 {
+                      return Err(QxError::BusinessViolation("L1 双边数量不能为负".into()));
+                  }
+                  Ok(())
+              }
+          }
+
+          ''' + struct_marker
+          if text.count(struct_marker) != 1:
+              raise SystemExit('RuntimeIngestReceipt marker missing')
+          text = text.replace(struct_marker, quote_struct, 1)
+
+          field_old = '''    marks: BTreeMap<InstrumentId, Price>,
+              account_balances:'''
+          field_new = '''    marks: BTreeMap<InstrumentId, Price>,
+              quotes: BTreeMap<InstrumentId, RuntimeTopOfBook>,
+              account_balances:'''
+          if text.count(field_old) != 1:
+              raise SystemExit('LiveEventPipeline marks field marker missing')
+          text = text.replace(field_old, field_new, 1)
+          init_old = '''            marks: BTreeMap::new(),
+                  account_balances:'''
+          init_new = '''            marks: BTreeMap::new(),
+                  quotes: BTreeMap::new(),
+                  account_balances:'''
+          if text.count(init_old) != 1:
+              raise SystemExit('LiveEventPipeline marks initializer missing')
+          text = text.replace(init_old, init_new, 1)
+          method_old = '''    pub fn marks(&self) -> &BTreeMap<InstrumentId, Price> {
+                  &self.marks
+              }
+          '''
+          method_new = method_old + '''
+              pub fn latest_quote(&self, instrument: &InstrumentId) -> Option<RuntimeTopOfBook> {
+                  self.quotes.get(instrument).copied()
+              }
+          '''
+          if text.count(method_old) != 1:
+              raise SystemExit('marks accessor missing')
+          text = text.replace(method_old, method_new, 1)
+
+          kind_old = '''            RuntimeExternalEvent::MarketQuote {
+                          instrument,
+                          bid,
+                          ask,
+                      } => (
+                          EventKind::MarketQuote {
+                              instrument: instrument.clone(),
+                              bid: *bid,
+                              ask: *ask,
+                          },
+                          Priority::MARKET,
+                      ),'''
+          kind_new = kind_old + '''
+                      RuntimeExternalEvent::MarketQuoteL1 {
+                          instrument,
+                          bid,
+                          bid_qty,
+                          ask,
+                          ask_qty,
+                      } => {
+                          let quote = RuntimeTopOfBook {
+                              bid: *bid,
+                              bid_qty: *bid_qty,
+                              ask: *ask,
+                              ask_qty: *ask_qty,
+                              source_ts: event_ts,
+                              receive_ts,
+                              source_seq,
+                          };
+                          quote.validate()?;
+                          (
+                              EventKind::MarketQuoteL1 {
+                                  instrument: instrument.clone(),
+                                  bid: *bid,
+                                  bid_qty: *bid_qty,
+                                  ask: *ask,
+                                  ask_qty: *ask_qty,
+                                  source_ts: event_ts,
+                              },
+                              Priority::MARKET,
+                          )
+                      },'''
+          if text.count(kind_old) != 1:
+              raise SystemExit('ingest quote mapping missing')
+          text = text.replace(kind_old, kind_new, 1)
+
+          apply_old = '''            RuntimeExternalEvent::MarketQuote {
+                          instrument,
+                          bid: _bid,
+                          ask,
+                      } => {
+                          staged.marks.insert(instrument, ask);
+                      }'''
+          apply_new = apply_old + '''
+                      RuntimeExternalEvent::MarketQuoteL1 {
+                          instrument,
+                          bid,
+                          bid_qty,
+                          ask,
+                          ask_qty,
+                      } => {
+                          staged.marks.insert(instrument.clone(), ask);
+                          staged.quotes.insert(
+                              instrument,
+                              RuntimeTopOfBook {
+                                  bid,
+                                  bid_qty,
+                                  ask,
+                                  ask_qty,
+                                  source_ts: event_ts,
+                                  receive_ts,
+                                  source_seq,
+                              },
+                          );
+                      }'''
+          if text.count(apply_old) != 1:
+              raise SystemExit('apply quote arm missing')
+          text = text.replace(apply_old, apply_new, 1)
+
+          rebuild_old = '''                EventKind::MarketQuote {
+                              instrument, ask, ..
+                          } => {
+                              self.marks.insert(instrument.clone(), *ask);
+                          }'''
+          rebuild_new = rebuild_old + '''
+                          EventKind::MarketQuoteL1 {
+                              instrument,
+                              bid,
+                              bid_qty,
+                              ask,
+                              ask_qty,
+                              source_ts,
+                          } => {
+                              self.marks.insert(instrument.clone(), *ask);
+                              let quote = RuntimeTopOfBook {
+                                  bid: *bid,
+                                  bid_qty: *bid_qty,
+                                  ask: *ask,
+                                  ask_qty: *ask_qty,
+                                  source_ts: *source_ts,
+                                  receive_ts: event.receive_time,
+                                  source_seq: event.source_seq,
+                              };
+                              quote.validate()?;
+                              self.quotes.insert(instrument.clone(), quote);
+                          }'''
+          if text.count(rebuild_old) != 1:
+              raise SystemExit('rebuild quote arm missing')
+          text = text.replace(rebuild_old, rebuild_new, 1)
+
+          test_marker = '''    #[test]
+              fn segmented_pipeline_reopens_with_identical_state() {'''
+          l1_test = '''    #[test]
+              fn complete_l1_quote_preserves_liquidity_and_source_time_across_restart() {
+                  let root = temp_root("l1-recover");
+                  let instrument = InstrumentId::new("BTCUSDT", VenueId::new("BINANCE"));
+                  let mut pipeline = LiveEventPipeline::open(&root, "market-l1", "USDT").unwrap();
+                  pipeline
+                      .ingest(RuntimeEventEnvelope::market_quote_l1(
+                          instrument.clone(),
+                          Price::from_i64(99),
+                          Quantity::from_i64(3),
+                          Price::from_i64(100),
+                          Quantity::from_i64(4),
+                          90,
+                          120,
+                          77,
+                          "l1-77",
+                      ))
+                      .unwrap();
+                  let quote = pipeline.latest_quote(&instrument).unwrap();
+                  assert_eq!(quote.bid_qty, Quantity::from_i64(3));
+                  assert_eq!(quote.ask_qty, Quantity::from_i64(4));
+                  assert_eq!(quote.source_ts, 90);
+                  assert_eq!(quote.receive_ts, 120);
+                  assert_eq!(quote.source_seq, 77);
+                  let restored = LiveEventPipeline::open(&root, "market-l1", "USDT").unwrap();
+                  assert_eq!(restored.latest_quote(&instrument), Some(quote));
+                  let _ = std::fs::remove_dir_all(root);
+              }
+
+          ''' + test_marker
+          if text.count(test_marker) != 1:
+              raise SystemExit('runtime test marker missing')
+          pipeline.write_text(text.replace(test_marker, l1_test, 1), encoding='utf-8')
+
+          cli = Path('crates/qx-cli/src/main.rs')
+          text = cli.read_text(encoding='utf-8')
+          old = '''RuntimeEventEnvelope::market_quote(
+                                  instrument.clone(),
+                                  quote.bid,
+                                  quote.ask,'''
+          new = '''RuntimeEventEnvelope::market_quote_l1(
+                                  instrument.clone(),
+                                  quote.bid,
+                                  quote.bid_qty,
+                                  quote.ask,
+                                  quote.ask_qty,'''
+          count = text.count(old)
+          if count < 1:
+              raise SystemExit('Binance quote ingestion call not found')
+          text = text.replace(old, new)
+          cli.write_text(text, encoding='utf-8')
+      - name: Format
+        run: cargo fmt --all
+      - name: Verify market facts and adapters
+        run: cargo test -p qx-core -p qx-runtime -p qx-adapter -p qx-cli
+      - name: Commit L1 refactor
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add crates/qx-core/src/event.rs crates/qx-runtime/src/pipeline.rs crates/qx-cli/src/main.rs
+          git commit -m "feat(runtime): persist replayable L1 liquidity facts"
+          git push origin HEAD:refactor/quant-system-v8
