@@ -19,14 +19,117 @@ pub struct PositionSnapshot {
     pub net_qty: i128,
     pub gross_notional: i128,
     pub multiplier: i128,
+    /// Hedge 模式的多头腿数量（正数）。None 表示调用方没有提供可证明快照。
+    pub long_qty: Option<i128>,
+    /// Hedge 模式的空头腿数量（负数）。None 表示调用方没有提供可证明快照。
+    pub short_qty: Option<i128>,
+}
+
+fn checked_abs_qty(value: i128) -> QxResult<i128> {
+    value
+        .checked_abs()
+        .ok_or_else(|| QxError::BusinessViolation("持仓数量绝对值溢出".into()))
+}
+
+fn signed_order_delta(order: &Order) -> QxResult<i128> {
+    let qty = order.qty.raw();
+    if qty <= 0 {
+        return Err(QxError::BusinessViolation("风控订单数量必须为正".into()));
+    }
+    match order.side {
+        Side::Buy => Ok(qty),
+        Side::Sell => qty
+            .checked_neg()
+            .ok_or_else(|| QxError::BusinessViolation("订单数量取负溢出".into())),
+    }
+}
+
+/// 返回 (当前 gross qty, 投影后 gross qty)。OneWay 以净仓绝对值为 gross；
+/// Hedge 必须提供 long/short 双腿，避免仅凭净仓把对冲账户误判成零暴露。
+fn projected_gross_qty(order: &Order, position: &PositionSnapshot) -> QxResult<(i128, i128)> {
+    let policy = order.policy.unwrap_or_default();
+    let delta = signed_order_delta(order)?;
+    if policy.position_mode == qx_core::PositionMode::Hedge {
+        let (Some(long), Some(short)) = (position.long_qty, position.short_qty) else {
+            return Err(QxError::BusinessViolation(
+                "Hedge 风控缺少 long/short 双腿持仓快照".into(),
+            ));
+        };
+        if long < 0 || short > 0 {
+            return Err(QxError::Invariant(
+                "Hedge 持仓快照方向非法：long 必须>=0 且 short 必须<=0".into(),
+            ));
+        }
+        let (projected_long, projected_short) = match policy.position_side {
+            qx_core::PositionSide::Long => (
+                long.checked_add(delta)
+                    .ok_or_else(|| QxError::Invariant("Long 投影持仓溢出".into()))?,
+                short,
+            ),
+            qx_core::PositionSide::Short => (
+                long,
+                short
+                    .checked_add(delta)
+                    .ok_or_else(|| QxError::Invariant("Short 投影持仓溢出".into()))?,
+            ),
+            qx_core::PositionSide::Net => {
+                return Err(QxError::BusinessViolation(
+                    "Hedge 模式必须指定 Long 或 Short position_side".into(),
+                ));
+            }
+        };
+        if projected_long < 0 || projected_short > 0 {
+            return Err(QxError::BusinessViolation(
+                "Hedge 订单会穿越对应持仓腿并反向开仓".into(),
+            ));
+        }
+        let current = checked_abs_qty(long)?
+            .checked_add(checked_abs_qty(short)?)
+            .ok_or_else(|| QxError::Invariant("Hedge gross qty 溢出".into()))?;
+        let projected = checked_abs_qty(projected_long)?
+            .checked_add(checked_abs_qty(projected_short)?)
+            .ok_or_else(|| QxError::Invariant("Hedge projected gross qty 溢出".into()))?;
+        if policy.reduce_only && projected >= current {
+            return Err(QxError::BusinessViolation(
+                "reduce-only Hedge 订单必须严格降低对应腿暴露".into(),
+            ));
+        }
+        return Ok((current, projected));
+    }
+
+    let projected = position
+        .net_qty
+        .checked_add(delta)
+        .ok_or_else(|| QxError::Invariant("OneWay 投影持仓溢出".into()))?;
+    let current_abs = checked_abs_qty(position.net_qty)?;
+    let projected_abs = checked_abs_qty(projected)?;
+    if policy.reduce_only {
+        if position.net_qty == 0
+            || position.net_qty.signum() == delta.signum()
+            || projected_abs >= current_abs
+            || (projected != 0 && projected.signum() != position.net_qty.signum())
+        {
+            return Err(QxError::BusinessViolation(
+                "reduce-only OneWay 订单不能开仓、加仓或穿越零点".into(),
+            ));
+        }
+    }
+    Ok((current_abs, projected_abs))
+}
+
+fn legacy_notional(qty: i128, price: Price, multiplier: i128) -> QxResult<i128> {
+    checked_abs_qty(qty)?
+        .checked_mul(price.raw())
+        .and_then(|value| value.checked_div(qx_core::SCALE))
+        .and_then(|value| value.checked_mul(multiplier.max(1)))
+        .ok_or_else(|| QxError::Invariant("风控名义额计算溢出".into()))
 }
 
 /// 订单进入 OMS/Venue 前的账户级风控上下文。
 ///
-/// `RiskRule` 适合表达单条静态规则；`RiskContext` 把账户可用保证金、市场参考价、
-/// 产品规格和账户限额放到同一个不可变快照中，确保回测、Paper 和实盘预检可以
-/// 复用同一套规格/杠杆/保证金判定。缺少必要的规格或市价参考价时拒绝订单，
-/// 不把未知资金状态当成“通过”。
+/// 风控按“投影后暴露”而不是“当前暴露 + 订单名义额”判定。这样真正的减仓
+/// 不会被误杀，而反转/加仓会按最终 gross exposure 计算。Hedge 模式若没有
+/// long/short 双腿快照则 fail-closed。
 #[derive(Clone, Debug, Default)]
 pub struct RiskContext {
     pub available_margin_raw: Option<i128>,
@@ -62,29 +165,36 @@ impl RiskContext {
             .limit
             .or(self.reference_price)
             .ok_or_else(|| QxError::BusinessViolation("账户级风控缺少市价参考价".into()))?;
-        let notional = spec.notional(order.qty.raw(), price.raw())?;
+        let order_notional = spec.notional(order.qty.raw(), price.raw())?;
         if self
             .max_order_notional_raw
-            .is_some_and(|limit| notional > limit)
+            .is_some_and(|limit| order_notional > limit)
         {
             return Err(QxError::BusinessViolation("订单名义额超过账户限额".into()));
         }
+
+        let (current_gross_qty, projected_gross_qty) = projected_gross_qty(order, position)?;
+        let projected_notional = spec.notional(projected_gross_qty, price.raw())?;
         if self
             .max_position_notional_raw
-            .is_some_and(|limit| position.gross_notional.saturating_add(notional) > limit)
+            .is_some_and(|limit| projected_notional > limit)
         {
-            return Err(QxError::BusinessViolation("持仓名义额超过账户限额".into()));
+            return Err(QxError::BusinessViolation(
+                "投影后持仓名义额超过账户限额".into(),
+            ));
         }
+
         if let Some(available) = self.available_margin_raw {
             if available < 0 {
                 return Err(QxError::BusinessViolation("可用保证金不能为负".into()));
             }
-            if !policy.reduce_only {
+            let incremental_qty = projected_gross_qty.saturating_sub(current_gross_qty);
+            if incremental_qty > 0 {
                 let required =
-                    spec.initial_margin(order.qty.raw(), price.raw(), policy.leverage)?;
+                    spec.initial_margin(incremental_qty, price.raw(), policy.leverage)?;
                 if required > available {
                     return Err(QxError::BusinessViolation(
-                        "订单初始保证金超过账户可用保证金".into(),
+                        "新增暴露所需初始保证金超过账户可用保证金".into(),
                     ));
                 }
             }
@@ -99,6 +209,8 @@ impl PositionSnapshot {
             net_qty,
             gross_notional,
             multiplier: 1,
+            long_qty: None,
+            short_qty: None,
         }
     }
 
@@ -107,6 +219,24 @@ impl PositionSnapshot {
             net_qty,
             gross_notional,
             multiplier: multiplier.max(1),
+            long_qty: None,
+            short_qty: None,
+        }
+    }
+
+    pub fn new_with_hedge_legs(
+        net_qty: i128,
+        gross_notional: i128,
+        multiplier: i128,
+        long_qty: i128,
+        short_qty: i128,
+    ) -> Self {
+        Self {
+            net_qty,
+            gross_notional,
+            multiplier: multiplier.max(1),
+            long_qty: Some(long_qty),
+            short_qty: Some(short_qty),
         }
     }
 }
@@ -169,10 +299,16 @@ impl RiskRule for MaxNotionalRule {
             .limit
             .or(reference_price)
             .ok_or_else(|| QxError::BusinessViolation("市价单缺少名义额风控参考价".into()))?;
-        let add = (o.qty.raw().saturating_mul(px.raw()) / 1_000_000_000)
-            .saturating_mul(pos.multiplier.max(1));
-        if pos.gross_notional + add > self.max_notional {
-            return Err(QxError::BusinessViolation("超过最大名义额".into()));
+        let policy = o.policy.unwrap_or_default();
+        let projected = if policy.position_mode == qx_core::PositionMode::Hedge {
+            let (_, projected_qty) = projected_gross_qty(o, pos)?;
+            legacy_notional(projected_qty, px, pos.multiplier)?
+        } else {
+            let (_, projected_qty) = projected_gross_qty(o, pos)?;
+            legacy_notional(projected_qty, px, pos.multiplier)?
+        };
+        if projected > self.max_notional {
+            return Err(QxError::BusinessViolation("投影后超过最大名义额".into()));
         }
         Ok(())
     }
@@ -1290,6 +1426,96 @@ mod tests {
                 Some(Price::from_i64(100)),
             )
             .is_err());
+    }
+
+    #[test]
+    fn max_notional_uses_projected_exposure_and_allows_real_reduction() {
+        let mut gate = RiskGate::new();
+        gate.add(Box::new(MaxNotionalRule {
+            max_notional: 900 * SCALE,
+        }));
+        let reducing = order(5, Side::Sell);
+        let long = PositionSnapshot::new(10 * SCALE, 1_000 * SCALE);
+        assert!(gate.check(&reducing, &long).is_ok());
+
+        let increasing = order(1, Side::Buy);
+        assert!(gate.check(&increasing, &long).is_err());
+    }
+
+    #[test]
+    fn risk_context_charges_only_incremental_margin_for_reduction() {
+        let instrument = InstrumentId::parse("T.V").unwrap();
+        let spec = TradingInstrumentSpec {
+            instrument: instrument.clone(),
+            product: TradingProduct::Perpetual,
+            base_currency: "T".into(),
+            quote_currency: "V".into(),
+            settlement_currency: "V".into(),
+            contract_size: SCALE,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            max_leverage: 20,
+            maintenance_margin_bps: 500,
+            valid_from: 1,
+            valid_to: None,
+        };
+        let mut reducing = order(1, Side::Sell);
+        reducing.instrument = instrument;
+        reducing.policy = Some(qx_core::OrderPolicy {
+            leverage: 10,
+            margin_mode: qx_core::MarginMode::Cross,
+            ..qx_core::OrderPolicy::default()
+        });
+        let context = RiskContext {
+            available_margin_raw: Some(0),
+            reference_price: Some(Price::from_i64(100)),
+            instrument_spec: Some(spec),
+            max_position_notional_raw: Some(150 * SCALE),
+            ..RiskContext::default()
+        };
+        let position = PositionSnapshot::new(2 * SCALE, 200 * SCALE);
+        assert!(context.validate_order(&reducing, &position).is_ok());
+    }
+
+    #[test]
+    fn reduce_only_cannot_open_or_cross_zero() {
+        let mut reduce_only = order(1, Side::Buy);
+        reduce_only.policy = Some(qx_core::OrderPolicy {
+            reduce_only: true,
+            ..qx_core::OrderPolicy::default()
+        });
+        assert!(projected_gross_qty(&reduce_only, &PositionSnapshot::default()).is_err());
+
+        let mut cross = order(3, Side::Sell);
+        cross.policy = Some(qx_core::OrderPolicy {
+            reduce_only: true,
+            ..qx_core::OrderPolicy::default()
+        });
+        assert!(
+            projected_gross_qty(&cross, &PositionSnapshot::new(2 * SCALE, 200 * SCALE)).is_err()
+        );
+    }
+
+    #[test]
+    fn hedge_risk_fails_closed_without_leg_snapshot() {
+        let mut hedge = order(1, Side::Sell);
+        hedge.policy = Some(qx_core::OrderPolicy {
+            reduce_only: true,
+            position_side: qx_core::PositionSide::Long,
+            position_mode: qx_core::PositionMode::Hedge,
+            margin_mode: qx_core::MarginMode::Cross,
+            leverage: 1,
+            post_only: false,
+        });
+        assert!(projected_gross_qty(&hedge, &PositionSnapshot::new(0, 2 * 100 * SCALE)).is_err());
+        let legs = PositionSnapshot::new_with_hedge_legs(0, 2 * 100 * SCALE, 1, SCALE, -SCALE);
+        assert_eq!(
+            projected_gross_qty(&hedge, &legs).unwrap(),
+            (2 * SCALE, SCALE)
+        );
     }
 
     #[test]
