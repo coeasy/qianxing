@@ -21,8 +21,9 @@ pub use self::backtest::{
     InterestEvent, NativeBarStrategy, VirtualTradingConfig,
 };
 pub use self::cost::{
-    FeeModel, FixedRateMargin, LatencyModel, LeverageMargin, MakerTakerFeeModel, MarginRule,
-    MarginTier, NoMargin, StaticLatency, TieredMargin, ZeroFeeModel, ZeroLatency,
+    FeeContext, FeeModel, FixedRateMargin, LatencyModel, LeverageMargin, LiquidityRole,
+    MakerTakerFeeModel, MarginRule, MarginTier, NoMargin, StaticLatency, TieredMargin,
+    ZeroFeeModel, ZeroLatency,
 };
 pub use self::fill::{
     BestPriceFillModel, DataTier, FillContext, FillModel, NextBarOpenFillModel,
