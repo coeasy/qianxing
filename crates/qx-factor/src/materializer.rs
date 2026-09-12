@@ -491,10 +491,7 @@ mod tests {
                     input_fingerprint: "wrong".into(),
                     as_of: request.as_of,
                     coverage_bps: 10_000,
-                    values: BTreeMap::from([(
-                        InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
-                        1,
-                    )]),
+                    values: BTreeMap::from([(InstrumentId::parse("BTCUSDT.BINANCE").unwrap(), 1)]),
                 })
             }
         }
