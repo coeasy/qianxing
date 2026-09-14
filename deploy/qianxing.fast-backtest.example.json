@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "jobs": [
+    {
+      "runtime": "qianxing.runtime.builtin-strategy.example.json",
+      "bars": "qianxing.bar-frame.example.json"
+    },
+    {
+      "runtime": "qianxing.runtime.builtin-strategy.okx.example.json",
+      "bars": "qianxing.bar-frame.okx.example.json"
+    }
+  ]
+}

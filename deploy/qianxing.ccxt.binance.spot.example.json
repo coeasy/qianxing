@@ -1,0 +1,16 @@
+{
+  "exchange_id": "binance",
+  "account_id": "main",
+  "sandbox": true,
+  "enable_rate_limit": true,
+  "timeout_ms": 30000,
+  "ws_max_retries": 0,
+  "ws_retry_backoff_ms": 250,
+  "default_type": "spot",
+  "credential_env": {
+    "api_key": "QX_CCXT_BINANCE_API_KEY",
+    "secret": "QX_CCXT_BINANCE_SECRET"
+  },
+  "options": {},
+  "instruments": ["BTC/USDT.BINANCE"]
+}

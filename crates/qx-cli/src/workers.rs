@@ -74,6 +74,151 @@ pub(crate) fn run_scheduler_worker(path: &Path, worker_id: &str, once: bool) -> 
         .map_err(|_| format!("Scheduler worker {worker_id} panic"))?
 }
 
+fn live_strategy_job(
+    strategy: &StrategyRuntimeConfig,
+    worker_id: &str,
+    data_fingerprint: u64,
+    now: u64,
+    environment: &str,
+) -> (JobSpec, qx_scheduler::JobRun) {
+    let trading_day = utc_schedule_tick(now).0;
+    let job = JobSpec {
+        job_id: format!("live-strategy:{worker_id}"),
+        job_version: strategy.version.clone(),
+        owner: worker_id.into(),
+        enabled: true,
+        trigger: Trigger::Manual,
+        window: JobWindow::Any,
+        depends_on: Vec::new(),
+        input_refs: vec![format!("barframe:{data_fingerprint:016x}")],
+        output_refs: vec!["strategy-submit-order".into()],
+        timeout_seconds: 60,
+        retry_policy: RetryPolicy::default(),
+        concurrency_key: format!(
+            "live-strategy:{}",
+            strategy.instrument.as_deref().unwrap_or("")
+        ),
+        idempotency_key: format!("barframe:{data_fingerprint:016x}"),
+        permission_scope: "strategy".into(),
+        audit_reason: "live-closed-bar".into(),
+        dry_run: environment.eq_ignore_ascii_case("paper"),
+    };
+    let run_id = job.stable_key(&trading_day);
+    let run = qx_scheduler::JobRun {
+        run_id,
+        job_id: job.job_id.clone(),
+        trading_day,
+        attempt: 1,
+        status: JobStatus::Running,
+        manifest_digest: Some(data_fingerprint),
+        error_code: None,
+        next_retry_ts: None,
+        started_ts: now,
+        deadline_ts: now.saturating_add(60_000),
+    };
+    (job, run)
+}
+
+fn live_strategy_snapshot_digest(strategy: &StrategyRuntimeConfig) -> Result<Option<u64>, String> {
+    if !strategy.live_enabled {
+        return Ok(None);
+    }
+    let Some(path) = strategy.bars_snapshot_path.as_deref() else {
+        return Err("实时策略缺少 bars_snapshot_path".into());
+    };
+    if !Path::new(path).exists() {
+        return Ok(None);
+    }
+    let payload = std::fs::read_to_string(path)
+        .map_err(|error| format!("读取实时策略 BarFrame 失败 {}: {error}", path))?;
+    let frame = BarFrame::from_json(&payload)
+        .map_err(|error| format!("实时策略 BarFrame 无效 {}: {error:?}", path))?;
+    if strategy
+        .instrument
+        .as_deref()
+        .and_then(InstrumentId::parse)
+        .is_some_and(|instrument| instrument != frame.instrument)
+    {
+        return Err(format!(
+            "实时策略 BarFrame instrument 不一致: strategy={} frame={}",
+            strategy.instrument.as_deref().unwrap_or(""),
+            frame.instrument
+        ));
+    }
+    let mut digest = frame.digest();
+    if let Some(reference_text) = strategy.builtin_reference_instrument.as_deref() {
+        let reference_path = strategy
+            .builtin_reference_bars_snapshot_path
+            .as_deref()
+            .ok_or_else(|| "双腿实时策略缺少对冲腿 BarFrame".to_string())?;
+        let reference_payload = match std::fs::read_to_string(reference_path) {
+            Ok(payload) => payload,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(format!(
+                    "读取实时策略对冲腿 BarFrame 失败 {}: {error}",
+                    reference_path
+                ))
+            }
+        };
+        let reference_frame = BarFrame::from_json(&reference_payload).map_err(|error| {
+            format!("实时策略对冲腿 BarFrame 无效 {}: {error:?}", reference_path)
+        })?;
+        let reference_instrument = InstrumentId::parse(reference_text)
+            .ok_or_else(|| format!("实时策略对冲腿 instrument 非法: {reference_text}"))?;
+        if reference_frame.instrument != reference_instrument {
+            return Err(format!(
+                "实时策略对冲腿 instrument 不一致: expected={} frame={}",
+                reference_instrument, reference_frame.instrument
+            ));
+        }
+        if reference_frame.ts.last() != frame.ts.last() {
+            // 双腿快照必须处于同一闭合 Bar；市场 worker 的两次原子写入之间
+            // 允许策略 worker 短暂跳过本轮，下一轮会重新观察。
+            return Ok(None);
+        }
+        digest ^= reference_frame.digest().rotate_left(1);
+    }
+    Ok(Some(digest))
+}
+
+fn live_strategy_digest_state_path(root: &Path, worker_id: &str) -> PathBuf {
+    root.join("strategy-live-state")
+        .join(format!("{worker_id}.digest"))
+}
+
+fn load_live_strategy_digest(path: &Path) -> Result<Option<u64>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(value) => value
+            .trim()
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|error| format!("实时策略 digest 状态非法 {}: {error}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "读取实时策略 digest 状态失败 {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn save_live_strategy_digest(path: &Path, digest: u64) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("实时策略 digest 路径没有父目录: {}", path.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("创建实时策略 digest 目录失败: {error}"))?;
+    let temporary = path.with_extension(format!("digest.tmp.{}", std::process::id()));
+    std::fs::write(&temporary, digest.to_string())
+        .map_err(|error| format!("写入实时策略 digest 失败: {error}"))?;
+    if let Err(error) = std::fs::rename(&temporary, path) {
+        let _ = std::fs::remove_file(path);
+        std::fs::rename(&temporary, path)
+            .map_err(|replacement| format!("提交实时策略 digest 失败: {error}; {replacement}"))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> Result<(), String> {
     let config = read_runtime_config(path)?;
     let worker = config
@@ -96,6 +241,8 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
     let mut strategy_runtime_config = config.clone();
     // 将选中的实例投影到兼容的单策略执行路径，保留所有既有订单、目标仓位和审计逻辑。
     strategy_runtime_config.strategy = strategy_config.clone();
+    let live_digest_path = live_strategy_digest_state_path(&root, worker_id);
+    let persisted_live_digest = load_live_strategy_digest(&live_digest_path)?;
     let supervisor = RuntimeSupervisor::new(config)?;
     let registered_id = worker.id.clone();
     let handle = supervisor.spawn_worker(&registered_id, move |context| {
@@ -151,6 +298,7 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
             None
         };
         let mut native_initialized = false;
+        let mut last_live_digest = persisted_live_digest;
         context.mark(
             qx_runtime::ServiceStatus::Ready,
             format!("strategy version={}", strategy.version),
@@ -220,6 +368,24 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
             }
             let mut processed = 0_usize;
             if matches!(strategy.state, qx_zhenlu::StrategyState::Running) {
+                if let Some(data_fingerprint) =
+                    live_strategy_snapshot_digest(&strategy_runtime_config.strategy)?
+                {
+                    if last_live_digest != Some(data_fingerprint) {
+                        let (job, run) = live_strategy_job(
+                            &strategy_runtime_config.strategy,
+                            context.id(),
+                            data_fingerprint,
+                            now,
+                            &strategy_runtime_config.environment,
+                        );
+                        queue.enqueue(job, run, now).map_err(|error| {
+                            format!("写入实时 Strategy JobQueue 失败: {error:?}")
+                        })?;
+                        save_live_strategy_digest(&live_digest_path, data_fingerprint)?;
+                        last_live_digest = Some(data_fingerprint);
+                    }
+                }
                 for queued in queue
                     .available(now)
                     .map_err(|error| format!("读取 Strategy JobQueue 失败: {error:?}"))?
@@ -394,16 +560,23 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                     } else {
                         "STRATEGY_NO_REBALANCE".to_string()
                     };
-                    state_store
-                        .transact_scheduler_at(&state_path, |scheduler| {
-                            scheduler
-                                .finish_run_with_code(queued.run.run_id, true, Some(&result), now)
-                                .map(|_| ())
-                                .map_err(|error| format!("完成 JobRun 失败: {error:?}"))
-                        })
-                        .map_err(|error| format!("回写 JobRun 状态失败: {error:?}"))?
-                        .1
-                        .map_err(|error| format!("完成 JobRun 被拒绝: {error}"))?;
+                    if !queued.job.job_id.starts_with("live-strategy:") {
+                        state_store
+                            .transact_scheduler_at(&state_path, |scheduler| {
+                                scheduler
+                                    .finish_run_with_code(
+                                        queued.run.run_id,
+                                        true,
+                                        Some(&result),
+                                        now,
+                                    )
+                                    .map(|_| ())
+                                    .map_err(|error| format!("完成 JobRun 失败: {error:?}"))
+                            })
+                            .map_err(|error| format!("回写 JobRun 状态失败: {error:?}"))?
+                            .1
+                            .map_err(|error| format!("完成 JobRun 被拒绝: {error}"))?;
+                    }
                     queue
                         .ack_at(queued.run.run_id, context.id(), lease.fencing_token, now)
                         .map_err(|error| format!("确认 Strategy JobQueue 失败: {error:?}"))?;

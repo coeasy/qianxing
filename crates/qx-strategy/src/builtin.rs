@@ -8,7 +8,7 @@ use crate::{
     MarketEvent, Strategy, StrategyContext, StrategyDecision, StrategyOrderIntent,
     STRATEGY_API_VERSION,
 };
-use qx_core::{InstrumentId, Quantity, Side};
+use qx_core::{InstrumentId, OrderPolicy, Quantity, Side};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
@@ -27,10 +27,17 @@ pub enum BuiltinStrategyKind {
     MeanReversion,
     Grid,
     AtrTrend,
+    KeltnerTrend,
+    VwapReversion,
+    VolatilityBreakout,
+    PairsArbitrage,
+    BasisArbitrage,
+    CrossVenueArbitrage,
+    SpotFuturesArbitrage,
 }
 
 impl BuiltinStrategyKind {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 17] = [
         Self::SmaCross,
         Self::EmaCross,
         Self::Macd,
@@ -41,6 +48,13 @@ impl BuiltinStrategyKind {
         Self::MeanReversion,
         Self::Grid,
         Self::AtrTrend,
+        Self::KeltnerTrend,
+        Self::VwapReversion,
+        Self::VolatilityBreakout,
+        Self::PairsArbitrage,
+        Self::BasisArbitrage,
+        Self::CrossVenueArbitrage,
+        Self::SpotFuturesArbitrage,
     ];
 
     pub fn name(self) -> &'static str {
@@ -55,6 +69,13 @@ impl BuiltinStrategyKind {
             Self::MeanReversion => "mean_reversion",
             Self::Grid => "grid",
             Self::AtrTrend => "atr_trend",
+            Self::KeltnerTrend => "keltner_trend",
+            Self::VwapReversion => "vwap_reversion",
+            Self::VolatilityBreakout => "volatility_breakout",
+            Self::PairsArbitrage => "pairs_arbitrage",
+            Self::BasisArbitrage => "basis_arbitrage",
+            Self::CrossVenueArbitrage => "cross_venue_arbitrage",
+            Self::SpotFuturesArbitrage => "spot_futures_arbitrage",
         }
     }
 
@@ -70,6 +91,13 @@ impl BuiltinStrategyKind {
             Self::MeanReversion => "均值偏离回归",
             Self::Grid => "固定基准网格信号",
             Self::AtrTrend => "ATR 波动突破趋势",
+            Self::KeltnerTrend => "Keltner 通道趋势",
+            Self::VwapReversion => "成交量加权均价回归",
+            Self::VolatilityBreakout => "波动率突破趋势",
+            Self::PairsArbitrage => "双腿配对价差套利",
+            Self::BasisArbitrage => "现货/合约基差套利",
+            Self::CrossVenueArbitrage => "跨交易所价差套利",
+            Self::SpotFuturesArbitrage => "现货/期货基差套利",
         }
     }
 
@@ -103,6 +131,9 @@ pub struct BuiltinStrategyConfig {
     pub period: usize,
     /// 动量/均值回归/网格使用的阈值，单位为基点。
     pub threshold_bps: i128,
+    pub reference_instrument: Option<InstrumentId>,
+    pub primary_policy: Option<OrderPolicy>,
+    pub reference_policy: Option<OrderPolicy>,
 }
 
 impl BuiltinStrategyConfig {
@@ -122,6 +153,9 @@ impl BuiltinStrategyConfig {
             slow_window: 20,
             period: 14,
             threshold_bps: 100,
+            reference_instrument: None,
+            primary_policy: None,
+            reference_policy: None,
         };
         config.validate()?;
         Ok(config)
@@ -139,6 +173,23 @@ impl BuiltinStrategyConfig {
         {
             return Err("内置策略参数非法：策略身份、数量、窗口或阈值不满足约束".into());
         }
+        let needs_reference = matches!(
+            self.kind,
+            BuiltinStrategyKind::PairsArbitrage
+                | BuiltinStrategyKind::BasisArbitrage
+                | BuiltinStrategyKind::CrossVenueArbitrage
+                | BuiltinStrategyKind::SpotFuturesArbitrage
+        );
+        if needs_reference && self.reference_instrument.is_none() {
+            return Err("双腿套利必须配置 reference_instrument".into());
+        }
+        if self
+            .reference_instrument
+            .as_ref()
+            .is_some_and(|instrument| instrument == &self.instrument)
+        {
+            return Err("reference_instrument 不能与主腿 instrument 相同".into());
+        }
         Ok(())
     }
 }
@@ -148,11 +199,13 @@ struct BarPoint {
     high: i128,
     low: i128,
     close: i128,
+    volume: i128,
 }
 
 pub struct BuiltinStrategy {
     pub config: BuiltinStrategyConfig,
     bars: VecDeque<BarPoint>,
+    reference_bars: VecDeque<BarPoint>,
     next_signal_id: u64,
     next_intent_id: u64,
 }
@@ -163,6 +216,7 @@ impl BuiltinStrategy {
         Ok(Self {
             config,
             bars: VecDeque::new(),
+            reference_bars: VecDeque::new(),
             next_signal_id: 1,
             next_intent_id: 1,
         })
@@ -174,6 +228,90 @@ impl BuiltinStrategy {
 
     fn closes(&self) -> Vec<i128> {
         self.bars.iter().map(|bar| bar.close).collect()
+    }
+
+    fn spread_signal(&self) -> Result<Option<i8>, String> {
+        if self.reference_bars.len() < self.config.period + 1 {
+            return Ok(None);
+        }
+        let primary_base = self
+            .bars
+            .iter()
+            .rev()
+            .nth(self.config.period)
+            .map(|bar| bar.close)
+            .ok_or_else(|| "主腿价差历史不足".to_string())?;
+        let primary_now = self
+            .bars
+            .back()
+            .map(|bar| bar.close)
+            .ok_or_else(|| "主腿价差当前值缺失".to_string())?;
+        let reference_base = self
+            .reference_bars
+            .iter()
+            .rev()
+            .nth(self.config.period)
+            .map(|bar| bar.close)
+            .ok_or_else(|| "对冲腿价差历史不足".to_string())?;
+        let reference_now = self
+            .reference_bars
+            .back()
+            .map(|bar| bar.close)
+            .ok_or_else(|| "对冲腿价差当前值缺失".to_string())?;
+        if primary_base <= 0 || reference_base <= 0 {
+            return Err("套利腿基准价格必须为正".into());
+        }
+        let primary_return = primary_now
+            .checked_sub(primary_base)
+            .and_then(|value| value.checked_mul(BPS_SCALE))
+            .and_then(|value| value.checked_div(primary_base))
+            .ok_or("主腿价差收益计算溢出")?;
+        let reference_return = reference_now
+            .checked_sub(reference_base)
+            .and_then(|value| value.checked_mul(BPS_SCALE))
+            .and_then(|value| value.checked_div(reference_base))
+            .ok_or("对冲腿价差收益计算溢出")?;
+        let spread = primary_return
+            .checked_sub(reference_return)
+            .ok_or("双腿价差计算溢出")?;
+        if spread >= self.config.threshold_bps {
+            Ok(Some(-1))
+        } else if spread <= -self.config.threshold_bps {
+            Ok(Some(1))
+        } else {
+            Ok(Some(0))
+        }
+    }
+
+    fn basis_signal(&self) -> Result<Option<i8>, String> {
+        let reference_now = self
+            .reference_bars
+            .back()
+            .map(|bar| bar.close)
+            .ok_or_else(|| "基差对冲腿当前值缺失".to_string())?;
+        let primary_now = self
+            .bars
+            .back()
+            .map(|bar| bar.close)
+            .ok_or_else(|| "基差主腿当前值缺失".to_string())?;
+        if reference_now <= 0 || primary_now <= 0 {
+            return Err("基差套利腿价格必须为正".into());
+        }
+        let basis_bps = primary_now
+            .checked_sub(reference_now)
+            .and_then(|value| value.checked_mul(BPS_SCALE))
+            .and_then(|value| value.checked_div(reference_now))
+            .ok_or("基差计算溢出")?;
+        let exit_threshold = self.config.threshold_bps / 2;
+        if basis_bps >= self.config.threshold_bps {
+            Ok(Some(-1))
+        } else if basis_bps <= -self.config.threshold_bps {
+            Ok(Some(1))
+        } else if basis_bps.abs() <= exit_threshold {
+            Ok(Some(0))
+        } else {
+            Ok(None)
+        }
     }
 
     fn signal(&self) -> Result<Option<i8>, String> {
@@ -193,6 +331,13 @@ impl BuiltinStrategy {
                 self.config.period + 1
             }
             BuiltinStrategyKind::Grid => 1,
+            BuiltinStrategyKind::KeltnerTrend
+            | BuiltinStrategyKind::VwapReversion
+            | BuiltinStrategyKind::VolatilityBreakout
+            | BuiltinStrategyKind::PairsArbitrage
+            | BuiltinStrategyKind::BasisArbitrage
+            | BuiltinStrategyKind::CrossVenueArbitrage
+            | BuiltinStrategyKind::SpotFuturesArbitrage => self.config.period + 1,
         };
         if closes.len() < required {
             return Ok(None);
@@ -347,6 +492,100 @@ impl BuiltinStrategy {
                     None
                 }
             }
+            BuiltinStrategyKind::KeltnerTrend => {
+                let middle = ema(&closes, self.config.period).unwrap();
+                let average_range = self
+                    .bars
+                    .iter()
+                    .rev()
+                    .take(self.config.period)
+                    .try_fold(0_i128, |sum, bar| {
+                        sum.checked_add(bar.high.checked_sub(bar.low)?)
+                    })
+                    .and_then(|value| value.checked_div(self.config.period as i128))
+                    .ok_or("Keltner 波动计算溢出")?;
+                let width = average_range.checked_mul(2).ok_or("Keltner 通道溢出")?;
+                let current = *closes.last().unwrap();
+                if current > middle.saturating_add(width) {
+                    Some(1)
+                } else if current < middle.saturating_sub(width) {
+                    Some(-1)
+                } else {
+                    None
+                }
+            }
+            BuiltinStrategyKind::VwapReversion => {
+                let values = self
+                    .bars
+                    .iter()
+                    .rev()
+                    .take(self.config.period)
+                    .collect::<Vec<_>>();
+                let (weighted, volume) =
+                    values
+                        .into_iter()
+                        .try_fold((0_i128, 0_i128), |(weighted, volume), bar| {
+                            Ok::<_, String>((
+                                weighted
+                                    .checked_add(
+                                        bar.close
+                                            .checked_mul(bar.volume)
+                                            .ok_or("VWAP 加权价格溢出")?,
+                                    )
+                                    .ok_or("VWAP 加权和溢出")?,
+                                volume.checked_add(bar.volume).ok_or("VWAP 成交量溢出")?,
+                            ))
+                        })?;
+                let vwap = if volume == 0 {
+                    return Err("VWAP 成交量不能为零".into());
+                } else {
+                    weighted.checked_div(volume).ok_or("VWAP 计算溢出")?
+                };
+                let current = *closes.last().unwrap();
+                let deviation = current
+                    .checked_sub(vwap)
+                    .and_then(|value| value.checked_mul(BPS_SCALE))
+                    .and_then(|value| value.checked_div(vwap.max(1)))
+                    .ok_or("VWAP 偏离计算溢出")?;
+                if deviation <= -self.config.threshold_bps {
+                    Some(1)
+                } else if deviation >= self.config.threshold_bps {
+                    Some(-1)
+                } else {
+                    Some(0)
+                }
+            }
+            BuiltinStrategyKind::VolatilityBreakout => {
+                let current = self.bars.back().unwrap();
+                let range = current
+                    .high
+                    .checked_sub(current.low)
+                    .ok_or("波动率范围非法")?;
+                let average = self
+                    .bars
+                    .iter()
+                    .rev()
+                    .skip(1)
+                    .take(self.config.period)
+                    .try_fold(0_i128, |sum, bar| {
+                        sum.checked_add(bar.high.checked_sub(bar.low)?)
+                    })
+                    .and_then(|value| value.checked_div(self.config.period as i128))
+                    .ok_or("波动率均值计算溢出")?;
+                if range > average.saturating_mul(2) && current.close >= current.high {
+                    Some(1)
+                } else if range > average.saturating_mul(2) && current.close <= current.low {
+                    Some(-1)
+                } else {
+                    None
+                }
+            }
+            BuiltinStrategyKind::PairsArbitrage | BuiltinStrategyKind::CrossVenueArbitrage => {
+                return self.spread_signal();
+            }
+            BuiltinStrategyKind::BasisArbitrage | BuiltinStrategyKind::SpotFuturesArbitrage => {
+                return self.basis_signal();
+            }
         };
         Ok(signal)
     }
@@ -379,68 +618,122 @@ impl Strategy for BuiltinStrategy {
             high_raw,
             low_raw,
             close_raw,
+            volume_raw,
             ..
         } = event
         else {
             return Ok(self.empty_decision(context, event.ts()));
         };
-        if instrument != &self.config.instrument {
+        let is_pair = matches!(
+            self.config.kind,
+            BuiltinStrategyKind::PairsArbitrage
+                | BuiltinStrategyKind::BasisArbitrage
+                | BuiltinStrategyKind::CrossVenueArbitrage
+                | BuiltinStrategyKind::SpotFuturesArbitrage
+        );
+        let is_primary = instrument == &self.config.instrument;
+        let is_reference = self
+            .config
+            .reference_instrument
+            .as_ref()
+            .is_some_and(|reference| reference == instrument);
+        if !is_primary && !(is_pair && is_reference) {
             return Err(format!(
                 "内置策略 instrument 不匹配: expected={} actual={}",
                 self.config.instrument, instrument
             ));
         }
         self.next_signal_id = self.next_signal_id.saturating_add(1);
-        self.bars.push_back(BarPoint {
+        let point = BarPoint {
             high: *high_raw,
             low: *low_raw,
             close: *close_raw,
-        });
-        while self.bars.len() > self.max_history() {
-            self.bars.pop_front();
+            volume: *volume_raw,
+        };
+        if is_reference {
+            self.reference_bars.push_back(point);
+            while self.reference_bars.len() > self.max_history() {
+                self.reference_bars.pop_front();
+            }
+            if !is_primary {
+                return Ok(self.empty_decision(context, *ts));
+            }
+        } else {
+            self.bars.push_back(point);
+            while self.bars.len() > self.max_history() {
+                self.bars.pop_front();
+            }
         }
         let Some(signal) = self.signal()? else {
             return Ok(self.empty_decision(context, *ts));
         };
-        let current = context
-            .positions
-            .get(&instrument.to_string())
-            .copied()
-            .unwrap_or(0);
-        let target = self
-            .config
-            .quantity
-            .raw()
-            .checked_mul(i128::from(signal))
-            .ok_or("内置策略目标仓位溢出")?;
-        let delta = target.checked_sub(current).ok_or("内置策略订单数量溢出")?;
-        let Some(qty_raw) = delta.checked_abs() else {
-            return Err("内置策略订单数量溢出".into());
-        };
-        if qty_raw == 0 {
+        let mut legs = vec![(self.config.instrument.clone(), i128::from(signal))];
+        if is_pair {
+            legs.push((
+                self.config
+                    .reference_instrument
+                    .clone()
+                    .ok_or("双腿套利缺少 reference_instrument")?,
+                i128::from(-signal),
+            ));
+        }
+        let mut intents = Vec::with_capacity(legs.len());
+        let mut confidence = 0_i128;
+        for (leg_instrument, leg_signal) in legs {
+            let current = context
+                .positions
+                .get(&leg_instrument.to_string())
+                .copied()
+                .unwrap_or(0);
+            let target = self
+                .config
+                .quantity
+                .raw()
+                .checked_mul(leg_signal)
+                .ok_or("内置策略目标仓位溢出")?;
+            let delta = target.checked_sub(current).ok_or("内置策略订单数量溢出")?;
+            let Some(qty_raw) = delta.checked_abs() else {
+                return Err("内置策略订单数量溢出".into());
+            };
+            if qty_raw == 0 {
+                continue;
+            }
+            confidence = confidence.saturating_add(qty_raw);
+            let side = if delta > 0 { Side::Buy } else { Side::Sell };
+            let is_reference_leg = self
+                .config
+                .reference_instrument
+                .as_ref()
+                .is_some_and(|reference| reference == &leg_instrument);
+            intents.push(StrategyOrderIntent {
+                intent_id: self.next_intent_id,
+                instrument: leg_instrument,
+                side,
+                qty: Quantity::from_raw(qty_raw),
+                limit: None,
+                policy: if is_reference_leg {
+                    self.config.reference_policy
+                } else {
+                    self.config.primary_policy
+                },
+                reduce_only: signal == 0,
+                post_only: false,
+            });
+            self.next_intent_id = self.next_intent_id.saturating_add(1);
+        }
+        if intents.is_empty() {
             return Ok(self.empty_decision(context, *ts));
         }
-        let side = if delta > 0 { Side::Buy } else { Side::Sell };
         let decision = StrategyDecision {
             schema_version: STRATEGY_API_VERSION,
             request_id: format!("{}:{ts}", self.config.strategy_id),
             strategy_id: context.strategy_id.clone(),
             signal_id: self.next_signal_id,
-            confidence: qty_raw,
+            confidence,
             priority: 0,
             expires_at: *ts,
-            intents: vec![StrategyOrderIntent {
-                intent_id: self.next_intent_id,
-                instrument: self.config.instrument.clone(),
-                side,
-                qty: Quantity::from_raw(qty_raw),
-                limit: None,
-                policy: None,
-                reduce_only: signal == 0,
-                post_only: false,
-            }],
+            intents,
         };
-        self.next_intent_id = self.next_intent_id.saturating_add(1);
         decision.validate_for(context, *ts)?;
         Ok(decision)
     }
@@ -586,8 +879,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_contains_ten_builtin_strategies() {
-        assert_eq!(BuiltinStrategyKind::ALL.len(), 10);
+    fn registry_contains_fifteen_builtin_strategies() {
+        assert_eq!(BuiltinStrategyKind::ALL.len(), 17);
         assert_eq!(
             BuiltinStrategyKind::parse("EMA-CROSS").unwrap(),
             BuiltinStrategyKind::EmaCross
@@ -607,6 +900,9 @@ mod tests {
             slow_window: 3,
             period: 2,
             threshold_bps: 10,
+            reference_instrument: None,
+            primary_policy: None,
+            reference_policy: None,
         };
         let mut strategy = BuiltinStrategy::new(config).unwrap();
         let mut context = context(&instrument);
@@ -636,17 +932,60 @@ mod tests {
     #[test]
     fn every_builtin_strategy_survives_a_warmup_and_signal_cycle() {
         let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let reference = InstrumentId::parse("ETHUSDT.BINANCE").unwrap();
         for kind in BuiltinStrategyKind::ALL {
-            let config = BuiltinStrategyConfig::new(
+            let config = if matches!(
                 kind,
-                format!("builtin-{}", kind.name()),
-                instrument.clone(),
-                Quantity::from_i64(1),
-            )
-            .unwrap();
+                BuiltinStrategyKind::PairsArbitrage
+                    | BuiltinStrategyKind::BasisArbitrage
+                    | BuiltinStrategyKind::CrossVenueArbitrage
+                    | BuiltinStrategyKind::SpotFuturesArbitrage
+            ) {
+                BuiltinStrategyConfig {
+                    kind,
+                    strategy_id: format!("builtin-{}", kind.name()),
+                    strategy_version: format!("builtin-{}-v1", kind.name()),
+                    instrument: instrument.clone(),
+                    quantity: Quantity::from_i64(1),
+                    fast_window: 5,
+                    slow_window: 20,
+                    period: 14,
+                    threshold_bps: 100,
+                    reference_instrument: Some(reference.clone()),
+                    primary_policy: None,
+                    reference_policy: None,
+                }
+            } else {
+                BuiltinStrategyConfig::new(
+                    kind,
+                    format!("builtin-{}", kind.name()),
+                    instrument.clone(),
+                    Quantity::from_i64(1),
+                )
+                .unwrap()
+            };
+            let has_reference = config.reference_instrument.is_some();
             let mut strategy = BuiltinStrategy::new(config).unwrap();
             let mut context = context(&instrument);
             for ts in 1..=40 {
+                if has_reference {
+                    let reference_close = 100 + i128::from(ts);
+                    context.as_of = ts;
+                    strategy
+                        .on_event(
+                            &context,
+                            &MarketEvent::Bar {
+                                instrument: reference.clone(),
+                                ts,
+                                open_raw: reference_close,
+                                high_raw: reference_close + 1,
+                                low_raw: reference_close - 1,
+                                close_raw: reference_close,
+                                volume_raw: 1,
+                            },
+                        )
+                        .unwrap();
+                }
                 let close = 100 + i128::from((ts % 7) as i64) * 3 + i128::from(ts);
                 context.as_of = ts;
                 let decision = strategy

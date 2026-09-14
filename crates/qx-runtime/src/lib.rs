@@ -143,6 +143,13 @@ pub struct StrategyContractIntent {
     pub post_only: bool,
     #[serde(default)]
     pub position_side: Option<String>,
+    /// 多腿策略可为每条腿覆盖执行模式；为空时沿用运行时主策略配置。
+    #[serde(default)]
+    pub margin_mode: Option<String>,
+    #[serde(default)]
+    pub position_mode: Option<String>,
+    #[serde(default)]
+    pub leverage: Option<u32>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -245,6 +252,16 @@ impl StrategyContractOutput {
                 position_side: intent
                     .policy
                     .map(|policy| format!("{:?}", policy.position_side).to_ascii_lowercase()),
+                margin_mode: intent.policy.map(|policy| match policy.margin_mode {
+                    MarginMode::Cash => "cash".into(),
+                    MarginMode::Cross => "cross".into(),
+                    MarginMode::Isolated => "isolated".into(),
+                }),
+                position_mode: intent.policy.map(|policy| match policy.position_mode {
+                    PositionMode::OneWay => "one_way".into(),
+                    PositionMode::Hedge => "hedge".into(),
+                }),
+                leverage: intent.policy.map(|policy| policy.leverage),
             })
             .collect();
         let output = Self {
@@ -290,6 +307,16 @@ impl StrategyContractOutput {
                 || intent.position_side.as_deref().is_some_and(|side| {
                     !matches!(side.to_ascii_lowercase().as_str(), "net" | "long" | "short")
                 })
+                || intent.margin_mode.as_deref().is_some_and(|mode| {
+                    !matches!(
+                        mode.to_ascii_lowercase().as_str(),
+                        "cash" | "cross" | "isolated"
+                    )
+                })
+                || intent.position_mode.as_deref().is_some_and(|mode| {
+                    !matches!(mode.to_ascii_lowercase().as_str(), "one_way" | "hedge")
+                })
+                || intent.leverage.is_some_and(|leverage| leverage == 0)
             {
                 return Err("StrategyContractOutput 中存在非法或重复的 OrderIntent".into());
             }
@@ -689,6 +716,18 @@ fn default_strategy_python_timeout_ms() -> u64 {
     2_000
 }
 
+fn default_strategy_live_timeframe() -> String {
+    "1m".into()
+}
+
+fn default_strategy_live_history_limit() -> usize {
+    200
+}
+
+fn default_strategy_live_closed_only() -> bool {
+    true
+}
+
 fn default_strategy_c_abi_max_library_bytes() -> u64 {
     64 * 1024 * 1024
 }
@@ -838,6 +877,19 @@ pub struct StrategyRuntimeConfig {
     /// None 时：衍生品默认允许双向，现货/杠杆默认禁止空头，必须显式开启。
     #[serde(default)]
     pub allow_short: Option<bool>,
+    /// 开启后由 CCXT MarketData worker 持续维护 BarFrame 快照，并在新闭合 Bar
+    /// 到达时向 Strategy JobQueue 投递一次幂等运行任务。
+    #[serde(default)]
+    pub live_enabled: bool,
+    /// 实时 OHLCV 周期，例如 1m、5m、1h。
+    #[serde(default = "default_strategy_live_timeframe")]
+    pub live_timeframe: String,
+    /// 实时策略保留的历史 Bar 数量；必须覆盖策略预热窗口。
+    #[serde(default = "default_strategy_live_history_limit")]
+    pub live_history_limit: usize,
+    /// 默认只将已闭合 K 线送入策略，避免同一根未闭合 K 线反复触发下单。
+    #[serde(default = "default_strategy_live_closed_only")]
+    pub live_closed_only: bool,
     /// 内置 Rust Bar 策略名称。配置后 Strategy Worker/Backtest 会使用同一套
     /// 固定点策略实现，并继续经过统一 OrderIntent、RiskGate 和 OMS。
     #[serde(default)]
@@ -852,6 +904,20 @@ pub struct StrategyRuntimeConfig {
     pub builtin_period: Option<usize>,
     #[serde(default)]
     pub builtin_threshold_bps: Option<i128>,
+    /// 双腿套利的对冲腿 InstrumentId；仅 pairs_arbitrage/basis_arbitrage 使用。
+    #[serde(default)]
+    pub builtin_reference_instrument: Option<String>,
+    /// 双腿套利对冲腿的 BarFrame 快照路径。
+    #[serde(default)]
+    pub builtin_reference_bars_snapshot_path: Option<String>,
+    /// 双腿套利对冲腿的执行策略；用于现货/永续混合时给每条腿独立设置
+    /// Cash/1x 或 Cross/Isolated/杠杆，不把期货参数误发给现货交易所。
+    #[serde(default)]
+    pub builtin_reference_margin_mode: Option<MarginMode>,
+    #[serde(default)]
+    pub builtin_reference_position_mode: Option<PositionMode>,
+    #[serde(default)]
+    pub builtin_reference_leverage: Option<u32>,
     /// Strategy worker 可读取的冻结 BarFrame 快照。外部策略会收到 bars 输入；
     /// 内置策略运行时必须配置该字段，才能基于历史 K 线产生信号。
     #[serde(default)]
@@ -913,12 +979,21 @@ impl Default for StrategyRuntimeConfig {
             position_mode: None,
             leverage: None,
             allow_short: None,
+            live_enabled: false,
+            live_timeframe: default_strategy_live_timeframe(),
+            live_history_limit: default_strategy_live_history_limit(),
+            live_closed_only: default_strategy_live_closed_only(),
             builtin_strategy: None,
             builtin_quantity: None,
             builtin_fast_window: None,
             builtin_slow_window: None,
             builtin_period: None,
             builtin_threshold_bps: None,
+            builtin_reference_instrument: None,
+            builtin_reference_bars_snapshot_path: None,
+            builtin_reference_margin_mode: None,
+            builtin_reference_position_mode: None,
+            builtin_reference_leverage: None,
             bars_snapshot_path: None,
             python_module: None,
             transport: StrategyTransport::Jsonl,
@@ -1028,6 +1103,17 @@ impl RuntimeConfig {
                 "{label} target_qty 不能为负；当前产品/策略未开启 allow_short"
             ));
         }
+        if strategy.live_timeframe.trim().is_empty() {
+            return Err(format!("{label} live_timeframe 不能为空"));
+        }
+        if strategy.live_history_limit < 2 || strategy.live_history_limit > 100_000 {
+            return Err(format!("{label} live_history_limit 必须在 2..=100000 内"));
+        }
+        if strategy.live_enabled && strategy.bars_snapshot_path.is_none() {
+            return Err(format!(
+                "{label} live_enabled=true 时必须配置 bars_snapshot_path"
+            ));
+        }
         if strategy
             .target_snapshot_path
             .as_deref()
@@ -1117,6 +1203,58 @@ impl RuntimeConfig {
             .is_some_and(|threshold| threshold < 0)
         {
             return Err(format!("{label} builtin_threshold_bps 不能为负"));
+        }
+        let builtin_kind = strategy
+            .builtin_strategy
+            .as_deref()
+            .map(qx_strategy::BuiltinStrategyKind::parse)
+            .transpose()
+            .map_err(|error| format!("{label} builtin_strategy 非法: {error}"))?;
+        let needs_reference = matches!(
+            builtin_kind,
+            Some(
+                qx_strategy::BuiltinStrategyKind::PairsArbitrage
+                    | qx_strategy::BuiltinStrategyKind::BasisArbitrage
+                    | qx_strategy::BuiltinStrategyKind::CrossVenueArbitrage
+                    | qx_strategy::BuiltinStrategyKind::SpotFuturesArbitrage
+            )
+        );
+        if needs_reference
+            && (strategy.builtin_reference_instrument.is_none()
+                || strategy.builtin_reference_bars_snapshot_path.is_none())
+        {
+            return Err(format!(
+                "{label} 双腿套利必须配置 builtin_reference_instrument 和 builtin_reference_bars_snapshot_path"
+            ));
+        }
+        if let Some(reference) = strategy.builtin_reference_instrument.as_deref() {
+            let reference = InstrumentId::parse(reference)
+                .ok_or_else(|| format!("{label} builtin_reference_instrument 非法: {reference}"))?;
+            if strategy
+                .instrument
+                .as_deref()
+                .and_then(InstrumentId::parse)
+                .is_some_and(|instrument| instrument == reference)
+            {
+                return Err(format!(
+                    "{label} builtin_reference_instrument 不能与 instrument 相同"
+                ));
+            }
+        }
+        if strategy
+            .builtin_reference_bars_snapshot_path
+            .as_deref()
+            .is_some_and(|path| path.trim().is_empty())
+        {
+            return Err(format!(
+                "{label} builtin_reference_bars_snapshot_path 不能为空字符串"
+            ));
+        }
+        if strategy
+            .builtin_reference_leverage
+            .is_some_and(|leverage| leverage == 0)
+        {
+            return Err(format!("{label} builtin_reference_leverage 必须大于 0"));
         }
         if strategy.python_timeout_ms == 0 || strategy.python_timeout_ms > 60_000 {
             return Err(format!("{label} python_timeout_ms 必须在 1..=60000 内"));
@@ -2210,6 +2348,9 @@ mod tests {
                     reduce_only: false,
                     post_only: true,
                     position_side: Some("net".into()),
+                    margin_mode: None,
+                    position_mode: None,
+                    leverage: None,
                 },
                 StrategyContractIntent {
                     intent_id: 1002,
@@ -2220,6 +2361,9 @@ mod tests {
                     reduce_only: true,
                     post_only: false,
                     position_side: Some("net".into()),
+                    margin_mode: None,
+                    position_mode: None,
+                    leverage: None,
                 },
             ],
         };
@@ -2414,6 +2558,23 @@ mod tests {
     }
 
     #[test]
+    fn live_builtin_and_pair_arbitrage_require_stream_inputs() {
+        let mut config = config();
+        config.strategy.live_enabled = true;
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .contains("bars_snapshot_path"));
+        config.strategy.bars_snapshot_path = Some("primary.json".into());
+        config.strategy.builtin_strategy = Some("pairs_arbitrage".into());
+        let error = config.validate().unwrap_err();
+        assert!(error.contains("builtin_reference_instrument"));
+        config.strategy.builtin_reference_instrument = Some("ETHUSDT.BINANCE".into());
+        config.strategy.builtin_reference_bars_snapshot_path = Some("reference.json".into());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
     fn production_c_abi_strategy_requires_detached_signature() {
         let mut config = config();
         config.environment = "production".into();
@@ -2502,12 +2663,21 @@ mod tests {
             position_mode: None,
             leverage: None,
             allow_short: None,
+            live_enabled: false,
+            live_timeframe: default_strategy_live_timeframe(),
+            live_history_limit: default_strategy_live_history_limit(),
+            live_closed_only: default_strategy_live_closed_only(),
             builtin_strategy: None,
             builtin_quantity: None,
             builtin_fast_window: None,
             builtin_slow_window: None,
             builtin_period: None,
             builtin_threshold_bps: None,
+            builtin_reference_instrument: None,
+            builtin_reference_bars_snapshot_path: None,
+            builtin_reference_margin_mode: None,
+            builtin_reference_position_mode: None,
+            builtin_reference_leverage: None,
             bars_snapshot_path: None,
             python_module: None,
             transport: StrategyTransport::Jsonl,

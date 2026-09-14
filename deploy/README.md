@@ -104,11 +104,15 @@ Paper Execution worker 可以配置 `paper_initial_cash_raw`，启动时通过�
 
 交易所连接优先使用 Python 公共 `ccxt`，配置 `exchange_id` 即可复用 Binance、OKX、Bybit 等交易所的统一 REST API。连接层入口为 `python/qianxing_ccxt`，负责 market/symbol 映射、OHLCV 分页、ticker、账户、订单和错误分类；`python -m qianxing_ccxt.worker --config <json>` 提供 JSONL 进程边界；核心 Rust 订单状态、Ledger 和回测撮合不直接依赖 CCXT。`qianxing.ccxt.binance.public.example.json` 提供无凭据公共探测样例，`credential_env: null` 也会被正确解释为匿名公共连接。
 
-安装 Python wheel 时会安装 `ccxt`；需要 `watch_*` 实时流时另行安装可选 `ccxt-pro` extra。没有 CCXT Pro 或交易所不支持某个 `watch_*` 能力时，必须使用 REST 轮询和对账，不得把轮询伪装成实时用户流。CCXT Pro JSONL worker 对网络/限频错误执行有限次指数退避、重建连接和重新订阅，对认证、参数和不支持错误立即失败；当前 CCXT REST 连接层、MarketData ticker Worker、Execution SubmitOrder Worker、订单/余额/持仓/资金费率/资金流水 Reconcile、OHLCV/MarketSpec 快照、研究快照 StrategyContext、API QueryPort 和跨进程租约恢复验收已接入；现货和永续 ticker 在 bid/ask 缺失时会使用订单簿首档完成统一标准化。交易所账单字段差异和真实多交易所 sandbox 闭环仍需外部凭证与交易所环境验收，详见 [CCXT 多交易所方案](../docs/CCXT多交易所接入与策略运行方案-V1.md)。
+安装 Python wheel 时会安装公共 `ccxt`；本期运行时只依赖 REST 轮询、下单和对账，不依赖 CCXT Pro。`ccxt-pro` extra 与 `watch_*` 封装仅作为后续实时流扩展保留，当前不能把它们作为生产前置条件，也不能把 REST 轮询伪装成 WebSocket 用户流。当前 CCXT REST 连接层、MarketData ticker/OHLCV Worker、Execution SubmitOrder Worker、订单/余额/持仓/资金费率/资金流水 Reconcile、MarketSpec 快照、研究快照 StrategyContext、API QueryPort 和跨进程租约恢复验收已接入；现货和永续 ticker 在 bid/ask 缺失时会使用订单簿首档完成统一标准化。交易所账单字段差异和真实多交易所 sandbox 闭环仍需外部凭证与交易所环境验收，详见 [CCXT 多交易所方案](../docs/CCXT多交易所接入与策略运行方案-V1.md)。
 
 可直接复制 `qianxing.runtime.ccxt.example.json` 作为多交易所 sandbox 拓扑样例；执行和行情 Worker 的 `endpoint` 指向 CCXT 配置文件，supervisor 会优先启动公共 CCXT 路径，旧 Binance Worker 仅作为无 CCXT endpoint 时的兼容回退。
 
 该样例同时展示 `strategies[]` 多策略配置。每个策略实例的 `id` 必须等于对应 Strategy worker id；调度任务的 `owner` 必须填写该策略实例，多个策略共用 JobQueue 时不会互相领取任务。
+
+双腿套利可使用 `multi-builtin-backtest <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity]`。两条 BarFrame 必须时间戳对齐；信号由同一个套利策略生成，再分别通过统一撮合、手续费、风控和 Ledger 回测，适用于跨交易所价差与现货/期货基差策略。示例输入为 `qianxing.bar-frame.example.json` 与 `qianxing.bar-frame.okx.example.json`。
+
+多标的、多币种批量回测使用 `fast-backtest manifest.json`。manifest 的 `jobs[]` 每项配置一个独立 `runtime`、`bars` 和可选 `market_spec`，CLI 会并行运行多个隔离账户/标的任务，适合同时比较 BTC、ETH、SOL，现货、永续、期货以及不同策略参数。示例见 `qianxing.fast-backtest.example.json`；每个 runtime 可以继续使用 `strategies[]` 配置多策略实例。
 
 策略实例还可配置 `python_module`（Python 模块名或 `.py` 文件路径）。Rust 会通过 `python -m qianxing_strategy.worker` 传递版本化 JSONL 输入/输出，校验请求身份、PIT 时间、数据指纹和信号有效期；Python 策略不能直接访问交易所、EventLog 或 Ledger，也不能绕过 Rust RiskGate。未配置该字段时使用现有 Rust 策略兼容路径。
 
@@ -123,7 +127,7 @@ Rust/C++ 也可以编译成独立策略进程，通过 `strategy.external_execut
 
 当配置包含 `strategies[]` 时，`strategy-backtest` 会按策略实例逐个执行隔离回测，每个实例使用自己的 account/strategy 配置并输出独立结果哈希；示例见 `deploy/qianxing.runtime.strategy-multi-backtest.example.json`。组合级资金池、跨策略净额和归因需要在组合回测层显式配置，不会隐式共享单策略账户状态。
 
-当前还提供 10 个固定点运算的内置策略，可先查看目录再直接回测：
+当前提供 17 个固定点运算的内置策略，可先查看目录再直接回测：
 
 ```powershell
 cargo run --release -p qx-cli -- builtin-strategies
@@ -131,7 +135,30 @@ cargo run --release -p qx-cli -- builtin-backtest macd deploy/qianxing.bar-frame
 cargo run --release -p qx-cli -- strategy-backtest deploy/qianxing.runtime.builtin-strategy.example.json deploy/qianxing.bar-frame.example.json
 ```
 
-内置策略包括 SMA/EMA 交叉、MACD、RSI、布林带、Donchian 突破、动量、均值回归、网格和 ATR 趋势。它们只产生统一 StrategyDecision，不直接访问交易所；Paper/实盘仍由 Runtime 的 RiskGate、OMS、Execution 和 CCXT worker 执行。运行时配置使用 `builtin_strategy` 选择策略，并通过 `bars_snapshot_path` 提供冻结 K 线窗口；Strategy worker 会按 `as_of` 截断 BarFrame 后调用策略。
+内置策略包括 SMA/EMA 交叉、MACD、RSI、布林带、Donchian 突破、动量、均值回归、网格、ATR/Keltner 趋势、VWAP 回归、波动率突破，以及配对、跨交易所、基差、现货/期货四类双腿套利。套利策略额外配置 `builtin_reference_instrument` 和 `builtin_reference_bars_snapshot_path`；跨交易所时主腿/对冲腿可以分别由不同 CCXT REST MarketData worker 维护，现货腿可设置 `builtin_reference_margin_mode: "cash"` 与 `builtin_reference_leverage: 1`，避免把期货杠杆参数发送给现货交易所。
+
+### CCXT 实时策略
+
+`qianxing.runtime.ccxt.example.json` 已包含可运行的 sandbox 实时配置。MarketData worker 会按 `live_timeframe` 持续拉取 OHLCV，默认只落盘已闭合 K 线到 `bars_snapshot_path`；Strategy worker 发现 BarFrame 摘要变化后只投递一次幂等 JobRun，随后沿原有策略、风控、订单和 CCXT Execution 链路执行。
+
+先配置公共 CCXT 凭据（不同交易所只需替换变量名）：
+
+```powershell
+$env:QX_CCXT_OKX_API_KEY = "<api-key>"
+$env:QX_CCXT_OKX_SECRET = "<secret>"
+$env:QX_CCXT_OKX_PASSWORD = "<passphrase>"
+```
+
+然后启动监督器：
+
+```powershell
+cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.ccxt.example.json
+cargo run --release -p qx-cli -- supervise deploy/qianxing.runtime.ccxt.example.json
+```
+
+实时模式仍然只让 Python 公共 CCXT 负责交易所协议；密钥通过 `credential_env` 注入，不写入 JSON、日志、事件或策略进程。sandbox 验证通过后，将 `sandbox` 切换为 `false` 前必须完成交易所权限、限频、最小数量、杠杆和订单恢复验收。
+
+多交易所现货/期货套利可直接参考 `qianxing.runtime.multi-venue-arbitrage.example.json`：Binance Spot 和 OKX Swap 各自运行独立 REST MarketData、Execution、Reconcile worker，分别维护两条 BarFrame 快照；`spot_futures_arbitrage` 等待两腿闭合时间一致后生成双腿订单。现货腿使用 Cash/1x policy，期货腿使用 Cross/3x policy，订单按 InstrumentId 的 venue 自动路由到对应 CCXT Execution worker。
 
 CCXT 数据进入回测的推荐流程：
 

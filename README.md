@@ -46,7 +46,7 @@
 | `qx-storage` | 文件/分段 EventLog、控制面、队列、快照、审计以及 SQLite/PostgreSQL 事务后端 |
 | `qx-strategy` | Rust Strategy API、上下文/事件/多订单意图和原生策略 SDK |
 | `qx-execution` | Venue 回报统一归约、SubmitOrder 执行副作用边界 |
-| `python/qianxing_ccxt` | 公共 CCXT 多交易所 REST 数据/交易连接层，CCXT Pro 可选实时流 |
+| `python/qianxing_ccxt` | 公共 CCXT 多交易所 REST 数据/交易连接层；CCXT Pro 仅保留后续扩展接口 |
 | `qx-python` | PyO3 原生扩展、Arrow C Data Interface capsule 协议 |
 | `cpp/` | C++ Strategy API v1 稳定 C ABI、CMake 示例 |
 | `qx-cli` | 端到端回测演示与确定性自校验 |
@@ -84,11 +84,15 @@ cargo run -p qx-cli -- init qianxing.runtime.json
 cargo run -p qx-cli -- backtest
 cargo run -p qx-cli -- builtin-strategies
 cargo run -p qx-cli -- builtin-backtest sma_cross deploy/qianxing.bar-frame.example.json
+cargo run -p qx-cli -- multi-builtin-backtest spot_futures_arbitrage deploy/qianxing.bar-frame.example.json deploy/qianxing.bar-frame.okx.example.json
+cargo run -p qx-cli -- fast-backtest deploy/qianxing.fast-backtest.example.json
 cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.builtin-strategy.example.json deploy/qianxing.bar-frame.example.json
+cargo run -p qx-cli -- runtime-check deploy/qianxing.runtime.ccxt.example.json
+cargo run -p qx-cli -- runtime-check deploy/qianxing.runtime.multi-venue-arbitrage.example.json
 cargo run -p qx-cli -- paper-check deploy/qianxing.runtime.paper-strategy.example.json
 cargo run -p qx-cli -- live-check deploy/qianxing.runtime.production.example.json
 
-# 内置 Rust、Python/C++ JSONL 策略直接复用 Bar 回测引擎
+# 内置 Rust、Python/C++ JSONL 策略直接复用 Bar 回测引擎；CCXT 实时模式会持续维护闭合 BarFrame 并按 digest 触发策略
 cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.strategy-backtest.example.json deploy/qianxing.bar-frame.example.json
 
 # 校验运行时拓扑配置，并启动 paper API（默认示例配置）

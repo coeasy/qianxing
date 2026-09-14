@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "environment": "sandbox",
+  "api": {
+    "bind": "127.0.0.1:18083",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {}
+  },
+  "storage": {
+    "backend": "files",
+    "data_dir": "data/qianxing-multi-venue-arbitrage",
+    "sqlite_path": null
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "market-binance-spot",
+      "role": "market_data",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": "binance",
+      "endpoint": "qianxing.ccxt.binance.spot.example.json",
+      "symbols": ["BTC/USDT.BINANCE"],
+      "credential_env": null
+    },
+    {
+      "id": "market-okx-swap",
+      "role": "market_data",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": "okx",
+      "endpoint": "qianxing.ccxt.okx.swap.example.json",
+      "symbols": ["BTC/USDT:USDT.OKX"],
+      "credential_env": null
+    },
+    {
+      "id": "execution-binance-spot",
+      "role": "execution",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "binance",
+      "endpoint": "qianxing.ccxt.binance.spot.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_CCXT_BINANCE_API_KEY",
+        "secret": "QX_CCXT_BINANCE_SECRET"
+      },
+      "instrument_spec_path": "qianxing.binance.spot.spec.json"
+    },
+    {
+      "id": "execution-okx-swap",
+      "role": "execution",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "okx",
+      "endpoint": "qianxing.ccxt.okx.swap.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": null,
+      "instrument_spec_path": "qianxing.ccxt.okx.perpetual.spec.json"
+    },
+    {
+      "id": "reconcile-binance-spot",
+      "role": "reconciler",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "binance",
+      "endpoint": "qianxing.ccxt.binance.spot.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": {
+        "api_key": "QX_CCXT_BINANCE_API_KEY",
+        "secret": "QX_CCXT_BINANCE_SECRET"
+      }
+    },
+    {
+      "id": "reconcile-okx-swap",
+      "role": "reconciler",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "okx",
+      "endpoint": "qianxing.ccxt.okx.swap.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": null
+    },
+    {
+      "id": "strategy-spot-futures",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "okx",
+      "endpoint": null,
+      "symbols": ["BTC/USDT.BINANCE", "BTC/USDT:USDT.OKX"],
+      "credential_env": null
+    }
+  ],
+  "scheduler": {
+    "state_path": "scheduler.json",
+    "jobs_path": "qianxing.scheduler.jobs.example.json",
+    "job_queue_path": "job-queue",
+    "tick_interval_ms": 1000
+  },
+  "strategy": {
+    "id": "strategy-spot-futures",
+    "version": "spot-futures-arbitrage-v1",
+    "max_orders": 1000,
+    "account_id": "main",
+    "venue_id": "okx",
+    "instrument": "BTC/USDT:USDT.OKX",
+    "target_qty": 0,
+    "live_enabled": true,
+    "live_timeframe": "1m",
+    "live_history_limit": 200,
+    "live_closed_only": true,
+    "builtin_strategy": "spot_futures_arbitrage",
+    "builtin_quantity": 1,
+    "builtin_period": 14,
+    "builtin_threshold_bps": 30,
+    "builtin_reference_instrument": "BTC/USDT.BINANCE",
+    "builtin_reference_bars_snapshot_path": "data/qianxing-multi-venue-arbitrage/btc-usdt-spot.bar-frame.json",
+    "builtin_reference_margin_mode": "cash",
+    "builtin_reference_position_mode": "one_way",
+    "builtin_reference_leverage": 1,
+    "bars_snapshot_path": "data/qianxing-multi-venue-arbitrage/btc-usdt-swap.bar-frame.json",
+    "product": "perpetual",
+    "margin_mode": "cross",
+    "position_mode": "one_way",
+    "leverage": 3,
+    "allow_short": true
+  },
+  "shutdown_timeout_ms": 30000
+}

@@ -7,7 +7,7 @@
 交易所连接层统一优先使用公共 CCXT，不再为 Binance、OKX、Bybit 等交易所重复实现签名、REST 路径、限频和订单协议。
 
 - `ccxt`：统一 REST 公共行情、历史 K 线、市场元数据、账户、下单、撤单和订单查询。
-- `ccxt.pro`：可选实时 WebSocket `watch_*` 能力；没有 Pro 授权或某交易所不支持时，使用 REST 轮询和对账，不伪装成实时流。
+- `ccxt.pro`：后续阶段的可选实时 WebSocket `watch_*` 能力；本期不作为运行时依赖，不纳入当前生产闭环。当前统一使用公共 `ccxt` REST 轮询、下单和对账。
 - Rust 核心：继续负责 Instrument、OrderIntent、风控、订单状态、事件事实、Ledger、回测撮合和恢复语义，不依赖 CCXT。
 - Python CCXT 边界：负责交易所调用、symbol/id 映射、十进制定点转换和 CCXT 错误分类，通过稳定的 JSON/Arrow 数据进入研究、回测和运行时。
 
@@ -28,10 +28,13 @@
 - CCXT Reconcile：`fetch_positions` 归一化为带多空方向、均价、标记价、强平价、未实现盈亏、初始/维持保证金和杠杆的 `AccountPositionSnapshot`；余额快照保留借贷负债，订单/成交对账保留手续费；`fetch_funding_rate` 归一化为可重放的 `FundingRateSnapshot`，但费率观察不会直接改 Ledger。
 - CCXT Cashflow：优先使用公共 `fetch_ledger`，将 funding/interest/settlement/transfer 账单归一化为带 `external_id` 的 `AccountCashflow`；不支持时显式尝试 `fetch_funding_history`，进入 EventLog 后生成 `LedgerApplied`，按账单身份幂等，不把余额快照或费率观察当成现金结算。
 - `CcxtErrorClass`：限频、网络重试、认证、交易所错误、参数错误、未支持能力和未知错误分类。
-- `watch_ohlcv/watch_ticker/watch_orders/watch_my_trades/watch_balance/watch_positions`：可选公共 CCXT Pro 流，缺失时显式返回 Unsupported；JSONL Worker 会复用同一个 Pro exchange，并输出带 stream/exchange_id/received_ts/events 的稳定事件封装。
-- `python -m qianxing_ccxt.worker --config ...`：JSONL 进程边界，支持 `load_markets`、`fetch_ohlcv`、`fetch_ticker`、`create_order`、`fetch_order`、`fetch_my_trades`、`cancel_order`、`fetch_balance`、`fetch_ledger`、`fetch_funding_history`、`fetch_leverage_tiers` 和可选 `watch_*` 流；秘密只从环境变量读取，Pro stream 对网络/限频错误按配置有限重连并指数退避，对认证、参数和不支持错误稳定失败。
-- CCXT `UserStream` worker 已接入 `watch_orders`：流只提供 remote order 唤醒和身份，Rust 再用 `fetch_order` 补齐成交/费用，之后通过 `CcxtProcessVenue::sync_order` 进入统一 Runtime/EventLog/Ledger；未知 remote order 交给 Reconcile，不自动注册或补单。
+- `watch_ohlcv/watch_ticker/watch_orders/watch_my_trades/watch_balance/watch_positions`：代码层保留后续 CCXT Pro 扩展边界，但本期不由运行时启用；当前市场、订单和账户状态依靠 REST 轮询与对账获取。
+- `python -m qianxing_ccxt.worker --config ...`：JSONL 进程边界，本期支持 `load_markets`、`fetch_ohlcv`、`fetch_ticker`、`create_order`、`fetch_order`、`fetch_my_trades`、`cancel_order`、`fetch_balance`、`fetch_ledger`、`fetch_funding_history` 和 `fetch_leverage_tiers`；秘密只从环境变量读取，REST 网络/限频错误按配置有限重建连接，对认证、参数和不支持错误稳定失败。
+- CCXT Pro `UserStream` 不属于本期交付；当前以 REST `fetch_order`、`fetch_open_orders`、余额、持仓和账单对账覆盖订单最终一致性，未知订单交给 Reconcile，不自动注册或补单。
 - `qx-cli ccxt-worker runtime.json worker-id ccxt-config.json`：把已审计 SubmitOrder 接入 Rust Control/Queue/EventLog/ExecutionService。
+- 当策略配置 `live_enabled=true` 时，CCXT MarketData worker 会按 `live_timeframe` 持续拉取 OHLCV，默认只保留闭合 K 线并原子更新 `bars_snapshot_path`；Strategy worker 以 BarFrame digest 为幂等键投递实时 JobRun，避免固定调度和重复下单。
+- 多交易所套利不要求 CCXT Pro：每个交易所配置独立的 CCXT REST MarketData/Execution worker，worker 只更新自己 `venue_id` 的主腿或对冲腿快照，策略等待两腿最新闭合时间一致后再生成双腿 intents。`cross_venue_arbitrage` 用归一化收益价差，`spot_futures_arbitrage` 用当前基差；现货腿通过独立 Cash/1x 执行策略避免继承期货杠杆。
+- 多标的/多币种通过同一 MarketData worker 的 `symbols[]` 和多个 Strategy worker/`strategies[]` 实例配置；不同结算币种在每个 worker 上用 `settlement_currency` 显式隔离，行情、执行和对账 EventLog 不再固定使用 USDT。
 - CCXT Python worker 启动时会清空父进程环境，只保留 Python/Windows 运行所需基础变量和 `credential_env` 声明的变量；不相关的交易所凭证不会跨进程继承。凭证值仍只从环境变量读取，不进入 Rust 日志或配置摘要。
 - Rust `CcxtProcessClient` 按配置读取 `timeout_ms`，通过独立响应读取线程和有界等待避免交易线程永久阻塞；超时、worker 退出和通道断开都按“提交结果未知”处理，不自动重试下单。
 - ExecutionService 接收到冻结 `TradingInstrumentSpec` 时，Paper/CCXT 的成交统一使用产品规格归约：Spot 走现金成交，Margin/Perpetual/Future 走持仓、已实现 PnL、手续费和资金结算语义；规格生成的 LedgerApplied 事实可在重启后直接重放。
@@ -67,7 +70,7 @@ Strategy
   → Rust Control/OMS
   → CCXT Execution Worker
   → create_order
-  → fetch_order / watch_orders
+  → fetch_order / fetch_open_orders
   → RuntimeEvent
   → EventLog → Ledger → Reconcile
 ```
@@ -116,7 +119,7 @@ Strategy
 1. 将现有 `qianxing_ccxt.worker` 接入独立 MarketData/Execution/Reconcile Worker，使用稳定 JSON 命令和事实文件与 Rust 运行时通信；当前已接入 CCXT ticker MarketData、Execution SubmitOrder、订单状态/余额 Reconcile、OHLCV 快照和 MarketSpec 下载入口。
 2. 将 CCXT 市场缓存、SymbolMapper 持久化、精度/杠杆/维持保证金分层和 capability 快照继续补齐；当前 MarketSpec 已能驱动统一产品规格，但缺省精度字段仍要求部署侧覆盖。
 3. 完成 REST 轮询式实盘闭环的成交明细、持仓快照、资金费观察、资金账单/利息、交割和分层强平对账；Cashflow 已进入 EventLog/Ledger，仍需按交易所真实字段和账单时间窗口做外部验收。
-4. 已完成 CCXT Pro `watch_*` JSONL、有限重连/退避和 UserStream 代码接入；仍需在真实 CCXT Pro/交易所环境中验证断点、重复回报、账单字段和限频矩阵。
+4. 后续阶段再接入 CCXT Pro `watch_*` JSONL、有限重连/退避和 UserStream 唤醒；本期先完成 REST 轮询、对账、重复回报幂等和未知订单恢复，不把 Pro 作为生产依赖。
 5. 为 Binance、OKX、Bybit 各完成 sandbox 注入式测试，再进行真实账户验收。
 6. 将 CCXT 历史数据快照接入回测 CLI，并实现多策略同输入确定性回放；当前已接入 Rust BacktestEngine 和多策略 JobQueue 隔离，后续补充策略插件化输入与组合级归因。
 

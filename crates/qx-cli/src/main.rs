@@ -1643,9 +1643,13 @@ fn print_cli_help() {
   backtest [runtime.json] [bar-frame.json] [market-spec.json]
       使用统一 Rust 撮合引擎运行跨语言策略回测。
   builtin-strategies
-      列出可直接用于回测/Paper/策略接入的 10 个内置策略。
+      列出可直接用于回测/Paper/策略接入的 17 个内置策略。
   builtin-backtest <strategy> <bar-frame.json> [market-spec.json] [quantity]
       使用内置策略和统一 Rust 撮合引擎回测。
+  multi-builtin-backtest <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity]
+      对齐两条 BarFrame，使用同一信号驱动双腿独立账户回测。
+  fast-backtest <manifest.json>
+      并行执行多个独立回测任务，适合多标的、多币种和多参数批量验证。
   ccxt-builtin-backtest <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity]
       一次完成 CCXT OHLCV 获取、内置策略回测和结果输出。
   paper-check [runtime.json]
@@ -2079,6 +2083,13 @@ fn resolve_strategy_runtime_paths(strategy: &mut StrategyRuntimeConfig, runtime_
                 .into_owned(),
         );
     }
+    if let Some(configured) = strategy.builtin_reference_bars_snapshot_path.as_deref() {
+        strategy.builtin_reference_bars_snapshot_path = Some(
+            resolve_runtime_relative_path(runtime_path, configured)
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
     if let Some(executable) = strategy.external_executable.as_deref() {
         let path_like = executable.contains('/')
             || executable.contains('\\')
@@ -2199,21 +2210,34 @@ fn strategy_current_qty_for(
     config: &RuntimeConfig,
     instrument: &InstrumentId,
 ) -> Result<i128, String> {
-    let (Some(account_id), Some(venue_id)) = (
-        config.strategy.account_id.as_deref(),
-        config.strategy.venue_id.as_deref(),
-    ) else {
+    let Some(account_id) = config.strategy.account_id.as_deref() else {
         return Ok(0);
     };
-    let Some(log_name) = account_event_log_name(account_id, venue_id) else {
+    // 多交易所套利的每条 intent 可以属于不同 venue；优先按
+    // InstrumentId 的 venue 读取，不能把所有腿都误读成策略主腿。
+    // 兼容旧的 paper/测试账户：历史配置可能把事件写入 strategy.venue_id
+    // 对应的 EventLog，而 instrument 本身仍使用交易所 venue。
+    let venue_id = instrument.venue.to_string();
+    let Some(instrument_log_name) = account_event_log_name(account_id, &venue_id) else {
         return Err(format!(
             "Strategy 当前持仓暂不支持 venue_id={}；请先接入该 Venue 的账户事件归约",
             venue_id
         ));
     };
-    if !event_log_exists(config, root, &log_name)? {
+    let log_name = if event_log_exists(config, root, &instrument_log_name)? {
+        instrument_log_name
+    } else if let Some(configured_venue) = config.strategy.venue_id.as_deref() {
+        let Some(configured_log_name) = account_event_log_name(account_id, configured_venue) else {
+            return Ok(0);
+        };
+        if event_log_exists(config, root, &configured_log_name)? {
+            configured_log_name
+        } else {
+            return Ok(0);
+        }
+    } else {
         return Ok(0);
-    }
+    };
     let pipeline = open_runtime_pipeline(config, root, log_name, "USDT")
         .map_err(|error| format!("恢复 Strategy 账户 EventLog 失败: {error}"))?;
     Ok(pipeline
@@ -2931,13 +2955,20 @@ fn builtin_strategy_config_from_runtime(
     if quantity_raw <= 0 {
         return Err("builtin_quantity 必须为正整数".into());
     }
-    let mut config = BuiltinStrategyConfig::new(
+    let mut config = BuiltinStrategyConfig {
         kind,
         strategy_id,
-        instrument.clone(),
-        Quantity::from_raw(quantity_raw),
-    )?;
-    config.strategy_version = strategy.version.clone();
+        strategy_version: strategy.version.clone(),
+        instrument: instrument.clone(),
+        quantity: Quantity::from_raw(quantity_raw),
+        fast_window: 5,
+        slow_window: 20,
+        period: 14,
+        threshold_bps: 100,
+        reference_instrument: None,
+        primary_policy: None,
+        reference_policy: None,
+    };
     if let Some(window) = strategy.builtin_fast_window {
         config.fast_window = window;
     }
@@ -2949,6 +2980,46 @@ fn builtin_strategy_config_from_runtime(
     }
     if let Some(threshold) = strategy.builtin_threshold_bps {
         config.threshold_bps = threshold;
+    }
+    if let Some(reference) = strategy.builtin_reference_instrument.as_deref() {
+        config.reference_instrument = Some(
+            InstrumentId::parse(reference)
+                .ok_or_else(|| format!("builtin_reference_instrument 非法: {reference}"))?,
+        );
+    }
+    if config.reference_instrument.is_some() {
+        let primary_product = strategy.product.unwrap_or(TradingProduct::Spot);
+        let primary_margin =
+            strategy
+                .margin_mode
+                .unwrap_or(if primary_product == TradingProduct::Spot {
+                    MarginMode::Cash
+                } else {
+                    MarginMode::Cross
+                });
+        let primary_position = strategy.position_mode.unwrap_or(PositionMode::OneWay);
+        config.primary_policy = Some(OrderPolicy {
+            reduce_only: false,
+            position_side: PositionSide::Net,
+            margin_mode: primary_margin,
+            position_mode: primary_position,
+            leverage: strategy.leverage.unwrap_or(1),
+            post_only: false,
+        });
+        let reference_margin = strategy
+            .builtin_reference_margin_mode
+            .unwrap_or(MarginMode::Cash);
+        let reference_position = strategy
+            .builtin_reference_position_mode
+            .unwrap_or(PositionMode::OneWay);
+        config.reference_policy = Some(OrderPolicy {
+            reduce_only: false,
+            position_side: PositionSide::Net,
+            margin_mode: reference_margin,
+            position_mode: reference_position,
+            leverage: strategy.builtin_reference_leverage.unwrap_or(1),
+            post_only: false,
+        });
     }
     config.validate()?;
     Ok(config)
@@ -2971,16 +3042,55 @@ fn invoke_builtin_strategy(
         instrument,
     )?)?;
     strategy.on_init(&context)?;
+    let reference_bars =
+        if let Some(reference_text) = config.strategy.builtin_reference_instrument.as_deref() {
+            let reference = InstrumentId::parse(reference_text)
+                .ok_or_else(|| format!("builtin_reference_instrument 非法: {reference_text}"))?;
+            let reference_path = config
+                .strategy
+                .builtin_reference_bars_snapshot_path
+                .as_deref()
+                .ok_or_else(|| "双腿套利缺少 builtin_reference_bars_snapshot_path".to_string())?;
+            let mut reference_config = config.clone();
+            reference_config.strategy.instrument = Some(reference.to_string());
+            reference_config.strategy.bars_snapshot_path = Some(reference_path.into());
+            load_strategy_contract_bars(root, &reference_config, &reference, now)?
+                .map(|(bars, _, _)| (reference, bars))
+        } else {
+            None
+        };
+    let mut events = bars
+        .ts
+        .iter()
+        .enumerate()
+        .map(|(index, ts)| (*ts, false, index))
+        .collect::<Vec<_>>();
+    if let Some((_, reference)) = reference_bars.as_ref() {
+        events.extend(
+            reference
+                .ts
+                .iter()
+                .enumerate()
+                .map(|(index, ts)| (*ts, true, index)),
+        );
+    }
+    events.sort_by_key(|(ts, is_reference, _)| (*ts, !*is_reference));
     let mut decision = None;
-    for index in 0..bars.ts.len() {
+    for (_, is_reference, index) in events {
+        let (event_instrument, event_bars) = if is_reference {
+            let (reference, bars) = reference_bars.as_ref().ok_or("套利对冲腿 BarFrame 缺失")?;
+            (reference.clone(), bars)
+        } else {
+            (instrument.clone(), bars)
+        };
         let event = NativeMarketEvent::Bar {
-            instrument: instrument.clone(),
-            ts: bars.ts[index],
-            open_raw: bars.open_raw[index],
-            high_raw: bars.high_raw[index],
-            low_raw: bars.low_raw[index],
-            close_raw: bars.close_raw[index],
-            volume_raw: bars.volume_raw[index],
+            instrument: event_instrument,
+            ts: event_bars.ts[index],
+            open_raw: event_bars.open_raw[index],
+            high_raw: event_bars.high_raw[index],
+            low_raw: event_bars.low_raw[index],
+            close_raw: event_bars.close_raw[index],
+            volume_raw: event_bars.volume_raw[index],
         };
         decision = Some(strategy.on_event(&context, &event)?);
     }
@@ -3445,23 +3555,40 @@ fn build_strategy_order_from_contract_intent(
         other => return Err(format!("Strategy intent side 非法: {other}")),
     };
     let product = config.strategy.product.unwrap_or(TradingProduct::Spot);
-    let allow_short = config
-        .strategy
-        .allow_short
-        .unwrap_or(product.is_derivative());
-    let position_mode = config
-        .strategy
-        .position_mode
-        .unwrap_or(PositionMode::OneWay);
-    let margin_mode = config
-        .strategy
-        .margin_mode
-        .unwrap_or(if product == TradingProduct::Spot {
-            MarginMode::Cash
-        } else {
-            MarginMode::Cross
-        });
-    let leverage = config.strategy.leverage.unwrap_or(1);
+    let position_mode = match intent.position_mode.as_deref() {
+        None => config
+            .strategy
+            .position_mode
+            .unwrap_or(PositionMode::OneWay),
+        Some("one_way") => PositionMode::OneWay,
+        Some("hedge") => PositionMode::Hedge,
+        Some(other) => return Err(format!("Strategy intent position_mode 非法: {other}")),
+    };
+    let margin_mode = match intent.margin_mode.as_deref() {
+        None => config
+            .strategy
+            .margin_mode
+            .unwrap_or(if product == TradingProduct::Spot {
+                MarginMode::Cash
+            } else {
+                MarginMode::Cross
+            }),
+        Some("cash") => MarginMode::Cash,
+        Some("cross") => MarginMode::Cross,
+        Some("isolated") => MarginMode::Isolated,
+        Some(other) => return Err(format!("Strategy intent margin_mode 非法: {other}")),
+    };
+    let leverage = intent
+        .leverage
+        .unwrap_or(config.strategy.leverage.unwrap_or(1));
+    let allow_short = if margin_mode == MarginMode::Cash {
+        false
+    } else {
+        config
+            .strategy
+            .allow_short
+            .unwrap_or(product.is_derivative())
+    };
     let position_side = match intent
         .position_side
         .as_deref()
@@ -3510,6 +3637,9 @@ fn build_strategy_order_from_contract_intent(
         || config.strategy.margin_mode.is_some()
         || config.strategy.position_mode.is_some()
         || config.strategy.leverage.is_some()
+        || intent.margin_mode.is_some()
+        || intent.position_mode.is_some()
+        || intent.leverage.is_some()
         || intent.reduce_only
         || intent.post_only
         || intent.position_side.is_some()
@@ -5299,7 +5429,10 @@ fn run_ccxt_execution_worker(
                 Ok("DRY_RUN_VALIDATED".into())
             } else {
                 let mut pipeline = pipeline_storage
-                    .open(ccxt_event_log_name(&worker), "USDT")
+                    .open(
+                        ccxt_event_log_name(&worker),
+                        worker.settlement_currency.as_deref().unwrap_or("USDT"),
+                    )
                     .map_err(|error| format!("打开 CCXT EventLog 失败: {error}"))?;
                 let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
                     .map_err(|error| format!("启动公共 CCXT Worker 失败: {error}"))?;
@@ -5564,15 +5697,206 @@ fn run_ccxt_user_stream_worker(
     Ok(())
 }
 
-/// 使用公共 CCXT REST ticker 轮询接入统一行情 EventLog。
-///
-/// 没有 CCXT Pro 时仍可运行多交易所实盘；将来接入 watch_ticker 时复用同一
-/// RuntimeEventEnvelope，不改变核心归约边界。
+#[derive(Clone)]
+struct LiveStrategyBarSpec {
+    instrument: InstrumentId,
+    timeframe: String,
+    timeframe_ms: u64,
+    history_limit: usize,
+    closed_only: bool,
+    snapshot_path: PathBuf,
+}
+
+fn timeframe_to_ms(timeframe: &str) -> Result<u64, String> {
+    let value = timeframe.trim().to_ascii_lowercase();
+    if value.len() < 2 {
+        return Err(format!("CCXT timeframe 非法: {timeframe}"));
+    }
+    let (number, unit) = value.split_at(value.len() - 1);
+    let number = number
+        .parse::<u64>()
+        .map_err(|_| format!("CCXT timeframe 数值非法: {timeframe}"))?;
+    if number == 0 {
+        return Err(format!("CCXT timeframe 必须为正数: {timeframe}"));
+    }
+    let unit_ms = match unit {
+        "s" => 1_000,
+        "m" => 60_000,
+        "h" => 3_600_000,
+        "d" => 86_400_000,
+        "w" => 604_800_000,
+        _ => return Err(format!("不支持的 CCXT timeframe 单位: {timeframe}")),
+    };
+    number
+        .checked_mul(unit_ms)
+        .ok_or_else(|| format!("CCXT timeframe 溢出: {timeframe}"))
+}
+
+fn live_strategy_bar_specs(
+    config: &RuntimeConfig,
+    runtime_config_path: &Path,
+    worker: &WorkerConfig,
+) -> Result<Vec<LiveStrategyBarSpec>, String> {
+    let strategies = if config.strategies.is_empty() {
+        vec![config.strategy.clone()]
+    } else {
+        config.strategies.clone()
+    };
+    let mut specs = Vec::new();
+    for strategy in strategies {
+        if !strategy.live_enabled {
+            continue;
+        }
+        let instrument_text = strategy
+            .instrument
+            .as_deref()
+            .ok_or_else(|| "实时策略必须配置 instrument".to_string())?;
+        let instrument = InstrumentId::parse(instrument_text)
+            .ok_or_else(|| format!("实时策略 instrument 非法: {instrument_text}"))?;
+        let timeframe_ms = timeframe_to_ms(&strategy.live_timeframe)?;
+        let primary_matches = worker.symbols.iter().any(|symbol| {
+            InstrumentId::parse(symbol).is_some_and(|configured| configured == instrument)
+        });
+        if primary_matches {
+            let configured_path = strategy
+                .bars_snapshot_path
+                .as_deref()
+                .ok_or_else(|| "实时策略必须配置 bars_snapshot_path".to_string())?;
+            specs.push(LiveStrategyBarSpec {
+                instrument,
+                timeframe: strategy.live_timeframe.clone(),
+                timeframe_ms,
+                history_limit: strategy.live_history_limit,
+                closed_only: strategy.live_closed_only,
+                snapshot_path: resolve_runtime_relative_path(runtime_config_path, configured_path),
+            });
+        }
+        if let (Some(reference_text), Some(reference_path)) = (
+            strategy.builtin_reference_instrument.as_deref(),
+            strategy.builtin_reference_bars_snapshot_path.as_deref(),
+        ) {
+            let reference = InstrumentId::parse(reference_text)
+                .ok_or_else(|| format!("实时策略对冲腿 instrument 非法: {reference_text}"))?;
+            if worker.symbols.iter().any(|symbol| {
+                InstrumentId::parse(symbol).is_some_and(|configured| configured == reference)
+            }) {
+                specs.push(LiveStrategyBarSpec {
+                    instrument: reference,
+                    timeframe: strategy.live_timeframe.clone(),
+                    timeframe_ms,
+                    history_limit: strategy.live_history_limit,
+                    closed_only: strategy.live_closed_only,
+                    snapshot_path: resolve_runtime_relative_path(
+                        runtime_config_path,
+                        reference_path,
+                    ),
+                });
+            }
+        }
+    }
+    specs.sort_by(|left, right| {
+        left.instrument
+            .to_string()
+            .cmp(&right.instrument.to_string())
+            .then(left.snapshot_path.cmp(&right.snapshot_path))
+    });
+    specs.dedup_by(|left, right| {
+        left.instrument == right.instrument && left.snapshot_path == right.snapshot_path
+    });
+    Ok(specs)
+}
+
+fn closed_live_frame(
+    frame: BarFrame,
+    spec: &LiveStrategyBarSpec,
+    now: u64,
+) -> Result<Option<BarFrame>, String> {
+    if frame.instrument != spec.instrument {
+        return Err(format!(
+            "实时 OHLCV instrument 不一致: expected={} actual={}",
+            spec.instrument, frame.instrument
+        ));
+    }
+    let visible = frame
+        .ts
+        .iter()
+        .enumerate()
+        .filter(|(_, ts)| {
+            !spec.closed_only
+                || ts
+                    .checked_add(spec.timeframe_ms)
+                    .is_some_and(|close_ts| close_ts <= now)
+        })
+        .collect::<Vec<_>>();
+    if visible.is_empty() {
+        return Ok(None);
+    }
+    let start = visible.len().saturating_sub(spec.history_limit);
+    let visible = &visible[start..];
+    let result = BarFrame {
+        instrument: frame.instrument,
+        source: frame.source,
+        ts: visible.iter().map(|(_, ts)| **ts).collect(),
+        open_raw: visible
+            .iter()
+            .map(|(index, _)| frame.open_raw[*index])
+            .collect(),
+        high_raw: visible
+            .iter()
+            .map(|(index, _)| frame.high_raw[*index])
+            .collect(),
+        low_raw: visible
+            .iter()
+            .map(|(index, _)| frame.low_raw[*index])
+            .collect(),
+        close_raw: visible
+            .iter()
+            .map(|(index, _)| frame.close_raw[*index])
+            .collect(),
+        volume_raw: visible
+            .iter()
+            .map(|(index, _)| frame.volume_raw[*index])
+            .collect(),
+    };
+    result
+        .validate()
+        .map_err(|error| format!("实时 BarFrame 校验失败: {error:?}"))?;
+    Ok(Some(result))
+}
+
+fn write_live_bar_snapshot(path: &Path, frame: &BarFrame) -> Result<u64, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("实时 BarFrame 路径没有父目录: {}", path.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("创建实时 BarFrame 目录失败 {}: {error}", parent.display()))?;
+    let payload = frame.to_json();
+    let temporary = path.with_extension(format!("barframe.tmp.{}", std::process::id()));
+    std::fs::write(&temporary, payload)
+        .map_err(|error| format!("写入实时 BarFrame 临时文件失败: {error}"))?;
+    if let Err(error) = std::fs::rename(&temporary, path) {
+        // Windows 无法直接覆盖已有文件；只在替换失败时删除旧快照，
+        // Strategy worker 遇到短暂缺文件会等待下一轮，不会读取半份 JSON。
+        let _ = std::fs::remove_file(path);
+        std::fs::rename(&temporary, path).map_err(|replacement| {
+            format!(
+                "提交实时 BarFrame 失败 {}: initial={error}; replacement={replacement}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(frame.digest())
+}
+
+/// 使用公共 CCXT REST ticker 和 OHLCV 轮询接入统一行情 EventLog，并将闭合
+/// BarFrame 原子写入策略快照。Strategy worker 通过快照摘要触发幂等 JobQueue，
+/// 因而不依赖 Scheduler 的固定周期，也不会因为未闭合 K 线反复下单。
 fn run_ccxt_market_worker(
     context: qx_runtime::WorkerContext,
     worker: WorkerConfig,
     pipeline_storage: PipelineStorage,
     ccxt_config_path: String,
+    runtime_config_path: PathBuf,
     once: bool,
 ) -> Result<(), String> {
     if worker.role != WorkerRole::MarketData {
@@ -5581,11 +5905,16 @@ fn run_ccxt_market_worker(
     if worker.symbols.is_empty() {
         return Err(format!("worker {} 至少需要一个 CCXT instrument", worker.id));
     }
+    let runtime_config = read_runtime_config(&runtime_config_path)?;
+    let live_specs = live_strategy_bar_specs(&runtime_config, &runtime_config_path, &worker)?;
     let python = std::env::var("QX_PYTHON").unwrap_or_else(|_| "python".into());
     let mut client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
         .map_err(|error| format!("启动公共 CCXT MarketData Worker 失败: {error}"))?;
     let mut pipeline = pipeline_storage
-        .open(ccxt_market_event_log_name(&worker), "USDT")
+        .open(
+            ccxt_market_event_log_name(&worker),
+            worker.settlement_currency.as_deref().unwrap_or("USDT"),
+        )
         .map_err(|error| format!("创建 CCXT 行情事件管线失败: {error}"))?;
     let instruments = worker
         .symbols
@@ -5597,19 +5926,37 @@ fn run_ccxt_market_worker(
         .collect::<Result<Vec<_>, _>>()?;
     context.mark(
         qx_runtime::ServiceStatus::Ready,
-        format!("ccxt ticker polling instruments={}", instruments.len()),
+        format!(
+            "ccxt ticker/ohlcv polling instruments={} live_snapshots={}",
+            instruments.len(),
+            live_specs.len()
+        ),
         Some(runtime_timestamp_ms()),
     )?;
     let mut source_seq = 0_u64;
     let mut quotes = 0_u64;
+    let mut bars_written = 0_u64;
     while !context.should_stop() {
+        let cycle_now = runtime_timestamp_ms();
         for instrument in &instruments {
-            let result = client
-                .call(serde_json::json!({
-                    "op": "fetch_ticker",
-                    "instrument": instrument.to_string(),
-                }))
-                .map_err(|error| format!("CCXT ticker 查询失败 {}: {error}", instrument))?;
+            let result = match client.call(serde_json::json!({
+                "op": "fetch_ticker",
+                "instrument": instrument.to_string(),
+            })) {
+                Ok(result) => result,
+                Err(error) => {
+                    context.mark(
+                        qx_runtime::ServiceStatus::Degraded,
+                        format!("CCXT ticker 暂时失败 {}: {error}; reconnecting", instrument),
+                        Some(cycle_now),
+                    )?;
+                    client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None).map_err(
+                        |spawn_error| format!("重启公共 CCXT Worker 失败: {spawn_error}"),
+                    )?;
+                    thread::sleep(Duration::from_millis(500));
+                    continue;
+                }
+            };
             let ticker = result
                 .get("ticker")
                 .ok_or_else(|| format!("CCXT ticker 响应缺少 ticker: {instrument}"))?;
@@ -5638,14 +5985,65 @@ fn run_ccxt_market_worker(
             quotes = quotes.saturating_add(1);
             context.heartbeat(received_ts)?;
         }
+        for spec in &live_specs {
+            let start_ms = cycle_now.saturating_sub(
+                spec.timeframe_ms
+                    .saturating_mul(spec.history_limit.saturating_add(2) as u64),
+            );
+            let result = match client.call(serde_json::json!({
+                "op": "fetch_ohlcv",
+                "instrument": spec.instrument.to_string(),
+                "timeframe": spec.timeframe,
+                "start_ms": start_ms,
+                "end_ms": cycle_now,
+                "limit": spec.history_limit.saturating_add(2),
+            })) {
+                Ok(result) => result,
+                Err(error) => {
+                    context.mark(
+                        qx_runtime::ServiceStatus::Degraded,
+                        format!(
+                            "CCXT OHLCV 暂时失败 {}: {error}; reconnecting",
+                            spec.instrument
+                        ),
+                        Some(cycle_now),
+                    )?;
+                    client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None).map_err(
+                        |spawn_error| format!("重启公共 CCXT Worker 失败: {spawn_error}"),
+                    )?;
+                    thread::sleep(Duration::from_millis(500));
+                    continue;
+                }
+            };
+            let frame_value = result
+                .get("frame")
+                .ok_or_else(|| format!("CCXT OHLCV 响应缺少 frame: {}", spec.instrument))?;
+            let frame = BarFrame::from_json(
+                &serde_json::to_string(frame_value)
+                    .map_err(|error| format!("编码 CCXT OHLCV frame 失败: {error}"))?,
+            )
+            .map_err(|error| format!("CCXT OHLCV BarFrame 非法 {}: {error:?}", spec.instrument))?;
+            if let Some(closed) = closed_live_frame(frame, spec, cycle_now)? {
+                write_live_bar_snapshot(&spec.snapshot_path, &closed)?;
+                bars_written = bars_written.saturating_add(1);
+            }
+        }
+        context.mark(
+            qx_runtime::ServiceStatus::Ready,
+            format!(
+                "ccxt live market healthy quotes={} bar_snapshots={}",
+                quotes, bars_written
+            ),
+            Some(cycle_now),
+        )?;
         if once {
             break;
         }
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_millis(1_000));
     }
     context.mark(
         qx_runtime::ServiceStatus::Stopped,
-        format!("ccxt ticker worker stopped quotes={quotes}"),
+        format!("ccxt market worker stopped quotes={quotes} bar_snapshots={bars_written}"),
         Some(runtime_timestamp_ms()),
     )?;
     Ok(())
@@ -6297,6 +6695,7 @@ fn run_ccxt_worker(
             worker,
             pipeline_storage.clone(),
             ccxt_config_path,
+            runtime_config_path.clone(),
             once,
         ),
         WorkerRole::UserStream => run_ccxt_user_stream_worker(
@@ -6736,6 +7135,80 @@ fn run_strategy_backtest(
     Ok(())
 }
 
+fn run_fast_backtest_manifest(manifest_path: &Path) -> Result<(), String> {
+    let payload = std::fs::read_to_string(manifest_path).map_err(|error| {
+        format!(
+            "读取快速回测 manifest 失败 {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let document: serde_json::Value = serde_json::from_str(&payload)
+        .map_err(|error| format!("快速回测 manifest JSON 无效: {error}"))?;
+    let jobs = document
+        .get("jobs")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "快速回测 manifest 必须包含 jobs 数组".to_string())?;
+    if jobs.is_empty() || jobs.len() > 256 {
+        return Err("快速回测 jobs 数量必须在 1..=256 内".into());
+    }
+    let base = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let resolve = |value: &str| {
+        let path = PathBuf::from(value);
+        if path.is_absolute() {
+            path
+        } else {
+            base.join(path)
+        }
+    };
+    let mut parsed = Vec::with_capacity(jobs.len());
+    for (index, job) in jobs.iter().enumerate() {
+        let object = job
+            .as_object()
+            .ok_or_else(|| format!("快速回测 jobs[{index}] 必须是对象"))?;
+        let runtime = object
+            .get("runtime")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| format!("快速回测 jobs[{index}] 缺少 runtime"))?;
+        let bars = object
+            .get("bars")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| format!("快速回测 jobs[{index}] 缺少 bars"))?;
+        let spec = object
+            .get("market_spec")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(resolve);
+        parsed.push((index, resolve(runtime), resolve(bars), spec));
+    }
+    let results = std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(parsed.len());
+        for (index, runtime, bars, spec) in parsed {
+            handles.push(scope.spawn(move || {
+                run_strategy_backtest(&runtime, &bars, spec.as_deref())
+                    .map(|_| index)
+                    .map_err(|error| format!("jobs[{index}] {error}"))
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| "快速回测任务线程 panic".to_string())?
+            })
+            .collect::<Result<Vec<_>, String>>()
+    })?;
+    println!(
+        "[Fast Backtest] manifest={} jobs={} completed={}",
+        manifest_path.display(),
+        jobs.len(),
+        results.len()
+    );
+    Ok(())
+}
+
 fn run_single_strategy_backtest(
     config: &RuntimeConfig,
     frame: &BarFrame,
@@ -7024,6 +7497,265 @@ fn run_builtin_backtest(
     Ok(())
 }
 
+struct ScheduledTargetStrategy {
+    instrument: InstrumentId,
+    targets: BTreeMap<u64, i128>,
+    policy: Option<OrderPolicy>,
+    account_id: String,
+}
+
+impl BarStrategy for ScheduledTargetStrategy {
+    fn on_bar(
+        &mut self,
+        history: &[Bar],
+        instrument: &InstrumentId,
+        _ts: u64,
+        position: i128,
+    ) -> Option<Order> {
+        if instrument != &self.instrument {
+            return None;
+        }
+        let visible_ts = history.last()?.ts;
+        let target = self
+            .targets
+            .range(..=visible_ts)
+            .next_back()
+            .map(|(_, target)| *target)
+            .unwrap_or(0);
+        let delta = target.checked_sub(position)?;
+        if delta == 0 {
+            return None;
+        }
+        Some(Order {
+            client_id: 0,
+            instrument: self.instrument.clone(),
+            side: if delta > 0 { Side::Buy } else { Side::Sell },
+            qty: Quantity::from_raw(delta.checked_abs()?),
+            limit: None,
+            status: OrderStatus::Submitted,
+            filled: Quantity::ZERO,
+            account_id: self.account_id.clone(),
+            trace: None,
+            policy: self.policy,
+        })
+    }
+}
+
+fn read_bar_frame_for_multi_backtest(path: &Path, label: &str) -> Result<BarFrame, String> {
+    let payload = std::fs::read_to_string(path)
+        .map_err(|error| format!("读取{label} BarFrame 失败 {}: {error}", path.display()))?;
+    BarFrame::from_json(&payload)
+        .map_err(|error| format!("{label} BarFrame 校验失败 {}: {error:?}", path.display()))
+}
+
+fn multi_backtest_market_spec(
+    instrument: &InstrumentId,
+    path: Option<&Path>,
+) -> Result<(Option<TradingInstrumentSpec>, Box<dyn MarginRule>), String> {
+    let Some(path) = path else {
+        return Ok((None, Box::new(NoMargin)));
+    };
+    let payload = std::fs::read_to_string(path)
+        .map_err(|error| format!("读取多腿 market spec 失败 {}: {error}", path.display()))?;
+    let market: serde_json::Value = serde_json::from_str(&payload)
+        .map_err(|error| format!("多腿 market spec JSON 无效 {}: {error}", path.display()))?;
+    let margin = ccxt_margin_rule_from_market(&market);
+    let spec = ccxt_market_to_spec(instrument, &market)?;
+    Ok((Some(spec), margin))
+}
+
+fn run_multi_builtin_backtest(
+    strategy_name: &str,
+    primary_path: &Path,
+    reference_path: &Path,
+    primary_spec_path: Option<&Path>,
+    reference_spec_path: Option<&Path>,
+    quantity: i64,
+) -> Result<(), String> {
+    if quantity <= 0 {
+        return Err("多腿内置策略 quantity 必须为正整数".into());
+    }
+    let kind = BuiltinStrategyKind::parse(strategy_name)?;
+    if !matches!(
+        kind,
+        BuiltinStrategyKind::PairsArbitrage
+            | BuiltinStrategyKind::BasisArbitrage
+            | BuiltinStrategyKind::CrossVenueArbitrage
+            | BuiltinStrategyKind::SpotFuturesArbitrage
+    ) {
+        return Err(format!("多腿回测只接受套利策略，当前为 {}", kind.name()));
+    }
+    let primary_frame = read_bar_frame_for_multi_backtest(primary_path, "主腿")?;
+    let reference_frame = read_bar_frame_for_multi_backtest(reference_path, "对冲腿")?;
+    if primary_frame.ts != reference_frame.ts {
+        return Err("多腿回测要求两条 BarFrame 的时间戳完全对齐".into());
+    }
+    let primary_bars: Vec<Bar> = (&primary_frame).into();
+    let reference_bars: Vec<Bar> = (&reference_frame).into();
+    if primary_bars.len() < 3 {
+        return Err("多腿内置策略回测至少需要三根对齐 Bar".into());
+    }
+    let strategy_config = BuiltinStrategyConfig {
+        kind,
+        strategy_id: format!("builtin-{}-multi", kind.name()),
+        strategy_version: format!("builtin-{}-v1", kind.name()),
+        instrument: primary_frame.instrument.clone(),
+        quantity: Quantity::from_i64(quantity),
+        fast_window: 5,
+        slow_window: 20,
+        period: 14,
+        threshold_bps: 100,
+        reference_instrument: Some(reference_frame.instrument.clone()),
+        primary_policy: None,
+        reference_policy: None,
+    };
+    let mut native = BuiltinStrategy::new(strategy_config)?;
+    let mut context = NativeStrategyContext {
+        strategy_id: format!("builtin-{}-multi", kind.name()),
+        strategy_version: format!("builtin-{}-v1", kind.name()),
+        account_id: "multi-leg-backtest".into(),
+        venue_id: primary_frame.instrument.venue.to_string(),
+        data_fingerprint: format!("{:?}:{:?}", primary_frame.source, reference_frame.source),
+        as_of: primary_bars.first().map(|bar| bar.ts).unwrap_or(1),
+        positions: BTreeMap::from([
+            (primary_frame.instrument.to_string(), 0),
+            (reference_frame.instrument.to_string(), 0),
+        ]),
+        cash: BTreeMap::from([("USDT".into(), Money::from_i64(100_000).raw())]),
+        available_margin_raw: Some(Money::from_i64(100_000).raw()),
+        risk_state: "multi-leg-backtest".into(),
+    };
+    native
+        .on_init(&context)
+        .map_err(|error| format!("初始化多腿内置策略失败: {error}"))?;
+    let mut primary_targets = BTreeMap::new();
+    let mut reference_targets = BTreeMap::new();
+    for (primary_bar, reference_bar) in primary_bars.iter().zip(&reference_bars) {
+        context.as_of = primary_bar.ts;
+        let reference_event = NativeMarketEvent::Bar {
+            instrument: reference_frame.instrument.clone(),
+            ts: reference_bar.ts,
+            open_raw: reference_bar.open,
+            high_raw: reference_bar.high,
+            low_raw: reference_bar.low,
+            close_raw: reference_bar.close,
+            volume_raw: reference_bar.volume,
+        };
+        native
+            .on_event(&context, &reference_event)
+            .map_err(|error| format!("处理多腿对冲 Bar 失败: {error}"))?;
+        let primary_event = NativeMarketEvent::Bar {
+            instrument: primary_frame.instrument.clone(),
+            ts: primary_bar.ts,
+            open_raw: primary_bar.open,
+            high_raw: primary_bar.high,
+            low_raw: primary_bar.low,
+            close_raw: primary_bar.close,
+            volume_raw: primary_bar.volume,
+        };
+        let decision = native
+            .on_event(&context, &primary_event)
+            .map_err(|error| format!("处理多腿主 Bar 失败: {error}"))?;
+        for intent in decision.intents {
+            let instrument_key = intent.instrument.to_string();
+            let current = context.positions.get(&instrument_key).copied().unwrap_or(0);
+            let delta = if intent.side == Side::Buy {
+                intent.qty.raw()
+            } else {
+                -intent.qty.raw()
+            };
+            let target = current.checked_add(delta).ok_or("多腿回测目标仓位溢出")?;
+            context.positions.insert(instrument_key.clone(), target);
+            if intent.instrument == primary_frame.instrument {
+                primary_targets.insert(primary_bar.ts, target);
+            } else if intent.instrument == reference_frame.instrument {
+                reference_targets.insert(reference_bar.ts, target);
+            }
+        }
+    }
+    let (primary_spec, primary_margin) =
+        multi_backtest_market_spec(&primary_frame.instrument, primary_spec_path)?;
+    let (reference_spec, reference_margin) =
+        multi_backtest_market_spec(&reference_frame.instrument, reference_spec_path)?;
+    if primary_spec
+        .as_ref()
+        .is_some_and(|spec| spec.product.is_derivative())
+        && primary_spec_path.is_none()
+    {
+        return Err("主腿衍生品多腿回测必须提供 market spec".into());
+    }
+    let run_leg = |frame: &BarFrame,
+                   bars: &[Bar],
+                   spec: Option<TradingInstrumentSpec>,
+                   margin: Box<dyn MarginRule>,
+                   targets: BTreeMap<u64, i128>,
+                   leg: &str|
+     -> Result<qx_xingban::BacktestReport, String> {
+        let currency = spec
+            .as_ref()
+            .map(|value| value.settlement_currency.clone())
+            .unwrap_or_else(|| "USDT".into());
+        let mut strategy = ScheduledTargetStrategy {
+            instrument: frame.instrument.clone(),
+            targets,
+            policy: None,
+            account_id: format!("multi-leg-{leg}"),
+        };
+        BacktestEngine::new(BacktestConfig {
+            instrument: frame.instrument.clone(),
+            instrument_spec: spec,
+            account_id: format!("multi-leg-{leg}"),
+            currency,
+            initial_cash: Money::from_i64(100_000),
+            multiplier: 1,
+            fill: Box::new(NextBarOpenFillModel),
+            fee: Box::new(MakerTakerFeeModel {
+                maker_bp: 2,
+                taker_bp: 5,
+            }),
+            data_tier: DataTier::Bar,
+            latency: Box::new(ZeroLatency),
+            margin,
+            seed: 20260914,
+            risk: RiskGate::new(),
+            virtual_trading: VirtualTradingConfig::default(),
+        })
+        .run(bars, &mut strategy)
+        .map_err(|error| format!("{leg} 多腿回测失败: {error:?}"))
+    };
+    let primary_report = run_leg(
+        &primary_frame,
+        &primary_bars,
+        primary_spec,
+        primary_margin,
+        primary_targets,
+        "primary",
+    )?;
+    let reference_report = run_leg(
+        &reference_frame,
+        &reference_bars,
+        reference_spec,
+        reference_margin,
+        reference_targets,
+        "reference",
+    )?;
+    println!(
+        "[Multi-leg · Backtest] strategy={} primary={} fills={} return_bps={} reference={} fills={} return_bps={} combined_return_bps={} result_hashes={:016x}/{:016x}",
+        kind.name(),
+        primary_frame.instrument,
+        primary_report.fills.len(),
+        primary_report.return_bps,
+        reference_frame.instrument,
+        reference_report.fills.len(),
+        reference_report.return_bps,
+        (i64::from(primary_report.return_bps) + i64::from(reference_report.return_bps)) / 2,
+        primary_report.result_hash(),
+        reference_report.result_hash()
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_ccxt_builtin_backtest(
     ccxt_config_path: &Path,
     strategy_name: &str,
@@ -8004,6 +8736,54 @@ fn main() {
         }
         return;
     }
+    if mode == "multi-builtin-backtest" {
+        let strategy = match std::env::args().nth(2) {
+            Some(value) => value,
+            None => {
+                eprintln!(
+                    "multi-builtin-backtest 需要 strategy primary-bar.json reference-bar.json [primary-spec.json] [reference-spec.json] [quantity]"
+                );
+                std::process::exit(2);
+            }
+        };
+        let primary = match std::env::args().nth(3) {
+            Some(value) => value,
+            None => {
+                eprintln!("multi-builtin-backtest 缺少 primary-bar.json");
+                std::process::exit(2);
+            }
+        };
+        let reference = match std::env::args().nth(4) {
+            Some(value) => value,
+            None => {
+                eprintln!("multi-builtin-backtest 缺少 reference-bar.json");
+                std::process::exit(2);
+            }
+        };
+        let primary_spec = std::env::args().nth(5).map(PathBuf::from);
+        let reference_spec = std::env::args().nth(6).map(PathBuf::from);
+        let quantity = std::env::args()
+            .nth(7)
+            .map(|value| value.parse::<i64>())
+            .transpose()
+            .unwrap_or_else(|_| {
+                eprintln!("multi-builtin-backtest quantity 非法");
+                std::process::exit(2);
+            })
+            .unwrap_or(1);
+        if let Err(error) = run_multi_builtin_backtest(
+            &strategy,
+            Path::new(&primary),
+            Path::new(&reference),
+            primary_spec.as_deref(),
+            reference_spec.as_deref(),
+            quantity,
+        ) {
+            eprintln!("多腿内置策略回测失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     if mode == "live-check" {
         let path = std::env::args()
             .nth(2)
@@ -8439,6 +9219,20 @@ fn main() {
             run_strategy_backtest(Path::new(&runtime), Path::new(&frame), spec_path.as_deref())
         {
             eprintln!("跨语言策略回测失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "fast-backtest" {
+        let manifest = match std::env::args().nth(2) {
+            Some(manifest) => manifest,
+            None => {
+                eprintln!("fast-backtest 需要 manifest.json");
+                std::process::exit(2);
+            }
+        };
+        if let Err(error) = run_fast_backtest_manifest(Path::new(&manifest)) {
+            eprintln!("快速批量回测失败: {error}");
             std::process::exit(2);
         }
         return;
