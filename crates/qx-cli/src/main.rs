@@ -78,14 +78,16 @@ use qx_storage::{
     SqliteOutboxStore, SqliteTokenBucket,
 };
 use qx_strategy::{
-    DynamicCAbiLoadPolicy, DynamicCAbiStrategy, MarketEvent as NativeMarketEvent, SharedRingConfig,
-    SharedRingError, SharedRingReader, SharedRingWriter, Strategy as NativeStrategy, StrategyFrame,
-    StrategyFrameKind, DEFAULT_MAX_FRAME_BYTES,
+    BuiltinStrategy, BuiltinStrategyConfig, BuiltinStrategyKind, DynamicCAbiLoadPolicy,
+    DynamicCAbiStrategy, MarketEvent as NativeMarketEvent, SharedRingConfig, SharedRingError,
+    SharedRingReader, SharedRingWriter, Strategy as NativeStrategy,
+    StrategyContext as NativeStrategyContext, StrategyFrame, StrategyFrameKind,
+    DEFAULT_MAX_FRAME_BYTES,
 };
 use qx_xingban::{
     BacktestConfig, BacktestEngine, BarMatchingEngine, BarStrategy, DataTier, DeterministicRng,
-    MakerTakerFeeModel, MarginRule, MarginTier, NextBarOpenFillModel, NoMargin, TieredMargin,
-    VirtualTradingConfig, ZeroLatency,
+    MakerTakerFeeModel, MarginRule, MarginTier, NativeBarStrategy, NextBarOpenFillModel, NoMargin,
+    TieredMargin, VirtualTradingConfig, ZeroLatency,
 };
 use qx_zhenlu::{
     rebalance_intent, MaxQtyRule, NoShortRule, Oms, PaperVenue, PositionSnapshot, RiskContext,
@@ -1618,6 +1620,233 @@ fn run_runtime_check(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn repository_deploy_path(file_name: &str) -> PathBuf {
+    let source_tree_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy")
+        .join(file_name);
+    if source_tree_path.exists() {
+        source_tree_path
+    } else {
+        PathBuf::from("deploy").join(file_name)
+    }
+}
+
+fn print_cli_help() {
+    println!(
+        r#"牵星 Qianxing CLI
+
+常用入口：
+  init [runtime.json] [--force]
+      从 deploy/qianxing.runtime.example.json 创建本地运行时配置。
+  backtest [runtime.json] [bar-frame.json] [market-spec.json]
+      使用统一 Rust 撮合引擎运行跨语言策略回测。
+  builtin-strategies
+      列出可直接用于回测/Paper/策略接入的 10 个内置策略。
+  builtin-backtest <strategy> <bar-frame.json> [market-spec.json] [quantity]
+      使用内置策略和统一 Rust 撮合引擎回测。
+  ccxt-builtin-backtest <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity]
+      一次完成 CCXT OHLCV 获取、内置策略回测和结果输出。
+  paper-check [runtime.json]
+      按 Scheduler → Strategy → Paper Execution → Ledger 验收主体链路。
+  live-check [production.runtime.json]
+      执行实盘启动前静态门禁，不连接交易所、不发送订单。
+  runtime-check [runtime.json]
+      校验运行时拓扑并输出健康与配置指纹。
+
+核心运行入口：
+  serve, supervise, scheduler-worker, strategy-worker, paper-worker
+  binance-worker, ccxt-worker, ccxt-fetch-ohlcv, ccxt-backtest
+  strategy-backtest, reconcile, ecosystem, paper
+
+使用 `qianxing help` 查看入口摘要；既有入口参数保持兼容，完整说明见 README.md 与 deploy/README.md。"#
+    );
+}
+
+fn run_init(output: &Path, force: bool) -> Result<(), String> {
+    let template = repository_deploy_path("qianxing.runtime.example.json");
+    if !template.exists() {
+        return Err(format!("找不到运行时模板: {}", template.display()));
+    }
+    if output.exists() && !force {
+        return Err(format!(
+            "目标配置已存在: {}；如确认覆盖，请显式添加 --force",
+            output.display()
+        ));
+    }
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("创建配置目录失败 {}: {error}", parent.display()))?;
+    }
+    std::fs::copy(&template, output)
+        .map_err(|error| format!("写入运行时配置失败 {}: {error}", output.display()))?;
+    let config = read_runtime_config(output)?;
+    println!(
+        "[初始化] 已创建 {} environment={} fingerprint={}",
+        output.display(),
+        config.environment,
+        config.fingerprint()?
+    );
+    println!("下一步：qianxing backtest 或 qianxing paper-check");
+    Ok(())
+}
+
+fn run_unified_backtest(
+    runtime: Option<&Path>,
+    frame: Option<&Path>,
+    spec: Option<&Path>,
+) -> Result<(), String> {
+    let default_runtime = repository_deploy_path("qianxing.runtime.strategy-backtest.example.json");
+    let default_frame = repository_deploy_path("qianxing.bar-frame.example.json");
+    run_strategy_backtest(
+        runtime.unwrap_or(&default_runtime),
+        frame.unwrap_or(&default_frame),
+        spec,
+    )
+}
+
+fn run_live_check(path: &Path) -> Result<(), String> {
+    let config = read_runtime_config(path)?;
+    let mut failures = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    if !config.environment.eq_ignore_ascii_case("production") {
+        failures.push(format!(
+            "environment 必须为 production，当前为 {}",
+            config.environment
+        ));
+    }
+    match config.config_fingerprint.as_deref() {
+        Some(expected) => match config.verify_fingerprint() {
+            Ok(()) => println!("[PASS] config_fingerprint locked=true value={expected}"),
+            Err(error) => failures.push(error),
+        },
+        None => failures.push("production 必须配置 config_fingerprint 发布锁".into()),
+    }
+
+    for (label, configured) in [
+        (
+            "api.tls.certificate_chain",
+            config
+                .api
+                .tls
+                .as_ref()
+                .map(|tls| tls.certificate_chain.as_str()),
+        ),
+        (
+            "api.tls.private_key",
+            config.api.tls.as_ref().map(|tls| tls.private_key.as_str()),
+        ),
+        (
+            "api.tls.client_ca",
+            config.api.tls.as_ref().map(|tls| tls.client_ca.as_str()),
+        ),
+    ] {
+        match configured {
+            Some(file) if Path::new(file).exists() => println!("[PASS] {label}={file}"),
+            Some(file) => failures.push(format!("{label} 文件不存在: {file}")),
+            None => failures.push(format!("{label} 未配置")),
+        }
+    }
+
+    let mut execution_count = 0_usize;
+    for worker in config.workers.iter().filter(|worker| worker.enabled) {
+        if worker.role == WorkerRole::Execution {
+            execution_count += 1;
+            if worker
+                .venue_id
+                .as_deref()
+                .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
+            {
+                failures.push(format!(
+                    "{} 是 production 中不允许启用的 Paper Execution worker",
+                    worker.id
+                ));
+            }
+            let spec = worker.instrument_spec_path.as_deref().unwrap_or_default();
+            let spec_path = resolve_runtime_relative_path(path, spec);
+            if spec.is_empty() || !spec_path.exists() {
+                failures.push(format!(
+                    "{} instrument_spec_path 不可用: {}",
+                    worker.id,
+                    spec_path.display()
+                ));
+            } else {
+                println!(
+                    "[PASS] {} instrument_spec={}",
+                    worker.id,
+                    spec_path.display()
+                );
+            }
+            if worker.max_order_notional_raw.is_none() || worker.max_position_notional_raw.is_none()
+            {
+                failures.push(format!("{} 缺少订单或持仓名义额上限", worker.id));
+            }
+        }
+        if matches!(
+            worker.role,
+            WorkerRole::UserStream | WorkerRole::Execution | WorkerRole::Reconciler
+        ) {
+            let credential_ready = worker.credential_env.as_ref().is_some_and(|credential| {
+                std::env::var_os(&credential.api_key).is_some_and(|value| !value.is_empty())
+                    && std::env::var_os(&credential.secret).is_some_and(|value| !value.is_empty())
+            }) || worker.credential_files.as_ref().is_some_and(
+                |credential| {
+                    Path::new(&credential.api_key).is_file()
+                        && Path::new(&credential.secret).is_file()
+                },
+            );
+            if credential_ready {
+                println!("[PASS] {} credentials source is available", worker.id);
+            } else {
+                failures.push(format!("{} 凭据环境变量或凭据文件不可用", worker.id));
+            }
+        }
+    }
+    if execution_count == 0 {
+        failures.push("production 至少需要一个启用的 Execution worker".into());
+    }
+
+    for strategy in config
+        .strategies
+        .iter()
+        .chain(std::iter::once(&config.strategy))
+        .filter(|strategy| strategy.account_id.is_some() || strategy.venue_id.is_some())
+    {
+        if let Some(snapshot) = strategy.research_snapshot_path.as_deref() {
+            let snapshot_path = resolve_runtime_relative_path(path, snapshot);
+            if snapshot_path.is_file() {
+                println!("[PASS] research_snapshot={}", snapshot_path.display());
+            } else {
+                failures.push(format!(
+                    "research_snapshot_path 文件不存在: {}",
+                    snapshot_path.display()
+                ));
+            }
+        }
+    }
+    if config.api.bind.starts_with("127.") || config.api.bind.starts_with("localhost") {
+        warnings.push("API 仅绑定本机地址，适合单机部署，不适合跨节点访问".into());
+    }
+
+    for warning in warnings {
+        println!("[WARN] {warning}");
+    }
+    if failures.is_empty() {
+        println!("[PASS] live-check 全部通过：未连接交易所，未发送订单");
+        Ok(())
+    } else {
+        for failure in &failures {
+            eprintln!("[FAIL] {failure}");
+        }
+        Err(format!("实盘前置检查失败，共 {} 项", failures.len()))
+    }
+}
+
 fn utc_schedule_tick(timestamp_ms: u64) -> (String, ScheduleTick) {
     let seconds = timestamp_ms / 1_000;
     let days = (seconds / 86_400) as i64;
@@ -1843,6 +2072,13 @@ fn resolve_strategy_runtime_paths(strategy: &mut StrategyRuntimeConfig, runtime_
                 .into_owned(),
         );
     }
+    if let Some(configured) = strategy.bars_snapshot_path.as_deref() {
+        strategy.bars_snapshot_path = Some(
+            resolve_runtime_relative_path(runtime_path, configured)
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
     if let Some(executable) = strategy.external_executable.as_deref() {
         let path_like = executable.contains('/')
             || executable.contains('\\')
@@ -2021,6 +2257,7 @@ fn build_strategy_contract_input(
         )
         .map_err(|error| format!("Python Strategy research snapshot JSON 无效: {error:?}"))?;
         validate_research_snapshot_binding(&config.strategy, &research)?;
+        let research_as_of = research.as_of;
         let data_fingerprint = research.candidate.config.data_fingerprint.clone();
         let (positions, cash, available_margin_raw, risk_state) =
             strategy_account_context(root, config, instrument)?;
@@ -2044,11 +2281,19 @@ fn build_strategy_contract_input(
         context
             .validate(now, config.environment.eq_ignore_ascii_case("production"))
             .map_err(|error| format!("Python StrategyContext 校验失败: {error}"))?;
-        return context.to_contract_input(request_id, instrument, None);
+        let bars = load_strategy_contract_bars(root, config, instrument, research_as_of)?
+            .map(|(bars, _, _)| bars);
+        return context.to_contract_input(request_id, instrument, bars);
     }
 
     let (positions, cash, available_margin_raw, risk_state) =
         strategy_account_context(root, config, instrument)?;
+    let bars = load_strategy_contract_bars(root, config, instrument, now)?;
+    let (bars, data_fingerprint, as_of) = if let Some((bars, data_fingerprint, as_of)) = bars {
+        (Some(bars), data_fingerprint, as_of)
+    } else {
+        (None, "runtime-config-v1".into(), now.max(1))
+    };
     let input = StrategyContractInput {
         schema_version: qx_runtime::STRATEGY_CONTRACT_SCHEMA_VERSION,
         request_id: request_id.to_string(),
@@ -2058,15 +2303,15 @@ fn build_strategy_contract_input(
             .clone()
             .unwrap_or_else(|| config.strategy.version.clone()),
         strategy_version: config.strategy.version.clone(),
-        data_fingerprint: "runtime-config-v1".into(),
-        as_of: now.max(1),
+        data_fingerprint,
+        as_of,
         instrument: instrument.to_string(),
         positions,
         cash,
         available_margin_raw,
         risk_state,
         research_targets: BTreeMap::from([(instrument.to_string(), config.strategy.target_qty)]),
-        bars: None,
+        bars,
     };
     input.validate()?;
     Ok(input)
@@ -2627,6 +2872,27 @@ fn native_strategy_context(
     }
 }
 
+fn strategy_contract_output_from_native_decision(
+    decision: &qx_strategy::StrategyDecision,
+    input: &StrategyContractInput,
+) -> Result<StrategyContractOutput, String> {
+    let mut output = StrategyContractOutput::from_native_decision(decision)?;
+    output.request_id = input.request_id.clone();
+    output.strategy_id = input.strategy_id.clone();
+    if output.instrument.is_empty() {
+        output.instrument = input.instrument.clone();
+    }
+    if output.intents.is_empty() {
+        output.target_qty = input
+            .positions
+            .get(&input.instrument)
+            .copied()
+            .unwrap_or_default();
+    }
+    output.validate_for(input)?;
+    Ok(output)
+}
+
 fn invoke_c_abi_strategy(
     strategy: &mut DynamicCAbiStrategy,
     initialized: &mut bool,
@@ -2641,13 +2907,85 @@ fn invoke_c_abi_strategy(
         *initialized = true;
     }
     let decision = strategy.on_event(context, event)?;
-    let mut output = StrategyContractOutput::from_native_decision(&decision)?;
-    // A no-op decision has no intent from which to infer the instrument.
-    if output.instrument.is_empty() {
-        output.instrument = input.instrument.clone();
+    strategy_contract_output_from_native_decision(&decision, input)
+}
+
+fn builtin_strategy_config_from_runtime(
+    strategy: &StrategyRuntimeConfig,
+    instrument: &InstrumentId,
+) -> Result<BuiltinStrategyConfig, String> {
+    let name = strategy
+        .builtin_strategy
+        .as_deref()
+        .ok_or_else(|| "Strategy 未配置 builtin_strategy".to_string())?;
+    let kind = BuiltinStrategyKind::parse(name)?;
+    let strategy_id = strategy
+        .id
+        .clone()
+        .unwrap_or_else(|| format!("builtin-{}", kind.name()));
+    let quantity_raw = strategy
+        .builtin_quantity
+        .map(i128::from)
+        .or_else(|| (strategy.target_qty != 0).then_some(strategy.target_qty.abs()))
+        .unwrap_or(1);
+    if quantity_raw <= 0 {
+        return Err("builtin_quantity 必须为正整数".into());
     }
-    output.validate_for(input)?;
-    Ok(output)
+    let mut config = BuiltinStrategyConfig::new(
+        kind,
+        strategy_id,
+        instrument.clone(),
+        Quantity::from_raw(quantity_raw),
+    )?;
+    config.strategy_version = strategy.version.clone();
+    if let Some(window) = strategy.builtin_fast_window {
+        config.fast_window = window;
+    }
+    if let Some(window) = strategy.builtin_slow_window {
+        config.slow_window = window;
+    }
+    if let Some(period) = strategy.builtin_period {
+        config.period = period;
+    }
+    if let Some(threshold) = strategy.builtin_threshold_bps {
+        config.threshold_bps = threshold;
+    }
+    config.validate()?;
+    Ok(config)
+}
+
+fn invoke_builtin_strategy(
+    root: &Path,
+    config: &RuntimeConfig,
+    instrument: &InstrumentId,
+    request_id: &str,
+    now: u64,
+) -> Result<StrategyContractOutput, String> {
+    let input = build_strategy_contract_input(root, config, instrument, request_id, now)?;
+    let bars = input.bars.as_ref().ok_or_else(|| {
+        "builtin_strategy 运行时需要 bars_snapshot_path 提供 K 线历史".to_string()
+    })?;
+    let context = native_strategy_context(&config.strategy, &input);
+    let mut strategy = BuiltinStrategy::new(builtin_strategy_config_from_runtime(
+        &config.strategy,
+        instrument,
+    )?)?;
+    strategy.on_init(&context)?;
+    let mut decision = None;
+    for index in 0..bars.ts.len() {
+        let event = NativeMarketEvent::Bar {
+            instrument: instrument.clone(),
+            ts: bars.ts[index],
+            open_raw: bars.open_raw[index],
+            high_raw: bars.high_raw[index],
+            low_raw: bars.low_raw[index],
+            close_raw: bars.close_raw[index],
+            volume_raw: bars.volume_raw[index],
+        };
+        decision = Some(strategy.on_event(&context, &event)?);
+    }
+    let decision = decision.ok_or_else(|| "builtin_strategy 可见 K 线为空".to_string())?;
+    strategy_contract_output_from_native_decision(&decision, &input)
 }
 
 enum ContractStrategyClient {
@@ -2814,6 +3152,12 @@ impl BarStrategy for ContractBarStrategy {
         };
         let mut orders = Vec::with_capacity(output.intents.len().max(1));
         if output.intents.is_empty() {
+            let rebalance = output
+                .build_rebalance_plan(&input, 10_000, 1)
+                .map_err(qx_core::QxError::BusinessViolation)?;
+            if rebalance.positions.is_empty() {
+                return Ok(Vec::new());
+            }
             if let Some(order) = build_strategy_order_with_signal(
                 &self.config,
                 &strategy_id,
@@ -2941,6 +3285,74 @@ type StrategyAccountContext = (
     Option<i128>,
     String,
 );
+
+fn load_strategy_contract_bars(
+    root: &Path,
+    config: &RuntimeConfig,
+    instrument: &InstrumentId,
+    as_of: u64,
+) -> Result<Option<(StrategyContractBars, String, u64)>, String> {
+    let Some(configured) = config.strategy.bars_snapshot_path.as_deref() else {
+        return Ok(None);
+    };
+    let candidate = runtime_path(root, configured);
+    let path = if candidate.exists() {
+        candidate
+    } else {
+        PathBuf::from(configured)
+    };
+    let payload = std::fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "读取 Strategy bars_snapshot_path 失败 {}: {error}",
+            path.display()
+        )
+    })?;
+    let frame = BarFrame::from_json(&payload).map_err(|error| {
+        format!(
+            "Strategy bars_snapshot_path BarFrame 无效 {}: {error:?}",
+            path.display()
+        )
+    })?;
+    if &frame.instrument != instrument {
+        return Err(format!(
+            "Strategy bars_snapshot_path instrument 不一致: strategy={} frame={}",
+            instrument, frame.instrument
+        ));
+    }
+    let visible: Vec<usize> = frame
+        .ts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, ts)| (*ts <= as_of).then_some(index))
+        .collect();
+    let Some(last_index) = visible.last().copied() else {
+        return Err(format!(
+            "Strategy bars_snapshot_path 在 as_of={} 前没有可见 Bar",
+            as_of
+        ));
+    };
+    let bars = StrategyContractBars {
+        source: frame.source.0.clone(),
+        ts: visible.iter().map(|index| frame.ts[*index]).collect(),
+        open_raw: visible.iter().map(|index| frame.open_raw[*index]).collect(),
+        high_raw: visible.iter().map(|index| frame.high_raw[*index]).collect(),
+        low_raw: visible.iter().map(|index| frame.low_raw[*index]).collect(),
+        close_raw: visible
+            .iter()
+            .map(|index| frame.close_raw[*index])
+            .collect(),
+        volume_raw: visible
+            .iter()
+            .map(|index| frame.volume_raw[*index])
+            .collect(),
+    };
+    bars.validate()?;
+    Ok(Some((
+        bars,
+        format!("barframe:{:016x}", frame.digest()),
+        frame.ts[last_index],
+    )))
+}
 
 fn strategy_account_context(
     root: &Path,
@@ -3129,7 +3541,30 @@ fn build_strategy_order_with_signal(
     target_qty: i128,
     contract_output: Option<&StrategyContractOutput>,
 ) -> Result<Option<Order>, String> {
-    if target_qty == 0 {
+    let instrument_text = config
+        .strategy
+        .instrument
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Strategy 产生订单必须配置 instrument".to_string())?;
+    let current = qx_portfolio::PortfolioState {
+        portfolio_id: strategy_id.into(),
+        timestamp: now,
+        cash: 0,
+        positions: BTreeMap::from([(instrument_text.to_string(), current_qty)]),
+    };
+    let rebalance = qx_portfolio::rebalance(
+        &current,
+        &[qx_portfolio::TargetPosition {
+            instrument: instrument_text.to_string(),
+            quantity: target_qty,
+        }],
+        &qx_portfolio::PortfolioConstraint {
+            max_turnover_bps: 10_000,
+            min_trade_size: 1,
+        },
+    )?;
+    if rebalance.positions.is_empty() {
         return Ok(None);
     }
     let account_id = config
@@ -3138,12 +3573,6 @@ fn build_strategy_order_with_signal(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "Strategy 产生订单必须配置 account_id".to_string())?;
-    let instrument_text = config
-        .strategy
-        .instrument
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Strategy 产生订单必须配置 instrument".to_string())?;
     let instrument = InstrumentId::parse(instrument_text)
         .ok_or_else(|| format!("Strategy instrument 非法: {instrument_text}"))?;
     let signal = Signal {
@@ -5039,6 +5468,7 @@ fn run_ccxt_user_stream_worker(
             .ok_or_else(|| "CCXT Pro orders 事件缺少 events".to_string())?;
         let mut matched = 0_usize;
         let mut reduced = 0_usize;
+        let mut reconcile_errors = 0_usize;
         for update in events {
             let remote_id = update
                 .get("order_id")
@@ -5069,9 +5499,29 @@ fn run_ccxt_user_stream_worker(
                 .get("timestamp_ms")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(received_ts);
-            let venue_events = venue
-                .sync_order(order.client_id, event_ts)
-                .map_err(|error| format!("归约 CCXT Pro order 失败: {error:?}"))?;
+            let venue_events = match venue.sync_order(order.client_id, event_ts) {
+                Ok(events) => events,
+                Err(error) => {
+                    reconcile_errors = reconcile_errors.saturating_add(1);
+                    source_seq = source_seq.saturating_add(1);
+                    pipeline
+                        .ingest(RuntimeEventEnvelope::venue(
+                            RuntimeExternalEvent::ReconcileRequired {
+                                client_order_id: order.client_id,
+                            },
+                            event_ts,
+                            received_ts,
+                            source_seq,
+                            format!("{}:sync-error:{}", worker.id, order.client_id),
+                        ))
+                        .map_err(|ingest_error| {
+                            format!(
+                                "归约 CCXT Pro order 失败 {error:?}，且无法写入 ReconcileRequired: {ingest_error:?}"
+                            )
+                        })?;
+                    continue;
+                }
+            };
             let reduced_events = if let Some(spec) =
                 load_worker_instrument_spec(&worker, &order, Some(&runtime_config_path))?
             {
@@ -5096,7 +5546,9 @@ fn run_ccxt_user_stream_worker(
         }
         context.mark(
             qx_runtime::ServiceStatus::Ready,
-            format!("ccxt pro orders matched={matched} reduced={reduced}"),
+            format!(
+                "ccxt pro orders matched={matched} reduced={reduced} reconcile_errors={reconcile_errors}"
+            ),
             Some(received_ts),
         )?;
         context.heartbeat(received_ts)?;
@@ -6324,8 +6776,6 @@ fn run_single_strategy_backtest(
         .map(|spec| spec.settlement_currency.clone())
         .unwrap_or_else(|| "USDT".into());
     let initial_cash = Money::from_i64(100_000);
-    let mut strategy =
-        ContractBarStrategy::from_config(config.clone(), frame, initial_cash, currency.clone())?;
     let backtest_config = BacktestConfig {
         instrument: frame.instrument.clone(),
         instrument_spec,
@@ -6345,9 +6795,58 @@ fn run_single_strategy_backtest(
         risk: RiskGate::new(),
         virtual_trading: VirtualTradingConfig::default(),
     };
-    let report = BacktestEngine::new(backtest_config)
-        .run(bars, &mut strategy)
-        .map_err(|error| format!("跨语言策略回测失败: {error:?}"))?;
+    let report = if config.strategy.builtin_strategy.is_some() {
+        if let Some(configured) = config.strategy.instrument.as_deref() {
+            let configured = InstrumentId::parse(configured)
+                .ok_or_else(|| format!("Strategy instrument 非法: {configured}"))?;
+            if configured != frame.instrument {
+                return Err(format!(
+                    "内置策略回测 instrument 不一致: strategy={} frame={}",
+                    configured, frame.instrument
+                ));
+            }
+        }
+        let builtin_config =
+            builtin_strategy_config_from_runtime(&config.strategy, &frame.instrument)?;
+        let context = NativeStrategyContext {
+            strategy_id: builtin_config.strategy_id.clone(),
+            strategy_version: builtin_config.strategy_version.clone(),
+            account_id: config
+                .strategy
+                .account_id
+                .clone()
+                .unwrap_or_else(|| "backtest".into()),
+            venue_id: config
+                .strategy
+                .venue_id
+                .clone()
+                .unwrap_or_else(|| frame.instrument.venue.to_string()),
+            data_fingerprint: format!("barframe:{:016x}", frame.digest()),
+            as_of: bars.first().map(|bar| bar.ts).unwrap_or(1),
+            positions: BTreeMap::new(),
+            cash: BTreeMap::from([(backtest_config.currency.clone(), initial_cash.raw())]),
+            available_margin_raw: Some(initial_cash.raw()),
+            risk_state: "backtest-verified".into(),
+        };
+        let strategy = BuiltinStrategy::new(builtin_config)?;
+        let mut strategy = NativeBarStrategy::new(strategy, context);
+        strategy
+            .initialize()
+            .map_err(|error| format!("初始化内置策略失败: {error:?}"))?;
+        BacktestEngine::new(backtest_config)
+            .run(bars, &mut strategy)
+            .map_err(|error| format!("内置策略回测失败: {error:?}"))?
+    } else {
+        let mut strategy = ContractBarStrategy::from_config(
+            config.clone(),
+            frame,
+            initial_cash,
+            backtest_config.currency.clone(),
+        )?;
+        BacktestEngine::new(backtest_config)
+            .run(bars, &mut strategy)
+            .map_err(|error| format!("跨语言策略回测失败: {error:?}"))?
+    };
     println!(
         "[Strategy · Backtest] strategy={} instrument={} bars={} fills={} return_bps={} max_drawdown_bps={} result_hash={:016x}",
         strategy_id,
@@ -6423,6 +6922,150 @@ fn run_ccxt_backtest(
         report.result_hash()
     );
     Ok(())
+}
+
+fn run_builtin_backtest(
+    strategy_name: &str,
+    frame_path: &Path,
+    spec_path: Option<&Path>,
+    quantity: i64,
+) -> Result<(), String> {
+    if quantity <= 0 {
+        return Err("内置策略 quantity 必须为正整数".into());
+    }
+    let kind = BuiltinStrategyKind::parse(strategy_name)?;
+    let payload = std::fs::read_to_string(frame_path).map_err(|error| {
+        format!(
+            "读取内置策略 BarFrame 失败 {}: {error}",
+            frame_path.display()
+        )
+    })?;
+    let frame = BarFrame::from_json(&payload).map_err(|error| {
+        format!(
+            "内置策略 BarFrame 校验失败 {}: {error:?}",
+            frame_path.display()
+        )
+    })?;
+    let bars: Vec<Bar> = (&frame).into();
+    if bars.len() < 3 {
+        return Err("内置策略回测至少需要三根 Bar".into());
+    }
+
+    let mut margin: Box<dyn MarginRule> = Box::new(NoMargin);
+    let instrument_spec = if let Some(spec_path) = spec_path {
+        let spec_payload = std::fs::read_to_string(spec_path).map_err(|error| {
+            format!(
+                "读取内置策略 market spec 失败 {}: {error}",
+                spec_path.display()
+            )
+        })?;
+        let market: serde_json::Value = serde_json::from_str(&spec_payload)
+            .map_err(|error| format!("内置策略 market spec JSON 无效: {error}"))?;
+        margin = ccxt_margin_rule_from_market(&market);
+        Some(ccxt_market_to_spec(&frame.instrument, &market)?)
+    } else {
+        None
+    };
+    let context = NativeStrategyContext {
+        strategy_id: format!("builtin-{}", kind.name()),
+        strategy_version: format!("builtin-{}-v1", kind.name()),
+        account_id: "main".into(),
+        venue_id: frame.instrument.venue.to_string(),
+        data_fingerprint: format!("barframe:{:?}", frame.source),
+        as_of: bars.first().map(|bar| bar.ts).unwrap_or(1),
+        positions: BTreeMap::new(),
+        cash: BTreeMap::from([("USDT".into(), Money::from_i64(100_000).raw())]),
+        available_margin_raw: Some(Money::from_i64(100_000).raw()),
+        risk_state: "ready".into(),
+    };
+    let strategy_config = BuiltinStrategyConfig::new(
+        kind,
+        format!("builtin-{}", kind.name()),
+        frame.instrument.clone(),
+        Quantity::from_i64(quantity),
+    )?;
+    let strategy = BuiltinStrategy::new(strategy_config)?;
+    let mut strategy = NativeBarStrategy::new(strategy, context);
+    strategy
+        .initialize()
+        .map_err(|error| format!("初始化内置策略失败: {error:?}"))?;
+    let config = BacktestConfig {
+        instrument: frame.instrument.clone(),
+        instrument_spec,
+        account_id: "main".into(),
+        currency: "USDT".into(),
+        initial_cash: Money::from_i64(100_000),
+        multiplier: 1,
+        fill: Box::new(NextBarOpenFillModel),
+        fee: Box::new(MakerTakerFeeModel {
+            maker_bp: 2,
+            taker_bp: 5,
+        }),
+        data_tier: DataTier::Bar,
+        latency: Box::new(ZeroLatency),
+        margin,
+        seed: 20260914,
+        risk: RiskGate::new(),
+        virtual_trading: VirtualTradingConfig::default(),
+    };
+    let report = BacktestEngine::new(config)
+        .run(&bars, &mut strategy)
+        .map_err(|error| format!("内置策略回测失败: {error:?}"))?;
+    println!(
+        "[Builtin · Backtest] strategy={} instrument={} bars={} fills={} return_bps={} max_drawdown_bps={} result_hash={:016x}",
+        kind.name(),
+        frame.instrument,
+        bars.len(),
+        report.fills.len(),
+        report.return_bps,
+        report.max_drawdown_bps,
+        report.result_hash()
+    );
+    Ok(())
+}
+
+fn run_ccxt_builtin_backtest(
+    ccxt_config_path: &Path,
+    strategy_name: &str,
+    instrument: &str,
+    timeframe: &str,
+    start_ms: u64,
+    end_ms: u64,
+    spec_path: Option<&Path>,
+    quantity: i64,
+) -> Result<(), String> {
+    if end_ms < start_ms {
+        return Err("CCXT 内置策略回测 end_ms 不能早于 start_ms".into());
+    }
+    let python = std::env::var("QX_PYTHON").unwrap_or_else(|_| "python".into());
+    let mut client = CcxtProcessClient::spawn(&python, &ccxt_config_path.to_string_lossy(), None)
+        .map_err(|error| format!("启动公共 CCXT Worker 失败: {error}"))?;
+    let result = client
+        .call(serde_json::json!({
+            "op": "fetch_ohlcv",
+            "instrument": instrument,
+            "timeframe": timeframe,
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+        }))
+        .map_err(|error| format!("CCXT OHLCV 查询失败: {error}"))?;
+    let frame = result
+        .get("frame")
+        .ok_or_else(|| "CCXT OHLCV 响应缺少 frame".to_string())?;
+    let temp_path = std::env::temp_dir().join(format!(
+        "qianxing-ccxt-builtin-{}-{}.json",
+        std::process::id(),
+        runtime_timestamp_ms()
+    ));
+    std::fs::write(
+        &temp_path,
+        serde_json::to_string(frame)
+            .map_err(|error| format!("编码 CCXT BarFrame 失败: {error}"))?,
+    )
+    .map_err(|error| format!("写入临时 CCXT BarFrame 失败: {error}"))?;
+    let result = run_builtin_backtest(strategy_name, &temp_path, spec_path, quantity);
+    let _ = std::fs::remove_file(&temp_path);
+    result
 }
 
 /// 供跨进程恢复验收器调用的极小子进程入口。
@@ -7228,6 +7871,149 @@ fn main() {
     println!("牵星 Qianxing — 分级校准，量天定位\n");
 
     let mode = std::env::args().nth(1).unwrap_or_else(|| "all".into());
+    if matches!(mode.as_str(), "help" | "--help" | "-h") {
+        print_cli_help();
+        return;
+    }
+    if mode == "init" {
+        let arguments = std::env::args().skip(2).collect::<Vec<_>>();
+        let force = arguments.iter().any(|argument| argument == "--force");
+        let output = arguments
+            .iter()
+            .find(|argument| !argument.starts_with('-'))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("qianxing.runtime.json"));
+        if let Err(error) = run_init(&output, force) {
+            eprintln!("初始化失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "backtest" {
+        let runtime = std::env::args().nth(2).map(PathBuf::from);
+        let frame = std::env::args().nth(3).map(PathBuf::from);
+        let spec = std::env::args().nth(4).map(PathBuf::from);
+        if let Err(error) =
+            run_unified_backtest(runtime.as_deref(), frame.as_deref(), spec.as_deref())
+        {
+            eprintln!("统一策略回测失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "builtin-strategies" {
+        for kind in BuiltinStrategyKind::ALL {
+            println!("{}\t{}", kind.name(), kind.description());
+        }
+        return;
+    }
+    if mode == "builtin-backtest" {
+        let strategy = match std::env::args().nth(2) {
+            Some(value) => value,
+            None => {
+                eprintln!(
+                    "builtin-backtest 需要 strategy bar-frame.json [market-spec.json] [quantity]"
+                );
+                std::process::exit(2);
+            }
+        };
+        let frame = match std::env::args().nth(3) {
+            Some(value) => value,
+            None => {
+                eprintln!("builtin-backtest 缺少 bar-frame.json");
+                std::process::exit(2);
+            }
+        };
+        let spec = std::env::args().nth(4).map(PathBuf::from);
+        let quantity = std::env::args()
+            .nth(5)
+            .map(|value| value.parse::<i64>())
+            .transpose()
+            .unwrap_or_else(|_| {
+                eprintln!("builtin-backtest quantity 非法");
+                std::process::exit(2);
+            })
+            .unwrap_or(1);
+        if let Err(error) =
+            run_builtin_backtest(&strategy, Path::new(&frame), spec.as_deref(), quantity)
+        {
+            eprintln!("内置策略回测失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "ccxt-builtin-backtest" {
+        let ccxt_config = match std::env::args().nth(2) {
+            Some(value) => value,
+            None => {
+                eprintln!("ccxt-builtin-backtest 需要 ccxt-config strategy instrument start_ms end_ms [timeframe] [market-spec.json] [quantity]");
+                std::process::exit(2);
+            }
+        };
+        let strategy = match std::env::args().nth(3) {
+            Some(value) => value,
+            None => {
+                eprintln!("ccxt-builtin-backtest 缺少 strategy");
+                std::process::exit(2);
+            }
+        };
+        let instrument = match std::env::args().nth(4) {
+            Some(value) => value,
+            None => {
+                eprintln!("ccxt-builtin-backtest 缺少 instrument");
+                std::process::exit(2);
+            }
+        };
+        let start_ms = match std::env::args().nth(5).and_then(|value| value.parse().ok()) {
+            Some(value) => value,
+            None => {
+                eprintln!("ccxt-builtin-backtest start_ms 非法");
+                std::process::exit(2);
+            }
+        };
+        let end_ms = match std::env::args().nth(6).and_then(|value| value.parse().ok()) {
+            Some(value) => value,
+            None => {
+                eprintln!("ccxt-builtin-backtest end_ms 非法");
+                std::process::exit(2);
+            }
+        };
+        let timeframe = std::env::args().nth(7).unwrap_or_else(|| "1h".into());
+        let spec = std::env::args().nth(8).map(PathBuf::from);
+        let quantity = std::env::args()
+            .nth(9)
+            .map(|value| value.parse::<i64>())
+            .transpose()
+            .unwrap_or_else(|_| {
+                eprintln!("ccxt-builtin-backtest quantity 非法");
+                std::process::exit(2);
+            })
+            .unwrap_or(1);
+        if let Err(error) = run_ccxt_builtin_backtest(
+            Path::new(&ccxt_config),
+            &strategy,
+            &instrument,
+            &timeframe,
+            start_ms,
+            end_ms,
+            spec.as_deref(),
+            quantity,
+        ) {
+            eprintln!("CCXT 内置策略回测失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "live-check" {
+        let path = std::env::args()
+            .nth(2)
+            .unwrap_or_else(|| "deploy/qianxing.runtime.production.example.json".into());
+        if let Err(error) = run_live_check(Path::new(&path)) {
+            eprintln!("实盘前置检查失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     if mode == "recovery-child" {
         let args = std::env::args().collect::<Vec<_>>();
         if let Err(error) = run_recovery_child(&args) {
@@ -7749,6 +8535,16 @@ fn main() {
         return;
     }
     if mode == "paper-e2e" {
+        let path = std::env::args()
+            .nth(2)
+            .unwrap_or_else(|| "deploy/qianxing.runtime.paper-strategy.example.json".into());
+        if let Err(error) = run_paper_pipeline_once(Path::new(&path)) {
+            eprintln!("Paper 主链路验收失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "paper-check" {
         let path = std::env::args()
             .nth(2)
             .unwrap_or_else(|| "deploy/qianxing.runtime.paper-strategy.example.json".into());
@@ -8647,6 +9443,26 @@ mod tests {
     }
 
     #[test]
+    fn strategy_target_zero_emits_close_order_for_existing_position() {
+        let template = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("deploy")
+            .join("qianxing.runtime.example.json");
+        let mut config = read_runtime_config(&template).unwrap();
+        config.strategy.account_id = Some("main".into());
+        config.strategy.venue_id = Some("binance-testnet".into());
+        config.strategy.instrument = Some("BTCUSDT.BINANCE".into());
+        config.strategy.target_qty = 0;
+
+        let order = build_strategy_order(&config, "strategy-close", 9102, 10, 2, 0)
+            .unwrap()
+            .expect("target zero must close an existing position");
+        assert_eq!(order.side, Side::Sell);
+        assert_eq!(order.qty.raw(), 2);
+    }
+
+    #[test]
     fn strategy_worker_reads_candidate_factor_bundle_as_context() {
         let root = std::env::temp_dir().join(format!(
             "qianxing-cli-research-context-{}-{}",
@@ -8773,6 +9589,46 @@ mod tests {
         assert_eq!(policy.margin_mode, MarginMode::Isolated);
         assert_eq!(policy.position_mode, PositionMode::OneWay);
         assert_eq!(policy.position_side, PositionSide::Net);
+    }
+
+    #[test]
+    fn strategy_backtest_accepts_builtin_runtime_config() {
+        let deploy = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("deploy");
+        let runtime = deploy.join("qianxing.runtime.builtin-strategy.example.json");
+        let frame = deploy.join("qianxing.bar-frame.example.json");
+        run_strategy_backtest(&runtime, &frame, None).unwrap();
+    }
+
+    #[test]
+    fn builtin_strategy_worker_path_reads_bar_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-builtin-worker-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("deploy")
+            .join("qianxing.runtime.builtin-strategy.example.json");
+        let mut config = read_runtime_config(&runtime).unwrap();
+        config.storage.data_dir = root.to_string_lossy().into_owned();
+        resolve_strategy_runtime_paths(&mut config.strategy, &runtime);
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let output =
+            invoke_builtin_strategy(&root, &config, &instrument, "builtin-worker-test", u64::MAX)
+                .unwrap();
+        assert_eq!(output.request_id, "builtin-worker-test");
+        assert_eq!(output.strategy_id, "strategy-builtin");
+        assert_eq!(output.instrument, "BTCUSDT.BINANCE");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

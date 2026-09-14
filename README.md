@@ -78,7 +78,17 @@ bash tools/build_python_wheel.sh
 # 全量测试
 cargo test --workspace
 
-# Python/C++ JSONL 策略直接复用 Bar 回测引擎
+# 工业化统一入口：初始化、回测、Paper 主链路和实盘前检查
+cargo run -p qx-cli -- help
+cargo run -p qx-cli -- init qianxing.runtime.json
+cargo run -p qx-cli -- backtest
+cargo run -p qx-cli -- builtin-strategies
+cargo run -p qx-cli -- builtin-backtest sma_cross deploy/qianxing.bar-frame.example.json
+cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.builtin-strategy.example.json deploy/qianxing.bar-frame.example.json
+cargo run -p qx-cli -- paper-check deploy/qianxing.runtime.paper-strategy.example.json
+cargo run -p qx-cli -- live-check deploy/qianxing.runtime.production.example.json
+
+# 内置 Rust、Python/C++ JSONL 策略直接复用 Bar 回测引擎
 cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.strategy-backtest.example.json deploy/qianxing.bar-frame.example.json
 
 # 校验运行时拓扑配置，并启动 paper API（默认示例配置）
@@ -99,6 +109,8 @@ cargo run -p qx-cli --release -- paper-submit-order deploy/qianxing.runtime.exam
 Windows 下可直接双击 `build.bat`。
 
 实现状态与未完成外部边界见：[V5 落地审计](D:/work_code/quantwork/qianxing/自研量化框架V5落地审计.md) 和 [工业级落地验收与差距清单](D:/work_code/quantwork/qianxing/docs/工业级落地验收与差距清单-V1.md)。
+
+工业化易用性收口入口和发布前检查见：[工业化易用性收口指南 V1](D:/work_code/quantwork/qianxing/docs/工业化易用性收口指南-V1.md)。
 
 演示会输出：
 

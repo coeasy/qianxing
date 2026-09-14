@@ -1183,6 +1183,7 @@ dependencies = [
  "qx-guanxing",
  "qx-orchestrator",
  "qx-plugin",
+ "qx-portfolio",
  "qx-protocol",
  "qx-provider",
  "qx-runtime",
@@ -1212,11 +1213,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "qx-data"
+version = "0.1.0"
+dependencies = [
+ "qx-domain",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "qx-datastruct"
 version = "0.1.0"
 dependencies = [
  "qx-core",
  "qx-guanxing",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "qx-domain"
+version = "0.1.0"
+dependencies = [
+ "qx-core",
  "serde",
  "serde_json",
 ]
@@ -1291,6 +1310,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "qx-portfolio"
+version = "0.1.0"
+dependencies = [
+ "qx-core",
+ "serde",
+]
+
+[[package]]
 name = "qx-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1318,13 +1345,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "qx-risk"
+version = "0.1.0"
+dependencies = [
+ "qx-core",
+ "serde",
+]
+
+[[package]]
 name = "qx-runtime"
 version = "0.1.0"
 dependencies = [
  "qx-control",
  "qx-core",
+ "qx-data",
+ "qx-domain",
  "qx-factor",
  "qx-oms",
+ "qx-portfolio",
  "qx-storage",
  "qx-strategy",
  "serde",
@@ -1389,6 +1427,7 @@ dependencies = [
  "qx-core",
  "qx-guanxing",
  "qx-oms",
+ "qx-risk",
 ]
 
 [[package]]

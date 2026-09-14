@@ -9,3 +9,4 @@ license.workspace = true
 qx-core = { path = "../qx-core" }
 qx-oms = { path = "../qx-oms" }
 qx-guanxing = { path = "../qx-guanxing" }
+qx-risk = { path = "../qx-risk" }

@@ -297,6 +297,44 @@ impl StrategyContractOutput {
         Ok(())
     }
 
+    /// 将兼容的单目标仓位输出转换为统一组合调仓计划。
+    ///
+    /// 多订单 `intents[]` 已经表达了明确的订单增量，不在这里再次推导目标仓位；
+    /// 只有旧版 `target_qty` 输出走该路径，从而保证回测、Paper 和实盘兼容路径
+    /// 使用同一套“目标仓位 → 数量增量”语义，并且能正确处理目标为零的清仓。
+    pub fn build_rebalance_plan(
+        &self,
+        input: &StrategyContractInput,
+        max_turnover_bps: u32,
+        min_trade_size: i128,
+    ) -> Result<qx_portfolio::RebalancePlan, String> {
+        self.validate_for(input)?;
+        if !self.intents.is_empty() {
+            return Err("包含 intents[] 的策略输出不能再次转换为 target_qty 调仓计划".into());
+        }
+        let current = qx_portfolio::PortfolioState {
+            portfolio_id: input.strategy_id.clone(),
+            timestamp: input.as_of,
+            cash: input
+                .cash
+                .values()
+                .copied()
+                .fold(0_i128, i128::saturating_add),
+            positions: input.positions.clone(),
+        };
+        qx_portfolio::rebalance(
+            &current,
+            &[qx_portfolio::TargetPosition {
+                instrument: self.instrument.clone(),
+                quantity: self.target_qty,
+            }],
+            &qx_portfolio::PortfolioConstraint {
+                max_turnover_bps,
+                min_trade_size,
+            },
+        )
+    }
+
     pub fn to_json_for(&self, input: &StrategyContractInput) -> Result<String, String> {
         self.validate_for(input)?;
         serde_json::to_string(self).map_err(|error| format!("策略输出契约序列化失败: {error}"))
@@ -800,6 +838,24 @@ pub struct StrategyRuntimeConfig {
     /// None 时：衍生品默认允许双向，现货/杠杆默认禁止空头，必须显式开启。
     #[serde(default)]
     pub allow_short: Option<bool>,
+    /// 内置 Rust Bar 策略名称。配置后 Strategy Worker/Backtest 会使用同一套
+    /// 固定点策略实现，并继续经过统一 OrderIntent、RiskGate 和 OMS。
+    #[serde(default)]
+    pub builtin_strategy: Option<String>,
+    #[serde(default)]
+    pub builtin_quantity: Option<i64>,
+    #[serde(default)]
+    pub builtin_fast_window: Option<usize>,
+    #[serde(default)]
+    pub builtin_slow_window: Option<usize>,
+    #[serde(default)]
+    pub builtin_period: Option<usize>,
+    #[serde(default)]
+    pub builtin_threshold_bps: Option<i128>,
+    /// Strategy worker 可读取的冻结 BarFrame 快照。外部策略会收到 bars 输入；
+    /// 内置策略运行时必须配置该字段，才能基于历史 K 线产生信号。
+    #[serde(default)]
+    pub bars_snapshot_path: Option<String>,
     /// 可选 Python JSONL 策略模块；Strategy Worker 只通过稳定契约调用它。
     #[serde(default)]
     pub python_module: Option<String>,
@@ -857,6 +913,13 @@ impl Default for StrategyRuntimeConfig {
             position_mode: None,
             leverage: None,
             allow_short: None,
+            builtin_strategy: None,
+            builtin_quantity: None,
+            builtin_fast_window: None,
+            builtin_slow_window: None,
+            builtin_period: None,
+            builtin_threshold_bps: None,
+            bars_snapshot_path: None,
             python_module: None,
             transport: StrategyTransport::Jsonl,
             shared_memory_capacity: default_strategy_shared_memory_capacity(),
@@ -1003,6 +1066,58 @@ impl RuntimeConfig {
         {
             return Err(format!("{label} python_module 不能为空字符串"));
         }
+        if let Some(name) = strategy.builtin_strategy.as_deref() {
+            if name.trim().is_empty() {
+                return Err(format!("{label} builtin_strategy 不能为空字符串"));
+            }
+            qx_strategy::BuiltinStrategyKind::parse(name)
+                .map_err(|error| format!("{label} builtin_strategy 非法: {error}"))?;
+        }
+        if strategy
+            .bars_snapshot_path
+            .as_deref()
+            .is_some_and(|path| path.trim().is_empty())
+        {
+            return Err(format!("{label} bars_snapshot_path 不能为空字符串"));
+        }
+        if strategy.builtin_strategy.is_some() && strategy.bars_snapshot_path.is_none() {
+            return Err(format!(
+                "{label} builtin_strategy 运行时必须配置 bars_snapshot_path"
+            ));
+        }
+        if strategy
+            .builtin_quantity
+            .is_some_and(|quantity| quantity <= 0)
+        {
+            return Err(format!("{label} builtin_quantity 必须为正整数"));
+        }
+        if strategy
+            .builtin_fast_window
+            .is_some_and(|window| window == 0)
+            || strategy
+                .builtin_slow_window
+                .is_some_and(|window| window == 0)
+        {
+            return Err(format!("{label} builtin fast/slow window 必须大于 0"));
+        }
+        if let (Some(fast), Some(slow)) =
+            (strategy.builtin_fast_window, strategy.builtin_slow_window)
+        {
+            if fast >= slow {
+                return Err(format!(
+                    "{label} builtin_fast_window 必须小于 builtin_slow_window"
+                ));
+            }
+        }
+        if strategy.builtin_period.is_some_and(|period| period < 2) {
+            return Err(format!("{label} builtin_period 必须大于等于 2"));
+        }
+        if strategy
+            .builtin_threshold_bps
+            .is_some_and(|threshold| threshold < 0)
+        {
+            return Err(format!("{label} builtin_threshold_bps 不能为负"));
+        }
         if strategy.python_timeout_ms == 0 || strategy.python_timeout_ms > 60_000 {
             return Err(format!("{label} python_timeout_ms 必须在 1..=60000 内"));
         }
@@ -1082,6 +1197,7 @@ impl RuntimeConfig {
             ));
         }
         let strategy_sources = [
+            strategy.builtin_strategy.is_some(),
             strategy.python_module.is_some(),
             strategy.external_executable.is_some(),
             strategy.c_abi_library.is_some(),
@@ -1091,7 +1207,7 @@ impl RuntimeConfig {
         .count();
         if strategy_sources > 1 {
             return Err(format!(
-                "{label} python_module、external_executable、c_abi_library 只能配置一个"
+                "{label} builtin_strategy、python_module、external_executable、c_abi_library 只能配置一个"
             ));
         }
         if strategy
@@ -1983,6 +2099,40 @@ mod tests {
     }
 
     #[test]
+    fn legacy_target_contract_emits_close_rebalance_for_zero_target() {
+        let input = StrategyContractInput {
+            schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
+            request_id: "close-request".into(),
+            strategy_id: "strategy-close".into(),
+            strategy_version: "v1".into(),
+            data_fingerprint: "bars-1".into(),
+            as_of: 10,
+            instrument: "BTCUSDT.BINANCE".into(),
+            positions: BTreeMap::from([("BTCUSDT.BINANCE".into(), 2)]),
+            cash: BTreeMap::from([("USDT".into(), 100)]),
+            available_margin_raw: Some(100),
+            risk_state: "verified".into(),
+            research_targets: BTreeMap::new(),
+            bars: None,
+        };
+        let output = StrategyContractOutput {
+            schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
+            request_id: input.request_id.clone(),
+            strategy_id: input.strategy_id.clone(),
+            signal_id: 1,
+            instrument: input.instrument.clone(),
+            target_qty: 0,
+            confidence: 1_000,
+            priority: 0,
+            expires_at: 10,
+            intents: Vec::new(),
+        };
+        let plan = output.build_rebalance_plan(&input, 10_000, 1).unwrap();
+        assert_eq!(plan.positions.len(), 1);
+        assert_eq!(plan.positions[0].quantity, -2);
+    }
+
+    #[test]
     fn strategy_columnar_input_preserves_metadata_and_fixed_width_columns() {
         let input = StrategyContractInput {
             schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
@@ -2245,6 +2395,25 @@ mod tests {
     }
 
     #[test]
+    fn builtin_strategy_requires_valid_name_snapshot_and_exclusive_source() {
+        let mut config = config();
+        config.strategy.builtin_strategy = Some("macd".into());
+        let error = config.validate().unwrap_err();
+        assert!(error.contains("bars_snapshot_path"));
+
+        config.strategy.bars_snapshot_path = Some("bars.json".into());
+        assert!(config.validate().is_ok());
+
+        config.strategy.builtin_strategy = Some("not-exists".into());
+        assert!(config.validate().is_err());
+
+        config.strategy.builtin_strategy = Some("macd".into());
+        config.strategy.python_module = Some("demo_strategy".into());
+        let error = config.validate().unwrap_err();
+        assert!(error.contains("只能配置一个"));
+    }
+
+    #[test]
     fn production_c_abi_strategy_requires_detached_signature() {
         let mut config = config();
         config.environment = "production".into();
@@ -2333,6 +2502,13 @@ mod tests {
             position_mode: None,
             leverage: None,
             allow_short: None,
+            builtin_strategy: None,
+            builtin_quantity: None,
+            builtin_fast_window: None,
+            builtin_slow_window: None,
+            builtin_period: None,
+            builtin_threshold_bps: None,
+            bars_snapshot_path: None,
             python_module: None,
             transport: StrategyTransport::Jsonl,
             shared_memory_capacity: default_strategy_shared_memory_capacity(),

@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "environment": "paper",
+  "api": {
+    "bind": "127.0.0.1:18082",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {}
+  },
+  "storage": {
+    "backend": "files",
+    "data_dir": "data/qianxing-builtin-strategy",
+    "sqlite_path": null
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "strategy-builtin",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "paper",
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": null
+    }
+  ],
+  "shutdown_timeout_ms": 30000,
+  "strategy": {
+    "id": "strategy-builtin",
+    "version": "builtin-macd-v1",
+    "max_orders": 100,
+    "account_id": "main",
+    "venue_id": "paper",
+    "instrument": "BTCUSDT.BINANCE",
+    "target_qty": 0,
+    "builtin_strategy": "macd",
+    "builtin_quantity": 1,
+    "builtin_fast_window": 5,
+    "builtin_slow_window": 20,
+    "builtin_period": 14,
+    "builtin_threshold_bps": 100,
+    "bars_snapshot_path": "qianxing.bar-frame.example.json",
+    "python_timeout_ms": 2000
+  }
+}

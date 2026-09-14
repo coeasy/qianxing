@@ -6,7 +6,7 @@
 
 use qx_core::{
     Fill, MarginMode, Money, Order, OrderStatus, PositionMode, PositionSide, Price, Quantity,
-    QxError, QxResult,
+    QxError, QxResult, SCALE,
 };
 use qx_zhenlu::{
     AdapterHealth, ConnectorCapabilities, ConnectorState, Venue, VenueAdapter, VenueEvent,
@@ -204,6 +204,7 @@ pub struct CcxtProcessVenue {
     orders: BTreeMap<u64, Order>,
     remote_ids: BTreeMap<u64, String>,
     seen_trade_ids: BTreeMap<u64, BTreeSet<String>>,
+    cumulative_costs: BTreeMap<u64, i128>,
 }
 
 impl CcxtProcessVenue {
@@ -215,6 +216,7 @@ impl CcxtProcessVenue {
             orders: BTreeMap::new(),
             remote_ids: BTreeMap::new(),
             seen_trade_ids: BTreeMap::new(),
+            cumulative_costs: BTreeMap::new(),
         }
     }
 
@@ -226,7 +228,14 @@ impl CcxtProcessVenue {
                 "CCXT 恢复订单缺少 remote order id".into(),
             ));
         }
+        let same_remote_order = self
+            .remote_ids
+            .get(&order.client_id)
+            .is_some_and(|existing| existing == &remote_id);
         self.remote_ids.insert(order.client_id, remote_id);
+        if !same_remote_order {
+            self.cumulative_costs.remove(&order.client_id);
+        }
         self.orders.insert(order.client_id, order);
         Ok(())
     }
@@ -259,20 +268,50 @@ impl CcxtProcessVenue {
             ));
         }
         let mut events = Vec::new();
+        let prior_filled = order.filled.raw();
+        let prior_cost = self
+            .cumulative_costs
+            .get(&client_order_id)
+            .copied()
+            .unwrap_or(0);
+        if filled > prior_filled
+            && prior_filled > 0
+            && !self.cumulative_costs.contains_key(&client_order_id)
+        {
+            return Err(QxError::ReconcileRequired(
+                "CCXT 增量成交缺少上一阶段累计成本，禁止按全量均价伪造增量价格".into(),
+            ));
+        }
+        let cumulative_cost = if filled > prior_filled {
+            cumulative_cost_raw(remote, filled)?
+        } else if filled == 0 {
+            0
+        } else if remote.get("cost_raw").is_some()
+            || remote.get("average_raw").is_some()
+            || remote.get("price_raw").is_some()
+        {
+            cumulative_cost_raw(remote, filled)?
+        } else {
+            prior_cost
+        };
+        if cumulative_cost < prior_cost {
+            return Err(QxError::ReconcileRequired(
+                "CCXT 累计成交成本不能回退".into(),
+            ));
+        }
         if filled > order.filled.raw() {
-            let price = remote
-                .get("average_raw")
-                .map(|value| raw_i128_value(value, "average_raw"))
-                .transpose()?
-                .or_else(|| {
-                    remote
-                        .get("price_raw")
-                        .map(|value| raw_i128_value(value, "price_raw"))
-                        .transpose()
-                        .ok()
-                        .flatten()
-                })
-                .ok_or_else(|| QxError::ReconcileRequired("CCXT 成交缺少价格".into()))?;
+            let delta_qty = filled - prior_filled;
+            let delta_cost = cumulative_cost - prior_cost;
+            if delta_qty <= 0 || delta_cost <= 0 {
+                return Err(QxError::ReconcileRequired(
+                    "CCXT 增量成交缺少有效累计成本".into(),
+                ));
+            }
+            let price = delta_cost
+                .checked_mul(SCALE)
+                .and_then(|value| value.checked_div(delta_qty))
+                .filter(|price| *price > 0)
+                .ok_or_else(|| QxError::ReconcileRequired("CCXT 增量成交价格无效".into()))?;
             let mut fee_raw = remote
                 .get("fee_raw")
                 .map(|value| raw_i128_value(value, "fee_raw"))
@@ -298,7 +337,7 @@ impl CcxtProcessVenue {
             }
             let mut fill = Fill {
                 order_id: client_order_id,
-                qty: Quantity::from_raw(filled - order.filled.raw()),
+                qty: Quantity::from_raw(delta_qty),
                 price: Price::from_raw(price),
                 fee: Money::from_raw(fee_raw),
                 ts,
@@ -314,6 +353,8 @@ impl CcxtProcessVenue {
             order.trace_fill(&mut fill, Some(&self.id), Some(&remote_id));
             events.push(VenueEvent::Fill(fill));
         }
+        self.cumulative_costs
+            .insert(client_order_id, cumulative_cost);
         let remote_status = remote
             .get("status")
             .and_then(Value::as_str)
@@ -506,6 +547,7 @@ impl Venue for CcxtProcessVenue {
             .ok_or_else(|| QxError::ReconcileRequired("CCXT create_order 缺少 order_id".into()))?
             .to_string();
         self.remote_ids.insert(order.client_id, remote_id.clone());
+        self.cumulative_costs.remove(&order.client_id);
         self.orders.insert(order.client_id, order.clone());
         Ok(vec![VenueEvent::Accepted {
             client_order_id: order.client_id,
@@ -605,6 +647,33 @@ fn raw_i128_value(value: &Value, key: &str) -> QxResult<i128> {
     Err(QxError::ReconcileRequired(format!(
         "CCXT 字段不是定点整数: {key}"
     )))
+}
+
+fn cumulative_cost_raw(remote: &Value, filled_raw: i128) -> QxResult<i128> {
+    if filled_raw <= 0 {
+        return Ok(0);
+    }
+    if let Some(value) = remote.get("cost_raw") {
+        let cost = raw_i128_value(value, "cost_raw")?;
+        if cost <= 0 {
+            return Err(QxError::ReconcileRequired(
+                "CCXT 累计成交成本必须为正".into(),
+            ));
+        }
+        return Ok(cost);
+    }
+    let average = remote
+        .get("average_raw")
+        .or_else(|| remote.get("price_raw"))
+        .map(|value| raw_i128_value(value, "average_raw"))
+        .transpose()?
+        .filter(|price| *price > 0)
+        .ok_or_else(|| QxError::ReconcileRequired("CCXT 成交缺少累计价格".into()))?;
+    average
+        .checked_mul(filled_raw)
+        .and_then(|value| value.checked_div(SCALE))
+        .filter(|cost| *cost > 0)
+        .ok_or_else(|| QxError::ReconcileRequired("CCXT 累计成交成本无效".into()))
 }
 
 #[cfg(test)]
@@ -732,6 +801,63 @@ mod tests {
             }
             other => panic!("expected fill, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn ccxt_partial_sync_uses_incremental_price_from_cumulative_average() {
+        struct PartialRpc {
+            fetches: usize,
+        }
+
+        impl CcxtRpc for PartialRpc {
+            fn call(&mut self, request: Value) -> Result<Value, String> {
+                match request.get("op").and_then(Value::as_str) {
+                    Some("create_order") => Ok(json!({
+                        "order": {"order_id": "partial-1", "status": "open", "filled_raw": 0}
+                    })),
+                    Some("fetch_order") => {
+                        self.fetches += 1;
+                        if self.fetches == 1 {
+                            Ok(json!({
+                                "order": {
+                                    "order_id": "partial-1",
+                                    "status": "open",
+                                    "filled_raw": 1_000_000_000_i64,
+                                    "average_raw": 100_000_000_000_i64,
+                                    "fee_raw": 1
+                                }
+                            }))
+                        } else {
+                            Ok(json!({
+                                "order": {
+                                    "order_id": "partial-1",
+                                    "status": "closed",
+                                    "filled_raw": 2_000_000_000_i64,
+                                    "average_raw": 110_000_000_000_i64,
+                                    "fee_raw": 2
+                                }
+                            }))
+                        }
+                    }
+                    _ => Ok(json!({})),
+                }
+            }
+        }
+
+        let mut venue = CcxtProcessVenue::new("binance", Box::new(PartialRpc { fetches: 0 }));
+        venue.submit(order(), 10).unwrap();
+        let first = venue.sync_order(7, 11).unwrap();
+        let second = venue.sync_order(7, 12).unwrap();
+        let VenueEvent::Fill(first_fill) = &first[0] else {
+            panic!("expected first partial fill")
+        };
+        let VenueEvent::Fill(second_fill) = &second[0] else {
+            panic!("expected second partial fill")
+        };
+        assert_eq!(first_fill.qty, Quantity::from_i64(1));
+        assert_eq!(first_fill.price, Price::from_i64(100));
+        assert_eq!(second_fill.qty, Quantity::from_i64(1));
+        assert_eq!(second_fill.price, Price::from_i64(120));
     }
 
     #[test]

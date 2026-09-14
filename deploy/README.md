@@ -9,10 +9,22 @@
 ## 启动前检查
 
 ```powershell
+cargo run --release -p qx-cli -- help
+cargo run --release -p qx-cli -- live-check deploy/qianxing.runtime.production.example.json
 cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.example.json
 cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.production.example.json
 cargo run --release -p qx-cli -- binance-public-probe testnet BTCUSDT.BINANCE
 cargo run --release -p qx-cli -- binance-private-probe deploy/qianxing.runtime.production.example.json binance-execution-main
+```
+
+`live-check` 是不连接交易所、不发送订单的生产发布前静态门禁。它会额外检查 production 环境、配置指纹锁、TLS 文件、凭据来源、Execution 品种规格与名义额上限、研究快照文件；模板中的占位路径或 `config_fingerprint: null` 会按预期失败，必须替换为部署机上的真实发布配置后再通过。
+
+本地开发推荐使用统一入口：
+
+```powershell
+cargo run --release -p qx-cli -- init qianxing.runtime.json
+cargo run --release -p qx-cli -- backtest
+cargo run --release -p qx-cli -- paper-check deploy/qianxing.runtime.paper-strategy.example.json
 ```
 
 配置检查会拒绝：
@@ -111,6 +123,16 @@ Rust/C++ 也可以编译成独立策略进程，通过 `strategy.external_execut
 
 当配置包含 `strategies[]` 时，`strategy-backtest` 会按策略实例逐个执行隔离回测，每个实例使用自己的 account/strategy 配置并输出独立结果哈希；示例见 `deploy/qianxing.runtime.strategy-multi-backtest.example.json`。组合级资金池、跨策略净额和归因需要在组合回测层显式配置，不会隐式共享单策略账户状态。
 
+当前还提供 10 个固定点运算的内置策略，可先查看目录再直接回测：
+
+```powershell
+cargo run --release -p qx-cli -- builtin-strategies
+cargo run --release -p qx-cli -- builtin-backtest macd deploy/qianxing.bar-frame.example.json deploy/qianxing.binance.spot.spec.json
+cargo run --release -p qx-cli -- strategy-backtest deploy/qianxing.runtime.builtin-strategy.example.json deploy/qianxing.bar-frame.example.json
+```
+
+内置策略包括 SMA/EMA 交叉、MACD、RSI、布林带、Donchian 突破、动量、均值回归、网格和 ATR 趋势。它们只产生统一 StrategyDecision，不直接访问交易所；Paper/实盘仍由 Runtime 的 RiskGate、OMS、Execution 和 CCXT worker 执行。运行时配置使用 `builtin_strategy` 选择策略，并通过 `bars_snapshot_path` 提供冻结 K 线窗口；Strategy worker 会按 `as_of` 截断 BarFrame 后调用策略。
+
 CCXT 数据进入回测的推荐流程：
 
 ```powershell
@@ -123,6 +145,17 @@ cargo run --release -p qx-cli -- ccxt-backtest bars.json 5 20 market.json
 ```
 
 三条命令分别冻结历史行情、冻结交易所产品规格并运行本地回测；回测过程不再访问交易所。若 MarketSpec 没有提供精度或维持保证金档位，必须在部署侧补齐后再用于真实合约风险评估。
+
+快速试跑内置策略也可以使用一条命令：
+
+```powershell
+cargo run --release -p qx-cli -- ccxt-builtin-backtest `
+  deploy/qianxing.ccxt.exchange.example.json macd `
+  BTC/USDT.OKX 1704067200000 1706745600000 1h `
+  deploy/qianxing.ccxt.okx.perpetual.spec.json 1
+```
+
+该快捷入口不会保存中间行情快照；生产研究和审计仍应使用上面的三步冻结流程。
 
 Paper/虚拟交易也复用同一份产品规格：现货按现金买卖记账，保证金/永续/期货按持仓、杠杆、保证金和 PnL 记账。为启用执行前规格门禁，在 Execution worker 配置 `instrument_spec_path`；示例规格见 `qianxing.binance.spot.spec.json` 和 `qianxing.ccxt.okx.perpetual.spec.json`。Paper 的订单标的可以使用任意已解析的交易所 InstrumentId，不会被虚拟 Venue 硬编码到 Binance。
 

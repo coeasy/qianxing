@@ -13,6 +13,7 @@ postgres = ["qx-storage/postgres"]
 qx-core = { path = "../qx-core" }
 qx-domain = { path = "../qx-domain" }
 qx-data = { path = "../qx-data" }
+qx-portfolio = { path = "../qx-portfolio" }
 qx-oms = { path = "../qx-oms" }
 qx-factor = { path = "../qx-factor" }
 qx-strategy = { path = "../qx-strategy" }

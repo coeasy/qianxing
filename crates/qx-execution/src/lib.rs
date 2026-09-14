@@ -122,10 +122,35 @@ impl<'a, V: Venue> ExecutionService<'a, V> {
             .into_iter()
             .find(|order| order.client_id == requested_order.client_id)
             .ok_or_else(|| "OrderSubmitted 后找不到订单".to_string())?;
-        let events = self
-            .venue
-            .submit(order, self.now)
-            .map_err(|error| format!("Venue submit 失败/结果未知: {error:?}"))?;
+        let events = match self.venue.submit(order, self.now) {
+            Ok(events) => events,
+            Err(error) => {
+                // Once the order has been persisted, a Venue error cannot prove
+                // that no remote order exists. Fail closed by moving the local
+                // order into reconcile-required state before returning.
+                *self.source_seq = self.source_seq.saturating_add(1);
+                let reconcile = self.pipeline.ingest(RuntimeEventEnvelope::venue(
+                    RuntimeExternalEvent::ReconcileRequired {
+                        client_order_id: requested_order.client_id,
+                    },
+                    self.now,
+                    self.now,
+                    *self.source_seq,
+                    format!(
+                        "{}:submit-error:{}",
+                        self.worker_id, requested_order.client_id
+                    ),
+                ));
+                return match reconcile {
+                    Ok(_) => Err(format!(
+                        "Venue submit 失败/结果未知: {error:?}；订单已标记为待对账"
+                    )),
+                    Err(reconcile_error) => Err(format!(
+                        "Venue submit 失败/结果未知: {error:?}；标记待对账也失败: {reconcile_error:?}"
+                    )),
+                };
+            }
+        };
         let count = if let Some(spec) = self.instrument_spec.as_ref() {
             ingest_venue_events_with_spec(
                 self.pipeline,

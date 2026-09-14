@@ -11,6 +11,7 @@ use qx_core::{
     TradingInstrumentSpec,
 };
 use qx_guanxing::QuoteTick;
+use qx_risk::{RiskDecision, RiskEngine, RiskSnapshot};
 use std::collections::{BTreeMap, VecDeque};
 
 /// 持仓快照：风控判定所需的最小信息。
@@ -100,7 +101,19 @@ impl RiskContext {
             let projected_gross_notional = other_notional
                 .checked_add(projected_leg_notional)
                 .ok_or_else(|| QxError::Invariant("投影持仓名义额溢出".into()))?;
-            if projected_gross_notional > limit {
+            let risk_snapshot = RiskSnapshot {
+                portfolio_id: order.account_id.clone(),
+                timestamp: 0,
+                gross_exposure: projected_gross_notional,
+                net_exposure: projected_qty,
+                volatility_bps: 0,
+                drawdown_bps: 0,
+                factor_exposure: BTreeMap::new(),
+            };
+            if !matches!(
+                RiskEngine::evaluate(&risk_snapshot, limit, i32::MIN),
+                RiskDecision::Allow
+            ) {
                 return Err(QxError::BusinessViolation(
                     "投影持仓名义额超过账户限额".into(),
                 ));

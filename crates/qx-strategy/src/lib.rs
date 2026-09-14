@@ -9,10 +9,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
+pub mod builtin;
 pub mod c_api;
 pub mod frame;
 pub mod ring;
 
+pub use builtin::{BuiltinStrategy, BuiltinStrategyConfig, BuiltinStrategyKind};
 pub use c_api::{
     sha256_hex, verify_file_sha256, CAbiStrategy, DynamicCAbiLoadPolicy, DynamicCAbiStrategy,
     QxStrategyVTable, QX_C_STRATEGY_API_VERSION,

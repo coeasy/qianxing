@@ -240,7 +240,20 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                         .as_deref()
                         .and_then(InstrumentId::parse)
                         .ok_or_else(|| "Strategy instrument 非法或未配置".to_string())?;
-                    let (target_qty, contract_output) = if let Some(module) =
+                    let (target_qty, contract_output) = if strategy_runtime_config
+                        .strategy
+                        .builtin_strategy
+                        .is_some()
+                    {
+                        let output = invoke_builtin_strategy(
+                            &root,
+                            &strategy_runtime_config,
+                            &instrument,
+                            &queued.run.run_id.to_string(),
+                            now,
+                        )?;
+                        (output.target_qty, Some(output))
+                    } else if let Some(module) =
                         strategy_runtime_config.strategy.python_module.as_deref()
                     {
                         let input = build_strategy_contract_input(

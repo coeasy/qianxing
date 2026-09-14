@@ -23,6 +23,7 @@ qx-zhenlu = { path = "../qx-zhenlu" }
 qx-genglu = { path = "../qx-genglu" }
 qx-plugin = { path = "../qx-plugin" }
 qx-factor = { path = "../qx-factor" }
+qx-portfolio = { path = "../qx-portfolio" }
 qx-protocol = { path = "../qx-protocol" }
 qx-provider = { path = "../qx-provider" }
 qx-scheduler = { path = "../qx-scheduler" }

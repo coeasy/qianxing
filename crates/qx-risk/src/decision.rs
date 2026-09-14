@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::snapshot::RiskSnapshot;
+use crate::RiskSnapshot;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RiskAction {

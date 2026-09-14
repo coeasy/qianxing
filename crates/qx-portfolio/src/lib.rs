@@ -1,49 +1,11 @@
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
+pub mod constraint;
 pub mod optimizer;
+pub mod rebalance;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PortfolioState {
-    pub portfolio_id: String,
-    pub timestamp: u64,
-    pub cash: i128,
-    pub positions: BTreeMap<String, i128>,
-}
-
-impl PortfolioState {
-    pub fn validate(&self) -> Result<(), String> {
-        if self.portfolio_id.trim().is_empty() {
-            return Err("portfolio id is required".into());
-        }
-        if self.positions.keys().any(|k| k.trim().is_empty()) {
-            return Err("empty instrument id".into());
-        }
-        Ok(())
-    }
-
-    pub fn position(&self, instrument: &str) -> i128 {
-        self.positions.get(instrument).copied().unwrap_or_default()
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PortfolioConstraint {
-    pub max_turnover_bps: u32,
-    pub min_trade_size: i128,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TargetPosition {
-    pub instrument: String,
-    pub quantity: i128,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RebalancePlan {
-    pub positions: Vec<TargetPosition>,
-    pub turnover_bps: u32,
-}
+pub use constraint::PortfolioConstraint;
+pub use rebalance::{
+    build_rebalance, rebalance, PortfolioState, RebalanceDelta, RebalancePlan, TargetPosition,
+};
 
 pub trait Allocator {
     fn allocate(&self, signals: &[i128]) -> Vec<i128>;
@@ -53,25 +15,27 @@ pub struct EqualWeight;
 
 impl Allocator for EqualWeight {
     fn allocate(&self, signals: &[i128]) -> Vec<i128> {
-        if signals.is_empty() { return Vec::new(); }
+        if signals.is_empty() {
+            return Vec::new();
+        }
         let weight = 10_000 / signals.len() as i128;
-        signals.iter().map(|_| weight).collect()
+        let remainder = 10_000 - weight * signals.len() as i128;
+        signals
+            .iter()
+            .enumerate()
+            .map(|(index, _)| weight + if (index as i128) < remainder { 1 } else { 0 })
+            .collect()
     }
 }
 
-pub fn rebalance(current: &PortfolioState, target: &[TargetPosition], constraint: &PortfolioConstraint) -> Result<RebalancePlan, String> {
-    current.validate()?;
-    let mut positions = Vec::new();
-    let mut turnover = 0u32;
-    for item in target {
-        let delta = item.quantity.saturating_sub(current.position(&item.instrument));
-        if delta.abs() >= constraint.min_trade_size {
-            positions.push(TargetPosition { instrument: item.instrument.clone(), quantity: delta });
-        }
-        turnover = turnover.saturating_add(delta.unsigned_abs().min(u32::MAX as u128) as u32);
+#[cfg(test)]
+mod tests {
+    use super::{Allocator, EqualWeight};
+
+    #[test]
+    fn equal_weight_preserves_full_bps_budget() {
+        let weights = EqualWeight.allocate(&[1, 2, 3]);
+        assert_eq!(weights, vec![3334, 3333, 3333]);
+        assert_eq!(weights.iter().sum::<i128>(), 10_000);
     }
-    if turnover > constraint.max_turnover_bps {
-        return Err("rebalance turnover exceeds limit".into());
-    }
-    Ok(RebalancePlan { positions, turnover_bps: turnover })
 }
