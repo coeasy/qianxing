@@ -922,6 +922,9 @@ pub struct StrategyRuntimeConfig {
     /// 内置策略运行时必须配置该字段，才能基于历史 K 线产生信号。
     #[serde(default)]
     pub bars_snapshot_path: Option<String>,
+    /// A 股规则快照；启用后回测和纸面交易使用 T+1、整手、涨跌停、停牌和费用规则。
+    #[serde(default)]
+    pub ashare_rules_path: Option<String>,
     /// 可选 Python JSONL 策略模块；Strategy Worker 只通过稳定契约调用它。
     #[serde(default)]
     pub python_module: Option<String>,
@@ -995,6 +998,7 @@ impl Default for StrategyRuntimeConfig {
             builtin_reference_position_mode: None,
             builtin_reference_leverage: None,
             bars_snapshot_path: None,
+            ashare_rules_path: None,
             python_module: None,
             transport: StrategyTransport::Jsonl,
             shared_memory_capacity: default_strategy_shared_memory_capacity(),
@@ -2679,6 +2683,7 @@ mod tests {
             builtin_reference_position_mode: None,
             builtin_reference_leverage: None,
             bars_snapshot_path: None,
+            ashare_rules_path: None,
             python_module: None,
             transport: StrategyTransport::Jsonl,
             shared_memory_capacity: default_strategy_shared_memory_capacity(),

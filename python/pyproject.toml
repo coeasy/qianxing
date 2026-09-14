@@ -15,6 +15,20 @@ dependencies = [
 ccxt-pro = [
     "ccxtpro>=1.0.0",
 ]
+a-share-akshare = [
+    "akshare>=1.16.0",
+]
+a-share-baostock = [
+    "baostock>=0.8.9",
+]
+a-share-easy-tdx = [
+    "easy-tdx>=0.1.0",
+]
+a-share = [
+    "akshare>=1.16.0",
+    "baostock>=0.8.9",
+    "easy-tdx>=0.1.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

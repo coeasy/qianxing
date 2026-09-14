@@ -11,6 +11,7 @@ use qx_guanxing::{Bar, DataSourceId, DataView, QualityGate, Verdict};
 use qx_strategy::{MarketEvent, Strategy, StrategyContext};
 use qx_zhenlu::{Oms, PositionSnapshot, RiskGate};
 
+use crate::ashare::{AshareRuleConfig, AshareSettlementState};
 use crate::cost::{FeeModel, LatencyModel, MarginRule};
 use crate::fill::{DataTier, FillModel};
 use crate::venue::BarMatchingEngine;
@@ -130,6 +131,8 @@ pub struct VirtualTradingConfig {
     pub fx_rates: BTreeMap<String, Price>,
     /// 除 `BacktestConfig.currency/initial_cash` 外的初始抵押品余额。
     pub collateral: BTreeMap<String, Money>,
+    /// A 股专用交易规则；None 保持通用现货/衍生品兼容路径。
+    pub ashare_rules: Option<AshareRuleConfig>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -322,7 +325,7 @@ impl BacktestEngine {
                 data_tier
             )));
         }
-        let model_descriptors = vec![
+        let mut model_descriptors = vec![
             fill.descriptor(),
             fee.descriptor(),
             latency.descriptor(),
@@ -362,6 +365,19 @@ impl BacktestEngine {
         let mut max_drawdown_raw = 0_i128;
         let mut next_id = 1_u64;
         validate_virtual_events(&virtual_trading)?;
+        if let Some(rules) = virtual_trading.ashare_rules.as_ref() {
+            rules
+                .validate()
+                .map_err(qx_core::QxError::BusinessViolation)?;
+        }
+        let ashare_rules = virtual_trading
+            .ashare_rules
+            .as_ref()
+            .filter(|rules| rules.enabled);
+        let mut ashare_state = AshareSettlementState::default();
+        if let Some(rules) = ashare_rules {
+            model_descriptors.push(rules.descriptor());
+        }
         let deposit_entry = ledger
             .entries()
             .iter()
@@ -402,6 +418,18 @@ impl BacktestEngine {
         }
 
         for (i, bar) in bars.iter().enumerate() {
+            if let Some(rules) = ashare_rules {
+                ashare_state.prepare(bar.ts);
+                let previous_close = rules.previous_close(bars, i);
+                matcher.set_halted(!rules.is_trading(bar.ts));
+                matcher.set_side_blocks(
+                    rules.blocks_fill(Side::Buy, bar, previous_close),
+                    rules.blocks_fill(Side::Sell, bar, previous_close),
+                );
+            } else {
+                matcher.set_halted(false);
+                matcher.set_side_blocks(false, false);
+            }
             let mut virtual_state = VirtualExecution {
                 instrument: &instrument,
                 account_id: &account_id,
@@ -433,8 +461,15 @@ impl BacktestEngine {
                     } else {
                         None
                     };
+                    let ashare_reason = ashare_rules.and_then(|rules| {
+                        rules
+                            .validate_order(&order, position, ashare_state.bought_today(), bar.ts)
+                            .err()
+                    });
                     if let Some(reason) = invalid_reason {
                         append_rejection(&mut log, bar.ts, order.client_id, reason);
+                    } else if let Some(reason) = ashare_reason {
+                        append_rejection(&mut log, bar.ts, order.client_id, &reason);
                     } else {
                         let product_policy = order.policy.unwrap_or_default();
                         let leverage = if let Some(spec) = derivative_spec {
@@ -687,6 +722,9 @@ impl BacktestEngine {
                 } else {
                     ledger.apply_fill_with_multiplier(&order, &fill, &currency, multiplier)?
                 };
+                if ashare_rules.is_some() && order.side == Side::Buy {
+                    ashare_state.on_buy(fill.qty.raw());
+                }
                 let fill_seq = log.alloc_seq();
                 log.append(Event::new(
                     fill_seq,
@@ -1127,6 +1165,34 @@ fn apply_virtual_events(
         .position_for(state.account_id, state.instrument)
         .quantity
         .raw();
+    if let Some(rules) = config.ashare_rules.as_ref().filter(|rules| rules.enabled) {
+        for event in rules
+            .corporate_actions
+            .iter()
+            .filter(|event| event.ts == bar.ts)
+        {
+            if !AshareRuleConfig::corporate_action_supported_by_ledger(event.action_type) {
+                return Err(qx_core::QxError::BusinessViolation(format!(
+                    "A 股公司行为 {:?} 尚未接入完整账本，禁止静默回测；请先配置专用事件处理器",
+                    event.action_type
+                )));
+            }
+            let entry_ids = state.ledger.apply_corporate_action(
+                state.account_id,
+                state.instrument,
+                state.currency,
+                qx_core::CorporateAction {
+                    cash_dividend_raw: event.cash_dividend_raw,
+                    split_num: event.split_num,
+                    split_den: event.split_den,
+                },
+                bar.ts,
+            )?;
+            for entry_id in entry_ids {
+                append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
+            }
+        }
+    }
     for event in config.funding.iter().filter(|event| event.ts == bar.ts) {
         if position == 0 {
             continue;
@@ -1614,6 +1680,7 @@ mod tests {
             liquidation_fee_bp: 0,
             fx_rates: BTreeMap::new(),
             collateral: BTreeMap::new(),
+            ashare_rules: None,
         };
         let bars = vec![
             Bar::new(1, 100, 101, 99, 100, 10),

@@ -28,7 +28,7 @@ pub use self::event::{
     FundingRateSnapshot, Priority,
 };
 pub use self::identity::{CanonicalProduct, InstrumentId, MarketId, VenueId};
-pub use self::ledger::{Ledger, LedgerEntry, LedgerEntryKind, PositionState};
+pub use self::ledger::{CorporateAction, Ledger, LedgerEntry, LedgerEntryKind, PositionState};
 pub use self::numeric::{Fixed, Money, Price, Quantity, SCALE};
 pub use self::order::{Fill, Order, OrderStatus, OrderTrace, Side};
 pub use self::queue::CausalQueue;

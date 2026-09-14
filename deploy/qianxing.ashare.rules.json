@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "board": "main",
+  "t_plus_one": true,
+  "lot_size": 100000000000,
+  "allow_odd_lot_sell": true,
+  "limit_up_bp": 1000,
+  "limit_down_bp": 1000,
+  "price_tick": 10000000,
+  "commission_bp": 3,
+  "min_commission": 5000000000,
+  "stamp_duty_bp": 5,
+  "transfer_fee_bp": 1,
+  "trading_timestamps": [],
+  "session_windows": [],
+  "halted_timestamps": [],
+  "previous_close_raw": {},
+  "corporate_actions": []
+}

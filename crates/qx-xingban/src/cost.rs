@@ -3,7 +3,7 @@
 //! 真实回测不能只扣比例手续费。Fee / Latency / Margin 属于不同语义层，
 //! 却必须共享同一订单事件流，否则成交、账户与组合估值会彼此断裂。
 
-use qx_core::{QxError, QxResult, TradingInstrumentSpec};
+use qx_core::{QxError, QxResult, Side, TradingInstrumentSpec};
 
 /// 名义额 = qty * price / SCALE（两者均为定点原始值）。
 pub fn notional(qty: i128, price: i128) -> i128 {
@@ -22,6 +22,11 @@ pub trait FeeModel {
     }
     /// 返回费用（定点原始值）。`is_maker` 区分挂单/吃单。
     fn commission(&self, qty: i128, price: i128, is_maker: bool) -> i128;
+
+    fn commission_for_side(&self, qty: i128, price: i128, side: Side, is_maker: bool) -> i128 {
+        let _ = side;
+        self.commission(qty, price, is_maker)
+    }
 
     fn parameters(&self) -> String {
         String::new()
@@ -88,11 +93,13 @@ impl FeeModel for AShareFeeModel {
         "AShareFee"
     }
     fn commission(&self, qty: i128, price: i128, is_maker: bool) -> i128 {
+        self.commission_for_side(qty, price, Side::Buy, is_maker)
+    }
+    fn commission_for_side(&self, qty: i128, price: i128, side: Side, _is_maker: bool) -> i128 {
         let n = notional(qty, price);
         let mut fee = bp_amount(n, self.commission_bp).max(self.min_commission);
         fee += bp_amount(n, self.transfer_fee_bp);
-        if !is_maker {
-            // 吃单≈主动卖出场景，印花税按卖出计
+        if side == Side::Sell {
             fee += bp_amount(n, self.stamp_duty_bp);
         }
         fee
@@ -375,6 +382,21 @@ mod tests {
             transfer_fee_bp: 0,
         };
         assert_eq!(m.commission(1, 1, true), 5_000_000_000);
+    }
+
+    #[test]
+    fn ashare_stamp_duty_is_sell_side_only() {
+        let m = AShareFeeModel {
+            commission_bp: 0,
+            min_commission: 0,
+            stamp_duty_bp: 5,
+            transfer_fee_bp: 0,
+        };
+        let buy = m.commission_for_side(1_000_000_000, 100_000_000_000, qx_core::Side::Buy, false);
+        let sell =
+            m.commission_for_side(1_000_000_000, 100_000_000_000, qx_core::Side::Sell, false);
+        assert_eq!(buy, 0);
+        assert_eq!(sell, 50_000_000);
     }
 
     #[test]

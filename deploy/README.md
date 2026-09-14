@@ -171,6 +171,56 @@ cargo run --release -p qx-cli -- ccxt-market-spec `
 cargo run --release -p qx-cli -- ccxt-backtest bars.json 5 20 market.json
 ```
 
+## A 股数据源、快速选股与回测
+
+A 股研究数据通过 `python/qianxing_ashare` 统一转换为 BarFrame。AkShare、Baostock 和
+easy_tdx 都是可选依赖，默认不会改变现有 CCXT 运行时。安装一种数据源后即可获取并冻结
+历史数据：
+
+```powershell
+pip install -e "python[a-share-akshare]"
+python -m qianxing_ashare fetch `
+  --provider akshare --code 000001 --start 20240101 --end 20241231 `
+  --frequency daily --adjustment qfq `
+  --output data/ashare/000001.SZSE.json
+python -m qianxing_ashare screen `
+  --bars-dir data/ashare --min-return-bps 500 --limit 50 `
+  --output data/ashare/screen.json
+python -m qianxing_ashare screen `
+  --bars-dir data/ashare --min-return-bps 500 --limit 50 `
+  --output data/ashare/screen.json `
+  --backtest-manifest data/ashare/fast-backtest.json `
+  --runtime deploy/qianxing.runtime.ashare.example.json `
+  --market-spec deploy/qianxing.ashare.spot.spec.json
+```
+
+随后可将候选标的的 BarFrame 组成 `fast-backtest` manifest 并行回测：
+
+```powershell
+cargo run --release -p qx-cli -- fast-backtest `
+  deploy/qianxing.fast-backtest.ashare.example.json
+```
+
+公司行为可以单独冻结，避免把在线数据直接带入回测：
+
+```powershell
+python -m qianxing_ashare actions `
+  --provider akshare --code 000001 --start 20200101 --end 20241231 `
+  --output data/ashare/000001.SZSE.actions.json
+```
+
+统一层会保留原始字段和来源摘要，并支持现金分红、送股、转增、配股、增发、回购和可转债等事件类型。
+当前 Rust Ledger 只自动处理现金分红、送股和转增；其他复杂事件进入回测会被安全门禁拒绝，
+直到专用权利/资金/独立标的账本完成，避免产生看似成功但实际错误的净值。
+
+示例输入、A 股现货精度、规则快照和批量 manifest 分别见 `qianxing.ashare.bar-frame.example.json`、
+`qianxing.ashare.spot.spec.json`、`qianxing.ashare.rules.json` 和 `qianxing.fast-backtest.ashare.example.json`。
+当前入口已经完成数据获取、标准化、筛选和 A 股规则化回测接入；`ashare_rules_path`
+会启用 T+1、整手、涨跌停封板、停牌和费用模型。公司行为 Ledger 变更和真实券商柜台
+公司行为快照中的现金分红和拆股会进入 Ledger 并支持重放；完整历史数据覆盖和真实券商柜台
+仍需按具体历史数据与券商协议验收。完整边界与后续交付顺序见
+[`A股数据源接入与快速选股回测方案-V1`](../docs/A股数据源接入与快速选股回测方案-V1.md)。
+
 三条命令分别冻结历史行情、冻结交易所产品规格并运行本地回测；回测过程不再访问交易所。若 MarketSpec 没有提供精度或维持保证金档位，必须在部署侧补齐后再用于真实合约风险评估。
 
 快速试跑内置策略也可以使用一条命令：

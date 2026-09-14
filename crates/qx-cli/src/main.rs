@@ -85,9 +85,10 @@ use qx_strategy::{
     DEFAULT_MAX_FRAME_BYTES,
 };
 use qx_xingban::{
-    BacktestConfig, BacktestEngine, BarMatchingEngine, BarStrategy, DataTier, DeterministicRng,
-    MakerTakerFeeModel, MarginRule, MarginTier, NativeBarStrategy, NextBarOpenFillModel, NoMargin,
-    TieredMargin, VirtualTradingConfig, ZeroLatency,
+    AShareFeeModel, AshareRuleConfig, BacktestConfig, BacktestEngine, BarMatchingEngine,
+    BarStrategy, DataTier, DeterministicRng, FeeModel, MakerTakerFeeModel, MarginRule, MarginTier,
+    NativeBarStrategy, NextBarOpenFillModel, NoMargin, TieredMargin, VirtualTradingConfig,
+    ZeroLatency,
 };
 use qx_zhenlu::{
     rebalance_intent, MaxQtyRule, NoShortRule, Oms, PaperVenue, PositionSnapshot, RiskContext,
@@ -2078,6 +2079,13 @@ fn resolve_strategy_runtime_paths(strategy: &mut StrategyRuntimeConfig, runtime_
     }
     if let Some(configured) = strategy.bars_snapshot_path.as_deref() {
         strategy.bars_snapshot_path = Some(
+            resolve_runtime_relative_path(runtime_path, configured)
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    if let Some(configured) = strategy.ashare_rules_path.as_deref() {
+        strategy.ashare_rules_path = Some(
             resolve_runtime_relative_path(runtime_path, configured)
                 .to_string_lossy()
                 .into_owned(),
@@ -7239,6 +7247,31 @@ fn run_single_strategy_backtest(
     {
         return Err("衍生品跨语言回测必须提供 market-spec.json".into());
     }
+    let mut virtual_trading = VirtualTradingConfig::default();
+    let fee: Box<dyn FeeModel> = if let Some(path) = config.strategy.ashare_rules_path.as_deref() {
+        let payload = std::fs::read_to_string(path)
+            .map_err(|error| format!("读取 A 股规则快照失败 {path}: {error}"))?;
+        let rules: AshareRuleConfig = serde_json::from_str(&payload)
+            .map_err(|error| format!("A 股规则快照 JSON 无效 {path}: {error}"))?;
+        rules
+            .validate()
+            .map_err(|error| format!("A 股规则快照非法: {error}"))?;
+        if !rules.enabled {
+            return Err("配置 ashare_rules_path 后 enabled 必须为 true".into());
+        }
+        virtual_trading.ashare_rules = Some(rules.clone());
+        Box::new(AShareFeeModel {
+            commission_bp: rules.commission_bp,
+            min_commission: rules.min_commission,
+            stamp_duty_bp: rules.stamp_duty_bp,
+            transfer_fee_bp: rules.transfer_fee_bp,
+        })
+    } else {
+        Box::new(MakerTakerFeeModel {
+            maker_bp: 2,
+            taker_bp: 5,
+        })
+    };
     let account_id = config
         .strategy
         .account_id
@@ -7257,16 +7290,13 @@ fn run_single_strategy_backtest(
         initial_cash,
         multiplier: 1,
         fill: Box::new(NextBarOpenFillModel),
-        fee: Box::new(MakerTakerFeeModel {
-            maker_bp: 2,
-            taker_bp: 5,
-        }),
+        fee,
         data_tier: DataTier::Bar,
         latency: Box::new(ZeroLatency),
         margin,
         seed: 20260911,
         risk: RiskGate::new(),
-        virtual_trading: VirtualTradingConfig::default(),
+        virtual_trading,
     };
     let report = if config.strategy.builtin_strategy.is_some() {
         if let Some(configured) = config.strategy.instrument.as_deref() {

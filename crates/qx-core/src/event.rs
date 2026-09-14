@@ -406,6 +406,7 @@ impl Event {
                     LedgerEntryKind::Adjustment => 6,
                     LedgerEntryKind::Interest => 7,
                     LedgerEntryKind::Liquidation => 8,
+                    LedgerEntryKind::CorporateAction => 9,
                 });
                 h.write_i128(entry.amount.raw());
                 h.write_text(

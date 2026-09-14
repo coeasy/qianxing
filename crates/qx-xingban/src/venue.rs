@@ -31,6 +31,9 @@ pub struct BarMatchingEngine {
     fee_price_multiplier: i128,
     rng: DeterministicRng,
     all_fills: Vec<Fill>,
+    halted: bool,
+    block_buy: bool,
+    block_sell: bool,
 }
 
 impl BarMatchingEngine {
@@ -43,6 +46,9 @@ impl BarMatchingEngine {
             fee_price_multiplier: 1,
             rng: DeterministicRng::new(seed),
             all_fills: Vec::new(),
+            halted: false,
+            block_buy: false,
+            block_sell: false,
         }
     }
 
@@ -71,6 +77,15 @@ impl BarMatchingEngine {
         &self.all_fills
     }
 
+    pub fn set_halted(&mut self, halted: bool) {
+        self.halted = halted;
+    }
+
+    pub fn set_side_blocks(&mut self, block_buy: bool, block_sell: bool) {
+        self.block_buy = block_buy;
+        self.block_sell = block_sell;
+    }
+
     /// 用本根 bar 撮合上一根 bar 提交的挂单，返回本轮成交。
     pub fn on_bar(&mut self, bar: &Bar, ts: u64) -> Vec<Fill> {
         let pending = std::mem::take(&mut self.pending);
@@ -83,12 +98,21 @@ impl BarMatchingEngine {
             }
             let eligible_ts = pending_order.eligible_ts;
             let mut o = pending_order.order;
+            if (o.side == qx_core::Side::Buy && self.block_buy)
+                || (o.side == qx_core::Side::Sell && self.block_sell)
+            {
+                self.pending.push(PendingOrder {
+                    order: o,
+                    eligible_ts,
+                });
+                continue;
+            }
             let ctx = FillContext {
                 side: o.side,
                 qty: o.remaining().raw(),
                 limit: o.limit.map(|p| p.raw()),
                 bar,
-                halted: false,
+                halted: self.halted,
             };
 
             match self.fill_model.fill(&ctx, &mut self.rng) {
@@ -97,7 +121,9 @@ impl BarMatchingEngine {
                         .checked_mul(self.fee_price_multiplier)
                         .and_then(|value| value.checked_div(qx_core::SCALE))
                         .unwrap_or(px);
-                    let fee = self.fee_model.commission(q, fee_price, o.limit.is_some());
+                    let fee =
+                        self.fee_model
+                            .commission_for_side(q, fee_price, o.side, o.limit.is_some());
                     o.filled = Quantity::from_raw(o.filled.raw() + q);
                     o.status = if o.filled.raw() >= o.qty.raw() {
                         OrderStatus::Filled

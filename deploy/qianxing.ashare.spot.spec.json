@@ -1,0 +1,16 @@
+{
+  "market_type": "spot",
+  "base": "000001",
+  "quote": "CNY",
+  "settle": "CNY",
+  "contract_size_raw": 1000000000,
+  "linear": true,
+  "inverse": false,
+  "price_tick_raw": 10000000,
+  "qty_step_raw": 100000000000,
+  "min_qty_raw": 100000000000,
+  "max_leverage": 1,
+  "maintenance_margin_bps": 0,
+  "valid_from": 0,
+  "valid_to": null
+}

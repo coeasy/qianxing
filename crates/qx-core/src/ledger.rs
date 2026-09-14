@@ -21,6 +21,7 @@ pub enum LedgerEntryKind {
     Settlement,
     Liquidation,
     Adjustment,
+    CorporateAction,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -52,6 +53,13 @@ pub struct PositionState {
     pub quantity: Quantity,
     pub average_entry: Price,
     pub realized_pnl: Money,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CorporateAction {
+    pub cash_dividend_raw: i128,
+    pub split_num: i128,
+    pub split_den: i128,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -398,6 +406,73 @@ impl Ledger {
             amount,
             ts,
         )
+    }
+
+    /// 应用 A 股现金分红或拆股事实。现金分红按持仓数量计入结算币，
+    /// 拆股通过 TradePosition 增量保持平均成本可回放。
+    pub fn apply_corporate_action(
+        &mut self,
+        account_id: &str,
+        instrument: &InstrumentId,
+        currency: &str,
+        action: CorporateAction,
+        ts: u64,
+    ) -> QxResult<Vec<u64>> {
+        if action.split_num <= 0 || action.split_den <= 0 || action.cash_dividend_raw < 0 {
+            return Err(QxError::BusinessViolation("公司行为参数非法".into()));
+        }
+        let current = self.position_for(account_id, instrument).quantity.raw();
+        if current == 0 {
+            return Ok(Vec::new());
+        }
+        let mut ids = Vec::new();
+        let dividend = current
+            .checked_mul(action.cash_dividend_raw)
+            .and_then(|value| value.checked_div(SCALE))
+            .ok_or_else(|| QxError::Invariant("公司行为现金分红溢出".into()))?;
+        if dividend != 0 {
+            ids.push(self.append(LedgerEntry {
+                id: 0,
+                account_id: account_id.into(),
+                currency: currency.into(),
+                kind: LedgerEntryKind::CorporateAction,
+                amount: Money::from_raw(dividend),
+                instrument: Some(instrument.clone()),
+                quantity: Quantity::ZERO,
+                price: None,
+                order_id: None,
+                ts,
+                multiplier: 1,
+                position_side: None,
+            })?);
+        }
+        if action.split_num != action.split_den {
+            let next = current
+                .checked_mul(action.split_num)
+                .and_then(|value| value.checked_div(action.split_den))
+                .ok_or_else(|| QxError::Invariant("公司行为拆股数量溢出".into()))?;
+            let delta = next
+                .checked_sub(current)
+                .ok_or_else(|| QxError::Invariant("公司行为拆股增量溢出".into()))?;
+            if delta != 0 {
+                let price = self.position_for(account_id, instrument).average_entry;
+                ids.push(self.append(LedgerEntry {
+                    id: 0,
+                    account_id: account_id.into(),
+                    currency: currency.into(),
+                    kind: LedgerEntryKind::TradePosition,
+                    amount: Money::ZERO,
+                    instrument: Some(instrument.clone()),
+                    quantity: Quantity::from_raw(delta),
+                    price: Some(price),
+                    order_id: None,
+                    ts,
+                    multiplier: 1,
+                    position_side: None,
+                })?);
+            }
+        }
+        Ok(ids)
     }
 
     pub fn apply_liquidation(
@@ -1402,6 +1477,65 @@ mod tests {
         assert_eq!(
             replay.position_for("main", &instrument).realized_pnl,
             ledger.position_for("main", &instrument).realized_pnl
+        );
+    }
+
+    #[test]
+    fn corporate_action_dividend_and_split_replay() {
+        let instrument = InstrumentId::parse("000001.SZSE").unwrap();
+        let mut ledger = Ledger::new();
+        ledger
+            .deposit("main", "CNY", Money::from_i64(10_000), 1)
+            .unwrap();
+        let mut buy = order(Side::Buy);
+        buy.client_id = 12;
+        buy.instrument = instrument.clone();
+        buy.qty = Quantity::from_i64(100);
+        ledger
+            .apply_fill(
+                &buy,
+                &Fill {
+                    order_id: 12,
+                    qty: Quantity::from_i64(100),
+                    price: Price::from_i64(10),
+                    ts: 2,
+                    ..Fill::default()
+                },
+                "CNY",
+            )
+            .unwrap();
+        ledger
+            .apply_corporate_action(
+                "main",
+                &instrument,
+                "CNY",
+                CorporateAction {
+                    cash_dividend_raw: Money::from_raw(SCALE / 10).raw(),
+                    split_num: 2,
+                    split_den: 1,
+                },
+                3,
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.position_for("main", &instrument).quantity.raw(),
+            200 * SCALE
+        );
+        assert_eq!(
+            ledger.cash_for("main", "CNY"),
+            Money::from_i64(9_000).raw() + 10 * SCALE
+        );
+        let mut replay = Ledger::new();
+        for entry in ledger.entries().iter().cloned() {
+            replay.apply_entry(entry).unwrap();
+        }
+        assert_eq!(
+            replay.position_for("main", &instrument),
+            ledger.position_for("main", &instrument)
+        );
+        assert_eq!(
+            replay.cash_for("main", "CNY"),
+            ledger.cash_for("main", "CNY")
         );
     }
 }

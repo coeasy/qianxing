@@ -7,6 +7,7 @@
 //! - 规则包描述订单簿与业务约束
 //! - 两者匹配才启用精细撮合，否则**自动降级为保守假设并写入审计**
 
+pub mod ashare;
 pub mod backtest;
 pub mod cost;
 pub mod fill;
@@ -16,13 +17,17 @@ pub mod rng;
 pub mod tick_backtest;
 pub mod venue;
 
+pub use self::ashare::{
+    AshareBoard, AshareCorporateActionEvent, AshareCorporateActionType, AshareRuleConfig,
+    AshareSettlementState,
+};
 pub use self::backtest::{
     BacktestConfig, BacktestEngine, BacktestReport, BarStrategy, DeliveryEvent, FundingEvent,
     InterestEvent, NativeBarStrategy, VirtualTradingConfig,
 };
 pub use self::cost::{
-    FeeModel, FixedRateMargin, LatencyModel, LeverageMargin, MakerTakerFeeModel, MarginRule,
-    MarginTier, NoMargin, StaticLatency, TieredMargin, ZeroFeeModel, ZeroLatency,
+    AShareFeeModel, FeeModel, FixedRateMargin, LatencyModel, LeverageMargin, MakerTakerFeeModel,
+    MarginRule, MarginTier, NoMargin, StaticLatency, TieredMargin, ZeroFeeModel, ZeroLatency,
 };
 pub use self::fill::{
     BestPriceFillModel, DataTier, FillContext, FillModel, NextBarOpenFillModel,
