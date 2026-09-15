@@ -5,10 +5,53 @@ use std::collections::HashMap;
 use crate::command::SubmitOrderCommand;
 use crate::event::TradingEvent;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderStatus {
+    Created,
+    Submitted,
+    Accepted,
+    PartialFilled,
+    Filled,
+    Cancelled,
+    Rejected,
+}
+
 #[derive(Debug, Clone)]
 pub struct ManagedOrder {
     pub order_id: String,
-    pub status: String,
+    pub status: OrderStatus,
+}
+
+impl ManagedOrder {
+    pub fn submit(&mut self) -> bool {
+        if self.status == OrderStatus::Created {
+            self.status = OrderStatus::Submitted;
+            return true;
+        }
+        false
+    }
+
+    pub fn accept(&mut self) -> bool {
+        if self.status == OrderStatus::Submitted {
+            self.status = OrderStatus::Accepted;
+            return true;
+        }
+        false
+    }
+
+    pub fn fill(&mut self, partial: bool) -> bool {
+        match self.status {
+            OrderStatus::Accepted | OrderStatus::PartialFilled => {
+                self.status = if partial {
+                    OrderStatus::PartialFilled
+                } else {
+                    OrderStatus::Filled
+                };
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -22,11 +65,12 @@ impl OrderManager {
     }
 
     pub fn submit(&mut self, command: SubmitOrderCommand) -> TradingEvent {
-        let order = ManagedOrder {
+        let mut order = ManagedOrder {
             order_id: command.order_id.clone(),
-            status: "Submitted".to_string(),
+            status: OrderStatus::Created,
         };
 
+        order.submit();
         self.orders.insert(command.order_id.clone(), order);
 
         TradingEvent::OrderSubmitted {
