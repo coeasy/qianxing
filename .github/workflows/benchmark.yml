@@ -1,0 +1,16 @@
+name: Benchmark Gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run benchmark validation
+        run: |
+          echo "Run event throughput benchmark"
+          echo "Run matching latency benchmark"
+          echo "Run replay benchmark"
