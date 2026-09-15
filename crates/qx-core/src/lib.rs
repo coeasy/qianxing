@@ -25,10 +25,13 @@ pub use self::engine::{Engine, Handler};
 pub use self::error::{QxError, QxResult};
 pub use self::event::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventKind,
-    FundingRateSnapshot, Priority,
+    EventMetadata, FundingRateSnapshot, Priority, EVENT_METADATA_SCHEMA_VERSION,
 };
 pub use self::identity::{CanonicalProduct, InstrumentId, MarketId, VenueId};
-pub use self::ledger::{CorporateAction, Ledger, LedgerEntry, LedgerEntryKind, PositionState};
+pub use self::ledger::{
+    ConvertibleBondConversion, CorporateAction, Ledger, LedgerEntry, LedgerEntryKind,
+    PositionState, RightsIssueEvent, ShareSubscription,
+};
 pub use self::numeric::{Fixed, Money, Price, Quantity, SCALE};
 pub use self::order::{Fill, Order, OrderStatus, OrderTrace, Side};
 pub use self::queue::CausalQueue;

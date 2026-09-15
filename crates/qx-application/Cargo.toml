@@ -1,0 +1,10 @@
+[package]
+name = "qx-application"
+description = "牵星应用层端口与执行事实契约"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { path = "../qx-core" }
+qx-guanxing = { path = "../qx-guanxing" }

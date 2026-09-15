@@ -2,7 +2,14 @@
 
 `qianxing.runtime.example.json` 是 paper/testnet 的拓扑模板，不包含 API key、secret、私钥或任何账户余额。
 
-`qianxing.runtime.production.example.json` 是生产 mTLS + SQLite 的拓扑模板；其中 `/run/secrets` 和 `/var/lib` 只是部署约定，必须由实际的秘密管理器和持久卷提供。
+`qianxing.runtime.production.example.json` 是后续分布式生产拓扑模板，显式使用 `profile: "distributed"`、PostgreSQL 和 mTLS；其中 `/run/secrets` 和 `/var/lib` 只是部署约定，必须由实际的秘密管理器和持久卷提供。本阶段默认不启用该 profile。
+
+本阶段推荐 `profile: "single_node"`（省略时默认）：运行时使用 SQLite 或 Files，研究/回测使用 Files，不依赖 PostgreSQL/NATS。`single_node` 会在配置校验阶段拒绝 PostgreSQL、NATS、OutboxRelay 和 EventConsumer，避免编译了可选 feature 后误把分布式组件带入单机部署。需要使用 PostgreSQL/NATS 时，必须显式声明 `profile: "distributed"`。
+
+`storage.consistency` 是必须与拓扑匹配的显式声明：单机 Files/SQLite 使用
+`local_durable`；PostgreSQL 事务事实使用 `transactional`；启用 NATS Outbox Relay
+使用 `distributed_outbox`。配置指纹、`runtime-check` 和 `status --json` 都会包含该字段。
+它描述的是事实持久化与 Outbox 发布边界，不代表跨系统分布式事务；真实集群仍需故障演练。
 
 生产配置支持 `config_fingerprint` 发布锁。指纹计算会排除该字段自身；策略、worker、存储、凭据引用或 API 参数被修改后，API/worker 启动会拒绝加载。`runtime-check` 会输出当前指纹和 `locked=true/false`。
 
@@ -13,19 +20,54 @@ cargo run --release -p qx-cli -- help
 cargo run --release -p qx-cli -- live-check deploy/qianxing.runtime.production.example.json
 cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.example.json
 cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.production.example.json
+# CI/部署平台可直接消费 JSON；失败时退出码非零
+cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.example.json --json
+cargo run --release -p qx-cli -- live-check deploy/qianxing.runtime.production.json --json
 cargo run --release -p qx-cli -- binance-public-probe testnet BTCUSDT.BINANCE
 cargo run --release -p qx-cli -- binance-private-probe deploy/qianxing.runtime.production.example.json binance-execution-main
 ```
 
 `live-check` 是不连接交易所、不发送订单的生产发布前静态门禁。它会额外检查 production 环境、配置指纹锁、TLS 文件、凭据来源、Execution 品种规格与名义额上限、研究快照文件；模板中的占位路径或 `config_fingerprint: null` 会按预期失败，必须替换为部署机上的真实发布配置后再通过。
 
+`runtime-check --json` 输出版本化运行时诊断（健康快照、配置指纹、引用 warnings/failures 和安全边界字段），
+适合 CI、启动脚本和部署平台采集；它不会连接交易所或发送订单。`run runtime-check --json` 是等价的统一入口。
+
+`live-check --json` 输出实盘发布前的逐项环境、TLS、凭据、产品规格、风险限额和研究快照检查，
+同样不会连接交易所或发送订单；`run live-check --json` 是等价的统一入口。
+
+公共 CCXT 的私有 worker 可以只在 `endpoint` 指向的 CCXT JSON 中配置
+`credential_env.api_key`、`credential_env.secret`（以及交易所需要的 `password`），
+RuntimeConfig 无需重复配置。`doctor` 会检查 endpoint 的 `exchange_id` 是否与 worker 的
+`venue_id` 一致，并提示 CCXT 凭据环境变量；生产 `live-check` 会把该来源纳入凭据门禁。
+
 本地开发推荐使用统一入口：
 
 ```powershell
 cargo run --release -p qx-cli -- init qianxing.runtime.json
+cargo run --release -p qx-cli -- init qianxing.runtime.json --strategy macd
+cargo run --release -p qx-cli -- init qianxing.runtime.ccxt.json --profile ccxt
+cargo run --release -p qx-cli -- init qianxing.runtime.ashare.json --profile ashare
+cargo run --release -p qx-cli -- doctor qianxing.runtime.json
+cargo run --release -p qx-cli -- config explain qianxing.runtime.json
+cargo run --release -p qx-cli -- config validate qianxing.runtime.json
+cargo run --release -p qx-cli -- config fingerprint qianxing.runtime.json
+cargo run --release -p qx-cli -- config lock qianxing.runtime.json qianxing.runtime.locked.json
+cargo run --release -p qx-cli -- run backtest
+cargo run --release -p qx-cli -- run paper
 cargo run --release -p qx-cli -- backtest
 cargo run --release -p qx-cli -- paper-check deploy/qianxing.runtime.paper-strategy.example.json
 ```
+
+`doctor` 会一次检查运行时配置、策略输入、数据 Bundle、公司行为/日历文件、存储目录和运行拓扑；
+它不会连接交易所或发送订单。`config explain --json` 输出经过校验的有效配置，只有凭据引用名称/路径，
+不会读取或打印 key、secret 内容。
+
+`init` 会将运行时配置所需的调度样例、BarFrame、DatasetBundle、品种规格和 Paper 目标复制到同一目录，
+避免“配置本身合法但引用样例文件不存在”。`--strategy macd` 可直接生成绑定内置策略的本地回测项目。
+
+DatasetBundle 的非行情组件默认使用 JSON；Arrow 组件需要在 Bundle 中声明 `"format": "arrow"`，
+并把策略路径指向带 schema、行数和 fingerprint 的 Arrow Dataset manifest。参考
+`deploy/qianxing.dataset-component.arrow.example.json`。
 
 配置检查会拒绝：
 
@@ -96,7 +138,7 @@ EventLog 对账。
 
 Scheduler worker 从 `scheduler.jobs_path` 装载 JobSpec，恢复 `scheduler.state_path`，按 UTC Cron 触发并写入带租约/fencing 的 JobQueue；Strategy worker 管理策略生命周期，执行 `Signal→Portfolio→RiskGate→OrderIntent`，并把通过风控的订单转成带审计的 SubmitOrder 命令交给 Execution worker。它不会绕过 OMS/Risk 直接调用 Venue。未知角色仍会被脚本拒绝；`-AllowUnmanagedRoles` 只适合外部扩展进程接管未知角色。
 
-Strategy 可以通过 `strategy.research_snapshot_path` 加载包含 CandidateBinding、FeatureArtifact、FactorReport、PIT 时间和数据血缘的研究快照；生产中已绑定交易对象的策略必须同时设置 `research_snapshot_required=true`、`research_data_fingerprint`，运行时还要求快照指纹匹配并绑定已验证的事件回测 manifest。回测/纸面配置仍兼容 `target_snapshot_path` 和 `target_qty`，但不应将裸目标仓位作为实盘发布物。
+Strategy 可以通过 `strategy.research_snapshot_path` 加载包含 CandidateBinding、FeatureArtifact、FactorReport、PIT 时间和数据血缘的研究快照；生产中已绑定交易对象的策略必须同时设置 `research_snapshot_required=true`、`research_data_fingerprint` 和 `dataset_bundle_path`，运行时还要求快照指纹匹配并绑定已验证的数据清单。回测/纸面配置仍兼容 `target_snapshot_path` 和 `target_qty`，但不应将裸目标仓位作为实盘发布物。
 
 Paper Execution worker 可以配置 `paper_initial_cash_raw`，启动时通过幂等 `AccountCashflow(Transfer)` 写入结算币初始资金；资金进入同一 EventLog/Ledger，重启不会重复入金。该字段只能用于 `venue_id=paper`，金额使用核心定点 raw 单位。
 
@@ -124,6 +166,23 @@ Rust/C++ 也可以编译成独立策略进程，通过 `strategy.external_execut
 
 同一套 Python/C++/Rust JSONL 策略也可以直接进入 Bar 回测：
 `cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.strategy-backtest.example.json deploy/qianxing.bar-frame.example.json [market-spec.json]`。回测传入的 `bars` 只包含当前撮合 Bar 之前的数据，成交仍由 Rust `BacktestEngine` 统一处理。策略配置可将 `transport` 设为 `framed_json`，使用带版本、序号、长度上限和 CRC32 的二进制分帧；也可设为 `shared_memory_json` 或 `shared_memory_columnar` 使用双向 SPSC mmap ring；对应示例为 `deploy/qianxing.runtime.strategy-framed.example.json`、`deploy/qianxing.runtime.strategy-shared.example.json` 和 `deploy/qianxing.runtime.strategy-columnar.example.json`。
+
+回测策略还可通过 `strategy.dataset_bundle_path` 绑定冻结的数据 Bundle。配置后启动门禁会校验 Bundle 的 `bars` fingerprint/行数，以及已支持的 `corporate_actions`、`calendar` 文件内容 fingerprint/行数，避免策略实际使用的研究组件与清单不一致；可运行的绑定示例见 `deploy/qianxing.runtime.builtin-strategy.example.json`。
+
+Bundle 的其它组件使用 `strategy.dataset_component_paths` 显式绑定，例如：
+
+```json
+{
+  "dataset_component_paths": {
+    "suspensions": "qianxing.ashare.suspensions.json",
+    "limit_rules": "qianxing.ashare.limit-rules.json",
+    "factors": "research/factors.snapshot.json"
+  }
+}
+```
+
+组件文件必须是数组，或包含 `rows`/`data` 数组；系统会递归规范化 JSON 字段顺序后计算 fingerprint，并校验行数。未显式绑定的组件会在回测启动前拒绝，避免把“Bundle 中声明存在”误当成“策略实际加载成功”。公司行为和交易日历仍兼容 `ashare_actions_path`、`ashare_calendar_path`。
+回测完成后会在运行时 data_dir/runs 下原子保存 RunManifest JSON，记录配置指纹、Bundle 聚合指纹、各数据组件指纹、模型、时钟和结果哈希。
 
 当配置包含 `strategies[]` 时，`strategy-backtest` 会按策略实例逐个执行隔离回测，每个实例使用自己的 account/strategy 配置并输出独立结果哈希；示例见 `deploy/qianxing.runtime.strategy-multi-backtest.example.json`。组合级资金池、跨策略净额和归因需要在组合回测层显式配置，不会隐式共享单策略账户状态。
 
@@ -194,6 +253,31 @@ python -m qianxing_ashare screen `
   --market-spec deploy/qianxing.ashare.spot.spec.json
 ```
 
+需要将 BarFrame 固化为单机数据集时，可先通过 Rust 数据层做幂等摄取和
+DatasetManifest 注册：
+
+```powershell
+cargo run --release -p qx-cli -- dataset-ingest `
+  data/ashare/000001.SZSE.json ashare.daily snapshot-20260915 data/datasets
+```
+
+同一个 `dataset-id + version` 如果产生不同 fingerprint 会被拒绝，避免回测输入被静默替换。
+
+需要把行情、公司行为、交易日历等组件绑定为同一研究快照时，准备
+`DatasetBundleManifest` 后执行：
+
+```powershell
+cargo run --release -p qx-cli -- dataset-bundle `
+  deploy/qianxing.dataset-bundle.example.json data/datasets [bar-frame.json]
+```
+
+Bundle 只保存组件身份和 fingerprint，组件数据仍由各自数据集存储管理；真实
+fingerprint 必须替换示例文件中的占位值。策略回测配置 `strategy.dataset_bundle_path`
+后，会在启动前校验 Bundle 的 bars fingerprint 和 row_count，校验失败直接拒绝回测。
+命令末尾提供 `bar-frame.json` 时，Bundle 落盘前也会执行同样的 bars fingerprint 校验。
+可直接运行的 BarFrame 绑定示例是 `qianxing.dataset-bundle.bar-frame.example.json`；
+生产配置不得直接使用示例清单。
+
 随后可将候选标的的 BarFrame 组成 `fast-backtest` manifest 并行回测：
 
 ```powershell
@@ -209,14 +293,36 @@ python -m qianxing_ashare actions `
   --output data/ashare/000001.SZSE.actions.json
 ```
 
+Bars、公司行为和交易日历 manifest 可以由 Python 直接绑定成 Rust Bundle 清单：
+
+```powershell
+python -m qianxing_ashare bundle `
+  --bundle-id ashare.000001 --version snapshot-20260915 `
+  --source akshare+calendar `
+  --bars-manifest data/ashare/000001.SZSE.manifest.json `
+  --bars-frame data/ashare/000001.SZSE.json `
+  --actions-manifest data/ashare/000001.SZSE.actions.manifest.json `
+  --calendar data/ashare/cn-calendar.json `
+  --output data/ashare/ashare.000001.bundle.json
+```
+
+提供 `--bars-frame` 时 Python 会使用与 Rust `qx-data` 一致的 bars fingerprint；生产清单必须提供该参数，避免仅用来源摘要代替实际数据指纹。
+
 统一层会保留原始字段和来源摘要，并支持现金分红、送股、转增、配股、增发、回购和可转债等事件类型。
-当前 Rust Ledger 只自动处理现金分红、送股和转增；其他复杂事件进入回测会被安全门禁拒绝，
-直到专用权利/资金/独立标的账本完成，避免产生看似成功但实际错误的净值。
+当前 Rust Ledger 自动处理现金分红、送股和转增；配股/增发认购、回购要约、可转债转股
+在 JSON 中同时提供明确数量、价格和目标标的时进入多腿账本并可重放；配股还支持独立的
+权利登记、部分认购和剩余权利失效事实。缺少明确生命周期事实时不会自动推导。按登记日自动生成权利、
+发行人级增发过程、可转债发行/回售/赎回/到账周期以及缺少参与事实的复杂事件仍会被安全门禁拒绝；
+其中 `capital_change` 已支持显式的 `issuer_total_shares_raw` 绝对总股本和可选的
+`issuer_free_float_shares_raw` 绝对流通股本，回测报告保留生效日股本快照但不生成账户流水，
+缺少绝对总股本时会拒绝配置，
+避免产生看似成功但实际错误的净值。可参考 `deploy/qianxing.ashare.complex-actions.example.json`。
 
 示例输入、A 股现货精度、规则快照和批量 manifest 分别见 `qianxing.ashare.bar-frame.example.json`、
 `qianxing.ashare.spot.spec.json`、`qianxing.ashare.rules.json` 和 `qianxing.fast-backtest.ashare.example.json`。
 当前入口已经完成数据获取、标准化、筛选和 A 股规则化回测接入；`ashare_rules_path`
-会启用 T+1、整手、涨跌停封板、停牌和费用模型。公司行为 Ledger 变更和真实券商柜台
+会启用 T+1、整手、涨跌停封板、停牌和费用模型；配置 `ashare_actions_path` 后，
+Python 标准化公司行为 JSON 会在回测启动时转换并合并到规则快照。公司行为 Ledger 变更和真实券商柜台
 公司行为快照中的现金分红和拆股会进入 Ledger 并支持重放；完整历史数据覆盖和真实券商柜台
 仍需按具体历史数据与券商协议验收。完整边界与后续交付顺序见
 [`A股数据源接入与快速选股回测方案-V1`](../docs/A股数据源接入与快速选股回测方案-V1.md)。
@@ -235,6 +341,31 @@ cargo run --release -p qx-cli -- ccxt-builtin-backtest `
 该快捷入口不会保存中间行情快照；生产研究和审计仍应使用上面的三步冻结流程。
 
 Paper/虚拟交易也复用同一份产品规格：现货按现金买卖记账，保证金/永续/期货按持仓、杠杆、保证金和 PnL 记账。为启用执行前规格门禁，在 Execution worker 配置 `instrument_spec_path`；示例规格见 `qianxing.binance.spot.spec.json` 和 `qianxing.ccxt.okx.perpetual.spec.json`。Paper 的订单标的可以使用任意已解析的交易所 InstrumentId，不会被虚拟 Venue 硬编码到 Binance。
+
+多腿策略建议额外配置一个独立的 `spread_recovery` worker。它只扫描持久化的
+`HedgeRequired` 组并执行幂等 reduce-only 补偿，不消费普通 SubmitOrder 队列，适合单独重启和扩容：
+
+```json
+{
+  "id": "paper-spread-recovery",
+  "role": "spread_recovery",
+  "enabled": true,
+  "account_id": "main",
+  "venue_id": "paper",
+  "endpoint": null,
+  "symbols": [],
+  "settlement_currency": "USDT",
+  "instrument_spec_path": "qianxing.binance.spot.spec.json"
+}
+```
+
+Binance 的恢复 worker 使用同一账户凭据；公共 CCXT 恢复 worker 将 `endpoint` 配置为对应的
+CCXT JSON 配置文件。旧配置不增加该角色时，Execution worker 仍保留兼容恢复扫描；同账户、同
+Venue 启用独立恢复 worker 后，Execution 会自动关闭兼容扫描，避免两个进程同时补偿同一订单组。
+文件存储还会为每个订单组创建带过期时间和 fencing token 的 recovery claim；同一时刻只有一个
+owner 能执行补偿，进程崩溃后 lease 到期即可由下一轮恢复接管。旧 owner 即使在过期后恢复，
+也不能凭旧 token 保存或释放新 owner 的状态。该 claim 是单机文件后端能力，分布式部署仍需使用
+带租约/fencing 的共享存储并完成外部故障演练。
 
 可以用 `--once` 做本地启动验收：
 

@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "environment": "paper",
+  "profile": "distributed",
   "api": {
     "bind": "127.0.0.1:18082",
     "transport": "plaintext",
@@ -9,6 +10,7 @@
   },
   "storage": {
     "backend": "files",
+    "consistency": "distributed_outbox",
     "data_dir": "data/qianxing-consumer",
     "sqlite_path": null
   },

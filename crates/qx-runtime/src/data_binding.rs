@@ -285,6 +285,7 @@ mod tests {
             code_commit: "commit-1".into(),
             config_hash: "config-1".into(),
             data_fingerprint: "bars-abc".into(),
+            input_components: BTreeMap::new(),
             clock_start: 1,
             clock_end: 10,
             global_seed: 7,

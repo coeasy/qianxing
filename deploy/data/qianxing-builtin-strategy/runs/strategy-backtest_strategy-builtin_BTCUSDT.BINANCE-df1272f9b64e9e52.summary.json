@@ -1,0 +1,32 @@
+{
+  "assumptions": [
+    "data_tier=Bar",
+    "benchmark=flat-cash",
+    "metrics=raw-fixed-point",
+    "virtual_trading=funding:0 interest:0 delivery:0 liquidation:false"
+  ],
+  "bars": 5,
+  "clock_end": 5000,
+  "clock_start": 1000,
+  "fills": 0,
+  "input_data_hash": "4a4d2b1771475d78",
+  "instrument": "BTCUSDT.BINANCE",
+  "metrics": {
+    "fees_raw": 0,
+    "final_equity_raw": 100000000000000,
+    "max_drawdown_bps": 0,
+    "return_bps": 0,
+    "turnover_raw": 0
+  },
+  "model_descriptors": [
+    "NextBarOpen@v1[tier=Bar;params=;assumption=假设下一根bar开盘可全部成交；不建模排队与容量]",
+    "MakerTaker@v1[params=maker_bp=2;taker_bp=5]",
+    "ZeroLatency@v1[delay_ns=0]",
+    "NoMargin@v1"
+  ],
+  "replay_hash": "5e718a438bb3196e",
+  "result_hash": "5e718a438bb3196e",
+  "run_manifest": "D:\\work_code\\quantwork\\qianxing\\crates\\qx-cli\\..\\..\\deploy\\data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE-df1272f9b64e9e52.run.json",
+  "schema_version": 1,
+  "strategy_id": "strategy-builtin"
+}

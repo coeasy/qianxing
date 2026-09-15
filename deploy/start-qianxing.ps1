@@ -44,6 +44,16 @@ foreach ($worker in $runtime.workers) {
                 $launches += [pscustomobject]@{ Id = $worker.id; Args = @("binance-worker", $configPath, $worker.id) }
             }
         }
+        "spread_recovery" {
+            if ([string]$worker.venue_id -eq "paper") {
+                $launches += [pscustomobject]@{ Id = $worker.id; Args = @("paper-worker", $configPath, $worker.id) }
+            } elseif (-not [string]::IsNullOrWhiteSpace([string]$worker.endpoint)) {
+                $ccxtConfigPath = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $configPath) ([string]$worker.endpoint)))
+                $launches += [pscustomobject]@{ Id = $worker.id; Args = @("ccxt-worker", $configPath, $worker.id, $ccxtConfigPath) }
+            } else {
+                $launches += [pscustomobject]@{ Id = $worker.id; Args = @("binance-worker", $configPath, $worker.id) }
+            }
+        }
         "reconciler" { $launches += [pscustomobject]@{ Id = $worker.id; Args = @("binance-worker", $configPath, $worker.id) } }
         "scheduler" { $launches += [pscustomobject]@{ Id = $worker.id; Args = @("scheduler-worker", $configPath, $worker.id) } }
         "strategy" { $launches += [pscustomobject]@{ Id = $worker.id; Args = @("strategy-worker", $configPath, $worker.id) } }

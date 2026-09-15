@@ -22,6 +22,9 @@ pub enum LedgerEntryKind {
     Liquidation,
     Adjustment,
     CorporateAction,
+    RightsEntitlement,
+    CashDividendEntitlement,
+    ConvertibleBondInterestEntitlement,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -62,11 +65,44 @@ pub struct CorporateAction {
     pub split_den: i128,
 }
 
+/// 配股/增发的显式认购事实。配额不是自动成交，必须由上层策略或
+/// 账户指令明确给出认购数量；这样回测与实盘对账不会凭空增加持仓。
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ShareSubscription {
+    pub entitled_qty_raw: i128,
+    pub subscription_qty_raw: i128,
+    pub subscription_price_raw: i128,
+}
+
+/// 一次配股登记事实及其可选的账户级认购结果。未认购部分不会自动变成
+/// 普通持仓，而是保留为独立权利余额，等待后续认购或失效事实。
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct RightsIssueEvent {
+    pub source_instrument: InstrumentId,
+    pub rights_instrument: InstrumentId,
+    pub currency: String,
+    pub entitled_qty_raw: i128,
+    pub subscription_qty_raw: i128,
+    pub subscription_price_raw: i128,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ConvertibleBondConversion {
+    pub bond_instrument: InstrumentId,
+    pub target_instrument: InstrumentId,
+    pub bond_qty_raw: i128,
+    pub target_qty_raw: i128,
+    pub conversion_price_raw: i128,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Ledger {
     cash: BTreeMap<(String, String), i128>,
     positions: BTreeMap<(String, InstrumentId), PositionState>,
     hedge_positions: BTreeMap<(String, InstrumentId, PositionSide), PositionState>,
+    rights_entitlements: BTreeMap<(String, InstrumentId), i128>,
+    cash_dividend_entitlements: BTreeMap<(String, String, InstrumentId), i128>,
+    convertible_bond_interest_entitlements: BTreeMap<(String, String, InstrumentId), i128>,
     entries: Vec<LedgerEntry>,
     next_id: u64,
 }
@@ -475,6 +511,697 @@ impl Ledger {
         Ok(ids)
     }
 
+    /// 在登记日按当日持仓生成现金分红待结算权益。现金不会立即进入余额，
+    /// 只有支付日的结算事实才能产生可用现金。
+    pub fn grant_cash_dividend_entitlement(
+        &mut self,
+        account_id: &str,
+        instrument: &InstrumentId,
+        currency: &str,
+        dividend_per_share_raw: i128,
+        ts: u64,
+    ) -> QxResult<Option<u64>> {
+        if dividend_per_share_raw < 0 {
+            return Err(QxError::BusinessViolation("每股现金分红不能为负".into()));
+        }
+        let quantity = self.position_for(account_id, instrument).quantity.raw();
+        if quantity <= 0 || dividend_per_share_raw == 0 {
+            return Ok(None);
+        }
+        let amount = quantity
+            .checked_mul(dividend_per_share_raw)
+            .and_then(|value| value.checked_div(SCALE))
+            .ok_or_else(|| QxError::Invariant("现金分红权益计算溢出".into()))?;
+        if amount <= 0 {
+            return Ok(None);
+        }
+        self.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::CashDividendEntitlement,
+            amount: Money::ZERO,
+            instrument: Some(instrument.clone()),
+            quantity: Quantity::from_raw(amount),
+            price: None,
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })
+        .map(Some)
+    }
+
+    /// 在支付日结算该标的全部待支付现金分红权益。结算金额只来自登记日
+    /// 已生成的权益，不会因为登记日后卖出/买入而改变。
+    pub fn settle_cash_dividend_entitlement(
+        &mut self,
+        account_id: &str,
+        instrument: &InstrumentId,
+        currency: &str,
+        ts: u64,
+    ) -> QxResult<Option<u64>> {
+        let key = (
+            account_id.to_string(),
+            currency.to_string(),
+            instrument.clone(),
+        );
+        let amount = self
+            .cash_dividend_entitlements
+            .get(&key)
+            .copied()
+            .unwrap_or(0);
+        if amount <= 0 {
+            return Ok(None);
+        }
+        self.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::CashDividendEntitlement,
+            amount: Money::from_raw(amount),
+            instrument: Some(instrument.clone()),
+            quantity: Quantity::from_raw(-amount),
+            price: None,
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })
+        .map(Some)
+    }
+
+    pub fn cash_dividend_entitlement_for(
+        &self,
+        account_id: &str,
+        instrument: &InstrumentId,
+        currency: &str,
+    ) -> Money {
+        Money::from_raw(
+            self.cash_dividend_entitlements
+                .get(&(
+                    account_id.to_string(),
+                    currency.to_string(),
+                    instrument.clone(),
+                ))
+                .copied()
+                .unwrap_or(0),
+        )
+    }
+
+    /// 应用配股认购。rights_instrument 可以与 source_instrument 相同（普通股配股），
+    /// 也可以是交易所独立挂牌的配股权/新股标的。此方法只处理已经明确认购的部分。
+    pub fn apply_rights_issue_subscription(
+        &mut self,
+        account_id: &str,
+        source_instrument: &InstrumentId,
+        rights_instrument: &InstrumentId,
+        currency: &str,
+        subscription: ShareSubscription,
+        ts: u64,
+    ) -> QxResult<Vec<u64>> {
+        if subscription.entitled_qty_raw <= 0
+            || subscription.subscription_qty_raw <= 0
+            || subscription.subscription_qty_raw > subscription.entitled_qty_raw
+            || subscription.subscription_price_raw <= 0
+        {
+            return Err(QxError::BusinessViolation(
+                "配股认购必须提供正的配额、认购数量和认购价格，且认购数量不能超过配额".into(),
+            ));
+        }
+        let held = self
+            .position_for(account_id, source_instrument)
+            .quantity
+            .raw();
+        if held < subscription.entitled_qty_raw {
+            return Err(QxError::BusinessViolation(
+                "配股认购时账户持仓不足以覆盖登记配额".into(),
+            ));
+        }
+        self.apply_share_subscription(
+            account_id,
+            rights_instrument,
+            currency,
+            subscription.subscription_qty_raw,
+            subscription.subscription_price_raw,
+            ts,
+        )
+    }
+
+    /// 在登记日授予独立配股权利，不产生认购现金或普通持仓。
+    ///
+    /// 该事实与后续认购/失效分离，允许回测准确处理“登记日持有、除权日
+    /// 已卖出、认购期内再认购”的生命周期，而不会重新读取除权日持仓伪造配额。
+    pub fn grant_rights_entitlement(
+        &mut self,
+        account_id: &str,
+        source_instrument: &InstrumentId,
+        rights_instrument: &InstrumentId,
+        currency: &str,
+        entitled_qty_raw: i128,
+        ts: u64,
+    ) -> QxResult<u64> {
+        if entitled_qty_raw <= 0 {
+            return Err(QxError::BusinessViolation("配股登记配额必须为正".into()));
+        }
+        if self
+            .position_for(account_id, source_instrument)
+            .quantity
+            .raw()
+            < entitled_qty_raw
+        {
+            return Err(QxError::BusinessViolation(
+                "配股登记日账户持仓不足以覆盖权利配额".into(),
+            ));
+        }
+        self.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::RightsEntitlement,
+            amount: Money::ZERO,
+            instrument: Some(rights_instrument.clone()),
+            quantity: Quantity::from_raw(entitled_qty_raw),
+            price: None,
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })
+    }
+
+    /// 使用登记日已经授予的权利完成认购，并原子扣减权利余额。
+    pub fn apply_rights_issue_subscription_from_entitlement(
+        &mut self,
+        account_id: &str,
+        rights_instrument: &InstrumentId,
+        currency: &str,
+        subscription_qty_raw: i128,
+        subscription_price_raw: i128,
+        ts: u64,
+    ) -> QxResult<Vec<u64>> {
+        if subscription_qty_raw <= 0 || subscription_price_raw <= 0 {
+            return Err(QxError::BusinessViolation(
+                "配股认购数量和价格必须为正".into(),
+            ));
+        }
+        if self
+            .rights_entitlement_for(account_id, rights_instrument)
+            .raw()
+            < subscription_qty_raw
+        {
+            return Err(QxError::BusinessViolation("配股权利余额不足".into()));
+        }
+        let mut staged = self.clone();
+        let mut ids = staged.append_share_subscription_entries(
+            account_id,
+            rights_instrument,
+            currency,
+            subscription_qty_raw,
+            subscription_price_raw,
+            ts,
+        )?;
+        ids.push(staged.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::RightsEntitlement,
+            amount: Money::ZERO,
+            instrument: Some(rights_instrument.clone()),
+            quantity: Quantity::from_raw(-subscription_qty_raw),
+            price: None,
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })?);
+        *self = staged;
+        Ok(ids)
+    }
+
+    /// 应用一条完整的配股权利事实：先登记账户配额，再按明确参与数量
+    /// 扣款/入股；未认购部分保留在独立权利余额中，可在截止日失效。
+    pub fn apply_rights_issue_event(
+        &mut self,
+        account_id: &str,
+        event: RightsIssueEvent,
+        ts: u64,
+    ) -> QxResult<Vec<u64>> {
+        if event.entitled_qty_raw <= 0
+            || event.subscription_qty_raw < 0
+            || event.subscription_qty_raw > event.entitled_qty_raw
+            || (event.subscription_qty_raw > 0 && event.subscription_price_raw <= 0)
+        {
+            return Err(QxError::BusinessViolation("配股权利事实参数非法".into()));
+        }
+        if self
+            .position_for(account_id, &event.source_instrument)
+            .quantity
+            .raw()
+            < event.entitled_qty_raw
+        {
+            return Err(QxError::BusinessViolation(
+                "配股登记日账户持仓不足以覆盖权利配额".into(),
+            ));
+        }
+        let mut staged = self.clone();
+        let grant_id = staged.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: event.currency.clone(),
+            kind: LedgerEntryKind::RightsEntitlement,
+            amount: Money::ZERO,
+            instrument: Some(event.rights_instrument.clone()),
+            quantity: Quantity::from_raw(event.entitled_qty_raw),
+            price: None,
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })?;
+        let mut ids = vec![grant_id];
+        if event.subscription_qty_raw > 0 {
+            ids.extend(staged.append_share_subscription_entries(
+                account_id,
+                &event.rights_instrument,
+                &event.currency,
+                event.subscription_qty_raw,
+                event.subscription_price_raw,
+                ts,
+            )?);
+            ids.push(staged.append(LedgerEntry {
+                id: 0,
+                account_id: account_id.into(),
+                currency: event.currency.clone(),
+                kind: LedgerEntryKind::RightsEntitlement,
+                amount: Money::ZERO,
+                instrument: Some(event.rights_instrument.clone()),
+                quantity: Quantity::from_raw(-event.subscription_qty_raw),
+                price: None,
+                order_id: None,
+                ts,
+                multiplier: 1,
+                position_side: None,
+            })?);
+        }
+        *self = staged;
+        Ok(ids)
+    }
+
+    /// 截止日使未认购权利失效；权利余额独立于普通持仓，不产生现金或股票。
+    pub fn expire_rights_entitlement(
+        &mut self,
+        account_id: &str,
+        rights_instrument: &InstrumentId,
+        expired_qty_raw: i128,
+        currency: &str,
+        ts: u64,
+    ) -> QxResult<u64> {
+        if expired_qty_raw <= 0 {
+            return Err(QxError::BusinessViolation("失效权利数量必须为正".into()));
+        }
+        if self
+            .rights_entitlement_for(account_id, rights_instrument)
+            .raw()
+            < expired_qty_raw
+        {
+            return Err(QxError::BusinessViolation("失效权利余额不足".into()));
+        }
+        self.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::RightsEntitlement,
+            amount: Money::ZERO,
+            instrument: Some(rights_instrument.clone()),
+            quantity: Quantity::from_raw(-expired_qty_raw),
+            price: None,
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })
+    }
+
+    /// 应用明确的新股/增发认购。与配股不同，它不要求账户先持有原标的，
+    /// 但仍然必须显式给出认购数量和价格。
+    pub fn apply_new_share_subscription(
+        &mut self,
+        account_id: &str,
+        issue_instrument: &InstrumentId,
+        currency: &str,
+        subscription_qty_raw: i128,
+        issue_price_raw: i128,
+        ts: u64,
+    ) -> QxResult<Vec<u64>> {
+        if subscription_qty_raw <= 0 || issue_price_raw <= 0 {
+            return Err(QxError::BusinessViolation(
+                "增发认购数量和价格必须为正".into(),
+            ));
+        }
+        self.apply_share_subscription(
+            account_id,
+            issue_instrument,
+            currency,
+            subscription_qty_raw,
+            issue_price_raw,
+            ts,
+        )
+    }
+
+    /// 应用明确的可转债发行/配售认购。发行人发行本身不是账户事实；只有
+    /// 账户已经确认的认购数量和价格才允许进入 Ledger，现金腿与债券持仓
+    /// 在同一追加事实序列中产生。
+    pub fn apply_convertible_bond_issue_subscription(
+        &mut self,
+        account_id: &str,
+        bond_instrument: &InstrumentId,
+        currency: &str,
+        subscription_qty_raw: i128,
+        issue_price_raw: i128,
+        ts: u64,
+    ) -> QxResult<Vec<u64>> {
+        if subscription_qty_raw <= 0 || issue_price_raw <= 0 {
+            return Err(QxError::BusinessViolation(
+                "可转债发行认购数量和价格必须为正".into(),
+            ));
+        }
+        self.apply_share_subscription(
+            account_id,
+            bond_instrument,
+            currency,
+            subscription_qty_raw,
+            issue_price_raw,
+            ts,
+        )
+    }
+
+    /// 在可转债利息登记日按债券持仓锁定待支付利息；利息不会按支付日
+    /// 当前持仓重新计算。
+    pub fn grant_convertible_bond_interest_entitlement(
+        &mut self,
+        account_id: &str,
+        bond_instrument: &InstrumentId,
+        currency: &str,
+        interest_per_bond_raw: i128,
+        ts: u64,
+    ) -> QxResult<Option<u64>> {
+        if interest_per_bond_raw < 0 {
+            return Err(QxError::BusinessViolation(
+                "可转债每债券利息不能为负".into(),
+            ));
+        }
+        let quantity = self
+            .position_for(account_id, bond_instrument)
+            .quantity
+            .raw();
+        if quantity <= 0 || interest_per_bond_raw == 0 {
+            return Ok(None);
+        }
+        let amount = quantity
+            .checked_mul(interest_per_bond_raw)
+            .and_then(|value| value.checked_div(SCALE))
+            .ok_or_else(|| QxError::Invariant("可转债利息权益计算溢出".into()))?;
+        if amount <= 0 {
+            return Ok(None);
+        }
+        self.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::ConvertibleBondInterestEntitlement,
+            amount: Money::ZERO,
+            instrument: Some(bond_instrument.clone()),
+            quantity: Quantity::from_raw(amount),
+            price: None,
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })
+        .map(Some)
+    }
+
+    /// 在支付日结算登记日锁定的可转债利息权益。
+    pub fn settle_convertible_bond_interest_entitlement(
+        &mut self,
+        account_id: &str,
+        bond_instrument: &InstrumentId,
+        currency: &str,
+        ts: u64,
+    ) -> QxResult<Option<u64>> {
+        let pending = self
+            .convertible_bond_interest_entitlements
+            .get(&(account_id.into(), currency.into(), bond_instrument.clone()))
+            .copied()
+            .unwrap_or(0);
+        if pending <= 0 {
+            return Ok(None);
+        }
+        self.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::ConvertibleBondInterestEntitlement,
+            amount: Money::from_raw(pending),
+            instrument: Some(bond_instrument.clone()),
+            quantity: Quantity::from_raw(-pending),
+            price: None,
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })
+        .map(Some)
+    }
+
+    pub fn convertible_bond_interest_entitlement_for(
+        &self,
+        account_id: &str,
+        bond_instrument: &InstrumentId,
+        currency: &str,
+    ) -> Money {
+        Money::from_raw(
+            self.convertible_bond_interest_entitlements
+                .get(&(account_id.into(), currency.into(), bond_instrument.clone()))
+                .copied()
+                .unwrap_or(0),
+        )
+    }
+
+    /// 账户明确接受的可转债回售/赎回结算，复用现金腿与债券交付的原子语义。
+    pub fn apply_convertible_bond_tender(
+        &mut self,
+        account_id: &str,
+        bond_instrument: &InstrumentId,
+        currency: &str,
+        quantity_raw: i128,
+        price_raw: i128,
+        ts: u64,
+    ) -> QxResult<Vec<u64>> {
+        if quantity_raw <= 0 || price_raw <= 0 {
+            return Err(QxError::BusinessViolation(
+                "可转债回售/赎回数量和价格必须为正".into(),
+            ));
+        }
+        self.apply_repurchase_tender(
+            account_id,
+            bond_instrument,
+            currency,
+            quantity_raw,
+            price_raw,
+            ts,
+        )
+    }
+
+    /// 应用已获配并成交的回购要约。回购不是所有持有人都自动参与，调用方
+    /// 必须提供被接受的数量；数量和现金腿在同一份追加式账簿事实中产生。
+    pub fn apply_repurchase_tender(
+        &mut self,
+        account_id: &str,
+        instrument: &InstrumentId,
+        currency: &str,
+        tender_qty_raw: i128,
+        tender_price_raw: i128,
+        ts: u64,
+    ) -> QxResult<Vec<u64>> {
+        if tender_qty_raw <= 0 || tender_price_raw <= 0 {
+            return Err(QxError::BusinessViolation(
+                "回购要约数量和价格必须为正".into(),
+            ));
+        }
+        if self.position_for(account_id, instrument).quantity.raw() < tender_qty_raw {
+            return Err(QxError::BusinessViolation("回购要约可交付持仓不足".into()));
+        }
+        let mut staged = self.clone();
+        let proceeds = tender_qty_raw
+            .checked_mul(tender_price_raw)
+            .and_then(|value| value.checked_div(SCALE))
+            .ok_or_else(|| QxError::Invariant("回购要约现金腿溢出".into()))?;
+        let cash_id = staged.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::CorporateAction,
+            amount: Money::from_raw(proceeds),
+            instrument: Some(instrument.clone()),
+            quantity: Quantity::ZERO,
+            price: None,
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })?;
+        let position_id = staged.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::CorporateAction,
+            amount: Money::ZERO,
+            instrument: Some(instrument.clone()),
+            quantity: Quantity::from_raw(-tender_qty_raw),
+            price: Some(Price::from_raw(tender_price_raw)),
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })?;
+        *self = staged;
+        Ok(vec![cash_id, position_id])
+    }
+
+    /// 应用可转债转股。转股是债券减少与目标股票增加的双腿转换，必须由
+    /// 上层传入已确认的转债数量、目标股票数量和转股价，禁止隐式推导。
+    pub fn apply_convertible_bond_conversion(
+        &mut self,
+        account_id: &str,
+        currency: &str,
+        conversion: ConvertibleBondConversion,
+        ts: u64,
+    ) -> QxResult<Vec<u64>> {
+        if conversion.bond_qty_raw <= 0
+            || conversion.target_qty_raw <= 0
+            || conversion.conversion_price_raw <= 0
+        {
+            return Err(QxError::BusinessViolation(
+                "可转债转股数量、目标数量和转股价必须为正".into(),
+            ));
+        }
+        if self
+            .position_for(account_id, &conversion.bond_instrument)
+            .quantity
+            .raw()
+            < conversion.bond_qty_raw
+        {
+            return Err(QxError::BusinessViolation(
+                "可转债转股时债券持仓不足".into(),
+            ));
+        }
+        let mut staged = self.clone();
+        let bond_price = staged
+            .position_for(account_id, &conversion.bond_instrument)
+            .average_entry;
+        let bond_id = staged.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::CorporateAction,
+            amount: Money::ZERO,
+            instrument: Some(conversion.bond_instrument.clone()),
+            quantity: Quantity::from_raw(-conversion.bond_qty_raw),
+            price: Some(bond_price),
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })?;
+        let target_id = staged.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::CorporateAction,
+            amount: Money::ZERO,
+            instrument: Some(conversion.target_instrument.clone()),
+            quantity: Quantity::from_raw(conversion.target_qty_raw),
+            price: Some(Price::from_raw(conversion.conversion_price_raw)),
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })?;
+        *self = staged;
+        Ok(vec![bond_id, target_id])
+    }
+
+    fn apply_share_subscription(
+        &mut self,
+        account_id: &str,
+        instrument: &InstrumentId,
+        currency: &str,
+        quantity_raw: i128,
+        price_raw: i128,
+        ts: u64,
+    ) -> QxResult<Vec<u64>> {
+        let mut staged = self.clone();
+        let ids = staged.append_share_subscription_entries(
+            account_id,
+            instrument,
+            currency,
+            quantity_raw,
+            price_raw,
+            ts,
+        )?;
+        *self = staged;
+        Ok(ids)
+    }
+
+    fn append_share_subscription_entries(
+        &mut self,
+        account_id: &str,
+        instrument: &InstrumentId,
+        currency: &str,
+        quantity_raw: i128,
+        price_raw: i128,
+        ts: u64,
+    ) -> QxResult<Vec<u64>> {
+        let notional = quantity_raw
+            .checked_mul(price_raw)
+            .and_then(|value| value.checked_div(SCALE))
+            .ok_or_else(|| QxError::Invariant("认购现金腿溢出".into()))?;
+        if self.cash_for(account_id, currency) < notional {
+            return Err(QxError::BusinessViolation("认购结算现金余额不足".into()));
+        }
+        let cash_id = self.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::CorporateAction,
+            amount: Money::from_raw(-notional),
+            instrument: Some(instrument.clone()),
+            quantity: Quantity::ZERO,
+            price: None,
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })?;
+        let position_id = self.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::CorporateAction,
+            amount: Money::ZERO,
+            instrument: Some(instrument.clone()),
+            quantity: Quantity::from_raw(quantity_raw),
+            price: Some(Price::from_raw(price_raw)),
+            order_id: None,
+            ts,
+            multiplier: 1,
+            position_side: None,
+        })?;
+        Ok(vec![cash_id, position_id])
+    }
+
     pub fn apply_liquidation(
         &mut self,
         account_id: &str,
@@ -567,6 +1294,19 @@ impl Ledger {
             .cash
             .get(&(account_id.to_string(), currency.to_string()))
             .unwrap_or(&0)
+    }
+
+    pub fn rights_entitlement_for(
+        &self,
+        account_id: &str,
+        rights_instrument: &InstrumentId,
+    ) -> Quantity {
+        Quantity::from_raw(
+            *self
+                .rights_entitlements
+                .get(&(account_id.to_string(), rights_instrument.clone()))
+                .unwrap_or(&0),
+        )
     }
 
     /// 返回账户所有币种的现金余额，按币种排序，供跨币种抵押品估值使用。
@@ -848,6 +1588,13 @@ impl Ledger {
 
     /// 以完整 entry 重放账簿。entry id、现金和持仓变更都必须连续且可验证。
     pub fn apply_entry(&mut self, entry: LedgerEntry) -> QxResult<u64> {
+        let mut staged = self.clone();
+        let id = staged.apply_entry_inner(entry)?;
+        *self = staged;
+        Ok(id)
+    }
+
+    fn apply_entry_inner(&mut self, entry: LedgerEntry) -> QxResult<u64> {
         if entry.id != self.next_id {
             return Err(QxError::Invariant(format!(
                 "账簿 entry id 不连续: expected={}, actual={}",
@@ -860,6 +1607,84 @@ impl Ledger {
         if entry.multiplier <= 0 {
             return Err(QxError::Invariant("账簿 entry 合约乘数必须为正".into()));
         }
+        if matches!(entry.kind, LedgerEntryKind::RightsEntitlement) {
+            if entry.amount.raw() != 0
+                || entry.price.is_some()
+                || entry.position_side.is_some()
+                || entry.instrument.is_none()
+                || entry.quantity.raw() == 0
+            {
+                return Err(QxError::Invariant("权利余额 entry 结构非法".into()));
+            }
+            let instrument = entry.instrument.clone().unwrap();
+            let key = (entry.account_id.clone(), instrument);
+            let current = self.rights_entitlements.get(&key).copied().unwrap_or(0);
+            let next = current
+                .checked_add(entry.quantity.raw())
+                .ok_or_else(|| QxError::Invariant("权利余额溢出".into()))?;
+            if next < 0 {
+                return Err(QxError::BusinessViolation("权利余额不足".into()));
+            }
+            self.rights_entitlements.insert(key, next);
+        }
+        if matches!(entry.kind, LedgerEntryKind::CashDividendEntitlement) {
+            if entry.price.is_some()
+                || entry.position_side.is_some()
+                || entry.instrument.is_none()
+                || entry.quantity.raw() == 0
+                || entry.amount.raw() < 0
+                || (entry.quantity.raw() > 0 && entry.amount.raw() != 0)
+                || (entry.quantity.raw() < 0
+                    && entry.quantity.raw().checked_neg() != Some(entry.amount.raw()))
+            {
+                return Err(QxError::Invariant("现金分红权益 entry 结构非法".into()));
+            }
+            let instrument = entry.instrument.clone().unwrap();
+            let key = (entry.account_id.clone(), entry.currency.clone(), instrument);
+            let current = self
+                .cash_dividend_entitlements
+                .get(&key)
+                .copied()
+                .unwrap_or(0);
+            let next = current
+                .checked_add(entry.quantity.raw())
+                .ok_or_else(|| QxError::Invariant("现金分红权益溢出".into()))?;
+            if next < 0 {
+                return Err(QxError::BusinessViolation("现金分红权益余额不足".into()));
+            }
+            self.cash_dividend_entitlements.insert(key, next);
+        }
+        if matches!(
+            entry.kind,
+            LedgerEntryKind::ConvertibleBondInterestEntitlement
+        ) {
+            if entry.price.is_some()
+                || entry.position_side.is_some()
+                || entry.instrument.is_none()
+                || entry.quantity.raw() == 0
+                || entry.amount.raw() < 0
+                || (entry.quantity.raw() > 0 && entry.amount.raw() != 0)
+                || (entry.quantity.raw() < 0
+                    && entry.quantity.raw().checked_neg() != Some(entry.amount.raw()))
+            {
+                return Err(QxError::Invariant("可转债利息权益 entry 结构非法".into()));
+            }
+            let instrument = entry.instrument.clone().unwrap();
+            let key = (entry.account_id.clone(), entry.currency.clone(), instrument);
+            let current = self
+                .convertible_bond_interest_entitlements
+                .get(&key)
+                .copied()
+                .unwrap_or(0);
+            let next = current
+                .checked_add(entry.quantity.raw())
+                .ok_or_else(|| QxError::Invariant("可转债利息权益溢出".into()))?;
+            if next < 0 {
+                return Err(QxError::BusinessViolation("可转债利息权益余额不足".into()));
+            }
+            self.convertible_bond_interest_entitlements
+                .insert(key, next);
+        }
         if entry.amount.raw() != 0 {
             let key = (entry.account_id.clone(), entry.currency.clone());
             let current = self.cash.get(&key).copied().unwrap_or(0);
@@ -868,7 +1693,9 @@ impl Ledger {
                 .ok_or_else(|| QxError::Invariant("现金余额溢出".into()))?;
             self.cash.insert(key, next);
         }
-        if matches!(entry.kind, LedgerEntryKind::TradePosition) {
+        if matches!(entry.kind, LedgerEntryKind::TradePosition)
+            || (matches!(entry.kind, LedgerEntryKind::CorporateAction) && entry.quantity.raw() != 0)
+        {
             let instrument = entry
                 .instrument
                 .clone()
@@ -1011,7 +1838,7 @@ fn apply_position_state_delta(
 impl Ledger {
     fn append(&mut self, mut entry: LedgerEntry) -> QxResult<u64> {
         entry.id = self.next_id;
-        self.apply_entry(entry)
+        self.apply_entry_inner(entry)
     }
 }
 
@@ -1537,5 +2364,513 @@ mod tests {
             replay.cash_for("main", "CNY"),
             ledger.cash_for("main", "CNY")
         );
+    }
+
+    #[test]
+    fn cash_dividend_entitlement_pays_by_record_date_position() {
+        let instrument = InstrumentId::parse("000001.SZSE").unwrap();
+        let mut ledger = Ledger::new();
+        ledger
+            .deposit("main", "CNY", Money::from_i64(10_000), 1)
+            .unwrap();
+        let mut buy = order(Side::Buy);
+        buy.client_id = 13;
+        buy.instrument = instrument.clone();
+        buy.qty = Quantity::from_i64(100);
+        ledger
+            .apply_fill(
+                &buy,
+                &Fill {
+                    order_id: 13,
+                    qty: Quantity::from_i64(100),
+                    price: Price::from_i64(10),
+                    ts: 2,
+                    ..Fill::default()
+                },
+                "CNY",
+            )
+            .unwrap();
+        ledger
+            .grant_cash_dividend_entitlement(
+                "main",
+                &instrument,
+                "CNY",
+                Money::from_raw(SCALE / 10).raw(),
+                3,
+            )
+            .unwrap();
+
+        let mut sell = order(Side::Sell);
+        sell.client_id = 14;
+        sell.instrument = instrument.clone();
+        sell.qty = Quantity::from_i64(100);
+        ledger
+            .apply_fill(
+                &sell,
+                &Fill {
+                    order_id: 14,
+                    qty: Quantity::from_i64(100),
+                    price: Price::from_i64(10),
+                    ts: 4,
+                    ..Fill::default()
+                },
+                "CNY",
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.cash_dividend_entitlement_for("main", &instrument, "CNY"),
+            Money::from_i64(10)
+        );
+        ledger
+            .settle_cash_dividend_entitlement("main", &instrument, "CNY", 5)
+            .unwrap();
+        assert_eq!(
+            ledger.cash_dividend_entitlement_for("main", &instrument, "CNY"),
+            Money::ZERO
+        );
+        assert_eq!(
+            ledger.cash_for("main", "CNY"),
+            Money::from_i64(10_010).raw()
+        );
+        let mut replay = Ledger::new();
+        for entry in ledger.entries().iter().cloned() {
+            replay.apply_entry(entry).unwrap();
+        }
+        assert_eq!(
+            replay.cash_dividend_entitlement_for("main", &instrument, "CNY"),
+            Money::ZERO
+        );
+        assert_eq!(
+            replay.cash_for("main", "CNY"),
+            ledger.cash_for("main", "CNY")
+        );
+    }
+
+    #[test]
+    fn convertible_bond_issue_interest_and_tender_replay() {
+        let bond = InstrumentId::parse("123001.SZSE").unwrap();
+        let mut ledger = Ledger::new();
+        ledger
+            .deposit("main", "CNY", Money::from_i64(100_000), 1)
+            .unwrap();
+
+        ledger
+            .apply_convertible_bond_issue_subscription(
+                "main",
+                &bond,
+                "CNY",
+                Quantity::from_i64(100).raw(),
+                Price::from_i64(100).raw(),
+                2,
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.position_for("main", &bond).quantity,
+            Quantity::from_i64(100)
+        );
+        assert_eq!(
+            ledger.cash_for("main", "CNY"),
+            Money::from_i64(90_000).raw()
+        );
+
+        ledger
+            .grant_convertible_bond_interest_entitlement(
+                "main",
+                &bond,
+                "CNY",
+                Price::from_i64(5).raw(),
+                3,
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.convertible_bond_interest_entitlement_for("main", &bond, "CNY"),
+            Money::from_i64(500)
+        );
+
+        ledger
+            .apply_convertible_bond_tender(
+                "main",
+                &bond,
+                "CNY",
+                Quantity::from_i64(40).raw(),
+                Price::from_i64(110).raw(),
+                4,
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.position_for("main", &bond).quantity,
+            Quantity::from_i64(60)
+        );
+        assert_eq!(
+            ledger.convertible_bond_interest_entitlement_for("main", &bond, "CNY"),
+            Money::from_i64(500)
+        );
+
+        ledger
+            .settle_convertible_bond_interest_entitlement("main", &bond, "CNY", 5)
+            .unwrap();
+        assert_eq!(
+            ledger.convertible_bond_interest_entitlement_for("main", &bond, "CNY"),
+            Money::ZERO
+        );
+        assert_eq!(
+            ledger.cash_for("main", "CNY"),
+            Money::from_i64(94_900).raw()
+        );
+
+        let mut replay = Ledger::new();
+        for entry in ledger.entries().iter().cloned() {
+            replay.apply_entry(entry).unwrap();
+        }
+        assert_eq!(replay.entries(), ledger.entries());
+        assert_eq!(
+            replay.position_for("main", &bond),
+            ledger.position_for("main", &bond)
+        );
+        assert_eq!(
+            replay.cash_for("main", "CNY"),
+            ledger.cash_for("main", "CNY")
+        );
+        assert_eq!(
+            replay.convertible_bond_interest_entitlement_for("main", &bond, "CNY"),
+            Money::ZERO
+        );
+    }
+
+    #[test]
+    fn rights_subscription_is_explicit_and_replayable() {
+        let instrument = InstrumentId::parse("000001.SZSE").unwrap();
+        let mut ledger = Ledger::new();
+        ledger
+            .deposit("main", "CNY", Money::from_i64(10_000), 1)
+            .unwrap();
+        let mut buy = order(Side::Buy);
+        buy.client_id = 20;
+        buy.instrument = instrument.clone();
+        buy.qty = Quantity::from_i64(100);
+        ledger
+            .apply_fill(
+                &buy,
+                &Fill {
+                    order_id: 20,
+                    qty: Quantity::from_i64(100),
+                    price: Price::from_i64(10),
+                    ts: 2,
+                    ..Fill::default()
+                },
+                "CNY",
+            )
+            .unwrap();
+        ledger
+            .apply_rights_issue_subscription(
+                "main",
+                &instrument,
+                &instrument,
+                "CNY",
+                ShareSubscription {
+                    entitled_qty_raw: Quantity::from_i64(20).raw(),
+                    subscription_qty_raw: Quantity::from_i64(20).raw(),
+                    subscription_price_raw: Price::from_i64(5).raw(),
+                },
+                3,
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.position_for("main", &instrument).quantity.raw(),
+            Quantity::from_i64(120).raw()
+        );
+        assert_eq!(ledger.cash_for("main", "CNY"), Money::from_i64(8_900).raw());
+        let mut replay = Ledger::new();
+        for entry in ledger.entries().iter().cloned() {
+            replay.apply_entry(entry).unwrap();
+        }
+        assert_eq!(
+            replay.cash_for("main", "CNY"),
+            ledger.cash_for("main", "CNY")
+        );
+        assert_eq!(
+            replay.position_for("main", &instrument),
+            ledger.position_for("main", &instrument)
+        );
+    }
+
+    #[test]
+    fn rights_entitlement_lifecycle_supports_partial_subscription_and_expiry() {
+        let source = InstrumentId::parse("000001.SZSE").unwrap();
+        let rights = InstrumentId::parse("700001.SZSE").unwrap();
+        let mut ledger = Ledger::new();
+        ledger
+            .deposit("main", "CNY", Money::from_i64(10_000), 1)
+            .unwrap();
+        let mut buy = order(Side::Buy);
+        buy.client_id = 22;
+        buy.instrument = source.clone();
+        buy.qty = Quantity::from_i64(100);
+        ledger
+            .apply_fill(
+                &buy,
+                &Fill {
+                    order_id: 22,
+                    qty: Quantity::from_i64(100),
+                    price: Price::from_i64(10),
+                    ts: 2,
+                    ..Fill::default()
+                },
+                "CNY",
+            )
+            .unwrap();
+
+        ledger
+            .apply_rights_issue_event(
+                "main",
+                RightsIssueEvent {
+                    source_instrument: source.clone(),
+                    rights_instrument: rights.clone(),
+                    currency: "CNY".into(),
+                    entitled_qty_raw: Quantity::from_i64(20).raw(),
+                    subscription_qty_raw: Quantity::from_i64(10).raw(),
+                    subscription_price_raw: Price::from_i64(5).raw(),
+                },
+                3,
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.rights_entitlement_for("main", &rights).raw(),
+            Quantity::from_i64(10).raw()
+        );
+        assert_eq!(
+            ledger.position_for("main", &source).quantity.raw(),
+            Quantity::from_i64(100).raw()
+        );
+        assert_eq!(
+            ledger.position_for("main", &rights).quantity.raw(),
+            Quantity::from_i64(10).raw()
+        );
+        assert_eq!(ledger.cash_for("main", "CNY"), Money::from_i64(8_950).raw());
+
+        ledger
+            .expire_rights_entitlement("main", &rights, Quantity::from_i64(10).raw(), "CNY", 4)
+            .unwrap();
+        assert_eq!(
+            ledger.rights_entitlement_for("main", &rights),
+            Quantity::ZERO
+        );
+
+        let mut replay = Ledger::new();
+        for entry in ledger.entries().iter().cloned() {
+            replay.apply_entry(entry).unwrap();
+        }
+        assert_eq!(
+            replay.rights_entitlement_for("main", &rights),
+            ledger.rights_entitlement_for("main", &rights)
+        );
+        assert_eq!(
+            replay.position_for("main", &rights),
+            ledger.position_for("main", &rights)
+        );
+        assert_eq!(
+            replay.cash_for("main", "CNY"),
+            ledger.cash_for("main", "CNY")
+        );
+    }
+
+    #[test]
+    fn rights_entitlement_can_be_granted_then_subscribed_after_position_changes() {
+        let source = InstrumentId::parse("000001.SZSE").unwrap();
+        let rights = InstrumentId::parse("700001.SZSE").unwrap();
+        let mut ledger = Ledger::new();
+        ledger
+            .deposit("main", "CNY", Money::from_i64(10_000), 1)
+            .unwrap();
+        let mut buy = order(Side::Buy);
+        buy.client_id = 23;
+        buy.instrument = source.clone();
+        buy.qty = Quantity::from_i64(100);
+        ledger
+            .apply_fill(
+                &buy,
+                &Fill {
+                    order_id: 23,
+                    qty: Quantity::from_i64(100),
+                    price: Price::from_i64(10),
+                    ts: 2,
+                    ..Fill::default()
+                },
+                "CNY",
+            )
+            .unwrap();
+        ledger
+            .grant_rights_entitlement(
+                "main",
+                &source,
+                &rights,
+                "CNY",
+                Quantity::from_i64(20).raw(),
+                3,
+            )
+            .unwrap();
+
+        let mut sell = order(Side::Sell);
+        sell.client_id = 24;
+        sell.instrument = source.clone();
+        sell.qty = Quantity::from_i64(100);
+        ledger
+            .apply_fill(
+                &sell,
+                &Fill {
+                    order_id: 24,
+                    qty: Quantity::from_i64(100),
+                    price: Price::from_i64(10),
+                    ts: 4,
+                    ..Fill::default()
+                },
+                "CNY",
+            )
+            .unwrap();
+        ledger
+            .apply_rights_issue_subscription_from_entitlement(
+                "main",
+                &rights,
+                "CNY",
+                Quantity::from_i64(10).raw(),
+                Price::from_i64(5).raw(),
+                5,
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.rights_entitlement_for("main", &rights).raw(),
+            10 * SCALE
+        );
+        assert_eq!(
+            ledger.position_for("main", &rights).quantity.raw(),
+            10 * SCALE
+        );
+        assert_eq!(ledger.position_for("main", &source).quantity.raw(), 0);
+        let mut replay = Ledger::new();
+        for entry in ledger.entries().iter().cloned() {
+            replay.apply_entry(entry).unwrap();
+        }
+        assert_eq!(
+            replay.rights_entitlement_for("main", &rights),
+            ledger.rights_entitlement_for("main", &rights)
+        );
+        assert_eq!(
+            replay.position_for("main", &rights),
+            ledger.position_for("main", &rights)
+        );
+    }
+
+    #[test]
+    fn rights_entitlement_rejects_insufficient_expiry_and_subscription_atomically() {
+        let source = InstrumentId::parse("000001.SZSE").unwrap();
+        let rights = InstrumentId::parse("700001.SZSE").unwrap();
+        let mut ledger = Ledger::new();
+        ledger
+            .deposit("main", "CNY", Money::from_i64(10), 1)
+            .unwrap();
+        let before_entries = ledger.entries().len();
+        assert!(ledger
+            .apply_rights_issue_event(
+                "main",
+                RightsIssueEvent {
+                    source_instrument: source.clone(),
+                    rights_instrument: rights.clone(),
+                    currency: "CNY".into(),
+                    entitled_qty_raw: Quantity::from_i64(1).raw(),
+                    subscription_qty_raw: Quantity::from_i64(1).raw(),
+                    subscription_price_raw: Price::from_i64(100).raw(),
+                },
+                2,
+            )
+            .is_err());
+        assert_eq!(ledger.entries().len(), before_entries);
+        assert_eq!(
+            ledger.rights_entitlement_for("main", &rights),
+            Quantity::ZERO
+        );
+        assert!(ledger
+            .expire_rights_entitlement("main", &rights, Quantity::from_i64(1).raw(), "CNY", 3)
+            .is_err());
+        assert_eq!(ledger.entries().len(), before_entries);
+    }
+
+    #[test]
+    fn convertible_conversion_transfers_two_instruments() {
+        let bond = InstrumentId::parse("123001.SZSE").unwrap();
+        let stock = InstrumentId::parse("000001.SZSE").unwrap();
+        let mut ledger = Ledger::new();
+        ledger
+            .deposit("main", "CNY", Money::from_i64(1_000), 1)
+            .unwrap();
+        let mut buy = order(Side::Buy);
+        buy.client_id = 21;
+        buy.instrument = bond.clone();
+        buy.qty = Quantity::from_i64(10);
+        ledger
+            .apply_fill(
+                &buy,
+                &Fill {
+                    order_id: 21,
+                    qty: Quantity::from_i64(10),
+                    price: Price::from_i64(100),
+                    ts: 2,
+                    ..Fill::default()
+                },
+                "CNY",
+            )
+            .unwrap();
+        ledger
+            .apply_convertible_bond_conversion(
+                "main",
+                "CNY",
+                ConvertibleBondConversion {
+                    bond_instrument: bond.clone(),
+                    target_instrument: stock.clone(),
+                    bond_qty_raw: Quantity::from_i64(2).raw(),
+                    target_qty_raw: Quantity::from_i64(20).raw(),
+                    conversion_price_raw: Price::from_i64(10).raw(),
+                },
+                3,
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.position_for("main", &bond).quantity.raw(),
+            Quantity::from_i64(8).raw()
+        );
+        assert_eq!(
+            ledger.position_for("main", &stock).quantity.raw(),
+            Quantity::from_i64(20).raw()
+        );
+        assert_eq!(ledger.position_for("main", &bond).realized_pnl, Money::ZERO);
+        let mut replay = Ledger::new();
+        for entry in ledger.entries().iter().cloned() {
+            replay.apply_entry(entry).unwrap();
+        }
+        assert_eq!(replay.entries(), ledger.entries());
+        assert_eq!(
+            replay.position_for("main", &stock),
+            ledger.position_for("main", &stock)
+        );
+    }
+
+    #[test]
+    fn subscription_rejects_insufficient_cash_without_partial_entries() {
+        let instrument = InstrumentId::parse("000001.SZSE").unwrap();
+        let mut ledger = Ledger::new();
+        ledger
+            .deposit("main", "CNY", Money::from_i64(1), 1)
+            .unwrap();
+        let before = ledger.entries().len();
+        let result = ledger.apply_new_share_subscription(
+            "main",
+            &instrument,
+            "CNY",
+            Quantity::from_i64(1).raw(),
+            Price::from_i64(5).raw(),
+            2,
+        );
+        assert!(matches!(result, Err(QxError::BusinessViolation(_))));
+        assert_eq!(ledger.entries().len(), before);
+        assert_eq!(ledger.cash_for("main", "CNY"), Money::from_i64(1).raw());
     }
 }

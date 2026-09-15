@@ -30,6 +30,8 @@ jobs:
         run: cargo test --workspace
       - name: Independent deterministic semantics
         run: python3 tools/validate_core.py
+      - name: Python adapters and strategy contracts
+        run: python3 -m unittest discover -s python/tests -q
 
   feature-matrix:
     name: qx-cli features (${{ matrix.features }})
@@ -49,9 +51,9 @@ jobs:
         with:
           key: ${{ matrix.features }}
       - name: Check feature build
-        run: cargo check -p qx-cli --features "${{ matrix.features }}"
+        run: cargo check -p qx-cli --no-default-features --features "${{ matrix.features }}"
       - name: Test feature build
-        run: cargo test -p qx-cli --features "${{ matrix.features }}"
+        run: cargo test -p qx-cli --no-default-features --features "${{ matrix.features }}"
 
   runtime-contracts:
     name: Runtime and Paper contracts
@@ -62,10 +64,42 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Validate baseline runtime config
         run: cargo run -p qx-cli --features sqlite,postgres -- runtime-check deploy/qianxing.runtime.example.json
-      - name: Validate production runtime config
-        run: cargo run -p qx-cli --features sqlite,postgres -- runtime-check deploy/qianxing.runtime.production.example.json
+      - name: Validate user-facing CLI diagnostics
+        run: |
+          cargo run -p qx-cli --features sqlite,postgres -- doctor deploy/qianxing.runtime.example.json
+          cargo run -p qx-cli --features sqlite,postgres -- config validate deploy/qianxing.runtime.example.json
+          cargo run -p qx-cli --features sqlite,postgres -- config explain deploy/qianxing.runtime.example.json --json > /tmp/qianxing-config.json
+          python3 -c "import json; json.load(open('/tmp/qianxing-config.json'))"
+          cargo run -p qx-cli --features sqlite,postgres -- status deploy/qianxing.runtime.example.json --json > /tmp/qianxing-status.json
+          python3 -c "import json; json.load(open('/tmp/qianxing-status.json'))"
+          cargo run -p qx-cli --features sqlite,postgres -- runtime-check deploy/qianxing.runtime.example.json --json > /tmp/qianxing-runtime-check.json
+          python3 -c "import json; value=json.load(open('/tmp/qianxing-runtime-check.json')); assert value['ok']; assert value['network_accessed'] is False; assert value['orders_sent'] is False"
+          set +e
+          cargo run -p qx-cli --features sqlite,postgres -- live-check deploy/qianxing.runtime.production.example.json --json > /tmp/qianxing-live-check.json
+          status=$?
+          set -e
+          test "$status" -ne 0
+          python3 -c "import json; value=json.load(open('/tmp/qianxing-live-check.json')); assert value['ok'] is False; assert value['network_accessed'] is False; assert value['orders_sent'] is False; assert value['failures']"
       - name: Validate Paper strategy runtime config
         run: cargo run -p qx-cli --features sqlite,postgres -- runtime-check deploy/qianxing.runtime.paper-strategy.example.json
+      - name: Validate all non-production runtime examples
+        shell: bash
+        run: |
+          set -euo pipefail
+          for config in deploy/qianxing.runtime*.json; do
+            if [[ "$config" == *production.example.json ]]; then
+              continue
+            fi
+            cargo run -p qx-cli --features sqlite,postgres -- runtime-check "$config"
+          done
+      - name: Verify production config remains fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if cargo run -p qx-cli --features sqlite,postgres -- runtime-check deploy/qianxing.runtime.production.example.json; then
+            echo "production placeholder config unexpectedly passed runtime-check"
+            exit 1
+          fi
       - name: Paper process-boundary E2E
         run: cargo run -p qx-cli --features sqlite,postgres -- paper-e2e deploy/qianxing.runtime.paper-strategy.example.json
 
@@ -74,9 +108,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install C++ JSON dependency
+        run: sudo apt-get update && sudo apt-get install -y nlohmann-json3-dev
       - name: Configure C++ SDK
-        run: cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release -DQX_BUILD_JSONL_EXAMPLE=ON
       - name: Build C++ SDK smoke
         run: cmake --build build/cpp --config Release --parallel
       - name: Run C++ ring smoke
         run: ./build/cpp/qianxing_ring_smoke
+      - name: Run C++ JSONL strategy contract smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' '{"schema_version":1,"request_id":"ci-request-1","strategy_id":"ci-strategy","strategy_version":"v1","data_fingerprint":"bars-ci","as_of":10,"instrument":"BTCUSDT.BINANCE","research_targets":{"BTCUSDT.BINANCE":3}}' \
+            | ./build/cpp/qianxing_strategy_jsonl > /tmp/qianxing-cpp-response.jsonl
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('/tmp/qianxing-cpp-response.jsonl').read_text())
+          assert value['ok'] is True
+          output = value['output']
+          assert output['request_id'] == 'ci-request-1'
+          assert output['strategy_id'] == 'ci-strategy'
+          assert output['instrument'] == 'BTCUSDT.BINANCE'
+          assert output['target_qty'] == 3
+          PY

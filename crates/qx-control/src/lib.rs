@@ -3,7 +3,7 @@
 //! 所有写操作都先变成带权限、原因和请求 ID 的 `ControlCommand`，由上层执行器
 //! 再决定如何调用策略运行时、OMS 或 Scheduler。本 crate 不提供绕过风控的快捷写入。
 
-use qx_core::Fnv1a;
+use qx_core::{Fnv1a, Order, OrderStatus, QxError, QxResult};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -124,6 +124,42 @@ pub enum ControlError {
     DuplicateCommand(u64),
     UnknownCommand(u64),
     AlreadyFinal(u64),
+}
+
+/// 从已通过控制面校验的 SubmitOrder 载荷解析订单，并再次校验命令身份边界。
+///
+/// 这是控制命令与领域订单之间的唯一解析入口，放在控制面契约层，避免
+/// Runtime、Execution 和 CLI 各自复制一套 `order_json`/target 校验逻辑。
+pub fn order_from_submit_command(command: &ControlCommand) -> QxResult<Order> {
+    command.validate().map_err(|error| {
+        QxError::BusinessViolation(format!("SubmitOrder 控制命令非法: {error:?}"))
+    })?;
+    if command.kind != CommandKind::SubmitOrder {
+        return Err(QxError::BusinessViolation(
+            "控制命令不是 SubmitOrder".into(),
+        ));
+    }
+    let payload = command
+        .payload
+        .get("order_json")
+        .ok_or_else(|| QxError::BusinessViolation("SubmitOrder 缺少 order_json".into()))?;
+    let order: Order = serde_json::from_str(payload)
+        .map_err(|error| QxError::BusinessViolation(format!("order_json 非法: {error}")))?;
+    if command.target != order.client_id.to_string() {
+        return Err(QxError::BusinessViolation(
+            "SubmitOrder target 与 order.client_id 不一致".into(),
+        ));
+    }
+    order.validate().map_err(QxError::BusinessViolation)?;
+    if !matches!(
+        order.status,
+        OrderStatus::PendingSubmit | OrderStatus::Submitted
+    ) {
+        return Err(QxError::BusinessViolation(
+            "SubmitOrder 只接受 PendingSubmit 或 Submitted 订单".into(),
+        ));
+    }
+    Ok(order)
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

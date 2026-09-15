@@ -267,6 +267,42 @@ impl CcxtProcessVenue {
                 "CCXT filled 与本地订单不一致".into(),
             ));
         }
+        let remote_status = remote
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_ascii_lowercase();
+        match remote_status.as_str() {
+            "rejected" if filled == 0 => {
+                return Err(QxError::Permanent("CCXT 订单被交易所拒绝".into()));
+            }
+            "rejected" => {
+                return Err(QxError::ReconcileRequired(
+                    "CCXT 订单状态为 rejected 但已有成交，禁止静默归约".into(),
+                ));
+            }
+            "open" | "new" | "live" | "pending" | "accepted" | "partially_filled"
+            | "partially-filled"
+                if filled < order.qty.raw() => {}
+            "canceled" | "cancelled" | "expired" if filled <= order.qty.raw() => {}
+            "closed" | "filled" | "done" if filled == order.qty.raw() => {}
+            "closed" | "filled" | "done" => {
+                return Err(QxError::ReconcileRequired(
+                    "CCXT 订单已关闭但成交数量不足，无法判断剩余数量是否已撤销".into(),
+                ));
+            }
+            "open" | "new" | "live" | "pending" | "accepted" | "partially_filled"
+            | "partially-filled" => {
+                return Err(QxError::ReconcileRequired(
+                    "CCXT 订单状态仍为未完成但成交数量已达到订单数量".into(),
+                ));
+            }
+            _ => {
+                return Err(QxError::ReconcileRequired(format!(
+                    "CCXT 返回未知订单状态: {remote_status}"
+                )));
+            }
+        }
         let mut events = Vec::new();
         let prior_filled = order.filled.raw();
         let prior_cost = self
@@ -355,19 +391,14 @@ impl CcxtProcessVenue {
         }
         self.cumulative_costs
             .insert(client_order_id, cumulative_cost);
-        let remote_status = remote
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        match remote_status {
-            "canceled" | "cancelled" | "expired" if !order.status.is_terminal() => {
+        match remote_status.as_str() {
+            "canceled" | "cancelled" | "expired"
+                if !order.status.is_terminal() && filled < order.qty.raw() =>
+            {
                 events.push(VenueEvent::Cancelled {
                     client_order_id,
                     ts,
                 })
-            }
-            "rejected" => {
-                return Err(QxError::Permanent("CCXT 订单被交易所拒绝".into()));
             }
             _ => {}
         }
@@ -375,19 +406,27 @@ impl CcxtProcessVenue {
             local.filled = Quantity::from_raw(filled);
             if filled == local.qty.raw() {
                 local.status = OrderStatus::Filled;
+            } else if matches!(remote_status.as_str(), "canceled" | "cancelled" | "expired") {
+                local.status = OrderStatus::Cancelled;
             } else if filled > 0 {
                 local.status = OrderStatus::PartiallyFilled;
-            } else if matches!(remote_status, "canceled" | "cancelled" | "expired") {
-                local.status = OrderStatus::Cancelled;
             }
         }
         Ok(events)
     }
 
     fn call_or_reconcile(&mut self, request: Value) -> QxResult<Value> {
-        self.rpc
-            .call(request)
-            .map_err(|error| QxError::ReconcileRequired(format!("CCXT Worker 结果未知: {error}")))
+        match self.rpc.call(request) {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                // 一旦 RPC 返回错误，不能继续把本地 Venue 当作可提交状态；
+                // 调用方必须先 replace_rpc 或交给对账流程恢复。
+                self.connected = false;
+                Err(QxError::ReconcileRequired(format!(
+                    "CCXT Worker 结果未知: {error}"
+                )))
+            }
+        }
     }
 
     /// 将 CCXT Pro/扩展 JSONL 事件请求保持在同一进程边界；调用方只能得到
@@ -417,9 +456,10 @@ impl CcxtProcessVenue {
             Ok(result) => result,
             Err(error) if error.contains("[unsupported]") => return Ok((0, None)),
             Err(error) => {
+                self.connected = false;
                 return Err(QxError::ReconcileRequired(format!(
                     "CCXT 成交费用查询结果未知: {error}"
-                )))
+                )));
             }
         };
         let trades = result
@@ -858,6 +898,106 @@ mod tests {
         assert_eq!(first_fill.price, Price::from_i64(100));
         assert_eq!(second_fill.qty, Quantity::from_i64(1));
         assert_eq!(second_fill.price, Price::from_i64(120));
+    }
+
+    struct StatusRpc {
+        status: &'static str,
+        filled_raw: i64,
+    }
+
+    impl CcxtRpc for StatusRpc {
+        fn call(&mut self, request: Value) -> Result<Value, String> {
+            match request.get("op").and_then(Value::as_str) {
+                Some("create_order") => Ok(json!({
+                    "order": {"order_id": "status-1", "status": "open", "filled_raw": 0}
+                })),
+                Some("fetch_order") => Ok(json!({
+                    "order": {
+                        "order_id": "status-1",
+                        "status": self.status,
+                        "filled_raw": self.filled_raw,
+                        "average_raw": 100_000_000_000_i64,
+                        "fee_raw": 1
+                    }
+                })),
+                _ => Ok(json!({})),
+            }
+        }
+    }
+
+    #[test]
+    fn ccxt_unknown_status_fails_closed_without_mutating_local_progress() {
+        let mut venue = CcxtProcessVenue::new(
+            "binance",
+            Box::new(StatusRpc {
+                status: "mystery",
+                filled_raw: 0,
+            }),
+        );
+        venue.submit(order(), 10).unwrap();
+        let error = venue.sync_order(7, 11).unwrap_err();
+        assert!(matches!(error, QxError::ReconcileRequired(_)));
+        assert!(!venue.cumulative_costs.contains_key(&7));
+        assert_eq!(venue.snapshot()[0].filled, Quantity::ZERO);
+        assert_eq!(venue.snapshot()[0].status, OrderStatus::PendingSubmit);
+    }
+
+    #[test]
+    fn ccxt_rpc_failure_marks_venue_disconnected_until_rpc_replacement() {
+        struct FailingRpc;
+        impl CcxtRpc for FailingRpc {
+            fn call(&mut self, _request: Value) -> Result<Value, String> {
+                Err("transport closed".into())
+            }
+        }
+
+        let mut venue = CcxtProcessVenue::new("okx", Box::new(FailingRpc));
+        assert!(matches!(
+            venue.submit(order(), 10),
+            Err(QxError::ReconcileRequired(_))
+        ));
+        assert!(!venue.connected());
+        assert!(matches!(
+            venue.submit(order(), 11),
+            Err(QxError::VenueState(_))
+        ));
+    }
+
+    #[test]
+    fn ccxt_closed_partial_order_requires_reconciliation_without_mutating_local_progress() {
+        let mut venue = CcxtProcessVenue::new(
+            "okx",
+            Box::new(StatusRpc {
+                status: "closed",
+                filled_raw: 1_000_000_000,
+            }),
+        );
+        venue.submit(order(), 10).unwrap();
+        let error = venue.sync_order(7, 11).unwrap_err();
+        assert!(matches!(error, QxError::ReconcileRequired(_)));
+        assert!(!venue.cumulative_costs.contains_key(&7));
+        assert_eq!(venue.snapshot()[0].filled, Quantity::ZERO);
+    }
+
+    #[test]
+    fn ccxt_partial_cancel_emits_terminal_cancel_and_preserves_fill() {
+        let mut venue = CcxtProcessVenue::new(
+            "binance",
+            Box::new(StatusRpc {
+                status: "canceled",
+                filled_raw: 1_000_000_000,
+            }),
+        );
+        venue.submit(order(), 10).unwrap();
+        let events = venue.sync_order(7, 11).unwrap();
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, VenueEvent::Fill(_))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, VenueEvent::Cancelled { .. })));
+        assert_eq!(venue.snapshot()[0].filled, Quantity::from_i64(1));
+        assert_eq!(venue.snapshot()[0].status, OrderStatus::Cancelled);
     }
 
     #[test]

@@ -5,12 +5,14 @@
 //! 采用文件后端时，每次成功归约都会原子保存，因此进程重启可以先恢复账簿
 //! 和订单状态，再继续接收新的行情或用户流事实。
 
-use qx_control::{CommandKind, ControlCommand};
+pub use qx_control::order_from_submit_command;
+use qx_control::ControlCommand;
 use qx_core::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventKind,
-    EventLog, Fill, FundingRateSnapshot, InstrumentId, Ledger, Order, OrderStatus, Price, Priority,
-    QxError, QxResult, ReplayVerifier, TradingInstrumentSpec,
+    EventLog, EventMetadata, Fill, FundingRateSnapshot, InstrumentId, Ledger, Order, OrderStatus,
+    Price, Priority, Quantity, QxError, QxResult, ReplayVerifier, TradingInstrumentSpec,
 };
+use qx_guanxing::QuoteTick;
 use qx_oms::Oms;
 #[cfg(feature = "postgres")]
 use qx_storage::PostgresEventLogStore;
@@ -34,6 +36,8 @@ pub enum RuntimeExternalEvent {
         instrument: InstrumentId,
         bid: Price,
         ask: Price,
+        bid_qty: Quantity,
+        ask_qty: Quantity,
     },
     AccountBalanceSnapshot {
         account_id: String,
@@ -84,28 +88,33 @@ pub struct RuntimeEventEnvelope {
     /// 供应商序号、trade id 或本地稳定序号。
     pub source_seq: u64,
     pub correlation_id: String,
+    /// 外部事实的 schema/source/dedup/rule 元数据；业务时间仍由 event_ts 和
+    /// receive_ts 分别表达 effective_at/observed_at。
+    pub metadata: EventMetadata,
 }
 
 impl RuntimeEventEnvelope {
     pub fn market_quote(
         instrument: InstrumentId,
-        bid: Price,
-        ask: Price,
-        event_ts: u64,
+        quote: QuoteTick,
         receive_ts: u64,
         source_seq: u64,
         correlation_id: impl Into<String>,
     ) -> Self {
+        let correlation_id = correlation_id.into();
         Self {
             event: RuntimeExternalEvent::MarketQuote {
                 instrument,
-                bid,
-                ask,
+                bid: quote.bid,
+                ask: quote.ask,
+                bid_qty: quote.bid_qty,
+                ask_qty: quote.ask_qty,
             },
-            event_ts,
+            event_ts: quote.ts,
             receive_ts,
             source_seq,
-            correlation_id: correlation_id.into(),
+            metadata: runtime_event_metadata(&correlation_id, source_seq, "market_data"),
+            correlation_id,
         }
     }
 
@@ -116,13 +125,45 @@ impl RuntimeEventEnvelope {
         source_seq: u64,
         correlation_id: impl Into<String>,
     ) -> Self {
+        let correlation_id = correlation_id.into();
         Self {
             event,
             event_ts,
             receive_ts,
             source_seq,
-            correlation_id: correlation_id.into(),
+            metadata: runtime_event_metadata(&correlation_id, source_seq, "venue"),
+            correlation_id,
         }
+    }
+
+    pub fn with_metadata(mut self, metadata: EventMetadata) -> Self {
+        self.metadata = metadata;
+        self
+    }
+}
+
+fn runtime_event_metadata(
+    correlation_id: &str,
+    source_seq: u64,
+    source_kind: &str,
+) -> EventMetadata {
+    let source_id = correlation_id
+        .split(':')
+        .next()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("runtime")
+        .to_string();
+    let dedup_key = if correlation_id.trim().is_empty() {
+        format!("runtime:source:{source_seq}")
+    } else {
+        format!("{correlation_id}:source:{source_seq}")
+    };
+    EventMetadata {
+        schema_version: qx_core::EVENT_METADATA_SCHEMA_VERSION,
+        source_id,
+        source_kind: source_kind.into(),
+        dedup_key,
+        rule_version: "runtime-v1".into(),
     }
 }
 
@@ -143,6 +184,11 @@ pub struct PipelineMetricsSnapshot {
     pub transient_retries: u64,
     pub refreshes: u64,
     pub failures: u64,
+}
+
+struct EventFact {
+    metadata: EventMetadata,
+    kind: EventKind,
 }
 
 impl PipelineMetricsSnapshot {
@@ -445,6 +491,41 @@ impl LiveEventPipeline {
         &self.marks
     }
 
+    /// 返回 EventLog 中最近一次 L1 价格，兼容只需要价格的调用方。
+    ///
+    /// 返回 EventLog 中最近一次完整 L1 报价及数量，供 Paper/模拟执行使用。
+    /// Paper 执行不得把固定价格当作默认市场；没有真实行情事实时应停在
+    /// 等待/失败状态，由行情 worker 先写入报价后再重试订单。
+    pub fn latest_quote(&self, instrument: &InstrumentId) -> Option<(Price, Price, u64)> {
+        self.latest_quote_with_depth(instrument)
+            .map(|quote| (quote.bid, quote.ask, quote.ts))
+    }
+
+    /// 返回 EventLog 中最近一次完整 L1 报价及买卖盘数量。
+    pub fn latest_quote_with_depth(&self, instrument: &InstrumentId) -> Option<QuoteTick> {
+        self.log.events().iter().rev().find_map(|event| {
+            if let EventKind::MarketQuote {
+                instrument: event_instrument,
+                bid,
+                ask,
+                bid_qty,
+                ask_qty,
+            } = &event.kind
+            {
+                (event_instrument == instrument).then_some(QuoteTick::new(
+                    event.ts,
+                    *bid,
+                    *bid_qty,
+                    *ask,
+                    *ask_qty,
+                    event.source_seq,
+                ))
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn metrics(&self) -> PipelineMetricsSnapshot {
         self.metrics.snapshot()
     }
@@ -540,7 +621,7 @@ impl LiveEventPipeline {
         )
     }
 
-    fn register_order_with_correlation(
+    pub fn register_order_with_correlation(
         &mut self,
         order: Order,
         ts: u64,
@@ -590,8 +671,16 @@ impl LiveEventPipeline {
             Priority::COMMAND,
             order.client_id,
             correlation.unwrap_or_else(|| format!("{}:order:{}", staged.log_name, order.client_id)),
-            EventKind::OrderSubmitted {
-                order: order.clone(),
+            EventFact {
+                metadata: EventMetadata {
+                    source_id: "control".into(),
+                    source_kind: "control".into(),
+                    dedup_key: format!("control:order:{}", order.client_id),
+                    ..EventMetadata::default()
+                },
+                kind: EventKind::OrderSubmitted {
+                    order: order.clone(),
+                },
             },
         )?;
         staged.oms.insert_replayed(order)?;
@@ -648,12 +737,29 @@ impl LiveEventPipeline {
             receive_ts,
             source_seq,
             correlation_id,
+            mut metadata,
         } = envelope;
         let correlation_id = if correlation_id.trim().is_empty() {
             format!("{}:source:{}", staged.log_name, source_seq)
         } else {
             correlation_id
         };
+        if metadata.source_id.trim().is_empty() {
+            metadata.source_id =
+                runtime_event_metadata(&correlation_id, source_seq, "internal").source_id;
+        }
+        if metadata.dedup_key.trim().is_empty() {
+            metadata.dedup_key =
+                runtime_event_metadata(&correlation_id, source_seq, "internal").dedup_key;
+        }
+        if metadata.source_kind.trim().is_empty() {
+            metadata.source_kind =
+                runtime_event_metadata(&correlation_id, source_seq, "internal").source_kind;
+        }
+        if metadata.rule_version.trim().is_empty() {
+            metadata.rule_version = "runtime-v1".into();
+        }
+        metadata.validate().map_err(QxError::BusinessViolation)?;
 
         let semantic_replay = matches!(
             &event,
@@ -664,8 +770,9 @@ impl LiveEventPipeline {
                 | RuntimeExternalEvent::FillWithSpec { .. }
         );
         if let Some(existing) = staged.log.events().iter().find(|event| {
-            event.correlation_id == correlation_id
-                && (event.source_seq == source_seq || semantic_replay)
+            (!metadata.dedup_key.is_empty() && event.metadata.dedup_key == metadata.dedup_key)
+                || (event.correlation_id == correlation_id
+                    && (event.source_seq == source_seq || semantic_replay))
         }) {
             return Ok(RuntimeIngestReceipt {
                 primary_seq: existing.seq,
@@ -704,14 +811,30 @@ impl LiveEventPipeline {
                 instrument,
                 bid,
                 ask,
-            } => (
-                EventKind::MarketQuote {
-                    instrument: instrument.clone(),
-                    bid: *bid,
-                    ask: *ask,
-                },
-                Priority::MARKET,
-            ),
+                bid_qty,
+                ask_qty,
+            } => {
+                if bid.raw() <= 0
+                    || ask.raw() <= 0
+                    || bid.raw() > ask.raw()
+                    || bid_qty.raw() <= 0
+                    || ask_qty.raw() <= 0
+                {
+                    return Err(QxError::BusinessViolation(
+                        "L1 行情 bid/ask/数量非法或买卖盘交叉".into(),
+                    ));
+                }
+                (
+                    EventKind::MarketQuote {
+                        instrument: instrument.clone(),
+                        bid: *bid,
+                        ask: *ask,
+                        bid_qty: *bid_qty,
+                        ask_qty: *ask_qty,
+                    },
+                    Priority::MARKET,
+                )
+            }
             RuntimeExternalEvent::AccountBalanceSnapshot {
                 account_id,
                 venue_id,
@@ -817,7 +940,10 @@ impl LiveEventPipeline {
             priority,
             source_seq,
             correlation_id.clone(),
-            kind,
+            EventFact {
+                metadata: metadata.clone(),
+                kind,
+            },
         )?;
         let engine_ts = primary.ts;
         let mut derived_seqs = Vec::new();
@@ -827,6 +953,8 @@ impl LiveEventPipeline {
                 instrument,
                 bid: _bid,
                 ask,
+                bid_qty: _bid_qty,
+                ask_qty: _ask_qty,
             } => {
                 staged.marks.insert(instrument, ask);
             }
@@ -868,7 +996,10 @@ impl LiveEventPipeline {
                     Priority::APPLY,
                     source_seq,
                     correlation_id.clone(),
-                    EventKind::LedgerApplied { entry },
+                    EventFact {
+                        metadata: metadata.derived(format!("ledger:{entry_id}")),
+                        kind: EventKind::LedgerApplied { entry },
+                    },
                 )?;
                 derived_seqs.push(derived.seq);
             }
@@ -896,7 +1027,10 @@ impl LiveEventPipeline {
                         Priority::APPLY,
                         source_seq,
                         correlation_id.clone(),
-                        EventKind::LedgerApplied { entry },
+                        EventFact {
+                            metadata: metadata.derived(format!("ledger:{id}")),
+                            kind: EventKind::LedgerApplied { entry },
+                        },
                     )?;
                     derived_seqs.push(derived.seq);
                 }
@@ -921,7 +1055,10 @@ impl LiveEventPipeline {
                         Priority::APPLY,
                         source_seq,
                         correlation_id.clone(),
-                        EventKind::LedgerApplied { entry },
+                        EventFact {
+                            metadata: metadata.derived(format!("ledger:{id}")),
+                            kind: EventKind::LedgerApplied { entry },
+                        },
                     )?;
                     derived_seqs.push(derived.seq);
                 }
@@ -1058,7 +1195,7 @@ impl LiveEventPipeline {
         priority: u8,
         source_seq: u64,
         correlation_id: String,
-        kind: EventKind,
+        fact: EventFact,
     ) -> QxResult<Event> {
         let engine_ts = self.last_engine_ts.max(event_ts);
         self.append_at_engine(
@@ -1071,7 +1208,7 @@ impl LiveEventPipeline {
             priority,
             source_seq,
             correlation_id,
-            kind,
+            fact,
         )
     }
 
@@ -1082,7 +1219,7 @@ impl LiveEventPipeline {
         priority: u8,
         source_seq: u64,
         correlation_id: String,
-        kind: EventKind,
+        fact: EventFact,
     ) -> QxResult<Event> {
         let mut effective_ts = engine_ts.max(self.last_engine_ts);
         if let Some(previous) = self.log.events().last() {
@@ -1094,11 +1231,12 @@ impl LiveEventPipeline {
             }
         }
         let seq = self.log.alloc_seq();
-        let event = Event::new(seq, effective_ts, priority, kind)
+        let event = Event::new(seq, effective_ts, priority, fact.kind)
             .received_at(receive_ts)
             .engine_at(effective_ts)
             .sourced_by(source_seq)
-            .correlated(correlation_id);
+            .correlated(correlation_id)
+            .with_metadata(fact.metadata);
         self.log.append_checked(event.clone())?;
         self.last_engine_ts = self.last_engine_ts.max(effective_ts);
         Ok(event)
@@ -1284,42 +1422,6 @@ fn fill_key(fill: &Fill) -> (u64, u64, i128, i128, i128, String) {
     )
 }
 
-/// 从控制命令的 `order_json` 载荷解析订单，并再次校验命令身份边界。
-///
-/// 订单 JSON 不允许携带凭证；命令的 target 必须精确等于 client_order_id，
-/// 防止把一个已审计命令误路由到另一笔订单。
-pub fn order_from_submit_command(command: &ControlCommand) -> QxResult<Order> {
-    command.validate().map_err(|error| {
-        QxError::BusinessViolation(format!("SubmitOrder 控制命令非法: {error:?}"))
-    })?;
-    if command.kind != CommandKind::SubmitOrder {
-        return Err(QxError::BusinessViolation(
-            "控制命令不是 SubmitOrder".into(),
-        ));
-    }
-    let payload = command
-        .payload
-        .get("order_json")
-        .ok_or_else(|| QxError::BusinessViolation("SubmitOrder 缺少 order_json".into()))?;
-    let order: Order = serde_json::from_str(payload)
-        .map_err(|error| QxError::BusinessViolation(format!("order_json 非法: {error}")))?;
-    if command.target != order.client_id.to_string() {
-        return Err(QxError::BusinessViolation(
-            "SubmitOrder target 与 order.client_id 不一致".into(),
-        ));
-    }
-    order.validate().map_err(QxError::BusinessViolation)?;
-    if !matches!(
-        order.status,
-        OrderStatus::PendingSubmit | OrderStatus::Submitted
-    ) {
-        return Err(QxError::BusinessViolation(
-            "SubmitOrder 只接受 PendingSubmit 或 Submitted 订单".into(),
-        ));
-    }
-    Ok(order)
-}
-
 fn normalize_balances(mut balances: Vec<AccountBalance>) -> QxResult<Vec<AccountBalance>> {
     for balance in &balances {
         if balance.asset.trim().is_empty()
@@ -1466,9 +1568,14 @@ mod tests {
             .unwrap();
         let quote = RuntimeEventEnvelope::market_quote(
             InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
-            Price::from_i64(99),
-            Price::from_i64(100),
-            90,
+            QuoteTick::new(
+                90,
+                Price::from_i64(99),
+                qx_core::Quantity::from_i64(2),
+                Price::from_i64(100),
+                qx_core::Quantity::from_i64(3),
+                2,
+            ),
             120,
             2,
             "quote-2",
@@ -1521,9 +1628,14 @@ mod tests {
         let late_quote = pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
                 InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
-                Price::from_i64(98),
-                Price::from_i64(99),
-                100,
+                QuoteTick::new(
+                    100,
+                    Price::from_i64(98),
+                    qx_core::Quantity::from_i64(2),
+                    Price::from_i64(99),
+                    qx_core::Quantity::from_i64(3),
+                    5,
+                ),
                 123,
                 5,
                 "late-quote",
@@ -1558,6 +1670,63 @@ mod tests {
         let restored = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
         assert_eq!(restored.snapshot(), pipeline.snapshot());
         assert_eq!(restored.ledger().entries().len(), 3);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn external_fact_metadata_is_persisted_and_explicit_dedup_is_authoritative() {
+        let root = temp_root("fact-metadata");
+        let mut pipeline = LiveEventPipeline::open(&root, "ccxt-main", "USDT").unwrap();
+        let instrument = InstrumentId::new("BTCUSDT", VenueId::new("OKX"));
+        let envelope = RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::MarketQuote {
+                instrument: instrument.clone(),
+                bid: Price::from_i64(100),
+                ask: Price::from_i64(101),
+                bid_qty: Quantity::from_i64(2),
+                ask_qty: Quantity::from_i64(3),
+            },
+            100,
+            110,
+            7,
+            "okx:ticker",
+        )
+        .with_metadata(EventMetadata {
+            source_id: "okx-rest".into(),
+            source_kind: "market_data".into(),
+            dedup_key: "okx:BTCUSDT:quote:closed-1".into(),
+            rule_version: "ccxt-market-v1".into(),
+            ..EventMetadata::default()
+        });
+        pipeline.ingest(envelope.clone()).unwrap();
+        let event = pipeline.log().events().last().unwrap();
+        assert_eq!(event.metadata.source_id, "okx-rest");
+        assert_eq!(event.metadata.source_kind, "market_data");
+        assert_eq!(event.metadata.dedup_key, "okx:BTCUSDT:quote:closed-1");
+        assert_eq!(event.metadata.rule_version, "ccxt-market-v1");
+        assert_eq!(event.effective_at(), 100);
+        assert_eq!(event.observed_at(), 110);
+
+        let duplicate = RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::MarketQuote {
+                instrument,
+                bid: Price::from_i64(100),
+                ask: Price::from_i64(101),
+                bid_qty: Quantity::from_i64(2),
+                ask_qty: Quantity::from_i64(3),
+            },
+            101,
+            111,
+            8,
+            "okx:ticker:retry",
+        )
+        .with_metadata(envelope.metadata.clone());
+        assert!(pipeline.ingest(duplicate).unwrap().deduplicated);
+        let restored = LiveEventPipeline::open(&root, "ccxt-main", "USDT").unwrap();
+        assert_eq!(
+            restored.log().events().last().unwrap().metadata,
+            envelope.metadata
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1677,7 +1846,7 @@ mod tests {
                 "funding-1",
             ))
             .unwrap();
-        pipeline
+        let cashflow_receipt = pipeline
             .ingest(RuntimeEventEnvelope::venue(
                 RuntimeExternalEvent::AccountCashflow {
                     cashflow: qx_core::AccountCashflow {
@@ -1695,6 +1864,15 @@ mod tests {
                 "cashflow:funding-bill-1",
             ))
             .unwrap();
+        assert_eq!(cashflow_receipt.derived_seqs.len(), 1);
+        let derived = pipeline
+            .log()
+            .events()
+            .iter()
+            .find(|event| event.seq == cashflow_receipt.derived_seqs[0])
+            .unwrap();
+        assert!(derived.metadata.dedup_key.contains(":ledger:"));
+        assert_eq!(derived.metadata.source_id, "cashflow");
         let duplicate = pipeline
             .ingest(RuntimeEventEnvelope::venue(
                 RuntimeExternalEvent::AccountCashflow {

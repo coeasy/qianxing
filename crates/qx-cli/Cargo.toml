@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = []
+default = ["sqlite"]
 sqlite = ["qx-api/sqlite", "qx-storage/sqlite"]
 postgres = ["qx-storage/postgres", "qx-runtime/postgres", "qx-execution/postgres"]
 nats = ["qx-storage/nats"]
@@ -28,6 +28,7 @@ qx-protocol = { path = "../qx-protocol" }
 qx-provider = { path = "../qx-provider" }
 qx-scheduler = { path = "../qx-scheduler" }
 qx-control = { path = "../qx-control" }
+qx-data = { path = "../qx-data" }
 qx-execution = { path = "../qx-execution" }
 qx-runtime = { path = "../qx-runtime" }
 qx-strategy = { path = "../qx-strategy" }

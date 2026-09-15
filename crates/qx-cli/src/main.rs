@@ -16,7 +16,9 @@ use qx_api::{
     ControlSubmitError, MtlsIdentityPemReloader, MtlsIdentityStore, ReconcileReportSnapshot,
     TlsConfigStore, TlsPemReloader,
 };
-use qx_control::{CommandKind, ControlCommand, ControlPlane, Permission};
+use qx_control::{
+    order_from_submit_command, CommandKind, ControlCommand, ControlPlane, Permission,
+};
 use qx_core::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot as VenuePositionSnapshot,
     CashflowKind, Event, EventKind, EventLog, FundingRateSnapshot, InstrumentId, Ledger,
@@ -24,13 +26,16 @@ use qx_core::{
     Priority, Quantity, ReplayVerifier, RunManifest, Side, TradingInstrumentSpec, TradingProduct,
     SCALE,
 };
+use qx_data::{JsonBarFrameProvider, JsonDatasetRegistry};
 use qx_datastruct::BarFrame;
 #[cfg(test)]
 use qx_execution::execute_paper_submit_effect_with_storage;
 use qx_execution::{
-    execute_paper_submit_effect_with_storage_backend_and_pool, ingest_venue_events,
+    execute_paper_submit_effect_with_storage_backend_and_pool,
+    execute_paper_submit_effect_with_storage_backend_and_pool_with_quote, ingest_venue_events,
     ingest_venue_events_with_spec, submit_order as execute_submit_order,
-    submit_order_with_risk as execute_submit_order_with_risk, RiskExecutionContext,
+    submit_order_with_risk as execute_submit_order_with_risk, HedgeOrderValidator,
+    HedgeRecoveryWorker, RiskExecutionContext, VenuePortAdapter,
 };
 use qx_factor::{
     analyze_factor, CandidateRequest, FactorAnalysisConfig, FactorCatalog, FactorObservation,
@@ -46,9 +51,9 @@ use qx_provider::{
     ProviderRegistry, ProviderResult,
 };
 use qx_runtime::{
-    encode_strategy_columnar_input, load_control_state, order_from_submit_command, ApiTransport,
-    LiveEventPipeline, RuntimeBalanceDiscrepancy, RuntimeConfig, RuntimeEventEnvelope,
-    RuntimeExternalEvent, RuntimeSupervisor, StorageBackend, StrategyContext, StrategyContractBars,
+    encode_strategy_columnar_input, load_control_state, ApiTransport, LiveEventPipeline,
+    RuntimeBalanceDiscrepancy, RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent,
+    RuntimeSupervisor, StorageBackend, StorageConsistency, StrategyContext, StrategyContractBars,
     StrategyContractInput, StrategyContractIntent, StrategyContractOutput, StrategyRuntimeConfig,
     StrategyTargetSnapshot, StrategyTransport, WorkerConfig, WorkerRole,
 };
@@ -72,10 +77,11 @@ use qx_storage::{PostgresConsumerStateStore, PostgresOutboxStore};
 use qx_storage::{
     PostgresControlCommandQueue, PostgresControlStore, PostgresEventLogStore, PostgresJobQueue,
 };
+#[cfg(all(feature = "sqlite", feature = "nats"))]
+use qx_storage::{SqliteConsumerStateStore, SqliteOutboxStore};
 #[cfg(feature = "sqlite")]
 use qx_storage::{
-    SqliteConsumerStateStore, SqliteControlCommandQueue, SqliteControlStore, SqliteJobQueue,
-    SqliteOutboxStore, SqliteTokenBucket,
+    SqliteControlCommandQueue, SqliteControlStore, SqliteJobQueue, SqliteTokenBucket,
 };
 use qx_strategy::{
     BuiltinStrategy, BuiltinStrategyConfig, BuiltinStrategyKind, DynamicCAbiLoadPolicy,
@@ -87,15 +93,22 @@ use qx_strategy::{
 use qx_xingban::{
     AShareFeeModel, AshareRuleConfig, BacktestConfig, BacktestEngine, BarMatchingEngine,
     BarStrategy, DataTier, DeterministicRng, FeeModel, MakerTakerFeeModel, MarginRule, MarginTier,
-    NativeBarStrategy, NextBarOpenFillModel, NoMargin, TieredMargin, VirtualTradingConfig,
-    ZeroLatency,
+    NativeBarStrategy, NextBarOpenFillModel, NoMargin, RunManifestIdentity, TieredMargin,
+    VirtualTradingConfig, ZeroLatency,
 };
 use qx_zhenlu::{
-    rebalance_intent, MaxQtyRule, NoShortRule, Oms, PaperVenue, PositionSnapshot, RiskContext,
-    RiskGate, Signal, SignalMerger, StrategyRuntime, Venue, VenueEvent,
+    rebalance_intent, FileSpreadOrderGroupStore, MaxQtyRule, NoShortRule, Oms, PaperVenue,
+    PositionSnapshot, RiskContext, RiskGate, Signal, SignalMerger, SpreadOrderGroup,
+    SpreadOrderGroupStatus, SpreadOrderGroupStore, SpreadOrderLeg, StrategyRuntime, Venue,
+    VenueEvent,
 };
+mod dataset_commands;
 mod workers;
 
+use dataset_commands::{
+    run_dataset_bundle, run_dataset_ingest, verify_dataset_bundle_binding,
+    verify_dataset_bundle_component_bindings,
+};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -930,37 +943,15 @@ fn production_trading_assets_ready(config: &RuntimeConfig, runtime_config_path: 
             worker.enabled
                 && matches!(
                     worker.role,
-                    WorkerRole::UserStream | WorkerRole::Execution | WorkerRole::Reconciler
+                    WorkerRole::UserStream
+                        | WorkerRole::Execution
+                        | WorkerRole::SpreadRecovery
+                        | WorkerRole::Reconciler
                 )
         })
         .all(|worker| {
-            let credentials_ready = if let Some(credentials) = worker.credential_env.as_ref() {
-                non_empty_env(&credentials.api_key) && non_empty_env(&credentials.secret)
-            } else if let Some(credentials) = worker.credential_files.as_ref() {
-                resolve_runtime_relative_path(runtime_config_path, &credentials.api_key).is_file()
-                    && resolve_runtime_relative_path(runtime_config_path, &credentials.secret)
-                        .is_file()
-            } else if let Some(endpoint) = worker.endpoint.as_deref() {
-                let path = resolve_runtime_relative_path(runtime_config_path, endpoint);
-                let Ok(payload) = std::fs::read_to_string(path) else {
-                    return false;
-                };
-                let Ok(value) = serde_json::from_str::<serde_json::Value>(&payload) else {
-                    return false;
-                };
-                let Some(credentials) = value.get("credential_env") else {
-                    return false;
-                };
-                let env_value = |key: &str| {
-                    credentials
-                        .get(key)
-                        .and_then(serde_json::Value::as_str)
-                        .is_some_and(non_empty_env)
-                };
-                env_value("api_key") && env_value("secret")
-            } else {
-                false
-            };
+            let credentials_ready =
+                worker_credentials_ready(runtime_config_path, worker).unwrap_or(false);
             if !credentials_ready {
                 return false;
             }
@@ -968,6 +959,109 @@ fn production_trading_assets_ready(config: &RuntimeConfig, runtime_config_path: 
                 resolve_runtime_relative_path(runtime_config_path, path).is_file()
             })
         })
+}
+
+/// 检查私有 worker 的密钥来源，兼容三种部署方式：RuntimeConfig 环境变量、
+/// RuntimeConfig 凭据文件，以及公共 CCXT JSON 配置中的 `credential_env`。
+/// 这里只验证引用和环境变量是否可用，永远不返回或打印密钥内容。
+fn worker_credentials_ready(
+    runtime_config_path: &Path,
+    worker: &WorkerConfig,
+) -> Result<bool, String> {
+    // CCXT worker 实际由 endpoint 配置驱动；当 endpoint 是本地 JSON 时，
+    // 优先读取其中的 credential_env，避免 RuntimeConfig 中的兼容字段
+    // 覆盖真正会被公共 CCXT 进程使用的凭据来源。
+    let ccxt_endpoint = worker.endpoint.as_deref().filter(|endpoint| {
+        !endpoint.contains("://")
+            && matches!(
+                worker.role,
+                WorkerRole::MarketData
+                    | WorkerRole::UserStream
+                    | WorkerRole::Execution
+                    | WorkerRole::SpreadRecovery
+                    | WorkerRole::Reconciler
+            )
+    });
+    if let Some(endpoint) = ccxt_endpoint {
+        let endpoint_path = resolve_runtime_relative_path(runtime_config_path, endpoint);
+        let payload = std::fs::read_to_string(&endpoint_path).map_err(|error| {
+            format!(
+                "读取 worker {} CCXT 配置失败 {}: {error}",
+                worker.id,
+                endpoint_path.display()
+            )
+        })?;
+        let value = serde_json::from_str::<serde_json::Value>(&payload).map_err(|error| {
+            format!(
+                "解析 worker {} CCXT 配置失败 {}: {error}",
+                worker.id,
+                endpoint_path.display()
+            )
+        })?;
+        let Some(credentials) = value.get("credential_env") else {
+            return Ok(false);
+        };
+        let env_value = |key: &str| {
+            credentials
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(non_empty_env)
+        };
+        let optional_env_value = |key: &str| {
+            credentials
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(non_empty_env)
+        };
+        return Ok(env_value("api_key") && env_value("secret") && optional_env_value("password"));
+    }
+    if let Some(credentials) = worker.credential_env.as_ref() {
+        return Ok(non_empty_env(&credentials.api_key) && non_empty_env(&credentials.secret));
+    }
+    if let Some(credentials) = worker.credential_files.as_ref() {
+        return Ok(
+            resolve_runtime_relative_path(runtime_config_path, &credentials.api_key).is_file()
+                && resolve_runtime_relative_path(runtime_config_path, &credentials.secret)
+                    .is_file(),
+        );
+    }
+    let Some(endpoint) = worker.endpoint.as_deref() else {
+        return Ok(false);
+    };
+    if endpoint.contains("://") || endpoint.starts_with("ws:") || endpoint.starts_with("wss:") {
+        return Ok(false);
+    }
+    let endpoint_path = resolve_runtime_relative_path(runtime_config_path, endpoint);
+    let payload = std::fs::read_to_string(&endpoint_path).map_err(|error| {
+        format!(
+            "读取 worker {} CCXT 配置失败 {}: {error}",
+            worker.id,
+            endpoint_path.display()
+        )
+    })?;
+    let value = serde_json::from_str::<serde_json::Value>(&payload).map_err(|error| {
+        format!(
+            "解析 worker {} CCXT 配置失败 {}: {error}",
+            worker.id,
+            endpoint_path.display()
+        )
+    })?;
+    let Some(credentials) = value.get("credential_env") else {
+        return Ok(false);
+    };
+    let env_value = |key: &str| {
+        credentials
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(non_empty_env)
+    };
+    let optional_env_value = |key: &str| {
+        credentials
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(non_empty_env)
+    };
+    Ok(env_value("api_key") && env_value("secret") && optional_env_value("password"))
 }
 
 #[cfg(feature = "nats")]
@@ -1403,7 +1497,10 @@ fn load_api_query_models(config: &RuntimeConfig) -> Result<ApiQueryModels, Strin
         worker.enabled
             && matches!(
                 worker.role,
-                WorkerRole::UserStream | WorkerRole::Execution | WorkerRole::Reconciler
+                WorkerRole::UserStream
+                    | WorkerRole::Execution
+                    | WorkerRole::SpreadRecovery
+                    | WorkerRole::Reconciler
             )
             && worker.account_id.is_some()
             && worker.venue_id.is_some()
@@ -1457,7 +1554,10 @@ fn load_api_account_snapshot(config: &RuntimeConfig) -> Result<Option<AccountSna
         worker.enabled
             && matches!(
                 worker.role,
-                WorkerRole::UserStream | WorkerRole::Execution | WorkerRole::Reconciler
+                WorkerRole::UserStream
+                    | WorkerRole::Execution
+                    | WorkerRole::SpreadRecovery
+                    | WorkerRole::Reconciler
             )
             && worker.account_id.is_some()
             && worker.venue_id.is_some()
@@ -1591,34 +1691,491 @@ fn load_api_account_snapshot(config: &RuntimeConfig) -> Result<Option<AccountSna
     Ok(Some(snapshot))
 }
 
-fn run_runtime_check(path: &Path) -> Result<(), String> {
+fn collect_runtime_check_report(path: &Path) -> Result<serde_json::Value, String> {
     let config = read_runtime_config(path)?;
+    let (reference_failures, reference_warnings) = validate_runtime_references(path, &config);
     let supervisor = RuntimeSupervisor::new(config.clone())?;
     let health = supervisor
         .health()
         .lock()
         .map_err(|_| "运行时健康锁已中毒".to_string())?
         .snapshot(0, config.shutdown_timeout_ms);
+    let fingerprint = config.fingerprint()?;
+    let environment = config.environment.clone();
+    let profile = config.profile;
+    let api_transport = config.api.transport;
+    let storage_backend = config.storage.backend;
+    let storage_consistency = config.storage.consistency;
+    let fingerprint_locked = config.config_fingerprint.is_some();
+    let ok = reference_failures.is_empty()
+        && !matches!(health.overall, qx_runtime::OverallHealth::Failed);
+    Ok(serde_json::json!({
+        "schema_version": 1,
+        "runtime_path": path.display().to_string(),
+        "environment": environment,
+        "profile": profile,
+        "api_transport": api_transport,
+        "storage_backend": storage_backend,
+        "storage_consistency": storage_consistency,
+        "config_fingerprint": fingerprint,
+        "config_fingerprint_locked": fingerprint_locked,
+        "health": health,
+        "warnings": reference_warnings,
+        "failures": reference_failures,
+        "ok": ok,
+        "network_accessed": false,
+        "orders_sent": false
+    }))
+}
+
+fn run_runtime_check(path: &Path, as_json: bool) -> Result<(), String> {
+    let report = collect_runtime_check_report(path)?;
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|error| format!("编码 runtime-check JSON 失败: {error}"))?
+        );
+        if report.get("ok").and_then(serde_json::Value::as_bool) == Some(false) {
+            return Err("运行时配置校验未通过".into());
+        }
+        return Ok(());
+    }
+
+    let environment = report
+        .get("environment")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("-");
+    let profile = report
+        .get("profile")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("-");
+    let api_transport = report
+        .get("api_transport")
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "-".into());
+    let storage_backend = report
+        .get("storage_backend")
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "-".into());
+    let storage_consistency = report
+        .get("storage_consistency")
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "-".into());
+    let fingerprint = report
+        .get("config_fingerprint")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("-");
+    let locked = report
+        .get("config_fingerprint_locked")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let health = report.get("health");
     println!(
-        "[运行时 · 配置] environment={} api={:?} workers={} storage={:?}",
-        config.environment,
-        config.api.transport,
-        health.services.len(),
-        config.storage.backend
+        "[运行时 · 配置] environment={} profile={:?} api={:?} workers={} storage={:?} consistency={:?}",
+        environment,
+        profile,
+        api_transport,
+        health
+            .and_then(|value| value.get("services"))
+            .and_then(serde_json::Value::as_array)
+            .map_or(0, Vec::len),
+        storage_backend,
+        storage_consistency
     );
     println!(
         "[运行时 · 指纹] config_fingerprint={} locked={}",
-        config.fingerprint()?,
-        config.config_fingerprint.is_some()
+        fingerprint, locked
     );
-    println!("[运行时 · 健康] overall={:?}", health.overall);
-    for service in health.services {
-        println!(
-            "  {} role={:?} status={:?}",
-            service.id, service.role, service.status
-        );
+    println!(
+        "[运行时 · 健康] overall={}",
+        health
+            .and_then(|value| value.get("overall"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown")
+    );
+    if let Some(services) = health
+        .and_then(|value| value.get("services"))
+        .and_then(serde_json::Value::as_array)
+    {
+        for service in services {
+            println!(
+                "  {} role={:?} status={:?}",
+                service
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("-"),
+                service.get("role").unwrap_or(&serde_json::Value::Null),
+                service
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown")
+            );
+        }
     }
-    Ok(())
+    for warning in report
+        .get("warnings")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+    {
+        println!("[WARN] {warning}");
+    }
+    let failures = report
+        .get("failures")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
+    if failures.is_empty() && report.get("ok").and_then(serde_json::Value::as_bool) != Some(false) {
+        println!("[PASS] runtime 引用文件校验通过");
+        Ok(())
+    } else {
+        for failure in &failures {
+            eprintln!("[FAIL] {failure}");
+        }
+        Err(format!(
+            "运行时配置校验失败，共 {} 项",
+            failures.len().max(1)
+        ))
+    }
+}
+
+fn validate_runtime_references(
+    runtime_path: &Path,
+    config: &RuntimeConfig,
+) -> (Vec<String>, Vec<String>) {
+    let mut failures = Vec::new();
+    let mut warnings = Vec::new();
+
+    let require_file = |failures: &mut Vec<String>, label: String, configured: &str| {
+        let resolved = resolve_runtime_relative_path(runtime_path, configured);
+        if !resolved.is_file() {
+            failures.push(format!(
+                "{label} 文件不存在: {} (configured={configured})",
+                resolved.display()
+            ));
+        }
+    };
+    let path_like = |value: &str| {
+        !(value.contains("://") || value.starts_with("ws:") || value.starts_with("wss:"))
+            && (value.contains('/')
+                || value.contains('\\')
+                || value.ends_with(".json")
+                || value.ends_with(".yaml")
+                || value.ends_with(".yml")
+                || value.ends_with(".toml"))
+    };
+
+    for worker in config.workers.iter().filter(|worker| worker.enabled) {
+        if let Some(spec) = worker.instrument_spec_path.as_deref() {
+            require_file(
+                &mut failures,
+                format!("worker {} instrument_spec_path", worker.id),
+                spec,
+            );
+        }
+        if let Some(credentials) = worker.credential_files.as_ref() {
+            require_file(
+                &mut failures,
+                format!("worker {} credential api_key", worker.id),
+                &credentials.api_key,
+            );
+            require_file(
+                &mut failures,
+                format!("worker {} credential secret", worker.id),
+                &credentials.secret,
+            );
+        }
+        if let Some(endpoint) = worker.endpoint.as_deref().filter(|value| path_like(value)) {
+            require_file(
+                &mut failures,
+                format!("worker {} endpoint", worker.id),
+                endpoint,
+            );
+            if matches!(
+                worker.role,
+                WorkerRole::MarketData
+                    | WorkerRole::UserStream
+                    | WorkerRole::Execution
+                    | WorkerRole::SpreadRecovery
+                    | WorkerRole::Reconciler
+            ) {
+                let endpoint_path = resolve_runtime_relative_path(runtime_path, endpoint);
+                if endpoint_path.is_file() {
+                    if let Err(error) = validate_ccxt_worker_binding(worker, &endpoint_path) {
+                        failures.push(error);
+                    }
+                }
+            }
+        }
+        if worker.role == WorkerRole::Scheduler {
+            require_file(
+                &mut failures,
+                "scheduler.jobs_path".into(),
+                &config.scheduler.jobs_path,
+            );
+        }
+    }
+
+    let mut strategies = Vec::with_capacity(config.strategies.len() + 1);
+    strategies.push(("strategy".to_string(), &config.strategy));
+    for strategy in &config.strategies {
+        strategies.push((
+            format!(
+                "strategy[{}]",
+                strategy.id.as_deref().unwrap_or("<missing-id>")
+            ),
+            strategy,
+        ));
+    }
+    for (label, strategy) in strategies {
+        if let Some(target) = strategy.target_snapshot_path.as_deref() {
+            require_file(
+                &mut failures,
+                format!("{label}.target_snapshot_path"),
+                target,
+            );
+        }
+        if let Some(research) = strategy.research_snapshot_path.as_deref() {
+            require_file(
+                &mut failures,
+                format!("{label}.research_snapshot_path"),
+                research,
+            );
+        }
+        if let Some(bundle) = strategy.dataset_bundle_path.as_deref() {
+            require_file(
+                &mut failures,
+                format!("{label}.dataset_bundle_path"),
+                bundle,
+            );
+            validate_dataset_bundle_component_references(
+                runtime_path,
+                &mut failures,
+                &label,
+                bundle,
+                strategy,
+            );
+        }
+        for (kind, component_path) in &strategy.dataset_component_paths {
+            if kind != "bars" {
+                require_file(
+                    &mut failures,
+                    format!("{label}.dataset_component_paths.{kind}"),
+                    component_path,
+                );
+            }
+        }
+        if let Some(rules) = strategy.ashare_rules_path.as_deref() {
+            require_file(&mut failures, format!("{label}.ashare_rules_path"), rules);
+        }
+        if let Some(actions) = strategy.ashare_actions_path.as_deref() {
+            validate_ashare_component_json(
+                runtime_path,
+                &mut failures,
+                format!("{label}.ashare_actions_path"),
+                actions,
+                "actions",
+                strategy.instrument.as_deref(),
+            );
+        }
+        if let Some(calendar) = strategy.ashare_calendar_path.as_deref() {
+            validate_ashare_component_json(
+                runtime_path,
+                &mut failures,
+                format!("{label}.ashare_calendar_path"),
+                calendar,
+                "calendar",
+                None,
+            );
+        }
+        if let Some(bars) = strategy.bars_snapshot_path.as_deref() {
+            if strategy.live_enabled {
+                if !resolve_runtime_relative_path(runtime_path, bars).is_file() {
+                    warnings.push(format!(
+                        "{label}.bars_snapshot_path 尚不存在，将由 live market worker 首次生成: {bars}"
+                    ));
+                }
+            } else if strategy.builtin_strategy.is_some() {
+                require_file(&mut failures, format!("{label}.bars_snapshot_path"), bars);
+            }
+        } else if strategy.builtin_strategy.is_some() && !strategy.live_enabled {
+            failures.push(format!(
+                "{label}.builtin_strategy 非 live 模式必须配置 bars_snapshot_path"
+            ));
+        }
+        if let Some(reference) = strategy.builtin_reference_bars_snapshot_path.as_deref() {
+            if strategy.live_enabled {
+                if !resolve_runtime_relative_path(runtime_path, reference).is_file() {
+                    warnings.push(format!(
+                        "{label}.builtin_reference_bars_snapshot_path 尚不存在，将由 live market worker 首次生成: {reference}"
+                    ));
+                }
+            } else {
+                require_file(
+                    &mut failures,
+                    format!("{label}.builtin_reference_bars_snapshot_path"),
+                    reference,
+                );
+            }
+        }
+        for (field, value) in [
+            (
+                "external_executable",
+                strategy.external_executable.as_deref(),
+            ),
+            ("python_module", strategy.python_module.as_deref()),
+            ("c_abi_library", strategy.c_abi_library.as_deref()),
+        ] {
+            if let Some(value) = value.filter(|value| path_like(value)) {
+                require_file(&mut failures, format!("{label}.{field}"), value);
+            }
+        }
+    }
+
+    (failures, warnings)
+}
+
+fn validate_ashare_component_json(
+    runtime_path: &Path,
+    failures: &mut Vec<String>,
+    label: String,
+    configured: &str,
+    kind: &str,
+    instrument: Option<&str>,
+) {
+    let resolved = resolve_runtime_relative_path(runtime_path, configured);
+    if !resolved.is_file() {
+        failures.push(format!(
+            "{label} 文件不存在: {} (configured={configured})",
+            resolved.display()
+        ));
+        return;
+    }
+    let payload = match std::fs::read_to_string(&resolved) {
+        Ok(payload) => payload,
+        Err(error) => {
+            failures.push(format!(
+                "{label} 文件不可读 {}: {error}",
+                resolved.display()
+            ));
+            return;
+        }
+    };
+    let validation = if kind == "calendar" {
+        let mut rules = AshareRuleConfig::default();
+        rules.apply_calendar_json(&payload).map(|_| ())
+    } else if let Some(instrument) = instrument {
+        let mut rules = AshareRuleConfig::default();
+        rules
+            .apply_corporate_actions_json(instrument, &payload)
+            .map(|_| ())
+    } else {
+        serde_json::from_str::<serde_json::Value>(&payload)
+            .map_err(|error| format!("JSON 无效: {error}"))
+            .and_then(|document| {
+                let is_array = document.is_array();
+                let is_wrapped = document
+                    .get("actions")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some();
+                if is_array || is_wrapped {
+                    Ok(())
+                } else {
+                    Err("必须是数组或包含 actions 数组的对象".into())
+                }
+            })
+    };
+    match validation {
+        Ok(()) => {}
+        Err(error) => failures.push(format!("{label} 内容非法: {error}")),
+    }
+}
+
+fn validate_dataset_bundle_component_references(
+    runtime_path: &Path,
+    failures: &mut Vec<String>,
+    label: &str,
+    configured_bundle: &str,
+    strategy: &StrategyRuntimeConfig,
+) {
+    let bundle_path = resolve_runtime_relative_path(runtime_path, configured_bundle);
+    let payload = match std::fs::read_to_string(&bundle_path) {
+        Ok(payload) => payload,
+        Err(_) => return,
+    };
+    let bundle: qx_data::DatasetBundleManifest = match serde_json::from_str(&payload) {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            failures.push(format!("{label}.dataset_bundle_path JSON 无效: {error}"));
+            return;
+        }
+    };
+    if let Err(error) = bundle.validate() {
+        failures.push(format!("{label}.dataset_bundle_path 校验失败: {error}"));
+        return;
+    }
+    for kind in bundle
+        .components
+        .keys()
+        .filter(|kind| kind.as_str() != "bars")
+    {
+        let configured = strategy
+            .dataset_component_paths
+            .get(kind)
+            .map(String::as_str)
+            .or(match kind.as_str() {
+                "corporate_actions" => strategy.ashare_actions_path.as_deref(),
+                "calendar" => strategy.ashare_calendar_path.as_deref(),
+                _ => None,
+            });
+        let Some(configured) = configured else {
+            failures.push(format!(
+                "{label}.dataset_bundle_path 组件 {kind} 没有绑定输入文件"
+            ));
+            continue;
+        };
+        let path = resolve_runtime_relative_path(runtime_path, configured);
+        if !path.is_file() {
+            failures.push(format!(
+                "{label}.dataset_component_paths.{kind} 文件不存在: {}",
+                path.display()
+            ));
+        } else if matches!(
+            bundle
+                .components
+                .get(kind)
+                .map(|component| &component.format),
+            Some(qx_data::DatasetComponentFormat::Arrow)
+        ) {
+            match dataset_commands::arrow_dataset_manifest_fingerprint(&path, kind) {
+                Ok((fingerprint, row_count)) => {
+                    let component = bundle
+                        .components
+                        .get(kind)
+                        .expect("bundle component exists");
+                    if fingerprint != component.dataset.fingerprint {
+                        failures.push(format!(
+                            "{label}.dataset_component_paths.{kind} Arrow fingerprint 不匹配: bundle={} input={fingerprint}",
+                            component.dataset.fingerprint
+                        ));
+                    }
+                    if row_count != component.row_count {
+                        failures.push(format!(
+                            "{label}.dataset_component_paths.{kind} Arrow 行数不匹配: bundle={} input={row_count}",
+                            component.row_count
+                        ));
+                    }
+                }
+                Err(error) => failures.push(format!(
+                    "{label}.dataset_component_paths.{kind} Arrow manifest 校验失败: {error}"
+                )),
+            }
+        }
+    }
 }
 
 fn repository_deploy_path(file_name: &str) -> PathBuf {
@@ -1640,7 +2197,33 @@ fn print_cli_help() {
 
 常用入口：
   init [runtime.json] [--force]
-      从 deploy/qianxing.runtime.example.json 创建本地运行时配置。
+      创建本地运行时配置及可复用的样例数据/调度文件。
+  init [runtime.json] --profile <base|paper|ccxt|ashare|multi-venue|backtest> [--force]
+      按场景创建自包含项目；会自动改写 deploy/ 样例路径并复制依赖文件。
+  init [runtime.json] --strategy <name> [--force]
+      创建绑定内置策略和样例 BarFrame 的可直接回测项目。
+  doctor [runtime.json] [--json]
+      一次检查配置、路径、策略输入和运行拓扑；不连接交易所、不发送订单。
+  config explain [runtime.json] [--json]
+      输出有效配置摘要或机器可读配置；只显示凭据引用，不显示密钥内容。
+  config validate [runtime.json]
+      校验配置和所有已配置的本地文件引用。
+  config fingerprint [runtime.json]
+      输出不含 config_fingerprint 字段自身的稳定配置指纹。
+  config lock <runtime.json> [output.json] [--force]
+      生成带发布指纹锁的配置副本，不读取或输出密钥内容。
+  run <backtest|paper|doctor|live-check|runtime-check|report> [参数...]
+      统一执行常用安全入口；paper 只运行本地 Paper 验收，不发送真实订单。
+  status [runtime.json] [--json]
+      查看本地运行配置、Worker、回测结果和安全状态；不连接交易所。
+  report [runtime.json|summary.json] [--json]
+      查看最新或指定回测报告；--json 输出可供脚本消费的完整摘要。
+  strategy list
+      列出内置策略。
+  strategy init <strategy> [runtime.json] [bar-frame.json] [--force]
+      从模板生成可直接回测的内置策略配置。
+  strategy backtest <runtime.json> <bar-frame.json> [market-spec.json]
+      使用统一回测引擎运行策略并保存结果产物。
   backtest [runtime.json] [bar-frame.json] [market-spec.json]
       使用统一 Rust 撮合引擎运行跨语言策略回测。
   builtin-strategies
@@ -1651,17 +2234,22 @@ fn print_cli_help() {
       对齐两条 BarFrame，使用同一信号驱动双腿独立账户回测。
   fast-backtest <manifest.json>
       并行执行多个独立回测任务，适合多标的、多币种和多参数批量验证。
+  dataset-ingest <bar-frame.json> <dataset-id> <version> <data-dir>
+      将标准化 BarFrame 增量合并到单机数据集缓存并注册 DatasetManifest。
+  dataset-bundle <bundle.json> <data-dir> [bar-frame.json]
+      校验并持久化 DatasetBundleManifest；提供 BarFrame 时同时校验 bars fingerprint。
   ccxt-builtin-backtest <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity]
       一次完成 CCXT OHLCV 获取、内置策略回测和结果输出。
   paper-check [runtime.json]
       按 Scheduler → Strategy → Paper Execution → Ledger 验收主体链路。
-  live-check [production.runtime.json]
+  live-check [production.runtime.json] [--json]
       执行实盘启动前静态门禁，不连接交易所、不发送订单。
-  runtime-check [runtime.json]
+  runtime-check [runtime.json] [--json]
       校验运行时拓扑并输出健康与配置指纹。
 
 核心运行入口：
   serve, supervise, scheduler-worker, strategy-worker, paper-worker
+  （paper-worker 也承载配置中的 spread_recovery 角色）
   binance-worker, ccxt-worker, ccxt-fetch-ohlcv, ccxt-backtest
   strategy-backtest, reconcile, ecosystem, paper
 
@@ -1669,8 +2257,187 @@ fn print_cli_help() {
     );
 }
 
-fn run_init(output: &Path, force: bool) -> Result<(), String> {
-    let template = repository_deploy_path("qianxing.runtime.example.json");
+fn copy_init_asset(root: &Path, file_name: &str, force: bool) -> Result<PathBuf, String> {
+    let source = repository_deploy_path(file_name);
+    if !source.is_file() {
+        return Err(format!("找不到初始化样例文件: {}", source.display()));
+    }
+    let target = root.join(file_name);
+    if target.exists() {
+        let same_file = source
+            .canonicalize()
+            .ok()
+            .zip(target.canonicalize().ok())
+            .is_some_and(|(source, target)| source == target);
+        if same_file || !force {
+            return Ok(target);
+        }
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("创建初始化样例目录失败 {}: {error}", parent.display()))?;
+    }
+    std::fs::copy(&source, &target).map_err(|error| {
+        format!(
+            "复制初始化样例失败 {} -> {}: {error}",
+            source.display(),
+            target.display()
+        )
+    })?;
+    Ok(target)
+}
+
+fn init_profile_template(
+    profile: Option<&str>,
+    strategy_name: Option<&str>,
+) -> Result<(&'static str, Vec<&'static str>, &'static str), String> {
+    let selected = match profile {
+        None => {
+            if strategy_name.is_some() {
+                "builtin"
+            } else {
+                "base"
+            }
+        }
+        Some("base") => "base",
+        Some("builtin") => "builtin",
+        Some("paper") => "paper",
+        Some("ccxt") => "ccxt",
+        Some("ashare") => "ashare",
+        Some("multi-venue") => "multi-venue",
+        Some("backtest") => "backtest",
+        Some(other) => {
+            return Err(format!(
+                "未知 init profile={other}；可用值：base、paper、ccxt、ashare、multi-venue、backtest"
+            ));
+        }
+    };
+    if strategy_name.is_some() && !matches!(selected, "base" | "builtin") {
+        return Err(format!(
+            "init --strategy 只能与 base/builtin profile 组合；当前 profile={selected}"
+        ));
+    }
+    let common = vec![
+        "qianxing.scheduler.jobs.example.json",
+        "qianxing.scheduler.paper-order-smoke.json",
+        "qianxing.bar-frame.example.json",
+        "qianxing.dataset-bundle.bar-frame.example.json",
+        "qianxing.dataset-component.arrow.example.json",
+        "qianxing.binance.spot.spec.json",
+        "qianxing.strategy-target.paper.json",
+    ];
+    match selected {
+        "base" | "builtin" => Ok((
+            if selected == "builtin" {
+                "qianxing.runtime.builtin-strategy.example.json"
+            } else {
+                "qianxing.runtime.example.json"
+            },
+            common,
+            selected,
+        )),
+        "paper" => Ok((
+            "qianxing.runtime.paper-strategy.example.json",
+            common,
+            selected,
+        )),
+        "ccxt" => Ok((
+            "qianxing.runtime.ccxt.example.json",
+            vec![
+                "qianxing.ccxt.exchange.example.json",
+                "qianxing.ccxt.okx.perpetual.spec.json",
+                "qianxing.scheduler.jobs.example.json",
+            ],
+            selected,
+        )),
+        "ashare" => Ok((
+            "qianxing.runtime.ashare.example.json",
+            vec![
+                "qianxing.ashare.actions.example.json",
+                "qianxing.ashare.bar-frame.example.json",
+                "qianxing.ashare.calendar.example.json",
+                "qianxing.ashare.rules.json",
+                "qianxing.ashare.spot.spec.json",
+                "qianxing.dataset-bundle.ashare.example.json",
+            ],
+            selected,
+        )),
+        "multi-venue" => Ok((
+            "qianxing.runtime.multi-venue-arbitrage.example.json",
+            vec![
+                "qianxing.ccxt.binance.spot.example.json",
+                "qianxing.ccxt.okx.swap.example.json",
+                "qianxing.binance.spot.spec.json",
+                "qianxing.ccxt.okx.perpetual.spec.json",
+                "qianxing.scheduler.jobs.example.json",
+            ],
+            selected,
+        )),
+        "backtest" => Ok((
+            "qianxing.runtime.strategy-backtest.example.json",
+            vec!["qianxing.bar-frame.example.json"],
+            selected,
+        )),
+        _ => Err(format!(
+            "未知 init profile={selected}；可用值：base、paper、ccxt、ashare、multi-venue、backtest"
+        )),
+    }
+}
+
+fn normalize_init_template_paths(value: &mut serde_json::Value, assets: &mut BTreeSet<String>) {
+    match value {
+        serde_json::Value::String(text) => {
+            if let Some(relative) = text.strip_prefix("deploy/") {
+                let relative = relative.to_owned();
+                if repository_deploy_path(&relative).is_file() {
+                    *text = relative.clone();
+                    assets.insert(relative);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                normalize_init_template_paths(value, assets);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values_mut() {
+                normalize_init_template_paths(value, assets);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+}
+
+fn init_readme(output: &Path, strategy: Option<&str>, profile: &str) -> String {
+    let strategy_line = strategy
+        .map(|name| format!("已绑定内置策略：`{name}`。"))
+        .unwrap_or_else(|| {
+            "当前配置为基础运行时，可通过 `qianxing init --strategy macd --force` 绑定内置策略。"
+                .into()
+        });
+    format!(
+        "# Qianxing 本地项目\n\n运行时配置：`{}`。profile=`{}`。{}\n\n## 推荐流程\n\n```text\nqianxing doctor {}\nqianxing config explain {}\nqianxing config validate {}\nqianxing backtest {} qianxing.bar-frame.example.json qianxing.binance.spot.spec.json\nqianxing paper-check {}\n```\n\n初始化生成的样例文件只用于本地回测和 Paper 验收，不包含交易密钥，也不会自动发送真实订单。CCXT/多交易所 profile 只生成公共配置和凭据引用，必须自行配置环境变量后再做 sandbox 验收。\n",
+        output.display(),
+        profile,
+        strategy_line,
+        output.display(),
+        output.display(),
+        output.display(),
+        output.display(),
+        output.display()
+    )
+}
+
+fn run_init_with_profile(
+    output: &Path,
+    force: bool,
+    strategy_name: Option<&str>,
+    profile: Option<&str>,
+) -> Result<(), String> {
+    let (template_name, profile_assets, profile_name) =
+        init_profile_template(profile, strategy_name)?;
+    let template = repository_deploy_path(template_name);
     if !template.exists() {
         return Err(format!("找不到运行时模板: {}", template.display()));
     }
@@ -1687,17 +2454,746 @@ fn run_init(output: &Path, force: bool) -> Result<(), String> {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("创建配置目录失败 {}: {error}", parent.display()))?;
     }
-    std::fs::copy(&template, output)
+    let mut document: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&template)
+            .map_err(|error| format!("读取运行时模板失败 {}: {error}", template.display()))?,
+    )
+    .map_err(|error| format!("运行时模板 JSON 无效 {}: {error}", template.display()))?;
+    let mut init_assets = profile_assets.into_iter().map(str::to_owned).collect();
+    normalize_init_template_paths(&mut document, &mut init_assets);
+    if let Some(strategy_name) = strategy_name {
+        let kind = BuiltinStrategyKind::parse(strategy_name)?;
+        let strategy = document
+            .get_mut("strategy")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| "内置策略运行时模板缺少 strategy 对象".to_string())?;
+        strategy.insert(
+            "id".into(),
+            serde_json::Value::String(format!("strategy-{}", kind.name())),
+        );
+        strategy.insert(
+            "version".into(),
+            serde_json::Value::String(format!("builtin-{}-v1", kind.name())),
+        );
+        strategy.insert(
+            "builtin_strategy".into(),
+            serde_json::Value::String(kind.name().into()),
+        );
+        strategy.insert(
+            "bars_snapshot_path".into(),
+            serde_json::Value::String("qianxing.bar-frame.example.json".into()),
+        );
+        strategy.insert(
+            "dataset_bundle_path".into(),
+            serde_json::Value::String("qianxing.dataset-bundle.bar-frame.example.json".into()),
+        );
+        if let Some(storage) = document
+            .get_mut("storage")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            storage.insert(
+                "data_dir".into(),
+                serde_json::Value::String("data/qianxing".into()),
+            );
+        }
+    }
+    let payload = serde_json::to_string_pretty(&document)
+        .map_err(|error| format!("编码初始化运行时配置失败: {error}"))?;
+    RuntimeConfig::from_json(&payload)?;
+    std::fs::write(output, payload)
         .map_err(|error| format!("写入运行时配置失败 {}: {error}", output.display()))?;
+    let project_root = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    for asset in &init_assets {
+        copy_init_asset(project_root, asset, force)?;
+    }
+    std::fs::create_dir_all(project_root.join("data"))
+        .map_err(|error| format!("创建项目数据目录失败: {error}"))?;
+    let readme_path = project_root.join("README.qianxing.md");
+    if force || !readme_path.exists() {
+        std::fs::write(
+            &readme_path,
+            init_readme(output, strategy_name, profile_name),
+        )
+        .map_err(|error| format!("写入初始化说明失败 {}: {error}", readme_path.display()))?;
+    }
     let config = read_runtime_config(output)?;
     println!(
-        "[初始化] 已创建 {} environment={} fingerprint={}",
+        "[初始化] 已创建 {} profile={} environment={} fingerprint={} assets={} strategy={}",
         output.display(),
+        profile_name,
         config.environment,
+        config.fingerprint()?,
+        init_assets.len(),
+        strategy_name.unwrap_or("none")
+    );
+    println!(
+        "下一步：qianxing doctor {}；qianxing backtest {} qianxing.bar-frame.example.json qianxing.binance.spot.spec.json",
+        output.display(),
+        output.display()
+    );
+    Ok(())
+}
+
+fn run_strategy_init(
+    strategy_name: &str,
+    output: &Path,
+    bars_path: Option<&Path>,
+    force: bool,
+) -> Result<(), String> {
+    let kind = BuiltinStrategyKind::parse(strategy_name)?;
+    if output.exists() && !force {
+        return Err(format!(
+            "目标策略配置已存在: {}；如确认覆盖，请显式添加 --force",
+            output.display()
+        ));
+    }
+    let template = repository_deploy_path("qianxing.runtime.builtin-strategy.example.json");
+    let payload = std::fs::read_to_string(&template)
+        .map_err(|error| format!("读取内置策略模板失败 {}: {error}", template.display()))?;
+    let mut document: serde_json::Value = serde_json::from_str(&payload)
+        .map_err(|error| format!("内置策略模板 JSON 无效: {error}"))?;
+    let strategy = document
+        .get_mut("strategy")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "内置策略模板缺少 strategy 对象".to_string())?;
+    strategy.insert(
+        "id".into(),
+        serde_json::Value::String(format!("strategy-{}", kind.name())),
+    );
+    strategy.insert(
+        "version".into(),
+        serde_json::Value::String(format!("builtin-{}-v1", kind.name())),
+    );
+    strategy.insert(
+        "builtin_strategy".into(),
+        serde_json::Value::String(kind.name().into()),
+    );
+    let bars = bars_path
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "deploy/qianxing.bar-frame.example.json".into());
+    strategy.insert(
+        "bars_snapshot_path".into(),
+        serde_json::Value::String(bars.clone()),
+    );
+    if bars_path.is_none() {
+        strategy.insert(
+            "dataset_bundle_path".into(),
+            serde_json::Value::String(
+                "deploy/qianxing.dataset-bundle.bar-frame.example.json".into(),
+            ),
+        );
+    } else {
+        strategy.remove("dataset_bundle_path");
+    }
+    let result = serde_json::to_string_pretty(&document)
+        .map_err(|error| format!("编码内置策略配置失败: {error}"))?;
+    RuntimeConfig::from_json(&result)?;
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("创建策略配置目录失败 {}: {error}", parent.display()))?;
+    }
+    std::fs::write(output, result)
+        .map_err(|error| format!("写入策略配置失败 {}: {error}", output.display()))?;
+    println!(
+        "[Strategy · Init] strategy={} output={} bars={}",
+        kind.name(),
+        output.display(),
+        bars
+    );
+    println!(
+        "下一步：qianxing strategy backtest {} {}",
+        output.display(),
+        bars
+    );
+    Ok(())
+}
+
+fn default_runtime_path() -> PathBuf {
+    repository_deploy_path("qianxing.runtime.example.json")
+}
+
+fn run_config_explain(path: &Path, as_json: bool) -> Result<(), String> {
+    let config = read_runtime_config(path)?;
+    if as_json {
+        // RuntimeConfig 只包含凭据引用（环境变量名/投影文件路径），不包含
+        // secret 内容；输出可直接交给脚本或配置审计工具继续处理。
+        println!("{}", config.to_json()?);
+        return Ok(());
+    }
+    let strategy_count = if config.strategies.is_empty() {
+        1
+    } else {
+        config.strategies.len()
+    };
+    println!("[配置 · 有效] path={}", path.display());
+    println!(
+        "  schema={} environment={} profile={:?}",
+        config.schema_version, config.environment, config.profile
+    );
+    println!(
+        "  storage={:?} data_dir={} api={} transport={:?}",
+        config.storage.backend,
+        resolve_runtime_relative_path(path, &config.storage.data_dir).display(),
+        config.api.bind,
+        config.api.transport
+    );
+    println!(
+        "  workers={} enabled={} strategies={} fingerprint={} locked={}",
+        config.workers.len(),
+        config
+            .workers
+            .iter()
+            .filter(|worker| worker.enabled)
+            .count(),
+        strategy_count,
+        config.fingerprint()?,
+        config.config_fingerprint.is_some()
+    );
+    for worker in config.workers.iter().filter(|worker| worker.enabled) {
+        println!(
+            "  worker id={} role={:?} account={} venue={}",
+            worker.id,
+            worker.role,
+            worker.account_id.as_deref().unwrap_or("-"),
+            worker.venue_id.as_deref().unwrap_or("-")
+        );
+    }
+    println!("[配置 · 安全] 未读取密钥内容，仅检查引用名称和文件路径");
+    Ok(())
+}
+
+fn run_config_fingerprint(path: &Path) -> Result<(), String> {
+    let config = read_runtime_config(path)?;
+    println!(
+        "[配置 · Fingerprint] path={} fingerprint={}",
+        path.display(),
         config.fingerprint()?
     );
-    println!("下一步：qianxing backtest 或 qianxing paper-check");
     Ok(())
+}
+
+fn run_config_lock(input: &Path, output: &Path, force: bool) -> Result<(), String> {
+    let config = read_runtime_config(input)?;
+    let fingerprint = config.fingerprint()?;
+    if output.exists() && !force {
+        return Err(format!(
+            "目标发布配置已存在: {}；如确认覆盖，请显式添加 --force",
+            output.display()
+        ));
+    }
+    let mut locked = config;
+    locked.config_fingerprint = Some(fingerprint.clone());
+    let payload = locked.to_json()?;
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("创建发布配置目录失败 {}: {error}", parent.display()))?;
+    }
+    std::fs::write(output, payload)
+        .map_err(|error| format!("写入发布配置失败 {}: {error}", output.display()))?;
+    let verified = read_runtime_config(output)?;
+    verified.verify_fingerprint()?;
+    println!(
+        "[配置 · Lock] input={} output={} fingerprint={} locked=true",
+        input.display(),
+        output.display(),
+        fingerprint
+    );
+    Ok(())
+}
+
+fn run_unified_command(arguments: &[String]) -> Result<(), String> {
+    let action = arguments.first().map(String::as_str).ok_or_else(|| {
+        "run 需要 backtest、paper、doctor、live-check 或 runtime-check".to_string()
+    })?;
+    match action {
+        "backtest" => {
+            let runtime = arguments.get(1).map(PathBuf::from);
+            let frame = arguments.get(2).map(PathBuf::from);
+            let spec = arguments.get(3).map(PathBuf::from);
+            run_unified_backtest(runtime.as_deref(), frame.as_deref(), spec.as_deref())
+        }
+        "paper" | "paper-check" => {
+            let path = arguments.get(1).map(PathBuf::from).unwrap_or_else(|| {
+                repository_deploy_path("qianxing.runtime.paper-strategy.example.json")
+            });
+            run_paper_pipeline_once(&path)
+        }
+        "doctor" => {
+            let path = arguments
+                .iter()
+                .skip(1)
+                .find(|value| !value.starts_with('-'))
+                .map(PathBuf::from)
+                .unwrap_or_else(default_runtime_path);
+            run_doctor(&path, arguments.iter().any(|argument| argument == "--json"))
+        }
+        "live-check" => {
+            let path = arguments
+                .iter()
+                .skip(1)
+                .find(|value| !value.starts_with('-'))
+                .map(PathBuf::from)
+                .unwrap_or_else(|| repository_deploy_path("qianxing.runtime.production.example.json"));
+            run_live_check(&path, arguments.iter().any(|argument| argument == "--json"))
+        }
+        "runtime-check" => {
+            let path = arguments
+                .iter()
+                .skip(1)
+                .find(|value| !value.starts_with('-'))
+                .map(PathBuf::from)
+                .unwrap_or_else(default_runtime_path);
+            run_runtime_check(&path, arguments.iter().any(|argument| argument == "--json"))
+        }
+        "report" => {
+            let path = arguments
+                .iter()
+                .skip(1)
+                .find(|value| !value.starts_with('-'))
+                .map(PathBuf::from)
+                .unwrap_or_else(default_runtime_path);
+            run_report(&path, arguments.iter().any(|argument| argument == "--json"))
+        }
+        _ => Err(format!(
+            "run 不支持 {action}；可用入口：backtest、paper、doctor、live-check、runtime-check、report"
+        )),
+    }
+}
+
+fn list_backtest_summary_paths(runs_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut summaries = Vec::new();
+    if !runs_dir.is_dir() {
+        return Ok(summaries);
+    }
+    for entry in std::fs::read_dir(runs_dir)
+        .map_err(|error| format!("读取回测结果目录失败 {}: {error}", runs_dir.display()))?
+    {
+        let entry = entry.map_err(|error| format!("读取回测结果目录项失败: {error}"))?;
+        let path = entry.path();
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".summary.json"))
+        {
+            summaries.push(path);
+        }
+    }
+    summaries.sort_by(|left, right| {
+        let left_modified = std::fs::metadata(left)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        let right_modified = std::fs::metadata(right)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        left_modified
+            .cmp(&right_modified)
+            .then_with(|| left.cmp(right))
+    });
+    Ok(summaries)
+}
+
+fn resolve_backtest_summary_path(path: &Path) -> Result<PathBuf, String> {
+    let is_summary = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".summary.json"));
+    if is_summary {
+        if path.is_file() {
+            return Ok(path.to_path_buf());
+        }
+        return Err(format!("指定回测摘要不存在: {}", path.display()));
+    }
+    let config = read_runtime_config(path)?;
+    let data_dir = resolve_runtime_relative_path(path, &config.storage.data_dir);
+    let summaries = list_backtest_summary_paths(&data_dir.join("runs"))?;
+    summaries
+        .last()
+        .cloned()
+        .ok_or_else(|| format!("未找到回测摘要: {}", data_dir.join("runs").display()))
+}
+
+fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
+    let summary_path = resolve_backtest_summary_path(path)?;
+    let payload = std::fs::read_to_string(&summary_path)
+        .map_err(|error| format!("读取回测摘要失败 {}: {error}", summary_path.display()))?;
+    let summary: serde_json::Value = serde_json::from_str(&payload)
+        .map_err(|error| format!("回测摘要 JSON 无效 {}: {error}", summary_path.display()))?;
+    if as_json {
+        let report = serde_json::json!({
+            "schema_version": 1,
+            "summary_path": summary_path.display().to_string(),
+            "summary": summary
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|error| format!("编码回测报告 JSON 失败: {error}"))?
+        );
+        return Ok(());
+    }
+
+    let text = |pointer: &str, fallback: &str| -> String {
+        summary
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(fallback)
+            .to_string()
+    };
+    let integer = |pointer: &str| {
+        summary
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0)
+    };
+    println!("[Report] summary={}", summary_path.display());
+    println!(
+        "  strategy={} instrument={} bars={} fills={}",
+        text("/strategy_id", "-"),
+        text("/instrument", "-"),
+        integer("/bars"),
+        integer("/fills")
+    );
+    println!(
+        "  return_bps={} max_drawdown_bps={} fees_raw={} turnover_raw={} final_equity_raw={}",
+        integer("/metrics/return_bps"),
+        integer("/metrics/max_drawdown_bps"),
+        integer("/metrics/fees_raw"),
+        integer("/metrics/turnover_raw"),
+        integer("/metrics/final_equity_raw")
+    );
+    println!(
+        "  input_data_hash={} result_hash={} replay_hash={}",
+        text("/input_data_hash", "-"),
+        text("/result_hash", "-"),
+        text("/replay_hash", "-")
+    );
+    Ok(())
+}
+
+fn run_status(path: &Path, as_json: bool) -> Result<(), String> {
+    let config = read_runtime_config(path)?;
+    let data_dir = resolve_runtime_relative_path(path, &config.storage.data_dir);
+    let runs_dir = data_dir.join("runs");
+    let summaries = list_backtest_summary_paths(&runs_dir)?;
+    let latest_summary = summaries.last().and_then(|summary_path| {
+        std::fs::read_to_string(summary_path)
+            .ok()
+            .and_then(|payload| serde_json::from_str::<serde_json::Value>(&payload).ok())
+    });
+    let enabled_workers = config
+        .workers
+        .iter()
+        .filter(|worker| worker.enabled)
+        .map(|worker| {
+            serde_json::json!({
+                "id": worker.id,
+                "role": format!("{:?}", worker.role),
+                "account_id": worker.account_id,
+                "venue_id": worker.venue_id,
+            })
+        })
+        .collect::<Vec<_>>();
+    if as_json {
+        let status = serde_json::json!({
+            "schema_version": 1,
+            "runtime_path": path,
+            "environment": config.environment,
+            "profile": config.profile,
+            "storage_backend": config.storage.backend,
+            "storage_consistency": config.storage.consistency,
+            "data_dir": data_dir,
+            "config_fingerprint": config.fingerprint()?,
+            "enabled_workers": enabled_workers,
+            "backtest_summary_count": summaries.len(),
+            "latest_backtest": latest_summary,
+            "network_accessed": false,
+            "orders_sent": false,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&status)
+                .map_err(|error| format!("编码 status JSON 失败: {error}"))?
+        );
+        return Ok(());
+    }
+    println!("[Status] runtime={}", path.display());
+    println!(
+        "  environment={} profile={:?} storage={:?} consistency={:?}",
+        config.environment, config.profile, config.storage.backend, config.storage.consistency
+    );
+    println!(
+        "  data_dir={} backtest_summaries={} network_accessed=false orders_sent=false",
+        data_dir.display(),
+        summaries.len()
+    );
+    for worker in config.workers.iter().filter(|worker| worker.enabled) {
+        println!(
+            "  worker id={} role={:?} account={} venue={} configured",
+            worker.id,
+            worker.role,
+            worker.account_id.as_deref().unwrap_or("-"),
+            worker.venue_id.as_deref().unwrap_or("-")
+        );
+    }
+    if let Some(summary) = latest_summary {
+        println!(
+            "[Latest Backtest] strategy={} instrument={} fills={} return_bps={} max_drawdown_bps={} result_hash={}",
+            summary
+                .get("strategy_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("-"),
+            summary
+                .get("instrument")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("-"),
+            summary
+                .get("fills")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+            summary
+                .pointer("/metrics/return_bps")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+            summary
+                .pointer("/metrics/max_drawdown_bps")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+            summary
+                .get("result_hash")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("-")
+        );
+    } else {
+        println!("[Latest Backtest] 暂无已保存回测摘要");
+    }
+    Ok(())
+}
+
+fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, String> {
+    let config = read_runtime_config(path)?;
+    let fingerprint = config.fingerprint()?;
+    let mut checks = Vec::new();
+    let mut failures = Vec::new();
+    let mut warnings = Vec::new();
+
+    checks.push(serde_json::json!({
+        "name": "config",
+        "status": "pass",
+        "message": "配置解析与领域校验通过"
+    }));
+    checks.push(serde_json::json!({
+        "name": "fingerprint",
+        "status": "pass",
+        "message": format!("配置指纹={fingerprint}")
+    }));
+
+    let (reference_failures, reference_warnings) = validate_runtime_references(path, &config);
+    for warning in reference_warnings {
+        checks.push(serde_json::json!({
+            "name": "runtime_reference",
+            "status": "warn",
+            "message": warning.clone()
+        }));
+        warnings.push(warning);
+    }
+    for failure in reference_failures {
+        checks.push(serde_json::json!({
+            "name": "runtime_reference",
+            "status": "fail",
+            "message": failure.clone()
+        }));
+        failures.push(failure);
+    }
+
+    for worker in config.workers.iter().filter(|worker| {
+        worker.enabled
+            && matches!(
+                worker.role,
+                WorkerRole::UserStream
+                    | WorkerRole::Execution
+                    | WorkerRole::SpreadRecovery
+                    | WorkerRole::Reconciler
+            )
+            && worker.endpoint.is_some()
+            && worker
+                .endpoint
+                .as_deref()
+                .is_some_and(|endpoint| !endpoint.contains("://"))
+    }) {
+        match worker_credentials_ready(path, worker) {
+            Ok(true) => checks.push(serde_json::json!({
+                "name": format!("worker[{}].credentials", worker.id),
+                "status": "pass",
+                "message": "CCXT 配置中的凭据环境变量可用"
+            })),
+            Ok(false) => {
+                let message = format!(
+                    "worker {} 的 CCXT 配置未提供可用 credential_env；当前仅能运行公共能力",
+                    worker.id
+                );
+                checks.push(serde_json::json!({
+                    "name": format!("worker[{}].credentials", worker.id),
+                    "status": "warn",
+                    "message": message
+                }));
+                warnings.push(message);
+            }
+            Err(error) => {
+                checks.push(serde_json::json!({
+                    "name": format!("worker[{}].credentials", worker.id),
+                    "status": "fail",
+                    "message": error
+                }));
+                failures.push(error);
+            }
+        }
+    }
+
+    let data_dir = resolve_runtime_relative_path(path, &config.storage.data_dir);
+    if data_dir.exists() {
+        if data_dir.is_dir() {
+            checks.push(serde_json::json!({
+                "name": "storage.data_dir",
+                "status": "pass",
+                "message": data_dir.display().to_string()
+            }));
+        } else {
+            let message = format!("storage.data_dir 不是目录: {}", data_dir.display());
+            checks.push(serde_json::json!({
+                "name": "storage.data_dir",
+                "status": "fail",
+                "message": message
+            }));
+            failures.push(message);
+        }
+    } else if data_dir.parent().is_some_and(|parent| parent.is_dir()) {
+        let message = format!(
+            "storage.data_dir 尚不存在，将在首次运行时创建: {}",
+            data_dir.display()
+        );
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir",
+            "status": "warn",
+            "message": message
+        }));
+        warnings.push(message);
+    } else {
+        let message = format!("storage.data_dir 的父目录不存在: {}", data_dir.display());
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir",
+            "status": "fail",
+            "message": message
+        }));
+        failures.push(message);
+    }
+
+    match RuntimeSupervisor::new(config.clone()) {
+        Ok(supervisor) => {
+            let health = supervisor
+                .health()
+                .lock()
+                .map_err(|_| "运行时健康锁已中毒".to_string())?
+                .snapshot(0, config.shutdown_timeout_ms);
+            checks.push(serde_json::json!({
+                "name": "runtime_topology",
+                "status": "pass",
+                "message": format!("overall={:?}", health.overall)
+            }));
+        }
+        Err(error) => {
+            let message = format!("运行拓扑构建失败: {error}");
+            checks.push(serde_json::json!({
+                "name": "runtime_topology",
+                "status": "fail",
+                "message": message
+            }));
+            failures.push(message);
+        }
+    }
+
+    Ok(serde_json::json!({
+        "schema_version": 1,
+        "runtime_path": path.display().to_string(),
+        "environment": config.environment,
+        "profile": config.profile,
+        "config_fingerprint": fingerprint,
+        "ok": failures.is_empty(),
+        "checks": checks,
+        "warnings": warnings,
+        "failures": failures,
+        "network_accessed": false,
+        "orders_sent": false
+    }))
+}
+
+fn run_doctor(path: &Path, as_json: bool) -> Result<(), String> {
+    let report = collect_doctor_report(path)?;
+    let failures = report
+        .get("failures")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    let warnings = report
+        .get("warnings")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    let ok = report
+        .get("ok")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|error| format!("编码 doctor JSON 失败: {error}"))?
+        );
+    } else {
+        println!("[Doctor] 检查配置、路径、运行拓扑和策略输入");
+        if let Some(checks) = report.get("checks").and_then(serde_json::Value::as_array) {
+            for check in checks {
+                let status = check
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_ascii_uppercase();
+                let name = check
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("check");
+                let message = check
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                println!("[{status}] {name}: {message}");
+            }
+            if ok {
+                println!(
+                    "[Doctor] 通过：{} 个警告；未连接交易所、未发送订单",
+                    warnings
+                );
+            } else if let Some(items) = report.get("failures").and_then(serde_json::Value::as_array)
+            {
+                for failure in items.iter().filter_map(serde_json::Value::as_str) {
+                    eprintln!("[FAIL] {failure}");
+                }
+            }
+        }
+    }
+
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("Doctor 发现 {failures} 个必须修复的问题"))
+    }
 }
 
 fn run_unified_backtest(
@@ -1714,23 +3210,75 @@ fn run_unified_backtest(
     )
 }
 
-fn run_live_check(path: &Path) -> Result<(), String> {
+fn push_live_check(
+    checks: &mut Vec<serde_json::Value>,
+    name: impl Into<String>,
+    status: &str,
+    message: impl Into<String>,
+) {
+    checks.push(serde_json::json!({
+        "name": name.into(),
+        "status": status,
+        "message": message.into(),
+    }));
+}
+
+fn collect_live_check_report(path: &Path) -> Result<serde_json::Value, String> {
     let config = read_runtime_config(path)?;
+    let fingerprint = config.fingerprint()?;
     let mut failures = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
+    let mut checks = Vec::new();
 
     if !config.environment.eq_ignore_ascii_case("production") {
-        failures.push(format!(
+        let message = format!(
             "environment 必须为 production，当前为 {}",
             config.environment
-        ));
+        );
+        push_live_check(&mut checks, "environment", "fail", &message);
+        failures.push(message);
+    } else {
+        push_live_check(&mut checks, "environment", "pass", "environment=production");
     }
     match config.config_fingerprint.as_deref() {
-        Some(expected) => match config.verify_fingerprint() {
-            Ok(()) => println!("[PASS] config_fingerprint locked=true value={expected}"),
-            Err(error) => failures.push(error),
+        Some(_) => match config.verify_fingerprint() {
+            Ok(()) => push_live_check(
+                &mut checks,
+                "config_fingerprint",
+                "pass",
+                "config_fingerprint locked=true",
+            ),
+            Err(error) => {
+                push_live_check(&mut checks, "config_fingerprint", "fail", &error);
+                failures.push(error);
+            }
         },
-        None => failures.push("production 必须配置 config_fingerprint 发布锁".into()),
+        None => {
+            let message = "production 必须配置 config_fingerprint 发布锁".to_string();
+            push_live_check(&mut checks, "config_fingerprint", "fail", &message);
+            failures.push(message);
+        }
+    }
+
+    let expected_consistency = if config.messaging.enabled {
+        StorageConsistency::DistributedOutbox
+    } else {
+        StorageConsistency::Transactional
+    };
+    if config.storage.consistency != expected_consistency {
+        let message = format!(
+            "production storage.consistency={:?} 与拓扑要求 {:?} 不一致",
+            config.storage.consistency, expected_consistency
+        );
+        push_live_check(&mut checks, "storage.consistency", "fail", &message);
+        failures.push(message);
+    } else {
+        push_live_check(
+            &mut checks,
+            "storage.consistency",
+            "pass",
+            format!("consistency={:?}", config.storage.consistency),
+        );
     }
 
     for (label, configured) in [
@@ -1752,68 +3300,145 @@ fn run_live_check(path: &Path) -> Result<(), String> {
         ),
     ] {
         match configured {
-            Some(file) if Path::new(file).exists() => println!("[PASS] {label}={file}"),
-            Some(file) => failures.push(format!("{label} 文件不存在: {file}")),
-            None => failures.push(format!("{label} 未配置")),
+            Some(file) if resolve_runtime_relative_path(path, file).exists() => push_live_check(
+                &mut checks,
+                label,
+                "pass",
+                resolve_runtime_relative_path(path, file)
+                    .display()
+                    .to_string(),
+            ),
+            Some(file) => {
+                let message = format!(
+                    "{label} 文件不存在: {}",
+                    resolve_runtime_relative_path(path, file).display()
+                );
+                push_live_check(&mut checks, label, "fail", &message);
+                failures.push(message);
+            }
+            None => {
+                let message = format!("{label} 未配置");
+                push_live_check(&mut checks, label, "fail", &message);
+                failures.push(message);
+            }
         }
     }
 
     let mut execution_count = 0_usize;
     for worker in config.workers.iter().filter(|worker| worker.enabled) {
-        if worker.role == WorkerRole::Execution {
-            execution_count += 1;
+        if matches!(
+            worker.role,
+            WorkerRole::Execution | WorkerRole::SpreadRecovery
+        ) {
+            if worker.role == WorkerRole::Execution {
+                execution_count += 1;
+            }
             if worker
                 .venue_id
                 .as_deref()
                 .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
             {
-                failures.push(format!(
-                    "{} 是 production 中不允许启用的 Paper Execution worker",
+                let message = format!(
+                    "{} 是 production 中不允许启用的 Paper Execution/SpreadRecovery worker",
                     worker.id
-                ));
+                );
+                push_live_check(
+                    &mut checks,
+                    format!("worker[{}].venue", worker.id),
+                    "fail",
+                    &message,
+                );
+                failures.push(message);
             }
             let spec = worker.instrument_spec_path.as_deref().unwrap_or_default();
             let spec_path = resolve_runtime_relative_path(path, spec);
             if spec.is_empty() || !spec_path.exists() {
-                failures.push(format!(
+                let message = format!(
                     "{} instrument_spec_path 不可用: {}",
                     worker.id,
                     spec_path.display()
-                ));
+                );
+                push_live_check(
+                    &mut checks,
+                    format!("worker[{}].instrument_spec", worker.id),
+                    "fail",
+                    &message,
+                );
+                failures.push(message);
             } else {
-                println!(
-                    "[PASS] {} instrument_spec={}",
-                    worker.id,
-                    spec_path.display()
+                push_live_check(
+                    &mut checks,
+                    format!("worker[{}].instrument_spec", worker.id),
+                    "pass",
+                    spec_path.display().to_string(),
                 );
             }
             if worker.max_order_notional_raw.is_none() || worker.max_position_notional_raw.is_none()
             {
-                failures.push(format!("{} 缺少订单或持仓名义额上限", worker.id));
+                let message = format!("{} 缺少订单或持仓名义额上限", worker.id);
+                push_live_check(
+                    &mut checks,
+                    format!("worker[{}].risk_limits", worker.id),
+                    "fail",
+                    &message,
+                );
+                failures.push(message);
+            } else {
+                push_live_check(
+                    &mut checks,
+                    format!("worker[{}].risk_limits", worker.id),
+                    "pass",
+                    "order and position notional limits configured",
+                );
             }
         }
         if matches!(
             worker.role,
-            WorkerRole::UserStream | WorkerRole::Execution | WorkerRole::Reconciler
+            WorkerRole::UserStream
+                | WorkerRole::Execution
+                | WorkerRole::SpreadRecovery
+                | WorkerRole::Reconciler
         ) {
-            let credential_ready = worker.credential_env.as_ref().is_some_and(|credential| {
-                std::env::var_os(&credential.api_key).is_some_and(|value| !value.is_empty())
-                    && std::env::var_os(&credential.secret).is_some_and(|value| !value.is_empty())
-            }) || worker.credential_files.as_ref().is_some_and(
-                |credential| {
-                    Path::new(&credential.api_key).is_file()
-                        && Path::new(&credential.secret).is_file()
-                },
-            );
-            if credential_ready {
-                println!("[PASS] {} credentials source is available", worker.id);
-            } else {
-                failures.push(format!("{} 凭据环境变量或凭据文件不可用", worker.id));
+            match worker_credentials_ready(path, worker) {
+                Ok(true) => push_live_check(
+                    &mut checks,
+                    format!("worker[{}].credentials", worker.id),
+                    "pass",
+                    "credentials source is available",
+                ),
+                Ok(false) => {
+                    let message = format!("{} 凭据环境变量或凭据文件不可用", worker.id);
+                    push_live_check(
+                        &mut checks,
+                        format!("worker[{}].credentials", worker.id),
+                        "fail",
+                        &message,
+                    );
+                    failures.push(message);
+                }
+                Err(error) => {
+                    push_live_check(
+                        &mut checks,
+                        format!("worker[{}].credentials", worker.id),
+                        "fail",
+                        &error,
+                    );
+                    failures.push(error);
+                }
             }
         }
     }
     if execution_count == 0 {
-        failures.push("production 至少需要一个启用的 Execution worker".into());
+        let message = "production 至少需要一个启用的 Execution worker".to_string();
+        push_live_check(&mut checks, "execution_workers", "fail", &message);
+        failures.push(message);
+    } else {
+        push_live_check(
+            &mut checks,
+            "execution_workers",
+            "pass",
+            format!("enabled_execution_workers={execution_count}"),
+        );
     }
 
     for strategy in config
@@ -1825,30 +3450,96 @@ fn run_live_check(path: &Path) -> Result<(), String> {
         if let Some(snapshot) = strategy.research_snapshot_path.as_deref() {
             let snapshot_path = resolve_runtime_relative_path(path, snapshot);
             if snapshot_path.is_file() {
-                println!("[PASS] research_snapshot={}", snapshot_path.display());
+                push_live_check(
+                    &mut checks,
+                    "research_snapshot",
+                    "pass",
+                    snapshot_path.display().to_string(),
+                );
             } else {
-                failures.push(format!(
+                let message = format!(
                     "research_snapshot_path 文件不存在: {}",
                     snapshot_path.display()
-                ));
+                );
+                push_live_check(&mut checks, "research_snapshot", "fail", &message);
+                failures.push(message);
             }
         }
     }
     if config.api.bind.starts_with("127.") || config.api.bind.starts_with("localhost") {
-        warnings.push("API 仅绑定本机地址，适合单机部署，不适合跨节点访问".into());
+        let message = "API 仅绑定本机地址，适合单机部署，不适合跨节点访问".to_string();
+        push_live_check(&mut checks, "api.bind", "warn", &message);
+        warnings.push(message);
     }
 
-    for warning in warnings {
-        println!("[WARN] {warning}");
+    let ok = failures.is_empty();
+    Ok(serde_json::json!({
+        "schema_version": 1,
+        "runtime_path": path.display().to_string(),
+        "environment": config.environment,
+        "profile": config.profile,
+        "storage_backend": config.storage.backend,
+        "storage_consistency": config.storage.consistency,
+        "config_fingerprint": fingerprint,
+        "config_fingerprint_locked": config.config_fingerprint.is_some(),
+        "checks": checks,
+        "warnings": warnings,
+        "failures": failures,
+        "ok": ok,
+        "network_accessed": false,
+        "orders_sent": false
+    }))
+}
+
+fn run_live_check(path: &Path, as_json: bool) -> Result<(), String> {
+    let report = collect_live_check_report(path)?;
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|error| format!("编码 live-check JSON 失败: {error}"))?
+        );
+        if report.get("ok").and_then(serde_json::Value::as_bool) == Some(false) {
+            return Err("实盘前置检查未通过".into());
+        }
+        return Ok(());
     }
-    if failures.is_empty() {
+
+    if let Some(checks) = report.get("checks").and_then(serde_json::Value::as_array) {
+        for check in checks {
+            let status = check
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown")
+                .to_ascii_uppercase();
+            let name = check
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("check");
+            let message = check
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            if status == "FAIL" {
+                eprintln!("[{status}] {name}: {message}");
+            } else {
+                println!("[{status}] {name}: {message}");
+            }
+        }
+    }
+    let failures = report
+        .get("failures")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    let ok = report
+        .get("ok")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if ok {
         println!("[PASS] live-check 全部通过：未连接交易所，未发送订单");
         Ok(())
     } else {
-        for failure in &failures {
-            eprintln!("[FAIL] {failure}");
-        }
-        Err(format!("实盘前置检查失败，共 {} 项", failures.len()))
+        Err(format!("实盘前置检查失败，共 {failures} 项"))
     }
 }
 
@@ -1894,6 +3585,7 @@ fn scheduler_manifest(worker_id: &str, trading_day: &str, now: u64) -> qx_core::
         code_commit: "workspace".into(),
         config_hash: "runtime-scheduler-v1".into(),
         data_fingerprint: format!("scheduler:{trading_day}"),
+        input_components: BTreeMap::new(),
         clock_start: now,
         clock_end: now,
         global_seed: 0,
@@ -2019,6 +3711,129 @@ fn ccxt_market_event_log_name(worker: &WorkerConfig) -> String {
     format!("ccxt-market-{}-events", worker.id)
 }
 
+/// Paper execution 必须消费与市场数据相同的行情事实。
+///
+/// MarketData worker 自己的 EventLog 用于保留供应商来源与 BarFrame 快照，
+/// Paper 账户则有独立的账户级 EventLog（订单、账簿、行情共同归约）。因此
+/// 公共 CCXT/Binance 行情需要在这里显式镜像到匹配的 Paper 账户，而不是让
+/// Paper execution worker 读取另一个 worker 的内存状态。镜像沿用来源 worker
+/// 与 source sequence 组成幂等键；同一行情重试不会重复写入。
+struct PaperMarketBridge {
+    workers: Vec<WorkerConfig>,
+    log_name: String,
+    pipeline: LiveEventPipeline,
+}
+
+struct PaperMarketQuote<'a> {
+    source_worker_id: &'a str,
+    instrument: &'a InstrumentId,
+    bid: Price,
+    bid_qty: Quantity,
+    ask: Price,
+    ask_qty: Quantity,
+    event_ts: u64,
+    receive_ts: u64,
+    source_seq: u64,
+}
+
+fn paper_market_worker_matches_instrument(
+    worker: &WorkerConfig,
+    instrument: &InstrumentId,
+) -> bool {
+    worker.enabled
+        && worker.role == WorkerRole::Execution
+        && worker
+            .venue_id
+            .as_deref()
+            .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
+        && (worker.symbols.is_empty()
+            || worker
+                .symbols
+                .iter()
+                .any(|symbol| InstrumentId::parse(symbol).as_ref() == Some(instrument)))
+}
+
+fn open_paper_market_bridges(
+    storage: &PipelineStorage,
+    workers: &[WorkerConfig],
+) -> Result<Vec<PaperMarketBridge>, String> {
+    let mut bridges: Vec<PaperMarketBridge> = Vec::new();
+    for worker in workers.iter().filter(|worker| {
+        worker.enabled
+            && worker.role == WorkerRole::Execution
+            && worker
+                .venue_id
+                .as_deref()
+                .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
+    }) {
+        let log_name = format!(
+            "paper-{}-{}-events",
+            worker.account_id.as_deref().unwrap_or("unknown"),
+            worker.venue_id.as_deref().unwrap_or("paper")
+        );
+        // 同一账户/venue 允许配置多个标的 worker，但它们共享一个账户级日志；
+        // 合并 worker 的过滤条件，避免第一个 worker 的 symbols 遮蔽其它标的。
+        if let Some(existing) = bridges
+            .iter_mut()
+            .find(|bridge| bridge.log_name == log_name)
+        {
+            existing.workers.push(worker.clone());
+            continue;
+        }
+        let pipeline = storage.open(
+            log_name.clone(),
+            worker.settlement_currency.as_deref().unwrap_or("USDT"),
+        )?;
+        bridges.push(PaperMarketBridge {
+            workers: vec![worker.clone()],
+            log_name,
+            pipeline,
+        });
+    }
+    Ok(bridges)
+}
+
+fn bridge_market_quote_to_paper(
+    bridges: &mut [PaperMarketBridge],
+    quote: PaperMarketQuote<'_>,
+) -> Result<usize, String> {
+    let mut mirrored = 0;
+    for bridge in bridges.iter_mut().filter(|bridge| {
+        bridge
+            .workers
+            .iter()
+            .any(|worker| paper_market_worker_matches_instrument(worker, quote.instrument))
+    }) {
+        bridge
+            .pipeline
+            .ingest(RuntimeEventEnvelope::market_quote(
+                quote.instrument.clone(),
+                QuoteTick::new(
+                    quote.event_ts,
+                    quote.bid,
+                    quote.bid_qty,
+                    quote.ask,
+                    quote.ask_qty,
+                    quote.source_seq,
+                ),
+                quote.receive_ts,
+                quote.source_seq,
+                format!(
+                    "market-bridge:{}:{}:{}",
+                    quote.source_worker_id, quote.instrument, quote.source_seq
+                ),
+            ))
+            .map_err(|error| {
+                format!(
+                    "镜像公共行情到 Paper EventLog 失败 {} {}: {error:?}",
+                    bridge.log_name, quote.instrument
+                )
+            })?;
+        mirrored += 1;
+    }
+    Ok(mirrored)
+}
+
 fn resolve_ccxt_config_path(runtime_path: &Path, configured: &str) -> String {
     resolve_runtime_relative_path(runtime_path, configured)
         .to_string_lossy()
@@ -2039,10 +3854,25 @@ fn resolve_runtime_relative_path(runtime_path: &Path, configured: &str) -> PathB
     if is_explicit_absolute_path(configured) {
         PathBuf::from(configured)
     } else {
-        runtime_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(configured)
+        let parent = runtime_path.parent().unwrap_or_else(|| Path::new("."));
+        let configured_path = Path::new(configured);
+
+        // Runtime JSON 通常位于 deploy/ 下。兼容两种常见写法：
+        // `qianxing.foo.json` 与 `deploy/qianxing.foo.json`；后者在
+        // deploy/runtime.json 下直接 join 会错误地变成 deploy/deploy/。
+        // 只在配置首段恰好等于运行时目录名时剥离该冗余段，避免改变
+        // 其它目录布局的语义。
+        let mut components = configured_path.components();
+        let first = components.next();
+        let parent_name = parent.file_name().and_then(|value| value.to_str());
+        if let (Some(std::path::Component::Normal(first)), Some(parent_name)) = (first, parent_name)
+        {
+            if first == std::ffi::OsStr::new(parent_name) {
+                let remainder = components.as_path();
+                return parent.join(remainder);
+            }
+        }
+        parent.join(configured_path)
     }
 }
 
@@ -2077,6 +3907,18 @@ fn resolve_strategy_runtime_paths(strategy: &mut StrategyRuntimeConfig, runtime_
                 .into_owned(),
         );
     }
+    if let Some(configured) = strategy.dataset_bundle_path.as_deref() {
+        strategy.dataset_bundle_path = Some(
+            resolve_runtime_relative_path(runtime_path, configured)
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    for configured in strategy.dataset_component_paths.values_mut() {
+        *configured = resolve_runtime_relative_path(runtime_path, configured)
+            .to_string_lossy()
+            .into_owned();
+    }
     if let Some(configured) = strategy.bars_snapshot_path.as_deref() {
         strategy.bars_snapshot_path = Some(
             resolve_runtime_relative_path(runtime_path, configured)
@@ -2086,6 +3928,20 @@ fn resolve_strategy_runtime_paths(strategy: &mut StrategyRuntimeConfig, runtime_
     }
     if let Some(configured) = strategy.ashare_rules_path.as_deref() {
         strategy.ashare_rules_path = Some(
+            resolve_runtime_relative_path(runtime_path, configured)
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    if let Some(configured) = strategy.ashare_actions_path.as_deref() {
+        strategy.ashare_actions_path = Some(
+            resolve_runtime_relative_path(runtime_path, configured)
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    if let Some(configured) = strategy.ashare_calendar_path.as_deref() {
+        strategy.ashare_calendar_path = Some(
             resolve_runtime_relative_path(runtime_path, configured)
                 .to_string_lossy()
                 .into_owned(),
@@ -2199,6 +4055,28 @@ fn validate_ccxt_worker_binding(
             "CCXT worker {} venue_id={} 与配置 exchange_id={} 不一致",
             worker.id, expected, configured
         ));
+    }
+    if let Some(credentials) = config
+        .get("credential_env")
+        .filter(|value| !value.is_null())
+    {
+        let credentials = credentials.as_object().ok_or_else(|| {
+            format!(
+                "CCXT 配置 credential_env 必须是对象或 null path={}",
+                ccxt_config_path.display()
+            )
+        })?;
+        for key in ["api_key", "secret", "password", "uid"] {
+            if let Some(value) = credentials.get(key) {
+                if !value.is_string() || value.as_str().is_some_and(|value| value.trim().is_empty())
+                {
+                    return Err(format!(
+                        "CCXT 配置 credential_env.{key} 必须是非空环境变量名 path={}",
+                        ccxt_config_path.display()
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -3131,6 +5009,7 @@ impl ContractBarStrategy {
         frame: &BarFrame,
         initial_cash: Money,
         currency: impl Into<String>,
+        dataset_bundle_fingerprint: Option<&str>,
     ) -> Result<Self, String> {
         let instrument = config
             .strategy
@@ -3188,7 +5067,9 @@ impl ContractBarStrategy {
             instrument,
             initial_cash,
             currency: currency.into(),
-            data_fingerprint: format!("{:016x}", frame.digest()),
+            data_fingerprint: dataset_bundle_fingerprint
+                .map(|fingerprint| format!("dataset-bundle:{fingerprint}"))
+                .unwrap_or_else(|| format!("{:016x}", frame.digest())),
             native_initialized: false,
         })
     }
@@ -3808,12 +5689,19 @@ fn strategy_submit_command(
     strategy_id: &str,
     order: &Order,
     dry_run: bool,
+    spread_group_id: Option<&str>,
 ) -> Result<ControlCommand, String> {
-    let payload = BTreeMap::from([(
+    let mut payload = BTreeMap::from([(
         "order_json".into(),
         serde_json::to_string(order)
             .map_err(|error| format!("Strategy 订单序列化失败: {error}"))?,
     )]);
+    if let Some(group_id) = spread_group_id {
+        if group_id.trim().is_empty() {
+            return Err("Strategy 多腿 spread_group_id 不能为空".into());
+        }
+        payload.insert("spread_group_id".into(), group_id.into());
+    }
     Ok(ControlCommand {
         command_id: order.client_id,
         request_id: format!("strategy:{strategy_id}:{}", order.client_id),
@@ -3825,6 +5713,343 @@ fn strategy_submit_command(
         permission: Permission::Trading,
         dry_run,
     })
+}
+
+fn spread_group_id(strategy_id: &str, run_id: u64, signal_id: u64) -> String {
+    format!("spread-{strategy_id}-{run_id}-{signal_id}")
+}
+
+/// 在多腿命令进入队列前持久化完整订单组。组快照不是成交事实，事实仍由
+/// 各 Venue EventLog 写入；它只提供跨 worker 的腿身份、路由和重启恢复索引。
+fn persist_strategy_spread_group(
+    root: &Path,
+    group_id: &str,
+    strategy_id: &str,
+    orders: &[Order],
+) -> Result<(), String> {
+    if orders.len() < 2 {
+        return Ok(());
+    }
+    let legs = orders
+        .iter()
+        .map(|order| SpreadOrderLeg {
+            leg_id: format!("leg-{}", order.client_id),
+            venue_id: order.instrument.venue.to_string(),
+            order: order.clone(),
+        })
+        .collect();
+    let group = SpreadOrderGroup::new(group_id, strategy_id, legs)
+        .map_err(|error| format!("创建多腿订单组失败: {error:?}"))?;
+    let mut store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
+    if let Some(existing) = store.load(group_id)? {
+        if existing != group {
+            return Err(format!("多腿订单组 {} 已存在且内容不一致", group_id));
+        }
+        return Ok(());
+    }
+    store.save(&group)
+}
+
+/// 将某条执行 worker 已写入 EventLog 的订单状态归约到多腿组快照。
+/// 只依据本地事实更新，不根据命令成功返回值臆造成交；部分成交、取消和未知
+/// 状态分别进入 SpreadOrderGroup 的补偿/对账状态机。
+fn sync_spread_group_after_order(
+    root: &Path,
+    pipeline: &LiveEventPipeline,
+    command: &ControlCommand,
+    now: u64,
+) -> Result<(), String> {
+    let Some(group_id) = command.payload.get("spread_group_id") else {
+        return Ok(());
+    };
+    let order = order_from_submit_command(command)
+        .map_err(|error| format!("读取多腿 SubmitOrder 失败: {error:?}"))?;
+    let current = pipeline
+        .orders()
+        .into_iter()
+        .find(|candidate| candidate.client_id == order.client_id)
+        .ok_or_else(|| format!("多腿订单组缺少 EventLog 订单 {}", order.client_id))?;
+    let mut store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
+    let Some(mut group) = store.load(group_id)? else {
+        return Err(format!("找不到多腿订单组快照: {group_id}"));
+    };
+    let leg_id = format!("leg-{}", current.client_id);
+    let recorded_filled = group
+        .leg(&leg_id)
+        .map_err(|error| format!("读取多腿订单腿失败: {error:?}"))?
+        .order
+        .filled
+        .raw();
+    let filled_delta = current.filled.raw().saturating_sub(recorded_filled);
+    if filled_delta > 0 {
+        let fill = qx_core::Fill {
+            order_id: current.client_id,
+            qty: Quantity::from_raw(filled_delta),
+            price: current.limit.unwrap_or_else(|| Price::from_i64(1)),
+            fee: Money::ZERO,
+            ts: now,
+            account_id: current.account_id.clone(),
+            ..qx_core::Fill::default()
+        };
+        group
+            .record_fill(&leg_id, &fill)
+            .map_err(|error| format!("归约多腿成交失败: {error:?}"))?;
+    }
+    match current.status {
+        OrderStatus::Accepted
+        | OrderStatus::Working
+        | OrderStatus::PartiallyFilled
+        | OrderStatus::Filled => group
+            .record_accepted(&leg_id)
+            .map_err(|error| format!("归约多腿 Accepted 失败: {error:?}"))?,
+        OrderStatus::Cancelled | OrderStatus::Expired => group
+            .record_cancelled(&leg_id)
+            .map_err(|error| format!("归约多腿 Cancelled 失败: {error:?}"))?,
+        OrderStatus::Rejected => group
+            .record_rejected(&leg_id)
+            .map_err(|error| format!("归约多腿 Rejected 失败: {error:?}"))?,
+        OrderStatus::Unknown => group
+            .record_unknown(&leg_id)
+            .map_err(|error| format!("归约多腿 Unknown 失败: {error:?}"))?,
+        OrderStatus::PendingSubmit | OrderStatus::Submitted | OrderStatus::CancelPending => {}
+    }
+    store.save(&group)
+}
+
+struct SpreadRecoveryContext<'a> {
+    root: &'a Path,
+    venue_id: &'a str,
+    accept_any_venue: bool,
+    order_validator: Option<&'a dyn HedgeOrderValidator>,
+    pipeline: &'a mut LiveEventPipeline,
+    worker_id: &'a str,
+    now: u64,
+    source_seq: &'a mut u64,
+}
+
+/// 扫描单机多腿恢复快照，并在当前执行 Venue 上处理已确认的风险敞口。
+///
+/// 该函数只处理 `HedgeRequired`，永远跳过 `ReconcileRequired`；后者必须先
+/// 由用户流/对账 worker 得到确定的远端事实。补偿订单仍由
+/// `HedgeRecoveryWorker` 生成确定性 client_order_id，并通过同一 EventLog
+/// 事实端口归约，因而执行 worker 重启不会重复提交。
+fn recover_spread_groups_for_venue<V: Venue>(
+    context: SpreadRecoveryContext<'_>,
+    venue: V,
+) -> Result<(V, Vec<String>), String> {
+    let SpreadRecoveryContext {
+        root,
+        venue_id,
+        accept_any_venue,
+        order_validator,
+        pipeline,
+        worker_id,
+        now,
+        source_seq,
+    } = context;
+    let probe_store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
+    let groups = probe_store
+        .group_ids()?
+        .into_iter()
+        .filter_map(|group_id| match probe_store.load(&group_id) {
+            Ok(Some(group))
+                if group.status == SpreadOrderGroupStatus::HedgeRequired
+                    && group.legs.iter().any(|leg| {
+                        leg.order.filled.raw() > 0
+                            && (venue_id.trim().is_empty()
+                                || leg.venue_id.eq_ignore_ascii_case(venue_id))
+                    }) =>
+            {
+                Some(Ok(group))
+            }
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if groups.is_empty() {
+        return Ok((venue, Vec::new()));
+    }
+
+    let mut store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
+    let mut router = if accept_any_venue {
+        VenuePortAdapter::new_for_any_venue(venue)
+    } else {
+        VenuePortAdapter::new(venue)
+    };
+    let mut diagnostics = Vec::new();
+    for group in groups {
+        let group_id = group.group_id.clone();
+        let outcome = HedgeRecoveryWorker::new(
+            group,
+            &mut store,
+            &mut router,
+            pipeline,
+            worker_id,
+            now,
+            source_seq,
+        )
+        .map_err(|error| format!("构造多腿恢复 worker 失败: {error:?}"))?
+        .execute_with_validator(order_validator)?;
+        if outcome.completed {
+            diagnostics.push(format!("spread_group={group_id} hedge=completed"));
+        }
+        diagnostics.extend(
+            outcome
+                .errors
+                .into_iter()
+                .map(|error| format!("spread_group={group_id} hedge=pending reason={error}")),
+        );
+    }
+    Ok((router.into_inner(), diagnostics))
+}
+
+fn has_pending_spread_recovery(root: &Path, venue_id: &str) -> Result<bool, String> {
+    let store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
+    for group_id in store.group_ids()? {
+        let Some(group) = store.load(&group_id)? else {
+            continue;
+        };
+        if group.status != SpreadOrderGroupStatus::HedgeRequired {
+            continue;
+        }
+        if group.legs.iter().any(|leg| {
+            leg.order.filled.raw() > 0
+                && (venue_id.trim().is_empty() || leg.venue_id.eq_ignore_ascii_case(venue_id))
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn dedicated_spread_recovery_configured(
+    config: &RuntimeConfig,
+    execution_worker: &WorkerConfig,
+) -> bool {
+    let Some(account_id) = execution_worker.account_id.as_deref() else {
+        return false;
+    };
+    let Some(venue_id) = execution_worker.venue_id.as_deref() else {
+        return false;
+    };
+    config.workers.iter().any(|worker| {
+        worker.enabled
+            && worker.role == WorkerRole::SpreadRecovery
+            && worker.account_id.as_deref() == Some(account_id)
+            && worker
+                .venue_id
+                .as_deref()
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(venue_id))
+    })
+}
+
+fn recovery_order_validator<'a>(
+    worker: &'a WorkerConfig,
+    pipeline: &LiveEventPipeline,
+    runtime_config_path: Option<&'a Path>,
+) -> impl Fn(&Order) -> Result<(), String> + 'a {
+    // 风控读取的是恢复扫描开始时的不可变快照；本轮补偿产生的事实会在
+    // 下一轮扫描重新加载，避免在同一轮里用半更新状态重复计算风险。
+    let risk_pipeline = pipeline.clone();
+    move |order| {
+        if let Some((risk, position)) =
+            worker_risk_context(worker, order, &risk_pipeline, runtime_config_path)?
+        {
+            risk.validate_order(order, &position)
+                .map_err(|error| format!("{error:?}"))?;
+        }
+        Ok(())
+    }
+}
+
+/// Paper 恢复使用同一 `PaperVenue` 复现补偿单的 Accepted→Fill 过程，
+/// 但只恢复 `spread-hedge-v1` 订单，避免恢复扫描误撮合普通策略订单。
+fn recover_paper_spread_groups(
+    root: &Path,
+    pipeline: &mut LiveEventPipeline,
+    worker_id: &str,
+    now: u64,
+    order_validator: Option<&dyn HedgeOrderValidator>,
+) -> Result<Vec<String>, String> {
+    let hedge_orders = pipeline
+        .orders()
+        .into_iter()
+        .filter(|order| {
+            order
+                .trace
+                .as_ref()
+                .and_then(|trace| trace.rule_version.as_deref())
+                == Some("spread-hedge-v1")
+        })
+        .collect::<Vec<_>>();
+    let mut venue = PaperVenue::new("paper");
+    venue
+        .restore_orders(hedge_orders)
+        .map_err(|error| format!("恢复 Paper 补偿订单失败: {error:?}"))?;
+    let mut source_seq = pipeline
+        .log()
+        .events()
+        .last()
+        .map(|event| event.source_seq)
+        .unwrap_or(0);
+    let (mut venue, mut diagnostics) = recover_spread_groups_for_venue(
+        SpreadRecoveryContext {
+            root,
+            venue_id: "",
+            accept_any_venue: true,
+            order_validator,
+            pipeline,
+            worker_id,
+            now,
+            source_seq: &mut source_seq,
+        },
+        venue,
+    )?;
+
+    let instruments = pipeline
+        .orders()
+        .into_iter()
+        .filter(|order| {
+            order
+                .trace
+                .as_ref()
+                .and_then(|trace| trace.rule_version.as_deref())
+                == Some("spread-hedge-v1")
+                && !order.status.is_terminal()
+        })
+        .map(|order| order.instrument)
+        .collect::<BTreeSet<_>>();
+    for instrument in instruments {
+        let Some(quote) = pipeline.latest_quote_with_depth(&instrument) else {
+            diagnostics.push(format!(
+                "spread_hedge instrument={} pending reason=缺少最新行情",
+                instrument
+            ));
+            continue;
+        };
+        let events = venue.on_quote(&instrument, quote);
+        if !events.is_empty() {
+            ingest_venue_events(pipeline, events, worker_id, now, &mut source_seq)
+                .map_err(|error| format!("写入 Paper 补偿成交事实失败: {error}"))?;
+        }
+    }
+
+    // 第一轮负责生成补偿单，行情驱动后第二轮确认其 Filled 并将组标记 Hedged。
+    let (_venue, second_pass) = recover_spread_groups_for_venue(
+        SpreadRecoveryContext {
+            root,
+            venue_id: "",
+            accept_any_venue: true,
+            order_validator,
+            pipeline,
+            worker_id,
+            now,
+            source_seq: &mut source_seq,
+        },
+        venue,
+    )?;
+    diagnostics.extend(second_pass);
+    Ok(diagnostics)
 }
 
 fn persist_strategy_submit(
@@ -4138,7 +6363,10 @@ fn run_binance_private_probe(runtime_path: &Path, worker_id: &str) -> Result<(),
 fn binance_event_log_name(worker: &WorkerConfig) -> String {
     match worker.role {
         WorkerRole::MarketData => format!("{}-events", worker.id),
-        WorkerRole::UserStream | WorkerRole::Execution | WorkerRole::Reconciler => format!(
+        WorkerRole::UserStream
+        | WorkerRole::Execution
+        | WorkerRole::SpreadRecovery
+        | WorkerRole::Reconciler => format!(
             "binance-{}-{}-events",
             worker.account_id.as_deref().unwrap_or("unknown"),
             worker.venue_id.as_deref().unwrap_or("unknown")
@@ -4151,6 +6379,7 @@ fn run_binance_market_worker(
     context: qx_runtime::WorkerContext,
     worker: WorkerConfig,
     pipeline_storage: PipelineStorage,
+    paper_workers: Vec<WorkerConfig>,
 ) -> Result<(), String> {
     if worker.symbols.len() != 1 {
         return Err(format!(
@@ -4164,6 +6393,7 @@ fn run_binance_market_worker(
     let mut pipeline = pipeline_storage
         .open(binance_event_log_name(&worker), "USDT")
         .map_err(|error| format!("创建行情事件管线失败: {error}"))?;
+    let mut paper_bridges = open_paper_market_bridges(&pipeline_storage, &paper_workers)?;
     let mut stream = BinanceSpotMarketStream::connect_with_endpoint(
         instrument.clone(),
         host,
@@ -4183,14 +6413,26 @@ fn run_binance_market_worker(
                 pipeline
                     .ingest(RuntimeEventEnvelope::market_quote(
                         instrument.clone(),
-                        quote.bid,
-                        quote.ask,
-                        quote.ts,
+                        quote,
                         received_ts,
                         quote.source_seq,
                         format!("{}:quote:{}", worker.id, quote.source_seq),
                     ))
                     .map_err(|error| format!("行情事实归约失败: {error:?}"))?;
+                bridge_market_quote_to_paper(
+                    &mut paper_bridges,
+                    PaperMarketQuote {
+                        source_worker_id: &worker.id,
+                        instrument: &instrument,
+                        bid: quote.bid,
+                        bid_qty: quote.bid_qty,
+                        ask: quote.ask,
+                        ask_qty: quote.ask_qty,
+                        event_ts: quote.ts,
+                        receive_ts: received_ts,
+                        source_seq: quote.source_seq,
+                    },
+                )?;
                 quotes = quotes.saturating_add(1);
                 context.heartbeat(received_ts)?;
             }
@@ -4331,6 +6573,7 @@ struct ReconcileReportInput<'a> {
     venue_id: &'a str,
     observed_ts: u64,
     issues: &'a [AdapterReconcileIssue],
+    additional_order_issues: &'a [serde_json::Value],
     balances_count: usize,
     balance_discrepancies: &'a [RuntimeBalanceDiscrepancy],
     position_snapshots_count: usize,
@@ -4345,7 +6588,12 @@ fn persist_reconcile_report(input: ReconcileReportInput<'_>) -> Result<(), Strin
         account_id: input.account_id.into(),
         venue_id: input.venue_id.into(),
         observed_ts: input.observed_ts,
-        order_issues: input.issues.iter().map(reconcile_issue_json).collect(),
+        order_issues: input
+            .issues
+            .iter()
+            .map(reconcile_issue_json)
+            .chain(input.additional_order_issues.iter().cloned())
+            .collect(),
         balances_count: input.balances_count,
         balance_discrepancies: input
             .balance_discrepancies
@@ -4440,6 +6688,7 @@ fn run_binance_reconcile_worker(
             venue_id: &venue_id,
             observed_ts: received_ts,
             issues: &issues,
+            additional_order_issues: &[],
             balances_count: balances.len(),
             balance_discrepancies: &balance_discrepancies,
             position_snapshots_count: 0,
@@ -4948,6 +7197,76 @@ fn paper_submit_matches_worker(command: &ControlCommand, worker: &WorkerConfig) 
         .unwrap_or(false)
 }
 
+/// 独立的 Paper 多腿恢复 worker。它只扫描并推进 `HedgeRequired` 快照，
+/// 不消费普通 SubmitOrder 队列，使恢复任务可以单独扩缩容、重启和观测。
+fn run_paper_spread_recovery_worker(
+    path: &Path,
+    worker_id: &str,
+    once: bool,
+) -> Result<(), String> {
+    let config = read_runtime_config(path)?;
+    let worker = config
+        .workers
+        .iter()
+        .find(|worker| worker.id == worker_id)
+        .cloned()
+        .ok_or_else(|| format!("找不到 worker: {worker_id}"))?;
+    if !worker.enabled
+        || worker.role != WorkerRole::SpreadRecovery
+        || worker
+            .venue_id
+            .as_deref()
+            .map(|venue| !venue.eq_ignore_ascii_case("paper"))
+            .unwrap_or(true)
+    {
+        return Err(format!(
+            "worker {worker_id} 不是启用的 Paper SpreadRecovery worker"
+        ));
+    }
+    let root = Path::new(&config.storage.data_dir).to_path_buf();
+    let log_name = format!(
+        "paper-{}-{}-events",
+        worker.account_id.as_deref().unwrap_or("unknown"),
+        worker.venue_id.as_deref().unwrap_or("paper")
+    );
+    let runtime_config = config.clone();
+    let runtime_config_path = path.to_path_buf();
+    let supervisor = RuntimeSupervisor::new(config)?;
+    let registered_id = worker.id.clone();
+    let handle = supervisor.spawn_worker(&registered_id, move |context| {
+        context.mark(
+            qx_runtime::ServiceStatus::Ready,
+            "paper spread recovery scanning",
+            Some(runtime_timestamp_ms()),
+        )?;
+        while !context.should_stop() {
+            let now = runtime_timestamp_ms();
+            let mut pipeline = open_runtime_pipeline(&runtime_config, &root, &log_name, "USDT")
+                .map_err(|error| format!("打开 Paper 多腿恢复 EventLog 失败: {error}"))?;
+            let validator =
+                recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
+            for message in recover_paper_spread_groups(
+                &root,
+                &mut pipeline,
+                context.id(),
+                now,
+                Some(&validator),
+            )? {
+                eprintln!("[HedgeRecovery] {message}");
+            }
+            context.heartbeat(now)?;
+            if once {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        Ok(())
+    })?;
+    handle
+        .join()
+        .map_err(|_| format!("Paper SpreadRecovery worker {worker_id} panic"))?
+}
+
 fn run_paper_execution_worker(path: &Path, worker_id: &str, once: bool) -> Result<(), String> {
     let config = read_runtime_config(path)?;
     let worker = config
@@ -4957,7 +7276,10 @@ fn run_paper_execution_worker(path: &Path, worker_id: &str, once: bool) -> Resul
         .cloned()
         .ok_or_else(|| format!("找不到 worker: {worker_id}"))?;
     if !worker.enabled
-        || worker.role != WorkerRole::Execution
+        || !matches!(
+            worker.role,
+            WorkerRole::Execution | WorkerRole::SpreadRecovery
+        )
         || worker
             .venue_id
             .as_deref()
@@ -4967,6 +7289,9 @@ fn run_paper_execution_worker(path: &Path, worker_id: &str, once: bool) -> Resul
         return Err(format!(
             "worker {worker_id} 不是启用的 Paper Execution worker"
         ));
+    }
+    if worker.role == WorkerRole::SpreadRecovery {
+        return run_paper_spread_recovery_worker(path, worker_id, once);
     }
     let root = Path::new(&config.storage.data_dir).to_path_buf();
     let store = configured_control_store(&config)?;
@@ -4978,6 +7303,7 @@ fn run_paper_execution_worker(path: &Path, worker_id: &str, once: bool) -> Resul
     );
     let segment_events = config.storage.event_log_segment_events;
     let runtime_config = config.clone();
+    let dedicated_spread_recovery = dedicated_spread_recovery_configured(&config, &worker);
     let postgres_dsn = configured_postgres_dsn(&config)?;
     let supervisor = RuntimeSupervisor::new(config)?;
     let registered_id = worker.id.clone();
@@ -5027,21 +7353,32 @@ fn run_paper_execution_worker(path: &Path, worker_id: &str, once: bool) -> Resul
                 let action = if command.dry_run {
                     Ok("DRY_RUN_VALIDATED".into())
                 } else {
+                    let market_pipeline =
+                        open_runtime_pipeline(&runtime_config, &root, &log_name, "USDT")
+                            .map_err(|error| format!("打开 Paper 行情 EventLog 失败: {error}"))?;
+                    let order = order_from_submit_command(&command)
+                        .map_err(|error| format!("Paper 订单载荷非法: {error:?}"))?;
+                    let market_quote = market_pipeline
+                        .latest_quote_with_depth(&order.instrument)
+                        .ok_or_else(|| {
+                        format!(
+                            "Paper 订单 {} 缺少 {} 的最新行情事实，等待 MarketData 后重试",
+                            order.client_id, order.instrument
+                        )
+                    })?;
                     let risk_snapshot = if worker.instrument_spec_path.is_some() {
-                        let pipeline =
-                            open_runtime_pipeline(&runtime_config, &root, &log_name, "USDT")
-                                .map_err(|error| {
-                                    format!("打开 Paper 风控 EventLog 失败: {error}")
-                                })?;
-                        let order = order_from_submit_command(&command)
-                            .map_err(|error| format!("Paper 订单载荷非法: {error:?}"))?;
-                        worker_risk_context(&worker, &order, &pipeline, Some(&runtime_config_path))?
+                        worker_risk_context(
+                            &worker,
+                            &order,
+                            &market_pipeline,
+                            Some(&runtime_config_path),
+                        )?
                     } else {
                         None
                     };
-                    match risk_snapshot {
+                    let result = match risk_snapshot {
                         Some((risk, position)) => {
-                            execute_paper_submit_effect_with_storage_backend_and_pool(
+                            execute_paper_submit_effect_with_storage_backend_and_pool_with_quote(
                                 &command,
                                 &root,
                                 &log_name,
@@ -5051,20 +7388,30 @@ fn run_paper_execution_worker(path: &Path, worker_id: &str, once: bool) -> Resul
                                 runtime_config.storage.postgres_pool_size,
                                 Some(risk),
                                 Some(position),
+                                Some(market_quote),
                             )
                         }
-                        None => execute_paper_submit_effect_with_storage_backend_and_pool(
-                            &command,
-                            &root,
-                            &log_name,
-                            now,
-                            segment_events,
-                            postgres_dsn.as_deref(),
-                            runtime_config.storage.postgres_pool_size,
-                            None,
-                            None,
-                        ),
-                    }
+                        None => {
+                            execute_paper_submit_effect_with_storage_backend_and_pool_with_quote(
+                                &command,
+                                &root,
+                                &log_name,
+                                now,
+                                segment_events,
+                                postgres_dsn.as_deref(),
+                                runtime_config.storage.postgres_pool_size,
+                                None,
+                                None,
+                                Some(market_quote),
+                            )
+                        }
+                    };
+                    let latest_pipeline =
+                        open_runtime_pipeline(&runtime_config, &root, &log_name, "USDT").map_err(
+                            |error| format!("刷新 Paper 多腿订单组 EventLog 失败: {error}"),
+                        )?;
+                    sync_spread_group_after_order(&root, &latest_pipeline, &command, now)?;
+                    result
                 };
                 let (_, record_result) = store
                     .transact(|plane| plane.execute(command.command_id, now, |_| action.clone()))
@@ -5087,6 +7434,25 @@ fn run_paper_execution_worker(path: &Path, worker_id: &str, once: bool) -> Resul
                     ),
                     Some(now),
                 )?;
+            }
+            if !dedicated_spread_recovery {
+                let mut recovery_pipeline =
+                    open_runtime_pipeline(&runtime_config, &root, &log_name, "USDT")
+                        .map_err(|error| format!("打开 Paper 多腿恢复 EventLog 失败: {error}"))?;
+                let validator = recovery_order_validator(
+                    &worker,
+                    &recovery_pipeline,
+                    Some(&runtime_config_path),
+                );
+                for message in recover_paper_spread_groups(
+                    &root,
+                    &mut recovery_pipeline,
+                    context.id(),
+                    now,
+                    Some(&validator),
+                )? {
+                    eprintln!("[HedgeRecovery] {message}");
+                }
             }
             context.heartbeat(now)?;
             if once {
@@ -5140,6 +7506,46 @@ fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
 
     run_scheduler_worker(path, &scheduler_id, true)?;
     run_strategy_worker(path, &strategy_id, true)?;
+
+    // Paper 执行必须消费已经进入 EventLog 的市场事实。验收 fixture 不连接
+    // 网络，因此在执行 worker 前显式注入一条可审计 L1 报价；真实部署由
+    // MarketData worker 写入同一账户/运行时日志，不再使用固定价格兜底。
+    let execution_worker = config
+        .workers
+        .iter()
+        .find(|worker| worker.id == execution_id)
+        .ok_or_else(|| "Paper Execution worker 配置在注入行情前消失".to_string())?;
+    let root = Path::new(&config.storage.data_dir);
+    let log_name = format!(
+        "paper-{}-{}-events",
+        execution_worker.account_id.as_deref().unwrap_or("unknown"),
+        execution_worker.venue_id.as_deref().unwrap_or("paper")
+    );
+    let mut market_pipeline = open_runtime_pipeline(&config, root, &log_name, "USDT")
+        .map_err(|error| format!("打开 Paper 行情 EventLog 失败: {error}"))?;
+    let instrument = config
+        .strategy
+        .instrument
+        .as_deref()
+        .and_then(InstrumentId::parse)
+        .ok_or_else(|| "Paper 验收策略缺少合法 instrument".to_string())?;
+    let market_ts = runtime_timestamp_ms();
+    market_pipeline
+        .ingest(RuntimeEventEnvelope::market_quote(
+            instrument,
+            QuoteTick::new(
+                market_ts,
+                Price::from_i64(99),
+                Quantity::from_i64(1_000),
+                Price::from_i64(100),
+                Quantity::from_i64(1_000),
+                market_ts,
+            ),
+            market_ts,
+            market_ts,
+            format!("{log_name}:paper-check-market:{market_ts}"),
+        ))
+        .map_err(|error| format!("注入 Paper 验收行情失败: {error:?}"))?;
     run_paper_execution_worker(path, &execution_id, true)?;
 
     let root = Path::new(&config.storage.data_dir);
@@ -5225,7 +7631,8 @@ fn run_binance_submit_order(
         match auth.and_then(|auth| new_binance_venue(&worker, auth)) {
             Ok(mut venue) => {
                 let mut source_seq = 0_u64;
-                execute_binance_submit_effect(
+                let validator = recovery_order_validator(&worker, &pipeline, Some(path));
+                let result = execute_binance_submit_effect(
                     &command,
                     &worker,
                     &mut pipeline,
@@ -5233,7 +7640,34 @@ fn run_binance_submit_order(
                     now,
                     &mut source_seq,
                     Some(path),
-                )
+                );
+                let latest_pipeline = pipeline_storage
+                    .open(binance_event_log_name(&worker), "USDT")
+                    .map_err(|error| format!("刷新 Binance 多腿订单组 EventLog 失败: {error}"))?;
+                sync_spread_group_after_order(
+                    &pipeline_storage.root,
+                    &latest_pipeline,
+                    &command,
+                    now,
+                )?;
+                let (venue, recovery) = recover_spread_groups_for_venue(
+                    SpreadRecoveryContext {
+                        root: &pipeline_storage.root,
+                        venue_id: worker.venue_id.as_deref().unwrap_or("BINANCE"),
+                        accept_any_venue: false,
+                        order_validator: Some(&validator),
+                        pipeline: &mut pipeline,
+                        worker_id: &worker.id,
+                        now,
+                        source_seq: &mut source_seq,
+                    },
+                    venue,
+                )?;
+                for message in recovery {
+                    eprintln!("[HedgeRecovery] {message}");
+                }
+                drop(venue);
+                result
             }
             Err(error) => Err(error),
         }
@@ -5253,6 +7687,7 @@ fn run_binance_submit_order(
 }
 
 /// 运行持久化控制命令队列的 Binance 执行 worker。
+#[allow(clippy::too_many_arguments)]
 fn run_binance_execution_worker(
     context: qx_runtime::WorkerContext,
     worker: WorkerConfig,
@@ -5260,6 +7695,7 @@ fn run_binance_execution_worker(
     control_store: ControlStateBackend,
     queue: Arc<dyn ControlCommandQueueBackend>,
     runtime_config_path: PathBuf,
+    dedicated_spread_recovery: bool,
     once: bool,
 ) -> Result<(), String> {
     let owner = worker.id.clone();
@@ -5271,6 +7707,43 @@ fn run_binance_execution_worker(
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
         let control = control_store.load()?;
+        let venue_id = worker.venue_id.as_deref().unwrap_or("BINANCE");
+        if !dedicated_spread_recovery
+            && has_pending_spread_recovery(&pipeline_storage.root, venue_id)?
+        {
+            let mut recovery_pipeline = pipeline_storage
+                .open(binance_event_log_name(&worker), "USDT")
+                .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
+            let auth = load_binance_worker_auth(&worker)?;
+            let mut recovery_venue = new_binance_venue(&worker, auth)?;
+            recovery_venue
+                .restore_orders(recovery_pipeline.orders())
+                .map_err(|error| format!("恢复 Binance 多腿订单状态失败: {error:?}"))?;
+            let mut recovery_seq = recovery_pipeline
+                .log()
+                .events()
+                .last()
+                .map(|event| event.source_seq)
+                .unwrap_or(0);
+            let validator =
+                recovery_order_validator(&worker, &recovery_pipeline, Some(&runtime_config_path));
+            let (_, diagnostics) = recover_spread_groups_for_venue(
+                SpreadRecoveryContext {
+                    root: &pipeline_storage.root,
+                    venue_id,
+                    accept_any_venue: false,
+                    order_validator: Some(&validator),
+                    pipeline: &mut recovery_pipeline,
+                    worker_id: &worker.id,
+                    now,
+                    source_seq: &mut recovery_seq,
+                },
+                recovery_venue,
+            )?;
+            for message in diagnostics {
+                eprintln!("[HedgeRecovery] {message}");
+            }
+        }
         for command in control.pending().filter(|command| {
             matches!(&command.kind, CommandKind::SubmitOrder)
                 && binance_submit_matches_worker(command, &worker)
@@ -5313,7 +7786,9 @@ fn run_binance_execution_worker(
                     .restore_orders(pipeline.orders())
                     .map_err(|error| format!("恢复执行订单状态失败: {error:?}"))?;
                 let mut source_seq = 0_u64;
-                execute_binance_submit_effect(
+                let validator =
+                    recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
+                let result = execute_binance_submit_effect(
                     &command,
                     &worker,
                     &mut pipeline,
@@ -5321,7 +7796,34 @@ fn run_binance_execution_worker(
                     now,
                     &mut source_seq,
                     Some(&runtime_config_path),
-                )
+                );
+                let latest_pipeline = pipeline_storage
+                    .open(binance_event_log_name(&worker), "USDT")
+                    .map_err(|error| format!("刷新 Binance 多腿订单组 EventLog 失败: {error}"))?;
+                sync_spread_group_after_order(
+                    &pipeline_storage.root,
+                    &latest_pipeline,
+                    &command,
+                    now,
+                )?;
+                let (venue, recovery) = recover_spread_groups_for_venue(
+                    SpreadRecoveryContext {
+                        root: &pipeline_storage.root,
+                        venue_id: worker.venue_id.as_deref().unwrap_or("BINANCE"),
+                        accept_any_venue: false,
+                        order_validator: Some(&validator),
+                        pipeline: &mut pipeline,
+                        worker_id: &worker.id,
+                        now,
+                        source_seq: &mut source_seq,
+                    },
+                    venue,
+                )?;
+                for message in recovery {
+                    eprintln!("[HedgeRecovery] {message}");
+                }
+                drop(venue);
+                result
             };
             let (_, record_result) = control_store
                 .transact(|plane| plane.execute(command.command_id, now, |_| action.clone()))
@@ -5385,6 +7887,7 @@ fn run_ccxt_execution_worker(
     queue: Arc<dyn ControlCommandQueueBackend>,
     ccxt_config_path: String,
     runtime_config_path: PathBuf,
+    dedicated_spread_recovery: bool,
     once: bool,
 ) -> Result<(), String> {
     if worker.role != WorkerRole::Execution {
@@ -5403,6 +7906,44 @@ fn run_ccxt_execution_worker(
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
         let control = control_store.load()?;
+        let venue_id = worker.venue_id.as_deref().unwrap_or("ccxt");
+        if !dedicated_spread_recovery
+            && has_pending_spread_recovery(&pipeline_storage.root, venue_id)?
+        {
+            let mut recovery_pipeline = pipeline_storage
+                .open(
+                    ccxt_event_log_name(&worker),
+                    worker.settlement_currency.as_deref().unwrap_or("USDT"),
+                )
+                .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
+            let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
+                .map_err(|error| format!("启动公共 CCXT 恢复 Worker 失败: {error}"))?;
+            let recovery_venue = CcxtProcessVenue::new(venue_id, Box::new(client));
+            let mut recovery_seq = recovery_pipeline
+                .log()
+                .events()
+                .last()
+                .map(|event| event.source_seq)
+                .unwrap_or(0);
+            let validator =
+                recovery_order_validator(&worker, &recovery_pipeline, Some(&runtime_config_path));
+            let (_, diagnostics) = recover_spread_groups_for_venue(
+                SpreadRecoveryContext {
+                    root: &pipeline_storage.root,
+                    venue_id,
+                    accept_any_venue: false,
+                    order_validator: Some(&validator),
+                    pipeline: &mut recovery_pipeline,
+                    worker_id: &worker.id,
+                    now,
+                    source_seq: &mut recovery_seq,
+                },
+                recovery_venue,
+            )?;
+            for message in diagnostics {
+                eprintln!("[HedgeRecovery] {message}");
+            }
+        }
         for command in control.pending().filter(|command| {
             matches!(&command.kind, CommandKind::SubmitOrder)
                 && ccxt_submit_matches_worker(command, &worker)
@@ -5449,6 +7990,8 @@ fn run_ccxt_execution_worker(
                     Box::new(client),
                 );
                 let mut source_seq = 0_u64;
+                let validator =
+                    recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
                 let requested_order = order_from_submit_command(&command)
                     .map_err(|error| format!("CCXT 订单载荷非法: {error:?}"))?;
                 if requested_order.limit.is_none() && worker.instrument_spec_path.is_some() {
@@ -5463,6 +8006,8 @@ fn run_ccxt_execution_worker(
                         .ok_or_else(|| "CCXT ticker 响应缺少 ticker".to_string())?;
                     let bid = Price::from_raw(raw_json_i128(ticker, "bid_raw")?);
                     let ask = Price::from_raw(raw_json_i128(ticker, "ask_raw")?);
+                    let bid_qty = Quantity::from_raw(raw_json_i128(ticker, "bid_qty_raw")?);
+                    let ask_qty = Quantity::from_raw(raw_json_i128(ticker, "ask_qty_raw")?);
                     let event_ts = ticker
                         .get("timestamp_ms")
                         .and_then(serde_json::Value::as_u64)
@@ -5474,6 +8019,8 @@ fn run_ccxt_execution_worker(
                                 instrument: requested_order.instrument.clone(),
                                 bid,
                                 ask,
+                                bid_qty,
+                                ask_qty,
                             },
                             event_ts,
                             now,
@@ -5482,7 +8029,7 @@ fn run_ccxt_execution_worker(
                         ))
                         .map_err(|error| format!("写入 CCXT 风控参考行情失败: {error:?}"))?;
                 }
-                execute_submit_order_with_worker_risk(
+                let result = execute_submit_order_with_worker_risk(
                     &command,
                     &worker,
                     &mut venue,
@@ -5490,7 +8037,37 @@ fn run_ccxt_execution_worker(
                     now,
                     &mut source_seq,
                     Some(&runtime_config_path),
-                )
+                );
+                let latest_pipeline = pipeline_storage
+                    .open(
+                        ccxt_event_log_name(&worker),
+                        worker.settlement_currency.as_deref().unwrap_or("USDT"),
+                    )
+                    .map_err(|error| format!("刷新 CCXT 多腿订单组 EventLog 失败: {error}"))?;
+                sync_spread_group_after_order(
+                    &pipeline_storage.root,
+                    &latest_pipeline,
+                    &command,
+                    now,
+                )?;
+                let (venue, recovery) = recover_spread_groups_for_venue(
+                    SpreadRecoveryContext {
+                        root: &pipeline_storage.root,
+                        venue_id: worker.venue_id.as_deref().unwrap_or("ccxt"),
+                        accept_any_venue: false,
+                        order_validator: Some(&validator),
+                        pipeline: &mut pipeline,
+                        worker_id: &worker.id,
+                        now,
+                        source_seq: &mut source_seq,
+                    },
+                    venue,
+                )?;
+                for message in recovery {
+                    eprintln!("[HedgeRecovery] {message}");
+                }
+                drop(venue);
+                result
             };
             let (_, record_result) = control_store
                 .transact(|plane| plane.execute(command.command_id, now, |_| action.clone()))
@@ -5710,6 +8287,7 @@ struct LiveStrategyBarSpec {
     instrument: InstrumentId,
     timeframe: String,
     timeframe_ms: u64,
+    max_staleness_ms: u64,
     history_limit: usize,
     closed_only: bool,
     snapshot_path: PathBuf,
@@ -5762,6 +8340,9 @@ fn live_strategy_bar_specs(
         let instrument = InstrumentId::parse(instrument_text)
             .ok_or_else(|| format!("实时策略 instrument 非法: {instrument_text}"))?;
         let timeframe_ms = timeframe_to_ms(&strategy.live_timeframe)?;
+        let max_staleness_ms = strategy
+            .live_max_staleness_ms
+            .unwrap_or_else(|| timeframe_ms.saturating_mul(3).max(timeframe_ms));
         let primary_matches = worker.symbols.iter().any(|symbol| {
             InstrumentId::parse(symbol).is_some_and(|configured| configured == instrument)
         });
@@ -5774,6 +8355,7 @@ fn live_strategy_bar_specs(
                 instrument,
                 timeframe: strategy.live_timeframe.clone(),
                 timeframe_ms,
+                max_staleness_ms,
                 history_limit: strategy.live_history_limit,
                 closed_only: strategy.live_closed_only,
                 snapshot_path: resolve_runtime_relative_path(runtime_config_path, configured_path),
@@ -5792,6 +8374,7 @@ fn live_strategy_bar_specs(
                     instrument: reference,
                     timeframe: strategy.live_timeframe.clone(),
                     timeframe_ms,
+                    max_staleness_ms,
                     history_limit: strategy.live_history_limit,
                     closed_only: strategy.live_closed_only,
                     snapshot_path: resolve_runtime_relative_path(
@@ -5812,6 +8395,33 @@ fn live_strategy_bar_specs(
         left.instrument == right.instrument && left.snapshot_path == right.snapshot_path
     });
     Ok(specs)
+}
+
+fn live_frame_is_fresh(
+    frame: &BarFrame,
+    timeframe_ms: u64,
+    closed_only: bool,
+    max_staleness_ms: u64,
+    now: u64,
+) -> bool {
+    let Some(&last_ts) = frame.ts.last() else {
+        return false;
+    };
+    let freshness_ts = if closed_only {
+        let Some(close_ts) = last_ts.checked_add(timeframe_ms) else {
+            return false;
+        };
+        if close_ts > now {
+            return false;
+        }
+        close_ts
+    } else {
+        if last_ts > now {
+            return false;
+        }
+        last_ts
+    };
+    now.saturating_sub(freshness_ts) <= max_staleness_ms
 }
 
 fn closed_live_frame(
@@ -5869,6 +8479,15 @@ fn closed_live_frame(
     result
         .validate()
         .map_err(|error| format!("实时 BarFrame 校验失败: {error:?}"))?;
+    if !live_frame_is_fresh(
+        &result,
+        spec.timeframe_ms,
+        spec.closed_only,
+        spec.max_staleness_ms,
+        now,
+    ) {
+        return Ok(None);
+    }
     Ok(Some(result))
 }
 
@@ -5924,6 +8543,7 @@ fn run_ccxt_market_worker(
             worker.settlement_currency.as_deref().unwrap_or("USDT"),
         )
         .map_err(|error| format!("创建 CCXT 行情事件管线失败: {error}"))?;
+    let mut paper_bridges = open_paper_market_bridges(&pipeline_storage, &runtime_config.workers)?;
     let instruments = worker
         .symbols
         .iter()
@@ -5970,7 +8590,9 @@ fn run_ccxt_market_worker(
                 .ok_or_else(|| format!("CCXT ticker 响应缺少 ticker: {instrument}"))?;
             let bid = raw_json_i128(ticker, "bid_raw")?;
             let ask = raw_json_i128(ticker, "ask_raw")?;
-            if bid <= 0 || ask <= 0 || bid > ask {
+            let bid_qty = raw_json_i128(ticker, "bid_qty_raw")?;
+            let ask_qty = raw_json_i128(ticker, "ask_qty_raw")?;
+            if bid <= 0 || ask <= 0 || bid > ask || bid_qty <= 0 || ask_qty <= 0 {
                 return Err(format!("CCXT ticker 买卖价非法: {instrument}"));
             }
             let ts = ticker
@@ -5982,14 +8604,33 @@ fn run_ccxt_market_worker(
             pipeline
                 .ingest(RuntimeEventEnvelope::market_quote(
                     instrument.clone(),
-                    qx_core::Price::from_raw(bid),
-                    qx_core::Price::from_raw(ask),
-                    ts,
+                    QuoteTick::new(
+                        ts,
+                        qx_core::Price::from_raw(bid),
+                        qx_core::Quantity::from_raw(bid_qty),
+                        qx_core::Price::from_raw(ask),
+                        qx_core::Quantity::from_raw(ask_qty),
+                        source_seq,
+                    ),
                     received_ts,
                     source_seq,
                     format!("{}:ticker:{}", worker.id, source_seq),
                 ))
                 .map_err(|error| format!("CCXT 行情事实归约失败: {error:?}"))?;
+            bridge_market_quote_to_paper(
+                &mut paper_bridges,
+                PaperMarketQuote {
+                    source_worker_id: &worker.id,
+                    instrument,
+                    bid: qx_core::Price::from_raw(bid),
+                    bid_qty: qx_core::Quantity::from_raw(bid_qty),
+                    ask: qx_core::Price::from_raw(ask),
+                    ask_qty: qx_core::Quantity::from_raw(ask_qty),
+                    event_ts: ts,
+                    receive_ts: received_ts,
+                    source_seq,
+                },
+            )?;
             quotes = quotes.saturating_add(1);
             context.heartbeat(received_ts)?;
         }
@@ -6357,6 +8998,100 @@ fn ccxt_error_is_optional_derivatives_capability(error: &str) -> bool {
         || error.contains("fetchpositions")
 }
 
+/// 将 CCXT `fetch_open_orders` 的结果与本地订单索引做只读核对。
+///
+/// 这里故意不把远端未知订单注册进 OMS，也不根据单次查询自动撤单或平仓。
+/// 远端订单可能来自进程崩溃前尚未写入 Accepted 事实、人工操作或其他系统；
+/// 正确的 fail-safe 行为是保留原始证据并让对账服务降级，交由人工确认归属。
+fn ccxt_open_order_issues(
+    value: &serde_json::Value,
+    local_orders: &[Order],
+    known_remote_orders: &BTreeMap<String, (u64, OrderStatus)>,
+    venue_id: &str,
+) -> Result<Vec<serde_json::Value>, String> {
+    let orders = value
+        .get("orders")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "CCXT fetch_open_orders 返回缺少 orders 数组".to_string())?;
+    let mut issues = Vec::new();
+    for remote in orders {
+        let object = remote
+            .as_object()
+            .ok_or_else(|| "CCXT open order 返回项必须是 object".to_string())?;
+        let remote_order_id = object
+            .get("order_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "CCXT open order 缺少 order_id".to_string())?;
+        let symbol = object
+            .get("symbol")
+            .or_else(|| object.get("instrument"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let status = object
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        let client_order_id = object
+            .get("client_order_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let client_order_id_u64 = client_order_id.and_then(|value| value.parse::<u64>().ok());
+        let local_by_client_id = client_order_id_u64.and_then(|client_id| {
+            local_orders
+                .iter()
+                .find(|order| order.client_id == client_id)
+        });
+        let local_by_remote_id = known_remote_orders.get(remote_order_id);
+
+        if let Some((local_client_id, local_status)) = local_by_remote_id {
+            if local_status.is_terminal() {
+                issues.push(serde_json::json!({
+                    "kind": "remote_open_local_terminal",
+                    "source": "ccxt.fetch_open_orders",
+                    "venue_id": venue_id,
+                    "remote_order_id": remote_order_id,
+                    "client_order_id": local_client_id,
+                    "instrument": symbol,
+                    "status": status,
+                    "local_status": format!("{local_status:?}"),
+                    "observed": true,
+                }));
+            }
+            continue;
+        }
+
+        let kind = if let Some(local) = local_by_client_id {
+            serde_json::json!({
+                "kind": "remote_open_unmapped_local_order",
+                "source": "ccxt.fetch_open_orders",
+                "venue_id": venue_id,
+                "remote_order_id": remote_order_id,
+                "client_order_id": local.client_id,
+                "instrument": symbol,
+                "status": status,
+                "local_status": format!("{:?}", local.status),
+                "observed": true,
+            })
+        } else {
+            serde_json::json!({
+                "kind": "unknown_remote_open_order",
+                "source": "ccxt.fetch_open_orders",
+                "venue_id": venue_id,
+                "remote_order_id": remote_order_id,
+                "client_order_id": client_order_id,
+                "instrument": symbol,
+                "status": status,
+                "observed": true,
+            })
+        };
+        issues.push(kind);
+    }
+    Ok(issues)
+}
+
 fn run_ccxt_reconcile_worker(
     context: qx_runtime::WorkerContext,
     worker: WorkerConfig,
@@ -6544,8 +9279,60 @@ fn run_ccxt_reconcile_worker(
             }
         }
 
+        // 订单逐笔 fetch_order 只能覆盖本地已经知道的订单；进程在写入
+        // Accepted 前崩溃、人工下单或其他系统下单，都会只存在于交易所。
+        // 先拉取远端活动订单做只读发现，再交给下面的本地订单同步流程。
+        let local_orders = pipeline.orders();
+        let known_remote_orders = local_orders
+            .iter()
+            .filter_map(|order| {
+                pipeline
+                    .venue_order_id(order.client_id)
+                    .map(|remote_id| (remote_id, (order.client_id, order.status)))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let open_order_requests = if worker.symbols.is_empty() {
+            vec![None]
+        } else {
+            worker.symbols.iter().map(Some).collect::<Vec<_>>()
+        };
+        let mut open_order_issues = Vec::new();
+        let mut seen_open_order_keys = BTreeSet::new();
+        for instrument in open_order_requests {
+            let open_orders_result = client.call(serde_json::json!({
+                "op": "fetch_open_orders",
+                "instrument": instrument,
+            }));
+            let open_orders_result = match open_orders_result {
+                Ok(value) => value,
+                Err(error) if ccxt_error_is_optional_derivatives_capability(&error) => continue,
+                Err(error) => return Err(format!("CCXT 活动订单对账失败: {error}")),
+            };
+            for issue in ccxt_open_order_issues(
+                &open_orders_result,
+                &local_orders,
+                &known_remote_orders,
+                &venue_id,
+            )? {
+                let key = format!(
+                    "{}:{}",
+                    issue
+                        .get("remote_order_id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown"),
+                    issue
+                        .get("instrument")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                );
+                if seen_open_order_keys.insert(key) {
+                    open_order_issues.push(issue);
+                }
+            }
+        }
+
         let mut venue = CcxtProcessVenue::new(venue_id.clone(), Box::new(client));
-        let orders = pipeline.orders();
+        let orders = local_orders;
         let mut updates = 0_usize;
         for order in orders
             .into_iter()
@@ -6628,6 +9415,7 @@ fn run_ccxt_reconcile_worker(
             venue_id: &venue_id,
             observed_ts: received_ts,
             issues: &[],
+            additional_order_issues: &open_order_issues,
             balances_count: balances.len(),
             balance_discrepancies: &balance_discrepancies,
             position_snapshots_count,
@@ -6635,9 +9423,18 @@ fn run_ccxt_reconcile_worker(
             cashflow_count,
         })?;
         context.heartbeat(received_ts)?;
+        let service_status = if open_order_issues.is_empty() && balance_discrepancies.is_empty() {
+            qx_runtime::ServiceStatus::Ready
+        } else {
+            qx_runtime::ServiceStatus::Degraded
+        };
         context.mark(
-            qx_runtime::ServiceStatus::Ready,
-            format!("ccxt reconciled order_updates={updates}"),
+            service_status,
+            format!(
+                "ccxt reconciled order_updates={updates} open_order_issues={} balance_discrepancies={}",
+                open_order_issues.len(),
+                balance_discrepancies.len()
+            ),
             Some(received_ts),
         )?;
         if once {
@@ -6666,17 +9463,19 @@ fn run_ccxt_worker(
         .find(|worker| worker.id == worker_id)
         .cloned()
         .ok_or_else(|| format!("找不到 worker: {worker_id}"))?;
+    let dedicated_spread_recovery = dedicated_spread_recovery_configured(&config, &worker);
     if !worker.enabled
         || !matches!(
             worker.role,
             WorkerRole::MarketData
                 | WorkerRole::UserStream
                 | WorkerRole::Execution
+                | WorkerRole::SpreadRecovery
                 | WorkerRole::Reconciler
         )
     {
         return Err(format!(
-            "worker {worker_id} 不是启用的 CCXT MarketData/UserStream/Execution/Reconciler worker"
+            "worker {worker_id} 不是启用的 CCXT MarketData/UserStream/Execution/SpreadRecovery/Reconciler worker"
         ));
     }
     if worker
@@ -6723,6 +9522,14 @@ fn run_ccxt_worker(
             runtime_config_path.clone(),
             once,
         ),
+        WorkerRole::SpreadRecovery => run_ccxt_spread_recovery_worker(
+            context,
+            worker,
+            pipeline_storage,
+            ccxt_config_path,
+            runtime_config_path,
+            once,
+        ),
         WorkerRole::Execution => run_ccxt_execution_worker(
             context,
             worker,
@@ -6731,6 +9538,7 @@ fn run_ccxt_worker(
             queue,
             ccxt_config_path,
             runtime_config_path,
+            dedicated_spread_recovery,
             once,
         ),
         _ => Err("unsupported CCXT worker role".into()),
@@ -6738,6 +9546,67 @@ fn run_ccxt_worker(
     handle
         .join()
         .map_err(|_| format!("CCXT worker {worker_id} panic"))?
+}
+
+fn run_ccxt_spread_recovery_worker(
+    context: qx_runtime::WorkerContext,
+    worker: WorkerConfig,
+    pipeline_storage: PipelineStorage,
+    ccxt_config_path: String,
+    runtime_config_path: PathBuf,
+    once: bool,
+) -> Result<(), String> {
+    let python = std::env::var("QX_PYTHON").unwrap_or_else(|_| "python".into());
+    let venue_id = worker.venue_id.clone().unwrap_or_else(|| "ccxt".into());
+    context.mark(
+        qx_runtime::ServiceStatus::Ready,
+        format!("ccxt spread recovery scanning venue={venue_id}"),
+        Some(runtime_timestamp_ms()),
+    )?;
+    while !context.should_stop() {
+        let now = runtime_timestamp_ms();
+        if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
+            let mut pipeline = pipeline_storage
+                .open(
+                    ccxt_event_log_name(&worker),
+                    worker.settlement_currency.as_deref().unwrap_or("USDT"),
+                )
+                .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
+            let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
+                .map_err(|error| format!("启动公共 CCXT 恢复 Worker 失败: {error}"))?;
+            let venue = CcxtProcessVenue::new(venue_id.clone(), Box::new(client));
+            let mut source_seq = pipeline
+                .log()
+                .events()
+                .last()
+                .map(|event| event.source_seq)
+                .unwrap_or(0);
+            let validator =
+                recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
+            let (_, diagnostics) = recover_spread_groups_for_venue(
+                SpreadRecoveryContext {
+                    root: &pipeline_storage.root,
+                    venue_id: &venue_id,
+                    accept_any_venue: false,
+                    order_validator: Some(&validator),
+                    pipeline: &mut pipeline,
+                    worker_id: &worker.id,
+                    now,
+                    source_seq: &mut source_seq,
+                },
+                venue,
+            )?;
+            for message in diagnostics {
+                eprintln!("[HedgeRecovery] {message}");
+            }
+        }
+        context.heartbeat(now)?;
+        if once {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Ok(())
 }
 
 /// 下载公共 CCXT OHLCV 快照，输出为 qianxing_bridge.BarFrame JSON，作为回测
@@ -6826,6 +9695,64 @@ fn run_ccxt_market_spec(
     Ok(())
 }
 
+fn run_binance_spread_recovery_worker(
+    context: qx_runtime::WorkerContext,
+    worker: WorkerConfig,
+    pipeline_storage: PipelineStorage,
+    runtime_config_path: PathBuf,
+    once: bool,
+) -> Result<(), String> {
+    let venue_id = worker.venue_id.clone().unwrap_or_else(|| "BINANCE".into());
+    context.mark(
+        qx_runtime::ServiceStatus::Ready,
+        format!("binance spread recovery scanning venue={venue_id}"),
+        Some(runtime_timestamp_ms()),
+    )?;
+    while !context.should_stop() {
+        let now = runtime_timestamp_ms();
+        if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
+            let mut pipeline = pipeline_storage
+                .open(binance_event_log_name(&worker), "USDT")
+                .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
+            let auth = load_binance_worker_auth(&worker)?;
+            let mut venue = new_binance_venue(&worker, auth)?;
+            venue
+                .restore_orders(pipeline.orders())
+                .map_err(|error| format!("恢复 Binance 多腿订单状态失败: {error:?}"))?;
+            let mut source_seq = pipeline
+                .log()
+                .events()
+                .last()
+                .map(|event| event.source_seq)
+                .unwrap_or(0);
+            let validator =
+                recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
+            let (_, diagnostics) = recover_spread_groups_for_venue(
+                SpreadRecoveryContext {
+                    root: &pipeline_storage.root,
+                    venue_id: &venue_id,
+                    accept_any_venue: false,
+                    order_validator: Some(&validator),
+                    pipeline: &mut pipeline,
+                    worker_id: &worker.id,
+                    now,
+                    source_seq: &mut source_seq,
+                },
+                venue,
+            )?;
+            for message in diagnostics {
+                eprintln!("[HedgeRecovery] {message}");
+            }
+        }
+        context.heartbeat(now)?;
+        if once {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Ok(())
+}
+
 fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Result<(), String> {
     let config = read_runtime_config(path)?;
     let mut worker = config
@@ -6843,10 +9770,11 @@ fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Result<(), St
         WorkerRole::MarketData
             | WorkerRole::UserStream
             | WorkerRole::Execution
+            | WorkerRole::SpreadRecovery
             | WorkerRole::Reconciler
     ) {
         return Err(format!(
-            "worker {} 不是 Binance 数据/用户流/执行/对账角色",
+            "worker {} 不是 Binance 数据/用户流/执行/多腿恢复/对账角色",
             worker.id
         ));
     }
@@ -6863,17 +9791,34 @@ fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Result<(), St
     }
     let pipeline_root = Path::new(&config.storage.data_dir).to_path_buf();
     let pipeline_storage = PipelineStorage::from_config(&config)?;
+    let paper_workers = config
+        .workers
+        .iter()
+        .filter(|worker| {
+            worker.enabled
+                && worker.role == WorkerRole::Execution
+                && worker
+                    .venue_id
+                    .as_deref()
+                    .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     let runtime_config_path = path.to_path_buf();
     let control_store = configured_control_store(&config)?;
     let command_queue = configured_command_queue(&config, &pipeline_root)?;
+    let dedicated_spread_recovery = dedicated_spread_recovery_configured(&config, &worker);
     let supervisor = RuntimeSupervisor::new(config)?;
     let worker_role = worker.role;
     let registered_id = worker.id.clone();
     let worker_for_run = worker.clone();
     let handle = supervisor.spawn_worker(&registered_id, move |context| match worker_role {
-        WorkerRole::MarketData => {
-            run_binance_market_worker(context, worker_for_run.clone(), pipeline_storage.clone())
-        }
+        WorkerRole::MarketData => run_binance_market_worker(
+            context,
+            worker_for_run.clone(),
+            pipeline_storage.clone(),
+            paper_workers,
+        ),
         WorkerRole::UserStream => {
             run_binance_user_worker(context, worker_for_run.clone(), pipeline_storage.clone())
         }
@@ -6883,6 +9828,14 @@ fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Result<(), St
             pipeline_storage.clone(),
             control_store,
             command_queue,
+            runtime_config_path,
+            dedicated_spread_recovery,
+            once,
+        ),
+        WorkerRole::SpreadRecovery => run_binance_spread_recovery_worker(
+            context,
+            worker_for_run,
+            pipeline_storage,
             runtime_config_path,
             once,
         ),
@@ -7123,6 +10076,38 @@ fn run_strategy_backtest(
     if bars.len() < 2 {
         return Err("跨语言 Bar 回测至少需要两根 Bar".into());
     }
+    let provider =
+        JsonBarFrameProvider::new(frame.source.0.clone(), "barframe-json-v1", frame_path);
+    let (provider_bars, manifest) = provider.load_bars_with_manifest(
+        &format!("strategy-bars:{}", frame.instrument),
+        &frame.instrument.to_string(),
+        bars.first().map(|bar| bar.ts).unwrap_or(1),
+        bars.last().map(|bar| bar.ts).unwrap_or(1),
+    )?;
+    if provider_bars.len() != bars.len()
+        || provider_bars.iter().zip(&bars).any(|(left, right)| {
+            left.timestamp != right.ts
+                || left.open_raw != right.open
+                || left.high_raw != right.high
+                || left.low_raw != right.low
+                || left.close_raw != right.close
+                || left.volume_raw != right.volume
+        })
+    {
+        return Err("qx-data Provider 与 BarFrame 列式输入不一致，拒绝开始回测".into());
+    }
+    let data_root = resolve_runtime_relative_path(runtime_path, &config.storage.data_dir);
+    let mut dataset_registry = JsonDatasetRegistry::open(data_root.join("datasets.manifest.json"))?;
+    dataset_registry.register(manifest.clone())?;
+    dataset_registry.verify(
+        &manifest.dataset_id,
+        &manifest.version,
+        &manifest.fingerprint,
+    )?;
+    println!(
+        "[Data · Dataset] dataset={} version={} source={} fingerprint={}",
+        manifest.dataset_id, manifest.version, manifest.source, manifest.fingerprint
+    );
     let strategies = if config.strategies.is_empty() {
         vec![config.strategy.clone()]
     } else {
@@ -7137,10 +10122,240 @@ fn run_strategy_backtest(
         strategy_config.strategy = strategy;
         strategy_config.strategies.clear();
         resolve_strategy_runtime_paths(&mut strategy_config.strategy, runtime_path);
+        let (bundle_fingerprint, bundle_components) =
+            if let Some(bundle_path) = strategy_config.strategy.dataset_bundle_path.as_deref() {
+                let bundle_payload = std::fs::read_to_string(bundle_path).map_err(|error| {
+                    format!(
+                        "读取策略 DatasetBundleManifest 组件失败 {}: {error}",
+                        bundle_path
+                    )
+                })?;
+                let bundle: qx_data::DatasetBundleManifest = serde_json::from_str(&bundle_payload)
+                    .map_err(|error| format!("策略 DatasetBundleManifest JSON 无效: {error}"))?;
+                let fingerprint =
+                    verify_dataset_bundle_binding(Path::new(bundle_path), &manifest, bars.len())?;
+                verify_dataset_bundle_component_bindings(
+                    &bundle,
+                    &strategy_config.strategy,
+                    &strategy_id,
+                )?;
+                let components = bundle
+                    .components
+                    .iter()
+                    .map(|(kind, component)| (kind.clone(), component.dataset.fingerprint.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                (Some(fingerprint), Some(components))
+            } else {
+                (None, None)
+            };
+        if let Some(bundle_path) = strategy_config.strategy.dataset_bundle_path.as_deref() {
+            let bundle_payload = std::fs::read_to_string(bundle_path).map_err(|error| {
+                format!(
+                    "读取策略 DatasetBundleManifest 组件失败 {}: {error}",
+                    bundle_path
+                )
+            })?;
+            let bundle: qx_data::DatasetBundleManifest = serde_json::from_str(&bundle_payload)
+                .map_err(|error| format!("策略 DatasetBundleManifest JSON 无效: {error}"))?;
+            if bundle.component("corporate_actions").is_some()
+                && !strategy_config
+                    .strategy
+                    .dataset_component_paths
+                    .contains_key("corporate_actions")
+                && strategy_config.strategy.ashare_actions_path.is_none()
+            {
+                return Err(format!(
+                    "策略 Bundle 包含 corporate_actions，但未配置 ashare_actions_path: {strategy_id}"
+                ));
+            }
+            if bundle.component("calendar").is_some()
+                && !strategy_config
+                    .strategy
+                    .dataset_component_paths
+                    .contains_key("calendar")
+                && strategy_config.strategy.ashare_calendar_path.is_none()
+            {
+                return Err(format!(
+                    "策略 Bundle 包含 calendar，但未配置 ashare_calendar_path: {strategy_id}"
+                ));
+            }
+        }
         verify_strategy_artifact(&strategy_config.strategy)?;
-        run_single_strategy_backtest(&strategy_config, &frame, &bars, spec_path, &strategy_id)?;
+        run_single_strategy_backtest(
+            &strategy_config,
+            &frame,
+            &bars,
+            spec_path,
+            &strategy_id,
+            bundle_fingerprint
+                .as_deref()
+                .zip(bundle_components.as_ref())
+                .map(
+                    |(bundle_fingerprint, component_fingerprints)| DatasetRunBinding {
+                        bundle_fingerprint,
+                        component_fingerprints,
+                    },
+                ),
+            &data_root,
+        )?;
     }
     Ok(())
+}
+
+fn persist_backtest_run_manifest(root: &Path, manifest: &RunManifest) -> Result<PathBuf, String> {
+    let runs_root = root.join("runs");
+    std::fs::create_dir_all(&runs_root)
+        .map_err(|error| format!("创建回测 RunManifest 目录失败: {error}"))?;
+    let safe_run_id = manifest
+        .run_id
+        .chars()
+        .map(|value| {
+            if value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.') {
+                value
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let path = runs_root.join(format!("{safe_run_id}-{:016x}.run.json", manifest.digest()));
+    let payload = manifest.to_json()?;
+    if path.exists() {
+        let existing = std::fs::read_to_string(&path).map_err(|error| {
+            format!("读取已有回测 RunManifest 失败 {}: {error}", path.display())
+        })?;
+        let restored = RunManifest::from_json(&existing)?;
+        if restored != *manifest {
+            return Err(format!(
+                "同一回测 RunManifest 路径已存在不同内容: {}",
+                path.display()
+            ));
+        }
+        return Ok(path);
+    }
+    let temporary = path.with_extension(format!("run.json.tmp.{}", std::process::id()));
+    std::fs::write(&temporary, payload)
+        .map_err(|error| format!("写入回测 RunManifest 失败 {}: {error}", temporary.display()))?;
+    if let Err(error) = std::fs::rename(&temporary, &path) {
+        let _ = std::fs::remove_file(&temporary);
+        if !path.exists() {
+            return Err(format!(
+                "提交回测 RunManifest 失败 {}: {error}",
+                path.display()
+            ));
+        }
+    }
+    Ok(path)
+}
+
+fn write_backtest_artifact(path: &Path, payload: &str, label: &str) -> Result<(), String> {
+    if path.exists() {
+        let existing = std::fs::read_to_string(path)
+            .map_err(|error| format!("读取已有{label}失败 {}: {error}", path.display()))?;
+        if existing == payload {
+            return Ok(());
+        }
+        return Err(format!(
+            "同一回测{label}路径已存在不同内容: {}",
+            path.display()
+        ));
+    }
+    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
+    std::fs::write(&temporary, payload)
+        .map_err(|error| format!("写入{label}失败 {}: {error}", temporary.display()))?;
+    if let Err(error) = std::fs::rename(&temporary, path) {
+        if path.exists() {
+            let existing = std::fs::read_to_string(path).map_err(|read_error| {
+                format!("读取并发生成的{label}失败 {}: {read_error}", path.display())
+            })?;
+            let _ = std::fs::remove_file(&temporary);
+            if existing == payload {
+                return Ok(());
+            }
+        }
+        let _ = std::fs::remove_file(&temporary);
+        return Err(format!("提交{label}失败 {}: {error}", path.display()));
+    }
+    Ok(())
+}
+
+fn persist_backtest_artifacts(
+    manifest_path: &Path,
+    strategy_id: &str,
+    instrument: &InstrumentId,
+    bars: &[Bar],
+    report: &qx_xingban::BacktestReport,
+) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let stem = manifest_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("backtest.run.json")
+        .strip_suffix(".run.json")
+        .unwrap_or("backtest");
+    let root = manifest_path
+        .parent()
+        .ok_or_else(|| "回测 RunManifest 缺少父目录".to_string())?;
+    let summary_path = root.join(format!("{stem}.summary.json"));
+    let equity_path = root.join(format!("{stem}.equity.csv"));
+    let fills_path = root.join(format!("{stem}.fills.csv"));
+    let summary = serde_json::json!({
+        "schema_version": 1,
+        "strategy_id": strategy_id,
+        "instrument": instrument.to_string(),
+        "bars": bars.len(),
+        "fills": report.fills.len(),
+        "clock_start": report.clock_start,
+        "clock_end": report.clock_end,
+        "input_data_hash": format!("{:016x}", report.input_data_hash),
+        "result_hash": format!("{:016x}", report.result_hash()),
+        "replay_hash": format!("{:016x}", report.replay_hash()),
+        "metrics": {
+            "return_bps": report.return_bps,
+            "max_drawdown_bps": report.max_drawdown_bps,
+            "fees_raw": report.fees_raw,
+            "turnover_raw": report.turnover_raw,
+            "final_equity_raw": report.final_equity(),
+        },
+        "assumptions": &report.assumptions,
+        "model_descriptors": &report.model_descriptors,
+        "run_manifest": manifest_path.to_string_lossy(),
+    });
+    let summary_payload = serde_json::to_string_pretty(&summary)
+        .map_err(|error| format!("编码回测摘要失败: {error}"))?;
+    write_backtest_artifact(&summary_path, &summary_payload, "回测摘要")?;
+
+    let mut equity_payload = String::from("index,ts,equity_raw,position_raw\n");
+    for (index, equity) in report.equity.iter().enumerate() {
+        let ts = bars.get(index).map(|bar| bar.ts).unwrap_or_default();
+        let position = report.positions.get(index).copied().unwrap_or_default();
+        equity_payload.push_str(&format!("{index},{ts},{equity},{position}\n"));
+    }
+    write_backtest_artifact(&equity_path, &equity_payload, "权益曲线")?;
+
+    let mut fills_payload = String::from(
+        "order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id\n",
+    );
+    for fill in &report.fills {
+        fills_payload.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{},{}\n",
+            fill.order_id,
+            fill.ts,
+            fill.qty.raw(),
+            fill.price.raw(),
+            fill.fee.raw(),
+            fill.account_id,
+            fill.strategy_id.as_deref().unwrap_or_default(),
+            fill.signal_id
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            fill.intent_id
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            fill.venue_id.as_deref().unwrap_or_default(),
+            fill.venue_order_id.as_deref().unwrap_or_default(),
+        ));
+    }
+    write_backtest_artifact(&fills_path, &fills_payload, "成交明细")?;
+    Ok((summary_path, equity_path, fills_path))
 }
 
 fn run_fast_backtest_manifest(manifest_path: &Path) -> Result<(), String> {
@@ -7217,12 +10432,19 @@ fn run_fast_backtest_manifest(manifest_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+struct DatasetRunBinding<'a> {
+    bundle_fingerprint: &'a str,
+    component_fingerprints: &'a BTreeMap<String, String>,
+}
+
 fn run_single_strategy_backtest(
     config: &RuntimeConfig,
     frame: &BarFrame,
     bars: &[Bar],
     spec_path: Option<&Path>,
     strategy_id: &str,
+    dataset_binding: Option<DatasetRunBinding<'_>>,
+    run_manifest_root: &Path,
 ) -> Result<(), String> {
     let mut margin: Box<dyn MarginRule> = Box::new(NoMargin);
     let instrument_spec = if let Some(spec_path) = spec_path {
@@ -7251,8 +10473,22 @@ fn run_single_strategy_backtest(
     let fee: Box<dyn FeeModel> = if let Some(path) = config.strategy.ashare_rules_path.as_deref() {
         let payload = std::fs::read_to_string(path)
             .map_err(|error| format!("读取 A 股规则快照失败 {path}: {error}"))?;
-        let rules: AshareRuleConfig = serde_json::from_str(&payload)
+        let mut rules: AshareRuleConfig = serde_json::from_str(&payload)
             .map_err(|error| format!("A 股规则快照 JSON 无效 {path}: {error}"))?;
+        if let Some(actions_path) = config.strategy.ashare_actions_path.as_deref() {
+            let actions_payload = std::fs::read_to_string(actions_path)
+                .map_err(|error| format!("读取 A 股公司行为 JSON 失败 {actions_path}: {error}"))?;
+            rules
+                .apply_corporate_actions_json(&frame.instrument.to_string(), &actions_payload)
+                .map_err(|error| format!("A 股公司行为 JSON 非法: {error}"))?;
+        }
+        if let Some(calendar_path) = config.strategy.ashare_calendar_path.as_deref() {
+            let calendar_payload = std::fs::read_to_string(calendar_path)
+                .map_err(|error| format!("读取 A 股交易日历 JSON 失败 {calendar_path}: {error}"))?;
+            rules
+                .apply_calendar_json(&calendar_payload)
+                .map_err(|error| format!("A 股交易日历 JSON 非法: {error}"))?;
+        }
         rules
             .validate()
             .map_err(|error| format!("A 股规则快照非法: {error}"))?;
@@ -7272,6 +10508,15 @@ fn run_single_strategy_backtest(
             taker_bp: 5,
         })
     };
+    if (config.strategy.ashare_actions_path.is_some()
+        || config.strategy.ashare_calendar_path.is_some())
+        && config.strategy.ashare_rules_path.is_none()
+    {
+        return Err(
+            "配置 ashare_actions_path 或 ashare_calendar_path 时必须同时配置 ashare_rules_path"
+                .into(),
+        );
+    }
     let account_id = config
         .strategy
         .account_id
@@ -7324,7 +10569,10 @@ fn run_single_strategy_backtest(
                 .venue_id
                 .clone()
                 .unwrap_or_else(|| frame.instrument.venue.to_string()),
-            data_fingerprint: format!("barframe:{:016x}", frame.digest()),
+            data_fingerprint: dataset_binding
+                .as_ref()
+                .map(|binding| format!("dataset-bundle:{}", binding.bundle_fingerprint))
+                .unwrap_or_else(|| format!("barframe:{:016x}", frame.digest())),
             as_of: bars.first().map(|bar| bar.ts).unwrap_or(1),
             positions: BTreeMap::new(),
             cash: BTreeMap::from([(backtest_config.currency.clone(), initial_cash.raw())]),
@@ -7345,11 +10593,44 @@ fn run_single_strategy_backtest(
             frame,
             initial_cash,
             backtest_config.currency.clone(),
+            dataset_binding
+                .as_ref()
+                .map(|binding| binding.bundle_fingerprint),
         )?;
         BacktestEngine::new(backtest_config)
             .run(bars, &mut strategy)
             .map_err(|error| format!("跨语言策略回测失败: {error:?}"))?
     };
+    let data_fingerprint = dataset_binding
+        .as_ref()
+        .map(|binding| format!("dataset-bundle:{}", binding.bundle_fingerprint))
+        .unwrap_or_else(|| format!("{:016x}", report.input_data_hash));
+    let run_manifest = report.run_manifest_with_input_components(
+        RunManifestIdentity {
+            run_id: &format!("strategy-backtest:{strategy_id}:{}", frame.instrument),
+            code_commit: "workspace",
+            config_hash: &config.fingerprint()?,
+            strategy_version: &config.strategy.version,
+            instrument_spec_version: if spec_path.is_some() {
+                "ccxt-market-spec-v1"
+            } else {
+                "default-instrument-spec-v1"
+            },
+            runtime_version: &format!("runtime-schema-{}", config.schema_version),
+        },
+        &data_fingerprint,
+        dataset_binding
+            .map(|binding| binding.component_fingerprints.clone())
+            .unwrap_or_default(),
+    )?;
+    let run_manifest_path = persist_backtest_run_manifest(run_manifest_root, &run_manifest)?;
+    let (summary_path, equity_path, fills_path) = persist_backtest_artifacts(
+        &run_manifest_path,
+        strategy_id,
+        &frame.instrument,
+        bars,
+        &report,
+    )?;
     println!(
         "[Strategy · Backtest] strategy={} instrument={} bars={} fills={} return_bps={} max_drawdown_bps={} result_hash={:016x}",
         strategy_id,
@@ -7359,6 +10640,20 @@ fn run_single_strategy_backtest(
         report.return_bps,
         report.max_drawdown_bps,
         report.result_hash()
+    );
+    println!(
+        "[RunManifest] run_id={} data_fingerprint={} result_hash={} digest={:016x}",
+        run_manifest.run_id,
+        run_manifest.data_fingerprint,
+        run_manifest.result_hash,
+        run_manifest.digest()
+    );
+    println!("[RunManifest] path={}", run_manifest_path.display());
+    println!(
+        "[Artifacts] summary={} equity={} fills={}",
+        summary_path.display(),
+        equity_path.display(),
+        fills_path.display()
     );
     Ok(())
 }
@@ -8630,24 +11925,235 @@ fn run_dead_letter_replay(path: &Path, group_id: &str, event_id: &str) -> Result
 }
 
 fn main() {
-    println!("牵星 Qianxing — 分级校准，量天定位\n");
-
     let mode = std::env::args().nth(1).unwrap_or_else(|| "all".into());
+    let run_json = mode == "run"
+        && matches!(
+            std::env::args().nth(2).as_deref(),
+            Some("doctor") | Some("live-check") | Some("runtime-check") | Some("report")
+        )
+        && std::env::args().any(|argument| argument == "--json");
+    let machine_output = matches!(mode.as_str(), "config" | "status" | "doctor" | "report")
+        && std::env::args().any(|argument| argument == "--json")
+        || matches!(mode.as_str(), "live-check" | "runtime-check")
+            && std::env::args().any(|argument| argument == "--json")
+        || run_json;
+    if !machine_output {
+        println!("牵星 Qianxing — 分级校准，量天定位\n");
+    }
     if matches!(mode.as_str(), "help" | "--help" | "-h") {
         print_cli_help();
+        return;
+    }
+    if mode == "run" {
+        let arguments = std::env::args().skip(2).collect::<Vec<_>>();
+        if let Err(error) = run_unified_command(&arguments) {
+            eprintln!("统一运行入口失败: {error}");
+            std::process::exit(2);
+        }
         return;
     }
     if mode == "init" {
         let arguments = std::env::args().skip(2).collect::<Vec<_>>();
         let force = arguments.iter().any(|argument| argument == "--force");
-        let output = arguments
-            .iter()
-            .find(|argument| !argument.starts_with('-'))
+        let mut positional = Vec::new();
+        let mut strategy_name = None;
+        let mut profile = None;
+        let mut index = 0;
+        while index < arguments.len() {
+            let argument = &arguments[index];
+            if argument == "--strategy" {
+                index += 1;
+                strategy_name = arguments.get(index).cloned();
+                if strategy_name.is_none() {
+                    eprintln!("init --strategy 缺少策略名称");
+                    std::process::exit(2);
+                }
+            } else if let Some(value) = argument.strip_prefix("--strategy=") {
+                if value.is_empty() {
+                    eprintln!("init --strategy= 缺少策略名称");
+                    std::process::exit(2);
+                }
+                strategy_name = Some(value.to_string());
+            } else if argument == "--profile" {
+                index += 1;
+                profile = arguments.get(index).cloned();
+                if profile.is_none() {
+                    eprintln!("init --profile 缺少场景名称");
+                    std::process::exit(2);
+                }
+            } else if let Some(value) = argument.strip_prefix("--profile=") {
+                if value.is_empty() {
+                    eprintln!("init --profile= 缺少场景名称");
+                    std::process::exit(2);
+                }
+                profile = Some(value.to_string());
+            } else if !argument.starts_with('-') {
+                positional.push(argument.clone());
+            }
+            index += 1;
+        }
+        let output = positional
+            .first()
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("qianxing.runtime.json"));
-        if let Err(error) = run_init(&output, force) {
+        if let Err(error) =
+            run_init_with_profile(&output, force, strategy_name.as_deref(), profile.as_deref())
+        {
             eprintln!("初始化失败: {error}");
             std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "doctor" {
+        let path = std::env::args()
+            .skip(2)
+            .find(|argument| !argument.starts_with('-'))
+            .map(PathBuf::from)
+            .unwrap_or_else(default_runtime_path);
+        if let Err(error) = run_doctor(&path, std::env::args().any(|argument| argument == "--json"))
+        {
+            eprintln!("Doctor 失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "report" {
+        let path = std::env::args()
+            .skip(2)
+            .find(|argument| !argument.starts_with('-'))
+            .map(PathBuf::from)
+            .unwrap_or_else(default_runtime_path);
+        if let Err(error) = run_report(&path, std::env::args().any(|argument| argument == "--json"))
+        {
+            eprintln!("报告查看失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "config" {
+        let action = std::env::args().nth(2).unwrap_or_else(|| "validate".into());
+        let path = std::env::args()
+            .nth(3)
+            .map(PathBuf::from)
+            .unwrap_or_else(default_runtime_path);
+        let result = match action.as_str() {
+            "explain" => {
+                run_config_explain(&path, std::env::args().any(|argument| argument == "--json"))
+            }
+            "validate" => match read_runtime_config(&path) {
+                Ok(config) => {
+                    let (failures, warnings) = validate_runtime_references(&path, &config);
+                    for warning in warnings {
+                        println!("[WARN] {warning}");
+                    }
+                    if failures.is_empty() {
+                        println!("[PASS] config validate 通过: {}", path.display());
+                        Ok(())
+                    } else {
+                        for failure in &failures {
+                            eprintln!("[FAIL] {failure}");
+                        }
+                        Err(format!("配置引用校验失败，共 {} 项", failures.len()))
+                    }
+                }
+                Err(error) => Err(error),
+            },
+            "fingerprint" => run_config_fingerprint(&path),
+            "lock" => {
+                let output = std::env::args()
+                    .nth(4)
+                    .filter(|value| !value.starts_with('-'))
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| {
+                        let stem = path
+                            .file_stem()
+                            .and_then(|value| value.to_str())
+                            .unwrap_or("qianxing.runtime");
+                        path.with_file_name(format!("{stem}.locked.json"))
+                    });
+                run_config_lock(
+                    &path,
+                    &output,
+                    std::env::args().any(|argument| argument == "--force"),
+                )
+            }
+            _ => Err("config 仅支持 explain、validate、fingerprint 或 lock".into()),
+        };
+        if let Err(error) = result {
+            eprintln!("配置命令失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "status" {
+        let path = std::env::args()
+            .nth(2)
+            .filter(|value| !value.starts_with('-'))
+            .map(PathBuf::from)
+            .unwrap_or_else(default_runtime_path);
+        if let Err(error) = run_status(&path, std::env::args().any(|argument| argument == "--json"))
+        {
+            eprintln!("状态查看失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "strategy" {
+        let action = std::env::args().nth(2).unwrap_or_else(|| "list".into());
+        match action.as_str() {
+            "list" => {
+                for kind in BuiltinStrategyKind::ALL {
+                    println!("{}\t{}", kind.name(), kind.description());
+                }
+            }
+            "init" => {
+                let name = match std::env::args().nth(3) {
+                    Some(value) => value,
+                    None => {
+                        eprintln!("strategy init 需要 strategy 名称");
+                        std::process::exit(2);
+                    }
+                };
+                let positional = std::env::args()
+                    .skip(4)
+                    .filter(|argument| !argument.starts_with('-'))
+                    .collect::<Vec<_>>();
+                let output = positional
+                    .first()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from(format!("qianxing.strategy.{name}.json")));
+                let bars = positional.get(1).map(PathBuf::from);
+                let force = std::env::args().any(|argument| argument == "--force");
+                if let Err(error) = run_strategy_init(&name, &output, bars.as_deref(), force) {
+                    eprintln!("策略初始化失败: {error}");
+                    std::process::exit(2);
+                }
+            }
+            "backtest" => {
+                let runtime = match std::env::args().nth(3) {
+                    Some(value) => PathBuf::from(value),
+                    None => {
+                        eprintln!("strategy backtest 需要 runtime.json bar-frame.json");
+                        std::process::exit(2);
+                    }
+                };
+                let bars = match std::env::args().nth(4) {
+                    Some(value) => PathBuf::from(value),
+                    None => {
+                        eprintln!("strategy backtest 缺少 bar-frame.json");
+                        std::process::exit(2);
+                    }
+                };
+                let spec = std::env::args().nth(5).map(PathBuf::from);
+                if let Err(error) = run_strategy_backtest(&runtime, &bars, spec.as_deref()) {
+                    eprintln!("策略回测失败: {error}");
+                    std::process::exit(2);
+                }
+            }
+            _ => {
+                eprintln!("strategy 仅支持 list、init、backtest");
+                std::process::exit(2);
+            }
         }
         return;
     }
@@ -8659,6 +12165,63 @@ fn main() {
             run_unified_backtest(runtime.as_deref(), frame.as_deref(), spec.as_deref())
         {
             eprintln!("统一策略回测失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "dataset-ingest" {
+        let frame = match std::env::args().nth(2) {
+            Some(value) => PathBuf::from(value),
+            None => {
+                eprintln!("dataset-ingest 需要 bar-frame.json dataset-id version data-dir");
+                std::process::exit(2);
+            }
+        };
+        let dataset_id = match std::env::args().nth(3) {
+            Some(value) => value,
+            None => {
+                eprintln!("dataset-ingest 缺少 dataset-id");
+                std::process::exit(2);
+            }
+        };
+        let version = match std::env::args().nth(4) {
+            Some(value) => value,
+            None => {
+                eprintln!("dataset-ingest 缺少 version");
+                std::process::exit(2);
+            }
+        };
+        let data_root = match std::env::args().nth(5) {
+            Some(value) => PathBuf::from(value),
+            None => {
+                eprintln!("dataset-ingest 缺少 data-dir");
+                std::process::exit(2);
+            }
+        };
+        if let Err(error) = run_dataset_ingest(&frame, &dataset_id, &version, &data_root) {
+            eprintln!("数据集摄取失败: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if mode == "dataset-bundle" {
+        let bundle = match std::env::args().nth(2) {
+            Some(value) => PathBuf::from(value),
+            None => {
+                eprintln!("dataset-bundle 需要 bundle.json data-dir");
+                std::process::exit(2);
+            }
+        };
+        let data_root = match std::env::args().nth(3) {
+            Some(value) => PathBuf::from(value),
+            None => {
+                eprintln!("dataset-bundle 缺少 data-dir");
+                std::process::exit(2);
+            }
+        };
+        let bars_frame = std::env::args().nth(4).map(PathBuf::from);
+        if let Err(error) = run_dataset_bundle(&bundle, &data_root, bars_frame.as_deref()) {
+            eprintln!("数据集 Bundle 保存失败: {error}");
             std::process::exit(2);
         }
         return;
@@ -8816,9 +12379,13 @@ fn main() {
     }
     if mode == "live-check" {
         let path = std::env::args()
-            .nth(2)
+            .skip(2)
+            .find(|argument| !argument.starts_with('-'))
             .unwrap_or_else(|| "deploy/qianxing.runtime.production.example.json".into());
-        if let Err(error) = run_live_check(Path::new(&path)) {
+        if let Err(error) = run_live_check(
+            Path::new(&path),
+            std::env::args().any(|argument| argument == "--json"),
+        ) {
             eprintln!("实盘前置检查失败: {error}");
             std::process::exit(2);
         }
@@ -9016,9 +12583,13 @@ fn main() {
     }
     if mode == "runtime-check" {
         let path = std::env::args()
-            .nth(2)
+            .skip(2)
+            .find(|argument| !argument.starts_with('-'))
             .unwrap_or_else(|| "deploy/qianxing.runtime.example.json".into());
-        if let Err(error) = run_runtime_check(Path::new(&path)) {
+        if let Err(error) = run_runtime_check(
+            Path::new(&path),
+            std::env::args().any(|argument| argument == "--json"),
+        ) {
             eprintln!("运行时配置校验失败: {error}");
             std::process::exit(2);
         }
@@ -9451,6 +13022,7 @@ fn main() {
         code_commit: "workspace".into(),
         config_hash: "fast=5;slow=20;seed=42".to_string(),
         data_fingerprint: format!("synthetic:{}", bars.len()),
+        input_components: BTreeMap::new(),
         clock_start: bars.first().map(|b| b.ts).unwrap_or(0),
         clock_end: bars.last().map(|b| b.ts).unwrap_or(0),
         global_seed: 42,
@@ -9547,6 +13119,148 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn init_creates_self_contained_project_assets_and_builtin_strategy() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-init-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = root.join("qianxing.runtime.json");
+        run_init_with_profile(&runtime, false, Some("macd"), None).unwrap();
+
+        let config = read_runtime_config(&runtime).unwrap();
+        assert_eq!(config.strategy.builtin_strategy.as_deref(), Some("macd"));
+        assert_eq!(
+            config.strategy.bars_snapshot_path.as_deref(),
+            Some("qianxing.bar-frame.example.json")
+        );
+        for asset in [
+            "qianxing.scheduler.jobs.example.json",
+            "qianxing.scheduler.paper-order-smoke.json",
+            "qianxing.bar-frame.example.json",
+            "qianxing.dataset-bundle.bar-frame.example.json",
+            "qianxing.dataset-component.arrow.example.json",
+            "qianxing.binance.spot.spec.json",
+            "qianxing.strategy-target.paper.json",
+            "README.qianxing.md",
+        ] {
+            assert!(root.join(asset).is_file(), "missing init asset {asset}");
+        }
+        let (failures, _) = validate_runtime_references(&runtime, &config);
+        assert!(failures.is_empty(), "init references invalid: {failures:?}");
+        assert!(run_init_with_profile(&runtime, false, Some("macd"), None).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn init_profiles_rewrite_deploy_paths_and_validate_references() {
+        for profile in ["paper", "ccxt", "ashare", "multi-venue", "backtest"] {
+            let root = std::env::temp_dir().join(format!(
+                "qianxing-cli-profile-{profile}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&root).unwrap();
+            let runtime = root.join("qianxing.runtime.json");
+            run_init_with_profile(&runtime, false, None, Some(profile)).unwrap();
+            let config = read_runtime_config(&runtime).unwrap();
+            let (failures, _) = validate_runtime_references(&runtime, &config);
+            assert!(
+                failures.is_empty(),
+                "profile={profile} failures={failures:?}"
+            );
+            assert!(!std::fs::read_to_string(&runtime)
+                .unwrap()
+                .contains("deploy/"));
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn doctor_report_is_machine_readable_and_never_claims_network_or_orders() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-doctor-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = root.join("qianxing.runtime.json");
+        run_init_with_profile(&runtime, false, Some("macd"), None).unwrap();
+
+        let report = collect_doctor_report(&runtime).unwrap();
+        assert_eq!(report["schema_version"], 1);
+        assert_eq!(report["ok"], true);
+        assert_eq!(report["network_accessed"], false);
+        assert_eq!(report["orders_sent"], false);
+        assert!(report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| { check["name"] == "config" && check["status"] == "pass" }));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn report_resolves_explicit_summary_and_runtime_latest_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-report-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = root.join("qianxing.runtime.json");
+        run_init_with_profile(&runtime, false, Some("macd"), None).unwrap();
+        let runs = root.join("data/qianxing/runs");
+        std::fs::create_dir_all(&runs).unwrap();
+        let summary = runs.join("example.summary.json");
+        std::fs::write(&summary, "{\"schema_version\":1}").unwrap();
+
+        assert_eq!(resolve_backtest_summary_path(&summary).unwrap(), summary);
+        assert_eq!(resolve_backtest_summary_path(&runtime).unwrap(), summary);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn config_lock_writes_and_verifies_published_fingerprint() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-config-lock-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let input = root.join("runtime.json");
+        let output = root.join("runtime.locked.json");
+        run_init_with_profile(&input, false, None, None).unwrap();
+        run_config_lock(&input, &output, false).unwrap();
+        let locked = read_runtime_config(&output).unwrap();
+        assert_eq!(
+            locked.config_fingerprint,
+            Some(locked.fingerprint().unwrap())
+        );
+        assert!(locked.verify_fingerprint().is_ok());
+        assert!(run_config_lock(&input, &output, false).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn runtime_relative_paths_resolve_from_runtime_config_directory() {
         assert_eq!(
             resolve_runtime_relative_path(
@@ -9554,6 +13268,13 @@ mod tests {
                 "qianxing.binance.spot.spec.json",
             ),
             PathBuf::from("deploy/qianxing.binance.spot.spec.json")
+        );
+        assert_eq!(
+            resolve_runtime_relative_path(
+                Path::new("deploy/qianxing.runtime.ccxt.example.json"),
+                "deploy/qianxing.ccxt.okx.perpetual.spec.json",
+            ),
+            PathBuf::from("deploy/qianxing.ccxt.okx.perpetual.spec.json")
         );
         assert_eq!(
             resolve_runtime_relative_path(
@@ -9567,6 +13288,7 @@ mod tests {
             python_module: Some("../python/strategy.py".into()),
             target_snapshot_path: Some("../research/target.json".into()),
             research_snapshot_path: Some("../research/bundle.json".into()),
+            dataset_bundle_path: Some("../research/dataset.bundle.json".into()),
             ..StrategyRuntimeConfig::default()
         };
         resolve_strategy_runtime_paths(&mut strategy, Path::new("deploy/runtime.json"));
@@ -9596,6 +13318,13 @@ mod tests {
             resolve_runtime_relative_path(
                 Path::new("deploy/runtime.json"),
                 "../research/bundle.json"
+            )
+        );
+        assert_eq!(
+            PathBuf::from(strategy.dataset_bundle_path.unwrap()),
+            resolve_runtime_relative_path(
+                Path::new("deploy/runtime.json"),
+                "../research/dataset.bundle.json"
             )
         );
         let root = std::env::temp_dir().join(format!(
@@ -9656,6 +13385,367 @@ mod tests {
             PathBuf::from(files.secret),
             resolve_runtime_relative_path(Path::new("deploy/runtime.json"), "../secrets/secret")
         );
+    }
+
+    #[test]
+    fn paper_market_bridge_filters_symbols_and_accepts_account_wildcard() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let other = InstrumentId::parse("ETHUSDT.BINANCE").unwrap();
+        let worker = WorkerConfig {
+            id: "paper-btc".into(),
+            role: WorkerRole::Execution,
+            enabled: true,
+            account_id: Some("paper-main".into()),
+            venue_id: Some("paper".into()),
+            endpoint: None,
+            symbols: vec![instrument.to_string()],
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        };
+        assert!(paper_market_worker_matches_instrument(&worker, &instrument));
+        assert!(!paper_market_worker_matches_instrument(&worker, &other));
+
+        let mut wildcard = worker.clone();
+        wildcard.symbols.clear();
+        assert!(paper_market_worker_matches_instrument(&wildcard, &other));
+
+        let mut disabled = wildcard.clone();
+        disabled.enabled = false;
+        assert!(!paper_market_worker_matches_instrument(
+            &disabled,
+            &instrument
+        ));
+        let mut live = wildcard;
+        live.venue_id = Some("binance".into());
+        assert!(!paper_market_worker_matches_instrument(&live, &instrument));
+    }
+
+    #[test]
+    fn paper_market_bridge_mirrors_quote_into_account_event_log() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-paper-market-bridge-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let worker = WorkerConfig {
+            id: "paper-btc".into(),
+            role: WorkerRole::Execution,
+            enabled: true,
+            account_id: Some("paper-main".into()),
+            venue_id: Some("paper".into()),
+            endpoint: None,
+            symbols: vec![instrument.to_string()],
+            settlement_currency: Some("USDT".into()),
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        };
+        let pipeline = LiveEventPipeline::open_configured(
+            root.clone(),
+            "paper-paper-main-paper-events",
+            "USDT",
+            None,
+        )
+        .unwrap();
+        let mut bridge = PaperMarketBridge {
+            workers: vec![worker],
+            log_name: "paper-paper-main-paper-events".into(),
+            pipeline,
+        };
+        let mirrored = bridge_market_quote_to_paper(
+            std::slice::from_mut(&mut bridge),
+            PaperMarketQuote {
+                source_worker_id: "ccxt-btc",
+                instrument: &instrument,
+                bid: Price::from_raw(100),
+                bid_qty: Quantity::from_i64(2),
+                ask: Price::from_raw(101),
+                ask_qty: Quantity::from_i64(3),
+                event_ts: 1_000,
+                receive_ts: 1_001,
+                source_seq: 7,
+            },
+        )
+        .unwrap();
+        assert_eq!(mirrored, 1);
+        assert_eq!(
+            bridge.pipeline.latest_quote(&instrument),
+            Some((Price::from_raw(100), Price::from_raw(101), 1_000))
+        );
+        let restored_quote = bridge
+            .pipeline
+            .latest_quote_with_depth(&instrument)
+            .unwrap();
+        assert_eq!(restored_quote.bid_qty, Quantity::from_i64(2));
+        assert_eq!(restored_quote.ask_qty, Quantity::from_i64(3));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn strategy_backtest_rejects_dataset_bundle_bar_mismatch() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-bundle-binding-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let bundle_path = root.join("bundle.json");
+        let mut bundle = qx_data::DatasetBundleManifest::new("test", "v1", "fixture");
+        bundle
+            .add_component(qx_data::DatasetComponentManifest {
+                kind: "bars".into(),
+                format: qx_data::DatasetComponentFormat::Json,
+                dataset: qx_data::DatasetManifest {
+                    dataset_id: "bars".into(),
+                    version: "v1".into(),
+                    source: "fixture".into(),
+                    fingerprint: "bundle-bars".into(),
+                    schema_version: 1,
+                    start_timestamp: 1,
+                    end_timestamp: 2,
+                },
+                row_count: 2,
+            })
+            .unwrap();
+        std::fs::write(&bundle_path, serde_json::to_vec(&bundle).unwrap()).unwrap();
+        let expected = qx_data::DatasetManifest {
+            dataset_id: "bars".into(),
+            version: "v1".into(),
+            source: "fixture".into(),
+            fingerprint: "input-bars".into(),
+            schema_version: 1,
+            start_timestamp: 1,
+            end_timestamp: 2,
+        };
+        let error = verify_dataset_bundle_binding(&bundle_path, &expected, 2).unwrap_err();
+        assert!(error.contains("fingerprint 不匹配"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn strategy_bundle_binds_non_bar_component_content() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-component-binding-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let actions_path = root.join("actions.json");
+        let actions =
+            serde_json::json!([{"instrument":"000001.SZSE","action_type":"cash_dividend"}]);
+        let actions_bytes = serde_json::to_vec(&actions).unwrap();
+        std::fs::write(&actions_path, &actions_bytes).unwrap();
+        let mut bundle = qx_data::DatasetBundleManifest::new("test", "v1", "fixture");
+        bundle
+            .add_component(qx_data::DatasetComponentManifest {
+                kind: "bars".into(),
+                format: qx_data::DatasetComponentFormat::Json,
+                dataset: qx_data::DatasetManifest {
+                    dataset_id: "bars".into(),
+                    version: "v1".into(),
+                    source: "fixture".into(),
+                    fingerprint: "bars".into(),
+                    schema_version: 1,
+                    start_timestamp: 1,
+                    end_timestamp: 2,
+                },
+                row_count: 2,
+            })
+            .unwrap();
+        bundle
+            .add_component(qx_data::DatasetComponentManifest {
+                kind: "corporate_actions".into(),
+                format: qx_data::DatasetComponentFormat::Json,
+                dataset: qx_data::DatasetManifest {
+                    dataset_id: "actions".into(),
+                    version: "v1".into(),
+                    source: "fixture".into(),
+                    fingerprint: qx_strategy::sha256_hex(&actions_bytes),
+                    schema_version: 1,
+                    start_timestamp: 1,
+                    end_timestamp: 2,
+                },
+                row_count: 1,
+            })
+            .unwrap();
+        let strategy = StrategyRuntimeConfig {
+            ashare_actions_path: Some(actions_path.to_string_lossy().into_owned()),
+            ..StrategyRuntimeConfig::default()
+        };
+        verify_dataset_bundle_component_bindings(&bundle, &strategy, "test").unwrap();
+        std::fs::write(&actions_path, br"[]").unwrap();
+        assert!(verify_dataset_bundle_component_bindings(&bundle, &strategy, "test").is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn strategy_bundle_binds_explicit_generic_component_path() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-generic-component-binding-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let factors_path = root.join("factors.json");
+        std::fs::write(
+            &factors_path,
+            br#"{"schema":1,"rows":[{"beta":2,"alpha":1}]}"#,
+        )
+        .unwrap();
+        let (fingerprint, row_count) =
+            dataset_commands::dataset_component_file_fingerprint(&factors_path, "factors").unwrap();
+        let mut bundle = qx_data::DatasetBundleManifest::new("test", "v1", "fixture");
+        bundle
+            .add_component(qx_data::DatasetComponentManifest {
+                kind: "bars".into(),
+                format: qx_data::DatasetComponentFormat::Json,
+                dataset: qx_data::DatasetManifest {
+                    dataset_id: "bars".into(),
+                    version: "v1".into(),
+                    source: "fixture".into(),
+                    fingerprint: "bars".into(),
+                    schema_version: 1,
+                    start_timestamp: 1,
+                    end_timestamp: 2,
+                },
+                row_count: 2,
+            })
+            .unwrap();
+        bundle
+            .add_component(qx_data::DatasetComponentManifest {
+                kind: "factors".into(),
+                format: qx_data::DatasetComponentFormat::Json,
+                dataset: qx_data::DatasetManifest {
+                    dataset_id: "factors".into(),
+                    version: "v1".into(),
+                    source: "fixture".into(),
+                    fingerprint,
+                    schema_version: 1,
+                    start_timestamp: 1,
+                    end_timestamp: 2,
+                },
+                row_count,
+            })
+            .unwrap();
+        let strategy = StrategyRuntimeConfig {
+            dataset_component_paths: BTreeMap::from([(
+                "factors".into(),
+                factors_path.to_string_lossy().into_owned(),
+            )]),
+            ..StrategyRuntimeConfig::default()
+        };
+        verify_dataset_bundle_component_bindings(&bundle, &strategy, "test").unwrap();
+        // JSON 字段顺序变化不应改变通用组件 fingerprint。
+        std::fs::write(
+            &factors_path,
+            br#"{"rows":[{"alpha":1,"beta":2}],"schema":1}"#,
+        )
+        .unwrap();
+        verify_dataset_bundle_component_bindings(&bundle, &strategy, "test").unwrap();
+        std::fs::write(
+            &factors_path,
+            br#"{"rows":[{"alpha":1,"beta":3}],"schema":1}"#,
+        )
+        .unwrap();
+        assert!(verify_dataset_bundle_component_bindings(&bundle, &strategy, "test").is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn strategy_bundle_binds_arrow_component_manifest() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-arrow-component-binding-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let arrow_path = root.join("factors.arrow.manifest.json");
+        let arrow_manifest = qx_data::ArrowDatasetManifest {
+            format: "arrow".into(),
+            kind: "factors".into(),
+            dataset: qx_data::DatasetManifest {
+                dataset_id: "factors".into(),
+                version: "arrow-v1".into(),
+                source: "fixture".into(),
+                fingerprint: "arrow-factors".into(),
+                schema_version: 1,
+                start_timestamp: 1,
+                end_timestamp: 2,
+            },
+            row_count: 2,
+            schema: vec![qx_data::ArrowFieldManifest {
+                name: "value_raw".into(),
+                format: "decimal128(38,9)".into(),
+            }],
+        };
+        std::fs::write(
+            &arrow_path,
+            serde_json::to_vec_pretty(&arrow_manifest).unwrap(),
+        )
+        .unwrap();
+        let mut bundle = qx_data::DatasetBundleManifest::new("test", "arrow-v1", "fixture");
+        bundle
+            .add_component(qx_data::DatasetComponentManifest {
+                kind: "bars".into(),
+                format: qx_data::DatasetComponentFormat::Json,
+                dataset: qx_data::DatasetManifest {
+                    dataset_id: "bars".into(),
+                    version: "v1".into(),
+                    source: "fixture".into(),
+                    fingerprint: "bars".into(),
+                    schema_version: 1,
+                    start_timestamp: 1,
+                    end_timestamp: 2,
+                },
+                row_count: 2,
+            })
+            .unwrap();
+        bundle
+            .add_component(qx_data::DatasetComponentManifest {
+                kind: "factors".into(),
+                format: qx_data::DatasetComponentFormat::Arrow,
+                dataset: arrow_manifest.dataset.clone(),
+                row_count: arrow_manifest.row_count,
+            })
+            .unwrap();
+        let strategy = StrategyRuntimeConfig {
+            dataset_component_paths: BTreeMap::from([(
+                "factors".into(),
+                arrow_path.to_string_lossy().into_owned(),
+            )]),
+            ..StrategyRuntimeConfig::default()
+        };
+        verify_dataset_bundle_component_bindings(&bundle, &strategy, "test").unwrap();
+        let mut invalid = arrow_manifest;
+        invalid.dataset.fingerprint = "changed".into();
+        std::fs::write(&arrow_path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(verify_dataset_bundle_component_bindings(&bundle, &strategy, "test").is_err());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -9815,6 +13905,38 @@ mod tests {
     }
 
     #[test]
+    fn runtime_check_report_is_machine_readable_and_safe() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("deploy")
+            .join("qianxing.runtime.example.json");
+        let report = collect_runtime_check_report(&path).unwrap();
+        assert_eq!(report["schema_version"], 1);
+        assert_eq!(report["ok"], true);
+        assert_eq!(report["network_accessed"], false);
+        assert_eq!(report["orders_sent"], false);
+        assert!(!report["health"]["services"].as_array().unwrap().is_empty());
+        assert!(report["config_fingerprint"].as_str().unwrap().len() >= 32);
+    }
+
+    #[test]
+    fn live_check_report_is_structured_and_fail_closed_for_template() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("deploy")
+            .join("qianxing.runtime.production.example.json");
+        let report = collect_live_check_report(&path).unwrap();
+        assert_eq!(report["schema_version"], 1);
+        assert_eq!(report["ok"], false);
+        assert_eq!(report["network_accessed"], false);
+        assert_eq!(report["orders_sent"], false);
+        assert!(!report["checks"].as_array().unwrap().is_empty());
+        assert!(!report["failures"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
     fn ccxt_worker_rejects_exchange_config_mismatch() {
         let root = std::env::temp_dir().join(format!(
             "qianxing-cli-ccxt-binding-{}-{}",
@@ -9845,6 +13967,52 @@ mod tests {
         };
         let error = validate_ccxt_worker_binding(&worker, &config_path).unwrap_err();
         assert!(error.contains("不一致"));
+        std::fs::write(
+            &config_path,
+            r#"{"exchange_id":"binance","credential_env":{"api_key":1,"secret":"QX_SECRET"}}"#,
+        )
+        .unwrap();
+        let error = validate_ccxt_worker_binding(&worker, &config_path).unwrap_err();
+        assert!(error.contains("credential_env.api_key"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ccxt_private_worker_reads_credentials_from_endpoint_config() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-ccxt-credentials-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("runtime.json");
+        let ccxt_path = root.join("ccxt.json");
+        std::fs::write(
+            &ccxt_path,
+            r#"{"exchange_id":"okx","credential_env":{"api_key":"QX_TEST_MISSING_KEY","secret":"QX_TEST_MISSING_SECRET"}}"#,
+        )
+        .unwrap();
+        let worker = WorkerConfig {
+            id: "ccxt-private".into(),
+            role: WorkerRole::Execution,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("okx".into()),
+            endpoint: Some("ccxt.json".into()),
+            symbols: Vec::new(),
+            settlement_currency: Some("USDT".into()),
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        };
+        assert!(!worker_credentials_ready(&config_path, &worker).unwrap());
+        assert!(validate_ccxt_worker_binding(&worker, &ccxt_path).is_ok());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -9910,6 +14078,29 @@ mod tests {
         assert_eq!(facts[0].0.amount, Money::from_raw(-120000000));
         assert_eq!(facts[1].0.kind, CashflowKind::Interest);
         assert_eq!(facts[1].1, 5100);
+    }
+
+    #[test]
+    fn ccxt_open_orders_report_unknown_and_unmapped_remote_risk() {
+        let instrument = InstrumentId::parse("BTC/USDT.OKX").unwrap();
+        let mut terminal = mk_order(7, &instrument, Side::Buy, 1);
+        terminal.status = OrderStatus::Filled;
+        let local_orders = vec![terminal, mk_order(8, &instrument, Side::Sell, 1)];
+        let known_remote_orders =
+            BTreeMap::from([("remote-known".into(), (7, OrderStatus::Filled))]);
+        let value = serde_json::json!({
+            "orders": [
+                {"order_id": "remote-known", "client_order_id": "7", "symbol": "BTC/USDT", "status": "open"},
+                {"order_id": "remote-unmapped", "client_order_id": "8", "symbol": "BTC/USDT", "status": "open"},
+                {"order_id": "remote-unknown", "client_order_id": "", "symbol": "ETH/USDT", "status": "open"}
+            ]
+        });
+        let issues =
+            ccxt_open_order_issues(&value, &local_orders, &known_remote_orders, "okx").unwrap();
+        assert_eq!(issues.len(), 3);
+        assert_eq!(issues[0]["kind"], "remote_open_local_terminal");
+        assert_eq!(issues[1]["kind"], "remote_open_unmapped_local_order");
+        assert_eq!(issues[2]["kind"], "unknown_remote_open_order");
     }
 
     #[test]
@@ -10013,6 +14204,24 @@ mod tests {
     }
 
     #[test]
+    fn live_strategy_rejects_future_or_stale_bar_snapshots() {
+        let frame = BarFrame {
+            instrument: InstrumentId::parse("BTC/USDT.OKX").unwrap(),
+            source: DataSourceId::new("ccxt:test"),
+            ts: vec![0, 60_000, 120_000],
+            open_raw: vec![1_000_000_000; 3],
+            high_raw: vec![1_000_000_001; 3],
+            low_raw: vec![999_999_999; 3],
+            close_raw: vec![1_000_000_000; 3],
+            volume_raw: vec![1_000_000_000; 3],
+        };
+        assert!(live_frame_is_fresh(&frame, 60_000, true, 120_000, 180_000));
+        assert!(!live_frame_is_fresh(&frame, 60_000, true, 120_000, 300_001));
+        assert!(!live_frame_is_fresh(&frame, 60_000, true, 120_000, 119_999));
+        assert!(live_frame_is_fresh(&frame, 60_000, false, 120_000, 240_000));
+    }
+
+    #[test]
     fn ccxt_derivative_snapshots_map_to_signed_positions_and_funding_facts() {
         let response = serde_json::json!({
             "positions": [{
@@ -10070,6 +14279,7 @@ mod tests {
         config.storage.data_dir = data_dir.to_string_lossy().into_owned();
         config.storage.event_log_segment_events = Some(2);
         config.storage.backend = StorageBackend::Files;
+        config.storage.consistency = qx_runtime::StorageConsistency::LocalDurable;
         config.storage.sqlite_path = None;
         let config_path = root.join("runtime.json");
         std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
@@ -10102,6 +14312,239 @@ mod tests {
         assert_eq!(state.audit()[0].status, CommandStatus::Accepted);
         assert_eq!(state.audit()[1].status, CommandStatus::Executed);
         assert!(state.pending().next().is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn strategy_multileg_group_snapshot_is_idempotent_and_reconciles_eventlog_state() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-spread-group-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let first = mk_order(
+            9101,
+            &InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            Side::Buy,
+            1,
+        );
+        let second = mk_order(
+            9102,
+            &InstrumentId::parse("ETHUSDT.OKX").unwrap(),
+            Side::Sell,
+            1,
+        );
+        let group_id = spread_group_id("arb", 7, 11);
+        persist_strategy_spread_group(&root, &group_id, "arb", &[first.clone(), second.clone()])
+            .unwrap();
+        // 策略重试或 worker 重启不能重复创建不同快照。
+        persist_strategy_spread_group(&root, &group_id, "arb", &[first.clone(), second.clone()])
+            .unwrap();
+        let store = FileSpreadOrderGroupStore::new(root.join("spread-groups")).unwrap();
+        let group = store.load(&group_id).unwrap().unwrap();
+        assert_eq!(group.status, qx_zhenlu::SpreadOrderGroupStatus::Planned);
+        assert_eq!(group.strategy_id, "arb");
+
+        let command = strategy_submit_command("arb", &first, false, Some(&group_id)).unwrap();
+        let mut pipeline = LiveEventPipeline::open(&root, "spread-events", "USDT").unwrap();
+        pipeline.register_order(first.clone(), 100).unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: first.client_id,
+                    venue_order_id: Some("binance-9101".into()),
+                },
+                101,
+                101,
+                1,
+                "binance:accepted:9101",
+            ))
+            .unwrap();
+        sync_spread_group_after_order(&root, &pipeline, &command, 101).unwrap();
+        let group = store.load(&group_id).unwrap().unwrap();
+        assert_eq!(
+            group.leg("leg-9101").unwrap().order.status,
+            OrderStatus::Accepted
+        );
+        assert_eq!(group.status, qx_zhenlu::SpreadOrderGroupStatus::Submitting);
+
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::ReconcileRequired {
+                    client_order_id: first.client_id,
+                },
+                102,
+                102,
+                2,
+                "binance:reconcile:9101",
+            ))
+            .unwrap();
+        sync_spread_group_after_order(&root, &pipeline, &command, 102).unwrap();
+        let group = store.load(&group_id).unwrap().unwrap();
+        assert_eq!(
+            group.leg("leg-9101").unwrap().order.status,
+            OrderStatus::Unknown
+        );
+        assert_eq!(
+            group.status,
+            qx_zhenlu::SpreadOrderGroupStatus::ReconcileRequired
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn paper_hedge_recovery_replays_partial_fill_to_hedged() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-paper-hedge-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let mut first = mk_order(9201, &instrument, Side::Buy, 2);
+        first.limit = Some(Price::from_i64(100));
+        let mut second = mk_order(
+            9202,
+            &InstrumentId::parse("ETHUSDT.BINANCE").unwrap(),
+            Side::Sell,
+            2,
+        );
+        second.limit = Some(Price::from_i64(100));
+        let mut group = SpreadOrderGroup::new(
+            "paper-hedge-1",
+            "basis-arbitrage",
+            vec![
+                SpreadOrderLeg {
+                    leg_id: "spot".into(),
+                    venue_id: "BINANCE".into(),
+                    order: first.clone(),
+                },
+                SpreadOrderLeg {
+                    leg_id: "future".into(),
+                    venue_id: "BINANCE".into(),
+                    order: second,
+                },
+            ],
+        )
+        .unwrap();
+        group.begin_submission().unwrap();
+        group.record_accepted("spot").unwrap();
+        group
+            .record_fill(
+                "spot",
+                &qx_core::Fill {
+                    order_id: first.client_id,
+                    qty: Quantity::from_i64(1),
+                    price: Price::from_i64(100),
+                    ..qx_core::Fill::default()
+                },
+            )
+            .unwrap();
+        group.record_cancelled("future").unwrap();
+        assert_eq!(group.status, SpreadOrderGroupStatus::HedgeRequired);
+        let mut group_store = FileSpreadOrderGroupStore::new(root.join("spread-groups")).unwrap();
+        group_store.save(&group).unwrap();
+
+        let mut pipeline = LiveEventPipeline::open(&root, "paper-events", "USDT").unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::AccountCashflow {
+                    cashflow: AccountCashflow {
+                        account_id: "main".into(),
+                        venue_id: "paper".into(),
+                        currency: "USDT".into(),
+                        kind: CashflowKind::Transfer,
+                        amount: Money::from_i64(10_000),
+                        external_id: "paper-hedge-cash".into(),
+                    },
+                },
+                1,
+                1,
+                1,
+                "paper:cash",
+            ))
+            .unwrap();
+        pipeline.register_order(first.clone(), 2).unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: first.client_id,
+                    venue_order_id: Some("paper-9201".into()),
+                },
+                3,
+                3,
+                2,
+                "paper:accepted:9201",
+            ))
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::market_quote(
+                instrument.clone(),
+                QuoteTick::new(
+                    4,
+                    Price::from_i64(99),
+                    Quantity::from_i64(10),
+                    Price::from_i64(100),
+                    Quantity::from_i64(10),
+                    3,
+                ),
+                4,
+                3,
+                "paper:quote:btc",
+            ))
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Fill {
+                    fill: qx_core::Fill {
+                        order_id: first.client_id,
+                        qty: Quantity::from_i64(1),
+                        price: Price::from_i64(100),
+                        fee: Money::ZERO,
+                        ts: 5,
+                        account_id: "main".into(),
+                        venue_id: Some("paper".into()),
+                        venue_order_id: Some("paper-9201".into()),
+                        ..qx_core::Fill::default()
+                    },
+                },
+                5,
+                5,
+                4,
+                "paper:fill:9201",
+            ))
+            .unwrap();
+
+        let diagnostics =
+            recover_paper_spread_groups(&root, &mut pipeline, "paper-hedge", 6, None).unwrap();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|message| message.contains("hedge=completed")),
+            "{diagnostics:?}"
+        );
+        let restored = group_store.load("paper-hedge-1").unwrap().unwrap();
+        assert_eq!(restored.status, SpreadOrderGroupStatus::Hedged);
+        let hedge = pipeline
+            .orders()
+            .into_iter()
+            .find(|order| {
+                order
+                    .trace
+                    .as_ref()
+                    .and_then(|trace| trace.rule_version.as_deref())
+                    == Some("spread-hedge-v1")
+            })
+            .unwrap();
+        assert_eq!(hedge.status, OrderStatus::Filled);
+        assert!(hedge.policy.unwrap().reduce_only);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -10250,7 +14693,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        let command = strategy_submit_command("strategy-paper", &order, false).unwrap();
+        let command = strategy_submit_command("strategy-paper", &order, false, None).unwrap();
         let store = ControlStateBackend::Files(JsonStateStore::new(&data_dir));
         let queue = ControlCommandQueue::new(data_dir.join("control-queue"));
         let result = persist_strategy_submit(&store, &queue, &command, 10).unwrap();
@@ -10456,6 +14899,63 @@ mod tests {
     }
 
     #[test]
+    fn dedicated_paper_spread_recovery_worker_runs_one_scan_without_orders() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-cli-paper-recovery-worker-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let template = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("deploy")
+            .join("qianxing.runtime.paper-strategy.example.json");
+        let mut config = read_runtime_config(&template).unwrap();
+        config.storage.data_dir = root.join("data").to_string_lossy().into_owned();
+        config
+            .workers
+            .iter_mut()
+            .find(|worker| worker.id == "paper-spread-recovery")
+            .expect("paper sample must include disabled spread recovery")
+            .enabled = true;
+        let runtime = root.join("runtime.json");
+        std::fs::write(&runtime, config.to_json().unwrap()).unwrap();
+        run_paper_spread_recovery_worker(&runtime, "paper-spread-recovery", true).unwrap();
+        assert!(root.join("data").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dedicated_spread_recovery_disables_legacy_execution_scan_only_for_same_account_and_venue() {
+        let template = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("deploy")
+            .join("qianxing.runtime.paper-strategy.example.json");
+        let mut config = read_runtime_config(&template).unwrap();
+        let execution = config
+            .workers
+            .iter()
+            .find(|worker| worker.role == WorkerRole::Execution)
+            .cloned()
+            .unwrap();
+        assert!(!dedicated_spread_recovery_configured(&config, &execution));
+        config
+            .workers
+            .iter_mut()
+            .find(|worker| worker.id == "paper-spread-recovery")
+            .expect("paper sample must include disabled spread recovery")
+            .enabled = true;
+        assert!(dedicated_spread_recovery_configured(&config, &execution));
+        config.workers.last_mut().unwrap().venue_id = Some("other".into());
+        assert!(!dedicated_spread_recovery_configured(&config, &execution));
+    }
+
+    #[test]
     fn api_snapshot_is_rebuilt_from_persisted_account_eventlog() {
         let root = std::env::temp_dir().join(format!(
             "qianxing-cli-api-read-model-{}-{}",
@@ -10554,7 +15054,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        let command = strategy_submit_command("strategy-paper", &order, false).unwrap();
+        let command = strategy_submit_command("strategy-paper", &order, false, None).unwrap();
         let log_name = "paper-main-paper-events";
         let result = execute_paper_submit_effect_with_storage(
             &command,
@@ -10625,7 +15125,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        let command = strategy_submit_command("strategy-paper", &order, false).unwrap();
+        let command = strategy_submit_command("strategy-paper", &order, false, None).unwrap();
         let store = ControlStateBackend::Files(JsonStateStore::new(&data_dir));
         let queue = ControlCommandQueue::new(data_dir.join("control-queue"));
         store
@@ -10723,6 +15223,7 @@ mod tests {
             venue_id: "binance",
             observed_ts: 42,
             issues: &[],
+            additional_order_issues: &[],
             balances_count: 1,
             balance_discrepancies: &[discrepancy],
             position_snapshots_count: 0,

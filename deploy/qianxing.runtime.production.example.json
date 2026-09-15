@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "environment": "production",
+  "profile": "distributed",
   "config_fingerprint": null,
   "api": {
     "bind": "0.0.0.0:8443",
@@ -19,6 +20,7 @@
   },
   "storage": {
     "backend": "postgres",
+    "consistency": "transactional",
     "data_dir": "/var/lib/qianxing",
     "sqlite_path": null,
     "postgres_dsn_env": "QX_POSTGRES_DSN",
@@ -124,7 +126,8 @@
     "target_qty": 0,
     "research_snapshot_required": true,
     "research_snapshot_path": "/var/lib/qianxing/research/production-strategy-v1.json",
-    "research_data_fingerprint": "replace-with-published-snapshot-fingerprint"
+    "research_data_fingerprint": "replace-with-published-snapshot-fingerprint",
+    "dataset_bundle_path": "/var/lib/qianxing/research/production-strategy-v1.bundle.json"
   },
   "shutdown_timeout_ms": 60000
 }

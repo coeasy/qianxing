@@ -1,0 +1,19 @@
+{
+  "bundle_id": "strategy-bars.BTCUSDT.BINANCE",
+  "version": "barframe-example-v1",
+  "source": "example-bars-v1",
+  "schema_version": 1,
+  "components": {
+    "bars": {
+      "kind": "bars",
+      "dataset_id": "strategy-bars:BTCUSDT.BINANCE",
+      "version": "barframe-json-v1",
+      "source": "example-bars-v1",
+      "fingerprint": "ad5b2a4216a4d813",
+      "schema_version": 1,
+      "start_timestamp": 1000,
+      "end_timestamp": 5000,
+      "row_count": 5
+    }
+  }
+}

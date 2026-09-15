@@ -43,6 +43,7 @@
 | `qx-datastruct` | 列式 BarFrame、PIT 视图、JSON/Arrow C Data Interface |
 | `qx-adapter` | REST/TLS/WebSocket 传输与 Venue/Provider 适配边界；含 Binance Spot REST/L1 行情基线 |
 | `qx-runtime` | 运行时拓扑配置、worker 监督、停机信号与健康状态 |
+| `qx-application` | 执行事实、订单、风控、行情、对账和 Venue 的稳定应用层端口 |
 | `qx-storage` | 文件/分段 EventLog、控制面、队列、快照、审计以及 SQLite/PostgreSQL 事务后端 |
 | `qx-strategy` | Rust Strategy API、上下文/事件/多订单意图和原生策略 SDK |
 | `qx-execution` | Venue 回报统一归约、SubmitOrder 执行副作用边界 |
@@ -81,19 +82,43 @@ cargo test --workspace
 # 工业化统一入口：初始化、回测、Paper 主链路和实盘前检查
 cargo run -p qx-cli -- help
 cargo run -p qx-cli -- init qianxing.runtime.json
+# 一步生成绑定内置 MACD 和样例数据的可回测项目
+cargo run -p qx-cli -- init qianxing.runtime.json --strategy macd
+# 一次检查配置、路径和策略输入；不连接交易所、不发送订单
+cargo run -p qx-cli -- doctor qianxing.runtime.json
+cargo run -p qx-cli -- doctor qianxing.runtime.json --json
+# 查看有效配置摘要；脚本需要 JSON 时加 --json
+cargo run -p qx-cli -- config explain qianxing.runtime.json
+cargo run -p qx-cli -- config explain qianxing.runtime.json --json
+cargo run -p qx-cli -- config fingerprint qianxing.runtime.json
+cargo run -p qx-cli -- run backtest
+cargo run -p qx-cli -- run paper
+cargo run -p qx-cli -- status qianxing.runtime.json
+cargo run -p qx-cli -- report qianxing.runtime.json
+cargo run -p qx-cli -- report qianxing.runtime.json --json
 cargo run -p qx-cli -- backtest
 cargo run -p qx-cli -- builtin-strategies
+cargo run -p qx-cli -- strategy list
+cargo run -p qx-cli -- strategy init macd qianxing.strategy.macd.json
+cargo run -p qx-cli -- strategy backtest qianxing.strategy.macd.json deploy/qianxing.bar-frame.example.json
 cargo run -p qx-cli -- builtin-backtest sma_cross deploy/qianxing.bar-frame.example.json
 cargo run -p qx-cli -- multi-builtin-backtest spot_futures_arbitrage deploy/qianxing.bar-frame.example.json deploy/qianxing.bar-frame.okx.example.json
 cargo run -p qx-cli -- fast-backtest deploy/qianxing.fast-backtest.example.json
 cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.builtin-strategy.example.json deploy/qianxing.bar-frame.example.json
+cargo run -p qx-cli -- dataset-bundle deploy/qianxing.dataset-bundle.example.json data/datasets
+cargo run -p qx-cli -- dataset-bundle deploy/qianxing.dataset-bundle.bar-frame.example.json data/datasets deploy/qianxing.bar-frame.example.json
 cargo run -p qx-cli -- runtime-check deploy/qianxing.runtime.ccxt.example.json
 cargo run -p qx-cli -- runtime-check deploy/qianxing.runtime.multi-venue-arbitrage.example.json
+cargo run -p qx-cli -- runtime-check deploy/qianxing.runtime.example.json --json
+cargo run -p qx-cli -- live-check deploy/qianxing.runtime.production.example.json --json
 cargo run -p qx-cli -- paper-check deploy/qianxing.runtime.paper-strategy.example.json
 cargo run -p qx-cli -- live-check deploy/qianxing.runtime.production.example.json
 
 # 内置 Rust、Python/C++ JSONL 策略直接复用 Bar 回测引擎；CCXT 实时模式会持续维护闭合 BarFrame 并按 digest 触发策略
 cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.strategy-backtest.example.json deploy/qianxing.bar-frame.example.json
+
+# strategy-backtest 会在运行时 data_dir/runs 下生成 summary.json、equity.csv、fills.csv，
+# 并与同一回测的 RunManifest 使用相同前缀，便于归档和二次分析
 
 # 校验运行时拓扑配置，并启动 paper API（默认示例配置）
 cargo run -p qx-cli --release -- runtime-check deploy/qianxing.runtime.example.json
@@ -112,9 +137,19 @@ cargo run -p qx-cli --release -- paper-submit-order deploy/qianxing.runtime.exam
 
 Windows 下可直接双击 `build.bat`。
 
-实现状态与未完成外部边界见：[V5 落地审计](D:/work_code/quantwork/qianxing/自研量化框架V5落地审计.md) 和 [工业级落地验收与差距清单](D:/work_code/quantwork/qianxing/docs/工业级落地验收与差距清单-V1.md)。
+实现状态与未完成外部边界见：[V8 架构审计与重构方案](docs/自研量化框架架构审计与重构方案-V8.md) 和 [工业级落地验收与差距清单](docs/工业级落地验收与差距清单-V1.md)。
 
-工业化易用性收口入口和发布前检查见：[工业化易用性收口指南 V1](D:/work_code/quantwork/qianxing/docs/工业化易用性收口指南-V1.md)。
+能力证据分级见：[maturity/capabilities.yaml](maturity/capabilities.yaml)。默认 `single_node` 使用 SQLite/Files；PostgreSQL、NATS、真实交易所沙盒和券商柜台不会因为代码或 feature 存在而被标记为生产批准。
+
+Barter 对齐后的最终目标架构见：[牵星最终架构方案 V2：Barter 对齐版](docs/牵星最终架构方案-V2-Barter对齐版.md)。
+
+跨项目对比、可视化终态、产品工作流与分阶段实施门禁见：[牵星终极改造计划 V1](docs/牵星终极改造计划-V1.md)。
+
+模块是否拆分、哪些能力需要扩展以及新 crate/进程的拆分门禁见：[牵星架构拆分与扩展决策 V1](docs/牵星架构拆分与扩展决策-V1.md)。
+
+可视化、控制面、快照/游标、实时投影和三轮端到端链路审计见：[Qianxing Visualization Architecture V1](Qianxing-Visualization-Architecture-V1.md)。
+
+工业化易用性收口入口和发布前检查见：[工业化易用性收口指南 V1](docs/工业化易用性收口指南-V1.md)。
 
 演示会输出：
 

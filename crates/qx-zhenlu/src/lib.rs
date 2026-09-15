@@ -11,7 +11,8 @@ use qx_core::{
     TradingInstrumentSpec,
 };
 use qx_guanxing::QuoteTick;
-use qx_risk::{RiskDecision, RiskEngine, RiskSnapshot};
+use qx_risk::{OrderRiskContext as CanonicalOrderRiskContext, OrderRiskPosition};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 
 /// 持仓快照：风控判定所需的最小信息。
@@ -42,98 +43,42 @@ pub struct RiskContext {
 }
 
 impl RiskContext {
-    pub fn validate_order(&self, order: &Order, position: &PositionSnapshot) -> QxResult<()> {
-        order.validate().map_err(QxError::BusinessViolation)?;
-        let Some(spec) = self.instrument_spec.as_ref() else {
-            if self.available_margin_raw.is_some()
-                || self.max_order_notional_raw.is_some()
-                || self.max_position_notional_raw.is_some()
-            {
-                return Err(QxError::BusinessViolation(
-                    "账户级 RiskContext 缺少 TradingInstrumentSpec".into(),
-                ));
-            }
-            return Ok(());
-        };
-        if order.instrument != spec.instrument {
-            return Err(QxError::BusinessViolation(
-                "订单标的与 RiskContext TradingInstrumentSpec 不一致".into(),
-            ));
+    fn canonical_context(&self, position: &PositionSnapshot) -> CanonicalOrderRiskContext {
+        CanonicalOrderRiskContext {
+            available_margin_raw: self.available_margin_raw,
+            reference_price: self.reference_price,
+            instrument_spec: self.instrument_spec.clone(),
+            max_order_notional_raw: self.max_order_notional_raw,
+            max_position_notional_raw: self.max_position_notional_raw,
+            position: OrderRiskPosition {
+                net_qty: position.net_qty,
+                gross_notional: position.gross_notional,
+                multiplier: position.multiplier,
+                long_qty: position.long_qty,
+                short_qty: position.short_qty,
+            },
         }
-        let policy = order.policy.unwrap_or_default();
-        policy.validate_for(spec)?;
-        spec.validate_order(order.qty.raw(), order.limit.map(|price| price.raw()))?;
-        let price = order
-            .limit
-            .or(self.reference_price)
-            .ok_or_else(|| QxError::BusinessViolation("账户级风控缺少市价参考价".into()))?;
-        let notional = spec.notional(order.qty.raw(), price.raw())?;
-        if self
-            .max_order_notional_raw
-            .is_some_and(|limit| notional > limit)
-        {
-            return Err(QxError::BusinessViolation("订单名义额超过账户限额".into()));
-        }
+    }
 
-        validate_reduce_only(order, position)?;
-        let current_qty = position.active_qty_for(order);
-        let signed_delta = match order.side {
-            Side::Buy => order.qty.raw(),
-            Side::Sell => order
-                .qty
-                .raw()
-                .checked_neg()
-                .ok_or_else(|| QxError::Invariant("订单数量取反溢出".into()))?,
-        };
-        let projected_qty = current_qty
-            .checked_add(signed_delta)
-            .ok_or_else(|| QxError::Invariant("投影持仓数量溢出".into()))?;
-        if let Some(limit) = self.max_position_notional_raw {
-            let current_abs = current_qty
-                .checked_abs()
-                .ok_or_else(|| QxError::Invariant("当前持仓绝对值溢出".into()))?;
-            let projected_abs = projected_qty
-                .checked_abs()
-                .ok_or_else(|| QxError::Invariant("投影持仓绝对值溢出".into()))?;
-            let current_leg_notional = spec.notional(current_abs, price.raw())?;
-            let projected_leg_notional = spec.notional(projected_abs, price.raw())?;
-            let other_notional = position.gross_notional.saturating_sub(current_leg_notional);
-            let projected_gross_notional = other_notional
-                .checked_add(projected_leg_notional)
-                .ok_or_else(|| QxError::Invariant("投影持仓名义额溢出".into()))?;
-            let risk_snapshot = RiskSnapshot {
-                portfolio_id: order.account_id.clone(),
-                timestamp: 0,
-                gross_exposure: projected_gross_notional,
-                net_exposure: projected_qty,
-                volatility_bps: 0,
-                drawdown_bps: 0,
-                factor_exposure: BTreeMap::new(),
-            };
-            if !matches!(
-                RiskEngine::evaluate(&risk_snapshot, limit, i32::MIN),
-                RiskDecision::Allow
-            ) {
-                return Err(QxError::BusinessViolation(
-                    "投影持仓名义额超过账户限额".into(),
-                ));
-            }
-        }
-        if let Some(available) = self.available_margin_raw {
-            if available < 0 {
-                return Err(QxError::BusinessViolation("可用保证金不能为负".into()));
-            }
-            if !policy.reduce_only {
-                let required =
-                    spec.initial_margin(order.qty.raw(), price.raw(), policy.leverage)?;
-                if required > available {
-                    return Err(QxError::BusinessViolation(
-                        "订单初始保证金超过账户可用保证金".into(),
-                    ));
+    /// 兼容快照入口对应的统一可审计订单级决定。
+    pub fn evaluate_order(
+        &self,
+        order: &Order,
+        position: &PositionSnapshot,
+    ) -> qx_risk::OrderRiskDecision {
+        let canonical = self.canonical_context(position);
+        qx_risk::RiskEngine::evaluate_order(&canonical, order)
+    }
+
+    pub fn validate_order(&self, order: &Order, position: &PositionSnapshot) -> QxResult<()> {
+        self.canonical_context(position)
+            .validate_order(order)
+            .map_err(|error| match error {
+                QxError::BusinessViolation(message) => {
+                    QxError::BusinessViolation(format!("RiskContext: {message}"))
                 }
-            }
-        }
-        Ok(())
+                other => other,
+            })
     }
 }
 
@@ -580,6 +525,612 @@ pub trait Venue {
     fn connected(&self) -> bool;
 }
 
+/// 多腿订单组的生命周期。两条独立订单只有在该状态机确认所有腿完成后，
+/// 才能被策略视为套利完成；部分成交、取消和未知回报必须显式进入恢复路径。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpreadOrderGroupStatus {
+    Planned,
+    Submitting,
+    PartiallyFilled,
+    HedgeRequired,
+    /// Compensation orders have fully offset all confirmed exposure.
+    Hedged,
+    Filled,
+    Failed,
+    Cancelled,
+    ReconcileRequired,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct SpreadOrderLeg {
+    pub leg_id: String,
+    /// 路由到的 Venue；空值仅兼容旧快照，新的多 Venue 编排必须显式填写。
+    #[serde(default)]
+    pub venue_id: String,
+    pub order: Order,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct SpreadCompensationTarget {
+    pub leg_id: String,
+    pub instrument: InstrumentId,
+    pub account_id: String,
+    pub side: Side,
+    pub qty: Quantity,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct SpreadOrderGroup {
+    pub group_id: String,
+    pub strategy_id: String,
+    pub status: SpreadOrderGroupStatus,
+    pub legs: Vec<SpreadOrderLeg>,
+}
+
+impl SpreadOrderGroup {
+    pub fn new(
+        group_id: impl Into<String>,
+        strategy_id: impl Into<String>,
+        legs: Vec<SpreadOrderLeg>,
+    ) -> QxResult<Self> {
+        let group = Self {
+            group_id: group_id.into(),
+            strategy_id: strategy_id.into(),
+            status: SpreadOrderGroupStatus::Planned,
+            legs,
+        };
+        group.validate()?;
+        Ok(group)
+    }
+
+    pub fn validate(&self) -> QxResult<()> {
+        if self.group_id.trim().is_empty() || self.strategy_id.trim().is_empty() {
+            return Err(QxError::BusinessViolation(
+                "SpreadOrderGroup group_id/strategy_id 不能为空".into(),
+            ));
+        }
+        if self.legs.len() < 2 {
+            return Err(QxError::BusinessViolation(
+                "SpreadOrderGroup 至少需要两条腿".into(),
+            ));
+        }
+        let mut ids = std::collections::BTreeSet::new();
+        for leg in &self.legs {
+            if leg.leg_id.trim().is_empty() || !ids.insert(leg.leg_id.clone()) {
+                return Err(QxError::BusinessViolation(
+                    "SpreadOrderGroup leg_id 不能为空且不能重复".into(),
+                ));
+            }
+            leg.order.validate().map_err(QxError::BusinessViolation)?;
+            if leg.order.filled != Quantity::ZERO {
+                return Err(QxError::BusinessViolation(
+                    "SpreadOrderGroup 初始订单不得带有已成交数量".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// 校验已经进入执行生命周期的订单组。与创建时的 `validate` 不同，
+    /// 持久化状态允许腿带有部分/全部成交数量，但仍禁止超量成交和非法订单。
+    pub fn validate_persisted(&self) -> QxResult<()> {
+        let mut structure = self.clone();
+        for leg in &mut structure.legs {
+            if leg.order.filled.raw() < 0 || leg.order.filled.raw() > leg.order.qty.raw() {
+                return Err(QxError::BusinessViolation(
+                    "持久化多腿状态的成交数量超出订单范围".into(),
+                ));
+            }
+            leg.order.filled = Quantity::ZERO;
+        }
+        structure.validate()
+    }
+
+    pub fn begin_submission(&mut self) -> QxResult<()> {
+        if self.status != SpreadOrderGroupStatus::Planned {
+            return Err(QxError::VenueState("SpreadOrderGroup 不能重复提交".into()));
+        }
+        self.status = SpreadOrderGroupStatus::Submitting;
+        Ok(())
+    }
+
+    pub fn record_accepted(&mut self, leg_id: &str) -> QxResult<()> {
+        let leg = self.leg_mut(leg_id)?;
+        Self::accept_leg_order(leg)?;
+        self.recompute_status();
+        Ok(())
+    }
+
+    pub fn record_fill(&mut self, leg_id: &str, fill: &Fill) -> QxResult<()> {
+        let leg = self.leg_mut(leg_id)?;
+        if fill.order_id != leg.order.client_id || fill.qty.raw() <= 0 {
+            return Err(QxError::BusinessViolation(
+                "SpreadOrderGroup Fill 与腿订单不匹配".into(),
+            ));
+        }
+        let next = leg
+            .order
+            .filled
+            .raw()
+            .checked_add(fill.qty.raw())
+            .ok_or_else(|| QxError::Invariant("SpreadOrderGroup 成交数量溢出".into()))?;
+        if next > leg.order.qty.raw() {
+            return Err(QxError::BusinessViolation(
+                "SpreadOrderGroup 成交数量超过腿订单数量".into(),
+            ));
+        }
+        Self::accept_leg_order(leg)?;
+        leg.order.filled = Quantity::from_raw(next);
+        leg.order.status = if next == leg.order.qty.raw() {
+            OrderStatus::Filled
+        } else {
+            OrderStatus::PartiallyFilled
+        };
+        self.recompute_status();
+        Ok(())
+    }
+
+    pub fn record_rejected(&mut self, leg_id: &str) -> QxResult<()> {
+        let leg = self.leg_mut(leg_id)?;
+        if leg.order.filled.raw() > 0 {
+            self.status = SpreadOrderGroupStatus::HedgeRequired;
+            return Ok(());
+        }
+        if !leg.order.status.is_terminal() {
+            leg.order.status = OrderStatus::Rejected;
+        }
+        self.recompute_status();
+        Ok(())
+    }
+
+    pub fn record_cancelled(&mut self, leg_id: &str) -> QxResult<()> {
+        let leg = self.leg_mut(leg_id)?;
+        if leg.order.filled.raw() > 0 {
+            self.status = SpreadOrderGroupStatus::HedgeRequired;
+            return Ok(());
+        }
+        if !leg.order.status.is_terminal() {
+            leg.order.status = OrderStatus::Cancelled;
+        }
+        self.recompute_status();
+        Ok(())
+    }
+
+    pub fn record_unknown(&mut self, leg_id: &str) -> QxResult<()> {
+        let leg = self.leg_mut(leg_id)?;
+        if leg.order.status.is_terminal() {
+            return Err(QxError::VenueState("终态腿不能标记 Unknown".into()));
+        }
+        leg.order.status = OrderStatus::Unknown;
+        self.status = SpreadOrderGroupStatus::ReconcileRequired;
+        Ok(())
+    }
+
+    /// 返回已经产生风险敞口的腿的反向补偿目标。执行器必须将其作为
+    /// `reduce_only`/对账恢复命令处理，不能自动把未确认的另一腿补下去。
+    pub fn compensation_targets(&self) -> Vec<SpreadCompensationTarget> {
+        if !matches!(
+            self.status,
+            SpreadOrderGroupStatus::PartiallyFilled
+                | SpreadOrderGroupStatus::HedgeRequired
+                | SpreadOrderGroupStatus::ReconcileRequired
+        ) {
+            return Vec::new();
+        }
+        self.legs
+            .iter()
+            .filter(|leg| leg.order.filled.raw() > 0)
+            .map(|leg| SpreadCompensationTarget {
+                leg_id: leg.leg_id.clone(),
+                instrument: leg.order.instrument.clone(),
+                account_id: leg.order.account_id.clone(),
+                side: match leg.order.side {
+                    Side::Buy => Side::Sell,
+                    Side::Sell => Side::Buy,
+                },
+                qty: leg.order.filled,
+            })
+            .collect()
+    }
+
+    /// Mark a group as recovered only after every deterministic compensation
+    /// order has reached Filled. Unknown venue state must never use this path.
+    pub fn mark_hedged(&mut self) -> QxResult<()> {
+        if self.status != SpreadOrderGroupStatus::HedgeRequired {
+            return Err(QxError::VenueState(format!(
+                "只有 HedgeRequired 订单组可以标记为 Hedged，当前为 {:?}",
+                self.status
+            )));
+        }
+        self.status = SpreadOrderGroupStatus::Hedged;
+        Ok(())
+    }
+
+    pub fn leg(&self, leg_id: &str) -> QxResult<&SpreadOrderLeg> {
+        self.legs
+            .iter()
+            .find(|leg| leg.leg_id == leg_id)
+            .ok_or_else(|| {
+                QxError::BusinessViolation(format!("SpreadOrderGroup 不存在腿: {leg_id}"))
+            })
+    }
+
+    fn leg_mut(&mut self, leg_id: &str) -> QxResult<&mut SpreadOrderLeg> {
+        self.legs
+            .iter_mut()
+            .find(|leg| leg.leg_id == leg_id)
+            .ok_or_else(|| {
+                QxError::BusinessViolation(format!("SpreadOrderGroup 不存在腿: {leg_id}"))
+            })
+    }
+
+    fn accept_leg_order(leg: &mut SpreadOrderLeg) -> QxResult<()> {
+        match leg.order.status {
+            OrderStatus::PendingSubmit => {
+                leg.order
+                    .status
+                    .transition(OrderStatus::Submitted)
+                    .map_err(QxError::Invariant)?;
+                leg.order
+                    .status
+                    .transition(OrderStatus::Accepted)
+                    .map_err(QxError::Invariant)?;
+            }
+            OrderStatus::Submitted => leg
+                .order
+                .status
+                .transition(OrderStatus::Accepted)
+                .map_err(QxError::Invariant)?,
+            OrderStatus::Accepted
+            | OrderStatus::Working
+            | OrderStatus::PartiallyFilled
+            | OrderStatus::Filled => {}
+            status => {
+                return Err(QxError::VenueState(format!(
+                    "SpreadOrderGroup leg 不能从 {status:?} 接受"
+                )))
+            }
+        }
+        Ok(())
+    }
+
+    fn recompute_status(&mut self) {
+        if self
+            .legs
+            .iter()
+            .any(|leg| leg.order.status == OrderStatus::Unknown)
+        {
+            self.status = SpreadOrderGroupStatus::ReconcileRequired;
+            return;
+        }
+        let any_filled = self.legs.iter().any(|leg| leg.order.filled.raw() > 0);
+        if self
+            .legs
+            .iter()
+            .all(|leg| leg.order.status == OrderStatus::Filled)
+        {
+            self.status = SpreadOrderGroupStatus::Filled;
+        } else if any_filled
+            && self.legs.iter().any(|leg| {
+                matches!(
+                    leg.order.status,
+                    OrderStatus::Rejected | OrderStatus::Cancelled | OrderStatus::Expired
+                )
+            })
+        {
+            self.status = SpreadOrderGroupStatus::HedgeRequired;
+        } else if any_filled {
+            self.status = SpreadOrderGroupStatus::PartiallyFilled;
+        } else if self.legs.iter().all(|leg| leg.order.status.is_terminal()) {
+            self.status = if self
+                .legs
+                .iter()
+                .all(|leg| leg.order.status == OrderStatus::Cancelled)
+            {
+                SpreadOrderGroupStatus::Cancelled
+            } else {
+                SpreadOrderGroupStatus::Failed
+            };
+        } else {
+            self.status = SpreadOrderGroupStatus::Submitting;
+        }
+    }
+}
+
+/// 多腿订单组的持久化端口。实现必须以 `group_id` 幂等保存完整状态，
+/// 使执行 worker 重启后可以继续对账/补偿，而不是重新提交已确认的腿。
+pub trait SpreadOrderGroupStore {
+    fn load(&self, group_id: &str) -> Result<Option<SpreadOrderGroup>, String>;
+    fn save(&mut self, group: &SpreadOrderGroup) -> Result<(), String>;
+    fn delete(&mut self, group_id: &str) -> Result<(), String>;
+
+    /// Claim a group for a single recovery owner. Backends that do not yet
+    /// provide a durable lease keep the historical no-op behavior; the file
+    /// backend implements an expiring atomic claim below.
+    fn try_claim(
+        &mut self,
+        _group_id: &str,
+        _owner: &str,
+        _now: u64,
+        _lease_ms: u64,
+    ) -> Result<Option<u64>, String> {
+        Ok(Some(0))
+    }
+
+    fn verify_claim(
+        &mut self,
+        _group_id: &str,
+        _owner: &str,
+        _token: u64,
+        _now: u64,
+    ) -> Result<bool, String> {
+        Ok(true)
+    }
+
+    fn save_claimed(
+        &mut self,
+        group: &SpreadOrderGroup,
+        owner: &str,
+        token: u64,
+        now: u64,
+    ) -> Result<(), String> {
+        if !self.verify_claim(&group.group_id, owner, token, now)? {
+            return Err("多腿恢复 claim 已过期或已被其他 owner 接管".into());
+        }
+        self.save(group)
+    }
+
+    fn release_claim(&mut self, _group_id: &str, _owner: &str, _token: u64) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// 单机多腿状态文件存储。它只保存订单组状态，不替代 EventLog；每次状态
+/// 变化仍必须先由 EventLog 记录单腿事实，再更新该恢复快照。
+#[derive(Clone, Debug)]
+pub struct FileSpreadOrderGroupStore {
+    root: std::path::PathBuf,
+}
+
+impl FileSpreadOrderGroupStore {
+    pub fn new(root: impl Into<std::path::PathBuf>) -> Result<Self, String> {
+        let root = root.into();
+        std::fs::create_dir_all(&root).map_err(|error| format!("创建多腿状态目录失败: {error}"))?;
+        Ok(Self { root })
+    }
+
+    pub fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    /// 返回当前状态目录中的订单组标识。临时文件和锁文件不会被暴露；
+    /// 每个 JSON 在返回前仍由调用方通过 `load` 做完整结构校验。
+    pub fn group_ids(&self) -> Result<Vec<String>, String> {
+        let mut ids = Vec::new();
+        let entries = std::fs::read_dir(&self.root)
+            .map_err(|error| format!("读取多腿状态目录失败: {error}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("读取多腿状态目录项失败: {error}"))?;
+            let path = entry.path();
+            if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("json")
+            {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if !stem.trim().is_empty() {
+                ids.push(stem.to_string());
+            }
+        }
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
+    }
+
+    fn path_for(&self, group_id: &str) -> Result<std::path::PathBuf, String> {
+        if group_id.trim().is_empty()
+            || group_id.contains('/')
+            || group_id.contains('\\')
+            || group_id.contains("..")
+        {
+            return Err("多腿 group_id 包含非法路径字符".into());
+        }
+        Ok(self.root.join(format!("{group_id}.json")))
+    }
+
+    fn lock_path(&self) -> std::path::PathBuf {
+        self.root.join(".spread-groups.lock")
+    }
+
+    fn lease_path_for(&self, group_id: &str) -> Result<std::path::PathBuf, String> {
+        self.path_for(group_id)
+            .map(|path| path.with_extension("lease"))
+    }
+}
+
+impl SpreadOrderGroupStore for FileSpreadOrderGroupStore {
+    fn load(&self, group_id: &str) -> Result<Option<SpreadOrderGroup>, String> {
+        let path = self.path_for(group_id)?;
+        let payload = match std::fs::read_to_string(&path) {
+            Ok(payload) => payload,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("读取多腿状态 {} 失败: {error}", path.display())),
+        };
+        let group: SpreadOrderGroup = serde_json::from_str(&payload)
+            .map_err(|error| format!("解析多腿状态 {} 失败: {error}", path.display()))?;
+        group
+            .validate_persisted()
+            .map_err(|error| format!("多腿状态 {} 校验失败: {error:?}", path.display()))?;
+        Ok(Some(group))
+    }
+
+    fn save(&mut self, group: &SpreadOrderGroup) -> Result<(), String> {
+        group
+            .validate_persisted()
+            .map_err(|error| format!("保存多腿状态前校验失败: {error:?}"))?;
+        let path = self.path_for(&group.group_id)?;
+        let lock_path = self.lock_path();
+        let _lock = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+            .map_err(|error| format!("获取多腿状态写锁失败: {error}"))?;
+        let result = (|| {
+            let payload = serde_json::to_vec_pretty(group)
+                .map_err(|error| format!("序列化多腿状态失败: {error}"))?;
+            let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
+            std::fs::write(&temporary, payload)
+                .map_err(|error| format!("写入多腿状态临时文件失败: {error}"))?;
+            if let Err(error) = std::fs::rename(&temporary, &path) {
+                let _ = std::fs::remove_file(&path);
+                std::fs::rename(&temporary, &path)
+                    .map_err(|replacement| format!("替换多腿状态失败: {error}; {replacement}"))?;
+            }
+            Ok::<(), String>(())
+        })();
+        drop(_lock);
+        let _ = std::fs::remove_file(lock_path);
+        result
+    }
+
+    fn delete(&mut self, group_id: &str) -> Result<(), String> {
+        let path = self.path_for(group_id)?;
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!("删除多腿状态失败: {error}")),
+        }
+    }
+
+    fn try_claim(
+        &mut self,
+        group_id: &str,
+        owner: &str,
+        now: u64,
+        lease_ms: u64,
+    ) -> Result<Option<u64>, String> {
+        if owner.trim().is_empty() || lease_ms == 0 {
+            return Err("多腿恢复 claim 要求非空 owner 和正 lease_ms".into());
+        }
+        let path = self.lease_path_for(group_id)?;
+        let mut next_token = 1_u64;
+        for _ in 0..3 {
+            let payload = serde_json::json!({
+                "owner": owner,
+                "token": next_token,
+                "expires_at": now.saturating_add(lease_ms),
+            });
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    use std::io::Write;
+                    let encoded = serde_json::to_vec(&payload)
+                        .map_err(|error| format!("序列化多腿恢复 claim 失败: {error}"))?;
+                    file.write_all(&encoded)
+                        .map_err(|error| format!("写入多腿恢复 claim 失败: {error}"))?;
+                    return Ok(Some(next_token));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let existing = match std::fs::read_to_string(&path) {
+                        Ok(value) => value,
+                        Err(read_error) if read_error.kind() == std::io::ErrorKind::NotFound => {
+                            continue
+                        }
+                        Err(read_error) => {
+                            return Err(format!("读取多腿恢复 claim 失败: {read_error}"));
+                        }
+                    };
+                    let current: serde_json::Value = serde_json::from_str(&existing)
+                        .map_err(|parse_error| format!("解析多腿恢复 claim 失败: {parse_error}"))?;
+                    let expires_at = current
+                        .get("expires_at")
+                        .and_then(serde_json::Value::as_u64)
+                        .ok_or_else(|| "多腿恢复 claim 缺少 expires_at".to_string())?;
+                    let current_token = current
+                        .get("token")
+                        .and_then(serde_json::Value::as_u64)
+                        .ok_or_else(|| "多腿恢复 claim 缺少 fencing token".to_string())?;
+                    let current_owner = current
+                        .get("owner")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    if current_owner == owner && expires_at > now {
+                        return Ok(Some(current_token));
+                    }
+                    if expires_at > now {
+                        return Ok(None);
+                    }
+                    next_token = current_token.saturating_add(1).max(1);
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => continue,
+                        Err(remove_error)
+                            if remove_error.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            continue
+                        }
+                        Err(remove_error) => {
+                            return Err(format!("清理过期多腿恢复 claim 失败: {remove_error}"));
+                        }
+                    }
+                }
+                Err(error) => return Err(format!("创建多腿恢复 claim 失败: {error}")),
+            }
+        }
+        Ok(None)
+    }
+
+    fn verify_claim(
+        &mut self,
+        group_id: &str,
+        owner: &str,
+        token: u64,
+        now: u64,
+    ) -> Result<bool, String> {
+        let path = self.lease_path_for(group_id)?;
+        let existing = match std::fs::read_to_string(&path) {
+            Ok(value) => value,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(format!("读取多腿恢复 claim 失败: {error}")),
+        };
+        let current: serde_json::Value = serde_json::from_str(&existing)
+            .map_err(|error| format!("解析多腿恢复 claim 失败: {error}"))?;
+        let current_owner = current.get("owner").and_then(serde_json::Value::as_str);
+        let current_token = current.get("token").and_then(serde_json::Value::as_u64);
+        let expires_at = current
+            .get("expires_at")
+            .and_then(serde_json::Value::as_u64);
+        Ok(current_owner == Some(owner) && current_token == Some(token) && expires_at > Some(now))
+    }
+
+    fn release_claim(&mut self, group_id: &str, owner: &str, token: u64) -> Result<(), String> {
+        let path = self.lease_path_for(group_id)?;
+        let existing = match std::fs::read_to_string(&path) {
+            Ok(value) => value,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(format!("读取多腿恢复 claim 失败: {error}")),
+        };
+        let current: serde_json::Value = serde_json::from_str(&existing)
+            .map_err(|error| format!("解析多腿恢复 claim 失败: {error}"))?;
+        // An expired owner may clean up its own lease, but it must never
+        // remove a newer owner's lease after the token has advanced.
+        if current.get("owner").and_then(serde_json::Value::as_str) != Some(owner)
+            || current.get("token").and_then(serde_json::Value::as_u64) != Some(token)
+        {
+            return Ok(());
+        }
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!("释放多腿恢复 claim 失败: {error}")),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct ConnectorCapabilities {
     pub market_data: bool,
@@ -625,6 +1176,29 @@ impl PaperVenue {
             last_source_seq: 0,
             reconnects: 0,
         }
+    }
+
+    /// 从 EventLog 恢复本地虚拟 Venue 的订单索引。Paper 不把内存 Venue
+    /// 当作事实来源；重启后由运行时先恢复 EventLog，再恢复此索引，随后
+    /// 仍只能通过新的行情事实推进补偿单成交。
+    pub fn restore_orders<I>(&mut self, orders: I) -> QxResult<()>
+    where
+        I: IntoIterator<Item = Order>,
+    {
+        for order in orders {
+            order.validate().map_err(QxError::BusinessViolation)?;
+            if let Some(existing) = self.orders.get(&order.client_id) {
+                if existing != &order {
+                    return Err(QxError::Invariant(format!(
+                        "Paper 恢复订单 {} 与 EventLog 不一致",
+                        order.client_id
+                    )));
+                }
+                continue;
+            }
+            self.orders.insert(order.client_id, order);
+        }
+        Ok(())
     }
 
     pub fn disconnect(&mut self) {
@@ -1275,6 +1849,7 @@ impl Router {
 mod tests {
     use super::*;
     use qx_core::{InstrumentId, Money, Price, Side, TradingProduct, SCALE};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn order(qty: i64, side: Side) -> Order {
         Order {
@@ -1289,6 +1864,208 @@ mod tests {
             trace: None,
             policy: None,
         }
+    }
+
+    #[test]
+    fn spread_group_requires_explicit_compensation_after_partial_fill() {
+        let mut first = order(10, Side::Buy);
+        first.client_id = 101;
+        let mut second = order(10, Side::Sell);
+        second.client_id = 102;
+        second.instrument = InstrumentId::parse("T2.V2").unwrap();
+        let mut group = SpreadOrderGroup::new(
+            "spread-1",
+            "basis-v1",
+            vec![
+                SpreadOrderLeg {
+                    leg_id: "buy-leg".into(),
+                    venue_id: "venue-a".into(),
+                    order: first,
+                },
+                SpreadOrderLeg {
+                    leg_id: "sell-leg".into(),
+                    venue_id: "venue-b".into(),
+                    order: second,
+                },
+            ],
+        )
+        .unwrap();
+        group.begin_submission().unwrap();
+        group.record_accepted("buy-leg").unwrap();
+        group
+            .record_fill(
+                "buy-leg",
+                &Fill {
+                    order_id: 101,
+                    qty: Quantity::from_i64(4),
+                    price: Price::from_i64(100),
+                    ..Fill::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(group.status, SpreadOrderGroupStatus::PartiallyFilled);
+        assert_eq!(group.compensation_targets().len(), 1);
+        assert_eq!(group.compensation_targets()[0].side, Side::Sell);
+        assert_eq!(group.compensation_targets()[0].qty, Quantity::from_i64(4));
+
+        let mut unknown_group = group.clone();
+        unknown_group.record_unknown("sell-leg").unwrap();
+        assert_eq!(
+            unknown_group.status,
+            SpreadOrderGroupStatus::ReconcileRequired
+        );
+
+        group.record_cancelled("sell-leg").unwrap();
+        assert_eq!(group.status, SpreadOrderGroupStatus::HedgeRequired);
+    }
+
+    #[test]
+    fn spread_group_file_store_round_trips_in_progress_fills() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-spread-store-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut first = order(10, Side::Buy);
+        first.client_id = 301;
+        let mut second = order(10, Side::Sell);
+        second.client_id = 302;
+        second.instrument = InstrumentId::parse("T2.V2").unwrap();
+        let mut group = SpreadOrderGroup::new(
+            "spread-persisted",
+            "basis-v2",
+            vec![
+                SpreadOrderLeg {
+                    leg_id: "buy".into(),
+                    venue_id: "venue-a".into(),
+                    order: first,
+                },
+                SpreadOrderLeg {
+                    leg_id: "sell".into(),
+                    venue_id: "venue-b".into(),
+                    order: second,
+                },
+            ],
+        )
+        .unwrap();
+        group.begin_submission().unwrap();
+        group.record_accepted("buy").unwrap();
+        group
+            .record_fill(
+                "buy",
+                &Fill {
+                    order_id: 301,
+                    qty: Quantity::from_i64(3),
+                    price: Price::from_i64(100),
+                    ..Fill::default()
+                },
+            )
+            .unwrap();
+        let mut store = FileSpreadOrderGroupStore::new(&root).unwrap();
+        store.save(&group).unwrap();
+        store.save(&group).unwrap();
+        let restored = store.load("spread-persisted").unwrap().unwrap();
+        assert_eq!(restored.status, SpreadOrderGroupStatus::PartiallyFilled);
+        assert_eq!(restored.legs[0].order.filled, Quantity::from_i64(3));
+        assert_eq!(restored.compensation_targets().len(), 1);
+        store.delete("spread-persisted").unwrap();
+        assert!(store.load("spread-persisted").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn spread_group_file_store_claim_is_exclusive_and_expires() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-spread-claim-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut first = FileSpreadOrderGroupStore::new(&root).unwrap();
+        let mut second = FileSpreadOrderGroupStore::new(&root).unwrap();
+        let first_token = first
+            .try_claim("spread-claim", "worker-a", 100, 1_000)
+            .unwrap()
+            .expect("first worker should acquire claim");
+        assert!(second
+            .try_claim("spread-claim", "worker-b", 200, 1_000)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            first
+                .try_claim("spread-claim", "worker-a", 500, 1_000)
+                .unwrap(),
+            Some(first_token)
+        );
+        assert!(first
+            .verify_claim("spread-claim", "worker-a", first_token, 500)
+            .unwrap());
+        let second_token = second
+            .try_claim("spread-claim", "worker-b", 1_101, 1_000)
+            .unwrap()
+            .expect("second worker should acquire the expired claim");
+        assert!(second_token > first_token);
+        assert!(!first
+            .verify_claim("spread-claim", "worker-a", first_token, 1_101)
+            .unwrap());
+        assert!(second
+            .verify_claim("spread-claim", "worker-b", second_token, 1_101)
+            .unwrap());
+        assert!(first
+            .release_claim("spread-claim", "worker-a", first_token)
+            .is_ok());
+        assert!(second
+            .release_claim("spread-claim", "worker-b", second_token)
+            .is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn spread_group_is_filled_only_when_every_leg_is_filled() {
+        let mut first = order(1, Side::Buy);
+        first.client_id = 201;
+        let mut second = order(1, Side::Sell);
+        second.client_id = 202;
+        let mut group = SpreadOrderGroup::new(
+            "spread-2",
+            "pairs-v1",
+            vec![
+                SpreadOrderLeg {
+                    leg_id: "a".into(),
+                    venue_id: "venue-a".into(),
+                    order: first,
+                },
+                SpreadOrderLeg {
+                    leg_id: "b".into(),
+                    venue_id: "venue-b".into(),
+                    order: second,
+                },
+            ],
+        )
+        .unwrap();
+        group.begin_submission().unwrap();
+        for (leg_id, order_id, side) in [("a", 201, Side::Buy), ("b", 202, Side::Sell)] {
+            group.record_accepted(leg_id).unwrap();
+            group
+                .record_fill(
+                    leg_id,
+                    &Fill {
+                        order_id,
+                        qty: Quantity::from_i64(1),
+                        price: Price::from_i64(100),
+                        ..Fill::default()
+                    },
+                )
+                .unwrap();
+            assert!(matches!(side, Side::Buy | Side::Sell));
+        }
+        assert_eq!(group.status, SpreadOrderGroupStatus::Filled);
+        assert!(group.compensation_targets().is_empty());
     }
 
     #[test]

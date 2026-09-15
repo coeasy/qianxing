@@ -1476,6 +1476,7 @@ mod tests {
             code_commit: "commit".into(),
             config_hash: "config".into(),
             data_fingerprint: "bars-1".into(),
+            input_components: BTreeMap::new(),
             clock_start: 1,
             clock_end: 20,
             global_seed: 7,

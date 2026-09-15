@@ -50,6 +50,9 @@
     "builtin_period": 14,
     "builtin_threshold_bps": 0,
     "ashare_rules_path": "qianxing.ashare.rules.json",
+    "ashare_actions_path": "qianxing.ashare.actions.example.json",
+    "ashare_calendar_path": "qianxing.ashare.calendar.example.json",
+    "dataset_bundle_path": "qianxing.dataset-bundle.ashare.example.json",
     "bars_snapshot_path": "qianxing.ashare.bar-frame.example.json",
     "python_timeout_ms": 2000
   }

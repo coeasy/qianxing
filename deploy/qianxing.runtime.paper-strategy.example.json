@@ -53,6 +53,17 @@
       "symbols": [],
       "credential_env": null,
       "paper_initial_cash_raw": 100000000000000
+    },
+    {
+      "id": "paper-spread-recovery",
+      "role": "spread_recovery",
+      "enabled": false,
+      "account_id": "main",
+      "venue_id": "paper",
+      "endpoint": null,
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": null
     }
   ],
   "scheduler": {

@@ -1,0 +1,216 @@
+schema_version: 1
+updated_at: "2026-09-15"
+default_profile: single_node
+
+# 证据等级：
+# implementation     代码/配置已存在
+# code_tested        本地测试、契约测试或 Paper E2E 已通过
+# sandbox_tested     真实供应商沙盒/模拟账户已通过
+# production_approved 真实生产凭据、故障演练和运维审批已通过
+profiles:
+  single_node:
+    storage: sqlite_or_files
+    messaging: disabled
+    intended_use: local_research_backtest_paper
+  distributed:
+    storage: postgres_or_files
+    messaging: optional_nats
+    intended_use: explicit_future_deployment
+
+capabilities:
+  deterministic_kernel:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-core
+      - cargo test --workspace
+
+  event_fact_metadata:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-core/src/event.rs
+      - crates/qx-core/src/sourcing.rs
+      - crates/qx-runtime/src/pipeline.rs
+      - EventMetadata schema v2 source_kind replay/digest tests
+    limitations:
+      - external_adapter_fine_grained_source_taxonomy_pending
+      - cross_process_schema_registry_pending
+
+  storage_consistency_contract:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-runtime/src/lib.rs
+      - crates/qx-cli/src/main.rs runtime-check/status JSON
+      - deploy/qianxing.runtime.messaging.example.json
+      - deploy/qianxing.runtime.postgres.example.json
+    limitations:
+      - PostgreSQL/NATS service-container integration remains pending
+
+  canonical_order_risk_decision:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-risk/src/lib.rs
+      - crates/qx-execution/src/lib.rs CanonicalRiskPort
+    limitations:
+      - legacy RiskGate rule chain remains a compatibility layer pending migration
+
+  local_backtest:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-xingban
+      - crates/qx-cli/src/main.rs
+      - deploy/qianxing.runtime.strategy-backtest.example.json
+
+  cli_scenario_init:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-cli/src/main.rs
+      - docs/工业化易用性收口指南-V1.md
+    limitations:
+      - generated_ccxt_project_still_requires_user_credentials_and_external_sandbox
+      - generated_multi_venue_project_does_not_provide_atomic_cross_venue_submission
+
+  paper_execution:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-execution/src/lib.rs
+      - crates/qx-application/src/lib.rs
+      - crates/qx-cli/src/main.rs
+      - paper-e2e
+      - qx-application execution submit/cancel fact contract tests
+      - qx-execution Paper/CCXT/Binance shared PortExecutionService contract test
+    limitations:
+      - continuous_market_driven_paper_worker_requires_runtime_market_data_validation
+
+  ccxt_rest:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - python/qianxing_ccxt
+      - crates/qx-adapter
+      - crates/qx-runtime/src/lib.rs live strategy topology gate test
+      - crates/qx-cli/src/main.rs live Bar freshness test
+      - crates/qx-cli/src/workers.rs live Job digest guard
+      - crates/qx-cli/src/main.rs runtime-check/live-check JSON safety contracts
+      - crates/qx-cli/src/main.rs CCXT fetch_open_orders discovers unknown remote active orders and degrades readiness without auto-adoption
+      - deploy/qianxing.runtime.ccxt.example.json
+      - .github/workflows/ci.yml C++ JSONL strategy contract smoke
+      - qx-application execution fact contract shared by PortExecutionService adapters
+    limitations:
+      - exchange_sandbox_precision_and_bill_matrix_pending
+      - external_unknown_result_recovery_requires_reconcile_worker
+
+  binance_direct:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-adapter/src/lib.rs
+      - crates/qx-cli/src/main.rs
+
+  ashare_json_provider:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - python/qianxing_ashare
+      - crates/qx-data/src/provider.rs
+      - crates/qx-provider/src/lib.rs
+
+  ashare_corporate_action_ledger:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-core/src/ledger.rs
+      - crates/qx-xingban/src/ashare.rs
+      - crates/qx-xingban/src/backtest.rs
+    limitations:
+      - rights_expiry_requires_explicit_or_timed_fact
+      - issuer_capital_snapshot_requires_explicit_absolute_total_shares
+      - issuer_level_convertible_bond_supply_and_call_trigger_rules_pending
+
+  dataset_bundle_manifest:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-data/src/catalog.rs
+      - crates/qx-data/src/ingestion.rs
+      - crates/qx-data/src/registry.rs
+      - crates/qx-cli/src/main.rs
+      - python/qianxing_ashare/__init__.py
+      - python/qianxing_ashare/__main__.py
+    limitations:
+      - arrow_ipc_reader_remains_provider_boundary
+      - runtime_component_paths_are_json_manifest_boundary
+
+  multi_leg_execution:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-zhenlu/src/lib.rs
+      - crates/qx-execution/src/lib.rs
+      - crates/qx-application/src/lib.rs
+      - crates/qx-cli/src/main.rs
+      - crates/qx-cli/src/workers.rs
+      - HedgeRecoveryWorker idempotency test
+      - FileSpreadOrderGroupStore claim lease + fencing token test
+    limitations:
+      - no_atomic_cross_venue_submission
+      - dedicated_spread_recovery_role_is_available_but_not_enabled_by_default
+      - legacy_execution_recovery_is_disabled_when_same_account_venue_dedicated_worker_is_enabled
+      - group_snapshot_sync_is_after_single_leg_eventlog_commit
+      - no_production_failure_matrix
+
+  postgres:
+    implementation: optional
+    code_tested: feature_matrix_only
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-storage/src/postgres.rs
+
+  nats:
+    implementation: optional
+    code_tested: feature_matrix_only
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-storage/src/nats.rs
+
+  broker_gateway:
+    implementation: unavailable_without_vendor_protocol
+    code_tested: false
+    sandbox_tested: false
+    production_approved: false
+    limitations:
+      - broker_protocol_and_simulated_account_required

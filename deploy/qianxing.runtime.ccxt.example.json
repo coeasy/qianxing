@@ -46,6 +46,18 @@
       "instrument_spec_path": "deploy/qianxing.ccxt.okx.perpetual.spec.json"
     },
     {
+      "id": "ccxt-spread-recovery-main",
+      "role": "spread_recovery",
+      "enabled": false,
+      "account_id": "main",
+      "venue_id": "okx",
+      "endpoint": "qianxing.ccxt.exchange.example.json",
+      "symbols": [],
+      "settlement_currency": "USDT",
+      "credential_env": null,
+      "instrument_spec_path": "deploy/qianxing.ccxt.okx.perpetual.spec.json"
+    },
+    {
       "id": "ccxt-reconciler-main",
       "role": "reconciler",
       "enabled": true,

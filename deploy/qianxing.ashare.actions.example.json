@@ -1,0 +1,25 @@
+[
+  {
+    "instrument": "000001.SZSE",
+    "ex_date": "2024-06-03",
+    "published_at": "2024-05-20T00:00:00+08:00",
+    "action_type": "cash_dividend",
+    "cash_dividend_raw": 100000000,
+    "share_ratio_num": 1,
+    "share_ratio_den": 1,
+    "source": "example",
+    "announcement_date": null,
+    "record_date": null,
+    "payment_date": null,
+    "subscription_start": null,
+    "subscription_end": null,
+    "rights_issue_price_raw": 0,
+    "rights_issue_ratio_num": 0,
+    "rights_issue_ratio_den": 1,
+    "issue_price_raw": 0,
+    "conversion_price_raw": 0,
+    "conversion_ratio_num": 0,
+    "conversion_ratio_den": 1,
+    "raw_payload": null
+  }
+]

@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "environment": "paper",
+  "profile": "distributed",
   "api": {
     "bind": "127.0.0.1:18080",
     "transport": "plaintext",
@@ -9,6 +10,7 @@
   },
   "storage": {
     "backend": "postgres",
+    "consistency": "transactional",
     "data_dir": "data/qianxing-postgres",
     "sqlite_path": null,
     "postgres_dsn_env": "QX_POSTGRES_DSN",

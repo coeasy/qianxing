@@ -24,6 +24,71 @@ pub use pipeline::{
     RuntimeIngestReceipt,
 };
 
+/// 将共享 EventLog 运行时适配为应用层执行端口。
+///
+/// 适配器只负责把应用层的稳定执行事实映射为 Runtime 事件；订单注册仍由
+/// `LiveEventPipeline` 统一完成校验、幂等和日志追加，避免应用层绕过 Kernel。
+impl qx_application::OrderStore for LiveEventPipeline {
+    fn orders(&self) -> Vec<qx_core::Order> {
+        LiveEventPipeline::orders(self)
+    }
+
+    fn register_order(
+        &mut self,
+        order: qx_core::Order,
+        ts: u64,
+        correlation_id: Option<String>,
+    ) -> Result<(), String> {
+        self.register_order_with_correlation(order, ts, correlation_id)
+            .map(|_| ())
+            .map_err(|error| format!("注册订单失败: {error:?}"))
+    }
+}
+
+impl qx_application::EventAppender for LiveEventPipeline {
+    fn append_execution_event(
+        &mut self,
+        envelope: qx_application::ExecutionEventEnvelope,
+    ) -> Result<(), String> {
+        let event = match envelope.event {
+            qx_application::ExecutionEvent::Accepted {
+                client_order_id,
+                venue_order_id,
+            } => RuntimeExternalEvent::Accepted {
+                client_order_id,
+                venue_order_id: Some(venue_order_id),
+            },
+            qx_application::ExecutionEvent::Fill(fill) => {
+                RuntimeExternalEvent::Fill { fill: *fill }
+            }
+            qx_application::ExecutionEvent::FillWithSpec { fill, spec } => {
+                RuntimeExternalEvent::FillWithSpec { fill, spec }
+            }
+            qx_application::ExecutionEvent::Cancelled { client_order_id } => {
+                RuntimeExternalEvent::Cancelled { client_order_id }
+            }
+            qx_application::ExecutionEvent::ReconcileRequired { client_order_id } => {
+                RuntimeExternalEvent::ReconcileRequired { client_order_id }
+            }
+        };
+        self.ingest(RuntimeEventEnvelope::venue(
+            event,
+            envelope.event_ts,
+            envelope.receive_ts,
+            envelope.source_seq,
+            envelope.correlation_id,
+        ))
+        .map(|_| ())
+        .map_err(|error| format!("执行事实归约失败: {error:?}"))
+    }
+}
+
+impl qx_application::MarketDataPort for LiveEventPipeline {
+    fn latest_quote(&self, instrument: &InstrumentId) -> Option<qx_guanxing::QuoteTick> {
+        self.latest_quote_with_depth(instrument)
+    }
+}
+
 pub const STRATEGY_CONTRACT_SCHEMA_VERSION: u32 = qx_strategy::STRATEGY_API_VERSION;
 
 /// Python/其他语言策略进程看到的稳定、只读 JSON 输入。
@@ -474,6 +539,19 @@ pub fn save_control_state(
 
 pub const RUNTIME_SCHEMA_VERSION: u32 = 1;
 
+/// 运行时部署 profile。
+///
+/// `single_node` 是本阶段的默认工业化基线：运行时事实、控制面和队列
+/// 使用本地 SQLite/Files，不要求 PostgreSQL 或 NATS。`distributed` 仅保留
+/// 给后续多节点部署，不能因为编译了 feature 就被单机配置隐式启用。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeProfile {
+    #[default]
+    SingleNode,
+    Distributed,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiTransport {
@@ -511,9 +589,26 @@ pub enum StorageBackend {
     Postgres,
 }
 
+/// 运行时事实的持久化/传播一致性等级。
+///
+/// `local_durable` 适用于单机文件或 SQLite，依靠顺序追加、恢复扫描和本地
+/// 租约保证一致性；`transactional` 要求 PostgreSQL 在同一事务中提交领域
+/// 事实和 Outbox；`distributed_outbox` 表示在持久化事实之后通过 Outbox
+/// Relay 异步发布到 NATS，不把消息发布误称为跨系统原子事务。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageConsistency {
+    #[default]
+    LocalDurable,
+    Transactional,
+    DistributedOutbox,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct StorageRuntimeConfig {
     pub backend: StorageBackend,
+    #[serde(default)]
+    pub consistency: StorageConsistency,
     pub data_dir: String,
     pub sqlite_path: Option<String>,
     /// PostgreSQL DSN 的环境变量名；不允许把带密码的 DSN 写入运行时 JSON。
@@ -634,6 +729,7 @@ pub enum WorkerRole {
     MarketData,
     UserStream,
     Execution,
+    SpreadRecovery,
     Scheduler,
     Reconciler,
     Strategy,
@@ -865,6 +961,16 @@ pub struct StrategyRuntimeConfig {
     /// 发布时锁定的研究数据指纹；运行时会拒绝快照与该指纹不一致。
     #[serde(default)]
     pub research_data_fingerprint: Option<String>,
+    /// 回测/研究使用的 DatasetBundleManifest 文件。配置后，回测启动前
+    /// 必须证明输入 BarFrame 的 fingerprint 与 bundle 的 bars 组件一致。
+    #[serde(default)]
+    pub dataset_bundle_path: Option<String>,
+    /// DatasetBundle 中除 bars 外的组件文件绑定。键必须与 Bundle 的组件 kind
+    /// 一致，值是相对于 runtime 配置文件的 JSON/Arrow 清单路径。公司行为和
+    /// 交易日历仍兼容下方的专用字段；显式映射用于停牌、涨跌停、因子、股票池
+    /// 以及未来新增组件，避免每增加一种数据就修改运行时核心。
+    #[serde(default)]
+    pub dataset_component_paths: BTreeMap<String, String>,
     /// 策略订单的统一产品语义；省略时兼容现货 Cash/1x/NoShort。
     #[serde(default)]
     pub product: Option<TradingProduct>,
@@ -890,6 +996,10 @@ pub struct StrategyRuntimeConfig {
     /// 默认只将已闭合 K 线送入策略，避免同一根未闭合 K 线反复触发下单。
     #[serde(default = "default_strategy_live_closed_only")]
     pub live_closed_only: bool,
+    /// 实时策略允许的最新 Bar 最大滞后时间；省略时按 3 个周期计算。
+    /// 超过该窗口只保持运行，不再生成新的策略订单。
+    #[serde(default)]
+    pub live_max_staleness_ms: Option<u64>,
     /// 内置 Rust Bar 策略名称。配置后 Strategy Worker/Backtest 会使用同一套
     /// 固定点策略实现，并继续经过统一 OrderIntent、RiskGate 和 OMS。
     #[serde(default)]
@@ -925,6 +1035,14 @@ pub struct StrategyRuntimeConfig {
     /// A 股规则快照；启用后回测和纸面交易使用 T+1、整手、涨跌停、停牌和费用规则。
     #[serde(default)]
     pub ashare_rules_path: Option<String>,
+    /// 可选 Python/A 股标准化公司行为 JSON；加载后会合并进 ashare_rules_path。
+    /// 配股登记/认购/失效、增发/回购/转股必须携带显式账户事实；
+    /// 登记日/除权日自动推导及发行人级生命周期事件仍 fail-closed。
+    #[serde(default)]
+    pub ashare_actions_path: Option<String>,
+    /// 可选 Python/A 股交易日历 JSON；会展开交易日和交易时段并合并进规则快照。
+    #[serde(default)]
+    pub ashare_calendar_path: Option<String>,
     /// 可选 Python JSONL 策略模块；Strategy Worker 只通过稳定契约调用它。
     #[serde(default)]
     pub python_module: Option<String>,
@@ -977,6 +1095,8 @@ impl Default for StrategyRuntimeConfig {
             research_snapshot_path: None,
             research_snapshot_required: false,
             research_data_fingerprint: None,
+            dataset_bundle_path: None,
+            dataset_component_paths: BTreeMap::new(),
             product: None,
             margin_mode: None,
             position_mode: None,
@@ -986,6 +1106,7 @@ impl Default for StrategyRuntimeConfig {
             live_timeframe: default_strategy_live_timeframe(),
             live_history_limit: default_strategy_live_history_limit(),
             live_closed_only: default_strategy_live_closed_only(),
+            live_max_staleness_ms: None,
             builtin_strategy: None,
             builtin_quantity: None,
             builtin_fast_window: None,
@@ -999,6 +1120,8 @@ impl Default for StrategyRuntimeConfig {
             builtin_reference_leverage: None,
             bars_snapshot_path: None,
             ashare_rules_path: None,
+            ashare_actions_path: None,
+            ashare_calendar_path: None,
             python_module: None,
             transport: StrategyTransport::Jsonl,
             shared_memory_capacity: default_strategy_shared_memory_capacity(),
@@ -1021,6 +1144,8 @@ impl Default for StrategyRuntimeConfig {
 pub struct RuntimeConfig {
     pub schema_version: u32,
     pub environment: String,
+    #[serde(default)]
+    pub profile: RuntimeProfile,
     /// 发布后可选的配置锁指纹。计算时排除本字段本身，避免修改其他配置
     /// 后通过同步修改 fingerprint 绕过启动校验。
     #[serde(default)]
@@ -1113,6 +1238,14 @@ impl RuntimeConfig {
         if strategy.live_history_limit < 2 || strategy.live_history_limit > 100_000 {
             return Err(format!("{label} live_history_limit 必须在 2..=100000 内"));
         }
+        if strategy
+            .live_max_staleness_ms
+            .is_some_and(|staleness| staleness == 0 || staleness > 7 * 86_400_000)
+        {
+            return Err(format!(
+                "{label} live_max_staleness_ms 必须在 1..=604800000 内"
+            ));
+        }
         if strategy.live_enabled && strategy.bars_snapshot_path.is_none() {
             return Err(format!(
                 "{label} live_enabled=true 时必须配置 bars_snapshot_path"
@@ -1144,9 +1277,39 @@ impl RuntimeConfig {
         {
             return Err(format!("{label} research_data_fingerprint 不能为空字符串"));
         }
+        if strategy
+            .ashare_actions_path
+            .as_deref()
+            .is_some_and(|path| path.trim().is_empty())
+        {
+            return Err(format!("{label} ashare_actions_path 不能为空字符串"));
+        }
+        if strategy
+            .ashare_calendar_path
+            .as_deref()
+            .is_some_and(|path| path.trim().is_empty())
+        {
+            return Err(format!("{label} ashare_calendar_path 不能为空字符串"));
+        }
         if strategy.research_snapshot_required && strategy.research_data_fingerprint.is_none() {
             return Err(format!(
                 "{label} research_snapshot_required=true 时必须配置 research_data_fingerprint"
+            ));
+        }
+        if strategy
+            .dataset_bundle_path
+            .as_deref()
+            .is_some_and(|path| path.trim().is_empty())
+        {
+            return Err(format!("{label} dataset_bundle_path 不能为空字符串"));
+        }
+        if strategy
+            .dataset_component_paths
+            .iter()
+            .any(|(kind, path)| kind.trim().is_empty() || path.trim().is_empty() || kind == "bars")
+        {
+            return Err(format!(
+                "{label} dataset_component_paths 的 kind/path 不能为空，且 bars 必须使用 bars_snapshot_path"
             ));
         }
         if strategy
@@ -1419,6 +1582,19 @@ impl RuntimeConfig {
                 "{label} production 已绑定交易对象，必须启用并配置 research_snapshot_path"
             ));
         }
+        if self.environment.eq_ignore_ascii_case("production") && strategy.target_qty != 0 {
+            return Err(format!(
+                "{label} production 禁止使用裸 target_qty；必须通过 ResearchSnapshot/CandidateBinding 产生目标"
+            ));
+        }
+        if self.environment.eq_ignore_ascii_case("production")
+            && strategy.research_snapshot_required
+            && strategy.dataset_bundle_path.is_none()
+        {
+            return Err(format!(
+                "{label} production research_snapshot_required=true 时必须配置 dataset_bundle_path"
+            ));
+        }
         let account_id = strategy
             .account_id
             .as_deref()
@@ -1451,6 +1627,59 @@ impl RuntimeConfig {
                 "{label} 绑定 {}@{} / {} 没有匹配的启用 strategy worker",
                 account_id, venue_id, instrument
             ));
+        }
+        if strategy.live_enabled {
+            let has_primary_market_data = self.workers.iter().any(|worker| {
+                worker.enabled
+                    && worker.role == WorkerRole::MarketData
+                    && worker
+                        .symbols
+                        .iter()
+                        .any(|symbol| InstrumentId::parse(symbol).as_ref() == Some(&instrument))
+            });
+            if !has_primary_market_data {
+                return Err(format!(
+                    "{label} live_enabled=true 但没有包含 {} 的启用 MarketData worker",
+                    instrument
+                ));
+            }
+            if let Some(reference_text) = strategy.builtin_reference_instrument.as_deref() {
+                let reference = InstrumentId::parse(reference_text)
+                    .ok_or_else(|| format!("{label} 对冲腿 instrument 非法: {reference_text}"))?;
+                let has_reference_market_data = self.workers.iter().any(|worker| {
+                    worker.enabled
+                        && worker.role == WorkerRole::MarketData
+                        && worker
+                            .symbols
+                            .iter()
+                            .any(|symbol| InstrumentId::parse(symbol).as_ref() == Some(&reference))
+                });
+                if !has_reference_market_data {
+                    return Err(format!(
+                        "{label} live_enabled=true 但没有包含对冲腿 {} 的启用 MarketData worker",
+                        reference
+                    ));
+                }
+            }
+            let has_matching_execution = self.workers.iter().any(|worker| {
+                worker.enabled
+                    && worker.role == WorkerRole::Execution
+                    && worker.account_id.as_deref() == Some(account_id)
+                    && worker
+                        .venue_id
+                        .as_deref()
+                        .is_some_and(|configured| configured.eq_ignore_ascii_case(venue_id))
+                    && (worker.symbols.is_empty()
+                        || worker.symbols.iter().any(|symbol| {
+                            InstrumentId::parse(symbol).as_ref() == Some(&instrument)
+                        }))
+            });
+            if !has_matching_execution {
+                return Err(format!(
+                    "{label} live_enabled=true 但没有匹配 {}@{} / {} 的启用 Execution worker",
+                    account_id, venue_id, instrument
+                ));
+            }
         }
         Ok(())
     }
@@ -1509,12 +1738,61 @@ impl RuntimeConfig {
         if self.storage.data_dir.trim().is_empty() {
             return Err("storage.data_dir 不能为空".into());
         }
+        if self.profile == RuntimeProfile::SingleNode {
+            if self.storage.backend == StorageBackend::Postgres {
+                return Err(
+                    "single_node profile 不允许 PostgreSQL；请使用 SQLite/Files，或显式切换 distributed profile".into(),
+                );
+            }
+            if self.messaging.enabled {
+                return Err(
+                    "single_node profile 不允许启用 NATS messaging；请使用本地队列，或显式切换 distributed profile".into(),
+                );
+            }
+            if self.workers.iter().any(|worker| {
+                worker.enabled
+                    && matches!(
+                        worker.role,
+                        WorkerRole::OutboxRelay | WorkerRole::EventConsumer
+                    )
+            }) {
+                return Err(
+                    "single_node profile 不允许启用 OutboxRelay/EventConsumer；请显式切换 distributed profile".into(),
+                );
+            }
+        }
         if self.environment.eq_ignore_ascii_case("production")
             && self.storage.backend != StorageBackend::Postgres
         {
             return Err(
                 "production 环境 EventLog/Outbox 必须使用 PostgreSQL transactional backend".into(),
             );
+        }
+        match (self.storage.backend, self.storage.consistency) {
+            (StorageBackend::Files | StorageBackend::Sqlite, StorageConsistency::Transactional) => {
+                return Err(
+                    "Files/SQLite backend 不支持 transactional consistency；请使用 local_durable 或 distributed_outbox".into(),
+                );
+            }
+            (StorageBackend::Postgres, StorageConsistency::LocalDurable) => {
+                return Err(
+                    "PostgreSQL backend 不能声明 local_durable；请使用 transactional 或 distributed_outbox".into(),
+                );
+            }
+            _ => {}
+        }
+        if self.storage.consistency == StorageConsistency::DistributedOutbox
+            && !self.messaging.enabled
+        {
+            return Err(
+                "distributed_outbox consistency 必须同时启用 messaging，由 Outbox Relay 发布"
+                    .into(),
+            );
+        }
+        if self.messaging.enabled
+            && self.storage.consistency != StorageConsistency::DistributedOutbox
+        {
+            return Err("启用 messaging 时 storage.consistency 必须为 distributed_outbox".into());
         }
         if self
             .storage
@@ -1735,14 +2013,24 @@ impl RuntimeConfig {
             {
                 return Err(format!("{} settlement_currency 不能为空字符串", worker.id));
             }
+            for symbol in &worker.symbols {
+                if InstrumentId::parse(symbol).is_none() {
+                    return Err(format!(
+                        "{} symbols 必须是合法 InstrumentId: {}",
+                        worker.id, symbol
+                    ));
+                }
+            }
             if !worker.enabled {
                 continue;
             }
             if worker.role == WorkerRole::Api {
                 enabled_api_workers = enabled_api_workers.saturating_add(1);
             }
-            if worker.role == WorkerRole::Execution
-                && worker.instrument_spec_path.is_none()
+            if matches!(
+                worker.role,
+                WorkerRole::Execution | WorkerRole::SpreadRecovery
+            ) && worker.instrument_spec_path.is_none()
                 && (self.environment.eq_ignore_ascii_case("production")
                     || !worker
                         .venue_id
@@ -1750,28 +2038,33 @@ impl RuntimeConfig {
                         .is_some_and(|venue| venue.eq_ignore_ascii_case("paper")))
             {
                 return Err(format!(
-                    "{} Execution worker 必须配置 instrument_spec_path；仅非 production 的 Paper smoke 允许兼容省略",
+                        "{} Execution/SpreadRecovery worker 必须配置 instrument_spec_path；仅非 production 的 Paper smoke 允许兼容省略",
                     worker.id
                 ));
             }
-            if worker.role == WorkerRole::Execution
-                && self.environment.eq_ignore_ascii_case("production")
+            if matches!(
+                worker.role,
+                WorkerRole::Execution | WorkerRole::SpreadRecovery
+            ) && self.environment.eq_ignore_ascii_case("production")
             {
                 if worker.max_order_notional_raw.is_none() {
                     return Err(format!(
-                        "{} production Execution worker 必须配置 max_order_notional_raw",
+                        "{} production Execution/SpreadRecovery worker 必须配置 max_order_notional_raw",
                         worker.id
                     ));
                 }
                 if worker.max_position_notional_raw.is_none() {
                     return Err(format!(
-                        "{} production Execution worker 必须配置 max_position_notional_raw",
+                        "{} production Execution/SpreadRecovery worker 必须配置 max_position_notional_raw",
                         worker.id
                     ));
                 }
             }
             match worker.role {
-                WorkerRole::UserStream | WorkerRole::Execution | WorkerRole::Reconciler => {
+                WorkerRole::UserStream
+                | WorkerRole::Execution
+                | WorkerRole::SpreadRecovery
+                | WorkerRole::Reconciler => {
                     if worker
                         .account_id
                         .as_deref()
@@ -2380,6 +2673,7 @@ mod tests {
         RuntimeConfig {
             schema_version: RUNTIME_SCHEMA_VERSION,
             environment: "paper".into(),
+            profile: RuntimeProfile::SingleNode,
             config_fingerprint: None,
             api: ApiRuntimeConfig {
                 bind: "127.0.0.1:19090".into(),
@@ -2389,6 +2683,7 @@ mod tests {
             },
             storage: StorageRuntimeConfig {
                 backend: StorageBackend::Files,
+                consistency: StorageConsistency::LocalDurable,
                 data_dir: "data".into(),
                 sqlite_path: None,
                 postgres_dsn_env: None,
@@ -2457,6 +2752,30 @@ mod tests {
     }
 
     #[test]
+    fn spread_recovery_requires_the_same_account_boundary_as_execution() {
+        let mut config = config();
+        config.workers.push(WorkerConfig {
+            id: "paper-recovery".into(),
+            role: WorkerRole::SpreadRecovery,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("paper".into()),
+            endpoint: None,
+            symbols: Vec::new(),
+            settlement_currency: Some("USDT".into()),
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        assert!(config.validate().is_ok());
+        config.workers.last_mut().unwrap().account_id = None;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
     fn runtime_config_fingerprint_locks_published_configuration() {
         let mut locked = config();
         let fingerprint = locked.fingerprint().unwrap();
@@ -2475,8 +2794,10 @@ mod tests {
     #[test]
     fn production_bound_strategy_requires_research_snapshot() {
         let mut config = config();
+        config.profile = RuntimeProfile::Distributed;
         config.environment = "production".into();
         config.storage.backend = StorageBackend::Postgres;
+        config.storage.consistency = StorageConsistency::Transactional;
         config.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
         config.api.transport = ApiTransport::Mtls;
         config.api.tls = Some(TlsPaths {
@@ -2515,7 +2836,14 @@ mod tests {
         config.strategy.research_snapshot_required = true;
         config.strategy.research_snapshot_path = Some("research.json".into());
         config.strategy.research_data_fingerprint = Some("bars-sha256".into());
+        config.strategy.dataset_bundle_path = Some("research.bundle.json".into());
         assert!(config.validate().is_ok());
+
+        config.strategy.target_qty = 1;
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .contains("禁止使用裸 target_qty"));
     }
 
     #[test]
@@ -2579,10 +2907,69 @@ mod tests {
     }
 
     #[test]
+    fn live_strategy_requires_market_data_and_execution_topology() {
+        let mut config = config();
+        config.workers.push(WorkerConfig {
+            id: "strategy-live".into(),
+            role: WorkerRole::Strategy,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("okx".into()),
+            endpoint: None,
+            symbols: vec!["BTC/USDT.OKX".into()],
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        config.strategy.account_id = Some("main".into());
+        config.strategy.venue_id = Some("okx".into());
+        config.strategy.instrument = Some("BTC/USDT.OKX".into());
+        config.strategy.live_enabled = true;
+        config.strategy.bars_snapshot_path = Some("bars.json".into());
+
+        let error = config.validate().unwrap_err();
+        assert!(error.contains("MarketData worker"));
+
+        config.workers[1].symbols = vec!["BTC/USDT.OKX".into()];
+        let error = config.validate().unwrap_err();
+        assert!(error.contains("Execution worker"));
+
+        config.workers.push(WorkerConfig {
+            id: "execution-live".into(),
+            role: WorkerRole::Execution,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("OKX".into()),
+            endpoint: None,
+            symbols: Vec::new(),
+            settlement_currency: Some("USDT".into()),
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: Some("spec.json".into()),
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        let result = config.validate();
+        assert!(result.is_ok(), "{result:?}");
+        config.strategy.live_max_staleness_ms = Some(0);
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .contains("live_max_staleness_ms"));
+    }
+
+    #[test]
     fn production_c_abi_strategy_requires_detached_signature() {
         let mut config = config();
+        config.profile = RuntimeProfile::Distributed;
         config.environment = "production".into();
         config.storage.backend = StorageBackend::Postgres;
+        config.storage.consistency = StorageConsistency::Transactional;
         config.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
         config.api.transport = ApiTransport::Mtls;
         config.api.tls = Some(TlsPaths {
@@ -2608,8 +2995,10 @@ mod tests {
     #[test]
     fn production_external_strategy_requires_artifact_lock() {
         let mut config = config();
+        config.profile = RuntimeProfile::Distributed;
         config.environment = "production".into();
         config.storage.backend = StorageBackend::Postgres;
+        config.storage.consistency = StorageConsistency::Transactional;
         config.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
         config.api.transport = ApiTransport::Mtls;
         config.api.tls = Some(TlsPaths {
@@ -2662,6 +3051,8 @@ mod tests {
             research_snapshot_path: None,
             research_snapshot_required: false,
             research_data_fingerprint: None,
+            dataset_bundle_path: None,
+            dataset_component_paths: BTreeMap::new(),
             product: None,
             margin_mode: None,
             position_mode: None,
@@ -2671,6 +3062,7 @@ mod tests {
             live_timeframe: default_strategy_live_timeframe(),
             live_history_limit: default_strategy_live_history_limit(),
             live_closed_only: default_strategy_live_closed_only(),
+            live_max_staleness_ms: None,
             builtin_strategy: None,
             builtin_quantity: None,
             builtin_fast_window: None,
@@ -2684,6 +3076,8 @@ mod tests {
             builtin_reference_leverage: None,
             bars_snapshot_path: None,
             ashare_rules_path: None,
+            ashare_actions_path: None,
+            ashare_calendar_path: None,
             python_module: None,
             transport: StrategyTransport::Jsonl,
             shared_memory_capacity: default_strategy_shared_memory_capacity(),
@@ -2743,8 +3137,41 @@ mod tests {
     }
 
     #[test]
+    fn storage_consistency_matches_backend_and_messaging_topology() {
+        let mut files = config();
+        files.storage.consistency = StorageConsistency::Transactional;
+        assert!(files
+            .validate()
+            .unwrap_err()
+            .contains("Files/SQLite backend"));
+
+        let mut postgres = config();
+        postgres.profile = RuntimeProfile::Distributed;
+        postgres.storage.backend = StorageBackend::Postgres;
+        postgres.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
+        assert!(postgres
+            .validate()
+            .unwrap_err()
+            .contains("不能声明 local_durable"));
+        postgres.storage.consistency = StorageConsistency::Transactional;
+        assert!(postgres.validate().is_ok());
+
+        let mut messaging = config();
+        messaging.profile = RuntimeProfile::Distributed;
+        messaging.messaging.enabled = true;
+        assert!(messaging
+            .validate()
+            .unwrap_err()
+            .contains("distributed_outbox"));
+        messaging.storage.consistency = StorageConsistency::DistributedOutbox;
+        assert!(messaging.validate().is_ok());
+    }
+
+    #[test]
     fn messaging_worker_requires_valid_runtime_contract() {
         let mut relay_config = config();
+        relay_config.profile = RuntimeProfile::Distributed;
+        relay_config.storage.consistency = StorageConsistency::DistributedOutbox;
         relay_config.workers.push(WorkerConfig {
             id: "outbox-relay".into(),
             role: WorkerRole::OutboxRelay,
@@ -2771,6 +3198,8 @@ mod tests {
         assert!(relay_config.validate().is_err());
 
         let mut consumer = config();
+        consumer.profile = RuntimeProfile::Distributed;
+        consumer.storage.consistency = StorageConsistency::DistributedOutbox;
         consumer.messaging.enabled = true;
         consumer.messaging.consumer_stream = Some("QIANXING_EVENTS".into());
         consumer.messaging.consumer_name = Some("ledger-reducer".into());
@@ -2800,6 +3229,7 @@ mod tests {
     #[test]
     fn worker_ids_are_safe_for_runtime_artifact_names() {
         let mut invalid = config();
+        invalid.profile = RuntimeProfile::Distributed;
         invalid.messaging.enabled = true;
         invalid.workers.push(WorkerConfig {
             id: "relay/primary".into(),
@@ -2823,7 +3253,9 @@ mod tests {
     #[test]
     fn postgres_storage_requires_secret_manager_environment_name() {
         let mut config = config();
+        config.profile = RuntimeProfile::Distributed;
         config.storage.backend = StorageBackend::Postgres;
+        config.storage.consistency = StorageConsistency::Transactional;
         assert!(config.validate().is_err());
         config.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
         assert!(config.validate().is_ok());
@@ -2833,6 +3265,24 @@ mod tests {
         assert!(config.validate().is_ok());
         let json = serde_json::to_string(&config).unwrap();
         assert!(!json.contains("postgresql://"));
+    }
+
+    #[test]
+    fn single_node_profile_rejects_postgres_and_nats() {
+        let mut postgres = config();
+        postgres.storage.backend = StorageBackend::Postgres;
+        postgres.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
+        let error = postgres
+            .validate()
+            .expect_err("single_node must reject PostgreSQL");
+        assert!(error.contains("single_node") && error.contains("PostgreSQL"));
+
+        let mut messaging = config();
+        messaging.messaging.enabled = true;
+        let error = messaging
+            .validate()
+            .expect_err("single_node must reject NATS messaging");
+        assert!(error.contains("single_node") && error.contains("NATS"));
     }
 
     #[test]

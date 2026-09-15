@@ -29,14 +29,15 @@
 - CCXT Cashflow：优先使用公共 `fetch_ledger`，将 funding/interest/settlement/transfer 账单归一化为带 `external_id` 的 `AccountCashflow`；不支持时显式尝试 `fetch_funding_history`，进入 EventLog 后生成 `LedgerApplied`，按账单身份幂等，不把余额快照或费率观察当成现金结算。
 - `CcxtErrorClass`：限频、网络重试、认证、交易所错误、参数错误、未支持能力和未知错误分类。
 - `watch_ohlcv/watch_ticker/watch_orders/watch_my_trades/watch_balance/watch_positions`：代码层保留后续 CCXT Pro 扩展边界，但本期不由运行时启用；当前市场、订单和账户状态依靠 REST 轮询与对账获取。
-- `python -m qianxing_ccxt.worker --config ...`：JSONL 进程边界，本期支持 `load_markets`、`fetch_ohlcv`、`fetch_ticker`、`create_order`、`fetch_order`、`fetch_my_trades`、`cancel_order`、`fetch_balance`、`fetch_ledger`、`fetch_funding_history` 和 `fetch_leverage_tiers`；秘密只从环境变量读取，REST 网络/限频错误按配置有限重建连接，对认证、参数和不支持错误稳定失败。
-- CCXT Pro `UserStream` 不属于本期交付；当前以 REST `fetch_order`、`fetch_open_orders`、余额、持仓和账单对账覆盖订单最终一致性，未知订单交给 Reconcile，不自动注册或补单。
+- `python -m qianxing_ccxt.worker --config ...`：JSONL 进程边界，本期支持 `load_markets`、`fetch_ohlcv`、`fetch_ticker`、`create_order`、`fetch_order`、`fetch_open_orders`、`fetch_my_trades`、`cancel_order`、`fetch_balance`、`fetch_ledger`、`fetch_funding_history` 和 `fetch_leverage_tiers`；秘密只从环境变量读取，REST 网络/限频错误按配置有限重建连接，对认证、参数和不支持错误稳定失败。
+- CCXT Pro `UserStream` 不属于本期交付；当前以 REST `fetch_order`、`fetch_open_orders`、余额、持仓和账单对账覆盖订单最终一致性。Reconcile 会发现交易所存在但本地没有映射的活动订单，以及本地已终态但交易所仍开放的订单，将原始风险写入 `reconcile/<worker>.json` 并将服务置为 `Degraded`；不自动注册、撤单、平仓或补单，必须人工确认归属。
 - `qx-cli ccxt-worker runtime.json worker-id ccxt-config.json`：把已审计 SubmitOrder 接入 Rust Control/Queue/EventLog/ExecutionService。
 - 当策略配置 `live_enabled=true` 时，CCXT MarketData worker 会按 `live_timeframe` 持续拉取 OHLCV，默认只保留闭合 K 线并原子更新 `bars_snapshot_path`；Strategy worker 以 BarFrame digest 为幂等键投递实时 JobRun，避免固定调度和重复下单。
 - 多交易所套利不要求 CCXT Pro：每个交易所配置独立的 CCXT REST MarketData/Execution worker，worker 只更新自己 `venue_id` 的主腿或对冲腿快照，策略等待两腿最新闭合时间一致后再生成双腿 intents。`cross_venue_arbitrage` 用归一化收益价差，`spot_futures_arbitrage` 用当前基差；现货腿通过独立 Cash/1x 执行策略避免继承期货杠杆。
 - 多标的/多币种通过同一 MarketData worker 的 `symbols[]` 和多个 Strategy worker/`strategies[]` 实例配置；不同结算币种在每个 worker 上用 `settlement_currency` 显式隔离，行情、执行和对账 EventLog 不再固定使用 USDT。
 - CCXT Python worker 启动时会清空父进程环境，只保留 Python/Windows 运行所需基础变量和 `credential_env` 声明的变量；不相关的交易所凭证不会跨进程继承。凭证值仍只从环境变量读取，不进入 Rust 日志或配置摘要。
 - Rust `CcxtProcessClient` 按配置读取 `timeout_ms`，通过独立响应读取线程和有界等待避免交易线程永久阻塞；超时、worker 退出和通道断开都按“提交结果未知”处理，不自动重试下单。
+- `CcxtProcessVenue` 对订单状态采用 fail-closed 归约：未知状态、已关闭但部分成交、拒绝但已有成交均进入 `ReconcileRequired`，RPC 传输失败会把 Venue 标记为断开，必须先替换连接或由对账流程恢复；不会在异常状态下继续提交或污染累计成交成本。
 - ExecutionService 接收到冻结 `TradingInstrumentSpec` 时，Paper/CCXT 的成交统一使用产品规格归约：Spot 走现金成交，Margin/Perpetual/Future 走持仓、已实现 PnL、手续费和资金结算语义；规格生成的 LedgerApplied 事实可在重启后直接重放。
 - `qx-cli ccxt-fetch-ohlcv ccxt-config.json instrument start_ms end_ms output.json [timeframe]`：下载一次 OHLCV 并冻结为回测输入快照。
 - `qx-cli ccxt-market-spec ccxt-config.json instrument market.json`：下载并冻结 CCXT 市场元数据与可用 `leverage_tiers`，作为现货/保证金/永续/交割合约回测的产品规格和阶梯保证金输入。
@@ -75,7 +76,7 @@ Strategy
   → EventLog → Ledger → Reconcile
 ```
 
-未知下单结果禁止自动补单，先用 `fetch_order`、`fetch_open_orders` 和余额/成交对账确认。CCXT 的统一状态只作为输入，终态转换仍由牵星订单状态机决定。
+未知下单结果禁止自动补单，先用 `fetch_order`、`fetch_open_orders` 和余额/成交对账确认。CCXT 的统一状态只作为输入，终态转换仍由牵星订单状态机决定；`fetch_open_orders` 返回的未知活动订单会阻断“Ready”判断，直到人工完成对账。
 
 ## 4. 多交易所配置约束
 

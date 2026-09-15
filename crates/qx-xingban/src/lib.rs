@@ -18,12 +18,12 @@ pub mod tick_backtest;
 pub mod venue;
 
 pub use self::ashare::{
-    AshareBoard, AshareCorporateActionEvent, AshareCorporateActionType, AshareRuleConfig,
-    AshareSettlementState,
+    AshareBoard, AshareCorporateActionEvent, AshareCorporateActionType,
+    AshareIssuerCapitalSnapshot, AshareRuleConfig, AshareSettlementState,
 };
 pub use self::backtest::{
     BacktestConfig, BacktestEngine, BacktestReport, BarStrategy, DeliveryEvent, FundingEvent,
-    InterestEvent, NativeBarStrategy, VirtualTradingConfig,
+    InterestEvent, NativeBarStrategy, RunManifestIdentity, VirtualTradingConfig,
 };
 pub use self::cost::{
     AShareFeeModel, FeeModel, FixedRateMargin, LatencyModel, LeverageMargin, MakerTakerFeeModel,

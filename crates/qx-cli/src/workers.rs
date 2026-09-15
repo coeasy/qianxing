@@ -119,10 +119,17 @@ fn live_strategy_job(
     (job, run)
 }
 
-fn live_strategy_snapshot_digest(strategy: &StrategyRuntimeConfig) -> Result<Option<u64>, String> {
+fn live_strategy_snapshot_digest(
+    strategy: &StrategyRuntimeConfig,
+    now: u64,
+) -> Result<Option<u64>, String> {
     if !strategy.live_enabled {
         return Ok(None);
     }
+    let timeframe_ms = timeframe_to_ms(&strategy.live_timeframe)?;
+    let max_staleness_ms = strategy
+        .live_max_staleness_ms
+        .unwrap_or_else(|| timeframe_ms.saturating_mul(3).max(timeframe_ms));
     let Some(path) = strategy.bars_snapshot_path.as_deref() else {
         return Err("实时策略缺少 bars_snapshot_path".into());
     };
@@ -133,6 +140,15 @@ fn live_strategy_snapshot_digest(strategy: &StrategyRuntimeConfig) -> Result<Opt
         .map_err(|error| format!("读取实时策略 BarFrame 失败 {}: {error}", path))?;
     let frame = BarFrame::from_json(&payload)
         .map_err(|error| format!("实时策略 BarFrame 无效 {}: {error:?}", path))?;
+    if !live_frame_is_fresh(
+        &frame,
+        timeframe_ms,
+        strategy.live_closed_only,
+        max_staleness_ms,
+        now,
+    ) {
+        return Ok(None);
+    }
     if strategy
         .instrument
         .as_deref()
@@ -164,6 +180,15 @@ fn live_strategy_snapshot_digest(strategy: &StrategyRuntimeConfig) -> Result<Opt
         let reference_frame = BarFrame::from_json(&reference_payload).map_err(|error| {
             format!("实时策略对冲腿 BarFrame 无效 {}: {error:?}", reference_path)
         })?;
+        if !live_frame_is_fresh(
+            &reference_frame,
+            timeframe_ms,
+            strategy.live_closed_only,
+            max_staleness_ms,
+            now,
+        ) {
+            return Ok(None);
+        }
         let reference_instrument = InstrumentId::parse(reference_text)
             .ok_or_else(|| format!("实时策略对冲腿 instrument 非法: {reference_text}"))?;
         if reference_frame.instrument != reference_instrument {
@@ -369,7 +394,7 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
             let mut processed = 0_usize;
             if matches!(strategy.state, qx_zhenlu::StrategyState::Running) {
                 if let Some(data_fingerprint) =
-                    live_strategy_snapshot_digest(&strategy_runtime_config.strategy)?
+                    live_strategy_snapshot_digest(&strategy_runtime_config.strategy, now)?
                 {
                     if last_live_digest != Some(data_fingerprint) {
                         let (job, run) = live_strategy_job(
@@ -400,6 +425,37 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                             return Err(format!("领取 Strategy JobQueue 租约失败: {error:?}"))
                         }
                     };
+                    let live_job_digest = if queued.job.job_id.starts_with("live-strategy:") {
+                        Some(queued.run.manifest_digest.ok_or_else(|| {
+                            "实时 Strategy Job 缺少 manifest_digest，拒绝执行".to_string()
+                        })?)
+                    } else {
+                        None
+                    };
+                    if let Some(expected_digest) = live_job_digest {
+                        let current_digest = live_strategy_snapshot_digest(
+                            &strategy_runtime_config.strategy,
+                            now,
+                        )?;
+                        if current_digest != Some(expected_digest) {
+                            queue
+                                .ack_at(queued.run.run_id, context.id(), lease.fencing_token, now)
+                                .map_err(|error| {
+                                    format!("确认过期实时 Strategy Job 失败: {error:?}")
+                                })?;
+                            processed += 1;
+                            println!(
+                                "[策略 · Strategy] worker={} job={} skipped=stale-market-digest expected={:016x} actual={}",
+                                context.id(),
+                                queued.job.job_id,
+                                expected_digest,
+                                current_digest
+                                    .map(|digest| format!("{digest:016x}"))
+                                    .unwrap_or_else(|| "none".into())
+                            );
+                            continue;
+                        }
+                    }
                     let instrument = strategy_runtime_config
                         .strategy
                         .instrument
@@ -534,13 +590,65 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                         .into_iter()
                         .collect::<Vec<_>>()
                     };
+                    if let Some(expected_digest) = live_job_digest {
+                        let current_digest = live_strategy_snapshot_digest(
+                            &strategy_runtime_config.strategy,
+                            runtime_timestamp_ms(),
+                        )?;
+                        if current_digest != Some(expected_digest) {
+                            queue
+                                .ack_at(queued.run.run_id, context.id(), lease.fencing_token, now)
+                                .map_err(|error| {
+                                    format!("确认执行期间过期实时 Strategy Job 失败: {error:?}")
+                                })?;
+                            processed += 1;
+                            println!(
+                                "[策略 · Strategy] worker={} job={} skipped=market-changed-during-evaluation expected={:016x} actual={}",
+                                context.id(),
+                                queued.job.job_id,
+                                expected_digest,
+                                current_digest
+                                    .map(|digest| format!("{digest:016x}"))
+                                    .unwrap_or_else(|| "none".into())
+                            );
+                            continue;
+                        }
+                    }
+                    let spread_group_id = if orders.len() >= 2 {
+                        Some(spread_group_id(
+                            context.id(),
+                            queued.run.run_id,
+                            contract_output
+                                .as_ref()
+                                .map(|output| output.signal_id)
+                                .unwrap_or(queued.run.run_id),
+                        ))
+                    } else {
+                        None
+                    };
+                    // 先完成全部策略配额和命令构造校验，再落组快照；这样配额不足
+                    // 或订单无法序列化时不会留下一个没有对应命令的孤儿套利组。
+                    let commands = orders
+                        .iter()
+                        .map(|order| {
+                            strategy
+                                .reserve_order()
+                                .map_err(|error| format!("Strategy 订单配额拒绝: {error:?}"))?;
+                            strategy_submit_command(
+                                context.id(),
+                                order,
+                                queued.job.dry_run,
+                                spread_group_id.as_deref(),
+                            )
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    if !queued.job.dry_run {
+                        if let Some(group_id) = spread_group_id.as_deref() {
+                            persist_strategy_spread_group(&root, group_id, context.id(), &orders)?;
+                        }
+                    }
                     let mut results = Vec::new();
-                    for order in orders {
-                        strategy
-                            .reserve_order()
-                            .map_err(|error| format!("Strategy 订单配额拒绝: {error:?}"))?;
-                        let command =
-                            strategy_submit_command(context.id(), &order, queued.job.dry_run)?;
+                    for command in commands {
                         let order_result = if command.dry_run {
                             "DRY_RUN_SIGNAL_ORDER_INTENT_VALIDATED".to_string()
                         } else {

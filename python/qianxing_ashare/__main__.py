@@ -7,7 +7,17 @@ import json
 import os
 from pathlib import Path
 
-from . import AshareActionQuery, AshareQuery, create_provider, screen_bar_frames
+from . import (
+    AshareActionManifest,
+    AshareActionQuery,
+    AshareManifest,
+    AshareQuery,
+    AshareTradingCalendar,
+    BarFrame,
+    build_dataset_bundle_manifest,
+    create_provider,
+    screen_bar_frames,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -30,6 +40,15 @@ def _parser() -> argparse.ArgumentParser:
     actions.add_argument("--as-of", help="PIT 截止时间；只保留已公开可见事件")
     actions.add_argument("--output", required=True, type=Path)
     actions.add_argument("--manifest", type=Path)
+    bundle = sub.add_parser("bundle", help="将 A 股组件 manifest 绑定为 DatasetBundleManifest")
+    bundle.add_argument("--bundle-id", required=True)
+    bundle.add_argument("--version", required=True)
+    bundle.add_argument("--source", required=True)
+    bundle.add_argument("--bars-manifest", required=True, type=Path)
+    bundle.add_argument("--bars-frame", type=Path, help="可选 BarFrame；提供后使用 Rust qx-data fingerprint")
+    bundle.add_argument("--actions-manifest", type=Path)
+    bundle.add_argument("--calendar", type=Path)
+    bundle.add_argument("--output", required=True, type=Path)
     screen = sub.add_parser("screen", help="对目录中的 BarFrame 做快速初筛")
     screen.add_argument("--bars-dir", required=True, type=Path)
     screen.add_argument("--output", required=True, type=Path)
@@ -64,6 +83,32 @@ def main() -> int:
         manifest_path = args.manifest or args.output.with_suffix(".manifest.json")
         manifest_path.write_text(manifest.to_json(), encoding="utf-8")
         print(json.dumps({"instrument": manifest.instrument, "actions": len(actions), "output": str(args.output), "manifest": str(manifest_path)}, ensure_ascii=False))
+        return 0
+    if args.command == "bundle":
+        bars_manifest = AshareManifest.from_json(args.bars_manifest.read_text(encoding="utf-8"))
+        actions_manifest = None
+        if args.actions_manifest:
+            actions_manifest = AshareActionManifest.from_json(
+                args.actions_manifest.read_text(encoding="utf-8")
+            )
+        calendar = None
+        if args.calendar:
+            calendar = AshareTradingCalendar.from_json(args.calendar.read_text(encoding="utf-8"))
+        bars_frame = None
+        if args.bars_frame:
+            bars_frame = BarFrame.from_json(args.bars_frame.read_text(encoding="utf-8"))
+        bundle = build_dataset_bundle_manifest(
+            args.bundle_id,
+            args.version,
+            args.source,
+            bars_manifest,
+            actions_manifest,
+            calendar,
+            bars_frame,
+        )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps({"bundle_id": args.bundle_id, "components": sorted(bundle["components"]), "output": str(args.output)}, ensure_ascii=False))
         return 0
     args.output.parent.mkdir(parents=True, exist_ok=True)
     paths = []

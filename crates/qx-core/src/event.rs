@@ -10,6 +10,78 @@ use crate::numeric::{Money, Price, Quantity};
 use crate::order::Fill;
 use serde::{Deserialize, Serialize};
 
+/// 交易事实的最小血缘元数据。
+///
+/// 该结构只描述事实来源和规则版本，不携带任何凭据。旧 EventLog 缺少该
+/// 字段时由 serde 使用默认值恢复；新事实会把它纳入 Event digest，保证
+/// 来源或规则变化不会被错误地视为同一条可重放事实。
+pub const EVENT_METADATA_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct EventMetadata {
+    #[serde(default = "default_event_metadata_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub source_id: String,
+    /// 稳定来源分类，例如 `market_data`、`venue`、`control` 或 `internal`。
+    /// 具体供应商/worker 仍由 `source_id` 表达；分类用于跨适配器审计和
+    /// 回放筛选，旧事件缺失时恢复为 `internal`。
+    #[serde(default = "default_event_source_kind")]
+    pub source_kind: String,
+    #[serde(default)]
+    pub dedup_key: String,
+    #[serde(default = "default_event_rule_version")]
+    pub rule_version: String,
+}
+
+fn default_event_metadata_schema_version() -> u32 {
+    EVENT_METADATA_SCHEMA_VERSION
+}
+
+fn default_event_rule_version() -> String {
+    "runtime-v1".into()
+}
+
+fn default_event_source_kind() -> String {
+    "internal".into()
+}
+
+impl Default for EventMetadata {
+    fn default() -> Self {
+        Self {
+            schema_version: EVENT_METADATA_SCHEMA_VERSION,
+            source_id: String::new(),
+            source_kind: default_event_source_kind(),
+            dedup_key: String::new(),
+            rule_version: default_event_rule_version(),
+        }
+    }
+}
+
+impl EventMetadata {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version == 0 {
+            return Err("EventMetadata schema_version 必须大于 0".into());
+        }
+        if self.rule_version.trim().is_empty() {
+            return Err("EventMetadata rule_version 不能为空".into());
+        }
+        if self.source_kind.trim().is_empty() {
+            return Err("EventMetadata source_kind 不能为空".into());
+        }
+        Ok(())
+    }
+
+    pub fn derived(&self, suffix: impl AsRef<str>) -> Self {
+        let suffix = suffix.as_ref();
+        let mut derived = self.clone();
+        if !derived.dedup_key.is_empty() {
+            derived.dedup_key = format!("{}:{suffix}", derived.dedup_key);
+        }
+        derived
+    }
+}
+
 /// 因果优先级。数值小者先处理。
 pub mod prio {
     /// 时钟/定时器到期：改变内部状态，但**不应偷看当前 bar 收盘**。
@@ -105,11 +177,15 @@ pub enum EventKind {
         instrument: InstrumentId,
         close: Price,
     },
-    /// L1 报价到达；深度和数量由上层数据事件保存。
+    /// L1 报价到达；保存最优买卖价及对应数量，供 Paper/回放保持成交容量一致。
     MarketQuote {
         instrument: InstrumentId,
         bid: Price,
         ask: Price,
+        #[serde(default)]
+        bid_qty: Quantity,
+        #[serde(default)]
+        ask_qty: Quantity,
     },
     AccountBalanceSnapshot {
         account_id: String,
@@ -178,6 +254,9 @@ pub struct Event {
     pub engine_time: Ts,
     pub source_seq: u64,
     pub correlation_id: String,
+    /// 来源、去重和规则版本；`receive_time`/`ts` 分别对应 observed/effective 时间。
+    #[serde(default)]
+    pub metadata: EventMetadata,
 }
 
 impl Event {
@@ -192,6 +271,7 @@ impl Event {
             engine_time: ts,
             source_seq: seq,
             correlation_id: String::new(),
+            metadata: EventMetadata::default(),
         }
     }
 
@@ -217,6 +297,21 @@ impl Event {
         self
     }
 
+    pub fn with_metadata(mut self, metadata: EventMetadata) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
+    /// 外部事实收到的本地时间，即 metadata 语义中的 observed_at。
+    pub fn observed_at(&self) -> Ts {
+        self.receive_time
+    }
+
+    /// 事实业务生效时间，即 metadata 语义中的 effective_at。
+    pub fn effective_at(&self) -> Ts {
+        self.ts
+    }
+
     /// 稳定摘要：用于重放校验。**不得依赖 Debug 输出**（格式可能随版本变化）。
     pub fn digest(&self, h: &mut crate::sourcing::Fnv1a) {
         h.write_u64(self.seq);
@@ -227,6 +322,11 @@ impl Event {
         h.write_u64(self.engine_time);
         h.write_u64(self.source_seq);
         h.write_text(&self.correlation_id);
+        h.write_u64(self.metadata.schema_version as u64);
+        h.write_text(&self.metadata.source_id);
+        h.write_text(&self.metadata.source_kind);
+        h.write_text(&self.metadata.dedup_key);
+        h.write_text(&self.metadata.rule_version);
         match &self.kind {
             EventKind::Timer { name } => {
                 h.write_u64(1);
@@ -241,11 +341,15 @@ impl Event {
                 instrument,
                 bid,
                 ask,
+                bid_qty,
+                ask_qty,
             } => {
                 h.write_u64(7);
                 h.write_text(&instrument.to_string());
                 h.write_i128(bid.raw());
                 h.write_i128(ask.raw());
+                h.write_i128(bid_qty.raw());
+                h.write_i128(ask_qty.raw());
             }
             EventKind::AccountBalanceSnapshot {
                 account_id,
@@ -407,6 +511,9 @@ impl Event {
                     LedgerEntryKind::Interest => 7,
                     LedgerEntryKind::Liquidation => 8,
                     LedgerEntryKind::CorporateAction => 9,
+                    LedgerEntryKind::RightsEntitlement => 10,
+                    LedgerEntryKind::CashDividendEntitlement => 11,
+                    LedgerEntryKind::ConvertibleBondInterestEntitlement => 12,
                 });
                 h.write_i128(entry.amount.raw());
                 h.write_text(
@@ -471,5 +578,36 @@ mod tests {
         left.digest(&mut left_hash);
         right.digest(&mut right_hash);
         assert_ne!(left_hash.finish(), right_hash.finish());
+    }
+
+    #[test]
+    fn metadata_is_part_of_event_identity_and_round_trips() {
+        let event = Event::new(1, 20, Priority::MARKET, EventKind::Settle)
+            .received_at(30)
+            .with_metadata(EventMetadata {
+                source_id: "okx-market".into(),
+                dedup_key: "okx:quote:7".into(),
+                rule_version: "market-v2".into(),
+                ..EventMetadata::default()
+            });
+        assert_eq!(event.effective_at(), 20);
+        assert_eq!(event.observed_at(), 30);
+        let restored: Event =
+            serde_json::from_str(&serde_json::to_string(&event).unwrap()).unwrap();
+        assert_eq!(restored, event);
+
+        let mut legacy = serde_json::to_value(&event).unwrap();
+        legacy.as_object_mut().unwrap().remove("metadata");
+        let restored_legacy: Event = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored_legacy.metadata, EventMetadata::default());
+
+        let mut first = crate::sourcing::Fnv1a::new();
+        event.digest(&mut first);
+        let changed = event
+            .clone()
+            .with_metadata(event.metadata.derived("ledger:1"));
+        let mut second = crate::sourcing::Fnv1a::new();
+        changed.digest(&mut second);
+        assert_ne!(first.finish(), second.finish());
     }
 }

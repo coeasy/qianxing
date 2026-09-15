@@ -1,0 +1,41 @@
+{
+  "bundle_id": "ashare.example.000001",
+  "version": "snapshot-example-v1",
+  "source": "ashare-example-qfq-v1",
+  "schema_version": 1,
+  "components": {
+    "bars": {
+      "kind": "bars",
+      "dataset_id": "strategy-bars:000001.SZSE",
+      "version": "barframe-json-v1",
+      "source": "ashare-example-qfq-v1",
+      "fingerprint": "0ccb96c919a6999b",
+      "schema_version": 1,
+      "start_timestamp": 1000,
+      "end_timestamp": 6000,
+      "row_count": 6
+    },
+    "corporate_actions": {
+      "kind": "corporate_actions",
+      "dataset_id": "ashare.example.000001.corporate_actions",
+      "version": "example",
+      "source": "example",
+      "fingerprint": "fccf61e1b832b0b301866578fc7af5bcad147a283d44ac020e0fabfac5233763",
+      "schema_version": 1,
+      "start_timestamp": 1717344000000,
+      "end_timestamp": 1717344000000,
+      "row_count": 1
+    },
+    "calendar": {
+      "kind": "calendar",
+      "dataset_id": "ashare.example.000001.calendar",
+      "version": "cn-example-2024",
+      "source": "ashare-example-qfq-v1",
+      "fingerprint": "4fdf05f1c8acaa0691355e2799592e486f2974b9d287d4a0550e7629d9f55531",
+      "schema_version": 1,
+      "start_timestamp": 1717344000000,
+      "end_timestamp": 1717430400000,
+      "row_count": 2
+    }
+  }
+}

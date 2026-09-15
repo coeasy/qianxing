@@ -10,3 +10,5 @@ qianxing-ring-smoke.bin
 .vscode/
 __pycache__/
 *.pyc
+python/build/
+python/**/*.egg-info/

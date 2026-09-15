@@ -10,11 +10,14 @@ default = []
 postgres = ["qx-runtime/postgres"]
 
 [dependencies]
+qx-application = { path = "../qx-application" }
 qx-core = { path = "../qx-core" }
 qx-control = { path = "../qx-control" }
 qx-guanxing = { path = "../qx-guanxing" }
+qx-risk = { path = "../qx-risk" }
 qx-runtime = { path = "../qx-runtime" }
 qx-zhenlu = { path = "../qx-zhenlu" }
 
 [dev-dependencies]
+qx-adapter = { path = "../qx-adapter" }
 serde_json = { workspace = true }

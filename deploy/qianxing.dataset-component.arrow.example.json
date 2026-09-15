@@ -1,0 +1,22 @@
+{
+  "format": "arrow",
+  "kind": "factors",
+  "dataset_id": "factors.daily.000001.SZSE",
+  "version": "arrow-v1",
+  "source": "python-factor-provider",
+  "fingerprint": "sha256-of-the-arrow-artifact",
+  "schema_version": 1,
+  "start_timestamp": 1704067200000,
+  "end_timestamp": 1704153600000,
+  "row_count": 1,
+  "schema": [
+    {
+      "name": "instrument",
+      "format": "utf8"
+    },
+    {
+      "name": "value_raw",
+      "format": "decimal128(38,9)"
+    }
+  ]
+}

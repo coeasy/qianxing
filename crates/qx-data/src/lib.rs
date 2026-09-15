@@ -10,6 +10,7 @@ pub mod catalog;
 pub mod corporate_action;
 pub mod fingerprint;
 pub mod incremental;
+pub mod ingestion;
 pub mod pipeline;
 pub mod provider;
 pub mod registry;
@@ -21,13 +22,18 @@ pub mod validation;
 pub use batch::{load_bar_batch, BarBatchItem, BarRequest};
 pub use cache::{CacheKey, DataCache};
 pub use calendar::{TradingCalendar, TradingSession};
-pub use catalog::DatasetManifest;
+pub use catalog::{
+    ArrowDatasetManifest, ArrowFieldManifest, DatasetBundleManifest, DatasetComponentFormat,
+    DatasetComponentManifest, DatasetManifest, JsonDatasetBundleStore,
+};
 pub use corporate_action::{CorporateAction, CorporateActionType};
 pub use fingerprint::fingerprint_bars;
 pub use incremental::{merge_bars, IncrementalMergeReport};
+pub use ingestion::{ingest_bars, IngestionReport, IngestionRequest};
 pub use pipeline::{process_bars, DataPipelineReport};
-pub use registry::DatasetRegistry;
+pub use provider::{DataProvider, JsonBarFrameProvider, ProviderMetadata};
+pub use registry::{DatasetRegistrar, DatasetRegistry, JsonDatasetRegistry};
 pub use resolver::{DatasetRef, DatasetResolver};
 pub use schema::{Bar, DataSchemaVersion};
-pub use storage::{DataStorage, MemoryDataStorage};
+pub use storage::{DataStorage, JsonFileDataStorage, MemoryDataStorage};
 pub use validation::{validate_bars, ValidationReport};

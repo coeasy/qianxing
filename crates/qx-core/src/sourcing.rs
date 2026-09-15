@@ -6,7 +6,7 @@
 use crate::error::QxResult;
 use crate::event::{Event, EventKind};
 use crate::ledger::Ledger;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// FNV-1a 64：零依赖、跨平台稳定。
 ///
@@ -91,6 +91,9 @@ impl EventLog {
 
     /// 追加并校验事件序号，供生产归约器使用。
     pub fn append_checked(&mut self, e: Event) -> QxResult<()> {
+        e.metadata
+            .validate()
+            .map_err(crate::error::QxError::Invariant)?;
         if self.events.iter().any(|event| event.seq == e.seq) {
             return Err(crate::error::QxError::Invariant("事件 seq 重复".into()));
         }
@@ -118,6 +121,10 @@ impl EventLog {
         let mut seen_seq = BTreeSet::new();
         let mut max_seq = None;
         for event in &self.events {
+            event
+                .metadata
+                .validate()
+                .map_err(crate::error::QxError::Invariant)?;
             if !seen_seq.insert(event.seq) {
                 return Err(crate::error::QxError::Invariant("事件日志 seq 重复".into()));
             }
@@ -194,6 +201,10 @@ pub struct RunManifest {
     pub code_commit: String,
     pub config_hash: String,
     pub data_fingerprint: String,
+    /// 运行实际绑定的多组件数据指纹，例如 bars、corporate_actions、calendar。
+    /// 旧 JSON 缺失时按空集合读取，新的 Bundle 回测必须写入完整组件集合。
+    #[serde(default)]
+    pub input_components: BTreeMap<String, String>,
     pub clock_start: u64,
     pub clock_end: u64,
     pub global_seed: u64,
@@ -225,6 +236,13 @@ impl RunManifest {
         if let Some((field, _)) = required.iter().find(|(_, value)| value.trim().is_empty()) {
             return Err(format!("RunManifest 字段不能为空: {field}"));
         }
+        if self
+            .input_components
+            .iter()
+            .any(|(kind, fingerprint)| kind.trim().is_empty() || fingerprint.trim().is_empty())
+        {
+            return Err("RunManifest input_components 不能包含空键或空指纹".into());
+        }
         if self.clock_start > self.clock_end {
             return Err("RunManifest 时钟范围非法".into());
         }
@@ -249,6 +267,11 @@ impl RunManifest {
         write_text(&mut h, &self.code_commit);
         write_text(&mut h, &self.config_hash);
         write_text(&mut h, &self.data_fingerprint);
+        h.write_u64(self.input_components.len() as u64);
+        for (kind, fingerprint) in &self.input_components {
+            write_text(&mut h, kind);
+            write_text(&mut h, fingerprint);
+        }
         h.write_u64(self.clock_start);
         h.write_u64(self.clock_end);
         h.write_u64(self.global_seed);
@@ -343,6 +366,7 @@ mod tests {
             code_commit: "ab".into(),
             config_hash: "c".into(),
             data_fingerprint: "data".into(),
+            input_components: BTreeMap::new(),
             clock_start: 1,
             clock_end: 2,
             global_seed: 7,
@@ -362,6 +386,12 @@ mod tests {
         changed.code_commit = "a".into();
         changed.config_hash = "bc".into();
         assert_ne!(manifest.digest(), changed.digest());
+
+        let mut component_changed = manifest.clone();
+        component_changed
+            .input_components
+            .insert("calendar".into(), "calendar-fingerprint".into());
+        assert_ne!(manifest.digest(), component_changed.digest());
 
         changed.clock_start = 3;
         assert!(changed.validate().is_err());

@@ -37,9 +37,14 @@ _CORPORATE_ACTION_TYPES = {
     "bonus_share",
     "capital_transfer",
     "rights_issue",
+    "rights_issue_expiry",
     "new_share_issue",
     "repurchase",
     "convertible_bond_issue",
+    "convertible_bond_interest",
+    "convertible_bond_redemption",
+    "convertible_bond_call",
+    "convertible_bond_put",
     "convertible_bond_conversion",
     "suspension",
     "capital_change",
@@ -99,6 +104,20 @@ def _nonnegative_scaled(value: Any, field: str) -> int:
     return int((number * SCALE).quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))
 
 
+def _nonnegative_raw(value: Any, field: str) -> int:
+    """解析已经处于 Qianxing 定点单位的非负整数。"""
+
+    if value is None or str(value).strip() in {"", "-", "--", "nan", "NaN", "None"}:
+        return 0
+    try:
+        number = Decimal(str(value).replace(",", "").strip())
+    except (InvalidOperation, ValueError) as exc:
+        raise AshareProviderError(f"invalid {field} value: {value!r}") from exc
+    if not number.is_finite() or number < 0 or number != number.to_integral_value():
+        raise AshareProviderError(f"invalid {field} value: {value!r}")
+    return int(number)
+
+
 def _ratio_scaled(value: Any, field: str) -> tuple[int, int]:
     """将“每 10 股 X 股”或“每股 X 股”统一为 X/1。"""
 
@@ -119,19 +138,72 @@ def _ratio_scaled(value: Any, field: str) -> tuple[int, int]:
 def _canonical_action_type(row: Mapping[str, Any]) -> str:
     value = _optional_pick(row, "action_type", "type", "类别", "分红类型", "变动类型", "事件类型")
     text = str(value or "").strip().lower()
+    if "除权除息" in text:
+        # 该中文描述在不同数据源中既可能表示股本变更，也可能只是
+        # 分红/送转的统称；只有明确给出股本快照时才进入 CapitalChange。
+        if _optional_pick(
+            row,
+            "issuer_total_shares_raw",
+            "issuer_total_shares",
+            "total_shares",
+            "总股本",
+            "总股本数",
+        ) is not None:
+            return "capital_change"
+        if _optional_pick(
+            row,
+            "cash_dividend_raw",
+            "派息",
+            "现金分红",
+            "每股派息",
+            "fenhong",
+            "cash_dividend",
+        ) is not None:
+            return "cash_dividend"
+        if _optional_pick(row, "送股", "送股比例", "bonus_share", "bonus_ratio", "songzhuangu") is not None:
+            return "bonus_share"
+        if _optional_pick(row, "转增", "转增比例", "capital_transfer", "transfer_ratio") is not None:
+            return "capital_transfer"
+        return "unknown"
     mapping = (
+        ("convertible_bond_interest", "convertible_bond_interest"),
+        ("bond_interest", "convertible_bond_interest"),
+        ("可转债付息", "convertible_bond_interest"),
+        ("可转债利息", "convertible_bond_interest"),
+        ("付息", "convertible_bond_interest"),
+        ("convertible_bond_call", "convertible_bond_call"),
+        ("bond_call", "convertible_bond_call"),
+        ("可转债强赎", "convertible_bond_call"),
+        ("强制赎回", "convertible_bond_call"),
+        ("强赎", "convertible_bond_call"),
+        ("convertible_bond_redemption", "convertible_bond_redemption"),
+        ("bond_redemption", "convertible_bond_redemption"),
+        ("可转债赎回", "convertible_bond_redemption"),
+        ("赎回", "convertible_bond_redemption"),
+        ("convertible_bond_put", "convertible_bond_put"),
+        ("bond_put", "convertible_bond_put"),
+        ("可转债回售", "convertible_bond_put"),
+        ("回售", "convertible_bond_put"),
         ("可转债转股", "convertible_bond_conversion"),
         ("转股", "convertible_bond_conversion"),
+        ("convertible_bond_issue", "convertible_bond_issue"),
         ("可转债", "convertible_bond_issue"),
+        ("配股失效", "rights_issue_expiry"),
+        ("配股到期", "rights_issue_expiry"),
+        ("rights expiry", "rights_issue_expiry"),
+        ("rights_issue_expiry", "rights_issue_expiry"),
         ("配股", "rights_issue"),
         ("增发", "new_share_issue"),
         ("新股", "new_share_issue"),
         ("回购", "repurchase"),
         ("停牌", "suspension"),
+        ("capital_change", "capital_change"),
+        ("share_capital", "capital_change"),
+        ("股本变更", "capital_change"),
+        ("总股本变更", "capital_change"),
         ("送股", "bonus_share"),
         ("转增", "capital_transfer"),
         ("分红", "cash_dividend"),
-        ("除权除息", "capital_change"),
         ("rights", "rights_issue"),
         ("bonus", "bonus_share"),
         ("transfer", "capital_transfer"),
@@ -304,6 +376,129 @@ class AshareActionManifest:
         return manifest
 
 
+def _manifest_timestamp_ms(value: str) -> int:
+    parsed = _date_text(value)
+    if parsed is None:
+        raise ValueError(f"invalid manifest date: {value}")
+    day = date.fromisoformat(parsed)
+    return int(datetime.combine(day, time.min, tzinfo=_SHANGHAI).timestamp() * 1000)
+
+
+def _qx_data_bars_fingerprint(frame: BarFrame) -> str:
+    """复现 Rust qx-data::fingerprint_bars 的稳定 FNV-1a 规则。"""
+
+    frame.validate()
+    value = 0xCBF29CE484222325
+
+    def write_bytes(payload: bytes) -> None:
+        nonlocal value
+        for byte in payload:
+            value = ((value ^ byte) * 0x0100000001B3) & ((1 << 64) - 1)
+
+    def write_u64(number: int) -> None:
+        write_bytes(int(number).to_bytes(8, "little", signed=False))
+
+    def write_i128(number: int) -> None:
+        write_bytes(int(number).to_bytes(16, "little", signed=True))
+
+    def write_text(text: str) -> None:
+        encoded = text.encode("utf-8")
+        write_u64(len(encoded))
+        write_bytes(encoded)
+
+    write_u64(len(frame.ts))
+    for row in zip(
+        frame.ts,
+        frame.open_raw,
+        frame.high_raw,
+        frame.low_raw,
+        frame.close_raw,
+        frame.volume_raw,
+    ):
+        write_text(frame.instrument)
+        write_u64(row[0])
+        for value_raw in row[1:]:
+            write_i128(value_raw)
+    return f"{value:016x}"
+
+
+def build_dataset_bundle_manifest(
+    bundle_id: str,
+    version: str,
+    source: str,
+    bars: AshareManifest,
+    actions: AshareActionManifest | None = None,
+    calendar: "AshareTradingCalendar" | None = None,
+    bars_frame: BarFrame | None = None,
+) -> dict[str, Any]:
+    """生成 Rust ``DatasetBundleManifest`` 可直接读取的组件清单。
+
+    这里仅绑定已经通过各自 Provider 校验的 manifest，不把 DataFrame 或原始
+    公司行为偷偷写入 Bundle。组件数据仍由 `dataset-ingest` 或专用存储管理。
+    """
+
+    if not bundle_id.strip() or not version.strip() or not source.strip():
+        raise ValueError("bundle_id/version/source are required")
+    if not isinstance(bars, AshareManifest) or bars.row_count < 1:
+        raise ValueError("bars manifest must contain rows")
+
+    if bars_frame is not None:
+        if bars_frame.instrument != bars.instrument or len(bars_frame.ts) != bars.row_count:
+            raise ValueError("bars frame does not match bars manifest")
+        bars_fingerprint = _qx_data_bars_fingerprint(bars_frame)
+    else:
+        bars_fingerprint = bars.source_hash
+    components: dict[str, dict[str, Any]] = {
+        "bars": {
+            "kind": "bars",
+            "dataset_id": f"{bundle_id}.bars",
+            "version": bars.provider_version,
+            "source": bars.provider,
+            "fingerprint": bars_fingerprint,
+            "schema_version": bars.schema_version,
+            "start_timestamp": _manifest_timestamp_ms(bars.start),
+            "end_timestamp": _manifest_timestamp_ms(bars.end),
+            "row_count": bars.row_count,
+        }
+    }
+    if actions is not None:
+        if not isinstance(actions, AshareActionManifest):
+            raise ValueError("actions must be AshareActionManifest")
+        if actions.row_count > 0:
+            components["corporate_actions"] = {
+                "kind": "corporate_actions",
+                "dataset_id": f"{bundle_id}.corporate_actions",
+                "version": actions.provider_version,
+                "source": actions.provider,
+                "fingerprint": actions.source_hash,
+                "schema_version": actions.schema_version,
+                "start_timestamp": _manifest_timestamp_ms(actions.start),
+                "end_timestamp": _manifest_timestamp_ms(actions.end),
+                "row_count": actions.row_count,
+            }
+    if calendar is not None:
+        calendar.validate()
+        calendar_payload = calendar.to_json().encode("utf-8")
+        components["calendar"] = {
+            "kind": "calendar",
+            "dataset_id": f"{bundle_id}.calendar",
+            "version": calendar.calendar_id,
+            "source": source,
+            "fingerprint": hashlib.sha256(calendar_payload).hexdigest(),
+            "schema_version": 1,
+            "start_timestamp": _manifest_timestamp_ms(calendar.trading_days[0]),
+            "end_timestamp": _manifest_timestamp_ms(calendar.trading_days[-1]),
+            "row_count": len(calendar.trading_days),
+        }
+    return {
+        "bundle_id": bundle_id,
+        "version": version,
+        "source": source,
+        "schema_version": 1,
+        "components": components,
+    }
+
+
 @dataclass(frozen=True)
 class AshareActionConflict:
     instrument: str
@@ -336,6 +531,15 @@ def reconcile_corporate_actions(
         "conversion_price_raw",
         "conversion_ratio_num",
         "conversion_ratio_den",
+        "rights_instrument",
+        "subscription_qty_raw",
+        "rights_expiry_qty_raw",
+        "repurchase_qty_raw",
+        "repurchase_price_raw",
+        "convertible_bond_instrument",
+        "conversion_target_instrument",
+        "conversion_qty_raw",
+        "conversion_target_qty_raw",
     )
     for source_actions in sources:
         for action in source_actions:
@@ -617,6 +821,85 @@ def normalize_corporate_action_rows(
         conversion_num, conversion_den = _ratio_scaled(
             _optional_pick(row, "转股比例", "转股数", "conversion_ratio"), "conversion_ratio"
         )
+        rights_instrument = _optional_pick(
+            row, "rights_instrument", "配股权代码", "配股代码", "rights_symbol"
+        )
+        subscription_qty = _optional_pick(
+            row, "subscription_qty", "subscription_quantity", "认购数量", "认购股数"
+        )
+        rights_expiry_qty = _optional_pick(
+            row,
+            "rights_expiry_qty",
+            "rights_expiry_quantity",
+            "配股失效数量",
+            "配股到期数量",
+        )
+        repurchase_qty = _optional_pick(
+            row, "repurchase_qty", "repurchase_quantity", "回购数量", "回购股数"
+        )
+        repurchase_price = _optional_pick(row, "repurchase_price", "回购价", "回购价格")
+        bond_instrument = _optional_pick(
+            row, "convertible_bond_instrument", "可转债代码", "债券代码", "bond_symbol"
+        )
+        target_instrument = _optional_pick(
+            row, "conversion_target_instrument", "转股标的", "转股股票代码", "target_symbol"
+        )
+        conversion_qty = _optional_pick(
+            row, "conversion_qty", "conversion_quantity", "转股数量", "转债数量"
+        )
+        target_qty = _optional_pick(
+            row, "conversion_target_qty", "conversion_target_quantity", "转股所得数量"
+        )
+        interest_per_bond = _optional_pick(
+            row,
+            "interest_per_bond_raw",
+            "interest_per_bond",
+            "bond_interest",
+            "每张利息",
+            "每债利息",
+            "利息",
+        )
+        settlement_qty = _optional_pick(
+            row,
+            "settlement_qty_raw",
+            "settlement_qty",
+            "settlement_quantity",
+            "赎回数量",
+            "回售数量",
+            "结算数量",
+        )
+        settlement_price = _optional_pick(
+            row,
+            "settlement_price_raw",
+            "settlement_price",
+            "赎回价",
+            "回售价",
+            "结算价格",
+        )
+        issuer_total_raw_value = _optional_pick(row, "issuer_total_shares_raw")
+        issuer_free_float_raw_value = _optional_pick(row, "issuer_free_float_shares_raw")
+        issuer_total_shares = (
+            _nonnegative_raw(issuer_total_raw_value, "issuer_total_shares_raw")
+            if issuer_total_raw_value is not None
+            else _nonnegative_scaled(
+                _optional_pick(row, "issuer_total_shares", "total_shares", "总股本", "总股本数"),
+                "issuer_total_shares",
+            )
+        )
+        issuer_free_float_shares = (
+            _nonnegative_raw(issuer_free_float_raw_value, "issuer_free_float_shares_raw")
+            if issuer_free_float_raw_value is not None
+            else _nonnegative_scaled(
+                _optional_pick(
+                    row,
+                    "issuer_free_float_shares",
+                    "free_float_shares",
+                    "流通股本",
+                    "流通股数",
+                ),
+                "issuer_free_float_shares",
+            )
+        )
         event = AshareCorporateAction(
             instrument=instrument,
             ex_date=ex_date,
@@ -638,6 +921,23 @@ def normalize_corporate_action_rows(
             conversion_price_raw=_nonnegative_scaled(conversion_price, "conversion_price"),
             conversion_ratio_num=conversion_num,
             conversion_ratio_den=conversion_den,
+            rights_instrument=(normalize_instrument(str(rights_instrument))
+                               if rights_instrument not in (None, "") else None),
+            subscription_qty_raw=_nonnegative_scaled(subscription_qty, "subscription_qty"),
+            rights_expiry_qty_raw=_nonnegative_scaled(rights_expiry_qty, "rights_expiry_qty"),
+            repurchase_qty_raw=_nonnegative_scaled(repurchase_qty, "repurchase_qty"),
+            repurchase_price_raw=_nonnegative_scaled(repurchase_price, "repurchase_price"),
+            convertible_bond_instrument=(normalize_instrument(str(bond_instrument))
+                                         if bond_instrument not in (None, "") else None),
+            conversion_target_instrument=(normalize_instrument(str(target_instrument))
+                                          if target_instrument not in (None, "") else None),
+            conversion_qty_raw=_nonnegative_scaled(conversion_qty, "conversion_qty"),
+            conversion_target_qty_raw=_nonnegative_scaled(target_qty, "conversion_target_qty"),
+            interest_per_bond_raw=_nonnegative_scaled(interest_per_bond, "interest_per_bond"),
+            settlement_qty_raw=_nonnegative_scaled(settlement_qty, "settlement_qty"),
+            settlement_price_raw=_nonnegative_scaled(settlement_price, "settlement_price"),
+            issuer_total_shares_raw=issuer_total_shares,
+            issuer_free_float_shares_raw=issuer_free_float_shares or None,
             raw_payload={str(key): _json_safe(value) for key, value in row.items()},
         )
         event.validate()
@@ -1096,6 +1396,20 @@ class AshareCorporateAction:
     conversion_price_raw: int = 0
     conversion_ratio_num: int = 0
     conversion_ratio_den: int = 1
+    rights_instrument: str | None = None
+    subscription_qty_raw: int = 0
+    rights_expiry_qty_raw: int = 0
+    repurchase_qty_raw: int = 0
+    repurchase_price_raw: int = 0
+    convertible_bond_instrument: str | None = None
+    conversion_target_instrument: str | None = None
+    conversion_qty_raw: int = 0
+    conversion_target_qty_raw: int = 0
+    interest_per_bond_raw: int = 0
+    settlement_qty_raw: int = 0
+    settlement_price_raw: int = 0
+    issuer_total_shares_raw: int = 0
+    issuer_free_float_shares_raw: int | None = None
     raw_payload: dict[str, Any] | None = None
 
     def validate(self) -> None:
@@ -1112,10 +1426,77 @@ class AshareCorporateAction:
             or self.conversion_price_raw < 0
             or self.conversion_ratio_num < 0
             or self.conversion_ratio_den <= 0
+            or self.subscription_qty_raw < 0
+            or self.rights_expiry_qty_raw < 0
+            or self.repurchase_qty_raw < 0
+            or self.repurchase_price_raw < 0
+            or self.conversion_qty_raw < 0
+            or self.conversion_target_qty_raw < 0
+            or self.interest_per_bond_raw < 0
+            or self.settlement_qty_raw < 0
+            or self.settlement_price_raw < 0
+            or self.issuer_total_shares_raw < 0
+            or (self.issuer_free_float_shares_raw is not None and self.issuer_free_float_shares_raw < 0)
         ):
             raise ValueError("invalid corporate action date or ratio")
         if self.action_type not in _CORPORATE_ACTION_TYPES:
             raise ValueError(f"unsupported corporate action type: {self.action_type}")
+        if self.action_type == "rights_issue":
+            if (
+                not self.rights_instrument
+                or self.rights_issue_price_raw <= 0
+                or self.rights_issue_ratio_num <= 0
+            ):
+                raise ValueError("rights_issue requires instrument, price and ratio")
+        elif self.action_type == "rights_issue_expiry":
+            if not self.rights_instrument or self.rights_expiry_qty_raw <= 0:
+                raise ValueError("rights_issue_expiry requires instrument and quantity")
+        elif self.action_type == "new_share_issue":
+            if self.issue_price_raw <= 0 or self.subscription_qty_raw <= 0:
+                raise ValueError("new_share_issue requires price and subscription quantity")
+        elif self.action_type == "convertible_bond_issue":
+            if (
+                not self.convertible_bond_instrument
+                or self.issue_price_raw <= 0
+                or self.subscription_qty_raw <= 0
+            ):
+                raise ValueError("convertible_bond_issue requires bond, price and subscription quantity")
+        elif self.action_type == "convertible_bond_interest":
+            if not self.convertible_bond_instrument or self.interest_per_bond_raw <= 0:
+                raise ValueError("convertible_bond_interest requires bond and interest")
+        elif self.action_type in {"convertible_bond_redemption", "convertible_bond_put"}:
+            if (
+                not self.convertible_bond_instrument
+                or self.settlement_qty_raw <= 0
+                or self.settlement_price_raw <= 0
+            ):
+                raise ValueError("convertible bond settlement requires bond, quantity and price")
+        elif self.action_type == "convertible_bond_call":
+            if not self.convertible_bond_instrument or self.settlement_price_raw <= 0:
+                raise ValueError("convertible_bond_call requires bond and price")
+        elif self.action_type == "repurchase":
+            if self.repurchase_qty_raw <= 0 or self.repurchase_price_raw <= 0:
+                raise ValueError("repurchase requires quantity and price")
+        elif self.action_type == "convertible_bond_conversion":
+            if (
+                not self.convertible_bond_instrument
+                or not self.conversion_target_instrument
+                or self.conversion_qty_raw <= 0
+                or self.conversion_target_qty_raw <= 0
+                or self.conversion_price_raw <= 0
+            ):
+                raise ValueError("convertible_bond_conversion requires explicit conversion facts")
+        elif self.action_type == "capital_change":
+            if self.issuer_total_shares_raw <= 0:
+                raise ValueError("capital_change requires issuer_total_shares_raw")
+            if (
+                self.issuer_free_float_shares_raw is not None
+                and (
+                    self.issuer_free_float_shares_raw <= 0
+                    or self.issuer_free_float_shares_raw > self.issuer_total_shares_raw
+                )
+            ):
+                raise ValueError("capital_change free float cannot exceed total shares")
         if self.cash_dividend_raw < 0:
             raise ValueError("cash_dividend_raw cannot be negative")
         for field_name in (
@@ -1169,6 +1550,7 @@ class AsharePITRecord:
 
 __all__ = [
     "AshareDataProvider",
+    "build_dataset_bundle_manifest",
     "AshareManifest",
     "AsharePITRecord",
     "AshareProviderError",

@@ -119,6 +119,37 @@ pub fn plan_workers(
                     continue;
                 }
             }
+            WorkerRole::SpreadRecovery => {
+                if worker
+                    .venue_id
+                    .as_deref()
+                    .map(|venue| venue.eq_ignore_ascii_case("paper"))
+                    == Some(true)
+                {
+                    vec!["paper-worker".into(), config_arg.clone(), worker.id.clone()]
+                } else if let Some(ccxt_config) = worker.endpoint.as_deref() {
+                    vec![
+                        "ccxt-worker".into(),
+                        config_arg.clone(),
+                        worker.id.clone(),
+                        resolve_ccxt_config_path(config_path, ccxt_config),
+                    ]
+                } else if worker
+                    .venue_id
+                    .as_deref()
+                    .map(|venue| venue.to_ascii_lowercase().contains("binance"))
+                    == Some(true)
+                {
+                    vec![
+                        "binance-worker".into(),
+                        config_arg.clone(),
+                        worker.id.clone(),
+                    ]
+                } else {
+                    unmanaged.push(worker.id.clone());
+                    continue;
+                }
+            }
             WorkerRole::Reconciler => {
                 if let Some(ccxt_config) = worker.endpoint.as_deref() {
                     vec![
@@ -342,6 +373,36 @@ mod tests {
             .find(|launch| launch.worker_id == "ccxt-user-main")
             .unwrap();
         assert_eq!(launch.args.first().map(String::as_str), Some("ccxt-worker"));
+    }
+
+    #[test]
+    fn worker_plan_routes_spread_recovery_to_the_matching_venue_worker() {
+        let mut config = example_config();
+        config.workers.push(WorkerConfig {
+            id: "ccxt-recovery-main".into(),
+            role: WorkerRole::SpreadRecovery,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("okx".into()),
+            endpoint: Some("qianxing.ccxt.exchange.example.json".into()),
+            symbols: Vec::new(),
+            settlement_currency: Some("USDT".into()),
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        });
+        let launches = plan_workers(&config, Path::new("deploy/runtime.json"), false).unwrap();
+        let launch = launches
+            .iter()
+            .find(|launch| launch.worker_id == "ccxt-recovery-main")
+            .unwrap();
+        assert_eq!(launch.args.first().map(String::as_str), Some("ccxt-worker"));
+        assert!(launch.args.last().is_some_and(|path| {
+            Path::new(path).ends_with("qianxing.ccxt.exchange.example.json")
+        }));
     }
 
     #[test]
