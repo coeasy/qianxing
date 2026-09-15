@@ -8,9 +8,10 @@
 pub use qx_control::order_from_submit_command;
 use qx_control::ControlCommand;
 use qx_core::{
-    AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventKind,
-    EventLog, EventMetadata, Fill, FundingRateSnapshot, InstrumentId, Ledger, Order, OrderStatus,
-    Price, Priority, Quantity, QxError, QxResult, ReplayVerifier, TradingInstrumentSpec,
+    AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
+    EventKind, EventLog, EventMetadata, Fill, FundingRateSnapshot, InstrumentId, Ledger, Order,
+    OrderStatus, Price, Priority, Quantity, QxError, QxResult, ReplayVerifier,
+    TradingInstrumentSpec,
 };
 use qx_guanxing::QuoteTick;
 use qx_oms::Oms;
@@ -140,6 +141,11 @@ impl RuntimeEventEnvelope {
         self.metadata = metadata;
         self
     }
+
+    pub fn with_context(mut self, context: EventContext) -> Self {
+        self.metadata.context = context;
+        self
+    }
 }
 
 fn runtime_event_metadata(
@@ -164,6 +170,102 @@ fn runtime_event_metadata(
         source_kind: source_kind.into(),
         dedup_key,
         rule_version: "runtime-v1".into(),
+        context: EventContext::default(),
+    }
+}
+
+fn enrich_runtime_event_context(metadata: &mut EventMetadata, event: &RuntimeExternalEvent) {
+    let context = &mut metadata.context;
+    match event {
+        RuntimeExternalEvent::AccountBalanceSnapshot {
+            account_id,
+            venue_id,
+            ..
+        }
+        | RuntimeExternalEvent::AccountPositionSnapshot {
+            account_id,
+            venue_id,
+            ..
+        } => {
+            if context.account_id.trim().is_empty() {
+                context.account_id = account_id.clone();
+            }
+            if context.portfolio_id.trim().is_empty() {
+                context.portfolio_id = account_id.clone();
+            }
+            if context.tenant_id.trim().is_empty() {
+                context.tenant_id = account_id.clone();
+            }
+            if context.run_id.trim().is_empty() {
+                context.run_id = format!("account:{account_id}");
+            }
+            if context.strategy_id.trim().is_empty() {
+                context.strategy_id = "external-account-state".into();
+            }
+            if context.signal_id.trim().is_empty() {
+                context.signal_id = venue_id.clone();
+            }
+        }
+        RuntimeExternalEvent::AccountCashflow { cashflow } => {
+            if context.account_id.trim().is_empty() {
+                context.account_id = cashflow.account_id.clone();
+            }
+            if context.portfolio_id.trim().is_empty() {
+                context.portfolio_id = cashflow.account_id.clone();
+            }
+            if context.tenant_id.trim().is_empty() {
+                context.tenant_id = cashflow.account_id.clone();
+            }
+            if context.run_id.trim().is_empty() {
+                context.run_id = format!("account:{}", cashflow.account_id);
+            }
+            if context.strategy_id.trim().is_empty() {
+                context.strategy_id = "external-cashflow".into();
+            }
+            if context.signal_id.trim().is_empty() {
+                context.signal_id = cashflow.venue_id.clone();
+            }
+        }
+        RuntimeExternalEvent::Fill { fill } => enrich_fill_context(context, fill),
+        RuntimeExternalEvent::FillWithSpec { fill, .. } => enrich_fill_context(context, fill),
+        RuntimeExternalEvent::MarketQuote { .. }
+        | RuntimeExternalEvent::FundingRateSnapshot { .. }
+        | RuntimeExternalEvent::Accepted { .. }
+        | RuntimeExternalEvent::Cancelled { .. }
+        | RuntimeExternalEvent::ReconcileRequired { .. } => {}
+    }
+}
+
+fn enrich_fill_context(context: &mut EventContext, fill: &Fill) {
+    if context.account_id.trim().is_empty() {
+        context.account_id = fill.account_id.clone();
+    }
+    if context.strategy_id.trim().is_empty() {
+        context.strategy_id = fill
+            .strategy_id
+            .clone()
+            .unwrap_or_else(|| "external-execution".into());
+    }
+    if context.signal_id.trim().is_empty() {
+        context.signal_id = fill
+            .signal_id
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+    }
+    if context.intent_id.trim().is_empty() {
+        context.intent_id = fill
+            .intent_id
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+    }
+    if context.run_id.trim().is_empty() && !context.account_id.trim().is_empty() {
+        context.run_id = format!("account:{}", context.account_id);
+    }
+    if context.portfolio_id.trim().is_empty() && !context.account_id.trim().is_empty() {
+        context.portfolio_id = context.account_id.clone();
+    }
+    if context.tenant_id.trim().is_empty() && !context.account_id.trim().is_empty() {
+        context.tenant_id = context.account_id.clone();
     }
 }
 
@@ -665,6 +767,10 @@ impl LiveEventPipeline {
             ));
         }
         let mut staged = self.clone();
+        let context = order_event_context(&order);
+        context
+            .validate_for_trading()
+            .map_err(QxError::BusinessViolation)?;
         let event = staged.append_fact(
             ts,
             ts,
@@ -676,6 +782,7 @@ impl LiveEventPipeline {
                     source_id: "control".into(),
                     source_kind: "control".into(),
                     dedup_key: format!("control:order:{}", order.client_id),
+                    context,
                     ..EventMetadata::default()
                 },
                 kind: EventKind::OrderSubmitted {
@@ -759,6 +866,7 @@ impl LiveEventPipeline {
         if metadata.rule_version.trim().is_empty() {
             metadata.rule_version = "runtime-v1".into();
         }
+        enrich_runtime_event_context(&mut metadata, &event);
         metadata.validate().map_err(QxError::BusinessViolation)?;
 
         let semantic_replay = matches!(
@@ -1411,6 +1519,27 @@ impl LiveEventPipeline {
     }
 }
 
+fn order_event_context(order: &Order) -> EventContext {
+    let trace = order.trace.as_ref();
+    EventContext {
+        tenant_id: order.account_id.clone(),
+        run_id: format!("account:{}", order.account_id),
+        account_id: order.account_id.clone(),
+        portfolio_id: order.account_id.clone(),
+        strategy_id: trace
+            .and_then(|trace| trace.strategy_id.clone())
+            .unwrap_or_else(|| "unattributed-order".into()),
+        signal_id: trace
+            .and_then(|trace| trace.signal_id)
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+        intent_id: trace
+            .and_then(|trace| trace.intent_id)
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+    }
+}
+
 fn fill_key(fill: &Fill) -> (u64, u64, i128, i128, i128, String) {
     (
         fill.order_id,
@@ -1554,6 +1683,14 @@ mod tests {
         let root = temp_root("recover");
         let mut pipeline = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
         pipeline.register_order(order(), 100).unwrap();
+        let submitted = pipeline
+            .log()
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::OrderSubmitted { .. }))
+            .expect("order submission fact");
+        assert_eq!(submitted.metadata.context.account_id, "main");
+        assert_eq!(submitted.metadata.context.strategy_id, "demo");
         pipeline
             .ingest(RuntimeEventEnvelope::venue(
                 RuntimeExternalEvent::Accepted {

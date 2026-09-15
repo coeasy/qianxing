@@ -29,6 +29,62 @@ pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str = r#"{
   }
 }"#;
 
+pub const PROJECTION_ENVELOPE_SCHEMA_VERSION: u32 = 1;
+
+/// 所有查询、可视化和跨语言读模型共用的外层协议。数据内容可以是账户
+/// 快照、事件批次、回测报告或因子报告，但游标、事实序号和状态哈希语义
+/// 必须保持一致，客户端不能把 transport cursor 当成 EventLog seq。
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ProjectionEnvelope<T> {
+    pub schema_version: u32,
+    pub kind: String,
+    #[serde(default)]
+    pub tenant_id: String,
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub account_id: String,
+    #[serde(default)]
+    pub portfolio_id: String,
+    #[serde(default)]
+    pub venue_id: String,
+    pub as_of: u64,
+    pub event_seq: u64,
+    pub cursor: String,
+    pub state_hash: u64,
+    pub source: String,
+    pub lineage: ProjectionLineage,
+    pub data: T,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub struct ProjectionLineage {
+    #[serde(default)]
+    pub dataset_version: String,
+    #[serde(default)]
+    pub manifest_digest: String,
+    #[serde(default)]
+    pub source_digest: String,
+}
+
+impl<T> ProjectionEnvelope<T> {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version != PROJECTION_ENVELOPE_SCHEMA_VERSION
+            || self.kind.trim().is_empty()
+            || self.source.trim().is_empty()
+            || self.cursor.trim().is_empty()
+            || self.tenant_id.trim().is_empty()
+            || self.run_id.trim().is_empty()
+            || self.account_id.trim().is_empty()
+            || self.portfolio_id.trim().is_empty()
+            || self.venue_id.trim().is_empty()
+        {
+            return Err("ProjectionEnvelope schema、身份、source 或 cursor 非法".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct SnapshotHeader {
     pub schema_version: u32,

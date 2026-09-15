@@ -60,6 +60,29 @@ pub struct VenuePortAdapter<V: Venue> {
     accept_any_venue: bool,
 }
 
+/// 把仍使用旧版 `Venue` trait 的连接器借用到统一 `VenuePort`，避免执行
+/// 入口因为所有权模型不同而回退到第二套 `ExecutionService`。
+pub struct BorrowedVenuePort<'a, V: Venue + ?Sized> {
+    venue: &'a mut V,
+    accept_any_venue: bool,
+}
+
+impl<'a, V: Venue + ?Sized> BorrowedVenuePort<'a, V> {
+    pub fn new(venue: &'a mut V) -> Self {
+        Self {
+            venue,
+            accept_any_venue: false,
+        }
+    }
+
+    pub fn new_for_any_venue(venue: &'a mut V) -> Self {
+        Self {
+            venue,
+            accept_any_venue: true,
+        }
+    }
+}
+
 impl<V: Venue> VenuePortAdapter<V> {
     pub fn new(venue: V) -> Self {
         Self {
@@ -135,6 +158,74 @@ impl<V: Venue> VenuePort for VenuePortAdapter<V> {
             .cancel(client_order_id, ts)
             .map(venue_events_to_application)
             .map_err(|error| format!("Venue cancel 失败: {error:?}"))
+    }
+}
+
+impl<V: Venue + ?Sized> VenuePort for BorrowedVenuePort<'_, V> {
+    fn venue_id(&self) -> &str {
+        self.venue.id()
+    }
+
+    fn submit_order(
+        &mut self,
+        order: qx_core::Order,
+        ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        self.venue
+            .submit(order, ts)
+            .map(venue_events_to_application)
+            .map_err(|error| format!("Venue submit 失败: {error:?}"))
+    }
+
+    fn cancel_order(
+        &mut self,
+        client_order_id: u64,
+        ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        self.venue
+            .cancel(client_order_id, ts)
+            .map(venue_events_to_application)
+            .map_err(|error| format!("Venue cancel 失败: {error:?}"))
+    }
+}
+
+impl<V: Venue + ?Sized> VenueRouterPort for BorrowedVenuePort<'_, V> {
+    fn submit_order(
+        &mut self,
+        venue_id: &str,
+        order: qx_core::Order,
+        ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        if self.accept_any_venue
+            || venue_id.trim().is_empty()
+            || venue_id.eq_ignore_ascii_case(self.venue_id())
+        {
+            VenuePort::submit_order(self, order, ts)
+        } else {
+            Err(format!(
+                "Venue 路由不匹配: requested={venue_id} configured={}",
+                self.venue_id()
+            ))
+        }
+    }
+
+    fn cancel_order(
+        &mut self,
+        venue_id: &str,
+        client_order_id: u64,
+        ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        if self.accept_any_venue
+            || venue_id.trim().is_empty()
+            || venue_id.eq_ignore_ascii_case(self.venue_id())
+        {
+            VenuePort::cancel_order(self, client_order_id, ts)
+        } else {
+            Err(format!(
+                "Venue 路由不匹配: requested={venue_id} configured={}",
+                self.venue_id()
+            ))
+        }
     }
 }
 
@@ -299,6 +390,8 @@ pub struct PortExecutionService<'a, V: VenuePort, P: ExecutionEventPort> {
     worker_id: &'a str,
     now: u64,
     source_seq: &'a mut u64,
+    registration_correlation: Option<String>,
+    instrument_spec: Option<TradingInstrumentSpec>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -326,7 +419,48 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
             worker_id,
             now,
             source_seq,
+            registration_correlation: None,
+            instrument_spec: None,
         }
+    }
+
+    /// 为本次提交绑定控制面/策略意图关联号。它只影响首次订单登记，重复
+    /// 提交仍由 EventLog 中已有的 client_order_id 状态决定。
+    pub fn with_registration_correlation(mut self, correlation_id: impl Into<String>) -> Self {
+        self.registration_correlation = Some(correlation_id.into());
+        self
+    }
+
+    pub fn with_instrument_spec(mut self, spec: TradingInstrumentSpec) -> Self {
+        self.instrument_spec = Some(spec);
+        self
+    }
+
+    /// 统一的控制命令提交入口。命令解析、订单校验、风险（如调用方继续使用
+    /// `submit_with_risk`）和 Venue 副作用均在同一个端口化服务中完成。
+    pub fn submit_command(
+        &mut self,
+        command: &ControlCommand,
+    ) -> Result<PortExecutionResult, String> {
+        let order = order_from_submit_command(command)
+            .map_err(|error| format!("SubmitOrder 订单载荷非法: {error:?}"))?;
+        self.registration_correlation = Some(format!("control:{}", command.command_id));
+        let result = self.submit(order);
+        self.registration_correlation = None;
+        result
+    }
+
+    pub fn submit_command_with_risk<R: RiskPort>(
+        &mut self,
+        command: &ControlCommand,
+        risk: &R,
+    ) -> Result<PortExecutionResult, String> {
+        let order = order_from_submit_command(command)
+            .map_err(|error| format!("SubmitOrder 订单载荷非法: {error:?}"))?;
+        self.registration_correlation = Some(format!("control:{}", command.command_id));
+        let result = self.submit_with_risk(order, risk);
+        self.registration_correlation = None;
+        result
     }
 
     pub fn submit(&mut self, order: qx_core::Order) -> Result<PortExecutionResult, String> {
@@ -375,7 +509,11 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
             self.events.register_order(
                 order.clone(),
                 self.now,
-                Some(format!("{}:submit:{}", self.worker_id, order.client_id)),
+                Some(
+                    self.registration_correlation.clone().unwrap_or_else(|| {
+                        format!("{}:submit:{}", self.worker_id, order.client_id)
+                    }),
+                ),
             )?;
         }
 
@@ -498,6 +636,13 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         let event_ts = match &event {
             ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. } => fill.ts,
             _ => self.now,
+        };
+        let event = match (self.instrument_spec.as_ref(), event) {
+            (Some(spec), ExecutionEvent::Fill(fill)) => ExecutionEvent::FillWithSpec {
+                fill,
+                spec: Box::new(spec.clone()),
+            },
+            (_, event) => event,
         };
         self.events.append_execution_event(ExecutionEventEnvelope {
             event,
@@ -1755,6 +1900,30 @@ pub fn ingest_venue_events_with_spec(
 /// 这里不负责账户/Venue 拓扑授权，也不负责 ControlPlane 的 Accepted/终态回写；
 /// 它只负责订单事实注册、未知结果保护、Venue submit 和标准回报归约。这样
 /// Paper、Binance 和未来执行 worker 可以共享同一副作用边界。
+pub fn submit_order_via_gateway<V: VenuePort, P: ExecutionEventPort>(
+    command: &ControlCommand,
+    venue: &mut V,
+    events: &mut P,
+    worker_id: &str,
+    now: u64,
+    source_seq: &mut u64,
+) -> Result<PortExecutionResult, String> {
+    ExecutionGateway::new(venue, events, worker_id, now, source_seq).submit_command(command)
+}
+
+pub fn submit_order_via_gateway_with_risk<V: VenuePort, P: ExecutionEventPort, R: RiskPort>(
+    command: &ControlCommand,
+    venue: &mut V,
+    events: &mut P,
+    worker_id: &str,
+    now: u64,
+    source_seq: &mut u64,
+    risk: &R,
+) -> Result<PortExecutionResult, String> {
+    ExecutionGateway::new(venue, events, worker_id, now, source_seq)
+        .submit_command_with_risk(command, risk)
+}
+
 pub fn submit_order<V: Venue>(
     command: &ControlCommand,
     venue: &mut V,
@@ -1763,7 +1932,10 @@ pub fn submit_order<V: Venue>(
     now: u64,
     source_seq: &mut u64,
 ) -> Result<String, String> {
-    ExecutionService::new(venue, pipeline, worker_id, now, source_seq).execute(command)
+    let mut venue = BorrowedVenuePort::new(venue);
+    let result = ExecutionGateway::new(&mut venue, pipeline, worker_id, now, source_seq)
+        .submit_command(command)?;
+    Ok(result.message)
 }
 
 /// `submit_order` 的账户级风控版本，供 Paper/CCXT/Binance worker 在已有账户
@@ -1777,16 +1949,28 @@ pub fn submit_order_with_risk<V: Venue>(
     source_seq: &mut u64,
     context: &RiskExecutionContext<'_>,
 ) -> Result<String, String> {
-    if let Some(spec) = context.risk.instrument_spec.clone() {
-        ExecutionService::new_with_spec(venue, pipeline, worker_id, now, source_seq, spec)
-            .execute_with_risk(command, context.risk, context.position)
+    let mut venue = BorrowedVenuePort::new(venue);
+    let mut gateway = ExecutionGateway::new(&mut venue, pipeline, worker_id, now, source_seq);
+    let result = if let Some(spec) = context.risk.instrument_spec.clone() {
+        gateway
+            .with_instrument_spec(spec)
+            .submit_command_with_risk(
+                command,
+                &RiskContextPort {
+                    risk: context.risk,
+                    position: context.position,
+                },
+            )?
     } else {
-        ExecutionService::new(venue, pipeline, worker_id, now, source_seq).execute_with_risk(
+        gateway.submit_command_with_risk(
             command,
-            context.risk,
-            context.position,
-        )
-    }
+            &RiskContextPort {
+                risk: context.risk,
+                position: context.position,
+            },
+        )?
+    };
+    Ok(result.message)
 }
 
 /// 完全本地的 Paper SubmitOrder 副作用：提交、行情、成交和 Ledger 归约共用

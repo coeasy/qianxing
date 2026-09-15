@@ -21,6 +21,63 @@ pub use materializer::{
     FactorMaterializationResult, FactorMaterializer,
 };
 
+/// 因子计算由外部 finkit 提供时，qianxing 只接收带版本与摘要的研究工件。
+/// 该绑定不把 finkit 的实现类型带入交易内核，避免因子计算和执行状态形成
+/// 反向依赖；生产策略必须在输入血缘中保留此声明。
+pub const FINKIT_PROVIDER_ID: &str = "finkit";
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct FactorProviderBinding {
+    pub provider: String,
+    pub provider_version: String,
+    pub artifact_schema: String,
+    pub artifact_digest: u64,
+}
+
+impl FactorProviderBinding {
+    pub fn finkit(
+        provider_version: impl Into<String>,
+        artifact_schema: impl Into<String>,
+        artifact_digest: u64,
+    ) -> Self {
+        Self {
+            provider: FINKIT_PROVIDER_ID.into(),
+            provider_version: provider_version.into(),
+            artifact_schema: artifact_schema.into(),
+            artifact_digest,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), FactorError> {
+        if self.provider.trim() != FINKIT_PROVIDER_ID
+            || self.provider_version.trim().is_empty()
+            || self.artifact_schema.trim().is_empty()
+            || self.artifact_digest == 0
+        {
+            return Err(FactorError::Invalid(
+                "因子 provider binding 必须是带版本、schema 和非零摘要的 finkit 工件".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn validate_finkit_artifact(
+    artifact: &FeatureArtifact,
+    binding: &FactorProviderBinding,
+) -> Result<(), FactorError> {
+    artifact.validate()?;
+    binding.validate()?;
+    if binding.artifact_digest != artifact.digest() {
+        return Err(FactorError::Invalid(format!(
+            "finkit 因子工件摘要不匹配: expected={} actual={}",
+            binding.artifact_digest,
+            artifact.digest()
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct FeatureDefinition {
     pub name: String,
@@ -1341,6 +1398,24 @@ mod tests {
             dependencies: Vec::new(),
             point_in_time: true,
         }
+    }
+
+    #[test]
+    fn finkit_binding_requires_matching_artifact_digest() {
+        let artifact = FeatureArtifact {
+            feature_key: "momentum@v1".into(),
+            input_fingerprint: "bars:v1".into(),
+            as_of: 10,
+            coverage_bps: 10_000,
+            values: [(InstrumentId::parse("BTC-USDT.BINANCE").unwrap(), 123_i128)]
+                .into_iter()
+                .collect(),
+        };
+        let binding =
+            FactorProviderBinding::finkit("0.1.0", "feature-artifact-v1", artifact.digest());
+        validate_finkit_artifact(&artifact, &binding).unwrap();
+        let invalid = FactorProviderBinding::finkit("0.1.0", "feature-artifact-v1", 7);
+        assert!(validate_finkit_artifact(&artifact, &invalid).is_err());
     }
 
     #[test]

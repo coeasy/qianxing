@@ -17,6 +17,38 @@ use serde::{Deserialize, Serialize};
 /// 来源或规则变化不会被错误地视为同一条可重放事实。
 pub const EVENT_METADATA_SCHEMA_VERSION: u32 = 2;
 
+/// 事件的统一运行作用域。空字段表示该维度不适用于当前事件（例如全局
+/// 市场事件），但一旦事件属于订单/账户/策略链路，生产入口必须填充相应身份。
+#[derive(Clone, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct EventContext {
+    #[serde(default)]
+    pub tenant_id: String,
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub account_id: String,
+    #[serde(default)]
+    pub portfolio_id: String,
+    #[serde(default)]
+    pub strategy_id: String,
+    #[serde(default)]
+    pub signal_id: String,
+    #[serde(default)]
+    pub intent_id: String,
+}
+
+impl EventContext {
+    pub fn validate_for_trading(&self) -> Result<(), String> {
+        if self.run_id.trim().is_empty()
+            || self.account_id.trim().is_empty()
+            || self.strategy_id.trim().is_empty()
+        {
+            return Err("交易事件上下文必须包含 run_id、account_id 和 strategy_id".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct EventMetadata {
     #[serde(default = "default_event_metadata_schema_version")]
@@ -32,6 +64,8 @@ pub struct EventMetadata {
     pub dedup_key: String,
     #[serde(default = "default_event_rule_version")]
     pub rule_version: String,
+    #[serde(default)]
+    pub context: EventContext,
 }
 
 fn default_event_metadata_schema_version() -> u32 {
@@ -54,6 +88,7 @@ impl Default for EventMetadata {
             source_kind: default_event_source_kind(),
             dedup_key: String::new(),
             rule_version: default_event_rule_version(),
+            context: EventContext::default(),
         }
     }
 }
@@ -79,6 +114,11 @@ impl EventMetadata {
             derived.dedup_key = format!("{}:{suffix}", derived.dedup_key);
         }
         derived
+    }
+
+    pub fn with_context(mut self, context: EventContext) -> Self {
+        self.context = context;
+        self
     }
 }
 
@@ -327,6 +367,13 @@ impl Event {
         h.write_text(&self.metadata.source_kind);
         h.write_text(&self.metadata.dedup_key);
         h.write_text(&self.metadata.rule_version);
+        h.write_text(&self.metadata.context.tenant_id);
+        h.write_text(&self.metadata.context.run_id);
+        h.write_text(&self.metadata.context.account_id);
+        h.write_text(&self.metadata.context.portfolio_id);
+        h.write_text(&self.metadata.context.strategy_id);
+        h.write_text(&self.metadata.context.signal_id);
+        h.write_text(&self.metadata.context.intent_id);
         match &self.kind {
             EventKind::Timer { name } => {
                 h.write_u64(1);

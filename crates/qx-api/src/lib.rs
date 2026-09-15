@@ -4,8 +4,11 @@
 //! 进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
 
 use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
-use qx_core::{Event, EventLog, LedgerEntry};
-use qx_protocol::{AccountSnapshot, ACCOUNT_SNAPSHOT_JSON_SCHEMA};
+use qx_core::{Event, EventKind, EventLog, Fnv1a, LedgerEntry};
+use qx_protocol::{
+    AccountSnapshot, ProjectionEnvelope, ProjectionLineage, ACCOUNT_SNAPSHOT_JSON_SCHEMA,
+    PROJECTION_ENVELOPE_SCHEMA_VERSION,
+};
 use qx_scheduler::JobRun;
 use qx_storage::FileTokenBucket;
 #[cfg(feature = "sqlite")]
@@ -460,6 +463,25 @@ pub struct ApiProjectionKey {
     pub venue_id: String,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ProjectionHealth {
+    pub healthy: bool,
+    pub last_projected_seq: Option<u64>,
+    pub source_digest: Option<u64>,
+    pub error: Option<String>,
+}
+
+impl Default for ProjectionHealth {
+    fn default() -> Self {
+        Self {
+            healthy: true,
+            last_projected_seq: None,
+            source_digest: None,
+            error: None,
+        }
+    }
+}
+
 impl ApiProjectionKey {
     pub fn new(account_id: impl Into<String>, venue_id: impl Into<String>) -> Self {
         Self {
@@ -482,6 +504,7 @@ pub struct ApiAccountProjection {
     snapshot_history: BTreeMap<u64, AccountSnapshot>,
     pub events: EventLog,
     pub event_bus: ApiEventBus,
+    pub health: ProjectionHealth,
 }
 
 impl ApiAccountProjection {
@@ -502,9 +525,35 @@ impl ApiAccountProjection {
             .map_err(|error| format!("account projected event bus rejected: {error:?}"))
     }
 
-    fn project_event_log(&mut self, source: &EventLog) -> Result<usize, String> {
+    fn project_event_log(
+        &mut self,
+        key: &ApiProjectionKey,
+        source: &EventLog,
+    ) -> Result<usize, String> {
+        let result = self.project_event_log_inner(key, source);
+        match &result {
+            Ok(_) => {
+                self.health.healthy = true;
+                self.health.last_projected_seq = self.events.events().last().map(|event| event.seq);
+                self.health.source_digest = Some(source.digest());
+                self.health.error = None;
+            }
+            Err(error) => {
+                self.health.healthy = false;
+                self.health.error = Some(error.clone());
+            }
+        }
+        result
+    }
+
+    fn project_event_log_inner(
+        &mut self,
+        key: &ApiProjectionKey,
+        source: &EventLog,
+    ) -> Result<usize, String> {
         let mut projected = 0;
         for event in source.events() {
+            validate_projection_event(key, event)?;
             if event.seq < self.events.next_seq() {
                 let existing = self
                     .events
@@ -693,6 +742,12 @@ impl ApiState {
         self.projections.keys().cloned().collect()
     }
 
+    pub fn projection_health(&self, account_id: &str, venue_id: &str) -> Option<ProjectionHealth> {
+        self.projections
+            .get(&ApiProjectionKey::new(account_id, venue_id))
+            .map(|projection| projection.health.clone())
+    }
+
     fn append_projected_event(&mut self, event: Event) -> Result<(), String> {
         let expected = self.events.next_seq();
         let bus_expected = self.event_bus.next_seq();
@@ -768,10 +823,66 @@ impl ApiState {
         let key = ApiProjectionKey::new(account_id, venue_id);
         key.validate()?;
         self.projections
-            .entry(key)
+            .entry(key.clone())
             .or_default()
-            .project_event_log(source)
+            .project_event_log(&key, source)
     }
+}
+
+fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<(), String> {
+    let identity = match &event.kind {
+        EventKind::AccountBalanceSnapshot {
+            account_id,
+            venue_id,
+            ..
+        }
+        | EventKind::AccountPositionSnapshot {
+            account_id,
+            venue_id,
+            ..
+        } => Some((account_id.as_str(), Some(venue_id.as_str()))),
+        EventKind::AccountCashflow { cashflow } => Some((
+            cashflow.account_id.as_str(),
+            Some(cashflow.venue_id.as_str()),
+        )),
+        EventKind::OrderSubmitted { order } => Some((
+            order.account_id.as_str(),
+            Some(order.instrument.venue.as_str()),
+        )),
+        EventKind::Filled { fill } => Some((fill.account_id.as_str(), fill.venue_id.as_deref())),
+        EventKind::LedgerApplied { entry } => Some((
+            entry.account_id.as_str(),
+            entry
+                .instrument
+                .as_ref()
+                .map(|instrument| instrument.venue.as_str()),
+        )),
+        EventKind::Timer { .. }
+        | EventKind::MarketBar { .. }
+        | EventKind::MarketQuote { .. }
+        | EventKind::FundingRateSnapshot { .. }
+        | EventKind::Submit { .. }
+        | EventKind::Accepted { .. }
+        | EventKind::Rejected { .. }
+        | EventKind::Cancelled { .. }
+        | EventKind::ReconcileRequired { .. }
+        | EventKind::Settle => None,
+    };
+    if let Some((account_id, venue_id)) = identity {
+        if (!account_id.trim().is_empty() && account_id != key.account_id)
+            || venue_id.is_some_and(|venue_id| !venue_id.eq_ignore_ascii_case(&key.venue_id))
+        {
+            return Err(format!(
+                "事件身份与 API 投影不匹配: expected={}/{} actual={}/{} seq={}",
+                key.account_id,
+                key.venue_id,
+                account_id,
+                venue_id.unwrap_or("unknown"),
+                event.seq
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// API 层的服务端身份映射。命令体中的 `permission` 仅用于审计，不能替代此表。
@@ -1097,6 +1208,29 @@ impl ApiService {
             .account_snapshot_for(account_id, venue_id)
     }
 
+    pub fn projection_health(&self, account_id: &str, venue_id: &str) -> Option<ProjectionHealth> {
+        self.state
+            .lock()
+            .expect("api state mutex poisoned")
+            .projection_health(account_id, venue_id)
+    }
+
+    fn projection_readiness(&self) -> Option<String> {
+        let state = self.state.lock().expect("api state mutex poisoned");
+        state
+            .projections
+            .iter()
+            .find(|(_, projection)| !projection.health.healthy)
+            .map(|(key, projection)| {
+                format!(
+                    "projection_stale account_id={} venue_id={} error={}",
+                    key.account_id,
+                    key.venue_id,
+                    projection.health.error.as_deref().unwrap_or("unknown")
+                )
+            })
+    }
+
     fn snapshot_for_query(&self, query: &str) -> Result<Option<AccountSnapshot>, String> {
         let key = projection_key_from_query(query)?;
         let state = self.state.lock().expect("api state mutex poisoned");
@@ -1121,6 +1255,49 @@ impl ApiService {
                 .unwrap_or_default(),
             None => state.events.events().to_vec(),
         })
+    }
+
+    fn snapshot_envelope_for_query(
+        &self,
+        query: &str,
+    ) -> Result<Option<ProjectionEnvelope<AccountSnapshot>>, String> {
+        let key = projection_key_from_query(query)?;
+        let state = self.state.lock().expect("api state mutex poisoned");
+        let (snapshot, source_digest) = match key {
+            Some(key) => {
+                let Some(projection) = state.projections.get(&key) else {
+                    return Ok(None);
+                };
+                (projection.snapshot.clone(), projection.events.digest())
+            }
+            None => (state.snapshot.clone(), state.events.digest()),
+        };
+        Ok(snapshot.map(|snapshot| {
+            let event_seq = snapshot.header.event_seq;
+            let state_hash = snapshot.state_hash();
+            ProjectionEnvelope {
+                schema_version: PROJECTION_ENVELOPE_SCHEMA_VERSION,
+                kind: "account_snapshot".into(),
+                tenant_id: snapshot.header.account_id.clone(),
+                run_id: format!(
+                    "account:{}:{}",
+                    snapshot.header.account_id, snapshot.header.venue_id
+                ),
+                account_id: snapshot.header.account_id.clone(),
+                portfolio_id: snapshot.header.portfolio_id.clone(),
+                venue_id: snapshot.header.venue_id.clone(),
+                as_of: snapshot.header.as_of,
+                event_seq,
+                cursor: format!("{event_seq}:{state_hash:016x}"),
+                state_hash,
+                source: "eventlog".into(),
+                lineage: ProjectionLineage {
+                    source_digest: format!("{source_digest:016x}"),
+                    ..ProjectionLineage::default()
+                },
+                data: snapshot,
+            }
+        }))
     }
 
     pub fn with_rate_limit(mut self, capacity: u64, refill_per_second: u64) -> Self {
@@ -1200,7 +1377,7 @@ impl ApiService {
         match (method, route) {
             ("GET", "/health") => ApiResponse::json(200, "{\"status\":\"ok\"}"),
             ("GET", "/ready") => {
-                let readiness = self
+                let mut readiness = self
                     .readiness_provider
                     .as_ref()
                     .map(|provider| provider())
@@ -1208,6 +1385,10 @@ impl ApiService {
                         ready: true,
                         detail: "api_ready".into(),
                     });
+                if let Some(detail) = self.projection_readiness() {
+                    readiness.ready = false;
+                    readiness.detail = detail;
+                }
                 let status = if readiness.ready { 200 } else { 503 };
                 ApiResponse::json(
                     status,
@@ -1224,6 +1405,17 @@ impl ApiService {
             }
             ("GET", "/schema/account-snapshot-v1") => {
                 ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA)
+            }
+            ("GET", "/account/snapshot/envelope") => {
+                match self.snapshot_envelope_for_query(query) {
+                    Err(error) => ApiResponse::json(400, error_json(&error)),
+                    Ok(Some(envelope)) => ApiResponse::json(
+                        200,
+                        serde_json::to_string(&envelope)
+                            .expect("projection envelope is serializable"),
+                    ),
+                    Ok(None) => ApiResponse::json(404, "{\"error\":\"snapshot_not_found\"}"),
+                }
             }
             ("GET", "/account/snapshot") => match self.snapshot_for_query(query) {
                 Err(error) => ApiResponse::json(400, error_json(&error)),
@@ -1350,10 +1542,17 @@ impl ApiService {
             }
         };
         match event_bus.read_after(after) {
-            Ok(events) => ApiResponse::json(
-                200,
-                serde_json::to_string(&events).expect("event bus events are serializable"),
-            ),
+            Ok(events) => {
+                let envelopes = events
+                    .into_iter()
+                    .map(|event| event_projection_envelope(event, "api-event-bus"))
+                    .collect::<Vec<_>>();
+                ApiResponse::json(
+                    200,
+                    serde_json::to_string(&envelopes)
+                        .expect("projection event envelopes are serializable"),
+                )
+            }
             Err(EventBusError::CursorTooOld { .. } | EventBusError::CursorAhead { .. }) => {
                 ApiResponse::json(409, error_json("event_cursor_requires_snapshot"))
             }
@@ -1801,7 +2000,14 @@ impl ApiService {
             )?;
         }
         if !state.events.is_empty() {
-            let events = serde_json::to_string(state.events.events())
+            let events = state
+                .events
+                .events()
+                .iter()
+                .cloned()
+                .map(|event| event_projection_envelope(event, "api-event-bus"))
+                .collect::<Vec<_>>();
+            let events = serde_json::to_string(&events)
                 .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
             write_ws_text(
                 stream,
@@ -1815,16 +2021,18 @@ impl ApiService {
             match event_bus.wait_after(cursor, Duration::from_millis(100)) {
                 Ok(events) => {
                     for event in events {
+                        let event_seq = event.seq;
+                        let envelope = event_projection_envelope(event, "api-event-bus");
                         write_ws_text(
                             stream,
                             &format!(
                                 "{{\"type\":\"event\",\"data\":{}}}",
-                                serde_json::to_string(&event).map_err(|error| {
+                                serde_json::to_string(&envelope).map_err(|error| {
                                     std::io::Error::new(std::io::ErrorKind::InvalidData, error)
                                 })?
                             ),
                         )?;
-                        cursor = Some(event.seq);
+                        cursor = Some(event_seq);
                     }
                 }
                 Err(EventBusError::CursorTooOld { .. } | EventBusError::CursorAhead { .. }) => {
@@ -1857,6 +2065,56 @@ impl ApiService {
                 Err(error) => return Err(error),
             }
         }
+    }
+}
+
+fn event_projection_envelope(event: Event, source_digest: &str) -> ProjectionEnvelope<Event> {
+    let context = event.metadata.context.clone();
+    let mut digest = Fnv1a::new();
+    event.digest(&mut digest);
+    let state_hash = digest.finish();
+    ProjectionEnvelope {
+        schema_version: PROJECTION_ENVELOPE_SCHEMA_VERSION,
+        kind: "event".into(),
+        tenant_id: non_empty_or_system(context.tenant_id),
+        run_id: non_empty_or_system(context.run_id),
+        account_id: non_empty_or_system(context.account_id),
+        portfolio_id: non_empty_or_system(context.portfolio_id),
+        venue_id: non_empty_or_system(event_venue_id(&event)),
+        as_of: event.engine_time,
+        event_seq: event.seq,
+        cursor: format!("{}:{state_hash:016x}", event.seq),
+        state_hash,
+        source: "eventlog".into(),
+        lineage: ProjectionLineage {
+            source_digest: source_digest.into(),
+            ..ProjectionLineage::default()
+        },
+        data: event,
+    }
+}
+
+fn non_empty_or_system(value: String) -> String {
+    if value.trim().is_empty() {
+        "system".into()
+    } else {
+        value
+    }
+}
+
+fn event_venue_id(event: &Event) -> String {
+    match &event.kind {
+        EventKind::AccountBalanceSnapshot { venue_id, .. }
+        | EventKind::AccountPositionSnapshot { venue_id, .. } => venue_id.clone(),
+        EventKind::AccountCashflow { cashflow } => cashflow.venue_id.clone(),
+        EventKind::OrderSubmitted { order } => order.instrument.venue.to_string(),
+        EventKind::Filled { fill } => fill.venue_id.clone().unwrap_or_default(),
+        EventKind::LedgerApplied { entry } => entry
+            .instrument
+            .as_ref()
+            .map(|instrument| instrument.venue.to_string())
+            .unwrap_or_default(),
+        _ => event.metadata.context.account_id.clone(),
     }
 }
 
@@ -2619,6 +2877,15 @@ mod tests {
         assert!(binance_response
             .body
             .contains("\"cash_raw\":{\"USDT\":200}"));
+        let envelope = service.handle(
+            "GET",
+            "/account/snapshot/envelope?account_id=account-a&venue_id=paper",
+            "",
+            2,
+        );
+        assert_eq!(envelope.status, 200);
+        assert!(envelope.body.contains("\"kind\":\"account_snapshot\""));
+        assert!(envelope.body.contains("\"source\":\"eventlog\""));
         let paper_events =
             service.handle("GET", "/events?account_id=account-a&venue_id=paper", "", 2);
         assert_eq!(paper_events.status, 200);
@@ -2633,6 +2900,36 @@ mod tests {
     }
 
     #[test]
+    fn account_projection_rejects_identity_drift_and_marks_readiness_stale() {
+        let mut source = EventLog::new();
+        source
+            .append_checked(Event::new(
+                0,
+                1,
+                Priority::FEEDBACK,
+                EventKind::AccountBalanceSnapshot {
+                    account_id: "other-account".into(),
+                    venue_id: "paper".into(),
+                    balances: Vec::new(),
+                },
+            ))
+            .unwrap();
+        let mut state = ApiState::default();
+        assert!(state
+            .project_account_event_log("account-a", "paper", &source)
+            .is_err());
+        let health = state
+            .projection_health("account-a", "paper")
+            .expect("failed projection keeps health state");
+        assert!(!health.healthy);
+        assert!(health.error.unwrap().contains("身份"));
+        let service = ApiService::new(state);
+        let ready = service.handle("GET", "/ready", "", 1);
+        assert_eq!(ready.status, 503);
+        assert!(ready.body.contains("projection_stale"));
+    }
+
+    #[test]
     fn live_event_route_uses_the_realtime_cursor_contract() {
         let service = ApiService::new(ApiState::default());
         service
@@ -2642,6 +2939,8 @@ mod tests {
         assert_eq!(response.status, 409);
         let response = service.handle("GET", "/events/live", "", 1);
         assert_eq!(response.status, 200);
+        assert!(response.body.contains("\"schema_version\":1"));
+        assert!(response.body.contains("\"cursor\":\"0:"));
         assert!(response.body.contains("Settle"));
     }
 

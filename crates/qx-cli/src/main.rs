@@ -1393,7 +1393,7 @@ fn build_configured_api_service(
                 .map_err(|error| format!("初始化 API 账户事件投影失败: {error}"))?;
         }
     }
-    if let Some(snapshot) = load_api_account_snapshot(config)? {
+    for snapshot in load_api_account_snapshots(config)? {
         state
             .publish_snapshot(snapshot)
             .map_err(|error| format!("装载 API 账户查询快照失败: {error}"))?;
@@ -1559,8 +1559,10 @@ fn load_api_query_models(config: &RuntimeConfig) -> Result<ApiQueryModels, Strin
 ///
 /// 该快照只是 QueryPort 的读模型：所有余额、持仓、订单和成交仍由 EventLog
 /// 重放得到，不会反向写入 Ledger，也不会把柜台观察当成交易事实。
-fn load_api_account_snapshot(config: &RuntimeConfig) -> Result<Option<AccountSnapshot>, String> {
-    let worker = config.workers.iter().find(|worker| {
+fn load_api_account_snapshots(config: &RuntimeConfig) -> Result<Vec<AccountSnapshot>, String> {
+    let mut seen = BTreeSet::new();
+    let mut snapshots = Vec::new();
+    for worker in config.workers.iter().filter(|worker| {
         worker.enabled
             && matches!(
                 worker.role,
@@ -1571,10 +1573,47 @@ fn load_api_account_snapshot(config: &RuntimeConfig) -> Result<Option<AccountSna
             )
             && worker.account_id.is_some()
             && worker.venue_id.is_some()
-    });
-    let Some(worker) = worker else {
-        return Ok(None);
-    };
+    }) {
+        let key = (
+            worker.account_id.clone().unwrap_or_default(),
+            worker.venue_id.clone().unwrap_or_default(),
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        if let Some(snapshot) = load_api_account_snapshot_for_worker(config, worker)? {
+            snapshots.push(snapshot);
+        }
+    }
+    Ok(snapshots)
+}
+
+/// 保留单快照兼容入口给旧 CLI 校验；生产 API 启动使用上面的多账户入口。
+#[cfg(test)]
+fn load_api_account_snapshot(config: &RuntimeConfig) -> Result<Option<AccountSnapshot>, String> {
+    for worker in config.workers.iter().filter(|worker| {
+        worker.enabled
+            && matches!(
+                worker.role,
+                WorkerRole::UserStream
+                    | WorkerRole::Execution
+                    | WorkerRole::SpreadRecovery
+                    | WorkerRole::Reconciler
+            )
+            && worker.account_id.is_some()
+            && worker.venue_id.is_some()
+    }) {
+        if let Some(snapshot) = load_api_account_snapshot_for_worker(config, worker)? {
+            return Ok(Some(snapshot));
+        }
+    }
+    Ok(None)
+}
+
+fn load_api_account_snapshot_for_worker(
+    config: &RuntimeConfig,
+    worker: &WorkerConfig,
+) -> Result<Option<AccountSnapshot>, String> {
     let account_id = worker.account_id.as_deref().unwrap_or_default();
     let venue_id = worker.venue_id.as_deref().unwrap_or_default();
     let Some(log_name) = account_event_log_name(account_id, venue_id) else {

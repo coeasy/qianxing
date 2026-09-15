@@ -24,8 +24,8 @@ pub use self::clock::{ClockError, TestClock, Ts};
 pub use self::engine::{Engine, EngineCtx, EngineRunOptions, EngineRunReport, Handler};
 pub use self::error::{QxError, QxResult};
 pub use self::event::{
-    AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventKind,
-    EventMetadata, FundingRateSnapshot, Priority, EVENT_METADATA_SCHEMA_VERSION,
+    AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
+    EventKind, EventMetadata, FundingRateSnapshot, Priority, EVENT_METADATA_SCHEMA_VERSION,
 };
 pub use self::identity::{CanonicalProduct, InstrumentId, MarketId, VenueId};
 pub use self::ledger::{
