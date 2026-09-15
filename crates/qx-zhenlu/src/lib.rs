@@ -1633,15 +1633,13 @@ impl AccountRouter {
         if !self.accounts.contains_key(account_id) {
             return Err(QxError::Permanent("账户不存在".into()));
         }
-        self.strategy_allowlist
+        let allowed_accounts = self
+            .strategy_allowlist
             .entry(strategy_id.into())
-            .or_default()
-            .push(account_id.into());
-        self.strategy_allowlist.get_mut(strategy_id).unwrap().sort();
-        self.strategy_allowlist
-            .get_mut(strategy_id)
-            .unwrap()
-            .dedup();
+            .or_default();
+        allowed_accounts.push(account_id.into());
+        allowed_accounts.sort();
+        allowed_accounts.dedup();
         Ok(())
     }
     pub fn route(&mut self, strategy_id: &str, preferred: Option<&str>) -> QxResult<String> {
