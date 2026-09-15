@@ -166,14 +166,16 @@ impl DatasetBundleManifest {
 
     pub fn add_component(&mut self, component: DatasetComponentManifest) -> Result<(), String> {
         component.validate()?;
-        if self.components.contains_key(&component.kind) {
-            return Err(format!(
-                "dataset bundle component already exists: {}",
-                component.kind
-            ));
+        let kind = component.kind.clone();
+        match self.components.entry(kind.clone()) {
+            std::collections::btree_map::Entry::Occupied(_) => {
+                Err(format!("dataset bundle component already exists: {kind}"))
+            }
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(component);
+                Ok(())
+            }
         }
-        self.components.insert(component.kind.clone(), component);
-        Ok(())
     }
 
     pub fn validate(&self) -> Result<(), String> {
