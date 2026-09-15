@@ -3804,10 +3804,13 @@ fn spawn_api_projection_bridge(
         let mut pipelines = BTreeMap::<(String, String), LiveEventPipeline>::new();
         while !stop.load(Ordering::Acquire) {
             for (account_id, venue_id, log_name, currency) in &sources {
-                if !pipelines.contains_key(&(account_id.clone(), venue_id.clone())) {
+                let pipeline_key = (account_id.clone(), venue_id.clone());
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    pipelines.entry(pipeline_key.clone())
+                {
                     match storage.open(log_name.clone(), currency.clone()) {
                         Ok(opened) => {
-                            pipelines.insert((account_id.clone(), venue_id.clone()), opened);
+                            entry.insert(opened);
                         }
                         Err(error) => {
                             eprintln!(
@@ -3818,8 +3821,7 @@ fn spawn_api_projection_bridge(
                         }
                     }
                 }
-                let Some(current) = pipelines.get_mut(&(account_id.clone(), venue_id.clone()))
-                else {
+                let Some(current) = pipelines.get_mut(&pipeline_key) else {
                     continue;
                 };
                 if let Err(error) = current.refresh() {
@@ -3827,7 +3829,7 @@ fn spawn_api_projection_bridge(
                         "[运行时 · API] 刷新账户 EventLog 投影源失败 account={} venue={}: {error:?}",
                         account_id, venue_id
                     );
-                    pipelines.remove(&(account_id.clone(), venue_id.clone()));
+                    pipelines.remove(&pipeline_key);
                     continue;
                 }
                 if let Err(error) =
