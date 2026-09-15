@@ -1,51 +1,7 @@
-//! Qianxing V5 canonical order model.
+//! Stable domain access to the canonical qx-core order model.
+//!
+//! qx-domain must not maintain a second order state machine. Execution facts
+//! remain owned by qx-core and are re-exported here for upper-layer contracts.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderSide {
-    Buy,
-    Sell,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderStatus {
-    Created,
-    Submitted,
-    Accepted,
-    PartialFilled,
-    Filled,
-    Cancelled,
-    Rejected,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Order {
-    pub id: u64,
-    pub instrument_id: String,
-    pub side: OrderSide,
-    pub quantity: i64,
-    pub price: i64,
-    pub status: OrderStatus,
-}
-
-impl Order {
-    pub fn new(
-        id: u64,
-        instrument_id: impl Into<String>,
-        side: OrderSide,
-        quantity: i64,
-        price: i64,
-    ) -> Self {
-        Self {
-            id,
-            instrument_id: instrument_id.into(),
-            side,
-            quantity,
-            price,
-            status: OrderStatus::Created,
-        }
-    }
-
-    pub fn submit(&mut self) {
-        self.status = OrderStatus::Submitted;
-    }
-}
+pub use qx_core::Side as OrderSide;
+pub use qx_core::{Fill, Order, OrderStatus, OrderTrace, Side};
