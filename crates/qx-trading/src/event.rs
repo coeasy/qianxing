@@ -1,17 +1,9 @@
 //! Trading facts emitted after command processing.
 
 #[derive(Debug, Clone)]
-pub struct OrderSubmitted {
-    pub order_id: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct OrderAccepted {
-    pub order_id: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct OrderFilled {
-    pub order_id: String,
-    pub quantity: u64,
+pub enum TradingEvent {
+    OrderSubmitted { order_id: String },
+    OrderAccepted { order_id: String },
+    OrderFilled { order_id: String, quantity: u64 },
+    OrderCancelled { order_id: String },
 }
