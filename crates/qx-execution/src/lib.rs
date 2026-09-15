@@ -307,6 +307,11 @@ pub struct PortExecutionResult {
     pub event_count: usize,
 }
 
+/// 统一执行网关名称。新运行时、Paper、回测和语言绑定应依赖这个端口化
+/// 入口；保留 `PortExecutionService` 作为兼容的具体类型名，避免已有适配器
+/// 在迁移期间被迫同时修改。
+pub type ExecutionGateway<'a, V, P> = PortExecutionService<'a, V, P>;
+
 impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
     pub fn new(
         venue: &'a mut V,
@@ -416,6 +421,28 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
             message: format!("SUBMITTED venue_events={event_count}"),
             event_count,
         })
+    }
+
+    /// 风控前置的统一提交入口。RiskPort 拒绝发生在订单登记、Venue 副作用和
+    /// EventLog 事实追加之前；因此拒单不会留下“已提交但未执行”的伪订单。
+    pub fn submit_with_risk<R: RiskPort>(
+        &mut self,
+        order: qx_core::Order,
+        risk: &R,
+    ) -> Result<PortExecutionResult, String> {
+        order
+            .validate()
+            .map_err(|error| format!("订单校验失败: {error}"))?;
+        let decision = risk
+            .evaluate_order(&order)
+            .map_err(|error| format!("账户级 RiskPort 执行失败: {error}"))?;
+        if !decision.accepted {
+            return Err(format!(
+                "账户级 RiskPort 拒绝订单: {}",
+                decision.reason_code
+            ));
+        }
+        self.submit(order)
     }
 
     pub fn cancel(&mut self, client_order_id: u64) -> Result<PortExecutionResult, String> {
@@ -2113,6 +2140,37 @@ mod tests {
         result: Result<Vec<ExecutionEvent>, String>,
     }
 
+    struct NeverCalledVenue;
+
+    impl VenuePort for NeverCalledVenue {
+        fn venue_id(&self) -> &str {
+            "never-called"
+        }
+
+        fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
+            panic!("risk rejection must happen before Venue submit")
+        }
+
+        fn cancel_order(
+            &mut self,
+            _client_order_id: u64,
+            _ts: u64,
+        ) -> Result<Vec<ExecutionEvent>, String> {
+            panic!("risk rejection test must not cancel")
+        }
+    }
+
+    struct RejectingRisk;
+
+    impl RiskPort for RejectingRisk {
+        fn evaluate_order(&self, _order: &Order) -> Result<RiskDecision, String> {
+            Ok(RiskDecision {
+                accepted: false,
+                reason_code: "max_notional",
+            })
+        }
+    }
+
     #[derive(Default)]
     struct PortRouter {
         calls: Vec<String>,
@@ -2245,6 +2303,24 @@ mod tests {
             state.events.last().map(|event| &event.event),
             Some(ExecutionEvent::ReconcileRequired { client_order_id: 9 })
         ));
+    }
+
+    #[test]
+    fn port_execution_service_rejects_before_registration_or_venue_side_effect() {
+        let mut state = PortState::default();
+        let mut venue = NeverCalledVenue;
+        let mut source_seq = 0;
+        let result =
+            PortExecutionService::new(&mut venue, &mut state, "risk-worker", 10, &mut source_seq)
+                .submit_with_risk(port_order(12), &RejectingRisk);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "账户级 RiskPort 拒绝订单: max_notional"
+        );
+        assert!(state.orders.is_empty());
+        assert!(state.events.is_empty());
+        assert_eq!(source_seq, 0);
     }
 
     #[test]

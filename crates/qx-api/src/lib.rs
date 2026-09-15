@@ -454,12 +454,94 @@ impl MtlsIdentityPemReloader {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct ApiProjectionKey {
+    pub account_id: String,
+    pub venue_id: String,
+}
+
+impl ApiProjectionKey {
+    pub fn new(account_id: impl Into<String>, venue_id: impl Into<String>) -> Self {
+        Self {
+            account_id: account_id.into(),
+            venue_id: venue_id.into(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.account_id.trim().is_empty() || self.venue_id.trim().is_empty() {
+            return Err("API 投影必须同时指定非空 account_id 和 venue_id".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+pub struct ApiAccountProjection {
+    pub snapshot: Option<AccountSnapshot>,
+    snapshot_history: BTreeMap<u64, AccountSnapshot>,
+    pub events: EventLog,
+    pub event_bus: ApiEventBus,
+}
+
+impl ApiAccountProjection {
+    fn append_projected_event(&mut self, event: Event) -> Result<(), String> {
+        let expected = self.events.next_seq();
+        let bus_expected = self.event_bus.next_seq();
+        if event.seq != expected || event.seq != bus_expected {
+            return Err(format!(
+                "账户投影事件游标不连续: event_seq={} event_log_next={} event_bus_next={}",
+                event.seq, expected, bus_expected
+            ));
+        }
+        self.events
+            .append_checked(event.clone())
+            .map_err(|error| format!("account projected event rejected: {error:?}"))?;
+        self.event_bus
+            .publish(event)
+            .map_err(|error| format!("account projected event bus rejected: {error:?}"))
+    }
+
+    fn project_event_log(&mut self, source: &EventLog) -> Result<usize, String> {
+        let mut projected = 0;
+        for event in source.events() {
+            if event.seq < self.events.next_seq() {
+                let existing = self
+                    .events
+                    .events()
+                    .iter()
+                    .find(|current| current.seq == event.seq);
+                if existing == Some(event) {
+                    continue;
+                }
+                return Err(format!(
+                    "账户投影检测到事件内容漂移: event_seq={}",
+                    event.seq
+                ));
+            }
+            self.append_projected_event(event.clone())?;
+            projected += 1;
+        }
+        Ok(projected)
+    }
+
+    fn publish_snapshot(&mut self, snapshot: AccountSnapshot) -> u64 {
+        let hash = snapshot.state_hash();
+        self.snapshot_history.insert(hash, snapshot.clone());
+        self.snapshot = Some(snapshot);
+        hash
+    }
+}
+
 #[derive(Default)]
 pub struct ApiState {
     pub snapshot: Option<AccountSnapshot>,
     snapshot_history: BTreeMap<u64, AccountSnapshot>,
     pub events: EventLog,
     pub event_bus: ApiEventBus,
+    /// 按 account_id + venue_id 隔离的查询/订阅投影。旧的单账户字段保留为
+    /// 兼容入口，新调用方应通过该索引避免多账户之间串读游标或状态。
+    pub projections: BTreeMap<ApiProjectionKey, ApiAccountProjection>,
     pub control: ControlPlane,
     /// 只读运维读模型；调度、账簿和对账事实仍由各自 owner 写入。
     pub job_runs: Vec<JobRun>,
@@ -553,18 +635,142 @@ impl ApiState {
         let hash = snapshot.state_hash();
         self.snapshot_history.insert(hash, snapshot.clone());
         self.snapshot = Some(snapshot);
+        if !self.snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot.header.account_id.trim().is_empty()
+                || snapshot.header.venue_id.trim().is_empty()
+        }) {
+            let snapshot = self.snapshot.clone().expect("snapshot was just stored");
+            let key = ApiProjectionKey::new(
+                snapshot.header.account_id.clone(),
+                snapshot.header.venue_id.clone(),
+            );
+            key.validate()?;
+            self.projections
+                .entry(key)
+                .or_default()
+                .publish_snapshot(snapshot);
+        }
         Ok(hash)
     }
 
-    /// 事件同时写入历史日志和实时总线；外部恢复代码若直接装载 EventLog，
-    /// 应在完成恢复后按序重新发布到 event_bus。
+    /// 写入指定账户/交易所的快照投影，不会覆盖兼容的全局主账户快照。
+    pub fn publish_snapshot_for(
+        &mut self,
+        account_id: impl Into<String>,
+        venue_id: impl Into<String>,
+        mut snapshot: AccountSnapshot,
+    ) -> Result<u64, String> {
+        let key = ApiProjectionKey::new(account_id, venue_id);
+        key.validate()?;
+        if snapshot.header.account_id != key.account_id || snapshot.header.venue_id != key.venue_id
+        {
+            return Err("账户投影快照的 account_id/venue_id 与目标不一致".into());
+        }
+        snapshot.header.state_hash = 0;
+        snapshot
+            .validate()
+            .map_err(|error| format!("snapshot invalid: {error:?}"))?;
+        snapshot.seal();
+        let hash = snapshot.state_hash();
+        self.projections
+            .entry(key)
+            .or_default()
+            .publish_snapshot(snapshot);
+        Ok(hash)
+    }
+
+    pub fn account_snapshot_for(
+        &self,
+        account_id: &str,
+        venue_id: &str,
+    ) -> Option<AccountSnapshot> {
+        self.projections
+            .get(&ApiProjectionKey::new(account_id, venue_id))
+            .and_then(|projection| projection.snapshot.clone())
+    }
+
+    pub fn projection_keys(&self) -> Vec<ApiProjectionKey> {
+        self.projections.keys().cloned().collect()
+    }
+
+    fn append_projected_event(&mut self, event: Event) -> Result<(), String> {
+        let expected = self.events.next_seq();
+        let bus_expected = self.event_bus.next_seq();
+        if event.seq != expected || event.seq != bus_expected {
+            return Err(format!(
+                "API 投影事件游标不连续: event_seq={} event_log_next={} event_bus_next={}",
+                event.seq, expected, bus_expected
+            ));
+        }
+        self.events
+            .append_checked(event.clone())
+            .map_err(|error| format!("projected event rejected: {error:?}"))?;
+        self.event_bus
+            .publish(event)
+            .map_err(|error| format!("projected event bus rejected: {error:?}"))
+    }
+
+    /// 兼容 API 内部事件入口。生产运行时应优先使用 `project_event_log`，由外部
+    /// Runtime EventLog 作为事实源投影到 API；API 自己保存的 events 仅是查询
+    /// 读模型，不应被当作交易事实源。该入口保留 `EventLog::alloc_seq` 后再
+    /// 发布的历史调用方式，但仍要求 EventBus 序号连续。
     pub fn publish_event(&mut self, event: Event) -> Result<(), String> {
+        let bus_expected = self.event_bus.next_seq();
+        if event.seq != bus_expected {
+            return Err(format!(
+                "API 内部事件总线游标不连续: event_seq={} event_bus_next={}",
+                event.seq, bus_expected
+            ));
+        }
         self.events
             .append_checked(event.clone())
             .map_err(|error| format!("event log rejected event: {error:?}"))?;
         self.event_bus
             .publish(event)
             .map_err(|error| format!("event bus rejected event: {error:?}"))
+    }
+
+    /// 将运行时事实日志增量投影到 API 查询/订阅读模型。
+    ///
+    /// 已经投影过且内容完全一致的前缀会被幂等跳过；任何序号缺口、覆盖或
+    /// 内容漂移都会失败，避免 API 读模型悄悄偏离 Runtime EventLog。
+    pub fn project_event_log(&mut self, source: &EventLog) -> Result<usize, String> {
+        let mut projected = 0;
+        for event in source.events() {
+            if event.seq < self.events.next_seq() {
+                let existing = self
+                    .events
+                    .events()
+                    .iter()
+                    .find(|current| current.seq == event.seq);
+                if existing == Some(event) {
+                    continue;
+                }
+                return Err(format!(
+                    "API 投影检测到事件内容漂移: event_seq={}",
+                    event.seq
+                ));
+            }
+            self.append_projected_event(event.clone())?;
+            projected += 1;
+        }
+        Ok(projected)
+    }
+
+    /// 将某一账户/交易所的事实日志投影到隔离的 API 读模型。每个投影拥有
+    /// 独立的 EventLog 和实时游标，因此一个账户的 retention gap 不会污染另一个账户。
+    pub fn project_account_event_log(
+        &mut self,
+        account_id: impl Into<String>,
+        venue_id: impl Into<String>,
+        source: &EventLog,
+    ) -> Result<usize, String> {
+        let key = ApiProjectionKey::new(account_id, venue_id);
+        key.validate()?;
+        self.projections
+            .entry(key)
+            .or_default()
+            .project_event_log(source)
     }
 }
 
@@ -859,6 +1065,64 @@ impl ApiService {
             .publish_event(event)
     }
 
+    /// 将外部 Runtime EventLog 投影到 API 读模型。该方法不会改变 Runtime
+    /// 的事实日志，只更新 API 查询和订阅所需的副本。
+    pub fn project_event_log(&self, source: &EventLog) -> Result<usize, String> {
+        self.state
+            .lock()
+            .expect("api state mutex poisoned")
+            .project_event_log(source)
+    }
+
+    pub fn project_account_event_log(
+        &self,
+        account_id: impl Into<String>,
+        venue_id: impl Into<String>,
+        source: &EventLog,
+    ) -> Result<usize, String> {
+        self.state
+            .lock()
+            .expect("api state mutex poisoned")
+            .project_account_event_log(account_id, venue_id, source)
+    }
+
+    pub fn account_snapshot_for(
+        &self,
+        account_id: &str,
+        venue_id: &str,
+    ) -> Option<AccountSnapshot> {
+        self.state
+            .lock()
+            .expect("api state mutex poisoned")
+            .account_snapshot_for(account_id, venue_id)
+    }
+
+    fn snapshot_for_query(&self, query: &str) -> Result<Option<AccountSnapshot>, String> {
+        let key = projection_key_from_query(query)?;
+        let state = self.state.lock().expect("api state mutex poisoned");
+        Ok(match key {
+            Some(key) => state
+                .projections
+                .get(&key)
+                .and_then(|projection| projection.snapshot.clone()),
+            None => state.snapshot.clone(),
+        })
+    }
+
+    fn projection_events_for_query(&self, query: &str) -> Result<Vec<Event>, String> {
+        let key = projection_key_from_query(query)?;
+        let state = self.state.lock().expect("api state mutex poisoned");
+        Ok(match key {
+            Some(key) => state
+                .projections
+                .get(&key)
+                .map(|projection| projection.events.events())
+                .map(|events| events.to_vec())
+                .unwrap_or_default(),
+            None => state.events.events().to_vec(),
+        })
+    }
+
     pub fn with_rate_limit(mut self, capacity: u64, refill_per_second: u64) -> Self {
         self.rate_limiter = Arc::new(LocalRateLimitBackend {
             limiter: Mutex::new(ApiRateLimiter::new(capacity, refill_per_second)),
@@ -961,34 +1225,47 @@ impl ApiService {
             ("GET", "/schema/account-snapshot-v1") => {
                 ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA)
             }
-            ("GET", "/account/snapshot") => {
-                let state = self.state.lock().expect("api state mutex poisoned");
-                match &state.snapshot {
-                    Some(snapshot) => ApiResponse::json(200, snapshot.to_json()),
-                    None => ApiResponse::json(404, "{\"error\":\"snapshot_not_found\"}"),
-                }
-            }
+            ("GET", "/account/snapshot") => match self.snapshot_for_query(query) {
+                Err(error) => ApiResponse::json(400, error_json(&error)),
+                Ok(Some(snapshot)) => ApiResponse::json(200, snapshot.to_json()),
+                Ok(None) => ApiResponse::json(404, "{\"error\":\"snapshot_not_found\"}"),
+            },
             ("GET", "/account/orders") => {
-                let orders = self.account_orders();
+                let snapshot = match self.snapshot_for_query(query) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => return ApiResponse::json(400, error_json(&error)),
+                };
+                let orders = snapshot
+                    .map(|snapshot| snapshot.orders.into_values().collect::<Vec<_>>())
+                    .unwrap_or_default();
                 ApiResponse::json(
                     200,
                     serde_json::to_string(&orders).expect("order snapshots are serializable"),
                 )
             }
             ("GET", "/account/positions") => {
-                let positions = self.account_positions();
+                let snapshot = match self.snapshot_for_query(query) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => return ApiResponse::json(400, error_json(&error)),
+                };
+                let positions = snapshot
+                    .map(|snapshot| snapshot.positions.into_values().collect::<Vec<_>>())
+                    .unwrap_or_default();
                 ApiResponse::json(
                     200,
                     serde_json::to_string(&positions).expect("position snapshots are serializable"),
                 )
             }
             ("GET", "/account/balances") => {
-                let state = self.state.lock().expect("api state mutex poisoned");
+                let snapshot = match self.snapshot_for_query(query) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => return ApiResponse::json(400, error_json(&error)),
+                };
                 let body = serde_json::json!({
-                    "cash_raw": state.snapshot.as_ref().map(|snapshot| &snapshot.cash_raw).cloned().unwrap_or_default(),
-                    "equity_raw": state.snapshot.as_ref().map(|snapshot| snapshot.equity_raw),
-                    "available_raw": state.snapshot.as_ref().map(|snapshot| snapshot.available_raw),
-                    "margin_raw": state.snapshot.as_ref().map(|snapshot| snapshot.margin_raw),
+                    "cash_raw": snapshot.as_ref().map(|snapshot| &snapshot.cash_raw).cloned().unwrap_or_default(),
+                    "equity_raw": snapshot.as_ref().map(|snapshot| snapshot.equity_raw),
+                    "available_raw": snapshot.as_ref().map(|snapshot| snapshot.available_raw),
+                    "margin_raw": snapshot.as_ref().map(|snapshot| snapshot.margin_raw),
                 });
                 ApiResponse::json(200, body.to_string())
             }
@@ -1012,7 +1289,10 @@ impl ApiService {
             ),
             ("GET", "/account/snapshot/diff") => self.snapshot_diff(query),
             ("GET", "/events") => {
-                let state = self.state.lock().expect("api state mutex poisoned");
+                let all_events = match self.projection_events_for_query(query) {
+                    Ok(events) => events,
+                    Err(error) => return ApiResponse::json(400, error_json(&error)),
+                };
                 let after = match query_value(query, "after") {
                     None => u64::MAX,
                     Some(value) => match value.parse::<u64>() {
@@ -1025,15 +1305,15 @@ impl ApiService {
                         }
                     },
                 };
-                if after != u64::MAX && after >= state.events.next_seq() {
+                if after != u64::MAX && after >= all_events.len() as u64 {
                     return ApiResponse::json(409, error_json("event_cursor_requires_snapshot"));
                 }
                 let events = if after == u64::MAX {
-                    state.events.events()
+                    all_events
                 } else {
-                    &state.events.events()[(after as usize + 1).min(state.events.len())..]
+                    all_events[(after as usize + 1).min(all_events.len())..].to_vec()
                 };
-                match serde_json::to_string(events) {
+                match serde_json::to_string(&events) {
                     Ok(events) => ApiResponse::json(200, events),
                     Err(error) => ApiResponse::json(500, error_json(&error.to_string())),
                 }
@@ -1054,8 +1334,22 @@ impl ApiService {
                 }
             },
         };
-        let state = self.state.lock().expect("api state mutex poisoned");
-        match state.event_bus.read_after(after) {
+        let key = match projection_key_from_query(query) {
+            Ok(key) => key,
+            Err(error) => return ApiResponse::json(400, error_json(&error)),
+        };
+        let event_bus = {
+            let state = self.state.lock().expect("api state mutex poisoned");
+            match key {
+                Some(key) => state
+                    .projections
+                    .get(&key)
+                    .map(|projection| projection.event_bus.clone())
+                    .unwrap_or_default(),
+                None => state.event_bus.clone(),
+            }
+        };
+        match event_bus.read_after(after) {
             Ok(events) => ApiResponse::json(
                 200,
                 serde_json::to_string(&events).expect("event bus events are serializable"),
@@ -1074,11 +1368,24 @@ impl ApiService {
         let Ok(base_hash) = base_hash.parse::<u64>() else {
             return ApiResponse::json(400, error_json("base_hash must be an unsigned integer"));
         };
+        let key = match projection_key_from_query(query) {
+            Ok(key) => key,
+            Err(error) => return ApiResponse::json(400, error_json(&error)),
+        };
         let state = self.state.lock().expect("api state mutex poisoned");
-        let Some(base) = state.snapshot_history.get(&base_hash) else {
+        let (history, target) = match key {
+            Some(key) => {
+                let Some(projection) = state.projections.get(&key) else {
+                    return ApiResponse::json(409, error_json("snapshot_base_not_found"));
+                };
+                (&projection.snapshot_history, projection.snapshot.as_ref())
+            }
+            None => (&state.snapshot_history, state.snapshot.as_ref()),
+        };
+        let Some(base) = history.get(&base_hash) else {
             return ApiResponse::json(409, error_json("snapshot_base_not_found"));
         };
-        let Some(target) = state.snapshot.as_ref() else {
+        let Some(target) = target else {
             return ApiResponse::json(404, error_json("snapshot_not_found"));
         };
         match base.diff(target) {
@@ -1337,13 +1644,11 @@ impl ApiService {
         for stream in listener.incoming() {
             let stream = stream?;
             configure_connection(&stream)?;
-            let mut stream = tls_stream(stream, Arc::clone(&config))?;
-            let request = read_request(&mut stream)?;
-            let request = String::from_utf8_lossy(&request);
+            let stream = tls_stream(stream, Arc::clone(&config))?;
             let operator_id = identities
                 .operator_for(stream.conn.peer_certificates())
                 .map(str::to_string);
-            self.dispatch_request(&mut stream, &request, ts, operator_id.as_deref())?;
+            self.spawn_connection(stream, ts, operator_id);
         }
         Ok(())
     }
@@ -1361,13 +1666,11 @@ impl ApiService {
         for stream in listener.incoming() {
             let stream = stream?;
             configure_connection(&stream)?;
-            let mut stream = tls_stream(stream, configs.current())?;
-            let request = read_request(&mut stream)?;
-            let request = String::from_utf8_lossy(&request);
+            let stream = tls_stream(stream, configs.current())?;
             let operator_id = identities
                 .operator_for(stream.conn.peer_certificates())
                 .map(str::to_string);
-            self.dispatch_request(&mut stream, &request, ts, operator_id.as_deref())?;
+            self.spawn_connection(stream, ts, operator_id);
         }
         Ok(())
     }
@@ -1384,23 +1687,36 @@ impl ApiService {
         for stream in listener.incoming() {
             let stream = stream?;
             configure_connection(&stream)?;
-            let mut stream = tls_stream(stream, configs.current())?;
-            let request = read_request(&mut stream)?;
-            let request = String::from_utf8_lossy(&request);
+            let stream = tls_stream(stream, configs.current())?;
             let policy = identities.current();
             let operator_id = policy
                 .operator_for(stream.conn.peer_certificates())
                 .map(str::to_string);
-            self.dispatch_request(&mut stream, &request, ts, operator_id.as_deref())?;
+            self.spawn_connection(stream, ts, operator_id);
         }
         Ok(())
+    }
+
+    /// 每个长连接独立处理，避免 WebSocket 或慢客户端占住监听循环。
+    /// 连接线程只拥有 API 的共享读模型和不可变服务配置；领域事实仍由
+    /// Runtime owner 写入，连接处理失败只影响当前客户端。
+    fn spawn_connection<S>(&self, stream: S, ts: u64, operator_id: Option<String>)
+    where
+        S: Read + Write + Send + 'static,
+    {
+        let service = self.clone();
+        std::thread::spawn(move || {
+            if let Err(error) = service.serve_stream_as(stream, ts, operator_id.as_deref()) {
+                eprintln!("[qx-api] connection closed with error: {error}");
+            }
+        });
     }
 
     pub fn serve(&self, listener: TcpListener, ts: u64) -> std::io::Result<()> {
         for stream in listener.incoming() {
             let stream = stream?;
             configure_connection(&stream)?;
-            self.serve_stream(stream, ts)?;
+            self.spawn_connection(stream, ts, None);
         }
         Ok(())
     }
@@ -1414,7 +1730,7 @@ impl ApiService {
         for stream in listener.incoming() {
             let stream = stream?;
             configure_connection(&stream)?;
-            self.serve_stream_as(stream, ts, Some(operator_id))?;
+            self.spawn_connection(stream, ts, Some(operator_id.to_string()));
         }
         Ok(())
     }
@@ -1429,7 +1745,7 @@ impl ApiService {
         for stream in listener.incoming() {
             let stream = stream?;
             configure_connection(&stream)?;
-            self.serve_stream(tls_stream(stream, Arc::clone(&config))?, ts)?;
+            self.spawn_connection(tls_stream(stream, Arc::clone(&config))?, ts, None);
         }
         Ok(())
     }
@@ -1445,11 +1761,11 @@ impl ApiService {
         for stream in listener.incoming() {
             let stream = stream?;
             configure_connection(&stream)?;
-            self.serve_stream_as(
+            self.spawn_connection(
                 tls_stream(stream, Arc::clone(&config))?,
                 ts,
-                Some(operator_id),
-            )?;
+                Some(operator_id.to_string()),
+            );
         }
         Ok(())
     }
@@ -1756,6 +2072,20 @@ fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
         let (name, value) = part.split_once('=')?;
         (name == key).then_some(value)
     })
+}
+
+fn projection_key_from_query(query: &str) -> Result<Option<ApiProjectionKey>, String> {
+    let account_id = query_value(query, "account_id");
+    let venue_id = query_value(query, "venue_id");
+    match (account_id, venue_id) {
+        (None, None) => Ok(None),
+        (Some(account_id), Some(venue_id)) => {
+            let key = ApiProjectionKey::new(account_id, venue_id);
+            key.validate()?;
+            Ok(Some(key))
+        }
+        _ => Err("account_id 和 venue_id 必须同时提供".into()),
+    }
 }
 
 fn json_string(value: &str) -> String {
@@ -2186,6 +2516,120 @@ mod tests {
             bus.read_after(Some(0)),
             Err(EventBusError::CursorTooOld { .. })
         ));
+    }
+
+    #[test]
+    fn api_projection_is_idempotent_and_rejects_gaps_or_drift() {
+        let mut source = EventLog::new();
+        source
+            .append_checked(Event::new(0, 1, Priority::MARKET, EventKind::Settle))
+            .unwrap();
+        source
+            .append_checked(Event::new(1, 2, Priority::POST, EventKind::Settle))
+            .unwrap();
+
+        let mut state = ApiState::default();
+        assert_eq!(state.project_event_log(&source).unwrap(), 2);
+        assert_eq!(state.project_event_log(&source).unwrap(), 0);
+        assert_eq!(state.events.len(), 2);
+
+        let mut gap = EventLog::new();
+        gap.append_checked(Event::new(0, 1, Priority::MARKET, EventKind::Settle))
+            .unwrap();
+        gap.append_checked(Event::new(1, 2, Priority::POST, EventKind::Settle))
+            .unwrap();
+        let mut changed = gap.clone();
+        changed
+            .append_checked(Event::new(2, 3, Priority::POST, EventKind::Settle))
+            .unwrap();
+        assert_eq!(state.project_event_log(&changed).unwrap(), 1);
+
+        let mut drift = EventLog::new();
+        drift
+            .append_checked(Event::new(0, 1, Priority::MARKET, EventKind::Settle))
+            .unwrap();
+        drift
+            .append_checked(Event::new(1, 99, Priority::POST, EventKind::Settle))
+            .unwrap();
+        assert!(state.project_event_log(&drift).is_err());
+    }
+
+    #[test]
+    fn account_projections_isolate_snapshots_events_and_cursors() {
+        let mut state = ApiState::default();
+        let mut paper = AccountSnapshot::new(1, "account-a", "portfolio-a", "paper", 10);
+        paper.cash_raw.insert("USDT".into(), 100);
+        let mut binance = AccountSnapshot::new(2, "account-b", "portfolio-b", "binance", 10);
+        binance.cash_raw.insert("USDT".into(), 200);
+        state
+            .publish_snapshot_for("account-a", "paper", paper)
+            .unwrap();
+        state
+            .publish_snapshot_for("account-b", "binance", binance)
+            .unwrap();
+
+        let mut paper_log = EventLog::new();
+        paper_log
+            .append_checked(Event::new(
+                0,
+                10,
+                Priority::POST,
+                EventKind::Timer {
+                    name: "paper".into(),
+                },
+            ))
+            .unwrap();
+        let mut binance_log = EventLog::new();
+        binance_log
+            .append_checked(Event::new(
+                0,
+                10,
+                Priority::POST,
+                EventKind::Timer {
+                    name: "binance".into(),
+                },
+            ))
+            .unwrap();
+        assert_eq!(
+            state
+                .project_account_event_log("account-a", "paper", &paper_log)
+                .unwrap(),
+            1
+        );
+        state
+            .project_account_event_log("account-b", "binance", &binance_log)
+            .unwrap();
+
+        let service = ApiService::new(state);
+        let paper_response = service.handle(
+            "GET",
+            "/account/snapshot?account_id=account-a&venue_id=paper",
+            "",
+            1,
+        );
+        let binance_response = service.handle(
+            "GET",
+            "/account/snapshot?account_id=account-b&venue_id=binance",
+            "",
+            1,
+        );
+        assert_eq!(paper_response.status, 200);
+        assert_eq!(binance_response.status, 200);
+        assert!(paper_response.body.contains("\"cash_raw\":{\"USDT\":100}"));
+        assert!(binance_response
+            .body
+            .contains("\"cash_raw\":{\"USDT\":200}"));
+        let paper_events =
+            service.handle("GET", "/events?account_id=account-a&venue_id=paper", "", 2);
+        assert_eq!(paper_events.status, 200);
+        assert!(paper_events.body.contains("paper"));
+        assert!(!paper_events.body.contains("binance"));
+        assert_eq!(
+            service
+                .handle("GET", "/account/snapshot?account_id=account-a", "", 3)
+                .status,
+            400
+        );
     }
 
     #[test]

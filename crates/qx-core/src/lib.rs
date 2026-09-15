@@ -21,7 +21,7 @@ pub mod sourcing;
 pub mod trading;
 
 pub use self::clock::{ClockError, TestClock, Ts};
-pub use self::engine::{Engine, Handler};
+pub use self::engine::{Engine, EngineCtx, EngineRunOptions, EngineRunReport, Handler};
 pub use self::error::{QxError, QxResult};
 pub use self::event::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventKind,

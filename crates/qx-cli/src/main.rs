@@ -1383,6 +1383,16 @@ fn build_configured_api_service(
         .into_iter()
         .map(|report| (report.worker_id.clone(), report))
         .collect();
+    for (account_id, venue_id, log_name, currency) in configured_account_event_logs(config) {
+        let root = Path::new(&config.storage.data_dir);
+        if event_log_exists(config, root, &log_name)? {
+            let pipeline = open_runtime_pipeline(config, root, log_name, currency)
+                .map_err(|error| format!("读取 API 事件投影失败: {error}"))?;
+            state
+                .project_account_event_log(&account_id, &venue_id, pipeline.log())
+                .map_err(|error| format!("初始化 API 账户事件投影失败: {error}"))?;
+        }
+    }
     if let Some(snapshot) = load_api_account_snapshot(config)? {
         state
             .publish_snapshot(snapshot)
@@ -3692,6 +3702,108 @@ fn account_event_log_name(account_id: &str, venue_id: &str) -> Option<String> {
         "ccxt"
     };
     Some(format!("{prefix}-{account_id}-{venue_id}-events"))
+}
+
+/// 返回所有启用的账户级运行时 EventLog。相同 account/venue 可能同时由
+/// user-stream、execution、reconciler 等 worker 使用，但 API 只能建立一个
+/// 隔离投影，避免多个 worker 重复写同一游标。
+fn configured_account_event_logs(config: &RuntimeConfig) -> Vec<(String, String, String, String)> {
+    let keys = config
+        .workers
+        .iter()
+        .filter(|worker| {
+            worker.enabled
+                && matches!(
+                    worker.role,
+                    WorkerRole::UserStream
+                        | WorkerRole::Execution
+                        | WorkerRole::SpreadRecovery
+                        | WorkerRole::Reconciler
+                )
+                && worker.account_id.is_some()
+                && worker.venue_id.is_some()
+        })
+        .filter_map(|worker| {
+            Some((
+                worker.account_id.as_deref()?.to_string(),
+                worker.venue_id.as_deref()?.to_string(),
+            ))
+        })
+        .collect::<BTreeSet<_>>();
+    keys.into_iter()
+        .filter_map(|(account_id, venue_id)| {
+            Some((
+                account_id.clone(),
+                venue_id.clone(),
+                account_event_log_name(&account_id, &venue_id)?,
+                "USDT".into(),
+            ))
+        })
+        .collect()
+}
+
+/// 在 API 服务旁启动只读投影桥。它只读取 Runtime EventLog，调用 API 的
+/// `project_event_log` 更新查询/订阅读模型，不拥有订单、账本或外部副作用。
+fn spawn_api_projection_bridge(
+    config: &RuntimeConfig,
+    service: ApiService,
+    stop: Arc<AtomicBool>,
+) -> Option<thread::JoinHandle<()>> {
+    let sources = configured_account_event_logs(config);
+    if sources.is_empty() {
+        return None;
+    }
+    let storage = match PipelineStorage::from_config(config) {
+        Ok(storage) => storage,
+        Err(error) => {
+            eprintln!("[运行时 · API] 初始化 EventLog 投影桥失败: {error}");
+            return None;
+        }
+    };
+    let poll_interval = Duration::from_millis(250);
+    Some(thread::spawn(move || {
+        let mut pipelines = BTreeMap::<(String, String), LiveEventPipeline>::new();
+        while !stop.load(Ordering::Acquire) {
+            for (account_id, venue_id, log_name, currency) in &sources {
+                if !pipelines.contains_key(&(account_id.clone(), venue_id.clone())) {
+                    match storage.open(log_name.clone(), currency.clone()) {
+                        Ok(opened) => {
+                            pipelines.insert((account_id.clone(), venue_id.clone()), opened);
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "[运行时 · API] 打开账户 EventLog 投影源失败 account={} venue={}: {error}",
+                                account_id, venue_id
+                            );
+                            continue;
+                        }
+                    }
+                }
+                let Some(current) = pipelines.get_mut(&(account_id.clone(), venue_id.clone()))
+                else {
+                    continue;
+                };
+                if let Err(error) = current.refresh() {
+                    eprintln!(
+                        "[运行时 · API] 刷新账户 EventLog 投影源失败 account={} venue={}: {error:?}",
+                        account_id, venue_id
+                    );
+                    pipelines.remove(&(account_id.clone(), venue_id.clone()));
+                    continue;
+                }
+                if let Err(error) =
+                    service.project_account_event_log(account_id, venue_id, current.log())
+                {
+                    eprintln!(
+                        "[运行时 · API] 写入账户查询投影失败 account={} venue={}: {error}",
+                        account_id, venue_id
+                    );
+                    pipelines.remove(&(account_id.clone(), venue_id.clone()));
+                }
+            }
+            thread::sleep(poll_interval);
+        }
+    }))
 }
 
 fn ccxt_event_log_name(worker: &WorkerConfig) -> String {
@@ -6133,13 +6245,24 @@ fn run_runtime_api(path: &Path) -> Result<(), String> {
     );
     match config.api.transport {
         ApiTransport::Plaintext => {
-            let worker = supervisor.spawn_worker("api", move |context| {
+            let projection_stop = Arc::new(AtomicBool::new(false));
+            let mut projection_thread =
+                spawn_api_projection_bridge(&config, service.clone(), Arc::clone(&projection_stop));
+            let worker = match supervisor.spawn_worker("api", move |context| {
                 context.heartbeat(runtime_timestamp_ms())?;
                 service
                     .serve(listener, runtime_timestamp_ms())
                     .map_err(|error| format!("API 服务停止: {error}"))
-            })?;
-            worker.join().map_err(|_| "API worker panic".to_string())?
+            }) {
+                Ok(worker) => worker,
+                Err(error) => {
+                    stop_api_projection_bridge(&projection_stop, &mut projection_thread);
+                    return Err(error);
+                }
+            };
+            let result = worker.join().map_err(|_| "API worker panic".to_string())?;
+            stop_api_projection_bridge(&projection_stop, &mut projection_thread);
+            result
         }
         ApiTransport::Mtls => {
             let tls = config
@@ -6168,6 +6291,9 @@ fn run_runtime_api(path: &Path) -> Result<(), String> {
                 tls.client_ca.clone(),
             );
             let store = TlsConfigStore::new(server_config);
+            let projection_stop = Arc::new(AtomicBool::new(false));
+            let mut projection_thread =
+                spawn_api_projection_bridge(&config, service.clone(), Arc::clone(&projection_stop));
             let reload_stop = Arc::new(AtomicBool::new(false));
             let reload_stop_thread = Arc::clone(&reload_stop);
             let reload_store = store.clone();
@@ -6201,6 +6327,7 @@ fn run_runtime_api(path: &Path) -> Result<(), String> {
                 Err(error) => {
                     reload_stop.store(true, Ordering::Release);
                     let _ = reload_thread.join();
+                    stop_api_projection_bridge(&projection_stop, &mut projection_thread);
                     return Err(error);
                 }
             };
@@ -6209,8 +6336,19 @@ fn run_runtime_api(path: &Path) -> Result<(), String> {
                 .map_err(|_| "mTLS API worker panic".to_string());
             reload_stop.store(true, Ordering::Release);
             let _ = reload_thread.join();
+            stop_api_projection_bridge(&projection_stop, &mut projection_thread);
             result?
         }
+    }
+}
+
+fn stop_api_projection_bridge(
+    stop: &Arc<AtomicBool>,
+    thread: &mut Option<std::thread::JoinHandle<()>>,
+) {
+    stop.store(true, Ordering::Release);
+    if let Some(thread) = thread.take() {
+        let _ = thread.join();
     }
 }
 
