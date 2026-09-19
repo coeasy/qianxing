@@ -11,6 +11,68 @@ use std::collections::BTreeMap;
 const DAY_MS: u64 = 86_400_000;
 const SHANGHAI_OFFSET_MS: u64 = 8 * 3_600_000;
 
+/// Python→Rust A 股数据契约版本。文档缺省 `schema_version` 视为 `0`（旧格式，
+/// 宽松解析），`>= 1` 启用严格模式：顶层必须携带非空 `source`，未知字段直接
+/// 报错，且每条公司行为必须提供 PIT 可见时间 `published_at`。
+///
+/// 必须与 `python/qianxing_ashare.ASHARE_SCHEMA_VERSION` 以及
+/// `crates/qx-data/src/provider.rs` 的 BarFrame 契约保持一致；任何 bump 都要
+/// 同时更新下面的字段白名单，否则 Python 写出的文档会被 Rust fail-closed 拒绝。
+pub const ASHARE_SCHEMA_VERSION: u32 = 1;
+
+/// v1 公司行为文档（信封）顶层字段白名单，与 Python
+/// `ASHARE_ACTION_ENVELOPE_FIELDS` 逐项一致。
+const ASHARE_ACTION_ENVELOPE_FIELDS: [&str; 5] =
+    ["schema_version", "source", "instrument", "as_of", "actions"];
+
+/// v1 单条公司行为的字段白名单，与 Python `ASHARE_ACTION_FIELDS` 逐项一致。
+const ASHARE_ACTION_FIELDS: [&str; 35] = [
+    "announcement_date",
+    "action_type",
+    "cash_dividend_raw",
+    "conversion_price_raw",
+    "conversion_qty_raw",
+    "conversion_ratio_den",
+    "conversion_ratio_num",
+    "conversion_target_instrument",
+    "conversion_target_qty_raw",
+    "convertible_bond_instrument",
+    "ex_date",
+    "interest_per_bond_raw",
+    "instrument",
+    "issue_price_raw",
+    "issuer_free_float_shares_raw",
+    "issuer_total_shares_raw",
+    "payment_date",
+    "published_at",
+    "raw_payload",
+    "record_date",
+    "repurchase_price_raw",
+    "repurchase_qty_raw",
+    "rights_expiry_qty_raw",
+    "rights_instrument",
+    "rights_issue_price_raw",
+    "rights_issue_ratio_den",
+    "rights_issue_ratio_num",
+    "settlement_price_raw",
+    "settlement_qty_raw",
+    "share_ratio_den",
+    "share_ratio_num",
+    "source",
+    "subscription_end",
+    "subscription_qty_raw",
+    "subscription_start",
+];
+
+/// v1 交易日历字段白名单，与 Python `ASHARE_CALENDAR_FIELDS` 逐项一致。
+const ASHARE_CALENDAR_FIELDS: [&str; 5] = [
+    "calendar_id",
+    "trading_days",
+    "sessions",
+    "schema_version",
+    "source",
+];
+
 fn default_true() -> bool {
     true
 }
@@ -85,7 +147,7 @@ pub enum AshareCorporateActionType {
     Unknown,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AshareCorporateActionEvent {
     pub ts: u64,
     /// 公告/登记/认购/结算日期使用独立时间轴；`ts` 保持旧格式的除权/生效日。
@@ -159,7 +221,19 @@ pub struct AshareCorporateActionEvent {
     pub issuer_free_float_shares_raw: Option<i128>,
     #[serde(default)]
     pub source: String,
+    /// PIT 可见时间（epoch 毫秒），随快照携带供审计。唯一的判定发生在公司行为
+    /// JSON 加载闸门：信封带 `as_of` 时按 `published_at_ms <= as_of` 取舍，
+    /// 旧格式缺省为 `None`，此时无法证明可见性的事件一律 fail-closed 丢弃。
+    #[serde(default)]
+    pub published_at_ms: Option<u64>,
+    /// 数据源原始字段快照，仅用于审计和重放，不参与撮合语义。
+    #[serde(default)]
+    pub raw_payload: Option<serde_json::Value>,
 }
+
+/// `raw_payload` 只承载 JSON 值；`serde_json` 无法表示 NaN/Infinity，因此
+/// 该结构上的 `Eq` 是全成立的，手工实现以保持既有公开约束不变。
+impl Eq for AshareCorporateActionEvent {}
 
 /// 发行人层面的股本快照，不产生账户 Ledger entry。
 ///
@@ -174,6 +248,150 @@ pub struct AshareIssuerCapitalSnapshot {
     pub free_float_shares_raw: Option<i128>,
     #[serde(default)]
     pub source: String,
+}
+
+/// 一次公司行为 JSON 加载的契约与 PIT 报告。
+///
+/// 该报告把“这份数据按哪个契约版本写出、来自哪里、研究截止日是多少、
+/// 有多少事件因为尚未公告被挡在外面”变成可登记的结构，供质量报告和
+/// DatasetManifest 血缘使用；`row_count == applied_actions + hidden_actions
+/// + halted_timestamps`。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AshareCorporateActionLoadReport {
+    /// 文档契约版本；`0` 表示旧格式（无 `schema_version`）。
+    pub schema_version: u32,
+    /// 文档级来源；旧格式数组允许为空。
+    pub source: String,
+    pub instrument: String,
+    /// 信封携带的 PIT 截止时间（epoch 毫秒）。
+    pub as_of_ms: Option<u64>,
+    pub row_count: usize,
+    /// 真正进入规则快照的公司行为数量。
+    pub applied_actions: usize,
+    /// `published_at > as_of`（或无法证明可见性）而被挡下的行数。
+    pub hidden_actions: usize,
+    /// 作为停牌事实处理的行数。
+    pub halted_timestamps: usize,
+}
+
+/// 一次交易日历 JSON 加载的契约报告；字段语义与公司行为报告一致。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AshareCalendarLoadReport {
+    pub schema_version: u32,
+    pub source: String,
+    pub calendar_id: String,
+    pub trading_days: usize,
+    pub sessions: usize,
+}
+
+/// 已解析的公司行为文档：契约版本、来源、绑定标的、PIT 截止时间和事件行。
+struct AshareActionDocument<'a> {
+    schema_version: u32,
+    source: String,
+    instrument: Option<&'a str>,
+    as_of_ms: Option<u64>,
+    actions: &'a [serde_json::Value],
+}
+
+impl<'a> AshareActionDocument<'a> {
+    /// `schema_version >= 1` 即严格模式：信封与每行都受白名单约束。
+    fn is_strict(&self) -> bool {
+        self.schema_version >= 1
+    }
+
+    /// PIT 可见性判定：没有 `as_of` 时全部可见，否则必须能证明
+    /// `published_at <= as_of`。
+    fn visible_at(&self, published_at_ms: Option<u64>) -> bool {
+        match self.as_of_ms {
+            None => true,
+            Some(as_of) => published_at_ms.is_some_and(|published| published <= as_of),
+        }
+    }
+
+    /// 解析 v0 数组 / v0 `{actions:[...]}` 包装 / v1 信封。
+    ///
+    /// 缺省 `schema_version` 一律按 `0` 处理并保留旧的宽松解析路径，因此
+    /// 历史样例继续可加载；高于 [`ASHARE_SCHEMA_VERSION`] 的版本 fail-closed，
+    /// 避免新文档被旧 Rust 静默降级解析。
+    fn parse(document: &'a serde_json::Value) -> Result<Self, String> {
+        let (object, actions) = match document {
+            serde_json::Value::Array(actions) => (None, actions.as_slice()),
+            serde_json::Value::Object(object) => {
+                let actions = object
+                    .get("actions")
+                    .and_then(serde_json::Value::as_array)
+                    .ok_or_else(|| {
+                        "公司行为 JSON 必须是数组或包含 actions 数组的对象".to_string()
+                    })?;
+                (Some(object), actions.as_slice())
+            }
+            _ => {
+                return Err("公司行为 JSON 必须是数组或包含 actions 数组的对象".into());
+            }
+        };
+        let schema_version =
+            object.map_or(Ok(0), |object| json_schema_version(object, "公司行为"))?;
+        if schema_version > ASHARE_SCHEMA_VERSION {
+            return Err(format!(
+                "不支持的公司行为 schema_version={schema_version}（本构建支持 0 旧格式与 1..={ASHARE_SCHEMA_VERSION}）"
+            ));
+        }
+        let Some(object) = object else {
+            // 顶层数组是 v0 的最小形态：没有信封字段，来源和可见性由行自身提供。
+            return Ok(Self {
+                schema_version: 0,
+                source: String::new(),
+                instrument: None,
+                as_of_ms: None,
+                actions,
+            });
+        };
+        let instrument = object
+            .get("instrument")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let as_of_ms = object
+            .get("as_of")
+            .filter(|value| !value.is_null())
+            .map(timestamp_to_ms)
+            .transpose()?;
+        let source = object
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        if schema_version >= 1 {
+            reject_unknown_fields(object, &ASHARE_ACTION_ENVELOPE_FIELDS, "公司行为文档")?;
+            let missing: Vec<&str> = ASHARE_ACTION_ENVELOPE_FIELDS
+                .iter()
+                .copied()
+                .filter(|key| !object.contains_key(*key))
+                .collect();
+            if !missing.is_empty() {
+                return Err(format!(
+                    "公司行为 schema_version={schema_version} 缺少字段: {missing:?}"
+                ));
+            }
+            if source.is_empty() {
+                return Err(format!(
+                    "公司行为 schema_version={schema_version} 要求非空 source"
+                ));
+            }
+            if instrument.is_none() {
+                return Err(format!(
+                    "公司行为 schema_version={schema_version} 要求非空 instrument"
+                ));
+            }
+        }
+        Ok(Self {
+            schema_version,
+            source,
+            instrument,
+            as_of_ms,
+            actions,
+        })
+    }
 }
 
 impl Default for AshareCorporateActionEvent {
@@ -211,6 +429,8 @@ impl Default for AshareCorporateActionEvent {
             issuer_total_shares_raw: 0,
             issuer_free_float_shares_raw: None,
             source: String::new(),
+            published_at_ms: None,
+            raw_payload: None,
         }
     }
 }
@@ -300,33 +520,63 @@ impl Default for AshareRuleConfig {
 impl AshareRuleConfig {
     /// 将 Python A 股数据层输出的公司行为 JSON 转换为规则快照。
     ///
-    /// 输入可以是动作数组，也可以是 `{ "actions": [...] }`。转换只负责
-    /// 规范化日期、比例和字段；复杂事件仍由回测账本的支持矩阵决定，不能
+    /// 输入可以是 v0 动作数组（`[...]` 或 `{ "actions": [...] }`），也可以是
+    /// v1 信封 `{schema_version, source, instrument, as_of, actions}`。转换只
+    /// 负责规范化日期、比例和字段；复杂事件仍由回测账本的支持矩阵决定，不能
     /// 因为完成了 JSON 解析就被误当成已实现的资金/权利语义。
+    ///
+    /// 返回值保持既有计数语义（文档中的行数）；需要契约版本、来源和 PIT
+    /// 过滤统计时改用 [`AshareRuleConfig::apply_corporate_actions_json_with_report`]。
     pub fn apply_corporate_actions_json(
         &mut self,
         instrument: &str,
         payload: &str,
     ) -> Result<usize, String> {
+        self.apply_corporate_actions_json_with_report(instrument, payload)
+            .map(|report| report.row_count)
+    }
+
+    /// 与 [`AshareRuleConfig::apply_corporate_actions_json`] 共用同一条解析路径，
+    /// 额外返回可审计的契约/PIT 报告。
+    ///
+    /// 严格模式（`schema_version >= 1`）下：信封字段集合与每行字段集合都受
+    /// 白名单约束、`source` 必须非空、每行必须提供 `published_at`。信封携带
+    /// `as_of` 时，`published_at > as_of`（或缺少可见时间）的事件不会进入
+    /// 规则快照，避免把未来公告的公司行为写进历史回测。
+    pub fn apply_corporate_actions_json_with_report(
+        &mut self,
+        instrument: &str,
+        payload: &str,
+    ) -> Result<AshareCorporateActionLoadReport, String> {
         if instrument.trim().is_empty() {
             return Err("A 股公司行为 JSON 缺少 instrument".into());
         }
         let document: serde_json::Value = serde_json::from_str(payload)
             .map_err(|error| format!("公司行为 JSON 无效: {error}"))?;
-        let actions = document
-            .as_array()
-            .or_else(|| {
-                document
-                    .get("actions")
-                    .and_then(serde_json::Value::as_array)
-            })
-            .ok_or_else(|| "公司行为 JSON 必须是数组或包含 actions 数组的对象".to_string())?;
+        let contract = AshareActionDocument::parse(&document)?;
+        if let Some(actual) = contract.instrument {
+            if actual != instrument {
+                return Err(format!(
+                    "公司行为 instrument 不匹配: expected={instrument} actual={actual}"
+                ));
+            }
+        }
+        let strict = contract.is_strict();
+        let actions = contract.actions;
         let mut converted = Vec::with_capacity(actions.len());
         let mut halted = Vec::new();
+        let mut hidden = 0_usize;
         for (index, action) in actions.iter().enumerate() {
             let object = action
                 .as_object()
                 .ok_or_else(|| format!("公司行为 actions[{index}] 必须是对象"))?;
+            if strict {
+                reject_unknown_fields(
+                    object,
+                    &ASHARE_ACTION_FIELDS,
+                    &format!("公司行为 actions[{index}]"),
+                )?;
+            }
             if let Some(actual) = object.get("instrument").and_then(serde_json::Value::as_str) {
                 if actual != instrument {
                     return Err(format!(
@@ -340,6 +590,16 @@ impl AshareRuleConfig {
                 .ok_or_else(|| format!("公司行为 actions[{index}] 缺少 ex_date"))?;
             let ts = date_to_shanghai_midnight_ms(ex_date)
                 .map_err(|error| format!("公司行为 actions[{index}] ex_date 非法: {error}"))?;
+            let published_at_ms = json_optional_timestamp(object, "published_at")
+                .map_err(|error| format!("公司行为 actions[{index}] published_at 非法: {error}"))?;
+            if strict && published_at_ms.is_none() {
+                return Err(format!(
+                    "公司行为 actions[{index}] 在 schema_version={} 下必须提供 published_at",
+                    contract.schema_version
+                ));
+            }
+            let raw_payload = json_raw_payload(object, strict)
+                .map_err(|error| format!("公司行为 actions[{index}] raw_payload 非法: {error}"))?;
             let action_type = object
                 .get("action_type")
                 .and_then(serde_json::Value::as_str)
@@ -347,9 +607,24 @@ impl AshareRuleConfig {
             let parsed_type = parse_json_action_type(action_type).ok_or_else(|| {
                 format!("公司行为 actions[{index}] action_type 非法: {action_type}")
             })?;
+            // PIT 闸门放在语义校验之后：不可见事件不进入快照，但格式错误仍
+            // 必须 fail-closed，避免坏数据被“看不见”静默吞掉。
+            if !contract.visible_at(published_at_ms) {
+                hidden += 1;
+                continue;
+            }
             if parsed_type == AshareCorporateActionType::Suspension {
                 halted.push(ts);
                 continue;
+            }
+            let mut row_source: String = object
+                .get("source")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .into();
+            if row_source.trim().is_empty() && !contract.source.is_empty() {
+                // 行内缺省来源时用文档级来源补齐，Rust 侧不会产出无血缘事件。
+                row_source = contract.source.clone();
             }
             converted.push(AshareCorporateActionEvent {
                 ts,
@@ -395,16 +670,16 @@ impl AshareRuleConfig {
                     object,
                     "issuer_free_float_shares_raw",
                 )?,
-                source: object
-                    .get("source")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .into(),
+                source: row_source,
+                published_at_ms,
+                raw_payload,
             });
         }
         converted.sort_by_key(|event| event.ts);
         halted.sort_unstable();
         halted.dedup();
+        let applied_actions = converted.len();
+        let halted_count = halted.len();
         // 先在候选快照上校验，失败时不污染调用方已有的规则配置。
         let mut candidate = self.clone();
         candidate.corporate_actions.extend(converted);
@@ -414,16 +689,78 @@ impl AshareRuleConfig {
         candidate.halted_timestamps.dedup();
         candidate.validate()?;
         *self = candidate;
-        Ok(actions.len())
+        Ok(AshareCorporateActionLoadReport {
+            schema_version: contract.schema_version,
+            source: contract.source,
+            instrument: instrument.to_owned(),
+            as_of_ms: contract.as_of_ms,
+            row_count: actions.len(),
+            applied_actions,
+            hidden_actions: hidden,
+            halted_timestamps: halted_count,
+        })
     }
 
     /// 将 Python AshareTradingCalendar JSON 合并到规则快照。交易日使用
     /// Asia/Shanghai 午夜时间戳；如果日历包含 sessions，则为每个交易日展开
     /// [start, end) 时段。日线 Bar 的午夜时间戳仍视为该交易日有效。
+    ///
+    /// 返回交易日数量，保持既有调用方的计数语义；需要契约版本与来源时用
+    /// [`AshareRuleConfig::apply_calendar_json_with_report`]。
     pub fn apply_calendar_json(&mut self, payload: &str) -> Result<usize, String> {
+        self.apply_calendar_json_with_report(payload)
+            .map(|report| report.trading_days)
+    }
+
+    /// 与 [`AshareRuleConfig::apply_calendar_json`] 共用解析路径，额外登记
+    /// `schema_version`、`source` 和 `calendar_id`，让交易日历的血缘可以进入
+    /// 质量报告而不是退化成一份无身份的文件。
+    pub fn apply_calendar_json_with_report(
+        &mut self,
+        payload: &str,
+    ) -> Result<AshareCalendarLoadReport, String> {
         let document: serde_json::Value = serde_json::from_str(payload)
             .map_err(|error| format!("交易日历 JSON 无效: {error}"))?;
-        let days = document
+        let object = document
+            .as_object()
+            .ok_or_else(|| "交易日历必须是对象".to_string())?;
+        let schema_version = json_schema_version(object, "交易日历")?;
+        if schema_version > ASHARE_SCHEMA_VERSION {
+            return Err(format!(
+                "不支持的交易日历 schema_version={schema_version}（本构建支持 0 旧格式与 1..={ASHARE_SCHEMA_VERSION}）"
+            ));
+        }
+        let mut source = String::new();
+        if schema_version >= 1 {
+            reject_unknown_fields(object, &ASHARE_CALENDAR_FIELDS, "交易日历")?;
+            let missing: Vec<&str> = ASHARE_CALENDAR_FIELDS
+                .iter()
+                .copied()
+                .filter(|key| !object.contains_key(*key))
+                .collect();
+            if !missing.is_empty() {
+                return Err(format!(
+                    "交易日历 schema_version={schema_version} 缺少字段: {missing:?}"
+                ));
+            }
+            source = object
+                .get("source")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_owned();
+            if source.is_empty() {
+                return Err(format!(
+                    "交易日历 schema_version={schema_version} 要求非空 source"
+                ));
+            }
+        }
+        let calendar_id = object
+            .get("calendar_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let days = object
             .get("trading_days")
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| "交易日历必须包含 trading_days 数组".to_string())?;
@@ -440,10 +777,7 @@ impl AshareRuleConfig {
         trading_days.sort_unstable();
         trading_days.dedup();
         let mut session_windows = Vec::new();
-        if let Some(sessions) = document
-            .get("sessions")
-            .and_then(serde_json::Value::as_array)
-        {
+        if let Some(sessions) = object.get("sessions").and_then(serde_json::Value::as_array) {
             for (day_index, day) in trading_days.iter().enumerate() {
                 for (session_index, session) in sessions.iter().enumerate() {
                     let values = session.as_array().ok_or_else(|| {
@@ -479,7 +813,13 @@ impl AshareRuleConfig {
         self.trading_days = trading_days;
         self.session_windows = session_windows;
         self.validate()?;
-        Ok(self.trading_days.len())
+        Ok(AshareCalendarLoadReport {
+            schema_version,
+            source,
+            calendar_id,
+            trading_days: self.trading_days.len(),
+            sessions: self.session_windows.len(),
+        })
     }
 
     /// 将统一数据层公司行为转换成当前 A 股撮合/账本可以安全处理的规则事件。
@@ -534,6 +874,10 @@ impl AshareRuleConfig {
                 issuer_total_shares_raw: 0,
                 issuer_free_float_shares_raw: None,
                 source: action.source.clone(),
+                // 统一数据层的 published_at 就是 PIT 可见时间，必须一路带到
+                // 撮合层，否则 `as_of` 只能看到除权日而漏掉公告时间。
+                published_at_ms: action.published_at,
+                raw_payload: None,
             };
             match &action.action_type {
                 qx_data::CorporateActionType::Dividend => {
@@ -1025,6 +1369,175 @@ fn json_i128_or(
     } else {
         json_i128(object, field)
     }
+}
+
+/// 读取文档顶层 `schema_version`；缺省视为 `0`（旧格式兼容分支）。
+fn json_schema_version(
+    object: &serde_json::Map<String, serde_json::Value>,
+    label: &str,
+) -> Result<u32, String> {
+    match object.get("schema_version") {
+        None => Ok(0),
+        Some(value) => value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| format!("{label} schema_version 必须是非负整数")),
+    }
+}
+
+/// 严格模式的未知字段守卫：Python 侧新增字段而 Rust 尚未识别时必须报错，
+/// 而不是把契约漂移降级成“静默丢掉一列”。
+fn reject_unknown_fields(
+    object: &serde_json::Map<String, serde_json::Value>,
+    allowed: &[&str],
+    label: &str,
+) -> Result<(), String> {
+    let mut unknown: Vec<&str> = object
+        .keys()
+        .filter(|key| !allowed.contains(&key.as_str()))
+        .map(|key| key.as_str())
+        .collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    unknown.sort_unstable();
+    Err(format!("{label} schema_version>=1 含未知字段: {unknown:?}"))
+}
+
+/// `published_at` 等 PIT 时间字段：允许 epoch 毫秒整数或 ISO-8601 文本。
+fn json_optional_timestamp(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<Option<u64>, String> {
+    let Some(value) = object.get(field) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    timestamp_to_ms(value).map(Some)
+}
+
+/// 原始字段快照：只接受对象或 `null`，严格模式禁止写入非对象残留值。
+fn json_raw_payload(
+    object: &serde_json::Map<String, serde_json::Value>,
+    strict: bool,
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(value) = object.get("raw_payload") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    if strict && !value.is_object() {
+        return Err("raw_payload 必须是对象".into());
+    }
+    Ok(Some(value.clone()))
+}
+
+/// 把 JSON 值解释为 epoch 毫秒时间戳。
+fn timestamp_to_ms(value: &serde_json::Value) -> Result<u64, String> {
+    if let Some(number) = value.as_u64() {
+        return Ok(number);
+    }
+    if let Some(number) = value.as_i64() {
+        return u64::try_from(number).map_err(|_| "时间戳不能早于 Unix epoch".to_string());
+    }
+    let text = value
+        .as_str()
+        .ok_or_else(|| "时间必须是 epoch 毫秒或 ISO-8601 字符串".to_string())?;
+    timestamp_text_to_ms(text)
+}
+
+/// 解析 `YYYY-MM-DD` / `YYYY-MM-DDTHH:MM:SS[.fff][Z|±HH:MM]`。
+///
+/// 无时区后缀时按 Asia/Shanghai(+08:00) 解释，与
+/// [`date_to_shanghai_midnight_ms`] 的日线时间轴保持一致；A 股公告时间都带
+/// `+08:00`，因此两种写法会落在同一毫秒上。
+fn timestamp_text_to_ms(text: &str) -> Result<u64, String> {
+    if text.len() < 10 {
+        return Err("时间必须是 YYYY-MM-DD 或 ISO-8601 字符串".into());
+    }
+    let (date, rest) = text.split_at(10);
+    // 日期午夜（+08:00）对应的 UTC 毫秒。
+    let base_ms = date_to_shanghai_midnight_ms(date)?;
+    let mut rest = rest;
+    if !rest.is_empty() {
+        let separator = rest.as_bytes()[0];
+        if !matches!(separator, b'T' | b't' | b' ') {
+            return Err("日期与时间之间必须使用 T 或空格分隔".into());
+        }
+        rest = &rest[1..];
+    }
+    let mut offset_ms: i64 = i64::try_from(SHANGHAI_OFFSET_MS).expect("上海偏移可表示为 i64");
+    // 时区后缀：时间部分自身不含 Z/+/-，因此首个出现处即偏移起点。
+    let clock_text = match rest.find(['Z', 'z', '+', '-']) {
+        Some(index) => {
+            let (clock, zone) = rest.split_at(index);
+            let sign = zone.as_bytes()[0];
+            let zone = &zone[1..];
+            if matches!(sign, b'Z' | b'z') {
+                if !zone.is_empty() {
+                    return Err("时区 Z 之后不能带其它字符".into());
+                }
+                offset_ms = 0;
+            } else {
+                let (zone_hour, zone_minute) = match zone.split_once(':') {
+                    Some((hour, minute)) => (hour, minute),
+                    None if zone.len() == 4 => zone.split_at(2),
+                    None => return Err("时区偏移必须是 ±HH:MM".into()),
+                };
+                let hour = zone_hour
+                    .parse::<u64>()
+                    .map_err(|_| "时区小时部分非法".to_string())?;
+                let minute = zone_minute
+                    .parse::<u64>()
+                    .map_err(|_| "时区分钟部分非法".to_string())?;
+                if hour > 26 || minute >= 60 {
+                    return Err("时区偏移超出范围".into());
+                }
+                let mut value = i64::try_from(hour * 3_600 + minute * 60)
+                    .expect("合法时区偏移可表示为 i64")
+                    * 1_000;
+                if sign == b'-' {
+                    value = -value;
+                }
+                offset_ms = value;
+            }
+            clock
+        }
+        None => rest,
+    };
+    let (clock_text, fraction) = match clock_text.split_once('.') {
+        Some((clock, fraction)) => (clock, fraction),
+        None => (clock_text, ""),
+    };
+    let mut clock_ms = if clock_text.is_empty() {
+        0
+    } else {
+        time_of_day_ms(clock_text)?
+    };
+    if !fraction.is_empty() {
+        if !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err("秒的小数部分必须是数字".into());
+        }
+        let digits = &fraction[..fraction.len().min(3)];
+        let scaled = digits
+            .parse::<u64>()
+            .map_err(|_| "秒的小数部分非法".to_string())?
+            * 10u64.pow(3 - digits.len() as u32);
+        clock_ms += scaled;
+    }
+    let days_ms = i64::try_from(base_ms)
+        .map_err(|_| "日期超出范围".to_string())?
+        .checked_add(SHANGHAI_OFFSET_MS as i64)
+        .ok_or_else(|| "日期时间戳溢出".to_string())?;
+    let clock_ms = i64::try_from(clock_ms).expect("一天的毫秒数可表示为 i64");
+    let timestamp = days_ms
+        .checked_add(clock_ms)
+        .and_then(|value| value.checked_sub(offset_ms))
+        .ok_or_else(|| "时间戳溢出".to_string())?;
+    u64::try_from(timestamp).map_err(|_| "时间必须不早于 Unix epoch".into())
 }
 
 fn parse_json_action_type(value: &str) -> Option<AshareCorporateActionType> {

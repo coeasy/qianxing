@@ -2,7 +2,8 @@ use qx_core::{
     InstrumentId, MarginMode, Order, OrderPolicy, OrderStatus, PositionMode, PositionSide, Price,
     Quantity, Side, TradingInstrumentSpec, TradingProduct, SCALE,
 };
-use qx_zhenlu::{MaxNotionalRule, PositionSnapshot, RiskContext, RiskGate, RiskRule};
+use qx_risk::{MaxNotionalRule, OrderRiskContext, OrderRiskPosition, RiskRule};
+use qx_zhenlu::{RiskContext, RiskGate};
 
 fn perpetual_spec() -> TradingInstrumentSpec {
     TradingInstrumentSpec {
@@ -68,7 +69,7 @@ fn reduce_only_close_uses_projected_exposure_instead_of_gross_plus_order() {
         max_order_notional_raw: None,
         max_position_notional_raw: Some(150 * SCALE),
     };
-    let position = PositionSnapshot::new(2 * SCALE, 200 * SCALE);
+    let position = OrderRiskPosition::new(2 * SCALE, 200 * SCALE);
 
     context
         .validate_order(&order(Side::Sell, SCALE, true), &position)
@@ -84,7 +85,7 @@ fn reduce_only_cannot_increase_or_flip_a_one_way_position() {
         max_order_notional_raw: None,
         max_position_notional_raw: Some(500 * SCALE),
     };
-    let position = PositionSnapshot::new(2 * SCALE, 200 * SCALE);
+    let position = OrderRiskPosition::new(2 * SCALE, 200 * SCALE);
 
     assert!(context
         .validate_order(&order(Side::Buy, SCALE, true), &position)
@@ -103,7 +104,7 @@ fn hedge_reduce_only_uses_the_selected_leg_and_cannot_cross_zero() {
         max_order_notional_raw: None,
         max_position_notional_raw: Some(500 * SCALE),
     };
-    let position = PositionSnapshot::new_with_multiplier(0, 400 * SCALE, SCALE)
+    let position = OrderRiskPosition::new_with_multiplier(0, 400 * SCALE, SCALE)
         .with_hedge_legs(2 * SCALE, -2 * SCALE);
 
     context
@@ -135,7 +136,7 @@ fn hedge_reduce_only_uses_the_selected_leg_and_cannot_cross_zero() {
 #[test]
 fn empty_risk_gate_still_enforces_reduce_only_account_invariant() {
     let gate = RiskGate::new();
-    let position = PositionSnapshot::new_with_multiplier(0, 400 * SCALE, SCALE)
+    let position = OrderRiskPosition::new_with_multiplier(0, 400 * SCALE, SCALE)
         .with_hedge_legs(2 * SCALE, -2 * SCALE);
 
     gate.check_with_price(
@@ -154,15 +155,50 @@ fn empty_risk_gate_still_enforces_reduce_only_account_invariant() {
 }
 
 #[test]
-fn legacy_max_notional_rule_also_uses_projected_exposure() {
+fn max_notional_rule_uses_projected_exposure() {
+    // 规则链已上收到 `qx-risk::RuleSet`：名义额折算只走 `OrderRiskContext` 一份
+    // 实现，因此规则的输入也必须是规范上下文而不是旧的持仓快照形状。
     let rule = MaxNotionalRule {
         max_notional: 150 * SCALE,
     };
-    let position = PositionSnapshot::new(2 * SCALE, 200 * SCALE);
-    rule.check_with_price(
+    let context = OrderRiskContext {
+        reference_price: Some(Price::from_raw(100 * SCALE)),
+        position: OrderRiskPosition {
+            net_qty: 2 * SCALE,
+            gross_notional: 200 * SCALE,
+            multiplier: 1,
+            long_qty: 0,
+            short_qty: 0,
+        },
+        ..OrderRiskContext::default()
+    };
+    rule.check(&context, &order(Side::Sell, SCALE, false))
+        .expect("RuleSet semantics must agree with projected exposure");
+    // 同一份投影在反向加仓时必须超限。
+    assert!(rule
+        .check(&context, &order(Side::Buy, 2 * SCALE, false))
+        .is_err());
+}
+
+#[test]
+fn risk_gate_wrapper_delegates_to_rule_set() {
+    // deprecated compat：`RiskGate` 只保留旧调用形状，判定来自 `RuleSet`。
+    let mut gate = RiskGate::new();
+    gate.add(Box::new(MaxNotionalRule {
+        max_notional: 150 * SCALE,
+    }));
+    let position = OrderRiskPosition::new(2 * SCALE, 200 * SCALE);
+    gate.check_with_price(
         &order(Side::Sell, SCALE, false),
         &position,
         Some(Price::from_raw(100 * SCALE)),
     )
-    .expect("legacy RiskGate semantics must agree with projected exposure");
+    .expect("RiskGate wrapper must agree with RuleSet");
+    assert!(gate
+        .check_with_price(
+            &order(Side::Buy, 2 * SCALE, false),
+            &position,
+            Some(Price::from_raw(100 * SCALE)),
+        )
+        .is_err());
 }

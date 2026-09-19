@@ -50,7 +50,9 @@
 | `python/qianxing_ccxt` | 公共 CCXT 多交易所 REST 数据/交易连接层；CCXT Pro 仅保留后续扩展接口 |
 | `qx-python` | PyO3 原生扩展、Arrow C Data Interface capsule 协议 |
 | `cpp/` | C++ Strategy API v1 稳定 C ABI、CMake 示例 |
-| `qx-cli` | 端到端回测演示与确定性自校验 |
+| `qx-cli` | 单一 CLI binary：命令分派、worker 装配、回测与运维命令，外加进程内确定性自校验 |
+
+`qx-cli` 是单个 binary（决策：不为拆进程而拆 crate），内部按职责分文件：`cli.rs` 是"命令名 → 处理器"的唯一分派点，未识别的命令打印 `未知命令: <x>` 并以退出码 2 fail closed；`worker_entry.rs` 用一张 `VENUE_ROLES` 角色白名单加 `VenueEntry` 登记表同时服务 `ccxt-worker` 与 `binance-worker`，新增角色只需在这张表登记一次；跨语言子进程的 Python 解释器统一由 `QX_PYTHON` 解析（缺省 `python`）。
 
 ## 快速开始
 
@@ -79,6 +81,9 @@ bash tools/build_python_wheel.sh
 # 全量测试
 cargo test --workspace
 
+# 架构不变量自检（V9 收口：单一分派点、无空风控门、回测装配唯一、能力矩阵证据、行数棘轮）
+python3 tools/check_architecture.py
+
 # 工业化统一入口：初始化、回测、Paper 主链路和实盘前检查
 cargo run -p qx-cli -- help
 cargo run -p qx-cli -- init qianxing.runtime.json
@@ -91,20 +96,19 @@ cargo run -p qx-cli -- doctor qianxing.runtime.json --json
 cargo run -p qx-cli -- config explain qianxing.runtime.json
 cargo run -p qx-cli -- config explain qianxing.runtime.json --json
 cargo run -p qx-cli -- config fingerprint qianxing.runtime.json
-cargo run -p qx-cli -- run backtest
+cargo run -p qx-cli -- backtest
 cargo run -p qx-cli -- run paper
 cargo run -p qx-cli -- status qianxing.runtime.json
 cargo run -p qx-cli -- report qianxing.runtime.json
 cargo run -p qx-cli -- report qianxing.runtime.json --json
-cargo run -p qx-cli -- backtest
 cargo run -p qx-cli -- builtin-strategies
 cargo run -p qx-cli -- strategy list
 cargo run -p qx-cli -- strategy init macd qianxing.strategy.macd.json
 cargo run -p qx-cli -- strategy backtest qianxing.strategy.macd.json deploy/qianxing.bar-frame.example.json
-cargo run -p qx-cli -- builtin-backtest sma_cross deploy/qianxing.bar-frame.example.json
-cargo run -p qx-cli -- multi-builtin-backtest spot_futures_arbitrage deploy/qianxing.bar-frame.example.json deploy/qianxing.bar-frame.okx.example.json
+cargo run -p qx-cli -- backtest builtin sma_cross deploy/qianxing.bar-frame.example.json
+cargo run -p qx-cli -- backtest multi-builtin spot_futures_arbitrage deploy/qianxing.bar-frame.example.json deploy/qianxing.bar-frame.okx.example.json
 cargo run -p qx-cli -- fast-backtest deploy/qianxing.fast-backtest.example.json
-cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.builtin-strategy.example.json deploy/qianxing.bar-frame.example.json
+cargo run -p qx-cli -- backtest deploy/qianxing.runtime.builtin-strategy.example.json deploy/qianxing.bar-frame.example.json
 cargo run -p qx-cli -- dataset-bundle deploy/qianxing.dataset-bundle.example.json data/datasets
 cargo run -p qx-cli -- dataset-bundle deploy/qianxing.dataset-bundle.bar-frame.example.json data/datasets deploy/qianxing.bar-frame.example.json
 cargo run -p qx-cli -- runtime-check deploy/qianxing.runtime.ccxt.example.json
@@ -115,9 +119,9 @@ cargo run -p qx-cli -- paper-check deploy/qianxing.runtime.paper-strategy.exampl
 cargo run -p qx-cli -- live-check deploy/qianxing.runtime.production.example.json
 
 # 内置 Rust、Python/C++ JSONL 策略直接复用 Bar 回测引擎；CCXT 实时模式会持续维护闭合 BarFrame 并按 digest 触发策略
-cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.strategy-backtest.example.json deploy/qianxing.bar-frame.example.json
+cargo run -p qx-cli -- backtest deploy/qianxing.runtime.strategy-backtest.example.json deploy/qianxing.bar-frame.example.json
 
-# strategy-backtest 会在运行时 data_dir/runs 下生成 summary.json、equity.csv、fills.csv，
+# backtest 会在运行时 data_dir/runs 下生成 summary.json、equity.csv、fills.csv，
 # 并与同一回测的 RunManifest 使用相同前缀，便于归档和二次分析
 
 # 校验运行时拓扑配置，并启动 paper API（默认示例配置）
@@ -135,11 +139,43 @@ cargo run -p qx-cli --release -- binance-submit-order deploy/qianxing.runtime.pr
 cargo run -p qx-cli --release -- paper-submit-order deploy/qianxing.runtime.example.json deploy/qianxing.paper-submit-order.example.json
 ```
 
+### 外部链路验收（缺凭据即 fail closed）
+
+```bash
+# Binance Spot 测试网络验收：runtime-check/live-check 必须先通过，
+# 缺少 QX_BINANCE_TESTNET_API_KEY / QX_BINANCE_TESTNET_API_SECRET 时以退出码 3 跳过交易所步骤
+python tools/binance_testnet_acceptance.py --binary target/release/qx-cli
+# CI 使用 --allow-skip，让离线半边始终执行
+python tools/binance_testnet_acceptance.py --binary target/release/qx-cli --allow-skip
+
+# C++ 外部策略进程：分别用 JSON 与列式两种协议跑一遍共享内存环契约
+python tools/verify_cpp_worker.py build/cpp/Release/qianxing_strategy_jsonl.exe shared_memory_json
+python tools/verify_cpp_worker.py build/cpp/Release/qianxing_strategy_jsonl.exe shared_memory_columnar
+```
+
+`deploy/qianxing.runtime.binance-testnet.example.json` 是测试网络拓扑模板：行情走
+`wss://stream.testnet.binance.vision/ws`，执行与对账 worker 默认指向 `paper` 之外的
+testnet 账户，凭据只从环境变量读取，配置文件中不落任何密钥。
+
 Windows 下可直接双击 `build.bat`。
 
-实现状态与未完成外部边界见：[V8 架构审计与重构方案](docs/自研量化框架架构审计与重构方案-V8.md) 和 [工业级落地验收与差距清单](docs/工业级落地验收与差距清单-V1.md)。
+实现状态与未完成外部边界见：现行重构基线 [自研量化框架重构方案 V9](docs/自研量化框架重构方案-V9.md)，历史审计见 [V8 架构审计与重构方案](docs/自研量化框架架构审计与重构方案-V8.md) 和 [工业级落地验收与差距清单](docs/工业级落地验收与差距清单-V1.md)。
 
 能力证据分级见：[maturity/capabilities.yaml](maturity/capabilities.yaml)。默认 `single_node` 使用 SQLite/Files；PostgreSQL、NATS、真实交易所沙盒和券商柜台不会因为代码或 feature 存在而被标记为生产批准。
+
+## 持续集成作业
+
+`.github/workflows/ci.yml` 把每条链路都钉在独立的作业上，任何一条断裂都会红：
+
+| 作业 | 覆盖链路 |
+| --- | --- |
+| `rust-core` | 全 workspace fmt/clippy/test、独立确定性自校验、架构不变量与能力矩阵证据门禁（`tools/check_architecture.py`）、Python 适配层契约 |
+| `python-wheel` | Linux/Windows × Python 3.10/3.12/3.13 wheel 构建、装入干净环境后原生扩展可用且指纹与纯 Python 一致 |
+| `feature-matrix` | `qx-cli` 在 sqlite / postgres / nats / postgres+nats 四种特性组合下可编译可测试 |
+| `service-backends` | `postgres:16` 与 `nats -js` 服务容器下跑 Outbox 租约/围栏/重试与 JetStream 一发一收幂等契约（`--ignored`） |
+| `runtime-contracts` | 全部非生产 runtime 示例的 `runtime-check`、`live-check` 失败即闭、Paper 进程边界 E2E |
+| `cpp-sdk` | Ubuntu/Windows/macOS 三平台 C++ SDK 构建、ring smoke、JSONL 契约、JSON 与列式两种共享内存协议 |
+| `venue-acceptance` | Binance 测试网络验收；无凭据只做离线 fail-closed 半边（`--allow-skip`） |
 
 Barter 对齐后的最终目标架构见：[牵星最终架构方案 V2：Barter 对齐版](docs/牵星最终架构方案-V2-Barter对齐版.md)。
 
@@ -179,24 +215,24 @@ Barter 对齐后的最终目标架构见：[牵星最终架构方案 V2：Barter
 完整架构方案：[`自研量化框架重规划方案-V5.md`](自研量化框架重规划方案-V5.md)
 
 本项目已完成 **Phase 0–4 的确定性内核与研究/协议闭环**，并补齐了 V5.1 的账户隔离账簿、合约乘数估值、真实事件重放、PIT 数据边界、L1 撮合容量、延迟/保证金模型、PaperVenue 恢复、Provider/因子/协议/调度/控制面的可执行实现。
-当前已增加可运行 HTTP/WebSocket 控制面、Operator 权限校验、单进程/共享文件/可选 SQLite 事务 API 限流、Snapshot/Diff 与事件游标、持续实时事件总线、有序关闭、可热替换 TLS 配置、PEM 证书加载/轮询式安全重载、mTLS `ServerConfig` 与客户端证书到 Operator 的可信映射、明文/TLS API 服务端入口、文件恢复、带并发追加锁的链式持久化审计、可选 SQLite/PostgreSQL 审计链/快照/任务租约/fencing token/EventLog 后端、Python/JSON DataStruct、PyO3 原生扩展与本机构建 wheel、Linux/macOS/Windows wheel CI 矩阵、Arrow C Data Interface 借用零拷贝与拥有型跨语言释放边界、带 rustls TLS 客户端、带 API key 握手头的 TLS WebSocket 用户流底座、HMAC-SHA256 签名边界、超时/限频/成交回报幂等的 REST Provider/Venue 适配器基线、Binance Spot 主网/Testnet HMAC 签名下单/撤单、`allOrders`/开放订单对账、公共 L1 REST `bookTicker`/WSS 流、签名用户流订阅会话、可注入重连退避驱动与 `executionReport` 用户事件映射、支持环境变量或 Secret Manager 投影文件且在新会话/新订单/新对账轮次重新加载凭证的独立 Binance 行情/用户流/对账 worker、LiveEventPipeline 事件→Kernel/EventLog/Ledger/账户余额快照归约与订单重启恢复、结算币种差异报告、Cron/Calendar/Event/Manual 调度与 JobWindow/Worker/带失败码与退避的确定性重试、超时人工介入、可校验 RunManifest、Provider 来源哈希与 JSON 血缘恢复、PIT 财务视图、按样本计算 IC/RankIC/衰减/换手的因子报告、带训练/验证区间和执行/风险模型绑定的因子候选、真实组内中性化、插件 manifest schema/hash 校验与 Ed25519 发布签名验证、带基准/持仓/费用/换手/回撤的回测报告、共享文件系统 claim 锁/fencing token 任务队列与租约、因子 DAG 和多 Venue 路由评分；连接池/读写分离、跨节点 HA、MQ、真实账户网络验收、其他供应商用户流认证/订阅与事件映射、逐家签名协议、证书签发、manylinux/musllinux 兼容性、发布签名和 WASM 仍需按实际供应商与部署环境接入。详见[工业级产品化实施路线图 V1](docs/工业级产品化实施路线图-V1.md)。
+当前已增加可运行 HTTP/WebSocket 控制面、Operator 权限校验、单进程/共享文件/可选 SQLite 事务 API 限流、Snapshot/Diff 与事件游标、持续实时事件总线、有序关闭、可热替换 TLS 配置、PEM 证书加载/轮询式安全重载、mTLS `ServerConfig` 与客户端证书到 Operator 的可信映射、明文/TLS API 服务端入口、文件恢复、带并发追加锁的链式持久化审计、可选 SQLite/PostgreSQL 审计链/快照/任务租约/fencing token/EventLog 后端、Python/JSON DataStruct、PyO3 原生扩展与本机构建 wheel、Linux/Windows（Python 3.10/3.12/3.13）wheel CI 矩阵、Arrow C Data Interface 借用零拷贝与拥有型跨语言释放边界、带 rustls TLS 客户端、带 API key 握手头的 TLS WebSocket 用户流底座、HMAC-SHA256 签名边界、超时/限频/成交回报幂等的 REST Provider/Venue 适配器基线、Binance Spot 主网/Testnet HMAC 签名下单/撤单、`allOrders`/开放订单对账、公共 L1 REST `bookTicker`/WSS 流、签名用户流订阅会话、可注入重连退避驱动与 `executionReport` 用户事件映射、支持环境变量或 Secret Manager 投影文件且在新会话/新订单/新对账轮次重新加载凭证的独立 Binance 行情/用户流/对账 worker、LiveEventPipeline 事件→Kernel/EventLog/Ledger/账户余额快照归约与订单重启恢复、结算币种差异报告、Cron/Calendar/Event/Manual 调度与 JobWindow/Worker/带失败码与退避的确定性重试、超时人工介入、可校验 RunManifest、Provider 来源哈希与 JSON 血缘恢复、PIT 财务视图、按样本计算 IC/RankIC/衰减/换手的因子报告、带训练/验证区间和执行/风险模型绑定的因子候选、真实组内中性化、插件 manifest schema/hash 校验与 Ed25519 发布签名验证、带基准/持仓/费用/换手/回撤的回测报告、共享文件系统 claim 锁/fencing token 任务队列与租约、因子 DAG 和多 Venue 路由评分；连接池/读写分离、跨节点 HA、MQ、真实账户网络验收、其他供应商用户流认证/订阅与事件映射、逐家签名协议、证书签发、manylinux/musllinux 兼容性、发布签名和 WASM 仍需按实际供应商与部署环境接入。详见[工业级产品化实施路线图 V1](docs/工业级产品化实施路线图-V1.md)。
 
 跨语言策略传输默认兼容 JSONL，也支持 `transport: "framed_json"` 的 QXSF 二进制分帧（版本、序号、长度上限、CRC32）；`transport: "shared_memory_json"` 会将同一 QXSF 帧放入双向固定槽位 SPSC mmap ring；`transport: "shared_memory_columnar"` 会将 Bar 历史编码为 QXCB 固定宽度列后放入同一 ring，适合减少行情数值 JSON 解析。示例：
 
 ```powershell
-cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.strategy-framed.example.json deploy/qianxing.bar-frame.example.json
+cargo run -p qx-cli -- backtest deploy/qianxing.runtime.strategy-framed.example.json deploy/qianxing.bar-frame.example.json
 ```
 
 共享内存策略 Worker 回测：
 
 ```powershell
-cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.strategy-shared.example.json deploy/qianxing.bar-frame.example.json
+cargo run -p qx-cli -- backtest deploy/qianxing.runtime.strategy-shared.example.json deploy/qianxing.bar-frame.example.json
 ```
 
 列式共享内存策略 Worker 回测：
 
 ```powershell
-cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.strategy-columnar.example.json deploy/qianxing.bar-frame.example.json
+cargo run -p qx-cli -- backtest deploy/qianxing.runtime.strategy-columnar.example.json deploy/qianxing.bar-frame.example.json
 ```
 
 共享内存传输层微基准（不代表完整策略端到端延迟）：

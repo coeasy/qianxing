@@ -7,13 +7,15 @@
 use super::{
     audit_entry_hash, validate_audit_chain, AuditEntry, AuditStore, ConsumerCheckpoint,
     ConsumerProjection, ConsumerStateStore, ControlCommandLease, ControlCommandQueueBackend,
-    DeadLetterRecord, JobLease, JobQueueBackend, OutboxEvent, OutboxLease, OutboxStore,
-    QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
+    DeadLetterRecord, EventLogStore, JobLease, JobQueueBackend, OutboxEvent, OutboxLease,
+    OutboxStore, QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
 };
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
+use qx_core::{Event, EventLog, QxResult};
 use qx_protocol::{AccountSnapshot, ProtocolError, SnapshotStore};
 use qx_scheduler::{JobRun, JobSpec};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 fn db_string(value: u64) -> String {
@@ -126,6 +128,26 @@ fn open(path: &Path) -> Result<Connection, StorageError> {
                  payload TEXT NOT NULL,
                  updated_ts TEXT NOT NULL,
                  PRIMARY KEY(group_id, projection_key)
+             );
+             CREATE TABLE IF NOT EXISTS qx_event_log_entries (
+                 name TEXT NOT NULL,
+                 position INTEGER NOT NULL,
+                 seq INTEGER NOT NULL,
+                 event_ts TEXT NOT NULL,
+                 prio INTEGER NOT NULL,
+                 dedup_key TEXT NOT NULL DEFAULT '',
+                 event_json TEXT NOT NULL,
+                 PRIMARY KEY (name, position)
+             );
+             CREATE UNIQUE INDEX IF NOT EXISTS qx_event_log_entries_seq
+                 ON qx_event_log_entries(name, seq);
+             CREATE UNIQUE INDEX IF NOT EXISTS qx_event_log_entries_dedup
+                 ON qx_event_log_entries(name, dedup_key) WHERE dedup_key <> '';
+             CREATE TABLE IF NOT EXISTS qx_event_log_state (
+                 name TEXT PRIMARY KEY NOT NULL,
+                 event_count INTEGER NOT NULL,
+                 next_seq TEXT NOT NULL,
+                 digest TEXT NOT NULL
              );",
         )
         .map_err(map_sqlite)?;
@@ -159,6 +181,12 @@ pub struct SqliteOutboxStore {
 
 #[derive(Clone, Debug)]
 pub struct SqliteConsumerStateStore {
+    path: PathBuf,
+}
+
+/// SQLite 事务 EventLog：append-only 行存 + manifest 摘要校验。
+#[derive(Clone, Debug)]
+pub struct SqliteEventLogStore {
     path: PathBuf,
 }
 
@@ -553,55 +581,7 @@ impl SqliteOutboxStore {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sqlite)?;
-        let existing: Option<OutboxEvent> = transaction
-            .query_row(
-                "SELECT topic, partition_key, sequence, schema_version, trace_id, payload, created_ts, attempts
-                 FROM qx_outbox_events WHERE event_id = ?1",
-                params![event.event_id],
-                |row| {
-                    Ok(OutboxEvent {
-                        event_id: event.event_id.clone(),
-                        topic: row.get(0)?,
-                        partition_key: row.get(1)?,
-                        sequence: parse_sqlite_u64(&row.get::<_, String>(2)?)?,
-                        schema_version: row.get::<_, i64>(3)? as u32,
-                        trace_id: row.get(4)?,
-                        payload: row.get(5)?,
-                        created_ts: parse_sqlite_u64(&row.get::<_, String>(6)?)?,
-                        attempts: parse_sqlite_u64(&row.get::<_, String>(7)?)? as u32,
-                    })
-                },
-            )
-            .optional()
-            .map_err(map_sqlite)?;
-        if let Some(existing) = existing {
-            if existing.same_fact(&event) {
-                transaction.commit().map_err(map_sqlite)?;
-                return Ok(());
-            }
-            return Err(StorageError::Conflict(format!(
-                "event_id {} 已被不同 Outbox 事件占用",
-                event.event_id
-            )));
-        }
-        transaction
-            .execute(
-                "INSERT INTO qx_outbox_events
-                 (event_id, topic, partition_key, sequence, schema_version, trace_id, payload, created_ts, attempts)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    event.event_id,
-                    event.topic,
-                    event.partition_key,
-                    db_string(event.sequence),
-                    event.schema_version as i64,
-                    event.trace_id,
-                    event.payload,
-                    db_string(event.created_ts),
-                    db_string(event.attempts as u64),
-                ],
-            )
-            .map_err(map_sqlite)?;
+        append_outbox_event(&transaction, &event)?;
         transaction.commit().map_err(map_sqlite)
     }
 
@@ -797,6 +777,63 @@ impl SqliteOutboxStore {
             .map_err(map_sqlite)?;
         transaction.commit().map_err(map_sqlite)
     }
+}
+
+/// 在调用方事务中幂等追加一条 Outbox 事实。
+///
+/// `event_id` 主键就是重试幂等键；同一 `event_id` 携带不同事实时按冲突处理，
+/// 与 `SqliteOutboxStore::append` 和 PostgreSQL 的 `append_outbox_in_transaction`
+/// 保持同一条语义。调用方必须先 `event.validate()`。
+fn append_outbox_event(connection: &Connection, event: &OutboxEvent) -> Result<(), StorageError> {
+    let existing: Option<OutboxEvent> = connection
+        .query_row(
+            "SELECT topic, partition_key, sequence, schema_version, trace_id, payload, created_ts, attempts
+             FROM qx_outbox_events WHERE event_id = ?1",
+            params![event.event_id],
+            |row| {
+                Ok(OutboxEvent {
+                    event_id: event.event_id.clone(),
+                    topic: row.get(0)?,
+                    partition_key: row.get(1)?,
+                    sequence: parse_sqlite_u64(&row.get::<_, String>(2)?)?,
+                    schema_version: row.get::<_, i64>(3)? as u32,
+                    trace_id: row.get(4)?,
+                    payload: row.get(5)?,
+                    created_ts: parse_sqlite_u64(&row.get::<_, String>(6)?)?,
+                    attempts: parse_sqlite_u64(&row.get::<_, String>(7)?)? as u32,
+                })
+            },
+        )
+        .optional()
+        .map_err(map_sqlite)?;
+    if let Some(existing) = existing {
+        if existing.same_fact(event) {
+            return Ok(());
+        }
+        return Err(StorageError::Conflict(format!(
+            "event_id {} 已被不同 Outbox 事件占用",
+            event.event_id
+        )));
+    }
+    connection
+        .execute(
+            "INSERT INTO qx_outbox_events
+             (event_id, topic, partition_key, sequence, schema_version, trace_id, payload, created_ts, attempts)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                event.event_id,
+                event.topic,
+                event.partition_key,
+                db_string(event.sequence),
+                event.schema_version as i64,
+                event.trace_id,
+                event.payload,
+                db_string(event.created_ts),
+                db_string(event.attempts as u64),
+            ],
+        )
+        .map_err(map_sqlite)?;
+    Ok(())
 }
 
 fn validate_sqlite_outbox_name(event_id: &str) -> Result<(), StorageError> {
@@ -1840,6 +1877,485 @@ impl JobQueueBackend for SqliteJobQueue {
 
     fn recover_expired_leases(&self, now: u64) -> Result<Vec<u64>, StorageError> {
         self.recover_expired(now)
+    }
+}
+
+// ----------------------------- Event Log ---------------------------------
+
+/// EventLog 名称沿用文件/分段/PostgreSQL 后端的同一套白名单规则，避免同一
+/// 运行时日志名在不同后端之间被降级接受。
+fn validate_event_log_name(name: &str) -> Result<(), StorageError> {
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || !name
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '-' | '_'))
+    {
+        return Err(StorageError::InvalidName(name.into()));
+    }
+    Ok(())
+}
+
+/// SQLite INTEGER 是带符号 64 位；超出范围的 seq 必须显式失败，
+/// 不能被静默截断成另一个事实身份。
+fn event_seq_column(seq: u64) -> Result<i64, StorageError> {
+    i64::try_from(seq)
+        .map_err(|_| StorageError::Conflict(format!("事件 seq {seq} 超出 SQLite INTEGER 范围")))
+}
+
+fn event_row_index(index: usize) -> Result<i64, StorageError> {
+    i64::try_from(index).map_err(|_| StorageError::Conflict("事件行号超出范围".into()))
+}
+
+fn event_row_count(value: i64) -> Result<u64, StorageError> {
+    u64::try_from(value).map_err(|_| StorageError::Conflict("事件日志计数为负数".into()))
+}
+
+fn encode_event_json(event: &Event) -> Result<String, StorageError> {
+    serde_json::to_string(event)
+        .map_err(|error| StorageError::Io(format!("SQLite 事件序列化失败: {error}")))
+}
+
+fn decode_event_json(value: &str) -> Result<Event, StorageError> {
+    serde_json::from_str(value)
+        .map_err(|error| StorageError::Io(format!("SQLite 事件 JSON 非法: {error}")))
+}
+
+/// 同一条日志内 dedup_key 不得重复：文件后端由归约器保证这一不变量，
+/// SQLite 用部分唯一索引 + 这里的前置校验把它变成存储层硬约束。
+fn validate_event_log_dedup_keys(events: &[Event]) -> Result<(), StorageError> {
+    let mut seen = BTreeSet::new();
+    for event in events {
+        if event.metadata.dedup_key.is_empty() {
+            continue;
+        }
+        if !seen.insert(event.metadata.dedup_key.as_str()) {
+            return Err(StorageError::Conflict(format!(
+                "事件日志内 dedup_key {} 重复",
+                event.metadata.dedup_key
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn insert_event_row(
+    connection: &Connection,
+    name: &str,
+    position: i64,
+    event: &Event,
+) -> Result<(), StorageError> {
+    let seq = event_seq_column(event.seq)?;
+    let event_ts = db_string(event.ts);
+    let dedup_key = event.metadata.dedup_key.as_str();
+    let event_json = encode_event_json(event)?;
+    connection.execute(
+        "INSERT INTO qx_event_log_entries(name, position, seq, event_ts, prio, dedup_key, event_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            name,
+            position,
+            seq,
+            event_ts,
+            i64::from(event.prio),
+            dedup_key,
+            event_json
+        ],
+    )
+    .map_err(map_sqlite)?;
+    Ok(())
+}
+
+fn stored_event_at_seq(
+    connection: &Connection,
+    name: &str,
+    seq: u64,
+) -> Result<Option<Event>, StorageError> {
+    let seq = event_seq_column(seq)?;
+    connection
+        .query_row(
+            "SELECT event_json FROM qx_event_log_entries WHERE name = ?1 AND seq = ?2",
+            params![name, seq],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(map_sqlite)?
+        .map(|value| decode_event_json(&value))
+        .transpose()
+}
+
+fn stored_event_by_dedup_key(
+    connection: &Connection,
+    name: &str,
+    dedup_key: &str,
+) -> Result<Option<Event>, StorageError> {
+    if dedup_key.is_empty() {
+        return Ok(None);
+    }
+    connection
+        .query_row(
+            "SELECT event_json FROM qx_event_log_entries WHERE name = ?1 AND dedup_key = ?2",
+            params![name, dedup_key],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(map_sqlite)?
+        .map(|value| decode_event_json(&value))
+        .transpose()
+}
+
+/// 读取 manifest 行：`(event_count, next_seq, digest)`。
+fn read_event_log_state(
+    connection: &Connection,
+    name: &str,
+) -> Result<Option<(u64, u64, u64)>, StorageError> {
+    let state = connection
+        .query_row(
+            "SELECT event_count, next_seq, digest FROM qx_event_log_state WHERE name = ?1",
+            params![name],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_sqlite)?;
+    let (event_count, next_seq, digest) = match state {
+        Some(state) => state,
+        None => return Ok(None),
+    };
+    Ok(Some((
+        event_row_count(event_count)?,
+        parse_db_u64(&next_seq, "event_log.next_seq")?,
+        parse_db_u64(&digest, "event_log.digest")?,
+    )))
+}
+
+fn write_event_log_state(
+    connection: &Connection,
+    name: &str,
+    log: &EventLog,
+) -> Result<(), StorageError> {
+    let event_count = event_row_index(log.len())?;
+    let next_seq = db_string(log.next_seq());
+    let digest = db_string(log.digest());
+    connection
+        .execute(
+            "INSERT INTO qx_event_log_state(name, event_count, next_seq, digest)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(name) DO UPDATE SET event_count = excluded.event_count,
+                                        next_seq = excluded.next_seq,
+                                        digest = excluded.digest",
+            params![name, event_count, next_seq, digest],
+        )
+        .map_err(map_sqlite)?;
+    Ok(())
+}
+
+/// 顺序读整条日志，并复用 Kernel 的 seq/因果排序校验和 manifest 摘要比对；
+/// 语义与 `SegmentedEventLogStore::read_if_exists` 一致。
+fn load_event_log(connection: &Connection, name: &str) -> Result<Option<EventLog>, StorageError> {
+    let (event_count, next_seq, digest) = match read_event_log_state(connection, name)? {
+        Some(state) => state,
+        None => return Ok(None),
+    };
+    let mut statement = connection
+        .prepare(
+            "SELECT position, event_json FROM qx_event_log_entries
+             WHERE name = ?1 ORDER BY position ASC",
+        )
+        .map_err(map_sqlite)?;
+    let rows = statement
+        .query_map(params![name], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(map_sqlite)?;
+    let mut log = EventLog::new();
+    for (expected_position, row) in rows.enumerate() {
+        let expected_position = expected_position as i64;
+        let (position, event_json) = row.map_err(map_sqlite)?;
+        if position != expected_position {
+            return Err(StorageError::Conflict(format!(
+                "事件日志 position 不连续：期望 {expected_position}，实际 {position}"
+            )));
+        }
+        log.append(decode_event_json(&event_json)?);
+    }
+    log.validate().map_err(StorageError::Core)?;
+    if log.len() as u64 != event_count || log.next_seq() != next_seq || log.digest() != digest {
+        return Err(StorageError::Conflict(
+            "事件日志 manifest 与事件内容摘要不一致".into(),
+        ));
+    }
+    Ok(Some(log))
+}
+
+/// 在调用方事务内把整条日志按 append-only 语义落库。
+///
+/// 已存在的前缀必须逐事件相等；日志未增长时只重写 manifest，使同一内容的
+/// 重复保存成为幂等重试而不是错误。
+fn write_event_log_in_transaction(
+    connection: &Connection,
+    name: &str,
+    log: &EventLog,
+) -> Result<(), StorageError> {
+    log.validate().map_err(StorageError::Core)?;
+    validate_event_log_dedup_keys(log.events())?;
+    let stored = load_event_log(connection, name)?.unwrap_or_default();
+    if stored.len() > log.len()
+        || stored
+            .events()
+            .iter()
+            .zip(log.events())
+            .any(|(old, new)| old != new)
+    {
+        return Err(StorageError::NonAppendOnly(name.into()));
+    }
+    let start = stored.len();
+    if start == log.len() {
+        return write_event_log_state(connection, name, log);
+    }
+    for (offset, event) in log.events()[start..].iter().enumerate() {
+        insert_event_row(connection, name, event_row_index(start + offset)?, event)?;
+    }
+    write_event_log_state(connection, name, log)
+}
+
+/// 在调用方事务内逐条幂等追加事件，并同步刷新 manifest。
+fn append_events_in_transaction(
+    connection: &Connection,
+    name: &str,
+    events: &[Event],
+    log: &mut EventLog,
+) -> Result<usize, StorageError> {
+    let mut appended = 0;
+    for event in events {
+        let dedup_key = event.metadata.dedup_key.as_str();
+        if let Some(stored) = stored_event_by_dedup_key(connection, name, dedup_key)? {
+            if stored == *event {
+                continue;
+            }
+            return Err(StorageError::Conflict(format!(
+                "dedup_key {dedup_key} 已被不同事件占用"
+            )));
+        }
+        if let Some(stored) = stored_event_at_seq(connection, name, event.seq)? {
+            if stored == *event {
+                continue;
+            }
+            return Err(StorageError::NonAppendOnly(name.into()));
+        }
+        log.append_checked(event.clone())
+            .map_err(StorageError::Core)?;
+        let position = event_row_index(log.len() - 1)?;
+        insert_event_row(connection, name, position, event)?;
+        appended += 1;
+    }
+    if appended > 0 {
+        write_event_log_state(connection, name, log)?;
+    }
+    Ok(appended)
+}
+
+impl SqliteEventLogStore {
+    pub fn new(path: impl Into<PathBuf>) -> Result<Self, StorageError> {
+        let store = Self { path: path.into() };
+        let _ = open(&store.path)?;
+        Ok(store)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// append-only 保存整条日志；返回数据库文件路径作为写入标记，
+    /// 与文件后端的 `write` 返回路径保持同一调用约定。
+    pub fn write(&self, name: &str, log: &EventLog) -> Result<PathBuf, StorageError> {
+        validate_event_log_name(name)?;
+        let mut connection = open(&self.path)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite)?;
+        write_event_log_in_transaction(&transaction, name, log)?;
+        transaction.commit().map_err(map_sqlite)?;
+        Ok(self.path.clone())
+    }
+
+    /// 与 PostgreSQL 后端同构的事务入口：EventLog 追加和 Outbox 投影要么
+    /// 一起提交，要么一起回滚，禁止“先写事实、后丢出站事件”。
+    pub fn write_with_outbox(
+        &self,
+        name: &str,
+        log: &EventLog,
+        outbox_events: &[OutboxEvent],
+    ) -> Result<PathBuf, StorageError> {
+        validate_event_log_name(name)?;
+        for event in outbox_events {
+            event.validate()?;
+        }
+        let mut connection = open(&self.path)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite)?;
+        write_event_log_in_transaction(&transaction, name, log)?;
+        for event in outbox_events {
+            append_outbox_event(&transaction, event)?;
+        }
+        transaction.commit().map_err(map_sqlite)?;
+        Ok(self.path.clone())
+    }
+
+    pub fn read(&self, name: &str) -> Result<EventLog, StorageError> {
+        self.read_if_exists(name)?
+            .ok_or_else(|| StorageError::NotFound(format!("SQLite event log {name} 不存在")))
+    }
+
+    /// 首次启动时日志不存在不是错误；已存在但摘要不一致必须失败。
+    pub fn read_if_exists(&self, name: &str) -> Result<Option<EventLog>, StorageError> {
+        validate_event_log_name(name)?;
+        let connection = open(&self.path)?;
+        load_event_log(&connection, name)
+    }
+
+    /// 单条事实的幂等追加：返回 `false` 表示该事实已按同一 dedup_key 落库。
+    pub fn append(&self, name: &str, event: &Event) -> Result<bool, StorageError> {
+        self.append_many(name, std::slice::from_ref(event))
+            .map(|appended| appended == 1)
+    }
+
+    /// 批量追加，返回真正写入的行数；重复事实与已存在 dedup_key 的相同事件
+    /// 会被跳过，同一 dedup_key 承载不同事实则按冲突失败。
+    pub fn append_many(&self, name: &str, events: &[Event]) -> Result<usize, StorageError> {
+        validate_event_log_name(name)?;
+        validate_event_log_dedup_keys(events)?;
+        let mut connection = open(&self.path)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite)?;
+        let mut log = match load_event_log(&transaction, name)? {
+            Some(log) => log,
+            None => EventLog::new(),
+        };
+        let appended = append_events_in_transaction(&transaction, name, events, &mut log)?;
+        transaction.commit().map_err(map_sqlite)?;
+        Ok(appended)
+    }
+
+    /// 重放用的范围读：返回 `seq > after_seq` 的事件，按日志写入顺序排列。
+    pub fn read_range(
+        &self,
+        name: &str,
+        after_seq: u64,
+        limit: usize,
+    ) -> Result<Vec<Event>, StorageError> {
+        validate_event_log_name(name)?;
+        let connection = open(&self.path)?;
+        if read_event_log_state(&connection, name)?.is_none() {
+            return Err(StorageError::NotFound(format!(
+                "SQLite 事件日志 {name} 不存在"
+            )));
+        }
+        let after_seq = event_seq_column(after_seq)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut statement = connection
+            .prepare(
+                "SELECT event_json FROM qx_event_log_entries
+                 WHERE name = ?1 AND seq > ?2 ORDER BY position ASC LIMIT ?3",
+            )
+            .map_err(map_sqlite)?;
+        let rows = statement
+            .query_map(params![name, after_seq, limit], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(map_sqlite)?;
+        rows.map(|row| decode_event_json(&row.map_err(map_sqlite)?))
+            .collect()
+    }
+
+    /// 最后一条已落库事件的 seq；`None` 表示日志为空或尚不存在。
+    pub fn last_seq(&self, name: &str) -> Result<Option<u64>, StorageError> {
+        validate_event_log_name(name)?;
+        let connection = open(&self.path)?;
+        let last: Option<i64> = connection
+            .query_row(
+                "SELECT seq FROM qx_event_log_entries
+                 WHERE name = ?1 ORDER BY position DESC LIMIT 1",
+                params![name],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_sqlite)?;
+        last.map(event_row_count).transpose()
+    }
+
+    pub fn event_count(&self, name: &str) -> Result<u64, StorageError> {
+        validate_event_log_name(name)?;
+        let connection = open(&self.path)?;
+        Ok(read_event_log_state(&connection, name)?.map_or(0, |(count, _, _)| count))
+    }
+
+    pub fn next_seq(&self, name: &str) -> Result<Option<u64>, StorageError> {
+        validate_event_log_name(name)?;
+        let connection = open(&self.path)?;
+        Ok(read_event_log_state(&connection, name)?.map(|(_, next_seq, _)| next_seq))
+    }
+
+    /// manifest 中记录的摘要；需要验证内容一致性时使用 `validate`。
+    pub fn digest(&self, name: &str) -> Result<Option<u64>, StorageError> {
+        validate_event_log_name(name)?;
+        let connection = open(&self.path)?;
+        Ok(read_event_log_state(&connection, name)?.map(|(_, _, digest)| digest))
+    }
+
+    /// 全量顺序读 + 因果排序校验 + manifest 摘要比对；日志不存在时报错。
+    pub fn validate(&self, name: &str) -> Result<(), StorageError> {
+        self.read(name).map(|_| ())
+    }
+
+    /// 供归约器/重放判断某条外部事实是否已经落库。空 dedup_key 不是去重键。
+    pub fn contains_dedup_key(&self, name: &str, dedup_key: &str) -> Result<bool, StorageError> {
+        validate_event_log_name(name)?;
+        if dedup_key.is_empty() {
+            return Ok(false);
+        }
+        let connection = open(&self.path)?;
+        let found: Option<i64> = connection
+            .query_row(
+                "SELECT seq FROM qx_event_log_entries WHERE name = ?1 AND dedup_key = ?2",
+                params![name, dedup_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_sqlite)?;
+        Ok(found.is_some())
+    }
+
+    /// 已存在的日志名，等价于文件后端的 `list`。
+    pub fn list(&self) -> Result<Vec<String>, StorageError> {
+        let connection = open(&self.path)?;
+        let mut statement = connection
+            .prepare("SELECT name FROM qx_event_log_state ORDER BY name ASC")
+            .map_err(map_sqlite)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(map_sqlite)?;
+        rows.collect::<Result<Vec<String>, rusqlite::Error>>()
+            .map_err(map_sqlite)
+    }
+}
+
+impl EventLogStore for SqliteEventLogStore {
+    fn save(&self, name: &str, log: &EventLog) -> QxResult<()> {
+        self.write(name, log).map(|_| ()).map_err(Into::into)
+    }
+
+    fn load(&self, name: &str) -> QxResult<EventLog> {
+        self.read(name).map_err(Into::into)
     }
 }
 

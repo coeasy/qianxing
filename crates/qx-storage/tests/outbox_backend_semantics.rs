@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "postgres")]
-use qx_storage::PostgresConsumerStateStore;
+use qx_storage::{PostgresConsumerStateStore, PostgresOutboxStore};
 #[cfg(feature = "sqlite")]
 use qx_storage::{SqliteConsumerStateStore, SqliteOutboxStore};
 
@@ -271,4 +271,77 @@ fn postgres_transactional_consumer_projection_contract() {
     let dsn = std::env::var("QX_TEST_POSTGRES_DSN")
         .expect("QX_TEST_POSTGRES_DSN must be set for PostgreSQL integration");
     assert_transactional_consumer_semantics(PostgresConsumerStateStore::connect(&dsn).unwrap());
+}
+
+/// PostgreSQL 上 Outbox 的租约、围栏令牌与重试语义。
+///
+/// 这里刻意不复用 `assert_semantics`：它包含 `available_outbox` 全表为空的断言，
+/// 只能独占一个数据库，而服务容器作业里多个后端契约测试共用同一个 DSN。
+#[cfg(feature = "postgres")]
+#[test]
+#[ignore = "requires QX_TEST_POSTGRES_DSN"]
+fn postgres_outbox_lease_fencing_and_retry_contract() {
+    let dsn = std::env::var("QX_TEST_POSTGRES_DSN")
+        .expect("QX_TEST_POSTGRES_DSN must point at an isolated test database");
+    let store = PostgresOutboxStore::connect(&dsn).expect("connect PostgreSQL OutboxStore");
+    let event_id = format!(
+        "postgres-outbox-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after unix epoch")
+            .as_nanos()
+    );
+    let append = || OutboxEvent {
+        event_id: event_id.clone(),
+        ..event()
+    };
+    store.append_outbox(append()).unwrap();
+    store.append_outbox(append()).unwrap();
+    let attempts = |store: &PostgresOutboxStore| -> Vec<OutboxEvent> {
+        store
+            .available_outbox(17)
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event_id == event_id)
+            .collect()
+    };
+
+    let first = store
+        .claim_outbox(&event_id, "relay-a", 10, 5)
+        .expect("首次租约");
+    assert_eq!(
+        attempts(&store)
+            .first()
+            .expect("同一 event_id 的重复投递必须合并成一行")
+            .attempts,
+        0
+    );
+    assert!(matches!(
+        store.claim_outbox(&event_id, "relay-b", 11, 5),
+        Err(StorageError::LeaseHeld { .. })
+    ));
+    assert!(matches!(
+        store.ack_outbox(&event_id, "relay-a", first.fencing_token, 16),
+        Err(StorageError::LeaseExpired { .. })
+    ));
+    let second = store
+        .claim_outbox(&event_id, "relay-b", 16, 5)
+        .expect("租约过期后可以接管");
+    assert_eq!(second.fencing_token, first.fencing_token + 1);
+    store
+        .retry_outbox(&event_id, "relay-b", second.fencing_token, 17)
+        .unwrap();
+    assert_eq!(attempts(&store)[0].attempts, 1);
+    let third = store
+        .claim_outbox(&event_id, "relay-a", 17, 5)
+        .expect("重试后可以再次投递");
+    store
+        .ack_outbox(&event_id, "relay-a", third.fencing_token, 18)
+        .unwrap();
+    assert!(store
+        .available_outbox(18)
+        .unwrap()
+        .into_iter()
+        .all(|event| event.event_id != event_id));
 }

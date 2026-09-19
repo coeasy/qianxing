@@ -17,6 +17,8 @@ use qx_guanxing::QuoteTick;
 use qx_oms::Oms;
 #[cfg(feature = "postgres")]
 use qx_storage::PostgresEventLogStore;
+#[cfg(feature = "sqlite")]
+use qx_storage::SqliteEventLogStore;
 use qx_storage::{
     project_event_log_to_outbox, EventLogFileStore, FileOutboxStore, SegmentedEventLogStore,
     StorageError,
@@ -379,6 +381,8 @@ pub struct RuntimeBalanceDiscrepancy {
 enum RuntimeEventStore {
     Flat(EventLogFileStore, FileOutboxStore),
     Segmented(SegmentedEventLogStore, FileOutboxStore),
+    #[cfg(feature = "sqlite")]
+    Sqlite(SqliteEventLogStore),
     #[cfg(feature = "postgres")]
     Postgres(PostgresEventLogStore),
 }
@@ -388,6 +392,10 @@ impl RuntimeEventStore {
         match self {
             Self::Flat(store, _) => store.read_if_exists(name),
             Self::Segmented(store, _) => store.read_if_exists(name),
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite(store) => store
+                .read_if_exists(name)
+                .map_err(|error| StorageError::Io(format!("SQLite EventLog: {error:?}"))),
             #[cfg(feature = "postgres")]
             Self::Postgres(store) => store
                 .read_if_exists(name)
@@ -412,6 +420,8 @@ impl RuntimeEventStore {
                 }
                 Ok(path)
             }
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite(store) => store.write_with_outbox(name, log, &outbox_events),
             #[cfg(feature = "postgres")]
             Self::Postgres(store) => store.write_with_outbox(name, log, &outbox_events),
         }
@@ -487,6 +497,19 @@ impl LiveEventPipeline {
             log_name,
             currency,
         )
+    }
+
+    /// 使用 SQLite 事务 EventLog 打开单机持久运行管线。事件事实与 Outbox
+    /// 投影在同一事务内提交，与队列/控制面共享同一个数据库文件。
+    #[cfg(feature = "sqlite")]
+    pub fn open_sqlite(
+        path: impl Into<std::path::PathBuf>,
+        log_name: impl Into<String>,
+        currency: impl Into<String>,
+    ) -> QxResult<Self> {
+        let store = SqliteEventLogStore::new(path)
+            .map_err(|error| QxError::Permanent(format!("打开 SQLite EventLog 失败: {error:?}")))?;
+        Self::open_with_store(RuntimeEventStore::Sqlite(store), log_name, currency)
     }
 
     /// 使用 PostgreSQL 事务 EventLog 打开运行管线。队列、控制面和 EventLog
@@ -1807,6 +1830,78 @@ mod tests {
         let restored = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
         assert_eq!(restored.snapshot(), pipeline.snapshot());
         assert_eq!(restored.ledger().entries().len(), 3);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// SQLite 事务 EventLog 的单机持久化门禁：事实、Ledger 与去重语义必须
+    /// 与文件后端一致，并能在进程重启（重新打开数据库）后完整回放。
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn sqlite_pipeline_persists_replays_and_dedups_across_reopen() {
+        let root = temp_root("sqlite");
+        std::fs::create_dir_all(&root).unwrap();
+        let db = root.join("qx-runtime.sqlite");
+        let mut pipeline = LiveEventPipeline::open_sqlite(&db, "binance-main", "USDT").unwrap();
+        pipeline.register_order(order(), 100).unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: 7,
+                    venue_order_id: None,
+                },
+                110,
+                111,
+                1,
+                "ack-7",
+            ))
+            .unwrap();
+        let fill = Fill {
+            order_id: 7,
+            qty: Quantity::from_i64(2),
+            price: Price::from_i64(100),
+            fee: Money::from_i64(1),
+            ts: 115,
+            account_id: "main".into(),
+            venue_id: Some("BINANCE".into()),
+            venue_order_id: Some("9001".into()),
+            ..Fill::default()
+        };
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Fill { fill: fill.clone() },
+                fill.ts,
+                121,
+                2,
+                "sqlite-fill-1",
+            ))
+            .unwrap();
+        assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
+        assert!(pipeline.ledger().entries().len() >= 2);
+        let duplicate = pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Fill { fill: fill.clone() },
+                115,
+                122,
+                3,
+                "sqlite-fill-duplicate",
+            ))
+            .unwrap();
+        assert!(duplicate.deduplicated);
+
+        drop(pipeline);
+        let mut restored = LiveEventPipeline::open_sqlite(&db, "binance-main", "USDT").unwrap();
+        assert_eq!(restored.orders()[0].status, OrderStatus::Filled);
+        assert_eq!(restored.ledger().entries().len(), 3);
+        let replayed_duplicate = restored
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Fill { fill },
+                115,
+                123,
+                4,
+                "sqlite-fill-duplicate-again",
+            ))
+            .unwrap();
+        assert!(replayed_duplicate.deduplicated);
         let _ = std::fs::remove_dir_all(root);
     }
 

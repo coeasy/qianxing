@@ -4,9 +4,9 @@ use qx_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub mod decision;
-pub mod exposure;
-pub mod volatility;
+pub mod rules;
+
+pub use rules::{MaxNotionalRule, MaxQtyRule, NoShortRule, RiskRule, RuleSet};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RiskSnapshot {
@@ -37,6 +37,10 @@ impl RiskSnapshot {
     }
 }
 
+/// 组合级快照风控动作。
+///
+/// 历史上 `decision::RiskAction` 与本枚举变体完全重复且零调用，已随死代码删除；
+/// 本枚举是仓库内唯一的组合级动作表示。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RiskDecision {
     Allow,
@@ -81,6 +85,32 @@ pub struct OrderRiskPosition {
 }
 
 impl OrderRiskPosition {
+    pub fn new(net_qty: i128, gross_notional: i128) -> Self {
+        Self {
+            net_qty,
+            gross_notional,
+            multiplier: 1,
+            long_qty: 0,
+            short_qty: 0,
+        }
+    }
+
+    pub fn new_with_multiplier(net_qty: i128, gross_notional: i128, multiplier: i128) -> Self {
+        Self {
+            net_qty,
+            gross_notional,
+            multiplier: multiplier.max(1),
+            long_qty: 0,
+            short_qty: 0,
+        }
+    }
+
+    pub fn with_hedge_legs(mut self, long_qty: i128, short_qty: i128) -> Self {
+        self.long_qty = long_qty;
+        self.short_qty = short_qty;
+        self
+    }
+
     pub fn active_qty_for(self, order: &Order) -> i128 {
         let policy = order.policy.unwrap_or_default();
         if policy.position_mode == PositionMode::Hedge {
@@ -120,45 +150,30 @@ pub struct OrderRiskDecision {
 
 pub const ORDER_RISK_RULE_SET_VERSION: &str = "qx-order-risk-v1";
 
+/// 投影名义额超限时唯一使用的拒绝消息。
+///
+/// `OrderRiskContext::validate_order` 与规则链的 `MaxNotionalRule` 共用该常量，
+/// 保证回测、Paper 和实盘三条路径的 violations 集合可直接逐条比对。
+pub const MAX_POSITION_NOTIONAL_MESSAGE: &str = "投影持仓名义额超过账户限额";
+
 impl RiskEngine {
     /// 统一订单级入口。底层校验仍只有 `OrderRiskContext::validate_order` 一份，
     /// 本方法只负责把结果投影为跨应用层可审计的决定，避免不同执行器复制
     /// “是否允许下单”的判断。
+    ///
+    /// 需要叠加配置化静态规则时调用 [`Self::evaluate_order_with_rules`]；两者共用
+    /// [`RuleSet::evaluate`]，因此投影字段与 `rule_set_version` 语义完全一致。
     pub fn evaluate_order(context: &OrderRiskContext, order: &Order) -> OrderRiskDecision {
-        let policy = order.policy.unwrap_or_default();
-        let reference_price = order.limit.or(context.reference_price);
-        let signed_delta = match order.side {
-            Side::Buy => Some(order.qty.raw()),
-            Side::Sell => order.qty.raw().checked_neg(),
-        };
-        let projected_position_raw = signed_delta
-            .and_then(|delta| context.position.active_qty_for(order).checked_add(delta));
-        let projected_margin_raw = context
-            .instrument_spec
-            .as_ref()
-            .zip(reference_price)
-            .and_then(|(spec, price)| {
-                spec.initial_margin(order.qty.raw(), price.raw(), policy.leverage)
-                    .ok()
-            });
-        match context.validate_order(order) {
-            Ok(()) => OrderRiskDecision {
-                allowed: true,
-                violations: Vec::new(),
-                projected_position_raw,
-                projected_margin_raw,
-                reference_price_raw: reference_price.map(|price| price.raw()),
-                rule_set_version: ORDER_RISK_RULE_SET_VERSION.into(),
-            },
-            Err(error) => OrderRiskDecision {
-                allowed: false,
-                violations: vec![error.to_string()],
-                projected_position_raw,
-                projected_margin_raw,
-                reference_price_raw: reference_price.map(|price| price.raw()),
-                rule_set_version: ORDER_RISK_RULE_SET_VERSION.into(),
-            },
-        }
+        RuleSet::new().evaluate(context, order)
+    }
+
+    /// 带规则集的统一订单级入口：账户级唯一实现 + 配置化静态规则。
+    pub fn evaluate_order_with_rules(
+        context: &OrderRiskContext,
+        order: &Order,
+        rules: &RuleSet,
+    ) -> OrderRiskDecision {
+        rules.evaluate(context, order)
     }
 }
 
@@ -197,38 +212,12 @@ impl OrderRiskContext {
         }
 
         self.validate_reduce_only(order)?;
-        let current_qty = self.position.active_qty_for(order);
-        let signed_delta = match order.side {
-            Side::Buy => order.qty.raw(),
-            Side::Sell => order
-                .qty
-                .raw()
-                .checked_neg()
-                .ok_or_else(|| QxError::Invariant("订单数量取反溢出".into()))?,
-        };
-        let projected_qty = current_qty
-            .checked_add(signed_delta)
-            .ok_or_else(|| QxError::Invariant("投影持仓数量溢出".into()))?;
         if let Some(limit) = self.max_position_notional_raw {
-            let current_abs = current_qty
-                .checked_abs()
-                .ok_or_else(|| QxError::Invariant("当前持仓绝对值溢出".into()))?;
-            let projected_abs = projected_qty
-                .checked_abs()
-                .ok_or_else(|| QxError::Invariant("投影持仓绝对值溢出".into()))?;
-            let current_leg_notional = spec.notional(current_abs, price.raw())?;
-            let projected_leg_notional = spec.notional(projected_abs, price.raw())?;
-            let other_notional = self
-                .position
-                .gross_notional
-                .saturating_sub(current_leg_notional);
-            let projected_gross_notional = other_notional
-                .checked_add(projected_leg_notional)
-                .ok_or_else(|| QxError::Invariant("投影持仓名义额溢出".into()))?;
+            let (projected_qty, projected_gross) = self.project_exposure(spec, order, price)?;
             let snapshot = RiskSnapshot {
                 portfolio_id: order.account_id.clone(),
                 timestamp: 0,
-                gross_exposure: projected_gross_notional,
+                gross_exposure: projected_gross,
                 net_exposure: projected_qty,
                 volatility_bps: 0,
                 drawdown_bps: 0,
@@ -239,7 +228,7 @@ impl OrderRiskContext {
                 RiskDecision::Allow
             ) {
                 return Err(QxError::BusinessViolation(
-                    "投影持仓名义额超过账户限额".into(),
+                    MAX_POSITION_NOTIONAL_MESSAGE.into(),
                 ));
             }
         }
@@ -260,7 +249,49 @@ impl OrderRiskContext {
         Ok(())
     }
 
-    fn validate_reduce_only(&self, order: &Order) -> QxResult<()> {
+    /// 投影持仓名义额的唯一实现：返回 `(投影后净数量, 投影后组合 gross 名义额)`。
+    ///
+    /// `validate_order` 与规则链的 `MaxNotionalRule` 都调用本方法，名义额一律走
+    /// `TradingInstrumentSpec::notional`，不允许任何上层再写一份 `/1e9` 折算。
+    pub fn project_exposure(
+        &self,
+        spec: &TradingInstrumentSpec,
+        order: &Order,
+        price: Price,
+    ) -> QxResult<(i128, i128)> {
+        let current_qty = self.position.active_qty_for(order);
+        let signed_delta = match order.side {
+            Side::Buy => order.qty.raw(),
+            Side::Sell => order
+                .qty
+                .raw()
+                .checked_neg()
+                .ok_or_else(|| QxError::Invariant("订单数量取反溢出".into()))?,
+        };
+        let projected_qty = current_qty
+            .checked_add(signed_delta)
+            .ok_or_else(|| QxError::Invariant("投影持仓数量溢出".into()))?;
+        let current_abs = current_qty
+            .checked_abs()
+            .ok_or_else(|| QxError::Invariant("当前持仓绝对值溢出".into()))?;
+        let projected_abs = projected_qty
+            .checked_abs()
+            .ok_or_else(|| QxError::Invariant("投影持仓绝对值溢出".into()))?;
+        let current_leg_notional = spec.notional(current_abs, price.raw())?;
+        let projected_leg_notional = spec.notional(projected_abs, price.raw())?;
+        let other_notional = self
+            .position
+            .gross_notional
+            .saturating_sub(current_leg_notional);
+        let projected_gross_notional = other_notional
+            .checked_add(projected_leg_notional)
+            .ok_or_else(|| QxError::Invariant("投影持仓名义额溢出".into()))?;
+        Ok((projected_qty, projected_gross_notional))
+    }
+
+    /// reduce-only 不变式：不依赖产品规格与账户限额，规则链即使上下文缺规格
+    /// 也必须先满足该条件，因此单独暴露给 [`crate::RuleSet`] 与上层门面复用。
+    pub fn validate_reduce_only(&self, order: &Order) -> QxResult<()> {
         let policy = order.policy.unwrap_or_default();
         if !policy.reduce_only {
             return Ok(());

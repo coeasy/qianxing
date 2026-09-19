@@ -17,6 +17,7 @@ from . import (
     build_dataset_bundle_manifest,
     create_provider,
     screen_bar_frames,
+    serialize_corporate_actions,
 )
 
 
@@ -76,8 +77,15 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         query = AshareActionQuery(args.code, args.start, args.end, args.as_of)
         actions, manifest = create_provider(args.provider).fetch_corporate_actions(query)
+        # v1 信封：顶层携带 schema_version/source/as_of，Rust 侧据此启用严格模式
+        # 并按 published_at <= as_of 复核 PIT 可见性；actions 行本身保持兼容。
         args.output.write_text(
-            json.dumps([json.loads(action.to_json()) for action in actions], ensure_ascii=False, indent=2),
+            serialize_corporate_actions(
+                actions,
+                source=manifest.provider,
+                instrument=manifest.instrument,
+                as_of=query.as_of,
+            ),
             encoding="utf-8",
         )
         manifest_path = args.manifest or args.output.with_suffix(".manifest.json")

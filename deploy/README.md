@@ -52,7 +52,7 @@ cargo run --release -p qx-cli -- config explain qianxing.runtime.json
 cargo run --release -p qx-cli -- config validate qianxing.runtime.json
 cargo run --release -p qx-cli -- config fingerprint qianxing.runtime.json
 cargo run --release -p qx-cli -- config lock qianxing.runtime.json qianxing.runtime.locked.json
-cargo run --release -p qx-cli -- run backtest
+cargo run --release -p qx-cli -- backtest
 cargo run --release -p qx-cli -- run paper
 cargo run --release -p qx-cli -- backtest
 cargo run --release -p qx-cli -- paper-check deploy/qianxing.runtime.paper-strategy.example.json
@@ -152,7 +152,7 @@ Paper Execution worker 可以配置 `paper_initial_cash_raw`，启动时通过�
 
 该样例同时展示 `strategies[]` 多策略配置。每个策略实例的 `id` 必须等于对应 Strategy worker id；调度任务的 `owner` 必须填写该策略实例，多个策略共用 JobQueue 时不会互相领取任务。
 
-双腿套利可使用 `multi-builtin-backtest <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity]`。两条 BarFrame 必须时间戳对齐；信号由同一个套利策略生成，再分别通过统一撮合、手续费、风控和 Ledger 回测，适用于跨交易所价差与现货/期货基差策略。示例输入为 `qianxing.bar-frame.example.json` 与 `qianxing.bar-frame.okx.example.json`。
+双腿套利可使用 `backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity]`。两条 BarFrame 必须时间戳对齐；信号由同一个套利策略生成，再分别通过统一撮合、手续费、风控和 Ledger 回测，适用于跨交易所价差与现货/期货基差策略。示例输入为 `qianxing.bar-frame.example.json` 与 `qianxing.bar-frame.okx.example.json`。
 
 多标的、多币种批量回测使用 `fast-backtest manifest.json`。manifest 的 `jobs[]` 每项配置一个独立 `runtime`、`bars` 和可选 `market_spec`，CLI 会并行运行多个隔离账户/标的任务，适合同时比较 BTC、ETH、SOL，现货、永续、期货以及不同策略参数。示例见 `qianxing.fast-backtest.example.json`；每个 runtime 可以继续使用 `strategies[]` 配置多策略实例。
 
@@ -165,7 +165,7 @@ Rust/C++ 也可以编译成独立策略进程，通过 `strategy.external_execut
 策略子进程不会继承父进程的交易凭证环境；`external_env` 仅允许非敏感业务参数，包含 `SECRET`、`TOKEN`、`PASSWORD`、`API_KEY`、`PRIVATE_KEY` 或 `CREDENTIAL` 的变量名会被拒绝。
 
 同一套 Python/C++/Rust JSONL 策略也可以直接进入 Bar 回测：
-`cargo run -p qx-cli -- strategy-backtest deploy/qianxing.runtime.strategy-backtest.example.json deploy/qianxing.bar-frame.example.json [market-spec.json]`。回测传入的 `bars` 只包含当前撮合 Bar 之前的数据，成交仍由 Rust `BacktestEngine` 统一处理。策略配置可将 `transport` 设为 `framed_json`，使用带版本、序号、长度上限和 CRC32 的二进制分帧；也可设为 `shared_memory_json` 或 `shared_memory_columnar` 使用双向 SPSC mmap ring；对应示例为 `deploy/qianxing.runtime.strategy-framed.example.json`、`deploy/qianxing.runtime.strategy-shared.example.json` 和 `deploy/qianxing.runtime.strategy-columnar.example.json`。
+`cargo run -p qx-cli -- backtest deploy/qianxing.runtime.strategy-backtest.example.json deploy/qianxing.bar-frame.example.json [market-spec.json]`。回测传入的 `bars` 只包含当前撮合 Bar 之前的数据，成交仍由 Rust `BacktestEngine` 统一处理。策略配置可将 `transport` 设为 `framed_json`，使用带版本、序号、长度上限和 CRC32 的二进制分帧；也可设为 `shared_memory_json` 或 `shared_memory_columnar` 使用双向 SPSC mmap ring；对应示例为 `deploy/qianxing.runtime.strategy-framed.example.json`、`deploy/qianxing.runtime.strategy-shared.example.json` 和 `deploy/qianxing.runtime.strategy-columnar.example.json`。
 
 回测策略还可通过 `strategy.dataset_bundle_path` 绑定冻结的数据 Bundle。配置后启动门禁会校验 Bundle 的 `bars` fingerprint/行数，以及已支持的 `corporate_actions`、`calendar` 文件内容 fingerprint/行数，避免策略实际使用的研究组件与清单不一致；可运行的绑定示例见 `deploy/qianxing.runtime.builtin-strategy.example.json`。
 
@@ -190,8 +190,8 @@ Bundle 的其它组件使用 `strategy.dataset_component_paths` 显式绑定，�
 
 ```powershell
 cargo run --release -p qx-cli -- builtin-strategies
-cargo run --release -p qx-cli -- builtin-backtest macd deploy/qianxing.bar-frame.example.json deploy/qianxing.binance.spot.spec.json
-cargo run --release -p qx-cli -- strategy-backtest deploy/qianxing.runtime.builtin-strategy.example.json deploy/qianxing.bar-frame.example.json
+cargo run --release -p qx-cli -- backtest builtin macd deploy/qianxing.bar-frame.example.json deploy/qianxing.binance.spot.spec.json
+cargo run --release -p qx-cli -- backtest deploy/qianxing.runtime.builtin-strategy.example.json deploy/qianxing.bar-frame.example.json
 ```
 
 内置策略包括 SMA/EMA 交叉、MACD、RSI、布林带、Donchian 突破、动量、均值回归、网格、ATR/Keltner 趋势、VWAP 回归、波动率突破，以及配对、跨交易所、基差、现货/期货四类双腿套利。套利策略额外配置 `builtin_reference_instrument` 和 `builtin_reference_bars_snapshot_path`；跨交易所时主腿/对冲腿可以分别由不同 CCXT REST MarketData worker 维护，现货腿可设置 `builtin_reference_margin_mode: "cash"` 与 `builtin_reference_leverage: 1`，避免把期货杠杆参数发送给现货交易所。
@@ -227,7 +227,7 @@ cargo run --release -p qx-cli -- ccxt-fetch-ohlcv `
   BTC/USDT.OKX 1704067200000 1706745600000 bars.json 1h
 cargo run --release -p qx-cli -- ccxt-market-spec `
   deploy/qianxing.ccxt.exchange.example.json BTC/USDT.OKX market.json
-cargo run --release -p qx-cli -- ccxt-backtest bars.json 5 20 market.json
+cargo run --release -p qx-cli -- backtest builtin sma-cross bars.json market.json
 ```
 
 ## A 股数据源、快速选股与回测
@@ -332,7 +332,7 @@ Python 标准化公司行为 JSON 会在回测启动时转换并合并到规则�
 快速试跑内置策略也可以使用一条命令：
 
 ```powershell
-cargo run --release -p qx-cli -- ccxt-builtin-backtest `
+cargo run --release -p qx-cli -- backtest ccxt-builtin `
   deploy/qianxing.ccxt.exchange.example.json macd `
   BTC/USDT.OKX 1704067200000 1706745600000 1h `
   deploy/qianxing.ccxt.okx.perpetual.spec.json 1

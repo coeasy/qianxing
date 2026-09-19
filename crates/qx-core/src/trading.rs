@@ -158,6 +158,25 @@ impl TradingInstrumentSpec {
         Ok(())
     }
 
+    /// 校验交易所成交回报的精度约束（tick/step 对齐）。
+    ///
+    /// 与 `validate_order` 的差别是刻意的：`min_qty` 只约束下单数量，一笔合规订单可以被
+    /// 拆成多笔小于最小下单量的成交，因此回报侧不套用该下限；落在 tick/step 之外的回报
+    /// 意味着事实与冻结产品规格冲突，上层必须按未知结果处理而不是静默记账或截断。
+    pub fn validate_fill(&self, qty: i128, price: i128) -> QxResult<()> {
+        if qty <= 0 || qty % self.qty_step != 0 {
+            return Err(QxError::BusinessViolation(
+                "成交数量不是正数或不在数量步长上".into(),
+            ));
+        }
+        if price <= 0 || price % self.price_tick != 0 {
+            return Err(QxError::BusinessViolation(
+                "成交价格不是正数或不在价格 tick 上".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn maintenance_margin(&self, qty: i128, price: i128) -> QxResult<i128> {
         self.notional(qty, price)?
             .checked_mul(i128::from(self.maintenance_margin_bps))

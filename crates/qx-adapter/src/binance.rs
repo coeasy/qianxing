@@ -1121,11 +1121,12 @@ impl BinanceSpotVenue {
                 }
             }
             "CANCELED" => {
-                self.mark_cancelled(client_order_id)?;
-                events.push(VenueEvent::Cancelled {
-                    client_order_id,
-                    ts: event_ts,
-                });
+                if self.mark_cancelled(client_order_id)? {
+                    events.push(VenueEvent::Cancelled {
+                        client_order_id,
+                        ts: event_ts,
+                    });
+                }
             }
             "EXPIRED" | "REJECTED" => {
                 self.state = ConnectorState::ReconcileRequired;
@@ -1328,14 +1329,24 @@ impl BinanceSpotVenue {
             price.raw(),
             fee.raw(),
         );
-        if !self.seen_fill_keys.insert(key) {
+        if self.seen_fill_keys.contains(&key) {
             return Ok(None);
         }
         let order = self
             .orders
             .get_mut(&client_order_id)
             .ok_or_else(|| QxError::ReconcileRequired("Binance 成交对应订单不存在".into()))?;
+        if order.status.is_terminal() {
+            // 本地订单已终态（撤单/成完/拒绝），远端却又推来成交：这是真实的状态分歧，
+            // 只能按未知结果交给对账，绝不能伪造一条成交事实把终态订单改写。
+            return Err(QxError::ReconcileRequired(format!(
+                "Binance 订单 {} 本地已终态 {:?} 但远端仍有成交回报",
+                client_order_id, order.status
+            )));
+        }
         if qty.raw() <= 0 || qty.raw() > order.remaining().raw() {
+            // 回报越界时不占用去重键：否则一次虚假回报会让该笔成交在对账后永远无法
+            // 被重新接受（去重键只在回报真正落到本地状态后才登记）。
             return Err(QxError::ReconcileRequired(
                 "Binance 成交数量超过本地订单剩余量".into(),
             ));
@@ -1368,16 +1379,28 @@ impl BinanceSpotVenue {
         };
         order.trace_fill(&mut fill, Some(&self.id), Some(venue_order_id));
         self.last_event_ts = self.last_event_ts.max(fill.ts);
+        self.seen_fill_keys.insert(key);
         Ok(Some(VenueEvent::Fill(fill)))
     }
 
-    fn mark_cancelled(&mut self, client_order_id: u64) -> QxResult<()> {
+    /// 应用远端撤单回报，返回本地状态是否真的推进到 `Cancelled`。
+    ///
+    /// 重复的撤单回报返回 `false`（幂等，不产生第二条事实）；订单在本地已因成交或拒绝
+    /// 进入终态时返回错误——那是本地与远端的真实分歧，只能交给对账，绝不能把终态改写
+    /// 成 Cancelled。
+    fn mark_cancelled(&mut self, client_order_id: u64) -> QxResult<bool> {
         let order = self
             .orders
             .get_mut(&client_order_id)
             .ok_or_else(|| QxError::ReconcileRequired("Binance 取消回报对应订单不存在".into()))?;
+        if order.status == OrderStatus::Cancelled {
+            return Ok(false);
+        }
         if order.status.is_terminal() {
-            return Ok(());
+            return Err(QxError::ReconcileRequired(format!(
+                "Binance 订单 {} 本地已终态 {:?} 但远端回报撤单",
+                client_order_id, order.status
+            )));
         }
         if !matches!(order.status, OrderStatus::CancelPending) {
             order
@@ -1388,7 +1411,8 @@ impl BinanceSpotVenue {
         order
             .status
             .transition(OrderStatus::Cancelled)
-            .map_err(QxError::Invariant)
+            .map_err(QxError::Invariant)?;
+        Ok(true)
     }
 
     fn request(

@@ -16,6 +16,7 @@ use std::thread::JoinHandle;
 
 mod data_binding;
 mod pipeline;
+mod worker_policy;
 
 pub use data_binding::{RuntimeDatasetBinding, RuntimeResearchBinding};
 pub use pipeline::{
@@ -23,6 +24,7 @@ pub use pipeline::{
     PipelineMetricsSnapshot, RuntimeBalanceDiscrepancy, RuntimeEventEnvelope, RuntimeExternalEvent,
     RuntimeIngestReceipt,
 };
+pub use worker_policy::{FieldScope, RoleFieldStatus, WorkerRoleFieldScopes, ALL_WORKER_ROLES};
 
 /// 将共享 EventLog 运行时适配为应用层执行端口。
 ///
@@ -50,36 +52,59 @@ impl qx_application::EventAppender for LiveEventPipeline {
         &mut self,
         envelope: qx_application::ExecutionEventEnvelope,
     ) -> Result<(), String> {
-        let event = match envelope.event {
-            qx_application::ExecutionEvent::Accepted {
-                client_order_id,
-                venue_order_id,
-            } => RuntimeExternalEvent::Accepted {
-                client_order_id,
-                venue_order_id: Some(venue_order_id),
-            },
-            qx_application::ExecutionEvent::Fill(fill) => {
-                RuntimeExternalEvent::Fill { fill: *fill }
+        let receipt = match envelope.event {
+            qx_application::ExecutionEvent::MarketQuote { instrument, quote } => {
+                self.ingest(RuntimeEventEnvelope::market_quote(
+                    instrument,
+                    quote,
+                    envelope.event_ts,
+                    envelope.source_seq,
+                    envelope.correlation_id,
+                ))
             }
-            qx_application::ExecutionEvent::FillWithSpec { fill, spec } => {
-                RuntimeExternalEvent::FillWithSpec { fill, spec }
-            }
-            qx_application::ExecutionEvent::Cancelled { client_order_id } => {
-                RuntimeExternalEvent::Cancelled { client_order_id }
-            }
-            qx_application::ExecutionEvent::ReconcileRequired { client_order_id } => {
-                RuntimeExternalEvent::ReconcileRequired { client_order_id }
+            event => {
+                let event = match event {
+                    qx_application::ExecutionEvent::Accepted {
+                        client_order_id,
+                        venue_order_id,
+                    } => RuntimeExternalEvent::Accepted {
+                        client_order_id,
+                        venue_order_id: Some(venue_order_id),
+                    },
+                    qx_application::ExecutionEvent::Fill(fill) => {
+                        RuntimeExternalEvent::Fill { fill: *fill }
+                    }
+                    qx_application::ExecutionEvent::FillWithSpec { fill, spec } => {
+                        RuntimeExternalEvent::FillWithSpec { fill, spec }
+                    }
+                    qx_application::ExecutionEvent::Cancelled { client_order_id } => {
+                        RuntimeExternalEvent::Cancelled { client_order_id }
+                    }
+                    qx_application::ExecutionEvent::ReconcileRequired { client_order_id } => {
+                        RuntimeExternalEvent::ReconcileRequired { client_order_id }
+                    }
+                    qx_application::ExecutionEvent::MarketQuote { .. } => {
+                        unreachable!("MarketQuote 在上面的分支处理")
+                    }
+                };
+                self.ingest(RuntimeEventEnvelope::venue(
+                    event,
+                    envelope.event_ts,
+                    envelope.receive_ts,
+                    envelope.source_seq,
+                    envelope.correlation_id,
+                ))
             }
         };
-        self.ingest(RuntimeEventEnvelope::venue(
-            event,
-            envelope.event_ts,
-            envelope.receive_ts,
-            envelope.source_seq,
-            envelope.correlation_id,
-        ))
-        .map(|_| ())
-        .map_err(|error| format!("执行事实归约失败: {error:?}"))
+        receipt
+            .map(|_| ())
+            .map_err(|error| format!("执行事实归约失败: {error:?}"))
+    }
+}
+
+impl qx_application::LedgerProbe for LiveEventPipeline {
+    fn ledger_entry_count(&self) -> usize {
+        self.ledger().entries().len()
     }
 }
 
@@ -560,6 +585,7 @@ pub enum ApiTransport {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TlsPaths {
     pub certificate_chain: String,
     pub private_key: String,
@@ -567,12 +593,14 @@ pub struct TlsPaths {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OperatorConfig {
     pub permission: Permission,
     pub certificate: String,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApiRuntimeConfig {
     pub bind: String,
     pub transport: ApiTransport,
@@ -605,6 +633,7 @@ pub enum StorageConsistency {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StorageRuntimeConfig {
     pub backend: StorageBackend,
     #[serde(default)]
@@ -662,6 +691,7 @@ fn default_messaging_worker_stale_after_ms() -> u64 {
 /// 事件 Outbox/MQ worker 的运行参数。Stream、consumer、复制和保留策略仍由
 /// NATS/部署系统创建；运行时只负责连接既有 subject 并持续执行 relay。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MessagingRuntimeConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -738,6 +768,7 @@ pub enum WorkerRole {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkerConfig {
     pub id: String,
     pub role: WorkerRole,
@@ -770,6 +801,7 @@ pub struct WorkerConfig {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CredentialEnv {
     pub api_key: String,
     pub secret: String,
@@ -779,6 +811,7 @@ pub struct CredentialEnv {
 /// 文件内容不进入运行时 JSON、健康详情或事件日志；worker 在建立新连接、
 /// 新一轮对账和新订单执行前重新读取文件，以支持原子替换式轮换。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CredentialFiles {
     pub api_key: String,
     pub secret: String,
@@ -910,6 +943,7 @@ impl StrategyTargetSnapshot {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SchedulerRuntimeConfig {
     #[serde(default = "default_scheduler_state_path")]
     pub state_path: String,
@@ -932,7 +966,31 @@ impl Default for SchedulerRuntimeConfig {
     }
 }
 
+/// 回测/Paper/Live 共用的可序列化账户级风控规则集配置。判定实现唯一存在于
+/// `qx-risk::RuleSet`；本结构只负责把 JSON 配置映射为规则参数。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RiskRulesConfig {
+    /// 规则集版本，随判定结果与运行摘要输出，用于结果归因。
+    #[serde(default = "default_risk_rules_version")]
+    pub version: String,
+    /// 单笔最大数量（128-bit 定点 raw）。缺省=不启用该规则。
+    #[serde(default)]
+    pub max_qty_raw: Option<i128>,
+    /// 投影名义额上限（128-bit 定点 raw）。缺省=不启用该规则。
+    #[serde(default)]
+    pub max_notional_raw: Option<i128>,
+    /// 是否禁止建立空头。
+    #[serde(default)]
+    pub no_short: bool,
+}
+
+fn default_risk_rules_version() -> String {
+    "risk-rules-cfg-v1".into()
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StrategyRuntimeConfig {
     /// 多策略运行时中用于绑定 Strategy worker 的稳定 ID；旧版单策略配置可省略。
     #[serde(default)]
@@ -943,6 +1001,10 @@ pub struct StrategyRuntimeConfig {
     pub max_orders: u64,
     #[serde(default)]
     pub account_id: Option<String>,
+    /// 回测与 Strategy worker 共用的账户级风控规则集；未配置时使用默认规则集
+    /// （仅 reduce-only 不变式），运行摘要记录其默认版本号。
+    #[serde(default)]
+    pub risk_rules: Option<RiskRulesConfig>,
     #[serde(default)]
     pub venue_id: Option<String>,
     #[serde(default)]
@@ -1087,6 +1149,7 @@ impl Default for StrategyRuntimeConfig {
             id: None,
             version: default_strategy_version(),
             max_orders: default_strategy_max_orders(),
+            risk_rules: None,
             account_id: None,
             venue_id: None,
             instrument: None,
@@ -1141,6 +1204,7 @@ impl Default for StrategyRuntimeConfig {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
     pub schema_version: u32,
     pub environment: String,
@@ -1167,7 +1231,8 @@ pub struct RuntimeConfig {
 
 impl RuntimeConfig {
     pub fn from_json(payload: &str) -> Result<Self, String> {
-        let config: Self = serde_json::from_str(payload)
+        let payload = strip_config_comments(payload)?;
+        let config: Self = serde_json::from_str(&payload)
             .map_err(|error| format!("运行时配置 JSON 无效: {error}"))?;
         config.validate()?;
         Ok(config)
@@ -1973,6 +2038,35 @@ impl RuntimeConfig {
             {
                 return Err(format!("worker id 为空或重复: {}", worker.id));
             }
+            // 角色字段可见性由 `WorkerRole::field_scopes` 单点判定，且与启用开关
+            // 无关：把一个角色永不读取的字段绑到该 worker 上就是配置错误。
+            match worker.role_field_status() {
+                RoleFieldStatus::Ok => {}
+                RoleFieldStatus::Forbidden { field } => {
+                    return Err(format!(
+                        "{} {field} 不能配置在 {:?} 角色；该角色的运行路径不会读取它",
+                        worker.id, worker.role
+                    ))
+                }
+                RoleFieldStatus::Missing { field } => {
+                    return Err(format!(
+                        "{} {:?} 角色必须配置 {field}",
+                        worker.id, worker.role
+                    ))
+                }
+                RoleFieldStatus::CredentialSource => {
+                    return Err(format!(
+                        "{} 必须且只能配置一份有效的 credential_env 或 credential_files",
+                        worker.id
+                    ))
+                }
+                RoleFieldStatus::PaperCashOnRealVenue => {
+                    return Err(format!(
+                        "{} paper_initial_cash_raw 只能配置在 Paper worker",
+                        worker.id
+                    ))
+                }
+            }
             if worker
                 .instrument_spec_path
                 .as_deref()
@@ -1985,17 +2079,6 @@ impl RuntimeConfig {
                 .is_some_and(|amount| amount <= 0)
             {
                 return Err(format!("{} paper_initial_cash_raw 必须为正数", worker.id));
-            }
-            if worker.paper_initial_cash_raw.is_some()
-                && !worker
-                    .venue_id
-                    .as_deref()
-                    .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
-            {
-                return Err(format!(
-                    "{} paper_initial_cash_raw 只能配置在 Paper worker",
-                    worker.id
-                ));
             }
             if worker
                 .max_order_notional_raw
@@ -2060,56 +2143,17 @@ impl RuntimeConfig {
                     ));
                 }
             }
-            match worker.role {
-                WorkerRole::UserStream
-                | WorkerRole::Execution
-                | WorkerRole::SpreadRecovery
-                | WorkerRole::Reconciler => {
-                    if worker
-                        .account_id
-                        .as_deref()
-                        .map(str::trim)
-                        .unwrap_or_default()
-                        .is_empty()
-                        || worker
-                            .venue_id
-                            .as_deref()
-                            .map(str::trim)
-                            .unwrap_or_default()
-                            .is_empty()
-                    {
-                        return Err(format!(
-                            "{} worker 必须配置 account_id 和 venue_id",
-                            worker.id
-                        ));
-                    }
-                    if is_binance(&worker.venue_id) {
-                        let has_env = valid_credential_env(worker.credential_env.as_ref());
-                        let has_files = valid_credential_files(worker.credential_files.as_ref());
-                        if has_env == has_files {
-                            return Err(format!(
-                                "{} Binance worker 必须且只能配置有效 credential_env 或 credential_files",
-                                worker.id
-                            ));
-                        }
-                    }
-                }
-                WorkerRole::Api
-                | WorkerRole::MarketData
-                | WorkerRole::Scheduler
-                | WorkerRole::Strategy
-                | WorkerRole::OutboxRelay
-                | WorkerRole::EventConsumer => {}
-            }
-            if matches!(worker.role, WorkerRole::MarketData | WorkerRole::UserStream)
-                && worker
-                    .endpoint
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default()
-                    .is_empty()
+            // account_id / venue_id 的必需性与凭据来源的唯一性已经由
+            // `role_field_status` 判定；这里只补 Binance 私有接口对凭据的强制要求。
+            if worker.role.uses_private_venue()
+                && is_binance(&worker.venue_id)
+                && !worker.has_valid_credential_env()
+                && !worker.has_valid_credential_files()
             {
-                return Err(format!("{} worker 必须配置 endpoint", worker.id));
+                return Err(format!(
+                    "{} Binance worker 必须配置有效 credential_env 或 credential_files",
+                    worker.id
+                ));
             }
             if worker.role == WorkerRole::MarketData
                 && is_binance(&worker.venue_id)
@@ -2158,29 +2202,31 @@ fn is_binance(venue_id: &Option<String>) -> bool {
         .unwrap_or(false)
 }
 
-fn valid_credential_env(credentials: Option<&CredentialEnv>) -> bool {
-    credentials
-        .map(|credentials| {
-            [credentials.api_key.as_str(), credentials.secret.as_str()]
-                .iter()
-                .all(|name| {
-                    !name.trim().is_empty()
-                        && name
-                            .chars()
-                            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-                })
-        })
-        .unwrap_or(false)
-}
-
-fn valid_credential_files(credentials: Option<&CredentialFiles>) -> bool {
-    credentials
-        .map(|credentials| {
-            [credentials.api_key.as_str(), credentials.secret.as_str()]
-                .iter()
-                .all(|path| !path.trim().is_empty())
-        })
-        .unwrap_or(false)
+/// 运行时配置允许以 `_` 开头的注释键承载运维说明；它们在结构体反序列化前被
+/// 递归剥离，因此既不会进入 `config_fingerprint`，也不会因为开启
+/// `deny_unknown_fields` 而报错。除此之外的未知键一律失败——拼错一个风控字段
+/// 不能静默退化成“该字段没有配置”。
+fn strip_config_comments(payload: &str) -> Result<String, String> {
+    fn prune(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(entries) => {
+                entries.retain(|key, _| !key.starts_with('_'));
+                for (_, child) in entries.iter_mut() {
+                    prune(child);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    prune(item);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut value: serde_json::Value =
+        serde_json::from_str(payload).map_err(|error| format!("运行时配置 JSON 无效: {error}"))?;
+    prune(&mut value);
+    serde_json::to_string(&value).map_err(|error| format!("运行时配置 JSON 规范化失败: {error}"))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -2669,6 +2715,104 @@ mod tests {
         assert_eq!(restored, output);
     }
 
+    /// 配置面必须 fail-closed：未知键（含风控字段拼错）在反序列化阶段就失败，
+    /// 而 `_` 前缀的运维注释键被递归剥离且不进入配置指纹。
+    #[test]
+    fn runtime_config_rejects_unknown_keys_and_strips_comment_keys() {
+        let base = config();
+        let fingerprint = base.fingerprint().unwrap();
+        let payload = base.to_json().unwrap();
+        let mutate = |edit: &dyn Fn(&mut serde_json::Value)| -> String {
+            let mut value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+            edit(&mut value);
+            serde_json::to_string(&value).unwrap()
+        };
+        let with_top_comment = mutate(&|value| {
+            value["_comment"] = serde_json::json!("生产部署说明");
+        });
+        assert_eq!(RuntimeConfig::from_json(&with_top_comment).unwrap(), base);
+        assert_eq!(
+            RuntimeConfig::from_json(&with_top_comment)
+                .unwrap()
+                .fingerprint()
+                .unwrap(),
+            fingerprint
+        );
+        let with_worker_comment = mutate(&|value| {
+            value["workers"][0]["_comment"] = serde_json::json!("该 worker 只跑行情");
+        });
+        assert_eq!(
+            RuntimeConfig::from_json(&with_worker_comment).unwrap(),
+            base
+        );
+        let typo_in_worker = mutate(&|value| {
+            value["workers"][0]["max_order_notional_raws"] = serde_json::json!(1_000_000);
+        });
+        let error = RuntimeConfig::from_json(&typo_in_worker).unwrap_err();
+        assert!(error.contains("max_order_notional_raws"), "{error}");
+        let typo_in_storage = mutate(&|value| {
+            value["storage"]["sqlite_pat"] = serde_json::json!("runtime/events.jsonl");
+        });
+        assert!(RuntimeConfig::from_json(&typo_in_storage)
+            .unwrap_err()
+            .contains("sqlite_pat"));
+        let typo_in_strategy = mutate(&|value| {
+            value["strategy"]["alow_short"] = serde_json::json!(true);
+        });
+        assert!(RuntimeConfig::from_json(&typo_in_strategy)
+            .unwrap_err()
+            .contains("alow_short"));
+    }
+
+    /// 角色字段可见性必须由启动校验咬住，且与 `enabled` 开关无关。
+    #[test]
+    fn worker_field_policy_is_enforced_when_validating_runtime_config() {
+        let mut with_api_symbols = config();
+        with_api_symbols
+            .workers
+            .iter_mut()
+            .find(|worker| worker.role == WorkerRole::Api)
+            .expect("测试配置需要 api worker")
+            .symbols = vec!["BTCUSDT.BINANCE".into()];
+        let error = with_api_symbols.validate().unwrap_err();
+        assert!(
+            error.contains("symbols") && error.contains("Api"),
+            "{error}"
+        );
+
+        // 禁用不是豁免：字段绑错角色的风险与是否启动无关。
+        let mut disabled_misbinding = config();
+        let api = disabled_misbinding
+            .workers
+            .iter_mut()
+            .find(|worker| worker.role == WorkerRole::Api)
+            .expect("测试配置需要 api worker");
+        api.enabled = false;
+        api.credential_env = Some(CredentialEnv {
+            api_key: "QX_KEY".into(),
+            secret: "QX_SECRET".into(),
+        });
+        let error = disabled_misbinding.validate().unwrap_err();
+        assert!(error.contains("credential_env"), "{error}");
+
+        // 半空的凭据引用在任何 Venue 下都非法，不能退化成"没有凭据"。
+        let mut half_credential = config();
+        let market = half_credential
+            .workers
+            .iter_mut()
+            .find(|worker| worker.role == WorkerRole::MarketData)
+            .expect("测试配置需要 market data worker");
+        market.venue_id = Some("okx".into());
+        market.credential_env = Some(CredentialEnv {
+            api_key: "QX_OKX_KEY".into(),
+            secret: " ".into(),
+        });
+        assert!(half_credential
+            .validate()
+            .unwrap_err()
+            .contains("credential_env 或 credential_files"));
+    }
+
     fn config() -> RuntimeConfig {
         RuntimeConfig {
             schema_version: RUNTIME_SCHEMA_VERSION,
@@ -3043,6 +3187,7 @@ mod tests {
             id: Some("strategy-alpha".into()),
             version: "alpha-v1".into(),
             max_orders: 10,
+            risk_rules: None,
             account_id: Some("main".into()),
             venue_id: Some("okx".into()),
             instrument: Some("BTC/USDT.OKX".into()),

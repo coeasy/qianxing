@@ -63,6 +63,71 @@ impl OrderBookSnapshot {
     }
 }
 
+/// 一份可交付的 L1/L2 深度数据帧。`source` 必填，用于把回测输入绑定到
+/// 数据来源；快照顺序、价格和数量由 `OrderBookSnapshot::validate` 约束。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DepthFrame {
+    pub schema_version: u32,
+    pub source: String,
+    pub instrument: qx_core::InstrumentId,
+    pub snapshots: Vec<OrderBookSnapshot>,
+}
+
+impl DepthFrame {
+    pub const SUPPORTED_SCHEMA_VERSION: u32 = 1;
+
+    pub fn from_json(input: &str) -> Result<Self, String> {
+        let frame: Self = serde_json::from_str(input)
+            .map_err(|error| format!("深度数据帧 JSON 无效: {error}"))?;
+        frame.validate()?;
+        Ok(frame)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version != Self::SUPPORTED_SCHEMA_VERSION {
+            return Err(format!(
+                "深度数据帧 schema_version 仅支持 {}，实际 {}",
+                Self::SUPPORTED_SCHEMA_VERSION,
+                self.schema_version
+            ));
+        }
+        if self.source.trim().is_empty() {
+            return Err("深度数据帧 source 不能为空".into());
+        }
+        if self.snapshots.is_empty() {
+            return Err("深度数据帧至少需要一份盘口快照".into());
+        }
+        for snapshot in &self.snapshots {
+            snapshot.validate()?;
+            if snapshot.instrument != self.instrument {
+                return Err(format!(
+                    "深度数据帧快照标的与声明不一致: {} != {}",
+                    snapshot.instrument, self.instrument
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// 输入数据指纹；与撮合结果无关，只描述深度序列本身。
+    pub fn input_hash(&self) -> u64 {
+        let mut hash = qx_core::Fnv1a::new();
+        hash.write_text(&self.source);
+        hash.write_text(&self.instrument.to_string());
+        hash.write_u64(self.snapshots.len() as u64);
+        for snapshot in &self.snapshots {
+            hash.write_u64(snapshot.ts);
+            hash.write_u64(snapshot.sequence);
+            for level in snapshot.bids.iter().chain(snapshot.asks.iter()) {
+                hash.write_i128(level.price.raw());
+                hash.write_i128(level.qty.raw());
+            }
+        }
+        hash.finish()
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct PendingBookOrder {
     order: Order,

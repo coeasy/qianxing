@@ -23,16 +23,21 @@ try {
     }
 
     $native = Get-ChildItem $TargetDirectory -File |
-        Where-Object { $_.Name -match '^_qianxing_native\.(pyd|so|dll|dylib)$' } |
-        Select-Object -First 1
+    Where-Object { $_.Name -match '^(lib)?_qianxing_native\.(pyd|so|dll|dylib)$' } |
+    Select-Object -First 1
 if ($null -eq $native) {
     throw "native extension artifact was not found in $TargetDirectory"
 }
 
+# Cargo 的 cdylib 产物名与 Python 导入名不同：Python 只接受
+# `_qianxing_native.pyd`（Windows）或 `_qianxing_native.so`（Unix）。
+$importName = if ($env:OS -eq "Windows_NT") { "_qianxing_native.pyd" } else { "_qianxing_native.so" }
+Copy-Item -LiteralPath $native.FullName -Destination (Join-Path $TargetDirectory $importName) -Force
+
 Get-ChildItem -LiteralPath $PackageDirectory -File -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -match '^_qianxing_native\.(pyd|so|dll|dylib)$' } |
     ForEach-Object { [System.IO.File]::Delete($_.FullName) }
-$destination = Join-Path $PackageDirectory $native.Name
+$destination = Join-Path $PackageDirectory $importName
 Copy-Item -LiteralPath $native.FullName -Destination $destination -Force
     New-Item -ItemType Directory -Path (Join-Path $RepositoryRoot $OutputDirectory) -Force | Out-Null
     & $Python -m pip wheel --no-deps $PythonProject --wheel-dir (Join-Path $RepositoryRoot $OutputDirectory)

@@ -52,6 +52,7 @@
       "endpoint": null,
       "symbols": [],
       "credential_env": null,
+      "instrument_spec_path": "deploy/qianxing.binance.spot.spec.json",
       "paper_initial_cash_raw": 100000000000000
     },
     {
@@ -78,8 +79,14 @@
     "account_id": "main",
     "venue_id": "paper",
     "instrument": "BTCUSDT.BINANCE",
-    "target_qty": 1,
+    "target_qty": 1000000000,
     "target_snapshot_path": "qianxing.strategy-target.paper.json",
+    "risk_rules": {
+      "version": "paper-e2e-v1",
+      "max_qty_raw": 100000000000,
+      "max_notional_raw": null,
+      "no_short": true
+    },
     "python_timeout_ms": 2000
   },
   "shutdown_timeout_ms": 30000

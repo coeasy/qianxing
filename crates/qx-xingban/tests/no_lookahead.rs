@@ -1,10 +1,11 @@
 use qx_core::{InstrumentId, Money, Order, OrderStatus, Quantity, Side};
 use qx_guanxing::Bar;
+use qx_risk::MaxNotionalRule;
 use qx_xingban::{
     BacktestConfig, BacktestEngine, BarStrategy, DataTier, MakerTakerFeeModel,
     NextBarOpenFillModel, NoMargin, VirtualTradingConfig, ZeroLatency,
 };
-use qx_zhenlu::{MaxNotionalRule, RiskGate};
+use qx_zhenlu::RiskGate;
 
 struct BuyOnce {
     done: bool,

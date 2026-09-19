@@ -31,7 +31,10 @@ pub use fingerprint::fingerprint_bars;
 pub use incremental::{merge_bars, IncrementalMergeReport};
 pub use ingestion::{ingest_bars, IngestionReport, IngestionRequest};
 pub use pipeline::{process_bars, DataPipelineReport};
-pub use provider::{DataProvider, JsonBarFrameProvider, ProviderMetadata};
+pub use provider::{
+    BarFrameContract, DataProvider, JsonBarFrameProvider, ProviderMetadata,
+    BAR_FRAME_SCHEMA_VERSION,
+};
 pub use registry::{DatasetRegistrar, DatasetRegistry, JsonDatasetRegistry};
 pub use resolver::{DatasetRef, DatasetResolver};
 pub use schema::{Bar, DataSchemaVersion};

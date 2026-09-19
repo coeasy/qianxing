@@ -30,8 +30,77 @@ jobs:
         run: cargo test --workspace
       - name: Independent deterministic semantics
         run: python3 tools/validate_core.py
+      - name: Architecture invariants and capability evidence
+        run: python3 tools/check_architecture.py
       - name: Python adapters and strategy contracts
         run: python3 -m unittest discover -s python/tests -q
+
+  python-wheel:
+    name: Python wheel (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wheel-${{ matrix.os }}-py${{ matrix.python }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Build native extension and wheel
+        shell: bash
+        env:
+          PYTHON: python
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip wheel
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pwsh -NoProfile -ExecutionPolicy Bypass -File tools/build_python_wheel.ps1 -Python python
+          else
+            bash tools/build_python_wheel.sh
+          fi
+          python -m pip install --quiet dist/*.whl
+      - name: Import the installed wheel outside the source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}"
+          python - <<'PY'
+          import qianxing_bridge
+          from qianxing_bridge import native
+
+          assert qianxing_bridge.__file__.startswith("site-packages") or "site-packages" in qianxing_bridge.__file__, (
+              f"wheel import resolved outside site-packages: {qianxing_bridge.__file__}"
+          )
+          assert native.available(), "native extension missing from the installed wheel"
+          payload = (
+              '{"instrument":"BTCUSDT.BINANCE","source":"native","ts":[1,2],'
+              '"open_raw":[100,101],"high_raw":[102,103],"low_raw":[99,100],'
+              '"close_raw":[101,102],"volume_raw":[10,11]}'
+          )
+          assert native.frame_digest(payload) > 0
+          from qianxing_bridge import BarFrame
+
+          frame = BarFrame(
+              "BTCUSDT.BINANCE",
+              "native",
+              (1, 2),
+              (100, 101),
+              (102, 103),
+              (99, 100),
+              (101, 102),
+              (10, 11),
+          )
+          assert native.frame_digest(payload) == frame.digest(), "wheel native diverges from pure Python digest"
+          PY
+      - name: Python suite against the built extension
+        shell: bash
+        run: python -m unittest discover -s python/tests -q
 
   feature-matrix:
     name: qx-cli features (${{ matrix.features }})
@@ -54,6 +123,48 @@ jobs:
         run: cargo check -p qx-cli --no-default-features --features "${{ matrix.features }}"
       - name: Test feature build
         run: cargo test -p qx-cli --no-default-features --features "${{ matrix.features }}"
+
+  service-backends:
+    name: Backend service contracts
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: qianxing
+          POSTGRES_DB: qianxing_contract
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d qianxing_contract"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      nats:
+        image: nats:2.10-alpine
+        args: -js -sd /tmp/jetstream
+        ports:
+          - 4222:4222
+        options: >-
+          --health-cmd "nc -z 127.0.0.1 4222"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      QX_TEST_POSTGRES_DSN: postgres://postgres:qianxing@127.0.0.1:5432/qianxing_contract
+      QX_TEST_NATS_URL: nats://127.0.0.1:4222
+      QX_TEST_NATS_SUBJECT_PREFIX: qianxing.acceptance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: service-backends
+      - name: Ignored storage contracts (PostgreSQL + NATS JetStream)
+        run: >-
+          cargo test -p qx-storage --features sqlite,postgres,nats --
+          --ignored --test-threads=1 --nocapture
 
   runtime-contracts:
     name: Runtime and Paper contracts
@@ -104,28 +215,57 @@ jobs:
         run: cargo run -p qx-cli --features sqlite,postgres -- paper-e2e deploy/qianxing.runtime.paper-strategy.example.json
 
   cpp-sdk:
-    name: C++ SDK smoke
-    runs-on: ubuntu-latest
+    name: C++ SDK smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install C++ JSON dependency
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y nlohmann-json3-dev
       - name: Configure C++ SDK
         run: cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release -DQX_BUILD_JSONL_EXAMPLE=ON
       - name: Build C++ SDK smoke
         run: cmake --build build/cpp --config Release --parallel
-      - name: Run C++ ring smoke
-        run: ./build/cpp/qianxing_ring_smoke
-      - name: Run C++ JSONL strategy contract smoke
+      - name: Locate built binaries
+        id: binaries
         shell: bash
         run: |
           set -euo pipefail
+          find_binary() {
+            local found
+            found="$(find build/cpp -type f \( -name "$1" -o -name "$1.exe" \) -print -quit)"
+            if [[ -z "${found}" ]]; then
+              echo "expected binary $1 was not produced" >&2
+              exit 1
+            fi
+            printf '%s\n' "${found}"
+          }
+          echo "smoke=$(find_binary qianxing_ring_smoke)" >> "${GITHUB_OUTPUT}"
+          echo "strategy=$(find_binary qianxing_strategy_jsonl)" >> "${GITHUB_OUTPUT}"
+      - name: Run C++ ring smoke
+        shell: bash
+        env:
+          SMOKE: ${{ steps.binaries.outputs.smoke }}
+        run: '"${SMOKE}"'
+      - name: Run C++ JSONL strategy contract smoke
+        shell: bash
+        env:
+          STRATEGY: ${{ steps.binaries.outputs.strategy }}
+        run: |
+          set -euo pipefail
           printf '%s\n' '{"schema_version":1,"request_id":"ci-request-1","strategy_id":"ci-strategy","strategy_version":"v1","data_fingerprint":"bars-ci","as_of":10,"instrument":"BTCUSDT.BINANCE","research_targets":{"BTCUSDT.BINANCE":3}}' \
-            | ./build/cpp/qianxing_strategy_jsonl > /tmp/qianxing-cpp-response.jsonl
-          python3 - <<'PY'
+            | "${STRATEGY}" > response.jsonl
+          python - <<'PY'
           import json
           from pathlib import Path
-          value = json.loads(Path('/tmp/qianxing-cpp-response.jsonl').read_text())
+          value = json.loads(Path('response.jsonl').read_text(encoding='utf-8'))
           assert value['ok'] is True
           output = value['output']
           assert output['request_id'] == 'ci-request-1'
@@ -133,3 +273,36 @@ jobs:
           assert output['instrument'] == 'BTCUSDT.BINANCE'
           assert output['target_qty'] == 3
           PY
+      - name: Run C++ worker through the shared-memory ring (JSON and columnar)
+        shell: bash
+        env:
+          STRATEGY: ${{ steps.binaries.outputs.strategy }}
+        run: |
+          set -euo pipefail
+          for protocol in shared_memory_json shared_memory_columnar; do
+            echo "== ${protocol} =="
+            python tools/verify_cpp_worker.py "${STRATEGY}" "${protocol}"
+          done
+
+  venue-acceptance:
+    name: Venue acceptance (Binance testnet)
+    runs-on: ubuntu-latest
+    env:
+      QX_BINANCE_TESTNET_API_KEY: ${{ secrets.BINANCE_TESTNET_API_KEY }}
+      QX_BINANCE_TESTNET_API_SECRET: ${{ secrets.BINANCE_TESTNET_API_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: venue-acceptance
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build qx-cli
+        run: cargo build -p qx-cli --features sqlite,postgres
+      - name: Fail-closed offline checks (always run)
+        run: python tools/binance_testnet_acceptance.py --binary target/debug/qx-cli --allow-skip
+      - name: Full testnet acceptance (only when credentials exist)
+        if: env.QX_BINANCE_TESTNET_API_KEY != ''
+        run: python tools/binance_testnet_acceptance.py --binary target/debug/qx-cli

@@ -27,7 +27,8 @@ pub struct BarMatchingEngine {
     fee_model: Box<dyn FeeModel>,
     latency_model: Box<dyn LatencyModel>,
     /// 费用模型仍接收 qty/price；这里将合约乘数折算到 fee price，避免
-    /// contractSize != 1 时手续费仍按现货名义额计算。
+    /// contractSize != 1 时手续费仍按现货名义额计算。该乘数与 `contract_size`
+    /// 同为定点 raw 口径（`SCALE` 表示 1.0），因此 1 会把费用压到 1e-9 倍。
     fee_price_multiplier: i128,
     rng: DeterministicRng,
     all_fills: Vec<Fill>,
@@ -43,7 +44,7 @@ impl BarMatchingEngine {
             fill_model: fill,
             fee_model: fee,
             latency_model: Box::new(ZeroLatency),
-            fee_price_multiplier: 1,
+            fee_price_multiplier: qx_core::SCALE,
             rng: DeterministicRng::new(seed),
             all_fills: Vec::new(),
             halted: false,

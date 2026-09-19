@@ -18,8 +18,9 @@ pub mod tick_backtest;
 pub mod venue;
 
 pub use self::ashare::{
-    AshareBoard, AshareCorporateActionEvent, AshareCorporateActionType,
-    AshareIssuerCapitalSnapshot, AshareRuleConfig, AshareSettlementState,
+    AshareBoard, AshareCalendarLoadReport, AshareCorporateActionEvent,
+    AshareCorporateActionLoadReport, AshareCorporateActionType, AshareIssuerCapitalSnapshot,
+    AshareRuleConfig, AshareSettlementState, ASHARE_SCHEMA_VERSION,
 };
 pub use self::backtest::{
     BacktestConfig, BacktestEngine, BacktestReport, BarStrategy, DeliveryEvent, FundingEvent,
@@ -34,14 +35,15 @@ pub use self::fill::{
     OneTickSlippageFillModel, ProbabilisticFillModel, VolumeSensitiveFillModel,
 };
 pub use self::orderbook::{
-    BookLevel, OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot,
+    BookLevel, DepthFrame, OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot,
 };
 pub use self::orderbook_backtest::{
-    NativeOrderBookStrategy, OrderBookBacktestConfig, OrderBookBacktestEngine,
+    DepthBarStrategy, NativeOrderBookStrategy, OrderBookBacktestConfig, OrderBookBacktestEngine,
     OrderBookBacktestReport, OrderBookStrategy,
 };
 pub use self::rng::DeterministicRng;
 pub use self::tick_backtest::{
-    NativeTickStrategy, TickBacktestConfig, TickBacktestEngine, TickBacktestReport, TickStrategy,
+    depth_frame_to_ticks, NativeTickStrategy, TickBacktestConfig, TickBacktestEngine,
+    TickBacktestReport, TickStrategy,
 };
 pub use self::venue::{BarMatchingEngine, MatchingConfig};

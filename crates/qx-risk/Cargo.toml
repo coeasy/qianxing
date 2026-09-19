@@ -8,3 +8,9 @@ license.workspace = true
 [dependencies]
 qx-core = { path = "../qx-core" }
 serde = { workspace = true }
+
+[dev-dependencies]
+# 三路径一致性测试（tests/risk_parity.rs）需要 qx-zhenlu 的风控门面。
+# 这是仅存在于 dev 边上的依赖环：Cargo 允许 dev-dependency 环路，
+# qx-zhenlu 的正常构建不会反向拉入本 crate 的测试。
+qx-zhenlu = { path = "../qx-zhenlu" }

@@ -284,8 +284,15 @@ class AshareTest(unittest.TestCase):
         self.assertEqual(json.loads(first.to_json())["instrument"], "000001.SZSE")
 
     def test_calendar_corporate_action_and_pit_are_as_of_bounded(self):
-        calendar = AshareTradingCalendar("sse-2024", ("2024-01-02", "2024-01-03"), (("09:30", "11:30"),))
-        self.assertTrue(AshareTradingCalendar.from_json(calendar.to_json()).contains("2024-01-02"))
+        calendar = AshareTradingCalendar(
+            "sse-2024",
+            ("2024-01-02", "2024-01-03"),
+            (("09:30", "11:30"),),
+            source="akshare",
+        )
+        restored = AshareTradingCalendar.from_json(calendar.to_json())
+        self.assertTrue(restored.contains("2024-01-02"))
+        self.assertEqual(restored.source, "akshare")
         action = AshareCorporateAction("000001", "2024-01-03", "2024-01-04T09:00:00+08:00", source="test")
         self.assertFalse(action.visible_at("2024-01-03T15:00:00+08:00"))
         self.assertTrue(action.visible_at("2024-01-04T09:00:00+08:00"))

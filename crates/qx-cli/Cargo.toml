@@ -7,13 +7,18 @@ license.workspace = true
 
 [features]
 default = ["sqlite"]
-sqlite = ["qx-api/sqlite", "qx-storage/sqlite"]
-postgres = ["qx-storage/postgres", "qx-runtime/postgres", "qx-execution/postgres"]
+sqlite = [
+    "qx-api/sqlite",
+    "qx-storage/sqlite",
+    "qx-runtime/sqlite",
+]
+postgres = ["qx-storage/postgres", "qx-runtime/postgres"]
 nats = ["qx-storage/nats"]
 
 [dependencies]
 qx-api = { path = "../qx-api" }
 qx-adapter = { path = "../qx-adapter" }
+qx-application = { path = "../qx-application" }
 qx-core = { path = "../qx-core" }
 qx-datastruct = { path = "../qx-datastruct" }
 qx-fenye = { path = "../qx-fenye" }
@@ -25,6 +30,7 @@ qx-plugin = { path = "../qx-plugin" }
 qx-factor = { path = "../qx-factor" }
 qx-portfolio = { path = "../qx-portfolio" }
 qx-protocol = { path = "../qx-protocol" }
+qx-risk = { path = "../qx-risk" }
 qx-provider = { path = "../qx-provider" }
 qx-scheduler = { path = "../qx-scheduler" }
 qx-control = { path = "../qx-control" }

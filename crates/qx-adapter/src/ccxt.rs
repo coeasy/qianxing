@@ -54,7 +54,7 @@ impl CcxtProcessClient {
         }
         let mut child = command
             .spawn()
-            .map_err(|error| format!("启动 CCXT Worker 失败: {error}"))?;
+            .map_err(|error| format!("启动 CCXT Worker 失败: {python} 无法执行: {error}"))?;
         let stdin = child
             .stdin
             .take()
@@ -64,13 +64,17 @@ impl CcxtProcessClient {
             .take()
             .ok_or_else(|| "CCXT Worker stdout 不可用".to_string())?;
         let (sender, responses) = mpsc::channel();
+        let worker_program = python.to_string();
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
                 let mut line = String::new();
                 match reader.read_line(&mut line) {
                     Ok(0) => {
-                        let _ = sender.send(Err("CCXT Worker 已退出，提交结果未知".into()));
+                        // "提交结果未知"是安全语义，不能被诊断文本改掉；这里只追加死掉的是哪个程序。
+                        let _ = sender.send(Err(format!(
+                            "CCXT Worker 已退出，提交结果未知（程序={worker_program}）"
+                        )));
                         return;
                     }
                     Ok(_) => {
@@ -336,6 +340,16 @@ impl CcxtProcessVenue {
             ));
         }
         if filled > order.filled.raw() {
+            if order.status.is_terminal() {
+                // 本地已终态（典型场景是撤单落地后远端又推进了成交）：这是本地与远端的
+                // 真实分歧，只能交给对账，不能伪造一条增量成交让上层记账或改写终态。
+                return Err(QxError::ReconcileRequired(format!(
+                    "CCXT 订单 {client_order_id} 本地已终态 {:?}，但远端累计成交 {} 大于本地 {}",
+                    order.status,
+                    filled,
+                    order.filled.raw()
+                )));
+            }
             let delta_qty = filled - prior_filled;
             let delta_cost = cumulative_cost - prior_cost;
             if delta_qty <= 0 || delta_cost <= 0 {
@@ -601,6 +615,11 @@ impl Venue for CcxtProcessVenue {
             .orders
             .get(&client_order_id)
             .ok_or_else(|| QxError::Permanent("CCXT 本地订单不存在".into()))?;
+        if order.status.is_terminal() {
+            // 与 PaperVenue 同口径：本地已终态的订单不再产生撤单事实，否则一条
+            // Cancelled 会去改写已成交的终态。
+            return Ok(Vec::new());
+        }
         let remote_id = self
             .remote_ids
             .get(&client_order_id)

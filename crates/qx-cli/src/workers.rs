@@ -314,6 +314,7 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                         capacity: strategy_config.shared_memory_capacity,
                         slot_bytes: strategy_config.shared_memory_slot_bytes,
                     },
+                    None,
                 )
             })
             .transpose()?;

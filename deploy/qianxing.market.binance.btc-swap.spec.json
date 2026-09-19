@@ -1,0 +1,16 @@
+{
+  "market_type": "swap",
+  "base": "BTC",
+  "quote": "USDT",
+  "settle": "USDT",
+  "contract_size_raw": 1000000000,
+  "linear": true,
+  "inverse": false,
+  "price_tick_raw": 1000000,
+  "qty_step_raw": 1000000000,
+  "min_qty_raw": 1000000000,
+  "max_leverage": 10,
+  "maintenance_margin_bps": 500,
+  "valid_from": 0,
+  "valid_to": null
+}

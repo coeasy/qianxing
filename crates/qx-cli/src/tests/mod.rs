@@ -1,0 +1,103 @@
+// qx-cli 的行为用例按主题分文件放在这里（Phase 4o 从单文件 `tests_main.rs` 拆出）。
+// 与 `venue_runtime/`、`ledger/` 同一先例：目录模块让每个文件留在 500 行门槛内，
+// 于是不必为测试代码单独登记行数预算。共享夹具集中在本文件，主题文件只写用例。
+use super::*;
+use qx_control::{CommandKind, CommandStatus};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Paper smoke fixture 的账户级风控上下文：绑定仓库内已验收的 BTCUSDT
+/// 现货规格并提供充足保证金。完整风控矩阵在 `qx-execution` 与 `qx-risk`
+/// 的合同测试中覆盖。
+pub(crate) fn smoke_paper_risk_context() -> RiskContext {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let spec: TradingInstrumentSpec = serde_json::from_str(
+        &std::fs::read_to_string(
+            workspace_root
+                .join("deploy")
+                .join("qianxing.binance.spot.spec.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    RiskContext {
+        available_margin_raw: Some(1_000_000 * SCALE),
+        reference_price: Some(Price::from_i64(100)),
+        instrument_spec: Some(spec),
+        max_order_notional_raw: None,
+        max_position_notional_raw: None,
+    }
+}
+
+/// 回测示例配置的 deploy 目录、BarFrame 与运行时模板。
+pub(crate) fn builtin_backtest_example_paths() -> (PathBuf, PathBuf, PathBuf) {
+    let deploy = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy");
+    (
+        deploy.clone(),
+        deploy.join("qianxing.bar-frame.example.json"),
+        deploy.join("qianxing.runtime.builtin-strategy.example.json"),
+    )
+}
+
+/// 为单个用例创建独立临时目录，避免回测产物落在仓库里。
+pub(crate) fn temp_cli_case_dir(label: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "qianxing-cli-{label}-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    root
+}
+
+/// 把配置写入独立的临时 data_dir，避免回测产物落在仓库里。
+pub(crate) fn isolated_backtest_runtime(
+    deploy: &Path,
+    config: &RuntimeConfig,
+    label: &str,
+) -> (PathBuf, PathBuf) {
+    let root = std::env::temp_dir().join(format!(
+        "qianxing-cli-{label}-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut config = config.clone();
+    config.storage.data_dir = root.to_string_lossy().into_owned();
+    // 运行时文件搬进临时目录后，相对 deploy 的输入路径要固定为绝对路径。
+    config.strategy.bars_snapshot_path = Some(
+        deploy
+            .join("qianxing.bar-frame.example.json")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    config.strategy.dataset_bundle_path = Some(
+        deploy
+            .join("qianxing.dataset-bundle.bar-frame.example.json")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let runtime_path = root.join("runtime.json");
+    std::fs::write(
+        &runtime_path,
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .unwrap();
+    (root, runtime_path)
+}
+
+mod backtest_entries;
+mod cli_surface;
+mod e2e_and_python_contract;
+mod execution_and_multi_leg;
+mod paper_and_strategy_worker;
+mod paper_bridge_and_bundles;
+mod worker_observability;

@@ -1,5 +1,5 @@
 schema_version: 1
-updated_at: "2026-09-15"
+updated_at: "2026-09-19"
 default_profile: single_node
 
 # 证据等级：
@@ -25,6 +25,7 @@ capabilities:
     production_approved: false
     evidence:
       - crates/qx-core
+      - crates/qx-cli/tests/cli_dispatch.rs
       - cargo test --workspace
 
   event_fact_metadata:
@@ -48,11 +49,14 @@ capabilities:
     production_approved: false
     evidence:
       - crates/qx-runtime/src/lib.rs
-      - crates/qx-cli/src/main.rs runtime-check/status JSON
+      - crates/qx-cli/src/config_commands.rs runtime-check/status JSON
+      - crates/qx-storage/tests/outbox_backend_semantics.rs file/SQLite/PostgreSQL lease+fencing+retry
+      - crates/qx-storage/tests/nats_jetstream.rs publish/consume/dedup and input validation
       - deploy/qianxing.runtime.messaging.example.json
       - deploy/qianxing.runtime.postgres.example.json
+      - .github/workflows/ci.yml service-backends job (postgres:16 + nats -js service containers)
     limitations:
-      - PostgreSQL/NATS service-container integration remains pending
+      - postgres_nats_contract_run_requires_first_ci_record_local_docker_unavailable
 
   canonical_order_risk_decision:
     implementation: true
@@ -61,9 +65,11 @@ capabilities:
     production_approved: false
     evidence:
       - crates/qx-risk/src/lib.rs
+      - crates/qx-risk/src/rules.rs single notional formula
       - crates/qx-execution/src/lib.rs CanonicalRiskPort
+      - backtest/paper/live share one RuleSet (crates/qx-cli/src/runtime_wiring.rs strategy_risk_gate)
     limitations:
-      - legacy RiskGate rule chain remains a compatibility layer pending migration
+      - RiskGate remains a thin facade over RuleSet for legacy call sites
 
   local_backtest:
     implementation: true
@@ -72,8 +78,14 @@ capabilities:
     production_approved: false
     evidence:
       - crates/qx-xingban
-      - crates/qx-cli/src/main.rs
+      - crates/qx-cli/src/backtests/strategy_backtest.rs
+      - crates/qx-cli/src/backtests/single_strategy.rs
+      - crates/qx-xingban/src/backtest.rs raw-scaled fee_price_multiplier regression
       - deploy/qianxing.runtime.strategy-backtest.example.json
+      - every CLI backtest entry builds its gate via strategy_risk_gate (builtin and multi-leg legs added in V9 Phase 4)
+      - backtests/mod.rs BarBacktestAssembly pins one engine default set for all three bar backtest chains
+    limitations:
+      - backtest exposes only two builtins after V9 cleanup (single instrument and multi-leg)
 
   cli_scenario_init:
     implementation: true
@@ -81,7 +93,7 @@ capabilities:
     sandbox_tested: false
     production_approved: false
     evidence:
-      - crates/qx-cli/src/main.rs
+      - crates/qx-cli/src/config_commands.rs
       - docs/工业化易用性收口指南-V1.md
     limitations:
       - generated_ccxt_project_still_requires_user_credentials_and_external_sandbox
@@ -94,11 +106,16 @@ capabilities:
     production_approved: false
     evidence:
       - crates/qx-execution/src/lib.rs
+      - crates/qx-execution/src/tests/gateway_port.rs
+      - crates/qx-execution/src/tests/paper_accounting.rs
       - crates/qx-application/src/lib.rs
-      - crates/qx-cli/src/main.rs
+      - crates/qx-cli/src/venue_runtime/paper_worker.rs
+      - crates/qx-cli/src/venue_runtime/paper_submit.rs
       - paper-e2e
+      - crates/qx-execution/tests/venue_report_contract.rs late/out-of-order + imprecise report contract
       - qx-application execution submit/cancel fact contract tests
       - qx-execution Paper/CCXT/Binance shared PortExecutionService contract test
+      - qx-execution paper gateway idempotency test
     limitations:
       - continuous_market_driven_paper_worker_requires_runtime_market_data_validation
 
@@ -111,11 +128,12 @@ capabilities:
       - python/qianxing_ccxt
       - crates/qx-adapter
       - crates/qx-runtime/src/lib.rs live strategy topology gate test
-      - crates/qx-cli/src/main.rs live Bar freshness test
+      - crates/qx-cli/src/venue_runtime/ccxt_live_bars.rs live Bar freshness test
       - crates/qx-cli/src/workers.rs live Job digest guard
-      - crates/qx-cli/src/main.rs runtime-check/live-check JSON safety contracts
-      - crates/qx-cli/src/main.rs CCXT fetch_open_orders discovers unknown remote active orders and degrades readiness without auto-adoption
+      - crates/qx-cli/src/config_commands.rs runtime-check/live-check JSON safety contracts
+      - crates/qx-cli/src/ccxt_facts.rs CCXT fetch_open_orders discovers unknown remote active orders and degrades readiness without auto-adoption
       - deploy/qianxing.runtime.ccxt.example.json
+      - crates/qx-execution/tests/venue_report_contract.rs CCXT fixture：终态后迟到成交与 off-tick/off-step 回报只转待对账
       - .github/workflows/ci.yml C++ JSONL strategy contract smoke
       - qx-application execution fact contract shared by PortExecutionService adapters
     limitations:
@@ -129,7 +147,15 @@ capabilities:
     production_approved: false
     evidence:
       - crates/qx-adapter/src/lib.rs
-      - crates/qx-cli/src/main.rs
+      - crates/qx-cli/src/venue_runtime/binance_submit.rs
+      - crates/qx-execution/tests/venue_report_contract.rs Binance 用户流 fixture：迟到成交/撤单与越界回报分类
+      - deploy/qianxing.runtime.binance-testnet.example.json
+      - tools/binance_testnet_acceptance.py fail-closed driver
+      - .github/workflows/ci.yml venue-acceptance job
+    limitations:
+      - testnet_acceptance_has_not_run_with_real_credentials_yet
+      - venue_endpoint_certification_requires_user_supplied_testnet_secret
+      - exchange_side_precision_matrix_requires_testnet_bills
 
   ashare_json_provider:
     implementation: true
@@ -147,13 +173,19 @@ capabilities:
     sandbox_tested: false
     production_approved: false
     evidence:
-      - crates/qx-core/src/ledger.rs
+      - crates/qx-core/src/ledger/mod.rs
+      - crates/qx-core/src/ledger/corporate_action.rs
+      - crates/qx-core/src/ledger/rights.rs
+      - crates/qx-core/src/ledger/subscription.rs
+      - crates/qx-core/tests/ledger.rs
       - crates/qx-xingban/src/ashare.rs
       - crates/qx-xingban/src/backtest.rs
+      - crates/qx-xingban/tests/ashare_pit_asof.rs
     limitations:
       - rights_expiry_requires_explicit_or_timed_fact
       - issuer_capital_snapshot_requires_explicit_absolute_total_shares
       - issuer_level_convertible_bond_supply_and_call_trigger_rules_pending
+      - pit_asof_filter_runs_only_at_corporate_action_json_load
 
   dataset_bundle_manifest:
     implementation: true
@@ -164,7 +196,7 @@ capabilities:
       - crates/qx-data/src/catalog.rs
       - crates/qx-data/src/ingestion.rs
       - crates/qx-data/src/registry.rs
-      - crates/qx-cli/src/main.rs
+      - crates/qx-cli/src/dataset_commands.rs
       - python/qianxing_ashare/__init__.py
       - python/qianxing_ashare/__main__.py
     limitations:
@@ -179,12 +211,19 @@ capabilities:
     evidence:
       - crates/qx-zhenlu/src/lib.rs
       - crates/qx-execution/src/lib.rs
+      - crates/qx-execution/src/tests/recovery_and_replay.rs
       - crates/qx-application/src/lib.rs
-      - crates/qx-cli/src/main.rs
+      - crates/qx-cli/src/backtests/multi_builtin.rs
+      - crates/qx-cli/src/multi_leg.rs
       - crates/qx-cli/src/workers.rs
+      - crates/qx-cli/src/spread.rs
+      - crates/qx-cli/src/tests/execution_and_multi_leg.rs
       - HedgeRecoveryWorker idempotency test
       - FileSpreadOrderGroupStore claim lease + fencing token test
+      - Paper 多腿经生产单轨提交两条腿并归约组快照的生命周期测试
+      - Paper worker 在 ReconcileRequired 组上拒绝提交剩余腿的屏障测试
     limitations:
+      - legs_submit_one_command_each_no_atomic_group_transaction
       - no_atomic_cross_venue_submission
       - dedicated_spread_recovery_role_is_available_but_not_enabled_by_default
       - legacy_execution_recovery_is_disabled_when_same_account_venue_dedicated_worker_is_enabled
@@ -198,6 +237,10 @@ capabilities:
     production_approved: false
     evidence:
       - crates/qx-storage/src/postgres.rs
+      - crates/qx-storage/tests/outbox_backend_semantics.rs postgres lease/fencing/retry contract
+      - .github/workflows/ci.yml service-backends job
+    limitations:
+      - contract_test_is_ignored_without_QX_TEST_POSTGRES_DSN_and_has_no_ci_record_yet
 
   nats:
     implementation: optional
@@ -206,6 +249,37 @@ capabilities:
     production_approved: false
     evidence:
       - crates/qx-storage/src/nats.rs
+      - crates/qx-storage/tests/nats_jetstream.rs publish/consume/dedup contract plus validation test
+      - .github/workflows/ci.yml service-backends job
+    limitations:
+      - contract_test_is_ignored_without_QX_TEST_NATS_URL_and_has_no_ci_record_yet
+
+  python_bridge:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-python/src/lib.rs
+      - python/qianxing_bridge/native.py
+      - python/tests/test_native_extension.py
+      - tools/build_python_wheel.sh and tools/build_python_wheel.ps1
+      - .github/workflows/ci.yml python-wheel job (Python 3.10/3.12/3.13 on Linux and Windows)
+    limitations:
+      - wheel_matrix_has_not_produced_a_ci_record_yet
+
+  cpp_strategy_sdk:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - cpp/include/qianxing_ring.hpp and cpp/include/qianxing_strategy.h
+      - cpp/examples/jsonl_strategy.cpp JSON and columnar request decoding
+      - tools/verify_cpp_worker.py drives both shared_memory_json and shared_memory_columnar
+      - .github/workflows/ci.yml cpp-sdk job on ubuntu, windows and macos
+    limitations:
+      - three_os_cpp_matrix_has_not_produced_a_ci_record_yet
 
   broker_gateway:
     implementation: unavailable_without_vendor_protocol

@@ -1,0 +1,36 @@
+{
+  "assumptions": [
+    "data_tier=Bar",
+    "benchmark=flat-cash",
+    "metrics=raw-fixed-point",
+    "virtual_trading=funding:0 interest:0 delivery:0 liquidation:false"
+  ],
+  "bars": 5,
+  "clock_end": 5000,
+  "clock_start": 1000,
+  "fills": 0,
+  "input_data_hash": "f0dcf298c2602c16",
+  "instrument": "BTC/USDT:USDT.OKX",
+  "metrics": {
+    "fees_raw": 0,
+    "final_equity_raw": 100000000000000,
+    "max_drawdown_bps": 0,
+    "return_bps": 0,
+    "turnover_raw": 0
+  },
+  "model_descriptors": [
+    "NextBarOpen@v1[tier=Bar;params=;assumption=假设下一根bar开盘可全部成交；不建模排队与容量]",
+    "MakerTaker@v1[params=maker_bp=2;taker_bp=5]",
+    "ZeroLatency@v1[delay_ns=0]",
+    "NoMargin@v1"
+  ],
+  "replay_hash": "baf385cdb4ca3772",
+  "result_hash": "baf385cdb4ca3772",
+  "risk_rules": {
+    "rule_set_version": "conservative-default-v1+implicit-no-short"
+  },
+  "run_manifest": "deploy\\data/qianxing-builtin-strategy-okx\\runs\\strategy-backtest_strategy-builtin-okx_BTC_USDT_USDT.OKX-97d9d8b1869e523c.run.json",
+  "sample_unit": "bar",
+  "schema_version": 1,
+  "strategy_id": "strategy-builtin-okx"
+}

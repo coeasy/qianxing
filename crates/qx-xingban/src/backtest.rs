@@ -8,8 +8,9 @@ use qx_core::{
     Price, Priority, Quantity, ReplayVerifier, RunManifest, Side, TradingInstrumentSpec,
 };
 use qx_guanxing::{Bar, DataSourceId, DataView, QualityGate, Verdict};
+use qx_risk::OrderRiskPosition;
 use qx_strategy::{MarketEvent, Strategy, StrategyContext};
-use qx_zhenlu::{Oms, PositionSnapshot, RiskGate};
+use qx_zhenlu::{Oms, RiskGate};
 
 use crate::ashare::{
     AshareCorporateActionType, AshareIssuerCapitalSnapshot, AshareRuleConfig, AshareSettlementState,
@@ -395,7 +396,7 @@ impl BacktestEngine {
         let input_data_hash = view.metadata().data_hash;
         let fee_price_multiplier = derivative_spec
             .map(|spec| spec.contract_size)
-            .unwrap_or(multiplier);
+            .unwrap_or_else(|| multiplier.saturating_mul(qx_core::SCALE));
         let mut matcher = BarMatchingEngine::new_with_latency_and_fee_multiplier(
             fill,
             fee,
@@ -720,7 +721,7 @@ impl BacktestEngine {
                             if matches!(order.status, OrderStatus::PendingSubmit) {
                                 order.status = OrderStatus::Submitted;
                             }
-                            let risk_position = PositionSnapshot::new_with_multiplier(
+                            let risk_position = OrderRiskPosition::new_with_multiplier(
                                 one_way_qty,
                                 gross_notional,
                                 multiplier,
@@ -2502,6 +2503,74 @@ mod tests {
         assert_eq!(
             replayed.cash_for("main", "USD"),
             report.ledger.cash_for("main", "USD")
+        );
+    }
+
+    /// 费用按 raw 口径的名义额计收：`fee_price_multiplier` 与 `contract_size` 同为
+    /// SCALE=1.0 的定点倍数。历史上这里被当成整数乘数，现货手续费被压小 1e9 倍
+    /// 且没有任何测试捕获（既有费用断言全部使用 0 bp）。
+    #[test]
+    fn fees_scale_with_raw_notional_for_spot_and_derivative() {
+        let price = 60_000 * qx_core::SCALE;
+        let bars = vec![
+            Bar::new(1, price, price, price, price, 10 * qx_core::SCALE),
+            Bar::new(2, price, price, price, price, 10 * qx_core::SCALE),
+        ];
+
+        let mut spot = simple_config();
+        spot.initial_cash = Money::from_i64(1_000_000);
+        spot.fee = Box::new(MakerTakerFeeModel {
+            maker_bp: 2,
+            taker_bp: 5,
+        });
+        let spot_report = BacktestEngine::new(spot)
+            .run(&bars, &mut BuyOnce { done: false })
+            .unwrap();
+        assert_eq!(spot_report.turnover_raw, 60_000 * qx_core::SCALE);
+        assert_eq!(
+            spot_report.fills[0].fee.raw(),
+            30 * qx_core::SCALE,
+            "1.0 @ 60_000 的 taker 费用应是 30，而不是 3e-8"
+        );
+        assert_eq!(spot_report.fees_raw, spot_report.fills[0].fee.raw());
+
+        let instrument = InstrumentId::parse("BTC/USDT:USDT.SIM").unwrap();
+        let mut derivative = simple_config();
+        derivative.instrument = instrument.clone();
+        derivative.initial_cash = Money::from_i64(1_000_000);
+        derivative.fee = Box::new(MakerTakerFeeModel {
+            maker_bp: 2,
+            taker_bp: 5,
+        });
+        derivative.instrument_spec = Some(TradingInstrumentSpec {
+            instrument,
+            product: qx_core::TradingProduct::Perpetual,
+            base_currency: "BTC".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: 10 * qx_core::SCALE,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            max_leverage: 100,
+            maintenance_margin_bps: 500,
+            valid_from: 1,
+            valid_to: None,
+        });
+        let derivative_report = BacktestEngine::new(derivative)
+            .run(&bars, &mut BuyOnce { done: false })
+            .unwrap();
+        assert_eq!(derivative_report.turnover_raw, 600_000 * qx_core::SCALE);
+        assert_eq!(
+            derivative_report.fills[0].fee.raw(),
+            300 * qx_core::SCALE,
+            "每张合约 10 个标的单位时，费用必须按 10 倍名义额计收"
+        );
+        assert_eq!(
+            derivative_report.fees_raw,
+            derivative_report.fills[0].fee.raw()
         );
     }
 

@@ -9,6 +9,8 @@ description = "Qianxing JSON/DataStruct bridge"
 requires-python = ">=3.10"
 dependencies = [
     "ccxt>=4.4.0",
+    # Windows 没有系统 IANA 时区库；`qianxing_ashare` 导入时即解析 Asia/Shanghai。
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +34,14 @@ a-share = [
 
 [tool.setuptools.packages.find]
 where = ["."]
+# 只打包发布的命名空间：`pip wheel` 会在 `python/build/lib` 里留下上一次构建的副本，
+# 不加 include 时它们会被再次发现成 `build.lib.qianxing_bridge` 并递归进wheel。
+include = [
+    "qianxing_bridge*",
+    "qianxing_ccxt*",
+    "qianxing_ashare*",
+    "qianxing_strategy*",
+]
 
 [tool.setuptools.package-data]
 qianxing_bridge = [

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "manifests": [
+    {
+      "dataset_id": "strategy-bars:BTC/USDT:USDT.OKX",
+      "version": "barframe-json-v1",
+      "source": "example-okx-bars-v1",
+      "fingerprint": "342307c2986d23e0",
+      "schema_version": 1,
+      "start_timestamp": 1000,
+      "end_timestamp": 5000
+    }
+  ]
+}

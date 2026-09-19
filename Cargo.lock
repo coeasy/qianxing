@@ -1181,6 +1181,7 @@ version = "0.1.0"
 dependencies = [
  "qx-adapter",
  "qx-api",
+ "qx-application",
  "qx-control",
  "qx-core",
  "qx-data",
@@ -1195,6 +1196,7 @@ dependencies = [
  "qx-portfolio",
  "qx-protocol",
  "qx-provider",
+ "qx-risk",
  "qx-runtime",
  "qx-scheduler",
  "qx-storage",
@@ -1226,7 +1228,6 @@ name = "qx-data"
 version = "0.1.0"
 dependencies = [
  "qx-core",
- "qx-domain",
  "qx-guanxing",
  "qx-provider",
  "serde",
@@ -1239,15 +1240,6 @@ version = "0.1.0"
 dependencies = [
  "qx-core",
  "qx-guanxing",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "qx-domain"
-version = "0.1.0"
-dependencies = [
- "qx-core",
  "serde",
  "serde_json",
 ]
@@ -1364,6 +1356,7 @@ name = "qx-risk"
 version = "0.1.0"
 dependencies = [
  "qx-core",
+ "qx-zhenlu",
  "serde",
 ]
 
@@ -1375,7 +1368,6 @@ dependencies = [
  "qx-control",
  "qx-core",
  "qx-data",
- "qx-domain",
  "qx-factor",
  "qx-guanxing",
  "qx-oms",
@@ -1433,6 +1425,7 @@ dependencies = [
  "qx-data",
  "qx-fenye",
  "qx-guanxing",
+ "qx-risk",
  "qx-strategy",
  "qx-zhenlu",
  "serde",

@@ -4,12 +4,17 @@
 //! 因此策略不会用当前快照直接成交，避免回测中的同一快照作弊。
 
 use qx_core::{
-    Event, EventKind, EventLog, Fill, Ledger, Order, OrderStatus, Price, Priority, ReplayVerifier,
-    TradingInstrumentSpec,
+    Event, EventKind, EventLog, Fill, Fnv1a, Ledger, Order, OrderStatus, Price, Priority,
+    ReplayVerifier, RunManifest, TradingInstrumentSpec,
 };
-use qx_zhenlu::{Oms, PositionSnapshot, RiskGate};
+use qx_risk::OrderRiskPosition;
+use qx_zhenlu::{Oms, RiskGate};
 
-use crate::{OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot};
+use crate::{
+    DataTier, OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot,
+    RunManifestIdentity,
+};
+use std::collections::BTreeMap;
 
 fn append_event(log: &mut EventLog, ts: u64, priority: u8, kind: EventKind) {
     let seq = log.alloc_seq();
@@ -73,6 +78,80 @@ impl<S: qx_strategy::Strategy> OrderBookStrategy for NativeOrderBookStrategy<S> 
     }
 }
 
+/// 只接受 Bar 事件的策略在 L1/L2 深度流上的视图。
+///
+/// 每份盘口快照按中间价折叠成一根 Bar（open=high=low=close），可见流动性
+/// 汇总为成交量；这样只认 Bar 的内置策略无需第二套实现就能复用逐档撮合内核。
+pub struct DepthBarStrategy<S: qx_strategy::Strategy> {
+    pub strategy: S,
+    pub context: qx_strategy::StrategyContext,
+    /// Tick 事件不携带标的，因此策略视图必须显式绑定标的。
+    pub instrument: qx_core::InstrumentId,
+}
+
+impl<S: qx_strategy::Strategy> DepthBarStrategy<S> {
+    pub fn new(
+        strategy: S,
+        context: qx_strategy::StrategyContext,
+        instrument: qx_core::InstrumentId,
+    ) -> Self {
+        Self {
+            strategy,
+            context,
+            instrument,
+        }
+    }
+
+    pub fn initialize(&mut self) -> Result<(), String> {
+        self.strategy.on_init(&self.context)
+    }
+
+    pub(crate) fn on_mid(
+        &mut self,
+        instrument: &qx_core::InstrumentId,
+        ts: u64,
+        position: i128,
+        mid: qx_core::Price,
+        volume_raw: i128,
+    ) -> Result<Vec<Order>, String> {
+        self.context.as_of = ts;
+        self.context
+            .positions
+            .insert(instrument.to_string(), position);
+        let mid_raw = mid.raw();
+        let event = qx_strategy::MarketEvent::Bar {
+            instrument: instrument.clone(),
+            ts,
+            open_raw: mid_raw,
+            high_raw: mid_raw,
+            low_raw: mid_raw,
+            close_raw: mid_raw,
+            volume_raw,
+        };
+        let decision = self.strategy.on_event(&self.context, &event)?;
+        decision.to_orders(&self.context)
+    }
+}
+
+impl<S: qx_strategy::Strategy> OrderBookStrategy for DepthBarStrategy<S> {
+    fn on_order_book(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        position: i128,
+    ) -> Result<Vec<Order>, String> {
+        let (Some(bid), Some(ask)) = (snapshot.bids.first(), snapshot.asks.first()) else {
+            return Ok(Vec::new());
+        };
+        let mid = Price::from_raw(bid.price.raw().saturating_add(ask.price.raw()) / 2);
+        let volume_raw = snapshot
+            .bids
+            .iter()
+            .chain(snapshot.asks.iter())
+            .fold(0_i128, |total, level| total.saturating_add(level.qty.raw()));
+        self.on_mid(&snapshot.instrument, snapshot.ts, position, mid, volume_raw)
+    }
+}
+
 pub struct OrderBookBacktestConfig {
     pub instrument: qx_core::InstrumentId,
     pub account_id: String,
@@ -83,6 +162,8 @@ pub struct OrderBookBacktestConfig {
     /// 未平仓头寸使用 `Ledger::apply_fill_with_spec`，不能退化为现货现金语义。
     pub instrument_spec: Option<TradingInstrumentSpec>,
     pub risk: RiskGate,
+    /// 输入深度档位声明；L2 以上才有逐档撮合意义，L1 由 Tick 引擎固定。
+    pub data_tier: DataTier,
 }
 
 pub struct OrderBookBacktestReport {
@@ -90,6 +171,22 @@ pub struct OrderBookBacktestReport {
     pub ledger: Ledger,
     pub event_log: EventLog,
     pub pending_orders: usize,
+    /// 与 Bar 回测同形的统一产物：每个快照结束后的账户权益、净持仓与时间。
+    pub equity: Vec<i128>,
+    pub positions: Vec<i128>,
+    pub snapshot_ts: Vec<u64>,
+    pub fees_raw: i128,
+    pub turnover_raw: i128,
+    pub return_bps: i32,
+    pub max_drawdown_bps: u32,
+    pub initial_equity_raw: i128,
+    pub input_data_hash: u64,
+    pub clock_start: u64,
+    pub clock_end: u64,
+    pub data_tier: DataTier,
+    pub risk_rule_set_version: String,
+    pub model_descriptors: Vec<String>,
+    pub assumptions: Vec<String>,
 }
 
 impl OrderBookBacktestReport {
@@ -99,6 +196,56 @@ impl OrderBookBacktestReport {
 
     pub fn replay_hash(&self) -> u64 {
         ReplayVerifier::rebuild_from(self.event_log.events())
+    }
+
+    pub fn final_equity(&self) -> i128 {
+        *self.equity.last().unwrap_or(&self.initial_equity_raw)
+    }
+
+    /// 用报告事实生成与 Bar 回测同构的运行指纹，保证两条链路共享 RunManifest 契约。
+    pub fn run_manifest(
+        &self,
+        identity: RunManifestIdentity<'_>,
+        data_fingerprint: &str,
+    ) -> Result<RunManifest, String> {
+        if data_fingerprint.trim().is_empty() {
+            return Err("RunManifest data_fingerprint 不能为空".into());
+        }
+        let mut model_hash = Fnv1a::new();
+        for descriptor in &self.model_descriptors {
+            model_hash.write_text(descriptor);
+        }
+        let manifest = RunManifest {
+            run_id: identity.run_id.into(),
+            code_commit: identity.code_commit.into(),
+            config_hash: identity.config_hash.into(),
+            data_fingerprint: data_fingerprint.into(),
+            input_components: BTreeMap::new(),
+            clock_start: self.clock_start,
+            clock_end: self.clock_end,
+            global_seed: 0,
+            determinism_mode: true,
+            result_hash: format!("{:016x}", self.result_hash()),
+            strategy_version: identity.strategy_version.into(),
+            instrument_spec_version: identity.instrument_spec_version.into(),
+            model_fingerprint: format!("{:016x}", model_hash.finish()),
+            input_event_hash: format!("{:016x}", self.input_data_hash),
+            output_event_hash: format!("{:016x}", self.result_hash()),
+            runtime_version: identity.runtime_version.into(),
+        };
+        manifest.validate()?;
+        Ok(manifest)
+    }
+}
+
+fn book_notional(
+    spec: Option<&TradingInstrumentSpec>,
+    qty: i128,
+    price: i128,
+) -> Result<i128, qx_core::QxError> {
+    match spec {
+        Some(spec) => spec.notional(qty, price),
+        None => Ok(crate::cost::notional(qty, price)),
     }
 }
 
@@ -137,7 +284,9 @@ impl OrderBookBacktestEngine {
             fee_bps,
             instrument_spec,
             risk,
+            data_tier,
         } = config;
+        let risk_rule_set_version = risk.rule_set().version().to_string();
         if account_id.trim().is_empty() || currency.trim().is_empty() {
             return Err(qx_core::QxError::BusinessViolation(
                 "订单簿回测账户和结算币不能为空".into(),
@@ -172,6 +321,32 @@ impl OrderBookBacktestEngine {
                 "订单簿回测快照 ts/sequence 必须严格递增".into(),
             ));
         }
+        if matches!(data_tier, DataTier::Bar) {
+            return Err(qx_core::QxError::BusinessViolation(
+                "订单簿回测需要盘口快照档位（L1 或 L2/L3），不能声明为 Bar".into(),
+            ));
+        }
+        let mut input_hash = Fnv1a::new();
+        input_hash.write_text(&instrument.to_string());
+        input_hash.write_u64(snapshots.len() as u64);
+        for snapshot in snapshots {
+            input_hash.write_u64(snapshot.ts);
+            input_hash.write_u64(snapshot.sequence);
+            for level in snapshot.bids.iter().chain(snapshot.asks.iter()) {
+                input_hash.write_i128(level.price.raw());
+                input_hash.write_i128(level.qty.raw());
+            }
+        }
+        let input_data_hash = input_hash.finish();
+        let model_descriptors = vec![
+            format!("data_tier={data_tier:?}"),
+            format!("orderbook-matching@v1 fee_bps={fee_bps}"),
+            format!("risk_rule_set={risk_rule_set_version}"),
+            match instrument_spec.as_ref() {
+                Some(spec) => format!("ledger=spec:{:?}", spec.product),
+                None => "ledger=cash-spot".to_string(),
+            },
+        ];
         let mut matcher = match execution_model {
             Some(model) => OrderBookMatchingEngine::with_model(model),
             None => OrderBookMatchingEngine::new(fee_bps),
@@ -181,6 +356,13 @@ impl OrderBookBacktestEngine {
         let mut log = EventLog::new();
         let mut oms = Oms::new();
         let mut fills = Vec::new();
+        let mut equity_curve = Vec::with_capacity(snapshots.len());
+        let mut position_curve = Vec::with_capacity(snapshots.len());
+        let mut snapshot_curve = Vec::with_capacity(snapshots.len());
+        let mut fees_raw = 0_i128;
+        let mut turnover_raw = 0_i128;
+        let mut peak_equity = initial_cash.raw();
+        let mut max_drawdown_raw = 0_i128;
         let deposit_id = ledger.deposit(
             &account_id,
             &currency,
@@ -217,6 +399,12 @@ impl OrderBookBacktestEngine {
                     ledger.apply_fill_with_multiplier(&order, &traced_fill, &currency, 1)?
                 };
                 fill = traced_fill;
+                fees_raw = fees_raw.saturating_add(fill.fee.raw());
+                turnover_raw = turnover_raw.saturating_add(book_notional(
+                    instrument_spec.as_ref(),
+                    fill.qty.raw(),
+                    fill.price.raw(),
+                )?);
                 append_event(
                     &mut log,
                     fill.ts,
@@ -363,14 +551,14 @@ impl OrderBookBacktestEngine {
                     } else {
                         0
                     };
-                    PositionSnapshot::new_with_multiplier(
+                    OrderRiskPosition::new_with_multiplier(
                         one_way_qty,
                         gross_notional,
                         spec.contract_size,
                     )
                     .with_hedge_legs(long_qty, short_qty)
                 } else {
-                    PositionSnapshot::new(one_way_qty, 0).with_hedge_legs(long_qty, short_qty)
+                    OrderRiskPosition::new(one_way_qty, 0).with_hedge_legs(long_qty, short_qty)
                 };
                 if let Err(error) =
                     risk.check_with_price(&order, &position_snapshot, reference_price)
@@ -410,12 +598,76 @@ impl OrderBookBacktestEngine {
                     },
                 );
             }
+            let marked_equity = match reference_price {
+                Some(price) => {
+                    let marks = BTreeMap::from([(instrument.clone(), price)]);
+                    if let Some(spec) = instrument_spec
+                        .as_ref()
+                        .filter(|spec| spec.product.supports_leverage())
+                    {
+                        ledger.equity_for_with_spec(&account_id, &marks, &currency, spec)?
+                    } else {
+                        ledger
+                            .equity_for_with_multiplier(&account_id, &marks, &currency, 1)
+                            .ok_or_else(|| {
+                                qx_core::QxError::Invariant("订单簿回测无法计算账户权益".into())
+                            })?
+                    }
+                }
+                None => ledger.cash_for(&account_id, &currency),
+            };
+            peak_equity = peak_equity.max(marked_equity);
+            max_drawdown_raw = max_drawdown_raw.max(peak_equity.saturating_sub(marked_equity));
+            equity_curve.push(marked_equity);
+            position_curve.push(position);
+            snapshot_curve.push(snapshot.ts);
         }
+        let final_equity = equity_curve.last().copied().unwrap_or(initial_cash.raw());
+        let return_bps = if initial_cash.raw() > 0 {
+            final_equity
+                .saturating_sub(initial_cash.raw())
+                .saturating_mul(10_000)
+                .checked_div(initial_cash.raw())
+                .unwrap_or(0)
+                .clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32
+        } else {
+            0
+        };
+        let max_drawdown_bps = if peak_equity > 0 {
+            max_drawdown_raw
+                .saturating_mul(10_000)
+                .checked_div(peak_equity)
+                .unwrap_or(0)
+                .clamp(0, 10_000) as u32
+        } else {
+            0
+        };
         Ok(OrderBookBacktestReport {
             fills,
             ledger,
             event_log: log,
             pending_orders: matcher.pending_count(),
+            equity: equity_curve,
+            positions: position_curve,
+            snapshot_ts: snapshot_curve,
+            fees_raw,
+            turnover_raw,
+            return_bps,
+            max_drawdown_bps,
+            initial_equity_raw: initial_cash.raw(),
+            input_data_hash,
+            clock_start: snapshots.first().map(|snapshot| snapshot.ts).unwrap_or(0),
+            clock_end: snapshots.last().map(|snapshot| snapshot.ts).unwrap_or(0),
+            data_tier,
+            risk_rule_set_version,
+            assumptions: vec![
+                format!("data_tier={data_tier:?}"),
+                "benchmark=flat-cash".into(),
+                "metrics=raw-fixed-point".into(),
+                "causality=match-previous-submit-current".into(),
+                format!("pending_orders={}", matcher.pending_count()),
+            ],
+            model_descriptors,
         })
     }
 }
@@ -556,6 +808,7 @@ mod tests {
             fee_bps: 1,
             instrument_spec: None,
             risk: RiskGate::new(),
+            data_tier: DataTier::L2L3,
         };
         let mut strategy = BuyOnce { emitted: false };
         let report = OrderBookBacktestEngine::new(config)
@@ -580,6 +833,7 @@ mod tests {
             fee_bps: 0,
             instrument_spec: None,
             risk: RiskGate::new(),
+            data_tier: DataTier::L2L3,
         };
         let context = StrategyContext {
             strategy_id: "native-book".into(),
@@ -629,6 +883,7 @@ mod tests {
             fee_bps: 0,
             instrument_spec: Some(spec),
             risk: RiskGate::new(),
+            data_tier: DataTier::L2L3,
         };
         let mut strategy = DerivativeBuy { emitted: false };
         let report = OrderBookBacktestEngine::new(config)
@@ -647,5 +902,113 @@ mod tests {
                 .raw(),
             Quantity::from_i64(1).raw()
         );
+    }
+
+    fn l2_config(fee_bps: i128) -> OrderBookBacktestConfig {
+        OrderBookBacktestConfig {
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            account_id: "main".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_i64(10_000),
+            fee_bps,
+            instrument_spec: None,
+            risk: RiskGate::new(),
+            data_tier: DataTier::L2L3,
+        }
+    }
+
+    fn book_context() -> qx_strategy::StrategyContext {
+        qx_strategy::StrategyContext {
+            strategy_id: "depth-book".into(),
+            strategy_version: "v1".into(),
+            account_id: "main".into(),
+            venue_id: "paper".into(),
+            data_fingerprint: "book-1".into(),
+            as_of: 1,
+            positions: std::collections::BTreeMap::new(),
+            cash: std::collections::BTreeMap::new(),
+            available_margin_raw: Some(10_000),
+            risk_state: "ready".into(),
+        }
+    }
+
+    #[test]
+    fn order_book_report_is_deterministic_and_carries_unified_metrics() {
+        let snapshots = [snapshot(1, 100), snapshot(2, 101), snapshot(3, 102)];
+        let first = OrderBookBacktestEngine::new(l2_config(1))
+            .run(&snapshots, &mut BuyOnce { emitted: false })
+            .unwrap();
+        let second = OrderBookBacktestEngine::new(l2_config(1))
+            .run(&snapshots, &mut BuyOnce { emitted: false })
+            .unwrap();
+        assert_eq!(first.result_hash(), second.result_hash());
+        assert_eq!(first.equity, second.equity);
+        assert_eq!(first.snapshot_ts, vec![1, 2, 3]);
+        assert_eq!(first.positions.len(), first.equity.len());
+        assert_eq!(
+            first.fees_raw,
+            first.fills.iter().map(|fill| fill.fee.raw()).sum::<i128>()
+        );
+        assert!(first.turnover_raw > 0);
+        assert_eq!(first.clock_start, 1);
+        assert_eq!(first.clock_end, 3);
+        assert_eq!(first.final_equity(), *first.equity.last().unwrap());
+        assert!(first
+            .model_descriptors
+            .iter()
+            .any(|descriptor| descriptor == "data_tier=L2L3"));
+        let manifest = first
+            .run_manifest(
+                RunManifestIdentity {
+                    run_id: "book-test:run",
+                    code_commit: "workspace",
+                    config_hash: "config-hash",
+                    strategy_version: "v1",
+                    instrument_spec_version: "default-instrument-spec-v1",
+                    runtime_version: "runtime-schema-1",
+                },
+                "depth:test",
+            )
+            .unwrap();
+        assert_eq!(manifest.clock_start, 1);
+        assert_eq!(manifest.clock_end, 3);
+        assert_eq!(
+            manifest.input_event_hash,
+            format!("{:016x}", first.input_data_hash)
+        );
+        assert_eq!(
+            manifest.result_hash,
+            format!("{:016x}", first.result_hash())
+        );
+        let changed = OrderBookBacktestEngine::new(l2_config(50))
+            .run(&snapshots, &mut BuyOnce { emitted: false })
+            .unwrap();
+        assert_ne!(changed.result_hash(), first.result_hash());
+        assert!(changed.fees_raw > first.fees_raw);
+    }
+
+    #[test]
+    fn depth_bar_view_lets_bar_only_strategies_trade_on_order_book_snapshots() {
+        let mut strategy =
+            DepthBarStrategy::new(NativeBuy, book_context(), snapshot(1, 100).instrument);
+        let report = OrderBookBacktestEngine::new(l2_config(0))
+            .run(&[snapshot(1, 100), snapshot(2, 101)], &mut strategy)
+            .unwrap();
+        assert_eq!(report.fills.len(), 1);
+        assert_eq!(report.pending_orders, 1);
+        assert_eq!(report.positions, vec![0, Quantity::from_i64(1).raw()]);
+    }
+
+    #[test]
+    fn order_book_backtest_rejects_bar_data_tier() {
+        let config = OrderBookBacktestConfig {
+            data_tier: DataTier::Bar,
+            ..l2_config(0)
+        };
+        let error = OrderBookBacktestEngine::new(config)
+            .run(&[snapshot(1, 100)], &mut BuyOnce { emitted: false })
+            .err()
+            .expect("Bar 档位不能用于盘口回测");
+        assert!(format!("{error:?}").contains("不能声明为 Bar"));
     }
 }

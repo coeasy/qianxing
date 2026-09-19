@@ -18,7 +18,7 @@ mod sqlite;
 #[cfg(feature = "sqlite")]
 pub use sqlite::{
     SqliteAuditStore, SqliteConsumerStateStore, SqliteControlCommandQueue, SqliteControlStore,
-    SqliteJobQueue, SqliteOutboxStore, SqliteSnapshotStore, SqliteTokenBucket,
+    SqliteEventLogStore, SqliteJobQueue, SqliteOutboxStore, SqliteSnapshotStore, SqliteTokenBucket,
 };
 
 #[cfg(feature = "postgres")]
@@ -35,6 +35,7 @@ mod nats;
 #[cfg(feature = "nats")]
 pub use nats::{NatsConsumerBatchReport, NatsJetStreamConsumer, NatsJetStreamPublisher};
 
+use std::io::ErrorKind;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
@@ -1595,6 +1596,11 @@ pub trait ControlCommandQueueBackend: Send + Sync {
         fencing_token: u64,
         now: u64,
     ) -> Result<PathBuf, StorageError>;
+    /// 尚未确认（未 ack）的全部命令，忽略活跃租约。默认实现把 `available`
+    /// 的时间推到上限，使文件/SQLite/PostgreSQL 后端共享同一“待清理”语义。
+    fn pending_commands(&self) -> Result<Vec<QueuedControlCommand>, StorageError> {
+        self.available_commands(u64::MAX)
+    }
 }
 
 impl ControlCommandQueue {
@@ -1995,9 +2001,8 @@ impl Drop for StorageLock {
 }
 
 fn acquire_storage_lock(path: PathBuf) -> Result<StorageLock, StorageError> {
-    // A short bounded retry turns normal concurrent writers into serialized
-    // appends while still returning a visible conflict if a crashed process
-    // leaves a stale lock behind.
+    // 有界重试把正常并发写者串行化；`AlreadyExists` 与 Windows 删除窗口内
+    // `create_new` 抛出的 `PermissionDenied`（os error 5）都算锁正在占用或正在释放。
     for _ in 0..100 {
         match std::fs::OpenOptions::new()
             .write(true)
@@ -2005,7 +2010,12 @@ fn acquire_storage_lock(path: PathBuf) -> Result<StorageLock, StorageError> {
             .open(&path)
         {
             Ok(_) => return Ok(StorageLock { path }),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::AlreadyExists | ErrorKind::PermissionDenied
+                ) =>
+            {
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
             Err(error) => return Err(StorageError::Io(error.to_string())),

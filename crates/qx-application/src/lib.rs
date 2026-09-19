@@ -25,6 +25,11 @@ pub enum ExecutionEvent {
     ReconcileRequired {
         client_order_id: u64,
     },
+    /// 行情事实。撮合前必须先落行情事件，使 Paper 与 Live 共享同一道行情门禁。
+    MarketQuote {
+        instrument: InstrumentId,
+        quote: QuoteTick,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -54,6 +59,11 @@ pub trait OrderStore {
 pub trait ExecutionEventPort: EventAppender + OrderStore {}
 
 impl<T: EventAppender + OrderStore> ExecutionEventPort for T {}
+
+/// 只读的账本条目计数，用于执行结果摘要；实现者不必暴露 Ledger 结构。
+pub trait LedgerProbe {
+    fn ledger_entry_count(&self) -> usize;
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct RiskDecision {
@@ -172,6 +182,9 @@ pub fn validate_submit_events(order: &Order, events: &[ExecutionEvent]) -> Resul
                         order.client_id, client_order_id
                     ));
                 }
+            }
+            ExecutionEvent::MarketQuote { instrument, .. } => {
+                return Err(format!("提交接口返回了行情事实: instrument={instrument}"));
             }
         }
     }

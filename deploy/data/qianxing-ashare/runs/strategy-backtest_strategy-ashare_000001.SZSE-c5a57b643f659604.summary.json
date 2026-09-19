@@ -1,0 +1,37 @@
+{
+  "assumptions": [
+    "data_tier=Bar",
+    "benchmark=flat-cash",
+    "metrics=raw-fixed-point",
+    "virtual_trading=funding:0 interest:0 delivery:0 liquidation:false"
+  ],
+  "bars": 6,
+  "clock_end": 6000,
+  "clock_start": 1000,
+  "fills": 0,
+  "input_data_hash": "954ba74a0e8dd9d0",
+  "instrument": "000001.SZSE",
+  "metrics": {
+    "fees_raw": 0,
+    "final_equity_raw": 100000000000000,
+    "max_drawdown_bps": 0,
+    "return_bps": 0,
+    "turnover_raw": 0
+  },
+  "model_descriptors": [
+    "NextBarOpen@v1[tier=Bar;params=;assumption=假设下一根bar开盘可全部成交；不建模排队与容量]",
+    "AShareFee@v1[params=commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1]",
+    "ZeroLatency@v1[delay_ns=0]",
+    "NoMargin@v1",
+    "AshareRules@v2[board=Main;t_plus_one=true;lot_size=100000000000;limit_up_bp=1000;limit_down_bp=1000;price_tick=10000000;commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1;calendar=0;trading_days=2;sessions=4;halted=0;actions=1;actions_hash=3ccac4992760a857]"
+  ],
+  "replay_hash": "5bdbc7ead7043b1c",
+  "result_hash": "5bdbc7ead7043b1c",
+  "risk_rules": {
+    "rule_set_version": "conservative-default-v1+implicit-no-short"
+  },
+  "run_manifest": "P:\\github_public\\qianxing\\deploy\\data/qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE-c5a57b643f659604.run.json",
+  "sample_unit": "bar",
+  "schema_version": 1,
+  "strategy_id": "strategy-ashare"
+}

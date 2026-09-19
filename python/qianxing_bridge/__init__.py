@@ -15,6 +15,41 @@ _FNV_OFFSET = 0xCBF29CE484222325
 _FNV_PRIME = 0x100000001B3
 _U64_MASK = (1 << 64) - 1
 
+#: BarFrame JSON 契约版本。落盘/交换文档在顶层显式携带该值，Rust 侧
+#: （``qx-data`` 的 ``JsonBarFrameProvider``）据此切换兼容分支与严格模式：
+#: 缺省/0 表示旧格式（允许未知列、不强制 ``source``），``>=1`` 表示严格模式。
+BAR_FRAME_SCHEMA_VERSION = 1
+
+#: v1 BarFrame JSON 的完整字段集合；两侧任何新增列都必须同步更新这里。
+BAR_FRAME_JSON_FIELDS = (
+    "instrument",
+    "source",
+    "ts",
+    "open_raw",
+    "high_raw",
+    "low_raw",
+    "close_raw",
+    "volume_raw",
+)
+
+#: v1 允许的顶层键：内容列 + 契约版本。Rust 严格模式的 `deny_unknown_fields`
+#: 使用同一集合（`qx-data/src/provider.rs` 的 `BAR_FRAME_STRICT_FIELDS`）。
+BAR_FRAME_STRICT_FIELDS = ("schema_version", *BAR_FRAME_JSON_FIELDS)
+
+
+def read_bar_frame_schema_version(payload: "str | dict[str, Any]") -> int:
+    """读取 BarFrame JSON 顶层 ``schema_version``，缺省视为 0（旧格式）。"""
+
+    value = json.loads(payload) if isinstance(payload, str) else payload
+    if not isinstance(value, dict):
+        raise ValueError("BarFrame JSON must be an object")
+    raw = value.get("schema_version", 0)
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError("schema_version must be an integer")
+    if raw < 0 or raw > BAR_FRAME_SCHEMA_VERSION:
+        raise ValueError(f"unsupported BarFrame schema_version: {raw}")
+    return raw
+
 
 def _fnv_write_byte(value: int, byte: int) -> int:
     return ((value ^ byte) * _FNV_PRIME) & _U64_MASK
@@ -99,6 +134,18 @@ class BarFrame:
     @classmethod
     def from_json(cls, payload: str) -> "BarFrame":
         value = json.loads(payload)
+        schema_version = read_bar_frame_schema_version(value)
+        if schema_version >= 1:
+            if not isinstance(value.get("instrument"), str) or not value["instrument"].strip():
+                raise ValueError("BarFrame schema_version>=1 requires a non-empty instrument")
+            if not isinstance(value.get("source"), str) or not value["source"].strip():
+                raise ValueError("BarFrame schema_version>=1 requires a non-empty source")
+            missing = sorted(set(BAR_FRAME_JSON_FIELDS).difference(value))
+            if missing:
+                raise ValueError(f"BarFrame schema_version={schema_version} missing {missing}")
+            unknown = sorted(set(value).difference(BAR_FRAME_STRICT_FIELDS))
+            if unknown:
+                raise ValueError(f"BarFrame schema_version={schema_version} unknown {unknown}")
         frame = cls(
             instrument=value["instrument"],
             source=value["source"],
@@ -121,6 +168,8 @@ class BarFrame:
             self.close_raw,
             self.volume_raw,
         )
+        if not self.source.strip():
+            raise ValueError("BarFrame source is required")
         if not self.ts:
             raise ValueError("empty BarFrame")
         if any(len(column) != len(self.ts) for column in columns):
@@ -132,6 +181,7 @@ class BarFrame:
         self.validate()
         return json.dumps(
             {
+                "schema_version": BAR_FRAME_SCHEMA_VERSION,
                 "instrument": self.instrument,
                 "source": self.source,
                 "ts": list(self.ts),

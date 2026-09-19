@@ -40,7 +40,7 @@ def main() -> int:
                 [
                     str(executable),
                     "--protocol",
-                    "shared_memory_json",
+                    protocol,
                     "--input-ring",
                     str(input_path),
                     "--output-ring",

@@ -34,7 +34,6 @@
       "account_id": null,
       "venue_id": null,
       "endpoint": null,
-      "symbols": ["BTCUSDT.BINANCE"],
       "credential_env": null
     },
     {
@@ -58,7 +57,8 @@
       "credential_env": {
         "api_key": "QX_BINANCE_API_KEY",
         "secret": "QX_BINANCE_API_SECRET"
-      }
+      },
+      "instrument_spec_path": "deploy/qianxing.binance.spot.spec.json"
     },
     {
       "id": "reconciler-main",

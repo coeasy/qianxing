@@ -18,7 +18,11 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 from zoneinfo import ZoneInfo
 
-from qianxing_bridge import BarFrame
+from qianxing_bridge import (
+    BAR_FRAME_JSON_FIELDS,
+    BAR_FRAME_SCHEMA_VERSION,
+    BarFrame,
+)
 
 
 SCALE = 1_000_000_000
@@ -50,6 +54,90 @@ _CORPORATE_ACTION_TYPES = {
     "capital_change",
     "unknown",
 }
+
+#: Python→Rust A 股数据契约版本。缺省（``0``）代表旧格式，Rust 侧继续按宽松
+#: 分支解析；``1`` 代表严格模式：顶层必须携带非空 ``source``，未知字段直接报错。
+#: 任何 bump 都必须同步 `crates/qx-xingban/src/ashare.rs` 与
+#: `crates/qx-data/src/provider.rs` 的字段白名单。
+ASHARE_SCHEMA_VERSION = 1
+
+#: v1 公司行为文档（信封）与单条事件的字段白名单，必须与 Rust
+#: `ASHARE_ACTION_ENVELOPE_FIELDS` / `ASHARE_ACTION_FIELDS` 完全一致。
+ASHARE_ACTION_ENVELOPE_FIELDS = (
+    "schema_version",
+    "source",
+    "instrument",
+    "as_of",
+    "actions",
+)
+ASHARE_ACTION_FIELDS = (
+    "announcement_date",
+    "action_type",
+    "cash_dividend_raw",
+    "conversion_price_raw",
+    "conversion_qty_raw",
+    "conversion_ratio_den",
+    "conversion_ratio_num",
+    "conversion_target_instrument",
+    "conversion_target_qty_raw",
+    "convertible_bond_instrument",
+    "ex_date",
+    "interest_per_bond_raw",
+    "instrument",
+    "issue_price_raw",
+    "issuer_free_float_shares_raw",
+    "issuer_total_shares_raw",
+    "payment_date",
+    "published_at",
+    "raw_payload",
+    "record_date",
+    "repurchase_price_raw",
+    "repurchase_qty_raw",
+    "rights_expiry_qty_raw",
+    "rights_instrument",
+    "rights_issue_price_raw",
+    "rights_issue_ratio_den",
+    "rights_issue_ratio_num",
+    "settlement_price_raw",
+    "settlement_qty_raw",
+    "share_ratio_den",
+    "share_ratio_num",
+    "source",
+    "subscription_end",
+    "subscription_qty_raw",
+    "subscription_start",
+)
+
+#: v1 交易日历字段白名单，必须与 Rust `ASHARE_CALENDAR_FIELDS` 一致。
+ASHARE_CALENDAR_FIELDS = ("calendar_id", "trading_days", "sessions", "schema_version", "source")
+
+
+def _document_schema_version(value: Mapping[str, Any], *, label: str) -> int:
+    """读取文档顶层 ``schema_version``；缺省视为 0（旧格式兼容分支）。"""
+
+    raw = value.get("schema_version", 0)
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(f"{label} schema_version must be an integer")
+    if raw < 0 or raw > ASHARE_SCHEMA_VERSION:
+        raise ValueError(f"unsupported {label} schema_version: {raw}")
+    return int(raw)
+
+
+def _require_strict_document(
+    value: Mapping[str, Any], allowed: tuple[str, ...], *, label: str
+) -> str:
+    """严格模式（``schema_version >= 1``）下校验来源与字段集合。"""
+
+    source = value.get("source")
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError(f"{label} schema_version>=1 requires a non-empty source")
+    missing = sorted(set(allowed).difference(value))
+    if missing:
+        raise ValueError(f"{label} schema_version=1 missing fields: {missing}")
+    unknown = sorted(set(value).difference(allowed))
+    if unknown:
+        raise ValueError(f"{label} schema_version=1 unknown fields: {unknown}")
+    return source.strip()
 
 
 def _json_safe(value: Any) -> Any:
@@ -478,14 +566,13 @@ def build_dataset_bundle_manifest(
             }
     if calendar is not None:
         calendar.validate()
-        calendar_payload = calendar.to_json().encode("utf-8")
         components["calendar"] = {
             "kind": "calendar",
             "dataset_id": f"{bundle_id}.calendar",
             "version": calendar.calendar_id,
             "source": source,
-            "fingerprint": hashlib.sha256(calendar_payload).hexdigest(),
-            "schema_version": 1,
+            "fingerprint": calendar.component_fingerprint(),
+            "schema_version": ASHARE_SCHEMA_VERSION,
             "start_timestamp": _manifest_timestamp_ms(calendar.trading_days[0]),
             "end_timestamp": _manifest_timestamp_ms(calendar.trading_days[-1]),
             "row_count": len(calendar.trading_days),
@@ -494,7 +581,7 @@ def build_dataset_bundle_manifest(
         "bundle_id": bundle_id,
         "version": version,
         "source": source,
-        "schema_version": 1,
+        "schema_version": ASHARE_SCHEMA_VERSION,
         "components": components,
     }
 
@@ -1342,6 +1429,8 @@ class AshareTradingCalendar:
     calendar_id: str
     trading_days: tuple[str, ...]
     sessions: tuple[tuple[str, str], ...] = ()
+    #: v1 契约的必填来源；旧数据可以留空（只影响导出为 v1 文档的能力）。
+    source: str = ""
 
     def validate(self) -> None:
         if not self.calendar_id.strip() or not self.trading_days:
@@ -1356,17 +1445,53 @@ class AshareTradingCalendar:
         self.validate()
         return trading_day in self.trading_days
 
+    def component_fingerprint(self) -> str:
+        """复现 Rust `dataset_component_file_fingerprint("calendar")` 的字节。
+
+        DatasetBundle 只绑定 ``calendar_id/trading_days/sessions`` 的规范字节，
+        所以顶层新增 ``schema_version``/``source`` 不会让已登记的 bundle
+        fingerprint 失效；这条路径必须和 CLI 保持一致，不能改成哈希整个文件。
+        """
+
+        self.validate()
+        canonical = json.dumps(
+            {
+                "calendar_id": self.calendar_id,
+                "trading_days": list(self.trading_days),
+                "sessions": [[start, end] for start, end in self.sessions],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def to_json(self) -> str:
         self.validate()
-        return json.dumps(asdict(self), ensure_ascii=False, separators=(",", ":"))
+        if not self.source.strip():
+            raise ValueError("AshareTradingCalendar.to_json requires source for schema_version=1")
+        return json.dumps(
+            {
+                "calendar_id": self.calendar_id,
+                "trading_days": list(self.trading_days),
+                "sessions": [[start, end] for start, end in self.sessions],
+                "schema_version": ASHARE_SCHEMA_VERSION,
+                "source": self.source,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
     @classmethod
     def from_json(cls, payload: str) -> "AshareTradingCalendar":
         value = json.loads(payload)
+        schema_version = _document_schema_version(value, label="calendar")
+        if schema_version >= 1:
+            _require_strict_document(value, ASHARE_CALENDAR_FIELDS, label="calendar")
         calendar = cls(
             calendar_id=value["calendar_id"],
             trading_days=tuple(value["trading_days"]),
             sessions=tuple(tuple(session) for session in value.get("sessions", [])),
+            source=str(value.get("source") or ""),
         )
         calendar.validate()
         return calendar
@@ -1529,6 +1654,183 @@ class AshareCorporateAction:
 
 
 @dataclass(frozen=True)
+class AshareCorporateActionDocument:
+    """公司行为文档（v1 信封）：契约版本、来源与 PIT 截止时间。
+
+    Rust ``AshareRuleConfig::apply_corporate_actions_json`` 读取同一份信封：
+    ``schema_version`` 缺省视为旧格式（宽松解析），``>=1`` 启用严格模式，
+    ``as_of`` 存在时按 ``published_at <= as_of`` 过滤事件。行对象本身保持
+    v0 的字段集合，因此 DatasetBundle 的 ``corporate_actions`` fingerprint
+    （只哈希 ``actions`` 数组）不会因为信封而改变。
+    """
+
+    actions: tuple[AshareCorporateAction, ...]
+    source: str
+    instrument: str
+    schema_version: int = ASHARE_SCHEMA_VERSION
+    as_of: str | None = None
+
+    def validate(self) -> None:
+        if self.schema_version >= 1:
+            if not self.source.strip():
+                raise ValueError("corporate action document requires a non-empty source")
+            if not self.instrument.strip():
+                raise ValueError("corporate action document requires an instrument")
+        for action in self.actions:
+            action.validate()
+            if action.instrument != self.instrument:
+                raise ValueError(
+                    f"corporate action instrument mismatch: {action.instrument} != {self.instrument}"
+                )
+
+    def visible_actions(self) -> tuple[AshareCorporateAction, ...]:
+        """按 ``as_of`` 收敛可见事件；未提供 ``as_of`` 时返回全部事件。"""
+
+        self.validate()
+        return filter_visible_corporate_actions(self.actions, self.as_of)
+
+    def to_json(self) -> str:
+        self.validate()
+        rows = [json.loads(action.to_json()) for action in self.actions]
+        if self.schema_version >= 1:
+            # 行内 source 缺失时用文档级来源补齐，Rust 侧不再产生空来源。
+            for row in rows:
+                if not str(row.get("source") or "").strip():
+                    row["source"] = self.source
+        document = {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "instrument": self.instrument,
+            "as_of": self.as_of,
+            "actions": rows,
+        }
+        if self.schema_version == 0:
+            return json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    @classmethod
+    def from_json(cls, payload: str) -> "AshareCorporateActionDocument":
+        """读取 v0 数组或 v1 信封；顶层字段集合在严格模式下受白名单约束。"""
+
+        value = json.loads(payload)
+        if isinstance(value, list):
+            actions = _parse_corporate_action_rows(value)
+            document = cls(
+                actions=actions,
+                source=_single_inferred_source(value),
+                instrument=_single_instrument(actions),
+                schema_version=0,
+                as_of=None,
+            )
+            document.validate()
+            return document
+        if not isinstance(value, dict):
+            raise ValueError("corporate action document must be an array or an object")
+        schema_version = _document_schema_version(value, label="corporate actions")
+        if schema_version >= 1:
+            _require_strict_document(value, ASHARE_ACTION_ENVELOPE_FIELDS, label="corporate actions")
+        rows = value.get("actions")
+        if not isinstance(rows, list):
+            raise ValueError("corporate action document requires an actions array")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("corporate action actions[] must be objects")
+            if schema_version >= 1:
+                unknown = sorted(set(row).difference(ASHARE_ACTION_FIELDS))
+                if unknown:
+                    raise ValueError(
+                        f"corporate actions schema_version=1 unknown fields: {unknown}"
+                    )
+        actions = _parse_corporate_action_rows(rows)
+        source = str(value.get("source") or _single_inferred_source(rows))
+        instrument = value.get("instrument") or _single_instrument(actions)
+        document = cls(
+            actions=actions,
+            source=source,
+            instrument=str(instrument or ""),
+            schema_version=schema_version,
+            as_of=value.get("as_of"),
+        )
+        document.validate()
+        return document
+
+
+def _parse_corporate_action_rows(rows: Sequence[Any]) -> tuple[AshareCorporateAction, ...]:
+    parsed: list[AshareCorporateAction] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("corporate actions[] must be objects")
+        parsed.append(AshareCorporateAction(**row))
+    return tuple(parsed)
+
+
+def _single_instrument(actions: Sequence[AshareCorporateAction]) -> str:
+    instruments = {action.instrument for action in actions}
+    if len(instruments) > 1:
+        raise ValueError("corporate action document must bind exactly one instrument")
+    return next(iter(instruments), "")
+
+
+def _single_inferred_source(rows: Sequence[Any]) -> str:
+    sources = {
+        str(row.get("source") or "").strip()
+        for row in rows
+        if isinstance(row, dict) and str(row.get("source") or "").strip()
+    }
+    if len(sources) > 1:
+        raise ValueError("legacy corporate action array mixes sources; use a v1 document")
+    return next(iter(sources), "")
+
+
+def serialize_corporate_actions(
+    actions: Sequence[AshareCorporateAction],
+    *,
+    source: str,
+    instrument: str | None = None,
+    as_of: str | None = None,
+    schema_version: int = ASHARE_SCHEMA_VERSION,
+) -> str:
+    """导出 Rust 可读的公司行为文档（默认 v1 信封）。"""
+
+    tuple_actions = tuple(actions)
+    document = AshareCorporateActionDocument(
+        actions=tuple_actions,
+        source=source,
+        instrument=instrument or _single_instrument(tuple_actions),
+        schema_version=schema_version,
+        as_of=as_of,
+    )
+    return document.to_json()
+
+
+def load_corporate_actions(
+    payload: str,
+) -> tuple[tuple[AshareCorporateAction, ...], dict[str, Any]]:
+    """读取公司行为文档，返回事件与可审计的契约元数据。"""
+
+    document = AshareCorporateActionDocument.from_json(payload)
+    return (
+        document.actions,
+        {
+            "schema_version": document.schema_version,
+            "source": document.source,
+            "instrument": document.instrument,
+            "as_of": document.as_of,
+        },
+    )
+
+
+def filter_visible_corporate_actions(
+    actions: Sequence[AshareCorporateAction], as_of: str | None
+) -> tuple[AshareCorporateAction, ...]:
+    """按 PIT 可见性过滤：``published_at <= as_of`` 的事件才允许进入回测。"""
+
+    if as_of is None:
+        return tuple(actions)
+    return tuple(action for action in actions if action.visible_at(as_of))
+
+
+@dataclass(frozen=True)
 class AsharePITRecord:
     """财务/公告/行业等研究事实的最小 PIT 封装。"""
 
@@ -1556,6 +1858,7 @@ __all__ = [
     "AshareProviderError",
     "AshareQuery",
     "AshareCorporateAction",
+    "AshareCorporateActionDocument",
     "AshareActionManifest",
     "AshareActionConflict",
     "AshareActionQuery",
@@ -1565,10 +1868,19 @@ __all__ = [
     "EasyTdxProvider",
     "BarFrame",
     "SCALE",
+    "ASHARE_SCHEMA_VERSION",
+    "ASHARE_ACTION_ENVELOPE_FIELDS",
+    "ASHARE_ACTION_FIELDS",
+    "ASHARE_CALENDAR_FIELDS",
+    "BAR_FRAME_JSON_FIELDS",
+    "BAR_FRAME_SCHEMA_VERSION",
     "create_provider",
     "normalize_bar_rows",
     "normalize_corporate_action_rows",
     "reconcile_corporate_actions",
     "normalize_instrument",
     "screen_bar_frames",
+    "serialize_corporate_actions",
+    "load_corporate_actions",
+    "filter_visible_corporate_actions",
 ]

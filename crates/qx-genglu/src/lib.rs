@@ -3,7 +3,7 @@
 //! 审计与对账。更路簿是明清航海者记录航线、针位、更数的手抄本——
 //! 用它命名"事件日志与审计"是精准的：都是**不可篡改的航行事实记录**。
 
-use qx_core::{Fill, InstrumentId, Order};
+use qx_core::{Fill, Order};
 use std::collections::BTreeMap;
 
 /// 最大回撤（定点比例，0..1e9 表示 0..100%）。
@@ -108,11 +108,6 @@ pub enum Discrepancy {
         local: i128,
         venue: i128,
     },
-    PositionMismatch {
-        instrument: InstrumentId,
-        local: i128,
-        venue: i128,
-    },
     FeeMismatch {
         currency: String,
         local: i128,
@@ -195,12 +190,6 @@ pub struct CashSnapshot {
     pub amount: i128,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct PositionSnapshot {
-    pub instrument: InstrumentId,
-    pub quantity: i128,
-}
-
 pub fn reconcile_cash(local: &[CashSnapshot], venue: &[CashSnapshot]) -> Vec<Discrepancy> {
     let (l, mut out) = amount_map(
         local,
@@ -227,32 +216,6 @@ pub fn reconcile_cash(local: &[CashSnapshot], venue: &[CashSnapshot]) -> Vec<Dis
                 let b = *v.get(currency).unwrap_or(&0);
                 (a != b).then(|| Discrepancy::CashMismatch {
                     currency: currency.clone(),
-                    local: a,
-                    venue: b,
-                })
-            })
-            .collect::<Vec<_>>(),
-    );
-    out
-}
-
-pub fn reconcile_positions(
-    local: &[PositionSnapshot],
-    venue: &[PositionSnapshot],
-) -> Vec<Discrepancy> {
-    let (l, mut out) = position_map(local, "local");
-    let (v, venue_duplicates) = position_map(venue, "venue");
-    out.extend(venue_duplicates);
-    out.extend(
-        l.keys()
-            .chain(v.keys())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .filter_map(|instrument| {
-                let a = *l.get(instrument).unwrap_or(&0);
-                let b = *v.get(instrument).unwrap_or(&0);
-                (a != b).then(|| Discrepancy::PositionMismatch {
-                    instrument: instrument.clone(),
                     local: a,
                     venue: b,
                 })
@@ -345,25 +308,6 @@ where
                 domain: domain.into(),
                 side: side.into(),
                 key,
-            });
-        }
-    }
-    (map, issues)
-}
-
-fn position_map(
-    values: &[PositionSnapshot],
-    side: &str,
-) -> (BTreeMap<InstrumentId, i128>, Vec<Discrepancy>) {
-    let mut map = BTreeMap::new();
-    let mut issues = Vec::new();
-    for value in values {
-        let key = value.instrument.clone();
-        if map.insert(key.clone(), value.quantity).is_some() {
-            issues.push(Discrepancy::DuplicateSnapshot {
-                domain: "position".into(),
-                side: side.into(),
-                key: key.to_string(),
             });
         }
     }
@@ -535,18 +479,6 @@ mod tests {
             }],
         );
         assert!(matches!(cash[0], Discrepancy::CashMismatch { .. }));
-        let instrument = qx_core::InstrumentId::parse("T.V").unwrap();
-        let pos = reconcile_positions(
-            &[PositionSnapshot {
-                instrument: instrument.clone(),
-                quantity: 2,
-            }],
-            &[PositionSnapshot {
-                instrument,
-                quantity: 1,
-            }],
-        );
-        assert!(matches!(pos[0], Discrepancy::PositionMismatch { .. }));
         let fees = reconcile_fees(
             &[FlowSnapshot {
                 currency: "USD".into(),
