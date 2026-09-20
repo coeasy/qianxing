@@ -108,8 +108,8 @@ capabilities:
     evidence:
       - crates/qx-execution/src/lib.rs
       - crates/qx-execution/src/tests/gateway_port.rs
-      - crates/qx-execution/src/tests/paper_accounting.rs
-      - crates/qx-application/src/lib.rs
+      - crates/qx-execution/tests/paper_accounting.rs
+      - crates/qx-execution/src/application.rs
       - crates/qx-cli/src/venue_runtime/paper_worker.rs
       - crates/qx-cli/src/venue_runtime/paper_submit.rs
       - paper-e2e
@@ -213,7 +213,7 @@ capabilities:
       - crates/qx-zhenlu/src/lib.rs
       - crates/qx-execution/src/lib.rs
       - crates/qx-execution/src/tests/recovery_and_replay.rs
-      - crates/qx-application/src/lib.rs
+      - crates/qx-execution/src/application.rs
       - crates/qx-cli/src/backtests/multi_builtin.rs
       - crates/qx-cli/src/multi_leg.rs
       - crates/qx-cli/src/workers.rs
