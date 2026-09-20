@@ -326,6 +326,16 @@ impl OrderBookBacktestEngine {
                 "订单簿回测需要盘口快照档位（L1 或 L2/L3），不能声明为 Bar".into(),
             ));
         }
+        if let Some(model) = execution_model.as_ref() {
+            // 与上方规格/instrument 校验同一约定：冲突要报错，不能让配置里的
+            // fee_bps 被执行模型静默覆盖，否则回测成本口径与声明不一致。
+            if model.fee_bps != fee_bps {
+                return Err(qx_core::QxError::BusinessViolation(format!(
+                    "订单簿回测执行模型 fee_bps={} 与配置 fee_bps={fee_bps} 不一致",
+                    model.fee_bps
+                )));
+            }
+        }
         let mut input_hash = Fnv1a::new();
         input_hash.write_text(&instrument.to_string());
         input_hash.write_u64(snapshots.len() as u64);
@@ -351,7 +361,8 @@ impl OrderBookBacktestEngine {
             Some(model) => OrderBookMatchingEngine::with_model(model),
             None => OrderBookMatchingEngine::new(fee_bps),
         }
-        .map_err(qx_core::QxError::BusinessViolation)?;
+        .map_err(qx_core::QxError::BusinessViolation)?
+        .with_fee_spec(instrument_spec.clone());
         let mut ledger = Ledger::new();
         let mut log = EventLog::new();
         let mut oms = Oms::new();
@@ -498,7 +509,10 @@ impl OrderBookBacktestEngine {
                         let price = order.limit.or(reference_price).ok_or_else(|| {
                             qx_core::QxError::BusinessViolation("订单簿订单缺少保证金参考价".into())
                         })?;
-                        let equity = if spec.product.supports_leverage() {
+                        // 现货买入只能用可用现金：权益含持仓市值，用它放行会让 Ledger
+                        // 现金被静默透支成负数。衍生品按权益 + 初始保证金判定。
+                        let leveraged = spec.product.supports_leverage();
+                        let available_funding = if leveraged {
                             let marks =
                                 std::collections::BTreeMap::from([(instrument.clone(), price)]);
                             ledger.equity_for_with_spec(&account_id, &marks, &currency, spec)?
@@ -507,14 +521,31 @@ impl OrderBookBacktestEngine {
                         };
                         let required =
                             spec.initial_margin(order.qty.raw(), price.raw(), policy.leverage)?;
-                        if required > equity {
+                        // 手续费按成交名义额双边收取，与 OrderBookMatchingEngine 同源；
+                        // 漏掉它会让"刚好花光现金"的买单在成交后才透支。
+                        let required_funding = if order.side == qx_core::Side::Buy {
+                            required
+                                .checked_add(
+                                    spec.notional(order.qty.raw(), price.raw())? * fee_bps / 10_000,
+                                )
+                                .ok_or_else(|| {
+                                    qx_core::QxError::Invariant("买入所需现金溢出".into())
+                                })?
+                        } else {
+                            required
+                        };
+                        if required_funding > available_funding {
                             append_event(
                                 &mut log,
                                 snapshot.ts,
                                 Priority::COMMAND,
                                 EventKind::Rejected {
                                     client_order_id: order.client_id,
-                                    reason: "订单初始保证金超过订单簿回测权益".into(),
+                                    reason: if leveraged {
+                                        "订单初始保证金超过订单簿回测权益".into()
+                                    } else {
+                                        "买入成本（含预估手续费）超过订单簿回测可用现金".into()
+                                    },
                                 },
                             );
                             continue;

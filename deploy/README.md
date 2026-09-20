@@ -452,11 +452,13 @@ cargo run --release -p qx-cli -- binance-submit-order `
 
 确认沙盒/模拟账户、余额和回滚流程后，才可以把命令中的 `dry_run` 改为 `false`。执行器会先追加 `OrderSubmitted`，再调用 Binance REST submit；成功回报继续写入 Accepted/Fill/LedgerApplied，HTTP 5xx 或连接中断只保留待对账状态，不自动重试。
 
-生产 Execution worker 应配置冻结的 `instrument_spec_path`（可直接使用
-`ccxt-market-spec` 生成的市场快照），并可配置 `max_order_notional_raw`、
-`max_position_notional_raw`。配置后，Paper/CCXT/Binance 在调用 Venue 前会从同一
-EventLog 重建账户权益、持仓和标记价，统一执行 lot/tick、产品、杠杆、保证金和名义额
-预检；缺少规格时虽然保留旧配置兼容，但不应作为生产风控配置。
+Execution、SpreadRecovery 与 HedgeRecovery worker 必须配置冻结的 `instrument_spec_path`
+（可直接使用 `ccxt-market-spec` 生成的市场快照），并可配置 `max_order_notional_raw`、
+`max_position_notional_raw`。提交订单前，Paper/CCXT/Binance 会在同一 EventLog 上重建
+账户权益、持仓和标记价，统一执行 lot/tick、产品、杠杆、保证金和名义额预检；缺少规格时
+运行时会直接拒绝执行该 SubmitOrder，而不是退回“没有风控”的裸提交——否则同一条策略订单
+会在配了规格时被拒、没配时静默成交，风控成了可选项。对账与行情 worker 不提交订单，
+不需要该字段。
 
 示例配置已经为 CCXT OKX 永续和 Binance Spot 提供冻结规格文件：
 `qianxing.ccxt.okx.perpetual.spec.json`、`qianxing.binance.spot.spec.json`。

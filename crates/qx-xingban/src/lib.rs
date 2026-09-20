@@ -5,11 +5,12 @@
 //! 核心设计：**规则包 × 数据档位** 两维插件。
 //! - 数据档位决定可见深度（L2/L3、L1、Bar）
 //! - 规则包描述订单簿与业务约束
-//! - 两者匹配才启用精细撮合，否则**自动降级为保守假设并写入审计**
+//! - 两者匹配才启用精细撮合；档位不足时**直接报错拒绝运行**，不静默降级成更宽松的假设
 
 pub mod ashare;
 pub mod backtest;
 pub mod cost;
+pub mod cost_rules;
 pub mod fill;
 pub mod orderbook;
 pub mod orderbook_backtest;
@@ -27,9 +28,10 @@ pub use self::backtest::{
     InterestEvent, NativeBarStrategy, RunManifestIdentity, VirtualTradingConfig,
 };
 pub use self::cost::{
-    AShareFeeModel, FeeModel, FixedRateMargin, LatencyModel, LeverageMargin, MakerTakerFeeModel,
-    MarginRule, MarginTier, NoMargin, StaticLatency, TieredMargin, ZeroFeeModel, ZeroLatency,
+    FixedRateMargin, LatencyModel, LeverageMargin, MarginRule, MarginTier, NoMargin, StaticLatency,
+    TieredMargin, ZeroLatency,
 };
+pub use self::cost_rules::{ExecutionCostRules, DEFAULT_MAKER_BP, DEFAULT_TAKER_BP};
 pub use self::fill::{
     BestPriceFillModel, DataTier, FillContext, FillModel, NextBarOpenFillModel,
     OneTickSlippageFillModel, ProbabilisticFillModel, VolumeSensitiveFillModel,

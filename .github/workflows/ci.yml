@@ -118,9 +118,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.features }}
+      # 只在某些 feature 分支里才存在的代码不会被默认特性的 Clippy 看到，
+      # 因此每个特性组合都要单独跑一次 lint，而不是只做 check/test。
+      - name: Lint feature build
+        run: cargo clippy -p qx-cli --no-default-features --features "${{ matrix.features }}" --all-targets -- -D warnings
       - name: Check feature build
         run: cargo check -p qx-cli --no-default-features --features "${{ matrix.features }}"
       - name: Test feature build

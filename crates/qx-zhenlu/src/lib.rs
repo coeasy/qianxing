@@ -9,8 +9,8 @@ pub use oms::Oms;
 // 目标仓位是全仓唯一概念（定义在 qx-core，V10 §4.8）；此处只做出口别名。
 pub use qx_core::TargetPosition;
 use qx_core::{
-    Fill, InstrumentId, Order, OrderStatus, OrderTrace, Price, Quantity, QxError, QxResult, Side,
-    TradingInstrumentSpec,
+    FeeModel, Fill, InstrumentId, Order, OrderStatus, OrderTrace, Price, Quantity, QxError,
+    QxResult, Side, TradingInstrumentSpec, ZeroFeeModel, SCALE,
 };
 use qx_guanxing::QuoteTick;
 #[cfg(test)]
@@ -1206,6 +1206,7 @@ pub struct PaperVenue {
     last_event_ts: u64,
     last_source_seq: u64,
     reconnects: u64,
+    fee_model: Box<dyn FeeModel + Send>,
 }
 
 impl PaperVenue {
@@ -1219,7 +1220,21 @@ impl PaperVenue {
             last_event_ts: 0,
             last_source_seq: 0,
             reconnects: 0,
+            fee_model: Box::new(ZeroFeeModel),
         }
+    }
+
+    /// 注入费用模型。Paper 的 `Fill.fee` 必须与回测、实盘同一口径，否则
+    /// 同一条成交在不同执行平面得出不同成本；零费默认只适用于显式声明
+    /// 不计费的冒烟测试。
+    pub fn with_fee_model(mut self, fee_model: Box<dyn FeeModel + Send>) -> Self {
+        self.fee_model = fee_model;
+        self
+    }
+
+    /// 当前费用模型描述子，用于运行清单与配置校验的可观测性。
+    pub fn fee_descriptor(&self) -> String {
+        self.fee_model.descriptor()
     }
 
     /// 从 EventLog 恢复本地虚拟 Venue 的订单索引。Paper 不把内存 Venue
@@ -1372,11 +1387,17 @@ impl PaperVenue {
                 OrderStatus::PartiallyFilled
             };
             let _ = o.status.transition(next);
+            // maker/taker 判定必须与 BarMatchingEngine 同规则：只有显式
+            // post_only 的挂单算 maker，否则 Paper 会比回测更乐观。
+            let is_maker = o.policy.as_ref().is_some_and(|policy| policy.post_only);
+            let fee = self
+                .fee_model
+                .commission_for_side(qty.raw(), px.raw(), o.side, is_maker);
             let mut fill = Fill {
                 order_id: id,
                 qty,
                 price: px,
-                fee: qx_core::Money::ZERO,
+                fee: qx_core::Money::from_raw(fee),
                 ts: quote.ts,
                 account_id: o.account_id.clone(),
                 ..Fill::default()
@@ -2039,6 +2060,51 @@ mod tests {
         );
         assert!(matches!(events[0], VenueEvent::Fill(_)));
         assert_eq!(venue.snapshot()[0].status, OrderStatus::Filled);
+    }
+
+    /// Paper 的 `Fill.fee` 此前恒为零，会让 Paper 曲线系统性优于回测与实盘。
+    #[test]
+    fn paper_venue_charges_fills_with_the_shared_fee_model() {
+        let instrument = InstrumentId::parse("T.V").unwrap();
+        let fee_of = |post_only: bool, id: u64| {
+            let mut venue =
+                PaperVenue::new("paper").with_fee_model(Box::new(qx_core::MakerTakerFeeModel {
+                    maker_bp: 2,
+                    taker_bp: 5,
+                }));
+            let mut o = order(1, Side::Buy);
+            o.client_id = id;
+            if post_only {
+                o.policy = Some(qx_core::OrderPolicy {
+                    post_only: true,
+                    ..qx_core::OrderPolicy::default()
+                });
+            }
+            venue.submit(o, 10).unwrap();
+            let events = venue.on_quote(
+                &instrument,
+                QuoteTick::new(
+                    20,
+                    Price::from_i64(99),
+                    Quantity::from_i64(10),
+                    Price::from_i64(100),
+                    Quantity::from_i64(10),
+                    1,
+                ),
+            );
+            match events.first() {
+                Some(VenueEvent::Fill(fill)) => fill.fee.raw(),
+                _ => panic!("post_only={post_only} 应产生成交"),
+            }
+        };
+        // 名义 100.0：吃单 5bp = 0.05，挂单 2bp = 0.02
+        assert_eq!(fee_of(false, 1), qx_core::SCALE / 20);
+        assert_eq!(fee_of(true, 2), qx_core::SCALE / 50);
+        // 默认零费只属于显式不计费的冒烟路径
+        assert_eq!(
+            PaperVenue::new("paper").fee_descriptor(),
+            "ZeroFee@v1[params=]"
+        );
     }
 
     #[test]

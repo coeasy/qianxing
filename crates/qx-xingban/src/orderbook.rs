@@ -3,7 +3,9 @@
 //! 该模块不依赖网络或存储，可被历史 Tick 回放、Paper 模拟和性能基准共同使用。
 //! 盘口快照先做顺序/价格/数量校验，再按价格优先、同价位数量优先逐档消费。
 
-use qx_core::{Fill, Money, Order, OrderStatus, Price, Quantity, Side, SCALE};
+use qx_core::{
+    Fill, Money, Order, OrderStatus, Price, Quantity, Side, TradingInstrumentSpec, SCALE,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -178,6 +180,10 @@ pub struct OrderBookMatchingEngine {
     snapshot_index: u64,
     last_snapshot_sequence: Option<u64>,
     last_snapshot_ts: Option<u64>,
+    /// 手续费基准所用产品规格。Ledger 用 `notional(qty, price)` 记账，
+    /// 费用必须走同一口径，否则 `contract_size != 1` 的合约手续费会与
+    /// 真实名义额脱钩。`None` 保持现货 `qty * price` 口径。
+    fee_spec: Option<TradingInstrumentSpec>,
 }
 
 impl OrderBookMatchingEngine {
@@ -193,7 +199,15 @@ impl OrderBookMatchingEngine {
             snapshot_index: 0,
             last_snapshot_sequence: None,
             last_snapshot_ts: None,
+            fee_spec: None,
         })
+    }
+
+    /// 指定手续费基准使用的产品规格，使费用名义额与 `Ledger::apply_fill_with_spec`
+    /// 记账的 `TradingInstrumentSpec::notional` 保持一致。
+    pub fn with_fee_spec(mut self, spec: Option<TradingInstrumentSpec>) -> Self {
+        self.fee_spec = spec;
+        self
     }
 
     pub fn submit(&mut self, order: Order) -> Result<(), String> {
@@ -263,16 +277,11 @@ impl OrderBookMatchingEngine {
         self.cancel_many(cancelled_client_ids);
         self.snapshot_index = self.snapshot_index.saturating_add(1);
         let pending = std::mem::take(&mut self.pending);
-        let mut not_ready = Vec::new();
-        let mut ready = Vec::new();
-        for pending_order in pending {
-            if pending_order.ready_at_snapshot <= self.snapshot_index {
-                ready.push(pending_order);
-            } else {
-                not_ready.push(pending_order);
-            }
-        }
-        let mut remaining_orders = Vec::with_capacity(ready.len());
+        // 单遍按提交顺序处理挂单：到期即撮合、未到期或仍存活者原位留在队列末尾。
+        // 先分组再拼接（未到期 + 部分成交）会把早提交、已部分成交的订单排到晚提交、
+        // 延迟更长的订单之后，在 latency_snapshots > 0 且发生部分成交时颠倒
+        // 价格-时间优先级，让后单抢走前单本应先吃到的流动性。
+        let mut next = Vec::with_capacity(pending.len());
         let mut fills = Vec::new();
         let mut remaining_bids: Vec<i128> =
             snapshot.bids.iter().map(|level| level.qty.raw()).collect();
@@ -288,7 +297,12 @@ impl OrderBookMatchingEngine {
             .iter()
             .map(|level| self.queue_ahead(level.qty.raw()))
             .collect();
-        for pending_order in ready {
+        for pending_order in pending {
+            if pending_order.ready_at_snapshot > self.snapshot_index {
+                next.push(pending_order);
+                continue;
+            }
+            let ready_at_snapshot = pending_order.ready_at_snapshot;
             let mut order = pending_order.order;
             if order.instrument != snapshot.instrument {
                 return Err("订单簿订单 instrument 与快照不一致".into());
@@ -328,10 +342,15 @@ impl OrderBookMatchingEngine {
                 if !Self::limit_ok(&order, Price::from_raw(execution_price_raw)) {
                     break;
                 }
-                let notional_raw = fill_qty
-                    .checked_mul(execution_price_raw)
-                    .and_then(|value| value.checked_div(SCALE))
-                    .ok_or_else(|| "订单簿成交名义额溢出".to_string())?;
+                let notional_raw = match self.fee_spec.as_ref() {
+                    Some(spec) => spec
+                        .notional(fill_qty, execution_price_raw)
+                        .map_err(|error| format!("订单簿成交名义额计算失败: {error}"))?,
+                    None => fill_qty
+                        .checked_mul(execution_price_raw)
+                        .and_then(|value| value.checked_div(SCALE))
+                        .ok_or_else(|| "订单簿成交名义额溢出".to_string())?,
+                };
                 let fee_raw = notional_raw
                     .checked_mul(self.model.fee_bps)
                     .and_then(|value| value.checked_div(10_000))
@@ -360,10 +379,15 @@ impl OrderBookMatchingEngine {
                 remaining_qty -= fill_qty;
                 *raw_available -= fill_qty;
                 if order.limit.is_some() {
+                    // 前置队列只能被消耗到 0：不夹住的话 `available = raw - queue` 会因为
+                    // 负的 queue 重新变大，把本快照已吃掉的流动性按成交数量凭空复制给
+                    // 后续限价单——`queue_position_bps = 0` 时同样成立，因为扣减照样执行。
                     if order.side == Side::Buy {
-                        queue_asks[level_index] = queue_asks[level_index].saturating_sub(fill_qty);
+                        queue_asks[level_index] =
+                            queue_asks[level_index].saturating_sub(fill_qty).max(0);
                     } else {
-                        queue_bids[level_index] = queue_bids[level_index].saturating_sub(fill_qty);
+                        queue_bids[level_index] =
+                            queue_bids[level_index].saturating_sub(fill_qty).max(0);
                     }
                 }
                 order.filled = Quantity::from_raw(
@@ -382,14 +406,13 @@ impl OrderBookMatchingEngine {
                 order.status
             };
             if order.status != OrderStatus::Filled {
-                remaining_orders.push(PendingBookOrder {
+                next.push(PendingBookOrder {
                     order,
-                    ready_at_snapshot: pending_order.ready_at_snapshot,
+                    ready_at_snapshot,
                 });
             }
         }
-        not_ready.extend(remaining_orders);
-        self.pending = not_ready;
+        self.pending = next;
         Ok(fills)
     }
 
@@ -533,6 +556,77 @@ mod tests {
         assert_eq!(fills.len(), 1);
         assert_eq!(fills[0].price, Price::from_i64(101));
         assert_eq!(fills[0].qty, Quantity::from_i64(1));
+    }
+
+    /// 队列优先级不能因为"部分成交"与"尚未到期"两组拼接而颠倒：早提交且已部分
+    /// 成交的订单，必须继续排在场次更晚、延迟更长的订单之前。
+    #[test]
+    fn partially_filled_order_keeps_queue_priority_over_later_order() {
+        let model = OrderBookExecutionModel {
+            fee_bps: 0,
+            latency_snapshots: 1,
+            queue_position_bps: 0,
+            market_impact_bps: 0,
+        };
+        let mut engine = OrderBookMatchingEngine::with_model(model).unwrap();
+        let limit = Some(Price::from_i64(100).raw());
+        let mut first = order(Side::Buy, Quantity::from_i64(2).raw(), limit);
+        first.client_id = 1;
+        let mut second = order(Side::Buy, Quantity::from_i64(2).raw(), limit);
+        second.client_id = 2;
+        engine.submit(first).unwrap();
+        // 快照 1：first 的第 2 个快照才到期，本轮无成交。
+        assert!(engine.on_snapshot(&book()).unwrap().is_empty());
+        // 此后提交的 second 要到第 3 个快照才到期。
+        engine.submit(second).unwrap();
+        let second_snapshot = OrderBookSnapshot {
+            ts: 11,
+            sequence: 2,
+            ..book()
+        };
+        let fills = engine.on_snapshot(&second_snapshot).unwrap();
+        // 买一只挂 1 单位，first 吃到 1 单位后仍是挂单；second 仍在等待到期。
+        assert_eq!(
+            fills.iter().map(|fill| fill.order_id).collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert_eq!(engine.pending_count(), 2);
+        // 买一的最后流动性应回到先提交的 first，而不是后提交、先轮到执行的 second。
+        let third_snapshot = OrderBookSnapshot {
+            ts: 12,
+            sequence: 3,
+            ..book()
+        };
+        let fills = engine.on_snapshot(&third_snapshot).unwrap();
+        assert_eq!(
+            fills.iter().map(|fill| fill.order_id).collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert_eq!(engine.pending_count(), 1);
+    }
+
+    /// 同一快照的流动性不能被第二张限价单重复吃掉：扣减前置队列时不夹到 0，
+    /// 第一单的成交量就会以"负队列"的形式重新变成可吃数量。
+    #[test]
+    fn limit_orders_do_not_resell_the_same_snapshot_liquidity() {
+        let limit = Some(Price::from_i64(100).raw());
+        let mut first = order(Side::Buy, Quantity::from_i64(1).raw(), limit);
+        first.client_id = 1;
+        let mut second = order(Side::Buy, Quantity::from_i64(1).raw(), limit);
+        second.client_id = 2;
+        let mut engine = OrderBookMatchingEngine::new(0).unwrap();
+        engine.submit(first).unwrap();
+        engine.submit(second).unwrap();
+        let fills = engine.on_snapshot(&book()).unwrap();
+        assert_eq!(
+            fills.iter().map(|fill| fill.order_id).collect::<Vec<_>>(),
+            vec![1],
+            "买一只有 1 单位，second 不该拿到同一份流动性"
+        );
+        assert_eq!(
+            fills.iter().map(|fill| fill.qty.raw()).sum::<i128>(),
+            Quantity::from_i64(1).raw()
+        );
     }
 
     #[test]

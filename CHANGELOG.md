@@ -60,6 +60,21 @@ D4 外部验收只交付可执行方案）记在同文档 §0、§8.1。
 - CI 的 wheel 腿补 macOS 平台；`sandbox_tested` 在未拿到真实外部结果包前全量保持 `false`，
   §5 的"能力齐备、内部闭环、外部未证"结论本轮不变。
 
+### Merged（上游分叉收口，2026-09-20 追加）
+
+- 拉取并合并上游 `6743ae0`（"fix: close audit gaps in execution, backtest and CLI layout"）。
+  该提交与本地 V9/V10 在 `296e56e` 分叉，**独立重做了一遍 CLI 巨型文件拆分**（把当时的
+  `qx-cli/src/main.rs` 拆成 19 个扁平顶层模块并改用宏命令表），与本仓库的目录模块布局
+  （`backtests/`、`venue_runtime/`、`tests/`）和按路径取数的架构门禁互斥。
+  合并口径逐 hunk 判定：**结构与 API 形状取本仓库**（受祝福风控构造、`spread_group_barrier`
+  单点、`runtime_config/` 目录模块、config 持有 `risk` 字段、存储信封与 `qx-core::retry` 单点），
+  **行为与修复移植上游**（`qx-core::fee` 统一 `FeeModel` 并把合约乘数与反向计费基准折进费用价、
+  `cost_rules.rs` 费用规则单点、单向净持仓强平、强平按 taker 费率、报表费用与成交额改由成交账本推导）。
+- 同一"第二笔成交被静默丢弃"缺陷两侧各修了一次：本仓库按订单定序关联号（V9 §8.2 反向验证 F），
+  上游改按成交内容判重。合并后以本仓库口径为准并由既有用例钉住，不保留第二套幂等键推导。
+- 被合并丢弃的上游模块随时可用 `git show 6743ae0:<path>` 取回；`crates/qx-{oms,application,portfolio,fenye}`
+  在本仓库已由 P2a 并入语义归属 crate，合并未复活它们。
+
 ## Unreleased — V9 重构收口（2026-09-19）
 
 方案与逐阶段判定见 [docs/自研量化框架重构方案-V9.md](docs/自研量化框架重构方案-V9.md) §8。

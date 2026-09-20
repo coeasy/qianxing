@@ -8,7 +8,7 @@
 pub mod application;
 pub use application::*;
 use qx_control::{order_from_submit_command, ControlCommand};
-use qx_core::{Order, OrderStatus, OrderTrace, Price, Quantity, TradingInstrumentSpec, SCALE};
+use qx_core::{FeeModel, Order, OrderStatus, OrderTrace, Price, Quantity, TradingInstrumentSpec};
 use qx_guanxing::QuoteTick;
 use qx_risk::OrderRiskPosition;
 use qx_zhenlu::{
@@ -894,14 +894,13 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                     continue;
                 }
             };
+            let hedge_prefix = format!(
+                "{}:hedge:{}:{}",
+                self.worker_id, self.group.group_id, target.leg_id
+            );
             for fact in facts {
-                self.append_fact(
-                    fact,
-                    format!(
-                        "{}:hedge:{}:{}",
-                        self.worker_id, self.group.group_id, target.leg_id
-                    ),
-                )?;
+                let correlation_id = fact_correlation(&hedge_prefix, &fact);
+                self.append_fact(fact, correlation_id)?;
             }
             let filled = self
                 .events
