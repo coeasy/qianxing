@@ -6,10 +6,8 @@
 //! 迁移前逐条一致，`tools/check_architecture.py` 校验「clap 命令表 ≡ 这里的分支集合
 //! ≡ help 印出的入口」。所有业务实现仍直接复用 crate 根的同一批函数。
 
+use super::cli_args::{BacktestCommand, Cli, Command, ConfigCommand, RunCommand, StrategyCommand};
 use super::*;
-use super::cli_args::{
-    BacktestCommand, Cli, Command, ConfigCommand, RunCommand, StrategyCommand,
-};
 use clap::Parser;
 
 fn print_banner() {
@@ -20,7 +18,8 @@ fn print_banner() {
 fn fail_usage(error: clap::Error) -> ! {
     if matches!(
         error.kind(),
-        clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayHelpSubcommand
+        clap::error::ErrorKind::DisplayHelp
+            | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
     ) {
         let _ = error.print();
         std::process::exit(0);
@@ -46,9 +45,7 @@ fn print_builtin_strategies() {
 
 #[cfg(feature = "nats")]
 fn dispatch_outbox_relay(root: PathBuf, url: String, subject_prefix: String, limit: Option<usize>) {
-    if let Err(error) =
-        run_file_outbox_relay(&root, &url, &subject_prefix, limit.unwrap_or(100))
-    {
+    if let Err(error) = run_file_outbox_relay(&root, &url, &subject_prefix, limit.unwrap_or(100)) {
         eprintln!("Outbox relay 失败: {error}");
         std::process::exit(2);
     }
@@ -188,14 +185,19 @@ pub(crate) fn run() {
             }
         }
         Command::Config { action } => {
+            let validate_path = match &action {
+                Some(ConfigCommand::Validate { path, .. }) => path.clone(),
+                _ => None,
+            };
             let result = match action {
                 Some(ConfigCommand::Explain { path, json }) => {
                     run_config_explain(&path.unwrap_or_else(default_runtime_path), json)
                 }
-                Some(ConfigCommand::Validate { path, .. })
-                | None => match read_runtime_config(&path.unwrap_or_else(default_runtime_path)) {
+                Some(ConfigCommand::Validate { .. }) | None => match read_runtime_config(
+                    &validate_path.clone().unwrap_or_else(default_runtime_path),
+                ) {
                     Ok(config) => {
-                        let path = path.unwrap_or_else(default_runtime_path);
+                        let path = validate_path.unwrap_or_else(default_runtime_path);
                         let (failures, warnings) = validate_runtime_references(&path, &config);
                         for warning in warnings {
                             println!("[WARN] {warning}");
@@ -272,15 +274,17 @@ pub(crate) fn run() {
             }
         }
         Command::LiveCheck { path, json } => {
-            let path =
-                path.unwrap_or_else(|| PathBuf::from("deploy/qianxing.runtime.production.example.json"));
+            let path = path.unwrap_or_else(|| {
+                PathBuf::from("deploy/qianxing.runtime.production.example.json")
+            });
             if let Err(error) = run_live_check(&path, json) {
                 eprintln!("实盘前置检查失败: {error}");
                 std::process::exit(2);
             }
         }
         Command::RuntimeCheck { path, json } => {
-            let path = path.unwrap_or_else(|| PathBuf::from("deploy/qianxing.runtime.example.json"));
+            let path =
+                path.unwrap_or_else(|| PathBuf::from("deploy/qianxing.runtime.example.json"));
             if let Err(error) = run_runtime_check(&path, json) {
                 eprintln!("运行时配置校验失败: {error}");
                 std::process::exit(2);
@@ -294,14 +298,18 @@ pub(crate) fn run() {
                 bars,
                 force,
             }) => {
-                let output =
-                    output.unwrap_or_else(|| PathBuf::from(format!("qianxing.strategy.{name}.json")));
+                let output = output
+                    .unwrap_or_else(|| PathBuf::from(format!("qianxing.strategy.{name}.json")));
                 if let Err(error) = run_strategy_init(&name, &output, bars.as_deref(), force) {
                     eprintln!("策略初始化失败: {error}");
                     std::process::exit(2);
                 }
             }
-            Some(StrategyCommand::Backtest { runtime, bars, spec }) => {
+            Some(StrategyCommand::Backtest {
+                runtime,
+                bars,
+                spec,
+            }) => {
                 if let Err(error) = run_strategy_backtest(&runtime, &bars, spec.as_deref()) {
                     eprintln!("策略回测失败: {error}");
                     std::process::exit(2);
@@ -557,10 +565,18 @@ pub(crate) fn run() {
             subject_prefix,
             limit,
         } => dispatch_outbox_relay_postgres(runtime, url, subject_prefix, limit),
-        Command::OutboxRelayWorker { path, worker_id, once } => {
+        Command::OutboxRelayWorker {
+            path,
+            worker_id,
+            once,
+        } => {
             dispatch_outbox_relay_worker(path, worker_id, once);
         }
-        Command::EventConsumerWorker { path, worker_id, once } => {
+        Command::EventConsumerWorker {
+            path,
+            worker_id,
+            once,
+        } => {
             dispatch_event_consumer_worker(path, worker_id, once);
         }
         Command::ConsumerDlqReplay {
@@ -577,7 +593,10 @@ pub(crate) fn run() {
                 std::process::exit(2);
             }
         }
-        Command::BinancePublicProbe { network, instrument } => {
+        Command::BinancePublicProbe {
+            network,
+            instrument,
+        } => {
             let testnet = match network.as_str() {
                 "testnet" => true,
                 "mainnet" => false,

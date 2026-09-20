@@ -108,7 +108,7 @@ pub(crate) fn multi_leg_leg_buckets(
                 Some(spec) => spec
                     .notional(alloc, fill.price.raw())
                     .map_err(|error| format!("{} 腿成交额名义额非法: {error:?}", leg.label))?,
-                None => qx_xingban::cost::notional(alloc, fill.price.raw()),
+                None => qx_core::fee::notional(alloc, fill.price.raw()),
             };
             bucket.fees_raw += share;
         }

@@ -282,14 +282,12 @@ impl Command {
     /// 机读输出判定：与迁移前一致，`--json` 在这组命令上抑制横幅行。
     pub(crate) fn machine_output(&self) -> bool {
         match self {
-            Self::Doctor { json }
-            | Self::Status { json }
-            | Self::Report { json }
-            | Self::LiveCheck { json }
-            | Self::RuntimeCheck { json } => *json,
-            Self::Config { action } => {
-                action.as_ref().is_some_and(ConfigCommand::machine_output)
-            }
+            Self::Doctor { json, .. }
+            | Self::Status { json, .. }
+            | Self::Report { json, .. }
+            | Self::LiveCheck { json, .. }
+            | Self::RuntimeCheck { json, .. } => *json,
+            Self::Config { action } => action.as_ref().is_some_and(ConfigCommand::machine_output),
             Self::Run { action } => action.as_ref().is_some_and(RunCommand::machine_output),
             _ => false,
         }
@@ -331,9 +329,9 @@ pub(crate) enum ConfigCommand {
 impl ConfigCommand {
     fn machine_output(&self) -> bool {
         match self {
-            Self::Explain { json }
-            | Self::Validate { json }
-            | Self::Fingerprint { json }
+            Self::Explain { json, .. }
+            | Self::Validate { json, .. }
+            | Self::Fingerprint { json, .. }
             | Self::Lock { json, .. } => *json,
         }
     }

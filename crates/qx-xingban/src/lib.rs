@@ -49,3 +49,4 @@ pub use self::tick_backtest::{
     TickBacktestReport, TickStrategy,
 };
 pub use self::venue::{BarMatchingEngine, MatchingConfig};
+pub use qx_core::{AShareFeeModel, FeeModel, MakerTakerFeeModel};

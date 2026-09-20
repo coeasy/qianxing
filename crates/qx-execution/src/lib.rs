@@ -8,7 +8,7 @@
 pub mod application;
 pub use application::*;
 use qx_control::{order_from_submit_command, ControlCommand};
-use qx_core::{FeeModel, Order, OrderStatus, OrderTrace, Price, Quantity, TradingInstrumentSpec};
+use qx_core::{Order, OrderStatus, OrderTrace, Price, Quantity, TradingInstrumentSpec};
 use qx_guanxing::QuoteTick;
 use qx_risk::OrderRiskPosition;
 use qx_zhenlu::{
@@ -521,17 +521,19 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         let has_reconcile = facts
             .iter()
             .any(|fact| matches!(fact, ExecutionEvent::ReconcileRequired { .. }));
-        // 关联号必须含客户单号：EventLog 以 `correlation_id:source_seq` 去重，而每条
-        // 命令都从 0 重新计数，只用 `(worker, venue)` 会让后一笔订单的 Accepted/
-        // ReconcileRequired 被判为重放而静默丢弃。
-        let venue_correlation = format!(
+        // 关联号必须含客户单号 **且** 含回报自身身份：EventLog 以
+        // `correlation_id:source_seq` 去重，而每条命令都从 0 重新计数，只用
+        // `(worker, venue)` 会让后一笔订单的 Accepted/ReconcileRequired 被判为
+        // 重放而静默丢弃；只用客户单号又会让同一订单的第二笔成交被吞掉。
+        let venue_prefix = format!(
             "{}:venue:{}:{}",
             self.worker_id,
             self.venue.venue_id(),
             order.client_id
         );
         for fact in facts {
-            self.append(fact, venue_correlation.clone())?;
+            let correlation_id = fact_correlation(&venue_prefix, &fact);
+            self.append(fact, correlation_id)?;
         }
         if has_reconcile {
             return Err("Venue 返回待对账事实，禁止继续自动提交".into());
@@ -1009,6 +1011,51 @@ fn compensation_client_id(group: &SpreadOrderGroup, leg_id: &str) -> u64 {
     candidate
 }
 
+/// 成交事实的稳定身份段。
+///
+/// 身份必须取自成交内容本身，不能用进程内的 `source_seq`：一次性 Paper 命令
+/// 每个进程都从 1 重新计数，同一订单的第二笔成交会撞上第一笔已落库的事实、被
+/// EventLog 静默去重，订单停在 Accepted 而资金不动，调用方却收到 `fills=2`。
+/// 字段选择与 `qx-runtime` 的 `fill_key` 同源，因此同一批回报重放仍然幂等。
+fn fill_tag(fill: &qx_core::Fill) -> String {
+    format!(
+        "fill:{}:{}:{}:{}",
+        fill.order_id,
+        fill.ts,
+        fill.qty.raw(),
+        fill.price.raw()
+    )
+}
+
+/// 一条 Venue 回报在其关联号中的稳定身份段。
+fn fact_tag(fact: &ExecutionEvent) -> String {
+    match fact {
+        ExecutionEvent::Accepted {
+            client_order_id, ..
+        } => format!("accepted:{client_order_id}"),
+        ExecutionEvent::Cancelled { client_order_id } => format!("cancelled:{client_order_id}"),
+        ExecutionEvent::ReconcileRequired { client_order_id } => {
+            format!("reconcile:{client_order_id}")
+        }
+        ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. } => {
+            fill_tag(fill.as_ref())
+        }
+        ExecutionEvent::MarketQuote { instrument, quote } => {
+            format!("market:{instrument}:{}:{}", quote.source_seq, quote.ts)
+        }
+    }
+}
+
+/// 在调用方的来源前缀（worker/venue/group/leg）后追加回报身份。
+///
+/// `RuntimePipeline::ingest` 对 Accepted/Cancelled/ReconcileRequired/
+/// FillWithSpec 按 correlation 去重——重启后 `source_seq` 会重新计数，只靠它
+/// 挡不住重放。因此前缀必须唯一到"这一批回报属于哪条腿"，再叠加事实自身的
+/// 身份；否则第二个订单/第二条腿会撞上第一个已落库的事实而被静默丢弃。
+fn fact_correlation(prefix: &str, fact: &ExecutionEvent) -> String {
+    format!("{prefix}:{}", fact_tag(fact))
+}
+
 /// 将 Venue 返回的订单事实统一归约到执行事件端口（EventLog/Ledger 管线）。
 ///
 /// `source_seq` 由调用方持有；重复回报仍由端口的幂等语义去重。Paper、Live 与
@@ -1345,7 +1392,7 @@ pub fn execute_paper_submit_effect<P: ExecutionEventPort + application::LedgerPr
         // WARN: 合成盘口仅供 Paper smoke fixture 使用（显式 opt-in）。生产路径
         // 必须传入最新行情事实，否则上面的分支已经以 fail-closed 拒绝撮合。
         let ask = order.limit.unwrap_or_else(|| Price::from_i64(100));
-        let bid = Price::from_raw(ask.raw().saturating_sub(SCALE));
+        let bid = Price::from_raw(ask.raw().saturating_sub(qx_core::SCALE));
         QuoteTick::new(
             now.saturating_add(1),
             bid,

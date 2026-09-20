@@ -103,6 +103,7 @@ mod api_service;
 mod backtests;
 mod ccxt_facts;
 mod cli;
+mod cli_args;
 mod cli_help;
 mod config_commands;
 mod configured_backends;

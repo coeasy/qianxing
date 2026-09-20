@@ -245,7 +245,7 @@ fn book_notional(
 ) -> Result<i128, qx_core::QxError> {
     match spec {
         Some(spec) => spec.notional(qty, price),
-        None => Ok(crate::cost::notional(qty, price)),
+        None => Ok(qx_core::fee::notional(qty, price)),
     }
 }
 

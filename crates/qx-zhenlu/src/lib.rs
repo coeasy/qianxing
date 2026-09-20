@@ -10,7 +10,7 @@ pub use oms::Oms;
 pub use qx_core::TargetPosition;
 use qx_core::{
     FeeModel, Fill, InstrumentId, Order, OrderStatus, OrderTrace, Price, Quantity, QxError,
-    QxResult, Side, TradingInstrumentSpec, ZeroFeeModel, SCALE,
+    QxResult, Side, TradingInstrumentSpec, ZeroFeeModel,
 };
 use qx_guanxing::QuoteTick;
 #[cfg(test)]
