@@ -306,6 +306,58 @@ pub struct PortExecutionService<'a, V: VenuePort, P: ExecutionEventPort> {
     source_seq: &'a mut u64,
     registration_correlation: Option<String>,
     instrument_spec: Option<TradingInstrumentSpec>,
+    spread_store: Option<&'a dyn SpreadOrderGroupStore>,
+}
+
+/// 多腿订单组提交屏障的**唯一实现**，由执行网关在写入任何事实之前调用。
+///
+/// 组一旦进入 `ReconcileRequired`（已有腿结果未知）或 `HedgeRequired`（已有确认敞口
+/// 等待补偿），同组其余腿必须停止自动提交：未知敞口不能靠再加一条腿掩盖，必须先由
+/// 对账/补偿链路给出确定事实。判定口径由 `SpreadOrderGroup::blocks_new_leg_submission`
+/// 唯一持有。
+///
+/// 三条 fail-closed 纪律（V10 §4.10 把屏障从 CLI 下沉到这里的原因）：
+/// 1. 命令声明了 `spread_group_id` 而提交路径没注入组存储 —— 无法证明组是干净的，拒绝；
+/// 2. 注入了组存储但快照读不到 —— 拒绝；
+/// 3. 快照处于待对账/待补偿态 —— 拒绝并列出未知腿。
+///
+/// 不带 `spread_group_id` 的单腿命令不受影响。
+pub fn spread_group_barrier(
+    store: Option<&dyn SpreadOrderGroupStore>,
+    command: &ControlCommand,
+) -> Result<(), String> {
+    let Some(group_id) = command.payload.get("spread_group_id") else {
+        return Ok(());
+    };
+    let Some(store) = store else {
+        return Err(format!(
+            "FAIL_CLOSED: 命令 {} 声明属于多腿订单组 {group_id}，但提交路径未注入组快照存储，禁止提交该腿",
+            command.command_id
+        ));
+    };
+    let Some(group) = store.load(group_id).map_err(|error| {
+        format!("FAIL_CLOSED: 读取多腿订单组 {group_id} 快照失败，禁止提交腿: {error}",)
+    })?
+    else {
+        return Err(format!(
+            "FAIL_CLOSED: 命令 {} 属于多腿订单组 {group_id}，但快照不存在，禁止提交该腿",
+            command.command_id
+        ));
+    };
+    if group.blocks_new_leg_submission() {
+        let unknown_legs = group
+            .legs
+            .iter()
+            .filter(|leg| leg.order.status == OrderStatus::Unknown)
+            .map(|leg| leg.leg_id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        return Err(format!(
+            "FAIL_CLOSED: 多腿订单组 {group_id} 状态为 {:?}，禁止提交剩余腿（未知腿: {unknown_legs}），须先完成对账/补偿",
+            group.status
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -335,7 +387,17 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
             source_seq,
             registration_correlation: None,
             instrument_spec: None,
+            spread_store: None,
         }
+    }
+
+    /// 绑定多腿订单组快照存储：只有注入组存储的提交路径才可能提交带
+    /// `spread_group_id` 的腿，其余路径对这类命令一律 fail-closed（见
+    /// [`spread_group_barrier`]）。屏障判定住在网关而不是 CLI，是为了让任何
+    /// 绕过 CLI 的调用方（回测、语言绑定、未来执行器）也无法跳过它。
+    pub fn with_spread_group_store(mut self, store: &'a dyn SpreadOrderGroupStore) -> Self {
+        self.spread_store = Some(store);
+        self
     }
 
     /// 为本次提交绑定控制面/策略意图关联号。它只影响首次订单登记，重复
@@ -356,6 +418,7 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         &mut self,
         command: &ControlCommand,
     ) -> Result<PortExecutionResult, String> {
+        spread_group_barrier(self.spread_store, command)?;
         let order = order_from_submit_command(command)
             .map_err(|error| format!("SubmitOrder 订单载荷非法: {error:?}"))?;
         self.registration_correlation = Some(format!("control:{}", command.command_id));
@@ -369,6 +432,7 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         command: &ControlCommand,
         risk: &R,
     ) -> Result<PortExecutionResult, String> {
+        spread_group_barrier(self.spread_store, command)?;
         let order = order_from_submit_command(command)
             .map_err(|error| format!("SubmitOrder 订单载荷非法: {error:?}"))?;
         self.registration_correlation = Some(format!("control:{}", command.command_id));
@@ -1078,6 +1142,10 @@ fn ingest_venue_events_with_pipeline<P: ExecutionEventPort>(
 /// 这里不负责账户/Venue 拓扑授权，也不负责 ControlPlane 的 Accepted/终态回写；
 /// 它只负责订单事实注册、未知结果保护、Venue submit 和标准回报归约。这样
 /// Paper、Binance 和未来执行 worker 可以共享同一副作用边界。
+///
+/// `spread_store` 是多腿订单组快照来源：带 `spread_group_id` 的命令必须由注入了
+/// 组存储的提交路径执行，否则 [`spread_group_barrier`] 以 fail-closed 拒绝。
+#[allow(clippy::too_many_arguments)]
 pub fn submit_order_via_gateway<V: VenuePort, P: ExecutionEventPort>(
     command: &ControlCommand,
     venue: &mut V,
@@ -1085,10 +1153,17 @@ pub fn submit_order_via_gateway<V: VenuePort, P: ExecutionEventPort>(
     worker_id: &str,
     now: u64,
     source_seq: &mut u64,
+    spread_store: Option<&dyn SpreadOrderGroupStore>,
 ) -> Result<PortExecutionResult, String> {
-    ExecutionGateway::new(venue, events, worker_id, now, source_seq).submit_command(command)
+    spread_group_barrier(spread_store, command)?;
+    let mut gateway = ExecutionGateway::new(venue, events, worker_id, now, source_seq);
+    if let Some(store) = spread_store {
+        gateway = gateway.with_spread_group_store(store);
+    }
+    gateway.submit_command(command)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn submit_order_via_gateway_with_risk<V: VenuePort, P: ExecutionEventPort, R: RiskPort>(
     command: &ControlCommand,
     venue: &mut V,
@@ -1097,11 +1172,17 @@ pub fn submit_order_via_gateway_with_risk<V: VenuePort, P: ExecutionEventPort, R
     now: u64,
     source_seq: &mut u64,
     risk: &R,
+    spread_store: Option<&dyn SpreadOrderGroupStore>,
 ) -> Result<PortExecutionResult, String> {
-    ExecutionGateway::new(venue, events, worker_id, now, source_seq)
-        .submit_command_with_risk(command, risk)
+    spread_group_barrier(spread_store, command)?;
+    let mut gateway = ExecutionGateway::new(venue, events, worker_id, now, source_seq);
+    if let Some(store) = spread_store {
+        gateway = gateway.with_spread_group_store(store);
+    }
+    gateway.submit_command_with_risk(command, risk)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn submit_order<V: Venue, P: ExecutionEventPort>(
     command: &ControlCommand,
     venue: &mut V,
@@ -1109,15 +1190,21 @@ pub fn submit_order<V: Venue, P: ExecutionEventPort>(
     worker_id: &str,
     now: u64,
     source_seq: &mut u64,
+    spread_store: Option<&dyn SpreadOrderGroupStore>,
 ) -> Result<String, String> {
+    spread_group_barrier(spread_store, command)?;
     let mut venue = BorrowedVenuePort::new(venue);
-    let result = ExecutionGateway::new(&mut venue, pipeline, worker_id, now, source_seq)
-        .submit_command(command)?;
+    let mut gateway = ExecutionGateway::new(&mut venue, pipeline, worker_id, now, source_seq);
+    if let Some(store) = spread_store {
+        gateway = gateway.with_spread_group_store(store);
+    }
+    let result = gateway.submit_command(command)?;
     Ok(result.message)
 }
 
 /// `submit_order` 的账户级风控版本，供 Paper/CCXT/Binance worker 在已有账户
 /// 快照和市场规格时统一使用；Venue 仍只接收通过预检的订单。
+#[allow(clippy::too_many_arguments)]
 pub fn submit_order_with_risk<V: Venue, P: ExecutionEventPort>(
     command: &ControlCommand,
     venue: &mut V,
@@ -1126,9 +1213,14 @@ pub fn submit_order_with_risk<V: Venue, P: ExecutionEventPort>(
     now: u64,
     source_seq: &mut u64,
     context: &RiskExecutionContext<'_>,
+    spread_store: Option<&dyn SpreadOrderGroupStore>,
 ) -> Result<String, String> {
+    spread_group_barrier(spread_store, command)?;
     let mut venue = BorrowedVenuePort::new(venue);
     let mut gateway = ExecutionGateway::new(&mut venue, pipeline, worker_id, now, source_seq);
+    if let Some(store) = spread_store {
+        gateway = gateway.with_spread_group_store(store);
+    }
     let result = if let Some(spec) = context.risk.instrument_spec.clone() {
         gateway
             .with_instrument_spec(spec)
@@ -1151,7 +1243,7 @@ pub fn submit_order_with_risk<V: Venue, P: ExecutionEventPort>(
     Ok(result.message)
 }
 
-/// 把“结果未知，必须先对账”写成运行时事实的 `ReconcilePort` 适配器。
+/// 把“结果未知，必须先对账”写成运行时事实的 `ReconcilePort` 适配器（对账判定唯一口径在 qx-genglu 的 `order_reconcile_verdict`，本端口只落事实、不复制判定）。
 ///
 /// Paper、CCXT 与 Binance worker 共用同一条写入路径：`source_seq` 由端口独占推进，
 /// correlation id 形如 `<worker>:<tag>:<client_order_id>`（`tag` 默认 `reconcile`，
@@ -1220,6 +1312,7 @@ impl<P: EventAppender> ReconcilePort for EventLogReconcilePort<'_, P> {
 /// 注入，本 crate 不再感知任何后端与特性开关，因此 Paper、Live 与自定义运行时共用
 /// 同一条判定链。`allow_synthetic_quote` 是**唯一**的伪造价开关，只允许离线 smoke
 /// fixture 显式传 `true`；生产 worker 必须保持 `false` 并提供 `Some(market_quote)`。
+#[allow(clippy::too_many_arguments)] // V10 P1b：组存储作为最后一个形参是刻意的，让编译器逐个点名提交入口是否接了屏障。
 pub fn execute_paper_submit_effect<P: ExecutionEventPort + qx_application::LedgerProbe>(
     command: &ControlCommand,
     pipeline: &mut P,
@@ -1228,7 +1321,11 @@ pub fn execute_paper_submit_effect<P: ExecutionEventPort + qx_application::Ledge
     position: Option<OrderRiskPosition>,
     market_quote: Option<QuoteTick>,
     allow_synthetic_quote: bool,
+    spread_store: Option<&dyn SpreadOrderGroupStore>,
 ) -> Result<String, String> {
+    // 多腿屏障由网关统一裁决：带 `spread_group_id` 的腿若提交路径没有注入组存储，
+    // 无法证明组干净，直接 fail-closed（见 [`spread_group_barrier`]）。
+    spread_group_barrier(spread_store, command)?;
     let order = order_from_submit_command(command)
         .map_err(|error| format!("Paper SubmitOrder 订单载荷非法: {error:?}"))?;
     // fail-closed：风控上下文与持仓快照必须成对提供。`(None, None)` 过去会跳过
@@ -1279,6 +1376,9 @@ pub fn execute_paper_submit_effect<P: ExecutionEventPort + qx_application::Ledge
             now,
             &mut source_seq,
         );
+        if let Some(store) = spread_store {
+            gateway = gateway.with_spread_group_store(store);
+        }
         let message = match risk_context.instrument_spec.clone() {
             Some(spec) => {
                 gateway

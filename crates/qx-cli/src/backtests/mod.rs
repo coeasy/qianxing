@@ -108,8 +108,14 @@ pub(crate) use depth::*;
 mod fast_backtest;
 pub(crate) use fast_backtest::*;
 
+mod kernels;
+pub(crate) use kernels::*;
+
 mod multi_builtin;
 pub(crate) use multi_builtin::*;
+
+mod risk_binding;
+pub(crate) use risk_binding::*;
 
 mod single_strategy;
 pub(crate) use single_strategy::*;

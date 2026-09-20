@@ -2348,7 +2348,7 @@ mod tests {
             latency: Box::new(ZeroLatency),
             margin: Box::new(NoMargin),
             seed: 1,
-            risk: RiskGate::new(),
+            risk: RiskGate::conservative_default(),
             virtual_trading: VirtualTradingConfig::default(),
         }
     }
@@ -2440,7 +2440,7 @@ mod tests {
             latency: Box::new(ZeroLatency),
             margin: Box::new(NoMargin),
             seed: 1,
-            risk: RiskGate::new(),
+            risk: RiskGate::conservative_default(),
             virtual_trading: VirtualTradingConfig::default(),
         };
         let engine = BacktestEngine::new(cfg);
@@ -2590,7 +2590,7 @@ mod tests {
             latency: Box::new(ZeroLatency),
             margin: Box::new(NoMargin),
             seed: 1,
-            risk: RiskGate::new(),
+            risk: RiskGate::conservative_default(),
             virtual_trading: VirtualTradingConfig::default(),
         };
         let bars = vec![Bar::new(1, 100, 101, 99, 100, 10)];

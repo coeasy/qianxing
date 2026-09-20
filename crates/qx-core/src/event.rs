@@ -154,6 +154,20 @@ pub struct AccountBalance {
     pub borrowed: Money,
 }
 
+impl AccountBalance {
+    /// 净现金口径的**唯一**实现：`free + locked - borrowed`。
+    ///
+    /// 上层（对账、余额差异判定、协议线格式）必须经由本方法得到净现金，不得再
+    /// 各自抄写这条公式——历史上 `qx-runtime` 与 `qx-cli` worker 两侧抄写时
+    /// 已经出现口径分叉（V10 §4.7）。溢出返回 `None`，由调用方决定 fail-closed。
+    pub fn net_cash_raw(&self) -> Option<i128> {
+        self.free
+            .raw()
+            .checked_add(self.locked.raw())?
+            .checked_sub(self.borrowed.raw())
+    }
+}
+
 /// 交易所返回的持仓观察快照。它用于实盘恢复、保证金/风险对账和查询，
 /// 不会绕过成交事实直接修改 Ledger；Ledger 仍只由 Fill/Settlement 等事实驱动。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

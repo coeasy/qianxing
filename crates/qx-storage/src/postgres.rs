@@ -909,9 +909,12 @@ impl PostgresOutboxStore {
             return Err(StorageError::LeaseExpired { run_id: 0 });
         }
         if retry {
+            // P1c（§4.9）：与文件 / SQLite 后端的 `qx-core` 统一策略口径一致，
+            // 尝试计数按 u32 饱和（4294967295 = u32::MAX），不再无限递增。
             transaction
                 .execute(
-                    "UPDATE qx_outbox_events SET attempts = (attempts::numeric + 1)::text
+                    "UPDATE qx_outbox_events
+                     SET attempts = LEAST(attempts::numeric + 1, 4294967295)::text
                      WHERE event_id = $1",
                     &[&event_id],
                 )

@@ -4,6 +4,7 @@
 //! 使用临时文件+rename，避免进程中断留下半个事实日志。
 
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
+use qx_core::retry;
 use qx_core::{Event, EventLog, Fnv1a, QxError, QxResult};
 use qx_scheduler::{JobRun, JobSpec, JobStatus, Scheduler};
 use serde::de::DeserializeOwned;
@@ -11,7 +12,21 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
+
+mod state_envelope;
+pub use state_envelope::JsonStateEnvelope;
+use state_envelope::{
+    acquire_storage_lock, encode_state_json, read_json_file, read_state_json,
+    read_state_json_or_default, read_state_text, read_state_text_required, transact_state_json,
+    write_atomic_path, write_json_file, write_state_json, write_state_text, Commit, StorageLock,
+};
+
+// 四个文件后端存储的唯一定义点在 `file` 目录模块；crate 根只负责再导出，
+// 保持 `qx_storage::{FileConsumerStateStore, FileOutboxStore, FileJobQueue, JsonStateStore}`
+// 公开路径逐字不变（其它 crate 依赖该路径）。
+mod file;
+pub use file::{FileConsumerStateStore, FileJobQueue, FileOutboxStore, JsonStateStore};
 
 #[cfg(feature = "sqlite")]
 mod sqlite;
@@ -35,7 +50,6 @@ mod nats;
 #[cfg(feature = "nats")]
 pub use nats::{NatsConsumerBatchReport, NatsJetStreamConsumer, NatsJetStreamPublisher};
 
-use std::io::ErrorKind;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
@@ -88,13 +102,8 @@ impl EventLogFileStore {
             }
         }
         let content = log.to_json().map_err(StorageError::Core)?;
-        let temp = self.root.join(format!(
-            ".{name}.json.tmp.{}",
-            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::write(&temp, content).map_err(|error| StorageError::Io(error.to_string()))?;
-        sync_file(&temp)?;
-        std::fs::rename(&temp, &path).map_err(|error| StorageError::Io(error.to_string()))?;
+        // 崩溃安全的临时文件+rename 一律复用 crate 内唯一的原子替换 helper。
+        write_atomic_path(&path, &self.root, &content)?;
         Ok(path)
     }
 
@@ -370,6 +379,11 @@ pub struct OutboxEvent {
 }
 
 impl OutboxEvent {
+    /// 当前唯一在写的 Outbox schema 版本。更高的版本意味着“未来的写入者”，
+    /// 三个后端（文件 / SQLite / PostgreSQL）必须在同一处拒绝，故校验放在这里，
+    /// 文件信封与数据库后端都复用本函数（P1c §4.9）。
+    pub const LATEST_SCHEMA_VERSION: u32 = 1;
+
     pub fn validate(&self) -> Result<(), StorageError> {
         if self.event_id.trim().is_empty()
             || self.topic.trim().is_empty()
@@ -380,6 +394,13 @@ impl OutboxEvent {
             return Err(StorageError::Conflict(
                 "Outbox event_id、topic、partition_key、schema_version 和 payload 不能为空".into(),
             ));
+        }
+        if self.schema_version > Self::LATEST_SCHEMA_VERSION {
+            return Err(StorageError::Conflict(format!(
+                "Outbox schema_version 过新: {} > {}",
+                self.schema_version,
+                Self::LATEST_SCHEMA_VERSION
+            )));
         }
         validate_outbox_name(&self.event_id, "event_id")?;
         validate_outbox_name(&self.topic, "topic")
@@ -759,7 +780,8 @@ pub enum ConsumerOutcome {
 pub struct ConsumerEngine<S> {
     store: S,
     group_id: String,
-    max_attempts: u32,
+    /// P1c（§4.9）：重试判定收敛到 `qx-core` 统一策略（仅计次，无延时）。
+    retry_policy: retry::RetryPolicy,
 }
 
 impl<S> ConsumerEngine<S>
@@ -781,7 +803,7 @@ where
         Ok(Self {
             store,
             group_id,
-            max_attempts,
+            retry_policy: retry::RetryPolicy::attempts_only(max_attempts),
         })
     }
 
@@ -821,7 +843,7 @@ where
             }
         }
         if let Err(error) = handler(event) {
-            if delivery_attempt < self.max_attempts {
+            if self.retry_policy.should_retry(delivery_attempt) {
                 return Ok(ConsumerOutcome::Retried { error });
             }
             self.store.append_dead_letter(DeadLetterRecord {
@@ -890,7 +912,7 @@ where
         let projection = match handler(event, &checkpoint) {
             Ok(projection) => projection,
             Err(error) => {
-                if delivery_attempt < self.max_attempts {
+                if self.retry_policy.should_retry(delivery_attempt) {
                     return Ok(ConsumerOutcome::Retried { error });
                 }
                 let record = DeadLetterRecord {
@@ -913,561 +935,6 @@ where
         self.store
             .commit_processed_with_projection(checkpoint, projection)?;
         Ok(ConsumerOutcome::Applied)
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
-struct FileConsumerState {
-    checkpoint: Option<ConsumerCheckpoint>,
-    processed_event_ids: BTreeSet<String>,
-    dead_letters: Vec<DeadLetterRecord>,
-    #[serde(default)]
-    projections: std::collections::BTreeMap<String, ConsumerProjection>,
-}
-
-#[derive(Clone, Debug)]
-pub struct FileConsumerStateStore {
-    root: PathBuf,
-}
-
-impl FileConsumerStateStore {
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    fn state_key(
-        &self,
-        group_id: &str,
-        topic: &str,
-        partition_key: &str,
-    ) -> Result<String, StorageError> {
-        validate_outbox_name(group_id, "group_id")?;
-        validate_outbox_name(topic, "topic")?;
-        validate_outbox_name(partition_key, "partition_key")?;
-        Ok(outbox_file_key(&format!(
-            "{group_id}|{topic}|{partition_key}"
-        )))
-    }
-
-    fn path_for(
-        &self,
-        group_id: &str,
-        topic: &str,
-        partition_key: &str,
-    ) -> Result<PathBuf, StorageError> {
-        let key = self.state_key(group_id, topic, partition_key)?;
-        Ok(self.root.join("consumers").join(format!("{key}.json")))
-    }
-
-    fn lock_for(
-        &self,
-        group_id: &str,
-        topic: &str,
-        partition_key: &str,
-    ) -> Result<PathBuf, StorageError> {
-        let key = self.state_key(group_id, topic, partition_key)?;
-        Ok(self.root.join("consumers").join(format!("{key}.lock")))
-    }
-
-    fn read_state(&self, path: &Path) -> Result<FileConsumerState, StorageError> {
-        match std::fs::read_to_string(path) {
-            Ok(content) => serde_json::from_str(&content)
-                .map_err(|error| StorageError::Io(format!("consumer 状态解析失败: {error}"))),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(FileConsumerState::default())
-            }
-            Err(error) => Err(StorageError::Io(error.to_string())),
-        }
-    }
-
-    fn write_state(&self, path: &Path, state: &FileConsumerState) -> Result<(), StorageError> {
-        let content = serde_json::to_string(state)
-            .map_err(|error| StorageError::Io(format!("consumer 状态序列化失败: {error}")))?;
-        write_atomic_path(path, &self.root, &content)
-    }
-}
-
-impl ConsumerStateStore for FileConsumerStateStore {
-    fn load_checkpoint(
-        &self,
-        group_id: &str,
-        topic: &str,
-        partition_key: &str,
-    ) -> Result<Option<ConsumerCheckpoint>, StorageError> {
-        let path = self.path_for(group_id, topic, partition_key)?;
-        Ok(self.read_state(&path)?.checkpoint)
-    }
-
-    fn is_processed(&self, group_id: &str, event_id: &str) -> Result<bool, StorageError> {
-        validate_outbox_name(group_id, "group_id")?;
-        validate_outbox_name(event_id, "event_id")?;
-        let dir = self.root.join("consumers");
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-            Err(error) => return Err(StorageError::Io(error.to_string())),
-        };
-        for entry in entries {
-            let path = entry
-                .map_err(|error| StorageError::Io(error.to_string()))?
-                .path();
-            if path.extension().and_then(|value| value.to_str()) != Some("json") {
-                continue;
-            }
-            let state = self.read_state(&path)?;
-            if state.processed_event_ids.contains(event_id)
-                && state
-                    .checkpoint
-                    .as_ref()
-                    .is_some_and(|checkpoint| checkpoint.group_id == group_id)
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    fn commit_processed(&self, checkpoint: ConsumerCheckpoint) -> Result<(), StorageError> {
-        checkpoint.validate()?;
-        let path = self.path_for(
-            &checkpoint.group_id,
-            &checkpoint.topic,
-            &checkpoint.partition_key,
-        )?;
-        std::fs::create_dir_all(self.root.join("consumers"))
-            .map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.lock_for(
-            &checkpoint.group_id,
-            &checkpoint.topic,
-            &checkpoint.partition_key,
-        )?)?;
-        let mut state = self.read_state(&path)?;
-        if state.processed_event_ids.contains(&checkpoint.event_id) {
-            return Ok(());
-        }
-        if let Some(previous) = state.checkpoint.as_ref() {
-            if previous.offset > checkpoint.offset {
-                return Err(StorageError::Conflict("consumer checkpoint 回退".into()));
-            }
-            if previous.offset == checkpoint.offset && previous.event_id != checkpoint.event_id {
-                return Err(StorageError::Conflict(
-                    "consumer 相同 offset 对应不同 event_id".into(),
-                ));
-            }
-        }
-        state
-            .processed_event_ids
-            .insert(checkpoint.event_id.clone());
-        state.checkpoint = Some(checkpoint);
-        self.write_state(&path, &state)
-    }
-
-    fn append_dead_letter(&self, record: DeadLetterRecord) -> Result<(), StorageError> {
-        record.validate()?;
-        let path = self.path_for(&record.group_id, &record.topic, &record.partition_key)?;
-        std::fs::create_dir_all(self.root.join("consumers"))
-            .map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.lock_for(
-            &record.group_id,
-            &record.topic,
-            &record.partition_key,
-        )?)?;
-        let mut state = self.read_state(&path)?;
-        if !state.dead_letters.iter().any(|existing| {
-            existing.event_id == record.event_id && existing.attempts == record.attempts
-        }) {
-            state.dead_letters.push(record);
-        }
-        self.write_state(&path, &state)
-    }
-
-    fn dead_letters(
-        &self,
-        group_id: &str,
-        limit: usize,
-    ) -> Result<Vec<DeadLetterRecord>, StorageError> {
-        validate_outbox_name(group_id, "group_id")?;
-        let dir = self.root.join("consumers");
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(StorageError::Io(error.to_string())),
-        };
-        let mut result = Vec::new();
-        for entry in entries {
-            let path = entry
-                .map_err(|error| StorageError::Io(error.to_string()))?
-                .path();
-            if path.extension().and_then(|value| value.to_str()) != Some("json") {
-                continue;
-            }
-            let state = self.read_state(&path)?;
-            result.extend(
-                state
-                    .dead_letters
-                    .into_iter()
-                    .filter(|record| record.group_id == group_id),
-            );
-        }
-        result.sort_by_key(|record| (record.failed_ts, record.event_id.clone()));
-        result.truncate(limit);
-        Ok(result)
-    }
-}
-
-impl TransactionalConsumerStateStore for FileConsumerStateStore {
-    fn commit_processed_with_projection(
-        &self,
-        checkpoint: ConsumerCheckpoint,
-        projection: ConsumerProjection,
-    ) -> Result<(), StorageError> {
-        projection.validate_for(&checkpoint)?;
-        let path = self.path_for(
-            &checkpoint.group_id,
-            &checkpoint.topic,
-            &checkpoint.partition_key,
-        )?;
-        std::fs::create_dir_all(self.root.join("consumers"))
-            .map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.lock_for(
-            &checkpoint.group_id,
-            &checkpoint.topic,
-            &checkpoint.partition_key,
-        )?)?;
-        let mut state = self.read_state(&path)?;
-        if state.processed_event_ids.contains(&checkpoint.event_id) {
-            return Ok(());
-        }
-        if let Some(previous) = state.checkpoint.as_ref() {
-            if previous.offset > checkpoint.offset {
-                return Err(StorageError::Conflict("consumer checkpoint 回退".into()));
-            }
-            if previous.offset == checkpoint.offset && previous.event_id != checkpoint.event_id {
-                return Err(StorageError::Conflict(
-                    "consumer 相同 offset 对应不同 event_id".into(),
-                ));
-            }
-        }
-        if let Some(previous) = state.projections.get(&projection.projection_key) {
-            if previous.offset > projection.offset
-                || (previous.offset == projection.offset
-                    && previous.event_id != projection.event_id)
-            {
-                return Err(StorageError::Conflict(
-                    "consumer projection 顺序或 event_id 非法".into(),
-                ));
-            }
-        }
-        state
-            .processed_event_ids
-            .insert(checkpoint.event_id.clone());
-        state
-            .projections
-            .insert(projection.projection_key.clone(), projection);
-        state.checkpoint = Some(checkpoint);
-        self.write_state(&path, &state)
-    }
-
-    fn append_dead_letter_and_commit(
-        &self,
-        record: DeadLetterRecord,
-        checkpoint: ConsumerCheckpoint,
-    ) -> Result<(), StorageError> {
-        record.validate_for(&checkpoint)?;
-        let path = self.path_for(
-            &checkpoint.group_id,
-            &checkpoint.topic,
-            &checkpoint.partition_key,
-        )?;
-        std::fs::create_dir_all(self.root.join("consumers"))
-            .map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.lock_for(
-            &checkpoint.group_id,
-            &checkpoint.topic,
-            &checkpoint.partition_key,
-        )?)?;
-        let mut state = self.read_state(&path)?;
-        if state.processed_event_ids.contains(&checkpoint.event_id) {
-            return Ok(());
-        }
-        if let Some(previous) = state.checkpoint.as_ref() {
-            if previous.offset > checkpoint.offset {
-                return Err(StorageError::Conflict("consumer checkpoint 回退".into()));
-            }
-            if previous.offset == checkpoint.offset && previous.event_id != checkpoint.event_id {
-                return Err(StorageError::Conflict(
-                    "consumer 相同 offset 对应不同 event_id".into(),
-                ));
-            }
-        }
-        if !state.dead_letters.iter().any(|existing| {
-            existing.event_id == record.event_id && existing.attempts == record.attempts
-        }) {
-            state.dead_letters.push(record);
-        }
-        state
-            .processed_event_ids
-            .insert(checkpoint.event_id.clone());
-        state.checkpoint = Some(checkpoint);
-        self.write_state(&path, &state)
-    }
-
-    fn load_projection(
-        &self,
-        group_id: &str,
-        projection_key: &str,
-    ) -> Result<Option<ConsumerProjection>, StorageError> {
-        validate_outbox_name(group_id, "group_id")?;
-        validate_outbox_name(projection_key, "projection_key")?;
-        let dir = self.root.join("consumers");
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(StorageError::Io(error.to_string())),
-        };
-        for entry in entries {
-            let path = entry
-                .map_err(|error| StorageError::Io(error.to_string()))?
-                .path();
-            if path.extension().and_then(|value| value.to_str()) != Some("json") {
-                continue;
-            }
-            if let Some(projection) = self.read_state(&path)?.projections.get(projection_key) {
-                if projection.group_id == group_id {
-                    return Ok(Some(projection.clone()));
-                }
-            }
-        }
-        Ok(None)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct FileOutboxStore {
-    root: PathBuf,
-}
-
-impl FileOutboxStore {
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    pub fn append(&self, event: OutboxEvent) -> Result<(), StorageError> {
-        event.validate()?;
-        self.ensure_dirs()?;
-        let path = self.event_path(&event.event_id)?;
-        let _lock = acquire_storage_lock(self.root.join("outbox.append.lock"))?;
-        if path.exists() {
-            let existing = self.read_json::<OutboxEvent>(&path)?;
-            if existing.same_fact(&event) {
-                return Ok(());
-            }
-            return Err(StorageError::Conflict(format!(
-                "event_id {} 已被不同 Outbox 事件占用",
-                event.event_id
-            )));
-        }
-        let content = serde_json::to_string(&event)
-            .map_err(|error| StorageError::Io(format!("Outbox 事件序列化失败: {error}")))?;
-        write_atomic_path(&path, &self.root, &content)
-    }
-
-    pub fn available(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
-        self.ensure_dirs()?;
-        let mut events = Vec::new();
-        for entry in std::fs::read_dir(self.root.join("outbox/events"))
-            .map_err(|error| StorageError::Io(error.to_string()))?
-        {
-            let path = entry
-                .map_err(|error| StorageError::Io(error.to_string()))?
-                .path();
-            if path.extension().and_then(|value| value.to_str()) != Some("json") {
-                continue;
-            }
-            let event: OutboxEvent = self.read_json(&path)?;
-            event.validate()?;
-            let lease_path = self.lease_path(&event.event_id)?;
-            if !lease_path.exists() || self.read_json::<OutboxLease>(&lease_path)?.expires_ts <= now
-            {
-                events.push(event);
-            }
-        }
-        events.sort_by_key(|event| (event.created_ts, event.sequence, event.event_id.clone()));
-        Ok(events)
-    }
-
-    pub fn claim(
-        &self,
-        event_id: &str,
-        owner: &str,
-        now: u64,
-        lease_seconds: u64,
-    ) -> Result<OutboxLease, StorageError> {
-        validate_outbox_name(event_id, "event_id")?;
-        if owner.trim().is_empty() || lease_seconds == 0 {
-            return Err(StorageError::Conflict(
-                "Outbox worker 和租约时长不能为空".into(),
-            ));
-        }
-        self.ensure_dirs()?;
-        let _lock = acquire_storage_lock(self.lock_path(event_id)?)?;
-        if !self.event_path(event_id)?.exists() {
-            return Err(StorageError::NotFound(format!(
-                "Outbox event_id {event_id}"
-            )));
-        }
-        let lease_path = self.lease_path(event_id)?;
-        let mut fencing_token = 1;
-        if lease_path.exists() {
-            let current: OutboxLease = self.read_json(&lease_path)?;
-            if current.expires_ts > now && current.owner != owner {
-                return Err(StorageError::LeaseHeld {
-                    run_id: 0,
-                    owner: current.owner,
-                });
-            }
-            if current.expires_ts <= now {
-                fencing_token = current.fencing_token.saturating_add(1).max(1);
-                std::fs::remove_file(&lease_path)
-                    .map_err(|error| StorageError::Io(error.to_string()))?;
-            } else {
-                fencing_token = current.fencing_token.max(1);
-            }
-        }
-        let lease = OutboxLease {
-            event_id: event_id.into(),
-            owner: owner.into(),
-            expires_ts: now.saturating_add(lease_seconds),
-            fencing_token,
-        };
-        let content = serde_json::to_string(&lease)
-            .map_err(|error| StorageError::Io(format!("Outbox 租约序列化失败: {error}")))?;
-        write_atomic_path(&lease_path, &self.root, &content)?;
-        Ok(lease)
-    }
-
-    pub fn ack(
-        &self,
-        event_id: &str,
-        owner: &str,
-        fencing_token: u64,
-        now: u64,
-    ) -> Result<(), StorageError> {
-        let _lock = acquire_storage_lock(self.lock_path(event_id)?)?;
-        let lease = self.read_json::<OutboxLease>(&self.lease_path(event_id)?)?;
-        validate_outbox_lease(&lease, event_id, owner, fencing_token, now)?;
-        std::fs::remove_file(self.event_path(event_id)?)
-            .map_err(|error| StorageError::Io(error.to_string()))?;
-        std::fs::remove_file(self.lease_path(event_id)?)
-            .map_err(|error| StorageError::Io(error.to_string()))?;
-        Ok(())
-    }
-
-    pub fn retry(
-        &self,
-        event_id: &str,
-        owner: &str,
-        fencing_token: u64,
-        now: u64,
-    ) -> Result<(), StorageError> {
-        let _lock = acquire_storage_lock(self.lock_path(event_id)?)?;
-        let lease = self.read_json::<OutboxLease>(&self.lease_path(event_id)?)?;
-        validate_outbox_lease(&lease, event_id, owner, fencing_token, now)?;
-        let path = self.event_path(event_id)?;
-        let mut event = self.read_json::<OutboxEvent>(&path)?;
-        event.attempts = event.attempts.saturating_add(1);
-        let content = serde_json::to_string(&event)
-            .map_err(|error| StorageError::Io(format!("Outbox 重试事件序列化失败: {error}")))?;
-        write_atomic_path(&path, &self.root, &content)?;
-        std::fs::remove_file(self.lease_path(event_id)?)
-            .map_err(|error| StorageError::Io(error.to_string()))?;
-        Ok(())
-    }
-
-    fn ensure_dirs(&self) -> Result<(), StorageError> {
-        for path in ["outbox/events", "outbox/leases", "outbox/locks"] {
-            std::fs::create_dir_all(self.root.join(path))
-                .map_err(|error| StorageError::Io(error.to_string()))?;
-        }
-        Ok(())
-    }
-
-    fn event_path(&self, event_id: &str) -> Result<PathBuf, StorageError> {
-        validate_outbox_name(event_id, "event_id")?;
-        Ok(self
-            .root
-            .join("outbox/events")
-            .join(format!("{}.json", outbox_file_key(event_id))))
-    }
-
-    fn lease_path(&self, event_id: &str) -> Result<PathBuf, StorageError> {
-        validate_outbox_name(event_id, "event_id")?;
-        Ok(self
-            .root
-            .join("outbox/leases")
-            .join(format!("{}.json", outbox_file_key(event_id))))
-    }
-
-    fn lock_path(&self, event_id: &str) -> Result<PathBuf, StorageError> {
-        validate_outbox_name(event_id, "event_id")?;
-        Ok(self
-            .root
-            .join("outbox/locks")
-            .join(format!("{}.lock", outbox_file_key(event_id))))
-    }
-
-    fn read_json<T: DeserializeOwned>(&self, path: &Path) -> Result<T, StorageError> {
-        let text =
-            std::fs::read_to_string(path).map_err(|error| StorageError::Io(error.to_string()))?;
-        serde_json::from_str(&text).map_err(|error| StorageError::Io(error.to_string()))
-    }
-}
-
-impl OutboxStore for FileOutboxStore {
-    fn append_outbox(&self, event: OutboxEvent) -> Result<(), StorageError> {
-        self.append(event)
-    }
-
-    fn available_outbox(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
-        self.available(now)
-    }
-
-    fn claim_outbox(
-        &self,
-        event_id: &str,
-        owner: &str,
-        now: u64,
-        lease_seconds: u64,
-    ) -> Result<OutboxLease, StorageError> {
-        self.claim(event_id, owner, now, lease_seconds)
-    }
-
-    fn ack_outbox(
-        &self,
-        event_id: &str,
-        owner: &str,
-        fencing_token: u64,
-        now: u64,
-    ) -> Result<(), StorageError> {
-        self.ack(event_id, owner, fencing_token, now)
-    }
-
-    fn retry_outbox(
-        &self,
-        event_id: &str,
-        owner: &str,
-        fencing_token: u64,
-        now: u64,
-    ) -> Result<(), StorageError> {
-        self.retry(event_id, owner, fencing_token, now)
     }
 }
 
@@ -1514,6 +981,43 @@ fn validate_outbox_lease(
 
 fn default_outbox_schema_version() -> u32 {
     1
+}
+
+// --- P1c（§4.9）：crate 根负载类型的信封声明 ------------------------------
+//
+// 序列化、版本拒绝、损坏拒绝与原子替换的唯一实现都在 `state_envelope`；这里只声明
+// 留在 crate 根的载荷类型（OutboxEvent/OutboxLease/QueuedJob/JobLease）的文案主体与
+// （如有）内嵌版本字段。`FileConsumerState` 的声明随其存储一并迁入 `file::consumers`。
+// 磁盘格式与迁移前逐字节一致：首代没有版本 key 的负载保持
+// `embedded_schema_version() == None`，不就地补 key。
+
+impl JsonStateEnvelope for OutboxEvent {
+    const LABEL: &'static str = "Outbox 事件";
+    const SUPPORTED_SCHEMA_VERSION: u32 = Self::LATEST_SCHEMA_VERSION;
+
+    fn embedded_schema_version(&self) -> Option<u32> {
+        Some(self.schema_version)
+    }
+
+    fn validate_loaded(&self) -> Result<(), StorageError> {
+        self.validate()
+    }
+}
+
+impl JsonStateEnvelope for OutboxLease {
+    const LABEL: &'static str = "Outbox 租约";
+}
+
+impl JsonStateEnvelope for QueuedJob {
+    const LABEL: &'static str = "任务";
+
+    fn validate_loaded(&self) -> Result<(), StorageError> {
+        self.validate()
+    }
+}
+
+impl JsonStateEnvelope for JobLease {
+    const LABEL: &'static str = "任务租约";
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -1990,42 +1494,6 @@ impl AuditFileStore {
     }
 }
 
-struct StorageLock {
-    path: PathBuf,
-}
-
-impl Drop for StorageLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-fn acquire_storage_lock(path: PathBuf) -> Result<StorageLock, StorageError> {
-    // 有界重试把正常并发写者串行化；`AlreadyExists` 与 Windows 删除窗口内
-    // `create_new` 抛出的 `PermissionDenied`（os error 5）都算锁正在占用或正在释放。
-    for _ in 0..100 {
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(_) => return Ok(StorageLock { path }),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    ErrorKind::AlreadyExists | ErrorKind::PermissionDenied
-                ) =>
-            {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            Err(error) => return Err(StorageError::Io(error.to_string())),
-        }
-    }
-    Err(StorageError::Conflict(
-        "存储追加锁被占用，调用方应在恢复后重试".into(),
-    ))
-}
-
 impl AuditStore for AuditFileStore {
     fn append_record(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
         self.append(record)
@@ -2080,25 +1548,6 @@ fn validate_audit_chain(entries: &[AuditEntry]) -> Result<(), StorageError> {
     Ok(())
 }
 
-/// 单机可恢复任务队列：用原子 JSON 文件模拟队列、租约和确认语义。
-///
-/// 该实现适合开发、单机 worker 和故障注入；生产多进程/多节点应替换为数据库或
-/// 消息队列实现，但必须保持 `run_id` 幂等、租约过期接管和确认前不丢任务的语义。
-#[derive(Clone, Debug)]
-pub struct FileJobQueue {
-    root: PathBuf,
-}
-
-struct ClaimLock {
-    path: PathBuf,
-}
-
-impl Drop for ClaimLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
 /// 可替换任务队列契约。数据库/消息队列实现必须保留幂等键、租约、过期接管和确认语义。
 pub trait JobQueueBackend {
     fn enqueue_job(
@@ -2124,339 +1573,6 @@ pub trait JobQueueBackend {
         now: u64,
     ) -> Result<PathBuf, StorageError>;
     fn recover_expired_leases(&self, now: u64) -> Result<Vec<u64>, StorageError>;
-}
-
-impl FileJobQueue {
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    pub fn enqueue(
-        &self,
-        job: JobSpec,
-        run: JobRun,
-        enqueued_ts: u64,
-    ) -> Result<PathBuf, StorageError> {
-        let envelope = QueuedJob {
-            job,
-            run,
-            enqueued_ts,
-        };
-        envelope.validate()?;
-        let path = self.queue_path(envelope.run.run_id);
-        if path.exists() {
-            let existing = self.read_json::<QueuedJob>(&path)?;
-            if existing.job == envelope.job && existing.run == envelope.run {
-                return Ok(path);
-            }
-            return Err(StorageError::Conflict(format!(
-                "run_id {} 已被不同任务占用",
-                envelope.run.run_id
-            )));
-        }
-        self.ensure_dirs()?;
-        self.write_atomic(
-            &path,
-            &serde_json::to_string(&envelope)
-                .map_err(|error| StorageError::Io(format!("任务序列化失败: {error}")))?,
-        )?;
-        Ok(path)
-    }
-
-    pub fn pending(&self) -> Result<Vec<QueuedJob>, StorageError> {
-        let mut jobs = Vec::new();
-        let dir = self.root.join("queue");
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(jobs),
-            Err(error) => return Err(StorageError::Io(error.to_string())),
-        };
-        for entry in entries {
-            let path = entry
-                .map_err(|error| StorageError::Io(error.to_string()))?
-                .path();
-            if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-                let job: QueuedJob = self.read_json(&path)?;
-                job.validate()?;
-                jobs.push(job);
-            }
-        }
-        jobs.sort_by_key(|job: &QueuedJob| (job.run.trading_day.clone(), job.run.run_id));
-        Ok(jobs)
-    }
-
-    pub fn available(&self, now: u64) -> Result<Vec<QueuedJob>, StorageError> {
-        let mut jobs = Vec::new();
-        for job in self.pending()? {
-            let lease_path = self.lease_path(job.run.run_id);
-            let available = if !lease_path.exists() {
-                true
-            } else {
-                self.read_json::<JobLease>(&lease_path)?.expires_ts <= now
-            };
-            if available {
-                jobs.push(job);
-            }
-        }
-        Ok(jobs)
-    }
-
-    pub fn claim(
-        &self,
-        run_id: u64,
-        worker: &str,
-        now: u64,
-        lease_seconds: u64,
-    ) -> Result<JobLease, StorageError> {
-        if worker.trim().is_empty() || lease_seconds == 0 {
-            return Err(StorageError::Conflict("worker 和租约时长不能为空".into()));
-        }
-        let queue_path = self.queue_path(run_id);
-        self.ensure_dirs()?;
-        let _claim_lock = self.acquire_claim_lock(run_id)?;
-        if !queue_path.exists() {
-            return Err(StorageError::NotFound(format!("run_id {run_id}")));
-        }
-        let queued: QueuedJob = self.read_json(&queue_path)?;
-        queued.validate()?;
-        let lease_path = self.lease_path(run_id);
-        let mut fencing_token = 1;
-        if lease_path.exists() {
-            let current: JobLease = self.read_json(&lease_path)?;
-            if current.expires_ts > now && current.owner != worker {
-                return Err(StorageError::LeaseHeld {
-                    run_id,
-                    owner: current.owner,
-                });
-            }
-            if current.expires_ts <= now {
-                fencing_token = current.fencing_token.saturating_add(1).max(1);
-                std::fs::remove_file(&lease_path)
-                    .map_err(|error| StorageError::Io(error.to_string()))?;
-            } else if current.owner == worker {
-                let lease = JobLease {
-                    run_id,
-                    owner: worker.into(),
-                    expires_ts: now.saturating_add(lease_seconds),
-                    fencing_token: current.fencing_token.max(1),
-                };
-                self.write_atomic(
-                    &lease_path,
-                    &serde_json::to_string(&lease)
-                        .map_err(|error| StorageError::Io(error.to_string()))?,
-                )?;
-                return Ok(lease);
-            }
-        }
-        let lease = JobLease {
-            run_id,
-            owner: worker.into(),
-            expires_ts: now.saturating_add(lease_seconds),
-            fencing_token,
-        };
-        let mut file = std::fs::OpenOptions::new();
-        file.write(true).create_new(true);
-        let mut handle = file.open(&lease_path).map_err(|error| match error.kind() {
-            std::io::ErrorKind::AlreadyExists => StorageError::LeaseHeld {
-                run_id,
-                owner: "concurrent-worker".into(),
-            },
-            _ => StorageError::Io(error.to_string()),
-        })?;
-        let content =
-            serde_json::to_string(&lease).map_err(|error| StorageError::Io(error.to_string()))?;
-        handle
-            .write_all(content.as_bytes())
-            .map_err(|error| StorageError::Io(error.to_string()))?;
-        handle
-            .sync_all()
-            .map_err(|error| StorageError::Io(error.to_string()))?;
-        Ok(lease)
-    }
-
-    pub fn ack(&self, run_id: u64, worker: &str) -> Result<PathBuf, StorageError> {
-        let lease_path = self.lease_path(run_id);
-        let lease: JobLease = self.read_json(&lease_path)?;
-        if lease.owner != worker {
-            return Err(StorageError::Unauthorized(format!(
-                "worker {} 不能确认 worker {} 的任务",
-                worker, lease.owner
-            )));
-        }
-        self.ack_files(run_id, worker, lease.fencing_token)
-    }
-
-    /// 严格确认路径：校验 worker、fencing token 和逻辑时间，拒绝过期租约。
-    pub fn ack_at(
-        &self,
-        run_id: u64,
-        worker: &str,
-        fencing_token: u64,
-        now: u64,
-    ) -> Result<PathBuf, StorageError> {
-        let lease_path = self.lease_path(run_id);
-        let lease: JobLease = self.read_json(&lease_path)?;
-        if lease.expires_ts <= now {
-            return Err(StorageError::LeaseExpired { run_id });
-        }
-        if lease.owner != worker || lease.fencing_token != fencing_token {
-            return Err(StorageError::Unauthorized(format!(
-                "worker {} 的租约 fencing token 无效",
-                worker
-            )));
-        }
-        self.ack_files(run_id, worker, fencing_token)
-    }
-
-    fn ack_files(
-        &self,
-        run_id: u64,
-        worker: &str,
-        fencing_token: u64,
-    ) -> Result<PathBuf, StorageError> {
-        let lease_path = self.lease_path(run_id);
-        let lease: JobLease = self.read_json(&lease_path)?;
-        if lease.owner != worker || lease.fencing_token != fencing_token {
-            return Err(StorageError::Unauthorized(format!(
-                "worker {} 不能确认当前租约",
-                worker
-            )));
-        }
-        let source = self.queue_path(run_id);
-        let target = self.done_path(run_id);
-        self.ensure_dirs()?;
-        let _claim_lock = self.acquire_claim_lock(run_id)?;
-        let queued: QueuedJob = self.read_json(&source)?;
-        queued.validate()?;
-        if target.exists() {
-            std::fs::remove_file(&source).ok();
-        } else {
-            std::fs::rename(&source, &target)
-                .map_err(|error| StorageError::Io(error.to_string()))?;
-        }
-        std::fs::remove_file(lease_path).map_err(|error| StorageError::Io(error.to_string()))?;
-        Ok(target)
-    }
-
-    /// 返回已过期任务；保留旧租约直到下一次 `claim`，以便递增 fencing token。
-    pub fn recover_expired(&self, now: u64) -> Result<Vec<u64>, StorageError> {
-        let mut recovered = Vec::new();
-        let dir = self.root.join("leases");
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(recovered),
-            Err(error) => return Err(StorageError::Io(error.to_string())),
-        };
-        for entry in entries {
-            let path = entry
-                .map_err(|error| StorageError::Io(error.to_string()))?
-                .path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                continue;
-            }
-            let lease: JobLease = self.read_json(&path)?;
-            if lease.expires_ts <= now {
-                recovered.push(lease.run_id);
-            }
-        }
-        recovered.sort_unstable();
-        Ok(recovered)
-    }
-
-    fn ensure_dirs(&self) -> Result<(), StorageError> {
-        for dir in ["queue", "leases", "done", "locks"] {
-            std::fs::create_dir_all(self.root.join(dir))
-                .map_err(|error| StorageError::Io(error.to_string()))?;
-        }
-        Ok(())
-    }
-
-    fn queue_path(&self, run_id: u64) -> PathBuf {
-        self.root.join("queue").join(format!("{run_id}.json"))
-    }
-
-    fn lease_path(&self, run_id: u64) -> PathBuf {
-        self.root.join("leases").join(format!("{run_id}.json"))
-    }
-
-    fn acquire_claim_lock(&self, run_id: u64) -> Result<ClaimLock, StorageError> {
-        let path = self.root.join("locks").join(format!("{run_id}.lock"));
-        let result = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path);
-        match result {
-            Ok(_) => Ok(ClaimLock { path }),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                Err(StorageError::LeaseHeld {
-                    run_id,
-                    owner: "concurrent-lease-operation".into(),
-                })
-            }
-            Err(error) => Err(StorageError::Io(error.to_string())),
-        }
-    }
-
-    fn done_path(&self, run_id: u64) -> PathBuf {
-        self.root.join("done").join(format!("{run_id}.json"))
-    }
-
-    fn read_json<T: for<'de> Deserialize<'de>>(&self, path: &Path) -> Result<T, StorageError> {
-        let text =
-            std::fs::read_to_string(path).map_err(|error| StorageError::Io(error.to_string()))?;
-        serde_json::from_str(&text).map_err(|error| StorageError::Io(error.to_string()))
-    }
-
-    fn write_atomic(&self, path: &Path, content: &str) -> Result<(), StorageError> {
-        write_atomic_path(path, &self.root, content)
-    }
-}
-
-impl JobQueueBackend for FileJobQueue {
-    fn enqueue_job(
-        &self,
-        job: JobSpec,
-        run: JobRun,
-        enqueued_ts: u64,
-    ) -> Result<PathBuf, StorageError> {
-        self.enqueue(job, run, enqueued_ts)
-    }
-
-    fn available_jobs(&self, now: u64) -> Result<Vec<QueuedJob>, StorageError> {
-        self.available(now)
-    }
-
-    fn claim_job(
-        &self,
-        run_id: u64,
-        worker: &str,
-        now: u64,
-        lease_seconds: u64,
-    ) -> Result<JobLease, StorageError> {
-        self.claim(run_id, worker, now, lease_seconds)
-    }
-
-    fn ack_job(&self, run_id: u64, worker: &str) -> Result<PathBuf, StorageError> {
-        self.ack(run_id, worker)
-    }
-
-    fn ack_job_at(
-        &self,
-        run_id: u64,
-        worker: &str,
-        fencing_token: u64,
-        now: u64,
-    ) -> Result<PathBuf, StorageError> {
-        self.ack_at(run_id, worker, fencing_token, now)
-    }
-
-    fn recover_expired_leases(&self, now: u64) -> Result<Vec<u64>, StorageError> {
-        self.recover_expired(now)
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2538,258 +1654,6 @@ impl FileTokenBucket {
         write_atomic_path(&path, &self.root, &content)?;
         Ok(granted)
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct JsonStateStore {
-    root: PathBuf,
-}
-
-impl JsonStateStore {
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    /// 保存一个受路径约束、原子替换的 JSON 状态文件。
-    ///
-    /// 运行时报告、对账结果等非 Kernel 事实可以复用这个边界；调用方仍应
-    /// 把真正的交易事实写入 EventLog，不能用状态文件替代事件追加。
-    pub fn save_json_at<T: Serialize>(
-        &self,
-        relative_path: impl AsRef<Path>,
-        value: &T,
-    ) -> Result<PathBuf, StorageError> {
-        let path = self.state_path(relative_path)?;
-        std::fs::create_dir_all(&self.root).map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.root.join(".json-state.write.lock"))?;
-        let content = serde_json::to_string_pretty(value)
-            .map_err(|error| StorageError::Io(format!("JSON 状态序列化失败: {error}")))?;
-        write_atomic_path(&path, &self.root, &content)?;
-        Ok(path)
-    }
-
-    pub fn load_json_at<T: DeserializeOwned>(
-        &self,
-        relative_path: impl AsRef<Path>,
-    ) -> Result<T, StorageError> {
-        let path = self.state_path(relative_path)?;
-        let content =
-            std::fs::read_to_string(path).map_err(|error| StorageError::Io(error.to_string()))?;
-        serde_json::from_str(&content)
-            .map_err(|error| StorageError::Io(format!("JSON 状态解析失败: {error}")))
-    }
-
-    pub fn save_control(&self, plane: &ControlPlane) -> Result<PathBuf, StorageError> {
-        std::fs::create_dir_all(&self.root).map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.root.join(".control-plane.write.lock"))?;
-        self.save_control_unlocked(plane)
-    }
-
-    /// 在同一把文件锁内读取、修改并原子保存控制面状态。
-    ///
-    /// API 接收命令和执行器回写终态都必须通过这个事务边界，避免两个进程
-    /// 分别基于旧快照保存而互相覆盖命令或审计尾部。
-    pub fn update_control<T, F>(&self, update: F) -> Result<(ControlPlane, T), StorageError>
-    where
-        F: FnOnce(&mut ControlPlane) -> Result<T, String>,
-    {
-        let (plane, result) = self.transact_control(update)?;
-        result.map(|value| (plane, value)).map_err(StorageError::Io)
-    }
-
-    /// 控制面事务的保留错误类型版本。业务拒绝（重复请求/权限不足等）不会
-    /// 被误包装成存储故障，也不会写入半成品状态；只有成功变更才会原子保存。
-    pub fn transact_control<T, E, F>(
-        &self,
-        update: F,
-    ) -> Result<(ControlPlane, Result<T, E>), StorageError>
-    where
-        F: FnOnce(&mut ControlPlane) -> Result<T, E>,
-    {
-        std::fs::create_dir_all(&self.root).map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.root.join(".control-plane.write.lock"))?;
-        let path = self.root.join("control-plane.json");
-        let mut plane = match std::fs::read_to_string(&path) {
-            Ok(content) => ControlPlane::from_json(&content).map_err(StorageError::Io)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => ControlPlane::default(),
-            Err(error) => return Err(StorageError::Io(error.to_string())),
-        };
-        let result = update(&mut plane);
-        if result.is_ok() {
-            self.save_control_unlocked(&plane)?;
-        }
-        Ok((plane, result))
-    }
-
-    pub fn load_control(&self) -> Result<ControlPlane, StorageError> {
-        let text = self.load_text("control-plane")?;
-        ControlPlane::from_json(&text).map_err(StorageError::Io)
-    }
-
-    /// 加载可选的控制面状态；首次启动没有文件时返回空控制面。
-    pub fn load_control_if_exists(&self) -> Result<Option<ControlPlane>, StorageError> {
-        let path = self.root.join("control-plane.json");
-        match std::fs::read_to_string(path) {
-            Ok(text) => ControlPlane::from_json(&text)
-                .map(Some)
-                .map_err(StorageError::Io),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(StorageError::Io(error.to_string())),
-        }
-    }
-
-    pub fn save_scheduler(&self, scheduler: &Scheduler) -> Result<PathBuf, StorageError> {
-        self.save_scheduler_at("scheduler.json", scheduler)
-    }
-
-    pub fn load_scheduler(&self) -> Result<Scheduler, StorageError> {
-        self.load_scheduler_at("scheduler.json")
-    }
-
-    /// 将调度状态保存到 data root 下的显式相对路径；路径越界会被拒绝。
-    /// 这让多个运行拓扑可以在同一个 data root 中拥有独立的调度状态文件。
-    pub fn save_scheduler_at(
-        &self,
-        relative_path: impl AsRef<Path>,
-        scheduler: &Scheduler,
-    ) -> Result<PathBuf, StorageError> {
-        let path = self.state_path(relative_path)?;
-        std::fs::create_dir_all(&self.root).map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.root.join(".scheduler.write.lock"))?;
-        let content = scheduler.to_json().map_err(StorageError::Io)?;
-        write_atomic_path(&path, &self.root, &content)?;
-        Ok(path)
-    }
-
-    pub fn load_scheduler_at(
-        &self,
-        relative_path: impl AsRef<Path>,
-    ) -> Result<Scheduler, StorageError> {
-        let path = self.state_path(relative_path)?;
-        let text =
-            std::fs::read_to_string(path).map_err(|error| StorageError::Io(error.to_string()))?;
-        Scheduler::from_json(&text).map_err(StorageError::Io)
-    }
-
-    /// 在调度状态文件锁内读取、修改并原子保存；用于 Scheduler 与 Strategy
-    /// 进程对同一 JobRun 的异步状态推进，避免旧内存快照覆盖新终态。
-    pub fn transact_scheduler_at<T, E, F>(
-        &self,
-        relative_path: impl AsRef<Path>,
-        update: F,
-    ) -> Result<(Scheduler, Result<T, E>), StorageError>
-    where
-        F: FnOnce(&mut Scheduler) -> Result<T, E>,
-    {
-        let path = self.state_path(relative_path)?;
-        std::fs::create_dir_all(&self.root).map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.root.join(".scheduler.write.lock"))?;
-        let mut scheduler = match std::fs::read_to_string(&path) {
-            Ok(content) => Scheduler::from_json(&content).map_err(StorageError::Io)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Scheduler::default(),
-            Err(error) => return Err(StorageError::Io(error.to_string())),
-        };
-        let result = update(&mut scheduler);
-        if result.is_ok() {
-            let content = scheduler.to_json().map_err(StorageError::Io)?;
-            write_atomic_path(&path, &self.root, &content)?;
-        }
-        Ok((scheduler, result))
-    }
-
-    fn state_path(&self, relative_path: impl AsRef<Path>) -> Result<PathBuf, StorageError> {
-        let relative_path = relative_path.as_ref();
-        if relative_path.as_os_str().is_empty() {
-            return Err(StorageError::InvalidName("调度状态路径必须非空".into()));
-        }
-        if relative_path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return Err(StorageError::InvalidName(
-                "调度状态路径不能包含父目录".into(),
-            ));
-        }
-        let path = if relative_path.is_absolute() {
-            relative_path.to_path_buf()
-        } else {
-            self.root.join(relative_path)
-        };
-        if !path.starts_with(&self.root) {
-            return Err(StorageError::InvalidName(
-                "调度状态路径越出 data root".into(),
-            ));
-        }
-        Ok(path)
-    }
-
-    fn save_text(
-        &self,
-        name: &str,
-        text: Result<String, StorageError>,
-    ) -> Result<PathBuf, StorageError> {
-        let path = self.root.join(format!("{name}.json"));
-        std::fs::create_dir_all(&self.root).map_err(|error| StorageError::Io(error.to_string()))?;
-        let temp = self.root.join(format!(
-            ".{name}.json.tmp.{}",
-            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::write(&temp, text?).map_err(|error| StorageError::Io(error.to_string()))?;
-        sync_file(&temp)?;
-        std::fs::rename(&temp, &path).map_err(|error| StorageError::Io(error.to_string()))?;
-        Ok(path)
-    }
-
-    fn save_control_unlocked(&self, plane: &ControlPlane) -> Result<PathBuf, StorageError> {
-        self.save_text("control-plane", plane.to_json().map_err(StorageError::Io))
-    }
-
-    fn load_text(&self, name: &str) -> Result<String, StorageError> {
-        std::fs::read_to_string(self.root.join(format!("{name}.json")))
-            .map_err(|error| StorageError::Io(error.to_string()))
-    }
-}
-
-fn sync_file(path: &Path) -> Result<(), StorageError> {
-    #[cfg(not(windows))]
-    {
-        std::fs::File::open(path)
-            .and_then(|file| file.sync_all())
-            .map_err(|error| StorageError::Io(error.to_string()))?;
-    }
-    #[cfg(windows)]
-    {
-        // Windows antivirus/indexer hooks can reject fsync on a freshly created
-        // temp file; rename still provides the crash-safe visibility boundary.
-        let _ = path;
-    }
-    Ok(())
-}
-
-fn write_atomic_path(path: &Path, root: &Path, content: &str) -> Result<(), StorageError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| StorageError::Io("存储路径没有父目录".into()))?;
-    if !parent.starts_with(root) {
-        return Err(StorageError::InvalidName("存储路径越出根目录".into()));
-    }
-    std::fs::create_dir_all(parent).map_err(|error| StorageError::Io(error.to_string()))?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| StorageError::Io("存储文件名非法".into()))?;
-    let temp = parent.join(format!(
-        ".{name}.tmp.{}",
-        TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::write(&temp, content).map_err(|error| StorageError::Io(error.to_string()))?;
-    sync_file(&temp)?;
-    std::fs::rename(&temp, path).map_err(|error| StorageError::Io(error.to_string()))?;
-    Ok(())
 }
 
 #[cfg(test)]

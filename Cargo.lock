@@ -1141,6 +1141,7 @@ name = "qx-adapter"
 version = "0.1.0"
 dependencies = [
  "qx-core",
+ "qx-genglu",
  "qx-guanxing",
  "qx-provider",
  "qx-runtime",

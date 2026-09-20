@@ -82,7 +82,7 @@ pub(crate) fn ccxt_balance_facts(value: &serde_json::Value) -> Result<Vec<Accoun
 pub(crate) fn ccxt_position_facts(
     value: &serde_json::Value,
     venue_id: &str,
-) -> Result<Vec<VenuePositionSnapshot>, String> {
+) -> Result<Vec<AccountPositionSnapshot>, String> {
     let positions = value
         .get("positions")
         .and_then(serde_json::Value::as_array)
@@ -142,7 +142,7 @@ pub(crate) fn ccxt_position_facts(
             .get("leverage")
             .and_then(serde_json::Value::as_u64)
             .and_then(|value| u32::try_from(value).ok());
-        facts.push(VenuePositionSnapshot {
+        facts.push(AccountPositionSnapshot {
             instrument,
             quantity: Quantity::from_raw(quantity),
             average_price: optional_price("entry_price_raw")?,

@@ -25,6 +25,11 @@ pub(crate) struct BacktestArtifacts<'a> {
     pub(crate) assumptions: &'a [String],
     pub(crate) model_descriptors: &'a [String],
     pub(crate) risk_rule_set_version: &'a str,
+    /// 规则集来源：`runtime-config` 表示吃了 `strategy.risk_rules`，`conservative-default`
+    /// 表示该入口没有给出配置文件。产物必须能区分这两者（V10 §4.2）。
+    pub(crate) risk_rule_source: &'static str,
+    /// 本次实际使用的撮合内核；深度档不得声称与 Bar 链同一内核。
+    pub(crate) matching_kernel: &'static str,
 }
 
 pub(crate) fn persist_backtest_artifacts(
@@ -64,8 +69,10 @@ pub(crate) fn persist_backtest_artifacts(
         },
         "assumptions": input.assumptions,
         "model_descriptors": input.model_descriptors,
+        "matching_kernel": input.matching_kernel,
         "risk_rules": {
             "rule_set_version": input.risk_rule_set_version,
+            "source": input.risk_rule_source,
         },
         "run_manifest": manifest_path.to_string_lossy(),
     });

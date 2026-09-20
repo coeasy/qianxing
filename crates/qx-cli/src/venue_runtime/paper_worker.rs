@@ -157,9 +157,10 @@ pub(crate) fn run_paper_execution_worker(
                 }
                 let action = if command.dry_run {
                     Ok("DRY_RUN_VALIDATED".into())
-                } else if let Err(reason) = spread_group_barrier(&root, &command) {
-                    Err(reason)
                 } else {
+                    // 跨腿屏障由 `qx-execution` 网关在写入任何事实之前自行判定，
+                    // 这里只注入由存储根解析出的组快照。
+                    let spread_store = open_spread_group_store(&root)?;
                     let mut market_pipeline =
                         open_runtime_pipeline(&runtime_config, &root, &log_name, "USDT")
                             .map_err(|error| format!("打开 Paper 行情 EventLog 失败: {error}"))?;
@@ -192,15 +193,22 @@ pub(crate) fn run_paper_execution_worker(
                             Some(position),
                             Some(market_quote),
                             false,
+                            Some(&spread_store),
                         ),
                         None => Err(
                             "FAIL_CLOSED: Paper worker 缺少风控配置（instrument_spec_path），拒绝提交订单"
                                 .to_string(),
                         ),
                     };
-                    // 执行事实已写入同一个 pipeline，多腿订单组归约无需再打开一次日志。
-                    sync_spread_group_after_order(&root, &market_pipeline, &command, now)?;
-                    result
+                    if is_fail_closed_rejection(&result) {
+                        // 网关未写入任何事实：归约会把真正的 FAIL_CLOSED 文案覆盖成
+                        // "订单组缺少 EventLog 订单"，因此这条路径直接保留原拒绝原因。
+                        result
+                    } else {
+                        // 执行事实已写入同一个 pipeline，多腿订单组归约无需再打开一次日志。
+                        sync_spread_group_after_order(&root, &market_pipeline, &command, now)?;
+                        result
+                    }
                 };
                 let (_, record_result) = store
                     .transact(|plane| plane.execute(command.command_id, now, |_| action.clone()))

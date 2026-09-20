@@ -94,10 +94,61 @@ pub(crate) fn isolated_backtest_runtime(
     (root, runtime_path)
 }
 
+/// 构造一份只做字段填装的 worker 配置，避免每个风控用例重复 14 个字段。
+pub(crate) fn mk_worker(
+    id: &str,
+    role: WorkerRole,
+    venue: &str,
+    instrument_spec_path: Option<&str>,
+) -> WorkerConfig {
+    WorkerConfig {
+        id: id.into(),
+        role,
+        enabled: true,
+        account_id: Some("main".into()),
+        venue_id: Some(venue.into()),
+        endpoint: None,
+        symbols: Vec::new(),
+        settlement_currency: None,
+        credential_env: None,
+        credential_files: None,
+        instrument_spec_path: instrument_spec_path.map(str::to_string),
+        paper_initial_cash_raw: None,
+        max_order_notional_raw: None,
+        max_position_notional_raw: None,
+    }
+}
+
+/// 仓库内已验收的 BTCUSDT 现货规格绝对路径，供风控配置用例直接引用。
+pub(crate) fn workspace_binance_spot_spec() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy")
+        .join("qianxing.binance.spot.spec.json")
+}
+
+/// 装配一条 SubmitOrder 控制命令；`dry_run=false` 时进入真实副作用分支。
+pub(crate) fn mk_submit_command(command_id: u64, order: &Order, dry_run: bool) -> ControlCommand {
+    ControlCommand {
+        command_id,
+        request_id: format!("submit-{command_id}"),
+        operator_id: "ops".into(),
+        reason: "risk boundary integration".into(),
+        kind: CommandKind::SubmitOrder,
+        target: command_id.to_string(),
+        payload: BTreeMap::from([("order_json".into(), serde_json::to_string(order).unwrap())]),
+        permission: Permission::Trading,
+        dry_run,
+    }
+}
+
 mod backtest_entries;
+mod backtest_risk_provenance;
 mod cli_surface;
 mod e2e_and_python_contract;
 mod execution_and_multi_leg;
+mod live_submit_fail_closed;
 mod paper_and_strategy_worker;
 mod paper_bridge_and_bundles;
 mod worker_observability;

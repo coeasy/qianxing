@@ -754,13 +754,27 @@ impl SqliteOutboxStore {
             return Err(StorageError::LeaseExpired { run_id: 0 });
         }
         if retry {
-            transaction
-                .execute(
-                    "UPDATE qx_outbox_events SET attempts = CAST(CAST(attempts AS INTEGER) + 1 AS TEXT)
-                     WHERE event_id = ?1",
+            // P1c（§4.9）：尝试计数与文件后端共用 `qx-core` 统一策略的递增口径
+            // （`next_attempt_count`，u32 饱和），不再由各后端就地推导算术；
+            // 事件行缺失时保持旧 UPDATE 的 0 行影响语义（静默跳过）。
+            let current: Option<String> = transaction
+                .query_row(
+                    "SELECT attempts FROM qx_outbox_events WHERE event_id = ?1",
                     params![event_id],
+                    |row| row.get(0),
                 )
+                .optional()
                 .map_err(map_sqlite)?;
+            if let Some(raw) = current {
+                let attempts = parse_sqlite_u64(&raw).map_err(map_sqlite)?;
+                let next = qx_core::retry::RetryPolicy::next_attempt_count(attempts as u32);
+                transaction
+                    .execute(
+                        "UPDATE qx_outbox_events SET attempts = ?2 WHERE event_id = ?1",
+                        params![event_id, db_string(next as u64)],
+                    )
+                    .map_err(map_sqlite)?;
+            }
         } else {
             transaction
                 .execute(

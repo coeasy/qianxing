@@ -198,6 +198,8 @@ pub(crate) fn run_single_strategy_backtest(
             assumptions: &report.assumptions,
             model_descriptors: &report.model_descriptors,
             risk_rule_set_version: &risk_rule_set_version,
+            risk_rule_source: "runtime-config",
+            matching_kernel: BAR_MATCHING_KERNEL,
         },
     )?;
     println!(
@@ -232,6 +234,7 @@ pub(crate) fn run_builtin_backtest(
     frame_path: &Path,
     spec_path: Option<&Path>,
     quantity: i64,
+    runtime_config_path: Option<&Path>,
 ) -> Result<(), String> {
     if quantity <= 0 {
         return Err("内置策略 quantity 必须为正整数".into());
@@ -256,9 +259,11 @@ pub(crate) fn run_builtin_backtest(
 
     let (instrument_spec, margin) =
         market_spec_with_margin(&frame.instrument, spec_path, "内置策略")?;
+    let risk_binding = backtest_risk_binding(runtime_config_path, false)?;
     let mut assembly = BarBacktestAssembly::new(&frame.instrument, "main", 20260914);
     assembly.instrument_spec = instrument_spec;
     assembly.margin = margin;
+    assembly.risk = risk_binding.gate();
     let context = NativeStrategyContext {
         strategy_id: format!("builtin-{}", kind.name()),
         strategy_version: format!("builtin-{}-v1", kind.name()),
@@ -291,6 +296,12 @@ pub(crate) fn run_builtin_backtest(
         report.return_bps,
         report.max_drawdown_bps,
         report.result_hash()
+    );
+    println!(
+        "[Builtin · Risk] rule_set_version={} source={} kernel={}",
+        risk_binding.gate().rule_set().version(),
+        risk_binding.source(),
+        BAR_MATCHING_KERNEL
     );
     Ok(())
 }

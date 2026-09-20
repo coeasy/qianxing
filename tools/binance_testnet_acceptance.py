@@ -10,6 +10,10 @@
   `--allow-skip` 才会把该情形折叠为退出码 0，供 CI 的“未验收”分支使用。
 * 只有显式 `--send-orders` 才会把命令的 `dry_run` 置为 false；默认全程不向
   交易所发送真实订单。
+* 每次运行都会在 `--evidence-root`（默认 `maturity/evidence/testnet`）下留下一个
+  UTC 时间戳目录与 `result.json`（阶段退出码、耗时、outcome、是否允许翻转
+  `sandbox_tested`）。目录不自动删除：`maturity/capabilities.yaml` 的
+  `sandbox_tested` 只能凭一份 `outcome=pass` 的结果包翻转。
 """
 
 from __future__ import annotations
@@ -18,10 +22,8 @@ import argparse
 import copy
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -36,6 +38,52 @@ SECRET_ENV = "QX_BINANCE_TESTNET_API_SECRET"
 EXIT_FAILURE = 2
 EXIT_SKIPPED = 3
 
+# V10 §6 P3：每段验收都必须留下**带时间戳的结果包**，否则 `sandbox_tested` 永远
+# 没有可核对的证据来源。默认落在仓库内的证据目录，而不是跑完就删的临时目录。
+DEFAULT_EVIDENCE_ROOT = WORKSPACE / "maturity" / "evidence" / "testnet"
+
+# 逐步记录：包名 → 退出码 / 耗时 / 输出末行，供结果包与人工复核使用。
+STAGE_RECORDS: list[dict[str, Any]] = []
+
+
+def utc_stamp() -> str:
+    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
+
+def write_result_package(
+    workdir: Path,
+    binary: Path,
+    instrument: str,
+    send_orders: bool,
+    credentials_present: bool,
+    outcome: str,
+    started_at: float,
+    detail: str = "",
+) -> Path:
+    """落一份机器可读的结果包；它是 `capabilities.yaml` 翻 `sandbox_tested` 的唯一依据。"""
+    package = {
+        "schema_version": 1,
+        "kind": "binance-testnet-acceptance",
+        "outcome": outcome,
+        "started_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at)),
+        "finished_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "duration_ms": int((time.time() - started_at) * 1000),
+        "binary": str(binary),
+        "instrument": instrument,
+        "send_orders": send_orders,
+        "credentials_present": credentials_present,
+        "stages": STAGE_RECORDS,
+        "detail": detail,
+        "sandbox_tested_flip": {
+            "allowed": outcome == "pass",
+            "rule": "只有 outcome=pass 且全部阶段退出码为 0 才允许把 capabilities.yaml 的"
+            " sandbox_tested 置 true；skipped/fail 一律保持 false，且必须连同本包一起归档",
+        },
+    }
+    path = workdir / "result.json"
+    path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
 # Windows 控制台默认 GBK，中文日志需要显式切到 UTF-8。
 for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
@@ -49,8 +97,20 @@ def log(message: str) -> None:
 def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     command = [str(binary), *args]
     log("$ " + " ".join(command))
+    started = time.time()
     # Windows 控制台默认 GBK，而 qx-cli 的中文诊断是 UTF-8。
-    return subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+    output = (result.stdout + result.stderr).strip().splitlines()
+    STAGE_RECORDS.append(
+        {
+            "stage": args[0] if args else "unknown",
+            "argv": args,
+            "exit_code": result.returncode,
+            "duration_ms": int((time.time() - started) * 1000),
+            "output_tail": output[-3:],
+        }
+    )
+    return result
 
 
 def fail(step: str, result: subprocess.CompletedProcess[str]) -> None:
@@ -156,11 +216,22 @@ def assert_fail_closed(binary: Path, config: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, help="qx-cli 可执行文件路径")
-    parser.add_argument("--workdir", type=Path, help="验收产物目录，默认临时目录")
+    parser.add_argument(
+        "--workdir",
+        type=Path,
+        help="验收产物目录；默认在 --evidence-root 下按 UTC 时间戳新建，且不会自动删除",
+    )
+    parser.add_argument(
+        "--evidence-root",
+        type=Path,
+        default=DEFAULT_EVIDENCE_ROOT,
+        help="结果包根目录，默认 maturity/evidence/testnet",
+    )
     parser.add_argument("--instrument", default="BTCUSDT.BINANCE")
     parser.add_argument("--allow-skip", action="store_true", help="缺少凭据时以退出码 0 结束")
     parser.add_argument("--send-orders", action="store_true", help="允许向测试网络发送真实订单")
     args = parser.parse_args()
+    started_at = time.time()
 
     # 运行时示例里的 scheduler.jobs_path 等按进程工作目录解析，统一切到仓库根。
     os.chdir(WORKSPACE)
@@ -184,16 +255,22 @@ def main() -> int:
             )
     binary = Path(binary).resolve()
 
-    owned = args.workdir is None
-    workdir = args.workdir or Path(tempfile.mkdtemp(prefix="qianxing-testnet-"))
+    # 验收目录不再跑完即删：结果包必须留在仓库内，人工与 CI 都能事后核对。
+    workdir = args.workdir
+    if workdir is None:
+        scope = "orders" if args.send_orders else "dryrun"
+        workdir = args.evidence_root / f"{utc_stamp()}-{scope}"
     workdir.mkdir(parents=True, exist_ok=True)
     config = build_acceptance_config(workdir)
+    missing = [name for name in (KEY_ENV, SECRET_ENV) if not os.environ.get(name)]
+    outcome, detail = "fail", "未到达终态"
     try:
         assert_fail_closed(binary, config)
 
-        missing = [name for name in (KEY_ENV, SECRET_ENV) if not os.environ.get(name)]
         if missing:
-            log(f"缺少凭据 {', '.join(missing)}：跳过需要交易所参与的步骤")
+            outcome = "skipped"
+            detail = f"缺少凭据 {', '.join(missing)}：只执行了离线前两段"
+            log(f"{detail}（skip 而不是假通过）")
             return 0 if args.allow_skip else EXIT_SKIPPED
 
         dry_run = not args.send_orders
@@ -235,11 +312,32 @@ def main() -> int:
             fail("reconcile 对账", reconcile)
         status = json_step(binary, "status", ["status", str(config), "--json"])
         (workdir / "status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
+        if any(
+            record["stage"] != "live-check" and record["exit_code"] != 0
+            for record in STAGE_RECORDS
+        ):
+            raise SystemExit("存在非零退出码阶段，不能判定为验收通过")
+        outcome, detail = "pass", ""
         log(f"验收通过：产物见 {workdir}")
         return 0
+    except SystemExit as error:
+        if isinstance(error.code, int):
+            outcome, detail = "fail", f"子进程以退出码 {error.code} 结束"
+        else:
+            outcome, detail = "fail", str(error.code)
+        raise
     finally:
-        if owned:
-            shutil.rmtree(workdir, ignore_errors=True)
+        package = write_result_package(
+            workdir=workdir,
+            binary=binary,
+            instrument=args.instrument,
+            send_orders=args.send_orders,
+            credentials_present=not missing,
+            outcome=outcome,
+            started_at=started_at,
+            detail=detail,
+        )
+        log(f"结果包（outcome={outcome}）：{package}")
 
 
 if __name__ == "__main__":

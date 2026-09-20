@@ -122,9 +122,13 @@ pub(crate) fn run_ccxt_execution_worker(
             }
             let action = if command.dry_run {
                 Ok("DRY_RUN_VALIDATED".into())
-            } else if let Err(reason) = spread_group_barrier(&pipeline_storage.root, &command) {
+            } else if let Err(reason) =
+                require_worker_risk_spec(&worker, &command, Some(&runtime_config_path))
+            {
                 Err(reason)
             } else {
+                // 跨腿屏障由 `qx-execution` 网关自行判定；CLI 只注入存储根解析出的组快照。
+                let spread_store = open_spread_group_store(&pipeline_storage.root)?;
                 let mut pipeline = pipeline_storage
                     .open(
                         ccxt_event_log_name(&worker),
@@ -185,36 +189,43 @@ pub(crate) fn run_ccxt_execution_worker(
                     now,
                     &mut source_seq,
                     Some(&runtime_config_path),
+                    Some(&spread_store),
                 );
-                let latest_pipeline = pipeline_storage
-                    .open(
-                        ccxt_event_log_name(&worker),
-                        worker.settlement_currency.as_deref().unwrap_or("USDT"),
-                    )
-                    .map_err(|error| format!("刷新 CCXT 多腿订单组 EventLog 失败: {error}"))?;
-                sync_spread_group_after_order(
-                    &pipeline_storage.root,
-                    &latest_pipeline,
-                    &command,
-                    now,
-                )?;
-                let (venue, recovery) = recover_spread_groups_for_venue(
-                    SpreadRecoveryContext {
-                        root: &pipeline_storage.root,
-                        venue_id: worker.venue_id.as_deref().unwrap_or("ccxt"),
-                        accept_any_venue: false,
-                        order_validator: Some(&validator),
-                        pipeline: &mut pipeline,
-                        worker_id: &worker.id,
+                if is_fail_closed_rejection(&result) {
+                    // 网关在写入任何事实之前就拒绝了：没有腿订单可归约、没有敞口要
+                    // 补偿，原样把 FAIL_CLOSED 原因交给控制面记录。
+                    drop(venue);
+                } else {
+                    let latest_pipeline = pipeline_storage
+                        .open(
+                            ccxt_event_log_name(&worker),
+                            worker.settlement_currency.as_deref().unwrap_or("USDT"),
+                        )
+                        .map_err(|error| format!("刷新 CCXT 多腿订单组 EventLog 失败: {error}"))?;
+                    sync_spread_group_after_order(
+                        &pipeline_storage.root,
+                        &latest_pipeline,
+                        &command,
                         now,
-                        source_seq: &mut source_seq,
-                    },
-                    venue,
-                )?;
-                for message in recovery {
-                    eprintln!("[HedgeRecovery] {message}");
+                    )?;
+                    let (venue, recovery) = recover_spread_groups_for_venue(
+                        SpreadRecoveryContext {
+                            root: &pipeline_storage.root,
+                            venue_id: worker.venue_id.as_deref().unwrap_or("ccxt"),
+                            accept_any_venue: false,
+                            order_validator: Some(&validator),
+                            pipeline: &mut pipeline,
+                            worker_id: &worker.id,
+                            now,
+                            source_seq: &mut source_seq,
+                        },
+                        venue,
+                    )?;
+                    for message in recovery {
+                        eprintln!("[HedgeRecovery] {message}");
+                    }
+                    drop(venue);
                 }
-                drop(venue);
                 result
             };
             let (_, record_result) = control_store

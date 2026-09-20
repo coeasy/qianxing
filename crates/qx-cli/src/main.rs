@@ -21,29 +21,26 @@ use qx_control::{
     order_from_submit_command, CommandKind, ControlCommand, ControlPlane, Permission,
 };
 use qx_core::{
-    AccountBalance, AccountCashflow, AccountPositionSnapshot as VenuePositionSnapshot,
-    CashflowKind, Event, EventKind, EventLog, FundingRateSnapshot, InstrumentId, Ledger,
-    MarginMode, Money, Order, OrderPolicy, OrderStatus, PositionMode, PositionSide, Price,
-    Priority, Quantity, ReplayVerifier, RunManifest, Side, TradingInstrumentSpec, TradingProduct,
-    SCALE,
+    AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, EventKind,
+    FundingRateSnapshot, InstrumentId, MarginMode, Money, Order, OrderPolicy, OrderStatus,
+    PositionMode, PositionSide, Price, Quantity, ReplayVerifier, RunManifest, Side,
+    TradingInstrumentSpec, TradingProduct, SCALE,
 };
 use qx_data::{JsonBarFrameProvider, JsonDatasetRegistry};
 use qx_datastruct::BarFrame;
 use qx_execution::{
     execute_paper_submit_effect, ingest_venue_events, ingest_venue_events_with_spec,
-    submit_order as execute_submit_order, submit_order_with_risk as execute_submit_order_with_risk,
-    EventLogReconcilePort, HedgeOrderValidator, HedgeRecoveryWorker, RiskExecutionContext,
-    VenuePortAdapter,
+    submit_order_with_risk as execute_submit_order_with_risk, EventLogReconcilePort,
+    HedgeOrderValidator, HedgeRecoveryWorker, RiskExecutionContext, VenuePortAdapter,
 };
 use qx_factor::{
     analyze_factor, CandidateRequest, FactorAnalysisConfig, FactorCatalog, FactorObservation,
     FeatureArtifact, FeatureDefinition, StrategyResearchSnapshot,
 };
-use qx_genglu::BasicAnalyser;
-use qx_guanxing::{Bar, DataSourceId, DataView, QualityGate, QuoteTick, Verdict};
+use qx_guanxing::{Bar, DataSourceId, QualityGate, QuoteTick, Verdict};
 use qx_orchestrator::supervise_workers;
 use qx_plugin::{Cardinality, Manifest, Provides, Registry, POINT_FEE_MODEL, POINT_MATCHER};
-use qx_protocol::{AccountSnapshot, PositionSnapshot as AccountPositionSnapshot};
+use qx_protocol::{AccountSnapshot, PositionSnapshot};
 use qx_provider::{
     DataKind, DataProvider, DataQuery, ProviderCapability, ProviderError, ProviderErrorClass,
     ProviderRegistry, ProviderResult,
@@ -91,13 +88,13 @@ use qx_strategy::{
 };
 use qx_xingban::{
     depth_frame_to_ticks, AShareFeeModel, AshareRuleConfig, BacktestConfig, BacktestEngine,
-    BarMatchingEngine, BarStrategy, DataTier, DepthBarStrategy, DepthFrame, DeterministicRng,
-    FeeModel, MakerTakerFeeModel, MarginRule, MarginTier, NativeBarStrategy, NextBarOpenFillModel,
-    NoMargin, OrderBookBacktestConfig, OrderBookBacktestEngine, RunManifestIdentity,
-    TickBacktestConfig, TickBacktestEngine, TieredMargin, VirtualTradingConfig, ZeroLatency,
+    BarStrategy, DataTier, DepthBarStrategy, DepthFrame, DeterministicRng, FeeModel,
+    MakerTakerFeeModel, MarginRule, MarginTier, NativeBarStrategy, NextBarOpenFillModel, NoMargin,
+    OrderBookBacktestConfig, OrderBookBacktestEngine, RunManifestIdentity, TickBacktestConfig,
+    TickBacktestEngine, TieredMargin, VirtualTradingConfig, ZeroLatency,
 };
 use qx_zhenlu::{
-    rebalance_intent, FileSpreadOrderGroupStore, Oms, PaperVenue, RiskContext, RiskGate, Signal,
+    rebalance_intent, FileSpreadOrderGroupStore, PaperVenue, RiskContext, RiskGate, Signal,
     SignalMerger, SpreadGroupAttribution, SpreadLegAttribution, SpreadOrderGroup,
     SpreadOrderGroupStatus, SpreadOrderGroupStore, SpreadOrderLeg, StrategyRuntime, Venue,
     VenueEvent,
@@ -106,6 +103,7 @@ mod api_service;
 mod backtests;
 mod ccxt_facts;
 mod cli;
+mod cli_help;
 mod config_commands;
 mod configured_backends;
 mod dataset_commands;
@@ -131,6 +129,7 @@ mod workers;
 pub(crate) use api_service::*;
 pub(crate) use backtests::*;
 pub(crate) use ccxt_facts::*;
+pub(crate) use cli_help::*;
 pub(crate) use config_commands::*;
 pub(crate) use configured_backends::*;
 pub(crate) use ecosystem_smoke::*;

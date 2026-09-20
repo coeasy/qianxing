@@ -73,6 +73,7 @@ fn paper_derivative_fill_uses_spec_pnl_accounting_instead_of_spot_cash() {
         Some(OrderRiskPosition::default()),
         None,
         true,
+        None,
     )
     .unwrap();
     assert!(result.contains("fills=1"));
@@ -133,7 +134,7 @@ fn paper_submit_fails_closed_without_risk_context_or_market_quote() {
     };
     let mut pipeline = LiveEventPipeline::open(&root, "events", "USDT").unwrap();
     let missing_risk =
-        execute_paper_submit_effect(&command, &mut pipeline, 1, None, None, None, false)
+        execute_paper_submit_effect(&command, &mut pipeline, 1, None, None, None, false, None)
             .unwrap_err();
     assert!(missing_risk.contains("FAIL_CLOSED: risk context missing"));
     // 只提供 RiskContext、缺持仓快照同样拒绝执行。
@@ -145,6 +146,7 @@ fn paper_submit_fails_closed_without_risk_context_or_market_quote() {
         None,
         None,
         false,
+        None,
     )
     .unwrap_err();
     assert!(missing_position.contains("FAIL_CLOSED: risk context missing"));
@@ -157,6 +159,7 @@ fn paper_submit_fails_closed_without_risk_context_or_market_quote() {
         Some(OrderRiskPosition::default()),
         None,
         false,
+        None,
     )
     .unwrap_err();
     assert!(missing_quote.contains("FAIL_CLOSED: market quote missing"));
@@ -243,6 +246,7 @@ fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
         Some(OrderRiskPosition::default()),
         Some(quote),
         false,
+        None,
     )
     .unwrap();
     assert!(executed.starts_with("PAPER_EXECUTED fills=1"), "{executed}");
@@ -256,6 +260,7 @@ fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
         Some(OrderRiskPosition::default()),
         Some(quote),
         false,
+        None,
     )
     .unwrap();
     assert!(

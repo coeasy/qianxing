@@ -129,24 +129,46 @@ fn legacy_spot_spec(instrument: &InstrumentId, multiplier: i128) -> TradingInstr
 ///
 /// 版本会写进 [`OrderRiskDecision::rule_set_version`]，使任何一条风控结论都能
 /// 回溯到当时的规则配置；`evaluate` 不短路，收集全部拒绝原因。
+///
+/// 构造是显式命名的：不再有 `new()`/`Default` 这种"零规则即默认形状"的入口
+/// （V10 §4.5——静默放行就是双轨风控的温床）。要么用 [`RuleSet::account_limits_only`]
+/// 明确表达"只跑账户级判定、无静态规则"，要么用 [`RuleSet::conservative_default`]
+/// 拿到带保守上限的具名规则集，要么用 [`RuleSet::with_version`] 从配置构造。
 pub struct RuleSet {
     version: String,
     rules: Vec<Box<dyn RiskRule>>,
 }
 
-impl Default for RuleSet {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// 保守默认规则集的单笔数量上限（定点原始值）：与历史上 CLI 回测回落使用的
+/// `conservative-default-v1` 完全一致，收编到 qx-risk 后不再由调用方各自抄写。
+pub const CONSERVATIVE_MAX_QTY_RAW: i128 = 1_000 * SCALE;
+/// 保守默认规则集的版本号（写进判定结果，供审计回溯）。
+pub const CONSERVATIVE_DEFAULT_RULE_SET_VERSION: &str = "conservative-default-v1";
 
 impl RuleSet {
-    /// 空规则集：只有账户级判定，语义与 `RiskEngine::evaluate_order` 一致。
-    pub fn new() -> Self {
+    /// 零静态规则、仅剩账户级判定的显式形状。
+    ///
+    /// 语义与 [`crate::RiskEngine::evaluate_order`] 一致（版本同为
+    /// `ORDER_RISK_RULE_SET_VERSION`）；命名本身即声明"这里故意没有静态规则"，
+    /// 不允许再借默认构造器混过审查。
+    pub fn account_limits_only() -> Self {
         Self {
             version: ORDER_RISK_RULE_SET_VERSION.into(),
             rules: Vec::new(),
         }
+    }
+
+    /// 具名保守默认规则集：单笔数量上限一条静态规则，缺省放行风险最低。
+    /// 任何"没有配置可用"的回落路径都必须走这里，而不是零规则放行。
+    pub fn conservative_default() -> Self {
+        let mut rules = Self {
+            version: CONSERVATIVE_DEFAULT_RULE_SET_VERSION.into(),
+            rules: Vec::new(),
+        };
+        rules.add(Box::new(MaxQtyRule {
+            max_qty: CONSERVATIVE_MAX_QTY_RAW,
+        }));
+        rules
     }
 
     /// 以配置来源（例如运行配置或 RunManifest 中的规则摘要）指定版本号。

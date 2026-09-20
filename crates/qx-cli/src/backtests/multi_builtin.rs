@@ -12,6 +12,7 @@ pub(crate) fn run_multi_builtin_backtest(
     quantity: i64,
     funding_bps: i64,
     artifact_root: Option<&Path>,
+    runtime_config_path: Option<&Path>,
 ) -> Result<(), String> {
     if quantity <= 0 {
         return Err("多腿内置策略 quantity 必须为正整数".into());
@@ -129,12 +130,17 @@ pub(crate) fn run_multi_builtin_backtest(
     let attribution_reference_spec = reference_spec.clone();
     let attribution_primary_targets = primary_targets.clone();
     let attribution_reference_targets = reference_targets.clone();
-    let run_leg = |frame: &BarFrame,
-                   bars: &[Bar],
-                   spec: Option<TradingInstrumentSpec>,
-                   margin: Box<dyn MarginRule>,
-                   targets: BTreeMap<u64, i128>,
-                   leg: &str|
+    // 两条腿共用同一份规则绑定：多腿链的规则集版本必须与单标的链可比较。
+    let risk_binding = backtest_risk_binding(runtime_config_path, true)?;
+    let risk_rule_set_version = risk_binding.gate().rule_set().version().to_string();
+    // 产物里写的版本必须是真正装进引擎的那一份：把每条腿实际生效的版本读回来核对。
+    let mut leg_risk_versions: Vec<String> = Vec::new();
+    let mut run_leg = |frame: &BarFrame,
+                       bars: &[Bar],
+                       spec: Option<TradingInstrumentSpec>,
+                       margin: Box<dyn MarginRule>,
+                       targets: BTreeMap<u64, i128>,
+                       leg: &str|
      -> Result<qx_xingban::BacktestReport, String> {
         let currency = spec
             .as_ref()
@@ -151,7 +157,8 @@ pub(crate) fn run_multi_builtin_backtest(
         assembly.instrument_spec = spec;
         assembly.margin = margin;
         assembly.currency = currency;
-        assembly.risk = strategy_risk_gate(None, true);
+        assembly.risk = risk_binding.gate();
+        leg_risk_versions.push(assembly.risk.rule_set().version().to_string());
         BacktestEngine::new(assembly.into_config())
             .run(bars, &mut strategy)
             .map_err(|error| format!("{leg} 多腿回测失败: {error:?}"))
@@ -172,6 +179,14 @@ pub(crate) fn run_multi_builtin_backtest(
         reference_targets,
         "reference",
     )?;
+    if leg_risk_versions
+        .iter()
+        .any(|version| version != &risk_rule_set_version)
+    {
+        return Err(format!(
+            "多腿回测腿级生效风控规则集与产物声明不一致: legs={leg_risk_versions:?} declared={risk_rule_set_version}"
+        ));
+    }
     println!(
         "[Multi-leg · Backtest] strategy={} primary={} fills={} return_bps={} reference={} fills={} return_bps={} combined_return_bps={} result_hashes={:016x}/{:016x}",
         kind.name(),
@@ -256,6 +271,12 @@ pub(crate) fn run_multi_builtin_backtest(
             "8h-pro-rata-by-holding-time"
         }
     );
+    println!(
+        "[Multi-leg · Risk] rule_set_version={} source={} kernel={}",
+        risk_rule_set_version,
+        risk_binding.source(),
+        BAR_MATCHING_KERNEL
+    );
     if let Some(root) = artifact_root {
         let runs = root.join("runs");
         std::fs::create_dir_all(&runs)
@@ -266,6 +287,11 @@ pub(crate) fn run_multi_builtin_backtest(
             "primary_instrument": primary_frame.instrument.to_string(),
             "reference_instrument": reference_frame.instrument.to_string(),
             "funding_bps": funding_bps,
+            "risk_rules": {
+                "rule_set_version": risk_rule_set_version,
+                "source": risk_binding.source(),
+                "matching_kernel": BAR_MATCHING_KERNEL,
+            },
             "totals": {
                 "turnover_raw": totals.1.to_string(),
                 "fees_raw": totals.0.to_string(),
@@ -311,6 +337,7 @@ pub(crate) fn run_ccxt_builtin_backtest(
     end_ms: u64,
     spec_path: Option<&Path>,
     quantity: i64,
+    runtime_config_path: Option<&Path>,
 ) -> Result<(), String> {
     if end_ms < start_ms {
         return Err("CCXT 内置策略回测 end_ms 不能早于 start_ms".into());
@@ -341,7 +368,13 @@ pub(crate) fn run_ccxt_builtin_backtest(
             .map_err(|error| format!("编码 CCXT BarFrame 失败: {error}"))?,
     )
     .map_err(|error| format!("写入临时 CCXT BarFrame 失败: {error}"))?;
-    let result = run_builtin_backtest(strategy_name, &temp_path, spec_path, quantity);
+    let result = run_builtin_backtest(
+        strategy_name,
+        &temp_path,
+        spec_path,
+        quantity,
+        runtime_config_path,
+    );
     let _ = std::fs::remove_file(&temp_path);
     result
 }

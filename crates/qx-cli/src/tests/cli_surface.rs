@@ -1,5 +1,124 @@
 use super::*;
 
+const QX_CLI_SURFACE_SOURCES: [&str; 3] =
+    ["src/cli.rs", "src/cli_help.rs", "src/config_commands.rs"];
+
+/// 被测 binary 是否不早于被测源码：`cargo test --bin` 只编译测试壳、不会重链
+/// `target/debug/qx-cli.exe`，放任过期 binary 会让子进程断言对着旧行为"绿"。
+fn assert_binary_fresh(binary: &Path) {
+    let built = binary
+        .metadata()
+        .and_then(|m| m.modified())
+        .expect("读取被测 binary 修改时间失败");
+    for source in QX_CLI_SURFACE_SOURCES {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(source);
+        let edited = path
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or_else(|_| panic!("找不到被测源码 {}", path.display()));
+        assert!(
+            built >= edited,
+            "被测 binary {} 比 {} 旧，请先 cargo build -p qx-cli 再跑本用例",
+            binary.display(),
+            path.display()
+        );
+    }
+}
+
+fn qx_cli_binary() -> PathBuf {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_qx-cli") {
+        let binary = PathBuf::from(path);
+        assert_binary_fresh(&binary);
+        return binary;
+    }
+    let profile_dir = std::env::current_exe()
+        .expect("读取测试可执行文件路径失败")
+        .parent()
+        .and_then(|deps| deps.parent())
+        .expect("测试可执行文件应位于 target/<profile>/deps")
+        .to_path_buf();
+    let binary = profile_dir.join(if cfg!(windows) {
+        "qx-cli.exe"
+    } else {
+        "qx-cli"
+    });
+    assert!(binary.is_file(), "未找到被测 binary {}", binary.display());
+    assert_binary_fresh(&binary);
+    binary
+}
+
+/// V10 §4.3 第 3 项：`reconcile` 无参曾经打印两份手写向量的"差异"，看起来像真对账能力。
+#[test]
+fn reconcile_without_sources_is_a_usage_error_not_a_demo() {
+    let output = Command::new(qx_cli_binary())
+        .arg("reconcile")
+        .output()
+        .expect("启动 qx-cli 失败");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "reconcile 缺少本地/远端来源必须是用法错误并退出 2:\n{stdout}{stderr}"
+    );
+    assert!(
+        stderr.contains("本地") && stderr.contains("远端"),
+        "用法错误必须点名两个必需输入: {stderr}"
+    );
+    assert!(
+        !stdout.contains("差异数="),
+        "不得再打印硬编码假订单的演示差异:\n{stdout}"
+    );
+}
+
+/// V10 §4.3 第 4 项 + §7.2 新不变量：help 宣称的 `run` 入口必须真能被派发。
+#[test]
+fn run_help_entry_list_equals_dispatched_entries() {
+    let output = Command::new(qx_cli_binary())
+        .arg("help")
+        .output()
+        .expect("启动 qx-cli 失败");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let line = stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("run <"))
+        .expect("help 里没有 run 入口行");
+    let advertised: BTreeSet<String> = line
+        .trim_start()
+        .trim_start_matches("run <")
+        .split('>')
+        .next()
+        .expect("run 入口行缺少闭合尖括号")
+        .split('|')
+        .map(str::to_string)
+        .collect();
+    let listed: BTreeSet<String> = RUN_ENTRY_POINTS
+        .iter()
+        .map(|entry| (*entry).to_string())
+        .collect();
+    assert_eq!(
+        advertised, listed,
+        "help 的 run 入口表必须与 RUN_ENTRY_POINTS 集合相等"
+    );
+    let missing = temp_cli_case_dir("run-entry").join("missing-runtime.json");
+    for entry in RUN_ENTRY_POINTS {
+        let error =
+            run_unified_command(&[entry.to_string(), missing.to_string_lossy().into_owned()])
+                .expect_err("缺配置文件时每条入口都必须失败，而不是静默成功");
+        assert!(
+            !error.contains("不支持"),
+            "help 宣称 run {entry} 可用，但 run_unified_command 没有该分支: {error}"
+        );
+    }
+    let unknown = run_unified_command(&["definitely-not-an-entry".to_string()]).unwrap_err();
+    for entry in RUN_ENTRY_POINTS {
+        assert!(
+            unknown.contains(entry),
+            "未知入口的提示要列出全部可用入口，缺 {entry}: {unknown}"
+        );
+    }
+}
+
 #[test]
 fn init_creates_self_contained_project_assets_and_builtin_strategy() {
     let root = std::env::temp_dir().join(format!(

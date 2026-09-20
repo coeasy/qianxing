@@ -280,7 +280,7 @@ mod tests {
             initial_cash: Money::from_i64(10_000),
             fee_bps: 0,
             instrument_spec: None,
-            risk: RiskGate::new(),
+            risk: RiskGate::conservative_default(),
         };
         let ticks = vec![
             QuoteTick::new(
@@ -364,7 +364,7 @@ mod tests {
     fn tick_backtest_shares_the_configured_risk_gate() {
         let ticks =
             depth_frame_to_ticks(&frame(vec![book(1, 99, 100), book(2, 100, 101)])).unwrap();
-        let allowed = TickBacktestEngine::new(l1_config(RiskGate::new()))
+        let allowed = TickBacktestEngine::new(l1_config(RiskGate::conservative_default()))
             .run(&ticks, &mut BuyOnce { done: false })
             .unwrap();
         assert_eq!(allowed.fills.len(), 1);
@@ -462,7 +462,7 @@ mod tests {
             context,
             InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
         );
-        let report = TickBacktestEngine::new(l1_config(RiskGate::new()))
+        let report = TickBacktestEngine::new(l1_config(RiskGate::conservative_default()))
             .run(&ticks, &mut strategy)
             .unwrap();
         // 快照 (100,101) 的中间价 100.5 作为最后一根合成 Bar 的收盘价。

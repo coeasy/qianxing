@@ -13,9 +13,10 @@ pub(crate) fn resolve_worker_runtime_paths(worker: &mut WorkerConfig, runtime_pa
 
 /// 从执行 worker 的冻结 market spec 和同一 EventLog 构造账户级风险快照。
 ///
-/// 没有配置 `instrument_spec_path` 时保持兼容的基础执行路径；一旦配置，
-/// 订单必须同时通过规格、杠杆、名义额、可用保证金和当前持仓预检，之后才
-/// 能进入 OMS/Venue。这样 Paper、Binance、CCXT 共用同一个风险边界。
+/// 返回 `None` 只表示该 worker 没有配置 `instrument_spec_path`，**不是**"允许降级到无风控提交"：
+/// 提交路径必须把它当作 fail-closed 处理（见 `execute_submit_order_with_worker_risk`），
+/// 只有不产生新订单的回报归约侧可以忽略。一旦配置，订单必须同时通过规格、杠杆、名义额、
+/// 可用保证金和当前持仓预检，之后才能进入 OMS/Venue；Paper、Binance、CCXT 共用同一个边界。
 pub(crate) fn worker_risk_context(
     worker: &WorkerConfig,
     order: &Order,
@@ -196,6 +197,31 @@ pub(crate) fn worker_report_spec(
     Ok(resolved)
 }
 
+/// 提交前置门槛：没有冻结的 market spec 就没有账户级风控，实盘链一律拒绝，
+/// 不再降级为无风控提交；放在 venue/凭据装配之前，让未配置的风控边界在
+/// 任何外部动作发生前就失败。
+pub(crate) fn require_worker_risk_spec(
+    worker: &WorkerConfig,
+    command: &ControlCommand,
+    runtime_config_path: Option<&Path>,
+) -> Result<(), String> {
+    let order = order_from_submit_command(command)
+        .map_err(|error| format!("SubmitOrder 订单载荷非法: {error:?}"))?;
+    if load_worker_instrument_spec(worker, &order, runtime_config_path)?.is_some() {
+        return Ok(());
+    }
+    Err(format!(
+        "FAIL_CLOSED: worker {} 缺少风控配置（instrument_spec_path），拒绝提交订单",
+        worker.id
+    ))
+}
+
+/// 提交一条 Binance / CCXT 实盘腿。
+///
+/// `spread_store` 是**必填**的多腿订单组快照来源：屏障判定已下沉到 `qx-execution`
+/// 网关（V10 §6.1），CLI 只负责把存储根解析出的组存储交给它。传 `None` 不再意味着
+/// "跳过屏障"，而是让任何带 `spread_group_id` 的腿以 `FAIL_CLOSED` 被拒绝。
+#[allow(clippy::too_many_arguments)] // V10 P0a/P1b：风控与组存储形参由编译器逐个点名，不合并成参数包。
 pub(crate) fn execute_submit_order_with_worker_risk<V: Venue>(
     command: &ControlCommand,
     worker: &WorkerConfig,
@@ -204,20 +230,30 @@ pub(crate) fn execute_submit_order_with_worker_risk<V: Venue>(
     now: u64,
     source_seq: &mut u64,
     runtime_config_path: Option<&Path>,
+    spread_store: Option<&dyn SpreadOrderGroupStore>,
 ) -> Result<String, String> {
     let order = order_from_submit_command(command)
         .map_err(|error| format!("SubmitOrder 订单载荷非法: {error:?}"))?;
-    if let Some((risk, position)) =
+    let Some((risk, position)) =
         worker_risk_context(worker, &order, pipeline, runtime_config_path)?
-    {
-        let context = RiskExecutionContext {
-            risk: &risk,
-            position: &position,
-        };
-        execute_submit_order_with_risk(
-            command, venue, pipeline, &worker.id, now, source_seq, &context,
-        )
-    } else {
-        execute_submit_order(command, venue, pipeline, &worker.id, now, source_seq)
-    }
+    else {
+        return Err(format!(
+            "FAIL_CLOSED: worker {} 缺少风控配置（instrument_spec_path），拒绝提交订单",
+            worker.id
+        ));
+    };
+    let context = RiskExecutionContext {
+        risk: &risk,
+        position: &position,
+    };
+    execute_submit_order_with_risk(
+        command,
+        venue,
+        pipeline,
+        &worker.id,
+        now,
+        source_seq,
+        &context,
+        spread_store,
+    )
 }

@@ -17,7 +17,9 @@ pub mod ledger;
 pub mod numeric;
 pub mod order;
 pub mod queue;
+pub mod retry;
 pub mod sourcing;
+pub mod target;
 pub mod trading;
 
 pub use self::clock::{ClockError, TestClock, Ts};
@@ -35,7 +37,9 @@ pub use self::ledger::{
 pub use self::numeric::{Fixed, Money, Price, Quantity, SCALE};
 pub use self::order::{Fill, Order, OrderStatus, OrderTrace, Side};
 pub use self::queue::CausalQueue;
+pub use self::retry::{Backoff, RetryPolicy};
 pub use self::sourcing::{EventLog, Fnv1a, ReplayVerifier, RunManifest};
+pub use self::target::TargetPosition;
 pub use self::trading::{
     MarginMode, MarginState, OrderPolicy, PositionMode, PositionSide, TradingInstrumentSpec,
     TradingProduct,

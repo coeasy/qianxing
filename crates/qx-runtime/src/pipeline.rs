@@ -695,10 +695,7 @@ impl LiveEventPipeline {
             .find(|balance| balance.asset == self.currency)
             .map(|balance| {
                 balance
-                    .free
-                    .raw()
-                    .checked_add(balance.locked.raw())
-                    .and_then(|value| value.checked_sub(balance.borrowed.raw()))
+                    .net_cash_raw()
                     .ok_or_else(|| QxError::ReconcileRequired("柜台余额相加溢出".into()))
             })
             .transpose()?

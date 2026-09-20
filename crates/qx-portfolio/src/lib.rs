@@ -3,9 +3,8 @@ pub mod optimizer;
 pub mod rebalance;
 
 pub use constraint::PortfolioConstraint;
-pub use rebalance::{
-    build_rebalance, rebalance, PortfolioState, RebalanceDelta, RebalancePlan, TargetPosition,
-};
+pub use qx_core::TargetPosition;
+pub use rebalance::{build_rebalance, rebalance, PortfolioState, RebalanceDelta, RebalancePlan};
 
 pub trait Allocator {
     fn allocate(&self, signals: &[i128]) -> Vec<i128>;

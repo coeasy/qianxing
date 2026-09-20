@@ -116,6 +116,9 @@ fn paper_strategy_reads_filled_position_before_emitting_next_order() {
         Some(OrderRiskPosition::new(0, 0)),
         None,
         true,
+        // 本例的命令不带 `spread_group_id`（上一行 `strategy_submit_command(.., None)`），
+        // 单腿提交不经过多腿屏障，因此无需组存储。
+        None,
     )
     .unwrap();
     assert!(result.starts_with("PAPER_EXECUTED fills=1"));
@@ -197,6 +200,8 @@ fn paper_worker_cleans_stale_queue_after_terminal_commit() {
         Some(OrderRiskPosition::new(0, 0)),
         None,
         true,
+        // 单腿命令（`spread_group_id` 缺省），不经过多腿屏障。
+        None,
     )
     .unwrap();
     store

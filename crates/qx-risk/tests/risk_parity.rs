@@ -69,7 +69,7 @@ fn perpetual_spec() -> TradingInstrumentSpec {
 
 /// 同一份规则集配置：三条入口各自构造一次，配置内容必须完全相同。
 fn rule_set() -> RuleSet {
-    let mut rules = RuleSet::new();
+    let mut rules = RuleSet::account_limits_only();
     rules.add(Box::new(MaxQtyRule { max_qty: 2 * SCALE }));
     rules.add(Box::new(MaxNotionalRule {
         max_notional: 150 * SCALE,

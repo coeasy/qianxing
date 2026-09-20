@@ -38,38 +38,24 @@ pub(crate) fn persist_strategy_spread_group(
     store.save(&group)
 }
 
-/// 提交单条腿之前的跨腿屏障。
+/// 打开流水线存储根下的多腿订单组存储（`<root>/spread-groups`）。
 ///
-/// 组一旦进入 `ReconcileRequired`（已有腿结果未知）或 `HedgeRequired`（已有确认敞口
-/// 等待补偿），同组其余腿必须停止自动提交：未知敞口不能靠再加一条腿掩盖，必须先由
-/// 对账/补偿链路给出确定事实。读不到快照同样拒绝（fail-closed）——无法证明组是干净的
-/// 时候，"继续下单"不是安全选项。判定口径由 `SpreadOrderGroup::blocks_new_leg_submission`
-/// 唯一持有，本函数只负责把它接到命令提交路径上。不带 `spread_group_id` 的命令不受影响。
-pub(crate) fn spread_group_barrier(root: &Path, command: &ControlCommand) -> Result<(), String> {
-    let Some(group_id) = command.payload.get("spread_group_id") else {
-        return Ok(());
-    };
-    let store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
-    let Some(group) = store.load(group_id)? else {
-        return Err(format!(
-            "FAIL_CLOSED: 命令 {} 属于多腿订单组 {group_id}，但快照不存在，禁止提交该腿",
-            command.command_id
-        ));
-    };
-    if group.blocks_new_leg_submission() {
-        let unknown_legs = group
-            .legs
-            .iter()
-            .filter(|leg| leg.order.status == OrderStatus::Unknown)
-            .map(|leg| leg.leg_id.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
-        return Err(format!(
-            "FAIL_CLOSED: 多腿订单组 {group_id} 状态为 {:?}，禁止提交剩余腿（未知腿: {unknown_legs}），须先完成对账/补偿",
-            group.status
-        ));
-    }
-    Ok(())
+/// 生产提交路径都用它拿到组存储，再把这个 `Option<&dyn SpreadOrderGroupStore>`
+/// 交给 `qx-execution` 的提交入口——屏障判定住在网关，CLI 只负责解析存储根。
+pub(crate) fn open_spread_group_store(root: &Path) -> Result<FileSpreadOrderGroupStore, String> {
+    FileSpreadOrderGroupStore::new(root.join("spread-groups"))
+}
+
+/// 提交入口是否以 **fail-closed** 被拒绝（网关内的屏障、风控或配置缺失判定）。
+///
+/// 网关用 `FAIL_CLOSED:` 前缀标注"在写入任何事实之前就拒绝"，CLI 据此分类：
+/// 这类提交没有腿订单事实可归约、也没有敞口需要补偿，因此组快照同步与恢复扫描
+/// 都必须跳过，否则后续步骤会用"缺少 EventLog 订单"覆盖掉真正的原因文案。
+pub(crate) fn is_fail_closed_rejection(result: &Result<String, String>) -> bool {
+    result
+        .as_ref()
+        .err()
+        .is_some_and(|error| error.starts_with("FAIL_CLOSED:"))
 }
 
 /// 将某条执行 worker 已写入 EventLog 的订单状态归约到多腿组快照。

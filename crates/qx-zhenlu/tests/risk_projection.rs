@@ -2,7 +2,7 @@ use qx_core::{
     InstrumentId, MarginMode, Order, OrderPolicy, OrderStatus, PositionMode, PositionSide, Price,
     Quantity, Side, TradingInstrumentSpec, TradingProduct, SCALE,
 };
-use qx_risk::{MaxNotionalRule, OrderRiskContext, OrderRiskPosition, RiskRule};
+use qx_risk::{MaxNotionalRule, OrderRiskContext, OrderRiskPosition, RiskRule, RuleSet};
 use qx_zhenlu::{RiskContext, RiskGate};
 
 fn perpetual_spec() -> TradingInstrumentSpec {
@@ -135,7 +135,7 @@ fn hedge_reduce_only_uses_the_selected_leg_and_cannot_cross_zero() {
 
 #[test]
 fn empty_risk_gate_still_enforces_reduce_only_account_invariant() {
-    let gate = RiskGate::new();
+    let gate = RiskGate::from_rule_set(RuleSet::account_limits_only());
     let position = OrderRiskPosition::new_with_multiplier(0, 400 * SCALE, SCALE)
         .with_hedge_legs(2 * SCALE, -2 * SCALE);
 
@@ -183,7 +183,7 @@ fn max_notional_rule_uses_projected_exposure() {
 #[test]
 fn risk_gate_wrapper_delegates_to_rule_set() {
     // deprecated compat：`RiskGate` 只保留旧调用形状，判定来自 `RuleSet`。
-    let mut gate = RiskGate::new();
+    let mut gate = RiskGate::from_rule_set(RuleSet::account_limits_only());
     gate.add(Box::new(MaxNotionalRule {
         max_notional: 150 * SCALE,
     }));

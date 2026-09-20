@@ -48,7 +48,8 @@ capabilities:
     sandbox_tested: false
     production_approved: false
     evidence:
-      - crates/qx-runtime/src/lib.rs
+      - crates/qx-runtime/src/runtime_config/schema.rs StorageConsistency/StorageRuntimeConfig contract
+      - crates/qx-runtime/src/runtime_config/schema_tests.rs storage consistency matches backend topology
       - crates/qx-cli/src/config_commands.rs runtime-check/status JSON
       - crates/qx-storage/tests/outbox_backend_semantics.rs file/SQLite/PostgreSQL lease+fencing+retry
       - crates/qx-storage/tests/nats_jetstream.rs publish/consume/dedup and input validation
@@ -127,7 +128,7 @@ capabilities:
     evidence:
       - python/qianxing_ccxt
       - crates/qx-adapter
-      - crates/qx-runtime/src/lib.rs live strategy topology gate test
+      - crates/qx-runtime/src/runtime_config/strategy_tests.rs live strategy topology gate test
       - crates/qx-cli/src/venue_runtime/ccxt_live_bars.rs live Bar freshness test
       - crates/qx-cli/src/workers.rs live Job digest guard
       - crates/qx-cli/src/config_commands.rs runtime-check/live-check JSON safety contracts

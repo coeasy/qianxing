@@ -220,4 +220,5 @@ fn port_order(client_id: u64) -> Order {
 mod gateway_port;
 mod paper_accounting;
 mod recovery_and_replay;
+mod spread_group_barrier;
 mod venue_submit_contract;

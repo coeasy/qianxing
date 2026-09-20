@@ -1,36 +1,25 @@
 use crate::*;
 
 pub(crate) fn reconcile_issue_json(issue: &AdapterReconcileIssue) -> serde_json::Value {
+    // kind 与单号复用适配器内唯一的一份枚举翻译（reason_code），这里只展开维度值。
+    let mut value = serde_json::json!({
+        "kind": issue.reason_code(),
+        "client_order_id": issue.client_order_id(),
+    });
+    let object = value.as_object_mut().expect("json object");
     match issue {
-        AdapterReconcileIssue::MissingLocally { client_order_id } => serde_json::json!({
-            "kind": "missing_locally",
-            "client_order_id": client_order_id,
-        }),
-        AdapterReconcileIssue::MissingAtVenue { client_order_id } => serde_json::json!({
-            "kind": "missing_at_venue",
-            "client_order_id": client_order_id,
-        }),
-        AdapterReconcileIssue::StatusMismatch {
-            client_order_id,
-            local,
-            venue,
-        } => serde_json::json!({
-            "kind": "status_mismatch",
-            "client_order_id": client_order_id,
-            "local": local,
-            "venue": venue,
-        }),
-        AdapterReconcileIssue::FilledMismatch {
-            client_order_id,
-            local,
-            venue,
-        } => serde_json::json!({
-            "kind": "filled_mismatch",
-            "client_order_id": client_order_id,
-            "local_raw": local.raw(),
-            "venue_raw": venue.raw(),
-        }),
+        AdapterReconcileIssue::MissingLocally { .. }
+        | AdapterReconcileIssue::MissingAtVenue { .. } => {}
+        AdapterReconcileIssue::StatusMismatch { local, venue, .. } => {
+            object.insert("local".into(), serde_json::json!(local));
+            object.insert("venue".into(), serde_json::json!(venue));
+        }
+        AdapterReconcileIssue::FilledMismatch { local, venue, .. } => {
+            object.insert("local_raw".into(), serde_json::json!(local.raw()));
+            object.insert("venue_raw".into(), serde_json::json!(venue.raw()));
+        }
     }
+    value
 }
 
 pub(crate) struct ReconcileReportInput<'a> {
@@ -176,23 +165,11 @@ pub(crate) fn run_binance_reconcile_worker(
                 format!("{}:balances:{}", worker.id, source_seq),
             ))
             .map_err(|error| format!("账户余额事实归约失败: {error:?}"))?;
+        // 待对账事实的归类只复用适配器对裁决口径的投影（client_order_id/reason_code），
+        // 调用点不复制差异判定分支。
         for issue in &issues {
-            let (client_order_id, reason) = match issue {
-                AdapterReconcileIssue::MissingLocally { client_order_id } => {
-                    (*client_order_id, "missing_locally")
-                }
-                AdapterReconcileIssue::MissingAtVenue { client_order_id } => {
-                    (*client_order_id, "missing_at_venue")
-                }
-                AdapterReconcileIssue::StatusMismatch {
-                    client_order_id, ..
-                } => (*client_order_id, "status_mismatch"),
-                AdapterReconcileIssue::FilledMismatch {
-                    client_order_id, ..
-                } => (*client_order_id, "filled_mismatch"),
-            };
             EventLogReconcilePort::new(&mut pipeline, &worker.id, received_ts, &mut source_seq)
-                .require_reconcile(client_order_id, reason)
+                .require_reconcile(issue.client_order_id(), issue.reason_code())
                 .map_err(|error| format!("对账事实归约失败: {error}"))?;
         }
         context.heartbeat(received_ts)?;

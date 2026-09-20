@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 qx-core = { path = "../qx-core" }
+qx-genglu = { path = "../qx-genglu" }
 qx-guanxing = { path = "../qx-guanxing" }
 qx-provider = { path = "../qx-provider" }
 qx-zhenlu = { path = "../qx-zhenlu" }

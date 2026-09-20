@@ -2,12 +2,26 @@
 //!
 //! `CanonicalAccountSnapshot` 是跨语言、跨 Venue 的边界对象；它用于查询、恢复、
 //! 对账和桥接，不是账簿事实的替代品。核心事实仍来自 EventLog、Fill、LedgerEntry。
+//!
+//! ## 快照概念的单点定义（V10 §4.7 / P1a）
+//!
+//! "持仓/余额/订单快照"这类概念只在 `qx-core` 有一份领域定义；本 crate 只拥有
+//! **跨语言线格式**（`PositionSnapshot` / `OrderSnapshot` / `FillSnapshot`，全部是
+//! `*_raw: i128` 的定长整数表示），并通过下面唯一的 `From` / `from_fact` 转换层与
+//! 内核观察类型对接。内核观察类型由本 crate 直接再导出，因此消费者（`qx-cli`、
+//! `qx-api`）从同一个 crate 拿到同一套名字，不再需要别名导入两套同名概念。
 
-use qx_core::{Fnv1a, InstrumentId, OrderStatus, Side};
+use qx_core::{Fnv1a, InstrumentId, Money, Order, OrderStatus, Price, Quantity, Side};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+pub use qx_core::{AccountBalance, AccountPositionSnapshot, Fill};
+
+// 线格式与唯一转换层住在子模块（行数棘轮与概念单点都要求它独立成文件）。
+mod wire;
+pub use wire::*;
 
 static SNAPSHOT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -83,80 +97,6 @@ impl<T> ProjectionEnvelope<T> {
         }
         Ok(())
     }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct SnapshotHeader {
-    pub schema_version: u32,
-    pub snapshot_id: u64,
-    pub account_id: String,
-    pub portfolio_id: String,
-    pub venue_id: String,
-    pub trading_day: String,
-    pub as_of: u64,
-    pub event_seq: u64,
-    pub state_hash: u64,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct PositionSnapshot {
-    pub instrument: InstrumentId,
-    pub quantity_raw: i128,
-    pub today_quantity_raw: i128,
-    pub average_price_raw: i128,
-    pub mark_price_raw: i128,
-    pub unrealized_pnl_raw: i128,
-    pub margin_raw: i128,
-}
-
-impl Default for PositionSnapshot {
-    fn default() -> Self {
-        Self {
-            instrument: InstrumentId::parse("UNKNOWN.UNKNOWN").expect("valid sentinel instrument"),
-            quantity_raw: 0,
-            today_quantity_raw: 0,
-            average_price_raw: 0,
-            mark_price_raw: 0,
-            unrealized_pnl_raw: 0,
-            margin_raw: 0,
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct OrderSnapshot {
-    pub order_id: u64,
-    pub client_order_id: u64,
-    pub instrument: InstrumentId,
-    pub side: Side,
-    pub quantity_raw: i128,
-    pub filled_raw: i128,
-    pub status: OrderStatus,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct FillSnapshot {
-    pub fill_id: u64,
-    pub order_id: u64,
-    pub quantity_raw: i128,
-    pub price_raw: i128,
-    pub fee_raw: i128,
-    pub ts: u64,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct TransferSnapshot {
-    pub transfer_id: u64,
-    pub currency: String,
-    pub amount_raw: i128,
-    pub ts: u64,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
-pub struct ReconcileSnapshot {
-    pub last_reconcile_ts: u64,
-    pub discrepancy_count: u32,
-    pub recovery_state: String,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

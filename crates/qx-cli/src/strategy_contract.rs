@@ -577,10 +577,11 @@ pub(crate) fn build_strategy_order_with_signal(
     };
     let rebalance = qx_portfolio::rebalance(
         &current,
-        &[qx_portfolio::TargetPosition {
-            instrument: instrument_text.to_string(),
-            quantity: target_qty,
-        }],
+        &[qx_portfolio::TargetPosition::single(
+            InstrumentId::parse(instrument_text)
+                .ok_or_else(|| format!("Strategy instrument 非法: {instrument_text}"))?,
+            target_qty,
+        )],
         &qx_portfolio::PortfolioConstraint {
             max_turnover_bps: 10_000,
             min_trade_size: 1,

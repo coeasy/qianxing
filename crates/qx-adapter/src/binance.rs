@@ -6,7 +6,7 @@
 
 use super::{HttpRequest, HttpResponse, HttpTransport, TlsWebSocketUserStream};
 use qx_core::{
-    Fill, InstrumentId, Money, Order, OrderStatus, Price, Quantity, QxError, QxResult, Side,
+    retry, Fill, InstrumentId, Money, Order, OrderStatus, Price, Quantity, QxError, QxResult, Side,
 };
 use qx_guanxing::QuoteTick;
 use qx_zhenlu::{
@@ -255,7 +255,7 @@ pub struct BinanceSpotUserStream {
     subscription_id: u64,
 }
 
-/// 连接器重连退避策略。时间由调用方的 `sleep` 注入，核心事件语义不读取系统时间。
+/// 连接器重连退避策略。时间由调用方的 `sleep` 注入；V10 §4.9 起退避公式与终态判定统一委托 [`qx_core::retry`]，此处只承载形状参数。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BinanceStreamRetryPolicy {
     pub max_reconnects: u32,
@@ -279,15 +279,15 @@ impl BinanceStreamRetryPolicy {
         })
     }
 
+    /// 判定与延迟都委托 `qx-core::retry` 的唯一实现；`reconnect_number` 从 1 起算。
+    pub fn allows_reconnect(&self, reconnect_number: u32) -> bool {
+        retry::RetryPolicy::attempts_only(self.max_reconnects)
+            .should_retry(reconnect_number.saturating_sub(1))
+    }
+
     pub fn delay_for(&self, reconnect_number: u32) -> std::time::Duration {
-        let exponent = reconnect_number.saturating_sub(1).min(31);
-        let multiplier = 1_u128 << exponent;
-        let millis = self
-            .base_delay
-            .as_millis()
-            .saturating_mul(multiplier)
-            .min(self.max_delay.as_millis());
-        std::time::Duration::from_millis(millis as u64)
+        retry::Backoff::exponential(self.base_delay, self.max_delay)
+            .delay_before_attempt(reconnect_number)
     }
 }
 
@@ -386,8 +386,8 @@ where
         let mut session = match connect() {
             Ok(session) => session,
             Err(error) => {
-                report.reconnects = report.reconnects.saturating_add(1);
-                if report.reconnects > policy.max_reconnects {
+                report.reconnects = retry::RetryPolicy::next_attempt_count(report.reconnects);
+                if !policy.allows_reconnect(report.reconnects) {
                     return Err(format!("Binance 用户流连接失败且超过重试上限: {error}"));
                 }
                 sleep(policy.delay_for(report.reconnects));
@@ -415,8 +415,8 @@ where
         if should_stop() {
             break;
         }
-        report.reconnects = report.reconnects.saturating_add(1);
-        if report.reconnects > policy.max_reconnects {
+        report.reconnects = retry::RetryPolicy::next_attempt_count(report.reconnects);
+        if !policy.allows_reconnect(report.reconnects) {
             return Err(callback_error.unwrap_or_else(|| "Binance 用户流关闭".into()));
         }
         sleep(policy.delay_for(report.reconnects));
@@ -1251,44 +1251,28 @@ impl BinanceSpotVenue {
             }
             Ok(map)
         })?;
-        let mut issues = Vec::new();
-        for (id, local) in &self.orders {
-            if local.status.is_terminal() {
-                continue;
+        // venue 专属过滤：本地终态订单不参与对账（事件日志已收口，无需再向柜台核对）。
+        let local_facts: Vec<_> = self
+            .orders
+            .iter()
+            .filter(|(_, order)| !order.status.is_terminal())
+            .map(|(id, order)| super::reconcile::local_order_fact(id, order))
+            .collect();
+        let mut issues = super::reconcile::reconcile_issues(
+            &local_facts,
+            &super::reconcile::remote_order_facts(&remote),
+        );
+        // venue 专属过滤：`allOrders` 会返回账户历史终态单，或本地已以终态收口的订单，
+        // 它们都不属于本 worker 待核对的活跃订单，不应把连接器永久钉在 ReconcileRequired。
+        issues.retain(|issue| match issue {
+            super::AdapterReconcileIssue::MissingLocally { client_order_id } => {
+                !self.orders.contains_key(client_order_id)
+                    && !remote
+                        .get(client_order_id)
+                        .is_some_and(|order| order.status.is_terminal())
             }
-            match remote.get(id) {
-                None => issues.push(super::AdapterReconcileIssue::MissingAtVenue {
-                    client_order_id: *id,
-                }),
-                Some(remote) => {
-                    if local.status != remote.status {
-                        issues.push(super::AdapterReconcileIssue::StatusMismatch {
-                            client_order_id: *id,
-                            local: local.status,
-                            venue: remote.status,
-                        });
-                    }
-                    if local.filled != remote.filled {
-                        issues.push(super::AdapterReconcileIssue::FilledMismatch {
-                            client_order_id: *id,
-                            local: local.filled,
-                            venue: remote.filled,
-                        });
-                    }
-                }
-            }
-        }
-        for (id, remote_order) in &remote {
-            // `allOrders` also returns the account's historical terminal orders.
-            // Only an unknown active order is actionable; historical terminal
-            // orders do not belong to this worker's local EventLog and must not
-            // keep the connector permanently in ReconcileRequired.
-            if !self.orders.contains_key(id) && !remote_order.status.is_terminal() {
-                issues.push(super::AdapterReconcileIssue::MissingLocally {
-                    client_order_id: *id,
-                });
-            }
-        }
+            _ => true,
+        });
         self.state = if issues.is_empty() {
             ConnectorState::Live
         } else {

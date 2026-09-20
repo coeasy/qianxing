@@ -5,6 +5,8 @@
 //! 原则：**RiskGate 可以拒绝，但不得静默改写业务含义。**
 
 pub use qx_oms::Oms;
+// 目标仓位是全仓唯一概念（定义在 qx-core，V10 §4.8）；此处只做出口别名。
+pub use qx_core::TargetPosition;
 
 use qx_core::{
     Fill, InstrumentId, Order, OrderStatus, OrderTrace, Price, Quantity, QxError, QxResult, Side,
@@ -101,24 +103,21 @@ fn legacy_gate_context(
 /// 风控门禁。**不短路**：收集全部拒绝原因，策略需要知道所有问题。
 //
 // deprecated compat: 规则实现已上收到 `qx-risk::RuleSet`。本类型仅保留旧
-// `(Order, OrderRiskPosition)` 调用形状：默认无规则仍然放行，reduce-only 不变式
-// 与静态规则链的判定完全委托给 `RuleSet`。生产路径请改为构造
-// `qx_risk::OrderRiskContext` 并调用 `qx_risk::RiskEngine::evaluate_order_with_rules`
-// 传入配置化 `RuleSet`。
+// `(Order, OrderRiskPosition)` 调用形状。构造必须显式命名规则集
+// （[`RiskGate::from_rule_set`] 或 [`RiskGate::conservative_default`]），
+// 不再提供零规则即放行的 `new()`/`Default`（V10 §4.5：静默的宽松门禁就是双轨）。
+// 生产路径请改为构造 `qx_risk::OrderRiskContext` 并调用
+// `qx_risk::RiskEngine::evaluate_order_with_rules` 传入配置化 `RuleSet`。
 pub struct RiskGate {
     rule_set: RuleSet,
 }
 
-impl Default for RiskGate {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl RiskGate {
-    pub fn new() -> Self {
+    /// 具名保守默认门禁：回落路径唯一允许的零配置形状，判定来自
+    /// [`RuleSet::conservative_default`]，绝不静默放行。
+    pub fn conservative_default() -> Self {
         Self {
-            rule_set: RuleSet::new(),
+            rule_set: RuleSet::conservative_default(),
         }
     }
 
@@ -169,13 +168,8 @@ pub struct Signal {
     pub expires_at: u64,
 }
 
-/// 组合层净额后的目标仓位。
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct TargetPosition {
-    pub instrument: InstrumentId,
-    pub target_qty: i128,
-    pub source_signals: Vec<u64>,
-}
+/// 组合层净额后的目标仓位 `TargetPosition` 唯一定义在 `qx-core`（本 crate 顶部
+/// 已重导出）；`SignalMerger` 与 `rebalance_intent` 直接消费该类型。
 
 #[derive(Default)]
 pub struct SignalMerger;
@@ -1905,7 +1899,7 @@ mod tests {
 
     #[test]
     fn risk_gate_collects_all_reasons() {
-        let mut g = RiskGate::new();
+        let mut g = RiskGate::from_rule_set(RuleSet::account_limits_only());
         g.add(Box::new(MaxQtyRule {
             max_qty: 5_000_000_000,
         }));
@@ -1920,7 +1914,7 @@ mod tests {
     #[test]
     fn no_short_blocks_overselling() {
         let g = {
-            let mut g = RiskGate::new();
+            let mut g = RiskGate::from_rule_set(RuleSet::account_limits_only());
             g.add(Box::new(NoShortRule));
             g
         };
@@ -1935,7 +1929,7 @@ mod tests {
 
     #[test]
     fn market_order_requires_reference_price_for_notional_risk() {
-        let mut gate = RiskGate::new();
+        let mut gate = RiskGate::from_rule_set(RuleSet::account_limits_only());
         gate.add(Box::new(MaxNotionalRule {
             max_notional: 50_000_000_000,
         }));

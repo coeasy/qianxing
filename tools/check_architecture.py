@@ -10,7 +10,9 @@
   4. 生产代码里不得出现"空风控门"（裸 `RiskGate::new()` 白名单 + 必须立刻加规则）；
   5. 单腿订单副作用只有一套实现（遗留 `ExecutionService`/`SpreadExecutionService` 与
      `MultiVenueSpreadExecutionService`+`VenueRouterMap` 已删除，单腿与多腿共用同一个
-     `ExecutionGateway`，Paper 也走它）；
+     `ExecutionGateway`，Paper 也走它）；多腿跨腿屏障的判定与执行同样只在网关一处，
+     CLI 侧既不保留实现也不保留"先查后提"的薄壳，且每个提交入口都必须显式回答
+     `spread_store` 参数（V10 §6.1）；
   6. Bar 回测引擎装配只有一份（`BacktestConfig {` 字面量唯一）；
   7. `maturity/capabilities.yaml` 结构完整且证据路径真实存在；
   8. 单文件行数预算只允许下降（棘轮），新增超 500 行文件必须显式登记；
@@ -44,6 +46,25 @@ if hasattr(sys.stdout, "reconfigure"):
 
 ROOT = Path(__file__).resolve().parent.parent
 CRATES = ROOT / "crates"
+
+
+def surface_text(roots: tuple[str, ...]) -> str:
+    """把一个 crate 里若干"曾经是同一个文件"的源码拼成一份文本供形状断言扫描。
+
+    V10 P2c 把 `qx-runtime/src/lib.rs`（3,660 行）拆成目录模块。按单文件路径取源码的
+    门禁会因此静默失去覆盖面——空文本既不会命中 `deny_unknown_fields`，也不会命中重复
+    定义。这里显式按"拆分后的落点集合"取文本：任一文件被搬走导致集合缺失时，相应断言
+    仍然红，而不是悄悄变绿。
+    """
+    chunks: list[str] = []
+    for root in roots:
+        path = ROOT / root
+        files = sorted(path.rglob("*.rs")) if path.is_dir() else [path]
+        for file in files:
+            chunks.append(file.read_text(encoding="utf-8"))
+            # 文件边界必须是"断行"，否则上一文件末行会与下一文件首行粘连成假 token。
+            chunks.append("\n")
+    return "".join(chunks)
 LINE_BUDGETS = ROOT / "maturity" / "line_budgets.yaml"
 # 行数棘轮的登记门槛：低于此行数的文件不受预算约束。
 OVERSIZED = 500
@@ -58,9 +79,9 @@ DISPATCH_PATTERN = re.compile(
     r'|matches!\(\s*\b(?:mode|cmd|command)\.as_str\(\)'
 )
 # 4. 允许构造裸 `RiskGate::new()` 的非测试代码，键为相对路径、值为期望出现次数。
-#    `ecosystem_smoke.rs` 的一处是进程内确定性自校验演示（Phase 4p 前位于 `main.rs`），
-#    紧随其后必须 add 规则（见下方专项断言）。
-BARE_RISK_GATE_ALLOWLIST = {"crates/qx-cli/src/ecosystem_smoke.rs": 1}
+#    V10 §4.3 收口后留空：`all`/`verify` 的回测自校验已改调 `qx-xingban` 真实内核，
+#    风控门统一由 `BarBacktestAssembly` 经 `strategy_risk_gate` 构造，CLI 里不再自带第二套。
+BARE_RISK_GATE_ALLOWLIST: dict[str, int] = {}
 
 failures: list[str] = []
 checks = 0
@@ -192,6 +213,87 @@ def cli_dispatch_check() -> None:
             rel = path.relative_to(CRATES / "qx-cli/src").as_posix()
             offenders.append(f"{rel}:{hits[0]}")
     check(not offenders, "命令名分派只存在于 cli.rs", f"额外分派点 {offenders}")
+
+
+# V10 §4.3 第 3/4 项 + §7.2 新不变量：帮助里印出的入口集合必须等于真正能派发的集合。
+CLI_HELP_FILE = "crates/qx-cli/src/cli_help.rs"
+CLI_DISPATCH_FILE = "crates/qx-cli/src/cli.rs"
+CLI_RUN_DISPATCH_FILE = "crates/qx-cli/src/config_commands.rs"
+# `help` 的三种拼写在 cli.rs 里共用一条分支，帮助文本只登记规范名。
+CLI_HELP_META_ALIASES = {"--help", "-h"}
+# 帮助用法行：恰好两空格缩进、首个 token 即命令名；说明行是六空格缩进。
+HELP_USAGE_LINE = re.compile(r"^  ([a-z][a-z0-9-]*)$|^  ([a-z][a-z0-9-]*)[ \t]", re.MULTILINE)
+HELP_RUN_LINE = re.compile(r"^  run <([a-z0-9|-]+)>", re.MULTILINE)
+DISPATCH_NAME_COMPARE = re.compile(r'\bmode\s*==\s*"([a-z][a-z0-9-]*)"', re.MULTILINE)
+DISPATCH_NAME_MATCHES = re.compile(
+    r'matches!\(\s*mode\.as_str\(\)\s*,\s*([^)]*)\)', re.MULTILINE
+)
+RUN_ARM_LINE = re.compile(r'^ {8}"([a-z][a-z0-9-]*)"(?:\s*\|\s*"([a-z][a-z0-9-]*)")* =>', re.M)
+RUN_ENTRY_CONST = re.compile(r"const RUN_ENTRY_POINTS: \[&str; (\d+)\] = \[(.*?)\];", re.S)
+
+
+def help_printed_commands(help_text: str) -> set[str]:
+    """帮助正文里"印出来给人照着敲"的顶层命令名。"""
+    names: set[str] = set()
+    for line in help_text.splitlines():
+        if not line.startswith("  ") or line.startswith("   "):
+            continue  # 说明行（六空格）与段落标题（零缩进）都不是入口
+        matched = HELP_USAGE_LINE.match(line)
+        if matched:
+            names.add(matched.group(1) or matched.group(2))
+    return names
+
+
+def dispatched_commands(cli_text: str) -> set[str]:
+    """`cli.rs` 真正能派发的顶层命令名（唯一分派点，见 cli_dispatch_check）。"""
+    names = set(DISPATCH_NAME_COMPARE.findall(cli_text))
+    for group in DISPATCH_NAME_MATCHES.findall(cli_text):
+        names.update(re.findall(r'"([a-z][a-z0-9-]*)"', group))
+    return names - CLI_HELP_META_ALIASES
+
+
+def run_unified_arms(source: str) -> set[str]:
+    """`run_unified_command` 的 match 分支实际接住的入口名。"""
+    body = source.split("fn run_unified_command", 1)[-1].split("_ =>", 1)[0]
+    arms: set[str] = set()
+    for matched in RUN_ARM_LINE.finditer(body):
+        arms.update(group for group in matched.groups() if group)
+    return arms
+
+
+def cli_help_surface_check() -> None:
+    """命令面诚实化：help 入口集合 ≡ 派发集合，且 `run` 子入口三处口径一致。
+
+    两侧都从源码取事实：帮助正文每条入口独占一行（两空格缩进），派发只认
+    `mode == "x"` 与 `matches!(mode.as_str(), "x" | "y")`。派发有而帮助没写 = 存在
+    没人知道的能力；帮助写了而派发没有 = 照着提示敲会拿到"未知命令"（V10 §4.3 第 4 项）。
+    `run` 再单独三方对齐：help 的 `run <a|b|…>` 行、`RUN_ENTRY_POINTS` 常量
+    （错误文案由它拼出）、`run_unified_command` 的 match 分支。
+    """
+    help_source = (ROOT / CLI_HELP_FILE).read_text(encoding="utf-8")
+    help_body = help_source.split('r#"', 1)[-1].split('"#', 1)[0]
+    documented = help_printed_commands(help_body)
+    dispatched = dispatched_commands((ROOT / CLI_DISPATCH_FILE).read_text(encoding="utf-8"))
+    check(
+        documented == dispatched,
+        "help 印出的入口集合与 cli.rs 实际派发的命令集合相等",
+        f"只在帮助里 {sorted(documented - dispatched) or '无'}；"
+        f"只在派发里 {sorted(dispatched - documented) or '无'}",
+    )
+    source = (ROOT / CLI_RUN_DISPATCH_FILE).read_text(encoding="utf-8")
+    advertised = set(HELP_RUN_LINE.findall(help_body)[0].split("|"))
+    const_entries = RUN_ENTRY_CONST.search(source)
+    entries = set(re.findall(r'"([a-z][a-z0-9-]*)"', const_entries.group(2))) if const_entries else set()
+    declared = int(const_entries.group(1)) if const_entries else -1
+    arms = run_unified_arms(source)
+    check(
+        const_entries is not None
+        and declared == len(entries)
+        and advertised == entries == arms,
+        "run 的帮助入口、RUN_ENTRY_POINTS 常量与 match 分支三者相等",
+        f"帮助 {sorted(advertised)}；常量 {sorted(entries)}（声明 {declared} 项）；"
+        f"分支 {sorted(arms)}",
+    )
 
 
 
@@ -405,7 +507,9 @@ CLI_BACKTESTS_MODULES = (
     "artifacts",
     "depth",
     "fast_backtest",
+    "kernels",
     "multi_builtin",
+    "risk_binding",
     "single_strategy",
     "strategy_backtest",
 )
@@ -459,6 +563,13 @@ def cli_backtest_module_check() -> None:
         f"回测共享装配在 mod.rs 的顶层条目不多于 {CLI_BACKTESTS_MOUNT_CEILING} 个（实现不得长回 mod.rs）",
         f"当前 {items} 个",
     )
+    # 反向：mod.rs 挂载的主题模块必须全在登记表里，否则新模块会绕过逐文件的行数检查。
+    mounted = set(re.findall(r"^mod (\w+);$", mount, re.MULTILINE))
+    check(
+        mounted == set(CLI_BACKTESTS_MODULES),
+        "backtests/mod.rs 挂载的主题模块与登记表一致",
+        f"登记 {sorted(CLI_BACKTESTS_MODULES)} / 实际 {sorted(mounted)}",
+    )
     sources = sorted((CRATES / CLI_BACKTESTS_DIR).glob("*.rs"))
     for symbol, owner in BACKTEST_ENTRY_OWNERS.items():
         regex = re.compile(rf"^(?:pub(?:\(crate\))? )?fn {symbol}\(", re.MULTILINE)
@@ -475,21 +586,30 @@ def cli_backtest_module_check() -> None:
 
 
 def bare_risk_gate_check() -> None:
+    # V10 §4.5：静默宽松的风控门必须不可达。四类"空门"构造（裸 RiskGate/RuleSet 的
+    # new 与 default）都等于 fail-open，非测试生产代码里出现即违规（白名单当前为空）。
+    bypass = (
+        "RiskGate::new()",
+        "RuleSet::new()",
+        "RiskGate::default()",
+        "RuleSet::default()",
+    )
     seen: dict[str, list[int]] = {}
     unseeded: list[str] = []
     for path in rust_sources():
         rel = path.relative_to(ROOT).as_posix()
         lines = path.read_text(encoding="utf-8").splitlines()
         for index, line in enumerate(lines):
-            if "RiskGate::new()" not in line:
+            if not any(token in line for token in bypass):
                 continue
             if "/tests/" in rel or rel.endswith("_tests.rs") or is_test_scoped(index, lines):
                 continue
             seen.setdefault(rel, []).append(index + 1)
             # 空风控门 = fail-open：构造后 5 行内必须 add 规则，或显式接收外部 RuleSet。
-            window = " ".join(lines[index : index + 6])
-            if ".add(" not in window and "strategy_risk_gate" not in window:
-                unseeded.append(f"{rel}:{index + 1}")
+            if "RiskGate::new()" in line:
+                window = " ".join(lines[index : index + 6])
+                if ".add(" not in window and "strategy_risk_gate" not in window:
+                    unseeded.append(f"{rel}:{index + 1}")
     unexpected = {rel: lines for rel, lines in seen.items() if rel not in BARE_RISK_GATE_ALLOWLIST}
     drifted = sorted(
         rel
@@ -506,12 +626,89 @@ def bare_risk_gate_check() -> None:
 
 EXEC_CORE_FILE = "crates/qx-execution/src/lib.rs"
 SPREAD_BARRIER_FILE = "crates/qx-zhenlu/src/lib.rs"
-SPREAD_BARRIER_CALL = "spread_group_barrier("
-# 生产提交入口：任何在此类文件中调用它们的语句都是"提交一条腿"的现场，
-# 必须先过多腿屏障。新增入口时把其所在文件纳入本清单，并接上屏障。
+# V10 §6.1 把跨腿屏障的**判定与执行**都下沉到 qx-execution 网关，CLI 侧那份实现已删除。
+# 于是"CLI 文件里有没有出现 `spread_group_barrier(` 调用"不再是可用的覆盖面口径：
+# 生产提交入口不再调它，改口径后如果仍按标识符发现，任何新提交点漏接组存储都不会变红。
+# 现在的口径有三条：屏障定义点唯一在 qx-execution、qx-cli 不得有第二份实现、
+# 每个提交入口（声明与调用）都必须显式回答 `spread_store` 参数。
+SPREAD_GATEWAY_BARRIER_DEF = re.compile(r"^pub fn spread_group_barrier\(", re.MULTILINE)
+CLI_BARRIER_IMPL = re.compile(r"\bfn\s+spread_group_barrier\b")
+# `blocks_new_leg_submission` 是屏障的唯一安全谓词：它在 CLI 里重新出现，就等于把判定
+# 搬回了网关之外（V10 §4.10 的原状）。
+CLI_BARRIER_JUDGEMENT_PRIMITIVES = (re.compile(r"blocks_new_leg_submission\s*\("),)
+# 生产提交入口：函数名后紧跟实参/形参左括号。名字前的 `.` 与标识符字符被排除，
+# 所以 `run_binance_submit_order(` / `venue.submit_order(` 不会被误认成提交入口。
 LEG_SUBMIT_ENTRY = re.compile(
-    r"execute_paper_submit_effect\(|execute_submit_order_with_worker_risk\("
+    r"(?<![A-Za-z0-9_.])(?P<name>execute_paper_submit_effect"
+    r"|submit_order_via_gateway_with_risk|submit_order_via_gateway"
+    r"|submit_order_with_risk|submit_order"
+    r"|execute_submit_order_with_worker_risk|execute_submit_order_with_risk"
+    r"|execute_binance_submit_effect)\s*(?P<paren>\()"
 )
+# 显式组存储表达式：形参写 `spread_store: Option<&dyn SpreadOrderGroupStore>`，
+# 实参写 `Some(&spread_store)` / `Some(&group_store)`；裸 `None` 在生产路径不算回答。
+SPREAD_STORE_ARG = re.compile(r"(?:\bspread_store\b|\bgroup_store\b|FileSpreadOrderGroupStore)")
+
+
+def balanced_args(text: str, open_paren: int) -> str:
+    """取自 `open_paren` 处开括号内部的全部文本（字符串字面量里的括号不算）。"""
+    depth = 0
+    in_string = False
+    index = open_paren
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            if char == "\\":
+                index += 2
+                continue
+            if char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return text[open_paren + 1 : index]
+        index += 1
+    return ""
+
+
+def split_top_level(args: str) -> list[str]:
+    """按顶层逗号切分实参/形参列表，嵌套括号与字符串字面量内的逗号不参与切分。"""
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    in_string = False
+    index = 0
+    while index < len(args):
+        char = args[index]
+        if in_string:
+            if char == "\\":
+                current.append(args[index : index + 2])
+                index += 2
+                continue
+            in_string = char != '"'
+            current.append(char)
+        elif char == '"':
+            in_string = True
+            current.append(char)
+        elif char in "([{":
+            depth += 1
+            current.append(char)
+        elif char in ")]}":
+            depth -= 1
+            current.append(char)
+        elif char == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    parts.append("".join(current))
+    return [part.strip() for part in parts if part.strip()]
+
 
 
 def execution_single_track_check() -> None:
@@ -520,9 +717,10 @@ def execution_single_track_check() -> None:
     遗留的 `ExecutionService`/`SpreadExecutionService` 与只在单元测试中构造的
     `MultiVenueSpreadExecutionService`+`VenueRouterMap` 均已删除：单腿与多腿共用
     同一个 `ExecutionGateway`（= `PortExecutionService`），多腿安全性由策略 worker
-    的组快照、EventLog 归约、`HedgeRecoveryWorker` 补偿，以及提交前的
-    `spread_group_barrier` 共同保证。这里钉住"不得再出现第二套实现/第二编排入口"，
-    而不是给它们留白名单。正则用前后否定环视排除 `PortExecutionService` 等更长标识符。
+    的组快照、EventLog 归约、`HedgeRecoveryWorker` 补偿，以及**网关内部**在写入任何
+    事实之前调用的 `spread_group_barrier` 共同保证（V10 §6.1 把该屏障从 CLI 下沉到此）。
+    这里钉住"不得再出现第二套实现/第二编排入口"，而不是给它们留白名单。正则用前后
+    否定环视排除 `PortExecutionService` 等更长标识符。
     """
     legacy_tokens = {
         "第二套执行实现（ExecutionService/SpreadExecutionService）": re.compile(
@@ -568,7 +766,42 @@ def execution_single_track_check() -> None:
         "多腿停止提交的安全谓词只在 qx-zhenlu 定义一处（唯一口径）",
         f"定义于 {definitions}",
     )
-    uncovered = []
+    # (a) 屏障判定的定义点唯一，且在 qx-execution 网关侧。
+    barrier_defs = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted(CRATES.glob("*/**/*.rs"))
+        if SPREAD_GATEWAY_BARRIER_DEF.search(path.read_text(encoding="utf-8"))
+    ]
+    check(
+        barrier_defs == [EXEC_CORE_FILE],
+        "多腿屏障判定只在 qx-execution 定义一处（下沉网关后不得再有第二处）",
+        f"定义于 {barrier_defs}",
+    )
+    # (b) CLI 侧不得再有任何 `spread_group_barrier` 实现：V10 §4.10 的原始缺陷就是屏障住在
+    #     CLI、网关被绕过时约束消失；P1b 下沉后 CLI 连"薄壳预检"也不再保留（提交路径由网关在
+    #     写入任何事实之前自己执行屏障，留一个可调用的壳就等于留一条"先查后提"的竞态口径）。
+    #     判定原语 `blocks_new_leg_submission` 同时禁止出现在 CLI——那是屏障唯一的裁决谓词，
+    #     只允许住在 qx-zhenlu（定义）与 qx-execution（调用它做判定）两侧。
+    cli_clones: list[str] = []
+    for path in sorted(CRATES.glob("qx-cli/src/**/*.rs")):
+        source = path.read_text(encoding="utf-8")
+        location = path.relative_to(ROOT).as_posix()
+        if CLI_BARRIER_IMPL.search(source):
+            cli_clones.append(f"{location} 重新定义了 spread_group_barrier（判定必须只在网关）")
+        for primitive in CLI_BARRIER_JUDGEMENT_PRIMITIVES:
+            if primitive.search(source):
+                cli_clones.append(f"{location} 重新内联了判定原语 {primitive.pattern}")
+    check(
+        not cli_clones,
+        "qx-cli 不得定义或内联多腿屏障（判定只在 qx-execution 网关）",
+        f"违规 {cli_clones or '无'}",
+    )
+    # (c) 每个提交入口都必须显式回答组存储：函数**声明**的最后一个形参、以及函数**调用**
+    #     的最后一个实参都必须是组存储表达式。新增一条忘记接组存储的提交链——无论是自己
+    #     写个新入口还是调既有入口——都会落进这张清单。生产路径给裸 `None` 单独记一条，
+    #     因为那等价于把屏障降级成可跳过。
+    missing_store: list[str] = []
+    fail_open_none: list[str] = []
     for path in sorted(CRATES.glob("qx-cli/src/**/*.rs")):
         rel = path.relative_to(CRATES / "qx-cli/src")
         # 用例文件里的提交调用是"被测现场"而不是生产入口。Phase 4o 起用例集中在
@@ -577,12 +810,32 @@ def execution_single_track_check() -> None:
         if rel.parts[0] == "tests" or "test" in path.stem:
             continue
         source = path.read_text(encoding="utf-8")
-        if LEG_SUBMIT_ENTRY.search(source) and SPREAD_BARRIER_CALL not in source:
-            uncovered.append(path.relative_to(ROOT).as_posix())
+        location = path.relative_to(ROOT).as_posix()
+        for match in LEG_SUBMIT_ENTRY.finditer(source):
+            args = balanced_args(source, match.start("paren"))
+            elements = split_top_level(args)
+            label = f"{location}:{source[: match.start()].count(chr(10)) + 1}"
+            if not elements:
+                # `foo()` 空参不是提交入口的形状（ trait 方法声明等），跳过。
+                continue
+            last = elements[-1]
+            if last == "None":
+                # 裸 `None` 是"回答了但选择放行"：生产路径带 `spread_group_id` 的腿
+                # 会因此绕过屏障，与 V10 §6.1 第 1 条纪律相反，单列一类。
+                fail_open_none.append(f"{label} {match.group('name')}")
+            elif not SPREAD_STORE_ARG.search(last):
+                # 形参列表的 `Option<&dyn SpreadOrderGroupStore>` 与实参的
+                # `Some(&spread_store)` 都能命中；漏掉整个参数则落在这里。
+                missing_store.append(f"{label} {match.group('name')} -> {last[:60]}")
     check(
-        not uncovered,
-        "每条腿的提交入口都在执行前调用 spread_group_barrier",
-        f"未接屏障 {uncovered or '无'}",
+        not missing_store,
+        "qx-cli 每个腿提交入口都显式给出 spread_store 形参/实参",
+        f"未回答组存储 {missing_store or '无'}",
+    )
+    check(
+        not fail_open_none,
+        "qx-cli 生产提交路径不得以裸 None 交出组存储（那等于跳过屏障）",
+        f"裸 None {fail_open_none or '无'}",
     )
 
 
@@ -652,8 +905,17 @@ def backtest_assembly_check() -> None:
         "market spec 读取共用单一入口",
         f"market_spec_with_margin 调用 {text.count('market_spec_with_margin(')} 处",
     )
+    # V10 P0b 之后，四条回测入口不再各自直接 `strategy_risk_gate(...)`：入口经
+    # `backtest_risk_binding(...)` 取配置，只有绑定层与共享装配允许直接构造。因此两条口径
+    # 一起数——任何入口改回写死规则都会让总数掉到 4 以下。
     gates = len(re.findall(r"strategy_risk_gate\(", text))
-    check(gates >= 4, "回测风控门全部经 strategy_risk_gate 构造", f"共 {gates} 处")
+    bound_entries = len(re.findall(r"=\s*backtest_risk_binding\(", text))
+    bypass = len(re.findall(r"RiskGate::new\(", text))
+    check(
+        gates + bound_entries >= 4 and bypass == 0,
+        "回测风控门全部经 strategy_risk_gate 构造",
+        f"直接构造 {gates} 处 / 配置绑定入口 {bound_entries} 处 / 绕过 {bypass} 处",
+    )
 
 
 def capabilities_check() -> None:
@@ -859,12 +1121,12 @@ def concept_registry_check() -> None:
         # 持仓：内核账簿状态 / 风控投影 / 交易所回报线格式，三个角色各一份、名字互不相同。
         "PositionState": ["crates/qx-core/src/ledger/mod.rs"],
         "OrderRiskPosition": ["crates/qx-risk/src/lib.rs"],
-        "PositionSnapshot": ["crates/qx-protocol/src/lib.rs"],
+        "PositionSnapshot": ["crates/qx-protocol/src/wire.rs"],
         # K 线：撮合与回测用的引擎 Bar（列式数据集到它只有一次投影）+ 数据集侧逐条记录。
         "Bar": ["crates/qx-data/src/schema.rs", "crates/qx-guanxing/src/lib.rs"],
         # 订单意图：SDK 原生 / 跨语言 JSON 契约 / C ABI 镜像 / 风控前的下单意图。
         "StrategyOrderIntent": ["crates/qx-strategy/src/lib.rs"],
-        "StrategyContractIntent": ["crates/qx-runtime/src/lib.rs"],
+        "StrategyContractIntent": ["crates/qx-runtime/src/strategy_contract/contract.rs"],
         "QxOrderIntent": ["crates/qx-strategy/src/c_api.rs"],
         "OrderIntent": ["crates/qx-zhenlu/src/lib.rs"],
     }
@@ -917,6 +1179,16 @@ def concept_registry_check() -> None:
         f"定义于 {occupancy}",
     )
 
+
+# 原 `qx-runtime/src/lib.rs` 拆分后的全部落点（V10 P2c）；配置面形状断言按此集合取源码。
+RUNTIME_CONFIG_TEXT = surface_text(
+    (
+        "crates/qx-runtime/src/lib.rs",
+        "crates/qx-runtime/src/runtime_config",
+        "crates/qx-runtime/src/strategy_contract",
+        "crates/qx-runtime/src/supervision",
+    )
+)
 
 CONFIG_STRUCTS = (
     "TlsPaths",
@@ -992,7 +1264,7 @@ def runtime_config_fail_closed_check() -> None:
 
     Phase 4m 把这三处收进类型系统（`qx-runtime::worker_policy`），这里钉住形状。
     """
-    lib = (CRATES / "qx-runtime" / "src" / "lib.rs").read_text(encoding="utf-8")
+    lib = RUNTIME_CONFIG_TEXT
     policy = (CRATES / "qx-runtime" / "src" / "worker_policy.rs").read_text(encoding="utf-8")
     blocks = struct_attribute_blocks(lib)
     missing = [
@@ -1121,6 +1393,192 @@ def line_budget_check() -> None:
     check(not violations, "单文件行数预算只降不升、无未登记的超大文件", "；".join(violations))
 
 
+# P1c 的两个单点（V10 §4.9）：文件状态信封与重试退避策略。此处只查"定义点唯一"，
+# 因为重复实现的危害方式是"下一次改动只改了其中一份"——用例能钉住当下，钉不住未来
+# 出现的第二份；把定义点收在一张清单里才让"另起一份"当场变红。
+STORAGE_ENVELOPE = "crates/qx-storage/src/state_envelope.rs"
+RETRY_KERNEL = "crates/qx-core/src/retry.rs"
+
+# 信封必须独占的能力：序列化/校验/事务/原子替换/追加锁。
+ENVELOPE_PRIMITIVES = (
+    "encode_state_json",
+    "decode_state_json",
+    "write_state_json",
+    "transact_state_json",
+    "write_atomic_path",
+    "acquire_storage_lock",
+)
+
+# 借用统一策略的三方（连接器重连 / 调度器重试 / 存储尝试计数）。
+RETRY_CONSUMERS = (
+    "crates/qx-adapter/src/binance.rs",
+    "crates/qx-scheduler/src/retry_policy.rs",
+    "crates/qx-storage/src/lib.rs",
+)
+
+# 就地重算退避的指纹：位移形式的指数退避算式。薄封装（如连接器的 `delay_for` 只转发给
+# `retry::Backoff`）是期望形状，因此不禁止函数名本身，只禁止"算式搬到消费者手里"。
+RETRY_REIMPLEMENTATION = (re.compile(r"1_u128\s*<<|1u128\s*<<|1_u64\s*<<|1u64\s*<<"),)
+
+
+def non_test_source(source: str) -> str:
+    """截掉 `#[cfg(test)]` 之后的部分：门禁只约束生产代码，用例手写盘是合法现场。"""
+    index = source.find("#[cfg(test)]")
+    return source if index < 0 else source[:index]
+
+
+def module_declarations(path: Path) -> set[str]:
+    """一个文件里写下的 `mod 名字;` 集合（含 `pub` / `pub(crate)` 变体）。"""
+    return set(
+        re.findall(
+            r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;",
+            path.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+    )
+
+
+    # (e) 四个文件状态存储各自只有一份定义，且住在 `src/file/`。P1c 真实踩到的形态是
+    #     "拆出来的那份没人 mod、lib.rs 里内联那份继续当唯一实现"——两份同时存在而编译无感，
+    #     所以这里既数定义点个数，也钉住它所在的文件，拆完不允许退回内联。
+    store_homes = {
+        "JsonStateStore": "crates/qx-storage/src/file/state.rs",
+        "FileConsumerStateStore": "crates/qx-storage/src/file/consumers.rs",
+        "FileOutboxStore": "crates/qx-storage/src/file/outbox.rs",
+        "FileJobQueue": "crates/qx-storage/src/file/jobs.rs",
+    }
+    for store, home in sorted(store_homes.items()):
+        definitions = sorted(
+            rel
+            for rel, source in storage_text.items()
+            if re.search(rf"^\s*pub struct {store}\b", source, re.MULTILINE)
+        )
+        check(
+            definitions == [home],
+            f"文件状态存储 {store} 只有目录模块里的一份定义",
+            f"定义于 {definitions}，期望 {home}",
+        )
+
+
+def module_mount_check() -> None:
+    """`crates/*/src` 下不得存在未挂载的 `.rs`（V10 P1c 期间真实踩到的失效形态）。
+
+    拆分进行到一半时，新目录模块与 crate 根的内联实现会**同时存在**：新那份没人 `mod`，
+    于是既不参与编译、也不被任何测试覆盖，而旧那份继续是唯一的生产实现。`cargo check`
+    对这种"多出一份死源码"完全无感，只有按挂载关系清点才能发现——本轮就是这么抓到
+    `qx-storage/src/file/` 与 lib.rs 内联四份 store 并存的。
+    """
+    unmounted: list[str] = []
+    for crate in sorted(path for path in CRATES.iterdir() if path.is_dir()):
+        source_root = crate / "src"
+        if not source_root.is_dir():
+            continue
+        directories: dict[Path, list[Path]] = {}
+        for path in source_root.rglob("*.rs"):
+            if "bin" in path.relative_to(source_root).parts:
+                continue  # src/bin/*.rs 由 cargo 自动发现为二进制目标
+            directories.setdefault(path.parent, []).append(path)
+        declared: dict[Path, set[str]] = {}
+        for directory, files in directories.items():
+            names: set[str] = set()
+            for path in files:
+                names.update(
+                    re.findall(
+                        r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;",
+                        path.read_text(encoding="utf-8"),
+                        re.MULTILINE,
+                    )
+                )
+            declared[directory] = names
+        for directory, files in directories.items():
+            names_here = {path.name for path in files}
+            # 2018 版式允许 `src/ashare.rs` + `src/ashare/json.rs`：子文件的声明写在
+            # 同名的父文件里，而不是目录内的 mod.rs，所以认领范围要并上这一份。
+            sidecar = directory.parent / f"{directory.name}.rs"
+            mounted = set(declared[directory])
+            if sidecar.is_file():
+                mounted |= module_declarations(sidecar)
+            for path in files:
+                if path.stem in ("lib", "main", "build", "mod"):
+                    continue
+                if path.stem not in mounted:
+                    unmounted.append(path.relative_to(ROOT).as_posix())
+            if (
+                directory != source_root
+                and "mod.rs" in names_here
+                and directory.name not in declared[directory.parent]
+            ):
+                unmounted.append((directory / "mod.rs").relative_to(ROOT).as_posix())
+    check(
+        not unmounted,
+        "crate 源码树每个 .rs 都被某处 mod 挂载（未挂载即死源码，编译与用例都不覆盖）",
+        f"未挂载 {unmounted}",
+    )
+
+
+def storage_retry_check() -> None:
+    """存储写路径与重试退避各只有一个定义点（V10 §6 P1c / §7.2）。"""
+    storage_files = sorted(CRATES.glob("qx-storage/src/**/*.rs"))
+    storage_text = {
+        path.relative_to(ROOT).as_posix(): non_test_source(
+            path.read_text(encoding="utf-8")
+        )
+        for path in storage_files
+    }
+    # (a) 信封原语的定义点唯一，且全部住在 state_envelope.rs。泛型签名带 `<T>`，
+    #     因此按 `fn 名字` 后接 `(` 或 `<` 认领，而不是要求紧跟左括号。
+    for name in ENVELOPE_PRIMITIVES:
+        definition = re.compile(rf"\bfn {name}\s*[<(]")
+        definitions = sorted(
+            rel for rel, source in storage_text.items() if definition.search(source)
+        )
+        check(
+            definitions == [STORAGE_ENVELOPE],
+            f"存储信封原语 {name} 只有一个定义点",
+            f"定义于 {definitions}",
+        )
+    # (b) 落盘动作只有一个出口：信封之外的生产代码不得直接 std::fs::write，
+    #     否则就绕过了"临时文件 + fsync + 原子改名"的崩溃安全边界。
+    direct_writes = sorted(
+        rel
+        for rel, source in storage_text.items()
+        if rel != STORAGE_ENVELOPE and "std::fs::write(" in source
+    )
+    check(
+        not direct_writes,
+        "qx-storage 生产代码只有信封一处落盘（绕过即失去原子替换）",
+        f"直接写文件于 {direct_writes}",
+    )
+    # (c) 退避形状与延迟算式只住在 qx-core::retry：热路径不读时钟，时间由调用方注入，
+    #     这样回测与故障注入能确定性复现同一条重连序列。
+    kernel = (ROOT / RETRY_KERNEL).read_text(encoding="utf-8")
+    enum_sites = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted(CRATES.glob("*/**/*.rs"))
+        if re.search(r"^\s*pub enum Backoff \{$", path.read_text(encoding="utf-8"), re.MULTILINE)
+    ]
+    check(
+        enum_sites == [RETRY_KERNEL],
+        "退避形状 Backoff 只有一个定义点",
+        f"定义于 {enum_sites}",
+    )
+    check(
+        "Instant::now" not in kernel and "SystemTime" not in kernel,
+        "退避策略为纯函数、不读系统时钟",
+        "qx-core/src/retry.rs 出现了时钟读取",
+    )
+    # (d) 三方消费者必须引用统一策略，且不得就地保留退避算式。
+    for rel in RETRY_CONSUMERS:
+        source = non_test_source((ROOT / rel).read_text(encoding="utf-8"))
+        fingerprints = [p.pattern for p in RETRY_REIMPLEMENTATION if p.search(source)]
+        check(
+            "retry::" in source and not fingerprints,
+            f"{Path(rel).name} 的重试判定委托 qx-core::retry",
+            f"引用统一策略={'是' if 'retry::' in source else '否'}；"
+            f"就地退避算式 {fingerprints or '无'}",
+        )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -1128,6 +1586,7 @@ def main() -> int:
     python_interpreter_check()
     worker_diagnostics_check()
     cli_dispatch_check()
+    cli_help_surface_check()
     test_module_shape_check()
     cli_root_module_check()
     cli_backtest_module_check()
@@ -1137,6 +1596,8 @@ def main() -> int:
     venue_report_contract_check()
     ledger_kernel_split_check()
     concept_registry_check()
+    storage_retry_check()
+    module_mount_check()
     runtime_config_fail_closed_check()
     backtest_assembly_check()
     capabilities_check()

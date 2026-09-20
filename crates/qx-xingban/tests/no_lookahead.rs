@@ -41,7 +41,7 @@ impl BarStrategy for BuyOnce {
 #[test]
 fn pre_trade_risk_uses_last_visible_close_not_current_bar_close() {
     let instrument = InstrumentId::parse("T.SIM").unwrap();
-    let mut risk = RiskGate::new();
+    let mut risk = RiskGate::from_rule_set(qx_risk::RuleSet::account_limits_only());
     risk.add(Box::new(MaxNotionalRule { max_notional: 150 }));
     let config = BacktestConfig {
         instrument,

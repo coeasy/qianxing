@@ -26,6 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod binance;
 mod ccxt;
+mod reconcile;
 pub use binance::{
     run_binance_user_stream, run_binance_user_stream_live, run_binance_user_stream_testnet,
     run_binance_user_stream_with_config, run_binance_user_stream_with_config_loader,
@@ -1036,43 +1037,26 @@ impl RestVenue {
                 }
                 Ok(orders)
             })?;
-        let mut issues = Vec::new();
+        // venue 专属前置硬校验：远端成交数量必须落在本地订单量范围内，否则快照本身
+        // 不可信，直接判为对账失败（不作为普通差异上报）。
         for (id, local) in &self.orders {
-            match remote.get(id) {
-                None => issues.push(AdapterReconcileIssue::MissingAtVenue {
-                    client_order_id: *id,
-                }),
-                Some(remote) => {
-                    if remote.filled.raw() < 0 || remote.filled.raw() > local.qty.raw() {
-                        return Err(QxError::ReconcileRequired(format!(
-                            "远端订单 {} 成交数量超出本地订单范围",
-                            id
-                        )));
-                    }
-                    if local.status != remote.status {
-                        issues.push(AdapterReconcileIssue::StatusMismatch {
-                            client_order_id: *id,
-                            local: local.status,
-                            venue: remote.status,
-                        });
-                    }
-                    if local.filled != remote.filled {
-                        issues.push(AdapterReconcileIssue::FilledMismatch {
-                            client_order_id: *id,
-                            local: local.filled,
-                            venue: remote.filled,
-                        });
-                    }
+            if let Some(remote) = remote.get(id) {
+                if remote.filled.raw() < 0 || remote.filled.raw() > local.qty.raw() {
+                    return Err(QxError::ReconcileRequired(format!(
+                        "远端订单 {} 成交数量超出本地订单范围",
+                        id
+                    )));
                 }
             }
         }
-        for id in remote.keys() {
-            if !self.orders.contains_key(id) {
-                issues.push(AdapterReconcileIssue::MissingLocally {
-                    client_order_id: *id,
-                });
-            }
-        }
+        // 判定委托 qx-genglu（对账归一，V10 §4.8）：装配中性事实并翻译回本类型。
+        let local_facts: Vec<_> = self
+            .orders
+            .iter()
+            .map(|(id, order)| reconcile::local_order_fact(id, order))
+            .collect();
+        let issues =
+            reconcile::reconcile_issues(&local_facts, &reconcile::remote_order_facts(&remote));
         self.state = if issues.is_empty() {
             ConnectorState::Live
         } else {

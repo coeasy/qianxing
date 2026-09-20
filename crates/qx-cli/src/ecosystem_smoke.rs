@@ -1,7 +1,10 @@
-//! 内置生态 smoke：合成行情、演示数据源与双均线回测/纸面交易的一次性自检链路。
+//! 内置生态 smoke：合成行情、演示数据源与纸面交易的一次性自检链路。
+//!
+//! 这里的回测只提供**合成输入**，撮合与账本走 `qx-xingban` 真实内核（与 `backtest
+//! builtin` 同一装配），CLI 内不再自带第二套撮合引擎。
 //!
 //! 由 `main.rs` 的 crate 根职责簇拆出（Phase 4p），条目经根部的
-//! `pub(crate) use ecosystem_smoke::*;` 再导出，行为与拆分前逐字相同。
+//! `pub(crate) use ecosystem_smoke::*;` 再导出。
 
 use super::*;
 
@@ -40,8 +43,8 @@ pub(crate) struct Outcome {
     pub(crate) hash: u64,
     pub(crate) n_fills: usize,
     pub(crate) total_fee: i128,
-    pub(crate) total_return: i128,
-    pub(crate) max_drawdown: i128,
+    pub(crate) return_bps: i32,
+    pub(crate) max_drawdown_bps: u32,
     pub(crate) final_equity: i128,
 }
 
@@ -186,10 +189,10 @@ pub(crate) fn run_ecosystem_smoke() {
     base.cash_raw.insert("USD".into(), 100_000);
     base.positions.insert(
         instrument.clone(),
-        AccountPositionSnapshot {
+        PositionSnapshot {
             instrument,
             quantity_raw: 10,
-            ..AccountPositionSnapshot::default()
+            ..PositionSnapshot::default()
         },
     );
     base.seal();
@@ -313,135 +316,50 @@ pub(crate) fn mk_order(id: u64, instr: &InstrumentId, side: Side, qty: i64) -> O
     }
 }
 
-/// 双均线策略回测。**关键：bar t 决策 → bar t+1 开盘成交。**
+/// 合成行情 + **真实撮合内核**的双均线回测产物。
+///
+/// 引擎与 `backtest builtin` 同源：装配走 `BarBacktestAssembly`（含 next-open 成交与
+/// maker/taker 2/5bp 费率），策略走内置 `sma_cross`。本文件不再自带第二套撮合循环
+/// （V10 §4.3 第 3 项）；只有输入序列是合成的。
 pub(crate) fn run_backtest(bars: &[Bar], seed: u64, fast: usize, slow: usize) -> Outcome {
-    let view = DataView::try_new(bars.to_vec(), DataSourceId::new("synthetic"))
-        .expect("synthetic bars must pass quality gate");
-    let instr = InstrumentId::parse("DEMO.SIM").unwrap();
-
-    let mut matching = BarMatchingEngine::new(
-        Box::new(NextBarOpenFillModel),
-        Box::new(MakerTakerFeeModel {
-            maker_bp: 2,
-            taker_bp: 5,
-        }),
-        seed,
-    );
-
-    let mut log = EventLog::new();
-    let mut analyser = BasicAnalyser::default();
-    let mut ledger = Ledger::new();
-    let deposit_id = ledger
-        .deposit(
-            "main",
-            "USD",
-            Money::from_raw(100_000_000_000_000),
-            bars[0].ts,
+    let instrument = InstrumentId::parse("DEMO.SIM").unwrap();
+    let strategy_config = BuiltinStrategyConfig {
+        fast_window: fast,
+        slow_window: slow,
+        ..BuiltinStrategyConfig::new(
+            BuiltinStrategyKind::SmaCross,
+            "cli-selfcheck-sma",
+            instrument.clone(),
+            Quantity::from_i64(10),
         )
-        .unwrap();
-    let mut equity: Vec<i128> = Vec::new();
-    let mut next_id: u64 = 1;
-    let deposit_entry = ledger
-        .entries()
-        .iter()
-        .find(|entry| entry.id == deposit_id)
-        .cloned()
-        .expect("initial deposit entry must exist");
-    let deposit_seq = log.alloc_seq();
-    log.append(Event::new(
-        deposit_seq,
-        deposit_entry.ts,
-        Priority::APPLY,
-        EventKind::LedgerApplied {
-            entry: deposit_entry,
-        },
-    ));
-
-    let mut risk = RiskGate::new();
-    risk.add(Box::new(MaxQtyRule {
-        max_qty: 100_000_000_000, // 100 单位
-    }));
-    risk.add(Box::new(NoShortRule));
-    let mut oms = Oms::new();
-
-    for i in (slow + 1)..bars.len() {
-        // 决策只使用截至**上一根** bar 的数据
-        let hist = view.as_of(bars[i - 1].ts);
-        let pos = ledger.position_for("main", &instr).quantity.raw();
-        if hist.len() > slow {
-            let n = hist.len();
-            let sum = |a: usize, b: usize| hist[a..b].iter().map(|x| x.close).sum::<i128>();
-            let fast_now = sum(n - fast, n) / fast as i128;
-            let slow_now = sum(n - slow, n) / slow as i128;
-            let fast_prev = sum(n - fast - 1, n - 1) / fast as i128;
-            let slow_prev = sum(n - slow - 1, n - 1) / slow as i128;
-
-            let golden = fast_prev <= slow_prev && fast_now > slow_now;
-            let death = fast_prev >= slow_prev && fast_now < slow_now;
-
-            if golden && pos == 0 {
-                let o = mk_order(next_id, &instr, Side::Buy, 10);
-                if risk.check(&o, &OrderRiskPosition::new(pos, 0)).is_ok() {
-                    let _ = oms.submit(o.clone());
-                    matching.submit(o);
-                    next_id += 1;
-                }
-            } else if death && pos > 0 {
-                let o = mk_order(next_id, &instr, Side::Sell, 10);
-                if risk.check(&o, &OrderRiskPosition::new(pos, 0)).is_ok() {
-                    let _ = oms.submit(o.clone());
-                    matching.submit(o);
-                    next_id += 1;
-                }
-            }
-        }
-
-        // 本根 bar 开盘撮合上一根 bar 提交的挂单
-        let fills = matching.on_bar(&bars[i], bars[i].ts);
-        for fl in &fills {
-            let order = oms.get(fl.order_id).cloned().unwrap();
-            let _ = oms.apply_fill(fl);
-            let entry_ids = ledger.apply_fill(&order, fl, "USD").unwrap();
-            analyser.on_fill(fl);
-            // 必须用 alloc_seq：append 不会推进 seq，否则所有事件 seq 都相同，
-            // 事件日志将失去顺序信息（摘要里 seq 恒为 0）。
-            let event_seq = log.alloc_seq();
-            log.append(Event::new(
-                event_seq,
-                fl.ts,
-                Priority::APPLY,
-                EventKind::Filled { fill: fl.clone() },
-            ));
-            for entry_id in entry_ids {
-                let seq = log.alloc_seq();
-                let entry = ledger
-                    .entries()
-                    .iter()
-                    .find(|entry| entry.id == entry_id)
-                    .cloned()
-                    .expect("账簿 entry 必须存在");
-                log.append(Event::new(
-                    seq,
-                    fl.ts,
-                    Priority::APPLY,
-                    EventKind::LedgerApplied { entry },
-                ));
-            }
-        }
-
-        let mut marks = BTreeMap::new();
-        marks.insert(instr.clone(), Price::from_raw(bars[i].close));
-        equity.push(ledger.equity_for("main", &marks, "USD").unwrap());
-    }
-
-    let m = analyser.report(&equity);
+        .expect("内置双均线默认参数必须合法")
+    };
+    let context = NativeStrategyContext {
+        strategy_id: "cli-selfcheck-sma".into(),
+        strategy_version: format!("builtin-{}-v1", BuiltinStrategyKind::SmaCross.name()),
+        account_id: "main".into(),
+        venue_id: instrument.venue.to_string(),
+        data_fingerprint: format!("synthetic:{}", bars.len()),
+        as_of: bars.first().map(|bar| bar.ts).unwrap_or(1),
+        positions: BTreeMap::new(),
+        cash: BTreeMap::from([("USDT".into(), Money::from_i64(100_000).raw())]),
+        available_margin_raw: Some(Money::from_i64(100_000).raw()),
+        risk_state: "selfcheck".into(),
+    };
+    let report = run_builtin_strategy_on_bars(
+        BarBacktestAssembly::new(&instrument, "main", seed).into_config(),
+        strategy_config,
+        context,
+        bars,
+    )
+    .expect("合成输入的真实内核回测必须跑通");
     Outcome {
-        hash: log.digest(),
-        n_fills: m.n_fills,
-        total_fee: m.total_fee,
-        total_return: m.total_return,
-        max_drawdown: m.max_drawdown,
-        final_equity: m.final_equity,
+        hash: report.result_hash(),
+        n_fills: report.fills.len(),
+        total_fee: report.fees_raw,
+        return_bps: report.return_bps,
+        max_drawdown_bps: report.max_drawdown_bps,
+        final_equity: report.final_equity(),
     }
 }
 

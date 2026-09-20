@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::constraint::PortfolioConstraint;
+// `TargetPosition` 全仓唯一定义在 qx-core（V10 §4.8）；本 crate 只消费与转出。
+use qx_core::{InstrumentId, TargetPosition};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PortfolioState {
@@ -28,12 +30,6 @@ impl PortfolioState {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TargetPosition {
-    pub instrument: String,
-    pub quantity: i128,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RebalancePlan {
     /// The quantity delta to submit, not the final target quantity.
     pub positions: Vec<TargetPosition>,
@@ -56,11 +52,13 @@ pub fn rebalance(
 
     let mut targets = BTreeMap::new();
     for item in target {
-        if item.instrument.trim().is_empty() {
+        if item.instrument.symbol.trim().is_empty()
+            || item.instrument.venue.as_str().trim().is_empty()
+        {
             return Err("empty target instrument id".into());
         }
         if targets
-            .insert(item.instrument.clone(), item.quantity)
+            .insert(item.instrument.to_string(), item.target_qty)
             .is_some()
         {
             return Err(format!("duplicate target instrument: {}", item.instrument));
@@ -85,10 +83,9 @@ pub fn rebalance(
         let delta = target_qty.saturating_sub(current_qty);
         turnover_quantity = turnover_quantity.saturating_add(delta.unsigned_abs());
         if delta.unsigned_abs() >= constraints.min_trade_size as u128 {
-            positions.push(TargetPosition {
-                instrument,
-                quantity: delta,
-            });
+            let instrument = InstrumentId::parse(&instrument)
+                .ok_or_else(|| format!("invalid target instrument id: {instrument}"))?;
+            positions.push(TargetPosition::single(instrument, delta));
         }
     }
 
@@ -146,25 +143,26 @@ mod tests {
             portfolio_id: "portfolio-1".into(),
             timestamp: 1,
             cash: 1_000,
-            positions: BTreeMap::from([(String::from("BTC"), quantity)]),
+            positions: BTreeMap::from([(String::from("BTC.SIM"), quantity)]),
         }
+    }
+
+    fn btc() -> InstrumentId {
+        InstrumentId::parse("BTC.SIM").unwrap()
     }
 
     #[test]
     fn turnover_is_reported_in_basis_points() {
         let plan = rebalance(
             &state(100),
-            &[TargetPosition {
-                instrument: "BTC".into(),
-                quantity: 110,
-            }],
+            &[TargetPosition::single(btc(), 110)],
             &PortfolioConstraint {
                 max_turnover_bps: 1_000,
                 min_trade_size: 1,
             },
         )
         .unwrap();
-        assert_eq!(plan.positions[0].quantity, 10);
+        assert_eq!(plan.positions[0].target_qty, 10);
         assert_eq!(plan.turnover_bps, 909);
     }
 
@@ -194,8 +192,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan.positions.len(), 1);
-        assert_eq!(plan.positions[0].instrument, "BTC");
-        assert_eq!(plan.positions[0].quantity, -2);
+        assert_eq!(plan.positions[0].instrument, btc());
+        assert_eq!(plan.positions[0].target_qty, -2);
         assert_eq!(plan.turnover_bps, 10_000);
     }
 }

@@ -126,7 +126,7 @@ fn run_backtest(rules: &AshareRuleConfig, bars: &[Bar]) -> BacktestReport {
         latency: Box::new(ZeroLatency),
         margin: Box::new(NoMargin),
         seed: 1,
-        risk: RiskGate::new(),
+        risk: RiskGate::conservative_default(),
         virtual_trading: VirtualTradingConfig {
             ashare_rules: Some(rules.clone()),
             ..VirtualTradingConfig::default()

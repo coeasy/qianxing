@@ -1,6 +1,8 @@
 //! 确定性自校验演示：同输入同哈希、改参数变哈希、无前视偏差、插件装配顺序。
 //!
 //! `all` / `verify` 两个入口命令复用这一条链路，进程内的断言即 CLI 冒烟测试。
+//! 输入序列是合成的（`gen_bars`），但撮合与账本走 `qx-xingban` 真实回测内核；
+//! 因此下面每一行产物都显式标注 `DEMO 合成输入`，不让人误读成真实行情上的结果。
 
 use super::*;
 
@@ -19,23 +21,24 @@ pub(crate) fn run(scope: Scope) {
     // 1. 质量门
     let report = QualityGate::check(&bars);
     println!(
-        "[观星 · 质量门] bars={} 判定={:?}",
+        "[观星 · 质量门 · DEMO 合成输入] bars={} 判定={:?}",
         bars.len(),
         report.verdict()
     );
     assert_eq!(report.verdict(), Verdict::Ok, "合成数据不应有质量问题");
 
-    // 2. 回测
+    // 2. 回测：真实内核（与 `backtest builtin` 同一装配）跑合成输入
     let a = run_backtest(&bars, 42, 5, 20);
     let b = run_backtest(&bars, 42, 5, 20); // 完全相同参数
     let c = run_backtest(&bars, 42, 6, 20); // 改一个参数
 
     println!(
-        "\n[星板 · 回测 A] 成交={} 手续费={:.4} 总收益={:.2}% 最大回撤={:.2}% 终值={:.2}",
+        "\n[星板 · 回测 A · DEMO 合成输入] 内核={} 成交={} 手续费={:.4} 总收益={:.2}% 最大回撤={:.2}% 终值={:.2}",
+        BAR_MATCHING_KERNEL,
         a.n_fills,
         f(a.total_fee),
-        f(a.total_return) * 100.0,
-        f(a.max_drawdown) * 100.0,
+        a.return_bps as f64 / 100.0,
+        a.max_drawdown_bps as f64 / 100.0,
         f(a.final_equity)
     );
 
@@ -50,14 +53,17 @@ pub(crate) fn run(scope: Scope) {
         global_seed: 42,
         determinism_mode: true,
         result_hash: format!("{:016x}", a.hash),
-        strategy_version: "sma-cross-v1".into(),
+        strategy_version: format!("builtin-{}-v1", BuiltinStrategyKind::SmaCross.name()),
         instrument_spec_version: "demo-v1".into(),
         model_fingerprint: "next-open+maker-taker".into(),
         input_event_hash: format!("bars:{}", bars.len()),
         output_event_hash: format!("{:016x}", a.hash),
         runtime_version: env!("CARGO_PKG_VERSION").into(),
     };
-    println!("[更路 · RunManifest] digest={:016x}", manifest.digest());
+    println!(
+        "[更路 · RunManifest · DEMO 合成输入] digest={:016x}",
+        manifest.digest()
+    );
 
     // 3. 三重重放校验（此处验证前两条）
     let same = ReplayVerifier::identical(a.hash, b.hash);

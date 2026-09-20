@@ -41,7 +41,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # macOS 腿补齐 V10 §4.16：`tools/build_python_wheel.sh` 早已按 Darwin 走
+        # `.so` 导入后缀，缺的只是 CI 从没在这条平台上跑过 wheel。
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.10", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4

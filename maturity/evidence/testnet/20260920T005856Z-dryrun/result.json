@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "binance-testnet-acceptance",
+  "outcome": "skipped",
+  "started_at_utc": "2026-09-20T00:58:56Z",
+  "finished_at_utc": "2026-09-20T00:58:56Z",
+  "duration_ms": 24,
+  "binary": "P:\\github_public\\qianxing\\target\\debug\\qx-cli.exe",
+  "instrument": "BTCUSDT.BINANCE",
+  "send_orders": false,
+  "credentials_present": false,
+  "stages": [
+    {
+      "stage": "runtime-check",
+      "argv": [
+        "runtime-check",
+        "P:\\github_public\\qianxing\\maturity\\evidence\\testnet\\20260920T005856Z-dryrun\\qianxing.runtime.binance-testnet.acceptance.json",
+        "--json"
+      ],
+      "exit_code": 0,
+      "duration_ms": 11,
+      "output_tail": [
+        "  \"storage_consistency\": \"local_durable\",",
+        "  \"warnings\": []",
+        "}"
+      ]
+    },
+    {
+      "stage": "live-check",
+      "argv": [
+        "live-check",
+        "P:\\github_public\\qianxing\\maturity\\evidence\\testnet\\20260920T005856Z-dryrun\\qianxing.runtime.binance-testnet.acceptance.json",
+        "--json"
+      ],
+      "exit_code": 2,
+      "duration_ms": 8,
+      "output_tail": [
+        "  ]",
+        "}",
+        "实盘前置检查失败: 实盘前置检查未通过"
+      ]
+    }
+  ],
+  "detail": "缺少凭据 QX_BINANCE_TESTNET_API_KEY, QX_BINANCE_TESTNET_API_SECRET：只执行了离线前两段",
+  "sandbox_tested_flip": {
+    "allowed": false,
+    "rule": "只有 outcome=pass 且全部阶段退出码为 0 才允许把 capabilities.yaml 的 sandbox_tested 置 true；skipped/fail 一律保持 false，且必须连同本包一起归档"
+  }
+}

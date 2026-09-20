@@ -807,7 +807,7 @@ mod tests {
             initial_cash: Money::from_i64(10_000),
             fee_bps: 1,
             instrument_spec: None,
-            risk: RiskGate::new(),
+            risk: RiskGate::conservative_default(),
             data_tier: DataTier::L2L3,
         };
         let mut strategy = BuyOnce { emitted: false };
@@ -832,7 +832,7 @@ mod tests {
             initial_cash: Money::from_i64(10_000),
             fee_bps: 0,
             instrument_spec: None,
-            risk: RiskGate::new(),
+            risk: RiskGate::conservative_default(),
             data_tier: DataTier::L2L3,
         };
         let context = StrategyContext {
@@ -882,7 +882,7 @@ mod tests {
             initial_cash: Money::from_i64(10_000),
             fee_bps: 0,
             instrument_spec: Some(spec),
-            risk: RiskGate::new(),
+            risk: RiskGate::conservative_default(),
             data_tier: DataTier::L2L3,
         };
         let mut strategy = DerivativeBuy { emitted: false };
@@ -912,7 +912,7 @@ mod tests {
             initial_cash: Money::from_i64(10_000),
             fee_bps,
             instrument_spec: None,
-            risk: RiskGate::new(),
+            risk: RiskGate::conservative_default(),
             data_tier: DataTier::L2L3,
         }
     }

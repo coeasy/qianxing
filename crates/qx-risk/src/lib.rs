@@ -6,7 +6,10 @@ use std::collections::BTreeMap;
 
 pub mod rules;
 
-pub use rules::{MaxNotionalRule, MaxQtyRule, NoShortRule, RiskRule, RuleSet};
+pub use rules::{
+    MaxNotionalRule, MaxQtyRule, NoShortRule, RiskRule, RuleSet,
+    CONSERVATIVE_DEFAULT_RULE_SET_VERSION, CONSERVATIVE_MAX_QTY_RAW,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RiskSnapshot {
@@ -164,7 +167,7 @@ impl RiskEngine {
     /// 需要叠加配置化静态规则时调用 [`Self::evaluate_order_with_rules`]；两者共用
     /// [`RuleSet::evaluate`]，因此投影字段与 `rule_set_version` 语义完全一致。
     pub fn evaluate_order(context: &OrderRiskContext, order: &Order) -> OrderRiskDecision {
-        RuleSet::new().evaluate(context, order)
+        RuleSet::account_limits_only().evaluate(context, order)
     }
 
     /// 带规则集的统一订单级入口：账户级唯一实现 + 配置化静态规则。

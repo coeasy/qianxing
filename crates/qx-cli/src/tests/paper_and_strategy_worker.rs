@@ -89,9 +89,14 @@ fn paper_submit_order_runs_queue_pipeline_ledger_and_ack() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// 跨腿屏障的 worker 级证据：腿 A 结果未知后，Paper 执行 worker 必须拒绝腿 B 的
-/// SubmitOrder 命令。撮合行情与风控配置在此都是齐备的，所以唯一的拒绝理由就是屏障
-/// 本身——摘掉 `spread_group_barrier` 后本例会变成 Filled 订单而不是 Failed 命令。
+/// 跨腿屏障的 **worker 级**证据：腿 A 结果未知后，Paper 执行 worker 必须把腿 B 的
+/// SubmitOrder 命令判为 Failed，且拒绝文案要能按 `FAIL_CLOSED` 前缀分类。
+///
+/// 屏障判定本身已下沉到 `qx-execution` 网关（V10 §6.1），所以"摘掉屏障这一行就会
+/// 变成 Filled 订单"的反向验证也随之搬到了
+/// `crates/qx-execution/src/tests/spread_group_barrier.rs`；本例负责的是网关之外
+/// 的那半条链：CLI 把存储根解析出的组快照真的注入了进去，并且拒绝原因没有被
+/// 后续的多腿归约步骤覆盖掉。
 #[test]
 fn paper_worker_refuses_next_leg_when_spread_group_awaits_reconciliation() {
     let root = std::env::temp_dir().join(format!(

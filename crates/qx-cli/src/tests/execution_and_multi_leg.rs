@@ -117,9 +117,9 @@ fn strategy_multileg_group_snapshot_is_idempotent_and_reconciles_eventlog_state(
     assert_eq!(group.status, qx_zhenlu::SpreadOrderGroupStatus::Submitting);
     // 组仍在正常推进：其余腿照常放行。
     let second_command = strategy_submit_command("arb", &second, false, Some(&group_id)).unwrap();
-    assert!(spread_group_barrier(&root, &second_command).is_ok());
-    assert!(spread_group_barrier(
-        &root,
+    assert!(qx_execution::spread_group_barrier(Some(&store), &second_command).is_ok());
+    assert!(qx_execution::spread_group_barrier(
+        Some(&store),
         &strategy_submit_command("arb", &second, false, None).unwrap()
     )
     .is_ok());
@@ -146,7 +146,7 @@ fn strategy_multileg_group_snapshot_is_idempotent_and_reconciles_eventlog_state(
         qx_zhenlu::SpreadOrderGroupStatus::ReconcileRequired
     );
     // 同一份快照进入未知结果后，屏障必须挡住同组其余腿，直到对账给出确定事实。
-    let reason = spread_group_barrier(&root, &second_command).unwrap_err();
+    let reason = qx_execution::spread_group_barrier(Some(&store), &second_command).unwrap_err();
     assert!(
         reason.contains("FAIL_CLOSED")
             && reason.contains(&group_id)
@@ -154,8 +154,8 @@ fn strategy_multileg_group_snapshot_is_idempotent_and_reconciles_eventlog_state(
             && reason.contains("leg-9101"),
         "屏障拒绝理由必须点名组、状态与未知腿: {reason}"
     );
-    assert!(spread_group_barrier(
-        &root,
+    assert!(qx_execution::spread_group_barrier(
+        Some(&store),
         &strategy_submit_command("arb", &second, false, None).unwrap()
     )
     .is_ok());
@@ -201,6 +201,9 @@ fn paper_multi_leg_spread_submits_each_leg_through_single_track_and_reduces_grou
     .unwrap();
     let mut pipeline =
         LiveEventPipeline::open(&root, "spread-single-track-events", "USDT").unwrap();
+    // 两条腿的命令都带 `spread_group_id`，因此必须把真实组存储交给提交入口：
+    // 屏障判定已在 `qx-execution` 网关内执行，注入 `None` 会让两腿全部 fail-closed。
+    let group_store = open_spread_group_store(&root).unwrap();
     for (index, order) in [long.clone(), short.clone()].iter().enumerate() {
         let mut risk = smoke_paper_risk_context();
         // 每腿按自己的冻结产品规格做账户级预检：第二腿换到 OKX 的 ETH 现货规格。
@@ -232,6 +235,7 @@ fn paper_multi_leg_spread_submits_each_leg_through_single_track_and_reduces_grou
             Some(OrderRiskPosition::new(0, 0)),
             Some(quote),
             false,
+            Some(&group_store),
         )
         .unwrap();
         assert!(

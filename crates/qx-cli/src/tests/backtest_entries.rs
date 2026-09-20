@@ -41,14 +41,16 @@ fn bar_backtest_assembly_pins_the_shared_engine_defaults() {
 #[test]
 fn builtin_backtest_entry_validates_inputs_and_runs_on_the_shared_kernel() {
     let (_deploy, frame, _template) = builtin_backtest_example_paths();
-    assert!(run_builtin_backtest("not_a_strategy", &frame, None, 1).is_err());
-    assert!(run_builtin_backtest("sma_cross", &frame, None, 0).is_err());
-    assert!(run_builtin_backtest("sma_cross", Path::new("missing-frame.json"), None, 1).is_err());
-    run_builtin_backtest("sma_cross", &frame, None, 1).unwrap();
+    assert!(run_builtin_backtest("not_a_strategy", &frame, None, 1, None).is_err());
+    assert!(run_builtin_backtest("sma_cross", &frame, None, 0, None).is_err());
+    assert!(
+        run_builtin_backtest("sma_cross", Path::new("missing-frame.json"), None, 1, None).is_err()
+    );
+    run_builtin_backtest("sma_cross", &frame, None, 1, None).unwrap();
     let spec_root = temp_cli_case_dir("builtin-broken-market-spec");
     let broken_spec = spec_root.join("spec.json");
     std::fs::write(&broken_spec, "{ not json").unwrap();
-    let error = run_builtin_backtest("sma_cross", &frame, Some(&broken_spec), 1).unwrap_err();
+    let error = run_builtin_backtest("sma_cross", &frame, Some(&broken_spec), 1, None).unwrap_err();
     assert!(
         error.contains("内置策略 market spec JSON 无效"),
         "market spec 必须走共用读取口径并 fail-closed: {error}"
@@ -73,6 +75,7 @@ fn multi_builtin_backtest_entry_writes_spread_attribution_from_leg_fills() {
         1,
         25,
         Some(&root),
+        None,
     )
     .unwrap();
     let artifacts = std::fs::read_dir(root.join("runs"))

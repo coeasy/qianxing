@@ -2,6 +2,7 @@
 //!
 //! 本模块只做配置读取、引用校验与人读/机读输出，不改变运行时语义；
 //! 真实执行链路仍复用 crate 根上的同一批 Runtime/Storage 辅助函数。
+//! 帮助文本本身不在这里，见 `cli_help.rs`（它与派发分支由架构门禁做集合相等校验）。
 
 use super::*;
 pub(crate) fn repository_deploy_path(file_name: &str) -> PathBuf {
@@ -15,71 +16,6 @@ pub(crate) fn repository_deploy_path(file_name: &str) -> PathBuf {
     } else {
         PathBuf::from("deploy").join(file_name)
     }
-}
-
-pub(crate) fn print_cli_help() {
-    println!(
-        r#"牵星 Qianxing CLI
-
-常用入口：
-  init [runtime.json] [--force]
-      创建本地运行时配置及可复用的样例数据/调度文件。
-  init [runtime.json] --profile <base|paper|ccxt|ashare|multi-venue|backtest> [--force]
-      按场景创建自包含项目；会自动改写 deploy/ 样例路径并复制依赖文件。
-  init [runtime.json] --strategy <name> [--force]
-      创建绑定内置策略和样例 BarFrame 的可直接回测项目。
-  doctor [runtime.json] [--json]
-      一次检查配置、路径、策略输入和运行拓扑；不连接交易所、不发送订单。
-  config explain [runtime.json] [--json]
-      输出有效配置摘要或机器可读配置；只显示凭据引用，不显示密钥内容。
-  config validate [runtime.json]
-      校验配置和所有已配置的本地文件引用。
-  config fingerprint [runtime.json]
-      输出不含 config_fingerprint 字段自身的稳定配置指纹。
-  config lock <runtime.json> [output.json] [--force]
-      生成带发布指纹锁的配置副本，不读取或输出密钥内容。
-  run <backtest|paper|doctor|live-check|runtime-check|report> [参数...]
-      统一执行常用安全入口；paper 只运行本地 Paper 验收，不发送真实订单。
-  status [runtime.json] [--json]
-      查看本地运行配置、Worker、回测结果和安全状态；不连接交易所。
-  report [runtime.json|summary.json] [--json]
-      查看最新或指定回测报告；--json 输出可供脚本消费的完整摘要。
-  strategy list
-      列出内置策略。
-  strategy init <strategy> [runtime.json] [bar-frame.json] [--force]
-      从模板生成可直接回测的内置策略配置。
-  strategy backtest <runtime.json> <bar-frame.json> [market-spec.json]
-      使用统一回测引擎运行策略并保存结果产物。
-  backtest [runtime.json] [bar-frame.json] [market-spec.json]
-      使用统一 Rust 撮合引擎运行跨语言策略回测。
-  backtest builtin <strategy> <bar-frame.json> [market-spec.json] [quantity]
-      使用内置策略和统一 Rust 撮合引擎回测。
-  backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity] [--funding-bps <n>] [--quantity <n>] [--root <产物目录>]
-      对齐两条 BarFrame，使用同一信号驱动双腿独立账户回测，并按 SpreadOrderGroup 汇总组级费用/保证金/资金费归因。
-  backtest ccxt-builtin <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity]
-      一次完成 CCXT OHLCV 获取、内置策略回测和结果输出。
-  builtin-strategies
-      列出可直接用于回测/Paper/策略接入的 17 个内置策略。
-  fast-backtest <manifest.json>
-      并行执行多个独立回测任务，适合多标的、多币种和多参数批量验证。
-  dataset-ingest <bar-frame.json> <dataset-id> <version> <data-dir>
-      将标准化 BarFrame 增量合并到单机数据集缓存并注册 DatasetManifest。
-  dataset-bundle <bundle.json> <data-dir> [bar-frame.json]
-      校验并持久化 DatasetBundleManifest；提供 BarFrame 时同时校验 bars fingerprint。
-  paper-check [runtime.json]
-      按 Scheduler → Strategy → Paper Execution → Ledger 验收主体链路。
-  live-check [production.runtime.json] [--json]
-      执行实盘启动前静态门禁，不连接交易所、不发送订单。
-  runtime-check [runtime.json] [--json]
-      校验运行时拓扑并输出健康与配置指纹。
-
-核心运行入口：
-  serve, supervise, scheduler-worker, strategy-worker, paper-worker
-  （paper-worker 也承载配置中的 spread_recovery 角色）
-  binance-worker, ccxt-worker, ccxt-fetch-ohlcv, reconcile, ecosystem, paper
-
-使用 `qianxing help` 查看入口摘要；既有入口参数保持兼容，完整说明见 README.md 与 deploy/README.md。"#
-    );
 }
 
 pub(crate) fn copy_init_asset(
@@ -542,12 +478,47 @@ pub(crate) fn run_config_lock(input: &Path, output: &Path, force: bool) -> Resul
     Ok(())
 }
 
+/// `run` 的可用入口清单：help 文案、缺参提示与"不支持"提示共用同一份。
+/// 三处各写一遍正是 V10 §4.3 第 4 项"文案自称支持 backtest 而 match 没有该分支"的来源；
+/// `tools/check_architecture.py` 会把本清单与 help 入口行、下面的 match 分支做集合相等校验。
+pub(crate) const RUN_ENTRY_POINTS: [&str; 7] = [
+    "backtest",
+    "paper",
+    "paper-check",
+    "doctor",
+    "live-check",
+    "runtime-check",
+    "report",
+];
+
+fn run_usage(phrase: &str) -> String {
+    format!("run {phrase}；可用入口：{}", RUN_ENTRY_POINTS.join("、"))
+}
+
 pub(crate) fn run_unified_command(arguments: &[String]) -> Result<(), String> {
     let action = arguments
         .first()
         .map(String::as_str)
-        .ok_or_else(|| "run 需要 paper、doctor、live-check 或 runtime-check".to_string())?;
+        .ok_or_else(|| run_usage("需要入口参数"))?;
     match action {
+        "backtest" => {
+            let positional: Vec<String> = arguments[1..]
+                .iter()
+                .filter(|value| !value.starts_with('-'))
+                .cloned()
+                .collect();
+            // 收下却不处理等于对用户撒谎：旗标与多余位置参数都报用法，而不是静默丢弃。
+            if arguments.len() - 1 > positional.len() || positional.len() > 3 {
+                return Err(run_usage(
+                    "backtest 不接受旗标，位置参数至多三个：<runtime.json> [bar-frame.json] [market-spec.json]",
+                ));
+            }
+            run_unified_backtest(
+                positional.first().map(PathBuf::from).as_deref(),
+                positional.get(1).map(PathBuf::from).as_deref(),
+                positional.get(2).map(PathBuf::from).as_deref(),
+            )
+        }
         "paper" | "paper-check" => {
             let path = arguments.get(1).map(PathBuf::from).unwrap_or_else(|| {
                 repository_deploy_path("qianxing.runtime.paper-strategy.example.json")
@@ -569,7 +540,9 @@ pub(crate) fn run_unified_command(arguments: &[String]) -> Result<(), String> {
                 .skip(1)
                 .find(|value| !value.starts_with('-'))
                 .map(PathBuf::from)
-                .unwrap_or_else(|| repository_deploy_path("qianxing.runtime.production.example.json"));
+                .unwrap_or_else(|| {
+                    repository_deploy_path("qianxing.runtime.production.example.json")
+                });
             run_live_check(&path, arguments.iter().any(|argument| argument == "--json"))
         }
         "runtime-check" => {
@@ -590,9 +563,7 @@ pub(crate) fn run_unified_command(arguments: &[String]) -> Result<(), String> {
                 .unwrap_or_else(default_runtime_path);
             run_report(&path, arguments.iter().any(|argument| argument == "--json"))
         }
-        _ => Err(format!(
-            "run 不支持 {action}；可用入口：backtest、paper、doctor、live-check、runtime-check、report"
-        )),
+        _ => Err(run_usage(&format!("不支持 {action}"))),
     }
 }
 

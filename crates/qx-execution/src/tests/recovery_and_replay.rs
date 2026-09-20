@@ -295,6 +295,7 @@ fn risk_preflight_rejects_before_event_log_or_venue_side_effect() {
         1,
         &mut source_seq,
         &risk_context,
+        None,
     );
     assert!(result.is_err());
     assert!(pipeline.orders().is_empty());

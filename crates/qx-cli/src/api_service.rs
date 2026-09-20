@@ -288,20 +288,7 @@ pub(crate) fn load_api_account_snapshot_for_worker(
     snapshot.orders = runtime_snapshot
         .orders
         .iter()
-        .map(|order| {
-            (
-                order.client_id,
-                qx_protocol::OrderSnapshot {
-                    order_id: order.client_id,
-                    client_order_id: order.client_id,
-                    instrument: order.instrument.clone(),
-                    side: order.side,
-                    quantity_raw: order.qty.raw(),
-                    filled_raw: order.filled.raw(),
-                    status: order.status,
-                },
-            )
-        })
+        .map(|order| (order.client_id, qx_protocol::OrderSnapshot::from(order)))
         .collect();
     snapshot.fills = pipeline
         .log()
@@ -310,14 +297,7 @@ pub(crate) fn load_api_account_snapshot_for_worker(
         .filter_map(|event| match &event.kind {
             EventKind::Filled { fill } => Some((
                 event.seq,
-                qx_protocol::FillSnapshot {
-                    fill_id: event.seq,
-                    order_id: fill.order_id,
-                    quantity_raw: fill.qty.raw(),
-                    price_raw: fill.price.raw(),
-                    fee_raw: fill.fee.raw(),
-                    ts: fill.ts,
-                },
+                qx_protocol::FillSnapshot::from_fact(event.seq, fill),
             )),
             _ => None,
         })
@@ -349,37 +329,37 @@ pub(crate) fn load_api_account_snapshot_for_worker(
             .account_positions
             .get(&(account_id.to_string(), venue_id.to_string()))
             .and_then(|positions| positions.iter().find(|item| item.instrument == instrument));
-        let quantity_raw = venue_position
-            .map(|position| position.quantity.raw())
-            .unwrap_or_else(|| position.quantity.raw());
-        if quantity_raw == 0 && venue_position.is_none() {
+        // 内核持仓观察 → 线格式只经由 `qx-protocol` 的唯一折算层；本函数不再
+        // 手抄 `free/locked/…raw()` 折算，只补齐线格式没有的 Ledger 回退值。
+        let mut wire = venue_position
+            .map(qx_protocol::PositionSnapshot::from)
+            .unwrap_or_else(|| qx_protocol::PositionSnapshot {
+                instrument: instrument.clone(),
+                quantity_raw: position.quantity.raw(),
+                today_quantity_raw: position.quantity.raw(),
+                average_price_raw: position.average_entry.raw(),
+                mark_price_raw: pipeline
+                    .marks()
+                    .get(&instrument)
+                    .map(|price| price.raw())
+                    .unwrap_or(0),
+                unrealized_pnl_raw: 0,
+                margin_raw: 0,
+            });
+        if wire.quantity_raw == 0 && venue_position.is_none() {
             continue;
         }
-        let average_price_raw = venue_position
-            .and_then(|position| position.average_price)
-            .map(|price| price.raw())
-            .unwrap_or_else(|| position.average_entry.raw());
-        let mark_price_raw = venue_position
-            .and_then(|position| position.mark_price)
-            .or_else(|| pipeline.marks().get(&instrument).copied())
-            .map(|price| price.raw())
-            .unwrap_or(0);
-        snapshot.positions.insert(
-            instrument.clone(),
-            qx_protocol::PositionSnapshot {
-                instrument,
-                quantity_raw,
-                today_quantity_raw: quantity_raw,
-                average_price_raw,
-                mark_price_raw,
-                unrealized_pnl_raw: venue_position
-                    .map(|position| position.unrealized_pnl.raw())
-                    .unwrap_or(0),
-                margin_raw: venue_position
-                    .map(|position| position.initial_margin.raw())
-                    .unwrap_or(0),
-            },
-        );
+        if wire.average_price_raw == 0 {
+            wire.average_price_raw = position.average_entry.raw();
+        }
+        if wire.mark_price_raw == 0 {
+            wire.mark_price_raw = pipeline
+                .marks()
+                .get(&instrument)
+                .map(|price| price.raw())
+                .unwrap_or(0);
+        }
+        snapshot.positions.insert(instrument.clone(), wire);
     }
     snapshot.reconcile.recovery_state = "eventlog-replayed".into();
     Ok(Some(snapshot))

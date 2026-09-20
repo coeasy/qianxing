@@ -7,6 +7,9 @@ use qx_core::{Fnv1a, RunManifest};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod retry_policy;
+pub use retry_policy::RetryPolicy;
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Trigger {
     Manual,
@@ -137,23 +140,6 @@ impl JobWindow {
             Self::PreOpen => "pre_open",
             Self::Session => "session",
             Self::PostClose => "post_close",
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct RetryPolicy {
-    pub max_attempts: u32,
-    pub backoff_seconds: u64,
-    pub retryable_codes: BTreeSet<String>,
-}
-
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        Self {
-            max_attempts: 1,
-            backoff_seconds: 0,
-            retryable_codes: BTreeSet::new(),
         }
     }
 }
@@ -820,13 +806,13 @@ impl Scheduler {
         run.error_code = error_code.map(str::to_string);
         run.next_retry_ts = (!success
             && !matches!(run.status, JobStatus::NeedsIntervention)
-            && run.attempt < job.retry_policy.max_attempts
+            && job.retry_policy.should_retry(run.attempt)
             && (job.retry_policy.retryable_codes.is_empty()
                 || run
                     .error_code
                     .as_ref()
                     .is_some_and(|code| job.retry_policy.retryable_codes.contains(code))))
-        .then(|| finished_ts.saturating_add(job.retry_policy.backoff_seconds));
+        .then(|| job.retry_policy.retry_deadline(finished_ts));
         self.active_keys.remove(&job.concurrency_key);
         if success {
             self.completed.insert(run.job_id.clone());
@@ -849,8 +835,7 @@ impl Scheduler {
             .jobs
             .get(&run.job_id)
             .ok_or_else(|| SchedulerError::MissingDependency(run.job_id.clone()))?;
-        if !matches!(run.status, JobStatus::Failed) || run.attempt >= job.retry_policy.max_attempts
-        {
+        if !matches!(run.status, JobStatus::Failed) || !job.retry_policy.should_retry(run.attempt) {
             return Err(SchedulerError::NotReady(format!("run {} 不可重试", run_id)));
         }
         if run

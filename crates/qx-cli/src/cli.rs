@@ -239,18 +239,34 @@ pub(crate) fn run() {
         return;
     }
     if mode == "backtest" {
-        let arguments: Vec<String> = std::env::args().skip(2).collect();
-        match arguments.first().map(String::as_str) {
+        let mut arguments: Vec<String> = std::env::args().skip(2).collect();
+        let entry = arguments.first().cloned().unwrap_or_default();
+        // 命令行型回测入口（builtin / multi-builtin / book / ccxt-builtin）历史上把风控规则
+        // 写死在代码里；`--config` 让它们与 strategy 回测吃同一份 `strategy.risk_rules`。
+        let runtime_config = match take_config_flag(&mut arguments) {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("backtest {error}");
+                std::process::exit(2);
+            }
+        };
+        match Some(entry.as_str()) {
             Some("builtin") => {
                 let (Some(strategy), Some(frame)) = (arguments.get(1), arguments.get(2)) else {
-                    eprintln!("backtest builtin 需要 <strategy> <bar-frame.json> [market-spec.json] [quantity]");
+                    eprintln!(
+                        "backtest builtin 需要 <strategy> <bar-frame.json> [market-spec.json] [quantity] [--config runtime.json]"
+                    );
                     std::process::exit(2);
                 };
                 let spec = arguments.get(3).map(PathBuf::from);
                 let quantity = parse_backtest_quantity(arguments.get(4), "backtest builtin");
-                if let Err(error) =
-                    run_builtin_backtest(strategy, Path::new(frame), spec.as_deref(), quantity)
-                {
+                if let Err(error) = run_builtin_backtest(
+                    strategy,
+                    Path::new(frame),
+                    spec.as_deref(),
+                    quantity,
+                    runtime_config.as_deref(),
+                ) {
                     eprintln!("内置策略回测失败: {error}");
                     std::process::exit(2);
                 }
@@ -291,7 +307,7 @@ pub(crate) fn run() {
                 let (Some(strategy), Some(primary), Some(reference)) =
                     (positional.first(), positional.get(1), positional.get(2))
                 else {
-                    eprintln!("backtest multi-builtin 需要 <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity] [--funding-bps <n>] [--quantity <n>] [--root <产物目录>]");
+                    eprintln!("backtest multi-builtin 需要 <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity] [--funding-bps <n>] [--quantity <n>] [--root <产物目录>] [--config runtime.json]");
                     std::process::exit(2);
                 };
                 let primary_spec = positional.get(3).map(PathBuf::from);
@@ -322,6 +338,7 @@ pub(crate) fn run() {
                     quantity,
                     funding_bps,
                     root.as_deref().map(Path::new),
+                    runtime_config.as_deref(),
                 ) {
                     eprintln!("多腿内置策略回测失败: {error}");
                     std::process::exit(2);
@@ -336,7 +353,7 @@ pub(crate) fn run() {
                     arguments.get(4),
                     arguments.get(5),
                 ) else {
-                    eprintln!("backtest ccxt-builtin 需要 <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity]");
+                    eprintln!("backtest ccxt-builtin 需要 <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity] [--config runtime.json]");
                     std::process::exit(2);
                 };
                 let (Ok(start_ms), Ok(end_ms)) = (start.parse::<u64>(), end.parse::<u64>()) else {
@@ -355,6 +372,7 @@ pub(crate) fn run() {
                     end_ms,
                     spec.as_deref(),
                     quantity,
+                    runtime_config.as_deref(),
                 ) {
                     eprintln!("CCXT 内置策略回测失败: {error}");
                     std::process::exit(2);
@@ -394,7 +412,7 @@ pub(crate) fn run() {
                     index += 1;
                 }
                 let (Some(strategy), Some(frame)) = (positional.first(), positional.get(1)) else {
-                    eprintln!("backtest book 需要 --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>]");
+                    eprintln!("backtest book 需要 --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>] [--config runtime.json]");
                     std::process::exit(2);
                 };
                 let spec = positional.get(2).map(PathBuf::from);
@@ -422,6 +440,7 @@ pub(crate) fn run() {
                     quantity,
                     fee_bps,
                     Path::new(&root),
+                    runtime_config.as_deref(),
                 ) {
                     eprintln!("深度档位回测失败: {error}");
                     std::process::exit(2);
@@ -1039,28 +1058,14 @@ pub(crate) fn run() {
             }
             return;
         }
-        let local = [(1_u64, 10_i128), (2, 5)];
-        let venue = [(1_u64, 10_i128), (2, 4)];
-        let diffs = qx_genglu::reconcile_orders(
-            &local
-                .iter()
-                .map(|(id, qty)| Order {
-                    client_id: *id,
-                    instrument: InstrumentId::parse("DEMO.SIM").unwrap(),
-                    side: Side::Buy,
-                    qty: Quantity::from_raw(*qty),
-                    limit: None,
-                    status: OrderStatus::PartiallyFilled,
-                    filled: Quantity::from_raw(*qty),
-                    account_id: "main".into(),
-                    trace: None,
-                    policy: None,
-                })
-                .collect::<Vec<_>>(),
-            &venue,
+        // V10 §4.3：无参时曾用两份手写向量打印"差异"，看起来像真对账能力。
+        // 对账必须同时点名本地与远端来源，缺任一即是用法错误。
+        eprintln!(
+            "reconcile 需要本地与远端两个来源：reconcile <runtime.json> [worker-id]\n  \
+             本地来源 = 运行时配置指向的 EventLog 账本\n  \
+             远端来源 = 该配置中 Binance worker 的交易所账户（凭据由配置引用，不在命令行传）"
         );
-        println!("[更路 · reconcile] 差异数={} 明细={:?}", diffs.len(), diffs);
-        return;
+        std::process::exit(2);
     }
 
     if matches!(mode.as_str(), "all" | "verify") {
