@@ -11,6 +11,7 @@
   "fills": 0,
   "input_data_hash": "f0dcf298c2602c16",
   "instrument": "BTC/USDT:USDT.OKX",
+  "matching_kernel": "qx-xingban::BacktestEngine(bar)",
   "metrics": {
     "fees_raw": 0,
     "final_equity_raw": 100000000000000,
@@ -27,7 +28,8 @@
   "replay_hash": "baf385cdb4ca3772",
   "result_hash": "baf385cdb4ca3772",
   "risk_rules": {
-    "rule_set_version": "conservative-default-v1+implicit-no-short"
+    "rule_set_version": "conservative-default-v1+implicit-no-short",
+    "source": "runtime-config"
   },
   "run_manifest": "P:\\github_public\\qianxing\\deploy\\data/qianxing-builtin-strategy-okx\\runs\\strategy-backtest_strategy-builtin-okx_BTC_USDT_USDT.OKX-67233a5d03b82c87.run.json",
   "sample_unit": "bar",

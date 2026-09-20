@@ -11,6 +11,7 @@
   "fills": 0,
   "input_data_hash": "954ba74a0e8dd9d0",
   "instrument": "000001.SZSE",
+  "matching_kernel": "qx-xingban::BacktestEngine(bar)",
   "metrics": {
     "fees_raw": 0,
     "final_equity_raw": 100000000000000,
@@ -28,7 +29,8 @@
   "replay_hash": "5bdbc7ead7043b1c",
   "result_hash": "5bdbc7ead7043b1c",
   "risk_rules": {
-    "rule_set_version": "conservative-default-v1+implicit-no-short"
+    "rule_set_version": "conservative-default-v1+implicit-no-short",
+    "source": "runtime-config"
   },
   "run_manifest": "P:\\github_public\\qianxing\\deploy\\data/qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE-c5a57b643f659604.run.json",
   "sample_unit": "bar",

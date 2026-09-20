@@ -11,6 +11,7 @@
   "fills": 0,
   "input_data_hash": "4a4d2b1771475d78",
   "instrument": "BTCUSDT.BINANCE",
+  "matching_kernel": "qx-xingban::BacktestEngine(bar)",
   "metrics": {
     "fees_raw": 0,
     "final_equity_raw": 100000000000000,
@@ -27,7 +28,8 @@
   "replay_hash": "b26e1d4d4d430cb1",
   "result_hash": "b26e1d4d4d430cb1",
   "risk_rules": {
-    "rule_set_version": "conservative-default-v1+implicit-no-short"
+    "rule_set_version": "conservative-default-v1+implicit-no-short",
+    "source": "runtime-config"
   },
   "run_manifest": "P:\\github_public\\qianxing\\deploy\\data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE-f27332db9aad2689.run.json",
   "sample_unit": "bar",
