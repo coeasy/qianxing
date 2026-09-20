@@ -1,6 +1,6 @@
 [package]
 name = "qx-risk"
-description = "Portfolio risk engine"
+description = "风控规则与决策原语：RuleSet、RiskEngine 对订单/仓位的判定"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

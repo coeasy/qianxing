@@ -28,10 +28,12 @@
 
 | 模块 | 职责 |
 |---|---|
-| `qx-core` **牵星** | 确定性内核：时钟、因果事件队列、事件溯源、重放校验，以及 `VenueId` / `InstrumentId` / `MarketId` / `CanonicalProduct` 身份契约 |
+| `qx-core` **牵星** | 确定性内核：时钟、因果事件队列、事件溯源、重放校验，以及 `VenueId` / `InstrumentId` / `MarketId` / `CanonicalProduct` 身份契约；内含 **分野** `fenye` 模块（合约规格与市场状态分离、符号映射只增不覆盖） |
 | `qx-guanxing` **观星** | 数据平面：`DataSourceId`、质量门、标准化、`as_of()` point-in-time 可见性 |
+| `qx-data` | 多资产数据基础设施：统一市场数据契约、目录、摄取与增量管道（提供方不进内核） |
 | `qx-xingban` **星板** | Bar/L1 Tick/L2 订单簿撮合与仿真：成本、延迟、保证金、因果回测 |
 | `qx-zhenlu` **针路** | 执行与路由：风控门禁、OMS、路由决策 |
+| `qx-risk` | 风控规则集：`RiskRule`（禁空 / 最大数量 / 最大名义）与保守默认规则集版本 |
 | `qx-genglu` **更路** | 审计与对账：绩效指标、归因、订单对账 |
 | `qx-plugin` **卯眼/榫头** | 能力清单注册表：manifest schema/哈希校验与 Ed25519 签名、扩展点贡献声明、独占冲突检测、依赖求解、Profile/Bundle/Patch 静态装配计划（不含运行时动态加载） |
 | `qx-factor` | 因子与特征：版本、PIT 工件、分析报告、候选策略绑定 |
@@ -39,19 +41,20 @@
 | `qx-provider` | 数据提供方：能力矩阵、稳定选择、主备故障切换 |
 | `qx-scheduler` | 调度契约：JobSpec、依赖、交易日历、幂等与重试 |
 | `qx-control` | 控制面：权限、审计命令、事件订阅游标 |
+| `qx-api` | 框架无关的本地查询、控制命令、事件流与 WebSocket 边界；写操作只经 `ControlPlane` |
 | `qx-datastruct` | 列式 BarFrame、PIT 视图、JSON/Arrow C Data Interface |
 | `qx-adapter` | REST/TLS/WebSocket 传输与 Venue/Provider 适配边界；含 Binance Spot REST/L1 行情基线 |
 | `qx-runtime` | 运行时拓扑配置、worker 监督、停机信号与健康状态 |
-| `qx-application` | 执行事实、订单、风控、行情、对账和 Venue 的稳定应用层端口 |
+| `qx-orchestrator` | 运行编排：把已校验的 `RuntimeConfig` 变成 worker 启动计划并管理子进程生命周期；不执行策略、不下单 |
 | `qx-storage` | 文件/分段 EventLog、控制面、队列、快照、审计以及 SQLite/PostgreSQL 事务后端 |
 | `qx-strategy` | Rust Strategy API、上下文/事件/多订单意图和原生策略 SDK |
-| `qx-execution` | Venue 回报统一归约、SubmitOrder 执行副作用边界 |
+| `qx-execution` | Venue 回报统一归约、SubmitOrder 执行副作用边界，以及执行事实/订单/风控/行情/对账/Venue 的稳定端口（V10 P2a 由独立端口 crate 并入） |
 | `python/qianxing_ccxt` | 公共 CCXT 多交易所 REST 数据/交易连接层；CCXT Pro 仅保留后续扩展接口 |
 | `qx-python` | PyO3 原生扩展、Arrow C Data Interface capsule 协议 |
 | `cpp/` | C++ Strategy API v1 稳定 C ABI、CMake 示例 |
 | `qx-cli` | 单一 CLI binary：命令分派、worker 装配、回测与运维命令，外加进程内确定性自校验 |
 
-`qx-cli` 是单个 binary（决策：不为拆进程而拆 crate），内部按职责分文件：`cli.rs` 是"命令名 → 处理器"的唯一分派点，未识别的命令打印 `未知命令: <x>` 并以退出码 2 fail closed；`worker_entry.rs` 用一张 `VENUE_ROLES` 角色白名单加 `VenueEntry` 登记表同时服务 `ccxt-worker` 与 `binance-worker`，新增角色只需在这张表登记一次；跨语言子进程的 Python 解释器统一由 `QX_PYTHON` 解析（缺省 `python`）。
+`qx-cli` 是单个 binary（决策：不为拆进程而拆 crate），内部按职责分文件：命令语法与命令表只有一份，在 `cli_args.rs` 由 clap 派生（V10 P2b，旧手写字符串解析已整体删除、不留双轨），`cli.rs` 保留对 `Command` 的一次显式 `match`，未识别的命令或未知参数打印 `未知命令或未知参数: <x>` 并以退出码 2 fail closed，`tools/check_architecture.py` 校验「clap 命令表 ≡ `cli.rs` 分支集合 ≡ help 印出的入口」；`worker_entry.rs` 用一张 `VENUE_ROLES` 角色白名单加 `VenueEntry` 登记表同时服务 `ccxt-worker` 与 `binance-worker`，新增角色只需在这张表登记一次；跨语言子进程的 Python 解释器统一由 `QX_PYTHON` 解析（缺省 `python`）。
 
 ## 快速开始
 

@@ -37,6 +37,26 @@ pub(crate) fn run_multi_builtin_backtest(
     if primary_bars.len() < 3 {
         return Err("多腿内置策略回测至少需要三根对齐 Bar".into());
     }
+    // 每腿账户必须付得起它宣称的下单量：Bar 内核现在拒绝现金不足的现货买入
+    // （`qx-xingban/src/backtest.rs` 的 cash-funded spot buy 检查）。沿用装配默认的
+    // 100_000 USDT，示例里 2-BTC 腿的第三笔买入（名义 ≈122_400）就是废单，
+    // 归因会少一条腿；因此按"全帧最高价 × quantity × 2"给足头寸余量，
+    // 且不低于装配默认值。
+    let max_mark_raw = primary_bars
+        .iter()
+        .chain(&reference_bars)
+        .map(|bar| bar.high)
+        .max()
+        .unwrap_or(0);
+    let leg_initial_cash = Money::from_i64(
+        100_000_i128
+            .max(
+                i128::from(quantity)
+                    .saturating_mul(max_mark_raw / qx_core::SCALE)
+                    .saturating_mul(2),
+            )
+            .min(i64::MAX as i128) as i64,
+    );
     let strategy_config = BuiltinStrategyConfig {
         kind,
         strategy_id: format!("builtin-{}-multi", kind.name()),
@@ -63,8 +83,8 @@ pub(crate) fn run_multi_builtin_backtest(
             (primary_frame.instrument.to_string(), 0),
             (reference_frame.instrument.to_string(), 0),
         ]),
-        cash: BTreeMap::from([("USDT".into(), Money::from_i64(100_000).raw())]),
-        available_margin_raw: Some(Money::from_i64(100_000).raw()),
+        cash: BTreeMap::from([("USDT".into(), leg_initial_cash.raw())]),
+        available_margin_raw: Some(leg_initial_cash.raw()),
         risk_state: "multi-leg-backtest".into(),
     };
     native
@@ -157,6 +177,7 @@ pub(crate) fn run_multi_builtin_backtest(
         assembly.instrument_spec = spec;
         assembly.margin = margin;
         assembly.currency = currency;
+        assembly.initial_cash = leg_initial_cash;
         assembly.risk = risk_binding.gate();
         leg_risk_versions.push(assembly.risk.rule_set().version().to_string());
         BacktestEngine::new(assembly.into_config())
