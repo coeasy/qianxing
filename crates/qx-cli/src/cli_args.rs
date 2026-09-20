@@ -31,6 +31,9 @@ fn parse_funding_bps(value: &str) -> Result<i64, String> {
 
 /// 顶层命令表：每个变体一个 `#[command(name = "…")]`，与 `cli_help.rs` 的入口一一对应。
 #[derive(Subcommand)]
+// clap 要求每个子命令把旗标平铺在自己的变体里，最大的 `Backtest` 变体 392 字节。
+// 装箱能让 clippy 闭嘴，但会让 `cli.rs` 每条派发分支多一次解构，而这张表整个进程只构造一次。
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Command {
     #[command(name = "init")]
     Init {
