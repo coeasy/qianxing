@@ -5,17 +5,11 @@ use qx_adapter::{
     BinanceSpotAuth, BinanceSpotVenue, CcxtProcessVenue, CcxtRpc, HttpRequest, HttpResponse,
     HttpTransport,
 };
-use qx_application::{
-    EventAppender, ExecutionEventEnvelope, OrderStore, VenuePort, VenueRouterPort,
-};
 use qx_control::{CommandKind, ControlCommand, Permission};
 use qx_core::{
     InstrumentId, MarginMode, Order, OrderPolicy, OrderStatus, PositionMode, Price, Quantity, Side,
     TradingInstrumentSpec, TradingProduct, SCALE,
 };
-// 测试用真实运行时管线作为 `ExecutionEventPort` 的实现，验证执行层与后端解耦后
-// 仍能端到端归约事实；生产依赖方向保持 qx-execution 不感知 qx-runtime。
-use qx_runtime::LiveEventPipeline;
 use qx_zhenlu::{FileSpreadOrderGroupStore, SpreadOrderGroupStore, SpreadOrderLeg};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -218,7 +212,6 @@ fn port_order(client_id: u64) -> Order {
 }
 
 mod gateway_port;
-mod paper_accounting;
 mod recovery_and_replay;
 mod spread_group_barrier;
 mod venue_submit_contract;

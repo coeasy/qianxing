@@ -1,4 +1,4 @@
-//! 牵星订单管理系统（OMS）。
+//! 牵星订单管理系统（OMS）。原 `qx-oms` crate，V10 P2a 按"订单管理归针路"并入。
 //!
 //! OMS 只拥有本地订单状态和状态迁移，不调用 Venue、不写 Ledger；Venue 回报由
 //! `apply_fill` 归约进来。Paper、CCXT 和其他执行器都通过同一个订单状态机。

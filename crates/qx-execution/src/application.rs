@@ -1,5 +1,6 @@
 //! 应用层端口。
 //!
+//! 原 `qx-application` crate，V10 P2a 按"端口即执行事实契约，归执行网关"并入本 crate。
 //! 这里不拥有 EventLog、数据库或具体 Venue；只定义执行编排需要的稳定事实和
 //! 端口。Runtime、Storage、Paper、CCXT 和 Binance 通过 adapter 实现这些端口，
 //! 避免应用服务反向依赖某个运行时具体类型。

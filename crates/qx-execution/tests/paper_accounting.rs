@@ -1,4 +1,20 @@
-use super::*;
+//! Paper 记账端到端用例。V10 P2a 自 `src/tests/paper_accounting.rs` 整体搬入：
+//! 端口 trait 并入本 crate 后，qx-runtime 正常依赖 qx-execution，单元测试构建里
+//! `qx_execution` 会出现两份编译产物（cfg(test) 版与 rlib 版），端口 trait 对不上；
+//! 只有集成测试链接单一 rlib，跨 crate 断言才成立。用例函数与断言未改动。
+
+use qx_control::{CommandKind, ControlCommand, Permission};
+use qx_core::{
+    InstrumentId, MarginMode, Order, OrderPolicy, OrderStatus, PositionMode, Price, Quantity, Side,
+    TradingInstrumentSpec, TradingProduct, SCALE,
+};
+use qx_execution::execute_paper_submit_effect;
+use qx_guanxing::QuoteTick;
+use qx_risk::OrderRiskPosition;
+use qx_runtime::LiveEventPipeline;
+use qx_zhenlu::RiskContext;
+use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn paper_derivative_fill_uses_spec_pnl_accounting_instead_of_spot_cash() {

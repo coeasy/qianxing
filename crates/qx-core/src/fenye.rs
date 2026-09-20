@@ -1,4 +1,4 @@
-//! # qx-fenye — 分野
+//! # fenye — 分野（原 `qx-fenye` crate，V10 P2a 按"身份元数据归内核"并入 qx-core）
 //!
 //! 身份与市场：合约规格、市场状态、双向版本化符号映射。
 //!
@@ -7,7 +7,7 @@
 //! 2. 符号映射**只能新增与退役，不能覆盖或静默删除**——否则历史特征、回测路径
 //!    与真实成交都将失去可解释性。
 
-use qx_core::QxError;
+use crate::QxError;
 use std::collections::BTreeMap;
 
 /// 生命周期：元数据未完整时禁止下单。

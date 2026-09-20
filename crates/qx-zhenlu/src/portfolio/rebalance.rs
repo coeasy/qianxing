@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::constraint::PortfolioConstraint;
+use crate::portfolio::constraint::PortfolioConstraint;
 // `TargetPosition` 全仓唯一定义在 qx-core（V10 §4.8）；本 crate 只消费与转出。
 use qx_core::{InstrumentId, TargetPosition};
 

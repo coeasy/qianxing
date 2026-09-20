@@ -1,12 +1,12 @@
 //! P1a 概念单点化 · `TargetPosition` 单点定义（V10 §4.8）。
 //!
-//! 唯一定义住在 `qx-core::target`；`qx-portfolio`（调仓计划）与 `qx-zhenlu`
-//! （信号归并）都只引用它。反向验证：任一 crate 重新声明本地
-//! `pub struct TargetPosition` → 下面的 `TypeId` 断言即红（并且 `qx-protocol`
-//! 的 `concept_definitions_are_single_sourced` 也会红）。
+//! 唯一定义住在 `qx-core::target`；`qx-zhenlu::portfolio`（调仓计划，原
+//! `qx-portfolio`）与 `qx-zhenlu`（信号归并）都只引用它。反向验证：任一位置
+//! 重新声明本地 `pub struct TargetPosition` → 下面的 `TypeId` 断言即红（并且
+//! `qx-protocol` 的 `concept_definitions_are_single_sourced` 也会红）。
 
 use qx_core::{InstrumentId, TargetPosition};
-use qx_portfolio::{
+use qx_zhenlu::portfolio::{
     rebalance, PortfolioConstraint, PortfolioState, TargetPosition as PortfolioTargetPosition,
 };
 use std::any::TypeId;
@@ -17,7 +17,7 @@ fn portfolio_reuses_the_kernel_target_position_type() {
     assert_eq!(
         TypeId::of::<PortfolioTargetPosition>(),
         TypeId::of::<TargetPosition>(),
-        "qx-portfolio 不得再定义第二份 TargetPosition，必须引用 qx-core 的唯一定义"
+        "qx-zhenlu::portfolio 不得再定义第二份 TargetPosition，必须引用 qx-core 的唯一定义"
     );
 }
 

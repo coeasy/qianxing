@@ -36,7 +36,7 @@ pub use worker_policy::{FieldScope, RoleFieldStatus, WorkerRoleFieldScopes, ALL_
 ///
 /// 适配器只负责把应用层的稳定执行事实映射为 Runtime 事件；订单注册仍由
 /// `LiveEventPipeline` 统一完成校验、幂等和日志追加，避免应用层绕过 Kernel。
-impl qx_application::OrderStore for LiveEventPipeline {
+impl qx_execution::OrderStore for LiveEventPipeline {
     fn orders(&self) -> Vec<qx_core::Order> {
         LiveEventPipeline::orders(self)
     }
@@ -53,13 +53,13 @@ impl qx_application::OrderStore for LiveEventPipeline {
     }
 }
 
-impl qx_application::EventAppender for LiveEventPipeline {
+impl qx_execution::EventAppender for LiveEventPipeline {
     fn append_execution_event(
         &mut self,
-        envelope: qx_application::ExecutionEventEnvelope,
+        envelope: qx_execution::ExecutionEventEnvelope,
     ) -> Result<(), String> {
         let receipt = match envelope.event {
-            qx_application::ExecutionEvent::MarketQuote { instrument, quote } => {
+            qx_execution::ExecutionEvent::MarketQuote { instrument, quote } => {
                 self.ingest(RuntimeEventEnvelope::market_quote(
                     instrument,
                     quote,
@@ -70,26 +70,26 @@ impl qx_application::EventAppender for LiveEventPipeline {
             }
             event => {
                 let event = match event {
-                    qx_application::ExecutionEvent::Accepted {
+                    qx_execution::ExecutionEvent::Accepted {
                         client_order_id,
                         venue_order_id,
                     } => RuntimeExternalEvent::Accepted {
                         client_order_id,
                         venue_order_id: Some(venue_order_id),
                     },
-                    qx_application::ExecutionEvent::Fill(fill) => {
+                    qx_execution::ExecutionEvent::Fill(fill) => {
                         RuntimeExternalEvent::Fill { fill: *fill }
                     }
-                    qx_application::ExecutionEvent::FillWithSpec { fill, spec } => {
+                    qx_execution::ExecutionEvent::FillWithSpec { fill, spec } => {
                         RuntimeExternalEvent::FillWithSpec { fill, spec }
                     }
-                    qx_application::ExecutionEvent::Cancelled { client_order_id } => {
+                    qx_execution::ExecutionEvent::Cancelled { client_order_id } => {
                         RuntimeExternalEvent::Cancelled { client_order_id }
                     }
-                    qx_application::ExecutionEvent::ReconcileRequired { client_order_id } => {
+                    qx_execution::ExecutionEvent::ReconcileRequired { client_order_id } => {
                         RuntimeExternalEvent::ReconcileRequired { client_order_id }
                     }
-                    qx_application::ExecutionEvent::MarketQuote { .. } => {
+                    qx_execution::ExecutionEvent::MarketQuote { .. } => {
                         unreachable!("MarketQuote 在上面的分支处理")
                     }
                 };
@@ -108,13 +108,13 @@ impl qx_application::EventAppender for LiveEventPipeline {
     }
 }
 
-impl qx_application::LedgerProbe for LiveEventPipeline {
+impl qx_execution::LedgerProbe for LiveEventPipeline {
     fn ledger_entry_count(&self) -> usize {
         self.ledger().entries().len()
     }
 }
 
-impl qx_application::MarketDataPort for LiveEventPipeline {
+impl qx_execution::MarketDataPort for LiveEventPipeline {
     fn latest_quote(&self, instrument: &InstrumentId) -> Option<qx_guanxing::QuoteTick> {
         self.latest_quote_with_depth(instrument)
     }

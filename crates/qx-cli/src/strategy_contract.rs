@@ -569,20 +569,20 @@ pub(crate) fn build_strategy_order_with_signal(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "Strategy 产生订单必须配置 instrument".to_string())?;
-    let current = qx_portfolio::PortfolioState {
+    let current = qx_zhenlu::portfolio::PortfolioState {
         portfolio_id: strategy_id.into(),
         timestamp: now,
         cash: 0,
         positions: BTreeMap::from([(instrument_text.to_string(), current_qty)]),
     };
-    let rebalance = qx_portfolio::rebalance(
+    let rebalance = qx_zhenlu::portfolio::rebalance(
         &current,
-        &[qx_portfolio::TargetPosition::single(
+        &[qx_zhenlu::portfolio::TargetPosition::single(
             InstrumentId::parse(instrument_text)
                 .ok_or_else(|| format!("Strategy instrument 非法: {instrument_text}"))?,
             target_qty,
         )],
-        &qx_portfolio::PortfolioConstraint {
+        &qx_zhenlu::portfolio::PortfolioConstraint {
             max_turnover_bps: 10_000,
             min_trade_size: 1,
         },

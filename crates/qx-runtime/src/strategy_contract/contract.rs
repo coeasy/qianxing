@@ -312,12 +312,12 @@ impl StrategyContractOutput {
         input: &StrategyContractInput,
         max_turnover_bps: u32,
         min_trade_size: i128,
-    ) -> Result<qx_portfolio::RebalancePlan, String> {
+    ) -> Result<qx_zhenlu::portfolio::RebalancePlan, String> {
         self.validate_for(input)?;
         if !self.intents.is_empty() {
             return Err("包含 intents[] 的策略输出不能再次转换为 target_qty 调仓计划".into());
         }
-        let current = qx_portfolio::PortfolioState {
+        let current = qx_zhenlu::portfolio::PortfolioState {
             portfolio_id: input.strategy_id.clone(),
             timestamp: input.as_of,
             cash: input
@@ -327,14 +327,14 @@ impl StrategyContractOutput {
                 .fold(0_i128, i128::saturating_add),
             positions: input.positions.clone(),
         };
-        qx_portfolio::rebalance(
+        qx_zhenlu::portfolio::rebalance(
             &current,
             &[qx_core::TargetPosition::single(
                 InstrumentId::parse(&self.instrument)
                     .ok_or_else(|| format!("instrument 非法: {}", self.instrument))?,
                 self.target_qty,
             )],
-            &qx_portfolio::PortfolioConstraint {
+            &qx_zhenlu::portfolio::PortfolioConstraint {
                 max_turnover_bps,
                 min_trade_size,
             },

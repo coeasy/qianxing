@@ -14,7 +14,6 @@ use qx_core::{
     TradingInstrumentSpec,
 };
 use qx_guanxing::QuoteTick;
-use qx_oms::Oms;
 #[cfg(feature = "postgres")]
 use qx_storage::PostgresEventLogStore;
 #[cfg(feature = "sqlite")]
@@ -23,6 +22,7 @@ use qx_storage::{
     project_event_log_to_outbox, EventLogFileStore, FileOutboxStore, SegmentedEventLogStore,
     StorageError,
 };
+use qx_zhenlu::Oms;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

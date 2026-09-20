@@ -3,11 +3,11 @@
 //! 执行与路由：风控门禁 → OMS → 路由 → 适配器。
 //!
 //! 原则：**RiskGate 可以拒绝，但不得静默改写业务含义。**
-
-pub use qx_oms::Oms;
+pub mod oms;
+pub mod portfolio;
+pub use oms::Oms;
 // 目标仓位是全仓唯一概念（定义在 qx-core，V10 §4.8）；此处只做出口别名。
 pub use qx_core::TargetPosition;
-
 use qx_core::{
     Fill, InstrumentId, Order, OrderStatus, OrderTrace, Price, Quantity, QxError, QxResult, Side,
     TradingInstrumentSpec,

@@ -1,5 +1,65 @@
 # Changelog
 
+## Unreleased — V10 重构收口（2026-09-20）
+
+方案、逐阶段验收口径与实测数字见 [docs/自研量化框架重构方案-V10.md](docs/自研量化框架重构方案-V10.md)
+§6 与收口记录；本轮四决策（D1 实盘一律 fail-closed / D2 回测风控同源 / D3 命令面按审计收口 /
+D4 外部验收只交付可执行方案）记在同文档 §0、§8.1。
+
+### Fixed（正确性）
+
+- **实盘存在静默降级的无风控提交路径**（P0a，§4.1）：`worker_risk_context` 在
+  `instrument_spec_path` 缺失时返回 `Ok(None)`，调用方随即走不带风控的提交分支，而 paper 侧
+  对同一缺口是显式拒绝——即缺规格的部署照样下单且无人察觉。现在判定收敛为唯一的
+  `require_worker_risk_spec`，Binance / CCXT / Paper 三条链的每个提交点都先过它，缺配置一律
+  `FAIL_CLOSED: … 缺少风控配置（instrument_spec_path），拒绝提交订单` 且不留任何成交事实；
+  `crates/qx-cli/src/tests/live_submit_fail_closed.rs` 钉住"被判 Failed 且 EventLog 无成交事实"。
+- **两条回测入口根本不读风控配置**（P0b，§4.2）：`multi-builtin` 与深度档此前把规则集写死成
+  `None`，同一份 `strategy.risk_rules` 在四条链上得到不同门禁（回测"通过"而实盘被拒，或反之更危险）。
+  现在命令行型入口经唯一的 `backtest_risk_binding` 取配置，产物里显式写明规则来源
+  （`runtime-config` / `conservative-default`），深度档另在清单里声明自己用的是
+  `TickBacktestEngine` / `OrderBookBacktestEngine`，不再谎称与 Bar 链同一内核。
+  `src/tests/backtest_risk_provenance.rs` 断言四条链得到同一规则集版本。
+- **假数据被当作能力入口**（P0c，§4.3/§4.4）：`reconcile` 无参数时手写两组持仓打印差异的行为
+  删除，改为必须给本地与远端来源，否则用法错误退出码 2；`run` 的错误文案此前宣称支持
+  `backtest` 而 match 无该分支，现帮助表与派发集合由门禁做集合相等校验；
+  `all` / `verify` 自带的第二套撮合循环删除，改调 `qx-xingban` 真实内核（只有输入序列是合成的，
+  产物里 `input_fingerprint` 明写 `synthetic:*`）。
+
+### Refactored（架构与边界收敛）
+
+- **概念单点化**（P1a，§4.5/§4.7/§4.8）：`qx-zhenlu::RiskGate` 的默认构造绕过点归零，回测与
+  实盘的风控门全部经 `strategy_risk_gate` 构造；`PositionSnapshot` 收在 `qx-protocol` 线格式一处、
+  `TargetPosition` 收在一处；对账归一为 `qx-genglu` 的 `order_reconcile_verdict`
+  （`Consistent` / `PendingReconcile` / `AutoConverge` / `NeedsHuman`）+ 唯一动作映射，
+  Binance / CCXT / EventLog 三处不再各自推导"是否一致"。
+- **spread 屏障下沉网关**（P1b，§4.10）：屏障判定与执行只在 `qx_execution::spread_group_barrier`，
+  CLI 侧那份薄壳连同"绕过网关的预检"一并删除；五个提交入口一律新增组存储形参，让编译器强制
+  每个调用点回答它；命令带 `spread_group_id` 而提交路径未注入组存储不再是"跳过屏障"，
+  而是 `FAIL_CLOSED` 拒绝提交。门禁改查"判定原语不得搬回 CLI"。
+- **存储写路径与重试退避**（P1c，§4.9）：四个 JSON 文件状态存储的序列化 / schema 版本拒绝 /
+  损坏判定 / 读改写事务收敛为 `qx-storage/src/state_envelope.rs` 一份实现（原子替换与追加锁
+  逐字节沿用，磁盘兼容是硬约束），并拆出 `src/file/` 目录模块；退避与尝试计数收敛为
+  `qx-core::retry`（`Backoff::Fixed|Exponential` + `RetryPolicy`，纯函数、不读系统时钟），
+  连接器重连、调度器重试、存储计数三处只承载形状参数并委托它。
+- **薄壳 crate 与中文代号**（P2a，§4.11）：见同文档收口记录与 README 的中英对照职责表。
+- **CLI 参数框架**（P2b，§4.12）：约 40 个命令的手写字符串派发迁移到 clap 派生，命令表只有一份，
+  `qx-cli` 仍是单 binary，未知参数退出码保持 2。
+- **超大文件真拆分**（P2c，§4.13）：`qx-xingban/src/ashare.rs` 与 `qx-runtime/src/lib.rs`
+  按职责边界拆目录模块，等价性用符号 token 多重集比对证明；登记集规模与逐文件行数只降不升。
+
+### Verification（外部验收，D4：本轮不执行）
+
+- `tools/binance_testnet_acceptance.py` 现在逐段记录退出码 / 耗时 / 输出末行，并把带时间戳的
+  结果包落到 `maturity/evidence/testnet/<UTC>-{orders|dryrun}/`（不再跑完即删临时目录）；
+  缺凭据时仍只跑离线两段并以退出码 3 结束。结果包里的 `sandbox_tested_flip` 是
+  `maturity/capabilities.yaml` 翻转的唯一依据。
+- 新增 [docs/外部链路验收执行方案-V1.md](docs/外部链路验收执行方案-V1.md)：三段链路的前置条件、
+  崩溃后远端未知态的处置程序、以及**当前缺口如实记录**（CCXT 侧没有 `ccxt-submit-order`，
+  因此第二交易所的第三段暂不可跑）。
+- CI 的 wheel 腿补 macOS 平台；`sandbox_tested` 在未拿到真实外部结果包前全量保持 `false`，
+  §5 的"能力齐备、内部闭环、外部未证"结论本轮不变。
+
 ## Unreleased — V9 重构收口（2026-09-19）
 
 方案与逐阶段判定见 [docs/自研量化框架重构方案-V9.md](docs/自研量化框架重构方案-V9.md) §8。

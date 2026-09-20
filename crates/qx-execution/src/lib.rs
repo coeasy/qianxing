@@ -1,15 +1,12 @@
 //! 统一执行层边界。
 //!
 //! Venue 只返回 `VenueEvent`，执行层负责把这些事件转换成运行时标准事实，
-//! 再通过 `qx-application` 的执行端口交给 EventLog、订单状态和 Ledger。Paper、
+//! 再通过本 crate `application` 子模块的执行端口交给 EventLog、订单状态和 Ledger。Paper、
 //! Binance 以及未来连接器都必须复用这里的事实转换，不能在 CLI 中各写一套。
 //! 本 crate 不依赖任何具体运行时或存储后端。
 
-use qx_application::{
-    validate_cancel_events, validate_submit_events, EventAppender, ExecutionEvent,
-    ExecutionEventEnvelope, ExecutionEventPort, ReconcilePort, RiskDecision, RiskPort, VenuePort,
-    VenueRouterPort,
-};
+pub mod application;
+pub use application::*;
 use qx_control::{order_from_submit_command, ControlCommand};
 use qx_core::{Order, OrderStatus, OrderTrace, Price, Quantity, TradingInstrumentSpec, SCALE};
 use qx_guanxing::QuoteTick;
@@ -1313,7 +1310,7 @@ impl<P: EventAppender> ReconcilePort for EventLogReconcilePort<'_, P> {
 /// 同一条判定链。`allow_synthetic_quote` 是**唯一**的伪造价开关，只允许离线 smoke
 /// fixture 显式传 `true`；生产 worker 必须保持 `false` 并提供 `Some(market_quote)`。
 #[allow(clippy::too_many_arguments)] // V10 P1b：组存储作为最后一个形参是刻意的，让编译器逐个点名提交入口是否接了屏障。
-pub fn execute_paper_submit_effect<P: ExecutionEventPort + qx_application::LedgerProbe>(
+pub fn execute_paper_submit_effect<P: ExecutionEventPort + application::LedgerProbe>(
     command: &ControlCommand,
     pipeline: &mut P,
     now: u64,

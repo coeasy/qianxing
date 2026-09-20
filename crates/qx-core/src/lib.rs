@@ -12,6 +12,7 @@ pub mod clock;
 pub mod engine;
 pub mod error;
 pub mod event;
+pub mod fenye;
 pub mod identity;
 pub mod ledger;
 pub mod numeric;
