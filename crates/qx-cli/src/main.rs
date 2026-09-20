@@ -249,19 +249,6 @@ fn run_recovery_child(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_backtest_quantity(raw: Option<&String>, command: &str) -> i64 {
-    match raw {
-        Some(value) => match value.parse::<i64>() {
-            Ok(quantity) => quantity,
-            Err(_) => {
-                eprintln!("{command} quantity 非法: {value}");
-                std::process::exit(2);
-            }
-        },
-        None => 1,
-    }
-}
-
 /// Python 解释器解析：`QX_PYTHON` 环境变量优先，否则回落到 `python`。
 ///
 /// CLI 里所有跨语言子进程（CCXT worker、Python/C++ 策略 worker）都从这里取解释器，

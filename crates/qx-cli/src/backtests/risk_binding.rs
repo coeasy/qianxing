@@ -49,17 +49,3 @@ pub(crate) fn backtest_risk_binding(
         from_config: true,
     })
 }
-
-/// 从命令参数里摘出 `--config <runtime.json>`。
-///
-/// 命令行型回测入口的位置参数顺序不能因为新增可选旗标而漂移，所以先把它整对移除再解析。
-pub(crate) fn take_config_flag(arguments: &mut Vec<String>) -> Result<Option<PathBuf>, String> {
-    let Some(index) = arguments.iter().position(|argument| argument == "--config") else {
-        return Ok(None);
-    };
-    let Some(path) = arguments.get(index + 1).cloned() else {
-        return Err("--config 需要紧跟一个运行时配置路径".into());
-    };
-    arguments.drain(index..index + 2);
-    Ok(Some(PathBuf::from(path)))
-}
