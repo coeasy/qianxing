@@ -216,17 +216,21 @@ def cli_dispatch_check() -> None:
 
 
 # V10 §4.3 第 3/4 项 + §7.2 新不变量：帮助里印出的入口集合必须等于真正能派发的集合。
+# P2b 之后派发不再是字符串比较而是 clap 派生的 `Command` 枚举，因此命令表的事实来源
+# 变成 `cli_args.rs`（`#[command(name = "…")]` + 变体名），`cli.rs` 只交出显式分支。
 CLI_HELP_FILE = "crates/qx-cli/src/cli_help.rs"
 CLI_DISPATCH_FILE = "crates/qx-cli/src/cli.rs"
+CLI_ARGS_FILE = "crates/qx-cli/src/cli_args.rs"
 CLI_RUN_DISPATCH_FILE = "crates/qx-cli/src/config_commands.rs"
-# `help` 的三种拼写在 cli.rs 里共用一条分支，帮助文本只登记规范名。
+# `help` 的三种拼写在进入 clap 之前共用一条预检分支，帮助文本只登记规范名。
 CLI_HELP_META_ALIASES = {"--help", "-h"}
+CLI_HELP_PRECHECK = re.compile(r'Some\("help"\)\s*\|')
 # 帮助用法行：恰好两空格缩进、首个 token 即命令名；说明行是六空格缩进。
 HELP_USAGE_LINE = re.compile(r"^  ([a-z][a-z0-9-]*)$|^  ([a-z][a-z0-9-]*)[ \t]", re.MULTILINE)
 HELP_RUN_LINE = re.compile(r"^  run <([a-z0-9|-]+)>", re.MULTILINE)
-DISPATCH_NAME_COMPARE = re.compile(r'\bmode\s*==\s*"([a-z][a-z0-9-]*)"', re.MULTILINE)
-DISPATCH_NAME_MATCHES = re.compile(
-    r'matches!\(\s*mode\.as_str\(\)\s*,\s*([^)]*)\)', re.MULTILINE
+# clap 命令表条目：`#[command(name = "x")]` 紧跟其后的 `Command` 变体标识符。
+CLAP_COMMAND_ENTRY = re.compile(
+    r'#\[command\(name = "([a-z][a-z0-9-]*)"\)\]\s*\n\s*([A-Za-z][A-Za-z0-9]*)'
 )
 RUN_ARM_LINE = re.compile(r'^ {8}"([a-z][a-z0-9-]*)"(?:\s*\|\s*"([a-z][a-z0-9-]*)")* =>', re.M)
 RUN_ENTRY_CONST = re.compile(r"const RUN_ENTRY_POINTS: \[&str; (\d+)\] = \[(.*?)\];", re.S)
@@ -244,11 +248,25 @@ def help_printed_commands(help_text: str) -> set[str]:
     return names
 
 
-def dispatched_commands(cli_text: str) -> set[str]:
-    """`cli.rs` 真正能派发的顶层命令名（唯一分派点，见 cli_dispatch_check）。"""
-    names = set(DISPATCH_NAME_COMPARE.findall(cli_text))
-    for group in DISPATCH_NAME_MATCHES.findall(cli_text):
-        names.update(re.findall(r'"([a-z][a-z0-9-]*)"', group))
+def clap_command_table(args_text: str) -> dict[str, str]:
+    """clap 派生的顶层命令表：`命令名 -> Command 变体名`。"""
+    start = args_text.find("pub(crate) enum Command {")
+    if start < 0:
+        return {}
+    body = args_text[start:]
+    end = body.find("\n}\n")
+    return dict(CLAP_COMMAND_ENTRY.findall(body if end < 0 else body[:end]))
+
+
+def dispatched_commands(cli_text: str, table: dict[str, str]) -> set[str]:
+    """`cli.rs` 真正接住的命令名：clap 表里每个变体都要有一条显式 `Command::X` 分支。"""
+    names = {
+        name
+        for name, variant in table.items()
+        if re.search(rf"\bCommand::{variant}\b", cli_text)
+    }
+    if CLI_HELP_PRECHECK.search(cli_text):
+        names.add("help")
     return names - CLI_HELP_META_ALIASES
 
 
@@ -262,22 +280,29 @@ def run_unified_arms(source: str) -> set[str]:
 
 
 def cli_help_surface_check() -> None:
-    """命令面诚实化：help 入口集合 ≡ 派发集合，且 `run` 子入口三处口径一致。
+    """命令面诚实化：help 入口集合 ≡ clap 命令表 ≡ `cli.rs` 显式派发分支，且 `run` 子入口三处口径一致。
 
-    两侧都从源码取事实：帮助正文每条入口独占一行（两空格缩进），派发只认
-    `mode == "x"` 与 `matches!(mode.as_str(), "x" | "y")`。派发有而帮助没写 = 存在
-    没人知道的能力；帮助写了而派发没有 = 照着提示敲会拿到"未知命令"（V10 §4.3 第 4 项）。
+    三侧都从源码取事实：帮助正文每条入口独占一行（两空格缩进），命令表来自 `cli_args.rs`
+    的 clap 派生，派发来自 `cli.rs` 的 `Command::X` 分支。派发有而帮助没写 = 存在没人知道的
+    能力；帮助写了而派发没有 = 照着提示敲会拿到"未知命令"（V10 §4.3 第 4 项）；clap 有变体
+    而 `cli.rs` 没分支 = 参数能解析却没有实现，是最坏的一种（编译期也只靠 `_ =>` 兜住）。
     `run` 再单独三方对齐：help 的 `run <a|b|…>` 行、`RUN_ENTRY_POINTS` 常量
     （错误文案由它拼出）、`run_unified_command` 的 match 分支。
     """
     help_source = (ROOT / CLI_HELP_FILE).read_text(encoding="utf-8")
     help_body = help_source.split('r#"', 1)[-1].split('"#', 1)[0]
     documented = help_printed_commands(help_body)
-    dispatched = dispatched_commands((ROOT / CLI_DISPATCH_FILE).read_text(encoding="utf-8"))
+    table = clap_command_table((ROOT / CLI_ARGS_FILE).read_text(encoding="utf-8"))
+    cli_source = (ROOT / CLI_DISPATCH_FILE).read_text(encoding="utf-8")
+    dispatched = dispatched_commands(cli_source, table)
+    # `help` 不经 clap 子命令（`disable_help_subcommand`），而是 clap 之前的同一条预检分支，
+    # 因此命令表要并上它才与帮助、派发同口径。
+    declared = set(table) | ({"help"} if CLI_HELP_PRECHECK.search(cli_source) else set())
     check(
-        documented == dispatched,
-        "help 印出的入口集合与 cli.rs 实际派发的命令集合相等",
-        f"只在帮助里 {sorted(documented - dispatched) or '无'}；"
+        bool(table) and documented == declared == dispatched,
+        "help 印出的入口、clap 命令表与 cli.rs 显式派发分支三者相等",
+        f"命令表 {len(declared)} 项；只在帮助里 {sorted(documented - declared) or '无'}；"
+        f"clap 有变体但 cli.rs 无分支 {sorted(declared - dispatched) or '无'}；"
         f"只在派发里 {sorted(dispatched - documented) or '无'}",
     )
     source = (ROOT / CLI_RUN_DISPATCH_FILE).read_text(encoding="utf-8")
@@ -360,6 +385,16 @@ def test_module_shape_check() -> None:
             )
             for path in files
         }
+        # P2a 把跨 crate 的用例搬进了集成测试目录（`crates/<crate>/tests/`）。它们同样是该
+        # crate 的行为用例，必须计入下限口径，否则"换个目录"就能凭空让用例数下降。
+        counts.update(
+            {
+                f"tests/{path.name}": len(
+                    re.findall(r"^#\[test\]$", path.read_text(encoding="utf-8"), re.MULTILINE)
+                )
+                for path in sorted((CRATES / crate / "tests").glob("*.rs"))
+            }
+        )
         check(
             sum(counts.values()) >= floor,
             f"{crate} 行为用例不少于 {floor} 条",
