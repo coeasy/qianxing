@@ -1124,6 +1124,10 @@ fn ingest_venue_events_with_pipeline<P: ExecutionEventPort>(
                 let event_ts = fill.ts;
                 let fill_order_id = fill.order_id;
                 let seq = *source_seq;
+                // 成交回报的关联号取自成交内容：`source_seq` 是进程内计数，
+                // 重启后重新计数会让同一订单的第二笔成交撞上第一笔已落库事实
+                // 而被静默去重（订单停在 Accepted、资金不动）。
+                let content_correlation = format!("{worker_id}:{}", fill_tag(&fill));
                 // 精度闸门：带冻结产品规格的回报若落在 tick/step 之外，就是与规格冲突的
                 // 事实，只能转成待对账（不记账、不改状态），并把原因回传给 worker。
                 let violation = spec
@@ -1147,11 +1151,7 @@ fn ingest_venue_events_with_pipeline<P: ExecutionEventPort>(
                         },
                         None => ExecutionEvent::Fill(Box::new(fill)),
                     };
-                    (
-                        event,
-                        event_ts,
-                        format!("{worker_id}:fill:{fill_order_id}:{seq}"),
-                    )
+                    (event, event_ts, content_correlation)
                 }
             }
             VenueEvent::Cancelled {
