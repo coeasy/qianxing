@@ -770,7 +770,12 @@ impl BacktestEngine {
                             let risk_position = OrderRiskPosition::new_with_multiplier(
                                 one_way_qty,
                                 gross_notional,
-                                multiplier.saturating_mul(SCALE),
+                                // `OrderRiskPosition::multiplier` 沿用 `BacktestConfig::multiplier`
+                                // 的**普通整数**口径；SCALE 折算只发生在唯一入口
+                                // `qx_risk::legacy_spot_spec`，这里再乘一次 SCALE 会把名义额
+                                // 放大 1e9 倍（上游 `PositionSnapshot` 的定点口径不适用于
+                                // 我方 `OrderRiskPosition`）。
+                                multiplier,
                             )
                             .with_hedge_legs(long_qty, short_qty);
                             let risk_result = risk.check_with_price(

@@ -935,6 +935,74 @@ mod tests {
         );
     }
 
+    /// 小额合约乘数的盘口回测必须按真实名义额计费：Ledger 用
+    /// `spec.notional` 记账，若费用仍按 `qty * price` 计，0.001 合约的
+    /// 手续费会被高估 1000 倍。
+    #[test]
+    fn fractional_contract_sizes_fee_on_spec_notional() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let spec = TradingInstrumentSpec {
+            instrument: instrument.clone(),
+            product: TradingProduct::Perpetual,
+            base_currency: "BTC".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: SCALE / 1000,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            max_leverage: 100,
+            maintenance_margin_bps: 500,
+            valid_from: 1,
+            valid_to: None,
+        };
+        let config = OrderBookBacktestConfig {
+            instrument,
+            account_id: "main".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_i64(10_000),
+            fee_bps: 100,
+            instrument_spec: Some(spec),
+            risk: RiskGate::conservative_default(),
+            data_tier: DataTier::L2L3,
+        };
+        let mut strategy = DerivativeBuy { emitted: false };
+        let report = OrderBookBacktestEngine::new(config)
+            .run(&[snapshot(1, 100), snapshot(2, 100)], &mut strategy)
+            .unwrap();
+        assert_eq!(report.fills.len(), 1);
+        // 1 张 * 0.001 BTC * 100 USDT = 0.1 USDT 名义额，1% 费率 = 0.001
+        assert_eq!(report.fills[0].fee.raw(), SCALE / 1000);
+    }
+
+    /// 执行模型不能静默覆盖配置里的费率，否则成本口径与声明不一致。
+    #[test]
+    fn conflicting_execution_model_fee_is_rejected_not_silently_applied() {
+        let config = OrderBookBacktestConfig {
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            account_id: "main".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_i64(10_000),
+            fee_bps: 5,
+            instrument_spec: None,
+            risk: RiskGate::conservative_default(),
+            data_tier: DataTier::L2L3,
+        };
+        let mut strategy = DerivativeBuy { emitted: false };
+        let error = OrderBookBacktestEngine::new(config)
+            .with_execution_model(OrderBookExecutionModel::new(7).unwrap())
+            .run(&[snapshot(1, 100), snapshot(2, 100)], &mut strategy)
+            .err()
+            .expect("费率冲突必须报错");
+        assert!(
+            matches!(error, qx_core::QxError::BusinessViolation(_))
+                && error.to_string().contains("fee_bps"),
+            "错误信息应指出冲突字段: {error}"
+        );
+    }
+
     fn l2_config(fee_bps: i128) -> OrderBookBacktestConfig {
         OrderBookBacktestConfig {
             instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),

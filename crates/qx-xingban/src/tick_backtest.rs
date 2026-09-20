@@ -382,6 +382,34 @@ mod tests {
         ));
     }
 
+    /// 上游移植：注入的门禁必须真正拦下 Tick 链路上的订单。与
+    /// [`tick_backtest_shares_the_configured_risk_gate`] 的区别是这里用**正的**
+    /// 数量上限（小于下单量），验证"装配了规则但阈值判定同样生效"，而不只是
+    /// 零阈值；门禁仍由配置持有，不在引擎上另起第二份状态。
+    #[test]
+    fn tick_backtest_applies_the_injected_risk_gate() {
+        let mut rule_set = qx_risk::RuleSet::with_version("tick-injected-max-qty");
+        rule_set.add(Box::new(qx_risk::MaxQtyRule { max_qty: 1 }));
+        let ticks = vec![QuoteTick::new(
+            1,
+            Price::from_i64(99),
+            Quantity::from_i64(2),
+            Price::from_i64(100),
+            Quantity::from_i64(2),
+            1,
+        )];
+        let mut strategy = BuyOnce { done: false };
+        let report = TickBacktestEngine::new(l1_config(RiskGate::from_rule_set(rule_set)))
+            .run(&ticks, &mut strategy)
+            .unwrap();
+        assert!(report.fills.is_empty());
+        assert!(report
+            .event_log
+            .events()
+            .iter()
+            .any(|event| matches!(event.kind, qx_core::EventKind::Rejected { .. })));
+    }
+
     struct BarOnlyBuy {
         emitted: bool,
         last_close_raw: i128,
