@@ -4,8 +4,9 @@
 //! 下一根 bar 撮合 → Fill → Ledger → EventLog。
 
 use qx_core::{
-    Event, EventKind, EventLog, Fill, Fnv1a, InstrumentId, Ledger, Money, Order, OrderStatus,
-    Price, Priority, Quantity, ReplayVerifier, RunManifest, Side, TradingInstrumentSpec,
+    Event, EventKind, EventLog, FeeModel, Fill, Fnv1a, InstrumentId, Ledger, Money, Order,
+    OrderStatus, Price, Priority, Quantity, ReplayVerifier, RunManifest, Side,
+    TradingInstrumentSpec, SCALE,
 };
 use qx_guanxing::{Bar, DataSourceId, DataView, QualityGate, Verdict};
 use qx_strategy::{MarketEvent, Strategy, StrategyContext};
@@ -14,7 +15,7 @@ use qx_zhenlu::{Oms, PositionSnapshot, RiskGate};
 use crate::ashare::{
     AshareCorporateActionType, AshareIssuerCapitalSnapshot, AshareRuleConfig, AshareSettlementState,
 };
-use crate::cost::{FeeModel, LatencyModel, MarginRule};
+use crate::cost::{LatencyModel, MarginRule};
 use crate::fill::{DataTier, FillModel};
 use crate::venue::BarMatchingEngine;
 use std::collections::BTreeMap;
@@ -165,7 +166,8 @@ pub struct BacktestConfig {
     pub account_id: String,
     pub currency: String,
     pub initial_cash: Money,
-    /// 合约乘数；现货使用 1，期货/永续必须显式传入市场规格中的乘数。
+    /// 合约乘数，**普通整数**（现货使用 1）；期货/永续必须显式传入市场规格中的乘数。
+    /// 注意与 `TradingInstrumentSpec::contract_size` 不同：后者是 SCALE 标度定点值。
     pub multiplier: i128,
     pub fill: Box<dyn FillModel>,
     pub fee: Box<dyn FeeModel>,
@@ -393,9 +395,11 @@ impl BacktestEngine {
                 qx_core::QxError::Permanent(format!("回测视图未通过质量门: {:?}", report.issues))
             })?;
         let input_data_hash = view.metadata().data_hash;
+        // 费用基准需要 SCALE 标度乘数：contract_size 本身就是定点值，而兼容路径的
+        // multiplier 是普通整数，必须折算，否则小额手续费会被整数除法截断为 0。
         let fee_price_multiplier = derivative_spec
             .map(|spec| spec.contract_size)
-            .unwrap_or(multiplier);
+            .unwrap_or_else(|| multiplier.saturating_mul(SCALE));
         let mut matcher = BarMatchingEngine::new_with_latency_and_fee_multiplier(
             fill,
             fee,
@@ -403,6 +407,9 @@ impl BacktestEngine {
             seed,
             fee_price_multiplier,
         );
+        // 反向（币本位）合约的费用基准与线性合约不同，必须跟随产品规格切换，
+        // 否则撮合计出的手续费会与账本按 `spec.notional` 记的名义额脱钩。
+        matcher.set_inverse_fee_basis(derivative_spec.is_some_and(|spec| spec.inverse));
         let mut ledger = Ledger::new();
         let deposit_id = ledger.deposit(
             &account_id,
@@ -416,8 +423,6 @@ impl BacktestEngine {
         let mut equity = Vec::new();
         let mut benchmark_equity = Vec::new();
         let mut positions = Vec::new();
-        let mut fees_raw = 0_i128;
-        let mut turnover_raw = 0_i128;
         let mut peak_equity = initial_cash.raw();
         let mut max_drawdown_raw = 0_i128;
         let mut next_id = 1_u64;
@@ -507,6 +512,7 @@ impl BacktestEngine {
                 ledger: &mut ledger,
                 log: &mut log,
                 fills: &mut fills,
+                fee_engine: None,
             };
             apply_virtual_events(&virtual_trading, bar, &mut virtual_state)?;
             if i > 0 {
@@ -651,6 +657,42 @@ impl BacktestEngine {
                             derivative_spec,
                             &virtual_trading.fx_rates,
                         )?;
+                        // 现货买入的资金下限只能是**可用现金**：权益含持仓未实现盈亏，
+                        // 用它放行等于让策略拿已有持仓当现金继续买，Ledger 会静默透支成
+                        // 负现金。衍生品/保证金交易仍按权益判定，与订单簿回测同一分支规则。
+                        //
+                        // 现货买入的资金需求是**全额名义额**，与 `MarginRule` 无关：
+                        // 保证金模型描述的是衍生品分级，`NoMargin` 让需求归零等于给现货
+                        // 账户免费杠杆。手续费同理由前置门禁承担，避免"校验时以为免费、
+                        // 成交时才扣款"。
+                        let cash_funded_spot_buy = derivative_spec.is_none()
+                            && order.side == Side::Buy
+                            && !product_policy.reduce_only;
+                        let required_funding = if cash_funded_spot_buy {
+                            let notional = notional_for(
+                                derivative_spec,
+                                order_qty,
+                                checked_abs(reference_price)?,
+                                multiplier,
+                            )?;
+                            notional
+                                .checked_add(matcher.estimate_fee(
+                                    order_qty,
+                                    checked_abs(reference_price)?,
+                                    &order,
+                                ))
+                                .ok_or_else(|| {
+                                    qx_core::QxError::Invariant("买入所需现金溢出".into())
+                                })?
+                                .max(required_margin)
+                        } else {
+                            required_margin
+                        };
+                        let available_funding = if cash_funded_spot_buy {
+                            ledger.cash_for(&account_id, &currency)
+                        } else {
+                            equity
+                        };
                         if !reduce_only_allowed {
                             append_rejection(
                                 &mut log,
@@ -658,12 +700,16 @@ impl BacktestEngine {
                                 order.client_id,
                                 "reduce-only order would open or exceed the existing position",
                             );
-                        } else if required_margin > equity {
+                        } else if required_funding > available_funding {
                             append_rejection(
                                 &mut log,
                                 bar.ts,
                                 order.client_id,
-                                "initial margin exceeds equity",
+                                if cash_funded_spot_buy {
+                                    "买入成本（含预估手续费）超过账户可用现金"
+                                } else {
+                                    "initial margin exceeds equity"
+                                },
                             );
                         } else {
                             let long_qty = ledger
@@ -723,7 +769,7 @@ impl BacktestEngine {
                             let risk_position = PositionSnapshot::new_with_multiplier(
                                 one_way_qty,
                                 gross_notional,
-                                multiplier,
+                                multiplier.saturating_mul(SCALE),
                             )
                             .with_hedge_legs(long_qty, short_qty);
                             let risk_result = risk.check_with_price(
@@ -817,17 +863,6 @@ impl BacktestEngine {
                         EventKind::LedgerApplied { entry },
                     ));
                 }
-                fees_raw = fees_raw
-                    .checked_add(fill.fee.raw())
-                    .ok_or_else(|| qx_core::QxError::Invariant("手续费累计溢出".into()))?;
-                turnover_raw = turnover_raw
-                    .checked_add(notional_for(
-                        derivative_spec,
-                        checked_abs(fill.qty.raw())?,
-                        checked_abs(fill.price.raw())?,
-                        multiplier,
-                    )?)
-                    .ok_or_else(|| qx_core::QxError::Invariant("换手累计溢出".into()))?;
                 fills.push(fill);
             }
             let mut marks = std::collections::BTreeMap::new();
@@ -886,8 +921,12 @@ impl BacktestEngine {
                         ledger: &mut ledger,
                         log: &mut log,
                         fills: &mut fills,
+                        fee_engine: Some(&matcher),
                     };
-                    if derivative_spec.is_some() {
+                    // 只有真的持有双向腿时才按腿平仓：单向（Net）持仓在双向账本里
+                    // 记为 0，用 `derivative_spec` 判定分支会让单向衍生持仓的强平
+                    // 变成两次空操作——权益永远停在维持保证金之下却不平仓。
+                    if derivative_spec.is_some() && (long_leg != 0 || short_leg != 0) {
                         for (position_side, leg) in [
                             (qx_core::PositionSide::Long, long_leg),
                             (qx_core::PositionSide::Short, short_leg),
@@ -929,6 +968,24 @@ impl BacktestEngine {
             positions.push(ledger.position_for(&account_id, &instrument).quantity.raw());
         }
         log.validate()?;
+        // 费用与换手按成交事实汇总，而不是在撮合循环里累加：强平、交割的成交由
+        // 虚拟事件路径直接记账，不经过该循环，循环内累加会让报告统计与账本现金
+        // 对不上。
+        let mut fees_raw = 0_i128;
+        let mut turnover_raw = 0_i128;
+        for fill in &fills {
+            fees_raw = fees_raw
+                .checked_add(fill.fee.raw())
+                .ok_or_else(|| qx_core::QxError::Invariant("手续费累计溢出".into()))?;
+            turnover_raw = turnover_raw
+                .checked_add(notional_for(
+                    derivative_spec,
+                    checked_abs(fill.qty.raw())?,
+                    checked_abs(fill.price.raw())?,
+                    multiplier,
+                )?)
+                .ok_or_else(|| qx_core::QxError::Invariant("换手累计溢出".into()))?;
+        }
         let final_equity = *equity.last().unwrap_or(&initial_cash.raw());
         let return_bps = if initial_cash.raw() > 0 {
             final_equity
@@ -992,7 +1049,7 @@ fn notional_for(
     if let Some(spec) = spec {
         spec.notional(qty, price)
     } else {
-        Ok(crate::cost::notional(qty, price).saturating_mul(multiplier))
+        Ok(qx_core::notional(qty, price).saturating_mul(multiplier))
     }
 }
 
@@ -1154,6 +1211,9 @@ struct VirtualExecution<'a> {
     ledger: &'a mut Ledger,
     log: &'a mut EventLog,
     fills: &'a mut Vec<Fill>,
+    /// 强制平仓用的费用口径。None 表示按无佣金结算（交割），Some 表示与
+    /// 策略成交共用同一撮合器的费率模型。
+    fee_engine: Option<&'a BarMatchingEngine>,
 }
 
 fn is_cash_dividend_action(action_type: AshareCorporateActionType) -> bool {
@@ -1211,11 +1271,19 @@ fn close_virtual_position(
             post_only: false,
         }),
     };
+    // 强平成交必须与策略成交收同一份佣金：忽略费率会让爆仓路径凭空免掉
+    // 手续费，回测出"亏损被佣金补贴"的系统性乐观偏差。合成订单不是 post-only，
+    // 因此按 taker 计费。
+    let price_abs = checked_abs(price.raw())?;
+    let commission_raw = state
+        .fee_engine
+        .map(|engine| engine.estimate_fee(qty, price_abs, &order).max(0))
+        .unwrap_or(0);
     let fill = Fill {
         order_id: client_id,
         qty: Quantity::from_raw(qty),
         price,
-        fee: Money::ZERO,
+        fee: Money::from_raw(commission_raw),
         ts,
         account_id: state.account_id.into(),
         ..Fill::default()
@@ -1233,7 +1301,7 @@ fn close_virtual_position(
     state.fills.push(fill);
     if let Some(fee_bp) = liquidation_fee_bp {
         let notional = notional_for(state.spec, qty, checked_abs(price.raw())?, state.multiplier)?;
-        let penalty = crate::cost::bp_amount(notional, fee_bp);
+        let penalty = qx_core::bp_amount(notional, fee_bp);
         if penalty > 0 {
             let entry_id = state.ledger.apply_liquidation(
                 state.account_id,
@@ -1742,7 +1810,7 @@ fn apply_virtual_events(
                 state.multiplier,
             )?;
             let signed = if position > 0 { -1 } else { 1 };
-            crate::cost::bp_amount(notional, event.rate_bp).saturating_mul(signed)
+            qx_core::bp_amount(notional, event.rate_bp).saturating_mul(signed)
         };
         if amount != 0 {
             let entry_id = state.ledger.apply_funding(
@@ -1756,7 +1824,7 @@ fn apply_virtual_events(
     }
     for event in config.interest.iter().filter(|event| event.ts == bar.ts) {
         let cash = state.ledger.cash_for(state.account_id, state.currency);
-        let amount = crate::cost::bp_amount(cash, event.rate_bp);
+        let amount = qx_core::bp_amount(cash, event.rate_bp);
         if amount != 0 {
             let entry_id = state.ledger.apply_interest(
                 state.account_id,
@@ -1780,13 +1848,31 @@ fn apply_virtual_events(
             .position_for(state.account_id, state.instrument)
             .quantity
             .raw();
-        if state.spec.is_some() {
-            for position_side in [qx_core::PositionSide::Long, qx_core::PositionSide::Short] {
-                let leg = state
-                    .ledger
-                    .position_for_side(state.account_id, state.instrument, position_side)
-                    .quantity
-                    .raw();
+        let long_leg = state
+            .ledger
+            .position_for_side(
+                state.account_id,
+                state.instrument,
+                qx_core::PositionSide::Long,
+            )
+            .quantity
+            .raw();
+        let short_leg = state
+            .ledger
+            .position_for_side(
+                state.account_id,
+                state.instrument,
+                qx_core::PositionSide::Short,
+            )
+            .quantity
+            .raw();
+        // 单向（Net）持仓在双向账本里两条腿都是 0，"按腿结算"等于什么都不平；
+        // 与强平路径共用同一分支规则。
+        if state.spec.is_some() && (long_leg != 0 || short_leg != 0) {
+            for (position_side, leg) in [
+                (qx_core::PositionSide::Long, long_leg),
+                (qx_core::PositionSide::Short, short_leg),
+            ] {
                 close_virtual_position(
                     state,
                     leg,
@@ -1827,10 +1913,10 @@ mod tests {
     use super::*;
     use crate::ashare::AshareCorporateActionEvent;
     use crate::{
-        MakerTakerFeeModel, MarginTier, NextBarOpenFillModel, NoMargin, TieredMargin,
-        VolumeSensitiveFillModel, ZeroLatency,
+        MarginTier, NextBarOpenFillModel, NoMargin, TieredMargin, VolumeSensitiveFillModel,
+        ZeroLatency,
     };
-    use qx_core::{OrderStatus, Quantity, Side, SCALE};
+    use qx_core::{MakerTakerFeeModel, OrderStatus, Quantity, Side, SCALE};
 
     struct BuyOnce {
         done: bool,
@@ -2022,6 +2108,7 @@ mod tests {
                 ledger: &mut ledger,
                 log: &mut log,
                 fills: &mut fills,
+                fee_engine: None,
             };
             apply_virtual_events(&config, &bar, &mut state).unwrap();
             if ts == record_ts {
@@ -2114,6 +2201,7 @@ mod tests {
                 ledger: &mut ledger,
                 log: &mut log,
                 fills: &mut fills,
+                fee_engine: None,
             };
             apply_virtual_events(&config, &bar, &mut state).unwrap();
         }
@@ -2148,6 +2236,7 @@ mod tests {
             ledger: &mut ledger,
             log: &mut log,
             fills: &mut fills,
+            fee_engine: None,
         };
         apply_virtual_events(&config, &payment_bar, &mut state).unwrap();
         assert_eq!(
@@ -2218,6 +2307,7 @@ mod tests {
                 ledger: &mut ledger,
                 log: &mut log,
                 fills: &mut fills,
+                fee_engine: None,
             };
             apply_virtual_events(&config, &bar, &mut state).unwrap();
             if ts == 10 {
@@ -2516,7 +2606,7 @@ mod tests {
             initial_cash: Money::from_i64(1000),
             multiplier: 1,
             fill: Box::new(VolumeSensitiveFillModel { frac_bp: 1000 }),
-            fee: Box::new(crate::ZeroFeeModel),
+            fee: Box::new(qx_core::ZeroFeeModel),
             data_tier: DataTier::Bar,
             latency: Box::new(ZeroLatency),
             margin: Box::new(NoMargin),
@@ -2918,6 +3008,100 @@ mod tests {
         assert_eq!(accepted_report.fills.len(), 1);
     }
 
+    /// 强平成交必须与策略成交按同一费率收佣金。
+    ///
+    /// 撮合器的费率模型此前只作用于策略路径，虚拟强平路径把 `fill.fee` 写死为
+    /// 零，于是爆仓场景等于免掉手续费平仓，回测结果系统性偏乐观。
+    #[test]
+    fn forced_liquidation_pays_the_same_commission_as_a_strategy_close() {
+        let instrument = InstrumentId::parse("BTC/USDT:USDT.LIQ").unwrap();
+        let spec = TradingInstrumentSpec {
+            instrument: instrument.clone(),
+            product: qx_core::TradingProduct::Perpetual,
+            base_currency: "BTC".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: qx_core::SCALE,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            max_leverage: 100,
+            maintenance_margin_bps: 100,
+            valid_from: 1,
+            valid_to: None,
+        };
+        let flat_bar = |ts: u64, price: i64| {
+            let raw = i128::from(price) * qx_core::SCALE;
+            Bar::new(ts, raw, raw, raw, raw, qx_core::SCALE)
+        };
+        // 100 开多一张，第三根 bar 跌到 10：权益跌破维持保证金，触发强平。
+        let bars = vec![flat_bar(1, 100), flat_bar(2, 100), flat_bar(3, 10)];
+        let config = |taker_bp: i64| {
+            let mut cfg = simple_config();
+            cfg.instrument = instrument.clone();
+            cfg.initial_cash = Money::from_i64(25);
+            cfg.instrument_spec = Some(spec.clone());
+            cfg.fee = Box::new(MakerTakerFeeModel {
+                maker_bp: 0,
+                taker_bp,
+            });
+            cfg.margin = Box::new(TieredMargin {
+                tiers: vec![MarginTier {
+                    max_notional: 150 * qx_core::SCALE,
+                    initial_bp: 2_000,
+                    maintenance_bp: 1_000,
+                    max_leverage: None,
+                }],
+            });
+            cfg.virtual_trading = VirtualTradingConfig {
+                enable_liquidation: true,
+                ..VirtualTradingConfig::default()
+            };
+            cfg
+        };
+        let run = |taker_bp: i64| {
+            BacktestEngine::new(config(taker_bp))
+                .run(
+                    &bars,
+                    &mut LeveragedBuyOnce {
+                        done: false,
+                        leverage: 10,
+                    },
+                )
+                .unwrap()
+        };
+
+        let charged = run(50);
+        assert_eq!(charged.fills.len(), 2, "开仓成交与强平成交各一笔");
+        assert_eq!(charged.positions.last(), Some(&0), "强平后必须清空持仓");
+        let entry = charged.fills[0].fee.raw();
+        let forced = charged.fills[1].fee.raw();
+        assert_eq!(
+            entry,
+            qx_core::bp_amount(100 * qx_core::SCALE, 50),
+            "开仓按 taker 计费"
+        );
+        assert_eq!(
+            forced,
+            qx_core::bp_amount(10 * qx_core::SCALE, 50),
+            "强平必须按同一 taker 费率收佣金"
+        );
+        assert_eq!(
+            charged.fees_raw,
+            charged.fills.iter().map(|fill| fill.fee.raw()).sum(),
+            "报告费用统计必须覆盖不经过撮合循环的强平成交"
+        );
+        let free = run(0);
+        assert_eq!(free.fills.len(), 2);
+        assert_eq!(free.fills[1].fee.raw(), 0);
+        assert!(
+            charged.equity.last() < free.equity.last(),
+            "同一场景下计费权益必须低于免佣金权益"
+        );
+    }
+
     #[test]
     fn reduce_only_order_cannot_open_a_new_virtual_position() {
         let bars = vec![
@@ -2951,5 +3135,105 @@ mod tests {
             .events()
             .iter()
             .any(|event| matches!(event.kind, EventKind::Rejected { .. })));
+    }
+
+    /// 按调用次序依次下单，用于构造"先建仓再用持仓市值继续买"的场景。
+    struct StagedBuyer {
+        quantities: Vec<i64>,
+        stage: usize,
+    }
+
+    impl BarStrategy for StagedBuyer {
+        fn on_bar(
+            &mut self,
+            _history: &[Bar],
+            instrument: &InstrumentId,
+            _ts: u64,
+            _position: i128,
+        ) -> Option<Order> {
+            let qty = *self.quantities.get(self.stage)?;
+            self.stage += 1;
+            Some(Order {
+                client_id: self.stage as u64,
+                instrument: instrument.clone(),
+                side: Side::Buy,
+                qty: Quantity::from_i64(qty),
+                limit: None,
+                status: OrderStatus::Submitted,
+                filled: Quantity::ZERO,
+                account_id: "main".into(),
+                trace: None,
+                policy: None,
+            })
+        }
+    }
+
+    fn rejection_reasons(report: &BacktestReport) -> Vec<String> {
+        report
+            .event_log
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::Rejected { reason, .. } => Some(reason.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn spot_buys_cannot_be_funded_by_position_value() {
+        let bars = (0..4)
+            .map(|i| Bar::new(i + 1, 100, 100, 100, 100, 10))
+            .collect::<Vec<_>>();
+        let mut config = simple_config();
+        config.initial_cash = Money::from_raw(1_000);
+        let mut strategy = StagedBuyer {
+            quantities: vec![5, 8],
+            stage: 0,
+        };
+        let report = BacktestEngine::new(config)
+            .run(&bars, &mut strategy)
+            .unwrap();
+
+        assert_eq!(report.fills.len(), 1, "只有第一笔现金买单应当成交");
+        // 5 手在 bar2 开盘 100 成交后剩现金 500，权益仍是 1000；第二笔 8 手名义额
+        // 800 必须因为现金不足被拒，否则等于用持仓市值凭空加杠杆。
+        assert!(
+            rejection_reasons(&report)
+                .iter()
+                .any(|reason| reason.contains("可用现金")),
+            "现金不足必须留下可审计的拒绝原因，实际为 {:?}",
+            rejection_reasons(&report)
+        );
+        assert!(
+            report.ledger.cash_for("main", "USD") >= 0,
+            "现货买入不得把账本现金写成负数"
+        );
+    }
+
+    #[test]
+    fn spot_buy_cash_floor_includes_the_estimated_fee() {
+        let bars = (0..3)
+            .map(|i| Bar::new(i + 1, 100, 100, 100, 100, 10))
+            .collect::<Vec<_>>();
+        let mut config = simple_config();
+        config.initial_cash = Money::from_raw(1_000);
+        config.fee = Box::new(MakerTakerFeeModel {
+            maker_bp: 0,
+            taker_bp: 1_000,
+        });
+        let mut strategy = StagedBuyer {
+            quantities: vec![10],
+            stage: 0,
+        };
+        let report = BacktestEngine::new(config)
+            .run(&bars, &mut strategy)
+            .unwrap();
+
+        // 名义额恰好等于现金，但 10% 吃单费会让成交后透支，所以必须前置拒绝。
+        assert!(report.fills.is_empty());
+        assert!(rejection_reasons(&report)
+            .iter()
+            .any(|reason| reason.contains("含预估手续费")));
     }
 }

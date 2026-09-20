@@ -21,11 +21,6 @@ pub enum DataTier {
 }
 
 impl DataTier {
-    /// 是否支持深度敏感模型。
-    pub fn has_depth(self) -> bool {
-        matches!(self, DataTier::L2L3)
-    }
-
     pub fn supports(self, model: Self) -> bool {
         matches!(
             (self, model),
@@ -241,19 +236,6 @@ impl FillModel for VolumeSensitiveFillModel {
         } else {
             None
         }
-    }
-}
-
-/// 按数据档位选择默认模型。档位不足时**降级**而非硬报错，
-/// 并调用方应把降级事实写入审计。
-pub fn default_for_tier(tier: DataTier) -> Box<dyn FillModel> {
-    match tier {
-        DataTier::L2L3 => Box::new(VolumeSensitiveFillModel { frac_bp: 1000 }),
-        DataTier::L1 => Box::new(ProbabilisticFillModel {
-            prob_fill_on_limit: 1_000_000_000,
-            tick: 0,
-        }),
-        DataTier::Bar => Box::new(NextBarOpenFillModel),
     }
 }
 

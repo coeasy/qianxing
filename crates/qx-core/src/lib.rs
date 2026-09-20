@@ -12,6 +12,7 @@ pub mod clock;
 pub mod engine;
 pub mod error;
 pub mod event;
+pub mod fee;
 pub mod identity;
 pub mod ledger;
 pub mod numeric;
@@ -26,6 +27,9 @@ pub use self::error::{QxError, QxResult};
 pub use self::event::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
     EventKind, EventMetadata, FundingRateSnapshot, Priority, EVENT_METADATA_SCHEMA_VERSION,
+};
+pub use self::fee::{
+    bp_amount, notional, AShareFeeModel, FeeModel, MakerTakerFeeModel, ZeroFeeModel,
 };
 pub use self::identity::{CanonicalProduct, InstrumentId, MarketId, VenueId};
 pub use self::ledger::{

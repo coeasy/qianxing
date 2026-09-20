@@ -7,7 +7,7 @@ use qx_data::{JsonBarFrameProvider, JsonDatasetRegistry};
 use qx_datastruct::BarFrame;
 use qx_guanxing::Bar;
 use qx_runtime::StrategyRuntimeConfig;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) fn run_dataset_ingest(
     frame_path: &Path,
@@ -316,5 +316,62 @@ fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
             serde_json::Value::Array(values.iter().map(canonicalize_json).collect())
         }
         _ => value.clone(),
+    }
+}
+
+pub(crate) fn dataset_ingest_command(argv: &[String]) {
+    let frame = match argv.get(2).cloned() {
+        Some(value) => PathBuf::from(value),
+        None => {
+            eprintln!("dataset-ingest 需要 bar-frame.json dataset-id version data-dir");
+            std::process::exit(2);
+        }
+    };
+    let dataset_id = match argv.get(3).cloned() {
+        Some(value) => value,
+        None => {
+            eprintln!("dataset-ingest 缺少 dataset-id");
+            std::process::exit(2);
+        }
+    };
+    let version = match argv.get(4).cloned() {
+        Some(value) => value,
+        None => {
+            eprintln!("dataset-ingest 缺少 version");
+            std::process::exit(2);
+        }
+    };
+    let data_root = match argv.get(5).cloned() {
+        Some(value) => PathBuf::from(value),
+        None => {
+            eprintln!("dataset-ingest 缺少 data-dir");
+            std::process::exit(2);
+        }
+    };
+    if let Err(error) = run_dataset_ingest(&frame, &dataset_id, &version, &data_root) {
+        eprintln!("数据集摄取失败: {error}");
+        std::process::exit(2);
+    }
+}
+
+pub(crate) fn dataset_bundle_command(argv: &[String]) {
+    let bundle = match argv.get(2).cloned() {
+        Some(value) => PathBuf::from(value),
+        None => {
+            eprintln!("dataset-bundle 需要 bundle.json data-dir");
+            std::process::exit(2);
+        }
+    };
+    let data_root = match argv.get(3).cloned() {
+        Some(value) => PathBuf::from(value),
+        None => {
+            eprintln!("dataset-bundle 缺少 data-dir");
+            std::process::exit(2);
+        }
+    };
+    let bars_frame = argv.get(4).cloned().map(PathBuf::from);
+    if let Err(error) = run_dataset_bundle(&bundle, &data_root, bars_frame.as_deref()) {
+        eprintln!("数据集 Bundle 保存失败: {error}");
+        std::process::exit(2);
     }
 }

@@ -16,7 +16,6 @@ qx-api = { path = "../qx-api" }
 qx-adapter = { path = "../qx-adapter" }
 qx-core = { path = "../qx-core" }
 qx-datastruct = { path = "../qx-datastruct" }
-qx-fenye = { path = "../qx-fenye" }
 qx-guanxing = { path = "../qx-guanxing" }
 qx-xingban = { path = "../qx-xingban" }
 qx-zhenlu = { path = "../qx-zhenlu" }

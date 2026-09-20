@@ -1,0 +1,7 @@
+{
+  "name": "crypto-default-maker-taker",
+  "maker_bp": 2,
+  "taker_bp": 5,
+  "latency_base_ns": 0,
+  "latency_insert_ns": 0
+}

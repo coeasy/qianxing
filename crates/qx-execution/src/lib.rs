@@ -9,7 +9,7 @@ use qx_application::{
     ExecutionEventPort, RiskDecision, RiskPort, VenuePort, VenueRouterPort,
 };
 use qx_control::{order_from_submit_command, ControlCommand};
-use qx_core::{Order, OrderStatus, OrderTrace, Price, Quantity, TradingInstrumentSpec, SCALE};
+use qx_core::{FeeModel, Order, OrderStatus, OrderTrace, Price, Quantity, TradingInstrumentSpec};
 use qx_guanxing::QuoteTick;
 use qx_runtime::{LiveEventPipeline, RuntimeEventEnvelope, RuntimeExternalEvent};
 use qx_zhenlu::{
@@ -547,10 +547,11 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
             .iter()
             .any(|fact| matches!(fact, ExecutionEvent::ReconcileRequired { .. }));
         for fact in facts {
-            self.append(
-                fact,
-                format!("{}:venue:{}", self.worker_id, self.venue.venue_id()),
-            )?;
+            let correlation_id = fact_correlation(
+                &format!("{}:venue:{}", self.worker_id, self.venue.venue_id()),
+                &fact,
+            );
+            self.append(fact, correlation_id)?;
         }
         if has_reconcile {
             return Err("Venue 返回待对账事实，禁止继续自动提交".into());
@@ -1234,15 +1235,14 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> MultiVenueSpreadExecutionSer
                 }
             };
             let mut route_error = None;
+            let spread_prefix = format!(
+                "{}:spread:{}:{}",
+                self.worker_id, self.group.group_id, leg_id
+            );
             for fact in facts {
                 let event = fact.clone();
-                if let Err(error) = self.append_fact(
-                    fact,
-                    format!(
-                        "{}:spread:{}:{}",
-                        self.worker_id, self.group.group_id, leg_id
-                    ),
-                ) {
+                if let Err(error) = self.append_fact(fact, fact_correlation(&spread_prefix, &event))
+                {
                     route_error = Some(error);
                     break;
                 }
@@ -1547,14 +1547,13 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                     continue;
                 }
             };
+            let hedge_prefix = format!(
+                "{}:hedge:{}:{}",
+                self.worker_id, self.group.group_id, target.leg_id
+            );
             for fact in facts {
-                self.append_fact(
-                    fact,
-                    format!(
-                        "{}:hedge:{}:{}",
-                        self.worker_id, self.group.group_id, target.leg_id
-                    ),
-                )?;
+                let correlation_id = fact_correlation(&hedge_prefix, &fact);
+                self.append_fact(fact, correlation_id)?;
             }
             let filled = self
                 .events
@@ -1692,6 +1691,48 @@ fn apply_spread_venue_events(
     Ok(())
 }
 
+/// 成交事实的稳定身份段。
+///
+/// 身份必须取自成交内容本身，不能用进程内的 `source_seq`：一次性 Paper 命令
+/// 每个进程都从 1 重新计数，第二笔订单的成交会撞上第一笔已落库的事实、被
+/// EventLog 静默去重，订单停在 Accepted 而资金不动，调用方却收到 `fills=1`。
+/// 字段选择与 `qx-runtime` 的 `fill_key` 同源，因此同一批回报重放仍然幂等。
+fn fill_tag(fill: &qx_core::Fill) -> String {
+    format!(
+        "fill:{}:{}:{}:{}",
+        fill.order_id,
+        fill.ts,
+        fill.qty.raw(),
+        fill.price.raw()
+    )
+}
+
+/// 一条 Venue 回报在其关联号中的稳定身份段。
+fn fact_tag(fact: &ExecutionEvent) -> String {
+    match fact {
+        ExecutionEvent::Accepted {
+            client_order_id, ..
+        } => format!("accepted:{client_order_id}"),
+        ExecutionEvent::Cancelled { client_order_id } => format!("cancelled:{client_order_id}"),
+        ExecutionEvent::ReconcileRequired { client_order_id } => {
+            format!("reconcile:{client_order_id}")
+        }
+        ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. } => {
+            fill_tag(fill.as_ref())
+        }
+    }
+}
+
+/// 在调用方的来源前缀（worker/venue/group/leg）后追加回报身份。
+///
+/// `RuntimePipeline::ingest` 对 Accepted/Cancelled/ReconcileRequired/
+/// FillWithSpec 按 correlation 去重——重启后 `source_seq` 会重新计数，只靠它
+/// 挡不住重放。因此前缀必须唯一到"这一批回报属于哪条腿"，再叠加事实自身的
+/// 身份；否则第二个订单/第二条腿会撞上第一个已落库的事实而被静默丢弃。
+fn fact_correlation(prefix: &str, fact: &ExecutionEvent) -> String {
+    format!("{prefix}:{}", fact_tag(fact))
+}
+
 /// 将 Venue 返回的订单事实统一归约到 Runtime/EventLog/Ledger 管线。
 ///
 /// `source_seq` 由调用方持有；重复回报仍由 LiveEventPipeline 去重。
@@ -1750,6 +1791,7 @@ fn ingest_venue_events_port_with_spec<P: ExecutionEventPort>(
             ),
             VenueEvent::Fill(fill) => {
                 let event_ts = fill.ts;
+                let correlation_id = format!("{worker_id}:{}", fill_tag(&fill));
                 let event = match spec {
                     Some(spec) => ExecutionEvent::FillWithSpec {
                         fill: Box::new(fill),
@@ -1757,7 +1799,7 @@ fn ingest_venue_events_port_with_spec<P: ExecutionEventPort>(
                     },
                     None => ExecutionEvent::Fill(Box::new(fill)),
                 };
-                (event, event_ts, format!("{worker_id}:fill:{}", *source_seq))
+                (event, event_ts, correlation_id)
             }
             VenueEvent::Cancelled {
                 client_order_id,
@@ -1805,10 +1847,11 @@ pub fn ingest_venue_events(
             ),
             VenueEvent::Fill(fill) => {
                 let event_ts = fill.ts;
+                let correlation_id = format!("{worker_id}:{}", fill_tag(&fill));
                 (
                     RuntimeExternalEvent::Fill { fill },
                     event_ts,
-                    format!("{worker_id}:fill:{}", *source_seq),
+                    correlation_id,
                 )
             }
             VenueEvent::Cancelled {
@@ -1864,13 +1907,14 @@ pub fn ingest_venue_events_with_spec(
             ),
             VenueEvent::Fill(fill) => {
                 let event_ts = fill.ts;
+                let correlation_id = format!("{worker_id}:{}", fill_tag(&fill));
                 (
                     RuntimeExternalEvent::FillWithSpec {
                         fill: Box::new(fill),
                         spec: Box::new(spec.clone()),
                     },
                     event_ts,
-                    format!("{worker_id}:fill:{}", *source_seq),
+                    correlation_id,
                 )
             }
             VenueEvent::Cancelled {
@@ -1924,22 +1968,8 @@ pub fn submit_order_via_gateway_with_risk<V: VenuePort, P: ExecutionEventPort, R
         .submit_command_with_risk(command, risk)
 }
 
-pub fn submit_order<V: Venue>(
-    command: &ControlCommand,
-    venue: &mut V,
-    pipeline: &mut LiveEventPipeline,
-    worker_id: &str,
-    now: u64,
-    source_seq: &mut u64,
-) -> Result<String, String> {
-    let mut venue = BorrowedVenuePort::new(venue);
-    let result = ExecutionGateway::new(&mut venue, pipeline, worker_id, now, source_seq)
-        .submit_command(command)?;
-    Ok(result.message)
-}
-
-/// `submit_order` 的账户级风控版本，供 Paper/CCXT/Binance worker 在已有账户
-/// 快照和市场规格时统一使用；Venue 仍只接收通过预检的订单。
+/// `submit_order_via_gateway` 的账户级风控版本，供 Paper/CCXT/Binance worker 在
+/// 已有账户快照和市场规格时统一使用；Venue 仍只接收通过预检的订单。
 pub fn submit_order_with_risk<V: Venue>(
     command: &ControlCommand,
     venue: &mut V,
@@ -1951,25 +1981,16 @@ pub fn submit_order_with_risk<V: Venue>(
 ) -> Result<String, String> {
     let mut venue = BorrowedVenuePort::new(venue);
     let mut gateway = ExecutionGateway::new(&mut venue, pipeline, worker_id, now, source_seq);
-    let result = if let Some(spec) = context.risk.instrument_spec.clone() {
-        gateway
-            .with_instrument_spec(spec)
-            .submit_command_with_risk(
-                command,
-                &RiskContextPort {
-                    risk: context.risk,
-                    position: context.position,
-                },
-            )?
-    } else {
-        gateway.submit_command_with_risk(
-            command,
-            &RiskContextPort {
-                risk: context.risk,
-                position: context.position,
-            },
-        )?
-    };
+    if let Some(spec) = context.risk.instrument_spec.clone() {
+        gateway = gateway.with_instrument_spec(spec);
+    }
+    let result = gateway.submit_command_with_risk(
+        command,
+        &RiskContextPort {
+            risk: context.risk,
+            position: context.position,
+        },
+    )?;
     Ok(result.message)
 }
 
@@ -2044,10 +2065,14 @@ pub fn execute_paper_submit_effect_with_storage_backend(
         1,
         risk,
         position,
+        None,
     )
 }
 
 /// Paper 执行的统一存储版本，并允许 PostgreSQL EventLog 使用运行时连接池。
+///
+/// `fee_model` 是 Paper 成交的手续费来源。生产 worker 必须传入与回测一致的
+/// 配置模型；`None` 表示不计费，只保留给离线 smoke fixture。
 #[allow(clippy::too_many_arguments)]
 pub fn execute_paper_submit_effect_with_storage_backend_and_pool(
     command: &ControlCommand,
@@ -2059,6 +2084,7 @@ pub fn execute_paper_submit_effect_with_storage_backend_and_pool(
     postgres_pool_size: usize,
     risk: Option<RiskContext>,
     position: Option<PositionSnapshot>,
+    fee_model: Option<Box<dyn FeeModel + Send>>,
 ) -> Result<String, String> {
     execute_paper_submit_effect_with_storage_backend_and_pool_with_quote(
         command,
@@ -2071,6 +2097,7 @@ pub fn execute_paper_submit_effect_with_storage_backend_and_pool(
         risk,
         position,
         None,
+        fee_model,
     )
 }
 
@@ -2089,6 +2116,7 @@ pub fn execute_paper_submit_effect_with_storage_backend_and_pool_with_quote(
     risk: Option<RiskContext>,
     position: Option<PositionSnapshot>,
     market_quote: Option<QuoteTick>,
+    fee_model: Option<Box<dyn FeeModel + Send>>,
 ) -> Result<String, String> {
     let order = order_from_submit_command(command)
         .map_err(|error| format!("Paper SubmitOrder 订单载荷非法: {error:?}"))?;
@@ -2115,7 +2143,10 @@ pub fn execute_paper_submit_effect_with_storage_backend_and_pool_with_quote(
         None => LiveEventPipeline::open_configured(root, log_name, "USDT", segment_events),
     }
     .map_err(|error| format!("打开 Paper EventLog 失败: {error:?}"))?;
-    let mut venue = PaperVenue::new("paper");
+    let mut venue = match fee_model {
+        Some(model) => PaperVenue::new("paper").with_fee_model(model),
+        None => PaperVenue::new("paper"),
+    };
     let mut source_seq = 0_u64;
     let mut execution = if let Some(spec) = risk
         .as_ref()
@@ -2147,8 +2178,21 @@ pub fn execute_paper_submit_effect_with_storage_backend_and_pool_with_quote(
         return Ok(submit_result);
     }
     let quote = market_quote.unwrap_or_else(|| {
-        let ask = order.limit.unwrap_or_else(|| Price::from_i64(100));
-        let bid = Price::from_raw(ask.raw().saturating_sub(SCALE));
+        // 冒烟夹具的报价必须让订单按自身限价成交：PaperVenue 用 ask 成交买单、
+        // 用 bid 成交卖单，所以有效价格一侧等于限价、另一侧只差一个最小价格
+        // 单位。此前固定为 `bid = ask - 1`（1 个完整价格单位）会让限价卖单永远
+        // 不成交、市价卖单凭空多付这 1 个单位。
+        let reference = order.limit.unwrap_or_else(|| Price::from_i64(100));
+        let (bid, ask) = match order.side {
+            qx_core::Side::Buy => (
+                Price::from_raw(reference.raw().saturating_sub(1)),
+                reference,
+            ),
+            qx_core::Side::Sell => (
+                reference,
+                Price::from_raw(reference.raw().saturating_add(1)),
+            ),
+        };
         QuoteTick::new(
             now.saturating_add(1),
             bid,
@@ -2449,6 +2493,50 @@ mod tests {
             state.events[0].event,
             ExecutionEvent::Accepted { .. }
         ));
+    }
+
+    /// 同一 worker + 同一 Venue 的第二笔订单必须拥有自己的关联号：
+    /// EventLog 对 Accepted 一类语义事实只按 correlation 去重，共用一个
+    /// `worker:venue` 关联号会让后一笔订单的回报被当成前一笔的重放丢弃。
+    #[test]
+    fn port_execution_service_correlates_each_order_separately() {
+        let mut state = PortState::default();
+        let mut source_seq = 0;
+        for client_id in 11_u64..13 {
+            let mut venue = PortVenue {
+                result: Ok(vec![
+                    ExecutionEvent::Accepted {
+                        client_order_id: client_id,
+                        venue_order_id: format!("remote-{client_id}"),
+                    },
+                    ExecutionEvent::Fill(Box::new(qx_core::Fill {
+                        order_id: client_id,
+                        qty: Quantity::from_i64(1),
+                        price: Price::from_i64(100),
+                        ts: 20,
+                        account_id: "port-main".into(),
+                        ..qx_core::Fill::default()
+                    })),
+                ]),
+            };
+            PortExecutionService::new(&mut venue, &mut state, "port-worker", 10, &mut source_seq)
+                .submit(port_order(client_id))
+                .unwrap();
+        }
+        let correlations: Vec<&str> = state
+            .events
+            .iter()
+            .map(|envelope| envelope.correlation_id.as_str())
+            .collect();
+        assert_eq!(
+            correlations,
+            vec![
+                "port-worker:venue:port-test:accepted:11",
+                "port-worker:venue:port-test:fill:11:20:1000000000:100000000000",
+                "port-worker:venue:port-test:accepted:12",
+                "port-worker:venue:port-test:fill:12:20:1000000000:100000000000",
+            ]
+        );
     }
 
     #[test]
@@ -3122,6 +3210,132 @@ mod tests {
             .entries()
             .iter()
             .all(|entry| entry.kind != qx_core::LedgerEntryKind::TradeCash));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sequential_paper_orders_each_reach_the_ledger() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-execution-sequential-paper-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let instrument = InstrumentId::parse("BTC/USDT.BINANCE").unwrap();
+        for client_id in 3_u64..6 {
+            let order = Order {
+                client_id,
+                instrument: instrument.clone(),
+                side: Side::Buy,
+                qty: Quantity::from_i64(1),
+                limit: Some(Price::from_i64(100)),
+                status: OrderStatus::PendingSubmit,
+                filled: Quantity::ZERO,
+                account_id: "main".into(),
+                trace: None,
+                policy: None,
+            };
+            let command = ControlCommand {
+                command_id: order.client_id,
+                request_id: format!("paper-{client_id}"),
+                operator_id: "test".into(),
+                reason: "sequential paper orders".into(),
+                kind: CommandKind::SubmitOrder,
+                target: order.client_id.to_string(),
+                payload: BTreeMap::from([(
+                    "order_json".into(),
+                    serde_json::to_string(&order).unwrap(),
+                )]),
+                permission: Permission::Trading,
+                dry_run: false,
+            };
+            // 每次调用都是一个新进程的效果：`source_seq` 从 0 重新计数，
+            // 只有按成交内容去重才不会把后一笔订单的成交当成重放丢掉。
+            let result =
+                execute_paper_submit_effect(&command, &root, "paper-events", 10 + client_id)
+                    .unwrap();
+            assert!(result.contains("fills=1"), "{client_id}: {result}");
+        }
+        let pipeline = LiveEventPipeline::open(&root, "paper-events", "USDT").unwrap();
+        let mut orders = pipeline.orders();
+        orders.sort_by_key(|order| order.client_id);
+        assert_eq!(
+            orders
+                .iter()
+                .map(|order| (order.client_id, order.status))
+                .collect::<Vec<_>>(),
+            vec![
+                (3, OrderStatus::Filled),
+                (4, OrderStatus::Filled),
+                (5, OrderStatus::Filled)
+            ]
+        );
+        assert_eq!(
+            pipeline
+                .ledger()
+                .position_for("main", &instrument)
+                .quantity
+                .raw(),
+            3 * SCALE
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// 冒烟夹具没有行情时必须造一个报价推进成交；造出来的买卖价不能牺牲任一侧
+    /// 的限价：卖单吃 bid，旧实现把 bid 固定为 `ask - 1 个价格单位`，限价卖单
+    /// 因此永远不成交，市价卖单则凭空多付这 1 个单位。
+    #[test]
+    fn smoke_fixture_quote_fills_limit_sell_at_its_own_limit() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-execution-smoke-sell-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let instrument = InstrumentId::parse("BTC/USDT.BINANCE").unwrap();
+        let order = Order {
+            client_id: 21,
+            instrument: instrument.clone(),
+            side: Side::Sell,
+            qty: Quantity::from_i64(1),
+            limit: Some(Price::from_i64(100)),
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+        };
+        let command = ControlCommand {
+            command_id: order.client_id,
+            request_id: "smoke-sell".into(),
+            operator_id: "test".into(),
+            reason: "smoke sell".into(),
+            kind: CommandKind::SubmitOrder,
+            target: order.client_id.to_string(),
+            payload: BTreeMap::from([(
+                "order_json".into(),
+                serde_json::to_string(&order).unwrap(),
+            )]),
+            permission: Permission::Trading,
+            dry_run: false,
+        };
+        execute_paper_submit_effect(&command, &root, "smoke-events", 30).unwrap();
+        let pipeline = LiveEventPipeline::open(&root, "smoke-events", "USDT").unwrap();
+        assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
+        let fill = pipeline
+            .log()
+            .events()
+            .iter()
+            .find_map(|event| match &event.kind {
+                qx_core::EventKind::Filled { fill } => Some(fill.clone()),
+                _ => None,
+            })
+            .expect("夹具报价必须推动限价卖单成交");
+        assert_eq!(fill.price.raw(), 100 * SCALE);
         let _ = std::fs::remove_dir_all(root);
     }
 

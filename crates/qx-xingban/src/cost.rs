@@ -1,116 +1,10 @@
-//! 成本、延迟、保证金。
+//! 延迟与保证金。
 //!
-//! 真实回测不能只扣比例手续费。Fee / Latency / Margin 属于不同语义层，
-//! 却必须共享同一订单事件流，否则成交、账户与组合估值会彼此断裂。
+//! 费用契约在内核 [`qx_core::FeeModel`]：回测撮合、订单簿逐档撮合与 Paper 模拟
+//! 都要为同一条 `Fill.fee` 负责，放在回测层会让其他执行平面各写一套。
+//! 延迟与保证金只参与回测撮合，因此留在本层。
 
-use qx_core::{QxError, QxResult, Side, TradingInstrumentSpec};
-
-/// 名义额 = qty * price / SCALE（两者均为定点原始值）。
-pub fn notional(qty: i128, price: i128) -> i128 {
-    qty.saturating_mul(price) / 1_000_000_000
-}
-
-/// 按基点取金额（1 bp = 万分之一）。
-pub fn bp_amount(x: i128, bp: i64) -> i128 {
-    x.saturating_mul(bp as i128) / 10_000
-}
-
-pub trait FeeModel {
-    fn name(&self) -> &'static str;
-    fn version(&self) -> &'static str {
-        "v1"
-    }
-    /// 返回费用（定点原始值）。`is_maker` 区分挂单/吃单。
-    fn commission(&self, qty: i128, price: i128, is_maker: bool) -> i128;
-
-    fn commission_for_side(&self, qty: i128, price: i128, side: Side, is_maker: bool) -> i128 {
-        let _ = side;
-        self.commission(qty, price, is_maker)
-    }
-
-    fn parameters(&self) -> String {
-        String::new()
-    }
-
-    fn descriptor(&self) -> String {
-        format!(
-            "{}@{}[params={}]",
-            self.name(),
-            self.version(),
-            self.parameters()
-        )
-    }
-}
-
-pub struct ZeroFeeModel;
-
-impl FeeModel for ZeroFeeModel {
-    fn name(&self) -> &'static str {
-        "ZeroFee"
-    }
-    fn commission(&self, _q: i128, _p: i128, _maker: bool) -> i128 {
-        0
-    }
-}
-
-/// maker/taker 费率模型（加密现货与合约常见）。
-pub struct MakerTakerFeeModel {
-    pub maker_bp: i64,
-    pub taker_bp: i64,
-}
-
-impl FeeModel for MakerTakerFeeModel {
-    fn name(&self) -> &'static str {
-        "MakerTaker"
-    }
-    fn commission(&self, qty: i128, price: i128, is_maker: bool) -> i128 {
-        let n = notional(qty, price);
-        if is_maker {
-            bp_amount(n, self.maker_bp)
-        } else {
-            bp_amount(n, self.taker_bp)
-        }
-    }
-    fn parameters(&self) -> String {
-        format!("maker_bp={};taker_bp={}", self.maker_bp, self.taker_bp)
-    }
-}
-
-/// A 股费用：佣金（含最低佣金）+ 卖出印花税 + 过户费。
-///
-/// 常见陷阱：把 T+1、涨跌停、除复权时点弄错；这里只负责"钱"，规则在规则包。
-pub struct AShareFeeModel {
-    pub commission_bp: i64,
-    pub min_commission: i128,
-    /// 仅卖出征收。
-    pub stamp_duty_bp: i64,
-    /// 双边征收。
-    pub transfer_fee_bp: i64,
-}
-
-impl FeeModel for AShareFeeModel {
-    fn name(&self) -> &'static str {
-        "AShareFee"
-    }
-    fn commission(&self, qty: i128, price: i128, is_maker: bool) -> i128 {
-        self.commission_for_side(qty, price, Side::Buy, is_maker)
-    }
-    fn commission_for_side(&self, qty: i128, price: i128, side: Side, _is_maker: bool) -> i128 {
-        let n = notional(qty, price);
-        let mut fee = bp_amount(n, self.commission_bp).max(self.min_commission);
-        fee += bp_amount(n, self.transfer_fee_bp);
-        if side == Side::Sell {
-            fee += bp_amount(n, self.stamp_duty_bp);
-        }
-        fee
-    }
-    fn parameters(&self) -> String {
-        format!(
-            "commission_bp={};min_commission={};stamp_duty_bp={};transfer_fee_bp={}",
-            self.commission_bp, self.min_commission, self.stamp_duty_bp, self.transfer_fee_bp
-        )
-    }
-}
+use qx_core::{bp_amount, QxError, QxResult, TradingInstrumentSpec};
 
 pub trait LatencyModel {
     fn name(&self) -> &'static str;
@@ -152,7 +46,10 @@ impl LatencyModel for StaticLatency {
         "StaticLatency"
     }
     fn delay_ns(&self) -> u64 {
-        self.base_ns + self.insert_ns
+        // 饱和加：`ExecutionCostRules::validate` 只在从配置加载时守住这次相加，
+        // 而本结构体是公开字段。release 下的回绕会把延迟变短，等于把时间因果
+        // 变成一个静默的乐观假设。
+        self.base_ns.saturating_add(self.insert_ns)
     }
     fn descriptor(&self) -> String {
         format!(
@@ -361,43 +258,6 @@ impl MarginRule for FixedRateMargin {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn maker_cheaper_than_taker() {
-        let m = MakerTakerFeeModel {
-            maker_bp: 2,
-            taker_bp: 5,
-        };
-        let qty = 1_000_000_000i128; // 1.0
-        let px = 100_000_000_000i128; // 100.0
-        assert!(m.commission(qty, px, true) < m.commission(qty, px, false));
-    }
-
-    #[test]
-    fn min_commission_floor() {
-        let m = AShareFeeModel {
-            commission_bp: 1,
-            min_commission: 5_000_000_000, // 5 元
-            stamp_duty_bp: 0,
-            transfer_fee_bp: 0,
-        };
-        assert_eq!(m.commission(1, 1, true), 5_000_000_000);
-    }
-
-    #[test]
-    fn ashare_stamp_duty_is_sell_side_only() {
-        let m = AShareFeeModel {
-            commission_bp: 0,
-            min_commission: 0,
-            stamp_duty_bp: 5,
-            transfer_fee_bp: 0,
-        };
-        let buy = m.commission_for_side(1_000_000_000, 100_000_000_000, qx_core::Side::Buy, false);
-        let sell =
-            m.commission_for_side(1_000_000_000, 100_000_000_000, qx_core::Side::Sell, false);
-        assert_eq!(buy, 0);
-        assert_eq!(sell, 50_000_000);
-    }
 
     #[test]
     fn latency_is_additive() {

@@ -77,7 +77,9 @@
       "credential_env": {
         "api_key": "QX_BINANCE_TESTNET_API_KEY",
         "secret": "QX_BINANCE_TESTNET_API_SECRET"
-      }
+      },
+      "instrument_spec_path": "qianxing.binance.spot.spec.json",
+      "settlement_currency": "USDT"
     }
   ],
   "scheduler": {

@@ -10,8 +10,9 @@ use std::collections::BinaryHeap;
 struct Keyed(Event);
 
 impl PartialEq for Keyed {
+    /// 委托 `cmp`：只比 seq 会在 seq 重复时违反 Ord/Eq 契约。
     fn eq(&self, other: &Self) -> bool {
-        self.0.seq == other.0.seq
+        self.cmp(other) == Ordering::Equal
     }
 }
 impl Eq for Keyed {}

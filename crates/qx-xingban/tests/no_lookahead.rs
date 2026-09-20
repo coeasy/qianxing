@@ -1,8 +1,8 @@
-use qx_core::{InstrumentId, Money, Order, OrderStatus, Quantity, Side};
+use qx_core::{InstrumentId, MakerTakerFeeModel, Money, Order, OrderStatus, Quantity, Side};
 use qx_guanxing::Bar;
 use qx_xingban::{
-    BacktestConfig, BacktestEngine, BarStrategy, DataTier, MakerTakerFeeModel,
-    NextBarOpenFillModel, NoMargin, VirtualTradingConfig, ZeroLatency,
+    BacktestConfig, BacktestEngine, BarStrategy, DataTier, NextBarOpenFillModel, NoMargin,
+    VirtualTradingConfig, ZeroLatency,
 };
 use qx_zhenlu::{MaxNotionalRule, RiskGate};
 

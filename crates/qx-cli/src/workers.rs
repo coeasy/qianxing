@@ -715,3 +715,35 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
         .join()
         .map_err(|_| format!("Strategy worker {worker_id} panic"))?
 }
+
+fn worker_command(argv: &[String], mode: &str) {
+    let path = argv
+        .get(2)
+        .cloned()
+        .unwrap_or_else(|| "deploy/qianxing.runtime.example.json".into());
+    let worker_id = match argv.get(3).cloned() {
+        Some(worker_id) => worker_id,
+        None => {
+            eprintln!("{mode} 需要 worker-id");
+            std::process::exit(2);
+        }
+    };
+    let once = argv.iter().any(|argument| argument == "--once");
+    let result = if mode == "scheduler-worker" {
+        run_scheduler_worker(Path::new(&path), &worker_id, once)
+    } else {
+        run_strategy_worker(Path::new(&path), &worker_id, once)
+    };
+    if let Err(error) = result {
+        eprintln!("{mode} 启动/运行失败: {error}");
+        std::process::exit(2);
+    }
+}
+
+pub(crate) fn scheduler_worker_command(argv: &[String]) {
+    worker_command(argv, "scheduler-worker");
+}
+
+pub(crate) fn strategy_worker_command(argv: &[String]) {
+    worker_command(argv, "strategy-worker");
+}

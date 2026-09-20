@@ -152,7 +152,9 @@ Paper Execution worker 可以配置 `paper_initial_cash_raw`，启动时通过�
 
 该样例同时展示 `strategies[]` 多策略配置。每个策略实例的 `id` 必须等于对应 Strategy worker id；调度任务的 `owner` 必须填写该策略实例，多个策略共用 JobQueue 时不会互相领取任务。
 
-双腿套利可使用 `multi-builtin-backtest <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity]`。两条 BarFrame 必须时间戳对齐；信号由同一个套利策略生成，再分别通过统一撮合、手续费、风控和 Ledger 回测，适用于跨交易所价差与现货/期货基差策略。示例输入为 `qianxing.bar-frame.example.json` 与 `qianxing.bar-frame.okx.example.json`。
+双腿套利可使用 `multi-builtin-backtest <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity] [--costs costs.json]`。两条 BarFrame 必须时间戳对齐；信号由同一个套利策略生成，再分别通过统一撮合、手续费、风控和 Ledger 回测，适用于跨交易所价差与现货/期货基差策略。示例输入为 `qianxing.bar-frame.example.json` 与 `qianxing.bar-frame.okx.example.json`。
+
+加密与非 A 股市场的手续费和下单延迟由 `qianxing.costs.example.json` 一类成本规则文件驱动：策略配置 `cost_rules_path`，`builtin-backtest`、`multi-builtin-backtest`、`ccxt-backtest`、`ccxt-builtin-backtest` 四条命令则用 `--costs <path>` 开关传同一个文件。`maker_bp`/`taker_bp` 是万分之一基点，`latency_base_ns`/`latency_insert_ns` 与内核时钟同为纳秒；两项延迟为 0 时使用零延迟模型，否则使用固定延迟模型。缺省配置等价于历史写死的 `maker_bp=2、taker_bp=5、零延迟`，费用与延迟的 descriptor 都会进入 RunManifest，因此“真的零延迟”和“忘记配置”在清单上可区分。`cost_rules_path` 与 `ashare_rules_path` 互斥，A 股费率、印花税和最低佣金以规则快照为准；Paper 与恢复补偿腿使用同一份费用模型，不会比回测更乐观。
 
 多标的、多币种批量回测使用 `fast-backtest manifest.json`。manifest 的 `jobs[]` 每项配置一个独立 `runtime`、`bars` 和可选 `market_spec`，CLI 会并行运行多个隔离账户/标的任务，适合同时比较 BTC、ETH、SOL，现货、永续、期货以及不同策略参数。示例见 `qianxing.fast-backtest.example.json`；每个 runtime 可以继续使用 `strategies[]` 配置多策略实例。
 
@@ -452,11 +454,13 @@ cargo run --release -p qx-cli -- binance-submit-order `
 
 确认沙盒/模拟账户、余额和回滚流程后，才可以把命令中的 `dry_run` 改为 `false`。执行器会先追加 `OrderSubmitted`，再调用 Binance REST submit；成功回报继续写入 Accepted/Fill/LedgerApplied，HTTP 5xx 或连接中断只保留待对账状态，不自动重试。
 
-生产 Execution worker 应配置冻结的 `instrument_spec_path`（可直接使用
-`ccxt-market-spec` 生成的市场快照），并可配置 `max_order_notional_raw`、
-`max_position_notional_raw`。配置后，Paper/CCXT/Binance 在调用 Venue 前会从同一
-EventLog 重建账户权益、持仓和标记价，统一执行 lot/tick、产品、杠杆、保证金和名义额
-预检；缺少规格时虽然保留旧配置兼容，但不应作为生产风控配置。
+Execution、SpreadRecovery 与 HedgeRecovery worker 必须配置冻结的 `instrument_spec_path`
+（可直接使用 `ccxt-market-spec` 生成的市场快照），并可配置 `max_order_notional_raw`、
+`max_position_notional_raw`。提交订单前，Paper/CCXT/Binance 会在同一 EventLog 上重建
+账户权益、持仓和标记价，统一执行 lot/tick、产品、杠杆、保证金和名义额预检；缺少规格时
+运行时会直接拒绝执行该 SubmitOrder，而不是退回“没有风控”的裸提交——否则同一条策略订单
+会在配了规格时被拒、没配时静默成交，风控成了可选项。对账与行情 worker 不提交订单，
+不需要该字段。
 
 示例配置已经为 CCXT OKX 永续和 Binance Spot 提供冻结规格文件：
 `qianxing.ccxt.okx.perpetual.spec.json`、`qianxing.binance.spot.spec.json`。

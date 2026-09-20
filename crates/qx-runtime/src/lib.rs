@@ -1043,6 +1043,10 @@ pub struct StrategyRuntimeConfig {
     /// 可选 Python/A 股交易日历 JSON；会展开交易日和交易时段并合并进规则快照。
     #[serde(default)]
     pub ashare_calendar_path: Option<String>,
+    /// 执行成本规则（maker/taker 基点 + 下单延迟）。加密等非 A 股路径用它
+    /// 替代代码里的硬编码费率；与 ashare_rules_path 互斥，因为后者已自带费用。
+    #[serde(default)]
+    pub cost_rules_path: Option<String>,
     /// 可选 Python JSONL 策略模块；Strategy Worker 只通过稳定契约调用它。
     #[serde(default)]
     pub python_module: Option<String>,
@@ -1122,6 +1126,7 @@ impl Default for StrategyRuntimeConfig {
             ashare_rules_path: None,
             ashare_actions_path: None,
             ashare_calendar_path: None,
+            cost_rules_path: None,
             python_module: None,
             transport: StrategyTransport::Jsonl,
             shared_memory_capacity: default_strategy_shared_memory_capacity(),
@@ -1290,6 +1295,18 @@ impl RuntimeConfig {
             .is_some_and(|path| path.trim().is_empty())
         {
             return Err(format!("{label} ashare_calendar_path 不能为空字符串"));
+        }
+        if strategy
+            .cost_rules_path
+            .as_deref()
+            .is_some_and(|path| path.trim().is_empty())
+        {
+            return Err(format!("{label} cost_rules_path 不能为空字符串"));
+        }
+        if strategy.cost_rules_path.is_some() && strategy.ashare_rules_path.is_some() {
+            return Err(format!(
+                "{label} cost_rules_path 与 ashare_rules_path 都声明了手续费，只能二选一"
+            ));
         }
         if strategy.research_snapshot_required && strategy.research_data_fingerprint.is_none() {
             return Err(format!(
@@ -3078,6 +3095,7 @@ mod tests {
             ashare_rules_path: None,
             ashare_actions_path: None,
             ashare_calendar_path: None,
+            cost_rules_path: None,
             python_module: None,
             transport: StrategyTransport::Jsonl,
             shared_memory_capacity: default_strategy_shared_memory_capacity(),

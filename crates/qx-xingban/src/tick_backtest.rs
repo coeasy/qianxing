@@ -114,6 +114,7 @@ pub type TickBacktestReport = OrderBookBacktestReport;
 pub struct TickBacktestEngine {
     config: TickBacktestConfig,
     execution_model: Option<OrderBookExecutionModel>,
+    risk: RiskGate,
 }
 
 impl TickBacktestEngine {
@@ -121,7 +122,16 @@ impl TickBacktestEngine {
         Self {
             config,
             execution_model: None,
+            risk: RiskGate::new(),
         }
+    }
+
+    /// Tick 回测复用盘口回测的风险门，规则在这里注入而不是写进
+    /// `TickBacktestConfig`：该配置派生 `Clone/PartialEq/Eq`，而 `RiskGate`
+    /// 持有 `Box<dyn RiskRule>`，无法跟随派生。
+    pub fn with_risk_gate(mut self, risk: RiskGate) -> Self {
+        self.risk = risk;
+        self
     }
 
     pub fn with_execution_model(mut self, model: OrderBookExecutionModel) -> Self {
@@ -152,7 +162,7 @@ impl TickBacktestEngine {
             initial_cash: self.config.initial_cash,
             fee_bps: self.config.fee_bps,
             instrument_spec: self.config.instrument_spec,
-            risk: RiskGate::new(),
+            risk: self.risk,
         };
         let mut adapter = TickAdapter {
             strategy,
@@ -261,5 +271,38 @@ mod tests {
         assert_eq!(report.fills.len(), 1);
         assert_eq!(report.fills[0].ts, 2);
         assert_eq!(report.fills[0].price, Price::from_i64(101));
+    }
+
+    #[test]
+    fn tick_backtest_applies_the_injected_risk_gate() {
+        let config = TickBacktestConfig {
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            account_id: "main".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_i64(10_000),
+            fee_bps: 0,
+            instrument_spec: None,
+        };
+        let ticks = vec![QuoteTick::new(
+            1,
+            Price::from_i64(99),
+            Quantity::from_i64(2),
+            Price::from_i64(100),
+            Quantity::from_i64(2),
+            1,
+        )];
+        let mut gate = RiskGate::new();
+        gate.add(Box::new(qx_zhenlu::MaxQtyRule { max_qty: 1 }));
+        let mut strategy = BuyOnce { done: false };
+        let report = TickBacktestEngine::new(config)
+            .with_risk_gate(gate)
+            .run(&ticks, &mut strategy)
+            .unwrap();
+        assert!(report.fills.is_empty());
+        assert!(report
+            .event_log
+            .events()
+            .iter()
+            .any(|event| matches!(event.kind, qx_core::EventKind::Rejected { .. })));
     }
 }

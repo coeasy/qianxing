@@ -172,11 +172,22 @@ impl OrderBookBacktestEngine {
                 "订单簿回测快照 ts/sequence 必须严格递增".into(),
             ));
         }
+        if let Some(model) = execution_model.as_ref() {
+            // 与上方规格/instrument 校验同一约定：冲突要报错，不能让配置里的
+            // fee_bps 被执行模型静默覆盖，否则回测成本口径与声明不一致。
+            if model.fee_bps != fee_bps {
+                return Err(qx_core::QxError::BusinessViolation(format!(
+                    "订单簿回测执行模型 fee_bps={} 与配置 fee_bps={fee_bps} 不一致",
+                    model.fee_bps
+                )));
+            }
+        }
         let mut matcher = match execution_model {
             Some(model) => OrderBookMatchingEngine::with_model(model),
             None => OrderBookMatchingEngine::new(fee_bps),
         }
-        .map_err(qx_core::QxError::BusinessViolation)?;
+        .map_err(qx_core::QxError::BusinessViolation)?
+        .with_fee_spec(instrument_spec.clone());
         let mut ledger = Ledger::new();
         let mut log = EventLog::new();
         let mut oms = Oms::new();
@@ -310,7 +321,10 @@ impl OrderBookBacktestEngine {
                         let price = order.limit.or(reference_price).ok_or_else(|| {
                             qx_core::QxError::BusinessViolation("订单簿订单缺少保证金参考价".into())
                         })?;
-                        let equity = if spec.product.supports_leverage() {
+                        // 现货买入只能用可用现金：权益含持仓市值，用它放行会让 Ledger
+                        // 现金被静默透支成负数。衍生品按权益 + 初始保证金判定。
+                        let leveraged = spec.product.supports_leverage();
+                        let available_funding = if leveraged {
                             let marks =
                                 std::collections::BTreeMap::from([(instrument.clone(), price)]);
                             ledger.equity_for_with_spec(&account_id, &marks, &currency, spec)?
@@ -319,14 +333,31 @@ impl OrderBookBacktestEngine {
                         };
                         let required =
                             spec.initial_margin(order.qty.raw(), price.raw(), policy.leverage)?;
-                        if required > equity {
+                        // 手续费按成交名义额双边收取，与 OrderBookMatchingEngine 同源；
+                        // 漏掉它会让"刚好花光现金"的买单在成交后才透支。
+                        let required_funding = if order.side == qx_core::Side::Buy {
+                            required
+                                .checked_add(
+                                    spec.notional(order.qty.raw(), price.raw())? * fee_bps / 10_000,
+                                )
+                                .ok_or_else(|| {
+                                    qx_core::QxError::Invariant("买入所需现金溢出".into())
+                                })?
+                        } else {
+                            required
+                        };
+                        if required_funding > available_funding {
                             append_event(
                                 &mut log,
                                 snapshot.ts,
                                 Priority::COMMAND,
                                 EventKind::Rejected {
                                     client_order_id: order.client_id,
-                                    reason: "订单初始保证金超过订单簿回测权益".into(),
+                                    reason: if leveraged {
+                                        "订单初始保证金超过订单簿回测权益".into()
+                                    } else {
+                                        "买入成本（含预估手续费）超过订单簿回测可用现金".into()
+                                    },
                                 },
                             );
                             continue;
@@ -646,6 +677,72 @@ mod tests {
                 .quantity
                 .raw(),
             Quantity::from_i64(1).raw()
+        );
+    }
+
+    /// 小额合约乘数的盘口回测必须按真实名义额计费：Ledger 用
+    /// `spec.notional` 记账，若费用仍按 `qty * price` 计，0.001 合约的
+    /// 手续费会被高估 1000 倍。
+    #[test]
+    fn fractional_contract_sizes_fee_on_spec_notional() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let spec = TradingInstrumentSpec {
+            instrument: instrument.clone(),
+            product: TradingProduct::Perpetual,
+            base_currency: "BTC".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: SCALE / 1000,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            max_leverage: 100,
+            maintenance_margin_bps: 500,
+            valid_from: 1,
+            valid_to: None,
+        };
+        let config = OrderBookBacktestConfig {
+            instrument,
+            account_id: "main".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_i64(10_000),
+            fee_bps: 100,
+            instrument_spec: Some(spec),
+            risk: RiskGate::new(),
+        };
+        let mut strategy = DerivativeBuy { emitted: false };
+        let report = OrderBookBacktestEngine::new(config)
+            .run(&[snapshot(1, 100), snapshot(2, 100)], &mut strategy)
+            .unwrap();
+        assert_eq!(report.fills.len(), 1);
+        // 1 张 * 0.001 BTC * 100 USDT = 0.1 USDT 名义额，1% 费率 = 0.001
+        assert_eq!(report.fills[0].fee.raw(), SCALE / 1000);
+    }
+
+    /// 执行模型不能静默覆盖配置里的费率，否则成本口径与声明不一致。
+    #[test]
+    fn conflicting_execution_model_fee_is_rejected_not_silently_applied() {
+        let config = OrderBookBacktestConfig {
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            account_id: "main".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_i64(10_000),
+            fee_bps: 5,
+            instrument_spec: None,
+            risk: RiskGate::new(),
+        };
+        let mut strategy = DerivativeBuy { emitted: false };
+        let error = OrderBookBacktestEngine::new(config)
+            .with_execution_model(OrderBookExecutionModel::new(7).unwrap())
+            .run(&[snapshot(1, 100), snapshot(2, 100)], &mut strategy)
+            .err()
+            .expect("费率冲突必须报错");
+        assert!(
+            matches!(error, qx_core::QxError::BusinessViolation(_))
+                && error.to_string().contains("fee_bps"),
+            "错误信息应指出冲突字段: {error}"
         );
     }
 }
