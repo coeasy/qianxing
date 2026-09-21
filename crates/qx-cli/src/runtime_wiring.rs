@@ -146,6 +146,87 @@ pub(crate) fn strategy_risk_gate(
     RiskGate::from_rule_set(rule_set)
 }
 
+/// 执行成本口径的单点：Bar 回测装配、Paper 提交与补偿单恢复共用同一份 [`ExecutionCostRules`]。
+///
+/// 与 [`strategy_risk_gate`] 同构——那是风控的唯一构造入口，这是成本的唯一构造入口。
+/// Q0a 让两条链取到**同一个**模型，Q0c 才让它**来自配置**：`strategy.cost_rules_path`
+/// 指向的文件只在这里被读取。缺文件、坏 JSON、bp 越界一律失败并带上路径；静默退回
+/// 内置 2/5bp 就是 §4 P0 第 2 项里 `--config` 被吞掉的那类形状（"宣称能配、实际不生效"）。
+#[derive(Debug)]
+pub(crate) struct ExecutionCostBinding {
+    pub(crate) rules: ExecutionCostRules,
+    /// 实际读取的成本规则文件；`None` 表示本次用的是内核默认费率。
+    pub(crate) loaded_from: Option<PathBuf>,
+    /// 给了运行时配置（无论其中有没有 `cost_rules_path`），与"根本没给配置"要能区分。
+    pub(crate) from_runtime_config: bool,
+}
+
+impl ExecutionCostBinding {
+    pub(crate) fn fee_model(&self) -> Box<dyn FeeModel + Send> {
+        self.rules.fee_model()
+    }
+
+    pub(crate) fn latency_model(&self) -> Box<dyn LatencyModel + Send> {
+        self.rules.latency_model()
+    }
+
+    /// 产物与打印行里的成本来源。费率数字本身已经进了 `model_descriptors`，
+    /// 这里只回答"这组数字从哪来"，避免同一个事实出现第二份记录。
+    pub(crate) fn source(&self) -> String {
+        match &self.loaded_from {
+            Some(path) => format!("cost-rules-file:{}", path.display()),
+            None if self.from_runtime_config => "runtime-config-default".to_string(),
+            None => "builtin-default".to_string(),
+        }
+    }
+}
+
+pub(crate) fn execution_cost_binding_from_config(
+    config: &RuntimeConfig,
+    runtime_config_path: Option<&Path>,
+) -> Result<ExecutionCostBinding, String> {
+    let Some(configured) = config.strategy.cost_rules_path.as_deref() else {
+        return Ok(ExecutionCostBinding {
+            from_runtime_config: runtime_config_path.is_some(),
+            ..default_execution_cost_binding()
+        });
+    };
+    // 策略链会先把该路径解析成绝对路径，这里对已解析的值是幂等的。
+    let rules_path = match runtime_config_path {
+        Some(base) => resolve_runtime_relative_path(base, configured),
+        None => PathBuf::from(configured),
+    };
+    let rules = ExecutionCostRules::load(&rules_path)
+        .map_err(|error| format!("读取执行成本规则失败 {}: {error}", rules_path.display()))?;
+    Ok(ExecutionCostBinding {
+        rules,
+        loaded_from: Some(rules_path),
+        from_runtime_config: true,
+    })
+}
+
+/// 完全没有运行时配置时的内核默认口径（CLI 自检与单测用）。
+pub(crate) fn default_execution_cost_binding() -> ExecutionCostBinding {
+    ExecutionCostBinding {
+        rules: ExecutionCostRules::default(),
+        loaded_from: None,
+        from_runtime_config: false,
+    }
+}
+
+/// 手上只有运行时配置路径、没有内存里配置对象的入口（内置策略、深度档）用的薄壳。
+pub(crate) fn execution_cost_binding(
+    runtime_config_path: Option<&Path>,
+) -> Result<ExecutionCostBinding, String> {
+    match runtime_config_path {
+        Some(path) => {
+            let config = read_runtime_config(path)?;
+            execution_cost_binding_from_config(&config, Some(path))
+        }
+        None => Ok(default_execution_cost_binding()),
+    }
+}
+
 /// 与 Strategy worker 完全一致的做空许可判定：现金保证金一律禁止，
 /// 其余场景由 `strategy.allow_short` 决定，缺省按产品是否为衍生品。
 pub(crate) fn strategy_allows_short(config: &RuntimeConfig, margin_mode: MarginMode) -> bool {

@@ -130,6 +130,13 @@ pub struct StrategyRuntimeConfig {
     /// （仅 reduce-only 不变式），运行摘要记录其默认版本号。
     #[serde(default)]
     pub risk_rules: Option<RiskRulesConfig>,
+    /// 执行成本规则文件（maker/taker 费率与撮合延迟），路径相对本配置文件解析。
+    /// 省略时回测与 Paper 使用 `qx-core` 的默认费率，产物里的 `execution_costs.source`
+    /// 会区分这两种情况。`skip_serializing_if` 是刻意的：省略该字段时运行时配置的
+    /// 序列化字节必须与引入它之前完全一致，否则所有已 bless 的 `config_fingerprint`
+    /// 与 RunManifest 哈希会在一夜之间全部失真，而行为并没有变。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_rules_path: Option<String>,
     #[serde(default)]
     pub venue_id: Option<String>,
     #[serde(default)]
@@ -275,6 +282,7 @@ impl Default for StrategyRuntimeConfig {
             version: default_strategy_version(),
             max_orders: default_strategy_max_orders(),
             risk_rules: None,
+            cost_rules_path: None,
             account_id: None,
             venue_id: None,
             instrument: None,

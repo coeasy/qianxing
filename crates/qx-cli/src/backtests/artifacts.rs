@@ -28,6 +28,10 @@ pub(crate) struct BacktestArtifacts<'a> {
     /// 规则集来源：`runtime-config` 表示吃了 `strategy.risk_rules`，`conservative-default`
     /// 表示该入口没有给出配置文件。产物必须能区分这两者（V10 §4.2）。
     pub(crate) risk_rule_source: &'static str,
+    /// 执行成本口径的来源（V11 Q0c）：`cost-rules-file:<路径>` / `runtime-config-default` /
+    /// `builtin-default` / `cli-flag` / `ashare-rules`。费率数值本身已经在
+    /// `model_descriptors` 里，这里只回答"这组数字从哪来"，让"没配"与"配了同样的值"可区分。
+    pub(crate) cost_source: &'a str,
     /// 本次实际使用的撮合内核；深度档不得声称与 Bar 链同一内核。
     pub(crate) matching_kernel: &'static str,
 }
@@ -74,6 +78,7 @@ pub(crate) fn persist_backtest_artifacts(
             "rule_set_version": input.risk_rule_set_version,
             "source": input.risk_rule_source,
         },
+        "execution_costs": { "source": input.cost_source },
         "run_manifest": manifest_path.to_string_lossy(),
     });
     let summary_payload = serde_json::to_string_pretty(&summary)

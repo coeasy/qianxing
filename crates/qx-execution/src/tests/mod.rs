@@ -193,6 +193,12 @@ impl VenuePort for PortVenue {
     }
 }
 
+/// 只断言回报形状/生命周期事实的用例显式零费：费用会让期望变成噪音，
+/// 但生产 Paper 路径的费用模型必须由调用方给出（见 `PaperVenue::new`）。
+fn zero_fee() -> Box<dyn FeeModel + Send> {
+    Box::new(qx_core::ZeroFeeModel)
+}
+
 fn port_order(client_id: u64) -> Order {
     Order {
         client_id,

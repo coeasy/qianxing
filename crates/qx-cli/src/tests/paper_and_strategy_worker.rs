@@ -77,8 +77,9 @@ fn paper_submit_order_runs_queue_pipeline_ledger_and_ack() {
     let state = load_control_state(&data_dir).unwrap();
     assert_eq!(state.audit().len(), 2);
     let pipeline = LiveEventPipeline::open(&data_dir, "paper-events", "USDT").unwrap();
-    // 初始资金 + 成交双 Ledger 事实；行情注入不产生账本条目。
-    assert_eq!(pipeline.ledger().entries().len(), 3);
+    // 初始资金 + 成交三笔 Ledger 事实（名义额、持仓，以及 Q0a 起计入的 Fee）；
+    // 行情注入本身不产生账本条目。
+    assert_eq!(pipeline.ledger().entries().len(), 4);
     assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
     assert!(
         qx_storage::ControlCommandQueue::new(data_dir.join("control-queue"))

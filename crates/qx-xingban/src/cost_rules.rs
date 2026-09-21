@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 use crate::cost::{LatencyModel, StaticLatency, ZeroLatency};
 
 /// 无配置时的加密费率（基点），与历史硬编码保持一致。
-pub const DEFAULT_MAKER_BP: i64 = 2;
-pub const DEFAULT_TAKER_BP: i64 = 5;
+///
+/// 值定义在 `qx_core::fee`（费用模型的归属处），此处只做再导出：
+/// 费率常数的第二处定义会让"配置驱动"与"默认口径"在不同 crate 里各自漂移。
+pub use qx_core::fee::{DEFAULT_MAKER_BP, DEFAULT_TAKER_BP};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

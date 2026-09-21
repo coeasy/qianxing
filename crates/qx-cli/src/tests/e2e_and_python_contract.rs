@@ -115,6 +115,7 @@ fn paper_strategy_reads_filled_position_before_emitting_next_order() {
         Some(smoke_paper_risk_context()),
         Some(OrderRiskPosition::new(0, 0)),
         None,
+        default_execution_cost_binding().fee_model(),
         true,
         // 本例的命令不带 `spread_group_id`（上一行 `strategy_submit_command(.., None)`），
         // 单腿提交不经过多腿屏障，因此无需组存储。
@@ -144,7 +145,8 @@ fn paper_strategy_reads_filled_position_before_emitting_next_order() {
     )
     .unwrap();
     assert_eq!(restored.orders()[0].status, OrderStatus::Filled);
-    assert_eq!(restored.ledger().entries().len(), 2);
+    // Q0a 起 Paper 成交按共享费率计费：买入多出 1 条 Fee 分录（名义额、持仓、费用）。
+    assert_eq!(restored.ledger().entries().len(), 3);
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -199,6 +201,7 @@ fn paper_worker_cleans_stale_queue_after_terminal_commit() {
         Some(smoke_paper_risk_context()),
         Some(OrderRiskPosition::new(0, 0)),
         None,
+        default_execution_cost_binding().fee_model(),
         true,
         // 单腿命令（`spread_group_id` 缺省），不经过多腿屏障。
         None,
@@ -214,7 +217,8 @@ fn paper_worker_cleans_stale_queue_after_terminal_commit() {
     assert!(queue.pending().unwrap().is_empty());
     let restored = LiveEventPipeline::open(&data_dir, log_name, "USDT").unwrap();
     assert_eq!(restored.orders()[0].status, OrderStatus::Filled);
-    assert_eq!(restored.ledger().entries().len(), 3);
+    // Q0a 起 Paper 成交按共享费率计费：买入多出 1 条 Fee 分录（名义额、持仓、费用）。
+    assert_eq!(restored.ledger().entries().len(), 4);
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -270,7 +274,8 @@ fn paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger() {
     let pipeline = LiveEventPipeline::open(&data_dir, "paper-main-paper-events", "USDT").unwrap();
     assert_eq!(pipeline.orders().len(), 1);
     assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
-    assert_eq!(pipeline.ledger().entries().len(), 3);
+    // Q0a 起 Paper 成交按共享费率计费：买入多出 1 条 Fee 分录（名义额、持仓、费用）。
+    assert_eq!(pipeline.ledger().entries().len(), 4);
     let _ = std::fs::remove_dir_all(root);
 }
 

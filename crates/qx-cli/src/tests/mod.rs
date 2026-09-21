@@ -143,6 +143,58 @@ pub(crate) fn mk_submit_command(command_id: u64, order: &Order, dry_run: bool) -
     }
 }
 
+/// 子进程型用例共用的被测 binary 与其新鲜度护栏（原本只在 `cli_surface.rs` 内，
+/// V11 Q0b 的旗标用例同样要跑真 binary，于是按"共享夹具进本文件"的约定上移）。
+const QX_CLI_SURFACE_SOURCES: [&str; 4] = [
+    "src/cli.rs",
+    "src/cli_help.rs",
+    "src/config_commands.rs",
+    "src/backtests/mod.rs",
+];
+
+/// 被测 binary 是否不早于被测源码：`cargo test --bin` 只编译测试壳、不会重链
+/// `target/debug/qx-cli.exe`，放任过期 binary 会让子进程断言对着旧行为"绿"。
+fn assert_binary_fresh(binary: &Path) {
+    let built = binary
+        .metadata()
+        .and_then(|m| m.modified())
+        .expect("读取被测 binary 修改时间失败");
+    for source in QX_CLI_SURFACE_SOURCES {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(source);
+        let edited = path
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or_else(|_| panic!("找不到被测源码 {}", path.display()));
+        assert!(
+            built >= edited,
+            "被测 binary {} 比 {} 旧，请先 cargo build -p qx-cli 再跑本用例",
+            binary.display(),
+            path.display()
+        );
+    }
+}
+
+fn qx_cli_binary() -> PathBuf {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_qx-cli") {
+        let binary = PathBuf::from(path);
+        assert_binary_fresh(&binary);
+        return binary;
+    }
+    let profile_dir = std::env::current_exe()
+        .expect("读取测试可执行文件路径失败")
+        .parent()
+        .and_then(|deps| deps.parent())
+        .expect("测试可执行文件应位于 target/<profile>/deps")
+        .to_path_buf();
+    let binary = profile_dir.join(if cfg!(windows) {
+        "qx-cli.exe"
+    } else {
+        "qx-cli"
+    });
+    assert!(binary.is_file(), "未找到被测 binary {}", binary.display());
+    binary
+}
+
 mod backtest_entries;
 mod backtest_risk_provenance;
 mod cli_surface;

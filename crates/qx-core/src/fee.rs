@@ -66,6 +66,23 @@ pub struct MakerTakerFeeModel {
     pub taker_bp: i64,
 }
 
+/// 加密现货的默认费率（基点）。
+///
+/// 定义点唯一在内核：Bar 回测装配、Paper 模拟与 `ExecutionCostRules` 的缺省值
+/// 都从这里取，否则"同一条成交在两个执行平面上费用不同"只会靠人工审计发现。
+pub const DEFAULT_MAKER_BP: i64 = 2;
+pub const DEFAULT_TAKER_BP: i64 = 5;
+
+impl MakerTakerFeeModel {
+    /// 未给成本配置时的默认费率模型。
+    pub const fn default_maker_taker() -> Self {
+        Self {
+            maker_bp: DEFAULT_MAKER_BP,
+            taker_bp: DEFAULT_TAKER_BP,
+        }
+    }
+}
+
 impl FeeModel for MakerTakerFeeModel {
     fn name(&self) -> &'static str {
         "MakerTaker"

@@ -5,6 +5,8 @@
 //! 帮助里出现派发不了的入口、或存在不写进帮助的能力，都判红。
 //! 约定：每条入口独占一行，行内不使用英文逗号，说明行缩进六空格。
 
+use qx_strategy::BuiltinStrategyKind;
+
 pub(crate) fn print_cli_help() {
     println!(
         r#"牵星 Qianxing CLI
@@ -54,8 +56,11 @@ pub(crate) fn print_cli_help() {
       一次完成 CCXT OHLCV 获取、内置策略回测和结果输出。
   backtest book --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>]
       深度档回测：l1 走 Tick 内核、l2/l3 走订单簿内核，产物会写明本次实际使用的撮合内核。
+      --fee-bps 优先级：显式旗标 > 运行时配置 cost_rules_path 的 taker_bp > 内核默认吃单费率。
+      成本规则里的延迟设置在深度档没有落点，非零会直接报错而不是被忽略。
   builtin-strategies
-      列出可直接用于回测/Paper/策略接入的 17 个内置策略。
+      列出 17 个内置策略及各自被哪个回测入口接受：13 个单标的策略可走 builtin / ccxt-builtin /
+      book，4 个套利 kind 只被 multi-builtin 接受（book 会明确拒绝它们）。
   fast-backtest <manifest.json>
       并行执行多个独立回测任务，适合多标的、多币种和多参数批量验证。
   dataset-ingest <bar-frame.json> <dataset-id> <version> <data-dir>
@@ -107,7 +112,8 @@ pub(crate) fn print_cli_help() {
   paper-e2e [runtime.json]
       跑一次 Paper 主链路验收（注入合成行情，不接真实 feed）。
   paper-check [runtime.json]
-      按 Scheduler → Strategy → Paper Execution → Ledger 验收主体链路。
+      按 Scheduler → Strategy → Paper Execution → Ledger 验收主体链路；与 paper-e2e 一样注入
+      一条固定合成 L1 报价（99/100），不接真实 feed。
   reconcile <runtime.json> [worker-id]
       用运行时配置指向的本地 EventLog 账本与配置内 Binance 账户做真实对账；
       缺少本地或远端来源时按用法错误退出，不再打印演示差异。
@@ -126,4 +132,37 @@ pub(crate) fn print_cli_help() {
 
 使用 `qianxing help` 查看入口摘要；既有入口参数保持兼容，完整说明见 README.md 与 deploy/README.md。"#
     );
+}
+
+/// 内置策略 kind 的回测准入分区：这 4 个 kind 需要两条对齐的 BarFrame，只有
+/// `backtest multi-builtin` 接受；三个单标的入口（`builtin` / `ccxt-builtin` / `book`）必须拒绝。
+/// `qx-strategy` 里"缺 `reference_instrument` 即非法"是同一条事实的内核侧表述，两边一致性由
+/// `src/tests/backtest_entries.rs` 的行为用例逐 kind 复现（V11 Q0b）。
+pub(crate) const MULTI_LEG_KINDS: [BuiltinStrategyKind; 4] = [
+    BuiltinStrategyKind::PairsArbitrage,
+    BuiltinStrategyKind::BasisArbitrage,
+    BuiltinStrategyKind::CrossVenueArbitrage,
+    BuiltinStrategyKind::SpotFuturesArbitrage,
+];
+
+/// 某个 kind 实际能被哪个回测入口接受 —— `builtin-strategies` 的输出与帮助文本共用这一处，
+/// 免得帮助再写成"17 个策略都能用于回测/Paper/策略接入"。
+pub(crate) fn backtest_entry_of(kind: BuiltinStrategyKind) -> &'static str {
+    if MULTI_LEG_KINDS.contains(&kind) {
+        "multi-builtin"
+    } else {
+        "builtin / ccxt-builtin / book"
+    }
+}
+
+/// `builtin-strategies` 与 `strategy list` 的三列输出：名称、说明、真正接受它的回测入口。
+pub(crate) fn print_builtin_strategies() {
+    for kind in BuiltinStrategyKind::ALL {
+        println!(
+            "{}\t{}\t[{}]",
+            kind.name(),
+            kind.description(),
+            backtest_entry_of(kind)
+        );
+    }
 }

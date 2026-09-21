@@ -37,12 +37,6 @@ fn run_arguments(entry: &str, mut arguments: Vec<String>) -> Vec<String> {
     arguments
 }
 
-fn print_builtin_strategies() {
-    for kind in BuiltinStrategyKind::ALL {
-        println!("{}\t{}", kind.name(), kind.description());
-    }
-}
-
 #[cfg(feature = "nats")]
 fn dispatch_outbox_relay(root: PathBuf, url: String, subject_prefix: String, limit: Option<usize>) {
     if let Err(error) = run_file_outbox_relay(&root, &url, &subject_prefix, limit.unwrap_or(100)) {
@@ -320,7 +314,6 @@ pub(crate) fn run() {
             runtime,
             frame,
             spec,
-            config: _,
             action,
         } => match action {
             None => {
@@ -420,7 +413,8 @@ pub(crate) fn run() {
                     &frame,
                     spec.as_deref(),
                     quantity.unwrap_or(1),
-                    fee_bps.unwrap_or(5).into(),
+                    // 缺省时由深度入口向成本绑定要费率（Q0c）：命令行 > 成本规则文件 > 内核默认。
+                    fee_bps,
                     &root,
                     config.as_deref(),
                 ) {

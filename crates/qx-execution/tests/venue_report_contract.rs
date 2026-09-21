@@ -512,7 +512,7 @@ impl PaperHarness {
     fn new() -> Self {
         Self {
             contract: Contract::open("paper"),
-            venue: PaperVenue::new("paper"),
+            venue: PaperVenue::new("paper", zero_fee()),
             current: 0,
             quote_seq: 0,
             last_quote: None,
@@ -919,6 +919,12 @@ impl VenueReportHarness for BinanceHarness {
         self.history.push(payload);
         Ok(events)
     }
+}
+
+/// 只断言回报形状 / 恢复事实的用例显式零费：费用不是这里的期望，但生产 Paper
+/// 路径的成本口径必须由调用方给出（见 `PaperVenue::new`）。
+fn zero_fee() -> Box<dyn qx_core::FeeModel + Send> {
+    Box::new(qx_core::ZeroFeeModel)
 }
 
 #[test]

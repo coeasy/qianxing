@@ -63,7 +63,7 @@ fn every_backtest_entry_reads_the_same_risk_rules_from_one_config() {
         &deploy.join("qianxing.depth-frame.l1.example.json"),
         None,
         1,
-        5,
+        Some(5),
         &depth_root,
         Some(&runtime),
     )

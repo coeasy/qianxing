@@ -9,6 +9,7 @@ pub(crate) struct DatasetRunBinding<'a> {
 
 pub(crate) fn run_single_strategy_backtest(
     config: &RuntimeConfig,
+    runtime_config_path: Option<&Path>,
     frame: &BarFrame,
     bars: &[Bar],
     spec_path: Option<&Path>,
@@ -27,8 +28,10 @@ pub(crate) fn run_single_strategy_backtest(
         return Err("衍生品跨语言回测必须提供 market-spec.json".into());
     }
     let mut virtual_trading = VirtualTradingConfig::default();
-    // None 表示沿用内核默认的 maker/taker 2/5 bp 费率。
+    // None 表示沿用成本绑定给出的费率模型（`cost_rules_path` 或内核默认 2/5bp）。
     let mut fee: Option<Box<dyn FeeModel>> = None;
+    // A 股规则快照自带一套佣金/印花税模型，它会覆盖成本绑定的费率——产物必须改口说明。
+    let mut fee_from_ashare_rules = false;
     if let Some(path) = config.strategy.ashare_rules_path.as_deref() {
         let payload = std::fs::read_to_string(path)
             .map_err(|error| format!("读取 A 股规则快照失败 {path}: {error}"))?;
@@ -61,6 +64,7 @@ pub(crate) fn run_single_strategy_backtest(
             stamp_duty_bp: rules.stamp_duty_bp,
             transfer_fee_bp: rules.transfer_fee_bp,
         }));
+        fee_from_ashare_rules = true;
     }
     if (config.strategy.ashare_actions_path.is_some()
         || config.strategy.ashare_calendar_path.is_some())
@@ -88,7 +92,10 @@ pub(crate) fn run_single_strategy_backtest(
         strategy_allows_short(config, config_margin_mode(config)),
     );
     let risk_rule_set_version = risk_gate.rule_set().version().to_string();
-    let mut assembly = BarBacktestAssembly::new(&frame.instrument, account_id, 20260911);
+    // 成本绑定取自内存里这一份策略配置：多策略清单里每条策略都有自己的
+    // `cost_rules_path`，从磁盘重读只会拿到默认那条。
+    let costs = execution_cost_binding_from_config(config, runtime_config_path)?;
+    let mut assembly = BarBacktestAssembly::new(&frame.instrument, account_id, 20260911, &costs);
     assembly.instrument_spec = instrument_spec;
     assembly.margin = margin;
     assembly.currency = currency;
@@ -98,6 +105,20 @@ pub(crate) fn run_single_strategy_backtest(
     if let Some(fee) = fee {
         assembly.fee = fee;
     }
+    let cost_source = if fee_from_ashare_rules {
+        // A 股规则快照自带佣金模型，它顶掉成本文件里的费率，但成本文件的延迟仍然生效：
+        // 两个来源都要写进产物，否则摘要会把延迟口径也算到 A 股规则头上。
+        let base = format!(
+            "ashare-rules:{}",
+            config.strategy.ashare_rules_path.as_deref().unwrap_or("")
+        );
+        match costs.loaded_from.as_deref() {
+            Some(path) => format!("{base}+cost-rules-file:{}", path.display()),
+            None => base,
+        }
+    } else {
+        costs.source()
+    };
     let backtest_config = assembly.into_config();
     let report = if config.strategy.builtin_strategy.is_some() {
         if let Some(configured) = config.strategy.instrument.as_deref() {
@@ -199,6 +220,7 @@ pub(crate) fn run_single_strategy_backtest(
             model_descriptors: &report.model_descriptors,
             risk_rule_set_version: &risk_rule_set_version,
             risk_rule_source: "runtime-config",
+            cost_source: &cost_source,
             matching_kernel: BAR_MATCHING_KERNEL,
         },
     )?;
@@ -260,7 +282,8 @@ pub(crate) fn run_builtin_backtest(
     let (instrument_spec, margin) =
         market_spec_with_margin(&frame.instrument, spec_path, "内置策略")?;
     let risk_binding = backtest_risk_binding(runtime_config_path, false)?;
-    let mut assembly = BarBacktestAssembly::new(&frame.instrument, "main", 20260914);
+    let costs = execution_cost_binding(runtime_config_path)?;
+    let mut assembly = BarBacktestAssembly::new(&frame.instrument, "main", 20260914, &costs);
     assembly.instrument_spec = instrument_spec;
     assembly.margin = margin;
     assembly.risk = risk_binding.gate();
@@ -302,6 +325,15 @@ pub(crate) fn run_builtin_backtest(
         risk_binding.gate().rule_set().version(),
         risk_binding.source(),
         BAR_MATCHING_KERNEL
+    );
+    // 本入口不写摘要文件，成本口径只能靠这行交代来源；不印出来就等于"用了什么费率无人知晓"。
+    println!(
+        "[Builtin · Cost] source={} maker_bp={} taker_bp={} latency_base_ns={} latency_insert_ns={}",
+        costs.source(),
+        costs.rules.maker_bp,
+        costs.rules.taker_bp,
+        costs.rules.latency_base_ns,
+        costs.rules.latency_insert_ns,
     );
     Ok(())
 }

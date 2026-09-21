@@ -279,6 +279,44 @@ def run_unified_arms(source: str) -> set[str]:
     return arms
 
 
+# V11 Q0b 旗标诚实性：clap 声明的每个长旗标都必须被真正读到。
+# `#[arg(long…)]` 只出现在带长旗标的字段上（位置参数用的是 value_parser 等其它元数据）。
+CLI_LONG_FLAG_FIELD = re.compile(
+    r'#\[arg\([^)]*long[^)]*\)\]\s*\n\s*(?P<name>[a-z_][a-z0-9_]*):'
+)
+# 分派里把字段绑成 `_` 就是"收下但不处理"的形状（`config: _,`）。
+CLI_DISCARD_BINDING = re.compile(r'(?<![A-Za-z0-9_])(?P<name>[a-z_][a-z0-9_]*):\s*_\s*,')
+
+
+def cli_flag_honesty_check() -> None:
+    """被解析后丢弃的旗标比没有旗标更坏：使用者以为换了风控与费用口径，实际什么都没生效。
+
+    V11 §4 P0 第 2 项的形状是 `Command::Backtest` 父命令声明 `--config`、`cli.rs:323` 以
+    `config: _` 收下。收口后两条判据：分派正文里不得出现任何 `ident: _` 丢弃绑定；
+    `cli_args.rs` 声明的每个长旗标字段都必须在 `cli.rs` 被点名（新声明却没人读的旗标同样红）。
+    """
+    args_text = (ROOT / CLI_ARGS_FILE).read_text(encoding="utf-8")
+    cli_text = (ROOT / CLI_DISPATCH_FILE).read_text(encoding="utf-8")
+    discards = sorted(
+        {
+            matched.group("name")
+            for matched in CLI_DISCARD_BINDING.finditer(cli_text)
+        }
+    )
+    check(
+        not discards,
+        "cli.rs 分派不得把 clap 字段绑成 `_` 后丢弃",
+        f"丢弃形状 {discards or '无'}",
+    )
+    flags = sorted({matched.group("name") for matched in CLI_LONG_FLAG_FIELD.finditer(args_text)})
+    unread = [name for name in flags if re.search(rf"\b{name}\b", cli_text) is None]
+    check(
+        bool(flags) and not unread,
+        f"cli_args.rs 声明的 {len(flags)} 个长旗标全部被 cli.rs 读到",
+        f"未出现在分派里 {unread or '（清单为空）'}",
+    )
+
+
 def cli_help_surface_check() -> None:
     """命令面诚实化：help 入口集合 ≡ clap 命令表 ≡ `cli.rs` 显式派发分支，且 `run` 子入口三处口径一致。
 
@@ -1614,6 +1652,106 @@ def storage_retry_check() -> None:
         )
 
 
+
+# V11 Q0a：执行平面的成本口径只有一个定义点，且生产 Paper 不得回落到零费。
+EXECUTION_FEE_MODEL_FILE = "crates/qx-cli/src/runtime_wiring.rs"
+FEE_KERNEL_FILE = "crates/qx-core/src/fee.rs"
+COST_RULES_FILE = "crates/qx-xingban/src/cost_rules.rs"
+PAPER_FEE_TEST_FILE = "crates/qx-execution/tests/paper_accounting.rs"
+EXECUTION_FEE_MODEL_DEF = re.compile(r"^pub\(crate\) fn execution_fee_model\(", re.MULTILINE)
+PAPER_COST_CONSTRUCTION = re.compile(
+    r"(?<![A-Za-z0-9_])(?:PaperVenue::new|execute_paper_submit_effect)\s*(?P<paren>\()"
+)
+# 默认费率常数的**定义**形状（`pub const DEFAULT_*_BP: i64 = …`）；再导出不算第二处定义。
+FEE_CONST_DEF = re.compile(r"^pub const DEFAULT_(?:MAKER|TAKER)_BP:", re.MULTILINE)
+
+
+def paper_fee_same_source_check() -> None:
+    """V11 §4.1 的缺陷形状：`PaperVenue` 自带零费默认、`with_fee_model` 只有单元测试调用，
+    于是生产 Paper 的 `Fill.fee` 恒为 0，Paper 曲线系统性优于同输入回测。
+
+    收口后的口径有四条，每条都靠"抽掉它就变红"钉住：默认费率常数的定义点唯一在内核
+    （`qx-xingban::cost_rules` 只做再导出）；CLI 侧成本口径由 `execution_fee_model()` 单点
+    提供；qx-cli 生产代码的每个 Paper 构造点都显式调用它且不出现 `ZeroFeeModel`；Bar 回测
+    装配的 `fee` 与 Paper 来自同一函数，并存在一条把费用真的记进 Ledger 的行为用例。
+    """
+    const_defs = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted(CRATES.glob("*/src/**/*.rs"))
+        if FEE_CONST_DEF.search(path.read_text(encoding="utf-8"))
+    ]
+    check(
+        const_defs == [FEE_KERNEL_FILE],
+        "默认 maker/taker 费率常数只在 qx-core::fee 定义（再导出不算第二处）",
+        f"定义于 {const_defs}",
+    )
+    reexport = (ROOT / COST_RULES_FILE).read_text(encoding="utf-8")
+    check(
+        "pub use qx_core::fee::{DEFAULT_MAKER_BP, DEFAULT_TAKER_BP}" in reexport,
+        "cost_rules 只再导出费率常数，不重复定义默认值",
+        "缺少对 qx_core::fee 的再导出",
+    )
+    definitions = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted(CRATES.glob("qx-cli/src/**/*.rs"))
+        if EXECUTION_FEE_MODEL_DEF.search(path.read_text(encoding="utf-8"))
+    ]
+    check(
+        definitions == [EXECUTION_FEE_MODEL_FILE],
+        "执行成本口径只有一个构造点（execution_fee_model）",
+        f"定义于 {definitions}",
+    )
+    missing: list[str] = []
+    zero_fee: list[str] = []
+    for path in sorted(CRATES.glob("qx-cli/src/**/*.rs")):
+        rel = path.relative_to(CRATES / "qx-cli/src")
+        # 用例文件里的 Paper 构造是被测现场，允许显式零费；口径同 V10 P1b 的提交入口清单。
+        if rel.parts[0] == "tests" or "test" in path.stem:
+            continue
+        source = path.read_text(encoding="utf-8")
+        location = path.relative_to(ROOT).as_posix()
+        for match in PAPER_COST_CONSTRUCTION.finditer(source):
+            args = balanced_args(source, match.start("paren"))
+            # 形参声明里的 `fee_model: Box<dyn FeeModel + Send>` 同样算显式回答。
+            if "fee_model" not in args and "execution_fee_model()" not in args:
+                missing.append(
+                    f"{location}:{source[: match.start()].count(chr(10)) + 1}"
+                    f" {match.group(0).strip()} -> {args[:50]}"
+                )
+        if re.search(r"\bZeroFeeModel\b", source):
+            zero_fee.append(location)
+    check(
+        not missing,
+        "qx-cli 每个 Paper 构造点都显式给出费用模型",
+        f"未给出 {missing or '无'}",
+    )
+    check(
+        not zero_fee,
+        "qx-cli 生产代码不得以零费构造 Paper（零费只允许出现在用例里）",
+        f"出现于 {zero_fee or '无'}",
+    )
+    assembly = (CRATES / "qx-cli/src/backtests/mod.rs").read_text(encoding="utf-8")
+    check(
+        re.search(r"^\s*fee: execution_fee_model\(\),$", assembly, re.MULTILINE) is not None,
+        "Bar 回测装配的费用与 Paper 共用同一函数（同源，而不是两份相同的字面量）",
+        "backtests/mod.rs 的 fee 字段未调用 execution_fee_model()",
+    )
+    behavior = (ROOT / PAPER_FEE_TEST_FILE).read_text(encoding="utf-8")
+    check(
+        "fn paper_spot_fill_charges_the_shared_fee_model_into_the_ledger" in behavior,
+        "存在把 Paper 费用记进 Ledger 的可执行用例（Q0a 的行为面证据）",
+        f"缺少 {PAPER_FEE_TEST_FILE} 中的费用记账用例",
+    )
+    # Q0b：深度档回测的 --fee-bps 缺省此前是游离在分派里的字面量 5，与内核常数无引用关系；
+    # 现在必须显式取自 qx_core，费率一旦改动就会同时反映到三条链。
+    dispatch = (ROOT / CLI_DISPATCH_FILE).read_text(encoding="utf-8")
+    check(
+        "fee_bps.unwrap_or(qx_core::DEFAULT_TAKER_BP)" in dispatch,
+        "深度档回测的缺省费率引用内核常数 qx_core::DEFAULT_TAKER_BP",
+        "cli.rs 的 fee_bps 缺省值没有引用该常数（游离字面量会静默偏离执行平面）",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -1622,6 +1760,7 @@ def main() -> int:
     worker_diagnostics_check()
     cli_dispatch_check()
     cli_help_surface_check()
+    cli_flag_honesty_check()
     test_module_shape_check()
     cli_root_module_check()
     cli_backtest_module_check()
@@ -1635,6 +1774,7 @@ def main() -> int:
     module_mount_check()
     runtime_config_fail_closed_check()
     backtest_assembly_check()
+    paper_fee_same_source_check()
     capabilities_check()
     line_budget_check()
     print()

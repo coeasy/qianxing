@@ -95,9 +95,6 @@ pub(crate) enum Command {
         runtime: Option<PathBuf>,
         frame: Option<PathBuf>,
         spec: Option<PathBuf>,
-        /// 统一回测兜底与迁移前一致：`--config` 会被接受但不参与该链路。
-        #[arg(long)]
-        config: Option<PathBuf>,
         #[command(subcommand)]
         action: Option<BacktestCommand>,
     },

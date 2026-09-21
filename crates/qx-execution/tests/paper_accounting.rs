@@ -16,6 +16,16 @@ use qx_zhenlu::RiskContext;
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// 成本口径的两种显式选择：`shared_fee` 与 Bar 回测装配同源（Q0a 要钉住的就是它），
+/// `zero_fee` 只属于"本用例不关心钱"的期望。
+fn shared_fee() -> Box<dyn qx_core::FeeModel + Send> {
+    Box::new(qx_core::MakerTakerFeeModel::default_maker_taker())
+}
+
+fn zero_fee() -> Box<dyn qx_core::FeeModel + Send> {
+    Box::new(qx_core::ZeroFeeModel)
+}
+
 #[test]
 fn paper_derivative_fill_uses_spec_pnl_accounting_instead_of_spot_cash() {
     let root = std::env::temp_dir().join(format!(
@@ -88,6 +98,7 @@ fn paper_derivative_fill_uses_spec_pnl_accounting_instead_of_spot_cash() {
         Some(risk),
         Some(OrderRiskPosition::default()),
         None,
+        zero_fee(),
         true,
         None,
     )
@@ -149,9 +160,18 @@ fn paper_submit_fails_closed_without_risk_context_or_market_quote() {
         ..RiskContext::default()
     };
     let mut pipeline = LiveEventPipeline::open(&root, "events", "USDT").unwrap();
-    let missing_risk =
-        execute_paper_submit_effect(&command, &mut pipeline, 1, None, None, None, false, None)
-            .unwrap_err();
+    let missing_risk = execute_paper_submit_effect(
+        &command,
+        &mut pipeline,
+        1,
+        None,
+        None,
+        None,
+        zero_fee(),
+        false,
+        None,
+    )
+    .unwrap_err();
     assert!(missing_risk.contains("FAIL_CLOSED: risk context missing"));
     // 只提供 RiskContext、缺持仓快照同样拒绝执行。
     let missing_position = execute_paper_submit_effect(
@@ -161,6 +181,7 @@ fn paper_submit_fails_closed_without_risk_context_or_market_quote() {
         Some(risk.clone()),
         None,
         None,
+        zero_fee(),
         false,
         None,
     )
@@ -174,6 +195,7 @@ fn paper_submit_fails_closed_without_risk_context_or_market_quote() {
         Some(risk),
         Some(OrderRiskPosition::default()),
         None,
+        zero_fee(),
         false,
         None,
     )
@@ -261,6 +283,7 @@ fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
         Some(risk.clone()),
         Some(OrderRiskPosition::default()),
         Some(quote),
+        shared_fee(),
         false,
         None,
     )
@@ -275,6 +298,7 @@ fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
         Some(risk),
         Some(OrderRiskPosition::default()),
         Some(quote),
+        shared_fee(),
         false,
         None,
     )
@@ -285,5 +309,108 @@ fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
     );
     assert_eq!(pipeline.orders().len(), orders);
     assert_eq!(pipeline.ledger().entries().len(), entries);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Q0a：Paper 成交必须按与 Bar 回测装配同一口径的费率计费，并且费用要落进 Ledger。
+///
+/// 反向验证口径：把本用例注入的 `shared_fee()` 换成 `zero_fee()`，`Fee` 分录会消失、
+/// `fee_raw` 变成 0，两条断言同时变红——这正是 V11 §4.1 记录的"Paper 曲线系统性优于
+/// 同输入回测"的缺陷形状（`PaperVenue` 曾自带零费默认）。
+#[test]
+fn paper_spot_fill_charges_the_shared_fee_model_into_the_ledger() {
+    let root = std::env::temp_dir().join(format!(
+        "qianxing-execution-paper-fee-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let instrument = InstrumentId::parse("BTC/USDT.BINANCE").unwrap();
+    let order = Order {
+        client_id: 81,
+        instrument: instrument.clone(),
+        side: Side::Buy,
+        qty: Quantity::from_i64(1),
+        limit: Some(Price::from_i64(100)),
+        status: OrderStatus::PendingSubmit,
+        filled: Quantity::ZERO,
+        account_id: "main".into(),
+        trace: None,
+        policy: None,
+    };
+    let command = ControlCommand {
+        command_id: 81,
+        request_id: "paper-fee".into(),
+        operator_id: "test".into(),
+        reason: "paper fee same-source".into(),
+        kind: CommandKind::SubmitOrder,
+        target: "81".into(),
+        payload: BTreeMap::from([("order_json".into(), serde_json::to_string(&order).unwrap())]),
+        permission: Permission::Trading,
+        dry_run: false,
+    };
+    let risk = RiskContext {
+        available_margin_raw: Some(10_000 * SCALE),
+        reference_price: order.limit,
+        instrument_spec: Some(TradingInstrumentSpec {
+            instrument: instrument.clone(),
+            product: TradingProduct::Spot,
+            base_currency: "BTC".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: SCALE,
+            linear: false,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            max_leverage: 1,
+            maintenance_margin_bps: 0,
+            valid_from: 1,
+            valid_to: None,
+        }),
+        ..RiskContext::default()
+    };
+    let quote = QuoteTick::new(
+        2,
+        Price::from_i64(99),
+        Quantity::from_i64(1_000),
+        Price::from_i64(100),
+        Quantity::from_i64(1_000),
+        7,
+    );
+    let mut pipeline = LiveEventPipeline::open(&root, "events", "USDT").unwrap();
+    let executed = execute_paper_submit_effect(
+        &command,
+        &mut pipeline,
+        1,
+        Some(risk),
+        Some(OrderRiskPosition::default()),
+        Some(quote),
+        shared_fee(),
+        false,
+        None,
+    )
+    .unwrap();
+    assert!(executed.starts_with("PAPER_EXECUTED fills=1"), "{executed}");
+    // 吃单：名义 1 * 100 = 100 USDT，默认吃单费率 DEFAULT_TAKER_BP。
+    let expected = qx_core::bp_amount(
+        qx_core::notional(order.qty.raw(), order.limit.unwrap().raw()),
+        qx_core::DEFAULT_TAKER_BP,
+    );
+    assert!(expected > 0, "默认吃单费率必须产生非零费用");
+    let fee_raw: i128 = pipeline
+        .ledger()
+        .entries()
+        .iter()
+        .filter(|entry| entry.kind == qx_core::LedgerEntryKind::Fee)
+        .map(|entry| -entry.amount.raw())
+        .sum();
+    assert_eq!(
+        fee_raw, expected,
+        "Paper 成交未计入费用：Ledger 里只有 {fee_raw}，按共享费率应为 {expected}"
+    );
     let _ = std::fs::remove_dir_all(root);
 }

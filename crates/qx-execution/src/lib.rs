@@ -8,7 +8,7 @@
 pub mod application;
 pub use application::*;
 use qx_control::{order_from_submit_command, ControlCommand};
-use qx_core::{Order, OrderStatus, OrderTrace, Price, Quantity, TradingInstrumentSpec};
+use qx_core::{FeeModel, Order, OrderStatus, OrderTrace, Price, Quantity, TradingInstrumentSpec};
 use qx_guanxing::QuoteTick;
 use qx_risk::OrderRiskPosition;
 use qx_zhenlu::{
@@ -1355,6 +1355,7 @@ impl<P: EventAppender> ReconcilePort for EventLogReconcilePort<'_, P> {
 /// 注入，本 crate 不再感知任何后端与特性开关，因此 Paper、Live 与自定义运行时共用
 /// 同一条判定链。`allow_synthetic_quote` 是**唯一**的伪造价开关，只允许离线 smoke
 /// fixture 显式传 `true`；生产 worker 必须保持 `false` 并提供 `Some(market_quote)`。
+/// `fee_model` 同理：成本口径由调用方显式给出，不留"默认零费"的口子（V11 §4.1）。
 #[allow(clippy::too_many_arguments)] // V10 P1b：组存储作为最后一个形参是刻意的，让编译器逐个点名提交入口是否接了屏障。
 pub fn execute_paper_submit_effect<P: ExecutionEventPort + application::LedgerProbe>(
     command: &ControlCommand,
@@ -1363,6 +1364,7 @@ pub fn execute_paper_submit_effect<P: ExecutionEventPort + application::LedgerPr
     risk: Option<RiskContext>,
     position: Option<OrderRiskPosition>,
     market_quote: Option<QuoteTick>,
+    fee_model: Box<dyn FeeModel + Send>,
     allow_synthetic_quote: bool,
     spread_store: Option<&dyn SpreadOrderGroupStore>,
 ) -> Result<String, String> {
@@ -1402,7 +1404,7 @@ pub fn execute_paper_submit_effect<P: ExecutionEventPort + application::LedgerPr
             1,
         )
     });
-    let mut venue = PaperVenue::new("paper");
+    let mut venue = PaperVenue::new("paper", fee_model);
     let mut source_seq = 0_u64;
     // Paper 与 worker/实盘共用同一副作用编排（`ExecutionGateway` = `PortExecutionService`）：
     // 空的 Venue 回报同样要转成"未知结果 → 待对账"，不允许第二套实现各自解释。

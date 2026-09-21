@@ -4,6 +4,10 @@ use super::*;
 
 /// L1/L2 深度档位回测：把 `DepthFrame` 喂进逐档撮合内核，输出与 Bar 回测同构的
 /// RunManifest、摘要、权益曲线与成交明细。策略侧沿用 Bar 协议（中间价折叠视图）。
+///
+/// `fee_bps` 为 `None` 时吃单费率取自成本规则（`strategy.cost_rules_path`），最终缺省仍是
+/// 内核常数；深度内核只吃单一吃单费率，因此成本规则里的延迟与 maker 费率在本链路无处落地，
+/// 非零延迟会直接报错而不是被静默忽略（V11 Q0c）。
 #[allow(clippy::too_many_arguments)] // V10 P0a/P1b：风控与组存储形参由编译器逐个点名，不合并成参数包。
 pub(crate) fn run_depth_backtest(
     tier: &str,
@@ -11,7 +15,7 @@ pub(crate) fn run_depth_backtest(
     frame_path: &Path,
     spec_path: Option<&Path>,
     quantity: i64,
-    fee_bps: i128,
+    fee_bps: Option<i64>,
     root: &Path,
     runtime_config_path: Option<&Path>,
 ) -> Result<(), String> {
@@ -23,17 +27,11 @@ pub(crate) fn run_depth_backtest(
     if quantity <= 0 {
         return Err("深度回测 quantity 必须为正整数".into());
     }
-    if !(0..=10_000).contains(&fee_bps) {
+    if fee_bps.is_some_and(|bps| !(0..=10_000).contains(&bps)) {
         return Err("深度回测 --fee-bps 必须在 0..=10000 内".into());
     }
     let kind = BuiltinStrategyKind::parse(strategy_name)?;
-    if matches!(
-        kind,
-        BuiltinStrategyKind::PairsArbitrage
-            | BuiltinStrategyKind::BasisArbitrage
-            | BuiltinStrategyKind::CrossVenueArbitrage
-            | BuiltinStrategyKind::SpotFuturesArbitrage
-    ) {
+    if MULTI_LEG_KINDS.contains(&kind) {
         return Err("深度档位回测只支持单标的策略，多腿配对请使用 multi-builtin".into());
     }
     let payload = std::fs::read_to_string(frame_path)
@@ -67,6 +65,22 @@ pub(crate) fn run_depth_backtest(
     let risk_binding = backtest_risk_binding(runtime_config_path, false)?;
     let risk_gate = risk_binding.gate();
     let risk_rule_set_version = risk_gate.rule_set().version().to_string();
+    let costs = execution_cost_binding(runtime_config_path)?;
+    // 深度内核只有单一吃单费率：maker 与延迟都没有落点。延迟非零却照样跑完，
+    // 就是把"能配"当成"生效"——正是 Q0b 删 `--config` 时判掉的形状，所以直接拒绝。
+    if costs.rules.latency_base_ns != 0 || costs.rules.latency_insert_ns != 0 {
+        return Err(format!(
+            "深度档回测不接受成本规则里的延迟设置（{}），只有 Bar 链已接入延迟模型；请把 latency_base_ns/latency_insert_ns 置 0 或改用 Bar 入口",
+            costs.source()
+        ));
+    }
+    // 三层优先级：显式 --fee-bps > 成本规则文件的 taker_bp > 内核默认。
+    let cost_source = if fee_bps.is_some() {
+        "cli-flag".to_string()
+    } else {
+        costs.source()
+    };
+    let fee_bps = fee_bps.unwrap_or(costs.rules.taker_bp) as i128;
     // 深度链走 Tick / OrderBook 两套撮合，产物里必须写明实际内核，不得冒充 Bar 内核。
     let matching_kernel = if single_level {
         TICK_MATCHING_KERNEL
@@ -148,11 +162,12 @@ pub(crate) fn run_depth_backtest(
             model_descriptors: &report.model_descriptors,
             risk_rule_set_version: &risk_rule_set_version,
             risk_rule_source: risk_binding.source(),
+            cost_source: &cost_source,
             matching_kernel,
         },
     )?;
     println!(
-        "[Depth · Backtest] tier={tier} strategy={} instrument={} snapshots={} fills={} fee_bps={} return_bps={} max_drawdown_bps={} result_hash={:016x}",
+        "[Depth · Backtest] tier={tier} strategy={} instrument={} snapshots={} fills={} fee_bps={} cost_source={cost_source} return_bps={} max_drawdown_bps={} result_hash={:016x}",
         kind.name(),
         frame.instrument,
         frame.snapshots.len(),

@@ -116,7 +116,7 @@ fn paper_ccxt_and_binance_share_unknown_submit_fact_contract() {
     let order = port_order(41);
     assert_unknown_submit_fact_contract(
         || {
-            let mut venue = PaperVenue::new("paper");
+            let mut venue = PaperVenue::new("paper", zero_fee());
             venue.disconnect();
             VenuePortAdapter::new_for_any_venue(venue)
         },
@@ -168,7 +168,7 @@ fn paper_ccxt_and_binance_share_unknown_submit_fact_contract() {
 fn paper_ccxt_and_binance_share_submit_cancel_port_contract() {
     let order = port_order(40);
     assert_submit_cancel_port_contract(
-        VenuePortAdapter::new_for_any_venue(PaperVenue::new("paper")),
+        VenuePortAdapter::new_for_any_venue(PaperVenue::new("paper", zero_fee())),
         order.clone(),
         "paper",
     );

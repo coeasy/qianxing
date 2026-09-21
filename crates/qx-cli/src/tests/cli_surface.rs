@@ -1,52 +1,5 @@
 use super::*;
 
-const QX_CLI_SURFACE_SOURCES: [&str; 3] =
-    ["src/cli.rs", "src/cli_help.rs", "src/config_commands.rs"];
-
-/// 被测 binary 是否不早于被测源码：`cargo test --bin` 只编译测试壳、不会重链
-/// `target/debug/qx-cli.exe`，放任过期 binary 会让子进程断言对着旧行为"绿"。
-fn assert_binary_fresh(binary: &Path) {
-    let built = binary
-        .metadata()
-        .and_then(|m| m.modified())
-        .expect("读取被测 binary 修改时间失败");
-    for source in QX_CLI_SURFACE_SOURCES {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(source);
-        let edited = path
-            .metadata()
-            .and_then(|m| m.modified())
-            .unwrap_or_else(|_| panic!("找不到被测源码 {}", path.display()));
-        assert!(
-            built >= edited,
-            "被测 binary {} 比 {} 旧，请先 cargo build -p qx-cli 再跑本用例",
-            binary.display(),
-            path.display()
-        );
-    }
-}
-
-fn qx_cli_binary() -> PathBuf {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_qx-cli") {
-        let binary = PathBuf::from(path);
-        assert_binary_fresh(&binary);
-        return binary;
-    }
-    let profile_dir = std::env::current_exe()
-        .expect("读取测试可执行文件路径失败")
-        .parent()
-        .and_then(|deps| deps.parent())
-        .expect("测试可执行文件应位于 target/<profile>/deps")
-        .to_path_buf();
-    let binary = profile_dir.join(if cfg!(windows) {
-        "qx-cli.exe"
-    } else {
-        "qx-cli"
-    });
-    assert!(binary.is_file(), "未找到被测 binary {}", binary.display());
-    assert_binary_fresh(&binary);
-    binary
-}
-
 /// V10 §4.3 第 3 项：`reconcile` 无参曾经打印两份手写向量的"差异"，看起来像真对账能力。
 #[test]
 fn reconcile_without_sources_is_a_usage_error_not_a_demo() {
@@ -373,5 +326,43 @@ fn runtime_relative_paths_resolve_from_runtime_config_directory() {
     assert_eq!(
         PathBuf::from(files.secret),
         resolve_runtime_relative_path(Path::new("deploy/runtime.json"), "../secrets/secret")
+    );
+}
+
+/// V11 §4 P0 第 2 项（决策 E2）：`backtest --config` 曾被 clap 收下、在分派里以 `config: _`
+/// 丢弃，使用者以为换了风控与费用口径而实际什么都没生效。现在旗标整体不存在，必须报未知参数，
+/// 而真正吃配置的子入口仍要暴露它（V10 P0b 的回测风控同源）。
+#[test]
+fn backtest_rejects_the_config_flag_it_used_to_swallow() {
+    let output = Command::new(qx_cli_binary())
+        .args([
+            "backtest",
+            "--config",
+            "deploy/qianxing.runtime.example.json",
+        ])
+        .output()
+        .expect("启动 qx-cli 失败");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "`backtest --config` 必须按用法错误退出 2，而不是静默接受:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--config"),
+        "错误必须点名被拒绝的旗标，让人知道它已不存在: {stderr}"
+    );
+    let help = Command::new(qx_cli_binary())
+        .args(["backtest", "builtin", "--help"])
+        .output()
+        .expect("启动 qx-cli 失败");
+    assert_eq!(
+        help.status.code(),
+        Some(0),
+        "backtest builtin 的帮助必须可用"
+    );
+    assert!(
+        String::from_utf8_lossy(&help.stdout).contains("--config"),
+        "backtest builtin 仍须暴露 --config（它真的吃这份配置）"
     );
 }

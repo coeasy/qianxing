@@ -347,7 +347,14 @@ pub(crate) fn run_backtest(bars: &[Bar], seed: u64, fast: usize, slow: usize) ->
         risk_state: "selfcheck".into(),
     };
     let report = run_builtin_strategy_on_bars(
-        BarBacktestAssembly::new(&instrument, "main", seed).into_config(),
+        // 自检不读运行时配置：它证明的是接线，口径固定为内核默认。
+        BarBacktestAssembly::new(
+            &instrument,
+            "main",
+            seed,
+            &default_execution_cost_binding(),
+        )
+        .into_config(),
         strategy_config,
         context,
         bars,
@@ -365,7 +372,7 @@ pub(crate) fn run_backtest(bars: &[Bar], seed: u64, fast: usize, slow: usize) ->
 
 pub(crate) fn run_paper_smoke() {
     let instrument = InstrumentId::parse("DEMO.SIM").unwrap();
-    let mut venue = PaperVenue::new("paper");
+    let mut venue = PaperVenue::new("paper", default_execution_cost_binding().fee_model());
     let order = mk_order(9001, &instrument, Side::Buy, 2);
     let accepted = venue.submit(order, 1).unwrap();
     assert!(matches!(accepted.as_slice(), [VenueEvent::Accepted { .. }]));

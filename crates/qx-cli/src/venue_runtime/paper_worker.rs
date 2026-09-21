@@ -48,12 +48,15 @@ pub(crate) fn run_paper_spread_recovery_worker(
                 .map_err(|error| format!("打开 Paper 多腿恢复 EventLog 失败: {error}"))?;
             let validator =
                 recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
+            let costs =
+                execution_cost_binding_from_config(&runtime_config, Some(&runtime_config_path))?;
             for message in recover_paper_spread_groups(
                 &root,
                 &mut pipeline,
                 context.id(),
                 now,
                 Some(&validator),
+                &costs,
             )? {
                 eprintln!("[HedgeRecovery] {message}");
             }
@@ -192,6 +195,12 @@ pub(crate) fn run_paper_execution_worker(
                             Some(risk),
                             Some(position),
                             Some(market_quote),
+                            // 费率与回测同源：同一份运行时配置的 `cost_rules_path`。
+                            execution_cost_binding_from_config(
+                                &runtime_config,
+                                Some(&runtime_config_path),
+                            )?
+                            .fee_model(),
                             false,
                             Some(&spread_store),
                         ),
@@ -241,12 +250,17 @@ pub(crate) fn run_paper_execution_worker(
                     &recovery_pipeline,
                     Some(&runtime_config_path),
                 );
+                let costs = execution_cost_binding_from_config(
+                    &runtime_config,
+                    Some(&runtime_config_path),
+                )?;
                 for message in recover_paper_spread_groups(
                     &root,
                     &mut recovery_pipeline,
                     context.id(),
                     now,
                     Some(&validator),
+                    &costs,
                 )? {
                     eprintln!("[HedgeRecovery] {message}");
                 }

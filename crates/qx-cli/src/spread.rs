@@ -278,6 +278,7 @@ pub(crate) fn recover_paper_spread_groups(
     worker_id: &str,
     now: u64,
     order_validator: Option<&dyn HedgeOrderValidator>,
+    costs: &ExecutionCostBinding,
 ) -> Result<Vec<String>, String> {
     let hedge_orders = pipeline
         .orders()
@@ -290,7 +291,7 @@ pub(crate) fn recover_paper_spread_groups(
                 == Some("spread-hedge-v1")
         })
         .collect::<Vec<_>>();
-    let mut venue = PaperVenue::new("paper");
+    let mut venue = PaperVenue::new("paper", costs.fee_model());
     venue
         .restore_orders(hedge_orders)
         .map_err(|error| format!("恢复 Paper 补偿订单失败: {error:?}"))?;

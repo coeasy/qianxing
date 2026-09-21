@@ -10,7 +10,7 @@ pub use oms::Oms;
 pub use qx_core::TargetPosition;
 use qx_core::{
     FeeModel, Fill, InstrumentId, Order, OrderStatus, OrderTrace, Price, Quantity, QxError,
-    QxResult, Side, TradingInstrumentSpec, ZeroFeeModel,
+    QxResult, Side, TradingInstrumentSpec,
 };
 use qx_guanxing::QuoteTick;
 #[cfg(test)]
@@ -1210,7 +1210,10 @@ pub struct PaperVenue {
 }
 
 impl PaperVenue {
-    pub fn new(id: impl Into<String>) -> Self {
+    /// 构造 Paper 虚拟 Venue。费用模型**必须显式给出**：Paper 的 `Fill.fee` 要与
+    /// 回测、实盘同一口径，"默认零费"会让同一条成交在执行平面上悄悄变便宜
+    /// （V11 §4.1 的缺陷形状）。不计费的冒烟测试显式传 `Box::new(ZeroFeeModel)`。
+    pub fn new(id: impl Into<String>, fee_model: Box<dyn FeeModel + Send>) -> Self {
         Self {
             id: id.into(),
             connected: true,
@@ -1220,16 +1223,8 @@ impl PaperVenue {
             last_event_ts: 0,
             last_source_seq: 0,
             reconnects: 0,
-            fee_model: Box::new(ZeroFeeModel),
+            fee_model,
         }
-    }
-
-    /// 注入费用模型。Paper 的 `Fill.fee` 必须与回测、实盘同一口径，否则
-    /// 同一条成交在不同执行平面得出不同成本；零费默认只适用于显式声明
-    /// 不计费的冒烟测试。
-    pub fn with_fee_model(mut self, fee_model: Box<dyn FeeModel + Send>) -> Self {
-        self.fee_model = fee_model;
-        self
     }
 
     /// 当前费用模型描述子，用于运行清单与配置校验的可观测性。
@@ -1634,6 +1629,14 @@ mod tests {
             trace: None,
             policy: None,
         }
+    }
+
+    /// 与 Bar 回测装配同一默认费率的 Paper Venue；零费只在生命周期冒烟用例里显式出现。
+    fn shared_rate_paper() -> PaperVenue {
+        PaperVenue::new(
+            "paper",
+            Box::new(qx_core::MakerTakerFeeModel::default_maker_taker()),
+        )
     }
 
     fn two_leg_group() -> SpreadOrderGroup {
@@ -2043,7 +2046,7 @@ mod tests {
     #[test]
     fn paper_venue_accepts_and_fills_from_l1() {
         let instrument = InstrumentId::parse("T.V").unwrap();
-        let mut venue = PaperVenue::new("paper");
+        let mut venue = PaperVenue::new("paper", Box::new(qx_core::ZeroFeeModel));
         let o = order(1, Side::Buy);
         let accepted = venue.submit(o, 10).unwrap();
         assert!(matches!(accepted[0], VenueEvent::Accepted { .. }));
@@ -2067,11 +2070,7 @@ mod tests {
     fn paper_venue_charges_fills_with_the_shared_fee_model() {
         let instrument = InstrumentId::parse("T.V").unwrap();
         let fee_of = |post_only: bool, id: u64| {
-            let mut venue =
-                PaperVenue::new("paper").with_fee_model(Box::new(qx_core::MakerTakerFeeModel {
-                    maker_bp: 2,
-                    taker_bp: 5,
-                }));
+            let mut venue = shared_rate_paper();
             let mut o = order(1, Side::Buy);
             o.client_id = id;
             if post_only {
@@ -2100,17 +2099,17 @@ mod tests {
         // 名义 100.0：吃单 5bp = 0.05，挂单 2bp = 0.02
         assert_eq!(fee_of(false, 1), qx_core::SCALE / 20);
         assert_eq!(fee_of(true, 2), qx_core::SCALE / 50);
-        // 默认零费只属于显式不计费的冒烟路径
+        // 冻结的执行平面成本口径：descriptor 变了就是指纹变了，须与 Bar 回测装配同步审阅。
         assert_eq!(
-            PaperVenue::new("paper").fee_descriptor(),
-            "ZeroFee@v1[params=]"
+            shared_rate_paper().fee_descriptor(),
+            "MakerTaker@v1[params=maker_bp=2;taker_bp=5]"
         );
     }
 
     #[test]
     fn paper_venue_consumes_quote_capacity_once() {
         let instrument = InstrumentId::parse("T.V").unwrap();
-        let mut venue = PaperVenue::new("paper");
+        let mut venue = PaperVenue::new("paper", Box::new(qx_core::ZeroFeeModel));
         let mut first = order(6, Side::Buy);
         first.client_id = 1;
         let mut second = order(6, Side::Buy);
@@ -2161,7 +2160,7 @@ mod tests {
 
     #[test]
     fn disconnected_submit_is_ambiguous() {
-        let mut venue = PaperVenue::new("paper");
+        let mut venue = PaperVenue::new("paper", Box::new(qx_core::ZeroFeeModel));
         venue.disconnect();
         assert!(matches!(
             venue.submit(order(1, Side::Buy), 1),
@@ -2171,7 +2170,7 @@ mod tests {
 
     #[test]
     fn reconnect_requires_snapshot_reconciliation() {
-        let mut venue = PaperVenue::new("paper");
+        let mut venue = PaperVenue::new("paper", Box::new(qx_core::ZeroFeeModel));
         venue.submit(order(1, Side::Buy), 1).unwrap();
         let remote = venue.snapshot();
         venue.disconnect();

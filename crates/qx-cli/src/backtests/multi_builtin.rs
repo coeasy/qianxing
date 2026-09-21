@@ -18,13 +18,7 @@ pub(crate) fn run_multi_builtin_backtest(
         return Err("多腿内置策略 quantity 必须为正整数".into());
     }
     let kind = BuiltinStrategyKind::parse(strategy_name)?;
-    if !matches!(
-        kind,
-        BuiltinStrategyKind::PairsArbitrage
-            | BuiltinStrategyKind::BasisArbitrage
-            | BuiltinStrategyKind::CrossVenueArbitrage
-            | BuiltinStrategyKind::SpotFuturesArbitrage
-    ) {
+    if !MULTI_LEG_KINDS.contains(&kind) {
         return Err(format!("多腿回测只接受套利策略，当前为 {}", kind.name()));
     }
     let primary_frame = read_bar_frame_for_multi_backtest(primary_path, "主腿")?;
@@ -153,6 +147,9 @@ pub(crate) fn run_multi_builtin_backtest(
     // 两条腿共用同一份规则绑定：多腿链的规则集版本必须与单标的链可比较。
     let risk_binding = backtest_risk_binding(runtime_config_path, true)?;
     let risk_rule_set_version = risk_binding.gate().rule_set().version().to_string();
+    // 两条腿同样共用一份成本绑定：多腿归因的费用必须是同一口径，否则净成本差里没有可比性。
+    let costs = execution_cost_binding(runtime_config_path)?;
+    let cost_source = costs.source();
     // 产物里写的版本必须是真正装进引擎的那一份：把每条腿实际生效的版本读回来核对。
     let mut leg_risk_versions: Vec<String> = Vec::new();
     let mut run_leg = |frame: &BarFrame,
@@ -173,7 +170,7 @@ pub(crate) fn run_multi_builtin_backtest(
             account_id: format!("multi-leg-{leg}"),
         };
         let mut assembly =
-            BarBacktestAssembly::new(&frame.instrument, strategy.account_id.clone(), 20260914);
+            BarBacktestAssembly::new(&frame.instrument, strategy.account_id.clone(), 20260914, &costs);
         assembly.instrument_spec = spec;
         assembly.margin = margin;
         assembly.currency = currency;
@@ -313,6 +310,7 @@ pub(crate) fn run_multi_builtin_backtest(
                 "source": risk_binding.source(),
                 "matching_kernel": BAR_MATCHING_KERNEL,
             },
+            "execution_costs": { "source": cost_source },
             "totals": {
                 "turnover_raw": totals.1.to_string(),
                 "fees_raw": totals.0.to_string(),

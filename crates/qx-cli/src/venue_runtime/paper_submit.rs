@@ -119,6 +119,8 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
             Some(risk),
             Some(position),
             Some(market_quote),
+            // 与回测装配同一份成本口径：费率只从运行时配置的 `cost_rules_path` 来。
+            execution_cost_binding_from_config(&config, Some(path))?.fee_model(),
             false,
             Some(&spread_store),
         )

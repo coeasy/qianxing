@@ -33,6 +33,7 @@ pub use self::event::{
 };
 pub use self::fee::{
     bp_amount, notional, AShareFeeModel, FeeModel, MakerTakerFeeModel, ZeroFeeModel,
+    DEFAULT_MAKER_BP, DEFAULT_TAKER_BP,
 };
 pub use self::identity::{CanonicalProduct, InstrumentId, MarketId, VenueId};
 pub use self::ledger::{

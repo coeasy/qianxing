@@ -15,13 +15,21 @@ pub(crate) struct BarBacktestAssembly {
     pub(crate) initial_cash: Money,
     pub(crate) margin: Box<dyn MarginRule>,
     pub(crate) fee: Box<dyn FeeModel>,
+    pub(crate) latency: Box<dyn LatencyModel>,
     pub(crate) risk: RiskGate,
     pub(crate) virtual_trading: VirtualTradingConfig,
     pub(crate) seed: u64,
 }
 
 impl BarBacktestAssembly {
-    pub(crate) fn new(instrument: &InstrumentId, account_id: impl Into<String>, seed: u64) -> Self {
+    /// 费用与延迟成对来自同一份 [`ExecutionCostBinding`]（V11 Q0c）：分两个入口注入
+    /// 就会退回到"两条链各自挑口径"，那是 Q0a/Q0c 要消灭的形状。
+    pub(crate) fn new(
+        instrument: &InstrumentId,
+        account_id: impl Into<String>,
+        seed: u64,
+        costs: &ExecutionCostBinding,
+    ) -> Self {
         Self {
             instrument: instrument.clone(),
             instrument_spec: None,
@@ -29,10 +37,8 @@ impl BarBacktestAssembly {
             currency: "USDT".into(),
             initial_cash: Money::from_i64(100_000),
             margin: Box::new(NoMargin),
-            fee: Box::new(MakerTakerFeeModel {
-                maker_bp: 2,
-                taker_bp: 5,
-            }),
+            fee: costs.fee_model(),
+            latency: costs.latency_model(),
             risk: strategy_risk_gate(None, false),
             virtual_trading: VirtualTradingConfig::default(),
             seed,
@@ -50,7 +56,7 @@ impl BarBacktestAssembly {
             fill: Box::new(NextBarOpenFillModel),
             fee: self.fee,
             data_tier: DataTier::Bar,
-            latency: Box::new(ZeroLatency),
+            latency: self.latency,
             margin: self.margin,
             seed: self.seed,
             risk: self.risk,

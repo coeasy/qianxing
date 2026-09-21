@@ -16,7 +16,9 @@ fn strategy_backtest_accepts_builtin_runtime_config() {
 #[test]
 fn bar_backtest_assembly_pins_the_shared_engine_defaults() {
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
-    let config = BarBacktestAssembly::new(&instrument, "main", 20260914).into_config();
+    let config =
+        BarBacktestAssembly::new(&instrument, "main", 20260914, &default_execution_cost_binding())
+            .into_config();
     assert_eq!(config.instrument, instrument);
     assert_eq!(config.account_id, "main");
     assert_eq!(config.currency, "USDT");
@@ -318,4 +320,109 @@ fn dedicated_spread_recovery_disables_legacy_execution_scan_only_for_same_accoun
     assert!(dedicated_spread_recovery_configured(&config, &execution));
     config.workers.last_mut().unwrap().venue_id = Some("other".into());
     assert!(!dedicated_spread_recovery_configured(&config, &execution));
+}
+
+/// V11 Q0b：内置策略 kind 的"回测准入分区"必须三处同口径 —— 内核侧的配置合法性、
+/// 两个入口函数的真实判定、`builtin-strategies` 与帮助正文印出来的话。
+/// 此前帮助只笼统宣称"17 个内置策略可直接用于回测/Paper/策略接入"，而 4 个套利 kind
+/// 实际只被 `multi-builtin` 接受（`book` 明确拒绝它们）。
+#[test]
+fn builtin_strategy_entries_match_the_printed_partition() {
+    let case_root = temp_cli_case_dir("partition");
+    let missing = case_root.join("missing-frame.json");
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let mut single_leg = 0;
+    let mut multi_leg = 0;
+    for kind in BuiltinStrategyKind::ALL {
+        let wants_two_legs = MULTI_LEG_KINDS.contains(&kind);
+        if wants_two_legs {
+            multi_leg += 1;
+        } else {
+            single_leg += 1;
+        }
+        // 内核侧是同一条事实的另一面：多腿 kind 缺 reference_instrument 即非法。
+        let config = BuiltinStrategyConfig::new(
+            kind,
+            format!("builtin-{}", kind.name()),
+            instrument.clone(),
+            Quantity::from_i64(1),
+        );
+        assert_eq!(
+            config.is_err(),
+            wants_two_legs,
+            "{:?} 的配置合法性必须与准入分区一致",
+            kind
+        );
+        // 深度档入口在读取数据帧之前就按 kind 拒绝。
+        let depth = run_depth_backtest(
+            "l1",
+            kind.name(),
+            &missing,
+            None,
+            1,
+            Some(5),
+            &case_root,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            depth.contains("只支持单标的策略"),
+            wants_two_legs,
+            "深度档入口对 {} 的判定偏离分区: {depth}",
+            kind.name()
+        );
+        // 多腿入口只接受这四类。
+        let legs = run_multi_builtin_backtest(
+            kind.name(),
+            &missing,
+            &missing,
+            None,
+            None,
+            1,
+            0,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            legs.contains("只接受套利策略"),
+            !wants_two_legs,
+            "多腿入口对 {} 的判定偏离分区: {legs}",
+            kind.name()
+        );
+    }
+    assert_eq!(
+        (single_leg, multi_leg),
+        (13, 4),
+        "17 个 kind 的分区必须由用例逐条数出来"
+    );
+    // 帮助正文的分区口径必须由同一轮数出的数字复现，不得停留在"17 个都能用于回测/Paper"。
+    let help_source = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("cli_help.rs"),
+    )
+    .expect("读取 cli_help.rs 失败");
+    assert!(
+        help_source.contains(&format!(
+            "{single_leg} 个单标的策略可走 builtin / ccxt-builtin /\n      book，{multi_leg} 个套利 kind"
+        )),
+        "帮助里 builtin-strategies 的说明必须写明 {single_leg}/{multi_leg} 的真实准入分区"
+    );
+    let output = Command::new(qx_cli_binary())
+        .arg("builtin-strategies")
+        .output()
+        .expect("启动 qx-cli 失败");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    for kind in BuiltinStrategyKind::ALL {
+        let line = stdout
+            .lines()
+            .find(|line| line.starts_with(&format!("{}\t", kind.name())))
+            .unwrap_or_else(|| panic!("builtin-strategies 未印出 {}", kind.name()));
+        assert!(
+            line.contains(backtest_entry_of(kind)),
+            "{} 的准入列必须是该 kind 真正可用的入口，实际行: {line}",
+            kind.name()
+        );
+    }
 }

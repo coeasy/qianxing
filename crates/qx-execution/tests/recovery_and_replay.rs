@@ -14,6 +14,12 @@ use qx_zhenlu::{PaperVenue, RiskContext, Venue, VenueEvent};
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// 只断言回报形状 / 恢复事实的用例显式零费：费用不是这里的期望，但生产 Paper
+/// 路径的成本口径必须由调用方给出（见 `PaperVenue::new`）。
+fn zero_fee() -> Box<dyn qx_core::FeeModel + Send> {
+    Box::new(qx_core::ZeroFeeModel)
+}
+
 #[test]
 fn accepted_events_replay_by_correlation_even_when_local_sequence_changes() {
     let root = std::env::temp_dir().join(format!(
@@ -133,7 +139,7 @@ fn risk_preflight_rejects_before_event_log_or_venue_side_effect() {
         ..RiskContext::default()
     };
     let mut pipeline = LiveEventPipeline::open(&root, "events", "USDT").unwrap();
-    let mut venue = PaperVenue::new("paper");
+    let mut venue = PaperVenue::new("paper", zero_fee());
     let mut source_seq = 0;
     let risk_context = RiskExecutionContext {
         risk: &risk,

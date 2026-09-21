@@ -234,6 +234,7 @@ fn paper_multi_leg_spread_submits_each_leg_through_single_track_and_reduces_grou
             Some(risk),
             Some(OrderRiskPosition::new(0, 0)),
             Some(quote),
+            default_execution_cost_binding().fee_model(),
             false,
             Some(&group_store),
         )
@@ -269,7 +270,8 @@ fn paper_multi_leg_spread_submits_each_leg_through_single_track_and_reduces_grou
             .count();
         assert_eq!(
             (accepted, fills, ledger),
-            (1, 1, 2),
+            // Q0a 起每腿成交多出 1 条 Fee 分录：名义额、持仓、费用。
+            (1, 1, 3),
             "订单 {client_order_id} 的执行事实不完整"
         );
     }
@@ -421,7 +423,15 @@ fn paper_hedge_recovery_replays_partial_fill_to_hedged() {
         .unwrap();
 
     let diagnostics =
-        recover_paper_spread_groups(&root, &mut pipeline, "paper-hedge", 6, None).unwrap();
+        recover_paper_spread_groups(
+            &root,
+            &mut pipeline,
+            "paper-hedge",
+            6,
+            None,
+            &default_execution_cost_binding(),
+        )
+        .unwrap();
     assert!(
         diagnostics
             .iter()

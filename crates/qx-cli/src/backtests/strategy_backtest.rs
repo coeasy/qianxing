@@ -131,6 +131,7 @@ pub(crate) fn run_strategy_backtest(
         verify_strategy_artifact(&strategy_config.strategy)?;
         run_single_strategy_backtest(
             &strategy_config,
+            Some(runtime_path),
             &frame,
             &bars,
             spec_path,
