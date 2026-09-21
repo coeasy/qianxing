@@ -11,6 +11,17 @@ pub(crate) fn resolve_worker_runtime_paths(worker: &mut WorkerConfig, runtime_pa
     }
 }
 
+/// worker 账户日志的记账币种。EventLog 按记账币种选择现金账簿，因此打开日志、播种初始资金、
+/// 归约成交和构造风控快照必须使用同一个值；未声明时回落 USDT。统一大写是因为 Venue 现金流水的
+/// 币种按惯例大写，大小写错位会读到一个空账簿——成交扣减和风控读取各看一本账，谁都不报错。
+pub(crate) fn worker_settlement_currency(worker: &WorkerConfig) -> String {
+    worker
+        .settlement_currency
+        .as_deref()
+        .unwrap_or("USDT")
+        .to_ascii_uppercase()
+}
+
 /// Paper 账户可用保证金的估值口径，必须和 `RiskContext` 里的 `initial_margin` 同一把尺子：
 /// 现货买入付出现金，持仓按全额名义额计入权益才是账户价值；保证金产品开仓不动现金，
 /// 账上属于这笔持仓的只有已实现/未实现 PnL，再按名义额累加等于凭空多出整笔可用保证金
@@ -60,10 +71,10 @@ pub(crate) fn worker_risk_context(
         .account_id
         .as_deref()
         .ok_or_else(|| format!("worker {} 缺少 account_id", worker.id))?;
-    let settlement = worker
-        .settlement_currency
-        .as_deref()
-        .unwrap_or(&spec.settlement_currency);
+    let settlement = match worker.settlement_currency.as_deref() {
+        Some(currency) => currency.to_ascii_uppercase(),
+        None => spec.settlement_currency.clone(),
+    };
     let observed_available = worker.venue_id.as_deref().and_then(|venue_id| {
         pipeline
             .snapshot()
@@ -83,7 +94,7 @@ pub(crate) fn worker_risk_context(
             pipeline.ledger(),
             account_id,
             pipeline.marks(),
-            settlement,
+            &settlement,
             &spec,
         )?
     } else {

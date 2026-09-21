@@ -15,6 +15,13 @@ pub trait LatencyModel {
     /// 不能用成交价随机偏移偷偷替代——那会破坏时间因果。
     fn delay_ns(&self) -> u64;
 
+    /// 同一条延迟在**撮合时间轴**上的口径：`Bar.ts` 与事件时间戳是毫秒，`delay_ns` 是纳秒。
+    /// 把延迟加到时间轴上必须走这里——直接加 `delay_ns()` 会把 1ms 放大成 1e6 ms（约 16.7
+    /// 分钟），于是"配了非零延迟"等于"订单在 bar 级回测里永不成交"，而且一声不响。
+    fn delay_ms(&self) -> u64 {
+        latency_delay_ms(self.delay_ns())
+    }
+
     fn descriptor(&self) -> String {
         format!(
             "{}@{}[delay_ns={}]",
@@ -60,6 +67,15 @@ impl LatencyModel for StaticLatency {
             self.insert_ns
         )
     }
+}
+
+/// 撮合时间轴（`Bar.ts`、`EventLog` 时间戳）统一是毫秒，而延迟按纳秒配置。
+const NS_PER_MS: u64 = 1_000_000;
+
+/// 把纳秒延迟换算成撮合时间轴的毫秒刻度。非零延迟一律**向上取整**：整除会把任何亚毫秒
+/// 延迟静默归零。走 [`LatencyModel::delay_ms`]，不要在调用处加 `delay_ns()`。
+fn latency_delay_ms(delay_ns: u64) -> u64 {
+    delay_ns.saturating_add(NS_PER_MS - 1) / NS_PER_MS
 }
 
 pub trait MarginRule {
@@ -266,6 +282,16 @@ mod tests {
             insert_ns: 50,
         };
         assert_eq!(l.delay_ns(), 150);
+    }
+
+    /// 换算发生在毫秒刻度上：亚毫秒延迟不能整除归零，整毫秒延迟不能放大一千倍。
+    #[test]
+    fn latency_rounds_up_to_whole_milliseconds() {
+        assert_eq!(latency_delay_ms(0), 0);
+        assert_eq!(latency_delay_ms(1), 1);
+        assert_eq!(latency_delay_ms(1_000_000), 1);
+        assert_eq!(latency_delay_ms(1_000_001), 2);
+        assert_eq!(latency_delay_ms(u64::MAX), u64::MAX / NS_PER_MS);
     }
 
     #[test]

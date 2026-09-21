@@ -60,6 +60,100 @@ pub(crate) fn resolve_runtime_asset_path(
     config_candidate
 }
 
+/// `storage.data_dir` 实际被打开的落点。
+///
+/// 这个字段有两种口径：可写运行态（控制面、队列、EventLog、outbox、metrics）按进程
+/// 当前目录打开，回测产物（`runs/`、`datasets.manifest.json`）按 runtime.json 同级目录
+/// 写入。相对配置值在两个口径下会指向不同目录，所以诊断命令必须报告真正在用的那个，
+/// 而不是任选一种折算：以进程目录口径为主，只有它不存在而配置目录口径存在时才报告后者。
+/// 两处都有状态时由调用方并列提示——那意味着同一份配置换了启动目录，账本和回测已分家。
+pub(crate) fn effective_storage_root(runtime_path: &Path, configured: &str) -> PathBuf {
+    let process_root = Path::new(configured);
+    if process_root.exists() {
+        return process_root.to_path_buf();
+    }
+    let config_root = resolve_runtime_relative_path(runtime_path, configured);
+    if config_root.exists() {
+        return config_root;
+    }
+    process_root.to_path_buf()
+}
+
+/// doctor 的 `storage.data_dir` 检查：可用性与提示按**两个**落点口径共同判断。
+///
+/// 只按其中一种折算会让 doctor 指向一个没有写入者使用的目录——真实账本已存在却被提示成
+/// "将在首次运行时创建"，两处都还没创建时又会把可创建的落点误判成父目录不可用。报告给出
+/// 真正在被使用的落点（[`effective_storage_root`]），并在两处都已落盘时提示配置分家。
+pub(crate) fn check_storage_data_dir(
+    runtime_path: &Path,
+    configured: &str,
+    checks: &mut Vec<serde_json::Value>,
+    warnings: &mut Vec<String>,
+    failures: &mut Vec<String>,
+) {
+    let process_root = Path::new(configured);
+    let config_relative_root = resolve_runtime_relative_path(runtime_path, configured);
+    let candidates = [process_root, config_relative_root.as_path()];
+    let data_dir = effective_storage_root(runtime_path, configured);
+    let canonical = candidates
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .collect::<Vec<_>>();
+    if canonical.len() == 2 && canonical[0] != canonical[1] {
+        let message = format!(
+            "storage.data_dir 有两个已存在的落点: {}（进程目录口径，运行态写在这里）与 {}（配置目录口径，回测产物写在这里）；请固定启动目录或改用绝对路径，否则同一配置的账本与回测互不可见",
+            process_root.display(),
+            config_relative_root.display()
+        );
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir.split",
+            "status": "warn",
+            "message": message
+        }));
+        warnings.push(message);
+    }
+    if let Some(blocked) = candidates
+        .iter()
+        .find(|root| root.exists() && !root.is_dir())
+    {
+        let message = format!("storage.data_dir 不是目录: {}", blocked.display());
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir",
+            "status": "fail",
+            "message": message
+        }));
+        failures.push(message);
+    } else if candidates.iter().any(|root| root.is_dir()) {
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir",
+            "status": "pass",
+            "message": data_dir.display().to_string()
+        }));
+    } else if candidates
+        .iter()
+        .any(|root| root.parent().is_some_and(|parent| parent.is_dir()))
+    {
+        let message = format!(
+            "storage.data_dir 尚不存在，将在首次运行时创建: {}",
+            data_dir.display()
+        );
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir",
+            "status": "warn",
+            "message": message
+        }));
+        warnings.push(message);
+    } else {
+        let message = format!("storage.data_dir 的父目录不存在: {}", data_dir.display());
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir",
+            "status": "fail",
+            "message": message
+        }));
+        failures.push(message);
+    }
+}
+
 pub(crate) fn resolve_strategy_runtime_paths(
     strategy: &mut StrategyRuntimeConfig,
     runtime_path: &Path,

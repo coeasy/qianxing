@@ -209,10 +209,7 @@ pub(crate) fn open_paper_market_bridges(
             existing.workers.push(worker.clone());
             continue;
         }
-        let pipeline = storage.open(
-            log_name.clone(),
-            worker.settlement_currency.as_deref().unwrap_or("USDT"),
-        )?;
+        let pipeline = storage.open(log_name.clone(), worker_settlement_currency(worker))?;
         bridges.push(PaperMarketBridge {
             workers: vec![worker.clone()],
             log_name,

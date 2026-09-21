@@ -407,7 +407,9 @@ pub(crate) fn run_config_explain(path: &Path, as_json: bool) -> Result<(), Strin
     println!(
         "  storage={:?} data_dir={} api={} transport={:?}",
         config.storage.backend,
-        resolve_runtime_relative_path(path, &config.storage.data_dir).display(),
+        // 与 doctor 同口径：相对 data_dir 有两个落点（可写运行态按进程当前目录，
+        // 回测产物按 runtime.json 同级），报告真正在被使用的那个。
+        effective_storage_root(path, &config.storage.data_dir).display(),
         config.api.bind,
         config.api.transport
     );
@@ -860,43 +862,13 @@ pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, St
         }
     }
 
-    let data_dir = resolve_runtime_relative_path(path, &config.storage.data_dir);
-    if data_dir.exists() {
-        if data_dir.is_dir() {
-            checks.push(serde_json::json!({
-                "name": "storage.data_dir",
-                "status": "pass",
-                "message": data_dir.display().to_string()
-            }));
-        } else {
-            let message = format!("storage.data_dir 不是目录: {}", data_dir.display());
-            checks.push(serde_json::json!({
-                "name": "storage.data_dir",
-                "status": "fail",
-                "message": message
-            }));
-            failures.push(message);
-        }
-    } else if data_dir.parent().is_some_and(|parent| parent.is_dir()) {
-        let message = format!(
-            "storage.data_dir 尚不存在，将在首次运行时创建: {}",
-            data_dir.display()
-        );
-        checks.push(serde_json::json!({
-            "name": "storage.data_dir",
-            "status": "warn",
-            "message": message
-        }));
-        warnings.push(message);
-    } else {
-        let message = format!("storage.data_dir 的父目录不存在: {}", data_dir.display());
-        checks.push(serde_json::json!({
-            "name": "storage.data_dir",
-            "status": "fail",
-            "message": message
-        }));
-        failures.push(message);
-    }
+    check_storage_data_dir(
+        path,
+        &config.storage.data_dir,
+        &mut checks,
+        &mut warnings,
+        &mut failures,
+    );
 
     match RuntimeSupervisor::new(config.clone()) {
         Ok(supervisor) => {

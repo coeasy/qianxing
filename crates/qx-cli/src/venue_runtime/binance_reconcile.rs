@@ -85,7 +85,10 @@ pub(crate) fn run_binance_reconcile_worker(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut pipeline = pipeline_storage
-        .open(binance_event_log_name(&worker), "USDT")
+        .open(
+            binance_event_log_name(&worker),
+            worker_settlement_currency(&worker),
+        )
         .map_err(|error| format!("创建对账事件管线失败: {error}"))?;
     let mut source_seq = 0_u64;
     context.mark(

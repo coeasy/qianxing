@@ -152,4 +152,6 @@ mod live_submit_fail_closed;
 mod paper_and_strategy_worker;
 mod paper_bridge_and_bundles;
 mod paper_margin_valuation;
+mod paper_settlement_currency;
+mod storage_root_report;
 mod worker_observability;

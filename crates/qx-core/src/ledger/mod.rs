@@ -54,6 +54,9 @@ fn default_multiplier() -> i128 {
 pub struct PositionState {
     pub quantity: Quantity,
     pub average_entry: Price,
+    /// 平仓累计已实现盈亏，按"价差 × 平仓数量 × `multiplier`"统计。衍生品走
+    /// `TradingInstrumentSpec` 的现金腿时还会再乘 `contract_size`，所以
+    /// `contract_size != SCALE` 的产品这里只是每手口径的统计，账户现金以现金腿为准。
     pub realized_pnl: Money,
 }
 

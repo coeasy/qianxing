@@ -16,7 +16,10 @@ pub(crate) fn run_binance_market_worker(
         .ok_or_else(|| format!("worker {} instrument 非法", worker.id))?;
     let (host, port) = configured_ws_endpoint(&worker)?;
     let mut pipeline = pipeline_storage
-        .open(binance_event_log_name(&worker), "USDT")
+        .open(
+            binance_event_log_name(&worker),
+            worker_settlement_currency(&worker),
+        )
         .map_err(|error| format!("创建行情事件管线失败: {error}"))?;
     let mut paper_bridges = open_paper_market_bridges(&pipeline_storage, &paper_workers)?;
     let mut stream = BinanceSpotMarketStream::connect_with_endpoint(
@@ -84,7 +87,10 @@ pub(crate) fn run_binance_user_worker(
     let initial_auth = load_binance_worker_auth(&worker)?;
     let mut venue = new_binance_venue(&worker, initial_auth)?;
     let mut pipeline = pipeline_storage
-        .open(binance_event_log_name(&worker), "USDT")
+        .open(
+            binance_event_log_name(&worker),
+            worker_settlement_currency(&worker),
+        )
         .map_err(|error| format!("创建用户流事件管线失败: {error}"))?;
     venue
         .restore_orders(pipeline.orders())
