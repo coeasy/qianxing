@@ -399,16 +399,17 @@ impl OrderBookBacktestEngine {
                 .map_err(qx_core::QxError::Permanent)?
             {
                 let order = oms.get(fill.order_id).cloned().ok_or_else(|| {
-                    qx_core::QxError::Invariant("订单簿成交找不到 OMS 订单".into())
+                    qx_core::QxError::ReconcileRequired("订单簿成交找不到 OMS 订单".into())
                 })?;
                 let mut traced_fill = fill.clone();
                 order.trace_fill(&mut traced_fill, None, None);
-                oms.apply_fill(&traced_fill)?;
-                let entry_ids = if let Some(spec) = instrument_spec.as_ref() {
-                    ledger.apply_fill_with_spec(&order, &traced_fill, &currency, spec)?
-                } else {
-                    ledger.apply_fill_with_multiplier(&order, &traced_fill, &currency, 1)?
-                };
+                let entry_ids = qx_core::apply_fill_to_books(
+                    &mut ledger,
+                    &mut oms,
+                    &currency,
+                    &traced_fill,
+                    qx_core::FillTerms::resolve(instrument_spec.as_ref(), 1),
+                )?;
                 fill = traced_fill;
                 fees_raw = fees_raw.saturating_add(fill.fee.raw());
                 turnover_raw = turnover_raw.saturating_add(book_notional(

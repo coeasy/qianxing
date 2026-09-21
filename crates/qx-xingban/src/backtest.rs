@@ -374,6 +374,15 @@ impl BacktestEngine {
             }
             spec.validate()?;
         }
+        // 有产品规格时规格就是每手规模的唯一真相：`contract_size` 已经参与名义额，
+        // 再叠一个历史 `multiplier` 会让同一段成交在回测与实盘记出不同现金——实盘
+        // 路径根本没有 multiplier。两者同时给出且不为 1 时必须显式拒绝，不能静默
+        // 丢弃其中一个。
+        if instrument_spec.is_some() && multiplier != 1 {
+            return Err(qx_core::QxError::BusinessViolation(
+                "已提供产品规格时回测乘数必须为 1，每手规模由 contract_size 决定".into(),
+            ));
+        }
         let derivative_spec = instrument_spec
             .as_ref()
             .filter(|spec| spec.product.supports_leverage());
@@ -834,14 +843,15 @@ impl BacktestEngine {
                 let order = oms
                     .get(fill.order_id)
                     .cloned()
-                    .ok_or_else(|| qx_core::QxError::Invariant("成交找不到订单".into()))?;
+                    .ok_or_else(|| qx_core::QxError::ReconcileRequired("成交找不到订单".into()))?;
                 order.trace_fill(&mut fill, None, None);
-                oms.apply_fill(&fill)?;
-                let entry_ids = if let Some(spec) = derivative_spec {
-                    ledger.apply_fill_with_spec(&order, &fill, &currency, spec)?
-                } else {
-                    ledger.apply_fill_with_multiplier(&order, &fill, &currency, multiplier)?
-                };
+                let entry_ids = qx_core::apply_fill_to_books(
+                    &mut ledger,
+                    &mut oms,
+                    &currency,
+                    &fill,
+                    qx_core::FillTerms::resolve(instrument_spec.as_ref(), multiplier),
+                )?;
                 if ashare_rules.is_some() && order.side == Side::Buy {
                     ashare_state.on_buy(fill.qty.raw());
                 }
@@ -1294,15 +1304,13 @@ fn close_virtual_position(
         account_id: state.account_id.into(),
         ..Fill::default()
     };
-    let entry_ids = if let Some(spec) = state.spec {
-        state
-            .ledger
-            .apply_fill_with_spec(&order, &fill, state.currency, spec)?
-    } else {
-        state
-            .ledger
-            .apply_fill_with_multiplier(&order, &fill, state.currency, state.multiplier)?
-    };
+    let entry_ids = qx_core::apply_ledger_fill(
+        state.ledger,
+        &order,
+        state.currency,
+        &fill,
+        qx_core::FillTerms::resolve(state.spec, state.multiplier),
+    )?;
     append_virtual_fill(state.log, state.ledger, &fill, &entry_ids)?;
     state.fills.push(fill);
     if let Some(fee_bp) = liquidation_fee_bp {

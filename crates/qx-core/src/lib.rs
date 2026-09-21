@@ -14,6 +14,7 @@ pub mod error;
 pub mod event;
 pub mod fee;
 pub mod fenye;
+pub mod fill_apply;
 pub mod identity;
 pub mod ledger;
 pub mod numeric;
@@ -34,6 +35,7 @@ pub use self::event::{
 pub use self::fee::{
     bp_amount, notional, AShareFeeModel, FeeModel, MakerTakerFeeModel, ZeroFeeModel,
 };
+pub use self::fill_apply::{apply_fill_to_books, apply_ledger_fill, FillTerms, OrderFillBook};
 pub use self::identity::{CanonicalProduct, InstrumentId, MarketId, VenueId};
 pub use self::ledger::{
     ConvertibleBondConversion, CorporateAction, Ledger, LedgerEntry, LedgerEntryKind,

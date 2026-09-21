@@ -1228,7 +1228,9 @@ impl LiveEventPipeline {
                 }
                 EventKind::Filled { fill } => {
                     self.seen_fills.insert(fill_key(fill));
-                    self.apply_order_fill(fill)?;
+                    // 索引重建只回放订单状态；现金与持仓由 Ledger 自身的回放恢复，
+                    // 在这里再记一次会重复入账。
+                    self.oms.apply_fill(fill)?;
                 }
                 EventKind::Cancelled { client_order_id } => {
                     self.apply_cancelled(*client_order_id)?;
@@ -1416,14 +1418,13 @@ impl LiveEventPipeline {
     }
 
     fn apply_fill(&mut self, fill: &Fill) -> QxResult<Vec<u64>> {
-        let order = self
-            .oms
-            .get(fill.order_id)
-            .cloned()
-            .ok_or_else(|| QxError::ReconcileRequired("成交对应的本地订单不存在".into()))?;
-        let ids = self.ledger.apply_fill(&order, fill, &self.currency)?;
-        self.apply_order_fill(fill)?;
-        Ok(ids)
+        qx_core::apply_fill_to_books(
+            &mut self.ledger,
+            &mut self.oms,
+            &self.currency,
+            fill,
+            qx_core::FillTerms::LegacyMultiplier(1),
+        )
     }
 
     fn apply_fill_with_spec(
@@ -1431,20 +1432,13 @@ impl LiveEventPipeline {
         fill: &Fill,
         spec: &TradingInstrumentSpec,
     ) -> QxResult<Vec<u64>> {
-        let order = self
-            .oms
-            .get(fill.order_id)
-            .cloned()
-            .ok_or_else(|| QxError::ReconcileRequired("成交对应的本地订单不存在".into()))?;
-        let ids = self
-            .ledger
-            .apply_fill_with_spec(&order, fill, &self.currency, spec)?;
-        self.apply_order_fill(fill)?;
-        Ok(ids)
-    }
-
-    fn apply_order_fill(&mut self, fill: &Fill) -> QxResult<()> {
-        self.oms.apply_fill(fill)
+        qx_core::apply_fill_to_books(
+            &mut self.ledger,
+            &mut self.oms,
+            &self.currency,
+            fill,
+            qx_core::FillTerms::Instrument(spec),
+        )
     }
 
     fn apply_cancelled(&mut self, client_order_id: u64) -> QxResult<()> {
