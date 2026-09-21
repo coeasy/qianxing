@@ -7,6 +7,7 @@ pub(crate) struct DatasetRunBinding<'a> {
     pub(crate) component_fingerprints: &'a BTreeMap<String, String>,
 }
 
+#[allow(clippy::too_many_arguments)] // 同深度/多腿入口：配置路径与产物根由编译器逐个点名，不合并成参数包。
 pub(crate) fn run_single_strategy_backtest(
     config: &RuntimeConfig,
     runtime_config_path: Option<&Path>,
@@ -80,10 +81,6 @@ pub(crate) fn run_single_strategy_backtest(
         .account_id
         .clone()
         .unwrap_or_else(|| "backtest".into());
-    let currency = instrument_spec
-        .as_ref()
-        .map(|spec| spec.settlement_currency.clone())
-        .unwrap_or_else(|| "USDT".into());
     let initial_cash = Money::from_i64(100_000);
     // 门禁只构造一次：回测判定与摘要里的 rule_set_version 必须来自同一份配置，
     // 且与 Paper/Live worker 走同一个 `strategy_risk_gate` 入口。
@@ -95,10 +92,10 @@ pub(crate) fn run_single_strategy_backtest(
     // 成本绑定取自内存里这一份策略配置：多策略清单里每条策略都有自己的
     // `cost_rules_path`，从磁盘重读只会拿到默认那条。
     let costs = execution_cost_binding_from_config(config, runtime_config_path)?;
-    let mut assembly = BarBacktestAssembly::new(&frame.instrument, account_id, 20260911, &costs);
+    let mut assembly =
+        BarBacktestAssembly::new(&frame.instrument, account_id.clone(), 20260911, &costs);
     assembly.instrument_spec = instrument_spec;
     assembly.margin = margin;
-    assembly.currency = currency;
     assembly.initial_cash = initial_cash;
     assembly.risk = risk_gate;
     assembly.virtual_trading = virtual_trading;
@@ -136,11 +133,7 @@ pub(crate) fn run_single_strategy_backtest(
         let context = NativeStrategyContext {
             strategy_id: builtin_config.strategy_id.clone(),
             strategy_version: builtin_config.strategy_version.clone(),
-            account_id: config
-                .strategy
-                .account_id
-                .clone()
-                .unwrap_or_else(|| "backtest".into()),
+            account_id: account_id.clone(),
             venue_id: config
                 .strategy
                 .venue_id
@@ -178,7 +171,7 @@ pub(crate) fn run_single_strategy_backtest(
     let run_manifest = report.run_manifest_with_input_components(
         RunManifestIdentity {
             run_id: &format!("strategy-backtest:{strategy_id}:{}", frame.instrument),
-            code_commit: "workspace",
+            code_commit: env!("QX_GIT_COMMIT"),
             config_hash: &config.fingerprint()?,
             strategy_version: &config.strategy.version,
             instrument_spec_version: if spec_path.is_some() {
@@ -287,6 +280,7 @@ pub(crate) fn run_builtin_backtest(
     assembly.instrument_spec = instrument_spec;
     assembly.margin = margin;
     assembly.risk = risk_binding.gate();
+    let backtest_config = assembly.into_config();
     let context = NativeStrategyContext {
         strategy_id: format!("builtin-{}", kind.name()),
         strategy_version: format!("builtin-{}-v1", kind.name()),
@@ -295,12 +289,16 @@ pub(crate) fn run_builtin_backtest(
         data_fingerprint: format!("barframe:{:?}", frame.source),
         as_of: bars.first().map(|bar| bar.ts).unwrap_or(1),
         positions: BTreeMap::new(),
-        cash: BTreeMap::from([("USDT".into(), Money::from_i64(100_000).raw())]),
-        available_margin_raw: Some(Money::from_i64(100_000).raw()),
+        // 现金腿落在引擎实际记账的那本账簿上，币种和金额都从装配回读。
+        cash: BTreeMap::from([(
+            backtest_config.currency.clone(),
+            backtest_config.initial_cash.raw(),
+        )]),
+        available_margin_raw: Some(backtest_config.initial_cash.raw()),
         risk_state: "ready".into(),
     };
     let report = run_builtin_strategy_on_bars(
-        assembly.into_config(),
+        backtest_config,
         BuiltinStrategyConfig::new(
             kind,
             format!("builtin-{}", kind.name()),

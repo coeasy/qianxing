@@ -94,6 +94,7 @@ pub(crate) fn run_binance_spread_recovery_worker(
     once: bool,
 ) -> Result<(), String> {
     let venue_id = worker.venue_id.clone().unwrap_or_else(|| "BINANCE".into());
+    let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
     context.mark(
         qx_runtime::ServiceStatus::Ready,
         format!("binance spread recovery scanning venue={venue_id}"),
@@ -103,7 +104,10 @@ pub(crate) fn run_binance_spread_recovery_worker(
         let now = runtime_timestamp_ms();
         if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
             let mut pipeline = pipeline_storage
-                .open(binance_event_log_name(&worker), "USDT")
+                .open(
+                    binance_event_log_name(&worker)?,
+                    settlement_currency.clone(),
+                )
                 .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
             let auth = load_binance_worker_auth(&worker)?;
             let mut venue = new_binance_venue(&worker, auth)?;
@@ -153,19 +157,8 @@ pub(crate) fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Re
     }
     let pipeline_root = Path::new(&config.storage.data_dir).to_path_buf();
     let pipeline_storage = PipelineStorage::from_config(&config)?;
-    let paper_workers = config
-        .workers
-        .iter()
-        .filter(|worker| {
-            worker.enabled
-                && worker.role == WorkerRole::Execution
-                && worker
-                    .venue_id
-                    .as_deref()
-                    .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
-        })
-        .cloned()
-        .collect::<Vec<_>>();
+    // Paper 行情桥要按账户身份判定记账币种，所以这里带全量 worker；桥自身再按角色过滤。
+    let all_workers = config.workers.clone();
     let runtime_config_path = path.to_path_buf();
     let control_store = configured_control_store(&config)?;
     let command_queue = configured_command_queue(&config, &pipeline_root)?;
@@ -179,7 +172,7 @@ pub(crate) fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Re
             context,
             worker_for_run.clone(),
             pipeline_storage.clone(),
-            paper_workers,
+            all_workers,
         ),
         WorkerRole::UserStream => run_binance_user_worker(
             context,
@@ -209,6 +202,7 @@ pub(crate) fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Re
             worker_for_run,
             &pipeline_root,
             pipeline_storage,
+            &runtime_config_path,
             once,
         ),
         _ => Err("unsupported Binance worker role".into()),
@@ -445,6 +439,7 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
 ) -> Result<(), String> {
     let python = python_interpreter();
     let venue_id = worker.venue_id.clone().unwrap_or_else(|| "ccxt".into());
+    let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
     context.mark(
         qx_runtime::ServiceStatus::Ready,
         format!("ccxt spread recovery scanning venue={venue_id}"),
@@ -455,8 +450,8 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
         if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
             let mut pipeline = pipeline_storage
                 .open(
-                    ccxt_event_log_name(&worker),
-                    worker.settlement_currency.as_deref().unwrap_or("USDT"),
+                    required_account_event_log(&worker)?,
+                    settlement_currency.clone(),
                 )
                 .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
             let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)

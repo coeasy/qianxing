@@ -1019,11 +1019,13 @@ fn compensation_client_id(group: &SpreadOrderGroup, leg_id: &str) -> u64 {
 /// 字段选择与 `qx-runtime` 的 `fill_key` 同源，因此同一批回报重放仍然幂等。
 fn fill_tag(fill: &qx_core::Fill) -> String {
     format!(
-        "fill:{}:{}:{}:{}",
+        "fill:{}:{}:{}:{}:{}:{}",
         fill.order_id,
         fill.ts,
         fill.qty.raw(),
-        fill.price.raw()
+        fill.price.raw(),
+        fill.fee.raw(),
+        fill.venue_order_id.clone().unwrap_or_default()
     )
 }
 

@@ -198,3 +198,39 @@ fn paper_ccxt_and_binance_share_submit_cancel_port_contract() {
     let binance = BinanceSpotVenue::with_endpoint("binance", auth, transport, "mock.binance", 443);
     assert_submit_cancel_port_contract(VenuePortAdapter::new(binance), order, "binance");
 }
+
+/// 同一订单在同一个 `ts` 上可以有两笔真实成交（分档吃单、费用返还），
+/// 只靠 `order_id + ts + qty + price` 会把第二笔判为重播而静默丢弃。
+/// 身份段必须覆盖 `fee` 与 `venue_order_id`，与 `qx-runtime` 的 `fill_key` 对齐。
+#[test]
+fn fill_tag_distinguishes_facts_that_only_differ_in_fee_or_venue_order() {
+    let base = qx_core::Fill {
+        order_id: 7,
+        qty: qx_core::Quantity::from_i64(1),
+        price: qx_core::Price::from_i64(100),
+        fee: qx_core::Money::ZERO,
+        ts: 200,
+        venue_order_id: Some("venue-1".into()),
+        ..qx_core::Fill::default()
+    };
+    let fee_only = qx_core::Fill {
+        fee: qx_core::Money::from_i64(3),
+        ..base.clone()
+    };
+    let venue_order_only = qx_core::Fill {
+        venue_order_id: Some("venue-2".into()),
+        ..base.clone()
+    };
+
+    assert_eq!(
+        fill_tag(&base),
+        fill_tag(&qx_core::Fill {
+            account_id: "other".into(),
+            ..base.clone()
+        }),
+        "同一笔事实的展示字段不得改变身份"
+    );
+    assert_ne!(fill_tag(&base), fill_tag(&fee_only));
+    assert_ne!(fill_tag(&base), fill_tag(&venue_order_only));
+    assert_ne!(fill_tag(&fee_only), fill_tag(&venue_order_only));
+}

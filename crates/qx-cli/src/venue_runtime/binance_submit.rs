@@ -102,6 +102,7 @@ pub(crate) fn run_binance_submit_order(
         .ok_or_else(|| format!("找不到 worker: {worker_id}"))?;
     resolve_worker_runtime_paths(&mut worker, path);
     validate_binance_submit_worker(&worker)?;
+    let settlement_currency = account_worker_settlement_currency(&config, &worker)?;
     let command: ControlCommand = serde_json::from_str(
         &std::fs::read_to_string(command_path)
             .map_err(|error| format!("读取 SubmitOrder 命令失败: {error}"))?,
@@ -124,7 +125,10 @@ pub(crate) fn run_binance_submit_order(
         Err(reason)
     } else {
         let mut pipeline = pipeline_storage
-            .open(binance_event_log_name(&worker), "USDT")
+            .open(
+                binance_event_log_name(&worker)?,
+                settlement_currency.clone(),
+            )
             .map_err(|error| format!("打开执行 EventLog 失败: {error}"))?;
         let auth = load_binance_worker_auth(&worker);
         // 屏障判定已下沉 `qx-execution` 网关（V10 §6.1）：CLI 不再预跑一遍，只把
@@ -150,7 +154,10 @@ pub(crate) fn run_binance_submit_order(
                     drop(venue);
                 } else {
                     let latest_pipeline = pipeline_storage
-                        .open(binance_event_log_name(&worker), "USDT")
+                        .open(
+                            binance_event_log_name(&worker)?,
+                            settlement_currency.clone(),
+                        )
                         .map_err(|error| {
                             format!("刷新 Binance 多腿订单组 EventLog 失败: {error}")
                         })?;
@@ -210,6 +217,7 @@ pub(crate) fn run_binance_execution_worker(
     once: bool,
 ) -> Result<(), String> {
     let owner = worker.id.clone();
+    let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
     context.mark(
         qx_runtime::ServiceStatus::Ready,
         "execution queue polling",
@@ -223,7 +231,10 @@ pub(crate) fn run_binance_execution_worker(
             && has_pending_spread_recovery(&pipeline_storage.root, venue_id)?
         {
             let mut recovery_pipeline = pipeline_storage
-                .open(binance_event_log_name(&worker), "USDT")
+                .open(
+                    binance_event_log_name(&worker)?,
+                    settlement_currency.clone(),
+                )
                 .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
             let auth = load_binance_worker_auth(&worker)?;
             let mut recovery_venue = new_binance_venue(&worker, auth)?;
@@ -293,7 +304,10 @@ pub(crate) fn run_binance_execution_worker(
                 Err(reason)
             } else {
                 let mut pipeline = pipeline_storage
-                    .open(binance_event_log_name(&worker), "USDT")
+                    .open(
+                        binance_event_log_name(&worker)?,
+                        settlement_currency.clone(),
+                    )
                     .map_err(|error| format!("打开执行 EventLog 失败: {error}"))?;
                 let auth = load_binance_worker_auth(&worker)?;
                 let mut venue = new_binance_venue(&worker, auth)?;
@@ -320,7 +334,10 @@ pub(crate) fn run_binance_execution_worker(
                     drop(venue);
                 } else {
                     let latest_pipeline = pipeline_storage
-                        .open(binance_event_log_name(&worker), "USDT")
+                        .open(
+                            binance_event_log_name(&worker)?,
+                            settlement_currency.clone(),
+                        )
                         .map_err(|error| {
                             format!("刷新 Binance 多腿订单组 EventLog 失败: {error}")
                         })?;

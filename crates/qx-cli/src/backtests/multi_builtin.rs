@@ -66,6 +66,11 @@ pub(crate) fn run_multi_builtin_backtest(
         reference_policy: None,
     };
     let mut native = BuiltinStrategy::new(strategy_config)?;
+    // 规格先解析：策略侧现金腿要落在主腿记账的那本账簿上，币种只能从 spec 读回来。
+    let (primary_spec, primary_margin) =
+        market_spec_with_margin(&primary_frame.instrument, primary_spec_path, "多腿")?;
+    let (reference_spec, reference_margin) =
+        market_spec_with_margin(&reference_frame.instrument, reference_spec_path, "多腿")?;
     let mut context = NativeStrategyContext {
         strategy_id: format!("builtin-{}-multi", kind.name()),
         strategy_version: format!("builtin-{}-v1", kind.name()),
@@ -77,7 +82,10 @@ pub(crate) fn run_multi_builtin_backtest(
             (primary_frame.instrument.to_string(), 0),
             (reference_frame.instrument.to_string(), 0),
         ]),
-        cash: BTreeMap::from([("USDT".into(), leg_initial_cash.raw())]),
+        cash: BTreeMap::from([(
+            backtest_settlement_currency(primary_spec.as_ref()),
+            leg_initial_cash.raw(),
+        )]),
         available_margin_raw: Some(leg_initial_cash.raw()),
         risk_state: "multi-leg-backtest".into(),
     };
@@ -129,10 +137,6 @@ pub(crate) fn run_multi_builtin_backtest(
             }
         }
     }
-    let (primary_spec, primary_margin) =
-        market_spec_with_margin(&primary_frame.instrument, primary_spec_path, "多腿")?;
-    let (reference_spec, reference_margin) =
-        market_spec_with_margin(&reference_frame.instrument, reference_spec_path, "多腿")?;
     if primary_spec
         .as_ref()
         .is_some_and(|spec| spec.product.is_derivative())
@@ -159,21 +163,20 @@ pub(crate) fn run_multi_builtin_backtest(
                        targets: BTreeMap<u64, i128>,
                        leg: &str|
      -> Result<qx_xingban::BacktestReport, String> {
-        let currency = spec
-            .as_ref()
-            .map(|value| value.settlement_currency.clone())
-            .unwrap_or_else(|| "USDT".into());
         let mut strategy = ScheduledTargetStrategy {
             instrument: frame.instrument.clone(),
             targets,
             policy: None,
             account_id: format!("multi-leg-{leg}"),
         };
-        let mut assembly =
-            BarBacktestAssembly::new(&frame.instrument, strategy.account_id.clone(), 20260914, &costs);
+        let mut assembly = BarBacktestAssembly::new(
+            &frame.instrument,
+            strategy.account_id.clone(),
+            20260914,
+            &costs,
+        );
         assembly.instrument_spec = spec;
         assembly.margin = margin;
-        assembly.currency = currency;
         assembly.initial_cash = leg_initial_cash;
         assembly.risk = risk_binding.gate();
         leg_risk_versions.push(assembly.risk.rule_set().version().to_string());

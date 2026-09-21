@@ -94,6 +94,12 @@ pub(crate) fn isolated_backtest_runtime(
     (root, runtime_path)
 }
 
+/// Paper 账户域 `(main, paper)` 的账户级日志名。用例一律从这里取，不抄字面量：
+/// 测试里的第二份命名就是生产里第二份命名的温床。
+pub(crate) fn paper_account_log() -> String {
+    account_event_log_name("main", "paper").expect("main/paper 是合法账户身份")
+}
+
 /// 构造一份只做字段填装的 worker 配置，避免每个风控用例重复 14 个字段。
 pub(crate) fn mk_worker(
     id: &str,
@@ -119,6 +125,30 @@ pub(crate) fn mk_worker(
     }
 }
 
+/// 读取回测产物目录里的第一份摘要。风控与成本口径用例读的是同一批产物，
+/// 扫描 `runs/` 的写法只留一处，避免第二份实现把"没产物"误判成"通过"。
+pub(crate) fn read_first_backtest_summary(root: &Path) -> serde_json::Value {
+    read_first_artifact(root, ".summary.json")
+}
+
+/// 读取 `runs/` 下第一份以 `suffix` 结尾的 JSON 产物。
+pub(crate) fn read_first_artifact(root: &Path, suffix: &str) -> serde_json::Value {
+    let runs = root.join("runs");
+    let mut paths = std::fs::read_dir(&runs)
+        .unwrap_or_else(|error| panic!("读取 {} 失败: {error}", runs.display()))
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().ends_with(suffix))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    assert!(!paths.is_empty(), "{} 下缺少 {suffix} 产物", runs.display());
+    paths.sort();
+    let payload = std::fs::read_to_string(&paths[0]).unwrap();
+    serde_json::from_str(&payload).unwrap()
+}
+
 /// 仓库内已验收的 BTCUSDT 现货规格绝对路径，供风控配置用例直接引用。
 pub(crate) fn workspace_binance_spot_spec() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -126,6 +156,17 @@ pub(crate) fn workspace_binance_spot_spec() -> PathBuf {
         .join("..")
         .join("deploy")
         .join("qianxing.binance.spot.spec.json")
+}
+
+/// 换掉仓库现货规格的结算币种并落到 `dir`。账户账簿币种和规格结算币种必须一致
+/// （`worker_risk_context` 会拒不一致的配置），所以换记账币种的用例要连规格一起换。
+pub(crate) fn spot_spec_settled_in(dir: &Path, currency: &str) -> PathBuf {
+    let payload = std::fs::read_to_string(workspace_binance_spot_spec()).unwrap();
+    let mut spec: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    spec["settlement_currency"] = serde_json::Value::String(currency.into());
+    let path = dir.join(format!("spot-{currency}.spec.json"));
+    std::fs::write(&path, serde_json::to_vec(&spec).unwrap()).unwrap();
+    path
 }
 
 /// 装配一条 SubmitOrder 控制命令；`dry_run=false` 时进入真实副作用分支。
@@ -142,6 +183,8 @@ pub(crate) fn mk_submit_command(command_id: u64, order: &Order, dry_run: bool) -
         dry_run,
     }
 }
+
+mod account_event_log_identity;
 
 /// 子进程型用例共用的被测 binary 与其新鲜度护栏（原本只在 `cli_surface.rs` 内，
 /// V11 Q0b 的旗标用例同样要跑真 binary，于是按"共享夹具进本文件"的约定上移）。
@@ -195,6 +238,7 @@ fn qx_cli_binary() -> PathBuf {
     binary
 }
 
+mod backtest_cost_provenance;
 mod backtest_entries;
 mod backtest_risk_provenance;
 mod cli_surface;
@@ -203,4 +247,8 @@ mod execution_and_multi_leg;
 mod live_submit_fail_closed;
 mod paper_and_strategy_worker;
 mod paper_bridge_and_bundles;
+mod paper_margin_valuation;
+mod paper_settlement_currency;
+mod settlement_currency_caliper;
+mod storage_root_report;
 mod worker_observability;

@@ -63,30 +63,43 @@ impl Oms {
 
     /// 只接受带账户身份的成交，成交数量必须落在订单剩余数量内。
     pub fn apply_fill(&mut self, fill: &Fill) -> QxResult<()> {
+        let next = self.reduce_fill(fill)?;
+        self.commit_fill(next);
+        Ok(())
+    }
+
+    /// 在订单副本上校验成交并推进状态机，不改动任何持久状态。
+    pub(crate) fn reduce_fill(&self, fill: &Fill) -> QxResult<Order> {
         let order = self
             .orders
-            .get_mut(&fill.order_id)
-            .ok_or_else(|| QxError::Invariant("成交对应的订单不存在".into()))?;
+            .get(&fill.order_id)
+            .ok_or_else(|| QxError::Invariant("成交对应的订单不存在".into()))?
+            .clone();
         if fill.qty.raw() <= 0 || fill.qty.raw() > order.remaining().raw() {
             return Err(QxError::Invariant("成交数量超过订单剩余数量".into()));
         }
         if !fill.account_id.is_empty() && fill.account_id != order.account_id {
             return Err(QxError::Invariant("成交账户与 OMS 订单账户不一致".into()));
         }
-        if matches!(order.status, OrderStatus::Submitted | OrderStatus::Accepted) {
-            order
-                .status
+        let mut next = order;
+        if matches!(next.status, OrderStatus::Submitted | OrderStatus::Accepted) {
+            next.status
                 .transition(OrderStatus::Working)
                 .map_err(QxError::Invariant)?;
         }
-        order.filled = Quantity::from_raw(order.filled.raw() + fill.qty.raw());
-        let next = if order.filled.raw() >= order.qty.raw() {
+        next.filled = Quantity::from_raw(next.filled.raw() + fill.qty.raw());
+        let status = if next.filled.raw() >= next.qty.raw() {
             OrderStatus::Filled
         } else {
             OrderStatus::PartiallyFilled
         };
-        order.status.transition(next).map_err(QxError::Invariant)?;
-        Ok(())
+        next.status.transition(status).map_err(QxError::Invariant)?;
+        Ok(next)
+    }
+
+    /// 写回 `reduce_fill` 的产物。除内核成交归约接缝外，调用方应走 `apply_fill`。
+    pub(crate) fn commit_fill(&mut self, order: Order) {
+        self.orders.insert(order.client_id, order);
     }
 
     pub fn get(&self, client_order_id: u64) -> Option<&Order> {
@@ -120,6 +133,21 @@ impl Oms {
             .values()
             .filter(|order| !order.status.is_terminal())
             .collect()
+    }
+}
+
+/// 内核的成交归约接缝只通过这三个方法读写订单状态，避免 `qx-core` 反向依赖 OMS。
+impl qx_core::OrderFillBook for Oms {
+    fn order_state(&self, client_order_id: u64) -> Option<Order> {
+        self.get(client_order_id).cloned()
+    }
+
+    fn reduce_fill(&self, fill: &Fill) -> QxResult<Order> {
+        Oms::reduce_fill(self, fill)
+    }
+
+    fn commit_fill(&mut self, order: Order) {
+        Oms::commit_fill(self, order);
     }
 }
 
@@ -167,5 +195,27 @@ mod tests {
         oms.apply_fill(&fill).unwrap();
         assert_eq!(oms.get(1).unwrap().status, OrderStatus::Filled);
         assert!(oms.open_orders().is_empty());
+    }
+
+    /// 状态机拒下的成交不能把订单留在"已加仓但未迁移状态"的半程上。
+    #[test]
+    fn rejected_fill_leaves_no_partial_order_state() {
+        let mut oms = Oms::new();
+        oms.submit(Order {
+            status: OrderStatus::PendingSubmit,
+            ..order()
+        })
+        .unwrap();
+        let fill = Fill {
+            order_id: 1,
+            qty: Quantity::from_i64(1),
+            price: qx_core::Price::from_i64(100),
+            account_id: "main".into(),
+            ..Fill::default()
+        };
+        assert!(oms.apply_fill(&fill).is_err());
+        let stored = oms.get(1).unwrap();
+        assert_eq!(stored.status, OrderStatus::PendingSubmit);
+        assert_eq!(stored.filled, Quantity::ZERO);
     }
 }

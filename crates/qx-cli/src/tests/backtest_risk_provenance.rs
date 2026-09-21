@@ -102,25 +102,3 @@ fn every_backtest_entry_reads_the_same_risk_rules_from_one_config() {
         let _ = std::fs::remove_dir_all(path);
     }
 }
-
-/// 读取回测产物目录里的第一份摘要。
-fn read_first_backtest_summary(root: &Path) -> serde_json::Value {
-    read_first_artifact(root, ".summary.json")
-}
-
-fn read_first_artifact(root: &Path, suffix: &str) -> serde_json::Value {
-    let runs = root.join("runs");
-    let mut paths = std::fs::read_dir(&runs)
-        .unwrap_or_else(|error| panic!("读取 {} 失败: {error}", runs.display()))
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().ends_with(suffix))
-                .unwrap_or(false)
-        })
-        .collect::<Vec<_>>();
-    assert!(!paths.is_empty(), "{} 下缺少 {suffix} 产物", runs.display());
-    paths.sort();
-    let payload = std::fs::read_to_string(&paths[0]).unwrap();
-    serde_json::from_str(&payload).unwrap()
-}

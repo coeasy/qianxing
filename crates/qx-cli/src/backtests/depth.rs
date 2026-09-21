@@ -39,6 +39,7 @@ pub(crate) fn run_depth_backtest(
     let frame = DepthFrame::from_json(&payload)
         .map_err(|error| format!("{}: {error}", frame_path.display()))?;
     let (instrument_spec, _) = market_spec_with_margin(&frame.instrument, spec_path, "深度回测")?;
+    let currency = backtest_settlement_currency(instrument_spec.as_ref());
     let data_fingerprint = format!("depth:{}:{:016x}", frame.source, frame.input_hash());
     let context = NativeStrategyContext {
         strategy_id: format!("builtin-{}", kind.name()),
@@ -48,7 +49,7 @@ pub(crate) fn run_depth_backtest(
         data_fingerprint: data_fingerprint.clone(),
         as_of: frame.snapshots.first().map(|item| item.ts).unwrap_or(1),
         positions: BTreeMap::new(),
-        cash: BTreeMap::from([("USDT".into(), Money::from_i64(100_000).raw())]),
+        cash: BTreeMap::from([(currency.clone(), Money::from_i64(100_000).raw())]),
         available_margin_raw: Some(Money::from_i64(100_000).raw()),
         risk_state: "ready".into(),
     };
@@ -92,7 +93,7 @@ pub(crate) fn run_depth_backtest(
         TickBacktestEngine::new(TickBacktestConfig {
             instrument: frame.instrument.clone(),
             account_id: "main".into(),
-            currency: "USDT".into(),
+            currency,
             initial_cash: Money::from_i64(100_000),
             fee_bps,
             instrument_spec,
@@ -104,7 +105,7 @@ pub(crate) fn run_depth_backtest(
         OrderBookBacktestEngine::new(OrderBookBacktestConfig {
             instrument: frame.instrument.clone(),
             account_id: "main".into(),
-            currency: "USDT".into(),
+            currency,
             initial_cash: Money::from_i64(100_000),
             fee_bps,
             instrument_spec,
@@ -117,7 +118,7 @@ pub(crate) fn run_depth_backtest(
     let run_manifest = report.run_manifest(
         RunManifestIdentity {
             run_id: &format!("depth-backtest:{tier}:{}:{}", kind.name(), frame.instrument),
-            code_commit: "workspace",
+            code_commit: env!("QX_GIT_COMMIT"),
             config_hash: &depth_run_config_hash(
                 tier,
                 kind.name(),

@@ -72,6 +72,7 @@ pub(crate) fn run_binance_reconcile_worker(
     worker: WorkerConfig,
     pipeline_root: &Path,
     pipeline_storage: PipelineStorage,
+    runtime_config_path: &Path,
     once: bool,
 ) -> Result<(), String> {
     let reconcile_symbols = worker
@@ -85,7 +86,10 @@ pub(crate) fn run_binance_reconcile_worker(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut pipeline = pipeline_storage
-        .open(binance_event_log_name(&worker), "USDT")
+        .open(
+            binance_event_log_name(&worker)?,
+            account_worker_currency_from_path(runtime_config_path, &worker)?,
+        )
         .map_err(|error| format!("创建对账事件管线失败: {error}"))?;
     let mut source_seq = 0_u64;
     context.mark(

@@ -35,7 +35,7 @@ fn paper_submit_order_runs_queue_pipeline_ledger_and_ack() {
     std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
     // fail-closed 语义要求撮合行情来自 EventLog 行情事实，先注入可审计 L1 报价。
     {
-        let mut pipeline = LiveEventPipeline::open(&data_dir, "paper-events", "USDT").unwrap();
+        let mut pipeline = LiveEventPipeline::open(&data_dir, paper_account_log(), "USDT").unwrap();
         let market_ts = runtime_timestamp_ms();
         pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
@@ -76,7 +76,7 @@ fn paper_submit_order_runs_queue_pipeline_ledger_and_ack() {
     run_paper_submit_order(&config_path, &command_path).unwrap();
     let state = load_control_state(&data_dir).unwrap();
     assert_eq!(state.audit().len(), 2);
-    let pipeline = LiveEventPipeline::open(&data_dir, "paper-events", "USDT").unwrap();
+    let pipeline = LiveEventPipeline::open(&data_dir, paper_account_log(), "USDT").unwrap();
     // 初始资金 + 成交三笔 Ledger 事实（名义额、持仓，以及 Q0a 起计入的 Fee）；
     // 行情注入本身不产生账本条目。
     assert_eq!(pipeline.ledger().entries().len(), 4);
@@ -132,9 +132,9 @@ fn paper_worker_refuses_next_leg_when_spread_group_awaits_reconciliation() {
     let config_path = root.join("runtime.json");
     std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
 
-    let log_name = "paper-main-paper-events";
+    let log_name = paper_account_log();
     let market_ts = runtime_timestamp_ms();
-    LiveEventPipeline::open(&data_dir, log_name, "USDT")
+    LiveEventPipeline::open(&data_dir, &log_name, "USDT")
         .unwrap()
         .ingest(RuntimeEventEnvelope::market_quote(
             InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
@@ -200,7 +200,7 @@ fn paper_worker_refuses_next_leg_when_spread_group_awaits_reconciliation() {
         "拒绝原因必须来自跨腿屏障: {}",
         record.result_code
     );
-    let pipeline = LiveEventPipeline::open(&data_dir, log_name, "USDT").unwrap();
+    let pipeline = LiveEventPipeline::open(&data_dir, &log_name, "USDT").unwrap();
     assert!(
         pipeline
             .orders()

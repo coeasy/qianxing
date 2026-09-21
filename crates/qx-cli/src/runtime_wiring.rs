@@ -191,7 +191,8 @@ pub(crate) fn execution_cost_binding_from_config(
             ..default_execution_cost_binding()
         });
     };
-    // 策略链会先把该路径解析成绝对路径，这里对已解析的值是幂等的。
+    // 这里就是该字段的唯一解析点：策略链的绝对化预处理不含 cost_rules_path，
+    // 相对值一律按运行时配置文件所在目录落地。
     let rules_path = match runtime_config_path {
         Some(base) => resolve_runtime_relative_path(base, configured),
         None => PathBuf::from(configured),
@@ -203,6 +204,23 @@ pub(crate) fn execution_cost_binding_from_config(
         loaded_from: Some(rules_path),
         from_runtime_config: true,
     })
+}
+
+/// `config validate` 用的成本规则体检：把"文件缺失"和"内容非法"翻译成一行结论。
+///
+/// 校验与装配读的是同一个文件、走的是同一份 `ExecutionCostRules::load`，所以
+/// "校验说没问题、装配却跑不动"这类分裂不可能出现——成本规则文件的读者只有这一处。
+pub(crate) fn cost_rules_problem(runtime_config_path: &Path, configured: &str) -> Option<String> {
+    let rules_path = resolve_runtime_relative_path(runtime_config_path, configured);
+    if !rules_path.is_file() {
+        return Some(format!(
+            "文件不存在: {} (configured={configured})",
+            rules_path.display()
+        ));
+    }
+    ExecutionCostRules::load(&rules_path)
+        .err()
+        .map(|error| format!("内容非法: {error}"))
 }
 
 /// 完全没有运行时配置时的内核默认口径（CLI 自检与单测用）。
@@ -263,6 +281,21 @@ pub(crate) fn open_runtime_pipeline(
     let mut storage = storage;
     storage.root = root.to_path_buf();
     storage.open(log_name, currency)
+}
+
+/// 读模型打开账户级 EventLog 的统一入口：记账币种跟着日志身份走，打开之后
+/// 再按 [`LiveEventPipeline::settlement_currency`] 回读，调用处不再各写一本账。
+pub(crate) fn open_account_pipeline(
+    config: &RuntimeConfig,
+    root: &Path,
+    log_name: &str,
+) -> Result<LiveEventPipeline, String> {
+    open_runtime_pipeline(
+        config,
+        root,
+        log_name.to_string(),
+        settlement_currency_for_log(config, log_name)?,
+    )
 }
 
 pub(crate) fn event_log_exists(

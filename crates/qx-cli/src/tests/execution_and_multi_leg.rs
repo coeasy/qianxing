@@ -352,7 +352,7 @@ fn paper_hedge_recovery_replays_partial_fill_to_hedged() {
     let mut group_store = FileSpreadOrderGroupStore::new(root.join("spread-groups")).unwrap();
     group_store.save(&group).unwrap();
 
-    let mut pipeline = LiveEventPipeline::open(&root, "paper-events", "USDT").unwrap();
+    let mut pipeline = LiveEventPipeline::open(&root, paper_account_log(), "USDT").unwrap();
     pipeline
         .ingest(RuntimeEventEnvelope::venue(
             RuntimeExternalEvent::AccountCashflow {
@@ -422,16 +422,15 @@ fn paper_hedge_recovery_replays_partial_fill_to_hedged() {
         ))
         .unwrap();
 
-    let diagnostics =
-        recover_paper_spread_groups(
-            &root,
-            &mut pipeline,
-            "paper-hedge",
-            6,
-            None,
-            &default_execution_cost_binding(),
-        )
-        .unwrap();
+    let diagnostics = recover_paper_spread_groups(
+        &root,
+        &mut pipeline,
+        "paper-hedge",
+        6,
+        None,
+        &default_execution_cost_binding(),
+    )
+    .unwrap();
     assert!(
         diagnostics
             .iter()

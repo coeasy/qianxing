@@ -16,9 +16,13 @@ fn strategy_backtest_accepts_builtin_runtime_config() {
 #[test]
 fn bar_backtest_assembly_pins_the_shared_engine_defaults() {
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
-    let config =
-        BarBacktestAssembly::new(&instrument, "main", 20260914, &default_execution_cost_binding())
-            .into_config();
+    let config = BarBacktestAssembly::new(
+        &instrument,
+        "main",
+        20260914,
+        &default_execution_cost_binding(),
+    )
+    .into_config();
     assert_eq!(config.instrument, instrument);
     assert_eq!(config.account_id, "main");
     assert_eq!(config.currency, "USDT");
@@ -36,6 +40,29 @@ fn bar_backtest_assembly_pins_the_shared_engine_defaults() {
         config.risk.rule_set().version(),
         strategy_risk_gate(None, false).rule_set().version(),
         "缺省风控门必须与策略回测同源，不允许退回空 RiskGate"
+    );
+}
+
+/// market spec 声明了结算币种时，回测的现金腿必须跟着换到那本账簿。装配处的
+/// USDT 兜底曾盖过 spec 声明：CNY 标的在 USDT 账簿上撮合，等于花一笔账户里
+/// 永远读不到的钱，产物里的成交却标着 USDT。
+#[test]
+fn backtest_assembly_books_in_the_instrument_settlement_currency() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let payload = std::fs::read_to_string(workspace_binance_spot_spec()).unwrap();
+    let mut spec: TradingInstrumentSpec = serde_json::from_str(&payload).unwrap();
+    spec.settlement_currency = "CNY".into();
+    let mut assembly = BarBacktestAssembly::new(
+        &instrument,
+        "main",
+        20260914,
+        &default_execution_cost_binding(),
+    );
+    assembly.instrument_spec = Some(spec);
+    assert_eq!(
+        assembly.into_config().currency,
+        "CNY",
+        "记账币种必须跟着 market spec 声明，不能停在装配处的兜底"
     );
 }
 
@@ -402,7 +429,10 @@ fn builtin_strategy_entries_match_the_printed_partition() {
             .join("src")
             .join("cli_help.rs"),
     )
-    .expect("读取 cli_help.rs 失败");
+    .expect("读取 cli_help.rs 失败")
+    // 断言的是文本内容；Windows 工作树在 core.autocrlf=true 下会把整棵树换成 CRLF，
+    // 那属于检出形态，不该让一条跨行的文本核对变红。
+    .replace('\r', "");
     assert!(
         help_source.contains(&format!(
             "{single_leg} 个单标的策略可走 builtin / ccxt-builtin /\n      book，{multi_leg} 个套利 kind"
@@ -425,4 +455,42 @@ fn builtin_strategy_entries_match_the_printed_partition() {
             kind.name()
         );
     }
+}
+
+/// `RunManifest.code_commit` 参与清单摘要：它恒为常量时，两份不同代码跑出的回测清单
+/// 长得一模一样，事后无法判定收益出自哪个提交，重放校验也就失去了比较对象。构建身份
+/// 由 `build.rs` 烧进二进制，这里同时锁定形状与"确实落进了产物文件"。
+#[test]
+fn run_manifests_bear_the_built_code_identity() {
+    let identity = env!("QX_GIT_COMMIT");
+    let commit = identity.strip_suffix("-dirty").unwrap_or(identity);
+    assert!(
+        commit == "unknown"
+            || (commit.len() == 40
+                && commit
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit())),
+        "代码身份必须是 git 提交哈希或 unknown 回落值，实际为 {identity:?}"
+    );
+    assert_eq!(
+        scheduler_manifest("job-worker", "2026-01-05", 1_700_000_000_000).code_commit,
+        identity
+    );
+
+    let (deploy, frame, template) = builtin_backtest_example_paths();
+    let base = read_runtime_config(&template).unwrap();
+    let (root, runtime) = isolated_backtest_runtime(&deploy, &base, "code-identity");
+    run_strategy_backtest(&runtime, &frame, None).unwrap();
+    let persisted = std::fs::read_dir(root.join("runs"))
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with(".run.json"))
+        })
+        .expect("回测 RunManifest 未落盘");
+    let payload: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&persisted).unwrap()).unwrap();
+    assert_eq!(payload["code_commit"].as_str(), Some(identity));
+    let _ = std::fs::remove_dir_all(&root);
 }

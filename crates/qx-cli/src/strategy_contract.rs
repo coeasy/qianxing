@@ -398,16 +398,15 @@ pub(crate) fn strategy_account_context(
             "account-snapshot-not-seen".into(),
         ));
     }
-    let pipeline = open_runtime_pipeline(config, root, log_name, "USDT")
+    let pipeline = open_account_pipeline(config, root, &log_name)
         .map_err(|error| format!("恢复 StrategyContext 账户 EventLog 失败: {error}"))?;
     let state = pipeline.ledger().position_for(account_id, instrument);
-    let positions = [(instrument.to_string(), state.quantity.raw())]
-        .into_iter()
-        .collect();
+    let positions = BTreeMap::from([(instrument.to_string(), state.quantity.raw())]);
     let cash = pipeline.ledger().cash_balances_for(account_id);
-    let available_margin_raw = pipeline
-        .ledger()
-        .equity_for(account_id, pipeline.marks(), "USDT");
+    let available_margin_raw =
+        pipeline
+            .ledger()
+            .equity_for(account_id, pipeline.marks(), pipeline.settlement_currency());
     Ok((
         positions,
         cash,

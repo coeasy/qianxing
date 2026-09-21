@@ -144,7 +144,9 @@ impl RuntimeSupervisor {
                 }
                 Ok(Err(error)) => {
                     let _ = context.mark(ServiceStatus::Failed, error.clone(), None);
-                    Err(format!("worker {thread_id} failed"))
+                    // 失败原因必须跟着 Err 回到调用方：只留在健康面里，单次运行的 CLI
+                    // 会打印 "worker x failed" 就退出，运维拿不到任何可定位信息。
+                    Err(format!("worker {thread_id} failed: {error}"))
                 }
                 Err(_) => {
                     let _ = context.mark(ServiceStatus::Failed, "worker panicked", None);

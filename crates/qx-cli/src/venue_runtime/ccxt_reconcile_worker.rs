@@ -21,12 +21,9 @@ pub(crate) fn run_ccxt_reconcile_worker(
         .clone()
         .ok_or_else(|| format!("worker {} 缺少 venue_id", worker.id))?;
     let python = python_interpreter();
-    let settlement_currency = worker
-        .settlement_currency
-        .clone()
-        .unwrap_or_else(|| "USDT".into());
+    let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
     let mut pipeline = pipeline_storage
-        .open(ccxt_event_log_name(&worker), settlement_currency)
+        .open(required_account_event_log(&worker)?, settlement_currency)
         .map_err(|error| format!("打开 CCXT 对账 EventLog 失败: {error}"))?;
     context.mark(
         qx_runtime::ServiceStatus::Ready,

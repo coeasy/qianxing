@@ -1500,6 +1500,13 @@ def non_test_source(source: str) -> str:
     return source if index < 0 else source[:index]
 
 
+def is_cli_case_file(path: Path) -> bool:
+    """`qx-cli/src/tests/` 下的主题文件整体就是用例现场（挂在 `cfg(test)` 模块里，
+    文件本身不带标记），因此按路径认领，口径同 V10 P1b 的提交入口清单。"""
+    relative = path.relative_to(CRATES / "qx-cli" / "src")
+    return relative.parts[0] == "tests" or "test" in path.stem
+
+
 def module_declarations(path: Path) -> set[str]:
     """一个文件里写下的 `mod 名字;` 集合（含 `pub` / `pub(crate)` 变体）。"""
     return set(
@@ -1654,11 +1661,21 @@ def storage_retry_check() -> None:
 
 
 # V11 Q0a：执行平面的成本口径只有一个定义点，且生产 Paper 不得回落到零费。
+# V11 Q0c：该定义点必须**读配置**，且成本规则文件的读者全仓唯一。
 EXECUTION_FEE_MODEL_FILE = "crates/qx-cli/src/runtime_wiring.rs"
 FEE_KERNEL_FILE = "crates/qx-core/src/fee.rs"
 COST_RULES_FILE = "crates/qx-xingban/src/cost_rules.rs"
+COST_RULES_TEMPLATE = "deploy/qianxing.costs.example.json"
 PAPER_FEE_TEST_FILE = "crates/qx-execution/tests/paper_accounting.rs"
-EXECUTION_FEE_MODEL_DEF = re.compile(r"^pub\(crate\) fn execution_fee_model\(", re.MULTILINE)
+COST_PROVENANCE_TEST_FILE = "crates/qx-cli/src/tests/backtest_cost_provenance.rs"
+STRATEGY_SCHEMA_FILE = "crates/qx-runtime/src/runtime_config/strategy_schema.rs"
+BAR_ASSEMBLY_FILE = "crates/qx-cli/src/backtests/mod.rs"
+DEPTH_BACKTEST_FILE = "crates/qx-cli/src/backtests/depth.rs"
+RUNTIME_CHECK_FILE = "crates/qx-cli/src/runtime_check.rs"
+EXECUTION_FEE_MODEL_DEF = re.compile(
+    r"^pub\(crate\) fn (?:default_)?execution_cost_binding(?:_from_config)?\(", re.MULTILINE
+)
+COST_RULES_LOAD_CALL = re.compile(r"ExecutionCostRules::load\(")
 PAPER_COST_CONSTRUCTION = re.compile(
     r"(?<![A-Za-z0-9_])(?:PaperVenue::new|execute_paper_submit_effect)\s*(?P<paren>\()"
 )
@@ -1671,9 +1688,15 @@ def paper_fee_same_source_check() -> None:
     于是生产 Paper 的 `Fill.fee` 恒为 0，Paper 曲线系统性优于同输入回测。
 
     收口后的口径有四条，每条都靠"抽掉它就变红"钉住：默认费率常数的定义点唯一在内核
-    （`qx-xingban::cost_rules` 只做再导出）；CLI 侧成本口径由 `execution_fee_model()` 单点
-    提供；qx-cli 生产代码的每个 Paper 构造点都显式调用它且不出现 `ZeroFeeModel`；Bar 回测
-    装配的 `fee` 与 Paper 来自同一函数，并存在一条把费用真的记进 Ledger 的行为用例。
+    （`qx-xingban::cost_rules` 只做再导出）；CLI 侧成本口径由 `execution_cost_binding*`
+    单点提供，且它是成本规则文件在全仓的唯一读者；qx-cli 生产代码的每个 Paper 构造点
+    都显式给出费用模型且不出现 `ZeroFeeModel`；Bar 回测装配的 `fee` 与 `latency` 成对取自
+    同一份绑定，并存在把费用真的记进 Ledger 的行为用例。
+
+    Q0c 加的两条：`strategy.cost_rules_path` 必须既有 schema 声明、又被 `config validate`
+    覆盖（否则是"宣称能配、无人校验"）；深度档的三层优先级必须落在成本绑定上，分派层
+    不得再自己给出费率缺省值（Q0b 的 `qx_core::DEFAULT_TAKER_BP` 引用在合并后回到分派层
+    也会在这里变红）。
     """
     const_defs = [
         path.relative_to(ROOT).as_posix()
@@ -1694,19 +1717,38 @@ def paper_fee_same_source_check() -> None:
     definitions = [
         path.relative_to(ROOT).as_posix()
         for path in sorted(CRATES.glob("qx-cli/src/**/*.rs"))
-        if EXECUTION_FEE_MODEL_DEF.search(path.read_text(encoding="utf-8"))
+        if not is_cli_case_file(path)
+        and EXECUTION_FEE_MODEL_DEF.search(path.read_text(encoding="utf-8"))
     ]
     check(
         definitions == [EXECUTION_FEE_MODEL_FILE],
-        "执行成本口径只有一个构造点（execution_fee_model）",
+        "执行成本口径只有一个构造点（execution_cost_binding*）",
         f"定义于 {definitions}",
+    )
+    # Q0c：成本规则文件必须有唯一读者。第二处 `ExecutionCostRules::load` 意味着
+    # 校验与装配开始各读各的，那正是"配置写着生效、跑起来用的是默认值"的分裂形状。
+    # 用例直接调用加载器是被测现场，与 `non_test_source` 同一口径豁免。
+    loaders = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted(CRATES.glob("qx-cli/src/**/*.rs"))
+        if not is_cli_case_file(path)
+        and COST_RULES_LOAD_CALL.search(non_test_source(path.read_text(encoding="utf-8")))
+    ]
+    check(
+        loaders == [EXECUTION_FEE_MODEL_FILE],
+        "成本规则文件的读者全仓唯一（runtime_wiring）",
+        f"出现于 {loaders}",
+    )
+    check(
+        (ROOT / COST_RULES_TEMPLATE).is_file(),
+        "成本规则模板随仓库发布（配置面的可复制起点）",
+        f"缺少 {COST_RULES_TEMPLATE}",
     )
     missing: list[str] = []
     zero_fee: list[str] = []
     for path in sorted(CRATES.glob("qx-cli/src/**/*.rs")):
-        rel = path.relative_to(CRATES / "qx-cli/src")
         # 用例文件里的 Paper 构造是被测现场，允许显式零费；口径同 V10 P1b 的提交入口清单。
-        if rel.parts[0] == "tests" or "test" in path.stem:
+        if is_cli_case_file(path):
             continue
         source = path.read_text(encoding="utf-8")
         location = path.relative_to(ROOT).as_posix()
@@ -1730,11 +1772,18 @@ def paper_fee_same_source_check() -> None:
         "qx-cli 生产代码不得以零费构造 Paper（零费只允许出现在用例里）",
         f"出现于 {zero_fee or '无'}",
     )
-    assembly = (CRATES / "qx-cli/src/backtests/mod.rs").read_text(encoding="utf-8")
+    assembly = (ROOT / BAR_ASSEMBLY_FILE).read_text(encoding="utf-8")
     check(
-        re.search(r"^\s*fee: execution_fee_model\(\),$", assembly, re.MULTILINE) is not None,
-        "Bar 回测装配的费用与 Paper 共用同一函数（同源，而不是两份相同的字面量）",
-        "backtests/mod.rs 的 fee 字段未调用 execution_fee_model()",
+        re.search(r"^\s*fee: costs\.fee_model\(\),$", assembly, re.MULTILINE) is not None
+        and re.search(r"^\s*latency: costs\.latency_model\(\),$", assembly, re.MULTILINE)
+        is not None,
+        "Bar 回测装配的费用与延迟成对来自同一份成本绑定（Q0a 同源 + Q0c 来自配置）",
+        "backtests/mod.rs 的 fee/latency 字段未取自 ExecutionCostBinding",
+    )
+    check(
+        "ZeroLatency" not in assembly,
+        "Bar 回测装配不再写死零延迟（零延迟只能由成本绑定推导）",
+        "backtests/mod.rs 仍出现 ZeroLatency 字面量",
     )
     behavior = (ROOT / PAPER_FEE_TEST_FILE).read_text(encoding="utf-8")
     check(
@@ -1742,13 +1791,38 @@ def paper_fee_same_source_check() -> None:
         "存在把 Paper 费用记进 Ledger 的可执行用例（Q0a 的行为面证据）",
         f"缺少 {PAPER_FEE_TEST_FILE} 中的费用记账用例",
     )
-    # Q0b：深度档回测的 --fee-bps 缺省此前是游离在分派里的字面量 5，与内核常数无引用关系；
-    # 现在必须显式取自 qx_core，费率一旦改动就会同时反映到三条链。
+    # Q0b→Q0c：深度档的缺省费率从"cli.rs 里的游离字面量"下沉到成本绑定。分派只负责
+    # 把 `Option<i64>` 原样传下去，三层优先级（旗标 > 成本规则 > 内核默认）在深度入口判定。
     dispatch = (ROOT / CLI_DISPATCH_FILE).read_text(encoding="utf-8")
+    depth = (ROOT / DEPTH_BACKTEST_FILE).read_text(encoding="utf-8")
     check(
-        "fee_bps.unwrap_or(qx_core::DEFAULT_TAKER_BP)" in dispatch,
-        "深度档回测的缺省费率引用内核常数 qx_core::DEFAULT_TAKER_BP",
-        "cli.rs 的 fee_bps 缺省值没有引用该常数（游离字面量会静默偏离执行平面）",
+        "fee_bps.unwrap_or(qx_core::DEFAULT_TAKER_BP)" not in dispatch,
+        "深度档缺省费率不再由分派层写死",
+        "cli.rs 仍在分派处给出费率缺省值",
+    )
+    check(
+        "fee_bps.unwrap_or(costs.rules.taker_bp)" in depth and "fee_bps: Option<i64>" in depth,
+        "深度档缺省费率取自成本绑定（三层优先级在入口落地）",
+        "backtests/depth.rs 未按 `Option<i64>` 形参向 ExecutionCostBinding 要缺省值",
+    )
+    # Q0c：配置面必须"配了就生效"，且 `config validate` 与装配共用同一份校验。
+    schema = (ROOT / STRATEGY_SCHEMA_FILE).read_text(encoding="utf-8")
+    validation = (ROOT / RUNTIME_CHECK_FILE).read_text(encoding="utf-8")
+    check(
+        "pub cost_rules_path: Option<String>," in schema,
+        "运行时配置声明 strategy.cost_rules_path",
+        f"{STRATEGY_SCHEMA_FILE} 缺少该字段",
+    )
+    check(
+        "cost_rules_problem(" in validation,
+        "config validate 覆盖 cost_rules_path（与装配同一个读者）",
+        f"{RUNTIME_CHECK_FILE} 未调用 cost_rules_problem",
+    )
+    provenance = (ROOT / COST_PROVENANCE_TEST_FILE).read_text(encoding="utf-8")
+    check(
+        "fn cost_rules_file_changes_backtest_fees" in provenance,
+        "存在「改配置里的 taker_bp → 回测手续费产物随之变化」的行为用例（Q0c 证据）",
+        f"缺少 {COST_PROVENANCE_TEST_FILE} 中的成本驱动用例",
     )
 
 

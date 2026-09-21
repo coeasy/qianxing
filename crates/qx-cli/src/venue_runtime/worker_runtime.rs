@@ -11,6 +11,194 @@ pub(crate) fn resolve_worker_runtime_paths(worker: &mut WorkerConfig, runtime_pa
     }
 }
 
+/// worker **自己声明**的记账币种，只是身份判定的输入之一：账户日志的口径由
+/// [`settlement_currency_for_log`] 在同一本日志的全部写入方声明里唯一化，风控和成交
+/// 落账则回读管线自身的 [`LiveEventPipeline::settlement_currency`]。这里不要求账户身份
+/// 完整，所以只用于 worker 级行情日志和声明集合。统一大写是因为 Venue 现金流水的币种
+/// 按惯例大写，大小写错位会读到一个空账簿——成交扣减和风控读取各看一本账，谁都不报错。
+pub(crate) fn worker_settlement_currency(worker: &WorkerConfig) -> String {
+    worker
+        .settlement_currency
+        .as_deref()
+        .unwrap_or("USDT")
+        .to_ascii_uppercase()
+}
+
+/// 会动账户现金账簿的角色。Strategy/Scheduler 只提交意图，所以它们声明的结算币种
+/// 不能替账户日志定记账口径。这里不要求账户身份完整，doctor 的凭据检查按同一批角色筛。
+pub(crate) fn writes_account_ledger(worker: &WorkerConfig) -> bool {
+    worker.enabled
+        && matches!(
+            worker.role,
+            WorkerRole::UserStream
+                | WorkerRole::Execution
+                | WorkerRole::SpreadRecovery
+                | WorkerRole::Reconciler
+        )
+}
+
+/// 拥有账户级 EventLog 写入权的 worker。
+pub(crate) fn owns_account_event_log(worker: &WorkerConfig) -> bool {
+    writes_account_ledger(worker) && worker.account_id.is_some() && worker.venue_id.is_some()
+}
+
+/// 只持有日志身份的读模型按同一规则找回记账币种。
+///
+/// 写入方是 worker，读取方只有日志名，而账户级日志名由 `(account_id, venue_id)`
+/// 唯一确定，所以用日志身份反查 worker。同一账户/venue 上多个 worker 共享一本
+/// 日志，因此它们的声明必须一致：币种会随 `LedgerApplied` 事实永久落盘，按配置
+/// 顺序取第一个声明者等于让第二个写入方把自己的成交记到另一本账上，两边各自
+/// "自洽"，事后对账看不出问题——所以这里是配置错误，不是回退。禁用 worker 不参与，
+/// 否则一个下线了的 worker 能给在线账簿改记账币种。
+pub(crate) fn settlement_currency_for_log(
+    config: &RuntimeConfig,
+    log_name: &str,
+) -> Result<String, String> {
+    settlement_currency_among_workers(&config.workers, log_name)
+}
+
+/// 记账币种判定的唯一实现：只吃 worker 列表，因为装配路径未必留得住整份配置。
+pub(crate) fn settlement_currency_among_workers(
+    workers: &[WorkerConfig],
+    log_name: &str,
+) -> Result<String, String> {
+    let declared = account_log_currency_declarations(workers, log_name);
+    let distinct = declared
+        .iter()
+        .map(|(_, currency)| currency.clone())
+        .collect::<BTreeSet<_>>();
+    if distinct.len() > 1 {
+        return Err(account_log_currency_conflict_message(log_name, &declared));
+    }
+    Ok(distinct
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "USDT".to_string()))
+}
+
+/// 写入方打开账户级 EventLog 前的记账币种。与读模型走同一条身份判定，所以配置里
+/// 出现两个口径时在落账前就失败——`worker_settlement_currency` 只看自己声明的值，
+/// 用它开册等于把冲突写进永久账本。worker 级行情日志没有账户身份，仍走前者。
+pub(crate) fn account_worker_settlement_currency(
+    config: &RuntimeConfig,
+    worker: &WorkerConfig,
+) -> Result<String, String> {
+    account_worker_currency_among_workers(&config.workers, worker)
+}
+
+/// 同上，供只拿得到 worker 列表的装配路径使用；列表必须是全量，子集会漏掉冲突方。
+pub(crate) fn account_worker_currency_among_workers(
+    workers: &[WorkerConfig],
+    worker: &WorkerConfig,
+) -> Result<String, String> {
+    settlement_currency_among_workers(workers, &required_account_event_log(worker)?)
+}
+
+/// 同上，供只拿得到配置路径的 worker 装配路径使用：在进程启动处解一次，
+/// 循环内复用，避免每条命令重读配置，也不让某一段退回 `worker_settlement_currency`。
+pub(crate) fn account_worker_currency_from_path(
+    runtime_config_path: &Path,
+    worker: &WorkerConfig,
+) -> Result<String, String> {
+    account_worker_settlement_currency(&read_runtime_config(runtime_config_path)?, worker)
+}
+
+/// 该账户身份上每个启用写入方各自会用的记账币种，按 worker id 排序。
+fn account_log_currency_declarations(
+    workers: &[WorkerConfig],
+    log_name: &str,
+) -> Vec<(String, String)> {
+    workers
+        .iter()
+        .filter(|worker| owns_account_event_log(worker))
+        .filter_map(|worker| {
+            let name =
+                account_event_log_name(worker.account_id.as_deref()?, worker.venue_id.as_deref()?)?;
+            (name == log_name).then(|| (worker.id.clone(), worker_settlement_currency(worker)))
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// 冲突文案点名双方 worker 和各自币种：只报"币种不一致"无法定位该改哪一段配置。
+fn account_log_currency_conflict_message(log_name: &str, declared: &[(String, String)]) -> String {
+    let parties = declared
+        .iter()
+        .map(|(worker_id, currency)| format!("{worker_id}={currency}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "FAIL_CLOSED: 账户日志 {log_name} 的写入方声明了不一致的 settlement_currency（{parties}）；\
+         同一本账只能有一个记账口径，请统一后重启"
+    )
+}
+
+/// doctor 用：一次列全所有账户身份上的币种冲突，不在第一个错误处中断。
+pub(crate) fn account_log_settlement_conflicts(config: &RuntimeConfig) -> Vec<String> {
+    config
+        .workers
+        .iter()
+        .filter(|worker| owns_account_event_log(worker))
+        .filter_map(|worker| {
+            account_event_log_name(worker.account_id.as_deref()?, worker.venue_id.as_deref()?)
+        })
+        .collect::<BTreeSet<_>>()
+        .iter()
+        .filter_map(|name| settlement_currency_for_log(config, name).err())
+        .collect()
+}
+
+/// doctor 的账户日志记账口径检查。
+///
+/// 币种冲突不会让任何一段代码报错：写入方各自按 `worker_settlement_currency` 落现金腿，
+/// 读取方按日志身份反查，两边各自"自洽"地读写半本账，事后对账也看不出问题。配置能加载
+/// 却没人校验，所以 doctor 在这里拦一次。
+pub(crate) fn check_account_log_settlement(
+    config: &RuntimeConfig,
+    checks: &mut Vec<serde_json::Value>,
+    failures: &mut Vec<String>,
+) {
+    let conflicts = account_log_settlement_conflicts(config);
+    checks.push(serde_json::json!({
+        "name": "account_log_settlement",
+        "status": if conflicts.is_empty() { "pass" } else { "fail" },
+        "message": if conflicts.is_empty() {
+            "账户事实日志的启用写入方共用同一记账币种".to_string()
+        } else {
+            conflicts.join("；")
+        }
+    }));
+    failures.extend(conflicts);
+}
+
+/// Paper 账户可用保证金的估值口径，必须和 `RiskContext` 里的 `initial_margin` 同一把尺子：
+/// 现货买入付出现金，持仓按全额名义额计入权益才是账户价值；保证金产品开仓不动现金，
+/// 账上属于这笔持仓的只有已实现/未实现 PnL，再按名义额累加等于凭空多出整笔可用保证金
+/// （10k USDT 开 1 张 50k 名义的永续会把权益算成 60k，10 倍杠杆规则形同虚设，且每成交
+/// 一次就更宽松）。缺少标记价格时退回纯现金，宁可保守也不放松闸门。
+pub(crate) fn paper_available_margin(
+    ledger: &Ledger,
+    account_id: &str,
+    marks: &BTreeMap<InstrumentId, Price>,
+    settlement: &str,
+    spec: &TradingInstrumentSpec,
+) -> Result<i128, String> {
+    let cash_only = ledger.cash_for(account_id, settlement);
+    if !spec.product.is_derivative() {
+        return Ok(ledger
+            .equity_for(account_id, marks, settlement)
+            .unwrap_or(cash_only));
+    }
+    if marks.contains_key(&spec.instrument) {
+        ledger
+            .equity_for_with_spec(account_id, marks, settlement, spec)
+            .map_err(|error| format!("Paper 衍生品可用保证金计算失败: {error:?}"))
+    } else {
+        Ok(cash_only)
+    }
+}
+
 /// 从执行 worker 的冻结 market spec 和同一 EventLog 构造账户级风险快照。
 ///
 /// 返回 `None` 只表示该 worker 没有配置 `instrument_spec_path`，**不是**"允许降级到无风控提交"：
@@ -33,10 +221,17 @@ pub(crate) fn worker_risk_context(
         .account_id
         .as_deref()
         .ok_or_else(|| format!("worker {} 缺少 account_id", worker.id))?;
-    let settlement = worker
-        .settlement_currency
-        .as_deref()
-        .unwrap_or(&spec.settlement_currency);
+    // 记账币种只有一个真相源：这本账户日志打开时用的币种，成交的现金腿就落在它上面。
+    // market spec 的 settlement_currency 说的是标的用什么币结算，不是账簿口径；拿它兜底
+    // 会从一本空账簿算出 0 可用保证金，账户明明有钱却被按保证金不足拒单。
+    let settlement = pipeline.settlement_currency().to_string();
+    if !spec.settlement_currency.eq_ignore_ascii_case(&settlement) {
+        return Err(format!(
+            "FAIL_CLOSED: worker {} 的 market spec 结算币种 {} 与账户账簿币种 {settlement} 不一致；\
+             可用保证金只能按账簿币种计，请统一 worker.settlement_currency 与规格文件后重启",
+            worker.id, spec.settlement_currency
+        ));
+    }
     let observed_available = worker.venue_id.as_deref().and_then(|venue_id| {
         pipeline
             .snapshot()
@@ -52,10 +247,13 @@ pub(crate) fn worker_risk_context(
         .as_deref()
         .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
     {
-        pipeline
-            .ledger()
-            .equity_for(account_id, pipeline.marks(), settlement)
-            .unwrap_or_else(|| pipeline.ledger().cash_for(account_id, settlement))
+        paper_available_margin(
+            pipeline.ledger(),
+            account_id,
+            pipeline.marks(),
+            &settlement,
+            &spec,
+        )?
     } else {
         return Err(format!(
             "worker {} 尚未收到 {} 账户余额快照，拒绝执行账户级风控订单",

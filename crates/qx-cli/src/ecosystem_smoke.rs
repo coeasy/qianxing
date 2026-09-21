@@ -348,13 +348,8 @@ pub(crate) fn run_backtest(bars: &[Bar], seed: u64, fast: usize, slow: usize) ->
     };
     let report = run_builtin_strategy_on_bars(
         // 自检不读运行时配置：它证明的是接线，口径固定为内核默认。
-        BarBacktestAssembly::new(
-            &instrument,
-            "main",
-            seed,
-            &default_execution_cost_binding(),
-        )
-        .into_config(),
+        BarBacktestAssembly::new(&instrument, "main", seed, &default_execution_cost_binding())
+            .into_config(),
         strategy_config,
         context,
         bars,

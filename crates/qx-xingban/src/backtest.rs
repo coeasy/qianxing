@@ -374,6 +374,13 @@ impl BacktestEngine {
             }
             spec.validate()?;
         }
+        // 规格给出时每手规模由 `contract_size` 决定；再叠历史乘数会让同一成交在
+        // 回测与实盘记出不同现金（实盘路径没有 multiplier），因此显式拒绝。
+        if instrument_spec.is_some() && multiplier != 1 {
+            return Err(qx_core::QxError::BusinessViolation(
+                "已提供产品规格时回测乘数必须为 1，每手规模由 contract_size 决定".into(),
+            ));
+        }
         let derivative_spec = instrument_spec
             .as_ref()
             .filter(|spec| spec.product.supports_leverage());
@@ -834,14 +841,11 @@ impl BacktestEngine {
                 let order = oms
                     .get(fill.order_id)
                     .cloned()
-                    .ok_or_else(|| qx_core::QxError::Invariant("成交找不到订单".into()))?;
+                    .ok_or_else(|| qx_core::QxError::ReconcileRequired("成交找不到订单".into()))?;
                 order.trace_fill(&mut fill, None, None);
-                oms.apply_fill(&fill)?;
-                let entry_ids = if let Some(spec) = derivative_spec {
-                    ledger.apply_fill_with_spec(&order, &fill, &currency, spec)?
-                } else {
-                    ledger.apply_fill_with_multiplier(&order, &fill, &currency, multiplier)?
-                };
+                let terms = qx_core::FillTerms::resolve(instrument_spec.as_ref(), multiplier);
+                let entry_ids =
+                    qx_core::apply_fill_to_books(&mut ledger, &mut oms, &currency, &fill, terms)?;
                 if ashare_rules.is_some() && order.side == Side::Buy {
                     ashare_state.on_buy(fill.qty.raw());
                 }
@@ -1294,15 +1298,8 @@ fn close_virtual_position(
         account_id: state.account_id.into(),
         ..Fill::default()
     };
-    let entry_ids = if let Some(spec) = state.spec {
-        state
-            .ledger
-            .apply_fill_with_spec(&order, &fill, state.currency, spec)?
-    } else {
-        state
-            .ledger
-            .apply_fill_with_multiplier(&order, &fill, state.currency, state.multiplier)?
-    };
+    let terms = qx_core::FillTerms::resolve(state.spec, state.multiplier);
+    let entry_ids = qx_core::apply_ledger_fill(state.ledger, &order, state.currency, &fill, terms)?;
     append_virtual_fill(state.log, state.ledger, &fill, &entry_ids)?;
     state.fills.push(fill);
     if let Some(fee_bp) = liquidation_fee_bp {

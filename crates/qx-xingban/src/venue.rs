@@ -71,7 +71,7 @@ impl BarMatchingEngine {
     }
 
     pub fn submit_at(&mut self, o: Order, submitted_ts: u64) {
-        let eligible_ts = submitted_ts.saturating_add(self.latency_model.delay_ns());
+        let eligible_ts = submitted_ts.saturating_add(self.latency_model.delay_ms());
         self.pending.push(PendingOrder {
             order: o,
             eligible_ts,
@@ -441,7 +441,7 @@ mod tests {
             Box::new(crate::fill::NextBarOpenFillModel),
             Box::new(qx_core::ZeroFeeModel),
             Box::new(crate::cost::StaticLatency {
-                base_ns: 5,
+                base_ns: 5_000_000,
                 insert_ns: 0,
             }),
             1,

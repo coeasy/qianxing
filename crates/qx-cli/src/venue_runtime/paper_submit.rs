@@ -14,11 +14,7 @@ pub(crate) fn seed_paper_initial_cash(
         .account_id
         .as_deref()
         .ok_or_else(|| format!("Paper worker {} 缺少 account_id", worker.id))?;
-    let currency = worker
-        .settlement_currency
-        .as_deref()
-        .unwrap_or("USDT")
-        .to_ascii_uppercase();
+    let currency = pipeline.settlement_currency().to_string();
     let external_id = format!(
         "paper-initial-cash:{}:{}:{}",
         worker.id, account_id, currency
@@ -72,8 +68,9 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
         })
         .cloned();
     if let Some(worker) = paper_worker.as_ref() {
-        let mut pipeline = open_runtime_pipeline(&config, &root, "paper-events", "USDT")
-            .map_err(|error| format!("打开 Paper 初始资金 EventLog 失败: {error}"))?;
+        let mut pipeline =
+            open_account_pipeline(&config, &root, &required_account_event_log(worker)?)
+                .map_err(|error| format!("打开 Paper 初始资金 EventLog 失败: {error}"))?;
         seed_paper_initial_cash(&mut pipeline, worker, now)?;
     }
     let (_, accepted_result) = store
@@ -97,8 +94,9 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
         // 跨腿屏障已下沉 `qx-execution` 网关：这里只把存储根解析出的组快照注入提交，
         // 带 `spread_group_id` 的腿若拿不到组存储会在网关内以 FAIL_CLOSED 被拒绝。
         let spread_store = open_spread_group_store(&root)?;
-        let mut pipeline = open_runtime_pipeline(&config, &root, "paper-events", "USDT")
-            .map_err(|error| format!("打开 Paper 风控 EventLog 失败: {error}"))?;
+        let mut pipeline =
+            open_account_pipeline(&config, &root, &required_account_event_log(worker)?)
+                .map_err(|error| format!("打开 Paper 风控 EventLog 失败: {error}"))?;
         let order = order_from_submit_command(&command)
             .map_err(|error| format!("Paper 订单载荷非法: {error:?}"))?;
         let (risk, position) = worker_risk_context(worker, &order, &pipeline, Some(path))?

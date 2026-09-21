@@ -71,7 +71,8 @@ fn binance_submit_without_market_spec_fails_closed_with_no_order_fact() {
         .cloned()
         .unwrap();
     let pipeline =
-        LiveEventPipeline::open(&data_dir, binance_event_log_name(&worker), "USDT").unwrap();
+        LiveEventPipeline::open(&data_dir, binance_event_log_name(&worker).unwrap(), "USDT")
+            .unwrap();
     assert!(
         pipeline.orders().is_empty(),
         "拒绝发生在提交之前，EventLog 不得出现订单事实"

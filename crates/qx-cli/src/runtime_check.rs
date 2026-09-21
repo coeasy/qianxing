@@ -304,18 +304,10 @@ pub(crate) fn validate_runtime_references(
             );
         }
         if let Some(cost_rules) = strategy.cost_rules_path.as_deref() {
-            require_file(
-                &mut failures,
-                format!("{label}.cost_rules_path"),
-                cost_rules,
-            );
-            // 存在但不合法的成本文件必须在这里报错：回测装配只会带着路径失败一次，
+            // 缺失与"存在但内容非法"都要在这里报出来：装配只会带着第一条失败原因退出，
             // 而 `config validate` 是唯一能一次列全这类问题的入口。
-            let resolved = resolve_runtime_relative_path(runtime_path, cost_rules);
-            if resolved.is_file() {
-                if let Err(error) = ExecutionCostRules::load(&resolved) {
-                    failures.push(format!("{label}.cost_rules_path 内容非法: {error}"));
-                }
+            if let Some(problem) = cost_rules_problem(runtime_path, cost_rules) {
+                failures.push(format!("{label}.cost_rules_path {problem}"));
             }
         }
         if let Some(bars) = strategy.bars_snapshot_path.as_deref() {

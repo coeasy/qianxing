@@ -24,7 +24,7 @@ pub(crate) fn build_configured_api_service(
         .into_iter()
         .map(|report| (report.worker_id.clone(), report))
         .collect();
-    for (account_id, venue_id, log_name, currency) in configured_account_event_logs(config) {
+    for (account_id, venue_id, log_name, currency) in configured_account_event_logs(config)? {
         let root = Path::new(&config.storage.data_dir);
         if event_log_exists(config, root, &log_name)? {
             let pipeline = open_runtime_pipeline(config, root, log_name, currency)
@@ -144,24 +144,17 @@ pub(crate) fn load_api_query_models(config: &RuntimeConfig) -> Result<ApiQueryMo
     };
 
     let mut ledger_entries = Vec::new();
-    if let Some(worker) = config.workers.iter().find(|worker| {
-        worker.enabled
-            && matches!(
-                worker.role,
-                WorkerRole::UserStream
-                    | WorkerRole::Execution
-                    | WorkerRole::SpreadRecovery
-                    | WorkerRole::Reconciler
-            )
-            && worker.account_id.is_some()
-            && worker.venue_id.is_some()
-    }) {
+    if let Some(worker) = config
+        .workers
+        .iter()
+        .find(|worker| owns_account_event_log(worker))
+    {
         if let (Some(account_id), Some(venue_id)) =
             (worker.account_id.as_deref(), worker.venue_id.as_deref())
         {
             if let Some(log_name) = account_event_log_name(account_id, venue_id) {
                 if event_log_exists(config, root, &log_name)? {
-                    let pipeline = open_runtime_pipeline(config, root, log_name, "USDT")
+                    let pipeline = open_account_pipeline(config, root, &log_name)
                         .map_err(|error| format!("读取 API Ledger 读模型失败: {error}"))?;
                     ledger_entries = pipeline.ledger().entries().to_vec();
                 }
@@ -205,23 +198,17 @@ pub(crate) fn load_api_account_snapshots(
 ) -> Result<Vec<AccountSnapshot>, String> {
     let mut seen = BTreeSet::new();
     let mut snapshots = Vec::new();
-    for worker in config.workers.iter().filter(|worker| {
-        worker.enabled
-            && matches!(
-                worker.role,
-                WorkerRole::UserStream
-                    | WorkerRole::Execution
-                    | WorkerRole::SpreadRecovery
-                    | WorkerRole::Reconciler
-            )
-            && worker.account_id.is_some()
-            && worker.venue_id.is_some()
-    }) {
-        let key = (
-            worker.account_id.clone().unwrap_or_default(),
-            worker.venue_id.clone().unwrap_or_default(),
-        );
-        if !seen.insert(key) {
+    for worker in config
+        .workers
+        .iter()
+        .filter(|worker| owns_account_event_log(worker))
+    {
+        // 去重键取规范化后的账户身份（即日志名），不取配置原文：`main/paper` 与
+        // `" main "/Paper` 是同一本账，按原文各投影一份就等于把同一账户报两次。
+        let Some(identity) = worker_account_event_log(worker) else {
+            continue;
+        };
+        if !seen.insert(identity) {
             continue;
         }
         if let Some(snapshot) = load_api_account_snapshot_for_worker(config, worker)? {
@@ -236,18 +223,11 @@ pub(crate) fn load_api_account_snapshots(
 pub(crate) fn load_api_account_snapshot(
     config: &RuntimeConfig,
 ) -> Result<Option<AccountSnapshot>, String> {
-    for worker in config.workers.iter().filter(|worker| {
-        worker.enabled
-            && matches!(
-                worker.role,
-                WorkerRole::UserStream
-                    | WorkerRole::Execution
-                    | WorkerRole::SpreadRecovery
-                    | WorkerRole::Reconciler
-            )
-            && worker.account_id.is_some()
-            && worker.venue_id.is_some()
-    }) {
+    for worker in config
+        .workers
+        .iter()
+        .filter(|worker| owns_account_event_log(worker))
+    {
         if let Some(snapshot) = load_api_account_snapshot_for_worker(config, worker)? {
             return Ok(Some(snapshot));
         }
@@ -259,8 +239,10 @@ pub(crate) fn load_api_account_snapshot_for_worker(
     config: &RuntimeConfig,
     worker: &WorkerConfig,
 ) -> Result<Option<AccountSnapshot>, String> {
-    let account_id = worker.account_id.as_deref().unwrap_or_default();
-    let venue_id = worker.venue_id.as_deref().unwrap_or_default();
+    // 账簿键跟着日志身份的规范化走：用未 trim 的账户号查 Ledger 会读到空账簿，
+    // 权益报 0 而没人报错。Venue 大小写不改，因为事实里的 venue 拼写由上报方决定。
+    let account_id = worker.account_id.as_deref().unwrap_or_default().trim();
+    let venue_id = worker.venue_id.as_deref().unwrap_or_default().trim();
     let Some(log_name) = account_event_log_name(account_id, venue_id) else {
         return Ok(None);
     };
@@ -268,7 +250,7 @@ pub(crate) fn load_api_account_snapshot_for_worker(
     if !event_log_exists(config, root, &log_name)? {
         return Ok(None);
     }
-    let pipeline = open_runtime_pipeline(config, root, log_name, "USDT")
+    let pipeline = open_account_pipeline(config, root, &log_name)
         .map_err(|error| format!("打开 API 账户 EventLog 失败: {error}"))?;
     let runtime_snapshot = pipeline.snapshot();
     let as_of = runtime_snapshot.last_engine_ts.max(1);
@@ -282,8 +264,12 @@ pub(crate) fn load_api_account_snapshot_for_worker(
     snapshot.cash_raw = pipeline.ledger().cash_balances_for(account_id);
     snapshot.equity_raw = pipeline
         .ledger()
-        .equity_for(account_id, pipeline.marks(), "USDT")
-        .unwrap_or_else(|| pipeline.ledger().cash_for(account_id, "USDT"));
+        .equity_for(account_id, pipeline.marks(), pipeline.settlement_currency())
+        .unwrap_or_else(|| {
+            pipeline
+                .ledger()
+                .cash_for(account_id, pipeline.settlement_currency())
+        });
     snapshot.available_raw = snapshot.equity_raw;
     snapshot.orders = runtime_snapshot
         .orders

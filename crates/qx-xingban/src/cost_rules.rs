@@ -22,7 +22,9 @@ pub struct ExecutionCostRules {
     pub name: String,
     pub maker_bp: i64,
     pub taker_bp: i64,
-    /// 下单到可成交的固定延迟，单位与事件时间戳 `Ts` 一致（内核时钟为纳秒）。
+    /// 下单到可成交的固定延迟，单位纳秒。撮合时间轴（`Bar.ts`、`EventLog` 时间戳）同为
+    /// 毫秒，装配时按毫秒向上取整（见 [`LatencyModel::delay_ms`]），因此 1ns 与 1ms 在
+    /// bar 级回测里同效，但非零延迟不会被整除成零。
     pub latency_base_ns: u64,
     /// 报单进队列的附加延迟，与 `latency_base_ns` 相加。
     pub latency_insert_ns: u64,

@@ -251,7 +251,7 @@ fn paper_initial_cash_is_idempotent_and_replayed_into_ledger() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&root).unwrap();
-    let mut pipeline = LiveEventPipeline::open(&root, "paper-events", "USDT").unwrap();
+    let mut pipeline = LiveEventPipeline::open(&root, paper_account_log(), "USDT").unwrap();
     let worker = WorkerConfig {
         id: "paper-execution".into(),
         role: WorkerRole::Execution,
