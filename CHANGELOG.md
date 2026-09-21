@@ -1,5 +1,59 @@
 # Changelog
 
+## Unreleased — V11 Q0e：多腿归因只承认实际成交（2026-09-21）
+
+方案与逐阶段验收口径见 [docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md)
+§4.18 与 §6 的 Q0e 行；一腿被挡时的显式动作按编号默认值取**标记 `PendingReconcile`**
+（不做自动收口），收口记录见同文档 §14。
+
+### Changed（`multi-builtin` 的归因与产物不再乐观记账）
+
+- `crates/qx-cli/src/multi_leg.rs`：套利组**只由实际成交配对**（`:381-387`）。改之前只要某条腿
+  在信号计划里出现过量，即使它一笔都没成交（现金不足、名义额上限、reduce-only 被挡），组里照样
+  挂上它的计划数量，净敞口 / 保证金峰值 / 归因费用可以描述一个现实中拿不到的组合；改后
+  `filled_qty_raw` 为零即不成组，该腿成本与成交量原样进 `residual_*`，一腿成交而对手腿落空时
+  登记 `MultiLegPendingReconcile`（含对手腿成交量），策略写死为
+  `mark-pending-reconcile-no-auto-close`。每腿新增"计划 vs 成交"事实
+  （`planned / filled / unfilled_planned_qty_raw / vetoed_signal_ts / rejected_orders /
+  rejection_reasons`），拒单原因从该腿事件日志的 `EventKind::Rejected` 归并而来，
+  **不新增事件、`result_hash` 不变**。
+- 单腿定资拆到 `crates/qx-cli/src/backtests/leg_funding.rs`（新模块，60 行）：改用**本腿自己的**
+  全帧最高价（旧口径取两腿全局最大值，一条 1e8 倍的参考价腿会把主腿账户撑爆）、手续费余量按
+  **当前生效的成本绑定** `taker_bp` 折算（旧口径是 ×2 的估算），并且全程 checked——算不出来
+  直接报错，不再 `.min(i64::MAX as i128)` 静默截断。截断正是"买不起的计划被伪装成跑通且零成交"
+  的机制（§4.18 的同一类失真）。
+- 产物升 `schema_version: 2`，新增 `accounts`（两腿初始现金与定资规则原文）、`legs`、
+  `pending_reconcile`；stdout 增 `[Multi-leg · Integrity]` 与 `[Multi-leg · Reconcile]` 两行，
+  归因行增 `residual_filled_qty_raw` / `residual_fees_raw`。两道闭合守卫
+  （`multi_builtin.rs:285`、`:301`）让"裸腿事实 vs 残余成交"和"归因成交量 vs 撮合 fills"
+  不闭合时直接失败。
+
+### Added（用例与门禁）
+
+- `crates/qx-cli/tests/multi_leg_attribution.rs` 用例 3 → 6 条：四条多腿 kind 各一条端到端
+  （过去只有 `pairs_arbitrage` 被覆盖）、风控挡腿场景（用运行时配置
+  `risk_rules.max_notional_raw = 10_000_000_000_000` 落在 ETH 腿 6e12 与 BTC 腿 1.2e14 之间，
+  实测主腿 `fills=0 / rejected_orders=34 / unfilled_planned_qty_raw=6000000000`、
+  `groups=0`、`pending=3`、`residual_filled_qty_raw=6000000000`）、定资越界必须报错
+  （退出码非零 + stderr 点名上限与 `quantity` + 不得产出归因摘要）。
+- `tools/check_architecture.py` 新增 `multi_leg_honesty_check()`（挂在 `kernel_claim_check()` 后），
+  架构不变量 **130 → 137 项**；七条判据逐条注入实测红（§14.3）。回测主题模块登记新增
+  `leg_funding`，`backtests/mod.rs` 的顶层条目保持在 8 个上限内。
+- 反向验证成对记录在 §14.3：行为侧 R1（抽掉"只看成交才成组"）与 R2（抽掉裸腿登记）都让
+  `vetoed_leg_never_pairs_against_a_filled_counterpart` 红、R3（定资退回静默截断）让
+  `multi_leg_funding_bound_fails_loudly_instead_of_capping_cash` 红，门禁侧 G1–G7 七次注入全红，
+  十次还原全部 `RESTORE[*]=identical` 且还原后复跑绿。
+
+### 已知偏离（写进产物与能力矩阵，不当作已完成）
+
+- §6 的"每腿费用按各自 venue spec"**未落地**：`TradingInstrumentSpec` 没有 maker/taker 字段，
+  唯一生效费率来源 `ExecutionCostRules` 是全局的；仓库里带分档费率的
+  `crates/qx-core/src/fenye.rs`（464 行）在自身文件之外零消费者，是 V10 P2a 留下的死码。
+  两腿因此共用一份成本绑定，该事实写进产物 assumptions 与
+  `capabilities.yaml` 的 `multi_leg_execution.limitations`。
+- 策略侧仓位仍是"意图"口径（`StrategyContext::positions` 由策略自持、成交不回填），
+  本轮只把归因与产物改成实际成交，并把 `vetoed_signal_ts` 留作后续接线的入口，见 §14.4。
+
 ## Unreleased — V11 Q0d：撮合内核表述如实化（2026-09-21）
 
 方案与逐阶段验收口径见 [docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md)

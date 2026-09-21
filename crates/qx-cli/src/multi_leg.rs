@@ -33,6 +33,76 @@ pub(crate) struct MultiLegLegFacts<'a> {
 /// 资金费结算周期（8 小时）；持仓不足一个周期时按持有毫秒数比例计提。
 pub(crate) const MULTI_LEG_FUNDING_INTERVAL_MS: u64 = 8 * 60 * 60 * 1_000;
 
+/// 把待对账裸腿列表编码进产物 JSON。
+pub(crate) fn multi_leg_pending_reconcile_json(
+    items: &[MultiLegPendingReconcile],
+) -> serde_json::Value {
+    serde_json::json!({
+        "policy": "mark-pending-reconcile-no-auto-close",
+        "items": items.iter().map(|item| serde_json::json!({
+            "leg": item.leg,
+            "counterpart": item.counterpart,
+            "ts": item.ts,
+            "filled_qty_raw": item.filled_qty_raw,
+            "turnover_raw": item.turnover_raw,
+            "fees_raw": item.fees_raw,
+            "counterpart_filled_qty_raw": item.counterpart_filled_qty_raw,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// 把单腿计划与实际成交的差距编码进产物 JSON。
+pub(crate) fn multi_leg_integrity_json(integrity: &MultiLegLegIntegrity) -> serde_json::Value {
+    serde_json::json!({
+        "label": integrity.label,
+        "instrument": integrity.instrument,
+        "planned_qty_raw": integrity.planned_qty_raw,
+        "filled_qty_raw": integrity.filled_qty_raw,
+        "unfilled_planned_qty_raw": integrity.unfilled_planned_qty_raw,
+        "vetoed_signal_ts": integrity.vetoed_signal_ts,
+        "rejected_orders": integrity.rejected_orders,
+        "rejection_reasons": integrity
+            .rejection_reasons
+            .iter()
+            .map(|(reason, count)| serde_json::json!({ "reason": reason, "count": count }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// 把一行单腿成交诚实性事实展开成 `key=value` 序列。前缀是腿名，方便 CLI 输出与
+/// 测试解析共用同一份口径；拒单原因里的空格换成 `_`，保证一个 token 一件事实。
+pub(crate) fn multi_leg_integrity_summary(integrity: &MultiLegLegIntegrity) -> String {
+    let reasons = integrity
+        .rejection_reasons
+        .iter()
+        .map(|(reason, count)| format!("{count}x{}", reason.replace(' ', "_")))
+        .collect::<Vec<_>>()
+        .join(";");
+    let reasons = if reasons.is_empty() {
+        "none".to_string()
+    } else {
+        reasons
+    };
+    [
+        ("planned_qty_raw", integrity.planned_qty_raw.clone()),
+        ("filled_qty_raw", integrity.filled_qty_raw.clone()),
+        (
+            "unfilled_planned_qty_raw",
+            integrity.unfilled_planned_qty_raw.clone(),
+        ),
+        (
+            "vetoed_signals",
+            integrity.vetoed_signal_ts.len().to_string(),
+        ),
+        ("rejected_orders", integrity.rejected_orders.to_string()),
+        ("rejection_reasons", reasons),
+    ]
+    .into_iter()
+    .map(|(key, value)| format!("{}_{}={}", integrity.label, key, value))
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
 pub(crate) fn multi_leg_bar_close_raw(bars: &[Bar], ts: u64) -> Option<i128> {
     bars.iter()
         .rev()
@@ -185,15 +255,112 @@ pub(crate) fn multi_leg_leg_margin(
         .map_err(|error| format!("{} 腿初始保证金非法: {error:?}", leg.label))
 }
 
+/// 组级归因的完整产出：成交组、未配对残余，以及"一腿成交、另一腿落空"的待对账事实。
+pub(crate) struct MultiLegAttribution {
+    pub groups: Vec<SpreadGroupAttribution>,
+    /// 未能成组的信号时点上，两条腿实际已成交的费用合计。
+    pub residual_fees_raw: i128,
+    /// 同上，按数量口径。
+    pub residual_filled_qty_raw: i128,
+    /// 跨腿失衡时点：本腿在该时点有真实成交、对手腿没有任何成交。
+    ///
+    /// 这里的数量与 `residual_*` 描述的是同一批成交，**不是**第二次计费；它存在的
+    /// 唯一理由是 §6 Q0e 的要求——一腿被拒时必须对另一腿有显式动作，而不是静默把
+    /// 裸敞口写进"某个组"里当作已完成套利。
+    pub pending_reconcile: Vec<MultiLegPendingReconcile>,
+}
+
+/// 一腿已成交、对手腿被挡下时，对该腿登记的显式待处理事实。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MultiLegPendingReconcile {
+    pub leg: &'static str,
+    pub counterpart: &'static str,
+    pub ts: u64,
+    pub filled_qty_raw: String,
+    pub turnover_raw: String,
+    pub fees_raw: String,
+    pub counterpart_filled_qty_raw: String,
+}
+
+/// 单腿成交诚实性事实：信号计划了多少、真正成交了多少、被挡下多少以及拒单原因。
+#[derive(Clone, Debug)]
+pub(crate) struct MultiLegLegIntegrity {
+    pub label: &'static str,
+    pub instrument: String,
+    pub planned_qty_raw: String,
+    pub filled_qty_raw: String,
+    pub unfilled_planned_qty_raw: String,
+    /// 有计划但整根 Bar 零成交的时点：策略以为建了仓，账上其实没有。
+    pub vetoed_signal_ts: Vec<u64>,
+    pub rejected_orders: usize,
+    /// `(原因, 次数)`，按次数降序；原因直接从该腿事件日志读，不重新推断。
+    pub rejection_reasons: Vec<(String, usize)>,
+}
+
+fn count_by_reason(reasons: Vec<String>) -> Vec<(String, usize)> {
+    let mut grouped: BTreeMap<String, usize> = BTreeMap::new();
+    for reason in reasons {
+        *grouped.entry(reason).or_default() += 1;
+    }
+    let mut pairs: Vec<(String, usize)> = grouped.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    pairs
+}
+
+/// 汇总一条腿"计划 vs 实际成交"的差距，并把引擎写进事件日志的拒单原因归并出来。
+pub(crate) fn multi_leg_leg_integrity(
+    leg: &MultiLegLegFacts<'_>,
+    buckets: &[MultiLegSignalBucket],
+) -> MultiLegLegIntegrity {
+    let planned_qty_raw = buckets
+        .iter()
+        .map(|bucket| bucket.planned_qty_raw)
+        .sum::<i128>();
+    let filled_qty_raw = buckets
+        .iter()
+        .map(|bucket| bucket.filled_qty_raw)
+        .sum::<i128>();
+    let reasons: Vec<String> = leg
+        .report
+        .event_log
+        .events()
+        .iter()
+        .filter_map(|event| match &event.kind {
+            qx_core::EventKind::Rejected { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .collect();
+    MultiLegLegIntegrity {
+        label: leg.label,
+        instrument: leg.instrument.to_string(),
+        rejected_orders: reasons.len(),
+        rejection_reasons: count_by_reason(reasons),
+        vetoed_signal_ts: buckets
+            .iter()
+            .filter(|bucket| bucket.filled_qty_raw == 0)
+            .map(|bucket| bucket.ts)
+            .collect(),
+        unfilled_planned_qty_raw: (planned_qty_raw - filled_qty_raw).to_string(),
+        planned_qty_raw: planned_qty_raw.to_string(),
+        filled_qty_raw: filled_qty_raw.to_string(),
+    }
+}
+
 /// 把两条腿的信号桶按时间戳配成 `SpreadOrderGroup` 并汇总组级归因。只有两腿
-/// 都能给出非零订单的时点才成组；否则该腿的成本计入 `residual_*`，不静默丢弃。
+/// 都能给出**非零实际成交量**的时点才成组；否则该腿的成本计入 `residual_*`，不静默丢弃。
+///
+/// V11 Q0e：这里的数量口径从"信号计划"改成"实际成交"。改之前只要某条腿在计划里
+/// 出现过量，即使那条腿一笔都没成交（现金不足、保证金不足、reduce-only 被挡），组里
+/// 仍然会挂上那条腿的计划数量——于是净敞口、保证金与归因费用可以描述一个现实中拿不
+/// 到的组合。改后成组与否只看 `filled_qty_raw`；一腿成交、另一腿落空时，成交腿不再被
+/// 折进任何组，而是登记成 `pending_reconcile`，让"裸腿"必须在产物里显式存在。
 pub(crate) fn multi_leg_group_attributions(
     strategy_id: &str,
     primary: &MultiLegLegFacts<'_>,
     reference: &MultiLegLegFacts<'_>,
     primary_buckets: &[MultiLegSignalBucket],
     reference_buckets: &[MultiLegSignalBucket],
-) -> Result<(Vec<SpreadGroupAttribution>, i128, i128), String> {
+) -> Result<MultiLegAttribution, String> {
     let mut timestamps = primary_buckets
         .iter()
         .chain(reference_buckets)
@@ -204,6 +371,7 @@ pub(crate) fn multi_leg_group_attributions(
     let mut groups = Vec::new();
     let mut residual_fees_raw = 0_i128;
     let mut residual_filled_qty_raw = 0_i128;
+    let mut pending_reconcile = Vec::new();
     for (index, ts) in timestamps.into_iter().enumerate() {
         let legs = [(primary, primary_buckets), (reference, reference_buckets)];
         let mut orders = Vec::with_capacity(2);
@@ -211,20 +379,13 @@ pub(crate) fn multi_leg_group_attributions(
         let mut paired = true;
         for (leg_id, (leg, buckets)) in ["primary", "reference"].iter().zip(legs) {
             let bucket = buckets.iter().find(|bucket| bucket.ts == ts);
-            let qty_raw = bucket
-                .map(|bucket| bucket.planned_qty_raw)
-                .unwrap_or_else(|| multi_leg_realized_standing_at(buckets, ts).abs());
+            // 只看实际成交：计划量再大，没成交就不能进入组。
+            let qty_raw = bucket.map(|bucket| bucket.filled_qty_raw).unwrap_or(0);
             if qty_raw == 0 {
                 paired = false;
                 continue;
             }
-            let side = bucket.map(|bucket| bucket.side).unwrap_or_else(|| {
-                if multi_leg_realized_standing_at(buckets, ts) >= 0 {
-                    Side::Buy
-                } else {
-                    Side::Sell
-                }
-            });
+            let side = bucket.map(|bucket| bucket.side).unwrap_or(Side::Buy);
             orders.push(Order {
                 client_id: u64::try_from(index + 1).expect("usize 与 u64 同宽"),
                 instrument: leg.instrument.clone(),
@@ -239,7 +400,7 @@ pub(crate) fn multi_leg_group_attributions(
             });
             attributions.push(SpreadLegAttribution {
                 leg_id: (*leg_id).to_string(),
-                filled_qty_raw: bucket.map(|bucket| bucket.filled_qty_raw).unwrap_or(0),
+                filled_qty_raw: qty_raw,
                 turnover_raw: bucket.map(|bucket| bucket.turnover_raw).unwrap_or(0),
                 fees_raw: bucket.map(|bucket| bucket.fees_raw).unwrap_or(0),
                 margin_raw: multi_leg_leg_margin(leg, buckets, ts)?,
@@ -247,13 +408,36 @@ pub(crate) fn multi_leg_group_attributions(
             });
         }
         if !paired || orders.len() != 2 {
-            for bucket in primary_buckets
-                .iter()
-                .chain(reference_buckets)
-                .filter(|bucket| bucket.ts == ts)
-            {
+            for (leg, buckets) in [(primary, primary_buckets), (reference, reference_buckets)] {
+                let Some(bucket) = buckets.iter().find(|bucket| bucket.ts == ts) else {
+                    continue;
+                };
                 residual_fees_raw += bucket.fees_raw;
                 residual_filled_qty_raw += bucket.filled_qty_raw;
+                // 该腿有成交而组没成 → 裸腿；对手腿的成交量一并写出来，便于
+                // 人读产物时立刻看出"谁被挡了"。
+                if bucket.filled_qty_raw > 0 {
+                    let counterpart = if leg.label == "primary" {
+                        ("reference", reference_buckets)
+                    } else {
+                        ("primary", primary_buckets)
+                    };
+                    let counterpart_filled = counterpart
+                        .1
+                        .iter()
+                        .find(|other| other.ts == ts)
+                        .map(|other| other.filled_qty_raw)
+                        .unwrap_or(0);
+                    pending_reconcile.push(MultiLegPendingReconcile {
+                        leg: leg.label,
+                        counterpart: counterpart.0,
+                        ts,
+                        filled_qty_raw: bucket.filled_qty_raw.to_string(),
+                        turnover_raw: bucket.turnover_raw.to_string(),
+                        fees_raw: bucket.fees_raw.to_string(),
+                        counterpart_filled_qty_raw: counterpart_filled.to_string(),
+                    });
+                }
             }
             continue;
         }
@@ -278,5 +462,10 @@ pub(crate) fn multi_leg_group_attributions(
                 .map_err(|error| format!("多腿归因失败: {error}"))?,
         );
     }
-    Ok((groups, residual_fees_raw, residual_filled_qty_raw))
+    Ok(MultiLegAttribution {
+        groups,
+        residual_fees_raw,
+        residual_filled_qty_raw,
+        pending_reconcile,
+    })
 }

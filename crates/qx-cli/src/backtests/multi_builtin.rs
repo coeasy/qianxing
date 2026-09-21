@@ -31,26 +31,16 @@ pub(crate) fn run_multi_builtin_backtest(
     if primary_bars.len() < 3 {
         return Err("多腿内置策略回测至少需要三根对齐 Bar".into());
     }
-    // 每腿账户必须付得起它宣称的下单量：Bar 内核现在拒绝现金不足的现货买入
-    // （`qx-xingban/src/backtest.rs` 的 cash-funded spot buy 检查）。沿用装配默认的
-    // 100_000 USDT，示例里 2-BTC 腿的第三笔买入（名义 ≈122_400）就是废单，
-    // 归因会少一条腿；因此按"全帧最高价 × quantity × 2"给足头寸余量，
-    // 且不低于装配默认值。
-    let max_mark_raw = primary_bars
-        .iter()
-        .chain(&reference_bars)
-        .map(|bar| bar.high)
-        .max()
-        .unwrap_or(0);
-    let leg_initial_cash = Money::from_i64(
-        100_000_i128
-            .max(
-                i128::from(quantity)
-                    .saturating_mul(max_mark_raw / qx_core::SCALE)
-                    .saturating_mul(2),
-            )
-            .min(i64::MAX as i128) as i64,
-    );
+    // 成本绑定在定资之前解析：账户要留的手续费余量必须来自真正生效的那份费率，
+    // 而不是事后再补一个估计口径。
+    let costs = execution_cost_binding(runtime_config_path)?;
+    // 每腿账户必须付得起它宣称的下单量：Bar 内核会拒绝现金不足的现货买入
+    // （`qx-xingban/src/backtest.rs` 的 cash-funded spot buy 检查）。定资口径见
+    // `multi_leg_leg_cash`：用**本腿自己的**最高价（全局最大值会让便宜腿背下贵腿的名义额）、
+    // 手续费余量按**生效成本绑定**算，且算不出来直接报错而不是截断到 i64::MAX。
+    let primary_cash = multi_leg_leg_cash(quantity, &primary_bars, costs.rules.taker_bp, "主")?;
+    let reference_cash =
+        multi_leg_leg_cash(quantity, &reference_bars, costs.rules.taker_bp, "对冲")?;
     let strategy_config = BuiltinStrategyConfig {
         kind,
         strategy_id: format!("builtin-{}-multi", kind.name()),
@@ -84,9 +74,9 @@ pub(crate) fn run_multi_builtin_backtest(
         ]),
         cash: BTreeMap::from([(
             backtest_settlement_currency(primary_spec.as_ref()),
-            leg_initial_cash.raw(),
+            primary_cash.raw(),
         )]),
-        available_margin_raw: Some(leg_initial_cash.raw()),
+        available_margin_raw: Some(primary_cash.raw()),
         risk_state: "multi-leg-backtest".into(),
     };
     native
@@ -152,7 +142,6 @@ pub(crate) fn run_multi_builtin_backtest(
     let risk_binding = backtest_risk_binding(runtime_config_path, true)?;
     let risk_rule_set_version = risk_binding.gate().rule_set().version().to_string();
     // 两条腿同样共用一份成本绑定：多腿归因的费用必须是同一口径，否则净成本差里没有可比性。
-    let costs = execution_cost_binding(runtime_config_path)?;
     let cost_source = costs.source();
     // 产物里写的版本必须是真正装进引擎的那一份：把每条腿实际生效的版本读回来核对。
     let mut leg_risk_versions: Vec<String> = Vec::new();
@@ -161,6 +150,7 @@ pub(crate) fn run_multi_builtin_backtest(
                        spec: Option<TradingInstrumentSpec>,
                        margin: Box<dyn MarginRule>,
                        targets: BTreeMap<u64, i128>,
+                       cash: Money,
                        leg: &str|
      -> Result<qx_xingban::BacktestReport, String> {
         let mut strategy = ScheduledTargetStrategy {
@@ -177,7 +167,7 @@ pub(crate) fn run_multi_builtin_backtest(
         );
         assembly.instrument_spec = spec;
         assembly.margin = margin;
-        assembly.initial_cash = leg_initial_cash;
+        assembly.initial_cash = cash;
         assembly.risk = risk_binding.gate();
         leg_risk_versions.push(assembly.risk.rule_set().version().to_string());
         BacktestEngine::new(assembly.into_config())
@@ -190,6 +180,7 @@ pub(crate) fn run_multi_builtin_backtest(
         primary_spec,
         primary_margin,
         primary_targets,
+        primary_cash,
         "primary",
     )?;
     let reference_report = run_leg(
@@ -198,6 +189,7 @@ pub(crate) fn run_multi_builtin_backtest(
         reference_spec,
         reference_margin,
         reference_targets,
+        reference_cash,
         "reference",
     )?;
     if leg_risk_versions
@@ -240,7 +232,12 @@ pub(crate) fn run_multi_builtin_backtest(
     };
     let primary_buckets = multi_leg_leg_buckets(&primary_leg, funding_bps)?;
     let reference_buckets = multi_leg_leg_buckets(&reference_leg, funding_bps)?;
-    let (groups, residual_fees_raw, residual_filled_qty_raw) = multi_leg_group_attributions(
+    let MultiLegAttribution {
+        groups,
+        residual_fees_raw,
+        residual_filled_qty_raw,
+        pending_reconcile,
+    } = multi_leg_group_attributions(
         &strategy_id,
         &primary_leg,
         &reference_leg,
@@ -267,6 +264,59 @@ pub(crate) fn run_multi_builtin_backtest(
         ));
     }
     let net_cost_raw = totals.0 + totals.2;
+    // V11 Q0e：把"计划了多少"和"真正成交了多少"并列导出，并当场核对闭合关系。
+    // 组里只允许出现实际成交（`multi_leg_group_attributions` 按 `filled_qty_raw` 配对），
+    // 因此"落在成组之外的成交"必然等于"裸腿待对账量"；两侧不等就说明归因又开始了
+    // 乐观记账——把没拿到的腿当成拿到了。
+    let leg_integrity = [
+        multi_leg_leg_integrity(&primary_leg, &primary_buckets),
+        multi_leg_leg_integrity(&reference_leg, &reference_buckets),
+    ];
+    let naked_filled_qty_raw = pending_reconcile
+        .iter()
+        .map(|item| {
+            item.filled_qty_raw
+                .parse::<i128>()
+                .map_err(|error| format!("裸腿成交量无法解析: {error}"))
+        })
+        .collect::<Result<Vec<_>, String>>()?
+        .into_iter()
+        .sum::<i128>();
+    if naked_filled_qty_raw != residual_filled_qty_raw {
+        return Err(format!(
+            "多腿裸腿事实与残余成交不闭合: pending={naked_filled_qty_raw} residual={residual_filled_qty_raw}"
+        ));
+    }
+    for (leg, integrity, report) in [
+        (&primary_leg, &leg_integrity[0], &primary_report),
+        (&reference_leg, &leg_integrity[1], &reference_report),
+    ] {
+        let filled_from_fills_raw = report
+            .fills
+            .iter()
+            .map(|fill| fill.qty.raw().abs())
+            .sum::<i128>();
+        if filled_from_fills_raw.to_string() != integrity.filled_qty_raw {
+            return Err(format!(
+                "{} 腿归因成交量与撮合成交不闭合: attribution={} fills={}",
+                leg.label, integrity.filled_qty_raw, filled_from_fills_raw
+            ));
+        }
+    }
+    println!(
+        "[Multi-leg · Integrity] {}",
+        leg_integrity
+            .iter()
+            .map(multi_leg_integrity_summary)
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+
+    println!(
+        "[Multi-leg · Reconcile] pending={} naked_filled_qty_raw={} policy=mark-pending-reconcile-no-auto-close",
+        pending_reconcile.len(),
+        naked_filled_qty_raw
+    );
     let cost_bps = if totals.1 > 0 {
         i64::try_from(net_cost_raw.saturating_mul(10_000) / totals.1).unwrap_or(i64::MAX)
     } else {
@@ -303,7 +353,8 @@ pub(crate) fn run_multi_builtin_backtest(
         std::fs::create_dir_all(&runs)
             .map_err(|error| format!("创建多腿归因产物目录失败: {error}"))?;
         let payload = serde_json::to_string_pretty(&serde_json::json!({
-            "schema_version": 1,
+            // v2：组只由**实际成交**配对，并新增 legs 计划/成交差距与 pending_reconcile。
+            "schema_version": 2,
             "strategy_id": strategy_id,
             "primary_instrument": primary_frame.instrument.to_string(),
             "reference_instrument": reference_frame.instrument.to_string(),
@@ -314,6 +365,11 @@ pub(crate) fn run_multi_builtin_backtest(
                 "matching_kernel": BAR_MATCHING_KERNEL,
             },
             "execution_costs": { "source": cost_source },
+            "accounts": {
+                "primary_initial_cash": primary_cash.raw().to_string(),
+                "reference_initial_cash": reference_cash.raw().to_string(),
+                "funding_rule": "2*quantity*leg-own-max-high + same-notional taker fee headroom, floor 100000",
+            },
             "totals": {
                 "turnover_raw": totals.1.to_string(),
                 "fees_raw": totals.0.to_string(),
@@ -325,12 +381,21 @@ pub(crate) fn run_multi_builtin_backtest(
                 "residual_filled_qty_raw": residual_filled_qty_raw.to_string(),
                 "residual_fees_raw": residual_fees_raw.to_string(),
             },
+            "legs": leg_integrity
+            .iter()
+            .map(multi_leg_integrity_json)
+            .collect::<Vec<_>>(),
+            "pending_reconcile":
+            multi_leg_pending_reconcile_json(&pending_reconcile),
             "groups": groups,
             "assumptions": [
                 "fees=per-leg FIFO allocated to signal ts buckets",
                 "margin=spec.initial_margin(|realized fills standing|, bar close, leverage=1)",
                 "funding=realized-fill notional*funding_bps*holding_ms/(8h*10000), long pays positive",
                 "cost_bps=net_cost*10000/turnover",
+                "groups=paired by ts only when BOTH legs have realized fills; planned-but-unfilled qty is reported per leg, never paired",
+                "pending_reconcile=a leg filled while its counterpart did not; no automatic close is executed",
+                "fees=one explicit cost binding shared by both legs; market spec carries no maker/taker field, so per-venue fee tiers are not applied",
             ],
         }))
         .map_err(|error| format!("编码多腿归因产物失败: {error}"))?;

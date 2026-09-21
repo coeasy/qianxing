@@ -581,6 +581,7 @@ CLI_BACKTESTS_MODULES = (
     "depth",
     "fast_backtest",
     "kernels",
+    "leg_funding",
     "multi_builtin",
     "risk_binding",
     "single_strategy",
@@ -1839,6 +1840,12 @@ SHARED_EXECUTION_SYMBOLS = (
     "Ledger",
     "Oms",
 )
+MULTI_LEG_KIND_NAMES = (
+    "pairs_arbitrage",
+    "basis_arbitrage",
+    "cross_venue_arbitrage",
+    "spot_futures_arbitrage",
+)
 PAPER_TOKEN = re.compile(r"Paper|paper|模拟盘")
 # 只认领"撮合/簿/内核"这一类同源性说法；`回测与实盘共享同一规则内核`（README）是
 # 规则口径，归 Q0a/Q0c 的费用与风控同源检查管，不在这里判。
@@ -1938,6 +1945,88 @@ def kernel_claim_check() -> None:
     )
 
 
+def multi_leg_honesty_check() -> None:
+    """V11 §6 Q0e：多腿归因只承认实际成交，一腿被挡时另一腿必须留下显式待对账事实。
+
+    七条判据各自抽掉就变红：配对口径必须只看 `filled_qty_raw`（回填成交）、裸腿必须
+    被登记而不是静默计入某个组、单腿定资要逐腿按本腿行情帧与生效费率算、算不出来必须
+    报错而不是截断到 `i64::MAX`（§4.18 的同一类失真）、诚实性事实必须同时出现在 stdout
+    与产物里、四条 kind 的端到端用例齐备，最后是费用口径的偏离声明：
+    `TradingInstrumentSpec` 没有 maker/taker 字段，两腿只能共用
+    一份显式成本绑定，产物必须自己说明这一点，否则读者会以为每腿按各自 venue 费率计过。
+    """
+
+    def top_level_fn(text: str, signature: str) -> str:
+        start = text.index(signature)
+        end = text.find("\n}" + "\n", start)
+        return text[start:] if end < 0 else text[start:end]
+
+    pairing_path = CRATES / "qx-cli/src/multi_leg.rs"
+    pairing = pairing_path.read_text(encoding="utf-8")
+    body = top_level_fn(pairing, "pub(crate) fn multi_leg_group_attributions(")
+    check(
+        "planned_qty_raw" not in body and "filled_qty_raw" in body,
+        "多腿成组配对只看实际成交（不得用信号计划量配对）",
+        f"{pairing_path.relative_to(ROOT).as_posix()} 的配对逻辑重新引用了计划量",
+    )
+    check(
+        "pub(crate) struct MultiLegPendingReconcile" in pairing
+        and "pending_reconcile.push(" in body,
+        "一腿成交、对手腿落空时必须登记裸腿待对账事实",
+        "multi_leg.rs 不再定义或写入 MultiLegPendingReconcile",
+    )
+    cash_path = CRATES / "qx-cli/src/backtests/leg_funding.rs"
+    report_path = CRATES / "qx-cli/src/backtests/multi_builtin.rs"
+    cash = cash_path.read_text(encoding="utf-8")
+    report = report_path.read_text(encoding="utf-8")
+    cash_body = top_level_fn(cash, "pub(crate) fn multi_leg_leg_cash(")
+    check(
+        "超出账户可表示上限" in cash_body
+        and ".map_err(" in cash_body
+        and cash_body.count("i64::MAX") == 1,
+        "多腿单腿定资越界必须报错，可表示上限只允许出现在诊断文案里",
+        f"{cash_path.relative_to(ROOT).as_posix()} 重新引入了静默截断定资",
+    )
+    check(
+        all(
+            token in report
+            for token in (
+                "multi_leg_leg_cash(quantity, &primary_bars, costs.rules.taker_bp",
+                "multi_leg_leg_cash(quantity, &reference_bars, costs.rules.taker_bp",
+            )
+        ),
+        "多腿定资逐腿取本腿行情帧与生效费率，不得共用全局口径",
+        "multi_builtin.rs 的定资调用退回了单一口径",
+    )
+    check(
+        all(
+            token in report
+            for token in (
+                "[Multi-leg · Integrity]",
+                "[Multi-leg · Reconcile]",
+                "\"pending_reconcile\"",
+                "\"legs\"",
+                "裸腿事实与残余成交不闭合",
+            )
+        ),
+        "多腿计划与成交的差距必须同时进 stdout 与产物，并有闭合守卫",
+        "multi_builtin.rs 缺少诚实性导出或闭合守卫",
+    )
+    cases = (CRATES / "qx-cli/tests/multi_leg_attribution.rs").read_text(encoding="utf-8")
+    check(
+        all(kind in cases for kind in MULTI_LEG_KIND_NAMES)
+        and "fn vetoed_leg_never_pairs_against_a_filled_counterpart" in cases
+        and "fn multi_leg_funding_bound_fails_loudly_instead_of_capping_cash" in cases,
+        "四条多腿 kind 与两个反向验证用例必须齐备",
+        "multi_leg_attribution.rs 的用例覆盖不再咬住 Q0e 口径",
+    )
+    check(
+        "market spec carries no maker/taker field" in report,
+        "多腿产物必须声明两腿共用一份成本绑定（spec 无费率字段的既有偏离）",
+        "multi_builtin.rs 的 assumptions 缺少费用口径偏离声明",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -1962,6 +2051,7 @@ def main() -> int:
     backtest_assembly_check()
     paper_fee_same_source_check()
     kernel_claim_check()
+    multi_leg_honesty_check()
     capabilities_check()
     line_budget_check()
     print()

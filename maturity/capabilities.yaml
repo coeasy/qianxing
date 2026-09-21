@@ -219,6 +219,8 @@ capabilities:
       - crates/qx-cli/src/workers.rs
       - crates/qx-cli/src/spread.rs
       - crates/qx-cli/src/tests/execution_and_multi_leg.rs
+      - crates/qx-cli/tests/multi_leg_attribution.rs
+      - crates/qx-cli/src/backtests/leg_funding.rs
       - HedgeRecoveryWorker idempotency test
       - FileSpreadOrderGroupStore claim lease + fencing token test
       - Paper 多腿经生产单轨提交两条腿并归约组快照的生命周期测试
@@ -229,6 +231,7 @@ capabilities:
       - dedicated_spread_recovery_role_is_available_but_not_enabled_by_default
       - legacy_execution_recovery_is_disabled_when_same_account_venue_dedicated_worker_is_enabled
       - group_snapshot_sync_is_after_single_leg_eventlog_commit
+      - backtest_multi_leg_fees_share_one_cost_binding_because_market_spec_has_no_tier_fields
       - no_production_failure_matrix
 
   postgres:

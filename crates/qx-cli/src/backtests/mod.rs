@@ -123,6 +123,9 @@ pub(crate) use fast_backtest::*;
 mod kernels;
 pub(crate) use kernels::*;
 
+mod leg_funding;
+pub(crate) use leg_funding::*;
+
 mod multi_builtin;
 pub(crate) use multi_builtin::*;
 
