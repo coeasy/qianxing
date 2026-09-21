@@ -151,4 +151,5 @@ mod execution_and_multi_leg;
 mod live_submit_fail_closed;
 mod paper_and_strategy_worker;
 mod paper_bridge_and_bundles;
+mod paper_margin_valuation;
 mod worker_observability;

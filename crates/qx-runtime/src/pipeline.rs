@@ -403,8 +403,17 @@ impl RuntimeEventStore {
         }
     }
 
-    fn write(&self, name: &str, log: &EventLog) -> Result<std::path::PathBuf, StorageError> {
-        let outbox_events = project_event_log_to_outbox(name, log)?;
+    fn write(
+        &self,
+        name: &str,
+        log: &EventLog,
+        projection_cursor: u64,
+    ) -> Result<std::path::PathBuf, StorageError> {
+        // 只投影游标之后的新事件。文件后端在 ack 时会删除事件文件，整段重投影会把
+        // 已投递并确认的事实重新放回 Outbox，relay/consumer 于是永远重复消费同一批
+        // 事件；写放大也随日志长度变成平方级。
+        let mut outbox_events = project_event_log_to_outbox(name, log)?;
+        outbox_events.retain(|event| event.sequence >= projection_cursor);
         match self {
             Self::Flat(store, outbox) => {
                 let path = store.write(name, log)?;
@@ -443,6 +452,10 @@ pub struct LiveEventPipeline {
     log_name: String,
     currency: String,
     last_engine_ts: u64,
+    /// Outbox 投影游标：小于该序号的事实已投影过，等于/大于的仍需投影。序号从 0
+    /// 开始，因此这里存"下一条待投影"而不是"最后一条已投影"。游标只在本进程内推进：
+    /// `open` 时仍会整段补投影一次，以便填掉"EventLog 已落盘、Outbox 未写完"的崩溃缺口。
+    outbox_projection_cursor: u64,
     metrics: Arc<PipelineMetrics>,
 }
 
@@ -563,9 +576,16 @@ impl LiveEventPipeline {
             .unwrap_or_default();
         if !log.is_empty() {
             // 启动恢复时重新投影一次，补齐进程在 EventLog 写成功、Outbox
-            // 尚未写完时崩溃留下的文件后端缺口；幂等后端不会重复事实。
-            store.write(&log_name, &log).map_err(storage_error)?;
+            // 尚未写完时崩溃留下的文件后端缺口。这里的补投影是整段的，因此运行期
+            // 已 ack 的事件可能在重启后重新出现：Outbox 只保证至少一次投递，
+            // 消费端必须按 event_id 幂等。
+            store.write(&log_name, &log, 0).map_err(storage_error)?;
         }
+        let outbox_projection_cursor = log
+            .events()
+            .last()
+            .map(|event| event.seq.saturating_add(1))
+            .unwrap_or(0);
         let ledger = ReplayVerifier::rebuild_ledger(log.events())?;
         let mut pipeline = Self {
             last_engine_ts: log.events().last().map(|event| event.ts).unwrap_or(0),
@@ -580,6 +600,7 @@ impl LiveEventPipeline {
             store,
             log_name,
             currency,
+            outbox_projection_cursor,
             metrics: Arc::new(PipelineMetrics::default()),
         };
         pipeline.rebuild_runtime_indexes()?;
@@ -1485,9 +1506,19 @@ impl LiveEventPipeline {
         Ok(())
     }
 
-    fn persist(&self) -> QxResult<()> {
-        match self.store.write(&self.log_name, &self.log) {
-            Ok(_) => Ok(()),
+    fn persist(&mut self) -> QxResult<()> {
+        let cursor = self.outbox_projection_cursor;
+        match self.store.write(&self.log_name, &self.log, cursor) {
+            Ok(_) => {
+                // 游标只在整段写成功后推进；中途失败时下一次 persist 会重放缺口，
+                // 已存在的 Outbox 事件由 same_fact 幂等吸收。
+                if let Some(last_seq) = self.log.events().last().map(|event| event.seq) {
+                    self.outbox_projection_cursor = self
+                        .outbox_projection_cursor
+                        .max(last_seq.saturating_add(1));
+                }
+                Ok(())
+            }
             Err(StorageError::NonAppendOnly(_)) => Err(QxError::Transient(
                 "共享 EventLog 已被其他 worker 追加，需重新载入".into(),
             )),
@@ -1525,6 +1556,7 @@ impl LiveEventPipeline {
             store: self.store.clone(),
             log_name: self.log_name.clone(),
             currency: self.currency.clone(),
+            outbox_projection_cursor: self.outbox_projection_cursor,
             metrics: Arc::clone(&self.metrics),
         };
         refreshed.rebuild_runtime_indexes()?;
@@ -1893,6 +1925,86 @@ mod tests {
             ))
             .unwrap();
         assert!(replayed_duplicate.deduplicated);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Outbox 必须只向前投影：已 ack 的事实不能被后续写入复活，否则 relay/consumer
+    /// 会对同一批事实无限重复投递。重新 open 时仍整段补投影一次，用于填崩溃缺口，
+    /// 所以 Outbox 是至少一次投递，消费端按 event_id 幂等。
+    #[test]
+    fn outbox_projection_does_not_resurrect_acked_events() {
+        let root = temp_root("outbox-watermark");
+        let mut pipeline = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        let outbox = FileOutboxStore::new(&root);
+        pipeline.register_order(order(), 100).unwrap();
+        let acked_ids: Vec<String> = outbox
+            .available(1_000)
+            .unwrap()
+            .iter()
+            .map(|event| {
+                let lease = outbox
+                    .claim(&event.event_id, "relay", 1_000, 30)
+                    .expect("claim outbox event");
+                outbox
+                    .ack(&event.event_id, "relay", lease.fencing_token, 1_000)
+                    .expect("ack outbox event");
+                event.event_id.clone()
+            })
+            .collect();
+        assert_eq!(acked_ids.len(), pipeline.log().len());
+        assert!(outbox.available(1_000).unwrap().is_empty());
+
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: 7,
+                    venue_order_id: None,
+                },
+                110,
+                111,
+                1,
+                "ack-7",
+            ))
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::MarketQuote {
+                    instrument: InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")),
+                    bid: Price::from_i64(99),
+                    ask: Price::from_i64(100),
+                    bid_qty: Quantity::from_i64(2),
+                    ask_qty: Quantity::from_i64(3),
+                },
+                120,
+                120,
+                2,
+                "quote-99",
+            ))
+            .unwrap();
+        let pending: Vec<String> = {
+            let mut events = outbox.available(1_000).unwrap();
+            events.sort_by_key(|event| event.sequence);
+            events.into_iter().map(|event| event.event_id).collect()
+        };
+        let expected: Vec<String> = pipeline
+            .log()
+            .events()
+            .iter()
+            .map(|event| format!("binance-main:{}", event.seq))
+            .filter(|id| !acked_ids.contains(id))
+            .collect();
+        assert_eq!(pending, expected);
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pipeline.log().len(), 3);
+
+        let restored = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        assert_eq!(restored.snapshot(), pipeline.snapshot());
+        assert_eq!(outbox.available(1_000).unwrap().len(), pipeline.log().len());
+        assert!(acked_ids.iter().all(|id| outbox
+            .available(1_000)
+            .unwrap()
+            .iter()
+            .any(|event| &event.event_id == id)));
         let _ = std::fs::remove_dir_all(root);
     }
 

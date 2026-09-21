@@ -319,3 +319,41 @@ fn dedicated_spread_recovery_disables_legacy_execution_scan_only_for_same_accoun
     config.workers.last_mut().unwrap().venue_id = Some("other".into());
     assert!(!dedicated_spread_recovery_configured(&config, &execution));
 }
+
+/// `RunManifest.code_commit` 参与清单摘要：它恒为常量时，两份不同代码跑出的回测清单
+/// 长得一模一样，事后无法判定收益出自哪个提交，重放校验也就失去了比较对象。构建身份
+/// 由 `build.rs` 烧进二进制，这里同时锁定形状与"确实落进了产物文件"。
+#[test]
+fn run_manifests_bear_the_built_code_identity() {
+    let identity = env!("QX_GIT_COMMIT");
+    let commit = identity.strip_suffix("-dirty").unwrap_or(identity);
+    assert!(
+        commit == "unknown"
+            || (commit.len() == 40
+                && commit
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit())),
+        "代码身份必须是 git 提交哈希或 unknown 回落值，实际为 {identity:?}"
+    );
+    assert_eq!(
+        scheduler_manifest("job-worker", "2026-01-05", 1_700_000_000_000).code_commit,
+        identity
+    );
+
+    let (deploy, frame, template) = builtin_backtest_example_paths();
+    let base = read_runtime_config(&template).unwrap();
+    let (root, runtime) = isolated_backtest_runtime(&deploy, &base, "code-identity");
+    run_strategy_backtest(&runtime, &frame, None).unwrap();
+    let persisted = std::fs::read_dir(root.join("runs"))
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with(".run.json"))
+        })
+        .expect("回测 RunManifest 未落盘");
+    let payload: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&persisted).unwrap()).unwrap();
+    assert_eq!(payload["code_commit"].as_str(), Some(identity));
+    let _ = std::fs::remove_dir_all(&root);
+}

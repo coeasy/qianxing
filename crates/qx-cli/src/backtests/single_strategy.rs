@@ -157,7 +157,7 @@ pub(crate) fn run_single_strategy_backtest(
     let run_manifest = report.run_manifest_with_input_components(
         RunManifestIdentity {
             run_id: &format!("strategy-backtest:{strategy_id}:{}", frame.instrument),
-            code_commit: "workspace",
+            code_commit: env!("QX_GIT_COMMIT"),
             config_hash: &config.fingerprint()?,
             strategy_version: &config.strategy.version,
             instrument_spec_version: if spec_path.is_some() {

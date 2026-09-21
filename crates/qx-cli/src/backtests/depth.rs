@@ -103,7 +103,7 @@ pub(crate) fn run_depth_backtest(
     let run_manifest = report.run_manifest(
         RunManifestIdentity {
             run_id: &format!("depth-backtest:{tier}:{}:{}", kind.name(), frame.instrument),
-            code_commit: "workspace",
+            code_commit: env!("QX_GIT_COMMIT"),
             config_hash: &depth_run_config_hash(
                 tier,
                 kind.name(),

@@ -11,6 +11,33 @@ pub(crate) fn resolve_worker_runtime_paths(worker: &mut WorkerConfig, runtime_pa
     }
 }
 
+/// Paper 账户可用保证金的估值口径，必须和 `RiskContext` 里的 `initial_margin` 同一把尺子：
+/// 现货买入付出现金，持仓按全额名义额计入权益才是账户价值；保证金产品开仓不动现金，
+/// 账上属于这笔持仓的只有已实现/未实现 PnL，再按名义额累加等于凭空多出整笔可用保证金
+/// （10k USDT 开 1 张 50k 名义的永续会把权益算成 60k，10 倍杠杆规则形同虚设，且每成交
+/// 一次就更宽松）。缺少标记价格时退回纯现金，宁可保守也不放松闸门。
+pub(crate) fn paper_available_margin(
+    ledger: &Ledger,
+    account_id: &str,
+    marks: &BTreeMap<InstrumentId, Price>,
+    settlement: &str,
+    spec: &TradingInstrumentSpec,
+) -> Result<i128, String> {
+    let cash_only = ledger.cash_for(account_id, settlement);
+    if !spec.product.is_derivative() {
+        return Ok(ledger
+            .equity_for(account_id, marks, settlement)
+            .unwrap_or(cash_only));
+    }
+    if marks.contains_key(&spec.instrument) {
+        ledger
+            .equity_for_with_spec(account_id, marks, settlement, spec)
+            .map_err(|error| format!("Paper 衍生品可用保证金计算失败: {error:?}"))
+    } else {
+        Ok(cash_only)
+    }
+}
+
 /// 从执行 worker 的冻结 market spec 和同一 EventLog 构造账户级风险快照。
 ///
 /// 返回 `None` 只表示该 worker 没有配置 `instrument_spec_path`，**不是**"允许降级到无风控提交"：
@@ -52,10 +79,13 @@ pub(crate) fn worker_risk_context(
         .as_deref()
         .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
     {
-        pipeline
-            .ledger()
-            .equity_for(account_id, pipeline.marks(), settlement)
-            .unwrap_or_else(|| pipeline.ledger().cash_for(account_id, settlement))
+        paper_available_margin(
+            pipeline.ledger(),
+            account_id,
+            pipeline.marks(),
+            settlement,
+            &spec,
+        )?
     } else {
         return Err(format!(
             "worker {} 尚未收到 {} 账户余额快照，拒绝执行账户级风控订单",

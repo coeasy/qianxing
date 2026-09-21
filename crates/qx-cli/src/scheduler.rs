@@ -45,7 +45,7 @@ pub(crate) fn scheduler_manifest(
 ) -> qx_core::RunManifest {
     qx_core::RunManifest {
         run_id: format!("{worker_id}-{trading_day}-{now}"),
-        code_commit: "workspace".into(),
+        code_commit: env!("QX_GIT_COMMIT").into(),
         config_hash: "runtime-scheduler-v1".into(),
         data_fingerprint: format!("scheduler:{trading_day}"),
         input_components: BTreeMap::new(),

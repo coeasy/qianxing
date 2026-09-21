@@ -44,7 +44,7 @@ pub(crate) fn run(scope: Scope) {
 
     let manifest = RunManifest {
         run_id: "cli-demo".into(),
-        code_commit: "workspace".into(),
+        code_commit: env!("QX_GIT_COMMIT").into(),
         config_hash: "fast=5;slow=20;seed=42".to_string(),
         data_fingerprint: format!("synthetic:{}", bars.len()),
         input_components: BTreeMap::new(),
