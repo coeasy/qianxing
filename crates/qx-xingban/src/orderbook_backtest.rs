@@ -401,16 +401,14 @@ impl OrderBookBacktestEngine {
                 let order = oms.get(fill.order_id).cloned().ok_or_else(|| {
                     qx_core::QxError::ReconcileRequired("订单簿成交找不到 OMS 订单".into())
                 })?;
-                let mut traced_fill = fill.clone();
-                order.trace_fill(&mut traced_fill, None, None);
+                order.trace_fill(&mut fill, None, None);
                 let entry_ids = qx_core::apply_fill_to_books(
                     &mut ledger,
                     &mut oms,
                     &currency,
-                    &traced_fill,
+                    &fill,
                     qx_core::FillTerms::resolve(instrument_spec.as_ref(), 1),
                 )?;
-                fill = traced_fill;
                 fees_raw = fees_raw.saturating_add(fill.fee.raw());
                 turnover_raw = turnover_raw.saturating_add(book_notional(
                     instrument_spec.as_ref(),
