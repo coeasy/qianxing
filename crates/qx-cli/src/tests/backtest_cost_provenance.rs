@@ -59,7 +59,7 @@ fn multi_attribution_with_costs(label: &str, rules: &str) -> (serde_json::Value,
     (read_first_artifact(&root, ".spread-attribution.json"), root)
 }
 
-/// V11 §4.3 Q0c 的正面用例：`strategy.cost_rules_path` 不是一行死配置。
+/// V11 §3B 末条（E3 的死配置面）的正面用例：`strategy.cost_rules_path` 不是一行死配置。
 ///
 /// 反向验证口径就在断言里——把 `BarBacktestAssembly::new` 的成本入参换回内置默认，
 /// "费率 0 的那一轮费用仍为 0、费率 25bp 的那一轮费用变成名义额的 25bp" 立刻不成立。
@@ -203,54 +203,78 @@ fn cost_rules_latency_reaches_the_bar_kernel_and_is_refused_by_depth() {
     }
 }
 
+/// 深度档跑一份成本文件（可选显式 `--fee-bps`），返回摘要与两个临时目录。
+fn depth_summary_with_costs(
+    deploy: &Path,
+    template: &Path,
+    label: &str,
+    rules: &str,
+    flag: Option<i64>,
+) -> (serde_json::Value, PathBuf, PathBuf) {
+    let (root, runtime) = runtime_with_cost_rules(deploy, template, label, rules);
+    let out = temp_cli_case_dir(label);
+    run_depth_backtest(
+        "l1",
+        "sma_cross",
+        &deploy.join("qianxing.depth-frame.l1.example.json"),
+        None,
+        1,
+        flag,
+        &out,
+        Some(&runtime),
+    )
+    .unwrap();
+    (read_first_backtest_summary(&out), root, out)
+}
+
 /// 深度档的三层优先级：显式 `--fee-bps` > 成本文件 taker_bp > 内核默认。
 #[test]
 fn explicit_fee_flag_beats_the_cost_rules_file_on_depth() {
     let (deploy, _, template) = builtin_backtest_example_paths();
-    let rules = cost_rules_json("depth", 0, 25, 0);
-    let (root, runtime) = runtime_with_cost_rules(&deploy, &template, "q0c-depth", &rules);
-    let frame = deploy.join("qianxing.depth-frame.l1.example.json");
+    let rules_25 = cost_rules_json("depth-25", 0, 25, 0);
+    // 与内核默认费率取同一个数字的成本文件：只有"真的读了文件"才让两轮费用差 5 倍，
+    // 否则缺省值退回内核常数时产物照样自称 cost-rules-file，光看来源字符串发现不了。
+    let rules_5 = cost_rules_json("depth-5", 0, 5, 0);
+    let (from_file, file_root, file_out) =
+        depth_summary_with_costs(&deploy, &template, "q0c-depth-25", &rules_25, None);
+    let (baseline, base_root, base_out) =
+        depth_summary_with_costs(&deploy, &template, "q0c-depth-5", &rules_5, None);
+    let (flagged, flag_root, flag_out) =
+        depth_summary_with_costs(&deploy, &template, "q0c-depth-flag", &rules_25, Some(0));
 
-    let from_file_root = temp_cli_case_dir("q0c-depth-file");
-    run_depth_backtest(
-        "l1",
-        "sma_cross",
-        &frame,
-        None,
-        1,
-        None,
-        &from_file_root,
-        Some(&runtime),
-    )
-    .unwrap();
-    let from_file = read_first_backtest_summary(&from_file_root);
+    let fees = |summary: &serde_json::Value| summary["metrics"]["fees_raw"].as_i64().unwrap();
+    let turnover =
+        |summary: &serde_json::Value| summary["metrics"]["turnover_raw"].as_i64().unwrap();
+
+    for (summary, root) in [(&from_file, &file_root), (&baseline, &base_root)] {
+        assert_eq!(
+            summary["execution_costs"]["source"],
+            format!("cost-rules-file:{}", root.join(COST_FILE).display())
+        );
+    }
+    assert!(turnover(&from_file) > 0, "深度示例本来就该有成交");
     assert_eq!(
-        from_file["execution_costs"]["source"],
-        format!("cost-rules-file:{}", root.join(COST_FILE).display())
+        turnover(&baseline),
+        turnover(&from_file),
+        "换费率不该改变成交"
     );
-    assert!(from_file["metrics"]["fees_raw"].as_i64().unwrap() > 0);
+    assert!(
+        fees(&from_file) > fees(&baseline),
+        "taker_bp 25 的费用必须真的高于 5：{:#?}",
+        [fees(&from_file), fees(&baseline)]
+    );
 
-    let flagged_root = temp_cli_case_dir("q0c-depth-flag");
-    run_depth_backtest(
-        "l1",
-        "sma_cross",
-        &frame,
-        None,
-        1,
-        Some(0),
-        &flagged_root,
-        Some(&runtime),
-    )
-    .unwrap();
-    let flagged = read_first_backtest_summary(&flagged_root);
     assert_eq!(flagged["execution_costs"]["source"], "cli-flag");
-    assert_eq!(flagged["metrics"]["fees_raw"].as_i64().unwrap(), 0);
+    assert_eq!(fees(&flagged), 0);
     assert_eq!(
-        flagged["metrics"]["turnover_raw"], from_file["metrics"]["turnover_raw"],
+        turnover(&flagged),
+        turnover(&from_file),
         "旗标只该换费率，不该换成交"
     );
 
-    for path in [root, from_file_root, flagged_root] {
+    for path in [
+        file_root, file_out, base_root, base_out, flag_root, flag_out,
+    ] {
         let _ = std::fs::remove_dir_all(path);
     }
 }
