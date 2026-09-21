@@ -67,6 +67,8 @@ spread-recovery / reconciler）若声明了不同的 `settlement_currency`，判
 （`account_log_settlement: fail`）——成交扣减和风控读取会各记各的账簿，且币种随事实永久落盘；
 `storage.data_dir` 里没有任何身份引用的 `*-events` 账本只告警点名（`event_logs.orphan: warn`），
 账户日志名按 `(account_id, venue_id)` 派生，切换是硬切的，旧账本不自动改名也不自动删除，归档与否由运维决定。
+该扫描读的是 Files 后端的目录，`backend` 为 `sqlite`/`postgres` 时这条检查同样给 `warn`，
+但含义是"未覆盖"而不是"已确认干净"——那两类存储里的遗留账本要按存储侧自行核对。
 
 `init` 会将运行时配置所需的调度样例、BarFrame、DatasetBundle、品种规格和 Paper 目标复制到同一目录，
 避免“配置本身合法但引用样例文件不存在”。`--strategy macd` 可直接生成绑定内置策略的本地回测项目。

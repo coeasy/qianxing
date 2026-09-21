@@ -37,6 +37,24 @@ fn bar_backtest_assembly_pins_the_shared_engine_defaults() {
     );
 }
 
+/// market spec 声明了结算币种时，回测的现金腿必须跟着换到那本账簿。装配处的
+/// USDT 兜底曾盖过 spec 声明：CNY 标的在 USDT 账簿上撮合，等于花一笔账户里
+/// 永远读不到的钱，产物里的成交却标着 USDT。
+#[test]
+fn backtest_assembly_books_in_the_instrument_settlement_currency() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let payload = std::fs::read_to_string(workspace_binance_spot_spec()).unwrap();
+    let mut spec: TradingInstrumentSpec = serde_json::from_str(&payload).unwrap();
+    spec.settlement_currency = "CNY".into();
+    let mut assembly = BarBacktestAssembly::new(&instrument, "main", 20260914);
+    assembly.instrument_spec = Some(spec);
+    assert_eq!(
+        assembly.into_config().currency,
+        "CNY",
+        "记账币种必须跟着 market spec 声明，不能停在装配处的兜底"
+    );
+}
+
 /// `backtest builtin` 入口：输入校验 fail-closed，且真实跑通共用内核。
 #[test]
 fn builtin_backtest_entry_validates_inputs_and_runs_on_the_shared_kernel() {

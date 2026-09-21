@@ -232,6 +232,8 @@ pub(crate) fn paper_market_worker_matches_instrument(
                 .any(|symbol| InstrumentId::parse(symbol).as_ref() == Some(instrument)))
 }
 
+/// 打开 Paper 行情桥。`workers` 必须是配置里的**全部** worker：桥自身按角色和 Venue
+/// 过滤，而记账币种要按账户身份找出这本账的所有写入方，传过滤后的子集会漏掉冲突方。
 pub(crate) fn open_paper_market_bridges(
     storage: &PipelineStorage,
     workers: &[WorkerConfig],
@@ -255,7 +257,10 @@ pub(crate) fn open_paper_market_bridges(
             existing.workers.push(worker.clone());
             continue;
         }
-        let pipeline = storage.open(log_name.clone(), worker_settlement_currency(worker))?;
+        let pipeline = storage.open(
+            log_name.clone(),
+            account_worker_currency_among_workers(workers, worker)?,
+        )?;
         bridges.push(PaperMarketBridge {
             workers: vec![worker.clone()],
             log_name,

@@ -203,11 +203,12 @@ pub(crate) fn load_api_account_snapshots(
         .iter()
         .filter(|worker| owns_account_event_log(worker))
     {
-        let key = (
-            worker.account_id.clone().unwrap_or_default(),
-            worker.venue_id.clone().unwrap_or_default(),
-        );
-        if !seen.insert(key) {
+        // 去重键取规范化后的账户身份（即日志名），不取配置原文：`main/paper` 与
+        // `" main "/Paper` 是同一本账，按原文各投影一份就等于把同一账户报两次。
+        let Some(identity) = worker_account_event_log(worker) else {
+            continue;
+        };
+        if !seen.insert(identity) {
             continue;
         }
         if let Some(snapshot) = load_api_account_snapshot_for_worker(config, worker)? {
@@ -238,8 +239,10 @@ pub(crate) fn load_api_account_snapshot_for_worker(
     config: &RuntimeConfig,
     worker: &WorkerConfig,
 ) -> Result<Option<AccountSnapshot>, String> {
-    let account_id = worker.account_id.as_deref().unwrap_or_default();
-    let venue_id = worker.venue_id.as_deref().unwrap_or_default();
+    // 账簿键跟着日志身份的规范化走：用未 trim 的账户号查 Ledger 会读到空账簿，
+    // 权益报 0 而没人报错。Venue 大小写不改，因为事实里的 venue 拼写由上报方决定。
+    let account_id = worker.account_id.as_deref().unwrap_or_default().trim();
+    let venue_id = worker.venue_id.as_deref().unwrap_or_default().trim();
     let Some(log_name) = account_event_log_name(account_id, venue_id) else {
         return Ok(None);
     };
@@ -247,9 +250,8 @@ pub(crate) fn load_api_account_snapshot_for_worker(
     if !event_log_exists(config, root, &log_name)? {
         return Ok(None);
     }
-    let pipeline =
-        open_runtime_pipeline(config, root, log_name, worker_settlement_currency(worker))
-            .map_err(|error| format!("打开 API 账户 EventLog 失败: {error}"))?;
+    let pipeline = open_account_pipeline(config, root, &log_name)
+        .map_err(|error| format!("打开 API 账户 EventLog 失败: {error}"))?;
     let runtime_snapshot = pipeline.snapshot();
     let as_of = runtime_snapshot.last_engine_ts.max(1);
     let mut snapshot = AccountSnapshot::new(1, account_id, "default", venue_id, as_of);

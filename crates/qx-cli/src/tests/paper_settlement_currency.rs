@@ -13,15 +13,13 @@ fn paper_submit_order_books_in_the_worker_settlement_currency() {
         .join("qianxing.runtime.paper-strategy.example.json");
     let mut config = read_runtime_config(&template).unwrap();
     config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let usdc_spec = spot_spec_settled_in(&data_dir, "USDC")
+        .to_string_lossy()
+        .into_owned();
     for worker in config.workers.iter_mut() {
         if worker.instrument_spec_path.is_some() {
-            worker.instrument_spec_path = Some(
-                workspace_root
-                    .join("deploy")
-                    .join("qianxing.binance.spot.spec.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            );
+            worker.instrument_spec_path = Some(usdc_spec.clone());
         }
     }
     // 故意用小写：币种代码在账簿键上必须归一化，否则 "usdc" 与 "USDC" 会分裂成两本账。

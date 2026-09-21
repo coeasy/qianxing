@@ -7,7 +7,8 @@
 use super::*;
 
 /// 纸面拓扑 + `paper-execution` 声明 USDC 结算。故意用小写：账簿键必须归一化，
-/// 否则 `"usdc"` 与 `"USDC"` 会分裂成两本账。
+/// 否则 `"usdc"` 与 `"USDC"` 会分裂成两本账。规格结算币种跟着改成 USDC——
+/// 记账币种和规格不一致是配置错误，风控会直接拒绝。
 fn usdc_paper_runtime(data_dir: &Path) -> RuntimeConfig {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
     let template = workspace_root
@@ -15,15 +16,12 @@ fn usdc_paper_runtime(data_dir: &Path) -> RuntimeConfig {
         .join("qianxing.runtime.paper-strategy.example.json");
     let mut config = read_runtime_config(&template).unwrap();
     config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    let usdc_spec = spot_spec_settled_in(data_dir, "USDC")
+        .to_string_lossy()
+        .into_owned();
     for worker in config.workers.iter_mut() {
         if worker.instrument_spec_path.is_some() {
-            worker.instrument_spec_path = Some(
-                workspace_root
-                    .join("deploy")
-                    .join("qianxing.binance.spot.spec.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            );
+            worker.instrument_spec_path = Some(usdc_spec.clone());
         }
     }
     config
@@ -276,6 +274,131 @@ fn agreeing_settlement_declarations_on_one_account_log_are_accepted() {
             .filter(|(_, _, log_name, _)| log_name == &paper_account_log())
             .count(),
         1
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 冲突不能只停在 doctor：真正往同一本账户日志落账的写入方必须一起拒绝开册。
+/// 币种随 `LedgerApplied` 永久落盘，写入方照常启动等于把冲突写进历史。
+#[test]
+fn conflicting_settlement_declarations_block_the_writers_that_book_the_log() {
+    let root = temp_cli_case_dir("currency-caliper-writer");
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let mut config = usdc_paper_runtime(&data_dir);
+    add_second_account_log_writer(&mut config, "USDT");
+
+    let storage = PipelineStorage::from_config(&config).unwrap();
+    match open_paper_market_bridges(&storage, &config.workers) {
+        Ok(bridges) => panic!(
+            "Paper 行情桥按第一个声明者的口径开了 {} 本册，冲突配置必须拒绝",
+            bridges.len()
+        ),
+        Err(error) => assert!(
+            error.contains("paper-spread-recovery"),
+            "写入方的拒绝必须点名冲突的另一方: {error}"
+        ),
+    }
+
+    let config_path = root.join("runtime.json");
+    std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
+    let error = run_paper_execution_worker(&config_path, "paper-execution", true)
+        .expect_err("冲突配置下写入 worker 不得播种初始资金并落账");
+    assert!(
+        error.contains("paper-spread-recovery") && error.contains("paper-execution"),
+        "写入 worker 的拒绝必须点名冲突双方: {error}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 风控侧证据：记账币种只有一把尺子。worker 未声明币种时曾退回 market spec 的
+/// `settlement_currency`——那说的是"这个标的用什么结算"，不是"这本账户账簿记什么币"。
+/// 两者不一致时可读保证金会从一本空账簿算成 0，账户里明明有钱却被按保证金不足拒单。
+#[test]
+fn risk_context_refuses_a_spec_currency_that_is_not_the_ledger_book() {
+    let root = temp_cli_case_dir("currency-caliper-risk");
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let spec = TradingInstrumentSpec {
+        instrument: instrument.clone(),
+        product: TradingProduct::Spot,
+        base_currency: "BTC".into(),
+        quote_currency: "USDT".into(),
+        settlement_currency: "USDT".into(),
+        contract_size: SCALE,
+        linear: true,
+        inverse: false,
+        price_tick: 1,
+        qty_step: SCALE,
+        min_qty: SCALE,
+        max_leverage: 1,
+        maintenance_margin_bps: 0,
+        valid_from: 1,
+        valid_to: None,
+    };
+    let spec_path = root.join("spot.spec.json");
+    std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap()).unwrap();
+    let mut worker = mk_worker(
+        "paper-execution",
+        WorkerRole::Execution,
+        "paper",
+        Some(&spec_path.to_string_lossy()),
+    );
+    worker.settlement_currency = None;
+    seed_usdc_account_cash(&root, 1_000);
+    let pipeline = LiveEventPipeline::open(&root, paper_account_log(), "USDC").unwrap();
+    let order = mk_order(9610, &instrument, Side::Buy, 1);
+
+    let error = worker_risk_context(&worker, &order, &pipeline, None)
+        .expect_err("规格结算币种与账户账簿不一致时必须拒绝，而不是按 0 保证金拒单");
+    for token in ["paper-execution", "USDC", "USDT"] {
+        assert!(
+            error.contains(token),
+            "不一致必须点名 worker 和两本币种，缺 {token}: {error}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// API 读模型侧证据：账户身份要去重到"同一本账一份投影"，键必须是规范化后的身份。
+/// `main/paper` 与 `" main "/Paper` 是同一本日志，按配置原文去重会投影出两份快照，
+/// 且后一份用未 trim 的账户号查账簿——读到空账簿也不报错。
+#[test]
+fn api_snapshots_deduplicate_by_normalized_account_identity() {
+    let root = temp_cli_case_dir("api-identity-dedupe");
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let mut config = usdc_paper_runtime(&data_dir);
+    let mut twin = config
+        .workers
+        .iter()
+        .find(|worker| worker.id == "paper-execution")
+        .expect("paper 拓扑缺少 paper-execution worker")
+        .clone();
+    twin.id = "paper-execution-twin".into();
+    twin.account_id = Some(" main ".into());
+    twin.venue_id = Some("Paper".into());
+    config.workers.push(twin);
+    seed_usdc_account_cash(&data_dir, 1_000);
+
+    let snapshots = load_api_account_snapshots(&config).unwrap();
+    let paper: Vec<(String, String)> = snapshots
+        .iter()
+        .map(|snapshot| {
+            (
+                snapshot.header.account_id.clone(),
+                snapshot.header.venue_id.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        paper,
+        vec![("main".to_string(), "paper".to_string())],
+        "同一账户身份只能投影一份、且按规范化账户号查账簿"
+    );
+    assert_eq!(
+        snapshots[0].equity_raw,
+        1_000 * SCALE,
+        "去重后留下的那份必须真读到 USDC 账簿，而不是空账簿"
     );
     let _ = std::fs::remove_dir_all(root);
 }

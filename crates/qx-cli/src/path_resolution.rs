@@ -189,6 +189,9 @@ fn event_log_name_of(path: &Path) -> Option<String> {
 /// 改名也不删除。让它静静躺在运行目录里，下一次只会以"这本账怎么不再增长"的形式被
 /// 重新发现，而那时没人记得它属于切换前的哪一套名字。所以 doctor 点名，但只警告不
 /// 失败——归档与否是运维决定，不是启动前置条件。
+///
+/// 扫描口径是 Files 后端的目录；其它后端没有可翻的目录，只能报告"未覆盖"，
+/// 不能把缺席当成通过。
 pub(crate) fn check_orphan_event_logs(
     runtime_path: &Path,
     config: &RuntimeConfig,
@@ -196,6 +199,20 @@ pub(crate) fn check_orphan_event_logs(
     warnings: &mut Vec<String>,
 ) {
     if config.storage.backend != StorageBackend::Files {
+        // 扫描靠翻 `data_dir` 目录，只对 Files 后端成立。这里必须留下检查记录：
+        // 静默 return 让 doctor 的输出看起来"这项查过且干净"，非 Files 后端上那些
+        // 没人引用的账本就此隐身。
+        let backend = format!("{:?}", config.storage.backend).to_ascii_lowercase();
+        let message = format!(
+            "孤儿 EventLog 扫描只覆盖 files 后端，当前 backend={backend} 未扫描；\
+             该后端的在册/遗留账本需按存储侧自行确认"
+        );
+        checks.push(serde_json::json!({
+            "name": "event_logs.orphan",
+            "status": "warn",
+            "message": message
+        }));
+        warnings.push(message);
         return;
     }
     let owned = configured_event_log_names(config);

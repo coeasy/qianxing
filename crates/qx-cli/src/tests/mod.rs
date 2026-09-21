@@ -134,6 +134,17 @@ pub(crate) fn workspace_binance_spot_spec() -> PathBuf {
         .join("qianxing.binance.spot.spec.json")
 }
 
+/// 换掉仓库现货规格的结算币种并落到 `dir`。账户账簿币种和规格结算币种必须一致
+/// （`worker_risk_context` 会拒不一致的配置），所以换记账币种的用例要连规格一起换。
+pub(crate) fn spot_spec_settled_in(dir: &Path, currency: &str) -> PathBuf {
+    let payload = std::fs::read_to_string(workspace_binance_spot_spec()).unwrap();
+    let mut spec: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    spec["settlement_currency"] = serde_json::Value::String(currency.into());
+    let path = dir.join(format!("spot-{currency}.spec.json"));
+    std::fs::write(&path, serde_json::to_vec(&spec).unwrap()).unwrap();
+    path
+}
+
 /// 装配一条 SubmitOrder 控制命令；`dry_run=false` 时进入真实副作用分支。
 pub(crate) fn mk_submit_command(command_id: u64, order: &Order, dry_run: bool) -> ControlCommand {
     ControlCommand {

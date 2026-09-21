@@ -11,9 +11,11 @@ pub(crate) fn resolve_worker_runtime_paths(worker: &mut WorkerConfig, runtime_pa
     }
 }
 
-/// worker 账户日志的记账币种。EventLog 按记账币种选择现金账簿，因此打开日志、播种初始资金、
-/// 归约成交和构造风控快照必须使用同一个值；未声明时回落 USDT。统一大写是因为 Venue 现金流水的
-/// 币种按惯例大写，大小写错位会读到一个空账簿——成交扣减和风控读取各看一本账，谁都不报错。
+/// worker **自己声明**的记账币种，只是身份判定的输入之一：账户日志的口径由
+/// [`settlement_currency_for_log`] 在同一本日志的全部写入方声明里唯一化，风控和成交
+/// 落账则回读管线自身的 [`LiveEventPipeline::settlement_currency`]。这里不要求账户身份
+/// 完整，所以只用于 worker 级行情日志和声明集合。统一大写是因为 Venue 现金流水的币种
+/// 按惯例大写，大小写错位会读到一个空账簿——成交扣减和风控读取各看一本账，谁都不报错。
 pub(crate) fn worker_settlement_currency(worker: &WorkerConfig) -> String {
     worker
         .settlement_currency
@@ -52,7 +54,15 @@ pub(crate) fn settlement_currency_for_log(
     config: &RuntimeConfig,
     log_name: &str,
 ) -> Result<String, String> {
-    let declared = account_log_currency_declarations(config, log_name);
+    settlement_currency_among_workers(&config.workers, log_name)
+}
+
+/// 记账币种判定的唯一实现：只吃 worker 列表，因为装配路径未必留得住整份配置。
+pub(crate) fn settlement_currency_among_workers(
+    workers: &[WorkerConfig],
+    log_name: &str,
+) -> Result<String, String> {
+    let declared = account_log_currency_declarations(workers, log_name);
     let distinct = declared
         .iter()
         .map(|(_, currency)| currency.clone())
@@ -66,13 +76,39 @@ pub(crate) fn settlement_currency_for_log(
         .unwrap_or_else(|| "USDT".to_string()))
 }
 
+/// 写入方打开账户级 EventLog 前的记账币种。与读模型走同一条身份判定，所以配置里
+/// 出现两个口径时在落账前就失败——`worker_settlement_currency` 只看自己声明的值，
+/// 用它开册等于把冲突写进永久账本。worker 级行情日志没有账户身份，仍走前者。
+pub(crate) fn account_worker_settlement_currency(
+    config: &RuntimeConfig,
+    worker: &WorkerConfig,
+) -> Result<String, String> {
+    account_worker_currency_among_workers(&config.workers, worker)
+}
+
+/// 同上，供只拿得到 worker 列表的装配路径使用；列表必须是全量，子集会漏掉冲突方。
+pub(crate) fn account_worker_currency_among_workers(
+    workers: &[WorkerConfig],
+    worker: &WorkerConfig,
+) -> Result<String, String> {
+    settlement_currency_among_workers(workers, &required_account_event_log(worker)?)
+}
+
+/// 同上，供只拿得到配置路径的 worker 装配路径使用：在进程启动处解一次，
+/// 循环内复用，避免每条命令重读配置，也不让某一段退回 `worker_settlement_currency`。
+pub(crate) fn account_worker_currency_from_path(
+    runtime_config_path: &Path,
+    worker: &WorkerConfig,
+) -> Result<String, String> {
+    account_worker_settlement_currency(&read_runtime_config(runtime_config_path)?, worker)
+}
+
 /// 该账户身份上每个启用写入方各自会用的记账币种，按 worker id 排序。
 fn account_log_currency_declarations(
-    config: &RuntimeConfig,
+    workers: &[WorkerConfig],
     log_name: &str,
 ) -> Vec<(String, String)> {
-    config
-        .workers
+    workers
         .iter()
         .filter(|worker| owns_account_event_log(worker))
         .filter_map(|worker| {
@@ -185,10 +221,17 @@ pub(crate) fn worker_risk_context(
         .account_id
         .as_deref()
         .ok_or_else(|| format!("worker {} 缺少 account_id", worker.id))?;
-    let settlement = match worker.settlement_currency.as_deref() {
-        Some(currency) => currency.to_ascii_uppercase(),
-        None => spec.settlement_currency.clone(),
-    };
+    // 记账币种只有一个真相源：这本账户日志打开时用的币种，成交的现金腿就落在它上面。
+    // market spec 的 settlement_currency 说的是标的用什么币结算，不是账簿口径；拿它兜底
+    // 会从一本空账簿算出 0 可用保证金，账户明明有钱却被按保证金不足拒单。
+    let settlement = pipeline.settlement_currency().to_string();
+    if !spec.settlement_currency.eq_ignore_ascii_case(&settlement) {
+        return Err(format!(
+            "FAIL_CLOSED: worker {} 的 market spec 结算币种 {} 与账户账簿币种 {settlement} 不一致；\
+             可用保证金只能按账簿币种计，请统一 worker.settlement_currency 与规格文件后重启",
+            worker.id, spec.settlement_currency
+        ));
+    }
     let observed_available = worker.venue_id.as_deref().and_then(|venue_id| {
         pipeline
             .snapshot()

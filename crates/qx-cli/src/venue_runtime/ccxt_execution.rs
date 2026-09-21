@@ -39,6 +39,7 @@ pub(crate) fn run_ccxt_execution_worker(
     if worker.role != WorkerRole::Execution {
         return Err(format!("worker {} 不是 CCXT Execution worker", worker.id));
     }
+    let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
     let python = python_interpreter();
     let owner = worker.id.clone();
     context.mark(
@@ -59,7 +60,7 @@ pub(crate) fn run_ccxt_execution_worker(
             let mut recovery_pipeline = pipeline_storage
                 .open(
                     required_account_event_log(&worker)?,
-                    worker_settlement_currency(&worker),
+                    settlement_currency.clone(),
                 )
                 .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
             let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
@@ -132,7 +133,7 @@ pub(crate) fn run_ccxt_execution_worker(
                 let mut pipeline = pipeline_storage
                     .open(
                         required_account_event_log(&worker)?,
-                        worker_settlement_currency(&worker),
+                        settlement_currency.clone(),
                     )
                     .map_err(|error| format!("打开 CCXT EventLog 失败: {error}"))?;
                 let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
@@ -199,7 +200,7 @@ pub(crate) fn run_ccxt_execution_worker(
                     let latest_pipeline = pipeline_storage
                         .open(
                             required_account_event_log(&worker)?,
-                            worker_settlement_currency(&worker),
+                            settlement_currency.clone(),
                         )
                         .map_err(|error| format!("刷新 CCXT 多腿订单组 EventLog 失败: {error}"))?;
                     sync_spread_group_after_order(
@@ -275,7 +276,10 @@ pub(crate) fn run_ccxt_user_stream_worker(
     let python = python_interpreter();
     let log_name = required_account_event_log(&worker)?;
     let mut pipeline = pipeline_storage
-        .open(&log_name, worker_settlement_currency(&worker))
+        .open(
+            log_name,
+            account_worker_currency_from_path(&runtime_config_path, &worker)?,
+        )
         .map_err(|error| format!("打开 CCXT UserStream EventLog 失败: {error}"))?;
     context.mark(
         qx_runtime::ServiceStatus::Ready,

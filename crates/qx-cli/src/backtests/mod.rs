@@ -11,7 +11,6 @@ pub(crate) struct BarBacktestAssembly {
     pub(crate) instrument: InstrumentId,
     pub(crate) instrument_spec: Option<TradingInstrumentSpec>,
     pub(crate) account_id: String,
-    pub(crate) currency: String,
     pub(crate) initial_cash: Money,
     pub(crate) margin: Box<dyn MarginRule>,
     pub(crate) fee: Box<dyn FeeModel>,
@@ -20,13 +19,20 @@ pub(crate) struct BarBacktestAssembly {
     pub(crate) seed: u64,
 }
 
+/// 回测记账币种：market spec 声明了就用它，没声明才回落 USDT。币种决定现金腿落在
+/// 哪本账簿，所以只能有一处判定——入口各抄一份兜底时，CNY 标的会在 USDT 账簿上撮合，
+/// 产物里的成交却标着没人声明过的币种。
+pub(crate) fn backtest_settlement_currency(spec: Option<&TradingInstrumentSpec>) -> String {
+    spec.map(|spec| spec.settlement_currency.clone())
+        .unwrap_or_else(|| "USDT".into())
+}
+
 impl BarBacktestAssembly {
     pub(crate) fn new(instrument: &InstrumentId, account_id: impl Into<String>, seed: u64) -> Self {
         Self {
             instrument: instrument.clone(),
             instrument_spec: None,
             account_id: account_id.into(),
-            currency: "USDT".into(),
             initial_cash: Money::from_i64(100_000),
             margin: Box::new(NoMargin),
             fee: Box::new(MakerTakerFeeModel {
@@ -41,10 +47,10 @@ impl BarBacktestAssembly {
 
     pub(crate) fn into_config(self) -> BacktestConfig {
         BacktestConfig {
+            currency: backtest_settlement_currency(self.instrument_spec.as_ref()),
             instrument: self.instrument,
             instrument_spec: self.instrument_spec,
             account_id: self.account_id,
-            currency: self.currency,
             initial_cash: self.initial_cash,
             multiplier: 1,
             fill: Box::new(NextBarOpenFillModel),

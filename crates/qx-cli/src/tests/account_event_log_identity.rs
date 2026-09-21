@@ -217,6 +217,40 @@ fn doctor_reports_event_logs_no_identity_owns() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// 孤儿扫描靠翻 `data_dir` 目录实现，只在 Files 后端成立。非 Files 后端上它什么都
+/// 看不到——静默 `return` 会让 doctor 的输出看起来"这项查过且干净"，所以必须显式
+/// 报告未覆盖，而不是让这条检查凭空消失。
+#[test]
+fn doctor_reports_the_orphan_scan_skips_non_file_backends() {
+    let root = temp_cli_case_dir("orphan-scan-backend");
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let mut config = paper_identity_runtime(&data_dir);
+    config.storage.backend = StorageBackend::Sqlite;
+    config.storage.sqlite_path = Some(
+        data_dir
+            .join("qx-events.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let config_path = root.join("runtime.json");
+    std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
+
+    let report = collect_doctor_report(&config_path).unwrap();
+    let checks = report["checks"].as_array().unwrap();
+    assert!(
+        checks.iter().any(|check| {
+            check["name"] == "event_logs.orphan"
+                && check["status"] == "warn"
+                && check["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("sqlite"))
+        }),
+        "非 Files 后端必须显式报告孤儿扫描未覆盖: {checks:?}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// 命名口径硬切留下的旧账本要靠"改名归档"处置，所以改名不得动到事实：
 /// `RunManifest` 的输入摘要吃的是事件序列摘要，一旦日志名混进摘要口径，
 /// 每次改名都会让已发布运行产物的指纹对不上，溯源链条当场作废。
