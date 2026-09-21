@@ -32,7 +32,7 @@ crates/qx-strategy/src/c_api.rs: 1106
 crates/qx-strategy/src/lib.rs: 548
 crates/qx-xingban/src/ashare.rs: 1202
 crates/qx-xingban/src/backtest.rs: 3310
-crates/qx-xingban/src/orderbook.rs: 664
+crates/qx-xingban/src/orderbook.rs: 671
 crates/qx-xingban/src/orderbook_backtest.rs: 1112
 crates/qx-xingban/src/tick_backtest.rs: 503
 crates/qx-xingban/src/venue.rs: 573

@@ -1826,6 +1826,118 @@ def paper_fee_same_source_check() -> None:
     )
 
 
+# V11 Q0d：撮合内核的表述必须与真实消费者一致。
+ORDERBOOK_KERNEL_FILE = "crates/qx-xingban/src/orderbook.rs"
+TICK_BACKTEST_FILE = "crates/qx-xingban/src/tick_backtest.rs"
+PAPER_VENUE_FILE = "crates/qx-zhenlu/src/lib.rs"
+USER_FACING_READMES = ("README.md", "deploy/README.md")
+# paper 与回测目前真正共享的执行平面符号；"同源"类表述只能落在这几个名字上。
+SHARED_EXECUTION_SYMBOLS = (
+    "FeeModel",
+    "apply_fill_to_books",
+    "apply_ledger_fill",
+    "Ledger",
+    "Oms",
+)
+PAPER_TOKEN = re.compile(r"Paper|paper|模拟盘")
+# 只认领"撮合/簿/内核"这一类同源性说法；`回测与实盘共享同一规则内核`（README）是
+# 规则口径，归 Q0a/Q0c 的费用与风控同源检查管，不在这里判。
+KERNEL_CLAIM_TOKEN = re.compile(r"(?:共用|共享|同一|都走|复用)[^。\n]{0,14}(?:内核|撮合|订单簿)")
+KERNEL_CLAIM_NEGATION = re.compile(
+    r"不成立|不得|并非|不是|没有|不再|不走|谎称|未实现|避免|区别|差异|必须写明"
+)
+SENTENCE_SPLIT = re.compile(r"[。；;\n]")
+
+
+def kernel_claim_check() -> None:
+    """V11 §4.3 的表述缺陷：`orderbook.rs` 曾称"可被历史 Tick 回放、Paper 模拟和性能基准
+    共同使用"，而 paper 的成交实际由 `PaperVenue::on_quote` 用首档一次性 touch 产生，
+    与簿内核没有任何符号耦合。Q0d 只改表述、不改行为（改行为是 §9 登记的 Q1d）。
+
+    六条判据各自抽掉就变红：paper 侧不得出现簿内核符号（负向事实）、`on_quote` 必须真的
+    存在（文档指向不落空）、Tick 链必须确实复用 L2 引擎（正向事实）、簿内核文档必须点名两处
+    真实消费者并写明 paper 首档 touch + Q1d 排期，最后是全局连坐——任何把 Paper 与"同一撮合
+    /共用内核"写进同一句、又没引用真实共享符号的表述一律红。
+
+    Q1d 落地（paper 改走簿内核）时必须**同时**改掉第 1 条与第 4/5 条的期望，二者是一对，
+    否则检查会变成把旧表述钉死的化石。
+    """
+    zhenlu = {
+        # 整份文件都扫，不能用 `non_test_source`：zhenlu 的 `lib.rs:16` 就挂着一条
+        # `#[cfg(test)] use`，截断后只剩 15 行，`PaperVenue` 本体反而扫不到。
+        # 同时只看代码耦合——注释里出现 OrderBook 是合法的如实表述，文字表述归第 6 条判。
+        path.relative_to(ROOT).as_posix(): re.sub(
+            r"//.*", "", path.read_text(encoding="utf-8")
+        )
+        for path in sorted(CRATES.glob("qx-zhenlu/src/**/*.rs"))
+    }
+    coupled = [
+        location
+        for location, source in zhenlu.items()
+        if re.search(r"\bOrderBook|\bBookLevel", source)
+    ]
+    check(
+        not coupled,
+        "Paper 侧（qx-zhenlu）不引用逐档簿内核符号（成交由首档 touch 产生）",
+        f"出现了簿内核引用 {coupled or '无'}",
+    )
+    venue = (ROOT / PAPER_VENUE_FILE).read_text(encoding="utf-8")
+    check(
+        re.search(r"impl PaperVenue \{", venue) is not None
+        and re.search(r"pub fn on_quote\(", venue) is not None,
+        "文档指向的 paper 成交入口真实存在（PaperVenue::on_quote）",
+        f"{PAPER_VENUE_FILE} 不再定义 on_quote",
+    )
+    tick = (ROOT / TICK_BACKTEST_FILE).read_text(encoding="utf-8")
+    check(
+        re.search(r"use crate::\{[^}]*OrderBookBacktestEngine", tick, re.DOTALL)
+        is not None,
+        "Tick 链确实复用 L2 的 OrderBookBacktestEngine（文档中的正向同源表述）",
+        "tick_backtest.rs 不再引用 OrderBookBacktestEngine",
+    )
+    doc = (ROOT / ORDERBOOK_KERNEL_FILE).read_text(encoding="utf-8")
+    doc_head = non_test_source(doc)
+    check(
+        "orderbook_backtest" in doc_head
+        and "tick_backtest" in doc_head
+        and "逐档" in doc_head,
+        "簿内核文档点名真实消费者（L2 深度回测 + L1 Tick 回测）",
+        "orderbook.rs 模块文档缺少消费者",
+    )
+    check(
+        "PaperVenue::on_quote" in doc_head
+        and "首档" in doc_head
+        and "Q1d" in doc_head,
+        "簿内核文档写明 paper 走首档 touch 并挂上 Q1d 排期",
+        "orderbook.rs 模块文档缺少 paper 口径或 Q1d 指向",
+    )
+    offenders: list[str] = []
+    scopes: list[tuple[str, str]] = [
+        (
+            path.relative_to(ROOT).as_posix(),
+            non_test_source(path.read_text(encoding="utf-8")),
+        )
+        for path in sorted(CRATES.glob("*/src/**/*.rs"))
+        if "tests" not in path.parts and "test" not in path.stem
+    ] + [
+        (rel, (ROOT / rel).read_text(encoding="utf-8")) for rel in USER_FACING_READMES
+    ]
+    for location, source in scopes:
+        for sentence in SENTENCE_SPLIT.split(source):
+            if not (
+                PAPER_TOKEN.search(sentence) and KERNEL_CLAIM_TOKEN.search(sentence)
+            ) or KERNEL_CLAIM_NEGATION.search(sentence):
+                continue
+            if any(symbol in sentence for symbol in SHARED_EXECUTION_SYMBOLS):
+                continue
+            offenders.append(f"{location}: {sentence.strip()[:56]}")
+    check(
+        not offenders,
+        "「Paper 与回测同一撮合内核」类表述必须同句引用真实共享符号",
+        f"无据表述 {offenders or '无'}",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -1849,6 +1961,7 @@ def main() -> int:
     runtime_config_fail_closed_check()
     backtest_assembly_check()
     paper_fee_same_source_check()
+    kernel_claim_check()
     capabilities_check()
     line_budget_check()
     print()

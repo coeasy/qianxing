@@ -1,5 +1,77 @@
 # Changelog
 
+## Unreleased — V11 Q0d：撮合内核表述如实化（2026-09-21）
+
+方案与逐阶段验收口径见 [docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md)
+§4.3 第 3 条与 §6 的 Q0d 行；本轮按其编号默认值执行——**只改表述 + 建 Q1d 排期，不改行为**，
+收口记录见同文档 §13。
+
+### Added（`kernel_claim_check()`：把"共用内核"这类说法钉成可判的六条）
+
+- `tools/check_architecture.py` 新增 `kernel_claim_check()`，挂在 `paper_fee_same_source_check()`
+  之后，架构不变量 **124 → 130 项**。六条判据各自"抽掉就变红"：
+  paper 侧（`crates/qx-zhenlu/src/**`，整文件、剥注释）不得出现 `OrderBook` / `BookLevel` 符号；
+  文档指向的成交入口必须真实存在（`impl PaperVenue` 与 `pub fn on_quote(`，实测在
+  `crates/qx-zhenlu/src/lib.rs:1330`）；Tick 链必须确实复用 L2 引擎
+  （`crates/qx-xingban/src/tick_backtest.rs:12-16` 的 `use crate::{… OrderBookBacktestEngine …}`）；
+  `orderbook.rs` 模块文档必须点名两处真实消费者、并写明 paper 走首档 touch 与 Q1d 指向；
+  最后是全局连坐——`crates/*/src/**`（跳过用例文件）加 `README.md`、`deploy/README.md` 里，
+  任何把 Paper 与"共用 / 共享 / 同一 / 都走 / 复用 + 内核 / 撮合 / 订单簿"写进**同一句**、
+  又不引用真实共享符号（`FeeModel` / `apply_fill_to_books` / `apply_ledger_fill` / `Ledger` / `Oms`）
+  的表述一律红；否定语（不成立 / 不得 / 没有 / 不走 / 谎称 …）豁免，
+  否则诚实记录错误说法的文字本身过不了门禁。
+- 新判据的反向验证成对记录在 §13.3：M1（文档退回旧版）、M2（README 写入"Paper 与回测共用撮合内核"）、
+  M3（`oms.rs` 引用 `OrderBookSnapshot`）、M4（Tick 不再复用 L2 引擎）、M5（`on_quote` 改名）五条红，
+  M3n（同位置只加一行 `OrderBook` 注释）**阴性对照保持绿**。
+
+### Changed（三处表述按事实改写，README 经核算不改）
+
+- `crates/qx-xingban/src/orderbook.rs` 模块文档：原第 3 行"可被历史 Tick 回放、Paper 模拟和性能基准
+  共同使用"不成立。新文档给出真实消费者两处、**Paper 不走这里**（首档一次性 touch、无逐档队列、
+  无排队中的部分成交）、paper 与回测目前真正共享的只有执行平面下游三件
+  （`FeeModel`、`qx_core::apply_fill_to_books`（调用点：`qx-runtime/src/pipeline.rs:1448,1462`、
+  `qx-xingban/src/backtest.rs:848`、`qx-xingban/src/orderbook_backtest.rs:405`）、`Ledger`），
+  并把"改接本内核"显式指向 V11 §9 的 Q1d。
+- `crates/qx-cli/src/backtests/kernels.rs`：该文件是产物清单里 `matching_kernel` 三个名字的家，
+  模块文档补明"还有第四套撮合不在清单里，因为它不产出回测产物"，避免读者以为内核只有三个。
+- `docs/牵星完整架构方案-V1.md` §2.3 加现状对照：核对后确认该节没说谎（它把撮合适配器放在"可替换"
+  那一侧），缺的是现状标注——事件 / 归约 / `Oms` / `Ledger` / `FeeModel` 四模式同源已成立且有门禁，
+  **撮合尚未同源**。`README.md:20` 的"回测与实盘共享同一规则内核"是**规则**口径而非撮合口径
+  （风控与费用同源已由 Q0a/Q0b/Q0c 接成配置驱动），故保留原文。
+
+### Fixed（门禁自身的缺陷）
+
+- 判据 1 最初照惯例套了 `non_test_source()`，而 `crates/qx-zhenlu/src/lib.rs:16` 就挂着一行
+  `#[cfg(test)] use`，按"首个 `#[cfg(test)]` 之前"截断后这条判据实际只扫了 15 行，
+  `PaperVenue` 本体根本没进扫描——M3 第一次跑没红才暴露它。改为整文件扫描 + 剥注释。
+  这条缺陷不影响 Q0a–Q0c 的任何结论（那些判据不依赖被截断的区段）。
+
+### Validation（本轮日志实测，`/tmp/qx_q0d_round_main.log` + `/tmp/qx_q0d_gate_203911.*.log`）
+
+- 前置门槛（`GIT_HEAD=b311f90`）：`CARGO_CHECK_EXIT=0`、`FMT_CHECK_PREFLIGHT_EXIT=0`、
+  `CLIPPY_DENY_EXIT=0 CLIPPY_WARNING_LINES=0`、`ARCH_BASELINE_EXIT=0 ARCH_PASS_LINES=130`、
+  `BUDGET_DRIFT_LINES=0`、`BUDGET_RESTORED=identical`。
+- 用例基线与收口一致（无行为改动，本轮不新增 Rust 用例）：
+  `SUITE_BASELINE_EXIT=0 TARGETS=53 PASSED=651 FAILED=0` →
+  `SUITE_FINAL_EXIT=0 TARGETS=53 PASSED=651 FAILED=0`；`qx-cli` 单测 95 条全绿。
+- 六次注入均 `INJECT_OK`（anchor 唯一）、六次还原均 `RESTORE[*]=identical` + `ANCHOR_BACK[*]=yes`，
+  每次还原后复跑 `ARCH_PASS_LINES=130`（六次）。`MUT_RESIDUE[M2]` / `[M3n]` 为 yes 是 §7.4
+  已登记的判据假象（M2 的 replacement 首行等于 anchor 首行；M3n 的 replacement 以换行起头使首行为空串），
+  不是残留。
+- 收口复跑：`FINAL_CHECK_EXIT=0`、`FMT_CHECK_EXIT=0`、`ARCH_FINAL_EXIT=0 ARCH_PASS_LINES=130`、
+  `SUITE_FINAL_*` 同上。`maturity/capabilities.yaml` 的 `sandbox_tested` 仍 18 条全为 `false`；
+  本轮未使用任何网络、凭据或外部服务。
+- 行数棘轮例外（显式声明）：`orderbook.rs` 664 → 671 行，增量全在模块文档，按快照头部规则重 bless，
+  `--snapshot` 的 diff 只有这一行。
+
+### Known issues（移交，见 §13.4）
+
+- Q1d 落地时判据是**成对**的：行为改接簿内核那一次必须同时改掉判据 1、判据 4 与 `kernels.rs` 的说法，
+  否则门禁会把旧口径钉成化石；该轮的"paper vs book 成对数字"目前没有可复用的夹具，需要新造
+  "同一 L1 输入两跑"的最小夹具。
+- 本轮没跑任何 CLI，仅两次全量用例就把 `deploy/data/**/runs/` 的未跟踪文件推到 **40 条**，
+  §12.4 第 1 条的产物冲突已升到必须裁决，归 Q1b。
+
 ## Unreleased — V11 Q0c：执行成本配置面接线（2026-09-21）
 
 方案与逐阶段验收口径见 [docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md)

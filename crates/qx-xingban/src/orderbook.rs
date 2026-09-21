@@ -1,7 +1,14 @@
-//! L1/L2 订单簿逐档撮合内核。
+//! L1/L2 订单簿逐档撮合内核；模块不依赖网络或存储，盘口快照先做顺序/价格/数量校验，
+//! 再按价格优先、同价位数量优先逐档消费。
 //!
-//! 该模块不依赖网络或存储，可被历史 Tick 回放、Paper 模拟和性能基准共同使用。
-//! 盘口快照先做顺序/价格/数量校验，再按价格优先、同价位数量优先逐档消费。
+//! 真实消费者都在本 crate 内：L2 深度回测（`orderbook_backtest`）直接逐档撮合，L1 Tick
+//! 回测（`tick_backtest`）把 bid/ask 首档折叠成快照后复用同一个引擎，两者没有第二套订单语义。
+//!
+//! **Paper 不走这里。** 它的成交由 `qx-zhenlu` 的 `PaperVenue::on_quote` 对每条 QuoteTick
+//! 用首档一次性 touch 产生，没有逐档队列、没有排队中的部分成交，所以"Paper 共用簿内核"是不
+//! 成立的说法（V11 §4.3）。paper 与回测目前真正共享的是执行平面下游的 `FeeModel`、
+//! `qx_core::apply_fill_to_books` 与 `Ledger`。把 paper 改接到本内核是 V11 §9 登记的 Q1d；
+//! 在那之前，涉及 paper 撮合的表述必须写明"首档 touch"。
 
 use qx_core::{
     Fill, Money, Order, OrderStatus, Price, Quantity, Side, TradingInstrumentSpec, SCALE,
