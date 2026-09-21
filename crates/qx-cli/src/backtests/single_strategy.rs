@@ -92,8 +92,20 @@ pub(crate) fn run_single_strategy_backtest(
     // 成本绑定取自内存里这一份策略配置：多策略清单里每条策略都有自己的
     // `cost_rules_path`，从磁盘重读只会拿到默认那条。
     let costs = execution_cost_binding_from_config(config, runtime_config_path)?;
-    let mut assembly =
-        BarBacktestAssembly::new(&frame.instrument, account_id.clone(), 20260911, &costs);
+    // 撮合口径与费用同源：也从这一份策略配置解析（V11 Q1a 第二批）。放在 spec 之后、
+    // 装配之前，因为 `one_tick_slippage` 的一档只能取自刚解析出来的 market spec。
+    let fill = bar_fill_model(
+        config.strategy.fill_model.as_deref(),
+        instrument_spec.as_ref(),
+    )?;
+    let (fill_model_name, fill_model_source) = (fill.name, fill.source);
+    let mut assembly = BarBacktestAssembly::new(
+        &frame.instrument,
+        account_id.clone(),
+        20260911,
+        &costs,
+        fill,
+    );
     assembly.instrument_spec = instrument_spec;
     assembly.margin = margin;
     assembly.initial_cash = initial_cash;
@@ -215,6 +227,7 @@ pub(crate) fn run_single_strategy_backtest(
             risk_rule_set_version: &risk_rule_set_version,
             risk_rule_source: "runtime-config",
             cost_source: &cost_source,
+            fill_model: Some((fill_model_name, fill_model_source)),
             matching_kernel: BAR_MATCHING_KERNEL,
             rejections: &rejections,
         },
@@ -283,7 +296,14 @@ pub(crate) fn run_builtin_backtest(
         market_spec_with_margin(&frame.instrument, spec_path, "内置策略")?;
     let risk_binding = backtest_risk_binding(runtime_config_path, false)?;
     let costs = execution_cost_binding(runtime_config_path)?;
-    let mut assembly = BarBacktestAssembly::new(&frame.instrument, "main", 20260914, &costs);
+    // 撮合口径与风控、成本同一来源：给了 `--config` 就必须认它声明的 `strategy.fill_model`，
+    // 否则同一份配置在 `strategy backtest` 与 `backtest builtin` 上会得到两种成交价（V11 §15.4）。
+    let fill = bar_fill_model(
+        configured_fill_model(runtime_config_path)?.as_deref(),
+        instrument_spec.as_ref(),
+    )?;
+    let (fill_model_name, fill_model_source) = (fill.name, fill.source);
+    let mut assembly = BarBacktestAssembly::new(&frame.instrument, "main", 20260914, &costs, fill);
     assembly.instrument_spec = instrument_spec;
     assembly.margin = margin;
     assembly.risk = risk_binding.gate();
@@ -345,6 +365,11 @@ pub(crate) fn run_builtin_backtest(
         costs.rules.taker_bp,
         costs.rules.latency_base_ns,
         costs.rules.latency_insert_ns,
+    );
+    // 同上：撮合模型换了成交价，成交额与费用都跟着换，而这条链不落摘要——只能印出来。
+    println!(
+        "[Builtin · Execution] fill_model={} source={}",
+        fill_model_name, fill_model_source
     );
     Ok(())
 }

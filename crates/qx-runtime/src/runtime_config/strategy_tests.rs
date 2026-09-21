@@ -256,6 +256,7 @@ fn multi_strategy_instances_are_bound_to_workers_and_jobs_can_select_them() {
         max_orders: 10,
         risk_rules: None,
         cost_rules_path: None,
+        fill_model: None,
         account_id: Some("main".into()),
         venue_id: Some("okx".into()),
         instrument: Some("BTC/USDT.OKX".into()),

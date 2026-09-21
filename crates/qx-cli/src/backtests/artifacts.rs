@@ -32,6 +32,12 @@ pub(crate) struct BacktestArtifacts<'a> {
     /// `builtin-default` / `cli-flag` / `ashare-rules`。费率数值本身已经在
     /// `model_descriptors` 里，这里只回答"这组数字从哪来"，让"没配"与"配了同样的值"可区分。
     pub(crate) cost_source: &'a str,
+    /// Bar 链的撮合模型与其来源（V11 Q1a 第二批）：`(配置名, 来源)`。模型本身已经在
+    /// `model_descriptors` 里（那份是内核自述，带参数与假设），这里补的是"这个口径是
+    /// 配置里声明的还是没人提"——与 `execution_costs.source` 同一条理由。
+    /// 深度链的 Tick/OrderBook 内核不经过 `FillModel`，所以它是 `None`：没有的东西
+    /// 不该在摘要里占一个键。
+    pub(crate) fill_model: Option<(&'static str, &'static str)>,
     /// 本次实际使用的撮合内核；深度档不得声称与 Bar 链同一内核。
     pub(crate) matching_kernel: &'static str,
     /// 引擎挡下的委托，按 `(原因, 次数)` 降序。只看 `fills` 分不出"策略没发信号"与
@@ -93,7 +99,7 @@ pub(crate) fn persist_backtest_artifacts(
     let summary_path = root.join(format!("{stem}.summary.json"));
     let equity_path = root.join(format!("{stem}.equity.csv"));
     let fills_path = root.join(format!("{stem}.fills.csv"));
-    let summary = serde_json::json!({
+    let mut summary = serde_json::json!({
         "schema_version": 1,
         "strategy_id": input.strategy_id,
         "instrument": input.instrument.to_string(),
@@ -128,6 +134,11 @@ pub(crate) fn persist_backtest_artifacts(
         "execution_costs": { "source": input.cost_source },
         "run_manifest": manifest_path.to_string_lossy(),
     });
+    if let Some((name, source)) = input.fill_model {
+        // 只在真的有 `FillModel` 的链上写这个键：深度链的撮合口径在 `model_descriptors`
+        // 的四参数描述子里，硬塞一个 "fill_model": null 等于给摘要添一个没人能填的格子。
+        summary["fill_model"] = serde_json::json!({ "name": name, "source": source });
+    }
     let summary_payload = serde_json::to_string_pretty(&summary)
         .map_err(|error| format!("编码回测摘要失败: {error}"))?;
     write_backtest_artifact(&summary_path, &summary_payload, "回测摘要")?;

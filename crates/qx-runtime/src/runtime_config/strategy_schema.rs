@@ -137,6 +137,20 @@ pub struct StrategyRuntimeConfig {
     /// 与 RunManifest 哈希会在一夜之间全部失真，而行为并没有变。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_rules_path: Option<String>,
+    /// Bar 链的撮合模型：`next_bar_open`（内核默认）/ `best_price` / `one_tick_slippage`。
+    /// 三者都是"只有 OHLCV 也能诚实撮合"的模型，换它们会换成交价，因而换成交额、费用与
+    /// 结果哈希；`one_tick_slippage` 的一档只取自 market spec 的 `price_tick`——没有 spec 就
+    /// 拒绝，因为替某个产品猜一档滑点等于把猜测写进结果。
+    ///
+    /// 内核另有 `probabilistic`（要 L1 一档）与 `volume_sensitive`（要 L2/L3 深度）两个更高保真
+    /// 的模型，本字段**不接受**它们：Bar 链的输入只有 OHLCV，装进去就是"声称还原了并不存在的
+    /// 盘口"。要让它们可达得先让 Bar 链吃到深度帧（V11 §15.4 第 1 条）。
+    ///
+    /// `skip_serializing_if` 的口径与上面的 `cost_rules_path` 完全相同：省略时运行时配置的
+    /// 序列化字节必须逐字节不变，否则所有已 bless 的 `config_fingerprint` 与 RunManifest
+    /// 哈希会因为一个没有改变行为的字段而集体失真。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_model: Option<String>,
     #[serde(default)]
     pub venue_id: Option<String>,
     #[serde(default)]
@@ -287,6 +301,7 @@ impl Default for StrategyRuntimeConfig {
             max_orders: default_strategy_max_orders(),
             risk_rules: None,
             cost_rules_path: None,
+            fill_model: None,
             account_id: None,
             venue_id: None,
             instrument: None,

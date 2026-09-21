@@ -34,6 +34,9 @@ pub(crate) fn run_multi_builtin_backtest(
     // 成本绑定在定资之前解析：账户要留的手续费余量必须来自真正生效的那份费率，
     // 而不是事后再补一个估计口径。
     let costs = execution_cost_binding(runtime_config_path)?;
+    // 撮合口径与成本同源：两条腿共用运行时配置里声明的那一份（V11 Q1a 第二批）。
+    // 具体模型要到 `run_leg` 里才解析得出来——`one_tick_slippage` 的一档取自各腿自己的 spec。
+    let fill_configured = configured_fill_model(runtime_config_path)?;
     // 每腿账户必须付得起它宣称的下单量：Bar 内核会拒绝现金不足的现货买入
     // （`qx-xingban/src/backtest.rs` 的 cash-funded spot buy 检查）。定资口径见
     // `multi_leg_leg_cash`：用**本腿自己的**最高价（全局最大值会让便宜腿背下贵腿的名义额）、
@@ -145,6 +148,9 @@ pub(crate) fn run_multi_builtin_backtest(
     let cost_source = costs.source();
     // 产物里写的版本必须是真正装进引擎的那一份：把每条腿实际生效的版本读回来核对。
     let mut leg_risk_versions: Vec<String> = Vec::new();
+    // 撮合模型同样是腿级事实：两条腿可以因为只有一个 spec 而滑点不同，但"用了哪种模型、
+    // 口径从哪来"必须一致，否则跨腿净成本差就混进了两套撮合假设。
+    let mut leg_fill_models: Vec<(&'static str, &'static str)> = Vec::new();
     let mut run_leg = |frame: &BarFrame,
                        bars: &[Bar],
                        spec: Option<TradingInstrumentSpec>,
@@ -159,11 +165,14 @@ pub(crate) fn run_multi_builtin_backtest(
             policy: None,
             account_id: format!("multi-leg-{leg}"),
         };
+        let fill = bar_fill_model(fill_configured.as_deref(), spec.as_ref())?;
+        leg_fill_models.push((fill.name, fill.source));
         let mut assembly = BarBacktestAssembly::new(
             &frame.instrument,
             strategy.account_id.clone(),
             20260914,
             &costs,
+            fill,
         );
         assembly.instrument_spec = spec;
         assembly.margin = margin;
@@ -198,6 +207,19 @@ pub(crate) fn run_multi_builtin_backtest(
     {
         return Err(format!(
             "多腿回测腿级生效风控规则集与产物声明不一致: legs={leg_risk_versions:?} declared={risk_rule_set_version}"
+        ));
+    }
+    // 两条腿的撮合口径必须同源同名，否则归因里的净成本差混进了两套假设；
+    // 一档滑点的**大小**可以随各腿自己的 price_tick 变化，那是标的规格而非口径分叉。
+    let Some((fill_model_name, fill_model_source)) = leg_fill_models.first().copied() else {
+        return Err("多腿回测未记录任何腿级撮合模型".into());
+    };
+    if leg_fill_models
+        .iter()
+        .any(|leg| *leg != (fill_model_name, fill_model_source))
+    {
+        return Err(format!(
+            "多腿回测腿级撮合模型口径不一致: legs={leg_fill_models:?} declared={fill_model_name}/{fill_model_source}"
         ));
     }
     println!(
@@ -348,6 +370,10 @@ pub(crate) fn run_multi_builtin_backtest(
         risk_binding.source(),
         BAR_MATCHING_KERNEL
     );
+    println!(
+        "[Multi-leg · Execution] fill_model={} source={}",
+        fill_model_name, fill_model_source
+    );
     if let Some(root) = artifact_root {
         let runs = root.join("runs");
         std::fs::create_dir_all(&runs)
@@ -365,6 +391,8 @@ pub(crate) fn run_multi_builtin_backtest(
                 "matching_kernel": BAR_MATCHING_KERNEL,
             },
             "execution_costs": { "source": cost_source },
+            // 多腿链不写 summary，撮合口径只能记在这里，否则"换了模型"在这条链上不可见。
+            "fill_model": { "name": fill_model_name, "source": fill_model_source },
             "accounts": {
                 "primary_initial_cash": primary_cash.raw().to_string(),
                 "reference_initial_cash": reference_cash.raw().to_string(),
@@ -396,6 +424,7 @@ pub(crate) fn run_multi_builtin_backtest(
                 "groups=paired by ts only when BOTH legs have realized fills; planned-but-unfilled qty is reported per leg, never paired",
                 "pending_reconcile=a leg filled while its counterpart did not; no automatic close is executed",
                 "fees=one explicit cost binding shared by both legs; market spec carries no maker/taker field, so per-venue fee tiers are not applied",
+                "fill_model=one declared model shared by both legs; one_tick_slippage takes each leg's own spec price_tick",
             ],
         }))
         .map_err(|error| format!("编码多腿归因产物失败: {error}"))?;

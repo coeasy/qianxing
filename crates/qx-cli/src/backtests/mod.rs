@@ -6,13 +6,14 @@ use super::*;
 
 /// Bar 回测内核装配：`backtest builtin`、`backtest multi-builtin` 的腿级回测与
 /// `strategy backtest` 共用同一份乘数、成交、延迟与数据档位口径；
-/// 各入口只覆盖真正会分叉的费用、保证金、风控门与随机种子。
+/// 各入口只覆盖真正会分叉的费用、撮合模型、保证金、风控门与随机种子。
 pub(crate) struct BarBacktestAssembly {
     pub(crate) instrument: InstrumentId,
     pub(crate) instrument_spec: Option<TradingInstrumentSpec>,
     pub(crate) account_id: String,
     pub(crate) initial_cash: Money,
     pub(crate) margin: Box<dyn MarginRule>,
+    pub(crate) fill: Box<dyn FillModel>,
     pub(crate) fee: Box<dyn FeeModel>,
     pub(crate) latency: Box<dyn LatencyModel>,
     pub(crate) risk: RiskGate,
@@ -31,11 +32,15 @@ pub(crate) fn backtest_settlement_currency(spec: Option<&TradingInstrumentSpec>)
 impl BarBacktestAssembly {
     /// 费用与延迟成对来自同一份 [`ExecutionCostBinding`]（V11 Q0c）：分两个入口注入
     /// 就会退回到"两条链各自挑口径"，那是 Q0a/Q0c 要消灭的形状。
+    ///
+    /// 撮合模型同样是必答题：`fill` 由调用方从 [`bar_fill_model`] 取回来，装配处不给默认值，
+    /// 于是新增一条 Bar 回测链时"忘了回答用哪个撮合模型"过不了编译（与 Q0a 的费用入参同法）。
     pub(crate) fn new(
         instrument: &InstrumentId,
         account_id: impl Into<String>,
         seed: u64,
         costs: &ExecutionCostBinding,
+        fill: BarFillModelBinding,
     ) -> Self {
         Self {
             instrument: instrument.clone(),
@@ -43,6 +48,7 @@ impl BarBacktestAssembly {
             account_id: account_id.into(),
             initial_cash: Money::from_i64(100_000),
             margin: Box::new(NoMargin),
+            fill: fill.fill,
             fee: costs.fee_model(),
             latency: costs.latency_model(),
             risk: strategy_risk_gate(None, false),
@@ -59,7 +65,7 @@ impl BarBacktestAssembly {
             account_id: self.account_id,
             initial_cash: self.initial_cash,
             multiplier: 1,
-            fill: Box::new(NextBarOpenFillModel),
+            fill: self.fill,
             fee: self.fee,
             data_tier: DataTier::Bar,
             latency: self.latency,
@@ -119,6 +125,9 @@ pub(crate) use depth::*;
 
 mod fast_backtest;
 pub(crate) use fast_backtest::*;
+
+mod fill_model;
+pub(crate) use fill_model::*;
 
 mod kernels;
 pub(crate) use kernels::*;

@@ -21,6 +21,7 @@ fn bar_backtest_assembly_pins_the_shared_engine_defaults() {
         "main",
         20260914,
         &default_execution_cost_binding(),
+        bar_fill_model(None, None).unwrap(),
     )
     .into_config();
     assert_eq!(config.instrument, instrument);
@@ -57,6 +58,7 @@ fn backtest_assembly_books_in_the_instrument_settlement_currency() {
         "main",
         20260914,
         &default_execution_cost_binding(),
+        bar_fill_model(None, None).unwrap(),
     );
     assembly.instrument_spec = Some(spec);
     assert_eq!(

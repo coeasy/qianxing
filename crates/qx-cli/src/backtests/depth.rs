@@ -196,6 +196,8 @@ pub(crate) fn run_depth_backtest(
             risk_rule_set_version: &risk_rule_set_version,
             risk_rule_source: risk_binding.source(),
             cost_source: &cost_source,
+            // 深度链不经过 FillModel：撮合口径是四参数描述子，摘要里不该出现 fill_model 键。
+            fill_model: None,
             matching_kernel,
             rejections: &rejections,
         },

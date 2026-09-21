@@ -89,9 +89,9 @@ use qx_strategy::{
 use qx_xingban::{
     depth_frame_to_ticks, AShareFeeModel, AshareRuleConfig, BacktestConfig, BacktestEngine,
     BarStrategy, DataTier, DepthBarStrategy, DepthFrame, DeterministicRng, ExecutionCostRules,
-    FeeModel, LatencyModel, MarginRule, MarginTier, NativeBarStrategy, NextBarOpenFillModel,
-    NoMargin, OrderBookBacktestConfig, OrderBookBacktestEngine, RunManifestIdentity,
-    TickBacktestConfig, TickBacktestEngine, TieredMargin, VirtualTradingConfig,
+    FeeModel, FillModel, LatencyModel, MarginRule, MarginTier, NativeBarStrategy, NoMargin,
+    OrderBookBacktestConfig, OrderBookBacktestEngine, RunManifestIdentity, TickBacktestConfig,
+    TickBacktestEngine, TieredMargin, VirtualTradingConfig,
 };
 use qx_zhenlu::{
     rebalance_intent, FileSpreadOrderGroupStore, PaperVenue, RiskContext, RiskGate, Signal,

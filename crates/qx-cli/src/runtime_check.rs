@@ -310,6 +310,8 @@ pub(crate) fn validate_runtime_references(
                 failures.push(format!("{label}.cost_rules_path {problem}"));
             }
         }
+        let fill_problem = fill_model_failure(strategy.fill_model.as_deref(), label.as_str());
+        failures.extend(fill_problem);
         if let Some(bars) = strategy.bars_snapshot_path.as_deref() {
             if strategy.live_enabled {
                 if !resolve_runtime_relative_path(runtime_path, bars).is_file() {

@@ -240,6 +240,7 @@ fn qx_cli_binary() -> PathBuf {
 
 mod backtest_cost_provenance;
 mod backtest_entries;
+mod backtest_fill_model;
 mod backtest_risk_provenance;
 mod cli_surface;
 mod e2e_and_python_contract;

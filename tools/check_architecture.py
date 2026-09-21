@@ -13,7 +13,9 @@
      `ExecutionGateway`，Paper 也走它）；多腿跨腿屏障的判定与执行同样只在网关一处，
      CLI 侧既不保留实现也不保留"先查后提"的薄壳，且每个提交入口都必须显式回答
      `spread_store` 参数（V10 §6.1）；
-  6. Bar 回测引擎装配只有一份（`BacktestConfig {` 字面量唯一）；
+  6. Bar 回测引擎装配只有一份（`BacktestConfig {` 字面量唯一）；撮合口径同样只有一个构造点
+     （`backtests/fill_model.rs`），装配字段取自绑定，且 `strategy.fill_model` 既有 schema
+     声明又被 `config validate` 覆盖，并有"换模型 → 结果与描述子变化"的行为用例（V11 Q1a）；
   7. `maturity/capabilities.yaml` 结构完整且证据路径真实存在；
   8. 单文件行数预算只允许下降（棘轮），新增超 500 行文件必须显式登记；
   9. A 股公司行为的 PIT 过滤只发生在 JSON 加载闸门，被删的第二道闸门不得复活；
@@ -580,6 +582,7 @@ CLI_BACKTESTS_MODULES = (
     "artifacts",
     "depth",
     "fast_backtest",
+    "fill_model",
     "kernels",
     "leg_funding",
     "multi_builtin",
@@ -961,7 +964,14 @@ def ashare_pit_check() -> None:
     )
 
 
+# V11 Q1a 第二批：Bar 链撮合口径的单点装配，与钉住它的行为用例。
+BAR_FILL_MODEL_FILE = "crates/qx-cli/src/backtests/fill_model.rs"
+FILL_MODEL_TEST_FILE = "crates/qx-cli/src/tests/backtest_fill_model.rs"
+
+
 def backtest_assembly_check() -> None:
+    # V11 Q1a 第二批：撮合口径的单点装配与它的行为用例。路径按文件取，因为"装配只有一份"
+    # 判的是整个目录的聚合形状，而这两处要判的是具体文件里的字段与用例名。
     # Phase 4s 起回测编排是目录模块：口径仍是"这一族文件合起来只有一份装配"，
     # 所以按目录聚合读取，而不是钉死某个单文件路径。
     text = "".join(
@@ -989,6 +999,45 @@ def backtest_assembly_check() -> None:
         gates + bound_entries >= 4 and bypass == 0,
         "回测风控门全部经 strategy_risk_gate 构造",
         f"直接构造 {gates} 处 / 配置绑定入口 {bound_entries} 处 / 绕过 {bypass} 处",
+    )
+    # V11 Q1a 第二批：撮合口径与风控/费用同构——只能在 `fill_model.rs` 构造，装配处
+    # 不再写死模型。`into_config` 一旦退回 `Box::new(NextBarOpenFillModel)`，
+    # `strategy.fill_model` 就重新变成 Q0c 判过的"宣称能配、无人读取"死配置面。
+    fill_single_source = (ROOT / BAR_FILL_MODEL_FILE).read_text(encoding="utf-8")
+    elsewhere = text.replace(fill_single_source, "")
+    constructions = len(re.findall(r"Box::new\(\w*FillModel", elsewhere))
+    check(
+        constructions == 0
+        and re.search(r"^\s*fill: self\.fill,$", elsewhere, re.MULTILINE) is not None,
+        "Bar 撮合模型只在 fill_model.rs 构造，装配字段取自绑定",
+        f"其余文件构造 {constructions} 处 / 装配字段未取自 self.fill",
+    )
+    # 三条 Bar 装配链（策略 / 内置 / 多腿的每一条腿）都要向 `bar_fill_model` 要口径。
+    bindings = len(re.findall(r"=\s*bar_fill_model\(", elsewhere))
+    check(
+        bindings >= 3 and "configured_fill_model(" in elsewhere,
+        "Bar 回测入口的撮合口径全部经 bar_fill_model 解析",
+        f"解析点 {bindings} 处 / 命令行配置读取 {'有' if 'configured_fill_model(' in elsewhere else '无'}",
+    )
+    # 配置面三件套：schema 声明、`config validate` 覆盖、行为用例。少了任一件就是
+    # "配置写着生效、没人校验"或"改了模型产物看不出来"，与 Q0c 同一判据。
+    schema = (ROOT / STRATEGY_SCHEMA_FILE).read_text(encoding="utf-8")
+    validation = (ROOT / RUNTIME_CHECK_FILE).read_text(encoding="utf-8")
+    check(
+        "pub fill_model: Option<String>," in schema,
+        "运行时配置声明 strategy.fill_model",
+        f"{STRATEGY_SCHEMA_FILE} 缺少该字段",
+    )
+    check(
+        "fill_model_failure(" in validation,
+        "config validate 覆盖 fill_model（与装配同一张表）",
+        f"{RUNTIME_CHECK_FILE} 未调用 fill_model_failure",
+    )
+    fill_cases = (ROOT / FILL_MODEL_TEST_FILE).read_text(encoding="utf-8")
+    check(
+        "fn each_reachable_fill_model_changes_the_result_and_is_declared" in fill_cases,
+        "存在「换撮合模型 → 回测结果与产物描述子随之变化」的行为用例（Q1a 第二批证据）",
+        f"缺少 {FILL_MODEL_TEST_FILE} 中的模型驱动用例",
     )
 
 
