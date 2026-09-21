@@ -188,6 +188,7 @@ fn cost_rules_latency_reaches_the_bar_kernel_and_is_refused_by_depth() {
         None,
         1,
         None,
+        DepthExecutionModel::default(),
         &depth_root,
         Some(&runtime),
     )
@@ -220,6 +221,7 @@ fn depth_summary_with_costs(
         None,
         1,
         flag,
+        DepthExecutionModel::default(),
         &out,
         Some(&runtime),
     )

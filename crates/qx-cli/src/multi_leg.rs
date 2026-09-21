@@ -72,17 +72,6 @@ pub(crate) fn multi_leg_integrity_json(integrity: &MultiLegLegIntegrity) -> serd
 /// 把一行单腿成交诚实性事实展开成 `key=value` 序列。前缀是腿名，方便 CLI 输出与
 /// 测试解析共用同一份口径；拒单原因里的空格换成 `_`，保证一个 token 一件事实。
 pub(crate) fn multi_leg_integrity_summary(integrity: &MultiLegLegIntegrity) -> String {
-    let reasons = integrity
-        .rejection_reasons
-        .iter()
-        .map(|(reason, count)| format!("{count}x{}", reason.replace(' ', "_")))
-        .collect::<Vec<_>>()
-        .join(";");
-    let reasons = if reasons.is_empty() {
-        "none".to_string()
-    } else {
-        reasons
-    };
     [
         ("planned_qty_raw", integrity.planned_qty_raw.clone()),
         ("filled_qty_raw", integrity.filled_qty_raw.clone()),
@@ -95,7 +84,10 @@ pub(crate) fn multi_leg_integrity_summary(integrity: &MultiLegLegIntegrity) -> S
             integrity.vetoed_signal_ts.len().to_string(),
         ),
         ("rejected_orders", integrity.rejected_orders.to_string()),
-        ("rejection_reasons", reasons),
+        (
+            "rejection_reasons",
+            rejection_facts_line(&integrity.rejection_reasons),
+        ),
     ]
     .into_iter()
     .map(|(key, value)| format!("{}_{}={}", integrity.label, key, value))
@@ -297,16 +289,6 @@ pub(crate) struct MultiLegLegIntegrity {
     pub rejection_reasons: Vec<(String, usize)>,
 }
 
-fn count_by_reason(reasons: Vec<String>) -> Vec<(String, usize)> {
-    let mut grouped: BTreeMap<String, usize> = BTreeMap::new();
-    for reason in reasons {
-        *grouped.entry(reason).or_default() += 1;
-    }
-    let mut pairs: Vec<(String, usize)> = grouped.into_iter().collect();
-    pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    pairs
-}
-
 /// 汇总一条腿"计划 vs 实际成交"的差距，并把引擎写进事件日志的拒单原因归并出来。
 pub(crate) fn multi_leg_leg_integrity(
     leg: &MultiLegLegFacts<'_>,
@@ -320,21 +302,12 @@ pub(crate) fn multi_leg_leg_integrity(
         .iter()
         .map(|bucket| bucket.filled_qty_raw)
         .sum::<i128>();
-    let reasons: Vec<String> = leg
-        .report
-        .event_log
-        .events()
-        .iter()
-        .filter_map(|event| match &event.kind {
-            qx_core::EventKind::Rejected { reason, .. } => Some(reason.clone()),
-            _ => None,
-        })
-        .collect();
+    let rejections = rejection_facts(&leg.report.event_log);
     MultiLegLegIntegrity {
         label: leg.label,
         instrument: leg.instrument.to_string(),
-        rejected_orders: reasons.len(),
-        rejection_reasons: count_by_reason(reasons),
+        rejected_orders: rejection_count(&rejections),
+        rejection_reasons: rejections,
         vetoed_signal_ts: buckets
             .iter()
             .filter(|bucket| bucket.filled_qty_raw == 0)

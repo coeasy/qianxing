@@ -64,6 +64,7 @@ fn every_backtest_entry_reads_the_same_risk_rules_from_one_config() {
         None,
         1,
         Some(5),
+        DepthExecutionModel::default(),
         &depth_root,
         Some(&runtime),
     )

@@ -160,7 +160,7 @@ Paper Execution worker 可以配置 `paper_initial_cash_raw`，启动时通过�
 
 该样例同时展示 `strategies[]` 多策略配置。每个策略实例的 `id` 必须等于对应 Strategy worker id；调度任务的 `owner` 必须填写该策略实例，多个策略共用 JobQueue 时不会互相领取任务。
 
-双腿套利可使用 `backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity]`。两条 BarFrame 必须时间戳对齐；信号由同一个套利策略生成，再分别通过统一撮合、手续费、风控和 Ledger 回测，适用于跨交易所价差与现货/期货基差策略。示例输入为 `qianxing.bar-frame.example.json` 与 `qianxing.bar-frame.okx.example.json`。
+双腿套利可使用 `backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity]`。两条 BarFrame 必须时间戳对齐；信号由同一个套利策略生成，再分别通过统一撮合、手续费、风控和 Ledger 回测，适用于跨交易所价差与现货/期货基差策略。示例输入为 `qianxing.bar-frame.pairs-primary.example.json` 与 `qianxing.bar-frame.pairs-reference.example.json`：套利信号要等两腿累计收益差越过 `builtin_threshold_bps`（默认 100 bps）才发单，`qianxing.bar-frame.example.json` 与 `qianxing.bar-frame.okx.example.json` 只差约 9 bps，用它们跑双腿示例会得到两腿都 `fills=0`。
 
 多标的、多币种批量回测使用 `fast-backtest manifest.json`。manifest 的 `jobs[]` 每项配置一个独立 `runtime`、`bars` 和可选 `market_spec`，CLI 会并行运行多个隔离账户/标的任务，适合同时比较 BTC、ETH、SOL，现货、永续、期货以及不同策略参数。示例见 `qianxing.fast-backtest.example.json`；每个 runtime 可以继续使用 `strategies[]` 配置多策略实例。
 
@@ -203,6 +203,12 @@ cargo run --release -p qx-cli -- backtest deploy/qianxing.runtime.builtin-strate
 ```
 
 内置策略包括 SMA/EMA 交叉、MACD、RSI、布林带、Donchian 突破、动量、均值回归、网格、ATR/Keltner 趋势、VWAP 回归、波动率突破，以及配对、跨交易所、基差、现货/期货四类双腿套利。套利策略额外配置 `builtin_reference_instrument` 和 `builtin_reference_bars_snapshot_path`；跨交易所时主腿/对冲腿可以分别由不同 CCXT REST MarketData worker 维护，现货腿可设置 `builtin_reference_margin_mode: "cash"` 与 `builtin_reference_leverage: 1`，避免把期货杠杆参数发送给现货交易所。
+
+示例夹具的三条硬约束由 `crates/qx-cli/tests/fast_backtest_manifest.rs::shipped_examples_fill_positions_and_pay_nonzero_fees` 钉住，改帧前先跑它：
+
+- **帧长要够上窗口**。`qianxing.bar-frame.example.json` / `.okx.example.json` 各 70 根（1000…70000，步长 1000），因为 MACD 的门槛是 35 根可见 Bar（26 根慢 EMA + 9 个 MACD 值 + 上一根交叉判定），默认的 `fast 5 / slow 20` 只需要 21 根。
+- **数量有两个口径，相差 1e9 倍**。运行时配置的 `builtin_quantity` 是定点裸值（`Quantity::from_raw`，1 个单位 = 1e9），命令行位置参数 `[QUANTITY]` 是整数单位（`Quantity::from_i64`）。裸值写 `1` 等于 1e-9 个单位，成交额小到让手续费按整数截断为零——摘要会显示"成交了但没付费"。示例配置一律用 `1000000000`（1 个单位），A 股示例用 `100000000000`（100 股，一手的整数量）。
+- **A 股时间戳要落在录制日历内**。`qianxing.ashare.bar-frame.example.json` 的 6 根 Bar 用的是 2024-06-03/06-04 两个交易日的实际分钟戳，与 `qianxing.ashare.calendar.example.json` 和 `qianxing.ashare.rules.json` 的 `session_windows` 对齐；换成任意的 `1000/2000/…` 会让每根 Bar 都判定为不可交易，回测安静地零成交。
 
 ### CCXT 实时策略
 

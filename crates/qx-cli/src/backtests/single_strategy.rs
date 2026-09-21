@@ -188,6 +188,7 @@ pub(crate) fn run_single_strategy_backtest(
     )?;
     let run_manifest_path = persist_backtest_run_manifest(run_manifest_root, &run_manifest)?;
     let bar_ts: Vec<u64> = bars.iter().map(|bar| bar.ts).collect();
+    let rejections = rejection_facts(&report.event_log);
     let (summary_path, equity_path, fills_path) = persist_backtest_artifacts(
         &run_manifest_path,
         &BacktestArtifacts {
@@ -215,6 +216,7 @@ pub(crate) fn run_single_strategy_backtest(
             risk_rule_source: "runtime-config",
             cost_source: &cost_source,
             matching_kernel: BAR_MATCHING_KERNEL,
+            rejections: &rejections,
         },
     )?;
     println!(
@@ -226,6 +228,11 @@ pub(crate) fn run_single_strategy_backtest(
         report.return_bps,
         report.max_drawdown_bps,
         report.result_hash()
+    );
+    println!(
+        "[Strategy · Integrity] rejected_orders={} rejection_reasons={}",
+        rejection_count(&rejections),
+        rejection_facts_line(&rejections)
     );
     println!(
         "[RunManifest] run_id={} data_fingerprint={} result_hash={} digest={:016x}",
@@ -308,6 +315,7 @@ pub(crate) fn run_builtin_backtest(
         context,
         &bars,
     )?;
+    let rejections = rejection_facts(&report.event_log);
     println!(
         "[Builtin · Backtest] strategy={} instrument={} bars={} fills={} return_bps={} max_drawdown_bps={} result_hash={:016x}",
         kind.name(),
@@ -317,6 +325,11 @@ pub(crate) fn run_builtin_backtest(
         report.return_bps,
         report.max_drawdown_bps,
         report.result_hash()
+    );
+    println!(
+        "[Builtin · Integrity] rejected_orders={} rejection_reasons={}",
+        rejection_count(&rejections),
+        rejection_facts_line(&rejections)
     );
     println!(
         "[Builtin · Risk] rule_set_version={} source={} kernel={}",

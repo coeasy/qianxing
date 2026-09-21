@@ -29,7 +29,9 @@ fn parse_quantity(value: &str) -> Result<i64, String> {
         .map_err(|error| format!("quantity 非法: {value}（{error}）"))
 }
 
-fn parse_funding_bps(value: &str) -> Result<i64, String> {
+/// 基点类旗标（`--funding-bps` / `--queue-position-bps` / `--market-impact-bps`）共用
+/// 同一个取值域：撮合与资金费口径都以万分比计，越界不该等到内核才报错，先在 clap 层挡住。
+fn parse_bps(value: &str) -> Result<i64, String> {
     match value.parse::<i64>() {
         Ok(parsed) if (0..=10_000).contains(&parsed) => Ok(parsed),
         _ => Err("必须在 0..=10000 内".to_string()),
@@ -432,7 +434,7 @@ pub(crate) enum BacktestCommand {
         positional_quantity: Option<i64>,
         #[arg(long = "quantity", value_parser = parse_quantity)]
         quantity: Option<i64>,
-        #[arg(long = "funding-bps", value_parser = parse_funding_bps)]
+        #[arg(long = "funding-bps", value_parser = parse_bps)]
         funding_bps: Option<i64>,
         #[arg(long)]
         root: Option<PathBuf>,
@@ -467,6 +469,14 @@ pub(crate) enum BacktestCommand {
         quantity: Option<i64>,
         #[arg(long = "fee-bps")]
         fee_bps: Option<i64>,
+        // 撮合模型参数只放"内置策略这条路真能生效"的两项。内核的
+        // `queue_position_bps` 只作用于限价单所在档位，而 17 个内置策略发的全部是市价单
+        // （`builtin.rs` 构造 intent 时 `limit: None`），配上也不改变任何一笔成交——
+        // 声明一个换不动结果的旗标就是 Q0b 判掉的"假风控"形状。
+        #[arg(long = "market-impact-bps", value_parser = parse_bps)]
+        market_impact_bps: Option<i64>,
+        #[arg(long = "latency-snapshots")]
+        latency_snapshots: Option<u64>,
         #[arg(long)]
         config: Option<PathBuf>,
     },

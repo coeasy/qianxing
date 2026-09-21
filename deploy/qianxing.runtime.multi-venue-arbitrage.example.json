@@ -125,7 +125,7 @@
     "live_history_limit": 200,
     "live_closed_only": true,
     "builtin_strategy": "spot_futures_arbitrage",
-    "builtin_quantity": 1,
+    "builtin_quantity": 1000000000,
     "builtin_period": 14,
     "builtin_threshold_bps": 30,
     "builtin_reference_instrument": "BTC/USDT.BINANCE",

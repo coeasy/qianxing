@@ -388,6 +388,7 @@ fn builtin_strategy_entries_match_the_printed_partition() {
             None,
             1,
             Some(5),
+            DepthExecutionModel::default(),
             &case_root,
             None,
         )

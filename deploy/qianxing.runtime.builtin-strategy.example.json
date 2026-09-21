@@ -44,7 +44,7 @@
     "instrument": "BTCUSDT.BINANCE",
     "target_qty": 0,
     "builtin_strategy": "macd",
-    "builtin_quantity": 1,
+    "builtin_quantity": 1000000000,
     "builtin_fast_window": 5,
     "builtin_slow_window": 20,
     "builtin_period": 14,

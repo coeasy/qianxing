@@ -405,6 +405,8 @@ pub(crate) fn run() {
                 spec,
                 quantity,
                 fee_bps,
+                market_impact_bps,
+                latency_snapshots,
                 config,
             }) => {
                 if let Err(error) = run_depth_backtest(
@@ -415,6 +417,11 @@ pub(crate) fn run() {
                     quantity.unwrap_or(1),
                     // 缺省时由深度入口向成本绑定要费率（Q0c）：命令行 > 成本规则文件 > 内核默认。
                     fee_bps,
+                    // 缺省的全 0 与不点名旗标同口径：撮合行为不变，描述子照常写出。
+                    DepthExecutionModel {
+                        latency_snapshots: latency_snapshots.unwrap_or(0),
+                        market_impact_bps: market_impact_bps.unwrap_or(0),
+                    },
                     &root,
                     config.as_deref(),
                 ) {

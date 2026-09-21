@@ -5,10 +5,10 @@
       "dataset_id": "strategy-bars:BTCUSDT.BINANCE",
       "version": "barframe-json-v1",
       "source": "example-bars-v1",
-      "fingerprint": "ad5b2a4216a4d813",
+      "fingerprint": "613fdc1dc0b779e7",
       "schema_version": 1,
       "start_timestamp": 1000,
-      "end_timestamp": 5000
+      "end_timestamp": 70000
     }
   ]
 }

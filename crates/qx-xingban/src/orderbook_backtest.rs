@@ -348,21 +348,31 @@ impl OrderBookBacktestEngine {
             }
         }
         let input_data_hash = input_hash.finish();
+        // 执行模型的三个高保真参数必须出现在产物里：只把它们喂进撮合器而不写进
+        // model_descriptors，就等于"能配但看不出来配了什么"。
+        let effective_model = match execution_model {
+            Some(model) => model,
+            None => OrderBookExecutionModel::new(fee_bps)
+                .map_err(qx_core::QxError::BusinessViolation)?,
+        };
         let model_descriptors = vec![
             format!("data_tier={data_tier:?}"),
-            format!("orderbook-matching@v1 fee_bps={fee_bps}"),
+            format!(
+                "orderbook-matching@v1 fee_bps={} latency_snapshots={} queue_position_bps={} market_impact_bps={}",
+                effective_model.fee_bps,
+                effective_model.latency_snapshots,
+                effective_model.queue_position_bps,
+                effective_model.market_impact_bps
+            ),
             format!("risk_rule_set={risk_rule_set_version}"),
             match instrument_spec.as_ref() {
                 Some(spec) => format!("ledger=spec:{:?}", spec.product),
                 None => "ledger=cash-spot".to_string(),
             },
         ];
-        let mut matcher = match execution_model {
-            Some(model) => OrderBookMatchingEngine::with_model(model),
-            None => OrderBookMatchingEngine::new(fee_bps),
-        }
-        .map_err(qx_core::QxError::BusinessViolation)?
-        .with_fee_spec(instrument_spec.clone());
+        let mut matcher = OrderBookMatchingEngine::with_model(effective_model)
+            .map_err(qx_core::QxError::BusinessViolation)?
+            .with_fee_spec(instrument_spec.clone());
         let mut ledger = Ledger::new();
         let mut log = EventLog::new();
         let mut oms = Oms::new();
@@ -549,6 +559,31 @@ impl OrderBookBacktestEngine {
                             );
                             continue;
                         }
+                    }
+                } else if order.side == qx_core::Side::Buy
+                    && !order.policy.unwrap_or_default().reduce_only
+                {
+                    // 没有 market spec 的现货买入同样只能用可用现金。Bar 链在
+                    // `backtest.rs` 的 `cash_funded_spot_buy` 分支里就是这么挡的；缺了这一步，
+                    // 深度回测会把账簿现金静默透支成负数，同一份信号在两条链上给出两种结论。
+                    let price = order.limit.or(reference_price).ok_or_else(|| {
+                        qx_core::QxError::BusinessViolation("订单簿现货买入缺少参考价".into())
+                    })?;
+                    let notional = book_notional(None, order.qty.raw(), price.raw())?;
+                    let required_funding = notional
+                        .checked_add(notional * fee_bps / 10_000)
+                        .ok_or_else(|| qx_core::QxError::Invariant("买入所需现金溢出".into()))?;
+                    if required_funding > ledger.cash_for(&account_id, &currency) {
+                        append_event(
+                            &mut log,
+                            snapshot.ts,
+                            Priority::COMMAND,
+                            EventKind::Rejected {
+                                client_order_id: order.client_id,
+                                reason: "买入成本（含预估手续费）超过订单簿回测可用现金".into(),
+                            },
+                        );
+                        continue;
                     }
                 }
                 let long_qty = ledger
@@ -852,6 +887,84 @@ mod tests {
         );
     }
 
+    /// 名义额远超可用现金的现货买单：用来验证深度链不会把账簿现金透支成负数。
+    struct BigBuyOnce {
+        emitted: bool,
+    }
+
+    impl OrderBookStrategy for BigBuyOnce {
+        fn on_order_book(
+            &mut self,
+            snapshot: &OrderBookSnapshot,
+            _position: i128,
+        ) -> Result<Vec<Order>, String> {
+            if self.emitted {
+                return Ok(Vec::new());
+            }
+            self.emitted = true;
+            Ok(vec![Order {
+                client_id: 7,
+                instrument: snapshot.instrument.clone(),
+                side: Side::Buy,
+                qty: Quantity::from_i64(1_000),
+                limit: None,
+                status: OrderStatus::PendingSubmit,
+                filled: Quantity::ZERO,
+                account_id: "main".into(),
+                trace: None,
+                policy: None,
+            }])
+        }
+    }
+
+    /// 没有 market spec 的深度回测同样是"现货买入只能用可用现金"。Bar 链的
+    /// `cash_funded_spot_buy` 分支一直这么挡；这条用例钉住两链同口径，否则一次超买
+    /// 会静默把账簿现金透支成负数，同一份信号在两条链上给出两种结论。
+    #[test]
+    fn specless_spot_buy_beyond_available_cash_is_rejected_not_overdrawn() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let config = OrderBookBacktestConfig {
+            instrument,
+            account_id: "main".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_i64(10_000),
+            fee_bps: 50,
+            instrument_spec: None,
+            risk: RiskGate::conservative_default(),
+            data_tier: DataTier::L2L3,
+        };
+        let mut strategy = BigBuyOnce { emitted: false };
+        let report = OrderBookBacktestEngine::new(config)
+            .run(&[snapshot(1, 100), snapshot(2, 101)], &mut strategy)
+            .unwrap();
+        assert!(
+            report.fills.is_empty(),
+            "1 万现金成交了 10 万名义额: {:?}",
+            report.fills
+        );
+        assert_eq!(report.turnover_raw, 0);
+        assert_eq!(report.fees_raw, 0);
+        assert_eq!(
+            report.ledger.cash_for("main", "USDT"),
+            Money::from_i64(10_000).raw(),
+            "现金被透支，说明买入没有过现金门"
+        );
+        let reasons: Vec<String> = report
+            .event_log
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::Rejected { reason, .. } => Some(reason.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            reasons,
+            vec!["买入成本（含预估手续费）超过订单簿回测可用现金".to_string()],
+            "拒单事实没有进入事件日志"
+        );
+    }
+
     #[test]
     fn native_strategy_adapter_uses_the_same_order_book_causal_path() {
         let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
@@ -1055,6 +1168,26 @@ mod tests {
             .model_descriptors
             .iter()
             .any(|descriptor| descriptor == "data_tier=L2L3"));
+        // 缺省口径要逐字写进描述子，非缺省口径要同时改变描述子与结果哈希：命令面那条
+        // 断言挡住"配了却不生效"，这一条挡住"生效了却没写进产物"。
+        assert!(first.model_descriptors.iter().any(|descriptor| descriptor
+            == "orderbook-matching@v1 fee_bps=1 latency_snapshots=0 queue_position_bps=0 market_impact_bps=0"));
+        let modeled = OrderBookBacktestEngine::new(l2_config(1))
+            .with_execution_model(OrderBookExecutionModel {
+                fee_bps: 1,
+                latency_snapshots: 2,
+                queue_position_bps: 500,
+                market_impact_bps: 10,
+            })
+            .run(&snapshots, &mut BuyOnce { emitted: false })
+            .unwrap();
+        assert!(modeled.model_descriptors.iter().any(|descriptor| descriptor
+            == "orderbook-matching@v1 fee_bps=1 latency_snapshots=2 queue_position_bps=500 market_impact_bps=10"));
+        assert_ne!(
+            modeled.result_hash(),
+            first.result_hash(),
+            "延迟与冲击参数没有改变撮合结果"
+        );
         let manifest = first
             .run_manifest(
                 RunManifestIdentity {

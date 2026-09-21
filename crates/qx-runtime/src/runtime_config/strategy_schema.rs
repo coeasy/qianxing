@@ -198,6 +198,10 @@ pub struct StrategyRuntimeConfig {
     /// 固定点策略实现，并继续经过统一 OrderIntent、RiskGate 和 OMS。
     #[serde(default)]
     pub builtin_strategy: Option<String>,
+    /// 内置策略的目标仓位，单位是**定点裸值**（`Quantity::from_raw`，1 个计价单位 = 1e9）。
+    /// 命令行入口的位置参数 `[QUANTITY]` 走的是另一个口径（`Quantity::from_i64`，按整数
+    /// 单位计），两者相差 1e9 倍。这里写 `1` 表示 1e-9 个单位：成交额小到让手续费按整数
+    /// 截断成零，回测看起来"成交了但一分钱费用都没付"。
     #[serde(default)]
     pub builtin_quantity: Option<i64>,
     #[serde(default)]

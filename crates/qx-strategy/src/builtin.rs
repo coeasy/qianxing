@@ -223,7 +223,37 @@ impl BuiltinStrategy {
     }
 
     fn max_history(&self) -> usize {
-        self.config.slow_window.max(self.config.period).max(30) + 2
+        // 窗口取样上限必须同时容得下信号门槛，否则门槛高的策略会被历史裁剪卡死：
+        // 默认 5/20/14 只算出 32 根，而 MACD 需要 35 根，示例帧再长也永远不信号。
+        let window_floor = self.config.slow_window.max(self.config.period).max(30) + 2;
+        self.required_bars().max(window_floor)
+    }
+
+    /// 该策略发出第一个信号所需的最少可见 Bar 数。历史上限与信号门槛共用这一份清单。
+    fn required_bars(&self) -> usize {
+        match self.config.kind {
+            BuiltinStrategyKind::SmaCross | BuiltinStrategyKind::EmaCross => {
+                self.config.slow_window + 1
+            }
+            // 26 根用于慢 EMA，至少还要 9 个 MACD 值计算 signal EMA，
+            // 当前/上一根交叉判定再额外需要一根可见 Bar。
+            BuiltinStrategyKind::Macd => 35,
+            BuiltinStrategyKind::Rsi
+            | BuiltinStrategyKind::Bollinger
+            | BuiltinStrategyKind::MeanReversion
+            | BuiltinStrategyKind::AtrTrend => self.config.period + 1,
+            BuiltinStrategyKind::DonchianBreakout | BuiltinStrategyKind::Momentum => {
+                self.config.period + 1
+            }
+            BuiltinStrategyKind::Grid => 1,
+            BuiltinStrategyKind::KeltnerTrend
+            | BuiltinStrategyKind::VwapReversion
+            | BuiltinStrategyKind::VolatilityBreakout
+            | BuiltinStrategyKind::PairsArbitrage
+            | BuiltinStrategyKind::BasisArbitrage
+            | BuiltinStrategyKind::CrossVenueArbitrage
+            | BuiltinStrategyKind::SpotFuturesArbitrage => self.config.period + 1,
+        }
     }
 
     fn closes(&self) -> Vec<i128> {
@@ -316,29 +346,7 @@ impl BuiltinStrategy {
 
     fn signal(&self) -> Result<Option<i8>, String> {
         let closes = self.closes();
-        let required = match self.config.kind {
-            BuiltinStrategyKind::SmaCross | BuiltinStrategyKind::EmaCross => {
-                self.config.slow_window + 1
-            }
-            // 26 根用于慢 EMA，至少还要 9 个 MACD 值计算 signal EMA，
-            // 当前/上一根交叉判定再额外需要一根可见 Bar。
-            BuiltinStrategyKind::Macd => 35,
-            BuiltinStrategyKind::Rsi
-            | BuiltinStrategyKind::Bollinger
-            | BuiltinStrategyKind::MeanReversion
-            | BuiltinStrategyKind::AtrTrend => self.config.period + 1,
-            BuiltinStrategyKind::DonchianBreakout | BuiltinStrategyKind::Momentum => {
-                self.config.period + 1
-            }
-            BuiltinStrategyKind::Grid => 1,
-            BuiltinStrategyKind::KeltnerTrend
-            | BuiltinStrategyKind::VwapReversion
-            | BuiltinStrategyKind::VolatilityBreakout
-            | BuiltinStrategyKind::PairsArbitrage
-            | BuiltinStrategyKind::BasisArbitrage
-            | BuiltinStrategyKind::CrossVenueArbitrage
-            | BuiltinStrategyKind::SpotFuturesArbitrage => self.config.period + 1,
-        };
+        let required = self.required_bars();
         if closes.len() < required {
             return Ok(None);
         }
@@ -759,11 +767,14 @@ fn ema(values: &[i128], window: usize) -> Option<i128> {
         .checked_div(window as i128)?;
     let denominator = window as i128 + 1;
     for value in &values[window..] {
+        // α = 2/(window+1)，因此旧值权重是 1-α = (window-1)/(window+1)。写成
+        // `window` 会让两个权重之和变成 (window+2)/(window+1)，常数序列收敛到
+        // 2×该常数，快慢线的相对位置随窗口大小漂移，交叉判定就废了。
         result = value
             .checked_mul(2)
             .and_then(|next| {
                 result
-                    .checked_mul(window as i128)
+                    .checked_mul(window as i128 - 1)
                     .and_then(|old| next.checked_add(old))
             })
             .and_then(|next| next.checked_div(denominator))?;
@@ -885,6 +896,83 @@ mod tests {
             BuiltinStrategyKind::parse("EMA-CROSS").unwrap(),
             BuiltinStrategyKind::EmaCross
         );
+    }
+
+    /// `ema` 的直流增益必须是 1，且快线必须落在趋势的同侧：这两条不成立时
+    /// `ema_cross` / `macd` 的快慢线相对位置会随窗口大小漂移，金叉死叉无从判定。
+    #[test]
+    fn ema_keeps_unit_dc_gain_and_lags_on_the_trend_side() {
+        use qx_core::SCALE;
+        for window in [1usize, 2, 5, 12, 20, 26] {
+            let flat = vec![7 * SCALE; window + 40];
+            assert_eq!(
+                ema(&flat, window).unwrap(),
+                7 * SCALE,
+                "window={window} 的常数序列必须收敛到常数本身"
+            );
+        }
+        let rising: Vec<i128> = (0..40)
+            .map(|index| i128::from(100 + index) * SCALE)
+            .collect();
+        assert!(
+            ema(&rising, 5).unwrap() > ema(&rising, 20).unwrap(),
+            "上涨段的快线必须在慢线之上"
+        );
+        let falling: Vec<i128> = rising.iter().rev().copied().collect();
+        assert!(
+            ema(&falling, 5).unwrap() < ema(&falling, 20).unwrap(),
+            "下跌段的快线必须在慢线之下"
+        );
+    }
+
+    /// 历史窗口上限必须容得下每个策略自己的信号门槛：MACD 需要 35 根 Bar，
+    /// 而上限一度只按 `slow_window`/`period` 算出 32 根，于是这条策略在任意长度的
+    /// 序列上都永远不信号——示例回测的 `fills=0` 就是这么来的。
+    #[test]
+    fn macd_signals_within_the_rolling_history_cap() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let config = BuiltinStrategyConfig::new(
+            BuiltinStrategyKind::Macd,
+            "builtin-macd".to_string(),
+            instrument.clone(),
+            Quantity::from_i64(1),
+        )
+        .unwrap();
+        let mut strategy = BuiltinStrategy::new(config).unwrap();
+        assert!(
+            strategy.max_history() >= strategy.required_bars(),
+            "历史上限 {} 裁掉了 MACD 门槛所需的 {} 根",
+            strategy.max_history(),
+            strategy.required_bars()
+        );
+        let mut context = context(&instrument);
+        let mut intents = 0_usize;
+        for ts in 1..=70_u64 {
+            // 价格按定点刻度放大：`ema` 全程整数截断，未放大的百位数会让快慢线
+            // 之差恒为 0，用例测的就是"永远不交叉"而不是历史上限。
+            let close = if ts <= 40 {
+                100 + i128::from(40 - ts)
+            } else {
+                100 + i128::from(ts - 40)
+            } * qx_core::SCALE;
+            context.as_of = ts;
+            let decision = strategy
+                .on_event(
+                    &context,
+                    &MarketEvent::Bar {
+                        instrument: instrument.clone(),
+                        ts,
+                        open_raw: close,
+                        high_raw: close + 1,
+                        low_raw: close - 1,
+                        close_raw: close,
+                        volume_raw: 1,
+                    },
+                )
+                .unwrap();
+            intents += decision.intents.len();
+        }
+        assert!(intents > 0, "V 形序列下 MACD 必须至少发出一条委托意图");
     }
 
     #[test]

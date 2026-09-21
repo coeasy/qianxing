@@ -95,6 +95,20 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
     assert_eq!(code, 0, "L2 深度回测失败: {stderr}");
     assert!(stdout.contains("snapshots=80"), "输出缺少快照数: {stdout}");
     assert!(stdout.contains("fills=1"), "输出缺少成交笔数: {stdout}");
+    // 深度示例的 SMA 下穿会发卖空意图，保守风控把它挡下：这正是"零成交"之外
+    // 必须能看见的事实，否则产物里只剩一个看不出原因的 fills=0。
+    let integrity = stdout
+        .lines()
+        .find(|line| line.starts_with("[Depth · Integrity]"))
+        .unwrap_or_else(|| panic!("深度链没有打印成交诚实性行: {stdout}"));
+    assert!(
+        integrity.contains("rejected_orders=1"),
+        "被风控挡下的卖空没有记进诚实性行: {integrity}"
+    );
+    assert!(
+        integrity.contains("1x") && integrity.contains("NoShort"),
+        "诚实性行缺少拒单原因: {integrity}"
+    );
     let first_hash = result_hash(&stdout);
 
     let second_root = root.join("second");
@@ -124,6 +138,21 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
     assert_eq!(summary_payload["sample_unit"], "depth_snapshot");
     assert_eq!(summary_payload["bars"], 80);
     assert_eq!(summary_payload["fills"], 1);
+    assert_eq!(summary_payload["rejected_orders"], 1);
+    let rejections = summary_payload["rejection_reasons"]
+        .as_array()
+        .expect("rejection_reasons 必须是数组");
+    assert_eq!(
+        rejections
+            .iter()
+            .filter(|entry| entry["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("NoShort"))
+            .count(),
+        1,
+        "摘要里的拒单原因与诚实性行不一致: {rejections:?}"
+    );
     assert_eq!(
         summary_payload["metrics"]["final_equity_raw"],
         100_265_589_000_000_i64
@@ -163,6 +192,131 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
         serde_json::from_str(&std::fs::read_to_string(&changed_summary).expect("读取摘要失败"))
             .unwrap();
     assert!(changed["metrics"]["fees_raw"].as_i64().unwrap() > 32_411_000_000_i64);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn summary(root: &Path) -> serde_json::Value {
+    let (_, path, _) = artifacts(root);
+    let payload = std::fs::read_to_string(&path).expect("读取摘要失败");
+    serde_json::from_str(&payload).expect("摘要不是合法 JSON")
+}
+
+fn execution_line(stdout: &str) -> String {
+    stdout
+        .lines()
+        .find(|line| line.starts_with("[Depth · Execution]"))
+        .unwrap_or_else(|| panic!("深度链没有打印撮合模型参数行: {stdout}"))
+        .to_string()
+}
+
+fn has_descriptor(summary: &serde_json::Value, needle: &str) -> bool {
+    summary["model_descriptors"]
+        .as_array()
+        .expect("model_descriptors 必须是数组")
+        .iter()
+        .any(|value| value.as_str().unwrap_or_default().contains(needle))
+}
+
+/// V11 Q1a：接到命令面的撮合参数必须"换了就真的换结果"，并且产物能读出实际口径。
+/// 内核的第三项 `queue_position_bps` 故意不做成旗标——它只作用于限价单，而内置策略
+/// 一律发市价单（`qx-strategy/src/builtin.rs` 的 intent 恒为 `limit: None`），
+/// 声明一个换不动任何成交的旗标就是 Q0b 判掉的假风控形状。
+#[test]
+fn depth_execution_model_flags_change_results_and_are_recorded() {
+    let root = temp_root("execution-model");
+    let frame = fixture("qianxing.depth-frame.example.json");
+    let frame = frame.to_string_lossy().to_string();
+    let run_model = |label: &str, extra: &[&str]| -> (String, String, serde_json::Value) {
+        let out = root.join(label);
+        let out = out.to_string_lossy().to_string();
+        let mut args = vec!["backtest", "book", "--fill-tier", "l2", "--root", &out];
+        args.extend_from_slice(extra);
+        args.extend_from_slice(&["sma-cross", &frame]);
+        let (code, stdout, stderr) = run(&args);
+        assert_eq!(code, 0, "{label} 深度回测失败: {stderr}");
+        (
+            execution_line(&stdout),
+            result_hash(&stdout),
+            summary(Path::new(&out)),
+        )
+    };
+
+    let (baseline_line, baseline_hash, baseline) = run_model("default", &[]);
+    assert_eq!(
+        baseline_line, "[Depth · Execution] latency_snapshots=0 market_impact_bps=0",
+        "缺省撮合口径必须显式写成全 0，而不是不告诉使用者用了什么"
+    );
+    assert!(
+        has_descriptor(
+            &baseline,
+            "latency_snapshots=0 queue_position_bps=0 market_impact_bps=0"
+        ),
+        "摘要没有写出实际撮合模型参数: {:?}",
+        baseline["model_descriptors"]
+    );
+    let baseline_fees = baseline["metrics"]["fees_raw"].as_i64().unwrap();
+    let baseline_equity = baseline["metrics"]["final_equity_raw"].as_i64().unwrap();
+
+    let (impact_line, impact_hash, impact) = run_model("impact", &["--market-impact-bps", "50"]);
+    assert_eq!(
+        impact_line,
+        "[Depth · Execution] latency_snapshots=0 market_impact_bps=50"
+    );
+    assert!(
+        has_descriptor(&impact, "market_impact_bps=50"),
+        "冲击参数没有写进摘要: {:?}",
+        impact["model_descriptors"]
+    );
+    assert_ne!(impact_hash, baseline_hash, "冲击参数没有改变结果指纹");
+    assert!(
+        impact["metrics"]["fees_raw"].as_i64().unwrap() > baseline_fees,
+        "买入被推高后手续费没有变化: {:?} vs {baseline_fees}",
+        impact["metrics"]["fees_raw"]
+    );
+    assert!(
+        impact["metrics"]["final_equity_raw"].as_i64().unwrap() < baseline_equity,
+        "单边冲击没有让终值变差，参数没有真的进撮合"
+    );
+
+    let (latency_line, latency_hash, latency) = run_model("latency", &["--latency-snapshots", "2"]);
+    assert_eq!(
+        latency_line,
+        "[Depth · Execution] latency_snapshots=2 market_impact_bps=0"
+    );
+    assert!(
+        has_descriptor(&latency, "latency_snapshots=2"),
+        "延迟参数没有写进摘要: {:?}",
+        latency["model_descriptors"]
+    );
+    assert_ne!(latency_hash, baseline_hash, "延迟参数没有改变结果指纹");
+    assert_ne!(
+        latency_hash, impact_hash,
+        "两种延迟/冲击口径共用同一结果指纹"
+    );
+    assert_ne!(
+        latency["metrics"]["final_equity_raw"].as_i64().unwrap(),
+        baseline_equity,
+        "延后成交换到的价格与逐档吃单一致，延迟没有进撮合"
+    );
+
+    let (code, _, stderr) = run(&[
+        "backtest",
+        "book",
+        "--fill-tier",
+        "l2",
+        "--root",
+        &root.join("queue").to_string_lossy(),
+        "--queue-position-bps",
+        "5000",
+        "sma-cross",
+        &frame,
+    ]);
+    assert_ne!(code, 0, "队列前置旗标没有落点却仍被接受");
+    assert!(
+        stderr.contains("--queue-position-bps"),
+        "报错没有点名被拒的旗标: {stderr}"
+    );
 
     let _ = std::fs::remove_dir_all(&root);
 }

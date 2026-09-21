@@ -54,10 +54,13 @@ pub(crate) fn print_cli_help() {
       对齐两条 BarFrame，使用同一信号驱动双腿独立账户回测，并按 SpreadOrderGroup 汇总组级费用/保证金/资金费归因。
   backtest ccxt-builtin <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity]
       一次完成 CCXT OHLCV 获取、内置策略回测和结果输出。
-  backtest book --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>]
+  backtest book --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>] [--latency-snapshots <n>] [--market-impact-bps <n>]
       深度档回测：l1 走 Tick 内核、l2/l3 走订单簿内核，产物会写明本次实际使用的撮合内核。
       --fee-bps 优先级：显式旗标 > 运行时配置 cost_rules_path 的 taker_bp > 内核默认吃单费率。
       成本规则里的延迟设置在深度档没有落点，非零会直接报错而不是被忽略。
+      --latency-snapshots/--market-impact-bps 是深度撮合模型参数，缺省全 0 即逐档吃单；
+      两者都会写进执行描述符与产物摘要，换参数就是换结果口径。内核的队列前置参数只作用于
+      限价单，而内置策略一律发市价单，因此没有做成旗标。
   builtin-strategies
       列出 17 个内置策略及各自被哪个回测入口接受：13 个单标的策略可走 builtin / ccxt-builtin /
       book，4 个套利 kind 只被 multi-builtin 接受（book 会明确拒绝它们）。
