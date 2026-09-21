@@ -144,24 +144,17 @@ pub(crate) fn load_api_query_models(config: &RuntimeConfig) -> Result<ApiQueryMo
     };
 
     let mut ledger_entries = Vec::new();
-    if let Some(worker) = config.workers.iter().find(|worker| {
-        worker.enabled
-            && matches!(
-                worker.role,
-                WorkerRole::UserStream
-                    | WorkerRole::Execution
-                    | WorkerRole::SpreadRecovery
-                    | WorkerRole::Reconciler
-            )
-            && worker.account_id.is_some()
-            && worker.venue_id.is_some()
-    }) {
+    if let Some(worker) = config
+        .workers
+        .iter()
+        .find(|worker| owns_account_event_log(worker))
+    {
         if let (Some(account_id), Some(venue_id)) =
             (worker.account_id.as_deref(), worker.venue_id.as_deref())
         {
             if let Some(log_name) = account_event_log_name(account_id, venue_id) {
                 if event_log_exists(config, root, &log_name)? {
-                    let pipeline = open_runtime_pipeline(config, root, log_name, "USDT")
+                    let pipeline = open_account_pipeline(config, root, &log_name)
                         .map_err(|error| format!("读取 API Ledger 读模型失败: {error}"))?;
                     ledger_entries = pipeline.ledger().entries().to_vec();
                 }
@@ -205,18 +198,11 @@ pub(crate) fn load_api_account_snapshots(
 ) -> Result<Vec<AccountSnapshot>, String> {
     let mut seen = BTreeSet::new();
     let mut snapshots = Vec::new();
-    for worker in config.workers.iter().filter(|worker| {
-        worker.enabled
-            && matches!(
-                worker.role,
-                WorkerRole::UserStream
-                    | WorkerRole::Execution
-                    | WorkerRole::SpreadRecovery
-                    | WorkerRole::Reconciler
-            )
-            && worker.account_id.is_some()
-            && worker.venue_id.is_some()
-    }) {
+    for worker in config
+        .workers
+        .iter()
+        .filter(|worker| owns_account_event_log(worker))
+    {
         let key = (
             worker.account_id.clone().unwrap_or_default(),
             worker.venue_id.clone().unwrap_or_default(),
@@ -236,18 +222,11 @@ pub(crate) fn load_api_account_snapshots(
 pub(crate) fn load_api_account_snapshot(
     config: &RuntimeConfig,
 ) -> Result<Option<AccountSnapshot>, String> {
-    for worker in config.workers.iter().filter(|worker| {
-        worker.enabled
-            && matches!(
-                worker.role,
-                WorkerRole::UserStream
-                    | WorkerRole::Execution
-                    | WorkerRole::SpreadRecovery
-                    | WorkerRole::Reconciler
-            )
-            && worker.account_id.is_some()
-            && worker.venue_id.is_some()
-    }) {
+    for worker in config
+        .workers
+        .iter()
+        .filter(|worker| owns_account_event_log(worker))
+    {
         if let Some(snapshot) = load_api_account_snapshot_for_worker(config, worker)? {
             return Ok(Some(snapshot));
         }
@@ -268,8 +247,9 @@ pub(crate) fn load_api_account_snapshot_for_worker(
     if !event_log_exists(config, root, &log_name)? {
         return Ok(None);
     }
-    let pipeline = open_runtime_pipeline(config, root, log_name, "USDT")
-        .map_err(|error| format!("打开 API 账户 EventLog 失败: {error}"))?;
+    let pipeline =
+        open_runtime_pipeline(config, root, log_name, worker_settlement_currency(worker))
+            .map_err(|error| format!("打开 API 账户 EventLog 失败: {error}"))?;
     let runtime_snapshot = pipeline.snapshot();
     let as_of = runtime_snapshot.last_engine_ts.max(1);
     let mut snapshot = AccountSnapshot::new(1, account_id, "default", venue_id, as_of);
@@ -282,8 +262,12 @@ pub(crate) fn load_api_account_snapshot_for_worker(
     snapshot.cash_raw = pipeline.ledger().cash_balances_for(account_id);
     snapshot.equity_raw = pipeline
         .ledger()
-        .equity_for(account_id, pipeline.marks(), "USDT")
-        .unwrap_or_else(|| pipeline.ledger().cash_for(account_id, "USDT"));
+        .equity_for(account_id, pipeline.marks(), pipeline.settlement_currency())
+        .unwrap_or_else(|| {
+            pipeline
+                .ledger()
+                .cash_for(account_id, pipeline.settlement_currency())
+        });
     snapshot.available_raw = snapshot.equity_raw;
     snapshot.orders = runtime_snapshot
         .orders

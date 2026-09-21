@@ -22,6 +22,45 @@ pub(crate) fn worker_settlement_currency(worker: &WorkerConfig) -> String {
         .to_ascii_uppercase()
 }
 
+/// 拥有账户级 EventLog 写入权的 worker。Strategy/Scheduler 只提交意图、不动现金
+/// 账簿，所以它们声明的结算币种不能替账户日志定记账口径。
+pub(crate) fn owns_account_event_log(worker: &WorkerConfig) -> bool {
+    worker.enabled
+        && matches!(
+            worker.role,
+            WorkerRole::UserStream
+                | WorkerRole::Execution
+                | WorkerRole::SpreadRecovery
+                | WorkerRole::Reconciler
+        )
+        && worker.account_id.is_some()
+        && worker.venue_id.is_some()
+}
+
+/// 只持有日志身份的读模型按同一规则找回记账币种。
+///
+/// 写入方是 worker，读取方只有日志名，而账户级日志名由 `(account_id, venue_id)`
+/// 唯一确定，所以用日志身份反查 worker。同一账户/venue 上多个 worker 共享一本
+/// 日志，按配置顺序取第一个启用的声明者；都没声明才回落 USDT。禁用 worker 不参与，
+/// 否则一个下线了的 worker 能给在线账簿改记账币种。
+pub(crate) fn settlement_currency_for_log(config: &RuntimeConfig, log_name: &str) -> String {
+    config
+        .workers
+        .iter()
+        .filter(|worker| owns_account_event_log(worker))
+        .filter_map(|worker| {
+            Some((
+                account_event_log_name(worker.account_id.as_deref()?, worker.venue_id.as_deref()?)?,
+                worker,
+            ))
+        })
+        .find(|(candidate, _)| candidate == log_name)
+        .map_or_else(
+            || "USDT".to_string(),
+            |(_, worker)| worker_settlement_currency(worker),
+        )
+}
+
 /// Paper 账户可用保证金的估值口径，必须和 `RiskContext` 里的 `initial_margin` 同一把尺子：
 /// 现货买入付出现金，持仓按全额名义额计入权益才是账户价值；保证金产品开仓不动现金，
 /// 账上属于这笔持仓的只有已实现/未实现 PnL，再按名义额累加等于凭空多出整笔可用保证金

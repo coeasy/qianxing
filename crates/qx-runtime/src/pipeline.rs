@@ -615,6 +615,12 @@ impl LiveEventPipeline {
         &self.ledger
     }
 
+    /// 本管线记账使用的结算币种。现金腿按它落账并随 `LedgerApplied` 事实持久化，
+    /// 因此读取同一账户的现金与权益必须回读这个值，而不是另猜一本账。
+    pub fn settlement_currency(&self) -> &str {
+        &self.currency
+    }
+
     pub fn orders(&self) -> Vec<Order> {
         self.oms.all_orders()
     }

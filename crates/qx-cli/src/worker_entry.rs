@@ -103,7 +103,10 @@ pub(crate) fn run_binance_spread_recovery_worker(
         let now = runtime_timestamp_ms();
         if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
             let mut pipeline = pipeline_storage
-                .open(binance_event_log_name(&worker), "USDT")
+                .open(
+                    binance_event_log_name(&worker),
+                    worker_settlement_currency(&worker),
+                )
                 .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
             let auth = load_binance_worker_auth(&worker)?;
             let mut venue = new_binance_venue(&worker, auth)?;

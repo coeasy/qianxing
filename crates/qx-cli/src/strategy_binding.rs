@@ -106,7 +106,7 @@ pub(crate) fn strategy_current_qty_for(
     } else {
         return Ok(0);
     };
-    let pipeline = open_runtime_pipeline(config, root, log_name, "USDT")
+    let pipeline = open_account_pipeline(config, root, &log_name)
         .map_err(|error| format!("恢复 Strategy 账户 EventLog 失败: {error}"))?;
     Ok(pipeline
         .ledger()

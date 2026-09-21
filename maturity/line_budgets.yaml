@@ -5,11 +5,11 @@ crates/qx-adapter/src/ccxt.rs: 1068
 crates/qx-adapter/src/lib.rs: 1758
 crates/qx-api/src/lib.rs: 3137
 crates/qx-cli/src/cli.rs: 674
-crates/qx-cli/src/config_commands.rs: 999
+crates/qx-cli/src/config_commands.rs: 971
 crates/qx-cli/src/event_pipeline.rs: 752
-crates/qx-cli/src/strategy_contract.rs: 823
+crates/qx-cli/src/strategy_contract.rs: 822
 crates/qx-cli/src/strategy_host.rs: 812
-crates/qx-cli/src/worker_entry.rs: 583
+crates/qx-cli/src/worker_entry.rs: 586
 crates/qx-cli/src/workers.rs: 718
 crates/qx-core/src/event.rs: 674
 crates/qx-data/src/provider.rs: 592
@@ -22,7 +22,7 @@ crates/qx-guanxing/src/lib.rs: 783
 crates/qx-plugin/src/lib.rs: 583
 crates/qx-protocol/src/lib.rs: 856
 crates/qx-provider/src/lib.rs: 743
-crates/qx-runtime/src/pipeline.rs: 2343
+crates/qx-runtime/src/pipeline.rs: 2349
 crates/qx-scheduler/src/lib.rs: 1530
 crates/qx-storage/src/lib.rs: 2405
 crates/qx-storage/src/postgres.rs: 2107

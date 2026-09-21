@@ -26,18 +26,7 @@ pub(crate) fn configured_account_event_logs(
     let keys = config
         .workers
         .iter()
-        .filter(|worker| {
-            worker.enabled
-                && matches!(
-                    worker.role,
-                    WorkerRole::UserStream
-                        | WorkerRole::Execution
-                        | WorkerRole::SpreadRecovery
-                        | WorkerRole::Reconciler
-                )
-                && worker.account_id.is_some()
-                && worker.venue_id.is_some()
-        })
+        .filter(|worker| owns_account_event_log(worker))
         .filter_map(|worker| {
             Some((
                 worker.account_id.as_deref()?.to_string(),
@@ -47,12 +36,9 @@ pub(crate) fn configured_account_event_logs(
         .collect::<BTreeSet<_>>();
     keys.into_iter()
         .filter_map(|(account_id, venue_id)| {
-            Some((
-                account_id.clone(),
-                venue_id.clone(),
-                account_event_log_name(&account_id, &venue_id)?,
-                "USDT".into(),
-            ))
+            let log_name = account_event_log_name(&account_id, &venue_id)?;
+            let currency = settlement_currency_for_log(config, &log_name);
+            Some((account_id, venue_id, log_name, currency))
         })
         .collect()
 }

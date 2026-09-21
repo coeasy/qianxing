@@ -184,6 +184,21 @@ pub(crate) fn open_runtime_pipeline(
     storage.open(log_name, currency)
 }
 
+/// 读模型打开账户级 EventLog 的统一入口：记账币种跟着日志身份走，打开之后
+/// 再按 [`LiveEventPipeline::settlement_currency`] 回读，调用处不再各写一本账。
+pub(crate) fn open_account_pipeline(
+    config: &RuntimeConfig,
+    root: &Path,
+    log_name: &str,
+) -> Result<LiveEventPipeline, String> {
+    open_runtime_pipeline(
+        config,
+        root,
+        log_name.to_string(),
+        settlement_currency_for_log(config, log_name),
+    )
+}
+
 pub(crate) fn event_log_exists(
     config: &RuntimeConfig,
     root: &Path,
