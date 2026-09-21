@@ -119,6 +119,60 @@ fn run_help_entry_list_equals_dispatched_entries() {
     }
 }
 
+/// clap 的位置参数规矩是「必填位置参数之前不得出现可选位置参数」。带
+/// `default_value` 的位置参数在 clap 眼里是可选，于是 `paper-worker
+/// [runtime.json] <worker-id>` 这一族签名只能在 release 下侥幸工作：debug
+/// 构建里 `clap` 的自检直接 panic，开发者照 README 跑 `cargo run -p qx-cli`
+/// 拿到的是 clap 内部堆栈而不是我们的退出码 2。`debug_assert()` 在 release
+/// 下是空操作，所以这条门禁只在它真正有效的构建里说话。
+#[test]
+fn clap_command_table_passes_debug_asserts() {
+    use clap::CommandFactory;
+    crate::cli_args::Cli::command().debug_assert();
+}
+
+/// 同一族签名修复后的正向契约：不给 runtime 路径必须是用法错误（fail closed，
+/// 不再回落到某个示例配置），给了路径仍然照旧可解析。
+#[test]
+fn runtime_path_positionals_fail_closed_when_omitted() {
+    use clap::error::ErrorKind;
+    use clap::Parser;
+    const ENTRIES: [(&str, &[&str]); 9] = [
+        ("scheduler-worker", &["worker-1"]),
+        ("strategy-worker", &["worker-1"]),
+        ("paper-worker", &["worker-1"]),
+        ("binance-worker", &["worker-1"]),
+        ("ccxt-worker", &["worker-1", "ccxt.json"]),
+        ("outbox-relay-worker", &["worker-1"]),
+        ("event-consumer-worker", &["worker-1"]),
+        ("binance-submit-order", &["worker-1", "submit-order.json"]),
+        ("paper-submit-order", &["submit-order.json"]),
+    ];
+    for (entry, tail) in ENTRIES {
+        let mut without_path = vec!["qx-cli", entry];
+        without_path.extend(tail.iter().copied());
+        let error = match crate::cli_args::Cli::try_parse_from(without_path) {
+            Ok(_) => panic!("{entry} 缺少 runtime 路径却解析成功"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.kind(),
+            ErrorKind::MissingRequiredArgument,
+            "{entry} 缺少 runtime 路径必须报缺失参数，而不是回落示例配置: {error}"
+        );
+        assert!(
+            error.to_string().contains("PATH"),
+            "{entry} 的缺参提示要点名缺失的 runtime 路径: {error}"
+        );
+        let mut with_path = vec!["qx-cli", entry, "deploy/runtime.json"];
+        with_path.extend(tail.iter().copied());
+        assert!(
+            crate::cli_args::Cli::try_parse_from(with_path).is_ok(),
+            "{entry} 显式给出 runtime 路径后必须照旧解析成功"
+        );
+    }
+}
+
 #[test]
 fn init_creates_self_contained_project_assets_and_builtin_strategy() {
     let root = std::env::temp_dir().join(format!(

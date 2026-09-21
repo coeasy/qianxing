@@ -94,6 +94,12 @@ pub(crate) fn isolated_backtest_runtime(
     (root, runtime_path)
 }
 
+/// Paper 账户域 `(main, paper)` 的账户级日志名。用例一律从这里取，不抄字面量：
+/// 测试里的第二份命名就是生产里第二份命名的温床。
+pub(crate) fn paper_account_log() -> String {
+    account_event_log_name("main", "paper").expect("main/paper 是合法账户身份")
+}
+
 /// 构造一份只做字段填装的 worker 配置，避免每个风控用例重复 14 个字段。
 pub(crate) fn mk_worker(
     id: &str,
@@ -143,6 +149,7 @@ pub(crate) fn mk_submit_command(command_id: u64, order: &Order, dry_run: bool) -
     }
 }
 
+mod account_event_log_identity;
 mod backtest_entries;
 mod backtest_risk_provenance;
 mod cli_surface;

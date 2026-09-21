@@ -71,7 +71,7 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
         let mut pipeline = open_runtime_pipeline(
             &config,
             &root,
-            "paper-events",
+            &required_account_event_log(worker)?,
             worker_settlement_currency(worker),
         )
         .map_err(|error| format!("打开 Paper 初始资金 EventLog 失败: {error}"))?;
@@ -101,7 +101,7 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
         let mut pipeline = open_runtime_pipeline(
             &config,
             &root,
-            "paper-events",
+            &required_account_event_log(worker)?,
             worker_settlement_currency(worker),
         )
         .map_err(|error| format!("打开 Paper 风控 EventLog 失败: {error}"))?;

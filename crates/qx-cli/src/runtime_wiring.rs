@@ -195,7 +195,7 @@ pub(crate) fn open_account_pipeline(
         config,
         root,
         log_name.to_string(),
-        settlement_currency_for_log(config, log_name),
+        settlement_currency_for_log(config, log_name)?,
     )
 }
 

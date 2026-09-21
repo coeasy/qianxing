@@ -58,7 +58,7 @@ pub(crate) fn run_ccxt_execution_worker(
         {
             let mut recovery_pipeline = pipeline_storage
                 .open(
-                    ccxt_event_log_name(&worker),
+                    required_account_event_log(&worker)?,
                     worker_settlement_currency(&worker),
                 )
                 .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
@@ -131,7 +131,7 @@ pub(crate) fn run_ccxt_execution_worker(
                 let spread_store = open_spread_group_store(&pipeline_storage.root)?;
                 let mut pipeline = pipeline_storage
                     .open(
-                        ccxt_event_log_name(&worker),
+                        required_account_event_log(&worker)?,
                         worker_settlement_currency(&worker),
                     )
                     .map_err(|error| format!("打开 CCXT EventLog 失败: {error}"))?;
@@ -198,7 +198,7 @@ pub(crate) fn run_ccxt_execution_worker(
                 } else {
                     let latest_pipeline = pipeline_storage
                         .open(
-                            ccxt_event_log_name(&worker),
+                            required_account_event_log(&worker)?,
                             worker_settlement_currency(&worker),
                         )
                         .map_err(|error| format!("刷新 CCXT 多腿订单组 EventLog 失败: {error}"))?;
@@ -273,7 +273,7 @@ pub(crate) fn run_ccxt_user_stream_worker(
         return Err(format!("worker {} 不是 CCXT UserStream worker", worker.id));
     }
     let python = python_interpreter();
-    let log_name = ccxt_event_log_name(&worker);
+    let log_name = required_account_event_log(&worker)?;
     let mut pipeline = pipeline_storage
         .open(&log_name, worker_settlement_currency(&worker))
         .map_err(|error| format!("打开 CCXT UserStream EventLog 失败: {error}"))?;

@@ -27,11 +27,7 @@ pub(crate) fn run_paper_spread_recovery_worker(
         ));
     }
     let root = Path::new(&config.storage.data_dir).to_path_buf();
-    let log_name = format!(
-        "paper-{}-{}-events",
-        worker.account_id.as_deref().unwrap_or("unknown"),
-        worker.venue_id.as_deref().unwrap_or("paper")
-    );
+    let log_name = required_account_event_log(&worker)?;
     let runtime_config = config.clone();
     let runtime_config_path = path.to_path_buf();
     let supervisor = RuntimeSupervisor::new(config)?;
@@ -108,11 +104,7 @@ pub(crate) fn run_paper_execution_worker(
     let root = Path::new(&config.storage.data_dir).to_path_buf();
     let store = configured_control_store(&config)?;
     let queue = configured_command_queue(&config, &root)?;
-    let log_name = format!(
-        "paper-{}-{}-events",
-        worker.account_id.as_deref().unwrap_or("unknown"),
-        worker.venue_id.as_deref().unwrap_or("paper")
-    );
+    let log_name = required_account_event_log(&worker)?;
     let runtime_config = config.clone();
     let dedicated_spread_recovery = dedicated_spread_recovery_configured(&config, &worker);
     let supervisor = RuntimeSupervisor::new(config)?;
@@ -318,11 +310,7 @@ pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
         .find(|worker| worker.id == execution_id)
         .ok_or_else(|| "Paper Execution worker 配置在注入行情前消失".to_string())?;
     let root = Path::new(&config.storage.data_dir);
-    let log_name = format!(
-        "paper-{}-{}-events",
-        execution_worker.account_id.as_deref().unwrap_or("unknown"),
-        execution_worker.venue_id.as_deref().unwrap_or("paper")
-    );
+    let log_name = required_account_event_log(execution_worker)?;
     let mut market_pipeline = open_runtime_pipeline(
         &config,
         root,
@@ -361,11 +349,7 @@ pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
         .iter()
         .find(|worker| worker.id == execution_id)
         .ok_or_else(|| "Paper Execution worker 配置在验收期间消失".to_string())?;
-    let log_name = format!(
-        "paper-{}-{}-events",
-        worker.account_id.as_deref().unwrap_or("unknown"),
-        worker.venue_id.as_deref().unwrap_or("paper")
-    );
+    let log_name = required_account_event_log(worker)?;
     let pipeline =
         open_runtime_pipeline(&config, root, log_name, worker_settlement_currency(worker))
             .map_err(|error| format!("打开 Paper 主链路 EventLog 失败: {error}"))?;

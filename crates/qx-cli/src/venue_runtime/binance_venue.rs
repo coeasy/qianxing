@@ -149,17 +149,11 @@ pub(crate) fn run_binance_private_probe(
     Ok(())
 }
 
-pub(crate) fn binance_event_log_name(worker: &WorkerConfig) -> String {
+/// Binance worker 的 EventLog 身份：行情按 worker 各自成册，账户侧角色一律走
+/// 账户身份的唯一构造点，拿不到身份就是配置错误。
+pub(crate) fn binance_event_log_name(worker: &WorkerConfig) -> Result<String, String> {
     match worker.role {
-        WorkerRole::MarketData => format!("{}-events", worker.id),
-        WorkerRole::UserStream
-        | WorkerRole::Execution
-        | WorkerRole::SpreadRecovery
-        | WorkerRole::Reconciler => format!(
-            "binance-{}-{}-events",
-            worker.account_id.as_deref().unwrap_or("unknown"),
-            worker.venue_id.as_deref().unwrap_or("unknown")
-        ),
-        _ => format!("{}-events", worker.id),
+        WorkerRole::MarketData => Ok(worker_scoped_event_log_name("", &worker.id)),
+        _ => required_account_event_log(worker),
     }
 }

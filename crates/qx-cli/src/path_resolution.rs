@@ -79,6 +79,23 @@ pub(crate) fn effective_storage_root(runtime_path: &Path, configured: &str) -> P
     process_root.to_path_buf()
 }
 
+/// `storage.data_dir` 的两个候选落点：进程当前目录口径与 runtime 配置文件目录口径。
+/// 两者可能是同一个目录，按 canonical 去重后再扫，避免重复报告。
+fn storage_root_candidates(runtime_path: &Path, configured: &str) -> Vec<PathBuf> {
+    let process_root = Path::new(configured).to_path_buf();
+    let config_root = resolve_runtime_relative_path(runtime_path, configured);
+    let mut seen = Vec::new();
+    let mut roots = Vec::new();
+    for root in [process_root, config_root] {
+        let key = root.canonicalize().unwrap_or_else(|_| root.clone());
+        if !seen.contains(&key) {
+            seen.push(key);
+            roots.push(root);
+        }
+    }
+    roots
+}
+
 /// doctor 的 `storage.data_dir` 检查：可用性与提示按**两个**落点口径共同判断。
 ///
 /// 只按其中一种折算会让 doctor 指向一个没有写入者使用的目录——真实账本已存在却被提示成
@@ -152,6 +169,75 @@ pub(crate) fn check_storage_data_dir(
         }));
         failures.push(message);
     }
+}
+
+/// 从 EventLog 落盘文件名还原日志名：单文件 `{name}.json`，分段后端另有
+/// `{name}.manifest.json`。只认 `-events` 结尾，`control-plane.json` 之类的
+/// 相邻运行态文件不归这条检查管。
+fn event_log_name_of(path: &Path) -> Option<String> {
+    if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+        return None;
+    }
+    let stem = path.file_stem()?.to_str()?;
+    let name = stem.strip_suffix(".manifest").unwrap_or(stem);
+    name.ends_with("-events").then(|| name.to_string())
+}
+
+/// doctor 的孤儿 EventLog 检查：`data_dir` 里没有任何身份引用的 `*-events` 账本。
+///
+/// 账户日志命名口径切到 `(account_id, venue_id)` 派生身份是硬切的：旧文件既不自动
+/// 改名也不删除。让它静静躺在运行目录里，下一次只会以"这本账怎么不再增长"的形式被
+/// 重新发现，而那时没人记得它属于切换前的哪一套名字。所以 doctor 点名，但只警告不
+/// 失败——归档与否是运维决定，不是启动前置条件。
+pub(crate) fn check_orphan_event_logs(
+    runtime_path: &Path,
+    config: &RuntimeConfig,
+    checks: &mut Vec<serde_json::Value>,
+    warnings: &mut Vec<String>,
+) {
+    if config.storage.backend != StorageBackend::Files {
+        return;
+    }
+    let owned = configured_event_log_names(config);
+    let mut orphans = Vec::new();
+    for root in storage_root_candidates(runtime_path, &config.storage.data_dir) {
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for path in entries.flatten().map(|entry| entry.path()) {
+            if let Some(name) = event_log_name_of(&path) {
+                if !owned.contains(&name) {
+                    orphans.push(path);
+                }
+            }
+        }
+    }
+    orphans.sort();
+    orphans.dedup();
+    if orphans.is_empty() {
+        checks.push(serde_json::json!({
+            "name": "event_logs.orphan",
+            "status": "pass",
+            "message": "data_dir 中的 EventLog 都被当前配置引用"
+        }));
+        return;
+    }
+    let listed = orphans
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let message = format!(
+        "{} 个 EventLog 没有被当前配置的任何身份引用: {listed}；账户日志按 (account_id, venue_id) \
+         派生名字（见 deploy/README.md），请确认后归档或删除",
+        orphans.len()
+    );
+    checks.push(serde_json::json!({
+        "name": "event_logs.orphan",
+        "status": "warn",
+        "message": message
+    }));
+    warnings.push(message);
 }
 
 pub(crate) fn resolve_strategy_runtime_paths(

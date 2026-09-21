@@ -70,15 +70,15 @@ pub(crate) fn print_cli_help() {
       启动 qx-api HTTP 服务，只读查询与受权限约束的控制命令。
   supervise [runtime.json] [--allow-unmanaged-roles]
       按配置拉起并监督 worker 子进程。
-  scheduler-worker [runtime.json] <worker-id> [--once]
+  scheduler-worker <runtime.json> <worker-id> [--once]
       运行调度 worker；--once 只推进一个 tick。
-  strategy-worker [runtime.json] <worker-id> [--once]
+  strategy-worker <runtime.json> <worker-id> [--once]
       运行策略 worker；信号在 Rust 侧过风控后入队。
-  paper-worker [runtime.json] <worker-id> [--once]
+  paper-worker <runtime.json> <worker-id> [--once]
       运行 Paper 执行 worker（也承载配置中的 spread_recovery 角色）。
-  binance-worker [runtime.json] <worker-id> [--once]
+  binance-worker <runtime.json> <worker-id> [--once]
       运行 Binance 行情/执行/对账 worker。
-  ccxt-worker [runtime.json] <worker-id> <ccxt-config.json> [--once]
+  ccxt-worker <runtime.json> <worker-id> <ccxt-config.json> [--once]
       运行 CCXT 执行 worker。
   ccxt-fetch-ohlcv <ccxt-config.json> <instrument> <start_ms> <end_ms> <output.json> [timeframe]
       下载一段 CCXT OHLCV 并写成标准 BarFrame 文件。
@@ -86,9 +86,9 @@ pub(crate) fn print_cli_help() {
       把文件 outbox 中的事件转发到 NATS（需 --features nats 构建）。
   outbox-relay-postgres <runtime.json> <nats-url> <subject-prefix> [limit]
       从 PostgreSQL outbox 转发事件到 NATS（需 --features 'nats postgres' 构建）。
-  outbox-relay-worker [runtime.json] <worker-id> [--once]
+  outbox-relay-worker <runtime.json> <worker-id> [--once]
       以配置驱动的 outbox relay worker（需 --features nats 构建）。
-  event-consumer-worker [runtime.json] <worker-id> [--once]
+  event-consumer-worker <runtime.json> <worker-id> [--once]
       事件消费 worker，带消费位点与死信队列（需 --features nats 构建）。
   consumer-dlq-replay <runtime.json> <group-id> <event-id>
       回放一条进入死信的事件（需 --features nats 构建）。
@@ -100,9 +100,9 @@ pub(crate) fn print_cli_help() {
       只读探测 Binance 公共接口，不需要凭据。
   binance-private-probe [runtime.json] [worker-id]
       只读探测 Binance 私有接口，需要配置引用的凭据。
-  binance-submit-order [runtime.json] <worker-id> <command.json>
+  binance-submit-order <runtime.json> <worker-id> <command.json>
       向 Binance 提交一条命令队列中的 SubmitOrder，真实下单。
-  paper-submit-order [runtime.json] <command.json>
+  paper-submit-order <runtime.json> <command.json>
       在 Paper venue 上提交一条 SubmitOrder，不访问交易所。
   paper-e2e [runtime.json]
       跑一次 Paper 主链路验收（注入合成行情，不接真实 feed）。
@@ -124,6 +124,6 @@ pub(crate) fn print_cli_help() {
   help
       打印本入口摘要；--help 与 -h 是同一条入口的别名。未知命令也会打印它并退出 2。
 
-使用 `qianxing help` 查看入口摘要；既有入口参数保持兼容，完整说明见 README.md 与 deploy/README.md。"#
+使用 `qx-cli help` 查看入口摘要；worker 与下单入口必须显式给出 runtime 配置，完整说明见 README.md 与 deploy/README.md。"#
     );
 }

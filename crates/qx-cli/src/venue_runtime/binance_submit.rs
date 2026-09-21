@@ -125,7 +125,7 @@ pub(crate) fn run_binance_submit_order(
     } else {
         let mut pipeline = pipeline_storage
             .open(
-                binance_event_log_name(&worker),
+                binance_event_log_name(&worker)?,
                 worker_settlement_currency(&worker),
             )
             .map_err(|error| format!("打开执行 EventLog 失败: {error}"))?;
@@ -154,7 +154,7 @@ pub(crate) fn run_binance_submit_order(
                 } else {
                     let latest_pipeline = pipeline_storage
                         .open(
-                            binance_event_log_name(&worker),
+                            binance_event_log_name(&worker)?,
                             worker_settlement_currency(&worker),
                         )
                         .map_err(|error| {
@@ -230,7 +230,7 @@ pub(crate) fn run_binance_execution_worker(
         {
             let mut recovery_pipeline = pipeline_storage
                 .open(
-                    binance_event_log_name(&worker),
+                    binance_event_log_name(&worker)?,
                     worker_settlement_currency(&worker),
                 )
                 .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
@@ -303,7 +303,7 @@ pub(crate) fn run_binance_execution_worker(
             } else {
                 let mut pipeline = pipeline_storage
                     .open(
-                        binance_event_log_name(&worker),
+                        binance_event_log_name(&worker)?,
                         worker_settlement_currency(&worker),
                     )
                     .map_err(|error| format!("打开执行 EventLog 失败: {error}"))?;
@@ -333,7 +333,7 @@ pub(crate) fn run_binance_execution_worker(
                 } else {
                     let latest_pipeline = pipeline_storage
                         .open(
-                            binance_event_log_name(&worker),
+                            binance_event_log_name(&worker)?,
                             worker_settlement_currency(&worker),
                         )
                         .map_err(|error| {

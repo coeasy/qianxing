@@ -23,7 +23,7 @@ pub(crate) fn run_ccxt_reconcile_worker(
     let python = python_interpreter();
     let settlement_currency = worker_settlement_currency(&worker);
     let mut pipeline = pipeline_storage
-        .open(ccxt_event_log_name(&worker), settlement_currency)
+        .open(required_account_event_log(&worker)?, settlement_currency)
         .map_err(|error| format!("打开 CCXT 对账 EventLog 失败: {error}"))?;
     context.mark(
         qx_runtime::ServiceStatus::Ready,

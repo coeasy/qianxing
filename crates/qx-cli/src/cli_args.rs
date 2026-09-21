@@ -5,6 +5,13 @@
 //! 集合相等做门禁（V10 §4.4 的"文案宣称支持某入口而派发没有该分支"因此不可表达）。
 //! `help` / `--help` / `-h` 是进入 clap 之前的同一条预检分支，门禁按规范名 `help` 计一条。
 //! 命令名与旗标语义与迁移前逐条一致（§8.1 裁定）；旧手写字符串解析不保留双轨。
+//!
+//! 一处有意的偏离：`<worker>` 与 `<submit-order.json>` 这类必填入参前面不再接受
+//! 省略 runtime 路径。带 `default_value` 的位置参数在 clap 眼里是"可选"，而 clap
+//! 要求必填位置参数之前不得出现可选位置参数——于是 `paper-worker [PATH] <WORKER_ID>`
+//! 这种签名只在 release 构建里侥幸可跑，debug 构建直接 panic 在 clap 的自检里。
+//! 这些入口的 runtime 路径一律显式给出（`deploy/start-qianxing.ps1`、
+//! `qx-orchestrator` 与全部文档本来就是显式的），示例配置不再充当隐式兜底。
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -138,7 +145,6 @@ pub(crate) enum Command {
     },
     #[command(name = "scheduler-worker")]
     SchedulerWorker {
-        #[arg(default_value = "deploy/qianxing.runtime.example.json")]
         path: PathBuf,
         worker_id: String,
         #[arg(long)]
@@ -146,7 +152,6 @@ pub(crate) enum Command {
     },
     #[command(name = "strategy-worker")]
     StrategyWorker {
-        #[arg(default_value = "deploy/qianxing.runtime.example.json")]
         path: PathBuf,
         worker_id: String,
         #[arg(long)]
@@ -154,7 +159,6 @@ pub(crate) enum Command {
     },
     #[command(name = "paper-worker")]
     PaperWorker {
-        #[arg(default_value = "deploy/qianxing.runtime.example.json")]
         path: PathBuf,
         worker_id: String,
         #[arg(long)]
@@ -162,7 +166,6 @@ pub(crate) enum Command {
     },
     #[command(name = "binance-worker")]
     BinanceWorker {
-        #[arg(default_value = "deploy/qianxing.runtime.example.json")]
         path: PathBuf,
         worker_id: String,
         #[arg(long)]
@@ -170,7 +173,6 @@ pub(crate) enum Command {
     },
     #[command(name = "ccxt-worker")]
     CcxtWorker {
-        #[arg(default_value = "deploy/qianxing.runtime.example.json")]
         path: PathBuf,
         worker_id: String,
         ccxt_config: PathBuf,
@@ -203,7 +205,6 @@ pub(crate) enum Command {
     },
     #[command(name = "outbox-relay-worker")]
     OutboxRelayWorker {
-        #[arg(default_value = "deploy/qianxing.runtime.example.json")]
         path: PathBuf,
         worker_id: String,
         #[arg(long)]
@@ -211,7 +212,6 @@ pub(crate) enum Command {
     },
     #[command(name = "event-consumer-worker")]
     EventConsumerWorker {
-        #[arg(default_value = "deploy/qianxing.runtime.example.json")]
         path: PathBuf,
         worker_id: String,
         #[arg(long)]
@@ -245,14 +245,12 @@ pub(crate) enum Command {
     },
     #[command(name = "binance-submit-order")]
     BinanceSubmitOrder {
-        #[arg(default_value = "deploy/qianxing.runtime.production.example.json")]
         path: PathBuf,
         worker_id: String,
         command_path: PathBuf,
     },
     #[command(name = "paper-submit-order")]
     PaperSubmitOrder {
-        #[arg(default_value = "deploy/qianxing.runtime.example.json")]
         path: PathBuf,
         command_path: PathBuf,
     },

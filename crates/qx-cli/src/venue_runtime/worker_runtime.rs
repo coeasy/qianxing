@@ -22,9 +22,9 @@ pub(crate) fn worker_settlement_currency(worker: &WorkerConfig) -> String {
         .to_ascii_uppercase()
 }
 
-/// 拥有账户级 EventLog 写入权的 worker。Strategy/Scheduler 只提交意图、不动现金
-/// 账簿，所以它们声明的结算币种不能替账户日志定记账口径。
-pub(crate) fn owns_account_event_log(worker: &WorkerConfig) -> bool {
+/// 会动账户现金账簿的角色。Strategy/Scheduler 只提交意图，所以它们声明的结算币种
+/// 不能替账户日志定记账口径。这里不要求账户身份完整，doctor 的凭据检查按同一批角色筛。
+pub(crate) fn writes_account_ledger(worker: &WorkerConfig) -> bool {
     worker.enabled
         && matches!(
             worker.role,
@@ -33,32 +33,107 @@ pub(crate) fn owns_account_event_log(worker: &WorkerConfig) -> bool {
                 | WorkerRole::SpreadRecovery
                 | WorkerRole::Reconciler
         )
-        && worker.account_id.is_some()
-        && worker.venue_id.is_some()
+}
+
+/// 拥有账户级 EventLog 写入权的 worker。
+pub(crate) fn owns_account_event_log(worker: &WorkerConfig) -> bool {
+    writes_account_ledger(worker) && worker.account_id.is_some() && worker.venue_id.is_some()
 }
 
 /// 只持有日志身份的读模型按同一规则找回记账币种。
 ///
 /// 写入方是 worker，读取方只有日志名，而账户级日志名由 `(account_id, venue_id)`
 /// 唯一确定，所以用日志身份反查 worker。同一账户/venue 上多个 worker 共享一本
-/// 日志，按配置顺序取第一个启用的声明者；都没声明才回落 USDT。禁用 worker 不参与，
+/// 日志，因此它们的声明必须一致：币种会随 `LedgerApplied` 事实永久落盘，按配置
+/// 顺序取第一个声明者等于让第二个写入方把自己的成交记到另一本账上，两边各自
+/// "自洽"，事后对账看不出问题——所以这里是配置错误，不是回退。禁用 worker 不参与，
 /// 否则一个下线了的 worker 能给在线账簿改记账币种。
-pub(crate) fn settlement_currency_for_log(config: &RuntimeConfig, log_name: &str) -> String {
+pub(crate) fn settlement_currency_for_log(
+    config: &RuntimeConfig,
+    log_name: &str,
+) -> Result<String, String> {
+    let declared = account_log_currency_declarations(config, log_name);
+    let distinct = declared
+        .iter()
+        .map(|(_, currency)| currency.clone())
+        .collect::<BTreeSet<_>>();
+    if distinct.len() > 1 {
+        return Err(account_log_currency_conflict_message(log_name, &declared));
+    }
+    Ok(distinct
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "USDT".to_string()))
+}
+
+/// 该账户身份上每个启用写入方各自会用的记账币种，按 worker id 排序。
+fn account_log_currency_declarations(
+    config: &RuntimeConfig,
+    log_name: &str,
+) -> Vec<(String, String)> {
     config
         .workers
         .iter()
         .filter(|worker| owns_account_event_log(worker))
         .filter_map(|worker| {
-            Some((
-                account_event_log_name(worker.account_id.as_deref()?, worker.venue_id.as_deref()?)?,
-                worker,
-            ))
+            let name =
+                account_event_log_name(worker.account_id.as_deref()?, worker.venue_id.as_deref()?)?;
+            (name == log_name).then(|| (worker.id.clone(), worker_settlement_currency(worker)))
         })
-        .find(|(candidate, _)| candidate == log_name)
-        .map_or_else(
-            || "USDT".to_string(),
-            |(_, worker)| worker_settlement_currency(worker),
-        )
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// 冲突文案点名双方 worker 和各自币种：只报"币种不一致"无法定位该改哪一段配置。
+fn account_log_currency_conflict_message(log_name: &str, declared: &[(String, String)]) -> String {
+    let parties = declared
+        .iter()
+        .map(|(worker_id, currency)| format!("{worker_id}={currency}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "FAIL_CLOSED: 账户日志 {log_name} 的写入方声明了不一致的 settlement_currency（{parties}）；\
+         同一本账只能有一个记账口径，请统一后重启"
+    )
+}
+
+/// doctor 用：一次列全所有账户身份上的币种冲突，不在第一个错误处中断。
+pub(crate) fn account_log_settlement_conflicts(config: &RuntimeConfig) -> Vec<String> {
+    config
+        .workers
+        .iter()
+        .filter(|worker| owns_account_event_log(worker))
+        .filter_map(|worker| {
+            account_event_log_name(worker.account_id.as_deref()?, worker.venue_id.as_deref()?)
+        })
+        .collect::<BTreeSet<_>>()
+        .iter()
+        .filter_map(|name| settlement_currency_for_log(config, name).err())
+        .collect()
+}
+
+/// doctor 的账户日志记账口径检查。
+///
+/// 币种冲突不会让任何一段代码报错：写入方各自按 `worker_settlement_currency` 落现金腿，
+/// 读取方按日志身份反查，两边各自"自洽"地读写半本账，事后对账也看不出问题。配置能加载
+/// 却没人校验，所以 doctor 在这里拦一次。
+pub(crate) fn check_account_log_settlement(
+    config: &RuntimeConfig,
+    checks: &mut Vec<serde_json::Value>,
+    failures: &mut Vec<String>,
+) {
+    let conflicts = account_log_settlement_conflicts(config);
+    checks.push(serde_json::json!({
+        "name": "account_log_settlement",
+        "status": if conflicts.is_empty() { "pass" } else { "fail" },
+        "message": if conflicts.is_empty() {
+            "账户事实日志的启用写入方共用同一记账币种".to_string()
+        } else {
+            conflicts.join("；")
+        }
+    }));
+    failures.extend(conflicts);
 }
 
 /// Paper 账户可用保证金的估值口径，必须和 `RiskContext` 里的 `initial_margin` 同一把尺子：

@@ -6,9 +6,6 @@
 
 use super::*;
 
-/// paper 拓扑里 `main` 账户在虚拟执行域下的账户级日志名。
-const PAPER_ACCOUNT_LOG: &str = "paper-main-paper-events";
-
 /// 纸面拓扑 + `paper-execution` 声明 USDC 结算。故意用小写：账簿键必须归一化，
 /// 否则 `"usdc"` 与 `"USDC"` 会分裂成两本账。
 fn usdc_paper_runtime(data_dir: &Path) -> RuntimeConfig {
@@ -40,7 +37,7 @@ fn usdc_paper_runtime(data_dir: &Path) -> RuntimeConfig {
 
 /// 往账户级日志播种一笔 USDC 现金，作为读模型唯一的账户事实。
 fn seed_usdc_account_cash(data_dir: &Path, amount: i64) {
-    let mut pipeline = LiveEventPipeline::open(data_dir, PAPER_ACCOUNT_LOG, "USDC").unwrap();
+    let mut pipeline = LiveEventPipeline::open(data_dir, paper_account_log(), "USDC").unwrap();
     pipeline
         .ingest(RuntimeEventEnvelope::venue(
             RuntimeExternalEvent::AccountCashflow {
@@ -73,7 +70,7 @@ fn paper_execution_worker_books_fills_in_the_worker_settlement_currency() {
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     // fail-closed 语义要求撮合行情来自同一账户日志的行情事实。
     {
-        let mut pipeline = LiveEventPipeline::open(&data_dir, PAPER_ACCOUNT_LOG, "USDC").unwrap();
+        let mut pipeline = LiveEventPipeline::open(&data_dir, paper_account_log(), "USDC").unwrap();
         let ts = runtime_timestamp_ms();
         pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
@@ -106,7 +103,7 @@ fn paper_execution_worker_books_fills_in_the_worker_settlement_currency() {
 
     run_paper_execution_worker(&config_path, "paper-execution", true).unwrap();
 
-    let pipeline = LiveEventPipeline::open(&data_dir, PAPER_ACCOUNT_LOG, "USDC").unwrap();
+    let pipeline = LiveEventPipeline::open(&data_dir, paper_account_log(), "USDC").unwrap();
     assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
     let ledger = pipeline.ledger();
     let tagged: Vec<(String, String)> = ledger
@@ -188,14 +185,97 @@ fn api_projection_bridge_sources_use_the_worker_settlement_currency() {
     std::fs::create_dir_all(&data_dir).unwrap();
     let config = usdc_paper_runtime(&data_dir);
 
-    let sources = configured_account_event_logs(&config);
+    let sources = configured_account_event_logs(&config).unwrap();
     let source = sources
         .iter()
-        .find(|(_, _, log_name, _)| log_name == PAPER_ACCOUNT_LOG)
+        .find(|(_, _, log_name, _)| log_name == &paper_account_log())
         .expect("paper 拓扑必须暴露账户级投影源");
     assert_eq!(
         source.3, "USDC",
         "投影源不能替账户挑一本默认账簿（禁用的 spread-recovery 声明不得覆盖）"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 让 `paper-spread-recovery` 成为 `(main, paper)` 身份的第二个启用写入方。
+/// 它与 `paper-execution` 写同一本账户日志，所以两者的结算币种声明必须一致。
+fn add_second_account_log_writer(config: &mut RuntimeConfig, currency: &str) {
+    let worker = config
+        .workers
+        .iter_mut()
+        .find(|worker| worker.id == "paper-spread-recovery")
+        .expect("paper 拓扑缺少 paper-spread-recovery worker");
+    worker.enabled = true;
+    worker.settlement_currency = Some(currency.into());
+}
+
+/// 同一本账户日志的两个写入方声明了不同币种：读取侧不能按配置顺序猜一本。
+#[test]
+fn conflicting_settlement_declarations_on_one_account_log_fail_closed() {
+    let root = temp_cli_case_dir("currency-caliper-conflict");
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let mut config = usdc_paper_runtime(&data_dir);
+    add_second_account_log_writer(&mut config, "USDT");
+    let log_name = paper_account_log();
+
+    let error = match settlement_currency_for_log(&config, &log_name) {
+        Ok(currency) => panic!("写入方币种冲突不能静默取第一个声明者，实际读出 {currency}"),
+        Err(error) => error,
+    };
+    for token in ["paper-execution", "paper-spread-recovery", "USDC", "USDT"] {
+        assert!(
+            error.contains(token),
+            "冲突必须点名双方 worker 和各自的币种，缺 {token}: {error}"
+        );
+    }
+    assert!(
+        configured_account_event_logs(&config).err().is_some(),
+        "投影源不得带着猜测出来的账簿口径启动"
+    );
+    assert!(
+        open_account_pipeline(&config, &data_dir, &log_name)
+            .err()
+            .is_some(),
+        "读模型打开账户日志必须失败，而不是读到半本账"
+    );
+
+    let config_path = root.join("runtime.json");
+    std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
+    let report = collect_doctor_report(&config_path).unwrap();
+    let failures = report["failures"].as_array().unwrap();
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.as_str().is_some_and(|message| {
+                message.contains("paper-execution") && message.contains("paper-spread-recovery")
+            })),
+        "doctor 必须把币种冲突报成配置错误: {failures:?}"
+    );
+    assert_eq!(report["ok"], serde_json::json!(false));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 口径一致时不得误报：两个写入方都声明 USDC（大小写不同）仍然是一本账。
+#[test]
+fn agreeing_settlement_declarations_on_one_account_log_are_accepted() {
+    let root = temp_cli_case_dir("currency-caliper-agree");
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let mut config = usdc_paper_runtime(&data_dir);
+    add_second_account_log_writer(&mut config, "usdc");
+
+    assert_eq!(
+        settlement_currency_for_log(&config, &paper_account_log()).unwrap(),
+        "USDC"
+    );
+    assert_eq!(
+        configured_account_event_logs(&config)
+            .unwrap()
+            .iter()
+            .filter(|(_, _, log_name, _)| log_name == &paper_account_log())
+            .count(),
+        1
     );
     let _ = std::fs::remove_dir_all(root);
 }

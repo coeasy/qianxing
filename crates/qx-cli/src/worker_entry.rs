@@ -104,7 +104,7 @@ pub(crate) fn run_binance_spread_recovery_worker(
         if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
             let mut pipeline = pipeline_storage
                 .open(
-                    binance_event_log_name(&worker),
+                    binance_event_log_name(&worker)?,
                     worker_settlement_currency(&worker),
                 )
                 .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
@@ -458,7 +458,7 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
         if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
             let mut pipeline = pipeline_storage
                 .open(
-                    ccxt_event_log_name(&worker),
+                    required_account_event_log(&worker)?,
                     worker_settlement_currency(&worker),
                 )
                 .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;

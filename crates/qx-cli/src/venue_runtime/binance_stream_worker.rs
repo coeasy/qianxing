@@ -17,7 +17,7 @@ pub(crate) fn run_binance_market_worker(
     let (host, port) = configured_ws_endpoint(&worker)?;
     let mut pipeline = pipeline_storage
         .open(
-            binance_event_log_name(&worker),
+            binance_event_log_name(&worker)?,
             worker_settlement_currency(&worker),
         )
         .map_err(|error| format!("创建行情事件管线失败: {error}"))?;
@@ -88,7 +88,7 @@ pub(crate) fn run_binance_user_worker(
     let mut venue = new_binance_venue(&worker, initial_auth)?;
     let mut pipeline = pipeline_storage
         .open(
-            binance_event_log_name(&worker),
+            binance_event_log_name(&worker)?,
             worker_settlement_currency(&worker),
         )
         .map_err(|error| format!("创建用户流事件管线失败: {error}"))?;

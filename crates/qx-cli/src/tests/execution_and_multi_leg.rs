@@ -350,7 +350,7 @@ fn paper_hedge_recovery_replays_partial_fill_to_hedged() {
     let mut group_store = FileSpreadOrderGroupStore::new(root.join("spread-groups")).unwrap();
     group_store.save(&group).unwrap();
 
-    let mut pipeline = LiveEventPipeline::open(&root, "paper-events", "USDT").unwrap();
+    let mut pipeline = LiveEventPipeline::open(&root, paper_account_log(), "USDT").unwrap();
     pipeline
         .ingest(RuntimeEventEnvelope::venue(
             RuntimeExternalEvent::AccountCashflow {

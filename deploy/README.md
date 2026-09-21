@@ -62,6 +62,12 @@ cargo run --release -p qx-cli -- paper-check deploy/qianxing.runtime.paper-strat
 它不会连接交易所或发送订单。`config explain --json` 输出经过校验的有效配置，只有凭据引用名称/路径，
 不会读取或打印 key、secret 内容。
 
+账户事实另有两条口径检查：同一 `(account, venue)` 身份上的启用写入方（user-stream / execution /
+spread-recovery / reconciler）若声明了不同的 `settlement_currency`，判为配置错误
+（`account_log_settlement: fail`）——成交扣减和风控读取会各记各的账簿，且币种随事实永久落盘；
+`storage.data_dir` 里没有任何身份引用的 `*-events` 账本只告警点名（`event_logs.orphan: warn`），
+账户日志名按 `(account_id, venue_id)` 派生，切换是硬切的，旧账本不自动改名也不自动删除，归档与否由运维决定。
+
 `init` 会将运行时配置所需的调度样例、BarFrame、DatasetBundle、品种规格和 Paper 目标复制到同一目录，
 避免“配置本身合法但引用样例文件不存在”。`--strategy macd` 可直接生成绑定内置策略的本地回测项目。
 
@@ -431,15 +437,22 @@ cargo run --release -p qx-cli -- reconcile `
 
 ## SubmitOrder 执行入口
 
-先用完全本地的 Paper 闭环验收控制面、队列、订单事实和账簿归约：
+先用完全本地的 Paper 闭环验收控制面、队列、订单事实和账簿归约。`paper-submit-order` 归约的是账户事件
+日志 `paper-<account>-<venue>-events.json` 里**已有**的行情事实，它自己不造行情，所以先跑 `paper-e2e`
+注入行情：
 
 ```powershell
+cargo run --release -p qx-cli -- paper-e2e `
+  deploy/qianxing.runtime.paper-strategy.example.json
+
 cargo run --release -p qx-cli -- paper-submit-order `
-  deploy/qianxing.runtime.example.json `
+  deploy/qianxing.runtime.paper-strategy.example.json `
   deploy/qianxing.paper-submit-order.example.json
 ```
 
-该命令输出 `PAPER_EXECUTED`，并验证 Accepted、Fill、LedgerApplied、控制命令终态和队列确认；它不连接任何网络。
+后者输出 `PAPER_EXECUTED`，并验证 Accepted、Fill、LedgerApplied、控制命令终态和队列确认；它不连接任何网络。
+在空数据目录上跳过 `paper-e2e` 直接执行，会把初始资金按账户身份落盘后以
+`FAIL_CLOSED: Paper SubmitOrder 缺少 <instrument> 的最新行情事实` 退出、不下单。
 
 订单提交必须先经过 `ControlCommand(kind=SubmitOrder)` 审计；命令的 `payload.order_json` 只允许包含订单，不允许携带凭证。示例默认 `dry_run: true`，只验证权限、账户、Venue 和订单形状，不建立网络连接：
 

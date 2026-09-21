@@ -35,7 +35,7 @@ fn paper_submit_order_books_in_the_worker_settlement_currency() {
     std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
     // fail-closed 语义要求撮合行情来自 EventLog 行情事实。
     {
-        let mut pipeline = LiveEventPipeline::open(&data_dir, "paper-events", "USDC").unwrap();
+        let mut pipeline = LiveEventPipeline::open(&data_dir, paper_account_log(), "USDC").unwrap();
         let market_ts = runtime_timestamp_ms();
         pipeline
             .ingest(RuntimeEventEnvelope::market_quote(
@@ -75,7 +75,7 @@ fn paper_submit_order_books_in_the_worker_settlement_currency() {
     std::fs::write(&command_path, serde_json::to_string(&command).unwrap()).unwrap();
     run_paper_submit_order(&config_path, &command_path).unwrap();
 
-    let pipeline = LiveEventPipeline::open(&data_dir, "paper-events", "USDC").unwrap();
+    let pipeline = LiveEventPipeline::open(&data_dir, paper_account_log(), "USDC").unwrap();
     assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
     let ledger = pipeline.ledger();
     let settled = ledger.cash_for("main", "USDC");

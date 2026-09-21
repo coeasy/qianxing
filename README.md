@@ -54,7 +54,7 @@
 | `cpp/` | C++ Strategy API v1 稳定 C ABI、CMake 示例 |
 | `qx-cli` | 单一 CLI binary：命令分派、worker 装配、回测与运维命令，外加进程内确定性自校验 |
 
-`qx-cli` 是单个 binary（决策：不为拆进程而拆 crate），内部按职责分文件：命令语法与命令表只有一份，在 `cli_args.rs` 由 clap 派生（V10 P2b，旧手写字符串解析已整体删除、不留双轨），`cli.rs` 保留对 `Command` 的一次显式 `match`，未识别的命令或未知参数打印 `未知命令或未知参数: <x>` 并以退出码 2 fail closed，`tools/check_architecture.py` 校验「clap 命令表 ≡ `cli.rs` 分支集合 ≡ help 印出的入口」；`worker_entry.rs` 用一张 `VENUE_ROLES` 角色白名单加 `VenueEntry` 登记表同时服务 `ccxt-worker` 与 `binance-worker`，新增角色只需在这张表登记一次；跨语言子进程的 Python 解释器统一由 `QX_PYTHON` 解析（缺省 `python`）。
+`qx-cli` 是单个 binary（决策：不为拆进程而拆 crate），内部按职责分文件：命令语法与命令表只有一份，在 `cli_args.rs` 由 clap 派生（V10 P2b，旧手写字符串解析已整体删除、不留双轨），`cli.rs` 保留对 `Command` 的一次显式 `match`，未识别的命令或未知参数打印 `未知命令或未知参数: <x>` 并以退出码 2 fail closed，`tools/check_architecture.py` 校验「clap 命令表 ≡ `cli.rs` 分支集合 ≡ help 印出的入口」；`worker_entry.rs` 用类型系统里的 `WorkerRole::is_venue_role()` 加一张 `VenueEntry` 登记表同时服务 `ccxt-worker` 与 `binance-worker`，新增角色只需在登记表上补一条 Venue 绑定判定；跨语言子进程的 Python 解释器统一由 `QX_PYTHON` 解析（缺省 `python`）。
 
 ## 快速开始
 
@@ -138,7 +138,7 @@ cargo run -p qx-cli --release -- binance-worker deploy/qianxing.runtime.example.
 # 通过审计后的 SubmitOrder 命令执行（示例默认为 dry_run）
 cargo run -p qx-cli --release -- binance-submit-order deploy/qianxing.runtime.production.example.json binance-user-main deploy/qianxing.submit-order.example.json
 # 本地 Paper 控制面→队列→成交→Ledger 闭环（不连接网络）
-cargo run -p qx-cli --release -- paper-submit-order deploy/qianxing.runtime.example.json deploy/qianxing.paper-submit-order.example.json
+cargo run -p qx-cli --release -- paper-submit-order deploy/qianxing.runtime.paper-strategy.example.json deploy/qianxing.paper-submit-order.example.json
 ```
 
 ### 外部链路验收（缺凭据即 fail closed）

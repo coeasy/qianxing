@@ -819,15 +819,7 @@ pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, St
     }
 
     for worker in config.workers.iter().filter(|worker| {
-        worker.enabled
-            && matches!(
-                worker.role,
-                WorkerRole::UserStream
-                    | WorkerRole::Execution
-                    | WorkerRole::SpreadRecovery
-                    | WorkerRole::Reconciler
-            )
-            && worker.endpoint.is_some()
+        writes_account_ledger(worker)
             && worker
                 .endpoint
                 .as_deref()
@@ -869,6 +861,8 @@ pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, St
         &mut warnings,
         &mut failures,
     );
+    check_account_log_settlement(&config, &mut checks, &mut failures);
+    check_orphan_event_logs(path, &config, &mut checks, &mut warnings);
 
     match RuntimeSupervisor::new(config.clone()) {
         Ok(supervisor) => {

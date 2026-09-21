@@ -23,7 +23,7 @@ fn api_snapshot_is_rebuilt_from_persisted_account_eventlog() {
     let order = mk_order(9401, &instrument, Side::Buy, 1);
     let mut pipeline = LiveEventPipeline::open_configured(
         &root,
-        "paper-main-paper-events",
+        paper_account_log(),
         "USDT",
         config.storage.event_log_segment_events,
     )
@@ -100,10 +100,10 @@ fn paper_strategy_reads_filled_position_before_emitting_next_order() {
     .unwrap()
     .unwrap();
     let command = strategy_submit_command("strategy-paper", &order, false, None).unwrap();
-    let log_name = "paper-main-paper-events";
+    let log_name = paper_account_log();
     let mut pipeline = LiveEventPipeline::open_configured(
         &data_dir,
-        log_name,
+        &log_name,
         "USDT",
         config.storage.event_log_segment_events,
     )
@@ -190,8 +190,8 @@ fn paper_worker_cleans_stale_queue_after_terminal_commit() {
         .unwrap();
     queue.enqueue(command.clone(), 10).unwrap();
 
-    let log_name = "paper-main-paper-events";
-    let mut pipeline = LiveEventPipeline::open(&data_dir, log_name, "USDT").unwrap();
+    let log_name = paper_account_log();
+    let mut pipeline = LiveEventPipeline::open(&data_dir, &log_name, "USDT").unwrap();
     execute_paper_submit_effect(
         &command,
         &mut pipeline,
@@ -212,7 +212,7 @@ fn paper_worker_cleans_stale_queue_after_terminal_commit() {
 
     run_paper_execution_worker(&config_path, "paper-execution", true).unwrap();
     assert!(queue.pending().unwrap().is_empty());
-    let restored = LiveEventPipeline::open(&data_dir, log_name, "USDT").unwrap();
+    let restored = LiveEventPipeline::open(&data_dir, &log_name, "USDT").unwrap();
     assert_eq!(restored.orders()[0].status, OrderStatus::Filled);
     assert_eq!(restored.ledger().entries().len(), 3);
     let _ = std::fs::remove_dir_all(root);
@@ -267,7 +267,7 @@ fn paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger() {
 
     run_paper_pipeline_once(&config_path).unwrap();
     run_paper_pipeline_once(&config_path).unwrap();
-    let pipeline = LiveEventPipeline::open(&data_dir, "paper-main-paper-events", "USDT").unwrap();
+    let pipeline = LiveEventPipeline::open(&data_dir, paper_account_log(), "USDT").unwrap();
     assert_eq!(pipeline.orders().len(), 1);
     assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
     assert_eq!(pipeline.ledger().entries().len(), 3);
@@ -330,15 +330,12 @@ fn paper_e2e_with_sqlite_backend_replays_from_transactional_eventlog() {
 
     run_paper_pipeline_once(&config_path).unwrap();
     let db = root.join("qx-runtime.sqlite");
-    let pipeline = LiveEventPipeline::open_sqlite(&db, "paper-main-paper-events", "USDT").unwrap();
+    let pipeline = LiveEventPipeline::open_sqlite(&db, paper_account_log(), "USDT").unwrap();
     assert_eq!(pipeline.orders().len(), 1);
     assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
     assert!(!pipeline.ledger().entries().is_empty());
     // 事实必须真实进入 SQLite 表，而不是退化为文件目录。
-    assert!(!data_dir
-        .join("events")
-        .join("paper-main-paper-events")
-        .exists());
+    assert!(!data_dir.join("events").join(paper_account_log()).exists());
     let _ = std::fs::remove_dir_all(root);
 }
 

@@ -24,7 +24,7 @@ pub(crate) fn build_configured_api_service(
         .into_iter()
         .map(|report| (report.worker_id.clone(), report))
         .collect();
-    for (account_id, venue_id, log_name, currency) in configured_account_event_logs(config) {
+    for (account_id, venue_id, log_name, currency) in configured_account_event_logs(config)? {
         let root = Path::new(&config.storage.data_dir);
         if event_log_exists(config, root, &log_name)? {
             let pipeline = open_runtime_pipeline(config, root, log_name, currency)

@@ -46,7 +46,7 @@ fn paper_margin_budget_values_derivative_positions_without_their_notional() {
     );
     let order = mk_order(9501, &instrument, Side::Buy, 1);
 
-    let mut pipeline = LiveEventPipeline::open(&root, "paper-events", "USDT").unwrap();
+    let mut pipeline = LiveEventPipeline::open(&root, paper_account_log(), "USDT").unwrap();
     pipeline
         .ingest(RuntimeEventEnvelope::venue(
             RuntimeExternalEvent::AccountCashflow {
