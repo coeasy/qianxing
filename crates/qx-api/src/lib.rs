@@ -1456,8 +1456,8 @@ impl ApiService {
                 let body = serde_json::json!({
                     "cash_raw": snapshot.as_ref().map(|snapshot| &snapshot.cash_raw).cloned().unwrap_or_default(),
                     "equity_raw": snapshot.as_ref().map(|snapshot| snapshot.equity_raw),
-                    "available_raw": snapshot.as_ref().map(|snapshot| snapshot.available_raw),
-                    "margin_raw": snapshot.as_ref().map(|snapshot| snapshot.margin_raw),
+                    "available_raw": snapshot.as_ref().and_then(|snapshot| snapshot.available_raw),
+                    "margin_raw": snapshot.as_ref().and_then(|snapshot| snapshot.margin_raw),
                 });
                 ApiResponse::json(200, body.to_string())
             }
@@ -2503,6 +2503,29 @@ mod tests {
         let metrics = service.handle("GET", "/metrics", "", 1);
         assert_eq!(metrics.status, 200);
         assert!(metrics.body.contains("qx_worker_up{worker=\"relay\"} 1"));
+    }
+
+    /// 端点侧的"未算 ≠ 零"（V11 Q67）：同一份快照在 `/account/balances` 上必须把算出来
+    /// 正好是零的钱印成 0、把这一层没算过的钱印成 null。两者印成同一个数时，读侧分不清
+    /// "这个账户没有保证金"和"根本没人替它算过保证金"。
+    #[test]
+    fn balances_endpoint_publishes_absent_money_as_null_not_zero() {
+        let mut state = ApiState::default();
+        let mut snapshot = AccountSnapshot::new(1, "main", "default", "paper", 10);
+        snapshot.equity_raw = 500;
+        snapshot.available_raw = Some(0);
+        state.publish_snapshot(snapshot).unwrap();
+        let body = ApiService::new(state)
+            .handle("GET", "/account/balances", "", 1)
+            .body;
+        assert!(
+            body.contains("\"equity_raw\":500") && body.contains("\"available_raw\":0"),
+            "算得出的两个量按实况印: {body}"
+        );
+        assert!(
+            body.contains("\"margin_raw\":null"),
+            "没算过的保证金必须印 null，而不是一个合法的 0: {body}"
+        );
     }
 
     #[test]

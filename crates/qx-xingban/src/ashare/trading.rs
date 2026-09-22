@@ -25,13 +25,29 @@ impl AshareRuleConfig {
         ts.saturating_add(SHANGHAI_OFFSET_MS) / DAY_MS
     }
 
+    /// 涨跌停的锚：**上一交易日**的收盘价，不是上一根 Bar 的收盘价。
+    ///
+    /// 日线数据上两者重合，分钟线上"上一根 5 分钟的收价"与昨收差着一整个交易日 —— 拿它当锚
+    /// 会把 ±10% 的板窄化成"最近 5 分钟 ±10%"，于是涨停封死的分钟线照样成交、跌停封死的照样卖。
+    /// 因此这里向前找到第一根跨日的 Bar：行情按时间升序进来时，它就是上一交易日的最后一根。
+    ///
+    /// 找不到（该标的第一个交易日）时返回 `None`，`blocks_fill` 因此不判板 —— 宁可不判，也不能
+    /// 拿当天的价格当昨收，那会把板算成 ±0%。
+    ///
+    /// `previous_close_raw` 按当前 Bar 的 ts 覆盖这一推导：除权除息日的昨收要用调整后价格，
+    /// 而分红/送股明细不在 Bar 里，只能由数据侧显式给 —— 仓库内不产生该映射（deploy 的
+    /// 规则样例里它就是空的），所以缺它时这里给的是**不复权**的原始昨收。
     pub fn previous_close(&self, bars: &[Bar], index: usize) -> Option<i128> {
-        let ts = bars.get(index)?.ts;
-        self.previous_close_raw.get(&ts).copied().or_else(|| {
-            index
-                .checked_sub(1)
-                .and_then(|previous| bars.get(previous).map(|bar| bar.close))
-        })
+        let current = bars.get(index)?;
+        if let Some(close) = self.previous_close_raw.get(&current.ts).copied() {
+            return Some(close);
+        }
+        let day = Self::day_key(current.ts);
+        bars[..index]
+            .iter()
+            .rev()
+            .find(|bar| Self::day_key(bar.ts) != day)
+            .map(|bar| bar.close)
     }
 
     pub fn limits(&self, previous_close: i128) -> (i128, i128) {

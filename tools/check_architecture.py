@@ -31,6 +31,23 @@
   14. 回测编排 `crates/qx-cli/src/backtests/` 已是目录模块（Phase 4s）：原 1,379 行单文件不得复活、
       六个主题模块逐个在门槛内、在 `mod.rs` 成对挂载、共享装配的顶层条目数不增、八条回测链入口
       的定义点唯一。第 6 项的"装配只有一份"因此改为按目录聚合读取。
+  15. 产品规格（market spec）JSON 的读法只有一处（`market_spec.rs`，V11 Q54）：回测链与 worker
+      都必须调用同一个 loader，生产代码不得在别处反序列化或构造 `TradingInstrumentSpec`，
+      三项定点精度（价格一档 / 数量步长 / 最小下单量）不得从缺失字段兜底出来。
+  16. "哪些内置策略是双腿套利"这一条事实的两处表述（内核谓词 `needs_reference_leg` 与 CLI
+      准入名单 `MULTI_LEG_KINDS`）必须逐项相等：改一边不改另一边会让某个入口悄悄放行。
+  17. `--config` 的 A 股段在回测侧只有一份读法（`backtests/ashare_binding.rs`，V11 Q61）：两条
+      Bar 回测链都通过它绑定规则与自带费率，承不了 A 股交易制度的深度档链与多腿链必须显式拒绝，
+      且这四条处理方式都有命令行用例咬住结果差异。
+  18. 回测产物必须声明"跑的是哪一份输入"，而且这句话得能被重算（V11 Q66 / Q1b）：输入身份只在
+      `backtests/artifacts.rs` 一处读、一处写，落盘的摘要带 `input` 块（schema v3），`qx report`
+      按声明路径走**同一个读点**重算并逐格比对，对不上或读不到就拒绝出报告；RunManifest 的
+      `data_fingerprint` 回落用的是被注册表复核过的数据集指纹，不是引擎对自己切片的自哈希。
+  19. "没算过的钱"在协议上必须说不清，而不是印成一个合法的 0（V11 Q67 账户级标量 / Q68 持仓行
+      与实盘回报）：内核观察、线格式行、事件摘要、稳定 JSON 四条路径各自都只有一处表达缺席，
+      且摘要与哈希带存在性标记；读模型自拼的持仓行承认算不出这两个钱字段；CCXT 持仓回报缺
+      `side` 或带连接器的 `unknown` 占位时只能拒收——数量符号顺着权益、保证金、风控一路算下去，
+      猜不得。
 
 运行： python3 tools/check_architecture.py
 刷新第 8 项的预算快照（改动后人工确认 diff）：
@@ -365,7 +382,13 @@ def cli_help_surface_check() -> None:
 CLI_TESTS_DIR = "crates/qx-cli/src/tests"
 # 用例条数下限棘轮：Phase 4o 把单文件 `tests_main.rs` 拆成目录模块时是 59 条。
 # 拆分让"删几条用例来压行数"变成一条可行路径，因此行数只降不升的同时，用例数只能升。
-CLI_TEST_FLOOR = 59
+# V11 Q65 把口径抬到实测总数（与 V10 Q57 同一做法）：地板停在历史值就等于没有防守。
+# Q62 补上重放闸门用例后再抬一次（158 → 161）。Q63 给两条写来源的链各补一条用例（161 → 163）。
+# Q66 给"产物声明的输入能否重算"补六条（163 → 169，按磁盘 `^#[test]$` 实测总数）。
+# Q67 给账户快照的钱字段口径补四条（169 → 173；协议侧那条在 qx-protocol 集成用例里，不计本地板）。
+# Q68 把同一条纪律推到持仓行与 CCXT 回报入口：ccxt 侧三条 + 读模型行侧两条（173 → 178，
+# 按磁盘 `^#[test]$` 实测总数：src/tests 139 + crates/qx-cli/tests 39）。
+CLI_TEST_FLOOR = 178
 # 拆文件时最容易被复制进各个主题文件的共享夹具（风控上下文、隔离运行时目录）。
 CLI_TEST_FIXTURES = (
     "smoke_paper_risk_context",
@@ -376,7 +399,9 @@ CLI_TEST_FIXTURES = (
 # Phase 4r 用同一套形状约束收第二处：qx-execution 的 `src/tests.rs`（1,088 行）按
 # 职责拆成目录模块。元组把 Phase 4o 的四项检查参数化，而不是复制一遍。
 EXECUTION_TESTS_DIR = "crates/qx-execution/src/tests"
-EXECUTION_TEST_FLOOR = 13
+# V11 Q57 把该目录连同集成测试的用例总数（25）写回下限。注释此前声称"删一条就红"，
+# 但 14 这个数早已落后实际条目数，下限只是"粗粒度地板"：抬到实测总数才真能挡住静默删除。
+EXECUTION_TEST_FLOOR = 25
 EXECUTION_TEST_FIXTURES = (
     "PortState",
     "PortVenue",
@@ -471,6 +496,9 @@ CLI_P4P_MODULES = (
     "market_bridges",
     "path_resolution",
     "strategy_binding",
+    # V11 Q54 起 `init` 一族与产品规格读法也按同一形状拆出（纯搬家，语义不变）。
+    "init_project",
+    "market_spec",
 )
 # 两批搬家后 crate 根只剩 7 个顶层条目（分派薄壳）；写成上限而不是快照，防止职责又长回根文件。
 CLI_ROOT_ITEM_CEILING = 7
@@ -505,11 +533,47 @@ CLI_CHAIN_SYMBOLS = {
         "strategy_binding.rs",
         r"^(?:pub(?:\(crate\))? )?fn build_strategy_contract_input\(",
     ),
+    "run_init_with_profile": (
+        "init_project.rs",
+        r"^(?:pub(?:\(crate\))? )?fn run_init_with_profile\(",
+    ),
+    "run_strategy_init": (
+        "init_project.rs",
+        r"^(?:pub(?:\(crate\))? )?fn run_strategy_init\(",
+    ),
+    "repository_deploy_path": (
+        "init_project.rs",
+        r"^(?:pub(?:\(crate\))? )?fn repository_deploy_path\(",
+    ),
+    "market_spec_from_value": (
+        "market_spec.rs",
+        r"^(?:pub(?:\(crate\))? )?fn market_spec_from_value\(",
+    ),
+    "ccxt_market_to_spec": (
+        "market_spec.rs",
+        r"^(?:pub(?:\(crate\))? )?fn ccxt_market_to_spec\(",
+    ),
+    "ccxt_margin_rule_from_market": (
+        "market_spec.rs",
+        r"^(?:pub(?:\(crate\))? )?fn ccxt_margin_rule_from_market\(",
+    ),
 }
 ROOT_ITEM = re.compile(
     r"^(?:pub(?:\([^)]*\))? )?(?:async )?(?:unsafe )?(?:extern )?"
     r"(?:fn|struct|enum|trait|impl|type|const|static|union)\b"
 )
+
+
+def mount_pair_present(text: str, name: str) -> bool:
+    """模块是否在挂载文件里 `mod` + `pub(crate) use x::*` 成对挂载（按整行判定）。
+
+    早先这里是子串包含判定，于是 `// pub(crate) use x::*;` 一行注释也算挂载通过 ——
+    拆出去的出口被注释掉、实现改回挂载点，门禁照样绿（V11 Q61 门禁轮变异实测）。
+    """
+    return bool(
+        re.search(rf"^\s*(?:pub(?:\([^)]*\))?\s+)?mod {name}\s*;$", text, re.MULTILINE)
+        and re.search(rf"^\s*pub\(crate\) use {name}::\*;$", text, re.MULTILINE)
+    )
 
 
 def cli_root_module_check() -> None:
@@ -535,9 +599,7 @@ def cli_root_module_check() -> None:
         f"越界 {oversized or '无'}",
     )
     unmounted = [
-        name
-        for name in CLI_P4P_MODULES
-        if f"mod {name};" not in root or f"pub(crate) use {name}::*;" not in root
+        name for name in CLI_P4P_MODULES if not mount_pair_present(root, name)
     ]
     check(
         not unmounted,
@@ -580,6 +642,7 @@ def cli_root_module_check() -> None:
 CLI_BACKTESTS_DIR = "qx-cli/src/backtests"
 CLI_BACKTESTS_MODULES = (
     "artifacts",
+    "ashare_binding",
     "depth",
     "fast_backtest",
     "fill_model",
@@ -594,13 +657,28 @@ CLI_BACKTESTS_MODULES = (
 CLI_BACKTESTS_MOUNT_CEILING = 8
 BACKTEST_ENTRY_OWNERS = {
     "run_multi_builtin_backtest": "multi_builtin.rs",
-    "run_ccxt_builtin_backtest": "multi_builtin.rs",
+    # V11 Q58 把 CCXT 入口搬到自己委派的那条链旁边：它取完 OHLCV 就调
+    # single_strategy.rs 的 run_builtin_backtest，与双腿归因链没有共用装配。
+    "run_ccxt_builtin_backtest": "single_strategy.rs",
     "run_strategy_backtest": "strategy_backtest.rs",
     "persist_backtest_artifacts": "artifacts.rs",
     "run_fast_backtest_manifest": "fast_backtest.rs",
     "run_single_strategy_backtest": "single_strategy.rs",
     "run_builtin_backtest": "single_strategy.rs",
     "run_depth_backtest": "depth.rs",
+    # V11 Q61：A 股段的读法只有一份，三条链对它的处理方式（绑定 / 拒绝）都由下面这三个
+    # 入口承担；复制一份加载逻辑就等于回到"两条链各自挑口径"。
+    "ashare_backtest_binding": "ashare_binding.rs",
+    "configured_ashare_binding": "ashare_binding.rs",
+    "reject_ashare_rules_config": "ashare_binding.rs",
+    # V11 Q66：输入身份的读点与写点各只有一处。声明与复核若各自解一遍 JSON，
+    # "跑的是哪份数据"就会有两个都能自圆其说的答案。
+    "read_bar_frame_for_backtest": "artifacts.rs",
+    "read_depth_frame_for_backtest": "artifacts.rs",
+    "barframe_dataset_identity": "artifacts.rs",
+    "barframe_input_provenance": "artifacts.rs",
+    "depth_frame_input_provenance": "artifacts.rs",
+    "recompute_declared_backtest_input": "artifacts.rs",
 }
 
 
@@ -625,9 +703,7 @@ def cli_backtest_module_check() -> None:
     )
     mount = (CRATES / CLI_BACKTESTS_DIR / "mod.rs").read_text(encoding="utf-8")
     unmounted = [
-        name
-        for name in CLI_BACKTESTS_MODULES
-        if f"mod {name};" not in mount or f"pub(crate) use {name}::*;" not in mount
+        name for name in CLI_BACKTESTS_MODULES if not mount_pair_present(mount, name)
     ]
     check(
         not unmounted,
@@ -964,6 +1040,658 @@ def ashare_pit_check() -> None:
     )
 
 
+# V11 Q60：涨跌停的锚。日线数据上"上一根 Bar"与"上一交易日"重合，缺陷因此不可见；
+# 分钟线一旦用它当锚，±10% 的板就窄化成"最近几分钟 ±10%"，封死的涨停线照样成交。
+ASHARE_TRADING_FILE = "crates/qx-xingban/src/ashare/trading.rs"
+ASHARE_LIMIT_TEST_FILE = "crates/qx-xingban/tests/ashare_limit_anchor.rs"
+ASHARE_RULE_TEST_FILE = "crates/qx-xingban/src/ashare/tests.rs"
+
+
+def ashare_limit_anchor_check() -> None:
+    """A 股涨跌停锚只有一个取法，且它锚的是**上一交易日收价**。
+
+    钉四件事：取锚点单一（引擎侧不得另抄一份"上一根 Bar"）；覆盖表先于推导（除权除息日
+    的昨收只能由数据侧给）；跨日扫描取的是上一时段的**最后一根**（`.rev()`）；以及
+    "同一根封板线在两种锚下结果不同"的行为用例在位 —— 缺了最后这条，前三条都只是文本。
+    """
+    trading = (ROOT / ASHARE_TRADING_FILE).read_text(encoding="utf-8")
+    start = trading.find("pub fn previous_close(")
+    anchor_body = trading[start : trading.find("pub fn limits(", start)]
+    engine = (CRATES / "qx-xingban/src/backtest.rs").read_text(encoding="utf-8")
+    definitions = len(re.findall(r"(?m)^    pub fn previous_close\(", trading))
+    calls = engine.count("rules.previous_close(")
+    check(
+        start > 0 and definitions == 1 and calls == 1,
+        "涨跌停的昨收锚只有一个定义点与一个引擎调用点",
+        f"定义 {definitions} 处、引擎调用 {calls} 处（各期望 1）",
+    )
+    check(
+        "previous_close_raw.get(&current.ts)" in anchor_body
+        and anchor_body.index("previous_close_raw.get(&current.ts)")
+        < anchor_body.index("bars[..index]")
+        and ".rev()" in anchor_body
+        and "Self::day_key(bar.ts) != day" in anchor_body,
+        "昨收锚按上一交易日推导（覆盖表优先、跨日后取该日最后一根）",
+        "previous_close 重新退回'上一根 Bar 的收价'或丢掉了覆盖表",
+    )
+    rules_text = (ROOT / ASHARE_RULES_FILE).read_text(encoding="utf-8")
+    doc = trading[:start]
+    check(
+        all(needle in doc for needle in ("不复权", "上一交易日"))
+        and "除权除息" in rules_text,
+        "锚的口径与'覆盖表才是除权除息出口'写进代码文档",
+        f"{ASHARE_TRADING_FILE} 或 {ASHARE_RULES_FILE} 的昨收说明被删",
+    )
+    limit_test = (ROOT / ASHARE_LIMIT_TEST_FILE).read_text(encoding="utf-8")
+    unit_test = (ROOT / ASHARE_RULE_TEST_FILE).read_text(encoding="utf-8")
+    check(
+        all(
+            case in text
+            for text, cases in (
+                (
+                    limit_test,
+                    (
+                        "fn a_sealed_intraday_limit_up_blocks_the_fill_when_anchored_to_the_session_close",
+                        "fn anchoring_to_the_previous_bar_would_fill_on_that_same_board",
+                        "report.fills.is_empty()",
+                    ),
+                ),
+                (
+                    unit_test,
+                    ("fn limit_band_anchors_to_the_previous_session_close_not_the_previous_bar",),
+                ),
+            )
+            for case in cases
+        ),
+        "同一根封板线在两种锚下结果不同，且有单元测试钉住锚本身",
+        f"{ASHARE_LIMIT_TEST_FILE} 或 {ASHARE_RULE_TEST_FILE} 不再咬住 Q60 口径",
+    )
+
+
+# V11 Q61：`--config` 的 A 股段在回测侧的读法，与钉住它的命令行行为用例。
+ASHARE_BINDING_FILE = "crates/qx-cli/src/backtests/ashare_binding.rs"
+ASHARE_BINDING_TEST_FILE = "crates/qx-cli/tests/ashare_builtin_backtest.rs"
+
+
+def ashare_backtest_binding_check() -> None:
+    """A 股段（规则快照 + 自带费率）在四条回测链上的处理方式只有一处定义。
+
+    钉四件事：JSON 加载与 `enabled` 判定只在 `ashare_binding.rs` 出现一次；两条 Bar 链各自
+    调用绑定入口（少一处就是"给了 --config 却不生效"）；深度档与多腿链各自调用拒绝入口且不
+    绑定（少一处就是收下配置再静默丢掉）；命令行行为用例逐条对着 stdout 断言结果真的变了。
+    """
+    backtests = CRATES / "qx-cli/src/backtests"
+    loader = (ROOT / ASHARE_BINDING_FILE).read_text(encoding="utf-8")
+    loads = {
+        path.relative_to(ROOT).as_posix(): count
+        for path in sorted(CRATES.glob("*/src/**/*.rs"))
+        if not ({"tests"} <= set(path.parts) or "test" in path.stem)
+        and (
+            count := len(
+                re.findall(
+                    r"AshareRuleConfig\s*=\s*serde_json::from_str",
+                    non_test_source(path.read_text(encoding="utf-8")),
+                )
+            )
+        )
+    }
+    check(
+        loads == {ASHARE_BINDING_FILE: 1},
+        "A 股规则快照的 JSON 读法全仓只有一处（新增读法即第二份口径）",
+        f"解析点 {loads or '无'}",
+    )
+    check(
+        loader.count("if !rules.enabled") == 1 and "ashare_rules_path 后 enabled 必须为 true" in loader,
+        "配了快照就必须启用，这条判定也只有一处",
+        "enabled 判定被删或多出第二份",
+    )
+    strategy_chain = (backtests / "single_strategy.rs").read_text(encoding="utf-8")
+    check(
+        strategy_chain.count("ashare_backtest_binding(") == 1
+        and strategy_chain.count("configured_ashare_binding(") == 1
+        # 两条 Bar 链都在同一份文件里：策略链读已解析的三元组，内置链只拿得到 `--config` 路径，
+        # 所以各自调用一个绑定入口。少任一处，那条链就重新变成"给了配置却不生效"。
+        and strategy_chain.count("virtual_trading.ashare_rules = Some(") == 2
+        # 费率模型必须跟着规则一起换：只装规则不换费用，等于 A 股的佣金/印花税/过户费
+        # 被 maker/taker 兜底冒充，而 stdout 上看不出任何异常。
+        and strategy_chain.count("binding.fee") == 2
+        and strategy_chain.count("assembly.fee = ") == 2
+        and "t_plus_one=" in strategy_chain,
+        "两条 Bar 回测链各自绑定 A 股规则与费率，并把它印进 stdout",
+        f"绑定调用 {strategy_chain.count('ashare_backtest_binding(')}/"
+        f"{strategy_chain.count('configured_ashare_binding(')} 处（各期望 1）、"
+        f"装配件 {strategy_chain.count('virtual_trading.ashare_rules = Some(')} 处（期望 2）、"
+        f"费率件 {strategy_chain.count('binding.fee')}/"
+        f"{strategy_chain.count('assembly.fee = ')} 处（各期望 2）",
+    )
+    for name, label in (("depth.rs", "backtest book"), ("multi_builtin.rs", "backtest multi-builtin")):
+        text = (backtests / name).read_text(encoding="utf-8")
+        check(
+            text.count("reject_ashare_rules_config(") == 1
+            and "ashare_rules = Some(" not in text
+            and f'"{label}"' in text,
+            f"{name} 承不了 A 股段，必须当场拒绝 {label}",
+            f"拒绝调用 {text.count('reject_ashare_rules_config(')} 处（期望 1）",
+        )
+    cases = (ROOT / ASHARE_BINDING_TEST_FILE).read_text(encoding="utf-8")
+    check(
+        all(
+            needle in cases
+            for needle in (
+                "fn builtin_entry_binds_the_declared_ashare_rules(",
+                "fn ashare_fee_model_replaces_the_builtin_cost_rates(",
+                "fn broken_ashare_sections_fail_closed_on_the_builtin_entry(",
+                "fn entries_without_ashare_hooks_reject_the_config(",
+                "fn strategy_chain_rejects_the_same_broken_pairing(",
+                '"整手"',
+                "source=ashare-rules:",
+            )
+        ),
+        "命令行子进程用例逐条咬住 Q61 口径（结果变化 + 两处拒绝）",
+        f"{ASHARE_BINDING_TEST_FILE} 不再覆盖 Q61",
+    )
+
+
+# V11 Q65：A 股段在 Paper/Live 提交侧的唯一闸门。回测链能执行制度，提交链不能 ——
+# 所以这里的正确形状是"配了就拒"，而拒绝必须早于任何副作用。
+ASHARE_SUBMIT_GUARD_FILE = "crates/qx-cli/src/runtime_wiring.rs"
+ASHARE_SUBMIT_GUARD_TEST_FILE = "crates/qx-cli/src/tests/ashare_submit_guard.rs"
+# 会提交订单的入口：两个 worker 入口 + 一个 Paper worker + 两个一次性提交入口。
+ASHARE_SUBMIT_CALL_SITES = {
+    "crates/qx-cli/src/worker_entry.rs": ("binance-worker", "ccxt-worker"),
+    "crates/qx-cli/src/venue_runtime/paper_worker.rs": ("paper-worker",),
+    "crates/qx-cli/src/venue_runtime/paper_submit.rs": ("paper-submit-order",),
+    "crates/qx-cli/src/venue_runtime/binance_submit.rs": ("binance-submit-order",),
+}
+
+
+def ashare_submit_guard_check() -> None:
+    """钉四件事：闸门只有一处定义、五个提交入口各问一次、问的顺序早于副作用、
+    不提交订单的角色不受影响（否则"研究用配置"连启动都做不到）。
+    """
+    wiring = (ROOT / ASHARE_SUBMIT_GUARD_FILE).read_text(encoding="utf-8")
+    check(
+        wiring.count("pub(crate) fn reject_ashare_rules_on_submit_path(") == 1
+        and wiring.count("fn worker_submits_orders(") == 1
+        and "WorkerRole::Execution | WorkerRole::SpreadRecovery" in wiring,
+        "提交侧的 A 股闸门只定义一处，且只管会提交新订单的角色",
+        "定义或角色判定不再唯一",
+    )
+    check(
+        wiring.count("reject_ashare_rules_config(") == 1
+        and "T+1" in wiring
+        and "strategy backtest" in (ROOT / ASHARE_BINDING_FILE).read_text(encoding="utf-8"),
+        "提交侧复用回测侧那一份拒绝文案，并点名缺的能力是 T+1 结算状态",
+        "文案出现第二处定义，或没有说明为什么接不上",
+    )
+    for path, labels in ASHARE_SUBMIT_CALL_SITES.items():
+        text = (ROOT / path).read_text(encoding="utf-8")
+        check(
+            text.count("reject_ashare_rules_on_submit_path(") == len(labels)
+            and all(f'"{label}"' in text for label in labels),
+            f"{path.split('/')[-1]} 每个提交入口都问过 A 股闸门（{'、'.join(labels)}）",
+            f"调用 {text.count('reject_ashare_rules_on_submit_path(')} 处（期望 {len(labels)}）",
+        )
+    venue = "".join(
+        (CRATES / "qx-cli/src/venue_runtime" / name).read_text(encoding="utf-8")
+        for name in sorted(
+            path.name for path in (CRATES / "qx-cli/src/venue_runtime").glob("*.rs")
+        )
+    )
+    check(
+        "ashare_backtest_binding(" not in venue
+        and "AshareRuleConfig" not in venue
+        and "AShareFeeModel" not in venue,
+        "提交侧不得自己装配 A 股规则或费率（半接半丢比不接更危险）",
+        "venue_runtime 里出现了 A 股装配点",
+    )
+    cases = (ROOT / ASHARE_SUBMIT_GUARD_TEST_FILE).read_text(encoding="utf-8")
+    check(
+        all(
+            f"fn {name}(" in cases
+            for name in (
+                "paper_submit_entry_refuses_the_ashare_section_before_touching_anything",
+                "paper_worker_entry_refuses_to_start_an_execution_worker_with_ashare_rules",
+                "binance_submit_entry_refuses_the_ashare_section_before_reading_the_command",
+                "ccxt_worker_entry_refuses_the_ashare_section_before_touching_the_ccxt_config",
+                "only_roles_that_submit_orders_meet_the_ashare_gate",
+            )
+        )
+        and "WorkerRole::Strategy" in cases
+        and "WorkerRole::MarketData" in cases,
+        "进程内用例逐条咬住 Q65 口径（五个入口的拒绝 + 不提交角色放行 + 副作用顺序）",
+        f"{ASHARE_SUBMIT_GUARD_TEST_FILE} 不再覆盖 Q65",
+    )
+    help_text = (ROOT / CLI_HELP_FILE).read_text(encoding="utf-8")
+    check(
+        help_text.count("strategy.ashare_rules_path") >= 3
+        and "  strategy-worker <runtime.json> <worker-id> [--once]" in help_text,
+        "帮助文本写明提交类入口会当场拒绝 A 股段，而策略 worker 不受影响",
+        "cli_help.rs 不再描述 Q65 的口径",
+    )
+
+
+# V11 Q64：`strategy.builtin_*` 四个信号参数在四条 Bar 回测链上的读点、生效与可见性。
+BUILTIN_SIGNAL_READER_FILE = "crates/qx-cli/src/strategy_binding.rs"
+BUILTIN_SIGNAL_STRATEGY_CHAIN_FILE = "crates/qx-cli/src/strategy_host.rs"
+BUILTIN_SIGNAL_TEST_FILE = "crates/qx-cli/tests/builtin_signal_from_config.rs"
+# 交易链路（paper/live）不经过回测链，用进程内用例钉同一个读点。
+BUILTIN_SIGNAL_WORKER_TEST_FILE = "crates/qx-cli/src/tests/strategy_worker_entries.rs"
+BUILTIN_SIGNAL_WRAPPER_FILE = "crates/qx-cli/src/backtests/single_strategy.rs"
+# 每条内置链都要问一次配置；少了这一处就退回到写死默认（Q64 的原缺陷形状）。
+BUILTIN_SIGNAL_CHAINS = {
+    "single_strategy.rs": "backtest builtin",
+    "depth.rs": "backtest book",
+    "multi_builtin.rs": "backtest multi-builtin",
+}
+
+
+def builtin_signal_check() -> None:
+    """信号参数只有一个赋值点，四条链各自问过它，并且都把生效口径印进 stdout。
+
+    钉五件事：四项覆盖的赋值语句全仓只出现一次；策略链与三条内置链各有一处读点调用；
+    覆盖之后必须重做参数体检（`BuiltinStrategyConfig::new` 只看得到写死默认）；四条链各印
+    一行 `[X · Signal]` 且判词由同一个函数生成；帮助文本点名这四个键；行为用例逐条咬住"换参数
+    就是换结果"。少了任何一项，`--config` 就又变成一句假话。
+    """
+    backtests = CRATES / "qx-cli/src/backtests"
+    reader = (ROOT / BUILTIN_SIGNAL_READER_FILE).read_text(encoding="utf-8")
+    strategy_chain = (ROOT / BUILTIN_SIGNAL_STRATEGY_CHAIN_FILE).read_text(encoding="utf-8")
+    assigns = {
+        path.relative_to(ROOT).as_posix(): count
+        for path in sorted(CRATES.glob("*/src/**/*.rs"))
+        if not ({"tests"} <= set(path.parts) or "test" in path.stem)
+        and (
+            count := len(
+                re.findall(
+                    r"config\.(?:fast_window|slow_window|period|threshold_bps) = ",
+                    non_test_source(path.read_text(encoding="utf-8")),
+                )
+            )
+        )
+    }
+    check(
+        assigns == {BUILTIN_SIGNAL_READER_FILE: 4},
+        "strategy.builtin_* 四项的覆盖赋值全仓只有一处（新增赋值点即第二份口径）",
+        f"赋值点 {assigns or '无'}",
+    )
+    check(
+        reader.count("pub(crate) fn apply_builtin_signal_overrides(") == 1
+        and strategy_chain.count("apply_builtin_signal_overrides(&mut config, strategy);") == 1,
+        "读点定义一处，且 `strategy backtest`/paper 那条链确实问过它",
+        f"定义 {reader.count('pub(crate) fn apply_builtin_signal_overrides(')} 处、"
+        f"策略链调用 {strategy_chain.count('apply_builtin_signal_overrides(&mut config, strategy);')} 处（各期望 1）",
+    )
+    wrapper = (ROOT / BUILTIN_SIGNAL_WRAPPER_FILE).read_text(encoding="utf-8")
+    check(
+        wrapper.count("pub(crate) fn apply_configured_builtin_signal(") == 1
+        and "= apply_configured_builtin_signal(" in wrapper,
+        "内置链侧的包装定义一处，且 `backtest builtin` 问过它",
+        f"定义 {wrapper.count('pub(crate) fn apply_configured_builtin_signal(')} 处",
+    )
+    for name, label in BUILTIN_SIGNAL_CHAINS.items():
+        text = (backtests / name).read_text(encoding="utf-8")
+        check(
+            text.count("= apply_configured_builtin_signal(") == 1,
+            f"{name} 必须读 `--config` 里的信号参数（{label}）",
+        "读点调用不再是 1 处，这条链会退回写死默认",
+        )
+    check(
+        strategy_chain.count("let mut config = BuiltinStrategyConfig {") == 1,
+        "策略链的内置配置只能由那一个构造点装配（否则第二处会绕过覆盖）",
+        f"构造点 {strategy_chain.count('let mut config = BuiltinStrategyConfig {')} 处（期望 1）",
+    )
+    check(
+        re.search(
+            r"fn apply_configured_builtin_signal\([^)]*\)[^{]*\{.*?"
+            r"apply_builtin_signal_overrides\(config, &strategy\);\s*\n\s*config\.validate\(\)(\?;|\.map_err\()",
+            wrapper,
+            re.S,
+        )
+        is not None,
+        "覆盖之后必须重做参数体检，非法信号组合整轮失败",
+        "包装里没有覆盖后紧跟 validate 的形状",
+    )
+    check(
+        re.search(
+            r"fn builtin_strategy_config_from_runtime\([^)]*\)[^{]*\{.*?config\.validate\(\)\?;\s*\n\s*Ok\(config\)",
+            strategy_chain,
+            re.S,
+        )
+        is not None,
+        "策略链那条链也要在覆盖之后复检，非法组合不许走到印口径",
+        "策略链的装配尾部没有 validate → Ok(config) 的形状",
+    )
+    printed = {
+        name: sum(text.count(marker) for marker in markers)
+        for name, markers in (
+            ("single_strategy.rs", ("[Builtin · Signal]", "[Strategy · Signal]")),
+            ("depth.rs", ("[Depth · Signal]",)),
+            ("multi_builtin.rs", ("[Multi · Signal]",)),
+        )
+        for text in [(backtests / name).read_text(encoding="utf-8")]
+    }
+    note_calls = sum(
+        (backtests / name).read_text(encoding="utf-8").count("builtin_signal_note(&")
+        for name in BUILTIN_SIGNAL_CHAINS
+    )
+    check(
+        printed == {"single_strategy.rs": 2, "depth.rs": 1, "multi_builtin.rs": 1}
+        and note_calls == 4,
+        "四条 Bar 链各印一行生效口径，且判词由共用的那句生成（builtin/strategy/book/multi）",
+        f"Signal 行 {printed}、共用判词调用 {note_calls} 处（期望 2/1/1 与 4）",
+    )
+    note_definitions = sum(
+        len(
+            re.findall(
+                r"fn builtin_signal_note\(",
+                non_test_source(path.read_text(encoding="utf-8")),
+            )
+        )
+        for path in sorted(CRATES.glob("*/src/**/*.rs"))
+        if not ({"tests"} <= set(path.parts) or "test" in path.stem)
+    )
+    check(
+        note_definitions == 1,
+        "生效口径的措辞全仓只定义一次（各链自己拼字符串就会各说一套）",
+        f"定义 {note_definitions} 处（期望 1）",
+    )
+    help_text = (ROOT / CLI_HELP_FILE).read_text(encoding="utf-8")
+    check(
+        all(
+            key in help_text
+            for key in (
+                "builtin_fast_window",
+                "builtin_slow_window",
+                "builtin_period",
+                "builtin_threshold_bps",
+            )
+        )
+        and "写了就必须生效" in help_text,
+        "帮助文本点名四个信号键并承诺写了就必须生效",
+        "cli_help.rs 不再描述 Q64 的读法",
+    )
+    check(
+        help_text.count("[Depth · Signal]") == 1 and help_text.count("[Multi · Signal]") == 1,
+        "深度档与多腿链的帮助都写明信号参数在本链生效",
+        "Q64 的两条链在帮助里仍是沉默的",
+    )
+    cases = (ROOT / BUILTIN_SIGNAL_TEST_FILE).read_text(encoding="utf-8")
+    check(
+        all(
+            f"fn {name}(" in cases
+            for name in (
+                "declared_windows_change_the_builtin_result",
+                "declared_period_and_threshold_each_move_the_result",
+                "illegal_declared_parameters_fail_closed",
+                "single_sided_override_is_rechecked_before_the_provenance_line",
+                "both_bar_chains_read_the_same_declared_signal",
+                "depth_chain_applies_the_declared_signal",
+                "multi_leg_chain_applies_the_declared_signal",
+            )
+        ),
+        "命令行子进程用例逐条咬住 Q64 口径（四条链 + 两类非法组合）",
+        f"{BUILTIN_SIGNAL_TEST_FILE} 不再覆盖 Q64",
+    )
+    worker_case = (ROOT / BUILTIN_SIGNAL_WORKER_TEST_FILE).read_text(encoding="utf-8")
+    check(
+        "fn builtin_worker_reads_the_declared_signal_parameters(" in worker_case
+        and "builtin_strategy_config_from_runtime" in worker_case,
+        "交易链路（paper/live）那侧也有一条进程内用例钉住同一份声明信号",
+        f"{BUILTIN_SIGNAL_WORKER_TEST_FILE} 不再覆盖 Q64",
+    )
+
+
+# V11 Q62：重放必须是"重新驱动一遍事实源"，而不是把同一段事件切片再哈希一次。
+REPLAY_KERNEL_FILE = "crates/qx-core/src/sourcing.rs"
+REPLAY_ENGINE_FILES = (
+    "crates/qx-xingban/src/backtest.rs",
+    "crates/qx-xingban/src/orderbook_backtest.rs",
+)
+REPLAY_ARTIFACT_FILE = "crates/qx-cli/src/backtests/artifacts.rs"
+REPLAY_CLI_TEST_FILE = "crates/qx-cli/src/tests/backtest_replay_gate.rs"
+# 报告出口必须把重放失败向上抛。写成 `.ok()` 吞掉等于闸门还在、返回值永远为真，
+# 光数调用次数看不出来，所以把传播形状本身钉成一条字符串。
+ENGINE_REPLAY_GATE_NEEDLE = "ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;"
+
+
+def function_body(text: str, name: str) -> str:
+    """取 `pub fn name(` 到其函数体结束（下一个四空格缩进的 `}`）的文本。
+
+    门禁要钉的是"这一步到底做没做"，把整份文件当字符串数次数会让相邻函数的调用混进来。
+    """
+    start = text.find(f"pub fn {name}(")
+    if start < 0:
+        return ""
+    rest = text[start:]
+    end = rest.find("\n    }")
+    return rest if end < 0 else rest[: end + len("\n    }")]
+
+
+def replay_kernel_check() -> None:
+    """重放内核唯一、三条判据齐、恒等口径不复活、两条引擎链与产物落盘点都问过它。
+
+    每一项各有独立取证面：内核定义唯一（改名/插第二份定义会红）、内核体三步齐
+    （摘掉 `log.validate()` 会红）、报告侧的条数比较还在（把它写成恒等式会红）、
+    `rebuild_from`/`"replay_hash"` 这类被证伪的口径不得复活、两条链的报告出口各问一次
+    且以 `?;` 向上抛（换成 `.ok();` 会红）、摘要落盘点问在写文件之前、摘要形状、
+    深度链的因果槽位、以及两侧用例的名字。
+    """
+    kernel = (ROOT / REPLAY_KERNEL_FILE).read_text(encoding="utf-8")
+    check(
+        kernel.count("pub fn replay(") == 1
+        and kernel.count("pub fn replay_facts(") == 1
+        and kernel.count("pub fn rebuild_ledger(") == 1
+        and kernel.count("pub fn verify(") == 1,
+        "重放只有一个内核函数，其余口径都是它的投影",
+        "内核函数不再各自唯一",
+    )
+    body = function_body(kernel, "replay")
+    check(
+        "log.append_checked(event.clone())" in body
+        and "ledger.apply_entry(entry.clone())" in body
+        and "log.validate()?" in body,
+        "重放内核三条都做：逐条重新接受事实、重新入账、整本再校验",
+        f"内核体缺少其中一步：{body[:160]}",
+    )
+    check(
+        "facts.ledger_entries != ledger.entries().len()"
+        in function_body(kernel, "verify"),
+        "报告侧留有一条真会失败的判据：重放账簿条数必须等于运行账簿条数",
+        "verify 不再比较两侧条数（退化成不可能失败的自校验）",
+    )
+    tautology = sum(
+        path.read_text(encoding="utf-8").count("rebuild_from(") for path in rust_sources()
+    ) + sum(
+        path.read_text(encoding="utf-8").count('"replay_hash":') for path in rust_sources()
+    ) + sum(
+        path.read_text(encoding="utf-8").count("fn replay_hash(") for path in rust_sources()
+    )
+    check(
+        tautology == 0,
+        "被证伪的恒等口径（rebuild_from / replay_hash）不得在任何 crate 复活",
+        f"命中 {tautology} 处"
+    )
+    for path in REPLAY_ENGINE_FILES:
+        production = (ROOT / path).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+        check(
+            production.count("ReplayVerifier::verify(") == 1
+            and ENGINE_REPLAY_GATE_NEEDLE in production,
+            f"{path.split('/')[-1]} 的报告出口先过重放校验才返回，失败向上抛而不是就地吞掉",
+            f"生产侧调用 {production.count('ReplayVerifier::verify(')} 处（期望 1），"
+            f"且需原样出现 {ENGINE_REPLAY_GATE_NEEDLE}",
+        )
+    artifact = (ROOT / REPLAY_ARTIFACT_FILE).read_text(encoding="utf-8")
+    gate_at = artifact.find("ReplayVerifier::verify(")
+    write_at = artifact.find("write_backtest_artifact(")
+    check(
+        artifact.count("ReplayVerifier::verify(") == 1 and 0 <= gate_at < write_at,
+        "摘要落盘前问过重放，且问在写任何工件之前",
+        f"verify@{gate_at} 首次写文件@{write_at}",
+    )
+    check(
+        '"schema_version": 3' in artifact
+        and '"log_digest"' in artifact
+        and '"ledger_entries"' in artifact
+        and '"run_ledger_entries"' in artifact,
+        "摘要把重放做过的三件事写成人各自可核对的字段",
+        "replay 结论块缺键或 schema 版本回退",
+    )
+    depth = (ROOT / REPLAY_ENGINE_FILES[1]).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    check(
+        depth.count("Priority::FEEDBACK") == 2
+        and depth.count("Priority::APPLY") == 0
+        and depth.count("Priority::TIMER") == 1,
+        "深度链把迟到成交回报排在同戳命令之前、初始入金排在观测起点（否则事实流不可重放）",
+        f"FEEDBACK={depth.count('Priority::FEEDBACK')} APPLY={depth.count('Priority::APPLY')} "
+        f"TIMER={depth.count('Priority::TIMER')}",
+    )
+    cli_cases = (ROOT / REPLAY_CLI_TEST_FILE).read_text(encoding="utf-8")
+    check(
+        all(
+            f"fn {name}(" in cli_cases
+            for name in (
+                "summary_publishes_the_replay_facts_it_actually_checked",
+                "artifacts_refuse_to_land_when_a_ledger_entry_has_no_fact_event",
+                "artifacts_refuse_to_land_when_the_fact_stream_is_not_canonically_ordered",
+            )
+        ),
+        "落盘侧三条用例钉住「该写的写了、两种坏事实源都拒落盘」",
+        f"{REPLAY_CLI_TEST_FILE} 不再覆盖 Q62",
+    )
+    bar_cases = (ROOT / REPLAY_ENGINE_FILES[0]).read_text(encoding="utf-8")
+    check(
+        bar_cases.count("assert_replay_matches(") == 3
+        and "assert_eq!(replayed.entries(), report.ledger.entries());" in bar_cases
+        and "ReplayVerifier::verify(report.event_log.events(), &unbacked)" in bar_cases,
+        "Bar 链逐条比对重放账簿，并留有一条「凭空多记」的反向证据",
+        "重放用例的形状变了（helper 定义/两处调用/反向证据）",
+    )
+
+
+# V11 Q66 / Q1b 第一批：产物声明的输入身份必须能被重算，且只有一处读、一处写。
+INPUT_PROV_ARTIFACT_FILE = "crates/qx-cli/src/backtests/artifacts.rs"
+INPUT_PROV_SINGLE_FILE = "crates/qx-cli/src/backtests/single_strategy.rs"
+INPUT_PROV_REPORT_FILE = "crates/qx-cli/src/config_commands.rs"
+INPUT_PROV_TEST_FILE = "crates/qx-cli/src/tests/backtest_input_provenance.rs"
+# 这三条链各自解一遍帧就等于"声明的输入"与"重算的输入"各有自己的答案。
+INPUT_PROV_CHAIN_FILES = (
+    "crates/qx-cli/src/backtests/strategy_backtest.rs",
+    "crates/qx-cli/src/backtests/depth.rs",
+    INPUT_PROV_REPORT_FILE,
+)
+INPUT_PROV_CASES = (
+    "bar_chain_declares_the_identity_the_registry_already_verified",
+    "report_refuses_when_the_declared_input_changed_after_the_run",
+    "report_refuses_when_the_declared_input_file_is_gone",
+    "tampered_frame_cannot_take_the_registered_identity_of_the_clean_one",
+    "depth_chain_declares_and_revalidates_its_own_frame",
+    "summary_without_an_input_block_is_not_declared_rather_than_verified",
+)
+INPUT_PROV_VERSION_CONSTANTS = ("BARFRAME_DATASET_VERSION", "DEPTH_FRAME_DATASET_VERSION")
+
+
+def input_provenance_check() -> None:
+    """回测产物的输入身份：一处读、一处写、报告侧真会失败（V11 Q66 / Q1b）。"""
+    artifact = (ROOT / INPUT_PROV_ARTIFACT_FILE).read_text(encoding="utf-8")
+
+    def body_of(name: str) -> str:
+        start = artifact.find(f"fn {name}(")
+        if start < 0:
+            return ""
+        end = artifact.find("\n}\n", start)
+        return artifact[start:] if end < 0 else artifact[start:end]
+
+    check(
+        artifact.count('"schema_version": 3') == 1
+        and artifact.count('"input": input_provenance_json(&input.input)') == 1
+        and artifact.count("fn input_provenance_json(") == 1,
+        "摘要以 schema v3 落一个 `input` 块，且这份形状只由 input_provenance_json 写一次",
+        "input 块的写法出现多处或 schema/键名回退",
+    )
+    chain_parses = sum(
+        (ROOT / path)
+        .read_text(encoding="utf-8")
+        .split("#[cfg(test)]")[0]
+        .count("Frame::from_json(")
+        for path in INPUT_PROV_CHAIN_FILES
+    )
+    check(
+        chain_parses == 0,
+        "三条会落产物的链都不自己解帧：入口读与复核读都问 artifacts.rs 的读点",
+        f"链上直接反序列化 {chain_parses} 处",
+    )
+    check(
+        "load_bars_with_manifest(" in body_of("barframe_dataset_identity")
+        and "Provider 与 BarFrame 列式输入不一致" in body_of("barframe_dataset_identity"),
+        "BarFrame → 数据集身份那一步既过 Provider 又逐列比对，声明的指纹就是被复核过的那个",
+        "barframe_dataset_identity 不再同时具备 Provider 读取与列式一致性检查",
+    )
+    recompute = body_of("recompute_declared_backtest_input")
+    check(
+        "read_bar_frame_for_backtest(" in recompute
+        and "barframe_dataset_identity(" in recompute
+        and "read_depth_frame_for_backtest(" in recompute
+        and '"dataset_id"' in recompute
+        and '"dataset_version"' in recompute
+        and '"fingerprint"' in recompute
+        and "回测产物声明的输入与实况不符" in recompute
+        and "未知的回测输入种类" in recompute
+        and "回测摘要的 input 块缺" in recompute,
+        "复核走同一读点重算，三格逐字段比，坏 kind 与缺字段都判失败",
+        f"recompute 体的形状变了：{recompute[:160]}",
+    )
+    report = (ROOT / INPUT_PROV_REPORT_FILE).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    check(
+        report.count("recompute_declared_backtest_input(&summary)?") == 1
+        and "input_verified=not_declared" in report,
+        "报告出口把复核失败向上抛，且旧 schema 只能被说成「没声明」而不是「已核对」",
+        "run_report 不再以 `?` 传播复核结果，或不再区分未声明",
+    )
+    single = (ROOT / INPUT_PROV_SINGLE_FILE).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    self_hash_fallback = sum(
+        path.read_text(encoding="utf-8").count('format!("{:016x}", report.input_data_hash)')
+        for path in CRATES.rglob("*.rs")
+    )
+    check(
+        'format!("{}:{}", input.kind, input.fingerprint)' in single
+        and self_hash_fallback == 0,
+        "RunManifest 的 data_fingerprint 回落用被复核过的数据集指纹，引擎自哈希不再冒充输入身份",
+        f"回落口径 {self_hash_fallback} 处仍是 report.input_data_hash",
+    )
+    constants = dict(
+        (name, value)
+        for name, value in re.findall(
+            r"pub\(crate\) const (\w+): &str = \"([^\"]*)\";", artifact
+        )
+        if name in INPUT_PROV_VERSION_CONSTANTS
+    )
+    literals = {
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8").count(
+            '"barframe-json-v1"'
+        )
+        + path.read_text(encoding="utf-8").count('"depth-frame-v1"')
+        for path in sorted(CRATES.rglob("*.rs"))
+    }
+    literals = {path: count for path, count in literals.items() if count}
+    check(
+        len(constants) == 2 and len(set(constants.values())) == 2,
+        "两档输入形状（BarFrame / 深度帧）各有唯一版本号，且没共用同一个标签",
+        f"常量取值 {constants}",
+    )
+    check(
+        literals == {INPUT_PROV_ARTIFACT_FILE: 2},
+        "版本号字面量只在 artifacts.rs 出现一次，链上不得自带兜底版本",
+        f"实际字面量分布 { {k: v for k, v in literals.items() if v} }",
+    )
+    cases = (ROOT / INPUT_PROV_TEST_FILE).read_text(encoding="utf-8")
+    check(
+        all(f"fn {name}(" in cases for name in INPUT_PROV_CASES),
+        "六条用例钉住「声明等于重算、篡改即拒、缺文件即拒、同一身份不容两种内容、深度链同形、未声明不等于通过」",
+        f"{INPUT_PROV_TEST_FILE} 不再覆盖 {INPUT_PROV_CASES}",
+    )
+
+
 # V11 Q1a 第二批：Bar 链撮合口径的单点装配，与钉住它的行为用例。
 BAR_FILL_MODEL_FILE = "crates/qx-cli/src/backtests/fill_model.rs"
 FILL_MODEL_TEST_FILE = "crates/qx-cli/src/tests/backtest_fill_model.rs"
@@ -1041,6 +1769,352 @@ def backtest_assembly_check() -> None:
     )
 
 
+# V11 Q67：账户快照的七个汇总钱字段必须能区分"算过"与"没算"（交易链路读模型侧）。
+SNAPSHOT_PROTOCOL_FILE = "crates/qx-protocol/src/lib.rs"
+SNAPSHOT_READ_FILE = "crates/qx-cli/src/api_service.rs"
+SNAPSHOT_ENDPOINT_FILE = "crates/qx-api/src/lib.rs"
+SNAPSHOT_CLI_CASE_FILE = "crates/qx-cli/src/tests/api_snapshot_money_fields.rs"
+SNAPSHOT_CORE_CASE_FILE = "crates/qx-protocol/tests/snapshot_single_source.rs"
+# 没有来源可算、必须停在 `None` 的那五个；`available_raw`/`fees_raw` 各有自己的算点。
+SNAPSHOT_UNCOMPUTED_FIELDS = (
+    "margin_raw",
+    "frozen_raw",
+    "realized_pnl_raw",
+    "unrealized_pnl_raw",
+    "funding_raw",
+)
+SNAPSHOT_OPTIONAL_FIELDS = ("available_raw",) + SNAPSHOT_UNCOMPUTED_FIELDS + ("fees_raw",)
+SNAPSHOT_SCALARS = ("equity_raw",) + SNAPSHOT_OPTIONAL_FIELDS
+SNAPSHOT_MONEY_CASES = (
+    "available_is_the_settlement_cash_and_not_a_copy_of_equity",
+    "published_fees_are_the_sum_of_the_fills_on_the_same_snapshot",
+    "uncomputed_money_is_absent_rather_than_zero",
+    "overflowing_fee_total_is_refused_instead_of_wrapping",
+)
+
+
+def snapshot_money_honesty_check() -> None:
+    """账户快照不得把"没算过的钱"印成 0（V11 Q67 / 交易链路 TX2）。"""
+    protocol = (ROOT / SNAPSHOT_PROTOCOL_FILE).read_text(encoding="utf-8")
+    # 读模型侧不按 `#[cfg(test)]` 截断：api_service.rs 里那个标记挂在单个测试专用函数上，
+    # 截断会把后面的生产代码一起丢掉。
+    reader = (ROOT / SNAPSHOT_READ_FILE).read_text(encoding="utf-8")
+    endpoint = (ROOT / SNAPSHOT_ENDPOINT_FILE).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+
+    check(
+        all(
+            protocol.count(f"pub {name}: Option<i128>,") == 1
+            for name in SNAPSHOT_OPTIONAL_FIELDS
+        )
+        and protocol.count("pub equity_raw: i128,") == 1,
+        "七个汇总钱字段在协议上是 Option<i128>，只有权益是恒算得出的 i128",
+        "有字段退回不可区分的 i128（未算与算出为零又会长成同一个数）",
+    )
+    check(
+        protocol.count("fn scalar_money_raw(&self) -> [Option<i128>; 8]") == 1
+        and protocol.count("Some(self.equity_raw),") == 1
+        and protocol.count("self.equity_raw,") == 0,
+        "八个标量钱的取法只有一处，哈希与 JSON 都向它要同一份，没有第二份手抄列表",
+        f"取法定义 {protocol.count('fn scalar_money_raw(&self) -> [Option<i128>; 8]')} 处、"
+        f"唯一入口 {protocol.count('Some(self.equity_raw),')} 处、"
+        f"手抄 equity 的列表 {protocol.count('self.equity_raw,')} 处",
+    )
+    check(
+        protocol.count("Self::write_scalar_money(&mut h, self.scalar_money_raw())") == 2,
+        "state_hash 与 scalar_hash 共用同一份标量写入，两处不会各说一套",
+        "有一处哈希不再走共用的 write_scalar_money",
+    )
+    # V11 Q68 把标量与持仓行共用的存在性标记搬进 `write_optional_money`：锚点跟着搬，
+    # 但仍要求标量那条链只经由 write_scalar_money 一次转发到它。
+    hashing = protocol[protocol.find("fn write_optional_money") :]
+    check(
+        protocol.count("fn write_scalar_money(") == 1
+        and protocol.count("Self::write_optional_money(hasher, value);") == 1
+        and 'hasher.write_u64(u64::from(value.is_some()));' in hashing[:200]
+        and "value.unwrap_or_default()" in hashing[:200],
+        "哈希带存在性标记：None 与 Some(0) 是两份状态，未算永远改不出一个「看起来算过」的 0",
+        "存在性标记被摘掉，未算与算出为零会撞成同一个哈希",
+    )
+    # 槽位只数稳定 JSON 那一条格式串：持仓快照也印 margin_raw/unrealized_pnl_raw，
+    # 全文件计数会把两种形状混在一起。
+    slots = [
+        line for line in protocol.splitlines() if '\\"equity_raw\\":{}' in line
+    ]
+    arg_start = protocol.find("scalars[0],")
+    args = protocol[arg_start : protocol.find("positions,", arg_start)] if arg_start >= 0 else ""
+    check(
+        protocol.count("let scalars = self.scalar_json_values();") == 1
+        and protocol.count('None => "null".to_string()') == 1
+        and len(slots) == 1
+        and all(slot.count(f'\\"{name}\\":{{}}') == 1 for slot in slots for name in SNAPSHOT_SCALARS)
+        and args != ""
+        and all(f"scalars[{index}]," in args for index in range(8))
+        and not any(f"self.{name}" in args for name in SNAPSHOT_SCALARS),
+        "稳定 JSON 的八个钱槽位只由 scalar_json_values 填，未算印 null 而不是合法的 0",
+        f"钱槽位写法不再唯一（格式串 {len(slots)} 条、实参 {args!r}）或 null 口径丢失",
+    )
+    # 逐字面量禁抄法要盯住"改协议后仍然编译得过"的写法：available 已是 Option<i128>，
+    # 旧的 `= snapshot.equity_raw` 现在根本通不过类型检查，只禁它等于禁一条回不来的形态。
+    all_rust = "".join(path.read_text(encoding="utf-8") for path in CRATES.rglob("*.rs"))
+    equity_copy = [
+        form
+        for form in (
+            "snapshot.available_raw = snapshot.equity_raw",
+            "snapshot.available_raw = Some(snapshot.equity_raw)",
+            "available_raw.unwrap_or(snapshot.equity_raw)",
+            "available_raw.unwrap_or(equity_raw)",
+        )
+        if form in all_rust
+    ]
+    check(
+        equity_copy == [],
+        "「可用资金 = 权益副本」这条抄法不得回到任何一处（含 Some(…) 包起来的可编译写法）",
+        f"读模型又把压在持仓上的那段钱说成可自由花掉：{equity_copy}",
+    )
+    check(
+        reader.count("snapshot.available_raw = Some(") == 1
+        and "cash_for(account_id, pipeline.settlement_currency())"
+        in reader[reader.find("snapshot.available_raw") :],
+        "可用资金取本条快照记账的那一本结算账簿现金",
+        "available 的算点丢失或换成了别的口径",
+    )
+    check(
+        reader.count("snapshot.fees_raw = Some(fees_raw);") == 1
+        and reader.count("fill.fee_raw.checked_add(fees_raw)") == 1
+        and reader.count("snapshot.fees_raw = Some(0)") == 0,
+        "账户费用合计由本快照的逐笔成交费用加出，且溢出即拒而不是回绕",
+        "费用算点丢失、被写回常量 0，或改用了会回绕的加法",
+    )
+    # 整文件扫描，不在 `#[cfg(test)]` 处截断：被截断的读模型尾部正是这些赋值会落下的地方。
+    fabricated = {
+        path.relative_to(ROOT).as_posix(): sum(
+            path.read_text(encoding="utf-8").count(f"snapshot.{name} =")
+            for name in SNAPSHOT_UNCOMPUTED_FIELDS
+        )
+        for path in sorted(CRATES.rglob("src/**/*.rs"))
+        if "src/tests" not in path.as_posix()
+    }
+    fabricated = {path: count for path, count in fabricated.items() if count}
+    check(
+        fabricated == {},
+        "保证金/冻结/已实现/未实现/资金费这五个字段在本层没有来源，产码里不得出现给它们赋值的写法",
+        f"凭空造数的位置 {fabricated}",
+    )
+    balances = endpoint[endpoint.find('("GET", "/account/balances")') :]
+    balances = balances[: balances.find('("GET", "/control/audit")')]
+    check(
+        balances.count(
+            '"available_raw": snapshot.as_ref().and_then(|snapshot| snapshot.available_raw)'
+        )
+        == 1
+        and balances.count(
+            '"margin_raw": snapshot.as_ref().and_then(|snapshot| snapshot.margin_raw)'
+        )
+        == 1
+        and "available_raw).unwrap_or" not in balances
+        and "margin_raw).unwrap_or" not in balances,
+        "/account/balances 把未算发布成 null，而不是给它兜一个 0",
+        "余额端点对 available/margin 又用了兜底写法",
+    )
+    cli_cases = (ROOT / SNAPSHOT_CLI_CASE_FILE).read_text(encoding="utf-8")
+    core_cases = (ROOT / SNAPSHOT_CORE_CASE_FILE).read_text(encoding="utf-8")
+    # 端点用例住在 `#[cfg(test)] mod tests` 里，要用整文件而不是上面截过断的生产体。
+    endpoint_cases = (ROOT / SNAPSHOT_ENDPOINT_FILE).read_text(encoding="utf-8")
+    check(
+        all(f"fn {name}(" in cli_cases for name in SNAPSHOT_MONEY_CASES)
+        and "fn uncomputed_money_is_not_the_same_state_as_computed_zero(" in core_cases
+        and "fn balances_endpoint_publishes_absent_money_as_null_not_zero(" in endpoint_cases,
+        "四条读模型用例（结算账簿口径/费用同源/未算缺席/溢出即拒）加协议侧缺席≠零、端点侧 null 发布各一条在位",
+        f"缺少用例：{[name for name in SNAPSHOT_MONEY_CASES if f'fn {name}(' not in cli_cases]}",
+    )
+
+
+# V11 Q68：把 Q67 那条"没算过的钱不能印成 0"的纪律推到**持仓行**与**实盘回报入口**
+# （交易链路 TX2b）。三处此前各自独立地会凭空造数：内核持仓观察的三个钱字段是不可区分
+# 的 `Money`、线格式行与读模型回退行写死 0、CCXT 缺 `side` 时默认多头。
+POSITION_CORE_FILE = "crates/qx-core/src/event.rs"
+POSITION_WIRE_FILE = "crates/qx-protocol/src/wire.rs"
+POSITION_CCXT_FILE = "crates/qx-cli/src/ccxt_facts.rs"
+POSITION_RUNTIME_FILE = "crates/qx-runtime/src/pipeline.rs"
+POSITION_CCXT_CASE_FILE = "crates/qx-cli/src/tests/ccxt_position_facts_honesty.rs"
+# 内核侧三个字段 / 线格式侧两列（线格式只有一列保证金）。
+POSITION_CORE_FIELDS = ("unrealized_pnl", "initial_margin", "maintenance_margin")
+POSITION_ROW_FIELDS = ("unrealized_pnl_raw", "margin_raw")
+POSITION_CCXT_CASES = (
+    "unknown_position_side_is_refused_instead_of_guessed_as_long",
+    "flat_position_without_side_is_skipped_before_the_direction_gate",
+    "unreported_position_money_stays_unreported_and_zero_stays_zero",
+)
+POSITION_ROW_CASES = (
+    "ledger_fallback_position_row_leaves_uncomputed_money_absent",
+    "venue_reported_row_keeps_reported_zero_and_unreported_absent",
+)
+
+
+def position_money_honesty_check() -> None:
+    """持仓行的未算钱不得印成 0，缺方向的持仓不得靠猜定符号（V11 Q68 / TX2b）。"""
+    core = (ROOT / POSITION_CORE_FILE).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    wire = (ROOT / POSITION_WIRE_FILE).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    protocol = (ROOT / SNAPSHOT_PROTOCOL_FILE).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    ccxt = (ROOT / POSITION_CCXT_FILE).read_text(encoding="utf-8")
+    # 禁零与方向口径只能落在持仓函数上：余额侧的 `.unwrap_or(Money::ZERO)` 说的是
+    # "这本账簿里没有这个币种"，那语义本来就是零。
+    position_fn = ccxt[ccxt.find("pub(crate) fn ccxt_position_facts") :]
+    position_fn = position_fn[: position_fn.find("pub(crate) fn ccxt_funding_fact")]
+    reader = (ROOT / SNAPSHOT_READ_FILE).read_text(encoding="utf-8")
+    runtime = (ROOT / POSITION_RUNTIME_FILE).read_text(encoding="utf-8")
+
+    struct_region = core[
+        core.find("pub struct AccountPositionSnapshot") : core.find(
+            "pub struct FundingRateSnapshot"
+        )
+    ]
+    # 这条只能由静态项钉住：serde 对 `Option<T>` 字段的缺键本来就读成 `None`，摘掉
+    # `#[serde(default)]` 不改变今天的行为（Q68 变异 MQ68a 实测），真实行为由内核那条
+    # 摘要用例锁着。留着声明是为了下次有人把类型改回裸 `Money` 时在同一行上撞墙。
+    check(
+        all(
+            re.search(
+                rf'#\[serde\(default\)\]\s*\n\s*pub {name}: Option<Money>,', struct_region
+            )
+            for name in POSITION_CORE_FIELDS
+        )
+        and "Money::ZERO" not in struct_region,
+        "内核持仓观察的三个钱字段是 Option<Money>，且每个都带 #[serde(default)]（老日志缺键读成未报）",
+        "有字段退回不可区分的 Money，或回读时会给缺席补一个伪造的零",
+    )
+    digest = core[core.find("h.write_u64(14);") :]
+    digest = digest[: digest.find("h.write_u64(position.leverage")]
+    check(
+        digest.count("h.write_u64(u64::from(value.is_some()));") == 1
+        and digest.count("value.map(Money::raw).unwrap_or_default()") == 1
+        and not any(f"position.{name}.raw()" in digest for name in POSITION_CORE_FIELDS),
+        "事件摘要逐字段带存在性标记：未报与报为零是两份内容，改日志里的 null 为 0 会改动摘要",
+        f"摘要里的存在性标记 {digest.count('h.write_u64(u64::from(value.is_some()));')} 处，"
+        f"或又出现不区分未报的裸 .raw() 写入",
+    )
+    check(
+        all(wire.count(f"pub {name}: Option<i128>,") == 1 for name in POSITION_ROW_FIELDS)
+        and all(wire.count(f"{name}: None,") == 1 for name in POSITION_ROW_FIELDS)
+        # 价格继续用 0 表达"没有"：定点价格里 0 不是合法值，钱没有这个性质。
+        and wire.count("pub mark_price_raw: i128,") == 1,
+        "线格式行的两个钱列是 Option<i128> 且默认缺席，价格列仍按 0 哨兵保持不变",
+        "行字段退回 i128 或 Default 又兜了一个 0",
+    )
+    check(
+        wire.count("unrealized_pnl_raw: observation.unrealized_pnl.map(Money::raw)") == 1
+        and wire.count("margin_raw: observation.initial_margin.map(Money::raw)") == 1
+        and wire.count("unrealized_pnl: wire.unrealized_pnl_raw.map(Money::from_raw)") == 1
+        and wire.count("initial_margin: wire.margin_raw.map(Money::from_raw)") == 1
+        and wire.count("maintenance_margin: None,") == 1,
+        "内核观察 ↔ 线格式行的钱列折算各只有一处，线格式没有的那一列折算回未报而不是 0",
+        "折算层出现了第二份手抄，或缺失列被兜成零",
+    )
+    hashing = protocol[protocol.find("fn write_optional_money") :]
+    json_region = protocol[protocol.find("fn money_json") :]
+    check(
+        protocol.count("fn write_optional_money(") == 1
+        and 'hasher.write_u64(u64::from(value.is_some()));' in hashing[:200]
+        and protocol.count("Self::write_optional_money(&mut h, value);") == 1,
+        "行哈希与账户标量共用同一个带存在性标记的写入助手，两处不会各说一套",
+        "存在性标记助手被复制或行哈希绕开了它",
+    )
+    check(
+        protocol.count("fn money_json(") == 1
+        and protocol.count("Self::money_json(value.unrealized_pnl_raw)") == 1
+        and protocol.count("Self::money_json(value.margin_raw)") == 1,
+        "行 JSON 的两个钱槽位只由 money_json 填，未报印 null 而不是合法的 0",
+        "槽位又开始直接印 raw 值",
+    )
+    # 抄法回归要盯"改协议后仍然编译得过"的写法：整仓逐行扫，字段名在行首缩进后才算，
+    # 免得把 available_margin_raw 这类同后缀字段误伤成命中。
+    fabricated_rows = [
+        f"{path.relative_to(ROOT).as_posix()}:{name}"
+        for path in sorted(CRATES.rglob("*.rs"))
+        for text in (path.read_text(encoding="utf-8"),)
+        for name in POSITION_ROW_FIELDS + POSITION_CORE_FIELDS
+        if re.search(rf"^\s*{name}: (?:0|Money::ZERO)\b", text, re.MULTILINE)
+    ]
+    check(
+        fabricated_rows == [],
+        "生产与用例里都不给持仓行的钱字段兜一个写死的 0",
+        f"凭空造数的位置 {fabricated_rows}",
+    )
+    check(
+        reader.count("unrealized_pnl_raw: None,") == 1 and reader.count("margin_raw: None,") == 1,
+        "读模型用 Ledger 自拼的那一行持仓承认自己算不出这两个钱字段",
+        "回退行又开始替交易所报数",
+    )
+    check(
+        position_fn.count('Some(value @ ("long" | "short"))') == 1
+        and "读到 {read:?}" in position_fn
+        and "position_side: Some(side)" in position_fn
+        and not any(
+            form in position_fn
+            for form in ('unwrap_or("long"', '=> "long"', 'unwrap_or_else(|| "long"', '"unknown" =>')
+        ),
+        "CCXT 持仓方向只认 long/short（大小写归一），缺失与连接器占位的 unknown 一律 fail-closed",
+        "方向闸门又允许默认多头，或占位值被当成可接受输入",
+    )
+    skip_at = position_fn.find("if contracts == 0 {")
+    gate_at = position_fn.find("let side = match")
+    check(
+        0 <= skip_at < gate_at,
+        "零数量行在方向闸门之前跳过：平仓位通常不带方向，不该被 fail-closed 连带打死",
+        f"跳过点 {skip_at} 不在方向闸门 {gate_at} 之前",
+    )
+    check(
+        position_fn.count(
+            "let optional_money = |key: &str| -> Result<Option<Money>, String>"
+        )
+        == 1
+        and all(
+            position_fn.count(f'optional_money("{name}")') == 1
+            for name in ("unrealized_pnl_raw", "initial_margin_raw", "maintenance_margin_raw")
+        )
+        and position_fn.count("if value.is_null() {") == 2
+        and "Money::ZERO" not in position_fn,
+        "CCXT 回报的三个钱字段只由一个 optional_money 读法取，省略与 null 都读成未报",
+        "钱字段读法出现第二处复制或又被兜成零",
+    )
+    normalize_region = runtime[runtime.find("fn normalize_positions") :]
+    normalize_region = normalize_region[: normalize_region.find("fn storage_error")]
+    guards = re.findall(
+        r"\.is_some_and\(\|(pnl|margin)\| \1\.raw\(\) (?:== i128::MIN|< 0)\)",
+        normalize_region,
+    )
+    check(
+        sorted(guards) == ["margin", "margin", "pnl"]
+        and not re.search(
+            r"^\s*(?:initial|maintenance)_margin\.raw\(\) < 0", runtime, re.MULTILINE
+        ),
+        "持仓快照的非法保证金守卫建立在「报了才判」上，不给未报补一个可比较的零",
+        f"守卫只剩 {sorted(guards)}，未报会被当成零参与判定",
+    )
+    ccxt_cases = (ROOT / POSITION_CCXT_CASE_FILE).read_text(encoding="utf-8")
+    reader_cases = (ROOT / SNAPSHOT_CLI_CASE_FILE).read_text(encoding="utf-8")
+    protocol_cases = (ROOT / SNAPSHOT_CORE_CASE_FILE).read_text(encoding="utf-8")
+    core_cases = (ROOT / POSITION_CORE_FILE).read_text(encoding="utf-8")
+    runtime_cases = (ROOT / POSITION_RUNTIME_FILE).read_text(encoding="utf-8")
+    check(
+        all(f"fn {name}(" in ccxt_cases for name in POSITION_CCXT_CASES)
+        and all(f"fn {name}(" in reader_cases for name in POSITION_ROW_CASES)
+        and "fn unreported_position_money_is_not_hashed_as_zero(" in core_cases
+        and "fn absent_venue_money_stays_absent_through_the_wire_folding(" in protocol_cases
+        and "fn uncomputed_position_money_is_not_the_same_state_as_computed_zero("
+        in protocol_cases
+        and "fn default_position_row_reports_no_money(" in protocol_cases
+        and "ETH/USDT:USDT.OKX" in runtime_cases,
+        "Q68 的八处行为用例在位（方向 fail-closed/平仓位跳过/钱字段未报/摘要区分/折算区分/行两态/默认行不报钱/落盘回读）",
+        f"缺 ccxt 用例 {[n for n in POSITION_CCXT_CASES if f'fn {n}(' not in ccxt_cases]}、"
+        f"缺读模型用例 {[n for n in POSITION_ROW_CASES if f'fn {n}(' not in reader_cases]}、"
+        f"缺内核摘要用例={'unreported_position_money_is_not_hashed_as_zero' not in core_cases}、"
+        f"缺折算/行用例={[n for n in ('absent_venue_money_stays_absent_through_the_wire_folding', 'uncomputed_position_money_is_not_the_same_state_as_computed_zero', 'default_position_row_reports_no_money') if f'fn {n}(' not in protocol_cases]}、"
+        f"缺落盘回读夹具={'ETH/USDT:USDT.OKX' not in runtime_cases}",
+    )
+
+
+
 def capabilities_check() -> None:
     path = ROOT / "maturity/capabilities.yaml"
     if not path.exists():
@@ -1107,6 +2181,7 @@ def capabilities_check() -> None:
 
 
 VENUE_REPORT_TEST = "crates/qx-execution/tests/venue_report_contract.rs"
+SUBMIT_GATE_TEST = "crates/qx-execution/src/tests/venue_submit_contract.rs"
 REPORT_FUNNEL_FILE = "crates/qx-execution/src/lib.rs"
 SPEC_FUNNEL_DEFINITION = "crates/qx-core/src/trading.rs"
 # 真实交易所回报的生产入口：一旦 worker 配了冻结规格，就必须把规格交给归约入口，
@@ -1115,16 +2190,22 @@ LIVE_REPORT_FILES = (
     "crates/qx-cli/src/venue_runtime/binance_stream_worker.rs",
     "crates/qx-cli/src/venue_runtime/ccxt_execution.rs",
     "crates/qx-cli/src/venue_runtime/ccxt_reconcile_worker.rs",
+    "crates/qx-cli/src/spread.rs",
 )
+HEDGE_GATE_TEST = "crates/qx-execution/src/tests/recovery_and_replay.rs"
 
 
 def venue_report_contract_check() -> None:
-    """交易所回报侧的迟到/乱序与精度越界纪律只有一处实现，且三家共用一份契约测试。
+    """交易所回报侧的迟到/乱序与精度越界纪律只有一处谓词，且三家共用一份契约测试。
 
     V9 §8.3 第 8 项收口：越界或迟到的回报只能留下 `ReconcileRequired` 事实，绝不能
-    伪造成交或改写终态。闸门刻意放在 `ingest_venue_events_with_pipeline`（所有生产回报
-    路径的唯一漏斗）而不是 Ledger 里——回测直接调 Ledger，放进 Ledger 会让实盘与回测
-    口径分叉。这里钉住"唯一调用点 + 生产路径都带规格 + 三家 fixture 共用断言"。
+    伪造成交或改写终态。闸门刻意放在成交进入账本的**全部三个入口**：归约入口
+    （`ingest_venue_events_with_pipeline`，所有生产用户流回报的漏斗）、普通提交同步回包
+    （`PortExecutionService::submit`）与对冲补偿提交（`HedgeRecoveryWorker`）。
+    V11 Q57 就是因为第三入口曾经独走一条路：同一笔越界成交走用户流被拦下、走补偿回包
+    却直接入账，而且补偿腿只追加裸 `Fill`，账簿退回乘数 1。
+    这里钉住"谓词唯一 + 两个提交入口共用同一道闸门 + 补偿路径带规格落库 + 生产路径都带
+    规格 + 三家 fixture 共用断言"，而不是回测侧的 Ledger（放进 Ledger 会让实盘与回测分叉）。
     """
     funnel = (ROOT / REPORT_FUNNEL_FILE).read_text(encoding="utf-8")
     start = funnel.find("fn ingest_venue_events_with_pipeline")
@@ -1137,6 +2218,52 @@ def venue_report_contract_check() -> None:
         "成交回报精度闸门只在唯一归约入口生效并转待对账",
         f"入口存在={start >= 0}，闸门调用 {body.count('validate_fill(')} 处（期望 1）",
     )
+    submit_start = funnel.find("    pub fn submit(")
+    submit_end = funnel.find("\n    }\n", submit_start) if submit_start >= 0 else -1
+    submit_body = funnel[submit_start:submit_end] if submit_start >= 0 and submit_end > submit_start else ""
+    check(
+        submit_body.count("= gate_submit_facts(") == 1
+        and "violation.reason_tag()" in submit_body
+        and "mark_reconcile(" in submit_body,
+        "提交同步返回的成交也过同一精度闸门并转待对账（V11 Q56）",
+        f"submit 体可定位={bool(submit_body)}，闸门调用 {submit_body.count('= gate_submit_facts(')} 处（期望 1）",
+    )
+    check(
+        funnel.count("= gate_submit_facts(") == 2,
+        "两道提交入口共用同一个提交闸门，不得有第三份内联校验（V11 Q57）",
+        f"{REPORT_FUNNEL_FILE} 内 {funnel.count('= gate_submit_facts(')} 处（期望 2）",
+    )
+    hedge_start = funnel.find("    pub fn execute_with_validator(")
+    hedge_end = funnel.find("\n    }\n", hedge_start) if hedge_start >= 0 else -1
+    hedge_body = funnel[hedge_start:hedge_end] if hedge_start >= 0 and hedge_end > hedge_start else ""
+    append_start = funnel.find("    fn append_fact(")
+    append_end = funnel.find("\n    }\n", append_start) if append_start >= 0 else -1
+    append_body = funnel[append_start:append_end] if append_start >= 0 and append_end > append_start else ""
+    check(
+        hedge_body.count("= gate_submit_facts(") == 1
+        and "instrument_spec(&order)" in hedge_body
+        and "ReconcileRequired" in hedge_body,
+        "对冲补偿提交过同一道闸门，且规格解析失败时拒绝补偿并转待对账（V11 Q57）",
+        f"worker 体可定位={bool(hedge_body)}，闸门调用 {hedge_body.count('= gate_submit_facts(')} 处（期望 1）",
+    )
+    check(
+        "ExecutionEvent::FillWithSpec" in append_body
+        and "spec.clone()" in append_body,
+        "补偿成交落库时带上冻结规格，衍生品腿不得退回乘数 1 记账（V11 Q57）",
+        f"append_fact 体可定位={bool(append_body)}",
+    )
+    check(
+        funnel.count("validate_fill(") == 2,
+        "精度闸门调用点恰为两处：归约入口 + 共用提交闸门（不得有第三处）",
+        f"{REPORT_FUNNEL_FILE} 内 {funnel.count('validate_fill(')} 处（期望 2）",
+    )
+    check(
+        funnel.count('"invalid-submit-response"') == 1
+        and funnel.count('"submit-fill-out-of-spec"') == 1,
+        "提交未知的两类原因段各只有一处定义（放在共用闸门的 reason_tag 里）",
+        f"形状 {funnel.count(chr(34) + 'invalid-submit-response' + chr(34))} 处、"
+        f"精度 {funnel.count(chr(34) + 'submit-fill-out-of-spec' + chr(34))} 处（期望各 1）",
+    )
     definer = (ROOT / SPEC_FUNNEL_DEFINITION).read_text(encoding="utf-8")
     predicates = len(re.findall(r"fn validate_fill\(", definer))
     copies = {
@@ -1147,8 +2274,25 @@ def venue_report_contract_check() -> None:
     }
     check(
         predicates == 1 and not copies,
-        "回报精度判定只有一个谓词、一个调用点（不在 Ledger/回测侧重复判定）",
+        "回报精度判定只有一个谓词（不在 Ledger/回测侧重复判定，调用点只允许归约入口与提交闸门）",
         f"定义 {predicates} 处；额外调用点 {copies or '无'}",
+    )
+    submit_test = (ROOT / SUBMIT_GATE_TEST).read_text(encoding="utf-8")
+    check(
+        "submit_returned_fills_share_the_precision_gate" in submit_test
+        and '"embedded-spec-wins-over-frozen-spec"' in submit_test
+        and 'vec!["reconcile"]' in submit_test,
+        "存在「提交同步回报越界 → 只留一条待对账事实」的行为用例（V11 Q56 证据）",
+        f"用例文件 {SUBMIT_GATE_TEST} 缺三形状之一",
+    )
+    hedge_test = (ROOT / HEDGE_GATE_TEST).read_text(encoding="utf-8")
+    check(
+        "hedge_compensation_submit_shares_the_submit_precision_gate" in hedge_test
+        and '"off-tick-sync-fill-reconciles"' in hedge_test
+        and '"spec-resolution-failure-blocks-submit"' in hedge_test
+        and '"accepted", "fill-with-spec"' in hedge_test,
+        "存在「补偿回包越界只留待对账 / 在 tick 上带规格落库 / 规格解析失败不提交」的行为用例（V11 Q57 证据）",
+        f"用例文件 {HEDGE_GATE_TEST} 缺四形状之一",
     )
     uncovered = [
         rel
@@ -1568,28 +2712,6 @@ def module_declarations(path: Path) -> set[str]:
     )
 
 
-    # (e) 四个文件状态存储各自只有一份定义，且住在 `src/file/`。P1c 真实踩到的形态是
-    #     "拆出来的那份没人 mod、lib.rs 里内联那份继续当唯一实现"——两份同时存在而编译无感，
-    #     所以这里既数定义点个数，也钉住它所在的文件，拆完不允许退回内联。
-    store_homes = {
-        "JsonStateStore": "crates/qx-storage/src/file/state.rs",
-        "FileConsumerStateStore": "crates/qx-storage/src/file/consumers.rs",
-        "FileOutboxStore": "crates/qx-storage/src/file/outbox.rs",
-        "FileJobQueue": "crates/qx-storage/src/file/jobs.rs",
-    }
-    for store, home in sorted(store_homes.items()):
-        definitions = sorted(
-            rel
-            for rel, source in storage_text.items()
-            if re.search(rf"^\s*pub struct {store}\b", source, re.MULTILINE)
-        )
-        check(
-            definitions == [home],
-            f"文件状态存储 {store} 只有目录模块里的一份定义",
-            f"定义于 {definitions}，期望 {home}",
-        )
-
-
 def module_mount_check() -> None:
     """`crates/*/src` 下不得存在未挂载的 `.rs`（V10 P1c 期间真实踩到的失效形态）。
 
@@ -1706,6 +2828,26 @@ def storage_retry_check() -> None:
             f"{Path(rel).name} 的重试判定委托 qx-core::retry",
             f"引用统一策略={'是' if 'retry::' in source else '否'}；"
             f"就地退避算式 {fingerprints or '无'}",
+        )
+    # (e) 四个文件状态存储各自只有一份定义，且住在 `src/file/`。P1c 真实踩到的形态是
+    #     "拆出来的那份没人 mod、lib.rs 里内联那份继续当唯一实现"——两份同时存在而编译无感，
+    #     所以这里既数定义点个数，也钉住它所在的文件，拆完不允许退回内联。
+    store_homes = {
+        "JsonStateStore": "crates/qx-storage/src/file/state.rs",
+        "FileConsumerStateStore": "crates/qx-storage/src/file/consumers.rs",
+        "FileOutboxStore": "crates/qx-storage/src/file/outbox.rs",
+        "FileJobQueue": "crates/qx-storage/src/file/jobs.rs",
+    }
+    for store, home in sorted(store_homes.items()):
+        definitions = sorted(
+            rel
+            for rel, source in storage_text.items()
+            if re.search(rf"^\s*pub struct {store}\b", source, re.MULTILINE)
+        )
+        check(
+            definitions == [home],
+            f"文件状态存储 {store} 只有目录模块里的一份定义",
+            f"定义于 {definitions}，期望 {home}",
         )
 
 
@@ -1997,12 +3139,16 @@ def kernel_claim_check() -> None:
 def multi_leg_honesty_check() -> None:
     """V11 §6 Q0e：多腿归因只承认实际成交，一腿被挡时另一腿必须留下显式待对账事实。
 
-    七条判据各自抽掉就变红：配对口径必须只看 `filled_qty_raw`（回填成交）、裸腿必须
+    十二条判据各自抽掉就变红：配对口径必须只看 `filled_qty_raw`（回填成交）、裸腿必须
     被登记而不是静默计入某个组、单腿定资要逐腿按本腿行情帧与生效费率算、算不出来必须
     报错而不是截断到 `i64::MAX`（§4.18 的同一类失真）、诚实性事实必须同时出现在 stdout
     与产物里、四条 kind 的端到端用例齐备，最后是费用口径的偏离声明：
     `TradingInstrumentSpec` 没有 maker/taker 字段，两腿只能共用
     一份显式成本绑定，产物必须自己说明这一点，否则读者会以为每腿按各自 venue 费率计过。
+
+    后五条属 V11 Q58：产品形态只有 market spec 说得了，缺 spec 的腿一律按现货乘数 1 记账，
+    所以"衍生品才计提保证金/资金费"这件事必须有一道先于撮合的规格闸门、腿级的衍生品过滤、
+    产物侧的口径披露，以及四种规格组合各自的行为用例。
     """
 
     def top_level_fn(text: str, signature: str) -> str:
@@ -2074,6 +3220,328 @@ def multi_leg_honesty_check() -> None:
         "多腿产物必须声明两腿共用一份成本绑定（spec 无费率字段的既有偏离）",
         "multi_builtin.rs 的 assumptions 缺少费用口径偏离声明",
     )
+    guard_body = top_level_fn(cash, "pub(crate) fn multi_leg_spec_guard(")
+    check(
+        "primary_spec.is_none()" in guard_body
+        and "腿没有 market spec" in guard_body
+        and "没有一条腿是衍生品" in guard_body,
+        "多腿规格闸门必须对缺规格与全现货两种组合都报错",
+        "leg_funding.rs 的 multi_leg_spec_guard 不再覆盖这两类非法组合",
+    )
+    check(
+        "multi_leg_spec_guard(" in report
+        and report.index("multi_leg_spec_guard(") < report.index("let primary_report = run_leg("),
+        "规格闸门必须先于任何腿级撮合，而不是跑完再补声明",
+        "multi_builtin.rs 的规格闸门落到了撮合之后",
+    )
+    funding_body = top_level_fn(pairing, "pub(crate) fn multi_leg_leg_buckets(")
+    margin_body = top_level_fn(pairing, "pub(crate) fn multi_leg_leg_margin(")
+    check(
+        "spec.product.is_derivative()" in funding_body
+        and "spec.product.is_derivative()" in margin_body
+        and "return Ok(0)" in margin_body,
+        "资金费与保证金只向 market spec 声明为衍生品的腿计提，其余腿记 0",
+        "multi_leg.rs 的腿级计费重新接受了现货或无规格腿",
+    )
+    check(
+        '"market_specs"' in report
+        and '"margin_model"' in report
+        and "any(|spec| spec.product.is_derivative())" in report,
+        "产物必须写出每条腿规格的来源，并按规格真实推导 margin_model",
+        "multi_builtin.rs 不再披露规格来源，或 margin_model 退回常量",
+    )
+    check(
+        all(
+            case in cases
+            for case in (
+                "fn funding_without_leg_spec_is_refused_before_matching",
+                "fn funding_on_spot_only_legs_is_refused",
+                "fn only_derivative_legs_bear_margin_and_funding",
+                "fn declared_derivative_product_without_primary_spec_is_refused",
+            )
+        )
+        and "none-no-derivative-leg-spec" in cases,
+        "四种规格组合（缺规格/全现货/混合/只声明衍生品）必须各有行为用例",
+        "multi_leg_attribution.rs 的用例覆盖不再咬住 Q58 口径",
+    )
+
+
+# V11 Q54：产品规格（market spec）的读法必须只有一处。回测链曾经只认 CCXT 归一化形状，
+# 而 `init` 打印的首条回测命令带的却是冻结产品规格（`qianxing.binance.spot.spec.json`），
+# 照文档操作的人第一条命令就撞 "CCXT market 缺少 base"；同一个文件的 worker 侧又能读它。
+# 另一侧的失效更安静：CCXT 快照缺 `price_tick_raw` 时曾被兜底成 1（=1e-9），字段校验照过，
+# 于是 `one_tick_slippage` 的一档和下单取整闸门双双变成"看不见的猜测"。
+MARKET_SPEC_READER_FILE = "crates/qx-cli/src/market_spec.rs"
+MARKET_SPEC_TEST_FILE = "crates/qx-cli/src/tests/market_spec_single_source.rs"
+# 三项定点口径：同时是一档滑点、数量步长与最小下单量的来源，缺失必须报错而不是兜底。
+MARKET_SPEC_PRECISION_FIELDS = ("price_tick", "qty_step", "min_qty")
+# "另一个地方自己解析/自己构造一份产品规格"的几种形状。按去空白后的文本匹配，
+# 否则 rustfmt 把 `let spec: TradingInstrumentSpec =\n serde_json::from_value(...)` 折行就漏判。
+MARKET_SPEC_CONSTRUCTION = (
+    re.compile(r"TradingInstrumentSpec\{"),
+    re.compile(r"TradingInstrumentSpec=serde_json::from"),
+    re.compile(r"from_(?:str|value)::<TradingInstrumentSpec"),
+)
+
+
+def market_spec_single_reader_check() -> None:
+    """market spec 单一读法 + 精度口径不得从缺失字段兜底（V11 Q54）。"""
+    elsewhere = []
+    for path in sorted((CRATES / "qx-cli/src").rglob("*.rs")):
+        relative = path.relative_to(ROOT).as_posix()
+        if relative == MARKET_SPEC_READER_FILE or "/tests/" in f"/{relative}":
+            continue
+        flat = re.sub(r"\s+", "", path.read_text(encoding="utf-8"))
+        if any(pattern.search(flat) for pattern in MARKET_SPEC_CONSTRUCTION):
+            elsewhere.append(relative)
+    check(
+        not elsewhere,
+        "产品规格只在 market_spec.rs 解析或构造，其余链路一律走 loader",
+        f"另起一份解析 {elsewhere}",
+    )
+    reader = (ROOT / MARKET_SPEC_READER_FILE).read_text(encoding="utf-8")
+    check(
+        all(
+            f'{field}: declared_raw_number(market, "{field}_raw"' in reader
+            for field in MARKET_SPEC_PRECISION_FIELDS
+        )
+        and not re.search(r"unwrap_or\(\s*1\s*\)", reader),
+        "三项定点精度必须显式声明，缺失即拒绝而非兜底",
+        "market_spec.rs 的精度读法退回兜底",
+    )
+    check(
+        'market.get("base_currency").is_some()' in reader,
+        "market spec 的两种形状按 base_currency 判定，而非 try-parse 回落",
+        "market_spec.rs 缺少形状判定，写错的规格会被误报成 CCXT 缺字段",
+    )
+    for chain, path in {
+        "回测链": "crates/qx-cli/src/backtests/mod.rs",
+        "worker 链": "crates/qx-cli/src/venue_runtime/worker_runtime.rs",
+    }.items():
+        check(
+            "market_spec_from_value(" in (ROOT / path).read_text(encoding="utf-8"),
+            f"{chain} 经 market_spec_from_value 读产品规格",
+            f"{path} 未调用 loader",
+        )
+    cases = (ROOT / MARKET_SPEC_TEST_FILE).read_text(encoding="utf-8")
+    check(
+        all(
+            name in cases
+            for name in (
+                "fn both_market_spec_shapes_resolve_to_the_same_spec",
+                "fn an_under_specified_ccxt_market_is_refused_not_invented",
+                "fn the_backtest_chain_reads_the_generated_frozen_spec",
+            )
+        ),
+        "存在两种形状同源、缺精度即拒、回测链吃冻结规格的行为用例（V11 Q54 证据）",
+        f"缺少 {MARKET_SPEC_TEST_FILE} 中的 Q54 用例",
+    )
+
+
+# V11 Q63：来源标签曾经只回答"有没有传 --market-spec"，于是仓库自己生成的那份产品规格
+# （`qianxing.binance.spot.spec.json`，带 base_currency）在产物里被写成 `ccxt-market-spec-v1`。
+# 规格内容不进 `model_fingerprint`，`contract_size` 与三项精度也都不进，所以这个字段是唯一
+# 承载"这份规格按哪种形状读的"的地方——写错等于把两种不同的记账口径声明成同一种。
+MARKET_SPEC_SOURCE_FILE = "crates/qx-cli/src/market_spec.rs"
+# 把来源写进产物的两条链 + 那条只打印不落摘要的 builtin 链。
+MARKET_SPEC_SOURCE_CHAINS = {
+    "策略回测": "crates/qx-cli/src/backtests/single_strategy.rs",
+    "深度回测": "crates/qx-cli/src/backtests/depth.rs",
+}
+MARKET_SPEC_SOURCE_CONSTANTS = (
+    "CCXT_MARKET_SPEC_VERSION",
+    "PRODUCT_MARKET_SPEC_VERSION",
+    "DEFAULT_INSTRUMENT_SPEC_VERSION",
+)
+
+
+def _identity_block(text: str, anchor: str) -> str:
+    """取 `RunManifestIdentity {` 到它自己那个右花括号之间的块（不含括号）。
+
+    必须按块取，而不是在整个文件里找字段名：链上 `let MarketSpecLoad { ... source:
+    instrument_spec_version, }` 的解构语句同样带着 `instrument_spec_version,`，按文件找
+    子串会在"产物那一行改回常量"之后照样命中（V11 Q63 第一轮的门禁变异没咬住，就是这个原因）。
+    """
+    start = text.find(anchor)
+    if start < 0:
+        return ""
+    depth = 0
+    for index in range(start + len(anchor) - 1, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:index]
+    return ""
+
+
+def market_spec_source_check() -> None:
+    """规格来源标签必须由"实际读成的形状"决定，且只有 loader 那一个落点（V11 Q63）。"""
+    reader = (ROOT / MARKET_SPEC_SOURCE_FILE).read_text(encoding="utf-8")
+
+    def body_of(name: str) -> str:
+        start = reader.find(f"fn {name}(")
+        if start < 0:
+            return ""
+        end = reader.find("\n}\n", start)
+        return reader[start:] if end < 0 else reader[start:end]
+
+    predicate = body_of("market_value_is_product_spec")
+    label = body_of("market_spec_source_label")
+    check(
+        reader.count("fn market_value_is_product_spec(") == 1
+        and reader.count("fn market_spec_source_label(") == 1
+        and "market_value_is_product_spec(market)" in label,
+        "形状判定只有一处，来源标签向它问同一个问题",
+        f"谓词定义 {reader.count('fn market_value_is_product_spec(')} 处、"
+        f"标签定义 {reader.count('fn market_spec_source_label(')} 处，"
+        "标签体未复用谓词（各自复述一遍迟早读成两个答案）",
+    )
+    check(
+        'market.get("base_currency").is_some()' in predicate
+        and reader.count('market.get("base_currency").is_some()') == 1
+        and "base_currency" not in label,
+        "形状问题只在谓词里问一次，标签不复述判据",
+        f"谓词体 {predicate!r} / 标签体 {label!r} 与 base_currency 判据的分布不再唯一",
+    )
+    values = dict(
+        (name, value)
+        for name, value in re.findall(
+            r"pub\(crate\) const (\w+): &str = \"([^\"]*)\";", reader
+        )
+        if name in MARKET_SPEC_SOURCE_CONSTANTS
+    )
+    check(
+        len(values) == 3 and len(set(values.values())) == 3,
+        "三档来源（CCXT 形状/产品形状/无规格）各自有名，且没有两档共用一个标签",
+        f"常量取值 {values}",
+    )
+    calls = {
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8").count(
+            "market_spec_source_label("
+        )
+        for path in sorted((CRATES / "qx-cli/src").rglob("*.rs"))
+        if "market_spec_source_label(" in path.read_text(encoding="utf-8")
+    }
+    check(
+        calls == {MARKET_SPEC_SOURCE_FILE: 1, "crates/qx-cli/src/backtests/mod.rs": 1},
+        "来源标签只在 loader 单点问一次：定义在 market_spec.rs、取用在 backtests/mod.rs",
+        f"实际出现处 {calls}",
+    )
+    defaults = {
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8").count(
+            "DEFAULT_INSTRUMENT_SPEC_VERSION"
+        )
+        for path in sorted((CRATES / "qx-cli/src").rglob("*.rs"))
+        if "DEFAULT_INSTRUMENT_SPEC_VERSION" in path.read_text(encoding="utf-8")
+        and "/tests/" not in f"/{path.relative_to(ROOT).as_posix()}"
+    }
+    check(
+        defaults == {
+            MARKET_SPEC_SOURCE_FILE: 1,
+            "crates/qx-cli/src/backtests/mod.rs": 1,
+        },
+        "没传规格那一档由 loader 独占，链上不得自带兜底标签",
+        f"实际出现处 {defaults}",
+    )
+    for chain, path in MARKET_SPEC_SOURCE_CHAINS.items():
+        production = (ROOT / path).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+        block = _identity_block(production, "RunManifestIdentity {")
+        check(
+            re.search(r"^\s+instrument_spec_version,$", block, re.MULTILINE) is not None
+            and "instrument_spec_version:" not in block
+            and "if spec_path.is_some()" not in production,
+            f"{chain} 的 identity 块里来源只可能是 loader 返回的那个变量",
+            f"{path} 的 RunManifestIdentity 块不再只搬用 loader 值: {block[-160:]!r}",
+        )
+    printed = (ROOT / MARKET_SPEC_SOURCE_CHAINS["策略回测"]).read_text(encoding="utf-8")
+    check(
+        '"[Builtin · Execution] fill_model={} source={} spec_source={}"' in printed
+        and "fill_model_name, fill_model_source, instrument_spec_version" in printed,
+        "不落摘要的 builtin 链把同一个来源打印出来，占位符与实际参数一一对应",
+        "single_strategy.rs 的 Execution 行不再披露或改印别处的规格来源",
+    )
+    cases = (ROOT / MARKET_SPEC_TEST_FILE).read_text(encoding="utf-8")
+
+    def case_slice(signature: str) -> str:
+        start = cases.find(signature)
+        if start < 0:
+            return ""
+        end = cases.find("\n}\n", start)
+        return cases[start:] if end < 0 else cases[start:end]
+
+    helper = case_slice("fn published_spec_source(")
+    strategy_case = case_slice("fn each_market_spec_shape_publishes_its_own_source_label(")
+    depth_case = case_slice("fn the_depth_chain_publishes_the_shape_it_actually_read(")
+    check(
+        '"run_manifest"' in helper
+        and "instrument_spec_version" in helper
+        and all(
+            entry in body
+            for body in (strategy_case, depth_case)
+            for entry in (
+                "spec.exists().then_some(&spec)",
+                "published_spec_source(&summary)",
+                *MARKET_SPEC_SOURCE_CONSTANTS,
+            )
+        )
+        and re.search(r"published\.len\(\)\s*,\s*3", strategy_case) is not None
+        and re.search(r"published\.len\(\)\s*,\s*3", depth_case) is not None
+        and "run_strategy_backtest(" in strategy_case
+        and "run_depth_backtest(" in depth_case,
+        "两条写来源的链各有经过真实入口、逐档核对产物标签的行为用例（V11 Q63 证据）",
+        f"{MARKET_SPEC_TEST_FILE} 不再覆盖来源标签",
+    )
+
+
+# V11 Q55：同一个事实在两层各有一份表述——内核的 `needs_reference_leg()`（缺
+# `reference_instrument` 即非法）与 CLI 的回测准入名单 `MULTI_LEG_KINDS`（只有
+# `backtest multi-builtin` 收这四个 kind）。两份都是必要的第一手登记（一层不能反向依赖
+# 另一层的形状），但它们必须逐项相等：只改一边就会出现"内核认为合法、入口却拒绝"或
+# 相反的静默放行。这里按文本取两侧的 kind 名单做集合比对。
+TWO_LEG_KINDS = {
+    "PairsArbitrage",
+    "BasisArbitrage",
+    "CrossVenueArbitrage",
+    "SpotFuturesArbitrage",
+}
+KERNEL_KIND_PREDICATE = "crates/qx-strategy/src/builtin.rs"
+CLI_KIND_PARTITION = "crates/qx-cli/src/cli_help.rs"
+# 取"从某个锚点起到下一个块结束"之间的片段，避免把同文件里的其它 kind 列表算进来。
+ARBITRAGE_BLOCK_END = re.compile(r"\n(?:    (?:pub )?fn |;)")
+
+
+def _kinds_between(text: str, anchor: str) -> set[str]:
+    start = text.index(anchor)
+    tail = text[start + len(anchor) :]
+    end = ARBITRAGE_BLOCK_END.search(tail)
+    body = tail[: end.start()] if end else tail
+    return set(re.findall(r"::(\w*Arbitrage)\b", body))
+
+
+def two_leg_partition_check() -> None:
+    """双腿 kind 的内核谓词与 CLI 准入名单必须逐项相等（V11 Q55）。"""
+    kernel = _kinds_between(
+        (ROOT / KERNEL_KIND_PREDICATE).read_text(encoding="utf-8"),
+        "pub const fn needs_reference_leg",
+    )
+    cli = _kinds_between(
+        (ROOT / CLI_KIND_PARTITION).read_text(encoding="utf-8"),
+        "const MULTI_LEG_KINDS",
+    )
+    check(
+        kernel == TWO_LEG_KINDS and cli == TWO_LEG_KINDS,
+        "双腿套利 kind 的内核谓词与 CLI 准入名单逐项相等",
+        f"内核 {sorted(kernel)} / CLI {sorted(cli)} / 期望 {sorted(TWO_LEG_KINDS)}",
+    )
+    init_surface = (ROOT / "crates/qx-cli/src/init_project.rs").read_text(encoding="utf-8")
+    check(
+        "fn single_leg_builtin_strategy" in init_surface
+        and "kind.needs_reference_leg()" in init_surface,
+        "init 的两个单标的入口必须按内核谓词拒绝双腿 kind",
+        "init_project.rs 缺少 single_leg_builtin_strategy 或其谓词调用",
+    )
 
 
 def main() -> int:
@@ -2091,7 +3559,13 @@ def main() -> int:
     bare_risk_gate_check()
     execution_single_track_check()
     ashare_pit_check()
+    ashare_limit_anchor_check()
     venue_report_contract_check()
+    ashare_backtest_binding_check()
+    ashare_submit_guard_check()
+    builtin_signal_check()
+    replay_kernel_check()
+    input_provenance_check()
     ledger_kernel_split_check()
     concept_registry_check()
     storage_retry_check()
@@ -2101,6 +3575,11 @@ def main() -> int:
     paper_fee_same_source_check()
     kernel_claim_check()
     multi_leg_honesty_check()
+    market_spec_single_reader_check()
+    market_spec_source_check()
+    two_leg_partition_check()
+    snapshot_money_honesty_check()
+    position_money_honesty_check()
     capabilities_check()
     line_budget_check()
     print()

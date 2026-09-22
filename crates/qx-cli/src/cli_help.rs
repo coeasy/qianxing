@@ -45,19 +45,29 @@ pub(crate) fn print_cli_help() {
   strategy init <strategy> [runtime.json] [bar-frame.json] [--force]
       从模板生成可直接回测的内置策略配置。
   strategy backtest <runtime.json> <bar-frame.json> [market-spec.json]
-      使用统一回测引擎运行策略并保存结果产物。
+      使用统一回测引擎运行策略并保存结果产物。strategy.builtin_* 信号参数在这里生效，
+      并印进 [Strategy · Signal] 行；同一份配置在 backtest builtin 上必须给出同一套信号。
   backtest [runtime.json] [bar-frame.json] [market-spec.json]
       使用统一 Rust 撮合引擎运行跨语言策略回测。
-  backtest builtin <strategy> <bar-frame.json> [market-spec.json] [quantity]
+  backtest builtin <strategy> <bar-frame.json> [market-spec.json] [quantity] [--config <runtime.json>]
       使用内置策略和统一 Rust 撮合引擎回测。
+      --config 读取的是策略口径（风控规则、撮合模型、成本规则、market spec 与 A 股段），
+      以及 strategy.builtin_fast_window / builtin_slow_window / builtin_period /
+      builtin_threshold_bps 这四个信号参数：逐项可省，写了就必须生效并在 stdout 印出 [· Signal] 行，
+      非法取值整轮失败。下单数量仍由命令行 quantity 点名；配了 A 股快照就必须生效，快照非法即整轮失败。
   backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity] [--funding-bps <n>] [--quantity <n>] [--root <产物目录>]
       对齐两条 BarFrame，使用同一信号驱动双腿独立账户回测，并按 SpreadOrderGroup 汇总组级费用/保证金/资金费归因。
-  backtest ccxt-builtin <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity]
-      一次完成 CCXT OHLCV 获取、内置策略回测和结果输出。
+      保证金与资金费只向 market spec 声明为衍生品的腿计提；--funding-bps 非零时两条腿都必须带 spec，缺失一律先拒再跑。
+      --config 的 A 股段（strategy.ashare_rules_path 等）在这里没有落点：一份策略段套不住两条腿各自的交易制度，配置了即整轮拒绝。
+      strategy.builtin_* 信号参数在本链生效（两条腿共用同一份信号），生效口径印进 [Multi · Signal] 行。
+  backtest ccxt-builtin <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity] [--config <runtime.json>]
+      一次完成 CCXT OHLCV 获取、内置策略回测和结果输出。取完数据后交给 backtest builtin，A 股段与费用口径同样生效。
   backtest book --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>] [--latency-snapshots <n>] [--market-impact-bps <n>]
       深度档回测：l1 走 Tick 内核、l2/l3 走订单簿内核，产物会写明本次实际使用的撮合内核。
       --fee-bps 优先级：显式旗标 > 运行时配置 cost_rules_path 的 taker_bp > 内核默认吃单费率。
       成本规则里的延迟设置在深度档没有落点，非零会直接报错而不是被忽略。
+      --config 的 A 股段同理：盘口引擎没有 T+1、整手与涨跌停的挂钩点，配置了即整轮拒绝。
+      strategy.builtin_* 信号参数在本链生效，生效口径印进 [Depth · Signal] 行。
       --latency-snapshots/--market-impact-bps 是深度撮合模型参数，缺省全 0 即逐档吃单；
       两者都会写进执行描述符与产物摘要，换参数就是换结果口径。内核的队列前置参数只作用于
       限价单，而内置策略一律发市价单，因此没有做成旗标。
@@ -84,10 +94,13 @@ pub(crate) fn print_cli_help() {
       运行策略 worker；信号在 Rust 侧过风控后入队。
   paper-worker <runtime.json> <worker-id> [--once]
       运行 Paper 执行 worker（也承载配置中的 spread_recovery 角色）。
+      strategy.ashare_rules_path 在这里会被当场拒绝：提交前的闸门没有 T+1/整手/涨跌停的落点（V11 Q65）。
   binance-worker <runtime.json> <worker-id> [--once]
       运行 Binance 行情/执行/对账 worker。
+      执行与补腿角色同样当场拒绝 strategy.ashare_rules_path；行情与对账角色不受影响。
   ccxt-worker <runtime.json> <worker-id> <ccxt-config.json> [--once]
       运行 CCXT 执行 worker。
+      执行与补腿角色同样当场拒绝 strategy.ashare_rules_path；行情角色不受影响。
   ccxt-fetch-ohlcv <ccxt-config.json> <instrument> <start_ms> <end_ms> <output.json> [timeframe]
       下载一段 CCXT OHLCV 并写成标准 BarFrame 文件。
   outbox-relay <data-root> <nats-url> <subject-prefix> [limit]
@@ -110,8 +123,10 @@ pub(crate) fn print_cli_help() {
       只读探测 Binance 私有接口，需要配置引用的凭据。
   binance-submit-order <runtime.json> <worker-id> <command.json>
       向 Binance 提交一条命令队列中的 SubmitOrder，真实下单。
+      配了 strategy.ashare_rules_path 即在任何副作用之前拒绝（V11 Q65）。
   paper-submit-order <runtime.json> <command.json>
       在 Paper venue 上提交一条 SubmitOrder，不访问交易所。
+      配了 strategy.ashare_rules_path 即在任何副作用之前拒绝（V11 Q65）。
   paper-e2e [runtime.json]
       跑一次 Paper 主链路验收（注入合成行情，不接真实 feed）。
   paper-check [runtime.json]

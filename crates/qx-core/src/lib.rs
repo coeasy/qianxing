@@ -46,7 +46,7 @@ pub use self::numeric::{Fixed, Money, Price, Quantity, SCALE};
 pub use self::order::{Fill, Order, OrderStatus, OrderTrace, Side};
 pub use self::queue::CausalQueue;
 pub use self::retry::{Backoff, RetryPolicy};
-pub use self::sourcing::{EventLog, Fnv1a, ReplayVerifier, RunManifest};
+pub use self::sourcing::{EventLog, Fnv1a, ReplayFacts, ReplayVerifier, RunManifest};
 pub use self::target::TargetPosition;
 pub use self::trading::{
     MarginMode, MarginState, OrderPolicy, PositionMode, PositionSide, TradingInstrumentSpec,

@@ -324,23 +324,20 @@ pub(crate) fn load_worker_instrument_spec(
             resolved_spec_path.display()
         )
     })?;
-    let spec = match serde_json::from_str::<TradingInstrumentSpec>(&payload) {
-        Ok(spec) => spec,
-        Err(_) => {
-            let market: serde_json::Value = serde_json::from_str(&payload).map_err(|error| {
-                format!(
-                    "worker market spec JSON 无效 {}: {error}",
-                    resolved_spec_path.display()
-                )
-            })?;
-            ccxt_market_to_spec(&order.instrument, &market)?
-        }
-    };
-    spec.validate()
-        .map_err(|error| format!("worker market spec 非法: {error:?}"))?;
-    if spec.instrument != order.instrument {
-        return Err("worker market spec instrument 与订单不一致".into());
-    }
+    let market: serde_json::Value = serde_json::from_str(&payload).map_err(|error| {
+        format!(
+            "worker market spec JSON 无效 {}: {error}",
+            resolved_spec_path.display()
+        )
+    })?;
+    // 形状判定、instrument 一致性与字段校验都在 [`market_spec_from_value`] 里，与三条
+    // Bar 回测链吃同一份口径；这里只负责把报错落到哪个文件说清楚。
+    let spec = market_spec_from_value(&order.instrument, &market).map_err(|error| {
+        format!(
+            "读取 worker market spec 失败 {}: {error}",
+            resolved_spec_path.display()
+        )
+    })?;
     Ok(Some(spec))
 }
 

@@ -185,13 +185,19 @@ pub(crate) fn mk_submit_command(command_id: u64, order: &Order, dry_run: bool) -
 }
 
 mod account_event_log_identity;
+mod api_snapshot_money_fields;
+mod ashare_submit_guard;
 
 /// 子进程型用例共用的被测 binary 与其新鲜度护栏（原本只在 `cli_surface.rs` 内，
 /// V11 Q0b 的旗标用例同样要跑真 binary，于是按"共享夹具进本文件"的约定上移）。
-const QX_CLI_SURFACE_SOURCES: [&str; 4] = [
+/// V11 Q54 把 `init` 一族与产品规格读法各自拆成模块，两者都是子进程用例的被测面，
+/// 因此一并列入：漏掉一项就等于放任过期 binary 对着旧行为"绿"。
+const QX_CLI_SURFACE_SOURCES: [&str; 6] = [
     "src/cli.rs",
     "src/cli_help.rs",
     "src/config_commands.rs",
+    "src/init_project.rs",
+    "src/market_spec.rs",
     "src/backtests/mod.rs",
 ];
 
@@ -241,15 +247,22 @@ fn qx_cli_binary() -> PathBuf {
 mod backtest_cost_provenance;
 mod backtest_entries;
 mod backtest_fill_model;
+mod backtest_input_provenance;
+mod backtest_replay_gate;
 mod backtest_risk_provenance;
+mod ccxt_position_facts_honesty;
 mod cli_surface;
 mod e2e_and_python_contract;
 mod execution_and_multi_leg;
+mod init_onboarding;
 mod live_submit_fail_closed;
+mod market_spec_single_source;
 mod paper_and_strategy_worker;
 mod paper_bridge_and_bundles;
+mod paper_hedge_recovery;
 mod paper_margin_valuation;
 mod paper_settlement_currency;
 mod settlement_currency_caliper;
 mod storage_root_report;
+mod strategy_worker_entries;
 mod worker_observability;

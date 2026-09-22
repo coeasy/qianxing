@@ -309,3 +309,70 @@ fn calendar_json_controls_daily_and_intraday_trading_windows() {
     assert!(!rules.is_trading(day + 12 * 3_600_000));
     assert!(!rules.is_trading(day + DAY_MS));
 }
+
+#[test]
+fn limit_band_anchors_to_the_previous_session_close_not_the_previous_bar() {
+    let rules = AshareRuleConfig {
+        enabled: true,
+        ..AshareRuleConfig::default()
+    };
+    rules.validate().unwrap();
+    let yuan = |cents: i128| cents * SCALE / 100;
+    let minute = 60_000;
+    let day_a = 100 * DAY_MS;
+    let day_b = day_a + DAY_MS;
+    // 昨天尾盘 9.90 -> 10.00 收盘；今天 10.50 起跳，涨到 11.00 封死在涨停板上。
+    let bars = vec![
+        Bar::new(
+            day_a + 555 * minute,
+            yuan(990),
+            yuan(995),
+            yuan(985),
+            yuan(990),
+            1_000,
+        ),
+        Bar::new(
+            day_a + 560 * minute,
+            yuan(995),
+            yuan(1_000),
+            yuan(990),
+            yuan(1_000),
+            1_000,
+        ),
+        Bar::new(
+            day_b,
+            yuan(1_050),
+            yuan(1_055),
+            yuan(1_045),
+            yuan(1_050),
+            1_000,
+        ),
+        Bar::new(
+            day_b + 5 * minute,
+            yuan(1_100),
+            yuan(1_100),
+            yuan(1_100),
+            yuan(1_100),
+            1_000,
+        ),
+    ];
+    // 同一交易日内的前一根不是昨收，所以今天头一根之前都没有锚。
+    assert_eq!(rules.previous_close(&bars, 0), None);
+    assert_eq!(rules.previous_close(&bars, 1), None);
+    assert_eq!(rules.previous_close(&bars, 2), Some(yuan(1_000)));
+    // 关键一格：今天第二根的锚仍是昨天收，而不是 10.50 那根。
+    assert_eq!(rules.previous_close(&bars, 3), Some(yuan(1_000)));
+    assert_eq!(rules.limits(yuan(1_000)).0, yuan(1_100));
+    assert!(rules.blocks_fill(Side::Buy, &bars[3], rules.previous_close(&bars, 3)));
+    // 上一根 Bar 收价那种旧口径把板推到 11.55，这根封死的分钟线就照样成交。
+    let (stale_up, _) = rules.limits(bars[2].close);
+    assert_eq!(stale_up, yuan(1_155));
+    assert!(!rules.blocks_fill(Side::Buy, &bars[3], Some(stale_up)));
+    // 覆盖表赢过推导：除权除息日的昨收只能由数据侧给。
+    let overridden = AshareRuleConfig {
+        previous_close_raw: [(bars[3].ts, yuan(1_050))].into_iter().collect(),
+        ..rules.clone()
+    };
+    overridden.validate().unwrap();
+    assert_eq!(overridden.previous_close(&bars, 3), Some(yuan(1_050)));
+}

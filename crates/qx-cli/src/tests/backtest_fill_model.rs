@@ -117,14 +117,14 @@ fn fill_model_error(configured: &str, spec: Option<&TradingInstrumentSpec>) -> S
         .unwrap_err()
 }
 
-/// 回测入口的 market spec 故意取的档位：它既不等于 `ccxt_market_to_spec` 缺字段时的兜底
-/// `1`，也不等于仓库里那份已验收现货规格的 `1_000_000`。摘要里出现这个数，才证明成交
-/// 一档真的取自使用者给的那份文件，而不是某处兜底。
+/// 回测入口的 market spec 故意取的档位：它既不等于仓库里那份已验收现货规格的
+/// `1_000_000`，也不是任何一处可能兜出来的整数。摘要里出现这个数，才证明成交一档真的取自
+/// 使用者给的那份文件——loader 现在对缺字段直接拒绝，所以"能跑起来"本身就说明这一档有出处。
 const SPEC_PRICE_TICK_RAW: i128 = 3_000_000;
 
-/// 落一份 CCXT 形状的现货市场快照到 `dir` 并返回路径。回测的 spec 走
-/// `ccxt_market_to_spec`，吃的是交易所原始字段（`base`/`quote`/`price_tick_raw`），
-/// 与 worker 侧 `instrument_spec_path` 吃的那份 `TradingInstrumentSpec` 不是同一形状。
+/// 落一份 CCXT 形状的现货市场快照到 `dir` 并返回路径。它与 worker 侧
+/// `instrument_spec_path` 吃的那份 `TradingInstrumentSpec` 是两种形状，但自 V11 Q54 起
+/// 走同一个 loader（[`market_spec_from_value`]），所以回测与实盘读到的口径不会再分叉。
 fn spot_market_spec(dir: &Path) -> PathBuf {
     let path = dir.join("binance-btcusdt.market.json");
     std::fs::write(
@@ -156,7 +156,7 @@ fn declared_tick(spec_path: &Path) -> i128 {
     let payload = std::fs::read_to_string(spec_path).unwrap();
     let market: serde_json::Value = serde_json::from_str(&payload).unwrap();
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
-    ccxt_market_to_spec(&instrument, &market)
+    market_spec_from_value(&instrument, &market)
         .unwrap()
         .price_tick
 }
@@ -289,7 +289,7 @@ fn command_line_entries_read_the_declared_fill_model() {
         None,
         None,
         1,
-        25,
+        0,
         Some(&declared_root),
         Some(&declared_runtime),
     )
@@ -309,7 +309,7 @@ fn command_line_entries_read_the_declared_fill_model() {
         None,
         None,
         1,
-        25,
+        0,
         Some(&plain_root),
         Some(&plain_runtime),
     )

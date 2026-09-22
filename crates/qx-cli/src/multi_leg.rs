@@ -188,7 +188,11 @@ pub(crate) fn multi_leg_leg_buckets(
     if funding_bps != 0 {
         // 资金费按实际持仓分段计提：持有到下一个信号或回测结束，按持有时长折算
         // 8 小时周期；多头支付为正，空头收取为负。
-        if let Some(spec) = leg.spec {
+        //
+        // 只向衍生品腿计提：现货没有资金费，给它挂一笔等于造一个不存在的成本。缺 spec
+        // 的腿按现货口径跳过 —— 而"声称要资金费却缺 spec"已由 `multi_leg_spec_guard`
+        // 在跑之前就拒掉，所以这里不会把一条衍生品腿的钱静默记成 0（V11 Q58）。
+        if let Some(spec) = leg.spec.filter(|spec| spec.product.is_derivative()) {
             for index in 0..buckets.len() {
                 let standing_raw = buckets[index].realized_standing_after_raw;
                 if standing_raw == 0 {
@@ -234,7 +238,9 @@ pub(crate) fn multi_leg_leg_margin(
     buckets: &[MultiLegSignalBucket],
     ts: u64,
 ) -> Result<i128, String> {
-    let Some(spec) = leg.spec else {
+    // 保证金只属于能用杠杆的产品：现货腿是全额现金买入，再按 notional 记一笔保证金就是把
+    // 同一笔现金算两次。缺 spec 同样按现货口径 —— 衍生品缺 spec 那种组合已经被规格闸门拒掉。
+    let Some(spec) = leg.spec.filter(|spec| spec.product.is_derivative()) else {
         return Ok(0);
     };
     let standing_raw = multi_leg_realized_standing_at(buckets, ts).abs();

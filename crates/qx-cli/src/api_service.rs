@@ -270,13 +270,15 @@ pub(crate) fn load_api_account_snapshot_for_worker(
                 .ledger()
                 .cash_for(account_id, pipeline.settlement_currency())
         });
-    snapshot.available_raw = snapshot.equity_raw;
-    snapshot.orders = runtime_snapshot
-        .orders
-        .iter()
-        .map(|order| (order.client_id, qx_protocol::OrderSnapshot::from(order)))
-        .collect();
-    snapshot.fills = pipeline
+    // 等权的权益不是"可用资金"：持仓那段已压在标的上，抄 equity 等于宣布持仓可自由花掉。
+    // 币种取本条快照记账的那一本，与上面的 cash/equity 同一口径；`LiveEventPipeline::open`
+    // 已经拒绝空结算币种，所以这里没有"账簿读不出"的第三种状态。
+    snapshot.available_raw = Some(
+        pipeline
+            .ledger()
+            .cash_for(account_id, pipeline.settlement_currency()),
+    );
+    let fill_facts = pipeline
         .log()
         .events()
         .iter()
@@ -287,7 +289,23 @@ pub(crate) fn load_api_account_snapshot_for_worker(
             )),
             _ => None,
         })
+        .collect::<Vec<_>>();
+    // 费用不用另找来源：同一条快照的逐笔成交已经带着 fee_raw。让账户级 fees 报 0，
+    // 等于在同一份 JSON 里一边说"这些成交收了这么多费"、一边说"这账户费用为零"。
+    // 溢出时宁可报"读不出这份快照"，也不发布一个回绕过的费用合计。
+    let mut fees_raw = 0_i128;
+    for (_, fill) in &fill_facts {
+        fees_raw = fill.fee_raw.checked_add(fees_raw).ok_or_else(|| {
+            format!("账户 {account_id} 的成交费用合计溢出，拒绝发布费用口径错误的快照")
+        })?;
+    }
+    snapshot.fees_raw = Some(fees_raw);
+    snapshot.orders = runtime_snapshot
+        .orders
+        .iter()
+        .map(|order| (order.client_id, qx_protocol::OrderSnapshot::from(order)))
         .collect();
+    snapshot.fills = fill_facts.into_iter().collect();
 
     let mut instruments = BTreeSet::new();
     instruments.extend(
@@ -329,8 +347,11 @@ pub(crate) fn load_api_account_snapshot_for_worker(
                     .get(&instrument)
                     .map(|price| price.raw())
                     .unwrap_or(0),
-                unrealized_pnl_raw: 0,
-                margin_raw: 0,
+                // 这一行只由自己的账本拼出来：Ledger 里没有"未实现盈亏"和"占用的保证金"
+                // 这两个量（它们要按冻结的 market spec 逐标的算，读侧没有规格来源），
+                // 所以只能缺席。写死 0 会让一个上涨 5% 的现货仓位长期报着"没有浮亏"。
+                unrealized_pnl_raw: None,
+                margin_raw: None,
             });
         if wire.quantity_raw == 0 && venue_position.is_none() {
             continue;

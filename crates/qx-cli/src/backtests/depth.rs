@@ -59,12 +59,15 @@ pub(crate) fn run_depth_backtest(
     if MULTI_LEG_KINDS.contains(&kind) {
         return Err("深度档位回测只支持单标的策略，多腿配对请使用 multi-builtin".into());
     }
-    let payload = std::fs::read_to_string(frame_path)
-        .map_err(|error| format!("读取深度数据帧失败 {}: {error}", frame_path.display()))?;
-    let frame = DepthFrame::from_json(&payload)
-        .map_err(|error| format!("{}: {error}", frame_path.display()))?;
-    let (instrument_spec, _) = market_spec_with_margin(&frame.instrument, spec_path, "深度回测")?;
+    let frame = read_depth_frame_for_backtest(frame_path)?;
+    let MarketSpecLoad {
+        spec: instrument_spec,
+        source: instrument_spec_version,
+        margin: _,
+    } = market_spec_with_margin(&frame.instrument, spec_path, "深度回测")?;
     let currency = backtest_settlement_currency(instrument_spec.as_ref());
+    // 深度档没有数据集注册表条目，但它有自己的内容哈希：那份哈希才是"跑的是哪一份帧"。
+    let input = depth_frame_input_provenance(frame_path, &frame);
     let data_fingerprint = format!("depth:{}:{:016x}", frame.source, frame.input_hash());
     let context = NativeStrategyContext {
         strategy_id: format!("builtin-{}", kind.name()),
@@ -78,12 +81,21 @@ pub(crate) fn run_depth_backtest(
         available_margin_raw: Some(Money::from_i64(100_000).raw()),
         risk_state: "ready".into(),
     };
-    let strategy = BuiltinStrategy::new(BuiltinStrategyConfig::new(
+    // 信号参数与另外两条 Bar 链同源：深度档读得到 `--config`（风控、成本都从它取），
+    // 却把窗口写死成默认，等于同一份配置在 book 上跑出另一套信号（V11 Q64）。
+    let mut strategy_config = BuiltinStrategyConfig::new(
         kind,
         format!("builtin-{}", kind.name()),
         frame.instrument.clone(),
         Quantity::from_i64(quantity),
-    )?)?;
+    )?;
+    let signal_source = apply_configured_builtin_signal(&mut strategy_config, runtime_config_path)?;
+    let signal_note = format!(
+        "{} quantity={}",
+        builtin_signal_note(&strategy_config, signal_source),
+        quantity
+    );
+    let strategy = BuiltinStrategy::new(strategy_config)?;
     let mut strategy = DepthBarStrategy::new(strategy, context, frame.instrument.clone());
     strategy
         .initialize()
@@ -100,6 +112,13 @@ pub(crate) fn run_depth_backtest(
             costs.source()
         ));
     }
+    // 同一判据管到 A 股段：深度内核只在盘口档位上撮合，T+1、整手与涨跌停没有挂钩点，
+    // 收下 `strategy.ashare_rules_path` 再静默丢掉，等于让配置说假话（V11 Q61）。
+    reject_ashare_rules_config(
+        runtime_config_path,
+        "backtest book",
+        "L1/L2 盘口引擎没有 T+1、整手与涨跌停的挂钩点",
+    )?;
     // 三层优先级：显式 --fee-bps > 成本规则文件的 taker_bp > 内核默认。
     let cost_source = if fee_bps.is_some() {
         "cli-flag".to_string()
@@ -159,11 +178,7 @@ pub(crate) fn run_depth_backtest(
                 &frame,
             ),
             strategy_version: &format!("builtin-{}-v1", kind.name()),
-            instrument_spec_version: if spec_path.is_some() {
-                "ccxt-market-spec-v1"
-            } else {
-                "default-instrument-spec-v1"
-            },
+            instrument_spec_version,
             runtime_version: "depth-backtest-v1",
         },
         &data_fingerprint,
@@ -185,7 +200,8 @@ pub(crate) fn run_depth_backtest(
             clock_end: report.clock_end,
             input_data_hash: report.input_data_hash,
             result_hash: report.result_hash(),
-            replay_hash: report.replay_hash(),
+            event_log: &report.event_log,
+            ledger: &report.ledger,
             return_bps: report.return_bps,
             max_drawdown_bps: report.max_drawdown_bps,
             fees_raw: report.fees_raw,
@@ -200,6 +216,7 @@ pub(crate) fn run_depth_backtest(
             fill_model: None,
             matching_kernel,
             rejections: &rejections,
+            input,
         },
     )?;
     println!(
@@ -217,6 +234,7 @@ pub(crate) fn run_depth_backtest(
         "[Depth · Execution] latency_snapshots={} market_impact_bps={}",
         execution.latency_snapshots, execution.market_impact_bps
     );
+    println!("[Depth · Signal] {signal_note}");
     println!(
         "[Depth · Integrity] rejected_orders={} rejection_reasons={}",
         rejection_count(&rejections),

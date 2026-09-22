@@ -493,7 +493,7 @@ pub struct AshareRuleConfig {
     /// 停牌 bar 时间戳。停牌 bar 不接受新订单，也不产生成交。
     #[serde(default)]
     pub halted_timestamps: Vec<u64>,
-    /// 可选的前收盘覆盖，key 为当前 bar ts；用于真实交易日历/公司行为快照。
+    /// 可选昨收覆盖（除权除息日的锚），key 为被锚定 Bar 的 ts；缺省由 `previous_close` 推导。
     #[serde(default)]
     pub previous_close_raw: BTreeMap<u64, i128>,
     #[serde(default)]

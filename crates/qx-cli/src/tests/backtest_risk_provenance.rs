@@ -42,7 +42,7 @@ fn every_backtest_entry_reads_the_same_risk_rules_from_one_config() {
         None,
         None,
         1,
-        25,
+        0,
         Some(&multi_root),
         Some(&runtime),
     )

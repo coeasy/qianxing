@@ -77,14 +77,21 @@ impl BarBacktestAssembly {
     }
 }
 
-/// market spec JSON → `(合约规格, 保证金规则)`；三条 Bar 回测链读取同一份口径。
+/// market spec JSON → `MarketSpecLoad`；三条 Bar 回测链读取同一份口径。
+///
+/// 结构体本身住在 `market_spec.rs`（它同时是保证金规则的形状来源），这里只负责"读文件 +
+/// 报错带上是哪条链"，好让 mod.rs 的顶层条目不再长一份。
 pub(crate) fn market_spec_with_margin(
     instrument: &InstrumentId,
     spec_path: Option<&Path>,
     label: &str,
-) -> Result<(Option<TradingInstrumentSpec>, Box<dyn MarginRule>), String> {
+) -> Result<MarketSpecLoad, String> {
     let Some(spec_path) = spec_path else {
-        return Ok((None, Box::new(NoMargin)));
+        return Ok(MarketSpecLoad {
+            spec: None,
+            margin: Box::new(NoMargin),
+            source: DEFAULT_INSTRUMENT_SPEC_VERSION,
+        });
     };
     let payload = std::fs::read_to_string(spec_path).map_err(|error| {
         format!(
@@ -98,8 +105,15 @@ pub(crate) fn market_spec_with_margin(
             spec_path.display()
         )
     })?;
+    let source = market_spec_source_label(&market);
     let margin = ccxt_margin_rule_from_market(&market);
-    Ok((Some(ccxt_market_to_spec(instrument, &market)?), margin))
+    let spec = market_spec_from_value(instrument, &market)
+        .map_err(|error| format!("{label} market spec {}: {error}", spec_path.display()))?;
+    Ok(MarketSpecLoad {
+        spec: Some(spec),
+        margin,
+        source,
+    })
 }
 
 /// 内置策略在 Bar 内核上跑一遍的共用执行段：初始化、撮合与失败文案只保留一份。
@@ -117,8 +131,12 @@ pub(crate) fn run_builtin_strategy_on_bars(
         .run(bars, &mut strategy)
         .map_err(|error| format!("内置策略回测失败: {error:?}"))
 }
+
 mod artifacts;
 pub(crate) use artifacts::*;
+
+mod ashare_binding;
+pub(crate) use ashare_binding::*;
 
 mod depth;
 pub(crate) use depth::*;

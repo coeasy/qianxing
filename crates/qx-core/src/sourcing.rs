@@ -294,6 +294,18 @@ fn write_text(hash: &mut Fnv1a, value: &str) {
 /// 重放校验：三重验证。
 pub struct ReplayVerifier;
 
+/// 一次真实重放得到的三条结论（V11 Q62）。
+///
+/// 它们必须**各自独立可核对**：`log_digest` 与 `events` 回答"事实源能不能被重新接受一遍"，
+/// `ledger_entries` 回答"这些事实重新驱动出来的账簿有没有少一条或多一条"。只给一个哈希
+/// 就等于把三件事压成一件，产物上看不出重放到底做了什么。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplayFacts {
+    pub log_digest: u64,
+    pub events: usize,
+    pub ledger_entries: usize,
+}
+
 impl ReplayVerifier {
     /// ① 相同 manifest 两次运行，结果哈希必须完全一致。
     pub fn identical(a: u64, b: u64) -> bool {
@@ -305,27 +317,64 @@ impl ReplayVerifier {
         a != b
     }
 
-    /// ③ 事件日志可重新驱动纯函数估值，得到相同账户与指标。
-    pub fn rebuild_from(events: &[Event]) -> u64 {
-        let mut log = EventLog::new();
-        for e in events {
-            log.append(e.clone());
-        }
-        log.digest()
-    }
-
-    /// 由账簿事实事件真实重建账户状态，而不是只重新计算日志哈希。
-    pub fn rebuild_ledger(events: &[Event]) -> QxResult<Ledger> {
+    /// ③ 事件日志可重新驱动纯函数估值：逐条过 `append_checked`（重复 seq、乱序、缺因果字段
+    /// 当场报错），把 `LedgerApplied` 事实重新入账，最后再对整本日志 `validate`。
+    ///
+    /// 这里没有"把同一段事件切片再哈希一遍"那种步骤 —— 旧实现 `rebuild_from` 就是这么算
+    /// `replay_hash` 的，于是它与 `result_hash` 恒等且**不可能失败**，写在产物里是一条假校验。
+    pub fn replay(events: &[Event]) -> QxResult<(EventLog, Ledger)> {
         let mut log = EventLog::new();
         let mut ledger = Ledger::new();
         for event in events {
-            log.append_checked(event.clone())?;
+            log.append_checked(event.clone()).map_err(|error| {
+                let previous = log.events().last().map_or_else(
+                    || "无前序事件".to_string(),
+                    |item| format!("前序 (ts={}, prio={})", item.ts, item.prio),
+                );
+                // 错误里带上"卡在哪一条"：只有一句"顺序不对"的使用者无法定位事实流。
+                crate::error::QxError::Invariant(format!(
+                    "事件重放在 seq={} (ts={}, prio={}) 处被拒绝: {error}; {previous}",
+                    event.seq, event.ts, event.prio
+                ))
+            })?;
             if let EventKind::LedgerApplied { entry } = &event.kind {
                 ledger.apply_entry(entry.clone())?;
             }
         }
         log.validate()?;
-        Ok(ledger)
+        Ok((log, ledger))
+    }
+
+    /// ③ 的三条结论投影；重放本身只有一个内核（`replay`），不要另起第二份。
+    pub fn replay_facts(events: &[Event]) -> QxResult<ReplayFacts> {
+        let (log, ledger) = Self::replay(events)?;
+        Ok(ReplayFacts {
+            log_digest: log.digest(),
+            events: events.len(),
+            ledger_entries: ledger.entries().len(),
+        })
+    }
+
+    /// 由账簿事实事件真实重建账户状态；`replay` 内核的账簿侧投影。
+    pub fn rebuild_ledger(events: &[Event]) -> QxResult<Ledger> {
+        Self::replay(events).map(|(_, ledger)| ledger)
+    }
+
+    /// ③ 的报告侧口径：重放事实源，并要求重建出的账簿与本轮账簿**条数一致**。
+    ///
+    /// 两条结论都可能失败，这是它与旧 `rebuild_from` 的分别：漏发一条 `LedgerApplied` 事实
+    /// （账户状态被就地改了）会让条数错开，事件重复或乱序会在 `append_checked` 当场报错，
+    /// 而"把切片再哈希一遍"对这两件事完全无感。
+    pub fn verify(events: &[Event], ledger: &Ledger) -> QxResult<ReplayFacts> {
+        let facts = Self::replay_facts(events)?;
+        if facts.ledger_entries != ledger.entries().len() {
+            return Err(crate::error::QxError::Invariant(format!(
+                "事件日志重放出的账簿与运行账簿不一致: replayed={}, run={}",
+                facts.ledger_entries,
+                ledger.entries().len()
+            )));
+        }
+        Ok(facts)
     }
 }
 
@@ -398,12 +447,90 @@ mod tests {
     }
 
     #[test]
-    fn rebuild_is_stable() {
-        let l = sample(4);
+    fn replay_rederives_the_digest_through_the_checked_path() {
+        let log = sample(4);
+        let facts = ReplayVerifier::replay_facts(log.events()).unwrap();
+        assert_eq!(facts.log_digest, log.digest());
+        assert_eq!(facts.events, 4);
+        assert_eq!(facts.ledger_entries, 0);
+    }
+
+    /// 旧的 `rebuild_from` 只是把切片再哈希一遍：换序照样给出同一个"重放哈希"。
+    #[test]
+    fn replay_rejects_a_log_a_blind_rehash_would_accept() {
+        let mut events: Vec<Event> = sample(4).events().to_vec();
+        events.swap(1, 2);
+        let error = ReplayVerifier::replay_facts(&events)
+            .expect_err("乱序日志必须报错，而不是给出一个与结果哈希相等的数字");
+        assert!(error.to_string().contains("顺序"), "{error}");
+    }
+
+    /// 账簿侧结论：事实少一条，重建出的账簿就必须少一条 —— 恒等的哈希看不出这件事。
+    #[test]
+    fn replay_counts_the_ledger_facts_the_log_actually_carries() {
+        let mut source = Ledger::new();
+        source
+            .deposit("main", "USD", crate::Money::from_i64(100), 10)
+            .unwrap();
+        source
+            .deposit("main", "USD", crate::Money::from_i64(50), 20)
+            .unwrap();
+        let mut log = EventLog::new();
+        for entry in source.entries() {
+            log.append_checked(Event::new(
+                entry.id,
+                entry.ts,
+                2,
+                EventKind::LedgerApplied {
+                    entry: entry.clone(),
+                },
+            ))
+            .unwrap();
+        }
         assert_eq!(
-            ReplayVerifier::rebuild_from(l.events()),
-            ReplayVerifier::rebuild_from(l.events())
+            ReplayVerifier::replay_facts(log.events())
+                .unwrap()
+                .ledger_entries,
+            2
         );
+        assert_eq!(
+            ReplayVerifier::replay_facts(&log.events()[..1])
+                .unwrap()
+                .ledger_entries,
+            1
+        );
+    }
+
+    /// 恒等的哈希看不出"账户被就地改了、但没发事实事件"这件事；条数对比能。
+    #[test]
+    fn verify_fails_when_the_run_ledger_carries_a_fact_the_log_does_not() {
+        let mut logged = Ledger::new();
+        logged
+            .deposit("main", "USD", crate::Money::from_i64(100), 10)
+            .unwrap();
+        let mut log = EventLog::new();
+        log.append_checked(Event::new(
+            0,
+            10,
+            2,
+            EventKind::LedgerApplied {
+                entry: logged.entries()[0].clone(),
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            ReplayVerifier::verify(log.events(), &logged)
+                .unwrap()
+                .ledger_entries,
+            1
+        );
+        let mut silent = logged.clone();
+        silent
+            .deposit("main", "USD", crate::Money::from_i64(20), 20)
+            .unwrap();
+        let error = ReplayVerifier::verify(log.events(), &silent)
+            .expect_err("账簿多一条而无对应事实事件必须报错");
+        assert!(error.to_string().contains("不一致"), "{error}");
     }
 
     #[test]

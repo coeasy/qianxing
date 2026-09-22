@@ -1,4 +1,5 @@
-//! 单策略回测装配：`run_single_strategy_backtest` 与薄壳 `run_builtin_backtest`。
+//! 单策略回测装配：`run_single_strategy_backtest` 与薄壳 `run_builtin_backtest`，
+//! 以及只多一步"取 CCXT OHLCV 再交给薄壳"的 `run_ccxt_builtin_backtest`。
 
 use super::*;
 
@@ -17,9 +18,15 @@ pub(crate) fn run_single_strategy_backtest(
     strategy_id: &str,
     dataset_binding: Option<DatasetRunBinding<'_>>,
     run_manifest_root: &Path,
+    // 本轮实际消费的那份输入的身份（路径 + 数据集 + 已复核指纹）。它由调用方从**唯一读点**
+    // 拿到，在这里只往两处用：RunManifest 的 `data_fingerprint` 与产物摘要的 `input` 块。
+    input: BacktestInputProvenance,
 ) -> Result<(), String> {
-    let (instrument_spec, margin) =
-        market_spec_with_margin(&frame.instrument, spec_path, "策略回测")?;
+    let MarketSpecLoad {
+        spec: instrument_spec,
+        margin,
+        source: instrument_spec_version,
+    } = market_spec_with_margin(&frame.instrument, spec_path, "策略回测")?;
     if config
         .strategy
         .product
@@ -30,51 +37,18 @@ pub(crate) fn run_single_strategy_backtest(
     }
     let mut virtual_trading = VirtualTradingConfig::default();
     // None 表示沿用成本绑定给出的费率模型（`cost_rules_path` 或内核默认 2/5bp）。
-    let mut fee: Option<Box<dyn FeeModel>> = None;
     // A 股规则快照自带一套佣金/印花税模型，它会覆盖成本绑定的费率——产物必须改口说明。
-    let mut fee_from_ashare_rules = false;
-    if let Some(path) = config.strategy.ashare_rules_path.as_deref() {
-        let payload = std::fs::read_to_string(path)
-            .map_err(|error| format!("读取 A 股规则快照失败 {path}: {error}"))?;
-        let mut rules: AshareRuleConfig = serde_json::from_str(&payload)
-            .map_err(|error| format!("A 股规则快照 JSON 无效 {path}: {error}"))?;
-        if let Some(actions_path) = config.strategy.ashare_actions_path.as_deref() {
-            let actions_payload = std::fs::read_to_string(actions_path)
-                .map_err(|error| format!("读取 A 股公司行为 JSON 失败 {actions_path}: {error}"))?;
-            rules
-                .apply_corporate_actions_json(&frame.instrument.to_string(), &actions_payload)
-                .map_err(|error| format!("A 股公司行为 JSON 非法: {error}"))?;
-        }
-        if let Some(calendar_path) = config.strategy.ashare_calendar_path.as_deref() {
-            let calendar_payload = std::fs::read_to_string(calendar_path)
-                .map_err(|error| format!("读取 A 股交易日历 JSON 失败 {calendar_path}: {error}"))?;
-            rules
-                .apply_calendar_json(&calendar_payload)
-                .map_err(|error| format!("A 股交易日历 JSON 非法: {error}"))?;
-        }
-        rules
-            .validate()
-            .map_err(|error| format!("A 股规则快照非法: {error}"))?;
-        if !rules.enabled {
-            return Err("配置 ashare_rules_path 后 enabled 必须为 true".into());
-        }
-        virtual_trading.ashare_rules = Some(rules.clone());
-        fee = Some(Box::new(AShareFeeModel {
-            commission_bp: rules.commission_bp,
-            min_commission: rules.min_commission,
-            stamp_duty_bp: rules.stamp_duty_bp,
-            transfer_fee_bp: rules.transfer_fee_bp,
-        }));
-        fee_from_ashare_rules = true;
-    }
-    if (config.strategy.ashare_actions_path.is_some()
-        || config.strategy.ashare_calendar_path.is_some())
-        && config.strategy.ashare_rules_path.is_none()
-    {
-        return Err(
-            "配置 ashare_actions_path 或 ashare_calendar_path 时必须同时配置 ashare_rules_path"
-                .into(),
-        );
+    let mut fee: Option<Box<dyn FeeModel>> = None;
+    let mut ashare_rules_path: Option<String> = None;
+    if let Some(binding) = ashare_backtest_binding(
+        config.strategy.ashare_rules_path.as_deref(),
+        config.strategy.ashare_actions_path.as_deref(),
+        config.strategy.ashare_calendar_path.as_deref(),
+        &frame.instrument.to_string(),
+    )? {
+        virtual_trading.ashare_rules = Some(binding.rules);
+        fee = Some(binding.fee);
+        ashare_rules_path = Some(binding.rules_path);
     }
     let account_id = config
         .strategy
@@ -114,19 +88,17 @@ pub(crate) fn run_single_strategy_backtest(
     if let Some(fee) = fee {
         assembly.fee = fee;
     }
-    let cost_source = if fee_from_ashare_rules {
+    let cost_source = match (ashare_rules_path, costs.loaded_from.as_deref()) {
         // A 股规则快照自带佣金模型，它顶掉成本文件里的费率，但成本文件的延迟仍然生效：
         // 两个来源都要写进产物，否则摘要会把延迟口径也算到 A 股规则头上。
-        let base = format!(
-            "ashare-rules:{}",
-            config.strategy.ashare_rules_path.as_deref().unwrap_or("")
-        );
-        match costs.loaded_from.as_deref() {
-            Some(path) => format!("{base}+cost-rules-file:{}", path.display()),
-            None => base,
+        (Some(rules_path), Some(path)) => {
+            format!(
+                "ashare-rules:{rules_path}+cost-rules-file:{}",
+                path.display()
+            )
         }
-    } else {
-        costs.source()
+        (Some(rules_path), None) => format!("ashare-rules:{rules_path}"),
+        (None, _) => costs.source(),
     };
     let backtest_config = assembly.into_config();
     let report = if config.strategy.builtin_strategy.is_some() {
@@ -142,6 +114,10 @@ pub(crate) fn run_single_strategy_backtest(
         }
         let builtin_config =
             builtin_strategy_config_from_runtime(&config.strategy, &frame.instrument)?;
+        println!(
+            "[Strategy · Signal] {}",
+            builtin_signal_note(&builtin_config, builtin_signal_source(&config.strategy))
+        );
         let context = NativeStrategyContext {
             strategy_id: builtin_config.strategy_id.clone(),
             strategy_version: builtin_config.strategy_version.clone(),
@@ -176,21 +152,20 @@ pub(crate) fn run_single_strategy_backtest(
             .run(bars, &mut strategy)
             .map_err(|error| format!("跨语言策略回测失败: {error:?}"))?
     };
+    // Bundle 场景仍然优先：那是跨多个组件的合成指纹。没有 Bundle 时，这一格必须是**被数据集
+    // 注册表复核过**的那份输入指纹，而不是 `report.input_data_hash`——后者是引擎对自己手里那段
+    // 切片的自哈希，既不含 instrument 也不含来源，换掉输入文件它照算不误（V11 Q66 / Q1b）。
     let data_fingerprint = dataset_binding
         .as_ref()
         .map(|binding| format!("dataset-bundle:{}", binding.bundle_fingerprint))
-        .unwrap_or_else(|| format!("{:016x}", report.input_data_hash));
+        .unwrap_or_else(|| format!("{}:{}", input.kind, input.fingerprint));
     let run_manifest = report.run_manifest_with_input_components(
         RunManifestIdentity {
             run_id: &format!("strategy-backtest:{strategy_id}:{}", frame.instrument),
             code_commit: env!("QX_GIT_COMMIT"),
             config_hash: &config.fingerprint()?,
             strategy_version: &config.strategy.version,
-            instrument_spec_version: if spec_path.is_some() {
-                "ccxt-market-spec-v1"
-            } else {
-                "default-instrument-spec-v1"
-            },
+            instrument_spec_version,
             runtime_version: &format!("runtime-schema-{}", config.schema_version),
         },
         &data_fingerprint,
@@ -216,7 +191,8 @@ pub(crate) fn run_single_strategy_backtest(
             clock_end: report.clock_end,
             input_data_hash: report.input_data_hash,
             result_hash: report.result_hash(),
-            replay_hash: report.replay_hash(),
+            event_log: &report.event_log,
+            ledger: &report.ledger,
             return_bps: report.return_bps,
             max_drawdown_bps: report.max_drawdown_bps,
             fees_raw: report.fees_raw,
@@ -230,6 +206,7 @@ pub(crate) fn run_single_strategy_backtest(
             fill_model: Some((fill_model_name, fill_model_source)),
             matching_kernel: BAR_MATCHING_KERNEL,
             rejections: &rejections,
+            input,
         },
     )?;
     println!(
@@ -264,6 +241,47 @@ pub(crate) fn run_single_strategy_backtest(
     Ok(())
 }
 
+/// `--config` 里的 `strategy.builtin_*` 信号参数，逐项覆盖到内置策略配置上（V11 Q64）。
+///
+/// 覆盖本身住在 [`apply_builtin_signal_overrides`]，与 `strategy backtest` 同一处读法；这里只
+/// 多两件事：把配置路径读开，以及在覆盖之后补一次体检 —— 只写了单边窗口时，运行时体检看不到
+/// （它只比两个都给了的键），非法组合要等这四项并进各链的默认窗口之后才成立。复检必须在这里做，
+/// 因为三条内置链紧接着就要印 `[X · Signal]` 那行生效口径：先宣告再报错等于往 stdout 写了一套
+/// 并没有跑过的参数。下单数量仍由命令行位置参数点名，这里不替它做主。
+pub(crate) fn apply_configured_builtin_signal(
+    config: &mut BuiltinStrategyConfig,
+    config_path: Option<&Path>,
+) -> Result<&'static str, String> {
+    let Some(path) = config_path else {
+        return Ok("builtin-default");
+    };
+    let strategy = read_runtime_config(path)?.strategy;
+    let source = builtin_signal_source(&strategy);
+    apply_builtin_signal_overrides(config, &strategy);
+    config.validate().map_err(|error| {
+        format!(
+            "{error}；{} 的 strategy.builtin_* 覆盖后为 fast_window={} slow_window={} \
+             period={} threshold_bps={}，请检查 builtin_fast_window / builtin_slow_window / \
+             builtin_period / builtin_threshold_bps",
+            path.display(),
+            config.fast_window,
+            config.slow_window,
+            config.period,
+            config.threshold_bps
+        )
+    })?;
+    Ok(source)
+}
+
+/// 把生效的那套信号口径写成一行 stdout 文案：三条链共用，措辞只有一处定义。
+/// 产物里看不出口径的缺陷（Q0b/Q54 一族）都是从"各链各印一句"开始的。
+pub(crate) fn builtin_signal_note(config: &BuiltinStrategyConfig, source: &str) -> String {
+    format!(
+        "source={} fast_window={} slow_window={} period={} threshold_bps={}",
+        source, config.fast_window, config.slow_window, config.period, config.threshold_bps
+    )
+}
+
 pub(crate) fn run_builtin_backtest(
     strategy_name: &str,
     frame_path: &Path,
@@ -292,8 +310,11 @@ pub(crate) fn run_builtin_backtest(
         return Err("内置策略回测至少需要三根 Bar".into());
     }
 
-    let (instrument_spec, margin) =
-        market_spec_with_margin(&frame.instrument, spec_path, "内置策略")?;
+    let MarketSpecLoad {
+        spec: instrument_spec,
+        margin,
+        source: instrument_spec_version,
+    } = market_spec_with_margin(&frame.instrument, spec_path, "内置策略")?;
     let risk_binding = backtest_risk_binding(runtime_config_path, false)?;
     let costs = execution_cost_binding(runtime_config_path)?;
     // 撮合口径与风控、成本同一来源：给了 `--config` 就必须认它声明的 `strategy.fill_model`，
@@ -303,10 +324,41 @@ pub(crate) fn run_builtin_backtest(
         instrument_spec.as_ref(),
     )?;
     let (fill_model_name, fill_model_source) = (fill.name, fill.source);
+    // A 股规则与费率同一条链同源：本链读 `strategy backtest` 读不到的那段，就会让同一份
+    // 配置在两个入口得到两种成交与两种费用（V11 Q61）。
+    let ashare = configured_ashare_binding(runtime_config_path, &frame.instrument.to_string())?;
     let mut assembly = BarBacktestAssembly::new(&frame.instrument, "main", 20260914, &costs, fill);
     assembly.instrument_spec = instrument_spec;
     assembly.margin = margin;
     assembly.risk = risk_binding.gate();
+    let mut ashare_note: Option<String> = None;
+    let cost_source = match ashare {
+        Some(binding) => {
+            let rules = binding.rules;
+            let rules_path = binding.rules_path;
+            ashare_note = Some(format!(
+                "t_plus_one={} lot_size={} price_tick={} commission_bp={} stamp_duty_bp={} transfer_fee_bp={} path={rules_path}",
+                rules.t_plus_one,
+                rules.lot_size,
+                rules.price_tick,
+                rules.commission_bp,
+                rules.stamp_duty_bp,
+                rules.transfer_fee_bp,
+            ));
+            assembly.virtual_trading.ashare_rules = Some(rules);
+            assembly.fee = binding.fee;
+            match costs.loaded_from.as_deref() {
+                Some(path) => {
+                    format!(
+                        "ashare-rules:{rules_path}+cost-rules-file:{}",
+                        path.display()
+                    )
+                }
+                None => format!("ashare-rules:{rules_path}"),
+            }
+        }
+        None => costs.source(),
+    };
     let backtest_config = assembly.into_config();
     let context = NativeStrategyContext {
         strategy_id: format!("builtin-{}", kind.name()),
@@ -324,17 +376,19 @@ pub(crate) fn run_builtin_backtest(
         available_margin_raw: Some(backtest_config.initial_cash.raw()),
         risk_state: "ready".into(),
     };
-    let report = run_builtin_strategy_on_bars(
-        backtest_config,
-        BuiltinStrategyConfig::new(
-            kind,
-            format!("builtin-{}", kind.name()),
-            frame.instrument.clone(),
-            Quantity::from_i64(quantity),
-        )?,
-        context,
-        &bars,
+    let mut strategy_config = BuiltinStrategyConfig::new(
+        kind,
+        format!("builtin-{}", kind.name()),
+        frame.instrument.clone(),
+        Quantity::from_i64(quantity),
     )?;
+    let signal_source = apply_configured_builtin_signal(&mut strategy_config, runtime_config_path)?;
+    let signal_note = format!(
+        "{} quantity={}",
+        builtin_signal_note(&strategy_config, signal_source),
+        quantity
+    );
+    let report = run_builtin_strategy_on_bars(backtest_config, strategy_config, context, &bars)?;
     let rejections = rejection_facts(&report.event_log);
     println!(
         "[Builtin · Backtest] strategy={} instrument={} bars={} fills={} return_bps={} max_drawdown_bps={} result_hash={:016x}",
@@ -358,18 +412,85 @@ pub(crate) fn run_builtin_backtest(
         BAR_MATCHING_KERNEL
     );
     // 本入口不写摘要文件，成本口径只能靠这行交代来源；不印出来就等于"用了什么费率无人知晓"。
-    println!(
-        "[Builtin · Cost] source={} maker_bp={} taker_bp={} latency_base_ns={} latency_insert_ns={}",
-        costs.source(),
-        costs.rules.maker_bp,
-        costs.rules.taker_bp,
-        costs.rules.latency_base_ns,
-        costs.rules.latency_insert_ns,
-    );
+    // A 股规则快照会把成本文件里那对 maker/taker 整个顶掉，所以费用字段只能按真正生效的
+    // 那一套印：否则读者拿 2/5bp 去核对本轮成交，永远核不上。
+    match &ashare_note {
+        None => println!(
+            "[Builtin · Cost] source={} maker_bp={} taker_bp={} latency_base_ns={} latency_insert_ns={}",
+            cost_source,
+            costs.rules.maker_bp,
+            costs.rules.taker_bp,
+            costs.rules.latency_base_ns,
+            costs.rules.latency_insert_ns,
+        ),
+        Some(note) => {
+            println!(
+                "[Builtin · Cost] source={cost_source} fee_model=ashare-rules latency_base_ns={} latency_insert_ns={}",
+                costs.rules.latency_base_ns, costs.rules.latency_insert_ns,
+            );
+            println!("[Builtin · A 股规则] {note}");
+        }
+    }
     // 同上：撮合模型换了成交价，成交额与费用都跟着换，而这条链不落摘要——只能印出来。
+    // 规格来源也一起印：本入口没有 `RunManifest` 可写，`instrument_spec_version` 那行
+    // 在这条链上根本不存在，不印就等于"这份 spec 按哪种形状读的无人知晓"（V11 Q63）。
     println!(
-        "[Builtin · Execution] fill_model={} source={}",
-        fill_model_name, fill_model_source
+        "[Builtin · Execution] fill_model={} source={} spec_source={}",
+        fill_model_name, fill_model_source, instrument_spec_version
     );
+    // 信号参数决定"有没有单"，与费用一样是这条不落摘要的链上必须交代的口径。
+    println!("[Builtin · Signal] {}", signal_note);
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_ccxt_builtin_backtest(
+    ccxt_config_path: &Path,
+    strategy_name: &str,
+    instrument: &str,
+    timeframe: &str,
+    start_ms: u64,
+    end_ms: u64,
+    spec_path: Option<&Path>,
+    quantity: i64,
+    runtime_config_path: Option<&Path>,
+) -> Result<(), String> {
+    if end_ms < start_ms {
+        return Err("CCXT 内置策略回测 end_ms 不能早于 start_ms".into());
+    }
+    let python = python_interpreter();
+    let mut client = CcxtProcessClient::spawn(&python, &ccxt_config_path.to_string_lossy(), None)
+        .map_err(|error| format!("启动公共 CCXT Worker 失败: {error}"))?;
+    let result = client
+        .call(serde_json::json!({
+            "op": "fetch_ohlcv",
+            "instrument": instrument,
+            "timeframe": timeframe,
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+        }))
+        .map_err(|error| format!("CCXT OHLCV 查询失败: {error}"))?;
+    let frame = result
+        .get("frame")
+        .ok_or_else(|| "CCXT OHLCV 响应缺少 frame".to_string())?;
+    let temp_path = std::env::temp_dir().join(format!(
+        "qianxing-ccxt-builtin-{}-{}.json",
+        std::process::id(),
+        runtime_timestamp_ms()
+    ));
+    std::fs::write(
+        &temp_path,
+        serde_json::to_string(frame)
+            .map_err(|error| format!("编码 CCXT BarFrame 失败: {error}"))?,
+    )
+    .map_err(|error| format!("写入临时 CCXT BarFrame 失败: {error}"))?;
+    let result = run_builtin_backtest(
+        strategy_name,
+        &temp_path,
+        spec_path,
+        quantity,
+        runtime_config_path,
+    );
+    let _ = std::fs::remove_file(&temp_path);
+    result
 }

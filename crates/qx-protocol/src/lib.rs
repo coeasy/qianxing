@@ -104,13 +104,16 @@ pub struct AccountSnapshot {
     pub header: SnapshotHeader,
     pub cash_raw: BTreeMap<String, i128>,
     pub equity_raw: i128,
-    pub available_raw: i128,
-    pub margin_raw: i128,
-    pub frozen_raw: i128,
-    pub realized_pnl_raw: i128,
-    pub unrealized_pnl_raw: i128,
-    pub fees_raw: i128,
-    pub funding_raw: i128,
+    /// 这七个钱字段是"读过才算得出"的量：`None` 表示这一层没有算它，`Some(0)` 表示算过且结果为零。
+    /// 它们此前是不可区分的 `i128`，于是全仓没有写入点的 `margin_raw`/`fees_raw` 等会以"0"的身份被
+    /// `GET /account/balances` 长期发布，读侧把"没算"当成"没有费用/没有保证金"。
+    pub available_raw: Option<i128>,
+    pub margin_raw: Option<i128>,
+    pub frozen_raw: Option<i128>,
+    pub realized_pnl_raw: Option<i128>,
+    pub unrealized_pnl_raw: Option<i128>,
+    pub fees_raw: Option<i128>,
+    pub funding_raw: Option<i128>,
     #[serde(with = "instrument_map")]
     pub positions: BTreeMap<InstrumentId, PositionSnapshot>,
     pub orders: BTreeMap<u64, OrderSnapshot>,
@@ -176,13 +179,13 @@ impl AccountSnapshot {
             },
             cash_raw: BTreeMap::new(),
             equity_raw: 0,
-            available_raw: 0,
-            margin_raw: 0,
-            frozen_raw: 0,
-            realized_pnl_raw: 0,
-            unrealized_pnl_raw: 0,
-            fees_raw: 0,
-            funding_raw: 0,
+            available_raw: None,
+            margin_raw: None,
+            frozen_raw: None,
+            realized_pnl_raw: None,
+            unrealized_pnl_raw: None,
+            fees_raw: None,
+            funding_raw: None,
             positions: BTreeMap::new(),
             orders: BTreeMap::new(),
             fills: BTreeMap::new(),
@@ -212,6 +215,50 @@ impl AccountSnapshot {
         self.header.state_hash = self.state_hash();
     }
 
+    /// 八个汇总钱字段的唯一取法（权益排在最前，它总是算得出的）。哈希与稳定 JSON 都走这一份，
+    /// 两处不可能对"哪些字段算未算"各说一套。
+    fn scalar_money_raw(&self) -> [Option<i128>; 8] {
+        [
+            Some(self.equity_raw),
+            self.available_raw,
+            self.margin_raw,
+            self.frozen_raw,
+            self.realized_pnl_raw,
+            self.unrealized_pnl_raw,
+            self.fees_raw,
+            self.funding_raw,
+        ]
+    }
+
+    /// `None` 与 `Some(0)` 必须是两个不同的哈希：前者是"这一层没算"，后者是"算过、结果为零"。
+    /// 只写 `unwrap_or_default()` 会让两者撞成同一份状态，未算也就永远改不动 state_hash。
+    /// 账户标量与持仓行共用这一处写入，两处不可能各定一套"未算"的编码。
+    fn write_optional_money(hasher: &mut Fnv1a, value: Option<i128>) {
+        hasher.write_u64(u64::from(value.is_some()));
+        hasher.write_i128(value.unwrap_or_default());
+    }
+
+    fn write_scalar_money(hasher: &mut Fnv1a, values: [Option<i128>; 8]) {
+        for value in values {
+            Self::write_optional_money(hasher, value);
+        }
+    }
+
+    /// "未算"在稳定 JSON 里只有一个字面量：`null`。持仓行与账户标量都经由这一处。
+    fn money_json(value: Option<i128>) -> String {
+        match value {
+            Some(raw) => raw.to_string(),
+            None => "null".to_string(),
+        }
+    }
+
+    fn scalar_json_values(&self) -> Vec<String> {
+        self.scalar_money_raw()
+            .into_iter()
+            .map(Self::money_json)
+            .collect()
+    }
+
     pub fn state_hash(&self) -> u64 {
         let mut h = Fnv1a::new();
         h.write_u64(self.header.schema_version as u64);
@@ -226,18 +273,7 @@ impl AccountSnapshot {
             h.write_text(currency);
             h.write_i128(*amount);
         }
-        for value in [
-            self.equity_raw,
-            self.available_raw,
-            self.margin_raw,
-            self.frozen_raw,
-            self.realized_pnl_raw,
-            self.unrealized_pnl_raw,
-            self.fees_raw,
-            self.funding_raw,
-        ] {
-            h.write_i128(value);
-        }
+        Self::write_scalar_money(&mut h, self.scalar_money_raw());
         for (instrument, position) in &self.positions {
             h.write_text(&format!("{}", instrument));
             for value in [
@@ -245,10 +281,11 @@ impl AccountSnapshot {
                 position.today_quantity_raw,
                 position.average_price_raw,
                 position.mark_price_raw,
-                position.unrealized_pnl_raw,
-                position.margin_raw,
             ] {
                 h.write_i128(value);
+            }
+            for value in [position.unrealized_pnl_raw, position.margin_raw] {
+                Self::write_optional_money(&mut h, value);
             }
         }
         for (id, order) in &self.orders {
@@ -316,18 +353,7 @@ impl AccountSnapshot {
 
     fn scalar_hash(&self) -> u64 {
         let mut h = Fnv1a::new();
-        for value in [
-            self.equity_raw,
-            self.available_raw,
-            self.margin_raw,
-            self.frozen_raw,
-            self.realized_pnl_raw,
-            self.unrealized_pnl_raw,
-            self.fees_raw,
-            self.funding_raw,
-        ] {
-            h.write_i128(value);
-        }
+        Self::write_scalar_money(&mut h, self.scalar_money_raw());
         h.write_u64(self.reconcile.last_reconcile_ts);
         h.write_u64(self.reconcile.discrepancy_count as u64);
         h.write_text(&self.reconcile.recovery_state);
@@ -355,8 +381,8 @@ impl AccountSnapshot {
                     value.today_quantity_raw,
                     value.average_price_raw,
                     value.mark_price_raw,
-                    value.unrealized_pnl_raw,
-                    value.margin_raw
+                    Self::money_json(value.unrealized_pnl_raw),
+                    Self::money_json(value.margin_raw)
                 )
             })
             .collect::<Vec<_>>()
@@ -417,6 +443,9 @@ impl AccountSnapshot {
             })
             .collect::<Vec<_>>()
             .join(",");
+        // 七个汇总钱字段与上面的 {} 一一对应：equity / available / margin / frozen /
+        // realized_pnl / unrealized_pnl / fees / funding（未算过印 null，不印 0）。
+        let scalars = self.scalar_json_values();
         format!(
             "{{\"protocol\":\"QIANXING_ACCOUNT\",\"schema_version\":{},\"header\":{{\"snapshot_id\":{},\"account_id\":{},\"portfolio_id\":{},\"venue_id\":{},\"trading_day\":{},\"as_of\":{},\"event_seq\":{},\"state_hash\":{}}},\"cash_raw\":{{{}}},\"equity_raw\":{},\"available_raw\":{},\"margin_raw\":{},\"frozen_raw\":{},\"realized_pnl_raw\":{},\"unrealized_pnl_raw\":{},\"fees_raw\":{},\"funding_raw\":{},\"positions\":{{{}}},\"orders\":{{{}}},\"fills\":{{{}}},\"transfers\":{{{}}},\"reconcile\":{{\"last_reconcile_ts\":{},\"discrepancy_count\":{},\"recovery_state\":{}}}}}",
             self.header.schema_version,
@@ -429,14 +458,14 @@ impl AccountSnapshot {
             self.header.event_seq,
             self.header.state_hash,
             cash,
-            self.equity_raw,
-            self.available_raw,
-            self.margin_raw,
-            self.frozen_raw,
-            self.realized_pnl_raw,
-            self.unrealized_pnl_raw,
-            self.fees_raw,
-            self.funding_raw,
+            scalars[0],
+            scalars[1],
+            scalars[2],
+            scalars[3],
+            scalars[4],
+            scalars[5],
+            scalars[6],
+            scalars[7],
             positions,
             orders,
             fills,
@@ -538,13 +567,13 @@ fn json_string(value: &str) -> String {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 struct ScalarState {
     equity_raw: i128,
-    available_raw: i128,
-    margin_raw: i128,
-    frozen_raw: i128,
-    realized_pnl_raw: i128,
-    unrealized_pnl_raw: i128,
-    fees_raw: i128,
-    funding_raw: i128,
+    available_raw: Option<i128>,
+    margin_raw: Option<i128>,
+    frozen_raw: Option<i128>,
+    realized_pnl_raw: Option<i128>,
+    unrealized_pnl_raw: Option<i128>,
+    fees_raw: Option<i128>,
+    funding_raw: Option<i128>,
     reconcile: ReconcileSnapshot,
 }
 

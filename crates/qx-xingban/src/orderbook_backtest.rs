@@ -194,10 +194,6 @@ impl OrderBookBacktestReport {
         self.event_log.digest()
     }
 
-    pub fn replay_hash(&self) -> u64 {
-        ReplayVerifier::rebuild_from(self.event_log.events())
-    }
-
     pub fn final_equity(&self) -> i128 {
         *self.equity.last().unwrap_or(&self.initial_equity_raw)
     }
@@ -399,7 +395,10 @@ impl OrderBookBacktestEngine {
         append_event(
             &mut log,
             deposit.ts,
-            Priority::APPLY,
+            // 初始入金是本观测起点**之前**就已成立的账户状态：策略在同一时间戳上就能用它下单。
+            // 用 APPLY 会让起点时间戳上的策略命令（COMMAND=3）在因果序里倒退，
+            // 深度链的事实流就不是可重放的规范日志（V11 Q62 —— 此前没有任何一处校验过这件事）。
+            Priority::TIMER,
             EventKind::LedgerApplied { entry: deposit },
         );
 
@@ -428,7 +427,11 @@ impl OrderBookBacktestEngine {
                 append_event(
                     &mut log,
                     fill.ts,
-                    Priority::APPLY,
+                    // 深度链的因果口径是 `match-previous-submit-current`：这一批成交回报来自
+                    // **更早时刻**提交的订单，只是在本快照到期。它们排在本时点策略命令之前，
+                    // 所以占用 FEEDBACK 槽；用 APPLY 会让同一时间戳上的 COMMAND 在因果序里倒退，
+                    // 事实流就不再是可重放的规范日志（V11 Q62）。
+                    Priority::FEEDBACK,
                     EventKind::Filled { fill: fill.clone() },
                 );
                 for entry_id in entry_ids {
@@ -443,7 +446,8 @@ impl OrderBookBacktestEngine {
                     append_event(
                         &mut log,
                         fill.ts,
-                        Priority::APPLY,
+                        // 与上面那条 `Filled` 同一个槽：账簿事实必须紧跟它所依据的成交回报。
+                        Priority::FEEDBACK,
                         EventKind::LedgerApplied { entry },
                     );
                 }
@@ -707,7 +711,7 @@ impl OrderBookBacktestEngine {
         } else {
             0
         };
-        Ok(OrderBookBacktestReport {
+        let report = OrderBookBacktestReport {
             fills,
             ledger,
             event_log: log,
@@ -733,7 +737,10 @@ impl OrderBookBacktestEngine {
                 format!("pending_orders={}", matcher.pending_count()),
             ],
             model_descriptors,
-        })
+        };
+        // 与 Bar 链同一条纪律：事实源必须能重新驱动账户，否则报告出不去（V11 Q62）。
+        ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;
+        Ok(report)
     }
 }
 
@@ -881,10 +888,14 @@ mod tests {
             .unwrap();
         assert_eq!(report.fills.len(), 1);
         assert_eq!(report.fills[0].ts, 2);
-        assert_eq!(
-            report.replay_hash(),
-            ReplayVerifier::rebuild_from(report.event_log.events())
-        );
+        // 深度链同一条纪律（V11 Q62）：事实源要被重新接受一遍并逐条还原出同一本账簿，
+        // 而不是把同一段事件切片再哈希一遍。
+        let (log, replayed) = ReplayVerifier::replay(report.event_log.events()).unwrap();
+        assert_eq!(log.digest(), report.result_hash());
+        assert_eq!(replayed.entries(), report.ledger.entries());
+        let facts = ReplayVerifier::verify(report.event_log.events(), &report.ledger).unwrap();
+        assert_eq!(facts.events, report.event_log.events().len());
+        assert_eq!(facts.ledger_entries, report.ledger.entries().len());
     }
 
     /// 名义额远超可用现金的现货买单：用来验证深度链不会把账簿现金透支成负数。

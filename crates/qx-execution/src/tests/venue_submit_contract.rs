@@ -234,3 +234,128 @@ fn fill_tag_distinguishes_facts_that_only_differ_in_fee_or_venue_order() {
     assert_ne!(fill_tag(&base), fill_tag(&venue_order_only));
     assert_ne!(fill_tag(&fee_only), fill_tag(&venue_order_only));
 }
+
+/// 提交**同步返回**的成交回报必须过与用户流回报同一个精度闸门：
+/// 同一条落在 tick 之外的成交，不能因为"是 Venue 在 submit 里直接给的"就直接入账。
+/// 覆盖三种决定性形状：裸 `Fill`（只认服务冻结的规格）、自带规格的 `FillWithSpec`
+/// （以回报自带为准，因为落库保留的就是它），以及两者不一致时的优先级。
+/// 越界时只能留下一条待对账事实（Accepted 与成交都不落），与"未知结果"契约同构。
+#[test]
+fn submit_returned_fills_share_the_precision_gate_with_user_stream_reports() {
+    const STEP: i128 = qx_core::SCALE / 10;
+    /// 100 USDT：在 0.1 与 1.0 两种 tick 上都成立。
+    const ON_TICK: i128 = 100 * qx_core::SCALE;
+    /// 100.05：不在 0.1 的 tick 上（两种规格都拒绝）。
+    const OFF_TICK: i128 = ON_TICK + qx_core::SCALE / 20;
+    /// 100.5：在 0.1 上、不在 1.0 上。配 "冻结宽规格 + 回报自带细规格" 用来钉死
+    /// 优先级：以回报自带为准（否则落库的 `FillWithSpec` 会带着没校验过的规格）。
+    const HALF_POINT: i128 = ON_TICK + qx_core::SCALE / 2;
+
+    fn spec_with_tick(price_tick: i128) -> qx_core::TradingInstrumentSpec {
+        qx_core::TradingInstrumentSpec {
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            product: qx_core::TradingProduct::Spot,
+            base_currency: "BTC".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: qx_core::SCALE,
+            linear: true,
+            inverse: false,
+            price_tick,
+            qty_step: STEP,
+            min_qty: STEP,
+            max_leverage: 1,
+            maintenance_margin_bps: 0,
+            valid_from: 0,
+            valid_to: None,
+        }
+    }
+
+    let fine = spec_with_tick(STEP);
+    let coarse = spec_with_tick(qx_core::SCALE);
+    // (用例, 服务冻结规格, 回报自带规格, 成交价, 是否必须转待对账)
+    let scenarios = [
+        ("bare-fill-on-tick", &fine, None, ON_TICK, false),
+        ("bare-fill-off-tick", &fine, None, OFF_TICK, true),
+        ("embedded-on-tick", &fine, Some(&fine), ON_TICK, false),
+        ("embedded-off-tick", &fine, Some(&fine), OFF_TICK, true),
+        (
+            "embedded-spec-wins-over-frozen-spec",
+            &coarse,
+            Some(&fine),
+            HALF_POINT,
+            false,
+        ),
+    ];
+
+    for (label, frozen, embedded, price_raw, must_reconcile) in scenarios {
+        let fill = qx_core::Fill {
+            order_id: 7,
+            qty: Quantity::from_raw(STEP),
+            price: Price::from_raw(price_raw),
+            fee: qx_core::Money::ZERO,
+            ts: 100,
+            venue_order_id: Some("venue-7".into()),
+            ..qx_core::Fill::default()
+        };
+        let facts = vec![
+            ExecutionEvent::Accepted {
+                client_order_id: 7,
+                venue_order_id: "venue-7".into(),
+            },
+            match embedded {
+                Some(spec) => ExecutionEvent::FillWithSpec {
+                    fill: Box::new(fill),
+                    spec: Box::new(spec.clone()),
+                },
+                None => ExecutionEvent::Fill(Box::new(fill)),
+            },
+        ];
+        let mut venue = PortVenue { result: Ok(facts) };
+        let mut state = PortState::default();
+        let mut source_seq = 0;
+        let order = Order {
+            qty: Quantity::from_raw(10 * STEP),
+            ..port_order(7)
+        };
+        let outcome = PortExecutionService::new(
+            &mut venue,
+            &mut state,
+            "precision-worker",
+            100,
+            &mut source_seq,
+        )
+        .with_instrument_spec(frozen.clone())
+        .submit(order.clone());
+        let seen = state
+            .events
+            .iter()
+            .map(|event| match &event.event {
+                ExecutionEvent::Accepted { .. } => "accepted",
+                ExecutionEvent::Fill(_) => "fill",
+                ExecutionEvent::FillWithSpec { .. } => "fill-with-spec",
+                ExecutionEvent::Cancelled { .. } => "cancelled",
+                ExecutionEvent::ReconcileRequired { .. } => "reconcile",
+                ExecutionEvent::MarketQuote { .. } => "quote",
+            })
+            .collect::<Vec<_>>();
+        if must_reconcile {
+            let error = outcome.expect_err(&format!("{label}: {seen:?}"));
+            assert!(error.contains("产品规格"), "{label} -> {error}");
+            assert!(error.contains("对账"), "{label} -> {error}");
+            assert_eq!(
+                seen,
+                vec!["reconcile"],
+                "{label}: 越界成交只能留下一条待对账事实"
+            );
+        } else {
+            let result = outcome.unwrap_or_else(|error| panic!("{label} 不应被拒: {error}"));
+            assert_eq!(result.event_count, 2, "{label}: {seen:?}");
+            assert_eq!(
+                seen,
+                vec!["accepted", "fill-with-spec"],
+                "{label}: 在 tick 上的成交必须照常入账"
+            );
+        }
+    }
+}

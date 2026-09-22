@@ -104,7 +104,7 @@ fn multi_builtin_backtest_entry_writes_spread_attribution_from_leg_fills() {
         None,
         None,
         1,
-        25,
+        0,
         Some(&root),
         None,
     )
@@ -130,7 +130,17 @@ fn multi_builtin_backtest_entry_writes_spread_attribution_from_leg_fills() {
     assert_eq!(payload["strategy_id"], "builtin-pairs_arbitrage-multi");
     assert_eq!(payload["primary_instrument"], "BTCUSDT.BINANCE");
     assert_eq!(payload["reference_instrument"], "ETHUSDT.BINANCE");
-    assert_eq!(payload["funding_bps"], 25);
+    assert_eq!(payload["funding_bps"], 0);
+    // V11 Q58：缺规格时按现货乘数 1 记账，产物必须把"哪条腿带了规格、这一轮到底有没有
+    // 会被计提保证金的腿"写出来，否则 `margin_peak_raw=0` 分不清现货与漏配。
+    assert_eq!(payload["market_specs"]["primary"], serde_json::Value::Null);
+    assert_eq!(
+        payload["market_specs"]["reference"],
+        serde_json::Value::Null
+    );
+    assert_eq!(payload["margin_model"], "none-no-derivative-leg-spec");
+    assert_eq!(payload["totals"]["margin_peak_raw"], "0");
+    assert_eq!(payload["totals"]["funding_raw"], "0");
     let groups = payload["groups"].as_array().unwrap();
     assert_eq!(groups.len(), 3, "三组配对信号应全部归因");
     let turnover: i128 = payload["totals"]["turnover_raw"]
@@ -263,92 +273,6 @@ fn backtest_and_paper_worker_share_one_risk_gate_builder() {
     );
     assert_eq!(explicit_gate.rule_set().version(), "explicit-no-short");
     assert_eq!(explicit_gate.rule_set().rule_count(), 1);
-}
-
-#[test]
-fn builtin_strategy_worker_path_reads_bar_snapshot() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-cli-builtin-worker-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).unwrap();
-    let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("deploy")
-        .join("qianxing.runtime.builtin-strategy.example.json");
-    let mut config = read_runtime_config(&runtime).unwrap();
-    config.storage.data_dir = root.to_string_lossy().into_owned();
-    resolve_strategy_runtime_paths(&mut config.strategy, &runtime);
-    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
-    let output =
-        invoke_builtin_strategy(&root, &config, &instrument, "builtin-worker-test", u64::MAX)
-            .unwrap();
-    assert_eq!(output.request_id, "builtin-worker-test");
-    assert_eq!(output.strategy_id, "strategy-builtin");
-    assert_eq!(output.instrument, "BTCUSDT.BINANCE");
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn dedicated_paper_spread_recovery_worker_runs_one_scan_without_orders() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-cli-paper-recovery-worker-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).unwrap();
-    let template = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("deploy")
-        .join("qianxing.runtime.paper-strategy.example.json");
-    let mut config = read_runtime_config(&template).unwrap();
-    config.storage.data_dir = root.join("data").to_string_lossy().into_owned();
-    config
-        .workers
-        .iter_mut()
-        .find(|worker| worker.id == "paper-spread-recovery")
-        .expect("paper sample must include disabled spread recovery")
-        .enabled = true;
-    let runtime = root.join("runtime.json");
-    std::fs::write(&runtime, config.to_json().unwrap()).unwrap();
-    run_paper_spread_recovery_worker(&runtime, "paper-spread-recovery", true).unwrap();
-    assert!(root.join("data").exists());
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn dedicated_spread_recovery_disables_legacy_execution_scan_only_for_same_account_and_venue() {
-    let template = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("deploy")
-        .join("qianxing.runtime.paper-strategy.example.json");
-    let mut config = read_runtime_config(&template).unwrap();
-    let execution = config
-        .workers
-        .iter()
-        .find(|worker| worker.role == WorkerRole::Execution)
-        .cloned()
-        .unwrap();
-    assert!(!dedicated_spread_recovery_configured(&config, &execution));
-    config
-        .workers
-        .iter_mut()
-        .find(|worker| worker.id == "paper-spread-recovery")
-        .expect("paper sample must include disabled spread recovery")
-        .enabled = true;
-    assert!(dedicated_spread_recovery_configured(&config, &execution));
-    config.workers.last_mut().unwrap().venue_id = Some("other".into());
-    assert!(!dedicated_spread_recovery_configured(&config, &execution));
 }
 
 /// V11 Q0b：内置策略 kind 的"回测准入分区"必须三处同口径 —— 内核侧的配置合法性、

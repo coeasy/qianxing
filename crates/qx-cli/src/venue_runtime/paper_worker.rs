@@ -96,6 +96,8 @@ pub(crate) fn run_paper_execution_worker(
             "worker {worker_id} 不是启用的 Paper Execution worker"
         ));
     }
+    // 与 binance/ccxt 同口径：会提交订单的 worker 收下 A 股段却不执行，等于让配置说假话（V11 Q65）。
+    reject_ashare_rules_on_submit_path(path, Some(&worker), "paper-worker")?;
     if worker.role == WorkerRole::SpreadRecovery {
         return run_paper_spread_recovery_worker(path, worker_id, once);
     }

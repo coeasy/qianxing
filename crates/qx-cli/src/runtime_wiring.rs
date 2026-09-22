@@ -456,3 +456,35 @@ pub(crate) fn worker_metrics_unhealthy(content: &str, now_ms: u64, stale_after_m
                 .is_none_or(|value| value != "1")
     })
 }
+
+/// A 股交易制度缺的那个状态，写进拒绝文案而不是只说"不支持"（V11 Q65）。
+///
+/// 费率倒是接得上（`execution_cost_binding_from_config` 就是挂钩点），但只接费率会让产物显示
+/// "A 股佣金"而订单照样 T+0、照样可以 150 股买入 —— 比整段不认更容易骗人。
+const ASHARE_SUBMIT_GAP: &str =
+    "T+1 需要\"今日买入\"的结算状态、整手与涨跌停要按板块和昨收逐单判定，\
+     而提交前的账户闸门只做规格、杠杆、名义额与可用保证金预检";
+
+/// 会向 Venue 提交**新订单**的角色。`SpreadRecovery` 算在内：补腿本身就是一笔新订单（V10 Q57）。
+fn worker_submits_orders(worker: &WorkerConfig) -> bool {
+    matches!(
+        worker.role,
+        WorkerRole::Execution | WorkerRole::SpreadRecovery
+    )
+}
+
+/// Paper/Live 的提交入口在动手前先拒 A 股段（V11 Q65，与 Q61 的 `book` / `multi-builtin` 同一口径）。
+///
+/// 判据只有一个：**这条路径会不会把一笔新订单送进 Venue**。行情、用户流、对账、策略与 API worker
+/// 不在此列 —— 它们本来就不承诺交易制度，把它们一起拒会让"研究用配置"连启动都做不到。
+/// `worker` 缺位表示一次性提交入口（`paper submit-order` / `binance submit-order`），按提交对待。
+pub(crate) fn reject_ashare_rules_on_submit_path(
+    config_path: &Path,
+    worker: Option<&WorkerConfig>,
+    entry: &str,
+) -> Result<(), String> {
+    if worker.is_some_and(worker_submits_orders) || worker.is_none() {
+        return reject_ashare_rules_config(Some(config_path), entry, ASHARE_SUBMIT_GAP);
+    }
+    Ok(())
+}

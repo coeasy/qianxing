@@ -102,6 +102,8 @@ pub(crate) fn run_binance_submit_order(
         .ok_or_else(|| format!("找不到 worker: {worker_id}"))?;
     resolve_worker_runtime_paths(&mut worker, path);
     validate_binance_submit_worker(&worker)?;
+    // 与 worker 入口同一条闸门：一次性提交也不能把 A 股段收下就什么都不做（V11 Q65）。
+    reject_ashare_rules_on_submit_path(path, Some(&worker), "binance-submit-order")?;
     let settlement_currency = account_worker_settlement_currency(&config, &worker)?;
     let command: ControlCommand = serde_json::from_str(
         &std::fs::read_to_string(command_path)

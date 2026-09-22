@@ -216,9 +216,7 @@ impl BacktestReport {
     pub fn result_hash(&self) -> u64 {
         self.event_log.digest()
     }
-    pub fn replay_hash(&self) -> u64 {
-        ReplayVerifier::rebuild_from(self.event_log.events())
-    }
+
     pub fn final_equity(&self) -> i128 {
         *self.equity.last().unwrap_or(&0)
     }
@@ -1016,7 +1014,7 @@ impl BacktestEngine {
         } else {
             0
         };
-        Ok(BacktestReport {
+        let report = BacktestReport {
             fills,
             equity,
             benchmark_equity,
@@ -1046,7 +1044,10 @@ impl BacktestEngine {
             input_data_hash,
             clock_start: bars.first().map(|bar| bar.ts).unwrap_or(0),
             clock_end: bars.last().map(|bar| bar.ts).unwrap_or(0),
-        })
+        };
+        // 事实必须能重新驱动账户：就地改了账簿而没有对应事实事件，报告在这里就出不去（V11 Q62）。
+        ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;
+        Ok(report)
     }
 }
 
@@ -1921,6 +1922,21 @@ mod tests {
     };
     use qx_core::{MakerTakerFeeModel, OrderStatus, Quantity, Side, SCALE};
 
+    /// Q62：报告必须能被事实重新驱动，且逐条账簿条目都对得上。
+    /// 旧的 `result_hash() == replay_hash()` 把同一段事件切片哈希两遍，恒等且不可能失败。
+    fn assert_replay_matches(report: &BacktestReport) {
+        let (log, ledger) = ReplayVerifier::replay(report.event_log.events()).unwrap();
+        assert_eq!(log.digest(), report.result_hash());
+        assert_eq!(log.events(), report.event_log.events());
+        assert_eq!(ledger.entries(), report.ledger.entries());
+        let facts = ReplayVerifier::verify(report.event_log.events(), &report.ledger).unwrap();
+        assert_eq!(facts.ledger_entries, report.ledger.entries().len());
+        assert!(
+            !report.ledger.entries().is_empty(),
+            "空账簿上的重放判据是空的"
+        );
+    }
+
     struct BuyOnce {
         done: bool,
     }
@@ -2538,7 +2554,7 @@ mod tests {
         let engine = BacktestEngine::new(cfg);
         let report = engine.run(&bars, &mut BuyOnce { done: false }).unwrap();
         assert_eq!(report.fills[0].price.raw(), 102);
-        assert_eq!(report.result_hash(), report.replay_hash());
+        assert_replay_matches(&report);
         assert_eq!(report.seed, 1);
         assert_eq!(report.equity.len(), report.benchmark_equity.len());
         assert_eq!(report.equity.len(), report.positions.len());
@@ -2595,6 +2611,21 @@ mod tests {
         assert_eq!(
             replayed.cash_for("main", "USD"),
             report.ledger.cash_for("main", "USD")
+        );
+        // 逐条相等，而不只是两个查询口径相等：多记、漏记、记错顺序都会在这里红。
+        assert_eq!(replayed.entries(), report.ledger.entries());
+        // 反向证据：运行账簿里凭空多一条没有事实事件支撑的条目时，校验必须报错。
+        let mut unbacked = report.ledger.clone();
+        let next_id = report.ledger.entries().len() as u64;
+        let extra = qx_core::LedgerEntry {
+            id: next_id,
+            ..report.ledger.entries()[0].clone()
+        };
+        unbacked.apply_entry(extra).unwrap();
+        let error = ReplayVerifier::verify(report.event_log.events(), &unbacked).unwrap_err();
+        assert!(
+            error.to_string().contains("replayed="),
+            "重放校验的错误文本应给出两侧条数: {error}"
         );
     }
 
@@ -2898,7 +2929,7 @@ mod tests {
                 .raw(),
             0
         );
-        assert_eq!(report.result_hash(), report.replay_hash());
+        assert_replay_matches(&report);
     }
 
     #[test]

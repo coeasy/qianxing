@@ -677,18 +677,7 @@ pub(crate) fn builtin_strategy_config_from_runtime(
         primary_policy: None,
         reference_policy: None,
     };
-    if let Some(window) = strategy.builtin_fast_window {
-        config.fast_window = window;
-    }
-    if let Some(window) = strategy.builtin_slow_window {
-        config.slow_window = window;
-    }
-    if let Some(period) = strategy.builtin_period {
-        config.period = period;
-    }
-    if let Some(threshold) = strategy.builtin_threshold_bps {
-        config.threshold_bps = threshold;
-    }
+    apply_builtin_signal_overrides(&mut config, strategy);
     if let Some(reference) = strategy.builtin_reference_instrument.as_deref() {
         config.reference_instrument = Some(
             InstrumentId::parse(reference)

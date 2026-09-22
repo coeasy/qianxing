@@ -179,9 +179,16 @@ pub struct AccountPositionSnapshot {
     /// 交易所估算的强平价格；它是风险观察值，不直接驱动 Ledger。
     #[serde(default)]
     pub liquidation_price: Option<Price>,
-    pub unrealized_pnl: Money,
-    pub initial_margin: Money,
-    pub maintenance_margin: Money,
+    /// 这三个量是"交易所报了才有"的观察值：`None` 表示这一份回报根本没带该字段，
+    /// `Some(0)` 表示交易所明确说了是零。此前它们是不可区分的 `Money`，于是现货交易所
+    /// 或省略字段的连接器会让持仓行长期以"0"的身份被发布，读侧把"没报"当成"没有浮亏/
+    /// 没有保证金"。老日志缺这三个键按 `None` 读，不补一个伪造的零。
+    #[serde(default)]
+    pub unrealized_pnl: Option<Money>,
+    #[serde(default)]
+    pub initial_margin: Option<Money>,
+    #[serde(default)]
+    pub maintenance_margin: Option<Money>,
     pub leverage: Option<u32>,
     pub margin_mode: Option<String>,
     pub position_side: Option<String>,
@@ -448,9 +455,16 @@ impl Event {
                             .map(|price| price.raw())
                             .unwrap_or(0),
                     );
-                    h.write_i128(position.unrealized_pnl.raw());
-                    h.write_i128(position.initial_margin.raw());
-                    h.write_i128(position.maintenance_margin.raw());
+                    for value in [
+                        position.unrealized_pnl,
+                        position.initial_margin,
+                        position.maintenance_margin,
+                    ] {
+                        // 与账户快照的 state_hash 同一条纪律：未报与报为零必须是两份内容，
+                        // 否则把日志里的 `null` 改成 `0` 不会改动摘要。
+                        h.write_u64(u64::from(value.is_some()));
+                        h.write_i128(value.map(Money::raw).unwrap_or_default());
+                    }
                     h.write_u64(position.leverage.unwrap_or(0) as u64);
                     h.write_text(position.margin_mode.as_deref().unwrap_or_default());
                     h.write_text(position.position_side.as_deref().unwrap_or_default());
@@ -670,5 +684,66 @@ mod tests {
         let mut second = crate::sourcing::Fnv1a::new();
         changed.digest(&mut second);
         assert_ne!(first.finish(), second.finish());
+    }
+
+    /// 交易所"没报这一项"和"报了且为零"是两份不同的内容。把两者哈希成同一个摘要，
+    /// 等于让日志里把 `null` 悄悄改成 `0` 也能通过重放校验（V11 Q68）。
+    #[test]
+    fn unreported_position_money_is_not_hashed_as_zero() {
+        let position = |pnl: Option<Money>| AccountPositionSnapshot {
+            instrument: InstrumentId::parse("BTC/USDT:USDT.OKX").unwrap(),
+            quantity: Quantity::from_i64(2),
+            average_price: None,
+            mark_price: None,
+            liquidation_price: None,
+            unrealized_pnl: pnl,
+            initial_margin: None,
+            maintenance_margin: None,
+            leverage: None,
+            margin_mode: None,
+            position_side: None,
+        };
+        let digest_of = |pnl: Option<Money>| {
+            let event = Event::new(
+                1,
+                1,
+                Priority::APPLY,
+                EventKind::AccountPositionSnapshot {
+                    account_id: "main".into(),
+                    venue_id: "OKX".into(),
+                    positions: vec![position(pnl)],
+                },
+            );
+            let mut hasher = crate::sourcing::Fnv1a::new();
+            event.digest(&mut hasher);
+            hasher.finish()
+        };
+        assert_ne!(digest_of(None), digest_of(Some(Money::ZERO)));
+
+        let reported: AccountPositionSnapshot =
+            serde_json::from_value(serde_json::to_value(position(Some(Money::ZERO))).unwrap())
+                .unwrap();
+        assert_eq!(reported, position(Some(Money::ZERO)));
+        // 老日志没有这三个键：读出来必须是"没报"，而不是补一个伪造的零。
+        let mut legacy = serde_json::to_value(position(Some(Money::ZERO))).unwrap();
+        for key in ["unrealized_pnl", "initial_margin", "maintenance_margin"] {
+            assert!(
+                legacy
+                    .as_object_mut()
+                    .expect("持仓观察值是 JSON 对象")
+                    .remove(key)
+                    .is_some(),
+                "键 {key} 必须真的写进过线格式，否则这条用例没在测缺席回读"
+            );
+        }
+        let legacy: AccountPositionSnapshot = serde_json::from_value(legacy).unwrap();
+        assert_eq!(
+            (
+                legacy.unrealized_pnl,
+                legacy.initial_margin,
+                legacy.maintenance_margin
+            ),
+            (None, None, None)
+        );
     }
 }

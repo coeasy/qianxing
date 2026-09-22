@@ -197,5 +197,12 @@ fn a_single_cutoff_stays_reproducible() {
     let first = run_backtest(&rules, &bars);
     let second = run_backtest(&rules, &bars);
     assert_eq!(first.result_hash(), second.result_hash());
-    assert_eq!(first.result_hash(), first.replay_hash());
+    // 恒等的 `result_hash == replay_hash` 只说明同一段事件被哈希了两遍（V11 Q62）。
+    let (log, replayed) = qx_core::ReplayVerifier::replay(first.event_log.events()).unwrap();
+    assert_eq!(log.digest(), first.result_hash());
+    assert_eq!(replayed.entries(), first.ledger.entries());
+    assert!(
+        !first.ledger.entries().is_empty(),
+        "空账簿上的重放判据是空的"
+    );
 }

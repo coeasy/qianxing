@@ -103,11 +103,23 @@ pub(crate) fn ccxt_position_facts(
         if contracts == 0 {
             continue;
         }
+        // `contracts_raw` 是无符号的张数，持仓的正负完全由 side 决定。连接器在交易所
+        // 没给方向时会填 "unknown"（python/qianxing_ccxt 的 _normalize_position），
+        // 把它连同缺失一起默认成多头，等于凭空替一笔可能是空头的持仓定了符号——
+        // 数量符号会顺着权益、保证金、风控一路算下去。方向不明只能拒绝这份回报。
         let side = position
             .get("side")
             .and_then(serde_json::Value::as_str)
-            .unwrap_or("long")
-            .to_ascii_lowercase();
+            .map(str::to_ascii_lowercase);
+        let side = match side.as_deref() {
+            Some(value @ ("long" | "short")) => value.to_string(),
+            read => {
+                return Err(format!(
+                    "CCXT position {symbol} 的 side 不是 long/short（读到 {read:?}）；\
+                     持仓方向决定数量符号，未知一律 fail-closed，请核对交易所回报的 hedged/one-way 形状"
+                ));
+            }
+        };
         let quantity = if side == "short" {
             contracts
                 .checked_neg()
@@ -128,15 +140,17 @@ pub(crate) fn ccxt_position_facts(
             }
             Ok(Some(Price::from_raw(raw)))
         };
-        let optional_money = |key: &str| -> Result<Money, String> {
+        // 钱字段与价格字段的"缺席"必须区分开：省略 unrealizedPnl 的连接器说的是
+        // "这一项我没报"，读成 0 就变成了"这仓位没有浮亏、没占保证金"，并会作为
+        // 账户持仓事实长期发布（V11 Q68）。
+        let optional_money = |key: &str| -> Result<Option<Money>, String> {
             let Some(value) = position.get(key) else {
-                return Ok(Money::ZERO);
+                return Ok(None);
             };
             if value.is_null() {
-                return Ok(Money::ZERO);
+                return Ok(None);
             }
-            let raw = raw_json_i128(position, key)?;
-            Ok(Money::from_raw(raw))
+            Ok(Some(Money::from_raw(raw_json_i128(position, key)?)))
         };
         let leverage = position
             .get("leverage")

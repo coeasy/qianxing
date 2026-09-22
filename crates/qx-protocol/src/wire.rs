@@ -28,8 +28,11 @@ pub struct PositionSnapshot {
     pub today_quantity_raw: i128,
     pub average_price_raw: i128,
     pub mark_price_raw: i128,
-    pub unrealized_pnl_raw: i128,
-    pub margin_raw: i128,
+    /// 与账户级同名标量同一条纪律（V11 Q67/Q68）：`None` 是"交易所没报这一项"，
+    /// `Some(0)` 是"报了且为零"。价格是定点数、0 不是合法价格，所以那两列继续用
+    /// `0` 表达"没有"；钱没有这个性质，必须显式缺席。
+    pub unrealized_pnl_raw: Option<i128>,
+    pub margin_raw: Option<i128>,
 }
 
 impl Default for PositionSnapshot {
@@ -40,8 +43,8 @@ impl Default for PositionSnapshot {
             today_quantity_raw: 0,
             average_price_raw: 0,
             mark_price_raw: 0,
-            unrealized_pnl_raw: 0,
-            margin_raw: 0,
+            unrealized_pnl_raw: None,
+            margin_raw: None,
         }
     }
 }
@@ -89,6 +92,7 @@ pub struct ReconcileSnapshot {
 ///   维度的调用方必须自行补齐，不得再抄一份折算。
 /// - `initial_margin` / `maintenance_margin` 在线格式上合并为一个 `margin_raw`，
 ///   取初始保证金（与历史 `api_service` 行为一致）。
+/// - 三个钱字段把内核的"没报"原样编码成 `null`，折算层不得在这里补一个 0。
 impl From<&AccountPositionSnapshot> for PositionSnapshot {
     fn from(observation: &AccountPositionSnapshot) -> Self {
         Self {
@@ -97,8 +101,8 @@ impl From<&AccountPositionSnapshot> for PositionSnapshot {
             today_quantity_raw: observation.quantity.raw(),
             average_price_raw: observation.average_price.map(Price::raw).unwrap_or(0),
             mark_price_raw: observation.mark_price.map(Price::raw).unwrap_or(0),
-            unrealized_pnl_raw: observation.unrealized_pnl.raw(),
-            margin_raw: observation.initial_margin.raw(),
+            unrealized_pnl_raw: observation.unrealized_pnl.map(Money::raw),
+            margin_raw: observation.initial_margin.map(Money::raw),
         }
     }
 }
@@ -106,8 +110,8 @@ impl From<&AccountPositionSnapshot> for PositionSnapshot {
 /// 线格式持仓 → 内核持仓观察（恢复 / 对账读回路径）。
 ///
 /// 有意的信息损失：线格式不携带强平价、杠杆、保证金模式与持仓方向，读回为
-/// `None`；价格为 0 读回 `None`（线格式无法区分"未知"与"零价"），
-/// `maintenance_margin` 读回 0。
+/// `None`；价格为 0 读回 `None`（线格式无法区分"未知"与"零价"，而零价非法），
+/// 线格式也只有一个保证金列，`maintenance_margin` 读回 `None` 而不是 0。
 impl From<&PositionSnapshot> for AccountPositionSnapshot {
     fn from(wire: &PositionSnapshot) -> Self {
         Self {
@@ -117,9 +121,9 @@ impl From<&PositionSnapshot> for AccountPositionSnapshot {
                 .then_some(Price::from_raw(wire.average_price_raw)),
             mark_price: (wire.mark_price_raw != 0).then_some(Price::from_raw(wire.mark_price_raw)),
             liquidation_price: None,
-            unrealized_pnl: Money::from_raw(wire.unrealized_pnl_raw),
-            initial_margin: Money::from_raw(wire.margin_raw),
-            maintenance_margin: Money::ZERO,
+            unrealized_pnl: wire.unrealized_pnl_raw.map(Money::from_raw),
+            initial_margin: wire.margin_raw.map(Money::from_raw),
+            maintenance_margin: None,
             leverage: None,
             margin_mode: None,
             position_side: None,

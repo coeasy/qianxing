@@ -1,6 +1,45 @@
-//! 策略绑定：策略当前持仓读取与跨语言契约输入装配。
+//! 策略绑定：策略当前持仓读取、跨语言契约输入装配，以及内置策略信号参数的唯一读点。
 
 use super::*;
+
+/// 这套信号口径从哪来：四项全缺 = 写死默认，任一项给了 = 配置。
+///
+/// 四条链共用这句判词，否则"来源"由各入口各自臆测 —— `[Builtin · Cost] source=` 一族
+/// 撒过谎的地方（Q0b）就是这么来的。
+pub(crate) fn builtin_signal_source(strategy: &StrategyRuntimeConfig) -> &'static str {
+    if strategy.builtin_fast_window.is_some()
+        || strategy.builtin_slow_window.is_some()
+        || strategy.builtin_period.is_some()
+        || strategy.builtin_threshold_bps.is_some()
+    {
+        "config"
+    } else {
+        "builtin-default"
+    }
+}
+
+/// `strategy.builtin_*` 四个信号参数的唯一读点（V11 Q64）。
+///
+/// 逐项可省：给了哪项换哪项，缺项留 `BuiltinStrategyConfig` 的默认。四条 Bar 回测链都走这里，
+/// 于是同一份 `--config` 不会在各入口得到两套窗口。这里不做体检：双腿 kind 的
+/// `reference_instrument` 在调用方才补齐，先验证会误报。
+pub(crate) fn apply_builtin_signal_overrides(
+    config: &mut BuiltinStrategyConfig,
+    strategy: &StrategyRuntimeConfig,
+) {
+    if let Some(window) = strategy.builtin_fast_window {
+        config.fast_window = window;
+    }
+    if let Some(window) = strategy.builtin_slow_window {
+        config.slow_window = window;
+    }
+    if let Some(period) = strategy.builtin_period {
+        config.period = period;
+    }
+    if let Some(threshold) = strategy.builtin_threshold_bps {
+        config.threshold_bps = threshold;
+    }
+}
 
 pub(crate) fn validate_ccxt_worker_binding(
     worker: &WorkerConfig,

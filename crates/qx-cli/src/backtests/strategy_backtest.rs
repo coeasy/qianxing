@@ -8,42 +8,11 @@ pub(crate) fn run_strategy_backtest(
     spec_path: Option<&Path>,
 ) -> Result<(), String> {
     let config = read_runtime_config(runtime_path)?;
-    let payload = std::fs::read_to_string(frame_path).map_err(|error| {
-        format!(
-            "读取策略回测 BarFrame 失败 {}: {error}",
-            frame_path.display()
-        )
-    })?;
-    let frame = BarFrame::from_json(&payload).map_err(|error| {
-        format!(
-            "策略回测 BarFrame 校验失败 {}: {error:?}",
-            frame_path.display()
-        )
-    })?;
-    let bars: Vec<Bar> = (&frame).into();
-    if bars.len() < 2 {
+    let frame = read_bar_frame_for_backtest(frame_path)?;
+    if frame.ts.len() < 2 {
         return Err("跨语言 Bar 回测至少需要两根 Bar".into());
     }
-    let provider =
-        JsonBarFrameProvider::new(frame.source.0.clone(), "barframe-json-v1", frame_path);
-    let (provider_bars, manifest) = provider.load_bars_with_manifest(
-        &format!("strategy-bars:{}", frame.instrument),
-        &frame.instrument.to_string(),
-        bars.first().map(|bar| bar.ts).unwrap_or(1),
-        bars.last().map(|bar| bar.ts).unwrap_or(1),
-    )?;
-    if provider_bars.len() != bars.len()
-        || provider_bars.iter().zip(&bars).any(|(left, right)| {
-            left.timestamp != right.ts
-                || left.open_raw != right.open
-                || left.high_raw != right.high
-                || left.low_raw != right.low
-                || left.close_raw != right.close
-                || left.volume_raw != right.volume
-        })
-    {
-        return Err("qx-data Provider 与 BarFrame 列式输入不一致，拒绝开始回测".into());
-    }
+    let (bars, manifest) = barframe_dataset_identity(frame_path, &frame)?;
     let data_root = resolve_runtime_relative_path(runtime_path, &config.storage.data_dir);
     let mut dataset_registry = JsonDatasetRegistry::open(data_root.join("datasets.manifest.json"))?;
     dataset_registry.register(manifest.clone())?;
@@ -56,6 +25,8 @@ pub(crate) fn run_strategy_backtest(
         "[Data · Dataset] dataset={} version={} source={} fingerprint={}",
         manifest.dataset_id, manifest.version, manifest.source, manifest.fingerprint
     );
+    // 同一份身份必须跟着产物走：只印在 stdout 上的指纹，事后拿着摘要无从复核（V11 Q66）。
+    let input = barframe_input_provenance(frame_path, &manifest);
     let strategies = if config.strategies.is_empty() {
         vec![config.strategy.clone()]
     } else {
@@ -146,6 +117,7 @@ pub(crate) fn run_strategy_backtest(
                     },
                 ),
             &data_root,
+            input.clone(),
         )?;
     }
     Ok(())

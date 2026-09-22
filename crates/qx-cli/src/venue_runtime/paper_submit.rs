@@ -43,6 +43,8 @@ pub(crate) fn seed_paper_initial_cash(
 /// 使用同一控制面/队列/EventLog 语义跑一笔完全本地的 Paper 下单闭环。
 /// 该入口用于验收执行编排，不连接网络，也不把 Paper 结果当作真实 Venue 结果。
 pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result<(), String> {
+    // 这个入口按定义就在提交订单，A 股段配了又没有闸门可用时必须在做任何副作用之前拒掉（V11 Q65）。
+    reject_ashare_rules_on_submit_path(path, None, "paper-submit-order")?;
     let config = read_runtime_config(path)?;
     let command: ControlCommand = serde_json::from_str(
         &std::fs::read_to_string(command_path)

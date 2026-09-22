@@ -51,7 +51,7 @@ fn multi_attribution_with_costs(label: &str, rules: &str) -> (serde_json::Value,
         None,
         None,
         1,
-        25,
+        0,
         Some(&root),
         Some(&runtime),
     )
@@ -122,7 +122,7 @@ fn cost_source_distinguishes_unset_from_default_rates() {
         None,
         None,
         1,
-        25,
+        0,
         Some(&no_root),
         None,
     )
@@ -143,7 +143,7 @@ fn cost_source_distinguishes_unset_from_default_rates() {
         None,
         None,
         1,
-        25,
+        0,
         Some(&plain_root),
         Some(&plain_runtime),
     )

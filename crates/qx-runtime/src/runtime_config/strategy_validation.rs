@@ -164,15 +164,7 @@ impl RuntimeConfig {
             .map(qx_strategy::BuiltinStrategyKind::parse)
             .transpose()
             .map_err(|error| format!("{label} builtin_strategy 非法: {error}"))?;
-        let needs_reference = matches!(
-            builtin_kind,
-            Some(
-                qx_strategy::BuiltinStrategyKind::PairsArbitrage
-                    | qx_strategy::BuiltinStrategyKind::BasisArbitrage
-                    | qx_strategy::BuiltinStrategyKind::CrossVenueArbitrage
-                    | qx_strategy::BuiltinStrategyKind::SpotFuturesArbitrage
-            )
-        );
+        let needs_reference = builtin_kind.is_some_and(|kind| kind.needs_reference_leg());
         if needs_reference
             && (strategy.builtin_reference_instrument.is_none()
                 || strategy.builtin_reference_bars_snapshot_path.is_none())

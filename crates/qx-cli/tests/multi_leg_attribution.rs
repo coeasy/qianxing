@@ -133,7 +133,7 @@ fn spot_multi_leg_attribution_closes_fees_and_stays_deterministic() {
     let legs = [primary.as_str(), reference.as_str()];
     let root = temp_root("spot");
     let first = root.join("first");
-    let (code, stdout, stderr) = backtest(&first, "2", "30", &legs);
+    let (code, stdout, stderr) = backtest(&first, "2", "0", &legs);
     assert_eq!(code, 0, "现货多腿回测失败: {stderr}");
     let fields = attribution_fields(&stdout);
     let turnover_raw = field(&fields, "turnover_raw");
@@ -195,6 +195,15 @@ fn spot_multi_leg_attribution_closes_fees_and_stays_deterministic() {
     assert_eq!(payload["totals"]["fees_raw"], fees_raw.to_string());
     assert_eq!(payload["totals"]["turnover_raw"], turnover_raw.to_string());
     assert_eq!(payload["totals"]["residual_fees_raw"], "0");
+    // Q58：零保证金/零资金费必须说清是"现货口径"还是"漏配规格"，只报数字分不出这两件事。
+    assert_eq!(payload["market_specs"]["primary"], serde_json::Value::Null);
+    assert_eq!(
+        payload["market_specs"]["reference"],
+        serde_json::Value::Null
+    );
+    assert_eq!(payload["margin_model"], "none-no-derivative-leg-spec");
+    assert_eq!(payload["totals"]["margin_peak_raw"], "0");
+    assert_eq!(payload["totals"]["funding_raw"], "0");
     let groups = validated_groups(&payload);
     assert_eq!(groups.len(), 3);
     let summed_fees: i128 = groups
@@ -211,7 +220,7 @@ fn spot_multi_leg_attribution_closes_fees_and_stays_deterministic() {
         .all(|group| group.total_fees_raw > 0 && group.total_turnover_raw > 0));
 
     let second = root.join("second");
-    let (code, second_stdout, _) = backtest(&second, "2", "30", &legs);
+    let (code, second_stdout, _) = backtest(&second, "2", "0", &legs);
     assert_eq!(code, 0);
     assert_eq!(
         result_hashes(&second_stdout),
@@ -221,7 +230,7 @@ fn spot_multi_leg_attribution_closes_fees_and_stays_deterministic() {
     assert_eq!(attribution_fields(&second_stdout), fields);
 
     let changed = root.join("changed");
-    let (code, changed_stdout, _) = backtest(&changed, "1", "30", &legs);
+    let (code, changed_stdout, _) = backtest(&changed, "1", "0", &legs);
     assert_eq!(code, 0);
     assert_ne!(
         result_hashes(&changed_stdout),
@@ -347,7 +356,7 @@ fn every_multi_leg_kind_reports_fully_filled_legs() {
         "spot_futures_arbitrage",
     ] {
         let out = root.join(kind);
-        let (code, stdout, stderr) = multi_backtest(&out, kind, "2", "30", &legs, &[]);
+        let (code, stdout, stderr) = multi_backtest(&out, kind, "2", "0", &legs, &[]);
         assert_eq!(code, 0, "{kind} 多腿回测失败: {stderr}");
         let fields = attribution_fields(&stdout);
         assert!(
@@ -388,7 +397,16 @@ fn every_multi_leg_kind_reports_fully_filled_legs() {
 fn vetoed_leg_never_pairs_against_a_filled_counterpart() {
     let primary = fixture("qianxing.bar-frame.pairs-primary.example.json");
     let reference = fixture("qianxing.bar-frame.pairs-reference.example.json");
-    let legs = [primary.as_str(), reference.as_str()];
+    // 配置声称产品是 perpetual，因此两条腿必须各自带 market spec（V11 Q58）：缺规格的
+    // 名义额会按现货乘数 1 记账，那条名义额上限就变成对猜出来的口径做风控。
+    let primary_spec = fixture("qianxing.market.binance.btc-swap.spec.json");
+    let reference_spec = fixture("qianxing.market.binance.eth-swap.spec.json");
+    let legs = [
+        primary.as_str(),
+        reference.as_str(),
+        primary_spec.as_str(),
+        reference_spec.as_str(),
+    ];
     let root = temp_root("veto");
     let config_dir = root.join("config");
     std::fs::create_dir_all(&config_dir).expect("创建风控配置目录失败");
@@ -502,6 +520,198 @@ fn multi_leg_funding_bound_fails_loudly_instead_of_capping_cash() {
     assert!(
         !stdout.contains("[Multi-leg · Attribution]"),
         "定资失败后不得产出归因摘要"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 在临时目录落一份 CCXT 形状的现货规格：与仓库里的 swap 规格只差 `market_type`，
+/// 用来把"产品形态"单独变成一个可对照的变量。
+fn write_spot_spec(dir: &Path, name: &str, base: &str) -> String {
+    let path = dir.join(name);
+    std::fs::write(
+        &path,
+        serde_json::to_string(&serde_json::json!({
+            "market_type": "spot",
+            "base": base,
+            "quote": "USDT",
+            "settle": "USDT",
+            "contract_size_raw": 1_000_000_000_i64,
+            "price_tick_raw": 1_000_000_i64,
+            "qty_step_raw": 1_000_000_i64,
+            "min_qty_raw": 1_000_000_i64,
+        }))
+        .expect("编码现货规格失败"),
+    )
+    .expect("写入现货规格失败");
+    path.to_string_lossy().to_string()
+}
+
+/// 按 `leg_id` 汇总组级归因的某一列（产物里是 `i128` 十进制字符串）。
+fn leg_column_sum(payload: &serde_json::Value, leg_id: &str, column: &str) -> i128 {
+    payload["groups"]
+        .as_array()
+        .expect("groups 必须是数组")
+        .iter()
+        .flat_map(|group| group["legs"].as_array().expect("legs 必须是数组").iter())
+        .filter(|leg| leg["leg_id"].as_str() == Some(leg_id))
+        .map(|leg| {
+            leg[column]
+                .as_str()
+                .unwrap_or_else(|| panic!("组级归因缺少 {leg_id}.{column}"))
+                .parse::<i128>()
+                .unwrap_or_else(|error| panic!("组级归因 {leg_id}.{column} 非法: {error}"))
+        })
+        .sum()
+}
+
+/// V11 Q58：`--funding-bps` 非零却没有腿规格时必须在撮合前报错。缺规格的腿按现货乘数 1
+/// 记账，跑完再补一句"资金费为 0"分不清"本来就不该有"与"规格漏了"。
+#[test]
+fn funding_without_leg_spec_is_refused_before_matching() {
+    let primary = fixture("qianxing.bar-frame.pairs-primary.example.json");
+    let reference = fixture("qianxing.bar-frame.pairs-reference.example.json");
+    let legs = [primary.as_str(), reference.as_str()];
+    let root = temp_root("spec-guard-missing");
+    let out = root.join("run");
+    let (code, stdout, stderr) = backtest(&out, "2", "30", &legs);
+    assert_ne!(
+        code, 0,
+        "缺规格却要计提资金费必须失败，而不是静默记 0: {stdout}"
+    );
+    assert!(
+        stderr.contains("腿没有 market spec"),
+        "报错必须指出缺的是规格: {stderr}"
+    );
+    assert!(
+        stderr.contains("primary 腿"),
+        "报错必须点名哪条腿缺规格: {stderr}"
+    );
+    assert!(
+        stderr.contains("--funding-bps"),
+        "报错必须给出可执行的修正方向: {stderr}"
+    );
+    assert!(
+        !stdout.contains("[Multi-leg · Backtest]"),
+        "规格闸门必须早于任何腿级撮合: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 两条腿都声明为现货时，非零资金费率无处计提：落到现货腿上就是造一笔不存在的成本。
+#[test]
+fn funding_on_spot_only_legs_is_refused() {
+    let primary = fixture("qianxing.bar-frame.pairs-primary.example.json");
+    let reference = fixture("qianxing.bar-frame.pairs-reference.example.json");
+    let root = temp_root("spec-guard-spot-only");
+    let primary_spec = write_spot_spec(&root, "btc-spot.spec.json", "BTC");
+    let reference_spec = write_spot_spec(&root, "eth-spot.spec.json", "ETH");
+    let legs = [
+        primary.as_str(),
+        reference.as_str(),
+        primary_spec.as_str(),
+        reference_spec.as_str(),
+    ];
+    let out = root.join("run");
+    let (code, stdout, stderr) = backtest(&out, "2", "30", &legs);
+    assert_ne!(code, 0, "全现货腿计提资金费必须失败: {stdout}");
+    assert!(
+        stderr.contains("没有一条腿是衍生品"),
+        "报错必须指出无处计提: {stderr}"
+    );
+    assert!(
+        stderr.contains("primary=Some(Spot)"),
+        "报错必须带回两条腿的实际产品形态: {stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 混合规格只向衍生品腿计费：现货腿的保证金/资金费必须恒为 0，且合计与逐腿之和闭合。
+/// 反向验证：去掉 `multi_leg_leg_margin` 与资金费循环里的衍生品判定，本用例立刻变红
+/// ——现货腿会按全额名义额背上一笔保证金。
+#[test]
+fn only_derivative_legs_bear_margin_and_funding() {
+    let primary = fixture("qianxing.bar-frame.pairs-primary.example.json");
+    let reference = fixture("qianxing.bar-frame.pairs-reference.example.json");
+    let root = temp_root("spec-guard-mixed");
+    let primary_spec = fixture("qianxing.market.binance.btc-swap.spec.json");
+    let reference_spec = write_spot_spec(&root, "eth-spot.spec.json", "ETH");
+    let legs = [
+        primary.as_str(),
+        reference.as_str(),
+        primary_spec.as_str(),
+        reference_spec.as_str(),
+    ];
+    let out = root.join("run");
+    let (code, stdout, stderr) = backtest(&out, "1", "30", &legs);
+    assert_eq!(code, 0, "衍生品主腿 + 现货对冲腿的回测失败: {stderr}");
+    let fields = attribution_fields(&stdout);
+    let payload = attribution_artifact(&out);
+    assert!(
+        field(&fields, "margin_peak_raw") > 0 && field(&fields, "funding_raw") != 0,
+        "主腿本该被计提，否则本用例什么都没验到: {fields:?}"
+    );
+    assert_eq!(leg_column_sum(&payload, "reference", "margin_raw"), 0);
+    assert_eq!(leg_column_sum(&payload, "reference", "funding_raw"), 0);
+    assert!(leg_column_sum(&payload, "primary", "margin_raw") > 0);
+    assert_eq!(
+        leg_column_sum(&payload, "primary", "funding_raw"),
+        field(&fields, "funding_raw"),
+        "全部资金费必须落在衍生品腿上，合计才与逐腿之和闭合"
+    );
+    assert_eq!(
+        payload["margin_model"],
+        "realized-initial-margin-leverage-1"
+    );
+    assert_eq!(
+        payload["market_specs"]["reference"],
+        serde_json::Value::String(reference_spec)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 配置把产品声明成衍生品、却没给主腿规格：即使 `--funding-bps 0`（保证金仍会漏计）
+/// 也必须拒绝，否则名义额按现货乘数 1 记账，回测与实盘的产品口径就此分叉。
+#[test]
+fn declared_derivative_product_without_primary_spec_is_refused() {
+    let primary = fixture("qianxing.bar-frame.pairs-primary.example.json");
+    let reference = fixture("qianxing.bar-frame.pairs-reference.example.json");
+    let legs = [primary.as_str(), reference.as_str()];
+    let root = temp_root("spec-guard-declared");
+    let config_dir = root.join("config");
+    std::fs::create_dir_all(&config_dir).expect("创建配置目录失败");
+    let mut config: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture("qianxing.runtime.example.json"))
+            .expect("读取运行时示例配置失败"),
+    )
+    .expect("运行时示例配置 JSON 非法");
+    config["strategy"]["product"] = serde_json::json!("perpetual");
+    config["strategy"]["allow_short"] = serde_json::json!(true);
+    let config_path = config_dir.join("runtime.json");
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
+        .expect("写入运行时配置失败");
+    let config_arg = config_path.to_string_lossy().to_string();
+
+    let out = root.join("run");
+    let (code, stdout, stderr) = multi_backtest(
+        &out,
+        "pairs_arbitrage",
+        "2",
+        "0",
+        &legs,
+        &["--config", config_arg.as_str()],
+    );
+    assert_ne!(
+        code, 0,
+        "声称衍生品却没有主腿规格必须失败: {stdout}
+{stderr}"
+    );
+    assert!(
+        stderr.contains("必须提供 primary 腿的 market spec"),
+        "报错必须点名主腿规格: {stderr}"
+    );
+    assert!(
+        stderr.contains("strategy.product=Perpetual"),
+        "报错必须带回声明值: {stderr}"
     );
     let _ = std::fs::remove_dir_all(&root);
 }

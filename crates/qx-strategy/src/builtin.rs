@@ -101,6 +101,18 @@ impl BuiltinStrategyKind {
         }
     }
 
+    /// 双腿套利口径：这四个 kind 需要第二条 BarFrame 与 `reference_instrument`，
+    /// 只有 `backtest multi-builtin` 喂得动，单标的入口（含 `init --strategy`）必须拒绝。
+    pub const fn needs_reference_leg(self) -> bool {
+        matches!(
+            self,
+            Self::PairsArbitrage
+                | Self::BasisArbitrage
+                | Self::CrossVenueArbitrage
+                | Self::SpotFuturesArbitrage
+        )
+    }
+
     pub fn parse(value: &str) -> Result<Self, String> {
         let normalized = value.trim().to_ascii_lowercase().replace('-', "_");
         Self::ALL
@@ -173,13 +185,7 @@ impl BuiltinStrategyConfig {
         {
             return Err("内置策略参数非法：策略身份、数量、窗口或阈值不满足约束".into());
         }
-        let needs_reference = matches!(
-            self.kind,
-            BuiltinStrategyKind::PairsArbitrage
-                | BuiltinStrategyKind::BasisArbitrage
-                | BuiltinStrategyKind::CrossVenueArbitrage
-                | BuiltinStrategyKind::SpotFuturesArbitrage
-        );
+        let needs_reference = self.kind.needs_reference_leg();
         if needs_reference && self.reference_instrument.is_none() {
             return Err("双腿套利必须配置 reference_instrument".into());
         }
@@ -632,13 +638,7 @@ impl Strategy for BuiltinStrategy {
         else {
             return Ok(self.empty_decision(context, event.ts()));
         };
-        let is_pair = matches!(
-            self.config.kind,
-            BuiltinStrategyKind::PairsArbitrage
-                | BuiltinStrategyKind::BasisArbitrage
-                | BuiltinStrategyKind::CrossVenueArbitrage
-                | BuiltinStrategyKind::SpotFuturesArbitrage
-        );
+        let is_pair = self.config.kind.needs_reference_leg();
         let is_primary = instrument == &self.config.instrument;
         let is_reference = self
             .config
@@ -1022,13 +1022,7 @@ mod tests {
         let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
         let reference = InstrumentId::parse("ETHUSDT.BINANCE").unwrap();
         for kind in BuiltinStrategyKind::ALL {
-            let config = if matches!(
-                kind,
-                BuiltinStrategyKind::PairsArbitrage
-                    | BuiltinStrategyKind::BasisArbitrage
-                    | BuiltinStrategyKind::CrossVenueArbitrage
-                    | BuiltinStrategyKind::SpotFuturesArbitrage
-            ) {
+            let config = if kind.needs_reference_leg() {
                 BuiltinStrategyConfig {
                     kind,
                     strategy_id: format!("builtin-{}", kind.name()),

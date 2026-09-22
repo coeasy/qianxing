@@ -1646,9 +1646,15 @@ fn normalize_positions(
     for position in &positions {
         if position.instrument.to_string().trim().is_empty()
             || position.quantity.raw() == i128::MIN
-            || position.unrealized_pnl.raw() == i128::MIN
-            || position.initial_margin.raw() < 0
-            || position.maintenance_margin.raw() < 0
+            || position
+                .unrealized_pnl
+                .is_some_and(|pnl| pnl.raw() == i128::MIN)
+            || position
+                .initial_margin
+                .is_some_and(|margin| margin.raw() < 0)
+            || position
+                .maintenance_margin
+                .is_some_and(|margin| margin.raw() < 0)
             || position.leverage == Some(0)
         {
             return Err(QxError::ReconcileRequired(
@@ -2152,19 +2158,36 @@ mod tests {
                 RuntimeExternalEvent::AccountPositionSnapshot {
                     account_id: "main".into(),
                     venue_id: "OKX".into(),
-                    positions: vec![qx_core::AccountPositionSnapshot {
-                        instrument: instrument.clone(),
-                        quantity: Quantity::from_i64(2),
-                        average_price: Some(Price::from_i64(100)),
-                        mark_price: Some(Price::from_i64(101)),
-                        liquidation_price: Some(Price::from_i64(50)),
-                        unrealized_pnl: Money::from_i64(2),
-                        initial_margin: Money::from_i64(20),
-                        maintenance_margin: Money::from_i64(5),
-                        leverage: Some(10),
-                        margin_mode: Some("isolated".into()),
-                        position_side: Some("long".into()),
-                    }],
+                    positions: vec![
+                        qx_core::AccountPositionSnapshot {
+                            instrument: instrument.clone(),
+                            quantity: Quantity::from_i64(2),
+                            average_price: Some(Price::from_i64(100)),
+                            mark_price: Some(Price::from_i64(101)),
+                            liquidation_price: Some(Price::from_i64(50)),
+                            unrealized_pnl: Some(Money::from_i64(2)),
+                            initial_margin: Some(Money::from_i64(20)),
+                            maintenance_margin: Some(Money::from_i64(5)),
+                            leverage: Some(10),
+                            margin_mode: Some("isolated".into()),
+                            position_side: Some("long".into()),
+                        },
+                        // 第二行是"交易所报了零"和"交易所没报"同时出现在一份快照里：
+                        // 落盘与回读必须把这两种状态分开保存（V11 Q68）。
+                        qx_core::AccountPositionSnapshot {
+                            instrument: InstrumentId::parse("ETH/USDT:USDT.OKX").unwrap(),
+                            quantity: Quantity::from_i64(3),
+                            average_price: None,
+                            mark_price: None,
+                            liquidation_price: None,
+                            unrealized_pnl: Some(Money::ZERO),
+                            initial_margin: None,
+                            maintenance_margin: None,
+                            leverage: None,
+                            margin_mode: None,
+                            position_side: None,
+                        },
+                    ],
                 },
                 100,
                 101,
@@ -2241,6 +2264,25 @@ mod tests {
         assert_eq!(pipeline.snapshot().funding_rates.len(), 1);
         let restored = LiveEventPipeline::open(&root, "ccxt-main", "USDT").unwrap();
         assert_eq!(restored.snapshot(), pipeline.snapshot());
+        let reopened = restored.snapshot();
+        let rows = reopened
+            .account_positions
+            .get(&("main".to_string(), "OKX".to_string()))
+            .expect("重开日志后必须仍有一组持仓事实");
+        assert_eq!(rows.len(), 2, "两份持仓观察都要活过落盘与回读");
+        let reported_zero = rows
+            .iter()
+            .find(|row| row.instrument.to_string().starts_with("ETH"))
+            .unwrap();
+        assert_eq!(
+            (
+                reported_zero.unrealized_pnl,
+                reported_zero.initial_margin,
+                reported_zero.maintenance_margin
+            ),
+            (Some(Money::ZERO), None, None),
+            "「报了零」与「没报」在回读后仍是两种状态，不能一起收敛成 0"
+        );
         assert_eq!(
             restored.ledger().cash_for("main", "USDT"),
             Money::from_i64(-2).raw()

@@ -511,11 +511,12 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
                 ));
             }
         };
-        if let Err(error) = validate_submit_events(&order, &facts) {
-            self.mark_reconcile(order.client_id, "invalid-submit-response")?;
-            return Err(format!(
-                "Venue 返回非法下单事实，结果未知，必须先对账: {error}"
-            ));
+        // 提交同步回包与用户流回报必须过同一道闸门（形状契约 + 产品规格精度），
+        // 否则"越界回报只能转待对账"就只剩半条纪律：同一笔成交走被推下来的路径
+        // 会被拦下、不记账，走提交回包却直接入账。
+        if let Err(violation) = gate_submit_facts(&order, &facts, self.instrument_spec.as_ref()) {
+            self.mark_reconcile(order.client_id, violation.reason_tag())?;
+            return Err(violation.to_string());
         }
         let event_count = facts.len();
         let has_reconcile = facts
@@ -653,6 +654,15 @@ const HEDGE_RECOVERY_LEASE_MS: u64 = 30_000;
 
 pub trait HedgeOrderValidator {
     fn validate(&self, order: &Order) -> Result<(), String>;
+
+    /// 补偿提交必须与正常提交带着同一份冻结产品规格：这个 guard 就是运行时按
+    /// `worker.instrument_spec_path` 解析出来的那个来源（见 qx-cli 的 `RecoveryGuard`），
+    /// 所以补偿腿既不会被按乘数 1 记账，也不会绕过提交侧精度闸门。
+    /// 返回 `Ok(None)` 只表示该 worker 没有配置规格（现货 `contract_size=1` 的既有口径），
+    /// **解析失败**（文件缺失、币种与账簿不符等）必须返回 `Err`，由 worker 转待对账。
+    fn instrument_spec(&self, _order: &Order) -> Result<Option<TradingInstrumentSpec>, String> {
+        Ok(None)
+    }
 }
 
 impl<F> HedgeOrderValidator for F
@@ -853,6 +863,7 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                 continue;
             }
 
+            let mut leg_spec: Option<TradingInstrumentSpec> = None;
             if let Some(validator) = validator {
                 if let Err(error) = validator.validate(&order) {
                     errors.push(format!(
@@ -861,6 +872,20 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                     ));
                     all_filled = false;
                     continue;
+                }
+                // 规格解析必须先于登记与提交：没有冻结规格就既过不了精度闸门，也
+                // 会让衍生腿被按乘数 1 记账。解析失败是配置问题而不是未知结果，
+                // 所以留组于 HedgeRequired 等下一轮，而不是留下一条假的待对账事实。
+                match validator.instrument_spec(&order) {
+                    Ok(spec) => leg_spec = spec,
+                    Err(error) => {
+                        errors.push(format!(
+                            "补偿腿 {} 未解析到产品规格，拒绝自动对冲: {error}",
+                            target.leg_id
+                        ));
+                        all_filled = false;
+                        continue;
+                    }
                 }
             }
             self.events
@@ -874,35 +899,56 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                 )
                 .map_err(|error| format!("注册补偿订单 {} 失败: {error}", client_id))?;
             attempted += 1;
-            let facts = match self
-                .router
-                .submit_order(&source_leg.venue_id, order, self.now)
-            {
-                Ok(facts) if facts.is_empty() => {
-                    errors.push(format!(
-                        "补偿腿 {} 未返回事实，结果未知，必须对账",
-                        target.leg_id
-                    ));
-                    all_filled = false;
-                    continue;
-                }
-                Ok(facts) => facts,
-                Err(error) => {
-                    errors.push(format!(
-                        "补偿腿 {} 提交失败/结果未知: {error}",
-                        target.leg_id
-                    ));
-                    all_filled = false;
-                    continue;
-                }
-            };
+            let facts =
+                match self
+                    .router
+                    .submit_order(&source_leg.venue_id, order.clone(), self.now)
+                {
+                    Ok(facts) if facts.is_empty() => {
+                        errors.push(format!(
+                            "补偿腿 {} 未返回事实，结果未知，必须对账",
+                            target.leg_id
+                        ));
+                        all_filled = false;
+                        continue;
+                    }
+                    Ok(facts) => facts,
+                    Err(error) => {
+                        errors.push(format!(
+                            "补偿腿 {} 提交失败/结果未知: {error}",
+                            target.leg_id
+                        ));
+                        all_filled = false;
+                        continue;
+                    }
+                };
+            // 补偿提交也是提交：回包必须过与 `PortExecutionService::submit` 同一道
+            // 闸门。这里绕过闸门，"越界回报只能转待对账"就只剩半条纪律。
+            if let Err(violation) = gate_submit_facts(&order, &facts, leg_spec.as_ref()) {
+                errors.push(format!("补偿腿 {} {violation}", target.leg_id));
+                self.append_fact(
+                    ExecutionEvent::ReconcileRequired {
+                        client_order_id: client_id,
+                    },
+                    format!(
+                        "{}:hedge:{}:{}:{}",
+                        self.worker_id,
+                        self.group.group_id,
+                        target.leg_id,
+                        violation.reason_tag()
+                    ),
+                    None,
+                )?;
+                all_filled = false;
+                continue;
+            }
             let hedge_prefix = format!(
                 "{}:hedge:{}:{}",
                 self.worker_id, self.group.group_id, target.leg_id
             );
             for fact in facts {
                 let correlation_id = fact_correlation(&hedge_prefix, &fact);
-                self.append_fact(fact, correlation_id)?;
+                self.append_fact(fact, correlation_id, leg_spec.as_ref())?;
             }
             let filled = self
                 .events
@@ -932,11 +978,26 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
         })
     }
 
-    fn append_fact(&mut self, event: ExecutionEvent, correlation_id: String) -> Result<(), String> {
+    /// 追加一条补偿路径事实。`spec` 与 `PortExecutionService::append` 同源：成交必须
+    /// 自带它那份冻结规格落库，否则账簿会退回 `LegacyMultiplier(1)`，衍生腿的仓位与
+    /// 保证金按乘数 1 计算，对冲方向对、数量却差一个合约面值。
+    fn append_fact(
+        &mut self,
+        event: ExecutionEvent,
+        correlation_id: String,
+        spec: Option<&TradingInstrumentSpec>,
+    ) -> Result<(), String> {
         *self.source_seq = self.source_seq.saturating_add(1);
         let event_ts = match &event {
             ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. } => fill.ts,
             _ => self.now,
+        };
+        let event = match (spec, event) {
+            (Some(spec), ExecutionEvent::Fill(fill)) => ExecutionEvent::FillWithSpec {
+                fill,
+                spec: Box::new(spec.clone()),
+            },
+            (_, event) => event,
         };
         self.events.append_execution_event(ExecutionEventEnvelope {
             event,
@@ -1009,6 +1070,66 @@ fn compensation_client_id(group: &SpreadOrderGroup, leg_id: &str) -> u64 {
         candidate = candidate.wrapping_add(1);
     }
     candidate
+}
+
+/// 提交**同步返回**的事实进入账本前的统一闸门：先形状契约，再产品规格精度。
+///
+/// 两处提交入口（`PortExecutionService::submit` 与对冲补偿 worker）必须共用它。
+/// 各写一份就会重演"越界回报只能转待对账"只剩半条纪律：同一笔成交走用户流被
+/// `ingest_venue_events_with_pipeline` 拦下、不记账，走提交回包却直接入账。
+/// 规格为 `None` 时只过形状闸门 —— 没有冻结规格就没有可核对的 tick/step，
+/// 与归约入口一样绝不凭空造一份。
+enum SubmitFactViolation {
+    /// 事实与订单不匹配（归属、数量、空回报、混入行情）。
+    Shape(String),
+    /// 成交落在冻结产品规格的 tick/step 之外。
+    Precision(qx_core::QxError),
+}
+
+impl SubmitFactViolation {
+    /// 写进 `ReconcileRequired` 关联号的原因段，保持两类未知结果可分别检索。
+    fn reason_tag(&self) -> &'static str {
+        match self {
+            Self::Shape(_) => "invalid-submit-response",
+            Self::Precision(_) => "submit-fill-out-of-spec",
+        }
+    }
+}
+
+impl std::fmt::Display for SubmitFactViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Shape(error) => {
+                write!(f, "Venue 返回非法下单事实，结果未知，必须先对账: {error}")
+            }
+            Self::Precision(error) => write!(
+                f,
+                "Venue 提交返回的成交回报违反产品规格，结果未知，必须先对账: {error:?}"
+            ),
+        }
+    }
+}
+
+fn gate_submit_facts(
+    order: &Order,
+    facts: &[ExecutionEvent],
+    spec: Option<&TradingInstrumentSpec>,
+) -> Result<(), SubmitFactViolation> {
+    validate_submit_events(order, facts).map_err(SubmitFactViolation::Shape)?;
+    // 规格优先取回报自带的那份：`append` 落库并交给账簿的就是它，校验另一份是假同源。
+    let violation = facts.iter().find_map(|fact| {
+        let (fill, embedded) = match fact {
+            ExecutionEvent::Fill(fill) => (fill.as_ref(), None),
+            ExecutionEvent::FillWithSpec { fill, spec } => (fill.as_ref(), Some(&**spec)),
+            _ => return None,
+        };
+        let spec = embedded.or(spec)?;
+        spec.validate_fill(fill.qty.raw(), fill.price.raw()).err()
+    });
+    match violation {
+        Some(error) => Err(SubmitFactViolation::Precision(error)),
+        None => Ok(()),
+    }
 }
 
 /// 成交事实的稳定身份段。

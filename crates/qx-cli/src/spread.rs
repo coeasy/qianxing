@@ -251,22 +251,50 @@ pub(crate) fn dedicated_spread_recovery_configured(
     })
 }
 
+/// 恢复扫描的补偿腿 guard：账户级风控 + 该 worker 的冻结产品规格。
+///
+/// 两件事必须同源：正常提交链路上 `instrument_spec_path` 既是风控的规格来源，也是
+/// 提交侧精度闸门与衍生品记账的规格来源。补偿提交若只带风控不带规格，同一笔越界
+/// 成交就会走提交回包直接入账，而衍生品腿会被按乘数 1 记账。
+pub(crate) struct RecoveryGuard<'a> {
+    worker: &'a WorkerConfig,
+    /// 风控读取的是恢复扫描开始时的不可变快照；本轮补偿产生的事实会在下一轮
+    /// 扫描重新加载，避免在同一轮里用半更新状态重复计算风险。
+    risk_pipeline: LiveEventPipeline,
+    runtime_config_path: Option<&'a Path>,
+}
+
 pub(crate) fn recovery_order_validator<'a>(
     worker: &'a WorkerConfig,
     pipeline: &LiveEventPipeline,
     runtime_config_path: Option<&'a Path>,
-) -> impl Fn(&Order) -> Result<(), String> + 'a {
-    // 风控读取的是恢复扫描开始时的不可变快照；本轮补偿产生的事实会在
-    // 下一轮扫描重新加载，避免在同一轮里用半更新状态重复计算风险。
-    let risk_pipeline = pipeline.clone();
-    move |order| {
-        if let Some((risk, position)) =
-            worker_risk_context(worker, order, &risk_pipeline, runtime_config_path)?
-        {
+) -> RecoveryGuard<'a> {
+    RecoveryGuard {
+        worker,
+        risk_pipeline: pipeline.clone(),
+        runtime_config_path,
+    }
+}
+
+impl HedgeOrderValidator for RecoveryGuard<'_> {
+    fn validate(&self, order: &Order) -> Result<(), String> {
+        if let Some((risk, position)) = worker_risk_context(
+            self.worker,
+            order,
+            &self.risk_pipeline,
+            self.runtime_config_path,
+        )? {
             risk.validate_order(order, &position)
                 .map_err(|error| format!("{error:?}"))?;
         }
         Ok(())
+    }
+
+    /// 规格解析与风控共用 `load_worker_instrument_spec` 这唯一的读法。`Ok(None)`
+    /// 只对应"该 worker 未配置规格"（现货 `contract_size=1` 的既有口径）；文件缺失、
+    /// 形状不符等解析失败必须原样上报，由 worker 拒绝补偿。
+    fn instrument_spec(&self, order: &Order) -> Result<Option<TradingInstrumentSpec>, String> {
+        load_worker_instrument_spec(self.worker, order, self.runtime_config_path)
     }
 }
 
@@ -315,7 +343,9 @@ pub(crate) fn recover_paper_spread_groups(
         venue,
     )?;
 
-    let instruments = pipeline
+    // 每条待补偿腿的规格都从它自己的订单解析：PaperVenue 由行情撮合出来的成交是
+    // 被推下来的回报，走 `ingest_venue_events` 就不带规格，衍生品腿会按乘数 1 记账。
+    let pending_legs = pipeline
         .orders()
         .into_iter()
         .filter(|order| {
@@ -326,9 +356,11 @@ pub(crate) fn recover_paper_spread_groups(
                 == Some("spread-hedge-v1")
                 && !order.status.is_terminal()
         })
-        .map(|order| order.instrument)
-        .collect::<BTreeSet<_>>();
-    for instrument in instruments {
+        .fold(BTreeMap::new(), |mut acc: BTreeMap<_, Order>, order| {
+            acc.entry(order.instrument.clone()).or_insert(order);
+            acc
+        });
+    for (instrument, leg_order) in pending_legs {
         let Some(quote) = pipeline.latest_quote_with_depth(&instrument) else {
             diagnostics.push(format!(
                 "spread_hedge instrument={} pending reason=缺少最新行情",
@@ -336,10 +368,33 @@ pub(crate) fn recover_paper_spread_groups(
             ));
             continue;
         };
+        // 外层 `Option` 是"本轮有没有 guard"，内层是"该 worker 有没有配置规格"。
+        let spec = match order_validator {
+            Some(validator) => match validator.instrument_spec(&leg_order) {
+                Ok(spec) => spec,
+                Err(error) => {
+                    diagnostics.push(format!(
+                        "spread_hedge instrument={instrument} pending reason=补偿腿产品规格解析失败 {error}"
+                    ));
+                    continue;
+                }
+            },
+            None => None,
+        };
         let events = venue.on_quote(&instrument, quote);
         if !events.is_empty() {
-            ingest_venue_events(pipeline, events, worker_id, now, &mut source_seq)
-                .map_err(|error| format!("写入 Paper 补偿成交事实失败: {error}"))?;
+            let ingested = match spec.as_ref() {
+                Some(spec) => ingest_venue_events_with_spec(
+                    pipeline,
+                    events,
+                    worker_id,
+                    now,
+                    &mut source_seq,
+                    spec,
+                ),
+                None => ingest_venue_events(pipeline, events, worker_id, now, &mut source_seq),
+            };
+            ingested.map_err(|error| format!("写入 Paper 补偿成交事实失败: {error}"))?;
         }
     }
 

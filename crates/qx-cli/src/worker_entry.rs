@@ -151,6 +151,8 @@ pub(crate) fn run_binance_spread_recovery_worker(
 pub(crate) fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Result<(), String> {
     let config = read_runtime_config(path)?;
     let mut worker = venue_worker(&config, worker_id, &VenueEntry::BINANCE)?;
+    // 提交路径不认 A 股段：配了就当场拒，而不是收下配置再按无交易制度下单（V11 Q65）。
+    reject_ashare_rules_on_submit_path(path, Some(&worker), "binance-worker")?;
     resolve_worker_runtime_paths(&mut worker, path);
     if once && matches!(worker.role, WorkerRole::MarketData | WorkerRole::UserStream) {
         return Err("binance-worker --once 只支持 execution 或 reconciler worker".into());
@@ -240,124 +242,6 @@ pub(crate) fn run_process_supervisor(
     supervise_workers(&config, path, &executable, &work_dir, allow_unmanaged_roles)
 }
 
-pub(crate) fn ccxt_market_to_spec(
-    instrument: &InstrumentId,
-    market: &serde_json::Value,
-) -> Result<TradingInstrumentSpec, String> {
-    let market_type = market
-        .get("market_type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("spot");
-    let product = match market_type {
-        "spot" => TradingProduct::Spot,
-        "margin" => TradingProduct::Margin,
-        "swap" | "perpetual" => TradingProduct::Perpetual,
-        "future" | "futures" => TradingProduct::Future,
-        other => return Err(format!("CCXT market type 不支持: {other}")),
-    };
-    let base_currency = market
-        .get("base")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "CCXT market 缺少 base".to_string())?;
-    let quote_currency = market
-        .get("quote")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "CCXT market 缺少 quote".to_string())?;
-    let settlement_currency = market
-        .get("settle")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(quote_currency);
-    let contract_size = raw_json_i128(market, "contract_size_raw")?;
-    let linear = market
-        .get("linear")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(!product.is_derivative());
-    let inverse = market
-        .get("inverse")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let max_leverage = market
-        .get("max_leverage")
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(if product.is_derivative() { 100 } else { 1 });
-    let spec = TradingInstrumentSpec {
-        instrument: instrument.clone(),
-        product,
-        base_currency: base_currency.into(),
-        quote_currency: quote_currency.into(),
-        settlement_currency: settlement_currency.into(),
-        contract_size,
-        linear,
-        inverse,
-        // CCXT 市场快照的精度字段由不同 exchange/precisionMode 表达；
-        // 若未由上游归一化，使用最小定点单位并要求部署侧覆盖。
-        price_tick: raw_json_i128(market, "price_tick_raw").unwrap_or(1),
-        qty_step: raw_json_i128(market, "qty_step_raw").unwrap_or(1),
-        min_qty: raw_json_i128(market, "min_qty_raw").unwrap_or(1),
-        max_leverage,
-        maintenance_margin_bps: market
-            .get("maintenance_margin_bps")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .unwrap_or(500),
-        valid_from: 0,
-        valid_to: market.get("expiry_ms").and_then(serde_json::Value::as_u64),
-    };
-    spec.validate()
-        .map_err(|error| format!("CCXT market spec 非法: {error:?}"))?;
-    Ok(spec)
-}
-
-pub(crate) fn ccxt_margin_rule_from_market(market: &serde_json::Value) -> Box<dyn MarginRule> {
-    let Some(rows) = market
-        .get("leverage_tiers")
-        .and_then(serde_json::Value::as_array)
-    else {
-        return Box::new(NoMargin);
-    };
-    let tiers = rows
-        .iter()
-        .filter_map(|row| {
-            let max_notional = row
-                .get("max_notional_raw")
-                .and_then(serde_json::Value::as_i64)
-                .map(i128::from)
-                .or_else(|| {
-                    row.get("max_notional_raw")
-                        .and_then(serde_json::Value::as_u64)
-                        .map(i128::from)
-                })
-                .unwrap_or(i128::MAX);
-            let initial_bp = row
-                .get("initial_margin_bps")
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(0);
-            let maintenance_bp = row
-                .get("maintenance_margin_bps")
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(0);
-            let max_leverage = row
-                .get("max_leverage")
-                .and_then(serde_json::Value::as_u64)
-                .and_then(|value| u32::try_from(value).ok());
-            (max_notional > 0 && initial_bp >= 0 && maintenance_bp >= 0).then_some(MarginTier {
-                max_notional,
-                initial_bp,
-                maintenance_bp,
-                max_leverage,
-            })
-        })
-        .collect::<Vec<_>>();
-    if tiers.is_empty() {
-        Box::new(NoMargin)
-    } else {
-        Box::new(TieredMargin { tiers })
-    }
-}
 pub(crate) fn run_ccxt_worker(
     path: &Path,
     worker_id: &str,
@@ -366,6 +250,7 @@ pub(crate) fn run_ccxt_worker(
 ) -> Result<(), String> {
     let config = read_runtime_config(path)?;
     let worker = venue_worker(&config, worker_id, &VenueEntry::CCXT)?;
+    reject_ashare_rules_on_submit_path(path, Some(&worker), "ccxt-worker")?;
     let dedicated_spread_recovery = dedicated_spread_recovery_configured(&config, &worker);
     let root = Path::new(&config.storage.data_dir).to_path_buf();
     let pipeline_storage = PipelineStorage::from_config(&config)?;

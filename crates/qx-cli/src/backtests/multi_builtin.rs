@@ -1,4 +1,7 @@
-//! 多内置策略与 CCXT 内置回测链：`run_multi_builtin_backtest` / `run_ccxt_builtin_backtest`。
+//! 多内置策略（双腿套利）回测链：`run_multi_builtin_backtest`。
+//!
+//! CCXT 形状的内置回测入口不在这里：它取完 OHLCV 后交给 `single_strategy.rs` 的
+//! `run_builtin_backtest`，与单标的链共用同一份装配，所以定义点也放在一起。
 
 use super::*;
 
@@ -44,7 +47,7 @@ pub(crate) fn run_multi_builtin_backtest(
     let primary_cash = multi_leg_leg_cash(quantity, &primary_bars, costs.rules.taker_bp, "主")?;
     let reference_cash =
         multi_leg_leg_cash(quantity, &reference_bars, costs.rules.taker_bp, "对冲")?;
-    let strategy_config = BuiltinStrategyConfig {
+    let mut strategy_config = BuiltinStrategyConfig {
         kind,
         strategy_id: format!("builtin-{}-multi", kind.name()),
         strategy_version: format!("builtin-{}-v1", kind.name()),
@@ -58,12 +61,36 @@ pub(crate) fn run_multi_builtin_backtest(
         primary_policy: None,
         reference_policy: None,
     };
+    // 与单标的链同一条读法：多腿入口也收 `--config`（风控、撮合、成本都读它），
+    // 信号参数却不能只在这条链上失效（V11 Q64）。
+    let signal_source = apply_configured_builtin_signal(&mut strategy_config, runtime_config_path)?;
+    println!(
+        "[Multi · Signal] {} quantity={}",
+        builtin_signal_note(&strategy_config, signal_source),
+        quantity
+    );
     let mut native = BuiltinStrategy::new(strategy_config)?;
     // 规格先解析：策略侧现金腿要落在主腿记账的那本账簿上，币种只能从 spec 读回来。
-    let (primary_spec, primary_margin) =
-        market_spec_with_margin(&primary_frame.instrument, primary_spec_path, "多腿")?;
-    let (reference_spec, reference_margin) =
-        market_spec_with_margin(&reference_frame.instrument, reference_spec_path, "多腿")?;
+    let MarketSpecLoad {
+        spec: primary_spec,
+        margin: primary_margin,
+        source: _,
+    } = market_spec_with_margin(&primary_frame.instrument, primary_spec_path, "多腿")?;
+    let MarketSpecLoad {
+        spec: reference_spec,
+        margin: reference_margin,
+        source: _,
+    } = market_spec_with_margin(&reference_frame.instrument, reference_spec_path, "多腿")?;
+    // 规格闸门先于任何撮合：名义额、保证金与资金费全部取自 spec，缺 spec 的腿按现货乘数 1
+    // 记账。声称要计提它们却连产品形态都没给，必须先拒而不是跑完再补一句假设。
+    multi_leg_spec_guard(
+        [
+            ("primary", primary_spec.as_ref()),
+            ("reference", reference_spec.as_ref()),
+        ],
+        funding_bps,
+        configured_instrument_product(runtime_config_path)?,
+    )?;
     let mut context = NativeStrategyContext {
         strategy_id: format!("builtin-{}-multi", kind.name()),
         strategy_version: format!("builtin-{}-v1", kind.name()),
@@ -130,19 +157,32 @@ pub(crate) fn run_multi_builtin_backtest(
             }
         }
     }
-    if primary_spec
-        .as_ref()
-        .is_some_and(|spec| spec.product.is_derivative())
-        && primary_spec_path.is_none()
-    {
-        return Err("主腿衍生品多腿回测必须提供 market spec".into());
-    }
     let attribution_primary_spec = primary_spec.clone();
     let attribution_reference_spec = reference_spec.clone();
     let attribution_primary_targets = primary_targets.clone();
     let attribution_reference_targets = reference_targets.clone();
+    // 本轮到底有没有会被计提保证金/资金费的腿：`margin_peak_raw=0` 既可能是"两条腿都是
+    // 现货"，也可能是"衍生品腿漏了 spec"。只报数字不报口径就等于让读者去猜，所以这一行
+    // 与产物里的 `market_specs` 一起把两种情形分开（V11 Q58）。
+    let margin_model = if [&attribution_primary_spec, &attribution_reference_spec]
+        .into_iter()
+        .flatten()
+        .any(|spec| spec.product.is_derivative())
+    {
+        "realized-initial-margin-leverage-1"
+    } else {
+        "none-no-derivative-leg-spec"
+    };
     // 两条腿共用同一份规则绑定：多腿链的规则集版本必须与单标的链可比较。
     let risk_binding = backtest_risk_binding(runtime_config_path, true)?;
+    // A 股规则是单标的口径（一天的涨跌停锚、整手、T+1 都按一条 `instrument` 生效），
+    // 而本入口的 `--config` 只有一份 strategy 段：收下它再按 primary 的代号去套两条腿，
+    // 等于给 reference 那条腿安上别人的交易制度，因此整份拒绝而不是猜一条腿（V11 Q61）。
+    reject_ashare_rules_config(
+        runtime_config_path,
+        "backtest multi-builtin",
+        "一份 strategy 段无法同时描述两条腿所属标的的交易制度",
+    )?;
     let risk_rule_set_version = risk_binding.gate().rule_set().version().to_string();
     // 两条腿同样共用一份成本绑定：多腿归因的费用必须是同一口径，否则净成本差里没有可比性。
     let cost_source = costs.source();
@@ -345,7 +385,7 @@ pub(crate) fn run_multi_builtin_backtest(
         0
     };
     println!(
-        "[Multi-leg · Attribution] strategy={} groups={} turnover_raw={} fees_raw={} funding_raw={} filled_qty_raw={} margin_peak_raw={} net_cost_raw={} cost_bps={} residual_filled_qty_raw={} residual_fees_raw={} funding_bps={} margin_model=realized-initial-margin-leverage-1 funding_model={}",
+        "[Multi-leg · Attribution] strategy={} groups={} turnover_raw={} fees_raw={} funding_raw={} filled_qty_raw={} margin_peak_raw={} net_cost_raw={} cost_bps={} residual_filled_qty_raw={} residual_fees_raw={} funding_bps={} margin_model={} funding_model={}",
         strategy_id,
         groups.len(),
         totals.1,
@@ -358,6 +398,7 @@ pub(crate) fn run_multi_builtin_backtest(
         residual_filled_qty_raw,
         residual_fees_raw,
         funding_bps,
+        margin_model,
         if funding_bps == 0 {
             "disabled"
         } else {
@@ -391,6 +432,13 @@ pub(crate) fn run_multi_builtin_backtest(
                 "matching_kernel": BAR_MATCHING_KERNEL,
             },
             "execution_costs": { "source": cost_source },
+            // 每条腿的记账口径来自哪份文件（null = 没给，按现货乘数 1 记账）。缺了它，
+            // "margin_peak_raw=0" 就分不清是现货还是漏配规格（V11 Q58）。
+            "market_specs": {
+                "primary": primary_spec_path.map(|path| path.display().to_string()),
+                "reference": reference_spec_path.map(|path| path.display().to_string()),
+            },
+            "margin_model": margin_model,
             // 多腿链不写 summary，撮合口径只能记在这里，否则"换了模型"在这条链上不可见。
             "fill_model": { "name": fill_model_name, "source": fill_model_source },
             "accounts": {
@@ -418,8 +466,8 @@ pub(crate) fn run_multi_builtin_backtest(
             "groups": groups,
             "assumptions": [
                 "fees=per-leg FIFO allocated to signal ts buckets",
-                "margin=spec.initial_margin(|realized fills standing|, bar close, leverage=1)",
-                "funding=realized-fill notional*funding_bps*holding_ms/(8h*10000), long pays positive",
+                "margin=spec.initial_margin(|realized fills standing|, bar close, leverage=1), only on legs whose market spec declares a derivative product",
+                "funding=realized-fill notional*funding_bps*holding_ms/(8h*10000), long pays positive, only on derivative legs; a leg without market spec is booked as spot multiplier 1 and is refused when funding_bps!=0",
                 "cost_bps=net_cost*10000/turnover",
                 "groups=paired by ts only when BOTH legs have realized fills; planned-but-unfilled qty is reported per leg, never paired",
                 "pending_reconcile=a leg filled while its counterpart did not; no automatic close is executed",
@@ -441,56 +489,4 @@ pub(crate) fn run_multi_builtin_backtest(
         println!("[Artifacts] spread_attribution={}", path.display());
     }
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_ccxt_builtin_backtest(
-    ccxt_config_path: &Path,
-    strategy_name: &str,
-    instrument: &str,
-    timeframe: &str,
-    start_ms: u64,
-    end_ms: u64,
-    spec_path: Option<&Path>,
-    quantity: i64,
-    runtime_config_path: Option<&Path>,
-) -> Result<(), String> {
-    if end_ms < start_ms {
-        return Err("CCXT 内置策略回测 end_ms 不能早于 start_ms".into());
-    }
-    let python = python_interpreter();
-    let mut client = CcxtProcessClient::spawn(&python, &ccxt_config_path.to_string_lossy(), None)
-        .map_err(|error| format!("启动公共 CCXT Worker 失败: {error}"))?;
-    let result = client
-        .call(serde_json::json!({
-            "op": "fetch_ohlcv",
-            "instrument": instrument,
-            "timeframe": timeframe,
-            "start_ms": start_ms,
-            "end_ms": end_ms,
-        }))
-        .map_err(|error| format!("CCXT OHLCV 查询失败: {error}"))?;
-    let frame = result
-        .get("frame")
-        .ok_or_else(|| "CCXT OHLCV 响应缺少 frame".to_string())?;
-    let temp_path = std::env::temp_dir().join(format!(
-        "qianxing-ccxt-builtin-{}-{}.json",
-        std::process::id(),
-        runtime_timestamp_ms()
-    ));
-    std::fs::write(
-        &temp_path,
-        serde_json::to_string(frame)
-            .map_err(|error| format!("编码 CCXT BarFrame 失败: {error}"))?,
-    )
-    .map_err(|error| format!("写入临时 CCXT BarFrame 失败: {error}"))?;
-    let result = run_builtin_backtest(
-        strategy_name,
-        &temp_path,
-        spec_path,
-        quantity,
-        runtime_config_path,
-    );
-    let _ = std::fs::remove_file(&temp_path);
-    result
 }
