@@ -69,6 +69,10 @@ pub(crate) fn run_depth_backtest(
     // 深度档没有数据集注册表条目，但它有自己的内容哈希：那份哈希才是"跑的是哪一份帧"。
     let input = depth_frame_input_provenance(frame_path, &frame);
     let data_fingerprint = format!("depth:{}:{:016x}", frame.source, frame.input_hash());
+    // 本金与风控、成本同源：本入口一直读 `--config` 取那两项，却把账户尺度写死成常数，
+    // 于是同一份配置在四条回测链上有三种本金口径（V11 Q72）。
+    let account_base = backtest_initial_cash(configured_initial_cash_raw(runtime_config_path)?)?;
+    let initial_cash = account_base.cash;
     let context = NativeStrategyContext {
         strategy_id: format!("builtin-{}", kind.name()),
         strategy_version: format!("builtin-{}-v1", kind.name()),
@@ -77,8 +81,8 @@ pub(crate) fn run_depth_backtest(
         data_fingerprint: data_fingerprint.clone(),
         as_of: frame.snapshots.first().map(|item| item.ts).unwrap_or(1),
         positions: BTreeMap::new(),
-        cash: BTreeMap::from([(currency.clone(), Money::from_i64(100_000).raw())]),
-        available_margin_raw: Some(Money::from_i64(100_000).raw()),
+        cash: BTreeMap::from([(currency.clone(), initial_cash.raw())]),
+        available_margin_raw: Some(initial_cash.raw()),
         risk_state: "ready".into(),
     };
     // 信号参数与另外两条 Bar 链同源：深度档读得到 `--config`（风控、成本都从它取），
@@ -148,7 +152,7 @@ pub(crate) fn run_depth_backtest(
             instrument: frame.instrument.clone(),
             account_id: "main".into(),
             currency,
-            initial_cash: Money::from_i64(100_000),
+            initial_cash,
             fee_bps,
             instrument_spec,
             risk: risk_gate,
@@ -161,7 +165,7 @@ pub(crate) fn run_depth_backtest(
             instrument: frame.instrument.clone(),
             account_id: "main".into(),
             currency,
-            initial_cash: Money::from_i64(100_000),
+            initial_cash,
             fee_bps,
             instrument_spec,
             risk: risk_gate,
@@ -221,11 +225,16 @@ pub(crate) fn run_depth_backtest(
             cost_source: &cost_source,
             // 深度链不经过 FillModel：撮合口径是四参数描述子，摘要里不该出现 fill_model 键。
             fill_model: None,
+            account_base,
             matching_kernel,
             rejections: &rejections,
             input,
         },
     )?;
+    println!(
+        "[Depth · Account] {}",
+        backtest_account_base_note(account_base)
+    );
     println!(
         "[Depth · Backtest] tier={tier} strategy={} instrument={} snapshots={} fills={} fee_bps={} cost_source={cost_source} return_bps={} max_drawdown_bps={} result_hash={:016x}",
         kind.name(),

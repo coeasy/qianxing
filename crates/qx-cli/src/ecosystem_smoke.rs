@@ -342,8 +342,13 @@ pub(crate) fn run_backtest(bars: &[Bar], seed: u64, fast: usize, slow: usize) ->
         data_fingerprint: format!("synthetic:{}", bars.len()),
         as_of: bars.first().map(|bar| bar.ts).unwrap_or(1),
         positions: BTreeMap::new(),
-        cash: BTreeMap::from([("USDT".into(), Money::from_i64(100_000).raw())]),
-        available_margin_raw: Some(Money::from_i64(100_000).raw()),
+        cash: BTreeMap::from([(
+            "USDT".into(),
+            Money::from_i64(crate::backtests::DEFAULT_BACKTEST_INITIAL_CASH).raw(),
+        )]),
+        available_margin_raw: Some(
+            Money::from_i64(crate::backtests::DEFAULT_BACKTEST_INITIAL_CASH).raw(),
+        ),
         risk_state: "selfcheck".into(),
     };
     let report = run_builtin_strategy_on_bars(
@@ -351,6 +356,8 @@ pub(crate) fn run_backtest(bars: &[Bar], seed: u64, fast: usize, slow: usize) ->
         BarBacktestAssembly::new(
             &instrument,
             "main",
+            // 自检的账户尺度固定为回测的默认本金，与它不读运行时配置是同一条理由。
+            Money::from_i64(crate::backtests::DEFAULT_BACKTEST_INITIAL_CASH),
             seed,
             &default_execution_cost_binding(),
             // 同上：撮合口径固定为内核默认，自检不替使用者选一个更乐观的成交价。

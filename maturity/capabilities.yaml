@@ -126,6 +126,12 @@ capabilities:
       - RunManifest.data_fingerprint falls back to the verified dataset fingerprint instead of the engine's own bars digest; the OKX shipped example moved from data_fingerprint d1eae507fc0a5d80 (identical to its own input_event_hash) to barframe:673fd995f8625b97 (V11 Q66)
       - crates/qx-cli/src/tests/backtest_input_provenance.rs six in-process cases walk the real entries: declaration equals recomputation, tampered content after the run is refused, a missing input file is refused, one registered identity cannot carry two contents, the depth chain behaves the same shape, and a summary without an input block reports not_declared rather than verified (V11 Q66)
       - tools/check_architecture.py input_provenance_check holds 9 items plus 6 BACKTEST_ENTRY_OWNERS entries over that single reader, the v3 input block, the report exit, the fallback wording, the two distinct dataset version constants and the six named cases (V11 Q66)
+      - crates/qx-cli/src/backtests/account_base.rs is the only place a backtest principal is declared, defaulted or worded: one named DEFAULT_BACKTEST_INITIAL_CASH, three source labels, one reader that fails closed on a non-positive declaration, and one note formatter shared by stdout and the summary (V11 Q72)
+      - BarBacktestAssembly::new takes initial_cash as a required argument and the field is private, so a fourth chain cannot skip the question nor overwrite the answer after the fact; the whole qx-cli production tree scans clean of a from_i64(100_000) literal (V11 Q72)
+      - all three single-leg chains read strategy.initial_cash_raw and print their booked principal plus source before the result line ([Strategy/Builtin/Depth · Account]); the built-in chain writes no summary, so that stdout line is its only exit for the number (V11 Q72)
+      - summary schema v4 lands an account block whose two keys are taken from the account base actually booked, and a new summary-writing chain must answer the required account_base field to compile (V11 Q72)
+      - crates/qx-cli/tests/backtest_account_base.rs five subprocess cases: the default is printed even when nothing is declared, the same config differing only in that one key must change fills 0 to 1 and the result_hash, a non-positive declaration exits 2, both summary chains land the principal they used, and the multi-leg entry refuses the key outright (V11 Q72)
+      - tools/check_architecture.py backtest_account_base_check holds 10 items over that literal ban, the three labels, assembly privacy, the per-chain reads and prints, the fail-closed gate, the v4 account block, the schema field shape, the question-mark-carrying multi-leg refusal and the eight case names (V11 Q72)
     limitations:
       - backtest exposes only two builtins after V9 cleanup (single instrument and multi-leg)
       - queue_position_bps_is_not_a_cli_flag_because_builtin_strategies_only_emit_market_orders
@@ -140,7 +146,9 @@ capabilities:
       - the_source_label_mapping_is_not_falsifiable_by_the_static_gate：PRODUCT 分支接回 CCXT 常量时 230 项全绿，只有那两条走真实入口的行为用例问得出来；model_fingerprint 也仍不含规格内容，换一份 contract_size 不同的规格指纹不变（V11 Q63 → Q1b）
       - artifact_filenames_carry_no_summary_generation：产物路径只含 run_id 与 manifest.digest()，而 digest() 覆盖输入与模型、不含摘要自身的 schema_version，所以"只改摘要形状"的变更会让同一条示例命令原地撞旧文件并报"已存在不同内容"。Q66 落地后实测撞到 3 条集成用例（builtin_signal_from_config.rs:292、fast_backtest_manifest.rs:65/:96），撞名的 12 份本地产物移到 %TEMP% 后整树复跑 716 passed / 0 failed；缺的是一次决策：摘要世代进文件名，或给示例集一条重 bless 命令（V11 Q66 → Q67）
       - recomputation_compare_is_not_falsifiable_by_the_static_gate：把 recompute_declared_backtest_input 改成声明与声明自比时 245 项全绿，只有走真实入口的两条行为用例问得出来（V11 Q66）
-      - summary_schema_is_now_v3：外部读者要改的除了 v2 的 replay_hash，还有 v3 新增的 input 块；本轮不改任何消费方脚本，示例摘要与正式摘要之间的世代差继续累积（V11 Q66）
+      - summary_schema_is_now_v4：外部读者要改的除了 v2 的 replay_hash 与 v3 的 input 块，还有 v4 新增的 account 块（期初本金与来源两格，定点整数按字符串写）；本轮不改任何消费方脚本，示例摘要与正式摘要之间的世代差继续累积（V11 Q66 → Q72）
+      - backtest_initial_cash_and_paper_worker_cash_never_meet：strategy.initial_cash_raw（回测）与 worker.paper_initial_cash_raw（paper）是两格且互不知情，Q72 把前者做成回测唯一的声明入口并在文档注释里点名后者，但没有任何判据要求同一份配置里两格同时出现时必须是同一个数 —— 使用者完全可以回测按 A、paper 按 B 再拿两边数字互相印证（V11 Q72 §34.5 第 2 条）
+      - multi_leg_chain_still_prints_no_account_line：四条链里只有它没有 `[X · Account]` 播报，因为它同时是最长的一条（`multi_builtin.rs` 498/500 行），再加 4 行就翻过 Phase 4s 的兄弟模块线；本轮给它的是拒收那一格声明 + 归因产物里的 `account_base_source`，补齐得先搬家（V11 Q72 §34.5 第 1、4 条）
 
   cli_scenario_init:
     implementation: true
@@ -346,6 +354,7 @@ capabilities:
       - crates/qx-cli/src/backtests/leg_funding.rs 的 `multi_leg_combined_return_bps`：多腿组合收益的唯一口径是两条腿合计盈亏 ÷ 两条腿合计本金，合计本金非正或折算越界一律报错（V11 Q71）
       - crates/qx-cli/src/tests/execution_and_multi_leg.rs 的 `multi_leg_combined_return_weights_each_leg_by_its_own_capital`：本金 3:1 的两腿按钱给 325bp 而非等权 550bp，本金相等时两口径重合，全零本金必须报错
       - crates/qx-cli/tests/multi_leg_attribution.rs 的 `combined_return_pools_both_legs_by_capital_instead_of_averaging_bps`：真实 CLI 跑仓库自带现货夹具（两腿本金实测相差 21 倍），stdout 与产物 `totals.combined_return_bps` 都等于用产物自己声明的 `accounts` 两端复算出的钱口径，且不等于两腿平均
+      - crates/qx-cli/src/backtests/leg_funding.rs 的 `reject_configured_initial_cash` + `multi_builtin.rs` 的调用点：两条腿本金各按本腿行情定资，所以那条链当场拒收 `strategy.initial_cash_raw`（exit 2，文案写明本链定资规则与"改用 quantity 表达规模"），归因产物写 `accounts.account_base_source = multi-leg-funding-rule`（V11 Q72）
     limitations:
       - legs_submit_one_command_each_no_atomic_group_transaction
       - no_atomic_cross_venue_submission

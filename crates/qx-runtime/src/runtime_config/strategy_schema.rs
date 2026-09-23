@@ -126,6 +126,15 @@ pub struct StrategyRuntimeConfig {
     pub max_orders: u64,
     #[serde(default)]
     pub account_id: Option<String>,
+    /// 回测链的账户本金（1e-9 定点整数）。收益率的分母、风控门看到的可用现金与可用保证金、
+    /// 以及"买入成本（含预估手续费）超过账户可用现金"这类拒单，全部压在这一个数上：不声明时
+    /// 三条单腿回测链按 `qx-cli` 的常数 100,000 记账，并在 stdout 与摘要里写
+    /// `account_base_source=builtin-default`（V11 Q72）。Paper 侧的同名事实是
+    /// `worker.paper_initial_cash_raw`，回测读不到它，所以这条字段是回测唯一的声明入口。
+    /// `skip_serializing_if` 的口径与下面的 `cost_rules_path` 相同：省略时配置序列化字节必须
+    /// 逐字节不变，否则已 bless 的 `config_fingerprint` 会因一个没有改变行为的字段集体失真。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_cash_raw: Option<i128>,
     /// 回测与 Strategy worker 共用的账户级风控规则集；未配置时使用默认规则集
     /// （仅 reduce-only 不变式），运行摘要记录其默认版本号。
     #[serde(default)]
@@ -303,6 +312,7 @@ impl Default for StrategyRuntimeConfig {
             cost_rules_path: None,
             fill_model: None,
             account_id: None,
+            initial_cash_raw: None,
             venue_id: None,
             instrument: None,
             target_qty: 0,

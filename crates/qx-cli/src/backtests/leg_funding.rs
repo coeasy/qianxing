@@ -64,6 +64,26 @@ pub(crate) fn multi_leg_leg_cash(
         })
 }
 
+/// 多腿链拒绝 `strategy.initial_cash_raw`（V11 Q72）。
+///
+/// 另外三条回测链（`strategy backtest` / `backtest builtin` / `backtest book`）都是"一个账户
+/// 跑一条标的"，那格声明有唯一确定的落点；本入口一次跑两条腿，本金按**各腿自己的**行情定资，
+/// 一个账户数字没法定成两条腿的本金。收下它再静默丢掉，等于让 `--config` 说假话，与
+/// [`super::reject_ashare_rules_config`]、深度链拒绝成本延迟设置是同一条纪律。
+pub(crate) fn reject_configured_initial_cash(
+    config_path: Option<&Path>,
+    entry: &str,
+) -> Result<(), String> {
+    let Some(raw) = configured_initial_cash_raw(config_path)? else {
+        return Ok(());
+    };
+    Err(format!(
+        "{entry} 不接受 strategy.initial_cash_raw={raw}：两条腿的本金各按本腿行情由定资规则算出\
+         （2 × quantity × 本腿全帧最高价 + 同名义额的手续费余量，下限 {MULTI_LEG_ACCOUNT_CASH_FLOOR}），\
+         一个账户数字无法同时是两条腿的本金。请改用 quantity 表达规模，或删掉这一格"
+    ))
+}
+
 /// 命令行回测入口读 `strategy.product` 的落点（V11 Q58）。
 ///
 /// 产品形态只有两处事实来源：该标的的 market spec，或运行时配置里声明的 `strategy.product`。

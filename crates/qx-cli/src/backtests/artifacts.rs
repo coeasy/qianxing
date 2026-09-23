@@ -216,6 +216,11 @@ pub(crate) struct BacktestArtifacts<'a> {
     /// 深度链的 Tick/OrderBook 内核不经过 `FillModel`，所以它是 `None`：没有的东西
     /// 不该在摘要里占一个键。
     pub(crate) fill_model: Option<(&'static str, &'static str)>,
+    /// 这一轮的账户本金与它的来源（V11 Q72）：`return_bps` 的分母、风控门看到的可用现金都
+    /// 是它，而摘要此前只印结果不印尺度 —— 读者拿 `metrics.final_equity_raw` 减不出本金，
+    /// 因为期初那笔钱从没被写出来过。"没配默认 100,000" 与 "配了 100,000" 必须可区分，
+    /// 与 `execution_costs.source`、`fill_model.source` 同一条理由。
+    pub(crate) account_base: BacktestAccountBase,
     /// 本次实际使用的撮合内核；深度档不得声称与 Bar 链同一内核。
     pub(crate) matching_kernel: &'static str,
     /// 引擎挡下的委托，按 `(原因, 次数)` 降序。只看 `fills` 分不出"策略没发信号"与
@@ -289,12 +294,18 @@ pub(crate) fn persist_backtest_artifacts(
         ));
     }
     let mut summary = serde_json::json!({
+        // v4：摘要开始交代"这一轮压在多少钱上"（`account` 块）。v3 有 `input` 却没有期初本金，
+        // 于是 `metrics.return_bps` 的分母与 `final_equity_raw` 的对照物都不在产物里（V11 Q72）。
         // v3：摘要开始交代"跑的是哪一份输入"（`input` 块）。v2 只有 `input_data_hash`，那是
         // 引擎对自己手里那段切片的自哈希，回答不了这个问题（V11 Q66）。
-        "schema_version": 3,
+        "schema_version": 4,
         "strategy_id": input.strategy_id,
         "instrument": input.instrument.to_string(),
         "input": input_provenance_json(&input.input),
+        "account": {
+            "initial_cash_raw": input.account_base.cash.raw().to_string(),
+            "source": input.account_base.source,
+        },
         "bars": input.samples,
         "sample_unit": input.sample_unit,
         "fills": input.fills.len(),

@@ -309,6 +309,7 @@ fn qx_cli_binary() -> PathBuf {
     binary
 }
 
+mod backtest_account_base;
 mod backtest_cost_provenance;
 mod backtest_entries;
 mod backtest_fill_model;
