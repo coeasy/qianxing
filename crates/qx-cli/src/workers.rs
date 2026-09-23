@@ -32,6 +32,11 @@ pub(crate) fn run_scheduler_worker(path: &Path, worker_id: &str, once: bool) -> 
             Some(runtime_timestamp_ms()),
         )?;
         loop {
+            // 生产循环里唯二不读停机令牌的两次（V11 S2）：其余十处 worker 循环都以
+            // `context.should_stop()` 收口，`once` 之外的唯一出口是 `?` 抛错。
+            if context.should_stop() {
+                break;
+            }
             let now = runtime_timestamp_ms();
             let (trading_day, tick) = utc_schedule_tick(now);
             let minute_key = now / 60_000;
@@ -331,6 +336,11 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
             Some(runtime_timestamp_ms()),
         )?;
         loop {
+            // 与其余 worker 循环同一口径：停机令牌是唯一"非错误"的出口（V11 S2）。
+            // 缺了它，Scheduler 与 Strategy 是生产里唯二永远不会自然结束的循环。
+            if context.should_stop() {
+                break;
+            }
             let now = runtime_timestamp_ms();
             let control = control_store.load()?;
             for command in control.pending().filter(|command| {

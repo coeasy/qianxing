@@ -702,10 +702,28 @@ pub(crate) fn strategy_submit_command(
     })
 }
 
+/// `serve` 该把 API 服务注册到哪个 worker 名下：按 **role** 找，不按名字猜（V11 S1）。
+///
+/// 监督器的注册表以 `worker.id` 为键，而配置校验只要求"恰好一个启用的 api role worker"——
+/// id 是自由命名的。此前两处 `spawn_worker("api", …)` 写死字面量，于是把该 worker 改名成
+/// `api-gw` 的合法拓扑能过 `config validate`/`doctor`/`runtime-check`，却在 serve 启动瞬间
+/// 死于"未知 worker: api"；`supervise` 下一个子进程退出还会连带停掉其余全部 worker。
+/// 没有启用的 api worker 时这里必须报错，不能回落到任何字面量。
+pub(crate) fn configured_api_worker_id(config: &RuntimeConfig) -> Result<String, String> {
+    config
+        .workers
+        .iter()
+        .find(|worker| worker.enabled && worker.role == WorkerRole::Api)
+        .map(|worker| worker.id.clone())
+        .ok_or_else(|| "运行时配置必须且只能启用一个 api worker".to_string())
+}
+
 pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
     let config = read_runtime_config(path)?;
     let supervisor = RuntimeSupervisor::new(config.clone())?;
-    let service = build_configured_api_service(&config, path)?;
+    // 取监督器实际认过的那份配置，用同一个判据（role）拿 id。
+    let api_worker_id = configured_api_worker_id(supervisor.config())?;
+    let service = build_configured_api_service(supervisor.config(), path)?;
     let listener = TcpListener::bind(&config.api.bind)
         .map_err(|error| format!("绑定 API 地址失败 {}: {error}", config.api.bind))?;
     println!(
@@ -717,7 +735,7 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
             let projection_stop = Arc::new(AtomicBool::new(false));
             let mut projection_thread =
                 spawn_api_projection_bridge(&config, service.clone(), Arc::clone(&projection_stop));
-            let worker = match supervisor.spawn_worker("api", move |context| {
+            let worker = match supervisor.spawn_worker(&api_worker_id, move |context| {
                 context.heartbeat(runtime_timestamp_ms())?;
                 service
                     .serve(listener, runtime_timestamp_ms())
@@ -781,7 +799,7 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
                     thread::sleep(Duration::from_secs(1));
                 }
             });
-            let worker = match supervisor.spawn_worker("api", move |context| {
+            let worker = match supervisor.spawn_worker(&api_worker_id, move |context| {
                 context.heartbeat(runtime_timestamp_ms())?;
                 service
                     .serve_tls_mtls_with_stores(

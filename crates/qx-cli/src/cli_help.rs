@@ -14,12 +14,13 @@ pub(crate) fn print_cli_help() {
 配置与运维入口：
   init [runtime.json] [--force]
       创建本地运行时配置及可复用的样例数据/调度文件。
-  init [runtime.json] --profile <base|paper|ccxt|ashare|multi-venue|backtest> [--force]
+  init [runtime.json] --profile <base|builtin|paper|ccxt|ashare|multi-venue|backtest> [--force]
       按场景创建自包含项目；会自动改写 deploy/ 样例路径并复制依赖文件。
   init [runtime.json] --strategy <name> [--force]
       创建绑定内置策略和样例 BarFrame 的可直接回测项目。
   doctor [runtime.json] [--json]
-      一次检查配置、路径、策略输入和运行拓扑；不连接交易所、不发送订单。
+      一次检查配置、路径、策略输入和"这份配置能否构建出运行时监督器"；不启动 worker，
+      因此不判运行健康，也不连接交易所、不发送订单。
   config explain [runtime.json] [--json]
       输出有效配置摘要或机器可读配置；只显示凭据引用，不显示密钥内容。
   config validate [runtime.json]
@@ -55,18 +56,22 @@ pub(crate) fn print_cli_help() {
       以及 strategy.builtin_fast_window / builtin_slow_window / builtin_period /
       builtin_threshold_bps 这四个信号参数：逐项可省，写了就必须生效并在 stdout 印出 [· Signal] 行，
       非法取值整轮失败。下单数量仍由命令行 quantity 点名；配了 A 股快照就必须生效，快照非法即整轮失败。
-  backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity] [--funding-bps <n>] [--quantity <n>] [--root <产物目录>]
+  backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity] [--funding-bps <n>] [--quantity <n>] [--root <产物目录>] [--config <runtime.json>]
       对齐两条 BarFrame，使用同一信号驱动双腿独立账户回测，并按 SpreadOrderGroup 汇总组级费用/保证金/资金费归因。
       保证金与资金费只向 market spec 声明为衍生品的腿计提；--funding-bps 非零时两条腿都必须带 spec，缺失一律先拒再跑。
       --config 的 A 股段（strategy.ashare_rules_path 等）在这里没有落点：一份策略段套不住两条腿各自的交易制度，配置了即整轮拒绝。
       strategy.builtin_* 信号参数在本链生效（两条腿共用同一份信号），生效口径印进 [Multi · Signal] 行。
+      产物只有 --root 点名时落盘的 1 份 spread-attribution.json：本链不写单标的链那四份同前缀产物。
   backtest ccxt-builtin <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity] [--config <runtime.json>]
       一次完成 CCXT OHLCV 获取、内置策略回测和结果输出。取完数据后交给 backtest builtin，A 股段与费用口径同样生效。
-  backtest book --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>] [--latency-snapshots <n>] [--market-impact-bps <n>]
-      深度档回测：l1 走 Tick 内核、l2/l3 走订单簿内核，产物会写明本次实际使用的撮合内核。
+  backtest book --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>] [--latency-snapshots <n>] [--market-impact-bps <n>] [--config <runtime.json>]
+      深度档回测：--fill-tier 只认 l1 与 l2 两个值。l1 走 Tick 内核，帧里每一 snapshot 必须只有一档
+      盘口（多一档即拒）；l2 走订单簿内核，按内核的 L2L3 档位吃掉帧里带的全部深度，因此没有第三个
+      l3 旗标——更深档位不是另一个参数，而是 depth frame 里那些档；产物会写明实际使用的撮合内核。
       --fee-bps 优先级：显式旗标 > 运行时配置 cost_rules_path 的 taker_bp > 内核默认吃单费率。
       成本规则里的延迟设置在深度档没有落点，非零会直接报错而不是被忽略。
       --config 的 A 股段同理：盘口引擎没有 T+1、整手与涨跌停的挂钩点，配置了即整轮拒绝。
+      strategy.fill_model 在这条链同样没有落点——深度档的撮合口径就是上面那三个参数，配了即整轮拒绝。
       strategy.builtin_* 信号参数在本链生效，生效口径印进 [Depth · Signal] 行。
       --latency-snapshots/--market-impact-bps 是深度撮合模型参数，缺省全 0 即逐档吃单；
       两者都会写进执行描述符与产物摘要，换参数就是换结果口径。内核的队列前置参数只作用于

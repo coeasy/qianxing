@@ -55,6 +55,48 @@ fn stale_worker_metrics_are_exposed_as_down() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// CCXT 行情 worker 每轮末尾的健康结论由本轮失败数决定（V11 R4）：写在循环里时它被
+/// 无条件 `mark(Ready, "ccxt live market healthy")` 覆盖，全部标的都取不到行情的轮次
+/// 在 API/就绪侧仍然是健康的。
+#[test]
+fn ccxt_market_cycle_health_degrades_on_any_failed_call() {
+    let (status, detail) = ccxt_market_cycle_health(0, 4, 9, 2);
+    assert_eq!(status, qx_runtime::ServiceStatus::Ready);
+    assert!(detail.contains("healthy"), "实际 {detail}");
+    let (status, detail) = ccxt_market_cycle_health(4, 4, 0, 0);
+    assert_eq!(status, qx_runtime::ServiceStatus::Degraded);
+    assert!(detail.contains("4/4"), "明细要指认失败面，实际 {detail}");
+    assert!(detail.contains("quotes=0"), "明细要保留计数，实际 {detail}");
+    assert_eq!(
+        ccxt_market_cycle_health(1, 4, 3, 0).0,
+        qx_runtime::ServiceStatus::Degraded,
+        "一个标的取不到行情不等于这个 worker 健康"
+    );
+}
+
+/// `/ready` 的指标侧必须区分"扫过且都健康"与"一份指标都没扫到"（V11 R5）：空目录在
+/// 有启用 worker 的配置里是没有证据，不是依赖健康。
+#[test]
+fn absent_worker_metrics_are_not_reported_as_dependencies_ready() {
+    assert_eq!(worker_metrics_readiness(2, false, true), None);
+    assert_eq!(
+        worker_metrics_readiness(2, true, true),
+        Some("worker_dependency_unavailable")
+    );
+    assert_eq!(
+        worker_metrics_readiness(0, false, true),
+        Some("worker_metrics_unpublished"),
+        "worker 从未发布过指标却要报 dependencies_ready，等于替它们宣称健康"
+    );
+    // 只读部署（没有启用的 worker）不因目录为空而误报不可用。
+    assert_eq!(worker_metrics_readiness(0, false, false), None);
+    // 证据缺失与证据损坏同时出现时，先报损坏。
+    assert_eq!(
+        worker_metrics_readiness(0, true, false),
+        Some("worker_dependency_unavailable")
+    );
+}
+
 #[test]
 fn unhealthy_worker_metrics_block_readiness() {
     let healthy =

@@ -15,4 +15,6 @@
 
 Rust 宿主绑定位于 `crates/qx-strategy/src/c_api.rs`，会校验 ABI 版本、复制插件返回的 intent，并在交给 Risk/OMS 前执行 schema、身份、数量和价格校验。`DynamicCAbiStrategy::load_verified(path, config_json, &DynamicCAbiLoadPolicy)` 会在动态链接前校验普通文件、大小上限和受信任 SHA-256 白名单；也可配置对完整动态库字节的 detached Ed25519 签名校验。加载后仍保证先销毁策略句柄、再卸载动态库。摘要/签名校验不等同于沙箱，信任根、轮换和不受信任代码隔离仍必须由部署系统负责。
 
+该头文件与 `c_api.rs` 里的 `#[repr(C)]` 定义是同一份契约的两处手写镜像，二者之间没有编译期耦合（C++ 侧无 `static_assert`，Rust 侧不 include 头文件），改任一侧必须同步另一侧，否则插件读到的是错位内存而不是报错。`tools/check_architecture.py` 的 `c_abi_header_check()` 逐字段比对类型集合、字段名与顺序、字段宽度和枚举判别值，这是当前唯一的对齐防线；CI 也从没把这个 SHARED 产物交给 Rust 宿主加载过，跨工具链的布局一致性没有运行时反例。
+
 受信任 C ABI 动态库可以直接接入 strategy-backtest：配置 strategy.c_abi_library、对应的 strategy.c_abi_sha256，可选 c_abi_max_library_bytes、c_abi_ed25519_public_key 和 c_abi_ed25519_signature。它与 Python/独立进程策略共用 Bar 因果回测、OrderIntent、Risk 和 OMS；未通过摘要/签名校验的库不会被加载。不受信任 C++ 代码仍应使用独立 Worker。

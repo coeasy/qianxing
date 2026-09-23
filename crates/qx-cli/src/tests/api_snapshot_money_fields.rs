@@ -10,61 +10,6 @@
 
 use super::*;
 
-fn paper_runtime(data_dir: &Path) -> RuntimeConfig {
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
-    let template = workspace_root
-        .join("deploy")
-        .join("qianxing.runtime.paper-strategy.example.json");
-    let mut config = read_runtime_config(&template).unwrap();
-    config.storage.data_dir = data_dir.to_string_lossy().into_owned();
-    // 模板里的规格路径相对 `data_dir`，用例的 data_dir 在临时目录，绝对化后才读得到。
-    let spec = workspace_binance_spot_spec().to_string_lossy().into_owned();
-    for worker in config.workers.iter_mut() {
-        if worker.instrument_spec_path.is_some() {
-            worker.instrument_spec_path = Some(spec.clone());
-        }
-    }
-    config
-}
-
-/// 把一笔带费用的成交落进 paper 账户日志，产出"持仓未平 + 已付费用"的账户状态。
-fn seed_paper_fill_with_fee(data_dir: &Path, config: &RuntimeConfig) {
-    let config_path = data_dir.join("runtime.json");
-    std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
-    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
-    let mut pipeline = LiveEventPipeline::open(data_dir, paper_account_log(), "USDT").unwrap();
-    let ts = runtime_timestamp_ms();
-    pipeline
-        .ingest(RuntimeEventEnvelope::market_quote(
-            instrument.clone(),
-            QuoteTick::new(
-                ts,
-                Price::from_i64(99),
-                Quantity::from_i64(1_000),
-                Price::from_i64(100),
-                Quantity::from_i64(1_000),
-                ts,
-            ),
-            ts,
-            ts,
-            "money-fields:quote",
-        ))
-        .unwrap();
-    drop(pipeline);
-    let order = mk_order(9701, &instrument, Side::Buy, 1);
-    let command = mk_submit_command(9701, &order, false);
-    let control = ControlStateBackend::Files(JsonStateStore::new(data_dir));
-    control
-        .transact(|plane| plane.submit_as(command.clone(), Permission::Trading, 10))
-        .unwrap()
-        .1
-        .unwrap();
-    ControlCommandQueue::new(data_dir.join("control-queue"))
-        .enqueue(command.clone(), 10)
-        .unwrap();
-    run_paper_execution_worker(&config_path, "paper-execution", true).unwrap();
-}
-
 fn paper_snapshot(config: &RuntimeConfig) -> AccountSnapshot {
     load_api_account_snapshots(config)
         .unwrap()
@@ -80,7 +25,7 @@ fn available_is_the_settlement_cash_and_not_a_copy_of_equity() {
     let root = temp_cli_case_dir("api-money-fields-available");
     let data_dir = root.join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
-    let config = paper_runtime(&data_dir);
+    let config = paper_runtime_config(&data_dir);
     seed_paper_fill_with_fee(&data_dir, &config);
 
     let snapshot = paper_snapshot(&config);
@@ -114,7 +59,7 @@ fn published_fees_are_the_sum_of_the_fills_on_the_same_snapshot() {
     let root = temp_cli_case_dir("api-money-fields-fees");
     let data_dir = root.join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
-    let config = paper_runtime(&data_dir);
+    let config = paper_runtime_config(&data_dir);
     seed_paper_fill_with_fee(&data_dir, &config);
 
     let snapshot = paper_snapshot(&config);
@@ -135,7 +80,7 @@ fn uncomputed_money_is_absent_rather_than_zero() {
     let root = temp_cli_case_dir("api-money-fields-absent");
     let data_dir = root.join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
-    let config = paper_runtime(&data_dir);
+    let config = paper_runtime_config(&data_dir);
     seed_paper_fill_with_fee(&data_dir, &config);
 
     let snapshot = paper_snapshot(&config);
@@ -180,7 +125,7 @@ fn overflowing_fee_total_is_refused_instead_of_wrapping() {
     let root = temp_cli_case_dir("api-money-fields-overflow");
     let data_dir = root.join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
-    let config = paper_runtime(&data_dir);
+    let config = paper_runtime_config(&data_dir);
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     // 一笔 1 单位 @100 的名义额是 100*SCALE，两笔正好等于播种的 200 USDT 现金。
     let fees = [i128::MAX / 2 + 2, i128::MAX / 2];
@@ -263,7 +208,7 @@ fn ledger_fallback_position_row_leaves_uncomputed_money_absent() {
     let root = temp_cli_case_dir("api-money-fields-row");
     let data_dir = root.join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
-    let config = paper_runtime(&data_dir);
+    let config = paper_runtime_config(&data_dir);
     seed_paper_fill_with_fee(&data_dir, &config);
 
     let snapshot = paper_snapshot(&config);
@@ -298,7 +243,7 @@ fn venue_reported_row_keeps_reported_zero_and_unreported_absent() {
     let root = temp_cli_case_dir("api-money-fields-venue-row");
     let data_dir = root.join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
-    let config = paper_runtime(&data_dir);
+    let config = paper_runtime_config(&data_dir);
     seed_paper_fill_with_fee(&data_dir, &config);
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     {
@@ -340,4 +285,109 @@ fn venue_reported_row_keeps_reported_zero_and_unreported_absent() {
     assert_eq!(row.margin_raw, None, "没报的保证金不能被读成 0");
     assert_eq!(row.mark_price_raw, Price::from_i64(105).raw());
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// 落一份对账报告到 `data_dir/reconcile/<worker-id>.json`，形状与对账 worker 的写出口一致。
+fn seed_reconcile_report(
+    data_dir: &Path,
+    worker_id: &str,
+    account_id: &str,
+    venue_id: &str,
+    observed_ts: u64,
+    order_issues: usize,
+    balance_discrepancies: usize,
+) {
+    let report = ReconcileReportSnapshot {
+        schema_version: 1,
+        worker_id: worker_id.into(),
+        account_id: account_id.into(),
+        venue_id: venue_id.into(),
+        observed_ts,
+        order_issues: vec![serde_json::json!({"kind": "remote-terminal"}); order_issues],
+        balances_count: 1,
+        balance_discrepancies: vec![serde_json::json!({"asset": "USDT"}); balance_discrepancies],
+        position_snapshots_count: Some(0),
+        funding_rate_snapshots_count: Some(0),
+        cashflow_count: Some(0),
+    };
+    let dir = data_dir.join("reconcile");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join(format!("{worker_id}.json")),
+        serde_json::to_vec(&report).unwrap(),
+    )
+    .unwrap();
+}
+
+/// 快照的对账侧字段必须有来源（V11 R7），而"没有来源"必须写成缺席而不是合法的 0（V11 R10）：
+/// `/account/snapshot` 起初把两格停在构造时的 0，同一份 data_dir 里却躺着对账报告；补上来源之后
+/// 0 仍然同时表示"从未对账"与"对过且无差异"，看板会把没跑过对账的账户读成绿色。
+#[test]
+fn account_snapshot_reconcile_fields_come_from_the_reports_on_disk() {
+    let root = temp_cli_case_dir("api-reconcile-fields");
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let config = paper_runtime_config(&data_dir);
+    seed_paper_fill_with_fee(&data_dir, &config);
+    seed_reconcile_report(&data_dir, "paper-reconciler", "main", "paper", 4_711, 2, 1);
+    // 另一本账的报告不能算到 main 头上：它连身份都对不上。
+    seed_reconcile_report(&data_dir, "ccxt-reconciler", "other", "okx", 9_999, 5, 5);
+
+    let snapshot = paper_snapshot(&config);
+    assert_eq!(
+        snapshot.reconcile.last_reconcile_ts,
+        Some(4_711),
+        "对账时刻要来自本账户的报告，而不是别家或 0"
+    );
+    assert_eq!(
+        snapshot.reconcile.discrepancy_count,
+        Some(3),
+        "订单差异与余额差异都要计入，实际 {:?}",
+        snapshot.reconcile.discrepancy_count
+    );
+
+    // 反面一：没有报告时两格一起缺席，而不是凭空造一个对账时刻或一个"干净"结论。
+    let clean_root = temp_cli_case_dir("api-reconcile-fields-clean");
+    let clean_dir = clean_root.join("data");
+    std::fs::create_dir_all(&clean_dir).unwrap();
+    let clean_config = paper_runtime_config(&clean_dir);
+    seed_paper_fill_with_fee(&clean_dir, &clean_config);
+    let clean = paper_snapshot(&clean_config);
+    assert_eq!(clean.reconcile.last_reconcile_ts, None);
+    assert_eq!(clean.reconcile.discrepancy_count, None);
+
+    // 反面二：对过且真的没有差异，零要留在零的位置上，且与"没对过"不是同一份协议状态。
+    let zero_root = temp_cli_case_dir("api-reconcile-fields-zero");
+    let zero_dir = zero_root.join("data");
+    std::fs::create_dir_all(&zero_dir).unwrap();
+    let zero_config = paper_runtime_config(&zero_dir);
+    seed_paper_fill_with_fee(&zero_dir, &zero_config);
+    seed_reconcile_report(&zero_dir, "paper-reconciler", "main", "paper", 5_000, 0, 0);
+    let reconciled = paper_snapshot(&zero_config);
+    assert_eq!(reconciled.reconcile.last_reconcile_ts, Some(5_000));
+    assert_eq!(
+        reconciled.reconcile.discrepancy_count,
+        Some(0),
+        "「对过且无差异」是算出来的零，不能被降格成缺席"
+    );
+    let mut never = reconciled.clone();
+    never.reconcile.discrepancy_count = None;
+    assert_ne!(
+        reconciled.state_hash(),
+        never.state_hash(),
+        "只差「对过且干净 / 没对过」的两份快照必须是两份哈希：\
+         只靠时间戳分开的话，`Some(0)` 与 `None` 在协议上仍是同一个数"
+    );
+    assert!(
+        reconciled.to_json().contains(r#""discrepancy_count":0"#),
+        "线格式里算出的零要写成 0，实际 {}",
+        reconciled.to_json()
+    );
+    assert!(
+        clean.to_json().contains(r#""discrepancy_count":null"#),
+        "线格式里没算过的要写成 null，而不是一个合法的 0"
+    );
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(clean_root);
+    let _ = std::fs::remove_dir_all(zero_root);
 }

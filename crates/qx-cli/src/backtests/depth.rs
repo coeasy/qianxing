@@ -119,6 +119,13 @@ pub(crate) fn run_depth_backtest(
         "backtest book",
         "L1/L2 盘口引擎没有 T+1、整手与涨跌停的挂钩点",
     )?;
+    // 同一条判据管到撮合口径：这条链的产物如实写着 `fill_model: null`（撮合口径在四参数
+    // 描述子里），若配置声明了 fill_model 却照样跑完，就是"能配"被当成"生效"（V11 R11）。
+    reject_fill_model_config(
+        runtime_config_path,
+        "backtest book",
+        "L1/L2 盘口引擎的撮合口径是四参数描述子，没有 FillModel 落点",
+    )?;
     // 三层优先级：显式 --fee-bps > 成本规则文件的 taker_bp > 内核默认。
     let cost_source = if fee_bps.is_some() {
         "cli-flag".to_string()

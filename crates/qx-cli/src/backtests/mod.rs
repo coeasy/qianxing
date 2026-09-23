@@ -138,6 +138,9 @@ pub(crate) use artifacts::*;
 mod ashare_binding;
 pub(crate) use ashare_binding::*;
 
+mod config_declarations;
+pub(crate) use config_declarations::*;
+
 mod depth;
 pub(crate) use depth::*;
 

@@ -583,6 +583,31 @@ API 探针语义固定为：`GET /health` 只表示进程存活；`GET /ready` �
 已产生的 Relay/Consumer worker 指标中的 down/stale 状态，依赖不可用时返回 HTTP 503。生产编排仍应把
 MQ、用户流、对账和交易安全状态继续接入同一 readiness provider，不能只依据 `/health` 放行交易流量。
 
+`serve` 暴露的端点就是下表这些，未列出的路径一律 404。表里第一列的 `METHOD 路径` 必须与
+`crates/qx-api/src/lib.rs` 的路由集合逐一相等（门禁 `api_surface_doc_check`），查询串只是提示可带：
+
+| 端点 | 语义 | 非 200 口径 |
+| --- | --- | --- |
+| `GET /health` | 进程存活，恒 200 | — |
+| `GET /ready` | 依赖就绪：控制面存储、已声明研究快照、生产凭据/冻结规格、worker 指标 down/stale、投影缺口 | 503 |
+| `GET /metrics` | Prometheus 文本，追加 worker 指标 | — |
+| `GET /schema/account-snapshot-v1` | `qx-protocol` 内嵌的账户快照 v1 JSON Schema 常量 | — |
+| `GET /account/snapshot[?account_id=&venue_id=]` | 账户快照 JSON；不带键时读默认账户=配置里第一个真有日志的账户 worker | 400 参数非法；404 `snapshot_not_found` |
+| `GET /account/snapshot/envelope[?…]` | 投影信封（快照 hash 与 lineage） | 400；404 `snapshot_not_found` |
+| `GET /account/snapshot/diff?base_hash=[&…]` | 与历史基线快照的差异 | 400；409 `snapshot_base_not_found` |
+| `GET /account/orders[?…]` `GET /account/positions[?…]` | 快照里的订单表/持仓表摊成数组 | 400；无快照时 200 空数组 |
+| `GET /account/balances[?…]` | 四个钱字段原样，未计算的是 `null` 而不是 0 | 400 |
+| `GET /account/ledger[?…]` `GET /scheduler/runs` `GET /reconcile/reports` | 每次请求现读账户日志/调度记录/对账报告，启动之后落盘的读得到 | 503 读不到即报错，不念开机那份 |
+| `GET /events[?after=&account_id=&venue_id=]` | 投影事件全量，或 `after` 游标之后的增量 | 400；409 `event_cursor_requires_snapshot` |
+| `GET /events/live[?after=&…]` | 事件总线现读增量 | 400；409 游标过旧/超前；500 |
+| `GET /control/audit` | 控制面审计流水 | — |
+| `POST /control/commands` | 提交控制命令；启用访问策略时 operator 身份必须来自认证边界 | 400 请求体不合法；403；503 队列不可用 |
+
+限流在鉴权之前判定：超额 429 `api_rate_limit_exceeded`，限流后端自身故障 503
+`api_rate_limit_backend_unavailable`；启用访问策略时，除 `/health`、`/ready`、
+`/schema/account-snapshot-v1` 外都要求已认证 operator，否则 403
+`authenticated_operator_required`。
+
 Prometheus 告警规则模板位于 `deploy/prometheus/qianxing-alerts.yml`，覆盖 worker 失联、心跳
 过期、Outbox 发布失败、Consumer 死信和 ACK 失败；生产环境应根据实际抓取间隔、租约窗口和
 值班策略调整 `for` 与 heartbeat 阈值。

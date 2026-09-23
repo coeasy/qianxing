@@ -59,6 +59,88 @@ fn ccxt_reconcile_round_routes_both_discovery_halves_to_report_and_fact_stream()
     assert_eq!(round.require_reconcile[2].reason, "CCXT 对账缺少远端订单号");
 }
 
+/// 对账进程重启不得让它自己的余额事实看起来像重复（V11 R2）：seq 从日志尾端接上、
+/// correlation 带本轮时间戳，两者由 `venue_balance_fact_identity` 单点构造，两条对账链共用。
+#[test]
+fn balance_facts_stay_unique_across_a_reconciler_restart() {
+    let root = temp_cli_case_dir("reconcile-fact-identity");
+    let balance = |usdt: i64| RuntimeExternalEvent::AccountBalanceSnapshot {
+        account_id: "main".into(),
+        venue_id: "okx".into(),
+        balances: vec![AccountBalance {
+            asset: "USDT".into(),
+            free: Money::from_i64(usdt),
+            locked: Money::ZERO,
+            borrowed: Money::ZERO,
+        }],
+    };
+    let log_name = "ccxt-main-okx-events";
+    let mut before = LiveEventPipeline::open(&root, log_name, "USDT").unwrap();
+    // 一轮只有一个身份：重试沿用同一份 (seq, correlation)，才不会被记成"另一条新事实"。
+    let round_fact = |seq: u64, correlation: String| {
+        RuntimeEventEnvelope::venue(balance(10), 1_000, 1_000, seq, correlation)
+    };
+    let (seq, correlation) = venue_balance_fact_identity(&before, "ccxt-reconciler", 1_000);
+    before.ingest(round_fact(seq, correlation.clone())).unwrap();
+    assert!(
+        before
+            .ingest(round_fact(seq, correlation))
+            .unwrap()
+            .deduplicated,
+        "同一轮重投必须仍被去重"
+    );
+    drop(before);
+    // 重启后的下一轮：新句柄、新时间戳，余额事实得是新的一格。
+    let mut after_restart = LiveEventPipeline::open(&root, log_name, "USDT").unwrap();
+    let (next_seq, next_correlation) =
+        venue_balance_fact_identity(&after_restart, "ccxt-reconciler", 1_001);
+    assert!(
+        !after_restart
+            .ingest(RuntimeEventEnvelope::venue(
+                balance(11),
+                1_001,
+                1_001,
+                next_seq,
+                next_correlation
+            ))
+            .unwrap()
+            .deduplicated,
+        "重启后的余额事实被当成已应用的旧事实静默吞掉了"
+    );
+    assert_eq!(after_restart.log().events().len(), 2);
+
+    // 修复前的形状（seq 每进程从 0 重来、correlation 由 seq 拼出）必须真的会被吞掉——
+    // 它不成立就说明上面那条断言问不出问题。
+    let legacy_root = root.join("legacy");
+    std::fs::create_dir_all(&legacy_root).unwrap();
+    let mut legacy_before = LiveEventPipeline::open(&legacy_root, log_name, "USDT").unwrap();
+    legacy_before
+        .ingest(RuntimeEventEnvelope::venue(
+            balance(10),
+            1_000,
+            1_000,
+            1,
+            "ccxt-reconciler:balances:1",
+        ))
+        .unwrap();
+    drop(legacy_before);
+    let mut legacy_restart = LiveEventPipeline::open(&legacy_root, log_name, "USDT").unwrap();
+    assert!(
+        legacy_restart
+            .ingest(RuntimeEventEnvelope::venue(
+                balance(11),
+                1_001,
+                1_001,
+                1,
+                "ccxt-reconciler:balances:1"
+            ))
+            .unwrap()
+            .deduplicated,
+        "旧形状必须仍会被去重，否则这一族缺陷根本没被这条用例描述"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// 健康结论必须由两半发现共同决定（V11 Q69）。写在 worker 循环里时这一条只能靠真实运行
 /// 触发，`HEAD` 因此在"只有一张本地单子查不到远端结果"的那一轮继续报 `Ready`。
 #[test]

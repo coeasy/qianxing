@@ -845,18 +845,12 @@ fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<()
             cashflow.account_id.as_str(),
             Some(cashflow.venue_id.as_str()),
         )),
-        EventKind::OrderSubmitted { order } => Some((
-            order.account_id.as_str(),
-            Some(order.instrument.venue.as_str()),
-        )),
+        // 订单与账簿条目没有"账户域"这一栏，只有标的后缀：paper 账户交易的符号就叫
+        // BTCUSDT.BINANCE，拿它当账户 venue 会把本账户自己的事实判成外来事实（V11 R13）。
+        // 这两条只核对账户身份；交易所侧的串读由带显式 venue 的余额/持仓/资金/成交事实守住。
+        EventKind::OrderSubmitted { order } => Some((order.account_id.as_str(), None)),
         EventKind::Filled { fill } => Some((fill.account_id.as_str(), fill.venue_id.as_deref())),
-        EventKind::LedgerApplied { entry } => Some((
-            entry.account_id.as_str(),
-            entry
-                .instrument
-                .as_ref()
-                .map(|instrument| instrument.venue.as_str()),
-        )),
+        EventKind::LedgerApplied { entry } => Some((entry.account_id.as_str(), None)),
         EventKind::Timer { .. }
         | EventKind::MarketBar { .. }
         | EventKind::MarketQuote { .. }
@@ -917,6 +911,7 @@ pub struct ApiService {
     metrics: Arc<ApiMetrics>,
     worker_metrics_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     readiness_provider: Option<ReadinessProvider>,
+    query_models_provider: Option<QueryModelsProvider>,
 }
 
 #[derive(Default)]
@@ -967,6 +962,17 @@ type ControlSubmitter = Arc<
 >;
 type CommandEnqueuer = Arc<dyn Fn(ControlCommand, u64) -> Result<(), String> + Send + Sync>;
 type ReadinessProvider = Arc<dyn Fn() -> ApiReadiness + Send + Sync>;
+
+/// `/scheduler/runs`、`/account/ledger`、`/reconcile/reports` 三个只读端点共用的一份现读结果。
+/// 对账报告在这里是**列表**：`ApiState` 里那张按 worker_id 键控的表只是它的查询副本。
+#[derive(Default, Clone)]
+pub struct ApiQueryModels {
+    pub job_runs: Vec<JobRun>,
+    pub ledger_entries: Vec<LedgerEntry>,
+    pub reconcile_reports: Vec<ReconcileReportSnapshot>,
+}
+
+type QueryModelsProvider = Arc<dyn Fn() -> Result<ApiQueryModels, String> + Send + Sync>;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct ApiResponse {
@@ -1084,6 +1090,7 @@ impl ApiService {
             metrics: Arc::new(ApiMetrics::default()),
             worker_metrics_provider: None,
             readiness_provider: None,
+            query_models_provider: None,
         }
     }
 
@@ -1099,6 +1106,7 @@ impl ApiService {
             metrics: Arc::new(ApiMetrics::default()),
             worker_metrics_provider: None,
             readiness_provider: None,
+            query_models_provider: None,
         }
     }
 
@@ -1140,6 +1148,46 @@ impl ApiService {
     {
         self.readiness_provider = Some(Arc::new(provider));
         self
+    }
+
+    /// 三份只读运维读模型的现读出口：调度状态、账户账簿、对账报告。
+    ///
+    /// 装 provider 之前，这三份只在 `build_configured_api_service` 启动时读一次，之后
+    /// `serve` 进程把它们当事实念到进程结束——对账 worker 每轮覆写
+    /// `reconcile/<worker-id>.json`，API 却永远看不见（V11 S3）。`Err` 表示"这一次没读到"，
+    /// 端点必须据此报错，不得退回上一份或空数组。
+    pub fn with_query_models_provider<F>(mut self, provider: F) -> Self
+    where
+        F: Fn() -> Result<ApiQueryModels, String> + Send + Sync + 'static,
+    {
+        self.query_models_provider = Some(Arc::new(provider));
+        self
+    }
+
+    /// 取三份只读运维读模型：装了 provider 就现读并把结果回填到查询副本，没装则读
+    /// 启动时装进 `state` 的那份。回填是为了让 `QueryPort` 的 trait 读点与 HTTP 端点
+    /// 说同一份数据，而不是各念一份（V11 S3）。
+    fn query_models(&self) -> Result<ApiQueryModels, String> {
+        let Some(provider) = &self.query_models_provider else {
+            let state = self.state.lock().expect("api state mutex poisoned");
+            return Ok(ApiQueryModels {
+                job_runs: state.job_runs.clone(),
+                ledger_entries: state.ledger_entries.clone(),
+                reconcile_reports: state.reconcile_reports.values().cloned().collect(),
+            });
+        };
+        let models = provider()?;
+        {
+            let mut state = self.state.lock().expect("api state mutex poisoned");
+            state.job_runs = models.job_runs.clone();
+            state.ledger_entries = models.ledger_entries.clone();
+            state.reconcile_reports = models
+                .reconcile_reports
+                .iter()
+                .map(|report| (report.worker_id.clone(), report.clone()))
+                .collect();
+        }
+        Ok(models)
     }
 
     pub fn query_port(&self) -> &dyn QueryPort {
@@ -1472,20 +1520,29 @@ impl ApiService {
                 200,
                 serde_json::to_string(&self.control_audit()).expect("audit is serializable"),
             ),
-            ("GET", "/scheduler/runs") => ApiResponse::json(
-                200,
-                serde_json::to_string(&self.job_runs()).expect("job runs are serializable"),
-            ),
-            ("GET", "/account/ledger") => ApiResponse::json(
-                200,
-                serde_json::to_string(&self.ledger_entries())
-                    .expect("ledger entries are serializable"),
-            ),
-            ("GET", "/reconcile/reports") => ApiResponse::json(
-                200,
-                serde_json::to_string(&self.reconcile_reports())
-                    .expect("reconcile reports are serializable"),
-            ),
+            ("GET", "/scheduler/runs") => match self.query_models() {
+                Ok(models) => ApiResponse::json(
+                    200,
+                    serde_json::to_string(&models.job_runs).expect("job runs are serializable"),
+                ),
+                Err(error) => ApiResponse::json(503, error_json(&error)),
+            },
+            ("GET", "/account/ledger") => match self.query_models() {
+                Ok(models) => ApiResponse::json(
+                    200,
+                    serde_json::to_string(&models.ledger_entries)
+                        .expect("ledger entries are serializable"),
+                ),
+                Err(error) => ApiResponse::json(503, error_json(&error)),
+            },
+            ("GET", "/reconcile/reports") => match self.query_models() {
+                Ok(models) => ApiResponse::json(
+                    200,
+                    serde_json::to_string(&models.reconcile_reports)
+                        .expect("reconcile reports are serializable"),
+                ),
+                Err(error) => ApiResponse::json(503, error_json(&error)),
+            },
             ("GET", "/account/snapshot/diff") => self.snapshot_diff(query),
             ("GET", "/events") => {
                 let all_events = match self.projection_events_for_query(query) {

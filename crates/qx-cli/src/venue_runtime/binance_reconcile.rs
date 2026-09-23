@@ -92,7 +92,6 @@ pub(crate) fn run_binance_reconcile_worker(
             account_worker_currency_from_path(runtime_config_path, &worker)?,
         )
         .map_err(|error| format!("创建对账事件管线失败: {error}"))?;
-    let mut source_seq = 0_u64;
     context.mark(
         qx_runtime::ServiceStatus::Ready,
         "reconciler starting",
@@ -158,7 +157,11 @@ pub(crate) fn run_binance_reconcile_worker(
             funding_rate_snapshots_count: None,
             cashflow_count: None,
         })?;
-        source_seq = source_seq.saturating_add(1);
+        // 身份由这一处构造，不在调用点各拼一份：seq 从日志尾端接上、correlation 带本轮时间戳，
+        // 两者都要跨进程重启仍然唯一。原先每进程从 0 起算、correlation 又由 seq 拼出，重启后的
+        // 第一条余额事实会撞上重启前那条同 seq 同 id，被去重静默吞掉。
+        let (mut source_seq, balance_correlation) =
+            venue_balance_fact_identity(&pipeline, &worker.id, received_ts);
         pipeline
             .ingest(RuntimeEventEnvelope::venue(
                 RuntimeExternalEvent::AccountBalanceSnapshot {
@@ -169,7 +172,7 @@ pub(crate) fn run_binance_reconcile_worker(
                 received_ts,
                 received_ts,
                 source_seq,
-                format!("{}:balances:{}", worker.id, source_seq),
+                balance_correlation,
             ))
             .map_err(|error| format!("账户余额事实归约失败: {error:?}"))?;
         // 待对账事实的归类只复用适配器对裁决口径的投影（client_order_id/reason_code），

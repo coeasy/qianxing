@@ -110,6 +110,27 @@ pub(crate) fn bar_fill_model(
     })
 }
 
+/// 没有 FillModel 落点的入口必须当场拒绝这条声明，而不是收下配置再静默丢掉（V11 R11）：
+/// 与深度链拒绝成本延迟、拒绝 A 股段是同一条判据——把"能配"当成"生效"，等于让配置替
+/// 用户宣称一个从未跑过的撮合口径。
+pub(crate) fn reject_fill_model_config(
+    config_path: Option<&Path>,
+    entry: &str,
+    reason: &str,
+) -> Result<(), String> {
+    let Some(path) = config_path else {
+        return Ok(());
+    };
+    if let Some(label) =
+        first_strategy_block_declaring(path, |strategy| strategy.fill_model.is_some())?
+    {
+        return Err(format!(
+            "{entry} 不接受 {label}.fill_model：{reason}。需要撮合模型口径请改用 strategy backtest 或 backtest builtin"
+        ));
+    }
+    Ok(())
+}
+
 /// 撮合口径的来源标注：`builtin-default` 是"配置没提这一项"，`runtime-config` 是"配置里
 /// 声明了"。两者可能指向同一个模型，但产物必须分得清——与 [`ExecutionCostBinding::source`]
 /// 同一条理由：分不清来源，就等于把默认值冒充成使用者选过的口径。

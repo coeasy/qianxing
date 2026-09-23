@@ -388,7 +388,10 @@ CLI_TESTS_DIR = "crates/qx-cli/src/tests"
 # Q67 给账户快照的钱字段口径补四条（169 → 173；协议侧那条在 qx-protocol 集成用例里，不计本地板）。
 # Q68 把同一条纪律推到持仓行与 CCXT 回报入口：ccxt 侧三条 + 读模型行侧两条（173 → 178，
 # 按磁盘 `^#[test]$` 实测总数：src/tests 139 + crates/qx-cli/tests 39）。
-CLI_TEST_FLOOR = 178
+# R 轮再抬一次：深度链拒绝撮合模型一条（R11）、无键读模型同账户一条（R12）、
+# 账户快照稳定 JSON 往返一条（R14，那条在 qx-protocol 侧，不计本地板）（178 → 187）。
+# S 轮：api worker 身份两条（S1）+ 运维读模型现读两条（S3）（187 → 191）。
+CLI_TEST_FLOOR = 191
 # 拆文件时最容易被复制进各个主题文件的共享夹具（风控上下文、隔离运行时目录）。
 CLI_TEST_FIXTURES = (
     "smoke_paper_risk_context",
@@ -643,6 +646,7 @@ CLI_BACKTESTS_DIR = "qx-cli/src/backtests"
 CLI_BACKTESTS_MODULES = (
     "artifacts",
     "ashare_binding",
+    "config_declarations",
     "depth",
     "fast_backtest",
     "fill_model",
@@ -1791,6 +1795,93 @@ SNAPSHOT_MONEY_CASES = (
     "uncomputed_money_is_absent_rather_than_zero",
     "overflowing_fee_total_is_refused_instead_of_wrapping",
 )
+# V11 R14/R15：四张键表在稳定 JSON 里没有第二份编码，写侧就是 serde 那一份。
+SNAPSHOT_SERDE_TABLES = ("orders", "fills", "transfers")
+# V11 R18：跨语言夹具——Rust 写侧原样产出、Python 读侧原样吃下，两侧各钉一次。
+SNAPSHOT_FIXTURE_FILE = "python/tests/fixtures/account-snapshot-v1.sample.json"
+SNAPSHOT_BRIDGE_CASE_FILE = "python/tests/test_bridge.py"
+# 夹具里四张键表的键：数据面自证编码口径，改写侧就得连带重产夹具。
+SNAPSHOT_FIXTURE_KEYS = (
+    '"positions":{"BTCUSDT.BINANCE":',
+    '"orders":{"77":',
+    '"fills":{"9":',
+    '"transfers":{"3":',
+)
+# 手抄 format! 留下的四条模板片段：它们一旦回来，`from_json` 就又解不回来了。
+SNAPSHOT_TABLE_TEMPLATES = (
+    'order_id\\":{}',
+    'fill_id\\":{}',
+    'transfer_id\\":{}',
+    '{}:{{\\"quantity_raw\\":{}',
+)
+# V11 R16：BarFrame JSON 的契约版本与键集合跨语言只有一份口径。
+DATASTRUCT_FRAME_FILE = "crates/qx-datastruct/src/lib.rs"
+DATA_PROVIDER_FILE = "crates/qx-data/src/provider.rs"
+DATA_SCHEMA_FILE = "crates/qx-data/src/schema.rs"
+BRIDGE_INIT_FILE = "python/qianxing_bridge/__init__.py"
+FRAME_CONTRACT_TEST_FILE = "crates/qx-datastruct/tests/frame_contract.rs"
+FRAME_CONTRACT_CASES = (
+    "a_written_frame_declares_the_version_its_readers_honour",
+    "a_frame_from_a_newer_contract_version_is_refused",
+    "a_versionless_document_still_reads_as_legacy",
+)
+
+
+def bar_frame_contract_check() -> None:
+    """BarFrame JSON 文档自己声明版本，且声明的口径与两侧读侧是同一份（V11 R16）。
+
+    `qx_datastruct::BarFrame::to_json` 此前不印 `schema_version`，而 `qx-data` 的
+    `parse_bar_frame` 与 Python 的 `BarFrame.from_json` 都把"缺省即旧格式"当成走宽松分支的
+    信号：Rust 自己写出的帧因此永远进不了它们各自的严格模式（`source` 必填、未知字段拒绝），
+    同一份帧的数据集 Manifest 却已经按当前版本记血缘。三处版本号与两份键集合必须同口径。
+    """
+    writer = (ROOT / DATASTRUCT_FRAME_FILE).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    provider = (ROOT / DATA_PROVIDER_FILE).read_text(encoding="utf-8")
+    schema = (ROOT / DATA_SCHEMA_FILE).read_text(encoding="utf-8")
+    bridge = (ROOT / BRIDGE_INIT_FILE).read_text(encoding="utf-8")
+    versions: dict[str, int] = {}
+    for label, pattern, source in (
+        ("qx-datastruct", r"pub const BAR_FRAME_JSON_SCHEMA_VERSION: u32 = (\d+);", writer),
+        ("qx-data/DATA_SCHEMA_VERSION", r"pub const DATA_SCHEMA_VERSION: u32 = (\d+);", schema),
+        ("qianxing_bridge", r"^BAR_FRAME_SCHEMA_VERSION = (\d+)", bridge),
+    ):
+        found = re.search(pattern, source, re.MULTILINE)
+        versions[label] = int(found.group(1)) if found else -1
+    # `qx-data` 的常量是 `DATA_SCHEMA_VERSION` 的别名，本身不印数字，所以按存在性计入。
+    versions["qx-data"] = (
+        1 if "pub const BAR_FRAME_SCHEMA_VERSION: u32 = DATA_SCHEMA_VERSION;" in provider else -1
+    )
+    check(
+        len(versions) == 4
+        and all(value == 1 for value in versions.values())
+        and '"{{\\"schema_version\\":{},\\"instrument\\":' in writer
+        and "wire.schema_version > BAR_FRAME_JSON_SCHEMA_VERSION" in writer,
+        "BarFrame 的三处契约版本常量同为一个数字，写侧把它印成文档第一格、读侧对更高版本 fail closed",
+        f"版本号 {versions}",
+    )
+    rust_keys: list[str] = []
+    literal = re.search(
+        r'pub fn to_json\(&self\) -> String \{\s*format!\(\s*"((?:[^"\\]|\\.)*)"', writer
+    )
+    if literal:
+        rust_keys = re.findall(r'\\"([a-z_]+)\\"', literal.group(1))
+    fields = re.search(r"BAR_FRAME_JSON_FIELDS = \(([^)]*)\)", bridge, re.DOTALL)
+    python_keys = re.findall(r'"([a-z_]+)"', fields.group(1)) if fields else []
+    check(
+        len(rust_keys) == len(python_keys) + 1
+        and rust_keys[:1] == ["schema_version"]
+        and set(rust_keys) == {"schema_version", *python_keys},
+        "写侧印出的键集合 = Python v1 严格模式允许的键集合（少一格就会被判未知键）",
+        f"Rust {rust_keys}；Python {python_keys}",
+    )
+    cases = (ROOT / FRAME_CONTRACT_TEST_FILE).read_text(encoding="utf-8")
+    missing_cases = [name for name in FRAME_CONTRACT_CASES if f"fn {name}()" not in cases]
+    check(
+        not missing_cases,
+        "帧契约用例在位：声明版本、拒绝未来版本、无版本老文档仍走兼容分支",
+        f"缺用例 {missing_cases}",
+    )
+
 
 
 def snapshot_money_honesty_check() -> None:
@@ -1927,6 +2018,28 @@ def snapshot_money_honesty_check() -> None:
         "四条读模型用例（结算账簿口径/费用同源/未算缺席/溢出即拒）加协议侧缺席≠零、端点侧 null 发布各一条在位",
         f"缺少用例：{[name for name in SNAPSHOT_MONEY_CASES if f'fn {name}(' not in cli_cases]}",
     )
+    # V11 R10：把同一条纪律推到对账两格。R7 只补上了"有来源"，剩下的半步是 0 仍同时表示
+    # "从未对账"与"对过且无差异"——看板会把没跑过对账的账户读成绿色。三处编码都必须分开。
+    wire = (ROOT / POSITION_WIRE_FILE).read_text(encoding="utf-8")
+    reconcile_writer = reader[reader.find("fn apply_reconcile_reports") :]
+    cuts = [
+        cut
+        for stop in ("\nfn ", "\npub(crate) fn ")
+        if (cut := reconcile_writer.find(stop, 1)) > 0
+    ]
+    reconcile_writer = reconcile_writer[: min(cuts)] if cuts else reconcile_writer
+    check(
+        wire.count("pub last_reconcile_ts: Option<u64>,") == 1
+        and wire.count("pub discrepancy_count: Option<u32>,") == 1
+        and wire.count("AccountSnapshot::write_optional_money(hasher, self.") == 2
+        and wire.count("AccountSnapshot::money_json(self.") == 2
+        and reconcile_writer.count("= last_reconcile_ts;") == 1
+        and reconcile_writer.count("last_reconcile_ts.map(|_|") == 1
+        and "unwrap_or(0)" not in reconcile_writer
+        and "fn account_snapshot_reconcile_fields_come_from_the_reports_on_disk(" in cli_cases,
+        "对账两格由「本账户有没有报告」这一个问题决定在不在，缺席与算出的零在类型/哈希/JSON 上都不是同一份",
+        "对账侧退回不可区分的整数，或写侧又给缺席兜了一个合法的 0",
+    )
 
 
 # V11 Q68：把 Q67 那条"没算过的钱不能印成 0"的纪律推到**持仓行**与**实盘回报入口**
@@ -2011,7 +2124,6 @@ def position_money_honesty_check() -> None:
         "折算层出现了第二份手抄，或缺失列被兜成零",
     )
     hashing = protocol[protocol.find("fn write_optional_money") :]
-    json_region = protocol[protocol.find("fn money_json") :]
     check(
         protocol.count("fn write_optional_money(") == 1
         and 'hasher.write_u64(u64::from(value.is_some()));' in hashing[:200]
@@ -2021,10 +2133,13 @@ def position_money_honesty_check() -> None:
     )
     check(
         protocol.count("fn money_json(") == 1
-        and protocol.count("Self::money_json(value.unrealized_pnl_raw)") == 1
-        and protocol.count("Self::money_json(value.margin_raw)") == 1,
-        "行 JSON 的两个钱槽位只由 money_json 填，未报印 null 而不是合法的 0",
-        "槽位又开始直接印 raw 值",
+        and protocol.count("Self::money_json") == 1
+        and "let positions = json_position_entries(&self.positions);" in protocol
+        and not [slot for slot in ("Self::money_json(value.", '\\"quantity_raw\\":{}') if slot in protocol],
+        "持仓行的钱槽位不再手抄：整行交给 serde、未报由 Option 印成 null，手填槽位只剩 money_json 一个来源",
+        f"money_json 定义 {protocol.count('fn money_json(')} 处、使用 "
+        f"{protocol.count('Self::money_json')} 处、持仓行渲染 "
+        f"{protocol.count('json_position_entries(&self.')} 处",
     )
     # 抄法回归要盯"改协议后仍然编译得过"的写法：整仓逐行扫，字段名在行首缩进后才算，
     # 免得把 available_margin_raw 这类同后缀字段误伤成命中。
@@ -2221,6 +2336,317 @@ def reconcile_round_honesty_check() -> None:
         "Q69 用例在位：两半发现同时进报告与事实流，四类远端归并口径另有独立用例咬住",
         f"缺用例 {[n for n in RECONCILE_ROUND_CASES if f'fn {n}(' not in cases]}"
         f" / 缺归并用例={'ccxt_open_orders_report_unknown_and_unmapped_remote_risk' not in discovery_cases}",
+    )
+
+
+def control_plane_honesty_check() -> None:
+    """控制面按 role 找 worker、只读运维端点按磁盘读现状、可用值只列一份（V11 S1/S2/S3/S5/S6）。"""
+    contract = (ROOT / "crates/qx-cli/src/strategy_contract.rs").read_text(encoding="utf-8")
+    workers = (ROOT / "crates/qx-cli/src/workers.rs").read_text(encoding="utf-8")
+    api = (ROOT / "crates/qx-api/src/lib.rs").read_text(encoding="utf-8")
+    assembly = (ROOT / "crates/qx-cli/src/api_service.rs").read_text(encoding="utf-8")
+    init = (ROOT / "crates/qx-cli/src/init_project.rs").read_text(encoding="utf-8")
+    help_text = (ROOT / "crates/qx-cli/src/cli_help.rs").read_text(encoding="utf-8")
+    identity_cases = (
+        ROOT / "crates/qx-cli/src/tests/runtime_api_worker_identity.rs"
+    ).read_text(encoding="utf-8")
+    live_cases = (ROOT / "crates/qx-cli/src/tests/api_query_models_live.rs").read_text(
+        encoding="utf-8"
+    )
+
+    check(
+        'supervisor.spawn_worker("api"' not in contract
+        and contract.count("supervisor.spawn_worker(&api_worker_id") == 2
+        and contract.count("fn configured_api_worker_id(") == 1
+        and 'worker.enabled && worker.role == WorkerRole::Api' in contract
+        and ".ok_or_else(" in contract[contract.find("fn configured_api_worker_id(") :],
+        "serve 把 API 服务注册到按 role 解析出的 worker 名下，且缺该 role 时报错而不是回落字面量",
+        "字面量 api 回到 spawn 点，或解析函数又允许挑别的 worker",
+    )
+    check(
+        all(
+            f"fn {name}(" in identity_cases
+            for name in (
+                "renamed_api_worker_is_the_one_the_supervisor_accepts",
+                "api_worker_lookup_fails_closed_without_an_enabled_one",
+            )
+        ),
+        "S1 用例在位：改名后的 api worker 仍能注册，而字面量必须失败",
+        "缺用例或改名，用例不再能区分字面量与按 role 解析",
+    )
+    check(
+        api.count("pub fn with_query_models_provider") == 1
+        and api.count("fn query_models(&self)") == 1
+        and assembly.count(
+            ".with_query_models_provider(move || load_api_query_models(&query_models_config))"
+        )
+        == 1,
+        "三个只读运维端点装了现读 provider，且 provider 与启动装载共用同一个读点",
+        "provider 又回到只读一次，或两条路各写一份读模型构造代码",
+    )
+    routes = api[api.find('("GET", "/scheduler/runs")') : api.find('("GET", "/account/snapshot/diff")')]
+    check(
+        routes.count("self.query_models()") == 3
+        and "self.job_runs()" not in routes
+        and "self.ledger_entries()" not in routes
+        and "self.reconcile_reports()" not in routes,
+        "调度/账簿/对账三个端点全部改读现读结果，读不到就报 503 而不是念启动那份",
+        f"三处里仍有回落到 boot 快照的读点：query_models()={routes.count('self.query_models()')}",
+    )
+    check(
+        all(
+            f"fn {name}(" in live_cases
+            for name in (
+                "reconcile_report_endpoint_follows_the_worker_written_file",
+                "ledger_endpoint_sees_fills_appended_after_boot",
+            )
+        ),
+        "S3 用例在位：启动之后落盘的报告与成交都必须读得到，两条机制各自验证",
+        "用例缺任一条：只剩文件扫描或只剩日志重放，另一条机制回退了无人发现",
+    )
+    check(
+        workers.count("if context.should_stop() {") == 2
+        and "should_stop" in workers,
+        "Scheduler 与 Strategy 两个生产循环读停机令牌，与其他 worker 循环同一口径",
+        "任一回退：那两个循环的唯一出口又只剩 once 或抛错",
+    )
+    profile_line = next(
+        (line for line in help_text.splitlines() if "--profile <" in line),
+        "",
+    )
+    listed = (
+        sorted(profile_line.split("--profile <", 1)[1].split(">", 1)[0].split("|"))
+        if profile_line
+        else []
+    )
+    declared = sorted(
+        init[init.find("const INIT_PROFILES") :].split("= [", 1)[1].split("]", 1)[0].split('"')[
+            1::2
+        ]
+    )
+    check(
+        listed == declared == ["ashare", "backtest", "base", "builtin", "ccxt", "multi-venue", "paper"]
+        and init.count('INIT_PROFILES.join("、")') == 2
+        and "可用值：base、paper" not in init,
+        "init --profile 的可用值只有一份：help 的表、错误文案与实际接受的集合三处相等",
+        f"help={listed} declared={declared}，或错误文案又抄了一份清单",
+    )
+    harness = (ROOT / "crates/qx-cli/src/tests/mod.rs").read_text(encoding="utf-8")
+    check(
+        harness.count("assert_binary_fresh(&binary);") == 2
+        and "fn assert_binary_fresh(" in harness,
+        "子进程用例的两条 binary 取用分支都过新鲜度守卫（V11 S6）",
+        "守卫只装在 option_env! 取得到值的那条分支上：`cargo test --bin` 走的是回落分支且不重链 "
+        "qx-cli.exe，过期 binary 会让子进程断言对着旧行为静默变绿",
+    )
+
+
+def api_surface_doc_check() -> None:
+    """`serve` 的端点表与路由集合逐一相等：文档没写到的端点等于没有前端（V11 S7）。
+
+    运维端点是这套框架对外唯一的读面，"代码里有、文档里没有"和"文档里有、代码里 404"
+    是同一类断链的两个方向，所以把对齐关系写成门禁而不是靠人记得改 README。
+    """
+    api = (ROOT / "crates/qx-api/src/lib.rs").read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    declared = set(re.findall(r'\("(GET|POST|PUT|DELETE)", "(/[^"]*)"\)', api))
+    readme = (ROOT / "deploy/README.md").read_text(encoding="utf-8")
+    documented = set()
+    for line in readme.splitlines():
+        if not line.startswith("| `"):
+            continue
+        for method, path in re.findall(r"`(GET|POST|PUT|DELETE) (/[^`\[?]+)", line):
+            documented.add((method, path))
+    check(
+        bool(declared) and documented == declared,
+        "deploy/README.md 的端点表与 qx-api 路由集合完全一致",
+        f"只在代码 {sorted(declared - documented)} / 只在文档 {sorted(documented - declared)}",
+    )
+    check(
+        "未列出的路径一律 404" in readme
+        and '_ => ApiResponse::text(404, "not found")' in api,
+        "端点表声明的兜底口径与代码一致：未列路径 404 而不是静默 200",
+        "路由表兜底被改，或文档删了那句声明",
+    )
+
+
+def c_abi_header_check() -> None:
+    """C++ SDK 的头文件是 Rust `#[repr(C)]` 的手抄镜像，镜像必须逐字段比对（V11 S13）。
+
+    `cpp/include/qianxing_strategy.h` 与 `crates/qx-strategy/src/c_api.rs` 描述同一份插件 ABI，
+    两侧之间没有任何编译期或链接期耦合：少一个字段、换一个顺序，宿主读到的就是错位内存而不是
+    报错。CI 的 `cpp-sdk` 作业只编译 C++ 例子、不把它交给 Rust 宿主加载，所以对齐只能靠这份比对。
+    """
+    header = (ROOT / "cpp/include/qianxing_strategy.h").read_text(encoding="utf-8")
+    rust = (ROOT / "crates/qx-strategy/src/c_api.rs").read_text(encoding="utf-8")
+
+    def to_camel(name: str) -> str:
+        # 只有 `vtable` 一段的惯用大小写不是首字母大写（Rust 侧写作 VTable）。
+        return "".join(
+            {"vtable": "VTable"}.get(part, part[:1].upper() + part[1:])
+            for part in name.split("_")
+        )
+
+    scalars = {
+        "uint64_t": "u64",
+        "int64_t": "i64",
+        "uint32_t": "u32",
+        "int32_t": "i32",
+        "uint8_t": "u8",
+        "size_t": "usize",
+        "char": "c_char",
+        "void": "c_void",
+    }
+
+    def c_type_to_rust(ctype: str) -> str:
+        ctype = " ".join(ctype.split())
+        mutable = True
+        if ctype.startswith("const "):
+            ctype, mutable = ctype[6:], False
+        if ctype.endswith("*"):
+            return f"*{'mut' if mutable else 'const'} {c_type_to_rust(ctype[:-1])}"
+        if ctype in scalars:
+            return scalars[ctype]
+        if ctype.startswith("qx_"):
+            return to_camel(ctype)
+        raise KeyError(f"未登记的 C 类型 {ctype}：先补映射，别让它绕过比对")
+
+    c_fields: dict[str, list[tuple[str, str]]] = {}
+    for body, tag in re.findall(r"typedef struct[\w ]*\{([^}]*)\}\s*(\w+);", header, re.S):
+        if "(*" in body:
+            # vtable 里的回调只比名字与顺序；签名两侧各按本语言写法表达，文本不可能逐字相等。
+            c_fields[to_camel(tag)] = [
+                (c_type_to_rust(ctype), name)
+                for ctype, name in re.findall(r"^\s*(\w+) (\w+);", body, re.M)
+            ] + [("fn", name) for name in re.findall(r"\(\*(\w+)\)", body)]
+            continue
+        fields = []
+        for line in body.splitlines():
+            line = re.sub(r"/\*.*?\*/", "", line).strip().rstrip(";")
+            if not line:
+                continue
+            ctype, _, name = line.rpartition(" ")
+            fields.append((c_type_to_rust(ctype), name))
+        c_fields[to_camel(tag)] = fields
+    c_enums = {
+        to_camel(tag): [int(value) for value in re.findall(r"=\s*(\d+)", body)]
+        for body, tag in re.findall(r"typedef enum[\w ]*\{([^}]*)\}\s*(\w+);", header, re.S)
+    }
+
+    rust_fields: dict[str, list[str]] = {}
+    rust_types: dict[str, dict[str, str]] = {}
+    rust_enums: dict[str, list[int]] = {}
+    for match in re.finditer(r"pub (struct|enum) (\w+) \{([\s\S]*?)\n\}", rust):
+        kind, name, body = match.group(1), match.group(2), match.group(3)
+        prefix = rust[: match.start()]
+        if "#[repr(C)]" not in prefix[prefix.rfind("\n}") :]:
+            continue
+        if kind == "enum":
+            rust_enums[name] = [int(value) for value in re.findall(r"=\s*(\d+),", body)]
+            continue
+        rust_fields[name] = re.findall(r"pub (\w+): ", body)
+        rust_types[name] = dict(re.findall(r"pub (\w+): ([^,\n]+),", body))
+
+    only_header = sorted((set(c_fields) | set(c_enums)) - (set(rust_fields) | set(rust_enums)))
+    only_rust = sorted((set(rust_fields) | set(rust_enums)) - (set(c_fields) | set(c_enums)))
+    check(
+        bool(c_fields) and bool(c_enums) and not (only_header or only_rust),
+        "C ABI 的头文件与 Rust `#[repr(C)]` 是同一组类型，两侧都没有多出或缺失的一份",
+        f"只在头文件 {only_header} / 只在 Rust {only_rust}",
+    )
+    mismatch = [
+        f"{name}: 头 {[field[1] for field in fields]} != Rust {rust_fields.get(name)}"
+        for name, fields in sorted(c_fields.items())
+        if [field[1] for field in fields] != rust_fields.get(name)
+    ]
+    check(
+        not mismatch,
+        "每个 C ABI 结构的字段名与顺序在头文件与 Rust 侧逐位相等",
+        "；".join(mismatch) or "字段顺序就是内存布局，错一位插件读到的是邻居字段",
+    )
+    typed = [
+        f"{name}.{fname}: 头 {ctype} != Rust {rust_types.get(name, {}).get(fname)!r}"
+        for name, fields in sorted(c_fields.items())
+        for ctype, fname in fields
+        if ctype != "fn" and rust_types.get(name, {}).get(fname, "").replace(" ", "") != ctype.replace(" ", "")
+    ]
+    check(
+        not typed,
+        "每个 C ABI 字段的类型按映射表逐字段相等（定宽整数、指针与嵌套结构都核对）",
+        "；".join(typed) or "类型换一位宽就是静默截断，比字段错位更难查",
+    )
+    header_version = re.search(r"#define QX_STRATEGY_API_VERSION\s+(\d+)", header)
+    rust_version = re.search(r"QX_C_STRATEGY_API_VERSION: u32 = (\d+)", rust)
+    check(
+        c_enums == rust_enums
+        and bool(header_version)
+        and bool(rust_version)
+        and header_version.group(1) == rust_version.group(1),
+        "枚举判别值序列与 ABI 版本常量两侧相等",
+        f"枚举 头 {c_enums} / Rust {rust_enums}；版本 头 {header_version and header_version.group(1)}"
+        f" / Rust {rust_version and rust_version.group(1)}",
+    )
+
+
+def snapshot_json_table_check() -> None:
+    """稳定 JSON 的键表只有一份编码：写侧印成什么，读侧 `from_json` 就得认什么（V11 R14/R15）。
+
+    订单/成交/划转的键是 `u64`，持仓的键是 `InstrumentId`。此前 `to_json` 手抄 `format!`
+    把裸数字当对象键，产出的 `{77:{...}}` 连合法 JSON 都不是，`from_json`、SQLite/Postgres
+    的 `load_json` 与 Python 侧的 `load_account_snapshot` 会在同一份产物上一起失败；枚举与
+    标的也是同一类分叉（数字码 / 字符串标的 vs serde 的变体名 / 对象标的）。持仓更进一层：
+    手抄那份少印 `instrument` 与任何新增字段，读侧却按 serde 认，于是新字段被写侧静默丢掉。
+    """
+    protocol = (ROOT / SNAPSHOT_PROTOCOL_FILE).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    cases = (ROOT / SNAPSHOT_CORE_CASE_FILE).read_text(encoding="utf-8")
+
+    check(
+        protocol.count("fn json_table_entries<K: Serialize, V: Serialize>") == 1
+        and protocol.count("serde_json::to_string(table)") == 1,
+        "四张键表的稳定 JSON 只有一个渲染点，且它委托 serde 而不是再抄一份字段顺序",
+        f"渲染点 {protocol.count('fn json_table_entries<K: Serialize, V: Serialize>')} 处、"
+        f"serde 委托 {protocol.count('serde_json::to_string(table)')} 处",
+    )
+    rendered = [f"let {name} = json_table_entries(&self.{name});" for name in SNAPSHOT_SERDE_TABLES]
+    check(
+        all(line in protocol for line in rendered)
+        and protocol.count("json_table_entries(&self.") == len(SNAPSHOT_SERDE_TABLES)
+        and protocol.count("fn json_position_entries(") == 1
+        and "let positions = json_position_entries(&self.positions);" in protocol
+        and protocol.count("fn instrument_key(") == 1
+        and protocol.count("instrument_key(") == 3
+        and not [template for template in SNAPSHOT_TABLE_TEMPLATES if template in protocol],
+        "持仓/订单/成交/划转全部经该渲染点，标的键只有一个写法，文件里没有剩下的手抄键值模板",
+        f"表渲染 {protocol.count('json_table_entries(&self.')} 处、持仓渲染 "
+        f"{protocol.count('json_position_entries(&self.')} 处、标的键 "
+        f"{protocol.count('instrument_key(')} 处、"
+        f"残留模板 {[template for template in SNAPSHOT_TABLE_TEMPLATES if template in protocol]}",
+    )
+    check(
+        "fn stable_json_tables_round_trip_through_the_reader(" in cases,
+        "往返用例在位：稳定 JSON 既是合法 JSON、又与 serde 那份同源、还能被 from_json 解回同一份状态",
+        "缺 stable_json_tables_round_trip_through_the_reader",
+    )
+    fixture = (ROOT / SNAPSHOT_FIXTURE_FILE).read_text(encoding="utf-8")
+    enum_slots = ('"side":"Sell"', '"status":"Accepted"')
+    check(
+        all(key in fixture for key in SNAPSHOT_FIXTURE_KEYS)
+        and all(slot in fixture for slot in enum_slots),
+        "跨语言夹具带着写侧的真实编码：四张键表的键是字符串、枚举是变体名，不是数字键/数字码",
+        f"夹具缺键表 {[key for key in SNAPSHOT_FIXTURE_KEYS if key not in fixture]}"
+        f" / 缺枚举格 {[slot for slot in enum_slots if slot not in fixture]}",
+    )
+    bridge_case = (ROOT / SNAPSHOT_BRIDGE_CASE_FILE).read_text(encoding="utf-8")
+    fixture_name = Path(SNAPSHOT_FIXTURE_FILE).name
+    golden_case = "fn the_cross_language_sample_is_what_the_writer_emits("
+    python_loads = "load_account_snapshot(ACCOUNT_SNAPSHOT_SAMPLE"
+    check(
+        golden_case in cases
+        and fixture_name in cases
+        and python_loads in bridge_case
+        and fixture_name in bridge_case,
+        "同一份夹具两侧各钉一次：Rust 比对 `to_json` 全等，Python 把它喂进 `load_account_snapshot`"
+        "——读侧不再只吃手抄的空表字典",
+        f"Rust 金样用例={golden_case in cases}、Python 读同一份夹具={python_loads in bridge_case}",
     )
 
 
@@ -3690,6 +4116,11 @@ def main() -> int:
     snapshot_money_honesty_check()
     position_money_honesty_check()
     reconcile_round_honesty_check()
+    control_plane_honesty_check()
+    api_surface_doc_check()
+    c_abi_header_check()
+    snapshot_json_table_check()
+    bar_frame_contract_check()
     capabilities_check()
     line_budget_check()
     print()

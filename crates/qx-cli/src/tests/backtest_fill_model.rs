@@ -366,3 +366,53 @@ fn depth_summary_carries_no_fill_model_key() {
         let _ = std::fs::remove_dir_all(path);
     }
 }
+
+/// 深度链没有 FillModel 落点（上一条用例已把"产物里不该有这个键"钉住）：配置里声明了一个
+/// 撮合模型却照样跑完，就是"能配"被当成"生效"（V11 R11）。同一条判据已经管着成本延迟与
+/// A 股段，这里补上第三条，并且必须拒在任何产物落盘之前。
+#[test]
+fn depth_chain_refuses_a_configured_fill_model() {
+    let (deploy, _, template) = builtin_backtest_example_paths();
+    let config = {
+        let mut config = read_runtime_config(&template).unwrap();
+        config.strategy.fill_model = Some("best_price".into());
+        config
+    };
+    let (root, runtime) = isolated_backtest_runtime(&deploy, &config, "r11-depth-fill");
+    let out = temp_cli_case_dir("r11-depth-fill-out");
+    let failure = run_depth_backtest(
+        "l1",
+        "sma_cross",
+        &deploy.join("qianxing.depth-frame.l1.example.json"),
+        None,
+        1,
+        None,
+        DepthExecutionModel::default(),
+        &out,
+        Some(&runtime),
+    )
+    .expect_err("深度链收下 strategy.fill_model 再静默丢掉，等于让配置说假话");
+    assert!(
+        failure.contains("strategy.fill_model"),
+        "拒绝必须点名是哪一条声明，实际错误 {failure}"
+    );
+    let leftovers = std::fs::read_dir(&out)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .path()
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .ends_with(".summary.json")
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(leftovers, 0, "拒绝必须发生在任何产物落盘之前");
+    for path in [root, out] {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}

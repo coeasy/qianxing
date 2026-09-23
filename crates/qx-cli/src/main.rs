@@ -12,9 +12,9 @@ use qx_adapter::{
     TlsHttpTransport,
 };
 use qx_api::{
-    load_mtls_server_config_from_pem, ApiPolicy, ApiReadiness, ApiService, ApiState,
-    ControlSubmitError, MtlsIdentityPemReloader, MtlsIdentityStore, ReconcileReportSnapshot,
-    TlsConfigStore, TlsPemReloader,
+    load_mtls_server_config_from_pem, ApiPolicy, ApiQueryModels, ApiReadiness, ApiService,
+    ApiState, ControlSubmitError, MtlsIdentityPemReloader, MtlsIdentityStore,
+    ReconcileReportSnapshot, TlsConfigStore, TlsPemReloader,
 };
 use qx_control::{
     order_from_submit_command, CommandKind, ControlCommand, ControlPlane, Permission,

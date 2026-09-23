@@ -1,5 +1,29 @@
 use crate::*;
 
+/// 一轮轮询的健康结论：本轮任何一次 ticker / OHLCV 调用失败都不能被"healthy"覆盖。
+///
+/// 判定此前直接写在 worker 循环末尾的 `context.mark(Ready, ...)` 里：全部标的都失败的
+/// worker 每轮仍然报 Ready + `ccxt live market healthy`，运维侧看到的永远是健康。
+pub(crate) fn ccxt_market_cycle_health(
+    failures: u32,
+    attempted: u32,
+    quotes: u64,
+    bars_written: u64,
+) -> (qx_runtime::ServiceStatus, String) {
+    if failures == 0 {
+        return (
+            qx_runtime::ServiceStatus::Ready,
+            format!("ccxt live market healthy quotes={quotes} bar_snapshots={bars_written}"),
+        );
+    }
+    (
+        qx_runtime::ServiceStatus::Degraded,
+        format!(
+            "ccxt live market 本轮 {failures}/{attempted} 次行情调用失败 quotes={quotes} bar_snapshots={bars_written}"
+        ),
+    )
+}
+
 /// 使用公共 CCXT REST ticker 和 OHLCV 轮询接入统一行情 EventLog，并将闭合
 /// BarFrame 原子写入策略快照。Strategy worker 通过快照摘要触发幂等 JobQueue，
 /// 因而不依赖 Scheduler 的固定周期，也不会因为未闭合 K 线反复下单。
@@ -49,8 +73,10 @@ pub(crate) fn run_ccxt_market_worker(
     let mut source_seq = 0_u64;
     let mut quotes = 0_u64;
     let mut bars_written = 0_u64;
+    let attempted_calls = (instruments.len() + live_specs.len()) as u32;
     while !context.should_stop() {
         let cycle_now = runtime_timestamp_ms();
+        let mut cycle_failures = 0_u32;
         for instrument in &instruments {
             let result = match client.call(serde_json::json!({
                 "op": "fetch_ticker",
@@ -58,6 +84,7 @@ pub(crate) fn run_ccxt_market_worker(
             })) {
                 Ok(result) => result,
                 Err(error) => {
+                    cycle_failures = cycle_failures.saturating_add(1);
                     context.mark(
                         qx_runtime::ServiceStatus::Degraded,
                         format!("CCXT ticker 暂时失败 {}: {error}; reconnecting", instrument),
@@ -134,6 +161,7 @@ pub(crate) fn run_ccxt_market_worker(
             })) {
                 Ok(result) => result,
                 Err(error) => {
+                    cycle_failures = cycle_failures.saturating_add(1);
                     context.mark(
                         qx_runtime::ServiceStatus::Degraded,
                         format!(
@@ -162,14 +190,9 @@ pub(crate) fn run_ccxt_market_worker(
                 bars_written = bars_written.saturating_add(1);
             }
         }
-        context.mark(
-            qx_runtime::ServiceStatus::Ready,
-            format!(
-                "ccxt live market healthy quotes={} bar_snapshots={}",
-                quotes, bars_written
-            ),
-            Some(cycle_now),
-        )?;
+        let (status, detail) =
+            ccxt_market_cycle_health(cycle_failures, attempted_calls, quotes, bars_written);
+        context.mark(status, detail, Some(cycle_now))?;
         if once {
             break;
         }

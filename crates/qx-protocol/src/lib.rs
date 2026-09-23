@@ -135,7 +135,7 @@ mod instrument_map {
     {
         let wire = map
             .iter()
-            .map(|(key, value)| (key.to_string(), value))
+            .map(|(key, value)| (instrument_key(key), value))
             .collect::<BTreeMap<_, _>>();
         wire.serialize(serializer)
     }
@@ -155,6 +155,11 @@ mod instrument_map {
             })
             .collect()
     }
+}
+
+/// 标的在 JSON 键位上的唯一写法：`positions` 的键由它决定，读写两侧共用一份。
+fn instrument_key(instrument: &InstrumentId) -> String {
+    instrument.to_string()
 }
 
 impl AccountSnapshot {
@@ -233,7 +238,7 @@ impl AccountSnapshot {
     /// `None` 与 `Some(0)` 必须是两个不同的哈希：前者是"这一层没算"，后者是"算过、结果为零"。
     /// 只写 `unwrap_or_default()` 会让两者撞成同一份状态，未算也就永远改不动 state_hash。
     /// 账户标量与持仓行共用这一处写入，两处不可能各定一套"未算"的编码。
-    fn write_optional_money(hasher: &mut Fnv1a, value: Option<i128>) {
+    pub(crate) fn write_optional_money(hasher: &mut Fnv1a, value: Option<i128>) {
         hasher.write_u64(u64::from(value.is_some()));
         hasher.write_i128(value.unwrap_or_default());
     }
@@ -244,8 +249,8 @@ impl AccountSnapshot {
         }
     }
 
-    /// "未算"在稳定 JSON 里只有一个字面量：`null`。持仓行与账户标量都经由这一处。
-    fn money_json(value: Option<i128>) -> String {
+    /// "未算"在稳定 JSON 里只有一个字面量：`null`。账户标量与对账两格都经由这一处。
+    pub(crate) fn money_json(value: Option<i128>) -> String {
         match value {
             Some(raw) => raw.to_string(),
             None => "null".to_string(),
@@ -311,9 +316,7 @@ impl AccountSnapshot {
             h.write_i128(transfer.amount_raw);
             h.write_u64(transfer.ts);
         }
-        h.write_u64(self.reconcile.last_reconcile_ts);
-        h.write_u64(self.reconcile.discrepancy_count as u64);
-        h.write_text(&self.reconcile.recovery_state);
+        self.reconcile.write_scalars(&mut h);
         h.finish()
     }
 
@@ -354,9 +357,7 @@ impl AccountSnapshot {
     fn scalar_hash(&self) -> u64 {
         let mut h = Fnv1a::new();
         Self::write_scalar_money(&mut h, self.scalar_money_raw());
-        h.write_u64(self.reconcile.last_reconcile_ts);
-        h.write_u64(self.reconcile.discrepancy_count as u64);
-        h.write_text(&self.reconcile.recovery_state);
+        self.reconcile.write_scalars(&mut h);
         h.finish()
     }
 
@@ -370,82 +371,20 @@ impl AccountSnapshot {
 
     /// 稳定 JSON 线格式：字段顺序固定、定点数传 raw integer，避免跨语言浮点漂移。
     pub fn to_json(&self) -> String {
-        let positions = self
-            .positions
-            .iter()
-            .map(|(instrument, value)| {
-                format!(
-                    "{}:{{\"quantity_raw\":{},\"today_quantity_raw\":{},\"average_price_raw\":{},\"mark_price_raw\":{},\"unrealized_pnl_raw\":{},\"margin_raw\":{}}}",
-                    json_string(&instrument.to_string()),
-                    value.quantity_raw,
-                    value.today_quantity_raw,
-                    value.average_price_raw,
-                    value.mark_price_raw,
-                    Self::money_json(value.unrealized_pnl_raw),
-                    Self::money_json(value.margin_raw)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
         let cash = self
             .cash_raw
             .iter()
             .map(|(currency, amount)| format!("{}:{}", json_string(currency), amount))
             .collect::<Vec<_>>()
             .join(",");
-        let orders = self
-            .orders
-            .iter()
-            .map(|(id, value)| {
-                format!(
-                    "{}:{{\"order_id\":{},\"client_order_id\":{},\"instrument\":{},\"side\":{},\"quantity_raw\":{},\"filled_raw\":{},\"status\":{}}}",
-                    id,
-                    value.order_id,
-                    value.client_order_id,
-                    json_string(&value.instrument.to_string()),
-                    side_code(value.side),
-                    value.quantity_raw,
-                    value.filled_raw,
-                    order_status_code(value.status)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let fills = self
-            .fills
-            .iter()
-            .map(|(id, value)| {
-                format!(
-                    "{}:{{\"fill_id\":{},\"order_id\":{},\"quantity_raw\":{},\"price_raw\":{},\"fee_raw\":{},\"ts\":{}}}",
-                    id,
-                    value.fill_id,
-                    value.order_id,
-                    value.quantity_raw,
-                    value.price_raw,
-                    value.fee_raw,
-                    value.ts
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let transfers = self
-            .transfers
-            .iter()
-            .map(|(id, value)| {
-                format!(
-                    "{}:{{\"transfer_id\":{},\"currency\":{},\"amount_raw\":{},\"ts\":{}}}",
-                    id,
-                    value.transfer_id,
-                    json_string(&value.currency),
-                    value.amount_raw,
-                    value.ts
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
+        let positions = json_position_entries(&self.positions);
+        let orders = json_table_entries(&self.orders);
+        let fills = json_table_entries(&self.fills);
+        let transfers = json_table_entries(&self.transfers);
         // 七个汇总钱字段与上面的 {} 一一对应：equity / available / margin / frozen /
         // realized_pnl / unrealized_pnl / fees / funding（未算过印 null，不印 0）。
         let scalars = self.scalar_json_values();
+        let reconcile = self.reconcile.json_values();
         format!(
             "{{\"protocol\":\"QIANXING_ACCOUNT\",\"schema_version\":{},\"header\":{{\"snapshot_id\":{},\"account_id\":{},\"portfolio_id\":{},\"venue_id\":{},\"trading_day\":{},\"as_of\":{},\"event_seq\":{},\"state_hash\":{}}},\"cash_raw\":{{{}}},\"equity_raw\":{},\"available_raw\":{},\"margin_raw\":{},\"frozen_raw\":{},\"realized_pnl_raw\":{},\"unrealized_pnl_raw\":{},\"fees_raw\":{},\"funding_raw\":{},\"positions\":{{{}}},\"orders\":{{{}}},\"fills\":{{{}}},\"transfers\":{{{}}},\"reconcile\":{{\"last_reconcile_ts\":{},\"discrepancy_count\":{},\"recovery_state\":{}}}}}",
             self.header.schema_version,
@@ -470,8 +409,8 @@ impl AccountSnapshot {
             orders,
             fills,
             transfers,
-            self.reconcile.last_reconcile_ts,
-            self.reconcile.discrepancy_count,
+            reconcile[0],
+            reconcile[1],
             json_string(&self.reconcile.recovery_state),
         )
     }
@@ -545,6 +484,26 @@ impl AccountSnapshot {
         snapshot.validate()?;
         Ok(snapshot)
     }
+}
+
+/// 稳定 JSON 里的四张键表（持仓/订单/成交/划转）整份交给 serde 写，只剥掉最外层大括号。
+/// 它们此前是手抄的 `format!`：键是裸数字（`{77:{...}}` 不是合法 JSON），枚举印 `side_code`
+/// /`order_status_code` 的数字码、`instrument` 印字符串、持仓行少印一个字段，而读侧 `from_json`
+/// 走 serde，认的是字符串键、变体名与对象形态的标的——两份编码分叉到产物要么谁也解不回（R14），
+/// 要么新字段被写侧静默丢掉（R15）。
+fn json_table_entries<K: Serialize, V: Serialize>(table: &BTreeMap<K, V>) -> String {
+    let rendered = serde_json::to_string(table).expect("账户快照的键表可以序列化");
+    rendered[1..rendered.len() - 1].to_string()
+}
+
+/// `positions` 的键是 `InstrumentId` 而 JSON 的键必须是字符串，所以先把键换成 `instrument_key`
+/// 那一份写法（与 `to_wire_json` 的 `instrument_map` 同一个口径），值整份交给同一个渲染点。
+fn json_position_entries(positions: &BTreeMap<InstrumentId, PositionSnapshot>) -> String {
+    let keyed = positions
+        .iter()
+        .map(|(instrument, value)| (instrument_key(instrument), value))
+        .collect::<BTreeMap<_, _>>();
+    json_table_entries(&keyed)
 }
 
 fn json_string(value: &str) -> String {

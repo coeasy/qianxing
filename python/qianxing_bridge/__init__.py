@@ -33,7 +33,7 @@ BAR_FRAME_JSON_FIELDS = (
 )
 
 #: v1 允许的顶层键：内容列 + 契约版本。Rust 严格模式的 `deny_unknown_fields`
-#: 使用同一集合（`qx-data/src/provider.rs` 的 `BAR_FRAME_STRICT_FIELDS`）。
+#: 使用同一集合（`qx-data/src/provider.rs` 的 `StrictBarFrameJson`）。
 BAR_FRAME_STRICT_FIELDS = ("schema_version", *BAR_FRAME_JSON_FIELDS)
 
 

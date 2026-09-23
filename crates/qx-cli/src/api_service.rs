@@ -17,10 +17,11 @@ pub(crate) fn build_configured_api_service(
     let command_queue = configured_command_queue(config, &control_root)?;
     let mut state = ApiState::default();
     state.control = control;
-    let (job_runs, ledger_entries, reconcile_reports) = load_api_query_models(config)?;
-    state.job_runs = job_runs;
-    state.ledger_entries = ledger_entries;
-    state.reconcile_reports = reconcile_reports
+    let models = load_api_query_models(config)?;
+    state.job_runs = models.job_runs;
+    state.ledger_entries = models.ledger_entries;
+    state.reconcile_reports = models
+        .reconcile_reports
         .into_iter()
         .map(|report| (report.worker_id.clone(), report))
         .collect();
@@ -34,10 +35,22 @@ pub(crate) fn build_configured_api_service(
                 .map_err(|error| format!("初始化 API 账户事件投影失败: {error}"))?;
         }
     }
+    // 只有默认账户能占用无键端点读到的那格全局兼容快照；其余账户按身份进各自的投影，
+    // 带 account_id/venue_id 的查询照旧读得到（V11 R12，与上面的 Ledger 共用同一个判据）。
+    let default_log = default_account_event_log(config, Path::new(&config.storage.data_dir))?;
     for snapshot in load_api_account_snapshots(config)? {
-        state
-            .publish_snapshot(snapshot)
-            .map_err(|error| format!("装载 API 账户查询快照失败: {error}"))?;
+        let identity =
+            account_event_log_name(&snapshot.header.account_id, &snapshot.header.venue_id);
+        let loaded = if identity.is_some() && identity == default_log {
+            state.publish_snapshot(snapshot)
+        } else {
+            state.publish_snapshot_for(
+                snapshot.header.account_id.clone(),
+                snapshot.header.venue_id.clone(),
+                snapshot,
+            )
+        };
+        loaded.map_err(|error| format!("装载 API 账户查询快照失败: {error}"))?;
     }
     let mut policy = ApiPolicy::new();
     for (operator_id, operator) in &config.api.operators {
@@ -47,6 +60,8 @@ pub(crate) fn build_configured_api_service(
     let worker_metrics_stale_after_ms = config.messaging.worker_stale_after_ms;
     let readiness_store = control_store.clone();
     let readiness_config = config.clone();
+    // 三个只读运维端点的现读出口：与 boot 用同一份配置、同一个读点，差别只在"每次请求都读"。
+    let query_models_config = config.clone();
     let readiness_runtime_config_path = runtime_config_path.to_path_buf();
     let readiness_metrics_dir = metrics_dir.clone();
     let service = if config.api.operators.is_empty() {
@@ -71,6 +86,7 @@ pub(crate) fn build_configured_api_service(
             worker_metrics_stale_after_ms,
         )
     })
+    .with_query_models_provider(move || load_api_query_models(&query_models_config))
     .with_control_submitter({
         let store = control_store.clone();
         move |command, granted, ts| {
@@ -119,16 +135,37 @@ pub(crate) fn build_configured_api_service(
     Ok(service)
 }
 
-/// 从持久化调度状态、账户 EventLog 和对账报告构造 API 读模型。
+/// 无键端点（`/account/ledger`、不带查询串的 `/account/snapshot`）的"默认账户"：
+/// 配置顺序里第一个**真有 EventLog** 的账户 worker。
 ///
-/// 这些数据只进入 QueryPort，不会被 API 反向写入 Scheduler、Ledger 或
-/// Reconcile worker，避免查询层成为第二个事实拥有者。
-pub(crate) type ApiQueryModels = (
-    Vec<qx_scheduler::JobRun>,
-    Vec<qx_core::LedgerEntry>,
-    Vec<ReconcileReportSnapshot>,
-);
+/// 两处必须问同一个问题（V11 R12）：账簿此前取第一个账户 worker，全局兼容快照却被最后一个
+/// 发布的账户覆盖，于是多账户部署下两个端点各讲一个账户，而调用方没有任何选账户的余地。
+/// "第一个有日志的"而不是"第一个"：首账户尚未落盘时静默改读另一个账户，等于把 A 的账
+/// 说成 B 的账。
+pub(crate) fn default_account_event_log(
+    config: &RuntimeConfig,
+    root: &Path,
+) -> Result<Option<String>, String> {
+    for worker in config
+        .workers
+        .iter()
+        .filter(|worker| owns_account_event_log(worker))
+    {
+        let Some(log_name) = worker_account_event_log(worker) else {
+            continue;
+        };
+        if event_log_exists(config, root, &log_name)? {
+            return Ok(Some(log_name));
+        }
+    }
+    Ok(None)
+}
 
+/// 从持久化调度状态、账户 EventLog 和对账报告构造三份只读运维读模型。
+///
+/// 同一个读点服务两条路：启动时的那一次装载，以及 `/scheduler/runs`、`/account/ledger`、
+/// `/reconcile/reports` 每次请求的现读（`with_query_models_provider`，V11 S3）。这些数据只进
+/// QueryPort，API 不反向写 Scheduler、Ledger 或 Reconcile worker，查询层不是第二个事实拥有者。
 pub(crate) fn load_api_query_models(config: &RuntimeConfig) -> Result<ApiQueryModels, String> {
     let root = Path::new(&config.storage.data_dir);
     let job_runs = {
@@ -144,24 +181,22 @@ pub(crate) fn load_api_query_models(config: &RuntimeConfig) -> Result<ApiQueryMo
     };
 
     let mut ledger_entries = Vec::new();
-    if let Some(worker) = config
-        .workers
-        .iter()
-        .find(|worker| owns_account_event_log(worker))
-    {
-        if let (Some(account_id), Some(venue_id)) =
-            (worker.account_id.as_deref(), worker.venue_id.as_deref())
-        {
-            if let Some(log_name) = account_event_log_name(account_id, venue_id) {
-                if event_log_exists(config, root, &log_name)? {
-                    let pipeline = open_account_pipeline(config, root, &log_name)
-                        .map_err(|error| format!("读取 API Ledger 读模型失败: {error}"))?;
-                    ledger_entries = pipeline.ledger().entries().to_vec();
-                }
-            }
-        }
+    if let Some(log_name) = default_account_event_log(config, root)? {
+        let pipeline = open_account_pipeline(config, root, &log_name)
+            .map_err(|error| format!("读取 API Ledger 读模型失败: {error}"))?;
+        ledger_entries = pipeline.ledger().entries().to_vec();
     }
 
+    let reconcile_reports = load_reconcile_reports(root)?;
+    Ok(qx_api::ApiQueryModels {
+        job_runs,
+        ledger_entries,
+        reconcile_reports,
+    })
+}
+
+/// 读取 `data_dir/reconcile/*.json`：对账 worker 每轮落一份报告，API 侧只读不写。
+pub(crate) fn load_reconcile_reports(root: &Path) -> Result<Vec<ReconcileReportSnapshot>, String> {
     let mut reconcile_reports = Vec::new();
     let report_root = root.join("reconcile");
     if report_root.exists() {
@@ -186,7 +221,7 @@ pub(crate) fn load_api_query_models(config: &RuntimeConfig) -> Result<ApiQueryMo
         }
         reconcile_reports.sort_by(|left, right| left.worker_id.cmp(&right.worker_id));
     }
-    Ok((job_runs, ledger_entries, reconcile_reports))
+    Ok(reconcile_reports)
 }
 
 /// 从已持久化的账户 EventLog 构造 API 查询快照。
@@ -196,6 +231,7 @@ pub(crate) fn load_api_query_models(config: &RuntimeConfig) -> Result<ApiQueryMo
 pub(crate) fn load_api_account_snapshots(
     config: &RuntimeConfig,
 ) -> Result<Vec<AccountSnapshot>, String> {
+    let reports = load_reconcile_reports(Path::new(&config.storage.data_dir))?;
     let mut seen = BTreeSet::new();
     let mut snapshots = Vec::new();
     for worker in config
@@ -211,7 +247,7 @@ pub(crate) fn load_api_account_snapshots(
         if !seen.insert(identity) {
             continue;
         }
-        if let Some(snapshot) = load_api_account_snapshot_for_worker(config, worker)? {
+        if let Some(snapshot) = load_api_account_snapshot_for_worker(config, worker, &reports)? {
             snapshots.push(snapshot);
         }
     }
@@ -223,21 +259,53 @@ pub(crate) fn load_api_account_snapshots(
 pub(crate) fn load_api_account_snapshot(
     config: &RuntimeConfig,
 ) -> Result<Option<AccountSnapshot>, String> {
+    let reports = load_reconcile_reports(Path::new(&config.storage.data_dir))?;
     for worker in config
         .workers
         .iter()
         .filter(|worker| owns_account_event_log(worker))
     {
-        if let Some(snapshot) = load_api_account_snapshot_for_worker(config, worker)? {
+        if let Some(snapshot) = load_api_account_snapshot_for_worker(config, worker, &reports)? {
             return Ok(Some(snapshot));
         }
     }
     Ok(None)
 }
 
+/// 把磁盘上的对账报告投影进账户快照的对账侧字段。
+///
+/// 每条对账链每轮覆盖写自己那一份 `reconcile/<worker-id>.json`，所以磁盘上的集合就是
+/// "各链最新一轮"：本账户身份下的差异相加、观察时间戳取最晚。此前这两个字段在全仓没有
+/// 任何写入点，报告里躺着待对账项时快照仍长期报"从未对账、零差异"。
+fn apply_reconcile_reports(
+    snapshot: &mut AccountSnapshot,
+    log_name: &str,
+    reports: &[ReconcileReportSnapshot],
+) {
+    // 报告与快照按同一本账的身份对上：`account_event_log_name` 是唯一的规范化点，
+    // 这里不再自己发明一套 account/venue 比较口径。
+    let mine = reports.iter().filter(|report| {
+        account_event_log_name(&report.account_id, &report.venue_id).as_deref() == Some(log_name)
+    });
+    let last_reconcile_ts = mine.clone().map(|report| report.observed_ts).max();
+    snapshot.reconcile.last_reconcile_ts = last_reconcile_ts;
+    // 两格由同一个问题决定有没有：一份报告都没有时它们一起缺席，而不是留下一个读侧无法与
+    // "对过且干净"区分的 0（V11 R10，与 Q67 的钱字段同一条纪律）。
+    snapshot.reconcile.discrepancy_count = last_reconcile_ts.map(|_| {
+        mine.fold(0_u32, |total, report| {
+            let items = report
+                .order_issues
+                .len()
+                .saturating_add(report.balance_discrepancies.len());
+            total.saturating_add(u32::try_from(items).unwrap_or(u32::MAX))
+        })
+    });
+}
+
 pub(crate) fn load_api_account_snapshot_for_worker(
     config: &RuntimeConfig,
     worker: &WorkerConfig,
+    reports: &[ReconcileReportSnapshot],
 ) -> Result<Option<AccountSnapshot>, String> {
     // 账簿键跟着日志身份的规范化走：用未 trim 的账户号查 Ledger 会读到空账簿，
     // 权益报 0 而没人报错。Venue 大小写不改，因为事实里的 venue 拼写由上报方决定。
@@ -368,6 +436,7 @@ pub(crate) fn load_api_account_snapshot_for_worker(
         }
         snapshot.positions.insert(instrument.clone(), wire);
     }
+    apply_reconcile_reports(&mut snapshot, &log_name, reports);
     snapshot.reconcile.recovery_state = "eventlog-replayed".into();
     Ok(Some(snapshot))
 }

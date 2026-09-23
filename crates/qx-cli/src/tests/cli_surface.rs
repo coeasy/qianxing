@@ -215,6 +215,19 @@ fn doctor_report_is_machine_readable_and_never_claims_network_or_orders() {
         .unwrap()
         .iter()
         .any(|check| { check["name"] == "config" && check["status"] == "pass" }));
+    // 拓扑这一项只能声明"能否构建监督器"：原名 `runtime_topology: pass` 配 `overall=Starting`
+    // 会被读成"运行拓扑已判健康"，而它永远不会失败。
+    let build = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["name"] == "runtime_supervisor_build")
+        .expect("doctor 必须报告监督器可构建性");
+    assert_eq!(build["status"], "pass");
+    assert!(build["message"]
+        .as_str()
+        .unwrap()
+        .contains("不代表运行健康"));
 
     let _ = std::fs::remove_dir_all(root);
 }

@@ -105,20 +105,23 @@ pub(crate) fn configured_api_readiness(
         }
     }
 
-    let metrics_unhealthy = std::fs::read_dir(metrics_dir)
+    let published_metrics = std::fs::read_dir(metrics_dir)
         .ok()
         .into_iter()
         .flat_map(|entries| entries.filter_map(Result::ok))
-        .filter_map(|entry| {
-            (entry.path().extension().and_then(|value| value.to_str()) == Some("prom"))
-                .then(|| std::fs::read_to_string(entry.path()).ok())
-        })
-        .flatten()
-        .any(|content| worker_metrics_unhealthy(&content, now_ms, stale_after_ms));
-    if metrics_unhealthy {
+        .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("prom"))
+        .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+        .collect::<Vec<_>>();
+    let unhealthy = published_metrics
+        .iter()
+        .any(|content| worker_metrics_unhealthy(content, now_ms, stale_after_ms));
+    let workers_expected = config.workers.iter().any(|worker| worker.enabled);
+    if let Some(detail) =
+        worker_metrics_readiness(published_metrics.len(), unhealthy, workers_expected)
+    {
         return ApiReadiness {
             ready: false,
-            detail: "worker_dependency_unavailable".into(),
+            detail: detail.into(),
         };
     }
 
@@ -126,6 +129,22 @@ pub(crate) fn configured_api_readiness(
         ready: true,
         detail: "dependencies_ready".into(),
     }
+}
+
+/// 指标侧的就绪结论（`Some` = 不就绪的原因）：一份 `.prom` 都没扫到不等于依赖健康。
+///
+/// 空目录既可能是"这个部署本来没有 worker"，也可能是 worker 从未起来、或 API 与 worker
+/// 读的不是同一个 `data_dir`（V10 Q55 报告过的双落点）。后者必须报"没有证据"，否则
+/// `/ready` 会替从未发布过健康的 worker 宣称就绪。
+pub(crate) fn worker_metrics_readiness(
+    published: usize,
+    unhealthy: bool,
+    workers_expected: bool,
+) -> Option<&'static str> {
+    if unhealthy {
+        return Some("worker_dependency_unavailable");
+    }
+    (published == 0 && workers_expected).then_some("worker_metrics_unpublished")
 }
 
 pub(crate) fn non_empty_env(name: &str) -> bool {

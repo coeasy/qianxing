@@ -521,28 +521,28 @@ pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, St
     check_account_log_settlement(&config, &mut checks, &mut failures);
     check_orphan_event_logs(path, &config, &mut checks, &mut warnings);
 
-    match RuntimeSupervisor::new(config.clone()) {
-        Ok(supervisor) => {
-            let health = supervisor
-                .health()
-                .lock()
-                .map_err(|_| "运行时健康锁已中毒".to_string())?
-                .snapshot(0, config.shutdown_timeout_ms);
-            checks.push(serde_json::json!({
-                "name": "runtime_topology",
-                "status": "pass",
-                "message": format!("overall={:?}", health.overall)
-            }));
-        }
-        Err(error) => {
-            let message = format!("运行拓扑构建失败: {error}");
-            checks.push(serde_json::json!({
-                "name": "runtime_topology",
-                "status": "fail",
-                "message": message
-            }));
-            failures.push(message);
-        }
+    // 判的是"这份配置能否构建出监督器"（`new` = 已判过的 validate + 按启用 worker 注册
+    // 服务），不是运行健康：此刻一个 worker 都没启动，原名 `runtime_topology: pass` 加
+    // `overall=Starting` 会让读报告的人以为拓扑被判成了健康。
+    let enabled_workers = config
+        .workers
+        .iter()
+        .filter(|worker| worker.enabled)
+        .count();
+    let (status, message) = match RuntimeSupervisor::new(config.clone()) {
+        Ok(_) => (
+            "pass",
+            format!("监督器可构建，启用 worker={enabled_workers}（未启动，不代表运行健康）"),
+        ),
+        Err(error) => ("fail", format!("运行时监督器构建失败: {error}")),
+    };
+    checks.push(serde_json::json!({
+        "name": "runtime_supervisor_build",
+        "status": status,
+        "message": message.clone()
+    }));
+    if status == "fail" {
+        failures.push(message);
     }
 
     Ok(serde_json::json!({
@@ -582,7 +582,7 @@ pub(crate) fn run_doctor(path: &Path, as_json: bool) -> Result<(), String> {
                 .map_err(|error| format!("编码 doctor JSON 失败: {error}"))?
         );
     } else {
-        println!("[Doctor] 检查配置、路径、运行拓扑和策略输入");
+        println!("[Doctor] 检查配置、路径、策略输入与监督器可构建性（不启动 worker）");
         if let Some(checks) = report.get("checks").and_then(serde_json::Value::as_array) {
             for check in checks {
                 let status = check

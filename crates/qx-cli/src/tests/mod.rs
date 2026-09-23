@@ -184,7 +184,68 @@ pub(crate) fn mk_submit_command(command_id: u64, order: &Order, dry_run: bool) -
     }
 }
 
+/// paper 策略运行时的配置模板，`data_dir` 换到用例的临时目录。
+///
+/// 模板里的规格路径相对 `data_dir`，所以规格文件要绝对化后才读得到。账户读模型的
+/// 多条用例（钱字段口径、默认账户挑选）都以这份配置起步，命名与 `ashare_submit_guard`
+/// 里那份"顺手写一份 runtime.json 并返回路径"的 helper 刻意分开。
+pub(crate) fn paper_runtime_config(data_dir: &Path) -> RuntimeConfig {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let template = workspace_root
+        .join("deploy")
+        .join("qianxing.runtime.paper-strategy.example.json");
+    let mut config = read_runtime_config(&template).unwrap();
+    config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    let spec = workspace_binance_spot_spec().to_string_lossy().into_owned();
+    for worker in config.workers.iter_mut() {
+        if worker.instrument_spec_path.is_some() {
+            worker.instrument_spec_path = Some(spec.clone());
+        }
+    }
+    config
+}
+
+/// 把一笔带费用的成交落进 paper 账户日志，产出"持仓未平 + 已付费用"的账户状态。
+pub(crate) fn seed_paper_fill_with_fee(data_dir: &Path, config: &RuntimeConfig) {
+    let config_path = data_dir.join("runtime.json");
+    std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let mut pipeline = LiveEventPipeline::open(data_dir, paper_account_log(), "USDT").unwrap();
+    let ts = runtime_timestamp_ms();
+    pipeline
+        .ingest(RuntimeEventEnvelope::market_quote(
+            instrument.clone(),
+            QuoteTick::new(
+                ts,
+                Price::from_i64(99),
+                Quantity::from_i64(1_000),
+                Price::from_i64(100),
+                Quantity::from_i64(1_000),
+                ts,
+            ),
+            ts,
+            ts,
+            "money-fields:quote",
+        ))
+        .unwrap();
+    drop(pipeline);
+    let order = mk_order(9701, &instrument, Side::Buy, 1);
+    let command = mk_submit_command(9701, &order, false);
+    let control = ControlStateBackend::Files(JsonStateStore::new(data_dir));
+    control
+        .transact(|plane| plane.submit_as(command.clone(), Permission::Trading, 10))
+        .unwrap()
+        .1
+        .unwrap();
+    ControlCommandQueue::new(data_dir.join("control-queue"))
+        .enqueue(command.clone(), 10)
+        .unwrap();
+    run_paper_execution_worker(&config_path, "paper-execution", true).unwrap();
+}
+
 mod account_event_log_identity;
+mod api_default_account_reads;
+mod api_query_models_live;
 mod api_snapshot_money_fields;
 mod ashare_submit_guard;
 
@@ -241,6 +302,10 @@ fn qx_cli_binary() -> PathBuf {
         "qx-cli"
     });
     assert!(binary.is_file(), "未找到被测 binary {}", binary.display());
+    // 本 crate 的 `--bin` 单元测试里 `option_env!("CARGO_BIN_EXE_qx-cli")` 取不到值（它只喂给
+    // 集成测试壳），所以走的正是这条回落分支——也正是 `cargo test --bin` 不重链 binary 的那条路。
+    // 新鲜度只写在上面那条分支等于没写：定向跑子进程用例时会静默对着旧行为变绿（V11 S6）。
+    assert_binary_fresh(&binary);
     binary
 }
 
@@ -263,6 +328,7 @@ mod paper_bridge_and_bundles;
 mod paper_hedge_recovery;
 mod paper_margin_valuation;
 mod paper_settlement_currency;
+mod runtime_api_worker_identity;
 mod settlement_currency_caliper;
 mod storage_root_report;
 mod strategy_worker_entries;

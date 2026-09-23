@@ -59,7 +59,7 @@
 ## 快速开始
 
 下面这段是可复制的常用链路示例。参数与入口的权威来源是 `cargo run -p qx-cli -- help`
-（本轮实测 50 条入口、`deploy/` 下 52 份示例配置），完整使用口径见
+（本轮实测 52 条入口行 / 41 个命令名、`deploy/` 顶层 52 份示例配置），完整使用口径见
 [工业化易用性收口指南](docs/工业化易用性收口指南-V1.md)。
 
 ```bash
@@ -69,10 +69,9 @@ cargo build --release
 # 运行端到端演示（含确定性自校验）
 cargo run -p qx-cli --release
 
-# 纸面交易 / 对账验收
+# 纸面交易验收
 cargo run -p qx-cli --release -- paper
-# 本地对账契约 smoke；真实 Binance 单轮对账使用下方 runtime 入口
-cargo run -p qx-cli --release -- reconcile
+# Binance 单轮对账：本地来源是运行时配置指向的账本，远端来源是该 worker 的交易所账户
 cargo run -p qx-cli --release -- reconcile deploy/qianxing.runtime.production.example.json reconciler-main
 # V5.1 生态层验收
 cargo run -p qx-cli --release -- ecosystem
@@ -244,20 +243,21 @@ Windows 下可直接双击 `build.bat`。
 ## 当前状态
 
 下面的数字全部是 2026-09-23 在本机实测得到的，不是从旧文档抄来的：23 个 crate、
-`cargo run -p qx-cli -- help` 有 50 条入口、`builtin-strategies` 列 17 个内置策略
-（13 个单标的 + 4 个只被 `backtest multi-builtin` 接受的套利 kind）、`deploy/` 有 52 份示例配置、
-`python tools/check_architecture.py` 279 项不变量全绿。
+`cargo run -p qx-cli -- help` 印出 52 条入口行、覆盖 41 个命令名（`config`/`backtest`/`strategy`/`run`
+各自带子入口）、`builtin-strategies` 列 17 个内置策略
+（13 个单标的 + 4 个只被 `backtest multi-builtin` 接受的套利 kind）、`deploy/` 顶层有 52 份示例配置、
+`python tools/check_architecture.py` 280 项不变量全绿。
 
 能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，本轮实测）：**18 个能力块中 15 个
 同时满足 `implementation` 与 `code_tested`；`sandbox_tested` 与 `production_approved` 无一为真**；
 `postgres` / `nats` / `broker_gateway` 三条连 `implementation` 都是 `false`，只有 feature 矩阵或接口占位。
-矩阵共 161 条证据路径与 53 条 limitation。因此可宣称的边界是：
+矩阵共 162 条证据与 54 条 limitation。因此可宣称的边界是：
 **本机可重放的确定性回测、Paper 闭环、以及 CCXT/Binance 的代码级契约** —— 不是"已对接真实账户"。
 
 | 链路 | 已落地且有本地测试证据 | 明确未收口（不得当作已完成） |
 |---|---|---|
-| 回测 | Bar 单标的链（撮合/成本/延迟/保证金四模型可配）、深度 `backtest book`（L1 走 Tick、L2/L3 走订单簿）、双腿 `multi-builtin`、`fast-backtest` 并行、四份同前缀产物与可重算的输入指纹、事件重放结论 | 被 git 跟踪的 16 份 blessed 摘要停在 `schema_version: 1`（无 `input` 块），当前代码在那些路径上已不再落盘；重 bless 与"摘要世代写进文件名"的取舍仍未拍板（V11 §27.5 / §28.5 第 5 条，任务 #53） |
-| 交易 · Paper | 控制面→队列→成交→Ledger、三条入账入口共用精度闸门、拒单与拒绝原因写进产物、崩溃窗口恢复 | 本地 Ledger 拼出的持仓行没有浮盈/保证金生产者，恒定报 `null`；账户级五个钱字段同样无来源 |
+| 回测 | Bar 单标的链（撮合/成本/延迟/保证金四模型可配）、深度 `backtest book`（`--fill-tier` 只认 `l1`/`l2`：前者走 Tick 且要求单档盘口，后者走订单簿并按 `L2L3` 吃掉帧内全部深度）、双腿 `multi-builtin`、`fast-backtest` 并行、Bar 与深度链各写四份同前缀产物与可重算的输入指纹、事件重放结论 | 被 git 跟踪的 16 份 blessed 摘要停在 `schema_version: 1`（无 `input` 块），当前代码在那些路径上已不再落盘；重 bless 与"摘要世代写进文件名"的取舍仍未拍板（V11 §27.5 / §28.5 第 5 条）；`multi-builtin` 只有 `--root` 点名时写 1 份归因产物，没有 RunManifest |
+| 交易 · Paper | 控制面→队列→成交→Ledger、三条入账入口共用精度闸门、拒单与拒绝原因写进产物、崩溃窗口恢复、账户快照的对账两格由磁盘报告投影且"没对过/对过且零差异"分开发布（V11 R7/R10） | 本地 Ledger 拼出的持仓行没有浮盈/保证金生产者，恒定报 `null`；账户级那五个钱字段在本层没有算点，同样按 `null` 发布而不是兜 0 |
 | 交易 · 实盘 | Binance Spot 直连与公共 CCXT 的提交/回报/对账代码路径，缺凭据即退出码 3 fail closed；一轮 CCXT 对账的两半发现（远端孤单 / 本地无远端结果）经同一份清单同时落到事实流、持久报告与健康判定（V11 Q69） | 零真实账户往返：`sandbox_tested=false`；Binance 对账链从不查询持仓/资金费/账单，报告只能报 `null`（取数器仍缺，V11 §31.5 第 5 条）；CCXT 资金费快照缺 `timestamp_ms` 时仍兜 0（§31.5 第 1 条）；远端孤单挂单只有报告与健康两面，没有可落事实流的本地句柄（§31.5 第 4 条，口径而非缺陷）；衍生品无直连（只经 CCXT） |
 | 数据 | 四级质量门、PIT `as_of()` 可见性、DatasetBundle 与组件指纹、A 股公司行为台账与八条交易制度 | 外部数据源正确性只能按供应商逐个验收，本机不可证明 |
 | 运行时 | worker 监督与停机阶梯、共享文件系统租约/fencing token、outbox relay（sqlite/postgres/nats 四种 feature 组合可编译） | PostgreSQL/NATS 无生产批准；券商柜台无供应商协议 |

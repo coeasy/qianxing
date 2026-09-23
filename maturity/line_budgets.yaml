@@ -1,26 +1,26 @@
 # 单文件行数棘轮快照，由 tools/check_architecture.py --snapshot 生成。
 # 只允许数值下降；确需增长或新增超 500 行文件时重新生成并审阅 diff。
-crates/qx-adapter/src/binance.rs: 2291
+crates/qx-adapter/src/binance.rs: 2217
 crates/qx-adapter/src/ccxt.rs: 1068
 crates/qx-adapter/src/lib.rs: 1758
-crates/qx-api/src/lib.rs: 3167
+crates/qx-api/src/lib.rs: 3224
 crates/qx-cli/src/cli.rs: 675
 crates/qx-cli/src/config_commands.rs: 622
 crates/qx-cli/src/event_pipeline.rs: 752
-crates/qx-cli/src/strategy_contract.rs: 822
+crates/qx-cli/src/strategy_contract.rs: 840
 crates/qx-cli/src/strategy_host.rs: 801
-crates/qx-cli/src/workers.rs: 718
+crates/qx-cli/src/workers.rs: 728
 crates/qx-core/src/event.rs: 749
 crates/qx-core/src/sourcing.rs: 567
 crates/qx-data/src/provider.rs: 592
-crates/qx-datastruct/src/lib.rs: 767
+crates/qx-datastruct/src/lib.rs: 702
 crates/qx-execution/src/lib.rs: 1619
 crates/qx-factor/src/execution_plan.rs: 517
 crates/qx-factor/src/lib.rs: 1821
 crates/qx-factor/src/materializer.rs: 507
 crates/qx-guanxing/src/lib.rs: 783
 crates/qx-plugin/src/lib.rs: 583
-crates/qx-protocol/src/lib.rs: 885
+crates/qx-protocol/src/lib.rs: 844
 crates/qx-provider/src/lib.rs: 743
 crates/qx-runtime/src/pipeline.rs: 2391
 crates/qx-scheduler/src/lib.rs: 1530

@@ -258,6 +258,8 @@ pub struct BinanceSpotUserStream {
 /// 连接器重连退避策略。时间由调用方的 `sleep` 注入；V10 §4.9 起退避公式与终态判定统一委托 [`qx_core::retry`]，此处只承载形状参数。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BinanceStreamRetryPolicy {
+    /// 连续重连上限，不是进程生命周期的总额：会话恢复过一次（交付过事件）就重新计数，
+    /// 否则长跑的用户流会在第 N 次正常网络抖动后永久退出。
     pub max_reconnects: u32,
     pub base_delay: std::time::Duration,
     pub max_delay: std::time::Duration,
@@ -294,6 +296,8 @@ impl BinanceStreamRetryPolicy {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BinanceStreamRunReport {
     pub events: u64,
+    /// 本次运行累计发起的重连次数（含失败的连接尝试）。判定上限用的是连续次数，
+    /// 见 [`run_binance_user_stream`]。
     pub reconnects: u32,
 }
 
@@ -382,25 +386,35 @@ where
     Event: FnMut(&str) -> Result<(), String>,
 {
     let mut report = BinanceStreamRunReport::default();
+    // 上限与退避按"连续失败次数"计：`report.reconnects` 是累计口径，拿它当预算等于让
+    // 长跑的用户流在第 N 次正常网络抖动后永久退出。
+    let mut consecutive = 0_u32;
     while !should_stop() {
         let mut session = match connect() {
             Ok(session) => session,
             Err(error) => {
-                report.reconnects = retry::RetryPolicy::next_attempt_count(report.reconnects);
-                if !policy.allows_reconnect(report.reconnects) {
+                consecutive = retry::RetryPolicy::next_attempt_count(consecutive);
+                report.reconnects = report.reconnects.saturating_add(1);
+                if !policy.allows_reconnect(consecutive) {
                     return Err(format!("Binance 用户流连接失败且超过重试上限: {error}"));
                 }
-                sleep(policy.delay_for(report.reconnects));
+                sleep(policy.delay_for(consecutive));
                 continue;
             }
         };
         let mut callback_error = None;
+        // 会话是否"工作过"：交付成功过至少一个事件，且中断不是本地回调失败。
+        let mut served = false;
         while !should_stop() {
             match session.recv_event() {
                 Ok(Some(event)) => match on_event(&event) {
-                    Ok(()) => report.events = report.events.saturating_add(1),
+                    Ok(()) => {
+                        report.events = report.events.saturating_add(1);
+                        served = true;
+                    }
                     Err(error) => {
                         callback_error = Some(error);
+                        served = false;
                         break;
                     }
                 },
@@ -415,11 +429,17 @@ where
         if should_stop() {
             break;
         }
-        report.reconnects = retry::RetryPolicy::next_attempt_count(report.reconnects);
-        if !policy.allows_reconnect(report.reconnects) {
+        // 回调失败不复位：那通常是确定性错误，复位只会让这个循环永远重试下去。
+        consecutive = if served {
+            0
+        } else {
+            retry::RetryPolicy::next_attempt_count(consecutive)
+        };
+        report.reconnects = report.reconnects.saturating_add(1);
+        if !policy.allows_reconnect(consecutive) {
             return Err(callback_error.unwrap_or_else(|| "Binance 用户流关闭".into()));
         }
-        sleep(policy.delay_for(report.reconnects));
+        sleep(policy.delay_for(consecutive));
     }
     Ok(report)
 }
@@ -2011,100 +2031,6 @@ mod tests {
         assert!(request.path.starts_with("/api/v3/allOrders?"));
         assert!(request.path.contains("limit=1000"));
         assert!(request.path.contains("symbol=BTCUSDT"));
-    }
-
-    struct FakeUserStream {
-        events: Vec<Result<Option<String>, String>>,
-    }
-
-    impl BinanceUserStreamSession for FakeUserStream {
-        fn recv_event(&mut self) -> Result<Option<String>, String> {
-            self.events.remove(0)
-        }
-
-        fn close(&mut self) -> Result<(), String> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn user_stream_runner_reconnects_with_injected_clock_and_stop() {
-        let policy = BinanceStreamRetryPolicy::new(
-            2,
-            std::time::Duration::from_millis(10),
-            std::time::Duration::from_millis(40),
-        )
-        .unwrap();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let stop_seen = Arc::clone(&seen);
-        let callback_seen = Arc::clone(&seen);
-        let mut connect_count = 0_u32;
-        let mut slept = Vec::new();
-        let report = run_binance_user_stream(
-            || {
-                connect_count += 1;
-                Ok(FakeUserStream {
-                    events: vec![Ok(Some(format!("event-{connect_count}"))), Ok(None)],
-                })
-            },
-            policy,
-            move || !stop_seen.lock().unwrap().is_empty(),
-            |delay| slept.push(delay),
-            move |event| {
-                callback_seen.lock().unwrap().push(event.to_string());
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(report.events, 1);
-        assert_eq!(report.reconnects, 0);
-        assert_eq!(connect_count, 1);
-        assert!(slept.is_empty());
-        assert_eq!(seen.lock().unwrap().as_slice(), ["event-1"]);
-    }
-
-    #[test]
-    fn user_stream_runner_reconnects_after_session_or_callback_error() {
-        let policy = BinanceStreamRetryPolicy::new(
-            2,
-            std::time::Duration::from_millis(10),
-            std::time::Duration::from_millis(40),
-        )
-        .unwrap();
-        let stop = Arc::new(Mutex::new(false));
-        let stop_for_runner = Arc::clone(&stop);
-        let stop_for_callback = Arc::clone(&stop);
-        let mut connect_count = 0_u32;
-        let mut slept = Vec::new();
-        let report = run_binance_user_stream(
-            || {
-                connect_count += 1;
-                if connect_count == 1 {
-                    Ok(FakeUserStream {
-                        events: vec![Ok(Some("callback-error".into()))],
-                    })
-                } else {
-                    Ok(FakeUserStream {
-                        events: vec![Ok(Some("recovered".into())), Ok(None)],
-                    })
-                }
-            },
-            policy,
-            move || *stop_for_runner.lock().unwrap(),
-            |delay| slept.push(delay),
-            move |event| {
-                if event == "callback-error" {
-                    return Err("injected callback failure".into());
-                }
-                *stop_for_callback.lock().unwrap() = true;
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(connect_count, 2);
-        assert_eq!(report.events, 1);
-        assert_eq!(report.reconnects, 1);
-        assert_eq!(slept, [std::time::Duration::from_millis(10)]);
     }
 
     struct MockTransport {

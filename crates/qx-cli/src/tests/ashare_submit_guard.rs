@@ -168,6 +168,45 @@ fn ccxt_worker_entry_refuses_the_ashare_section_before_touching_the_ccxt_config(
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// 闸门读的是哪一块决定它是不是摆设：`config validate` 与 `strategy backtest` 都认
+/// `strategies[]`，只看 legacy `strategy` 就等于留一条"把 A 股段写进列表"的绕过路径。
+#[test]
+fn the_ashare_gate_also_reads_the_strategies_list() {
+    let worker_id = "strategy-paper";
+    // 多策略条目必须绑定一个同 id 的启用 Strategy worker，否则先撞拓扑校验、到不了闸门。
+    let seeded = |label: &str, with_ashare_rules: bool| -> (PathBuf, PathBuf) {
+        let (root, path) = paper_runtime(label, false);
+        let mut config = read_runtime_config(&path).unwrap();
+        let mut entry = config.strategy.clone();
+        entry.id = Some(worker_id.into());
+        entry.target_snapshot_path = Some(
+            deploy("qianxing.strategy-target.paper.json")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        if with_ashare_rules {
+            entry.ashare_rules_path = Some(deploy(ASHARE_RULES).to_string_lossy().into_owned());
+        }
+        config.strategies.push(entry);
+        std::fs::write(&path, config.to_json().unwrap()).unwrap();
+        (root, path)
+    };
+    let worker = mk_worker("scoped", WorkerRole::Execution, "paper", None);
+    // 反向对照：同一份拓扑、只是没写 A 股段时必须过闸门，证明红的是那个键。
+    let (clean_root, clean_path) = seeded("q65-strategies-list-clean", false);
+    reject_ashare_rules_on_submit_path(&clean_path, Some(&worker), "paper-submit-order")
+        .expect("列表里没有 A 股段就不该被拒");
+    let (root, path) = seeded("q65-strategies-list", true);
+    let error = reject_ashare_rules_on_submit_path(&path, Some(&worker), "paper-submit-order")
+        .expect_err("列表里的 A 股段同样必须当场拒");
+    assert!(
+        error.contains(&format!("strategy[{worker_id}].ashare_rules_path")),
+        "拒绝必须点名是哪一条策略声明的，而不是含糊说 strategy: {error}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(clean_root);
+}
+
 /// 闸门只管会提交新订单的角色。把行情、对账与策略 worker 一起拒，会让"研究用配置"连启动都做不到 ——
 /// 那等于用一条正确的规则去制造一个新的假阴性。
 #[test]
