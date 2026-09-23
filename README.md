@@ -246,7 +246,7 @@ Windows 下可直接双击 `build.bat`。
 下面的数字全部是 2026-09-23 在本机实测得到的，不是从旧文档抄来的：23 个 crate、
 `cargo run -p qx-cli -- help` 有 50 条入口、`builtin-strategies` 列 17 个内置策略
 （13 个单标的 + 4 个只被 `backtest multi-builtin` 接受的套利 kind）、`deploy/` 有 52 份示例配置、
-`python tools/check_architecture.py` 280 项不变量全绿。
+`python tools/check_architecture.py` 283 项不变量全绿。
 
 能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，本轮实测）：**18 个能力块中 15 个
 同时满足 `implementation` 与 `code_tested`；`sandbox_tested` 与 `production_approved` 无一为真**；

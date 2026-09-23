@@ -388,7 +388,10 @@ CLI_TESTS_DIR = "crates/qx-cli/src/tests"
 # Q67 给账户快照的钱字段口径补四条（169 → 173；协议侧那条在 qx-protocol 集成用例里，不计本地板）。
 # Q68 把同一条纪律推到持仓行与 CCXT 回报入口：ccxt 侧三条 + 读模型行侧两条（173 → 178，
 # 按磁盘 `^#[test]$` 实测总数：src/tests 139 + crates/qx-cli/tests 39）。
-CLI_TEST_FLOOR = 178
+# Q71 给"组合收益按钱算而不是两条腿平均"补一条单元 + 一条端到端复算用例。地板本身落后于
+# 磁盘：Q69/Q70 落地时新增了三条用例却没有回写（178 → 181 只发生在磁盘上），本轮连同 Q71 两条
+# 一起抬到实测总数 183（src/tests 143 + crates/qx-cli/tests 40）。
+CLI_TEST_FLOOR = 183
 # 拆文件时最容易被复制进各个主题文件的共享夹具（风控上下文、隔离运行时目录）。
 CLI_TEST_FIXTURES = (
     "smoke_paper_risk_context",
@@ -3276,7 +3279,7 @@ def kernel_claim_check() -> None:
 def multi_leg_honesty_check() -> None:
     """V11 §6 Q0e：多腿归因只承认实际成交，一腿被挡时另一腿必须留下显式待对账事实。
 
-    十二条判据各自抽掉就变红：配对口径必须只看 `filled_qty_raw`（回填成交）、裸腿必须
+    十五条判据各自抽掉就变红：配对口径必须只看 `filled_qty_raw`（回填成交）、裸腿必须
     被登记而不是静默计入某个组、单腿定资要逐腿按本腿行情帧与生效费率算、算不出来必须
     报错而不是截断到 `i64::MAX`（§4.18 的同一类失真）、诚实性事实必须同时出现在 stdout
     与产物里、四条 kind 的端到端用例齐备，最后是费用口径的偏离声明：
@@ -3285,7 +3288,8 @@ def multi_leg_honesty_check() -> None:
 
     后五条属 V11 Q58：产品形态只有 market spec 说得了，缺 spec 的腿一律按现货乘数 1 记账，
     所以"衍生品才计提保证金/资金费"这件事必须有一道先于撮合的规格闸门、腿级的衍生品过滤、
-    产物侧的口径披露，以及四种规格组合各自的行为用例。
+    产物侧的口径披露，以及四种规格组合各自的行为用例。最后三条属 V11 Q71：组合收益只许
+    按两条腿的钱算一次、产物要留下可复算的两端，而组级合计折叠只能住在归因内核里一处。
     """
 
     def top_level_fn(text: str, signature: str) -> str:
@@ -3400,6 +3404,51 @@ def multi_leg_honesty_check() -> None:
         and "none-no-derivative-leg-spec" in cases,
         "四种规格组合（缺规格/全现货/混合/只声明衍生品）必须各有行为用例",
         "multi_leg_attribution.rs 的用例覆盖不再咬住 Q58 口径",
+    )
+    # V11 Q71：组合收益口径。两条腿的本金各按本腿行情定资、天然不等，把两个腿级 `return_bps`
+    # 平均念出来的是"给便宜腿和贵腿同样权重"的那个东西——它既不是组合收益率，也不是任何一条
+    # 腿的收益率（仓库自带夹具在 quantity=100 下实测 -189bp 被念成 -102bp）。判据收三头：调用
+    # 点只能调这一份实现、实现里合计本金非正必须报错（印 0 会把"没法度量"伪装成"不赚不赔"）、
+    # 复算所需的两腿本金与期末权益必须同时落在产物里。
+    # 实现放在 `leg_funding.rs`：它和 `multi_leg_leg_cash` 是同一件事的两端（先按本腿行情定
+    # 资，再按那份本金称收益），拆到两处就等于"权重"这个口径又有了第二个答案。
+    combined_body = top_level_fn(cash, "pub(crate) fn multi_leg_combined_return_bps(")
+    check(
+        "multi_leg_combined_return_bps([" in report
+        and "i64::from(primary_report.return_bps)" not in report
+        and "本金合计必须为正" in combined_body
+        and "Ok(0)" not in combined_body
+        and "unwrap_or" not in combined_body
+        and combined_body.count("checked_add(initial_raw)") == 1,
+        "多腿组合收益只有一处算法：合计盈亏 ÷ 合计本金，且算不出时报错而不是折成 0",
+        f"调用点 {report.count('multi_leg_combined_return_bps([')} 处、"
+        f"退回平均 {report.count('i64::from(primary_report.return_bps)')} 处、"
+        f"折成零形状 {combined_body.count('Ok(0)') + combined_body.count('unwrap_or')} 处",
+    )
+    unit_cases = (CRATES / "qx-cli/src/tests/execution_and_multi_leg.rs").read_text(
+        encoding="utf-8"
+    )
+    check(
+        "fn multi_leg_combined_return_weights_each_leg_by_its_own_capital" in unit_cases
+        and "fn combined_return_pools_both_legs_by_capital_instead_of_averaging_bps" in cases
+        and "primary_final_equity_raw" in report
+        and "reference_final_equity_raw" in report,
+        "组合收益必须同时有加权/平均分叉的行为用例与可复算的产物两端",
+        "Q71 的用例或产物两端缺一：本金加权用例、端到端复算用例、两腿期末权益落盘",
+    )
+    # 本轮把组级合计折叠从编排入口搬进归因内核（`multi_builtin.rs` 越过了 Phase 4s 的 500
+    # 行兄弟模块线，而这段 fold 本来就是在合计内核自己的产物）。搬家要能被抓住：入口重新
+    # 自己折一遍 loop 的话，产物 `totals` 与费用闭合守卫就会各读一份数。
+    check(
+        "multi_leg_group_totals(&groups)" in report
+        and "total_fees_raw" not in report
+        and top_level_fn(pairing, "pub(crate) fn multi_leg_group_totals(").count(
+            "total_fees_raw"
+        )
+        == 1,
+        "组级合计只在 multi_leg_group_totals 一处折叠，编排入口不得再各自 loop 一遍",
+        f"入口重inline={report.count('total_fees_raw')} 处、"
+        f"内核合计={top_level_fn(pairing, 'pub(crate) fn multi_leg_group_totals(').count('total_fees_raw')} 处",
     )
 
 

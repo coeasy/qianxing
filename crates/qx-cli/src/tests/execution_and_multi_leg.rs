@@ -295,3 +295,37 @@ fn paper_multi_leg_spread_submits_each_leg_through_single_track_and_reduces_grou
         .all(|order| order.status == OrderStatus::Filled));
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// V11 Q71：多腿组合收益必须把两条腿的钱合起来算，而不是把两个腿级 bps 平均。
+///
+/// 两条腿的本金由 `multi_leg_leg_cash` 各按本腿自己的行情定资，所以本金天然不等；等权平均
+/// 给便宜腿和贵腿同样的权重，念出来的既不是组合收益率也不是任何一条腿的收益率。
+#[test]
+fn multi_leg_combined_return_weights_each_leg_by_its_own_capital() {
+    // 主腿本金是对冲腿的 3 倍，两腿分别 +100bp 与 +1000bp：平均会念 +550bp，
+    // 而这个组合按钱算只有 (3 + 10) / 400 = +325bp。
+    assert_eq!(
+        multi_leg_combined_return_bps([("primary", 300, 303), ("reference", 100, 110)]).unwrap(),
+        325,
+        "本金不等的两条腿必须按本金加权，不能被等权平均抹平"
+    );
+    // 本金相等时两种算法重合：这条排除"只是换了个说法"的解读——差别确实来自本金权重。
+    assert_eq!(
+        multi_leg_combined_return_bps([("primary", 100, 101), ("reference", 100, 110)]).unwrap(),
+        550,
+        "本金相等时按钱算就该等于平均，否则这条用例什么都没证明"
+    );
+    // 亏损方向同样加权，且符号不能丢：亏 1000bp 的主腿要压过持平的对冲腿。
+    assert_eq!(
+        multi_leg_combined_return_bps([("primary", 300, 270), ("reference", 100, 100)]).unwrap(),
+        -750,
+        "组合亏损不能被平均成看起来更小的一笔"
+    );
+    // 合计本金为零时这个组合根本没有可度量的收益：必须报错，印 0 等于宣称"不赚不赔"。
+    let error =
+        multi_leg_combined_return_bps([("primary", 0, 0), ("reference", 0, 0)]).unwrap_err();
+    assert!(
+        error.contains("本金合计必须为正"),
+        "算不出的组合收益要失败，不能折成零: {error}"
+    );
+}

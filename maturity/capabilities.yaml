@@ -311,6 +311,9 @@ capabilities:
       - Paper 多腿经生产单轨提交两条腿并归约组快照的生命周期测试
       - Paper worker 在 ReconcileRequired 组上拒绝提交剩余腿的屏障测试
       - crates/qx-cli/src/spread.rs RecoveryGuard：补偿腿的风控与产品规格都取自该 worker 的 `instrument_spec_path`，规格解析失败拒绝自动对冲
+      - crates/qx-cli/src/backtests/leg_funding.rs 的 `multi_leg_combined_return_bps`：多腿组合收益的唯一口径是两条腿合计盈亏 ÷ 两条腿合计本金，合计本金非正或折算越界一律报错（V11 Q71）
+      - crates/qx-cli/src/tests/execution_and_multi_leg.rs 的 `multi_leg_combined_return_weights_each_leg_by_its_own_capital`：本金 3:1 的两腿按钱给 325bp 而非等权 550bp，本金相等时两口径重合，全零本金必须报错
+      - crates/qx-cli/tests/multi_leg_attribution.rs 的 `combined_return_pools_both_legs_by_capital_instead_of_averaging_bps`：真实 CLI 跑仓库自带现货夹具（两腿本金实测相差 21 倍），stdout 与产物 `totals.combined_return_bps` 都等于用产物自己声明的 `accounts` 两端复算出的钱口径，且不等于两腿平均
     limitations:
       - legs_submit_one_command_each_no_atomic_group_transaction
       - no_atomic_cross_venue_submission
@@ -318,6 +321,8 @@ capabilities:
       - legacy_execution_recovery_is_disabled_when_same_account_venue_dedicated_worker_is_enabled
       - group_snapshot_sync_is_after_single_leg_eventlog_commit
       - backtest_multi_leg_fees_share_one_cost_binding_because_market_spec_has_no_tier_fields
+      - multi_leg_combined_return_has_no_summary_json_and_its_leg_weights_come_from_the_funding_rule
+      - multi_leg_group_margin_peak_aggregates_with_max_across_groups_without_a_sum_versus_max_case
       - no_production_failure_matrix
 
   postgres:
