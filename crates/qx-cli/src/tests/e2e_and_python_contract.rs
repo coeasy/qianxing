@@ -371,9 +371,9 @@ fn reconcile_report_persists_structured_balance_discrepancy() {
         additional_order_issues: &[],
         balances_count: 1,
         balance_discrepancies: &[discrepancy],
-        position_snapshots_count: 0,
-        funding_rate_snapshots_count: 0,
-        cashflow_count: 0,
+        position_snapshots_count: None,
+        funding_rate_snapshots_count: Some(0),
+        cashflow_count: Some(0),
     })
     .unwrap();
     let report: serde_json::Value = JsonStateStore::new(&root)
@@ -385,6 +385,38 @@ fn reconcile_report_persists_structured_balance_discrepancy() {
         report["balance_discrepancies"][0]["venue_raw"],
         10_000_000_000_i64
     );
+    // "这条链没取" 与 "取了且为空" 在报告里必须是两个值（V11 Q69）。
+    assert!(report["position_snapshots_count"].is_null());
+    assert_eq!(report["funding_rate_snapshots_count"], 0);
+    // 老报告（三个计数是裸 0）仍要能读回来，缺席键读成"没取"。
+    let legacy: qx_api::ReconcileReportSnapshot = serde_json::from_value(serde_json::json!({
+        "schema_version": 1,
+        "worker_id": "reconciler-main",
+        "account_id": "main",
+        "venue_id": "binance",
+        "observed_ts": 42,
+        "order_issues": [],
+        "balances_count": 1,
+        "balance_discrepancies": [],
+        "position_snapshots_count": 0,
+        "funding_rate_snapshots_count": 0,
+        "cashflow_count": 0,
+    }))
+    .unwrap();
+    assert_eq!(legacy.position_snapshots_count, Some(0));
+    let legacy_without_keys: qx_api::ReconcileReportSnapshot =
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "worker_id": "reconciler-main",
+            "account_id": "main",
+            "venue_id": "binance",
+            "observed_ts": 42,
+            "order_issues": [],
+            "balances_count": 1,
+            "balance_discrepancies": [],
+        }))
+        .unwrap();
+    assert_eq!(legacy_without_keys.cashflow_count, None);
     let _ = std::fs::remove_dir_all(root);
 }
 

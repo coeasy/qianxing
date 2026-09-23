@@ -32,9 +32,10 @@ pub(crate) struct ReconcileReportInput<'a> {
     pub(crate) additional_order_issues: &'a [serde_json::Value],
     pub(crate) balances_count: usize,
     pub(crate) balance_discrepancies: &'a [RuntimeBalanceDiscrepancy],
-    pub(crate) position_snapshots_count: usize,
-    pub(crate) funding_rate_snapshots_count: usize,
-    pub(crate) cashflow_count: usize,
+    /// `None` = 这条对账链本轮没有去取该项，`Some(0)` = 取了且为空（V11 Q69）。
+    pub(crate) position_snapshots_count: Option<usize>,
+    pub(crate) funding_rate_snapshots_count: Option<usize>,
+    pub(crate) cashflow_count: Option<usize>,
 }
 
 pub(crate) fn persist_reconcile_report(input: ReconcileReportInput<'_>) -> Result<(), String> {
@@ -151,9 +152,11 @@ pub(crate) fn run_binance_reconcile_worker(
             additional_order_issues: &[],
             balances_count: balances.len(),
             balance_discrepancies: &balance_discrepancies,
-            position_snapshots_count: 0,
-            funding_rate_snapshots_count: 0,
-            cashflow_count: 0,
+            // Binance Spot 这条链只取余额与订单：持仓 / 资金费率 / 账单三项从不查询，
+            // 因此报"没取"而不是 0（写 0 等于替账户宣称"没有持仓、没有资金费"）。
+            position_snapshots_count: None,
+            funding_rate_snapshots_count: None,
+            cashflow_count: None,
         })?;
         source_seq = source_seq.saturating_add(1);
         pipeline

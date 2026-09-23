@@ -180,12 +180,18 @@ capabilities:
       - crates/qx-protocol/tests/snapshot_single_source.rs uncomputed_position_money_is_not_the_same_state_as_computed_zero + default_position_row_reports_no_money + absent_venue_money_stays_absent_through_the_wire_folding cover hash, seal, both wire formats, both diff directions and the Default constructor (V11 Q68)
       - tools/check_architecture.py position_money_honesty_check holds 13 items over that chain, including the ban on defaulting the five row/observation money fields anywhere in the tree and the deliberate keep of the 0-price sentinel (V11 Q68)
       - tools/check_architecture.py snapshot_money_honesty_check holds 11 items over that read model, including the ban on assigning the five money fields this layer cannot compute (V11 Q67)
+      - crates/qx-cli/src/venue_runtime/ccxt_reconcile_worker.rs ccxt_reconcile_round is the single exit for both discovery halves：报告的 order_issues、健康判定与 ReconcileRequired 事实流读同一份 round.order_issues，且只有 client_order_id 能按 JSON 数字解析的发现才允许产生事实 (V11 Q69)
+      - crates/qx-cli/src/tests/ccxt_reconcile_round.rs 两条用例：5 条发现进报告、3 条进事实流，远端孤单挂单（client_order_id 为 ""/字符串）不给 OMS 编一个不存在的句柄；健康结论 ccxt_reconcile_service_status 在只有一条本地-only 发现时也必须降级 (V11 Q69)
+      - crates/qx-api/src/lib.rs + crates/qx-cli/src/venue_runtime/binance_reconcile.rs hold the three reconcile coverage counts as Option<usize> with serde(default)：Binance Spot 那条链没去取的项写 null 而不是 0，落盘的老报告仍可读出 (V11 Q69)
+      - crates/qx-cli/src/tests/e2e_and_python_contract.rs reconcile_report_persists_structured_balance_discrepancy asserts null-versus-zero in the persisted report and deserializes both legacy 0 and an absent key (V11 Q69)
+      - tools/check_architecture.py reconcile_round_honesty_check holds 10 items over that aggregator, including the single require_reconcile call site and the as_u64 handle rule (V11 Q69)
     limitations:
       - continuous_market_driven_paper_worker_requires_runtime_market_data_validation
       - paper_venue_has_no_t_plus_one_settlement_state_today_bought_quantity_nor_board_scoped_limit_anchors_so_the_ashare_section_is_refused_at_every_submit_entry_instead_of_only_its_fee_model (V11 Q65)
       - position_rows_have_no_producer_for_unrealized_pnl_yet：V11 Q68 made the Ledger-fallback row honest (absent instead of a fabricated 0), but computing row PnL still needs a frozen market spec on the read side
       - account_level_unrealized_pnl_margin_frozen_realized_pnl_and_funding_raw_still_have_no_producer (V11 Q67 §28.5, restated after Q68)
-      - ccxt_reconcile_findings_split_between_event_log_and_report：in-loop reconcile facts never reach the persisted report or readiness, and open-order findings never reach the log (V11 Q67 §28.5)
+      - ccxt_reconcile_unknown_remote_open_order_has_no_fact_stream_entry_by_design：Q69 之后两半发现共用同一个出口，但一条远端孤单挂单没有可解析的 client_order_id，OMS 没有可标记的句柄，所以它只进报告与健康判定 (V11 Q69)
+      - binance_reconcile_still_fetches_only_balances_and_orders：那条链没有 positions/funding/cashflow 取数器，Q69 之后报告里写 null 而不是 0，取数缺口本身仍在 (V11 Q69)
 
   ccxt_rest:
     implementation: true
@@ -201,6 +207,7 @@ capabilities:
       - crates/qx-cli/src/config_commands.rs runtime-check/live-check JSON safety contracts
       - crates/qx-cli/src/ccxt_facts.rs CCXT fetch_open_orders discovers unknown remote active orders and degrades readiness without auto-adoption
       - crates/qx-cli/src/ccxt_facts.rs position facts refuse a missing or connector-placeholder side instead of defaulting it to long, and read the three money keys as "unreported" rather than zero (V11 Q68)
+      - crates/qx-cli/src/venue_runtime/ccxt_reconcile_worker.rs emits coverage flags per fetch：只有真正取过 cashflow/position/funding 的那一轮才向报告写计数，否则写 null (V11 Q69)
       - deploy/qianxing.runtime.ccxt.example.json
       - crates/qx-execution/tests/venue_report_contract.rs CCXT fixture：终态后迟到成交与 off-tick/off-step 回报只转待对账
       - .github/workflows/ci.yml C++ JSONL strategy contract smoke

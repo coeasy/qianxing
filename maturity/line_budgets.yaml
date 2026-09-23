@@ -3,7 +3,7 @@
 crates/qx-adapter/src/binance.rs: 2291
 crates/qx-adapter/src/ccxt.rs: 1068
 crates/qx-adapter/src/lib.rs: 1758
-crates/qx-api/src/lib.rs: 3160
+crates/qx-api/src/lib.rs: 3167
 crates/qx-cli/src/cli.rs: 675
 crates/qx-cli/src/config_commands.rs: 622
 crates/qx-cli/src/event_pipeline.rs: 752

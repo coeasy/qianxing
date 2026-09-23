@@ -251,6 +251,7 @@ mod backtest_input_provenance;
 mod backtest_replay_gate;
 mod backtest_risk_provenance;
 mod ccxt_position_facts_honesty;
+mod ccxt_reconcile_round;
 mod cli_surface;
 mod e2e_and_python_contract;
 mod execution_and_multi_leg;

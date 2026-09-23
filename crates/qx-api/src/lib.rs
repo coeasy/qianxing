@@ -995,9 +995,16 @@ pub struct ReconcileReportSnapshot {
     pub balances_count: usize,
     #[serde(default)]
     pub balance_discrepancies: Vec<serde_json::Value>,
-    pub position_snapshots_count: usize,
-    pub funding_rate_snapshots_count: usize,
-    pub cashflow_count: usize,
+    /// 下面三个是"这一轮有没有去取"的覆盖度，不是账户事实本身：`None` 表示这条对账链
+    /// 没有取该项（Binance 现货 worker 不查持仓/资金费/账单，CCXT 在该交易所报
+    /// "能力不支持"时跳过），`Some(0)` 才是取了且为空。此前三者是不可区分的 `usize`
+    /// 且 Binance 侧硬写 0，读侧把"没取"当成"账户没有"（V11 Q69）。
+    #[serde(default)]
+    pub position_snapshots_count: Option<usize>,
+    #[serde(default)]
+    pub funding_rate_snapshots_count: Option<usize>,
+    #[serde(default)]
+    pub cashflow_count: Option<usize>,
 }
 
 impl ReconcileReportSnapshot {
@@ -2604,9 +2611,9 @@ mod tests {
                 order_issues: Vec::new(),
                 balances_count: 1,
                 balance_discrepancies: Vec::new(),
-                position_snapshots_count: 1,
-                funding_rate_snapshots_count: 0,
-                cashflow_count: 0,
+                position_snapshots_count: Some(1),
+                funding_rate_snapshots_count: Some(0),
+                cashflow_count: Some(0),
             },
         );
         state.publish_snapshot(snapshot).unwrap();

@@ -2115,6 +2115,115 @@ def position_money_honesty_check() -> None:
 
 
 
+# V11 Q69（交易链路 TX3）：一轮 CCXT 对账有两半发现，此前各自只喂到一面 —— 本地订单查不到
+# 远端结果只进 `ReconcileRequired` 事实流，远端活动订单本地归并不了只进报告与健康判定；于是
+# 「有一笔单子结果未知」在三个面上互相矛盾（worker 报 Ready、报告说没问题、事实流在喊待对账）。
+# 报告的三个覆盖度计数同批收敛：Binance 侧硬写 0 等于替账户宣称「没有持仓、没有资金费」。
+CCXT_RECONCILE_FILE = "crates/qx-cli/src/venue_runtime/ccxt_reconcile_worker.rs"
+BINANCE_RECONCILE_FILE = "crates/qx-cli/src/venue_runtime/binance_reconcile.rs"
+RECONCILE_REPORT_FILE = "crates/qx-api/src/lib.rs"
+RECONCILE_ROUND_CASE_FILE = "crates/qx-cli/src/tests/ccxt_reconcile_round.rs"
+RECONCILE_DISCOVERY_CASE_FILE = "crates/qx-cli/src/tests/worker_observability.rs"
+RECONCILE_COVERAGE_FIELDS = (
+    "position_snapshots_count",
+    "funding_rate_snapshots_count",
+    "cashflow_count",
+)
+RECONCILE_OBSERVED_FLAGS = ("positions_observed", "funding_rates_observed", "cashflows_observed")
+RECONCILE_ROUND_CASES = (
+    "ccxt_reconcile_round_routes_both_discovery_halves_to_report_and_fact_stream",
+    "ccxt_reconcile_service_status_degrades_on_a_local_only_finding",
+)
+
+
+def reconcile_round_honesty_check() -> None:
+    """对账的两半发现要同时喂到事实流、报告与健康；覆盖度计数不得把「没取」印成 0。"""
+    worker = (ROOT / CCXT_RECONCILE_FILE).read_text(encoding="utf-8")
+    binance = (ROOT / BINANCE_RECONCILE_FILE).read_text(encoding="utf-8")
+    api = (ROOT / RECONCILE_REPORT_FILE).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    cases = (ROOT / RECONCILE_ROUND_CASE_FILE).read_text(encoding="utf-8")
+    discovery_cases = (ROOT / RECONCILE_DISCOVERY_CASE_FILE).read_text(encoding="utf-8")
+    # 去空白后再比形状：这些写法会被 rustfmt 折行，逐字面量数会误报。
+    tight = "".join(worker.split())
+
+    check(
+        worker.count("ccxt_reconcile_round(&open_order_issues, &local_order_issues)") == 1,
+        "CCXT 一轮对账的两半发现只经 ccxt_reconcile_round 汇总一次",
+        "汇总点丢失、少喂一半，或出现第二份手抄",
+    )
+    report_at = worker.find("persist_reconcile_report(ReconcileReportInput")
+    heartbeat_at = worker.find("context.heartbeat", report_at)
+    status_at = worker.find("let service_status")
+    check(
+        0 <= report_at < heartbeat_at < status_at,
+        "报告写入与健康判定排在汇总之后：先落报告再降级，顺序倒了等于本轮结论丢失",
+        f"report={report_at} heartbeat={heartbeat_at} status={status_at}",
+    )
+    report_region = worker[report_at:heartbeat_at]
+    status_region = worker[status_at:]
+    check(
+        report_region.count("additional_order_issues: &round.order_issues") == 1
+        and "additional_order_issues: &open_order_issues" not in worker,
+        "对账报告的清单就是汇总后的两半，不再回手只挑远端那份",
+        "报告又只收远端一半",
+    )
+    check(
+        "ccxt_reconcile_service_status(&round, &balance_discrepancies)" in status_region
+        and worker.count("fn ccxt_reconcile_service_status(") == 1
+        and worker.count("round.order_issues.is_empty() && balance_discrepancies.is_empty()")
+        == 1
+        and "open_order_issues.is_empty()" not in worker,
+        "worker 健康判定读同一份 round.order_issues（本地-only 的发现也要降级）",
+        "健康判定又只看远端一半：有单子结果未知时仍会报 Ready",
+    )
+    check(
+        worker.count(".require_reconcile(") == 1
+        and "for fact in &round.require_reconcile" in worker
+        and worker.count("with_tag(fact.event_tag)") == 1,
+        "待对账事实的写入点只有一处，条目与标签都来自汇总清单",
+        f"写入点 {worker.count('.require_reconcile(')} 处",
+    )
+    round_fn = worker[worker.find("pub(crate) fn ccxt_reconcile_round(") :]
+    check(
+        round_fn.count('issue.get("client_order_id")?.as_u64()?') == 1
+        and "parse::<u64>" not in round_fn
+        and round_fn.count(".chain(local_order_issues)") == 1,
+        "只有能对上本地订单的发现才落 ReconcileRequired：对不上的远端孤单不得把字符串客户号当本地句柄",
+        "句柄判据被放宽成「带 client_order_id 就落事实」，或清单少并一半",
+    )
+    check(
+        all(
+            api.count(f"#[serde(default)]\n    pub {name}: Option<usize>,") == 1
+            for name in RECONCILE_COVERAGE_FIELDS
+        )
+        and not any(f"pub {name}: usize," in api for name in RECONCILE_COVERAGE_FIELDS),
+        "报告的三个覆盖度计数是 Option<usize> 且带 serde default：没取≠取了且为空，老报告缺键仍读得回来",
+        f"字段形态 {[name for name in RECONCILE_COVERAGE_FIELDS if f'pub {name}: Option<usize>,' not in api]}",
+    )
+    check(
+        all(f"{name}: None," in binance for name in RECONCILE_COVERAGE_FIELDS)
+        and not any(f"{name}: 0," in binance for name in RECONCILE_COVERAGE_FIELDS),
+        "Binance 现货这条链对自己从不查询的三项报「没取」，不再写死 0",
+        "覆盖度计数又回到常量 0",
+    )
+    check(
+        all(f"let mut {flag} = false;" in worker for flag in RECONCILE_OBSERVED_FLAGS)
+        and worker.count("positions_observed = true;") == 1
+        and worker.count("funding_rates_observed = true;") == 1
+        and worker.count("cashflows_observed = true;") == 2
+        and all(f"{flag}.then" in tight for flag in RECONCILE_OBSERVED_FLAGS),
+        "CCXT 侧每个覆盖度计数都由「本轮真的取到了」的观测位门控，能力缺失被跳过时报缺席而不是零",
+        f"观测位缺失 {[f for f in RECONCILE_OBSERVED_FLAGS if f'let mut {f} = false;' not in worker]}",
+    )
+    check(
+        all(f"fn {name}(" in cases for name in RECONCILE_ROUND_CASES)
+        and "fn ccxt_open_orders_report_unknown_and_unmapped_remote_risk(" in discovery_cases,
+        "Q69 用例在位：两半发现同时进报告与事实流，四类远端归并口径另有独立用例咬住",
+        f"缺用例 {[n for n in RECONCILE_ROUND_CASES if f'fn {n}(' not in cases]}"
+        f" / 缺归并用例={'ccxt_open_orders_report_unknown_and_unmapped_remote_risk' not in discovery_cases}",
+    )
+
+
 def capabilities_check() -> None:
     path = ROOT / "maturity/capabilities.yaml"
     if not path.exists():
@@ -3580,6 +3689,7 @@ def main() -> int:
     two_leg_partition_check()
     snapshot_money_honesty_check()
     position_money_honesty_check()
+    reconcile_round_honesty_check()
     capabilities_check()
     line_budget_check()
     print()
