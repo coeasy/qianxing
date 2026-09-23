@@ -96,7 +96,10 @@ impl<T> ProjectionEnvelope<T> {
 pub struct AccountSnapshot {
     pub header: SnapshotHeader,
     pub cash_raw: BTreeMap<String, i128>,
-    pub equity_raw: i128,
+    /// 权益与下面这七个钱字段走同一条纪律（V11 Q67/Q68/Q70）：`None` 是"这一层算不出它"，
+    /// `Some(0)` 是"算过且为零"。此前它是不可区分的 `i128`，于是账户持有一条没有标记价的仓位时，
+    /// 读模型退回纯现金——把"算不出"印成一个看起来完全合法的权益。
+    pub equity_raw: Option<i128>,
     /// 这七个钱字段是"读过才算得出"的量：`None` 表示这一层没有算它，`Some(0)` 表示算过且结果为零。
     /// 它们此前是不可区分的 `i128`，于是全仓没有写入点的 `margin_raw`/`fees_raw` 等会以"0"的身份被
     /// `GET /account/balances` 长期发布，读侧把"没算"当成"没有费用/没有保证金"。
@@ -176,7 +179,7 @@ impl AccountSnapshot {
                 state_hash: 0,
             },
             cash_raw: BTreeMap::new(),
-            equity_raw: 0,
+            equity_raw: None,
             available_raw: None,
             margin_raw: None,
             frozen_raw: None,
@@ -213,11 +216,11 @@ impl AccountSnapshot {
         self.header.state_hash = self.state_hash();
     }
 
-    /// 八个汇总钱字段的唯一取法（权益排在最前，它总是算得出的）。哈希与稳定 JSON 都走这一份，
+    /// 八个汇总钱字段的唯一取法（权益排在最前，但它同样可能算不出）。哈希与稳定 JSON 都走这一份，
     /// 两处不可能对"哪些字段算未算"各说一套。
     fn scalar_money_raw(&self) -> [Option<i128>; 8] {
         [
-            Some(self.equity_raw),
+            self.equity_raw,
             self.available_raw,
             self.margin_raw,
             self.frozen_raw,
@@ -525,7 +528,7 @@ fn json_string(value: &str) -> String {
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 struct ScalarState {
-    equity_raw: i128,
+    equity_raw: Option<i128>,
     available_raw: Option<i128>,
     margin_raw: Option<i128>,
     frozen_raw: Option<i128>,
@@ -785,7 +788,7 @@ mod tests {
         let base = snapshot();
         let mut target = base.clone();
         target.cash_raw.insert("USDT".into(), 900);
-        target.equity_raw = 900;
+        target.equity_raw = Some(900);
         target.header.snapshot_id = 2;
         target.header.as_of = 11;
         target.header.event_seq = 4;

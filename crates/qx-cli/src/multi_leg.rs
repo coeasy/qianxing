@@ -448,3 +448,23 @@ pub(crate) fn multi_leg_group_attributions(
         pending_reconcile,
     })
 }
+
+/// 把组级归因合计成多腿链唯一的一份组合数字，依次为费用、成交额、资金费、成交量与保证金
+/// 峰值。保证金取的是各组里的峰值而非求和（同一账户上的两条腿共享那份保证金，加总等于
+/// 把它算两遍）。合计只在这里做一次：产物 `totals`、费用闭合守卫与 `cost_bps` 读的都是
+/// 这一份，各自再折一遍 loop 就会出现"两个 totals 都对不上"的那类失真。
+pub(crate) fn multi_leg_group_totals(
+    groups: &[SpreadGroupAttribution],
+) -> (i128, i128, i128, i128, i128) {
+    groups.iter().fold(
+        (0_i128, 0_i128, 0_i128, 0_i128, 0_i128),
+        |mut acc, group| {
+            acc.0 += group.total_fees_raw;
+            acc.1 += group.total_turnover_raw;
+            acc.2 += group.total_funding_raw;
+            acc.3 += group.total_filled_qty_raw;
+            acc.4 = acc.4.max(group.total_margin_raw);
+            acc
+        },
+    )
+}

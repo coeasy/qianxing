@@ -43,11 +43,16 @@ class BridgeTest(unittest.TestCase):
             "reconcile": {},
         }
         self.assertEqual(load_account_snapshot(json.dumps(payload))["schema_version"], 1)
-        # 必填集合与 Rust 读侧、与发布出去的契约同宽：`equity_raw` 是写侧恒印的一列。
+        # 必填集合与 Rust 读侧、与发布出去的契约同宽：`equity_raw` 是写侧恒印的键。
         for field in ("equity_raw", "positions"):
             incomplete = {key: value for key, value in payload.items() if key != field}
             with self.assertRaisesRegex(ValueError, "missing snapshot fields"):
                 load_account_snapshot(json.dumps(incomplete))
+        # 恒印的是键，不是值：Q70 起算不出标记价时写侧印 `"equity_raw":null`。契约那侧已经
+        # 允许 null，Python 读侧若拒收就是同一份产物一边解得开、一边解不开。
+        self.assertIsNone(
+            load_account_snapshot(json.dumps({**payload, "equity_raw": None}))["equity_raw"]
+        )
         # 别的版本号不是"缺字段"，也不能被当成 v1 解开——Rust 的 from_json 同一判据。
         for version in (0, 2):
             with self.assertRaisesRegex(ValueError, "unsupported account snapshot schema"):

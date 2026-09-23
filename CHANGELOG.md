@@ -1,11 +1,54 @@
 # Changelog
 
+## Unreleased — V11 合流轮：两条并行线各自全绿，合流之后契约对自家写侧说了谎（2026-09-23）
+
+T 轮落进本地之后 `git fetch` 才看到 `origin/main` 上多了 Q70/Q71 两颗。两侧各自跑完自己的门禁与用例都是绿的，
+合流之后才发现**对外契约对它自家读模型每天印出的 `"equity_raw":null` 说了谎**：Q70 把协议侧 `equity_raw` 变成
+`Option<i128>`（缺标记价的持仓不算权益，而不是拿剩余现金冒充），T3 刚把契约钉成"七格可空、权益不可空"。
+本轮跟上事实，并把三处判据从"抄字段名单"换成"问写侧产物与协议类型"。逐项证据、5 颗变异与一句被当场证伪的话见
+[docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md) §38。
+
+### Fixed
+
+- **`schemas/account-snapshot-v1.json` 的 `equity_raw` 改为 `["integer", "null"]`**，判据同时换掉三处：
+  `crates/qx-protocol/tests/snapshot_schema_contract.rs` 那条用例改由写侧自己交两份产物（八项全未算 /
+  八项全算得出）逐格比契约，并要求那份"全部未算"能被 `from_json` 读回 `None`；门禁
+  `account_snapshot_schema_check` 第 4 项直接正则读协议源码，契约里可空的那些必须正好等于类型为
+  `Option<i128>` 的那些；`python/tests/test_bridge.py` 补"契约允许 null 的键，对面 Python 读侧也收得下"。
+  名单与类型任何一侧单独漂都会红。
+- **门禁的一条失败文案停在旧口径**：`/account/balances` 那一项的条件里 `equity_raw` 是第三条，文案只点名
+  available/margin——判据对、文案错，一样会把人往错的方向上带（M5 顺手查出来的）。
+- 合流余下的三处编译错与一处夹具分叉：T3 的两份夹具赋值补 `Some(...)`（`snapshot_schema_contract.rs:279`、
+  `snapshot_single_source.rs:679`），`api_snapshot_money_fields.rs:249` 改调 `src/tests/mod.rs` 里那份共享
+  paper 夹具 `paper_runtime_config`。
+
+### 合流时塌掉的那一份夹具
+
+- 上游那份文件顶部的 `paper_runtime`（`origin/main` 版 `:13`）与本仓 `crates/qx-cli/src/tests/mod.rs:192` 的
+  `paper_runtime_config` 是同一份配置的两份手写字面量——逐行比过，除函数名与 `pub(crate)` 外完全相同；
+  `seed_paper_fill_with_fee` 在 `:31` 与 `mod.rs:209` 也是同一对。合流取共享那一份，上游新增用例的调用点改名到
+  `paper_runtime_config`（`api_snapshot_money_fields.rs:249`）。合并后"同一张 paper 模板 + 临时 data_dir"这一族
+  只剩 `mod.rs` 一处公共夹具；`ashare_submit_guard.rs:22` 那个同名 helper 读的是同一张模板但额外写那三个
+  A 股键、返回的是路径对，它是这一族的第三个成员，本轮不动它（动它就是又一次夹具收敛）。
+
+### 门禁数字（本轮实测，覆盖 §37.6）
+
+| 项 | T 轮（HEAD 实测） | 合流后 |
+|---|---|---|
+| 架构不变量 | 314 项全绿 | **318 项全绿**（+9 / −5 逐标签比过：上游新增 4、按 Q70/Q71 改名 4、本轮换判据 1 对删掉那项"权益不可空"） |
+| 整树 `cargo test --workspace` | 767 passed | **770 passed / 0 failed / 0 ignored**（+3 条 `#[test]` 全来自上游） |
+| `CLI_TEST_FLOOR` | 199 | **202**（实测 `src/tests` 162 + `crates/qx-cli/tests` 40） |
+| Python `unittest` | 46 | **46 OK（2 skip）** |
+| `cargo fmt` / `clippy -D warnings` | 0 / 0 | 0 / 0 |
+| 行数预算 | 全过 | 全过（`qx-api/src/lib.rs` 3224→3237 吸收上游端点用例、`qx-protocol/src/lib.rs` 888→847、新入册 `api_snapshot_money_fields.rs: 518`） |
+| 文档编号 | §32–§35 本仓占用 | **整批后移两位**（R=§34、S=§36、T=§37），合流轮记为 §38；上游的 Q70=§32、Q71=§33 不动 |
+
 ## Unreleased — V11 T 轮收口：上一轮"只报不修"里缺证据的四项，这轮全部改成有人咬着（2026-09-23，T1–T4）
 
-§34.5 / §32.5 的清单里有四项，原因并不是"需要拍板"，而是**证据留不住**：修复已经在了（或两份读法已经漂了），
+§36.5 / §34.5 的清单里有四项，原因并不是"需要拍板"，而是**证据留不住**：修复已经在了（或两份读法已经漂了），
 但全仓没有一条常驻用例会在它被改回缺陷态时变红。本轮只补这一件事，判据一句话——"任何人把它退回缺陷态，
 CI 会不会响"。四项共 **33 颗变异逐颗验证**，每颗跑完按字节还原。逐项证据、变异报告与本轮踩到的两条见
-[docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md) §35。
+[docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md) §37。
 
 ### Fixed
 
@@ -17,10 +60,11 @@ CI 会不会响"。四项共 **33 颗变异逐颗验证**，每颗跑完按字�
   两侧改为读同一对夹具，摘要只存在 `.fingerprint` 那一份文件里，代码里出现抄本会被门禁点名。
 - **T3（S10）账户快照的对外契约有两份手抄，且文件那份零消费者**：`ACCOUNT_SNAPSHOT_JSON_SCHEMA` 与
   `schemas/account-snapshot-v1.json` 逐键比过（已声明字段全等、差 6 个键），但**两份都漏掉了写侧恒印的八个钱
-  字段**。改为常量按字节 `include_str!` 仓库那份文件——漂移在编译期就没有退路；文件补齐八个钱字段（权益不可空、
-  七个"读过才算得出"的可空）。另一半是读侧：`from_json` 此前只核对"顶层与表内版本号是否自相矛盾"，一份按别的
+  字段**。改为常量按字节 `include_str!` 仓库那份文件——漂移在编译期就没有退路；文件补齐八个钱字段（那一轮
+  是"七格可空、权益不可空"，权益那一格在同日合流轮被 Q70 推翻，见上方「合流轮」一节）。另一半是读侧：`from_json`
+  此前只核对"顶层与表内版本号是否自相矛盾"，一份按别的
   版本自洽封存的文档会被当 v1 解出来，而对面 Python `load_account_snapshot` 对同一份产物直接抛错；现在补
-  `ACCOUNT_SNAPSHOT_SCHEMA_VERSION` 闸门，Python 侧必填集合同步补 `equity_raw`。
+  `ACCOUNT_SNAPSHOT_SCHEMA_VERSION` 闸门，Python 侧必填集合同步补 `equity_raw`（必填说的是键必须在，值可以是 null）。
 - **T4（S12）`reconcile` 的默认 worker 名是字面量**：`cli_args.rs:269` 是全仓唯一一个可选 `worker_id`，省略时
   HEAD 回落 `"reconciler-main"`，而 CCXT 那条链的 reconciler 实际叫 `ccxt-reconciler-main`。两个方向都撒谎：
   名字合法改动的拓扑上报"找不到 worker: reconciler-main"（把"没解析"说成"不存在"），恰好有个同名 execution
@@ -55,7 +99,7 @@ CI 会不会响"。四项共 **33 颗变异逐颗验证**，每颗跑完按字�
 | `cargo fmt` / `clippy -D warnings` | 0 | 0（`--workspace --all-targets --all-features`），`tools/validate_core.py` 全过 |
 | 行数预算 | — | 新入册 `worker_entry.rs: 509`，`cli.rs` 675→674；`qx-api/src/lib.rs` 与 `qx-protocol/src/lib.rs` 均零增行 |
 
-### 本轮踩到（§35.4）
+### 本轮踩到（§37.4）
 
 - **变异电池里的"红"必须是断言红**：一颗变异的红其实是 `link.exe exit code 1104`（另有一颗 cargo 在抢同一个
   `target/`），脚本按"编译失败也算被抓"把它记成了通过。单独重跑才拿到真红；判定式改为编译/链接失败一律记
@@ -63,7 +107,7 @@ CI 会不会响"。四项共 **33 颗变异逐颗验证**，每颗跑完按字�
 - **变异要改判据，不是改判据所在的语法结构**：把 `if let Some((a, b)) = identity {` 整段换成 `if false {` 会连
   块体引用的绑定一起删掉（E0425），这颗不合法。CRLF 仓库里用 `\n` 拼锚点 0 命中那条老教训本轮又撞一次。
 
-### 只报不修（升级路径写在 §35.5）
+### 只报不修（升级路径写在 §37.5）
 
 上一轮清单全部维持（R8、C3、C4、C6、C9、S8、S9、S11、S13 行为侧、`qx-execution` 1619 行结构债）。本轮新立四条，
 都不需要拍板但一拍就得改口径：T2 的夹具模式只钉住了 `calendar` 一条分支，`corporate_actions` 那半边
@@ -81,9 +125,9 @@ CI 会不会响"。四项共 **33 颗变异逐颗验证**，每颗跑完按字�
 与外部接口（worker 生命周期、重连、健康结论、跨语言边界），第三遍反方向核对（声明了没人读的东西、读了
 没人声明的东西、循环能否终止、两侧契约是否互拒），末了把同一套反向核对推到仓库外那一端（C++ 插件的 ABI
 镜像）。两轮共立案 30 项（R 轮 18 项、S 轮 12 项），23 项落代码并
-留常驻证明，7 项判为"需要部署侧或契约决策"只报不修；§32.5 另挂着前几轮立案的 C3/C4/C6/C9 与两条证明缺口
+留常驻证明，7 项判为"需要部署侧或契约决策"只报不修；§34.5 另挂着前几轮立案的 C3/C4/C6/C9 与两条证明缺口
 （R13 无常驻反例、`qx-execution` 1619 行结构债），本轮复核后仍未动。方法、逐项证据与变异报告见
-[docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md) §32–§34。
+[docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md) §34–§36。
 
 ### Fixed（R 轮 R1–R16、R18：数据面与读侧诚实）
 
@@ -144,10 +188,10 @@ CI 会不会响"。四项共 **33 颗变异逐颗验证**，每颗跑完按字�
 - 新门禁：`control_plane_honesty_check()`（8 项，S1/S2/S3/S5/S6）、`api_surface_doc_check()`（2 项，S7）、
   `c_abi_header_check()`（4 项，S13：两侧类型集合对称差、字段名与顺序逐位、字段类型按映射表、枚举判别值与
   ABI 版本常量相等；未登记的 C 类型直接报错而不是跳过）。
-  两轮的三遍扫描本身不新增依赖、不新增配置键：§33.3 的反向核对查到一处示例覆盖缺口（`cost_rules_path` 有文档
+  两轮的三遍扫描本身不新增依赖、不新增配置键：§35.3 的反向核对查到一处示例覆盖缺口（`cost_rules_path` 有文档
   无示例），已记为"缺口"而非"断链"，本轮未动。
 
-### 门禁数字（本轮实测，覆盖 §31.4 / §32.4 口径）
+### 门禁数字（本轮实测，覆盖 §31.4 / §34.4 口径）
 
 | 项 | R 轮前（`99c7051`） | 现在 |
 |---|---|---|
@@ -158,7 +202,7 @@ CI 会不会响"。四项共 **33 颗变异逐颗验证**，每颗跑完按字�
 | `cargo fmt` / `clippy -D warnings` | 0 | 0，`qx-cli` 特性矩阵四档（sqlite / postgres / nats / postgres,nats）同绿 |
 | 行数预算 | — | 抬升：`qx-api` 3167→3224、`strategy_contract.rs` 822→840、`workers.rs` 718→728；下降：`binance.rs` 2291→2217、`qx-datastruct` 767→702、`qx-protocol` 885→844 |
 
-### 本轮踩到（§33.2、§34.4）
+### 本轮踩到（§35.2、§36.4）
 
 - **委派报告里的每个 file:line 都要自己 grep 才算证据**：`/live` 端点、`is_backtest_artifact_path`、
   `CLI_TEST_FLOOR` 过期三条候选全经自跑驳回，未据此改代码。
@@ -170,7 +214,7 @@ CI 会不会响"。四项共 **33 颗变异逐颗验证**，每颗跑完按字�
 - **日志为空不等于通过**：一次变异把输出写到 `$TEMP` 拼错的路径，读到的是另一个项目的过期日志，
   差点把编译失败的 `exit 101` 记成测试结果。
 
-### 只报不修（升级路径写在 §32.5 / §34.5）
+### 只报不修（升级路径写在 §34.5 / §36.5）
 
 R8（停机令牌无人触发：出口有了、谁翻令牌是部署侧决策）、R17（日历组件指纹两侧各写一遍 canonical 字节，
 无实测分叉但互不拒绝；**T 轮已收口**）、R13 无常驻反例（**T 轮已补**）、C3（账单水位是跨币种/跨腿标量）、
@@ -181,6 +225,124 @@ S12（对账默认 worker id 与 CCXT 链分叉；**T 轮已收口**）。另有
 CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example` 确实被 build 出来却无人 `load_verified`），
 所以 S13 的 ABI 镜像一致性目前只有静态门禁一层保护。`maturity/capabilities.yaml` 里
 `sandbox_tested` 仍全为 `false`——本轮全部是本机行为用例与静态门禁，不含真实下单回报。
+
+## Unreleased — V11 Q71：多腿组合收益按两条腿的钱算，不再把两腿 bps 平均（2026-09-23）
+
+回测链路实测（V11 #54）排到的第八颗：回测 FN8。§28/§29/§32 那条纪律管"没算过的钱不许印成 0"，
+这一颗管**加权**：把两个分母不同的比率等权平均，念出来的既不是组合收益率、也不是任何一条腿的收益率，
+而它在终端上看起来完全像一个合理的组合收益率。收口记录见
+[docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md) §33。
+
+### Fixed（一个印在终端上的加权错误）
+
+- **组合收益改为两条腿按钱合计**：`crates/qx-cli/src/backtests/multi_builtin.rs:274` 此前印
+  `(i64::from(primary_report.return_bps) + i64::from(reference_report.return_bps)) / 2`。两条腿的本金由
+  `multi_leg_leg_cash` 各按**本腿行情帧的最高价**定资，天然不等 —— 仓库自带的那对现货夹具按 `quantity=100`
+  跑，主腿本金正好是对冲腿的 **21.0 倍**，两腿分别 -197bp 与 -7bp，平均念 **-102bp**，按钱算实际是
+  **-189bp**：这个组合的真实亏损被念轻了 87bp，接近一半。现在口径只有一处
+  `Σ(期末权益 − 期初本金) × 10000 ÷ Σ期初本金`（`crates/qx-cli/src/backtests/leg_funding.rs:141-165`，
+  与定资同处一文件，"权重"因此不再有第二个答案）。
+- **算不出时报错而不是折成 0**：合计本金 ≤ 0、`× 10000` 越界、结果超出 `i64` 三种情形一律 `Err`。
+  印 0 会把"这个组合根本没法度量"伪装成"这单套利不赚不赔"，与 `multi_leg_leg_cash` 撤掉静默截断同一条纪律。
+- **一次被行数逼出来的搬家**：`multi_builtin.rs` 加完新代码会越过 Phase 4s 的
+  `cli_backtest_module_check()`（`tools/check_architecture.py:700`，`>= OVERSIZED(500)` 即红，登记进预算表
+  也救不了）。把入口那 11 行组级合计折叠搬进归因内核 `crates/qx-cli/src/multi_leg.rs:452-470`
+  （新增 `multi_leg_group_totals`，保证金仍取各组峰值而非求和），入口只留 1 行调用；
+  `maturity/line_budgets.yaml` 本轮**一个字节都没动**。
+
+### Added（用例、产物两端与门禁）
+
+- `crates/qx-cli/src/tests/execution_and_multi_leg.rs:304-331`
+  （`multi_leg_combined_return_weights_each_leg_by_its_own_capital`）：本金 3:1、两腿 +100bp/+1000bp 时必须
+  给 **325bp** 而不是等权的 550bp；本金相等时两口径重合（排除"只是换了个说法"）；亏 1000bp 的主腿压过
+  持平的对冲腿给 -750bp 而不是 -500bp；全零本金必须 `Err` 且文案含"本金合计必须为正"。
+- `crates/qx-cli/tests/multi_leg_attribution.rs:726-792`
+  （`combined_return_pools_both_legs_by_capital_instead_of_averaging_bps`）：跑真实 CLI，用产物自己声明的
+  `accounts/*_initial_cash` 与 `accounts/*_final_equity_raw` 复算钱口径，要求 stdout 与
+  `totals.combined_return_bps` 都等于它，并**另加一条 `!=` 两腿平均** —— 少了这条，用例在旧实现下也是绿的。
+- **产物补齐复算所需的两端**：`multi_builtin.rs:445-446` 把两条腿的期末权益写进 `accounts`（期初本金本来就在
+  同一块，缺一端别人复算不出来），`:459` 落 `totals.combined_return_bps`。
+- `tools/check_architecture.py` 门禁 280 → **283 项**（四缩进 `check(` 201 → 204），
+  `multi_leg_honesty_check()` 十二条长到十五条：调用点只许出现那一份实现且 `i64::from(primary_report.return_bps)`
+  不得复活、实现体内必须留错误文案且不得出现 `Ok(0)` / `unwrap_or`；两条用例名 + 产物两腿期末权益键齐备；
+  组级合计折叠只在 `multi_leg_group_totals` 一处。
+- 用例地板 `CLI_TEST_FLOOR` 178 → **183**。这个数字本轮实测落后两次：Q69/Q70 新增的三条用例没回写地板
+  （磁盘 181 而门禁仍写 178），连同 Q71 两条一起按磁盘总数（`src/tests` 143 + `crates/qx-cli/tests` 40）抬平。
+
+### 本轮日志实测（`/tmp/qx_q71_gate1.log` 20:03:48 → 20:05:28，明细见 §33.4）
+
+- `STAGE1_CHECK_EXIT=0`、`STAGE3_FMT_EXIT=0`、`STAGE4_CLIPPY[qx-cli]_EXIT=0`；`SNAPSHOT_EXIT=0` 且
+  `BUDGET_DIFF_LINES=0`；基线三组用例 11 / 1 / 7 条通过，`0 failed`；
+- 四条变异全部 `MUT_STATE=red`、`ARCH_FAIL_LINES=1`、`OTHER_FAILS=0`、`PASS_LINES=282`（每条只点亮被测那一项），
+  四次还原全 `RESTORE_EXACT`。M1（调用点退回平均）红在 `multi_leg_attribution.rs:774`，M2（`Ok(0)`）红在
+  `execution_and_multi_leg.rs:326`，M3（产物缺两腿期末权益）红在 `:756` 的缺键 panic，M4（入口重新自己折
+  合计）只有结构项红 —— 算的是同一份五元组，行为用例分不出来，本轮如实记为"静态防守"而未补假用例；
+- `QX_PYTHON` 指向 venv 的整树 `STAGE7_WS_EXIT=0`、`WS_OK_LINES=76`、合计 `736 passed / 0 failed`；
+  `STAGE8_ARCH_EXIT=0`（283 项全绿）、`MODIFIED_DEPLOY=0`、`PRISTINE_OK final`。`gate1` 即验收轮，无作废轮次。
+
+### 本轮踩到（记在 §33.3）
+
+- **我自己写的第一版判据是假防守，被预检变异当场抓到**：原判据含 `"funded_raw <= 0" in combined_body`，而
+  M2 的坏形状恰恰是保留该条件、只把 `Err` 换成 `Ok(0)` —— 条件还在，判据照样绿。改成钉错误文案 + 两种折零
+  形状缺席。**每写一条"某串文本必须在/不在"的判据，先问一句"我要防的那个坏形状写出来还带着它吗"。**
+- **rustfmt 按 76 字符把元组实参拆成 4 行**，两处共 8 行的增量正好把入口文件顶过 500 行线。修法不是压注释，
+  而是先 `let primary_equity = primary_report.final_equity();` 再传，且这两个绑定在产物侧复用 —— 调用点与
+  `accounts` 读的是同一个值。
+- **零成交那档新旧口径恰好重合**：`crates/qx-cli/tests/builtin_signal_from_config.rs:433` 要求
+  `combined_return_bps == "0"`（远档 `fills=0`，两腿权益都等于各自本金）。它在旧实现下也成立，因此**不构成
+  新口径的证据**；加权与平均的分叉必须由本金不等的真实夹具来证明。
+
+## Unreleased — V11 Q70：账户权益不再拿剩余现金冒充"算不出的权益"（2026-09-23）
+
+交易链路实测（V11 #54）排到的第四颗：交易 TX4，是 Q67/Q68 那条"缺席不等于零"纪律的最后一颗。
+收口记录见 [docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md) §32。
+
+### Fixed（最后一个不可区分的钱标量）
+
+- **读模型不再替账户宣称"压在持仓上的那一腿不值钱"**：`crates/qx-cli/src/api_service.rs:268-272` 此前写
+  `equity_for(...).unwrap_or_else(|| cash_for(...))`。内核 `Ledger::equity_for`
+  （`crates/qx-core/src/ledger/query.rs:156-204`）的 `None` 含义明确 —— 有任意一条持仓拿不到标记价、或估值
+  溢出。折成剩余现金之后，一个只有成交、没有行情事实的账户会把现金长期报成权益，且哈希/稳定 JSON/线格式/
+  diff 全链路自洽，读侧无从发现。现在这个 `None` 原样发布为 `null`。
+- **协议层第一次能表达"权益没算"**：`crates/qx-protocol/src/lib.rs:109` 的 `equity_raw` 由 `i128` 变
+  `Option<i128>`（构造函数 `None`、`ScalarState` 同步），八个汇总钱字段从此共用 Q67 那一条带存在性标记的
+  哈希与序列化通道，本轮没有新增任何一份手抄字段清单。
+- **风控侧同一表达式是保守用法，明确不动**：`crates/qx-cli/src/venue_runtime/worker_runtime.rs:189-191`
+  的 Paper 现货分支 `unwrap_or(cash_only)` 把权益往小里说、闸门只会更紧，其注释已写明；本轮红线只划在读模型侧。
+
+### Added（用例与门禁）
+
+- `crates/qx-cli/src/tests/api_snapshot_money_fields.rs` 新增
+  `equity_without_a_mark_price_is_absent_rather_than_the_remaining_cash`：成对钉"缺标记价 → `None` + 两份
+  JSON 印 `null` + 可用资金照旧"与"补一条报价之后同一个账户必须重新算得出权益"。
+- `crates/qx-protocol/tests/snapshot_single_source.rs` 的 `OPTIONAL_MONEY_FIELDS` 从七个变**八个**，
+  Q67 那条"缺席≠零"遍历（哈希、seal、两份线格式、两个 diff 方向）由此自动覆盖权益，无需另写用例。
+- `crates/qx-api/src/lib.rs` 的端点用例加第二段：默认快照在 `/account/balances` 上必须印
+  `"equity_raw":null`（该端点生产体无需改动即不错报，但没有这一段就测不到权益的缺席态）。
+- `tools/check_architecture.py` 门禁 279 → **280 项**（四缩进 `check(` 调用点 200 → 201）：新增"权益只在
+  现金与每一条持仓的标记价都读得出时发布"一项（按语句区域判定，对 rustfmt 折行不敏感）；"八个字段全是
+  `Option<i128>`"并入 equity；端点项加 `equity_raw` 的 null 发布判据；取法项从"数一行字面量"改成
+  "盯整个 `fn scalar_money_raw` 函数体、禁 `Some(` 与 `unwrap_or`"。
+- 行数预算：`crates/qx-protocol/src/lib.rs` 885 → 888、`crates/qx-api/src/lib.rs` 3167 → 3180（本轮唯一两处）。
+
+### 本轮日志实测（`/tmp/qx_q70_gate1.log` 19:05:08 → 19:07:55，明细见 §32.4）
+
+- `STAGE1_CHECK_EXIT=0`、`STAGE3_FMT_EXIT=0`、`qx-protocol|qx-api|qx-cli` 三格 clippy `-D warnings` 均 0；
+  基线四组用例 10 / 7 / 11 / 1 条通过，`0 failed`；
+- 六条变异（M1 读模型兜底、M2 取法折零、M3 端点折零、M4 共用 null 编码器印 0、M5 字段退回 `i128`、
+  M6 读模型不算权益）全部 `MUT_STATE=red` 且 `OTHER_FAILS=0`，六次还原全 `RESTORE_EXACT`；其中五条
+  （M1/M2/M3/M4/M6）都有行为用例同红，M5 属类型层、由静态项与编译器承担证明（`STAGE6_M5_CHECK_EXIT=101`）；
+- `QX_PYTHON` 指向 venv 的整树 `STAGE7_WS_EXIT=0`、76 条 `test result: ok`、合计 `734 passed / 0 failed`。
+
+### 本轮踩到（记在 §32.3）
+
+- **第一版取法门禁项挡不住本轮自己的缺陷变异**：`Some(self.equity_raw.unwrap_or(0)),` 既不命中
+  `"Some(self.equity_raw),"` 也不改变 `"self.equity_raw,"` 的计数，写出来就是一张不会红的静态项。判据由此
+  改成盯函数体。**字面量计数型判据要先拿变异过一遍，再决定是否算"钉住了"。**
+- **给字段新增"缺席"状态时，要逐个发布面检查是否真有一条用例让它缺席**：端点用例原本只把 equity 设成
+  `Some(500)`，那一条"把 `None` 折成 0"的变异动不了它 —— M3 的 panic 点 `crates/qx-api/src/lib.rs:2545`
+  正是本轮新增的那一段，没有它这个发布面就没有行为证明（日志里 M3 另外三组用例全绿）。
+- 本轮 `gate1` 即验收日志：fmt/clippy 在变异段之前先跑绿，是 §31.3 那条教训的落地（无作废轮次）。
 
 ## Unreleased — V11 Q69：CCXT 对账的两半发现同时进事实流、报告与健康（2026-09-23）
 

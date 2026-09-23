@@ -12,7 +12,7 @@
       "required": ["snapshot_id", "account_id", "portfolio_id", "venue_id", "as_of", "event_seq", "state_hash"]
     },
     "cash_raw": {"type": "object", "additionalProperties": {"type": "integer"}},
-    "equity_raw": {"type": "integer"},
+    "equity_raw": {"type": ["integer", "null"]},
     "available_raw": {"type": ["integer", "null"]},
     "margin_raw": {"type": ["integer", "null"]},
     "frozen_raw": {"type": ["integer", "null"]},

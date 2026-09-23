@@ -1,4 +1,4 @@
-//! 账户快照的七个汇总钱字段必须区分"算过"与"没算"（V11 Q67，交易链路读模型侧）。
+//! 账户快照的八个汇总钱字段必须区分"算过"与"没算"（V11 Q67/Q70，交易链路读模型侧）。
 //!
 //! 此前 `available_raw` 被写成 `equity_raw` 的副本、`fees_raw` 等六个字段在全仓没有任何写入点，
 //! 于是同一份 JSON 一边逐笔公布成交费用、一边宣布账户费用为 0，且"没算过"与"算出是零"在协议上
@@ -40,14 +40,16 @@ fn available_is_the_settlement_cash_and_not_a_copy_of_equity() {
         "可用资金是结算账簿现金，实际 {:?}",
         snapshot.available_raw
     );
+    let equity = snapshot
+        .equity_raw
+        .expect("这笔夹具带着行情事实，权益必须算得出而不是缺席");
     assert!(
-        snapshot.equity_raw > settlement,
-        "持仓未平时权益必须高于现金，否则这条用例没在区分两个量：equity={} cash={settlement}",
-        snapshot.equity_raw
+        equity > settlement,
+        "持仓未平时权益必须高于现金，否则这条用例没在区分两个量：equity={equity} cash={settlement}"
     );
     assert_ne!(
         snapshot.available_raw,
-        Some(snapshot.equity_raw),
+        Some(equity),
         "available 不得再是 equity 的副本"
     );
     let _ = std::fs::remove_dir_all(root);
@@ -233,6 +235,129 @@ fn ledger_fallback_position_row_leaves_uncomputed_money_absent() {
             "{name} 未经交易所上报时线格式必须印 null: {json_row}"
         );
     }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 一条持仓拿不到标记价时，这一层算不出权益：退回纯现金等于替账户宣称"压在标的上的
+/// 那一腿不值钱"（V11 Q70）。这里成对钉两件事——没有行情事实时权益**缺席**，行情事实
+/// 到位后同一个账户又必须把权益**算出来**，缺席不是"永远不算"的挡箭牌。
+#[test]
+fn equity_without_a_mark_price_is_absent_rather_than_the_remaining_cash() {
+    let root = temp_cli_case_dir("api-money-fields-equity");
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let config = paper_runtime_config(&data_dir);
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    {
+        // 只播种现金与一笔成交：整条日志里没有一条行情事实，正是实盘 CCXT 账户
+        // 只跑对账 worker、不跑行情 worker 时的形状。
+        let mut pipeline = LiveEventPipeline::open(&data_dir, paper_account_log(), "USDT").unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::AccountCashflow {
+                    cashflow: AccountCashflow {
+                        account_id: "main".into(),
+                        venue_id: "paper".into(),
+                        currency: "USDT".into(),
+                        kind: CashflowKind::Transfer,
+                        amount: Money::from_i64(10_000),
+                        external_id: "money-fields:equity:seed".into(),
+                    },
+                },
+                1,
+                1,
+                1,
+                "money-fields:equity:seed",
+            ))
+            .unwrap();
+        let order = mk_order(9704, &instrument, Side::Buy, 1);
+        pipeline.register_order(order.clone(), 2).unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: order.client_id,
+                    venue_order_id: Some("money-fields-equity-9704".into()),
+                },
+                3,
+                3,
+                1,
+                "money-fields:equity:accept",
+            ))
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Fill {
+                    fill: qx_core::Fill {
+                        order_id: order.client_id,
+                        qty: Quantity::from_i64(1),
+                        price: Price::from_i64(100),
+                        ts: 4,
+                        account_id: "main".into(),
+                        ..qx_core::Fill::default()
+                    },
+                },
+                4,
+                4,
+                1,
+                "money-fields:equity:fill",
+            ))
+            .unwrap();
+    }
+
+    let snapshot = paper_snapshot(&config);
+    let cash = *snapshot
+        .cash_raw
+        .get("USDT")
+        .expect("成交必须落在结算币种账簿上");
+    let row = snapshot
+        .positions
+        .get(&instrument)
+        .expect("这笔成交必须投影出一行持仓");
+    assert_ne!(row.quantity_raw, 0, "夹具必须真的留下一笔持仓");
+    assert_eq!(row.mark_price_raw, 0, "夹具的前提就是这一腿没有标记价");
+    assert_eq!(
+        snapshot.available_raw,
+        Some(cash),
+        "可用资金照旧取得出现，缺席的只有权益"
+    );
+    assert_eq!(
+        snapshot.equity_raw, None,
+        "算不出的权益不能印成剩余现金 {cash}"
+    );
+    let wire: serde_json::Value = serde_json::from_str(&snapshot.to_wire_json().unwrap()).unwrap();
+    assert!(wire["equity_raw"].is_null(), "线格式必须印 null: {wire}");
+    assert!(
+        snapshot.to_json().contains("\"equity_raw\":null"),
+        "稳定 JSON 必须印 null: {}",
+        snapshot.to_json()
+    );
+
+    // 行情事实到位后，同一个账户必须重新算得出权益：现金 + 持仓按标记价的估值。
+    {
+        let mut pipeline = LiveEventPipeline::open(&data_dir, paper_account_log(), "USDT").unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::market_quote(
+                instrument.clone(),
+                QuoteTick::new(
+                    5,
+                    Price::from_i64(109),
+                    Quantity::from_i64(1_000),
+                    Price::from_i64(110),
+                    Quantity::from_i64(1_000),
+                    5,
+                ),
+                5,
+                5,
+                "money-fields:equity:quote",
+            ))
+            .unwrap();
+    }
+    let marked = paper_snapshot(&config);
+    assert_eq!(
+        marked.equity_raw,
+        Some(marked.cash_raw["USDT"] + 110 * SCALE),
+        "有了标记价就必须算得出权益，否则这条用例只证明了缺席"
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 

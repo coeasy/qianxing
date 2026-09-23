@@ -112,15 +112,15 @@ fn served_schema_declares_every_key_the_writer_emits() {
     }
 }
 
-/// 契约必须说清"没算过的钱"长什么样：七个汇总钱字段可空、权益不可空。这与 Q67 的
-/// `Option<i128>` 是同一件事的两种写法，漏掉任何一侧都会让客户端把 `null` 当类型错误。
+/// 契约里的"可空"必须逐项等于写侧印得出的形状：印得出 `null` 的那一格才可空（V11 T3，合流轮改判据）。
+/// 这里原本手抄着一份"七个可空、权益不可空"的名单，而 Q70 把 `equity_raw` 也变成了 `Option<i128>`
+/// ——缺标记价时报缺席，而不是拿剩余现金冒充权益。名单不会自己跟上类型，所以判据改成让写侧自己交
+/// 两份产物：一份"这一层什么都没算"、一份"八项全算得出"。印 null 的必须在契约里可空，而契约允许的
+/// null 必须真被 `from_json` 收得回——否则"可空"只是纸面口径。
 #[test]
 fn schema_keeps_uncomputed_money_nullable() {
-    let contract = schema();
-    let properties = contract["properties"]
-        .as_object()
-        .expect("properties 应为对象");
-    let nullable = [
+    const SCALARS: [&str; 8] = [
+        "equity_raw",
         "available_raw",
         "margin_raw",
         "frozen_raw",
@@ -129,40 +129,91 @@ fn schema_keeps_uncomputed_money_nullable() {
         "fees_raw",
         "funding_raw",
     ];
-    for key in nullable {
-        let types = properties[key]["type"]
+    let contract = schema();
+    let properties = contract["properties"]
+        .as_object()
+        .expect("properties 应为对象");
+    let mut uncomputed = AccountSnapshot::new(11, "main", "default", "BINANCE", 10);
+    uncomputed.seal();
+    let mut computed = AccountSnapshot::new(12, "main", "default", "BINANCE", 10);
+    computed.equity_raw = Some(1_000);
+    for slot in [
+        &mut computed.available_raw,
+        &mut computed.margin_raw,
+        &mut computed.frozen_raw,
+        &mut computed.realized_pnl_raw,
+        &mut computed.unrealized_pnl_raw,
+        &mut computed.fees_raw,
+        &mut computed.funding_raw,
+    ] {
+        *slot = Some(0);
+    }
+    computed.seal();
+    let uncomputed_text = uncomputed.to_json();
+    let computed_text = computed.to_json();
+    let uncomputed_doc: Value =
+        serde_json::from_str(&uncomputed_text).expect("写侧产物必须是合法 JSON");
+    let computed_doc: Value =
+        serde_json::from_str(&computed_text).expect("写侧产物必须是合法 JSON");
+    for key in SCALARS {
+        let declared = properties[key]["type"]
             .as_array()
-            .unwrap_or_else(|| panic!("{key} 必须声明为可空类型（未算时写侧印 null）"));
-        let types = types
+            .unwrap_or_else(|| panic!("{key} 必须声明为可空类型（写侧没算过时印 null）"))
             .iter()
             .map(|value| value.as_str().expect("类型项应为字符串"))
             .collect::<Vec<_>>();
         assert_eq!(
-            types,
+            declared,
             vec!["integer", "null"],
             "{key} 的类型必须是 integer|null，别的写法都在改动「未算」的形状"
         );
+        assert!(
+            uncomputed_doc[key].is_null(),
+            "判据读错了东西：写侧「没算过」时并没有给 {key} 印 null"
+        );
+        assert!(
+            computed_doc[key].is_i64(),
+            "判据读错了东西：写侧算出时 {key} 不是整数"
+        );
     }
-    assert_eq!(
-        properties["equity_raw"]["type"].as_str(),
-        Some("integer"),
-        "权益是恒算得出的一列，声明成可空等于允许读模型把它印成没算过"
+    let read_back = AccountSnapshot::from_json(&uncomputed_text)
+        .expect("契约声明可空的每一格，读侧都必须收得回写侧印出的 null");
+    assert!(
+        read_back.equity_raw.is_none()
+            && read_back.available_raw.is_none()
+            && read_back.margin_raw.is_none()
+            && read_back.frozen_raw.is_none()
+            && read_back.realized_pnl_raw.is_none()
+            && read_back.unrealized_pnl_raw.is_none()
+            && read_back.fees_raw.is_none()
+            && read_back.funding_raw.is_none(),
+        "读回来的快照把未算的钱折成了某个数：{uncomputed_text}"
     );
-    // 夹具里真的同时存在"算出的 0/整数"与"未算的 null"两种值，上面的类型不是纸上口径。
+    // 跨语言夹具同时存在两种状态：算得出的权益与未算的七格。上面那份"全部未算"是构造出来的，
+    // 夹具这一份才是读模型每天真的发出去的形状。
     let sample = writer_sample();
-    let nulls = sample
-        .as_object()
-        .expect("夹具应为对象")
+    let nulls = SCALARS
         .iter()
-        .filter(|(_, value)| value.is_null())
-        .map(|(key, _)| key.as_str())
+        .filter(|key| sample[**key].is_null())
+        .copied()
         .collect::<Vec<_>>();
     assert_eq!(
-        nulls.len(),
-        nullable.len(),
-        "夹具里未算的钱字段数量与可空声明不符: {nulls:?}"
+        nulls,
+        vec![
+            "available_raw",
+            "margin_raw",
+            "frozen_raw",
+            "realized_pnl_raw",
+            "unrealized_pnl_raw",
+            "fees_raw",
+            "funding_raw",
+        ],
+        "夹具里未算的钱字段与可空声明不符：两种状态必须同场"
     );
-    assert!(sample["equity_raw"].is_i64(), "权益在夹具里必须是整数");
+    assert!(
+        sample["equity_raw"].is_i64(),
+        "夹具里那一份权益必须是算得出的整数，否则「两种状态同场」的证据就没了"
+    );
 }
 
 /// 读侧必须按契约里那个 `"const": 1` 收口。此前它只核对协议字符串与两处版本号的自洽性，
@@ -225,7 +276,7 @@ fn reader_rejects_versions_the_served_schema_does_not_declare() {
 fn reader_refuses_a_self_consistent_document_from_another_version() {
     let foreign = ACCOUNT_SNAPSHOT_SCHEMA_VERSION + 1;
     let mut document = AccountSnapshot::new(7, "main", "default", "BINANCE", 10);
-    document.equity_raw = 1000;
+    document.equity_raw = Some(1000);
     document.header.schema_version = foreign;
     document.seal();
     let encoded = document.to_json();

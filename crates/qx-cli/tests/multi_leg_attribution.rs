@@ -715,3 +715,78 @@ fn declared_derivative_product_without_primary_spec_is_refused() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// V11 Q71：`combined_return_bps` 必须是两条腿**按钱合起来**算的组合收益。
+///
+/// 两条腿的本金各按本腿自己的行情定资（这份夹具在 `quantity=100` 下主腿正好是对冲腿的 21 倍
+/// 本金），所以"把两个腿级 `return_bps` 平均"念出来的既不是组合收益率也不是任何一条腿的收益
+/// 率。本用例拿产物自己声明的两腿本金与期末权益重算一遍，要求 stdout 上那个数等于钱口径，并且
+/// **不等于**平均值——两者在这份真实夹具上就是两个不同的数。
+#[test]
+fn combined_return_pools_both_legs_by_capital_instead_of_averaging_bps() {
+    let primary = fixture("qianxing.bar-frame.pairs-primary.example.json");
+    let reference = fixture("qianxing.bar-frame.pairs-reference.example.json");
+    let root = temp_root("combined-return");
+    let (code, stdout, stderr) =
+        backtest(&root, "100", "0", &[primary.as_str(), reference.as_str()]);
+    assert_eq!(code, 0, "多腿回测必须跑通: {stderr}");
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with("[Multi-leg · Backtest]"))
+        .expect("输出缺少 [Multi-leg · Backtest]");
+    // 这一行写了两腿各自的 `return_bps=` 与一颗 `combined_return_bps=`；按整段 token 前缀取，
+    // 才不会把组合那颗也当成腿级的。
+    let leg_returns: Vec<i128> = line
+        .split_whitespace()
+        .filter_map(|token| token.strip_prefix("return_bps="))
+        .map(|value| value.parse::<i128>().expect("腿级 return_bps 必须是整数"))
+        .collect();
+    assert_eq!(
+        leg_returns.len(),
+        2,
+        "这一行必须写出两条腿各自的收益率: {line}"
+    );
+    let printed = line_fields(&stdout, "[Multi-leg · Backtest]");
+    let combined = field(&printed, "combined_return_bps");
+
+    let payload = attribution_artifact(&root);
+    let funded = |key: &str, table: &str| -> i128 {
+        payload[table][key]
+            .as_str()
+            .unwrap_or_else(|| panic!("产物缺少 {table}/{key}"))
+            .parse::<i128>()
+            .unwrap_or_else(|_| panic!("产物 {table}/{key} 不是整数字符串"))
+    };
+    let initial = [
+        funded("primary_initial_cash", "accounts"),
+        funded("reference_initial_cash", "accounts"),
+    ];
+    let final_equity = [
+        funded("primary_final_equity_raw", "accounts"),
+        funded("reference_final_equity_raw", "accounts"),
+    ];
+    assert_ne!(
+        initial[0], initial[1],
+        "两腿本金必须不等，否则下面的对比是空的: {initial:?}"
+    );
+    let funded_raw = initial[0] + initial[1];
+    let pooled = (final_equity[0] + final_equity[1] - funded_raw) * 10_000 / funded_raw;
+    assert_eq!(
+        combined, pooled,
+        "组合收益必须是两条腿合计盈亏 ÷ 两条腿合计本金: stdout={combined} 钱口径={pooled}"
+    );
+    assert_eq!(
+        payload["totals"]["combined_return_bps"]
+            .as_i64()
+            .expect("产物缺少 totals/combined_return_bps 或非整数"),
+        i64::try_from(pooled).expect("组合收益应在 i64 范围内"),
+        "产物里那颗组合收益必须与 stdout 是同一份事实"
+    );
+    assert_ne!(
+        combined,
+        (leg_returns[0] + leg_returns[1]) / 2,
+        "两腿分别 {leg_returns:?}bp：等权平均会念 {}bp，那正是 Q71 修掉的口径",
+        (leg_returns[0] + leg_returns[1]) / 2
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

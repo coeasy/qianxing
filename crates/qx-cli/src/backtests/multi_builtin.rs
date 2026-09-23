@@ -262,6 +262,13 @@ pub(crate) fn run_multi_builtin_backtest(
             "多腿回测腿级撮合模型口径不一致: legs={leg_fill_models:?} declared={fill_model_name}/{fill_model_source}"
         ));
     }
+    // 组合收益按钱算：两条腿本金各自按本腿行情定资，平均腿级 bps 念的不是组合收益率（V11 Q71）。
+    let primary_equity = primary_report.final_equity();
+    let reference_equity = reference_report.final_equity();
+    let combined_return_bps = multi_leg_combined_return_bps([
+        ("primary", primary_cash.raw(), primary_equity),
+        ("reference", reference_cash.raw(), reference_equity),
+    ])?;
     println!(
         "[Multi-leg · Backtest] strategy={} primary={} fills={} return_bps={} reference={} fills={} return_bps={} combined_return_bps={} result_hashes={:016x}/{:016x}",
         kind.name(),
@@ -271,7 +278,7 @@ pub(crate) fn run_multi_builtin_backtest(
         reference_frame.instrument,
         reference_report.fills.len(),
         reference_report.return_bps,
-        (i64::from(primary_report.return_bps) + i64::from(reference_report.return_bps)) / 2,
+        combined_return_bps,
         primary_report.result_hash(),
         reference_report.result_hash()
     );
@@ -306,17 +313,7 @@ pub(crate) fn run_multi_builtin_backtest(
         &primary_buckets,
         &reference_buckets,
     )?;
-    let totals = groups.iter().fold(
-        (0_i128, 0_i128, 0_i128, 0_i128, 0_i128),
-        |mut acc, group| {
-            acc.0 += group.total_fees_raw;
-            acc.1 += group.total_turnover_raw;
-            acc.2 += group.total_funding_raw;
-            acc.3 += group.total_filled_qty_raw;
-            acc.4 = acc.4.max(group.total_margin_raw);
-            acc
-        },
-    );
+    let totals = multi_leg_group_totals(&groups);
     // 组级费用合计必须与两条腿的独立合计闭合，否则 FIFO 分配漏计或重复计入。
     let expected_fees_raw = primary_report.fees_raw + reference_report.fees_raw - residual_fees_raw;
     if totals.0 != expected_fees_raw {
@@ -444,6 +441,9 @@ pub(crate) fn run_multi_builtin_backtest(
             "accounts": {
                 "primary_initial_cash": primary_cash.raw().to_string(),
                 "reference_initial_cash": reference_cash.raw().to_string(),
+                // 期末权益与期初本金同侧落盘，读者才能自行复算组合收益（V11 Q71）。
+                "primary_final_equity_raw": primary_equity.to_string(),
+                "reference_final_equity_raw": reference_equity.to_string(),
                 "funding_rule": "2*quantity*leg-own-max-high + same-notional taker fee headroom, floor 100000",
             },
             "totals": {
@@ -456,6 +456,7 @@ pub(crate) fn run_multi_builtin_backtest(
                 "cost_bps": cost_bps,
                 "residual_filled_qty_raw": residual_filled_qty_raw.to_string(),
                 "residual_fees_raw": residual_fees_raw.to_string(),
+                "combined_return_bps": combined_return_bps,
             },
             "legs": leg_integrity
             .iter()

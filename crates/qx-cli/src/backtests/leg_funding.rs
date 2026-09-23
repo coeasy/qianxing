@@ -128,3 +128,38 @@ pub(crate) fn multi_leg_spec_guard(
     }
     Ok(())
 }
+
+/// 多腿组合收益的唯一口径：**两条腿合计赚了多少钱 ÷ 两条腿合计投了多少钱**。
+///
+/// 两条腿的本金由 `multi_leg_leg_cash` 各按**本腿自己的**最高价定资，所以本金天然不等
+/// （仓库自带的现货夹具按 `quantity=100` 跑，主腿本金正好是对冲腿的 21 倍）。把两个腿级
+/// `return_bps` 平均等于给两条腿同样的权重，念出来的数字既不是组合收益率、也不是任何一条腿
+/// 的收益率：那条夹具实测两腿分别 -197bp 与 -7bp，平均念 -102bp，而这个组合按钱算亏 -189bp（V11 Q71）。
+///
+/// 合计本金不为正、或定点折算越界时一律报错：印一个 0 会把"这个组合根本没法度量"伪装成
+/// "这单套利不赚不赔"，与上面的定资撤掉静默截断是同一条纪律。
+pub(crate) fn multi_leg_combined_return_bps(legs: [(&str, i128, i128); 2]) -> Result<i64, String> {
+    let mut pnl_raw = 0_i128;
+    let mut funded_raw = 0_i128;
+    for (label, initial_raw, final_raw) in legs {
+        let leg_pnl = final_raw
+            .checked_sub(initial_raw)
+            .ok_or_else(|| format!("{label} 腿权益差值溢出"))?;
+        pnl_raw = pnl_raw
+            .checked_add(leg_pnl)
+            .ok_or_else(|| format!("多腿组合盈亏合计溢出（{label} 腿）"))?;
+        funded_raw = funded_raw
+            .checked_add(initial_raw)
+            .ok_or_else(|| format!("多腿组合本金合计溢出（{label} 腿）"))?;
+    }
+    if funded_raw <= 0 {
+        return Err(format!(
+            "多腿组合本金合计必须为正才能度量收益，当前为 {funded_raw}"
+        ));
+    }
+    let bps = pnl_raw
+        .checked_mul(10_000)
+        .and_then(|value| value.checked_div(funded_raw))
+        .ok_or_else(|| "多腿组合收益折算 bps 溢出".to_string())?;
+    i64::try_from(bps).map_err(|_| format!("多腿组合收益 {bps} bps 超出可表示范围"))
+}

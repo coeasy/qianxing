@@ -398,11 +398,16 @@ CLI_TESTS_DIR = "crates/qx-cli/src/tests"
 # Q67 给账户快照的钱字段口径补四条（169 → 173；协议侧那条在 qx-protocol 集成用例里，不计本地板）。
 # Q68 把同一条纪律推到持仓行与 CCXT 回报入口：ccxt 侧三条 + 读模型行侧两条（173 → 178，
 # 按磁盘 `^#[test]$` 实测总数：src/tests 139 + crates/qx-cli/tests 39）。
+# Q71 给"组合收益按钱算而不是两条腿平均"补一条单元 + 一条端到端复算用例。地板本身落后于
+# 磁盘：Q69/Q70 落地时新增了三条用例却没有回写（178 → 181 只发生在磁盘上），本轮连同 Q71 两条
+# 一起抬到实测总数 183（src/tests 143 + crates/qx-cli/tests 40）。
 # R 轮再抬一次：深度链拒绝撮合模型一条（R11）、无键读模型同账户一条（R12）、
 # 账户快照稳定 JSON 往返一条（R14，那条在 qx-protocol 侧，不计本地板）（178 → 187）。
 # S 轮：api worker 身份两条（S1）+ 运维读模型现读两条（S3）（187 → 191）。
 # T 轮抬到实测总数：对账 worker 身份五条（T4/S12）+ 日历指纹跨语言夹具三条（T2/R17）（191 → 199）。
-CLI_TEST_FLOOR = 199
+# 两条线合流后按磁盘重测再抬：Q70/Q71 那三条与 T 轮那八条同场，谁也不是历史值（199 → 202，
+# src/tests 162 + crates/qx-cli/tests 40）。
+CLI_TEST_FLOOR = 202
 # 拆文件时最容易被复制进各个主题文件的共享夹具（风控上下文、隔离运行时目录）。
 CLI_TEST_FIXTURES = (
     "smoke_paper_risk_context",
@@ -1805,6 +1810,7 @@ SNAPSHOT_MONEY_CASES = (
     "published_fees_are_the_sum_of_the_fills_on_the_same_snapshot",
     "uncomputed_money_is_absent_rather_than_zero",
     "overflowing_fee_total_is_refused_instead_of_wrapping",
+    "equity_without_a_mark_price_is_absent_rather_than_the_remaining_cash",
 )
 # V11 R14/R15：四张键表在稳定 JSON 里没有第二份编码，写侧就是 serde 那一份。
 SNAPSHOT_SERDE_TABLES = ("orders", "fills", "transfers")
@@ -1908,18 +1914,25 @@ def snapshot_money_honesty_check() -> None:
             protocol.count(f"pub {name}: Option<i128>,") == 1
             for name in SNAPSHOT_OPTIONAL_FIELDS
         )
-        and protocol.count("pub equity_raw: i128,") == 1,
-        "七个汇总钱字段在协议上是 Option<i128>，只有权益是恒算得出的 i128",
+        and protocol.count("pub equity_raw: Option<i128>,") == 1,
+        "八个汇总钱字段在协议上全是 Option<i128>，没有任何一个还能退回不可区分的 i128（V11 Q70）",
         "有字段退回不可区分的 i128（未算与算出为零又会长成同一个数）",
     )
+    # 取法体内逐个直取：一行字面量计数挡得住"改回 Some(…) 硬包"，挡不住
+    # `Some(self.equity_raw.unwrap_or(0))` 这种同样能折平未算的写法，所以盯整段体。
+    raw_start = protocol.find("fn scalar_money_raw(&self)")
+    raw_end = protocol.find(chr(10) + "    }", raw_start) if raw_start >= 0 else -1
+    raw_body = protocol[raw_start:raw_end] if raw_end > raw_start >= 0 else ""
+    raw_missing = [name for name in SNAPSHOT_SCALARS if f"self.{name}," not in raw_body]
     check(
         protocol.count("fn scalar_money_raw(&self) -> [Option<i128>; 8]") == 1
-        and protocol.count("Some(self.equity_raw),") == 1
-        and protocol.count("self.equity_raw,") == 0,
-        "八个标量钱的取法只有一处，哈希与 JSON 都向它要同一份，没有第二份手抄列表",
+        and raw_body.count("self.equity_raw,") == 1
+        and raw_missing == []
+        and "Some(" not in raw_body
+        and "unwrap_or" not in raw_body,
+        "八个标量钱的取法只有一处、八项逐字段直取，体内没有 Some/unwrap_or 能把未算折成零",
         f"取法定义 {protocol.count('fn scalar_money_raw(&self) -> [Option<i128>; 8]')} 处、"
-        f"唯一入口 {protocol.count('Some(self.equity_raw),')} 处、"
-        f"手抄 equity 的列表 {protocol.count('self.equity_raw,')} 处",
+        f"体内权益 {raw_body.count('self.equity_raw,')} 处、缺项 {raw_missing}",
     )
     check(
         protocol.count("Self::write_scalar_money(&mut h, self.scalar_money_raw())") == 2,
@@ -1973,6 +1986,20 @@ def snapshot_money_honesty_check() -> None:
         "「可用资金 = 权益副本」这条抄法不得回到任何一处（含 Some(…) 包起来的可编译写法）",
         f"读模型又把压在持仓上的那段钱说成可自由花掉：{equity_copy}",
     )
+    equity_start = reader.find("snapshot.equity_raw =")
+    equity_stmt = (
+        reader[equity_start : reader.find(";", equity_start) + 1]
+        if equity_start >= 0
+        else ""
+    )
+    check(
+        reader.count("snapshot.equity_raw =") == 1
+        and "equity_for(" in equity_stmt
+        and "cash_for" not in equity_stmt
+        and "unwrap_or" not in equity_stmt,
+        "权益只在现金与每一条持仓的标记价都读得出时发布；算不出即缺席，不退回纯现金（V11 Q70）",
+        f"权益语句被改回兜底写法或算点丢失：{equity_stmt.strip()!r}",
+    )
     check(
         reader.count("snapshot.available_raw = Some(") == 1
         and "cash_for(account_id, pipeline.settlement_currency())"
@@ -2013,10 +2040,15 @@ def snapshot_money_honesty_check() -> None:
             '"margin_raw": snapshot.as_ref().and_then(|snapshot| snapshot.margin_raw)'
         )
         == 1
+        and balances.count(
+            '"equity_raw": snapshot.as_ref().map(|snapshot| snapshot.equity_raw)'
+        )
+        == 1
+        and "equity_raw).unwrap_or" not in balances
         and "available_raw).unwrap_or" not in balances
         and "margin_raw).unwrap_or" not in balances,
         "/account/balances 把未算发布成 null，而不是给它兜一个 0",
-        "余额端点对 available/margin 又用了兜底写法",
+        "余额端点对 equity/available/margin 又用了兜底写法，或不再原样透出这三个取法",
     )
     cli_cases = (ROOT / SNAPSHOT_CLI_CASE_FILE).read_text(encoding="utf-8")
     core_cases = (ROOT / SNAPSHOT_CORE_CASE_FILE).read_text(encoding="utf-8")
@@ -2026,7 +2058,8 @@ def snapshot_money_honesty_check() -> None:
         all(f"fn {name}(" in cli_cases for name in SNAPSHOT_MONEY_CASES)
         and "fn uncomputed_money_is_not_the_same_state_as_computed_zero(" in core_cases
         and "fn balances_endpoint_publishes_absent_money_as_null_not_zero(" in endpoint_cases,
-        "四条读模型用例（结算账簿口径/费用同源/未算缺席/溢出即拒）加协议侧缺席≠零、端点侧 null 发布各一条在位",
+        "五条读模型用例（结算账簿口径/费用同源/未算缺席/溢出即拒/缺标记价的权益缺席）"
+        "加协议侧缺席≠零、端点侧 null 发布各一条在位",
         f"缺少用例：{[name for name in SNAPSHOT_MONEY_CASES if f'fn {name}(' not in cli_cases]}",
     )
     # V11 R10：把同一条纪律推到对账两格。R7 只补上了"有来源"，剩下的半步是 0 仍同时表示
@@ -2571,16 +2604,29 @@ def account_snapshot_schema_check() -> None:
         f"只在契约 {sorted(set(properties) - set(emitted))}"
         f" / 只在产物 {sorted(set(emitted) - set(properties))}",
     )
+    # 可空口径不抄名单：契约允许 null 的那些，必须正好是协议里类型为 `Option<i128>` 的那些。
+    # 手抄名单在 V11 合流轮被实测证伪过一次——Q70 把 `equity_raw` 变成 `Option<i128>`，
+    # 而契约那侧还写着"权益不可空"，于是契约对自家写侧每天印出的 null 说了谎。
+    typed = {
+        name: re.search(rf"pub {name}: (Option<i128>|i128),", protocol)
+        for name in SNAPSHOT_SCALARS
+    }
+    optional_by_type = sorted(
+        name for name, match in typed.items() if match and match.group(1) == "Option<i128>"
+    )
     nullable = sorted(
         name for name in properties if isinstance(properties[name].get("type"), list)
     )
     uncomputed = sorted(key for key, value in emitted.items() if value is None)
     check(
-        nullable == sorted(SNAPSHOT_OPTIONAL_FIELDS)
-        and uncomputed == nullable
-        and properties["equity_raw"].get("type") == "integer",
-        "七个「读过才算得出」的钱字段在契约里可空、权益不可空，夹具里两种状态同时存在",
-        f"契约可空列 {nullable} / 夹具未算列 {uncomputed}",
+        all(match is not None for match in typed.values())
+        and nullable == optional_by_type
+        and set(uncomputed) <= set(nullable)
+        and len(uncomputed) < len(SNAPSHOT_SCALARS),
+        "钱字段的可空声明逐项等于协议类型：`Option<i128>` 才可空，夹具里两种状态同时存在",
+        f"协议 Option {optional_by_type} / 契约可空 {nullable}"
+        f" / 缺类型声明 {[name for name, match in typed.items() if match is None]}"
+        f" / 夹具未算 {uncomputed}",
     )
     named = 'Some("QIANXING_ACCOUNT")' in protocol
     check(
@@ -3922,7 +3968,7 @@ def kernel_claim_check() -> None:
 def multi_leg_honesty_check() -> None:
     """V11 §6 Q0e：多腿归因只承认实际成交，一腿被挡时另一腿必须留下显式待对账事实。
 
-    十二条判据各自抽掉就变红：配对口径必须只看 `filled_qty_raw`（回填成交）、裸腿必须
+    十五条判据各自抽掉就变红：配对口径必须只看 `filled_qty_raw`（回填成交）、裸腿必须
     被登记而不是静默计入某个组、单腿定资要逐腿按本腿行情帧与生效费率算、算不出来必须
     报错而不是截断到 `i64::MAX`（§4.18 的同一类失真）、诚实性事实必须同时出现在 stdout
     与产物里、四条 kind 的端到端用例齐备，最后是费用口径的偏离声明：
@@ -3931,7 +3977,8 @@ def multi_leg_honesty_check() -> None:
 
     后五条属 V11 Q58：产品形态只有 market spec 说得了，缺 spec 的腿一律按现货乘数 1 记账，
     所以"衍生品才计提保证金/资金费"这件事必须有一道先于撮合的规格闸门、腿级的衍生品过滤、
-    产物侧的口径披露，以及四种规格组合各自的行为用例。
+    产物侧的口径披露，以及四种规格组合各自的行为用例。最后三条属 V11 Q71：组合收益只许
+    按两条腿的钱算一次、产物要留下可复算的两端，而组级合计折叠只能住在归因内核里一处。
     """
 
     def top_level_fn(text: str, signature: str) -> str:
@@ -4046,6 +4093,51 @@ def multi_leg_honesty_check() -> None:
         and "none-no-derivative-leg-spec" in cases,
         "四种规格组合（缺规格/全现货/混合/只声明衍生品）必须各有行为用例",
         "multi_leg_attribution.rs 的用例覆盖不再咬住 Q58 口径",
+    )
+    # V11 Q71：组合收益口径。两条腿的本金各按本腿行情定资、天然不等，把两个腿级 `return_bps`
+    # 平均念出来的是"给便宜腿和贵腿同样权重"的那个东西——它既不是组合收益率，也不是任何一条
+    # 腿的收益率（仓库自带夹具在 quantity=100 下实测 -189bp 被念成 -102bp）。判据收三头：调用
+    # 点只能调这一份实现、实现里合计本金非正必须报错（印 0 会把"没法度量"伪装成"不赚不赔"）、
+    # 复算所需的两腿本金与期末权益必须同时落在产物里。
+    # 实现放在 `leg_funding.rs`：它和 `multi_leg_leg_cash` 是同一件事的两端（先按本腿行情定
+    # 资，再按那份本金称收益），拆到两处就等于"权重"这个口径又有了第二个答案。
+    combined_body = top_level_fn(cash, "pub(crate) fn multi_leg_combined_return_bps(")
+    check(
+        "multi_leg_combined_return_bps([" in report
+        and "i64::from(primary_report.return_bps)" not in report
+        and "本金合计必须为正" in combined_body
+        and "Ok(0)" not in combined_body
+        and "unwrap_or" not in combined_body
+        and combined_body.count("checked_add(initial_raw)") == 1,
+        "多腿组合收益只有一处算法：合计盈亏 ÷ 合计本金，且算不出时报错而不是折成 0",
+        f"调用点 {report.count('multi_leg_combined_return_bps([')} 处、"
+        f"退回平均 {report.count('i64::from(primary_report.return_bps)')} 处、"
+        f"折成零形状 {combined_body.count('Ok(0)') + combined_body.count('unwrap_or')} 处",
+    )
+    unit_cases = (CRATES / "qx-cli/src/tests/execution_and_multi_leg.rs").read_text(
+        encoding="utf-8"
+    )
+    check(
+        "fn multi_leg_combined_return_weights_each_leg_by_its_own_capital" in unit_cases
+        and "fn combined_return_pools_both_legs_by_capital_instead_of_averaging_bps" in cases
+        and "primary_final_equity_raw" in report
+        and "reference_final_equity_raw" in report,
+        "组合收益必须同时有加权/平均分叉的行为用例与可复算的产物两端",
+        "Q71 的用例或产物两端缺一：本金加权用例、端到端复算用例、两腿期末权益落盘",
+    )
+    # 本轮把组级合计折叠从编排入口搬进归因内核（`multi_builtin.rs` 越过了 Phase 4s 的 500
+    # 行兄弟模块线，而这段 fold 本来就是在合计内核自己的产物）。搬家要能被抓住：入口重新
+    # 自己折一遍 loop 的话，产物 `totals` 与费用闭合守卫就会各读一份数。
+    check(
+        "multi_leg_group_totals(&groups)" in report
+        and "total_fees_raw" not in report
+        and top_level_fn(pairing, "pub(crate) fn multi_leg_group_totals(").count(
+            "total_fees_raw"
+        )
+        == 1,
+        "组级合计只在 multi_leg_group_totals 一处折叠，编排入口不得再各自 loop 一遍",
+        f"入口重inline={report.count('total_fees_raw')} 处、"
+        f"内核合计={top_level_fn(pairing, 'pub(crate) fn multi_leg_group_totals(').count('total_fees_raw')} 处",
     )
 
 

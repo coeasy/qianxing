@@ -1,5 +1,5 @@
 schema_version: 1
-updated_at: "2026-09-22"
+updated_at: "2026-09-23"
 default_profile: single_node
 
 # 证据等级：
@@ -31,7 +31,8 @@ capabilities:
       - crates/qx-core/src/sourcing.rs verify(events, &Ledger) compares the replayed ledger against the run ledger, so a mutated account with a matching digest still fails (V11 Q62)
       - tools/check_architecture.py replay_kernel_check holds 11 items over that kernel, both engine exits, the artifact choke point, the depth-chain causality slots and the named cases (V11 Q62)
       - crates/qx-protocol/src/lib.rs write_scalar_money tags presence before the value, so an uncomputed money field and a computed zero are two different state_hash inputs (V11 Q67)
-      - crates/qx-protocol/tests/snapshot_single_source.rs uncomputed_money_is_not_the_same_state_as_computed_zero walks all seven optional money fields through hash, seal/validate, both wire formats and both diff directions (V11 Q67)
+      - crates/qx-protocol/tests/snapshot_single_source.rs uncomputed_money_is_not_the_same_state_as_computed_zero walks all eight account money scalars through hash, seal/validate, both wire formats and both diff directions; the eighth one is equity_raw, added to OPTIONAL_MONEY_FIELDS by V11 Q70 (V11 Q67/Q70)
+      - crates/qx-protocol/src/lib.rs AccountSnapshot.equity_raw is Option<i128> and scalar_money_raw reads all eight fields straight, so no Some(...)/unwrap_or inside that fn can fold an uncomputed amount back into a legal zero (V11 Q70)
     limitations:
       - three_kernel_invariants_are_pinned_by_text_only：log.validate() inside the kernel, the deposit's Priority::TIMER slot and the engines' `)?;` propagation all stay green when mutated, because the negative cases call the kernel directly instead of driving run() (V11 Q62 §25.3)
 
@@ -179,12 +180,12 @@ capabilities:
       - crates/qx-cli/src/venue_runtime/paper_submit.rs refuses the A-share section as its first statement, ahead of reading the runtime config and the SubmitOrder command (V11 Q65)
       - crates/qx-cli/src/tests/ashare_submit_guard.rs covers paper-worker, paper-submit-order, binance-submit-order and ccxt-worker, each with a key-free baseline of the same fixture (V11 Q65)
       - crates/qx-cli/src/api_service.rs publishes available_raw from the settlement-currency ledger cash and fees_raw as the checked sum of the same snapshot's fills, refusing the snapshot instead of wrapping (V11 Q67)
-      - crates/qx-cli/src/tests/api_snapshot_money_fields.rs 7 cases drive the real paper worker and the real read model: settlement-currency cash, fee provenance, absent-not-zero, overflow refusal, the Ledger-fallback position row stays absent, a venue-reported row keeps reported-zero distinct from unreported, and the reconcile block is projected from this account's own reports (V11 Q67/Q68/R7)
+      - crates/qx-cli/src/tests/api_snapshot_money_fields.rs 8 cases drive the real paper worker and the real read model: settlement-currency cash, fee provenance, absent-not-zero, overflow refusal, the Ledger-fallback position row stays absent, a venue-reported row keeps reported-zero distinct from unreported, the reconcile block is projected from this account's own reports, and equity is absent while a held position has no mark price yet recomputes once a quote arrives (V11 Q67/Q68/R7/Q70)
       - crates/qx-core/src/event.rs + crates/qx-protocol/src/wire.rs hold the three position money fields as Option and hash/serialize them with a presence tag, so "venue did not report" is no longer the same state as "venue reported zero" (V11 Q68)
       - crates/qx-cli/src/tests/ccxt_position_facts_honesty.rs 3 cases: an unknown or missing position side is refused instead of guessed as long, flat rows are skipped before that gate, and omitted/null money stays unreported while "0" and 0 stay reported (V11 Q68)
       - crates/qx-protocol/tests/snapshot_single_source.rs uncomputed_position_money_is_not_the_same_state_as_computed_zero + default_position_row_reports_no_money + absent_venue_money_stays_absent_through_the_wire_folding cover hash, seal, both wire formats, both diff directions and the Default constructor (V11 Q68)
       - tools/check_architecture.py position_money_honesty_check holds 13 items over that chain, including the ban on defaulting the five row/observation money fields anywhere in the tree and the deliberate keep of the 0-price sentinel (V11 Q68)
-      - tools/check_architecture.py snapshot_money_honesty_check holds 12 items over that read model, including the ban on assigning the five money fields this layer cannot compute (V11 Q67) and the reconcile block's presence rule (V11 R10)
+      - tools/check_architecture.py snapshot_money_honesty_check holds 13 items over that read model, including the ban on assigning the five money fields this layer cannot compute, the reconcile block's presence rule (V11 R10) and the ban on publishing equity from leftover cash (V11 Q67/Q70)
       - crates/qx-cli/src/api_service.rs apply_reconcile_reports + crates/qx-protocol/src/wire.rs keep last_reconcile_ts/discrepancy_count as Option：两格由「本账户有没有对账报告」这一个问题决定在不在，缺席与算出的零在类型、哈希与稳定 JSON 上都不是同一份 (V11 R7/R10)
       - crates/qx-cli/src/venue_runtime/ccxt_reconcile_worker.rs ccxt_reconcile_round is the single exit for both discovery halves：报告的 order_issues、健康判定与 ReconcileRequired 事实流读同一份 round.order_issues，且只有 client_order_id 能按 JSON 数字解析的发现才允许产生事实 (V11 Q69)
       - crates/qx-cli/src/tests/ccxt_reconcile_round.rs 两条用例：5 条发现进报告、3 条进事实流，远端孤单挂单（client_order_id 为 ""/字符串）不给 OMS 编一个不存在的句柄；健康结论 ccxt_reconcile_service_status 在只有一条本地-only 发现时也必须降级 (V11 Q69)
@@ -200,7 +201,7 @@ capabilities:
       - crates/qx-api/src/lib.rs validate_projection_event compares orders and ledger entries by account only：paper 账户交易的符号就叫 BTCUSDT.BINANCE，拿标的后缀当账户 venue 会把本账户自己的事实判成外来事实 (V11 R13)
       - crates/qx-api/tests/account_projection_identity.rs 一条用例三向钉住那条判定：本账户的无 venue 事实必须全投影、换账户必须拒（订单与账簿各一次）、带显式 venue 的成交仍必须守住交易所边界。R13 的修复此前只有一轮临时验证，生产代码本轮零改动 (V11 R13 → T1)
       - crates/qx-protocol/src/lib.rs ACCOUNT_SNAPSHOT_JSON_SCHEMA 是 include_str!("../../../schemas/account-snapshot-v1.json")：仓库那份文件是权威，第二份手抄在编译期没有退路；ACCOUNT_SNAPSHOT_SCHEMA_VERSION 与 from_json 的版本闸门让「按别的版本自洽封存」的文档被拒，而不是被当 v1 解出来 (V11 S10 → T3)
-      - crates/qx-protocol/tests/snapshot_schema_contract.rs 六条用例与 tools/check_architecture.py account_snapshot_schema_check 的 8 项：契约只有一份文本、键集合等于写侧产物、七个未算的钱可空而权益不可空、协议名与版本号同源、路由发出的就是它、对面 Python 同宽、六条判据各有常驻用例 (V11 T3)
+      - crates/qx-protocol/tests/snapshot_schema_contract.rs 六条用例与 tools/check_architecture.py account_snapshot_schema_check 的 8 项：契约只有一份文本、键集合等于写侧产物、可空声明逐项等于协议类型（Q70 起权益也可空）、协议名与版本号同源、路由发出的就是它、对面 Python 同宽、六条判据各有常驻用例 (V11 T3)
       - crates/qx-cli/src/worker_entry.rs configured_reconcile_worker_id resolves the reconcile default by role + venue binding, and zero or several candidates both fail closed with the candidates listed：字面量 reconciler-main 遇改名拓扑报「找不到 worker」，遇同名 execution worker 会真跑一次下单执行 (V11 S12 → T4)
       - crates/qx-cli/src/tests/reconcile_worker_identity.rs 五条用例：改名的 reconciler 解析得到、关掉的报错只说口径缺失而不提字面量名、两个候选不挑第一个、paper 腿不是 Binance 候选、四份发布示例各自解析出自己的名字 (V11 T4)
       - crates/qx-cli/src/strategy_contract.rs configured_api_worker_id resolves the API worker by role and both spawn sites use that id：此前字面量 "api" 遇上任何改名的合法拓扑就让 serve 在启动瞬间死于"未知 worker" (V11 S1)
@@ -210,6 +211,8 @@ capabilities:
       - crates/qx-cli/src/tests/api_query_models_live.rs 两条用例：boot 之后落盘的对账报告与追加的成交都必须读得到 (V11 S3)
       - crates/qx-cli/src/tests/mod.rs assert_binary_fresh guards both binary lookups：`cargo test --bin` 走的是 option_env! 取不到值的回落分支且不重链 qx-cli.exe，缺这道守卫时一条变异会被过期 binary 判成"通过" (V11 S6)
       - deploy/README.md serve 端点表 + tools/check_architecture.py api_surface_doc_check：17 条路由与文档集合逐一相等，未列路径 404 的兜底口径也在门禁里 (V11 S7)
+      - crates/qx-cli/src/api_service.rs publishes equity_raw straight from Ledger::equity_for, so an account holding a position without a mark price reports null instead of its remaining cash (V11 Q70)
+      - crates/qx-api/src/lib.rs balances_endpoint_publishes_absent_money_as_null_not_zero covers both sides of the balances route: a computed zero stays 0, and a snapshot whose equity could not be computed prints null (V11 Q70)
     limitations:
       - continuous_market_driven_paper_worker_requires_runtime_market_data_validation
       - paper_venue_has_no_t_plus_one_settlement_state_today_bought_quantity_nor_board_scoped_limit_anchors_so_the_ashare_section_is_refused_at_every_submit_entry_instead_of_only_its_fee_model (V11 Q65)
@@ -220,6 +223,8 @@ capabilities:
       - binance_reconcile_still_fetches_only_balances_and_orders：那条链没有 positions/funding/cashflow 取数器，Q69 之后报告里写 null 而不是 0，取数缺口本身仍在 (V11 Q69)
       - key_free_account_read_models_follow_one_default_account：无键的 /account/snapshot 与 /account/ledger 说的是配置里第一个真有账户日志的那条账户域（V11 R12 收的就是"账簿说 A、快照说 B"），其它账户必须带 account_id/venue_id 查询；账户快照在 API 服务装配时按域装载一次，不随事件流自动增补新账户
       - supervised_runtime_still_has_no_graceful_shutdown_trigger：V11 S2 让 scheduler 与 strategy 两个循环也读停机令牌，可 `RuntimeSupervisor::request_shutdown` 在生产里依然零调用者，仓库也没有信号处理依赖——出口有了，谁去翻这枚令牌仍是部署侧决策 (V11 R8/S2)
+      - read_model_equity_null_carries_no_diagnostic：Q70 之后权益算不出时只报 null，看不出是哪一条持仓缺标记价；给出缺价标的清单需要新的线格式形状 (V11 Q70 §32.5 第 5 条)
+      - three_equity_rulers_still_live：读模型的 equity_for（现货名义）、paper_available_margin（spec 尺子）与 strategy_contract 交给策略上下文的 available_margin_raw 仍是三把尺子，本轮只统一了"算不出即缺席"这一条 (V11 Q70 §32.5 第 4 条)
 
   ccxt_rest:
     implementation: true
@@ -338,6 +343,9 @@ capabilities:
       - Paper 多腿经生产单轨提交两条腿并归约组快照的生命周期测试
       - Paper worker 在 ReconcileRequired 组上拒绝提交剩余腿的屏障测试
       - crates/qx-cli/src/spread.rs RecoveryGuard：补偿腿的风控与产品规格都取自该 worker 的 `instrument_spec_path`，规格解析失败拒绝自动对冲
+      - crates/qx-cli/src/backtests/leg_funding.rs 的 `multi_leg_combined_return_bps`：多腿组合收益的唯一口径是两条腿合计盈亏 ÷ 两条腿合计本金，合计本金非正或折算越界一律报错（V11 Q71）
+      - crates/qx-cli/src/tests/execution_and_multi_leg.rs 的 `multi_leg_combined_return_weights_each_leg_by_its_own_capital`：本金 3:1 的两腿按钱给 325bp 而非等权 550bp，本金相等时两口径重合，全零本金必须报错
+      - crates/qx-cli/tests/multi_leg_attribution.rs 的 `combined_return_pools_both_legs_by_capital_instead_of_averaging_bps`：真实 CLI 跑仓库自带现货夹具（两腿本金实测相差 21 倍），stdout 与产物 `totals.combined_return_bps` 都等于用产物自己声明的 `accounts` 两端复算出的钱口径，且不等于两腿平均
     limitations:
       - legs_submit_one_command_each_no_atomic_group_transaction
       - no_atomic_cross_venue_submission
@@ -345,6 +353,8 @@ capabilities:
       - legacy_execution_recovery_is_disabled_when_same_account_venue_dedicated_worker_is_enabled
       - group_snapshot_sync_is_after_single_leg_eventlog_commit
       - backtest_multi_leg_fees_share_one_cost_binding_because_market_spec_has_no_tier_fields
+      - multi_leg_combined_return_has_no_summary_json_and_its_leg_weights_come_from_the_funding_rule
+      - multi_leg_group_margin_peak_aggregates_with_max_across_groups_without_a_sum_versus_max_case
       - no_production_failure_matrix
 
   postgres:

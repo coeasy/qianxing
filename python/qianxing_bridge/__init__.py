@@ -343,7 +343,7 @@ def load_account_snapshot(payload: str) -> dict[str, Any]:
     """解析 Qianxing account wire JSON，并执行最小 schema 级校验。
 
     必填集合与 ``schemas/account-snapshot-v1.json`` 的 ``required`` 是同一份口径（含
-    ``equity_raw``）：两侧各自宽严时，同一份产物会一边解得开、一边解不开。
+    ``equity_raw``）：两侧各自宽严时，同一份产物会一边解得开、一边解不开。必填说的是**键必须在**，不是值必须算得出——八个汇总钱字段在协议上全是 ``Option``，未算那一格写侧印 ``null``。
     """
 
     value = json.loads(payload)

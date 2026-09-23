@@ -147,7 +147,7 @@ fn api_account_snapshot_reports_the_worker_settlement_currency() {
     );
     assert_eq!(
         snapshot.equity_raw,
-        1_000 * SCALE,
+        Some(1_000 * SCALE),
         "权益必须与结算账簿同一口径，读成默认 USDT 会得到 0"
     );
     let _ = std::fs::remove_dir_all(root);
@@ -397,7 +397,7 @@ fn api_snapshots_deduplicate_by_normalized_account_identity() {
     );
     assert_eq!(
         snapshots[0].equity_raw,
-        1_000 * SCALE,
+        Some(1_000 * SCALE),
         "去重后留下的那份必须真读到 USDC 账簿，而不是空账簿"
     );
     let _ = std::fs::remove_dir_all(root);
