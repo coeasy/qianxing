@@ -25,23 +25,16 @@ pub use wire::*;
 
 static SNAPSHOT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str = r#"{
-  "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "$id":"https://qianxing.dev/schema/account-snapshot-v1.json",
-  "type":"object",
-  "required":["protocol","schema_version","header","cash_raw","positions","orders","fills","transfers","reconcile"],
-  "properties":{
-    "protocol":{"const":"QIANXING_ACCOUNT"},
-    "schema_version":{"const":1},
-    "header":{"type":"object","required":["snapshot_id","account_id","portfolio_id","venue_id","as_of","event_seq","state_hash"]},
-    "cash_raw":{"type":"object","additionalProperties":{"type":"integer"}},
-    "positions":{"type":"object"},
-    "orders":{"type":"object"},
-    "fills":{"type":"object"},
-    "transfers":{"type":"object"},
-    "reconcile":{"type":"object"}
-  }
-}"#;
+/// 账户快照 v1 的 JSON Schema —— `GET /schema/account-snapshot-v1` 实际发出的那一份。
+///
+/// 此前它和 `schemas/account-snapshot-v1.json` 各存一份手抄，两边都少了写侧的八个钱字段
+/// （V11 S10）。现在只剩一份文本：文件是权威，本常量按字节 `include_str!` 进来，漂移在编译期
+/// 就不可能发生；门禁 `account_snapshot_schema_check()` 转去钉 schema 自洽且覆盖写侧产物。
+pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str =
+    include_str!("../../../schemas/account-snapshot-v1.json");
+
+/// schema 里 `"schema_version": {"const": 1}` 说的是同一件事：读侧按它拒绝其他版本。
+pub const ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
 pub const PROJECTION_ENVELOPE_SCHEMA_VERSION: u32 = 1;
 
@@ -172,7 +165,7 @@ impl AccountSnapshot {
     ) -> Self {
         Self {
             header: SnapshotHeader {
-                schema_version: 1,
+                schema_version: ACCOUNT_SNAPSHOT_SCHEMA_VERSION,
                 snapshot_id,
                 account_id: account_id.into(),
                 portfolio_id: portfolio_id.into(),
@@ -429,6 +422,13 @@ impl AccountSnapshot {
             .get("schema_version")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| ProtocolError::Invalid("账户快照 schema_version 缺失".into()))?;
+        if top_schema != ACCOUNT_SNAPSHOT_SCHEMA_VERSION as u64 {
+            // Python 侧的 `load_account_snapshot` 早就按常量拒绝非 1；读侧此前只查自洽性，
+            // 一个 `schema_version: 7` 会被当 v1 解析出来，两边在同一份产物上一宽一严。
+            return Err(ProtocolError::Invalid(format!(
+                "账户快照 schema_version 不受支持: {top_schema}（只支持 {ACCOUNT_SNAPSHOT_SCHEMA_VERSION}）"
+            )));
+        }
         let header = object
             .get_mut("header")
             .and_then(serde_json::Value::as_object_mut)

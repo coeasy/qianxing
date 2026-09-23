@@ -48,6 +48,15 @@
       且摘要与哈希带存在性标记；读模型自拼的持仓行承认算不出这两个钱字段；CCXT 持仓回报缺
       `side` 或带连接器的 `unknown` 占位时只能拒收——数量符号顺着权益、保证金、风控一路算下去，
       猜不得。
+  20. C++ 插件 ABI 的两份镜像逐字段相等（V11 S13）：`cpp/include/qianxing_strategy.h` 与
+      `crates/qx-strategy/src/c_api.rs` 之间没有编译期耦合，错位只会读成坏内存；字段名、顺序、
+      宽度与 vtable 条目都按名字比对，CI 的 `cpp-sdk` 作业不加载产物，所以这条只能静态咬。
+  21. 账户快照的对外契约只有一份文本，且两侧读侧与它同宽（V11 S10 / T3）：服务常量按字节
+      `include_str!` 仓库里那份 schema，契约声明的键集合等于写侧产物，七个钱字段可空、权益不可空，
+      `schema_version` 与协议名是 `from_json` 认的那一对，Python 侧的必填集合也等于契约的 required。
+  22. 日历组件指纹两侧比同一份夹具（V11 R17 / T2）：Python 写侧产出文档与摘要、Rust 读侧重算，
+      摘要在代码里没有第二份抄本，字段白名单与契约版本号逐项相等——旧格式文档 `sessions` 缺席
+      必须读成"没有时段"，两侧一宽一严时 Python 登记的 bundle 会被 CLI 拒启。
 
 运行： python3 tools/check_architecture.py
 刷新第 8 项的预算快照（改动后人工确认 diff）：
@@ -56,6 +65,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -391,7 +401,8 @@ CLI_TESTS_DIR = "crates/qx-cli/src/tests"
 # R 轮再抬一次：深度链拒绝撮合模型一条（R11）、无键读模型同账户一条（R12）、
 # 账户快照稳定 JSON 往返一条（R14，那条在 qx-protocol 侧，不计本地板）（178 → 187）。
 # S 轮：api worker 身份两条（S1）+ 运维读模型现读两条（S3）（187 → 191）。
-CLI_TEST_FLOOR = 191
+# T 轮抬到实测总数：对账 worker 身份五条（T4/S12）+ 日历指纹跨语言夹具三条（T2/R17）（191 → 199）。
+CLI_TEST_FLOOR = 199
 # 拆文件时最容易被复制进各个主题文件的共享夹具（风控上下文、隔离运行时目录）。
 CLI_TEST_FIXTURES = (
     "smoke_paper_risk_context",
@@ -2469,6 +2480,243 @@ def api_surface_doc_check() -> None:
     )
 
 
+# V11 S10 / T3：对外发布的那一份账户快照 JSON Schema，以及"契约说的"与三方实现是否同宽。
+SNAPSHOT_SCHEMA_FILE = "schemas/account-snapshot-v1.json"
+SNAPSHOT_SCHEMA_ROUTE = "/schema/account-snapshot-v1"
+SNAPSHOT_SCHEMA_CASE_FILE = "crates/qx-protocol/tests/snapshot_schema_contract.rs"
+SNAPSHOT_BRIDGE_FILE = "python/qianxing_bridge/__init__.py"
+SNAPSHOT_SCHEMA_CASES = (
+    "served_schema_is_the_repository_file_verbatim",
+    "served_schema_declares_every_key_the_writer_emits",
+    "schema_keeps_uncomputed_money_nullable",
+    "reader_rejects_versions_the_served_schema_does_not_declare",
+    "reader_refuses_a_self_consistent_document_from_another_version",
+    "schema_frame_matches_the_protocol_it_describes",
+)
+
+# V11 R17/T2：日历组件指纹的跨语言夹具——Python 写侧产出文档与摘要，Rust 读侧重算同一格。
+CALENDAR_FIXTURE_DIR = "python/tests/fixtures"
+CALENDAR_FIXTURE_PAIRS = (
+    ("calendar-component-v1.json", "calendar-component-v1.fingerprint"),
+    ("calendar-component-legacy.json", "calendar-component-legacy.fingerprint"),
+)
+CALENDAR_RUST_TEST_FILE = "crates/qx-cli/src/tests/calendar_component_fingerprint.rs"
+CALENDAR_RUST_RULES_FILE = "crates/qx-xingban/src/ashare.rs"
+CALENDAR_PYTHON_MODULE_FILE = "python/qianxing_ashare/__init__.py"
+CALENDAR_PYTHON_TEST_FILE = "python/tests/test_ashare.py"
+CALENDAR_RUST_CASES = (
+    "calendar_component_fingerprints_match_the_shared_python_digest",
+    "calendar_digest_follows_the_canonical_fields_not_the_document_layout",
+    "calendar_fixtures_load_through_the_backtest_rules_registry",
+)
+CALENDAR_PYTHON_CASES = (
+    "def test_calendar_component_digest_is_the_shared_cross_language_pair",
+    "def test_calendar_component_fingerprint_moves_only_with_canonical_fields",
+)
+
+
+def account_snapshot_schema_check() -> None:
+    """账户快照的对外契约只有一份文本，且它承诺的每一格两侧都做得到（V11 S10 / T3）。
+
+    `schemas/account-snapshot-v1.json` 与服务常量 `ACCOUNT_SNAPSHOT_JSON_SCHEMA` 此前是两份手抄：
+    文件多 `title` 与顶层 `additionalProperties`，双方又都漏掉写侧真实印出的八个钱字段，比对时
+    没有谁是权威；读侧 `from_json` 只核对协议字符串与两处版本号是否自相矛盾，一份按别的版本
+    自洽封存的文档会被当成 v1 收下，而对面 Python 的 `load_account_snapshot` 对同一份产物直接
+    抛错。现在常量 `include_str!` 那份文件——手抄在编译期就没了退路——门禁转去钉"契约说的"与
+    "写侧印的、读侧认的、对面语言认的"是同一件事。
+    """
+    protocol = (ROOT / SNAPSHOT_PROTOCOL_FILE).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    endpoint = (ROOT / SNAPSHOT_ENDPOINT_FILE).read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+    try:
+        schema = json.loads((ROOT / SNAPSHOT_SCHEMA_FILE).read_text(encoding="utf-8"))
+        emitted = json.loads((ROOT / SNAPSHOT_FIXTURE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        check(
+            False,
+            "契约文档与写侧夹具都是可解析的 JSON",
+            f"{SNAPSHOT_SCHEMA_FILE} / {SNAPSHOT_FIXTURE_FILE}: {error}",
+        )
+        return
+    properties = schema["properties"]
+    version = re.search(r"pub const ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = (\d+);", protocol)
+    supported = int(version.group(1)) if version else None
+
+    copies = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted(CRATES.glob("*/src/**/*.rs"))
+        if '"$schema"' in path.read_text(encoding="utf-8")
+    ]
+    check(
+        re.search(
+            r"pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str =\s*"
+            r'include_str!\("\.\./\.\./\.\./schemas/account-snapshot-v1\.json"\)',
+            protocol,
+        )
+        is not None
+        and not copies,
+        "账户快照 JSON Schema 只有一份文本：常量按字节包含 schemas/ 那份，生产 Rust 侧无第二份手抄",
+        f"常量不再是 include_str!，或这些文件里又出现了 schema 字面量 {copies}",
+    )
+    check(
+        schema["type"] == "object"
+        and set(schema["required"]) <= set(properties)
+        and all(name in properties for name in SNAPSHOT_SCALARS),
+        "契约自身自洽：required 的每一项都在 properties 里，八个钱字段各自有声明",
+        f"required 越界 {sorted(set(schema['required']) - set(properties))}"
+        f" / 缺钱字段 {[name for name in SNAPSHOT_SCALARS if name not in properties]}",
+    )
+    check(
+        sorted(emitted) == sorted(properties),
+        "契约声明的顶层键集合正好等于写侧产物印出的那些：少一格是漏说，多一格是空头承诺",
+        f"只在契约 {sorted(set(properties) - set(emitted))}"
+        f" / 只在产物 {sorted(set(emitted) - set(properties))}",
+    )
+    nullable = sorted(
+        name for name in properties if isinstance(properties[name].get("type"), list)
+    )
+    uncomputed = sorted(key for key, value in emitted.items() if value is None)
+    check(
+        nullable == sorted(SNAPSHOT_OPTIONAL_FIELDS)
+        and uncomputed == nullable
+        and properties["equity_raw"].get("type") == "integer",
+        "七个「读过才算得出」的钱字段在契约里可空、权益不可空，夹具里两种状态同时存在",
+        f"契约可空列 {nullable} / 夹具未算列 {uncomputed}",
+    )
+    named = 'Some("QIANXING_ACCOUNT")' in protocol
+    check(
+        supported is not None
+        and properties["schema_version"].get("const") == supported
+        and properties["protocol"].get("const") == "QIANXING_ACCOUNT"
+        and named,
+        "契约里的协议名与版本号，就是读侧 `from_json` 认的那一对",
+        f"读侧常量 {supported} / 契约 const {properties['schema_version'].get('const')}"
+        f" / 协议名同源 {named}",
+    )
+    served = re.search(
+        r'\("GET", "/schema/account-snapshot-v1"\)\s*=>\s*\{?\s*ApiResponse::json\(\s*200,\s*'
+        r"ACCOUNT_SNAPSHOT_JSON_SCHEMA\s*\)",
+        endpoint,
+    )
+    whitelist = re.search(r"!matches!\(route,([^)]*)\)", endpoint)
+    listed = whitelist.group(1).strip() if whitelist else ""
+    check(
+        served is not None and SNAPSHOT_SCHEMA_ROUTE in listed,
+        "GET /schema/account-snapshot-v1 发出的就是这份常量，且客户端取契约不必带操作者凭据",
+        f"发出常量={served is not None} / 鉴权白名单 {listed}",
+    )
+    bridge = (ROOT / SNAPSHOT_BRIDGE_FILE).read_text(encoding="utf-8")
+    python_version = re.search(r'value\["schema_version"\] != (\d+)', bridge)
+    required_block = re.search(r"required = \{(.*?)\}", bridge, re.S)
+    python_required = (
+        sorted(re.findall(r'"([^"]+)"', required_block.group(1))) if required_block else []
+    )
+    check(
+        python_version is not None
+        and supported is not None
+        and int(python_version.group(1)) == supported
+        and python_required == sorted(schema["required"]),
+        "对面 Python 的快照读侧与契约同宽：认同一个版本号、要求同一组必填键",
+        f"Python 版本 {python_version.group(1) if python_version else None} vs {supported}"
+        f" / 必填差 {sorted(set(python_required) ^ set(schema['required']))}",
+    )
+    cases = (ROOT / SNAPSHOT_SCHEMA_CASE_FILE).read_text(encoding="utf-8")
+    missing_cases = [name for name in SNAPSHOT_SCHEMA_CASES if f"fn {name}()" not in cases]
+    check(
+        not missing_cases,
+        "契约的六条判据各有常驻用例：一份文本、键集合覆盖写侧、可空口径、版本闸门与跨版本文档",
+        f"缺用例 {missing_cases}",
+    )
+
+
+def calendar_fingerprint_caliper_check() -> None:
+    """日历组件指纹的两份 canonical 字节必须比同一份夹具（V11 R17 / T2）。
+
+    Python `AshareTradingCalendar.component_fingerprint` 把摘要登记进 DatasetBundle，Rust
+    `dataset_component_file_fingerprint` 在回测启动前对同一份文件重算，两边各自手写一遍规范
+    字节、中间只有一句 docstring（"必须和 CLI 保持一致"）连着——全仓没有一条用例比过这两个
+    数。夹具与摘要落在 `python/tests/fixtures/`：Python 用写侧函数产出、Rust 用读侧重算，两侧
+    各自读同一对文件比同一个值，所以任何一侧改了 canonical 字节都会有一侧变红，而摘要在代码里
+    没有第二份抄本可抄。同一份文档的字段白名单与契约版本号也一并逐项比对：它们是严格模式判定
+    的另一半，漂了就会让一侧收下、另一侧拒收。
+    """
+    fixture_dir = ROOT / CALENDAR_FIXTURE_DIR
+    pairs = []
+    for document, digest in CALENDAR_FIXTURE_PAIRS:
+        doc_path, digest_path = fixture_dir / document, fixture_dir / digest
+        if not doc_path.is_file() or not digest_path.is_file():
+            check(
+                False,
+                "日历夹具与摘要成对存在，两侧用例读的是同一对文件",
+                f"缺 {document if not doc_path.is_file() else ''}"
+                f" {digest if not digest_path.is_file() else ''}".strip(),
+            )
+            continue
+        pairs.append((document, digest, digest_path.read_text(encoding="utf-8").strip()))
+    readers = {
+        CALENDAR_RUST_TEST_FILE: (ROOT / CALENDAR_RUST_TEST_FILE).read_text(encoding="utf-8")
+        if (ROOT / CALENDAR_RUST_TEST_FILE).is_file()
+        else "",
+        CALENDAR_PYTHON_TEST_FILE: (ROOT / CALENDAR_PYTHON_TEST_FILE).read_text(encoding="utf-8"),
+    }
+    unread = [
+        name
+        for path, text in readers.items()
+        for name in [n for pair in CALENDAR_FIXTURE_PAIRS for n in pair]
+        if name not in text
+    ]
+    check(
+        len(pairs) == len(CALENDAR_FIXTURE_PAIRS) and not unread,
+        "日历夹具与摘要成对存在，两侧用例读的是同一对文件",
+        f"没有引用的夹具 {sorted(set(unread))}" if unread else "",
+    )
+    scanned = list(CRATES.rglob("*.rs")) + list((ROOT / "python").rglob("*.py"))
+    copied = []
+    for path in sorted(scanned):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if any(digest in text for _, _, digest in pairs):
+            copied.append(path.relative_to(ROOT).as_posix())
+    check(
+        pairs and not copied,
+        "期望摘要只在夹具旁边那一份文件里：代码与用例都读文件，不各自抄一份数",
+        f"出现抄本 {copied}",
+    )
+
+    rules = (ROOT / CALENDAR_RUST_RULES_FILE).read_text(encoding="utf-8")
+    module = (ROOT / CALENDAR_PYTHON_MODULE_FILE).read_text(encoding="utf-8")
+    rust_fields = re.search(
+        r"const ASHARE_CALENDAR_FIELDS: \[&str; (\d+)\] = \[(.*?)\];", rules, re.S
+    )
+    python_fields = re.search(r"^ASHARE_CALENDAR_FIELDS = \((.*?)\)", module, re.S | re.M)
+    rust_list = re.findall(r'"([^"]+)"', rust_fields.group(2)) if rust_fields else []
+    python_list = re.findall(r'"([^"]+)"', python_fields.group(1)) if python_fields else []
+    rust_version = re.search(r"pub const ASHARE_SCHEMA_VERSION: u32 = (\d+);", rules)
+    python_version = re.search(r"^ASHARE_SCHEMA_VERSION = (\d+)", module, re.M)
+    declared = int(rust_fields.group(1)) if rust_fields else None
+    check(
+        bool(rust_fields)
+        and bool(python_fields)
+        and rust_list == python_list
+        and declared == len(rust_list)
+        and rust_version is not None
+        and python_version is not None
+        and rust_version.group(1) == python_version.group(1),
+        "日历文档的字段白名单与契约版本号在两侧逐项相等，声明的个数也等于白名单长度",
+        f"Rust {rust_list} / Python {python_list}"
+        f" / 版本 {rust_version.group(1) if rust_version else None}"
+        f" vs {python_version.group(1) if python_version else None}"
+        f" / 声明 {declared} != {len(rust_list)}",
+    )
+
+    missing = [
+        name for name in CALENDAR_RUST_CASES if f"fn {name}()" not in readers[CALENDAR_RUST_TEST_FILE]
+    ] + [name for name in CALENDAR_PYTHON_CASES if name not in readers[CALENDAR_PYTHON_TEST_FILE]]
+    check(
+        not missing,
+        "日历指纹的三条 Rust 与两条 Python 常驻反例都在：共摘要、只随规范字段动、夹具能被回测链装载",
+        f"缺用例 {missing}",
+    )
+
+
 def c_abi_header_check() -> None:
     """C++ SDK 的头文件是 Rust `#[repr(C)]` 的手抄镜像，镜像必须逐字段比对（V11 S13）。
 
@@ -4118,6 +4366,8 @@ def main() -> int:
     reconcile_round_honesty_check()
     control_plane_honesty_check()
     api_surface_doc_check()
+    account_snapshot_schema_check()
+    calendar_fingerprint_caliper_check()
     c_abi_header_check()
     snapshot_json_table_check()
     bar_frame_contract_check()

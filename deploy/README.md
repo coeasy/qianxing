@@ -591,7 +591,7 @@ MQ、用户流、对账和交易安全状态继续接入同一 readiness provide
 | `GET /health` | 进程存活，恒 200 | — |
 | `GET /ready` | 依赖就绪：控制面存储、已声明研究快照、生产凭据/冻结规格、worker 指标 down/stale、投影缺口 | 503 |
 | `GET /metrics` | Prometheus 文本，追加 worker 指标 | — |
-| `GET /schema/account-snapshot-v1` | `qx-protocol` 内嵌的账户快照 v1 JSON Schema 常量 | — |
+| `GET /schema/account-snapshot-v1` | 账户快照 v1 JSON Schema，就是 `schemas/account-snapshot-v1.json` 那一份（编译期内嵌，不是第二份手抄） | — |
 | `GET /account/snapshot[?account_id=&venue_id=]` | 账户快照 JSON；不带键时读默认账户=配置里第一个真有日志的账户 worker | 400 参数非法；404 `snapshot_not_found` |
 | `GET /account/snapshot/envelope[?…]` | 投影信封（快照 hash 与 lineage） | 400；404 `snapshot_not_found` |
 | `GET /account/snapshot/diff?base_hash=[&…]` | 与历史基线快照的差异 | 400；409 `snapshot_base_not_found` |

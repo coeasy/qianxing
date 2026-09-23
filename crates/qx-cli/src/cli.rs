@@ -647,8 +647,7 @@ pub(crate) fn run() {
         }
         Command::Reconcile { path, worker_id } => {
             if let Some(path) = path {
-                let worker_id = worker_id.unwrap_or_else(|| "reconciler-main".into());
-                if let Err(error) = run_binance_worker(&path, &worker_id, true) {
+                if let Err(error) = run_binance_reconcile_once(&path, worker_id.as_deref()) {
                     eprintln!("Binance 对账失败: {error}");
                     std::process::exit(2);
                 }

@@ -198,6 +198,11 @@ capabilities:
       - crates/qx-cli/src/api_service.rs default_account_event_log is the one answer to「无键端点说的是哪条账户」：Ledger 读模型与全局兼容快照共用它，发布侧只有默认账户占那格全局位，其余账户按身份进自己的投影 (V11 R12)
       - crates/qx-cli/src/tests/api_default_account_reads.rs unkeyed_read_models_describe_the_same_account：两条账户域同场，无键快照与无键账簿必须同指 main，而带 account_id/venue_id 的查询仍读得到第二个账户 (V11 R12)
       - crates/qx-api/src/lib.rs validate_projection_event compares orders and ledger entries by account only：paper 账户交易的符号就叫 BTCUSDT.BINANCE，拿标的后缀当账户 venue 会把本账户自己的事实判成外来事实 (V11 R13)
+      - crates/qx-api/tests/account_projection_identity.rs 一条用例三向钉住那条判定：本账户的无 venue 事实必须全投影、换账户必须拒（订单与账簿各一次）、带显式 venue 的成交仍必须守住交易所边界。R13 的修复此前只有一轮临时验证，生产代码本轮零改动 (V11 R13 → T1)
+      - crates/qx-protocol/src/lib.rs ACCOUNT_SNAPSHOT_JSON_SCHEMA 是 include_str!("../../../schemas/account-snapshot-v1.json")：仓库那份文件是权威，第二份手抄在编译期没有退路；ACCOUNT_SNAPSHOT_SCHEMA_VERSION 与 from_json 的版本闸门让「按别的版本自洽封存」的文档被拒，而不是被当 v1 解出来 (V11 S10 → T3)
+      - crates/qx-protocol/tests/snapshot_schema_contract.rs 六条用例与 tools/check_architecture.py account_snapshot_schema_check 的 8 项：契约只有一份文本、键集合等于写侧产物、七个未算的钱可空而权益不可空、协议名与版本号同源、路由发出的就是它、对面 Python 同宽、六条判据各有常驻用例 (V11 T3)
+      - crates/qx-cli/src/worker_entry.rs configured_reconcile_worker_id resolves the reconcile default by role + venue binding, and zero or several candidates both fail closed with the candidates listed：字面量 reconciler-main 遇改名拓扑报「找不到 worker」，遇同名 execution worker 会真跑一次下单执行 (V11 S12 → T4)
+      - crates/qx-cli/src/tests/reconcile_worker_identity.rs 五条用例：改名的 reconciler 解析得到、关掉的报错只说口径缺失而不提字面量名、两个候选不挑第一个、paper 腿不是 Binance 候选、四份发布示例各自解析出自己的名字 (V11 T4)
       - crates/qx-cli/src/strategy_contract.rs configured_api_worker_id resolves the API worker by role and both spawn sites use that id：此前字面量 "api" 遇上任何改名的合法拓扑就让 serve 在启动瞬间死于"未知 worker" (V11 S1)
       - crates/qx-cli/src/tests/runtime_api_worker_identity.rs 两条用例：改名后的 api worker 能注册而字面量不能，且没有启用的 api worker 时解析报错而不是回落别的 worker (V11 S1)
       - crates/qx-cli/src/workers.rs scheduler 与 strategy 两个生产循环轮询 context.should_stop()：修之前它们是生产里唯二永不自然结束的循环 (V11 S2)
@@ -298,6 +303,10 @@ capabilities:
       - crates/qx-data/src/ingestion.rs
       - crates/qx-data/src/registry.rs
       - crates/qx-cli/src/dataset_commands.rs
+      - crates/qx-cli/src/dataset_commands.rs 的 calendar 分支：旧格式文档缺 sessions 读成「没有时段」而不是组件非法，与 Python from_json、回测规则装载 apply_calendar_json 同宽；sessions 是非数组时仍然 fail closed (V11 R17 → T2)
+      - python/tests/fixtures/calendar-component-v1.json 与 calendar-component-legacy.json 各配一份 .fingerprint：夹具由 Python 写侧 component_fingerprint 产出，CLI 侧只重算，期望摘要在代码里没有第二份抄本 (V11 T2)
+      - crates/qx-cli/src/tests/calendar_component_fingerprint.rs 三条用例：两侧共摘要且行数相符、摘要只随三个规范字段动（字段顺序换了不改摘要、sessions 非数组必须报错）、两份夹具都能被回测链装载 (V11 T2)
+      - tools/check_architecture.py calendar_fingerprint_caliper_check holds 4 items over the shared fixture pair, the single copy of the digest, the cross-language ASHARE_CALENDAR_FIELDS / ASHARE_SCHEMA_VERSION equality, and the five named permanent counterexamples (V11 T2)
       - python/qianxing_ashare/__init__.py
       - python/qianxing_ashare/__main__.py
     limitations:
@@ -377,6 +386,8 @@ capabilities:
       - tools/check_architecture.py bar_frame_contract_check holds 3 items over the four version homes, the writer printing the version first, the reader failing closed, and the Rust key set equalling the Python strict key set (V11 R16)
       - python/tests/fixtures/account-snapshot-v1.sample.json 是 Rust AccountSnapshot::to_json 的原样输出，两侧各钉一次：Rust 比对全等、Python 把它喂进 load_account_snapshot (V11 R18)
       - python/tests/test_bridge.py test_reader_consumes_the_document_the_writer_emits 断言四张键表的键是字符串、枚举是变体名、没算过的钱是 null；此前该用例只吃手抄字典、四张键表全填 {}，写侧印裸数字键的那几周一条都不会红 (V11 R18)
+      - python/qianxing_bridge/__init__.py load_account_snapshot 的必填集合与 schemas/account-snapshot-v1.json 的 required 同源（补上写侧恒印的 equity_raw），python/tests/test_bridge.py 把「少任一必填」与「schema_version 是 0 或 2」两个方向各断言一遍，与 Rust from_json 同一判据 (V11 S10 → T3)
+      - python/tests/test_ashare.py 两条日历用例：共用夹具的摘要与 .fingerprint 全等、夹具是 to_json 的定点，且摘要只随 calendar_id/trading_days/sessions 动而 source 改了不动 (V11 T2)
       - tools/build_python_wheel.sh and tools/build_python_wheel.ps1
       - .github/workflows/ci.yml python-wheel job (Python 3.10/3.12/3.13 on Linux and Windows)
     limitations:

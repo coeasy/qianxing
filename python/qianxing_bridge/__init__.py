@@ -340,7 +340,11 @@ class BarFrame:
 
 
 def load_account_snapshot(payload: str) -> dict[str, Any]:
-    """解析 Qianxing account wire JSON，并执行最小 schema 级校验。"""
+    """解析 Qianxing account wire JSON，并执行最小 schema 级校验。
+
+    必填集合与 ``schemas/account-snapshot-v1.json`` 的 ``required`` 是同一份口径（含
+    ``equity_raw``）：两侧各自宽严时，同一份产物会一边解得开、一边解不开。
+    """
 
     value = json.loads(payload)
     required = {
@@ -348,6 +352,7 @@ def load_account_snapshot(payload: str) -> dict[str, Any]:
         "schema_version",
         "header",
         "cash_raw",
+        "equity_raw",
         "positions",
         "orders",
         "fills",

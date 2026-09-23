@@ -3,7 +3,7 @@
   "$id": "https://qianxing.dev/schema/account-snapshot-v1.json",
   "title": "Qianxing Canonical Account Snapshot v1",
   "type": "object",
-  "required": ["protocol", "schema_version", "header", "cash_raw", "positions", "orders", "fills", "transfers", "reconcile"],
+  "required": ["protocol", "schema_version", "header", "cash_raw", "equity_raw", "positions", "orders", "fills", "transfers", "reconcile"],
   "properties": {
     "protocol": {"const": "QIANXING_ACCOUNT"},
     "schema_version": {"const": 1},
@@ -12,6 +12,14 @@
       "required": ["snapshot_id", "account_id", "portfolio_id", "venue_id", "as_of", "event_seq", "state_hash"]
     },
     "cash_raw": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "equity_raw": {"type": "integer"},
+    "available_raw": {"type": ["integer", "null"]},
+    "margin_raw": {"type": ["integer", "null"]},
+    "frozen_raw": {"type": ["integer", "null"]},
+    "realized_pnl_raw": {"type": ["integer", "null"]},
+    "unrealized_pnl_raw": {"type": ["integer", "null"]},
+    "fees_raw": {"type": ["integer", "null"]},
+    "funding_raw": {"type": ["integer", "null"]},
     "positions": {"type": "object", "additionalProperties": {"type": "object"}},
     "orders": {"type": "object", "additionalProperties": {"type": "object"}},
     "fills": {"type": "object", "additionalProperties": {"type": "object"}},
