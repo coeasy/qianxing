@@ -19,6 +19,7 @@ fn bar_backtest_assembly_pins_the_shared_engine_defaults() {
     let config = BarBacktestAssembly::new(
         &instrument,
         "main",
+        backtest_initial_cash(None).unwrap().cash,
         20260914,
         &default_execution_cost_binding(),
         bar_fill_model(None, None).unwrap(),
@@ -27,7 +28,16 @@ fn bar_backtest_assembly_pins_the_shared_engine_defaults() {
     assert_eq!(config.instrument, instrument);
     assert_eq!(config.account_id, "main");
     assert_eq!(config.currency, "USDT");
-    assert_eq!(config.initial_cash.raw(), Money::from_i64(100_000).raw());
+    assert_eq!(
+        config.initial_cash,
+        backtest_initial_cash(None).unwrap().cash,
+        "装配处必须原样带出调用方答的本金，自己不再藏默认值（V11 Q72）"
+    );
+    assert_eq!(
+        backtest_initial_cash(None).unwrap().cash,
+        Money::from_i64(DEFAULT_BACKTEST_INITIAL_CASH),
+        "没人声明时的账户尺度仍是 100,000，只是它现在由 account_base.rs 一处回答"
+    );
     assert_eq!(config.multiplier, 1);
     assert_eq!(config.seed, 20260914);
     assert!(
@@ -56,6 +66,7 @@ fn backtest_assembly_books_in_the_instrument_settlement_currency() {
     let mut assembly = BarBacktestAssembly::new(
         &instrument,
         "main",
+        backtest_initial_cash(None).unwrap().cash,
         20260914,
         &default_execution_cost_binding(),
         bar_fill_model(None, None).unwrap(),

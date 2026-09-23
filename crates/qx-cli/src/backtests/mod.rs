@@ -11,7 +11,9 @@ pub(crate) struct BarBacktestAssembly {
     pub(crate) instrument: InstrumentId,
     pub(crate) instrument_spec: Option<TradingInstrumentSpec>,
     pub(crate) account_id: String,
-    pub(crate) initial_cash: Money,
+    /// 只能由 [`Self::new`] 给出：本金一旦允许装配后再覆盖，"必答题"就退回到可以在
+    /// 某条链上忘了答的形状（V11 Q72）。
+    initial_cash: Money,
     pub(crate) margin: Box<dyn MarginRule>,
     pub(crate) fill: Box<dyn FillModel>,
     pub(crate) fee: Box<dyn FeeModel>,
@@ -29,15 +31,21 @@ pub(crate) fn backtest_settlement_currency(spec: Option<&TradingInstrumentSpec>)
         .unwrap_or_else(|| "USDT".into())
 }
 
+// 没人声明本金时，单腿回测按多少记账、这条必答题怎么答：见 `account_base.rs`（V11 Q72）。
+
 impl BarBacktestAssembly {
     /// 费用与延迟成对来自同一份 [`ExecutionCostBinding`]（V11 Q0c）：分两个入口注入
     /// 就会退回到"两条链各自挑口径"，那是 Q0a/Q0c 要消灭的形状。
     ///
     /// 撮合模型同样是必答题：`fill` 由调用方从 [`bar_fill_model`] 取回来，装配处不给默认值，
     /// 于是新增一条 Bar 回测链时"忘了回答用哪个撮合模型"过不了编译（与 Q0a 的费用入参同法）。
+    ///
+    /// 本金自 V11 Q72 起也是必答题（`initial_cash`）：它以前藏在下面的默认值里，两条链
+    /// 因此可以在使用者毫不知情的情况下，把整条收益率与全部风控判定压在一个 100,000 的常数上。
     pub(crate) fn new(
         instrument: &InstrumentId,
         account_id: impl Into<String>,
+        initial_cash: Money,
         seed: u64,
         costs: &ExecutionCostBinding,
         fill: BarFillModelBinding,
@@ -46,7 +54,7 @@ impl BarBacktestAssembly {
             instrument: instrument.clone(),
             instrument_spec: None,
             account_id: account_id.into(),
-            initial_cash: Money::from_i64(100_000),
+            initial_cash,
             margin: Box::new(NoMargin),
             fill: fill.fill,
             fee: costs.fee_model(),
@@ -132,6 +140,9 @@ pub(crate) fn run_builtin_strategy_on_bars(
         .map_err(|error| format!("内置策略回测失败: {error:?}"))
 }
 
+mod account_base;
+pub(crate) use account_base::*;
+
 mod artifacts;
 pub(crate) use artifacts::*;
 
@@ -158,6 +169,9 @@ pub(crate) use multi_builtin::*;
 
 mod risk_binding;
 pub(crate) use risk_binding::*;
+
+mod signal_binding;
+pub(crate) use signal_binding::*;
 
 mod single_strategy;
 pub(crate) use single_strategy::*;

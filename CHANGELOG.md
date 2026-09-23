@@ -1,5 +1,68 @@
 # Changelog
 
+## Unreleased — V11 Q72：回测压在多少钱上，可声明、来源可见（2026-09-23）
+
+回测链路实测（V11 #54）排到的第九颗：回测 FN9。§28/§29/§32/§33 那条纪律管"没算过的钱不许印成 0"，
+这一颗管**被假定的钱**：一个数字如果每条链都心里有数、嘴上不说，它和"没算过"是同一类缺陷 ——
+它决定收益率的分母、风控门看到的可用现金，而使用者从头到尾没被问过一句，也没在哪个产物里读得到它。
+收口记录见 [docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md) §34。
+
+### Fixed（本金从三处字面量变成一格可声明、四处可见）
+
+- **默认本金只剩一处具名常数**：`Money::from_i64(100_000)` 在生产代码里原有 **6 次**
+  （`backtests/mod.rs:49` 那个从没被人读过的装配默认、`depth.rs:80/81/144/157`、
+  `single_strategy.rs:58`，另加 `ecosystem_smoke.rs` 的自检副本）。现在它是
+  `crates/qx-cli/src/backtests/account_base.rs:12` 的 `DEFAULT_BACKTEST_INITIAL_CASH`，
+  门禁把"全 qx-cli 生产代码扫不到 `from_i64(100_000)` 字面量"写成判据（跳过 `tests` 目录与
+  文件尾 `#[cfg(test)]`），抄第二份当场红。
+- **本金改成装配的必答题**：`BarBacktestAssembly::new` 多一个 `initial_cash: Money` 入参
+  （`backtests/mod.rs:48`），字段去掉 `pub(crate)`（`:16`）—— 新链漏答过不了编译，答完也不许事后改写，
+  `single_strategy.rs` 那行 `assembly.initial_cash = initial_cash;` 随之删除。
+- **非正声明当场报错而不是回落默认**（`account_base.rs:31-48`）：0 元账户上的 `return_bps=0`
+  是一句假话，报错文案格出键名、值与理由。
+- **多腿链当场拒收那一格单账户数字**（`leg_funding.rs:73-86` 的 `reject_configured_initial_cash`，
+  `multi_builtin.rs:44` 调用）：两条腿的本金各按本腿行情定资，一份数字定不了两条腿，收下再静默丢掉
+  等于配置说假话 —— 与 §22 的 A 股段、§23 的延迟设置同一条纪律。
+- **实测分叉**（同一份 `sma_cross` + 同一份 `pairs-primary` 夹具 + 同一个 `--quantity 2`，
+  本轮 `/tmp/qx_q72_probe/probe.log`）：不声明 → `fills=0 return_bps=0`
+  （两笔买入被"买入成本超过账户可用现金"挡下）、`result_hash=892f8478c281a3e5`；
+  声明 `200000000000000` → `fills=1 return_bps=-23`、`result_hash=4faa4db9d340864d`。
+  改前 `fills=0 return_bps=0` 念出来像"这策略不赚不赔"，真相是"这两单位没人给它算过钱"。
+
+### Added（来源可见、摘要落盘、用例与门禁）
+
+- **stdout 三行本金播报**：`[Strategy · Account]`（`single_strategy.rs:215-216`）、
+  `[Builtin · Account]`（`:371-372`，这条链不落摘要，stdout 是本金对使用者唯一的出口）、
+  `[Depth · Account]`（`depth.rs:228-229`），排版函数只有一处。来源分三种且可区分：
+  `builtin-default` / `strategy-initial-cash` / `multi-leg-funding-rule` —— "没配"与"配了同一个数"必须分得开。
+- **摘要升到 schema v4**（`artifacts.rs:301`）：`BacktestArtifactsInput` 多一个必填字段
+  `account_base`（`:223`，新增落摘要的链必须答它），`:305-308` 落 `account` 块两格
+  （期初本金与来源，定点整数按仓库惯例写成字符串）。
+- **配置面那一格**（`crates/qx-runtime/src/runtime_config/strategy_schema.rs:129-137`）：
+  `initial_cash_raw: Option<i128>`（`Money` 是 i128 定点数，没有 i64 天花板），带
+  `skip_serializing_if = "Option::is_none"` —— 省略时配置序列化字节逐字节不变，
+  否则已 bless 的 `config_fingerprint` / `RunManifest` 会因一个不改变行为的字段集体失真。
+- **用例 8 条，`CLI_TEST_FLOOR` 183 → 191**：单元 `crates/qx-cli/src/tests/backtest_account_base.rs`
+  （3 条：默认必须有名字、声明值原样折成 `Money` 不被单位截断、`0/-1/-1e9` 全部 `unwrap_err`）；
+  命令行 `crates/qx-cli/tests/backtest_account_base.rs`（5 条真实子进程，其中一条是**同一份配置只差
+  那一格本金 → 结果必须不同**，断言 `fills` 0→1 且 `result_hash` 变化，另加来源两写法可区分）。
+  既有两条跟着改口径：装配用例不再比对"装配自带的默认"，改成"必须原样带出调用方答的本金"。
+- `tools/check_architecture.py` 门禁 **283 → 293 项**（3783 → 3964 行）：新增
+  `backtest_account_base_check()`（10 条，字面量唯一 / 三个标签 / 装配私有 / 三条链各自读过 /
+  三行播报 / 非正闸门 / 摘要 v4 / schema 字段形态 / 多腿拒绝必须带 `?` 传播 / 八条用例名齐备）。
+- **一次被行数逼出来的搬家**：`single_strategy.rs` 加完两处读点与两行打印会越过 Phase 4s 的
+  `cli_backtest_module_check()`，把与本金无关、但同样"三条链共用一句措辞"的信号参数侧
+  （`apply_configured_builtin_signal`、`builtin_signal_note`）搬进
+  `backtests/signal_binding.rs`（0 → 47 行），`single_strategy.rs` 496 → 477 行。
+  `maturity/line_budgets.yaml` 本轮**一个字节都没动**（`BUDGET_DIFF_LINES=0`）。
+
+### 验收（`/tmp/qx_q72_gate3.log`，整树 744 passed / 0 failed，77 个目标）
+
+M1–M5 五条变异全部 `MUT_STATE=red` 且 `OTHER_FAILS=0`（每条只点亮被测那一项），五次还原均
+`RESTORE_EXACT`，`PRISTINE_OK final`、`MODIFIED_DEPLOY=0`、`ARCH_ITEM_TOTAL=293`、`DISK_TEST_TOTAL=191`。
+本轮另有两份作废日志，原因都写进 §34.3：`gate1` 的 M5 判据只数调用点、抽掉 `?` 仍然绿（一条真空判据，
+预检变异当场抓到）；`gate2` 的 M2 改了判据文案没改脚本里的 want 串。**只有 gate3 是本轮验收依据。**
+
 ## Unreleased — V11 Q71：多腿组合收益按两条腿的钱算，不再把两腿 bps 平均（2026-09-23）
 
 回测链路实测（V11 #54）排到的第八颗：回测 FN8。§28/§29/§32 那条纪律管"没算过的钱不许印成 0"，

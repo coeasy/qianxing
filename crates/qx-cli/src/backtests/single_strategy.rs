@@ -55,7 +55,8 @@ pub(crate) fn run_single_strategy_backtest(
         .account_id
         .clone()
         .unwrap_or_else(|| "backtest".into());
-    let initial_cash = Money::from_i64(100_000);
+    let account_base = backtest_initial_cash(config.strategy.initial_cash_raw)?;
+    let initial_cash = account_base.cash;
     // 门禁只构造一次：回测判定与摘要里的 rule_set_version 必须来自同一份配置，
     // 且与 Paper/Live worker 走同一个 `strategy_risk_gate` 入口。
     let risk_gate = strategy_risk_gate(
@@ -76,13 +77,13 @@ pub(crate) fn run_single_strategy_backtest(
     let mut assembly = BarBacktestAssembly::new(
         &frame.instrument,
         account_id.clone(),
+        initial_cash,
         20260911,
         &costs,
         fill,
     );
     assembly.instrument_spec = instrument_spec;
     assembly.margin = margin;
-    assembly.initial_cash = initial_cash;
     assembly.risk = risk_gate;
     assembly.virtual_trading = virtual_trading;
     if let Some(fee) = fee {
@@ -204,11 +205,16 @@ pub(crate) fn run_single_strategy_backtest(
             risk_rule_source: "runtime-config",
             cost_source: &cost_source,
             fill_model: Some((fill_model_name, fill_model_source)),
+            account_base,
             matching_kernel: BAR_MATCHING_KERNEL,
             rejections: &rejections,
             input,
         },
     )?;
+    println!(
+        "[Strategy · Account] {}",
+        backtest_account_base_note(account_base)
+    );
     println!(
         "[Strategy · Backtest] strategy={} instrument={} bars={} fills={} return_bps={} max_drawdown_bps={} result_hash={:016x}",
         strategy_id,
@@ -239,47 +245,6 @@ pub(crate) fn run_single_strategy_backtest(
         fills_path.display()
     );
     Ok(())
-}
-
-/// `--config` 里的 `strategy.builtin_*` 信号参数，逐项覆盖到内置策略配置上（V11 Q64）。
-///
-/// 覆盖本身住在 [`apply_builtin_signal_overrides`]，与 `strategy backtest` 同一处读法；这里只
-/// 多两件事：把配置路径读开，以及在覆盖之后补一次体检 —— 只写了单边窗口时，运行时体检看不到
-/// （它只比两个都给了的键），非法组合要等这四项并进各链的默认窗口之后才成立。复检必须在这里做，
-/// 因为三条内置链紧接着就要印 `[X · Signal]` 那行生效口径：先宣告再报错等于往 stdout 写了一套
-/// 并没有跑过的参数。下单数量仍由命令行位置参数点名，这里不替它做主。
-pub(crate) fn apply_configured_builtin_signal(
-    config: &mut BuiltinStrategyConfig,
-    config_path: Option<&Path>,
-) -> Result<&'static str, String> {
-    let Some(path) = config_path else {
-        return Ok("builtin-default");
-    };
-    let strategy = read_runtime_config(path)?.strategy;
-    let source = builtin_signal_source(&strategy);
-    apply_builtin_signal_overrides(config, &strategy);
-    config.validate().map_err(|error| {
-        format!(
-            "{error}；{} 的 strategy.builtin_* 覆盖后为 fast_window={} slow_window={} \
-             period={} threshold_bps={}，请检查 builtin_fast_window / builtin_slow_window / \
-             builtin_period / builtin_threshold_bps",
-            path.display(),
-            config.fast_window,
-            config.slow_window,
-            config.period,
-            config.threshold_bps
-        )
-    })?;
-    Ok(source)
-}
-
-/// 把生效的那套信号口径写成一行 stdout 文案：三条链共用，措辞只有一处定义。
-/// 产物里看不出口径的缺陷（Q0b/Q54 一族）都是从"各链各印一句"开始的。
-pub(crate) fn builtin_signal_note(config: &BuiltinStrategyConfig, source: &str) -> String {
-    format!(
-        "source={} fast_window={} slow_window={} period={} threshold_bps={}",
-        source, config.fast_window, config.slow_window, config.period, config.threshold_bps
-    )
 }
 
 pub(crate) fn run_builtin_backtest(
@@ -324,10 +289,20 @@ pub(crate) fn run_builtin_backtest(
         instrument_spec.as_ref(),
     )?;
     let (fill_model_name, fill_model_source) = (fill.name, fill.source);
+    // 本金与风控、成本、撮合同源：这条链读得到 `--config`，却不读它声明的本金，等于让同一份
+    // 配置在两个入口压在不同的账户尺度上（V11 Q72）。
+    let account_base = backtest_initial_cash(configured_initial_cash_raw(runtime_config_path)?)?;
     // A 股规则与费率同一条链同源：本链读 `strategy backtest` 读不到的那段，就会让同一份
     // 配置在两个入口得到两种成交与两种费用（V11 Q61）。
     let ashare = configured_ashare_binding(runtime_config_path, &frame.instrument.to_string())?;
-    let mut assembly = BarBacktestAssembly::new(&frame.instrument, "main", 20260914, &costs, fill);
+    let mut assembly = BarBacktestAssembly::new(
+        &frame.instrument,
+        "main",
+        account_base.cash,
+        20260914,
+        &costs,
+        fill,
+    );
     assembly.instrument_spec = instrument_spec;
     assembly.margin = margin;
     assembly.risk = risk_binding.gate();
@@ -390,6 +365,12 @@ pub(crate) fn run_builtin_backtest(
     );
     let report = run_builtin_strategy_on_bars(backtest_config, strategy_config, context, &bars)?;
     let rejections = rejection_facts(&report.event_log);
+    // 本金决定收益率的分母，也决定风控门看到的可用现金。这条链不落摘要，所以它必须印出来：
+    // 零成交与"这策略不赚不赔"在两行数字里长得一样，而差别全在那个数没被人看见的账户尺度上。
+    println!(
+        "[Builtin · Account] {}",
+        backtest_account_base_note(account_base)
+    );
     println!(
         "[Builtin · Backtest] strategy={} instrument={} bars={} fills={} return_bps={} max_drawdown_bps={} result_hash={:016x}",
         kind.name(),

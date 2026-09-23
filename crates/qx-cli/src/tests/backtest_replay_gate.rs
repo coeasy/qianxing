@@ -47,6 +47,11 @@ fn fixture_input() -> crate::backtests::BacktestInputProvenance {
     }
 }
 
+/// 本金同样只是占位；它落进摘要的 `account` 块，由 `backtest_account_base` 那组用例核对。
+fn account_fixture() -> crate::backtests::BacktestAccountBase {
+    crate::backtests::backtest_initial_cash(None).unwrap()
+}
+
 /// 用给定事实源拼一份产物输入；除事实源外全是占位口径。
 fn artifact_input<'a>(
     instrument: &'a InstrumentId,
@@ -80,6 +85,9 @@ fn artifact_input<'a>(
         risk_rule_source: "conservative-default",
         cost_source: "builtin-default",
         fill_model: None,
+        // 重放闸门只关心事实源；本金在这里是占位，由 `backtest_account_base` 那组用例按真实
+        // 声明核对（V11 Q72）。
+        account_base: crate::backtests::backtest_initial_cash(None).unwrap(),
         matching_kernel: "test",
         rejections: &[],
         input: fixture_input(),
@@ -99,7 +107,15 @@ fn summary_publishes_the_replay_facts_it_actually_checked() {
     .unwrap();
     let summary: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&summary_path).unwrap()).unwrap();
-    assert_eq!(summary["schema_version"], serde_json::json!(3));
+    assert_eq!(summary["schema_version"], serde_json::json!(4));
+    // 摘要必须把期初本金与它的来源一起落盘：只有期末权益的产物算不出收益率的分母。
+    assert_eq!(
+        summary["account"],
+        serde_json::json!({
+            "initial_cash_raw": account_fixture().cash.raw().to_string(),
+            "source": crate::backtests::BACKTEST_ACCOUNT_BASE_DEFAULT_SOURCE,
+        })
+    );
     // 摘要必须把递进来的输入身份逐字段写出来：不落盘等于产物对"跑的哪份数据"仍然沉默。
     assert_eq!(
         summary["input"],

@@ -40,6 +40,8 @@ pub(crate) fn run_multi_builtin_backtest(
     // 撮合口径与成本同源：两条腿共用运行时配置里声明的那一份（V11 Q1a 第二批）。
     // 具体模型要到 `run_leg` 里才解析得出来——`one_tick_slippage` 的一档取自各腿自己的 spec。
     let fill_configured = configured_fill_model(runtime_config_path)?;
+    // 本金在这条链上没有落点：两条腿的账户各按本腿行情定资，因此拒绝而不是收下再丢掉。
+    reject_configured_initial_cash(runtime_config_path, "backtest multi-builtin")?;
     // 每腿账户必须付得起它宣称的下单量：Bar 内核会拒绝现金不足的现货买入
     // （`qx-xingban/src/backtest.rs` 的 cash-funded spot buy 检查）。定资口径见
     // `multi_leg_leg_cash`：用**本腿自己的**最高价（全局最大值会让便宜腿背下贵腿的名义额）、
@@ -210,13 +212,13 @@ pub(crate) fn run_multi_builtin_backtest(
         let mut assembly = BarBacktestAssembly::new(
             &frame.instrument,
             strategy.account_id.clone(),
+            cash,
             20260914,
             &costs,
             fill,
         );
         assembly.instrument_spec = spec;
         assembly.margin = margin;
-        assembly.initial_cash = cash;
         assembly.risk = risk_binding.gate();
         leg_risk_versions.push(assembly.risk.rule_set().version().to_string());
         BacktestEngine::new(assembly.into_config())
@@ -439,6 +441,9 @@ pub(crate) fn run_multi_builtin_backtest(
             // 多腿链不写 summary，撮合口径只能记在这里，否则"换了模型"在这条链上不可见。
             "fill_model": { "name": fill_model_name, "source": fill_model_source },
             "accounts": {
+                // 另外三条链在摘要/stdout 里写同一格来源标签；本链的答案是"按定资规则算"，
+                // 不写出来就等于四条链里只有这一条没交代本金从哪来（V11 Q72）。
+                "account_base_source": BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE,
                 "primary_initial_cash": primary_cash.raw().to_string(),
                 "reference_initial_cash": reference_cash.raw().to_string(),
                 // 期末权益与期初本金同侧落盘，读者才能自行复算组合收益（V11 Q71）。

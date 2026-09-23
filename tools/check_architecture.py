@@ -391,7 +391,10 @@ CLI_TESTS_DIR = "crates/qx-cli/src/tests"
 # Q71 给"组合收益按钱算而不是两条腿平均"补一条单元 + 一条端到端复算用例。地板本身落后于
 # 磁盘：Q69/Q70 落地时新增了三条用例却没有回写（178 → 181 只发生在磁盘上），本轮连同 Q71 两条
 # 一起抬到实测总数 183（src/tests 143 + crates/qx-cli/tests 40）。
-CLI_TEST_FLOOR = 183
+# Q72 给"回测压在多少钱上"补三条读法单元 + 五条命令行用例（183 → 191，按磁盘 `^#[test]$`
+# 实测总数：src/tests 146 + crates/qx-cli/tests 45）。其中 3 条在 `#[cfg(feature = "nats")]`
+# 后面，默认 `cargo test -p qx-cli` 跑 188 条 —— 地板按磁盘口径计，换 feature 组合不得少用例。
+CLI_TEST_FLOOR = 191
 # 拆文件时最容易被复制进各个主题文件的共享夹具（风控上下文、隔离运行时目录）。
 CLI_TEST_FIXTURES = (
     "smoke_paper_risk_context",
@@ -644,6 +647,7 @@ def cli_root_module_check() -> None:
 # 每条回测链的入口只有一处定义、共享装配留在 mod.rs 且其条目数不增。
 CLI_BACKTESTS_DIR = "qx-cli/src/backtests"
 CLI_BACKTESTS_MODULES = (
+    "account_base",
     "artifacts",
     "ashare_binding",
     "depth",
@@ -653,6 +657,7 @@ CLI_BACKTESTS_MODULES = (
     "leg_funding",
     "multi_builtin",
     "risk_binding",
+    "signal_binding",
     "single_strategy",
     "strategy_backtest",
 )
@@ -1280,7 +1285,10 @@ BUILTIN_SIGNAL_STRATEGY_CHAIN_FILE = "crates/qx-cli/src/strategy_host.rs"
 BUILTIN_SIGNAL_TEST_FILE = "crates/qx-cli/tests/builtin_signal_from_config.rs"
 # 交易链路（paper/live）不经过回测链，用进程内用例钉同一个读点。
 BUILTIN_SIGNAL_WORKER_TEST_FILE = "crates/qx-cli/src/tests/strategy_worker_entries.rs"
-BUILTIN_SIGNAL_WRAPPER_FILE = "crates/qx-cli/src/backtests/single_strategy.rs"
+# V11 Q72 把这条包装连同 `builtin_signal_note` 从 `single_strategy.rs` 搬进了独立模块
+# （那文件当时 511 行，撞上 500 行门槛）。读点调用仍留在三条链自己手里，所以只有这一处
+# 路径按"定义在哪"取，链侧检查按"谁调用"取。
+BUILTIN_SIGNAL_WRAPPER_FILE = "crates/qx-cli/src/backtests/signal_binding.rs"
 # 每条内置链都要问一次配置；少了这一处就退回到写死默认（Q64 的原缺陷形状）。
 BUILTIN_SIGNAL_CHAINS = {
     "single_strategy.rs": "backtest builtin",
@@ -1326,11 +1334,16 @@ def builtin_signal_check() -> None:
         f"策略链调用 {strategy_chain.count('apply_builtin_signal_overrides(&mut config, strategy);')} 处（各期望 1）",
     )
     wrapper = (ROOT / BUILTIN_SIGNAL_WRAPPER_FILE).read_text(encoding="utf-8")
+    wrapper_definitions = {
+        path.name
+        for path in sorted((CRATES / "qx-cli/src/backtests").glob("*.rs"))
+        if "pub(crate) fn apply_configured_builtin_signal(" in path.read_text(encoding="utf-8")
+    }
     check(
         wrapper.count("pub(crate) fn apply_configured_builtin_signal(") == 1
-        and "= apply_configured_builtin_signal(" in wrapper,
-        "内置链侧的包装定义一处，且 `backtest builtin` 问过它",
-        f"定义 {wrapper.count('pub(crate) fn apply_configured_builtin_signal(')} 处",
+        and wrapper_definitions == {Path(BUILTIN_SIGNAL_WRAPPER_FILE).name},
+        "内置链侧的包装定义一处，三条链各问过它一次（调用点检查在下面的逐链表里）",
+        f"定义 {wrapper.count('pub(crate) fn apply_configured_builtin_signal(')} 处 / 定义文件 {sorted(wrapper_definitions)}",
     )
     for name, label in BUILTIN_SIGNAL_CHAINS.items():
         text = (backtests / name).read_text(encoding="utf-8")
@@ -1533,7 +1546,7 @@ def replay_kernel_check() -> None:
         f"verify@{gate_at} 首次写文件@{write_at}",
     )
     check(
-        '"schema_version": 3' in artifact
+        '"schema_version": 4' in artifact
         and '"log_digest"' in artifact
         and '"ledger_entries"' in artifact
         and '"run_ledger_entries"' in artifact,
@@ -1606,10 +1619,10 @@ def input_provenance_check() -> None:
         return artifact[start:] if end < 0 else artifact[start:end]
 
     check(
-        artifact.count('"schema_version": 3') == 1
+        artifact.count('"schema_version": 4') == 1
         and artifact.count('"input": input_provenance_json(&input.input)') == 1
         and artifact.count("fn input_provenance_json(") == 1,
-        "摘要以 schema v3 落一个 `input` 块，且这份形状只由 input_provenance_json 写一次",
+        "摘要以当前 schema 版本落一个 `input` 块，且这份形状只由 input_provenance_json 写一次",
         "input 块的写法出现多处或 schema/键名回退",
     )
     chain_parses = sum(
@@ -2252,6 +2265,173 @@ def reconcile_round_honesty_check() -> None:
         "Q69 用例在位：两半发现同时进报告与事实流，四类远端归并口径另有独立用例咬住",
         f"缺用例 {[n for n in RECONCILE_ROUND_CASES if f'fn {n}(' not in cases]}"
         f" / 缺归并用例={'ccxt_open_orders_report_unknown_and_unmapped_remote_risk' not in discovery_cases}",
+    )
+
+
+# V11 Q72（回测链路 FN9）：三条单腿回测链把整条收益率与全部风控判定压在一个 100,000 的
+# 常数上，既不声明也不可见。把仓库自带夹具的 `quantity` 从 1 抬到 2 就零成交，而 stdout 只
+# 印 `return_bps=0`，读起来像"这策略不赚不赔"，真相是"这两单位没人给它算过钱"。收口形状与
+# 费用/撮合模型同源：常数和读法各一处、来源分三种、本金进装配的必答题、摘要多一个 `account`
+# 块，套不下一格本金的多腿链则当场拒收那格声明。
+ACCOUNT_BASE_MODULE = "crates/qx-cli/src/backtests/account_base.rs"
+BAR_CHAIN_FILE = "crates/qx-cli/src/backtests/single_strategy.rs"
+DEPTH_CHAIN_FILE = "crates/qx-cli/src/backtests/depth.rs"
+LEG_FUNDING_FILE = "crates/qx-cli/src/backtests/leg_funding.rs"
+MULTI_LEG_CHAIN_FILE = "crates/qx-cli/src/backtests/multi_builtin.rs"
+ASSEMBLY_MODULE = "crates/qx-cli/src/backtests/mod.rs"
+SUMMARY_MODULE = "crates/qx-cli/src/backtests/artifacts.rs"
+STRATEGY_SCHEMA = "crates/qx-runtime/src/runtime_config/strategy_schema.rs"
+ACCOUNT_BASE_CASES = "crates/qx-cli/src/tests/backtest_account_base.rs"
+ACCOUNT_BASE_CLI_CASES = "crates/qx-cli/tests/backtest_account_base.rs"
+# 每条单腿链都要把"这一轮压在多少钱上、这个数从哪来"印在结果之前。
+ACCOUNT_BASE_PRINT_MARKERS = ("[Strategy · Account]", "[Builtin · Account]", "[Depth · Account]")
+# 本金来源的三种说法：没配、配了、多腿按本腿行情定资。前两种必须可区分（Q67 口径）。
+ACCOUNT_BASE_SOURCES = (
+    "builtin-default",
+    "strategy-initial-cash",
+    "multi-leg-funding-rule",
+)
+ACCOUNT_BASE_UNIT_TESTS = (
+    "undeclared_backtest_cash_answers_with_the_one_named_default",
+    "declared_backtest_cash_lands_verbatim_with_its_own_source",
+    "non_positive_declared_cash_fails_rather_than_becoming_a_default",
+)
+ACCOUNT_BASE_CLI_TESTS = (
+    "builtin_entry_prints_the_default_it_booked_with",
+    "a_declared_account_base_is_what_makes_the_second_unit_fillable",
+    "a_non_positive_declaration_fails_closed",
+    "summary_chains_land_the_account_base_they_actually_used",
+    "the_multi_leg_entry_refuses_a_single_account_number_and_names_its_own_rule",
+)
+# 逐字面量比太脆（rustfmt 会折行、注释会改口径词），这里只钉那些"改坏即换语义"的写法。
+ACCOUNT_BASE_DEFAULT_DECL = "pub(crate) const DEFAULT_BACKTEST_INITIAL_CASH: i64 = 100_000;"
+ACCOUNT_BASE_SOURCE_CONSTS = (
+    "BACKTEST_ACCOUNT_BASE_DEFAULT_SOURCE",
+    "BACKTEST_ACCOUNT_BASE_CONFIG_SOURCE",
+    "BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE",
+)
+BACKTEST_ACCOUNT_BASE_FUNDING_USE = (
+    '"account_base_source": BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE'
+)
+ASSEMBLY_CASH_PARAM = "initial_cash: Money,"
+SUMMARY_ACCOUNT_BLOCK = '"source": input.account_base.source,'
+SCHEMA_CASH_FIELD = "pub initial_cash_raw: Option<i128>,"
+SCHEMA_CASH_ATTR = '#[serde(default, skip_serializing_if = "Option::is_none")]'
+
+
+def backtest_account_base_check() -> None:
+    """回测的账户本金：一处常数、一条读法、来源可见、非正声明当场拒。"""
+    account_base = (ROOT / ACCOUNT_BASE_MODULE).read_text(encoding="utf-8")
+    bar_chain = (ROOT / BAR_CHAIN_FILE).read_text(encoding="utf-8")
+    depth_chain = (ROOT / DEPTH_CHAIN_FILE).read_text(encoding="utf-8")
+    leg_funding = (ROOT / LEG_FUNDING_FILE).read_text(encoding="utf-8")
+    multi_leg = (ROOT / MULTI_LEG_CHAIN_FILE).read_text(encoding="utf-8")
+    assembly = (ROOT / ASSEMBLY_MODULE).read_text(encoding="utf-8")
+    summary = (ROOT / SUMMARY_MODULE).read_text(encoding="utf-8")
+    schema = (ROOT / STRATEGY_SCHEMA).read_text(encoding="utf-8")
+    unit_cases = (ROOT / ACCOUNT_BASE_CASES).read_text(encoding="utf-8")
+    cli_cases = (ROOT / ACCOUNT_BASE_CLI_CASES).read_text(encoding="utf-8")
+    chains = bar_chain + depth_chain
+
+    # 1. 默认本金只许住在一个具名常数里。生产代码再抄一个 `100_000` 字面量，就等于让某条
+    #    链绕过必答题——编译不会红，但它的分母又变成私下的了。
+    literal_sites = []
+    for path in sorted((CRATES / "qx-cli" / "src").rglob("*.rs")):
+        if "tests" in path.relative_to(CRATES / "qx-cli" / "src").parts:
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
+            if not re.search(r"from_i64\(100_?000\)", line):
+                continue
+            if is_test_scoped(index, lines):
+                continue
+            literal_sites.append(f"{path.name}:{index + 1}")
+    check(
+        account_base.count(ACCOUNT_BASE_DEFAULT_DECL) == 1
+        and not literal_sites,
+        "默认回测本金是 account_base.rs 里唯一一处具名常数，生产代码不得再抄 100,000 字面量（V11 Q72）",
+        f"定义 {account_base.count(ACCOUNT_BASE_DEFAULT_DECL)} 处 / 字面量 {literal_sites or '无'}",
+    )
+    check(
+        all(
+            f'pub(crate) const {name}: &str = "{literal}";' in account_base
+            for name, literal in zip(ACCOUNT_BASE_SOURCE_CONSTS, ACCOUNT_BASE_SOURCES)
+        )
+        and multi_leg.count(BACKTEST_ACCOUNT_BASE_FUNDING_USE) == 1
+        and "builtin-default" not in multi_leg,
+        "三种本金来源各有常量，多腿链只报自己的定资口径、不会冒充默认本金",
+        f"来源常量 {[n for n in ACCOUNT_BASE_SOURCE_CONSTS if n not in account_base]}"
+        f" / 多腿标注 {multi_leg.count(BACKTEST_ACCOUNT_BASE_FUNDING_USE)} 处",
+    )
+    # 2. 装配侧：本金是构造参数，字段私有 ⇒ 新链漏答不过编译，答完也不能在别处改写。
+    check(
+        assembly.count(ASSEMBLY_CASH_PARAM) == 2
+        and "pub(crate) initial_cash" not in assembly
+        and "Money::from_i64" not in assembly
+        and assembly.count(".initial_cash =") == 0
+        and sum(part.count(".initial_cash =") for part in (bar_chain, depth_chain, multi_leg)) == 0,
+        "BarBacktestAssembly 的本金只能由构造参数给出：字段私有、装配处无默认、事后不可回写（V11 Q72）",
+        f"参数位 {assembly.count(ASSEMBLY_CASH_PARAM)} 处 / 公开字段={'有' if 'pub(crate) initial_cash' in assembly else '无'}"
+        f" / 装配默认={assembly.count('Money::from_i64')}",
+    )
+    check(
+        bar_chain.count("backtest_initial_cash(") == 2
+        and depth_chain.count("backtest_initial_cash(") == 1
+        and bar_chain.count("config.strategy.initial_cash_raw") == 1
+        and bar_chain.count("configured_initial_cash_raw(") == 1
+        and depth_chain.count("configured_initial_cash_raw(") == 1
+        and leg_funding.count("pub(crate) fn backtest_initial_cash(") == 0
+        and account_base.count("pub(crate) fn backtest_initial_cash(") == 1,
+        "三条单腿回测链各自读过那一格声明、再把本金折成本地数字，读法只有 account_base.rs 一处实现（V11 Q72）",
+        f"Bar 链 {bar_chain.count('backtest_initial_cash(')}/{bar_chain.count('configured_initial_cash_raw(')}"
+        f" / 深度 {depth_chain.count('backtest_initial_cash(')}/{depth_chain.count('configured_initial_cash_raw(')}",
+    )
+    # 3. 可见性：结果行之前先印本金，stdout 与摘要共用同一句写法（不是两处各排一次版）。
+    check(
+        all(chains.count(marker) == 1 for marker in ACCOUNT_BASE_PRINT_MARKERS)
+        and chains.count("backtest_account_base_note(") == 3,
+        "三条单腿链各印一行本金，且都经 backtest_account_base_note 排版（V11 Q72）",
+        f"标记 {[m for m in ACCOUNT_BASE_PRINT_MARKERS if chains.count(m) != 1]}"
+        f" / 印点 {chains.count('backtest_account_base_note(')} 处",
+    )
+    check(
+        account_base.count("if raw <= 0") == 1
+        and "不是正的本金" in account_base
+        and account_base.count("Money::from_raw(raw)") == 1,
+        "非正声明当场报错而不是回落默认，正数声明原样折成 Money（V11 Q72）",
+        f"闸门 {account_base.count('if raw <= 0')} 处（期望 1）",
+    )
+    check(
+        summary.count(SUMMARY_ACCOUNT_BLOCK) == 1
+        and summary.count("input.account_base.cash.raw()") == 1
+        and '"schema_version": 4' in summary,
+        "摘要以 v4 落 account 块，期初本金与来源两格都取自真正记账的那一份（V11 Q72）",
+        f"来源格 {summary.count(SUMMARY_ACCOUNT_BLOCK)} / 本金格 {summary.count('input.account_base.cash.raw()')}",
+    )
+    # 4. 配置面：省略时序列化字节不变，已 bless 的 config_fingerprint 才不会集体失真。
+    check(
+        schema.count(SCHEMA_CASH_FIELD) == 1
+        and SCHEMA_CASH_ATTR in schema
+        and schema.count("initial_cash_raw: None,") == 1,
+        "strategy.initial_cash_raw 是 Option<i128> 定点数、省略时不落键，默认构造写 None（V11 Q72）",
+        f"字段 {schema.count(SCHEMA_CASH_FIELD)} / 属性={'在' if SCHEMA_CASH_ATTR in schema else '缺'}",
+    )
+    check(
+        leg_funding.count("pub(crate) fn reject_configured_initial_cash(") == 1
+        and re.search(r'reject_configured_initial_cash\([^)]*\)\?;', multi_leg) is not None
+        and multi_leg.count("reject_configured_initial_cash(") == 1,
+        "两条腿各有本金的多腿链当场拒收那格单账户声明，拒绝理由住在共用读法里（V11 Q72）",
+        f"定义 {leg_funding.count('pub(crate) fn reject_configured_initial_cash(')} 处"
+        f" / 调用 {multi_leg.count('reject_configured_initial_cash(')} 处，其中带 ? 传播的"
+        f" {len(re.findall(r'reject_configured_initial_cash[(][^)]*[)][?];', multi_leg))} 处（各期望 1）",
+    )
+    # 5. 用例面：本金改结果的这一条必须端到端跑过真实子进程。
+    check(
+        all(f"fn {name}(" in unit_cases for name in ACCOUNT_BASE_UNIT_TESTS)
+        and all(f"fn {name}(" in cli_cases for name in ACCOUNT_BASE_CLI_TESTS),
+        "Q72 用例在位：三条读法各一条单元，命令行侧默认/改结果/拒非正/摘要/多腿拒收各一条",
+        f"缺单元 {[n for n in ACCOUNT_BASE_UNIT_TESTS if f'fn {n}(' not in unit_cases]}"
+        f" / 缺命令行 {[n for n in ACCOUNT_BASE_CLI_TESTS if f'fn {n}(' not in cli_cases]}",
     )
 
 
@@ -3767,6 +3947,7 @@ def main() -> int:
     snapshot_money_honesty_check()
     position_money_honesty_check()
     reconcile_round_honesty_check()
+    backtest_account_base_check()
     capabilities_check()
     line_budget_check()
     print()
