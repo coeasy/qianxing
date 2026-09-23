@@ -336,8 +336,10 @@ fn no_crate_aliases_the_two_snapshot_names_over_each_other() {
     );
 }
 
-/// 七个"读过才算得出"的钱字段，按 `set_undiscounted_scalar` 的下标顺序。
-const OPTIONAL_MONEY_FIELDS: [&str; 7] = [
+/// 八个"读过才算得出"的钱字段，按 `set_optional_money_field` 的下标顺序。
+/// 权益排在末位是因为它晚到（V11 Q70）：这一层的权益要现金与**每一条**持仓的标记价
+/// 才拼得出来，缺一条就是算不出，与其余七个同属"没读过就不能印数"的那一族。
+const OPTIONAL_MONEY_FIELDS: [&str; 8] = [
     "available_raw",
     "margin_raw",
     "frozen_raw",
@@ -345,6 +347,7 @@ const OPTIONAL_MONEY_FIELDS: [&str; 7] = [
     "unrealized_pnl_raw",
     "fees_raw",
     "funding_raw",
+    "equity_raw",
 ];
 
 fn set_optional_money_field(snapshot: &mut AccountSnapshot, index: usize, value: Option<i128>) {
@@ -356,6 +359,7 @@ fn set_optional_money_field(snapshot: &mut AccountSnapshot, index: usize, value:
         4 => snapshot.unrealized_pnl_raw = value,
         5 => snapshot.fees_raw = value,
         6 => snapshot.funding_raw = value,
+        7 => snapshot.equity_raw = value,
         _ => panic!("未知的可选钱字段下标 {index}"),
     }
 }
@@ -369,11 +373,12 @@ fn optional_money_field(snapshot: &AccountSnapshot, index: usize) -> Option<i128
         4 => snapshot.unrealized_pnl_raw,
         5 => snapshot.fees_raw,
         6 => snapshot.funding_raw,
+        7 => snapshot.equity_raw,
         _ => panic!("未知的可选钱字段下标 {index}"),
     }
 }
 
-/// "这一层没算"与"算过、结果为零"必须是两份不同的状态（V11 Q67）。
+/// "这一层没算"与"算过、结果为零"必须是两份不同的状态（V11 Q67，Q70 把权益并进来）。
 ///
 /// 这两个量此前都是 `i128`，`Option` 化只在类型上区分了它们；真正咬合的地方有三处，
 /// 少任何一处都会让"未算"退回伪装成 0：
@@ -385,13 +390,12 @@ fn optional_money_field(snapshot: &AccountSnapshot, index: usize) -> Option<i128
 fn uncomputed_money_is_not_the_same_state_as_computed_zero() {
     for (index, name) in OPTIONAL_MONEY_FIELDS.iter().enumerate() {
         let mut uncomputed = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
-        uncomputed.equity_raw = 100;
         let mut computed_zero = uncomputed.clone();
         set_optional_money_field(&mut computed_zero, index, Some(0));
         assert_eq!(
             optional_money_field(&uncomputed, index),
             None,
-            "默认构造必须把 {name} 留在未算状态"
+            "默认构造必须把 {name} 留在未算状态，而不是先替账户算出一个数"
         );
 
         assert_ne!(
@@ -519,7 +523,7 @@ fn uncomputed_position_money_is_not_the_same_state_as_computed_zero() {
     let instrument = InstrumentId::parse(POSITION_ROW_INSTRUMENT).expect("valid instrument");
     for (index, name) in OPTIONAL_POSITION_MONEY_FIELDS.iter().enumerate() {
         let mut uncomputed = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
-        uncomputed.equity_raw = 100;
+        uncomputed.equity_raw = Some(100);
         // 账户标量刻意算成 7：稳定 JSON 里同名的两处印字必须能分清谁是持仓行。
         uncomputed.margin_raw = Some(7);
         uncomputed.unrealized_pnl_raw = Some(7);
@@ -647,7 +651,7 @@ fn default_position_row_reports_no_money() {
     let mut row = blank_row;
     row.instrument = instrument.clone();
     let mut untouched = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
-    untouched.equity_raw = 100;
+    untouched.equity_raw = Some(100);
     untouched.positions.insert(instrument.clone(), row);
     let mut reported_zero = untouched.clone();
     set_position_money_field(

@@ -198,7 +198,7 @@ pub(crate) fn run_ecosystem_smoke() {
     base.seal();
     let mut target = base.clone();
     target.cash_raw.insert("USD".into(), 99_000);
-    target.equity_raw = 101_000;
+    target.equity_raw = Some(101_000);
     target.seal();
     let diff = base.diff(&target).unwrap();
     assert_eq!(diff.apply(&base).unwrap(), target);

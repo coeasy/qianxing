@@ -262,14 +262,13 @@ pub(crate) fn load_api_account_snapshot_for_worker(
         .map(|event| event.seq)
         .unwrap_or(0);
     snapshot.cash_raw = pipeline.ledger().cash_balances_for(account_id);
-    snapshot.equity_raw = pipeline
-        .ledger()
-        .equity_for(account_id, pipeline.marks(), pipeline.settlement_currency())
-        .unwrap_or_else(|| {
-            pipeline
-                .ledger()
-                .cash_for(account_id, pipeline.settlement_currency())
-        });
+    // 权益 = 现金 + 每条持仓按标记价的估值。有一条持仓拿不到标记价，这个数就算不出来。
+    // 此前它退回纯现金（`unwrap_or_else(cash_for)`），等于替账户宣称"压在标的上的那一腿不值钱"：
+    // 一个满仓却没有行情事实的实盘账户，会把剩余现金长期报成权益，读侧无从分辨（V11 Q70）。
+    snapshot.equity_raw =
+        pipeline
+            .ledger()
+            .equity_for(account_id, pipeline.marks(), pipeline.settlement_currency());
     // 等权的权益不是"可用资金"：持仓那段已压在标的上，抄 equity 等于宣布持仓可自由花掉。
     // 币种取本条快照记账的那一本，与上面的 cash/equity 同一口径；`LiveEventPipeline::open`
     // 已经拒绝空结算币种，所以这里没有"账簿读不出"的第三种状态。

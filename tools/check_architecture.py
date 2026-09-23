@@ -1790,6 +1790,7 @@ SNAPSHOT_MONEY_CASES = (
     "published_fees_are_the_sum_of_the_fills_on_the_same_snapshot",
     "uncomputed_money_is_absent_rather_than_zero",
     "overflowing_fee_total_is_refused_instead_of_wrapping",
+    "equity_without_a_mark_price_is_absent_rather_than_the_remaining_cash",
 )
 
 
@@ -1806,18 +1807,25 @@ def snapshot_money_honesty_check() -> None:
             protocol.count(f"pub {name}: Option<i128>,") == 1
             for name in SNAPSHOT_OPTIONAL_FIELDS
         )
-        and protocol.count("pub equity_raw: i128,") == 1,
-        "七个汇总钱字段在协议上是 Option<i128>，只有权益是恒算得出的 i128",
+        and protocol.count("pub equity_raw: Option<i128>,") == 1,
+        "八个汇总钱字段在协议上全是 Option<i128>，没有任何一个还能退回不可区分的 i128（V11 Q70）",
         "有字段退回不可区分的 i128（未算与算出为零又会长成同一个数）",
     )
+    # 取法体内逐个直取：一行字面量计数挡得住"改回 Some(…) 硬包"，挡不住
+    # `Some(self.equity_raw.unwrap_or(0))` 这种同样能折平未算的写法，所以盯整段体。
+    raw_start = protocol.find("fn scalar_money_raw(&self)")
+    raw_end = protocol.find(chr(10) + "    }", raw_start) if raw_start >= 0 else -1
+    raw_body = protocol[raw_start:raw_end] if raw_end > raw_start >= 0 else ""
+    raw_missing = [name for name in SNAPSHOT_SCALARS if f"self.{name}," not in raw_body]
     check(
         protocol.count("fn scalar_money_raw(&self) -> [Option<i128>; 8]") == 1
-        and protocol.count("Some(self.equity_raw),") == 1
-        and protocol.count("self.equity_raw,") == 0,
-        "八个标量钱的取法只有一处，哈希与 JSON 都向它要同一份，没有第二份手抄列表",
+        and raw_body.count("self.equity_raw,") == 1
+        and raw_missing == []
+        and "Some(" not in raw_body
+        and "unwrap_or" not in raw_body,
+        "八个标量钱的取法只有一处、八项逐字段直取，体内没有 Some/unwrap_or 能把未算折成零",
         f"取法定义 {protocol.count('fn scalar_money_raw(&self) -> [Option<i128>; 8]')} 处、"
-        f"唯一入口 {protocol.count('Some(self.equity_raw),')} 处、"
-        f"手抄 equity 的列表 {protocol.count('self.equity_raw,')} 处",
+        f"体内权益 {raw_body.count('self.equity_raw,')} 处、缺项 {raw_missing}",
     )
     check(
         protocol.count("Self::write_scalar_money(&mut h, self.scalar_money_raw())") == 2,
@@ -1871,6 +1879,20 @@ def snapshot_money_honesty_check() -> None:
         "「可用资金 = 权益副本」这条抄法不得回到任何一处（含 Some(…) 包起来的可编译写法）",
         f"读模型又把压在持仓上的那段钱说成可自由花掉：{equity_copy}",
     )
+    equity_start = reader.find("snapshot.equity_raw =")
+    equity_stmt = (
+        reader[equity_start : reader.find(";", equity_start) + 1]
+        if equity_start >= 0
+        else ""
+    )
+    check(
+        reader.count("snapshot.equity_raw =") == 1
+        and "equity_for(" in equity_stmt
+        and "cash_for" not in equity_stmt
+        and "unwrap_or" not in equity_stmt,
+        "权益只在现金与每一条持仓的标记价都读得出时发布；算不出即缺席，不退回纯现金（V11 Q70）",
+        f"权益语句被改回兜底写法或算点丢失：{equity_stmt.strip()!r}",
+    )
     check(
         reader.count("snapshot.available_raw = Some(") == 1
         and "cash_for(account_id, pipeline.settlement_currency())"
@@ -1911,6 +1933,11 @@ def snapshot_money_honesty_check() -> None:
             '"margin_raw": snapshot.as_ref().and_then(|snapshot| snapshot.margin_raw)'
         )
         == 1
+        and balances.count(
+            '"equity_raw": snapshot.as_ref().map(|snapshot| snapshot.equity_raw)'
+        )
+        == 1
+        and "equity_raw).unwrap_or" not in balances
         and "available_raw).unwrap_or" not in balances
         and "margin_raw).unwrap_or" not in balances,
         "/account/balances 把未算发布成 null，而不是给它兜一个 0",
@@ -1924,7 +1951,8 @@ def snapshot_money_honesty_check() -> None:
         all(f"fn {name}(" in cli_cases for name in SNAPSHOT_MONEY_CASES)
         and "fn uncomputed_money_is_not_the_same_state_as_computed_zero(" in core_cases
         and "fn balances_endpoint_publishes_absent_money_as_null_not_zero(" in endpoint_cases,
-        "四条读模型用例（结算账簿口径/费用同源/未算缺席/溢出即拒）加协议侧缺席≠零、端点侧 null 发布各一条在位",
+        "五条读模型用例（结算账簿口径/费用同源/未算缺席/溢出即拒/缺标记价的权益缺席）"
+        "加协议侧缺席≠零、端点侧 null 发布各一条在位",
         f"缺少用例：{[name for name in SNAPSHOT_MONEY_CASES if f'fn {name}(' not in cli_cases]}",
     )
 

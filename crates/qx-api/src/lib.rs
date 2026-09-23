@@ -2512,14 +2512,14 @@ mod tests {
         assert!(metrics.body.contains("qx_worker_up{worker=\"relay\"} 1"));
     }
 
-    /// 端点侧的"未算 ≠ 零"（V11 Q67）：同一份快照在 `/account/balances` 上必须把算出来
+    /// 端点侧的"未算 ≠ 零"（V11 Q67，Q70 把权益并进来）：同一份快照在 `/account/balances` 上必须把算出来
     /// 正好是零的钱印成 0、把这一层没算过的钱印成 null。两者印成同一个数时，读侧分不清
     /// "这个账户没有保证金"和"根本没人替它算过保证金"。
     #[test]
     fn balances_endpoint_publishes_absent_money_as_null_not_zero() {
         let mut state = ApiState::default();
         let mut snapshot = AccountSnapshot::new(1, "main", "default", "paper", 10);
-        snapshot.equity_raw = 500;
+        snapshot.equity_raw = Some(500);
         snapshot.available_raw = Some(0);
         state.publish_snapshot(snapshot).unwrap();
         let body = ApiService::new(state)
@@ -2532,6 +2532,19 @@ mod tests {
         assert!(
             body.contains("\"margin_raw\":null"),
             "没算过的保证金必须印 null，而不是一个合法的 0: {body}"
+        );
+        // 权益从 Q70 起同样可能是"这一层算不出"：它在端点上必须走同一条 null 口径，
+        // 而不是被 `.unwrap_or(0)` 折回一个看起来合法的零。
+        let mut absent_state = ApiState::default();
+        absent_state
+            .publish_snapshot(AccountSnapshot::new(2, "main", "default", "paper", 20))
+            .unwrap();
+        let absent_body = ApiService::new(absent_state)
+            .handle("GET", "/account/balances", "", 2)
+            .body;
+        assert!(
+            absent_body.contains("\"equity_raw\":null"),
+            "算不出标记价时权益必须印 null，而不是给账户兜一个 0: {absent_body}"
         );
     }
 
