@@ -58,6 +58,10 @@
 
 ## 快速开始
 
+下面这段是可复制的常用链路示例。参数与入口的权威来源是 `cargo run -p qx-cli -- help`
+（本轮实测 50 条入口、`deploy/` 下 52 份示例配置），完整使用口径见
+[工业化易用性收口指南](docs/工业化易用性收口指南-V1.md)。
+
 ```bash
 # 构建
 cargo build --release
@@ -161,9 +165,11 @@ testnet 账户，凭据只从环境变量读取，配置文件中不落任何密
 
 Windows 下可直接双击 `build.bat`。
 
-实现状态与未完成外部边界见：现行重构基线 [自研量化框架重构方案 V9](docs/自研量化框架重构方案-V9.md)，历史审计见 [V8 架构审计与重构方案](docs/自研量化框架架构审计与重构方案-V8.md) 和 [工业级落地验收与差距清单](docs/工业级落地验收与差距清单-V1.md)。
+实现状态与未完成外部边界见：现行重构基线 [自研量化框架重构方案 V11](docs/自研量化框架重构方案-V11.md)。
+它逐轮记录审计与修复（每轮都带 `file:line` 与当轮门禁日志），是唯一仍在更新的方案文档。
 
-能力证据分级见：[maturity/capabilities.yaml](maturity/capabilities.yaml)。默认 `single_node` 使用 SQLite/Files；PostgreSQL、NATS、真实交易所沙盒和券商柜台不会因为代码或 feature 存在而被标记为生产批准。
+能力证据按 `implementation` / `code_tested` / `sandbox_tested` / `production_approved` 四档分级（见下方文档地图
+里的 `maturity/capabilities.yaml`）。默认 `single_node` 使用 SQLite/Files；PostgreSQL、NATS、真实交易所沙盒和券商柜台不会因为代码或 feature 存在而被标记为生产批准。
 
 ## 持续集成作业
 
@@ -179,27 +185,45 @@ Windows 下可直接双击 `build.bat`。
 | `cpp-sdk` | Ubuntu/Windows/macOS 三平台 C++ SDK 构建、ring smoke、JSONL 契约、JSON 与列式两种共享内存协议 |
 | `venue-acceptance` | Binance 测试网络验收；无凭据只做离线 fail-closed 半边（`--allow-skip`） |
 
-Barter 对齐后的最终目标架构见：[牵星最终架构方案 V2：Barter 对齐版](docs/牵星最终架构方案-V2-Barter对齐版.md)。
+## 文档地图
 
-跨项目对比、可视化终态、产品工作流与分阶段实施门禁见：[牵星终极改造计划 V1](docs/牵星终极改造计划-V1.md)。
+仓库里只保留**当前仍然正确**的文档；历史方案与审计（V1–V10 各代计划、Barter 对齐稿、可视化终态稿、
+产品化路线图、差距清单、release note）已删除，需要回溯时在 git 历史里按文件名取。
 
-模块是否拆分、哪些能力需要扩展以及新 crate/进程的拆分门禁见：[牵星架构拆分与扩展决策 V1](docs/牵星架构拆分与扩展决策-V1.md)。
+| 文档 | 什么时候读 |
+|---|---|
+| [自研量化框架重构方案 V11](docs/自研量化框架重构方案-V11.md) | 想知道**现在**代码的真实状态、每轮修了什么、还有哪些已知缺口（唯一在更新的方案文档） |
+| [工业化易用性收口指南](docs/工业化易用性收口指南-V1.md) | 上手：最短可用路径、回测入口族与配置落点、产物字段、读模型 `null` 口径、发布前检查 |
+| [deploy/README.md](deploy/README.md) | 运维：运行时配置、worker 拓扑、CCXT/A 股接入、SubmitOrder、存储后端、停机与故障 |
+| [CCXT 多交易所接入与策略运行方案](docs/CCXT多交易所接入与策略运行方案-V1.md) | CCXT worker 契约、凭据隔离、失败即闭的归约规则 |
+| [A 股数据源接入与快速选股回测方案](docs/A股数据源接入与快速选股回测方案-V1.md) | A 股提供方、代码归一化、公司行为与八条交易制度 |
+| [外部链路验收执行方案](docs/外部链路验收执行方案-V1.md) | 有凭据时怎么按五段阶梯验收，以及 `sandbox_tested` 何时才允许翻转 |
+| [工业级多语言策略与高性能交易方案](docs/工业级多语言策略与高性能交易方案-V1.md) | Rust/C++/Python 策略契约与共享内存传输的边界 |
+| [虚拟交易与衍生品统一模型](docs/虚拟交易与衍生品统一模型-V1.md) | 现货/杠杆/永续/交割的撮合与记账统一口径 |
+| [maturity/capabilities.yaml](maturity/capabilities.yaml) | 机器可读的能力证据分级：每条能力的实现/代码测试/沙盒/生产批准四档 + 证据 + 缺口 |
+| [CHANGELOG.md](CHANGELOG.md) | 逐轮变更、验收数字与"本轮没修什么" |
 
-可视化、控制面、快照/游标、实时投影和三轮端到端链路审计见：[Qianxing Visualization Architecture V1](Qianxing-Visualization-Architecture-V1.md)。
+任何一条命令怎么用、参数是什么，以 `cargo run -p qx-cli -- help` 为准：那份摘要由 clap 的命令定义派生，
+架构门禁校验「help ≡ `cli.rs` 派发分支」，因此它不会与实现漂移；本 README 不复述完整命令表。
 
-工业化易用性收口入口和发布前检查见：[工业化易用性收口指南 V1](docs/工业化易用性收口指南-V1.md)。
-
-演示会输出：
+演示会输出（2026-09-23 本机 `cargo run -p qx-cli -- all` 实抓）：
 
 ```
-[观星 · 质量门] bars=400 判定=Ok
-[星板 · 回测 A] 成交=... 手续费=... 总收益=...% 最大回撤=...% 终值=...
+[观星 · 质量门 · DEMO 合成输入] bars=400 判定=Ok
+
+[星板 · 回测 A · DEMO 合成输入] 内核=qx-xingban::BacktestEngine(bar) 成交=1 手续费=0.5171 总收益=0.09% 最大回撤=0.07% 终值=100096.72
+[更路 · RunManifest · DEMO 合成输入] digest=7e11720745002a39
+
 [更路 · 重放校验]
   ① 同输入两次运行哈希一致 : true
   ② 改参数后哈希发生变化   : true
-[卯眼 · 插件清单注册]
-  插件数=2 加载顺序=["sys.simulation", "sys.transaction-cost"] 独占冲突=[]
+
+[卯眼 · 插件装配]
+  插件数=2 加载顺序=["sys.simulation", "sys.transaction-cost"]
+  独占冲突=[]
+
 全部自校验通过 ✓
+[针路 · PaperVenue] 订单接受/报价成交/断线转对账/恢复通过 ✓
 ```
 
 ## 设计底线（改动前请先读）
@@ -212,13 +236,31 @@ Barter 对齐后的最终目标架构见：[牵星最终架构方案 V2：Barter
 5. **不用外部 RNG** —— `rand` 实现细节可能随版本变化，自实现 xorshift64\* 锁定种子语义。
 6. **同时间戳按因果优先级排序** —— 不是任意顺序。`MARKET < COMMAND < MATCH < APPLY < POST`。
 7. **bar t 决策，bar t+1 开盘成交** —— 从结构上杜绝 cheat-on-close。
+8. **只读投影不做第二个事实源** —— API、状态查看与任何前端只消费 EventLog 派生的快照与游标，
+   写操作一律经 `ControlPlane` 落审计后再进内核；投影不得回写交易状态。
+9. **"没算过"必须显式缺席** —— 钱字段用 `null`（`None`）表达"这一层没算/交易所没报"，`0` 只表达"算过且为零"；
+   只有价格为保留哨兵语义继续用 `0`（0 不是合法定点价格）。缺数据的字段兜一个合法的 0 等于替交易所报数。
 
 ## 当前状态
 
-完整架构方案：[`自研量化框架重规划方案-V5.md`](自研量化框架重规划方案-V5.md)
+下面的数字全部是 2026-09-23 在本机实测得到的，不是从旧文档抄来的：23 个 crate、
+`cargo run -p qx-cli -- help` 有 50 条入口、`builtin-strategies` 列 17 个内置策略
+（13 个单标的 + 4 个只被 `backtest multi-builtin` 接受的套利 kind）、`deploy/` 有 52 份示例配置、
+`python tools/check_architecture.py` 269 项不变量全绿。
 
-本项目已完成 **Phase 0–4 的确定性内核与研究/协议闭环**，并补齐了 V5.1 的账户隔离账簿、合约乘数估值、真实事件重放、PIT 数据边界、L1 撮合容量、延迟/保证金模型、PaperVenue 恢复、Provider/因子/协议/调度/控制面的可执行实现。
-当前已增加可运行 HTTP/WebSocket 控制面、Operator 权限校验、单进程/共享文件/可选 SQLite 事务 API 限流、Snapshot/Diff 与事件游标、持续实时事件总线、有序关闭、可热替换 TLS 配置、PEM 证书加载/轮询式安全重载、mTLS `ServerConfig` 与客户端证书到 Operator 的可信映射、明文/TLS API 服务端入口、文件恢复、带并发追加锁的链式持久化审计、可选 SQLite/PostgreSQL 审计链/快照/任务租约/fencing token/EventLog 后端、Python/JSON DataStruct、PyO3 原生扩展与本机构建 wheel、Linux/Windows（Python 3.10/3.12/3.13）wheel CI 矩阵、Arrow C Data Interface 借用零拷贝与拥有型跨语言释放边界、带 rustls TLS 客户端、带 API key 握手头的 TLS WebSocket 用户流底座、HMAC-SHA256 签名边界、超时/限频/成交回报幂等的 REST Provider/Venue 适配器基线、Binance Spot 主网/Testnet HMAC 签名下单/撤单、`allOrders`/开放订单对账、公共 L1 REST `bookTicker`/WSS 流、签名用户流订阅会话、可注入重连退避驱动与 `executionReport` 用户事件映射、支持环境变量或 Secret Manager 投影文件且在新会话/新订单/新对账轮次重新加载凭证的独立 Binance 行情/用户流/对账 worker、LiveEventPipeline 事件→Kernel/EventLog/Ledger/账户余额快照归约与订单重启恢复、结算币种差异报告、Cron/Calendar/Event/Manual 调度与 JobWindow/Worker/带失败码与退避的确定性重试、超时人工介入、可校验 RunManifest、Provider 来源哈希与 JSON 血缘恢复、PIT 财务视图、按样本计算 IC/RankIC/衰减/换手的因子报告、带训练/验证区间和执行/风险模型绑定的因子候选、真实组内中性化、插件 manifest schema/hash 校验与 Ed25519 发布签名验证、带基准/持仓/费用/换手/回撤的回测报告、共享文件系统 claim 锁/fencing token 任务队列与租约、因子 DAG 和多 Venue 路由评分；连接池/读写分离、跨节点 HA、MQ、真实账户网络验收、其他供应商用户流认证/订阅与事件映射、逐家签名协议、证书签发、manylinux/musllinux 兼容性、发布签名和 WASM 仍需按实际供应商与部署环境接入。详见[工业级产品化实施路线图 V1](docs/工业级产品化实施路线图-V1.md)。
+能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，本轮实测）：**18 个能力块中 15 个
+同时满足 `implementation` 与 `code_tested`；`sandbox_tested` 与 `production_approved` 无一为真**；
+`postgres` / `nats` / `broker_gateway` 三条连 `implementation` 都是 `false`，只有 feature 矩阵或接口占位。
+矩阵共 155 条证据路径与 52 条 limitation。因此可宣称的边界是：
+**本机可重放的确定性回测、Paper 闭环、以及 CCXT/Binance 的代码级契约** —— 不是"已对接真实账户"。
+
+| 链路 | 已落地且有本地测试证据 | 明确未收口（不得当作已完成） |
+|---|---|---|
+| 回测 | Bar 单标的链（撮合/成本/延迟/保证金四模型可配）、深度 `backtest book`（L1 走 Tick、L2/L3 走订单簿）、双腿 `multi-builtin`、`fast-backtest` 并行、四份同前缀产物与可重算的输入指纹、事件重放结论 | 被 git 跟踪的 16 份 blessed 摘要停在 `schema_version: 1`（无 `input` 块），当前代码在那些路径上已不再落盘；重 bless 与"摘要世代写进文件名"的取舍仍未拍板（V11 §27.5 / §28.5 第 5 条，任务 #53） |
+| 交易 · Paper | 控制面→队列→成交→Ledger、三条入账入口共用精度闸门、拒单与拒绝原因写进产物、崩溃窗口恢复 | 本地 Ledger 拼出的持仓行没有浮盈/保证金生产者，恒定报 `null`；账户级五个钱字段同样无来源 |
+| 交易 · 实盘 | Binance Spot 直连与公共 CCXT 的提交/回报/对账代码路径，缺凭据即退出码 3 fail closed | 零真实账户往返：`sandbox_tested=false`；CCXT 对账的 in-loop 发现与报告/健康两半不相交；Binance 对账报告的三个覆盖度计数恒 0；衍生品无直连（只经 CCXT） |
+| 数据 | 四级质量门、PIT `as_of()` 可见性、DatasetBundle 与组件指纹、A 股公司行为台账与八条交易制度 | 外部数据源正确性只能按供应商逐个验收，本机不可证明 |
+| 运行时 | worker 监督与停机阶梯、共享文件系统租约/fencing token、outbox relay（sqlite/postgres/nats 四种 feature 组合可编译） | PostgreSQL/NATS 无生产批准；券商柜台无供应商协议 |
 
 跨语言策略传输默认兼容 JSONL，也支持 `transport: "framed_json"` 的 QXSF 二进制分帧（版本、序号、长度上限、CRC32）；`transport: "shared_memory_json"` 会将同一 QXSF 帧放入双向固定槽位 SPSC mmap ring；`transport: "shared_memory_columnar"` 会将 Bar 历史编码为 QXCB 固定宽度列后放入同一 ring，适合减少行情数值 JSON 解析。示例：
 
@@ -248,17 +290,15 @@ cargo run --release -p qx-strategy --example ring_bench
 运行时还提供可恢复的 `scheduler-worker` 与 `strategy-worker`：Scheduler 恢复 JobSpec/Run 状态并投递 JobQueue，Strategy 管理生命周期、消费任务、执行 `Signal→Portfolio→RiskGate→OrderIntent` 并提交审计化 SubmitOrder；策略按账户/Venue 读取对应事件日志计算当前持仓，Paper 执行器在控制面已落终态但队列尚未确认的崩溃窗口只清理旧队列、不重复产生副作用；策略进程不会绕过 Risk/OMS 直接调用 Venue。
 Paper 主链路还提供 `paper-e2e` 统一验收入口，按 Scheduler→Strategy→Paper Execution 顺序运行一轮并检查订单、Ledger、审计和队列终态。
 
-按架构方案的阶段划分：
+三条容易被读过头的边界，写在这里而不是散落在阶段表里：
 
-| 阶段 | 内容 | 状态 |
-|---|---|---|
-| 0 | 统一领域契约 + 事件溯源 + 精确重放 | ✅ 已落地 |
-| 1 | 插件清单注册（扩展点声明/manifest/依赖求解/静态装配计划） | ✅ 已落地（启动期能力注册；运行时动态加载与热替换未实现，按 V7 方案 A 收敛定位） |
-| 2 | 回测引擎（TestClock + 因果队列 + 撮合模型） | ✅ 已落地 |
-| 3 | 账簿、L1、PaperVenue、限频、恢复与对账契约 | ✅ 基础能力已落地 |
-| 4 | 真实 Venue / 多数据源生产接入 | 🟡 Binance Spot REST/L1/用户事件与 EventLog 归约基线已落地，真实账户验收及其他供应商待接入 |
-| 4 | ProviderRegistry / 因子计算 / QIFI 快照与 Diff / Scheduler | ✅ 可执行实现，含 DAG、CronSpec、Worker、重试和 Diff；生产适配待接入 |
-| 5-7 | 真实 Venue / 多账户路由 / 生产可靠性 / WASM | 🟡 Binance 单账户审计执行入口已落地，多账户/跨节点生产执行器待接入 |
+- **插件只有启动期装配**：`qx-plugin` 做 manifest schema/哈希校验与 Ed25519 签名验证、扩展点贡献声明、
+  独占冲突检测、依赖求解并产出静态装配计划；运行时动态加载与热替换**没有实现**，内核组件由编译期决定。
+- **回测与实盘同源的是规则，不是撮合**：风控、费用、延迟、保证金四模型与事件归约同源且有门禁；
+  撮合按数据档位分内核（Bar / Tick / 订单簿三套回测内核，Paper 成交由 `PaperVenue::on_quote` 首档 touch 产生），
+  与回测簿内核**不是**同一台撮合机 —— 读到"同一内核"时不要把"同一撮合"一起读进去。
+- **WASM、跨节点 HA、连接池/读写分离、逐家签名协议、manylinux/musllinux 与发布签名仍未接入**，
+  需要按实际供应商与部署环境立项，不由 feature 开关存在而宣称完成。
 
 ## 许可
 

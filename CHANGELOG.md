@@ -1,5 +1,76 @@
 # Changelog
 
+## Unreleased — V11 文档收口轮：仓库里只留"今天仍然正确"的文档（2026-09-23）
+
+用户请求的四件事（提交代码 / 删除历史无效文档 / 更新接口使用文档 / 更新项目说明文档）。
+收口记录见 [docs/自研量化框架重构方案-V11.md](docs/自研量化框架重构方案-V11.md) §30。
+
+### Changed（文档面）
+
+- **删除 23 份历史文档**（`git rm`，原文全部在 git 历史里）：V1–V10 各代方案与审计（`牵星完整架构方案-V1`、
+  `牵星最终架构方案-V2-Barter对齐版`、`牵星架构拆分与扩展决策-V1`、`牵星终极改造计划-V1` 与其实施状态附录、
+  `自研量化框架重构方案-V6/V7/V8/V9/V10`、`Qianxing-Multi-Asset-Quant-Infrastructure-V2`、`QIANXING_CODE_AUDIT_V2`、
+  四份 V5 计划/审计/状态/RC + `v0.0.1` release note、根目录 V4/V5.1 两份、可视化终态稿、产品化路线图、差距清单）。
+  判据不是"旧"，而是**文档里的模块表或命令名在当前代码里已经不存在**：23 份里有 14 份、合计 115 行点名
+  `qx-domain` / `qx-kernel` / `qx-application` / `qx-oms` / `qx-portfolio` / `qx-fenye` / `qx-viz` /
+  `qx-server` / `qx-schema`（行数按 `git show HEAD:<路径>` 逐份数命中行；这九个名字在当前 workspace 实测
+  23 个 crate 里一个都没有，其中也含"该 crate 已并入 x"这类当时正确的记述，故 115 是上限），
+  README 也已经不链接其中大部分。
+- **保留的专题文档只改错、不删除**：CCXT worker 契约、A 股接入、外部链路验收阶梯、衍生品统一模型、
+  多语言策略契约仍是这些知识的唯一副本（`deploy/README.md` 只做摘要）。
+- **`Qianxing-Visualization-Architecture-V1.md` 的去留**：正文是未落地的 Web/桌面端设计（dashboard、market
+  terminal、前端接线），其 V1.1 修订自己承认 `qx-viz`/`qx-server`/`qx-schema`/`/ws` 不存在。唯一值得留的是那条
+  边界（只读投影不做第二个事实源）——搬进 `README.md` 的"设计底线"第 8 条后删除整篇。
+
+### Fixed（文档里的死命令名与不存在的文件）
+
+- `builtin-backtest` → `backtest builtin`、`ccxt-builtin-backtest` → `backtest ccxt-builtin`、
+  `strategy-backtest` → `strategy backtest`、`ccxt-backtest` → `backtest builtin`（前三条入口在 V9 Phase 2
+  已整体删除，今天调用得到"未知命令"和退出码 2；本轮用当前 binary 实测确认）。
+  位置：`docs/工业化易用性收口指南-V1.md`、`docs/CCXT多交易所接入与策略运行方案-V1.md`、
+  `docs/A股数据源接入与快速选股回测方案-V1.md`、`docs/工业级多语言策略与高性能交易方案-V1.md`、`deploy/README.md`。
+- 收口指南里 4 处 `deploy/qianxing.runtime.production.json` 指向**不存在的文件**，改为
+  `deploy/qianxing.runtime.production.example.json`；同一篇的"策略包括 …10 个"改为按 `builtin-strategies`
+  实测的 17 个（13 单标的 + 4 个只被 `backtest multi-builtin` 接受的套利 kind）并停止复述名单。
+- CHANGELOG 与 V11 中指向已删文档的 4 处链接改为"已删除，原文在 git 历史"的注记；历史条目本身不改写。
+
+### Added（接口使用文档）
+
+`docs/工业化易用性收口指南-V1.md` 补三节，全部按当轮实测写：
+
+- **§3.2 回测入口族与配置落点**：七条回测入口 × "哪些策略段在这条链上有落点 / 配了即整轮拒绝"的对照表
+  （A 股段在 `multi-builtin`/`book` 无落点、深度档拒绝非零延迟、`--fee-bps` 优先级、衍生品只向声明为衍生品的腿计提）。
+- **§3.3 产物、输入身份与重放结论**：`*.run.json` 16 个键与 `*.summary.json` 关键段（实抓自本轮一次
+  `backtest builtin macd` 运行），并说明 `replay.log_digest == result_hash` 是**重新驱动事件流的结果**，
+  而不是旧那个恒等式。
+- **§3.4 读模型里的 `null` 与 `0`**：把 Q67/Q68 的钱/价格两套编码写成面向消费方的口径，含"Ledger 回退行恒定
+  报 `null`"与"CCXT 缺 `side` 整条拒绝"两条生产者事实。
+- `README.md` 新增**文档地图**（每份保留文档一句"什么时候读"）与**当前状态**的链路成熟度表，替换掉原来那段
+  无法核对的能力长句和 V5 时代阶段表；演示输出块换成实抓文本。
+
+### Verified（本轮实测，数字不来自旧文档）
+
+| 事实 | 实测值 |
+|---|---|
+| workspace crate 数 = README 模块表行数 | 23（表内另列 `python/qianxing_ccxt`、`cpp/`）；脚本核对表内无缺项 |
+| `qx-cli --help` 入口条数 | 50 |
+| `builtin-strategies` | 17（13 单标的可走 builtin / ccxt-builtin / book；4 套利 kind 只被 multi-builtin 接受） |
+| `deploy/*.json` 示例配置 | 52 |
+| `tools/check_architecture.py` | `架构不变量自检全部通过 ✓（269 项）` |
+| `qx-cli all`（进程内自校验） | 退出码 0，`全部自校验通过 ✓` + PaperVenue 契约行 |
+| `backtest builtin macd deploy/qianxing.bar-frame.example.json` | `bars=70 fills=1`，产物四件套字段逐条读出 |
+| 能力矩阵 | 18 个能力块；`implementation`+`code_tested` 双真 15；`sandbox_tested` 0；`production_approved` 0；证据 155 条 / limitation 52 条 |
+| README 命令示例 ≡ help 入口 | 脚本比对：README 里所有 `-- <cmd>` 提及都能在 help 的 50 条中找到（0 例外） |
+| 全仓 markdown 相对链接 | 14 份 `.md`，悬空链接 0 |
+
+### Known issues（本轮没做）
+
+- README 的快速开始命令表**没有门禁**：`check_architecture.py` 只钉「clap 命令表 ≡ 派发 ≡ help」，
+  README/文档里的命令是 prose，漂移只能靠人工核对（本轮就是这么抓的）。
+- 收口指南与 `deploy/README.md` 仍有重叠段（`storage.consistency` 三档、CCXT 凭据键、发布前检查），
+  合并方向未定：要么把指南并成一篇教程、要么把 `deploy/README` 缩成配置键参考。
+- 被删文档中的"三轮端到端链路审计"结论只留在 git 历史，未回填到 V11；如果以后要复用，从 commit 里取。
+
 ## Unreleased — V11 Q68：持仓行的未算钱不再印成 0，缺方向不再靠猜（2026-09-22）
 
 交易链路实测（V11 #54）排到的第三颗：TX2 的下半截（持仓行）+ 实盘回报入口（TX2b），不在 §6 排期内。
@@ -1035,7 +1106,7 @@ Bar 链的 `--fill-model` / `--virtual-trading` 未做（前置条件见同文�
   并把"改接本内核"显式指向 V11 §9 的 Q1d。
 - `crates/qx-cli/src/backtests/kernels.rs`：该文件是产物清单里 `matching_kernel` 三个名字的家，
   模块文档补明"还有第四套撮合不在清单里，因为它不产出回测产物"，避免读者以为内核只有三个。
-- `docs/牵星完整架构方案-V1.md` §2.3 加现状对照：核对后确认该节没说谎（它把撮合适配器放在"可替换"
+- 给当时的 `docs/牵星完整架构方案-V1.md` §2.3 加现状对照（该文档已在文档收口时删除，原文在 git 历史）：核对后确认该节没说谎（它把撮合适配器放在"可替换"
   那一侧），缺的是现状标注——事件 / 归约 / `Oms` / `Ledger` / `FeeModel` 四模式同源已成立且有门禁，
   **撮合尚未同源**。`README.md:20` 的"回测与实盘共享同一规则内核"是**规则**口径而非撮合口径
   （风控与费用同源已由 Q0a/Q0b/Q0c 接成配置驱动），故保留原文。
@@ -1330,7 +1401,7 @@ E2–E5 留待后续阶段。
 
 ## Unreleased — V10 重构收口（2026-09-20）
 
-方案、逐阶段验收口径与实测数字见 [docs/自研量化框架重构方案-V10.md](docs/自研量化框架重构方案-V10.md)
+方案、逐阶段验收口径与实测数字见已删除的 `docs/自研量化框架重构方案-V10.md`（文档收口时移除，原文在 git 历史）
 §6 与收口记录；本轮四决策（D1 实盘一律 fail-closed / D2 回测风控同源 / D3 命令面按审计收口 /
 D4 外部验收只交付可执行方案）记在同文档 §0、§8.1。
 
@@ -1434,7 +1505,7 @@ D4 外部验收只交付可执行方案）记在同文档 §0、§8.1。
 
 ## Unreleased — V9 重构收口（2026-09-19）
 
-方案与逐阶段判定见 [docs/自研量化框架重构方案-V9.md](docs/自研量化框架重构方案-V9.md) §8。
+方案与逐阶段判定见已删除的 `docs/自研量化框架重构方案-V9.md` §8（文档收口时移除，原文在 git 历史）。
 
 ### Fixed（正确性）
 

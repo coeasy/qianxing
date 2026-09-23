@@ -74,7 +74,7 @@ python -m qianxing_ashare screen `
   --market-spec deploy/qianxing.ashare.spot.spec.json
 ```
 
-生成的 `BarFrame` 可直接作为现有 `strategy-backtest` 或 `fast-backtest` 的 `bars` 输入；回测前必须另行提供产品规格和 A 股规则配置。
+生成的 `BarFrame` 可直接作为现有 `strategy backtest`（或 `backtest builtin`）与 `fast-backtest` 的 `bars` 输入；回测前必须另行提供产品规格和 A 股规则配置。
 
 ## 3. 数据源选择
 

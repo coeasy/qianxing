@@ -41,7 +41,7 @@
 - ExecutionService 接收到冻结 `TradingInstrumentSpec` 时，Paper/CCXT 的成交统一使用产品规格归约：Spot 走现金成交，Margin/Perpetual/Future 走持仓、已实现 PnL、手续费和资金结算语义；规格生成的 LedgerApplied 事实可在重启后直接重放。
 - `qx-cli ccxt-fetch-ohlcv ccxt-config.json instrument start_ms end_ms output.json [timeframe]`：下载一次 OHLCV 并冻结为回测输入快照。
 - `qx-cli ccxt-market-spec ccxt-config.json instrument market.json`：下载并冻结 CCXT 市场元数据与可用 `leverage_tiers`，作为现货/保证金/永续/交割合约回测的产品规格和阶梯保证金输入。
-- `qx-cli ccxt-backtest bar-frame.json [fast] [slow] [market.json]`：只读取本地 BarFrame；传入 market.json 时按合约乘数、线性/反向合约和产品类型计算成交、持仓和未实现盈亏。
+- `qx-cli backtest builtin <strategy> <bar-frame.json> [market-spec.json] [quantity]`：只读取本地 BarFrame；传入 market spec 时按合约乘数、线性/反向合约和产品类型计算成交、持仓和未实现盈亏。`fast`/`slow` 这类信号参数不再是位置参数，改由 `--config <runtime.json>` 的 `strategy.builtin_*` 提供（V11 Q64）。
 - Strategy 运行配置支持 `product`、`margin_mode`、`position_mode`、`leverage` 和 `allow_short`；现货默认 Cash/1x/NoShort，永续/期货可显式生成 Cross/Isolated、OneWay/Hedge 和空头订单 Policy。
 - Runtime 支持 `strategies[]` 多策略实例；每个实例通过 `id` 绑定同名 Strategy worker，JobSpec.owner 决定任务归属，避免多个策略抢占或重复处理同一任务。
 - Strategy 实例可配置 `python_module`，或配置 `external_executable/external_args/external_env` 接入 Rust/C++ 独立策略进程；均由 Rust Strategy Worker 通过版本化 JSONL 契约调用。输入包含 PIT 研究目标、账户/持仓/现金、可用保证金和风险状态，输出必须回传相同的 `request_id`、`strategy_id`、`instrument`，不能绕过 Rust 风控与控制面。未配置时继续使用 Rust 内置策略兼容路径。
