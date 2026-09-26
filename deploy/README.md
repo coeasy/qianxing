@@ -172,7 +172,7 @@ cargo run --release -p qx-cli -- serve deploy/qianxing.runtime.example.json
 | `GET /ready` | `ApiReadiness` | 就绪检查 + 投影健康；未就绪时状态码 `503` |
 | `GET /metrics` | Prometheus 文本 | API 自身指标，并追加 `worker-metrics/<worker_id>.prom` 聚合 |
 | `GET /schema/account-snapshot-v1` | JSON Schema | 公布的就是仓库里的 `schemas/account-snapshot-v1.json`（编译期 `include_str!` 取用，不存在第二份），供读者自证 |
-| `GET /account/snapshot` | 快照 JSON / `404 snapshot_not_found` | 单账户投影快照 |
+| `GET /account/snapshot` | 快照 JSON / `404 snapshot_not_found` | 单账户投影快照；八个汇总钱字段里未算的那几格是 `null` 而不是 0，名单见下 |
 | `GET /account/snapshot/envelope` | 投影信封 / `404` | `data` 满足上面那份 schema（V12 R4-h） |
 | `GET /account/snapshot/diff?base_hash=<u64>` | 差异 | `base_hash` 缺失或非无符号整数 → `400`；基准不存在 → `409 snapshot_base_not_found` |
 | `GET /account/orders`、`/account/positions` | 数组 | 无快照时返回空数组，不返回 `404` |
@@ -187,6 +187,14 @@ cargo run --release -p qx-cli -- serve deploy/qianxing.runtime.example.json
 全部 `account/*`）都接受 `?account_id=&venue_id=`：两者必须同时出现，否则 `400
 {"error":"account_id 和 venue_id 必须同时提供"}`；都不出现时读全局投影。`?after=` 必须是十进制
 无符号整数，含义是**事件序号**，不是这条日志的下标。
+
+账户快照的八个汇总钱字段（`raw` 是整数量纲）在本构建分两类：有算点的是 `equity_raw`、`available_raw`、
+`fees_raw`；**账户级无生产者字段**：`margin_raw`、`frozen_raw`、`realized_pnl_raw`、`unrealized_pnl_raw`、
+`funding_raw`。后五格在 `/account/snapshot` 与其 envelope 里恒为 `null`（`/account/balances` 只公布其中
+`margin_raw` 一格，同样是 `null`）：`null` 的含义是"这一层没有算它"，不是 0，也不能读成"这个账户没有
+保证金占用 / 没交过资金费 / 没有浮亏"。这份名单不靠手抄维持——门禁 `account_money_field_registry_check`
+把它与协议里的 `Option<i128>` 声明、`schemas/account-snapshot-v1.json` 的逐字段 description、
+`maturity/capabilities.yaml` 的逐字段 limitation 与读侧 null 用例的点名集合逐条对齐，任一侧改口即红（V13 R1-A5）。
 
 WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分派前转交 `serve_websocket`。
 握手需要 `Sec-WebSocket-Key`，随后依次下发 `connected`、可选的 `snapshot`、已积累的 `events`

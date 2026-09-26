@@ -280,7 +280,11 @@ capabilities:
       - shutdown_signal_delivery_is_not_exercised：the four ladder cases drive the token through injected clocks and predicates, so what is proven is "once the token is pressed the ladder forwards it and bounds the wait"; no case raises a real signal, and on Windows SIGTERM has nothing to deliver (V12 R4-a)
       - paper_venue_has_no_t_plus_one_settlement_state_today_bought_quantity_nor_board_scoped_limit_anchors_so_the_ashare_section_is_refused_at_every_submit_entry_instead_of_only_its_fee_model (V11 Q65)
       - position_rows_have_no_producer_for_unrealized_pnl_yet：V11 Q68 made the Ledger-fallback row honest (absent instead of a fabricated 0), but computing row PnL still needs a frozen market spec on the read side
-      - account_level_unrealized_pnl_margin_frozen_realized_pnl_and_funding_raw_still_have_no_producer (V11 Q67 §28.5, restated after Q68)
+      - account_margin_raw_has_no_producer：账户级保证金占用在本层没有算点（这一层没有保证金模型），`/account/snapshot` 与 `/account/balances` 恒发布 null；null 不是 0，也不表示该账户没有保证金占用。接上它要先决定用哪把尺子，见 three_equity_rulers_still_live (V11 Q67 §28.5 立项，V13 R1-A5 拆成逐字段)
+      - account_frozen_raw_has_no_producer：账户级冻结金额在本层没有算点，快照恒发布 null；A 股的"T+1 锁定数量"今天也没有生产状态，见 paper_venue_has_no_t_plus_one_settlement_state_… (V11 Q67 §28.5，V13 R1-A5 拆成逐字段)
+      - account_realized_pnl_raw_has_no_producer：账户级已实现盈亏在本层没有算点——Ledger 有逐笔成交与现金，但没有把成交配对成平仓批次口径的读者，快照恒发布 null (V11 Q67 §28.5，V13 R1-A5 拆成逐字段)
+      - account_unrealized_pnl_raw_has_no_producer：账户级未实现盈亏在本层没有算点，快照恒发布 null；它与持仓行的同名列是两件事，后者按交易所上报，见 position_rows_have_no_producer_for_unrealized_pnl_yet (V11 Q67 §28.5，V13 R1-A5 拆成逐字段)
+      - account_funding_raw_has_no_producer：账户级资金费累计在本层没有算点——资金费流水只有对账侧的快照计数，没有进账簿，快照恒发布 null (V11 Q67 §28.5，V13 R1-A5 拆成逐字段)
       - stored_account_snapshots_predate_the_reconcile_presence_tag：V11 R10 给对账两格补了存在性标记，`state_hash` 形状随之改变，升级前落盘的账户快照会在 `from_json` 的哈希核对处被拒（有意 fail-closed），由 EventLog 重投影即可恢复；被 git 跟踪的产物侧实测不含此类快照
       - ccxt_reconcile_unknown_remote_open_order_has_no_fact_stream_entry_by_design：Q69 之后两半发现共用同一个出口，但一条远端孤单挂单没有可解析的 client_order_id，OMS 没有可标记的句柄，所以它只进报告与健康判定 (V11 Q69)
       - binance_reconcile_still_fetches_only_balances_and_orders：那条链没有 positions/funding/cashflow 取数器，Q69 之后报告里写 null 而不是 0，取数缺口本身仍在 (V11 Q69)

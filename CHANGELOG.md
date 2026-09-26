@@ -1,6 +1,62 @@
 # Changelog
 
 
+## Unreleased — V13 R1-A5：账户「这一层没算」的名单从四处散文收成一份源码派生的事实（2026-09-26）
+
+本轮**不动一行 Rust、不动结构、不给任何一格接生产者**（§5 给 A5 的口径就是「只做上报口径的可见性」）。
+要修的是一件更基础的事：账户快照有八个汇总钱字段，其中五格（`margin_raw`、`frozen_raw`、`realized_pnl_raw`、
+`unrealized_pnl_raw`、`funding_raw`）在本构建**没有生产者**，读侧恒发 `null`。这件事此前写在四处文本里，
+而四处**没有任何一处能被机器核对**——契约只标类型不提 null 的含义，能力矩阵把五格挤进一条合并命名
+（`account_level_unrealized_pnl_margin_frozen_realized_pnl_and_funding_raw_still_have_no_producer`），
+`deploy/README.md` 里五格有**四格从未点名**（本轮按字节复核：HEAD 版点名次数 `margin_raw` 1、其余四格各 0）。
+于是给某一格接上生产者、或把 `null` 当 `0` 读，四处口径一处都不会红。本轮把这五个名字做成**由源码派生的
+一份名单**，并要求契约、能力矩阵、接口文档、读侧用例逐条等于它（V13 §9.10，日志 `logs/s65_*.txt`—`logs/s75_*.txt`）。
+
+### Added（门禁：6 颗同源判据 + 不变量第 26 条）
+
+- `account_money_field_registry_check()`：名单从 `crates/qx-protocol/src/lib.rs` 的 `pub struct AccountSnapshot`
+  现取八个 `Option<i128>` 钱字段，减去生产文本（门禁同一个 `production_text()`，按项剥测试项与注释行）里真有
+  `<expr>.<field> =` 赋值点的那些，得到未算名单；再逐条核对四处：契约逐字段 `description` 的两套措辞
+  （「本构建有生产者」/「本构建这一层没有生产者」互斥且不漏格）、能力矩阵的逐字段 limitation 行、
+  `deploy/README.md` 的点名句与「`null` 不是 0」这句口径、读侧 null 用例的点名集合。
+- 第 2 颗把「构造账户快照只能走 `AccountSnapshot::new()`（八格默认 None）」钉住：生产文本出现结构体字面量
+  构造点即红，于是「凭空造数」只能留在赋值点上、被派生清单抓到。口径写进注释：`production_text()` 只剥**整行**
+  注释，行尾注释里的字面量照样算构造点（MA10 实测），这是 fail-closed 的选择而不是疏漏。
+- `GATE_CHECK_FLOOR` 509 → **515**（本轮实测整跑 515 项全绿）。
+
+### Changed（三处口径文本，全部按派生名单重写）
+
+| 文件 | 动作 | 实测 |
+| --- | --- | --- |
+| `schemas/account-snapshot-v1.json` | 八个钱字段各加一条 `description`，写明本构建这一格是「有生产者」还是「没有生产者」，以及 `null` ≠ `0` | 1,481 → **2,741** 字节（30 行，纯 LF）；这份文本是 `include_str!` 内嵌、由 `GET /schema/account-snapshot-v1` 原样公布，不是第二份手抄 |
+| `maturity/capabilities.yaml` | 那条合并命名 blob 拆成 **5 条**逐字段 limitation（`account_<field>_has_no_producer`），每条写清 null 含义与缺的那把尺子 | 533 → 537 行、limitation 行 30 → 35、证据行 255 未动、`sandbox_tested` 为真仍 **0** 条 |
+| `deploy/README.md` | 加一句机器可定位的点名句「**账户级无生产者字段**：…五格…」＋「`null` 的含义是这一层没有算它，不是 0」，并指明判据名 | 815 → **823** 行；两份 CRLF 文件改完逐字节复核**孤立 LF 为 0** |
+
+### Validation（数字全部抄自当轮日志）
+
+| 项 | 实测 | 日志 |
+| --- | --- | --- |
+| 新判据单独跑 | 6 颗全绿，六处名单逐条打印且同为那五格 | `s68_a5_registry_check_green_side_after_hardening.txt` |
+| 架构门禁整跑 | **515 项全绿 / `GATE_EXIT=0`**；变异电池收尾再跑仍 `exit=0 红 0 条` | `s69_…txt`、`s70_…txt` 末行 |
+| 变异反向验证（真树 + 进程内原始字节还原，逐颗「还原: 逐字节一致」） | **13 发**：MA1（给 `margin_raw` 凭空接上算点）红到新判据第 1/3/4/5/6 颗、连同既有「凭空造数」那颗共 6 条；MA1b（拆掉 `fees_raw` 算点）同样五颗 + 既有费用算点那颗；MA2（结构体字面量）只红第 2 颗；MA3 契约改口 / MA4 limitation 改名 / MA5 文档漏点一格 / MA6b 用例两处点名都注释 / MA7 合并 blob 复活 / MA8 给有算点的立「未算」 / MA9 删「不是 0」各**只红自己那一颗**（整跑红条数 1） | `s70_a5_mutation_battery.txt` |
+| 电池抓到的两条更正 | MA10「行尾注释里的例子不该算构造点」这句预期**不成立**（实测红在第 2 颗）；MA6 只删用例里**一处**点名**不咬**——那一格还有第二处在断言同一件事，判据的真实范围是「字段在用例里还有没有名字」。两条都按实测改写进代码注释与本条记录 | 同上 |
+| 安装包按当轮代码重建 | 两个对象分开测。wheel：`build_python_wheel.ps1` `WHEEL_BUILD_EXIT=0`，217,025 字节 / 17 条目，与上一轮那份**逐条目 CRC 全同**（载荷没变，变的只有 4 个条目的 zip 时间戳）；CLI 二进制才是契约所在：`cargo build --release -p qx-cli` 2m11s，11,999,232 字节的 exe 内数到"没有生产者" **5** 次 / "有生产者" **3** 次、契约前 200 字节整段在内，新 exe 实跑 `ecosystem` `ECO_EXIT=0`（含 `ecosystem_smoke.rs:297` 那发 `GET /schema/account-snapshot-v1`） | `s74_a5_package_rebuild.txt` |
+| `build.bat` 九步端到端 | `QX_PYTHON=<venv 绝对路径> build.bat` → `[0/9]`…`[9/9]` 全过、`BUILD_BAT_EXIT=0`；`[1/9]` 515 项全绿、`[4/9]` 92 段全 ok / 858 passed / 0 failed、`[6/9]` `Ran 55 tests`；跑完 `git status --porcelain` 逐行与跑前相等、未跟踪新产物 **0** 份 —— 文档轮那条"整跑会落 72 份产物"的旧理由就此撤销 | `s75_a5_build_bat_full.txt` |
+| 顺带抓到的一条新盲区（立案 #159） | 两份发布产物的**整档 sha256 都不可复现**：wheel 载荷 17/17 CRC 相同而整档 sha 变了；同一条 `cargo build --release` 跑两次的 exe 也是同尺寸不同 sha。README 里那处"sha256 前缀 = 产物身份证"的活口径本轮换成载荷口径，往轮的历史记录不改 | `s74` 第 4 节 |
+| 整树测试 | `QX_PYTHON=<venv 绝对路径> cargo test --workspace --all-targets --no-fail-fast` → 72 段全 ok、**858 passed / 0 failed / 0 ignored**、`CARGO_EXIT=0` | `s71_a5_cargo_workspace.txt` |
+| 取证探针的一处自纠 | 探针**第一版**按「文件里第一个 `#[cfg(test)]` 整行截断」剥测试，把 `api_service.rs` 的三个生产算点连着剥掉、报出「八格零生产者」；第二版改用门禁同源读法，读回三格有算点（`:354` 权益走 `ledger().equity_for`、`:361` 可用走结算账簿现金、`:387` 费用由逐笔成交 `checked_add` 加出）与五格无算点。两版并存留在日志里，含口径声明 | `s65_a5_null_field_probe.txt` |
+
+**这一条判据将来怎么被「正确地改掉」**：给 `margin_raw` 接上真正的生产者时，第 1/3/4/5/6 颗同时红（MA1 实测），
+要做的动作是撤契约那一格的措辞、删能力矩阵那一行、从文档句子里删名字、用例不再点它——四处一起改完才绿。
+拦的不是接生产者，而是「接上了却有一处口径没跟着改」。
+
+**本轮没做**：不动 `AccountSnapshot` 结构与线格式，不给任何一格接生产者（要先决定用哪把尺子，仍挂在
+`three_equity_rulers_still_live`）；`/account/balances` 仍只公布 `margin_raw` 一格，其余四格只出现在
+`/account/snapshot` 与 envelope；`maturity/capabilities.yaml` 的 `sandbox_tested` 与 `production_approved` 照旧
+全为 `false`。发布面本轮**没留在"没做"里**：安装包按当轮代码重建（`logs/s74_a5_package_rebuild.txt`，wheel 与
+CLI 二进制两件都重跑并逐字节复核）与 `build.bat` 九步端到端（`logs/s75_a5_build_bat_full.txt`）都已实测，
+CI 的三平台 wheel 矩阵与 feature 矩阵仍只有 CI 跑。V13 §5 R1 的 A1/A2/A2b/A3/A4/A5/A6 到此全部落地。
+
 ## Unreleased — V13 文档轮：V11/V12 归档进 `docs/archive/`、README 改成产品说明、安装面每条数字重跑后再写（2026-09-26）
 
 本轮**不动一行代码、不加一条判据**，只做三件事：把已被取代的两代审计移进 `docs/archive/` 并修好每一条

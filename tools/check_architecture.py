@@ -52,8 +52,9 @@
       `crates/qx-strategy/src/c_api.rs` 之间没有编译期耦合，错位只会读成坏内存；字段名、顺序、
       宽度与 vtable 条目都按名字比对，CI 的 `cpp-sdk` 作业不加载产物，所以这条只能静态咬。
   21. 账户快照的对外契约只有一份文本，且两侧读侧与它同宽（V11 S10 / T3）：服务常量按字节
-      `include_str!` 仓库里那份 schema，契约声明的键集合等于写侧产物，七个钱字段可空、权益不可空，
-      `schema_version` 与协议名是 `from_json` 认的那一对，Python 侧的必填集合也等于契约的 required。
+      `include_str!` 仓库里那份 schema，契约声明的键集合等于写侧产物，八个汇总钱字段全部可空
+      （V11 Q70 之后权益也可能是"算不出"），`schema_version` 与协议名是 `from_json` 认的那一对，
+      Python 侧的必填集合也等于契约的 required。
   22. 日历组件指纹两侧比同一份夹具（V11 R17 / T2）：Python 写侧产出文档与摘要、Rust 读侧重算，
       摘要在代码里没有第二份抄本，字段白名单与契约版本号逐项相等——旧格式文档 `sessions` 缺席
       必须读成"没有时段"，两侧一宽一严时 Python 登记的 bundle 会被 CLI 拒启。
@@ -70,6 +71,11 @@
       一次也没被赋过值。零生产者的变体要么删，要么进线格式允许清单，且清单每条都要自证：变体仍在册、
       所在枚举确实 derive 了 `Deserialize`（证据只认 `pub enum` 上方连续的 `#` 属性行，文件顶部那句
       `use serde::{Deserialize, …}` 不算）、且确实零生产者。
+  26. "这一层没算"的账户钱字段名单只有一份，而且它由源码派生（V13 R1-A5）：协议里八个
+      `Option<i128>` 钱字段减去生产文本真有赋值点的那些即为未算名单；契约的逐字段 description、
+      能力矩阵的逐字段 limitation、接口文档点名的那一串、读侧 null 用例点名的集合四处都必须等于
+      它。此前这条事实只活在一句合并命名里，四处口径谁改都不红；账户快照也允许用结构体字面量绕过
+      `new()` 的"八格默认 None"，现在构造单点同样在册。
 
 运行： python3 tools/check_architecture.py
 刷新第 8 项的预算快照（改动后人工确认 diff）：
@@ -512,7 +518,12 @@ WORKSPACE_TEST_FLOOR = 866
 # 变体⊆已使用 / 变体⊆坏内容探针 / 每类读取落在生产读点 / 三条用例与模块挂载 / 预期结果口径 /
 # 配对来源仍指向在册模板。这一把尺量的是"覆盖套件本身还在不在"：删掉登记项会被第 2 颗咬住，
 # 把生产读点换成测试内自造校验会被第 6 颗咬住（GA/GC 变异各自实测打红）。
-GATE_CHECK_FLOOR = 509
+# 509 → 515：V13 R1-A5 的账户 null 名单同源 6 颗——名单由源码派生 / 构造只走 new() /
+# 契约逐字段 description 点名两种身份且互斥 / 能力矩阵逐字段立 limitation 且合并命名不回来 /
+# 接口文档点名并写明 null 不是 0 / 读侧 null 用例逐字段点名。这六颗是一条同源链的六个方向：
+# 给某个字段接上生产者会同时打红第 1、3、4、5、6 颗（MA1 实测），反过来拆掉一个算点也是同样五颗
+# （MA1b），四处口径各自改口而源码不动时只打红自己那一颗（MA3/MA4/MA5/MA7/MA8/MA9 各实测 1 颗）。
+GATE_CHECK_FLOOR = 515
 # V12 §21 / #138：合流类判据的三个参数（455 → 457 就是本轮新增的两条，仍按"当轮实测总条数"取值）。窗口取 10 行是实测拐点 —— W=8 在 `tools` 之外命中 1,180
 # 处、到 W=10 仍有 781 处合法的并列实现（三条 venue 提交链、几家存储后端），所以逐字重复零容忍
 # 只对 `tools/*.py` 生效（本轮实测该目录 5 份脚本 0 命中），Rust 那一侧交给编译器与整树用例。
@@ -4086,6 +4097,142 @@ def snapshot_money_honesty_check() -> None:
         f"{'fn uncomputed_money_is_not_the_same_state_as_computed_zero(' in core_cases}"
         " / 端点侧 null 用例在位="
         f"{'fn balances_endpoint_publishes_absent_money_as_null_not_zero(' in endpoint_cases}",
+    )
+
+
+# === V13 R1-A5：账户级"本层没算"的名单要逐字段同源 ===
+# 这条事实此前只活在能力矩阵的一句合并命名（`account_level_unrealized_pnl_margin_frozen_…_and_
+# funding_raw_still_have_no_producer`）里，契约文本与接口文档更是只点到 `/account/balances` 那一格。
+# 于是"这一层到底哪几格算不出"没有一处能被机器核对：给某个字段接上生产者、或反过来把 null 当成 0
+# 读，四处口径都不会红。下面先把名单从**源码**派生（协议声明的八个 `Option<i128>` 钱字段，减去生产
+# 文本里真有赋值点的那些），再拿它逐条比对契约、能力矩阵、接口文档与读侧用例。
+ACCOUNT_MONEY_COMPUTED_MARKER = "本构建有生产者"
+ACCOUNT_MONEY_ABSENT_MARKER = "本构建这一层没有生产者"
+ACCOUNT_MONEY_DOC_MARKER = "账户级无生产者字段"
+ACCOUNT_MONEY_CASE_NAME = "uncomputed_money_is_absent_rather_than_zero"
+# V11 Q67 的旧写法：五个字段挤在一行合并命名里。它一回来，逐字段对齐就失去对象。
+ACCOUNT_MONEY_MERGED_LIMITATION = "- account_level_"
+# 结构体字面量构造点。`impl AccountSnapshot {` 后面跟的是 `pub fn`，不会误命中。
+# 口径（MA10 实测）：生产文本只剥"整行注释"，行尾注释里的字面量照样算构造点。方向是 fail-closed ——
+# 代价是有人在行尾注释举例如实时会红一次，把那条例子挪到整行注释就好；换成字符串感知的剥注释，
+# 换来的是"一个串里出现 // 就整段消失"的假绿，那才是这条判据承受不起的错法。
+ACCOUNT_SNAPSHOT_LITERAL = re.compile(r"AccountSnapshot\s*\{\s*[A-Za-z_]\w*\s*:")
+
+
+def account_money_field_registry_check() -> None:
+    """账户级"这一层没算"的字段名单：源码派生一份，契约/能力矩阵/接口文档/用例四处逐条对齐。"""
+    protocol = (ROOT / SNAPSHOT_PROTOCOL_FILE).read_text(encoding="utf-8")
+    struct_start = protocol.find("pub struct AccountSnapshot {")
+    struct_body = protocol[struct_start : protocol.find("\n}", struct_start)]
+    declared = re.findall(r"^    pub (\w+_raw): (Option<i128>|i128),$", struct_body, re.M)
+    scalars = sorted(name for name, kind in declared if kind == "Option<i128>")
+    if struct_start < 0 or not scalars:
+        check(
+            False,
+            "账户快照的钱字段名单能从协议结构体读出来（读不出来时下面几条全是假绿）",
+            f"{SNAPSHOT_PROTOCOL_FILE} 里找不到 `pub struct AccountSnapshot {{ … }}`",
+        )
+        return
+
+    # 算点只认赋值形状：构造被下一条判据钉成"只能走 new()"，所以生产侧要给出一个数只能写赋值。
+    # 协议定义文件本身只有"构造默认 None"与 SnapshotDiff 的逐字段转发，两处都不是算点。
+    produced: set[str] = set()
+    literals: list[str] = []
+    for path in sorted(CRATES.glob("*/src/**/*.rs")):
+        relative = path.relative_to(ROOT).as_posix()
+        if TEST_PATH.search(relative) or relative == SNAPSHOT_PROTOCOL_FILE:
+            continue
+        text = production_text(path.read_text(encoding="utf-8"))
+        for name in scalars:
+            if re.search(rf"[A-Za-z_]\w*\.{name}\s*=[^=]", text):
+                produced.add(name)
+        if ACCOUNT_SNAPSHOT_LITERAL.search(text):
+            literals.append(relative)
+    uncomputed = [name for name in scalars if name not in produced]
+    computed = [name for name in scalars if name in produced]
+    check(
+        sorted(uncomputed) == sorted(SNAPSHOT_UNCOMPUTED_FIELDS) and len(scalars) == 8,
+        "无生产者的账户钱字段由源码派生，与判据常量同一份：谁接上生产者这一步先知道",
+        f"协议声明 {len(scalars)} 格、派生未算 {uncomputed}、常量 {list(SNAPSHOT_UNCOMPUTED_FIELDS)}",
+    )
+    check(
+        not literals,
+        "生产代码构造账户快照只能走 AccountSnapshot::new()（八格默认 None），"
+        "凭空造数必须留在赋值点上、被派生清单抓到",
+        f"出现结构体字面量构造点 {literals}",
+    )
+
+    schema = json.loads((ROOT / SNAPSHOT_SCHEMA_FILE).read_text(encoding="utf-8"))
+    descriptions = {
+        name: str(schema["properties"].get(name, {}).get("description", "")) for name in scalars
+    }
+    schema_absent = sorted(n for n, d in descriptions.items() if ACCOUNT_MONEY_ABSENT_MARKER in d)
+    schema_computed = sorted(n for n, d in descriptions.items() if ACCOUNT_MONEY_COMPUTED_MARKER in d)
+    check(
+        all(descriptions.values())
+        and not (set(schema_absent) & set(schema_computed))
+        and schema_absent == sorted(uncomputed)
+        and schema_computed == sorted(computed),
+        "对外公布的契约逐字段写明 null 的含义：未算的点名、有算点的点名，两种标记互斥且不漏格",
+        f"缺描述 {[n for n, d in descriptions.items() if not d]}"
+        f" / 契约称未算 {schema_absent} / 契约称有算点 {schema_computed}",
+    )
+
+    capabilities = (ROOT / "maturity" / "capabilities.yaml").read_text(encoding="utf-8")
+    listed_absent = sorted(
+        name
+        for name in scalars
+        if re.search(rf"^\s*- account_{name}_has_no_producer(?=[： (])", capabilities, re.M)
+    )
+    wrongly_claimed = sorted(
+        name
+        for name in computed
+        if f"- account_{name}_has_no_producer" in capabilities
+    )
+    check(
+        listed_absent == sorted(uncomputed)
+        and not wrongly_claimed
+        and ACCOUNT_MONEY_MERGED_LIMITATION not in capabilities,
+        "能力矩阵把每一个无生产者字段各立一条 limitation：接上生产者就必须撤那一行，"
+        "合并命名那句 blob 也不许回来",
+        f"逐条在位 {listed_absent} / 有算点却被立成未算 {wrongly_claimed}"
+        f" / 合并写法残留={ACCOUNT_MONEY_MERGED_LIMITATION in capabilities}",
+    )
+
+    readme = (ROOT / "deploy" / "README.md").read_text(encoding="utf-8")
+    doc_sentence = re.search(ACCOUNT_MONEY_DOC_MARKER + r"\*?\*?：(.+?)。", readme, re.S)
+    doc_names = (
+        sorted(set(re.findall(r"`(\w+_raw)`", doc_sentence.group(1)))) if doc_sentence else []
+    )
+    check(
+        doc_sentence is not None
+        and doc_names == sorted(uncomputed)
+        and "不是 0" in readme[doc_sentence.start() : doc_sentence.start() + 400],
+        "接口文档向运维点名这份名单，并写明 null 不是 0：读侧不会把「没算」当成「没有」",
+        f"命中标记句={doc_sentence is not None} / 文档点名 {doc_names}"
+        f" / 派生未算 {sorted(uncomputed)}",
+    )
+
+    # 用例文本要剥注释：把那一格点名改成 `// ("frozen_raw", …)` 仍然是一处"用例还在"的假象。
+    # 量的范围（MA6 / MA6b 实测）：这一颗问的是"这个字段在那条用例里还有没有名字"。用例现在有两处
+    # 点名（None 断言的元组表 + 线格式循环的名册），只删其中一处它不红 —— 因为另一处仍在断言同一件事；
+    # 两处都删掉才红。要更细的"每一处点名都必须在"就得钉死排版，那次重构会先被它咬住。
+    case_source_text = without_line_comments(
+        (ROOT / SNAPSHOT_CLI_CASE_FILE).read_text(encoding="utf-8")
+    )
+    case_start = case_source_text.find(f"fn {ACCOUNT_MONEY_CASE_NAME}(")
+    case_body = (
+        case_source_text[case_start : case_source_text.find("\n}\n", case_start)]
+        if case_start >= 0
+        else ""
+    )
+    case_names = sorted(set(re.findall(r'"(\w+_raw)"', case_body)))
+    check(
+        case_start >= 0
+        and case_names == sorted(uncomputed)
+        and r'\"margin_raw\":null' in case_body,
+        "读侧那条 null 用例逐字段点名这五格，并真的断言了线格式与稳定 JSON 印 null 而不是 0",
+        f"用例在位={case_start >= 0} / 用例点名 {case_names} / 派生未算 {sorted(uncomputed)}",
     )
 
 
@@ -7886,6 +8033,7 @@ def main() -> int:
     two_leg_partition_check()
     deploy_template_coverage_check()
     snapshot_money_honesty_check()
+    account_money_field_registry_check()
     snapshot_contract_version_check()
     snapshot_row_wire_check()
     position_money_honesty_check()

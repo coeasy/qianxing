@@ -132,21 +132,24 @@ Python 3.10+（本轮实测 3.12.13）且能 `import tzdata`。第 `[0/9]` 步�
 cd python && uv venv .venv --python 3.12 && uv pip install tzdata
 ```
 
-第 `[1/9]` 跑的是 `tools/check_architecture.py`，也就是本仓库那四百多条架构不变量。V12 §22 之前它**只在
+第 `[1/9]` 跑的是 `tools/check_architecture.py`，也就是本仓库那五百多条架构不变量。V12 §22 之前它**只在
 CI 跑**：本地把八步走完看到"全部完成"，并不证明这些不变量成立（#139）。它只读源码、不碰编译产物，所以排在
 几分钟的 release 构建之前，红了当场就知道。
 
 实测：`build.bat` 九步全过、`BUILD_BAT_EXIT=0`；那次 `[1/9]` 打印 460 条 `PASS`、0 条 `FAIL`，`[4/9]` 是
 92 个 `test result:` 段全 ok / 843 passed / 0 failed（日志 `logs/s22_build_bat_full.txt`，V12 §22 那一轮）。
-**这两串数字是那次全量构建的历史快照，不是今天的门禁条数，也不是本轮重跑的结果**：本轮（2026-09-26
-文档轮）没有整体重跑 `build.bat`（它会连带产生 `deploy/data/**` 下的未跟踪产物，见 V12 §14 登记的 #82），
-只单独重跑了其中影响文档的两步 —— `[1/9]` 的 `tools/check_architecture.py` 现在 509 条全绿
-（本轮从头到尾重跑过六次，`logs/s50_*.txt`、`logs/s55_*.txt`、`logs/s57_*.txt`—`logs/s62_*.txt`，每次都是 509/0）、
-`[4/9]` 的 `cargo test --workspace` 现在 92 段全 ok /
-858 passed / 0 failed（`logs/s46_docs_round_cargo_test_workspace.txt`，其中 21 段是 Doc-tests；V13 R1-A6
-那一轮另单跑过 `cargo test --workspace --doc`，同样 21 段全 ok，`logs/s44_a6_cargo_test_doc.txt`）。
-460→509 与 843→858 的差来自 V12 §23 到 V13 R1 之间新增的判据与用例；下一次整体跑 `build.bat` 会把
-两侧口径对上。
+**这两串数字是那次全量构建的历史快照，不是今天的门禁条数**。本轮（2026-09-26 V13 R1-A5）把 `build.bat`
+真的整体重跑了一次（`logs/s75_a5_build_bat_full.txt`）：`QX_PYTHON=<venv 绝对路径>` 下 `[0/9]`…`[9/9]` 全过、
+`BUILD_BAT_EXIT=0`；`[1/9]` 打印 **515 项全绿**（整跑日志里 516 行 `PASS` = 那 515 项 + 第 `[9/9]` 那句 runtime
+校验），`[4/9]` **92 段全 ok / 858 passed / 0 failed / 0 ignored**（其中 21 段是 Doc-tests，仓库没有 doctest），
+`[6/9]` 是 `Ran 55 tests`。于是文档轮那句"下一次整体跑会把两侧口径对上"到此对上：460 → **515**（V12 §23 到
+V13 R1-A5 新增的判据）、843 → **858**（同区间新增的用例）。单独重跑的序列也留在册上：`[1/9]` 在文档轮那六次
+都是 509/0（`logs/s50_*.txt`、`logs/s55_*.txt`、`logs/s57_*.txt`—`logs/s62_*.txt`），A5 那轮抬到 515
+（`logs/s69_a5_full_gate_after_hardening.txt`）；`[4/9]` 走 `--all-targets` 是 72 段 / 858 passed
+（`logs/s71_a5_cargo_workspace.txt`），`--doc` 单跑 21 段全 ok（`logs/s44_a6_cargo_test_doc.txt`）。
+**顺带撤销一条旧理由**：文档轮那次的说明写着"不整体重跑，因为它会在 `deploy/data/**` 落下约 72 份未跟踪产物"
+（#82 当年登记的后果）。本轮在同样带着 7 个改动文件的脏树上跑完复核：`git status --porcelain` 逐行与跑前相等、
+未跟踪新产物 **0** 份。那句话在 #82 修完就已经不成立，只是没人回来重测 —— 教训是"没重跑的理由"也要有到期日。
 
 ### C. 装 Python 侧 —— 跨语言策略与 CCXT worker
 
@@ -170,14 +173,20 @@ python -c "import qianxing_bridge.native as n; print(n.available())"
 ```
 
 `--no-deps` 是诚实口径：wheel 自身只带四个包与原生扩展，`ccxt` 只在真的跑 CCXT worker 时才需要（运行时
-才 import），装它请走你自己的索引或本地缓存。实测（本轮 2026-09-26 按上面两条入口重新构建并复核，
-`logs/s52_*.txt` 与 `logs/s53_*.txt`）：wheel 217025 字节 / 17 个条目 /
-sha256 前缀 `2603b5c2be46926a`，内嵌 `_qianxing_native.pyd` 的 md5 与当轮
-`target/release/_qianxing_native.dll` 逐字节相同（`a9764db6131fb9cf94e417ca1a5383dd`）；
-干净 venv 里 `qianxing_ashare` / `qianxing_bridge` / `qianxing_ccxt` / `qianxing_strategy` 四包全部
-导入成功，`native.available() → True`，衍生品三字段按线格式归一成 `cross/hedge/3` 且 `from_dict` 读回一致，
+才 import），装它请走你自己的索引或本地缓存。实测（`logs/s52_*.txt`、`logs/s53_*.txt` 是文档轮那次的重建与
+干净 venv 复核；`logs/s74_a5_package_rebuild.txt` 是本轮按当轮代码重跑的那次）：wheel **217,025 字节 / 17 个
+条目**，本轮重 build 与文档轮那份**逐条目 CRC 全同**（A5 只改契约 JSON，而契约不在 wheel 里），内嵌
+`_qianxing_native.pyd` 的 md5 与当轮 `target/release/_qianxing_native.dll` 逐字节相同
+（`a9764db6131fb9cf94e417ca1a5383dd`），wheel 里 12 份 `.py` 与仓库 `python/` 逐文件相等；干净 venv 里
+`qianxing_ashare` / `qianxing_bridge` / `qianxing_ccxt` / `qianxing_strategy` 四包全部导入成功，
+`native.available() → True`，衍生品三字段按线格式归一成 `cross/hedge/3` 且 `from_dict` 读回一致，
 `margin_mode="weird"`、`position_mode="both"`、`leverage=0`、`position_side="Weird"` 四种非法取值
-各自按契约抛 `ValueError`。
+各自按契约抛 `ValueError`。**为什么这里不报整档 sha256**：同一份载荷重打包出来的 sha 就会变（本轮实测：
+17 个条目 CRC 全同，整档 sha 因 4 个条目的 zip 时间戳从 `2603b5c2…` 换成 `54c5ed36…`），所以产物身份只按
+载荷报（尺寸 / 条目数 / 条目 CRC / 内嵌扩展的 md5），已立案 #159。契约那份 JSON 是 `include_str!` 编进
+**CLI 二进制**的（`crates/qx-protocol/src/lib.rs:34`），本轮重链的 `cargo build --release -p qx-cli` 产物里
+按字节数到契约措辞（"本构建这一层没有生产者" 5 次、"本构建有生产者" 3 次），新 exe 实跑 `ecosystem`
+冒烟 `ECO_EXIT=0`。
 
 ### 装不上时的四个坑（都是本机踩过的）
 
@@ -314,7 +323,7 @@ Windows 下用 `build.bat`（cmd.exe 里跑；全部 9 步端到端跑通的那�
 `build_script_parity_check` 逐脚本核对"导出那一行存在且早于 `[1/9]`"，并且只认命令、不认报错提示里
 那句教用户怎么设 `QX_PYTHON` 的 `echo`（§19 #136）。同一条判据还核对**架构门禁本身在这两份脚本里各被调用一次、
 失败会中止、且排在任何 `cargo` 之前**（§22 #139）：此前八步里没有一步跑 `tools/check_architecture.py`，
-本地看到"全部完成"时这四百多条不变量其实只被 CI 证明过。`.gitattributes` 把 `*.bat`/`*.cmd` 钉成 CRLF、`*.sh` 钉成 LF：
+本地看到"全部完成"时这五百多条不变量其实只被 CI 证明过。`.gitattributes` 把 `*.bat`/`*.cmd` 钉成 CRLF、`*.sh` 钉成 LF：
 带 UTF-8 中文的 LF 版批处理 cmd.exe 读不了，会在文件中途以 `\'不是内部或外部命令\'` 死掉
 （`windows_batch_parse_check` 逐文件核对行尾与"每行以 ASCII 字节结尾"）。
 
@@ -415,9 +424,20 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 
 ## 当前状态
 
-下面这组数字全部是 2026-09-26 在本机实测得到的，分两次抓取：
+下面这组数字全部是 2026-09-26 在本机实测得到的，分三次抓取（最新一次在最前）：
 
-- **文档轮（本轮）**：`tools/check_architecture.py` 509 项全绿（本轮六次重跑 `logs/s50_*.txt`、`logs/s55_*.txt`、
+- **V13 R1-A5 轮（同日最新）**：门禁 `tools/check_architecture.py` 整跑 **515 项全绿 / `GATE_EXIT=0`**
+  （`logs/s69_a5_full_gate_after_hardening.txt`；13 发变异电池的收尾复跑同样 `exit=0 红 0 条`，
+  `logs/s70_a5_mutation_battery.txt`）；整树测试走 `cargo test --workspace --all-targets --no-fail-fast`
+  → 72 段全 ok、**858 passed / 0 failed**（`logs/s71_a5_cargo_workspace.txt`）。本轮改的是契约、能力矩阵、
+  接口文档与门禁四处口径，**Rust 一行未动**，所以测试条数与文档轮同为 858。
+  能力矩阵那一格的具体变化：把五格挤进的一条合并命名 limitation 拆成 **5 条逐字段 limitation**
+  （文件 533 → 537 行；以仓库内路径开头的证据行 **255** 未动；`sandbox_tested` 为真的仍 **0** 条）。
+  发布面这一轮也真的重跑了：`build.bat` 九步端到端 `BUILD_BAT_EXIT=0`（`logs/s75_a5_build_bat_full.txt`，
+  `[1/9]` 515 项、`[4/9]` 92 段 / 858 passed / 0 failed，跑完 `git status --porcelain` 逐行不变、未跟踪新产物 0 份），
+  安装包按当轮代码重建（`logs/s74_a5_package_rebuild.txt`：wheel 与 CLI 二进制两件都重跑，契约措辞在新 exe 里
+  按字节数到 5 + 3 处，新 exe 实跑 `ecosystem` 冒烟 `ECO_EXIT=0`）。
+- **文档轮（同日早些时候）**：`tools/check_architecture.py` 509 项全绿（那六次重跑 `logs/s50_*.txt`、`logs/s55_*.txt`、
   `logs/s57_*.txt`—`logs/s62_*.txt` 全部 509/0，最后一次在 V11/V12 移入 `docs/archive/`、README 产品说明重写、
   `deploy/README.md` 加安装前置**之后**）；
   `cargo test --workspace`（带 `QX_PYTHON`）92 个 `test result:` 段全 ok、858 passed、0 failed
@@ -426,9 +446,10 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
   `help` / `init --strategy macd` / `doctor` / `backtest` / `report` / `status` 六条，退出码全 0，
   `help` 印出 52 行用法、41 个入口名（六条退出码见 `logs/s48_*.txt`、`logs/s49_*.txt`；52/41 这两串是按名
   逐条清点的 `logs/s54_docs_round_help_measure.txt`）。
-  **本轮没有重跑的部分**：`build.bat` 九步端到端 —— 最后一次整体跑通是 V12 §22
-  那一轮（460 项 `PASS` / 92 段 843 passed，是那一轮的快照，不是今天的门禁条数），后者见下面「安装 C」
-  的口径。
+  **当时没有重跑的部分**：`build.bat` 九步端到端 —— 文档轮那一次的最后整体跑通是 V12 §22（460 项 `PASS` /
+  92 段 843 passed，是那一轮的快照，不是今天的门禁条数），后者见下面「安装 C」的口径。**这条"当时没跑"到
+  同日更晚的 V13 R1-A5 轮已经补上**：整跑九步全过、515 项 / 92 段 / 858 passed，见上面「当前状态」第一条与
+  `logs/s75_a5_build_bat_full.txt`。
 - **V13 R1-A6 轮（同日早些时候）**：口径是给 `deploy/` 顶层 52 份模板建立按执行计的读覆盖、并修掉三份
   "照抄即坏"的示例，日志 `logs/s29_*.txt`—`logs/s45_*.txt`；其前的记账币种单源以 V13 §9.7 为准，
   venue 家族判定收拢以 §9.6 为准，A 股线格式两侧对照以 §9.4 为准，除权除息锚收口以 §9.1 为准，
@@ -440,10 +461,12 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 （13 个单标的 + 4 个只被 `backtest multi-builtin` 接受的套利 kind）、`git ls-files deploy` 里 44 份
 `*example*.json` 配置（顶层 JSON 模板 52 份，逐份由 `crates/qx-cli/src/tests/deploy_template_coverage.rs`
 按登记表点名的生产读法真读一遍，15 类读取器各自还要拒一份坏内容）、
-`python tools/check_architecture.py` 509 项不变量全绿（其中含一条全仓地板：
+`python tools/check_architecture.py` 515 项不变量全绿（`logs/s69_a5_full_gate_after_hardening.txt`；其中含一条全仓地板：
 `crates/*/src` 与 `crates/*/tests` 递归的 `#[test]` 总数不得低于磁盘实测的 866）。
 
-能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，本轮实测）：缩进两格的条目 21 个，
+能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，下面这组是**文档轮那一次**的读数；V13 R1-A5
+之后 limitation 那一路多了 5 条逐字段条目、以仓库内路径开头的 255 行未动，见上面「当前状态」第一条）：
+缩进两格的条目 21 个，
 其中带 `implementation` 键的能力块 19 个、287 条证据行（其中 255 行以仓库内路径开头，逐行经门禁核对
 存在性）、76 条 limitation。**19 个能力块中 16 个同时满足
 `implementation` 与 `code_tested`；`sandbox_tested` 与 `production_approved` 无一为真**；
@@ -453,7 +476,9 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 **本机可重放的确定性回测、Paper 闭环、以及 CCXT/Binance 的代码级契约** —— 不是"已对接真实账户"。
 整树测试（带 Python 解释器，`QX_PYTHON` 指向可用的 CPython）`cargo test --workspace` 92 个
 `test result:` 段全 ok、858 passed、0 failed（那 21 段 Doc-tests 全 ok、0 passed，仓库没有 doctest；
-单独 `cargo test --workspace --doc` 复跑同样 21 段全 ok）。磁盘在册的 `#[test]` 是 866 条，
+单独 `cargo test --workspace --doc` 复跑同样 21 段全 ok；V13 R1-A5 那轮改的是契约与文档，Rust 一行未动，
+其整跑走 `--all-targets`（不含 doctest 那 21 段）= 72 段 / 同样 858 passed / 0 failed，
+`logs/s71_a5_cargo_workspace.txt`）。磁盘在册的 `#[test]` 是 866 条，
 866 − 858 = 8 条，与 V13 §4 L4 第 1 条点名的那批 feature 门后用例（`nats` / `sqlite`）数目相符 ——
 本轮没有逐名复算，#144 仍开着；不带 `QX_PYTHON` 时那 2 条 Python 桥用例必红（本机事实，见 V12 §15.4），
 而 `build.bat` 自 V12 §19 起会把 `[0/9]` 探测出的解释器真的导出成 `QX_PYTHON`，所以整脚本能一次跑通：
