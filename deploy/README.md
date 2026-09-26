@@ -1,5 +1,13 @@
 # 牵星运行时部署说明
 
+本文讲**运维面**：运行时配置、worker 拓扑、CCXT/A 股接入、SubmitOrder、存储后端、HTTP/WS 边界与停机
+故障。它假定你已经按根目录 [`README.md`](../README.md) 的「安装」装好 `qx-cli`（路径 A：
+`cargo install --path crates/qx-cli --locked`；路径 B：`build.bat` / `bash build.sh` 跑全套门禁）。
+本文里多数命令写成 `cargo run --release -p qx-cli -- …`，那是**在源码仓库里**的写法；已按路径 A 装过的
+人把前缀换成 `qx-cli ` 即可，参数与行为一致（同一份 clap 命令表）。上手细节（初始化项目、回测入口族、
+产物字段、读模型 `null` 口径）在
+[`docs/工业化易用性收口指南-V1.md`](../docs/工业化易用性收口指南-V1.md)。
+
 `qianxing.runtime.example.json` 是 paper/testnet 的拓扑模板，不包含 API key、secret、私钥或任何账户余额。
 
 `qianxing.runtime.production.example.json` 是后续分布式生产拓扑模板，显式使用 `profile: "distributed"`、PostgreSQL 和 mTLS；其中 `/run/secrets` 和 `/var/lib` 只是部署约定，必须由实际的秘密管理器和持久卷提供。本阶段默认不启用该 profile。
@@ -70,6 +78,15 @@ spread-recovery / reconciler）若声明了不同的 `settlement_currency`，判
 该扫描读的是 Files 后端的目录，`backend` 为 `sqlite`/`postgres` 时这条检查同样给 `warn`，
 但含义是"未覆盖"而不是"已确认干净"——那两类存储里的遗留账本要按存储侧自行核对。
 
+`settlement_currency` 的**缺省值**只写在一处：`crates/qx-core/src/identity.rs` 的
+`DEFAULT_SETTLEMENT_CURRENCY`（当前取值 `USDT`）。回测装配、worker 声明、账户日志三条回落链都读它，
+所以"这一格没写"与"写了 USDT"给出同一个答案；要换整个盘子的缺省币种，改那一行即可，不必找第四处
+（生产代码里再出现第二处写死的 `"USDT"`，架构门禁的 `settlement_currency_check` 会红）。
+它是缺省值而不是合法币种白名单，配置里仍按上面那条规则要求同一账户日志的写入方声明一致。
+记账币种会随事实永久落进产物：只换 `settlement_currency` 而其余输入不动，回测摘要的 `result_hash`
+必须随之改变，这一格由 `crates/qx-cli/src/tests/settlement_currency_single_source.rs` 走真实回测入口
+比对两份产物（V13 R1-A4）——产物里的收益数字因此能说清自己是哪种币的收益。
+
 `init` 会将运行时配置所需的调度样例、BarFrame、DatasetBundle、品种规格和 Paper 目标复制到同一目录，
 避免“配置本身合法但引用样例文件不存在”。`--strategy macd` 可直接生成绑定内置策略的本地回测项目。
 
@@ -90,6 +107,47 @@ DatasetBundle 的非行情组件默认使用 JSON；Arrow 组件需要在 Bundle
 `binance-public-probe` 只访问 Binance 公共 `bookTicker`，不读取凭据、不下单，用于验证 Testnet 网络连通性和 REST 字段解析；私有交易验收仍必须使用单独的签名、用户流和对账矩阵。
 
 `binance-private-probe` 只调用签名账户余额接口，不下单，凭据从 runtime worker 的 `credential_env` 或 `credential_files` 读取，输出不包含余额数值；没有凭据时应明确失败，不能退化为匿名请求。
+
+## 模板契约面：本目录每份模板都有人真读
+
+本目录顶层的 **52 份** JSON 模板不是"给人看的示例"，而是契约的另一半：每份都在
+`crates/qx-cli/src/tests/deploy_template_coverage.rs` 的登记表里点名了**一类生产读法**，
+用例真的调用那个读点，并把读出来的身份印进日志。跑这一族用例：
+
+```powershell
+cargo test -p qx-cli --bin qx-cli deploy_template_coverage -- --nocapture
+python tools/check_architecture.py
+```
+
+登记表是三列 `(文件名, Reader, Expected)`。`Reader` 有 15 类，各自对应链路上真实存在的那个读点，
+不在用例里另写一份校验：`Runtime`（`read_runtime_config` + `config validate` 的引用体检）、
+`MarketSpec`（`market_spec_from_value`，产品规格形状与 CCXT 归一化形状同源）、`Ccxt`
+（`validate_ccxt_worker_binding`）、`BarFrame`（回测链那一对读点）、`DepthFrame`、`DatasetBundle`、
+`ArrowComponent`、`AshareRules`、`AshareActions`、`AshareCalendar`、`CostRules`（`ExecutionCostRules::load`）、
+`SchedulerJobs`、`StrategyTarget`、`SubmitOrder`（`order_from_submit_command`）、`FastBacktest`。
+
+`Expected` 只有两档，没有"跳过"这一档：`Ok`，或 `Refuses(关键字清单)`。
+`qianxing.runtime.production.example.json` 落在后者 —— 它按设计带着 `/var/lib/qianxing` 与
+`/run/secrets` 的占位路径，`config validate` 会报 `research_snapshot_path`、`dataset_bundle_path`
+两项不存在；用例把这 3 项关键字点名核对并把拒绝理由原样打印，**不是**把这份模板排除在覆盖之外。
+真实部署机上这些路径必须存在，`live-check` 才会放行。
+
+**新增一份模板时必须做两件事**：在登记表里加一行（文件名 + 读取器 + 预期），并保证它能被那一类
+读点读通。只加文件不加登记，`deploy/` 清单与登记表逐名相等的那颗判据会当场变红；登记了却把
+`Reader` 配错类别，用例会红。门禁另有 9 颗判据盯这套覆盖本身（登记表三列对齐、变体清点、
+每个变体都真被用到、每个变体都进坏内容探针、读取都落在生产读点、三条用例与模块挂载、
+预期结果两档、配对来源仍在册），删掉一段判据不会静默变绿。
+
+两条会咬人的口径，写在这里是因为本轮实测就是按这两条抓到已发布示例的问题：
+
+- **`schema_version >= 1` 的 BarFrame 文档只能带严格字段集**。`crates/qx-data/src/provider.rs` 的
+  `parse_bar_frame` 先按旧格式宽解，`schema_version >= 1` 时改用 `deny_unknown_fields` 的严格视图
+  重解，并要求 `source` 非空。手写行情帧时多出一格（例如把取数请求的字段名抄进行情文档）在只跑
+  宽口径回测直读链时看不出来，一过 Provider 就炸。合法区间还有一条下限：Provider 拒 `start == 0`。
+- **SubmitOrder 载荷里 `policy` 的三格是 snake_case 枚举名**：`position_side` 取
+  `net`/`long`/`short`，`margin_mode` 取 `cross`/`isolated`，`position_mode` 取 `one_way`/`hedge`
+  （`crates/qx-core/src/trading.rs` 上三个枚举都带 `rename_all = "snake_case"`）。写成
+  `Net`/`Cross`/`OneWay` 的示例在反序列化那一格就失败，不会退回到"看起来更象交易所"的写法。
 
 ## Paper API
 
@@ -202,6 +260,23 @@ reports[]: feature_key, input_fingerprint, observation_hash, analysis_start, ana
 
 Paper Execution worker 可以配置 `paper_initial_cash_raw`，启动时通过幂等 `AccountCashflow(Transfer)` 写入结算币初始资金；资金进入同一 EventLog/Ledger，重启不会重复入金。该字段只能用于 `venue_id=paper`，金额使用核心定点 raw 单位。
 
+`venue_id` 怎么被读，只有一个定义点（`crates/qx-core/src/venue.rs`，V13 R1-A3），三条口径都是配置方需要知道的：
+
+- **算 Binance 家族**：去空格、转小写后**含** `binance` 即算，所以 `binance`、`binance-testnet`、`BINANCE`
+  都会走私有 Binance worker；把它写成 `binance` 之外的名字不会被判进该家族。
+- **算 Paper 虚拟执行域**：去空格、转小写后**整名等于** `paper` 才算（`" Paper "` 这种带空白与大小写的
+  写法仍算）。`paper-proxy`、`paper-testnet` 这类前缀名**不是** Paper：它们拿不到
+  `paper_initial_cash_raw`（配置校验直接拒绝），一条没有 CCXT `endpoint` 的 Execution worker 若配成这种
+  名字，编排会在生成启动计划时就报 `Err`，而不是把它当本地纸面撮合拉起
+  （`crates/qx-orchestrator/src/tests.rs` 的 `worker_plan_routes_only_the_exact_paper_venue_to_the_local_worker`
+  钉的就是这一对）。
+- **没有配 `venue_id`** 仍是"缺席"，不会被折成某个已知家族。缺席的含义按调用点分两种：需要凭据/规格的
+  路径直接报错，Paper 提交匹配路径按"不匹配"处理。
+
+标的（`instrument.venue`）上的 `BINANCE` 判定走的是另一把尺子（`VenueId::is_binance`，整名而非子串），
+因为那一格是产品 venue 名而不是账户域；两把尺子的差异写在各自定义处，并由门禁 `venue_identity_check`
+钉住"不得另起第二份"。
+
 ## 公共 CCXT 多交易所连接层
 
 交易所连接优先使用 Python 公共 `ccxt`，配置 `exchange_id` 即可复用 Binance、OKX、Bybit 等交易所的统一 REST API。连接层入口为 `python/qianxing_ccxt`，负责 market/symbol 映射、OHLCV 分页、ticker、账户、订单和错误分类；`python -m qianxing_ccxt.worker --config <json>` 提供 JSONL 进程边界；核心 Rust 订单状态、Ledger 和回测撮合不直接依赖 CCXT。`qianxing.ccxt.binance.public.example.json` 提供无凭据公共探测样例，`credential_env: null` 也会被正确解释为匿名公共连接。
@@ -243,6 +318,14 @@ Bundle 的其它组件使用 `strategy.dataset_component_paths` 显式绑定，�
 
 组件文件必须是数组，或包含 `rows`/`data` 数组；系统会递归规范化 JSON 字段顺序后计算 fingerprint，并校验行数。未显式绑定的组件会在回测启动前拒绝，避免把“Bundle 中声明存在”误当成“策略实际加载成功”。公司行为和交易日历仍兼容 `ashare_actions_path`、`ashare_calendar_path`。
 回测完成后会在运行时 data_dir/runs 下原子保存 RunManifest JSON，记录配置指纹、Bundle 聚合指纹、各数据组件指纹、模型、时钟和结果哈希。
+
+**A 股涨跌停的昨收锚怎么取**（`qianxing.ashare.rules.json` 的口径）：锚 = 上一交易日的最后一根 Bar 收价；
+除权除息日不按原始昨收，而是用**同一份规则快照装载进来的公司行为**折算
+`(昨收 + 配股价×配股比例 − 每股现金红利) ÷ (1 + 送转比例 + 配股比例)`，结果对齐到 `price_tick`。
+因此：想让除权日算对，必须给 `ashare_actions_path`（或 Bundle 的 corporate actions 组件）——
+只给规则快照时，当日没有可折算的事实，锚就是不复权的原始昨收。
+`rules.json` 的 `previous_close_raw`（`{"<被锚定 Bar 的毫秒 ts>": <定点昨收>}`）是手工覆盖出口，
+优先级高于折算，用于复权口径由数据侧决定的场合；仓库自带的样例这一格是空的。
 
 当配置包含 `strategies[]` 时，`backtest` 与 `strategy backtest` 会按策略实例逐个执行隔离回测，每个实例使用自己的 account/strategy 配置并输出独立结果哈希；示例见 `deploy/qianxing.runtime.strategy-multi-backtest.example.json`。组合级资金池、跨策略净额和归因需要在组合回测层显式配置，不会隐式共享单策略账户状态。
 
@@ -358,6 +441,38 @@ python -m qianxing_ashare actions `
   --provider akshare --code 000001 --start 20200101 --end 20241231 `
   --output data/ashare/000001.SZSE.actions.json
 ```
+
+**公司行为 v1 线格式**（Python 写侧与 Rust 读侧共用，`schema_version: 1`）。这份契约不靠文档对齐，
+由三处互相咬着：`tools/check_architecture.py` 的 `ashare_cross_language_contract_check()` 静态比两侧
+名册，`python/tests/test_ashare_cross_language_contract.py` 在进程内重算夹具，
+`crates/qx-xingban/src/ashare/tests.rs` 把同一份夹具读回并喂进折算锚。
+
+- 信封顶层 5 个键：`schema_version`、`source`、`instrument`、`as_of`、`actions`。
+- 单条动作 35 个键、交易日历 5 个键，两侧逐项同名同序；动作名 16 个：`cash_dividend`、`bonus_share`、
+  `capital_transfer`、`capital_change`、`rights_issue`、`rights_issue_expiry`、`new_share_issue`、
+  `repurchase`、`suspension`、`unknown`，以及可转债的 `convertible_bond_issue`、
+  `convertible_bond_interest`、`convertible_bond_conversion`、`convertible_bond_call`、
+  `convertible_bond_put`、`convertible_bond_redemption`。
+- **单位口径只有一条规则**：以 `_raw` 结尾的输入列是**已定点整数**（SCALE = 1e9），原样收下；
+  其余中文/英文别名按元或股读入再乘 SCALE。两种写法混用同一列时 `_raw` 优先。
+  因此 `派息: 0.5` 与 `cash_dividend_raw: 500000000` 是同一件事，但把后者再乘一次 SCALE 是错的。
+- **日期口径**：`YYYY-MM-DD`、`YYYY/M/D`、`YYYYMMDD`、以及带时间部分的 ISO 串都吃
+  （空格与 `T` 两种分隔都截断到日期）。公告日期解析不出来时会回落成除权日，那等于把 PIT 可见时间
+  改晚，所以自定义 provider 若要写 `published_at`，请写完整 ISO 时间戳而不是空串。
+- 除权日的锚按上文那条折算公式算，Python 侧 `test_anchor_reference_is_recomputed_from_the_payload_events`
+  与 Rust 侧 `python_written_actions_fold_into_the_shared_ex_rights_reference` 各自独立复算同一格期望值。
+
+复算与自证（离线，不碰任何外部接口）：
+
+```powershell
+python -m unittest discover -s python/tests -p test_ashare_cross_language_contract.py
+cargo test -p qx-xingban --lib python_written
+python tools/check_architecture.py
+```
+
+夹具在 `python/tests/fixtures/ashare_actions_cross_check.{rows,payload,expectations}.json`：
+`rows` 是数据源原始行，`payload` 是 Python 现在写出的字节，`expectations` 由 payload 派生。
+三份都在版本控制里，改任何一份都会被上面三条命令中的一条打红 —— 不要手抄期望值。
 
 Bars、公司行为和交易日历 manifest 可以由 Python 直接绑定成 Rust Bundle 清单：
 
