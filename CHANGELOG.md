@@ -1,6 +1,56 @@
 # Changelog
 
 
+## Unreleased — V12 §20：安装面三条路径各有退出码，并把上游 4 个提交真正合回来（2026-09-26）
+
+§19 那一遍的产物全部留在未提交的工作树里，且 `origin/main` 领先 4 个提交。这一遍做两件事：把
+"别人拿到仓库怎么装"写成实测过而不是期望中的路径，以及用一个**可复算的**合流判据替代"我看过了"。
+
+### Added（安装面，README 新增「安装」章）
+
+- **A 档 `cargo install --path crates/qx-cli --locked`**：2m10s 装出单个 `qx-cli.exe`，**在仓库外**
+  跑 `help` / `init` / `doctor` / `backtest` / `report` / `status` 六条命令退出码全 0，回测落
+  `result_hash=26fdd6b52d020700`；这一档不需要 Python（日志 `s22_cargo_install.txt`、`s22_installed_*.txt`）。
+- **B 档 `build.bat` / `bash build.sh`** 与 **C 档 wheel** 各写清前置：wheel 216439 字节，内嵌
+  `_qianxing_native.pyd` 的 md5 与当轮 `target/release/_qianxing_native.dll` 同为
+  `3e3c793385cf155e92c2cdc4f3694eba`，干净 venv 里 `available()` 为真（`s21_*.txt`）。
+- **「装不上时的四个坑」表**：WindowsApps 的裸 `python` 占位桩、PowerShell 未签名脚本要
+  `-ExecutionPolicy Bypass`、缺 `tzdata` 时 A 股用例的失败形状、`sed -i` 会抹掉 `.bat` 的 CRLF。
+- **如实记录一处缺口**：`qx-cli --version` 没有实现，会按未知参数 fail closed 退 2；确认安装用
+  `qx-cli help` 首行。（挂在 §20.5 未收口。）
+
+### Changed（合流 origin/main 的 4 个提交：`b4921ea` / `5cd11f8` / `2bf8ad6` / `dbfc429`）
+
+- **合并提交 `dbaa9d9`** 把远端 `main` 接进本地历史；15 个冲突文件全部取我方，理由是两条判据：
+  合流后 `git diff --cached HEAD` **为空**（206 个文件与提交后的树逐字节相同），且逐行审计 61 个
+  上游路径后只有 65 行不在我们树里、逐行确认全是同一事实的另一种写法（`production_text()` 取代
+  `.split("#[cfg(test)]")[0]`、`report.consecutive_failures` 取代局部 `consecutive`、文案与
+  `line_budgets` 数字的先后版本、12 行已拆进 `snapshot_single_source/` 目录的旧单文件正文）。
+- **推送走显式 `git@github.com:coeasy/qianxing.git`**（HTTPS 在本机被重置），不改 `git config`；
+  推送后 `git ls-remote` 与 `HEAD` 同为 `dbaa9d9c2a4bd94e7fdfa65486df79b1793120e1`。
+
+### Known（本轮新增的一类盲区，挂 §20.3 / #138）
+
+- **自动合并会把"双方各加同一段"首尾相接，且不产生任何冲突标记**：`snapshot_row_wire_check()` 里
+  上游那份 R10 对账判据落在我方那份之后，第一次运行以 `NameError: reader is not defined` 崩在中途 ——
+  而门禁此时 `GATE_EXIT=1`、**0 条 FAIL**，看起来像环境问题而不是内容问题；两段都跑还会让同一条检查
+  印两行 PASS，靠"判据条数"量的量具会被抬高。本轮用一个一次性扫描器（对合流改动的文件找出现两次以上
+  的 8 行窗口）证明全树无第二例，常驻判据待 §20.5。
+- **本轮没有重跑 `build.bat` 全 8 步**（§18.7 第 2 条）：推送的树与 §19 那一遍逐字节相同，八步在 §19
+  已实跑通过（`s19_build_bat_fix.txt`）。
+
+### Verified（本回合实测，逐条可 grep）
+
+| 门槛 | 结果 | 日志 |
+|---|---|---|
+| 架构门禁（文档回写前） | `GATE_EXIT=0`，455 项全绿 | `s23_gate_after_install_docs.txt` |
+| 架构门禁（合流后修复前） | `GATE_EXIT=1`、0 条 FAIL、`NameError: reader` | `s24_gate_merge1.txt` |
+| 架构门禁（合流完成） | `GATE_EXIT=0`，455 项全绿 | `s24_gate_merge2.txt` |
+| 整树测试（合流后的树） | `TEST_EXIT=0`，92 段 / 843 passed / 0 failed / 0 ignored | `s24_test_workspace_after_merge.txt` |
+| 安装 A 档 | 仓库外六条命令退出码全 0 | `s22_installed_help/init/doctor/backtest/report/status.txt` |
+| 推送 | `dbfc429..dbaa9d9 → main`，`PUSH_EXIT=0` | `s24_push.txt` |
+
+
 ## Unreleased — V12 §19：第一次把 `build.bat` 全 8 步端到端跑通，当场抓到一条从未生效过的解释器交接（2026-09-26）
 
 §18.7 第 2 条欠的账：「每遍都要重跑 `build.bat` 全 8 步」这条口径没有判据能执行 `cargo`。这一遍不写判据，
