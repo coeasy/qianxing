@@ -12,6 +12,14 @@ impl RuntimeConfig {
         if self.environment.trim().is_empty() {
             return Err("运行时 environment 不能为空".into());
         }
+        if self.environment_kind().is_none() {
+            return Err(format!(
+                "运行时 environment 必须是 {} 之一，当前为 {:?}；词表外的值会静默丢掉 production \
+                 专属风控，因此直接拒绝而不是当作非 production",
+                RUNTIME_ENVIRONMENTS.join(" / "),
+                self.environment
+            ));
+        }
         if self
             .config_fingerprint
             .as_deref()
@@ -29,9 +37,7 @@ impl RuntimeConfig {
         if self.api.transport == ApiTransport::Mtls && self.api.operators.is_empty() {
             return Err("mTLS API 必须至少配置一个 Operator 证书映射".into());
         }
-        if self.api.transport == ApiTransport::Plaintext
-            && self.environment.eq_ignore_ascii_case("production")
-        {
+        if self.api.transport == ApiTransport::Plaintext && self.is_production() {
             return Err("production 环境禁止使用明文 API".into());
         }
         if self.api.transport == ApiTransport::Plaintext && !self.api.operators.is_empty() {
@@ -80,9 +86,7 @@ impl RuntimeConfig {
                 );
             }
         }
-        if self.environment.eq_ignore_ascii_case("production")
-            && self.storage.backend != StorageBackend::Postgres
-        {
+        if self.is_production() && self.storage.backend != StorageBackend::Postgres {
             return Err(
                 "production 环境 EventLog/Outbox 必须使用 PostgreSQL transactional backend".into(),
             );
@@ -368,7 +372,7 @@ impl RuntimeConfig {
                 worker.role,
                 WorkerRole::Execution | WorkerRole::SpreadRecovery
             ) && worker.instrument_spec_path.is_none()
-                && (self.environment.eq_ignore_ascii_case("production")
+                && (self.is_production()
                     || !worker
                         .venue_id
                         .as_deref()
@@ -382,7 +386,7 @@ impl RuntimeConfig {
             if matches!(
                 worker.role,
                 WorkerRole::Execution | WorkerRole::SpreadRecovery
-            ) && self.environment.eq_ignore_ascii_case("production")
+            ) && self.is_production()
             {
                 if worker.max_order_notional_raw.is_none() {
                     return Err(format!(

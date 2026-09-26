@@ -1,60 +1,10 @@
-//! 时钟：确定性时间源。
+//! 内核时间轴的单位口径：事件时间戳一律是这一格定点纳秒。
 //!
-//! 回测只使用 [`TestClock`]；时间只在 `advance_to` 时前进，
-//! 任何读取系统时间的行为都会破坏可重放性。
+//! 这里没有"时钟"对象。牵星的时间轴不是被某个可注入的时钟读出来的，而是由推进它的一方
+//! 决定：回测按 bar 序列推进（`qx-xingban`），实盘按到达顺序把交易所/进程毫秒戳推进
+//! `EventLog`（`qx-runtime/src/pipeline.rs`）。曾有一份 `TestClock` 与它的 `advance_to`
+//! 倒流检查在这里，全仓没有任何生产者或消费者走过它，README 却把它写成确定性来源——
+//! V11 P2 把那份从未接线的实现删掉，口径改由上面两条真实推进路径承担。
 
 /// 纳秒时间戳。
 pub type Ts = u64;
-
-pub const NANOS_PER_SEC: u64 = 1_000_000_000;
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ClockError {
-    Backward,
-}
-
-/// 确定性时钟：仅在显式推进时前进。
-#[derive(Clone, Debug, Default)]
-pub struct TestClock {
-    now: Ts,
-}
-
-impl TestClock {
-    pub fn new(start: Ts) -> Self {
-        Self { now: start }
-    }
-
-    pub fn now(&self) -> Ts {
-        self.now
-    }
-
-    /// 单调推进到 `t`；回退会被拒绝（时间倒流是严重错误，不是"容错"）。
-    pub fn advance_to(&mut self, t: Ts) -> Result<(), ClockError> {
-        if t < self.now {
-            return Err(ClockError::Backward);
-        }
-        self.now = t;
-        Ok(())
-    }
-
-    pub fn advance_by(&mut self, d: Ts) {
-        self.now += d;
-    }
-}
-
-/// 一天中的纳秒数，用于日历推进。
-pub const NANOS_PER_DAY: u64 = 86_400 * NANOS_PER_SEC;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn clock_is_monotonic() {
-        let mut c = TestClock::new(100);
-        assert!(c.advance_to(50).is_err());
-        assert_eq!(c.now(), 100);
-        c.advance_to(200).unwrap();
-        assert_eq!(c.now(), 200);
-    }
-}

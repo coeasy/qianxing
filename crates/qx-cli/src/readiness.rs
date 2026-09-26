@@ -35,9 +35,7 @@ pub(crate) fn configured_api_readiness(
         };
     }
 
-    if config.environment.eq_ignore_ascii_case("production")
-        && !production_trading_assets_ready(config, runtime_config_path)
-    {
+    if config.is_production() && !production_trading_assets_ready(config, runtime_config_path) {
         return ApiReadiness {
             ready: false,
             detail: "trading_safety_assets_unavailable".into(),
@@ -94,7 +92,7 @@ pub(crate) fn configured_api_readiness(
                         .as_deref()
                         .unwrap_or(research.candidate.config.data_fingerprint.as_str()),
                     now_ms,
-                    config.environment.eq_ignore_ascii_case("production"),
+                    config.is_production(),
                 )
                 .is_err()
         {

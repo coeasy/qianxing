@@ -270,14 +270,14 @@ fn config_lock_writes_and_verifies_published_fingerprint() {
     let input = root.join("runtime.json");
     let output = root.join("runtime.locked.json");
     run_init_with_profile(&input, false, None, None).unwrap();
-    run_config_lock(&input, &output, false).unwrap();
+    run_config_lock(&input, &output, false, false).unwrap();
     let locked = read_runtime_config(&output).unwrap();
     assert_eq!(
         locked.config_fingerprint,
         Some(locked.fingerprint().unwrap())
     );
     assert!(locked.verify_fingerprint().is_ok());
-    assert!(run_config_lock(&input, &output, false).is_err());
+    assert!(run_config_lock(&input, &output, false, false).is_err());
     let _ = std::fs::remove_dir_all(root);
 }
 

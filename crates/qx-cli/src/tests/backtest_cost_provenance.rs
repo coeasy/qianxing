@@ -332,5 +332,69 @@ fn dangling_or_invalid_cost_rules_file_fails_closed() {
         "示例模板写错费率会被当成默认口径照抄，所以两者必须核对"
     );
 
-    let _ = std::fs::remove_dir_all(root);
+    // 只在 `strategies[]` 上声明、顶层没有同一路径的成本口径，执行平面一条都不会应用；
+    // 装配与 `config validate` 必须给同一份结论，不能一边读了那个文件说没问题、另一边
+    // 拿顶层路径或内核默认费率跑（V11 N5）。
+    let multi_template = read_runtime_config(&template).unwrap();
+    let mut multi = multi_template.clone();
+    multi.strategy.cost_rules_path = Some(COST_FILE.into());
+    let mut instance = multi.strategy.clone();
+    instance.id = Some("second".into());
+    instance.cost_rules_path = Some("second-costs.json".into());
+    multi.strategies = vec![instance];
+    // 拓扑校验要求每条实例都有一个启用的 Strategy worker 接住（V11 E7 那一批的口径），
+    // 所以这份声明是合法拓扑，不是坏配置——正因如此它才必须被拒在"没人应用"这一条上。
+    let mut second_worker = multi
+        .workers
+        .iter()
+        .find(|worker| worker.enabled && worker.role == WorkerRole::Strategy)
+        .cloned()
+        .expect("示例运行时配置里本就该有启用的 Strategy worker");
+    second_worker.id = "second".into();
+    multi.workers.push(second_worker);
+    let (multi_root, multi_runtime) =
+        isolated_backtest_runtime(&deploy, &multi, "q0c-strategies-cost");
+    std::fs::write(multi_root.join(COST_FILE), cost_rules_json("top", 2, 5, 0)).unwrap();
+    std::fs::write(
+        multi_root.join("second-costs.json"),
+        cost_rules_json("second", 0, 25, 0),
+    )
+    .unwrap();
+
+    let error = execution_cost_binding(Some(&multi_runtime)).unwrap_err();
+    assert!(
+        error.contains("[second]") && error.contains("second-costs.json"),
+        "要点名是哪条实例声明: {error}"
+    );
+    assert!(
+        error.contains("strategy.cost_rules_path"),
+        "要给出可执行的下一步: {error}"
+    );
+    let multi_config = read_runtime_config(&multi_runtime).unwrap();
+    assert_eq!(
+        multi_config.strategies[0].cost_rules_path.as_deref(),
+        Some("second-costs.json"),
+        "实例声明必须原样往返，否则这条判据读的是猜测而不是配置"
+    );
+    let (reference_failures, _) = validate_runtime_references(&multi_runtime, &multi_config);
+    assert!(
+        reference_failures
+            .iter()
+            .any(|failure| failure.contains("second-costs.json")),
+        "config validate 不能比执行平面更宽松: {reference_failures:?}"
+    );
+
+    // 正对照：实例与顶层指向同一份文件时不算"声明了没人应用"，照常装配。
+    let mut same = multi_config;
+    same.strategies[0].cost_rules_path = Some(COST_FILE.into());
+    let binding = execution_cost_binding_from_config(&same, Some(&multi_runtime))
+        .expect("同一路径的实例声明不该被拒");
+    assert_eq!(
+        binding.loaded_from.as_deref(),
+        Some(multi_root.join(COST_FILE).as_path())
+    );
+
+    for path in [root, multi_root] {
+        let _ = std::fs::remove_dir_all(path);
+    }
 }

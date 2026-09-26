@@ -6,7 +6,6 @@
 //! 和订单状态，再继续接收新的行情或用户流事实。
 
 pub use qx_control::order_from_submit_command;
-use qx_control::ControlCommand;
 use qx_core::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
     EventKind, EventLog, EventMetadata, Fill, FundingRateSnapshot, InstrumentId, Ledger, Order,
@@ -527,16 +526,8 @@ impl LiveEventPipeline {
 
     /// 使用 PostgreSQL 事务 EventLog 打开运行管线。队列、控制面和 EventLog
     /// 可以共享同一个 `PostgresStorage`，当前方法通过 DSN 建立独立安全连接，
-    /// 由部署层连接池和数据库 HA 提供跨节点可用性。
-    #[cfg(feature = "postgres")]
-    pub fn open_postgres(
-        dsn: &str,
-        log_name: impl Into<String>,
-        currency: impl Into<String>,
-    ) -> QxResult<Self> {
-        Self::open_postgres_with_pool_size(dsn, 1, log_name, currency)
-    }
-
+    /// 由部署层连接池和数据库 HA 提供跨节点可用性。池大小只从这里进，
+    /// 生产构造点（`runtime_wiring.rs`）传运行时配置的那一格。
     #[cfg(feature = "postgres")]
     pub fn open_postgres_with_pool_size(
         dsn: &str,
@@ -760,16 +751,9 @@ impl LiveEventPipeline {
         self.register_order_with_correlation(order, ts, None)
     }
 
-    /// 从已通过控制面权限校验的 `SubmitOrder` 命令注册订单。
-    pub fn register_control_order(&mut self, command: &ControlCommand, ts: u64) -> QxResult<u64> {
-        let order = order_from_submit_command(command)?;
-        self.register_order_with_correlation(
-            order,
-            ts,
-            Some(format!("control:{}", command.command_id)),
-        )
-    }
-
+    /// 登记入口只有一颗：控制面来源的订单由 `qx-execution` 网关在登记时写入
+    /// `control:{command_id}` 关联号（见其 `submit_command*`），这里不再另开一颗
+    /// "从命令注册"的壳，否则同一笔订单有两个地方决定自己的来源关联号（V11 M4）。
     pub fn register_order_with_correlation(
         &mut self,
         order: Order,

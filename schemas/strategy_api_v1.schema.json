@@ -2,19 +2,32 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/strategy-api-v1.json",
   "title": "Qianxing Strategy API v1",
+  "description": "跨语言策略进程（Rust / Python / C++ JSONL）每行输出的那一份载荷，形状真相是 qx-runtime 的 StrategyContractOutput / StrategyContractIntent：required 逐格等于读侧没有 #[serde(default)] 的字段，properties 逐格等于写侧序列化出来的键集。读侧对未知键宽容（serde 默认忽略），所以本文件枚举的是完整字段集，而不是「运行时额外接受什么」。逐键比对钉在 crates/qx-runtime/tests/strategy_api_schema_contract.rs。",
   "type": "object",
-  "required": ["schema_version", "request_id", "strategy_id", "signal_id", "intents"],
+  "required": [
+    "schema_version",
+    "request_id",
+    "strategy_id",
+    "signal_id",
+    "instrument",
+    "target_qty",
+    "confidence",
+    "priority",
+    "expires_at"
+  ],
   "properties": {
     "schema_version": {"const": 1},
     "request_id": {"type": "string", "minLength": 1},
     "strategy_id": {"type": "string", "minLength": 1},
     "signal_id": {"type": "integer", "minimum": 1},
+    "instrument": {"type": "string", "minLength": 1},
+    "target_qty": {"type": "integer"},
     "confidence": {"type": "integer"},
     "priority": {"type": "integer"},
     "expires_at": {"type": "integer", "minimum": 0},
     "intents": {
       "type": "array",
-      "uniqueItems": true,
+      "description": "缺省或空数组时走旧版 target_qty 兼容路径；非空时 intents 不再二次推导目标仓位。intent_id 必须唯一，这一条读侧逐张查，JSON Schema 表达不了按键唯一。",
       "items": {
         "type": "object",
         "required": ["intent_id", "instrument", "side", "qty_raw"],
@@ -26,7 +39,10 @@
           "limit_price_raw": {"type": ["integer", "null"], "exclusiveMinimum": 0},
           "reduce_only": {"type": "boolean"},
           "post_only": {"type": "boolean"},
-          "position_side": {"enum": ["net", "long", "short", null]}
+          "position_side": {"enum": ["net", "long", "short", null]},
+          "margin_mode": {"enum": ["cash", "cross", "isolated", null]},
+          "position_mode": {"enum": ["one_way", "hedge", null]},
+          "leverage": {"type": ["integer", "null"], "minimum": 1}
         },
         "additionalProperties": false
       }

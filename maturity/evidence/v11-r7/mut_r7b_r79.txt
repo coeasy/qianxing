@@ -1,0 +1,23 @@
+== 基线：门禁红名单 ==
+gate rc 1 红 7
+   - M4 留下的零调用公开面与它的活替代路径，行号逐条仍指到定义本身（V11 M4）
+   - V11 方案书指过去的那一行不是空行
+   - V11 方案书点名某颗东西时，被引那一格里就是那颗
+   - 单文件行数预算只降不升、无未登记的超大文件
+   - 变更日志点名某颗东西时，被引那一格里就是那颗
+   - 台账指过去的那一行不是空行
+   - 安全白皮书指过去的那一行不是空行
+== 基线：受影响用例必须先全绿 ==
+   -p qx-storage --lib rc 0 ['test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s']
+   -p qx-cli control_audit_reads_the_store rc 0 ['test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 198 filtered out; finished in 0.03s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s']
+   -p qx-core file_lock rc 0 ['test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 44 filtered out; finished in 0.01s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.00s']
+[R7-9-M7 Takeover 支自己再 age_of 一次（年龄两种写法）] 用例档=SURVIVED rc=0 []
+        门禁档= GATE-RED rc 1
+          红: 接管动手前复读年龄、只在仍然够老时才删（V11 K3）
+          红: 锁的『同一场竞争只接管一次』住在 decide_lock 里，且抢锁循环把计数喂回判据、只按判据交出的年龄说话
+      还原 sha: OK
+[R7-9-M8 Wait 支自己再 age_of 一次] 用例档=SURVIVED rc=0 []
+        门禁档= GATE-RED rc 1
+          红: 接管动手前复读年龄、只在仍然够老时才删（V11 K3）
+          红: 锁的『同一场竞争只接管一次』住在 decide_lock 里，且抢锁循环把计数喂回判据、只按判据交出的年龄说话
+      还原 sha: OK

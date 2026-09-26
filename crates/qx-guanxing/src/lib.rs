@@ -215,11 +215,12 @@ impl FinancialView {
 }
 
 /// 内存版 DataCatalog：为本地回测/纸面联调提供确定性的主源目录。
+/// 原始记录留痕在 `qx-provider` 的 `records: Vec<RawRecord>` 那条路上，不在这里
+/// 再挂一份没人写的 `raw`（V11 M4）。
 #[derive(Default)]
 pub struct DataCatalog {
     bars: BTreeMap<InstrumentId, Vec<Bar>>,
     quotes: BTreeMap<InstrumentId, Vec<QuoteTick>>,
-    raw: Vec<RawRecord>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -334,10 +335,6 @@ impl DataCatalog {
     pub fn new() -> Self {
         Self::default()
     }
-    pub fn append_raw(&mut self, record: RawRecord) {
-        self.raw.push(record);
-    }
-
     pub fn put_bars(
         &mut self,
         instrument: InstrumentId,
@@ -376,10 +373,6 @@ impl DataCatalog {
             .get(instrument)
             .map(|v| &v[..v.partition_point(|q| q.ts <= ts)])
             .unwrap_or(&[])
-    }
-
-    pub fn raw_records(&self) -> &[RawRecord] {
-        &self.raw
     }
 }
 

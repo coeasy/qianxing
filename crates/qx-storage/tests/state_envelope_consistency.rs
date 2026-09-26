@@ -291,13 +291,10 @@ fn qx_job_and_run(run_id_seed: &str) -> (qx_scheduler::JobSpec, qx_scheduler::Jo
         trigger: Trigger::Manual,
         window: JobWindow::Any,
         depends_on: Vec::new(),
-        input_refs: Vec::new(),
-        output_refs: Vec::new(),
         timeout_seconds: 60,
         retry_policy: RetryPolicy::default(),
         concurrency_key: format!("p1c-{run_id_seed}"),
         idempotency_key: format!("p1c-{run_id_seed}"),
-        permission_scope: "read".into(),
         audit_reason: "p1c test".into(),
         dry_run: false,
     };

@@ -22,15 +22,17 @@ cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.example.j
 cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.production.example.json
 # CI/部署平台可直接消费 JSON；失败时退出码非零
 cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.example.json --json
-cargo run --release -p qx-cli -- live-check deploy/qianxing.runtime.production.json --json
+cargo run --release -p qx-cli -- live-check deploy/qianxing.runtime.production.example.json --json
 cargo run --release -p qx-cli -- binance-public-probe testnet BTCUSDT.BINANCE
 cargo run --release -p qx-cli -- binance-private-probe deploy/qianxing.runtime.production.example.json binance-execution-main
 ```
 
 `live-check` 是不连接交易所、不发送订单的生产发布前静态门禁。它会额外检查 production 环境、配置指纹锁、TLS 文件、凭据来源、Execution 品种规格与名义额上限、研究快照文件；模板中的占位路径或 `config_fingerprint: null` 会按预期失败，必须替换为部署机上的真实发布配置后再通过。
 
-`runtime-check --json` 输出版本化运行时诊断（健康快照、配置指纹、引用 warnings/failures 和安全边界字段），
-适合 CI、启动脚本和部署平台采集；它不会连接交易所或发送订单。`run runtime-check --json` 是等价的统一入口。
+`runtime-check --json` 输出版本化运行时诊断（配置派生的服务花名册、`health_observed`、配置指纹、引用
+warnings/failures 和安全边界字段），适合 CI、启动脚本和部署平台采集；它不会连接交易所或发送订单。
+花名册里的 `last_heartbeat_ms` 在体检时恒为空（`health_observed: false`），因为这条入口跑在任何 worker
+启动之前——它是清单，不是活体探测（V11 L4）。`run runtime-check --json` 是等价的统一入口。
 
 `live-check --json` 输出实盘发布前的逐项环境、TLS、凭据、产品规格、风险限额和研究快照检查，
 同样不会连接交易所或发送订单；`run live-check --json` 是等价的统一入口。
@@ -600,8 +602,8 @@ MQ、用户流、对账和交易安全状态继续接入同一 readiness provide
 | `GET /account/ledger[?…]` `GET /scheduler/runs` `GET /reconcile/reports` | 每次请求现读账户日志/调度记录/对账报告，启动之后落盘的读得到 | 503 读不到即报错，不念开机那份 |
 | `GET /events[?after=&account_id=&venue_id=]` | 投影事件全量，或 `after` 游标之后的增量 | 400；409 `event_cursor_requires_snapshot` |
 | `GET /events/live[?after=&…]` | 事件总线现读增量 | 400；409 游标过旧/超前；500 |
-| `GET /control/audit` | 控制面审计流水 | — |
-| `POST /control/commands` | 提交控制命令；启用访问策略时 operator 身份必须来自认证边界 | 400 请求体不合法；403；503 队列不可用 |
+| `GET /control/audit` | 控制面审计流水 `{records, retirement}`：`records` 是**有界窗口**（容量 `AUDIT_WINDOW_RECORDS`，V11 R5-1），窗口滚过的终态只剩 `retirement` 的累计计数——念总数要读 `retirement`，不能把 `records.len()` 当成"总共这么多条" | 503 读不到控制面状态，不念开机那份 |
+| `POST /control/commands` | 提交控制命令；只有 `SubmitOrder` / `PauseStrategy` / `ResumeStrategy` 三类有执行者、会被受理，其余种类当场拒（V11 P1）；启用访问策略时 operator 身份必须来自认证边界。命令受理与入队是两步：入队失败时受理已落账，返回 503 并由 worker 的 `pending()` 扫描补投（V11 R6-3） | 400 请求体不合法或命令种类没人执行；403；409 重复身份或已终态；503 控制面状态读不到 / 命令队列写不进 |
 
 限流在鉴权之前判定：超额 429 `api_rate_limit_exceeded`，限流后端自身故障 503
 `api_rate_limit_backend_unavailable`；启用访问策略时，除 `/health`、`/ready`、
@@ -615,3 +617,7 @@ Prometheus 告警规则模板位于 `deploy/prometheus/qianxing-alerts.yml`，�
 ## 停机与故障
 
 服务进程收到 Ctrl+C 后由进程管理器负责终止；交易 worker 必须先停止新信号，再等待账户命令队列、用户流关闭和对账完成。若用户流或对账 worker 进入 `Failed`/`Degraded`，不得自动补单，必须走快照恢复与人工确认。
+
+运行时内的停机阶梯是完整的：`RuntimeSupervisor::request_shutdown` 置起令牌后，所有 worker 循环与 API 的 accept 循环（明文与 mTLS 两条长驻入口共用同一颗循环）都会在下一轮退出，读点是 `WorkerContext::should_stop()`；空闲监听时查令牌的节拍是 20 ms。
+
+**但仓内没有信号处理依赖**，`request_shutdown` 在生产侧仍是零调用者——把 SIGINT/SIGTERM 接到它上是部署侧的下一步决策，在那之前 Ctrl+C 走的仍是上面那条由进程管理器终止的路。

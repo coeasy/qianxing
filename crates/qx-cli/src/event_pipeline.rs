@@ -99,6 +99,7 @@ pub(crate) struct RelayMetricTotals {
     retried: u64,
     lease_conflicts: u64,
     publish_failures: u64,
+    parked: u64,
 }
 
 #[cfg(feature = "nats")]
@@ -109,6 +110,8 @@ impl RelayMetricTotals {
         self.retried += report.retried;
         self.lease_conflicts += report.lease_conflicts;
         self.publish_failures += report.publish_failures;
+        // parked 是"当前还有几条停在 outbox 里"的状态量，不是累计量：取最近一轮的观察值。
+        self.parked = report.parked;
     }
 
     fn render(&self, sink: &WorkerMetricsSink, up: bool, now_ms: u64) -> String {
@@ -120,7 +123,8 @@ qx_outbox_relay_scanned_total{{worker=\"{worker}\"}} {}\n\
 qx_outbox_relay_published_total{{worker=\"{worker}\"}} {}\n\
 qx_outbox_relay_retried_total{{worker=\"{worker}\"}} {}\n\
 qx_outbox_relay_lease_conflicts_total{{worker=\"{worker}\"}} {}\n\
-qx_outbox_relay_publish_failures_total{{worker=\"{worker}\"}} {}\n",
+qx_outbox_relay_publish_failures_total{{worker=\"{worker}\"}} {}\n\
+qx_outbox_relay_parked{{worker=\"{worker}\"}} {}\n",
             u8::from(up),
             now_ms / 1_000,
             self.scanned,
@@ -128,6 +132,7 @@ qx_outbox_relay_publish_failures_total{{worker=\"{worker}\"}} {}\n",
             self.retried,
             self.lease_conflicts,
             self.publish_failures,
+            self.parked,
         )
     }
 }
@@ -218,13 +223,14 @@ where
         metrics.write(&totals.render(&metrics, true, now));
         context.heartbeat(now)?;
         println!(
-            "[Outbox relay worker={}] scanned={} published={} retried={} failures={} conflicts={} last_error={:?}",
+            "[Outbox relay worker={}] scanned={} published={} retried={} failures={} conflicts={} parked={} last_error={:?}",
             context.id(),
             report.scanned,
             report.published,
             report.retried,
             report.publish_failures,
             report.lease_conflicts,
+            report.parked,
             report.last_error
         );
         if once {
@@ -405,11 +411,20 @@ pub(crate) fn invoke_event_consumer_handler(
     let mut child = command
         .spawn()
         .map_err(|error| format!("启动事件 consumer handler 失败: {error}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let write_result = stdin
-            .write_all(&payload)
-            .and_then(|_| stdin.write_all(b"\n"));
-        if let Err(error) = write_result {
+    if let Some(stdin) = child.stdin.take() {
+        // 写也要进预算（V11 N8）：handler 若不读 stdin，管道写满后 `write_all` 再也不返回，
+        // 而下面那圈 timeout_ms 判定排在它后面，压根没机会开始。
+        let mut envelope = payload;
+        envelope.push(b'\n');
+        let written = qx_adapter::write_all_within(
+            stdin,
+            envelope,
+            Duration::from_millis(handler.timeout_ms),
+            || {
+                let _ = child.kill();
+            },
+        );
+        if let Err(error) = written {
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!("写入事件 consumer handler stdin 失败: {error}"));
@@ -656,13 +671,9 @@ pub(crate) fn replay_dead_letter_from_store<S>(
 where
     S: ConsumerStateStore,
 {
-    let records = store
-        .dead_letters(group_id, 10_000)
-        .map_err(|error| format!("读取消费者死信失败: {error:?}"))?;
-    let record = records
-        .into_iter()
-        .filter(|record| record.event_id == event_id)
-        .max_by_key(|record| record.attempts)
+    let record = store
+        .dead_letter(group_id, event_id)
+        .map_err(|error| format!("读取消费者死信失败: {error:?}"))?
         .ok_or_else(|| format!("找不到 group={group_id} event_id={event_id} 的死信记录"))?;
     let mut replay = record.event;
     // Replay is a new logical delivery. The deterministic suffix makes an

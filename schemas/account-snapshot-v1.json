@@ -9,7 +9,17 @@
     "schema_version": {"const": 1},
     "header": {
       "type": "object",
-      "required": ["snapshot_id", "account_id", "portfolio_id", "venue_id", "as_of", "event_seq", "state_hash"]
+      "required": ["snapshot_id", "account_id", "portfolio_id", "venue_id", "trading_day", "as_of", "event_seq", "state_hash"],
+      "properties": {
+        "snapshot_id": {"type": "integer"},
+        "account_id": {"type": "string"},
+        "portfolio_id": {"type": "string"},
+        "venue_id": {"type": "string"},
+        "trading_day": {"type": "string"},
+        "as_of": {"type": "integer"},
+        "event_seq": {"type": "integer"},
+        "state_hash": {"type": "integer"}
+      }
     },
     "cash_raw": {"type": "object", "additionalProperties": {"type": "integer"}},
     "equity_raw": {"type": ["integer", "null"]},
@@ -20,11 +30,90 @@
     "unrealized_pnl_raw": {"type": ["integer", "null"]},
     "fees_raw": {"type": ["integer", "null"]},
     "funding_raw": {"type": ["integer", "null"]},
-    "positions": {"type": "object", "additionalProperties": {"type": "object"}},
-    "orders": {"type": "object", "additionalProperties": {"type": "object"}},
-    "fills": {"type": "object", "additionalProperties": {"type": "object"}},
-    "transfers": {"type": "object", "additionalProperties": {"type": "object"}},
-    "reconcile": {"type": "object"}
+    "positions": {
+      "type": "object",
+      "propertyNames": {"pattern": "^.+\\.[^.]+$"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["instrument", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw"],
+        "properties": {
+          "instrument": {"$ref": "#/$defs/instrument"},
+          "quantity_raw": {"type": "integer"},
+          "today_quantity_raw": {"type": "integer"},
+          "average_price_raw": {"type": "integer"},
+          "mark_price_raw": {"type": "integer"},
+          "unrealized_pnl_raw": {"type": ["integer", "null"]},
+          "margin_raw": {"type": ["integer", "null"]}
+        }
+      }
+    },
+    "orders": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[0-9]+$"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["order_id", "client_order_id", "instrument", "side", "quantity_raw", "filled_raw", "status"],
+        "properties": {
+          "order_id": {"type": "integer"},
+          "client_order_id": {"type": "integer"},
+          "instrument": {"$ref": "#/$defs/instrument"},
+          "side": {"enum": ["Buy", "Sell"]},
+          "quantity_raw": {"type": "integer"},
+          "filled_raw": {"type": "integer"},
+          "status": {"$ref": "#/$defs/order_status"}
+        }
+      }
+    },
+    "fills": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[0-9]+$"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["fill_id", "order_id", "quantity_raw", "price_raw", "fee_raw", "ts"],
+        "properties": {
+          "fill_id": {"type": "integer"},
+          "order_id": {"type": "integer"},
+          "quantity_raw": {"type": "integer"},
+          "price_raw": {"type": "integer"},
+          "fee_raw": {"type": "integer"},
+          "ts": {"type": "integer"}
+        }
+      }
+    },
+    "transfers": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[0-9]+$"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["transfer_id", "currency", "amount_raw", "ts"],
+        "properties": {
+          "transfer_id": {"type": "integer"},
+          "currency": {"type": "string"},
+          "amount_raw": {"type": "integer"},
+          "ts": {"type": "integer"}
+        }
+      }
+    },
+    "reconcile": {
+      "type": "object",
+      "required": ["last_reconcile_ts", "discrepancy_count", "recovery_state"],
+      "properties": {
+        "last_reconcile_ts": {"type": ["integer", "null"]},
+        "discrepancy_count": {"type": ["integer", "null"]},
+        "recovery_state": {"type": "string"}
+      }
+    }
+  },
+  "$defs": {
+    "instrument": {
+      "type": "object",
+      "required": ["symbol", "venue"],
+      "properties": {
+        "symbol": {"type": "string"},
+        "venue": {"type": "string"}
+      }
+    },
+    "order_status": {"enum": ["PendingSubmit", "Submitted", "Accepted", "Working", "PartiallyFilled", "Filled", "CancelPending", "Cancelled", "Rejected", "Expired", "Unknown"]}
   },
   "additionalProperties": true
 }

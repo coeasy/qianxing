@@ -193,6 +193,7 @@ impl BarStrategy for ContractBarStrategy {
                         &self.config,
                         &strategy_id,
                         output.signal_id,
+                        &output.request_id,
                         intent,
                         visible.ts,
                         position,
@@ -259,7 +260,7 @@ pub(crate) fn strategy_target_qty(
             risk_state,
         };
         context
-            .validate(now, config.environment.eq_ignore_ascii_case("production"))
+            .validate(now, config.is_production())
             .map_err(|error| format!("StrategyContext 校验失败: {error}"))?;
         return context.target_for(instrument).ok_or_else(|| {
             format!(
@@ -435,12 +436,30 @@ pub(crate) fn build_strategy_order(
     )
 }
 
+/// 一次输出的 `intent_id` 只是**轮内局部序号**（`schemas/strategy_api_v1.md`：uniqueness
+/// per decision），而订单身份在控制面（`command_id`）与执行面（`client_order_id`）都是全店
+/// 唯一键。所以身份必须由"哪一轮 + 轮内第几条"折出来：同一轮重放仍落回同一身份（幂等），
+/// 换一轮则得到新身份。`trace.intent_id` 保留策略侧原值，归因不受影响。
+fn strategy_order_identity(round_scope: &str, intent_id: u64) -> u64 {
+    let mut hash = qx_core::Fnv1a::new();
+    hash.write_text(round_scope);
+    hash.write_u64(intent_id);
+    // client_order_id 必须为正（`Order::validate`），摘要取到 0 的概率与一次哈希碰撞同级。
+    hash.finish().max(1)
+}
+
 /// 将跨语言 Strategy API v1 的单笔 intent 转为统一核心订单。
 /// 该转换只负责语义翻译，订单仍必须经过 RiskExecutionContext、OMS 和 Venue。
+///
+/// `round_scope` 是这一轮的标识：worker 传 `output.request_id`（即调度器的 run id，实时作业
+/// 按 BarFrame 指纹幂等），回测链传同一份契约输入的 request_id。非空不用在这里再查一遍——
+/// `StrategyContractOutput::validate_for` 要求 output 原样回显 input 的 request_id，而
+/// `StrategyContractInput::validate` 已经拒绝空值。
 pub(crate) fn build_strategy_order_from_contract_intent(
     config: &RuntimeConfig,
     strategy_id: &str,
     signal_id: u64,
+    round_scope: &str,
     intent: &StrategyContractIntent,
     now: u64,
     current_qty: i128,
@@ -513,7 +532,7 @@ pub(crate) fn build_strategy_order_from_contract_intent(
         post_only: intent.post_only,
     };
     let mut order = Order {
-        client_id: intent.intent_id,
+        client_id: strategy_order_identity(round_scope, intent.intent_id),
         instrument,
         side,
         qty: qx_core::Quantity::from_raw(intent.qty_raw),
@@ -738,7 +757,7 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
             let worker = match supervisor.spawn_worker(&api_worker_id, move |context| {
                 context.heartbeat(runtime_timestamp_ms())?;
                 service
-                    .serve(listener, runtime_timestamp_ms())
+                    .serve(listener, runtime_timestamp_ms(), || context.should_stop())
                     .map_err(|error| format!("API 服务停止: {error}"))
             }) {
                 Ok(worker) => worker,
@@ -807,6 +826,7 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
                         &store,
                         &identity_store,
                         runtime_timestamp_ms(),
+                        || context.should_stop(),
                     )
                     .map_err(|error| format!("mTLS API 服务停止: {error}"))
             }) {

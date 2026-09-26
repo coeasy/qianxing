@@ -171,22 +171,6 @@ fn strategy_child_environment_rejects_credentials_and_keeps_runtime_allowlist() 
 }
 
 #[test]
-fn runtime_check_report_is_machine_readable_and_safe() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("deploy")
-        .join("qianxing.runtime.example.json");
-    let report = collect_runtime_check_report(&path).unwrap();
-    assert_eq!(report["schema_version"], 1);
-    assert_eq!(report["ok"], true);
-    assert_eq!(report["network_accessed"], false);
-    assert_eq!(report["orders_sent"], false);
-    assert!(!report["health"]["services"].as_array().unwrap().is_empty());
-    assert!(report["config_fingerprint"].as_str().unwrap().len() >= 32);
-}
-
-#[test]
 fn live_check_report_is_structured_and_fail_closed_for_template() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")

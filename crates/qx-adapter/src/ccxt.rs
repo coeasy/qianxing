@@ -4,6 +4,8 @@
 //! JSONL 协议接入既有 `Venue` 事实边界。提交结果未知时返回 ReconcileRequired，
 //! 不自动重试或补单；订单回报通过 `sync_order` 显式进入统一 VenueEvent。
 
+use crate::io_budget::write_all_within;
+use crate::venue_cache::evict_stale_terminal_orders;
 use qx_core::{
     Fill, MarginMode, Money, Order, OrderStatus, PositionMode, PositionSide, Price, Quantity,
     QxError, QxResult, SCALE,
@@ -16,7 +18,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -28,7 +30,8 @@ pub trait CcxtRpc: Send {
 
 pub struct CcxtProcessClient {
     child: Child,
-    stdin: ChildStdin,
+    /// 写一次取走一次：`write_all_within` 要把句柄交给写线程，成功才还得回来。
+    stdin: Option<ChildStdin>,
     responses: Receiver<Result<String, String>>,
     timeout_ms: u64,
 }
@@ -91,7 +94,7 @@ impl CcxtProcessClient {
         });
         Ok(Self {
             child,
-            stdin,
+            stdin: Some(stdin),
             responses,
             timeout_ms,
         })
@@ -151,11 +154,21 @@ impl CcxtRpc for CcxtProcessClient {
     fn call(&mut self, request: Value) -> Result<Value, String> {
         let payload = serde_json::to_string(&request)
             .map_err(|error| format!("编码 CCXT Worker 请求失败: {error}"))?;
-        self.stdin
-            .write_all(payload.as_bytes())
-            .and_then(|_| self.stdin.write_all(b"\n"))
-            .and_then(|_| self.stdin.flush())
-            .map_err(|error| format!("写入 CCXT Worker 失败: {error}"))?;
+        let stdin = self
+            .stdin
+            .take()
+            .ok_or_else(|| "CCXT Worker stdin 不可用".to_string())?;
+        // 写也要进预算（V11 N8）：Worker 卡在别处不读 stdin 时，管道写满后这条
+        // `write_all` 就再也不返回，而下面那圈"响应超时"排在它后面，压根没机会开始
+        // ——配置里的 timeout_ms 只保护了读、没保护写。超时按"这条管道已不归我们
+        // 掌控"处理：杀掉 Worker，卡住的写线程随即以 BrokenPipe 收尾。
+        let mut line = payload.into_bytes();
+        line.push(b'\n');
+        let written = write_all_within(stdin, line, Duration::from_millis(self.timeout_ms), || {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        });
+        self.stdin = Some(written.map_err(|error| format!("写入 CCXT Worker 失败: {error}"))?);
         let line = match self
             .responses
             .recv_timeout(Duration::from_millis(self.timeout_ms))
@@ -224,6 +237,19 @@ impl CcxtProcessVenue {
         }
     }
 
+    /// 级联丢掉已退场订单的派生索引：远端订单号、成交去重键与累计费用。
+    fn forget_orders(&mut self, evicted: &BTreeSet<u64>) {
+        if evicted.is_empty() {
+            return;
+        }
+        self.remote_ids
+            .retain(|client_id, _| !evicted.contains(client_id));
+        self.seen_trade_ids
+            .retain(|client_id, _| !evicted.contains(client_id));
+        self.cumulative_costs
+            .retain(|client_id, _| !evicted.contains(client_id));
+    }
+
     pub fn restore_order(&mut self, order: Order, remote_id: impl Into<String>) -> QxResult<()> {
         order.validate().map_err(QxError::BusinessViolation)?;
         let remote_id = remote_id.into();
@@ -241,6 +267,8 @@ impl CcxtProcessVenue {
             self.cumulative_costs.remove(&order.client_id);
         }
         self.orders.insert(order.client_id, order);
+        let evicted = evict_stale_terminal_orders(&mut self.orders);
+        self.forget_orders(&evicted);
         Ok(())
     }
 
@@ -603,6 +631,8 @@ impl Venue for CcxtProcessVenue {
         self.remote_ids.insert(order.client_id, remote_id.clone());
         self.cumulative_costs.remove(&order.client_id);
         self.orders.insert(order.client_id, order.clone());
+        let evicted = evict_stale_terminal_orders(&mut self.orders);
+        self.forget_orders(&evicted);
         Ok(vec![VenueEvent::Accepted {
             client_order_id: order.client_id,
             venue_order_id: remote_id,
@@ -798,6 +828,67 @@ mod tests {
             trace: None,
             policy: None,
         }
+    }
+
+    /// V11 N9：`restore_order` 是启动期逐条灌历史订单的入口，封顶与三份派生索引的
+    /// 级联必须在这条路上真的生效——CCXT 执行 worker 是常驻进程。
+    #[test]
+    fn ccxt_order_cache_cap_cascades_remote_ids_dedup_keys_and_costs() {
+        const CAP: u64 = crate::venue_cache::MAX_CACHED_ORDERS as u64;
+        let cached = |client_id: u64| Order {
+            client_id,
+            status: if client_id == 1 {
+                OrderStatus::Working
+            } else {
+                OrderStatus::Filled
+            },
+            filled: if client_id == 1 {
+                Quantity::ZERO
+            } else {
+                Quantity::from_i64(2)
+            },
+            ..order()
+        };
+        let mut venue = CcxtProcessVenue::new("binance", Box::new(FakeRpc { calls: Vec::new() }));
+        let remote = |client_id: u64| format!("r-{client_id}");
+        let trade_key = |client_id: u64| format!("t-{client_id}");
+        for client_id in 1..=CAP {
+            venue
+                .restore_order(cached(client_id), remote(client_id))
+                .unwrap();
+        }
+        assert_eq!(venue.orders.len() as u64, CAP);
+        for client_id in [2, CAP] {
+            venue
+                .seen_trade_ids
+                .insert(client_id, BTreeSet::from([trade_key(client_id)]));
+            venue.cumulative_costs.insert(client_id, 7);
+        }
+        venue
+            .restore_order(cached(CAP + 1), remote(CAP + 1))
+            .unwrap();
+
+        assert_eq!(venue.orders.len() as u64, CAP + 1 - 1_025);
+        assert!(venue.orders.contains_key(&1), "未终态订单永不退场");
+        assert!(!venue.orders.contains_key(&2));
+        assert!(venue.orders.contains_key(&(CAP + 1)));
+        assert!(!venue.remote_ids.contains_key(&2));
+        assert!(!venue.seen_trade_ids.contains_key(&2));
+        assert!(!venue.cumulative_costs.contains_key(&2));
+        assert_eq!(
+            venue.remote_ids.get(&CAP).map(String::as_str),
+            Some(remote(CAP).as_str()),
+            "留下的订单不能被动过"
+        );
+        assert_eq!(
+            venue
+                .seen_trade_ids
+                .get(&CAP)
+                .and_then(|ids| ids.iter().next()),
+            Some(&trade_key(CAP)),
+            "成交去重键必须跟着订单一起退"
+        );
+        assert_eq!(venue.cumulative_costs.get(&CAP), Some(&7));
     }
 
     #[test]

@@ -305,7 +305,7 @@ pub(crate) enum ConfigCommand {
     #[command(name = "validate")]
     Validate {
         path: Option<PathBuf>,
-        /// 与迁移前一致：validate 不产出 JSON，但该旗标仍抑制横幅行。
+        /// 输出可直接交给脚本消费的校验结论（含 warnings/failures 数组）。
         #[arg(long)]
         json: bool,
     },

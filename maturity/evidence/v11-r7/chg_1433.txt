@@ -1,0 +1,13 @@
+== before L1433: - **折算与哈希收口到共用写法**：行哈希与账户标量共用 `write_optional_money`（`crates/qx-protocol/src/lib.rs:261`、
+   owners=['crates/qx-protocol/src/lib.rs']
+== before L1434: `:287-288`），`null` 的写法全仓唯一（`:248` `money_json`），线格式没有的那一列保证金折算回 `None` 而不是 0。
+   owners=[]
+   bare :287 @3 -> 无主
+   bare :248 @30 -> 无主
+== after L1433: - **折算与哈希收口到共用写法**：行哈希与账户标量共用 `write_optional_money`（定义 `crates/qx-protocol/src/lib.rs:267`、两处调用
+   owners=['crates/qx-protocol/src/lib.rs']
+== after L1434: `:274` / `:319`），`null` 的写法全仓唯一（`:279` `money_json`），线格式没有的那一列保证金折算回 `None` 而不是 0。
+   owners=[]
+   bare :274 @3 -> 无主
+   bare :319 @12 -> 无主
+   bare :279 @35 -> 无主

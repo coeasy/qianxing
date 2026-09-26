@@ -75,7 +75,7 @@ fn exponential_backoff_arithmetic_exists_once() {
 }
 
 #[test]
-fn four_file_state_stores_share_one_envelope_io() {
+fn file_state_stores_share_one_envelope_io_and_the_audit_chain_is_the_named_exception() {
     let lib = read("crates/qx-storage/src/lib.rs");
     let envelope = read("crates/qx-storage/src/state_envelope.rs");
     // 原子替换 / 锁 / fsync 的唯一实现只住进信封层。
@@ -88,26 +88,39 @@ fn four_file_state_stores_share_one_envelope_io() {
     assert!(!lib.contains("fn acquire_storage_lock"));
     assert!(!lib.contains("fn sync_file"));
 
-    // 四个存储已从 lib.rs 迁入 `crates/qx-storage/src/file/` 目录模块；该目录内
-    // 同样不允许出现任何“就地序列化 / 就地读写状态文件 / 自带原子替换”代码。
+    // 五本存储已从 lib.rs 迁入 `crates/qx-storage/src/file/` 目录模块；该目录内
+    // 同样不允许出现任何"自带原子替换 / 自带锁 / 自带 fsync"的实现。
     let store_dir = workspace_root().join("crates/qx-storage/src/file");
     let mut store_files = Vec::new();
     collect_rs(&store_dir, &mut store_files);
     assert!(
-        store_files.len() >= 5,
-        "file 目录模块必须包含四个存储 + records 共享形状，实际 {store_files:?}"
+        store_files.len() >= 6,
+        "file 目录模块必须包含五本存储 + records 共享形状，实际 {store_files:?}"
     );
+    // `audit.rs` 是追加式哈希审计链，整套"读全量 → 换整段"的形状对它不成立：每追
+    // 加一条就重写完文件，等于把写入频率乘上文件长度（V11 R5-2）。豁免必须是点名
+    // 的例外，不能是把目录改窄——因此它仍然受"不得自带锁 / 原子替换 / fsync 实现"
+    // 这条约束，且必须显式经由信封层的锁串行化。
+    let forbidden_everywhere = [
+        "fnwrite_atomic_path",
+        "fnacquire_storage_lock",
+        "fnsync_file",
+    ];
+    let forbidden_for_json_stores = [
+        "std::fs::read_to_string(",
+        "serde_json::to_string",
+        "serde_json::from_str",
+    ];
     for path in &store_files {
         let text = std::fs::read_to_string(path).unwrap();
         let normalized: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
-        for forbidden in [
-            "fnwrite_atomic_path",
-            "fnacquire_storage_lock",
-            "fnsync_file",
-            "std::fs::read_to_string(",
-            "serde_json::to_string",
-            "serde_json::from_str",
-        ] {
+        let is_audit_chain = path.file_name().is_some_and(|name| name == "audit.rs");
+        let whole_file_rules: &[&str] = if is_audit_chain {
+            &[]
+        } else {
+            &forbidden_for_json_stores
+        };
+        for forbidden in forbidden_everywhere.iter().chain(whole_file_rules) {
             assert!(
                 !normalized.contains(forbidden),
                 "文件存储 {} 必须经由 state_envelope 读写与原子替换，发现就地实现 {forbidden:?}",
@@ -115,6 +128,11 @@ fn four_file_state_stores_share_one_envelope_io() {
             );
         }
     }
+    let chain = read("crates/qx-storage/src/file/audit.rs");
+    assert!(
+        chain.contains("acquire_storage_lock") && chain.contains("audit.jsonl"),
+        "审计链的豁免只到「不套整段原子替换」为止：它仍必须用信封层的锁串行化尾部追加"
+    );
 
     // 正向锚点：四个存储确实调用信封原语（防止把调用删空来绕过扫描）。
     let consumer = read("crates/qx-storage/src/file/consumers.rs");

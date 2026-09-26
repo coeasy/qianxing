@@ -3,20 +3,16 @@
 //! Scheduler 只决定“何时、以什么幂等键触发哪个 Job”，不持有交易所客户端，
 //! 也不能绕过 Risk/OMS/Ledger。真实执行器可以在控制面或外部 Worker 中实现。
 
-use qx_core::{Fnv1a, RunManifest};
+use qx_core::RunManifest;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod retry_policy;
 pub use retry_policy::RetryPolicy;
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub enum Trigger {
-    Manual,
-    Cron(String),
-    TradingCalendar { session: String },
-    Event(String),
-}
+mod job_spec;
+pub use job_spec::{
+    claimable_by, undispatchable_by_registry, JobSpec, JobWindow, Trigger, JOB_OWNER_ANY,
+};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ScheduleTick {
@@ -110,101 +106,6 @@ fn parse_cron_field(field: &str, min: u8, max: u8) -> Result<BTreeSet<u8>, Sched
         return Err(SchedulerError::Invalid("Cron 字段不能为空".into()));
     }
     Ok(values)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub enum JobWindow {
-    Any,
-    PreOpen,
-    Session,
-    PostClose,
-}
-
-impl JobWindow {
-    fn allows(self, calendar: &TradingCalendar, trading_day: &str, ts: u64) -> bool {
-        match self {
-            Self::Any => true,
-            Self::PreOpen => calendar
-                .session(trading_day)
-                .is_some_and(|session| ts < session.open),
-            Self::Session => calendar.is_open(trading_day, ts),
-            Self::PostClose => calendar
-                .session(trading_day)
-                .is_some_and(|session| ts >= session.close),
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Any => "any",
-            Self::PreOpen => "pre_open",
-            Self::Session => "session",
-            Self::PostClose => "post_close",
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct JobSpec {
-    pub job_id: String,
-    pub job_version: String,
-    pub owner: String,
-    pub enabled: bool,
-    pub trigger: Trigger,
-    pub window: JobWindow,
-    pub depends_on: Vec<String>,
-    pub input_refs: Vec<String>,
-    pub output_refs: Vec<String>,
-    pub timeout_seconds: u64,
-    pub retry_policy: RetryPolicy,
-    pub concurrency_key: String,
-    pub idempotency_key: String,
-    pub permission_scope: String,
-    #[serde(default = "default_audit_reason")]
-    pub audit_reason: String,
-    pub dry_run: bool,
-}
-
-fn default_audit_reason() -> String {
-    "legacy-job".into()
-}
-
-impl JobSpec {
-    pub fn validate(&self) -> Result<(), SchedulerError> {
-        if self.job_id.trim().is_empty()
-            || self.job_version.trim().is_empty()
-            || self.owner.trim().is_empty()
-            || self.timeout_seconds == 0
-            || self.concurrency_key.trim().is_empty()
-            || self.idempotency_key.trim().is_empty()
-            || self.audit_reason.trim().is_empty()
-        {
-            return Err(SchedulerError::Invalid("JobSpec 必填字段非法".into()));
-        }
-        if self.retry_policy.max_attempts == 0 {
-            return Err(SchedulerError::Invalid("max_attempts 不能为 0".into()));
-        }
-        if let Trigger::Cron(expression) = &self.trigger {
-            CronSpec::parse(expression)?;
-        }
-        if self
-            .depends_on
-            .iter()
-            .any(|dependency| dependency == &self.job_id)
-        {
-            return Err(SchedulerError::Cycle(self.job_id.clone()));
-        }
-        Ok(())
-    }
-
-    pub fn stable_key(&self, trading_day: &str) -> u64 {
-        let mut h = Fnv1a::new();
-        h.write_text(&self.job_id);
-        h.write_text(&self.job_version);
-        h.write_text(&self.idempotency_key);
-        h.write_text(trading_day);
-        h.finish()
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -316,20 +217,8 @@ pub struct WorkerOutcome {
 pub struct SchedulerWorker;
 
 impl SchedulerWorker {
-    pub fn run_cron_tick_with_manifest<E: JobExecutor>(
-        scheduler: &mut Scheduler,
-        tick: &ScheduleTick,
-        trading_day: &str,
-        manifest: &RunManifest,
-        executor: &mut E,
-    ) -> Result<Vec<WorkerOutcome>, SchedulerError> {
-        manifest.validate().map_err(SchedulerError::Invalid)?;
-        Self::run_cron_tick(scheduler, tick, trading_day, manifest.digest(), executor)
-    }
-
-    /// 生产入口：同时绑定 RunManifest、交易日历和 JobWindow。
-    /// 旧的 `run_cron_tick_with_manifest` 保留给无交易日历的研究任务；交易任务必须
-    /// 使用本入口，避免 manifest 已绑定但窗口约束被绕过。
+    /// cron 面里绑定 RunManifest 的唯一入口：先 `manifest.validate()`，再把
+    /// `manifest.digest()` 递给 `run_cron_tick_with_calendar`。
     pub fn run_cron_tick_with_calendar_and_manifest<E: JobExecutor>(
         scheduler: &mut Scheduler,
         tick: &ScheduleTick,
@@ -351,49 +240,8 @@ impl SchedulerWorker {
         )
     }
 
-    pub fn run_cron_tick<E: JobExecutor>(
-        scheduler: &mut Scheduler,
-        tick: &ScheduleTick,
-        trading_day: &str,
-        manifest_digest: u64,
-        executor: &mut E,
-    ) -> Result<Vec<WorkerOutcome>, SchedulerError> {
-        let completed = scheduler.completed.clone();
-        let job_ids = scheduler
-            .due_jobs(tick, &completed)?
-            .into_iter()
-            .map(|job| job.job_id.clone())
-            .collect::<Vec<_>>();
-        let mut outcomes = Vec::with_capacity(job_ids.len());
-        for job_id in job_ids {
-            let run = scheduler.start_run(&job_id, trading_day, manifest_digest)?;
-            let job = scheduler
-                .job(&job_id)
-                .cloned()
-                .ok_or_else(|| SchedulerError::MissingDependency(job_id.clone()))?;
-            let execution = executor.execute(&job, &run);
-            let (success, error_code) = match &execution {
-                Ok(_) => (true, None),
-                Err(error) => (false, Some(error.as_str())),
-            };
-            let final_run = scheduler.finish_run_with_code(run.run_id, success, error_code, 0)?;
-            outcomes.push(match execution {
-                Ok(result_code) => WorkerOutcome {
-                    run: final_run,
-                    result_code: Some(result_code),
-                    error: None,
-                },
-                Err(error) => WorkerOutcome {
-                    run: final_run,
-                    result_code: None,
-                    error: Some(error),
-                },
-            });
-        }
-        Ok(outcomes)
-    }
-
-    /// 生产调度入口：同时执行 cron、交易日历和 JobWindow 约束。
+    /// cron 派发的唯一执行体：到期判据只有 `due_jobs_with_calendar` 一颗（窗口与
+    /// 交易日历都算在里面），执行循环与手动/事件入口共用 `execute_job_ids`。
     pub fn run_cron_tick_with_calendar<E: JobExecutor>(
         scheduler: &mut Scheduler,
         tick: &ScheduleTick,
@@ -409,33 +257,14 @@ impl SchedulerWorker {
             .into_iter()
             .map(|job| job.job_id.clone())
             .collect::<Vec<_>>();
-        let mut outcomes = Vec::with_capacity(job_ids.len());
-        for job_id in job_ids {
-            let run = scheduler.start_run_at(&job_id, trading_day, manifest_digest, now)?;
-            let job = scheduler
-                .job(&job_id)
-                .cloned()
-                .ok_or_else(|| SchedulerError::MissingDependency(job_id.clone()))?;
-            let execution = executor.execute(&job, &run);
-            let (success, error_code) = match &execution {
-                Ok(_) => (true, None),
-                Err(error) => (false, Some(error.as_str())),
-            };
-            let final_run = scheduler.finish_run_with_code(run.run_id, success, error_code, now)?;
-            outcomes.push(match execution {
-                Ok(result_code) => WorkerOutcome {
-                    run: final_run,
-                    result_code: Some(result_code),
-                    error: None,
-                },
-                Err(error) => WorkerOutcome {
-                    run: final_run,
-                    result_code: None,
-                    error: Some(error),
-                },
-            });
-        }
-        Ok(outcomes)
+        Self::execute_job_ids(
+            scheduler,
+            job_ids,
+            trading_day,
+            now,
+            manifest_digest,
+            executor,
+        )
     }
 
     pub fn run_event_with_manifest<E: JobExecutor>(
@@ -498,6 +327,10 @@ impl SchedulerWorker {
         manifest_digest: u64,
         executor: &mut E,
     ) -> Result<Vec<WorkerOutcome>, SchedulerError> {
+        // 一轮执行从"把卡死的运行收掉"开始，与生产派发事务的开场是同一颗（V11 N4b）：
+        // 少了这一步，崩溃留下的 `Running` 行会一直占着并发键，这份执行面之后每一轮
+        // 都在这条作业上拿 `NotReady`，而生产那条同一时刻已经把它转成 `NeedsIntervention`。
+        scheduler.sweep_timed_out(now)?;
         let mut outcomes = Vec::with_capacity(job_ids.len());
         for job_id in job_ids {
             let run = scheduler.start_run_at(&job_id, trading_day, manifest_digest, now)?;
@@ -561,33 +394,10 @@ impl Scheduler {
             .collect()
     }
 
-    pub fn due_jobs(
-        &self,
-        tick: &ScheduleTick,
-        completed: &BTreeSet<String>,
-    ) -> Result<Vec<&JobSpec>, SchedulerError> {
-        tick.validate()?;
-        let mut jobs = Vec::new();
-        for job in self.jobs.values() {
-            if !job.enabled
-                || !job
-                    .depends_on
-                    .iter()
-                    .all(|dependency| completed.contains(dependency))
-            {
-                continue;
-            }
-            if let Trigger::Cron(expression) = &job.trigger {
-                if CronSpec::parse(expression)?.matches(tick) {
-                    jobs.push(job);
-                }
-            }
-        }
-        Ok(jobs)
-    }
-
-    /// 带交易日历和业务时间的触发入口。`JobWindow` 与
-    /// `Trigger::TradingCalendar` 只能通过此入口判定，避免定义了窗口却没有实际约束。
+    /// 到期判据只有这一颗。原先另有一颗只认 `Trigger::Cron`、不看 `JobWindow` 也不看
+    /// 交易日历的 `due_jobs`：同一份 JobSpec 走两条路会点出两个不同的到期集合，而窗口
+    /// 约束在其中一条上静默失效（V11 N4）。`JobWindow` 与 `Trigger::TradingCalendar`
+    /// 只能从这里判定，避免定义了窗口却没有实际约束。
     pub fn due_jobs_with_calendar(
         &self,
         tick: &ScheduleTick,
@@ -667,6 +477,12 @@ impl Scheduler {
         self.jobs.get(id)
     }
 
+    /// 已登记作业的只读视图。运行拓扑装配用它核对 owner 是否有人领取，
+    /// 而不是让作业投进一条没人订阅的队列。
+    pub fn jobs(&self) -> impl Iterator<Item = &JobSpec> {
+        self.jobs.values()
+    }
+
     pub fn len(&self) -> usize {
         self.jobs.len()
     }
@@ -681,15 +497,12 @@ impl Scheduler {
     }
 
     /// 创建一次幂等运行。真正的 worker 只接收这里返回的 JobRun，不能自行绕过依赖。
-    pub fn start_run(
-        &mut self,
-        job_id: &str,
-        trading_day: &str,
-        manifest_digest: u64,
-    ) -> Result<JobRun, SchedulerError> {
-        self.start_run_at(job_id, trading_day, manifest_digest, 0)
-    }
-
+    ///
+    /// 作业登记只留这一颗，`started_ts` 必须由调用方给：`deadline_ts` 是
+    /// `started_ts + timeout_seconds`，登记侧写死一个起点（原来另有 `start_run(...)`
+    /// 硬传 `0`）等于让 `timeout_seconds` 在第一次超时收口时就把作业全部判成
+    /// `TIMEOUT`。同理，manifest 的校验与摘要取自 `run_*_with_manifest` 那几颗入口，
+    /// 它们各自 validate 后把 `manifest.digest()` 递进来（V11 M4、N4b）。
     pub fn start_run_at(
         &mut self,
         job_id: &str,
@@ -724,7 +537,9 @@ impl Scheduler {
             error_code: None,
             next_retry_ts: None,
             started_ts,
-            deadline_ts: started_ts.saturating_add(job.timeout_seconds),
+            // `started_ts`/`deadline_ts` 与运行时其余时钟一样是毫秒；`timeout_seconds` 是秒。
+            // 直接相加会让一条 60 秒的作业在 60 毫秒后"过期"，而这份数字照常外销。
+            deadline_ts: started_ts.saturating_add(job.timeout_seconds.saturating_mul(1_000)),
         };
         self.runs.insert(run_id, run.clone());
         Ok(run)
@@ -760,20 +575,24 @@ impl Scheduler {
         Ok(run)
     }
 
-    pub fn start_run_with_manifest(
-        &mut self,
-        job_id: &str,
-        trading_day: &str,
-        manifest: &RunManifest,
-    ) -> Result<JobRun, SchedulerError> {
-        manifest.validate().map_err(SchedulerError::Invalid)?;
-        self.start_run(job_id, trading_day, manifest.digest())
+    /// 把所有"已过截止时间仍在跑"的运行收成人工接管，并连带释放它们的并发键。
+    /// 生产派发每轮先走这一颗：`timeout_seconds` 只有在该收的时候有人收，才真的
+    /// 约束什么——否则一条卡死的运行会永久占着并发键，之后每一轮派发都被
+    /// `NotReady` 挡掉（V11 N2）。判定复用 `is_timed_out`，改写复用 `mark_timed_out`，
+    /// 这里只负责"扫一遍"这件事本身。
+    pub fn sweep_timed_out(&mut self, now: u64) -> Result<Vec<JobRun>, SchedulerError> {
+        let candidates = self.runs.keys().copied().collect::<Vec<_>>();
+        let mut swept = Vec::new();
+        for run_id in candidates {
+            if self.is_timed_out(run_id, now)? {
+                swept.push(self.mark_timed_out(run_id, now)?);
+            }
+        }
+        Ok(swept)
     }
 
-    pub fn finish_run(&mut self, run_id: u64, success: bool) -> Result<JobRun, SchedulerError> {
-        self.finish_run_with_code(run_id, success, None, 0)
-    }
-
+    /// 结束一次运行；`finished_ts` 同时是退避窗口的起点，写死 `0` 会让下一次重试
+    /// 时刻落在纪元上、等于随时可重投（原来另有 `finish_run(...)` 就是这么干的）。
     pub fn finish_run_with_code(
         &mut self,
         run_id: u64,
@@ -803,7 +622,14 @@ impl Scheduler {
         } else {
             JobStatus::Failed
         };
-        run.error_code = error_code.map(str::to_string);
+        // `error_code` 的口径是"这次失败为什么失败"：下面的重试判据按 `retryable_codes`
+        // 匹配它，`MANUAL_INTERVENTION` 也认它。成功那一侧往里写东西，读面上就是一个
+        // 从没发生过的错误码（V11 O1）。
+        run.error_code = if success {
+            None
+        } else {
+            error_code.map(str::to_string)
+        };
         run.next_retry_ts = (!success
             && !matches!(run.status, JobStatus::NeedsIntervention)
             && job.retry_policy.should_retry(run.attempt)
@@ -821,10 +647,12 @@ impl Scheduler {
         Ok(run)
     }
 
-    pub fn retry_run(&mut self, run_id: u64) -> Result<JobRun, SchedulerError> {
-        self.retry_run_at(run_id, u64::MAX)
-    }
-
+    /// 把一次已到重试时刻的失败运行推回 Running 并递增 `attempt`。
+    ///
+    /// 重试只有这一颗入口：`now` 由调用方给，退避判定与并发键占用都在函数里完成。
+    /// 原来另有一颗 `retry_run(run_id)`（内部传 `u64::MAX`，等于绕过退避窗口立刻重投），
+    /// 仓内没有任何派发者走它——运行时注册表不重试（V11 N4），留着一个"跳过等待"的
+    /// 写法只是多一处要让上层记住的口子。
     pub fn retry_run_at(&mut self, run_id: u64, now: u64) -> Result<JobRun, SchedulerError> {
         let mut run = self
             .runs
@@ -986,16 +814,39 @@ mod tests {
             trigger: Trigger::Manual,
             window: JobWindow::Any,
             depends_on: depends_on.into_iter().map(str::to_string).collect(),
-            input_refs: vec!["bars".into()],
-            output_refs: vec![format!("out-{id}")],
             timeout_seconds: 60,
             retry_policy: RetryPolicy::default(),
             concurrency_key: id.into(),
             idempotency_key: format!("{id}-daily"),
-            permission_scope: "research".into(),
             audit_reason: format!("test {id}"),
             dry_run: true,
         }
+    }
+
+    /// R7-4 删掉的三格在磁盘上还活在升级之前写下的调度状态与作业队列信封里。读侧一旦改成
+    /// 对未知键严格（`deny_unknown_fields`），升级就会把手里的运行状态读崩：作业队列会整批
+    /// 解不开，调度器连自己登记过什么都读不回来。这里钉住"旧文档仍解得回、且形状不变"。
+    #[test]
+    fn retired_job_spec_keys_are_ignored_by_the_loader() {
+        let mut scheduler = Scheduler::default();
+        scheduler.register(job("bars", vec![])).unwrap();
+        let current = scheduler.to_json().expect("当前形状必须可序列化");
+        let retired = current.replace(
+            "\"depends_on\":[],",
+            "\"depends_on\":[],\"input_refs\":[\"market:BTCUSDT.BINANCE\"],\"output_refs\":[\"strategy:order-intent\"],\"permission_scope\":\"strategy\",",
+        );
+        assert_ne!(
+            current, retired,
+            "夹具必须真的带上三格退役键，否则这条用例什么都没测"
+        );
+        let restored = Scheduler::from_json(&retired)
+            .expect("升级之前写下的调度状态必须解得回来")
+            .to_json()
+            .expect("读回后仍须可序列化");
+        assert_eq!(
+            restored, current,
+            "退役键必须被读侧忽略：解回再印出的形状要与当前形状逐字节相同"
+        );
     }
 
     #[test]
@@ -1051,15 +902,57 @@ mod tests {
         scheduler.register(job("load", vec![])).unwrap();
         scheduler.register(job("factor", vec!["load"])).unwrap();
         assert_eq!(
-            scheduler.start_run("factor", "20260910", 1),
+            scheduler.start_run_at("factor", "20260910", 1, 1_000),
             Err(SchedulerError::NotReady("factor".into()))
         );
-        let first = scheduler.start_run("load", "20260910", 1).unwrap();
-        assert_eq!(scheduler.start_run("load", "20260910", 1).unwrap(), first);
-        let finished = scheduler.finish_run(first.run_id, true).unwrap();
+        let first = scheduler
+            .start_run_at("load", "20260910", 1, 1_000)
+            .unwrap();
+        assert_eq!(
+            scheduler
+                .start_run_at("load", "20260910", 1, 1_000)
+                .unwrap(),
+            first
+        );
+        let finished = scheduler
+            .finish_run_with_code(first.run_id, true, None, 1_500)
+            .unwrap();
         assert_eq!(finished.status, JobStatus::Succeeded);
-        let next = scheduler.start_run("factor", "20260910", 2).unwrap();
+        let next = scheduler
+            .start_run_at("factor", "20260910", 2, 2_000)
+            .unwrap();
         assert_eq!(next.status, JobStatus::Running);
+    }
+
+    /// `error_code` 只装"这一次失败为什么失败"：一次成功的收尾把结果摘要递进来也不许落
+    /// 在那一格里——`/scheduler/runs` 原样外销它，重试判据又拿它匹配 `retryable_codes`，
+    /// 于是一条摘要在读面上就是一个从没发生过的错误码（V11 O1）。反向那半同时钉住：失败
+    /// 带码必须照常留码，否则判据退化成"这一格永远写不进东西"也能绿。
+    #[test]
+    fn a_successful_finish_refuses_an_error_code() {
+        let mut scheduler = Scheduler::default();
+        scheduler.register(job("load", vec![])).unwrap();
+        let ok = scheduler
+            .start_run_at("load", "20260910", 1, 1_000)
+            .unwrap();
+        let finished = scheduler
+            .finish_run_with_code(ok.run_id, true, Some("2 orders: BTC:1"), 1_500)
+            .unwrap();
+        assert_eq!(finished.status, JobStatus::Succeeded);
+        assert_eq!(
+            finished.error_code, None,
+            "成功运行不得携带错误码：读面会把它念成一次没发生过的失败"
+        );
+        let mut failing = job("load", vec![]);
+        failing.retry_policy.max_attempts = 2;
+        let mut retrying = Scheduler::default();
+        retrying.register(failing).unwrap();
+        let run = retrying.start_run_at("load", "20260910", 1, 1_000).unwrap();
+        let failed = retrying
+            .finish_run_with_code(run.run_id, false, Some("TRANSIENT"), 1_500)
+            .unwrap();
+        assert_eq!(failed.status, JobStatus::Failed);
+        assert_eq!(failed.error_code.as_deref(), Some("TRANSIENT"));
     }
 
     #[test]
@@ -1094,7 +987,7 @@ mod tests {
         cron_job.retry_policy.max_attempts = 2;
         scheduler.register(cron_job).unwrap();
         let due = scheduler
-            .due_jobs(
+            .due_jobs_with_calendar(
                 &ScheduleTick {
                     minute: 0,
                     hour: 9,
@@ -1102,13 +995,26 @@ mod tests {
                     month: 9,
                     weekday: 4,
                 },
+                "20260910",
+                1_000,
+                &TradingCalendar::default(),
                 &BTreeSet::new(),
             )
             .unwrap();
         assert_eq!(due.len(), 1);
-        let run = scheduler.start_run("cron", "20260910", 1).unwrap();
-        scheduler.finish_run(run.run_id, false).unwrap();
-        assert_eq!(scheduler.retry_run(run.run_id).unwrap().attempt, 2);
+        let run = scheduler
+            .start_run_at("cron", "20260910", 1, 1_000)
+            .unwrap();
+        scheduler
+            .finish_run_with_code(run.run_id, false, None, 1_500)
+            .unwrap();
+        // 退避窗口从 `finished_ts` 起算：默认 `backoff_seconds` 为 0，所以 1_500 这一刻
+        // 就能重投，而更早的时刻不行——写死 `0` 的那颗入口把这条判据抹平了。
+        assert!(scheduler.retry_run_at(run.run_id, 1_499).is_err());
+        assert_eq!(
+            scheduler.retry_run_at(run.run_id, 1_500).unwrap().attempt,
+            2
+        );
     }
 
     #[test]
@@ -1128,7 +1034,7 @@ mod tests {
         restored = restored.replace("0 9 * * *", "0 25 * * *");
         assert!(Scheduler::from_json(&restored).is_err());
         assert!(scheduler
-            .due_jobs(
+            .due_jobs_with_calendar(
                 &ScheduleTick {
                     minute: 0,
                     hour: 9,
@@ -1136,6 +1042,9 @@ mod tests {
                     month: 9,
                     weekday: 4,
                 },
+                "20260910",
+                1_000,
+                &TradingCalendar::default(),
                 &BTreeSet::new(),
             )
             .is_ok());
@@ -1174,9 +1083,16 @@ mod tests {
             calls: Vec::new(),
             fail: false,
         };
-        let outcomes =
-            SchedulerWorker::run_cron_tick(&mut scheduler, &tick, "20260910", 7, &mut executor)
-                .unwrap();
+        let outcomes = SchedulerWorker::run_cron_tick_with_calendar(
+            &mut scheduler,
+            &tick,
+            "20260910",
+            7,
+            &TradingCalendar::default(),
+            7,
+            &mut executor,
+        )
+        .unwrap();
         assert_eq!(executor.calls, ["worker#1"]);
         assert_eq!(outcomes[0].run.status, JobStatus::Succeeded);
         assert_eq!(outcomes[0].result_code.as_deref(), Some("WORKER_OK"));
@@ -1190,10 +1106,12 @@ mod tests {
             calls: Vec::new(),
             fail: true,
         };
-        let failed = SchedulerWorker::run_cron_tick(
+        let failed = SchedulerWorker::run_cron_tick_with_calendar(
             &mut retry_scheduler,
             &tick,
             "20260910",
+            7,
+            &TradingCalendar::default(),
             7,
             &mut failing,
         )
@@ -1202,7 +1120,7 @@ mod tests {
         assert_eq!(failed[0].error.as_deref(), Some("WORKER_FAILED"));
         assert_eq!(
             retry_scheduler
-                .retry_run(failed[0].run.run_id)
+                .retry_run_at(failed[0].run.run_id, 7)
                 .unwrap()
                 .attempt,
             2
@@ -1220,14 +1138,18 @@ mod tests {
             .retryable_codes
             .insert("TRANSIENT".into());
         scheduler.register(retry_job).unwrap();
-        let run = scheduler.start_run("retry-policy", "20260910", 1).unwrap();
+        let run = scheduler
+            .start_run_at("retry-policy", "20260910", 1, 90)
+            .unwrap();
         let failed = scheduler
             .finish_run_with_code(run.run_id, false, Some("PERMANENT"), 100)
             .unwrap();
         assert_eq!(failed.next_retry_ts, None);
         assert!(scheduler.retry_run_at(run.run_id, 110).is_err());
 
-        let second = scheduler.start_run("retry-policy", "20260911", 2).unwrap();
+        let second = scheduler
+            .start_run_at("retry-policy", "20260911", 2, 90)
+            .unwrap();
         scheduler
             .finish_run_with_code(second.run_id, false, Some("TRANSIENT"), 100)
             .unwrap();
@@ -1244,15 +1166,58 @@ mod tests {
         let mut timed = job("timed", vec![]);
         timed.timeout_seconds = 30;
         scheduler.register(timed).unwrap();
-        let run = scheduler.start_run_at("timed", "20260910", 1, 100).unwrap();
-        assert_eq!(run.started_ts, 100);
-        assert_eq!(run.deadline_ts, 130);
-        assert!(!scheduler.is_timed_out(run.run_id, 129).unwrap());
-        assert!(scheduler.is_timed_out(run.run_id, 130).unwrap());
-        let timeout = scheduler.mark_timed_out(run.run_id, 130).unwrap();
+        // `started_ts` 与运行时其余时钟同源（毫秒），`timeout_seconds` 是秒：拿 100/130
+        // 这类小计数当时间戳，秒与毫秒的差别看不出来，单位分叉就藏在这里（V11 N1）。
+        let started = 1_790_176_424_274;
+        let run = scheduler
+            .start_run_at("timed", "20260910", 1, started)
+            .unwrap();
+        assert_eq!(run.started_ts, started);
+        assert_eq!(run.deadline_ts, started + 30_000);
+        assert!(!scheduler
+            .is_timed_out(run.run_id, started + 29_999)
+            .unwrap());
+        assert!(scheduler
+            .is_timed_out(run.run_id, started + 30_000)
+            .unwrap());
+        let timeout = scheduler
+            .mark_timed_out(run.run_id, started + 30_000)
+            .unwrap();
         assert_eq!(timeout.status, JobStatus::NeedsIntervention);
         assert_eq!(timeout.error_code.as_deref(), Some("TIMEOUT"));
-        assert!(!scheduler.is_timed_out(run.run_id, 999).unwrap());
+        assert!(!scheduler
+            .is_timed_out(run.run_id, started + 999_999)
+            .unwrap());
+    }
+
+    #[test]
+    fn sweeping_a_stalled_run_gives_the_concurrency_key_back() {
+        let mut scheduler = Scheduler::default();
+        let mut stalled = job("stalled", vec![]);
+        stalled.timeout_seconds = 1;
+        scheduler.register(stalled).unwrap();
+        let started = 1_000;
+        scheduler
+            .start_run_at("stalled", "20260910", 1, started)
+            .unwrap();
+        // 没人收这一刀时，卡死的运行会把并发键一直占着：之后任何一天的新运行都拿到
+        // NotReady，派发端每一轮都失败一次而状态文件里看不出原因（V11 N2）。
+        assert!(matches!(
+            scheduler.start_run_at("stalled", "20260911", 1, started),
+            Err(SchedulerError::NotReady(_))
+        ));
+        assert!(scheduler.sweep_timed_out(started + 999).unwrap().is_empty());
+        let swept = scheduler.sweep_timed_out(started + 1_000).unwrap();
+        assert_eq!(swept.len(), 1);
+        assert_eq!(swept[0].error_code.as_deref(), Some("TIMEOUT"));
+        let next_day = scheduler
+            .start_run_at("stalled", "20260911", 1, started)
+            .unwrap();
+        assert_eq!(next_day.status, JobStatus::Running);
+        // 第二刀只可能落在新的那条上：已经转成人工接管的运行不会被再次改写。
+        let second = scheduler.sweep_timed_out(started + 9_999).unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].trading_day, "20260911");
     }
 
     #[test]
@@ -1371,10 +1336,12 @@ mod tests {
             output_event_hash: "output".into(),
             runtime_version: "runtime".into(),
         };
-        let outcomes = SchedulerWorker::run_cron_tick_with_manifest(
+        let outcomes = SchedulerWorker::run_cron_tick_with_calendar_and_manifest(
             &mut scheduler,
             &tick,
             "20260910",
+            7,
+            &TradingCalendar::default(),
             &manifest,
             &mut executor,
         )
@@ -1384,10 +1351,12 @@ mod tests {
         let mut invalid = manifest;
         invalid.run_id.clear();
         assert!(matches!(
-            SchedulerWorker::run_cron_tick_with_manifest(
+            SchedulerWorker::run_cron_tick_with_calendar_and_manifest(
                 &mut scheduler,
                 &tick,
                 "20260911",
+                7,
+                &TradingCalendar::default(),
                 &invalid,
                 &mut executor,
             ),
@@ -1526,5 +1495,44 @@ mod tests {
         .unwrap();
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].run.manifest_digest, Some(manifest.digest()));
+    }
+
+    /// 没有这颗收口，库里这份执行面会在一次崩溃之后永久派不动：`start_run_at` 的并发键
+    /// 还被那条 `Running` 占着，整轮以 `NotReady` 结束（V11 N4b，与生产 N2 同一口径）。
+    #[test]
+    fn worker_tick_sweeps_a_run_left_running_by_a_crash() {
+        let mut scheduler = Scheduler::default();
+        let mut stalled = job("stalled-then-cron", vec![]);
+        stalled.trigger = Trigger::Cron("0 9 * * *".into());
+        stalled.timeout_seconds = 1;
+        scheduler.register(stalled).unwrap();
+        let stuck = scheduler
+            .start_run_at("stalled-then-cron", "20260910", 1, 1_000)
+            .unwrap();
+        let mut executor = RecordingExecutor {
+            calls: Vec::new(),
+            fail: false,
+        };
+        let outcomes = SchedulerWorker::run_cron_tick_with_calendar(
+            &mut scheduler,
+            &ScheduleTick {
+                minute: 0,
+                hour: 9,
+                day: 10,
+                month: 9,
+                weekday: 4,
+            },
+            "20260911",
+            3_000,
+            &TradingCalendar::default(),
+            3_000,
+            &mut executor,
+        )
+        .unwrap();
+        assert_eq!(executor.calls, ["stalled-then-cron#1"]);
+        assert_eq!(outcomes.len(), 1);
+        let recovered = scheduler.run(stuck.run_id).unwrap();
+        assert_eq!(recovered.status, JobStatus::NeedsIntervention);
+        assert_eq!(recovered.error_code.as_deref(), Some("TIMEOUT"));
     }
 }

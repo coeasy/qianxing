@@ -179,43 +179,23 @@ pub(crate) fn run() {
             }
         }
         Command::Config { action } => {
-            let validate_path = match &action {
-                Some(ConfigCommand::Validate { path, .. }) => path.clone(),
-                _ => None,
-            };
             let result = match action {
                 Some(ConfigCommand::Explain { path, json }) => {
                     run_config_explain(&path.unwrap_or_else(default_runtime_path), json)
                 }
-                Some(ConfigCommand::Validate { .. }) | None => match read_runtime_config(
-                    &validate_path.clone().unwrap_or_else(default_runtime_path),
-                ) {
-                    Ok(config) => {
-                        let path = validate_path.unwrap_or_else(default_runtime_path);
-                        let (failures, warnings) = validate_runtime_references(&path, &config);
-                        for warning in warnings {
-                            println!("[WARN] {warning}");
-                        }
-                        if failures.is_empty() {
-                            println!("[PASS] config validate 通过: {}", path.display());
-                            Ok(())
-                        } else {
-                            for failure in &failures {
-                                eprintln!("[FAIL] {failure}");
-                            }
-                            Err(format!("配置引用校验失败，共 {} 项", failures.len()))
-                        }
-                    }
-                    Err(error) => Err(error),
-                },
-                Some(ConfigCommand::Fingerprint { path, .. }) => {
-                    run_config_fingerprint(&path.unwrap_or_else(default_runtime_path))
+                Some(ConfigCommand::Validate { path, json }) => {
+                    run_config_validate(&path.unwrap_or_else(default_runtime_path), json)
+                }
+                // 不带子命令的 `config` 与迁移前同义：仍跑 validate，且仍不产出 JSON。
+                None => run_config_validate(&default_runtime_path(), false),
+                Some(ConfigCommand::Fingerprint { path, json }) => {
+                    run_config_fingerprint(&path.unwrap_or_else(default_runtime_path), json)
                 }
                 Some(ConfigCommand::Lock {
                     path,
                     output,
                     force,
-                    ..
+                    json,
                 }) => {
                     let path = path.unwrap_or_else(default_runtime_path);
                     let output = output.unwrap_or_else(|| {
@@ -225,7 +205,7 @@ pub(crate) fn run() {
                             .unwrap_or("qianxing.runtime");
                         path.with_file_name(format!("{stem}.locked.json"))
                     });
-                    run_config_lock(&path, &output, force)
+                    run_config_lock(&path, &output, force, json)
                 }
             };
             if let Err(error) = result {
@@ -315,121 +295,140 @@ pub(crate) fn run() {
             frame,
             spec,
             action,
-        } => match action {
-            None => {
-                if let Err(error) =
-                    run_unified_backtest(runtime.as_deref(), frame.as_deref(), spec.as_deref())
-                {
-                    eprintln!("统一策略回测失败: {error}");
-                    std::process::exit(2);
-                }
+        } => {
+            // 外层三个位置参数只服务"无子命令"的统一回测形态；点了子命令还带着它们，
+            // 说明有一份输入被 clap 绑走却无人使用。宁可退出 2 也不猜用户要哪一份。
+            let ignored: Vec<&str> = [
+                runtime.as_ref().map(|_| "runtime"),
+                frame.as_ref().map(|_| "frame"),
+                spec.as_ref().map(|_| "spec"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            if action.is_some() && !ignored.is_empty() {
+                eprintln!(
+                    "backtest 的子命令自带数据参数，外层的 {} 不参与回测；请删除它们，或改用不带子命令的 `qx-cli backtest <runtime> <frame> [spec]`",
+                    ignored.join("/")
+                );
+                std::process::exit(2);
             }
-            Some(BacktestCommand::Builtin {
-                strategy,
-                frame,
-                spec,
-                quantity,
-                config,
-            }) => {
-                // 命令行型回测入口的 `--config` 与 strategy 回测吃同一份 `strategy.risk_rules`。
-                if let Err(error) = run_builtin_backtest(
-                    &strategy,
-                    &frame,
-                    spec.as_deref(),
-                    quantity.unwrap_or(1),
-                    config.as_deref(),
-                ) {
-                    eprintln!("内置策略回测失败: {error}");
-                    std::process::exit(2);
+            match action {
+                None => {
+                    if let Err(error) =
+                        run_unified_backtest(runtime.as_deref(), frame.as_deref(), spec.as_deref())
+                    {
+                        eprintln!("统一策略回测失败: {error}");
+                        std::process::exit(2);
+                    }
                 }
-            }
-            Some(BacktestCommand::MultiBuiltin {
-                strategy,
-                primary_bar,
-                reference_bar,
-                primary_spec,
-                reference_spec,
-                positional_quantity,
-                quantity,
-                funding_bps,
-                root,
-                config,
-            }) => {
-                let quantity = quantity.or(positional_quantity).unwrap_or(1);
-                if let Err(error) = run_multi_builtin_backtest(
-                    &strategy,
-                    &primary_bar,
-                    &reference_bar,
-                    primary_spec.as_deref(),
-                    reference_spec.as_deref(),
+                Some(BacktestCommand::Builtin {
+                    strategy,
+                    frame,
+                    spec,
                     quantity,
-                    funding_bps.unwrap_or(0),
-                    root.as_deref(),
-                    config.as_deref(),
-                ) {
-                    eprintln!("多腿内置策略回测失败: {error}");
-                    std::process::exit(2);
+                    config,
+                }) => {
+                    // 命令行型回测入口的 `--config` 与 strategy 回测吃同一份 `strategy.risk_rules`。
+                    if let Err(error) = run_builtin_backtest(
+                        &strategy,
+                        &frame,
+                        spec.as_deref(),
+                        quantity.unwrap_or(1),
+                        config.as_deref(),
+                    ) {
+                        eprintln!("内置策略回测失败: {error}");
+                        std::process::exit(2);
+                    }
                 }
-            }
-            Some(BacktestCommand::CcxtBuiltin {
-                ccxt_config,
-                strategy,
-                instrument,
-                start_ms,
-                end_ms,
-                timeframe,
-                spec,
-                quantity,
-                config,
-            }) => {
-                if let Err(error) = run_ccxt_builtin_backtest(
-                    &ccxt_config,
-                    &strategy,
-                    &instrument,
-                    &timeframe,
+                Some(BacktestCommand::MultiBuiltin {
+                    strategy,
+                    primary_bar,
+                    reference_bar,
+                    primary_spec,
+                    reference_spec,
+                    positional_quantity,
+                    quantity,
+                    funding_bps,
+                    root,
+                    config,
+                }) => {
+                    let quantity = quantity.or(positional_quantity).unwrap_or(1);
+                    if let Err(error) = run_multi_builtin_backtest(
+                        &strategy,
+                        &primary_bar,
+                        &reference_bar,
+                        primary_spec.as_deref(),
+                        reference_spec.as_deref(),
+                        quantity,
+                        funding_bps.unwrap_or(0),
+                        root.as_deref(),
+                        config.as_deref(),
+                    ) {
+                        eprintln!("多腿内置策略回测失败: {error}");
+                        std::process::exit(2);
+                    }
+                }
+                Some(BacktestCommand::CcxtBuiltin {
+                    ccxt_config,
+                    strategy,
+                    instrument,
                     start_ms,
                     end_ms,
-                    spec.as_deref(),
-                    quantity.unwrap_or(1),
-                    config.as_deref(),
-                ) {
-                    eprintln!("CCXT 内置策略回测失败: {error}");
-                    std::process::exit(2);
+                    timeframe,
+                    spec,
+                    quantity,
+                    config,
+                }) => {
+                    if let Err(error) = run_ccxt_builtin_backtest(
+                        &ccxt_config,
+                        &strategy,
+                        &instrument,
+                        &timeframe,
+                        start_ms,
+                        end_ms,
+                        spec.as_deref(),
+                        quantity.unwrap_or(1),
+                        config.as_deref(),
+                    ) {
+                        eprintln!("CCXT 内置策略回测失败: {error}");
+                        std::process::exit(2);
+                    }
                 }
-            }
-            Some(BacktestCommand::Book {
-                fill_tier,
-                root,
-                strategy,
-                frame,
-                spec,
-                quantity,
-                fee_bps,
-                market_impact_bps,
-                latency_snapshots,
-                config,
-            }) => {
-                if let Err(error) = run_depth_backtest(
-                    &fill_tier,
-                    &strategy,
-                    &frame,
-                    spec.as_deref(),
-                    quantity.unwrap_or(1),
-                    // 缺省时由深度入口向成本绑定要费率（Q0c）：命令行 > 成本规则文件 > 内核默认。
+                Some(BacktestCommand::Book {
+                    fill_tier,
+                    root,
+                    strategy,
+                    frame,
+                    spec,
+                    quantity,
                     fee_bps,
-                    // 缺省的全 0 与不点名旗标同口径：撮合行为不变，描述子照常写出。
-                    DepthExecutionModel {
-                        latency_snapshots: latency_snapshots.unwrap_or(0),
-                        market_impact_bps: market_impact_bps.unwrap_or(0),
-                    },
-                    &root,
-                    config.as_deref(),
-                ) {
-                    eprintln!("深度档位回测失败: {error}");
-                    std::process::exit(2);
+                    market_impact_bps,
+                    latency_snapshots,
+                    config,
+                }) => {
+                    if let Err(error) = run_depth_backtest(
+                        &fill_tier,
+                        &strategy,
+                        &frame,
+                        spec.as_deref(),
+                        quantity.unwrap_or(1),
+                        // 缺省时由深度入口向成本绑定要费率（Q0c）：命令行 > 成本规则文件 > 内核默认。
+                        fee_bps,
+                        // 缺省的全 0 与不点名旗标同口径：撮合行为不变，描述子照常写出。
+                        DepthExecutionModel {
+                            latency_snapshots: latency_snapshots.unwrap_or(0),
+                            market_impact_bps: market_impact_bps.unwrap_or(0),
+                        },
+                        &root,
+                        config.as_deref(),
+                    ) {
+                        eprintln!("深度档位回测失败: {error}");
+                        std::process::exit(2);
+                    }
                 }
             }
-        },
+        }
         Command::BuiltinStrategies => print_builtin_strategies(),
         Command::FastBacktest { manifest } => {
             if let Err(error) = run_fast_backtest_manifest(&manifest) {

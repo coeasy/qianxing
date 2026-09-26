@@ -415,3 +415,68 @@ fn execution_risk_limits_require_a_frozen_instrument_spec() {
     config.workers.last_mut().unwrap().instrument_spec_path = Some("market-spec.json".into());
     assert!(config.validate().is_ok());
 }
+
+/// E1：`environment` 过去只有"非空"一条判据，而十余处硬风控去比较 `production`
+/// 字面量。`prod` 这类拼错值既能通过校验、又被读成非 production，于是订单名义额
+/// 上限、冻结规格、C ABI 签名、研究快照一并静默失效，而 `config validate` 打印 [PASS]。
+#[test]
+fn runtime_environment_must_come_from_the_closed_vocabulary() {
+    let base = config();
+    assert_eq!(base.environment_kind(), Some("paper"));
+    assert!(!base.is_production());
+
+    let mut typo = config();
+    typo.environment = "prod".into();
+    assert!(!typo.is_production());
+    let error = typo
+        .validate()
+        .expect_err("词表外的 environment 必须被拒绝");
+    assert!(
+        error.contains("production / paper / sandbox / testnet"),
+        "{error}"
+    );
+    assert!(error.contains("\"prod\""), "{error}");
+
+    // 空与纯空白仍走原有措辞：收紧词表不得把这条既有判定换成新句子。
+    for blank in ["", "   "] {
+        let mut probe = config();
+        probe.environment = blank.into();
+        assert!(
+            probe.validate().unwrap_err().contains("不能为空"),
+            "{blank:?}"
+        );
+    }
+    // 词表内四个值都不该撞上词表判定（production 自身撞的是明文 API 那条）。
+    for name in RUNTIME_ENVIRONMENTS {
+        let mut probe = config();
+        probe.environment = name.into();
+        assert_eq!(probe.environment_kind(), Some(name), "{name}");
+        assert!(!probe.is_production() || name == "production", "{name}");
+        if let Err(error) = probe.validate() {
+            assert!(!error.contains("之一，当前为"), "{name} => {error}");
+        }
+    }
+}
+
+/// 归一化只做大小写与首尾空白：既不能把 `" Production "` 挡在词表外，也不能把它
+/// 读成非 production —— 两种拼法必须命中同一条闸门、给出同一条错误。
+#[test]
+fn environment_spelling_variants_hit_the_same_production_gates() {
+    let mut exact = config();
+    exact.environment = "production".into();
+    let expected = exact
+        .validate()
+        .expect_err("精确拼写必须按 production 校验");
+
+    for variant in ["PRODUCTION", " production ", "Production\t"] {
+        let mut probe = config();
+        probe.environment = variant.into();
+        assert!(probe.is_production(), "{variant:?} 必须按 production 判定");
+        assert_eq!(probe.environment_kind(), Some("production"), "{variant:?}");
+        assert_eq!(
+            probe.validate().unwrap_err(),
+            expected,
+            "{variant:?} 必须命中与精确拼写同一条闸门"
+        );
+    }
+}

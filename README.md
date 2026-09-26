@@ -28,14 +28,14 @@
 
 | 模块 | 职责 |
 |---|---|
-| `qx-core` **牵星** | 确定性内核：时钟、因果事件队列、事件溯源、重放校验，以及 `VenueId` / `InstrumentId` / `MarketId` / `CanonicalProduct` 身份契约；内含 **分野** `fenye` 模块（合约规格与市场状态分离、符号映射只增不覆盖） |
+| `qx-core` **牵星** | 确定性内核：事件溯源、重放校验，以及 `VenueId` / `InstrumentId` / `MarketId` / `CanonicalProduct` 身份契约 |
 | `qx-guanxing` **观星** | 数据平面：`DataSourceId`、质量门、标准化、`as_of()` point-in-time 可见性 |
 | `qx-data` | 多资产数据基础设施：统一市场数据契约、目录、摄取与增量管道（提供方不进内核） |
 | `qx-xingban` **星板** | Bar/L1 Tick/L2 订单簿撮合与仿真：成本、延迟、保证金、因果回测 |
 | `qx-zhenlu` **针路** | 执行与路由：风控门禁、OMS、路由决策 |
 | `qx-risk` | 风控规则集：`RiskRule`（禁空 / 最大数量 / 最大名义）与保守默认规则集版本 |
 | `qx-genglu` **更路** | 审计与对账：绩效指标、归因、订单对账 |
-| `qx-plugin` **卯眼/榫头** | 能力清单注册表：manifest schema/哈希校验与 Ed25519 签名、扩展点贡献声明、独占冲突检测、依赖求解、Profile/Bundle/Patch 静态装配计划（不含运行时动态加载） |
+| `qx-plugin` **卯眼/榫头** | 能力清单注册表：manifest schema/哈希校验、`fnv1a` 自检签名、扩展点贡献声明、独占冲突检测、依赖求解（Ed25519 未接线、静态装配计划未接线、生命周期超时未接线；不含运行时动态加载） |
 | `qx-factor` | 因子与特征：版本、PIT 工件、分析报告、候选策略绑定 |
 | `qx-protocol` | 账户协议：Canonical Snapshot、Diff、QIFI 兼容边界 |
 | `qx-provider` | 数据提供方：能力矩阵、稳定选择、主备故障切换 |
@@ -229,11 +229,16 @@ Windows 下可直接双击 `build.bat`。
 
 1. **热路径不用浮点** —— 金额/价格/数量一律 128-bit 定点（`SCALE = 1e9`）。
    IEEE-754 的 NaN 位模式不确定，会直接破坏 bit-level 可重放。
-2. **不用系统时间** —— 回测只认 `TestClock`，时间只在 `advance_to` 时前进。
+2. **时间轴由推进方决定** —— 内核里没有时钟对象（曾有一份 `TestClock`，全仓无人接线，V11 P2 已删）。
+   回测的时间取自 bar 序列（`qx-xingban`），实盘的时间取自交易所/进程戳（`qx-runtime`），
+   两条路径都把时间随事件写进 `EventLog`，重放只认落盘的那一列，从不读系统时间。
 3. **不用无序容器做顺序敏感迭代** —— 顺序敏感处一律 `BTreeMap` / `Vec` + 排序。
 4. **不用 `DefaultHasher` 做摘要** —— 其输出不保证跨版本稳定，改用内置 FNV-1a。
 5. **不用外部 RNG** —— `rand` 实现细节可能随版本变化，自实现 xorshift64\* 锁定种子语义。
-6. **同时间戳按因果优先级排序** —— 不是任意顺序。`MARKET < COMMAND < MATCH < APPLY < POST`。
+6. **同时间戳按因果优先级排序** —— 不是任意顺序。`TIMER < FEEDBACK < MARKET < COMMAND < MATCH < APPLY < POST`
+   （`qx-core/src/event.rs` 的 `Priority`）。这条序不是靠一个可乱序的调度队列维持的，而是长在写入处：
+   `EventLog` 按 `(ts, prio, seq)` 单调落盘，`(ts, prio)` 不比上一格靠后就先把引擎时间推进一格
+   （`qx-runtime/src/pipeline.rs` 的 `append_at_engine`），因此重放读到的顺序就是当时决定的顺序。
 7. **bar t 决策，bar t+1 开盘成交** —— 从结构上杜绝 cheat-on-close。
 8. **只读投影不做第二个事实源** —— API、状态查看与任何前端只消费 EventLog 派生的快照与游标，
    写操作一律经 `ControlPlane` 落审计后再进内核；投影不得回写交易状态。
@@ -292,8 +297,16 @@ Paper 主链路还提供 `paper-e2e` 统一验收入口，按 Scheduler→Strate
 
 三条容易被读过头的边界，写在这里而不是散落在阶段表里：
 
-- **插件只有启动期装配**：`qx-plugin` 做 manifest schema/哈希校验与 Ed25519 签名验证、扩展点贡献声明、
-  独占冲突检测、依赖求解并产出静态装配计划；运行时动态加载与热替换**没有实现**，内核组件由编译期决定。
+- **插件只有启动期装配，签名只接到了一半**：`qx-plugin` 做 manifest schema/哈希校验、扩展点贡献声明、
+  独占冲突检测与依赖求解；`qx verify` 注册的清单用 `sign()` 打 `fnv1a:` 自检签名，这一条是接到的。
+  **Ed25519 未接线**：`sign_ed25519`（`crates/qx-plugin/src/lib.rs:261`）与 `Manifest::validate` 里的
+  `ed25519:` 校验分支在全部 crate 的生产文本里零调用点，仓里没有第二个生产者，所以"卯眼清单可离线验证
+  发布签名"今天不成立 —— 也别与 C ABI 那条**接到的** Ed25519 混读：动态库字节的 detached 签名由
+  `qx-strategy` 校验、production 配置强制公钥与签名成对填写。静态装配计划同样未接线：
+  `bootstrap_plan`（:44）与 `Profile::assemble`（:440）零生产调用点。两颗生命周期超时也一样：
+  `healthcheck_timeout_ms` 与 `shutdown_timeout_ms` 是未接线的声明——只被 `validate` 问非 0、被
+  `canonical_hash` 计入，仓里没有插件宿主把它们换算成等待（区别于 `qx-orchestrator` 那份同名配置，它从 V11 L4
+  起真的界住了收尾）。运行时动态加载与热替换则没有实现，内核组件由编译期决定。
 - **回测与实盘同源的是规则，不是撮合**：风控、费用、延迟、保证金四模型与事件归约同源且有门禁；
   撮合按数据档位分内核（Bar / Tick / 订单簿三套回测内核，Paper 成交由 `PaperVenue::on_quote` 首档 touch 产生），
   与回测簿内核**不是**同一台撮合机 —— 读到"同一内核"时不要把"同一撮合"一起读进去。

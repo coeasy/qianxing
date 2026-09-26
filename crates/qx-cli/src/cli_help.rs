@@ -23,12 +23,12 @@ pub(crate) fn print_cli_help() {
       因此不判运行健康，也不连接交易所、不发送订单。
   config explain [runtime.json] [--json]
       输出有效配置摘要或机器可读配置；只显示凭据引用，不显示密钥内容。
-  config validate [runtime.json]
-      校验配置和所有已配置的本地文件引用。
-  config fingerprint [runtime.json]
-      输出不含 config_fingerprint 字段自身的稳定配置指纹。
-  config lock <runtime.json> [output.json] [--force]
-      生成带发布指纹锁的配置副本，不读取或输出密钥内容。
+  config validate [runtime.json] [--json]
+      校验配置和所有已配置的本地文件引用；--json 输出结论数组供脚本消费。
+  config fingerprint [runtime.json] [--json]
+      输出不含 config_fingerprint 字段自身的稳定配置指纹；--json 另给出是否已锁定。
+  config lock <runtime.json> [output.json] [--force] [--json]
+      生成带发布指纹锁的配置副本，不读取或输出密钥内容；--json 回报落盘路径与指纹。
   run <backtest|paper|paper-check|doctor|live-check|runtime-check|report> [参数...]
       统一执行常用安全入口；paper 只运行本地 Paper 验收，不发送真实订单。
   status [runtime.json] [--json]

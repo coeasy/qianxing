@@ -115,6 +115,11 @@ jobs:
           - postgres
           - nats
           - postgres,nats
+          # deploy/README.md 让实盘部署构建这一组合，而它是矩阵里唯一带着
+          # `#[cfg(all(feature = "sqlite", feature = "nats"))]` 的那一支（qx-cli main.rs
+          # 的 Sqlite*Store 导入与 event_pipeline 的 SQLite 分支只在这里编译）。
+          # 不列进来，生产构建线就永远没有 CI 走过（V11 M3）。
+          - nats,postgres,sqlite
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

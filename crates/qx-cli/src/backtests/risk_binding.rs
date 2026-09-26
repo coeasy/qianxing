@@ -43,6 +43,20 @@ pub(crate) fn backtest_risk_binding(
         });
     };
     let config = read_runtime_config(path)?;
+    unapplied_strategy_declaration(&config, "risk_rules", |strategy| {
+        strategy
+            .risk_rules
+            .as_ref()
+            .map(|rules| format!("{rules:?}"))
+    })?;
+    // 同一处读点还顺带取走保证金模式与做空许可：它们与 `risk_rules` 一起构成风控门的三条
+    // 声明，漏掉任何一条都是"实例里写了、门禁按顶层判"。
+    unapplied_strategy_declaration(&config, "margin_mode", |strategy| {
+        strategy.margin_mode.map(|mode| format!("{mode:?}"))
+    })?;
+    unapplied_strategy_declaration(&config, "allow_short", |strategy| {
+        strategy.allow_short.map(|flag| flag.to_string())
+    })?;
     Ok(BacktestRiskBinding {
         rules: config.strategy.risk_rules.clone(),
         allow_short: strategy_allows_short(&config, config_margin_mode(&config)),

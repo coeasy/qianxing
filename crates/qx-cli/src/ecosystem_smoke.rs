@@ -247,25 +247,45 @@ pub(crate) fn run_ecosystem_smoke() {
             job_version: "v1".into(),
             owner: "research".into(),
             enabled: true,
-            trigger: Trigger::TradingCalendar {
-                session: "post-close".into(),
-            },
-            window: JobWindow::PostClose,
+            trigger: Trigger::Cron("0 9 * * 1-5".into()),
+            window: JobWindow::Any,
             depends_on: vec![],
-            input_refs: vec![],
-            output_refs: vec!["bars".into()],
             timeout_seconds: 60,
             retry_policy: RetryPolicy::default(),
             concurrency_key: "data".into(),
             idempotency_key: "load-bars-daily".into(),
-            permission_scope: "research".into(),
             audit_reason: "ecosystem smoke schedule".into(),
             dry_run: true,
         })
         .unwrap();
-    assert_eq!(scheduler.ready_jobs(&BTreeSet::new()).len(), 1);
+    // 自检问的必须是派发器问的那三个问题：这份声明在注册表面上派发得到吗（
+    // `undispatchable_by_registry`，与 `config validate` 共用同一颗判据）、依赖满足了吗、
+    // 到点吗（`due_jobs_with_calendar`，运行时真正走的那一颗）。只数 `ready_jobs` 会在
+    // "声明根本触发不了"的夹具上照样报 ready=1（V11 O3）。
+    let registered = scheduler.ready_jobs(&BTreeSet::new());
+    assert_eq!(registered.len(), 1);
+    assert_eq!(
+        qx_scheduler::undispatchable_by_registry(registered[0]),
+        None
+    );
+    let due = scheduler
+        .due_jobs_with_calendar(
+            &ScheduleTick {
+                minute: 0,
+                hour: 9,
+                day: 10,
+                month: 9,
+                weekday: 4,
+            },
+            "20260910",
+            1_000,
+            &qx_scheduler::TradingCalendar::default(),
+            &BTreeSet::new(),
+        )
+        .unwrap();
+    assert_eq!(due.len(), 1);
     println!(
-        "[调度 · JobSpec] jobs={} ready=1 deterministic ✓",
+        "[调度 · JobSpec] jobs={} ready=1 due=1 dispatchable ✓",
         scheduler.len()
     );
 

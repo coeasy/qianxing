@@ -765,3 +765,56 @@ fn the_cross_language_sample_is_what_the_writer_emits() {
         "夹具必须由写侧原样产出：改了编码就重新产出夹具，不要手抄一份近似形状"
     );
 }
+
+/// 行内自指 id 不进 `state_hash`（V11 R7-3）：哈希只写 orders/fills/transfers 的 u64 **键**
+/// 与行内的 `client_order_id`/`order_id`（外键），`order_id`/`fill_id`/`transfer_id` 三格是盲区。
+/// 所以一份改过行内 id 的快照连同它自己的哈希仍然自洽，`validate()` 是唯一一条防线。
+/// 这里逐表钉两层：篡改后哈希一字未动（证明约束不是装饰，哈希校验抓不到它），
+/// 且校验必须点名自己的表与那一对键/行内 id——把 `check_keys` 的表名或取字段抄错都会红。
+#[test]
+fn key_tables_reject_rows_whose_inline_id_disagrees_with_their_key() {
+    let pristine = cross_language_sample();
+    pristine
+        .validate()
+        .expect("键与行内 id 一致的快照必须通过校验");
+
+    let cases: [(&str, u64, fn(&mut AccountSnapshot) -> u64); 3] = [
+        ("order", 77, |snapshot| {
+            let row = snapshot.orders.get_mut(&77).expect("样本有一行订单");
+            row.order_id += 1;
+            row.order_id
+        }),
+        ("fill", 9, |snapshot| {
+            let row = snapshot.fills.get_mut(&9).expect("样本有一行成交");
+            row.fill_id += 1;
+            row.fill_id
+        }),
+        ("transfer", 3, |snapshot| {
+            let row = snapshot.transfers.get_mut(&3).expect("样本有一行划转");
+            row.transfer_id += 1;
+            row.transfer_id
+        }),
+    ];
+    for (table, key, tamper) in cases {
+        let mut tampered = pristine.clone();
+        let id = tamper(&mut tampered);
+        assert_eq!(
+            tampered.state_hash(),
+            pristine.state_hash(),
+            "{table} 的行内 id 不在 state_hash 里：哈希校验抓不到这次篡改，{table} 表必须靠 validate 兜住"
+        );
+        tampered.seal();
+        let error = tampered
+            .validate()
+            .expect_err("行内 id 与键不一致的快照不能通过校验");
+        let qx_protocol::ProtocolError::Invalid(message) = error else {
+            panic!("{table} 表的篡改必须报 Invalid，实际是 {error:?}");
+        };
+        assert!(
+            message.contains(table)
+                && message.contains(&format!("键 {key}"))
+                && message.contains(&format!("id {id}")),
+            "{table} 表必须被点名拒绝并带出那一对键/行内 id，实际文案: {message}"
+        );
+    }
+}

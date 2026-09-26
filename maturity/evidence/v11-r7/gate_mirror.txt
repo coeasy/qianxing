@@ -1,0 +1,24 @@
+######## 台账 maturity/capabilities.yaml: 引用 257（地板 90）带名绑定 95（地板 20）史钉 0 行
+  -- MISSING: 0
+  -- MISALIGNED: 0
+  -- OUT-OF-RANGE: 0
+  -- BLANK: 0
+  -- WRONG-SYMBOL: 0
+######## V11 方案书 docs/自研量化框架重构方案-V11.md: 引用 775（地板 580）带名绑定 84（地板 50）史钉 22 行
+  -- MISSING: 0
+  -- MISALIGNED: 0
+  -- OUT-OF-RANGE: 0
+  -- BLANK: 0
+  -- WRONG-SYMBOL: 0
+######## 变更日志 CHANGELOG.md: 引用 267（地板 220）带名绑定 36（地板 25）史钉 7 行
+  -- MISSING: 0
+  -- MISALIGNED: 0
+  -- OUT-OF-RANGE: 0
+  -- BLANK: 0
+  -- WRONG-SYMBOL: 0
+######## 安全白皮书 docs/SECURITY.md: 引用 483（地板 410）带名绑定 74（地板 60）史钉 0 行
+  -- MISSING: 0
+  -- MISALIGNED: 0
+  -- OUT-OF-RANGE: 0
+  -- BLANK: 0
+  -- WRONG-SYMBOL: 0

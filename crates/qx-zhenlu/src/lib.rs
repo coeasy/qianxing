@@ -1015,28 +1015,21 @@ impl SpreadOrderGroupStore for FileSpreadOrderGroupStore {
             .validate_persisted()
             .map_err(|error| format!("保存多腿状态前校验失败: {error:?}"))?;
         let path = self.path_for(&group.group_id)?;
-        let lock_path = self.lock_path();
-        let _lock = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
+        // 写锁交给 qx-core::file_lock：进程被杀留下的 `.spread-groups.lock` 在旧实现里会让
+        // 多腿状态此后每一次写入都失败，且错误只有一句 OS 文案（V11 §40 D1）。
+        let _lock = qx_core::FileLock::acquire(self.lock_path())
             .map_err(|error| format!("获取多腿状态写锁失败: {error}"))?;
-        let result = (|| {
-            let payload = serde_json::to_vec_pretty(group)
-                .map_err(|error| format!("序列化多腿状态失败: {error}"))?;
-            let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
-            std::fs::write(&temporary, payload)
-                .map_err(|error| format!("写入多腿状态临时文件失败: {error}"))?;
-            if let Err(error) = std::fs::rename(&temporary, &path) {
-                let _ = std::fs::remove_file(&path);
-                std::fs::rename(&temporary, &path)
-                    .map_err(|replacement| format!("替换多腿状态失败: {error}; {replacement}"))?;
-            }
-            Ok::<(), String>(())
-        })();
-        drop(_lock);
-        let _ = std::fs::remove_file(lock_path);
-        result
+        let payload = serde_json::to_vec_pretty(group)
+            .map_err(|error| format!("序列化多腿状态失败: {error}"))?;
+        let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
+        std::fs::write(&temporary, payload)
+            .map_err(|error| format!("写入多腿状态临时文件失败: {error}"))?;
+        if let Err(error) = std::fs::rename(&temporary, &path) {
+            let _ = std::fs::remove_file(&path);
+            std::fs::rename(&temporary, &path)
+                .map_err(|replacement| format!("替换多腿状态失败: {error}; {replacement}"))?;
+        }
+        Ok(())
     }
 
     fn delete(&mut self, group_id: &str) -> Result<(), String> {
@@ -1227,7 +1220,9 @@ impl PaperVenue {
         }
     }
 
-    /// 当前费用模型描述子，用于运行清单与配置校验的可观测性。
+    /// 当前费用模型描述子。`fee_model` 是私有字段，这一颗是它在仓内唯一的公开出口，
+    /// 但运行清单与配置校验都不读它——只有用例点过名（V11 R7-6 登记为未接线的唯一写法；
+    /// 此前这句注释替一条并不存在的消费作保）。
     pub fn fee_descriptor(&self) -> String {
         self.fee_model.descriptor()
     }
@@ -1263,14 +1258,6 @@ impl PaperVenue {
         self.connected = true;
         self.state = ConnectorState::Snapshotting;
         self.reconnects += 1;
-    }
-
-    pub fn complete_reconcile(&mut self) -> QxResult<()> {
-        if !self.connected || !matches!(self.state, ConnectorState::Snapshotting) {
-            return Err(QxError::VenueState("当前不在重连对账阶段".into()));
-        }
-        self.state = ConnectorState::Live;
-        Ok(())
     }
 
     pub fn reconcile_snapshot(

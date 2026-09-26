@@ -4,8 +4,17 @@
 //! 是两份手抄（谁都不是权威），而两份都漏掉了写侧真实印出的八个钱字段。收口方式是在
 //! 编译期只留一份文本（常量 `include_str!` 那个文件），再把"契约说的"与"两侧做的"逐个对齐：
 //! 声明的键集合 = 写侧产物的键集合、未算的钱仍然是 `null`、读侧按 `const` 的版本号收口。
+//!
+//! V11 R4-4 补上后半：外层对齐了，嵌套层却仍然只写着"这是对象"。照那份契约校验通过的载荷，
+//! 喂进自家 `from_json` 会撞在 `missing field` 上（`header.trading_day` 就是漏掉的那一格），
+//! 所以下面三条把嵌套行逐格钉住：必填 = 写侧印出的键集合、读侧拒缺席的每一格都必须在必填名单里、
+//! 四张键表的键形状就是读侧认的那一条。
 
-use qx_protocol::{AccountSnapshot, ACCOUNT_SNAPSHOT_JSON_SCHEMA, ACCOUNT_SNAPSHOT_SCHEMA_VERSION};
+use qx_core::{InstrumentId, OrderStatus, Side};
+use qx_protocol::{
+    AccountSnapshot, FillSnapshot, OrderSnapshot, PositionSnapshot, TransferSnapshot,
+    ACCOUNT_SNAPSHOT_JSON_SCHEMA, ACCOUNT_SNAPSHOT_SCHEMA_VERSION,
+};
 use serde_json::Value;
 
 /// 写侧真实产出的那一份快照（V11 R18 的地面真值夹具，由 `to_json` 原样产出）。
@@ -331,6 +340,316 @@ fn schema_frame_matches_the_protocol_it_describes() {
         assert!(
             header_required.contains(&key.to_string()),
             "header 的契约里没有 {key}，而读模型每天都在印它"
+        );
+    }
+}
+
+/// 六张嵌套表在契约里的落点。四张键表（持仓/订单/成交/划转）的行声明住在自己的
+/// `additionalProperties` 里，`header` 与 `reconcile` 直接住在 `properties` 下。
+/// 第二个成员说"这是一张键表"。
+const NESTED_TABLES: [(&str, bool); 6] = [
+    ("header", false),
+    ("positions", true),
+    ("orders", true),
+    ("fills", true),
+    ("transfers", true),
+    ("reconcile", false),
+];
+
+fn sorted(mut names: Vec<String>) -> Vec<String> {
+    names.sort();
+    names
+}
+
+fn row_declaration<'a>(contract: &'a Value, table: &str, keyed: bool) -> &'a Value {
+    let declared = &contract["properties"][table];
+    if keyed {
+        &declared["additionalProperties"]
+    } else {
+        declared
+    }
+}
+
+/// 某一行的必填名单。少了这个数组就等于契约退回"只说这是个对象"。
+fn required_names(declaration: &Value, path: &str) -> Vec<String> {
+    let listed = declaration.get("required").unwrap_or_else(|| {
+        panic!("{path} 在契约里没有 required：这一格又退回了「只说这是个对象」")
+    });
+    sorted(string_array(listed))
+}
+
+/// 写侧文档里某张表的那一行：键表取它唯一的成员，`header`/`reconcile` 本身就是那一行。
+fn row_of<'a>(document: &'a Value, table: &str, keyed: bool) -> &'a Value {
+    if !keyed {
+        return &document[table];
+    }
+    let rows = document[table].as_object().expect("键表必须是 JSON object");
+    assert_eq!(
+        rows.len(),
+        1,
+        "{table} 里只该有一行，键集合才是从写侧现读出来的那一份"
+    );
+    rows.values().next().expect("键表有一行")
+}
+
+/// 契约里某一格声明的 JSON 类型集合。只有 `enum` 而没有 `type` 的声明返回空集，
+/// 由 `assert_shape` 走词表那一支。
+fn declared_types(declaration: &Value) -> Vec<&str> {
+    match &declaration["type"] {
+        Value::String(name) => vec![name.as_str()],
+        Value::Array(items) => items
+            .iter()
+            .map(|item| item.as_str().expect("type 的数组项必须是字符串"))
+            .collect(),
+        Value::Null => Vec::new(),
+        other => panic!("契约里的 type 声明形状不认识: {other}"),
+    }
+}
+
+/// 写侧印出的这一格是什么 JSON 类型。`state_hash` 落在 u64 那一侧（`Value` 容不下超过
+/// i64 的整数），所以"整数"要同时认 i64 与 u64。
+fn printed_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+        Value::Number(number) if number.is_i64() || number.is_u64() => "integer",
+        Value::Number(_) => "number",
+    }
+}
+
+/// 逐格比"契约声明的形状"与"写侧印出的那一份值"，对象格往里再走一层（`instrument` 就是对象）。
+fn assert_shape(path: &str, declaration: &Value, value: &Value, contract: &Value) {
+    let declaration = match declaration.get("$ref").and_then(Value::as_str) {
+        Some(reference) => {
+            let name = reference
+                .strip_prefix("#/$defs/")
+                .unwrap_or_else(|| panic!("不支持的 $ref 写法: {reference}"));
+            &contract["$defs"][name]
+        }
+        None => declaration,
+    };
+    if let Some(vocabulary) = declaration.get("enum").and_then(Value::as_array) {
+        assert!(
+            vocabulary.contains(value),
+            "{path} 印出的是 {value}，不在契约声明的词表 {vocabulary:?} 里"
+        );
+        return;
+    }
+    let types = declared_types(declaration);
+    assert!(
+        !types.is_empty(),
+        "{path} 在契约里既没有 type 也没有 enum：这一格等于没约束"
+    );
+    let printed = printed_type(value);
+    assert!(
+        types.contains(&printed),
+        "{path} 印出的是 {printed}，契约声明的却是 {types:?}"
+    );
+    if printed != "object" {
+        return;
+    }
+    assert_eq!(
+        required_names(declaration, path),
+        keys_of(value),
+        "{path} 的契约必填集合与写侧印出的键集合分叉了"
+    );
+    for (key, child) in value.as_object().expect("对象格") {
+        let child_declaration = &declaration["properties"][key];
+        assert!(
+            !child_declaration.is_null(),
+            "{path}.{key} 写侧印得出，契约里却没有这一格声明"
+        );
+        assert_shape(&format!("{path}.{key}"), child_declaration, child, contract);
+    }
+}
+
+/// 写侧此刻真实印出的那一份文档：四张键表各有且只有一行，八个汇总钱字段里只算权益。
+///
+/// 这里不用仓库里那份跨语言夹具——夹具是签进来的字节，写侧改坏时它不会自己跟着动，
+/// 而这一条要比的正是"契约说的形状 = 写侧印的形状"。
+fn writer_document() -> Value {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").expect("夹具标的合法");
+    let mut snapshot = AccountSnapshot::new(21, "main", "default", "BINANCE", 10);
+    snapshot.cash_raw.insert("USDT".to_string(), 1_000);
+    snapshot.equity_raw = Some(1_000);
+    snapshot.positions.insert(
+        instrument.clone(),
+        PositionSnapshot {
+            instrument: instrument.clone(),
+            quantity_raw: 3,
+            today_quantity_raw: 3,
+            average_price_raw: 101,
+            mark_price_raw: 105,
+            unrealized_pnl_raw: None,
+            margin_raw: None,
+        },
+    );
+    snapshot.orders.insert(
+        77,
+        OrderSnapshot {
+            order_id: 77,
+            client_order_id: 77,
+            instrument: instrument.clone(),
+            side: Side::Sell,
+            quantity_raw: 2,
+            filled_raw: 1,
+            status: OrderStatus::Accepted,
+        },
+    );
+    snapshot.fills.insert(
+        9,
+        FillSnapshot {
+            fill_id: 9,
+            order_id: 77,
+            quantity_raw: 1,
+            price_raw: 99,
+            fee_raw: 1,
+            ts: 1_234,
+        },
+    );
+    snapshot.transfers.insert(
+        3,
+        TransferSnapshot {
+            transfer_id: 3,
+            currency: "USDT".to_string(),
+            amount_raw: 5,
+            ts: 4_321,
+        },
+    );
+    snapshot.seal();
+    let encoded = snapshot.to_json();
+    AccountSnapshot::from_json(&encoded).expect("写侧刚印出的文档必须先被自家读侧解开");
+    serde_json::from_str(&encoded).expect("写侧产物必须是合法 JSON")
+}
+
+/// 外层只声明"这是对象"的契约，对嵌套层是什么都没说：客户端照它校验通过的载荷，喂给自家
+/// `from_json` 会撞在 `missing field` 上（V11 R4-4）。收口方式与顶层同一条纪律——必填名单
+/// 逐项等于写侧印出的键集合，形状逐格比到 `instrument` 那一层，两边都不许手抄。
+#[test]
+fn nested_rows_declare_exactly_the_keys_the_writer_prints() {
+    let contract = schema();
+    let document = writer_document();
+    for (table, keyed) in NESTED_TABLES {
+        let declaration = row_declaration(&contract, table, keyed);
+        let row = row_of(&document, table, keyed);
+        let emitted = keys_of(row);
+        assert_eq!(
+            required_names(declaration, table),
+            emitted,
+            "{table} 的契约必填集合必须正好等于写侧印出的键集合：少一格，照契约写的载荷会被\
+             自家读侧按缺字段拒掉；多一格，就是把没印的字段说成契约"
+        );
+        for key in &emitted {
+            let field = &declaration["properties"][key];
+            assert!(
+                !field.is_null(),
+                "{table}.{key} 是写侧每天印出的一格，契约里却没有它的声明"
+            );
+            assert_shape(&format!("{table}.{key}"), field, &row[key], &contract);
+        }
+    }
+}
+
+/// 契约里那些"必填"是否真是读侧非要不可的：把写侧文档逐格掏空喂回 `from_json`，读侧按
+/// `missing field` 拒的那一格必须出现在契约的必填名单里。方向只有一个——契约比读侧宽松，
+/// 就是"合规但解不开"，而这条正是 R4-4 之前的现状（`header.trading_day` 缺席照样合规）。
+#[test]
+fn nested_required_lists_cover_every_key_the_reader_cannot_default() {
+    let contract = schema();
+    let document = writer_document();
+    for (table, keyed) in NESTED_TABLES {
+        let declared = required_names(row_declaration(&contract, table, keyed), table);
+        let emitted = keys_of(row_of(&document, table, keyed));
+        let mut demanded: Vec<String> = Vec::new();
+        for key in &emitted {
+            let mut probe = document.clone();
+            let row = if keyed {
+                let rows = probe[table].as_object_mut().expect("键表必须是对象");
+                let only = rows.keys().cloned().collect::<Vec<String>>();
+                rows.get_mut(&only[0])
+                    .expect("键表的那一行")
+                    .as_object_mut()
+                    .expect("行必须是对象")
+            } else {
+                probe[table].as_object_mut().expect("行必须是对象")
+            };
+            row.remove(key);
+            match AccountSnapshot::from_json(&probe.to_string()) {
+                Ok(_) => {}
+                Err(qx_protocol::ProtocolError::Serialization(message)) => {
+                    assert!(
+                        message.contains("missing field"),
+                        "{table}.{key} 缺席时读侧给的是解析错误而不是缺字段，探针分不出这一格: {message}"
+                    );
+                    demanded.push(key.clone());
+                }
+                Err(error) => panic!(
+                    "{table}.{key} 缺席时读侧给出的不是缺字段而是 {error:?}——掏空一格改动了\
+                     状态哈希，这一格的探针得换个夹具"
+                ),
+            }
+        }
+        assert!(
+            !demanded.is_empty(),
+            "{table} 一格都没被读侧按缺字段拒绝：这张表的探针是空转"
+        );
+        let uncovered = demanded
+            .iter()
+            .filter(|key| !declared.contains(key))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            uncovered.is_empty(),
+            "{table} 的 {uncovered:?} 读侧按 missing field 拒绝，契约却没说必填——第三方照契约\
+             写的载荷会被自家读侧拒掉"
+        );
+    }
+}
+
+/// 四张键表的**键**本身也是契约的一部分：R14 那一次写侧把 `orders` 的键印成裸数字，产物
+/// 根本不是合法 JSON。契约现在逐表声明 `propertyNames`，这一条钉"声明的那条规则就是读侧
+/// 真正认的那一条"——合形状的键读得回来，破形状的那个键必须被拒。
+#[test]
+fn key_tables_declare_the_shape_the_reader_enforces() {
+    let contract = schema();
+    let document = writer_document();
+    for table in ["positions", "orders", "fills", "transfers"] {
+        let pattern = contract["properties"][table]["propertyNames"]["pattern"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{table} 的键没有形状声明"));
+        let rows = document[table].as_object().expect("键表必须是对象");
+        let key = rows.keys().next().expect("写侧文档里这张表有一行");
+        let (declared, broken_key, conforms) = if table == "positions" {
+            (
+                r"^.+\.[^.]+$",
+                "BTCUSDT".to_string(),
+                InstrumentId::parse(key).is_some(),
+            )
+        } else {
+            (
+                r"^[0-9]+$",
+                format!("{key}a"),
+                !key.is_empty() && key.chars().all(|ch| ch.is_ascii_digit()),
+            )
+        };
+        assert_eq!(
+            pattern, declared,
+            "{table} 的键形状声明改成了 {pattern}，下面那条读侧探针就不再是它的证据"
+        );
+        assert!(
+            conforms,
+            "写侧印出的 {table} 键 {key} 连自己声明的 {declared} 都不满足"
+        );
+        let mut broken = document.clone();
+        let rows = broken[table].as_object_mut().expect("键表必须是对象");
+        let value = rows.remove(key).expect("换键时原来那一行必须在");
+        rows.insert(broken_key.clone(), value);
+        assert!(
+            AccountSnapshot::from_json(&broken.to_string()).is_err(),
+            "{table} 的键换成不合形状的 {broken_key} 之后读侧仍然收下了，那条 pattern 就不是它的画像"
         );
     }
 }

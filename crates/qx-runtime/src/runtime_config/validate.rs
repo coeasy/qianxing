@@ -43,6 +43,23 @@ impl RuntimeConfig {
         Ok(())
     }
 
+    /// 归一化后的环境名：只在大小写与首尾空白上做归一，词表外为 `None`。
+    /// 校验与 production 判定共用这一份归一，避免出现"校验放行、判定不认"的第三态。
+    pub fn environment_kind(&self) -> Option<&'static str> {
+        let trimmed = self.environment.trim();
+        RUNTIME_ENVIRONMENTS
+            .iter()
+            .find(|&name| name.eq_ignore_ascii_case(trimmed))
+            .copied()
+    }
+
+    /// 是否按 production 口径校验。所有 production 分支只许走这里：就地比较字面量
+    /// 会把 `" Production "` 读成非 production，从而在配置校验通过的同时丢掉硬风控
+    /// （V11 §41 E1）。
+    pub fn is_production(&self) -> bool {
+        self.environment_kind() == Some(RUNTIME_ENVIRONMENT_PRODUCTION)
+    }
+
     pub fn strategy_for_worker(&self, worker_id: &str) -> Result<StrategyRuntimeConfig, String> {
         if self.strategies.is_empty() {
             return Ok(self.strategy.clone());

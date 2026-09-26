@@ -1,0 +1,11 @@
+== 基线：门禁红名单 ==
+gate rc 0 红 0
+== 基线：受影响用例必须先全绿 ==
+   cargo test -p qx-scheduler rc 0 ['test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s', 'test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s', 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s']
+[R7-4-M7 JobSpec 改 deny_unknown_fields（升级读崩旧状态）] ASSERT-RED rc=101 ['test result: FAILED. 17 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s']
+      还原 sha: OK
+[R7-4-M8 示例里再抄进一格没人读的键] GATE-RED rc=1 新增红=['deploy 里 3 份作业清单示例的每一格顶层键都在 JobSpec 名单里']
+       [FAIL] deploy 里 3 份作业清单示例的每一格顶层键都在 JobSpec 名单里 — 没人读的键 {'qianxing.scheduler.jobs.smoke.json': ['input_refs']}
+       ✗ deploy 里 3 份作业清单示例的每一格顶层键都在 JobSpec 名单里 — 没人读的键 {'qianxing.scheduler.jobs.smoke.json': ['input_refs']}
+      还原 sha: OK
+== 本批未跑 M9（整颗回滚），按选择器跳过 ==

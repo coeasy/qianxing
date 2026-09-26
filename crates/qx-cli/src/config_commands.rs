@@ -3,7 +3,8 @@
 //! 本模块只做配置读取、引用校验与人读/机读输出，不改变运行时语义；
 //! 真实执行链路仍复用 crate 根上的同一批 Runtime/Storage 辅助函数。
 //! 帮助文本本身不在这里，见 `cli_help.rs`（它与派发分支由架构门禁做集合相等校验）。
-//! 项目初始化一族见 `init_project.rs`。
+//! 项目初始化一族见 `init_project.rs`；`config validate` / `fingerprint` / `lock` 的
+//! 人读与机读输出见 `config_output.rs`（V11 E4：`--json` 曾经只抑制横幅，不产出 JSON）。
 
 use super::*;
 
@@ -60,48 +61,6 @@ pub(crate) fn run_config_explain(path: &Path, as_json: bool) -> Result<(), Strin
         );
     }
     println!("[配置 · 安全] 未读取密钥内容，仅检查引用名称和文件路径");
-    Ok(())
-}
-
-pub(crate) fn run_config_fingerprint(path: &Path) -> Result<(), String> {
-    let config = read_runtime_config(path)?;
-    println!(
-        "[配置 · Fingerprint] path={} fingerprint={}",
-        path.display(),
-        config.fingerprint()?
-    );
-    Ok(())
-}
-
-pub(crate) fn run_config_lock(input: &Path, output: &Path, force: bool) -> Result<(), String> {
-    let config = read_runtime_config(input)?;
-    let fingerprint = config.fingerprint()?;
-    if output.exists() && !force {
-        return Err(format!(
-            "目标发布配置已存在: {}；如确认覆盖，请显式添加 --force",
-            output.display()
-        ));
-    }
-    let mut locked = config;
-    locked.config_fingerprint = Some(fingerprint.clone());
-    let payload = locked.to_json()?;
-    if let Some(parent) = output
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("创建发布配置目录失败 {}: {error}", parent.display()))?;
-    }
-    std::fs::write(output, payload)
-        .map_err(|error| format!("写入发布配置失败 {}: {error}", output.display()))?;
-    let verified = read_runtime_config(output)?;
-    verified.verify_fingerprint()?;
-    println!(
-        "[配置 · Lock] input={} output={} fingerprint={} locked=true",
-        input.display(),
-        output.display(),
-        fingerprint
-    );
     Ok(())
 }
 
@@ -271,7 +230,7 @@ pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
                     "fingerprint": input.fingerprint,
                 }),
                 None => serde_json::json!({
-                    "verdict": "not_declared",
+                    "verdict": NOT_DECLARED,
                     "declared_and_recomputed_match": false,
                 }),
             },
@@ -285,57 +244,20 @@ pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
         return Ok(());
     }
 
-    let text = |pointer: &str, fallback: &str| -> String {
-        summary
-            .pointer(pointer)
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(fallback)
-            .to_string()
-    };
-    let integer = |pointer: &str| {
-        summary
-            .pointer(pointer)
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(0)
-    };
     println!("[Report] summary={}", summary_path.display());
-    println!(
-        "  strategy={} instrument={} bars={} fills={}",
-        text("/strategy_id", "-"),
-        text("/instrument", "-"),
-        integer("/bars"),
-        integer("/fills")
-    );
-    println!(
-        "  return_bps={} max_drawdown_bps={} fees_raw={} turnover_raw={} final_equity_raw={}",
-        integer("/metrics/return_bps"),
-        integer("/metrics/max_drawdown_bps"),
-        integer("/metrics/fees_raw"),
-        integer("/metrics/turnover_raw"),
-        integer("/metrics/final_equity_raw")
-    );
-    println!(
-        "  input_data_hash={} result_hash={} replay_log_digest={}",
-        text("/input_data_hash", "-"),
-        text("/result_hash", "-"),
-        text("/replay/log_digest", "-")
-    );
-    match &declared_input {
-        Some(input) => println!(
-            "  input_verified={} input_kind={} input_id={} input_fingerprint={}",
+    let input_line = match &declared_input {
+        Some(input) => format!(
+            "input_verified={} input_kind={} input_id={} input_fingerprint={}",
             input.path, input.kind, input.dataset_id, input.fingerprint
         ),
-        None => println!("  input_verified=not_declared（该摘要没有 input 块，输入身份未经核对）"),
+        None => format!("input_verified={NOT_DECLARED}（该摘要没有 input 块，输入身份未经核对）"),
+    };
+    for line in backtest_report_lines(&summary, &input_line) {
+        println!("{line}");
     }
     println!(
-        "  replay_events={} replay_ledger_entries={}/{}",
-        integer("/replay/events"),
-        integer("/replay/ledger_entries"),
-        integer("/replay/run_ledger_entries")
-    );
-    println!(
         "  risk_rule_set_version={}",
-        text("/risk_rules/rule_set_version", "-")
+        summary_text(&summary, "/risk_rules/rule_set_version", "-")
     );
     Ok(())
 }
@@ -406,158 +328,21 @@ pub(crate) fn run_status(path: &Path, as_json: bool) -> Result<(), String> {
         );
     }
     if let Some(summary) = latest_summary {
+        // 与 `report` 同一套"缺失怎么念"的口径：旧摘要在这里也会被印成
+        // `fills=0 return_bps=0`，而它只是没写过这两格（V11 D 轮 S6 的另一半）。
         println!(
             "[Latest Backtest] strategy={} instrument={} fills={} return_bps={} max_drawdown_bps={} result_hash={}",
-            summary
-                .get("strategy_id")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("-"),
-            summary
-                .get("instrument")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("-"),
-            summary
-                .get("fills")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            summary
-                .pointer("/metrics/return_bps")
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(0),
-            summary
-                .pointer("/metrics/max_drawdown_bps")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            summary
-                .get("result_hash")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("-")
+            summary_text(&summary, "/strategy_id", "-"),
+            summary_text(&summary, "/instrument", "-"),
+            summary_number(&summary, "/fills"),
+            summary_number(&summary, "/metrics/return_bps"),
+            summary_number(&summary, "/metrics/max_drawdown_bps"),
+            summary_text(&summary, "/result_hash", "-")
         );
     } else {
         println!("[Latest Backtest] 暂无已保存回测摘要");
     }
     Ok(())
-}
-
-pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, String> {
-    let config = read_runtime_config(path)?;
-    let fingerprint = config.fingerprint()?;
-    let mut checks = Vec::new();
-    let mut failures = Vec::new();
-    let mut warnings = Vec::new();
-
-    checks.push(serde_json::json!({
-        "name": "config",
-        "status": "pass",
-        "message": "配置解析与领域校验通过"
-    }));
-    checks.push(serde_json::json!({
-        "name": "fingerprint",
-        "status": "pass",
-        "message": format!("配置指纹={fingerprint}")
-    }));
-
-    let (reference_failures, reference_warnings) = validate_runtime_references(path, &config);
-    for warning in reference_warnings {
-        checks.push(serde_json::json!({
-            "name": "runtime_reference",
-            "status": "warn",
-            "message": warning.clone()
-        }));
-        warnings.push(warning);
-    }
-    for failure in reference_failures {
-        checks.push(serde_json::json!({
-            "name": "runtime_reference",
-            "status": "fail",
-            "message": failure.clone()
-        }));
-        failures.push(failure);
-    }
-
-    for worker in config.workers.iter().filter(|worker| {
-        writes_account_ledger(worker)
-            && worker
-                .endpoint
-                .as_deref()
-                .is_some_and(|endpoint| !endpoint.contains("://"))
-    }) {
-        match worker_credentials_ready(path, worker) {
-            Ok(true) => checks.push(serde_json::json!({
-                "name": format!("worker[{}].credentials", worker.id),
-                "status": "pass",
-                "message": "CCXT 配置中的凭据环境变量可用"
-            })),
-            Ok(false) => {
-                let message = format!(
-                    "worker {} 的 CCXT 配置未提供可用 credential_env；当前仅能运行公共能力",
-                    worker.id
-                );
-                checks.push(serde_json::json!({
-                    "name": format!("worker[{}].credentials", worker.id),
-                    "status": "warn",
-                    "message": message
-                }));
-                warnings.push(message);
-            }
-            Err(error) => {
-                checks.push(serde_json::json!({
-                    "name": format!("worker[{}].credentials", worker.id),
-                    "status": "fail",
-                    "message": error
-                }));
-                failures.push(error);
-            }
-        }
-    }
-
-    check_storage_data_dir(
-        path,
-        &config.storage.data_dir,
-        &mut checks,
-        &mut warnings,
-        &mut failures,
-    );
-    check_account_log_settlement(&config, &mut checks, &mut failures);
-    check_orphan_event_logs(path, &config, &mut checks, &mut warnings);
-
-    // 判的是"这份配置能否构建出监督器"（`new` = 已判过的 validate + 按启用 worker 注册
-    // 服务），不是运行健康：此刻一个 worker 都没启动，原名 `runtime_topology: pass` 加
-    // `overall=Starting` 会让读报告的人以为拓扑被判成了健康。
-    let enabled_workers = config
-        .workers
-        .iter()
-        .filter(|worker| worker.enabled)
-        .count();
-    let (status, message) = match RuntimeSupervisor::new(config.clone()) {
-        Ok(_) => (
-            "pass",
-            format!("监督器可构建，启用 worker={enabled_workers}（未启动，不代表运行健康）"),
-        ),
-        Err(error) => ("fail", format!("运行时监督器构建失败: {error}")),
-    };
-    checks.push(serde_json::json!({
-        "name": "runtime_supervisor_build",
-        "status": status,
-        "message": message.clone()
-    }));
-    if status == "fail" {
-        failures.push(message);
-    }
-
-    Ok(serde_json::json!({
-        "schema_version": 1,
-        "runtime_path": path.display().to_string(),
-        "environment": config.environment,
-        "profile": config.profile,
-        "config_fingerprint": fingerprint,
-        "ok": failures.is_empty(),
-        "checks": checks,
-        "warnings": warnings,
-        "failures": failures,
-        "network_accessed": false,
-        "orders_sent": false
-    }))
 }
 
 pub(crate) fn run_doctor(path: &Path, as_json: bool) -> Result<(), String> {

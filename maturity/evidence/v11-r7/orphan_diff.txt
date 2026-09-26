@@ -1,0 +1,6 @@
+#### 台账 maturity/capabilities.yaml  行数 590 -> 590
+#### 方案书 docs/自研量化框架重构方案-V11.md  行数 6329 -> 6329
+  L3438 无主 1 -> 0   `:79` 的 `dataset_version` / `manifest_digest` 在两个构造点（`crates/qx-api/src/lib.rs:1349`、 <!-- 史 -->
+#### 变更日志 CHANGELOG.md  行数 3940 -> 3940
+  L1434 无主 2 -> 3   `:274` / `:319`），`null` 的写法全仓唯一（`:279` `money_json`），线格式没有的那一列保证金折算回 `None` 而不是 0。
+#### 白皮书 docs/SECURITY.md  行数 777 -> 777

@@ -5,8 +5,14 @@
 
 用途有二：
   1. 在与 Rust 实现**相同的算法语义**下独立复算，交叉验证设计正确性
-     （因果队列排序、确定性重放、point-in-time 可见性、撮合模型）。
+     （确定性重放、point-in-time 可见性、撮合模型）。
   2. 作为未来 Python 控制面（PyO3 绑定之上）的语义骨架。
+
+V11 P2 起第 1 条不再包含"因果队列排序"：Rust 侧那份 `CausalQueue` 与 `TestClock` 从来没有
+一个生产者或消费者走过，已经删掉；同一条 (ts, prio) 序现在长在写入处——
+`qx-runtime/src/pipeline.rs` 的 `append_at_engine` 让 `EventLog` 单调落盘。下面的
+`CausalQueue` 与 `TestClock` 因此只是本文件自用的参考形状，不再与 Rust 一一对应；
+`PRIO_*` 常量的数值仍必须与 `qx-core/src/event.rs` 的 `prio` 逐项相同，这一条由门禁钉住。
 
 注意：本文件只验证**语义**，不代表性能。性能必须以 Rust 实测为准。
 
@@ -54,7 +60,7 @@ def show(x: int) -> str:
 
 
 class TestClock:
-    """确定性时钟：只在 advance_to 时前进。"""
+    """参考形状：只在 advance_to 时前进的单调时钟。Rust 侧自 V11 P2 起没有对应实现。"""
 
     def __init__(self, start: int = 0):
         self.now = start
@@ -65,7 +71,7 @@ class TestClock:
         self.now = t
 
 
-# ---------------------------------------------------------------- 因果队列
+# ------------------------------------------- (ts, prio) 全序（Python 侧参考形状）
 
 PRIO_TIMER, PRIO_FEEDBACK, PRIO_MARKET, PRIO_COMMAND, PRIO_MATCH, PRIO_APPLY, PRIO_POST = (
     0, 1, 2, 3, 4, 5, 9,
@@ -84,7 +90,7 @@ class Event:
 
 
 class CausalQueue:
-    """按 (ts, prio, seq) 全序出队。"""
+    """参考形状：按 (ts, prio, seq) 全序出队。Rust 侧这条序长在写入处（pipeline.rs）。"""
 
     def __init__(self):
         self._heap: List[Tuple[Tuple[int, int, int], int, Event]] = []
@@ -447,7 +453,7 @@ def main() -> None:
     q.push(Event(2, 100, PRIO_MARKET, "market"))
     q.push(Event(3, 50, PRIO_COMMAND, "cmd"))
     order = [q.pop().kind for _ in range(3)]
-    print(f"[牵星 · 因果队列] 出队顺序={order}")
+    print(f"[牵星 · (ts, prio) 全序] 参考形状出队顺序={order}")
     assert order == ["cmd", "market", "post"]
 
     # 撮合模型语义

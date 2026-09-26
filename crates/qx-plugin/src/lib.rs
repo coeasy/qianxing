@@ -117,6 +117,8 @@ pub struct Manifest {
     pub replaces: Vec<String>,
     pub capabilities: Vec<String>,
     pub permissions: Vec<String>,
+    /// 声明值：`validate` 只问它非 0，`canonical_hash` 只把它计入指纹。仓里没有插件宿主，
+    /// 因此这两颗今天没有任何一处被换算成等待——接上宿主时同步改 README 的卯眼边界口径（V11 R4-3）。
     pub healthcheck_timeout_ms: u64,
     pub shutdown_timeout_ms: u64,
     /// 启动期配置的 JSON Schema；插件不得以未校验字典接收配置。

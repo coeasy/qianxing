@@ -91,6 +91,26 @@ class StrategyContractTest(unittest.TestCase):
         self.assertEqual(restored, output)
         self.assertEqual(restored.intents[1].side, "sell")
 
+    def test_written_keys_stay_inside_the_declared_contract(self):
+        # 契约文件住在仓库里，读侧按 serde 字段名解码：拼错一格可选键（post_onlyl）
+        # 两侧都不会有人喊，所以键集与必填集合在这里各钉一次（V11 R4-4）。
+        schema_path = Path(__file__).resolve().parents[2] / "schemas" / "strategy_api_v1.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        output = StrategyOutput(
+            request_id="request-1",
+            strategy_id="strategy-1",
+            signal_id=3,
+            instrument=self.request.instrument,
+            target_qty=0,
+            intents=(StrategyIntent(intent_id=11, instrument="BTCUSDT.BINANCE", side="buy", qty_raw=1),),
+        ).to_dict(self.request)
+        self.assertLessEqual(set(schema["required"]), set(output))
+        self.assertLessEqual(set(output), set(schema["properties"]))
+        intent = output["intents"][0]
+        declared = schema["properties"]["intents"]["items"]
+        self.assertLessEqual(set(declared["required"]), set(intent))
+        self.assertLessEqual(set(intent), set(declared["properties"]))
+
     def test_framed_transport_round_trip_and_crc_guard(self):
         payload = b'{"request_id":"frame-1"}'
         encoded = encode_frame(REQUEST, 7, payload)

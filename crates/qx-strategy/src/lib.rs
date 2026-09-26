@@ -317,6 +317,9 @@ pub trait Strategy: Send {
         event: &MarketEvent,
     ) -> Result<StrategyDecision, String>;
 
+    /// 订单回报的回调位：接口在这里，运行时**尚未派发**（V11 R4-4 按未接线能力登记）。
+    /// 装配处只把行情事件喂给 `on_event`，而对面 Python 契约里连订单回报的载荷都还没有，
+    /// 接线要连带补那一格，所以这一颗既不删也不擅自接。
     fn on_order_update(
         &mut self,
         _context: &StrategyContext,

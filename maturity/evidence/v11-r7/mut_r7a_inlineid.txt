@@ -1,0 +1,11 @@
+== 基线：门禁红名单 ==
+gate rc 0 红 0
+== 基线：受影响用例必须先全绿 ==
+   cargo test -p qx-protocol --test snapshot_single_source rc 0 ['test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s']
+[R7-3-M6a validate 漏掉 fills 表] ASSERT-RED rc=101 ['test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s']
+      还原 sha: OK
+[R7-3-M6b validate 的 orders 半边改问外键 client_order_id] ASSERT-RED rc=101 ['test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s']
+      还原 sha: OK
+[R7-3-M6c check_keys 的判据反向（key==id 才报错）] ASSERT-RED rc=101 ['test result: FAILED. 11 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s']
+      还原 sha: OK
+== 本批未跑 M9（整颗回滚），按选择器跳过 ==

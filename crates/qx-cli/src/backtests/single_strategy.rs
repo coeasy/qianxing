@@ -115,6 +115,11 @@ pub(crate) fn run_single_strategy_backtest(
         }
         let builtin_config =
             builtin_strategy_config_from_runtime(&config.strategy, &frame.instrument)?;
+        // 落点判据要问派生出来的那份政策，而不是问配置里有没有写：声明了对冲腿时
+        // `primary_policy` 才带得上杠杆，单腿内置策略永远带 None 进内核（V11 R4-5）。
+        if builtin_config.primary_policy.is_none() {
+            reject_unapplied_product_policy(config, "strategy backtest 的内置策略分支")?;
+        }
         println!(
             "[Strategy · Signal] {}",
             builtin_signal_note(&builtin_config, builtin_signal_source(&config.strategy))
@@ -281,6 +286,12 @@ pub(crate) fn run_builtin_backtest(
         source: instrument_spec_version,
     } = market_spec_with_margin(&frame.instrument, spec_path, "内置策略")?;
     let risk_binding = backtest_risk_binding(runtime_config_path, false)?;
+    // 单腿内置策略派生不出 `OrderPolicy`（`BuiltinStrategyConfig::new` 只给 None），所以这两格
+    // 在本链没有任何落点：`backtest ccxt-builtin` 也走这一处，故一并点名两个命令。
+    reject_configured_product_policy(
+        runtime_config_path,
+        "backtest builtin / backtest ccxt-builtin",
+    )?;
     let costs = execution_cost_binding(runtime_config_path)?;
     // 撮合口径与风控、成本同一来源：给了 `--config` 就必须认它声明的 `strategy.fill_model`，
     // 否则同一份配置在 `strategy backtest` 与 `backtest builtin` 上会得到两种成交价（V11 §15.4）。

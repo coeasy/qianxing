@@ -118,7 +118,7 @@ pub(crate) fn configured_account_event_logs(
 }
 
 /// 在 API 服务旁启动只读投影桥。它只读取 Runtime EventLog，调用 API 的
-/// `project_event_log` 更新查询/订阅读模型，不拥有订单、账本或外部副作用。
+/// `project_account_event_log` 按账户键更新查询/订阅读模型，不拥有订单、账本或外部副作用。
 pub(crate) fn spawn_api_projection_bridge(
     config: &RuntimeConfig,
     service: ApiService,
@@ -128,22 +128,41 @@ pub(crate) fn spawn_api_projection_bridge(
         Ok(sources) => sources,
         Err(error) => {
             eprintln!("[运行时 · API] 账户 EventLog 投影桥未启动: {error}");
+            service.report_projection_refresher(ProjectionRefresher::Stopped(format!(
+                "账户 EventLog 列举失败: {error}"
+            )));
             return None;
         }
     };
     if sources.is_empty() {
+        // 不静默：这份拓扑里没有任何账户级日志，读模型的账户半边从此不会有第二份写入者。
+        eprintln!("[运行时 · API] 拓扑没有账户级 EventLog，投影桥未启动（快照只按配置装载）");
+        service.report_projection_refresher(ProjectionRefresher::Stopped(
+            "拓扑里没有账户级 EventLog".into(),
+        ));
         return None;
     }
     let storage = match PipelineStorage::from_config(config) {
         Ok(storage) => storage,
         Err(error) => {
             eprintln!("[运行时 · API] 初始化 EventLog 投影桥失败: {error}");
+            service.report_projection_refresher(ProjectionRefresher::Stopped(format!(
+                "EventLog 存储初始化失败: {error}"
+            )));
             return None;
         }
     };
     let poll_interval = Duration::from_millis(250);
+    let config = config.clone();
+    let state = service.state();
+    service.report_projection_refresher(ProjectionRefresher::Running);
+    let guard = ProjectionRefresherGuard {
+        service: service.clone(),
+    };
     Some(thread::spawn(move || {
+        let _guard = guard;
         let mut pipelines = BTreeMap::<(String, String), LiveEventPipeline>::new();
+        let mut snapshot_error: Option<String> = None;
         while !stop.load(Ordering::Acquire) {
             for (account_id, venue_id, log_name, currency) in &sources {
                 let pipeline_key = (account_id.clone(), venue_id.clone());
@@ -184,9 +203,43 @@ pub(crate) fn spawn_api_projection_bridge(
                     pipelines.remove(&(account_id.clone(), venue_id.clone()));
                 }
             }
+            // 事件与快照是同一个读模型的两半：只重投影事件会让 `/account/snapshot` 那一族停在
+            // 启动那一刻，而服务进程是按天跑的。装载复用 boot 那一个出口（V11 G1）。
+            let republished = publish_api_account_snapshots(
+                &mut state.lock().expect("api state mutex poisoned"),
+                &config,
+            );
+            match republished {
+                Err(error) if snapshot_error.as_deref() != Some(error.as_str()) => {
+                    // 同一句失败每轮只念一次：250 毫秒一条会把日志刷成噪声，读不出第一现场。
+                    eprintln!("[运行时 · API] 刷新账户快照投影失败: {error}");
+                    snapshot_error = Some(error);
+                }
+                Ok(_) if snapshot_error.take().is_some() => {
+                    eprintln!("[运行时 · API] 账户快照投影已从上一轮失败中恢复");
+                }
+                _ => {}
+            }
             thread::sleep(poll_interval);
         }
     }))
+}
+
+/// 投影桥线程一退出就把刷新者报成未运行——正常结束和 panic 都走这里。
+///
+/// 只有线程自己带着这个守卫，"桥死了"才能在读模型上看见：外层 `join` 发生在停机之后，
+/// 那时服务已经不接请求了（V11 I1）。
+struct ProjectionRefresherGuard {
+    service: ApiService,
+}
+
+impl Drop for ProjectionRefresherGuard {
+    fn drop(&mut self) {
+        self.service
+            .report_projection_refresher(ProjectionRefresher::Stopped(
+                "账户 EventLog 投影桥线程已退出".into(),
+            ));
+    }
 }
 
 pub(crate) fn ccxt_market_event_log_name(worker: &WorkerConfig) -> String {

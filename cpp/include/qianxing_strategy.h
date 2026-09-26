@@ -126,6 +126,9 @@ typedef struct qx_strategy_vtable {
                     qx_strategy_decision*,
                     char* error_buffer,
                     size_t error_buffer_len);
+    /* Declared ABI slot, but the Rust runtime does not dispatch order updates to
+       strategies yet (V11 R4-4): a plugin that only implements this slot will never
+       be called. `on_event` is the only live entry point. */
     int (*on_order_update)(qx_strategy_handle,
                            const char* update_json,
                            qx_strategy_decision*,

@@ -19,7 +19,7 @@ fn dry_run_submit_order_is_audited_without_credentials_or_network() {
         .join("qianxing.runtime.production.example.json");
     let mut config = read_runtime_config(&template).unwrap();
     config.config_fingerprint = None;
-    config.environment = "test".into();
+    config.environment = "paper".into();
     config.storage.data_dir = data_dir.to_string_lossy().into_owned();
     config.storage.event_log_segment_events = Some(2);
     config.storage.backend = StorageBackend::Files;

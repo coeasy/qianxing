@@ -84,16 +84,12 @@ impl<V: Venue> VenuePortAdapter<V> {
         }
     }
 
+    /// 适配器只往一个方向走：借出去提交，用完收回底层 Venue。留在结构体上的
+    /// `venue()`/`venue_mut()` 两颗读缝给不出任何生产入口需要东西——提交路径
+    /// 全部经 `VenuePort`/`VenueRouterPort`，绕过端口直接改 Venue 反而跳过了
+    /// 路由校验（V11 M4）。
     pub fn into_inner(self) -> V {
         self.venue
-    }
-
-    pub fn venue(&self) -> &V {
-        &self.venue
-    }
-
-    pub fn venue_mut(&mut self) -> &mut V {
-        &mut self.venue
     }
 }
 
@@ -1327,25 +1323,6 @@ pub fn submit_order_via_gateway<V: VenuePort, P: ExecutionEventPort>(
         gateway = gateway.with_spread_group_store(store);
     }
     gateway.submit_command(command)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn submit_order_via_gateway_with_risk<V: VenuePort, P: ExecutionEventPort, R: RiskPort>(
-    command: &ControlCommand,
-    venue: &mut V,
-    events: &mut P,
-    worker_id: &str,
-    now: u64,
-    source_seq: &mut u64,
-    risk: &R,
-    spread_store: Option<&dyn SpreadOrderGroupStore>,
-) -> Result<PortExecutionResult, String> {
-    spread_group_barrier(spread_store, command)?;
-    let mut gateway = ExecutionGateway::new(venue, events, worker_id, now, source_seq);
-    if let Some(store) = spread_store {
-        gateway = gateway.with_spread_group_store(store);
-    }
-    gateway.submit_command_with_risk(command, risk)
 }
 
 #[allow(clippy::too_many_arguments)]

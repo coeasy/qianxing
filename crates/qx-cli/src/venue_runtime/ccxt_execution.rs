@@ -301,6 +301,7 @@ pub(crate) fn run_ccxt_user_stream_worker(
         .last()
         .map(|event| event.source_seq)
         .unwrap_or(0);
+    let mut reconnect_streak = 0_u32;
     loop {
         if context.should_stop() {
             break;
@@ -314,18 +315,34 @@ pub(crate) fn run_ccxt_user_stream_worker(
             "instrument": null,
             "received_ts": received_ts,
         })) {
-            Ok(result) => result,
+            Ok(result) => {
+                reconnect_streak = 0;
+                result
+            }
             Err(error) => {
                 let detail = format!("{error:?}");
                 if detail.contains("[unsupported]") || detail.contains("[authentication]") {
                     return Err(format!("CCXT Pro 用户流不可用: {detail}"));
                 }
+                reconnect_streak = reconnect_streak.saturating_add(1);
                 context.mark(
                     qx_runtime::ServiceStatus::Degraded,
                     format!("ccxt pro user stream reconnecting: {detail}"),
                     Some(received_ts),
                 )?;
-                thread::sleep(Duration::from_millis(500));
+                if reconnect_streak >= CCXT_DEAD_CYCLE_BUDGET {
+                    context.mark(
+                        qx_runtime::ServiceStatus::Failed,
+                        format!(
+                            "ccxt pro user stream 连续 {reconnect_streak} 次重连全部失败，预算已用尽: {detail}"
+                        ),
+                        Some(received_ts),
+                    )?;
+                    return Err(format!(
+                        "CCXT Pro 用户流连续 {reconnect_streak} 次重连失败，已放弃重连公共 Worker"
+                    ));
+                }
+                thread::sleep(ccxt_respawn_delay(reconnect_streak));
                 let replacement = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
                     .map_err(|spawn_error| {
                         format!("重连公共 CCXT Pro Worker 失败: {spawn_error}")

@@ -295,7 +295,7 @@ fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
         &command,
         &mut pipeline,
         1,
-        Some(risk),
+        Some(risk.clone()),
         Some(OrderRiskPosition::default()),
         Some(quote),
         shared_fee(),
@@ -309,6 +309,34 @@ fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
     );
     assert_eq!(pipeline.orders().len(), orders);
     assert_eq!(pipeline.ledger().entries().len(), entries);
+    drop(pipeline);
+
+    // 幂等分支必须建立在**持久化事实**上，而不是进程内存：控制面只保留在途命令
+    // （终态退场）之后，同一 `client_order_id` 的重放只能由这里兜住。
+    let mut restarted = LiveEventPipeline::open(&root, "events", "USDT").unwrap();
+    assert_eq!(
+        restarted.orders().len(),
+        orders,
+        "重启后 OMS 必须从 EventLog 重建出同一批订单，否则退场后的重放无人认领"
+    );
+    let after_restart = execute_paper_submit_effect(
+        &command,
+        &mut restarted,
+        1,
+        Some(risk),
+        Some(OrderRiskPosition::default()),
+        Some(quote),
+        shared_fee(),
+        false,
+        None,
+    )
+    .unwrap();
+    assert!(
+        after_restart.starts_with("ALREADY_APPLIED_FROM_EVENT_LOG"),
+        "重启后重投必须仍然走 gateway 幂等分支: {after_restart}"
+    );
+    assert_eq!(restarted.orders().len(), orders);
+    assert_eq!(restarted.ledger().entries().len(), entries);
     let _ = std::fs::remove_dir_all(root);
 }
 

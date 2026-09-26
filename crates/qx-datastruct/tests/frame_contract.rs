@@ -67,3 +67,42 @@ fn a_versionless_document_still_reads_as_legacy() {
         frame()
     );
 }
+
+#[test]
+fn a_versioned_frame_with_an_unnamed_key_is_refused() {
+    // 缺陷原形（V11 Q2 实测）：deploy 的两份 pairs 示例带 `frequency`/`quality` 两格并声明
+    // schema_version=1，Python 严格分支当场拒、Rust 静默丢掉照常读回 —— 示例是给人抄的那一份，
+    // 两侧口径相反时必须按严格那侧收口。
+    let written = frame().to_json();
+    let padded = written.replace(
+        &format!("\"schema_version\":{BAR_FRAME_JSON_SCHEMA_VERSION},"),
+        &format!(
+            "\"schema_version\":{BAR_FRAME_JSON_SCHEMA_VERSION},\"frequency\":\"1h\",\"quality\":\"recorded\","
+        ),
+    );
+    assert_ne!(padded, written, "夹具没剥干净：{written}");
+    let error = BarFrame::from_json(&padded)
+        .expect_err("声明了版本的文档带读侧不认的顶层键必须当场拒，不能静默丢格");
+    let message = format!("{error:?}");
+    assert!(
+        message.contains("unknown") && message.contains("frequency") && message.contains("quality"),
+        "拒绝必须点名是哪几格没人读，实际 {message}"
+    );
+}
+
+#[test]
+fn a_versionless_frame_still_tolerates_an_unnamed_key() {
+    // 严格半边只作用于声明了版本的文档：R16 之前写出的帧没有版本可依据，仍按兼容分支宽读。
+    let written = frame().to_json();
+    let legacy = written
+        .replace(
+            &format!("\"schema_version\":{BAR_FRAME_JSON_SCHEMA_VERSION},"),
+            "",
+        )
+        .replacen("{", "{\"frequency\":\"1h\",", 1);
+    assert!(!legacy.contains("schema_version"), "夹具没剥干净：{legacy}");
+    assert_eq!(
+        BarFrame::from_json(&legacy).expect("旧文档带多余的键也要走兼容分支"),
+        frame()
+    );
+}

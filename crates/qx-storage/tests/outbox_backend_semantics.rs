@@ -1,7 +1,7 @@
 use qx_storage::{
-    ConsumerEngine, ConsumerOutcome, ConsumerProjection, ConsumerStateStore,
-    FileConsumerStateStore, FileOutboxStore, OutboxEvent, OutboxStore, StorageError,
-    TransactionalConsumerStateStore,
+    outbox_exhausted, ConsumerEngine, ConsumerOutcome, ConsumerProjection, ConsumerStateStore,
+    DeadLetterRecord, FileConsumerStateStore, FileOutboxStore, OutboxEvent, OutboxPublisher,
+    OutboxRelay, OutboxStore, StorageError, TransactionalConsumerStateStore, OUTBOX_MAX_ATTEMPTS,
 };
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -50,6 +50,54 @@ fn consumer_event() -> OutboxEvent {
     }
 }
 
+/// 死信点查的跨后端契约：能按 `(group_id, event_id)` 点名命中、命中的是
+/// `attempts` 最大的一行（要跨过 2→10 的数位边界，字典序会把第 9 次念成比
+/// 第 10 次新），且没死信过的事件不能被念成存在。
+fn assert_dead_letter_point_query<S>(store: S, event_id: &str)
+where
+    S: ConsumerStateStore + Clone,
+{
+    let latest = store
+        .dead_letter("ledger-reducer", event_id)
+        .unwrap()
+        .expect("死信必须能按 event_id 点查命中");
+    assert_eq!(
+        (
+            latest.attempts,
+            latest.offset,
+            latest.failed_ts,
+            latest.error.as_str()
+        ),
+        (2, 6, 13, "permanent")
+    );
+    assert_eq!(latest.event.event_id, event_id);
+    assert!(store
+        .dead_letter("ledger-reducer", "consumer-event-1")
+        .unwrap()
+        .is_none());
+    store
+        .append_dead_letter(DeadLetterRecord {
+            group_id: "ledger-reducer".into(),
+            topic: "qx.eventlog".into(),
+            partition_key: "account-1".into(),
+            event_id: event_id.into(),
+            offset: 14,
+            attempts: 10,
+            error: "permanent-after-crossing-into-two-digits".into(),
+            failed_ts: 21,
+            event: latest.event,
+        })
+        .unwrap();
+    assert_eq!(
+        store
+            .dead_letter("ledger-reducer", event_id)
+            .unwrap()
+            .expect("跨过数位边界的死信行也必须点查得到")
+            .attempts,
+        10
+    );
+}
+
 fn assert_consumer_semantics<S>(store: S)
 where
     S: ConsumerStateStore + Clone,
@@ -83,7 +131,7 @@ where
             .unwrap(),
         ConsumerOutcome::DeadLettered
     );
-    assert_eq!(store.dead_letters("ledger-reducer", 10).unwrap().len(), 1);
+    assert_dead_letter_point_query(store.clone(), "consumer-event-2");
 }
 
 fn assert_transactional_consumer_semantics<S>(store: S)
@@ -137,7 +185,7 @@ where
             .unwrap(),
         ConsumerOutcome::DeadLettered
     );
-    assert_eq!(store.dead_letters("ledger-reducer", 10).unwrap().len(), 1);
+    assert_dead_letter_point_query(store.clone(), "consumer-event-2");
 }
 
 fn assert_transactional_projection_failure_is_side_effect_free<S>(store: S)
@@ -198,11 +246,50 @@ fn assert_semantics(store: &dyn OutboxStore) {
     assert!(store.available_outbox(18).unwrap().is_empty());
 }
 
+/// 分区内的投递顺序口径：`(created_ts, sequence, event_id)` 按数字序，不是这三列
+/// 存成 TEXT 时 SQL 给的字典序（V11 R7-2）。夹具刻意跨数位边界——字典序会把
+/// sequence 20 排在 2 与 3 之前，等于把同一毫秒落盘的一串事件念反。
+///
+/// 只按 `namespace` 过滤自己那几行，因此可以多后端共用一个库/目录。
+fn assert_outbox_delivery_order(store: &dyn OutboxStore, namespace: &str) {
+    for sequence in [2u64, 20, 3] {
+        store
+            .append_outbox(OutboxEvent {
+                event_id: format!("{namespace}-{sequence}"),
+                sequence,
+                ..event()
+            })
+            .unwrap();
+    }
+    let sequences: Vec<u64> = store
+        .available_outbox(20)
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.event_id.starts_with(namespace))
+        .map(|event| event.sequence)
+        .collect();
+    assert_eq!(sequences, vec![2, 3, 20]);
+    for sequence in [2u64, 20, 3] {
+        let lease = store
+            .claim_outbox(&format!("{namespace}-{sequence}"), "relay-order", 20, 5)
+            .unwrap();
+        store
+            .ack_outbox(
+                &format!("{namespace}-{sequence}"),
+                "relay-order",
+                lease.fencing_token,
+                21,
+            )
+            .unwrap();
+    }
+}
+
 #[test]
 fn file_outbox_contract() {
     let root = temp_root("file");
     let store = FileOutboxStore::new(&root);
     assert_semantics(&store);
+    assert_outbox_delivery_order(&store, "file-order");
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -212,6 +299,7 @@ fn sqlite_outbox_contract() {
     let root = temp_root("sqlite");
     let store = SqliteOutboxStore::new(root.join("outbox.db")).unwrap();
     assert_semantics(&store);
+    assert_outbox_delivery_order(&store, "sqlite-order");
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -344,4 +432,156 @@ fn postgres_outbox_lease_fencing_and_retry_contract() {
         .unwrap()
         .into_iter()
         .all(|event| event.event_id != event_id));
+    assert_outbox_delivery_order(&store, "postgres-order");
+}
+/// 只拒绝点名事件的投递器：让"某一条永远发不出去"成为确定现场，其余照常ack。
+struct SelectivePublisher {
+    refused: &'static [&'static str],
+}
+
+impl OutboxPublisher for SelectivePublisher {
+    fn publish(&self, event: &OutboxEvent) -> Result<(), String> {
+        if self.refused.contains(&event.event_id.as_str()) {
+            return Err("refused by SelectivePublisher".into());
+        }
+        Ok(())
+    }
+}
+
+/// 预算用尽的头部不得阻断链尾（V11 K2）：修前 `pump_once` 取最旧的 `limit` 条，
+/// 头部一条毒事件就让后面全部事件无限期停摆，且没有任何一格说出"有条事件发不出去"。
+fn assert_relay_unblocks_the_tail<S>(store: S)
+where
+    S: OutboxStore + Clone,
+{
+    let now = 1_000_u64;
+    store
+        .append_outbox(OutboxEvent {
+            event_id: "poison-head".into(),
+            created_ts: 1,
+            sequence: 1,
+            attempts: OUTBOX_MAX_ATTEMPTS,
+            ..event()
+        })
+        .unwrap();
+    store
+        .append_outbox(OutboxEvent {
+            event_id: "healthy-tail".into(),
+            created_ts: 2,
+            sequence: 2,
+            ..event()
+        })
+        .unwrap();
+    let relay = OutboxRelay::new(
+        store.clone(),
+        SelectivePublisher {
+            refused: &["poison-head"],
+        },
+        "relay-a",
+        5,
+    )
+    .unwrap();
+    // limit=1 是修前会卡死的那一档：只端一条的话，端到的永远是头部。
+    let report = relay.pump_once(now, 1).unwrap();
+    assert_eq!(report.parked, 1, "预算用尽的那条必须被数出来: {report:?}");
+    assert_eq!(
+        report.published, 1,
+        "链尾必须跨过停摆的头部投递出去: {report:?}"
+    );
+    assert_eq!(report.scanned, 1, "停摆的那条不再占用投递名额: {report:?}");
+    assert_eq!(report.retried, 0, "停摆的那条不再被重试: {report:?}");
+    // 停摆不等于丢弃：它仍留在 outbox 里等人工确认，attempts 也不再增长。
+    let available = store.available_outbox(now).unwrap();
+    let poison = available
+        .iter()
+        .find(|event| event.event_id == "poison-head")
+        .expect("预算用尽的事件要留在 outbox 里可见，不能被静默删除");
+    assert_eq!(poison.attempts, OUTBOX_MAX_ATTEMPTS);
+    assert!(
+        !available
+            .iter()
+            .any(|event| event.event_id == "healthy-tail"),
+        "链尾已 ack 后不应再出现在候选集里"
+    );
+}
+
+#[test]
+fn file_outbox_relay_unblocks_the_tail() {
+    let root = temp_root("relay-tail-file");
+    assert_relay_unblocks_the_tail(FileOutboxStore::new(&root));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_outbox_relay_unblocks_the_tail() {
+    let root = temp_root("relay-tail-sqlite");
+    assert_relay_unblocks_the_tail(SqliteOutboxStore::new(root.join("outbox.db")).unwrap());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 投递预算是"重试出来的"，不是配置里凭空出现的：每条事件被拒 OUTBOX_MAX_ATTEMPTS 次
+/// 之后转入停摆，此后这一轮既不再claim、也不再报空转成功。
+#[test]
+fn file_outbox_relay_parks_events_after_the_attempt_budget() {
+    let root = temp_root("relay-budget-file");
+    let store = FileOutboxStore::new(&root);
+    store
+        .append_outbox(OutboxEvent {
+            event_id: "always-refused".into(),
+            created_ts: 1,
+            ..event()
+        })
+        .unwrap();
+    let relay = OutboxRelay::new(
+        store.clone(),
+        SelectivePublisher {
+            refused: &["always-refused"],
+        },
+        "relay-a",
+        5,
+    )
+    .unwrap();
+    for round in 1..=OUTBOX_MAX_ATTEMPTS {
+        let report = relay.pump_once(1_000, 4).unwrap();
+        assert_eq!(report.scanned, 1, "第 {round} 轮应仍尝试投递");
+        assert_eq!(report.retried, 1, "第 {round} 轮被拒后要释放租约再等下一轮");
+        assert_eq!(report.parked, 0, "预算未用尽前不该报停摆: 第 {round} 轮");
+        assert_eq!(
+            report.last_error.as_deref(),
+            Some("refused by SelectivePublisher")
+        );
+    }
+    let report = relay.pump_once(1_000, 4).unwrap();
+    assert_eq!(report.scanned, 0, "用尽预算后不再尝试投递");
+    assert_eq!(report.retried, 0);
+    assert_eq!(report.parked, 1, "但必须自报停摆，不能伪装成没有事件要发");
+    assert_eq!(
+        report.last_error, None,
+        "本轮什么都没投，不该留着上一轮的错误"
+    );
+    assert_eq!(
+        store.available_outbox(1_000).unwrap()[0].attempts,
+        OUTBOX_MAX_ATTEMPTS,
+        "停摆后 attempts 不再增长"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 预算判据本身的边界：判据只有这一处出口，三本后端的候选集形状不变。
+#[test]
+fn outbox_attempt_budget_boundaries() {
+    // 停摆点由谓词扫出来，而不是抄一遍常量的值：预算改成别的数字时这条仍说真话。
+    let first_parked = (0..=OUTBOX_MAX_ATTEMPTS + 1)
+        .find(|&attempts| outbox_exhausted(attempts))
+        .expect("预算内必须出现停摆");
+    assert_eq!(
+        first_parked, OUTBOX_MAX_ATTEMPTS,
+        "停摆必须正好落在预算那一格，之前每一格都还可重试"
+    );
+    assert!(first_parked > 1, "预算为 1 等于不给毒事件任何退避机会");
+    assert!(
+        outbox_exhausted(first_parked + 1_000_000),
+        "耗尽之后不得在高 attempts 上回到可重试"
+    );
 }

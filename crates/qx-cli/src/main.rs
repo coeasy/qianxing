@@ -13,7 +13,7 @@ use qx_adapter::{
 };
 use qx_api::{
     load_mtls_server_config_from_pem, ApiPolicy, ApiQueryModels, ApiReadiness, ApiService,
-    ApiState, ControlSubmitError, MtlsIdentityPemReloader, MtlsIdentityStore,
+    ApiState, ControlSubmitError, MtlsIdentityPemReloader, MtlsIdentityStore, ProjectionRefresher,
     ReconcileReportSnapshot, TlsConfigStore, TlsPemReloader,
 };
 use qx_control::{
@@ -55,15 +55,17 @@ use qx_runtime::{
 };
 #[cfg(feature = "nats")]
 use qx_runtime::{MessagingRuntimeConfig, WorkerContext};
-use qx_scheduler::{JobSpec, JobStatus, JobWindow, RetryPolicy, ScheduleTick, Scheduler, Trigger};
+use qx_scheduler::{
+    claimable_by, JobSpec, JobStatus, JobWindow, RetryPolicy, ScheduleTick, Scheduler, Trigger,
+};
+use qx_storage::{
+    verify_audit_chain, AuditFileStore, AuditStore, ControlCommandQueue,
+    ControlCommandQueueBackend, FileJobQueue, JobLease, JsonStateStore, QueuedJob, StorageError,
+};
 #[cfg(feature = "nats")]
 use qx_storage::{
     ConsumerStateStore, FileConsumerStateStore, FileOutboxStore, OutboxEvent, OutboxPublisher,
     OutboxRelay, OutboxStore,
-};
-use qx_storage::{
-    ControlCommandQueue, ControlCommandQueueBackend, FileJobQueue, JobLease, JsonStateStore,
-    QueuedJob, StorageError,
 };
 #[cfg(feature = "nats")]
 use qx_storage::{NatsJetStreamConsumer, NatsJetStreamPublisher};
@@ -73,12 +75,13 @@ use qx_storage::{PostgresConsumerStateStore, PostgresOutboxStore};
 use qx_storage::{
     PostgresControlCommandQueue, PostgresControlStore, PostgresEventLogStore, PostgresJobQueue,
 };
-#[cfg(all(feature = "sqlite", feature = "nats"))]
-use qx_storage::{SqliteConsumerStateStore, SqliteOutboxStore};
 #[cfg(feature = "sqlite")]
 use qx_storage::{
-    SqliteControlCommandQueue, SqliteControlStore, SqliteJobQueue, SqliteTokenBucket,
+    SqliteAuditStore, SqliteControlCommandQueue, SqliteControlStore, SqliteJobQueue,
+    SqliteTokenBucket,
 };
+#[cfg(all(feature = "sqlite", feature = "nats"))]
+use qx_storage::{SqliteConsumerStateStore, SqliteOutboxStore};
 use qx_strategy::{
     BuiltinStrategy, BuiltinStrategyConfig, BuiltinStrategyKind, DynamicCAbiLoadPolicy,
     DynamicCAbiStrategy, MarketEvent as NativeMarketEvent, SharedRingConfig, SharedRingError,
@@ -106,8 +109,10 @@ mod cli;
 mod cli_args;
 mod cli_help;
 mod config_commands;
+mod config_output;
 mod configured_backends;
 mod dataset_commands;
+mod doctor_report;
 mod ecosystem_smoke;
 mod event_pipeline;
 mod init_project;
@@ -117,7 +122,9 @@ mod market_spec;
 mod multi_leg;
 mod path_resolution;
 mod readiness;
+mod report_format;
 mod runtime_check;
+mod runtime_components;
 mod runtime_wiring;
 mod scheduler;
 mod selfcheck;
@@ -134,7 +141,9 @@ pub(crate) use backtests::*;
 pub(crate) use ccxt_facts::*;
 pub(crate) use cli_help::*;
 pub(crate) use config_commands::*;
+pub(crate) use config_output::*;
 pub(crate) use configured_backends::*;
+pub(crate) use doctor_report::*;
 pub(crate) use ecosystem_smoke::*;
 #[allow(unused_imports)] // 默认特性下本模块条目全部为 nats/postgres 门控
 pub(crate) use event_pipeline::*;
@@ -145,7 +154,9 @@ pub(crate) use market_spec::*;
 pub(crate) use multi_leg::*;
 pub(crate) use path_resolution::*;
 pub(crate) use readiness::*;
+pub(crate) use report_format::*;
 pub(crate) use runtime_check::*;
+pub(crate) use runtime_components::*;
 pub(crate) use runtime_wiring::*;
 pub(crate) use scheduler::*;
 pub(crate) use spread::*;
@@ -157,10 +168,10 @@ pub(crate) use worker_entry::*;
 
 use dataset_commands::{
     run_dataset_bundle, run_dataset_ingest, verify_dataset_bundle_binding,
-    verify_dataset_bundle_component_bindings,
+    verify_dataset_bundle_component_bindings, verify_dataset_registry_declarations,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

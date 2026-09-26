@@ -2,8 +2,9 @@
 //!
 //! 审计口径修正：四个文件状态存储（`JsonStateStore`、`FileConsumerStateStore`、
 //! `FileOutboxStore`、`FileJobQueue`）在迁移前**已经**共享同一套原子替换
-//! [`write_atomic_path`] 与跨进程锁 [`acquire_storage_lock`]（含 Phase 4t 修掉的
-//! Windows `create_new` 遇 `PermissionDenied` 的有界重试，逻辑逐字保留）；
+//! [`write_atomic_path`] 与跨进程锁 [`acquire_storage_lock`]；该锁的判据自 V11 §40 D1
+//! 起住在 qx-core::file_lock（Windows `create_new` 遇 `PermissionDenied` 的有界重试逐字
+//! 保留，另加孤儿锁年龄接管），本模块只保留调用点；
 //! 真正写重复的是它们各自的“序列化 + 信封校验 + 读改写事务”层。本模块把该层收敛
 //! 为唯一实现：
 //!
@@ -17,6 +18,7 @@
 //! `None`，未来如需引入版本 key 必须另做迁移而不是就地改写。
 
 use crate::{StorageError, TEMP_FILE_SEQUENCE};
+use qx_core::{FileLock, LockError};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::io::ErrorKind;
@@ -187,40 +189,16 @@ pub(crate) fn write_state_text(
     write_atomic_path(path, root, content)
 }
 
-pub(crate) struct StorageLock {
-    path: PathBuf,
-}
-
-impl Drop for StorageLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-pub(crate) fn acquire_storage_lock(path: PathBuf) -> Result<StorageLock, StorageError> {
-    // 有界重试把正常并发写者串行化；`AlreadyExists` 与 Windows 删除窗口内
-    // `create_new` 抛出的 `PermissionDenied`（os error 5）都算锁正在占用或正在释放。
-    for _ in 0..100 {
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(_) => return Ok(StorageLock { path }),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    ErrorKind::AlreadyExists | ErrorKind::PermissionDenied
-                ) =>
-            {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            Err(error) => return Err(StorageError::Io(error.to_string())),
-        }
-    }
-    Err(StorageError::Conflict(
-        "存储追加锁被占用，调用方应在恢复后重试".into(),
-    ))
+/// 存储侧写锁：抢锁与释放全部委托 qx-core::file_lock（V11 §40 D1）。
+///
+/// 旧实现只有"100 次 × 1ms"这一层有界重试；锁文件由被杀掉的进程留下时，每一次后续调用都会
+/// 撞上同一把死锁并永久失败。文件锁的年龄判据补回这条出路，同时保留调用方依赖的两种错误形状：
+/// 竞争=`Conflict`，其它=`Io`。
+pub(crate) fn acquire_storage_lock(path: PathBuf) -> Result<FileLock, StorageError> {
+    FileLock::acquire(path).map_err(|error| match error {
+        LockError::Contended(message) => StorageError::Conflict(message),
+        LockError::Io(message) => StorageError::Io(message),
+    })
 }
 
 pub(crate) fn sync_file(path: &Path) -> Result<(), StorageError> {

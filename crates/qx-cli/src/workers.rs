@@ -95,8 +95,6 @@ fn live_strategy_job(
         trigger: Trigger::Manual,
         window: JobWindow::Any,
         depends_on: Vec::new(),
-        input_refs: vec![format!("barframe:{data_fingerprint:016x}")],
-        output_refs: vec!["strategy-submit-order".into()],
         timeout_seconds: 60,
         retry_policy: RetryPolicy::default(),
         concurrency_key: format!(
@@ -104,7 +102,6 @@ fn live_strategy_job(
             strategy.instrument.as_deref().unwrap_or("")
         ),
         idempotency_key: format!("barframe:{data_fingerprint:016x}"),
-        permission_scope: "strategy".into(),
         audit_reason: "live-closed-bar".into(),
         dry_run: environment.eq_ignore_ascii_case("paper"),
     };
@@ -426,7 +423,7 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                     .available(now)
                     .map_err(|error| format!("读取 Strategy JobQueue 失败: {error:?}"))?
                 {
-                    if queued.job.owner != context.id() && queued.job.owner != "*" {
+                    if !claimable_by(&queued.job.owner, context.id()) {
                         continue;
                     }
                     let lease = match queue.claim(queued.run.run_id, context.id(), now, 30) {
@@ -579,6 +576,7 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                                         &strategy_runtime_config,
                                         context.id(),
                                         output.signal_id,
+                                        &output.request_id,
                                         intent,
                                         now,
                                         current_qty,
@@ -682,13 +680,11 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                     if !queued.job.job_id.starts_with("live-strategy:") {
                         state_store
                             .transact_scheduler_at(&state_path, |scheduler| {
+                                // 成功这一侧不写 `error_code`：那条摘要的出口是下面的自报行
+                                // `result=`，而这一格按"为什么失败"定义，重试判据拿它匹配
+                                // `retryable_codes`（V11 O1）。
                                 scheduler
-                                    .finish_run_with_code(
-                                        queued.run.run_id,
-                                        true,
-                                        Some(&result),
-                                        now,
-                                    )
+                                    .finish_run_with_code(queued.run.run_id, true, None, now)
                                     .map(|_| ())
                                     .map_err(|error| format!("完成 JobRun 失败: {error:?}"))
                             })

@@ -244,23 +244,46 @@ pub(crate) fn seed_paper_fill_with_fee(data_dir: &Path, config: &RuntimeConfig) 
 }
 
 mod account_event_log_identity;
+mod api_control_audit_live;
 mod api_default_account_reads;
+mod api_projection_refresher_ready;
 mod api_query_models_live;
+mod api_serve_stop_token;
 mod api_snapshot_money_fields;
+mod api_snapshot_republish;
 mod ashare_submit_guard;
 
-/// 子进程型用例共用的被测 binary 与其新鲜度护栏（原本只在 `cli_surface.rs` 内，
-/// V11 Q0b 的旗标用例同样要跑真 binary，于是按"共享夹具进本文件"的约定上移）。
-/// V11 Q54 把 `init` 一族与产品规格读法各自拆成模块，两者都是子进程用例的被测面，
-/// 因此一并列入：漏掉一项就等于放任过期 binary 对着旧行为"绿"。
-const QX_CLI_SURFACE_SOURCES: [&str; 6] = [
-    "src/cli.rs",
-    "src/cli_help.rs",
-    "src/config_commands.rs",
-    "src/init_project.rs",
-    "src/market_spec.rs",
-    "src/backtests/mod.rs",
-];
+/// 子进程用例的被测面：`src/` 下除 `src/tests/` 之外的每个 `.rs` 都编进 `qx-cli.exe`。
+///
+/// 原先这里是一份手抄清单，每拆出一个模块就要记得补一行——`config_output.rs`（V11 E4）
+/// 就是清单会漏掉的那一类：漏一行不等于少测一条用例，而是让子进程断言对着一份过期
+/// binary 变绿。改成按目录走一遍，清单就没有"忘了更新"这种失效方式。
+/// `src/tests/` 排除在外：那些文件只编进测试壳，改它们不该要求重链被测 binary。
+fn qx_cli_compiled_sources() -> Vec<PathBuf> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir)
+            .unwrap_or_else(|error| panic!("读取被测源码目录 {} 失败: {error}", dir.display()))
+        {
+            let entry = entry.expect("读取被测源码目录项失败");
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().and_then(|name| name.to_str()) == Some("rs") {
+                out.push(path);
+            }
+        }
+    }
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut sources = Vec::new();
+    walk(&src, &mut sources);
+    sources.retain(|path| !path.starts_with(src.join("tests")));
+    assert!(
+        sources.len() > 20,
+        "被测面只数到 {} 个源文件，递归走查本身失效了",
+        sources.len()
+    );
+    sources
+}
 
 /// 被测 binary 是否不早于被测源码：`cargo test --bin` 只编译测试壳、不会重链
 /// `target/debug/qx-cli.exe`，放任过期 binary 会让子进程断言对着旧行为"绿"。
@@ -269,12 +292,11 @@ fn assert_binary_fresh(binary: &Path) {
         .metadata()
         .and_then(|m| m.modified())
         .expect("读取被测 binary 修改时间失败");
-    for source in QX_CLI_SURFACE_SOURCES {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(source);
+    for path in qx_cli_compiled_sources() {
         let edited = path
             .metadata()
             .and_then(|m| m.modified())
-            .unwrap_or_else(|_| panic!("找不到被测源码 {}", path.display()));
+            .unwrap_or_else(|error| panic!("读取被测源码 {} 失败: {error}", path.display()));
         assert!(
             built >= edited,
             "被测 binary {} 比 {} 旧，请先 cargo build -p qx-cli 再跑本用例",
@@ -314,12 +336,16 @@ mod backtest_cost_provenance;
 mod backtest_entries;
 mod backtest_fill_model;
 mod backtest_input_provenance;
+mod backtest_product_policy;
 mod backtest_replay_gate;
 mod backtest_risk_provenance;
+mod builtin_command_identity;
 mod calendar_component_fingerprint;
 mod ccxt_position_facts_honesty;
 mod ccxt_reconcile_round;
+mod ccxt_respawn_budget;
 mod cli_surface;
+mod config_json_output;
 mod e2e_and_python_contract;
 mod execution_and_multi_leg;
 mod init_onboarding;
@@ -331,8 +357,12 @@ mod paper_hedge_recovery;
 mod paper_margin_valuation;
 mod paper_settlement_currency;
 mod reconcile_worker_identity;
+mod report_honesty;
 mod runtime_api_worker_identity;
+mod runtime_check_roster;
+mod scheduler_owner_routing;
 mod settlement_currency_caliper;
 mod storage_root_report;
+mod strategy_declaration_scope;
 mod strategy_worker_entries;
 mod worker_observability;

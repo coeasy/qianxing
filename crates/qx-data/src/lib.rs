@@ -37,6 +37,6 @@ pub use provider::{
 };
 pub use registry::{DatasetRegistrar, DatasetRegistry, JsonDatasetRegistry};
 pub use resolver::{DatasetRef, DatasetResolver};
-pub use schema::{Bar, DataSchemaVersion};
+pub use schema::Bar;
 pub use storage::{DataStorage, JsonFileDataStorage, MemoryDataStorage};
 pub use validation::{validate_bars, ValidationReport};

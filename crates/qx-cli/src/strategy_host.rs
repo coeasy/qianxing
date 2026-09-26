@@ -382,25 +382,30 @@ impl PythonStrategyClient {
                 let diagnostics = self.diagnostics();
                 let stdin = self
                     .stdin
-                    .as_mut()
+                    .take()
                     .ok_or_else(|| format!("{} worker stdin 不可用", label))?;
-                if self.transport == StrategyTransport::Jsonl {
-                    stdin
-                        .write_all(format!("{payload}\n").as_bytes())
-                        .map_err(|error| {
-                            format!("写入 {} 输入失败: {error}{}", label, diagnostics)
-                        })?;
+                let frame = if self.transport == StrategyTransport::Jsonl {
+                    format!("{payload}\n").into_bytes()
                 } else {
-                    let frame = StrategyFrame::request(sequence, payload.into_bytes())
+                    StrategyFrame::request(sequence, payload.into_bytes())
                         .encode(DEFAULT_MAX_FRAME_BYTES)
-                        .map_err(|error| format!("编码 {} 分帧输入失败: {error}", self.label))?;
-                    stdin.write_all(&frame).map_err(|error| {
-                        format!("写入 {} 分帧输入失败: {error}{}", label, diagnostics)
-                    })?;
-                }
-                stdin
-                    .flush()
-                    .map_err(|error| format!("刷新 {} 输入失败: {error}{}", label, diagnostics))?;
+                        .map_err(|error| format!("编码 {} 分帧输入失败: {error}", self.label))?
+                };
+                // 写也要进预算（V11 N8）：worker 卡在别处不读 stdin 时，管道写满后这条
+                // `write_all` 再也不返回，而下面那圈"响应超时"排在它后面，压根没机会开始。
+                // 超时即按"这条管道已不归我们掌控"处理：杀掉子进程，句柄不回置。
+                let written = qx_adapter::write_all_within(
+                    stdin,
+                    frame,
+                    Duration::from_millis(self.timeout_ms),
+                    || {
+                        let _ = self.child.kill();
+                    },
+                );
+                self.stdin = Some(
+                    written
+                        .map_err(|error| format!("写入 {label} 输入失败: {error}{diagnostics}"))?,
+                );
                 let received = self
                     .responses
                     .as_ref()

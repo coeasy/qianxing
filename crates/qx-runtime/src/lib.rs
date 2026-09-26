@@ -121,6 +121,10 @@ impl qx_execution::MarketDataPort for LiveEventPipeline {
 }
 
 /// 加载控制面状态；首次启动返回空状态，损坏的 JSON 不会被吞掉。
+///
+/// 写入侧不在这里：控制面状态的落盘只经 `ControlStateBackend`（file/sqlite/postgres
+/// 三本后端的 `transact`），这里再抄一颗 `save_control_state` 就是第二个写入入口
+/// ——它会绕过 backend 的锁与去重语义（V11 M4，与 H2 删 `sync_control` 同族）。
 pub fn load_control_state(
     root: impl Into<std::path::PathBuf>,
 ) -> Result<qx_control::ControlPlane, String> {
@@ -128,14 +132,4 @@ pub fn load_control_state(
         .load_control_if_exists()
         .map_err(|error| format!("读取控制面状态失败: {error:?}"))
         .map(|state| state.unwrap_or_default())
-}
-
-pub fn save_control_state(
-    root: impl Into<std::path::PathBuf>,
-    state: &qx_control::ControlPlane,
-) -> Result<(), String> {
-    JsonStateStore::new(root)
-        .save_control(state)
-        .map(|_| ())
-        .map_err(|error| format!("保存控制面状态失败: {error:?}"))
 }

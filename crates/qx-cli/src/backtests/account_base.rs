@@ -51,10 +51,14 @@ pub(crate) fn backtest_initial_cash(declared: Option<i128>) -> Result<BacktestAc
 pub(crate) fn configured_initial_cash_raw(
     config_path: Option<&Path>,
 ) -> Result<Option<i128>, String> {
-    Ok(match config_path {
-        Some(path) => read_runtime_config(path)?.strategy.initial_cash_raw,
-        None => None,
-    })
+    let Some(path) = config_path else {
+        return Ok(None);
+    };
+    let config = read_runtime_config(path)?;
+    unapplied_strategy_declaration(&config, "initial_cash_raw", |strategy| {
+        strategy.initial_cash_raw.map(|raw| raw.to_string())
+    })?;
+    Ok(config.strategy.initial_cash_raw)
 }
 
 /// stdout 与摘要共用的同一格写法：定点整数 + 来源，中间不夹任何一方的猜测。

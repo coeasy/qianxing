@@ -66,12 +66,12 @@ pub struct ProjectionEnvelope<T> {
 
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub struct ProjectionLineage {
-    #[serde(default)]
-    pub dataset_version: String,
-    #[serde(default)]
-    pub manifest_digest: String,
-    #[serde(default)]
-    pub source_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_digest: Option<String>,
 }
 
 impl<T> ProjectionEnvelope<T> {
@@ -196,6 +196,22 @@ impl AccountSnapshot {
     }
 
     pub fn validate(&self) -> Result<(), ProtocolError> {
+        /// 四张表共用同一条纪律（V11 R7-3）：行内的自指 id 必须与它自己的键相等。
+        /// `state_hash` 只哈希 `positions` 的 instrument 键与 orders/fills/transfers 的
+        /// u64 键，行内 id 不进哈希——所以它不能靠写侧的巧合保持一致，必须由约束兜住，
+        /// 否则一份改过 `fill_id` 的快照仍然能通过哈希校验。
+        fn check_keys(
+            table: &str,
+            rows: impl IntoIterator<Item = (u64, u64)>,
+        ) -> Result<(), ProtocolError> {
+            if let Some((key, id)) = rows.into_iter().find(|(key, id)| key != id) {
+                return Err(ProtocolError::Invalid(format!(
+                    "{table} 的键 {key} 与行内 id {id} 不一致"
+                )));
+            }
+            Ok(())
+        }
+
         if self.header.schema_version == 0 || self.header.account_id.trim().is_empty() {
             return Err(ProtocolError::Invalid("快照头或 account_id 非法".into()));
         }
@@ -209,6 +225,20 @@ impl AccountSnapshot {
                 ));
             }
         }
+        check_keys(
+            "order",
+            self.orders.iter().map(|(key, row)| (*key, row.order_id)),
+        )?;
+        check_keys(
+            "fill",
+            self.fills.iter().map(|(key, row)| (*key, row.fill_id)),
+        )?;
+        check_keys(
+            "transfer",
+            self.transfers
+                .iter()
+                .map(|(key, row)| (*key, row.transfer_id)),
+        )?;
         Ok(())
     }
 

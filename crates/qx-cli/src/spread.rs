@@ -230,6 +230,20 @@ pub(crate) fn has_pending_spread_recovery(root: &Path, venue_id: &str) -> Result
     Ok(false)
 }
 
+/// 补散度恢复两条链（Binance / CCXT）共用的轮间隔（V11 R4-10）。
+///
+/// 修前的形状：只要还有组停在 `HedgeRequired`，每轮就重建一次 venue（CCXT 那侧是**重启一个
+/// Python 子进程**）并再追加一条 `HedgeRequired` 事件，而间隔恒为 100 ms。一条对冲不上的腿
+/// 因此以 10 Hz 永久消耗进程、句柄与事件流水。这里只收频率、不收重试：推走一组即归零回
+/// 常规轮询，推不走就按 K1 那份指数退避付费，封顶 10 秒。
+/// 不设"试到第 N 次就退出"——放弃重试等于把那条腿永久留在敞口里。
+pub(crate) fn spread_recovery_poll_interval(stalled_rounds: u32) -> Duration {
+    if stalled_rounds == 0 {
+        return Duration::from_millis(100);
+    }
+    ccxt_respawn_delay(stalled_rounds)
+}
+
 pub(crate) fn dedicated_spread_recovery_configured(
     config: &RuntimeConfig,
     execution_worker: &WorkerConfig,
@@ -436,20 +450,16 @@ pub(crate) fn persist_strategy_submit(
             qx_control::ControlError::DuplicateCommand(_)
             | qx_control::ControlError::DuplicateRequest(_),
         ) => {
-            let existing = plane
-                .command(command.command_id)
-                .ok_or_else(|| "Strategy 幂等命令缺少原命令".to_string())?;
-            if existing.digest() != command.digest() {
+            // 幂等判据覆盖"已退场但仍留在审计窗口里"的命令，所以这里读的是窗口里最后一条记录，
+            // 而不是主表里的命令体——终态命令体已经跟着退场走了（V11 R5-1）。摘要比对与状态
+            // 判定共用同一条记录，避免在途与退场两种形状各写一遍。
+            let record = plane
+                .latest_audit(command.command_id)
+                .ok_or_else(|| "Strategy 幂等命令缺少审计记录".to_string())?;
+            if record.command_digest != command.digest() {
                 return Err("Strategy command_id 已被不同 OrderIntent 占用".into());
             }
-            let status = plane
-                .audit()
-                .iter()
-                .rev()
-                .find(|record| record.command_id == command.command_id)
-                .map(|record| record.status)
-                .ok_or_else(|| "Strategy 幂等命令缺少审计记录".to_string())?;
-            match status {
+            match record.status {
                 qx_control::CommandStatus::Accepted => {
                     command_queue
                         .enqueue_command(command.clone(), now)
@@ -462,7 +472,6 @@ pub(crate) fn persist_strategy_submit(
                 qx_control::CommandStatus::Failed => {
                     Err("Strategy 原 OrderIntent 已执行失败".into())
                 }
-                qx_control::CommandStatus::Rejected => Err("Strategy 原 OrderIntent 已拒绝".into()),
             }
         }
         Err(error) => Err(format!("Strategy SubmitOrder 被控制面拒绝: {error:?}")),
@@ -471,16 +480,6 @@ pub(crate) fn persist_strategy_submit(
 
 pub(crate) fn command_is_final(control: &ControlPlane, command_id: u64) -> bool {
     control
-        .audit()
-        .iter()
-        .rev()
-        .find(|record| record.command_id == command_id)
-        .is_some_and(|record| {
-            matches!(
-                record.status,
-                qx_control::CommandStatus::Rejected
-                    | qx_control::CommandStatus::Executed
-                    | qx_control::CommandStatus::Failed
-            )
-        })
+        .latest_audit(command_id)
+        .is_some_and(|record| record.status.is_final())
 }

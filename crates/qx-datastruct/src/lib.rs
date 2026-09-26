@@ -314,6 +314,21 @@ impl TransformManifest {
 /// `BAR_FRAME_SCHEMA_VERSION` 是同一个数字，由架构自检的跨语言常量项钉住（V11 R16）。
 pub const BAR_FRAME_JSON_SCHEMA_VERSION: u32 = 1;
 
+/// v1 文档允许的顶层键 —— 读侧认得的名字只有这些。Python 的 `BAR_FRAME_STRICT_FIELDS`
+/// 与写侧 `to_json` 印出的那一串必须同为这份名单（架构自检钉住三方相等，V11 Q2）：
+/// 名单外的一格过去在 Rust 里被静默丢掉，而 Python 当场拒，同一份文档两侧口径相反。
+const BAR_FRAME_STRICT_FIELDS: [&str; 9] = [
+    "schema_version",
+    "instrument",
+    "source",
+    "ts",
+    "open_raw",
+    "high_raw",
+    "low_raw",
+    "close_raw",
+    "volume_raw",
+];
+
 #[derive(Deserialize)]
 struct BarFrameWire {
     /// 旧文档可以完全没有这一格（`0` = 兼容分支）；本 crate 的写侧从 R16 起总是印上版本号。
@@ -338,6 +353,22 @@ impl BarFrame {
                 "unsupported BarFrame schema_version={} (supported: 0 legacy, 1..={BAR_FRAME_JSON_SCHEMA_VERSION})",
                 wire.schema_version
             )));
+        }
+        if wire.schema_version >= 1 {
+            // 只问键名，不碰数值 —— 走 `Value` 会把超过 u64 的原始价量塌成浮点。
+            let declared: serde_json::Map<String, serde_json::Value> = serde_json::from_str(input)
+                .map_err(|error| FrameError::InvalidJson(error.to_string()))?;
+            let unnamed: Vec<&str> = declared
+                .keys()
+                .filter(|key| !BAR_FRAME_STRICT_FIELDS.contains(&key.as_str()))
+                .map(String::as_str)
+                .collect();
+            if !unnamed.is_empty() {
+                return Err(FrameError::InvalidJson(format!(
+                    "BarFrame schema_version={} unknown {unnamed:?}",
+                    wire.schema_version
+                )));
+            }
         }
         let instrument = InstrumentId::parse(&wire.instrument)
             .ok_or_else(|| FrameError::InvalidInstrument(wire.instrument.clone()))?;

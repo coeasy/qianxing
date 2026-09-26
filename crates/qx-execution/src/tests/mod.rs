@@ -16,6 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 struct PortState {
     orders: Vec<Order>,
     events: Vec<ExecutionEventEnvelope>,
+    registrations: Vec<(u64, Option<String>)>,
 }
 
 impl OrderStore for PortState {
@@ -27,7 +28,7 @@ impl OrderStore for PortState {
         &mut self,
         order: Order,
         _ts: u64,
-        _correlation_id: Option<String>,
+        correlation_id: Option<String>,
     ) -> Result<(), String> {
         if self
             .orders
@@ -36,6 +37,7 @@ impl OrderStore for PortState {
         {
             return Err("duplicate order".into());
         }
+        self.registrations.push((order.client_id, correlation_id));
         self.orders.push(order);
         Ok(())
     }

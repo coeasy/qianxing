@@ -15,7 +15,7 @@ fn binance_submit_without_market_spec_fails_closed_with_no_order_fact() {
         .join("qianxing.runtime.production.example.json");
     let mut config = read_runtime_config(&template).unwrap();
     config.config_fingerprint = None;
-    config.environment = "test".into();
+    config.environment = "paper".into();
     config.storage.data_dir = data_dir.to_string_lossy().into_owned();
     config.storage.backend = StorageBackend::Files;
     config.storage.consistency = qx_runtime::StorageConsistency::LocalDurable;

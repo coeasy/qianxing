@@ -185,6 +185,9 @@ pub(crate) fn execution_cost_binding_from_config(
     config: &RuntimeConfig,
     runtime_config_path: Option<&Path>,
 ) -> Result<ExecutionCostBinding, String> {
+    if let Some(problem) = unapplied_cost_rules_declaration(config, runtime_config_path) {
+        return Err(problem);
+    }
     let Some(configured) = config.strategy.cost_rules_path.as_deref() else {
         return Ok(ExecutionCostBinding {
             from_runtime_config: runtime_config_path.is_some(),

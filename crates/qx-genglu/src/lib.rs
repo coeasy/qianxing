@@ -50,40 +50,6 @@ pub fn sharpe_ratio(returns: &[f64], periods_per_year: f64, risk_free: f64) -> O
     Some((mean - risk_free / periods_per_year) / sd * periods_per_year.sqrt())
 }
 
-/// 绩效汇总。
-#[derive(Clone, Copy, Debug)]
-pub struct Metrics {
-    pub n_fills: usize,
-    pub total_fee: i128,
-    pub total_return: i128,
-    pub max_drawdown: i128,
-    pub final_equity: i128,
-}
-
-/// 分析器：把成交流归约为绩效指标。
-#[derive(Default)]
-pub struct BasicAnalyser {
-    pub total_fee: i128,
-    pub n_fills: usize,
-}
-
-impl BasicAnalyser {
-    pub fn on_fill(&mut self, f: &Fill) {
-        self.n_fills += 1;
-        self.total_fee += f.fee.raw();
-    }
-
-    pub fn report(&self, equity: &[i128]) -> Metrics {
-        Metrics {
-            n_fills: self.n_fills,
-            total_fee: self.total_fee,
-            total_return: total_return(equity),
-            max_drawdown: max_drawdown(equity),
-            final_equity: *equity.last().unwrap_or(&0),
-        }
-    }
-}
-
 /// 成交归因链：不改变 Fill 事实，只在运营层保存来源。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct FillAttribution {

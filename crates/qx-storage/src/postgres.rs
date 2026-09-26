@@ -9,10 +9,11 @@
 //! 串行化，连接池只解决并发连接复用，不等同于读写分离或跨节点 HA。
 
 use super::{
-    audit_entry_hash, validate_audit_chain, AuditEntry, AuditStore, ConsumerCheckpoint,
-    ConsumerProjection, ConsumerStateStore, ControlCommandLease, ControlCommandQueueBackend,
-    DeadLetterRecord, EventLogStore, JobLease, JobQueueBackend, OutboxEvent, OutboxLease,
-    OutboxStore, QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
+    chain_audit, validate_audit_chain, AuditChainWriter, AuditEntry, AuditStore,
+    ConsumerCheckpoint, ConsumerProjection, ConsumerStateStore, ControlCommandLease,
+    ControlCommandQueueBackend, DeadLetterRecord, EventLogStore, JobLease, JobQueueBackend,
+    OutboxEvent, OutboxLease, OutboxStore, QueuedControlCommand, QueuedJob, StorageError,
+    TransactionalConsumerStateStore,
 };
 use postgres::{Client, GenericClient, Transaction};
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
@@ -21,10 +22,10 @@ use qx_protocol::{AccountSnapshot, ProtocolError, SnapshotStore};
 use qx_scheduler::{JobRun, JobSpec};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::time::{Duration, Instant};
 
 const QUEUE_LOCK_KEY: i64 = 7_381_922_401_127;
-const AUDIT_LOCK_KEY: i64 = 7_381_922_401_129;
 const EVENT_LOG_LOCK_KEY: i64 = 7_381_922_401_131;
 const OUTBOX_LOCK_KEY: i64 = 7_381_922_401_137;
 const CONSUMER_LOCK_KEY: i64 = 7_381_922_401_139;
@@ -43,6 +44,65 @@ fn lock_error() -> StorageError {
 
 fn protocol_lock_error() -> ProtocolError {
     ProtocolError::Io("PostgreSQL 客户端锁已中毒".into())
+}
+
+/// 等一颗连接槽的最长时间。`configure_client` 给服务端设了 30 秒 `statement_timeout`，
+/// 一条合法慢事务最迟在那一刻被服务端掐掉；到 60 秒还不放手的那位不是慢，是卡住了。
+const SLOT_WAIT_BUDGET: Duration = Duration::from_secs(60);
+
+/// 轮询间隔：正常竞争以毫秒级结束，只有越过 [`SLOT_WAIT_BUDGET`] 才改口报"槽位卡住"。
+const SLOT_WAIT_STEP: Duration = Duration::from_millis(5);
+
+/// 连不上时要等多久。M1 把连接阶段的界推给"驱动与 DSN"，而仓内当时一处都没写它，
+/// 于是那半句话实际指向 OS 的 TCP 超时（几十秒到几分钟，且随平台漂移）。
+const CONNECT_TIMEOUT_SECONDS: u64 = 10;
+
+/// 槽位取锁的两种失败：锁被前一位持有者弄坏了，或者持有者到点还没放手。
+enum SlotLock {
+    Poisoned,
+    Busy,
+}
+
+/// 有界地取一颗连接槽。原先直接用 `Mutex::lock()`：一条被黑洞掉的连接能让持有者永远
+/// 停在 socket read，之后排在这格上的每一个调用方也跟着永远排下去——停机令牌问不到，
+/// `/ready` 也读不到新东西（V11 O8）。
+fn lock_slot<T>(
+    slots: &[Mutex<T>],
+    index: usize,
+    budget: Duration,
+) -> Result<MutexGuard<'_, T>, SlotLock> {
+    let deadline = Instant::now() + budget;
+    loop {
+        match slots[index].try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(TryLockError::Poisoned(_)) => return Err(SlotLock::Poisoned),
+            Err(TryLockError::WouldBlock) => {
+                if Instant::now() >= deadline {
+                    return Err(SlotLock::Busy);
+                }
+                std::thread::sleep(SLOT_WAIT_STEP);
+            }
+        }
+    }
+}
+
+/// 给没有显式给出连接超时的 DSN 补上仓内默认值；显式给过的一字不动。
+fn dsn_with_connect_timeout(dsn: &str, seconds: u64) -> String {
+    let trimmed = dsn.trim();
+    if trimmed.to_ascii_lowercase().contains("connect_timeout=") {
+        return trimmed.to_string();
+    }
+    let keyword = format!("connect_timeout={seconds}");
+    if let Some(scheme_end) = trimmed.find("://") {
+        let (head, rest) = trimmed.split_at(scheme_end + 3);
+        // 带 fragment 的 URL 不是该由我们重写的形状，原样交回。
+        if rest.contains('#') {
+            return trimmed.to_string();
+        }
+        let separator = if rest.contains('?') { '&' } else { '?' };
+        return format!("{head}{rest}{separator}{keyword}");
+    }
+    format!("{trimmed} {keyword}")
 }
 
 fn u64_text(value: u64) -> String {
@@ -105,13 +165,16 @@ impl PostgresStorage {
                 "PostgreSQL pool_size 必须在 1..=128 内".into(),
             ));
         }
+        // 连接阶段的界由 DSN 给；调用方没写的时候补上仓内默认值，让"连不上要等多久"
+        // 这件事在仓内就有答案，而不是随平台漂移（V11 O8）。
+        let dsn = dsn_with_connect_timeout(dsn, CONNECT_TIMEOUT_SECONDS);
         let mut clients = Vec::with_capacity(pool_size);
         for index in 0..pool_size {
             let tls = native_tls::TlsConnector::builder()
                 .build()
                 .map_err(|error| StorageError::Io(format!("PostgreSQL TLS 初始化失败: {error}")))?;
             let connector = postgres_native_tls::MakeTlsConnector::new(tls);
-            let mut client = Client::connect(dsn, connector).map_err(pg_error)?;
+            let mut client = Client::connect(&dsn, connector).map_err(pg_error)?;
             if index == 0 {
                 migrate_client(&mut client)?;
             }
@@ -139,14 +202,22 @@ impl PostgresStorage {
 
     fn lock_client(&self) -> Result<MutexGuard<'_, Client>, StorageError> {
         let index = self.next_client.fetch_add(1, Ordering::Relaxed) % self.clients.len();
-        self.clients[index].lock().map_err(|_| lock_error())
+        lock_slot(&self.clients, index, SLOT_WAIT_BUDGET).map_err(|failure| match failure {
+            SlotLock::Poisoned => lock_error(),
+            SlotLock::Busy => StorageError::Io(format!(
+                "PostgreSQL 连接槽 {index} 在 {SLOT_WAIT_BUDGET:?} 内没有交出：持有者卡在往返里，不是慢"
+            )),
+        })
     }
 
     fn lock_client_protocol(&self) -> Result<MutexGuard<'_, Client>, ProtocolError> {
         let index = self.next_client.fetch_add(1, Ordering::Relaxed) % self.clients.len();
-        self.clients[index]
-            .lock()
-            .map_err(|_| protocol_lock_error())
+        lock_slot(&self.clients, index, SLOT_WAIT_BUDGET).map_err(|failure| match failure {
+            SlotLock::Poisoned => protocol_lock_error(),
+            SlotLock::Busy => ProtocolError::Io(format!(
+                "PostgreSQL 连接槽 {index} 在 {SLOT_WAIT_BUDGET:?} 内没有交出：持有者卡在往返里，不是慢"
+            )),
+        })
     }
 }
 
@@ -230,10 +301,19 @@ fn migrate_client(client: &mut Client) -> Result<(), StorageError> {
              );
              CREATE INDEX IF NOT EXISTS qx_jobs_pending_idx
                  ON qx_jobs(done, run_id);
+             -- 审计链按 `sequence::numeric` 排序与截残尾：`sequence` 存 TEXT 是为了容下
+             -- u64，字典序不等于序号序，没有这颗表达式索引时 `ORDER BY … DESC LIMIT 1`
+             -- 就是全表扫+排序，把每笔命令两笔追加写成 O(链长)（V11 R5-2）。
+             CREATE INDEX IF NOT EXISTS qx_audit_entries_sequence_numeric
+                 ON qx_audit_entries ((sequence::numeric));
              CREATE INDEX IF NOT EXISTS qx_control_commands_pending_idx
                  ON qx_control_commands(done, enqueued_ts, command_id);
-             CREATE INDEX IF NOT EXISTS qx_outbox_pending_idx
-                 ON qx_outbox_events(created_ts, sequence, event_id);
+             -- Outbox 待投递集合按 `available()` 的口径排序：created_ts/sequence 是 u64
+             -- 存 TEXT，普通索引服务不了 `::numeric` 排序，旧的 (created_ts, sequence,
+             -- event_id) 只会变成纯写放大，所以换成表达式索引（V11 R7-2，同审计链先例）。
+             DROP INDEX IF EXISTS qx_outbox_pending_idx;
+             CREATE INDEX IF NOT EXISTS qx_outbox_pending_numeric_idx
+                 ON qx_outbox_events ((created_ts::numeric), (sequence::numeric), event_id);
              CREATE TABLE IF NOT EXISTS qx_consumer_checkpoints (
                  group_id TEXT NOT NULL,
                  topic TEXT NOT NULL,
@@ -297,10 +377,6 @@ impl PostgresConsumerStateStore {
         Ok(Self {
             storage: PostgresStorage::connect_with_pool_size(dsn, pool_size)?,
         })
-    }
-
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
     }
 }
 
@@ -425,26 +501,28 @@ impl ConsumerStateStore for PostgresConsumerStateStore {
         Ok(())
     }
 
-    fn dead_letters(
+    fn dead_letter(
         &self,
         group_id: &str,
-        limit: usize,
-    ) -> Result<Vec<DeadLetterRecord>, StorageError> {
+        event_id: &str,
+    ) -> Result<Option<DeadLetterRecord>, StorageError> {
         let mut client = self.storage.lock_client()?;
-        let rows = client
-            .query(
+        // `attempts` 存 TEXT 是为了容下 u64，`ORDER BY attempts` 的字典序会把
+        // 第 9 次重试念成比第 10 次新；点查取最后一次入账，必须按数字序。
+        let row = client
+            .query_opt(
                 "SELECT record_json FROM qx_consumer_dead_letters
-                 WHERE group_id = $1 ORDER BY attempts, event_id LIMIT $2",
-                &[&group_id, &(limit as i64)],
+                 WHERE group_id = $1 AND event_id = $2
+                 ORDER BY attempts::numeric DESC LIMIT 1",
+                &[&group_id, &event_id],
             )
             .map_err(pg_error)?;
-        rows.into_iter()
-            .map(|row| {
-                let content: String = row.get(0);
-                serde_json::from_str(&content)
-                    .map_err(|error| StorageError::Io(format!("死信记录解析失败: {error}")))
-            })
-            .collect()
+        row.map(|row| {
+            let content: String = row.get(0);
+            serde_json::from_str(&content)
+                .map_err(|error| StorageError::Io(format!("死信记录解析失败: {error}")))
+        })
+        .transpose()
     }
 }
 
@@ -686,10 +764,6 @@ impl PostgresOutboxStore {
         })
     }
 
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
-    }
-
     pub fn append(&self, event: OutboxEvent) -> Result<(), StorageError> {
         event.validate()?;
         let mut client = self.storage.lock_client()?;
@@ -751,14 +825,17 @@ impl PostgresOutboxStore {
 
     pub fn available(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
         let mut client = self.storage.lock_client()?;
+        // `created_ts`/`sequence`/`expires_ts` 都是 u64 存 TEXT，字典序不等于序号序：
+        // 同一毫秒落盘的一串事件里，sequence 10 会排在 2 前面，把分区内的投递顺序念反。
+        // 口径与 SQLite/文件后端一致——三元组全部数字序（V11 R7-2）。
         let rows = client
             .query(
                 "SELECT e.event_id, e.topic, e.partition_key, e.sequence, e.schema_version,
                         e.trace_id, e.payload, e.created_ts, e.attempts
                  FROM qx_outbox_events e
                  LEFT JOIN qx_outbox_leases l ON l.event_id = e.event_id
-                 WHERE l.event_id IS NULL OR l.expires_ts <= $1
-                 ORDER BY e.created_ts, e.sequence, e.event_id",
+                 WHERE l.event_id IS NULL OR l.expires_ts::numeric <= $1::numeric
+                 ORDER BY e.created_ts::numeric, e.sequence::numeric, e.event_id",
                 &[&u64_text(now)],
             )
             .map_err(pg_error)?;
@@ -1012,10 +1089,6 @@ impl PostgresEventLogStore {
         })
     }
 
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
-    }
-
     pub fn storage(&self) -> &PostgresStorage {
         &self.storage
     }
@@ -1255,109 +1328,15 @@ impl PostgresAuditStore {
         })
     }
 
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
-    }
-
-    pub fn append(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
-        let mut client = self.storage.lock_client()?;
-        let mut transaction = client.transaction().map_err(pg_error)?;
-        lock_transaction(&mut transaction, AUDIT_LOCK_KEY)?;
-        let entries = read_audit(&mut transaction)?;
-        if entries.last().is_some_and(|entry| entry.record == record) {
-            transaction.commit().map_err(pg_error)?;
-            return Ok(PathBuf::from("postgres://qx/audit"));
-        }
-        let sequence = entries.len() as u64;
-        let previous_hash = entries.last().map_or(0, |entry| entry.entry_hash);
-        let entry_hash = audit_entry_hash(sequence, previous_hash, &record);
-        let record_json = serde_json::to_string(&record)
-            .map_err(|error| StorageError::Io(format!("审计序列化失败: {error}")))?;
-        let sequence_text = u64_text(sequence);
-        let previous_text = u64_text(previous_hash);
-        let entry_text = u64_text(entry_hash);
-        transaction
-            .execute(
-                "INSERT INTO qx_audit_entries
-                 (sequence, record_json, previous_hash, entry_hash)
-                 VALUES ($1, $2, $3, $4)",
-                &[&sequence_text, &record_json, &previous_text, &entry_text],
-            )
-            .map_err(pg_error)?;
-        transaction.commit().map_err(pg_error)?;
-        Ok(PathBuf::from("postgres://qx/audit"))
-    }
-
-    pub fn read(&self) -> Result<Vec<AuditEntry>, StorageError> {
+    pub(crate) fn read(&self) -> Result<Vec<AuditEntry>, StorageError> {
         let mut client = self.storage.lock_client()?;
         read_audit(&mut *client)
-    }
-
-    pub fn query_command(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        let command_id = u64_text(command_id);
-        let mut client = self.storage.lock_client()?;
-        let rows = client
-            .query(
-                "SELECT sequence, record_json, previous_hash, entry_hash
-                 FROM qx_audit_entries WHERE record_json::jsonb ->> 'command_id' = $1
-                 ORDER BY sequence::numeric",
-                &[&command_id],
-            )
-            .map_err(pg_error)?;
-        parse_audit_rows(rows)
-    }
-
-    pub fn after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        let sequence = u64_text(sequence);
-        let mut client = self.storage.lock_client()?;
-        let rows = client
-            .query(
-                "SELECT sequence, record_json, previous_hash, entry_hash
-                 FROM qx_audit_entries WHERE sequence::numeric > $1::numeric
-                 ORDER BY sequence::numeric",
-                &[&sequence],
-            )
-            .map_err(pg_error)?;
-        parse_audit_rows(rows)
-    }
-
-    pub fn sync_control(&self, plane: &ControlPlane) -> Result<usize, StorageError> {
-        let existing = self.read()?;
-        let records = plane.audit();
-        if existing.len() > records.len()
-            || existing
-                .iter()
-                .zip(records)
-                .any(|(entry, record)| entry.record != *record)
-        {
-            return Err(StorageError::Conflict(
-                "控制面审计与 PostgreSQL 审计前缀不一致".into(),
-            ));
-        }
-        let mut appended = 0;
-        for record in records.iter().skip(existing.len()) {
-            self.append(record.clone())?;
-            appended += 1;
-        }
-        Ok(appended)
     }
 }
 
 impl AuditStore for PostgresAuditStore {
-    fn append_record(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
-        self.append(record)
-    }
-
     fn read_entries(&self) -> Result<Vec<AuditEntry>, StorageError> {
         self.read()
-    }
-
-    fn query_command_entries(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        self.query_command(command_id)
-    }
-
-    fn entries_after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        self.after(sequence)
     }
 }
 
@@ -1369,23 +1348,38 @@ fn read_audit<C: GenericClient>(client: &mut C) -> Result<Vec<AuditEntry>, Stora
             &[],
         )
         .map_err(pg_error)?;
-    parse_audit_rows(rows)
-}
-
-fn parse_audit_rows(rows: Vec<postgres::Row>) -> Result<Vec<AuditEntry>, StorageError> {
-    let mut entries = Vec::with_capacity(rows.len());
-    for row in rows {
-        let record: AuditRecord = serde_json::from_str(row.get(1))
-            .map_err(|error| StorageError::Io(format!("PostgreSQL 审计 JSON 非法: {error}")))?;
-        entries.push(AuditEntry {
-            sequence: parse_u64(row.get(0), "sequence")?,
-            record,
-            previous_hash: parse_u64(row.get(2), "previous_hash")?,
-            entry_hash: parse_u64(row.get(3), "entry_hash")?,
-        });
-    }
+    let entries = collect_audit_rows(rows)?;
+    // 整条链只在按序号取回全量时逐条验：过滤后的片段可能从任意序号开始，拿
+    // "序号 == 下标" 去量它会把自家一条健康的链判成被篡改（V11 R5-2）。
     validate_audit_chain(&entries)?;
     Ok(entries)
+}
+
+/// 链尾那一条：有界的倒序首行读，供写入侧续链与检查点比对；不校验整条链。
+fn audit_tail<C: GenericClient>(client: &mut C) -> Result<Option<AuditEntry>, StorageError> {
+    let rows = client
+        .query(
+            "SELECT sequence, record_json, previous_hash, entry_hash
+             FROM qx_audit_entries ORDER BY sequence::numeric DESC LIMIT 1",
+            &[],
+        )
+        .map_err(pg_error)?;
+    rows.first().map(audit_entry_from_row).transpose()
+}
+
+fn collect_audit_rows(rows: Vec<postgres::Row>) -> Result<Vec<AuditEntry>, StorageError> {
+    rows.iter().map(audit_entry_from_row).collect()
+}
+
+fn audit_entry_from_row(row: &postgres::Row) -> Result<AuditEntry, StorageError> {
+    let record: AuditRecord = serde_json::from_str(row.get(1))
+        .map_err(|error| StorageError::Io(format!("PostgreSQL 审计 JSON 非法: {error}")))?;
+    Ok(AuditEntry {
+        sequence: parse_u64(row.get(0), "sequence")?,
+        record,
+        previous_hash: parse_u64(row.get(2), "previous_hash")?,
+        entry_hash: parse_u64(row.get(3), "entry_hash")?,
+    })
 }
 
 // ----------------------------- Snapshot ---------------------------------
@@ -1406,10 +1400,6 @@ impl PostgresSnapshotStore {
         Ok(Self {
             storage: PostgresStorage::connect_with_pool_size(dsn, pool_size)?,
         })
-    }
-
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
     }
 }
 
@@ -1488,10 +1478,6 @@ impl PostgresControlStore {
         })
     }
 
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
-    }
-
     pub fn load_if_exists(&self) -> Result<Option<ControlPlane>, StorageError> {
         let mut client = self.storage.lock_client()?;
         let content: Option<String> = client
@@ -1529,6 +1515,9 @@ impl PostgresControlStore {
         };
         let result = update(&mut plane);
         if result.is_ok() {
+            // 这条事务是 `qx_audit_entries` 唯一的主人：链与状态同笔提交，要么都算数、
+            // 要么都不算数，所以链不需要自己的第二把咨询锁。
+            chain_audit(&mut plane, &mut PgChainWriter(&mut transaction))?;
             let content = plane.to_json().map_err(StorageError::Io)?;
             transaction
                 .execute(
@@ -1540,6 +1529,47 @@ impl PostgresControlStore {
         }
         transaction.commit().map_err(pg_error)?;
         Ok((plane, result))
+    }
+}
+
+/// 控制面事务的 PostgreSQL 审计链写入器：借用同一笔未提交的事务，链与状态一起提交
+/// 或一起回滚（V11 R5-2）。
+struct PgChainWriter<'a, 'txn>(&'a mut Transaction<'txn>);
+
+impl AuditChainWriter for PgChainWriter<'_, '_> {
+    fn tail(&mut self) -> Result<Option<AuditEntry>, StorageError> {
+        audit_tail(self.0)
+    }
+
+    fn drop_from(&mut self, sequence: u64) -> Result<(), StorageError> {
+        self.0
+            .execute(
+                "DELETE FROM qx_audit_entries WHERE sequence::numeric >= $1::numeric",
+                &[&u64_text(sequence)],
+            )
+            .map_err(pg_error)?;
+        Ok(())
+    }
+
+    fn append_entries(&mut self, entries: &[AuditEntry]) -> Result<(), StorageError> {
+        for entry in entries {
+            let record_json = serde_json::to_string(&entry.record)
+                .map_err(|error| StorageError::Io(format!("审计序列化失败: {error}")))?;
+            let (sequence_text, previous_text, entry_text) = (
+                u64_text(entry.sequence),
+                u64_text(entry.previous_hash),
+                u64_text(entry.entry_hash),
+            );
+            self.0
+                .execute(
+                    "INSERT INTO qx_audit_entries
+                     (sequence, record_json, previous_hash, entry_hash)
+                     VALUES ($1, $2, $3, $4)",
+                    &[&sequence_text, &record_json, &previous_text, &entry_text],
+                )
+                .map_err(pg_error)?;
+        }
+        Ok(())
     }
 }
 
@@ -1561,10 +1591,6 @@ impl PostgresControlCommandQueue {
         Ok(Self {
             storage: PostgresStorage::connect_with_pool_size(dsn, pool_size)?,
         })
-    }
-
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
     }
 
     pub fn enqueue(
@@ -1830,10 +1856,6 @@ impl PostgresJobQueue {
         })
     }
 
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
-    }
-
     pub fn enqueue(
         &self,
         job: JobSpec,
@@ -2075,22 +2097,6 @@ impl JobQueueBackend for PostgresJobQueue {
         self.claim(run_id, worker, now, lease_seconds)
     }
 
-    fn ack_job(&self, run_id: u64, worker: &str) -> Result<PathBuf, StorageError> {
-        let lease = self.storage.clone();
-        let mut client = lease.lock_client()?;
-        let row = client
-            .query_opt(
-                "SELECT fencing_token, expires_ts FROM qx_job_leases WHERE run_id = $1",
-                &[&u64_text(run_id)],
-            )
-            .map_err(pg_error)?
-            .ok_or_else(|| StorageError::NotFound(format!("run_id {run_id} 租约")))?;
-        let token = parse_u64(row.get(0), "fencing_token")?;
-        let now = parse_u64(row.get(1), "expires_ts")?.saturating_sub(1);
-        drop(client);
-        self.ack_at(run_id, worker, token, now)
-    }
-
     fn ack_job_at(
         &self,
         run_id: u64,
@@ -2103,5 +2109,66 @@ impl JobQueueBackend for PostgresJobQueue {
 
     fn recover_expired_leases(&self, now: u64) -> Result<Vec<u64>, StorageError> {
         self.recover_expired(now)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 连接槽的等待必须有终点：一条被黑洞掉的连接能让持有者永远停在 socket read，
+    /// 而用 `Mutex::lock()` 取锁的后来者会跟着一起排到无限远（V11 O8）。
+    #[test]
+    fn a_slot_that_never_releases_gives_its_waiter_an_end() {
+        let slots = Arc::new([Mutex::new(0_u8)]);
+        let (held_sender, held) = std::sync::mpsc::channel();
+        let holder_slots = Arc::clone(&slots);
+        let holder = std::thread::spawn(move || {
+            let guard = holder_slots[0]
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let _ = held_sender.send(());
+            std::thread::sleep(Duration::from_secs(1));
+            drop(guard);
+        });
+        held.recv().expect("持有者应已拿到槽位");
+        let started = Instant::now();
+        let busy = matches!(
+            lock_slot(&slots[..], 0, Duration::from_millis(50)),
+            Err(SlotLock::Busy)
+        );
+        assert!(busy, "槽位被占满预算之后要交还一个失败，而不是继续排队");
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "等待要收在预算处，实际等了 {:?}",
+            started.elapsed()
+        );
+        holder.join().expect("持有者收尾");
+        // 正向对照：空出来的槽位照常取得到，预算不是把正常竞争也一并挡掉。
+        assert!(lock_slot(&slots[..], 0, Duration::from_millis(50)).is_ok());
+    }
+
+    /// M1 把连接阶段的界推给"驱动与 DSN"，而仓内当时一处都没写它。这里只补默认值，
+    /// 显式给过的一字不动（V11 O8）。
+    #[test]
+    fn a_postgres_dsn_without_a_connect_timeout_gets_the_repo_default() {
+        assert_eq!(
+            dsn_with_connect_timeout("host=db port=5432 dbname=qx", 10),
+            "host=db port=5432 dbname=qx connect_timeout=10"
+        );
+        assert_eq!(
+            dsn_with_connect_timeout("postgres://u:p@db:5432/qx", 10),
+            "postgres://u:p@db:5432/qx?connect_timeout=10"
+        );
+        assert_eq!(
+            dsn_with_connect_timeout("postgresql://u:p@db:5432/qx?sslmode=require", 10),
+            "postgresql://u:p@db:5432/qx?sslmode=require&connect_timeout=10"
+        );
+        let explicit = "postgres://u:p@db:5432/qx?connect_timeout=120";
+        assert_eq!(
+            dsn_with_connect_timeout(explicit, 10),
+            explicit,
+            "调用方写过的界不能被默认值盖掉"
+        );
     }
 }

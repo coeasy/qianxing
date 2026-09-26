@@ -94,12 +94,75 @@ pub(crate) fn load_scheduler_state(
                     .map_err(|error| format!("注册 Scheduler JobSpec 失败: {error:?}"))?;
             }
         }
+        // 先判再落盘：被拒绝的拓扑不该留下一份调度状态文件让下一次运行继续读它。
+        validate_job_owners(config, &scheduler)?;
+        validate_job_triggers(&scheduler)?;
         store
             .save_scheduler_at(&state_reference, &scheduler)
             .map_err(|error| format!("初始化 Scheduler 状态失败: {error:?}"))?;
         scheduler
     };
+    // 载入的既有状态同样要问：状态文件可能是另一套拓扑或改坏的 owner 留下的。
+    validate_job_owners(config, &scheduler)?;
+    validate_job_triggers(&scheduler)?;
     Ok((store, scheduler, state_reference))
+}
+
+/// 作业 owner 必须真有人领取。Scheduler 只负责入队，领取判据在
+/// `workers.rs` 的 `queued.job.owner != context.id()`；owner 拼错或指向未启用的
+/// worker 时，作业永远留在队列里，而 `start_run_at` 已把 JobRun 标成 Running，
+/// 命令面照样打印 `READY processed=0`——整段调度事实就这样丢了（V11 §41 E7）。
+fn validate_job_owners(config: &RuntimeConfig, scheduler: &Scheduler) -> Result<(), String> {
+    let claimants = config
+        .workers
+        .iter()
+        .filter(|worker| worker.enabled && worker.role == WorkerRole::Strategy)
+        .map(|worker| worker.id.as_str())
+        .collect::<Vec<_>>();
+    let claimants_note = if claimants.is_empty() {
+        "该拓扑没有启用的 Strategy worker".to_string()
+    } else {
+        format!("启用的 Strategy worker: {}", claimants.join(", "))
+    };
+    for job in scheduler.jobs() {
+        if !job.enabled {
+            continue;
+        }
+        let routable = claimants
+            .iter()
+            .any(|claimant| qx_scheduler::claimable_by(&job.owner, claimant));
+        if !routable {
+            return Err(format!(
+                "Scheduler 作业 {} 的 owner {:?} 无人领取（{claimants_note}）；\
+                 请把 owner 改成启用的 Strategy worker id，或使用 {:?} 交给任意 worker",
+                job.job_id,
+                job.owner,
+                qx_scheduler::JOB_OWNER_ANY
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 作业文件里的触发形状必须落在派发器真走得到的那一面上。运行时注册表只派发
+/// `Trigger::Cron` + `JobWindow::Any` + 一次尝试：其余声明今天**什么都不触发**，
+/// 而 `config validate` 会把它们逐条打印成合法——挡在启动前比留着当暗雷诚实
+/// （判据与派发器共用 `qx_scheduler::undispatchable_by_registry`，V11 N4）。
+fn validate_job_triggers(scheduler: &Scheduler) -> Result<(), String> {
+    for job in scheduler.jobs() {
+        if !job.enabled {
+            continue;
+        }
+        if let Some(reason) = qx_scheduler::undispatchable_by_registry(job) {
+            return Err(format!(
+                "Scheduler 作业 {} 的触发声明在运行时派发不到：{reason}；\
+                 请改成 `\"trigger\": {{\"Cron\": ...}}` + `\"window\": \"Any\"` + \
+                 `retry_policy.max_attempts: 1`，或把这类作业交给自己的派发端",
+                job.job_id
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn dispatch_scheduled_jobs(
@@ -113,9 +176,24 @@ pub(crate) fn dispatch_scheduled_jobs(
 ) -> Result<usize, String> {
     let (_, result) = state_store
         .transact_scheduler_at(state_path, |scheduler| {
+            // 先收超时：一条卡死的 Running 会一直占着并发键，之后每一轮派发都拿
+            // NotReady，而这份事实只在状态文件里躺着（V11 N2）。
+            scheduler
+                .sweep_timed_out(now)
+                .map_err(|error| format!("收口超时 JobRun 失败: {error:?}"))?;
             let completed = scheduler.completed_jobs();
+            // 窗口与交易日历的判定只有 `due_jobs_with_calendar` 这一颗；生产派发走它，
+            // 传空历是因为运行时还没有日历写入者——装配处已经挡掉非 `Any` 窗口的作业，
+            // 所以空历不改变任何被接受作业的判定结果。接上日历源时把这一颗的入参换掉，
+            // 不要退回只认 Cron 的 `due_jobs`（那等于把窗口判定重新变成没人调的孤儿）。
             let job_ids = scheduler
-                .due_jobs(tick, &completed)
+                .due_jobs_with_calendar(
+                    tick,
+                    trading_day,
+                    now,
+                    &qx_scheduler::TradingCalendar::default(),
+                    &completed,
+                )
                 .map_err(|error| format!("计算 Scheduler 到期任务失败: {error:?}"))?
                 .into_iter()
                 .map(|job| job.job_id.clone())

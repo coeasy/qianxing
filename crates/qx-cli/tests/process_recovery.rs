@@ -42,7 +42,7 @@ fn process_restart_recovers_expired_execution_lease_and_rejects_stale_ack() {
                 request_id: "recovery-99001".into(),
                 operator_id: "recovery-test".into(),
                 reason: "cross process recovery matrix".into(),
-                kind: CommandKind::ReconcileAccount,
+                kind: CommandKind::PauseStrategy,
                 target: "main".into(),
                 payload: BTreeMap::new(),
                 permission: Permission::Trading,

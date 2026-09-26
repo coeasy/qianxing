@@ -3,7 +3,9 @@
 //! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须
 //! 进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
 
-use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
+use qx_control::{
+    AuditRecord, ControlCommand, ControlError, ControlPlane, Permission, RetirementSummary,
+};
 use qx_core::{Event, EventKind, EventLog, Fnv1a, LedgerEntry};
 use qx_protocol::{
     AccountSnapshot, ProjectionEnvelope, ProjectionLineage, ACCOUNT_SNAPSHOT_JSON_SCHEMA,
@@ -25,6 +27,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
+
+mod snapshot_history;
+use snapshot_history::SnapshotHistory;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum EventBusError {
@@ -501,7 +506,7 @@ impl ApiProjectionKey {
 #[derive(Default)]
 pub struct ApiAccountProjection {
     pub snapshot: Option<AccountSnapshot>,
-    snapshot_history: BTreeMap<u64, AccountSnapshot>,
+    snapshot_history: SnapshotHistory,
     pub events: EventLog,
     pub event_bus: ApiEventBus,
     pub health: ProjectionHealth,
@@ -582,20 +587,32 @@ impl ApiAccountProjection {
     }
 }
 
+/// 账户读模型的刷新者（API 投影桥）此刻在不在跑。
+///
+/// `serve` 之外的装配（进程内测试、只读工具）根本没有桥可谈，所以默认是 `Unreported`
+/// 而不是"未运行"——`/ready` 对前者不加判定，只对 `Stopped` 判定（V11 I1）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum ProjectionRefresher {
+    #[default]
+    Unreported,
+    Running,
+    Stopped(String),
+}
+
 #[derive(Default)]
 pub struct ApiState {
     pub snapshot: Option<AccountSnapshot>,
-    snapshot_history: BTreeMap<u64, AccountSnapshot>,
-    pub events: EventLog,
-    pub event_bus: ApiEventBus,
-    /// 按 account_id + venue_id 隔离的查询/订阅投影。旧的单账户字段保留为
-    /// 兼容入口，新调用方应通过该索引避免多账户之间串读游标或状态。
+    snapshot_history: SnapshotHistory,
+    /// 按 account_id + venue_id 隔离的查询/订阅读模型。事件与实时游标只住在这里：
+    /// 旧的全局 `events`/`event_bus` 已在 V11 F1 删除，它们唯一的写入者是两个零生产调用的兼容入口。
     pub projections: BTreeMap<ApiProjectionKey, ApiAccountProjection>,
     pub control: ControlPlane,
     /// 只读运维读模型；调度、账簿和对账事实仍由各自 owner 写入。
     pub job_runs: Vec<JobRun>,
     pub ledger_entries: Vec<LedgerEntry>,
     pub reconcile_reports: BTreeMap<String, ReconcileReportSnapshot>,
+    /// 谁在推进 `projections`/`snapshot`：桥没跑，这两半就停在最后一轮（V11 I1）。
+    pub projection_refresher: ProjectionRefresher,
 }
 
 #[derive(Clone, Debug)]
@@ -748,72 +765,10 @@ impl ApiState {
             .map(|projection| projection.health.clone())
     }
 
-    fn append_projected_event(&mut self, event: Event) -> Result<(), String> {
-        let expected = self.events.next_seq();
-        let bus_expected = self.event_bus.next_seq();
-        if event.seq != expected || event.seq != bus_expected {
-            return Err(format!(
-                "API 投影事件游标不连续: event_seq={} event_log_next={} event_bus_next={}",
-                event.seq, expected, bus_expected
-            ));
-        }
-        self.events
-            .append_checked(event.clone())
-            .map_err(|error| format!("projected event rejected: {error:?}"))?;
-        self.event_bus
-            .publish(event)
-            .map_err(|error| format!("projected event bus rejected: {error:?}"))
-    }
-
-    /// 兼容 API 内部事件入口。生产运行时应优先使用 `project_event_log`，由外部
-    /// Runtime EventLog 作为事实源投影到 API；API 自己保存的 events 仅是查询
-    /// 读模型，不应被当作交易事实源。该入口保留 `EventLog::alloc_seq` 后再
-    /// 发布的历史调用方式，但仍要求 EventBus 序号连续。
-    pub fn publish_event(&mut self, event: Event) -> Result<(), String> {
-        let bus_expected = self.event_bus.next_seq();
-        if event.seq != bus_expected {
-            return Err(format!(
-                "API 内部事件总线游标不连续: event_seq={} event_bus_next={}",
-                event.seq, bus_expected
-            ));
-        }
-        self.events
-            .append_checked(event.clone())
-            .map_err(|error| format!("event log rejected event: {error:?}"))?;
-        self.event_bus
-            .publish(event)
-            .map_err(|error| format!("event bus rejected event: {error:?}"))
-    }
-
-    /// 将运行时事实日志增量投影到 API 查询/订阅读模型。
-    ///
-    /// 已经投影过且内容完全一致的前缀会被幂等跳过；任何序号缺口、覆盖或
-    /// 内容漂移都会失败，避免 API 读模型悄悄偏离 Runtime EventLog。
-    pub fn project_event_log(&mut self, source: &EventLog) -> Result<usize, String> {
-        let mut projected = 0;
-        for event in source.events() {
-            if event.seq < self.events.next_seq() {
-                let existing = self
-                    .events
-                    .events()
-                    .iter()
-                    .find(|current| current.seq == event.seq);
-                if existing == Some(event) {
-                    continue;
-                }
-                return Err(format!(
-                    "API 投影检测到事件内容漂移: event_seq={}",
-                    event.seq
-                ));
-            }
-            self.append_projected_event(event.clone())?;
-            projected += 1;
-        }
-        Ok(projected)
-    }
-
     /// 将某一账户/交易所的事实日志投影到隔离的 API 读模型。每个投影拥有
     /// 独立的 EventLog 和实时游标，因此一个账户的 retention gap 不会污染另一个账户。
+    /// 这是 API 读模型唯一的事件写入者（V11 F1）：被删掉的两个兼容入口各自复制过
+    /// 一遍"前缀幂等 + 漂移失败"，同一规则两处表达就是下一次漂移的入口。
     pub fn project_account_event_log(
         &mut self,
         account_id: impl Into<String>,
@@ -912,6 +867,7 @@ pub struct ApiService {
     worker_metrics_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     readiness_provider: Option<ReadinessProvider>,
     query_models_provider: Option<QueryModelsProvider>,
+    control_provider: Option<ControlProvider>,
 }
 
 #[derive(Default)]
@@ -962,6 +918,8 @@ type ControlSubmitter = Arc<
 >;
 type CommandEnqueuer = Arc<dyn Fn(ControlCommand, u64) -> Result<(), String> + Send + Sync>;
 type ReadinessProvider = Arc<dyn Fn() -> ApiReadiness + Send + Sync>;
+/// 控制面的现读出口：读端点经它取 store 那一份，而不是念进程内 boot 副本（V11 H1）。
+type ControlProvider = Arc<dyn Fn() -> Result<ControlPlane, String> + Send + Sync>;
 
 /// `/scheduler/runs`、`/account/ledger`、`/reconcile/reports` 三个只读端点共用的一份现读结果。
 /// 对账报告在这里是**列表**：`ApiState` 里那张按 worker_id 键控的表只是它的查询副本。
@@ -1034,7 +992,8 @@ pub trait QueryPort {
     fn account_positions(&self) -> Vec<qx_protocol::PositionSnapshot>;
     fn account_cash(&self) -> BTreeMap<String, i128>;
     fn control_audit(&self) -> Vec<AuditRecord>;
-    fn events_after(&self, after: Option<u64>) -> Result<Vec<Event>, EventBusError>;
+    /// 窗口之外那半本账：终态退场命令的累计摘要，与 `/control/audit` 的 `retirement` 同一格。
+    fn control_retirement(&self) -> RetirementSummary;
     fn job_runs(&self) -> Vec<JobRun>;
     fn ledger_entries(&self) -> Vec<LedgerEntry>;
     fn reconcile_reports(&self) -> Vec<ReconcileReportSnapshot>;
@@ -1091,6 +1050,7 @@ impl ApiService {
             worker_metrics_provider: None,
             readiness_provider: None,
             query_models_provider: None,
+            control_provider: None,
         }
     }
 
@@ -1107,11 +1067,23 @@ impl ApiService {
             worker_metrics_provider: None,
             readiness_provider: None,
             query_models_provider: None,
+            control_provider: None,
         }
     }
 
     pub fn state(&self) -> Arc<Mutex<ApiState>> {
         Arc::clone(&self.state)
+    }
+
+    /// 报一次"谁在推进账户读模型"：投影桥启动前报 `Running`，每条启动失败的路径报
+    /// `Stopped(原因)`，线程退出（含 panic）也要报。没有这格状态时 `/ready` 只看投影本身
+    /// 的健康位，而 boot 那份永远是健康的——桥没起来或已经死了，读模型停在最后一轮却
+    /// 照样报 Ready（V11 I1，与 R5 把"没有指标"读成健康同一形状）。
+    pub fn report_projection_refresher(&self, refresher: ProjectionRefresher) {
+        self.state
+            .lock()
+            .expect("api state mutex poisoned")
+            .projection_refresher = refresher;
     }
 
     pub fn metrics(&self) -> ApiMetricsSnapshot {
@@ -1164,9 +1136,32 @@ impl ApiService {
         self
     }
 
+    pub fn with_control_provider<F>(mut self, provider: F) -> Self
+    where
+        F: Fn() -> Result<ControlPlane, String> + Send + Sync + 'static,
+    {
+        self.control_provider = Some(Arc::new(provider));
+        self
+    }
+
+    /// 取控制面：装了 provider 就现读 store 并回填进程内那份，没装则读后者。
+    ///
+    /// 执行 worker 在**另一个进程**用 `ControlPlane::execute` 把终态追加进同一本 store，而
+    /// boot 装进 `state.control` 的那一份此后只会被本进程的 POST 换掉：不现读的 `/control/audit`
+    /// 就把命令永远念成 `Accepted`，而同一本 store 在 `/ready` 那里已经是每请求 `load()`（V11 H1）。
+    fn control_plane(&self) -> Result<ControlPlane, String> {
+        let Some(provider) = &self.control_provider else {
+            let state = self.state.lock().expect("api state mutex poisoned");
+            return Ok(state.control.clone());
+        };
+        let plane = provider()?;
+        self.state.lock().expect("api state mutex poisoned").control = plane.clone();
+        Ok(plane)
+    }
+
     /// 取三份只读运维读模型：装了 provider 就现读并把结果回填到查询副本，没装则读
-    /// 启动时装进 `state` 的那份。回填是为了让 `QueryPort` 的 trait 读点与 HTTP 端点
-    /// 说同一份数据，而不是各念一份（V11 S3）。
+    /// 启动时装进 `state` 的那份。回填的是"最后已知副本"，供现读失败时的 trait 读点退回，
+    /// 不是拿它当 `QueryPort` 的读点（V11 S3 / I2）。
     fn query_models(&self) -> Result<ApiQueryModels, String> {
         let Some(provider) = &self.query_models_provider else {
             let state = self.state.lock().expect("api state mutex poisoned");
@@ -1190,11 +1185,39 @@ impl ApiService {
         Ok(models)
     }
 
-    pub fn query_port(&self) -> &dyn QueryPort {
-        self
+    /// `QueryPort` 侧的现读：与 HTTP 端点问同一个出口，读不到才退回进程内的最后已知副本。
+    ///
+    /// trait 签名没有 `Result`，"这一次没读到"只能由端点那侧表达，所以这里的退回不是把
+    /// 失败念成空表。反过来（trait 直接读副本）在 V11 I2 之前是实际形状：副本只被
+    /// `query_models()` 回填，装配完到第一个 HTTP 请求之间，trait 说的仍是 boot 那一份。
+    fn query_models_last_known(&self) -> ApiQueryModels {
+        if let Ok(models) = self.query_models() {
+            return models;
+        }
+        let state = self.state.lock().expect("api state mutex poisoned");
+        ApiQueryModels {
+            job_runs: state.job_runs.clone(),
+            ledger_entries: state.ledger_entries.clone(),
+            reconcile_reports: state.reconcile_reports.values().cloned().collect(),
+        }
     }
 
-    pub fn control_port(&self) -> &dyn ControlPort {
+    /// `QueryPort` 侧的控制面现读：与 `/control/audit` 问同一个出口，读不到才退回副本。
+    ///
+    /// 退回的理由与 [`Self::query_models_last_known`] 同一颗：trait 签名没有 `Result`，
+    /// "这一次没读到"由端点那侧如实报 503，这里只负责别让流水停在 boot 那一份。
+    fn control_plane_last_known(&self) -> ControlPlane {
+        if let Ok(plane) = self.control_plane() {
+            return plane;
+        }
+        self.state
+            .lock()
+            .expect("api state mutex poisoned")
+            .control
+            .clone()
+    }
+
+    pub fn query_port(&self) -> &dyn QueryPort {
         self
     }
 
@@ -1222,22 +1245,6 @@ impl ApiService {
     {
         self.command_enqueuer = Some(Arc::new(enqueuer));
         self
-    }
-
-    pub fn publish_event(&self, event: Event) -> Result<(), String> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .publish_event(event)
-    }
-
-    /// 将外部 Runtime EventLog 投影到 API 读模型。该方法不会改变 Runtime
-    /// 的事实日志，只更新 API 查询和订阅所需的副本。
-    pub fn project_event_log(&self, source: &EventLog) -> Result<usize, String> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .project_event_log(source)
     }
 
     pub fn project_account_event_log(
@@ -1272,6 +1279,13 @@ impl ApiService {
 
     fn projection_readiness(&self) -> Option<String> {
         let state = self.state.lock().expect("api state mutex poisoned");
+        // 刷新者已经不在跑、而读模型里确实有账户投影：这份数据从这一秒起就是旧的（V11 I1）。
+        // 没有投影可刷新时不作判定——那是真的没有账户域的拓扑，不是断链。
+        if let ProjectionRefresher::Stopped(reason) = &state.projection_refresher {
+            if !state.projections.is_empty() {
+                return Some(format!("projection_refresher_stopped reason={reason}"));
+            }
+        }
         state
             .projections
             .iter()
@@ -1301,15 +1315,12 @@ impl ApiService {
     fn projection_events_for_query(&self, query: &str) -> Result<Vec<Event>, String> {
         let key = projection_key_from_query(query)?;
         let state = self.state.lock().expect("api state mutex poisoned");
-        Ok(match key {
-            Some(key) => state
-                .projections
-                .get(&key)
-                .map(|projection| projection.events.events())
-                .map(|events| events.to_vec())
-                .unwrap_or_default(),
-            None => state.events.events().to_vec(),
-        })
+        // 事件只按账户投影存着；缺键不再"挑一个默认账户"，也不再看那份空的全局面。
+        let key = key.ok_or_else(|| "事件读模型需要同时提供 account_id 与 venue_id".to_string())?;
+        Ok(state
+            .projections
+            .get(&key)
+            .map_or_else(Vec::new, |projection| projection.events.events().to_vec()))
     }
 
     fn snapshot_envelope_for_query(
@@ -1325,7 +1336,21 @@ impl ApiService {
                 };
                 (projection.snapshot.clone(), projection.events.digest())
             }
-            None => (state.snapshot.clone(), state.events.digest()),
+            // 全局快照由 `publish_snapshot` 按身份镜像进账户投影，摘要就取那份；
+            // 没有那份就没有可核对的事件源，宁可不给信封也不编一个 0。
+            None => {
+                let Some(snapshot) = state.snapshot.clone() else {
+                    return Ok(None);
+                };
+                let key = ApiProjectionKey::new(
+                    snapshot.header.account_id.clone(),
+                    snapshot.header.venue_id.clone(),
+                );
+                match state.projections.get(&key) {
+                    Some(projection) => (Some(snapshot), projection.events.digest()),
+                    None => return Ok(None),
+                }
+            }
         };
         Ok(snapshot.map(|snapshot| {
             let event_seq = snapshot.header.event_seq;
@@ -1347,7 +1372,7 @@ impl ApiService {
                 state_hash,
                 source: "eventlog".into(),
                 lineage: ProjectionLineage {
-                    source_digest: format!("{source_digest:016x}"),
+                    source_digest: Some(format!("{source_digest:016x}")),
                     ..ProjectionLineage::default()
                 },
                 data: snapshot,
@@ -1516,10 +1541,22 @@ impl ApiService {
                 });
                 ApiResponse::json(200, body.to_string())
             }
-            ("GET", "/control/audit") => ApiResponse::json(
-                200,
-                serde_json::to_string(&self.control_audit()).expect("audit is serializable"),
-            ),
+            ("GET", "/control/audit") => match self.control_plane() {
+                Err(error) => ApiResponse::json(
+                    503,
+                    error_json(&format!("control_state_unavailable: {error}")),
+                ),
+                // 流水是有界窗口（V11 R5-1）：同一份响应里交出窗口外的累计摘要，
+                // 否则"只剩最近 1000 条"会被读成"总共只有 1000 条"。
+                Ok(plane) => ApiResponse::json(
+                    200,
+                    serde_json::json!({
+                        "records": plane.audit(),
+                        "retirement": plane.retirement(),
+                    })
+                    .to_string(),
+                ),
+            },
             ("GET", "/scheduler/runs") => match self.query_models() {
                 Ok(models) => ApiResponse::json(
                     200,
@@ -1596,20 +1633,23 @@ impl ApiService {
         };
         let event_bus = {
             let state = self.state.lock().expect("api state mutex poisoned");
+            // 实时游标是账户级状态，缺键没有"全局那条"可退回（V11 F1）。
             match key {
                 Some(key) => state
                     .projections
                     .get(&key)
                     .map(|projection| projection.event_bus.clone())
                     .unwrap_or_default(),
-                None => state.event_bus.clone(),
+                None => {
+                    return ApiResponse::json(400, error_json("account_id_and_venue_id_required"))
+                }
             }
         };
         match event_bus.read_after(after) {
             Ok(events) => {
                 let envelopes = events
                     .into_iter()
-                    .map(|event| event_projection_envelope(event, "api-event-bus"))
+                    .map(event_projection_envelope)
                     .collect::<Vec<_>>();
                 ApiResponse::json(
                     200,
@@ -1706,7 +1746,14 @@ impl ApiService {
             };
             self.state.lock().expect("api state mutex poisoned").control = plane;
             if let Some(enqueuer) = &self.command_enqueuer {
-                let _ = enqueuer(queued_command, ts);
+                // 受理已经落账，队列却没写进去：把这条 202 念成"已交给执行者"就是假通告。
+                // 503 说的是"这一半没成"，补投由执行 worker 每轮的 `pending()` 扫描负责（V11 R6-3）。
+                if let Err(error) = enqueuer(queued_command, ts) {
+                    return ApiResponse::json(
+                        503,
+                        error_json(&format!("control_command_not_queued: {error}")),
+                    );
+                }
             }
             return ApiResponse::json(
                 202,
@@ -1738,18 +1785,6 @@ impl ApiService {
         self.serve_stream_as(stream, ts, None)
     }
 
-    /// 网络入口的可信身份版本；身份应由已认证的上游边界注入。
-    pub fn serve_once_as(
-        &self,
-        listener: &TcpListener,
-        ts: u64,
-        operator_id: &str,
-    ) -> std::io::Result<()> {
-        let (stream, _) = listener.accept()?;
-        configure_connection(&stream)?;
-        self.serve_stream_as(stream, ts, Some(operator_id))
-    }
-
     /// 使用调用方提供的证书和私钥配置服务端 TLS。
     ///
     /// `ServerConfig` 必须由部署边界构造并安全加载证书/私钥；API 层不提供跳过
@@ -1764,66 +1799,6 @@ impl ApiService {
         let (stream, _) = listener.accept()?;
         configure_connection(&stream)?;
         self.serve_stream(tls_stream(stream, config)?, ts)
-    }
-
-    /// 带可信身份注入的 TLS 单请求入口。
-    pub fn serve_once_tls_as(
-        &self,
-        listener: &TcpListener,
-        config: Arc<ServerConfig>,
-        ts: u64,
-        operator_id: &str,
-    ) -> std::io::Result<()> {
-        let (stream, _) = listener.accept()?;
-        configure_connection(&stream)?;
-        self.serve_stream_as(tls_stream(stream, config)?, ts, Some(operator_id))
-    }
-
-    /// 使用可热替换配置处理单个 TLS 连接。
-    pub fn serve_once_tls_with_store(
-        &self,
-        listener: &TcpListener,
-        configs: &TlsConfigStore,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        let (stream, _) = listener.accept()?;
-        configure_connection(&stream)?;
-        self.serve_stream(tls_stream(stream, configs.current())?, ts)
-    }
-
-    /// 使用可热替换配置持续处理 TLS 连接。
-    pub fn serve_tls_with_store(
-        &self,
-        listener: TcpListener,
-        configs: &TlsConfigStore,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            self.serve_stream(tls_stream(stream, configs.current())?, ts)?;
-        }
-        Ok(())
-    }
-
-    /// 使用可热替换配置持续处理 TLS 连接，并注入可信操作员身份。
-    pub fn serve_tls_with_store_as(
-        &self,
-        listener: TcpListener,
-        configs: &TlsConfigStore,
-        ts: u64,
-        operator_id: &str,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            self.serve_stream_as(
-                tls_stream(stream, configs.current())?,
-                ts,
-                Some(operator_id),
-            )?;
-        }
-        Ok(())
     }
 
     fn serve_stream<S>(&self, stream: S, ts: u64) -> std::io::Result<()>
@@ -1842,7 +1817,7 @@ impl ApiService {
     where
         S: Read + Write,
     {
-        let request = read_request(&mut stream)?;
+        let request = read_request(&mut stream, HTTP_REQUEST_BUDGET)?;
         let request = String::from_utf8_lossy(&request);
         self.dispatch_request(&mut stream, &request, ts, authenticated_operator)
     }
@@ -1877,78 +1852,20 @@ impl ApiService {
         write_http_response(stream, &response)
     }
 
-    /// 使用 mTLS 客户端证书自动解析可信操作员身份的单连接入口。
-    pub fn serve_once_tls_mtls(
-        &self,
-        listener: &TcpListener,
-        config: Arc<ServerConfig>,
-        identities: &MtlsIdentityPolicy,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        let (stream, _) = listener.accept()?;
-        configure_connection(&stream)?;
-        let mut stream = tls_stream(stream, config)?;
-        let request = read_request(&mut stream)?;
-        let request = String::from_utf8_lossy(&request);
-        let operator_id = identities
-            .operator_for(stream.conn.peer_certificates())
-            .map(str::to_string);
-        self.dispatch_request(&mut stream, &request, ts, operator_id.as_deref())
-    }
-
-    /// 持续接受 TLS 连接，并以客户端证书映射 Operator 身份。
-    pub fn serve_tls_mtls(
-        &self,
-        listener: TcpListener,
-        config: Arc<ServerConfig>,
-        identities: &MtlsIdentityPolicy,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            let stream = tls_stream(stream, Arc::clone(&config))?;
-            let operator_id = identities
-                .operator_for(stream.conn.peer_certificates())
-                .map(str::to_string);
-            self.spawn_connection(stream, ts, operator_id);
-        }
-        Ok(())
-    }
-
-    /// 持续接受 mTLS 连接，并在每个新连接握手时读取当前可热替换配置。
-    /// 已建立的 TLS 连接继续使用握手时的配置；配置文件解析失败由调用方的
-    /// reloader 处理，当前仍可用的配置不会被替换。
-    pub fn serve_tls_mtls_with_store(
-        &self,
-        listener: TcpListener,
-        configs: &TlsConfigStore,
-        identities: &MtlsIdentityPolicy,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            let stream = tls_stream(stream, configs.current())?;
-            let operator_id = identities
-                .operator_for(stream.conn.peer_certificates())
-                .map(str::to_string);
-            self.spawn_connection(stream, ts, operator_id);
-        }
-        Ok(())
-    }
-
     /// 持续接受 mTLS 连接，并在每个新连接握手时读取当前 TLS 配置和 Operator
     /// 身份映射。两份配置均由调用方的轮询重载器原子替换。
+    ///
+    /// `stop` 每轮 accept 前问一次：置起之后这条长驻循环会自己收，调用方的 `join`
+    /// 才可能返回（V11 J2）。
     pub fn serve_tls_mtls_with_stores(
         &self,
         listener: TcpListener,
         configs: &TlsConfigStore,
         identities: &MtlsIdentityStore,
         ts: u64,
+        stop: impl Fn() -> bool,
     ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
+        self.accept_polling(listener, &stop, |stream| {
             configure_connection(&stream)?;
             let stream = tls_stream(stream, configs.current())?;
             let policy = identities.current();
@@ -1956,8 +1873,8 @@ impl ApiService {
                 .operator_for(stream.conn.peer_certificates())
                 .map(str::to_string);
             self.spawn_connection(stream, ts, operator_id);
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     /// 每个长连接独立处理，避免 WebSocket 或慢客户端占住监听循环。
@@ -1975,61 +1892,56 @@ impl ApiService {
         });
     }
 
-    pub fn serve(&self, listener: TcpListener, ts: u64) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
+    /// 长驻明文服务循环。`stop` 每轮问一次，令牌置起后返回 `Ok(())` 而不是永远等在 accept。
+    pub fn serve(
+        &self,
+        listener: TcpListener,
+        ts: u64,
+        stop: impl Fn() -> bool,
+    ) -> std::io::Result<()> {
+        self.accept_polling(listener, &stop, |stream| {
             configure_connection(&stream)?;
             self.spawn_connection(stream, ts, None);
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
-    pub fn serve_as(
+    /// 带停机令牌地接受连接：非阻塞轮询 + 固定节拍，因此不需要额外的自连唤醒或信号依赖。
+    /// 两条长驻入口（明文与 mTLS）共用这一颗，终止性只有一处实现。
+    fn accept_polling<F>(
         &self,
         listener: TcpListener,
-        ts: u64,
-        operator_id: &str,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            self.spawn_connection(stream, ts, Some(operator_id.to_string()));
+        stop: &dyn Fn() -> bool,
+        mut on_connection: F,
+    ) -> std::io::Result<()>
+    where
+        F: FnMut(TcpStream) -> std::io::Result<()>,
+    {
+        listener.set_nonblocking(true)?;
+        loop {
+            if stop() {
+                break;
+            }
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    // 被接出来的流显式转回阻塞：监听套接字开了非阻塞之后，流是否继承这个模式
+                    // 各平台不一致，而紧跟着的 `configure_connection` 要设读超时。本机
+                    // （Windows + rustc 1.98）实测拿掉这一行不红，仍按防御性复位保留。
+                    stream.set_nonblocking(false)?;
+                    on_connection(stream)?;
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    std::thread::sleep(ACCEPT_POLL_INTERVAL);
+                }
+                Err(error) => return Err(error),
+            }
         }
-        Ok(())
-    }
-
-    /// 持续接受 TLS HTTP/WebSocket 连接；每个连接复用同一份不可变服务端配置。
-    pub fn serve_tls(
-        &self,
-        listener: TcpListener,
-        config: Arc<ServerConfig>,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            self.spawn_connection(tls_stream(stream, Arc::clone(&config))?, ts, None);
-        }
-        Ok(())
-    }
-
-    /// 持续 TLS 服务的可信身份版本；身份仍必须由上游认证边界注入。
-    pub fn serve_tls_as(
-        &self,
-        listener: TcpListener,
-        config: Arc<ServerConfig>,
-        ts: u64,
-        operator_id: &str,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            self.spawn_connection(
-                tls_stream(stream, Arc::clone(&config))?,
-                ts,
-                Some(operator_id.to_string()),
-            );
-        }
+        let _ = listener.set_nonblocking(false);
         Ok(())
     }
 
@@ -2049,27 +1961,44 @@ impl ApiService {
                 std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing websocket key")
             })?;
         let accept = websocket_accept(key);
+        // 升级之前先问清这条流属于哪个账户：缺键时 400 比"101 之后永远静默"诚实（V11 F1）。
+        let projection_key = match projection_key_from_query(websocket_query(request)) {
+            Ok(Some(key)) => key,
+            Ok(None) => {
+                stream.write_all(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")?;
+                return Ok(());
+            }
+            Err(error) => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, error)),
+        };
         let handshake = format!(
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
         );
         stream.write_all(handshake.as_bytes())?;
-        let state = self.state.lock().expect("api state mutex poisoned");
-        let event_bus = state.event_bus.clone();
-        let initial_cursor = state.events.events().last().map(|event| event.seq);
+        // 流只接在账户投影上：桥接线程按 account_id+venue_id 写 projections，
+        // 而一条事实都没投影过来时接上空总线等推送，不退回那份没有写入者的全局面。
+        let (event_bus, projected, snapshot) = {
+            let state = self.state.lock().expect("api state mutex poisoned");
+            match state.projections.get(&projection_key) {
+                Some(projection) => (
+                    projection.event_bus.clone(),
+                    projection.events.events().to_vec(),
+                    projection.snapshot.clone(),
+                ),
+                None => (ApiEventBus::default(), Vec::new(), None),
+            }
+        };
         write_ws_text(stream, "{\"type\":\"connected\",\"stream\":\"qianxing\"}")?;
-        if let Some(snapshot) = &state.snapshot {
+        if let Some(snapshot) = &snapshot {
             write_ws_text(
                 stream,
                 &format!("{{\"type\":\"snapshot\",\"data\":{}}}", snapshot.to_json()),
             )?;
         }
-        if !state.events.is_empty() {
-            let events = state
-                .events
-                .events()
+        if !projected.is_empty() {
+            let events = projected
                 .iter()
                 .cloned()
-                .map(|event| event_projection_envelope(event, "api-event-bus"))
+                .map(event_projection_envelope)
                 .collect::<Vec<_>>();
             let events = serde_json::to_string(&events)
                 .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
@@ -2078,15 +2007,14 @@ impl ApiService {
                 &format!("{{\"type\":\"events\",\"data\":{events}}}"),
             )?;
         }
-        drop(state);
-        let mut cursor = initial_cursor;
+        let mut cursor = projected.last().map(|event| event.seq);
         let mut client_buffer = [0_u8; 2048];
         loop {
             match event_bus.wait_after(cursor, Duration::from_millis(100)) {
                 Ok(events) => {
                     for event in events {
                         let event_seq = event.seq;
-                        let envelope = event_projection_envelope(event, "api-event-bus");
+                        let envelope = event_projection_envelope(event);
                         write_ws_text(
                             stream,
                             &format!(
@@ -2132,7 +2060,7 @@ impl ApiService {
     }
 }
 
-fn event_projection_envelope(event: Event, source_digest: &str) -> ProjectionEnvelope<Event> {
+fn event_projection_envelope(event: Event) -> ProjectionEnvelope<Event> {
     let context = event.metadata.context.clone();
     let mut digest = Fnv1a::new();
     event.digest(&mut digest);
@@ -2150,10 +2078,9 @@ fn event_projection_envelope(event: Event, source_digest: &str) -> ProjectionEnv
         cursor: format!("{}:{state_hash:016x}", event.seq),
         state_hash,
         source: "eventlog".into(),
-        lineage: ProjectionLineage {
-            source_digest: source_digest.into(),
-            ..ProjectionLineage::default()
-        },
+        // 这份信封来自进程内总线，它没有可发布的整体摘要：三格血缘如实缺席，
+        // 而不是填一个组件名冒充摘要（V11 L2）。
+        lineage: ProjectionLineage::default(),
         data: event,
     }
 }
@@ -2210,46 +2137,28 @@ impl QueryPort for ApiService {
     }
 
     fn control_audit(&self) -> Vec<AuditRecord> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .control
-            .audit()
-            .to_vec()
+        // 与 HTTP 端点同一个读点（V11 H1）：装了 provider 就是 store 那一份。这里的
+        // 退回不是把失败念成空表——现读失败时退回进程内的最后已知副本，而 HTTP 侧对
+        // 同一次失败如实报 503（trait 签名没有 Result，降级由端点表达）。
+        self.control_plane_last_known().audit().to_vec()
     }
 
-    fn events_after(&self, after: Option<u64>) -> Result<Vec<Event>, EventBusError> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .event_bus
-            .read_after(after)
+    fn control_retirement(&self) -> RetirementSummary {
+        // 流水与摘要必须出自同一次现读：分两次读会把"这一页窗口"和"窗口外累计"念成
+        // 两个时刻的账（V11 R7-8）。
+        self.control_plane_last_known().retirement()
     }
 
     fn job_runs(&self) -> Vec<JobRun> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .job_runs
-            .clone()
+        self.query_models_last_known().job_runs
     }
 
     fn ledger_entries(&self) -> Vec<LedgerEntry> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .ledger_entries
-            .clone()
+        self.query_models_last_known().ledger_entries
     }
 
     fn reconcile_reports(&self) -> Vec<ReconcileReportSnapshot> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .reconcile_reports
-            .values()
-            .cloned()
-            .collect()
+        self.query_models_last_known().reconcile_reports
     }
 }
 
@@ -2267,6 +2176,17 @@ impl ControlPort for ApiService {
         self.submit_command(&body, ts, authenticated_operator)
     }
 }
+
+/// 长驻 accept 循环查停机令牌的节拍。空闲时一晚也就几千次 load，换来不用引信号处理依赖。
+const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// 一个完整请求（头部 + body）允许的**整体**时长。`configure_connection` 的 100 ms 只界住
+/// **单次** `read`：对端每 99 ms 挤一个字节就能让读取循环永远读不完，1 MiB 的体积上限要
+/// 29 小时才挡得住——体积有界不等于时长有界（V11 R4-9，与 O7 的握手块同一判据）。
+const HTTP_REQUEST_BUDGET: Duration = Duration::from_secs(5);
+
+/// 单个请求的字节上限（头部 + body）。
+const HTTP_REQUEST_MAX_BYTES: usize = 1_048_576;
 
 fn configure_connection(stream: &TcpStream) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_millis(100)))?;
@@ -2304,54 +2224,78 @@ fn write_ws_text<S: Write>(stream: &mut S, text: &str) -> std::io::Result<()> {
     stream.write_all(&frame)
 }
 
-fn read_request<S: Read>(stream: &mut S) -> std::io::Result<Vec<u8>> {
+fn read_request<S: Read>(stream: &mut S, budget: Duration) -> std::io::Result<Vec<u8>> {
+    let deadline = Instant::now() + budget;
     let mut request = Vec::new();
     let mut buffer = [0_u8; 4096];
+    // 头部扫描的游标：`\r\n\r\n` 只可能在"上次扫过的位置 − 3 字节"之后新出现，因此每一轮
+    // 只看新到的字节。修前是整缓冲区重扫，被逐字节喂满时一次请求要走平方级的比较。
+    let mut scanned_upto = 0_usize;
+    let mut expected: Option<usize> = None;
     loop {
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "http request exceeded overall budget {budget:?} after {} bytes",
+                    request.len()
+                ),
+            ));
+        }
         let count = stream.read(&mut buffer)?;
         if count == 0 {
             break;
         }
         request.extend_from_slice(&buffer[..count]);
-        if request.len() > 1_048_576 {
+        if request.len() > HTTP_REQUEST_MAX_BYTES {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "http request too large",
             ));
         }
-        if let Some(header_end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-            let header_end = header_end + 4;
-            let header = String::from_utf8_lossy(&request[..header_end]);
-            let mut content_length = 0_usize;
-            for line in header.lines() {
-                let Some((name, value)) = line.split_once(':') else {
-                    continue;
-                };
-                if name.eq_ignore_ascii_case("Content-Length") {
-                    content_length = value.trim().parse::<usize>().map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "invalid Content-Length",
-                        )
-                    })?;
-                    break;
-                }
+        if expected.is_none() {
+            let from = scanned_upto;
+            scanned_upto = request.len().saturating_sub(3);
+            if let Some(offset) = request[from..]
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+            {
+                expected = Some(expected_request_length(&request, from + offset + 4)?);
             }
-            let expected = header_end.checked_add(content_length).ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, "request length overflow")
-            })?;
-            if expected > 1_048_576 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "http request too large",
-                ));
-            }
-            if request.len() >= expected {
-                break;
-            }
+        }
+        if request.len() >= expected.unwrap_or(usize::MAX) {
+            break;
         }
     }
     Ok(request)
+}
+
+/// 头部到手之后还算不出该收多少字节就不算读完：`Content-Length` 缺失按 0 处理，
+/// 与头部一起封顶，超过体量的声明当场拒掉。
+fn expected_request_length(request: &[u8], header_end: usize) -> std::io::Result<usize> {
+    let header = String::from_utf8_lossy(&request[..header_end]);
+    let mut content_length = 0_usize;
+    for line in header.lines() {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("Content-Length") {
+            content_length = value.trim().parse::<usize>().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Content-Length")
+            })?;
+            break;
+        }
+    }
+    let expected = header_end.checked_add(content_length).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "request length overflow")
+    })?;
+    if expected > HTTP_REQUEST_MAX_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "http request too large",
+        ));
+    }
+    Ok(expected)
 }
 
 fn parse_http_request(request: &str) -> Result<(String, String, String), String> {
@@ -2408,6 +2352,13 @@ fn projection_key_from_query(query: &str) -> Result<Option<ApiProjectionKey>, St
         }
         _ => Err("account_id 和 venue_id 必须同时提供".into()),
     }
+}
+
+/// 从 WebSocket 握手请求行取查询串（`GET /stream?account_id=..&venue_id=..`）；没有 `?` 给空串。
+fn websocket_query(request: &str) -> &str {
+    request.split_whitespace().nth(1).map_or("", |path| {
+        path.split_once('?').map_or("", |(_, query)| query)
+    })
 }
 
 fn json_string(value: &str) -> String {
@@ -2507,731 +2458,4 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use qx_control::{CommandKind, Permission};
-    use qx_core::{Event, EventKind, Priority};
-    use qx_protocol::AccountSnapshot;
-    use rustls::server::{ClientHello, ResolvesServerCert};
-    use rustls::sign::CertifiedKey;
-    use std::collections::BTreeMap;
-    use std::net::{Shutdown, TcpStream};
-
-    #[derive(Debug)]
-    struct NoCertificateResolver;
-
-    impl ResolvesServerCert for NoCertificateResolver {
-        fn resolve(&self, _client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-            None
-        }
-    }
-
-    #[test]
-    fn websocket_accept_matches_rfc_example() {
-        assert_eq!(
-            websocket_accept("dGhlIHNhbXBsZSBub25jZQ=="),
-            "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
-        );
-    }
-
-    #[test]
-    fn control_and_query_routes_are_audited() {
-        let service = ApiService::new(ApiState::default());
-        assert_eq!(service.handle("GET", "/health", "", 1).status, 200);
-        let metrics = service.handle("GET", "/metrics", "", 1);
-        assert_eq!(metrics.status, 200);
-        assert!(metrics.body.contains("qx_api_requests_total"));
-        let command = ControlCommand {
-            command_id: 1,
-            request_id: "api-1".into(),
-            operator_id: "ops".into(),
-            reason: "pause after alert".into(),
-            kind: CommandKind::PauseStrategy,
-            target: "s1".into(),
-            payload: BTreeMap::new(),
-            permission: Permission::Trading,
-            dry_run: true,
-        };
-        let body = serde_json::to_string(&command).unwrap();
-        assert_eq!(
-            service.handle("POST", "/control/commands", &body, 2).status,
-            202
-        );
-        assert_eq!(service.state().lock().unwrap().control.audit().len(), 1);
-    }
-
-    #[test]
-    fn metrics_route_appends_supervised_worker_metrics() {
-        let service = ApiService::new(ApiState::default())
-            .with_worker_metrics_provider(|| "qx_worker_up{worker=\"relay\"} 1\n".into());
-        let metrics = service.handle("GET", "/metrics", "", 1);
-        assert_eq!(metrics.status, 200);
-        assert!(metrics.body.contains("qx_worker_up{worker=\"relay\"} 1"));
-    }
-
-    /// 端点侧的"未算 ≠ 零"（V11 Q67，Q70 把权益并进来）：同一份快照在 `/account/balances` 上必须把算出来
-    /// 正好是零的钱印成 0、把这一层没算过的钱印成 null。两者印成同一个数时，读侧分不清
-    /// "这个账户没有保证金"和"根本没人替它算过保证金"。
-    #[test]
-    fn balances_endpoint_publishes_absent_money_as_null_not_zero() {
-        let mut state = ApiState::default();
-        let mut snapshot = AccountSnapshot::new(1, "main", "default", "paper", 10);
-        snapshot.equity_raw = Some(500);
-        snapshot.available_raw = Some(0);
-        state.publish_snapshot(snapshot).unwrap();
-        let body = ApiService::new(state)
-            .handle("GET", "/account/balances", "", 1)
-            .body;
-        assert!(
-            body.contains("\"equity_raw\":500") && body.contains("\"available_raw\":0"),
-            "算得出的两个量按实况印: {body}"
-        );
-        assert!(
-            body.contains("\"margin_raw\":null"),
-            "没算过的保证金必须印 null，而不是一个合法的 0: {body}"
-        );
-        // 权益从 Q70 起同样可能是"这一层算不出"：它在端点上必须走同一条 null 口径，
-        // 而不是被 `.unwrap_or(0)` 折回一个看起来合法的零。
-        let mut absent_state = ApiState::default();
-        absent_state
-            .publish_snapshot(AccountSnapshot::new(2, "main", "default", "paper", 20))
-            .unwrap();
-        let absent_body = ApiService::new(absent_state)
-            .handle("GET", "/account/balances", "", 2)
-            .body;
-        assert!(
-            absent_body.contains("\"equity_raw\":null"),
-            "算不出标记价时权益必须印 null，而不是给账户兜一个 0: {absent_body}"
-        );
-    }
-
-    #[test]
-    fn readiness_separates_liveness_from_dependency_health() {
-        let service =
-            ApiService::new(ApiState::default()).with_readiness_provider(|| ApiReadiness {
-                ready: false,
-                detail: "control_store_unavailable".into(),
-            });
-        assert_eq!(service.handle("GET", "/health", "", 1).status, 200);
-        let ready = service.handle("GET", "/ready", "", 2);
-        assert_eq!(ready.status, 503);
-        assert!(ready.body.contains("control_store_unavailable"));
-    }
-
-    #[test]
-    fn query_port_exposes_account_orders_positions_balances_and_audit() {
-        let mut state = ApiState::default();
-        let mut snapshot = AccountSnapshot::new(10, "main", "default", "paper", 100);
-        snapshot.cash_raw.insert("USDT".into(), 123);
-        let instrument = qx_core::InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
-        snapshot.orders.insert(
-            7,
-            qx_protocol::OrderSnapshot {
-                order_id: 7,
-                client_order_id: 7,
-                instrument: instrument.clone(),
-                side: qx_core::Side::Buy,
-                quantity_raw: 1,
-                filled_raw: 0,
-                status: qx_core::OrderStatus::Accepted,
-            },
-        );
-        snapshot.positions.insert(
-            instrument.clone(),
-            qx_protocol::PositionSnapshot {
-                instrument,
-                quantity_raw: 1,
-                ..qx_protocol::PositionSnapshot::default()
-            },
-        );
-        state.job_runs.push(qx_scheduler::JobRun {
-            run_id: 99,
-            job_id: "strategy".into(),
-            trading_day: "20260911".into(),
-            attempt: 1,
-            status: qx_scheduler::JobStatus::Running,
-            manifest_digest: Some(7),
-            error_code: None,
-            next_retry_ts: None,
-            started_ts: 1,
-            deadline_ts: 2,
-        });
-        state.ledger_entries.push(qx_core::LedgerEntry {
-            id: 1,
-            account_id: "main".into(),
-            currency: "USDT".into(),
-            kind: qx_core::LedgerEntryKind::Adjustment,
-            amount: qx_core::Money::from_raw(123),
-            instrument: None,
-            quantity: qx_core::Quantity::ZERO,
-            price: None,
-            order_id: None,
-            ts: 100,
-            multiplier: 1,
-            position_side: None,
-        });
-        state.reconcile_reports.insert(
-            "reconciler".into(),
-            ReconcileReportSnapshot {
-                schema_version: 1,
-                worker_id: "reconciler".into(),
-                account_id: "main".into(),
-                venue_id: "paper".into(),
-                observed_ts: 100,
-                order_issues: Vec::new(),
-                balances_count: 1,
-                balance_discrepancies: Vec::new(),
-                position_snapshots_count: Some(1),
-                funding_rate_snapshots_count: Some(0),
-                cashflow_count: Some(0),
-            },
-        );
-        state.publish_snapshot(snapshot).unwrap();
-        let service = ApiService::new(state);
-        assert_eq!(service.handle("GET", "/account/orders", "", 1).status, 200);
-        assert_eq!(
-            service.handle("GET", "/account/positions", "", 2).status,
-            200
-        );
-        assert_eq!(
-            service.handle("GET", "/account/balances", "", 3).status,
-            200
-        );
-        assert_eq!(service.handle("GET", "/control/audit", "", 4).status, 200);
-        assert_eq!(service.handle("GET", "/scheduler/runs", "", 5).status, 200);
-        assert_eq!(service.handle("GET", "/account/ledger", "", 6).status, 200);
-        assert_eq!(
-            service.handle("GET", "/reconcile/reports", "", 7).status,
-            200
-        );
-        assert_eq!(service.query_port().account_cash()["USDT"], 123);
-        assert_eq!(service.query_port().account_orders().len(), 1);
-        assert_eq!(service.query_port().account_positions().len(), 1);
-        assert_eq!(service.query_port().job_runs().len(), 1);
-        assert_eq!(service.query_port().ledger_entries().len(), 1);
-        assert_eq!(service.query_port().reconcile_reports().len(), 1);
-    }
-
-    #[test]
-    fn control_submitter_persists_before_api_accepts() {
-        let persisted = Arc::new(Mutex::new(ControlPlane::default()));
-        let persisted_for_callback = Arc::clone(&persisted);
-        let service = ApiService::new(ApiState::default()).with_control_submitter(
-            move |command, granted, ts| {
-                let mut plane = persisted_for_callback.lock().unwrap();
-                let audit = plane
-                    .submit_as(command, granted, ts)
-                    .map_err(ControlSubmitError::Rejected)?;
-                Ok((plane.clone(), audit))
-            },
-        );
-        let command = ControlCommand {
-            command_id: 2,
-            request_id: "durable-api-2".into(),
-            operator_id: "ops".into(),
-            reason: "durable command".into(),
-            kind: CommandKind::SubmitOrder,
-            target: "2".into(),
-            payload: BTreeMap::from([("order_json".into(), "{}".into())]),
-            permission: Permission::Trading,
-            dry_run: true,
-        };
-        let body = serde_json::to_string(&command).unwrap();
-        let response = service.handle("POST", "/control/commands", &body, 3);
-        assert_eq!(response.status, 202);
-        assert_eq!(
-            service.handle("POST", "/control/commands", &body, 4).status,
-            409
-        );
-        assert_eq!(persisted.lock().unwrap().audit().len(), 1);
-        assert_eq!(service.state().lock().unwrap().control.audit().len(), 1);
-    }
-
-    #[test]
-    fn configured_api_policy_rejects_self_asserted_permission() {
-        let service = ApiService::with_policy(
-            ApiState::default(),
-            ApiPolicy::new().grant("ops", Permission::ReadOnly),
-        );
-        assert_eq!(service.handle("GET", "/metrics", "", 1).status, 403);
-        let command = ControlCommand {
-            command_id: 1,
-            request_id: "api-secure-1".into(),
-            operator_id: "ops".into(),
-            reason: "attempt".into(),
-            kind: CommandKind::CancelOrder,
-            target: "order-1".into(),
-            payload: BTreeMap::new(),
-            permission: Permission::Trading,
-            dry_run: true,
-        };
-        let body = serde_json::to_string(&command).unwrap();
-        assert_eq!(
-            service
-                .handle_as("ops", "POST", "/control/commands", &body, 2)
-                .status,
-            403
-        );
-        assert!(service.state().lock().unwrap().control.audit().is_empty());
-    }
-
-    #[test]
-    fn protected_api_does_not_accept_operator_from_command_body() {
-        let service = ApiService::with_policy(
-            ApiState::default(),
-            ApiPolicy::new().grant("ops", Permission::Trading),
-        );
-        let command = ControlCommand {
-            command_id: 1,
-            request_id: "api-untrusted-1".into(),
-            operator_id: "ops".into(),
-            reason: "missing trusted identity".into(),
-            kind: CommandKind::CancelOrder,
-            target: "order-1".into(),
-            payload: BTreeMap::new(),
-            permission: Permission::Trading,
-            dry_run: true,
-        };
-        let body = serde_json::to_string(&command).unwrap();
-        assert_eq!(
-            service.handle("POST", "/control/commands", &body, 2).status,
-            403
-        );
-        assert!(service.state().lock().unwrap().control.audit().is_empty());
-    }
-
-    #[test]
-    fn trusted_api_identity_overrides_command_body_identity() {
-        let service = ApiService::with_policy(
-            ApiState::default(),
-            ApiPolicy::new().grant("ops", Permission::Trading),
-        );
-        let command = ControlCommand {
-            command_id: 1,
-            request_id: "api-trusted-1".into(),
-            operator_id: "forged".into(),
-            reason: "trusted boundary test".into(),
-            kind: CommandKind::CancelOrder,
-            target: "order-1".into(),
-            payload: BTreeMap::new(),
-            permission: Permission::Trading,
-            dry_run: true,
-        };
-        let body = serde_json::to_string(&command).unwrap();
-        assert_eq!(
-            service
-                .handle_as("ops", "POST", "/control/commands", &body, 2)
-                .status,
-            202
-        );
-        assert_eq!(
-            service.state().lock().unwrap().control.audit()[0].operator_id,
-            "ops"
-        );
-    }
-
-    #[test]
-    fn api_rate_limit_is_deterministic_for_a_single_process() {
-        let service = ApiService::new(ApiState::default()).with_rate_limit(1, 0);
-        assert_eq!(service.handle("GET", "/health", "", 1).status, 200);
-        assert_eq!(service.handle("GET", "/health", "", 1).status, 429);
-        assert_eq!(service.handle("GET", "/health", "", 2).status, 429);
-    }
-
-    #[test]
-    fn shared_file_rate_limit_is_visible_to_multiple_api_services() {
-        let root = std::env::temp_dir().join(format!(
-            "qianxing-api-rate-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let first = ApiService::new(ApiState::default())
-            .with_shared_file_rate_limit(FileTokenBucket::new(&root, "api", 1, 0).unwrap());
-        let second = ApiService::new(ApiState::default())
-            .with_shared_file_rate_limit(FileTokenBucket::new(&root, "api", 1, 0).unwrap());
-        assert_eq!(first.handle("GET", "/health", "", 1).status, 200);
-        assert_eq!(second.handle("GET", "/health", "", 1).status, 429);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn event_bus_wakes_waiters_and_reports_retention_gaps() {
-        let bus = ApiEventBus::new(1).unwrap();
-        bus.publish(Event::new(0, 1, Priority::POST, EventKind::Settle))
-            .unwrap();
-        let waiter = bus.clone();
-        let thread =
-            std::thread::spawn(move || waiter.wait_after(Some(0), Duration::from_secs(1)).unwrap());
-        bus.publish(Event::new(1, 2, Priority::POST, EventKind::Settle))
-            .unwrap();
-        assert_eq!(thread.join().unwrap().len(), 1);
-        bus.publish(Event::new(2, 3, Priority::POST, EventKind::Settle))
-            .unwrap();
-        assert!(matches!(
-            bus.read_after(Some(0)),
-            Err(EventBusError::CursorTooOld { .. })
-        ));
-    }
-
-    #[test]
-    fn api_projection_is_idempotent_and_rejects_gaps_or_drift() {
-        let mut source = EventLog::new();
-        source
-            .append_checked(Event::new(0, 1, Priority::MARKET, EventKind::Settle))
-            .unwrap();
-        source
-            .append_checked(Event::new(1, 2, Priority::POST, EventKind::Settle))
-            .unwrap();
-
-        let mut state = ApiState::default();
-        assert_eq!(state.project_event_log(&source).unwrap(), 2);
-        assert_eq!(state.project_event_log(&source).unwrap(), 0);
-        assert_eq!(state.events.len(), 2);
-
-        let mut gap = EventLog::new();
-        gap.append_checked(Event::new(0, 1, Priority::MARKET, EventKind::Settle))
-            .unwrap();
-        gap.append_checked(Event::new(1, 2, Priority::POST, EventKind::Settle))
-            .unwrap();
-        let mut changed = gap.clone();
-        changed
-            .append_checked(Event::new(2, 3, Priority::POST, EventKind::Settle))
-            .unwrap();
-        assert_eq!(state.project_event_log(&changed).unwrap(), 1);
-
-        let mut drift = EventLog::new();
-        drift
-            .append_checked(Event::new(0, 1, Priority::MARKET, EventKind::Settle))
-            .unwrap();
-        drift
-            .append_checked(Event::new(1, 99, Priority::POST, EventKind::Settle))
-            .unwrap();
-        assert!(state.project_event_log(&drift).is_err());
-    }
-
-    #[test]
-    fn account_projections_isolate_snapshots_events_and_cursors() {
-        let mut state = ApiState::default();
-        let mut paper = AccountSnapshot::new(1, "account-a", "portfolio-a", "paper", 10);
-        paper.cash_raw.insert("USDT".into(), 100);
-        let mut binance = AccountSnapshot::new(2, "account-b", "portfolio-b", "binance", 10);
-        binance.cash_raw.insert("USDT".into(), 200);
-        state
-            .publish_snapshot_for("account-a", "paper", paper)
-            .unwrap();
-        state
-            .publish_snapshot_for("account-b", "binance", binance)
-            .unwrap();
-
-        let mut paper_log = EventLog::new();
-        paper_log
-            .append_checked(Event::new(
-                0,
-                10,
-                Priority::POST,
-                EventKind::Timer {
-                    name: "paper".into(),
-                },
-            ))
-            .unwrap();
-        let mut binance_log = EventLog::new();
-        binance_log
-            .append_checked(Event::new(
-                0,
-                10,
-                Priority::POST,
-                EventKind::Timer {
-                    name: "binance".into(),
-                },
-            ))
-            .unwrap();
-        assert_eq!(
-            state
-                .project_account_event_log("account-a", "paper", &paper_log)
-                .unwrap(),
-            1
-        );
-        state
-            .project_account_event_log("account-b", "binance", &binance_log)
-            .unwrap();
-
-        let service = ApiService::new(state);
-        let paper_response = service.handle(
-            "GET",
-            "/account/snapshot?account_id=account-a&venue_id=paper",
-            "",
-            1,
-        );
-        let binance_response = service.handle(
-            "GET",
-            "/account/snapshot?account_id=account-b&venue_id=binance",
-            "",
-            1,
-        );
-        assert_eq!(paper_response.status, 200);
-        assert_eq!(binance_response.status, 200);
-        assert!(paper_response.body.contains("\"cash_raw\":{\"USDT\":100}"));
-        assert!(binance_response
-            .body
-            .contains("\"cash_raw\":{\"USDT\":200}"));
-        let envelope = service.handle(
-            "GET",
-            "/account/snapshot/envelope?account_id=account-a&venue_id=paper",
-            "",
-            2,
-        );
-        assert_eq!(envelope.status, 200);
-        assert!(envelope.body.contains("\"kind\":\"account_snapshot\""));
-        assert!(envelope.body.contains("\"source\":\"eventlog\""));
-        let paper_events =
-            service.handle("GET", "/events?account_id=account-a&venue_id=paper", "", 2);
-        assert_eq!(paper_events.status, 200);
-        assert!(paper_events.body.contains("paper"));
-        assert!(!paper_events.body.contains("binance"));
-        assert_eq!(
-            service
-                .handle("GET", "/account/snapshot?account_id=account-a", "", 3)
-                .status,
-            400
-        );
-    }
-
-    #[test]
-    fn account_projection_rejects_identity_drift_and_marks_readiness_stale() {
-        let mut source = EventLog::new();
-        source
-            .append_checked(Event::new(
-                0,
-                1,
-                Priority::FEEDBACK,
-                EventKind::AccountBalanceSnapshot {
-                    account_id: "other-account".into(),
-                    venue_id: "paper".into(),
-                    balances: Vec::new(),
-                },
-            ))
-            .unwrap();
-        let mut state = ApiState::default();
-        assert!(state
-            .project_account_event_log("account-a", "paper", &source)
-            .is_err());
-        let health = state
-            .projection_health("account-a", "paper")
-            .expect("failed projection keeps health state");
-        assert!(!health.healthy);
-        assert!(health.error.unwrap().contains("身份"));
-        let service = ApiService::new(state);
-        let ready = service.handle("GET", "/ready", "", 1);
-        assert_eq!(ready.status, 503);
-        assert!(ready.body.contains("projection_stale"));
-    }
-
-    #[test]
-    fn live_event_route_uses_the_realtime_cursor_contract() {
-        let service = ApiService::new(ApiState::default());
-        service
-            .publish_event(Event::new(0, 1, Priority::POST, EventKind::Settle))
-            .unwrap();
-        let response = service.handle("GET", "/events/live?after=1", "", 1);
-        assert_eq!(response.status, 409);
-        let response = service.handle("GET", "/events/live", "", 1);
-        assert_eq!(response.status, 200);
-        assert!(response.body.contains("\"schema_version\":1"));
-        assert!(response.body.contains("\"cursor\":\"0:"));
-        assert!(response.body.contains("Settle"));
-    }
-
-    #[test]
-    fn mtls_identity_policy_maps_exact_certificate_der() {
-        let certificate = CertificateDer::from(vec![1, 2, 3, 4]);
-        let policy = MtlsIdentityPolicy::new()
-            .grant_certificate(certificate.clone(), "ops")
-            .unwrap();
-        assert_eq!(
-            policy.operator_for(Some(std::slice::from_ref(&certificate))),
-            Some("ops")
-        );
-        let other = CertificateDer::from(vec![1, 2, 3, 5]);
-        assert_eq!(
-            policy.operator_for(Some(std::slice::from_ref(&other))),
-            None
-        );
-    }
-
-    #[test]
-    fn mtls_identity_store_replaces_operator_mapping_atomically() {
-        let first_certificate = CertificateDer::from(vec![9, 8, 7]);
-        let second_certificate = CertificateDer::from(vec![6, 5, 4]);
-        let first = MtlsIdentityPolicy::new()
-            .grant_certificate(first_certificate.clone(), "ops-old")
-            .unwrap();
-        let second = MtlsIdentityPolicy::new()
-            .grant_certificate(second_certificate.clone(), "ops-new")
-            .unwrap();
-        let store = MtlsIdentityStore::new(first);
-        assert_eq!(
-            store
-                .current()
-                .operator_for(Some(std::slice::from_ref(&first_certificate))),
-            Some("ops-old")
-        );
-        store.replace(second);
-        let current = store.current();
-        assert_eq!(
-            current.operator_for(Some(std::slice::from_ref(&second_certificate))),
-            Some("ops-new")
-        );
-        assert_eq!(
-            current.operator_for(Some(std::slice::from_ref(&first_certificate))),
-            None
-        );
-    }
-
-    #[test]
-    fn tls_config_store_exposes_rotation_boundary() {
-        let first = Arc::new(
-            ServerConfig::builder()
-                .with_no_client_auth()
-                .with_cert_resolver(Arc::new(NoCertificateResolver)),
-        );
-        let second = Arc::new(
-            ServerConfig::builder()
-                .with_no_client_auth()
-                .with_cert_resolver(Arc::new(NoCertificateResolver)),
-        );
-        let store = TlsConfigStore::new(Arc::clone(&first));
-        assert!(Arc::ptr_eq(&store.current(), &first));
-        store.replace(Arc::clone(&second));
-        assert!(Arc::ptr_eq(&store.current(), &second));
-    }
-
-    #[test]
-    fn snapshot_diff_and_event_cursor_require_a_valid_base() {
-        let mut state = ApiState::default();
-        let mut base = AccountSnapshot::new(1, "a", "p", "paper", 1);
-        base.cash_raw.insert("USD".into(), 100);
-        let base_hash = state.publish_snapshot(base).unwrap();
-        let mut target = AccountSnapshot::new(2, "a", "p", "paper", 2);
-        target.cash_raw.insert("USD".into(), 120);
-        state.publish_snapshot(target).unwrap();
-        let seq = state.events.alloc_seq();
-        state
-            .events
-            .append(Event::new(seq, 2, Priority::POST, EventKind::Settle));
-        let seq = state.events.alloc_seq();
-        state
-            .events
-            .append(Event::new(seq, 3, Priority::POST, EventKind::Settle));
-        let service = ApiService::new(state);
-        let diff = service.handle(
-            "GET",
-            &format!("/account/snapshot/diff?base_hash={base_hash}"),
-            "",
-            3,
-        );
-        assert_eq!(diff.status, 200);
-        assert!(diff.body.contains("base_state_hash"));
-        let events = service.handle("GET", "/events?after=0", "", 3);
-        assert_eq!(events.status, 200);
-        assert!(events.body.contains("Settle"));
-        assert_eq!(
-            service
-                .handle("GET", "/account/snapshot/diff?base_hash=999", "", 3)
-                .status,
-            409
-        );
-    }
-
-    #[test]
-    fn http_server_serves_health_route() {
-        let service = ApiService::new(ApiState::default());
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let worker = std::thread::spawn(move || service.serve_once(&listener, 1));
-        let mut client = TcpStream::connect(address).unwrap();
-        client
-            .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n")
-            .unwrap();
-        let mut response = String::new();
-        client.read_to_string(&mut response).unwrap();
-        worker.join().unwrap().unwrap();
-        assert!(response.starts_with("HTTP/1.1 200 OK"));
-        assert!(response.contains("{\"status\":\"ok\"}"));
-    }
-
-    #[test]
-    fn tls_server_rejects_plaintext_before_http_dispatch() {
-        let service = ApiService::new(ApiState::default());
-        let config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_cert_resolver(Arc::new(NoCertificateResolver));
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let worker =
-            std::thread::spawn(move || service.serve_once_tls(&listener, Arc::new(config), 1));
-        let mut client = TcpStream::connect(address).unwrap();
-        client
-            .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n")
-            .unwrap();
-        client.shutdown(Shutdown::Write).unwrap();
-        let result = worker.join().unwrap();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn websocket_server_sends_connection_and_event_batches() {
-        let mut state = ApiState::default();
-        let seq = state.events.alloc_seq();
-        state
-            .publish_event(Event::new(seq, 1, Priority::POST, EventKind::Settle))
-            .unwrap();
-        let service = ApiService::new(state);
-        let publisher = service.clone();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let worker = std::thread::spawn(move || service.serve_once(&listener, 1));
-        let mut client = TcpStream::connect(address).unwrap();
-        client
-            .write_all(
-                b"GET /stream HTTP/1.1\r\nHost: localhost\r\nUpgrade: WebSocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
-            )
-            .unwrap();
-        client
-            .set_read_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
-        let mut response = Vec::new();
-        loop {
-            let mut chunk = [0_u8; 8192];
-            let count = client.read(&mut chunk).unwrap();
-            assert!(count > 0);
-            response.extend_from_slice(&chunk[..count]);
-            if String::from_utf8_lossy(&response).contains("events") {
-                break;
-            }
-        }
-        let next_seq = publisher.state().lock().unwrap().events.next_seq();
-        publisher
-            .publish_event(Event::new(next_seq, 2, Priority::POST, EventKind::Settle))
-            .unwrap();
-        let mut pushed = Vec::new();
-        loop {
-            let mut chunk = [0_u8; 8192];
-            let count = client.read(&mut chunk).unwrap();
-            assert!(count > 0);
-            pushed.extend_from_slice(&chunk[..count]);
-            if String::from_utf8_lossy(&pushed).contains("\"type\":\"event\"") {
-                break;
-            }
-        }
-        client.write_all(&[0x88, 0x80, 0, 0, 0, 0]).unwrap();
-        client.shutdown(Shutdown::Both).unwrap();
-        worker.join().unwrap().unwrap();
-        let response = String::from_utf8_lossy(&response);
-        assert!(response.starts_with("HTTP/1.1 101 Switching Protocols"));
-        assert!(response.contains("qianxing"));
-        assert!(response.contains("events"));
-    }
-}
+mod tests;

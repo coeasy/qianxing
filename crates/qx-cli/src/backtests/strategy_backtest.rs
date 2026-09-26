@@ -15,12 +15,9 @@ pub(crate) fn run_strategy_backtest(
     let (bars, manifest) = barframe_dataset_identity(frame_path, &frame)?;
     let data_root = resolve_runtime_relative_path(runtime_path, &config.storage.data_dir);
     let mut dataset_registry = JsonDatasetRegistry::open(data_root.join("datasets.manifest.json"))?;
+    // 登记本身就是漂移检查：同一 `(dataset_id, version)` 已有不同内容时 `register` 直接失败。
+    // 它后面曾跟着一句对同一个对象的 `verify`，那条永远不会红，已删（V11 F2）。
     dataset_registry.register(manifest.clone())?;
-    dataset_registry.verify(
-        &manifest.dataset_id,
-        &manifest.version,
-        &manifest.fingerprint,
-    )?;
     println!(
         "[Data · Dataset] dataset={} version={} source={} fingerprint={}",
         manifest.dataset_id, manifest.version, manifest.source, manifest.fingerprint
@@ -58,6 +55,21 @@ pub(crate) fn run_strategy_backtest(
                     &strategy_config.strategy,
                     &strategy_id,
                 )?;
+                // 声明的身份还要回数据集注册表解析一遍（V11 F2）：`dataset-ingest` 登记的那一份
+                // 与 Bundle 声明的不是同一内容时，这条链不能拿着两个"同一个数据集"继续跑。
+                let (checked, unrecorded) =
+                    verify_dataset_registry_declarations(&dataset_registry, &bundle)?;
+                println!(
+                    "[Data · Registry] bundle={} registry_checked={}/{}{}",
+                    bundle.bundle_id,
+                    checked,
+                    bundle.components.len(),
+                    if unrecorded.is_empty() {
+                        String::new()
+                    } else {
+                        format!("；未登记的组件: {}", unrecorded.join(", "))
+                    },
+                );
                 let components = bundle
                     .components
                     .iter()

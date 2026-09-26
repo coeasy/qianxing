@@ -264,7 +264,7 @@ impl RuntimeConfig {
         {
             return Err(format!("{label} C ABI Ed25519 公钥和签名必须成对配置"));
         }
-        if self.environment.eq_ignore_ascii_case("production")
+        if self.is_production()
             && strategy.c_abi_library.is_some()
             && strategy.c_abi_ed25519_public_key.is_none()
         {
@@ -272,7 +272,7 @@ impl RuntimeConfig {
                 "{label} production C ABI 策略必须配置 Ed25519 公钥和签名"
             ));
         }
-        if self.environment.eq_ignore_ascii_case("production")
+        if self.is_production()
             && (strategy.external_executable.is_some() || strategy.python_module.is_some())
             && strategy.strategy_artifact_sha256.is_none()
         {
@@ -354,19 +354,19 @@ impl RuntimeConfig {
         if !strategy_binding_configured {
             return Ok(());
         }
-        if self.environment.eq_ignore_ascii_case("production")
+        if self.is_production()
             && (!strategy.research_snapshot_required || strategy.research_snapshot_path.is_none())
         {
             return Err(format!(
                 "{label} production 已绑定交易对象，必须启用并配置 research_snapshot_path"
             ));
         }
-        if self.environment.eq_ignore_ascii_case("production") && strategy.target_qty != 0 {
+        if self.is_production() && strategy.target_qty != 0 {
             return Err(format!(
                 "{label} production 禁止使用裸 target_qty；必须通过 ResearchSnapshot/CandidateBinding 产生目标"
             ));
         }
-        if self.environment.eq_ignore_ascii_case("production")
+        if self.is_production()
             && strategy.research_snapshot_required
             && strategy.dataset_bundle_path.is_none()
         {

@@ -2,8 +2,6 @@
   "schema_version": 1,
   "source": "example-pairs-reference-v1",
   "instrument": "ETHUSDT.BINANCE",
-  "frequency": "1h",
-  "quality": "recorded",
   "ts": [
     3600000,
     7200000,

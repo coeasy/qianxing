@@ -4,6 +4,18 @@ use super::*;
 
 pub const RUNTIME_SCHEMA_VERSION: u32 = 1;
 
+/// 运行时 `environment` 的合法取值。历史口径只有"非空"这一条判定，而十余处硬
+/// 风控分支去比较 `production` 字面量：`prod`、`producion`、带空格的 `" production "`
+/// 都能通过校验，同时在运行时被读成"非 production"，于是 production 专属的
+/// `max_order_notional_raw` / `instrument_spec_path` / C ABI 签名 / 研究快照闸门
+/// 全部静默失效，而 `config validate` 依旧打印 [PASS]（V11 §41 E1）。
+/// 词表外一律 fail closed；归一化只做大小写与首尾空白，见 `RuntimeConfig::environment_kind`。
+pub const RUNTIME_ENVIRONMENTS: [&str; 4] = ["production", "paper", "sandbox", "testnet"];
+
+/// 唯一带硬风控的环境名。字面量只许出现在这里与词表里，判定必须走
+/// `RuntimeConfig::is_production`。
+pub const RUNTIME_ENVIRONMENT_PRODUCTION: &str = "production";
+
 /// 运行时部署 profile。
 ///
 /// `single_node` 是本阶段的默认工业化基线：运行时事实、控制面和队列

@@ -146,6 +146,7 @@ pub(crate) fn run_binance_spread_recovery_worker(
         format!("binance spread recovery scanning venue={venue_id}"),
         Some(runtime_timestamp_ms()),
     )?;
+    let mut stalled_rounds = 0_u32;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
         if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
@@ -184,12 +185,18 @@ pub(crate) fn run_binance_spread_recovery_worker(
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
             }
+            // 这一轮把组推离 HedgeRequired 了没有：没推走就按 K1 那份退避付费（V11 R4-10）。
+            stalled_rounds = if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
+                stalled_rounds + 1
+            } else {
+                0
+            };
         }
         context.heartbeat(now)?;
         if once {
             break;
         }
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(spread_recovery_poll_interval(stalled_rounds));
     }
     Ok(())
 }
@@ -285,7 +292,17 @@ pub(crate) fn run_process_supervisor(
     let executable =
         std::env::current_exe().map_err(|error| format!("解析 qx-cli 可执行文件失败: {error}"))?;
     let work_dir = std::env::current_dir().map_err(|error| format!("读取工作目录失败: {error}"))?;
-    supervise_workers(&config, path, &executable, &work_dir, allow_unmanaged_roles)
+    // 令牌由本函数持有并交给监督循环读；写侧（Ctrl-C / SIGTERM 触发的
+    // `request_shutdown`）在全仓仍无生产调用者，已在 capabilities.yaml 登记为限制。
+    let shutdown = qx_runtime::ShutdownToken::default();
+    supervise_workers(
+        &config,
+        path,
+        &executable,
+        &work_dir,
+        allow_unmanaged_roles,
+        || shutdown.is_requested(),
+    )
 }
 
 pub(crate) fn run_ccxt_worker(
@@ -376,6 +393,7 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
         format!("ccxt spread recovery scanning venue={venue_id}"),
         Some(runtime_timestamp_ms()),
     )?;
+    let mut stalled_rounds = 0_u32;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
         if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
@@ -412,12 +430,18 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
             }
+            // 这一轮把组推离 HedgeRequired 了没有：没推走就按 K1 那份退避付费（V11 R4-10）。
+            stalled_rounds = if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
+                stalled_rounds + 1
+            } else {
+                0
+            };
         }
         context.heartbeat(now)?;
         if once {
             break;
         }
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(spread_recovery_poll_interval(stalled_rounds));
     }
     Ok(())
 }

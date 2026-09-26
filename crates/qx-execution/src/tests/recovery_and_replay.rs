@@ -95,6 +95,14 @@ fn hedge_recovery_worker_is_idempotent_and_fails_closed_on_unknown_state() {
     assert_eq!(router.calls, vec!["binance"]);
     assert_eq!(state.orders.len(), 1);
     assert!(state.orders[0].policy.unwrap().reduce_only);
+    assert_eq!(state.registrations.len(), 1, "补偿路径只登记那一条补偿腿");
+    let (registered_id, correlation) = &state.registrations[0];
+    assert_eq!(*registered_id, state.orders[0].client_id);
+    assert_eq!(
+        correlation.as_deref(),
+        Some("hedge-worker:hedge:hedge-recovery-1:spot:register"),
+        "补偿腿的登记关联号必须点名 worker、组与待补偿腿，不能被普通提交形状顶替"
+    );
     let persisted = store.load("hedge-recovery-1").unwrap().unwrap();
     assert_eq!(persisted.status, SpreadOrderGroupStatus::Hedged);
 

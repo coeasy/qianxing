@@ -6,6 +6,66 @@ use crate::numeric::{Money, Quantity, SCALE};
 use crate::order::{Fill, Order, Side};
 use crate::trading::TradingInstrumentSpec;
 
+/// 从"基准资产 + 结算币种"形态的符号里取出基准资产（`BTCUSDT` / `BTC/USDT` → `BTC`）。
+///
+/// 取不出就返回 `None`，让调用方走拒记分支：这里宁可挡下一笔本可以折算的成交，
+/// 也不能靠猜把费用折成另一个数量。带前缀的杠杆/倒数符号（`1000SHIBUSDT`、`BTCUSD19Q`）
+/// 的前缀对不上费用币种，因此同样落回 `None`。
+fn base_asset_of(symbol: &str, settlement: &str) -> Option<String> {
+    let symbol = symbol.trim().to_ascii_uppercase();
+    let quote = settlement.trim().to_ascii_uppercase();
+    if quote.is_empty() || symbol.len() <= quote.len() || !symbol.ends_with(&quote) {
+        return None;
+    }
+    let base =
+        symbol[..symbol.len() - quote.len()].trim_end_matches(|c: char| !c.is_alphanumeric());
+    (!base.is_empty()).then(|| base.to_string())
+}
+
+/// 把成交费用折成账簿结算币种下的面值（raw 定点），折不出来就拒记。
+///
+/// 交易所回报的费用币种可以不是账簿的结算币种：Binance 现货默认从**收到的资产**里扣
+/// （BTCUSDT 买入回报 `commissionAsset=BTC`），CCXT 的 `fee_currency` 同义。分三种情况：
+///
+/// 1. 费用本身就是结算币种，或回报根本没有币种事实（`None`）→ 按面值入账，沿用既有口径；
+/// 2. 费用是这一对的基准资产 → 用**这笔成交自己的价格**折算：成交价就是基准资产对结算
+///    币种的即期报价，不需要任何外部汇率。挡下这一类等于挡掉主力连接器上每天正常发生的
+///    全部成交，所以必须折而不是拒；
+/// 3. 其他币种（BNB 抵扣、第三币种付费）→ 账簿里没有它的价格，按面值记是凭空造钱
+///    （0.001 BNB 记成 0.001 USDT 低估两个数量级），只能拒记并转待对账。
+///
+/// 派生品的基准资产折算需要 `contract_size` 与 inverse 口径，比现货更容易算错，
+/// 因此只在无规格的现货/历史乘数路径（`multiplier == 1`）上开放。
+fn fee_in_settlement_raw(fill: &Fill, currency: &str, base: Option<&str>) -> QxResult<i128> {
+    let fee_raw = fill.fee.raw();
+    if fee_raw == 0 {
+        return Ok(0);
+    }
+    let Some(fee_currency) = fill.fee_currency.as_deref() else {
+        return Ok(fee_raw);
+    };
+    if fee_currency.trim().eq_ignore_ascii_case(currency.trim()) {
+        return Ok(fee_raw);
+    }
+    if let Some(base) = base {
+        if fee_currency.trim().eq_ignore_ascii_case(base) {
+            // fee_raw 与 price_raw 都是 SCALE 定点：fee*price 要除掉一份 SCALE。
+            return fill
+                .price
+                .raw()
+                .checked_mul(fee_raw)
+                .and_then(|product| product.checked_div(SCALE))
+                .ok_or_else(|| QxError::Invariant("成交费用折算溢出".into()));
+        }
+    }
+    Err(QxError::ReconcileRequired(format!(
+        "成交手续费币种 {fee_currency} 既不是账簿结算币种 {}，也不是这一对的基准资产，\
+         账簿里没有它的价格，费用不能按面值记入结算币种；\
+         请关闭交易所的异币种手续费抵扣，或把账户 settlement_currency 统一为费用币种后重新对账",
+        currency.trim()
+    )))
+}
+
 impl Ledger {
     /// 用订单的方向和工具信息应用一笔不可变成交事实。
     pub fn apply_fill(&mut self, order: &Order, fill: &Fill, currency: &str) -> QxResult<Vec<u64>> {
@@ -32,6 +92,11 @@ impl Ledger {
         if fill.price.raw() <= 0 {
             return Err(QxError::BusinessViolation("成交价格必须为正".into()));
         }
+        // 异币种费用只有在现货口径下能按成交价折算，见 `fee_in_settlement_raw`。
+        let base = (multiplier == 1)
+            .then(|| base_asset_of(&order.instrument.symbol, currency))
+            .flatten();
+        let fee_raw = fee_in_settlement_raw(fill, currency, base.as_deref())?;
         if matches!(
             order.status,
             crate::order::OrderStatus::Rejected
@@ -41,7 +106,8 @@ impl Ledger {
             return Err(QxError::BusinessViolation("终态订单不能记入成交".into()));
         }
         let mut staged = self.clone();
-        let ids = staged.apply_fill_with_multiplier_inner(order, fill, currency, multiplier)?;
+        let ids =
+            staged.apply_fill_with_multiplier_inner(order, fill, currency, multiplier, fee_raw)?;
         *self = staged;
         Ok(ids)
     }
@@ -86,8 +152,11 @@ impl Ledger {
         ) {
             return Err(QxError::BusinessViolation("终态订单不能记入成交".into()));
         }
+        // 衍生费用只认结算币种：折成结算币种在这里还要过 `contract_size` 与 inverse 口径，
+        // 算错的代价比拒记更高，所以现货之外的折算一律不开。
+        let fee_raw = fee_in_settlement_raw(fill, currency, None)?;
         let mut staged = self.clone();
-        let ids = staged.apply_derivative_fill_inner(order, fill, currency, spec)?;
+        let ids = staged.apply_derivative_fill_inner(order, fill, currency, spec, fee_raw)?;
         *self = staged;
         Ok(ids)
     }
@@ -98,6 +167,7 @@ impl Ledger {
         fill: &Fill,
         currency: &str,
         spec: &TradingInstrumentSpec,
+        fee_raw: i128,
     ) -> QxResult<Vec<u64>> {
         let policy = order.policy.unwrap_or_default();
         let hedge = policy.position_mode == crate::trading::PositionMode::Hedge;
@@ -159,13 +229,13 @@ impl Ledger {
             multiplier: 1,
             position_side: hedge.then_some(policy.position_side),
         })?);
-        if !fill.fee.is_zero() {
+        if fee_raw != 0 {
             ids.push(self.append(LedgerEntry {
                 id: 0,
                 account_id: order.account_id.clone(),
                 currency: currency.into(),
                 kind: LedgerEntryKind::Fee,
-                amount: Money::from_raw(-fill.fee.raw()),
+                amount: Money::from_raw(-fee_raw),
                 instrument: Some(order.instrument.clone()),
                 quantity: Quantity::ZERO,
                 price: None,
@@ -184,6 +254,7 @@ impl Ledger {
         fill: &Fill,
         currency: &str,
         multiplier: i128,
+        fee_raw: i128,
     ) -> QxResult<Vec<u64>> {
         if multiplier <= 0 {
             return Err(QxError::BusinessViolation("合约乘数必须为正".into()));
@@ -239,13 +310,15 @@ impl Ledger {
                 .map(|policy| policy.position_side),
         })?;
         let mut ids = vec![cash_id, pos_id];
-        if !fill.fee.is_zero() {
+        // 折算后可能落到 0（极小费用 × 极低价），那时这一腿本就不该存在：
+        // 判据用折完的数，不用回报里的原数。
+        if fee_raw != 0 {
             let fee_id = self.append(LedgerEntry {
                 id: 0,
                 account_id: order.account_id.clone(),
                 currency: currency.into(),
                 kind: LedgerEntryKind::Fee,
-                amount: Money::from_raw(-fill.fee.raw()),
+                amount: Money::from_raw(-fee_raw),
                 instrument: Some(order.instrument.clone()),
                 quantity: Quantity::ZERO,
                 price: None,

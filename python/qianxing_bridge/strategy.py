@@ -2,7 +2,10 @@
 
 策略进程只能接收不可变定点输入并返回 Signal/Portfolio/OrderIntent 目标，不得直接访问
 交易所、控制面或账簿。协议与 Rust ``qx_runtime`` 中的
-``StrategyContractInput/Output`` 一一对应，便于 JSONL、Arrow 和其他语言复用。
+``StrategyContractInput/Output`` 同一份形状，逐键钉在
+``crates/qx-runtime/tests/strategy_api_schema_contract.rs``；本桥接的 ``StrategyIntent``
+只表达 11 格意图字段里的 8 格，逐腿 ``margin_mode`` / ``position_mode`` / ``leverage``
+运行时会读但 Python 侧写不出来（V11 R4-4 登记为未接线能力）。
 """
 
 from __future__ import annotations
