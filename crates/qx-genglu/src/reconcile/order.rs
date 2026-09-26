@@ -1,12 +1,9 @@
 //! 订单维度的对账裁决：全仓唯一的"本地 vs 远端订单"判定（V10 §4.8）。
 //!
-//! [`order_reconcile_verdict`] 是唯一的状态感知裁决函数；批量入口
-//! [`reconcile_order_verdicts`] 把缺边方向与重复键也折叠进同一口径。
-//! [`reconcile_order_facts`]、[`reconcile_orders`] 与 qx-adapter 的
-//! `reconcile_remote` 只投影裁决结果为各自的差异类型，禁止重复比较。
+//! [`order_reconcile_verdict`] 是唯一的状态感知裁决函数；[`reconcile_order_facts`]
+//! 与 qx-adapter 的 `reconcile_remote` 只把裁决投影为各自的差异类型，禁止重复比较。
 
-use super::Discrepancy;
-use qx_core::{Order, OrderStatus};
+use qx_core::OrderStatus;
 use std::collections::BTreeMap;
 
 /// 订单对账的"事实"中性表示：只携带判定所需字段，让 qx-genglu 与 qx-adapter 共享
@@ -69,6 +66,26 @@ impl VerdictAction {
     }
 }
 
+/// 状态维度差异 → 动作的唯一判据：合法沿生命周期前进视为远端权威推进可自动收敛，
+/// 互斥迁移（含终态之间）需人工。只在两侧状态均已提供（即真有差异）时调用。
+pub fn status_action(local: OrderStatus, venue: OrderStatus) -> VerdictAction {
+    if local.can_transition_to(venue) {
+        VerdictAction::Resync
+    } else {
+        VerdictAction::ManualReview
+    }
+}
+
+/// 成交数量维度差异 → 动作的唯一判据：远端回退（少于本地）是事实冲突需人工，
+/// 否则是可自动收敛的推进。只在两侧数量不等时调用。
+pub const fn filled_action(local_raw: i128, venue_raw: i128) -> VerdictAction {
+    if local_raw > venue_raw {
+        VerdictAction::ManualReview
+    } else {
+        VerdictAction::Resync
+    }
+}
+
 impl ReconcileVerdict {
     /// 裁决 → 动作的唯一映射口径。
     pub fn action(&self) -> VerdictAction {
@@ -77,22 +94,6 @@ impl ReconcileVerdict {
             Self::PendingReconcile => VerdictAction::ReconcileRequired,
             Self::AutoConverge(_) => VerdictAction::Resync,
             Self::NeedsHuman(_) => VerdictAction::ManualReview,
-        }
-    }
-
-    /// `AutoConverge` 时远端的权威状态（`None` 表示状态维度不可判定或需人工）。
-    pub fn venue_status(&self) -> Option<OrderStatus> {
-        match self {
-            Self::AutoConverge(diff) => diff.status.map(|(_, venue)| venue),
-            _ => None,
-        }
-    }
-
-    /// `AutoConverge` 时远端的权威成交数量（定点 raw）。
-    pub fn venue_filled_raw(&self) -> Option<i128> {
-        match self {
-            Self::AutoConverge(diff) => diff.filled.map(|(_, venue)| venue),
-            _ => None,
         }
     }
 
@@ -128,8 +129,8 @@ pub fn order_reconcile_verdict(
         filled: (local.filled_raw != remote.filled_raw)
             .then_some((local.filled_raw, remote.filled_raw)),
     };
-    let conflicts = matches!(dimensions.filled, Some((local_raw, venue_raw)) if local_raw > venue_raw)
-        || matches!(dimensions.status, Some((ls, rs)) if !ls.can_transition_to(rs));
+    let conflicts = matches!(dimensions.filled, Some((local_raw, venue_raw)) if filled_action(local_raw, venue_raw) == VerdictAction::ManualReview)
+        || matches!(dimensions.status, Some((local_status, venue_status)) if status_action(local_status, venue_status) == VerdictAction::ManualReview);
     if conflicts {
         ReconcileVerdict::NeedsHuman(dimensions)
     } else if dimensions.status.is_none() && dimensions.filled.is_none() {
@@ -151,36 +152,6 @@ fn index_order_facts(
         }
     }
     (map, duplicates)
-}
-
-/// 批量订单裁决：逐单判定唯一委托 [`order_reconcile_verdict`]，"远端有、本地无"与
-/// 重复键直接判 [`ReconcileVerdict::NeedsHuman`]。返回按 `client_order_id` 升序的裁决表。
-pub fn reconcile_order_verdicts(
-    local: &[OrderReconcileFact],
-    remote: &[OrderReconcileFact],
-) -> BTreeMap<u64, ReconcileVerdict> {
-    let (local_map, local_duplicates) = index_order_facts(local);
-    let (remote_map, remote_duplicates) = index_order_facts(remote);
-    let mut verdicts = local_map
-        .iter()
-        .map(|(&id, fact)| {
-            (
-                id,
-                order_reconcile_verdict(fact, remote_map.get(&id).copied()),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    let needs_human = ReconcileVerdict::NeedsHuman(OrderDimensionDiff::default());
-    for &id in remote_map.keys() {
-        if !local_map.contains_key(&id) {
-            verdicts.insert(id, needs_human.clone());
-        }
-    }
-    // 重复键的快照本身不可信，逐单判定结果必须被"需人工"覆盖。
-    for id in local_duplicates.into_iter().chain(remote_duplicates) {
-        verdicts.insert(id, needs_human.clone());
-    }
-    verdicts
 }
 
 /// 归一化订单差异报告：全仓唯一的"本地 vs 远端订单"差异输出（V10 §4.8）。
@@ -238,72 +209,6 @@ pub fn reconcile_order_facts(
         }
     }
     out
-}
-
-/// 订单对账（Orders 视角入口）：`venue` 参数为 (client_id, filled_qty, 远端状态)，
-/// 远端状态为 `None` 表示交易所回报未携带状态（该维度按不可判定跳过）。
-///
-/// 判定完全委托唯一口径 [`order_reconcile_verdict`]（经 [`reconcile_order_facts`]），
-/// 此处只把中性差异翻译回 [`Discrepancy`]。
-pub fn reconcile_orders(
-    local: &[Order],
-    venue: &[(u64, i128, Option<OrderStatus>)],
-) -> Vec<Discrepancy> {
-    let local_facts = local.iter().map(|order| OrderReconcileFact {
-        client_order_id: order.client_id,
-        status: Some(order.status),
-        filled_raw: order.filled.raw(),
-    });
-    let venue_facts = venue
-        .iter()
-        .map(|(client_id, filled, status)| OrderReconcileFact {
-            client_order_id: *client_id,
-            status: *status,
-            filled_raw: *filled,
-        });
-    reconcile_order_facts(
-        &local_facts.collect::<Vec<_>>(),
-        &venue_facts.collect::<Vec<_>>(),
-    )
-    .into_iter()
-    // 裁决投影后的每一维差异都必须如实进入报告，这里只做类型翻译，不筛除差异。
-    .map(|diff| match diff {
-        OrderReconcileDiff::DuplicateLocal { client_order_id } => Discrepancy::DuplicateSnapshot {
-            domain: "order".into(),
-            side: "local".into(),
-            key: client_order_id.to_string(),
-        },
-        OrderReconcileDiff::DuplicateRemote { client_order_id } => Discrepancy::DuplicateSnapshot {
-            domain: "order".into(),
-            side: "venue".into(),
-            key: client_order_id.to_string(),
-        },
-        OrderReconcileDiff::MissingAtVenue { client_order_id } => Discrepancy::MissingAtVenue {
-            client_id: client_order_id,
-        },
-        OrderReconcileDiff::MissingLocally { client_order_id } => Discrepancy::MissingLocally {
-            client_id: client_order_id,
-        },
-        OrderReconcileDiff::FilledMismatch {
-            client_order_id,
-            local_raw,
-            venue_raw,
-        } => Discrepancy::QtyMismatch {
-            client_id: client_order_id,
-            local: local_raw,
-            venue: venue_raw,
-        },
-        OrderReconcileDiff::StatusMismatch {
-            client_order_id,
-            local,
-            venue,
-        } => Discrepancy::StatusMismatch {
-            client_id: client_order_id,
-            local,
-            venue,
-        },
-    })
-    .collect()
 }
 
 /// [`reconcile_order_facts`] 输出的归一化差异裁定（裁决的逐维度投影）。

@@ -12,9 +12,9 @@ use qx_adapter::{
     TlsHttpTransport,
 };
 use qx_api::{
-    load_mtls_server_config_from_pem, ApiPolicy, ApiReadiness, ApiService, ApiState,
-    ControlSubmitError, MtlsIdentityPemReloader, MtlsIdentityStore, ReconcileReportSnapshot,
-    TlsConfigStore, TlsPemReloader,
+    load_mtls_server_config_from_pem, ApiPolicy, ApiQueryModels, ApiReadiness, ApiService,
+    ApiState, ControlSubmitError, MtlsIdentityPemReloader, MtlsIdentityStore,
+    ReconcileReportSnapshot, TlsConfigStore, TlsPemReloader,
 };
 use qx_control::{
     order_from_submit_command, CommandKind, ControlCommand, ControlPlane, Permission,
@@ -62,8 +62,8 @@ use qx_storage::{
     OutboxRelay, OutboxStore,
 };
 use qx_storage::{
-    ControlCommandQueue, ControlCommandQueueBackend, FileJobQueue, JobLease, JsonStateStore,
-    QueuedJob, StorageError,
+    ControlCommandQueue, ControlCommandQueueBackend, FileJobQueue, FileTokenBucket, JobLease,
+    JsonStateStore, QueuedJob, StorageError,
 };
 #[cfg(feature = "nats")]
 use qx_storage::{NatsJetStreamConsumer, NatsJetStreamPublisher};
@@ -117,6 +117,7 @@ mod market_spec;
 mod multi_leg;
 mod path_resolution;
 mod readiness;
+mod report_readout;
 mod runtime_check;
 mod runtime_wiring;
 mod scheduler;
@@ -125,8 +126,10 @@ mod spread;
 mod strategy_binding;
 mod strategy_contract;
 mod strategy_host;
+mod strategy_live_state;
 mod venue_runtime;
 mod worker_entry;
+mod worker_shutdown;
 mod workers;
 
 pub(crate) use api_service::*;
@@ -145,6 +148,7 @@ pub(crate) use market_spec::*;
 pub(crate) use multi_leg::*;
 pub(crate) use path_resolution::*;
 pub(crate) use readiness::*;
+pub(crate) use report_readout::*;
 pub(crate) use runtime_check::*;
 pub(crate) use runtime_wiring::*;
 pub(crate) use scheduler::*;
@@ -152,8 +156,10 @@ pub(crate) use spread::*;
 pub(crate) use strategy_binding::*;
 pub(crate) use strategy_contract::*;
 pub(crate) use strategy_host::*;
+pub(crate) use strategy_live_state::*;
 pub(crate) use venue_runtime::*;
 pub(crate) use worker_entry::*;
+pub(crate) use worker_shutdown::*;
 
 use dataset_commands::{
     run_dataset_bundle, run_dataset_ingest, verify_dataset_bundle_binding,

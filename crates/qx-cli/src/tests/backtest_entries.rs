@@ -392,6 +392,15 @@ fn builtin_strategy_entries_match_the_printed_partition() {
             "{} 的准入列必须是该 kind 真正可用的入口，实际行: {line}",
             kind.name()
         );
+        // 生效列与内核清单同源（V12 #102）：这一格没了或写了别的，读者就会在只读 period 的
+        // kind 上调快慢窗口。准入列有断言、生效列没有，等于清单只剩一半牙齿。
+        let last_column = line.trim_end().rsplit('\t').next().unwrap_or_default();
+        assert_eq!(
+            format!("knobs={}", kind.signal_knob_list()),
+            last_column,
+            "{} 的生效列必须逐项等于内核清单，实际行: {line}",
+            kind.name()
+        );
     }
 }
 

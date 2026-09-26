@@ -1,10 +1,15 @@
-import unittest
+import json
 import sys
+import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from qianxing_bridge import BarFrame, TransformManifest, load_account_snapshot
+
+#: Rust 写侧（`AccountSnapshot::to_json`）原样产出的那一份文档；两侧各钉一次，见
+#: `crates/qx-protocol/tests/snapshot_single_source.rs`。
+ACCOUNT_SNAPSHOT_SAMPLE = Path(__file__).resolve().parent / "fixtures" / "account-snapshot-v1.sample.json"
 
 
 class BridgeTest(unittest.TestCase):
@@ -30,13 +35,55 @@ class BridgeTest(unittest.TestCase):
             "schema_version": 1,
             "header": {},
             "cash_raw": {},
+            "equity_raw": 0,
             "positions": {},
             "orders": {},
             "fills": {},
             "transfers": {},
             "reconcile": {},
         }
-        self.assertEqual(load_account_snapshot(__import__("json").dumps(payload))["schema_version"], 1)
+        self.assertEqual(load_account_snapshot(json.dumps(payload))["schema_version"], 1)
+        # 必填集合与 Rust 读侧、与发布出去的契约同宽：`equity_raw` 是写侧恒印的键。
+        for field in ("equity_raw", "positions"):
+            incomplete = {key: value for key, value in payload.items() if key != field}
+            with self.assertRaisesRegex(ValueError, "missing snapshot fields"):
+                load_account_snapshot(json.dumps(incomplete))
+        # 恒印的是键，不是值：Q70 起算不出标记价时写侧印 `"equity_raw":null`。契约那侧已经
+        # 允许 null，Python 读侧若拒收就是同一份产物一边解得开、一边解不开。
+        self.assertIsNone(
+            load_account_snapshot(json.dumps({**payload, "equity_raw": None}))["equity_raw"]
+        )
+        # 别的版本号不是"缺字段"，也不能被当成 v1 解开——Rust 的 from_json 同一判据。
+        for version in (0, 2):
+            with self.assertRaisesRegex(ValueError, "unsupported account snapshot schema"):
+                load_account_snapshot(json.dumps({**payload, "schema_version": version}))
+
+    def test_reader_consumes_the_document_the_writer_emits(self):
+        # 此前这里喂的是手抄字典、四张键表全填 {}：写侧把键印成裸数字（`"orders":{77:...}`，
+        # 那份产物根本不是 JSON）、枚举印数字码的那几周，一条都不会红（V11 R18）。
+        snapshot = load_account_snapshot(ACCOUNT_SNAPSHOT_SAMPLE.read_text(encoding="utf-8"))
+        self.assertEqual(snapshot["protocol"], "QIANXING_ACCOUNT")
+        self.assertEqual(
+            sorted(snapshot["positions"]),
+            ["BTCUSDT.BINANCE"],
+            "持仓键必须是 `标的代码.交易所` 字符串——写侧与 serde 读侧共用 instrument_key",
+        )
+        self.assertEqual(snapshot["positions"]["BTCUSDT.BINANCE"]["instrument"],
+                         {"symbol": "BTCUSDT", "venue": "BINANCE"})
+        for table, key in (("orders", "77"), ("fills", "9"), ("transfers", "3")):
+            self.assertEqual(
+                sorted(snapshot[table]),
+                [key],
+                f"{table} 的键必须是带引号的十进制字符串：裸数字不是合法 JSON",
+            )
+        self.assertEqual(snapshot["orders"]["77"]["side"], "Sell")
+        self.assertEqual(snapshot["orders"]["77"]["status"], "Accepted")
+        self.assertEqual(snapshot["header"]["state_hash"], 17770453242411702682)
+        # 定点数走整数；没算过的钱格是 null 而不是 0。
+        self.assertEqual(snapshot["cash_raw"]["USDT"], 1000)
+        self.assertIsInstance(snapshot["header"]["state_hash"], int)
+        self.assertIsNone(snapshot["available_raw"])
+        self.assertIsNone(snapshot["positions"]["BTCUSDT.BINANCE"]["unrealized_pnl_raw"])
 
 
 if __name__ == "__main__":

@@ -443,7 +443,7 @@ pub fn project_event_log_to_outbox(
                     event.correlation_id.clone()
                 },
                 sequence: event.seq,
-                schema_version: 1,
+                schema_version: OutboxEvent::LATEST_SCHEMA_VERSION,
                 trace_id: event.correlation_id.clone(),
                 payload: serde_json::to_string(event).map_err(|error| {
                     StorageError::Io(format!("EventLog Outbox 序列化失败: {error}"))
@@ -1780,26 +1780,13 @@ mod tests {
     fn control_state_round_trips_after_restart() {
         let root = std::env::temp_dir().join(format!("qianxing-state-{}", std::process::id()));
         let store = JsonStateStore::new(&root);
-        let mut plane = ControlPlane::default();
-        plane
-            .submit(
-                ControlCommand {
-                    command_id: 1,
-                    request_id: "r1".into(),
-                    operator_id: "ops".into(),
-                    reason: "test".into(),
-                    kind: CommandKind::PauseStrategy,
-                    target: "s1".into(),
-                    payload: BTreeMap::new(),
-                    permission: Permission::Trading,
-                    dry_run: true,
-                },
-                1,
-            )
+        store
+            .transact_control(|plane| plane.submit(queued_control(1), 1))
+            .unwrap()
+            .1
             .unwrap();
-        store.save_control(&plane).unwrap();
-        let restored = store.load_control().unwrap();
-        assert_eq!(restored.command(1).unwrap().request_id, "r1");
+        let restored = store.load_control_if_exists().unwrap().unwrap();
+        assert_eq!(restored.command(1).unwrap().request_id, "queue-1");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1851,8 +1838,10 @@ mod tests {
                 dry_run: true,
             })
             .unwrap();
-        store.save_scheduler(&scheduler).unwrap();
-        let restored = store.load_scheduler().unwrap();
+        store
+            .save_scheduler_at("scheduler.json", &scheduler)
+            .unwrap();
+        let restored = store.load_scheduler_at("scheduler.json").unwrap();
         assert_eq!(restored.job("bars").unwrap().job_version, "v1");
         let _ = std::fs::remove_dir_all(root);
     }
@@ -2003,22 +1992,28 @@ mod tests {
         ));
         let store = JsonStateStore::new(&root);
         let (_, accepted) = store
-            .update_control(|plane| {
+            .transact_control(|plane| {
                 plane
                     .submit(queued_control(601), 10)
                     .map_err(|error| format!("{error:?}"))
             })
             .unwrap();
-        assert_eq!(accepted.status, qx_control::CommandStatus::Accepted);
+        assert_eq!(
+            accepted.unwrap().status,
+            qx_control::CommandStatus::Accepted
+        );
         let (_, executed) = store
-            .update_control(|plane| {
+            .transact_control(|plane| {
                 plane
                     .execute(601, 11, |_| Ok("DRY_RUN_VALIDATED".into()))
                     .map_err(|error| format!("{error:?}"))
             })
             .unwrap();
-        assert_eq!(executed.status, qx_control::CommandStatus::Executed);
-        let restored = store.load_control().unwrap();
+        assert_eq!(
+            executed.unwrap().status,
+            qx_control::CommandStatus::Executed
+        );
+        let restored = store.load_control_if_exists().unwrap().unwrap();
         assert_eq!(restored.audit().len(), 2);
         assert!(restored.pending().next().is_none());
         let _ = std::fs::remove_dir_all(root);
@@ -2112,8 +2107,14 @@ mod tests {
                 ts: 2,
             })
         });
-        assert!(first.join().unwrap().is_ok());
-        assert!(second.join().unwrap().is_ok());
+        // 失败要带得上底层错误：整树并发跑时这条追加曾在 Windows 上偶发失败，
+        // 而 `is_ok()` 只留下一句"断言失败"，本机无法从日志判断是哪一步、哪个 os error。
+        let first_result = first.join().unwrap();
+        let second_result = second.join().unwrap();
+        assert!(
+            first_result.is_ok() && second_result.is_ok(),
+            "并发追加必须两边都成功: first={first_result:?} second={second_result:?}"
+        );
         let entries = store.read().unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].previous_hash, 0);

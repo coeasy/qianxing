@@ -129,13 +129,3 @@ pub fn load_control_state(
         .map_err(|error| format!("读取控制面状态失败: {error:?}"))
         .map(|state| state.unwrap_or_default())
 }
-
-pub fn save_control_state(
-    root: impl Into<std::path::PathBuf>,
-    state: &qx_control::ControlPlane,
-) -> Result<(), String> {
-    JsonStateStore::new(root)
-        .save_control(state)
-        .map(|_| ())
-        .map_err(|error| format!("保存控制面状态失败: {error:?}"))
-}

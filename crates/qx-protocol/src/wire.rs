@@ -80,9 +80,29 @@ pub struct TransferSnapshot {
 
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub struct ReconcileSnapshot {
-    pub last_reconcile_ts: u64,
-    pub discrepancy_count: u32,
+    /// 与七个钱字段同一套编码（V11 Q67 的口径推到对账侧，R10）：`None` = 本账户一份对账报告
+    /// 都没有，`Some(0)` = 对过且无差异。此前两格是裸整数，"从未对账"与"对账很干净"在 JSON、
+    /// `state_hash` 和 diff 上都是同一份状态，看板会把没跑过对账的账户读成绿色。
+    pub last_reconcile_ts: Option<u64>,
+    pub discrepancy_count: Option<u32>,
     pub recovery_state: String,
+}
+
+impl ReconcileSnapshot {
+    /// 对账两格的唯一哈希取法：存在性标记与值共用账户钱字段那一次实现，不在这里再发明一遍。
+    pub(crate) fn write_scalars(&self, hasher: &mut Fnv1a) {
+        AccountSnapshot::write_optional_money(hasher, self.last_reconcile_ts.map(i128::from));
+        AccountSnapshot::write_optional_money(hasher, self.discrepancy_count.map(i128::from));
+        hasher.write_text(&self.recovery_state);
+    }
+
+    /// 稳定 JSON 里"没有对账报告"只有一个字面量：`null`（与 `money_json` 同一条纪律）。
+    pub(crate) fn json_values(&self) -> [String; 2] {
+        [
+            AccountSnapshot::money_json(self.last_reconcile_ts.map(i128::from)),
+            AccountSnapshot::money_json(self.discrepancy_count.map(i128::from)),
+        ]
+    }
 }
 
 /// 内核持仓观察 → 线格式持仓的**唯一**折算。

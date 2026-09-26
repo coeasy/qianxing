@@ -25,23 +25,16 @@ pub use wire::*;
 
 static SNAPSHOT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str = r#"{
-  "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "$id":"https://qianxing.dev/schema/account-snapshot-v1.json",
-  "type":"object",
-  "required":["protocol","schema_version","header","cash_raw","positions","orders","fills","transfers","reconcile"],
-  "properties":{
-    "protocol":{"const":"QIANXING_ACCOUNT"},
-    "schema_version":{"const":1},
-    "header":{"type":"object","required":["snapshot_id","account_id","portfolio_id","venue_id","as_of","event_seq","state_hash"]},
-    "cash_raw":{"type":"object","additionalProperties":{"type":"integer"}},
-    "positions":{"type":"object"},
-    "orders":{"type":"object"},
-    "fills":{"type":"object"},
-    "transfers":{"type":"object"},
-    "reconcile":{"type":"object"}
-  }
-}"#;
+/// 账户快照 v1 的 JSON Schema —— `GET /schema/account-snapshot-v1` 实际发出的那一份。
+///
+/// 此前它和 `schemas/account-snapshot-v1.json` 各存一份手抄，两边都少了写侧的八个钱字段
+/// （V11 S10）。现在只剩一份文本：文件是权威，本常量按字节 `include_str!` 进来，漂移在编译期
+/// 就不可能发生；门禁 `account_snapshot_schema_check()` 转去钉 schema 自洽且覆盖写侧产物。
+pub const ACCOUNT_SNAPSHOT_JSON_SCHEMA: &str =
+    include_str!("../../../schemas/account-snapshot-v1.json");
+
+/// schema 里 `"schema_version": {"const": 1}` 说的是同一件事：读侧按它拒绝其他版本。
+pub const ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
 pub const PROJECTION_ENVELOPE_SCHEMA_VERSION: u32 = 1;
 
@@ -138,7 +131,7 @@ mod instrument_map {
     {
         let wire = map
             .iter()
-            .map(|(key, value)| (key.to_string(), value))
+            .map(|(key, value)| (instrument_key(key), value))
             .collect::<BTreeMap<_, _>>();
         wire.serialize(serializer)
     }
@@ -160,6 +153,11 @@ mod instrument_map {
     }
 }
 
+/// 标的在 JSON 键位上的唯一写法：`positions` 的键由它决定，读写两侧共用一份。
+fn instrument_key(instrument: &InstrumentId) -> String {
+    instrument.to_string()
+}
+
 impl AccountSnapshot {
     pub fn new(
         snapshot_id: u64,
@@ -170,7 +168,7 @@ impl AccountSnapshot {
     ) -> Self {
         Self {
             header: SnapshotHeader {
-                schema_version: 1,
+                schema_version: ACCOUNT_SNAPSHOT_SCHEMA_VERSION,
                 snapshot_id,
                 account_id: account_id.into(),
                 portfolio_id: portfolio_id.into(),
@@ -198,6 +196,9 @@ impl AccountSnapshot {
     }
 
     pub fn validate(&self) -> Result<(), ProtocolError> {
+        // 这里只做"这一份文档自洽吗"的体检，**不做版本闸门**：一份按 v2 口径自洽封存的快照
+        // 在这里必须过关，拒它的理由只能是"本构建只认 v1"（闸门见 `from_json` / `from_wire_json`）。
+        // 混在一起会让"版本不受支持"和"哈希不对"共用一条通道，判据就分不出是谁拒的（V11 S10）。
         if self.header.schema_version == 0 || self.header.account_id.trim().is_empty() {
             return Err(ProtocolError::Invalid("快照头或 account_id 非法".into()));
         }
@@ -236,7 +237,7 @@ impl AccountSnapshot {
     /// `None` 与 `Some(0)` 必须是两个不同的哈希：前者是"这一层没算"，后者是"算过、结果为零"。
     /// 只写 `unwrap_or_default()` 会让两者撞成同一份状态，未算也就永远改不动 state_hash。
     /// 账户标量与持仓行共用这一处写入，两处不可能各定一套"未算"的编码。
-    fn write_optional_money(hasher: &mut Fnv1a, value: Option<i128>) {
+    pub(crate) fn write_optional_money(hasher: &mut Fnv1a, value: Option<i128>) {
         hasher.write_u64(u64::from(value.is_some()));
         hasher.write_i128(value.unwrap_or_default());
     }
@@ -247,8 +248,8 @@ impl AccountSnapshot {
         }
     }
 
-    /// "未算"在稳定 JSON 里只有一个字面量：`null`。持仓行与账户标量都经由这一处。
-    fn money_json(value: Option<i128>) -> String {
+    /// "未算"在稳定 JSON 里只有一个字面量：`null`。账户标量与对账两格都经由这一处。
+    pub(crate) fn money_json(value: Option<i128>) -> String {
         match value {
             Some(raw) => raw.to_string(),
             None => "null".to_string(),
@@ -314,9 +315,7 @@ impl AccountSnapshot {
             h.write_i128(transfer.amount_raw);
             h.write_u64(transfer.ts);
         }
-        h.write_u64(self.reconcile.last_reconcile_ts);
-        h.write_u64(self.reconcile.discrepancy_count as u64);
-        h.write_text(&self.reconcile.recovery_state);
+        self.reconcile.write_scalars(&mut h);
         h.finish()
     }
 
@@ -357,9 +356,7 @@ impl AccountSnapshot {
     fn scalar_hash(&self) -> u64 {
         let mut h = Fnv1a::new();
         Self::write_scalar_money(&mut h, self.scalar_money_raw());
-        h.write_u64(self.reconcile.last_reconcile_ts);
-        h.write_u64(self.reconcile.discrepancy_count as u64);
-        h.write_text(&self.reconcile.recovery_state);
+        self.reconcile.write_scalars(&mut h);
         h.finish()
     }
 
@@ -373,82 +370,20 @@ impl AccountSnapshot {
 
     /// 稳定 JSON 线格式：字段顺序固定、定点数传 raw integer，避免跨语言浮点漂移。
     pub fn to_json(&self) -> String {
-        let positions = self
-            .positions
-            .iter()
-            .map(|(instrument, value)| {
-                format!(
-                    "{}:{{\"quantity_raw\":{},\"today_quantity_raw\":{},\"average_price_raw\":{},\"mark_price_raw\":{},\"unrealized_pnl_raw\":{},\"margin_raw\":{}}}",
-                    json_string(&instrument.to_string()),
-                    value.quantity_raw,
-                    value.today_quantity_raw,
-                    value.average_price_raw,
-                    value.mark_price_raw,
-                    Self::money_json(value.unrealized_pnl_raw),
-                    Self::money_json(value.margin_raw)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
         let cash = self
             .cash_raw
             .iter()
             .map(|(currency, amount)| format!("{}:{}", json_string(currency), amount))
             .collect::<Vec<_>>()
             .join(",");
-        let orders = self
-            .orders
-            .iter()
-            .map(|(id, value)| {
-                format!(
-                    "{}:{{\"order_id\":{},\"client_order_id\":{},\"instrument\":{},\"side\":{},\"quantity_raw\":{},\"filled_raw\":{},\"status\":{}}}",
-                    id,
-                    value.order_id,
-                    value.client_order_id,
-                    json_string(&value.instrument.to_string()),
-                    side_code(value.side),
-                    value.quantity_raw,
-                    value.filled_raw,
-                    order_status_code(value.status)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let fills = self
-            .fills
-            .iter()
-            .map(|(id, value)| {
-                format!(
-                    "{}:{{\"fill_id\":{},\"order_id\":{},\"quantity_raw\":{},\"price_raw\":{},\"fee_raw\":{},\"ts\":{}}}",
-                    id,
-                    value.fill_id,
-                    value.order_id,
-                    value.quantity_raw,
-                    value.price_raw,
-                    value.fee_raw,
-                    value.ts
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let transfers = self
-            .transfers
-            .iter()
-            .map(|(id, value)| {
-                format!(
-                    "{}:{{\"transfer_id\":{},\"currency\":{},\"amount_raw\":{},\"ts\":{}}}",
-                    id,
-                    value.transfer_id,
-                    json_string(&value.currency),
-                    value.amount_raw,
-                    value.ts
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
+        let positions = json_position_entries(&self.positions);
+        let orders = json_table_entries(&self.orders);
+        let fills = json_table_entries(&self.fills);
+        let transfers = json_table_entries(&self.transfers);
         // 七个汇总钱字段与上面的 {} 一一对应：equity / available / margin / frozen /
         // realized_pnl / unrealized_pnl / fees / funding（未算过印 null，不印 0）。
         let scalars = self.scalar_json_values();
+        let reconcile = self.reconcile.json_values();
         format!(
             "{{\"protocol\":\"QIANXING_ACCOUNT\",\"schema_version\":{},\"header\":{{\"snapshot_id\":{},\"account_id\":{},\"portfolio_id\":{},\"venue_id\":{},\"trading_day\":{},\"as_of\":{},\"event_seq\":{},\"state_hash\":{}}},\"cash_raw\":{{{}}},\"equity_raw\":{},\"available_raw\":{},\"margin_raw\":{},\"frozen_raw\":{},\"realized_pnl_raw\":{},\"unrealized_pnl_raw\":{},\"fees_raw\":{},\"funding_raw\":{},\"positions\":{{{}}},\"orders\":{{{}}},\"fills\":{{{}}},\"transfers\":{{{}}},\"reconcile\":{{\"last_reconcile_ts\":{},\"discrepancy_count\":{},\"recovery_state\":{}}}}}",
             self.header.schema_version,
@@ -473,8 +408,8 @@ impl AccountSnapshot {
             orders,
             fills,
             transfers,
-            self.reconcile.last_reconcile_ts,
-            self.reconcile.discrepancy_count,
+            reconcile[0],
+            reconcile[1],
             json_string(&self.reconcile.recovery_state),
         )
     }
@@ -493,22 +428,36 @@ impl AccountSnapshot {
             .get("schema_version")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| ProtocolError::Invalid("账户快照 schema_version 缺失".into()))?;
+        if top_schema != ACCOUNT_SNAPSHOT_SCHEMA_VERSION as u64 {
+            // Python 侧的 `load_account_snapshot` 早就按常量拒绝非 1；读侧此前只查自洽性，
+            // 一个 `schema_version: 7` 会被当 v1 解析出来，两边在同一份产物上一宽一严。
+            return Err(ProtocolError::Invalid(format!(
+                "账户快照 schema_version={top_schema} 不受支持（本构建只认 {}）",
+                ACCOUNT_SNAPSHOT_SCHEMA_VERSION
+            )));
+        }
         let header = object
             .get_mut("header")
             .and_then(serde_json::Value::as_object_mut)
             .ok_or_else(|| ProtocolError::Invalid("账户快照 header 缺失".into()))?;
-        match header
-            .get("schema_version")
-            .and_then(serde_json::Value::as_u64)
-        {
-            Some(header_schema) if header_schema != top_schema => {
-                return Err(ProtocolError::Invalid(
-                    "账户快照 schema_version 前后不一致".into(),
-                ));
-            }
-            Some(_) => {}
+        match header.get("schema_version") {
+            // 缺席才是"存储的形状"（`to_json` 不写这一格），补写成顶层值；但**声明了却读不出
+            // 整数**的那一份是另一件事：按字符串 `"1"`、`true`、`null` 声明版本，不能被
+            // "读不出就当没写"的补写路径洗成合法值（V12 R2）。
             None => {
                 header.insert("schema_version".into(), serde_json::Value::from(top_schema));
+            }
+            Some(declared) => {
+                let declared = declared.as_u64().ok_or_else(|| {
+                    ProtocolError::Invalid(format!(
+                        "账户快照 header.schema_version 声明了但不是无符号整数: {declared}"
+                    ))
+                })?;
+                if declared != top_schema {
+                    return Err(ProtocolError::Invalid(format!(
+                        "账户快照 schema_version 前后不一致（顶层 {top_schema} ≠ header.schema_version {declared}）"
+                    )));
+                }
             }
         }
         if let Some(positions) = object
@@ -545,9 +494,37 @@ impl AccountSnapshot {
     pub fn from_wire_json(input: &str) -> Result<Self, ProtocolError> {
         let snapshot: Self = serde_json::from_str(input)
             .map_err(|error| ProtocolError::Serialization(error.to_string()))?;
+        // wire 入口与稳定 JSON 入口共用同一道版本闸门（V12 R2）：闸门放在读侧而不是
+        // `validate()` 里，所以"自洽的跨版本文档"在这里得到的理由是版本不受支持。
+        if snapshot.header.schema_version != ACCOUNT_SNAPSHOT_SCHEMA_VERSION {
+            return Err(ProtocolError::Invalid(format!(
+                "账户快照 schema_version={} 不受支持（本构建只认 {}）",
+                snapshot.header.schema_version, ACCOUNT_SNAPSHOT_SCHEMA_VERSION
+            )));
+        }
         snapshot.validate()?;
         Ok(snapshot)
     }
+}
+
+/// 稳定 JSON 里的四张键表（持仓/订单/成交/划转）整份交给 serde 写，只剥掉最外层大括号。
+/// 它们此前是手抄的 `format!`：键是裸数字（`{77:{...}}` 不是合法 JSON），枚举印 `side_code`
+/// /`order_status_code` 的数字码、`instrument` 印字符串、持仓行少印一个字段，而读侧 `from_json`
+/// 走 serde，认的是字符串键、变体名与对象形态的标的——两份编码分叉到产物要么谁也解不回（R14），
+/// 要么新字段被写侧静默丢掉（R15）。
+fn json_table_entries<K: Serialize, V: Serialize>(table: &BTreeMap<K, V>) -> String {
+    let rendered = serde_json::to_string(table).expect("账户快照的键表可以序列化");
+    rendered[1..rendered.len() - 1].to_string()
+}
+
+/// `positions` 的键是 `InstrumentId` 而 JSON 的键必须是字符串，所以先把键换成 `instrument_key`
+/// 那一份写法（与 `to_wire_json` 的 `instrument_map` 同一个口径），值整份交给同一个渲染点。
+fn json_position_entries(positions: &BTreeMap<InstrumentId, PositionSnapshot>) -> String {
+    let keyed = positions
+        .iter()
+        .map(|(instrument, value)| (instrument_key(instrument), value))
+        .collect::<BTreeMap<_, _>>();
+    json_table_entries(&keyed)
 }
 
 fn json_string(value: &str) -> String {
@@ -805,84 +782,4 @@ fn order_status_code(status: OrderStatus) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn snapshot() -> AccountSnapshot {
-        let instrument = InstrumentId::parse("BTC-USDT.BINANCE").unwrap();
-        let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
-        snapshot.cash_raw.insert("USDT".into(), 1000);
-        snapshot.positions.insert(
-            instrument.clone(),
-            PositionSnapshot {
-                instrument,
-                quantity_raw: 2,
-                ..PositionSnapshot::default()
-            },
-        );
-        snapshot.seal();
-        snapshot
-    }
-
-    #[test]
-    fn diff_is_deterministic_and_replayable() {
-        let base = snapshot();
-        let mut target = base.clone();
-        target.cash_raw.insert("USDT".into(), 900);
-        target.equity_raw = Some(900);
-        target.header.snapshot_id = 2;
-        target.header.as_of = 11;
-        target.header.event_seq = 4;
-        target.seal();
-        let diff = base.diff(&target).unwrap();
-        let rebuilt = diff.apply(&base).unwrap();
-        assert_eq!(rebuilt, target);
-    }
-
-    #[test]
-    fn wrong_base_is_rejected() {
-        let base = snapshot();
-        let mut target = base.clone();
-        target.cash_raw.insert("USDT".into(), 900);
-        target.seal();
-        let diff = base.diff(&target).unwrap();
-        let mut wrong = base.clone();
-        wrong.cash_raw.insert("USDT".into(), 800);
-        wrong.seal();
-        assert_eq!(diff.apply(&wrong), Err(ProtocolError::BaseStateMismatch));
-    }
-
-    #[test]
-    fn json_wire_format_is_stable_and_uses_raw_integers() {
-        let snapshot = snapshot();
-        let json = snapshot.to_json();
-        assert!(json.starts_with("{\"protocol\":\"QIANXING_ACCOUNT\""));
-        assert!(json.contains("\"cash_raw\":{\"USDT\":1000}"));
-        assert!(json.contains("\"quantity_raw\":2"));
-        assert!(ACCOUNT_SNAPSHOT_JSON_SCHEMA.contains("QIANXING_ACCOUNT"));
-        let wire = snapshot.to_wire_json().unwrap();
-        assert_eq!(AccountSnapshot::from_wire_json(&wire).unwrap(), snapshot);
-        let qifi = snapshot.to_qifi();
-        let qifi_json = qifi.to_json();
-        assert!(qifi_json.contains("\"protocol\":\"QIFI\""));
-        assert_eq!(QifiEnvelope::from_json(&qifi_json).unwrap(), qifi);
-    }
-
-    #[test]
-    fn stable_json_and_file_snapshot_store_are_recoverable_and_idempotent() {
-        let snapshot = snapshot();
-        let root = std::env::temp_dir().join(format!(
-            "qianxing-protocol-{}-{}",
-            std::process::id(),
-            snapshot.header.snapshot_id
-        ));
-        let store = FileSnapshotStore::new(&root);
-        let first = store.save(&snapshot).unwrap();
-        let second = store.save(&snapshot).unwrap();
-        assert_eq!(first, second);
-        let json = store
-            .load_json(snapshot.header.snapshot_id, snapshot.state_hash())
-            .unwrap();
-        assert_eq!(AccountSnapshot::from_json(&json).unwrap(), snapshot);
-    }
-}
+mod tests;

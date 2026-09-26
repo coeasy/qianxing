@@ -1,50 +1,11 @@
 //! 配股权利事实归约：登记、认购、失效。配额不会自动变成普通持仓。
 
-use super::{Ledger, LedgerEntry, LedgerEntryKind, RightsIssueEvent, ShareSubscription};
+use super::{Ledger, LedgerEntry, LedgerEntryKind, RightsIssueEvent};
 use crate::error::{QxError, QxResult};
 use crate::identity::InstrumentId;
 use crate::numeric::{Money, Quantity};
 
 impl Ledger {
-    /// 应用配股认购。rights_instrument 可以与 source_instrument 相同（普通股配股），
-    /// 也可以是交易所独立挂牌的配股权/新股标的。此方法只处理已经明确认购的部分。
-    pub fn apply_rights_issue_subscription(
-        &mut self,
-        account_id: &str,
-        source_instrument: &InstrumentId,
-        rights_instrument: &InstrumentId,
-        currency: &str,
-        subscription: ShareSubscription,
-        ts: u64,
-    ) -> QxResult<Vec<u64>> {
-        if subscription.entitled_qty_raw <= 0
-            || subscription.subscription_qty_raw <= 0
-            || subscription.subscription_qty_raw > subscription.entitled_qty_raw
-            || subscription.subscription_price_raw <= 0
-        {
-            return Err(QxError::BusinessViolation(
-                "配股认购必须提供正的配额、认购数量和认购价格，且认购数量不能超过配额".into(),
-            ));
-        }
-        let held = self
-            .position_for(account_id, source_instrument)
-            .quantity
-            .raw();
-        if held < subscription.entitled_qty_raw {
-            return Err(QxError::BusinessViolation(
-                "配股认购时账户持仓不足以覆盖登记配额".into(),
-            ));
-        }
-        self.apply_share_subscription(
-            account_id,
-            rights_instrument,
-            currency,
-            subscription.subscription_qty_raw,
-            subscription.subscription_price_raw,
-            ts,
-        )
-    }
-
     /// 在登记日授予独立配股权利，不产生认购现金或普通持仓。
     ///
     /// 该事实与后续认购/失效分离，允许回测准确处理“登记日持有、除权日

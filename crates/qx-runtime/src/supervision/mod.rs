@@ -6,9 +6,11 @@
 use crate::*;
 
 mod health;
+mod shutdown;
 mod supervisor;
 #[cfg(test)]
 mod tests;
 
 pub use health::*;
+pub use shutdown::*;
 pub use supervisor::*;

@@ -309,8 +309,16 @@ impl TransformManifest {
     }
 }
 
+/// BarFrame JSON 文档当前支持的契约版本：写侧印它，读侧遇到更高版本必须拒绝，不能降级成
+/// 宽松解析。`qianxing_bridge.BAR_FRAME_SCHEMA_VERSION` 与 `qx-data` 的
+/// `BAR_FRAME_SCHEMA_VERSION` 是同一个数字，由架构自检的跨语言常量项钉住（V11 R16）。
+pub const BAR_FRAME_JSON_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Deserialize)]
 struct BarFrameWire {
+    /// 旧文档可以完全没有这一格（`0` = 兼容分支）；本 crate 的写侧从 R16 起总是印上版本号。
+    #[serde(default)]
+    schema_version: u32,
     instrument: String,
     source: String,
     ts: Vec<u64>,
@@ -325,6 +333,12 @@ impl BarFrame {
     pub fn from_json(input: &str) -> Result<Self, FrameError> {
         let wire: BarFrameWire = serde_json::from_str(input)
             .map_err(|error| FrameError::InvalidJson(error.to_string()))?;
+        if wire.schema_version > BAR_FRAME_JSON_SCHEMA_VERSION {
+            return Err(FrameError::InvalidJson(format!(
+                "unsupported BarFrame schema_version={} (supported: 0 legacy, 1..={BAR_FRAME_JSON_SCHEMA_VERSION})",
+                wire.schema_version
+            )));
+        }
         let instrument = InstrumentId::parse(&wire.instrument)
             .ok_or_else(|| FrameError::InvalidInstrument(wire.instrument.clone()))?;
         let frame = Self {
@@ -616,9 +630,13 @@ impl BarFrame {
     }
 
     /// 固定字段顺序的轻量 JSON，列值均为 raw integer，便于跨语言桥接和 golden test。
+    /// 第一格就是 `schema_version`：不声明版本的文档会被两侧读侧（`qx-data` 的
+    /// `parse_bar_frame` 与 Python 的 `BarFrame.from_json`）当成旧格式，从而绕开它们各自
+    /// 的严格分支——Rust 自己写的帧因此一直走宽松口径（V11 R16）。
     pub fn to_json(&self) -> String {
         format!(
-            "{{\"instrument\":\"{}\",\"source\":\"{}\",\"ts\":{},\"open_raw\":{},\"high_raw\":{},\"low_raw\":{},\"close_raw\":{},\"volume_raw\":{}}}",
+            "{{\"schema_version\":{},\"instrument\":\"{}\",\"source\":\"{}\",\"ts\":{},\"open_raw\":{},\"high_raw\":{},\"low_raw\":{},\"close_raw\":{},\"volume_raw\":{}}}",
+            BAR_FRAME_JSON_SCHEMA_VERSION,
             escape_json(&self.instrument.to_string()),
             escape_json(&self.source.0),
             json_array(&self.ts),
@@ -681,87 +699,4 @@ fn json_array<T: std::fmt::Display>(values: &[T]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn frame_is_pit_bounded_and_round_trips_columns() {
-        let instrument = InstrumentId::parse("T.SIM").unwrap();
-        let view = DataView::try_new(
-            vec![
-                Bar::new(1, 10, 11, 9, 10, 1),
-                Bar::new(2, 11, 12, 10, 11, 2),
-                Bar::new(3, 12, 13, 11, 12, 3),
-            ],
-            DataSourceId::new("bars-v1"),
-        )
-        .unwrap();
-        let frame = BarFrame::from_view(instrument, &view, 2).unwrap();
-        assert_eq!(frame.len(), 2);
-        assert_eq!(frame.close_at(1), Some(11));
-        assert_eq!(Vec::<Bar>::from(&frame)[1].ts, 2);
-        assert!(frame.to_json().contains("\"volume_raw\":[1,2]"));
-        assert_eq!(BarFrame::from_json(&frame.to_json()).unwrap(), frame);
-        assert_eq!(frame.digest(), 0xf9d5_8b91_e72d_ae58);
-        let selected = frame.select_time(2, 2).unwrap();
-        assert_eq!(selected.ts, vec![2]);
-        let resampled = frame.resample(2).unwrap();
-        assert_eq!(resampled.ts, vec![0, 2]);
-        assert_eq!(resampled.volume_raw, vec![1, 2]);
-        assert_eq!(frame.resample(0), Err(FrameError::InvalidInterval));
-        let (selected, manifest) = frame.select_time_with_manifest(2, 3).unwrap();
-        assert_eq!(manifest.operation, "select_time");
-        assert_eq!(manifest.input_hash, frame.digest());
-        assert_eq!(manifest.output_hash, selected.digest());
-        assert_eq!(
-            TransformManifest::from_json(&manifest.to_json().unwrap()).unwrap(),
-            manifest
-        );
-        let (_, resample_manifest) = frame.resample_with_manifest(2).unwrap();
-        assert_eq!(resample_manifest.parameters["interval"], "2");
-    }
-
-    #[test]
-    fn arrow_views_are_zero_copy_and_reject_decimal_overflow() {
-        let instrument = InstrumentId::parse("T.SIM").unwrap();
-        let view = DataView::try_new(
-            vec![
-                Bar::new(1, 10, 11, 9, 10, 1),
-                Bar::new(2, 11, 12, 10, 11, 2),
-            ],
-            DataSourceId::new("bars-v1"),
-        )
-        .unwrap();
-        let frame = BarFrame::from_view(instrument, &view, 2).unwrap();
-        let columns = frame.arrow_column_views().unwrap();
-        assert_eq!(columns.len(), 6);
-        assert_eq!(columns[0].name(), "ts");
-        assert_eq!(columns[0].array().length, 2);
-        assert_eq!(columns[0].data_ptr(), frame.ts.as_ptr().cast());
-        assert_eq!(columns[1].name(), "open_raw");
-        assert_eq!(columns[1].data_ptr(), frame.open_raw.as_ptr().cast());
-        assert_eq!(
-            columns[1].schema().format,
-            ARROW_FORMAT_DECIMAL128.as_ptr().cast()
-        );
-
-        let mut extreme = frame.clone();
-        extreme.open_raw[0] = i128::MAX;
-        assert!(matches!(
-            extreme.arrow_column_views(),
-            Err(FrameError::ArrowDecimalOverflow)
-        ));
-
-        let mut owned = frame.owned_arrow_columns().unwrap();
-        let owned_open = owned.remove(1);
-        let (mut array, mut schema) = owned_open.into_ffi();
-        assert!(array.release.is_some());
-        assert!(schema.release.is_some());
-        unsafe {
-            (array.release.expect("array release callback"))(&mut array);
-            (schema.release.expect("schema release callback"))(&mut schema);
-        }
-        assert!(array.release.is_none());
-        assert!(schema.release.is_none());
-    }
-}
+mod tests;

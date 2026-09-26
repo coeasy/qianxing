@@ -8,87 +8,20 @@
 //! 1. **禁止隐式"最后加载者胜"**：独占扩展点冲突必须显式用 `replaces` 解决。
 //! 2. **依赖决定顺序，不是书写顺序**：由 `requires` 拓扑求解。
 //! 3. **"插件一次、运行静态"**：本模块只负责启动期装配，不提供运行期热替换。
+//!
+//! 扩展点名单只保留内核真的会分派的两格（`Matcher`/`FeeModel`，见 `qx-cli selfcheck`
+//! 的装配）；其余名字此前既没有贡献者也没有分派者，留在字典里会让"声明了扩展点"
+//! 被误读成"接上了插件"（V12 §16）。同理，`Profile/Bundle/Patch` 组合器与五阶段
+//! `bootstrap_plan` 在仓内没有任何装配读者，已连同其声明一并删除——启动顺序目前
+//! 由 `Registry::resolve_order` 的依赖拓扑单点决定。
 
 use qx_core::Fnv1a;
 use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const POINT_DATASOURCE: &str = "DataSource";
-pub const POINT_VENUE_ADAPTER: &str = "VenueAdapter";
 pub const POINT_MATCHER: &str = "Matcher";
-pub const POINT_FILL_MODEL: &str = "FillModel";
 pub const POINT_FEE_MODEL: &str = "FeeModel";
-pub const POINT_LATENCY_MODEL: &str = "LatencyModel";
-pub const POINT_MARGIN_RULE: &str = "MarginRule";
-pub const POINT_RISK_RULE: &str = "RiskRule";
-pub const POINT_ANALYTICS: &str = "AnalyticsSink";
-pub const POINT_PERSIST: &str = "PersistProvider";
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub enum StartupPhase {
-    ConfigValidation,
-    Infrastructure,
-    DomainRules,
-    AccountsStrategies,
-    Running,
-}
-
-/// 五阶段启动计划：把配置覆盖和初始化竞态变成可审查的确定顺序。
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct BootstrapPlan {
-    pub phase: StartupPhase,
-    pub plugins: Vec<String>,
-}
-
-pub fn bootstrap_plan(registry: &Registry) -> Result<Vec<BootstrapPlan>, PluginError> {
-    let order = registry.resolve_order()?;
-    let mut plans = Vec::new();
-    for phase in [
-        StartupPhase::ConfigValidation,
-        StartupPhase::Infrastructure,
-        StartupPhase::DomainRules,
-        StartupPhase::AccountsStrategies,
-        StartupPhase::Running,
-    ] {
-        let plugins = match phase {
-            StartupPhase::ConfigValidation => Vec::new(),
-            StartupPhase::Infrastructure => order
-                .iter()
-                .filter(|id| {
-                    registry
-                        .get(id)
-                        .map(|m| m.kind == "infra-adapter")
-                        .unwrap_or(false)
-                })
-                .cloned()
-                .collect(),
-            StartupPhase::DomainRules => order
-                .iter()
-                .filter(|id| {
-                    registry
-                        .get(id)
-                        .map(|m| m.kind == "domain-mod" || m.kind == "rule-pack")
-                        .unwrap_or(false)
-                })
-                .cloned()
-                .collect(),
-            StartupPhase::AccountsStrategies => order
-                .iter()
-                .filter(|id| {
-                    registry
-                        .get(id)
-                        .map(|m| m.kind == "strategy-template")
-                        .unwrap_or(false)
-                })
-                .cloned()
-                .collect(),
-            StartupPhase::Running => order.clone(),
-        };
-        plans.push(BootstrapPlan { phase, plugins });
-    }
-    Ok(plans)
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Cardinality {
@@ -419,47 +352,6 @@ impl Registry {
     }
 }
 
-/// Patch：**按 id 整行替换**，不是深合并。
-#[derive(Clone, Debug)]
-pub struct Patch {
-    pub target_id: String,
-    pub with: Manifest,
-}
-
-/// Profile：一套插件组合 = 一个运行场景。
-pub struct Profile {
-    pub name: String,
-    pub bundles: Vec<Vec<Manifest>>,
-    pub patches: Vec<Patch>,
-}
-
-impl Profile {
-    /// 装配：空配置 → bundles 展开 → patches 按 id 替换。
-    pub fn assemble(&self) -> Result<Vec<Manifest>, PluginError> {
-        let mut acc: BTreeMap<String, Manifest> = BTreeMap::new();
-
-        for bundle in &self.bundles {
-            for m in bundle {
-                m.validate()?;
-                acc.insert(m.id.clone(), m.clone());
-            }
-        }
-
-        for p in &self.patches {
-            p.with.validate()?;
-            if !acc.contains_key(&p.target_id) {
-                return Err(PluginError::InvalidManifest(format!(
-                    "Patch 目标不存在: {}",
-                    p.target_id
-                )));
-            }
-            acc.insert(p.target_id.clone(), p.with.clone());
-        }
-
-        Ok(acc.into_values().collect())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,34 +419,10 @@ mod tests {
     }
 
     #[test]
-    fn patch_replaces_whole_entry() {
-        let p = Profile {
-            name: "test".into(),
-            bundles: vec![vec![m("fee.default", vec![])]],
-            patches: vec![Patch {
-                target_id: "fee.default".into(),
-                with: m("fee.a-share", vec![]),
-            }],
-        };
-        let out = p.assemble().unwrap();
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].id, "fee.a-share");
-    }
-
-    #[test]
     fn duplicate_id_rejected() {
         let mut r = Registry::new();
         r.register(m("x", vec![])).unwrap();
         assert!(r.register(m("x", vec![])).is_err());
-    }
-
-    #[test]
-    fn bootstrap_has_five_deterministic_phases() {
-        let mut r = Registry::new();
-        r.register(m("rule", vec![])).unwrap();
-        let plan = bootstrap_plan(&r).unwrap();
-        assert_eq!(plan.len(), 5);
-        assert_eq!(plan[2].plugins, vec!["rule".to_string()]);
     }
 
     #[test]

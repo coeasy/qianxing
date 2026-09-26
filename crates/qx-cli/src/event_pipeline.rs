@@ -22,7 +22,7 @@ pub(crate) fn run_file_outbox_relay(
     )
     .map_err(|error| format!("创建 Outbox relay 失败: {error:?}"))?;
     let report = relay
-        .pump_once(runtime_timestamp_ms(), limit)
+        .pump_once(lease_clock(runtime_timestamp_ms()), limit)
         .map_err(|error| format!("执行 Outbox relay 失败: {error:?}"))?;
     println!(
         "[Outbox relay] scanned={} published={} retried={} publish_failures={} lease_conflicts={} last_error={:?}",
@@ -58,7 +58,7 @@ pub(crate) fn run_postgres_outbox_relay(
     )
     .map_err(|error| format!("创建 PostgreSQL Outbox relay 失败: {error:?}"))?;
     let report = relay
-        .pump_once(runtime_timestamp_ms(), limit)
+        .pump_once(lease_clock(runtime_timestamp_ms()), limit)
         .map_err(|error| format!("执行 PostgreSQL Outbox relay 失败: {error:?}"))?;
     println!(
         "[PostgreSQL Outbox relay] scanned={} published={} retried={} publish_failures={} lease_conflicts={} last_error={:?}",
@@ -212,7 +212,7 @@ where
         }
         let now = runtime_timestamp_ms();
         let report = relay
-            .pump_once(now, messaging.relay_batch_size)
+            .pump_once(lease_clock(now), messaging.relay_batch_size)
             .map_err(|error| format!("Outbox relay 批次失败: {error:?}"))?;
         totals.apply(&report);
         metrics.write(&totals.render(&metrics, true, now));
@@ -251,9 +251,7 @@ where
     let handle = supervisor.spawn_worker(&worker_id, move |context| {
         run_outbox_relay_loop(context, relay, messaging, metrics, once)
     })?;
-    handle
-        .join()
-        .map_err(|_| format!("Outbox relay worker {worker_id} panic"))?
+    join_worker_handle(&supervisor, handle, "Outbox relay", &worker_id)
 }
 
 #[cfg(feature = "nats")]
@@ -521,9 +519,7 @@ where
             runtime.once,
         )
     })?;
-    handle
-        .join()
-        .map_err(|_| format!("Event consumer worker {worker_id} panic"))?
+    join_worker_handle(&supervisor, handle, "Event consumer", &worker_id)
 }
 
 #[cfg(feature = "nats")]

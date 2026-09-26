@@ -4,10 +4,16 @@
 //! EventLog 或账户凭据。回测、Paper 和实盘都必须继续经过 Runtime 的
 //! Portfolio、RiskGate、OMS 和 Execution 边界。
 
+mod indicator;
+
+use crate::builtin_signal::{
+    BuiltinSignalKnob, HISTORY_FLOOR_BARS, MACD_REQUIRED_BARS, MACD_WINDOWS,
+};
 use crate::{
     MarketEvent, Strategy, StrategyContext, StrategyDecision, StrategyOrderIntent,
     STRATEGY_API_VERSION,
 };
+use indicator::{atr, ema, macd_series, rsi, sma, stddev};
 use qx_core::{InstrumentId, OrderPolicy, Quantity, Side};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -173,17 +179,32 @@ impl BuiltinStrategyConfig {
         Ok(config)
     }
 
+    /// 参数体检只看这个 kind 真正读到的旋钮（清单在 `builtin_signal.rs`）。
+    ///
+    /// 一份运行时配置会同时喂给多种 kind（`backtest builtin <kind>` 的 kind 来自命令行），
+    /// 于是"不上场的窗口合不合法"不该决定这一轮成不成：MACD 的 `fast_window>=slow_window`
+    /// 既不改成交、也不该把整轮拒掉。清单外的一项因此两头都不影响结果，播报里那句
+    /// "这一项没上场"才是真话。
     pub fn validate(&self) -> Result<(), String> {
+        let uses = |knob| self.kind.uses_signal_knob(knob);
         if self.strategy_id.trim().is_empty()
             || self.strategy_version.trim().is_empty()
             || self.quantity.raw() <= 0
-            || self.fast_window == 0
-            || self.slow_window == 0
-            || self.fast_window >= self.slow_window
-            || self.period < 2
-            || self.threshold_bps < 0
         {
-            return Err("内置策略参数非法：策略身份、数量、窗口或阈值不满足约束".into());
+            return Err("内置策略参数非法：策略身份或数量不满足约束".into());
+        }
+        if (uses(BuiltinSignalKnob::FastWindow) || uses(BuiltinSignalKnob::SlowWindow))
+            && (self.fast_window == 0
+                || self.slow_window == 0
+                || self.fast_window >= self.slow_window)
+        {
+            return Err("内置策略参数非法：快慢窗口必须为正且快线短于慢线".into());
+        }
+        if uses(BuiltinSignalKnob::Period) && self.period < 2 {
+            return Err("内置策略参数非法：指标周期至少为 2".into());
+        }
+        if uses(BuiltinSignalKnob::ThresholdBps) && self.threshold_bps < 0 {
+            return Err("内置策略参数非法：阈值不得为负".into());
         }
         let needs_reference = self.kind.needs_reference_leg();
         if needs_reference && self.reference_instrument.is_none() {
@@ -231,34 +252,36 @@ impl BuiltinStrategy {
     fn max_history(&self) -> usize {
         // 窗口取样上限必须同时容得下信号门槛，否则门槛高的策略会被历史裁剪卡死：
         // 默认 5/20/14 只算出 32 根，而 MACD 需要 35 根，示例帧再长也永远不信号。
-        let window_floor = self.config.slow_window.max(self.config.period).max(30) + 2;
-        self.required_bars().max(window_floor)
+        // 上限只按这个 kind 真正读到的窗口开：EMA 类指标的结果取决于留了多少前缀，
+        // 让不上场的窗口参与这里，等于给"这项参数改不动这一轮"留一条暗通道。
+        let mut floor = HISTORY_FLOOR_BARS;
+        for knob in self.config.kind.signal_knobs() {
+            let window = match knob {
+                BuiltinSignalKnob::SlowWindow => self.config.slow_window,
+                BuiltinSignalKnob::Period => self.config.period,
+                _ => continue,
+            };
+            floor = floor.max(window);
+        }
+        self.required_bars().max(floor + 2)
     }
 
-    /// 该策略发出第一个信号所需的最少可见 Bar 数。历史上限与信号门槛共用这一份清单。
+    /// 该策略发出第一个信号所需的最少可见 Bar 数。历史上限与信号门槛共用这一份清单，
+    /// 且只由上场的旋钮（或内核常数）决定：等一个不读周期的指标 = 白等。
     fn required_bars(&self) -> usize {
+        use BuiltinStrategyKind::*;
         match self.config.kind {
-            BuiltinStrategyKind::SmaCross | BuiltinStrategyKind::EmaCross => {
-                self.config.slow_window + 1
-            }
+            SmaCross | EmaCross => self.config.slow_window + 1,
             // 26 根用于慢 EMA，至少还要 9 个 MACD 值计算 signal EMA，
             // 当前/上一根交叉判定再额外需要一根可见 Bar。
-            BuiltinStrategyKind::Macd => 35,
-            BuiltinStrategyKind::Rsi
-            | BuiltinStrategyKind::Bollinger
-            | BuiltinStrategyKind::MeanReversion
-            | BuiltinStrategyKind::AtrTrend => self.config.period + 1,
-            BuiltinStrategyKind::DonchianBreakout | BuiltinStrategyKind::Momentum => {
-                self.config.period + 1
-            }
-            BuiltinStrategyKind::Grid => 1,
-            BuiltinStrategyKind::KeltnerTrend
-            | BuiltinStrategyKind::VwapReversion
-            | BuiltinStrategyKind::VolatilityBreakout
-            | BuiltinStrategyKind::PairsArbitrage
-            | BuiltinStrategyKind::BasisArbitrage
-            | BuiltinStrategyKind::CrossVenueArbitrage
-            | BuiltinStrategyKind::SpotFuturesArbitrage => self.config.period + 1,
+            Macd => MACD_REQUIRED_BARS,
+            Rsi | Bollinger | DonchianBreakout | Momentum | MeanReversion | AtrTrend
+            | KeltnerTrend | VwapReversion | VolatilityBreakout | PairsArbitrage
+            | CrossVenueArbitrage => self.config.period + 1,
+            Grid => 1,
+            // 基差只看两条腿的当前价：腿没报到齐是预热未完（`basis_signal` 返回 `None`），
+            // 齐了就能判，与 `period` 无关。
+            BasisArbitrage | SpotFuturesArbitrage => 1,
         }
     }
 
@@ -320,16 +343,14 @@ impl BuiltinStrategy {
     }
 
     fn basis_signal(&self) -> Result<Option<i8>, String> {
-        let reference_now = self
-            .reference_bars
-            .back()
-            .map(|bar| bar.close)
-            .ok_or_else(|| "基差对冲腿当前值缺失".to_string())?;
-        let primary_now = self
-            .bars
-            .back()
-            .map(|bar| bar.close)
-            .ok_or_else(|| "基差主腿当前值缺失".to_string())?;
+        // 腿还没报到齐是预热未完，不是错误：这一支只读两条腿的当前价，一根就够判，
+        // 与 `period` 无关（清单见 `builtin_signal.rs`）。
+        let (Some(reference), Some(primary)) = (self.reference_bars.back(), self.bars.back())
+        else {
+            return Ok(None);
+        };
+        let reference_now = reference.close;
+        let primary_now = primary.close;
         if reference_now <= 0 || primary_now <= 0 {
             return Err("基差套利腿价格必须为正".into());
         }
@@ -386,14 +407,15 @@ impl BuiltinStrategy {
                 }
             }
             BuiltinStrategyKind::Macd => {
-                let macd_now = ema(&closes, 12).unwrap() - ema(&closes, 26).unwrap();
+                let (fast, slow, signal_window) = MACD_WINDOWS;
+                let macd_now = ema(&closes, fast).unwrap() - ema(&closes, slow).unwrap();
                 let previous = &closes[..closes.len() - 1];
-                let macd_prev = ema(previous, 12).unwrap() - ema(previous, 26).unwrap();
-                let signal_now = macd_series(&closes, 12, 26, 9)
-                    .and_then(|series| ema(&series, 9))
+                let macd_prev = ema(previous, fast).unwrap() - ema(previous, slow).unwrap();
+                let signal_now = macd_series(&closes, fast, slow, signal_window)
+                    .and_then(|series| ema(&series, signal_window))
                     .unwrap();
-                let signal_prev = macd_series(previous, 12, 26, 9)
-                    .and_then(|series| ema(&series, 9))
+                let signal_prev = macd_series(previous, fast, slow, signal_window)
+                    .and_then(|series| ema(&series, signal_window))
                     .unwrap();
                 if macd_prev <= signal_prev && macd_now > signal_now {
                     Some(1)
@@ -745,128 +767,6 @@ impl Strategy for BuiltinStrategy {
         decision.validate_for(context, *ts)?;
         Ok(decision)
     }
-}
-
-fn sma(values: &[i128], window: usize) -> Option<i128> {
-    if window == 0 || values.len() < window {
-        return None;
-    }
-    values[values.len() - window..]
-        .iter()
-        .try_fold(0_i128, |sum, value| sum.checked_add(*value))
-        .and_then(|sum| sum.checked_div(window as i128))
-}
-
-fn ema(values: &[i128], window: usize) -> Option<i128> {
-    if window == 0 || values.len() < window {
-        return None;
-    }
-    let mut result = values[..window]
-        .iter()
-        .try_fold(0_i128, |sum, value| sum.checked_add(*value))?
-        .checked_div(window as i128)?;
-    let denominator = window as i128 + 1;
-    for value in &values[window..] {
-        // α = 2/(window+1)，因此旧值权重是 1-α = (window-1)/(window+1)。写成
-        // `window` 会让两个权重之和变成 (window+2)/(window+1)，常数序列收敛到
-        // 2×该常数，快慢线的相对位置随窗口大小漂移，交叉判定就废了。
-        result = value
-            .checked_mul(2)
-            .and_then(|next| {
-                result
-                    .checked_mul(window as i128 - 1)
-                    .and_then(|old| next.checked_add(old))
-            })
-            .and_then(|next| next.checked_div(denominator))?;
-    }
-    Some(result)
-}
-
-fn macd_series(values: &[i128], fast: usize, slow: usize, _signal: usize) -> Option<Vec<i128>> {
-    if values.len() < slow {
-        return None;
-    }
-    let mut result = Vec::with_capacity(values.len() - slow + 1);
-    for end in slow..=values.len() {
-        let slice = &values[..end];
-        result.push(ema(slice, fast)?.checked_sub(ema(slice, slow)?)?);
-    }
-    Some(result)
-}
-
-fn rsi(values: &[i128], period: usize) -> Option<i128> {
-    if period == 0 || values.len() < period + 1 {
-        return None;
-    }
-    let mut gain = 0_i128;
-    let mut loss = 0_i128;
-    for pair in values[values.len() - period - 1..].windows(2) {
-        let difference = pair[1].checked_sub(pair[0])?;
-        if difference >= 0 {
-            gain = gain.checked_add(difference)?;
-        } else {
-            loss = loss.checked_add(difference.checked_abs()?)?;
-        }
-    }
-    if loss == 0 {
-        return Some(BPS_SCALE);
-    }
-    gain.checked_mul(BPS_SCALE)?
-        .checked_div(gain.checked_add(loss)?)
-}
-
-fn stddev(values: &[i128], mean: i128) -> Result<i128, String> {
-    if values.is_empty() {
-        return Err("stddev 样本不能为空".into());
-    }
-    let variance = values
-        .iter()
-        .map(|value| {
-            value
-                .checked_sub(mean)
-                .and_then(|difference| difference.checked_mul(difference))
-        })
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| "stddev 计算溢出".to_string())?
-        .into_iter()
-        .try_fold(0_i128, |sum, value| sum.checked_add(value))
-        .and_then(|sum| sum.checked_div(values.len() as i128))
-        .ok_or_else(|| "stddev 方差计算溢出".to_string())?;
-    Ok(integer_sqrt(variance))
-}
-
-fn integer_sqrt(value: i128) -> i128 {
-    if value <= 0 {
-        return 0;
-    }
-    let mut low = 1_i128;
-    let mut high = value.min(i128::from(u64::MAX));
-    while low <= high {
-        let middle = low + (high - low) / 2;
-        if middle <= value / middle {
-            low = middle + 1;
-        } else {
-            high = middle - 1;
-        }
-    }
-    high
-}
-
-fn atr(values: &VecDeque<BarPoint>, period: usize) -> Option<i128> {
-    if period == 0 || values.len() < period + 1 {
-        return None;
-    }
-    let start = values.len() - period;
-    let mut total = 0_i128;
-    for index in start..values.len() {
-        let current = values[index];
-        let previous = values[index - 1];
-        let high_low = current.high.checked_sub(current.low)?;
-        let high_close = (current.high - previous.close).checked_abs()?;
-        let low_close = (current.low - previous.close).checked_abs()?;
-        total = total.checked_add(high_low.max(high_close).max(low_close))?;
-    }
-    total.checked_div(period as i128)
 }
 
 #[cfg(test)]

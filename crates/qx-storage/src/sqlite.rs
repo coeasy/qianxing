@@ -1052,6 +1052,11 @@ impl SqliteControlStore {
                 .map_err(map_sqlite)?;
         }
         transaction.commit().map_err(map_sqlite)?;
+        if result.is_ok() {
+            // 与文件后端同一口径：控制面事务成功后，把新增的审计尾部追加进
+            // `qx_audit_entries` 的哈希链。链落后于快照会被下一次事务自愈。
+            SqliteAuditStore::new(&self.path)?.sync_control(&plane)?;
+        }
         Ok((plane, result))
     }
 }
@@ -2260,37 +2265,6 @@ impl SqliteEventLogStore {
         Ok(appended)
     }
 
-    /// 重放用的范围读：返回 `seq > after_seq` 的事件，按日志写入顺序排列。
-    pub fn read_range(
-        &self,
-        name: &str,
-        after_seq: u64,
-        limit: usize,
-    ) -> Result<Vec<Event>, StorageError> {
-        validate_event_log_name(name)?;
-        let connection = open(&self.path)?;
-        if read_event_log_state(&connection, name)?.is_none() {
-            return Err(StorageError::NotFound(format!(
-                "SQLite 事件日志 {name} 不存在"
-            )));
-        }
-        let after_seq = event_seq_column(after_seq)?;
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let mut statement = connection
-            .prepare(
-                "SELECT event_json FROM qx_event_log_entries
-                 WHERE name = ?1 AND seq > ?2 ORDER BY position ASC LIMIT ?3",
-            )
-            .map_err(map_sqlite)?;
-        let rows = statement
-            .query_map(params![name, after_seq, limit], |row| {
-                row.get::<_, String>(0)
-            })
-            .map_err(map_sqlite)?;
-        rows.map(|row| decode_event_json(&row.map_err(map_sqlite)?))
-            .collect()
-    }
-
     /// 最后一条已落库事件的 seq；`None` 表示日志为空或尚不存在。
     pub fn last_seq(&self, name: &str) -> Result<Option<u64>, StorageError> {
         validate_event_log_name(name)?;
@@ -2329,24 +2303,6 @@ impl SqliteEventLogStore {
     /// 全量顺序读 + 因果排序校验 + manifest 摘要比对；日志不存在时报错。
     pub fn validate(&self, name: &str) -> Result<(), StorageError> {
         self.read(name).map(|_| ())
-    }
-
-    /// 供归约器/重放判断某条外部事实是否已经落库。空 dedup_key 不是去重键。
-    pub fn contains_dedup_key(&self, name: &str, dedup_key: &str) -> Result<bool, StorageError> {
-        validate_event_log_name(name)?;
-        if dedup_key.is_empty() {
-            return Ok(false);
-        }
-        let connection = open(&self.path)?;
-        let found: Option<i64> = connection
-            .query_row(
-                "SELECT seq FROM qx_event_log_entries WHERE name = ?1 AND dedup_key = ?2",
-                params![name, dedup_key],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(map_sqlite)?;
-        Ok(found.is_some())
     }
 
     /// 已存在的日志名，等价于文件后端的 `list`。

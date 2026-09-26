@@ -5,16 +5,75 @@ use super::*;
 /// 这套信号口径从哪来：四项全缺 = 写死默认，任一项给了 = 配置。
 ///
 /// 四条链共用这句判词，否则"来源"由各入口各自臆测 —— `[Builtin · Cost] source=` 一族
-/// 撒过谎的地方（Q0b）就是这么来的。
-pub(crate) fn builtin_signal_source(strategy: &StrategyRuntimeConfig) -> &'static str {
-    if strategy.builtin_fast_window.is_some()
-        || strategy.builtin_slow_window.is_some()
-        || strategy.builtin_period.is_some()
-        || strategy.builtin_threshold_bps.is_some()
-    {
-        "config"
-    } else {
-        "builtin-default"
+/// 撒过谎的地方（Q0b）就是这么来的。判词只回答"配置提过没有"，"提过的项上没上场"由
+/// [`BuiltinSignalProvenance`] 一起给出。
+///
+/// 这份配置声明了哪几项信号旋钮（按 `BuiltinSignalKnob::ALL` 的稳定顺序）。
+///
+/// 声明与生效是两件事：`builtin_fast_window` 对 MACD 而言从没上过场（V12 #102），
+/// 而"配了哪几项"只有配置本身知道。播报把两份都印出来，读者才分得清
+/// "没人提这一项"、"提了但这一轮不上场"与"提了并且改了信号"。
+pub(crate) fn builtin_signal_declared(
+    strategy: &StrategyRuntimeConfig,
+) -> Vec<qx_strategy::builtin_signal::BuiltinSignalKnob> {
+    use qx_strategy::builtin_signal::BuiltinSignalKnob;
+    BuiltinSignalKnob::ALL
+        .into_iter()
+        .filter(|knob| match knob {
+            BuiltinSignalKnob::FastWindow => strategy.builtin_fast_window.is_some(),
+            BuiltinSignalKnob::SlowWindow => strategy.builtin_slow_window.is_some(),
+            BuiltinSignalKnob::Period => strategy.builtin_period.is_some(),
+            BuiltinSignalKnob::ThresholdBps => strategy.builtin_threshold_bps.is_some(),
+        })
+        .collect()
+}
+
+/// 一次运行的信号声明面：来源判词，加上"这个 kind 上场的清单"与"配置提了却没上场的键"。
+///
+/// 三项一次算清，播报那行与摘要那块才不会各渲染一套（V12 #102）。此前 `source=config`
+/// 只回答"配置提过这一项"，读者据此以为印出来的四项都在改动信号。
+#[derive(Clone, Debug)]
+pub(crate) struct BuiltinSignalProvenance {
+    pub(crate) source: &'static str,
+    /// 这个 kind 的信号真正读的几项，逗号分隔；内核常数策略（MACD）为 `none`。
+    pub(crate) knobs: String,
+    /// 配置里声明了、这一轮却没有上场的键名；`none` 表示声明的几项全在场。
+    pub(crate) declared_unused: String,
+}
+
+impl BuiltinSignalProvenance {
+    /// 没给 `--config` 的那一侧：声明面是空的，但"哪些项本来就该上场"仍然要说清。
+    pub(crate) fn defaults(kind: qx_strategy::BuiltinStrategyKind) -> BuiltinSignalProvenance {
+        BuiltinSignalProvenance {
+            source: "builtin-default",
+            knobs: kind.signal_knob_list(),
+            declared_unused: "none".to_string(),
+        }
+    }
+
+    pub(crate) fn render(
+        kind: qx_strategy::BuiltinStrategyKind,
+        strategy: &StrategyRuntimeConfig,
+    ) -> Self {
+        let declared = builtin_signal_declared(strategy);
+        let unused = declared
+            .iter()
+            .filter(|knob| !kind.uses_signal_knob(**knob))
+            .map(|knob| knob.config_key())
+            .collect::<Vec<_>>();
+        Self {
+            source: if declared.is_empty() {
+                "builtin-default"
+            } else {
+                "config"
+            },
+            knobs: kind.signal_knob_list(),
+            declared_unused: if unused.is_empty() {
+                "none".to_string()
+            } else {
+                unused.join(",")
+            },
+        }
     }
 }
 
@@ -187,7 +246,7 @@ pub(crate) fn build_strategy_contract_input(
             })?,
         )
         .map_err(|error| format!("Python Strategy research snapshot JSON 无效: {error:?}"))?;
-        validate_research_snapshot_binding(&config.strategy, &research)?;
+        validate_research_snapshot_binding(root, &config.strategy, &research)?;
         let research_as_of = research.as_of;
         let data_fingerprint = research.candidate.config.data_fingerprint.clone();
         let (positions, cash, available_margin_raw, risk_state) =

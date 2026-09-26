@@ -1,0 +1,6 @@
+# cmd.exe cannot parse a .bat that carries UTF-8 Chinese with LF-only endings:
+# such a script dies mid-file with a "not recognized as an internal or external command" storm.
+# Force CRLF on checkout so a double-click works on any git config, and keep shell scripts LF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf

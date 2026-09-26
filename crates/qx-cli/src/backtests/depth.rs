@@ -71,7 +71,7 @@ pub(crate) fn run_depth_backtest(
     let data_fingerprint = format!("depth:{}:{:016x}", frame.source, frame.input_hash());
     // 本金与风控、成本同源：本入口一直读 `--config` 取那两项，却把账户尺度写死成常数，
     // 于是同一份配置在四条回测链上有三种本金口径（V11 Q72）。
-    let account_base = backtest_initial_cash(configured_initial_cash_raw(runtime_config_path)?)?;
+    let account_base = configured_account_base(runtime_config_path)?;
     let initial_cash = account_base.cash;
     let context = NativeStrategyContext {
         strategy_id: format!("builtin-{}", kind.name()),
@@ -93,12 +93,16 @@ pub(crate) fn run_depth_backtest(
         frame.instrument.clone(),
         Quantity::from_i64(quantity),
     )?;
-    let signal_source = apply_configured_builtin_signal(&mut strategy_config, runtime_config_path)?;
+    let signal_provenance =
+        apply_configured_builtin_signal(&mut strategy_config, runtime_config_path)?;
     let signal_note = format!(
         "{} quantity={}",
-        builtin_signal_note(&strategy_config, signal_source),
+        builtin_signal_note(&strategy_config, &signal_provenance),
         quantity
     );
+    // 同一套口径要在 `strategy_config` 被策略吃掉之前取走：摘要得回答"这轮并进配置的窗口
+    // 是哪几档"（V12 R4-j）。
+    let signal_params = builtin_signal_params(&strategy_config, &signal_provenance);
     let strategy = BuiltinStrategy::new(strategy_config)?;
     let mut strategy = DepthBarStrategy::new(strategy, context, frame.instrument.clone());
     strategy
@@ -122,6 +126,13 @@ pub(crate) fn run_depth_backtest(
         runtime_config_path,
         "backtest book",
         "L1/L2 盘口引擎没有 T+1、整手与涨跌停的挂钩点",
+    )?;
+    // 同一条判据管到撮合口径：这条链的产物如实写着 `fill_model: null`（撮合口径在四参数
+    // 描述子里），若配置声明了 fill_model 却照样跑完，就是"能配"被当成"生效"（V11 R11）。
+    reject_fill_model_config(
+        runtime_config_path,
+        "backtest book",
+        "L1/L2 盘口引擎的撮合口径是四参数描述子，没有 FillModel 落点",
     )?;
     // 三层优先级：显式 --fee-bps > 成本规则文件的 taker_bp > 内核默认。
     let cost_source = if fee_bps.is_some() {
@@ -222,6 +233,7 @@ pub(crate) fn run_depth_backtest(
             matching_kernel,
             rejections: &rejections,
             input,
+            signal: Some(signal_params),
         },
     )?;
     println!(

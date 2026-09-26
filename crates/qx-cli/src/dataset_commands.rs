@@ -267,9 +267,16 @@ pub(crate) fn dataset_component_file_fingerprint(
                 .get("trading_days")
                 .and_then(serde_json::Value::as_array)
                 .ok_or_else(|| "calendar 组件缺少 trading_days 数组".to_string())?;
-            let sessions = value
-                .get("sessions")
-                .ok_or_else(|| "calendar 组件缺少 sessions".to_string())?;
+            let sessions: &[serde_json::Value] = match value.get("sessions") {
+                // 旧版日历（顶层没有 `schema_version`）可以不写 sessions：Python 的
+                // `AshareTradingCalendar.from_json` 与本 crate 的 `apply_calendar_json` 都把它
+                // 读成"没有时段"。指纹侧此前直接报错，于是 Python 登记好的 bundle 会在回测
+                // 启动前被判成组件非法而拒启，两份读法对同一份文档一宽一严（V11 R17）。
+                None => &[],
+                Some(value) => value
+                    .as_array()
+                    .ok_or_else(|| "calendar 组件的 sessions 必须是数组".to_string())?,
+            };
             // 与 Python AshareTradingCalendar.to_json 的 dataclass 字段顺序保持一致。
             let canonical = format!(
                 "{{\"calendar_id\":{},\"trading_days\":{},\"sessions\":{}}}",

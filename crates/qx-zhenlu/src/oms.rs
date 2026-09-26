@@ -127,13 +127,6 @@ impl Oms {
     pub fn is_empty(&self) -> bool {
         self.orders.is_empty()
     }
-
-    pub fn open_orders(&self) -> Vec<&Order> {
-        self.orders
-            .values()
-            .filter(|order| !order.status.is_terminal())
-            .collect()
-    }
 }
 
 /// 内核的成交归约接缝只通过这三个方法读写订单状态，避免 `qx-core` 反向依赖 OMS。
@@ -194,7 +187,10 @@ mod tests {
         fill.qty = Quantity::from_i64(1);
         oms.apply_fill(&fill).unwrap();
         assert_eq!(oms.get(1).unwrap().status, OrderStatus::Filled);
-        assert!(oms.open_orders().is_empty());
+        assert!(oms
+            .all_orders()
+            .iter()
+            .all(|order| order.status.is_terminal()));
     }
 
     /// 状态机拒下的成交不能把订单留在"已加仓但未迁移状态"的半程上。

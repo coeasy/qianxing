@@ -770,10 +770,8 @@ impl Scheduler {
         self.start_run(job_id, trading_day, manifest.digest())
     }
 
-    pub fn finish_run(&mut self, run_id: u64, success: bool) -> Result<JobRun, SchedulerError> {
-        self.finish_run_with_code(run_id, success, None, 0)
-    }
-
+    /// 收口一次运行的终态。`error_code` 只在失败一侧有意义：成功的运行会把它丢掉，因此调用方
+    /// 拿第三个参数回传"结果码"不会让一条 Succeeded 运行在读侧带上假错误码（V12 §18-A #129）。
     pub fn finish_run_with_code(
         &mut self,
         run_id: u64,
@@ -803,7 +801,11 @@ impl Scheduler {
         } else {
             JobStatus::Failed
         };
-        run.error_code = error_code.map(str::to_string);
+        run.error_code = if success {
+            None
+        } else {
+            error_code.map(str::to_string)
+        };
         run.next_retry_ts = (!success
             && !matches!(run.status, JobStatus::NeedsIntervention)
             && job.retry_policy.should_retry(run.attempt)
@@ -1056,7 +1058,9 @@ mod tests {
         );
         let first = scheduler.start_run("load", "20260910", 1).unwrap();
         assert_eq!(scheduler.start_run("load", "20260910", 1).unwrap(), first);
-        let finished = scheduler.finish_run(first.run_id, true).unwrap();
+        let finished = scheduler
+            .finish_run_with_code(first.run_id, true, None, 0)
+            .unwrap();
         assert_eq!(finished.status, JobStatus::Succeeded);
         let next = scheduler.start_run("factor", "20260910", 2).unwrap();
         assert_eq!(next.status, JobStatus::Running);
@@ -1107,8 +1111,34 @@ mod tests {
             .unwrap();
         assert_eq!(due.len(), 1);
         let run = scheduler.start_run("cron", "20260910", 1).unwrap();
-        scheduler.finish_run(run.run_id, false).unwrap();
+        scheduler
+            .finish_run_with_code(run.run_id, false, None, 0)
+            .unwrap();
         assert_eq!(scheduler.retry_run(run.run_id).unwrap().attempt, 2);
+    }
+
+    /// 一次成功的运行不能携带 error_code：Strategy worker 曾把「3 orders: SUBMITTED」这类
+    /// 结果码塞进第三个参数，于是 /scheduler/runs 读到的成功作业带着一个假错误码。
+    #[test]
+    fn a_successful_finish_drops_the_error_code_a_failed_one_keeps_it() {
+        let mut scheduler = Scheduler::default();
+        scheduler.register(job("ok", vec![])).unwrap();
+        scheduler.register(job("bad", vec![])).unwrap();
+
+        let ok = scheduler.start_run("ok", "20260910", 1).unwrap();
+        let ok = scheduler
+            .finish_run_with_code(ok.run_id, true, Some("3 orders: SUBMITTED"), 0)
+            .unwrap();
+        assert_eq!(ok.status, JobStatus::Succeeded);
+        assert_eq!(ok.error_code, None, "成功运行读起来必须没有错误码");
+        assert_eq!(ok.next_retry_ts, None, "成功运行不进入重试排期");
+
+        let bad = scheduler.start_run("bad", "20260910", 1).unwrap();
+        let bad = scheduler
+            .finish_run_with_code(bad.run_id, false, Some("SUBMIT_REJECTED"), 0)
+            .unwrap();
+        assert_eq!(bad.status, JobStatus::Failed);
+        assert_eq!(bad.error_code.as_deref(), Some("SUBMIT_REJECTED"));
     }
 
     #[test]

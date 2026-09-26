@@ -42,6 +42,27 @@ pub(crate) fn required_account_event_log(worker: &WorkerConfig) -> Result<String
     })
 }
 
+/// 本轮 venue 余额快照的事实身份：`source_seq` 从这本 EventLog 的尾端接上，
+/// `correlation_id` 带本轮时间戳。两条对账链（Binance / CCXT）共用这一个构造点。
+///
+/// 之前 Binance 侧每进程从 0 起算 seq、correlation 又由 seq 拼出，于是对账进程重启后的
+/// 第一条余额事实与重启前那条同 seq 同 id，被去重判成"已经应用过"而静默丢弃——账本从此
+/// 不再跟进，worker 却照常报 Ready。seq 单独不足以做身份，因为进程重启会把它清零。
+pub(crate) fn venue_balance_fact_identity(
+    pipeline: &LiveEventPipeline,
+    worker_id: &str,
+    received_ts: u64,
+) -> (u64, String) {
+    let source_seq = pipeline
+        .log()
+        .events()
+        .last()
+        .map(|event| event.source_seq)
+        .unwrap_or(0)
+        .saturating_add(1);
+    (source_seq, format!("{worker_id}:balances:{received_ts}"))
+}
+
 /// 账户之外、按 worker 各自成册的供应商事实（行情源、BarFrame 快照）。
 /// `source` 是来源前缀（如 `ccxt-market`），空串表示直接用 worker id 成册。
 pub(crate) fn worker_scoped_event_log_name(source: &str, worker_id: &str) -> String {

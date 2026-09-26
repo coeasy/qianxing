@@ -7,6 +7,66 @@
 
 use qx_strategy::BuiltinStrategyKind;
 
+use crate::cli_args::{BacktestCommand, Command};
+
+/// 每条命令输出前的统一横幅。
+///
+/// V12 R4-e 从 `cli.rs` 搬进来：派发模块的行数预算是硬顶，而横幅与帮助同属"打印给人
+/// 看的入口口径"，放在这里比在 cli.rs 里挤一行更名副其实。
+pub(crate) fn print_banner() {
+    println!("牵星 Qianxing — 分级校准，量天定位\n");
+}
+
+impl Command {
+    /// V12 R4-e：`backtest <子命令>` 的输入只来自子命令自己那套位置参数，外层再写的
+    /// `[runtime] [frame] [spec]` 在那条链上没有任何落点。此前的行为是照跑不误、把外层
+    /// 三个值静默丢掉——用户以为换的是自己那份运行时配置与行情帧，实际跑的是另一份输入。
+    /// 现在整轮拒绝，并把两种正确写法点名给他。
+    ///
+    /// 在此就地退出而不返回 `Result`：这是用法错误，与 `fail_usage` 同一形状；派发处的
+    /// `match action` 没有返回值通道，为它重排五条臂不划算。
+    pub(crate) fn reject_shadowed_backtest_inputs(&self) {
+        let Self::Backtest {
+            runtime,
+            frame,
+            spec,
+            action,
+        } = self
+        else {
+            return;
+        };
+        let Some(action) = action else { return };
+        let paths = [runtime.as_deref(), frame.as_deref(), spec.as_deref()];
+        let shadowed: Vec<String> = paths
+            .into_iter()
+            .flatten()
+            .map(|path| path.display().to_string())
+            .collect();
+        if shadowed.is_empty() {
+            return;
+        }
+        eprintln!(
+            "backtest {} 的输入只来自它自己的位置参数，外层 {} 不会参与计算；\
+             请删掉外层参数，或改用不带子命令的统一回测入口 backtest [runtime] [frame] [spec]",
+            action.cli_name(),
+            shadowed.join(" / ")
+        );
+        std::process::exit(2);
+    }
+}
+
+impl BacktestCommand {
+    /// 子命令在命令行里的写法，与 `cli_args.rs` 里 `#[command(name = ...)]` 逐字一致。
+    fn cli_name(&self) -> &'static str {
+        match self {
+            Self::Builtin { .. } => "builtin",
+            Self::MultiBuiltin { .. } => "multi-builtin",
+            Self::CcxtBuiltin { .. } => "ccxt-builtin",
+            Self::Book { .. } => "book",
+        }
+    }
+}
+
 pub(crate) fn print_cli_help() {
     println!(
         r#"牵星 Qianxing CLI
@@ -14,12 +74,13 @@ pub(crate) fn print_cli_help() {
 配置与运维入口：
   init [runtime.json] [--force]
       创建本地运行时配置及可复用的样例数据/调度文件。
-  init [runtime.json] --profile <base|paper|ccxt|ashare|multi-venue|backtest> [--force]
+  init [runtime.json] --profile <base|builtin|paper|ccxt|ashare|multi-venue|backtest> [--force]
       按场景创建自包含项目；会自动改写 deploy/ 样例路径并复制依赖文件。
   init [runtime.json] --strategy <name> [--force]
       创建绑定内置策略和样例 BarFrame 的可直接回测项目。
   doctor [runtime.json] [--json]
-      一次检查配置、路径、策略输入和运行拓扑；不连接交易所、不发送订单。
+      一次检查配置、路径、策略输入和"这份配置能否构建出运行时监督器"；不启动 worker，
+      因此不判运行健康，也不连接交易所、不发送订单。
   config explain [runtime.json] [--json]
       输出有效配置摘要或机器可读配置；只显示凭据引用，不显示密钥内容。
   config validate [runtime.json]
@@ -41,7 +102,7 @@ pub(crate) fn print_cli_help() {
 
 策略与回测入口（撮合内核统一为 qx-xingban）：
   strategy list
-      列出内置策略。
+      列出内置策略，以及各自被哪个回测入口接受、信号读哪几个参数（同 builtin-strategies）。
   strategy init <strategy> [runtime.json] [bar-frame.json] [--force]
       从模板生成可直接回测的内置策略配置。
   strategy backtest <runtime.json> <bar-frame.json> [market-spec.json]
@@ -54,26 +115,34 @@ pub(crate) fn print_cli_help() {
       --config 读取的是策略口径（风控规则、撮合模型、成本规则、market spec 与 A 股段），
       以及 strategy.builtin_fast_window / builtin_slow_window / builtin_period /
       builtin_threshold_bps 这四个信号参数：逐项可省，写了就必须生效并在 stdout 印出 [· Signal] 行，
-      非法取值整轮失败。下单数量仍由命令行 quantity 点名；配了 A 股快照就必须生效，快照非法即整轮失败。
-  backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity] [--funding-bps <n>] [--quantity <n>] [--root <产物目录>]
+      非法取值整轮失败。四个键按 kind 分成子集，子集外的键不会偷偷改结果（MACD 的 12/26/9 是
+      内核常数，四旋钮一个都不读）：生效的那几项印在 knobs 格，提了却没上场的键名印在
+      declared_unused 格，摘要里同样落这两格。每个 kind 读哪几项由 builtin-strategies 第四列给出。
+      下单数量仍由命令行 quantity 点名；配了 A 股快照就必须生效，快照非法即整轮失败。
+  backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity] [--funding-bps <n>] [--quantity <n>] [--root <产物目录>] [--config <runtime.json>]
       对齐两条 BarFrame，使用同一信号驱动双腿独立账户回测，并按 SpreadOrderGroup 汇总组级费用/保证金/资金费归因。
       保证金与资金费只向 market spec 声明为衍生品的腿计提；--funding-bps 非零时两条腿都必须带 spec，缺失一律先拒再跑。
       --config 的 A 股段（strategy.ashare_rules_path 等）在这里没有落点：一份策略段套不住两条腿各自的交易制度，配置了即整轮拒绝。
       strategy.builtin_* 信号参数在本链生效（两条腿共用同一份信号），生效口径印进 [Multi · Signal] 行。
+      产物只有 --root 点名时落盘的 1 份 spread-attribution.json：本链不写单标的链那四份同前缀产物。
   backtest ccxt-builtin <ccxt-config> <strategy> <instrument> <start_ms> <end_ms> [timeframe] [market-spec.json] [quantity] [--config <runtime.json>]
       一次完成 CCXT OHLCV 获取、内置策略回测和结果输出。取完数据后交给 backtest builtin，A 股段与费用口径同样生效。
-  backtest book --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>] [--latency-snapshots <n>] [--market-impact-bps <n>]
-      深度档回测：l1 走 Tick 内核、l2/l3 走订单簿内核，产物会写明本次实际使用的撮合内核。
+  backtest book --fill-tier <l1|l2> --root <产物目录> <strategy> <depth-frame.json> [market-spec.json] [quantity] [--fee-bps <n>] [--latency-snapshots <n>] [--market-impact-bps <n>] [--config <runtime.json>]
+      深度档回测：--fill-tier 只认 l1 与 l2 两个值。l1 走 Tick 内核，帧里每一 snapshot 必须只有一档
+      盘口（多一档即拒）；l2 走订单簿内核，按内核的 L2L3 档位吃掉帧里带的全部深度，因此没有第三个
+      l3 旗标——更深档位不是另一个参数，而是 depth frame 里那些档；产物会写明实际使用的撮合内核。
       --fee-bps 优先级：显式旗标 > 运行时配置 cost_rules_path 的 taker_bp > 内核默认吃单费率。
       成本规则里的延迟设置在深度档没有落点，非零会直接报错而不是被忽略。
       --config 的 A 股段同理：盘口引擎没有 T+1、整手与涨跌停的挂钩点，配置了即整轮拒绝。
+      strategy.fill_model 在这条链同样没有落点——深度档的撮合口径就是上面那三个参数，配了即整轮拒绝。
       strategy.builtin_* 信号参数在本链生效，生效口径印进 [Depth · Signal] 行。
       --latency-snapshots/--market-impact-bps 是深度撮合模型参数，缺省全 0 即逐档吃单；
       两者都会写进执行描述符与产物摘要，换参数就是换结果口径。内核的队列前置参数只作用于
       限价单，而内置策略一律发市价单，因此没有做成旗标。
   builtin-strategies
       列出 17 个内置策略及各自被哪个回测入口接受：13 个单标的策略可走 builtin / ccxt-builtin /
-      book，4 个套利 kind 只被 multi-builtin 接受（book 会明确拒绝它们）。
+      book，4 个套利 kind 只被 multi-builtin 接受（book 会明确拒绝它们）。第四列写明该 kind 的
+      信号真正读哪几个参数，清单外的 strategy.builtin_* 键不会改结果（none 表示四项都不读）。
   fast-backtest <manifest.json>
       并行执行多个独立回测任务，适合多标的、多币种和多参数批量验证。
   dataset-ingest <bar-frame.json> <dataset-id> <version> <data-dir>
@@ -86,12 +155,15 @@ pub(crate) fn print_cli_help() {
 运行时与服务入口：
   serve [runtime.json]
       启动 qx-api HTTP 服务，只读查询与受权限约束的控制命令。
+      它受理的 SubmitOrder 会写进与执行 worker 同一条队列，因此这里也当场拒绝
+      strategy.ashare_rules_path：订单形状在入队前就定死了，A 股段改变不了它（V12 R1）。
   supervise [runtime.json] [--allow-unmanaged-roles]
       按配置拉起并监督 worker 子进程。
   scheduler-worker <runtime.json> <worker-id> [--once]
       运行调度 worker；--once 只推进一个 tick。
   strategy-worker <runtime.json> <worker-id> [--once]
       运行策略 worker；信号在 Rust 侧过风控后入队。
+      入队的每一笔订单形状已经定死，所以这里同样当场拒绝 strategy.ashare_rules_path（V12 R1）。
   paper-worker <runtime.json> <worker-id> [--once]
       运行 Paper 执行 worker（也承载配置中的 spread_recovery 角色）。
       strategy.ashare_rules_path 在这里会被当场拒绝：提交前的闸门没有 T+1/整手/涨跌停的落点（V11 Q65）。
@@ -115,6 +187,7 @@ pub(crate) fn print_cli_help() {
       回放一条进入死信的事件（需 --features nats 构建）。
   recovery-child <queue-root> <action> <owner> <now> [token-or-lease] <command-id>
       供跨进程恢复验收器调用的最小子命令：只操作持久化控制命令队列。
+      <now> 与 lease 参数都是 epoch 秒（队列租约域），不是运行时的毫秒墙钟。
 
 实盘与订单入口（会访问交易所）：
   binance-public-probe <testnet|mainnet> [instrument]
@@ -173,14 +246,16 @@ pub(crate) fn backtest_entry_of(kind: BuiltinStrategyKind) -> &'static str {
     }
 }
 
-/// `builtin-strategies` 与 `strategy list` 的三列输出：名称、说明、真正接受它的回测入口。
+/// `builtin-strategies` 与 `strategy list` 的四列输出：名称、说明、真正接受它的回测入口、
+/// 它的信号读哪几个 `strategy.builtin_*` 参数。
 pub(crate) fn print_builtin_strategies() {
     for kind in BuiltinStrategyKind::ALL {
         println!(
-            "{}\t{}\t[{}]",
+            "{}\t{}\t[{}]\tknobs={}",
             kind.name(),
             kind.description(),
-            backtest_entry_of(kind)
+            backtest_entry_of(kind),
+            kind.signal_knob_list()
         );
     }
 }

@@ -10,10 +10,6 @@ use super::cli_args::{BacktestCommand, Cli, Command, ConfigCommand, RunCommand, 
 use super::*;
 use clap::Parser;
 
-fn print_banner() {
-    println!("牵星 Qianxing — 分级校准，量天定位\n");
-}
-
 /// 旧派发在用法错误（未知命令/未知参数）时同样先打印横幅，再打印帮助并退出 2。
 fn fail_usage(error: clap::Error) -> ! {
     if matches!(
@@ -148,6 +144,7 @@ pub(crate) fn run() {
     if !command.machine_output() {
         print_banner();
     }
+    command.reject_shadowed_backtest_inputs();
     match command {
         Command::Init {
             output,
@@ -180,7 +177,7 @@ pub(crate) fn run() {
         }
         Command::Config { action } => {
             let validate_path = match &action {
-                Some(ConfigCommand::Validate { path, .. }) => path.clone(),
+                Some(ConfigCommand::Validate { path }) => path.clone(),
                 _ => None,
             };
             let result = match action {
@@ -208,14 +205,13 @@ pub(crate) fn run() {
                     }
                     Err(error) => Err(error),
                 },
-                Some(ConfigCommand::Fingerprint { path, .. }) => {
+                Some(ConfigCommand::Fingerprint { path }) => {
                     run_config_fingerprint(&path.unwrap_or_else(default_runtime_path))
                 }
                 Some(ConfigCommand::Lock {
                     path,
                     output,
                     force,
-                    ..
                 }) => {
                     let path = path.unwrap_or_else(default_runtime_path);
                     let output = output.unwrap_or_else(|| {
@@ -647,8 +643,7 @@ pub(crate) fn run() {
         }
         Command::Reconcile { path, worker_id } => {
             if let Some(path) = path {
-                let worker_id = worker_id.unwrap_or_else(|| "reconciler-main".into());
-                if let Err(error) = run_binance_worker(&path, &worker_id, true) {
+                if let Err(error) = run_binance_reconcile_once(&path, worker_id.as_deref()) {
                     eprintln!("Binance 对账失败: {error}");
                     std::process::exit(2);
                 }

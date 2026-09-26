@@ -422,13 +422,15 @@ pub(crate) fn persist_strategy_submit(
     command: &ControlCommand,
     now: u64,
 ) -> Result<String, String> {
+    // 控制面审计戳留在毫秒域，命令队列信封的 enqueued_ts 属于租约域。
+    let lease_now = lease_clock(now);
     let (plane, result) = control_store
         .transact(|plane| plane.submit_as(command.clone(), Permission::Trading, now))
         .map_err(|error| format!("Strategy SubmitOrder Accepted 持久化失败: {error}"))?;
     match result {
         Ok(_) => {
             command_queue
-                .enqueue_command(command.clone(), now)
+                .enqueue_command(command.clone(), lease_now)
                 .map_err(|error| format!("Strategy SubmitOrder 入队失败: {error:?}"))?;
             Ok("ORDER_INTENT_ACCEPTED".into())
         }
@@ -452,7 +454,7 @@ pub(crate) fn persist_strategy_submit(
             match status {
                 qx_control::CommandStatus::Accepted => {
                     command_queue
-                        .enqueue_command(command.clone(), now)
+                        .enqueue_command(command.clone(), lease_now)
                         .map_err(|error| {
                             format!("Strategy 幂等 SubmitOrder 入队失败: {error:?}")
                         })?;

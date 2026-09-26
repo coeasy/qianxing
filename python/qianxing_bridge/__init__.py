@@ -33,7 +33,7 @@ BAR_FRAME_JSON_FIELDS = (
 )
 
 #: v1 允许的顶层键：内容列 + 契约版本。Rust 严格模式的 `deny_unknown_fields`
-#: 使用同一集合（`qx-data/src/provider.rs` 的 `BAR_FRAME_STRICT_FIELDS`）。
+#: 使用同一集合（`qx-data/src/provider.rs` 的 `StrictBarFrameJson`）。
 BAR_FRAME_STRICT_FIELDS = ("schema_version", *BAR_FRAME_JSON_FIELDS)
 
 
@@ -340,7 +340,11 @@ class BarFrame:
 
 
 def load_account_snapshot(payload: str) -> dict[str, Any]:
-    """解析 Qianxing account wire JSON，并执行最小 schema 级校验。"""
+    """解析 Qianxing account wire JSON，并执行最小 schema 级校验。
+
+    必填集合与 ``schemas/account-snapshot-v1.json`` 的 ``required`` 是同一份口径（含
+    ``equity_raw``）：两侧各自宽严时，同一份产物会一边解得开、一边解不开。必填说的是**键必须在**，不是值必须算得出——八个汇总钱字段在协议上全是 ``Option``，未算那一格写侧印 ``null``。
+    """
 
     value = json.loads(payload)
     required = {
@@ -348,6 +352,7 @@ def load_account_snapshot(payload: str) -> dict[str, Any]:
         "schema_version",
         "header",
         "cash_raw",
+        "equity_raw",
         "positions",
         "orders",
         "fills",

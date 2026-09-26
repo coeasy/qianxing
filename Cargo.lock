@@ -1327,8 +1327,6 @@ name = "qx-data"
 version = "0.1.0"
 dependencies = [
  "qx-core",
- "qx-guanxing",
- "qx-provider",
  "serde",
  "serde_json",
 ]
@@ -1440,6 +1438,7 @@ dependencies = [
 name = "qx-runtime"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "qx-control",
  "qx-core",
  "qx-data",

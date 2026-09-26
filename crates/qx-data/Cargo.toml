@@ -7,7 +7,5 @@ license.workspace = true
 
 [dependencies]
 qx-core = { path = "../qx-core" }
-qx-guanxing = { path = "../qx-guanxing" }
-qx-provider = { path = "../qx-provider" }
 serde = { workspace = true }
 serde_json = { workspace = true }

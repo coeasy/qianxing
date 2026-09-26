@@ -128,6 +128,7 @@ fn four_file_state_stores_share_one_envelope_io() {
     let json_state = read("crates/qx-storage/src/file/state.rs");
     assert!(json_state.contains("read_json_file"));
     assert!(json_state.contains("write_json_file"));
+    assert!(json_state.contains("read_state_text"));
     assert!(json_state.contains("write_state_text"));
 }
 

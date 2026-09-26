@@ -5,6 +5,9 @@
 //! 数据"没有任何可核对的答案，跑完之后把输入文件换掉也检不出来。
 //! 改之后：摘要带 `input` 块（路径 + 数据集身份 + 已复核指纹），`qx report` 按它写的路径走
 //! **同一个读点**重算，对不上就拒绝出报告。
+//! 摘要旁边那本 `*.run.json` 走的是同一条腿（V12 R4-i）：报告按摘要写下的 `run_manifest`
+//! 指针重读清单，两格哈希对不上同样拒绝。此前那本清单只由写侧碰撞检查和用例读过，
+//! 产物被拆开换掉一半——摘要留着、清单换成别一轮的——也照样能出报告。
 
 use super::*;
 
@@ -283,4 +286,109 @@ fn summary_without_an_input_block_is_not_declared_rather_than_verified() {
     partial["input"].as_object_mut().unwrap().remove("kind");
     let error = recompute_declared_backtest_input(&partial).unwrap_err();
     assert!(error.contains("缺 kind"), "缺 kind 要失败: {error}");
+}
+
+/// 改写摘要指向的那本 RunManifest：模拟"清单被换成另一轮运行"或"清单本身坏了"。
+fn rewrite_run_manifest(summary: &serde_json::Value, edit: impl FnOnce(&mut serde_json::Value)) {
+    let path = PathBuf::from(
+        summary["run_manifest"]
+            .as_str()
+            .expect("策略链摘要必须写下 run_manifest 指针"),
+    );
+    let payload = std::fs::read_to_string(&path).expect("清单必须读得到");
+    let mut manifest: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    edit(&mut manifest);
+    std::fs::write(&path, serde_json::to_string(&manifest).unwrap()).expect("改写清单");
+}
+
+/// 跑一遍策略链并读回摘要。返回（摘要，runtime 路径，需要回收的用例目录）。
+fn bar_chain_products(label: &str) -> (serde_json::Value, PathBuf, Vec<PathBuf>) {
+    let (deploy, _, template) = builtin_backtest_example_paths();
+    let root = temp_cli_case_dir(label);
+    let frame = bar_frame_copy(&root, label);
+    let config = read_runtime_config(&template).unwrap();
+    let (strategy_root, runtime) = isolated_backtest_runtime(&deploy, &config, label);
+    runtime_without_bundle(&runtime);
+    let (summary, _) = run_bar_chain_and_read(&runtime, &frame, &strategy_root);
+    (summary, runtime, vec![root, strategy_root])
+}
+
+fn clean_up(dirs: Vec<PathBuf>) {
+    for path in dirs {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
+/// 拆开换掉一半产物：摘要不动、清单里的那两格哈希各换成别一轮的值。
+#[test]
+fn report_refuses_when_the_sibling_run_manifest_no_longer_matches() {
+    let (summary, runtime, dirs) = bar_chain_products("r4i-manifest-drift");
+    run_report(&runtime, false).expect("未拆开的产物报告应通过");
+    let result_hash = summary["result_hash"].as_str().unwrap().to_string();
+    // 两格各钉一次：只比对其中一格的实现在这里就会红。
+    for (field, manifest_key, tampered) in [
+        ("result_hash", "result_hash", "ffffffffffffffff"),
+        ("input_data_hash", "input_event_hash", "eeeeeeeeeeeeeeee"),
+    ] {
+        rewrite_run_manifest(&summary, |manifest| {
+            manifest["result_hash"] = serde_json::json!(result_hash);
+            manifest[manifest_key] = serde_json::json!(tampered);
+        });
+        let error = recompute_declared_backtest_input(&summary).unwrap_err();
+        assert!(
+            error.contains("RunManifest 不一致") && error.contains(field),
+            "对账要指名是 {field} 与清单不符: {error}"
+        );
+    }
+    let report_error = run_report(&runtime, false).unwrap_err();
+    assert!(
+        report_error.contains("RunManifest 不一致"),
+        "qx report 必须把清单对账失败原样抛给使用者: {report_error}"
+    );
+    clean_up(dirs);
+}
+
+/// 指针指不到文件，与"文件根本没声明"是两种结论：都得说清，都不能默默放过。
+#[test]
+fn report_refuses_when_the_declared_run_manifest_is_gone_or_unreadable() {
+    let (summary, runtime, dirs) = bar_chain_products("r4i-manifest-gone");
+    let pointer = summary["run_manifest"].as_str().unwrap().to_string();
+    std::fs::remove_file(&pointer).unwrap();
+    let error = recompute_declared_backtest_input(&summary).unwrap_err();
+    assert!(
+        error.contains("读取回测 RunManifest 失败") && error.contains(&pointer),
+        "缺清单要报同一个路径: {error}"
+    );
+    assert!(
+        run_report(&runtime, false)
+            .unwrap_err()
+            .contains("读取回测 RunManifest 失败"),
+        "报告侧必须同样拒绝"
+    );
+    // 文件在、内容不是清单：那是"读不懂"，不能退成"没声明"。
+    std::fs::write(&pointer, "{\"run_id\":\"only-half-a-manifest\"}").unwrap();
+    let error = recompute_declared_backtest_input(&summary).unwrap_err();
+    assert!(
+        error.contains("RunManifest 无效"),
+        "残缺清单要按无效处理: {error}"
+    );
+    clean_up(dirs);
+}
+
+/// 摘要声明了输入却不写清单指针：不给"少一格大概不重要"的余地。
+#[test]
+fn summary_that_omits_the_run_manifest_pointer_fails_instead_of_skipping_the_check() {
+    let (mut summary, runtime, dirs) = bar_chain_products("r4i-manifest-missing");
+    summary
+        .as_object_mut()
+        .expect("摘要必须是对象")
+        .remove("run_manifest");
+    let error = recompute_declared_backtest_input(&summary).unwrap_err();
+    assert!(
+        error.contains("没写 run_manifest 指针"),
+        "指针缺失本身要失败，而不是跳过对账: {error}"
+    );
+    // 报告读的是落盘那份完整摘要：它仍然通过，说明失败来自指针缺失而不是产物坏了。
+    run_report(&runtime, false).expect("落盘摘要必须照常通过");
+    clean_up(dirs);
 }

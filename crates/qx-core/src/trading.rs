@@ -303,12 +303,6 @@ impl MarginState {
             .checked_sub(self.initial_margin.raw())
             .map(Money::from_raw)
     }
-
-    pub fn liquidatable(self) -> bool {
-        self.equity()
-            .map(|equity| equity.raw() <= self.maintenance_margin.raw())
-            .unwrap_or(true)
-    }
 }
 
 #[cfg(test)]
@@ -429,9 +423,9 @@ mod tests {
             healthy.available().unwrap().raw(),
             Money::from_i64(80).raw()
         );
-        assert!(!healthy.liquidatable());
+        assert!(healthy.equity().unwrap().raw() > healthy.maintenance_margin.raw());
         let mut bad = healthy;
         bad.unrealized_pnl = Money::from_i64(-70);
-        assert!(bad.liquidatable());
+        assert!(bad.equity().unwrap().raw() <= bad.maintenance_margin.raw());
     }
 }

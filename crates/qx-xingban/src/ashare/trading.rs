@@ -5,6 +5,13 @@
 
 use super::*;
 
+/// 未声明涨跌停带时的 serde 默认。0 是"按板块推导"的哨兵，生效值见
+/// [`Self::effective_limit_up_bp`]。这里曾直接返回 1_000，于是 `board: ChiNext` 而省略
+/// `limit_*_bp` 的规则会按 ±10% 封板——比真实的 ±20% 窄，合法成交被当成涨停拒掉。
+pub(crate) fn unspecified_limit_bp() -> i64 {
+    0
+}
+
 impl AshareRuleConfig {
     pub fn is_trading(&self, ts: u64) -> bool {
         let day_start = Self::day_key(ts)
@@ -50,9 +57,30 @@ impl AshareRuleConfig {
             .map(|bar| bar.close)
     }
 
+    /// 生效涨停带：配置未声明（0）时按板块表推导，声明值优先。
+    pub fn effective_limit_up_bp(&self) -> i64 {
+        if self.limit_up_bp == 0 {
+            self.board.default_limit_bp()
+        } else {
+            self.limit_up_bp
+        }
+    }
+
+    /// 生效跌停带，口径同 [`Self::effective_limit_up_bp`]。
+    pub fn effective_limit_down_bp(&self) -> i64 {
+        if self.limit_down_bp == 0 {
+            self.board.default_limit_bp()
+        } else {
+            self.limit_down_bp
+        }
+    }
+
     pub fn limits(&self, previous_close: i128) -> (i128, i128) {
-        let up = previous_close.saturating_mul(i128::from(10_000 + self.limit_up_bp)) / 10_000;
-        let down = previous_close.saturating_mul(i128::from(10_000 - self.limit_down_bp)) / 10_000;
+        let up = previous_close.saturating_mul(i128::from(10_000 + self.effective_limit_up_bp()))
+            / 10_000;
+        let down = previous_close
+            .saturating_mul(i128::from(10_000 - self.effective_limit_down_bp()))
+            / 10_000;
         (self.align_down(up), self.align_up(down))
     }
 
@@ -126,8 +154,8 @@ impl AshareRuleConfig {
             self.board,
             self.t_plus_one,
             self.lot_size,
-            self.limit_up_bp,
-            self.limit_down_bp,
+            self.effective_limit_up_bp(),
+            self.effective_limit_down_bp(),
             self.price_tick,
             self.commission_bp,
             self.min_commission,

@@ -468,3 +468,24 @@ pub(crate) fn multi_leg_group_totals(
         },
     )
 }
+
+/// 多腿链的单位成本（万分比）= 净成本 × 10000 ÷ 成交额。
+///
+/// 两条边界都不许印成看起来合法的数字：成交额为 0 时这个比值没有分母，那是**算不出**
+/// 而不是"成本为零"（返回 `None`，由读侧印 `absent`）；比值超出 i64 时不能夹到 `i64::MAX`，
+/// 因为读者会把那个最大值当成一次真实测得的成本（V12 R1，与 Q70 同一套词）。
+pub(crate) fn multi_leg_cost_bps(
+    net_cost_raw: i128,
+    turnover_raw: i128,
+) -> Result<Option<i64>, String> {
+    if turnover_raw <= 0 {
+        return Ok(None);
+    }
+    let ratio = net_cost_raw.saturating_mul(10_000) / turnover_raw;
+    i64::try_from(ratio).map(Some).map_err(|_| {
+        format!(
+            "多腿单位成本超出 i64 可印范围，拒绝输出该值: \
+             net_cost_raw={net_cost_raw} turnover_raw={turnover_raw} ratio_raw={ratio}"
+        )
+    })
+}

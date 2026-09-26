@@ -50,21 +50,6 @@ def show(x: int) -> str:
     return f"{'-' if neg else ''}{i}" + (f".{s}" if s else "")
 
 
-# ---------------------------------------------------------------- 时钟
-
-
-class TestClock:
-    """确定性时钟：只在 advance_to 时前进。"""
-
-    def __init__(self, start: int = 0):
-        self.now = start
-
-    def advance_to(self, t: int) -> None:
-        if t < self.now:
-            raise ValueError(f"时间倒流: now={self.now} t={t}")
-        self.now = t
-
-
 # ---------------------------------------------------------------- 因果队列
 
 PRIO_TIMER, PRIO_FEEDBACK, PRIO_MARKET, PRIO_COMMAND, PRIO_MATCH, PRIO_APPLY, PRIO_POST = (

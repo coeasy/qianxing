@@ -2,7 +2,6 @@
 //! V10 P2a 按"目标→增量是路由决策的同族"并入针路。
 
 pub mod constraint;
-pub mod optimizer;
 pub mod rebalance;
 
 pub use constraint::PortfolioConstraint;

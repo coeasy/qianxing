@@ -22,3 +22,5 @@ qx-control = { path = "../qx-control" }
 qx-storage = { path = "../qx-storage" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# 停机信号：把 Ctrl+C / SIGINT / SIGTERM 接到 ShutdownToken 上（版本与锁内已有的传递依赖同档）。
+libc = "0.2"

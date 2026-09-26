@@ -91,6 +91,90 @@ class StrategyContractTest(unittest.TestCase):
         self.assertEqual(restored, output)
         self.assertEqual(restored.intents[1].side, "sell")
 
+    def test_intent_carries_the_three_derivative_fields_rust_emits(self):
+        # Rust StrategyContractIntent 对未设置的 margin_mode/position_mode/leverage 写的是
+        # JSON null，键始终在。Python 侧少这三个字段时 _reject_unknown_keys 会把 Rust 自己
+        # 的产出判成坏载荷，多腿衍生品策略因此无法跨语言往返（V12 §16 第三遍）。
+        output = StrategyOutput(
+            request_id="request-1",
+            strategy_id="strategy-1",
+            signal_id=7,
+            instrument=self.request.instrument,
+            target_qty=0,
+            intents=(
+                StrategyIntent(
+                    intent_id=701,
+                    instrument="BTCUSDT.BINANCE",
+                    side="buy",
+                    qty_raw=3,
+                    margin_mode="isolated",
+                    position_mode="hedge",
+                    leverage=10,
+                ),
+                StrategyIntent(
+                    intent_id=702,
+                    instrument="ETHUSDT.BINANCE",
+                    side="sell",
+                    qty_raw=2,
+                ),
+            ),
+        )
+        payload = json.loads(output.to_json(self.request))
+        for intent in payload["intents"]:
+            for key in ("margin_mode", "position_mode", "leverage"):
+                self.assertIn(key, intent, "Rust 侧始终写出该键，Python 产出也要写出去")
+        self.assertIsNone(payload["intents"][1]["margin_mode"])
+        restored = StrategyOutput.from_json(json.dumps(payload), self.request)
+        self.assertEqual(restored, output)
+        self.assertEqual(
+            (restored.intents[0].margin_mode, restored.intents[0].leverage),
+            ("isolated", 10),
+        )
+
+    def test_intent_rejects_derivative_fields_rust_would_reject(self):
+        # 与 Rust StrategyContractIntent::validate 同口径：档位取值封闭、leverage 不得为 0。
+        for kwargs, message in (
+            ({"margin_mode": "portfolio"}, r"margin_mode must be cash, cross or isolated"),
+            ({"position_mode": "both"}, r"position_mode must be one_way or hedge"),
+            ({"leverage": 0}, r"leverage must be positive"),
+        ):
+            with self.subTest(**kwargs), self.assertRaisesRegex(ValueError, message):
+                StrategyIntent(
+                    intent_id=703,
+                    instrument="BTCUSDT.BINANCE",
+                    side="buy",
+                    qty_raw=3,
+                    **kwargs,
+                ).validate()
+
+    def test_output_rejects_unknown_keys_rather_than_dropping_them(self):
+        # 与 Rust `StrategyContractOutput/Intent` 的 deny_unknown_fields 同一口径：拼错的
+        # 可选键静默丢掉，等于那一腿按运行时默认档位成交，而作者以为开了 post-only。
+        output = StrategyOutput(
+            request_id="request-1",
+            strategy_id="strategy-1",
+            signal_id=3,
+            instrument=self.request.instrument,
+            target_qty=1,
+            intents=(
+                StrategyIntent(
+                    intent_id=201,
+                    instrument="BTCUSDT.BINANCE",
+                    side="buy",
+                    qty_raw=3,
+                    post_only=True,
+                ),
+            ),
+        )
+        payload = json.loads(output.to_json(self.request))
+        payload["post_onli"] = True
+        with self.assertRaisesRegex(ValueError, r"strategy output contains unknown key\(s\).*post_onli"):
+            StrategyOutput.from_dict(payload, self.request)
+        del payload["post_onli"]
+        payload["intents"][0]["post_onli"] = True
+        with self.assertRaisesRegex(ValueError, r"strategy intent contains unknown key\(s\).*post_onli"):
+            StrategyOutput.from_dict(payload, self.request)
+
     def test_framed_transport_round_trip_and_crc_guard(self):
         payload = b'{"request_id":"frame-1"}'
         encoded = encode_frame(REQUEST, 7, payload)

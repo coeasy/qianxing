@@ -32,12 +32,17 @@ pub(crate) fn run_scheduler_worker(path: &Path, worker_id: &str, once: bool) -> 
             Some(runtime_timestamp_ms()),
         )?;
         loop {
+            // 生产循环里唯二不读停机令牌的两次（V11 S2）：其余十处 worker 循环都以
+            // `context.should_stop()` 收口，`once` 之外的唯一出口是 `?` 抛错。
+            if context.should_stop() {
+                break;
+            }
             let now = runtime_timestamp_ms();
             let (trading_day, tick) = utc_schedule_tick(now);
             let minute_key = now / 60_000;
             if last_minute != Some(minute_key) {
                 let manifest = scheduler_manifest(context.id(), &trading_day, now);
-                let queued = dispatch_scheduled_jobs(
+                let dispatch = dispatch_scheduled_jobs(
                     &state_store,
                     &state_path,
                     &queue,
@@ -46,12 +51,14 @@ pub(crate) fn run_scheduler_worker(path: &Path, worker_id: &str, once: bool) -> 
                     &manifest,
                     now,
                 )?;
-                if queued > 0 {
+                if dispatch.queued > 0 || dispatch.timed_out > 0 || dispatch.skipped > 0 {
                     println!(
-                        "[调度 · Scheduler] worker={} day={} queued={}",
+                        "[调度 · Scheduler] worker={} day={} queued={} timed_out={} skipped={}",
                         context.id(),
                         trading_day,
-                        queued
+                        dispatch.queued,
+                        dispatch.timed_out,
+                        dispatch.skipped
                     );
                 }
                 last_minute = Some(minute_key);
@@ -69,179 +76,7 @@ pub(crate) fn run_scheduler_worker(path: &Path, worker_id: &str, once: bool) -> 
         }
         Ok(())
     })?;
-    handle
-        .join()
-        .map_err(|_| format!("Scheduler worker {worker_id} panic"))?
-}
-
-fn live_strategy_job(
-    strategy: &StrategyRuntimeConfig,
-    worker_id: &str,
-    data_fingerprint: u64,
-    now: u64,
-    environment: &str,
-) -> (JobSpec, qx_scheduler::JobRun) {
-    let trading_day = utc_schedule_tick(now).0;
-    let job = JobSpec {
-        job_id: format!("live-strategy:{worker_id}"),
-        job_version: strategy.version.clone(),
-        owner: worker_id.into(),
-        enabled: true,
-        trigger: Trigger::Manual,
-        window: JobWindow::Any,
-        depends_on: Vec::new(),
-        input_refs: vec![format!("barframe:{data_fingerprint:016x}")],
-        output_refs: vec!["strategy-submit-order".into()],
-        timeout_seconds: 60,
-        retry_policy: RetryPolicy::default(),
-        concurrency_key: format!(
-            "live-strategy:{}",
-            strategy.instrument.as_deref().unwrap_or("")
-        ),
-        idempotency_key: format!("barframe:{data_fingerprint:016x}"),
-        permission_scope: "strategy".into(),
-        audit_reason: "live-closed-bar".into(),
-        dry_run: environment.eq_ignore_ascii_case("paper"),
-    };
-    let run_id = job.stable_key(&trading_day);
-    let run = qx_scheduler::JobRun {
-        run_id,
-        job_id: job.job_id.clone(),
-        trading_day,
-        attempt: 1,
-        status: JobStatus::Running,
-        manifest_digest: Some(data_fingerprint),
-        error_code: None,
-        next_retry_ts: None,
-        started_ts: now,
-        deadline_ts: now.saturating_add(60_000),
-    };
-    (job, run)
-}
-
-fn live_strategy_snapshot_digest(
-    strategy: &StrategyRuntimeConfig,
-    now: u64,
-) -> Result<Option<u64>, String> {
-    if !strategy.live_enabled {
-        return Ok(None);
-    }
-    let timeframe_ms = timeframe_to_ms(&strategy.live_timeframe)?;
-    let max_staleness_ms = strategy
-        .live_max_staleness_ms
-        .unwrap_or_else(|| timeframe_ms.saturating_mul(3).max(timeframe_ms));
-    let Some(path) = strategy.bars_snapshot_path.as_deref() else {
-        return Err("实时策略缺少 bars_snapshot_path".into());
-    };
-    if !Path::new(path).exists() {
-        return Ok(None);
-    }
-    let payload = std::fs::read_to_string(path)
-        .map_err(|error| format!("读取实时策略 BarFrame 失败 {}: {error}", path))?;
-    let frame = BarFrame::from_json(&payload)
-        .map_err(|error| format!("实时策略 BarFrame 无效 {}: {error:?}", path))?;
-    if !live_frame_is_fresh(
-        &frame,
-        timeframe_ms,
-        strategy.live_closed_only,
-        max_staleness_ms,
-        now,
-    ) {
-        return Ok(None);
-    }
-    if strategy
-        .instrument
-        .as_deref()
-        .and_then(InstrumentId::parse)
-        .is_some_and(|instrument| instrument != frame.instrument)
-    {
-        return Err(format!(
-            "实时策略 BarFrame instrument 不一致: strategy={} frame={}",
-            strategy.instrument.as_deref().unwrap_or(""),
-            frame.instrument
-        ));
-    }
-    let mut digest = frame.digest();
-    if let Some(reference_text) = strategy.builtin_reference_instrument.as_deref() {
-        let reference_path = strategy
-            .builtin_reference_bars_snapshot_path
-            .as_deref()
-            .ok_or_else(|| "双腿实时策略缺少对冲腿 BarFrame".to_string())?;
-        let reference_payload = match std::fs::read_to_string(reference_path) {
-            Ok(payload) => payload,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => {
-                return Err(format!(
-                    "读取实时策略对冲腿 BarFrame 失败 {}: {error}",
-                    reference_path
-                ))
-            }
-        };
-        let reference_frame = BarFrame::from_json(&reference_payload).map_err(|error| {
-            format!("实时策略对冲腿 BarFrame 无效 {}: {error:?}", reference_path)
-        })?;
-        if !live_frame_is_fresh(
-            &reference_frame,
-            timeframe_ms,
-            strategy.live_closed_only,
-            max_staleness_ms,
-            now,
-        ) {
-            return Ok(None);
-        }
-        let reference_instrument = InstrumentId::parse(reference_text)
-            .ok_or_else(|| format!("实时策略对冲腿 instrument 非法: {reference_text}"))?;
-        if reference_frame.instrument != reference_instrument {
-            return Err(format!(
-                "实时策略对冲腿 instrument 不一致: expected={} frame={}",
-                reference_instrument, reference_frame.instrument
-            ));
-        }
-        if reference_frame.ts.last() != frame.ts.last() {
-            // 双腿快照必须处于同一闭合 Bar；市场 worker 的两次原子写入之间
-            // 允许策略 worker 短暂跳过本轮，下一轮会重新观察。
-            return Ok(None);
-        }
-        digest ^= reference_frame.digest().rotate_left(1);
-    }
-    Ok(Some(digest))
-}
-
-fn live_strategy_digest_state_path(root: &Path, worker_id: &str) -> PathBuf {
-    root.join("strategy-live-state")
-        .join(format!("{worker_id}.digest"))
-}
-
-fn load_live_strategy_digest(path: &Path) -> Result<Option<u64>, String> {
-    match std::fs::read_to_string(path) {
-        Ok(value) => value
-            .trim()
-            .parse::<u64>()
-            .map(Some)
-            .map_err(|error| format!("实时策略 digest 状态非法 {}: {error}", path.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!(
-            "读取实时策略 digest 状态失败 {}: {error}",
-            path.display()
-        )),
-    }
-}
-
-fn save_live_strategy_digest(path: &Path, digest: u64) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("实时策略 digest 路径没有父目录: {}", path.display()))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("创建实时策略 digest 目录失败: {error}"))?;
-    let temporary = path.with_extension(format!("digest.tmp.{}", std::process::id()));
-    std::fs::write(&temporary, digest.to_string())
-        .map_err(|error| format!("写入实时策略 digest 失败: {error}"))?;
-    if let Err(error) = std::fs::rename(&temporary, path) {
-        let _ = std::fs::remove_file(path);
-        std::fs::rename(&temporary, path)
-            .map_err(|replacement| format!("提交实时策略 digest 失败: {error}; {replacement}"))?;
-    }
-    Ok(())
+    join_worker_handle(&supervisor, handle, "Scheduler", worker_id)
 }
 
 pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> Result<(), String> {
@@ -255,6 +90,10 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
     if !worker.enabled || worker.role != WorkerRole::Strategy {
         return Err(format!("worker {worker_id} 不是启用的 Strategy worker"));
     }
+    // 本 worker 自己不碰 Venue，但它把生成的每一笔 SubmitOrder 投进队列：A 股段配在这里
+    // 却不改变它生成的订单（T+1 可售量、整手都在生成时成立），等于让配置说假话。
+    // 因此按提交入口同一道闸门当场拒（V12 R1 §4.20）。
+    reject_ashare_rules_on_submit_path(path, None, "strategy-worker")?;
     let root = Path::new(&config.storage.data_dir).to_path_buf();
     let queue = configured_job_queue(&config, &root)?;
     let control_store = configured_control_store(&config)?;
@@ -331,7 +170,14 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
             Some(runtime_timestamp_ms()),
         )?;
         loop {
+            // 与其余 worker 循环同一口径：停机令牌是唯一"非错误"的出口（V11 S2）。
+            // 缺了它，Scheduler 与 Strategy 是生产里唯二永远不会自然结束的循环。
+            if context.should_stop() {
+                break;
+            }
             let now = runtime_timestamp_ms();
+            // 命令队列 / 作业队列的租约与 JobRun 状态都在秒域，见 `lease_clock`。
+            let lease_now = lease_clock(now);
             let control = control_store.load()?;
             for command in control.pending().filter(|command| {
                 matches!(
@@ -340,11 +186,11 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                 ) && (command.target == context.id() || command.target == "*")
             }) {
                 command_queue
-                    .enqueue_command(command.clone(), now)
+                    .enqueue_command(command.clone(), lease_now)
                     .map_err(|error| format!("补入 Strategy 控制命令队列失败: {error:?}"))?;
             }
             for queued in command_queue
-                .available_commands(now)
+                .available_commands(lease_now)
                 .map_err(|error| format!("读取 Strategy 控制命令队列失败: {error:?}"))?
             {
                 let command = queued.command.clone();
@@ -355,17 +201,23 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                 {
                     continue;
                 }
-                let lease =
-                    match command_queue.claim_command(command.command_id, context.id(), now, 30) {
-                        Ok(lease) => lease,
-                        Err(StorageError::LeaseHeld { .. }) => continue,
-                        Err(error) => {
-                            return Err(format!("领取 Strategy 控制命令租约失败: {error:?}"))
-                        }
-                    };
+                let lease = match command_queue
+                    .claim_command(command.command_id, context.id(), lease_now, 30)
+                {
+                    Ok(lease) => lease,
+                    Err(StorageError::LeaseHeld { .. }) => continue,
+                    Err(error) => {
+                        return Err(format!("领取 Strategy 控制命令租约失败: {error:?}"))
+                    }
+                };
                 if command_is_final(&control, command.command_id) {
                     command_queue
-                        .ack_command_at(command.command_id, context.id(), lease.fencing_token, now)
+                        .ack_command_at(
+                            command.command_id,
+                            context.id(),
+                            lease.fencing_token,
+                            lease_now,
+                        )
                         .map_err(|error| format!("清理已终态 Strategy 控制命令失败: {error:?}"))?;
                     continue;
                 }
@@ -389,7 +241,12 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                     .map_err(|error| format!("回写 Strategy 控制命令终态失败: {error}"))?;
                 record_result.map_err(|error| format!("Strategy 控制命令执行失败: {error:?}"))?;
                 command_queue
-                    .ack_command_at(command.command_id, context.id(), lease.fencing_token, now)
+                    .ack_command_at(
+                        command.command_id,
+                        context.id(),
+                        lease.fencing_token,
+                        lease_now,
+                    )
                     .map_err(|error| format!("确认 Strategy 控制命令失败: {error:?}"))?;
             }
             let mut processed = 0_usize;
@@ -405,7 +262,7 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                             now,
                             &strategy_runtime_config.environment,
                         );
-                        queue.enqueue(job, run, now).map_err(|error| {
+                        queue.enqueue(job, run, lease_now).map_err(|error| {
                             format!("写入实时 Strategy JobQueue 失败: {error:?}")
                         })?;
                         save_live_strategy_digest(&live_digest_path, data_fingerprint)?;
@@ -413,13 +270,14 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                     }
                 }
                 for queued in queue
-                    .available(now)
+                    .available(lease_now)
                     .map_err(|error| format!("读取 Strategy JobQueue 失败: {error:?}"))?
                 {
                     if queued.job.owner != context.id() && queued.job.owner != "*" {
                         continue;
                     }
-                    let lease = match queue.claim(queued.run.run_id, context.id(), now, 30) {
+                    let lease =
+                        match queue.claim(queued.run.run_id, context.id(), lease_now, 30) {
                         Ok(lease) => lease,
                         Err(StorageError::LeaseHeld { .. }) => continue,
                         Err(error) => {
@@ -440,7 +298,12 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                         )?;
                         if current_digest != Some(expected_digest) {
                             queue
-                                .ack_at(queued.run.run_id, context.id(), lease.fencing_token, now)
+                                .ack_at(
+                                    queued.run.run_id,
+                                    context.id(),
+                                    lease.fencing_token,
+                                    lease_now,
+                                )
                                 .map_err(|error| {
                                     format!("确认过期实时 Strategy Job 失败: {error:?}")
                                 })?;
@@ -598,7 +461,12 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                         )?;
                         if current_digest != Some(expected_digest) {
                             queue
-                                .ack_at(queued.run.run_id, context.id(), lease.fencing_token, now)
+                                .ack_at(
+                                    queued.run.run_id,
+                                    context.id(),
+                                    lease.fencing_token,
+                                    lease_now,
+                                )
                                 .map_err(|error| {
                                     format!("确认执行期间过期实时 Strategy Job 失败: {error:?}")
                                 })?;
@@ -676,8 +544,8 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                                     .finish_run_with_code(
                                         queued.run.run_id,
                                         true,
-                                        Some(&result),
-                                        now,
+                                        None,
+                                        lease_now,
                                     )
                                     .map(|_| ())
                                     .map_err(|error| format!("完成 JobRun 失败: {error:?}"))
@@ -687,7 +555,7 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                             .map_err(|error| format!("完成 JobRun 被拒绝: {error}"))?;
                     }
                     queue
-                        .ack_at(queued.run.run_id, context.id(), lease.fencing_token, now)
+                        .ack_at(queued.run.run_id, context.id(), lease.fencing_token, lease_now)
                         .map_err(|error| format!("确认 Strategy JobQueue 失败: {error:?}"))?;
                     processed += 1;
                     println!(
@@ -712,7 +580,5 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
         }
         Ok(())
     })?;
-    handle
-        .join()
-        .map_err(|_| format!("Strategy worker {worker_id} panic"))?
+    join_worker_handle(&supervisor, handle, "Strategy", worker_id)
 }

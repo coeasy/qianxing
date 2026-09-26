@@ -6,7 +6,6 @@
 //! 和订单状态，再继续接收新的行情或用户流事实。
 
 pub use qx_control::order_from_submit_command;
-use qx_control::ControlCommand;
 use qx_core::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
     EventKind, EventLog, EventMetadata, Fill, FundingRateSnapshot, InstrumentId, Ledger, Order,
@@ -141,11 +140,6 @@ impl RuntimeEventEnvelope {
 
     pub fn with_metadata(mut self, metadata: EventMetadata) -> Self {
         self.metadata = metadata;
-        self
-    }
-
-    pub fn with_context(mut self, context: EventContext) -> Self {
-        self.metadata.context = context;
         self
     }
 }
@@ -374,7 +368,8 @@ pub struct RuntimeBalanceDiscrepancy {
     pub venue_id: String,
     pub asset: String,
     pub ledger_raw: i128,
-    pub venue_raw: i128,
+    /// `None` = 柜台这一轮没报该币种（缺席）；把缺席折算成 0 参与比较，等于替交易所宣称该币种为 0。
+    pub venue_raw: Option<i128>,
 }
 
 #[derive(Clone)]
@@ -528,15 +523,6 @@ impl LiveEventPipeline {
     /// 使用 PostgreSQL 事务 EventLog 打开运行管线。队列、控制面和 EventLog
     /// 可以共享同一个 `PostgresStorage`，当前方法通过 DSN 建立独立安全连接，
     /// 由部署层连接池和数据库 HA 提供跨节点可用性。
-    #[cfg(feature = "postgres")]
-    pub fn open_postgres(
-        dsn: &str,
-        log_name: impl Into<String>,
-        currency: impl Into<String>,
-    ) -> QxResult<Self> {
-        Self::open_postgres_with_pool_size(dsn, 1, log_name, currency)
-    }
-
     #[cfg(feature = "postgres")]
     pub fn open_postgres_with_pool_size(
         dsn: &str,
@@ -703,8 +689,8 @@ impl LiveEventPipeline {
 
     /// 比较指定账户在结算币种上的本地 Ledger 与柜台余额快照。
     ///
-    /// `free + locked` 才是柜台可对账余额；输入会经过同一套非负/重复资产
-    /// 校验。该方法是纯查询，不追加任何调整 entry，也不改变 EventLog。
+    /// `free + locked` 才是柜台可对账余额；输入经同一套非负/重复资产校验。纯查询：不追加
+    /// entry、不改 EventLog。柜台没报该币种时产出 `venue_raw: None` 的缺席差异，不参与"相等"判定。
     pub fn settlement_balance_discrepancies(
         &self,
         account_id: &str,
@@ -725,10 +711,9 @@ impl LiveEventPipeline {
                     .net_cash_raw()
                     .ok_or_else(|| QxError::ReconcileRequired("柜台余额相加溢出".into()))
             })
-            .transpose()?
-            .unwrap_or(0);
+            .transpose()?;
         let ledger_raw = self.ledger.cash_for(account_id, &self.currency);
-        if ledger_raw == venue_raw {
+        if venue_raw == Some(ledger_raw) {
             return Ok(Vec::new());
         }
         Ok(vec![RuntimeBalanceDiscrepancy {
@@ -758,16 +743,6 @@ impl LiveEventPipeline {
     /// Fill、Cancelled 都只能通过事件驱动状态迁移。
     pub fn register_order(&mut self, order: Order, ts: u64) -> QxResult<u64> {
         self.register_order_with_correlation(order, ts, None)
-    }
-
-    /// 从已通过控制面权限校验的 `SubmitOrder` 命令注册订单。
-    pub fn register_control_order(&mut self, command: &ControlCommand, ts: u64) -> QxResult<u64> {
-        let order = order_from_submit_command(command)?;
-        self.register_order_with_correlation(
-            order,
-            ts,
-            Some(format!("control:{}", command.command_id)),
-        )
     }
 
     pub fn register_order_with_correlation(
@@ -2052,7 +2027,7 @@ mod tests {
         assert_eq!(event.metadata.dedup_key, "okx:BTCUSDT:quote:closed-1");
         assert_eq!(event.metadata.rule_version, "ccxt-market-v1");
         assert_eq!(event.effective_at(), 100);
-        assert_eq!(event.observed_at(), 110);
+        assert_eq!(event.receive_time, 110);
 
         let duplicate = RuntimeEventEnvelope::venue(
             RuntimeExternalEvent::MarketQuote {
@@ -2117,7 +2092,7 @@ mod tests {
             .unwrap();
         assert_eq!(discrepancies.len(), 1);
         assert_eq!(discrepancies[0].ledger_raw, 0);
-        assert_eq!(discrepancies[0].venue_raw, Money::from_i64(15).raw());
+        assert_eq!(discrepancies[0].venue_raw, Some(Money::from_i64(15).raw()));
         let net_debt_discrepancy = pipeline
             .settlement_balance_discrepancies(
                 "main",
@@ -2130,7 +2105,10 @@ mod tests {
                 }],
             )
             .unwrap();
-        assert_eq!(net_debt_discrepancy[0].venue_raw, Money::from_i64(10).raw());
+        assert_eq!(
+            net_debt_discrepancy[0].venue_raw,
+            Some(Money::from_i64(10).raw())
+        );
         assert!(pipeline.log().is_empty());
         assert!(pipeline
             .settlement_balance_discrepancies(

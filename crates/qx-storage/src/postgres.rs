@@ -124,19 +124,6 @@ impl PostgresStorage {
         })
     }
 
-    pub fn migrate(&self) -> Result<(), StorageError> {
-        let mut client = self.lock_client()?;
-        migrate_client(&mut client)
-    }
-
-    pub fn health_check(&self) -> Result<(), StorageError> {
-        let mut client = self.lock_client()?;
-        client
-            .query_one("SELECT 1", &[])
-            .map(|_| ())
-            .map_err(pg_error)
-    }
-
     fn lock_client(&self) -> Result<MutexGuard<'_, Client>, StorageError> {
         let index = self.next_client.fetch_add(1, Ordering::Relaxed) % self.clients.len();
         self.clients[index].lock().map_err(|_| lock_error())
@@ -297,10 +284,6 @@ impl PostgresConsumerStateStore {
         Ok(Self {
             storage: PostgresStorage::connect_with_pool_size(dsn, pool_size)?,
         })
-    }
-
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
     }
 }
 
@@ -686,10 +669,6 @@ impl PostgresOutboxStore {
         })
     }
 
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
-    }
-
     pub fn append(&self, event: OutboxEvent) -> Result<(), StorageError> {
         event.validate()?;
         let mut client = self.storage.lock_client()?;
@@ -1012,10 +991,6 @@ impl PostgresEventLogStore {
         })
     }
 
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
-    }
-
     pub fn storage(&self) -> &PostgresStorage {
         &self.storage
     }
@@ -1255,10 +1230,6 @@ impl PostgresAuditStore {
         })
     }
 
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
-    }
-
     pub fn append(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
         let mut client = self.storage.lock_client()?;
         let mut transaction = client.transaction().map_err(pg_error)?;
@@ -1407,10 +1378,6 @@ impl PostgresSnapshotStore {
             storage: PostgresStorage::connect_with_pool_size(dsn, pool_size)?,
         })
     }
-
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
-    }
 }
 
 impl SnapshotStore for PostgresSnapshotStore {
@@ -1488,10 +1455,6 @@ impl PostgresControlStore {
         })
     }
 
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
-    }
-
     pub fn load_if_exists(&self) -> Result<Option<ControlPlane>, StorageError> {
         let mut client = self.storage.lock_client()?;
         let content: Option<String> = client
@@ -1539,6 +1502,14 @@ impl PostgresControlStore {
                 .map_err(pg_error)?;
         }
         transaction.commit().map_err(pg_error)?;
+        if result.is_ok() {
+            // 复用同一个连接池把新增审计尾部追加进 `qx_audit_entries` 哈希链，
+            // 与文件/SQLite 后端的 `transact_control` 同一口径。
+            PostgresAuditStore {
+                storage: self.storage.clone(),
+            }
+            .sync_control(&plane)?;
+        }
         Ok((plane, result))
     }
 }
@@ -1561,10 +1532,6 @@ impl PostgresControlCommandQueue {
         Ok(Self {
             storage: PostgresStorage::connect_with_pool_size(dsn, pool_size)?,
         })
-    }
-
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
     }
 
     pub fn enqueue(
@@ -1828,10 +1795,6 @@ impl PostgresJobQueue {
         Ok(Self {
             storage: PostgresStorage::connect_with_pool_size(dsn, pool_size)?,
         })
-    }
-
-    pub fn from_storage(storage: PostgresStorage) -> Self {
-        Self { storage }
     }
 
     pub fn enqueue(

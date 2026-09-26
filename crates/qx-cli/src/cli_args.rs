@@ -99,6 +99,11 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<StrategyCommand>,
     },
+    // V12 R4-e：外层 `[runtime] [frame] [spec]` 与子命令自带的那套输入参数属于两条链，
+    // 混写时子命令那条链根本不读外层值——用户以为传了运行时配置与行情帧，实际跑的是
+    // 另一份输入。clap 4.6 的 `args_conflicts_with_subcommands` 在这三个可选位置参数存在
+    // 时会把子命令名当成第三个位置参数吃掉、报错口径也随之错位，所以互斥改在派发处显式
+    // 拒绝（`reject_shadowed_backtest_inputs`）。
     #[command(name = "backtest")]
     Backtest {
         runtime: Option<PathBuf>,
@@ -303,36 +308,27 @@ pub(crate) enum ConfigCommand {
         json: bool,
     },
     #[command(name = "validate")]
-    Validate {
-        path: Option<PathBuf>,
-        /// 与迁移前一致：validate 不产出 JSON，但该旗标仍抑制横幅行。
-        #[arg(long)]
-        json: bool,
-    },
+    Validate { path: Option<PathBuf> },
     #[command(name = "fingerprint")]
-    Fingerprint {
-        path: Option<PathBuf>,
-        #[arg(long)]
-        json: bool,
-    },
+    Fingerprint { path: Option<PathBuf> },
     #[command(name = "lock")]
     Lock {
         path: Option<PathBuf>,
         output: Option<PathBuf>,
         #[arg(long)]
         force: bool,
-        #[arg(long)]
-        json: bool,
     },
 }
 
 impl ConfigCommand {
     fn machine_output(&self) -> bool {
+        // V12 R4-f：`config validate|fingerprint|lock` 曾收下 `--json` 却只用它压掉横幅，
+        // stdout 依旧是 `[PASS] …` 这类人读文本——帮助里也从没承诺过这三个入口有机读输出
+        // （只有 `config explain --json` 真的产 JSON，CI 用的就是它）。旗标按"说谎即删"摘掉，
+        // 现在传 --json 会由 clap 报未知参数。
         match self {
-            Self::Explain { json, .. }
-            | Self::Validate { json, .. }
-            | Self::Fingerprint { json, .. }
-            | Self::Lock { json, .. } => *json,
+            Self::Explain { json, .. } => *json,
+            Self::Validate { .. } | Self::Fingerprint { .. } | Self::Lock { .. } => false,
         }
     }
 }

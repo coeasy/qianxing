@@ -215,6 +215,19 @@ fn doctor_report_is_machine_readable_and_never_claims_network_or_orders() {
         .unwrap()
         .iter()
         .any(|check| { check["name"] == "config" && check["status"] == "pass" }));
+    // 拓扑这一项只能声明"能否构建监督器"：原名 `runtime_topology: pass` 配 `overall=Starting`
+    // 会被读成"运行拓扑已判健康"，而它永远不会失败。
+    let build = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["name"] == "runtime_supervisor_build")
+        .expect("doctor 必须报告监督器可构建性");
+    assert_eq!(build["status"], "pass");
+    assert!(build["message"]
+        .as_str()
+        .unwrap()
+        .contains("不代表运行健康"));
 
     let _ = std::fs::remove_dir_all(root);
 }
@@ -419,4 +432,67 @@ fn backtest_rejects_the_config_flag_it_used_to_swallow() {
         String::from_utf8_lossy(&help.stdout).contains("--config"),
         "backtest builtin 仍须暴露 --config（它真的吃这份配置）"
     );
+}
+
+/// V12 R4-e：`backtest [runtime] [frame] [spec] builtin …` 的两条链曾经共存——外层三个可选
+/// 位置参数被 clap 收下，子命令派发里却只读子命令自己那套输入，使用者以为换了运行时配置与
+/// 行情帧，实际跑的是另一份输入。现在混写必须整轮拒绝，且两种正确写法各自不受影响。
+#[test]
+fn backtest_subcommand_rejects_outer_positionals_it_never_reads() {
+    let dir = temp_cli_case_dir("backtest-shadowed-inputs");
+    let outer_runtime = dir.join("outer-runtime.json").display().to_string();
+    let outer_frame = dir.join("outer-frame.csv").display().to_string();
+    let inner_frame = dir.join("inner-frame.csv").display().to_string();
+    let mixed = Command::new(qx_cli_binary())
+        .args([
+            "backtest",
+            &outer_runtime,
+            &outer_frame,
+            "builtin",
+            "sma_cross",
+            &inner_frame,
+        ])
+        .output()
+        .expect("启动 qx-cli 失败");
+    let mixed_stderr = String::from_utf8_lossy(&mixed.stderr).to_string();
+    assert_eq!(
+        mixed.status.code(),
+        Some(2),
+        "外层位置参数与 backtest 子命令混写必须按用法错误退出 2，而不是静默丢弃:\n{mixed_stderr}"
+    );
+    assert!(
+        mixed_stderr.contains("backtest builtin")
+            && mixed_stderr.contains(&outer_runtime)
+            && mixed_stderr.contains(&outer_frame)
+            && mixed_stderr.contains("不会参与计算"),
+        "错误必须点名子命令、每一个被丢弃的外层路径和丢弃口径: {mixed_stderr}"
+    );
+
+    for (label, args, consumed) in [
+        (
+            "仅子命令",
+            &["builtin", "sma_cross", &inner_frame][..],
+            &inner_frame,
+        ),
+        (
+            "统一入口",
+            &[outer_runtime.as_str(), outer_frame.as_str()][..],
+            &outer_runtime,
+        ),
+    ] {
+        let legal = Command::new(qx_cli_binary())
+            .arg("backtest")
+            .args(args)
+            .output()
+            .expect("启动 qx-cli 失败");
+        let stderr = String::from_utf8_lossy(&legal.stderr).to_string();
+        assert!(
+            stderr.contains(consumed),
+            "{label} 写法必须真的进入读自己那份输入的执行链，而不是被用法错误挡住:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("不会参与计算"),
+            "{label} 写法是合法形状，不得被新闸门拦下:\n{stderr}"
+        );
+    }
 }

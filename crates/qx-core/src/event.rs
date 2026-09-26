@@ -115,11 +115,6 @@ impl EventMetadata {
         }
         derived
     }
-
-    pub fn with_context(mut self, context: EventContext) -> Self {
-        self.context = context;
-        self
-    }
 }
 
 /// 因果优先级。数值小者先处理。
@@ -308,11 +303,10 @@ pub struct Event {
     pub ts: Ts,
     pub prio: u8,
     pub kind: EventKind,
-    /// 触发本事件的源事件 seq，用于归因。
-    pub causation: Option<u64>,
     /// 外部事实时间；回测中默认为业务时间。
     pub receive_time: Ts,
     pub engine_time: Ts,
+    /// 归因锚点：本事件所对应的外部事实序；`correlation_id` 给跨进程关联。
     pub source_seq: u64,
     pub correlation_id: String,
     /// 来源、去重和规则版本；`receive_time`/`ts` 分别对应 observed/effective 时间。
@@ -327,18 +321,12 @@ impl Event {
             ts,
             prio,
             kind,
-            causation: None,
             receive_time: ts,
             engine_time: ts,
             source_seq: seq,
             correlation_id: String::new(),
             metadata: EventMetadata::default(),
         }
-    }
-
-    pub fn caused_by(mut self, seq: u64) -> Self {
-        self.causation = Some(seq);
-        self
     }
 
     pub fn received_at(mut self, ts: Ts) -> Self {
@@ -363,11 +351,6 @@ impl Event {
         self
     }
 
-    /// 外部事实收到的本地时间，即 metadata 语义中的 observed_at。
-    pub fn observed_at(&self) -> Ts {
-        self.receive_time
-    }
-
     /// 事实业务生效时间，即 metadata 语义中的 effective_at。
     pub fn effective_at(&self) -> Ts {
         self.ts
@@ -378,7 +361,6 @@ impl Event {
         h.write_u64(self.seq);
         h.write_u64(self.ts);
         h.write_u64(self.prio as u64);
-        h.write_u64(self.causation.unwrap_or(0));
         h.write_u64(self.receive_time);
         h.write_u64(self.engine_time);
         h.write_u64(self.source_seq);
@@ -619,10 +601,6 @@ impl Event {
     }
 }
 
-/// 仅用于让上面 `Fill` 字段类型保持显式引用，避免 unused import 误判。
-#[allow(dead_code)]
-fn _assert_types(_: Option<(Quantity, Money)>) {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,7 +644,7 @@ mod tests {
                 ..EventMetadata::default()
             });
         assert_eq!(event.effective_at(), 20);
-        assert_eq!(event.observed_at(), 30);
+        assert_eq!(event.receive_time, 30);
         let restored: Event =
             serde_json::from_str(&serde_json::to_string(&event).unwrap()).unwrap();
         assert_eq!(restored, event);

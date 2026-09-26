@@ -3,11 +3,15 @@
 //! 该 crate 只负责把已验证的 RuntimeConfig 转换为 worker 启动计划，以及管理
 //! worker 子进程的日志、退出传播和停止顺序；不执行策略、下单、对账或账簿副作用。
 
+mod supervisor_stop;
+
 use qx_runtime::{RuntimeConfig, WorkerRole};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
+
+use supervisor_stop::{wait_for_children, ManagedProcess, SupervisorStop};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct WorkerLaunch {
@@ -217,6 +221,25 @@ struct ManagedChild {
     child: Child,
 }
 
+impl ManagedProcess for ManagedChild {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn poll_exit(&mut self) -> Result<Option<String>, String> {
+        let status = self
+            .child
+            .try_wait()
+            .map_err(|error| format!("检查 worker {} 状态失败: {error}", self.id))?;
+        Ok(status.map(|status| {
+            status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "signal".into())
+        }))
+    }
+}
+
 fn stop_managed_children(children: &mut [ManagedChild]) {
     for managed in children.iter_mut() {
         let _ = managed.child.kill();
@@ -235,6 +258,9 @@ pub fn supervise_workers(
     allow_unmanaged_roles: bool,
 ) -> Result<(), String> {
     let launches = plan_workers(config, config_path, allow_unmanaged_roles)?;
+    // 在派生任何子进程之前就接管终止信号：否则规划/启动窗口内的 Ctrl+C 会直接打死
+    // 监督器，留下无人回收的 worker 子进程。
+    qx_runtime::install_shutdown_signals();
     let data_dir = Path::new(&config.storage.data_dir);
     let data_dir = if data_dir.is_absolute() {
         data_dir.to_path_buf()
@@ -274,29 +300,32 @@ pub fn supervise_workers(
                 child,
             });
         }
-        loop {
-            thread::sleep(Duration::from_millis(250));
-            let mut exited = None;
-            for managed in children.iter_mut() {
-                if let Some(status) = managed
-                    .child
-                    .try_wait()
-                    .map_err(|error| format!("检查 worker {} 状态失败: {error}", managed.id))?
-                {
-                    exited = Some((managed.id.clone(), status));
-                    break;
-                }
-            }
-            if let Some((id, status)) = exited {
-                let code = status
-                    .code()
-                    .map(|code| code.to_string())
-                    .unwrap_or_else(|| "signal".into());
+        let started = std::time::Instant::now();
+        match wait_for_children(
+            &mut children,
+            qx_runtime::shutdown_signalled,
+            || u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            |millis| thread::sleep(Duration::from_millis(millis)),
+            config.shutdown_timeout_ms,
+        )? {
+            SupervisorStop::WorkerExited { id, code } => {
                 return Err(format!(
                     "managed worker {id} exited ({code}); stopping remaining workers"
-                ));
+                ))
+            }
+            SupervisorStop::StoppedWithinBudget { waited_ms } => {
+                println!("[监督器 · Shutdown] 全部 worker 按停机请求退出 waited_ms={waited_ms}")
+            }
+            SupervisorStop::StopTimedOut {
+                waited_ms,
+                remaining,
+            } => {
+                return Err(format!(
+                    "{remaining} 个 worker 收到停机请求后 {waited_ms}ms 仍未退出，超过 shutdown_timeout_ms"
+                ))
             }
         }
+        Ok(())
     })();
     stop_managed_children(&mut children);
     result

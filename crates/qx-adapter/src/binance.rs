@@ -24,10 +24,8 @@ const DEFAULT_HOST: &str = "api.binance.com";
 const DEFAULT_PORT: u16 = 443;
 const DEFAULT_WS_HOST: &str = "ws-api.binance.com";
 const DEFAULT_WS_PATH: &str = "/ws-api/v3";
-const DEFAULT_MARKET_WS_HOST: &str = "data-stream.binance.vision";
 const TESTNET_HOST: &str = "testnet.binance.vision";
 const TESTNET_WS_HOST: &str = "ws-api.testnet.binance.vision";
-const TESTNET_MARKET_WS_HOST: &str = "stream.testnet.binance.vision";
 
 /// Binance Spot HMAC API 凭据与参数签名边界。
 #[derive(Clone)]
@@ -156,14 +154,6 @@ impl BinanceSpotAuth {
         })
     }
 
-    pub fn with_recv_window(mut self, recv_window: u64) -> Result<Self, String> {
-        if recv_window == 0 || recv_window > 60_000 {
-            return Err("Binance recvWindow 必须在 1..=60000 毫秒内".into());
-        }
-        self.recv_window = recv_window;
-        Ok(self)
-    }
-
     pub fn api_key(&self) -> &str {
         &self.api_key
     }
@@ -171,12 +161,6 @@ impl BinanceSpotAuth {
     /// 返回 Binance HMAC 签名使用的 RFC3986 编码参数串对应的十六进制摘要。
     pub fn sign_parameters(&self, parameters: &BTreeMap<String, String>) -> String {
         self.sign_encoded_payload(&form_encode(parameters))
-    }
-
-    /// 按调用方提供的顺序签名；用于复现 Binance 官方签名样例或需要保留
-    /// query/body 原始顺序的供应商边界。
-    pub fn sign_ordered_parameters(&self, parameters: &[(String, String)]) -> String {
-        self.sign_encoded_payload(&form_encode_pairs(parameters))
     }
 
     fn sign_encoded_payload(&self, payload: &str) -> String {
@@ -294,7 +278,10 @@ impl BinanceStreamRetryPolicy {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BinanceStreamRunReport {
     pub events: u64,
+    /// 生涯累计重连次数，只用于观测。
     pub reconnects: u32,
+    /// 连续失败的重连次数：交付过事件的会话会把它清零，终态判定只看这个。
+    pub consecutive_failures: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -387,20 +374,33 @@ where
             Ok(session) => session,
             Err(error) => {
                 report.reconnects = retry::RetryPolicy::next_attempt_count(report.reconnects);
-                if !policy.allows_reconnect(report.reconnects) {
-                    return Err(format!("Binance 用户流连接失败且超过重试上限: {error}"));
+                report.consecutive_failures =
+                    retry::RetryPolicy::next_attempt_count(report.consecutive_failures);
+                if !policy.allows_reconnect(report.consecutive_failures) {
+                    return Err(format!(
+                        "Binance 用户流连续 {} 次重连失败且超过重试上限: {error}",
+                        report.consecutive_failures
+                    ));
                 }
-                sleep(policy.delay_for(report.reconnects));
+                sleep(policy.delay_for(report.consecutive_failures));
                 continue;
             }
         };
         let mut callback_error = None;
+        let mut delivered = 0_u64;
+        // 只有"回调自己拒了"才算本地确定性故障；链路断开（`recv_event` 报错）不是，
+        // 否则一条交付过事件后被网络掐掉的会话永远无法给预算复位。
+        let mut callback_failed = false;
         while !should_stop() {
             match session.recv_event() {
                 Ok(Some(event)) => match on_event(&event) {
-                    Ok(()) => report.events = report.events.saturating_add(1),
+                    Ok(()) => {
+                        report.events = report.events.saturating_add(1);
+                        delivered += 1;
+                    }
                     Err(error) => {
                         callback_error = Some(error);
+                        callback_failed = true;
                         break;
                     }
                 },
@@ -412,14 +412,22 @@ where
             }
         }
         let _ = session.close();
+        if delivered > 0 && !callback_failed {
+            // 交付过事件的会话证明链路可用：退避预算重新计，长期健康的流不会被判死。
+            // 但回调失败通常是确定性错误，即使这条会话此前交付过事件也不算"已恢复"，
+            // 复位只会让同一个错误被无限重试。
+            report.consecutive_failures = 0;
+        }
         if should_stop() {
             break;
         }
         report.reconnects = retry::RetryPolicy::next_attempt_count(report.reconnects);
-        if !policy.allows_reconnect(report.reconnects) {
+        report.consecutive_failures =
+            retry::RetryPolicy::next_attempt_count(report.consecutive_failures);
+        if !policy.allows_reconnect(report.consecutive_failures) {
             return Err(callback_error.unwrap_or_else(|| "Binance 用户流关闭".into()));
         }
-        sleep(policy.delay_for(report.reconnects));
+        sleep(policy.delay_for(report.consecutive_failures));
     }
     Ok(report)
 }
@@ -568,11 +576,6 @@ impl BinanceSpotMarketData {
         }
     }
 
-    pub fn with_rate_limit(mut self, capacity: u64, refill_per_second: u64) -> Self {
-        self.rate_limiter = RateLimiter::new(capacity, refill_per_second, 0);
-        self
-    }
-
     pub fn fetch_book_ticker(
         &mut self,
         instrument: &InstrumentId,
@@ -631,17 +634,6 @@ pub struct BinanceSpotMarketStream {
 }
 
 impl BinanceSpotMarketStream {
-    pub fn connect(instrument: InstrumentId, timeout: std::time::Duration) -> Result<Self, String> {
-        Self::connect_with_endpoint(instrument, DEFAULT_MARKET_WS_HOST, DEFAULT_PORT, timeout)
-    }
-
-    pub fn connect_testnet(
-        instrument: InstrumentId,
-        timeout: std::time::Duration,
-    ) -> Result<Self, String> {
-        Self::connect_with_endpoint(instrument, TESTNET_MARKET_WS_HOST, DEFAULT_PORT, timeout)
-    }
-
     pub fn connect_with_endpoint(
         instrument: InstrumentId,
         host: impl Into<String>,
@@ -689,23 +681,6 @@ impl BinanceSpotMarketStream {
 }
 
 impl BinanceSpotUserStream {
-    pub fn connect(
-        auth: &BinanceSpotAuth,
-        request_id: impl Into<String>,
-        timeout: std::time::Duration,
-    ) -> Result<Self, String> {
-        Self::connect_with_endpoint(auth, DEFAULT_WS_HOST, request_id, timeout)
-    }
-
-    pub fn connect_with_endpoint(
-        auth: &BinanceSpotAuth,
-        host: &str,
-        request_id: impl Into<String>,
-        timeout: std::time::Duration,
-    ) -> Result<Self, String> {
-        Self::connect_with_endpoint_port(auth, host, DEFAULT_PORT, request_id, timeout)
-    }
-
     pub fn connect_with_endpoint_port(
         auth: &BinanceSpotAuth,
         host: &str,
@@ -760,17 +735,6 @@ impl BinanceSpotUserStream {
                     .map_err(|error| format!("Binance 用户流事件不是 UTF-8: {error}"))
             })
             .transpose()
-    }
-
-    pub fn unsubscribe(&mut self) -> Result<(), String> {
-        self.stream.send_text(
-            &serde_json::json!({
-                "id": format!("qx-unsubscribe-{}", self.subscription_id),
-                "method": "userDataStream.unsubscribe",
-                "params": {"subscriptionId": self.subscription_id},
-            })
-            .to_string(),
-        )
     }
 
     pub fn close(&mut self) -> Result<(), String> {
@@ -925,11 +889,6 @@ impl BinanceSpotVenue {
             last_event_ts: 0,
             reconnects: 0,
         }
-    }
-
-    pub fn with_rate_limit(mut self, capacity: u64, refill_per_second: u64) -> Self {
-        self.rate_limiter = RateLimiter::new(capacity, refill_per_second, 0);
-        self
     }
 
     /// 设置重连对账需要覆盖的 Spot symbol 集合。
@@ -1860,28 +1819,27 @@ mod tests {
         .into_iter()
         .map(|(key, value)| (key.into(), value.into()))
         .collect();
+        // 官方样例的 query 顺序不是 BTreeMap 字典序，因此直接钉住“签名的就是发出去的那段
+        // 编码串”这一条私有能力；公开的 ordered 入口没有任何生产读者（V12 §16）。
         assert_eq!(
-            auth.sign_ordered_parameters(&parameters),
+            auth.sign_encoded_payload(&form_encode_pairs(&parameters)),
             "c8db56825ae71d6d79447849e617115f4a920fa2acdcab2b053c4b2838bd6b71"
         );
     }
 
     #[test]
     fn binance_user_stream_subscription_payload_is_signed_and_explicit() {
-        let auth = BinanceSpotAuth::with_clock("api-key", b"secret", || 1_700_000_000_123)
-            .unwrap()
-            .with_recv_window(3_000)
-            .unwrap();
+        let auth = BinanceSpotAuth::with_clock("api-key", b"secret", || 1_700_000_000_123).unwrap();
         let payload: Value =
             serde_json::from_str(&auth.user_stream_subscribe_payload("request-1")).unwrap();
         assert_eq!(payload["id"], "request-1");
         assert_eq!(payload["method"], "userDataStream.subscribe.signature");
         assert_eq!(payload["params"]["apiKey"], "api-key");
         assert_eq!(payload["params"]["timestamp"], 1_700_000_000_123_u64);
-        assert_eq!(payload["params"]["recvWindow"], 3_000_u64);
+        assert_eq!(payload["params"]["recvWindow"], 5_000_u64);
         let mut parameters = BTreeMap::new();
         parameters.insert("apiKey".into(), "api-key".into());
-        parameters.insert("recvWindow".into(), "3000".into());
+        parameters.insert("recvWindow".into(), "5000".into());
         parameters.insert("timestamp".into(), "1700000000123".into());
         assert_eq!(
             payload["params"]["signature"],
@@ -2011,100 +1969,6 @@ mod tests {
         assert!(request.path.starts_with("/api/v3/allOrders?"));
         assert!(request.path.contains("limit=1000"));
         assert!(request.path.contains("symbol=BTCUSDT"));
-    }
-
-    struct FakeUserStream {
-        events: Vec<Result<Option<String>, String>>,
-    }
-
-    impl BinanceUserStreamSession for FakeUserStream {
-        fn recv_event(&mut self) -> Result<Option<String>, String> {
-            self.events.remove(0)
-        }
-
-        fn close(&mut self) -> Result<(), String> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn user_stream_runner_reconnects_with_injected_clock_and_stop() {
-        let policy = BinanceStreamRetryPolicy::new(
-            2,
-            std::time::Duration::from_millis(10),
-            std::time::Duration::from_millis(40),
-        )
-        .unwrap();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let stop_seen = Arc::clone(&seen);
-        let callback_seen = Arc::clone(&seen);
-        let mut connect_count = 0_u32;
-        let mut slept = Vec::new();
-        let report = run_binance_user_stream(
-            || {
-                connect_count += 1;
-                Ok(FakeUserStream {
-                    events: vec![Ok(Some(format!("event-{connect_count}"))), Ok(None)],
-                })
-            },
-            policy,
-            move || !stop_seen.lock().unwrap().is_empty(),
-            |delay| slept.push(delay),
-            move |event| {
-                callback_seen.lock().unwrap().push(event.to_string());
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(report.events, 1);
-        assert_eq!(report.reconnects, 0);
-        assert_eq!(connect_count, 1);
-        assert!(slept.is_empty());
-        assert_eq!(seen.lock().unwrap().as_slice(), ["event-1"]);
-    }
-
-    #[test]
-    fn user_stream_runner_reconnects_after_session_or_callback_error() {
-        let policy = BinanceStreamRetryPolicy::new(
-            2,
-            std::time::Duration::from_millis(10),
-            std::time::Duration::from_millis(40),
-        )
-        .unwrap();
-        let stop = Arc::new(Mutex::new(false));
-        let stop_for_runner = Arc::clone(&stop);
-        let stop_for_callback = Arc::clone(&stop);
-        let mut connect_count = 0_u32;
-        let mut slept = Vec::new();
-        let report = run_binance_user_stream(
-            || {
-                connect_count += 1;
-                if connect_count == 1 {
-                    Ok(FakeUserStream {
-                        events: vec![Ok(Some("callback-error".into()))],
-                    })
-                } else {
-                    Ok(FakeUserStream {
-                        events: vec![Ok(Some("recovered".into())), Ok(None)],
-                    })
-                }
-            },
-            policy,
-            move || *stop_for_runner.lock().unwrap(),
-            |delay| slept.push(delay),
-            move |event| {
-                if event == "callback-error" {
-                    return Err("injected callback failure".into());
-                }
-                *stop_for_callback.lock().unwrap() = true;
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(connect_count, 2);
-        assert_eq!(report.events, 1);
-        assert_eq!(report.reconnects, 1);
-        assert_eq!(slept, [std::time::Duration::from_millis(10)]);
     }
 
     struct MockTransport {

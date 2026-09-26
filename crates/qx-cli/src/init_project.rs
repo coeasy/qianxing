@@ -51,11 +51,24 @@ pub(crate) fn copy_init_asset(
     Ok(target)
 }
 
+/// `init --profile` 的可用值。help 的 `<...>` 表、两处错误文案和实际接受的集合都由这一份来
+/// （V11 S5）：`builtin` 此前只在 match 里存在，帮助和"未知 profile"提示都不提它，
+/// 用户被告知的取值集合里恰好少了那个真正能用的取值。
+pub(crate) const INIT_PROFILES: [&str; 7] = [
+    "base",
+    "builtin",
+    "paper",
+    "ccxt",
+    "ashare",
+    "multi-venue",
+    "backtest",
+];
+
 pub(crate) fn init_profile_template(
     profile: Option<&str>,
     strategy_name: Option<&str>,
 ) -> Result<(&'static str, Vec<&'static str>, &'static str), String> {
-    let selected = match profile {
+    let selected: &'static str = match profile {
         None => {
             if strategy_name.is_some() {
                 "builtin"
@@ -63,18 +76,15 @@ pub(crate) fn init_profile_template(
                 "base"
             }
         }
-        Some("base") => "base",
-        Some("builtin") => "builtin",
-        Some("paper") => "paper",
-        Some("ccxt") => "ccxt",
-        Some("ashare") => "ashare",
-        Some("multi-venue") => "multi-venue",
-        Some("backtest") => "backtest",
-        Some(other) => {
-            return Err(format!(
-                "未知 init profile={other}；可用值：base、paper、ccxt、ashare、multi-venue、backtest"
-            ));
-        }
+        Some(value) => INIT_PROFILES
+            .into_iter()
+            .find(|candidate| *candidate == value)
+            .ok_or_else(|| {
+                format!(
+                    "未知 init profile={value}；可用值：{}",
+                    INIT_PROFILES.join("、")
+                )
+            })?,
     };
     if strategy_name.is_some() && !matches!(selected, "base" | "builtin") {
         return Err(format!(
@@ -143,7 +153,8 @@ pub(crate) fn init_profile_template(
             selected,
         )),
         _ => Err(format!(
-            "未知 init profile={selected}；可用值：base、paper、ccxt、ashare、multi-venue、backtest"
+            "未知 init profile={selected}；可用值：{}",
+            INIT_PROFILES.join("、")
         )),
     }
 }

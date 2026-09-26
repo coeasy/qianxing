@@ -24,6 +24,9 @@ from qianxing_ashare import (  # noqa: E402
     SCALE,
 )
 
+#: 与 Rust `crates/qx-cli/src/tests/calendar_component_fingerprint.rs` 共用的那一对夹具。
+CALENDAR_FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
 
 class _FakeAkShare:
     __version__ = "test"
@@ -298,6 +301,72 @@ class AshareTest(unittest.TestCase):
         self.assertTrue(action.visible_at("2024-01-04T09:00:00+08:00"))
         record = AsharePITRecord("000001", "2023-12-31", "2024-01-05T09:00:00+08:00", {"pe": 10})
         self.assertFalse(record.visible_at("2024-01-04T15:00:00+08:00"))
+
+    def test_calendar_component_digest_is_the_shared_cross_language_pair(self):
+        # Rust CLI 在回测启动前对同一份文件重算指纹；两侧比的是夹具旁边那一份摘要，谁都不抄谁。
+        for document, digest in (
+            ("calendar-component-v1.json", "calendar-component-v1.fingerprint"),
+            ("calendar-component-legacy.json", "calendar-component-legacy.fingerprint"),
+        ):
+            with self.subTest(document=document):
+                text = (CALENDAR_FIXTURES / document).read_text(encoding="utf-8")
+                pinned = (CALENDAR_FIXTURES / digest).read_text(encoding="utf-8").strip()
+                self.assertEqual(
+                    AshareTradingCalendar.from_json(text).component_fingerprint(),
+                    pinned,
+                    f"{document} 的指纹与仓库里钉住的那一格不符：改了指纹口径就得同时重产摘要，"
+                    "而 Rust 侧那三条用例会立刻指出对面没跟上",
+                )
+        text = (CALENDAR_FIXTURES / "calendar-component-v1.json").read_text(encoding="utf-8")
+        self.assertEqual(
+            AshareTradingCalendar.from_json(text).to_json() + "\n",
+            text,
+            "夹具必须由写侧原样产出：改了编码就重新产出夹具，不要手抄一份近似形状",
+        )
+
+    def test_calendar_component_fingerprint_moves_only_with_canonical_fields(self):
+        text = (CALENDAR_FIXTURES / "calendar-component-v1.json").read_text(encoding="utf-8")
+        calendar = AshareTradingCalendar.from_json(text)
+        base = calendar.component_fingerprint()
+        # 顶层新增或改动的非规范字段不进指纹：换 `source` 标签不能让已登记的 bundle 失效。
+        self.assertEqual(
+            AshareTradingCalendar(
+                calendar.calendar_id,
+                calendar.trading_days,
+                calendar.sessions,
+                source="another-provider",
+            ).component_fingerprint(),
+            base,
+        )
+        for label, mutated in (
+            (
+                "calendar_id",
+                AshareTradingCalendar(
+                    "cn-shanghai-other", calendar.trading_days, calendar.sessions, source=calendar.source
+                ),
+            ),
+            (
+                "trading_days",
+                AshareTradingCalendar(
+                    calendar.calendar_id,
+                    calendar.trading_days + ("2024-02-20",),
+                    calendar.sessions,
+                    source=calendar.source,
+                ),
+            ),
+            (
+                "sessions",
+                AshareTradingCalendar(
+                    calendar.calendar_id, calendar.trading_days, (), source=calendar.source
+                ),
+            ),
+        ):
+            with self.subTest(field=label):
+                self.assertNotEqual(
+                    mutated.component_fingerprint(),
+                    base,
+                    f"{label} 改了摘要却没变，说明这一列根本没进 canonical 字节",
+                )
 
     def test_python_bundle_manifest_matches_rust_component_schema(self):
         bars = AshareManifest(

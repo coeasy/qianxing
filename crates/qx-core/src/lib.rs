@@ -1,32 +1,32 @@
 //! # qx-core — 牵星内核
 //!
-//! 确定性内核：时钟、因果事件队列、身份、定点数值、订单状态机、事件溯源与重放校验。
+//! 确定性内核：时钟、身份、定点数值、订单状态机、事件溯源与重放校验。
 //!
 //! 设计底线（改动前请先读）：
 //! 1. **热路径不用浮点**：所有金额/价格/数量走 128-bit 定点 [`Fixed`]。
-//! 2. **不用系统时间**：回测只认 [`TestClock`]，实盘才接入真实时钟。
+//! 2. **不用系统时间**：回测只认输入数据自带的时间戳，时间轴由 `qx-data` 的排序与
+//!    「严格递增」闸门决定（见 [`clock`] 模块说明），内核不提供虚拟时钟对象。
 //! 3. **不用无序容器做顺序敏感迭代**：`HashMap` 只用于查找，遍历一律排序。
 //! 4. **事件即事实**：状态由事件日志重建，任何旁路写入都是 bug。
+//!    因果序（`(ts, prio, seq)` 全序）由 [`EventLog::validate`] 单点裁决；
+//!    内核不提供第二套事件循环——回测/paper/live 的循环各在自己的 crate 里，
+//!    但都只能通过 EventLog 落地事实。
 
 pub mod clock;
-pub mod engine;
 pub mod error;
 pub mod event;
 pub mod fee;
-pub mod fenye;
 pub mod fill_apply;
 pub mod identity;
 pub mod ledger;
 pub mod numeric;
 pub mod order;
-pub mod queue;
 pub mod retry;
 pub mod sourcing;
 pub mod target;
 pub mod trading;
 
-pub use self::clock::{ClockError, TestClock, Ts};
-pub use self::engine::{Engine, EngineCtx, EngineRunOptions, EngineRunReport, Handler};
+pub use self::clock::Ts;
 pub use self::error::{QxError, QxResult};
 pub use self::event::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
@@ -44,7 +44,6 @@ pub use self::ledger::{
 };
 pub use self::numeric::{Fixed, Money, Price, Quantity, SCALE};
 pub use self::order::{Fill, Order, OrderStatus, OrderTrace, Side};
-pub use self::queue::CausalQueue;
 pub use self::retry::{Backoff, RetryPolicy};
 pub use self::sourcing::{EventLog, Fnv1a, ReplayFacts, ReplayVerifier, RunManifest};
 pub use self::target::TargetPosition;

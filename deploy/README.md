@@ -101,6 +101,43 @@ cargo run --release -p qx-cli -- serve deploy/qianxing.runtime.example.json
 
 `serve` 启动时会恢复控制面状态；`storage.backend: "files"` 使用 `control-plane.json` 与 `control-queue/`，`storage.backend: "sqlite"` 使用 `sqlite_path` 中的事务表，`storage.backend: "postgres"` 使用 `postgres_dsn_env` 指向的 DSN 并自动执行幂等迁移。PostgreSQL 后端的控制面、控制命令队列和 JobQueue 使用事务、advisory lock、租约与 fencing token；带密码的 DSN 不得写入 JSON。控制命令先原子持久化再入队，队列写入失败不会丢失 Accepted 命令；Execution worker 启动后会扫描 pending 命令补队列。
 
+### HTTP 读面与控制面路由
+
+下表是 `qx-api` 当前实现的全部入口（17 条 HTTP 路由 + 1 条 WebSocket 升级），逐条来自
+`crates/qx-api/src/lib.rs` 的 `handle_inner`。除 `/health`、`/ready`、`/schema/account-snapshot-v1`
+之外，只要运行时配置里装了操作员权限策略（`transport: "mtls"` 必然装），未通过证书识别的
+请求一律 `403 {"error":"authenticated_operator_required"}`。
+
+| 入口 | 返回 | 说明 |
+| --- | --- | --- |
+| `GET /health` | `{"status":"ok"}` | 只表示进程存活，不表示可放行交易流量 |
+| `GET /ready` | `ApiReadiness` | 就绪检查 + 投影健康；未就绪时状态码 `503` |
+| `GET /metrics` | Prometheus 文本 | API 自身指标，并追加 `worker-metrics/<worker_id>.prom` 聚合 |
+| `GET /schema/account-snapshot-v1` | JSON Schema | 公布的就是仓库里的 `schemas/account-snapshot-v1.json`（编译期 `include_str!` 取用，不存在第二份），供读者自证 |
+| `GET /account/snapshot` | 快照 JSON / `404 snapshot_not_found` | 单账户投影快照 |
+| `GET /account/snapshot/envelope` | 投影信封 / `404` | `data` 满足上面那份 schema（V12 R4-h） |
+| `GET /account/snapshot/diff?base_hash=<u64>` | 差异 | `base_hash` 缺失或非无符号整数 → `400`；基准不存在 → `409 snapshot_base_not_found` |
+| `GET /account/orders`、`/account/positions` | 数组 | 无快照时返回空数组，不返回 `404` |
+| `GET /account/balances` | `{cash_raw, equity_raw, available_raw, margin_raw}` | 未算出的钱保持 `null`，不印成 `0`（V11 Q70） |
+| `GET /account/ledger`、`/reconcile/reports`、`/scheduler/runs`、`/control/audit` | 数组 | 读模型来自 `storage.data_dir`，非实时推送 |
+| `GET /events?after=<seq>` | 事件数组 | 快照式读取；游标越界 → `409 event_cursor_requires_snapshot` |
+| `GET /events/live?after=<seq>` | 事件数组 | 一次性 read-after，不是长连接；游标语义与 `/events` 同口径（V12 R4-g） |
+| `POST /control/commands` | 受理结果 | 载荷非法 → `400`；未识别操作员 → `403`；先持久化再入队 |
+| 任意路径 + `Upgrade: websocket` | `101` 帧流 | 见下 |
+
+三条读投影的入口（`/account/snapshot`、`/account/snapshot/envelope`、`/events`、`/events/live`、WS 之外的
+全部 `account/*`）都接受 `?account_id=&venue_id=`：两者必须同时出现，否则 `400
+{"error":"account_id 和 venue_id 必须同时提供"}`；都不出现时读全局投影。`?after=` 必须是十进制
+无符号整数，含义是**事件序号**，不是这条日志的下标。
+
+WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分派前转交 `serve_websocket`。
+握手需要 `Sec-WebSocket-Key`，随后依次下发 `connected`、可选的 `snapshot`、已积累的 `events`
+批量帧，再按 100ms 轮询事件总线逐条推 `event`。退出条件有四类：游标过旧/超前发
+`{"type":"resync_required"}` 后关闭、读到客户端 close 帧后关闭、对端 EOF 或
+`ConnectionReset` 后关闭。它有两个已知边界：走的是全局事件总线（不认 `account_id`/`venue_id`），
+并且**不经过限流桶**（限流在 `handle_inner` 里，WebSocket 分支在其之前返回）；本机明文绑定下
+可接受，公网暴露前必须先接上层代理。
+
 ## Binance worker
 
 用户流、执行和对账 worker 支持两种互斥凭据来源：`credential_env` 环境变量，或由 Secret Manager/CSI/容器 secrets 原子投影的 `credential_files` 文件。凭据值不会进入配置 JSON、运行时健康详情或日志；用户流新建连接、执行新订单和对账新轮次会重新读取文件，已有连接继续使用当前认证上下文。先校验拓扑，再单独启动 worker：
@@ -144,9 +181,24 @@ cargo build --release -p qx-cli --features sqlite
 worker，避免把未知网络结果误当成可安全重放；恢复依赖控制命令幂等、租约 fencing 和
 EventLog 对账。
 
-Scheduler worker 从 `scheduler.jobs_path` 装载 JobSpec，恢复 `scheduler.state_path`，按 UTC Cron 触发并写入带租约/fencing 的 JobQueue；Strategy worker 管理策略生命周期，执行 `Signal→Portfolio→RiskGate→OrderIntent`，并把通过风控的订单转成带审计的 SubmitOrder 命令交给 Execution worker。它不会绕过 OMS/Risk 直接调用 Venue。未知角色仍会被脚本拒绝；`-AllowUnmanagedRoles` 只适合外部扩展进程接管未知角色。
+Scheduler worker 从 `scheduler.jobs_path` 装载 JobSpec，恢复 `scheduler.state_path`，按 UTC Cron 触发并写入带租约/fencing 的 JobQueue；Strategy worker 管理策略生命周期，执行 `Signal→Portfolio→RiskGate→OrderIntent`，并把通过风控的订单转成带审计的 SubmitOrder 命令交给 Execution worker。它不会绕过 OMS/Risk 直接调用 Venue。未知角色仍会被脚本拒绝；`-AllowUnmanagedRoles` 只适合外部扩展进程接管未知角色。`scheduler.jobs_path` 里的作业只接受 `trigger` 为 Cron 且 `window` 为 `Any` 的形状：交易日历、事件与手工触发在运行时没有派发者，会话窗口也没有交易日历数据源，因此这类作业会在装载时被拒绝并点名 `job_id`，而不是登记后永远不出队（V12 §18-B #117）。
+
+一次作业运行在生产里只有一次执行机会，接口口径如下：Strategy worker 收口时只会写 `Succeeded`，并且**结果码不进 `JobRun`**——它没有"成功结果"这一格，硬塞会让一条成功运行在 `/scheduler/runs` 读出假 `error_code`（V12 §18-A #129 修的就是这个）。任务失败或超过 `timeout_seconds` 的运行由下一轮 tick 升级为 `NeedsIntervention` 并释放并发键，调度器不会自动重跑：失败那一刻无法判定订单是否已经出网，自动重试等于二次提交。因此 `JobSpec.retry_policy`（`max_attempts`、退避、`retryable_codes`）与到期重试入口 `Scheduler::retry_run_at` 目前只在 `qx-scheduler` 库内和用例里生效，生产装配零调用者；要接上它需要先给出"这条作业失败后可安全重放"的判定依据（V12 §18-A #110 剩余 / #129）。
 
 Strategy 可以通过 `strategy.research_snapshot_path` 加载包含 CandidateBinding、FeatureArtifact、FactorReport、PIT 时间和数据血缘的研究快照；生产中已绑定交易对象的策略必须同时设置 `research_snapshot_required=true`、`research_data_fingerprint` 和 `dataset_bundle_path`，运行时还要求快照指纹匹配并绑定已验证的数据清单。回测/纸面配置仍兼容 `target_snapshot_path` 和 `target_qty`，但不应将裸目标仓位作为实盘发布物。
+
+研究快照的字段契约（v1，逐层列出；快照 JSON 由仓库外的因子工程环节按此导出，**本框架不提供生成该文件的命令**，`qx-factor` 的物化与校验入口只在库和用例层被调用）：
+
+```text
+schema_version=1 的 research_snapshot JSON
+顶层: schema_version, candidate, artifacts, reports, as_of
+candidate: config, factor_keys, cost_bps, train_start, train_end, validation_start, validation_end, event_verified, event_manifest_digest
+candidate.config: strategy_version, universe_version, feature_version, parameters, data_fingerprint, intended_exposure, constraints, execution_model, risk_model
+artifacts[]: feature_key, input_fingerprint, as_of, coverage_bps, values
+reports[]: feature_key, input_fingerprint, observation_hash, analysis_start, analysis_end, sample_count, coverage_bps, ic_bps, rank_ic_bps, turnover_bps, transform, missing_policy, decay_bps, capacity_raw, exposures
+```
+
+每一层的未知字段都会被拒绝（拼错的键不会被按默认值读回），`intended_exposure` 才是运行时下单数量的来源，`artifacts[].values` 目前只参与 PIT 与数据指纹校验、不改变交易决策（V12 §18-B #119）。
 
 Paper Execution worker 可以配置 `paper_initial_cash_raw`，启动时通过幂等 `AccountCashflow(Transfer)` 写入结算币初始资金；资金进入同一 EventLog/Ledger，重启不会重复入金。该字段只能用于 `venue_id=paper`，金额使用核心定点 raw 单位。
 
@@ -583,9 +635,65 @@ API 探针语义固定为：`GET /health` 只表示进程存活；`GET /ready` �
 已产生的 Relay/Consumer worker 指标中的 down/stale 状态，依赖不可用时返回 HTTP 503。生产编排仍应把
 MQ、用户流、对账和交易安全状态继续接入同一 readiness provider，不能只依据 `/health` 放行交易流量。
 
+"心跳多久算陈旧"在全仓库只有一个窗口：`messaging.worker_stale_after_ms`（缺省值见
+`crates/qx-runtime/src/runtime_config/schema.rs`）。`/ready`、`/metrics` 的 stale 判定与
+`runtime-check` 的健康快照读的是同一个数、同一份 worker 指标目录；配置里另一处
+`shutdown_timeout_ms` 是"优雅停机最多等多久"，与心跳新鲜度无关，不得混用（V12 §16 #122
+修掉的就是 `runtime-check` 曾把两者当成一回事、并把当前时刻传成 `0` 使过期判定永不成立）。
+`runtime-check` 的 `health` 块是**拓扑快照**：它只按配置登记 worker（全部 `starting`），
+不拉起进程，因此这里既不会出现 `ready` 也不会出现 `degraded`；运行期健康以 `/ready` 与
+`/metrics` 为准。
+
+`serve` 暴露的端点就是下表这些，未列出的路径一律 404。表里第一列的 `METHOD 路径` 必须与
+`crates/qx-api/src/lib.rs` 的路由集合逐一相等（门禁 `api_surface_doc_check`），查询串只是提示可带：
+
+| 端点 | 语义 | 非 200 口径 |
+| --- | --- | --- |
+| `GET /health` | 进程存活，恒 200 | — |
+| `GET /ready` | 依赖就绪：控制面存储、已声明研究快照、生产凭据/冻结规格、worker 指标 down/stale、投影缺口 | 503 |
+| `GET /metrics` | Prometheus 文本，追加 worker 指标 | — |
+| `GET /schema/account-snapshot-v1` | 账户快照 v1 JSON Schema，就是 `schemas/account-snapshot-v1.json` 那一份（编译期内嵌，不是第二份手抄） | — |
+| `GET /account/snapshot[?account_id=&venue_id=]` | 账户快照 JSON；不带键时读默认账户=配置里第一个真有日志的账户 worker | 400 参数非法；404 `snapshot_not_found` |
+| `GET /account/snapshot/envelope[?…]` | 投影信封（快照 hash 与 lineage） | 400；404 `snapshot_not_found` |
+| `GET /account/snapshot/diff?base_hash=[&…]` | 与历史基线快照的差异 | 400；409 `snapshot_base_not_found` |
+| `GET /account/orders[?…]` `GET /account/positions[?…]` | 快照里的订单表/持仓表摊成数组 | 400；无快照时 200 空数组 |
+| `GET /account/balances[?…]` | 四个钱字段原样，未计算的是 `null` 而不是 0 | 400 |
+| `GET /account/ledger[?…]` `GET /scheduler/runs` `GET /reconcile/reports` | 每次请求现读账户日志/调度记录/对账报告，启动之后落盘的读得到 | 503 读不到即报错，不念开机那份 |
+| `GET /events[?after=&account_id=&venue_id=]` | 投影事件全量，或 `after` 游标之后的增量 | 400；409 `event_cursor_requires_snapshot` |
+| `GET /events/live[?after=&…]` | 事件总线现读增量 | 400；409 游标过旧/超前；500 |
+| `GET /control/audit` | 控制面审计流水 | — |
+| `POST /control/commands` | 提交控制命令；启用访问策略时 operator 身份必须来自认证边界 | 400 请求体不合法；403；503 队列不可用 |
+
+限流在鉴权之前判定：超额 429 `api_rate_limit_exceeded`，限流后端自身故障 503
+`api_rate_limit_backend_unavailable`；启用访问策略时，除 `/health`、`/ready`、
+`/schema/account-snapshot-v1` 外都要求已认证 operator，否则 403
+`authenticated_operator_required`。
+
 Prometheus 告警规则模板位于 `deploy/prometheus/qianxing-alerts.yml`，覆盖 worker 失联、心跳
 过期、Outbox 发布失败、Consumer 死信和 ACK 失败；生产环境应根据实际抓取间隔、租约窗口和
 值班策略调整 `for` 与 heartbeat 阈值。
+
+## 自检与内部命令
+
+这四条命令跑的是**合成输入**（`DEMO.SIM`、`gen_bars`），进程内断言即冒烟测试，不访问网络、
+不下单；输出行都带 `DEMO 合成输入` 标注，不要当成真实行情上的结果：
+
+| 命令 | 作用 | 口径 |
+| --- | --- | --- |
+| `qx-cli ecosystem` | 跨 crate 装配冒烟，逐段打印：因子目录→QIFI 协议差分→ProviderRegistry 重试链→调度 JobSpec→控制命令→API 路由 | 断言失败即非零退出 |
+| `qx-cli paper` | 只跑 Paper venue 主链路：受理→报价成交→快照 Filled→断线转 `ReconcileRequired`→恢复 | 同上 |
+| `qx-cli verify` | 只校验确定性内核：合成 Bar 过质量门、同输入同哈希、改参数变哈希 | 不触发插件装配与 Paper |
+| `qx-cli all` | 完整自校验：`verify` 的全部内容 + 插件装配顺序 + 上一条的 Paper 主链路 | `verify` 与 `paper` 的并集 |
+
+`qx-cli recovery-child <占位> <占位> …` 是 `supervise` 用来重启跨进程恢复的**内部入口**，
+位置参数按 argv 下标透传，不是给人手敲的命令；人工恢复请用 `outbox-relay`、
+`consumer-dlq-replay` 与 `reconcile`。`ccxt-worker` 与 `binance-worker` 同属 worker 进程入口，
+由运行时配置里 `workers[].role` 决定登记表分派，见上文「公共 CCXT 多交易所连接层」。
+
+API 服务线程的停机出口：`serve` / `serve_tls_mtls_with_stores` 现在都接受一个停机闭包，
+accept 循环按 2ms 轮询它并在置位时返回，`run_runtime_api` 传的是监督器的
+`context.should_stop()`。此前两条循环写作 `listener.incoming()`，Ctrl+C 之后线程仍卡在
+accept 里、`join()` 永不返回，投影线程与 TLS 重载线程永远停不掉（V12 §16 第二遍）。
 
 ## 停机与故障
 

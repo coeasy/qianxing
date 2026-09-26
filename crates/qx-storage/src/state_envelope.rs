@@ -187,6 +187,7 @@ pub(crate) fn write_state_text(
     write_atomic_path(path, root, content)
 }
 
+#[derive(Debug)]
 pub(crate) struct StorageLock {
     path: PathBuf,
 }
@@ -197,30 +198,58 @@ impl Drop for StorageLock {
     }
 }
 
+/// 跨进程锁的等待预算：墙钟时间，不是尝试次数。
+///
+/// 按次数计预算时，"能等多久"取决于一次 `create_new` 失败要付出多久：整树并发下
+/// 释放窗口（Windows 上删除待处理 + 杀软重扫同名文件）可远超原先 100 次 × 1 毫秒的
+/// 预算，于是审计追加会返回 `Conflict`（实测：`audit_file_store_serializes_concurrent_appends_without_losing_tail`
+/// 在负载下把这条链跑红）。墙钟预算让"能熬过多忙的机器"变成显式承诺。
+const STORAGE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(4_000);
+/// 轮询退避上限：小步快速让路给释放方，稳态下不把文件系统调用排队拉长。
+const STORAGE_LOCK_BACKOFF_STEP: std::time::Duration = std::time::Duration::from_millis(2);
+const STORAGE_LOCK_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_millis(16);
+
 pub(crate) fn acquire_storage_lock(path: PathBuf) -> Result<StorageLock, StorageError> {
-    // 有界重试把正常并发写者串行化；`AlreadyExists` 与 Windows 删除窗口内
-    // `create_new` 抛出的 `PermissionDenied`（os error 5）都算锁正在占用或正在释放。
-    for _ in 0..100 {
-        match std::fs::OpenOptions::new()
+    acquire_storage_lock_within(path, STORAGE_LOCK_WAIT)
+}
+
+/// 有界等待的锁获取：只在预算耗尽时返回 `Conflict`，因此不存在自旋不退出的路径。
+/// 预算作为参数留给用例在同一毫秒尺度上验证两端（等到 → 成功、超预算 → `Conflict`）。
+fn acquire_storage_lock_within(
+    path: PathBuf,
+    wait: std::time::Duration,
+) -> Result<StorageLock, StorageError> {
+    // `AlreadyExists` 与 Windows 删除窗口内 `create_new` 抛出的 `PermissionDenied`
+    // （os error 5）都算锁正在占用或正在释放。
+    let deadline = std::time::Instant::now() + wait;
+    let mut backoff = STORAGE_LOCK_BACKOFF_STEP;
+    let mut attempts = 0_u32;
+    loop {
+        attempts += 1;
+        let error = match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)
         {
             Ok(_) => return Ok(StorageLock { path }),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    ErrorKind::AlreadyExists | ErrorKind::PermissionDenied
-                ) =>
-            {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            Err(error) => return Err(StorageError::Io(error.to_string())),
+            Err(error) => error,
+        };
+        if !matches!(
+            error.kind(),
+            ErrorKind::AlreadyExists | ErrorKind::PermissionDenied
+        ) {
+            return Err(StorageError::Io(error.to_string()));
         }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(StorageError::Conflict(format!(
+                "存储追加锁被占用（{attempts} 次尝试、{} 毫秒内未取得），调用方应在恢复后重试",
+                wait.as_millis()
+            )));
+        }
+        std::thread::sleep(backoff.min(remaining));
+        backoff = (backoff * 2).min(STORAGE_LOCK_BACKOFF_MAX);
     }
-    Err(StorageError::Conflict(
-        "存储追加锁被占用，调用方应在恢复后重试".into(),
-    ))
 }
 
 pub(crate) fn sync_file(path: &Path) -> Result<(), StorageError> {
@@ -305,5 +334,57 @@ mod tests {
         assert!(corrupt.is_err());
         let validated = decode_state_json::<Probe>(r#"{"schema_version":1,"note":""}"#);
         assert!(matches!(validated, Err(StorageError::Conflict(_))));
+    }
+
+    fn lock_fixture(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "qianxing-lock-{}-{}-{}.lock",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn storage_lock_waits_out_a_brief_holder_instead_of_failing_the_write() {
+        let path = lock_fixture("wait");
+        std::fs::write(&path, "held").unwrap();
+        let releaser = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                let _ = std::fs::remove_file(path);
+            })
+        };
+        let lock = acquire_storage_lock_within(path.clone(), std::time::Duration::from_millis(500));
+        releaser.join().unwrap();
+        assert!(
+            lock.is_ok(),
+            "占用方在预算内释放时，等待必须拿到锁而不是把写失败上抛: {lock:?}"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn storage_lock_gives_up_at_its_deadline_rather_than_spinning_forever() {
+        let path = lock_fixture("deadline");
+        std::fs::write(&path, "held").unwrap();
+        let started = std::time::Instant::now();
+        let result =
+            acquire_storage_lock_within(path.clone(), std::time::Duration::from_millis(30));
+        let elapsed = started.elapsed();
+        let _ = std::fs::remove_file(path);
+        let detail = match result {
+            Err(StorageError::Conflict(detail)) => detail,
+            other => panic!("超预算的错误形态必须是 Conflict，实际为 {other:?}"),
+        };
+        assert!(
+            elapsed >= std::time::Duration::from_millis(30)
+                && elapsed < std::time::Duration::from_secs(2),
+            "等待必须落在墙钟预算内结束，实际 {elapsed:?}: {detail}"
+        );
     }
 }

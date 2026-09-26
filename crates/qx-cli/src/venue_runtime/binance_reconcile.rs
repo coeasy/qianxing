@@ -1,9 +1,11 @@
 use crate::*;
 
 pub(crate) fn reconcile_issue_json(issue: &AdapterReconcileIssue) -> serde_json::Value {
-    // kind 与单号复用适配器内唯一的一份枚举翻译（reason_code），这里只展开维度值。
+    // kind 是维度码（哪个维度对不上），action 是裁决动作码（能不能自动收敛）：两者
+    // 都由适配器对唯一裁决口径的投影给出，这里只展开维度值。
     let mut value = serde_json::json!({
         "kind": issue.reason_code(),
+        "action": issue.action().reason_code(),
         "client_order_id": issue.client_order_id(),
     });
     let object = value.as_object_mut().expect("json object");
@@ -92,7 +94,6 @@ pub(crate) fn run_binance_reconcile_worker(
             account_worker_currency_from_path(runtime_config_path, &worker)?,
         )
         .map_err(|error| format!("创建对账事件管线失败: {error}"))?;
-    let mut source_seq = 0_u64;
     context.mark(
         qx_runtime::ServiceStatus::Ready,
         "reconciler starting",
@@ -158,7 +159,11 @@ pub(crate) fn run_binance_reconcile_worker(
             funding_rate_snapshots_count: None,
             cashflow_count: None,
         })?;
-        source_seq = source_seq.saturating_add(1);
+        // 身份由这一处构造，不在调用点各拼一份：seq 从日志尾端接上、correlation 带本轮时间戳，
+        // 两者都要跨进程重启仍然唯一。原先每进程从 0 起算、correlation 又由 seq 拼出，重启后的
+        // 第一条余额事实会撞上重启前那条同 seq 同 id，被去重静默吞掉。
+        let (mut source_seq, balance_correlation) =
+            venue_balance_fact_identity(&pipeline, &worker.id, received_ts);
         pipeline
             .ingest(RuntimeEventEnvelope::venue(
                 RuntimeExternalEvent::AccountBalanceSnapshot {
@@ -169,14 +174,15 @@ pub(crate) fn run_binance_reconcile_worker(
                 received_ts,
                 received_ts,
                 source_seq,
-                format!("{}:balances:{}", worker.id, source_seq),
+                balance_correlation,
             ))
             .map_err(|error| format!("账户余额事实归约失败: {error:?}"))?;
-        // 待对账事实的归类只复用适配器对裁决口径的投影（client_order_id/reason_code），
-        // 调用点不复制差异判定分支。
+        // 待对账事实的 reason 只用裁决动作码（resync / pending_reconcile / manual_review），
+        // 不再写维度码：`status_mismatch` 分不出"远端权威推进"和"互斥迁移需人工"，
+        // 下游按 reason 分流时两类单子会被当成同一件事处理（V12 §18 TX7）。
         for issue in &issues {
             EventLogReconcilePort::new(&mut pipeline, &worker.id, received_ts, &mut source_seq)
-                .require_reconcile(issue.client_order_id(), issue.reason_code())
+                .require_reconcile(issue.client_order_id(), issue.action().reason_code())
                 .map_err(|error| format!("对账事实归约失败: {error}"))?;
         }
         context.heartbeat(received_ts)?;
@@ -185,7 +191,12 @@ pub(crate) fn run_binance_reconcile_worker(
             .map(|discrepancy| {
                 format!(
                     "{}:{}->{}",
-                    discrepancy.asset, discrepancy.ledger_raw, discrepancy.venue_raw
+                    discrepancy.asset,
+                    discrepancy.ledger_raw,
+                    // 柜台没报该币种时印"未报"，不印 0：0 是替交易所报数。
+                    discrepancy
+                        .venue_raw
+                        .map_or_else(|| "未报".to_string(), |raw| raw.to_string())
                 )
             })
             .collect::<Vec<_>>()

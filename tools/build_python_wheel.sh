@@ -9,6 +9,15 @@ python_project="${repository_root}/python"
 target_directory="${repository_root}/target/${profile}"
 package_directory="${python_project}/qianxing_bridge"
 
+# 仓库 venv 是 uv 建的、不带 pip，而最后一步用的是 `pip wheel`。先探测再跑 cargo，
+# 免得构建与复制都做完了才在最后一步炸掉。
+if ! "${python_bin}" -m pip --version >/dev/null 2>&1; then
+    echo "[失败] 解释器 ${python_bin} 没有 pip，跑不了 pip wheel" >&2
+    echo "       修法 1: ${python_bin} -m ensurepip --upgrade（或 uv pip install pip --python ${python_bin}）" >&2
+    echo "       修法 2(离线): uv build --wheel --offline --no-build-isolation --out-dir ${output_directory} ${python_project}" >&2
+    exit 1
+fi
+
 cargo_args=(build -p qx-python)
 if [[ "${profile}" == "release" ]]; then
     cargo_args+=(--release)

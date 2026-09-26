@@ -41,13 +41,9 @@ pub(crate) fn run_ccxt_reconcile_worker(
             .map_err(|error| format!("CCXT balance 对账失败: {error}"))?;
         let balances = ccxt_balance_facts(&balance_result)?;
         let received_ts = runtime_timestamp_ms();
-        let mut source_seq = pipeline
-            .log()
-            .events()
-            .last()
-            .map(|event| event.source_seq)
-            .unwrap_or(0);
-        source_seq = source_seq.saturating_add(1);
+        // 与 Binance 对账链共用同一个身份构造点：seq 从日志尾端接上、correlation 带本轮时间戳。
+        let (mut source_seq, balance_correlation) =
+            venue_balance_fact_identity(&pipeline, &worker.id, received_ts);
         pipeline
             .ingest(RuntimeEventEnvelope::venue(
                 RuntimeExternalEvent::AccountBalanceSnapshot {
@@ -58,7 +54,7 @@ pub(crate) fn run_ccxt_reconcile_worker(
                 received_ts,
                 received_ts,
                 source_seq,
-                format!("{}:balances:{}", worker.id, received_ts),
+                balance_correlation,
             ))
             .map_err(|error| format!("CCXT 余额事实归约失败: {error:?}"))?;
 

@@ -65,10 +65,11 @@ pub(crate) fn run_multi_builtin_backtest(
     };
     // 与单标的链同一条读法：多腿入口也收 `--config`（风控、撮合、成本都读它），
     // 信号参数却不能只在这条链上失效（V11 Q64）。
-    let signal_source = apply_configured_builtin_signal(&mut strategy_config, runtime_config_path)?;
+    let signal_provenance =
+        apply_configured_builtin_signal(&mut strategy_config, runtime_config_path)?;
     println!(
         "[Multi · Signal] {} quantity={}",
-        builtin_signal_note(&strategy_config, signal_source),
+        builtin_signal_note(&strategy_config, &signal_provenance),
         quantity
     );
     let mut native = BuiltinStrategy::new(strategy_config)?;
@@ -378,11 +379,8 @@ pub(crate) fn run_multi_builtin_backtest(
         pending_reconcile.len(),
         naked_filled_qty_raw
     );
-    let cost_bps = if totals.1 > 0 {
-        i64::try_from(net_cost_raw.saturating_mul(10_000) / totals.1).unwrap_or(i64::MAX)
-    } else {
-        0
-    };
+    // 换手为 0 时"单位成本"没有分母：那是算不出，不是成本为零（V12 R1）。
+    let cost_bps = multi_leg_cost_bps(net_cost_raw, totals.1)?;
     println!(
         "[Multi-leg · Attribution] strategy={} groups={} turnover_raw={} fees_raw={} funding_raw={} filled_qty_raw={} margin_peak_raw={} net_cost_raw={} cost_bps={} residual_filled_qty_raw={} residual_fees_raw={} funding_bps={} margin_model={} funding_model={}",
         strategy_id,
@@ -393,7 +391,7 @@ pub(crate) fn run_multi_builtin_backtest(
         totals.3,
         totals.4,
         net_cost_raw,
-        cost_bps,
+        render_number(cost_bps.map(i128::from)),
         residual_filled_qty_raw,
         residual_fees_raw,
         funding_bps,
@@ -474,7 +472,7 @@ pub(crate) fn run_multi_builtin_backtest(
                 "fees=per-leg FIFO allocated to signal ts buckets",
                 "margin=spec.initial_margin(|realized fills standing|, bar close, leverage=1), only on legs whose market spec declares a derivative product",
                 "funding=realized-fill notional*funding_bps*holding_ms/(8h*10000), long pays positive, only on derivative legs; a leg without market spec is booked as spot multiplier 1 and is refused when funding_bps!=0",
-                "cost_bps=net_cost*10000/turnover",
+                "cost_bps=net_cost*10000/turnover, null when turnover_raw=0 (no denominator: undefined, NOT zero cost)",
                 "groups=paired by ts only when BOTH legs have realized fills; planned-but-unfilled qty is reported per leg, never paired",
                 "pending_reconcile=a leg filled while its counterpart did not; no automatic close is executed",
                 "fees=one explicit cost binding shared by both legs; market spec carries no maker/taker field, so per-venue fee tiers are not applied",

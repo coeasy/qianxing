@@ -104,13 +104,13 @@ pub(crate) fn reject_ashare_rules_config(
     let Some(path) = config_path else {
         return Ok(());
     };
-    let strategy = &read_runtime_config(path)?.strategy;
-    if strategy.ashare_rules_path.is_some()
-        || strategy.ashare_actions_path.is_some()
-        || strategy.ashare_calendar_path.is_some()
-    {
+    if let Some(label) = first_strategy_block_declaring(path, |strategy| {
+        strategy.ashare_rules_path.is_some()
+            || strategy.ashare_actions_path.is_some()
+            || strategy.ashare_calendar_path.is_some()
+    })? {
         return Err(format!(
-            "{entry} 不接受 strategy.ashare_rules_path（含 ashare_actions_path / ashare_calendar_path）：\
+            "{entry} 不接受 {label}.ashare_rules_path（含 ashare_actions_path / ashare_calendar_path）：\
              {reason}。需要 A 股规则口径请改用 strategy backtest 或 backtest builtin"
         ));
     }

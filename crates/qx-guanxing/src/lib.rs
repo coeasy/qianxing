@@ -214,14 +214,6 @@ impl FinancialView {
     }
 }
 
-/// 内存版 DataCatalog：为本地回测/纸面联调提供确定性的主源目录。
-#[derive(Default)]
-pub struct DataCatalog {
-    bars: BTreeMap<InstrumentId, Vec<Bar>>,
-    quotes: BTreeMap<InstrumentId, Vec<QuoteTick>>,
-    raw: Vec<RawRecord>,
-}
-
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct DataViewMetadata {
     pub schema_version: u32,
@@ -262,34 +254,6 @@ impl DataViewMetadata {
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub struct ParameterSet(pub BTreeMap<String, i128>);
 
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct ParameterGrid {
-    pub dimensions: BTreeMap<String, Vec<i128>>,
-}
-
-impl ParameterGrid {
-    pub fn add(mut self, name: impl Into<String>, values: Vec<i128>) -> Self {
-        self.dimensions.insert(name.into(), values);
-        self
-    }
-
-    pub fn expand(&self) -> Vec<ParameterSet> {
-        let mut out = vec![ParameterSet::default()];
-        for (name, values) in &self.dimensions {
-            let mut next = Vec::new();
-            for base in &out {
-                for value in values {
-                    let mut p = base.0.clone();
-                    p.insert(name.clone(), *value);
-                    next.push(ParameterSet(p));
-                }
-            }
-            out = next;
-        }
-        out
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct CandidateConfig {
     pub strategy_version: String,
@@ -301,86 +265,6 @@ pub struct CandidateConfig {
     pub constraints: BTreeMap<String, i128>,
     pub execution_model: String,
     pub risk_model: String,
-}
-
-pub struct VectorScanner;
-
-impl VectorScanner {
-    pub fn scan(
-        grid: &ParameterGrid,
-        strategy_version: &str,
-        universe_version: &str,
-        feature_version: &str,
-        data_fingerprint: &str,
-    ) -> Vec<CandidateConfig> {
-        grid.expand()
-            .into_iter()
-            .map(|parameters| CandidateConfig {
-                strategy_version: strategy_version.into(),
-                universe_version: universe_version.into(),
-                feature_version: feature_version.into(),
-                parameters,
-                data_fingerprint: data_fingerprint.into(),
-                intended_exposure: BTreeMap::new(),
-                constraints: BTreeMap::new(),
-                execution_model: "vector-only@v1".into(),
-                risk_model: "unbound@v1".into(),
-            })
-            .collect()
-    }
-}
-
-impl DataCatalog {
-    pub fn new() -> Self {
-        Self::default()
-    }
-    pub fn append_raw(&mut self, record: RawRecord) {
-        self.raw.push(record);
-    }
-
-    pub fn put_bars(
-        &mut self,
-        instrument: InstrumentId,
-        bars: Vec<Bar>,
-    ) -> Result<(), QualityReport> {
-        let report = QualityGate::check(&bars);
-        if matches!(report.verdict(), Verdict::Fail | Verdict::Quarantine) {
-            return Err(report);
-        }
-        self.bars.insert(instrument, bars);
-        Ok(())
-    }
-
-    pub fn put_quotes(
-        &mut self,
-        instrument: InstrumentId,
-        quotes: Vec<QuoteTick>,
-    ) -> Result<(), QualityReport> {
-        let report = QualityGate::check_quotes(&quotes);
-        if matches!(report.verdict(), Verdict::Fail | Verdict::Quarantine) {
-            return Err(report);
-        }
-        self.quotes.insert(instrument, quotes);
-        Ok(())
-    }
-
-    pub fn bars_as_of(&self, instrument: &InstrumentId, ts: u64) -> &[Bar] {
-        self.bars
-            .get(instrument)
-            .map(|v| &v[..v.partition_point(|b| b.ts <= ts)])
-            .unwrap_or(&[])
-    }
-
-    pub fn quotes_as_of(&self, instrument: &InstrumentId, ts: u64) -> &[QuoteTick] {
-        self.quotes
-            .get(instrument)
-            .map(|v| &v[..v.partition_point(|q| q.ts <= ts)])
-            .unwrap_or(&[])
-    }
-
-    pub fn raw_records(&self) -> &[RawRecord] {
-        &self.raw
-    }
 }
 
 /// 数据视图：唯一被策略允许访问的行情入口。
@@ -475,8 +359,6 @@ pub enum QualityIssue {
     ZeroVolume { at: usize },
     DuplicateTimestamp { at: usize },
     NegativePrice { at: usize },
-    CrossedBook { at: usize },
-    QuoteNonMonotonic { at: usize },
     InvalidMetadata,
     MetadataHashMismatch,
 }
@@ -510,8 +392,6 @@ impl QualityReport {
                     | QualityIssue::NegativePrice { .. }
                     | QualityIssue::HighLessThanLow { .. }
                     | QualityIssue::CloseOutOfRange { .. }
-                    | QualityIssue::CrossedBook { .. }
-                    | QualityIssue::QuoteNonMonotonic { .. }
             )
         });
         if fatal {
@@ -564,25 +444,6 @@ impl QualityGate {
         }
         QualityReport { issues }
     }
-
-    pub fn check_quotes(quotes: &[QuoteTick]) -> QualityReport {
-        let mut issues = Vec::new();
-        if quotes.is_empty() {
-            issues.push(QualityIssue::EmptyInput);
-        }
-        for (i, q) in quotes.iter().enumerate() {
-            if q.is_crossed() {
-                issues.push(QualityIssue::CrossedBook { at: i });
-            }
-            if q.bid.raw() < 0 || q.ask.raw() < 0 || q.bid_qty.raw() < 0 || q.ask_qty.raw() < 0 {
-                issues.push(QualityIssue::NegativePrice { at: i });
-            }
-            if i > 0 && q.ts <= quotes[i - 1].ts {
-                issues.push(QualityIssue::QuoteNonMonotonic { at: i });
-            }
-        }
-        QualityReport { issues }
-    }
 }
 
 fn bars_digest(source: &DataSourceId, bars: &[Bar]) -> u64 {
@@ -598,17 +459,6 @@ fn bars_digest(source: &DataSourceId, bars: &[Bar]) -> u64 {
         hash.write_i128(bar.volume);
     }
     hash.finish()
-}
-
-/// 为定点数值提供的展示辅助（避免策略层直接依赖浮点）。
-pub trait NumericExt {
-    fn to_display(&self) -> f64;
-}
-
-impl NumericExt for i128 {
-    fn to_display(&self) -> f64 {
-        (*self as f64) / 1e9
-    }
 }
 
 #[cfg(test)]
@@ -659,7 +509,6 @@ mod tests {
     #[test]
     fn empty_inputs_are_rejected_by_quality_gate() {
         assert_eq!(QualityGate::check(&[]).verdict(), Verdict::Fail);
-        assert_eq!(QualityGate::check_quotes(&[]).verdict(), Verdict::Fail);
         assert!(DataView::try_new(Vec::new(), DataSourceId::new("test")).is_err());
     }
 
@@ -685,61 +534,6 @@ mod tests {
         b[1].volume = 0;
         let r = QualityGate::check(&b);
         assert_eq!(r.verdict(), Verdict::Warn);
-    }
-
-    #[test]
-    fn catalog_is_point_in_time() {
-        let instrument = qx_core::InstrumentId::parse("T.V").unwrap();
-        let mut c = DataCatalog::new();
-        c.put_quotes(
-            instrument.clone(),
-            vec![
-                QuoteTick::new(
-                    10,
-                    Price::from_i64(99),
-                    Quantity::from_i64(1),
-                    Price::from_i64(101),
-                    Quantity::from_i64(2),
-                    1,
-                ),
-                QuoteTick::new(
-                    20,
-                    Price::from_i64(100),
-                    Quantity::from_i64(1),
-                    Price::from_i64(102),
-                    Quantity::from_i64(2),
-                    2,
-                ),
-            ],
-        )
-        .unwrap();
-        assert_eq!(c.quotes_as_of(&instrument, 10).len(), 1);
-        assert_eq!(c.quotes_as_of(&instrument, 19).len(), 1);
-        assert_eq!(c.quotes_as_of(&instrument, 20).len(), 2);
-    }
-
-    #[test]
-    fn crossed_quote_is_fatal() {
-        let q = QuoteTick::new(
-            1,
-            Price::from_i64(101),
-            Quantity::from_i64(1),
-            Price::from_i64(100),
-            Quantity::from_i64(1),
-            1,
-        );
-        assert_eq!(QualityGate::check_quotes(&[q]).verdict(), Verdict::Fail);
-    }
-
-    #[test]
-    fn vector_scan_is_deterministic_and_keeps_provenance() {
-        let grid = ParameterGrid::default()
-            .add("fast", vec![5, 10])
-            .add("slow", vec![20, 30]);
-        let candidates = VectorScanner::scan(&grid, "s-v1", "u-v1", "f-v1", "data-hash");
-        assert_eq!(candidates.len(), 4);
-        assert_eq!(candidates[0].parameters.0.get("fast"), Some(&5));
-        assert_eq!(candidates[0].data_fingerprint, "data-hash");
     }
 
     #[test]

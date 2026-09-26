@@ -360,19 +360,6 @@ impl ControlPlane {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct SubscriptionCursor {
-    pub stream: String,
-    pub last_seq: u64,
-    pub state_hash: u64,
-}
-
-impl SubscriptionCursor {
-    pub fn requires_snapshot(&self, next_seq: u64) -> bool {
-        next_seq != self.last_seq.saturating_add(1)
-    }
-}
-
 fn has_permission(actual: Permission, required: Permission) -> bool {
     let level = |permission| match permission {
         Permission::ReadOnly => 0,
@@ -440,17 +427,6 @@ mod tests {
         assert!(plane
             .submit_as(command(Permission::Trading), Permission::Admin, 11)
             .is_ok());
-    }
-
-    #[test]
-    fn cursor_detects_lost_events() {
-        let cursor = SubscriptionCursor {
-            stream: "orders".into(),
-            last_seq: 3,
-            state_hash: 42,
-        };
-        assert!(!cursor.requires_snapshot(4));
-        assert!(cursor.requires_snapshot(6));
     }
 
     #[test]

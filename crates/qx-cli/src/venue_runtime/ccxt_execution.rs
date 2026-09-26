@@ -52,6 +52,8 @@ pub(crate) fn run_ccxt_execution_worker(
     )?;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
+        // 命令队列租约/入队时间在秒域，控制面审计戳保持毫秒（见 `lease_clock`）。
+        let lease_now = lease_clock(now);
         let control = control_store.load()?;
         let venue_id = worker.venue_id.as_deref().unwrap_or("ccxt");
         if !dedicated_spread_recovery
@@ -96,11 +98,11 @@ pub(crate) fn run_ccxt_execution_worker(
                 && ccxt_submit_matches_worker(command, &worker)
         }) {
             queue
-                .enqueue_command(command.clone(), now)
+                .enqueue_command(command.clone(), lease_now)
                 .map_err(|error| format!("补入 CCXT SubmitOrder 队列失败: {error:?}"))?;
         }
         for queued in queue
-            .available_commands(now)
+            .available_commands(lease_now)
             .map_err(|error| format!("读取 CCXT SubmitOrder 队列失败: {error:?}"))?
         {
             if context.should_stop() {
@@ -110,14 +112,14 @@ pub(crate) fn run_ccxt_execution_worker(
             if !ccxt_submit_matches_worker(&command, &worker) {
                 continue;
             }
-            let lease = match queue.claim_command(command.command_id, &owner, now, 30) {
+            let lease = match queue.claim_command(command.command_id, &owner, lease_now, 30) {
                 Ok(lease) => lease,
                 Err(StorageError::LeaseHeld { .. }) => continue,
                 Err(error) => return Err(format!("领取 CCXT SubmitOrder 租约失败: {error:?}")),
             };
             if command_is_final(&control, command.command_id) {
                 queue
-                    .ack_command_at(command.command_id, &owner, lease.fencing_token, now)
+                    .ack_command_at(command.command_id, &owner, lease.fencing_token, lease_now)
                     .map_err(|error| format!("清理已终态 CCXT SubmitOrder 失败: {error:?}"))?;
                 continue;
             }
@@ -235,7 +237,7 @@ pub(crate) fn run_ccxt_execution_worker(
             let record =
                 record_result.map_err(|error| format!("CCXT SubmitOrder 执行失败: {error:?}"))?;
             queue
-                .ack_command_at(command.command_id, &owner, lease.fencing_token, now)
+                .ack_command_at(command.command_id, &owner, lease.fencing_token, lease_now)
                 .map_err(|error| format!("确认 CCXT SubmitOrder 失败: {error:?}"))?;
             context.mark(
                 if record.status == qx_control::CommandStatus::Executed {
@@ -301,6 +303,7 @@ pub(crate) fn run_ccxt_user_stream_worker(
         .last()
         .map(|event| event.source_seq)
         .unwrap_or(0);
+    let mut reconnect_budget = CcxtStreamReconnectBudget::default();
     loop {
         if context.should_stop() {
             break;
@@ -320,12 +323,19 @@ pub(crate) fn run_ccxt_user_stream_worker(
                 if detail.contains("[unsupported]") || detail.contains("[authentication]") {
                     return Err(format!("CCXT Pro 用户流不可用: {detail}"));
                 }
+                // 非致命故障也要有终点：连续失败到上限就具名报错，不再无限重启子进程。
+                let backoff = reconnect_budget
+                    .note_failure()
+                    .map_err(|gave_up| format!("{gave_up}；最后一次故障: {detail}"))?;
                 context.mark(
                     qx_runtime::ServiceStatus::Degraded,
-                    format!("ccxt pro user stream reconnecting: {detail}"),
+                    format!(
+                        "ccxt pro user stream reconnecting failures={}: {detail}",
+                        reconnect_budget.consecutive_failures()
+                    ),
                     Some(received_ts),
                 )?;
-                thread::sleep(Duration::from_millis(500));
+                thread::sleep(backoff);
                 let replacement = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
                     .map_err(|spawn_error| {
                         format!("重连公共 CCXT Pro Worker 失败: {spawn_error}")
@@ -334,6 +344,8 @@ pub(crate) fn run_ccxt_user_stream_worker(
                 continue;
             }
         };
+        // 子进程答上了话：连续失败预算清零，长期健康的流不会累积历史故障。
+        reconnect_budget.note_success();
         let event = result
             .get("event")
             .ok_or_else(|| "CCXT Pro watch_orders 响应缺少 event".to_string())?;

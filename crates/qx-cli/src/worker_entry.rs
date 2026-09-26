@@ -22,7 +22,7 @@ const fn worker_role_label(role: WorkerRole) -> &'static str {
 }
 
 /// 一个 `*-worker` 命令入口的登记表。
-struct VenueEntry {
+pub(crate) struct VenueEntry {
     /// 命令入口展示名。
     name: &'static str,
     /// Venue 绑定判定。
@@ -32,7 +32,7 @@ struct VenueEntry {
 }
 
 impl VenueEntry {
-    const CCXT: VenueEntry = VenueEntry {
+    pub(crate) const CCXT: VenueEntry = VenueEntry {
         name: "CCXT",
         is_bound: |worker| {
             worker
@@ -42,7 +42,7 @@ impl VenueEntry {
         },
         venue_hint: "必须绑定非 paper 的 CCXT venue",
     };
-    const BINANCE: VenueEntry = VenueEntry {
+    pub(crate) const BINANCE: VenueEntry = VenueEntry {
         name: "Binance",
         is_bound: |worker| {
             worker
@@ -86,6 +86,52 @@ fn venue_worker(
     }
     Ok(worker)
 }
+
+/// `reconcile` 省略 worker-id 时该起哪一个 reconciler：按 **role + Venue 绑定**解析
+/// （V11 S12，与 S1 同一个判据）。字面量 `reconciler-main` 在两个方向上都会撒谎——
+/// 名字合法改动的拓扑上报"找不到 worker: reconciler-main"，把"没解析"说成"不存在"；
+/// 而恰好有个叫这名字、角色却是 execution 的 worker 时会真的跑一次下单执行。
+/// 零个或多个候选都必须报错并让人点名，不能挑第一个。
+pub(crate) fn configured_reconcile_worker_id(
+    config: &RuntimeConfig,
+    entry: &VenueEntry,
+) -> Result<String, String> {
+    let candidates = config
+        .workers
+        .iter()
+        .filter(|worker| {
+            worker.enabled && worker.role == WorkerRole::Reconciler && (entry.is_bound)(worker)
+        })
+        .map(|worker| worker.id.clone())
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [only] => Ok(only.clone()),
+        [] => Err(format!(
+            "运行时配置没有可解析的 reconciler worker（要求：启用且{}），请用 \
+             reconcile <runtime.json> <worker-id> 显式点名",
+            entry.venue_hint
+        )),
+        many => Err(format!(
+            "运行时配置有 {} 个候选 reconciler worker（{}），请用 \
+             reconcile <runtime.json> <worker-id> 显式点名",
+            many.len(),
+            many.join(", ")
+        )),
+    }
+}
+
+/// `reconcile` 入口：点名时与 `binance-worker` 走完全相同的四段校验，省略时按上表解析。
+pub(crate) fn run_binance_reconcile_once(
+    path: &Path,
+    worker_id: Option<&str>,
+) -> Result<(), String> {
+    let worker_id = match worker_id {
+        Some(worker_id) => worker_id.to_string(),
+        None => configured_reconcile_worker_id(&read_runtime_config(path)?, &VenueEntry::BINANCE)?,
+    };
+    run_binance_worker(path, &worker_id, true)
+}
+
 pub(crate) fn run_binance_spread_recovery_worker(
     context: qx_runtime::WorkerContext,
     worker: WorkerConfig,
@@ -209,9 +255,7 @@ pub(crate) fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Re
         ),
         _ => Err("unsupported Binance worker role".into()),
     })?;
-    handle
-        .join()
-        .map_err(|_| format!("worker {worker_id} panic"))?
+    join_worker_handle(&supervisor, handle, "Binance", worker_id)
 }
 
 #[cfg(test)]
@@ -309,9 +353,7 @@ pub(crate) fn run_ccxt_worker(
         ),
         _ => Err("unsupported CCXT worker role".into()),
     })?;
-    handle
-        .join()
-        .map_err(|_| format!("CCXT worker {worker_id} panic"))?
+    join_worker_handle(&supervisor, handle, "CCXT", worker_id)
 }
 
 pub(crate) fn run_ccxt_spread_recovery_worker(

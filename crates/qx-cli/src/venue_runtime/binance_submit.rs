@@ -227,6 +227,8 @@ pub(crate) fn run_binance_execution_worker(
     )?;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
+        // 命令队列租约/入队时间在秒域，控制面审计戳保持毫秒（见 `lease_clock`）。
+        let lease_now = lease_clock(now);
         let control = control_store.load()?;
         let venue_id = worker.venue_id.as_deref().unwrap_or("BINANCE");
         if !dedicated_spread_recovery
@@ -273,11 +275,11 @@ pub(crate) fn run_binance_execution_worker(
                 && binance_submit_matches_worker(command, &worker)
         }) {
             queue
-                .enqueue_command(command.clone(), now)
+                .enqueue_command(command.clone(), lease_now)
                 .map_err(|error| format!("补入 SubmitOrder 队列失败: {error:?}"))?;
         }
         for queued in queue
-            .available_commands(now)
+            .available_commands(lease_now)
             .map_err(|error| format!("读取 SubmitOrder 队列失败: {error:?}"))?
         {
             if context.should_stop() {
@@ -287,14 +289,14 @@ pub(crate) fn run_binance_execution_worker(
             if !binance_submit_matches_worker(&command, &worker) {
                 continue;
             }
-            let lease = match queue.claim_command(command.command_id, &owner, now, 30) {
+            let lease = match queue.claim_command(command.command_id, &owner, lease_now, 30) {
                 Ok(lease) => lease,
                 Err(qx_storage::StorageError::LeaseHeld { .. }) => continue,
                 Err(error) => return Err(format!("领取 SubmitOrder 租约失败: {error:?}")),
             };
             if command_is_final(&control, command.command_id) {
                 queue
-                    .ack_command_at(command.command_id, &owner, lease.fencing_token, now)
+                    .ack_command_at(command.command_id, &owner, lease.fencing_token, lease_now)
                     .map_err(|error| format!("清理已终态 SubmitOrder 失败: {error:?}"))?;
                 continue;
             }
@@ -374,7 +376,7 @@ pub(crate) fn run_binance_execution_worker(
                 .map_err(|error| format!("回写 SubmitOrder 终态失败: {error:?}"))?;
             let record = record_result.map_err(|error| format!("执行控制命令失败: {error:?}"))?;
             queue
-                .ack_command_at(command.command_id, &owner, lease.fencing_token, now)
+                .ack_command_at(command.command_id, &owner, lease.fencing_token, lease_now)
                 .map_err(|error| format!("确认 SubmitOrder 队列失败: {error:?}"))?;
             context.mark(
                 if record.status == qx_control::CommandStatus::Executed {

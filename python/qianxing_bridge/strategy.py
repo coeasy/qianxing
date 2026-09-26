@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, Mapping
 
 
@@ -20,6 +20,20 @@ def _require_text(value: Any, name: str) -> str:
     if not text.strip():
         raise ValueError(f"{name} must be non-empty")
     return text
+
+
+def _reject_unknown_keys(value: Mapping[str, Any], model: type, name: str) -> None:
+    """拒绝契约之外的键，而不是当成没写。
+
+    与 Rust 侧 `StrategyContractOutput/StrategyContractIntent` 的 `deny_unknown_fields`
+    同一口径：策略作者把 `post_only` 拼成 `post_onli` 时，静默丢掉等于那一腿按运行时
+    默认档位成交，而作者以为自己在它上面开了 post-only。允许集取自 dataclass 字段，
+    所以 SDK 加字段时这里不会变成第二份需要手工同步的清单。
+    """
+    allowed = {item.name for item in fields(model)}
+    unknown = sorted(str(key) for key in value if key not in allowed)
+    if unknown:
+        raise ValueError(f"{name} contains unknown key(s): {', '.join(unknown)}")
 
 
 @dataclass(frozen=True)
@@ -182,6 +196,9 @@ class StrategyIntent:
     reduce_only: bool = False
     post_only: bool = False
     position_side: str | None = None
+    margin_mode: str | None = None
+    position_mode: str | None = None
+    leverage: int | None = None
 
     def validate(self) -> None:
         if self.intent_id <= 0:
@@ -199,6 +216,21 @@ class StrategyIntent:
             "short",
         }:
             raise ValueError("intent.position_side must be net, long or short")
+        # 三个衍生品档位与 Rust StrategyContractIntent::validate 同口径：空值表示沿用运行时
+        # 主策略配置，非空值必须是运行时认识的规范小写形式，leverage 不允许 0（V12 §16 第三遍）。
+        if self.margin_mode is not None and self.margin_mode.lower() not in {
+            "cash",
+            "cross",
+            "isolated",
+        }:
+            raise ValueError("intent.margin_mode must be cash, cross or isolated")
+        if self.position_mode is not None and self.position_mode.lower() not in {
+            "one_way",
+            "hedge",
+        }:
+            raise ValueError("intent.position_mode must be one_way or hedge")
+        if self.leverage is not None and self.leverage <= 0:
+            raise ValueError("intent.leverage must be positive")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -211,10 +243,14 @@ class StrategyIntent:
             "reduce_only": self.reduce_only,
             "post_only": self.post_only,
             "position_side": None if self.position_side is None else self.position_side.lower(),
+            "margin_mode": None if self.margin_mode is None else self.margin_mode.lower(),
+            "position_mode": None if self.position_mode is None else self.position_mode.lower(),
+            "leverage": self.leverage,
         }
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "StrategyIntent":
+        _reject_unknown_keys(value, cls, "strategy intent")
         result = cls(
             intent_id=int(value["intent_id"]),
             instrument=str(value["instrument"]),
@@ -228,6 +264,11 @@ class StrategyIntent:
             position_side=(
                 None if value.get("position_side") is None else str(value["position_side"])
             ),
+            margin_mode=None if value.get("margin_mode") is None else str(value["margin_mode"]),
+            position_mode=(
+                None if value.get("position_mode") is None else str(value["position_mode"])
+            ),
+            leverage=None if value.get("leverage") is None else int(value["leverage"]),
         )
         result.validate()
         return result
@@ -285,6 +326,7 @@ class StrategyOutput:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any], request: StrategyInput) -> "StrategyOutput":
+        _reject_unknown_keys(value, cls, "strategy output")
         result = cls(
             schema_version=int(value.get("schema_version", 0)),
             request_id=str(value["request_id"]),

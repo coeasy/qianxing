@@ -109,6 +109,42 @@ fn input_provenance_json(input: &BacktestInputProvenance) -> serde_json::Value {
     })
 }
 
+/// 复核摘要旁边那本 `*.run.json`：摘要写下的 `run_manifest` 指针必须指得到一份读得开、
+/// 且与摘要那两格哈希同值的运行清单（V12 R4-i）。
+///
+/// 这一步之前没有任何生产读者：清单写着同一轮的身份，报告却只念摘要的自述，于是产物被拆开
+/// 换掉一半（摘要留着、清单换成别轮的）也照样出报告。指针缺失、文件读不到、哈希对不上
+/// 都判失败——它们都不是"没声明"，而是"两份产物在互相打脸"。
+fn verify_declared_run_manifest(summary: &serde_json::Value) -> Result<(), String> {
+    let pointer = summary
+        .get("run_manifest")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("回测摘要没写 run_manifest 指针，产物身份没有第二份证据可对")?;
+    let payload = std::fs::read_to_string(pointer)
+        .map_err(|error| format!("读取回测 RunManifest 失败 {pointer}: {error}"))?;
+    let manifest = qx_core::RunManifest::from_json(&payload)
+        .map_err(|error| format!("回测 RunManifest 无效 {pointer}: {error}"))?;
+    let declared = |name: &str| -> Result<String, String> {
+        summary
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .map(|value| value.to_string())
+            .ok_or_else(|| format!("回测摘要的 {name} 缺失或不是字符串，无法与 RunManifest 对账"))
+    };
+    for (field, manifest_value) in [
+        ("result_hash", manifest.result_hash.as_str()),
+        ("input_data_hash", manifest.input_event_hash.as_str()),
+    ] {
+        let summary_value = declared(field)?;
+        if summary_value != manifest_value {
+            return Err(format!(
+                "回测摘要与自己的 RunManifest 不一致: {field} 摘要={summary_value} 清单={manifest_value}（{pointer}）"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// 复核一份回测摘要声明的输入：按它写的路径重读同一份文件、走**同一个读点**重算指纹，再逐字段
 /// 比对。声明与实况不符就报错，这就是 Q1b 要的那条"真会失败"的检查。
 ///
@@ -168,6 +204,9 @@ pub(crate) fn recompute_declared_backtest_input(
             ));
         }
     }
+    // 输入身份对上之后，再跟同一轮的运行清单对账：两件事共用这一个复核入口，报告出口不需要
+    // 知道清单的存在，也不会出现"只核了输入、没核清单"的半套结论。
+    verify_declared_run_manifest(summary)?;
     Ok(Some(recomputed))
 }
 
@@ -228,6 +267,12 @@ pub(crate) struct BacktestArtifacts<'a> {
     pub(crate) rejections: &'a [(String, usize)],
     /// 这次跑的到底是哪一份输入：路径 + 数据集身份 + 内容指纹（V11 Q66）。
     pub(crate) input: BacktestInputProvenance,
+    /// 这一轮并进策略配置的那套信号参数与下单数量（V12 R4-j）：那行 `[X · Signal] source=…
+    /// fast_window=…` 此前只活在 stdout，摘要读出来分不出 fast=5 与 fast=20。跨语言策略链的口径由策略自己声明、
+    /// 内置窗口根本没参与，所以它是 `None`——与 `fill_model` 同一条理由：没有的东西不占键。
+    /// 注意这一格说的是**并进配置的口径**：各 kind 的信号读哪几项并不一致（MACD 的 12/26/9
+    /// 是 `qx-strategy` 的内核常数），所以它不担保每一项都改变了结果。
+    pub(crate) signal: Option<BacktestSignalParams>,
 }
 
 /// 从引擎事件日志归并拒单原因与次数；三条回测链共用这一份口径。
@@ -348,6 +393,26 @@ pub(crate) fn persist_backtest_artifacts(
         // 只在真的有 `FillModel` 的链上写这个键：深度链的撮合口径在 `model_descriptors`
         // 的四参数描述子里，硬塞一个 "fill_model": null 等于给摘要添一个没人能填的格子。
         summary["fill_model"] = serde_json::json!({ "name": name, "source": source });
+    }
+    if let Some(signal) = input.signal.as_ref() {
+        // 生效的信号口径此前只活在 stdout 的 `[X · Signal]` 那一行：同一份摘要既可能是
+        // fast=5 也可能是 fast=20 跑出来的，事后读产物分不出这两者（V12 R4-j）。
+        // 跨语言策略链的口径由策略自己声明，这四项没有落点，所以它不落键——与 `fill_model`
+        // 同一条理由。i128 按字符串落盘，与 `account/initial_cash_raw` 同一口径。
+        //
+        // `knobs` / `declared_unused` 说的是"这四项里哪几项真的进了这个 kind 的信号"
+        // （V12 #102）：只有数值没有生效面，摘要仍会让读者以为 `fast_window=5` 选了东西。
+        summary["signal"] = serde_json::json!({
+            "kind": signal.kind,
+            "source": signal.source,
+            "knobs": signal.knobs,
+            "declared_unused": signal.declared_unused,
+            "fast_window": signal.fast_window,
+            "slow_window": signal.slow_window,
+            "period": signal.period,
+            "threshold_bps": signal.threshold_bps.to_string(),
+            "quantity_raw": signal.quantity_raw.to_string(),
+        });
     }
     let summary_payload = serde_json::to_string_pretty(&summary)
         .map_err(|error| format!("编码回测摘要失败: {error}"))?;

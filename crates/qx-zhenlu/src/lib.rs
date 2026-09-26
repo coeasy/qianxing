@@ -60,8 +60,10 @@ impl RiskContext {
 
     /// 与 [`Self::evaluate_order`] 同一份判定，但叠加配置化静态规则集。
     ///
-    /// 三条执行路径（回测、Paper、实盘）都应经由本方法或
-    /// `qx_risk::RiskEngine::evaluate_order_with_rules`，不要再各自解释规则。
+    /// 规则的解释实现只有一份（`qx_risk::RuleSet`），三条路径按各自缺的输入选不同方法（逐个 grep
+    /// 生产调用点确认，旧注释说"三条路都经由本方法"是错的）：意图闸门走 `RiskGate::check*` →
+    /// `evaluate_rules_only`（`runtime_wiring.rs` 装配），提交端口走 `evaluate_order` → `account_limits_only`，
+    /// 本方法这条组合口径只有 `risk_parity.rs` 拿它做三入口一致性取证。
     pub fn evaluate_order_with_rules(
         &self,
         order: &Order,
@@ -1228,7 +1230,10 @@ impl PaperVenue {
     }
 
     /// 当前费用模型描述子，用于运行清单与配置校验的可观测性。
-    pub fn fee_descriptor(&self) -> String {
+    /// 冻结的执行平面成本口径：只有本文件的 golden 用例读它，生产侧一律走 `fee_model.descriptor()`。
+    /// 把它当公共面会让"descriptor 变了就是指纹变了"看起来像在保护一条并不存在的外部契约（V12 §16）。
+    #[cfg(test)]
+    pub(crate) fn fee_descriptor(&self) -> String {
         self.fee_model.descriptor()
     }
 
@@ -1263,14 +1268,6 @@ impl PaperVenue {
         self.connected = true;
         self.state = ConnectorState::Snapshotting;
         self.reconnects += 1;
-    }
-
-    pub fn complete_reconcile(&mut self) -> QxResult<()> {
-        if !self.connected || !matches!(self.state, ConnectorState::Snapshotting) {
-            return Err(QxError::VenueState("当前不在重连对账阶段".into()));
-        }
-        self.state = ConnectorState::Live;
-        Ok(())
     }
 
     pub fn reconcile_snapshot(
@@ -1992,7 +1989,10 @@ mod tests {
         })
         .unwrap();
         assert_eq!(oms.get(1).unwrap().status, OrderStatus::Filled);
-        assert!(oms.open_orders().is_empty());
+        assert!(oms
+            .all_orders()
+            .iter()
+            .all(|order| order.status.is_terminal()));
     }
 
     #[test]

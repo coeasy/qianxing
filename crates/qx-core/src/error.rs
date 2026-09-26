@@ -26,16 +26,8 @@ pub enum QxError {
 }
 
 impl QxError {
-    /// 是否允许自动重试。
-    pub fn retryable(&self) -> bool {
-        matches!(self, QxError::Transient(_))
-    }
-
-    /// 是否需要对账。
-    pub fn needs_reconcile(&self) -> bool {
-        matches!(self, QxError::Ambiguous(_) | QxError::ReconcileRequired(_))
-    }
-
+    /// 错误的机器可读分类。是否重试由 [`crate::retry::RetryPolicy`] 按预算裁决，
+    /// 不在此处再给一个布尔口径。
     pub fn code(&self) -> &'static str {
         match self {
             QxError::Transient(_) => "TRANSIENT",
@@ -74,9 +66,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_transient_is_retryable() {
-        assert!(QxError::Transient("t".into()).retryable());
-        assert!(!QxError::Ambiguous("t".into()).retryable());
-        assert!(QxError::Ambiguous("t".into()).needs_reconcile());
+    fn each_variant_has_one_machine_readable_code() {
+        // 「能不能重试」由 [`crate::retry::RetryPolicy`] 按预算裁决，错误类型只对外
+        // 暴露这一个分类字典；重复的布尔口径会在调用方各自漂移。
+        assert_eq!(QxError::Transient("t".into()).code(), "TRANSIENT");
+        assert_eq!(QxError::Ambiguous("t".into()).code(), "AMBIGUOUS");
+        assert_eq!(
+            QxError::ReconcileRequired("r".into()).code(),
+            "RECONCILE_REQUIRED"
+        );
+        assert_eq!(QxError::Invariant("i".into()).code(), "INVARIANT");
+        assert_eq!(
+            QxError::Ambiguous("timeout".into()).to_string(),
+            "[AMBIGUOUS] timeout"
+        );
     }
 }

@@ -55,7 +55,7 @@ pub(crate) fn run_single_strategy_backtest(
         .account_id
         .clone()
         .unwrap_or_else(|| "backtest".into());
-    let account_base = backtest_initial_cash(config.strategy.initial_cash_raw)?;
+    let account_base = account_base_from_config(config)?;
     let initial_cash = account_base.cash;
     // 门禁只构造一次：回测判定与摘要里的 rule_set_version 必须来自同一份配置，
     // 且与 Paper/Live worker 走同一个 `strategy_risk_gate` 入口。
@@ -102,6 +102,9 @@ pub(crate) fn run_single_strategy_backtest(
         (None, _) => costs.source(),
     };
     let backtest_config = assembly.into_config();
+    // 摘要要回答"这一轮跑的是哪套窗口"，而那四项只有内置链参与（V12 R4-j）。跨语言策略链的
+    // 口径由策略自己声明，内置窗口根本没上场，所以它留 None——摘要里不落这个键。
+    let mut builtin_signal = None;
     let report = if config.strategy.builtin_strategy.is_some() {
         if let Some(configured) = config.strategy.instrument.as_deref() {
             let configured = InstrumentId::parse(configured)
@@ -115,9 +118,13 @@ pub(crate) fn run_single_strategy_backtest(
         }
         let builtin_config =
             builtin_strategy_config_from_runtime(&config.strategy, &frame.instrument)?;
+        let signal_provenance =
+            BuiltinSignalProvenance::render(builtin_config.kind, &config.strategy);
+        // 口径要在 `builtin_config` 被策略吃掉之前取走，摘要才有这句话可写（V12 R4-j）。
+        builtin_signal = Some(builtin_signal_params(&builtin_config, &signal_provenance));
         println!(
             "[Strategy · Signal] {}",
-            builtin_signal_note(&builtin_config, builtin_signal_source(&config.strategy))
+            builtin_signal_note(&builtin_config, &signal_provenance)
         );
         let context = NativeStrategyContext {
             strategy_id: builtin_config.strategy_id.clone(),
@@ -209,6 +216,7 @@ pub(crate) fn run_single_strategy_backtest(
             matching_kernel: BAR_MATCHING_KERNEL,
             rejections: &rejections,
             input,
+            signal: builtin_signal,
         },
     )?;
     println!(
@@ -291,7 +299,7 @@ pub(crate) fn run_builtin_backtest(
     let (fill_model_name, fill_model_source) = (fill.name, fill.source);
     // 本金与风控、成本、撮合同源：这条链读得到 `--config`，却不读它声明的本金，等于让同一份
     // 配置在两个入口压在不同的账户尺度上（V11 Q72）。
-    let account_base = backtest_initial_cash(configured_initial_cash_raw(runtime_config_path)?)?;
+    let account_base = configured_account_base(runtime_config_path)?;
     // A 股规则与费率同一条链同源：本链读 `strategy backtest` 读不到的那段，就会让同一份
     // 配置在两个入口得到两种成交与两种费用（V11 Q61）。
     let ashare = configured_ashare_binding(runtime_config_path, &frame.instrument.to_string())?;
@@ -357,10 +365,11 @@ pub(crate) fn run_builtin_backtest(
         frame.instrument.clone(),
         Quantity::from_i64(quantity),
     )?;
-    let signal_source = apply_configured_builtin_signal(&mut strategy_config, runtime_config_path)?;
+    let signal_provenance =
+        apply_configured_builtin_signal(&mut strategy_config, runtime_config_path)?;
     let signal_note = format!(
         "{} quantity={}",
-        builtin_signal_note(&strategy_config, signal_source),
+        builtin_signal_note(&strategy_config, &signal_provenance),
         quantity
     );
     let report = run_builtin_strategy_on_bars(backtest_config, strategy_config, context, &bars)?;

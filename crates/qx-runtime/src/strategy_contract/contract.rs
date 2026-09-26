@@ -106,7 +106,13 @@ pub fn encode_strategy_columnar_input(input: &StrategyContractInput) -> Result<V
 /// 旧版策略仍然可以只返回 `target_qty`，运行时会继续走目标仓位再平衡；
 /// 新版 Rust/C++/Python 策略可以返回多个 intent，表达组合、做市和多腿
 /// 订单。数量、价格始终使用核心定点 raw 单位，最终仍必须经过 Risk/OMS。
+///
+/// `deny_unknown_fields` 兑现 `schemas/strategy_api_v1.schema.json` 的
+/// `additionalProperties: false`：拼错的可选键（`post_onli`、`margin_mod`）过去会被
+/// serde 静默丢掉，那一腿于是按运行时默认档位成交，而策略作者以为自己在它上面开了
+/// 对冲或 post-only（V12 R4-k）。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StrategyContractIntent {
     pub intent_id: u64,
     pub instrument: String,
@@ -131,6 +137,7 @@ pub struct StrategyContractIntent {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StrategyContractOutput {
     pub schema_version: u32,
     pub request_id: String,

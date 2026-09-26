@@ -3,6 +3,9 @@
 //! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须
 //! 进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
 
+mod event_cursor;
+
+use event_cursor::{events_after_cursor, parse_after_cursor};
 use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
 use qx_core::{Event, EventKind, EventLog, Fnv1a, LedgerEntry};
 use qx_protocol::{
@@ -129,31 +132,9 @@ impl ApiEventBus {
     }
 }
 
+/// 游标 → 事件批次的唯一实现在 `event_cursor`（V12 R4-g）。
 fn read_bus_events(state: &EventBusState, after: Option<u64>) -> Result<Vec<Event>, EventBusError> {
-    if let Some(after) = after {
-        if after >= state.next_seq {
-            return Err(EventBusError::CursorAhead {
-                requested: after,
-                next_seq: state.next_seq,
-            });
-        }
-        if let Some(oldest) = state.events.front().map(|event| event.seq) {
-            if after.saturating_add(1) < oldest {
-                return Err(EventBusError::CursorTooOld {
-                    requested: after,
-                    oldest,
-                });
-            }
-        }
-        Ok(state
-            .events
-            .iter()
-            .filter(|event| event.seq > after)
-            .cloned()
-            .collect())
-    } else {
-        Ok(state.events.iter().cloned().collect())
-    }
+    event_cursor::events_after_cursor(state.events.iter(), state.next_seq, after)
 }
 
 /// 可热替换的 TLS 服务端配置。新连接读取最新配置，已有连接继续使用握手时的配置。
@@ -598,6 +579,12 @@ pub struct ApiState {
     pub reconcile_reports: BTreeMap<String, ReconcileReportSnapshot>,
 }
 
+/// API 限流额度只有一处定义：进程内令牌桶、`with_rate_limit`、以及 `qx-cli`
+/// 装配的文件/SQLite 共享桶都必须引用这两个常量，否则"换一个存储后端"会
+/// 顺带改掉限流策略（V12 §16）。
+pub const DEFAULT_RATE_LIMIT_CAPACITY: u64 = 100;
+pub const DEFAULT_RATE_LIMIT_REFILL_PER_SECOND: u64 = 100;
+
 #[derive(Clone, Debug)]
 pub struct ApiRateLimiter {
     capacity: u64,
@@ -738,10 +725,6 @@ impl ApiState {
             .and_then(|projection| projection.snapshot.clone())
     }
 
-    pub fn projection_keys(&self) -> Vec<ApiProjectionKey> {
-        self.projections.keys().cloned().collect()
-    }
-
     pub fn projection_health(&self, account_id: &str, venue_id: &str) -> Option<ProjectionHealth> {
         self.projections
             .get(&ApiProjectionKey::new(account_id, venue_id))
@@ -845,18 +828,12 @@ fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<()
             cashflow.account_id.as_str(),
             Some(cashflow.venue_id.as_str()),
         )),
-        EventKind::OrderSubmitted { order } => Some((
-            order.account_id.as_str(),
-            Some(order.instrument.venue.as_str()),
-        )),
+        // 订单与账簿条目没有"账户域"这一栏，只有标的后缀：paper 账户交易的符号就叫
+        // BTCUSDT.BINANCE，拿它当账户 venue 会把本账户自己的事实判成外来事实（V11 R13）。
+        // 这两条只核对账户身份；交易所侧的串读由带显式 venue 的余额/持仓/资金/成交事实守住。
+        EventKind::OrderSubmitted { order } => Some((order.account_id.as_str(), None)),
         EventKind::Filled { fill } => Some((fill.account_id.as_str(), fill.venue_id.as_deref())),
-        EventKind::LedgerApplied { entry } => Some((
-            entry.account_id.as_str(),
-            entry
-                .instrument
-                .as_ref()
-                .map(|instrument| instrument.venue.as_str()),
-        )),
+        EventKind::LedgerApplied { entry } => Some((entry.account_id.as_str(), None)),
         EventKind::Timer { .. }
         | EventKind::MarketBar { .. }
         | EventKind::MarketQuote { .. }
@@ -917,6 +894,7 @@ pub struct ApiService {
     metrics: Arc<ApiMetrics>,
     worker_metrics_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     readiness_provider: Option<ReadinessProvider>,
+    query_models_provider: Option<QueryModelsProvider>,
 }
 
 #[derive(Default)]
@@ -967,6 +945,17 @@ type ControlSubmitter = Arc<
 >;
 type CommandEnqueuer = Arc<dyn Fn(ControlCommand, u64) -> Result<(), String> + Send + Sync>;
 type ReadinessProvider = Arc<dyn Fn() -> ApiReadiness + Send + Sync>;
+
+/// `/scheduler/runs`、`/account/ledger`、`/reconcile/reports` 三个只读端点共用的一份现读结果。
+/// 对账报告在这里是**列表**：`ApiState` 里那张按 worker_id 键控的表只是它的查询副本。
+#[derive(Default, Clone)]
+pub struct ApiQueryModels {
+    pub job_runs: Vec<JobRun>,
+    pub ledger_entries: Vec<LedgerEntry>,
+    pub reconcile_reports: Vec<ReconcileReportSnapshot>,
+}
+
+type QueryModelsProvider = Arc<dyn Fn() -> Result<ApiQueryModels, String> + Send + Sync>;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct ApiResponse {
@@ -1077,13 +1066,17 @@ impl ApiService {
             state: Arc::new(Mutex::new(state)),
             policy: None,
             rate_limiter: Arc::new(LocalRateLimitBackend {
-                limiter: Mutex::new(ApiRateLimiter::new(100, 100)),
+                limiter: Mutex::new(ApiRateLimiter::new(
+                    DEFAULT_RATE_LIMIT_CAPACITY,
+                    DEFAULT_RATE_LIMIT_REFILL_PER_SECOND,
+                )),
             }),
             control_submitter: None,
             command_enqueuer: None,
             metrics: Arc::new(ApiMetrics::default()),
             worker_metrics_provider: None,
             readiness_provider: None,
+            query_models_provider: None,
         }
     }
 
@@ -1092,13 +1085,17 @@ impl ApiService {
             state: Arc::new(Mutex::new(state)),
             policy: Some(policy),
             rate_limiter: Arc::new(LocalRateLimitBackend {
-                limiter: Mutex::new(ApiRateLimiter::new(100, 100)),
+                limiter: Mutex::new(ApiRateLimiter::new(
+                    DEFAULT_RATE_LIMIT_CAPACITY,
+                    DEFAULT_RATE_LIMIT_REFILL_PER_SECOND,
+                )),
             }),
             control_submitter: None,
             command_enqueuer: None,
             metrics: Arc::new(ApiMetrics::default()),
             worker_metrics_provider: None,
             readiness_provider: None,
+            query_models_provider: None,
         }
     }
 
@@ -1142,11 +1139,48 @@ impl ApiService {
         self
     }
 
-    pub fn query_port(&self) -> &dyn QueryPort {
+    /// 三份只读运维读模型的现读出口：调度状态、账户账簿、对账报告。
+    ///
+    /// 装 provider 之前，这三份只在 `build_configured_api_service` 启动时读一次，之后
+    /// `serve` 进程把它们当事实念到进程结束——对账 worker 每轮覆写
+    /// `reconcile/<worker-id>.json`，API 却永远看不见（V11 S3）。`Err` 表示"这一次没读到"，
+    /// 端点必须据此报错，不得退回上一份或空数组。
+    pub fn with_query_models_provider<F>(mut self, provider: F) -> Self
+    where
+        F: Fn() -> Result<ApiQueryModels, String> + Send + Sync + 'static,
+    {
+        self.query_models_provider = Some(Arc::new(provider));
         self
     }
 
-    pub fn control_port(&self) -> &dyn ControlPort {
+    /// 取三份只读运维读模型：装了 provider 就现读并把结果回填到查询副本，没装则读
+    /// 启动时装进 `state` 的那份。回填是为了让 `QueryPort` 的 trait 读点与 HTTP 端点
+    /// 说同一份数据，而不是各念一份（V11 S3）。
+    fn query_models(&self) -> Result<ApiQueryModels, String> {
+        let Some(provider) = &self.query_models_provider else {
+            let state = self.state.lock().expect("api state mutex poisoned");
+            return Ok(ApiQueryModels {
+                job_runs: state.job_runs.clone(),
+                ledger_entries: state.ledger_entries.clone(),
+                reconcile_reports: state.reconcile_reports.values().cloned().collect(),
+            });
+        };
+        let models = provider()?;
+        {
+            let mut state = self.state.lock().expect("api state mutex poisoned");
+            state.job_runs = models.job_runs.clone();
+            state.ledger_entries = models.ledger_entries.clone();
+            state.reconcile_reports = models
+                .reconcile_reports
+                .iter()
+                .map(|report| (report.worker_id.clone(), report.clone()))
+                .collect();
+        }
+        Ok(models)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn query_port(&self) -> &dyn QueryPort {
         self
     }
 
@@ -1239,15 +1273,13 @@ impl ApiService {
     }
 
     fn snapshot_for_query(&self, query: &str) -> Result<Option<AccountSnapshot>, String> {
-        let key = projection_key_from_query(query)?;
+        // 带 account_id/venue_id 的查询走与公共键读法同一处查找，避免路由与嵌入方
+        // 各自实现一遍"键怎么映射到投影"。
+        if let Some(key) = projection_key_from_query(query)? {
+            return Ok(self.account_snapshot_for(&key.account_id, &key.venue_id));
+        }
         let state = self.state.lock().expect("api state mutex poisoned");
-        Ok(match key {
-            Some(key) => state
-                .projections
-                .get(&key)
-                .and_then(|projection| projection.snapshot.clone()),
-            None => state.snapshot.clone(),
-        })
+        Ok(state.snapshot.clone())
     }
 
     fn projection_events_for_query(&self, query: &str) -> Result<Vec<Event>, String> {
@@ -1267,7 +1299,7 @@ impl ApiService {
     fn snapshot_envelope_for_query(
         &self,
         query: &str,
-    ) -> Result<Option<ProjectionEnvelope<AccountSnapshot>>, String> {
+    ) -> Result<Option<ProjectionEnvelope<serde_json::Value>>, String> {
         let key = projection_key_from_query(query)?;
         let state = self.state.lock().expect("api state mutex poisoned");
         let (snapshot, source_digest) = match key {
@@ -1302,12 +1334,16 @@ impl ApiService {
                     source_digest: format!("{source_digest:016x}"),
                     ..ProjectionLineage::default()
                 },
-                data: snapshot,
+                // `data` 只认 `to_json` 这一份线格式（V12 R4-h）：`/schema/account-snapshot-v1`
+                // 公布的就是它。`AccountSnapshot` 的 serde 派生形状没有 `protocol`/顶层
+                // `schema_version`，照 schema 校验必失败——同一端点家族不能发两种契约。
+                data: serde_json::from_str(&snapshot.to_json()).expect("账户快照线格式必须可解析"),
             }
         }))
     }
 
-    pub fn with_rate_limit(mut self, capacity: u64, refill_per_second: u64) -> Self {
+    #[cfg(test)]
+    pub(crate) fn with_rate_limit(mut self, capacity: u64, refill_per_second: u64) -> Self {
         self.rate_limiter = Arc::new(LocalRateLimitBackend {
             limiter: Mutex::new(ApiRateLimiter::new(capacity, refill_per_second)),
         });
@@ -1331,8 +1367,11 @@ impl ApiService {
         self.handle_inner(method, path, body, ts, None)
     }
 
-    /// 带可信身份的入口。`operator_id` 必须由认证网关/进程边界注入，不能来自命令体。
-    pub fn handle_as(
+    /// 带可信身份的入口（仅 crate 内可见）。`operator_id` 必须由认证网关/进程边界
+    /// 注入，不能来自命令体；产品装配只经 `serve_*` 的 mTLS 身份映射走到这里，
+    /// 因此不对外公开，避免宿主把认证入口当成可伪造的公共 API（V12 §16）。
+    #[cfg(test)]
+    pub(crate) fn handle_as(
         &self,
         operator_id: &str,
         method: &str,
@@ -1472,45 +1511,49 @@ impl ApiService {
                 200,
                 serde_json::to_string(&self.control_audit()).expect("audit is serializable"),
             ),
-            ("GET", "/scheduler/runs") => ApiResponse::json(
-                200,
-                serde_json::to_string(&self.job_runs()).expect("job runs are serializable"),
-            ),
-            ("GET", "/account/ledger") => ApiResponse::json(
-                200,
-                serde_json::to_string(&self.ledger_entries())
-                    .expect("ledger entries are serializable"),
-            ),
-            ("GET", "/reconcile/reports") => ApiResponse::json(
-                200,
-                serde_json::to_string(&self.reconcile_reports())
-                    .expect("reconcile reports are serializable"),
-            ),
+            ("GET", "/scheduler/runs") => match self.query_models() {
+                Ok(models) => ApiResponse::json(
+                    200,
+                    serde_json::to_string(&models.job_runs).expect("job runs are serializable"),
+                ),
+                Err(error) => ApiResponse::json(503, error_json(&error)),
+            },
+            ("GET", "/account/ledger") => match self.query_models() {
+                Ok(models) => ApiResponse::json(
+                    200,
+                    serde_json::to_string(&models.ledger_entries)
+                        .expect("ledger entries are serializable"),
+                ),
+                Err(error) => ApiResponse::json(503, error_json(&error)),
+            },
+            ("GET", "/reconcile/reports") => match self.query_models() {
+                Ok(models) => ApiResponse::json(
+                    200,
+                    serde_json::to_string(&models.reconcile_reports)
+                        .expect("reconcile reports are serializable"),
+                ),
+                Err(error) => ApiResponse::json(503, error_json(&error)),
+            },
             ("GET", "/account/snapshot/diff") => self.snapshot_diff(query),
             ("GET", "/events") => {
                 let all_events = match self.projection_events_for_query(query) {
                     Ok(events) => events,
                     Err(error) => return ApiResponse::json(400, error_json(&error)),
                 };
-                let after = match query_value(query, "after") {
-                    None => u64::MAX,
-                    Some(value) => match value.parse::<u64>() {
-                        Ok(value) => value,
-                        Err(_) => {
-                            return ApiResponse::json(
-                                400,
-                                error_json("after must be an unsigned integer"),
-                            )
-                        }
-                    },
+                let after = match parse_after_cursor(query) {
+                    Ok(after) => after,
+                    Err(error) => return ApiResponse::json(400, error_json(error)),
                 };
-                if after != u64::MAX && after >= all_events.len() as u64 {
-                    return ApiResponse::json(409, error_json("event_cursor_requires_snapshot"));
-                }
-                let events = if after == u64::MAX {
-                    all_events
-                } else {
-                    all_events[(after as usize + 1).min(all_events.len())..].to_vec()
+                // V12 R4-g：`after` 与 `/events/live` 同一个口径——事件序号，不是这条投影
+                // 日志的下标。投影日志的 `next_seq` 恒等于末条 seq+1（`validate` 保证），
+                // 因此这里按末条推导。
+                let next_seq = all_events.last().map_or(0, |event| event.seq + 1);
+                let events = match events_after_cursor(all_events.iter(), next_seq, after) {
+                    Ok(events) => events,
+                    Err(EventBusError::CursorTooOld { .. } | EventBusError::CursorAhead { .. }) => {
+                        return ApiResponse::json(409, error_json("event_cursor_requires_snapshot"))
+                    }
+                    Err(error) => return ApiResponse::json(500, error_json(&format!("{error:?}"))),
                 };
                 match serde_json::to_string(&events) {
                     Ok(events) => ApiResponse::json(200, events),
@@ -1524,14 +1567,9 @@ impl ApiService {
     }
 
     fn live_events(&self, query: &str) -> ApiResponse {
-        let after = match query_value(query, "after") {
-            None => None,
-            Some(value) => match value.parse::<u64>() {
-                Ok(value) => Some(value),
-                Err(_) => {
-                    return ApiResponse::json(400, error_json("after must be an unsigned integer"))
-                }
-            },
+        let after = match parse_after_cursor(query) {
+            Ok(after) => after,
+            Err(error) => return ApiResponse::json(400, error_json(error)),
         };
         let key = match projection_key_from_query(query) {
             Ok(key) => key,
@@ -1674,23 +1712,13 @@ impl ApiService {
         }
     }
 
-    /// 处理一个 HTTP/1.1 请求；用于本地控制面和集成测试。
-    pub fn serve_once(&self, listener: &TcpListener, ts: u64) -> std::io::Result<()> {
+    /// 处理一条 HTTP/1.1 连接（仅 crate 内可见）：与 `serve` 的区别只在它同步处理
+    /// 单条连接、不起线程，供本 crate 的集成用例钉住确定性的请求/响应顺序（V12 §16）。
+    #[cfg(test)]
+    pub(crate) fn serve_once(&self, listener: &TcpListener, ts: u64) -> std::io::Result<()> {
         let (stream, _) = listener.accept()?;
         configure_connection(&stream)?;
         self.serve_stream_as(stream, ts, None)
-    }
-
-    /// 网络入口的可信身份版本；身份应由已认证的上游边界注入。
-    pub fn serve_once_as(
-        &self,
-        listener: &TcpListener,
-        ts: u64,
-        operator_id: &str,
-    ) -> std::io::Result<()> {
-        let (stream, _) = listener.accept()?;
-        configure_connection(&stream)?;
-        self.serve_stream_as(stream, ts, Some(operator_id))
     }
 
     /// 使用调用方提供的证书和私钥配置服务端 TLS。
@@ -1698,7 +1726,8 @@ impl ApiService {
     /// `ServerConfig` 必须由部署边界构造并安全加载证书/私钥；API 层不提供跳过
     /// TLS 或动态信任任何客户端的快捷开关。HTTP 与 WebSocket 处理仍复用同一套
     /// 权限、审计、快照和事件游标语义。
-    pub fn serve_once_tls(
+    #[cfg(test)]
+    pub(crate) fn serve_once_tls(
         &self,
         listener: &TcpListener,
         config: Arc<ServerConfig>,
@@ -1706,74 +1735,7 @@ impl ApiService {
     ) -> std::io::Result<()> {
         let (stream, _) = listener.accept()?;
         configure_connection(&stream)?;
-        self.serve_stream(tls_stream(stream, config)?, ts)
-    }
-
-    /// 带可信身份注入的 TLS 单请求入口。
-    pub fn serve_once_tls_as(
-        &self,
-        listener: &TcpListener,
-        config: Arc<ServerConfig>,
-        ts: u64,
-        operator_id: &str,
-    ) -> std::io::Result<()> {
-        let (stream, _) = listener.accept()?;
-        configure_connection(&stream)?;
-        self.serve_stream_as(tls_stream(stream, config)?, ts, Some(operator_id))
-    }
-
-    /// 使用可热替换配置处理单个 TLS 连接。
-    pub fn serve_once_tls_with_store(
-        &self,
-        listener: &TcpListener,
-        configs: &TlsConfigStore,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        let (stream, _) = listener.accept()?;
-        configure_connection(&stream)?;
-        self.serve_stream(tls_stream(stream, configs.current())?, ts)
-    }
-
-    /// 使用可热替换配置持续处理 TLS 连接。
-    pub fn serve_tls_with_store(
-        &self,
-        listener: TcpListener,
-        configs: &TlsConfigStore,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            self.serve_stream(tls_stream(stream, configs.current())?, ts)?;
-        }
-        Ok(())
-    }
-
-    /// 使用可热替换配置持续处理 TLS 连接，并注入可信操作员身份。
-    pub fn serve_tls_with_store_as(
-        &self,
-        listener: TcpListener,
-        configs: &TlsConfigStore,
-        ts: u64,
-        operator_id: &str,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            self.serve_stream_as(
-                tls_stream(stream, configs.current())?,
-                ts,
-                Some(operator_id),
-            )?;
-        }
-        Ok(())
-    }
-
-    fn serve_stream<S>(&self, stream: S, ts: u64) -> std::io::Result<()>
-    where
-        S: Read + Write,
-    {
-        self.serve_stream_as(stream, ts, None)
+        self.serve_stream_as(tls_stream(stream, config)?, ts, None)
     }
 
     fn serve_stream_as<S>(
@@ -1820,67 +1782,6 @@ impl ApiService {
         write_http_response(stream, &response)
     }
 
-    /// 使用 mTLS 客户端证书自动解析可信操作员身份的单连接入口。
-    pub fn serve_once_tls_mtls(
-        &self,
-        listener: &TcpListener,
-        config: Arc<ServerConfig>,
-        identities: &MtlsIdentityPolicy,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        let (stream, _) = listener.accept()?;
-        configure_connection(&stream)?;
-        let mut stream = tls_stream(stream, config)?;
-        let request = read_request(&mut stream)?;
-        let request = String::from_utf8_lossy(&request);
-        let operator_id = identities
-            .operator_for(stream.conn.peer_certificates())
-            .map(str::to_string);
-        self.dispatch_request(&mut stream, &request, ts, operator_id.as_deref())
-    }
-
-    /// 持续接受 TLS 连接，并以客户端证书映射 Operator 身份。
-    pub fn serve_tls_mtls(
-        &self,
-        listener: TcpListener,
-        config: Arc<ServerConfig>,
-        identities: &MtlsIdentityPolicy,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            let stream = tls_stream(stream, Arc::clone(&config))?;
-            let operator_id = identities
-                .operator_for(stream.conn.peer_certificates())
-                .map(str::to_string);
-            self.spawn_connection(stream, ts, operator_id);
-        }
-        Ok(())
-    }
-
-    /// 持续接受 mTLS 连接，并在每个新连接握手时读取当前可热替换配置。
-    /// 已建立的 TLS 连接继续使用握手时的配置；配置文件解析失败由调用方的
-    /// reloader 处理，当前仍可用的配置不会被替换。
-    pub fn serve_tls_mtls_with_store(
-        &self,
-        listener: TcpListener,
-        configs: &TlsConfigStore,
-        identities: &MtlsIdentityPolicy,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            let stream = tls_stream(stream, configs.current())?;
-            let operator_id = identities
-                .operator_for(stream.conn.peer_certificates())
-                .map(str::to_string);
-            self.spawn_connection(stream, ts, operator_id);
-        }
-        Ok(())
-    }
-
     /// 持续接受 mTLS 连接，并在每个新连接握手时读取当前 TLS 配置和 Operator
     /// 身份映射。两份配置均由调用方的轮询重载器原子替换。
     pub fn serve_tls_mtls_with_stores(
@@ -1889,10 +1790,13 @@ impl ApiService {
         configs: &TlsConfigStore,
         identities: &MtlsIdentityStore,
         ts: u64,
+        stopped: impl Fn() -> bool,
     ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
+        listener.set_nonblocking(true)?;
+        loop {
+            let Some(stream) = Self::await_connection(&listener, &stopped)? else {
+                return Ok(());
+            };
             let stream = tls_stream(stream, configs.current())?;
             let policy = identities.current();
             let operator_id = policy
@@ -1900,7 +1804,6 @@ impl ApiService {
                 .map(str::to_string);
             self.spawn_connection(stream, ts, operator_id);
         }
-        Ok(())
     }
 
     /// 每个长连接独立处理，避免 WebSocket 或慢客户端占住监听循环。
@@ -1918,62 +1821,59 @@ impl ApiService {
         });
     }
 
-    pub fn serve(&self, listener: TcpListener, ts: u64) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
+    /// accept 轮询步长：拿到一条连接，或按 `stopped()` 收摊（返回 `None`）。
+    ///
+    /// 监听套接字必须处于非阻塞态才能让"没有新连接"也是一次可判定的循环，
+    /// 而 accepted socket 会继承监听端的非阻塞位（Linux 上确实继承）—— 不把它改回
+    /// 阻塞，`read_request` 会在读到一半时以 WouldBlock 失败。
+    const ACCEPT_POLL: Duration = Duration::from_millis(2);
+
+    fn await_connection(
+        listener: &TcpListener,
+        stopped: &dyn Fn() -> bool,
+    ) -> std::io::Result<Option<TcpStream>> {
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    stream.set_nonblocking(false)?;
+                    configure_connection(&stream)?;
+                    return Ok(Some(stream));
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    if stopped() {
+                        return Ok(None);
+                    }
+                    std::thread::sleep(Self::ACCEPT_POLL);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    /// 持续接受明文连接，直到 `stopped()` 为真。
+    ///
+    /// 停机出口是必需的而不是可选的：`for stream in listener.incoming()` 永不结束，
+    /// Ctrl+C 之后监督器只能把 worker 标成"已请求停机"，而 worker 线程仍卡在
+    /// `accept` 里，`join()` 永远回不来，投影线程与 TLS 重载线程也就永远停不掉
+    /// （V12 §16 第二遍：核心链路唯一的无出口循环）。
+    pub fn serve(
+        &self,
+        listener: TcpListener,
+        ts: u64,
+        stopped: impl Fn() -> bool,
+    ) -> std::io::Result<()> {
+        listener.set_nonblocking(true)?;
+        loop {
+            let Some(stream) = Self::await_connection(&listener, &stopped)? else {
+                return Ok(());
+            };
             self.spawn_connection(stream, ts, None);
         }
-        Ok(())
-    }
-
-    pub fn serve_as(
-        &self,
-        listener: TcpListener,
-        ts: u64,
-        operator_id: &str,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            self.spawn_connection(stream, ts, Some(operator_id.to_string()));
-        }
-        Ok(())
-    }
-
-    /// 持续接受 TLS HTTP/WebSocket 连接；每个连接复用同一份不可变服务端配置。
-    pub fn serve_tls(
-        &self,
-        listener: TcpListener,
-        config: Arc<ServerConfig>,
-        ts: u64,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            self.spawn_connection(tls_stream(stream, Arc::clone(&config))?, ts, None);
-        }
-        Ok(())
-    }
-
-    /// 持续 TLS 服务的可信身份版本；身份仍必须由上游认证边界注入。
-    pub fn serve_tls_as(
-        &self,
-        listener: TcpListener,
-        config: Arc<ServerConfig>,
-        ts: u64,
-        operator_id: &str,
-    ) -> std::io::Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream?;
-            configure_connection(&stream)?;
-            self.spawn_connection(
-                tls_stream(stream, Arc::clone(&config))?,
-                ts,
-                Some(operator_id.to_string()),
-            );
-        }
-        Ok(())
     }
 
     fn serve_websocket<S: Read + Write>(

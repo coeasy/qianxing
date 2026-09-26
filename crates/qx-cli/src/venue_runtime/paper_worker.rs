@@ -64,9 +64,7 @@ pub(crate) fn run_paper_spread_recovery_worker(
         }
         Ok(())
     })?;
-    handle
-        .join()
-        .map_err(|_| format!("Paper SpreadRecovery worker {worker_id} panic"))?
+    join_worker_handle(&supervisor, handle, "Paper SpreadRecovery", worker_id)
 }
 
 pub(crate) fn run_paper_execution_worker(
@@ -98,6 +96,12 @@ pub(crate) fn run_paper_execution_worker(
     }
     // 与 binance/ccxt 同口径：会提交订单的 worker 收下 A 股段却不执行，等于让配置说假话（V11 Q65）。
     reject_ashare_rules_on_submit_path(path, Some(&worker), "paper-worker")?;
+    // 这个 worker 起来后第一件事就是按 `paper_initial_cash_raw` 入账：先确认这一格没有和
+    // 回测侧那一格各说一套，并且把"两处共用同一个本金"说出来（V12 R3）。
+    reject_split_account_principal(&config)?;
+    if let Some(note) = account_principal_note(&config) {
+        println!("{note}");
+    }
     if worker.role == WorkerRole::SpreadRecovery {
         return run_paper_spread_recovery_worker(path, worker_id, once);
     }
@@ -121,25 +125,27 @@ pub(crate) fn run_paper_execution_worker(
         )?;
         while !context.should_stop() {
             let now = runtime_timestamp_ms();
+            // 命令队列租约/入队时间在秒域，控制面审计戳保持毫秒（见 `lease_clock`）。
+            let lease_now = lease_clock(now);
             let control = store.load()?;
             for command in control.pending().filter(|command| {
                 matches!(command.kind, CommandKind::SubmitOrder)
                     && paper_submit_matches_worker(command, &worker)
             }) {
                 queue
-                    .enqueue_command(command.clone(), now)
+                    .enqueue_command(command.clone(), lease_now)
                     .map_err(|error| format!("补入 Paper SubmitOrder 队列失败: {error:?}"))?;
             }
             let mut processed = 0_usize;
             for queued in queue
-                .available_commands(now)
+                .available_commands(lease_now)
                 .map_err(|error| format!("读取 Paper SubmitOrder 队列失败: {error:?}"))?
             {
                 let command = queued.command.clone();
                 if !paper_submit_matches_worker(&command, &worker) {
                     continue;
                 }
-                let lease = match queue.claim_command(command.command_id, context.id(), now, 30) {
+                let lease = match queue.claim_command(command.command_id, context.id(), lease_now, 30) {
                     Ok(lease) => lease,
                     Err(StorageError::LeaseHeld { .. }) => continue,
                     Err(error) => {
@@ -148,7 +154,7 @@ pub(crate) fn run_paper_execution_worker(
                 };
                 if command_is_final(&control, command.command_id) {
                     queue
-                        .ack_command_at(command.command_id, context.id(), lease.fencing_token, now)
+                        .ack_command_at(command.command_id, context.id(), lease.fencing_token, lease_now)
                         .map_err(|error| format!("清理已终态 Paper SubmitOrder 失败: {error:?}"))?;
                     continue;
                 }
@@ -219,7 +225,7 @@ pub(crate) fn run_paper_execution_worker(
                 let record = record_result
                     .map_err(|error| format!("Paper SubmitOrder 执行失败: {error:?}"))?;
                 queue
-                    .ack_command_at(command.command_id, context.id(), lease.fencing_token, now)
+                    .ack_command_at(command.command_id, context.id(), lease.fencing_token, lease_now)
                     .map_err(|error| format!("确认 Paper SubmitOrder 失败: {error:?}"))?;
                 processed += 1;
                 context.mark(
@@ -271,9 +277,7 @@ pub(crate) fn run_paper_execution_worker(
         }
         Ok(())
     })?;
-    handle
-        .join()
-        .map_err(|_| format!("Paper worker {worker_id} panic"))?
+    join_worker_handle(&supervisor, handle, "Paper", worker_id)
 }
 
 /// 按真实 worker 边界顺序执行一轮本地 Paper 主链路。

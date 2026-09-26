@@ -1,5 +1,5 @@
 schema_version: 1
-updated_at: "2026-09-23"
+updated_at: "2026-09-26"
 default_profile: single_node
 
 # 证据等级：
@@ -31,10 +31,18 @@ capabilities:
       - crates/qx-core/src/sourcing.rs verify(events, &Ledger) compares the replayed ledger against the run ledger, so a mutated account with a matching digest still fails (V11 Q62)
       - tools/check_architecture.py replay_kernel_check holds 11 items over that kernel, both engine exits, the artifact choke point, the depth-chain causality slots and the named cases (V11 Q62)
       - crates/qx-protocol/src/lib.rs write_scalar_money tags presence before the value, so an uncomputed money field and a computed zero are two different state_hash inputs (V11 Q67)
-      - crates/qx-protocol/tests/snapshot_single_source.rs uncomputed_money_is_not_the_same_state_as_computed_zero walks all eight account money scalars through hash, seal/validate, both wire formats and both diff directions; the eighth one is equity_raw, added to OPTIONAL_MONEY_FIELDS by V11 Q70 (V11 Q67/Q70)
+      - crates/qx-protocol/tests/snapshot_single_source/optional_money.rs uncomputed_money_is_not_the_same_state_as_computed_zero walks all eight account money scalars through hash, seal/validate, both wire formats and both diff directions; the eighth one is equity_raw, added to OPTIONAL_MONEY_FIELDS by V11 Q70 (V11 Q67/Q70)
       - crates/qx-protocol/src/lib.rs AccountSnapshot.equity_raw is Option<i128> and scalar_money_raw reads all eight fields straight, so no Some(...)/unwrap_or inside that fn can fold an uncomputed amount back into a legal zero (V11 Q70)
+      - crates/qx-protocol/src/lib.rs ACCOUNT_SNAPSHOT_SCHEMA_VERSION is the one known-version constant and both entry points gate on it (validate and from_json), so a snapshot declaring a self-consistent future version no longer walks in; previously only "top level agrees with header" was asked (V12 R2)
+      - crates/qx-protocol/src/tests.rs five cases: a self-consistent schema_version=7 is refused at every entry, a declared header copy that is not the same integer is refused instead of being rewritten, an absent header copy is the stored shape and still round-trips, the constant agrees with both served and repository contracts, and a future-version document this build cannot even deserialize is refused as a version problem rather than a missing-field error (V12 R2, V12 §13.3)
+      - tools/check_architecture.py snapshot_contract_version_check gates that single constant declaration, the two entry gates, the header-normalization order and the named cases (V12 R2)
+      - crates/qx-protocol/src/lib.rs publishes the contract by include_str! of schemas/account-snapshot-v1.json, so the served /schema body and the repository contract are one text instead of two hand-copied ones; the constant, the repository contract and the Python bridge are the three places that must stay on the same version number (V12 A2)
+      - crates/qx-protocol/src/wire.rs fold_stable_order_row is the only read-side fold from the hand-written stable order row (display instrument, numeric side/status codes) back to the struct's serde shape, and side_code/order_status_code/ALL_SIDES/ALL_ORDER_STATUSES live only there, so an unknown code is refused instead of guessed as Buy (V12 TX5)
+      - crates/qx-protocol/src/tests.rs rows_keyed_by_integer_still_produce_and_recover_valid_json puts an order/fill/transfer row into a snapshot, reads the whole document back through from_json, and refuses a tampered side=9 / status=99 (V12 TX5)
+      - tools/check_architecture.py snapshot_row_wire_check holds 6 items over the three quoted row keys, the single fold call site, the code table being absent from the crate root and present once in wire.rs, the read-side ban on unwrap_or and .or(Some, and the named cases (V12 TX5)
     limitations:
       - three_kernel_invariants_are_pinned_by_text_only：log.validate() inside the kernel, the deposit's Priority::TIMER slot and the engines' `)?;` propagation all stay green when mutated, because the negative cases call the kernel directly instead of driving run() (V11 Q62 §25.3)
+      - fills_and_transfers_rows_have_no_read_side_fold：TX5 folds order rows only, because fill/transfer rows already deserialize through their derived shape; a future row that carries a code column needs its own fold and the gate has one call-site slot for it (V12 TX5)
 
   event_fact_metadata:
     implementation: true
@@ -46,6 +54,8 @@ capabilities:
       - crates/qx-core/src/sourcing.rs
       - crates/qx-runtime/src/pipeline.rs
       - EventMetadata schema v2 source_kind replay/digest tests
+      - crates/qx-api/tests/event_cursor_after_semantics.rs both_event_read_chains_answer_the_same_cursor_the_same_way drives the in-memory and the SQLite read chains with one cursor and demands the same sequence list, after both were fixed on "strictly greater than after" (V12 R4-g)
+      - crates/qx-api/tests/event_cursor_after_semantics.rs stale_or_ahead_cursors_are_rejected_on_both_chains keeps the guard symmetrical instead of only tightening the chain that was wrong (V12 R4-g)
     limitations:
       - external_adapter_fine_grained_source_taxonomy_pending
       - cross_process_schema_registry_pending
@@ -64,6 +74,8 @@ capabilities:
       - deploy/qianxing.runtime.messaging.example.json
       - deploy/qianxing.runtime.postgres.example.json
       - .github/workflows/ci.yml service-backends job (postgres:16 + nats -js service containers)
+      - crates/qx-storage/tests/snapshot_rows_persist.rs file_snapshot_store_recovers_a_snapshot_that_has_rows + sqlite_snapshot_store_recovers_a_snapshot_that_has_rows save a sealed snapshot that carries one order / fill / transfer row and load it back through load_json, asserting the row keys survive as strings and the snapshot equals itself after from_json (V12 TX5)
+      - cargo test -p qx-storage --features sqlite is the only way the SQLite half of that file compiles in, because rusqlite sits behind the sqlite feature and the default profile builds the case out silently (V12 TX5)
     limitations:
       - postgres_nats_contract_run_requires_first_ci_record_local_docker_unavailable
 
@@ -92,7 +104,7 @@ capabilities:
       - crates/qx-xingban/src/backtest.rs raw-scaled fee_price_multiplier regression
       - deploy/qianxing.runtime.strategy-backtest.example.json
       - every CLI backtest entry builds its gate via strategy_risk_gate (builtin and multi-leg legs added in V9 Phase 4)
-      - backtests/mod.rs BarBacktestAssembly pins one engine default set for all three bar backtest chains
+      - crates/qx-cli/src/backtests/mod.rs BarBacktestAssembly pins one engine default set for all three bar backtest chains
       - crates/qx-cli/src/backtests/depth.rs DepthExecutionModel feeds latency_snapshots and market_impact_bps into both L1 and L2 matching
       - crates/qx-cli/tests/depth_backtest.rs depth_execution_model_flags_change_results_and_are_recorded pins flag-to-result-and-artifact coupling
       - crates/qx-cli/src/backtests/fill_model.rs bar_fill_model is the single resolution point every Bar chain asks for its fill model
@@ -101,10 +113,13 @@ capabilities:
       - crates/qx-cli/src/tests/market_spec_single_source.rs the_backtest_chain_reads_a_ccxt_shaped_spec_to_the_same_result pins both shapes to one identical result_hash
       - crates/qx-xingban/tests/ashare_limit_anchor.rs seals the intraday limit up band to the previous session close and shows the previous-bar anchor fills on that same board (V11 Q60)
       - crates/qx-cli/src/backtests/ashare_binding.rs is the single A-share section reader covering key pairing, enabled fail-closed and the fee model built from the same snapshot (V11 Q61)
+      - crates/qx-cli/src/backtests/config_declarations.rs first_strategy_block_declaring is the only place that asks which strategy block declared an item, shared by the A-share and fill-model no-landing-site gates (V11 R1/R11)
+      - crates/qx-cli/src/backtests/fill_model.rs reject_fill_model_config, called by backtests/depth.rs, refuses a configured strategy.fill_model on the depth chain instead of dropping it (V11 R11)
+      - crates/qx-cli/src/tests/backtest_fill_model.rs depth_chain_refuses_a_configured_fill_model pins the named-declaration error and the zero-artifact negative row (V11 R11)
       - crates/qx-cli/tests/ashare_builtin_backtest.rs five subprocess cases pin lot-size rejection, the A-share fee model alone changing result_hash, both fail-closed rejections and both no-hook entries refusing the config (V11 Q61)
       - crates/qx-cli/src/strategy_binding.rs is the only place in the repo that assigns builtin_fast_window/slow_window/period/threshold_bps onto a BuiltinStrategyConfig (V11 Q64)
       - apply_configured_builtin_signal revalidates the merged values before any chain prints its provenance line, so a one-sided window override fails closed instead of failing later (V11 Q64)
-      - single_strategy.rs depth.rs and multi_builtin.rs each print one [X · Signal] source line built by the single builtin_signal_note (V11 Q64)
+      - crates/qx-cli/src/backtests/single_strategy.rs, depth.rs and multi_builtin.rs each print one [X · Signal] source line built by the single builtin_signal_note (V11 Q64)
       - crates/qx-cli/tests/builtin_signal_from_config.rs seven subprocess cases pin declared-windows, declared-period-and-threshold three-tier hashes, illegal pairing, one-sided recheck on three entries, cross-chain equality, depth tier and multi-leg (V11 Q64)
       - tools/check_architecture.py builtin_signal_check holds 15 items over that single reader, the four chains, the help text and each named case (V11 Q64)
       - crates/qx-cli/src/runtime_wiring.rs reject_ashare_rules_on_submit_path is the single submit-side A-share gate and reuses the backtest rejection wording (V11 Q65)
@@ -129,8 +144,23 @@ capabilities:
       - summary schema v4 lands an account block whose two keys are taken from the account base actually booked, and a new summary-writing chain must answer the required account_base field to compile (V11 Q72)
       - crates/qx-cli/tests/backtest_account_base.rs five subprocess cases: the default is printed even when nothing is declared, the same config differing only in that one key must change fills 0 to 1 and the result_hash, a non-positive declaration exits 2, both summary chains land the principal they used, and the multi-leg entry refuses the key outright (V11 Q72)
       - tools/check_architecture.py backtest_account_base_check holds 10 items over that literal ban, the three labels, assembly privacy, the per-chain reads and prints, the fail-closed gate, the v4 account block, the schema field shape, the question-mark-carrying multi-leg refusal and the eight case names (V11 Q72)
+      - crates/qx-cli/src/report_readout.rs is the only place the read model words an absent key: report and status share report_readout_lines and latest_backtest_readout_lines, a missing key prints absent while a declared zero still prints 0, and summary_generation_note separates "that generation had no such block" from "this block is missing in this generation" (V12 R1)
+      - multi-leg cost_bps reports 算不出 when turnover_raw is zero (no denominator) and fails on an unprintable ratio instead of clamping to i64::MAX, so an unmeasurable cost never reads as a measured one (V12 R1)
+      - crates/qx-cli/tests/report_readout_honesty.rs five subprocess cases plus crates/qx-cli/src/tests/report_readout.rs six layout cases pin both sides of that rule in one assertion, including the input_verified field that carries the recomputation verdict (V12 R1, V12 §13.3)
+      - tools/check_architecture.py report_readout_honesty_check bans rendering an absent key as an in-domain legal value at the report exit, pins the generation note, the shared layout function and the named cases (V12 R1)
+      - crates/qx-cli/src/backtests/account_base.rs account_base_from_config is the only exit a backtest chain asks for its principal, and it first refuses a runtime whose strategy.initial_cash_raw and worker.paper_initial_cash_raw disagree; only when both declare the same number does the source become the fourth label, so an isolated declaration cannot pose as "both agree" (V12 R3)
+      - crates/qx-cli/src/venue_runtime/paper_submit.rs and paper_worker.rs run the same cross-check before booking anything, so the paper side cannot keep a second principal the backtest side never saw (V12 R3)
+      - crates/qx-cli/src/tests/account_principal_source.rs four cases: two unequal declarations are refused with both names and both numbers in the message, equal ones pass and print the agreeing source, a lone declaration keeps its own source, and the paper entry refuses before any side effect (V12 R3)
+      - tools/check_architecture.py account_principal_single_source_check holds that single exit, the refusal ahead of booking, the fourth source label and the named cases (V12 R3)
+      - crates/qx-strategy/src/builtin_signal.rs BuiltinStrategyKind::signal_knobs() is the one list of which knobs a kind actually reads (Macd is an empty list), and the kernel's history need, the runtime config recheck, the builtin-strategies effective column, the stdout knobs=/declared_unused= note and the summary signal{} block all ask that same list (V12 #102)
+      - crates/qx-strategy/tests/builtin_signal_knobs.rs four cases: a knob outside the list cannot change a single run, every knob on the list still can, Macd has no tunable signal knob and still signals, and the list covers every builtin kind (V12 #102)
+      - crates/qx-cli/src/tests/backtest_signal_provenance.rs five cases over the summary side, including that an out-of-list knob neither fails the run nor moves the summary numbers, and that declaring the default values says config without changing the result (V12 #102/R4-j)
+      - tools/check_architecture.py builtin_knob_list_check holds 9 items over that single list, the four consumers, the emitted (not commented) summary keys and the named cases (V12 #102)
+      - crates/qx-cli/src/tests/backtest_input_provenance.rs report_refuses_when_the_sibling_run_manifest_no_longer_matches, report_refuses_when_the_declared_run_manifest_is_gone_or_unreadable and summary_that_omits_the_run_manifest_pointer_fails_instead_of_skipping_the_check make the RunManifest pointer a check that can actually fail, which is what was missing after V11 Q66 wrote the pointer but nobody read it (V12 R4-i)
+      - crates/qx-cli/src/tests/cli_surface.rs backtest_subcommand_rejects_outer_positionals_it_never_reads refuses the outer positional argument the backtest chain never reads instead of swallowing it (V12 R4-e)
     limitations:
       - backtest exposes only two builtins after V9 cleanup (single instrument and multi-leg)
+      - declared_unused_knobs_do_not_fail_the_run：a knob outside the kind's list is reported and ignored rather than rejected, because these keys are also legacy config items; the cost is that "configured but inert" is only visible in the stdout note and the summary block (V12 #102 §14.5)
       - queue_position_bps_is_not_a_cli_flag_because_builtin_strategies_only_emit_market_orders
       - bar_chain_virtual_trading_config_remains_unreachable_without_mark_price_input
       - deep_tier_fill_models_probabilistic_and_volume_sensitive_are_rejected_because_bar_input_cannot_carry_their_book_precondition
@@ -144,7 +174,7 @@ capabilities:
       - artifact_filenames_carry_no_summary_generation：产物路径只含 run_id 与 manifest.digest()，而 digest() 覆盖输入与模型、不含摘要自身的 schema_version，所以"只改摘要形状"的变更会让同一条示例命令原地撞旧文件并报"已存在不同内容"。Q66 落地后实测撞到 3 条集成用例（builtin_signal_from_config.rs:292、fast_backtest_manifest.rs:65/:96），撞名的 12 份本地产物移到 %TEMP% 后整树复跑 716 passed / 0 failed；缺的是一次决策：摘要世代进文件名，或给示例集一条重 bless 命令（V11 Q66 → Q67）
       - recomputation_compare_is_not_falsifiable_by_the_static_gate：把 recompute_declared_backtest_input 改成声明与声明自比时 245 项全绿，只有走真实入口的两条行为用例问得出来（V11 Q66）
       - summary_schema_is_now_v4：外部读者要改的除了 v2 的 replay_hash 与 v3 的 input 块，还有 v4 新增的 account 块（期初本金与来源两格，定点整数按字符串写）；本轮不改任何消费方脚本，示例摘要与正式摘要之间的世代差继续累积（V11 Q66 → Q72）
-      - backtest_initial_cash_and_paper_worker_cash_never_meet：strategy.initial_cash_raw（回测）与 worker.paper_initial_cash_raw（paper）是两格且互不知情，Q72 把前者做成回测唯一的声明入口并在文档注释里点名后者，但没有任何判据要求同一份配置里两格同时出现时必须是同一个数 —— 使用者完全可以回测按 A、paper 按 B 再拿两边数字互相印证（V11 Q72 §34.5 第 2 条）
+      - integration_backtest_cases_write_into_the_repo：跑完整套测试后 `git status --porcelain deploy` 给出 72 条未跟踪产物（`deploy/data/*/runs/`），本轮整树复跑为 0 条被跟踪产物改写（MODIFIED_DEPLOY=0），也就是说用例把仓库目录当临时目录用。缺的是一次决策：用例的 data_dir 一律落到 %TEMP%，还是给仓库加一条"跑完清干净"的收口判据（V12 §13.6）
       - multi_leg_chain_still_prints_no_account_line：四条链里只有它没有 `[X · Account]` 播报，因为它同时是最长的一条（`multi_builtin.rs` 498/500 行），再加 4 行就翻过 Phase 4s 的兄弟模块线；本轮给它的是拒收那一格声明 + 归因产物里的 `account_base_source`，补齐得先搬家（V11 Q72 §34.5 第 1、4 条）
 
   cli_scenario_init:
@@ -155,6 +185,9 @@ capabilities:
     evidence:
       - crates/qx-cli/src/init_project.rs
       - crates/qx-cli/src/tests/init_onboarding.rs advertised_commands_only_name_files_the_profile_generated runs every printed step verbatim
+      - crates/qx-cli/src/init_project.rs INIT_PROFILES is the one list of accepted profiles；help 的 `<...>` 表与"未知 init profile"文案都由它生成，此前 `builtin` 只在 match 里存在，用户被告知的取值集合里恰好少了那个能用的取值 (V11 S5)
+      - crates/qx-cli/src/tests/cli_json_surface.rs three cases hold the --json promise: the config subcommands that never delivered a parseable body refuse the flag, config explain and config doctor do emit machine-readable JSON, and config validate keeps its human-readable PASS line (V12 R4-f)
+      - tools/check_architecture.py control_plane_honesty_check 钉住那三处相等，删掉接受集合里的一格会同时打死门禁和 init_onboarding 的两条用例 (V11 S5)
       - docs/工业化易用性收口指南-V1.md
     limitations:
       - generated_ccxt_project_still_requires_user_credentials_and_external_sandbox
@@ -174,7 +207,7 @@ capabilities:
       - crates/qx-cli/src/venue_runtime/paper_worker.rs
       - crates/qx-cli/src/venue_runtime/paper_submit.rs
       - paper-e2e
-      - crates/qx-execution/tests/venue_report_contract.rs late/out-of-order + imprecise report contract
+      - crates/qx-execution/tests/venue_report_contract/venues.rs late/out-of-order + imprecise report contract
       - qx-application execution submit/cancel fact contract tests
       - qx-execution Paper/CCXT/Binance shared PortExecutionService contract test
       - qx-execution paper gateway idempotency test
@@ -183,26 +216,66 @@ capabilities:
       - crates/qx-cli/src/venue_runtime/paper_submit.rs refuses the A-share section as its first statement, ahead of reading the runtime config and the SubmitOrder command (V11 Q65)
       - crates/qx-cli/src/tests/ashare_submit_guard.rs covers paper-worker, paper-submit-order, binance-submit-order and ccxt-worker, each with a key-free baseline of the same fixture (V11 Q65)
       - crates/qx-cli/src/api_service.rs publishes available_raw from the settlement-currency ledger cash and fees_raw as the checked sum of the same snapshot's fills, refusing the snapshot instead of wrapping (V11 Q67)
-      - crates/qx-cli/src/tests/api_snapshot_money_fields.rs 7 cases drive the real paper worker and the real read model: settlement-currency cash, fee provenance, absent-not-zero, overflow refusal, the Ledger-fallback position row stays absent, a venue-reported row keeps reported-zero distinct from unreported, and equity is absent while a held position has no mark price yet recomputes once a quote arrives (V11 Q67/Q68/Q70)
+      - crates/qx-cli/src/tests/api_snapshot_money_fields.rs 8 cases drive the real paper worker and the real read model: settlement-currency cash, fee provenance, absent-not-zero, overflow refusal, the Ledger-fallback position row stays absent, a venue-reported row keeps reported-zero distinct from unreported, the reconcile block is projected from this account's own reports, and equity is absent while a held position has no mark price yet recomputes once a quote arrives (V11 Q67/Q68/R7/Q70)
       - crates/qx-core/src/event.rs + crates/qx-protocol/src/wire.rs hold the three position money fields as Option and hash/serialize them with a presence tag, so "venue did not report" is no longer the same state as "venue reported zero" (V11 Q68)
       - crates/qx-cli/src/tests/ccxt_position_facts_honesty.rs 3 cases: an unknown or missing position side is refused instead of guessed as long, flat rows are skipped before that gate, and omitted/null money stays unreported while "0" and 0 stay reported (V11 Q68)
-      - crates/qx-protocol/tests/snapshot_single_source.rs uncomputed_position_money_is_not_the_same_state_as_computed_zero + default_position_row_reports_no_money + absent_venue_money_stays_absent_through_the_wire_folding cover hash, seal, both wire formats, both diff directions and the Default constructor (V11 Q68)
+      - crates/qx-protocol/tests/snapshot_single_source/optional_money.rs uncomputed_position_money_is_not_the_same_state_as_computed_zero + default_position_row_reports_no_money + absent_venue_money_stays_absent_through_the_wire_folding cover hash, seal, both wire formats, both diff directions and the Default constructor (V11 Q68)
       - tools/check_architecture.py position_money_honesty_check holds 13 items over that chain, including the ban on defaulting the five row/observation money fields anywhere in the tree and the deliberate keep of the 0-price sentinel (V11 Q68)
-      - tools/check_architecture.py snapshot_money_honesty_check holds 12 items over that read model, including the ban on assigning the five money fields this layer cannot compute and the ban on publishing equity from leftover cash (V11 Q67/Q70)
+      - tools/check_architecture.py snapshot_money_honesty_check holds 13 items over that read model, including the ban on assigning the five money fields this layer cannot compute, the reconcile block's presence rule (V11 R10) and the ban on publishing equity from leftover cash (V11 Q67/Q70)
+      - crates/qx-cli/src/api_service.rs apply_reconcile_reports + crates/qx-protocol/src/wire.rs keep last_reconcile_ts/discrepancy_count as Option：两格由「本账户有没有对账报告」这一个问题决定在不在，缺席与算出的零在类型、哈希与稳定 JSON 上都不是同一份 (V11 R7/R10)
       - crates/qx-cli/src/venue_runtime/ccxt_reconcile_worker.rs ccxt_reconcile_round is the single exit for both discovery halves：报告的 order_issues、健康判定与 ReconcileRequired 事实流读同一份 round.order_issues，且只有 client_order_id 能按 JSON 数字解析的发现才允许产生事实 (V11 Q69)
       - crates/qx-cli/src/tests/ccxt_reconcile_round.rs 两条用例：5 条发现进报告、3 条进事实流，远端孤单挂单（client_order_id 为 ""/字符串）不给 OMS 编一个不存在的句柄；健康结论 ccxt_reconcile_service_status 在只有一条本地-only 发现时也必须降级 (V11 Q69)
       - crates/qx-api/src/lib.rs + crates/qx-cli/src/venue_runtime/binance_reconcile.rs hold the three reconcile coverage counts as Option<usize> with serde(default)：Binance Spot 那条链没去取的项写 null 而不是 0，落盘的老报告仍可读出 (V11 Q69)
       - crates/qx-cli/src/tests/e2e_and_python_contract.rs reconcile_report_persists_structured_balance_discrepancy asserts null-versus-zero in the persisted report and deserializes both legacy 0 and an absent key (V11 Q69)
       - tools/check_architecture.py reconcile_round_honesty_check holds 10 items over that aggregator, including the single require_reconcile call site and the as_u64 handle rule (V11 Q69)
+      - crates/qx-protocol/src/lib.rs json_table_entries renders orders/fills/transfers through serde，也就是 from_json 认的那一份编码：此前手抄的 format! 把裸 u64 当对象键，产出的 {77:{...}} 连合法 JSON 都不是，枚举与标的也和读侧分叉 (V11 R14)
+      - crates/qx-protocol/src/lib.rs json_position_entries + instrument_key put the positions row on that same serde encoding，与 to_wire_json 的 instrument_map 共用一个标的键写法；手抄那份少印 instrument，PositionSnapshot 每加一个字段就是写侧静默丢掉一处 (V11 R15)
+      - crates/qx-protocol/tests/snapshot_single_source/stable_json_tables.rs stable_json_tables_round_trip_through_the_reader feeds the stable JSON back through serde_json and from_json with all four keyed tables non-empty, and asserts each table equals the lossless wire form (V11 R14/R15)
+      - crates/qx-protocol/tests/snapshot_single_source/stable_json_tables.rs the_cross_language_sample_is_what_the_writer_emits compares python/tests/fixtures/account-snapshot-v1.sample.json against to_json 的原样输出，所以改编码必须重产夹具，不能手抄近似形状 (V11 R18)
+      - tools/check_architecture.py snapshot_json_table_check holds 5 items over that single rendering point, the four delegated tables, the one instrument-key writer, the round-trip case and the shared cross-language fixture (V11 R14/R15/R18)
+      - crates/qx-cli/src/api_service.rs default_account_event_log is the one answer to「无键端点说的是哪条账户」：Ledger 读模型与全局兼容快照共用它，发布侧只有默认账户占那格全局位，其余账户按身份进自己的投影 (V11 R12)
+      - crates/qx-cli/src/tests/api_default_account_reads.rs unkeyed_read_models_describe_the_same_account：两条账户域同场，无键快照与无键账簿必须同指 main，而带 account_id/venue_id 的查询仍读得到第二个账户 (V11 R12)
+      - crates/qx-api/src/lib.rs validate_projection_event compares orders and ledger entries by account only：paper 账户交易的符号就叫 BTCUSDT.BINANCE，拿标的后缀当账户 venue 会把本账户自己的事实判成外来事实 (V11 R13)
+      - crates/qx-api/tests/account_projection_identity.rs 一条用例三向钉住那条判定：本账户的无 venue 事实必须全投影、换账户必须拒（订单与账簿各一次）、带显式 venue 的成交仍必须守住交易所边界。R13 的修复此前只有一轮临时验证，生产代码本轮零改动 (V11 R13 → T1)
+      - crates/qx-protocol/src/lib.rs ACCOUNT_SNAPSHOT_JSON_SCHEMA 是 include_str!("../../../schemas/account-snapshot-v1.json")：仓库那份文件是权威，第二份手抄在编译期没有退路；ACCOUNT_SNAPSHOT_SCHEMA_VERSION 与 from_json 的版本闸门让「按别的版本自洽封存」的文档被拒，而不是被当 v1 解出来 (V11 S10 → T3)
+      - crates/qx-protocol/tests/snapshot_schema_contract.rs 六条用例与 tools/check_architecture.py account_snapshot_schema_check 的 8 项：契约只有一份文本、键集合等于写侧产物、可空声明逐项等于协议类型（Q70 起权益也可空）、协议名与版本号同源、路由发出的就是它、对面 Python 同宽、六条判据各有常驻用例 (V11 T3)
+      - crates/qx-cli/src/worker_entry.rs configured_reconcile_worker_id resolves the reconcile default by role + venue binding, and zero or several candidates both fail closed with the candidates listed：字面量 reconciler-main 遇改名拓扑报「找不到 worker」，遇同名 execution worker 会真跑一次下单执行 (V11 S12 → T4)
+      - crates/qx-cli/src/tests/reconcile_worker_identity.rs 五条用例：改名的 reconciler 解析得到、关掉的报错只说口径缺失而不提字面量名、两个候选不挑第一个、paper 腿不是 Binance 候选、四份发布示例各自解析出自己的名字 (V11 T4)
+      - crates/qx-cli/src/strategy_contract.rs configured_api_worker_id resolves the API worker by role and both spawn sites use that id：此前字面量 "api" 遇上任何改名的合法拓扑就让 serve 在启动瞬间死于"未知 worker" (V11 S1)
+      - crates/qx-cli/src/tests/runtime_api_worker_identity.rs 两条用例：改名后的 api worker 能注册而字面量不能，且没有启用的 api worker 时解析报错而不是回落别的 worker (V11 S1)
+      - crates/qx-cli/src/scheduler.rs unsupported_dispatch_shape + load_scheduler_state：交易日历/事件/手工触发与任何非 Any 窗口在装载点即拒并点名作业，`dispatch_scheduled_jobs` 先 `manifest.validate()` 再拿摘要给 JobRun 盖血缘 (V12 §18-B #117)
+      - crates/qx-cli/src/tests/scheduler_dispatch_support.rs 三条用例：四种被拒形状各拒一次、受支持的 cron+Any 照常装载、非法 manifest 让整轮 tick 在写下 JobRun 之前失败 (V12 §18-B #117)
+      - crates/qx-cli/src/workers.rs scheduler 与 strategy 两个生产循环轮询 context.should_stop()：修之前它们是生产里唯二永不自然结束的循环 (V11 S2)
+      - crates/qx-api/src/lib.rs ApiQueryModels + with_query_models_provider，crates/qx-cli/src/api_service.rs 把 provider 装到 /scheduler/runs、/account/ledger、/reconcile/reports：三个只读运维端点读的是磁盘/日志现状，读不到报 503，不再念开机那一刻 (V11 S3)
+      - crates/qx-cli/src/tests/api_query_models_live.rs 两条用例：boot 之后落盘的对账报告与追加的成交都必须读得到 (V11 S3)
+      - crates/qx-cli/src/tests/mod.rs assert_binary_fresh guards both binary lookups：`cargo test --bin` 走的是 option_env! 取不到值的回落分支且不重链 qx-cli.exe，缺这道守卫时一条变异会被过期 binary 判成"通过" (V11 S6)
+      - deploy/README.md serve 端点表 + tools/check_architecture.py api_surface_doc_check：17 条路由与文档集合逐一相等，未列路径 404 的兜底口径也在门禁里 (V11 S7)
       - crates/qx-cli/src/api_service.rs publishes equity_raw straight from Ledger::equity_for, so an account holding a position without a mark price reports null instead of its remaining cash (V11 Q70)
       - crates/qx-api/src/lib.rs balances_endpoint_publishes_absent_money_as_null_not_zero covers both sides of the balances route: a computed zero stays 0, and a snapshot whose equity could not be computed prints null (V11 Q70)
+      - crates/qx-cli/src/venue_runtime/paper_submit.rs:50 and crates/qx-cli/src/venue_runtime/paper_worker.rs:103 both call reject_split_account_principal before booking anything, so the paper entry and the backtest chains cannot silently run two different principals on one runtime
+      - the same two entries print account_principal_note, so "both declarations agree on this number" is said out loud instead of the equality staying invisible
+      - crates/qx-cli/src/tests/account_principal_source.rs two_different_principals_in_one_runtime_are_rejected_everywhere_they_are_read drives the real run_paper_submit_order and asserts the refusal lands before the command file is even parsed (V12 R3)
+      - crates/qx-runtime/src/supervision/shutdown.rs install_shutdown_signals turns the process' Ctrl+C/SIGINT/SIGTERM into RuntimeSupervisor::request_shutdown, and wait_for_worker_finish reports StopTimedOut once shutdown_timeout_ms passes instead of waiting on a worker that ignores the token (V12 R4-a)
+      - crates/qx-runtime/src/supervision/tests.rs four ladder cases: a worker that ends on its own is not reported as stopped by shutdown, a request reaches the worker token inside the budget, a token pressed before joining still counts as stopped not finished, and a worker that ignores the token fails after the budget (V12 R4-a)
+      - crates/qx-cli/src/worker_shutdown.rs and crates/qx-orchestrator/src/lib.rs are the two production callers of install_shutdown_signals, so the token finally has a producer on both worker entry paths (V12 R4-a)
+      - crates/qx-api/tests/snapshot_envelope_contract.rs envelope_data_satisfies_the_schema_the_same_server_publishes validates the /account/snapshot/envelope body against the schema the same process serves, and envelope_data_is_the_same_wire_document_the_flat_route_serves keeps the two routes from diverging again (V12 R4-h)
+      - crates/qx-execution/src/lib.rs no longer carries submit_order_via_gateway / submit_order_via_gateway_with_risk, and the second multi-leg orchestration entry is gone; tools/check_architecture.py dead_public_entry_check refuses any pub fn in the managed entry families that has no production caller outside its own file (V12 R4-d)
+      - crates/qx-scheduler/src/lib.rs finish_run_with_code records error_code on the failing side only：Strategy worker 一度把「3 orders: SUBMITTED」这类结果码塞进同一个参数，于是一条 Succeeded 运行在 /scheduler/runs 读出来带着假错误码 (V12 §18-A #129)
+      - crates/qx-scheduler/src/lib.rs a_successful_finish_drops_the_error_code_a_failed_one_keeps_it 同场钉住两侧：成功一侧 error_code 归零且不进重试排期，失败一侧原样保留
+      - tools/check_architecture.py scheduler_retry_honesty_check：自动重试链的零生产调用点、能力矩阵的 limitation 与接口文档口径三处同源，任一侧改口即红 (V12 §18-A #129)
     limitations:
       - continuous_market_driven_paper_worker_requires_runtime_market_data_validation
+      - scheduler_dispatch_is_cron_and_any_window_only：生产 tick 只把「Cron 触发 + window=Any」的 JobSpec 入队。库侧的 `due_jobs_with_calendar`/`due_event_jobs`/`due_manual_jobs` 与 `SchedulerWorker` 的 calendar/manifest 绑定入口在 qx-scheduler 之外零生产读者 —— 交易日历的 `Session` 至今没有生产生产者，事件与手工触发也没有入队者，因此这些形状现在在装载时就被拒，而不是收下之后静默不跑；接入它们需要先给出日历数据源与事件派发者 (V12 §18-B #117)
+      - scheduler_run_retry_has_no_production_path：一次运行失败之后要不要重跑，生产装配里没有人决定。`dispatch_scheduled_jobs` 只把超过 deadline 的 Running 运行升级成 NeedsIntervention 并释放并发键；`finish_run_with_code` 在 CLI 侧唯一的调用点以 success=true 收口，于是 `JobStatus::Failed`、`next_retry_ts` 与 `retry_run_at`/`retry_run` 这条自动重试链在 qx-scheduler 之外零生产调用者（只被库内 `SchedulerWorker::run_cron_tick*` 用例路径走到）。交易作业失败时无法判定订单是否已经出网，自动重跑就是二次提交，因此这条链留作显式接线决策而不是顺手接上 (V12 §18-A #110 剩余 / #129)
+      - shutdown_signal_delivery_is_not_exercised：the four ladder cases drive the token through injected clocks and predicates, so what is proven is "once the token is pressed the ladder forwards it and bounds the wait"; no case raises a real signal, and on Windows SIGTERM has nothing to deliver (V12 R4-a)
       - paper_venue_has_no_t_plus_one_settlement_state_today_bought_quantity_nor_board_scoped_limit_anchors_so_the_ashare_section_is_refused_at_every_submit_entry_instead_of_only_its_fee_model (V11 Q65)
       - position_rows_have_no_producer_for_unrealized_pnl_yet：V11 Q68 made the Ledger-fallback row honest (absent instead of a fabricated 0), but computing row PnL still needs a frozen market spec on the read side
       - account_level_unrealized_pnl_margin_frozen_realized_pnl_and_funding_raw_still_have_no_producer (V11 Q67 §28.5, restated after Q68)
+      - stored_account_snapshots_predate_the_reconcile_presence_tag：V11 R10 给对账两格补了存在性标记，`state_hash` 形状随之改变，升级前落盘的账户快照会在 `from_json` 的哈希核对处被拒（有意 fail-closed），由 EventLog 重投影即可恢复；被 git 跟踪的产物侧实测不含此类快照
       - ccxt_reconcile_unknown_remote_open_order_has_no_fact_stream_entry_by_design：Q69 之后两半发现共用同一个出口，但一条远端孤单挂单没有可解析的 client_order_id，OMS 没有可标记的句柄，所以它只进报告与健康判定 (V11 Q69)
       - binance_reconcile_still_fetches_only_balances_and_orders：那条链没有 positions/funding/cashflow 取数器，Q69 之后报告里写 null 而不是 0，取数缺口本身仍在 (V11 Q69)
+      - key_free_account_read_models_follow_one_default_account：无键的 /account/snapshot 与 /account/ledger 说的是配置里第一个真有账户日志的那条账户域（V11 R12 收的就是"账簿说 A、快照说 B"），其它账户必须带 account_id/venue_id 查询；账户快照在 API 服务装配时按域装载一次，不随事件流自动增补新账户
+      - supervised_runtime_still_has_no_graceful_shutdown_trigger：V11 S2 让 scheduler 与 strategy 两个循环也读停机令牌，可 `RuntimeSupervisor::request_shutdown` 在生产里依然零调用者，仓库也没有信号处理依赖——出口有了，谁去翻这枚令牌仍是部署侧决策 (V11 R8/S2)
       - read_model_equity_null_carries_no_diagnostic：Q70 之后权益算不出时只报 null，看不出是哪一条持仓缺标记价；给出缺价标的清单需要新的线格式形状 (V11 Q70 §32.5 第 5 条)
       - three_equity_rulers_still_live：读模型的 equity_for（现货名义）、paper_available_margin（spec 尺子）与 strategy_contract 交给策略上下文的 available_margin_raw 仍是三把尺子，本轮只统一了"算不出即缺席"这一条 (V11 Q70 §32.5 第 4 条)
 
@@ -222,9 +295,11 @@ capabilities:
       - crates/qx-cli/src/ccxt_facts.rs position facts refuse a missing or connector-placeholder side instead of defaulting it to long, and read the three money keys as "unreported" rather than zero (V11 Q68)
       - crates/qx-cli/src/venue_runtime/ccxt_reconcile_worker.rs emits coverage flags per fetch：只有真正取过 cashflow/position/funding 的那一轮才向报告写计数，否则写 null (V11 Q69)
       - deploy/qianxing.runtime.ccxt.example.json
-      - crates/qx-execution/tests/venue_report_contract.rs CCXT fixture：终态后迟到成交与 off-tick/off-step 回报只转待对账
+      - crates/qx-execution/tests/venue_report_contract/venues.rs CCXT fixture：终态后迟到成交与 off-tick/off-step 回报只转待对账
       - .github/workflows/ci.yml C++ JSONL strategy contract smoke
       - qx-application execution fact contract shared by PortExecutionService adapters
+      - crates/qx-cli/src/venue_runtime/ccxt_stream_retry.rs CcxtStreamReconnectBudget gives every watch_orders session a real budget (500ms first backoff, 8s cap, named give-up after 10 consecutive failures) instead of a fixed delay retried forever (V12 R4-c)
+      - crates/qx-cli/src/tests/ccxt_stream_retry_budget.rs two cases: the backoff escalates through the ladder and a healthy session resets it to the first rung, and the budget gives up with a reason naming the consecutive-failure count rather than a total (V12 R4-c)
     limitations:
       - exchange_sandbox_precision_and_bill_matrix_pending
       - external_unknown_result_recovery_requires_reconcile_worker
@@ -239,10 +314,11 @@ capabilities:
     evidence:
       - crates/qx-adapter/src/lib.rs
       - crates/qx-cli/src/venue_runtime/binance_submit.rs
-      - crates/qx-execution/tests/venue_report_contract.rs Binance 用户流 fixture：迟到成交/撤单与越界回报分类
+      - crates/qx-execution/tests/venue_report_contract/venues.rs Binance 用户流 fixture：迟到成交/撤单与越界回报分类
       - deploy/qianxing.runtime.binance-testnet.example.json
       - tools/binance_testnet_acceptance.py fail-closed driver
       - .github/workflows/ci.yml venue-acceptance job
+      - crates/qx-adapter/tests/user_stream_retry.rs healthy_sessions_do_not_exhaust_the_reconnect_budget proves the reconnect cap counts consecutive failures, so a stream that keeps delivering events never burns the budget, while connect_failures_still_escalate_backoff_and_stop_at_the_budget keeps the give-up reachable (V12 R4-b)
     limitations:
       - testnet_acceptance_has_not_run_with_real_credentials_yet
       - venue_endpoint_certification_requires_user_supplied_testnet_secret
@@ -256,7 +332,8 @@ capabilities:
     evidence:
       - python/qianxing_ashare
       - crates/qx-data/src/provider.rs
-      - crates/qx-provider/src/lib.rs
+    limitations:
+      - barframe_json_carries_no_receive_time_so_registry_asof_queries_are_not_offered
 
   ashare_corporate_action_ledger:
     implementation: true
@@ -268,15 +345,36 @@ capabilities:
       - crates/qx-core/src/ledger/corporate_action.rs
       - crates/qx-core/src/ledger/rights.rs
       - crates/qx-core/src/ledger/subscription.rs
-      - crates/qx-core/tests/ledger.rs
+      - crates/qx-core/tests/ledger/core_facts.rs
+      - crates/qx-core/tests/ledger/corporate_actions.rs
+      - crates/qx-core/tests/ledger/rights_entitlements.rs
       - crates/qx-xingban/src/ashare.rs
       - crates/qx-xingban/src/backtest.rs
       - crates/qx-xingban/tests/ashare_pit_asof.rs
     limitations:
       - rights_expiry_requires_explicit_or_timed_fact
+      - corporate_action_read_side_has_no_production_reader：内核的 `cash_dividend_entitlement_for` / `convertible_bond_interest_entitlement_for` 两条待支付权益查询，与 `BacktestReport::issuer_capital_at`，在仓库里只有用例读者。发行股本快照随报告结构体存在，但不写进回测摘要、运行清单或任何 API 读模型，所以「这一轮的分红与配股权利压在多少股本上」目前读不到产物；把快照与待支付权益接进摘要读侧是本轮明确没做的事（不改产物形状，避免发布前重放哈希漂移）(V12 §18-B #118)
       - issuer_capital_snapshot_requires_explicit_absolute_total_shares
       - issuer_level_convertible_bond_supply_and_call_trigger_rules_pending
       - pit_asof_filter_runs_only_at_corporate_action_json_load
+
+  factor_research_bridge:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-factor/src/lib.rs
+      - crates/qx-factor/src/materializer.rs
+      - crates/qx-factor/src/execution_plan.rs
+      - crates/qx-cli/src/readiness.rs
+      - crates/qx-cli/src/strategy_binding.rs
+      - crates/qx-runtime/src/strategy_contract/context.rs
+      - crates/qx-runtime/src/data_binding.rs
+      - crates/qx-cli/src/tests/paper_and_strategy_worker.rs
+    limitations:
+      - factor_snapshot_json_has_no_in_repo_producer：研究快照的读侧（`research_snapshot_path` → `StrategyResearchSnapshot::from_json` → 指纹与事件回测证据复核）接进了就绪判定与两条策略装配，但写侧的 `materialize` / `materialize_incremental` / `compile_execution_plan` / `validate_finkit_artifact` / `compute_momentum` 在 CLI 生产装配里一次都没被调用，`ecosystem-smoke` 只在内存里用合成数据自检 `analyze_factor`。因此 `strategy.research_snapshot_path` 指向的 JSON 只能由仓库外的因子工程环节按接口文档的字段契约导出（V12 §18-B #119）
+      - feature_artifact_values_have_no_production_reader：快照里逐标的的因子值（`artifacts[].values`）只参与 PIT 与指纹校验，运行时下单数量取自 `candidate.intended_exposure`，所以修正的工件值不会改变交易决策；把值接进策略需要新的读模型，本轮明确没做（V12 §18-B #119）
 
   dataset_bundle_manifest:
     implementation: true
@@ -288,6 +386,10 @@ capabilities:
       - crates/qx-data/src/ingestion.rs
       - crates/qx-data/src/registry.rs
       - crates/qx-cli/src/dataset_commands.rs
+      - crates/qx-cli/src/dataset_commands.rs 的 calendar 分支：旧格式文档缺 sessions 读成「没有时段」而不是组件非法，与 Python from_json、回测规则装载 apply_calendar_json 同宽；sessions 是非数组时仍然 fail closed (V11 R17 → T2)
+      - python/tests/fixtures/calendar-component-v1.json 与 calendar-component-legacy.json 各配一份 .fingerprint：夹具由 Python 写侧 component_fingerprint 产出，CLI 侧只重算，期望摘要在代码里没有第二份抄本 (V11 T2)
+      - crates/qx-cli/src/tests/calendar_component_fingerprint.rs 三条用例：两侧共摘要且行数相符、摘要只随三个规范字段动（字段顺序换了不改摘要、sessions 非数组必须报错）、两份夹具都能被回测链装载 (V11 T2)
+      - tools/check_architecture.py calendar_fingerprint_caliper_check holds 4 items over the shared fixture pair, the single copy of the digest, the cross-language ASHARE_CALENDAR_FIELDS / ASHARE_SCHEMA_VERSION equality, and the five named permanent counterexamples (V11 T2)
       - python/qianxing_ashare/__init__.py
       - python/qianxing_ashare/__main__.py
     limitations:
@@ -310,9 +412,9 @@ capabilities:
       - crates/qx-cli/src/spread.rs
       - crates/qx-cli/src/tests/execution_and_multi_leg.rs
       - crates/qx-cli/src/tests/paper_hedge_recovery.rs
-      - crates/qx-cli/tests/multi_leg_attribution.rs
+      - crates/qx-cli/tests/multi_leg_attribution/entries.rs
       - crates/qx-cli/src/backtests/leg_funding.rs
-      - crates/qx-cli/tests/multi_leg_attribution.rs 的四个 Q58 用例：缺规格/全现货要求资金费先拒再跑、混合规格只向衍生品腿计提、配置声明 perpetual 却没有主腿规格一律拒绝
+      - crates/qx-cli/tests/multi_leg_attribution/margin_and_return.rs 的四个 Q58 用例：缺规格/全现货要求资金费先拒再跑、混合规格只向衍生品腿计提、配置声明 perpetual 却没有主腿规格一律拒绝
       - HedgeRecoveryWorker idempotency test
       - crates/qx-execution/src/tests/recovery_and_replay.rs hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeeping：补偿回包与正经提交共用同一道形状+精度闸门，越界只留一条待对账，在 tick 上按冻结规格落成 FillWithSpec
       - FileSpreadOrderGroupStore claim lease + fencing token test
@@ -321,7 +423,7 @@ capabilities:
       - crates/qx-cli/src/spread.rs RecoveryGuard：补偿腿的风控与产品规格都取自该 worker 的 `instrument_spec_path`，规格解析失败拒绝自动对冲
       - crates/qx-cli/src/backtests/leg_funding.rs 的 `multi_leg_combined_return_bps`：多腿组合收益的唯一口径是两条腿合计盈亏 ÷ 两条腿合计本金，合计本金非正或折算越界一律报错（V11 Q71）
       - crates/qx-cli/src/tests/execution_and_multi_leg.rs 的 `multi_leg_combined_return_weights_each_leg_by_its_own_capital`：本金 3:1 的两腿按钱给 325bp 而非等权 550bp，本金相等时两口径重合，全零本金必须报错
-      - crates/qx-cli/tests/multi_leg_attribution.rs 的 `combined_return_pools_both_legs_by_capital_instead_of_averaging_bps`：真实 CLI 跑仓库自带现货夹具（两腿本金实测相差 21 倍），stdout 与产物 `totals.combined_return_bps` 都等于用产物自己声明的 `accounts` 两端复算出的钱口径，且不等于两腿平均
+      - crates/qx-cli/tests/multi_leg_attribution/margin_and_return.rs 的 `combined_return_pools_both_legs_by_capital_instead_of_averaging_bps`：真实 CLI 跑仓库自带现货夹具（两腿本金实测相差 21 倍），stdout 与产物 `totals.combined_return_bps` 都等于用产物自己声明的 `accounts` 两端复算出的钱口径，且不等于两腿平均
       - crates/qx-cli/src/backtests/leg_funding.rs 的 `reject_configured_initial_cash` + `multi_builtin.rs` 的调用点：两条腿本金各按本腿行情定资，所以那条链当场拒收 `strategy.initial_cash_raw`（exit 2，文案写明本链定资规则与"改用 quantity 表达规模"），归因产物写 `accounts.account_base_source = multi-leg-funding-rule`（V11 Q72）
     limitations:
       - legs_submit_one_command_each_no_atomic_group_transaction
@@ -367,10 +469,22 @@ capabilities:
       - crates/qx-python/src/lib.rs
       - python/qianxing_bridge/native.py
       - python/tests/test_native_extension.py
+      - crates/qx-datastruct/src/lib.rs BAR_FRAME_JSON_SCHEMA_VERSION：写侧把它印成文档第一格，与 qx-data 的 BAR_FRAME_SCHEMA_VERSION、DATA_SCHEMA_VERSION 和 python 侧 BAR_FRAME_SCHEMA_VERSION 同为 1；此前两侧都靠「缺字段=旧格式」推断，于是 Rust 自己产出的帧在自家读侧被降级成宽松分支，而 v1 严格模式要求非空 source (V11 R16)
+      - crates/qx-datastruct/src/lib.rs from_json 对高于支持的 schema_version 直接拒绝而不是回落，FrameError 新增 unsupported BarFrame schema_version 一支 (V11 R16)
+      - crates/qx-datastruct/tests/frame_contract.rs 三条用例：写出的帧自带版本号、未来版本的帧被拒、无版本老文档仍走兼容分支 (V11 R16)
+      - tools/check_architecture.py bar_frame_contract_check holds 3 items over the four version homes, the writer printing the version first, the reader failing closed, and the Rust key set equalling the Python strict key set (V11 R16)
+      - python/tests/fixtures/account-snapshot-v1.sample.json 是 Rust AccountSnapshot::to_json 的原样输出，两侧各钉一次：Rust 比对全等、Python 把它喂进 load_account_snapshot (V11 R18)
+      - python/tests/test_bridge.py test_reader_consumes_the_document_the_writer_emits 断言四张键表的键是字符串、枚举是变体名、没算过的钱是 null；此前该用例只吃手抄字典、四张键表全填 {}，写侧印裸数字键的那几周一条都不会红 (V11 R18)
+      - python/qianxing_bridge/__init__.py load_account_snapshot 的必填集合与 schemas/account-snapshot-v1.json 的 required 同源（补上写侧恒印的 equity_raw），python/tests/test_bridge.py 把「少任一必填」与「schema_version 是 0 或 2」两个方向各断言一遍，与 Rust from_json 同一判据 (V11 S10 → T3)
+      - python/tests/test_ashare.py 两条日历用例：共用夹具的摘要与 .fingerprint 全等、夹具是 to_json 的定点，且摘要只随 calendar_id/trading_days/sessions 动而 source 改了不动 (V11 T2)
       - tools/build_python_wheel.sh and tools/build_python_wheel.ps1
       - .github/workflows/ci.yml python-wheel job (Python 3.10/3.12/3.13 on Linux and Windows)
+      - schemas/strategy_api_v1.schema.json now states the same field list the Rust contract writes and requires, refuses decimal-string money, and carries margin_mode/position_mode/leverage; tools/check_architecture.py does not own that alignment, crates/qx-runtime/tests/strategy_contract_schema.rs does (V12 R4-k)
+      - crates/qx-runtime/tests/strategy_contract_schema.rs four cases: the schema declares exactly the fields Rust writes and requires, unknown keys are rejected rather than dropped, fixed-point fields travel as JSON integers only, and the const schema version is the version the runtime accepts (V12 R4-k)
+      - python/tests/test_strategy_contract.py test_output_rejects_unknown_keys_rather_than_dropping_them keeps the Python bridge on the same deny-unknown-keys footing as Rust for both the output and each intent (V12 R4-k)
     limitations:
       - wheel_matrix_has_not_produced_a_ci_record_yet
+      - uppercase_enum_names_pass_the_runtime_but_not_the_schema：Rust accepts both spellings so the difference is stated in the schema description instead of being closed by a second validator; the Python SDK and the C++ worker still do not cover every schema field (V12 R4-k, schemas/strategy_api_v1.md Language coverage)
 
   cpp_strategy_sdk:
     implementation: true
@@ -379,11 +493,14 @@ capabilities:
     production_approved: false
     evidence:
       - cpp/include/qianxing_ring.hpp and cpp/include/qianxing_strategy.h
+      - crates/qx-strategy/src/c_api.rs 的 10 个 #[repr(C)] 类型就是上面那份头文件的另一侧手抄，DynamicCAbiStrategy::load_verified 按 sha256/签名白名单加载并保证句柄先于库卸载 (V11 S13)
+      - tools/check_architecture.py c_abi_header_check holds 4 items over that mirror：两侧类型集合对称差、每个结构的字段名与顺序逐位、每字段类型按映射表、枚举判别值序列与 ABI 版本常量两侧相等 (V11 S13)
       - cpp/examples/jsonl_strategy.cpp JSON and columnar request decoding
       - tools/verify_cpp_worker.py drives both shared_memory_json and shared_memory_columnar
       - .github/workflows/ci.yml cpp-sdk job on ubuntu, windows and macos
     limitations:
       - three_os_cpp_matrix_has_not_produced_a_ci_record_yet
+      - ci_never_loads_a_cpp_plugin_into_the_rust_host：SHARED 的 qianxing_strategy_example 确实被 build 出来，但没有一步用 DynamicCAbiStrategy 加载它，跨工具链的布局一致性目前只有静态门禁这一层保护 (V11 S13)
 
   broker_gateway:
     implementation: unavailable_without_vendor_protocol

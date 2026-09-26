@@ -350,6 +350,14 @@ pub(crate) fn runtime_timestamp_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// 租约域时钟：epoch 秒。租约（`JobLease`/`ControlCommandLease`/outbox）、`JobSpec.timeout_seconds`
+/// 与 `JobRun` 的 `started_ts`/`deadline_ts`/`next_retry_ts` 全按秒相加比较，而运行时唯一的墙钟是毫秒：
+/// 直接喂毫秒会让 30 秒租约在 30 毫秒后"过期"，作业还在跑就被别的 worker 抢走、收尾 `ack_at` 变
+/// `LeaseExpired`、`deadline_ts` 在启动瞬间就已超时。跨进租约域的调用点只在这里换算一次。
+pub(crate) fn lease_clock(timestamp_ms: u64) -> u64 {
+    timestamp_ms / 1_000
+}
+
 pub(crate) fn worker_metrics_dir(config: &RuntimeConfig) -> PathBuf {
     Path::new(&config.storage.data_dir).join("worker-metrics")
 }

@@ -184,22 +184,99 @@ pub(crate) fn mk_submit_command(command_id: u64, order: &Order, dry_run: bool) -
     }
 }
 
+/// paper 策略运行时的配置模板，`data_dir` 换到用例的临时目录。
+///
+/// 模板里的规格路径相对 `data_dir`，所以规格文件要绝对化后才读得到。账户读模型的
+/// 多条用例（钱字段口径、默认账户挑选）都以这份配置起步，命名与 `ashare_submit_guard`
+/// 里那份"顺手写一份 runtime.json 并返回路径"的 helper 刻意分开。
+pub(crate) fn paper_runtime_config(data_dir: &Path) -> RuntimeConfig {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let template = workspace_root
+        .join("deploy")
+        .join("qianxing.runtime.paper-strategy.example.json");
+    let mut config = read_runtime_config(&template).unwrap();
+    config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    let spec = workspace_binance_spot_spec().to_string_lossy().into_owned();
+    for worker in config.workers.iter_mut() {
+        if worker.instrument_spec_path.is_some() {
+            worker.instrument_spec_path = Some(spec.clone());
+        }
+    }
+    config
+}
+
+/// 把一笔带费用的成交落进 paper 账户日志，产出"持仓未平 + 已付费用"的账户状态。
+pub(crate) fn seed_paper_fill_with_fee(data_dir: &Path, config: &RuntimeConfig) {
+    let config_path = data_dir.join("runtime.json");
+    std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let mut pipeline = LiveEventPipeline::open(data_dir, paper_account_log(), "USDT").unwrap();
+    let ts = runtime_timestamp_ms();
+    pipeline
+        .ingest(RuntimeEventEnvelope::market_quote(
+            instrument.clone(),
+            QuoteTick::new(
+                ts,
+                Price::from_i64(99),
+                Quantity::from_i64(1_000),
+                Price::from_i64(100),
+                Quantity::from_i64(1_000),
+                ts,
+            ),
+            ts,
+            ts,
+            "money-fields:quote",
+        ))
+        .unwrap();
+    drop(pipeline);
+    let order = mk_order(9701, &instrument, Side::Buy, 1);
+    let command = mk_submit_command(9701, &order, false);
+    let control = ControlStateBackend::Files(JsonStateStore::new(data_dir));
+    control
+        .transact(|plane| plane.submit_as(command.clone(), Permission::Trading, 10))
+        .unwrap()
+        .1
+        .unwrap();
+    ControlCommandQueue::new(data_dir.join("control-queue"))
+        .enqueue(command.clone(), 10)
+        .unwrap();
+    run_paper_execution_worker(&config_path, "paper-execution", true).unwrap();
+}
+
 mod account_event_log_identity;
+mod account_principal_source;
+mod api_default_account_reads;
+mod api_query_models_live;
 mod api_snapshot_money_fields;
 mod ashare_submit_guard;
+mod cli_json_surface;
 
 /// 子进程型用例共用的被测 binary 与其新鲜度护栏（原本只在 `cli_surface.rs` 内，
 /// V11 Q0b 的旗标用例同样要跑真 binary，于是按"共享夹具进本文件"的约定上移）。
-/// V11 Q54 把 `init` 一族与产品规格读法各自拆成模块，两者都是子进程用例的被测面，
-/// 因此一并列入：漏掉一项就等于放任过期 binary 对着旧行为"绿"。
-const QX_CLI_SURFACE_SOURCES: [&str; 6] = [
-    "src/cli.rs",
-    "src/cli_help.rs",
-    "src/config_commands.rs",
-    "src/init_project.rs",
-    "src/market_spec.rs",
-    "src/backtests/mod.rs",
-];
+/// V12 R4-e 把 7 文件手工名单换成整棵 `src/` 递归清点：`cli_args.rs` 这类同样编进
+/// `qx-cli.exe` 的文件当时不在名单里，护栏对它就是形同不存在。
+fn qx_cli_surface_sources() -> Vec<PathBuf> {
+    let mut stack = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+    let mut files = Vec::new();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // `src/tests/` 只编进测试壳、不编进被测 binary，列进来会天天误报。
+                if path.file_name().is_some_and(|name| name == "tests") {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files
+}
 
 /// 被测 binary 是否不早于被测源码：`cargo test --bin` 只编译测试壳、不会重链
 /// `target/debug/qx-cli.exe`，放任过期 binary 会让子进程断言对着旧行为"绿"。
@@ -208,17 +285,16 @@ fn assert_binary_fresh(binary: &Path) {
         .metadata()
         .and_then(|m| m.modified())
         .expect("读取被测 binary 修改时间失败");
-    for source in QX_CLI_SURFACE_SOURCES {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(source);
-        let edited = path
+    for source in qx_cli_surface_sources() {
+        let edited = source
             .metadata()
             .and_then(|m| m.modified())
-            .unwrap_or_else(|_| panic!("找不到被测源码 {}", path.display()));
+            .unwrap_or_else(|_| panic!("找不到被测源码 {}", source.display()));
         assert!(
             built >= edited,
             "被测 binary {} 比 {} 旧，请先 cargo build -p qx-cli 再跑本用例",
             binary.display(),
-            path.display()
+            source.display()
         );
     }
 }
@@ -241,6 +317,10 @@ fn qx_cli_binary() -> PathBuf {
         "qx-cli"
     });
     assert!(binary.is_file(), "未找到被测 binary {}", binary.display());
+    // 本 crate 的 `--bin` 单元测试里 `option_env!("CARGO_BIN_EXE_qx-cli")` 取不到值（它只喂给
+    // 集成测试壳），所以走的正是这条回落分支——也正是 `cargo test --bin` 不重链 binary 的那条路。
+    // 新鲜度只写在上面那条分支等于没写：定向跑子进程用例时会静默对着旧行为变绿（V11 S6）。
+    assert_binary_fresh(&binary);
     binary
 }
 
@@ -251,12 +331,17 @@ mod backtest_fill_model;
 mod backtest_input_provenance;
 mod backtest_replay_gate;
 mod backtest_risk_provenance;
+mod backtest_signal_provenance;
+mod calendar_component_fingerprint;
 mod ccxt_position_facts_honesty;
 mod ccxt_reconcile_round;
+mod ccxt_stream_retry_budget;
 mod cli_surface;
 mod e2e_and_python_contract;
+mod event_backtest_evidence;
 mod execution_and_multi_leg;
 mod init_onboarding;
+mod lease_clock_domain;
 mod live_submit_fail_closed;
 mod market_spec_single_source;
 mod paper_and_strategy_worker;
@@ -264,6 +349,10 @@ mod paper_bridge_and_bundles;
 mod paper_hedge_recovery;
 mod paper_margin_valuation;
 mod paper_settlement_currency;
+mod reconcile_worker_identity;
+mod report_readout;
+mod runtime_api_worker_identity;
+mod scheduler_dispatch_support;
 mod settlement_currency_caliper;
 mod storage_root_report;
 mod strategy_worker_entries;

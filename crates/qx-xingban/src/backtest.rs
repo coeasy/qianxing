@@ -310,27 +310,6 @@ impl BacktestEngine {
         Self { config }
     }
 
-    /// 批量执行候选配置；每个候选都创建独立的策略和账户状态，不能共享可变 Ledger。
-    /// 工厂接收稳定的候选序号，调用方可以用它绑定 CandidateConfig 参数。
-    pub fn run_batch<I, F>(
-        configs: I,
-        bars: &[Bar],
-        mut strategy_factory: F,
-    ) -> Result<Vec<BacktestReport>, qx_core::QxError>
-    where
-        I: IntoIterator<Item = BacktestConfig>,
-        F: FnMut(usize) -> Box<dyn BarStrategy>,
-    {
-        configs
-            .into_iter()
-            .enumerate()
-            .map(|(index, config)| {
-                let mut strategy = strategy_factory(index);
-                BacktestEngine::new(config).run(bars, strategy.as_mut())
-            })
-            .collect()
-    }
-
     pub fn run(
         self,
         bars: &[Bar],
@@ -2732,11 +2711,15 @@ mod tests {
             Bar::new(2, 102, 103, 101, 102, 10),
             Bar::new(3, 104, 105, 103, 104, 10),
         ];
-        let reports =
-            BacktestEngine::run_batch(vec![simple_config(), simple_config()], &bars, |_| {
-                Box::new(BuyOnce { done: false })
+        let reports = [0, 1]
+            .into_iter()
+            .map(|_| {
+                let mut strategy: Box<dyn BarStrategy> = Box::new(BuyOnce { done: false });
+                BacktestEngine::new(simple_config())
+                    .run(&bars, strategy.as_mut())
+                    .unwrap()
             })
-            .unwrap();
+            .collect::<Vec<_>>();
         assert_eq!(reports.len(), 2);
         assert_eq!(reports[0].result_hash(), reports[1].result_hash());
         assert_eq!(

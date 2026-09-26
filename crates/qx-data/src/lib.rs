@@ -4,8 +4,6 @@
 //! must be converted into canonical schemas before entering research/runtime.
 
 pub mod batch;
-pub mod cache;
-pub mod calendar;
 pub mod catalog;
 pub mod corporate_action;
 pub mod fingerprint;
@@ -20,8 +18,6 @@ pub mod storage;
 pub mod validation;
 
 pub use batch::{load_bar_batch, BarBatchItem, BarRequest};
-pub use cache::{CacheKey, DataCache};
-pub use calendar::{TradingCalendar, TradingSession};
 pub use catalog::{
     ArrowDatasetManifest, ArrowFieldManifest, DatasetBundleManifest, DatasetComponentFormat,
     DatasetComponentManifest, DatasetManifest, JsonDatasetBundleStore,

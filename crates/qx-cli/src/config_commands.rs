@@ -285,58 +285,18 @@ pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
         return Ok(());
     }
 
-    let text = |pointer: &str, fallback: &str| -> String {
-        summary
-            .pointer(pointer)
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(fallback)
-            .to_string()
-    };
-    let integer = |pointer: &str| {
-        summary
-            .pointer(pointer)
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(0)
-    };
     println!("[Report] summary={}", summary_path.display());
-    println!(
-        "  strategy={} instrument={} bars={} fills={}",
-        text("/strategy_id", "-"),
-        text("/instrument", "-"),
-        integer("/bars"),
-        integer("/fills")
-    );
-    println!(
-        "  return_bps={} max_drawdown_bps={} fees_raw={} turnover_raw={} final_equity_raw={}",
-        integer("/metrics/return_bps"),
-        integer("/metrics/max_drawdown_bps"),
-        integer("/metrics/fees_raw"),
-        integer("/metrics/turnover_raw"),
-        integer("/metrics/final_equity_raw")
-    );
-    println!(
-        "  input_data_hash={} result_hash={} replay_log_digest={}",
-        text("/input_data_hash", "-"),
-        text("/result_hash", "-"),
-        text("/replay/log_digest", "-")
-    );
-    match &declared_input {
-        Some(input) => println!(
-            "  input_verified={} input_kind={} input_id={} input_fingerprint={}",
+    // 正文的排印与缺席口径统一在 `report_readout.rs`：这里只交摘要与"输入是否复核过"。
+    let input_verified = match &declared_input {
+        Some(input) => format!(
+            "{} input_kind={} input_id={} input_fingerprint={}",
             input.path, input.kind, input.dataset_id, input.fingerprint
         ),
-        None => println!("  input_verified=not_declared（该摘要没有 input 块，输入身份未经核对）"),
+        None => "not_declared（该摘要没有 input 块，输入身份未经核对）".to_string(),
+    };
+    for line in report_readout_lines(&summary, &input_verified) {
+        println!("{line}");
     }
-    println!(
-        "  replay_events={} replay_ledger_entries={}/{}",
-        integer("/replay/events"),
-        integer("/replay/ledger_entries"),
-        integer("/replay/run_ledger_entries")
-    );
-    println!(
-        "  risk_rule_set_version={}",
-        text("/risk_rules/rule_set_version", "-")
-    );
     Ok(())
 }
 
@@ -406,33 +366,10 @@ pub(crate) fn run_status(path: &Path, as_json: bool) -> Result<(), String> {
         );
     }
     if let Some(summary) = latest_summary {
-        println!(
-            "[Latest Backtest] strategy={} instrument={} fills={} return_bps={} max_drawdown_bps={} result_hash={}",
-            summary
-                .get("strategy_id")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("-"),
-            summary
-                .get("instrument")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("-"),
-            summary
-                .get("fills")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            summary
-                .pointer("/metrics/return_bps")
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(0),
-            summary
-                .pointer("/metrics/max_drawdown_bps")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            summary
-                .get("result_hash")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("-")
-        );
+        // 与 `report` 共用 `report_readout.rs` 的读法：没写的格子印 absent（V12 R1）。
+        for line in latest_backtest_readout_lines(&summary) {
+            println!("{line}");
+        }
     } else {
         println!("[Latest Backtest] 暂无已保存回测摘要");
     }
@@ -521,28 +458,28 @@ pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, St
     check_account_log_settlement(&config, &mut checks, &mut failures);
     check_orphan_event_logs(path, &config, &mut checks, &mut warnings);
 
-    match RuntimeSupervisor::new(config.clone()) {
-        Ok(supervisor) => {
-            let health = supervisor
-                .health()
-                .lock()
-                .map_err(|_| "运行时健康锁已中毒".to_string())?
-                .snapshot(0, config.shutdown_timeout_ms);
-            checks.push(serde_json::json!({
-                "name": "runtime_topology",
-                "status": "pass",
-                "message": format!("overall={:?}", health.overall)
-            }));
-        }
-        Err(error) => {
-            let message = format!("运行拓扑构建失败: {error}");
-            checks.push(serde_json::json!({
-                "name": "runtime_topology",
-                "status": "fail",
-                "message": message
-            }));
-            failures.push(message);
-        }
+    // 判的是"这份配置能否构建出监督器"（`new` = 已判过的 validate + 按启用 worker 注册
+    // 服务），不是运行健康：此刻一个 worker 都没启动，原名 `runtime_topology: pass` 加
+    // `overall=Starting` 会让读报告的人以为拓扑被判成了健康。
+    let enabled_workers = config
+        .workers
+        .iter()
+        .filter(|worker| worker.enabled)
+        .count();
+    let (status, message) = match RuntimeSupervisor::new(config.clone()) {
+        Ok(_) => (
+            "pass",
+            format!("监督器可构建，启用 worker={enabled_workers}（未启动，不代表运行健康）"),
+        ),
+        Err(error) => ("fail", format!("运行时监督器构建失败: {error}")),
+    };
+    checks.push(serde_json::json!({
+        "name": "runtime_supervisor_build",
+        "status": status,
+        "message": message.clone()
+    }));
+    if status == "fail" {
+        failures.push(message);
     }
 
     Ok(serde_json::json!({
@@ -582,7 +519,7 @@ pub(crate) fn run_doctor(path: &Path, as_json: bool) -> Result<(), String> {
                 .map_err(|error| format!("编码 doctor JSON 失败: {error}"))?
         );
     } else {
-        println!("[Doctor] 检查配置、路径、运行拓扑和策略输入");
+        println!("[Doctor] 检查配置、路径、策略输入与监督器可构建性（不启动 worker）");
         if let Some(checks) = report.get("checks").and_then(serde_json::Value::as_array) {
             for check in checks {
                 let status = check
