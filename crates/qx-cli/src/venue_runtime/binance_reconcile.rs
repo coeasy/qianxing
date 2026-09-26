@@ -83,7 +83,7 @@ pub(crate) fn run_binance_reconcile_worker(
         .iter()
         .map(|symbol| {
             InstrumentId::parse(symbol)
-                .filter(|instrument| instrument.venue.as_str().eq_ignore_ascii_case("BINANCE"))
+                .filter(|instrument| instrument.venue.is_binance())
                 .map(|instrument| instrument.symbol)
                 .ok_or_else(|| format!("worker {} 对账 symbol 非法: {symbol}", worker.id))
         })

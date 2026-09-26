@@ -158,13 +158,15 @@ capabilities:
       - tools/check_architecture.py builtin_knob_list_check holds 9 items over that single list, the four consumers, the emitted (not commented) summary keys and the named cases (V12 #102)
       - crates/qx-cli/src/tests/backtest_input_provenance.rs report_refuses_when_the_sibling_run_manifest_no_longer_matches, report_refuses_when_the_declared_run_manifest_is_gone_or_unreadable and summary_that_omits_the_run_manifest_pointer_fails_instead_of_skipping_the_check make the RunManifest pointer a check that can actually fail, which is what was missing after V11 Q66 wrote the pointer but nobody read it (V12 R4-i)
       - crates/qx-cli/src/tests/cli_surface.rs backtest_subcommand_rejects_outer_positionals_it_never_reads refuses the outer positional argument the backtest chain never reads instead of swallowing it (V12 R4-e)
+      - crates/qx-cli/src/backtests/mod.rs backtest_settlement_currency falls back to crates/qx-core/src/identity.rs DEFAULT_SETTLEMENT_CURRENCY, the single place the default accounting currency is written; the Bar chain's initial deposit therefore books cash in the same currency the account ledger reads (V13 R1-A4)
+      - crates/qx-cli/src/tests/settlement_currency_single_source.rs changing_only_the_settlement_currency_moves_the_published_fingerprint runs the real backtest entry twice with nothing but `settlement_currency` changed and demands different result_hash values, so a published artifact proves which currency its returns are denominated in (V13 R1-A4)
     limitations:
       - backtest exposes only two builtins after V9 cleanup (single instrument and multi-leg)
       - declared_unused_knobs_do_not_fail_the_run：a knob outside the kind's list is reported and ignored rather than rejected, because these keys are also legacy config items; the cost is that "configured but inert" is only visible in the stdout note and the summary block (V12 #102 §14.5)
       - queue_position_bps_is_not_a_cli_flag_because_builtin_strategies_only_emit_market_orders
       - bar_chain_virtual_trading_config_remains_unreachable_without_mark_price_input
       - deep_tier_fill_models_probabilistic_and_volume_sensitive_are_rejected_because_bar_input_cannot_carry_their_book_precondition
-      - ashare_previous_close_raw_has_no_in_repo_producer_so_ex_rights_anchors_stay_unadjusted
+      - ashare_previous_close_raw_is_now_an_override_not_the_only_exit：除权除息日的锚由 `previous_close` 从已装载的 `corporate_actions` 折算得出，覆盖表只在需要手工指定时生效；代价是随仓库发布的 `deploy/qianxing.ashare.rules.json` 仍带一份 `"previous_close_raw": {}` 且没有配套公司行为文件，所以照抄示例命令的那一轮拿到的还是不复权锚 —— 要让它折算，`--config` 必须同时给出公司行为 JSON 路径。复算方式：`cargo test -p qx-xingban --lib ashare::tests::ex_rights_anchor` 两条用例分别断言 9.50 与 6.88，`python tools/check_architecture.py` 的 8 项 A 股锚判据覆盖折算、顺序、用例与非测试写点（V13 R1-A1）
       - the_two_bar_chains_agree_on_fills_return_and_drawdown_for_one_config_yet_still_publish_different_result_hash_so_the_hash_hides_chain_metadata_that_q1b_has_not_fingerprinted (V11 Q64 open)
       - runtime_config_validation_only_compares_the_window_pair_when_both_keys_are_present_so_single_sided_overrides_are_caught_only_by_the_post_override_recheck (V11 Q64)
       - ashare_trading_rules_now_reach_both_bar_backtest_chains_and_are_refused_loudly_by_book_and_multi_builtin (V11 Q61); paper_and_live_submit_entries_now_refuse_the_section_loudly_too_rather_than_half_wiring_the_fee_model (V11 Q65)
@@ -189,10 +191,14 @@ capabilities:
       - crates/qx-cli/src/tests/cli_json_surface.rs three cases hold the --json promise: the config subcommands that never delivered a parseable body refuse the flag, config explain and config doctor do emit machine-readable JSON, and config validate keeps its human-readable PASS line (V12 R4-f)
       - tools/check_architecture.py control_plane_honesty_check 钉住那三处相等，删掉接受集合里的一格会同时打死门禁和 init_onboarding 的两条用例 (V11 S5)
       - docs/工业化易用性收口指南-V1.md
+      - crates/qx-cli/src/tests/deploy_template_coverage.rs 三条用例覆盖 `deploy/` 顶层全部 52 份模板：登记表与磁盘清单逐名相等、每份按它登记的那一类**生产读法**真读一遍（15 类读取器，含 runtime 配置的 `config validate` 引用体检）、每一类各喂一份坏内容必须被拒（V13 R1-A6）
+      - crates/qx-cli/src/tests/deploy_template_coverage.rs 的 Expected 只有 `Ok` 与 `Refuses(点名关键字)` 两档：`qianxing.runtime.production.example.json` 里 `/var/lib/qianxing` 的占位路径按 3 项关键字被拒并原样印进日志，而不是把这条预期删掉换绿（V13 R1-A6）
+      - tools/check_architecture.py deploy_template_coverage_check 的 9 颗：登记表三列逐条对齐 / 与磁盘逐名相等 / Reader 变体清点 / 变体⊆已使用 / 变体⊆坏内容探针 / 每类读取落在生产读点 / 三条用例与模块挂载 / 预期结果口径 / 配对来源仍在册；GA–GF 六发文本变异各自打红（V13 R1-A6）
     limitations:
       - generated_ccxt_project_still_requires_user_credentials_and_external_sandbox
       - generated_multi_venue_project_does_not_provide_atomic_cross_venue_submission
       - ccxt_and_multi_venue_profiles_print_no_backtest_step_because_init_copies_no_market_frames_for_them
+      - production_runtime_template_refuses_validation_by_design_because_its_secret_and_snapshot_paths_are_placeholders
 
   paper_execution:
     implementation: true
@@ -252,7 +258,7 @@ capabilities:
       - deploy/README.md serve 端点表 + tools/check_architecture.py api_surface_doc_check：17 条路由与文档集合逐一相等，未列路径 404 的兜底口径也在门禁里 (V11 S7)
       - crates/qx-cli/src/api_service.rs publishes equity_raw straight from Ledger::equity_for, so an account holding a position without a mark price reports null instead of its remaining cash (V11 Q70)
       - crates/qx-api/src/lib.rs balances_endpoint_publishes_absent_money_as_null_not_zero covers both sides of the balances route: a computed zero stays 0, and a snapshot whose equity could not be computed prints null (V11 Q70)
-      - crates/qx-cli/src/venue_runtime/paper_submit.rs:50 and crates/qx-cli/src/venue_runtime/paper_worker.rs:103 both call reject_split_account_principal before booking anything, so the paper entry and the backtest chains cannot silently run two different principals on one runtime
+      - crates/qx-cli/src/venue_runtime/paper_submit.rs:50 and crates/qx-cli/src/venue_runtime/paper_worker.rs:93 both call reject_split_account_principal before booking anything, so the paper entry and the backtest chains cannot silently run two different principals on one runtime
       - the same two entries print account_principal_note, so "both declarations agree on this number" is said out loud instead of the equality staying invisible
       - crates/qx-cli/src/tests/account_principal_source.rs two_different_principals_in_one_runtime_are_rejected_everywhere_they_are_read drives the real run_paper_submit_order and asserts the refusal lands before the command file is even parsed (V12 R3)
       - crates/qx-runtime/src/supervision/shutdown.rs install_shutdown_signals turns the process' Ctrl+C/SIGINT/SIGTERM into RuntimeSupervisor::request_shutdown, and wait_for_worker_finish reports StopTimedOut once shutdown_timeout_ms passes instead of waiting on a worker that ignores the token (V12 R4-a)
@@ -263,6 +269,10 @@ capabilities:
       - crates/qx-scheduler/src/lib.rs finish_run_with_code records error_code on the failing side only：Strategy worker 一度把「3 orders: SUBMITTED」这类结果码塞进同一个参数，于是一条 Succeeded 运行在 /scheduler/runs 读出来带着假错误码 (V12 §18-A #129)
       - crates/qx-scheduler/src/lib.rs a_successful_finish_drops_the_error_code_a_failed_one_keeps_it 同场钉住两侧：成功一侧 error_code 归零且不进重试排期，失败一侧原样保留
       - tools/check_architecture.py scheduler_retry_honesty_check：自动重试链的零生产调用点、能力矩阵的 limitation 与接口文档口径三处同源，任一侧改口即红 (V12 §18-A #129)
+      - crates/qx-core/src/venue.rs VenueFamily::parse / parse_option is the single place that turns a worker's `venue_id` into a venue family; the 19 worker-level spellings it replaced (5 byte-identical copies in crates/qx-orchestrator/src/lib.rs, 3 in qx-cli, plus 10 Paper-side variants whose None branch pointed in opposite directions) are now forbidden fingerprints, and tools/check_architecture.py venue_identity_check pins one definition, the 11-file consumer registry and the three family semantics (V13 R1-A3)
+      - crates/qx-orchestrator/src/tests.rs worker_plan_routes_only_the_exact_paper_venue_to_the_local_worker drives that single source from a consumer: `" Paper "` still routes to paper-worker, while `paper-proxy` makes plan_workers fail instead of sending a credential-bearing worker to local paper matching (V13 R1-A3)
+      - crates/qx-cli/src/venue_runtime/worker_runtime.rs worker_settlement_currency and settlement_currency_among_workers now both fall back to crates/qx-core/src/identity.rs DEFAULT_SETTLEMENT_CURRENCY, so a worker that omits `settlement_currency` and the account log whose writers all omit it answer with the same word as the backtest assembly (V13 R1-A4)
+      - crates/qx-cli/src/tests/settlement_currency_single_source.rs every_settlement_currency_fallback_reads_the_same_default drives the real paper template with every declared currency removed and declaring_the_default_currency_matches_declaring_nothing refuses a second answer when a spec states the default explicitly (V13 R1-A4)
     limitations:
       - continuous_market_driven_paper_worker_requires_runtime_market_data_validation
       - scheduler_dispatch_is_cron_and_any_window_only：生产 tick 只把「Cron 触发 + window=Any」的 JobSpec 入队。库侧的 `due_jobs_with_calendar`/`due_event_jobs`/`due_manual_jobs` 与 `SchedulerWorker` 的 calendar/manifest 绑定入口在 qx-scheduler 之外零生产读者 —— 交易日历的 `Session` 至今没有生产生产者，事件与手工触发也没有入队者，因此这些形状现在在装载时就被拒，而不是收下之后静默不跑；接入它们需要先给出日历数据源与事件派发者 (V12 §18-B #117)
@@ -300,6 +310,7 @@ capabilities:
       - qx-application execution fact contract shared by PortExecutionService adapters
       - crates/qx-cli/src/venue_runtime/ccxt_stream_retry.rs CcxtStreamReconnectBudget gives every watch_orders session a real budget (500ms first backoff, 8s cap, named give-up after 10 consecutive failures) instead of a fixed delay retried forever (V12 R4-c)
       - crates/qx-cli/src/tests/ccxt_stream_retry_budget.rs two cases: the backoff escalates through the ladder and a healthy session resets it to the first rung, and the budget gives up with a reason naming the consecutive-failure count rather than a total (V12 R4-c)
+      - deploy/qianxing.submit-order.ccxt-derivatives.example.json 的 policy 三格按 `crates/qx-core/src/trading.rs` 的 `rename_all = "snake_case"` 写成 `net`/`cross`/`one_way`；此前写着 `Net`/`Cross`/`OneWay`，照抄这份示例的提交在反序列化那一格就失败，本轮由 deploy 模板覆盖用例的 SubmitOrder 读点抓到 (V13 R1-A6)
     limitations:
       - exchange_sandbox_precision_and_bill_matrix_pending
       - external_unknown_result_recovery_requires_reconcile_worker
@@ -334,6 +345,8 @@ capabilities:
       - crates/qx-data/src/provider.rs
     limitations:
       - barframe_json_carries_no_receive_time_so_registry_asof_queries_are_not_offered
+      - provider_ingress_is_compared_against_a_shared_fixture_not_against_a_live_endpoint：A2 收的是"Python 写侧与 Rust 读侧的线格式对照"，对照物是仓库里的 `ashare_actions_cross_check.*` 三份夹具，akshare/baostock 的真实返回本轮一次都没打过（V13 §6 划定的"不碰外部"），所以 `sandbox_tested` 仍为 false；线上列名漂移（新增中文别名、`_raw` 语义变化）不会由这套用例发现，只能靠沙盒轮次
+      - canonical_action_names_are_recognised_by_exact_token_then_substring：写侧先按线格式名精确认回，再走中文别名的子串匹配；数据源若发明第 17 种事件名，读侧只会退化 `unknown`（按现金红利参与折算），不会报错 (V13 R1-A2)
 
   ashare_corporate_action_ledger:
     implementation: true
@@ -349,8 +362,17 @@ capabilities:
       - crates/qx-core/tests/ledger/corporate_actions.rs
       - crates/qx-core/tests/ledger/rights_entitlements.rs
       - crates/qx-xingban/src/ashare.rs
+      - crates/qx-xingban/src/ashare/trading.rs
       - crates/qx-xingban/src/backtest.rs
       - crates/qx-xingban/tests/ashare_pit_asof.rs
+      - crates/qx-xingban/src/ashare/trading.rs ex_rights_reference folds the loaded actions into the limit-band anchor: cash dividends subtract from the numerator, bonus shares and rights ratios enter the share factor, the rights subscription money enters the numerator, and the result is rounded to price_tick, so an ex-rights day no longer anchors to an unadjusted previous close (V13 R1-A1)
+      - crates/qx-xingban/src/ashare/tests.rs two cases run the real loader: a 0.50 CNY dividend alone moves the anchor 10.00 to 9.50 and its limit band to 10.45, and dividend plus 1.3 bonus shares plus 3-for-10 rights at 5.00 land together on 6.88, each with the sealed board blocked and the manual override still winning (V13 R1-A1)
+      - crates/qx-cli/src/backtests/ashare_binding.rs and crates/qx-cli/src/runtime_check.rs are the two non-test writers that load those actions, which is what makes the folded anchor reachable from the product config path rather than only from tests (V13 R1-A1)
+      - tools/check_architecture.py ashare_limit_anchor_check holds 8 items over the fold reading the action ledger, the fold running only after the cross-day derivation, the two named cases, and a producer scan that excludes comment lines, `#[cfg(test)]` tails, whole-file test modules and the definition's own `self.` delegation (V13 R1-A1)
+      - python/tests/fixtures/ashare_actions_cross_check.rows.json / .payload.json / .expectations.json 是两侧共读的一份对照夹具：rows 是数据源原始行，payload 由 Python `serialize_corporate_actions` 写出，expectations 由 payload 派生，锚定那格 `(10 + 5×0.2 − 0.5) ÷ (1 + 0.3 + 0.2) = 7.00` 由 Python 与 Rust 各自独立复算，谁都不抄它 (V13 R1-A2)
+      - python/tests/test_ashare_cross_language_contract.py 六条用例：payload 逐字节重算比对、期望值从 payload 派生、折算锚独立复算、16 个动作名逐个认回、`*_raw` 已定点与别名按元/股两种口径不混、ISO `T` 公告日期不回落成除权日 (V13 R1-A2)
+      - crates/qx-xingban/src/ashare/tests.rs 两条用例把同一份 payload 读回 Rust：信封五格与逐动作八格逐字段比，停牌行必须登记成停牌事实而非普通资金事件，并把装载好的事件喂进 A1 那道折算锚得到 7.00 (V13 R1-A2)
+      - tools/check_architecture.py ashare_cross_language_contract_check holds 14 items over the version number, the three field rosters (item by item, in order, equal to the declared Rust array length), the 16-action vocabulary, the writer recognising its own line-format names, the single fixed-point unit rule, both ISO date separators, the shared fixture trio and the fact that neither side may copy the anchor expectation into a numeric literal (V13 R1-A2)
     limitations:
       - rights_expiry_requires_explicit_or_timed_fact
       - corporate_action_read_side_has_no_production_reader：内核的 `cash_dividend_entitlement_for` / `convertible_bond_interest_entitlement_for` 两条待支付权益查询，与 `BacktestReport::issuer_capital_at`，在仓库里只有用例读者。发行股本快照随报告结构体存在，但不写进回测摘要、运行清单或任何 API 读模型，所以「这一轮的分红与配股权利压在多少股本上」目前读不到产物；把快照与待支付权益接进摘要读侧是本轮明确没做的事（不改产物形状，避免发布前重放哈希漂移）(V12 §18-B #118)

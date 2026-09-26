@@ -15,12 +15,10 @@ pub(crate) fn account_event_log_name(account_id: &str, venue_id: &str) -> Option
     if account.is_empty() || venue.is_empty() {
         return None;
     }
-    let prefix = if venue == "paper" {
-        "paper"
-    } else if venue.contains("binance") {
-        "binance"
-    } else {
-        "ccxt"
+    let prefix = match VenueFamily::parse(&venue) {
+        VenueFamily::Paper => "paper",
+        VenueFamily::Binance => "binance",
+        VenueFamily::Other => "ccxt",
     };
     Some(format!("{prefix}-{account}-{venue}-events"))
 }
@@ -242,10 +240,7 @@ pub(crate) fn paper_market_worker_matches_instrument(
 ) -> bool {
     worker.enabled
         && worker.role == WorkerRole::Execution
-        && worker
-            .venue_id
-            .as_deref()
-            .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
+        && VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper)
         && (worker.symbols.is_empty()
             || worker
                 .symbols
@@ -263,10 +258,7 @@ pub(crate) fn open_paper_market_bridges(
     for worker in workers.iter().filter(|worker| {
         worker.enabled
             && worker.role == WorkerRole::Execution
-            && worker
-                .venue_id
-                .as_deref()
-                .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
+            && VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper)
     }) {
         let log_name = required_account_event_log(worker)?;
         // 同一账户/venue 允许配置多个标的 worker，但它们共享一个账户级日志；

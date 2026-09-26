@@ -19,3 +19,8 @@ python/**/*.egg-info/
 '%SystemDrive%/'
 **/%SystemDrive%/
 
+# 每轮门禁/构建的原始日志：数字按轮抄进 docs 与 CHANGELOG，日志本身不是仓库资产
+/logs/
+# 变异取证时临时放的门禁副本（跑完即删；崩溃留不下清理时也不该进版本库）
+/.gate_mut/
+

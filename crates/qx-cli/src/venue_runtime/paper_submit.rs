@@ -70,10 +70,7 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
         .find(|worker| {
             worker.enabled
                 && worker.role == WorkerRole::Execution
-                && worker
-                    .venue_id
-                    .as_deref()
-                    .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
+                && VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper)
         })
         .cloned();
     if let Some(worker) = paper_worker.as_ref() {
@@ -164,11 +161,8 @@ pub(crate) fn paper_submit_matches_worker(command: &ControlCommand, worker: &Wor
     order_from_submit_command(command)
         .map(|order| {
             order.account_id == expected_account
-                && worker
-                    .venue_id
-                    .as_deref()
-                    .map(|venue| venue.eq_ignore_ascii_case("paper"))
-                    .unwrap_or(false)
+                && VenueFamily::parse_option(worker.venue_id.as_deref())
+                    == Some(VenueFamily::Paper)
                 // Paper 是虚拟执行域，订单 instrument 可以来自 Binance、OKX、
                 // Bybit 或自定义市场；不能把虚拟账户误绑死在某一个真实 Venue。
                 && (worker.symbols.is_empty()

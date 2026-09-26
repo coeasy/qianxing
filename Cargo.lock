@@ -1385,6 +1385,7 @@ dependencies = [
 name = "qx-orchestrator"
 version = "0.1.0"
 dependencies = [
+ "qx-core",
  "qx-runtime",
 ]
 

@@ -43,13 +43,13 @@ impl RiskSnapshot {
 /// 组合级快照风控动作。
 ///
 /// 历史上 `decision::RiskAction` 与本枚举变体完全重复且零调用，已随死代码删除；
-/// 本枚举是仓库内唯一的组合级动作表示。
+/// 本枚举是仓库内唯一的组合级动作表示。`evaluate()` 只产下面三档，第四档
+/// `Rebalance` 没有任何生产者也没有任何一条判定臂，随 V12 §23 删除。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RiskDecision {
     Allow,
     Reject,
     Reduce,
-    Rebalance,
 }
 
 pub struct RiskEngine;

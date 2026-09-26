@@ -1,6 +1,7 @@
 //! 进程拓扑校验：API、存储、消息与 worker 角色组合。
 
 use super::*;
+use qx_core::VenueFamily;
 
 impl RuntimeConfig {
     pub fn validate(&self) -> Result<(), String> {
@@ -369,10 +370,8 @@ impl RuntimeConfig {
                 WorkerRole::Execution | WorkerRole::SpreadRecovery
             ) && worker.instrument_spec_path.is_none()
                 && (self.environment.eq_ignore_ascii_case("production")
-                    || !worker
-                        .venue_id
-                        .as_deref()
-                        .is_some_and(|venue| venue.eq_ignore_ascii_case("paper")))
+                    || VenueFamily::parse_option(worker.venue_id.as_deref())
+                        != Some(VenueFamily::Paper))
             {
                 return Err(format!(
                         "{} Execution/SpreadRecovery worker 必须配置 instrument_spec_path；仅非 production 的 Paper smoke 允许兼容省略",
@@ -400,7 +399,8 @@ impl RuntimeConfig {
             // account_id / venue_id 的必需性与凭据来源的唯一性已经由
             // `role_field_status` 判定；这里只补 Binance 私有接口对凭据的强制要求。
             if worker.role.uses_private_venue()
-                && is_binance(&worker.venue_id)
+                && VenueFamily::parse_option(worker.venue_id.as_deref())
+                    == Some(VenueFamily::Binance)
                 && !worker.has_valid_credential_env()
                 && !worker.has_valid_credential_files()
             {
@@ -410,7 +410,8 @@ impl RuntimeConfig {
                 ));
             }
             if worker.role == WorkerRole::MarketData
-                && is_binance(&worker.venue_id)
+                && VenueFamily::parse_option(worker.venue_id.as_deref())
+                    == Some(VenueFamily::Binance)
                 && worker.symbols.is_empty()
             {
                 return Err(format!(
@@ -427,11 +428,13 @@ impl RuntimeConfig {
                     worker.id
                 ));
             }
-            if worker.role == WorkerRole::Reconciler && is_binance(&worker.venue_id) {
+            if worker.role == WorkerRole::Reconciler
+                && VenueFamily::parse_option(worker.venue_id.as_deref())
+                    == Some(VenueFamily::Binance)
+            {
                 for symbol in &worker.symbols {
-                    let valid = InstrumentId::parse(symbol).is_some_and(|instrument| {
-                        instrument.venue.as_str().eq_ignore_ascii_case("BINANCE")
-                    });
+                    let valid = InstrumentId::parse(symbol)
+                        .is_some_and(|instrument| instrument.venue.is_binance());
                     if !valid {
                         return Err(format!(
                             "{} Binance 对账 symbol 必须是合法的 *.BINANCE InstrumentId: {}",
@@ -447,11 +450,4 @@ impl RuntimeConfig {
         self.verify_fingerprint()?;
         Ok(())
     }
-}
-
-fn is_binance(venue_id: &Option<String>) -> bool {
-    venue_id
-        .as_deref()
-        .map(|venue| venue.to_ascii_lowercase().contains("binance"))
-        .unwrap_or(false)
 }

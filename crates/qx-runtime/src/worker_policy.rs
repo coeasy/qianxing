@@ -7,6 +7,7 @@
 //! Forbidden 三种可见性，非法组合在配置反序列化与启动校验阶段即失败。
 
 use crate::{CredentialEnv, CredentialFiles, WorkerConfig, WorkerRole};
+use qx_core::VenueFamily;
 
 /// 全部 `WorkerRole` 变体。新增角色必须在此登记，`field_scopes` 与角色谓词的
 /// 覆盖由测试核对，避免 CLI 侧另抄一份角色清单。
@@ -310,10 +311,7 @@ impl WorkerConfig {
             }
         }
         if self.paper_initial_cash_raw.is_some()
-            && !self
-                .venue_id
-                .as_deref()
-                .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
+            && VenueFamily::parse_option(self.venue_id.as_deref()) != Some(VenueFamily::Paper)
         {
             return RoleFieldStatus::PaperCashOnRealVenue;
         }

@@ -25,6 +25,7 @@ pub mod retry;
 pub mod sourcing;
 pub mod target;
 pub mod trading;
+pub mod venue;
 
 pub use self::clock::Ts;
 pub use self::error::{QxError, QxResult};
@@ -37,7 +38,9 @@ pub use self::fee::{
     DEFAULT_MAKER_BP, DEFAULT_TAKER_BP,
 };
 pub use self::fill_apply::{apply_fill_to_books, apply_ledger_fill, FillTerms, OrderFillBook};
-pub use self::identity::{CanonicalProduct, InstrumentId, MarketId, VenueId};
+pub use self::identity::{
+    CanonicalProduct, InstrumentId, MarketId, VenueId, DEFAULT_SETTLEMENT_CURRENCY,
+};
 pub use self::ledger::{
     ConvertibleBondConversion, CorporateAction, Ledger, LedgerEntry, LedgerEntryKind,
     PositionState, RightsIssueEvent, ShareSubscription,
@@ -51,3 +54,4 @@ pub use self::trading::{
     MarginMode, MarginState, OrderPolicy, PositionMode, PositionSide, TradingInstrumentSpec,
     TradingProduct,
 };
+pub use self::venue::VenueFamily;

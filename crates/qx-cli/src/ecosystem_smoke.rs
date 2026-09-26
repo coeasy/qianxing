@@ -343,7 +343,7 @@ pub(crate) fn run_backtest(bars: &[Bar], seed: u64, fast: usize, slow: usize) ->
         as_of: bars.first().map(|bar| bar.ts).unwrap_or(1),
         positions: BTreeMap::new(),
         cash: BTreeMap::from([(
-            "USDT".into(),
+            DEFAULT_SETTLEMENT_CURRENCY.into(),
             Money::from_i64(crate::backtests::DEFAULT_BACKTEST_INITIAL_CASH).raw(),
         )]),
         available_margin_raw: Some(

@@ -6,7 +6,7 @@
   "kind": "SubmitOrder",
   "target": "3001",
   "payload": {
-    "order_json": "{\"client_id\":3001,\"instrument\":{\"symbol\":\"BTC/USDT:USDT\",\"venue\":\"OKX\"},\"side\":\"Buy\",\"qty\":1000000000,\"limit\":null,\"status\":\"PendingSubmit\",\"filled\":0,\"account_id\":\"main\",\"trace\":null,\"policy\":{\"reduce_only\":false,\"position_side\":\"Net\",\"margin_mode\":\"Cross\",\"position_mode\":\"OneWay\",\"leverage\":3,\"post_only\":false}}"
+    "order_json": "{\"client_id\":3001,\"instrument\":{\"symbol\":\"BTC/USDT:USDT\",\"venue\":\"OKX\"},\"side\":\"Buy\",\"qty\":1000000000,\"limit\":null,\"status\":\"PendingSubmit\",\"filled\":0,\"account_id\":\"main\",\"trace\":null,\"policy\":{\"reduce_only\":false,\"position_side\":\"net\",\"margin_mode\":\"cross\",\"position_mode\":\"one_way\",\"leverage\":3,\"post_only\":false}}"
   },
   "permission": "Trading",
   "dry_run": true

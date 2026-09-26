@@ -1615,7 +1615,7 @@ fn client_order_id(id: u64) -> String {
 }
 
 fn validate_binance_instrument(instrument: &InstrumentId) -> QxResult<()> {
-    if !instrument.venue.as_str().eq_ignore_ascii_case("BINANCE") {
+    if !instrument.venue.is_binance() {
         return Err(QxError::Permanent(format!(
             "Binance Venue 不接受 instrument venue: {}",
             instrument.venue

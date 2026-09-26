@@ -6,4 +6,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+qx-core = { path = "../qx-core" }
 qx-runtime = { path = "../qx-runtime" }

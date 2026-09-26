@@ -57,6 +57,19 @@
   22. 日历组件指纹两侧比同一份夹具（V11 R17 / T2）：Python 写侧产出文档与摘要、Rust 读侧重算，
       摘要在代码里没有第二份抄本，字段白名单与契约版本号逐项相等——旧格式文档 `sessions` 缺席
       必须读成"没有时段"，两侧一宽一严时 Python 登记的 bundle 会被 CLI 拒启。
+  23. 合流不许把同一段判据接成两份（V12 §21 / #138）：`tools/*.py` 内不得出现逐字重复的连续
+      10 行，每条判据的描述文本全仓只写一次。git 对"双方各自在同处追加"不产生冲突标记，而
+      门禁没有编译器兜底——§20 那份重复判据是靠 `NameError` 崩在中途才暴露的，症状是退 1 却 0 条 FAIL。
+  24. 本地构建路径自己就得跑架构门禁（V12 §22 / #139）：`build.bat` 与 `build.sh` 的第 [1/9] 步
+      调用本脚本，失败当轮中止，且排在任何 `cargo` 之前。此前八步门禁里没有一步跑它，于是双击
+      构建看到"全部完成"时，这四百多条不变量一条都没被证明过——只有 CI 证明过，而 CI 不是发布路径。
+  25. 每个 `pub enum` 变体都要有人在生产代码里把它造出来（V12 §23 / #137）：生产者按**限定名**
+      `Enum::Variant` 计数（`impl Enum` 花括号配平块体内的 `Self::Variant` 也算），读者侧剔掉
+      `#[cfg(test)]` 条目与 `crates/*/src/tests/**` 整个目录。按裸名计数会假绿——实测
+      `ServiceStatus::Degraded` 在生产文本里出现 14 次，于是同一份扫描看不见 `ConnectorState::Degraded`
+      一次也没被赋过值。零生产者的变体要么删，要么进线格式允许清单，且清单每条都要自证：变体仍在册、
+      所在枚举确实 derive 了 `Deserialize`（证据只认 `pub enum` 上方连续的 `#` 属性行，文件顶部那句
+      `use serde::{Deserialize, …}` 不算）、且确实零生产者。
 
 运行： python3 tools/check_architecture.py
 刷新第 8 项的预算快照（改动后人工确认 diff）：
@@ -65,6 +78,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -436,7 +450,12 @@ CLI_TESTS_DIR = "crates/qx-cli/src/tests"
 # `^#[test]$` 实测 src/tests 192 + crates/qx-cli/tests 递归 52）。本轮另加的 3 条 accept 停机
 # 用例在 `crates/qx-api/tests`、5 条审计链用例在 `crates/qx-storage/tests`，各自由
 # `API_ACCEPT_LOOP_CASES` / `CONTROL_AUDIT_CASES` 点名钉住在位，不进本地板。
-CLI_TEST_FLOOR = 244
+# 244 → 262：V13 R1-A4 回合按磁盘重测（`^#[test]$` 实测 src/tests 210 + crates/qx-cli/tests
+# 递归 52）。抬的比我这一轮加的 3 条多，是因为 V12 §16/#133/合流几轮各自加的用例没人回填这里
+# —— 244 是 8 颗 venue 用例之前的历史值，与 §16 抓到的"两个历史值并存"是同一类漂移。
+# 262 → 265：V13 R1-A6 回合按磁盘重测（`^#[test]$` 实测 src/tests 213 + 递归 52）。这 3 条就是
+# 本轮新加的 deploy 模板读取覆盖用例（在册等 / 逐份真读 / 每类探针），没有历史欠账要补。
+CLI_TEST_FLOOR = 265
 # 拆文件时最容易被复制进各个主题文件的共享夹具（风控上下文、隔离运行时目录）。
 CLI_TEST_FIXTURES = (
     "smoke_paper_risk_context",
@@ -462,12 +481,45 @@ EXECUTION_TEST_FIXTURES = (
 # 而 §16 的账目回合抓到的正是它们覆盖不到的那种失效：整树 `test result:` 计数从 843 掉到 821，
 # 逐名比对才发现 39 条用例随死码删除或改名一起消失了 —— 没有下限的那些 crate 全绿通过。
 # 地板取本回合磁盘实测的 `#[test]` 属性总数（`crates/*/src` + `crates/*/tests` 递归）。
-WORKSPACE_TEST_FLOOR = 851
+# 851 → 853：V13 R1-A1 给除权除息锚的两条行为用例。
+# 853 → 855：V13 R1-A2 给 Python↔Rust 信封往返与折算锚的两条行为用例。
+# 855 → 860：V13 R1-A3 家族口径的三条（子串/整名/缺席）+ 编排消费点的两条
+# （testnet 走私有 worker、「 Paper 」仍本地而 paper-proxy 必须被拒）。
+# 860 → 863：V13 R1-A4 记账币种单源的三条（三条回落链同值 / 声明缺省==不声明 /
+# 换币种必须动发布产物里的 result_hash）。
+# 863 → 866：V13 R1-A6 deploy 模板读取覆盖的三条（登记表与磁盘逐名等 / 52 份逐份真读 /
+# 每类读取器的坏内容探针）。整树实跑同轮 `cargo test --workspace` 是 92 个套件 858 条全绿，
+# 866−858=8 就是 #144 那条"在册/实跑双口径"差，全部落在 feature 门后。
+WORKSPACE_TEST_FLOOR = 866
 # 门禁自身的判据数地板（V12 §17），取本回合实测的总条数。为什么要给量具本身再设一把尺：
 # 本回合编辑 `TEST_MODULES` 时误删了 qx-cli 那一项元组，门禁当场少跑 4 条判据，却依旧打印
 # "架构不变量自检全部通过 ✓" —— 判据可以整段消失而没人变红。这与 §16 抓到的"用例静默删除"
 # 是同一类失效，只是这一次发生在量具自己身上，而 §16 的全部结论都建立在这把尺的输出上。
-GATE_CHECK_FLOOR = 455
+# 457 → 460：§22 给构建脚本新加的三条 #139 判据（调用存在 / 失败中止 / 排在 cargo 之前）。
+# 460 → 463：§23 的变体级生产者三条（覆盖面在册 / 每个变体有限定名生产者 / 允许清单逐条可复核）。
+# 463 → 466：V13 R1-A1 的除权除息锚三条（折算读已装载的公司行为 / 折算在跨日推导之后 / 行为用例在位）。
+# 466 → 467：V13 R1-A1 第四颗——折算的输入必须有非测试写点，只数实例调用点。
+# 467 → 481：V13 R1-A2 的跨语言对照 14 颗——版本号 / 三份字段名册逐项等 / 动作名册等 /
+# 名册能被写侧自己认回（含往返用例）/ 定点单位单源 / 日期两种分隔 / 单位与日期各有用例 /
+# 三份夹具在位 / 两侧共词根 / Rust 侧两条读回用例 / Python 侧重算比对两条。
+# 481 → 489：V13 R1-A3 的 venue 单源 8 颗——定义点形状在册 / 判定式不得复活 / 消费者登记表 /
+# 家族三条用例在册 / 编排 testnet 断言现场 / 编排 Paper 整名断言现场 / 账户命名断言现场 /
+# 两份口径的差异写在注释里。
+# 489 → 500：V13 R1-A4 的记账币种单源 11 颗——定义点唯一且值仍是 USDT / 全仓只有一颗同类常量 /
+# 生产代码除定义点外没有第二处写死的 "USDT" / 定义处带着"缺省值≠白名单"的口径说明 /
+# 消费者登记表 / 四条回落链各自仍读常量 / 三条用例在册 / 指纹用例钉的是 result_hash 而不是随墙钟动的 digest。
+# 500 → 509：V13 R1-A6 的模板读取覆盖 9 颗——登记表三列对齐 / 登记表与磁盘逐名等 / Reader 变体清点 /
+# 变体⊆已使用 / 变体⊆坏内容探针 / 每类读取落在生产读点 / 三条用例与模块挂载 / 预期结果口径 /
+# 配对来源仍指向在册模板。这一把尺量的是"覆盖套件本身还在不在"：删掉登记项会被第 2 颗咬住，
+# 把生产读点换成测试内自造校验会被第 6 颗咬住（GA/GC 变异各自实测打红）。
+GATE_CHECK_FLOOR = 509
+# V12 §21 / #138：合流类判据的三个参数（455 → 457 就是本轮新增的两条，仍按"当轮实测总条数"取值）。窗口取 10 行是实测拐点 —— W=8 在 `tools` 之外命中 1,180
+# 处、到 W=10 仍有 781 处合法的并列实现（三条 venue 提交链、几家存储后端），所以逐字重复零容忍
+# 只对 `tools/*.py` 生效（本轮实测该目录 5 份脚本 0 命中），Rust 那一侧交给编译器与整树用例。
+# 描述条数地板按本轮实测 353 条字面 label 取整留余量；跌破说明"取数方式"本身失效，而不是判据变少。
+MERGE_DUP_WINDOW = 10
+MERGE_DUP_TRIVIAL = re.compile(r"^\s*(?:[}{()\[\];,]*|use\s+[^\s].*|#!?/\*?.*|//.*?)\s*$")
+GATE_LABEL_FLOOR = 300
 
 
 def workspace_test_floor_check() -> None:
@@ -550,6 +602,11 @@ def windows_batch_parse_check() -> None:
 # 两个平台的构建脚本必须是同一套门禁：V12 §17 之前 build.bat 已经走到 [8/8]，
 # 而 build.sh 还停在 "[7/7] 运行 CLI 全链路与生态冒烟" 里塞三条命令 —— 标签口径一漂，
 # 照着 README 数门禁的人就会漏掉 runtime-check 这一道。判据比的是"步骤标签 + cargo 命令集"。
+#
+# V12 §22（#139）把架构门禁本身接进来：八步里没有任何一步跑 `check_architecture.py`，
+# 只有 CI 跑，于是本地双击 build.bat 拿到"全部完成"时，这 457+ 条不变量一条都没被证明过。
+# 现在它是第 [1/9] 步（只读源码、约 40 秒，排在几分钟的 release 构建之前），而"接进来"这件事
+# 本身要成为判据：调用存在、失败会中止、且排在 cargo 之前 —— 三条各管一种"看起来接上了"的假法。
 def build_script_parity_check() -> None:
     """build.bat 与 build.sh 逐项跑同一组门禁命令。"""
     bat = (ROOT / "build.bat").read_bytes().decode("utf-8")
@@ -596,12 +653,31 @@ def build_script_parity_check() -> None:
             None,
         )
         first_gate = next(
-            (i for i, line in enumerate(lines) if re.search(r'echo\b[ "(]*\[1/8\]', line)), None
+            (i for i, line in enumerate(lines) if re.search(r'echo\b[ "(]*\[1/\d+\]', line)), None
         )
         return export_at, first_gate
 
+    def gate_call(text: str):
+        """真正调用架构门禁脚本的那一行。注释与 echo 提示语都不算（同 §19 #136 的口径）。"""
+        return [
+            (i, stripped)
+            for i, line in enumerate(text.splitlines())
+            if (stripped := line.strip()) and not is_comment(stripped)
+            and not re.match(r"^echo\b", stripped) and "tools/check_architecture.py" in stripped
+        ]
+
+    def first_cargo(text: str):
+        return next(
+            (
+                i
+                for i, line in enumerate(text.splitlines())
+                if not is_comment(line.strip()) and "cargo " in line
+            ),
+            None,
+        )
+
     check(
-        labels(bat) == labels(sh) and len(labels(bat)) == 8,
+        labels(bat) == labels(sh) and len(labels(bat)) == 9,
         "build.bat 与 build.sh 的门禁步骤逐项同名同序",
         f"bat {labels(bat)} vs sh {labels(sh)}",
     )
@@ -610,17 +686,48 @@ def build_script_parity_check() -> None:
         "两个构建脚本调用的是同一组 cargo 命令",
         f"bat {sorted(cargo_lines(bat))} vs sh {sorted(cargo_lines(sh))}",
     )
-    # Rust 侧只认 QX_PYTHON 这一个变量（python_interpreter()），而 [3/8] 的两条 Python 桥契约用例
-    # 与 [7/8] 的策略 worker 都由 Rust 去起 Python。脚本把探测出来的解释器留在自己的变量里，
-    # 就等于探测白做：V12 §19 实测双击 build.bat 必然死在第 3 步（QX_PYTHON 未设置 → 回落
-    # PATH 占位桩 → 2 failed）。所以"外传"本身要成判据，两侧各一条。
+    # Rust 侧只认 QX_PYTHON 这一个变量（python_interpreter()），而 [4/9] 的两条 Python 桥契约用例
+    # 与 [8/9] 的策略 worker 都由 Rust 去起 Python。脚本把探测出来的解释器留在自己的变量里，
+    # 就等于探测白做：V12 §19 实测双击 build.bat 必然死在 Rust 测试那一步（QX_PYTHON 未设置 →
+    # 回落 PATH 占位桩 → 2 failed）。所以"外传"本身要成判据，两侧各一条。
     for name, text in (("build.bat", bat), ("build.sh", sh)):
         export_at, first_gate = interpreter_handoff(text)
         check(
             export_at is not None and first_gate is not None and export_at < first_gate,
-            f"{name} 把探测选中的解释器导出成 QX_PYTHON，且早于 [1/8]",
-            f"导出行 {export_at}、[1/8] 行 {first_gate}（None 表示没有导出）",
+            f"{name} 把探测选中的解释器导出成 QX_PYTHON，且早于 [1/9]",
+            f"导出行 {export_at}、[1/9] 行 {first_gate}（None 表示没有导出）",
         )
+    # #139：门禁接进本地构建路径。三条各挡一种"看起来接上了"的假法 —— 只在注释或报错提示里
+    # 出现脚本名、调用失败后继续往下跑、以及排在几分钟的 release 构建之后（等于每次都白等）。
+    calls = {"build.bat": gate_call(bat), "build.sh": gate_call(sh)}
+    check(
+        all(len(hit) == 1 for hit in calls.values()),
+        "build.bat 与 build.sh 各自真的调用一次架构门禁脚本",
+        f"调用行 { {k: [i + 1 for i, _ in v] for k, v in calls.items()} }"
+        "（空列表表示只有 CI 跑门禁，本地那句'全部完成'并不证明不变量）",
+    )
+
+    def next_command(text: str, idx: int) -> str:
+        return next((line.strip() for line in text.splitlines()[idx + 1 :] if line.strip()), "")
+
+    bat_call, sh_call = calls["build.bat"], calls["build.sh"]
+    check(
+        bool(bat_call)
+        and next_command(bat, bat_call[0][0]) == "if errorlevel 1 goto :err"
+        and bool(sh_call)
+        and any("set -euo pipefail" in line for line in sh.splitlines()[: sh_call[0][0]]),
+        "架构门禁失败会中止构建脚本，而不是继续跑后面的步骤",
+        f"bat 调用行 {bat_call[:1]} 之后要紧跟 if errorlevel 1 goto :err，"
+        f"sh 调用行 {sh_call[:1]} 之前要有 set -euo pipefail",
+    )
+    cargo_at = {"build.bat": first_cargo(bat), "build.sh": first_cargo(sh)}
+    check(
+        all(calls[name] and cargo_at[name] is not None and calls[name][0][0] < cargo_at[name]
+            for name in calls),
+        "架构门禁排在任何 cargo 命令之前（最便宜的全量判据先跑）",
+        f"调用行 { {k: [i + 1 for i, _ in v] for k, v in calls.items()} }、"
+        f"首个 cargo 行 { {k: (v + 1 if v is not None else None) for k, v in cargo_at.items()} }",
+    )
 
 
 # README 承诺 `./tools/build_python_wheel.ps1` 与 `bash tools/build_python_wheel.sh` 是构建安装包的
@@ -1635,6 +1742,71 @@ def gate_source_truncation_check() -> None:
     )
 
 
+def merge_duplicate_block_check() -> None:
+    """V12 §21 / #138：合流悄悄接出来的第二份判据必须当场点名（两条）。
+
+    git 合并"双方各自在同一个函数尾部追加一段"时不产生任何冲突标记：上游那份原样接在我方
+    那份之后，文本合法、`check()` 照跑，于是同一条不变量印出两行 PASS，而"门禁至少执行 N 条
+    判据"这个量具本身被抬高——条数地板只咬下跌侧，抓不到虚增。§20 合流出来的那一份就是这么
+    进来的，第一次运行以 `GATE_EXIT=1` 却 0 条 FAIL 崩在中途（`NameError: reader`）才暴露。
+    `crates/*/src` 那一侧不并入这条：实测同样的逐字重复窗口在 318 份受版本控制源码里 W=10
+    命中 781 处、W=24 仍有 37 处，绝大多数是三条 venue 提交链、几家存储后端这类**合法的并列
+    实现**，零容忍只会立一条假判据；Rust 侧重复的函数/常量/`mod` 由编译器直接拒，所以那半边
+    的口径是"合流类提交必须跑整树 `cargo test --workspace --all-targets`"（V12 §20.3），
+    而 Python 门禁这一侧没有编译器兜底，只有这条能常驻咬住。
+    """
+    windows: dict[tuple[str, tuple[str, ...]], int] = {}
+    duplicated: list[str] = []
+    own = Path(__file__).resolve()
+    targets = sorted({*sorted((ROOT / "tools").glob("*.py")), own}, key=lambda p: str(p))
+    for path in targets:
+        rel = (
+            path.relative_to(ROOT).as_posix()
+            if path.is_relative_to(ROOT)
+            else path.name
+        )
+        lines = [
+            line.rstrip("\r\n").rstrip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+        ]
+        for start in range(max(0, len(lines) - MERGE_DUP_WINDOW + 1)):
+            window = tuple(lines[start : start + MERGE_DUP_WINDOW])
+            informative = sum(
+                1
+                for line in window
+                if len(line) >= 12 and not MERGE_DUP_TRIVIAL.match(line)
+            )
+            if informative < MERGE_DUP_WINDOW - 2:
+                continue
+            key = (rel, window)
+            first = windows.setdefault(key, start)
+            if first != start:
+                duplicated.append(f"{rel}:{first + 1}=={start + 1}")
+    check(
+        not duplicated,
+        "tools 下的门禁脚本没有逐字重复的连续窗口：同一段判据只存在一份",
+        f"疑似合流接出来的第二份 {duplicated}",
+    )
+
+    labels: dict[str, list[int]] = {}
+    literal_labels = 0
+    for node in ast.walk(ast.parse(Path(__file__).read_text(encoding="utf-8"))):
+        if not (
+            isinstance(node, ast.Call) and getattr(node.func, "id", None) == "check"
+        ) or len(node.args) < 2:
+            continue
+        second = node.args[1]
+        if isinstance(second, ast.Constant) and isinstance(second.value, str):
+            literal_labels += 1
+            labels.setdefault(second.value, []).append(node.lineno)
+    shared = {text: sites for text, sites in labels.items() if len(sites) > 1}
+    check(
+        literal_labels >= GATE_LABEL_FLOOR and not shared,
+        "每条判据的描述文本只写一次：两条 PASS 共用一句话就是判据被抄了第二份",
+        f"字面描述 {literal_labels} 条（少于地板 {GATE_LABEL_FLOOR} 说明取数方式失效），重复描述 {shared}",
+    )
+
+
 def zero_reference_public_surface_check() -> None:
     """V12 §17：全仓 `pub fn`/`pub const` 必须有生产读者，或在允许清单里写明理由。"""
     sources = {
@@ -1840,7 +2012,278 @@ def ashare_limit_anchor_check() -> None:
         "同一根封板线在两种锚下结果不同，且有单元测试钉住锚本身",
         f"{ASHARE_LIMIT_TEST_FILE} 或 {ASHARE_RULE_TEST_FILE} 不再咬住 Q60 口径",
     )
+    # V13 R1-A1（FN3 的正解）：除权除息日的锚不能只有"数据侧手工给"这一个出口 ——
+    # 仓库已经把红利/送转/配股装载进 corporate_actions，锚却读不到它们。
+    fold_start = trading.find("fn ex_rights_reference(")
+    fold_body = trading[fold_start : trading.find("fn effective_limit_up_bp(", fold_start)]
+    check(
+        fold_start > 0
+        and ".corporate_actions" in fold_body
+        and "is_cash_dividend_action" in fold_body
+        and "cash_dividend_raw" in fold_body
+        and "rights_issue_price_raw" in fold_body
+        and "self.price_tick" in fold_body,
+        "除权除息折算读已装载的公司行为，结果落到最小报价单位",
+        "ex_rights_reference 不再从 corporate_actions 折算红利/送转/配股",
+    )
+    check(
+        "self.ex_rights_reference(raw, current.ts)" in anchor_body
+        and anchor_body.index("bars[..index]")
+        < anchor_body.index("self.ex_rights_reference(raw, current.ts)"),
+        "折算只在跨日推导之后发生，手工覆盖表仍是锚的第一个出口",
+        "previous_close 把推导出的昨收交回给折算这一步丢了",
+    )
+    check(
+        all(
+            case in unit_test
+            for case in (
+                "fn ex_rights_anchor_folds_the_cash_dividend_loaded_with_the_rules",
+                "fn ex_rights_anchor_folds_dividend_bonus_shares_and_rights_issue_together",
+                "Some(yuan(950))",
+                "Some(yuan(688))",
+            )
+        ),
+        "除权除息锚有行为用例：红利扣减到 9.50、红利+送转+配股一次折算到 6.88",
+        f"{ASHARE_RULE_TEST_FILE} 不再咬住 FN3 的折算口径",
+    )
+    # V13 R1-A1 的第四颗判据：折算的**输入**必须有非测试写点。锚能算对不等于它收得到事实 ——
+    # 若只有测试在装载公司行为，那么生产链上的除权日照样按不复权处理，而全树用例仍全绿。
+    # 因此这里只数"实例方法调用点"，且把整份测试模块一并排除：定义处（前面没有 `.`）、
+    # 注释行、文件尾 `#[cfg(test)]` 模块内、以及 `src/**/tests.rs` 这类整文件即测试的
+    # 路径一律不算；`self.` 上的那一跳是定义处向 `_with_report` 的内部委托，不是写点。
+    # 第一版漏掉了测试整文件与内部委托两类，M5/M6 两发变异实测把判据喂成假绿（本轮日志）。
+    producers = []
+    for path in rust_sources():
+        if path.stem == "tests" or path.stem.startswith("tests_") or "tests" in path.parts:
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for number, line in enumerate(lines):
+            if line.lstrip().startswith("//") or is_test_scoped(number, lines):
+                continue
+            if re.search(r"(?<!self)\.apply_corporate_actions_json(?:_with_report)?\s*\(", line):
+                producers.append(path.relative_to(CRATES).as_posix())
+    cli_writers = sum(1 for name in producers if name.startswith("qx-cli/"))
+    check(
+        cli_writers >= 2,
+        "公司行为装载有非测试写点：回测绑定与运行自检各一处",
+        f"qx-cli 生产代码里的调用点为 {cli_writers} 处（期望 >=2），全部写点 {sorted(set(producers)) or '无'}",
+    )
 
+
+# V13 R1-A2：Python `qianxing_ashare` 与 Rust 读侧共用一套 A 股线格式。
+#
+# 两侧各自手抄了同一份字段名册与动作名册，此前**没有任何判据比过它们**：Python 写侧加
+# 一个字段、或 Rust 读侧改一个白名单，全树用例照样绿，直到真数据进来才在装载处炸。这里
+# 钉三层：名册逐项相等（含 Rust 声明的数组长度）、词表要能被写侧自己认回、以及一份两侧
+# 共读的对照夹具（`python/tests/fixtures/ashare_actions_cross_check.*`）在场且两侧都读它。
+ASHARE_PYTHON_FILE = "python/qianxing_ashare/__init__.py"
+ASHARE_CROSS_STEM = "ashare_actions_cross_check"
+ASHARE_CROSS_FIXTURES = (
+    f"{ASHARE_CROSS_STEM}.rows.json",
+    f"{ASHARE_CROSS_STEM}.payload.json",
+    f"{ASHARE_CROSS_STEM}.expectations.json",
+)
+ASHARE_CROSS_PY_TEST = "python/tests/test_ashare_cross_language_contract.py"
+FOLD_ANCHOR_TEST = "python_written_actions_fold_into_the_shared_ex_rights_reference"
+
+
+def _literal_items(text: str, header: str, opener: str, closer: str) -> list[str]:
+    """抓出一段字面量集合里的字符串项，顺序保持；找不到声明时返回空。"""
+
+    start = text.find(header)
+    if start < 0:
+        return []
+    try:
+        # 先跳过声明的等号：Rust 那侧写成 `const X: [&str; 5] = [...]`，直接从名字后面
+        # 找方括号会命中类型标注里的那一对，抓出来的就不是名册。
+        opened = text.index(opener, text.index("=", start))
+        closed = text.index(closer, opened)
+    except ValueError:
+        return []
+    return re.findall(r'"([a-z0-9_]+)"', text[opened:closed])
+
+
+def _snake_case(name: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+def ashare_cross_language_contract_check() -> None:
+    """A 股线格式的两侧名册必须逐项相等，且这份相等有共读夹具兜着。"""
+    python_text = (ROOT / ASHARE_PYTHON_FILE).read_text(encoding="utf-8")
+    rust_text = (ROOT / ASHARE_RULES_FILE).read_text(encoding="utf-8")
+    py_test = (ROOT / ASHARE_CROSS_PY_TEST).read_text(encoding="utf-8")
+    rs_test = (ROOT / ASHARE_RULE_TEST_FILE).read_text(encoding="utf-8")
+
+    python_version = re.search(r"(?m)^ASHARE_SCHEMA_VERSION = (\d+)$", python_text)
+    rust_version = re.search(r"(?m)^pub const ASHARE_SCHEMA_VERSION: u32 = (\d+);", rust_text)
+    check(
+        python_version is not None
+        and rust_version is not None
+        and python_version.group(1) == rust_version.group(1),
+        "A 股契约版本号两侧同一格",
+        f"Python={python_version and python_version.group(1)} "
+        f"Rust={rust_version and rust_version.group(1)}",
+    )
+
+    for header, surface in (
+        ("ASHARE_ACTION_ENVELOPE_FIELDS", "信封顶层"),
+        ("ASHARE_ACTION_FIELDS", "单条公司行为"),
+        ("ASHARE_CALENDAR_FIELDS", "交易日历"),
+    ):
+        py_items = _literal_items(python_text, f"{header} = ", "(", ")")
+        rs_items = _literal_items(rust_text, f"const {header}", "[", "]")
+        declared = re.search(rf"const {header}: \[&str; (\d+)\]", rust_text)
+        mismatched = sorted(set(py_items) ^ set(rs_items))
+        check(
+            bool(py_items)
+            and bool(rs_items)
+            and declared is not None
+            and len(py_items) == len(rs_items) == int(declared.group(1))
+            and py_items == rs_items,
+            f"{surface}字段名册两侧逐项一致（{len(rs_items)} 项，含顺序与 Rust 声明长度）",
+            f"Python {len(py_items)} 项 / Rust {len(rs_items)} 项"
+            f"（Rust 声明 {declared.group(1) if declared else '缺失'} 项）；"
+            + (
+                f"差异 {mismatched}"
+                if mismatched
+                else "项集相同但顺序不同"
+                if py_items and rs_items
+                and set(py_items) == set(rs_items)
+                and py_items != rs_items
+                else ""
+            ),
+        )
+
+    python_types = _literal_items(python_text, "_CORPORATE_ACTION_TYPES = ", "{", "}")
+    enum_start = rust_text.find("pub enum AshareCorporateActionType {")
+    enum_body = (
+        rust_text[enum_start : rust_text.find("}", enum_start)] if enum_start >= 0 else ""
+    )
+    rust_types = [
+        _snake_case(name) for name in re.findall(r"(?m)^    ([A-Z][A-Za-z0-9]*),$", enum_body)
+    ]
+    check(
+        bool(python_types)
+        and bool(rust_types)
+        and sorted(python_types) == sorted(rust_types)
+        and len(rust_types) >= 16,
+        f"公司行为动作名册两侧同一份（Rust 变体的 snake_case 名，{len(rust_types)} 个）",
+        f"Python {len(python_types)} 个 / Rust {len(rust_types)} 个；"
+        f"差异 {sorted(set(python_types) ^ set(rust_types)) or '无'}",
+    )
+    # 名册相等还不够：写侧的中文别名表是子串匹配，认不回自己的线格式名时
+    # `suspension`/`new_share_issue` 会退化 unknown，停牌与增发语义在读回时丢掉（本轮实测）。
+    canonical_body = python_text[
+        python_text.find("def _canonical_action_type(") : python_text.find("def _bare_code(")
+    ]
+    check(
+        "if text in _CORPORATE_ACTION_TYPES" in canonical_body,
+        "写侧的行读取器认得自己写出的每一个动作名",
+        f"{ASHARE_PYTHON_FILE} 的 _canonical_action_type 不再短路返回线格式名",
+    )
+    check(
+        "test_every_canonical_action_name_round_trips_through_the_row_reader" in py_test,
+        "动作名往返有行为用例兜着（名册里每个名字逐个认回）",
+        f"{ASHARE_CROSS_PY_TEST} 丢掉了名册往返用例",
+    )
+
+    # 定点单位口径必须单源：`*_raw` 是已定点整数，其余别名按元/股乘 SCALE。
+    normalize_body = python_text[
+        python_text.find("def normalize_corporate_action_rows(") : python_text.find(
+            "def _invoke_rows_method("
+        )
+    ]
+    amount_calls = normalize_body.count("_amount_pick(")
+    check(
+        normalize_body.count("_nonnegative_scaled(") == 0
+        and normalize_body.count("_nonnegative_raw(") == 0
+        and amount_calls >= 14
+        and "def _amount_pick(" in python_text
+        and '_nonnegative_raw(raw, f"{field}_raw")' in python_text
+        and "_nonnegative_scaled(_optional_pick(row, *aliases), field)" in python_text,
+        f"A 股行数据的定点单位口径只有一处规则（`*_raw` 已定点，别名按元/股；{amount_calls} 个字段走它）",
+        f"normalize_corporate_action_rows 里又出现直接乘 SCALE 的读法（_amount_pick 只覆盖 {amount_calls} 处）",
+    )
+    date_body = python_text[
+        python_text.find("def _date_text(") : python_text.find("def _nonnegative_scaled(")
+    ]
+    check(
+        'if " " in text:' in date_body
+        and 'elif "T" in text:' in date_body
+        and 'text.split(" ", 1)[0]' in date_body
+        and 'text.split("T", 1)[0]' in date_body,
+        "公告日期认得空格与 `T` 两种 ISO 分隔，不会回落成除权日",
+        f"{ASHARE_PYTHON_FILE} 的 _date_text 又只切空格，带时区的时间戳会被丢成 ex_date",
+    )
+    check(
+        all(
+            name in py_test
+            for name in (
+                "test_iso_timestamp_announcement_date_is_not_redated_to_the_ex_date",
+                "test_raw_named_input_columns_are_taken_as_already_scaled",
+            )
+        ),
+        "日期与单位两处口径各有行为用例钉住",
+        f"{ASHARE_CROSS_PY_TEST} 丢掉了日期/单位往返用例",
+    )
+
+    # 共读的对照夹具：三份文件在位，且两侧按同一个词根引用它。
+    present = [
+        name
+        for name in ASHARE_CROSS_FIXTURES
+        if (ROOT / "python" / "tests" / "fixtures" / name).exists()
+    ]
+    check(
+        len(present) == len(ASHARE_CROSS_FIXTURES),
+        f"跨语言对照夹具齐备（{len(ASHARE_CROSS_FIXTURES)} 份）",
+        f"在场 {present}，期望 {list(ASHARE_CROSS_FIXTURES)}",
+    )
+    # 词根要逐字对上：只查子串时 `STEM = "..._cross_check_forked"` 照样算引用了同一份。
+    check(
+        f'STEM = "{ASHARE_CROSS_STEM}"' in py_test
+        and f"{ASHARE_CROSS_STEM}.payload.json" in rs_test
+        and f"{ASHARE_CROSS_STEM}.expectations.json" in rs_test,
+        "两侧读的是同一份对照夹具（Python 词根与 Rust 夹具名逐字相同）",
+        f"{ASHARE_CROSS_PY_TEST} 的 STEM 不再是 {ASHARE_CROSS_STEM}，或 {ASHARE_RULE_TEST_FILE} "
+        f"不再按整名读 {ASHARE_CROSS_STEM} 的夹具",
+    )
+    # 折算锚那格必须是夹具里的期望值：把它抄成 `Some(7_000_000_000)` 字面量，跨语言对照
+    # 就地失效（Rust 改口径时再无东西会红），所以要在断言现场查有没有裸数字。
+    fold_start = rs_test.find(FOLD_ANCHOR_TEST)
+    fold_body = rs_test[fold_start : rs_test.find("\n}\n", fold_start)] if fold_start >= 0 else ""
+    literal_anchor = [
+        line.strip()
+        for line in fold_body.splitlines()
+        if line.strip().startswith("Some(") and re.search(r"Some\(\s*[\d_]+\s*\)", line)
+    ]
+    check(
+        all(
+            case in rs_test
+            for case in (
+                "fn python_written_action_envelope_round_trips_into_the_rust_reader",
+                FOLD_ANCHOR_TEST,
+                'expectations["document"]',
+                "expected_reference_raw",
+            )
+        )
+        and bool(fold_body)
+        and not literal_anchor,
+        "Rust 读侧把信封读回并喂进折算锚，期望值取自共读的那份夹具",
+        f"{ASHARE_RULE_TEST_FILE} 不再核对 Python 写出的 v1 信封"
+        + (f"；锚定期望值被抄成字面量 {literal_anchor}" if literal_anchor else ""),
+    )
+    check(
+        all(
+            name in py_test
+            for name in (
+                "test_blessed_payload_is_what_the_python_writer_produces",
+                "test_expectations_are_derived_from_the_blessed_payload",
+                "test_anchor_reference_is_recomputed_from_the_payload_events",
+            )
+        ),
+        "Python 侧在进程内重算 payload、期望值与折算锚，夹具不可手抄",
+        f"{ASHARE_CROSS_PY_TEST} 丢掉了重算比对用例",
+    )
 
 # V11 Q61：`--config` 的 A 股段在回测侧的读法，与钉住它的命令行行为用例。
 ASHARE_BINDING_FILE = "crates/qx-cli/src/backtests/ashare_binding.rs"
@@ -2966,6 +3409,126 @@ def quality_issue_producer_check() -> None:
         not revived and adapter_reads >= 1,
         "交叉报价只在 adapter 的报价入口判，质量闸门不再声明一个构造不出来的致命变体",
         f"复活于 {revived or '无'}；adapter 的 is_crossed() 读者 {adapter_reads} 处",
+    )
+
+
+# V12 §23 / #137：变体级生产者判据从"点名 QualityIssue 一个枚举"扩到全仓 `pub enum`。
+# 为什么必须按**限定名**计数，本轮量到了实例：`ServiceStatus::Degraded` 在监管侧出现 14 次，
+# 于是按裸名计数的扫描看不见 `ConnectorState::Degraded` 一次也没被赋过值 —— 同词不同枚举会
+# 替孤儿变体伪造生产者。同一把尺子反过来也成立：`RecvTimeoutError::Disconnected` 掩盖了
+# `ConnectorState::Disconnected`。因此本判据只认 `Enum::Variant`，以及 `impl Enum` 块体内
+# 指向同一类型的 `Self::Variant`（按花括号配平取块，见 `_impl_blocks`）。
+ENUM_HEADER = re.compile(r"^\s*pub enum (\w+)")
+ENUM_VARIANT_LINE = re.compile(r"^([A-Z][A-Za-z0-9]*)\s*,?\s*$")
+# 覆盖面地板：解析退化（例如有人给枚举加了跨行变体）会让"零变体"看起来全绿，所以条数本身要咬。
+ENUM_SURFACE_FLOOR = 50
+ENUM_VARIANT_SURFACE_FLOOR = 200
+# 允许清单：`Enum::Variant` -> 为什么生产代码里永远数不到它的限定名，它却必须留着。
+# 本清单只收"线格式生产者"一种理由，因此每条都要能被"该枚举确实 derive 了 Deserialize"
+# 独立复核（见下面第三条判据），否则允许清单就成了任意 widened 的口子。
+LINE_FORMAT_VARIANTS: dict[str, str] = {
+    "CorporateActionType::Split": "qx-data/src/corporate_action.rs 带 serde rename_all=snake_case，"
+                                  "线格式 \"split\" 即生产者；A 股侧落 unsupported 臂显式拒",
+    "CorporateActionType::Merge": "同上，线格式 \"merge\"",
+    "CorporateActionType::NewShareIssue": "同上，线格式 \"new_share_issue\"",
+    "CorporateActionType::Repurchase": "同上，线格式 \"repurchase\"",
+    "CorporateActionType::ConvertibleBondConversion": "同上，线格式 \"convertible_bond_conversion\"",
+    "CorporateActionType::Suspension": "同上，线格式 \"suspension\"",
+}
+
+
+def _impl_blocks(text: str, type_name: str) -> str:
+    """`impl Type` 与 `impl Trait for Type` 的花括号配平块体，供 `Self::Variant` 归类用。"""
+    bodies: list[str] = []
+    for header in re.finditer(rf"impl[^\n]*\b{re.escape(type_name)}\s*(?:<[^>\n]*>)?\s*\{{", text):
+        depth = 0
+        for index in range(header.end() - 1, len(text)):
+            depth += 1 if text[index] == "{" else -1 if text[index] == "}" else 0
+            if depth == 0:
+                bodies.append(text[header.end() - 1 : index + 1])
+                break
+    return "\n".join(bodies)
+
+
+def enum_variant_producer_check() -> None:
+    """全仓每个 `pub enum` 变体都必须有人写它的限定名，除非它的生产者在线格式上。"""
+    production = {
+        path: _production_lines(path.read_text(encoding="utf-8"))
+        for path in sorted(CRATES.glob("*/src/**/*.rs"))
+        # `src/tests/**` 是挂在 `#[cfg(test)] mod tests;` 下的用例文件，整目录排除：
+        # 否则"只有用例在写这个变体"会被数成生产者，判据退化成摆设。
+        if "tests" not in path.parts
+    }
+    joined = {path: "\n".join(lines) for path, lines in production.items()}
+    declared: dict[str, str] = {}
+    deserializable: set[str] = set()
+    for path, lines in production.items():
+        for index, line in enumerate(lines):
+            header = ENUM_HEADER.match(line)
+            if not header:
+                continue
+            enum = header.group(1)
+            # 只往回吃紧邻的属性行与注释行：`use serde::{Deserialize, …}` 那行不算证据，
+            # 否则"枚举其实没 derive Deserialize"也能被文件顶部的 import 骗绿（M_F 实测）。
+            cursor = index - 1
+            attributes: list[str] = []
+            while cursor >= 0 and lines[cursor].lstrip().startswith("#"):
+                attributes.append(lines[cursor])
+                cursor -= 1
+            if any("Deserialize" in attribute for attribute in attributes):
+                deserializable.add(enum)
+            cursor = index + 1
+            while cursor < len(lines) and not re.match(r"^\s*\}", lines[cursor]):
+                variant = ENUM_VARIANT_LINE.match(lines[cursor].strip())
+                if variant:
+                    declared[f"{enum}::{variant.group(1)}"] = path.relative_to(ROOT).as_posix()
+                cursor += 1
+    # 限定名引用一次也数不到 = 既构造不出来、也没有任何一条判定臂认它。
+    # `impl Enum` 块内的 `Self::Variant` 是同一个限定名的简写，必须一起数，
+    # 否则 `AshareBoard::Etf`（只在 `impl AshareBoard` 里以 `Self::Etf` 出现）会被误判成孤儿。
+    unproduced: list[str] = []
+    qualified_refs: dict[str, int] = {}
+    cache: dict[str, str] = {}
+
+    def self_scope(enum: str) -> str:
+        if enum not in cache:
+            cache[enum] = "\n".join(
+                _impl_blocks(blob, enum) for blob in joined.values() if "impl " in blob
+            )
+        return cache[enum]
+
+    for key, rel in declared.items():
+        enum, variant = key.split("::")
+        hits = sum(len(re.findall(rf"\b{enum}::{variant}\b", blob)) for blob in joined.values())
+        hits += len(re.findall(rf"\bSelf::{variant}\b", self_scope(enum)))
+        qualified_refs[key] = hits
+        if not hits and key not in LINE_FORMAT_VARIANTS:
+            unproduced.append(f"{key}（{rel}）")
+    check(
+        len(declared) >= ENUM_VARIANT_SURFACE_FLOOR
+        and len({key.split("::")[0] for key in declared}) >= ENUM_SURFACE_FLOOR,
+        "变体生产者判据扫到了全仓的 pub enum（解析退化会让零变体假绿）",
+        f"{len({key.split('::')[0] for key in declared})} 个枚举 / {len(declared)} 个变体，"
+        f"地板 {ENUM_SURFACE_FLOOR}/{ENUM_VARIANT_SURFACE_FLOOR}",
+    )
+    check(
+        not unproduced,
+        "每个 pub enum 变体都有生产代码里的限定名生产者，或在允许清单里说明它的生产者在线格式上",
+        f"无生产者变体 {sorted(unproduced)[:6] or '无'}",
+    )
+    stale: list[str] = []
+    for key in LINE_FORMAT_VARIANTS:
+        enum = key.split("::")[0]
+        if key not in declared:
+            stale.append(f"{key} 已不是任何枚举的变体")
+        elif enum not in deserializable:
+            stale.append(f"{enum} 没有 derive Deserialize，线格式理由不成立")
+        elif qualified_refs.get(key):
+            stale.append(f"{key} 已有 {qualified_refs[key]} 处限定名生产者，条目该删")
+    check(
+        not stale,
+        "线格式允许清单逐条可复核：变体仍在册、所在枚举确实 Deserialize、且确实零生产者",
+        f"清单 {len(LINE_FORMAT_VARIANTS)} 条；失效 {stale or '无'}",
     )
 
 
@@ -4652,7 +5215,7 @@ def calendar_fingerprint_caliper_check() -> None:
         if not doc_path.is_file() or not digest_path.is_file():
             check(
                 False,
-                "日历夹具与摘要成对存在，两侧用例读的是同一对文件",
+                "日历夹具或摘要文件缺一：这一对必须同时在磁盘上，缺哪一对当场点名",
                 f"缺 {document if not doc_path.is_file() else ''}"
                 f" {digest if not digest_path.is_file() else ''}".strip(),
             )
@@ -5649,6 +6212,332 @@ def concept_registry_check() -> None:
         occupancy == ["crates/qx-risk/src/lib.rs"],
         "持仓可用量判定只有一个实现",
         f"定义于 {occupancy}",
+    )
+
+
+# V13 R1-A3：venue 识别的单源。
+VENUE_FAMILY_DEFINITION = "crates/qx-core/src/venue.rs"
+VENUE_ID_DEFINITION = "crates/qx-core/src/identity.rs"
+# 允许读取家族判定的消费者文件集合：少一个 = 有人把判定搬回本地，多一个 = 另起第二份。
+VENUE_FAMILY_CONSUMERS = (
+    "crates/qx-cli/src/live_check.rs",
+    "crates/qx-cli/src/market_bridges.rs",
+    "crates/qx-cli/src/venue_runtime/binance_submit.rs",
+    "crates/qx-cli/src/venue_runtime/binance_venue.rs",
+    "crates/qx-cli/src/venue_runtime/paper_submit.rs",
+    "crates/qx-cli/src/venue_runtime/paper_worker.rs",
+    "crates/qx-cli/src/venue_runtime/worker_runtime.rs",
+    "crates/qx-cli/src/worker_entry.rs",
+    "crates/qx-orchestrator/src/lib.rs",
+    "crates/qx-runtime/src/runtime_config/topology_validation.rs",
+    "crates/qx-runtime/src/worker_policy.rs",
+)
+# 收拢之前这些写法各有 1–5 份抄本；现在它们是"另起第二份"的指纹，值 = 允许出现的那一处。
+# 指纹都带 `venue` 接收者：`environment` 等同名写法读的是另一个字段（如 scheduler 的
+# `environment.eq_ignore_ascii_case("paper")` 判的是部署环境，不是 Venue），不该被误伤。
+VENUE_REIMPLEMENTATION = {
+    'contains("binance")': (VENUE_FAMILY_DEFINITION,),
+    'eq_ignore_ascii_case("BINANCE")': (VENUE_ID_DEFINITION,),
+    'venue.eq_ignore_ascii_case("paper")': (),
+    'venue == "paper"': (),
+}
+VENUE_TEST_CASES = (
+    "binance_family_is_matched_by_substring_regardless_of_case",
+    "paper_is_exact_and_a_paper_prefixed_venue_is_not_paper",
+    "absent_venue_stays_absent_instead_of_becoming_other",
+)
+
+
+def venue_identity_check() -> None:
+    """`venue_id` → Venue 家族只有一个读点（V13 §5 A3）。
+
+    审计时同一个问题在仓库里有 19 处 worker 级写法：9 处问"是不是 Binance"
+    （`qx-orchestrator` 五份逐字相同的 `.map(|venue| venue.to_ascii_lowercase()
+    .contains("binance")) == Some(true)`、`qx-cli` 三份 `is_some_and` 变体、
+    `qx-runtime` 一份局部 `fn is_binance`）、10 处问"是不是 Paper"（`is_some_and`
+    与两种 `map(...).unwrap_or(...)` 抄法），另有标的级整名比较 `eq_ignore_ascii_case("BINANCE")`
+    六处收进 `VenueId::is_binance`。危害方式不是"现在算错"，而是下一次改口径时只改其中一份
+    —— 例如把子串改成整名，`binance-testnet`（仓内实测 13 处取值）会静默脱离 Binance 家族，
+    编排照常返回 Ok 但那条 worker 没人拉起；把 Paper 的整名改成前缀匹配，`paper-proxy`
+    会被当成虚拟撮合域。
+    """
+    production = {
+        path.relative_to(ROOT).as_posix(): without_line_comments(
+            non_test_source(path.read_text(encoding="utf-8"))
+        )
+        for path in rust_sources()
+    }
+    family = production.get(VENUE_FAMILY_DEFINITION, "")
+    identity = production.get(VENUE_ID_DEFINITION, "")
+    check(
+        family.count("pub fn parse(") == 1
+        and family.count("pub fn parse_option(") == 1
+        and family.count("pub enum VenueFamily") == 1
+        and identity.count("pub fn is_binance(") == 1,
+        "Venue 家族与标的级 Binance 判定各只有一处定义",
+        f"venue.rs parse={family.count('pub fn parse(')} parse_option="
+        f"{family.count('pub fn parse_option(')} enum={family.count('pub enum VenueFamily')}；"
+        f"identity.rs is_binance={identity.count('pub fn is_binance(')}",
+    )
+    revived = {}
+    for fragment, allowed in VENUE_REIMPLEMENTATION.items():
+        sites = [
+            rel
+            for rel, text in production.items()
+            if fragment in text and rel not in allowed
+        ]
+        if sites:
+            revived[fragment] = sites
+    check(
+        not revived,
+        "已收拢的 venue 判定式不得在生产代码里另起第二份",
+        f"重新出现于 {revived}",
+    )
+    consumers = sorted(
+        rel
+        for rel, text in production.items()
+        if "VenueFamily::" in text and rel != VENUE_FAMILY_DEFINITION
+    )
+    check(
+        consumers == sorted(VENUE_FAMILY_CONSUMERS),
+        "读取 Venue 家族的消费者与登记表逐一对应（新增判定必须登记）",
+        f"登记 {sorted(VENUE_FAMILY_CONSUMERS)} / 实际 {consumers}",
+    )
+    venue_tests = (ROOT / VENUE_FAMILY_DEFINITION).read_text(encoding="utf-8")
+    check(
+        all(f"fn {case}(" in venue_tests for case in VENUE_TEST_CASES)
+        and venue_tests.count('#[test]') == len(VENUE_TEST_CASES),
+        "家族口径的三条用例在册：子串、整名、缺席不得折进 Other",
+        f"在册 {[case for case in VENUE_TEST_CASES if f'fn {case}(' in venue_tests]}，"
+        f"#[test] 总数 {venue_tests.count('#[test]')}",
+    )
+    plan_body = _fn_body(
+        (ROOT / "crates/qx-orchestrator/src/tests.rs").read_text(encoding="utf-8"),
+        "fn worker_plan_routes_a_testnet_binance_venue_to_the_private_worker",
+    )
+    check(
+        'venue_id: Some("binance-testnet".into())' in plan_body
+        and 'Some("binance-worker")' in plan_body,
+        "testnet 写法必须被编排认成 Binance 私有 worker（用例在断言现场，不在别处）",
+        f"用例体可定位={bool(plan_body)}，缺输入格或期望格",
+    )
+    paper_plan_body = _fn_body(
+        (ROOT / "crates/qx-orchestrator/src/tests.rs").read_text(encoding="utf-8"),
+        "fn worker_plan_routes_only_the_exact_paper_venue_to_the_local_worker",
+    )
+    check(
+        'venue_id = Some("paper-proxy".into())' in paper_plan_body
+        and 'Some("paper-worker")' in paper_plan_body,
+        "编排的 Paper 分支钉住整名口径：空白写法仍本地，paper 前缀写法必须被拒",
+        f"用例体可定位={bool(paper_plan_body)}，缺本地分支或 paper-proxy 反例",
+    )
+    naming_body = _fn_body(
+        (ROOT / "crates/qx-cli/src/tests/account_event_log_identity.rs").read_text(
+            encoding="utf-8"
+        ),
+        "fn account_identity_normalizes_its_key_in_one_place",
+    )
+    check(
+        '"binance-main-binance-testnet-events"' in naming_body
+        and 'account_event_log_name("main", "binance-testnet")' in naming_body,
+        "账户日志命名的用例钉住同一家族口径：testnet 不得换前缀把账户拆成两本账",
+        f"用例体可定位={bool(naming_body)}",
+    )
+    # 口径分裂的证据：两处判定读的是不同字段，不得互相"统一"。注释里说清差异，
+    # 所以这一条读的是带注释的原文，而不是上面剥掉注释的生产代码。
+    family_docs = non_test_source((ROOT / VENUE_FAMILY_DEFINITION).read_text(encoding="utf-8"))
+    identity_docs = non_test_source((ROOT / VENUE_ID_DEFINITION).read_text(encoding="utf-8"))
+    check(
+        "大小写无关的子串" in family_docs and "不能改成子串" in identity_docs,
+        "两份口径的差异写在各自定义处注释里（家族读账户域、整名读产品 venue）",
+        f"venue.rs 侧={('大小写无关的子串' in family_docs)}，"
+        f"identity.rs 侧={('不能改成子串' in identity_docs)}，"
+        "缺任一侧的口径说明，下一次'顺手统一'就会把它折成一处",
+    )
+
+
+
+# V13 §5 A4：记账币种的单源与它进入发布产物的那条链。
+SETTLEMENT_CURRENCY_DEFINITION = "crates/qx-core/src/identity.rs"
+SETTLEMENT_CURRENCY_CONST = "DEFAULT_SETTLEMENT_CURRENCY"
+# 整串带引号的字面量：`BTCUSDT`、`"usdt"` 都不算命中，因为前者是标的名、后者是待归一的声明值。
+SETTLEMENT_CURRENCY_LITERAL = '"USDT"'
+# 三条回落链各自的读取点（**压掉空白**后比对：真实源码里这些链是跨行写的）。
+# 第五处出现 = 有人新写了一条兜底却没接常量。
+SETTLEMENT_CURRENCY_FALLBACK_FRAGMENTS = {
+    ".unwrap_or_else(||DEFAULT_SETTLEMENT_CURRENCY.into())": "crates/qx-cli/src/backtests/mod.rs",
+    ".unwrap_or(DEFAULT_SETTLEMENT_CURRENCY).to_ascii_uppercase()": "crates/qx-cli/src/venue_runtime/worker_runtime.rs",
+    ".unwrap_or_else(||DEFAULT_SETTLEMENT_CURRENCY.to_string())": "crates/qx-cli/src/venue_runtime/worker_runtime.rs",
+    "cash:BTreeMap::from([(DEFAULT_SETTLEMENT_CURRENCY.into(),Money::from_i64("
+    "crate::backtests::DEFAULT_BACKTEST_INITIAL_CASH).raw(),)]),": "crates/qx-cli/src/ecosystem_smoke.rs",
+}
+# 除定义点外，读取常量的生产文件；`qx-core/src/lib.rs` 是再导出，也算消费者。
+SETTLEMENT_CURRENCY_CONSUMERS = (
+    "crates/qx-cli/src/backtests/mod.rs",
+    "crates/qx-cli/src/ecosystem_smoke.rs",
+    "crates/qx-cli/src/main.rs",
+    "crates/qx-cli/src/venue_runtime/worker_runtime.rs",
+    "crates/qx-core/src/lib.rs",
+)
+SETTLEMENT_CURRENCY_CASE_FILE = "crates/qx-cli/src/tests/settlement_currency_single_source.rs"
+SETTLEMENT_CURRENCY_CASES = (
+    "every_settlement_currency_fallback_reads_the_same_default",
+    "declaring_the_default_currency_matches_declaring_nothing",
+    "changing_only_the_settlement_currency_moves_the_published_fingerprint",
+)
+
+
+def production_code_text(path: Path) -> str:
+    """一行生产代码：既不在用例面里，也不在 `#[cfg(test)]` 之后，也不是注释行。
+
+    `without_line_comments` 会连着 `///` 文档一起保留（`//` 是它的前缀），所以"某串字面量
+    不得再出现在生产代码里"这类判据必须先把整行注释剥掉——否则单源常量自己的口径说明
+    （`它只是缺省值，不是白名单`）会把自己判成第二处硬编码，而正确的修法是把注释删掉，
+    正好毁掉那条防误改的说明。
+    """
+    source = non_test_source(path.read_text(encoding="utf-8", errors="replace"))
+    return "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("//")
+    )
+
+
+def is_case_scoped_source(path: Path) -> bool:
+    """整份文件就是用例现场：`src/tests/` 下的主题文件，或以 `*_tests` / `tests` 命名的模块。
+
+    与 `is_cli_case_file` 同义但按全仓路径判定（后者对 `qx-cli` 之外的路径会抛
+    `relative_to` 的 ValueError），并且不把 `backtest.rs` 这类**生产**文件算作用例面——
+    文件名里带 "test" 不等于那是测试。
+    """
+    return "tests" in path.parts[:-1] or path.stem.endswith("tests")
+
+
+def settlement_currency_production_sites() -> dict[str, list[str]]:
+    """生产代码里写死 `"USDT"` 整串字面量的位置（`文件 → 行号`），空表即达标。"""
+    sites: dict[str, list[str]] = {}
+    for path in rust_sources():
+        if is_case_scoped_source(path):
+            continue
+        rel = path.relative_to(ROOT).as_posix()
+        lines = production_code_text(path).splitlines()
+        marked = [
+            str(index)
+            for index, line in enumerate(lines, 1)
+            if SETTLEMENT_CURRENCY_LITERAL in line
+        ]
+        if marked:
+            sites[rel] = marked
+    return sites
+
+
+def settlement_currency_definition_count() -> int:
+    """生产代码里 `pub const *SETTLEMENT_CURRENCY*: …` 的出现处数（按文件计）。"""
+    return sum(
+        1
+        for path in rust_sources()
+        if not is_case_scoped_source(path)
+        and re.search(r"pub const \w*SETTLEMENT_CURRENCY\w*:", production_code_text(path))
+    )
+
+
+def settlement_currency_check() -> None:
+    """记账币种只有一个缺省值，且它必须留在发布产物里（V13 §5 A4）。
+
+    审计时 `"USDT"` 作为"没人声明时按哪种币记账"的答案在 Rust 生产代码里写着四份
+    （见 `logs/s28_currency_sites_a4.txt`：回测装配 `backtest_settlement_currency`、
+    worker 自身声明的兜底 `worker_settlement_currency`、账户日志写入方全缺席时的兜底
+    `settlement_currency_among_workers`、以及 `ecosystem_smoke` 自检查现金簿的键）。
+    四份字面量本身没有算错任何东西——这正是它能活下来的原因。危害方式是**下一次改口径
+    只改一处**：把公司内币种从 USDT 换成 USDC 时，回测侧改成了 USDC、worker 侧仍是
+    USDT，两条链各自读一本账，产物却都自称"口径来自配置"，对账要等到人工看摘要才看得见。
+    第四份更隐蔽：`ecosystem_smoke` 的现金簿键如果与引擎兜底不同，自检查策略会读到空账簿
+    并安静地不下单，看起来像"行情没信号"。
+
+    第二件事是**记账币种必须留在发布产物里**。它决定现金腿落在哪本账；换币种还能给出
+    同一个 `result_hash`，产物就无法声明"这份收益是哪种币的收益"。实测这条链是通的
+    （USDT/CNY 两跑给 `71e90bdf1b27a4dc` / `a4f465684b3454f0`），所以这里钉的是"不许退回"，
+    而不是补一条从来没通过过的口径。
+    """
+    definition = production_code_text(ROOT / SETTLEMENT_CURRENCY_DEFINITION)
+    definition_sites = f'pub const {SETTLEMENT_CURRENCY_CONST}: &str = '
+    usdt_binding = f'{SETTLEMENT_CURRENCY_CONST}: &str = ' + SETTLEMENT_CURRENCY_LITERAL
+    check(
+        definition.count(definition_sites) == 1 and definition.count(usdt_binding) == 1,
+        "记账币种的缺省值只有一处定义，且值仍是 USDT（换币种要改这一格，不是四处）",
+        f"{SETTLEMENT_CURRENCY_DEFINITION} 定义点="
+        f"{definition.count(definition_sites)}，绑定值={usdt_binding in definition}",
+    )
+    # 第二颗同类常量就是第二份口径：它可能叫 SETTLEMENT_CURRENCY / CASH_BOOK_CURRENCY，
+    # 只要生产代码里再出现一颗 `*SETTLEMENT_CURRENCY*` 公共常量，上面那条"改一处"就失效了。
+    check(
+        settlement_currency_definition_count() == 1,
+        "全仓只有定义点那一颗 *SETTLEMENT_CURRENCY* 公共常量",
+        f"实际出现 {settlement_currency_definition_count()} 处",
+    )
+    sites = {
+        rel: rows
+        for rel, rows in settlement_currency_production_sites().items()
+        if rel != SETTLEMENT_CURRENCY_DEFINITION
+    }
+    check(
+        not sites,
+        "币种兜底已全部接回常量：生产代码里除定义点外没有第二处写死的 "
+        + SETTLEMENT_CURRENCY_LITERAL,
+        f"重新硬编码于 {sites}",
+    )
+    # 定义处必须把"这是缺省值不是白名单"写在注释里：这条读的是带注释的原文，
+    # 因为可执行行判据管不住"有人删掉那句说明"。
+    definition_docs = non_test_source(
+        (ROOT / SETTLEMENT_CURRENCY_DEFINITION).read_text(encoding="utf-8")
+    )
+    check(
+        SETTLEMENT_CURRENCY_LITERAL in definition_docs
+        and "缺省值" in definition_docs
+        and "白名单" in definition_docs,
+        "单源常量自己带着币种字面量与口径说明（缺省值≠合法币种白名单）",
+        f"字面量={SETTLEMENT_CURRENCY_LITERAL in definition_docs}，"
+        f"缺省值说明={'缺省值' in definition_docs}，白名单说明={'白名单' in definition_docs}",
+    )
+    consumers = sorted(
+        rel
+        for path in rust_sources()
+        if not is_case_scoped_source(path)
+        and SETTLEMENT_CURRENCY_CONST in production_code_text(path)
+        for rel in [path.relative_to(ROOT).as_posix()]
+        if rel != SETTLEMENT_CURRENCY_DEFINITION
+    )
+    check(
+        consumers == sorted(SETTLEMENT_CURRENCY_CONSUMERS),
+        "回落链消费者与登记表逐一对应（新增兜底必须登记，不许静默新增第五处）",
+        f"登记 {sorted(SETTLEMENT_CURRENCY_CONSUMERS)} / 实际 {consumers}",
+    )
+    for fragment, rel in SETTLEMENT_CURRENCY_FALLBACK_FRAGMENTS.items():
+        collapsed = re.sub(r"\s+", "", production_code_text(ROOT / rel))
+        check(
+            re.sub(r"\s+", "", fragment) in collapsed,
+            f"回落链仍读单源常量：{rel} 的 {fragment}",
+            f"{rel} 里找不到 {fragment}",
+        )
+    case_text = (ROOT / SETTLEMENT_CURRENCY_CASE_FILE).read_text(encoding="utf-8")
+    check(
+        all(f"fn {case}(" in case_text for case in SETTLEMENT_CURRENCY_CASES)
+        and case_text.count("#[test]") == len(SETTLEMENT_CURRENCY_CASES),
+        "单源口径的三条用例在册：三条回落链同值、声明缺省==不声明、换币种动产物哈希",
+        f"在册 {[c for c in SETTLEMENT_CURRENCY_CASES if f'fn {c}(' in case_text]}，"
+        f"#[test] 总数 {case_text.count('#[test]')}",
+    )
+    # 第三条用例比的是哪一格，是这条判据最容易"顺手改掉"的地方：digest 覆盖墙钟与
+    # 隔离根目录路径，拿它当判据会把"币种动了"和"这次运行本身不同"混成一格。
+    fingerprint_body = _fn_body(
+        case_text,
+        "fn changing_only_the_settlement_currency_moves_the_published_fingerprint(",
+    )
+    check(
+        'run("USDT")' in fingerprint_body
+        and 'run("CNY")' in fingerprint_body
+        and 'summary["result_hash"]' in fingerprint_body
+        and ".digest()" not in fingerprint_body,
+        "币种指纹用例钉的是产物里的 result_hash，且同币种重跑必须相等（不许改用会随墙钟动的 digest）",
+        f"用例体可定位={bool(fingerprint_body)}，USDT/CNY 侧或 result_hash 口径缺失",
     )
 
 
@@ -6682,6 +7571,10 @@ def market_spec_source_check() -> None:
         )
         for path in sorted((CRATES / "qx-cli/src").rglob("*.rs"))
         if "market_spec_source_label(" in path.read_text(encoding="utf-8")
+        # 用例树按同一条口径排除（下一条 DEFAULT_INSTRUMENT_SPEC_VERSION 的清点早就这么写）：
+        # 这一族判据钉的是**生产**里不许有第二个落点，而 V13 R1-A6 的模板覆盖用例正是要在
+        # 测试里问一次"这份文件按哪种形状读的"，把它算成落点等于禁止给规格建用例。
+        and "/tests/" not in f"/{path.relative_to(ROOT).as_posix()}"
     }
     check(
         calls == {MARKET_SPEC_SOURCE_FILE: 1, "crates/qx-cli/src/backtests/mod.rs": 1},
@@ -6803,9 +7696,147 @@ def two_leg_partition_check() -> None:
     )
 
 
+# —— deploy 模板读取覆盖（V13 R1-A6）——
+# 52 份顶层模板里曾有 12 份在代码与 CI 中零引用，而 CI 只按 `config validate` 读 1 份。
+# "零引用"当时被当成了"该删"，实测却推翻了这个前提：`qianxing.scheduler.jobs.smoke.json`
+# 正是另两份 runtime 模板挂着的 jobs_path。真正缺的是读取，于是补了一条覆盖用例
+# （`crates/qx-cli/src/tests/deploy_template_coverage.rs`）：每份模板都必须被它在生产里
+# 对应的那个读法解析一次。下面这几颗判据钉的是那份用例本身别烂掉——它一旦被动过手脚
+# （少登记、把读取器换成走过场、把某个变体从坏内容探针里漏掉），全仓其余用例都是绿的。
+COVERAGE_SOURCE = "crates/qx-cli/src/tests/deploy_template_coverage.rs"
+# 每类模板必须真的调用到生产的那一个读点，而不是在覆盖用例里另写一份字段校验。
+COVERAGE_PRODUCTION_READERS = (
+    "read_runtime_config(",
+    "validate_runtime_references(",
+    "market_spec_from_value(",
+    "validate_ccxt_worker_binding(",
+    "read_bar_frame_for_backtest(",
+    "barframe_dataset_identity(",
+    "DepthFrame::from_json(",
+    "DatasetBundleManifest",
+    "ArrowDatasetManifest::from_json(",
+    "ashare_backtest_binding(",
+    "apply_corporate_actions_json_with_report(",
+    "apply_calendar_json_with_report(",
+    "ExecutionCostRules::load(",
+    "filter_map(unsupported_dispatch_shape)",
+    "StrategyTargetSnapshot",
+    "order_from_submit_command(",
+    "parse_fast_backtest_manifest(",
+)
+COVERAGE_TEST_FNS = (
+    "every_deploy_template_is_registered_with_a_reader",
+    "every_deploy_template_loads_through_its_registered_reader",
+    "every_reader_class_rejects_a_broken_template",
+)
+
+
+def _balanced_paren_args(text: str, open_index: int) -> str:
+    """从 `(` 处取到配对的 `)`，用于把 `Reader::MarketSpec(Some("x"))` 的参数完整切出来。"""
+    if open_index >= len(text) or text[open_index] != "(":
+        return ""
+    depth = 0
+    for index in range(open_index, len(text)):
+        if text[index] == "(":
+            depth += 1
+        elif text[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return text[open_index : index + 1]
+    return ""
+
+
+def deploy_template_coverage_check() -> None:
+    """deploy 模板的读取覆盖登记表与磁盘清单、与生产读点、与坏内容探针三方对齐。"""
+    source = (ROOT / COVERAGE_SOURCE).read_text(encoding="utf-8")
+    deploy_files = sorted(
+        path.name for path in (ROOT / "deploy").glob("*.json") if path.is_file()
+    )
+    body_start = source.find("const COVERAGE:")
+    body_end = source.find("\n];", body_start)
+    body = source[body_start:body_end] if body_start >= 0 else ""
+    entries = re.findall(
+        r'"([\w.\-]+\.json)",\s*Reader::(\w+)',
+        body,
+    )
+    expected = re.findall(r"Expected::(\w+)", body)
+    check(
+        bool(entries) and len(entries) == len(expected),
+        "deploy 模板覆盖登记表在册（文件名→读取器→预期三列逐条对齐）",
+        f"登记表解析出 {len(entries)} 条读取器、{len(expected)} 条预期，两者必须逐条相等",
+    )
+    registered = [name for name, _ in entries]
+    check(
+        sorted(registered) == deploy_files and len(set(registered)) == len(registered),
+        "登记表与 deploy 顶层 JSON 清单逐名相等（新增不登记即红、删除不销账也红）",
+        f"登记 {len(registered)} 份 / 磁盘 {len(deploy_files)} 份，"
+        f"只在登记={sorted(set(registered) - set(deploy_files))} "
+        f"只在磁盘={sorted(set(deploy_files) - set(registered))}",
+    )
+    enum_start = source.find("enum Reader {")
+    enum_end = source.find("\n}", enum_start)
+    enum_body = source[enum_start:enum_end]
+    variants = re.findall(r"^\s{4}(\w+)[(,]", enum_body, re.MULTILINE)
+    check(
+        len(variants) >= 15,
+        "读取器变体清点得出来（新增一类却不登记就红）",
+        f"enum Reader 解析出 {len(variants)} 个变体: {variants}",
+    )
+    used = {reader for _, reader in entries}
+    check(
+        set(variants) <= used,
+        "Reader 的每个变体都至少被一份模板用到（没有无人验证的读取器）",
+        f"未被使用的变体: {sorted(set(variants) - used)}",
+    )
+    probe_start = source.find("fn reader_classes() -> Vec<Reader>")
+    probe_end = source.find("\n}", probe_start)
+    probe = re.findall(r"Reader::(\w+)", source[probe_start:probe_end])
+    check(
+        set(variants) <= set(probe),
+        "Reader 的每个变体都进了坏内容探针（走过场的读取器当场可检出）",
+        f"探针漏掉的变体: {sorted(set(variants) - set(probe))}",
+    )
+    missing_readers = [
+        symbol for symbol in COVERAGE_PRODUCTION_READERS if symbol not in source
+    ]
+    check(
+        not missing_readers,
+        "每类模板的读取都落在生产读点上，而不是覆盖用例里另写一份校验",
+        f"文件里找不到这些生产读点: {missing_readers}",
+    )
+    mounted = (ROOT / "crates/qx-cli/src/tests/mod.rs").read_text(encoding="utf-8")
+    fns = [name for name in COVERAGE_TEST_FNS if f"fn {name}()" in source]
+    check(
+        "mod deploy_template_coverage;" in mounted and len(fns) == len(COVERAGE_TEST_FNS),
+        "覆盖用例的三条判据在位且模块已挂载（半挂载的拆分会让判据静默失效）",
+        f"挂载={('mod deploy_template_coverage;' in mounted)}，在册用例 {len(fns)}/3",
+    )
+    refused = re.findall(
+        r'"([\w.\-]+\.json)",\s*Reader::\w+,[\s\S]{0,400}?Expected::Refuses', body
+    )
+    ok_count = expected.count("Ok")
+    check(
+        len(refused) + ok_count == len(entries),
+        "每份模板都写明了预期结果，Refuses 只点名在册的已知缺口",
+        f"Ok={ok_count} Refuses={len(refused)} 登记={len(entries)}，Refuses 名单: {refused}",
+    )
+    pairing = set()
+    for match in re.finditer(r"Reader::(\w+)", body):
+        open_index = match.end()
+        args = _balanced_paren_args(body, open_index if body[open_index : open_index + 1] == "(" else -1)
+        pairing.update(re.findall(r'"([\w.\-]+\.json)"', args))
+    dangling = sorted(pairing - set(deploy_files))
+    check(
+        not dangling,
+        "登记表里点名的配对来源必须仍是磁盘上存在的模板（配对失效不能静默换文件）",
+        f"配对指向不存在的文件: {dangling}",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
+    merge_duplicate_block_check()
     removed_crates_check()
     python_interpreter_check()
     worker_diagnostics_check()
@@ -6831,6 +7862,7 @@ def main() -> int:
     wheel_builder_check()
     ashare_pit_check()
     ashare_limit_anchor_check()
+    ashare_cross_language_contract_check()
     venue_report_contract_check()
     ashare_backtest_binding_check()
     ashare_submit_guard_check()
@@ -6840,6 +7872,8 @@ def main() -> int:
     input_provenance_check()
     ledger_kernel_split_check()
     concept_registry_check()
+    venue_identity_check()
+    settlement_currency_check()
     storage_retry_check()
     module_mount_check()
     runtime_config_fail_closed_check()
@@ -6850,6 +7884,7 @@ def main() -> int:
     market_spec_single_reader_check()
     market_spec_source_check()
     two_leg_partition_check()
+    deploy_template_coverage_check()
     snapshot_money_honesty_check()
     snapshot_contract_version_check()
     snapshot_row_wire_check()
@@ -6866,6 +7901,7 @@ def main() -> int:
     bar_frame_contract_check()
     bar_frame_pit_honesty_check()
     quality_issue_producer_check()
+    enum_variant_producer_check()
     event_backtest_evidence_check()
     backtest_clock_honesty_check()
     scheduler_dispatch_honesty_check()

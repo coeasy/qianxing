@@ -253,13 +253,13 @@ pub enum VenueEvent {
     },
 }
 
+/// 连接器的健康档位。断开不是一档状态而是一条义务：`disconnect()` 直接把档位钉成
+/// `ReconcileRequired`，`reconnect()` 立刻进 `Snapshotting`（没有异步握手期），"降级"则由
+/// 监管侧的 `ServiceStatus::Degraded` 承担 —— 故 `Disconnected`/`Connecting`/`Degraded` 已删。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ConnectorState {
-    Disconnected,
-    Connecting,
     Snapshotting,
     Live,
-    Degraded,
     ReconcileRequired,
 }
 
@@ -1523,13 +1523,13 @@ pub fn rebalance_intent(
     })
 }
 
+/// 策略生命周期档位：`stop()` 直接把 `Running` 收成 `Stopped`，故无"正在停"这一档（V12 §23）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StrategyState {
     Registered,
     Initialized,
     Running,
     Paused,
-    Stopping,
     Stopped,
 }
 

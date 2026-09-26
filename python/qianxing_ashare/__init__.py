@@ -172,6 +172,10 @@ def _date_text(value: Any) -> str | None:
     text = str(value).strip().replace("/", "-").replace("年", "-").replace("月", "-").replace("日", "")
     if " " in text:
         text = text.split(" ", 1)[0]
+    elif "T" in text:
+        # ISO 8601 的日期部分用 `T` 与时间分隔；`date.fromisoformat` 不吃带时区的
+        # 完整时间戳，返回 None 会让公告日期回落成除权日，把 PIT 时间悄悄改晚。
+        text = text.split("T", 1)[0]
     if len(text) == 8 and text.isdigit():
         text = f"{text[:4]}-{text[4:6]}-{text[6:]}"
     try:
@@ -206,6 +210,35 @@ def _nonnegative_raw(value: Any, field: str) -> int:
     return int(number)
 
 
+def _amount_pick(row: Mapping[str, Any], field: str, *aliases: str) -> int:
+    """读取一个定点金额/数量：`<field>_raw` 视为已定点整数，其余别名按元/股乘 SCALE。
+
+    `_raw` 后缀是 v1 信封与 Rust 读侧共用的定点名。行数据里出现同名输入时若再乘
+    一次 SCALE，同一份文档读第二遍就会把每股分红放大十亿倍；不接受该名的字段则把
+    已规范化的行读回时静默丢成 0。两种口径必须由这一处规则统一。
+    """
+
+    raw = _optional_pick(row, f"{field}_raw")
+    if raw is not None:
+        return _nonnegative_raw(raw, f"{field}_raw")
+    return _nonnegative_scaled(_optional_pick(row, *aliases), field)
+
+
+def _ratio_pair_pick(row: Mapping[str, Any], field: str) -> tuple[int, int] | None:
+    """读取 `<field>_num` / `<field>_den`：这是 v1 信封自己的比例字段名，原样收下。
+
+    只认"每股 X 股"式别名的话，一条已经规范化的行读第二遍就会把比例丢成默认值，
+    配股/转股比例正是在 `validate()` 里决定事件是否成立的那一格。缺名时返回 None，
+    由调用方决定它自己的默认比例（送转默认 1/1，配股与转股默认 0）。
+    """
+
+    numerator = _optional_pick(row, f"{field}_num")
+    denominator = _optional_pick(row, f"{field}_den")
+    if numerator is None or denominator is None:
+        return None
+    return int(numerator), int(denominator)
+
+
 def _ratio_scaled(value: Any, field: str) -> tuple[int, int]:
     """将“每 10 股 X 股”或“每股 X 股”统一为 X/1。"""
 
@@ -226,6 +259,10 @@ def _ratio_scaled(value: Any, field: str) -> tuple[int, int]:
 def _canonical_action_type(row: Mapping[str, Any]) -> str:
     value = _optional_pick(row, "action_type", "type", "类别", "分红类型", "变动类型", "事件类型")
     text = str(value or "").strip().lower()
+    if text in _CORPORATE_ACTION_TYPES:
+        # 线格式名必须原样认回：下面的别名表是子串匹配，`suspension` 不含 `suspend`、
+        # `new_share_issue` 不含 `增发`/`新股`，已规范化的行读第二遍会掉成 unknown。
+        return text
     if "除权除息" in text:
         # 该中文描述在不同数据源中既可能表示股本变更，也可能只是
         # 分红/送转的统称；只有明确给出股本快照时才进入 CapitalChange。
@@ -879,10 +916,9 @@ def normalize_corporate_action_rows(
             continue
         action_type = _canonical_action_type(row)
 
-        cash = _optional_pick(row, "cash_dividend_raw")
-        if cash is None:
-            cash = _optional_pick(row, "派息", "现金分红", "每股派息", "fenhong", "cash_dividend")
-        cash_raw = _nonnegative_scaled(cash, "cash_dividend")
+        cash_raw = _amount_pick(
+            row, "cash_dividend", "派息", "现金分红", "每股派息", "fenhong", "cash_dividend"
+        )
 
         bonus = _optional_pick(row, "送股", "送股比例", "bonus_share", "bonus_ratio", "songzhuangu")
         transfer = _optional_pick(row, "转增", "转增比例", "capital_transfer", "transfer_ratio")
@@ -893,100 +929,85 @@ def normalize_corporate_action_rows(
             if part_num:
                 ratio_num = ratio_num * (part_den + part_num) // part_den
         if not bonus_num and not transfer_num:
-            direct_num = _optional_pick(row, "share_ratio_num")
-            direct_den = _optional_pick(row, "share_ratio_den")
-            if direct_num is not None and direct_den is not None:
-                ratio_num, ratio_den = int(direct_num), int(direct_den)
+            direct = _ratio_pair_pick(row, "share_ratio")
+            if direct is not None:
+                ratio_num, ratio_den = direct
 
-        rights_price = _optional_pick(row, "配股价", "配股价格", "peigujia", "rights_issue_price", "rights_price")
+        rights_price = _amount_pick(
+            row,
+            "rights_issue_price",
+            "配股价",
+            "配股价格",
+            "peigujia",
+            "rights_issue_price",
+            "rights_price",
+        )
         rights_num, rights_den = _ratio_scaled(
             _optional_pick(row, "配股比例", "配股数", "peigu", "rights_issue_ratio", "rights_ratio"),
             "rights_issue_ratio",
         )
-        issue_price = _optional_pick(row, "增发价", "发行价", "增发价格", "issue_price", "new_issue_price")
-        conversion_price = _optional_pick(row, "转股价", "转股价格", "conversion_price")
+        if not rights_num:
+            direct = _ratio_pair_pick(row, "rights_issue_ratio")
+            if direct is not None:
+                rights_num, rights_den = direct
+        issue_price = _amount_pick(
+            row, "issue_price", "增发价", "发行价", "增发价格", "issue_price", "new_issue_price"
+        )
+        conversion_price = _amount_pick(row, "conversion_price", "转股价", "转股价格")
         conversion_num, conversion_den = _ratio_scaled(
             _optional_pick(row, "转股比例", "转股数", "conversion_ratio"), "conversion_ratio"
         )
+        if not conversion_num:
+            direct = _ratio_pair_pick(row, "conversion_ratio")
+            if direct is not None:
+                conversion_num, conversion_den = direct
         rights_instrument = _optional_pick(
             row, "rights_instrument", "配股权代码", "配股代码", "rights_symbol"
         )
-        subscription_qty = _optional_pick(
+        subscription_qty = _amount_pick(
             row, "subscription_qty", "subscription_quantity", "认购数量", "认购股数"
         )
-        rights_expiry_qty = _optional_pick(
-            row,
-            "rights_expiry_qty",
-            "rights_expiry_quantity",
-            "配股失效数量",
-            "配股到期数量",
+        rights_expiry_qty = _amount_pick(
+            row, "rights_expiry_qty", "rights_expiry_quantity", "配股失效数量", "配股到期数量"
         )
-        repurchase_qty = _optional_pick(
-            row, "repurchase_qty", "repurchase_quantity", "回购数量", "回购股数"
-        )
-        repurchase_price = _optional_pick(row, "repurchase_price", "回购价", "回购价格")
+        repurchase_qty = _amount_pick(row, "repurchase_qty", "repurchase_quantity", "回购数量", "回购股数")
+        repurchase_price = _amount_pick(row, "repurchase_price", "回购价", "回购价格")
         bond_instrument = _optional_pick(
             row, "convertible_bond_instrument", "可转债代码", "债券代码", "bond_symbol"
         )
         target_instrument = _optional_pick(
             row, "conversion_target_instrument", "转股标的", "转股股票代码", "target_symbol"
         )
-        conversion_qty = _optional_pick(
-            row, "conversion_qty", "conversion_quantity", "转股数量", "转债数量"
-        )
-        target_qty = _optional_pick(
+        conversion_qty = _amount_pick(row, "conversion_qty", "conversion_quantity", "转股数量", "转债数量")
+        target_qty = _amount_pick(
             row, "conversion_target_qty", "conversion_target_quantity", "转股所得数量"
         )
-        interest_per_bond = _optional_pick(
+        interest_per_bond = _amount_pick(
             row,
-            "interest_per_bond_raw",
             "interest_per_bond",
             "bond_interest",
             "每张利息",
             "每债利息",
             "利息",
         )
-        settlement_qty = _optional_pick(
+        settlement_qty = _amount_pick(
             row,
-            "settlement_qty_raw",
             "settlement_qty",
             "settlement_quantity",
             "赎回数量",
             "回售数量",
             "结算数量",
         )
-        settlement_price = _optional_pick(
-            row,
-            "settlement_price_raw",
-            "settlement_price",
-            "赎回价",
-            "回售价",
-            "结算价格",
+        settlement_price = _amount_pick(
+            row, "settlement_price", "赎回价", "回售价", "结算价格"
         )
-        issuer_total_raw_value = _optional_pick(row, "issuer_total_shares_raw")
-        issuer_free_float_raw_value = _optional_pick(row, "issuer_free_float_shares_raw")
-        issuer_total_shares = (
-            _nonnegative_raw(issuer_total_raw_value, "issuer_total_shares_raw")
-            if issuer_total_raw_value is not None
-            else _nonnegative_scaled(
-                _optional_pick(row, "issuer_total_shares", "total_shares", "总股本", "总股本数"),
-                "issuer_total_shares",
-            )
+        issuer_total_shares = _amount_pick(
+            row, "issuer_total_shares", "total_shares", "总股本", "总股本数"
         )
-        issuer_free_float_shares = (
-            _nonnegative_raw(issuer_free_float_raw_value, "issuer_free_float_shares_raw")
-            if issuer_free_float_raw_value is not None
-            else _nonnegative_scaled(
-                _optional_pick(
-                    row,
-                    "issuer_free_float_shares",
-                    "free_float_shares",
-                    "流通股本",
-                    "流通股数",
-                ),
-                "issuer_free_float_shares",
-            )
+        issuer_free_float_shares = _amount_pick(
+            row, "issuer_free_float_shares", "free_float_shares", "流通股本", "流通股数"
         )
+
         event = AshareCorporateAction(
             instrument=instrument,
             ex_date=ex_date,
@@ -1001,28 +1022,28 @@ def normalize_corporate_action_rows(
             payment_date=_date_text(_optional_pick(row, "派息日", "payment_date")),
             subscription_start=_date_text(_optional_pick(row, "认购开始日", "subscription_start")),
             subscription_end=_date_text(_optional_pick(row, "认购截止日", "subscription_end")),
-            rights_issue_price_raw=_nonnegative_scaled(rights_price, "rights_issue_price"),
+            rights_issue_price_raw=rights_price,
             rights_issue_ratio_num=rights_num,
             rights_issue_ratio_den=rights_den,
-            issue_price_raw=_nonnegative_scaled(issue_price, "issue_price"),
-            conversion_price_raw=_nonnegative_scaled(conversion_price, "conversion_price"),
+            issue_price_raw=issue_price,
+            conversion_price_raw=conversion_price,
             conversion_ratio_num=conversion_num,
             conversion_ratio_den=conversion_den,
             rights_instrument=(normalize_instrument(str(rights_instrument))
                                if rights_instrument not in (None, "") else None),
-            subscription_qty_raw=_nonnegative_scaled(subscription_qty, "subscription_qty"),
-            rights_expiry_qty_raw=_nonnegative_scaled(rights_expiry_qty, "rights_expiry_qty"),
-            repurchase_qty_raw=_nonnegative_scaled(repurchase_qty, "repurchase_qty"),
-            repurchase_price_raw=_nonnegative_scaled(repurchase_price, "repurchase_price"),
+            subscription_qty_raw=subscription_qty,
+            rights_expiry_qty_raw=rights_expiry_qty,
+            repurchase_qty_raw=repurchase_qty,
+            repurchase_price_raw=repurchase_price,
             convertible_bond_instrument=(normalize_instrument(str(bond_instrument))
                                          if bond_instrument not in (None, "") else None),
             conversion_target_instrument=(normalize_instrument(str(target_instrument))
                                           if target_instrument not in (None, "") else None),
-            conversion_qty_raw=_nonnegative_scaled(conversion_qty, "conversion_qty"),
-            conversion_target_qty_raw=_nonnegative_scaled(target_qty, "conversion_target_qty"),
-            interest_per_bond_raw=_nonnegative_scaled(interest_per_bond, "interest_per_bond"),
-            settlement_qty_raw=_nonnegative_scaled(settlement_qty, "settlement_qty"),
-            settlement_price_raw=_nonnegative_scaled(settlement_price, "settlement_price"),
+            conversion_qty_raw=conversion_qty,
+            conversion_target_qty_raw=target_qty,
+            interest_per_bond_raw=interest_per_bond,
+            settlement_qty_raw=settlement_qty,
+            settlement_price_raw=settlement_price,
             issuer_total_shares_raw=issuer_total_shares,
             issuer_free_float_shares_raw=issuer_free_float_shares or None,
             raw_payload={str(key): _json_safe(value) for key, value in row.items()},

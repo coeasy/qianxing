@@ -41,20 +41,81 @@ impl AshareRuleConfig {
     /// 找不到（该标的第一个交易日）时返回 `None`，`blocks_fill` 因此不判板 —— 宁可不判，也不能
     /// 拿当天的价格当昨收，那会把板算成 ±0%。
     ///
-    /// `previous_close_raw` 按当前 Bar 的 ts 覆盖这一推导：除权除息日的昨收要用调整后价格，
-    /// 而分红/送股明细不在 Bar 里，只能由数据侧显式给 —— 仓库内不产生该映射（deploy 的
-    /// 规则样例里它就是空的），所以缺它时这里给的是**不复权**的原始昨收。
+    /// `previous_close_raw` 按当前 Bar 的 ts 覆盖这一推导，它是数据侧手工指定锚点的出口。
+    /// 没有覆盖时，除权除息日的锚由**已装载的公司行为**折算（[`Self::ex_rights_reference`]）；
+    /// 当日没有可折算的事实时，这里给的就是**不复权**的原始昨收。
     pub fn previous_close(&self, bars: &[Bar], index: usize) -> Option<i128> {
         let current = bars.get(index)?;
         if let Some(close) = self.previous_close_raw.get(&current.ts).copied() {
             return Some(close);
         }
         let day = Self::day_key(current.ts);
-        bars[..index]
+        let raw = bars[..index]
             .iter()
             .rev()
             .find(|bar| Self::day_key(bar.ts) != day)
-            .map(|bar| bar.close)
+            .map(|bar| bar.close)?;
+        Some(self.ex_rights_reference(raw, current.ts))
+    }
+
+    /// 除权除息参考价（沪深口径）：
+    /// `(昨收 + 配股价×配股比例 − 每股现金红利) ÷ (1 + 送转比例 + 配股比例)`，再落到最小报价单位。
+    ///
+    /// 折算只读账本会记账的那批事实：现金红利与送转股比例取
+    /// [`crate::backtest::is_cash_dividend_action`] 覆盖的动作（与 `apply_corporate_action`
+    /// 的入账口径同一份名单），配股取 `RightsIssue` 的价格与比例。因此板锚不会和现金流
+    /// 因为"同一个事件两种读法"而分叉。
+    ///
+    /// 当日没有相关事件、或数据把参考价压到非正（脏数据）时，原样返回昨收 —— 宁可不折算，
+    /// 也不能把板算成 ±0%。
+    fn ex_rights_reference(&self, previous_close: i128, anchor_ts: u64) -> i128 {
+        let ex_date = Self::day_key(anchor_ts)
+            .saturating_mul(DAY_MS)
+            .saturating_sub(SHANGHAI_OFFSET_MS);
+        let mut cash_out = 0_i128;
+        let mut cash_in = 0_i128;
+        // 定点 SCALE 的"1 股折算成多少股"，即 1 + 送转比例 + 配股比例。
+        let mut share_factor = SCALE;
+        for event in self
+            .corporate_actions
+            .iter()
+            .filter(|event| event.ts == ex_date)
+        {
+            if crate::backtest::is_cash_dividend_action(event.action_type) {
+                cash_out = cash_out.saturating_add(event.cash_dividend_raw);
+                if event.split_num != event.split_den {
+                    share_factor = share_factor.saturating_add(
+                        event
+                            .split_num
+                            .saturating_sub(event.split_den)
+                            .saturating_mul(SCALE)
+                            .saturating_div(event.split_den),
+                    );
+                }
+            } else if event.action_type == AshareCorporateActionType::RightsIssue
+                && event.rights_issue_ratio_num > 0
+            {
+                let ratio_scaled = event
+                    .rights_issue_ratio_num
+                    .saturating_mul(SCALE)
+                    .saturating_div(event.rights_issue_ratio_den);
+                share_factor = share_factor.saturating_add(ratio_scaled);
+                cash_in = cash_in.saturating_add(
+                    event.rights_issue_price_raw.saturating_mul(ratio_scaled) / SCALE,
+                );
+            }
+        }
+        if cash_out == 0 && cash_in == 0 && share_factor == SCALE {
+            return previous_close;
+        }
+        let numerator = previous_close
+            .saturating_add(cash_in)
+            .saturating_sub(cash_out);
+        if numerator <= 0 || share_factor <= 0 {
+            return previous_close;
+        }
+        let adjusted = numerator.saturating_mul(SCALE).saturating_div(share_factor);
+        (adjusted + self.price_tick / 2) / self.price_tick * self.price_tick
     }
 
     /// 生效涨停带：配置未声明（0）时按板块表推导，声明值优先。

@@ -20,7 +20,7 @@ pub(crate) fn worker_settlement_currency(worker: &WorkerConfig) -> String {
     worker
         .settlement_currency
         .as_deref()
-        .unwrap_or("USDT")
+        .unwrap_or(DEFAULT_SETTLEMENT_CURRENCY)
         .to_ascii_uppercase()
 }
 
@@ -73,7 +73,7 @@ pub(crate) fn settlement_currency_among_workers(
     Ok(distinct
         .into_iter()
         .next()
-        .unwrap_or_else(|| "USDT".to_string()))
+        .unwrap_or_else(|| DEFAULT_SETTLEMENT_CURRENCY.to_string()))
 }
 
 /// 写入方打开账户级 EventLog 前的记账币种。与读模型走同一条身份判定，所以配置里
@@ -242,11 +242,7 @@ pub(crate) fn worker_risk_context(
     });
     let available_margin_raw = if let Some(available) = observed_available {
         available
-    } else if worker
-        .venue_id
-        .as_deref()
-        .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
-    {
+    } else if VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper) {
         paper_available_margin(
             pipeline.ledger(),
             account_id,

@@ -35,20 +35,14 @@ impl VenueEntry {
     pub(crate) const CCXT: VenueEntry = VenueEntry {
         name: "CCXT",
         is_bound: |worker| {
-            worker
-                .venue_id
-                .as_deref()
-                .is_some_and(|venue| !venue.eq_ignore_ascii_case("paper"))
+            VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Paper)
         },
         venue_hint: "必须绑定非 paper 的 CCXT venue",
     };
     pub(crate) const BINANCE: VenueEntry = VenueEntry {
         name: "Binance",
         is_bound: |worker| {
-            worker
-                .venue_id
-                .as_deref()
-                .is_some_and(|venue| venue.to_ascii_lowercase().contains("binance"))
+            VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Binance)
         },
         venue_hint: "必须绑定 Binance Venue",
     };

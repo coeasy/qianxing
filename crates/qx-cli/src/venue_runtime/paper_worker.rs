@@ -16,11 +16,7 @@ pub(crate) fn run_paper_spread_recovery_worker(
         .ok_or_else(|| format!("找不到 worker: {worker_id}"))?;
     if !worker.enabled
         || worker.role != WorkerRole::SpreadRecovery
-        || worker
-            .venue_id
-            .as_deref()
-            .map(|venue| !venue.eq_ignore_ascii_case("paper"))
-            .unwrap_or(true)
+        || VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Paper)
     {
         return Err(format!(
             "worker {worker_id} 不是启用的 Paper SpreadRecovery worker"
@@ -84,11 +80,7 @@ pub(crate) fn run_paper_execution_worker(
             worker.role,
             WorkerRole::Execution | WorkerRole::SpreadRecovery
         )
-        || worker
-            .venue_id
-            .as_deref()
-            .map(|venue| !venue.eq_ignore_ascii_case("paper"))
-            .unwrap_or(true)
+        || VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Paper)
     {
         return Err(format!(
             "worker {worker_id} 不是启用的 Paper Execution worker"
@@ -304,10 +296,7 @@ pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
         .find(|worker| {
             worker.enabled
                 && worker.role == WorkerRole::Execution
-                && worker
-                    .venue_id
-                    .as_deref()
-                    .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
+                && VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper)
         })
         .map(|worker| worker.id.clone())
         .ok_or_else(|| "Paper 主链路缺少启用的 Paper Execution worker".to_string())?;

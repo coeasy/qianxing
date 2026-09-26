@@ -357,9 +357,9 @@ impl DataProvider for InMemoryProvider {
     }
 }
 
+/// failover 只认这三档；从不被生产的 `Retryable` 已删（V12 §23 给出为什么不构成缺口）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum ProviderErrorClass {
-    Retryable,
     SwitchProvider,
     ManualIntervention,
     Permanent,

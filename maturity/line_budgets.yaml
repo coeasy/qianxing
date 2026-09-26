@@ -10,6 +10,7 @@ crates/qx-cli/src/event_pipeline.rs: 748
 crates/qx-cli/src/strategy_contract.rs: 840
 crates/qx-cli/src/strategy_host.rs: 801
 crates/qx-cli/src/tests/api_snapshot_money_fields.rs: 518
+crates/qx-cli/src/tests/deploy_template_coverage.rs: 779
 crates/qx-cli/src/tests/e2e_and_python_contract.rs: 503
 crates/qx-cli/src/worker_entry.rs: 505
 crates/qx-cli/src/workers.rs: 584
@@ -19,7 +20,7 @@ crates/qx-datastruct/src/lib.rs: 702
 crates/qx-execution/src/lib.rs: 1552
 crates/qx-factor/src/execution_plan.rs: 517
 crates/qx-factor/src/lib.rs: 1828
-crates/qx-guanxing/src/lib.rs: 590
+crates/qx-guanxing/src/lib.rs: 577
 crates/qx-protocol/src/lib.rs: 785
 crates/qx-provider/src/lib.rs: 743
 crates/qx-runtime/src/pipeline.rs: 2369
@@ -31,6 +32,7 @@ crates/qx-strategy/src/builtin.rs: 991
 crates/qx-strategy/src/c_api.rs: 1106
 crates/qx-strategy/src/lib.rs: 548
 crates/qx-xingban/src/ashare.rs: 1201
+crates/qx-xingban/src/ashare/tests.rs: 764
 crates/qx-xingban/src/backtest.rs: 3324
 crates/qx-xingban/src/orderbook.rs: 671
 crates/qx-xingban/src/orderbook_backtest.rs: 1256

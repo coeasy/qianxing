@@ -1206,7 +1206,7 @@ struct VirtualExecution<'a> {
     fee_engine: Option<&'a BarMatchingEngine>,
 }
 
-fn is_cash_dividend_action(action_type: AshareCorporateActionType) -> bool {
+pub(crate) fn is_cash_dividend_action(action_type: AshareCorporateActionType) -> bool {
     matches!(
         action_type,
         AshareCorporateActionType::CashDividend

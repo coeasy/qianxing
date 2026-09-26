@@ -447,3 +447,318 @@ fn limit_band_anchors_to_the_previous_session_close_not_the_previous_bar() {
     overridden.validate().unwrap();
     assert_eq!(overridden.previous_close(&bars, 3), Some(yuan(1_050)));
 }
+
+/// 除权除息日的锚不再退回**不复权**昨收：折算读的就是公司行为 JSON 装载进来的那份事实。
+///
+/// 这根封在 10.45 的线在两种锚下结果不同 —— 它是 Q60 那条"锚错一格就照样成交"的除息版。
+#[test]
+fn ex_rights_anchor_folds_the_cash_dividend_loaded_with_the_rules() {
+    let yuan = |cents: i128| cents * SCALE / 100;
+    let previous_session = date_to_shanghai_midnight_ms("2024-05-31").unwrap();
+    let ex_date = date_to_shanghai_midnight_ms("2024-06-03").unwrap();
+    let bars = vec![
+        Bar::new(
+            previous_session,
+            yuan(980),
+            yuan(1_000),
+            yuan(975),
+            yuan(1_000),
+            1_000,
+        ),
+        Bar::new(
+            ex_date,
+            yuan(1_045),
+            yuan(1_045),
+            yuan(1_045),
+            yuan(1_045),
+            1_000,
+        ),
+        Bar::new(
+            ex_date + 5 * 60_000,
+            yuan(1_045),
+            yuan(1_045),
+            yuan(1_045),
+            yuan(1_045),
+            1_000,
+        ),
+    ];
+    let mut rules = AshareRuleConfig {
+        enabled: true,
+        ..AshareRuleConfig::default()
+    };
+    // 每股 0.50 元现金红利：参考价 (10.00 − 0.50) = 9.50，涨停 10.45。
+    rules
+        .apply_corporate_actions_json(
+            "000001.SZSE",
+            r#"[{"instrument":"000001.SZSE","ex_date":"2024-06-03","action_type":"cash_dividend","cash_dividend_raw":500000000,"source":"akshare"}]"#,
+        )
+        .unwrap();
+    rules.validate().unwrap();
+    assert_eq!(
+        rules.previous_close(&bars, 1),
+        Some(yuan(950)),
+        "除息日的锚必须扣掉已装载的每股现金红利"
+    );
+    assert_eq!(rules.limits(yuan(950)).0, yuan(1_045));
+    assert!(rules.blocks_fill(Side::Buy, &bars[1], rules.previous_close(&bars, 1)));
+    assert!(
+        rules.blocks_fill(Side::Buy, &bars[2], rules.previous_close(&bars, 2)),
+        "除息日内的分钟线用同一格折算锚"
+    );
+    // 旧口径（不复权昨收 10.00）把板推到 11.00，这根封死的线就照样成交。
+    assert!(!rules.blocks_fill(Side::Buy, &bars[1], Some(yuan(1_000))));
+    // 手工覆盖仍优先于折算：数据侧给出调整后昨收时，以它为准。
+    let overridden = AshareRuleConfig {
+        previous_close_raw: [(ex_date, yuan(1_000))].into_iter().collect(),
+        ..rules.clone()
+    };
+    overridden.validate().unwrap();
+    assert_eq!(overridden.previous_close(&bars, 1), Some(yuan(1_000)));
+}
+
+/// 同一除权日上的红利 + 送转 + 配股按 `(昨收 + 配股价×配股比例 − 红利) ÷ (1 + 送转 + 配股)`
+/// 一次折算，落到最小报价单位。
+#[test]
+fn ex_rights_anchor_folds_dividend_bonus_shares_and_rights_issue_together() {
+    let yuan = |cents: i128| cents * SCALE / 100;
+    let previous_session = date_to_shanghai_midnight_ms("2024-05-31").unwrap();
+    let ex_date = date_to_shanghai_midnight_ms("2024-06-03").unwrap();
+    let bars = vec![
+        Bar::new(
+            previous_session,
+            yuan(980),
+            yuan(1_000),
+            yuan(975),
+            yuan(1_000),
+            1_000,
+        ),
+        Bar::new(ex_date, yuan(756), yuan(756), yuan(756), yuan(756), 1_000),
+    ];
+    let mut rules = AshareRuleConfig {
+        enabled: true,
+        ..AshareRuleConfig::default()
+    };
+    rules
+        .apply_corporate_actions_json(
+            "000001.SZSE",
+            r#"[
+                {"instrument":"000001.SZSE","ex_date":"2024-06-03","action_type":"cash_dividend","cash_dividend_raw":500000000,"source":"akshare"},
+                {"instrument":"000001.SZSE","ex_date":"2024-06-03","action_type":"bonus_share","share_ratio_num":13,"share_ratio_den":10,"source":"akshare"},
+                {"instrument":"000001.SZSE","ex_date":"2024-06-03","action_type":"rights_issue","rights_instrument":"700001.SZSE","rights_issue_price_raw":5000000000,"rights_issue_ratio_num":3,"rights_issue_ratio_den":10,"source":"akshare"}
+            ]"#,
+        )
+        .unwrap();
+    rules.validate().unwrap();
+    // (10.00 + 5.00×0.3 − 0.50) ÷ 1.6 = 6.875 → 落到 0.01 刻度是 6.88。
+    assert_eq!(
+        rules.previous_close(&bars, 1),
+        Some(yuan(688)),
+        "同一除权日的三类事实必须一次折算，而不是只读红利"
+    );
+    assert!(rules.blocks_fill(Side::Buy, &bars[1], rules.previous_close(&bars, 1)));
+    // 只折算红利（锚 9.50、板 10.45）时，这根封在 7.56 的线照样成交 —— 送转与配股不能漏。
+    assert!(!rules.blocks_fill(Side::Buy, &bars[1], Some(yuan(950))));
+}
+
+/// 跨语言对照夹具目录：Python 写侧的产物，Rust 读侧在这里读回。
+const CROSS_CHECK_FIXTURE_DIR: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../python/tests/fixtures");
+
+fn cross_check_fixture(name: &str) -> serde_json::Value {
+    let path = std::path::Path::new(CROSS_CHECK_FIXTURE_DIR).join(name);
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("跨语言对照夹具 {name} 必须存在: {error}"))
+        .replace("\r\n", "\n");
+    serde_json::from_str(&text)
+        .unwrap_or_else(|error| panic!("跨语言对照夹具 {name} 必须是合法 JSON: {error}"))
+}
+
+fn cross_check_raw(row: &serde_json::Value, key: &str) -> i128 {
+    row[key].as_i64().expect("定点整数格") as i128
+}
+
+/// V13 R1-A2：Python 写出的 v1 信封必须由 Rust 读侧原样读回，并喂进 A1 那道折算锚。
+///
+/// 三份文件一条链：`*.rows.json` 是数据源原始行，`*.payload.json` 由 Python 的
+/// `serialize_corporate_actions` 写出，`*.expectations.json` 由 payload 派生。两侧各自
+/// 读同一份期望值、谁都不抄它（与 V11 R17 的日历指纹夹具同一条设计）：Python 改了字段
+/// 名册或单位口径，Rust 这侧就红；Rust 改了读法或除权口径，Python 那侧就红。
+#[test]
+fn python_written_action_envelope_round_trips_into_the_rust_reader() {
+    let expectations = cross_check_fixture("ashare_actions_cross_check.expectations.json");
+    let payload = std::fs::read_to_string(
+        std::path::Path::new(CROSS_CHECK_FIXTURE_DIR)
+            .join("ashare_actions_cross_check.payload.json"),
+    )
+    .unwrap()
+    .replace("\r\n", "\n");
+    let document = &expectations["document"];
+
+    let mut rules = AshareRuleConfig {
+        enabled: true,
+        ..AshareRuleConfig::default()
+    };
+    let report = rules
+        .apply_corporate_actions_json_with_report("000001.SZSE", &payload)
+        .unwrap();
+    rules.validate().unwrap();
+
+    assert_eq!(
+        report.schema_version,
+        document["schema_version"].as_u64().unwrap() as u32
+    );
+    assert_eq!(report.source, document["source"].as_str().unwrap());
+    assert_eq!(report.instrument, document["instrument"].as_str().unwrap());
+    assert!(document["as_of"].is_null(), "夹具约定不带 as_of");
+    assert_eq!(report.as_of_ms, None, "无 as_of 时不得凭空造出 PIT 截止");
+    assert_eq!(
+        report.row_count,
+        document["row_count"].as_u64().unwrap() as usize
+    );
+    assert_eq!(
+        report.applied_actions,
+        document["applied_actions"].as_u64().unwrap() as usize
+    );
+    assert_eq!(
+        report.hidden_actions,
+        document["hidden_actions"].as_u64().unwrap() as usize
+    );
+    assert_eq!(
+        report.halted_timestamps,
+        document["halted_days"].as_u64().unwrap() as usize,
+        "停牌行必须由 Rust 认成停牌事实，而不是当作一条普通资金事件"
+    );
+    assert_eq!(
+        rules.halted_timestamps,
+        vec![
+            date_to_shanghai_midnight_ms(expectations["halted_days"][0].as_str().unwrap()).unwrap()
+        ],
+        "Rust 侧的停牌日必须与 Python 写出的一致"
+    );
+
+    let rows = expectations["applied_actions"].as_array().unwrap();
+    assert_eq!(rules.corporate_actions.len(), rows.len());
+    for (event, row) in rules.corporate_actions.iter().zip(rows) {
+        let label = row["action_type"].as_str().unwrap();
+        assert_eq!(
+            event.ts,
+            date_to_shanghai_midnight_ms(row["ex_date"].as_str().unwrap()).unwrap(),
+            "{label} 的生效日"
+        );
+        assert_eq!(
+            serde_json::to_value(event.action_type)
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            label,
+            "{label} 的动作名册在读侧变了"
+        );
+        assert_eq!(
+            event.cash_dividend_raw,
+            cross_check_raw(row, "cash_dividend_raw"),
+            "{label} 的每股红利"
+        );
+        assert_eq!(
+            event.split_num,
+            cross_check_raw(row, "share_ratio_num"),
+            "{label} 的送转分子"
+        );
+        assert_eq!(
+            event.split_den,
+            cross_check_raw(row, "share_ratio_den"),
+            "{label} 的送转分母"
+        );
+        assert_eq!(
+            event.rights_issue_price_raw,
+            cross_check_raw(row, "rights_issue_price_raw"),
+            "{label} 的配股价"
+        );
+        assert_eq!(
+            event.rights_issue_ratio_num,
+            cross_check_raw(row, "rights_issue_ratio_num"),
+            "{label} 的配股比例分子"
+        );
+        assert_eq!(
+            event.interest_per_bond_raw,
+            cross_check_raw(row, "interest_per_bond_raw"),
+            "{label} 的每张债券利息"
+        );
+        assert_eq!(
+            event.issuer_total_shares_raw,
+            cross_check_raw(row, "issuer_total_shares_raw"),
+            "{label} 的总股本"
+        );
+        assert_eq!(
+            event.source,
+            row["source"].as_str().unwrap(),
+            "{label} 的血缘来源"
+        );
+        assert_eq!(
+            event.published_at_ms,
+            Some(date_to_shanghai_midnight_ms(row["published_at"].as_str().unwrap()).unwrap()),
+            "{label} 的 PIT 可见时间"
+        );
+    }
+}
+
+/// 同一份 payload 走 A1 那道折算锚：除权日的参考价口径必须由两侧共读的期望值钉住。
+#[test]
+fn python_written_actions_fold_into_the_shared_ex_rights_reference() {
+    let expectations = cross_check_fixture("ashare_actions_cross_check.expectations.json");
+    let payload = std::fs::read_to_string(
+        std::path::Path::new(CROSS_CHECK_FIXTURE_DIR)
+            .join("ashare_actions_cross_check.payload.json"),
+    )
+    .unwrap()
+    .replace("\r\n", "\n");
+    let anchor = &expectations["anchor"];
+    let yuan = |cents: i128| cents * SCALE / 100;
+    let previous_session = date_to_shanghai_midnight_ms("2024-05-31").unwrap();
+    let ex_date = date_to_shanghai_midnight_ms(anchor["ex_date"].as_str().unwrap()).unwrap();
+    let previous_close = cross_check_raw(anchor, "previous_close_raw");
+    let reference = cross_check_raw(anchor, "expected_reference_raw");
+    assert_eq!(previous_close, yuan(1_000));
+    assert_eq!(reference, yuan(700));
+    let bars = vec![
+        Bar::new(
+            previous_session,
+            previous_close,
+            previous_close,
+            previous_close,
+            previous_close,
+            1_000,
+        ),
+        Bar::new(
+            ex_date,
+            7_560_000_000,
+            7_560_000_000,
+            7_560_000_000,
+            7_560_000_000,
+            1_000,
+        ),
+    ];
+    let mut rules = AshareRuleConfig {
+        enabled: true,
+        ..AshareRuleConfig::default()
+    };
+    rules
+        .apply_corporate_actions_json("000001.SZSE", &payload)
+        .unwrap();
+    rules.validate().unwrap();
+
+    assert!(
+        rules.previous_close_raw.is_empty(),
+        "夹具走的是折算，不是数据侧覆盖"
+    );
+    assert_eq!(
+        rules.previous_close(&bars, 1),
+        Some(cross_check_raw(anchor, "expected_reference_raw")),
+        "除权日锚定的参考价必须等于两侧共读的那一格期望值"
+    );
+    // 不折算就是不复权昨收 10.00：这两格必须分开，否则整条对照是空的。
+    assert_ne!(rules.previous_close(&bars, 1), Some(previous_close));
+    assert!(
+        rules.limits(previous_close).0 > rules.limits(reference).0,
+        "同一根 Bar 在未折算与折算后的锚下必须落在不同的涨停板上"
+    );
+}

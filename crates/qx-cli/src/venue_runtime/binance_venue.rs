@@ -72,7 +72,7 @@ pub(crate) fn configured_ws_endpoint(worker: &WorkerConfig) -> Result<(String, u
 pub(crate) fn run_binance_public_probe(testnet: bool, instrument: &str) -> Result<(), String> {
     let instrument = InstrumentId::parse(instrument)
         .ok_or_else(|| format!("Binance public probe instrument 非法: {instrument}"))?;
-    if !instrument.venue.as_str().eq_ignore_ascii_case("BINANCE") {
+    if !instrument.venue.is_binance() {
         return Err("Binance public probe 只接受 *.BINANCE InstrumentId".into());
     }
     let transport: Arc<dyn HttpTransport> =
@@ -117,11 +117,7 @@ pub(crate) fn run_binance_private_probe(
     {
         return Err(format!("worker {worker_id} 不是启用的 Binance 私有 worker"));
     }
-    if !worker
-        .venue_id
-        .as_deref()
-        .is_some_and(|venue| venue.to_ascii_lowercase().contains("binance"))
-    {
+    if VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Binance) {
         return Err(format!("worker {worker_id} 不是 Binance worker"));
     }
     resolve_worker_runtime_paths(&mut worker, runtime_path);
