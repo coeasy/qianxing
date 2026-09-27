@@ -74,6 +74,10 @@ pub(crate) fn run_ccxt_market_worker(
     let mut quotes = 0_u64;
     let mut bars_written = 0_u64;
     let attempted_calls = (instruments.len() + live_specs.len()) as u32;
+    // 旧口径只在每轮把 `cycle_failures` 报出去、下一轮又清零，于是柜台彻底不可用时
+    // 这个循环会无上限地重生 Python 子进程（每 500ms 一个）。预算按**连续** RPC 失败计，
+    // 任一成功应答清零，超过上限即具名放弃（V13 R2 #167）。
+    let mut reconnect_budget = CcxtReconnectBudget::market_rpc();
     while !context.should_stop() {
         let cycle_now = runtime_timestamp_ms();
         let mut cycle_failures = 0_u32;
@@ -82,9 +86,13 @@ pub(crate) fn run_ccxt_market_worker(
                 "op": "fetch_ticker",
                 "instrument": instrument.to_string(),
             })) {
-                Ok(result) => result,
+                Ok(result) => {
+                    reconnect_budget.note_success();
+                    result
+                }
                 Err(error) => {
                     cycle_failures = cycle_failures.saturating_add(1);
+                    let delay = reconnect_budget.note_failure()?;
                     context.mark(
                         qx_runtime::ServiceStatus::Degraded,
                         format!("CCXT ticker 暂时失败 {}: {error}; reconnecting", instrument),
@@ -93,7 +101,7 @@ pub(crate) fn run_ccxt_market_worker(
                     client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None).map_err(
                         |spawn_error| format!("重启公共 CCXT Worker 失败: {spawn_error}"),
                     )?;
-                    thread::sleep(Duration::from_millis(500));
+                    thread::sleep(delay);
                     continue;
                 }
             };
@@ -159,9 +167,13 @@ pub(crate) fn run_ccxt_market_worker(
                 "end_ms": cycle_now,
                 "limit": spec.history_limit.saturating_add(2),
             })) {
-                Ok(result) => result,
+                Ok(result) => {
+                    reconnect_budget.note_success();
+                    result
+                }
                 Err(error) => {
                     cycle_failures = cycle_failures.saturating_add(1);
+                    let delay = reconnect_budget.note_failure()?;
                     context.mark(
                         qx_runtime::ServiceStatus::Degraded,
                         format!(
@@ -173,7 +185,7 @@ pub(crate) fn run_ccxt_market_worker(
                     client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None).map_err(
                         |spawn_error| format!("重启公共 CCXT Worker 失败: {spawn_error}"),
                     )?;
-                    thread::sleep(Duration::from_millis(500));
+                    thread::sleep(delay);
                     continue;
                 }
             };

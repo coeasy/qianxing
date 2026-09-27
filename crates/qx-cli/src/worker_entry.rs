@@ -140,9 +140,11 @@ pub(crate) fn run_binance_spread_recovery_worker(
         format!("binance spread recovery scanning venue={venue_id}"),
         Some(runtime_timestamp_ms()),
     )?;
+    let mut recovery_stalls = 0_u32;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
-        if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
+        let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+        if pending_before > 0 {
             let mut pipeline = pipeline_storage
                 .open(
                     binance_event_log_name(&worker)?,
@@ -178,12 +180,21 @@ pub(crate) fn run_binance_spread_recovery_worker(
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
             }
+            // 扫描后仍停在原处才计一次原地不动：分组数少了说明这一轮真的在推进。
+            let pending_after = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+            recovery_stalls = if pending_after >= pending_before {
+                recovery_stalls.saturating_add(1)
+            } else {
+                0
+            };
+        } else {
+            recovery_stalls = 0;
         }
         context.heartbeat(now)?;
         if once {
             break;
         }
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(spread_recovery_poll_delay(recovery_stalls));
     }
     Ok(())
 }
@@ -366,15 +377,18 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
         format!("ccxt spread recovery scanning venue={venue_id}"),
         Some(runtime_timestamp_ms()),
     )?;
+    let mut recovery_stalls = 0_u32;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
-        if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
+        let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+        if pending_before > 0 {
             let mut pipeline = pipeline_storage
                 .open(
                     required_account_event_log(&worker)?,
                     settlement_currency.clone(),
                 )
                 .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
+            // 每轮扫描起一个 Python 子进程：只有过预算的重生才是有界的（V13 R2 #168c）。
             let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
                 .map_err(|error| format!("启动公共 CCXT 恢复 Worker 失败: {error}"))?;
             let venue = CcxtProcessVenue::new(venue_id.clone(), Box::new(client));
@@ -402,12 +416,20 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
             }
+            let pending_after = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+            recovery_stalls = if pending_after >= pending_before {
+                recovery_stalls.saturating_add(1)
+            } else {
+                0
+            };
+        } else {
+            recovery_stalls = 0;
         }
         context.heartbeat(now)?;
         if once {
             break;
         }
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(spread_recovery_poll_delay(recovery_stalls));
     }
     Ok(())
 }

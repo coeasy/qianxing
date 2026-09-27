@@ -96,6 +96,12 @@ impl CcxtProcessClient {
             timeout_ms,
         })
     }
+
+    /// 这条 RPC 通道的读窗超时：`watch_*` 调用方据此给子进程一个更小的
+    /// `wait_ms`，让"这一窗没有事件"的回话先于读窗到期到达。
+    pub fn timeout_ms(&self) -> u64 {
+        self.timeout_ms
+    }
 }
 
 fn ccxt_worker_environment(config_path: &str) -> Result<BTreeMap<String, String>, String> {

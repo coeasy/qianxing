@@ -250,37 +250,35 @@ impl<V: Venue> VenueRouterPort for VenuePortAdapter<V> {
 }
 
 impl RiskPort for RiskContextPort<'_> {
-    fn evaluate_order(&self, order: &qx_core::Order) -> Result<RiskDecision, String> {
+    fn evaluate_order(&self, order: &qx_core::Order) -> Result<RiskVerdict, String> {
         let decision = self.risk.evaluate_order(order, self.position);
         if decision.allowed {
-            Ok(RiskDecision {
-                accepted: true,
-                reason_code: "accepted",
-            })
+            Ok(RiskVerdict::Allow)
         } else {
-            Err(format!(
-                "RiskContext {}: {}",
-                decision.rule_set_version,
-                decision.violations.join("; ")
-            ))
+            Ok(RiskVerdict::Reject {
+                reason: format!(
+                    "RiskContext {}: {}",
+                    decision.rule_set_version,
+                    decision.violations.join("; ")
+                ),
+            })
         }
     }
 }
 
 impl RiskPort for CanonicalRiskPort<'_> {
-    fn evaluate_order(&self, order: &qx_core::Order) -> Result<RiskDecision, String> {
+    fn evaluate_order(&self, order: &qx_core::Order) -> Result<RiskVerdict, String> {
         let decision = qx_risk::RiskEngine::evaluate_order(self.context, order);
         if decision.allowed {
-            Ok(RiskDecision {
-                accepted: true,
-                reason_code: "accepted",
-            })
+            Ok(RiskVerdict::Allow)
         } else {
-            Err(format!(
-                "CanonicalRiskEngine {}: {}",
-                decision.rule_set_version,
-                decision.violations.join("; ")
-            ))
+            Ok(RiskVerdict::Reject {
+                reason: format!(
+                    "CanonicalRiskEngine {}: {}",
+                    decision.rule_set_version,
+                    decision.violations.join("; ")
+                ),
+            })
         }
     }
 }
@@ -535,7 +533,9 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
     }
 
     /// 风控前置的统一提交入口。RiskPort 拒绝发生在订单登记、Venue 副作用和
-    /// EventLog 事实追加之前；因此拒单不会留下“已提交但未执行”的伪订单。
+    /// EventLog 事实追加之前；因此拒单不会留下“已提交但未执行”的伪订单。两条通道
+    /// 不混用（V13 §9.12 #172）：端口给出拒绝才播报「拒绝订单」并带违规清单，端口
+    /// 给不出裁决才播报「执行失败」。
     pub fn submit_with_risk<R: RiskPort>(
         &mut self,
         order: qx_core::Order,
@@ -544,14 +544,14 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         order
             .validate()
             .map_err(|error| format!("订单校验失败: {error}"))?;
-        let decision = risk
+        match risk
             .evaluate_order(&order)
-            .map_err(|error| format!("账户级 RiskPort 执行失败: {error}"))?;
-        if !decision.accepted {
-            return Err(format!(
-                "账户级 RiskPort 拒绝订单: {}",
-                decision.reason_code
-            ));
+            .map_err(|error| format!("账户级 RiskPort 执行失败: {error}"))?
+        {
+            RiskVerdict::Allow => {}
+            RiskVerdict::Reject { reason } => {
+                return Err(format!("账户级 RiskPort 拒绝订单: {reason}"))
+            }
         }
         self.submit(order)
     }

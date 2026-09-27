@@ -128,10 +128,9 @@ impl VenuePort for NeverCalledVenue {
 struct RejectingRisk;
 
 impl RiskPort for RejectingRisk {
-    fn evaluate_order(&self, _order: &Order) -> Result<RiskDecision, String> {
-        Ok(RiskDecision {
-            accepted: false,
-            reason_code: "max_notional",
+    fn evaluate_order(&self, _order: &Order) -> Result<RiskVerdict, String> {
+        Ok(RiskVerdict::Reject {
+            reason: "max_notional".into(),
         })
     }
 }

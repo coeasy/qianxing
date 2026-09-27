@@ -4,16 +4,18 @@
 //! 口径：预算按**连续**失败计，交付过事件的会话把它清零，因此长期健康的长连接不会
 //! 因为生涯累计重连次数被判死。
 
-use qx_adapter::{run_binance_user_stream, BinanceStreamRetryPolicy, BinanceUserStreamSession};
+use qx_adapter::{
+    run_binance_user_stream, BinanceStreamPoll, BinanceStreamRetryPolicy, BinanceUserStreamSession,
+};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 struct FakeUserStream {
-    events: Vec<Result<Option<String>, String>>,
+    events: Vec<Result<BinanceStreamPoll, String>>,
 }
 
 impl BinanceUserStreamSession for FakeUserStream {
-    fn recv_event(&mut self) -> Result<Option<String>, String> {
+    fn recv_event(&mut self) -> Result<BinanceStreamPoll, String> {
         self.events.remove(0)
     }
 
@@ -37,7 +39,10 @@ fn user_stream_runner_reconnects_with_injected_clock_and_stop() {
         || {
             connect_count += 1;
             Ok(FakeUserStream {
-                events: vec![Ok(Some(format!("event-{connect_count}"))), Ok(None)],
+                events: vec![
+                    Ok(BinanceStreamPoll::Event(format!("event-{connect_count}"))),
+                    Ok(BinanceStreamPoll::Closed),
+                ],
             })
         },
         policy(),
@@ -68,11 +73,14 @@ fn user_stream_runner_reconnects_after_session_or_callback_error() {
             connect_count += 1;
             if connect_count == 1 {
                 Ok(FakeUserStream {
-                    events: vec![Ok(Some("callback-error".into()))],
+                    events: vec![Ok(BinanceStreamPoll::Event("callback-error".into()))],
                 })
             } else {
                 Ok(FakeUserStream {
-                    events: vec![Ok(Some("recovered".into())), Ok(None)],
+                    events: vec![
+                        Ok(BinanceStreamPoll::Event("recovered".into())),
+                        Ok(BinanceStreamPoll::Closed),
+                    ],
                 })
             }
         },
@@ -131,7 +139,7 @@ fn healthy_sessions_do_not_exhaust_the_reconnect_budget() {
             // 每次会话交付一条事件后链路才断：会话健康，重连也确实发生了。
             Ok(FakeUserStream {
                 events: vec![
-                    Ok(Some(format!("tick-{connect_count}"))),
+                    Ok(BinanceStreamPoll::Event(format!("tick-{connect_count}"))),
                     Err("injected drop".into()),
                 ],
             })

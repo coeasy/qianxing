@@ -4,7 +4,7 @@
 //! `executionReport` 用户事件映射。订单事实仍通过 `VenueEvent` 返回，绝不
 //! 直接修改 OMS、Ledger 或 Kernel。
 
-use super::{HttpRequest, HttpResponse, HttpTransport, TlsWebSocketUserStream};
+use super::{HttpRequest, HttpResponse, HttpTransport, TlsWebSocketUserStream, WebSocketPoll};
 use qx_core::{
     retry, Fill, InstrumentId, Money, Order, OrderStatus, Price, Quantity, QxError, QxResult, Side,
 };
@@ -282,6 +282,8 @@ pub struct BinanceStreamRunReport {
     pub reconnects: u32,
     /// 连续失败的重连次数：交付过事件的会话会把它清零，终态判定只看这个。
     pub consecutive_failures: u32,
+    /// 空闲读取窗口的次数：链路仍开着但这一窗没有事件，是"静默≠故障"的落地证据。
+    pub idle_windows: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -337,14 +339,31 @@ impl BinanceUserStreamRunConfig {
     }
 }
 
+/// 用户流一次读取窗口的结局。`Idle` 单独成态是这条链的关键：**没有事件**不能消耗重连预算，
+/// 否则一个连着但长时间不出单的纸面账户会按预算被判死（10s 读窗 × 10 次）。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum BinanceStreamPoll {
+    Event(String),
+    Idle,
+    Closed,
+}
+
+/// 行情流一次读取窗口的结局；静默交给调用方判 staleness，不作为致命错误上抛。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum BinanceQuotePoll {
+    Quote(QuoteTick),
+    Idle,
+    Closed,
+}
+
 /// 可测试的用户流会话抽象；真实实现为 `BinanceSpotUserStream`，测试可注入内存会话。
 pub trait BinanceUserStreamSession {
-    fn recv_event(&mut self) -> Result<Option<String>, String>;
+    fn recv_event(&mut self) -> Result<BinanceStreamPoll, String>;
     fn close(&mut self) -> Result<(), String>;
 }
 
 impl BinanceUserStreamSession for BinanceSpotUserStream {
-    fn recv_event(&mut self) -> Result<Option<String>, String> {
+    fn recv_event(&mut self) -> Result<BinanceStreamPoll, String> {
         Self::recv_event(self)
     }
 
@@ -393,7 +412,7 @@ where
         let mut callback_failed = false;
         while !should_stop() {
             match session.recv_event() {
-                Ok(Some(event)) => match on_event(&event) {
+                Ok(BinanceStreamPoll::Event(event)) => match on_event(&event) {
                     Ok(()) => {
                         report.events = report.events.saturating_add(1);
                         delivered += 1;
@@ -404,7 +423,13 @@ where
                         break;
                     }
                 },
-                Ok(None) => break,
+                // 链路还开着、只是这一窗没有事件：既不充当交付（否则空闲会替坏链路复位预算），
+                // 也不消耗重连预算（否则空闲账户几个窗口内就被判死）。
+                Ok(BinanceStreamPoll::Idle) => {
+                    report.idle_windows = report.idle_windows.saturating_add(1);
+                    continue;
+                }
+                Ok(BinanceStreamPoll::Closed) => break,
                 Err(error) => {
                     callback_error = Some(error);
                     break;
@@ -654,10 +679,13 @@ impl BinanceSpotMarketStream {
         &self.instrument
     }
 
-    pub fn recv_quote(&mut self, receive_ts: u64) -> Result<Option<QuoteTick>, String> {
+    pub fn recv_quote(&mut self, receive_ts: u64) -> Result<BinanceQuotePoll, String> {
         let message = match self.stream.recv_message()? {
-            Some(message) => message,
-            None => return Ok(None),
+            WebSocketPoll::Message(message) => message,
+            // 一个窗口里没有行情 ≠ 链路坏了：静默要交给调用方做 staleness 判定，
+            // 而不能顺着 `?` 把 worker 判成致命退出。
+            WebSocketPoll::Idle => return Ok(BinanceQuotePoll::Idle),
+            WebSocketPoll::Closed => return Ok(BinanceQuotePoll::Closed),
         };
         if message.opcode != 0x1 {
             return Err("Binance bookTicker 不是 JSON 文本".into());
@@ -672,7 +700,7 @@ impl BinanceSpotMarketStream {
                 self.instrument.symbol
             ));
         }
-        Ok(Some(quote))
+        Ok(BinanceQuotePoll::Quote(quote))
     }
 
     pub fn close(&mut self) -> Result<(), String> {
@@ -698,9 +726,11 @@ impl BinanceSpotUserStream {
             headers,
         )?;
         stream.send_text(&auth.user_stream_subscribe_payload(request_id))?;
-        let acknowledgement = stream
-            .recv_message()?
-            .ok_or_else(|| "Binance 用户流订阅连接已关闭".to_string())?;
+        let acknowledgement = match stream.recv_message()? {
+            WebSocketPoll::Message(message) => message,
+            WebSocketPoll::Idle => return Err("Binance 用户流订阅回执在读取窗口内未到".into()),
+            WebSocketPoll::Closed => return Err("Binance 用户流订阅连接已关闭".into()),
+        };
         if acknowledgement.opcode != 0x1 {
             return Err("Binance 用户流订阅回执不是 JSON 文本".into());
         }
@@ -724,17 +754,19 @@ impl BinanceSpotUserStream {
         self.subscription_id
     }
 
-    pub fn recv_event(&mut self) -> Result<Option<String>, String> {
-        self.stream
-            .recv_message()?
-            .map(|message| {
+    pub fn recv_event(&mut self) -> Result<BinanceStreamPoll, String> {
+        match self.stream.recv_message()? {
+            WebSocketPoll::Message(message) => {
                 if message.opcode != 0x1 {
                     return Err("Binance 用户流事件不是 JSON 文本".into());
                 }
-                String::from_utf8(message.payload)
-                    .map_err(|error| format!("Binance 用户流事件不是 UTF-8: {error}"))
-            })
-            .transpose()
+                let payload = String::from_utf8(message.payload)
+                    .map_err(|error| format!("Binance 用户流事件不是 UTF-8: {error}"))?;
+                Ok(BinanceStreamPoll::Event(payload))
+            }
+            WebSocketPoll::Idle => Ok(BinanceStreamPoll::Idle),
+            WebSocketPoll::Closed => Ok(BinanceStreamPoll::Closed),
+        }
     }
 
     pub fn close(&mut self) -> Result<(), String> {

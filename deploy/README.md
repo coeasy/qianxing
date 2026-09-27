@@ -767,6 +767,27 @@ MQ、用户流、对账和交易安全状态继续接入同一 readiness provide
 不拉起进程，因此这里既不会出现 `ready` 也不会出现 `degraded`；运行期健康以 `/ready` 与
 `/metrics` 为准。
 
+### 流的三态：空闲、断链与放弃
+
+行情流与用户流每条常驻读循环都区分三件事，混成一件事的两种后果都出现过（V13 §9.11）：把空闲当失败，
+一个当天没有成交的账户会在几个窗口后被具名放弃；把空闲当交付，坏链路会每窗复位预算、永不放弃。
+
+- **空闲（Idle）**：一个读窗内确实没有事件。它**不吃重连预算**。行情 worker 会因此降到 `Degraded`，
+  详情行带 `market stream idle consecutive_windows=N`，收尾时同时播报 `quotes=N idle_windows=M`；
+  CCXT Pro 用户流同口径（`ccxt pro user stream idle consecutive_windows=N`，收尾
+  `… stopped idle_windows=M`）。Binance 用户流不把空闲写成 `Degraded`（一个没有新成交的账户流本来就该是安静的），
+  它把 `idle_windows` 记进运行报告，由 `crates/qx-adapter/tests/binance_stream_retry.rs` 逐窗核对。
+  薄成交对的 symbol 会长期停在 `Degraded`，这不是断链，也不需要人工介入。
+  空闲只允许出现在**帧边界**上——读超时落在半条消息中间仍算故障，否则两帧会被拼成一帧。
+- **断链（Closed / 失败）**：退避只有一个口径（`crates/qx-core/src/retry.rs`）：500ms 起、8s 封顶、
+  **连续** 10 次失败后具名放弃；拿到一次成功应答即清零。放弃的报错会点名是哪条通道
+  （`CCXT Pro 用户流` / `CCXT 行情子进程` / Binance 用户流），运维据此判断要重启的是哪一侧。
+- **对冲恢复（不是一件事）**：多腿恢复链只有退避、**没有放弃**——节律 `100ms→8s` 有界，循环无界，
+  因为停在 `HedgeRequired` 的分组是一条腿已成交、另一条还没对冲的裸腿，把它永久晾着比反复扫描更危险。
+  三条恢复循环（Binance / CCXT / Paper）在没有待对冲分组时连扫描都不发起。
+
+所以判据是：`Degraded` + `idle` 计数在涨 = 市场安静；出现带"超过上限"的具名放弃 = 链路真的断了。
+
 `serve` 暴露的端点就是下表这些，未列出的路径一律 404。表里第一列的 `METHOD 路径` 必须与
 `crates/qx-api/src/lib.rs` 的路由集合逐一相等（门禁 `api_surface_doc_check`），查询串只是提示可带：
 
@@ -820,4 +841,9 @@ accept 里、`join()` 永不返回，投影线程与 TLS 重载线程永远停�
 
 ## 停机与故障
 
-服务进程收到 Ctrl+C 后由进程管理器负责终止；交易 worker 必须先停止新信号，再等待账户命令队列、用户流关闭和对账完成。若用户流或对账 worker 进入 `Failed`/`Degraded`，不得自动补单，必须走快照恢复与人工确认。
+服务进程收到 Ctrl+C / SIGINT / SIGTERM 后不再依赖默认强杀：`install_shutdown_signals` 把它转成监督器的
+停机请求，`join_worker_handle` 按 `shutdown_timeout_ms` 预算等 worker 自己收摊，超预算才报
+「收到停机请求后 Xms 仍未退出」。`serve` 的两条 API 出口（明文与 mTLS）本轮也汇入同一条阶梯，屏幕上
+「按 Ctrl+C 停止」那句从此真有对应行为（V13 R2 #164）。交易 worker 必须先停止新信号，再等待账户命令队列、
+用户流关闭和对账完成。`Degraded` 单独出现可能只是行情安静（见上文「流的三态」）；但若 worker 进入
+`Failed`，或 `Degraded` 伴随带"超过上限"的具名放弃，不得自动补单，必须走快照恢复与人工确认。

@@ -293,6 +293,9 @@ pub(crate) fn run_ccxt_user_stream_worker(
     )?;
     let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
         .map_err(|error| format!("启动公共 CCXT Pro Worker 失败: {error}"))?;
+    // 空闲回话上限取自身读窗的 4/5：让"这一窗没有事件"先答回来，读窗到期就重新只
+    // 表示子进程真的卡住 —— 而不是一个没有成交的账户在十个窗口后被具名放弃。
+    let watch_idle_ms = client.timeout_ms().saturating_mul(4) / 5;
     let mut venue = CcxtProcessVenue::new(
         worker.venue_id.clone().unwrap_or_else(|| "ccxt".into()),
         Box::new(client),
@@ -303,7 +306,8 @@ pub(crate) fn run_ccxt_user_stream_worker(
         .last()
         .map(|event| event.source_seq)
         .unwrap_or(0);
-    let mut reconnect_budget = CcxtStreamReconnectBudget::default();
+    let mut reconnect_budget = CcxtReconnectBudget::default();
+    let mut idle_windows = 0_u64;
     loop {
         if context.should_stop() {
             break;
@@ -316,6 +320,7 @@ pub(crate) fn run_ccxt_user_stream_worker(
             "op": "watch_orders",
             "instrument": null,
             "received_ts": received_ts,
+            "wait_ms": watch_idle_ms,
         })) {
             Ok(result) => result,
             Err(error) => {
@@ -352,6 +357,21 @@ pub(crate) fn run_ccxt_user_stream_worker(
         if event.get("stream").and_then(serde_json::Value::as_str) != Some("orders") {
             return Err("CCXT Pro 用户流返回了非 orders 事件".into());
         }
+        // 子进程答上了话、只是这一窗没有订单事件：不占重连预算，否则一个当天没有
+        // 成交的账户会在几个 30 秒窗口后被具名放弃；也不清 idle 计数之外的东西。
+        if ccxt_watch_reply_is_idle(event) {
+            idle_windows = idle_windows.saturating_add(1);
+            context.mark(
+                qx_runtime::ServiceStatus::Degraded,
+                format!("ccxt pro user stream idle consecutive_windows={idle_windows}"),
+                Some(received_ts),
+            )?;
+            if once {
+                break;
+            }
+            continue;
+        }
+        idle_windows = 0;
         let events = event
             .get("events")
             .and_then(serde_json::Value::as_array)
@@ -442,7 +462,7 @@ pub(crate) fn run_ccxt_user_stream_worker(
     }
     context.mark(
         qx_runtime::ServiceStatus::Stopped,
-        "ccxt pro user stream stopped",
+        format!("ccxt pro user stream stopped idle_windows={idle_windows}"),
         Some(runtime_timestamp_ms()),
     )?;
     Ok(())

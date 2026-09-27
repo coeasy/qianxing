@@ -1,6 +1,129 @@
 # Changelog
 
 
+## Unreleased — V13 R2 第五遍：字段级的"没人读"与"没人写"（三处修复，一处是真断链）（2026-09-27）
+
+第四遍数调用点，这一遍数字段：一个 `pub` 字段有人写没人读，编译器和门禁都不会抱怨（门禁只到函数与枚举变体
+级，类型面那条是 #135 立的案）。三份一次性探针清出字段账目后逐条人工判定，落成三处修复：**两格零读者字段删掉**
+（#170）、**三格"只有用例读者"的投影字段保留并如实登记**（#171）、**风控端口的"拒绝"与"端口坏了"原本共用一条
+通道**（#172，本轮唯一真断链：正常风控拒单在播报上变成「RiskPort 执行失败」，运维据此去查一条好链路）。
+详记 V13 §9.12，日志 `logs/s108_*.txt`—`logs/s122_*.txt`。
+
+### Changed（一处端口契约，不外溢到线格式）
+
+- **#172 风控端口的裁决与故障分通道**（`crates/qx-execution/src/application.rs:68-88`、
+  `crates/qx-execution/src/lib.rs:252-283,535-557`）：`RiskPort::evaluate_order` 的返回从
+  `Result<RiskDecision, String>` 换成 `Result<RiskVerdict, String>`，`RiskVerdict::{Allow, Reject { reason }}`；
+  `Ok(Reject)` 表示"端口给出了裁决、这单不该出门"，`Err` 只表示"端口给不出裁决"。改前两生产实现
+  （`RiskContextPort` / `CanonicalRiskPort`）**只在通过时**写 `accepted: true`，拒绝一律 `Err`，于是
+  `submit_with_risk` 里「账户级 RiskPort 拒绝订单」那条播报在生产不可达、只有测试假件能触发。改后拒单播报为
+  「账户级 RiskPort 拒绝订单: <规则集版本>: <违规清单>」，端口故障才是「账户级 RiskPort 执行失败」。
+  该类型不带 `Serialize`，不是线格式；同时消掉与 `qx_risk::RiskDecision` 同名异物一项（§5 R2-1 预登记）。
+
+### Removed（两处公共面，取证口径：全仓含用例零读者）
+
+- `qx_runtime::RuntimeIngestReceipt::primary_seq` 与 `::log_digest`（#170）：`ingest` 回执的五格里这两格
+  有三个生产构造点、**全仓（含用例）零读者** —— 要按序号或日志摘要读事实流本来就该走 `log()`。附带少算一笔：
+  `log_digest` 要为一次没人读的播报把整条事实流重哈希，而 `ingest` 是每笔行情/成交都走的路径。
+  判据把名册钉成三格（`derived_seqs` / `engine_ts` / `deduplicated`），并把"只有用例读者"与"零读者"这两层
+  区分写进结构体文档 —— 前者按仓库口径保留（用例是这条归约链的回归证明面，先例 #118/#119）。
+- `qx_execution::RiskDecision`（`struct { accepted: bool, reason_code: &'static str }`，#172）：改后无构造者；
+  `accepted: bool` 与 `reason_code` 两个名字被常驻判据列为生产实现文件里的禁用语。
+
+### Added（判据：新增 2 个用例文件、3 条判据、1 条 capabilities 登记）
+
+- `crates/qx-cli/src/tests/zero_reader_fields.rs`：#170 回执名册逐字钉三格 + `primary_seq` 禁回 + 全文件
+  `.digest()` 恰好 1 处（只在 `snapshot()`）；#171 **双向对齐** —— `assert_eq!(登记在否, 跨 crate 生产读者为空)`，
+  内核文档那句「没有任何生产读者」参与同一等式。
+- `crates/qx-cli/src/tests/risk_port_channel.rs`：#172 接线判据按调用点逐处数（生产实现 2 处，于是
+  `Ok(RiskVerdict::Allow)`、`Ok(RiskVerdict::Reject {`、`decision.violations.join` 各 2 处，两条播报各 1 处）。
+- `crates/qx-execution/src/tests/gateway_port.rs::canonical_risk_port_separates_verdict_from_port_failure`：
+  行为判据，钉"缺产品规格的限额订单给出的是**拒绝裁决**而不是端口故障"，且拒单不落订单、不落事件、不动 `source_seq`。
+- `maturity/capabilities.yaml` → `canonical_order_risk_decision.limitations` 新增
+  `order_risk_projection_fields_have_no_production_reader`：投影三格每笔都算，但生产端口只读
+  `allowed` / `violations` / `rule_set_version`，所以"这一单成交后仓位与保证金会变成多少"今天读不到产物。
+- `crates/qx-cli/src/tests/mod.rs`：共享夹具 `workspace_source()` / `all_crate_production_sources()` /
+  `path_under_crate()` 上移（此前这类"数源码字面量"的判据各自拼一次路径、有人漏掉 `unwrap`，文件改名会把
+  "读不到"读成"通过"）。
+
+### Validation（数字全部抄自当轮日志）
+
+| 项 | 实测 | 日志 |
+| --- | --- | --- |
+| 一次性字段探针 | `s108` 186 份生产源 / 89 个含 `Option` 字段的结构 / **11** 格"构造点都没显式写出"；`s109` 配置侧无人读 **4** 格，其中在模板/python/schema 出现过键名的 **0** 格；`s110` 181 份生产源 / 恒写字面量且被条件读的 bool-str 字段 **23** 格 → 人工判定**真缺陷 1 组**（即 #172） | `s108`、`s109`、`s110_v13_r2_pass5_constant_discriminator.txt` |
+| 变异反向验证 | **6 发**：`M1`–`M4` 首跑即咬；`M5` 首版**未咬**（判据按子串认 `capabilities` 登记，把登记项降级成注释就骗过它 —— 与 #136 同类盲区），加固为"只认该能力 `limitations:` 名单下的列表项"后 `M5`、`M6` 均咬。每发跑完即还原，还原后三份被改文件与 %TEMP% 镜像 `cmp` **逐字节相同** | `s111_v13_r2_pass5_mutation.txt` |
+| 架构门禁 | 三处修复落地后首轮整跑只红在单文件行数棘轮一项（#172 那段注释多一行），压回后 **515 项全绿 / `GATE_EXIT=0`**；两处文档注释改完再整跑仍 **515 / 0** | `s112_v13_r2_gate_after_pass5.txt`、`s114_v13_r2_gate_after_pass5_judges.txt` |
+| 整树测试 | `QX_PYTHON=<venv 绝对路径> cargo test --workspace` → **92 段全 ok、876 passed / 0 failed、`WORKSPACE_EXIT=0`**，`warning` 0 行（较 §9.11 记的 873 多 **3** 条，正是本轮三判据）；文档与 `rustfmt` 之后再定向复跑三判据与 `gateway_port` 全绿、`cargo fmt --all -- --check` 全仓 0 差异、门禁再整跑仍 515/0 | `s113_v13_r2_pass5_workspace_raw.txt`、`s115_v13_r2_pass5_workspace_final.txt`、`s116_v13_r2_gate_after_pass5_docs.txt` |
+| `build.bat` 九步端到端（未提交的当轮代码直接整跑） | `[0/9]`…`[9/9]` 全过、`BUILD_BAT_EXIT=0`：门禁 **515 项**全绿、`[4/9]` **92 段 / 876 passed / 0 failed**、`[5/9]` Clippy 只剩 linker 提示 2 行、`[6/9]` `Ran 57 tests … OK (skipped=1)`、`[7/9]` 重放①②③全 True、`[8/9]` release 1m55s 后 `all`/`ecosystem`/「针路 · PaperVenue」全过、`[9/9]` `config_fingerprint=aada66156749d230…`。**跑完复核**：`git status --porcelain` 与跑前逐行相同（35 行），未跟踪新产物 0 份 | `s117_v13_r2_pass5_build_bat_full.txt` |
+| 安装包（wheel）按当轮代码重建 + 载荷复核 | `WHEEL_BUILD_EXIT=0`、217,415 字节（整档 `sha256=b6b8b3519076880e…` 只登记不采信，#159）。载荷：17 条目名称集合相同、12 条目 CRC+时间戳全同、3 条目仅 zip 时间戳变，**真改的只有 2 条** —— `_qianxing_native.pyd`（353,280 字节重链接，md5 等于 `target/release/_qianxing_native.dll`）+ `RECORD`；**12 份 `.py` 与仓库逐字节对照不符 0 处**（本轮 `python/` 零改动，wheel 里唯一的实物变化就是那次重链接）。本轮契约改在 Rust 侧，落点是 CLI 二进制：11,921,920 字节的 `qx-cli.exe` 内「账户级 RiskPort 拒绝订单」/「账户级 RiskPort 执行失败」各 **1** 次、`RiskDecision` 与 `accepted: bool` 各 **0** 次（`reason_code` 那 1 次来自有真读者的对账裁决，禁用语只圈在 `qx-execution/src/lib.rs`） | `s118_v13_r2_pass5_wheel_build.txt`、`s119_v13_r2_pass5_release_payload.txt` |
+| 新 wheel 装进干净环境真用 | `uv venv`（3.12.13）+ `uv pip install` 退出码 0；四包从 **site-packages** 导入、`native.available() -> True`、`StrategyIntent` 线格式往返一致、四类非法衍生品字段照契约抛 `ValueError`；已安装的 `worker.py` 与仓库逐字节相同 | `s120_v13_r2_pass5_wheel_install_smoke.txt` |
+| 补记发布面之后的门禁复跑 | 上面三行写进文档后再整跑：`[PASS]` **515** 条 / `GATE_EXIT=0`；随后把 README 安装面段落里那处「本轮」口径改成点名轮次并补最新现场（#157 类的一处活文档腐坏），再整跑仍 **515 / 0** | `s121_v13_r2_pass5_gate_after_release_docs.txt`、`s122_v13_r2_pass5_gate_after_readme.txt` |
+
+**本轮不做的**：字段级"零读者即报"的门禁判据（门禁改动权本轮在协调者 agent 手上，按 #174 立案在册）；
+#171 的投影三格只登记不接线；`#169` 的全量重放与压缩/保留策略。`sandbox_tested` 与 `production_approved`
+照旧全为 `false`，本轮不使用任何外部服务或凭据。
+
+## Unreleased — V13 R2 第四遍：停机、空闲与无预算重生（六种"什么都没发生"被当成同一种事）（2026-09-27）
+
+第四遍只问一条：**每条常驻循环在"什么都没发生"的时候做什么**。清点出六个落点（#163–#168），共同形状是把
+`空闲`（这一窗确实没有）、`失败`（链路断了）、`放弃`（不再试了）三件事当成一件。混错的两个方向本轮都抓到了：
+把空闲读成失败 → 一个当天没有成交的账户在几个窗口后被具名放弃（#165/#166）；把空闲读成成功 → 坏链路每窗复位
+预算、永不放弃。反过来，**对冲恢复那条链刻意不许放弃**：停在 `HedgeRequired` 的分组是一条腿已成交、另一条还没
+对冲的裸腿，几次抖动之后把它永久晾着比每秒十次扫描更危险。详记 V13 §9.11，日志 `logs/s84_*.txt`—`logs/s106_*.txt`。
+
+### Changed（六处语义，全部只改"这一轮该做什么"，不改交易口径）
+
+| 落点 | 动作 | 改前会怎样 |
+| --- | --- | --- |
+| #164 `serve` 停机 | `run_runtime_api` 明文与 mTLS 两条出口从裸 `worker.join()` 换成 `join_worker_handle(&supervisor, …)`（`crates/qx-cli/src/strategy_contract.rs:752,824`） | 屏幕上「按 Ctrl+C 停止」没有生产者，只能靠默认信号强杀；V12 R4-a 接好的停机阶梯在 API 入口上没人调用 |
+| #165/#168a Binance 两条流 | `recv_user_event`/`recv_quote` 返回从 `Option` 换成 `BinanceStreamPoll::{Event,Idle,Closed}` / `BinanceQuotePoll::{Quote,Idle,Closed}`；`Idle` 只允许出现在**帧边界**（`qx-adapter/src/lib.rs`，半条消息中间超时仍是故障，否则两帧会被拼成一帧）；`binance_stream_worker.rs:39` 把 `Idle` 记成 `Degraded` 健康并累加 `idle_windows`，只有 `Closed` 收摊 | 原口径 `recv_quote(...)?` 把"十分钟没跳动"上抛，supervisor 记 `WorkerExited` 并**停掉其它 worker** —— 薄成交对的 symbol 会拖垮整个 runtime |
+| #166 CCXT Pro 空闲心跳 | Rust 发 `wait_ms`（自己读窗的 4/5），Python Worker 无事件时回 `event["idle"] = True`；读侧 `ccxt_watch_reply_is_idle` **只认显式 `idle: true`**（缺键 / `false` / 字符串 `"true"` / 任何真事件都不算空闲，否则一笔成交会被静默丢掉而不进 EventLog） | 空闲窗按失败计，约 5 分钟放弃一个没有成交的账户 |
+| #167 一条预算、两类通道 | `CcxtStreamReconnectBudget` → `CcxtReconnectBudget`（带 `subject`，`new()`=用户流 / `market_rpc()`=行情子进程，阶梯同源：500ms 起、8s 封顶、连续 10 次具名放弃）；`ccxt_market_worker.rs` 四处出口全过预算，删掉固定 500ms sleep | 柜台彻底不可用时"重生子进程 + sleep 500ms + continue"无限循环，且 `cycle_failures` 每轮清零（那是配置规模不是尝试次数） |
+| #168c/#168d 恢复节律 | `pending_spread_recovery_groups` 从"有没有"改成"几组"，三条恢复循环（Binance / CCXT / Paper）扫前扫后各数一次、`pending_after >= pending_before` 记一轮原地不动，节律走 `spread_recovery_poll_delay(stalls)`（0 轮 100ms，其后退到 8s 封顶，**永不放弃**）；Paper 那半边把闸门挪到扫描之前，没有积压时连账户 EventLog 都不开 | 只要还有分组待对冲，每 100ms 起灭一个 Python 子进程；Paper 循环每 100ms 全量重放一次事实流 |
+| #163 文档口径 | `init` 落盘份数从"14"更正为"**9**"，14 是"init + 首屏 `backtest` 之后"的目录总数（多出 5 份 = `data/qianxing/datasets.manifest.json` + 4 份同前缀 runs 产物）；本文第 105 行、V13 §9.9 那行与 `docs/工业化易用性收口指南-V1.md` 同步改掉 | 三处文档把两步之和归给一步，且 V13 的逐项列举只加到 13（漏了数据集清单）—— 谁按文档核对都会以为少了一份文件 |
+
+### Added（判据：新增 1 个用例文件 + 6 处判据扩写）
+
+- `crates/qx-cli/src/tests/spread_recovery_cadence.rs`（新）：一条纯函数判据钉"退避有界、循环无界"
+  （0→100ms、1→500ms、1..=200 单调不减、末档恰为 8s 且仍是正间隔）；一条接线判据按**调用点逐个数**，
+  覆盖 `worker_entry.rs` 两条与 `venue_runtime/paper_worker.rs` 一条恢复循环。
+- `crates/qx-cli/src/tests/init_onboarding.rs::init_lands_nine_files_and_the_advertised_backtest_adds_five`：
+  把 9 / 5 / 14 三个数钉成可执行来源 —— 这是 #157（文档引用 CLI 输出无人核对）的一个收口形态。
+- `ccxt_stream_retry_budget.rs` +2 颗（行情通道的放弃文案必须点名「CCXT 行情子进程」而不是「用户流」；
+  worker 每个重生点都在预算后：`spawn(` 3、`note_failure()?` 2、`note_success()` 2、固定 500ms sleep 0）；
+  `binance_stream_retry.rs`（1 次重连预算喂 40 个静默窗仍 `Ok`、`reconnects=0`，同时"只有空闲、末尾确实断了"
+  仍要被放弃）；`runtime_api_worker_identity.rs`（用"循环之后还写得动的尾巴"证明阶梯真接上）；
+  `python/tests/test_ccxt_worker.py` +2 颗（给了 `wait_ms` 就答 `idle`、窗内真有事件时照样交付），
+  Rust 侧再加一颗**跨语言字面量两侧对照**（`"wait_ms": watch_idle_ms` 与 `event["idle"] = True` 必须两侧都还在写，
+  键名漂移只会表现为"空闲账户永远不出事件回话"）。`user_stream_retry.rs` 与
+  `ccxt_stream_retry_budget.rs` 里的假流夹具随 `recv_event` 的新返回类型改写，判据口径未动。
+
+### Validation（数字全部抄自当轮日志）
+
+| 项 | 实测 | 日志 |
+| --- | --- | --- |
+| 变异反向验证（真树 + %TEMP% 原始字节镜像，逐发复核还原后逐字节相同） | **15 发全咬**（`bit=True` 15/15）：M164A、M165A/B、M166A/B、M168A、M167A/B/C、M168CA/CB/CC/CD、M168DA/DB | `s85`、`s89`、`s92`、`s93`、`s98_v13_r2_mut168d_paper.txt` |
+| 架构门禁 | 落地 #167/#168c 后先只红行数棘轮一项（`spread.rs(518)`、`worker_entry.rs(521)` 未登记），`--snapshot` 复核后 **515 项全绿 / `GATE_EXIT=0`**；#168d + #163 判据之后再跑仍 515/0 | `s94`（红因）、`s95`、`s99_v13_r2_gate_after_168d.txt` |
+| 行数棘轮登记 | 超 500 行文件 **38 → 40** 份（新增 `spread.rs` 518、`worker_entry.rs` 521；`paper_worker.rs` 改完 409 行，未入册） | `s82`、`s86`、`s95` |
+| 整树测试 | `QX_PYTHON=<venv 绝对路径> cargo test --workspace` → **92 段全 ok、872 passed / 0 failed / `WORKSPACE_EXIT=0`**；#163 的钉数用例之后复跑 92 段 / **873 passed / 0 failed** | `s97_v13_r2_pass4_workspace_final.txt`、`s101_v13_r2_pass4_workspace_closeout.txt` |
+| Python Worker 套件 | `Ran 57 tests ... OK (skipped=1)`（跳过的仍是需要真网络的 sandbox 契约，与 `sandbox_tested=false` 同口径） | `s96_v13_r2_python_suite.txt` |
+| `init` 落盘份数复测 | 仓库外空目录：`INIT_EXIT=0` 后 9 份、`BACKTEST_EXIT=0` 后 14 份、`result_hash=26fdd6b52d020700` | `s100_v13_r2_init_file_count.txt` |
+| `build.bat` 九步端到端（本轮代码，未提交状态直接整跑） | 解释器 3.12.13 且 `QX_PYTHON` 在 `[1/9]` 之前外传 → `[0/9]`…`[9/9]` 全过、`BUILD_BAT_EXIT=0`。分步读数：`[1/9]` **架构不变量 515 项全绿**、`[4/9]` **92 段全 ok / 873 passed / 0 failed**、`[5/9]` Clippy 仅 1 条 linker 提示、`[6/9]` **`Ran 57 tests … OK (skipped=1)`**、`[7/9]` 核心语义全过（重放①②③全 True）、`[8/9]` release 构建 1m51s 后 `qx-cli all` 与 `ecosystem` 与「针路 · PaperVenue 订单接受/报价成交/断线转对账/恢复」全过、`[9/9]` 拓扑 `config_fingerprint=aada6615…` + `runtime 引用文件校验通过`。**跑完复核**：`git status --porcelain` 与跑前逐行相同（26 改 + 1 未跟踪），未跟踪新产物 **0** 份 | `s103_v13_r2_build_bat_full.txt` |
+| 安装包（wheel）按当轮代码重建 | 第一次按脚本默认解释器跑即 `WHEEL_BUILD_EXIT=1`，报的是 §19 那条探测判据本身（`interpreter python has no pip …`），**没有**默默产出旧产物；换成 venv 绝对路径后 `WHEEL_BUILD_EXIT=0`，217,415 字节。载荷口径（#159）：与 A5 那份 17 条目名称集合相同，11 条目 CRC 全同，3 条目（`METADATA`/`WHEEL`/`top_level.txt`）CRC 同而 zip 时间戳变，**真改的只有 3 条** —— `qianxing_ccxt/worker.py` 12,093 → **12,878** 字节（本轮空闲心跳那 +24/−9）、`_qianxing_native.pyd` 同尺寸不同 CRC（重链接）、`RECORD` 跟着换哈希；wheel 内 `.pyd` md5 `4777c85f34e2…` = `target/release/_qianxing_native.dll`；**12 份 `.py` 与仓库逐字节相等 0 处不符** | `s104_v13_r2_wheel_build.txt`、`s105_v13_r2_release_payload.txt` |
+| 发布物内本轮诊断字面量 | 契约在 CLI 二进制不在 wheel：11,922,944 字节的 `target/release/qx-cli.exe` 内 `market stream idle consecutive_windows=` / `market stream stopped quotes=` / `ccxt pro user stream idle consecutive_windows=` / `ccxt pro user stream stopped idle_windows=` 各 **1** 次，具名放弃的「次重连仍失败，超过上限」1 次，两条通道主语「CCXT Pro 用户流」3 次 / 「CCXT 行情子进程」1 次 | `s105` 第 4 节 |
+| 新 wheel 真装真用 | `uv venv`（3.12）+ `uv pip install dist/…whl` → 退出码 0；四包导入 OK、`native.available() -> True`、`StrategyIntent` 线格式往返一致、四类非法衍生品字段照契约抛 `ValueError`；从**已安装**的 `qianxing_ccxt/worker.py` 读出 `"idle"` 1 处 / `wait_ms` 4 处 —— 与仓库同一份字节，所以 `test_ccxt_worker.py` 本轮那 2 颗用例打的键名就是发布物 | `s106_v13_r2_wheel_install_smoke.txt` |
+| 代码改动面 | 22 份跟踪文件 `+922 / −139`，另新增 1 份判据文件 | `git diff --numstat` |
+
+**抓到的两条量具教训**：接线判据要按**调用点逐个数**，只测纯函数不会发现某条循环被改回固定 sleep；"不许再出现
+固定 100ms"这类**负面清单必须按函数边界圈范围**，不能按文件 —— 第一次跑就是整文件断言把 `paper_worker.rs` 的
+执行循环（本来就按固定节拍消费队列）误判成红。
+
+**本轮没做**：`#169`（事件日志每轮全量重放、无压缩/保留策略）仍在册，#168d 只关掉 Paper 恢复循环那一个实例的
+无效重放，没有引入压缩或保留策略；三平台 wheel 与 feature 矩阵仍只由 CI 产；`sandbox_tested` 与
+`production_approved` 照旧全为 `false`（本轮不使用任何外部服务或凭据）。发布面本轮**不在"没做"里**：
+`build.bat` 九步端到端（`logs/s103`）、wheel 按当轮代码重建并逐条目对载荷（`logs/s104`、`logs/s105`）、
+新 wheel 装进干净 venv 真用（`logs/s106`）都已实测；只有 CI 的三平台 wheel 矩阵与 feature 矩阵没有本机等价物。
+
 ## Unreleased — V13 R1-A5：账户「这一层没算」的名单从四处散文收成一份源码派生的事实（2026-09-26）
 
 本轮**不动一行 Rust、不动结构、不给任何一格接生产者**（§5 给 A5 的口径就是「只做上报口径的可见性」）。
@@ -102,7 +225,7 @@ CI 的三平台 wheel 矩阵与 feature 矩阵仍只有 CI 跑。V13 §5 R1 的 
 | --- | --- | --- | --- |
 | 整树测试（带解释器） | `QX_PYTHON=<venv 解释器> cargo test --workspace` | 92 个 `test result:` 段、**858 passed / 0 failed**、`TEST_EXIT=0` | `s46_docs_round_cargo_test_workspace.txt` |
 | 安装路径 A | `cargo install --path crates/qx-cli --locked` | `Finished in 2m 14s`、`INSTALL_EXIT=0` | `s47_…_cargo_install.txt` |
-| 仓库外六条入口 | 临时目录里 `help`/`init --strategy macd`/`doctor`/`backtest`/`report`/`status` | 六条退出码全 0；`init` 落 14 份自包含文件；回测写四份同前缀产物、`result_hash=26fdd6b52d020700`（与 V12 §22 那一轮同一条命令逐字符相同） | `s48_…_installed_cli_smoke.txt`、`s49_…_install_measure.txt` |
+| 仓库外六条入口 | 临时目录里 `help`/`init --strategy macd`/`doctor`/`backtest`/`report`/`status` | 六条退出码全 0；`init` 落 **9** 份自包含文件（那一行原本写 14，实为"init + backtest 之后"的目录总数，见 V13 §9.11 的更正）；`backtest` 再写 5 份：`data/qianxing/datasets.manifest.json` + 4 份同前缀 runs 产物，`result_hash=26fdd6b52d020700`（与 V12 §22 那一轮同一条命令逐字符相同） | `s48_…_installed_cli_smoke.txt`、`s49_…_install_measure.txt`、`s100_v13_r2_init_file_count.txt` |
 | 命令面计数 | 已安装的 `~/.cargo/bin/qx-cli help`（在仓库外目录跑） | **52 行用法、41 个去重入口名**、help 输出 155 行、`HELP_EXIT=0`；入口名逐名列印进日志，README 那句"41 个入口"因此不再只由 `s49` 里一条正则失败的计数撑着 | `s54_docs_round_help_measure.txt` |
 | 架构门禁（归档与 README 改写之后） | `python tools/check_architecture.py` | **509 项全绿**、`GATE_EXIT=0`，其中"能力矩阵证据路径全部存在"与三条 README 字面量判据都在绿侧。归档之后跑一次（`s50`），四份文档全部改完之后再跑（`s55`），V13 记完 §9.9 之后重跑到收尾（`s57`—`s62`），**六次全是 509/0**；README 定稿后又对最终字节的 README 跑了一次，仍是 509/0（`s63_docs_round_gate_after_readme_final.txt`） | `s50`、`s55`、`s57`—`s63` |
 | 文档口径复核 | `qx-cli --version` 与 help 末行 | 退出码 2；末行指向 README 与 deploy/README（见 `### Fixed` 第 1 条） | `s51_docs_round_guide_claims.txt` |

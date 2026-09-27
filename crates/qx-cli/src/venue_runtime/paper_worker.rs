@@ -34,29 +34,45 @@ pub(crate) fn run_paper_spread_recovery_worker(
             "paper spread recovery scanning",
             Some(runtime_timestamp_ms()),
         )?;
+        let mut recovery_stalls = 0_u32;
         while !context.should_stop() {
             let now = runtime_timestamp_ms();
-            let mut pipeline = open_account_pipeline(&runtime_config, &root, &log_name)
-                .map_err(|error| format!("打开 Paper 多腿恢复 EventLog 失败: {error}"))?;
-            let validator =
-                recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
-            let costs =
-                execution_cost_binding_from_config(&runtime_config, Some(&runtime_config_path))?;
-            for message in recover_paper_spread_groups(
-                &root,
-                &mut pipeline,
-                context.id(),
-                now,
-                Some(&validator),
-                &costs,
-            )? {
-                eprintln!("[HedgeRecovery] {message}");
+            // Paper 恢复接的是任意 venue 的待补偿腿（`accept_any_venue`），所以待恢复计数也
+            // 按同一口径取：venue 传空串，不把自己限死在 "paper" 这个腿归属上。
+            let pending_before = pending_spread_recovery_groups(&root, "")?;
+            if pending_before > 0 {
+                let mut pipeline = open_account_pipeline(&runtime_config, &root, &log_name)
+                    .map_err(|error| format!("打开 Paper 多腿恢复 EventLog 失败: {error}"))?;
+                let validator =
+                    recovery_order_validator(&worker, &pipeline, Some(&runtime_config_path));
+                let costs = execution_cost_binding_from_config(
+                    &runtime_config,
+                    Some(&runtime_config_path),
+                )?;
+                for message in recover_paper_spread_groups(
+                    &root,
+                    &mut pipeline,
+                    context.id(),
+                    now,
+                    Some(&validator),
+                    &costs,
+                )? {
+                    eprintln!("[HedgeRecovery] {message}");
+                }
+                let pending_after = pending_spread_recovery_groups(&root, "")?;
+                recovery_stalls = if pending_after >= pending_before {
+                    recovery_stalls.saturating_add(1)
+                } else {
+                    0
+                };
+            } else {
+                recovery_stalls = 0;
             }
             context.heartbeat(now)?;
             if once {
                 break;
             }
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(spread_recovery_poll_delay(recovery_stalls));
         }
         Ok(())
     })?;

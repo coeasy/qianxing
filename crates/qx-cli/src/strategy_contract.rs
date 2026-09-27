@@ -746,7 +746,10 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
                     return Err(error);
                 }
             };
-            let result = worker.join().map_err(|_| "API worker panic".to_string())?;
+            // serve 的 accept 环本来就按 `context.should_stop()` 收摊；这里补的是令牌的另一半：
+            // 走和 worker 同一条停机阶梯，把 SIGINT/SIGTERM 转成监督器的停机请求，
+            // 否则「按 Ctrl+C 停止」只能靠进程被默认信号强杀。
+            let result = join_worker_handle(&supervisor, worker, "API", &api_worker_id);
             stop_api_projection_bridge(&projection_stop, &mut projection_thread);
             result
         }
@@ -818,13 +821,11 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
                     return Err(error);
                 }
             };
-            let result = worker
-                .join()
-                .map_err(|_| "mTLS API worker panic".to_string());
+            let result = join_worker_handle(&supervisor, worker, "mTLS API", &api_worker_id);
             reload_stop.store(true, Ordering::Release);
             let _ = reload_thread.join();
             stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-            result?
+            result
         }
     }
 }

@@ -169,6 +169,54 @@ pub(crate) fn spot_spec_settled_in(dir: &Path, currency: &str) -> PathBuf {
     path
 }
 
+/// 读取仓库根下的一份文件，按 `/` 分隔的相对路径。
+///
+/// 「数源码里的字面量」这类接线判据全仓有十几处，各自拼一次 `CARGO_MANIFEST_DIR`
+/// 就会有人漏掉 `unwrap`，把"文件改名了"读成"判据通过"。
+pub(crate) fn workspace_source(rel: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join(rel);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("读取 {rel} 失败: {error}"))
+}
+
+/// 所有 crate 的生产源码（`crates/*/src/**/*.rs`），跳过用例目录。
+///
+/// 判据问的是"生产里有没有人读"，所以 `src/tests/` 与任何名为 `tests` 的目录都不算
+/// 读者 —— 用例读者是回归证明，按仓库口径另走"保留 + 登记 limitation"那条路。
+pub(crate) fn all_crate_production_sources() -> Vec<PathBuf> {
+    let mut stack = vec![Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("crates")];
+    let mut files = Vec::new();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name == "tests") {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// 路径是否落在某个 crate 目录下（用于把声明该字段的 crate 自己排除出"读者"统计）。
+pub(crate) fn path_under_crate(path: &Path, crate_name: &str) -> bool {
+    path.components()
+        .any(|part| part.as_os_str() == std::ffi::OsStr::new(crate_name))
+}
+
 /// 装配一条 SubmitOrder 控制命令；`dry_run=false` 时进入真实副作用分支。
 pub(crate) fn mk_submit_command(command_id: u64, order: &Order, dry_run: bool) -> ControlCommand {
     ControlCommand {
@@ -352,10 +400,13 @@ mod paper_margin_valuation;
 mod paper_settlement_currency;
 mod reconcile_worker_identity;
 mod report_readout;
+mod risk_port_channel;
 mod runtime_api_worker_identity;
 mod scheduler_dispatch_support;
 mod settlement_currency_caliper;
 mod settlement_currency_single_source;
+mod spread_recovery_cadence;
 mod storage_root_report;
 mod strategy_worker_entries;
 mod worker_observability;
+mod zero_reader_fields;

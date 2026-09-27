@@ -24,9 +24,10 @@ mod reconcile;
 pub use binance::{
     run_binance_user_stream, run_binance_user_stream_live, run_binance_user_stream_testnet,
     run_binance_user_stream_with_config, run_binance_user_stream_with_config_loader,
-    BinanceSpotAuth, BinanceSpotCredentials, BinanceSpotMarketData, BinanceSpotMarketStream,
-    BinanceSpotUserStream, BinanceSpotVenue, BinanceStreamRetryPolicy, BinanceStreamRunReport,
-    BinanceUserStreamRunConfig, BinanceUserStreamSession,
+    BinanceQuotePoll, BinanceSpotAuth, BinanceSpotCredentials, BinanceSpotMarketData,
+    BinanceSpotMarketStream, BinanceSpotUserStream, BinanceSpotVenue, BinanceStreamPoll,
+    BinanceStreamRetryPolicy, BinanceStreamRunReport, BinanceUserStreamRunConfig,
+    BinanceUserStreamSession,
 };
 pub use ccxt::{CcxtProcessClient, CcxtProcessVenue, CcxtRpc};
 
@@ -54,6 +55,18 @@ pub trait HttpTransport: Send + Sync {
 pub struct WebSocketMessage {
     pub opcode: u8,
     pub payload: Vec<u8>,
+}
+
+/// 一次 `recv_message` 窗口的结局。`Idle` 与 `Closed` 分开是必需的：把"这一窗没有帧"
+/// 当成链路故障，会让一个连着但长时间没有事件的账户按重连预算被判死。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum WebSocketPoll {
+    /// 拿到一条数据帧。
+    Message(WebSocketMessage),
+    /// 读窗口到期，链路仍在原样等待。
+    Idle,
+    /// 对端发来关闭帧。
+    Closed,
 }
 
 /// 通用 WSS 用户流会话。供应商认证、订阅 payload 和业务事件映射由上层适配器提供。
@@ -172,33 +185,10 @@ impl TlsWebSocketUserStream {
         write_client_frame(&mut self.stream, 0x1, payload.as_bytes())
     }
 
-    pub fn recv_message(&mut self) -> Result<Option<WebSocketMessage>, String> {
-        let mut message = None;
-        loop {
-            let (fin, opcode, payload) = read_server_frame(&mut self.stream)?;
-            match opcode {
-                0x8 => return Ok(None),
-                0x9 => {
-                    write_client_frame(&mut self.stream, 0xA, &payload)?;
-                    continue;
-                }
-                0xA => continue,
-                0x1 | 0x2 if message.is_none() => {
-                    message = Some(WebSocketMessage { opcode, payload });
-                    if fin {
-                        return Ok(message);
-                    }
-                }
-                0x0 if message.is_some() => {
-                    let current = message.as_mut().expect("message checked");
-                    current.payload.extend_from_slice(&payload);
-                    if fin {
-                        return Ok(message);
-                    }
-                }
-                _ => return Err("WebSocket 分片 opcode 或控制帧非法".into()),
-            }
-        }
+    /// 读一帧。三种结局必须分开：拿到帧、这一窗没帧但链路仍在（`Idle`）、对端正常关闭。
+    /// 旧口径把超时算成 `Err`，于是空闲会话会去消费重连预算。
+    pub fn recv_message(&mut self) -> Result<WebSocketPoll, String> {
+        poll_websocket_message(&mut self.stream)
     }
 
     pub fn close(&mut self) -> Result<(), String> {
@@ -410,11 +400,71 @@ fn write_client_frame<W: Write>(writer: &mut W, opcode: u8, payload: &[u8]) -> R
     writer.write_all(&frame).map_err(|error| error.to_string())
 }
 
-fn read_server_frame<R: Read>(reader: &mut R) -> Result<(bool, u8, Vec<u8>), String> {
+/// 一次读帧窗口的结局：等到帧，或在**帧边界上**超时（链路仍然可用）。
+#[derive(Debug)]
+enum FramePoll {
+    Frame((bool, u8, Vec<u8>)),
+    Idle,
+}
+
+/// 套接字读超时不是断链：`set_read_timeout` 之后 `read_exact` 会以 `WouldBlock`/`TimedOut`
+/// 返回，把它当成会话故障会让"连着但没数据"的账户在几个窗口内被判死。
+fn is_read_window_expired(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
+}
+
+/// 从字节流里拼出一条完整消息，并把"读窗到期"的两种位置分开：还没有半截消息时是
+/// 空闲（链路仍在），已经开始收消息时是故障（跨帧串流会把下一条帧读成这条的尾部）。
+/// 独立成泛型函数是因为 `TlsWebSocketUserStream` 的流字段是具体 TLS 类型，挂在方法上
+/// 的这条分支构造不出来 —— 变异把中途超时降级成空闲时全树仍绿。
+fn poll_websocket_message<R: Read + Write>(reader: &mut R) -> Result<WebSocketPoll, String> {
+    let mut message = None;
+    loop {
+        let (fin, opcode, payload) = match poll_server_frame(reader)? {
+            FramePoll::Frame(frame) => frame,
+            FramePoll::Idle if message.is_none() => return Ok(WebSocketPoll::Idle),
+            // 半截帧之后才超时：帧边界已经破了，不能报空闲。
+            FramePoll::Idle => return Err("WebSocket 分帧读取中途超时".into()),
+        };
+        match opcode {
+            0x8 => return Ok(WebSocketPoll::Closed),
+            0x9 => {
+                write_client_frame(reader, 0xA, &payload)?;
+                continue;
+            }
+            0xA => continue,
+            0x1 | 0x2 if message.is_none() => {
+                message = Some(WebSocketMessage { opcode, payload });
+                if fin {
+                    return Ok(WebSocketPoll::Message(
+                        message.take().expect("message just set"),
+                    ));
+                }
+            }
+            0x0 if message.is_some() => {
+                let current = message.as_mut().expect("message checked");
+                current.payload.extend_from_slice(&payload);
+                if fin {
+                    return Ok(WebSocketPoll::Message(
+                        message.take().expect("message checked"),
+                    ));
+                }
+            }
+            _ => return Err("WebSocket 分片 opcode 或控制帧非法".into()),
+        }
+    }
+}
+
+fn poll_server_frame<R: Read>(reader: &mut R) -> Result<FramePoll, String> {
     let mut head = [0_u8; 2];
-    reader
-        .read_exact(&mut head)
-        .map_err(|error| error.to_string())?;
+    // 只在帧头之前判定空闲：半截帧超时仍然算故障，否则会跨帧串流。
+    match reader.read_exact(&mut head) {
+        Err(error) if is_read_window_expired(&error) => return Ok(FramePoll::Idle),
+        result => result.map_err(|error| error.to_string())?,
+    }
     let fin = head[0] & 0x80 != 0;
     let opcode = head[0] & 0x0F;
     let masked = head[1] & 0x80 != 0;
@@ -445,7 +495,7 @@ fn read_server_frame<R: Read>(reader: &mut R) -> Result<(bool, u8, Vec<u8>), Str
     reader
         .read_exact(&mut payload)
         .map_err(|error| error.to_string())?;
-    Ok((fin, opcode, payload))
+    Ok(FramePoll::Frame((fin, opcode, payload)))
 }
 
 fn sha1_digest(input: &[u8]) -> [u8; 20] {
@@ -649,10 +699,98 @@ mod tests {
         let response = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
         validate_websocket_handshake(response, "dGhlIHNhbXBsZSBub25jZQ==").unwrap();
         let mut frames = Cursor::new(vec![0x81, 0x02, b'o', b'k']);
-        assert_eq!(
-            read_server_frame(&mut frames).unwrap(),
-            (true, 0x1, b"ok".to_vec())
+        let frame = match poll_server_frame(&mut frames).unwrap() {
+            FramePoll::Frame(frame) => frame,
+            FramePoll::Idle => panic!("游标里就躺着一帧，不能判成空闲"),
+        };
+        assert_eq!(frame, (true, 0x1, b"ok".to_vec()));
+    }
+
+    /// 读窗到期的两种结局必须可区分：帧边界上的超时是"这一窗没数据"（链路还开着），
+    /// 半截帧上的超时是故障（跳过就会把一条流读到下一帧去）。
+    struct AlwaysExpired;
+
+    impl Read for AlwaysExpired {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let _ = buf;
+            Err(std::io::Error::from(std::io::ErrorKind::TimedOut))
+        }
+    }
+
+    struct PartialFrame {
+        head: Option<[u8; 2]>,
+    }
+
+    impl Read for PartialFrame {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match self.head.take() {
+                Some(head) => {
+                    let len = buf.len().min(head.len());
+                    buf[..len].copy_from_slice(&head[..len]);
+                    Ok(len)
+                }
+                None => Err(std::io::Error::from(std::io::ErrorKind::WouldBlock)),
+            }
+        }
+    }
+
+    #[test]
+    fn websocket_frame_poll_separates_idle_window_from_broken_link() {
+        assert!(matches!(
+            poll_server_frame(&mut AlwaysExpired),
+            Ok(FramePoll::Idle)
+        ));
+        let error = poll_server_frame(&mut PartialFrame {
+            head: Some([0x81, 0x02]),
+        })
+        .unwrap_err();
+        assert!(
+            !error.contains("没有帧"),
+            "半截帧超时被降级成了空闲: {error}"
         );
+    }
+
+    /// 一条帧后接读窗到期：消息已经开了头，这一窗的静默必须是故障而不是空闲，
+    /// 否则下一条帧的字节会被当成这条的尾部（跨帧串流）。控制帧不算开了头。
+    #[test]
+    fn websocket_message_poll_keeps_mid_message_timeout_fatal() {
+        // 0x01 = 非终止的文本分片，负载 2 字节；之后读窗到期。
+        let mut fragmented = BufferThenExpired(vec![0x01, 0x02, b'a', b'b']);
+        let error = poll_websocket_message(&mut fragmented).unwrap_err();
+        assert!(
+            error.contains("中途超时"),
+            "半截消息后的静默被降级成空闲: {error}"
+        );
+        // 0x89 = 终止的 ping：回 pong 之后到期，帧边界仍在 → 空闲。
+        let mut after_ping = BufferThenExpired(vec![0x89, 0x00]);
+        assert!(matches!(
+            poll_websocket_message(&mut after_ping),
+            Ok(WebSocketPoll::Idle)
+        ));
+    }
+
+    struct BufferThenExpired(Vec<u8>);
+
+    impl Read for BufferThenExpired {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Err(std::io::Error::from(std::io::ErrorKind::TimedOut));
+            }
+            let len = buf.len().min(self.0.len());
+            buf[..len].copy_from_slice(&self.0[..len]);
+            self.0.drain(..len);
+            Ok(len)
+        }
+    }
+
+    impl Write for BufferThenExpired {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]

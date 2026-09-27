@@ -91,6 +91,12 @@ capabilities:
       - backtest/paper/live share one RuleSet (crates/qx-cli/src/runtime_wiring.rs strategy_risk_gate)
     limitations:
       - RiskGate remains a thin facade over RuleSet for legacy call sites
+      - order_risk_projection_fields_have_no_production_reader：`OrderRiskDecision` 的三格投影
+        （`projected_position_raw` / `projected_margin_raw` / `reference_price_raw`）每笔订单都算，
+        但生产消费者只有 `qx-execution` 的两个 `RiskPort` 实现，它们只读 `allowed` / `violations` /
+        `rule_set_version`；三格目前只有 `crates/qx-risk/tests/risk_parity.rs` 与 qx-risk 用例读者，
+        充当「三条入口判定一致」的对照面，不进任何回测产物、运行清单或 API 读模型，
+        所以「这一单成交后仓位与保证金会变成多少」今天读不到产物（V13 §9.12 #171）
 
   local_backtest:
     implementation: true
@@ -264,6 +270,8 @@ capabilities:
       - crates/qx-runtime/src/supervision/shutdown.rs install_shutdown_signals turns the process' Ctrl+C/SIGINT/SIGTERM into RuntimeSupervisor::request_shutdown, and wait_for_worker_finish reports StopTimedOut once shutdown_timeout_ms passes instead of waiting on a worker that ignores the token (V12 R4-a)
       - crates/qx-runtime/src/supervision/tests.rs four ladder cases: a worker that ends on its own is not reported as stopped by shutdown, a request reaches the worker token inside the budget, a token pressed before joining still counts as stopped not finished, and a worker that ignores the token fails after the budget (V12 R4-a)
       - crates/qx-cli/src/worker_shutdown.rs and crates/qx-orchestrator/src/lib.rs are the two production callers of install_shutdown_signals, so the token finally has a producer on both worker entry paths (V12 R4-a)
+      - crates/qx-cli/src/strategy_contract.rs serve 的 API 与 mTLS API worker 也汇合到同一条停机阶梯（join_worker_handle）而不是裸 join，于是"按 Ctrl+C 停止"那句打印终于有了生产者 (V13 R2 #164)
+      - crates/qx-cli/src/tests/runtime_api_worker_identity.rs the ladder is proven by a worker that writes after its loop: dropping handle.join() makes the tail write invisible, and stop_api_projection_bridge must both join and clear the projection thread (V13 R2 #164)
       - crates/qx-api/tests/snapshot_envelope_contract.rs envelope_data_satisfies_the_schema_the_same_server_publishes validates the /account/snapshot/envelope body against the schema the same process serves, and envelope_data_is_the_same_wire_document_the_flat_route_serves keeps the two routes from diverging again (V12 R4-h)
       - crates/qx-execution/src/lib.rs no longer carries submit_order_via_gateway / submit_order_via_gateway_with_risk, and the second multi-leg orchestration entry is gone; tools/check_architecture.py dead_public_entry_check refuses any pub fn in the managed entry families that has no production caller outside its own file (V12 R4-d)
       - crates/qx-scheduler/src/lib.rs finish_run_with_code records error_code on the failing side only：Strategy worker 一度把「3 orders: SUBMITTED」这类结果码塞进同一个参数，于是一条 Succeeded 运行在 /scheduler/runs 读出来带着假错误码 (V12 §18-A #129)
@@ -312,8 +320,14 @@ capabilities:
       - crates/qx-execution/tests/venue_report_contract/venues.rs CCXT fixture：终态后迟到成交与 off-tick/off-step 回报只转待对账
       - .github/workflows/ci.yml C++ JSONL strategy contract smoke
       - qx-application execution fact contract shared by PortExecutionService adapters
-      - crates/qx-cli/src/venue_runtime/ccxt_stream_retry.rs CcxtStreamReconnectBudget gives every watch_orders session a real budget (500ms first backoff, 8s cap, named give-up after 10 consecutive failures) instead of a fixed delay retried forever (V12 R4-c)
+      - crates/qx-cli/src/venue_runtime/ccxt_stream_retry.rs CcxtReconnectBudget gives every watch_orders session a real budget (500ms first backoff, 8s cap, named give-up after 10 consecutive failures) instead of a fixed delay retried forever (V12 R4-c)
+      - crates/qx-cli/src/venue_runtime/ccxt_market_worker.rs the same budget backs the fetch_ticker/fetch_ohlcv channel, so a dead exchange gives up with a message naming the market channel instead of respawning a Python child every 500ms forever (V13 R2 #167)
       - crates/qx-cli/src/tests/ccxt_stream_retry_budget.rs two cases: the backoff escalates through the ladder and a healthy session resets it to the first rung, and the budget gives up with a reason naming the consecutive-failure count rather than a total (V12 R4-c)
+      - crates/qx-cli/src/tests/ccxt_stream_retry_budget.rs market-RPC channel judges: the give-up text names CCXT 行情子进程 and never 用户流, and every respawn point in the worker is budget-guarded (2× note_failure, 2× note_success, no fixed 500ms sleep) (V13 R2 #167)
+      - crates/qx-cli/src/venue_runtime/ccxt_execution.rs + python/qianxing_ccxt/worker.py idle heartbeat across the language boundary: Rust sends wait_ms at 4/5 of its own read window, Python answers event["idle"]=true, so an order-less window costs no reconnect budget (V13 R2 #166)
+      - crates/qx-cli/src/spread.rs spread_recovery_poll_delay backs hedge recovery off 100ms→8s while pending groups make no progress and deliberately never gives up, because a group stuck in HedgeRequired is an exposed leg (V13 R2 #168c)
+      - crates/qx-cli/src/venue_runtime/paper_worker.rs the Paper recovery loop skips opening the account EventLog at all when no group is pending, so an idle book no longer pays a full replay every 100ms (V13 R2 #168d)
+      - crates/qx-cli/src/tests/spread_recovery_cadence.rs all three recovery loops (Binance / CCXT / Paper) poll through the shared cadence, gate each scan on the pending group count and re-count it after the sweep (V13 R2 #168c #168d)
       - deploy/qianxing.submit-order.ccxt-derivatives.example.json 的 policy 三格按 `crates/qx-core/src/trading.rs` 的 `rename_all = "snake_case"` 写成 `net`/`cross`/`one_way`；此前写着 `Net`/`Cross`/`OneWay`，照抄这份示例的提交在反序列化那一格就失败，本轮由 deploy 模板覆盖用例的 SubmitOrder 读点抓到 (V13 R1-A6)
     limitations:
       - exchange_sandbox_precision_and_bill_matrix_pending
@@ -334,6 +348,9 @@ capabilities:
       - tools/binance_testnet_acceptance.py fail-closed driver
       - .github/workflows/ci.yml venue-acceptance job
       - crates/qx-adapter/tests/user_stream_retry.rs healthy_sessions_do_not_exhaust_the_reconnect_budget proves the reconnect cap counts consecutive failures, so a stream that keeps delivering events never burns the budget, while connect_failures_still_escalate_backoff_and_stop_at_the_budget keeps the give-up reachable (V12 R4-b)
+      - crates/qx-adapter/src/binance.rs BinanceStreamPoll/BinanceQuotePoll split "this read window had nothing" from "the link is down": an idle user-stream window is counted in idle_windows and costs no reconnect budget, and a quiet book ticker degrades the market worker instead of killing the runtime (V13 R2 #165/#168a)
+      - crates/qx-adapter/src/lib.rs WebSocketPoll/FramePoll keep idle legal only at a frame boundary — a read timeout in the middle of a message is still a fault, otherwise two frames would be spliced across windows (V13 R2 #168a)
+      - crates/qx-adapter/tests/binance_stream_retry.rs 40 silent windows with a 1-reconnect budget still return Ok with reconnects=0, while an idle-only session that ends in a broken link is still given up on, so idle can neither charge nor reset the budget (V13 R2 #165)
     limitations:
       - testnet_acceptance_has_not_run_with_real_credentials_yet
       - venue_endpoint_certification_requires_user_supplied_testnet_secret

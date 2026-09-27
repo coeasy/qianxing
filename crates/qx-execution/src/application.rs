@@ -65,14 +65,26 @@ pub trait LedgerProbe {
     fn ledger_entry_count(&self) -> usize;
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct RiskDecision {
-    pub accepted: bool,
-    pub reason_code: &'static str,
+/// 风控端口对单笔订单的裁决。
+///
+/// 两条通道各有其义，V13 §9.12 #172 之前它们被混用过：
+/// * `Ok(Allow)` / `Ok(Reject { .. })` —— 端口**给出了**裁决；拒绝是正常业务结果，
+///   订单不该出门，但不代表链路坏了。
+/// * `Err(..)` —— 端口给不出裁决（读不到账户状态、上游链路故障等）。
+///
+/// 原形状是 `struct { accepted: bool, reason_code: &'static str }`：两个生产实现
+/// 只在通过时写 `accepted: true`，拒绝改走 `Err`，于是 `accepted: false` 与
+/// `if !decision.accepted { "风控拒绝订单" }` 那条播报只有测试假件能触发，真实
+/// 拒绝被上层报成「RiskPort 执行失败」。改名同时消掉与 `qx_risk::RiskDecision`
+/// 的同名异物（V13 §5 R2-1 预登记的口径）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RiskVerdict {
+    Allow,
+    Reject { reason: String },
 }
 
 pub trait RiskPort {
-    fn evaluate_order(&self, order: &Order) -> Result<RiskDecision, String>;
+    fn evaluate_order(&self, order: &Order) -> Result<RiskVerdict, String>;
 }
 
 pub trait MarketDataPort {

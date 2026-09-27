@@ -174,19 +174,28 @@ python -c "import qianxing_bridge.native as n; print(n.available())"
 
 `--no-deps` 是诚实口径：wheel 自身只带四个包与原生扩展，`ccxt` 只在真的跑 CCXT worker 时才需要（运行时
 才 import），装它请走你自己的索引或本地缓存。实测（`logs/s52_*.txt`、`logs/s53_*.txt` 是文档轮那次的重建与
-干净 venv 复核；`logs/s74_a5_package_rebuild.txt` 是本轮按当轮代码重跑的那次）：wheel **217,025 字节 / 17 个
-条目**，本轮重 build 与文档轮那份**逐条目 CRC 全同**（A5 只改契约 JSON，而契约不在 wheel 里），内嵌
+干净 venv 复核；`logs/s74_a5_package_rebuild.txt` 是 A5 那轮按当轮代码重跑的那次）：wheel **217,025 字节 / 17 个
+条目**，A5 那轮重 build 与文档轮那份**逐条目 CRC 全同**（A5 只改契约 JSON，而契约不在 wheel 里），内嵌
 `_qianxing_native.pyd` 的 md5 与当轮 `target/release/_qianxing_native.dll` 逐字节相同
 （`a9764db6131fb9cf94e417ca1a5383dd`），wheel 里 12 份 `.py` 与仓库 `python/` 逐文件相等；干净 venv 里
 `qianxing_ashare` / `qianxing_bridge` / `qianxing_ccxt` / `qianxing_strategy` 四包全部导入成功，
 `native.available() → True`，衍生品三字段按线格式归一成 `cross/hedge/3` 且 `from_dict` 读回一致，
 `margin_mode="weird"`、`position_mode="both"`、`leverage=0`、`position_side="Weird"` 四种非法取值
-各自按契约抛 `ValueError`。**为什么这里不报整档 sha256**：同一份载荷重打包出来的 sha 就会变（本轮实测：
+各自按契约抛 `ValueError`。**为什么这里不报整档 sha256**：同一份载荷重打包出来的 sha 就会变（文档轮实测：
 17 个条目 CRC 全同，整档 sha 因 4 个条目的 zip 时间戳从 `2603b5c2…` 换成 `54c5ed36…`），所以产物身份只按
 载荷报（尺寸 / 条目数 / 条目 CRC / 内嵌扩展的 md5），已立案 #159。契约那份 JSON 是 `include_str!` 编进
 **CLI 二进制**的（`crates/qx-protocol/src/lib.rs:34`），本轮重链的 `cargo build --release -p qx-cli` 产物里
 按字节数到契约措辞（"本构建这一层没有生产者" 5 次、"本构建有生产者" 3 次），新 exe 实跑 `ecosystem`
 冒烟 `ECO_EXIT=0`。
+
+最近一次（V13 R2 第五遍，2026-09-27）又按当轮代码重建并复装过一遍：wheel **217,415 字节 / 17 条目**，与上一轮
+比真改的载荷只有 **2** 条 —— 重链接的 `_qianxing_native.pyd`（353,280 字节，md5 `87fc3005676cce1a…` 等于当轮
+`target/release/_qianxing_native.dll`）和跟着换哈希的 `RECORD`，12 份 `.py` 与仓库 `python/` 逐字节相同（那一轮
+没有改动 `python/`）。干净 venv 里四包从 **site-packages** 导入、`native.available() → True`、线格式往返一致、
+四种非法取值各自按契约抛 `ValueError`（`logs/s118_*.txt`、`logs/s119_*.txt`、`logs/s120_*.txt`）。**该轮改的是
+Rust 侧的风控端口契约，所以发布物上的落点在 CLI 二进制而不是 wheel**：11,921,920 字节的 `target/release/qx-cli.exe`
+里「账户级 RiskPort 拒绝订单」与「账户级 RiskPort 执行失败」各出现 **1** 次 —— 即"业务拒绝"与"端口给不出裁决"
+两条播报在装机产物里都可达。
 
 ### 装不上时的四个坑（都是本机踩过的）
 

@@ -138,9 +138,22 @@ pub struct OrderRiskContext {
     pub position: OrderRiskPosition,
 }
 
-/// 统一订单级风控输出。它把允许/拒绝和投影结果放在同一个可审计对象中，
-/// 供回测、Paper、CCXT 和实盘执行端口使用；Venue 仍只能在 `allowed=true`
-/// 且调用方完成副作用前被调用。
+/// 统一订单级风控输出。
+///
+/// 生产消费面只有三格：`allowed` 决定放行、`violations` 是全部拒绝原因（不短路）、
+/// `rule_set_version` 让任何一条结论都能回溯到规则集 —— `qx-execution` 的两个
+/// `RiskPort` 实现读的就是这三格。
+///
+/// 另外三格投影（`projected_position_raw` / `projected_margin_raw` /
+/// `reference_price_raw`）**目前没有任何生产读者**：它们每笔订单都算，但只被
+/// `tests/risk_parity.rs` 用来证明三条入口判定一致，不写进产物也不进 API 读模型，
+/// 所以"这一单成交后仓位与保证金会变成多少"今天读不到产物。派生面登记在
+/// `maturity/capabilities.yaml` 的
+/// `canonical_order_risk_decision.limitations.order_risk_projection_fields_have_no_production_reader`
+/// （V13 §9.12 #171）。本类型 `Serialize` 是为了将来接审计落盘时不必改形状，
+/// 不代表它今天被序列化过。
+///
+/// Venue 只能在 `allowed=true` 且调用方完成副作用前被调用。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OrderRiskDecision {
     pub allowed: bool,

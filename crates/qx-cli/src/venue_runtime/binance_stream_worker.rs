@@ -34,9 +34,11 @@ pub(crate) fn run_binance_market_worker(
         Some(runtime_timestamp_ms()),
     )?;
     let mut quotes = 0_u64;
+    let mut idle_windows = 0_u64;
     while !context.should_stop() {
         match stream.recv_quote(runtime_timestamp_ms())? {
-            Some(quote) => {
+            BinanceQuotePoll::Quote(quote) => {
+                idle_windows = 0;
                 let received_ts = runtime_timestamp_ms();
                 pipeline
                     .ingest(RuntimeEventEnvelope::market_quote(
@@ -64,13 +66,23 @@ pub(crate) fn run_binance_market_worker(
                 quotes = quotes.saturating_add(1);
                 context.heartbeat(received_ts)?;
             }
-            None => break,
+            // 一个读窗没行情不是致命错误：降级健康、继续等。旧口径让 `?` 把静默上抛，
+            // 于是薄成交对的 symbol 十分钟没跳动就会让整个 runtime 停摆。
+            BinanceQuotePoll::Idle => {
+                idle_windows = idle_windows.saturating_add(1);
+                context.mark(
+                    qx_runtime::ServiceStatus::Degraded,
+                    format!("market stream idle consecutive_windows={idle_windows}"),
+                    Some(runtime_timestamp_ms()),
+                )?;
+            }
+            BinanceQuotePoll::Closed => break,
         }
     }
     let _ = stream.close();
     context.mark(
         qx_runtime::ServiceStatus::Stopped,
-        format!("market stream stopped quotes={quotes}"),
+        format!("market stream stopped quotes={quotes} idle_windows={idle_windows}"),
         Some(runtime_timestamp_ms()),
     )?;
     Ok(())

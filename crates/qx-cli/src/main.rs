@@ -6,8 +6,8 @@
 //! 3. 决策只用 as_of(ts) 之前的数据（无前视偏差）
 
 use qx_adapter::{
-    AdapterReconcileIssue, BinanceSpotAuth, BinanceSpotCredentials, BinanceSpotMarketData,
-    BinanceSpotMarketStream, BinanceSpotVenue, BinanceStreamRetryPolicy,
+    AdapterReconcileIssue, BinanceQuotePoll, BinanceSpotAuth, BinanceSpotCredentials,
+    BinanceSpotMarketData, BinanceSpotMarketStream, BinanceSpotVenue, BinanceStreamRetryPolicy,
     BinanceUserStreamRunConfig, CcxtProcessClient, CcxtProcessVenue, CcxtRpc, HttpTransport,
     TlsHttpTransport,
 };
