@@ -236,14 +236,17 @@ fn assert_semantics(store: &dyn OutboxStore) {
         .retry_outbox("contract-event-1", "relay-b", second.fencing_token, 17)
         .unwrap();
     store.append_outbox(event()).unwrap();
-    assert_eq!(store.available_outbox(17).unwrap()[0].attempts, 1);
+    assert_eq!(
+        store.available_outbox(17, usize::MAX).unwrap()[0].attempts,
+        1
+    );
     let third = store
         .claim_outbox("contract-event-1", "relay-a", 17, 5)
         .unwrap();
     store
         .ack_outbox("contract-event-1", "relay-a", third.fencing_token, 18)
         .unwrap();
-    assert!(store.available_outbox(18).unwrap().is_empty());
+    assert!(store.available_outbox(18, usize::MAX).unwrap().is_empty());
 }
 
 /// 分区内的投递顺序口径：`(created_ts, sequence, event_id)` 按数字序，不是这三列
@@ -262,7 +265,7 @@ fn assert_outbox_delivery_order(store: &dyn OutboxStore, namespace: &str) {
             .unwrap();
     }
     let sequences: Vec<u64> = store
-        .available_outbox(20)
+        .available_outbox(20, usize::MAX)
         .unwrap()
         .into_iter()
         .filter(|event| event.event_id.starts_with(namespace))
@@ -284,12 +287,115 @@ fn assert_outbox_delivery_order(store: &dyn OutboxStore, namespace: &str) {
     }
 }
 
+/// K2 说停摆的事件"留在 outbox 里等人工确认"，这一颗钉住那次确认走得通：停摆只让 relay
+/// 不再自动投递，`claim_outbox` → `ack_outbox` 这对原语对停摆的行仍然有效，运维因此能把
+/// 一条确认过的事件取走，而不是让它永远压在候选集里（读全量时停摆的行也在其中）。
+/// 反方向——把 `attempts` 调回去重投——三本后端都没有原语，已按缺口登记在 capabilities.yaml。
+fn assert_parked_outbox_has_an_operator_exit(store: &dyn OutboxStore, namespace: &str) {
+    for sequence in [1u64, 2] {
+        store
+            .append_outbox(OutboxEvent {
+                event_id: format!("{namespace}-parked-{sequence}"),
+                sequence,
+                attempts: OUTBOX_MAX_ATTEMPTS,
+                ..event()
+            })
+            .unwrap();
+    }
+    let parked: Vec<String> = store
+        .available_outbox(20, usize::MAX)
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.event_id.starts_with(namespace))
+        .map(|event| event.event_id)
+        .collect();
+    assert_eq!(parked.len(), 2, "停摆的行必须仍在候选集里可见: {parked:?}");
+    let lease = store
+        .claim_outbox(&parked[0], "operator", 20, 5)
+        .expect("停摆不得把 claim 这条路也一起堵死");
+    store
+        .ack_outbox(&parked[0], "operator", lease.fencing_token, 21)
+        .unwrap();
+    let left: Vec<String> = store
+        .available_outbox(22, usize::MAX)
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.event_id.starts_with(namespace))
+        .map(|event| event.event_id)
+        .collect();
+    assert_eq!(
+        left,
+        vec![parked[1].clone()],
+        "确认过的那条要真的离开候选集"
+    );
+}
+
+/// 分页上界与「停摆不占页首」（V11 R7-d）：修前每轮 pump 都全表读 payload，而停摆的行按
+/// `created_ts` 永远排在最前——`limit` 再小也白拿。这一颗钉两面：
+/// 读全量时自己那两行的相对顺序必须是「投得出去的在前、停摆的在后」（即便停摆那条更旧），
+/// 而 `limit=1` 的一页只准端回一行（把 LIMIT 写没后端就红）。
+/// 只按 `namespace` 过滤自己那几行，因此可以多后端共用一个库/目录。
+fn assert_parked_rows_yield_the_page_head(store: &dyn OutboxStore, namespace: &str) {
+    store
+        .append_outbox(OutboxEvent {
+            event_id: format!("{namespace}-parked"),
+            created_ts: 1,
+            sequence: 1,
+            attempts: OUTBOX_MAX_ATTEMPTS,
+            ..event()
+        })
+        .unwrap();
+    store
+        .append_outbox(OutboxEvent {
+            event_id: format!("{namespace}-deliverable"),
+            created_ts: 2,
+            sequence: 2,
+            ..event()
+        })
+        .unwrap();
+    let mine: Vec<String> = store
+        .available_outbox(20, usize::MAX)
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.event_id.starts_with(namespace))
+        .map(|event| event.event_id)
+        .collect();
+    assert_eq!(
+        mine,
+        vec![
+            format!("{namespace}-deliverable"),
+            format!("{namespace}-parked")
+        ],
+        "停摆的行要退到页尾，而不是按落盘时间占住页首"
+    );
+    assert_eq!(
+        store.available_outbox(20, 1).unwrap().len(),
+        1,
+        "limit 必须真的落到读上：返回全量等于每轮 pump 仍是 O(全库)"
+    );
+    for suffix in ["parked", "deliverable"] {
+        let lease = store
+            .claim_outbox(&format!("{namespace}-{suffix}"), "relay-page", 20, 5)
+            .unwrap();
+        store
+            .ack_outbox(
+                &format!("{namespace}-{suffix}"),
+                "relay-page",
+                lease.fencing_token,
+                21,
+            )
+            .unwrap();
+    }
+}
+
 #[test]
 fn file_outbox_contract() {
     let root = temp_root("file");
     let store = FileOutboxStore::new(&root);
     assert_semantics(&store);
     assert_outbox_delivery_order(&store, "file-order");
+    assert_parked_outbox_has_an_operator_exit(&store, "file-park");
+    assert_parked_rows_yield_the_page_head(&store, "file-page");
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -300,6 +406,8 @@ fn sqlite_outbox_contract() {
     let store = SqliteOutboxStore::new(root.join("outbox.db")).unwrap();
     assert_semantics(&store);
     assert_outbox_delivery_order(&store, "sqlite-order");
+    assert_parked_outbox_has_an_operator_exit(&store, "sqlite-park");
+    assert_parked_rows_yield_the_page_head(&store, "sqlite-page");
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -388,7 +496,7 @@ fn postgres_outbox_lease_fencing_and_retry_contract() {
     store.append_outbox(append()).unwrap();
     let attempts = |store: &PostgresOutboxStore| -> Vec<OutboxEvent> {
         store
-            .available_outbox(17)
+            .available_outbox(17, usize::MAX)
             .unwrap()
             .into_iter()
             .filter(|event| event.event_id == event_id)
@@ -428,11 +536,12 @@ fn postgres_outbox_lease_fencing_and_retry_contract() {
         .ack_outbox(&event_id, "relay-a", third.fencing_token, 18)
         .unwrap();
     assert!(store
-        .available_outbox(18)
+        .available_outbox(18, usize::MAX)
         .unwrap()
         .into_iter()
         .all(|event| event.event_id != event_id));
     assert_outbox_delivery_order(&store, "postgres-order");
+    assert_parked_rows_yield_the_page_head(&store, "postgres-page");
 }
 /// 只拒绝点名事件的投递器：让"某一条永远发不出去"成为确定现场，其余照常ack。
 struct SelectivePublisher {
@@ -491,7 +600,7 @@ where
     assert_eq!(report.scanned, 1, "停摆的那条不再占用投递名额: {report:?}");
     assert_eq!(report.retried, 0, "停摆的那条不再被重试: {report:?}");
     // 停摆不等于丢弃：它仍留在 outbox 里等人工确认，attempts 也不再增长。
-    let available = store.available_outbox(now).unwrap();
+    let available = store.available_outbox(now, usize::MAX).unwrap();
     let poison = available
         .iter()
         .find(|event| event.event_id == "poison-head")
@@ -561,9 +670,56 @@ fn file_outbox_relay_parks_events_after_the_attempt_budget() {
         "本轮什么都没投，不该留着上一轮的错误"
     );
     assert_eq!(
-        store.available_outbox(1_000).unwrap()[0].attempts,
+        store.available_outbox(1_000, usize::MAX).unwrap()[0].attempts,
         OUTBOX_MAX_ATTEMPTS,
         "停摆后 attempts 不再增长"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 停摆条数是库里的状态量，不是「这一页数到几条」（V11 R7-d）：三条都停摆而 `limit=1`
+/// 的一页只装得下一条，逐行数只会报 1。把 `count_parked_outbox` 换回页内累加，这一颗红。
+fn assert_relay_parked_count_ignores_the_page<S>(store: S)
+where
+    S: OutboxStore + Clone,
+{
+    for sequence in [1u64, 2, 3] {
+        store
+            .append_outbox(OutboxEvent {
+                event_id: format!("page-blind-{sequence}"),
+                created_ts: sequence,
+                sequence,
+                attempts: OUTBOX_MAX_ATTEMPTS,
+                ..event()
+            })
+            .unwrap();
+    }
+    let relay = OutboxRelay::new(
+        store.clone(),
+        SelectivePublisher { refused: &[] },
+        "relay-a",
+        5,
+    )
+    .unwrap();
+    let report = relay.pump_once(1_000, 1).unwrap();
+    assert_eq!(report.scanned, 0, "三条都停摆，页里端到的那条也不该被投递");
+    assert_eq!(report.parked, 3, "停摆条数不随页数变小: {report:?}");
+    assert_eq!(store.count_parked_outbox().unwrap(), 3);
+}
+
+#[test]
+fn file_outbox_relay_parked_count_ignores_the_page() {
+    let root = temp_root("relay-parked-count-file");
+    assert_relay_parked_count_ignores_the_page(FileOutboxStore::new(&root));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_outbox_relay_parked_count_ignores_the_page() {
+    let root = temp_root("relay-parked-count-sqlite");
+    assert_relay_parked_count_ignores_the_page(
+        SqliteOutboxStore::new(root.join("outbox.db")).unwrap(),
     );
     let _ = std::fs::remove_dir_all(root);
 }

@@ -489,7 +489,13 @@ pub const fn outbox_exhausted(attempts: u32) -> bool {
 /// 文件、SQLite、PostgreSQL 和 MQ relay 共用的出站事件语义。
 pub trait OutboxStore: Send + Sync {
     fn append_outbox(&self, event: OutboxEvent) -> Result<(), StorageError>;
-    fn available_outbox(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError>;
+    /// 端出至多 `limit` 条可投递的事件：已持有有效租约的、以及**已用尽投递预算的**都排到最后，
+    /// 后者仍留在候选集里等人工 `claim`/`ack`（K2 的出口），只是不再占住页首。
+    /// `limit` 传 [`usize::MAX`] 表示读全量（运维列面），relay 传它自己的投递预算。
+    fn available_outbox(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError>;
+    /// 停在投递预算外的事件条数。这是状态量而不是本轮观察值：候选集被 `limit` 截断后，
+    /// 逐行数出来的条数会随页数漂移，运维面上「有几条发不出去」必须由这条不问页数的读给出。
+    fn count_parked_outbox(&self) -> Result<u64, StorageError>;
     fn claim_outbox(
         &self,
         event_id: &str,
@@ -526,14 +532,15 @@ pub struct OutboxRelayReport {
     pub retried: u64,
     pub lease_conflicts: u64,
     pub publish_failures: u64,
-    /// 本轮看到的、已用尽投递预算因而不再被尝试的事件数（V11 K2）。
+    /// 库里当前有几条已用尽投递预算、因而不再被尝试（V11 K2 计数、R7-d 改成不问页数的状态量）。
     pub parked: u64,
     pub last_error: Option<String>,
 }
 
 /// 通用 Outbox relay。它不关心 NATS、Redpanda 或 HTTP 的具体 SDK，负责保证
 /// claim → publish → ack 的生命周期；发布失败只释放租约并递增 attempts，而 attempts 到达
-/// [`OUTBOX_MAX_ATTEMPTS`] 的事件由 relay 跳过并计入 `parked`，不再阻断后面的事件。
+/// [`OUTBOX_MAX_ATTEMPTS`] 的事件由 relay 跳过、由 [`OutboxStore::count_parked_outbox`] 数出来，
+/// 既不再阻断后面的事件，也不占据每一轮的读取页数。
 pub struct OutboxRelay<S, P> {
     store: S,
     publisher: P,
@@ -571,18 +578,15 @@ where
             return Ok(OutboxRelayReport::default());
         }
         let mut report = OutboxRelayReport::default();
-        // 预算用尽的事件不再被投递，但必须被数出来：跳过它而不自报健康，才让运维看见
-        // "有一条事件发不出去"而不是"这一轮没有事件要发"。
-        let mut delivered = 0_usize;
-        for event in self.store.available_outbox(now)? {
+        // 停摆条数问的是「库里现在有几条发不出去」，不是「这一页里数到几条」：候选集被
+        // `limit` 截断后逐行数会随页数漂移，少报等于运维面上那条毒事件消失（V11 R7-d）。
+        report.parked = self.store.count_parked_outbox()?;
+        // 页数上界只有 store 那一处读：这里再数一遍 `delivered >= limit` 是一份走不到的第二判据
+        // ——三本后端的 LIMIT 由跨后端契约用例钉住，relay 只负责「端上来的这一页逐条投递」。
+        for event in self.store.available_outbox(now, limit)? {
             if outbox_exhausted(event.attempts) {
-                report.parked = report.parked.saturating_add(1);
                 continue;
             }
-            if delivered >= limit {
-                break;
-            }
-            delivered = delivered.saturating_add(1);
             report.scanned += 1;
             let lease =
                 match self

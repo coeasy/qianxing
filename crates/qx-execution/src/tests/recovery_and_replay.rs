@@ -14,6 +14,12 @@ fn hedge_recovery_worker_is_idempotent_and_fails_closed_on_unknown_state() {
     first.side = Side::Buy;
     let mut second = port_order(402);
     second.side = Side::Sell;
+    first.trace = Some(OrderTrace {
+        strategy_id: Some("basis-recovery".into()),
+        signal_id: Some(7701),
+        intent_id: Some(4412),
+        rule_version: Some("strategy-contract-v1".into()),
+    });
     let mut group = SpreadOrderGroup::new(
         "hedge-recovery-1",
         "basis-recovery",
@@ -95,6 +101,20 @@ fn hedge_recovery_worker_is_idempotent_and_fails_closed_on_unknown_state() {
     assert_eq!(router.calls, vec!["binance"]);
     assert_eq!(state.orders.len(), 1);
     assert!(state.orders[0].policy.unwrap().reduce_only);
+    let compensation_trace = state.orders[0]
+        .trace
+        .as_ref()
+        .expect("补偿订单必须带 trace，否则溯源在补偿这一步断链");
+    assert_eq!(
+        (compensation_trace.signal_id, compensation_trace.intent_id),
+        (Some(7701), Some(4412)),
+        "补偿单必须继承被补偿腿那笔订单的 signal/intent，写死 None 就是资金链路口径丢身份"
+    );
+    assert_eq!(
+        compensation_trace.rule_version.as_deref(),
+        Some("spread-hedge-v1"),
+        "补偿单自己的规则版本不得被来源腿的 trace 顶替"
+    );
     assert_eq!(state.registrations.len(), 1, "补偿路径只登记那一条补偿腿");
     let (registered_id, correlation) = &state.registrations[0];
     assert_eq!(*registered_id, state.orders[0].client_id);

@@ -1017,8 +1017,16 @@ fn build_compensation_order(
         account_id: target.account_id.clone(),
         trace: Some(OrderTrace {
             strategy_id: Some(group.strategy_id.clone()),
-            signal_id: None,
-            intent_id: None,
+            signal_id: source_leg
+                .order
+                .trace
+                .as_ref()
+                .and_then(|trace| trace.signal_id),
+            intent_id: source_leg
+                .order
+                .trace
+                .as_ref()
+                .and_then(|trace| trace.intent_id),
             rule_version: Some("spread-hedge-v1".into()),
         }),
         policy: Some(policy),

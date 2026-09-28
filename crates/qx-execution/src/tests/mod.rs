@@ -6,7 +6,7 @@ use qx_adapter::{
     HttpTransport,
 };
 use qx_control::{CommandKind, ControlCommand, Permission};
-use qx_core::{InstrumentId, Order, OrderStatus, Price, Quantity, Side};
+use qx_core::{InstrumentId, Order, OrderStatus, OrderTrace, Price, Quantity, Side};
 use qx_zhenlu::{FileSpreadOrderGroupStore, SpreadOrderGroupStore, SpreadOrderLeg};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};

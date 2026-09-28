@@ -48,7 +48,7 @@ fn result_hash(stdout: &str) -> String {
         .expect("输出缺少 [Depth · Backtest] result_hash")
 }
 
-fn artifacts(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+fn artifacts(root: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let runs = root.join("runs");
     let mut manifest = None;
     for entry in std::fs::read_dir(&runs).expect("读取 runs 目录失败") {
@@ -73,7 +73,23 @@ fn artifacts(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
         manifest,
         runs.join(format!("{stem}.summary.json")),
         runs.join(format!("{stem}.equity.csv")),
+        runs.join(format!("{stem}.fills.csv")),
     )
+}
+
+/// 交付面 CSV 的常驻读者：表头整串比对，行数列数逐行核对。
+///
+/// 表头按整串而不是逐列 `contains` —— 列序与列名一样是交付形状的一部分，仓库外的读者按位置取数。
+fn csv_shape(path: &Path) -> (String, Vec<String>, usize) {
+    let payload = std::fs::read_to_string(path).expect("读取交付面 CSV 失败");
+    let mut rows = payload.lines();
+    let header = rows.next().unwrap_or_default().to_string();
+    let body = rows
+        .filter(|row| !row.is_empty())
+        .map(str::to_string)
+        .collect();
+    let columns = header.split(',').count();
+    (header, body, columns)
 }
 
 #[test]
@@ -129,7 +145,7 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
         "同参数二次回测结果指纹漂移"
     );
 
-    let (manifest, summary, equity) = artifacts(&first_root);
+    let (manifest, summary, equity, fills) = artifacts(&first_root);
     let manifest_payload = std::fs::read_to_string(&manifest).expect("读取 RunManifest 失败");
     assert!(manifest_payload.contains("\"depth-backtest:l2:sma_cross"));
     assert!(manifest_payload.contains("example-depth-l2-v1"));
@@ -166,11 +182,39 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
         .expect("assumptions 必须是数组")
         .iter()
         .any(|value| value == "data_tier=L2L3"));
-    let equity_lines = std::fs::read_to_string(&equity)
-        .expect("读取权益曲线失败")
-        .lines()
-        .count();
-    assert_eq!(equity_lines, 81, "权益曲线必须逐快照一点");
+    // 两份 CSV 是交付面：仓库内没有生产读者，形状只能由常驻用例钉住（V12 R7-h）。
+    // 成交明细更薄——写侧之外连测试都没打开过它，所以除了表头还把行数对回摘要那一格。
+    let (equity_header, equity_rows, equity_columns) = csv_shape(&equity);
+    assert_eq!(
+        equity_header, "index,ts,equity_raw,position_raw",
+        "权益曲线的表头是交付形状，改名或换序都要先过这条"
+    );
+    assert_eq!(equity_rows.len(), 80, "权益曲线必须逐快照一点");
+    assert!(
+        equity_rows
+            .iter()
+            .all(|row| row.split(',').count() == equity_columns),
+        "权益曲线有行的列数与表头不等: {equity_rows:?}"
+    );
+    let (fills_header, fills_rows, fills_columns) = csv_shape(&fills);
+    assert_eq!(
+        fills_header,
+        "order_id,ts,qty_raw,price_raw,fee_raw,account_id,strategy_id,signal_id,intent_id,venue_id,venue_order_id",
+        "成交明细的表头是交付形状，改名或换序都要先过这条"
+    );
+    assert_eq!(
+        fills_rows.len(),
+        summary_payload["fills"]
+            .as_u64()
+            .expect("摘要的 fills 不是整数") as usize,
+        "成交明细的行数与摘要声明的成交笔数不是同一个数"
+    );
+    assert!(
+        fills_rows
+            .iter()
+            .all(|row| row.split(',').count() == fills_columns),
+        "成交明细有行的列数与表头不等: {fills_rows:?}"
+    );
 
     let changed_root = root.join("changed");
     let (code, stdout, _) = run(&[
@@ -187,7 +231,7 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
     ]);
     assert_eq!(code, 0);
     assert_ne!(result_hash(&stdout), first_hash, "费率变化必须改变结果指纹");
-    let (_, changed_summary, _) = artifacts(&changed_root);
+    let (_, changed_summary, _, _) = artifacts(&changed_root);
     let changed: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&changed_summary).expect("读取摘要失败"))
             .unwrap();
@@ -197,7 +241,7 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
 }
 
 fn summary(root: &Path) -> serde_json::Value {
-    let (_, path, _) = artifacts(root);
+    let (_, path, _, _) = artifacts(root);
     let payload = std::fs::read_to_string(&path).expect("读取摘要失败");
     serde_json::from_str(&payload).expect("摘要不是合法 JSON")
 }
@@ -338,7 +382,7 @@ fn l1_depth_backtest_runs_and_rejects_multi_level_books() {
     ]);
     assert_eq!(code, 0, "L1 深度回测失败: {stderr}");
     assert!(stdout.contains("tier=l1"), "输出缺少档位标记: {stdout}");
-    let (_, summary, _) = artifacts(&root);
+    let (_, summary, _, _) = artifacts(&root);
     let payload: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&summary).expect("读取摘要失败")).unwrap();
     assert!(payload["assumptions"]

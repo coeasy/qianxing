@@ -386,6 +386,11 @@ pub(crate) fn run_ccxt_user_stream_worker(
             .get("events")
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| "CCXT Pro orders 事件缺少 events".to_string())?;
+        // 有 event、既没有 events 也不带 idle 的空回话必须节奏化：子进程秒答一张空表时，
+        // 这条链上再没有第二处等待，循环就成了吃满一颗 CPU 的热转。
+        if events.is_empty() {
+            thread::sleep(Duration::from_millis(1_000));
+        }
         let mut matched = 0_usize;
         let mut reduced = 0_usize;
         let mut reconcile_errors = 0_usize;

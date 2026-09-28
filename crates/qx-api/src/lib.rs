@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -851,6 +851,8 @@ pub struct ApiService {
     readiness_provider: Option<ReadinessProvider>,
     query_models_provider: Option<QueryModelsProvider>,
     control_provider: Option<ControlProvider>,
+    /// 同时在场的长连接名额（V11 R7-e）：接一条占一格，连接线程结束（含 panic）时归还。
+    live: Arc<LiveConnectionBudget>,
 }
 
 #[derive(Default)]
@@ -858,6 +860,9 @@ struct ApiMetrics {
     requests_total: AtomicU64,
     rate_limit_rejected_total: AtomicU64,
     authentication_rejected_total: AtomicU64,
+    /// 因撞上 [`MAX_LIVE_CONNECTIONS`] 而被拒的长连接条数（V11 R7-e）。写侧不留在原地：
+    /// 它由下面的摘要念进 `/metrics`，运维数得到“今天拒了几条”。
+    connections_rejected_total: AtomicU64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -865,21 +870,31 @@ pub struct ApiMetricsSnapshot {
     pub requests_total: u64,
     pub rate_limit_rejected_total: u64,
     pub authentication_rejected_total: u64,
+    pub connections_rejected_total: u64,
 }
 
 impl ApiMetricsSnapshot {
     pub fn to_prometheus(self) -> String {
+        // 每格指标各占一行，分隔符必须是真换行：上一版这里写的是两字符的字面反斜杠加 n，于是
+        // `/metrics` 整份文本挤成一行，`deploy/prometheus/qianxing-alerts.yml` 那六条告警一条都
+        // 取不到样本——端点仍回 200，链路却是断的（V11 R7-i）。
         format!(
-            "# HELP qx_api_requests_total Total API requests received.\\n\
-# TYPE qx_api_requests_total counter\\n\
-qx_api_requests_total {}\\n\
-# HELP qx_api_rate_limit_rejected_total Requests rejected by the rate limiter.\\n\
-# TYPE qx_api_rate_limit_rejected_total counter\\n\
-qx_api_rate_limit_rejected_total {}\\n\
-# HELP qx_api_authentication_rejected_total Requests rejected by the API policy.\\n\
-# TYPE qx_api_authentication_rejected_total counter\\n\
-qx_api_authentication_rejected_total {}\\n",
-            self.requests_total, self.rate_limit_rejected_total, self.authentication_rejected_total
+            "# HELP qx_api_requests_total Total API requests received.\n\
+# TYPE qx_api_requests_total counter\n\
+qx_api_requests_total {}\n\
+# HELP qx_api_rate_limit_rejected_total Requests rejected by the rate limiter.\n\
+# TYPE qx_api_rate_limit_rejected_total counter\n\
+qx_api_rate_limit_rejected_total {}\n\
+# HELP qx_api_authentication_rejected_total Requests rejected by the API policy.\n\
+# TYPE qx_api_authentication_rejected_total counter\n\
+qx_api_authentication_rejected_total {}\n\
+# HELP qx_api_connections_rejected_total Long connections refused by the live-connection ceiling.\n\
+# TYPE qx_api_connections_rejected_total counter\n\
+qx_api_connections_rejected_total {}\n",
+            self.requests_total,
+            self.rate_limit_rejected_total,
+            self.authentication_rejected_total,
+            self.connections_rejected_total
         )
     }
 }
@@ -1019,6 +1034,56 @@ impl ApiResponse {
     }
 }
 
+/// 长驻循环与连接线程共用的停机回调。V11 J2 把它留在 accept 一侧，R7-e 把它递进连接线程，
+/// 于是“停机”对正在场的长连接同样是可执行的请求，而不是只对没人接听的套接字生效。
+type StopToken = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// 长连接名额的计数本体：上界只有一个来源（[`MAX_LIVE_CONNECTIONS`]），计数随 `ApiService`
+/// 的每份克隆共享——每台进程一份，而不是每个 handler 一份。
+struct LiveConnectionBudget {
+    live: AtomicUsize,
+    max: usize,
+}
+
+impl LiveConnectionBudget {
+    fn bounded() -> Self {
+        Self {
+            live: AtomicUsize::new(0),
+            max: MAX_LIVE_CONNECTIONS,
+        }
+    }
+
+    /// 领一格：满了当场返回 `None`，不自旋也不排队——让 accept 循环等一个空位会把“过载”
+    /// 变成“没反应”，而运维要的是看得见的一句拒绝加一个数得出来的计数。
+    fn reserve(self: &Arc<Self>) -> Option<LiveConnectionSlot> {
+        let taken = self
+            .live
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |live| {
+                if live < self.max {
+                    Some(live + 1)
+                } else {
+                    None
+                }
+            })
+            .is_ok();
+        taken.then(|| LiveConnectionSlot {
+            budget: Arc::clone(self),
+        })
+    }
+}
+
+/// 名额的归还凭证：连接线程返回或 panic 展开时 `Drop` 减一。少了这颗，一次 panic 就永久
+/// 占住一格，几次之后整台 API 只会回 503——那正是本轮要挡住的形状反过来咬人。
+struct LiveConnectionSlot {
+    budget: Arc<LiveConnectionBudget>,
+}
+
+impl Drop for LiveConnectionSlot {
+    fn drop(&mut self) {
+        self.budget.live.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 impl ApiService {
     pub fn new(state: ApiState) -> Self {
         Self {
@@ -1037,6 +1102,7 @@ impl ApiService {
             readiness_provider: None,
             query_models_provider: None,
             control_provider: None,
+            live: Arc::new(LiveConnectionBudget::bounded()),
         }
     }
 
@@ -1057,6 +1123,7 @@ impl ApiService {
             readiness_provider: None,
             query_models_provider: None,
             control_provider: None,
+            live: Arc::new(LiveConnectionBudget::bounded()),
         }
     }
 
@@ -1085,6 +1152,10 @@ impl ApiService {
             authentication_rejected_total: self
                 .metrics
                 .authentication_rejected_total
+                .load(Ordering::Relaxed),
+            connections_rejected_total: self
+                .metrics
+                .connections_rejected_total
                 .load(Ordering::Relaxed),
         }
     }
@@ -1374,6 +1445,16 @@ impl ApiService {
     pub(crate) fn with_rate_limit(mut self, capacity: u64, refill_per_second: u64) -> Self {
         self.rate_limiter = Arc::new(LocalRateLimitBackend {
             limiter: Mutex::new(ApiRateLimiter::new(capacity, refill_per_second)),
+        });
+        self
+    }
+
+    /// 用例把上界调小才真撞得到门：生产的 64 格要占住 64 颗线程才算数，那是夹具的代价不是判据。
+    #[cfg(test)]
+    pub(crate) fn with_max_live_connections(mut self, max: usize) -> Self {
+        self.live = Arc::new(LiveConnectionBudget {
+            live: AtomicUsize::new(0),
+            max,
         });
         self
     }
@@ -1768,7 +1849,8 @@ impl ApiService {
     pub(crate) fn serve_once(&self, listener: &TcpListener, ts: u64) -> std::io::Result<()> {
         let (stream, _) = listener.accept()?;
         configure_connection(&stream)?;
-        self.serve_stream_as(stream, ts, None)
+        let stop: StopToken = Arc::new(|| false);
+        self.serve_stream_as(stream, ts, None, &stop)
     }
 
     /// 使用调用方提供的证书和私钥配置服务端 TLS。
@@ -1785,7 +1867,8 @@ impl ApiService {
     ) -> std::io::Result<()> {
         let (stream, _) = listener.accept()?;
         configure_connection(&stream)?;
-        self.serve_stream_as(tls_stream(stream, config)?, ts, None)
+        let stop: StopToken = Arc::new(|| false);
+        self.serve_stream_as(tls_stream(stream, config)?, ts, None, &stop)
     }
 
     fn serve_stream_as<S>(
@@ -1793,13 +1876,14 @@ impl ApiService {
         mut stream: S,
         ts: u64,
         authenticated_operator: Option<&str>,
+        stop: &StopToken,
     ) -> std::io::Result<()>
     where
         S: Read + Write,
     {
         let request = read_request(&mut stream, HTTP_REQUEST_BUDGET)?;
         let request = String::from_utf8_lossy(&request);
-        self.dispatch_request(&mut stream, &request, ts, authenticated_operator)
+        self.dispatch_request(&mut stream, &request, ts, authenticated_operator, stop)
     }
 
     fn dispatch_request<S: Read + Write>(
@@ -1808,6 +1892,7 @@ impl ApiService {
         request: &str,
         ts: u64,
         authenticated_operator: Option<&str>,
+        stop: &StopToken,
     ) -> std::io::Result<()> {
         if request.to_ascii_lowercase().contains("upgrade: websocket") {
             if self.policy.is_some()
@@ -1821,7 +1906,7 @@ impl ApiService {
                 )?;
                 return Ok(());
             }
-            return self.serve_websocket(stream, request);
+            return self.serve_websocket(stream, request, stop);
         }
         let response = match parse_http_request(request) {
             Ok(parsed) => {
@@ -1836,15 +1921,16 @@ impl ApiService {
     /// 身份映射。两份配置均由调用方的轮询重载器原子替换。
     ///
     /// `stop` 每轮 accept 前问一次：置起之后这条长驻循环会自己收，调用方的 `join`
-    /// 才可能返回（V11 J2）。
+    /// 才可能返回（V11 J2）；同一枚令牌也递进连接线程，正在场的长连接因此随之收尾（R7-e）。
     pub fn serve_tls_mtls_with_stores(
         &self,
         listener: TcpListener,
         configs: &TlsConfigStore,
         identities: &MtlsIdentityStore,
         ts: u64,
-        stop: impl Fn() -> bool,
+        stop: impl Fn() -> bool + Send + Sync + 'static,
     ) -> std::io::Result<()> {
+        let stop: StopToken = Arc::new(stop);
         self.accept_polling(listener, &stop, |stream| {
             configure_connection(&stream)?;
             let stream = tls_stream(stream, configs.current())?;
@@ -1852,7 +1938,7 @@ impl ApiService {
             let operator_id = policy
                 .operator_for(stream.conn.peer_certificates())
                 .map(str::to_string);
-            self.spawn_connection(stream, ts, operator_id);
+            self.spawn_connection(stream, ts, operator_id, Arc::clone(&stop));
             Ok(())
         })
     }
@@ -1860,13 +1946,24 @@ impl ApiService {
     /// 每个长连接独立处理，避免 WebSocket 或慢客户端占住监听循环。
     /// 连接线程只拥有 API 的共享读模型和不可变服务配置；领域事实仍由
     /// Runtime owner 写入，连接处理失败只影响当前客户端。
-    fn spawn_connection<S>(&self, stream: S, ts: u64, operator_id: Option<String>)
+    ///
+    /// 起线程前先领一格长连接名额（V11 R7-e）：领不到就地回 503 而不是再开一颗线程；已给的
+    /// 那一格由 [`LiveConnectionSlot::drop`] 归还，处理函数 panic 时也归还。
+    fn spawn_connection<S>(&self, stream: S, ts: u64, operator_id: Option<String>, stop: StopToken)
     where
         S: Read + Write + Send + 'static,
     {
+        let Some(slot) = self.live.reserve() else {
+            self.metrics
+                .connections_rejected_total
+                .fetch_add(1, Ordering::Relaxed);
+            reject_overloaded(stream);
+            return;
+        };
         let service = self.clone();
         std::thread::spawn(move || {
-            if let Err(error) = service.serve_stream_as(stream, ts, operator_id.as_deref()) {
+            let _slot = slot;
+            if let Err(error) = service.serve_stream_as(stream, ts, operator_id.as_deref(), &stop) {
                 eprintln!("[qx-api] connection closed with error: {error}");
             }
         });
@@ -1877,11 +1974,12 @@ impl ApiService {
         &self,
         listener: TcpListener,
         ts: u64,
-        stop: impl Fn() -> bool,
+        stop: impl Fn() -> bool + Send + Sync + 'static,
     ) -> std::io::Result<()> {
+        let stop: StopToken = Arc::new(stop);
         self.accept_polling(listener, &stop, |stream| {
             configure_connection(&stream)?;
-            self.spawn_connection(stream, ts, None);
+            self.spawn_connection(stream, ts, None, Arc::clone(&stop));
             Ok(())
         })
     }
@@ -1891,7 +1989,7 @@ impl ApiService {
     fn accept_polling<F>(
         &self,
         listener: TcpListener,
-        stop: &dyn Fn() -> bool,
+        stop: &StopToken,
         mut on_connection: F,
     ) -> std::io::Result<()>
     where
@@ -1929,6 +2027,7 @@ impl ApiService {
         &self,
         stream: &mut S,
         request: &str,
+        stop: &StopToken,
     ) -> std::io::Result<()> {
         let key = request
             .lines()
@@ -1990,6 +2089,11 @@ impl ApiService {
         let mut cursor = projected.last().map(|event| event.seq);
         let mut client_buffer = [0_u8; 2048];
         loop {
+            // 停机请求之后不再等新事件：线程与名额要归还，进程才可能把长连接收干净。少了这一臂，
+            // 一条静默不关（半开、不 FIN）的流会占到进程退出，并把一格名额一起占死（V11 R7-e）。
+            if stop() {
+                return Ok(());
+            }
             match event_bus.wait_after(cursor, Duration::from_millis(100)) {
                 Ok(events) => {
                     for event in events {
@@ -2160,6 +2264,12 @@ impl ControlPort for ApiService {
 /// 长驻 accept 循环查停机令牌的节拍。空闲时一晚也就几千次 load，换来不用引信号处理依赖。
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
+/// 一台 API 进程同时在场的长连接上界（V11 R7-e）。每接一条就是一颗 OS 线程（默认栈 8 MiB），
+/// 64 颗 ≈ 0.5 GiB 虚拟内存，而这条链的真实读者是运维控制台：每操作员每块面板一条流，到不了
+/// 这个数。上界的价值在于“到不了”这件事可被证明，不在于贴着真实流量调；要按部署改它得先添
+/// 配置面，本轮零新配置项。
+const MAX_LIVE_CONNECTIONS: usize = 64;
+
 /// 一个完整请求（头部 + body）允许的**整体**时长。`configure_connection` 的 100 ms 只界住
 /// **单次** `read`：对端每 99 ms 挤一个字节就能让读取循环永远读不完，1 MiB 的体积上限要
 /// 29 小时才挡得住——体积有界不等于时长有界（V11 R4-9，与 O7 的握手块同一判据）。
@@ -2293,9 +2403,11 @@ fn write_http_response<S: Write>(stream: &mut S, response: &ApiResponse) -> std:
         200 => "OK",
         202 => "Accepted",
         400 => "Bad Request",
+        403 => "Forbidden",
         404 => "Not Found",
         409 => "Conflict",
         429 => "Too Many Requests",
+        503 => "Service Unavailable",
         _ => "Internal Server Error",
     };
     let head = format!(
@@ -2307,6 +2419,19 @@ fn write_http_response<S: Write>(stream: &mut S, response: &ApiResponse) -> std:
     );
     stream.write_all(head.as_bytes())?;
     stream.write_all(response.body.as_bytes())
+}
+
+/// 名额满时的拒绝。写不出去也照样收尾：这一格买不到“客户端一定看得见 503”的保证——
+/// mTLS 流还没握手完时写不进去。被拒的条数先计进 `/metrics`，运维数得到，而不是只看见静默。
+///
+/// 回话之前先把已经到达的字节读掉：带着未读数据关闭套接字会发出 RST 而不是 FIN，那句 503
+/// 就被自己抹掉了（Windows 上读侧直接看到 ConnectionReset）。这一读有 `configure_connection`
+/// 的 100 ms 上界，不重走 `read_request` 的整请求装配——名额满时最不该做的就是多干活。
+fn reject_overloaded<S: Read + Write>(mut stream: S) {
+    let mut drained = [0_u8; 2048];
+    let _ = stream.read(&mut drained);
+    let response = ApiResponse::json(503, error_json("too_many_live_connections"));
+    let _ = write_http_response(&mut stream, &response);
 }
 
 fn error_json(message: &str) -> String {

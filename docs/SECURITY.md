@@ -7,7 +7,9 @@
 
 ## 0. 范围
 
-**在范围内**：`crates/` 下 23 个 `qx-*` crate（含 `qx-cli` 二进制）、`python/` 侧 23 个 `.py`、
+**在范围内**：`crates/` 下 23 个 `qx-*` crate（含 `qx-cli` 二进制）、`python/` 侧 24 个 `.py`（2026-09-28 复测：
+`git ls-files python` 与磁盘同数，最后一份加入的是 `python/tests/test_ashare_cross_language_contract.py`；
+上一版写 23 是那份文件进场前的读数，本文其余判据不受这一格影响）、
 `cpp/include/qianxing_strategy.h` 的 C ABI 镜像、`deploy/*.json` 运行时配置面、
 文件 / SQLite / PostgreSQL / NATS 四本后端、明文与 mTLS 两种 API 传输、Binance 与 CCXT 两条 Venue 外联链。
 
@@ -58,8 +60,8 @@ Vulnerable System / Subsequent System 两个系统的动机。
 
 ### 4.1 路径穿越（Path Traversal）— 部分（局部）｜Low
 
-**远程面：不存在。** 所有路由在固定 `(method, route)` 上匹配（`crates/qx-api/src/lib.rs:1451`），
-URL 路径不进入任何文件系统调用；查询参数只被 `projection_key_from_query`（`crates/qx-api/src/lib.rs:2323`）折成
+**远程面：不存在。** 所有路由在固定 `(method, route)` 上匹配（`crates/qx-api/src/lib.rs:1532`），
+URL 路径不进入任何文件系统调用；查询参数只被 `projection_key_from_query`（`crates/qx-api/src/lib.rs:2448`）折成
 `ApiProjectionKey`，用作 `BTreeMap` 的键（`crates/qx-api/src/lib.rs:589`）。
 
 **落盘面：有允许列表，形状是对的。**
@@ -68,7 +70,7 @@ URL 路径不进入任何文件系统调用；查询参数只被 `projection_key
 |---|---|---|
 | 状态文件名 | `crates/qx-storage/src/lib.rs:153-164` | 只允许 ASCII 字母数字与 `-` `_`，再拒 `/` `\` `..` |
 | 事件日志段名 | `crates/qx-storage/src/lib.rs:336-348` | 同一份允许列表 |
-| Outbox / 消费者键 | `crates/qx-storage/src/lib.rs:975-996` | 校验后**逐字节十六进制编码**，穿越在构造层不可能 |
+| Outbox / 消费者键 | `crates/qx-storage/src/lib.rs:979-1000` | 校验后**逐字节十六进制编码**，穿越在构造层不可能 |
 | 调度状态相对路径 | `crates/qx-storage/src/file/state.rs:154-180` | 拒 `Component::ParentDir`，再 `starts_with(root)` |
 | 回测产物名 | `crates/qx-cli/src/backtests/strategy_backtest.rs:145-156` | 非 `[alnum - _ .]` 一律替换为 `_` |
 | 快照文件名 | `crates/qx-protocol/src/lib.rs:702-707` | `snapshot_id` 是 `u64`（`crates/qx-protocol/src/lib.rs:163`），无字符串面 |
@@ -145,7 +147,7 @@ URL 路径不进入任何文件系统调用；查询参数只被 `projection_key
 * 表名/列名从不来自数据：DDL 全是 `execute_batch` / `batch_execute` 里的硬编码字面量
   （`crates/qx-storage/src/sqlite.rs:48`、`crates/qx-storage/src/postgres.rs:213`、`crates/qx-storage/src/postgres.rs:224-333`）。
 * 调用方给的 `name` 作为**数据**绑定，且先过 `StorageError::InvalidName`
-  （`crates/qx-storage/src/sqlite.rs:1463` → `crates/qx-storage/src/sqlite.rs:1498-1502`）。
+  （`crates/qx-storage/src/sqlite.rs:1497` → `crates/qx-storage/src/sqlite.rs:1532-1536`）。
 
 **永久修法**：无缺陷可修；要做的是**保住这个形状**——见 §10 待补 G-2（插值 SQL 检测器）。
 今天它靠人的自觉，不靠牙齿。
@@ -175,9 +177,9 @@ WS 那半边**完全由配置决定**，`worker.endpoint`
 3. **可达性探针**：`host:port` 任取，端口不限于 443，等于一台能写配置的机器上的内网探测原点。
 
 旁支：`messaging.nats_url`（`crates/qx-runtime/src/runtime_config/schema.rs:150-151`，缺省 `nats://127.0.0.1:4222`）同样任指主机端口，
-且 `async_nats::connect(url)`（`crates/qx-storage/src/nats.rs:53`、`crates/qx-storage/src/nats.rs:163`）在仓内没有截止——
-这一格仓内已裁定（`CHANGELOG.md:27`：三处里两处本就带库内给的界、第三处只是把界传下去），
-本文按裁定归属，不重开。`python/qianxing_ccxt/__init__.py:266` 把 `options` 原样摊进 ccxt 构造器，
+且 `async_nats::connect(url)`（`crates/qx-storage/src/nats.rs:63`、`crates/qx-storage/src/nats.rs:199`）各有 `NATS_BOOT_BUDGET`（`crates/qx-storage/src/nats.rs:16`）10 秒的建链截止，
+`publish` 等 ack 另有 `NATS_PUBLISH_ACK_BUDGET`（`crates/qx-storage/src/nats.rs:18`）5 秒，用尽后本进程停止投递。M 轮当时的裁定写在 `CHANGELOG.md:27`（三处里两处本就带库内给的界、第三处只是把界传下去），
+R7-c 把那颗“只是把界传下去”的界换成自己数的预算；这一格的风险不变——截止只挡住挂死，不挡目的地。`python/qianxing_ccxt/__init__.py:266` 把 `options` 原样摊进 ccxt 构造器，
 未知键不拒，因此 ccxt 自己的 URL 覆盖键可以经配置生效——这一格记为**待裁决**（§11 Q-2）。
 
 `CVSS:4.1/AV:A/AC:L/AT:P/PR:H/UI:N/VC:H/VI:L/VA:N/SC:N/SI:L/SA:N` → **Medium**
@@ -205,7 +207,7 @@ WS 那半边**完全由配置决定**，`worker.endpoint`
 | 配置 DTO 有 `deny_unknown_fields` | `crates/qx-runtime/src/runtime_config/schema.rs:40`、`crates/qx-runtime/src/runtime_config/schema.rs:223` 等 | 16 处，5 个文件 |
 | 网络 DTO 一个都没有 | `crates/qx-control/src/lib.rs:60-71`、`crates/qx-storage/src/lib.rs:368-381`、`crates/qx-plugin/src/lib.rs:43-64` | `qx-control`/`qx-api`/`qx-protocol`/`qx-plugin`/`qx-storage` 命中 **0** |
 | `ControlCommand` 无版本锚 | `crates/qx-control/src/lib.rs:61-71` | 结构体里根本没有 `schema_version` 字段 |
-| `OutboxEvent` 有版本但从不比较 | `crates/qx-storage/src/lib.rs:373-374`（`#[serde(default = ...)]`）、`crates/qx-storage/src/nats.rs:231`、`crates/qx-storage/src/nats.rs:350` | 读侧无任何 `schema_version` 判断 |
+| `OutboxEvent` 有版本但从不比较 | `crates/qx-storage/src/lib.rs:373-374`（`#[serde(default = ...)]`）、`crates/qx-storage/src/nats.rs:275`、`crates/qx-storage/src/nats.rs:394` | 读侧无任何 `schema_version` 判断 |
 | 快照有版本且**先比后解** | `crates/qx-protocol/src/lib.rs:461-463` | 正面样本：`ACCOUNT_SNAPSHOT_SCHEMA_VERSION` 不匹配当场拒 |
 | 子进程 stdout 当 typed 事实 | `crates/qx-adapter/src/ccxt.rs:189-191` | 无类型 `Value`，形状靠 `get()` 逐格试 |
 
@@ -278,7 +280,7 @@ WS 那半边**完全由配置决定**，`worker.endpoint`
 3. 策略为 `None` → 鉴权门整个跳过（`crates/qx-api/src/lib.rs:1438-1439`：
    `if self.policy.is_some() && !matches!(route, "/health" | "/ready" | "/schema/account-snapshot-v1")`）。
 4. 明文的 accept 链把身份**硬写成 `None`**（`crates/qx-api/src/lib.rs:1882-1884` `self.spawn_connection(stream, ts, None)`）。
-5. 于是每个端点，包括 `POST /control/commands` 走的 `submit_command`（`crates/qx-api/src/lib.rs:1687`），无凭据可达。
+5. 于是每个端点，包括 `POST /control/commands` 走的 `submit_command`（`crates/qx-api/src/lib.rs:1768`），无凭据可达。
 
 `is_production()` 会在 `environment == "production"` 时禁掉明文
 （`crates/qx-runtime/src/runtime_config/topology_validation.rs:40-42`），环境词表也是闭合的（`crates/qx-runtime/src/runtime_config/schema.rs:13`，
@@ -293,10 +295,10 @@ WS 那半边**完全由配置决定**，`worker.endpoint`
 
 **利用场景（不需要任何凭据）**：攻击者能路由到 `api.bind` 即可——
 
-* `GET /account/snapshot` 的 `snapshot_for_query`（`crates/qx-api/src/lib.rs:1292`）、`/account/positions`、`/account/orders`、`/account/balances`、
+* `GET /account/snapshot` 的 `snapshot_for_query`（`crates/qx-api/src/lib.rs:1363`）、`/account/positions`、`/account/orders`、`/account/balances`、
   `/control/audit`：持仓、委托、现金、权益、审计流水与 `operator_id` 全读走。
   这些字段的完整集合见 `crates/qx-protocol/src/lib.rs:96-119` 与 `crates/qx-protocol/src/wire.rs:12-79`。
-* `GET /metrics`（`crates/qx-api/src/lib.rs:1473`）连策略与鉴权拒绝计数都不用认证就能读。
+* `GET /metrics`（`crates/qx-api/src/lib.rs:1554`）连策略与鉴权拒绝计数都不用认证就能读。
 * 写面见 §4.12（自授权）。
 
 `CVSS:4.1/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L/SC:H/SI:H/SA:H` → **Critical**
@@ -325,8 +327,8 @@ WS 那半边**完全由配置决定**，`worker.endpoint`
 
 ### 4.9 不安全文件上传 — 不存在｜None
 
-服务端没有任何写文件的请求路径：`parse_http_request`（`crates/qx-api/src/lib.rs:2281-2269`）之后
-body 只被 `serde_json::from_str` 解析成 `ControlCommand`（`crates/qx-api/src/lib.rs:1693`），解析失败回 400。
+服务端没有任何写文件的请求路径：`parse_http_request`（`crates/qx-api/src/lib.rs:2391-2399`）之后
+body 只被 `serde_json::from_str` 解析成 `ControlCommand`（`crates/qx-api/src/lib.rs:1774`），解析失败回 400。
 全仓搜 `multipart`、`form-data` → 0 命中；没有 `filename` 来自请求的处理
 （`crates/qx-protocol/src/lib.rs:702` 那个 `filename` 是从 `u64` 拼出来的，见 §4.1）。
 数据入库走的是 CLI 的 `dataset-ingest`，输入是**本机路径**，不是网络请求。
@@ -345,8 +347,8 @@ body 只被 `serde_json::from_str` 解析成 `ControlCommand`（`crates/qx-api/s
 | # | 位置 | 摘要承担的职责 | 为什么它其实是防伪控制 |
 |---|---|---|---|
 | C1 | `crates/qx-control/src/lib.rs:102-116` | `command_digest` 决定"这条命令是不是那条命令" | `crates/qx-control/src/lib.rs:495-498`、`crates/qx-control/src/lib.rs:528` 拿它做等值门；`crates/qx-control/src/lib.rs:325` 自陈是"幂等分支唯一还能核对 `command_digest` 的地方" |
-| C2 | `crates/qx-storage/src/lib.rs:1444-1459` | 审计链逐环摘要 | `crates/qx-storage/src/lib.rs:1417-1421` 声称能发现"文件被截断、重排或篡改" |
-| C3 | `crates/qx-protocol/src/lib.rs:299-353` | 快照完整性 | 同时是 SQL 查询键（`crates/qx-storage/src/sqlite.rs:941-943`）与对外 cursor（`crates/qx-api/src/lib.rs:1358`） |
+| C2 | `crates/qx-storage/src/lib.rs:1448-1463` | 审计链逐环摘要 | `crates/qx-storage/src/lib.rs:1421-1425` 声称能发现"文件被截断、重排或篡改" |
+| C3 | `crates/qx-protocol/src/lib.rs:299-353` | 快照完整性 | 同时是 SQL 查询键（`crates/qx-storage/src/sqlite.rs:975-977`）与对外 cursor（`crates/qx-api/src/lib.rs:1429`） |
 | C4 | `crates/qx-plugin/src/lib.rs:46-68` | manifest 完整性与"签名" | 见下 |
 | C5 | `crates/qx-factor/src/lib.rs:71-76` | 因子工件绑定 | `artifact_digest` 是裸 `u64`（`crates/qx-factor/src/lib.rs:34`） |
 
@@ -384,14 +386,14 @@ if self.header.state_hash != 0 && self.header.state_hash != self.state_hash() {
 （构造函数 `crates/qx-protocol/src/lib.rs:179` 就写 `state_hash: 0`）。
 
 **C2 的强度也要说准**：链是**未加键**的，能改写存储的人可以整条重算；
-头锚点取自同一个后端的控制面状态（`crates/qx-storage/src/lib.rs:1499-1502`），没有带外锚。
-链校验三个后端都有（`crates/qx-storage/src/file/audit.rs:60`、`crates/qx-storage/src/sqlite.rs:1387`、
-`crates/qx-storage/src/postgres.rs:1341`），问题不在"某个后端不扫"，而在它**只长在
+头锚点取自同一个后端的控制面状态（`crates/qx-storage/src/lib.rs:1503-1506`），没有带外锚。
+链校验三个后端都有（`crates/qx-storage/src/file/audit.rs:60`、`crates/qx-storage/src/sqlite.rs:1421`、
+`crates/qx-storage/src/postgres.rs:1371`），问题不在"某个后端不扫"，而在它**只长在
 `read_entries()` 这一条读路上**：生产里走这条路的只有 doctor 的两支
 （`crates/qx-cli/src/doctor_report.rs:350`、`crates/qx-cli/src/doctor_report.rs:436`，分别是 file 与 sqlite，**没有 postgres 支**），
 而 `/control/audit` 念的是内存控制面的 `plane.audit()`（`crates/qx-api/src/lib.rs:1548`、`crates/qx-api/src/lib.rs:2123`），
 全程不碰链。此外它把 `format!("{:?}", ...)` 混进摘要
-（`crates/qx-storage/src/lib.rs:1456`），与 `crates/qx-core/src/event.rs:359`"稳定摘要不得依赖 Debug 输出"相冲——
+（`crates/qx-storage/src/lib.rs:1460`），与 `crates/qx-core/src/event.rs:359`"稳定摘要不得依赖 Debug 输出"相冲——
 这条是本项目自己的口径，不是外部标准。
 
 **真密码学用在对的地方的部分**（要记账，别只记坏消息）：
@@ -414,7 +416,7 @@ API 服务端 `WebPkiClientVerifier`（`crates/qx-api/src/lib.rs:176-159`）且�
    `Fingerprint`（继续用 `Fnv1a`）只留给重放确定性与排序。
    判据只有一个出口：类型名不允许互换，编译器替人盯。
 2. 审计链 C2 改为**加键**（同一把 `IntegrityTag` 密钥），并把检查点锚到带外存储
-   （或至少一份只读导出），否则"防篡改"这个词该从 `crates/qx-storage/src/lib.rs:1417-1421` 的注释里删掉。
+   （或至少一份只读导出），否则"防篡改"这个词该从 `crates/qx-storage/src/lib.rs:1421-1425` 的注释里删掉。
    同时把 `format!("{:?}")` 换成显式稳定的 `as_str()` 映射（V11 R5-2d 已经在别处这么收了）。
 3. `state_hash != 0`：`validate()` 直接拒 0（写侧构造时就要求非 0），不留"0 表示未算"的第三态——
    本项目对"没算出来"和"算出来是 0"已经有过一轮裁定（V11 R10），这里同一口径。
@@ -558,10 +560,10 @@ let granted = match &self.policy {
 * 因此"我们有 API 限流"这句话在网络路径上不成立：它既不能按秒补水，也是**全局单桶**
   （`crates/qx-api/src/lib.rs:846` 一个 `Arc<dyn ApiRateLimitBackend>`，桶名是常量 `"api"`，
   `crates/qx-cli/src/api_service.rs:127`），不按对端或身份分。
-* `with_rate_limit`（`crates/qx-api/src/lib.rs:1374`，前一行 :1373 是 `#[cfg(test)]`）整颗只在测试构建里存在，全仓唯一调用点是 `crates/qx-api/src/tests.rs:484`，所以容量不是运维可调的。
+* `with_rate_limit`（`crates/qx-api/src/lib.rs:1445`，前一行 :1444 是 `#[cfg(test)]`）整颗只在测试构建里存在，全仓唯一调用点是 `crates/qx-api/src/tests.rs:531`，所以容量不是运维可调的。
 * 现有唯一相关用例是 `crates/qx-api/src/tests.rs:483-488`，它用 `with_rate_limit(1, 0)`
   （补水 0/秒）与手挑的 `ts` 值 1、2——**这个形状看不见单位不一致，也看不见常量 ts**。
-* WS 完全绕过：`serve_websocket`（`crates/qx-api/src/lib.rs:1928`，upgrade 判定 :1812）从 `dispatch_request` 直接返回，
+* WS 完全绕过：`serve_websocket`（`crates/qx-api/src/lib.rs:2026`，upgrade 判定 :1897）从 `dispatch_request` 直接返回，
   不进 `handle_inner`，于是一条 WS 长连接既不计次也不进桶，
   然后在 `crates/qx-api/src/lib.rs:2012` 的 `wait_after` 循环里无限往外写。
 * 一条连接一个 OS 线程且无上限（`crates/qx-api/src/lib.rs:1848` `std::thread::spawn`），没有并发连接天花板。
@@ -573,9 +575,9 @@ let granted = match &self.policy {
 
 | 项 | 值 | 位置 |
 |---|---|---|
-| 入站 HTTP 请求（头+体） | 1 MiB | `crates/qx-api/src/lib.rs:2169`，在 `crates/qx-api/src/lib.rs:2230-2255` 与 `crates/qx-api/src/lib.rs:2272-2297` 两处判 |
-| 完整请求整体截止 | 5 s | `crates/qx-api/src/lib.rs:2146`，每轮检查 `crates/qx-api/src/lib.rs:2195-2204` |
-| 单帧 / 分片累计 WS（入站 API） | 无长度解析 | `crates/qx-api/src/lib.rs:1971` 只给 2048 字节缓冲，帧长不判（与下一行不同） |
+| 入站 HTTP 请求（头+体） | 1 MiB | `crates/qx-api/src/lib.rs:2279`，在 `crates/qx-api/src/lib.rs:2340-2345` 与 `crates/qx-api/src/lib.rs:2382-2387` 两处判 |
+| 完整请求整体截止 | 5 s | `crates/qx-api/src/lib.rs:2276`，每轮检查 `crates/qx-api/src/lib.rs:2326-2334` |
+| 单帧 / 分片累计 WS（入站 API） | 无长度解析 | `crates/qx-api/src/lib.rs:2090` 只给 2048 字节缓冲，帧长不判（与下一行不同） |
 | 出站 WS 单帧 + 分片累计 | 16 MiB | `crates/qx-adapter/src/lib.rs:453`，帧头 `crates/qx-adapter/src/lib.rs:344-506`、累计 `crates/qx-adapter/src/lib.rs:551-395` |
 | 出站 **HTTP 响应体** | **无上限** | `crates/qx-adapter/src/lib.rs:275-276` `read_to_end`（TLS 路径），`crates/qx-adapter/src/lib.rs:672-673` 同形状 |
 | 插件 intents | 100 000 | `crates/qx-strategy/src/c_api.rs:22`：先判 `intents_len`（`crates/qx-strategy/src/c_api.rs:442`），之后才 `from_raw_parts`（`crates/qx-strategy/src/c_api.rs:450`） |
@@ -614,7 +616,7 @@ let granted = match &self.policy {
 | S-R5 | 插件/C ABI 无信任根；C ABI 默认不验签；Python 模块"先执行后校验" | High | `crates/qx-plugin/src/lib.rs:127-134`、`crates/qx-strategy/src/c_api.rs:658-660`、`python/qianxing_strategy/worker.py:36-39` |
 | S-R6 | 策略共享内存环：公共 temp + 可预测名 + 非独占创建 + 无权限位 | High | `crates/qx-cli/src/strategy_host.rs:127-133`、`crates/qx-strategy/src/ring.rs:120-129` |
 | S-R7 | 配置可把 Binance 凭据发到任意 host:port；`ws://` 静默 TLS | Medium | `crates/qx-cli/src/venue_runtime/binance_venue.rs:42-70`、`crates/qx-adapter/src/binance.rs:199`、`crates/qx-adapter/src/binance.rs:220`、`crates/qx-adapter/src/binance.rs:228` |
-| S-R8 | `qx-control`/`qx-protocol`/`qx-storage` 三个线上面 0 处 `deny_unknown_fields`；`ControlCommand` 无版本锚；`OutboxEvent` 有版本字段但全仓无人比较 | Medium | `crates/qx-control/src/lib.rs:60-71`、`crates/qx-storage/src/lib.rs:368-374`、`crates/qx-storage/src/lib.rs:1020` |
+| S-R8 | `qx-control`/`qx-protocol`/`qx-storage` 三个线上面 0 处 `deny_unknown_fields`；`ControlCommand` 无版本锚；`OutboxEvent` 有版本字段但全仓无人比较 | Medium | `crates/qx-control/src/lib.rs:60-71`、`crates/qx-storage/src/lib.rs:368-374`、`crates/qx-storage/src/lib.rs:1024` |
 | S-R9 | 无安全响应头；写路由不校验 `Content-Type`（浏览器 simple POST 可达） | Medium | `crates/qx-api/src/lib.rs:2281-2309` |
 | S-R10 | 出站 HTTP 响应体无上限 | Medium | `crates/qx-adapter/src/lib.rs:273-277` |
 | S-R11 | 连接数无天花板（一线程一连接）；`Debug` 打印 `api_key` | Low | `crates/qx-api/src/lib.rs:1848`、`crates/qx-adapter/src/binance.rs:114` |
@@ -746,8 +748,8 @@ let granted = match &self.policy {
   带 `schema_version` 且读侧先比。
 * **G-5 防伪位置不用无键哈希**：`Fnv1a` 的构造点白名单（`crates/qx-core/src/sourcing.rs`、`qx-guanxing` 的数据哈希等），
   出现在 C1/C3/C4/C5 任一格即红——这一条要等 §4.10 的修法落地才可能绿。
-* **G-6 本文的每条 `path:line` 都算数**：本文由 `doc_citation_check`（`tools/check_architecture.py:9548`）逐颗核对，它与台账
-  共用同一颗扫描器 `citation_audit`（`tools/check_architecture.py:9394`）——R6-8 起带三口径，R6-9 起裸引用的归属再扩到
+* **G-6 本文的每条 `path:line` 都算数**：本文由 `doc_citation_check`（`tools/check_architecture.py:9758`）逐颗核对，它与台账
+  共用同一颗扫描器 `citation_audit`（`tools/check_architecture.py:9604`）——R6-8 起带三口径，R6-9 起裸引用的归属再扩到
   "同一行只点了文件名、没带行号"那一颗。行号漂移即红。
 * **G-6 看不见的那两格**（写进契约，免得下一个人把绿读成"全对上了"）：判据按行扫描，所以①一行里既没有带行号的
   引用、也没有能唯一解析的文件名时，那颗裸行号无人核对——R6-9 之后四份文本仍剩 349 颗这种形状
@@ -774,5 +776,5 @@ let granted = match &self.policy {
 | 日期 | 变更 | 依据 |
 |---|---|---|
 | 2026-09-26 | 首版：12 类逐项判定 + 12 项缺陷登记 + 14 项负行 + 配置清单与轮换流程 | 本轮实测（`crates/` 23 个 crate、`python/` 23 个 `.py`、`deploy/` 全量、门禁与用例逐条读；首版当日工作树 359 个未提交改动） |
-| 2026-09-26 | 引用收口：三种门禁扫不到的形状各改一类——逗号串号 3 处、裸 `:NNN` 全部展开成自足 `path:line`、range 首行的窗口打不到尾部名字时另给精确锚点6 处「名字与锚点对不上」挪到声明处（`external_executable`、`consumer_handler_executable`/`consumer_handler_args`、签名头、`credential_env`、`postgres_dsn_env`、`python_module`）；2 处过强断言收窄（`deny_unknown_fields` 的适用范围、`OutboxEvent` 在 `crates/qx-storage/src/lib.rs:368-374` 有字段但无人比）；1 处指错锚点（`CancelOrder` 负行 252-257 → 281-286）；负行 14 → 16 | 判据按 AST 从 `doc_citation_check`（`tools/check_architecture.py:9548`）取出后重放：本文全部 `path:line` 逐颗对得上，引用数与带名绑定数由常驻门禁当轮打印、不在这里抄一份会过期的副本；名字档另判，剩余 3 处 hard 全是「断言某物不存在」，已升成 §9 负行
+| 2026-09-26 | 引用收口：三种门禁扫不到的形状各改一类——逗号串号 3 处、裸 `:NNN` 全部展开成自足 `path:line`、range 首行的窗口打不到尾部名字时另给精确锚点6 处「名字与锚点对不上」挪到声明处（`external_executable`、`consumer_handler_executable`/`consumer_handler_args`、签名头、`credential_env`、`postgres_dsn_env`、`python_module`）；2 处过强断言收窄（`deny_unknown_fields` 的适用范围、`OutboxEvent` 在 `crates/qx-storage/src/lib.rs:368-374` 有字段但无人比）；1 处指错锚点（`CancelOrder` 负行 252-257 → 281-286）；负行 14 → 16 | 判据按 AST 从 `doc_citation_check`（`tools/check_architecture.py:9758`）取出后重放：本文全部 `path:line` 逐颗对得上，引用数与带名绑定数由常驻门禁当轮打印、不在这里抄一份会过期的副本；名字档另判，剩余 3 处 hard 全是「断言某物不存在」，已升成 §9 负行
 | 2026-09-26 | R7 轮重钉：本文 51 行的行号按当前代码改口，并逐颗人工复核"被引那一格里是不是那颗东西"——机械 0 红不等于语义对：区间远端只量越界与空行（`CAP_RANGE_END`，`tools/check_architecture.py:8583`），同一条规则本轮在变更日志里抓到一例"数字恰好落在界内、那一格却是别的东西"的假通过，逐颗明细记在方案书 §55.10、§55.11；上一行那句"引用数不在这里抄副本"本轮同样回落到 §10 的 G-6——逐份拆分只留在方案书与台账，本文不再放第二份会过期的数 | 第 5 轮三扫之后的 R7 收口 |

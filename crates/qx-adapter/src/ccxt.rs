@@ -20,7 +20,7 @@ use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::Duration;
 
@@ -66,7 +66,10 @@ impl CcxtProcessClient {
             .stdout
             .take()
             .ok_or_else(|| "CCXT Worker stdout 不可用".to_string())?;
-        let (sender, responses) = mpsc::channel();
+        // 队列有界（V11 R7-f）：这条通道一问一答，每轮只取走一行，多出来的行没人认领。
+        // 无界队列会让 Worker 的杂印或上一轮迟到的应答一路攒下去；容量 1 把它变成背压——
+        // 泵线程停在第二行上等下一次 `take_turn` 来分诊，内存不再随杂印增长。
+        let (sender, responses) = mpsc::sync_channel(1);
         let worker_program = python.to_string();
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
@@ -104,6 +107,26 @@ impl CcxtProcessClient {
     /// `wait_ms`，让"这一窗没有事件"的回话先于读窗到期到达。
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms
+    }
+}
+
+/// 写下一条请求之前，通道里留着的东西（V11 R7-f）。
+///
+/// 一问一答的通道只在「上一轮已经收干净」的相位上可用：`Empty` 才算干净。取到 `Ok`
+/// 说明上一轮的应答迟到了、或 Worker 多印了一行——把它当这一轮的回答，等于把上一笔的
+/// 成交读成这一笔的。取到泵线程的死讯说明 Worker 已经不在了，这条请求根本没发出去，
+/// 不能顶着「提交结果未知」的口径让人以为动过账户。残留行的内容不进错误文本，只报长度。
+enum Turn {
+    Clear,
+    Stale(usize),
+    Exited(String),
+}
+
+fn take_turn(responses: &Receiver<Result<String, String>>) -> Turn {
+    match responses.try_recv() {
+        Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => Turn::Clear,
+        Ok(Ok(line)) => Turn::Stale(line.len()),
+        Ok(Err(message)) => Turn::Exited(message),
     }
 }
 
@@ -158,6 +181,24 @@ fn ccxt_worker_config(config_path: &str) -> Result<Value, String> {
 
 impl CcxtRpc for CcxtProcessClient {
     fn call(&mut self, request: Value) -> Result<Value, String> {
+        // 开口之前先确认通道干净（V11 R7-f）：留着上一轮的东西就说明相位已经错位，
+        // 这一轮请求不发出、不重试，只把错位报出去并停用这个 Worker——让它接着答下一轮，
+        // 就是把上一笔的成交读成这一笔的。
+        match take_turn(&self.responses) {
+            Turn::Clear => {}
+            Turn::Stale(bytes) => {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return Err(format!(
+                    "CCXT Worker 通道里残留着一行上一轮的应答（{bytes} 字节），相位已错位，这条请求没有发出"
+                ));
+            }
+            Turn::Exited(message) => {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return Err(format!("{message}，这条请求没有发出"));
+            }
+        }
         let payload = serde_json::to_string(&request)
             .map_err(|error| format!("编码 CCXT Worker 请求失败: {error}"))?;
         let stdin = self
@@ -793,6 +834,41 @@ mod tests {
         let _ = std::fs::write(&path, r#"{"credential_env":{"secret":"BAD=VARIABLE"}}"#);
         assert!(ccxt_worker_environment(&path.to_string_lossy()).is_err());
         let _ = std::fs::remove_file(path);
+    }
+
+    /// 一问一答的相位（V11 R7-f）：只有空队列才算干净；留着上一轮的应答就是残留，
+    /// 留着泵线程的死讯就原话转出去。两头都是判据：把 `Disconnected` 误读成残留，等于
+    /// Worker 活得好好的却白白停用一次；把残留误读成干净，就是错位读数的那条路。
+    #[test]
+    fn ccxt_rpc_channel_reports_what_is_left_before_the_next_request() {
+        let (sender, responses) = mpsc::sync_channel::<Result<String, String>>(1);
+        assert!(
+            matches!(take_turn(&responses), Turn::Clear),
+            "空队列不该报残留"
+        );
+        let leftover = "{\"ok\":true}".to_string();
+        let bytes = leftover.len();
+        sender.send(Ok(leftover)).unwrap();
+        assert!(
+            matches!(take_turn(&responses), Turn::Stale(size) if size == bytes),
+            "残留的那一行要按长度报出去"
+        );
+        assert!(
+            matches!(take_turn(&responses), Turn::Clear),
+            "一次错位只拒一轮，第二问要回到干净相位"
+        );
+        drop(sender);
+        assert!(
+            matches!(take_turn(&responses), Turn::Clear),
+            "泵线程已收摊且队列空，不是残留——请求照写，读侧自会报通道断开"
+        );
+
+        let (sender, responses) = mpsc::sync_channel::<Result<String, String>>(1);
+        sender.send(Err("Worker 已退出".to_string())).unwrap();
+        assert!(
+            matches!(take_turn(&responses), Turn::Exited(message) if message == "Worker 已退出"),
+            "死讯要原话转出去，不能当成干净的队列"
+        );
     }
 
     struct FakeRpc {

@@ -10,6 +10,7 @@ use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 use std::collections::BTreeMap;
 use std::net::{Shutdown, TcpStream};
+use std::sync::atomic::AtomicBool;
 
 #[derive(Debug)]
 struct NoCertificateResolver;
@@ -34,7 +35,11 @@ fn control_and_query_routes_are_audited() {
     assert_eq!(service.handle("GET", "/health", "", 1).status, 200);
     let metrics = service.handle("GET", "/metrics", "", 1);
     assert_eq!(metrics.status, 200);
-    assert!(metrics.body.contains("qx_api_requests_total"));
+    // 行首而不是"文里出现过"：整份文本挤成一行时 `contains` 依旧绿，Prometheus 却一条样本都取不到。
+    assert!(metrics
+        .body
+        .lines()
+        .any(|line| line.starts_with("qx_api_requests_total ")));
     let command = ControlCommand {
         command_id: 1,
         request_id: "api-1".into(),
@@ -61,6 +66,48 @@ fn metrics_route_appends_supervised_worker_metrics() {
     let metrics = service.handle("GET", "/metrics", "", 1);
     assert_eq!(metrics.status, 200);
     assert!(metrics.body.contains("qx_worker_up{worker=\"relay\"} 1"));
+}
+
+/// `/metrics` 必须是**多行** Prometheus 文本：这一版之前每格之间写的是两字符的字面反斜杠加 n，
+/// 端点照样回 200、`contains` 照样绿，而 `deploy/prometheus/qianxing-alerts.yml` 的六条告警
+/// 一条都取不到样本——对外通告健康、实际链路断开（V11 R7-i）。按行断言，字面 `\n` 一出现就红。
+#[test]
+fn metrics_exposition_puts_every_metric_on_its_own_line() {
+    let service = ApiService::new(ApiState::default());
+    assert_eq!(service.handle("GET", "/health", "", 1).status, 200);
+    let body = service.handle("GET", "/metrics", "", 2).body;
+    assert!(!body.contains("\\n"), "指标之间仍是字面反斜杠加 n：{body}");
+    let samples: Vec<&str> = body.lines().filter(|line| !line.starts_with('#')).collect();
+    assert_eq!(
+        samples,
+        [
+            "qx_api_requests_total 2",
+            "qx_api_rate_limit_rejected_total 0",
+            "qx_api_authentication_rejected_total 0",
+            "qx_api_connections_rejected_total 0",
+        ]
+    );
+    // 每一格样本都要有自己的一对 HELP/TYPE；行数一少就说明有两格被粘回同一行。
+    assert_eq!(body.lines().count(), samples.len() * 3, "{body}");
+}
+
+/// 追加侧的同一条判据：worker 块由 `worker_metrics_provider` 拼在 API 摘要之后，上一版 API
+/// 摘要的末行没有换行，于是 worker 的第一格被粘成 `..._rejected_total 0qx_worker_up{...}`——
+/// 一个谁都不解析的指标名（V11 R7-i）。
+#[test]
+fn appended_worker_metrics_start_on_a_fresh_line() {
+    let service = ApiService::new(ApiState::default())
+        .with_worker_metrics_provider(|| "qx_worker_up{worker=\"relay\"} 1\n".into());
+    let body = service.handle("GET", "/metrics", "", 1).body;
+    let lines: Vec<&str> = body.lines().collect();
+    assert_eq!(
+        lines.last().copied(),
+        Some("qx_worker_up{worker=\"relay\"} 1")
+    );
+    assert!(
+        !lines.iter().any(|line| line.contains("0qx_worker")),
+        "worker 块被粘在上一格的尾巴上：{lines:?}"
+    );
 }
 
 /// 端点侧的"未算 ≠ 零"（V11 Q67，Q70 把权益并进来）：同一份快照在 `/account/balances` 上必须把算出来
@@ -981,6 +1028,143 @@ fn websocket_server_sends_connection_and_event_batches() {
     assert!(response.starts_with("HTTP/1.1 101 Switching Protocols"));
     assert!(response.contains("qianxing"));
     assert!(response.contains("events"));
+}
+
+/// 连上一条 `/stream` 并读到握手后的第一帧：这一刻服务端的连接线程一定停在事件循环里，
+/// 于是这一格长连接名额被实实在在占住——上界的判据要有一条真占着门的连接才数得清。
+fn hold_open_websocket(address: std::net::SocketAddr) -> TcpStream {
+    let mut client = TcpStream::connect(address).unwrap();
+    client
+        .write_all(
+            b"GET /stream?account_id=account-a&venue_id=paper HTTP/1.1\r\nHost: localhost\r\nUpgrade: WebSocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+        )
+        .unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut seen = Vec::new();
+    loop {
+        let mut chunk = [0_u8; 4096];
+        let count = client.read(&mut chunk).unwrap();
+        assert!(count > 0, "升级之后服务端一帧都没吐");
+        seen.extend_from_slice(&chunk[..count]);
+        // 读到 `connected` 帧才算把首帧吃干净：后面的"这条流还开着"那半才不被残留字节骗过。
+        if String::from_utf8_lossy(&seen).contains("qianxing") {
+            break;
+        }
+    }
+    client
+}
+
+/// 长连接上界（V11 R7-e）：接一条占一格，占满就当场 503 而不是再开一颗线程；连接收尾时那一格
+/// 要能回来，否则上界会变成"一次之后永远 503"。用例把上界调到 1，因为生产的 64 格要 64 颗线程
+/// 才撞得到门——那是夹具的代价，不是判据。
+#[test]
+fn live_connection_ceiling_refuses_and_gives_the_slot_back() {
+    let service = ApiService::new(ApiState::default()).with_max_live_connections(1);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopping = Arc::clone(&stop);
+    let server = service.clone();
+    let worker = std::thread::spawn(move || {
+        server.serve(listener, 1, move || stopping.load(Ordering::Acquire))
+    });
+
+    let holder = hold_open_websocket(address);
+    let mut refused = TcpStream::connect(address).unwrap();
+    refused
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    refused
+        .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .unwrap();
+    let mut refusal = String::new();
+    refused.read_to_string(&mut refusal).unwrap();
+    // 首行连原因短语一起钉：503 此前不在状态原因表里，线上印成 "Internal Server Error"。
+    assert!(
+        refusal.starts_with("HTTP/1.1 503 Service Unavailable"),
+        "名额满时没回 503：{refusal}"
+    );
+    assert_eq!(service.metrics().connections_rejected_total, 1);
+
+    drop(holder);
+    let mut accepted = None;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let mut probe = TcpStream::connect(address).unwrap();
+        probe
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        probe
+            .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let mut head = String::new();
+        if probe.read_to_string(&mut head).is_ok() && head.starts_with("HTTP/1.1 200") {
+            accepted = Some(head);
+            break;
+        }
+    }
+    assert!(accepted.is_some(), "第一条收尾后名额没有回来：{refusal}");
+    stop.store(true, Ordering::Release);
+    worker.join().unwrap().unwrap();
+}
+
+/// 停机令牌对**正在场**的长连接同样生效（V11 R7-e）：过去只有 accept 循环读它，一条静默不关
+/// （半开、不发 FIN）的流会一直占到进程退出，并把一格名额一起占死。这里客户端一帧 close 都不发。
+#[test]
+fn websocket_stream_terminates_on_the_stop_token_without_client_close() {
+    let service = ApiService::new(ApiState::default());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopping = Arc::clone(&stop);
+    let server = service.clone();
+    let worker = std::thread::spawn(move || {
+        server.serve(listener, 1, move || stopping.load(Ordering::Acquire))
+    });
+    let mut client = hold_open_websocket(address);
+    client
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    let mut idle = [0_u8; 16];
+    let before = client.read(&mut idle);
+    let idle_kind = before.as_ref().err().map(|error| error.kind());
+    assert!(
+        matches!(
+            idle_kind,
+            Some(std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)
+        ),
+        "令牌还没置起这条流就先收了（读到的却是 {before:?}），下面那半就没有判据了"
+    );
+
+    stop.store(true, Ordering::Release);
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut closed = false;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match client.read(&mut idle) {
+            // 服务端 return 之后连接线程结束、socket 关闭：读侧看到的是 EOF。
+            Ok(0) => {
+                closed = true;
+                break;
+            }
+            Ok(_) => continue,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => panic!("读停机后的流失败：{error}"),
+        }
+    }
+    assert!(closed, "停机令牌置起后，服务端仍然没有收掉这条 WebSocket");
+    worker.join().unwrap().unwrap();
 }
 
 /// 逐字节挤的请求。`gap` 决定每轮 `read` 的耗时，`trailing` 决定"头部之后还愿意发

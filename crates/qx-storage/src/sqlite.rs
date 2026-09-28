@@ -585,8 +585,10 @@ impl SqliteOutboxStore {
         transaction.commit().map_err(map_sqlite)
     }
 
-    pub fn available(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
+    pub fn available(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
         let connection = open(&self.path)?;
+        // 用尽投递预算的行排在最后再截页：它们仍要被运维看得见（K2 的人工出口），
+        // 但不能占住页首把后面投得出去的事件挤出一页——阈值由 `?2` 绑定，SQL 里不写第二个 8。
         let mut statement = connection
             .prepare(
                 "SELECT e.event_id, e.topic, e.partition_key, e.sequence, e.schema_version,
@@ -594,23 +596,32 @@ impl SqliteOutboxStore {
                  FROM qx_outbox_events e
                  LEFT JOIN qx_outbox_leases l ON l.event_id = e.event_id
                  WHERE l.event_id IS NULL OR CAST(l.expires_ts AS INTEGER) <= CAST(?1 AS INTEGER)
-                 ORDER BY CAST(e.created_ts AS INTEGER), CAST(e.sequence AS INTEGER), e.event_id",
+                 ORDER BY CAST(e.attempts AS INTEGER) >= CAST(?2 AS INTEGER),
+                          CAST(e.created_ts AS INTEGER), CAST(e.sequence AS INTEGER), e.event_id
+                 LIMIT ?3",
             )
             .map_err(map_sqlite)?;
         let rows = statement
-            .query_map(params![db_string(now)], |row| {
-                Ok(OutboxEvent {
-                    event_id: row.get(0)?,
-                    topic: row.get(1)?,
-                    partition_key: row.get(2)?,
-                    sequence: parse_sqlite_u64(&row.get::<_, String>(3)?)?,
-                    schema_version: row.get::<_, i64>(4)? as u32,
-                    trace_id: row.get(5)?,
-                    payload: row.get(6)?,
-                    created_ts: parse_sqlite_u64(&row.get::<_, String>(7)?)?,
-                    attempts: parse_sqlite_u64(&row.get::<_, String>(8)?)? as u32,
-                })
-            })
+            .query_map(
+                params![
+                    db_string(now),
+                    db_string(crate::OUTBOX_MAX_ATTEMPTS as u64),
+                    i64::try_from(limit).unwrap_or(i64::MAX),
+                ],
+                |row| {
+                    Ok(OutboxEvent {
+                        event_id: row.get(0)?,
+                        topic: row.get(1)?,
+                        partition_key: row.get(2)?,
+                        sequence: parse_sqlite_u64(&row.get::<_, String>(3)?)?,
+                        schema_version: row.get::<_, i64>(4)? as u32,
+                        trace_id: row.get(5)?,
+                        payload: row.get(6)?,
+                        created_ts: parse_sqlite_u64(&row.get::<_, String>(7)?)?,
+                        attempts: parse_sqlite_u64(&row.get::<_, String>(8)?)? as u32,
+                    })
+                },
+            )
             .map_err(map_sqlite)?;
         rows.map(|row| {
             let event = row.map_err(map_sqlite)?;
@@ -618,6 +629,21 @@ impl SqliteOutboxStore {
             Ok(event)
         })
         .collect()
+    }
+
+    /// 不问页数、不读 payload 的停摆条数：`available` 被 `limit` 截断后，逐行数出来的
+    /// parked 只是这一页的观察值，而运维要的是库里的状态量（V11 R7-d）。
+    pub fn count_parked(&self) -> Result<u64, StorageError> {
+        let connection = open(&self.path)?;
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM qx_outbox_events
+                 WHERE CAST(attempts AS INTEGER) >= CAST(?1 AS INTEGER)",
+                params![db_string(crate::OUTBOX_MAX_ATTEMPTS as u64)],
+                |row| row.get(0),
+            )
+            .map_err(map_sqlite)?;
+        Ok(count as u64)
     }
 
     pub fn claim(
@@ -870,8 +896,12 @@ impl OutboxStore for SqliteOutboxStore {
         self.append(event)
     }
 
-    fn available_outbox(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
-        self.available(now)
+    fn available_outbox(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
+        self.available(now, limit)
+    }
+
+    fn count_parked_outbox(&self) -> Result<u64, StorageError> {
+        self.count_parked()
     }
 
     fn claim_outbox(

@@ -787,12 +787,12 @@ fn file_outbox_is_idempotent_fenced_and_retryable() {
     store
         .retry("order-1", "relay-b", second.fencing_token, 17)
         .unwrap();
-    assert_eq!(store.available(17).unwrap()[0].attempts, 1);
+    assert_eq!(store.available(17, usize::MAX).unwrap()[0].attempts, 1);
     let third = store.claim("order-1", "relay-a", 17, 5).unwrap();
     store
         .ack("order-1", "relay-a", third.fencing_token, 18)
         .unwrap();
-    assert!(store.available(18).unwrap().is_empty());
+    assert!(store.available(18, usize::MAX).unwrap().is_empty());
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -847,7 +847,7 @@ fn outbox_relay_publishes_then_acknowledges_and_retries_failures() {
     )
     .unwrap();
     assert_eq!(failing.pump_once(1, 10).unwrap().retried, 1);
-    assert_eq!(store.available(1).unwrap()[0].attempts, 1);
+    assert_eq!(store.available(1, usize::MAX).unwrap()[0].attempts, 1);
     let working = OutboxRelay::new(
         store.clone(),
         Publisher {
@@ -860,7 +860,7 @@ fn outbox_relay_publishes_then_acknowledges_and_retries_failures() {
     .unwrap();
     let report = working.pump_once(2, 10).unwrap();
     assert_eq!(report.published, 1);
-    assert!(store.available(2).unwrap().is_empty());
+    assert!(store.available(2, usize::MAX).unwrap().is_empty());
     let _ = std::fs::remove_dir_all(root);
 }
 

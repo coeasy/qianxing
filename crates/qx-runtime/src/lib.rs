@@ -23,9 +23,8 @@ mod worker_policy;
 
 pub use data_binding::{RuntimeDatasetBinding, RuntimeResearchBinding};
 pub use pipeline::{
-    order_from_submit_command, pipeline_path, LiveEventPipeline, LivePipelineSnapshot,
-    PipelineMetricsSnapshot, RuntimeBalanceDiscrepancy, RuntimeEventEnvelope, RuntimeExternalEvent,
-    RuntimeIngestReceipt,
+    order_from_submit_command, LiveEventPipeline, LivePipelineSnapshot, PipelineMetricsSnapshot,
+    RuntimeBalanceDiscrepancy, RuntimeEventEnvelope, RuntimeExternalEvent, RuntimeIngestReceipt,
 };
 pub use runtime_config::*;
 pub use strategy_contract::*;

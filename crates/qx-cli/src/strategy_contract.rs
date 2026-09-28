@@ -756,7 +756,9 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
             let worker = match supervisor.spawn_worker(&api_worker_id, move |context| {
                 context.heartbeat(runtime_timestamp_ms())?;
                 service
-                    .serve(listener, runtime_timestamp_ms(), || context.should_stop())
+                    .serve(listener, runtime_timestamp_ms(), move || {
+                        context.should_stop()
+                    })
                     .map_err(|error| format!("API 服务停止: {error}"))
             }) {
                 Ok(worker) => worker,
@@ -828,7 +830,7 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
                         &store,
                         &identity_store,
                         runtime_timestamp_ms(),
-                        || context.should_stop(),
+                        move || context.should_stop(),
                     )
                     .map_err(|error| format!("mTLS API 服务停止: {error}"))
             }) {

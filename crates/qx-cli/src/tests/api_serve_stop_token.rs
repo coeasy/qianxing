@@ -26,7 +26,9 @@ fn serve_returns_once_the_supervisor_requests_shutdown() {
     let worker = supervisor
         .spawn_worker(&api_worker_id, move |context| {
             service
-                .serve(listener, runtime_timestamp_ms(), || context.should_stop())
+                .serve(listener, runtime_timestamp_ms(), move || {
+                    context.should_stop()
+                })
                 .map_err(|error| format!("API 服务停止: {error}"))?;
             flag.store(true, std::sync::atomic::Ordering::Release);
             Ok(())

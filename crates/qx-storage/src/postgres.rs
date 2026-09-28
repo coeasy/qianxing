@@ -810,11 +810,13 @@ impl PostgresOutboxStore {
         transaction.commit().map_err(pg_error)
     }
 
-    pub fn available(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
+    pub fn available(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
         let mut client = self.storage.lock_client()?;
         // `created_ts`/`sequence`/`expires_ts` 都是 u64 存 TEXT，字典序不等于序号序：
         // 同一毫秒落盘的一串事件里，sequence 10 会排在 2 前面，把分区内的投递顺序念反。
         // 口径与 SQLite/文件后端一致——三元组全部数字序（V11 R7-2）。
+        // 用尽投递预算的行排到最后再截页：它们仍留在候选集里等人工确认（K2 的出口），
+        // 但不能占住页首把后面投得出去的事件挤出一页。阈值走 `$2` 绑定，SQL 里不写第二个 8。
         let rows = client
             .query(
                 "SELECT e.event_id, e.topic, e.partition_key, e.sequence, e.schema_version,
@@ -822,8 +824,14 @@ impl PostgresOutboxStore {
                  FROM qx_outbox_events e
                  LEFT JOIN qx_outbox_leases l ON l.event_id = e.event_id
                  WHERE l.event_id IS NULL OR l.expires_ts::numeric <= $1::numeric
-                 ORDER BY e.created_ts::numeric, e.sequence::numeric, e.event_id",
-                &[&u64_text(now)],
+                 ORDER BY e.attempts::numeric >= $2::numeric,
+                          e.created_ts::numeric, e.sequence::numeric, e.event_id
+                 LIMIT $3",
+                &[
+                    &u64_text(now),
+                    &u64_text(crate::OUTBOX_MAX_ATTEMPTS as u64),
+                    &i64::try_from(limit).unwrap_or(i64::MAX),
+                ],
             )
             .map_err(pg_error)?;
         rows.into_iter()
@@ -844,6 +852,20 @@ impl PostgresOutboxStore {
                 Ok(event)
             })
             .collect()
+    }
+
+    /// 不问页数、不读 payload 的停摆条数（V11 R7-d）：候选集被 `limit` 截断后逐行数出的
+    /// parked 只是这一页的观察值，而运维面上「有几条发不出去」要的是库里的状态量。
+    pub fn count_parked(&self) -> Result<u64, StorageError> {
+        let mut client = self.storage.lock_client()?;
+        let row = client
+            .query_one(
+                "SELECT COUNT(*) FROM qx_outbox_events WHERE attempts::numeric >= $1::numeric",
+                &[&u64_text(crate::OUTBOX_MAX_ATTEMPTS as u64)],
+            )
+            .map_err(pg_error)?;
+        let count: i64 = row.get(0);
+        Ok(count as u64)
     }
 
     pub fn claim(
@@ -1021,8 +1043,12 @@ impl OutboxStore for PostgresOutboxStore {
         self.append(event)
     }
 
-    fn available_outbox(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
-        self.available(now)
+    fn available_outbox(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
+        self.available(now, limit)
+    }
+
+    fn count_parked_outbox(&self) -> Result<u64, StorageError> {
+        self.count_parked()
     }
 
     fn claim_outbox(

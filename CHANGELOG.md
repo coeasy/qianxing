@@ -127,7 +127,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   `consume_batch_with_projection`、耕禄的 `sharpe_ratio()` 等——分界是"先找能力再找名字"，
   删掉唯一实现会把部署手册里那条命令变成没有对应实现的话。
 - **API 的 accept 循环读停机令牌**（J2）：`serve` 此前是 `for stream in listener.incoming()`，阻塞迭代器，
-  令牌翻起来也不回来。新增 `fn accept_polling`（`crates/qx-api/src/lib.rs:1891`）作为两条长驻入口
+  令牌翻起来也不回来。新增 `fn accept_polling`（`crates/qx-api/src/lib.rs:1989`）作为两条长驻入口
   （明文 `serve` 与 `serve_tls_mtls_with_stores`）共用的那颗循环：监听套接字转非阻塞、每轮先问令牌、
   `WouldBlock` 时按 20 ms 节拍睡、被接出来的流显式转回阻塞再设读超时。两处生产装配传
   `|| context.should_stop()`，与其余 worker 共用监督器那一枚令牌；参数是回调而不是 `Arc<AtomicBool>`，
@@ -159,7 +159,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   （进程内总线没有可发布的整体摘要，把总线名填进 `*_digest` 是外销一个不是摘要的摘要），无键读路
   拿不到镜像投影时"宁可不给信封"而不是编一个 0。§37.5 第 2 条（S9）随之关闭。
 - **原子投影链的登记补上读侧那一半**（L3）：J1 只登记了写侧三颗，L3 复核时把读侧 `load_projection`
-  （`crates/qx-storage/src/lib.rs:803` 与三本后端各一颗）与那条实际走的不带投影的 `consume_batch` 一起点名——那份落盘的投影
+  （`crates/qx-storage/src/lib.rs:807` 与三本后端各一颗）与那条实际走的不带投影的 `consume_batch` 一起点名——那份落盘的投影
   至今只有 `outbox_backend_semantics.rs` 的两条契约用例读过，**没有生产读者**。登记改为七条行号锁，
   漂了就红：漂掉的登记会把读者支到另一段代码上。
 - **`shutdown_timeout_ms` 第一次真的接成上界**（L4）：托管收尾从 supervisor 的 `child.wait()`
@@ -324,7 +324,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   （`crates/qx-plugin/src/lib.rs:55`）与 `shutdown_timeout_ms`（:56）被 `validate`（:86）问非 0、被
   `canonical_hash`（`crates/qx-plugin/src/lib.rs:143`）计入指纹——两件事都不构成等待，仓内没有一处把它们换算成 `Duration`，是 L4 的
   同族漏网。README 两处（crate 表速查行 :38、"三条容易被读过头的边界" :437）改到与实际可达性同口径；
-  `plugin_claim_honesty_check`（`tools/check_architecture.py:10566`）带一颗**反向排除**，正则把 `config.shutdown_timeout_ms` 那处合法的
+  `plugin_claim_honesty_check`（`tools/check_architecture.py:10776`）带一颗**反向排除**，正则把 `config.shutdown_timeout_ms` 那处合法的
   真接线排除掉，撤掉它门禁当场把真接线读成违规。
 - **三处契约面同时补齐，且契约只有一份**（R4-4）：`on_order_update` 除适配器自身之外仓内零派发，判据把
   这份零派发钉成在册状态而不是让它伪装成一条活链；`schemas/strategy_api_v1.schema.json` 此前**零读者且与
@@ -353,7 +353,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   **照抄封顶的净效果不是省内存，是把代价从内存换成一份再也打不开的长日志。** 本轮登记"刻意的不同"与两头
   代价各一颗判据（:4213 / :4231）。
 - **API 自己的 HTTP 读侧有了整体截止**（R4-9）：O7 收的是 WSS 握手块，这颗是同族的另一侧。`serve_stream_as`
-  （`crates/qx-api/src/lib.rs:1777`）在 :1787 把 `HTTP_REQUEST_BUDGET`（:2146，5 秒）交给 `read_request`，
+  （`crates/qx-api/src/lib.rs:1874`）在 :1884 把 `HTTP_REQUEST_BUDGET`（:2276，5 秒）交给 `read_request`，
   截止排在循环里**每一轮 read 之前**；此前只有单次 read 的 100 ms 套接字超时——一个每次挤 1 字节的客户端
   可以把一条连接无限占住，而 `/ready` 那侧一切正常。两颗常驻用例
   （`a_dribbling_client_hits_the_overall_budget_not_the_size_cap` :3378 与
@@ -373,8 +373,8 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   `/control/audit` 一次交出 `records` 与 `retirement` 两格。"什么算终态"只有一颗
   `CommandStatus::is_final`（qx-control/src/lib.rs:132），退场、裁剪、恢复期配对三处都问它。
 - **哈希审计链的两半都接上了**（R5-2，即 H3 的裁决落地；本轮先把定性改口：此前说的"写侧有、读侧无人验"
-  是错的，当时**写侧与读侧都不存在**）：写侧 `chain_audit`（qx-storage/src/lib.rs:1538）是三本后端唯一写入者，
-  各自在已经持有锁/事务的 `transact_control` 里接一次（file/state.rs:88、sqlite.rs:1046、postgres.rs:1498），
+  是错的，当时**写侧与读侧都不存在**）：写侧 `chain_audit`（qx-storage/src/lib.rs:1542）是三本后端唯一写入者，
+  各自在已经持有锁/事务的 `transact_control` 里接一次（file/state.rs:88、sqlite.rs:1080、postgres.rs:1528），
   `AuditChainWriter` 的 `tail` / `drop_from` / `append_entries` 三个动作都不越出那次事务；顺序是**链先落、
   状态后落**，崩在中间留下的残尾由下一笔事务按检查点截掉（`truncate_from_unlocked`，只认 65_536 字节尾部窗口），
   检查点比对失败直接失败关闭——**写不进链的命令也不会写进状态**。读侧 `verify_audit_chain`（:1491）判两件事：
@@ -404,9 +404,9 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   （:381），验收行把 `new_orders={}` 念出来（:424）。`paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 跑两轮并断言订单总数仍是 1。
 - **入队失败不再被念成已交给执行者**（R6-3）：`POST /control/commands` 把命令写进 store 之后
   `let _ = enqueuer(...)` 吞掉队列失败仍回 202，而 202 那句话的内容正是"已经交给执行者"。现在失败当场 503 +
-  错误体点名 `control_command_not_queued`（crates/qx-api/src/lib.rs:1738），受理那一半不回滚（记录仍在审计里等补投），
+  错误体点名 `control_command_not_queued`（crates/qx-api/src/lib.rs:1819），受理那一半不回滚（记录仍在审计里等补投），
   装配处的接线格子 `with_command_enqueuer`（crates/qx-cli/src/api_service.rs:106）把入队错误原样上抛；常驻用例
-  `a_command_that_cannot_be_queued_answers_503_not_202`（crates/qx-api/src/tests.rs:323）两面都判——换成一写得进
+  `a_command_that_cannot_be_queued_answers_503_not_202`（crates/qx-api/src/tests.rs:370）两面都判——换成一写得进
   的队列必须照常 202，否则判据就退化成"什么都不受理"也照样绿。
 - **"什么算终态"在跨进程那一侧也不再各写一遍**（R6-4）：worker 重放审计时四处各自 `matches!` 过状态，现在
   `command_is_final`（crates/qx-cli/src/spread.rs:499）是 qx-cli 侧唯一入口，四个调用者
@@ -415,17 +415,17 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
 - **死信重放不再是"取一页再筛"**（R7-1）：`replay_dead_letter_from_store`（`crates/qx-cli/src/event_pipeline.rs:661`）
   此前按窗口取最旧的一页、再在那一页里筛点名的 `event_id`，于是一份确实躺在死信表里的事件被念成"找不到"——
   危害是假阴性而不是慢：运维按这一句决定不用管，那笔已经放弃自动重试的投递就静默留在原地。现在 trait 只留点查
-  一颗入口 `dead_letter`（`crates/qx-storage/src/lib.rs:707`），三份后端各自取 `attempts` 最大的那一行（重放会追加
+  一颗入口 `dead_letter`（`crates/qx-storage/src/lib.rs:711`），三份后端各自取 `attempts` 最大的那一行（重放会追加
   新行，最大次数才是最后一次入账）：`max_by_key`（`crates/qx-storage/src/file/consumers.rs:192`）、
   `ORDER BY attempts DESC LIMIT 1`（`crates/qx-storage/src/sqlite.rs:337`）、同型的 `dead_letter`（`crates/qx-storage/src/postgres.rs:491`）；
   契约用例共用 `assert_dead_letter_point_query`（`crates/qx-storage/tests/outbox_backend_semantics.rs:56`），夹具刻意跨过
   2 与 10 的数位边界——那同时是"取最大"对"取最新"、以及 R7-2 那颗字典序的分界。
 - **TEXT 存的 u64 列在三处排序上收进同一口径**（R7-2）：`created_ts`、`enqueued_ts`、`command_id` 在文件后端是数字、
   在 SQL 后端是 TEXT 里存着的数字，于是 `ORDER BY` 给的是字符串序。三处排序各有一份 file/sqlite/postgres 实现，收的是
-  同一条口径：sqlite 侧 `ORDER BY CAST(e.created_ts AS INTEGER)`（`crates/qx-storage/src/sqlite.rs:597`）与
-  `ORDER BY CAST(c.enqueued_ts AS INTEGER)`（`crates/qx-storage/src/sqlite.rs:1177`），Rust 侧
-  `jobs.sort_by_key`（`crates/qx-storage/src/sqlite.rs:1664`）、`events.sort_by_key`（`crates/qx-storage/src/file/outbox.rs:58`）、
-  `commands.sort_by_key`（`crates/qx-storage/src/lib.rs:1220`）；Postgres 不把判据搬回应用层重排，而是换表达式索引：
+  同一条口径：sqlite 侧 `CAST(e.created_ts AS INTEGER)`（`crates/qx-storage/src/sqlite.rs:600`）与
+  `ORDER BY CAST(c.enqueued_ts AS INTEGER)`（`crates/qx-storage/src/sqlite.rs:1211`），Rust 侧
+  `jobs.sort_by_key`（`crates/qx-storage/src/sqlite.rs:1698`）、`group.sort_by_key`（`crates/qx-storage/src/file/outbox.rs:67`）、
+  `commands.sort_by_key`（`crates/qx-storage/src/lib.rs:1224`）；Postgres 不把判据搬回应用层重排，而是换表达式索引：
   `qx_outbox_pending_numeric_idx`（`crates/qx-storage/src/postgres.rs:302`）替掉旧的裸列索引那一句
   （`crates/qx-storage/src/postgres.rs:301`）——只改 `ORDER BY`、留着旧索引，等于让规划器继续按一串没人按的键做写放大。
 - **快照键表的行内自指 id 由约束兜住**（R7-3）：`state_hash` 只吃 map 的键，行内那一份 `order_id`/`fill_id`/`transfer_id`
@@ -438,9 +438,9 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   升级前写下的调度状态与队列信封还带着那三格，读崩旧状态不是收口，
   `retired_job_spec_keys_are_ignored_by_the_loader`（`crates/qx-scheduler/src/lib.rs:830`）钉的就是这个选择。
 - **`/control/audit` 的流水与摘要出自同一次现读**（R7-8）：H1 收的是"念 boot 那一份"，本轮收另一半——trait 侧
-  `control_retirement`（`crates/qx-api/src/lib.rs:2126`）此前分两次读，两次读会把"这一页窗口"和"窗口外累计"念成
-  两个时刻的账。降级从此只住在唯一出口里：`control_plane_last_known`（`crates/qx-api/src/lib.rs:1198`），
-  `control_audit`（`crates/qx-api/src/lib.rs:2119`）与摘要各取自己那一格、共用同一份现读结果。
+  `control_retirement`（`crates/qx-api/src/lib.rs:2230`）此前分两次读，两次读会把"这一页窗口"和"窗口外累计"念成
+  两个时刻的账。降级从此只住在唯一出口里：`control_plane_last_known`（`crates/qx-api/src/lib.rs:1269`），
+  `control_audit`（`crates/qx-api/src/lib.rs:2223`）与摘要各取自己那一格、共用同一份现读结果。
 - **锁的年龄只由判据交出**（R7-9）：`decide_lock`（`crates/qx-core/src/file_lock.rs:51`）已经收了"同一场竞争只接管一次"，
   本轮收的是抢锁循环在 `Takeover` 支里自己再 `age_of` 一次——同一个判断的两种写法，删不删取决于两次读之间的抖动。
   现在两条支路只按判据带回来的年龄说话（`crates/qx-core/src/file_lock.rs:143`、`crates/qx-core/src/file_lock.rs:157`）。
@@ -646,13 +646,13 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   不在"的判据（:2473 / :2967 / :4545 / :5977）仍按路径只读 `lib.rs`，其中 :5977 正是 R6-3 新写的那颗——四处改成
   `source_with_tests` 成对读（§54.6）。
 - **四份文本的 `path:line` 第一次由同一颗判据逐颗核对**（R6-7 / R6-8 / R6-9）：起点是白皮书、变更日志与
-  方案书里的行号没人量过（R6-7 逐颗复位），落点是把台账那套 `capabilities_citation_check`（`tools/check_architecture.py:9534`）泛化成
-  一颗共用扫描器 `citation_audit`（`tools/check_architecture.py:9394`）加文档侧薄壳 `doc_citation_check`（`tools/check_architecture.py:9548`），
-  常驻门禁 532 项 → **550 项全绿**（三份长文档各六颗；地板逐份钉在 `DOC_CITATION_TARGETS`（`tools/check_architecture.py:9336`）里：
+  方案书里的行号没人量过（R6-7 逐颗复位），落点是把台账那套 `capabilities_citation_check`（`tools/check_architecture.py:9744`）泛化成
+  一颗共用扫描器 `citation_audit`（`tools/check_architecture.py:9604`）加文档侧薄壳 `doc_citation_check`（`tools/check_architecture.py:9758`），
+  常驻门禁 532 项 → **550 项全绿**（三份长文档各六颗；地板逐份钉在 `DOC_CITATION_TARGETS`（`tools/check_architecture.py:9546`）里：
   方案书 580 引用 / 50 带名、变更日志 220/25、白皮书 410/60，台账沿用 90/20）。搬过来第一份取证就是它自己
   把 5 处文档锚点打红——门禁长一行，指进门禁的行号就集体下移一次；那不是判据过敏，是"文档按行号引用代码"
   这件事本身的代价。三口径（名字右边界、破折号区间远端、裸引用位置化归属）之外，R6-9 再把裸引用的归属扩到
-  "同一行只点了文件名、没带行号"那一颗：`CAP_BARE_PATH`（`tools/check_architecture.py:9316`）一次多量到 61 颗、当场红 12 颗，
+  "同一行只点了文件名、没带行号"那一颗：`CAP_BARE_PATH`（`tools/check_architecture.py:9526`）一次多量到 61 颗、当场红 12 颗，
   其中一颗是"数字恰好落在误认文件长度之内"的假通过。取证 6 颗变异、杀 6、存活 0，每颗在三种判据形状下逐列
   回放（明细在 §54.9–§54.12）。修完仍剩 349 颗无人核对的裸行号，按限制登记在 `maturity/capabilities.yaml`（R7 轮按同一条规则复测仍是 349，逐份拆分见 §55.11）。
 - **常驻门禁 550 项 → 553 项全绿**（本轮新增三颗）：`JobSpec 字段名单可解析，且不含三格只有写侧的退役键`
@@ -841,7 +841,7 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   颗判据的另一格还遇到过无效探针：`for client_id in []` 直接 `error[E0282]`，编译红不是一次判定，换成
   `.iter().take(0)` 与 `&new_client_ids[..0]` 两颗能编译的写法才拿到证据（§54.7）。
 - **一条扫描结论里"后果"那一半也要量**：R6-5 报上来的时候写作"worker 拿不到 ack 会无限重投"，量下来不是——
-  `QueuedControlCommand`（crates/qx-storage/src/lib.rs:1100）没有重试计数，但 worker 拿到 `Err(UnknownCommand)`
+  `QueuedControlCommand`（crates/qx-storage/src/lib.rs:1104）没有重试计数，但 worker 拿到 `Err(UnknownCommand)`
   就以非零码退出，`supervise_workers`（crates/qx-orchestrator/src/lib.rs:224）的 `loop` 在子进程退出时
   `return Err(...)`（:298）停掉其余 worker：**一次整店停机**而不是空转。本轮按实测改口才写进 §54.5，没有把那句
   抄进文档；同一族更早的一次是 §53.1 里那句"写侧有、读侧无人验"（当时写侧也不存在）。
@@ -853,7 +853,7 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   于是"对得上"。两处的修法都不是再加判据，而是**把名字请回同一行**——点名只对点了名的引用有效。
   这一格今天仍然成立（跨行折行就丢点名），已写进白皮书 §10 的 G-6 边界。
   台账第 52 行跟着红——与 §53.7 那两条同一根绳，本轮按实测改口。
-- **区间远端可以"在界内却指错东西"，判据看不见**：`CAP_RANGE_END`（`tools/check_architecture.py:9328`）只量越界与空行，
+- **区间远端可以"在界内却指错东西"，判据看不见**：`CAP_RANGE_END`（`tools/check_architecture.py:9538`）只量越界与空行，
   不参与名字对齐。变更日志里 `write_optional_money`（`crates/qx-protocol/src/lib.rs:270`）那颗此前写作一个区间，两端写成
   `crates/qx-protocol/src/lib.rs:287-288`，而 287 那一格其实是 `scalar_money_raw` <!-- 史 -->。两个数字都在这份 877 行的
   文件里、都不是空行，判据一路绿；它是 R7-10 人工逐颗复核时抓到的，不是门禁报的。把区间拆成具名引用之后，
@@ -3071,7 +3071,7 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
 ### Changed（有意的破坏性后果）
 
 - `Event::digest` 的形状变了（多一次存在性标记）：**含 venue 持仓观察的既有事件日志**会在 manifest 核对处被拒
-  （`crates/qx-storage/src/lib.rs:307-309`、`crates/qx-storage/src/sqlite.rs:2104`）。这是有意的 fail-closed ——
+  （`crates/qx-storage/src/lib.rs:307-309`、`crates/qx-storage/src/sqlite.rs:2138`）。这是有意的 fail-closed ——
   旧日志里"没报"与"报零"本来就是同一份内容，无法事后区分。本轮实测被跟踪的产物侧不含这类日志
   （`deploy/` 中 `AccountPositionSnapshot`/`account_positions`/`unrealized_pnl`/`"digest"` 各 0 命中，
   `MODIFIED_DEPLOY=0`），但真实跑过 paper/CCXT 的用户目录会受影响，升级路径尚未设计。

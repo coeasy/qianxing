@@ -92,3 +92,47 @@ fn ccxt_user_stream_reads_shutdown_idle_and_failure_as_three_states() {
         "故障累计跑到了空闲分流之后，空闲窗会先把 streak 清零"
     );
 }
+
+/// 空回话（有 event、既没有 events 也不带 idle）必须被节奏化：Python 侧只在读窗到期时
+/// 才补 `idle`，所以一张秒答回来的空表会走到交付臂，那里没有第二处等待——循环就成了
+/// 吃满一颗 CPU 的热转，还能把 EventLog 的刷盘频率顶到最高。
+#[test]
+fn ccxt_user_stream_paces_an_empty_non_idle_reply() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let source = std::fs::read_to_string(
+        root.join("crates")
+            .join("qx-cli")
+            .join("src")
+            .join("venue_runtime")
+            .join("ccxt_execution.rs"),
+    )
+    .unwrap();
+    let guards = source
+        .match_indices("if events.is_empty() {")
+        .map(|(offset, _)| offset)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        guards.len(),
+        1,
+        "空回话的节奏化守卫必须只有一颗，多了就是在重复分流"
+    );
+    let guard_at = guards[0];
+    let sleep_at = source[guard_at..]
+        .find("thread::sleep(")
+        .map(|offset| guard_at + offset)
+        .expect("空回话分支里没有等待，秒答空表就是热转");
+    let delivery_mark_at = source
+        .find("ccxt pro orders matched=")
+        .expect("交付播报不在源里");
+    assert!(
+        sleep_at < delivery_mark_at,
+        "等待被挪到交付播报之后，空回话那一轮仍然全速跑完整个循环体"
+    );
+    let idle_branch_at = source
+        .find("ccxt_watch_reply_is_idle(event)")
+        .expect("用户流不再分流空闲回话");
+    assert!(
+        idle_branch_at < guard_at,
+        "空回话的守卫抢到了空闲分流之前，空闲窗会被双倍拖慢"
+    );
+}

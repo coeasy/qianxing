@@ -298,12 +298,12 @@ fn sqlite_event_log_and_outbox_commit_atomically() {
     let events = project_event_log_to_outbox("run", &log).unwrap();
     store.write_with_outbox("run", &log, &events).unwrap();
     assert_eq!(store.event_count("run").unwrap(), 2);
-    assert_eq!(outbox.available(0).unwrap().len(), 2);
+    assert_eq!(outbox.available(0, usize::MAX).unwrap().len(), 2);
 
     // 同一批事实重试：EventLog 与 Outbox 都保持幂等。
     store.write_with_outbox("run", &log, &events).unwrap();
     assert_eq!(store.event_count("run").unwrap(), 2);
-    assert_eq!(outbox.available(0).unwrap().len(), 2);
+    assert_eq!(outbox.available(0, usize::MAX).unwrap().len(), 2);
 
     // Outbox 冲突必须回滚同事务内的 EventLog 追加。
     let extended = sample_log(5);
@@ -315,7 +315,7 @@ fn sqlite_event_log_and_outbox_commit_atomically() {
     ));
     assert_eq!(store.event_count("run").unwrap(), 2);
     assert_eq!(store.read("run").unwrap().digest(), log.digest());
-    assert_eq!(outbox.available(0).unwrap().len(), 2);
+    assert_eq!(outbox.available(0, usize::MAX).unwrap().len(), 2);
 
     // 事实与出站事件一起推进。
     let extended_events = project_event_log_to_outbox("run", &extended).unwrap();
@@ -323,6 +323,6 @@ fn sqlite_event_log_and_outbox_commit_atomically() {
         .write_with_outbox("run", &extended, &extended_events)
         .unwrap();
     assert_eq!(store.event_count("run").unwrap(), 5);
-    assert_eq!(outbox.available(0).unwrap().len(), 5);
+    assert_eq!(outbox.available(0, usize::MAX).unwrap().len(), 5);
     let _ = std::fs::remove_file(path);
 }

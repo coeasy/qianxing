@@ -7,9 +7,15 @@ use super::{
 use async_nats::jetstream;
 use futures_util::StreamExt;
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
+
+/// 建链预算：连接与消费端装配最多等多久，超时给出具名错误而不是把启动挂死。
+const NATS_BOOT_BUDGET: Duration = Duration::from_secs(10);
+/// 单条投递的 ack 预算：Outbox relay 每轮每个事件最多等多久。
+const NATS_PUBLISH_ACK_BUDGET: Duration = Duration::from_secs(5);
 
 /// JetStream publisher with a dedicated Tokio runtime.
 ///
@@ -22,6 +28,8 @@ pub struct NatsJetStreamPublisher {
     runtime: Arc<Runtime>,
     context: jetstream::Context,
     subject_prefix: String,
+    /// ack 等待用尽后置真：本进程不再投递，否则每轮都会留下一个永不落回的孤儿任务。
+    wedged: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for NatsJetStreamPublisher {
@@ -49,16 +57,22 @@ impl NatsJetStreamPublisher {
                 .map_err(|error| format!("NATS Tokio runtime 初始化失败: {error}"))?,
         );
         let url = url.to_string();
-        let client = block_on_runtime(&runtime, async move {
-            async_nats::connect(url)
-                .await
-                .map_err(|error| error.to_string())
-        })
+        let client = block_on_runtime_within(
+            &runtime,
+            async move {
+                async_nats::connect(url)
+                    .await
+                    .map_err(|error| error.to_string())
+            },
+            NATS_BOOT_BUDGET,
+        )
+        .map_err(|_| format!("NATS 连接在 {:?} 内没有回话", NATS_BOOT_BUDGET))?
         .map_err(|error| format!("NATS 连接失败: {error}"))?;
         Ok(Self {
             context: jetstream::new(client),
             runtime,
             subject_prefix: subject_prefix.trim_end_matches('.').into(),
+            wedged: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -72,19 +86,39 @@ impl NatsJetStreamPublisher {
 
 impl OutboxPublisher for NatsJetStreamPublisher {
     fn publish(&self, event: &OutboxEvent) -> Result<(), String> {
+        if self.wedged.load(Ordering::Relaxed) {
+            return Err(
+                "NATS publisher 前一笔 ack 等待已用尽，本进程不再投递（重启 worker 才会重连）"
+                    .into(),
+            );
+        }
         let subject = self.subject_for(event)?;
         let payload = serde_json::to_vec(event)
             .map_err(|error| format!("NATS Outbox envelope 序列化失败: {error}"))?;
         let context = self.context.clone();
-        block_on_runtime(&self.runtime, async move {
-            let ack = context
-                .publish(subject, payload.into())
-                .await
-                .map_err(|error| format!("JetStream publish 请求失败: {error}"))?;
-            ack.await
-                .map_err(|error| format!("JetStream publish ack 失败: {error}"))?;
-            Ok::<(), String>(())
-        })
+        match block_on_runtime_within(
+            &self.runtime,
+            async move {
+                let ack = context
+                    .publish(subject, payload.into())
+                    .await
+                    .map_err(|error| format!("JetStream publish 请求失败: {error}"))?;
+                ack.await
+                    .map_err(|error| format!("JetStream publish ack 失败: {error}"))?;
+                Ok::<(), String>(())
+            },
+            NATS_PUBLISH_ACK_BUDGET,
+        ) {
+            Ok(inner) => inner,
+            Err(_) => {
+                // 预算用尽时那次 ack 仍可能晚点落在 runtime 里，再投只会每轮攒一个孤儿任务。
+                self.wedged.store(true, Ordering::Relaxed);
+                Err(format!(
+                    "JetStream publish ack 在 {:?} 内没有回话，已停用本进程的 NATS 投递",
+                    NATS_PUBLISH_ACK_BUDGET
+                ))
+            }
+        }
     }
 }
 
@@ -159,18 +193,28 @@ impl NatsJetStreamConsumer {
         let url = url.to_string();
         let stream = stream.to_string();
         let consumer_name = consumer.to_string();
-        let jetstream_consumer = block_on_runtime(&runtime, async move {
-            let client = async_nats::connect(url)
-                .await
-                .map_err(|error| error.to_string())?;
-            jetstream::new(client)
-                .get_stream(stream)
-                .await
-                .map_err(|error| error.to_string())?
-                .get_consumer(&consumer_name)
-                .await
-                .map_err(|error| error.to_string())
-        })
+        let jetstream_consumer = block_on_runtime_within(
+            &runtime,
+            async move {
+                let client = async_nats::connect(url)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                jetstream::new(client)
+                    .get_stream(stream)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .get_consumer(&consumer_name)
+                    .await
+                    .map_err(|error| error.to_string())
+            },
+            NATS_BOOT_BUDGET,
+        )
+        .map_err(|_| {
+            format!(
+                "NATS JetStream consumer 装配在 {:?} 内没有回话",
+                NATS_BOOT_BUDGET
+            )
+        })?
         .map_err(|error| format!("NATS JetStream consumer 连接失败: {error}"))?;
         Ok(Self {
             runtime,
@@ -450,6 +494,32 @@ where
     }
 }
 
+/// 在固定预算内等一次 await 落回调用线程：`Err(())` 只表示"预算用尽"，与链路自己的
+/// 失败分开。任务留在 runtime 上跑完，调用方不再等它——否则一颗接得上话却从不答复的
+/// broker 会把 pump 的每一轮都挂死，也让 relay 停在同一个位置不动。
+fn block_on_runtime_within<F, T>(
+    runtime: &Arc<Runtime>,
+    future: F,
+    budget: Duration,
+) -> Result<Result<T, String>, ()>
+where
+    F: Future<Output = Result<T, String>> + Send + 'static,
+    T: Send + 'static,
+{
+    let (sender, receiver) = std::sync::mpsc::channel();
+    runtime.spawn(async move {
+        let _ = sender.send(future.await);
+    });
+    match receiver.recv_timeout(budget) {
+        Ok(outcome) => Ok(outcome),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(()),
+        // sender 被丢弃只可能是等待任务自己退了，按链路失败报，不冒充超时。
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Ok(Err("NATS 等待任务异常退出，这一笔没有落回".to_string()))
+        }
+    }
+}
+
 fn validate_subject(subject: &str) -> Result<(), String> {
     if subject.trim().is_empty()
         || subject.chars().any(char::is_whitespace)
@@ -459,4 +529,110 @@ fn validate_subject(subject: &str) -> Result<(), String> {
         return Err(format!("NATS subject 非法: {subject}"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn runtime() -> Arc<Runtime> {
+        Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("测试用的多线程 runtime"),
+        )
+    }
+
+    /// 预算内落回就是成功：投递链上的每一次等待都要能在自己的窗口里给出结果。
+    #[test]
+    fn bounded_wait_returns_the_completion_inside_its_budget() {
+        let runtime = runtime();
+        let outcome = block_on_runtime_within(
+            &runtime,
+            async { Ok::<&str, String>("done") },
+            Duration::from_secs(5),
+        );
+        assert_eq!(outcome, Ok(Ok("done")));
+    }
+
+    /// 永不答复的 await 必须在预算内报成"超时"这颗名，而不是把调用线程一起带走：
+    /// broker 接得上话却回不了 ack 时，relay 停在同一位置不动就是断链。
+    #[test]
+    fn bounded_wait_names_a_reply_that_never_lands() {
+        let runtime = runtime();
+        // sender 留在测试线程这一侧且一直活着：receiver 只有等死这一条路，
+        // 这正是"broker 接得上话却回不了 ack"的形状。
+        let (_sender, never) = tokio::sync::oneshot::channel::<()>();
+        let outcome = block_on_runtime_within(
+            &runtime,
+            async move {
+                let _ = never.await;
+                Ok::<(), String>(())
+            },
+            Duration::from_millis(120),
+        );
+        assert_eq!(
+            outcome,
+            Err(()),
+            "预算用尽没报成超时，调用方会以为链路还活着"
+        );
+    }
+
+    /// 三处 await 走的必须是带预算的那颗：任一处换回不带预算的兄弟，这棵树就红。
+    #[test]
+    fn every_nats_await_site_goes_through_the_bounded_wait() {
+        let source = include_str!("nats.rs");
+        let production = source
+            .split_once("#[cfg(test)]")
+            .expect("nats.rs 的测试模块标记不在源里")
+            .0;
+        assert_eq!(
+            production.matches("block_on_runtime_within(").count(),
+            3,
+            "带预算的等待必须恰好落在连接、ack 与消费端装配三处"
+        );
+        // 无截止的两处只能是批量拉取：它们靠 JetStream pull 的到期收尾，
+        // 半路掐断会把已经落盘的 ACK 留在孤儿任务里，比原地等待更危险。
+        assert_eq!(
+            production.matches("block_on_runtime(&self.runtime").count(),
+            2,
+            "不带截止的等待只允许 consume_batch 与 consume_batch_with_projection 两处"
+        );
+        assert_eq!(
+            production
+                .matches(".expires(std::time::Duration::from_secs(1))")
+                .count(),
+            2,
+            "批量拉取的 pull 到期被摘掉，那两处无截止等待就没有兜底了"
+        );
+        assert!(
+            production.contains("NATS_PUBLISH_ACK_BUDGET")
+                && production.contains("NATS_BOOT_BUDGET"),
+            "两颗预算常量有一颗没了引用点，就是有人把截止摘了"
+        );
+    }
+
+    /// 停投递的闩必须两头都在：只置位不读就是每轮再攒一个孤儿任务，只读不置位就是根空守卫。
+    #[test]
+    fn the_wedged_latch_has_exactly_one_setter_and_one_reader() {
+        let source = include_str!("nats.rs");
+        let production = source
+            .split_once("#[cfg(test)]")
+            .expect("nats.rs 的测试模块标记不在源里")
+            .0;
+        assert_eq!(
+            production.matches("self.wedged.store(true").count(),
+            1,
+            "闩的置位点必须只有一颗，多一处就是在别处偷偷停投递"
+        );
+        assert_eq!(
+            production
+                .matches("self.wedged.load(Ordering::Relaxed)")
+                .count(),
+            1,
+            "闩的读取点必须只有一颗，没人读的话它就只是一块写不出的内存"
+        );
+    }
 }

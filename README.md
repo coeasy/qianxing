@@ -446,6 +446,7 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
   接口文档与门禁四处口径，**Rust 一行未动**，所以测试条数与文档轮同为 858。
   能力矩阵那一格的具体变化：把五格挤进的一条合并命名 limitation 拆成 **5 条逐字段 limitation**
   （文件 533 → 537 行；以仓库内路径开头的证据行 **255** 未动；`sandbox_tested` 为真的仍 **0** 条）。
+  那三个数是**那一轮自己的读数**，其后各轮只增不减 —— 本段下面「能力矩阵」那一路的 2026-09-28 实测才是现状。
   发布面这一轮也真的重跑了：`build.bat` 九步端到端 `BUILD_BAT_EXIT=0`（`logs/s75_a5_build_bat_full.txt`，
   `[1/9]` 515 项、`[4/9]` 92 段 / 858 passed / 0 failed，跑完 `git status --porcelain` 逐行不变、未跟踪新产物 0 份），
   安装包按当轮代码重建（`logs/s74_a5_package_rebuild.txt`：wheel 与 CLI 二进制两件都重跑，契约措辞在新 exe 里
@@ -474,25 +475,30 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 （13 个单标的 + 4 个只被 `backtest multi-builtin` 接受的套利 kind）、`git ls-files deploy` 里 44 份
 `*example*.json` 配置（顶层 JSON 模板 52 份，逐份由 `crates/qx-cli/src/tests/deploy_template_coverage.rs`
 按登记表点名的生产读法真读一遍，15 类读取器各自还要拒一份坏内容）、
-`python tools/check_architecture.py` 515 项不变量全绿（`logs/s69_a5_full_gate_after_hardening.txt`；其中含一条全仓地板：
-`crates/*/src` 与 `crates/*/tests` 递归的 `#[test]` 总数不得低于磁盘实测的 866）。
+`python tools/check_architecture.py` 在那一轮 515 项不变量全绿（`logs/s69_a5_full_gate_after_hardening.txt`）。
+其中那条全仓地板值得单独改口：门禁打印的那一行是**「全仓行为用例不少于 1024 条」**（`WORKSPACE_TEST_FLOOR`，
+递归 `crates/*/src` 与 `crates/*/tests`、正则 `^[ \t]*#\[test\]$`），上一版把它写成"不得低于磁盘实测的 866" ——
+866 是 s69 那一轮的磁盘实测值，两条线合流后按磁盘重测得 1028、地板取整留余量到 1024，
+2026-09-28 的 R7-h 轮复测磁盘 **1035** 条（按 crate 点名：qx-cli=325、qx-xingban=94、qx-core=83、qx-runtime=78、
+qx-storage=75，其余 17 个 crate 合计 380）。
 
-能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，下面这组是**文档轮那一次**的读数；V13 R1-A5
-之后 limitation 那一路多了 5 条逐字段条目、以仓库内路径开头的 255 行未动，见上面「当前状态」第一条）：
+能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，下面这组是 **2026-09-28 的 V12 R7-h 轮**实测；
+上面「当前状态」那三条里的 533→537 行、255 证据行是**各自那一轮**的读数，这份台账此后只增不减）：
 缩进两格的条目 21 个，
-其中带 `implementation` 键的能力块 19 个、287 条证据行（其中 255 行以仓库内路径开头，逐行经门禁核对
-存在性）、76 条 limitation。**19 个能力块中 16 个同时满足
-`implementation` 与 `code_tested`；`sandbox_tested` 与 `production_approved` 无一为真**；
+其中带 `implementation` 键的能力块 19 个、393 条证据行（其中 316 行以仓库内路径开头 —— 前缀集合取门禁
+`capabilities_check` 自己那条正则的 `crates|tools|deploy|maturity|docs|schemas|python`，一行里每个路径 token
+逐个核对存在性，不止行首）、140 条 limitation，文件 708 行。**19 个能力块中 16 个同时满足
+`implementation` 与 `code_tested`；`sandbox_tested` 与 `production_approved` 无一为真**（这两档在 19 块里全为 `false`）；
 `postgres` / `nats` / `broker_gateway` 三条的 `implementation` 都不是 `true`（前两条是 `optional`，
-最后一条写着"没有厂商协议就没有实现"），只有 feature 矩阵或接口占位。
+最后一条写的是 `unavailable_without_vendor_protocol`），只有 feature 矩阵或接口占位。
 因此可宣称的边界是：
 **本机可重放的确定性回测、Paper 闭环、以及 CCXT/Binance 的代码级契约** —— 不是"已对接真实账户"。
 整树测试（带 Python 解释器，`QX_PYTHON` 指向可用的 CPython）`cargo test --workspace` 92 个
 `test result:` 段全 ok、858 passed、0 failed（那 21 段 Doc-tests 全 ok、0 passed，仓库没有 doctest；
 单独 `cargo test --workspace --doc` 复跑同样 21 段全 ok；V13 R1-A5 那轮改的是契约与文档，Rust 一行未动，
 其整跑走 `--all-targets`（不含 doctest 那 21 段）= 72 段 / 同样 858 passed / 0 failed，
-`logs/s71_a5_cargo_workspace.txt`）。磁盘在册的 `#[test]` 是 866 条，
-866 − 858 = 8 条，与 V13 §4 L4 第 1 条点名的那批 feature 门后用例（`nats` / `sqlite`）数目相符 ——
+`logs/s71_a5_cargo_workspace.txt`）。磁盘在册的 `#[test]` 是 866 条、`test result:` 报 858 条，都是**那一次**的两个数
+（现状口径见上面那条地板：磁盘 1035 条 / 地板 1024），866 − 858 = 8 条，与 V13 §4 L4 第 1 条点名的那批 feature 门后用例（`nats` / `sqlite`）数目相符 ——
 本轮没有逐名复算，#144 仍开着；不带 `QX_PYTHON` 时那 2 条 Python 桥用例必红（本机事实，见 V12 §15.4），
 而 `build.bat` 自 V12 §19 起会把 `[0/9]` 探测出的解释器真的导出成 `QX_PYTHON`，所以整脚本能一次跑通：
 九步全过、`BUILD_BAT_EXIT=0`（§19.1 #133 修的是解释器交接，§22 #139 加的是第 `[1/9]` 道架构门禁）。

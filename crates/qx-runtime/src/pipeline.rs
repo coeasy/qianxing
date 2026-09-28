@@ -24,7 +24,6 @@ use qx_storage::{
 use qx_zhenlu::Oms;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -299,24 +298,24 @@ struct EventFact {
 impl PipelineMetricsSnapshot {
     pub fn to_prometheus(self) -> String {
         format!(
-            "# HELP qx_pipeline_ingest_attempts_total Events presented to the live pipeline.\\n\
-# TYPE qx_pipeline_ingest_attempts_total counter\\n\
-qx_pipeline_ingest_attempts_total {}\\n\
-# HELP qx_pipeline_ingested_events_total Events appended to the live pipeline.\\n\
-# TYPE qx_pipeline_ingested_events_total counter\\n\
-qx_pipeline_ingested_events_total {}\\n\
-# HELP qx_pipeline_deduplicated_events_total Duplicate facts accepted without reapplying effects.\\n\
-# TYPE qx_pipeline_deduplicated_events_total counter\\n\
-qx_pipeline_deduplicated_events_total {}\\n\
-# HELP qx_pipeline_transient_retries_total Transient storage retries.\\n\
-# TYPE qx_pipeline_transient_retries_total counter\\n\
-qx_pipeline_transient_retries_total {}\\n\
-# HELP qx_pipeline_refreshes_total Shared EventLog refreshes.\\n\
-# TYPE qx_pipeline_refreshes_total counter\\n\
-qx_pipeline_refreshes_total {}\\n\
-# HELP qx_pipeline_failures_total Pipeline ingestion or refresh failures.\\n\
-# TYPE qx_pipeline_failures_total counter\\n\
-qx_pipeline_failures_total {}\\n",
+            "# HELP qx_pipeline_ingest_attempts_total Events presented to the live pipeline.\n\
+# TYPE qx_pipeline_ingest_attempts_total counter\n\
+qx_pipeline_ingest_attempts_total {}\n\
+# HELP qx_pipeline_ingested_events_total Events appended to the live pipeline.\n\
+# TYPE qx_pipeline_ingested_events_total counter\n\
+qx_pipeline_ingested_events_total {}\n\
+# HELP qx_pipeline_deduplicated_events_total Duplicate facts accepted without reapplying effects.\n\
+# TYPE qx_pipeline_deduplicated_events_total counter\n\
+qx_pipeline_deduplicated_events_total {}\n\
+# HELP qx_pipeline_transient_retries_total Transient storage retries.\n\
+# TYPE qx_pipeline_transient_retries_total counter\n\
+qx_pipeline_transient_retries_total {}\n\
+# HELP qx_pipeline_refreshes_total Shared EventLog refreshes.\n\
+# TYPE qx_pipeline_refreshes_total counter\n\
+qx_pipeline_refreshes_total {}\n\
+# HELP qx_pipeline_failures_total Pipeline ingestion or refresh failures.\n\
+# TYPE qx_pipeline_failures_total counter\n\
+qx_pipeline_failures_total {}\n",
             self.ingest_attempts,
             self.ingested_events,
             self.deduplicated_events,
@@ -1666,12 +1665,6 @@ fn storage_error(error: StorageError) -> QxError {
     QxError::Permanent(format!("运行时事件存储失败: {error:?}"))
 }
 
-/// 仅用于文档/测试校验路径是否落在工作区内；实际存储仍由
-/// `EventLogFileStore` 做文件名和原子写入校验。
-pub fn pipeline_path(root: impl AsRef<Path>, log_name: &str) -> std::path::PathBuf {
-    root.as_ref().join(format!("{log_name}.json"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1828,9 +1821,19 @@ mod tests {
         assert_eq!(metrics.ingested_events, 5);
         assert_eq!(metrics.deduplicated_events, 1);
         assert!(metrics.refreshes >= metrics.ingest_attempts);
-        assert!(metrics
-            .to_prometheus()
-            .contains("qx_pipeline_ingested_events_total 5"));
+        let exposition = metrics.to_prometheus();
+        assert!(
+            !exposition.contains("\\n"),
+            "指标之间仍是字面反斜杠加 n：{}",
+            exposition.replace("\\n", "⏎")
+        );
+        assert!(
+            exposition
+                .lines()
+                .any(|line| line == "qx_pipeline_ingested_events_total 5"),
+            "这一格没独占一行：{}",
+            exposition.replace("\\n", "⏎")
+        );
         let outbox_count = std::fs::read_dir(root.join("outbox/events"))
             .unwrap()
             .filter_map(Result::ok)
@@ -1925,7 +1928,7 @@ mod tests {
         let outbox = FileOutboxStore::new(&root);
         pipeline.register_order(order(), 100).unwrap();
         let acked_ids: Vec<String> = outbox
-            .available(1_000)
+            .available(1_000, usize::MAX)
             .unwrap()
             .iter()
             .map(|event| {
@@ -1939,7 +1942,7 @@ mod tests {
             })
             .collect();
         assert_eq!(acked_ids.len(), pipeline.log().len());
-        assert!(outbox.available(1_000).unwrap().is_empty());
+        assert!(outbox.available(1_000, usize::MAX).unwrap().is_empty());
 
         pipeline
             .ingest(RuntimeEventEnvelope::venue(
@@ -1969,7 +1972,7 @@ mod tests {
             ))
             .unwrap();
         let pending: Vec<String> = {
-            let mut events = outbox.available(1_000).unwrap();
+            let mut events = outbox.available(1_000, usize::MAX).unwrap();
             events.sort_by_key(|event| event.sequence);
             events.into_iter().map(|event| event.event_id).collect()
         };
@@ -1986,9 +1989,12 @@ mod tests {
 
         let restored = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
         assert_eq!(restored.snapshot(), pipeline.snapshot());
-        assert_eq!(outbox.available(1_000).unwrap().len(), pipeline.log().len());
+        assert_eq!(
+            outbox.available(1_000, usize::MAX).unwrap().len(),
+            pipeline.log().len()
+        );
         assert!(acked_ids.iter().all(|id| outbox
-            .available(1_000)
+            .available(1_000, usize::MAX)
             .unwrap()
             .iter()
             .any(|event| &event.event_id == id)));
