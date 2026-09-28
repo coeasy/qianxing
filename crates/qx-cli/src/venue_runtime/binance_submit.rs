@@ -18,12 +18,7 @@ pub(crate) fn validate_binance_submit_worker(worker: &WorkerConfig) -> Result<&s
             worker.id
         ));
     }
-    if worker
-        .venue_id
-        .as_deref()
-        .map(|venue| venue.to_ascii_lowercase().contains("binance"))
-        != Some(true)
-    {
+    if VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Binance) {
         return Err(format!("worker {} 不是 Binance Venue", worker.id));
     }
     worker
@@ -38,14 +33,7 @@ pub(crate) fn binance_submit_matches_worker(
 ) -> bool {
     let expected_account = worker.account_id.as_deref().unwrap_or_default();
     order_from_submit_command(command)
-        .map(|order| {
-            order.account_id == expected_account
-                && order
-                    .instrument
-                    .venue
-                    .as_str()
-                    .eq_ignore_ascii_case("BINANCE")
-        })
+        .map(|order| order.account_id == expected_account && order.instrument.venue.is_binance())
         .unwrap_or(false)
 }
 
@@ -64,11 +52,7 @@ pub(crate) fn execute_binance_submit_effect(
         .map_err(|error| format!("SubmitOrder 订单载荷非法: {error:?}"))?;
     let expected_account = validate_binance_submit_worker(worker)?;
     if requested_order.account_id != expected_account
-        || !requested_order
-            .instrument
-            .venue
-            .as_str()
-            .eq_ignore_ascii_case("BINANCE")
+        || !requested_order.instrument.venue.is_binance()
     {
         return Err("订单 account_id 或 instrument venue 与 worker 拓扑不一致".into());
     }

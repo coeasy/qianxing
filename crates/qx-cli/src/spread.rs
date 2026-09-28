@@ -211,8 +211,13 @@ pub(crate) fn recover_spread_groups_for_venue<V: Venue>(
     Ok((router.into_inner(), diagnostics))
 }
 
-pub(crate) fn has_pending_spread_recovery(root: &Path, venue_id: &str) -> Result<bool, String> {
+/// 待恢复的多腿分组数：`HedgeRequired` 且本 venue 至少有一条腿已成交。
+///
+/// 两条恢复循环要的不是"有没有"而是"这一轮扫描之后少了没有"，所以计数住在这里，
+/// `has_pending_spread_recovery` 退化成它的一次 `> 0`，避免两处各扫一遍口径。
+pub(crate) fn pending_spread_recovery_groups(root: &Path, venue_id: &str) -> Result<usize, String> {
     let store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
+    let mut pending = 0_usize;
     for group_id in store.group_ids()? {
         let Some(group) = store.load(&group_id)? else {
             continue;
@@ -224,24 +229,35 @@ pub(crate) fn has_pending_spread_recovery(root: &Path, venue_id: &str) -> Result
             leg.order.filled.raw() > 0
                 && (venue_id.trim().is_empty() || leg.venue_id.eq_ignore_ascii_case(venue_id))
         }) {
-            return Ok(true);
+            pending = pending.saturating_add(1);
         }
     }
-    Ok(false)
+    Ok(pending)
 }
 
-/// 补散度恢复两条链（Binance / CCXT）共用的轮间隔（V11 R4-10）。
+pub(crate) fn has_pending_spread_recovery(root: &Path, venue_id: &str) -> Result<bool, String> {
+    Ok(pending_spread_recovery_groups(root, venue_id)? > 0)
+}
+
+/// 一轮多腿恢复扫描之后隔多久再看（V13 R2 #168c，问题与理由同 V11 R4-10）。
 ///
-/// 修前的形状：只要还有组停在 `HedgeRequired`，每轮就重建一次 venue（CCXT 那侧是**重启一个
-/// Python 子进程**）并再追加一条 `HedgeRequired` 事件，而间隔恒为 100 ms。一条对冲不上的腿
-/// 因此以 10 Hz 永久消耗进程、句柄与事件流水。这里只收频率、不收重试：推走一组即归零回
-/// 常规轮询，推不走就按 K1 那份指数退避付费，封顶 10 秒。
-/// 不设"试到第 N 次就退出"——放弃重试等于把那条腿永久留在敞口里。
-pub(crate) fn spread_recovery_poll_interval(stalled_rounds: u32) -> Duration {
-    if stalled_rounds == 0 {
-        return Duration::from_millis(100);
+/// `stalls` 是"连续多少轮扫描一个分组都没推进"。归零时回到 100ms 的忙轮询；原地不动
+/// 就按 `qx-core::retry` 那份退避往上爬，封顶 8 秒。这里刻意**不设具名放弃**：停在
+/// `HedgeRequired` 的分组是一条腿已成交、另一条还没对冲的裸腿，停止扫描等于把敞口永久
+/// 晾着；行情链和用户流可以报错收口，敞口不行。退避公式仍走 `RetryPolicy`，不在这里重算。
+pub(crate) fn spread_recovery_poll_delay(stalls: u32) -> std::time::Duration {
+    const BUSY_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+    if stalls == 0 {
+        return BUSY_POLL;
     }
-    ccxt_respawn_delay(stalled_rounds)
+    let policy = qx_core::retry::RetryPolicy::new(
+        u32::MAX,
+        qx_core::retry::Backoff::exponential(
+            std::time::Duration::from_millis(500),
+            std::time::Duration::from_secs(8),
+        ),
+    );
+    policy.delay_before_attempt(stalls)
 }
 
 pub(crate) fn dedicated_spread_recovery_configured(

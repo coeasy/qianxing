@@ -5,7 +5,7 @@
 //! 什么都没交付的会话与本地回调失败都必须继续计数，否则这个循环永远不会停下来。
 //! N10 再补一条：读超时是**静默**，既不算失败也不算恢复——把它算成失败，一条十分钟
 //! 无人成交的薄行情就能杀掉 worker，而监督器是按进程粒度收工的。
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -401,4 +401,57 @@ fn market_stream_runner_gives_up_after_consecutive_transport_failures() {
         slept,
         [Duration::from_millis(10), Duration::from_millis(20)]
     );
+}
+
+/// 静默窗必须数得出来（V13 R2 #165）：修复前一次 10 秒静默就以 `Err` 上抛，一个当天
+/// 没有成交的纸面账户在几个窗口内就会被预算判死。这里 40 个静默窗一次预算也不花，
+/// 但也不许被读成"0 个窗"——计数是运维区分空闲账户与坏链路的唯一凭据。
+/// 收摊由会话自己的 `close()` 武装停机：静默不会让 `should_stop` 变真，否则这条用例
+/// 要靠预算到点才退出，而那一格正是它要否定的东西。
+struct IdleThenClosing {
+    remaining: usize,
+    closed: Arc<AtomicUsize>,
+}
+
+impl BinanceStreamSession for IdleThenClosing {
+    type Item = String;
+
+    fn recv(&mut self, _now: u64) -> Result<BinanceStreamRead<Self::Item>, String> {
+        if self.remaining == 0 {
+            return closed();
+        }
+        self.remaining -= 1;
+        idle()
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        self.closed.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[test]
+fn user_stream_runner_counts_idle_windows_without_charging_the_reconnect_budget() {
+    let mut slept = Vec::new();
+    let closed = Arc::new(AtomicUsize::new(0));
+    let closed_for_session = Arc::clone(&closed);
+    let closed_for_stop = Arc::clone(&closed);
+    let report = run_binance_user_stream(
+        move || {
+            Ok(IdleThenClosing {
+                remaining: 40,
+                closed: Arc::clone(&closed_for_session),
+            })
+        },
+        // 预算只有 1：只要静默窗被当成故障，第 2 个窗就会返回 Err 而不是 Ok(report)。
+        policy(1),
+        move || closed_for_stop.load(Ordering::SeqCst) > 0,
+        |delay| slept.push(delay),
+        |_| Ok(()),
+    )
+    .unwrap();
+    assert_eq!(report.idle_windows, 40, "空闲窗必须逐窗计数而不是丢掉");
+    assert_eq!(report.events, 0, "空闲窗不得冒充交付");
+    assert_eq!(report.reconnects, 0, "静默窗不能触发重连");
+    assert!(slept.is_empty(), "没有重连就不该退避: {slept:?}");
 }

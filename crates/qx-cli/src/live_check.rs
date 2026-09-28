@@ -125,11 +125,7 @@ pub(crate) fn collect_live_check_report(path: &Path) -> Result<serde_json::Value
             if worker.role == WorkerRole::Execution {
                 execution_count += 1;
             }
-            if worker
-                .venue_id
-                .as_deref()
-                .is_some_and(|venue| venue.eq_ignore_ascii_case("paper"))
-            {
+            if VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper) {
                 let message = format!(
                     "{} 是 production 中不允许启用的 Paper Execution/SpreadRecovery worker",
                     worker.id

@@ -237,3 +237,67 @@ fn two_leg_builtin_strategies_are_refused_with_the_real_entry() {
     assert_eq!(code, Some(0), "单标的策略仍须可用:\n{stdout}");
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// 数一个目录树里的文件份数（文档口径按这个数走，所以判据也必须按它算）。
+fn count_files(dir: &Path) -> usize {
+    let mut stack = vec![dir.to_path_buf()];
+    let mut files = 0_usize;
+    while let Some(current) = stack.pop() {
+        for entry in std::fs::read_dir(current).expect("目录应当可读") {
+            let path = entry.expect("条目应当可读").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                files += 1;
+            }
+        }
+    }
+    files
+}
+
+/// #163 文档口径判据：`init --strategy macd` 自己只落 **9** 份，剩下 **5** 份
+/// （`data/qianxing/datasets.manifest.json` + 4 份同前缀 runs 产物）是首屏那条
+/// `backtest` 写出来的。
+///
+/// 此前 CHANGELOG 与 V13 §9.9 把 14 份整个归给 `init`，而 V13 那行的逐项列举只加到 13
+/// —— 因为它把 runs 产物数了 4 份却漏了数据集清单。两处口径都没有可执行来源，所以这里
+/// 把两个数字钉住：以后改 `init_project.rs` 的模板清单，文档里那份数就得跟着一起改。
+#[test]
+fn init_lands_nine_files_and_the_advertised_backtest_adds_five() {
+    let root = temp_cli_case_dir("r2-init-file-count");
+    let runtime = root.join("qianxing.runtime.json");
+    let (code, stdout) = qx_cli(&[
+        "init",
+        &runtime.to_string_lossy(),
+        "--profile",
+        "builtin",
+        "--strategy",
+        "macd",
+    ]);
+    assert_eq!(code, Some(0), "init 失败:\n{stdout}");
+    assert_eq!(
+        count_files(&root),
+        9,
+        "init 落盘份数变了：文档里的 9 份口径要一起改"
+    );
+    let command = advertised_backtest(&stdout).expect("builtin profile 应当印出回测命令");
+    let (code, output) = run_as_printed(&command);
+    assert_eq!(code, Some(0), "{command} 失败:\n{output}");
+    let after = count_files(&root);
+    assert_eq!(
+        after, 14,
+        "跑完首屏回测后的总份数变了：文档里的 9+5=14 分解要一起改"
+    );
+    assert!(
+        root.join("data")
+            .join("qianxing")
+            .join("datasets.manifest.json")
+            .is_file(),
+        "多出来的 5 份里必须含数据集清单，否则 14 的分解口径不成立"
+    );
+    let runs = std::fs::read_dir(root.join("data").join("qianxing").join("runs"))
+        .expect("runs 目录应当存在")
+        .count();
+    assert_eq!(runs, 4, "一次回测应当只写同前缀的四份产物");
+    let _ = std::fs::remove_dir_all(root);
+}

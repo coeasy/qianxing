@@ -1,6 +1,7 @@
-//! 复活类循环的终止性判据（V11 K1、O5、R4-10）：退避形状、死轮账、按标的的复活上界与
-//! 补散度恢复的轮间隔都是纯函数，现场（Python 子进程持续不可用、两份标的里固定坏一份、
-//! 一条对冲不上的腿）不必真的复现一次就能钉死。
+//! 复活类循环的终止性判据（V11 K1、O5）：退避形状、死轮账、按标的的复活上界都是纯函数，
+//! 现场（Python 子进程持续不可用、两份标的里固定坏一份）不必真的复现一次就能钉死。
+//! 补散度恢复那一侧的轮间隔不在这里——V13 #168c 把两份间隔函数并成 `spread.rs` 里的一颗，
+//! 它的行为与接线判据随那份收敛住在 `tests/spread_recovery_cadence.rs`。
 
 use super::*;
 
@@ -106,39 +107,4 @@ fn a_symbol_that_never_recovers_stops_buying_resurrections() {
         ccxt_dead_cycle_ledger(2, 2, CCXT_DEAD_CYCLE_BUDGET - 1, CCXT_DEAD_CYCLE_BUDGET);
     assert_eq!(dead, CCXT_DEAD_CYCLE_BUDGET);
     assert!(reason.is_some(), "全败形状必须由死轮账给出终止原因");
-}
-
-/// 补散度恢复的轮间隔与公共 Worker 的复活退避必须是**同一份**政策（V11 R4-10）。
-/// 修前的形状：只要有组停在 `HedgeRequired`，每 100 ms 就重建一次 venue（CCXT 那侧是重启
-/// 一个 Python 子进程）并再追加一条 `HedgeRequired` 事件，一条对冲不上的腿以 10 Hz 永久
-/// 消耗进程与流水。这里断三件事，缺一件就回到修前：
-/// - 没进展时必须严格长于 100 ms（否则"共用退避"只是句空话，等价于修前那个 10 Hz 重生）；
-/// - 与 `ccxt_respawn_delay` 同值（政策只有一份，抄一份参数就会漂移）；
-/// - 有进展即归零回到常规轮询，且封顶 10 秒——收的是频率，不是重试：这里**故意没有**
-///   到预算就退出，放弃重试等于把那条腿永久留在敞口里。
-#[test]
-fn a_stalled_recovery_round_buys_no_more_venues() {
-    assert_eq!(
-        spread_recovery_poll_interval(0),
-        Duration::from_millis(100),
-        "空闲轮询仍是 100 ms：没有待补的腿时不该把恢复变慢"
-    );
-    for stalled in 1..6_u32 {
-        assert_eq!(
-            spread_recovery_poll_interval(stalled),
-            ccxt_respawn_delay(stalled),
-            "第 {stalled} 轮停滞的间隔必须走那份共用的复活退避，而不是自己的第二个参数表"
-        );
-        assert!(
-            spread_recovery_poll_interval(stalled) > Duration::from_millis(100),
-            "停滞第 {stalled} 轮仍只等 100 ms 就是修前那个 10 Hz 重生"
-        );
-    }
-    assert_eq!(
-        spread_recovery_poll_interval(64),
-        Duration::from_secs(10),
-        "间隔必须封顶，否则一条永不对冲不上的腿会把等待推成无限"
-    );
-    // 反向对照：这一轮真的推走了组，下一轮就得回到常规频率，不能把退避攒成常驻。
-    assert_eq!(spread_recovery_poll_interval(0), Duration::from_millis(100));
 }

@@ -10,6 +10,16 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// 没人声明时，账户账簿用哪种币记账 —— 全仓唯一写点。
+///
+/// 三条回落链都从这里取值：worker 没写 `settlement_currency`、同一账户日志的写入方
+/// 全都缺席、回测侧 market spec 没结算币种。字面量分头抄写时，一处改大盘子就跟着分叉
+/// （V13 §4 L2-6），所以 `tools/check_architecture.py` 的 `settlement_currency_check()`
+/// 钉住"生产代码里不得再出现 `"USDT"` 整串字面量"。
+///
+/// 它只是**缺省值**，不是合法币种白名单：任何非空字符串都是合法的 `settlement_currency`。
+pub const DEFAULT_SETTLEMENT_CURRENCY: &str = "USDT";
+
 /// 交易场所标识 = provider + region + account_set。
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct VenueId(pub String);
@@ -20,6 +30,15 @@ impl VenueId {
     }
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// 标的/产品级的 Binance 判定，全仓唯一一处：读的是 `InstrumentId` 里已经解析过的
+    /// venue 段（`BTCUSDT-PERP.BINANCE`），它必须是精确的一家交易所。
+    ///
+    /// 口径与 [`crate::VenueFamily::parse`] **故意不同**：`binance-testnet` 是 worker 的
+    /// 账户域（那里按子串认，见该模块说明），不是一种产品 venue，所以这里不能改成子串。
+    pub fn is_binance(&self) -> bool {
+        self.0.eq_ignore_ascii_case("BINANCE")
     }
 }
 

@@ -35,20 +35,14 @@ impl VenueEntry {
     pub(crate) const CCXT: VenueEntry = VenueEntry {
         name: "CCXT",
         is_bound: |worker| {
-            worker
-                .venue_id
-                .as_deref()
-                .is_some_and(|venue| !venue.eq_ignore_ascii_case("paper"))
+            VenueFamily::parse_option(worker.venue_id.as_deref()) != Some(VenueFamily::Paper)
         },
         venue_hint: "必须绑定非 paper 的 CCXT venue",
     };
     pub(crate) const BINANCE: VenueEntry = VenueEntry {
         name: "Binance",
         is_bound: |worker| {
-            worker
-                .venue_id
-                .as_deref()
-                .is_some_and(|venue| venue.to_ascii_lowercase().contains("binance"))
+            VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Binance)
         },
         venue_hint: "必须绑定 Binance Venue",
     };
@@ -146,10 +140,11 @@ pub(crate) fn run_binance_spread_recovery_worker(
         format!("binance spread recovery scanning venue={venue_id}"),
         Some(runtime_timestamp_ms()),
     )?;
-    let mut stalled_rounds = 0_u32;
+    let mut recovery_stalls = 0_u32;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
-        if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
+        let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+        if pending_before > 0 {
             let mut pipeline = pipeline_storage
                 .open(
                     binance_event_log_name(&worker)?,
@@ -185,18 +180,21 @@ pub(crate) fn run_binance_spread_recovery_worker(
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
             }
-            // 这一轮把组推离 HedgeRequired 了没有：没推走就按 K1 那份退避付费（V11 R4-10）。
-            stalled_rounds = if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
-                stalled_rounds + 1
+            // 扫描后仍停在原处才计一次原地不动：分组数少了说明这一轮真的在推进。
+            let pending_after = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+            recovery_stalls = if pending_after >= pending_before {
+                recovery_stalls.saturating_add(1)
             } else {
                 0
             };
+        } else {
+            recovery_stalls = 0;
         }
         context.heartbeat(now)?;
         if once {
             break;
         }
-        thread::sleep(spread_recovery_poll_interval(stalled_rounds));
+        thread::sleep(spread_recovery_poll_delay(recovery_stalls));
     }
     Ok(())
 }
@@ -389,16 +387,18 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
         format!("ccxt spread recovery scanning venue={venue_id}"),
         Some(runtime_timestamp_ms()),
     )?;
-    let mut stalled_rounds = 0_u32;
+    let mut recovery_stalls = 0_u32;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
-        if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
+        let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+        if pending_before > 0 {
             let mut pipeline = pipeline_storage
                 .open(
                     required_account_event_log(&worker)?,
                     settlement_currency.clone(),
                 )
                 .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
+            // 每轮扫描起一个 Python 子进程：只有过预算的重生才是有界的（V13 R2 #168c）。
             let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
                 .map_err(|error| format!("启动公共 CCXT 恢复 Worker 失败: {error}"))?;
             let venue = CcxtProcessVenue::new(venue_id.clone(), Box::new(client));
@@ -426,18 +426,20 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
             }
-            // 这一轮把组推离 HedgeRequired 了没有：没推走就按 K1 那份退避付费（V11 R4-10）。
-            stalled_rounds = if has_pending_spread_recovery(&pipeline_storage.root, &venue_id)? {
-                stalled_rounds + 1
+            let pending_after = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
+            recovery_stalls = if pending_after >= pending_before {
+                recovery_stalls.saturating_add(1)
             } else {
                 0
             };
+        } else {
+            recovery_stalls = 0;
         }
         context.heartbeat(now)?;
         if once {
             break;
         }
-        thread::sleep(spread_recovery_poll_interval(stalled_rounds));
+        thread::sleep(spread_recovery_poll_delay(recovery_stalls));
     }
     Ok(())
 }

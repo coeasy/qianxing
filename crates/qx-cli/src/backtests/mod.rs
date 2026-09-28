@@ -28,7 +28,7 @@ pub(crate) struct BarBacktestAssembly {
 /// 产物里的成交却标着没人声明过的币种。
 pub(crate) fn backtest_settlement_currency(spec: Option<&TradingInstrumentSpec>) -> String {
     spec.map(|spec| spec.settlement_currency.clone())
-        .unwrap_or_else(|| "USDT".into())
+        .unwrap_or_else(|| DEFAULT_SETTLEMENT_CURRENCY.into())
 }
 
 // 没人声明本金时，单腿回测按多少记账、这条必答题怎么答：见 `account_base.rs`（V11 Q72）。

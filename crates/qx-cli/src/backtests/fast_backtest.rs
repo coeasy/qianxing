@@ -2,7 +2,21 @@
 
 use super::*;
 
-pub(crate) fn run_fast_backtest_manifest(manifest_path: &Path) -> Result<(), String> {
+/// 一条已解析的作业：序号、runtime 配置、bars 文件，以及可选的 market spec。
+pub(crate) struct FastBacktestJob {
+    pub(crate) index: usize,
+    pub(crate) runtime: PathBuf,
+    pub(crate) bars: PathBuf,
+    pub(crate) market_spec: Option<PathBuf>,
+}
+
+/// manifest 的**解析段**：只做读文件与形状判定，不起线程、不落产物。
+///
+/// 拆出来是为了让样例模板能被用例读一次（V13 R1-A6）：执行段在 `run_strategy_backtest`
+/// 里跑完整回测，用例付不起那个代价，于是"这份 manifest 有没有人读过"就会长期没人回答。
+pub(crate) fn parse_fast_backtest_manifest(
+    manifest_path: &Path,
+) -> Result<Vec<FastBacktestJob>, String> {
     let payload = std::fs::read_to_string(manifest_path).map_err(|error| {
         format!(
             "读取快速回测 manifest 失败 {}: {error}",
@@ -47,13 +61,30 @@ pub(crate) fn run_fast_backtest_manifest(manifest_path: &Path) -> Result<(), Str
             .and_then(serde_json::Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .map(resolve);
-        parsed.push((index, resolve(runtime), resolve(bars), spec));
+        parsed.push(FastBacktestJob {
+            index,
+            runtime: resolve(runtime),
+            bars: resolve(bars),
+            market_spec: spec,
+        });
     }
+    Ok(parsed)
+}
+
+pub(crate) fn run_fast_backtest_manifest(manifest_path: &Path) -> Result<(), String> {
+    let parsed = parse_fast_backtest_manifest(manifest_path)?;
+    let jobs = parsed.len();
     let results = std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(parsed.len());
-        for (index, runtime, bars, spec) in parsed {
+        for FastBacktestJob {
+            index,
+            runtime,
+            bars,
+            market_spec,
+        } in parsed
+        {
             handles.push(scope.spawn(move || {
-                run_strategy_backtest(&runtime, &bars, spec.as_deref())
+                run_strategy_backtest(&runtime, &bars, market_spec.as_deref())
                     .map(|_| index)
                     .map_err(|error| format!("jobs[{index}] {error}"))
             }));
@@ -70,7 +101,7 @@ pub(crate) fn run_fast_backtest_manifest(manifest_path: &Path) -> Result<(), Str
     println!(
         "[Fast Backtest] manifest={} jobs={} completed={}",
         manifest_path.display(),
-        jobs.len(),
+        jobs,
         results.len()
     );
     Ok(())

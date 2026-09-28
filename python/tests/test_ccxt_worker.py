@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 import tempfile
@@ -90,6 +91,55 @@ class CcxtWorkerTest(unittest.TestCase):
         self.assertEqual(event["stream"], "orders")
         self.assertEqual(event["received_ts"], 7)
         self.assertEqual(event["events"][0]["order_id"], "remote-1")
+
+    def test_watch_with_wait_ms_replies_idle_instead_of_letting_the_read_window_expire(self):
+        class SilentPro(FakeProExchange):
+            async def watch_orders(self, symbol, since, limit, params):
+                await asyncio.sleep(30)
+                return []
+
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=FakeExchange()),
+            pro_exchange=SilentPro(),
+        )
+        row = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "watch_orders",
+                        "instrument": "BTCUSDT.BINANCE",
+                        "received_ts": 11,
+                        "wait_ms": 5,
+                    }
+                )
+            )
+        )
+        self.assertTrue(row["ok"], row)
+        event = row["result"]["event"]
+        self.assertEqual(event["stream"], "orders")
+        self.assertEqual(event["events"], [])
+        self.assertTrue(event.get("idle"), "静默窗要答成 idle 事件，而不是让调用方的读窗到期杀进程")
+
+    def test_watch_with_generous_wait_ms_still_delivers_the_event(self):
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=FakeExchange()),
+            pro_exchange=FakeProExchange(),
+        )
+        row = json.loads(
+            worker.handle_line(
+                json.dumps(
+                    {
+                        "op": "watch_orders",
+                        "instrument": "BTCUSDT.BINANCE",
+                        "wait_ms": 5_000,
+                    }
+                )
+            )
+        )
+        self.assertTrue(row["ok"], row)
+        event = row["result"]["event"]
+        self.assertEqual(event["events"][0]["order_id"], "remote-1")
+        self.assertNotIn("idle", event, "答得出来的事件不能被记成空闲窗")
 
     def test_jsonl_worker_recreates_ccxt_pro_after_retryable_disconnect(self):
         class FlakyPro(FakeProExchange):

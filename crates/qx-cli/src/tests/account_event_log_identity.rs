@@ -31,6 +31,11 @@ fn account_identity_normalizes_its_key_in_one_place() {
         Some("binance-main-binance-events")
     );
     assert_eq!(
+        account_event_log_name("main", "binance-testnet").as_deref(),
+        Some("binance-main-binance-testnet-events"),
+        "testnet 写法仍是 Binance 家族：账户日志名换前缀就等于把同一账户拆成两本账"
+    );
+    assert_eq!(
         account_event_log_name("", "paper"),
         None,
         "空账户不是合法身份"

@@ -23,7 +23,7 @@ use qx_core::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, EventKind,
     FundingRateSnapshot, InstrumentId, Ledger, MarginMode, Money, Order, OrderPolicy, OrderStatus,
     PositionMode, PositionSide, Price, Quantity, ReplayVerifier, RunManifest, Side,
-    TradingInstrumentSpec, TradingProduct, SCALE,
+    TradingInstrumentSpec, TradingProduct, VenueFamily, DEFAULT_SETTLEMENT_CURRENCY, SCALE,
 };
 use qx_data::{JsonBarFrameProvider, JsonDatasetRegistry};
 use qx_datastruct::BarFrame;

@@ -765,8 +765,9 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
                     return Err(error);
                 }
             };
-            // 这里曾是 12 处 spawn_worker 里唯一裸 join() 的两处："按 Ctrl+C 停止"那句横幅
-            // 没有生产者，令牌的优雅窗口与 shutdown_timeout_ms 上界都轮不到。
+            // 这里曾是 12 处 spawn_worker 里唯一裸 join() 的两处。serve 的 accept 环本来就按
+            // `context.should_stop()` 收摊，join_worker_handle 补上令牌的另一半：装 SIGINT/SIGTERM
+            // 的写侧并走同一条停机阶梯，否则「按 Ctrl+C 停止」只能靠进程被默认信号强杀。
             let result = join_worker_handle(&supervisor, worker, "API", &api_worker_id);
             stop_api_projection_bridge(&projection_stop, &mut projection_thread);
             result

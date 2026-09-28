@@ -85,8 +85,8 @@ pub(crate) fn run_binance_market_worker(
     context.mark(
         qx_runtime::ServiceStatus::Stopped,
         format!(
-            "market stream stopped quotes={} reconnects={}",
-            report.events, report.reconnects
+            "market stream stopped quotes={} idle_windows={} reconnects={}",
+            report.events, report.idle_windows, report.reconnects
         ),
         Some(runtime_timestamp_ms()),
     )?;
@@ -191,8 +191,8 @@ pub(crate) fn run_binance_user_worker(
     context.mark(
         qx_runtime::ServiceStatus::Stopped,
         format!(
-            "user stream stopped events={} reconnects={}",
-            report.events, report.reconnects
+            "user stream stopped events={} idle_windows={} reconnects={}",
+            report.events, report.idle_windows, report.reconnects
         ),
         Some(runtime_timestamp_ms()),
     )?;

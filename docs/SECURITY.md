@@ -243,8 +243,8 @@ WS 那半边**完全由配置决定**，`worker.endpoint`
 
 **两处要收**：
 
-1. `crates/qx-adapter/src/binance.rs:1913-1914` 有两串 64 字符字面量（前 4 分别为 `vmPU` / `NhqP`），
-   位于 `#[cfg(test)]` 内 `binance_hmac_matches_official_ascii_payload`（`crates/qx-adapter/src/binance.rs:1911-1997`），
+1. `crates/qx-adapter/src/binance.rs:1918-1919` 有两串 64 字符字面量（前 4 分别为 `vmPU` / `NhqP`），
+   位于 `#[cfg(test)]` 内 `binance_hmac_matches_official_ascii_payload`（`crates/qx-adapter/src/binance.rs:1916-2000`），
    配对的期望摘要 `crates/qx-adapter/src/binance.rs:1935` 是 Binance 官方文档公开的已知Answer 向量。**判定：不是泄露**，
    但形状与真 key 不可区分，正是让密钥扫描器天天误报的那种。修法见下。
 2. **`Debug` 把 `api_key` 原样打出来**：`crates/qx-adapter/src/binance.rs:113-121` 的
@@ -490,13 +490,13 @@ let granted = match &self.policy {
 
 拿到 `Admin` 之后今天能做什么，也说准：`ChangeRiskLimit` 与 `SwitchVenue` 会因
 `has_executor()` 当场被拒（`crates/qx-control/src/lib.rs:281-286`，V11 P1 的收口），
-所以**能执行的是三种**：`SubmitOrder`（`crates/qx-cli/src/venue_runtime/binance_submit.rs:274-337`）
+所以**能执行的是三种**：`SubmitOrder`（`crates/qx-cli/src/venue_runtime/binance_submit.rs:279-337`）
 经 `crates/qx-adapter/src/binance.rs:1556` 打真 `POST /api/v3/order`，请求头带真 key
 （`crates/qx-adapter/src/binance.rs:199`）；`PauseStrategy` 与 `ResumeStrategy` 的领取分支在
 `crates/qx-cli/src/workers.rs:228-231`、`crates/qx-cli/src/workers.rs:232-235`（循环体 `crates/qx-cli/src/workers.rs:172-584`）。第三格尤其值钱：`command.target`
 完全由请求体给，且 `"*"` 是**被接受的通配**（补入队列看 `crates/qx-cli/src/workers.rs:186`，领取看 `crates/qx-cli/src/workers.rs:200`），
 一条请求停掉全部策略。约束还剩两道：订单的 `account_id`/venue 必须与执行 worker 拓扑一致
-（`crates/qx-cli/src/venue_runtime/binance_submit.rs:66-74`），缺 `instrument_spec_path` 时 fail-closed 拒绝提交
+（`crates/qx-cli/src/venue_runtime/binance_submit.rs:54-58`），缺 `instrument_spec_path` 时 fail-closed 拒绝提交
 （`crates/qx-cli/src/venue_runtime/worker_runtime.rs:435-438`）。API key 不可由攻击者指定。
 
 **(b) 产物校验是可选的、且顺序有时在执行之后**：
@@ -746,8 +746,8 @@ let granted = match &self.policy {
   带 `schema_version` 且读侧先比。
 * **G-5 防伪位置不用无键哈希**：`Fnv1a` 的构造点白名单（`crates/qx-core/src/sourcing.rs`、`qx-guanxing` 的数据哈希等），
   出现在 C1/C3/C4/C5 任一格即红——这一条要等 §4.10 的修法落地才可能绿。
-* **G-6 本文的每条 `path:line` 都算数**：本文由 `doc_citation_check`（`tools/check_architecture.py:8800`）逐颗核对，它与台账
-  共用同一颗扫描器 `citation_audit`（`tools/check_architecture.py:8646`）——R6-8 起带三口径，R6-9 起裸引用的归属再扩到
+* **G-6 本文的每条 `path:line` 都算数**：本文由 `doc_citation_check`（`tools/check_architecture.py:9548`）逐颗核对，它与台账
+  共用同一颗扫描器 `citation_audit`（`tools/check_architecture.py:9394`）——R6-8 起带三口径，R6-9 起裸引用的归属再扩到
   "同一行只点了文件名、没带行号"那一颗。行号漂移即红。
 * **G-6 看不见的那两格**（写进契约，免得下一个人把绿读成"全对上了"）：判据按行扫描，所以①一行里既没有带行号的
   引用、也没有能唯一解析的文件名时，那颗裸行号无人核对——R6-9 之后四份文本仍剩 349 颗这种形状
@@ -774,5 +774,5 @@ let granted = match &self.policy {
 | 日期 | 变更 | 依据 |
 |---|---|---|
 | 2026-09-26 | 首版：12 类逐项判定 + 12 项缺陷登记 + 14 项负行 + 配置清单与轮换流程 | 本轮实测（`crates/` 23 个 crate、`python/` 23 个 `.py`、`deploy/` 全量、门禁与用例逐条读；首版当日工作树 359 个未提交改动） |
-| 2026-09-26 | 引用收口：三种门禁扫不到的形状各改一类——逗号串号 3 处、裸 `:NNN` 全部展开成自足 `path:line`、range 首行的窗口打不到尾部名字时另给精确锚点6 处「名字与锚点对不上」挪到声明处（`external_executable`、`consumer_handler_executable`/`consumer_handler_args`、签名头、`credential_env`、`postgres_dsn_env`、`python_module`）；2 处过强断言收窄（`deny_unknown_fields` 的适用范围、`OutboxEvent` 在 `crates/qx-storage/src/lib.rs:368-374` 有字段但无人比）；1 处指错锚点（`CancelOrder` 负行 252-257 → 281-286）；负行 14 → 16 | 判据按 AST 从 `doc_citation_check`（`tools/check_architecture.py:8800`）取出后重放：本文全部 `path:line` 逐颗对得上，引用数与带名绑定数由常驻门禁当轮打印、不在这里抄一份会过期的副本；名字档另判，剩余 3 处 hard 全是「断言某物不存在」，已升成 §9 负行
+| 2026-09-26 | 引用收口：三种门禁扫不到的形状各改一类——逗号串号 3 处、裸 `:NNN` 全部展开成自足 `path:line`、range 首行的窗口打不到尾部名字时另给精确锚点6 处「名字与锚点对不上」挪到声明处（`external_executable`、`consumer_handler_executable`/`consumer_handler_args`、签名头、`credential_env`、`postgres_dsn_env`、`python_module`）；2 处过强断言收窄（`deny_unknown_fields` 的适用范围、`OutboxEvent` 在 `crates/qx-storage/src/lib.rs:368-374` 有字段但无人比）；1 处指错锚点（`CancelOrder` 负行 252-257 → 281-286）；负行 14 → 16 | 判据按 AST 从 `doc_citation_check`（`tools/check_architecture.py:9548`）取出后重放：本文全部 `path:line` 逐颗对得上，引用数与带名绑定数由常驻门禁当轮打印、不在这里抄一份会过期的副本；名字档另判，剩余 3 处 hard 全是「断言某物不存在」，已升成 §9 负行
 | 2026-09-26 | R7 轮重钉：本文 51 行的行号按当前代码改口，并逐颗人工复核"被引那一格里是不是那颗东西"——机械 0 红不等于语义对：区间远端只量越界与空行（`CAP_RANGE_END`，`tools/check_architecture.py:8583`），同一条规则本轮在变更日志里抓到一例"数字恰好落在界内、那一格却是别的东西"的假通过，逐颗明细记在方案书 §55.10、§55.11；上一行那句"引用数不在这里抄副本"本轮同样回落到 §10 的 G-6——逐份拆分只留在方案书与台账，本文不再放第二份会过期的数 | 第 5 轮三扫之后的 R7 收口 |

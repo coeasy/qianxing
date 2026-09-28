@@ -6,6 +6,7 @@
 mod reap;
 mod supervisor_stop;
 
+use qx_core::VenueFamily;
 use qx_runtime::{RuntimeConfig, WorkerRole};
 use reap::{stop_managed_children, ManagedChild};
 use std::path::Path;
@@ -54,11 +55,8 @@ pub fn plan_workers(
                         worker.id.clone(),
                         resolve_ccxt_config_path(config_path, ccxt_config),
                     ]
-                } else if worker
-                    .venue_id
-                    .as_deref()
-                    .map(|venue| venue.to_ascii_lowercase().contains("binance"))
-                    == Some(true)
+                } else if VenueFamily::parse_option(worker.venue_id.as_deref())
+                    == Some(VenueFamily::Binance)
                 {
                     vec![
                         "binance-worker".into(),
@@ -78,11 +76,8 @@ pub fn plan_workers(
                         worker.id.clone(),
                         resolve_ccxt_config_path(config_path, ccxt_config),
                     ]
-                } else if worker
-                    .venue_id
-                    .as_deref()
-                    .map(|venue| venue.to_ascii_lowercase().contains("binance"))
-                    == Some(true)
+                } else if VenueFamily::parse_option(worker.venue_id.as_deref())
+                    == Some(VenueFamily::Binance)
                 {
                     vec![
                         "binance-worker".into(),
@@ -95,11 +90,7 @@ pub fn plan_workers(
                 }
             }
             WorkerRole::Execution => {
-                if worker
-                    .venue_id
-                    .as_deref()
-                    .map(|venue| venue.eq_ignore_ascii_case("paper"))
-                    == Some(true)
+                if VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper)
                 {
                     vec!["paper-worker".into(), config_arg.clone(), worker.id.clone()]
                 } else if let Some(ccxt_config) = worker.endpoint.as_deref() {
@@ -109,11 +100,8 @@ pub fn plan_workers(
                         worker.id.clone(),
                         resolve_ccxt_config_path(config_path, ccxt_config),
                     ]
-                } else if worker
-                    .venue_id
-                    .as_deref()
-                    .map(|venue| venue.to_ascii_lowercase().contains("binance"))
-                    == Some(true)
+                } else if VenueFamily::parse_option(worker.venue_id.as_deref())
+                    == Some(VenueFamily::Binance)
                 {
                     vec![
                         "binance-worker".into(),
@@ -126,11 +114,7 @@ pub fn plan_workers(
                 }
             }
             WorkerRole::SpreadRecovery => {
-                if worker
-                    .venue_id
-                    .as_deref()
-                    .map(|venue| venue.eq_ignore_ascii_case("paper"))
-                    == Some(true)
+                if VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper)
                 {
                     vec!["paper-worker".into(), config_arg.clone(), worker.id.clone()]
                 } else if let Some(ccxt_config) = worker.endpoint.as_deref() {
@@ -140,11 +124,8 @@ pub fn plan_workers(
                         worker.id.clone(),
                         resolve_ccxt_config_path(config_path, ccxt_config),
                     ]
-                } else if worker
-                    .venue_id
-                    .as_deref()
-                    .map(|venue| venue.to_ascii_lowercase().contains("binance"))
-                    == Some(true)
+                } else if VenueFamily::parse_option(worker.venue_id.as_deref())
+                    == Some(VenueFamily::Binance)
                 {
                     vec![
                         "binance-worker".into(),
@@ -164,11 +145,8 @@ pub fn plan_workers(
                         worker.id.clone(),
                         resolve_ccxt_config_path(config_path, ccxt_config),
                     ]
-                } else if worker
-                    .venue_id
-                    .as_deref()
-                    .map(|venue| venue.to_ascii_lowercase().contains("binance"))
-                    == Some(true)
+                } else if VenueFamily::parse_option(worker.venue_id.as_deref())
+                    == Some(VenueFamily::Binance)
                 {
                     vec![
                         "binance-worker".into(),
@@ -333,150 +311,4 @@ pub fn supervise_workers(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use qx_runtime::WorkerConfig;
-
-    fn example_config() -> RuntimeConfig {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("deploy")
-            .join("qianxing.runtime.ccxt.example.json");
-        let payload = std::fs::read_to_string(path).unwrap();
-        RuntimeConfig::from_json(&payload).unwrap()
-    }
-
-    #[test]
-    fn worker_plan_is_deterministic_and_routes_ccxt_endpoints() {
-        let config = example_config();
-        let path = Path::new("deploy/runtime.json");
-        let launches = plan_workers(&config, path, false).unwrap();
-        assert_eq!(launches.len(), 6);
-        assert!(launches.iter().any(|launch| {
-            launch.worker_id == "ccxt-market-main"
-                && launch.args.first().map(String::as_str) == Some("ccxt-worker")
-                && launch
-                    .args
-                    .last()
-                    .map(|path| Path::new(path).ends_with("qianxing.ccxt.exchange.example.json"))
-                    == Some(true)
-        }));
-    }
-
-    #[test]
-    fn worker_plan_rejects_unknown_venue_without_explicit_external_management() {
-        let mut config = example_config();
-        let worker = config
-            .workers
-            .iter_mut()
-            .find(|worker| worker.role == WorkerRole::Execution)
-            .unwrap();
-        worker.venue_id = Some("unknown-venue".into());
-        worker.endpoint = None;
-        assert!(plan_workers(&config, Path::new("runtime.json"), false).is_err());
-        assert!(plan_workers(&config, Path::new("runtime.json"), true).is_ok());
-    }
-
-    #[test]
-    fn worker_plan_routes_ccxt_user_stream_to_public_worker() {
-        let mut config = example_config();
-        config.workers.push(WorkerConfig {
-            id: "ccxt-user-main".into(),
-            role: WorkerRole::UserStream,
-            enabled: true,
-            account_id: Some("main".into()),
-            venue_id: Some("okx".into()),
-            endpoint: Some("qianxing.ccxt.exchange.example.json".into()),
-            symbols: Vec::new(),
-            settlement_currency: Some("USDT".into()),
-            credential_env: None,
-            credential_files: None,
-            instrument_spec_path: None,
-            paper_initial_cash_raw: None,
-            max_order_notional_raw: None,
-            max_position_notional_raw: None,
-        });
-        let launches = plan_workers(&config, Path::new("deploy/runtime.json"), false).unwrap();
-        let launch = launches
-            .iter()
-            .find(|launch| launch.worker_id == "ccxt-user-main")
-            .unwrap();
-        assert_eq!(launch.args.first().map(String::as_str), Some("ccxt-worker"));
-    }
-
-    #[test]
-    fn worker_plan_routes_spread_recovery_to_the_matching_venue_worker() {
-        let mut config = example_config();
-        config.workers.push(WorkerConfig {
-            id: "ccxt-recovery-main".into(),
-            role: WorkerRole::SpreadRecovery,
-            enabled: true,
-            account_id: Some("main".into()),
-            venue_id: Some("okx".into()),
-            endpoint: Some("qianxing.ccxt.exchange.example.json".into()),
-            symbols: Vec::new(),
-            settlement_currency: Some("USDT".into()),
-            credential_env: None,
-            credential_files: None,
-            instrument_spec_path: None,
-            paper_initial_cash_raw: None,
-            max_order_notional_raw: None,
-            max_position_notional_raw: None,
-        });
-        let launches = plan_workers(&config, Path::new("deploy/runtime.json"), false).unwrap();
-        let launch = launches
-            .iter()
-            .find(|launch| launch.worker_id == "ccxt-recovery-main")
-            .unwrap();
-        assert_eq!(launch.args.first().map(String::as_str), Some("ccxt-worker"));
-        assert!(launch.args.last().is_some_and(|path| {
-            Path::new(path).ends_with("qianxing.ccxt.exchange.example.json")
-        }));
-    }
-
-    #[test]
-    fn worker_plan_routes_outbox_relay_to_builtin_worker() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("deploy")
-            .join("qianxing.runtime.messaging.example.json");
-        let config = RuntimeConfig::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
-        let launches = plan_workers(
-            &config,
-            Path::new("deploy/qianxing.runtime.messaging.example.json"),
-            false,
-        )
-        .unwrap();
-        assert!(launches.iter().any(|launch| {
-            launch.worker_id == "outbox-relay"
-                && launch.args
-                    == vec![
-                        "outbox-relay-worker",
-                        "deploy/qianxing.runtime.messaging.example.json",
-                        "outbox-relay",
-                    ]
-        }));
-    }
-
-    #[test]
-    fn worker_plan_routes_event_consumer_to_builtin_worker() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("deploy")
-            .join("qianxing.runtime.consumer.example.json");
-        let config = RuntimeConfig::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
-        let launches = plan_workers(
-            &config,
-            Path::new("deploy/qianxing.runtime.consumer.example.json"),
-            false,
-        )
-        .unwrap();
-        assert!(launches.iter().any(|launch| {
-            launch.worker_id == "ledger-reducer"
-                && launch.args.first().map(String::as_str) == Some("event-consumer-worker")
-        }));
-    }
-}
+mod tests;

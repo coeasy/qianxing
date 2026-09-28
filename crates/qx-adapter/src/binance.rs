@@ -287,6 +287,8 @@ pub struct BinanceStreamRunReport {
     pub reconnects: u32,
     /// 连续失败的重连次数：交付过事件的会话会把它清零，终态判定只看这个。
     pub consecutive_failures: u32,
+    /// 空闲读取窗口的次数：链路仍开着但这一窗没有事件，是"静默≠故障"的落地证据。
+    pub idle_windows: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -488,8 +490,11 @@ where
                     }
                 },
                 // 静默既不是失败也不是恢复：连接仍在，只是这一轮没有帧。不计预算、
-                // 不复位，回到循环顶部重新等——顺带让停机令牌有机会被读到。
-                Ok(BinanceStreamRead::Idle) => {}
+                // 不复位，回到循环顶部重新等——顺带让停机令牌有机会被读到。计数只外销，
+                // 不参与判据：它是"静默≠故障"的落地证据，运维据此区分空闲账户与坏链路。
+                Ok(BinanceStreamRead::Idle) => {
+                    report.idle_windows = report.idle_windows.saturating_add(1);
+                }
                 Ok(BinanceStreamRead::Closed) => break,
                 Err(error) => {
                     callback_error = Some(error);
@@ -1665,7 +1670,7 @@ fn client_order_id(id: u64) -> String {
 }
 
 fn validate_binance_instrument(instrument: &InstrumentId) -> QxResult<()> {
-    if !instrument.venue.as_str().eq_ignore_ascii_case("BINANCE") {
+    if !instrument.venue.is_binance() {
         return Err(QxError::Permanent(format!(
             "Binance Venue 不接受 instrument venue: {}",
             instrument.venue

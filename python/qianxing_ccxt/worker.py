@@ -160,15 +160,30 @@ class CcxtJsonWorker:
         if not operation.startswith("watch_"):
             return self.handle(request)
         stream = operation.removeprefix("watch_")
-        payload = await self._watch_with_reconnect(request, stream)
-        return {
-            "event": normalize_stream_event(
-                stream,
-                payload,
-                exchange_id=self.client.config.exchange_id,
-                received_ts=request.get("received_ts"),
-            )
-        }
+        wait_ms = request.get("wait_ms")
+        idle = False
+        if wait_ms is None:
+            payload = await self._watch_with_reconnect(request, stream)
+        else:
+            # 调用方给了等待上限：这一窗没有事件就答一次"空闲"，而不是让调用方的读窗口
+            # 到期把好端端的子进程判成链路故障（旧口径每 30 秒白杀白起一个进程，还把
+            # 空闲计进重连预算，于是一个没有成交的纸面账户五分钟后被具名放弃）。
+            try:
+                payload = await asyncio.wait_for(
+                    self._watch_with_reconnect(request, stream),
+                    timeout=max(0.001, int(wait_ms) / 1000),
+                )
+            except asyncio.TimeoutError:
+                payload, idle = [], True
+        event = normalize_stream_event(
+            stream,
+            payload,
+            exchange_id=self.client.config.exchange_id,
+            received_ts=request.get("received_ts"),
+        )
+        if idle:
+            event["idle"] = True
+        return {"event": event}
 
     async def _watch_with_reconnect(self, request: dict[str, Any], stream: str) -> Any:
         attempts = 0

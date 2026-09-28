@@ -265,12 +265,19 @@ fn enrich_fill_context(context: &mut EventContext, fill: &Fill) {
     }
 }
 
+/// `ingest` 的回执：这次归约是否幂等命中、落了哪几条事件、引擎时间推进到哪。
+///
+/// 不带主事件序号与日志摘要：事实流是唯一事实源，要按序号或摘要读请走 `log()`；
+/// 这两格此前在全仓（含用例）零读者，随 V13 §9.12 #170 删除。
+///
+/// 剩下三格的读者也不同层：只有 `deduplicated` 有生产读者（`ccxt_facts.rs` 用它决定
+/// 这条现金流水要不要计入"本次新入账几条"），`derived_seqs` 与 `engine_ts` 目前只有本
+/// crate 的用例读者 —— 那两类断言（"派生事件落了几条""引擎时间推进到哪"）是这条归约链的
+/// 回归证明面，按仓库口径保留，不算 #170 的漏删。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RuntimeIngestReceipt {
-    pub primary_seq: u64,
     pub derived_seqs: Vec<u64>,
     pub engine_ts: u64,
-    pub log_digest: u64,
     pub deduplicated: bool,
 }
 
@@ -909,10 +916,8 @@ impl LiveEventPipeline {
                     && (event.source_seq == source_seq || semantic_replay))
         }) {
             return Ok(RuntimeIngestReceipt {
-                primary_seq: existing.seq,
                 derived_seqs: Vec::new(),
                 engine_ts: existing.ts,
-                log_digest: staged.log.digest(),
                 deduplicated: true,
             });
         }
@@ -926,15 +931,8 @@ impl LiveEventPipeline {
             let key = fill_key(fill);
             if staged.seen_fills.contains(&key) {
                 return Ok(RuntimeIngestReceipt {
-                    primary_seq: staged
-                        .log
-                        .events()
-                        .last()
-                        .map(|event| event.seq)
-                        .unwrap_or(0),
                     derived_seqs: Vec::new(),
                     engine_ts: staged.last_engine_ts,
-                    log_digest: staged.log.digest(),
                     deduplicated: true,
                 });
             }
@@ -1206,10 +1204,8 @@ impl LiveEventPipeline {
         }
         staged.persist()?;
         let receipt = RuntimeIngestReceipt {
-            primary_seq: primary.seq,
             derived_seqs,
             engine_ts,
-            log_digest: staged.log.digest(),
             deduplicated: false,
         };
         *self = staged;
