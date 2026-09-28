@@ -20,13 +20,6 @@ impl ValidationReport {
     }
 }
 
-pub fn validate_timestamps(values: &[u64]) -> Result<(), String> {
-    if values.windows(2).any(|w| w[0] >= w[1]) {
-        return Err("timestamps must be strictly increasing".into());
-    }
-    Ok(())
-}
-
 pub fn validate_bars(bars: &[Bar]) -> ValidationReport {
     let mut report = ValidationReport::ok(bars.len());
     let mut last_timestamp = BTreeMap::<&str, u64>::new();

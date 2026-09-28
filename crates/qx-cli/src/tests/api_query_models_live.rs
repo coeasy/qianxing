@@ -14,6 +14,27 @@ fn live_api_service(root: &Path) -> ApiService {
     build_configured_api_service(&config, &config_path).expect("paper 拓扑装配得出 API 服务")
 }
 
+/// 文件后端部署也要拿到跨进程共享的限流桶（V12 §16）：此前只有 SQLite 部署装配共享桶，
+/// 同一 `data_dir` 下并起的两个 API 进程各算各的额度，而它们用的是同一份配置。
+#[test]
+fn file_backend_services_share_one_rate_limit_bucket() {
+    let root = temp_cli_case_dir("api-shared-rate-limit");
+    let first = live_api_service(&root);
+    for attempt in 0..qx_api::DEFAULT_RATE_LIMIT_CAPACITY {
+        assert_eq!(
+            first.handle("GET", "/health", "", 1).status,
+            200,
+            "第 {attempt} 次请求仍在额度内"
+        );
+    }
+    let second = live_api_service(&root);
+    assert_eq!(
+        second.handle("GET", "/health", "", 1).status,
+        429,
+        "同一 data_dir 的第二个 API 进程必须读同一份令牌桶，而不是重新起算"
+    );
+}
+
 /// 对账报告的落盘形状：对账 worker 每轮覆写 `reconcile/<worker-id>.json`。
 fn reconcile_report(worker_id: &str) -> ReconcileReportSnapshot {
     ReconcileReportSnapshot {

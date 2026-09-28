@@ -252,7 +252,10 @@ fn single_sided_override_is_rechecked_before_the_provenance_line() {
         "l1".into(),
         "--root".into(),
         root.join("book").to_string_lossy().into_owned(),
-        "grid".into(),
+        // 体检按 kind 的清单做（V12 #102）：这条链上一轮用的是 grid，它只读阈值，
+        // 25/20 那对窗口对它既不改结果、也不该把整轮拒掉。这里要验的是"复检先于印口径"
+        // 这个顺序，所以点一个真的读快慢窗口的 kind。
+        "ema_cross".into(),
         deploy("qianxing.depth-frame.l1.example.json")
             .to_string_lossy()
             .into_owned(),
@@ -279,9 +282,13 @@ fn single_sided_override_is_rechecked_before_the_provenance_line() {
 }
 
 /// 两条 Bar 链读同一份配置就该跑同一套信号：成交笔数、收益与回撤逐项相等。
+/// 配置取用例自己那份副本（`data_dir` 已改到临时目录）：直接拿仓库里的示例跑，产物就会
+/// 落进 `deploy/data`，下一次改动摘要格式时"同一产物路径内容必须一致"的闸门会先把
+/// 仓库里那份旧产物当成对手，而不是让用例变红（V12 #82）。
 #[test]
 fn both_bar_chains_read_the_same_declared_signal() {
-    let config = deploy(RUNTIME);
+    let root = temp_dir("same-signal");
+    let config = signal_config(&root, |_| {});
     let (code, strategy_chain, err) = run(&[
         "strategy".into(),
         "backtest".into(),
@@ -293,6 +300,12 @@ fn both_bar_chains_read_the_same_declared_signal() {
     let (code, builtin_chain, err) = builtin("ema_cross", "100", Some(&config));
     assert_eq!(code, 0, "内置链同一份配置必须跑通: {err}");
     let marker = "[Builtin · Backtest]".to_string();
+    // 两条链都得真的成交：零成交下"逐项相等"可以永远成立，那就不是在核对同一套信号。
+    assert_ne!(
+        field(&strategy_chain, "[Strategy · Backtest]", "fills"),
+        "0",
+        "策略链基线零成交，下面的对比是空的: {strategy_chain}"
+    );
     for key in ["fills", "return_bps", "max_drawdown_bps"] {
         assert_eq!(
             field(&strategy_chain, "[Strategy · Backtest]", key),
@@ -316,6 +329,7 @@ fn both_bar_chains_read_the_same_declared_signal() {
         params(&line_with(&strategy_chain, "[Strategy · Signal]")),
         "两条链印出来的来源判词与四项参数必须逐项相同"
     );
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// 深度档链也收 `--config`（风控与成本都从它取），信号参数不能只在这条链上失效（V11 Q64）。

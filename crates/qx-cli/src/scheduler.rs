@@ -1,4 +1,4 @@
-//! 调度器：UTC tick 归一、调度状态装载与到期作业分派。
+//! 调度器：UTC tick 归一、调度状态装载、到期作业分派，以及实时策略作业的规格构造。
 
 use super::*;
 
@@ -61,6 +61,58 @@ pub(crate) fn scheduler_manifest(
         output_event_hash: format!("output-{now}"),
         runtime_version: env!("CARGO_PKG_VERSION").into(),
     }
+}
+
+/// 实时策略每根闭合 Bar 的作业超时；同时是 `JobRun.deadline_ts` 的推算口径。
+pub(crate) const LIVE_STRATEGY_TIMEOUT_SECONDS: u64 = 60;
+
+/// 实时策略 worker 每一根闭合 Bar 对应的作业规格与运行记录。
+///
+/// `idempotency_key` 就是 BarFrame 指纹：同一根闭合 Bar 重放不会二次下单；
+/// `dry_run` 只按环境的 `paper` 判定，与 worker 角色无关。
+pub(crate) fn live_strategy_job(
+    strategy: &StrategyRuntimeConfig,
+    worker_id: &str,
+    data_fingerprint: u64,
+    now: u64,
+    environment: &str,
+) -> (JobSpec, qx_scheduler::JobRun) {
+    let trading_day = utc_schedule_tick(now).0;
+    let job = JobSpec {
+        job_id: format!("live-strategy:{worker_id}"),
+        job_version: strategy.version.clone(),
+        owner: worker_id.into(),
+        enabled: true,
+        trigger: Trigger::Manual,
+        window: JobWindow::Any,
+        depends_on: Vec::new(),
+        timeout_seconds: LIVE_STRATEGY_TIMEOUT_SECONDS,
+        retry_policy: RetryPolicy::default(),
+        concurrency_key: format!(
+            "live-strategy:{}",
+            strategy.instrument.as_deref().unwrap_or("")
+        ),
+        idempotency_key: format!("barframe:{data_fingerprint:016x}"),
+        audit_reason: "live-closed-bar".into(),
+        dry_run: environment.eq_ignore_ascii_case("paper"),
+    };
+    let run_id = job.stable_key(&trading_day);
+    // JobRun 的时间戳属于租约域（与 `start_run_at` 写出的记录同一口径），因此这里必须
+    // 用秒；否则同一份队列里会同时存在"按秒比较"和"按毫秒填写"的 deadline。
+    let lease_now = lease_clock(now);
+    let run = qx_scheduler::JobRun {
+        run_id,
+        job_id: job.job_id.clone(),
+        trading_day,
+        attempt: 1,
+        status: JobStatus::Running,
+        manifest_digest: Some(data_fingerprint),
+        error_code: None,
+        next_retry_ts: None,
+        started_ts: lease_now,
+        deadline_ts: lease_now.saturating_add(job.timeout_seconds),
+    };
+    (job, run)
 }
 
 pub(crate) fn scheduler_jobs_path(runtime_config_path: &Path, configured: &str) -> PathBuf {
@@ -165,6 +217,14 @@ fn validate_job_triggers(scheduler: &Scheduler) -> Result<(), String> {
     Ok(())
 }
 
+/// 一次调度 tick 的三类结果：真正入队的作业、被升级的超时运行、到期但没派发出去的作业。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DispatchSummary {
+    pub(crate) queued: usize,
+    pub(crate) timed_out: usize,
+    pub(crate) skipped: usize,
+}
+
 pub(crate) fn dispatch_scheduled_jobs(
     state_store: &JsonStateStore,
     state_path: &Path,
@@ -173,19 +233,27 @@ pub(crate) fn dispatch_scheduled_jobs(
     trading_day: &str,
     manifest: &qx_core::RunManifest,
     now: u64,
-) -> Result<usize, String> {
+) -> Result<DispatchSummary, String> {
+    // 每一次派发都会把 manifest.digest() 写进 JobRun 作为血缘锚点：摘要来自一个自身非法的
+    // manifest 时，跑完的作业会指向一条无法复现的运行身份，因此先 fail-closed（V12 §18-B #117）。
+    manifest.validate()?;
+    // Scheduler 的 deadline/retry 与 JobQueue 的租约都按秒比较，墙钟是毫秒。
+    let lease_now = lease_clock(now);
     let (_, result) = state_store
         .transact_scheduler_at(state_path, |scheduler| {
             // 先收超时：一条卡死的 Running 会一直占着并发键，之后每一轮派发都拿
-            // NotReady，而这份事实只在状态文件里躺着（V11 N2）。
-            scheduler
-                .sweep_timed_out(now)
-                .map_err(|error| format!("收口超时 JobRun 失败: {error:?}"))?;
+            // NotReady，而这份事实只在状态文件里躺着（V11 N2）。收口只有 `sweep_timed_out`
+            // 这一颗，升级数同时喂给摘要的 `timed_out`；deadline 由 `start_run_at` 写在
+            // 秒域，所以这里传 `lease_now` 而不是毫秒墙钟。
+            let timed_out = scheduler
+                .sweep_timed_out(lease_now)
+                .map_err(|error| format!("收口超时 JobRun 失败: {error:?}"))?
+                .len();
             let completed = scheduler.completed_jobs();
             // 窗口与交易日历的判定只有 `due_jobs_with_calendar` 这一颗；生产派发走它，
             // 传空历是因为运行时还没有日历写入者——装配处已经挡掉非 `Any` 窗口的作业，
             // 所以空历不改变任何被接受作业的判定结果。接上日历源时把这一颗的入参换掉，
-            // 不要退回只认 Cron 的 `due_jobs`（那等于把窗口判定重新变成没人调的孤儿）。
+            // 不要再起一颗只看 Cron、不看窗口的第二判据（那等于把窗口判定重新变成孤儿）。
             let job_ids = scheduler
                 .due_jobs_with_calendar(
                     tick,
@@ -199,22 +267,41 @@ pub(crate) fn dispatch_scheduled_jobs(
                 .map(|job| job.job_id.clone())
                 .collect::<Vec<_>>();
             let mut queued = 0_usize;
+            let mut skipped = 0_usize;
             for job_id in job_ids {
                 let job = scheduler
                     .job(&job_id)
                     .cloned()
                     .ok_or_else(|| format!("Scheduler JobSpec 不存在: {job_id}"))?;
-                let run = scheduler
-                    .start_run_at(&job_id, trading_day, manifest.digest(), now)
-                    .map_err(|error| format!("创建 JobRun 失败: {error:?}"))?;
+                let run = match scheduler.start_run_at(
+                    &job_id,
+                    trading_day,
+                    manifest.digest(),
+                    lease_now,
+                ) {
+                    Ok(run) => run,
+                    // 并发键被占用只是"这一轮不能跑"，不能让一个作业卡死整个调度器。
+                    Err(qx_scheduler::SchedulerError::NotReady(_)) => {
+                        skipped += 1;
+                        continue;
+                    }
+                    Err(error) => return Err(format!("创建 JobRun 失败: {error:?}")),
+                };
                 if run.status == JobStatus::Running {
                     queue
-                        .enqueue(job, run, now)
+                        .enqueue(job, run, lease_now)
                         .map_err(|error| format!("写入 JobQueue 失败: {error:?}"))?;
                     queued += 1;
+                } else {
+                    // 同一交易日已有终态/待接管运行：到期判定成立但不再派发。
+                    skipped += 1;
                 }
             }
-            Ok(queued)
+            Ok(DispatchSummary {
+                queued,
+                timed_out,
+                skipped,
+            })
         })
         .map_err(|error| format!("Scheduler 状态事务失败: {error:?}"))?;
     result

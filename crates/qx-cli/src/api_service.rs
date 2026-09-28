@@ -9,6 +9,9 @@ pub(crate) fn build_configured_api_service(
     config: &RuntimeConfig,
     runtime_config_path: &Path,
 ) -> Result<ApiService, String> {
+    // API 会受理 Trading 权限的 SubmitOrder 并写进与 worker 同一条队列：A 股段配在这里
+    // 同样没有落点（订单形状在提交那一刻就已定死），所以排在建目录等副作用之前拒掉（V12 R1 §4.20）。
+    reject_ashare_rules_on_submit_path(runtime_config_path, None, "serve")?;
     std::fs::create_dir_all(&config.storage.data_dir)
         .map_err(|error| format!("创建运行时 data_dir 失败: {error}"))?;
     let control_root = Path::new(&config.storage.data_dir).to_path_buf();
@@ -104,7 +107,7 @@ pub(crate) fn build_configured_api_service(
         let queue = Arc::clone(&command_queue);
         move |command, ts| {
             queue
-                .enqueue_command(command, ts)
+                .enqueue_command(command, lease_clock(ts))
                 .map(|_| ())
                 .map_err(|error| format!("写入控制命令队列失败: {error:?}"))
         }
@@ -119,13 +122,28 @@ pub(crate) fn build_configured_api_service(
                 .sqlite_path
                 .as_deref()
                 .ok_or_else(|| "SQLite backend 缺少 sqlite_path".to_string())?;
-            let bucket = SqliteTokenBucket::new(path, "api", 100, 100)
-                .map_err(|error| format!("初始化 SQLite API 限流失败: {error:?}"))?;
+            let bucket = SqliteTokenBucket::new(
+                path,
+                "api",
+                qx_api::DEFAULT_RATE_LIMIT_CAPACITY,
+                qx_api::DEFAULT_RATE_LIMIT_REFILL_PER_SECOND,
+            )
+            .map_err(|error| format!("初始化 SQLite API 限流失败: {error:?}"))?;
             let service = service.with_sqlite_rate_limit(bucket);
             return Ok(service);
         }
     }
-    Ok(service)
+    // 文件后端部署也要跨进程共享限流：此前只有 SQLite 部署拿到共享桶，同一
+    // data_dir 下并起的两个 API 进程各算各的额度，而调用方看到同一份配置
+    // （V12 §16）。`FileTokenBucket` 的原子锁+临时文件替换语义与 worker 侧同源。
+    let bucket = FileTokenBucket::new(
+        control_root.join("api-rate-limit"),
+        "api",
+        qx_api::DEFAULT_RATE_LIMIT_CAPACITY,
+        qx_api::DEFAULT_RATE_LIMIT_REFILL_PER_SECOND,
+    )
+    .map_err(|error| format!("初始化文件 API 限流失败: {error:?}"))?;
+    Ok(service.with_shared_file_rate_limit(bucket))
 }
 
 /// 无键端点（`/account/ledger`、不带查询串的 `/account/snapshot`）的"默认账户"：

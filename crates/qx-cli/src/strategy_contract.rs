@@ -228,7 +228,7 @@ pub(crate) fn strategy_target_qty(
             })?,
         )
         .map_err(|error| format!("Strategy research snapshot JSON 无效: {error:?}"))?;
-        validate_research_snapshot_binding(&config.strategy, &research)?;
+        validate_research_snapshot_binding(root, &config.strategy, &research)?;
         let account_id = config
             .strategy
             .account_id
@@ -723,11 +723,10 @@ pub(crate) fn strategy_submit_command(
 
 /// `serve` 该把 API 服务注册到哪个 worker 名下：按 **role** 找，不按名字猜（V11 S1）。
 ///
-/// 监督器的注册表以 `worker.id` 为键，而配置校验只要求"恰好一个启用的 api role worker"——
-/// id 是自由命名的。此前两处 `spawn_worker("api", …)` 写死字面量，于是把该 worker 改名成
-/// `api-gw` 的合法拓扑能过 `config validate`/`doctor`/`runtime-check`，却在 serve 启动瞬间
-/// 死于"未知 worker: api"；`supervise` 下一个子进程退出还会连带停掉其余全部 worker。
-/// 没有启用的 api worker 时这里必须报错，不能回落到任何字面量。
+/// 注册表以 `worker.id` 为键，而配置校验只要求"恰好一个启用的 api role worker"——id 是自由
+/// 命名的。此前两处 `spawn_worker("api", …)` 写死字面量，于是改名成 `api-gw` 的合法拓扑能过
+/// `config validate`/`doctor`/`runtime-check`，却在 serve 启动瞬间死于"未知 worker: api"
+/// （`supervise` 下一个子进程退出还会连带停掉其余 worker）。这里必须报错，不能回落字面量。
 pub(crate) fn configured_api_worker_id(config: &RuntimeConfig) -> Result<String, String> {
     config
         .workers
@@ -766,7 +765,9 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
                     return Err(error);
                 }
             };
-            let result = worker.join().map_err(|_| "API worker panic".to_string())?;
+            // 这里曾是 12 处 spawn_worker 里唯一裸 join() 的两处："按 Ctrl+C 停止"那句横幅
+            // 没有生产者，令牌的优雅窗口与 shutdown_timeout_ms 上界都轮不到。
+            let result = join_worker_handle(&supervisor, worker, "API", &api_worker_id);
             stop_api_projection_bridge(&projection_stop, &mut projection_thread);
             result
         }
@@ -838,13 +839,11 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
                     return Err(error);
                 }
             };
-            let result = worker
-                .join()
-                .map_err(|_| "mTLS API worker panic".to_string());
+            let result = join_worker_handle(&supervisor, worker, "mTLS API", &api_worker_id);
             reload_stop.store(true, Ordering::Release);
             let _ = reload_thread.join();
             stop_api_projection_bridge(&projection_stop, &mut projection_thread);
-            result?
+            result
         }
     }
 }

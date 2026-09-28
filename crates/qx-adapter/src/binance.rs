@@ -26,11 +26,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_HOST: &str = "api.binance.com";
 const DEFAULT_PORT: u16 = 443;
-const DEFAULT_WS_HOST: &str = "ws-api.binance.com";
 const DEFAULT_WS_PATH: &str = "/ws-api/v3";
-const DEFAULT_MARKET_WS_HOST: &str = "data-stream.binance.vision";
 const TESTNET_HOST: &str = "testnet.binance.vision";
-const TESTNET_MARKET_WS_HOST: &str = "stream.testnet.binance.vision";
 
 /// Binance Spot HMAC API 凭据与参数签名边界。
 #[derive(Clone)]
@@ -162,14 +159,6 @@ impl BinanceSpotAuth {
         })
     }
 
-    pub fn with_recv_window(mut self, recv_window: u64) -> Result<Self, String> {
-        if recv_window == 0 || recv_window > 60_000 {
-            return Err("Binance recvWindow 必须在 1..=60000 毫秒内".into());
-        }
-        self.recv_window = recv_window;
-        Ok(self)
-    }
-
     pub fn api_key(&self) -> &str {
         &self.api_key
     }
@@ -177,12 +166,6 @@ impl BinanceSpotAuth {
     /// 返回 Binance HMAC 签名使用的 RFC3986 编码参数串对应的十六进制摘要。
     pub fn sign_parameters(&self, parameters: &BTreeMap<String, String>) -> String {
         self.sign_encoded_payload(&form_encode(parameters))
-    }
-
-    /// 按调用方提供的顺序签名；用于复现 Binance 官方签名样例或需要保留
-    /// query/body 原始顺序的供应商边界。
-    pub fn sign_ordered_parameters(&self, parameters: &[(String, String)]) -> String {
-        self.sign_encoded_payload(&form_encode_pairs(parameters))
     }
 
     fn sign_encoded_payload(&self, payload: &str) -> String {
@@ -264,8 +247,6 @@ pub struct BinanceSpotUserStream {
 /// 连接器重连退避策略。时间由调用方的 `sleep` 注入；V10 §4.9 起退避公式与终态判定统一委托 [`qx_core::retry`]，此处只承载形状参数。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BinanceStreamRetryPolicy {
-    /// 连续重连上限，不是进程生命周期的总额：会话恢复过一次（交付过事件）就重新计数，
-    /// 否则长跑的用户流会在第 N 次正常网络抖动后永久退出。
     pub max_reconnects: u32,
     pub base_delay: std::time::Duration,
     pub max_delay: std::time::Duration,
@@ -302,9 +283,10 @@ impl BinanceStreamRetryPolicy {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BinanceStreamRunReport {
     pub events: u64,
-    /// 本次运行累计发起的重连次数（含失败的连接尝试）。判定上限用的是连续次数，
-    /// 见 [`run_binance_user_stream`]。
+    /// 生涯累计重连次数，只用于观测。
     pub reconnects: u32,
+    /// 连续失败的重连次数：交付过事件的会话会把它清零，终态判定只看这个。
+    pub consecutive_failures: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -470,35 +452,38 @@ where
     OnItem: FnMut(S::Item) -> Result<(), String>,
 {
     let mut report = BinanceStreamRunReport::default();
-    // 上限与退避按"连续失败次数"计：`report.reconnects` 是累计口径，拿它当预算等于让
-    // 长跑的用户流在第 N 次正常网络抖动后永久退出。
-    let mut consecutive = 0_u32;
     while !should_stop() {
         let mut session = match connect() {
             Ok(session) => session,
             Err(error) => {
-                consecutive = retry::RetryPolicy::next_attempt_count(consecutive);
-                report.reconnects = report.reconnects.saturating_add(1);
-                if !policy.allows_reconnect(consecutive) {
-                    return Err(format!("Binance 流连接失败且超过重试上限: {error}"));
+                report.reconnects = retry::RetryPolicy::next_attempt_count(report.reconnects);
+                report.consecutive_failures =
+                    retry::RetryPolicy::next_attempt_count(report.consecutive_failures);
+                if !policy.allows_reconnect(report.consecutive_failures) {
+                    return Err(format!(
+                        "Binance 流连续 {} 次重连失败且超过重试上限: {error}",
+                        report.consecutive_failures
+                    ));
                 }
-                sleep(policy.delay_for(consecutive));
+                sleep(policy.delay_for(report.consecutive_failures));
                 continue;
             }
         };
         let mut callback_error = None;
-        // 会话是否"工作过"：交付成功过至少一个事件，且中断不是本地回调失败。
-        let mut served = false;
+        let mut delivered = 0_u64;
+        // 只有"回调自己拒了"才算本地确定性故障；链路断开（`recv` 报错）不是，
+        // 否则一条交付过事件后被网络掐掉的会话永远无法给预算复位。
+        let mut callback_failed = false;
         while !should_stop() {
             match session.recv(now()) {
                 Ok(BinanceStreamRead::Message(item)) => match on_item(item) {
                     Ok(()) => {
                         report.events = report.events.saturating_add(1);
-                        served = true;
+                        delivered += 1;
                     }
                     Err(error) => {
                         callback_error = Some(error);
-                        served = false;
+                        callback_failed = true;
                         break;
                     }
                 },
@@ -513,20 +498,22 @@ where
             }
         }
         let _ = session.close();
+        if delivered > 0 && !callback_failed {
+            // 交付过事件的会话证明链路可用：退避预算重新计，长期健康的流不会被判死。
+            // 但回调失败通常是确定性错误，即使这条会话此前交付过事件也不算"已恢复"，
+            // 复位只会让同一个错误被无限重试。
+            report.consecutive_failures = 0;
+        }
         if should_stop() {
             break;
         }
-        // 回调失败不复位：那通常是确定性错误，复位只会让这个循环永远重试下去。
-        consecutive = if served {
-            0
-        } else {
-            retry::RetryPolicy::next_attempt_count(consecutive)
-        };
-        report.reconnects = report.reconnects.saturating_add(1);
-        if !policy.allows_reconnect(consecutive) {
+        report.reconnects = retry::RetryPolicy::next_attempt_count(report.reconnects);
+        report.consecutive_failures =
+            retry::RetryPolicy::next_attempt_count(report.consecutive_failures);
+        if !policy.allows_reconnect(report.consecutive_failures) {
             return Err(callback_error.unwrap_or_else(|| "Binance 流关闭".into()));
         }
-        sleep(policy.delay_for(consecutive));
+        sleep(policy.delay_for(report.consecutive_failures));
     }
     Ok(report)
 }
@@ -637,11 +624,6 @@ impl BinanceSpotMarketData {
         }
     }
 
-    pub fn with_rate_limit(mut self, capacity: u64, refill_per_second: u64) -> Self {
-        self.rate_limiter = RateLimiter::new(capacity, refill_per_second, 0);
-        self
-    }
-
     pub fn fetch_book_ticker(
         &mut self,
         instrument: &InstrumentId,
@@ -700,17 +682,6 @@ pub struct BinanceSpotMarketStream {
 }
 
 impl BinanceSpotMarketStream {
-    pub fn connect(instrument: InstrumentId, timeout: std::time::Duration) -> Result<Self, String> {
-        Self::connect_with_endpoint(instrument, DEFAULT_MARKET_WS_HOST, DEFAULT_PORT, timeout)
-    }
-
-    pub fn connect_testnet(
-        instrument: InstrumentId,
-        timeout: std::time::Duration,
-    ) -> Result<Self, String> {
-        Self::connect_with_endpoint(instrument, TESTNET_MARKET_WS_HOST, DEFAULT_PORT, timeout)
-    }
-
     pub fn connect_with_endpoint(
         instrument: InstrumentId,
         host: impl Into<String>,
@@ -746,23 +717,6 @@ impl BinanceSpotMarketStream {
 }
 
 impl BinanceSpotUserStream {
-    pub fn connect(
-        auth: &BinanceSpotAuth,
-        request_id: impl Into<String>,
-        timeout: std::time::Duration,
-    ) -> Result<Self, String> {
-        Self::connect_with_endpoint(auth, DEFAULT_WS_HOST, request_id, timeout)
-    }
-
-    pub fn connect_with_endpoint(
-        auth: &BinanceSpotAuth,
-        host: &str,
-        request_id: impl Into<String>,
-        timeout: std::time::Duration,
-    ) -> Result<Self, String> {
-        Self::connect_with_endpoint_port(auth, host, DEFAULT_PORT, request_id, timeout)
-    }
-
     pub fn connect_with_endpoint_port(
         auth: &BinanceSpotAuth,
         host: &str,
@@ -812,17 +766,6 @@ impl BinanceSpotUserStream {
     pub fn recv_event(&mut self) -> Result<BinanceStreamRead<String>, String> {
         let read = self.stream.recv_message()?;
         read_or_forward(read, decode_user_event)
-    }
-
-    pub fn unsubscribe(&mut self) -> Result<(), String> {
-        self.stream.send_text(
-            &serde_json::json!({
-                "id": format!("qx-unsubscribe-{}", self.subscription_id),
-                "method": "userDataStream.unsubscribe",
-                "params": {"subscriptionId": self.subscription_id},
-            })
-            .to_string(),
-        )
     }
 
     pub fn close(&mut self) -> Result<(), String> {
@@ -977,11 +920,6 @@ impl BinanceSpotVenue {
             last_event_ts: 0,
             reconnects: 0,
         }
-    }
-
-    pub fn with_rate_limit(mut self, capacity: u64, refill_per_second: u64) -> Self {
-        self.rate_limiter = RateLimiter::new(capacity, refill_per_second, 0);
-        self
     }
 
     /// 设置重连对账需要覆盖的 Spot symbol 集合。
@@ -1990,28 +1928,27 @@ mod tests {
         .into_iter()
         .map(|(key, value)| (key.into(), value.into()))
         .collect();
+        // 官方样例的 query 顺序不是 BTreeMap 字典序，因此直接钉住“签名的就是发出去的那段
+        // 编码串”这一条私有能力；公开的 ordered 入口没有任何生产读者（V12 §16）。
         assert_eq!(
-            auth.sign_ordered_parameters(&parameters),
+            auth.sign_encoded_payload(&form_encode_pairs(&parameters)),
             "c8db56825ae71d6d79447849e617115f4a920fa2acdcab2b053c4b2838bd6b71"
         );
     }
 
     #[test]
     fn binance_user_stream_subscription_payload_is_signed_and_explicit() {
-        let auth = BinanceSpotAuth::with_clock("api-key", b"secret", || 1_700_000_000_123)
-            .unwrap()
-            .with_recv_window(3_000)
-            .unwrap();
+        let auth = BinanceSpotAuth::with_clock("api-key", b"secret", || 1_700_000_000_123).unwrap();
         let payload: Value =
             serde_json::from_str(&auth.user_stream_subscribe_payload("request-1")).unwrap();
         assert_eq!(payload["id"], "request-1");
         assert_eq!(payload["method"], "userDataStream.subscribe.signature");
         assert_eq!(payload["params"]["apiKey"], "api-key");
         assert_eq!(payload["params"]["timestamp"], 1_700_000_000_123_u64);
-        assert_eq!(payload["params"]["recvWindow"], 3_000_u64);
+        assert_eq!(payload["params"]["recvWindow"], 5_000_u64);
         let mut parameters = BTreeMap::new();
         parameters.insert("apiKey".into(), "api-key".into());
-        parameters.insert("recvWindow".into(), "3000".into());
+        parameters.insert("recvWindow".into(), "5000".into());
         parameters.insert("timestamp".into(), "1700000000123".into());
         assert_eq!(
             payload["params"]["signature"],

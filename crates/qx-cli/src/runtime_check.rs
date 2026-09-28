@@ -6,13 +6,14 @@ pub(crate) fn collect_runtime_check_report(path: &Path) -> Result<serde_json::Va
     let config = read_runtime_config(path)?;
     let (failures, reference_warnings) = validate_runtime_references(path, &config);
     let supervisor = RuntimeSupervisor::new(config.clone())?;
+    // 心跳新鲜度只有一个口径：serve 侧读 worker 指标用的 `messaging.worker_stale_after_ms`；
+    // 曾传 `0` 当时刻、`shutdown_timeout_ms` 当预算，前者使过期判定恒不成立（V12 §16 #122）。
+    let stale_ms = config.messaging.worker_stale_after_ms;
     let health = supervisor
         .health()
         .lock()
         .map_err(|_| "运行时健康锁已中毒".to_string())?
-        // 时钟取真实的现在：`snapshot(0, …)` 会让"心跳是否过期"这道比较恒为假，校验通过的
-        // shutdown_timeout_ms 在这一格就等于什么都不约束（V11 L4）。
-        .snapshot(runtime_timestamp_ms(), config.shutdown_timeout_ms);
+        .snapshot(runtime_timestamp_ms(), stale_ms);
     // 体检跑在任何 worker 启动之前，注册表里只有 `register()` 写下的 Starting 行：`overall`
     // 到不了 Failed，健康半边对 `ok` 投不出反对票。所以这块如实声明成"配置派生的花名册、没有
     // 心跳事实"（health_observed），别让人把 Starting 读成活体探测过了；真正会反对的是上面的
@@ -138,22 +139,10 @@ pub(crate) fn run_runtime_check(path: &Path, as_json: bool) -> Result<(), String
             );
         }
     }
-    for warning in report
-        .get("warnings")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(serde_json::Value::as_str)
-    {
+    for warning in string_array(&report, "warnings") {
         println!("[WARN] {warning}");
     }
-    let failures = report
-        .get("failures")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(serde_json::Value::as_str)
-        .collect::<Vec<_>>();
+    let failures = string_array(&report, "failures");
     if failures.is_empty() && report.get("ok").and_then(serde_json::Value::as_bool) != Some(false) {
         println!("[PASS] runtime 引用文件校验通过");
         Ok(())
@@ -202,6 +191,14 @@ pub(crate) fn unapplied_cost_rules_declaration(
         ));
     }
     None
+}
+
+/// 报告里的一个字符串数组字段：缺失或非数组一律按空处理，两处读点因此不必各写一遍兜底。
+fn string_array<'a>(report: &'a serde_json::Value, key: &str) -> Vec<&'a str> {
+    let Some(items) = report.get(key).and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    items.iter().filter_map(serde_json::Value::as_str).collect()
 }
 
 pub(crate) fn validate_runtime_references(

@@ -82,8 +82,10 @@ fn builtin_worker_reads_the_declared_signal_parameters() {
     );
 
     // 只给单边窗口时，运行时体检看不到（它只比两个都写了的键）；非法组合要等这项并进
-    // 默认慢窗之后才成立，所以装配尾部必须复检。
+    // 默认慢窗之后才成立，所以装配尾部必须复检。体检按 kind 的清单做（V12 #102）：
+    // 例子里的 macd 一个窗口都不读，25/20 那种"看着非法"的组合对它既不改结果、也不该拒。
     let mut one_sided = declared.clone();
+    one_sided.strategy.builtin_strategy = Some("ema_cross".into());
     one_sided.strategy.builtin_slow_window = None;
     one_sided.strategy.builtin_fast_window = Some(25);
     let error = crate::strategy_host::builtin_strategy_config_from_runtime(
@@ -94,6 +96,19 @@ fn builtin_worker_reads_the_declared_signal_parameters() {
     assert!(
         error.contains("内置策略参数非法"),
         "单边窗口的非法组合没有被复检: {error}"
+    );
+    let mut unused_illigal = declared.clone();
+    unused_illigal.strategy.builtin_fast_window = Some(9);
+    unused_illigal.strategy.builtin_slow_window = Some(3);
+    let ignored = crate::strategy_host::builtin_strategy_config_from_runtime(
+        &unused_illigal.strategy,
+        &instrument,
+    )
+    .unwrap_or_else(|error| panic!("macd 不读快慢窗口，9/3 这种清单外取值不许拒一轮交易: {error}"));
+    assert_eq!(
+        windows(&ignored),
+        (9, 3, 9, 50),
+        "清单外的取值仍要原样装配（播报才写得出 declared_unused），只是不参与信号"
     );
 }
 

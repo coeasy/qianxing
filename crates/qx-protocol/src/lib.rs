@@ -212,6 +212,9 @@ impl AccountSnapshot {
             Ok(())
         }
 
+        // 这里只做"这一份文档自洽吗"的体检，**不做版本闸门**：一份按 v2 口径自洽封存的快照
+        // 在这里必须过关，拒它的理由只能是"本构建只认 v1"（闸门见 `from_json` / `from_wire_json`）。
+        // 混在一起会让"版本不受支持"和"哈希不对"共用一条通道，判据就分不出是谁拒的（V11 S10）。
         if self.header.schema_version == 0 || self.header.account_id.trim().is_empty() {
             return Err(ProtocolError::Invalid("快照头或 account_id 非法".into()));
         }
@@ -459,25 +462,32 @@ impl AccountSnapshot {
             // Python 侧的 `load_account_snapshot` 早就按常量拒绝非 1；读侧此前只查自洽性，
             // 一个 `schema_version: 7` 会被当 v1 解析出来，两边在同一份产物上一宽一严。
             return Err(ProtocolError::Invalid(format!(
-                "账户快照 schema_version 不受支持: {top_schema}（只支持 {ACCOUNT_SNAPSHOT_SCHEMA_VERSION}）"
+                "账户快照 schema_version={top_schema} 不受支持（本构建只认 {}）",
+                ACCOUNT_SNAPSHOT_SCHEMA_VERSION
             )));
         }
         let header = object
             .get_mut("header")
             .and_then(serde_json::Value::as_object_mut)
             .ok_or_else(|| ProtocolError::Invalid("账户快照 header 缺失".into()))?;
-        match header
-            .get("schema_version")
-            .and_then(serde_json::Value::as_u64)
-        {
-            Some(header_schema) if header_schema != top_schema => {
-                return Err(ProtocolError::Invalid(
-                    "账户快照 schema_version 前后不一致".into(),
-                ));
-            }
-            Some(_) => {}
+        match header.get("schema_version") {
+            // 缺席才是"存储的形状"（`to_json` 不写这一格），补写成顶层值；但**声明了却读不出
+            // 整数**的那一份是另一件事：按字符串 `"1"`、`true`、`null` 声明版本，不能被
+            // "读不出就当没写"的补写路径洗成合法值（V12 R2）。
             None => {
                 header.insert("schema_version".into(), serde_json::Value::from(top_schema));
+            }
+            Some(declared) => {
+                let declared = declared.as_u64().ok_or_else(|| {
+                    ProtocolError::Invalid(format!(
+                        "账户快照 header.schema_version 声明了但不是无符号整数: {declared}"
+                    ))
+                })?;
+                if declared != top_schema {
+                    return Err(ProtocolError::Invalid(format!(
+                        "账户快照 schema_version 前后不一致（顶层 {top_schema} ≠ header.schema_version {declared}）"
+                    )));
+                }
             }
         }
         if let Some(positions) = object
@@ -514,6 +524,14 @@ impl AccountSnapshot {
     pub fn from_wire_json(input: &str) -> Result<Self, ProtocolError> {
         let snapshot: Self = serde_json::from_str(input)
             .map_err(|error| ProtocolError::Serialization(error.to_string()))?;
+        // wire 入口与稳定 JSON 入口共用同一道版本闸门（V12 R2）：闸门放在读侧而不是
+        // `validate()` 里，所以"自洽的跨版本文档"在这里得到的理由是版本不受支持。
+        if snapshot.header.schema_version != ACCOUNT_SNAPSHOT_SCHEMA_VERSION {
+            return Err(ProtocolError::Invalid(format!(
+                "账户快照 schema_version={} 不受支持（本构建只认 {}）",
+                snapshot.header.schema_version, ACCOUNT_SNAPSHOT_SCHEMA_VERSION
+            )));
+        }
         snapshot.validate()?;
         Ok(snapshot)
     }
@@ -794,84 +812,4 @@ fn order_status_code(status: OrderStatus) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn snapshot() -> AccountSnapshot {
-        let instrument = InstrumentId::parse("BTC-USDT.BINANCE").unwrap();
-        let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
-        snapshot.cash_raw.insert("USDT".into(), 1000);
-        snapshot.positions.insert(
-            instrument.clone(),
-            PositionSnapshot {
-                instrument,
-                quantity_raw: 2,
-                ..PositionSnapshot::default()
-            },
-        );
-        snapshot.seal();
-        snapshot
-    }
-
-    #[test]
-    fn diff_is_deterministic_and_replayable() {
-        let base = snapshot();
-        let mut target = base.clone();
-        target.cash_raw.insert("USDT".into(), 900);
-        target.equity_raw = Some(900);
-        target.header.snapshot_id = 2;
-        target.header.as_of = 11;
-        target.header.event_seq = 4;
-        target.seal();
-        let diff = base.diff(&target).unwrap();
-        let rebuilt = diff.apply(&base).unwrap();
-        assert_eq!(rebuilt, target);
-    }
-
-    #[test]
-    fn wrong_base_is_rejected() {
-        let base = snapshot();
-        let mut target = base.clone();
-        target.cash_raw.insert("USDT".into(), 900);
-        target.seal();
-        let diff = base.diff(&target).unwrap();
-        let mut wrong = base.clone();
-        wrong.cash_raw.insert("USDT".into(), 800);
-        wrong.seal();
-        assert_eq!(diff.apply(&wrong), Err(ProtocolError::BaseStateMismatch));
-    }
-
-    #[test]
-    fn json_wire_format_is_stable_and_uses_raw_integers() {
-        let snapshot = snapshot();
-        let json = snapshot.to_json();
-        assert!(json.starts_with("{\"protocol\":\"QIANXING_ACCOUNT\""));
-        assert!(json.contains("\"cash_raw\":{\"USDT\":1000}"));
-        assert!(json.contains("\"quantity_raw\":2"));
-        assert!(ACCOUNT_SNAPSHOT_JSON_SCHEMA.contains("QIANXING_ACCOUNT"));
-        let wire = snapshot.to_wire_json().unwrap();
-        assert_eq!(AccountSnapshot::from_wire_json(&wire).unwrap(), snapshot);
-        let qifi = snapshot.to_qifi();
-        let qifi_json = qifi.to_json();
-        assert!(qifi_json.contains("\"protocol\":\"QIFI\""));
-        assert_eq!(QifiEnvelope::from_json(&qifi_json).unwrap(), qifi);
-    }
-
-    #[test]
-    fn stable_json_and_file_snapshot_store_are_recoverable_and_idempotent() {
-        let snapshot = snapshot();
-        let root = std::env::temp_dir().join(format!(
-            "qianxing-protocol-{}-{}",
-            std::process::id(),
-            snapshot.header.snapshot_id
-        ));
-        let store = FileSnapshotStore::new(&root);
-        let first = store.save(&snapshot).unwrap();
-        let second = store.save(&snapshot).unwrap();
-        assert_eq!(first, second);
-        let json = store
-            .load_json(snapshot.header.snapshot_id, snapshot.state_hash())
-            .unwrap();
-        assert_eq!(AccountSnapshot::from_json(&json).unwrap(), snapshot);
-    }
-}
+mod tests;

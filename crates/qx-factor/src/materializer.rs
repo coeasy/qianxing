@@ -128,26 +128,6 @@ impl FactorMaterializationResult {
         }
         Ok(())
     }
-
-    pub fn artifact_for(&self, feature_key: &str) -> Option<&FeatureArtifact> {
-        self.artifacts
-            .iter()
-            .find(|artifact| artifact.feature_key == feature_key)
-    }
-
-    pub fn requested_artifacts<'a>(
-        &'a self,
-        plan: &'a FactorExecutionPlan,
-    ) -> Result<Vec<&'a FeatureArtifact>, FactorError> {
-        self.validate_for(plan)?;
-        plan.requested_outputs
-            .iter()
-            .map(|key| {
-                self.artifact_for(key)
-                    .ok_or_else(|| FactorError::MissingArtifact(key.clone()))
-            })
-            .collect()
-    }
 }
 
 pub struct FactorMaterializer<'a> {

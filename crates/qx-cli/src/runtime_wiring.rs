@@ -353,6 +353,12 @@ pub(crate) fn runtime_timestamp_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// 租约域时钟：epoch 秒。租约（`JobLease`/`ControlCommandLease`/outbox）、`JobSpec.timeout_seconds`
+/// 与 `JobRun` 的三个时间戳全按秒比较，喂毫秒会让 30 秒租约在 30 毫秒后"过期"；跨域只在这里换算一次。
+pub(crate) fn lease_clock(timestamp_ms: u64) -> u64 {
+    timestamp_ms / 1_000
+}
+
 pub(crate) fn worker_metrics_dir(config: &RuntimeConfig) -> PathBuf {
     Path::new(&config.storage.data_dir).join("worker-metrics")
 }

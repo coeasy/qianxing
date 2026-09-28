@@ -2,8 +2,8 @@
 //!
 //! 三条验收线：一是和文件后端跑**同一断言序列**（通过共享的 `EventLogStore`
 //! trait 对象），保证后端可互换；二是 SQLite 才有的行级能力（幂等追加、
-//! dedup_key、按 seq 范围读、manifest 摘要校验）；三是篡改与重启路径必须
-//! 暴露错误，而不是静默返回半个事实日志。
+//! dedup_key 冲突裁决、按 seq 升序交付、manifest 摘要校验）；三是篡改与
+//! 重启路径必须暴露错误，而不是静默返回半个事实日志。
 #![cfg(feature = "sqlite")]
 
 use qx_core::{Event, EventKind, EventLog, EventMetadata, Priority};
@@ -147,11 +147,10 @@ fn sqlite_event_log_append_is_idempotent_by_dedup_key() {
         1
     );
     assert_eq!(store.event_count("run").unwrap(), 2);
-    assert!(store.contains_dedup_key("run", "fact-0").unwrap());
-    // 空 dedup_key 不是去重键。
-    assert!(!store.contains_dedup_key("run", "").unwrap());
 
     // 同一 dedup_key 承载不同事实必须冲突，且不能留下半个事实。
+    // 这里刻意不引入"查一下这个键存过吗"的第二入口：唯一可信的裁决就是
+    // append 本身返回什么，因此下面的每条断言都直接读写入结果与行数。
     assert!(matches!(
         store.append("run", &settled_event(2, 3, "fact-0")),
         Err(StorageError::Conflict(_))
@@ -171,26 +170,30 @@ fn sqlite_event_log_append_is_idempotent_by_dedup_key() {
     );
     assert_eq!(store.event_count("run").unwrap(), 2);
 
-    // 没有 dedup_key 的事实不参与去重，只按 seq 幂等。
+    // 没有 dedup_key 的事实不参与去重，只按 seq 幂等；空键更不是去重键，
+    // 两条不同 seq 的空键事实都要各自落库。
     assert!(store
         .append("run", &Event::new(2, 3, Priority::POST, EventKind::Settle))
         .unwrap());
     assert!(!store
         .append("run", &Event::new(2, 3, Priority::POST, EventKind::Settle))
         .unwrap());
-    assert_eq!(store.event_count("run").unwrap(), 3);
+    assert!(store
+        .append("run", &Event::new(3, 4, Priority::POST, EventKind::Settle))
+        .unwrap());
+    assert_eq!(store.event_count("run").unwrap(), 4);
 
     // seq 单调：乱序事实被 Kernel 不变量拒绝，且不会污染已落库事实。
-    assert_eq!(store.last_seq("run").unwrap(), Some(2));
-    assert_eq!(store.next_seq("run").unwrap(), Some(3));
+    assert_eq!(store.last_seq("run").unwrap(), Some(3));
+    assert_eq!(store.next_seq("run").unwrap(), Some(4));
     assert!(matches!(
-        store.append("run", &settled_event(3, 2, "fact-3")),
+        store.append("run", &settled_event(4, 2, "fact-4")),
         Err(StorageError::Core(_))
     ));
-    assert_eq!(store.event_count("run").unwrap(), 3);
-    assert!(!store.contains_dedup_key("run", "fact-3").unwrap());
-    assert!(store.append("run", &settled_event(3, 4, "fact-3")).unwrap());
-    assert_eq!(store.last_seq("run").unwrap(), Some(3));
+    assert_eq!(store.event_count("run").unwrap(), 4);
+    // 被拒的键没有留下痕迹：同键换一个时间戳必须正常追加，而不是判成冲突。
+    assert!(store.append("run", &settled_event(4, 5, "fact-4")).unwrap());
+    assert_eq!(store.last_seq("run").unwrap(), Some(4));
     assert!(store.validate("run").is_ok());
     let digest = store.digest("run").unwrap();
     assert_eq!(digest, Some(store.read("run").unwrap().digest()));
@@ -198,11 +201,11 @@ fn sqlite_event_log_append_is_idempotent_by_dedup_key() {
     // 重开连接后可以继续按同一 seq 序列追加。
     let reopened = SqliteEventLogStore::new(&path).unwrap();
     assert_eq!(reopened.digest("run").unwrap(), digest);
-    assert_eq!(reopened.event_count("run").unwrap(), 4);
+    assert_eq!(reopened.event_count("run").unwrap(), 5);
     assert!(reopened
-        .append("run", &settled_event(4, 5, "fact-4"))
+        .append("run", &settled_event(5, 6, "fact-5"))
         .unwrap());
-    assert_eq!(reopened.last_seq("run").unwrap(), Some(4));
+    assert_eq!(reopened.last_seq("run").unwrap(), Some(5));
     assert!(reopened.validate("run").is_ok());
     assert_eq!(reopened.list().unwrap(), vec!["run".to_string()]);
     assert!(matches!(
@@ -212,38 +215,28 @@ fn sqlite_event_log_append_is_idempotent_by_dedup_key() {
     let _ = std::fs::remove_file(path);
 }
 
+/// 重放游标不在存储层：SQLite 后端只按 seq 升序交付整条日志，
+/// `after` 语义由 `qx-api` 的 `events_after_cursor` 单点实现（V12 R4-g）。
+/// 因此这里钉住的是"交付顺序 + 追加不可改写"，而不是某个 SQL 范围查询。
 #[test]
-fn sqlite_event_log_range_read_follows_seq() {
-    let path = temp_db("sqlite-range");
+fn sqlite_event_log_delivers_in_seq_order_and_rejects_rewrites() {
+    let path = temp_db("sqlite-order");
     let store = SqliteEventLogStore::new(&path).unwrap();
     store.write("run", &sample_log(6)).unwrap();
 
-    let tail = store.read_range("run", 3, 100).unwrap();
+    let events = store.read("run").unwrap();
     assert_eq!(
-        tail.iter().map(|event| event.seq).collect::<Vec<_>>(),
-        vec![4, 5]
-    );
-    // `after_seq` 是排他游标：seq 0 视为已消费，只返回其后的事实。
-    assert_eq!(
-        store
-            .read_range("run", 0, 100)
-            .unwrap()
+        events
+            .events()
             .iter()
-            .map(|event| event.seq)
+            .enumerate()
+            .map(|(index, event)| {
+                assert_eq!(event.seq, index as u64, "整条日志必须按 seq 升序交付");
+                event.seq
+            })
             .collect::<Vec<_>>(),
-        (1..6u64).collect::<Vec<u64>>()
+        (0..6u64).collect::<Vec<u64>>()
     );
-    // limit 截断保持 seq 升序，重放游标可直接推进到最后一个事件。
-    assert_eq!(
-        store
-            .read_range("run", 1, 2)
-            .unwrap()
-            .iter()
-            .map(|event| event.seq)
-            .collect::<Vec<_>>(),
-        vec![2, 3]
-    );
-    assert!(store.read_range("run", 5, 10).unwrap().is_empty());
 
     // 同一日志整体重写是幂等的；改写前缀被拒绝。
     let before = store.digest("run").unwrap();
@@ -262,7 +255,7 @@ fn sqlite_event_log_range_read_follows_seq() {
         Err(StorageError::Conflict(_))
     ));
     assert!(matches!(
-        store.read_range("missing", 0, 1),
+        store.read("missing"),
         Err(StorageError::NotFound(_))
     ));
     let _ = std::fs::remove_file(path);

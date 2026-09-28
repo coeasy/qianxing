@@ -75,8 +75,8 @@ fn backtest_rejects_positionals_shadowed_by_a_subcommand() {
         "被子命令遮蔽的外层参数必须退出 2，实际 stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("runtime/frame/spec") && stderr.contains("不参与回测"),
-        "stderr 需点名被丢弃的外层位置参数: {stderr}"
+        stderr.contains("不会参与计算") && stderr.contains("runtime.json / frame.json / spec.json"),
+        "stderr 需点名丢弃口径与每一份被遮蔽的外层位置参数: {stderr}"
     );
 }
 
@@ -86,7 +86,7 @@ fn backtest_still_accepts_either_argument_shape() {
     let (code, _, stderr) = run(&["backtest", "builtin", "sma_cross", "missing-bars.json"]);
     assert_eq!(code, 2, "数据文件缺失应退出 2，实际 stderr:\n{stderr}");
     assert!(
-        !stderr.contains("不参与回测"),
+        !stderr.contains("不会参与计算"),
         "纯子命令形态不该被拒: {stderr}"
     );
     assert!(
@@ -96,7 +96,7 @@ fn backtest_still_accepts_either_argument_shape() {
     let (code, _, stderr) = run(&["backtest", "missing-runtime.json", "missing-bars.json"]);
     assert_eq!(code, 2, "数据文件缺失应退出 2，实际 stderr:\n{stderr}");
     assert!(
-        !stderr.contains("不参与回测"),
+        !stderr.contains("不会参与计算"),
         "无子命令形态不该被拒: {stderr}"
     );
     assert!(
@@ -177,8 +177,14 @@ fn live_check_fails_closed_on_the_production_example() {
 /// 另一份（或空）数据，验收便以 `processed=0` 退 2 —— 那测的是隔离手法而不是入口。
 /// 两次调用留在同一颗用例里按顺序跑：它们共用 `data/qianxing-paper`（`.gitignore` 的
 /// `/data/` 已挡住），并行等于两个进程写同一份运行时状态。
+///
+/// 比较之前先跑一轮暖场：结论行里的 `new_orders` / `new_ledger_entries` 记的是"本轮新写进
+/// 账本的事实"，空目录上第一轮必然非零、同一份状态上的第二轮必然归零。不暖场直接比较，别名
+/// 相等会被读成"两个名字给的结论不一样"。
 #[test]
 fn paper_check_and_paper_e2e_share_one_entry() {
+    let (warm_code, _, warm_err) = run_in_repo_root(&["paper-check"]);
+    assert_eq!(warm_code, 0, "paper-check 暖场轮失败: {warm_err}");
     let (check_code, check_stdout, check_err) = run_in_repo_root(&["paper-check"]);
     let (e2e_code, e2e_stdout, e2e_err) = run_in_repo_root(&["paper-e2e"]);
     assert_eq!(check_code, 0, "paper-check 失败: {check_err}");

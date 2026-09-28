@@ -125,6 +125,36 @@ fn user_stream_runner_reconnects_after_session_or_callback_error() {
     assert_eq!(slept, [Duration::from_millis(10)]);
 }
 
+/// 连接根本没建立时（`connect()` 自己报错）预算与退避都照常爬升到终态。上面几条测的都是
+/// "会话交付过事件才复位"，这一条钉的是复位判据的另一半：一支连会话都没有的失败路径上，
+/// 计数器没有任何可复位的来源，必须一路撞到 `max_reconnects`。
+#[test]
+fn connect_failures_still_escalate_backoff_and_stop_at_the_budget() {
+    let mut connect_count = 0_u32;
+    let mut slept = Vec::new();
+    let failure = run_binance_user_stream(
+        || {
+            connect_count += 1;
+            Err::<FakeUserStream, _>("injected connect failure".into())
+        },
+        policy(2),
+        || false,
+        |delay| slept.push(delay),
+        |_| Ok(()),
+    )
+    .expect_err("连不上必须在上限处收口，而不是无限重试");
+    assert!(
+        failure.contains("超过重试上限") && failure.contains("injected connect failure"),
+        "终态文案要同时点名预算与那一次真正的错误: {failure}"
+    );
+    assert_eq!(connect_count, 3, "上限 2 允许两次重连，第三次当场收口");
+    assert_eq!(
+        slept,
+        [Duration::from_millis(10), Duration::from_millis(20)],
+        "连接失败的退避必须按连续次数爬升"
+    );
+}
+
 /// 每轮都正常交付事件的长跑会话必须能越过 `max_reconnects`，且退避停在 base：
 /// 修复前 `report.reconnects` 终身累加，第三条会话一结束就返回 Err 让 worker 退出。
 #[test]
@@ -152,6 +182,10 @@ fn user_stream_runner_survives_reconnects_after_healthy_sessions() {
     .unwrap();
     assert_eq!(report.events, 6);
     assert_eq!(report.reconnects, 2);
+    assert_eq!(
+        report.consecutive_failures, 0,
+        "终态判定读的是连续失败次数：退避回到 base 还不够，计数器本身也必须被复位"
+    );
     assert_eq!(
         slept,
         [Duration::from_millis(10), Duration::from_millis(10)],

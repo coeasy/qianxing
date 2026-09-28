@@ -8,6 +8,9 @@
 //!    进程毫秒戳推进 `EventLog`（`qx-runtime/src/pipeline.rs`）。内核里没有时钟对象。
 //! 3. **不用无序容器做顺序敏感迭代**：`HashMap` 只用于查找，遍历一律排序。
 //! 4. **事件即事实**：状态由事件日志重建，任何旁路写入都是 bug。
+//!    因果序（`(ts, prio, seq)` 全序）由 [`EventLog::validate`] 单点裁决；
+//!    内核不提供第二套事件循环——回测/paper/live 的循环各在自己的 crate 里，
+//!    但都只能通过 EventLog 落地事实。
 
 pub mod clock;
 pub mod error;

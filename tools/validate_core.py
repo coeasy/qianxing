@@ -8,11 +8,12 @@
      （确定性重放、point-in-time 可见性、撮合模型）。
   2. 作为未来 Python 控制面（PyO3 绑定之上）的语义骨架。
 
-V11 P2 起第 1 条不再包含"因果队列排序"：Rust 侧那份 `CausalQueue` 与 `TestClock` 从来没有
-一个生产者或消费者走过，已经删掉；同一条 (ts, prio) 序现在长在写入处——
-`qx-runtime/src/pipeline.rs` 的 `append_at_engine` 让 `EventLog` 单调落盘。下面的
-`CausalQueue` 与 `TestClock` 因此只是本文件自用的参考形状，不再与 Rust 一一对应；
-`PRIO_*` 常量的数值仍必须与 `qx-core/src/event.rs` 的 `prio` 逐项相同，这一条由门禁钉住。
+V11 P2 起第 1 条不再包含"因果队列排序"：Rust 侧那份 `CausalQueue` 与那份从未被推进过的虚拟时钟类型
+从来没有一个生产者或消费者走过，已经删掉；同一条 (ts, prio) 序现在长在写入处——
+`qx-runtime/src/pipeline.rs` 的 `append_at_engine` 让 `EventLog` 单调落盘。下面的 `CausalQueue`
+因此只是本文件自用的参考形状，不再与 Rust 一一对应；那份时钟类型连参考形状都不再留（它在本文件里
+同样零消费者），门禁按名字全仓禁止它回来。`PRIO_*` 常量的数值仍必须与 `qx-core/src/event.rs` 的
+`prio` 逐项相同，这一条由门禁钉住。
 
 注意：本文件只验证**语义**，不代表性能。性能必须以 Rust 实测为准。
 
@@ -54,21 +55,6 @@ def show(x: int) -> str:
     i, frac = divmod(x, SCALE)
     s = f"{frac:09d}".rstrip("0")
     return f"{'-' if neg else ''}{i}" + (f".{s}" if s else "")
-
-
-# ---------------------------------------------------------------- 时钟
-
-
-class TestClock:
-    """参考形状：只在 advance_to 时前进的单调时钟。Rust 侧自 V11 P2 起没有对应实现。"""
-
-    def __init__(self, start: int = 0):
-        self.now = start
-
-    def advance_to(self, t: int) -> None:
-        if t < self.now:
-            raise ValueError(f"时间倒流: now={self.now} t={t}")
-        self.now = t
 
 
 # ------------------------------------------- (ts, prio) 全序（Python 侧参考形状）

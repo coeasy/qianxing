@@ -94,11 +94,6 @@ pub enum LockError {
 }
 
 impl LockError {
-    /// 是否属于"有人在写"这一类：只有这一类可以映射成租约被占。
-    pub fn is_contended(&self) -> bool {
-        matches!(self, Self::Contended(_))
-    }
-
     pub fn message(&self) -> &str {
         match self {
             Self::Contended(message) | Self::Io(message) => message,
@@ -408,16 +403,59 @@ mod tests {
         let policy = LockPolicy {
             stale_after: Duration::from_secs(30),
             wait_attempts: 3,
-            wait_interval: Duration::ZERO,
+            wait_interval: Duration::from_millis(10),
         };
+        let started = std::time::Instant::now();
         let error =
             FileLock::acquire_with(&path, policy).expect_err("fresh lock must not be stolen");
-        assert!(error.is_contended(), "新鲜锁失败必须报成竞争: {error:?}");
+        let elapsed = started.elapsed();
+        assert!(
+            matches!(error, LockError::Contended(_)),
+            "新鲜锁失败必须报成竞争: {error:?}"
+        );
         let message = error.message();
         assert!(message.contains(&path.display().to_string()), "{message}");
         assert!(message.contains("holder=999999"), "{message}");
         assert!(message.contains("尚未达到"), "{message}");
         assert!(path.exists(), "等待预算用尽不得删掉别人的锁");
+        // 两条界一起才叫"有界等待"：一看到 Busy 就退出的实现同样交出 Contended，只是它把
+        // 并发写者正常干活的那几十毫秒当成了竞争失败。
+        assert!(
+            elapsed >= Duration::from_millis(10) && elapsed < Duration::from_secs(2),
+            "等待必须真的等过预算、又必须在预算用尽时收场，实际 {elapsed:?}: {message}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 占用方在预算内收尾时，等待方要拿到锁而不是把这次写失败上抛。
+    /// 上面那颗只答得出"抢不到时长什么样"，答不出"等是有回报的"。
+    #[test]
+    fn a_holder_that_releases_inside_the_budget_lets_the_waiter_in() {
+        let dir = temp_dir("release");
+        let path = dir.join("brief.lock");
+        let held = FileLock::acquire(&path).expect("acquire");
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            drop(held);
+        });
+        let waiter = FileLock::acquire_with(
+            &path,
+            LockPolicy {
+                stale_after: Duration::from_secs(30),
+                wait_attempts: 2_000,
+                wait_interval: Duration::from_millis(2),
+            },
+        );
+        releaser.join().expect("releaser panicked");
+        let waiter = waiter.expect("占用方在预算内释放时，等待必须拿到锁而不是把写失败上抛");
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("waiter must own the file")
+                .starts_with(&format!("{}-", std::process::id())),
+            "等到的那把锁要登记自己为持有者"
+        );
+        drop(waiter);
+        assert!(!path.exists(), "等待得到的锁同样由 Drop 收回");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -453,7 +491,7 @@ mod tests {
         let held = FileLock::acquire_with(&path, policy).expect("first takeover acquires");
         // 持锁期间再起一把：必须按新鲜锁失败，而不是互相删锁。
         let error = FileLock::acquire_with(&path, policy).expect_err("second must not steal");
-        assert!(error.is_contended(), "{error:?}");
+        assert!(matches!(error, LockError::Contended(_)), "{error:?}");
         assert!(error.message().contains("尚未达到"), "{error}");
         assert!(path.exists(), "被抢掉的活锁必须还在");
         drop(held);

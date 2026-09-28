@@ -184,16 +184,9 @@ fn grouped_leg_without_injected_group_store_fails_closed_instead_of_skipping() {
         }]),
     };
     let mut source_seq = 0_u64;
-    let error = submit_order_via_gateway(
-        &command,
-        &mut venue,
-        &mut state,
-        "gate-worker",
-        10,
-        &mut source_seq,
-        None,
-    )
-    .unwrap_err();
+    let error = ExecutionGateway::new(&mut venue, &mut state, "gate-worker", 10, &mut source_seq)
+        .submit_command(&command)
+        .unwrap_err();
     assert!(
         error.starts_with("FAIL_CLOSED:"),
         "未注入组存储必须拒绝而不是放行: {error}"
@@ -270,16 +263,10 @@ fn clean_group_still_submits_its_next_leg_through_the_gateway() {
         ]),
     };
     let mut source_seq = 0_u64;
-    submit_order_via_gateway(
-        &command,
-        &mut venue,
-        &mut state,
-        "gate-worker",
-        10,
-        &mut source_seq,
-        Some(&store),
-    )
-    .unwrap();
+    ExecutionGateway::new(&mut venue, &mut state, "gate-worker", 10, &mut source_seq)
+        .with_spread_group_store(&store)
+        .submit_command(&command)
+        .unwrap();
     assert_eq!(state.orders.len(), 1);
     assert_eq!(state.orders[0].status, OrderStatus::Filled);
     let _ = std::fs::remove_dir_all(root);

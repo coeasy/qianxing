@@ -537,9 +537,9 @@ impl Scheduler {
             error_code: None,
             next_retry_ts: None,
             started_ts,
-            // `started_ts`/`deadline_ts` 与运行时其余时钟一样是毫秒；`timeout_seconds` 是秒。
-            // 直接相加会让一条 60 秒的作业在 60 毫秒后"过期"，而这份数字照常外销。
-            deadline_ts: started_ts.saturating_add(job.timeout_seconds.saturating_mul(1_000)),
+            // `started_ts`/`deadline_ts` 与队列租约是同一把时钟：秒域，毫秒只在 `lease_clock` 那一处换算。
+            // 把 `timeout_seconds` 乘成毫秒会让派发侧按秒比较的超时判定永不成立，卡死的 Running 继续占住并发键。
+            deadline_ts: started_ts.saturating_add(job.timeout_seconds),
         };
         self.runs.insert(run_id, run.clone());
         Ok(run)
@@ -1017,6 +1017,30 @@ mod tests {
         );
     }
 
+    /// 一次成功的运行不能携带 error_code：Strategy worker 曾把「3 orders: SUBMITTED」这类
+    /// 结果码塞进第三个参数，于是 /scheduler/runs 读到的成功作业带着一个假错误码。
+    #[test]
+    fn a_successful_finish_drops_the_error_code_a_failed_one_keeps_it() {
+        let mut scheduler = Scheduler::default();
+        scheduler.register(job("ok", vec![])).unwrap();
+        scheduler.register(job("bad", vec![])).unwrap();
+
+        let ok = scheduler.start_run_at("ok", "20260910", 1, 0).unwrap();
+        let ok = scheduler
+            .finish_run_with_code(ok.run_id, true, Some("3 orders: SUBMITTED"), 0)
+            .unwrap();
+        assert_eq!(ok.status, JobStatus::Succeeded);
+        assert_eq!(ok.error_code, None, "成功运行读起来必须没有错误码");
+        assert_eq!(ok.next_retry_ts, None, "成功运行不进入重试排期");
+
+        let bad = scheduler.start_run_at("bad", "20260910", 1, 0).unwrap();
+        let bad = scheduler
+            .finish_run_with_code(bad.run_id, false, Some("SUBMIT_REJECTED"), 0)
+            .unwrap();
+        assert_eq!(bad.status, JobStatus::Failed);
+        assert_eq!(bad.error_code.as_deref(), Some("SUBMIT_REJECTED"));
+    }
+
     #[test]
     fn invalid_cron_is_rejected_at_registration_and_query() {
         let mut scheduler = Scheduler::default();
@@ -1166,37 +1190,31 @@ mod tests {
         let mut timed = job("timed", vec![]);
         timed.timeout_seconds = 30;
         scheduler.register(timed).unwrap();
-        // `started_ts` 与运行时其余时钟同源（毫秒），`timeout_seconds` 是秒：拿 100/130
+        // `started_ts` 与队列租约同一把时钟（秒域），`timeout_seconds` 也是秒：拿 100/130
         // 这类小计数当时间戳，秒与毫秒的差别看不出来，单位分叉就藏在这里（V11 N1）。
-        let started = 1_790_176_424_274;
+        let started = 1_790_176_424;
         let run = scheduler
             .start_run_at("timed", "20260910", 1, started)
             .unwrap();
         assert_eq!(run.started_ts, started);
-        assert_eq!(run.deadline_ts, started + 30_000);
-        assert!(!scheduler
-            .is_timed_out(run.run_id, started + 29_999)
-            .unwrap());
-        assert!(scheduler
-            .is_timed_out(run.run_id, started + 30_000)
-            .unwrap());
-        let timeout = scheduler
-            .mark_timed_out(run.run_id, started + 30_000)
-            .unwrap();
+        assert_eq!(run.deadline_ts, started + 30);
+        assert!(!scheduler.is_timed_out(run.run_id, started + 29).unwrap());
+        assert!(scheduler.is_timed_out(run.run_id, started + 30).unwrap());
+        let timeout = scheduler.mark_timed_out(run.run_id, started + 30).unwrap();
         assert_eq!(timeout.status, JobStatus::NeedsIntervention);
         assert_eq!(timeout.error_code.as_deref(), Some("TIMEOUT"));
-        assert!(!scheduler
-            .is_timed_out(run.run_id, started + 999_999)
-            .unwrap());
+        assert!(!scheduler.is_timed_out(run.run_id, started + 999).unwrap());
     }
 
     #[test]
     fn sweeping_a_stalled_run_gives_the_concurrency_key_back() {
         let mut scheduler = Scheduler::default();
         let mut stalled = job("stalled", vec![]);
-        stalled.timeout_seconds = 1;
+        stalled.timeout_seconds = 60;
         scheduler.register(stalled).unwrap();
-        let started = 1_000;
+        // 起点取真实 epoch 秒而不是 1_000 这类小计数：小计数下"乘一千"与"不乘"都能自洽，
+        // 单位分叉只有在真实量级上才看得见（V11 N1）。
+        let started = 1_790_176_424;
         scheduler
             .start_run_at("stalled", "20260910", 1, started)
             .unwrap();
@@ -1206,8 +1224,8 @@ mod tests {
             scheduler.start_run_at("stalled", "20260911", 1, started),
             Err(SchedulerError::NotReady(_))
         ));
-        assert!(scheduler.sweep_timed_out(started + 999).unwrap().is_empty());
-        let swept = scheduler.sweep_timed_out(started + 1_000).unwrap();
+        assert!(scheduler.sweep_timed_out(started + 59).unwrap().is_empty());
+        let swept = scheduler.sweep_timed_out(started + 60).unwrap();
         assert_eq!(swept.len(), 1);
         assert_eq!(swept[0].error_code.as_deref(), Some("TIMEOUT"));
         let next_day = scheduler

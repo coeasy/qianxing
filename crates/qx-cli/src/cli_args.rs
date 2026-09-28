@@ -99,6 +99,11 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<StrategyCommand>,
     },
+    // V12 R4-e：外层 `[runtime] [frame] [spec]` 与子命令自带的那套输入参数属于两条链，
+    // 混写时子命令那条链根本不读外层值——用户以为传了运行时配置与行情帧，实际跑的是
+    // 另一份输入。clap 4.6 的 `args_conflicts_with_subcommands` 在这三个可选位置参数存在
+    // 时会把子命令名当成第三个位置参数吃掉、报错口径也随之错位，所以互斥改在派发处显式
+    // 拒绝（`reject_shadowed_backtest_inputs`）。
     #[command(name = "backtest")]
     Backtest {
         runtime: Option<PathBuf>,
@@ -312,6 +317,7 @@ pub(crate) enum ConfigCommand {
     #[command(name = "fingerprint")]
     Fingerprint {
         path: Option<PathBuf>,
+        /// 输出指纹、当前发布指纹与是否已锁定的机读结论。
         #[arg(long)]
         json: bool,
     },
@@ -321,6 +327,7 @@ pub(crate) enum ConfigCommand {
         output: Option<PathBuf>,
         #[arg(long)]
         force: bool,
+        /// 输出落点、指纹与锁定结果的机读结论。
         #[arg(long)]
         json: bool,
     },
@@ -328,6 +335,9 @@ pub(crate) enum ConfigCommand {
 
 impl ConfigCommand {
     fn machine_output(&self) -> bool {
+        // V11 E4 之后这四条的 `--json` 各自真的产出一封 JSON（`config_output.rs`），
+        // 旗标是否被读到由 `config_json_surface_check` 逐命令判定；上游 V12 R4-f 摘掉
+        // 三颗旗标的那个前提——"收下 --json 只用来压横幅"——在这棵树里已经不成立。
         match self {
             Self::Explain { json, .. }
             | Self::Validate { json, .. }

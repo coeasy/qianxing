@@ -28,3 +28,19 @@ impl TargetPosition {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 兼容路径的空谱系是"没算过"的声明，不是伪造出来的来源；序列化后仍必须是空列表。
+    #[test]
+    fn single_target_declares_no_lineage() {
+        let target = TargetPosition::single(InstrumentId::parse("600000.XSHG").unwrap(), 100);
+        assert!(target.source_signals.is_empty());
+        let round_trip: TargetPosition =
+            serde_json::from_str(&serde_json::to_string(&target).unwrap()).unwrap();
+        assert_eq!(round_trip, target);
+        assert!(round_trip.source_signals.is_empty());
+    }
+}

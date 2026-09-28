@@ -46,6 +46,11 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
     // 这个入口按定义就在提交订单，A 股段配了又没有闸门可用时必须在做任何副作用之前拒掉（V11 Q65）。
     reject_ashare_rules_on_submit_path(path, None, "paper-submit-order")?;
     let config = read_runtime_config(path)?;
+    // 初始资金马上要按 worker 那一格入账：先确认它没有和回测侧那一格各说一套（V12 R3）。
+    reject_split_account_principal(&config)?;
+    if let Some(note) = account_principal_note(&config) {
+        println!("{note}");
+    }
     let command: ControlCommand = serde_json::from_str(
         &std::fs::read_to_string(command_path)
             .map_err(|error| format!("读取 Paper SubmitOrder 命令失败: {error}"))?,
@@ -57,6 +62,8 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
     let store = configured_control_store(&config)?;
     let queue = configured_command_queue(&config, &root)?;
     let now = runtime_timestamp_ms();
+    // 命令队列租约/入队时间在秒域，控制面审计戳保持毫秒（见 `lease_clock`）。
+    let lease_now = lease_clock(now);
     let paper_worker = config
         .workers
         .iter()
@@ -81,10 +88,10 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
     let accepted = accepted_result
         .map_err(|error| format!("Paper SubmitOrder 未通过控制面校验: {error:?}"))?;
     queue
-        .enqueue_command(command.clone(), now)
+        .enqueue_command(command.clone(), lease_now)
         .map_err(|error| format!("写入 Paper SubmitOrder 队列失败: {error:?}"))?;
     let lease = queue
-        .claim_command(command.command_id, "paper-execution", now, 30)
+        .claim_command(command.command_id, "paper-execution", lease_now, 30)
         .map_err(|error| format!("领取 Paper SubmitOrder 租约失败: {error:?}"))?;
 
     let action = if command.dry_run {
@@ -139,7 +146,7 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
             command.command_id,
             "paper-execution",
             lease.fencing_token,
-            now,
+            lease_now,
         )
         .map_err(|error| format!("确认 Paper SubmitOrder 队列失败: {error:?}"))?;
     println!(

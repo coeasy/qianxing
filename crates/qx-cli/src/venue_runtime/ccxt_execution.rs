@@ -52,6 +52,8 @@ pub(crate) fn run_ccxt_execution_worker(
     )?;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
+        // 命令队列租约/入队时间在秒域，控制面审计戳保持毫秒（见 `lease_clock`）。
+        let lease_now = lease_clock(now);
         let control = control_store.load()?;
         let venue_id = worker.venue_id.as_deref().unwrap_or("ccxt");
         if !dedicated_spread_recovery
@@ -96,11 +98,11 @@ pub(crate) fn run_ccxt_execution_worker(
                 && ccxt_submit_matches_worker(command, &worker)
         }) {
             queue
-                .enqueue_command(command.clone(), now)
+                .enqueue_command(command.clone(), lease_now)
                 .map_err(|error| format!("补入 CCXT SubmitOrder 队列失败: {error:?}"))?;
         }
         for queued in queue
-            .available_commands(now)
+            .available_commands(lease_now)
             .map_err(|error| format!("读取 CCXT SubmitOrder 队列失败: {error:?}"))?
         {
             if context.should_stop() {
@@ -110,14 +112,14 @@ pub(crate) fn run_ccxt_execution_worker(
             if !ccxt_submit_matches_worker(&command, &worker) {
                 continue;
             }
-            let lease = match queue.claim_command(command.command_id, &owner, now, 30) {
+            let lease = match queue.claim_command(command.command_id, &owner, lease_now, 30) {
                 Ok(lease) => lease,
                 Err(StorageError::LeaseHeld { .. }) => continue,
                 Err(error) => return Err(format!("领取 CCXT SubmitOrder 租约失败: {error:?}")),
             };
             if command_is_final(&control, command.command_id) {
                 queue
-                    .ack_command_at(command.command_id, &owner, lease.fencing_token, now)
+                    .ack_command_at(command.command_id, &owner, lease.fencing_token, lease_now)
                     .map_err(|error| format!("清理已终态 CCXT SubmitOrder 失败: {error:?}"))?;
                 continue;
             }
@@ -235,7 +237,7 @@ pub(crate) fn run_ccxt_execution_worker(
             let record =
                 record_result.map_err(|error| format!("CCXT SubmitOrder 执行失败: {error:?}"))?;
             queue
-                .ack_command_at(command.command_id, &owner, lease.fencing_token, now)
+                .ack_command_at(command.command_id, &owner, lease.fencing_token, lease_now)
                 .map_err(|error| format!("确认 CCXT SubmitOrder 失败: {error:?}"))?;
             context.mark(
                 if record.status == qx_control::CommandStatus::Executed {
@@ -316,6 +318,7 @@ pub(crate) fn run_ccxt_user_stream_worker(
             "received_ts": received_ts,
         })) {
             Ok(result) => {
+                // 子进程答上了话：连胜清零，长期健康的流不会累积历史故障（V11 K1）。
                 reconnect_streak = 0;
                 result
             }
@@ -327,7 +330,9 @@ pub(crate) fn run_ccxt_user_stream_worker(
                 reconnect_streak = reconnect_streak.saturating_add(1);
                 context.mark(
                     qx_runtime::ServiceStatus::Degraded,
-                    format!("ccxt pro user stream reconnecting: {detail}"),
+                    format!(
+                        "ccxt pro user stream reconnecting failures={reconnect_streak}: {detail}"
+                    ),
                     Some(received_ts),
                 )?;
                 if reconnect_streak >= CCXT_DEAD_CYCLE_BUDGET {

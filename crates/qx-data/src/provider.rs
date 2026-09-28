@@ -3,13 +3,6 @@ use serde::{Deserialize, Serialize};
 use crate::catalog::DatasetManifest;
 use crate::fingerprint::fingerprint_bars;
 use crate::schema::{Bar, DATA_SCHEMA_VERSION};
-use qx_core::Fnv1a;
-use qx_guanxing::{DataSourceId, RawRecord};
-use qx_provider::{
-    DataKind, DataProvider as RegistryDataProvider, DataQuery, ProviderCapability, ProviderError,
-    ProviderErrorClass, ProviderResult,
-};
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -40,8 +33,6 @@ pub const BAR_FRAME_SCHEMA_VERSION: u32 = DATA_SCHEMA_VERSION;
 pub struct JsonBarFrameProvider {
     metadata: ProviderMetadata,
     path: PathBuf,
-    registry_capability: ProviderCapability,
-    registry_received_at: Option<u64>,
 }
 
 impl JsonBarFrameProvider {
@@ -58,28 +49,11 @@ impl JsonBarFrameProvider {
                 version: version.clone(),
             },
             path: path.into(),
-            registry_capability: default_registry_capability(name, version),
-            registry_received_at: None,
         }
     }
 
     pub fn path(&self) -> &Path {
         &self.path
-    }
-
-    /// 为统一 `qx-provider` 注册入口覆盖能力声明。默认能力适用于日线 A 股
-    /// BarFrame；交易所、频率和质量等级不同的源必须显式声明，避免 Registry
-    /// 把一个文件误当成所有资产类别的通用 Provider。
-    pub fn with_registry_capability(mut self, capability: ProviderCapability) -> Self {
-        self.registry_capability = capability;
-        self
-    }
-
-    /// 静态 BarFrame 没有可靠接收时间时保持 `None`，带 `as_of` 的查询会安全
-    /// 失败而不是伪造 PIT 可见性。Python manifest/落盘流程应在注册前提供该值。
-    pub fn with_received_at(mut self, received_at: u64) -> Self {
-        self.registry_received_at = Some(received_at);
-        self
     }
 
     /// 加载同一份标准化数据并生成可注册的 DatasetManifest，确保“来源、版本、
@@ -121,25 +95,6 @@ impl JsonBarFrameProvider {
     /// 质量报告和运行清单登记使用。
     pub fn contract(&self) -> Result<BarFrameContract, String> {
         Ok(self.read_frame()?.contract())
-    }
-}
-
-fn default_registry_capability(name: String, version: String) -> ProviderCapability {
-    ProviderCapability {
-        provider_id: name,
-        version,
-        data_kinds: BTreeSet::from([DataKind::Bar]),
-        asset_classes: BTreeSet::from(["equity_cn".into()]),
-        frequencies: BTreeSet::from(["1d".into()]),
-        auth_scope: "offline-file".into(),
-        rate_limit_per_second: 1,
-        freshness_seconds: u64::MAX,
-        historical_start: 0,
-        historical_end: u64::MAX,
-        realtime: false,
-        priority: 100,
-        quality_score: 100,
-        cost_score: 0,
     }
 }
 
@@ -186,11 +141,6 @@ pub struct BarFrameContract {
 }
 
 impl BarFrameContract {
-    /// `0` 表示旧格式；`>= 1` 表示严格模式写出的文档。
-    pub fn is_versioned(&self) -> bool {
-        self.schema_version >= 1
-    }
-
     /// 质量/血缘哈希使用的有效版本：旧格式按 1 记账，避免出现 version=0 的记录。
     pub fn effective_version(&self) -> u32 {
         self.schema_version.max(1)
@@ -336,88 +286,9 @@ impl DataProvider for JsonBarFrameProvider {
     }
 }
 
-impl RegistryDataProvider for JsonBarFrameProvider {
-    fn capability(&self) -> &ProviderCapability {
-        &self.registry_capability
-    }
-
-    fn fetch(&self, query: &DataQuery) -> Result<ProviderResult, ProviderError> {
-        query.validate()?;
-        if query.kind != DataKind::Bar {
-            return Err(ProviderError::new(
-                ProviderErrorClass::Permanent,
-                "JSON BarFrame Provider 只支持 Bar 查询",
-            ));
-        }
-        let instrument = match query.instrument_set.iter().next() {
-            Some(instrument) if query.instrument_set.len() == 1 => instrument,
-            _ => {
-                return Err(ProviderError::new(
-                    ProviderErrorClass::Permanent,
-                    "JSON BarFrame 查询必须恰好包含一个 instrument",
-                ))
-            }
-        };
-        if query.as_of.is_some() && self.registry_received_at.is_none() {
-            return Err(ProviderError::new(
-                ProviderErrorClass::ManualIntervention,
-                "JSON BarFrame Provider 未配置 received_at，禁止伪造 PIT as_of 查询",
-            ));
-        }
-        // 契约版本随记录一起进入 source_hash，这样质量层能区分旧格式与
-        // schema_version>=1 的严格 BarFrame，而不是把两者混成同一份血缘。
-        let frame = self
-            .read_frame()
-            .map_err(|error| ProviderError::new(ProviderErrorClass::Permanent, error))?;
-        let bars = frame
-            .bars(instrument, query.start, query.end)
-            .map_err(|error| ProviderError::new(ProviderErrorClass::Permanent, error))?;
-        let contract_version = frame.contract().effective_version();
-        let receive_time = self.registry_received_at.unwrap_or(query.end);
-        let records = bars
-            .into_iter()
-            .map(|bar| RawRecord {
-                source: DataSourceId::new(self.registry_capability.provider_id.clone()),
-                event_time: bar.timestamp,
-                receive_time,
-                payload_hash: bar_payload_hash(&bar),
-                schema_version: contract_version,
-            })
-            .collect::<Vec<_>>();
-        let mut result = ProviderResult {
-            records,
-            provider_id: self.registry_capability.provider_id.clone(),
-            provider_version: self.registry_capability.version.clone(),
-            request_id: format!(
-                "{}-{:016x}",
-                self.registry_capability.provider_id,
-                query.digest()
-            ),
-            retry_chain: Vec::new(),
-            received_at: receive_time,
-            source_hash: 0,
-        };
-        result.source_hash = result.compute_source_hash();
-        Ok(result)
-    }
-}
-
-fn bar_payload_hash(bar: &Bar) -> u64 {
-    let mut hash = Fnv1a::new();
-    hash.write_text(&bar.instrument);
-    hash.write_u64(bar.timestamp);
-    hash.write_i128(bar.open_raw);
-    hash.write_i128(bar.high_raw);
-    hash.write_i128(bar.low_raw);
-    hash.write_i128(bar.close_raw);
-    hash.write_i128(bar.volume_raw);
-    hash.finish()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -455,46 +326,6 @@ mod tests {
     }
 
     #[test]
-    fn json_bar_frame_provider_registers_with_provider_registry() {
-        let root = std::env::temp_dir().join(format!(
-            "qianxing-data-registry-provider-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("bars.json");
-        std::fs::write(
-            &path,
-            r#"{"instrument":"000001.SZSE","source":"akshare","ts":[1000,2000,3000],"open_raw":[10,20,30],"high_raw":[11,21,31],"low_raw":[9,19,29],"close_raw":[10,20,30],"volume_raw":[1,2,3]}"#,
-        )
-        .unwrap();
-        let provider = JsonBarFrameProvider::new("akshare", "v1", &path).with_received_at(4_000);
-        let mut registry = qx_provider::ProviderRegistry::new();
-        registry.register(Box::new(provider)).unwrap();
-        let query = DataQuery {
-            kind: DataKind::Bar,
-            asset_class: "equity_cn".into(),
-            instrument_set: BTreeSet::from(["000001.SZSE".into()]),
-            field_set: BTreeSet::from(["open".into(), "close".into()]),
-            frequency: "1d".into(),
-            adjustment: "none".into(),
-            quality_policy: "strict".into(),
-            start: 1_500,
-            end: 3_000,
-            as_of: Some(5_000),
-        };
-        let result = registry.fetch_with_failover(&query).unwrap();
-        assert_eq!(result.provider_id, "akshare");
-        assert_eq!(result.records.len(), 2);
-        assert_eq!(result.records[0].receive_time, 4_000);
-        assert_ne!(result.source_hash, 0);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn json_bar_frame_provider_rejects_column_mismatch_and_non_monotonic_input() {
         let root = std::env::temp_dir().join(format!(
             "qianxing-data-provider-invalid-{}-{}",
@@ -525,7 +356,6 @@ mod tests {
         .unwrap();
         let contract = frame.contract();
         assert_eq!(contract.schema_version, 0);
-        assert!(!contract.is_versioned());
         assert_eq!(contract.effective_version(), 1);
         assert!(contract.source.is_empty());
         // 旧格式的 manifest 来源仍回退到 Provider 注册名，血缘语义不变。
@@ -538,7 +368,6 @@ mod tests {
         let frame = parse_bar_frame(payload).unwrap();
         let contract = frame.contract();
         assert_eq!(contract.schema_version, BAR_FRAME_SCHEMA_VERSION);
-        assert!(contract.is_versioned());
         assert_eq!(contract.source, "easy_tdx");
         assert_eq!(frame.manifest_source("akshare"), "easy_tdx");
 

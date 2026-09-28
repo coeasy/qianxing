@@ -12,10 +12,6 @@ fn deploy_dir() -> PathBuf {
         .join("deploy")
 }
 
-fn deploy(name: &str) -> String {
-    deploy_dir().join(name).to_string_lossy().to_string()
-}
-
 fn run(args: &[&str]) -> (i32, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
         .args(args)
@@ -60,7 +56,12 @@ fn hashes(stdout: &str, prefix: &str) -> Vec<String> {
 
 #[test]
 fn crypto_manifest_runs_every_job_in_parallel_and_is_reproducible() {
-    let manifest = deploy("qianxing.fast-backtest.example.json");
+    let root = temp_dir("crypto");
+    copy_examples_into(&root);
+    let manifest = root
+        .join("qianxing.fast-backtest.example.json")
+        .to_string_lossy()
+        .to_string();
     let (code, stdout, stderr) = run(&["fast-backtest", &manifest]);
     assert_eq!(code, 0, "加密现货快速回测失败: {stderr}");
     assert!(
@@ -87,11 +88,17 @@ fn crypto_manifest_runs_every_job_in_parallel_and_is_reproducible() {
         strategy,
         "同清单二次运行的结果指纹漂移（并行调度不得影响确定性）"
     );
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
 fn ashare_manifest_carries_recorded_dataset_provenance() {
-    let manifest = deploy("qianxing.fast-backtest.ashare.example.json");
+    let root = temp_dir("ashare");
+    copy_examples_into(&root);
+    let manifest = root
+        .join("qianxing.fast-backtest.ashare.example.json")
+        .to_string_lossy()
+        .to_string();
     let (code, stdout, stderr) = run(&["fast-backtest", &manifest]);
     assert_eq!(code, 0, "A 股快速回测失败: {stderr}");
     assert!(
@@ -110,6 +117,7 @@ fn ashare_manifest_carries_recorded_dataset_provenance() {
     let strategy = hashes(&stdout, "[Strategy · Backtest]");
     assert_eq!(strategy.len(), 1);
     assert_eq!(hashes(&stdout, "[RunManifest] run_id="), strategy);
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -139,33 +147,56 @@ fn manifest_validation_rejects_empty_jobs_and_missing_fields() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 把 deploy 目录的示例输入整体搬进临时目录，并把每份运行时示例的产物根改写到那里，
+/// 避免用例把 `runs/` 落在仓库里（同一份配置在仓库内是会被反复 bless 的状态，V12 #82）。
+/// 快速回测清单同样要搬：manifest 里的 job 路径按 manifest 所在目录解析，所以搬完的清单
+/// 指向的就是搬完的示例。
+fn copy_examples_into(root: &Path) {
+    let mut redirected = 0usize;
+    for entry in std::fs::read_dir(deploy_dir()).expect("读取 deploy 目录失败") {
+        let path = entry.expect("读取 deploy 条目失败").path();
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let target = root.join(name);
+        std::fs::copy(&path, &target).expect("复制示例输入失败");
+        let text = std::fs::read_to_string(&target).expect("读取示例输入失败");
+        // 没有 data_dir 的示例（如纯 spec/夹具）原样留着即可。
+        if !text.contains("\"data_dir\"") {
+            continue;
+        }
+        let redirected_text = regex_replace_data_dir(
+            &text,
+            &root.join("data").to_string_lossy().replace('\\', "/"),
+        );
+        assert_ne!(
+            redirected_text,
+            text,
+            "{} 的 data_dir 写法已变，用例需同步",
+            name.to_string_lossy()
+        );
+        std::fs::write(&target, redirected_text).expect("写入临时运行时配置失败");
+        redirected += 1;
+    }
+    assert!(
+        redirected > 0,
+        "deploy 目录里没有任何带 data_dir 的运行时示例，用例的隔离前提已变"
+    );
+}
+
 /// 把 deploy 目录的示例输入整体搬进临时目录，并把回测产物根改写到那里，
 /// 避免用例把 `runs/` 落在仓库里（同一份配置在仓库内是会被反复 bless 的状态）。
 fn isolated_example(root: &Path, runtime_name: &str) -> PathBuf {
-    for entry in std::fs::read_dir(deploy_dir()).expect("读取 deploy 目录失败") {
-        let path = entry.expect("读取 deploy 条目失败").path();
-        if path.extension().and_then(|value| value.to_str()) == Some("json") {
-            std::fs::copy(
-                &path,
-                root.join(path.file_name().expect("示例文件必须有文件名")),
-            )
-            .expect("复制示例输入失败");
-        }
-    }
-    let runtime = root.join(runtime_name);
-    let text = std::fs::read_to_string(&runtime).expect("读取示例运行时配置失败");
-    let data_dir = root.join("data").to_string_lossy().replace('\\', "/");
-    let redirected = regex_replace_data_dir(&text, &data_dir);
-    assert_ne!(
-        redirected, text,
-        "{runtime_name} 的 data_dir 写法已变，用例需同步"
-    );
-    std::fs::write(&runtime, redirected).expect("写入临时运行时配置失败");
-    runtime
+    copy_examples_into(root);
+    root.join(runtime_name)
 }
 
-/// 只替换 `"data_dir": "<value>"` 这一处，保持其它字段与注释键原样。
-fn regex_replace_data_dir(text: &str, data_dir: &str) -> String {
+/// 只替换 `"data_dir": "<value>"` 这一处，并把示例的 `data/<子目录>` 尾部接到临时目录下：
+/// 并行 job 因此仍各写各的产物目录，不会在同一瞬间争着建同一个目录。
+fn regex_replace_data_dir(text: &str, data_root: &str) -> String {
     let marker = "\"data_dir\": \"";
     let Some(start) = text.find(marker) else {
         return text.to_string();
@@ -174,9 +205,16 @@ fn regex_replace_data_dir(text: &str, data_dir: &str) -> String {
     let Some(end) = text[value_start..].find('"') else {
         return text.to_string();
     };
+    let old = &text[value_start..value_start + end];
+    let suffix = old.rsplit_once("data/").map_or("", |(_, tail)| tail);
+    let value = if suffix.is_empty() {
+        data_root.to_string()
+    } else {
+        format!("{data_root}/{suffix}")
+    };
     text.replacen(
         &text[start..value_start + end + 1],
-        &format!("{marker}{data_dir}\""),
+        &format!("{marker}{value}\""),
         1,
     )
 }
@@ -198,23 +236,34 @@ fn field(line: &str, key: &str) -> String {
         .to_string()
 }
 
-/// 读取临时产物目录里唯一的回测摘要。
+/// 读取临时产物目录里唯一的回测摘要。产物目录按运行时示例分档（`data/<示例名>/runs/`），
+/// 所以要递归找：并行 job 各写各的档，把它们压进同一个 `runs/` 只会让用例互相踩。
 fn first_summary(data_root: &Path) -> serde_json::Value {
-    let runs = data_root.join("runs");
-    let entries = std::fs::read_dir(&runs)
-        .unwrap_or_else(|error| panic!("读取回测产物目录失败 {}: {error}", runs.display()));
-    let path = entries
-        .filter_map(|entry| entry.ok().map(|value| value.path()))
-        .find(|path| {
-            path.extension().and_then(|value| value.to_str()) == Some("json")
-                && path
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|name| name.ends_with(".summary.json"))
-        })
-        .unwrap_or_else(|| panic!("回测产物里没有摘要文件: {}", runs.display()));
+    let path = summary_files(data_root)
+        .into_iter()
+        .min()
+        .unwrap_or_else(|| panic!("回测产物里没有摘要文件: {}", data_root.display()));
     let text = std::fs::read_to_string(&path).expect("读取回测摘要失败");
     serde_json::from_str(&text).expect("回测摘要不是合法 JSON")
+}
+
+fn summary_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries.flatten().fold(Vec::new(), |mut found, entry| {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(summary_files(&path));
+        } else if path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|name| name.ends_with(".summary.json"))
+        {
+            found.push(path);
+        }
+        found
+    })
 }
 
 /// 三份 §4.18 示例必须真的成交并真的付手续费：帧长够得上策略窗口、A 股时间戳够

@@ -5,6 +5,10 @@
 //! 一份没人读、读一遍就会否掉全部合法输入的契约文件，比没有契约更糟——它会让人以为
 //! Python/C++ 侧的形状与 Rust 不同。这里把判据接到**读侧本身**：键集与必填集合都拿
 //! `StrategyContractOutput::to_json_for` 真正序列化出来的那份 JSON 比，不抄第二份清单。
+//!
+//! 这份 schema 有两位常驻读者，各量互不重合的一半：这里量"写侧发得出、读侧收得下"那四件事
+//! （键集、必填、版本 const、词表行为，全部走生产序列化与生产读取两端）；
+//! `strategy_contract_schema.rs`（V12 R4-k）量未知键拒绝与定点值的线上形态。
 
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -59,6 +63,25 @@ fn fullest_output() -> qx_runtime::StrategyContractOutput {
 
 fn schema() -> Value {
     serde_json::from_str(SCHEMA_JSON).expect("仓库里的策略契约必须是合法 JSON")
+}
+
+/// 意图行的形状可以内联在 `items` 里，也可以搬进 `$defs` 由 `$ref` 引过去（合流进来的 V12 R4-k
+/// 那一版是后者）。用例跟着指针走，不在这里再抄一份内联清单：两份写法同时在场由门禁那格判红，
+/// 这里只负责认下真正在场的那一份——认不到必须红，静默拿到 `Null` 会让下面每一条断言自证成空转。
+fn intent_def(schema: &Value) -> Value {
+    let items = &schema["properties"]["intents"]["items"];
+    match items.get("$ref").and_then(Value::as_str) {
+        Some(reference) => {
+            let target = reference
+                .strip_prefix('#')
+                .unwrap_or_else(|| panic!("契约只接受文档内 $ref: {reference}"));
+            schema
+                .pointer(target)
+                .unwrap_or_else(|| panic!("契约的 $ref 指不到东西: {reference}"))
+                .clone()
+        }
+        None => items.clone(),
+    }
 }
 
 fn key_set(object: &Value) -> Vec<String> {
@@ -134,7 +157,7 @@ fn the_schema_declares_exactly_the_fields_the_writer_emits() {
     );
 
     let intents = payload["intents"].as_array().unwrap();
-    let intent_schema = &schema["properties"]["intents"]["items"];
+    let intent_schema = intent_def(&schema);
     assert_eq!(
         key_set(&intent_schema["properties"]),
         payload_keys(&intents[0]),
@@ -185,7 +208,7 @@ fn every_required_key_is_something_the_reader_actually_cannot_default() {
     top.as_object_mut().unwrap().remove("intents");
     assert!(qx_runtime::StrategyContractOutput::from_json_for(&top.to_string(), &request).is_ok());
 
-    let intents = schema["properties"]["intents"]["items"].clone();
+    let intents = intent_def(&schema);
     for key in string_set(&intents["required"]) {
         let mut probe: Value =
             serde_json::from_str(&fullest_output().to_json_for(&request).unwrap()).unwrap();
@@ -240,7 +263,8 @@ fn the_schema_versions_the_contract_the_runtime_serves() {
 fn the_schema_words_are_the_ones_the_writer_emits_and_the_reader_accepts() {
     let schema = schema();
     let request = request();
-    let declared_fields = &schema["properties"]["intents"]["items"]["properties"];
+    let intent = intent_def(&schema);
+    let declared_fields = &intent["properties"];
     let accepted = |field: &str, word: &str| -> bool {
         let mut probe: Value =
             serde_json::from_str(&fullest_output().to_json_for(&request).unwrap()).unwrap();

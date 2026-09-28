@@ -262,9 +262,7 @@ pub(crate) fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Re
         ),
         _ => Err("unsupported Binance worker role".into()),
     })?;
-    handle
-        .join()
-        .map_err(|_| format!("worker {worker_id} panic"))?
+    join_worker_handle(&supervisor, handle, "Binance", worker_id)
 }
 
 #[cfg(test)]
@@ -292,8 +290,8 @@ pub(crate) fn run_process_supervisor(
     let executable =
         std::env::current_exe().map_err(|error| format!("解析 qx-cli 可执行文件失败: {error}"))?;
     let work_dir = std::env::current_dir().map_err(|error| format!("读取工作目录失败: {error}"))?;
-    // 令牌由本函数持有并交给监督循环读；写侧（Ctrl-C / SIGTERM 触发的
-    // `request_shutdown`）在全仓仍无生产调用者，已在 capabilities.yaml 登记为限制。
+    // 令牌由本函数持有并交给监督循环读，可它自己仍没有写者：终止信号今天翻的是 worker 侧
+    // 那枚监督器令牌（停机阶梯里的 `request_shutdown`），父进程循环靠 `shutdown_signalled()` 读到请求。
     let shutdown = qx_runtime::ShutdownToken::default();
     supervise_workers(
         &config,
@@ -372,9 +370,7 @@ pub(crate) fn run_ccxt_worker(
         ),
         _ => Err("unsupported CCXT worker role".into()),
     })?;
-    handle
-        .join()
-        .map_err(|_| format!("CCXT worker {worker_id} panic"))?
+    join_worker_handle(&supervisor, handle, "CCXT", worker_id)
 }
 
 pub(crate) fn run_ccxt_spread_recovery_worker(

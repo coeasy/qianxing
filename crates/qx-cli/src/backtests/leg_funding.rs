@@ -74,13 +74,18 @@ pub(crate) fn reject_configured_initial_cash(
     config_path: Option<&Path>,
     entry: &str,
 ) -> Result<(), String> {
-    let Some(raw) = configured_initial_cash_raw(config_path)? else {
+    let base = configured_account_base(config_path)?;
+    if !matches!(
+        base.source,
+        BACKTEST_ACCOUNT_BASE_CONFIG_SOURCE | BACKTEST_ACCOUNT_BASE_BOTH_DECLARED_SOURCE
+    ) {
         return Ok(());
-    };
+    }
     Err(format!(
-        "{entry} 不接受 strategy.initial_cash_raw={raw}：两条腿的本金各按本腿行情由定资规则算出\
+        "{entry} 不接受 strategy.initial_cash_raw={}：两条腿的本金各按本腿行情由定资规则算出\
          （2 × quantity × 本腿全帧最高价 + 同名义额的手续费余量，下限 {MULTI_LEG_ACCOUNT_CASH_FLOOR}），\
-         一个账户数字无法同时是两条腿的本金。请改用 quantity 表达规模，或删掉这一格"
+         一个账户数字无法同时是两条腿的本金。请改用 quantity 表达规模，或删掉这一格",
+        base.cash.raw()
     ))
 }
 

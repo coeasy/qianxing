@@ -359,7 +359,12 @@ fn reconcile_report_persists_structured_balance_discrepancy() {
         venue_id: "binance".into(),
         asset: "USDT".into(),
         ledger_raw: 0,
-        venue_raw: Money::from_i64(10).raw(),
+        venue_raw: Some(Money::from_i64(10).raw()),
+    };
+    // 同一轮里柜台没报该币种的那条：缺席与"报了且为零"必须是两个值。
+    let absent = RuntimeBalanceDiscrepancy {
+        venue_raw: None,
+        ..discrepancy.clone()
     };
     persist_reconcile_report(ReconcileReportInput {
         pipeline_root: &root,
@@ -370,7 +375,7 @@ fn reconcile_report_persists_structured_balance_discrepancy() {
         issues: &[],
         additional_order_issues: &[],
         balances_count: 1,
-        balance_discrepancies: &[discrepancy],
+        balance_discrepancies: &[discrepancy, absent],
         position_snapshots_count: None,
         funding_rate_snapshots_count: Some(0),
         cashflow_count: Some(0),
@@ -384,6 +389,10 @@ fn reconcile_report_persists_structured_balance_discrepancy() {
     assert_eq!(
         report["balance_discrepancies"][0]["venue_raw"],
         10_000_000_000_i64
+    );
+    assert!(
+        report["balance_discrepancies"][1]["venue_raw"].is_null(),
+        "柜台未报该币种必须落成 null；写 0 等于替交易所报数（V12 §18 TX6）"
     );
     // "这条链没取" 与 "取了且为空" 在报告里必须是两个值（V11 Q69）。
     assert!(report["position_snapshots_count"].is_null());

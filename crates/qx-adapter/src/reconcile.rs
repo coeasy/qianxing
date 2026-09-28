@@ -9,7 +9,10 @@
 //! 终态过滤、状态机迁移）留在各适配器，不在此重复实现判定逻辑。
 
 use super::*;
-use qx_genglu::{reconcile_order_facts, OrderReconcileDiff, OrderReconcileFact};
+use qx_genglu::{
+    filled_action, reconcile_order_facts, status_action, OrderReconcileDiff, OrderReconcileFact,
+    VerdictAction,
+};
 
 impl AdapterReconcileIssue {
     /// 差异归属的本地客户单号。
@@ -26,15 +29,28 @@ impl AdapterReconcileIssue {
         }
     }
 
-    /// 差异种类的稳定 reason 码：对账报告的 `kind` 与写入待对账事实时的 reason
-    /// 共用这一处定义，调用点不再逐种类复制 match 枚举。动作归类（待对账 /
-    /// 需人工 / 可自动收敛）由 qx-genglu 的裁决口径唯一决定。
+    /// 差异种类的稳定维度码：只说明"哪个维度对不上"，写进对账报告的 `kind` 供诊断。
+    /// 动作归类（待对账 / 需人工 / 可自动收敛）另有唯一口径，见 [`Self::action`]。
     pub const fn reason_code(&self) -> &'static str {
         match self {
             Self::MissingLocally { .. } => "missing_locally",
             Self::MissingAtVenue { .. } => "missing_at_venue",
             Self::StatusMismatch { .. } => "status_mismatch",
             Self::FilledMismatch { .. } => "filled_mismatch",
+        }
+    }
+
+    /// 差异 → 动作的唯一归类：委托 qx-genglu 裁决所用的同一对维度判据
+    /// （[`status_action`] / [`filled_action`]），本模块不重复比较状态或数量。
+    /// 状态维度既可能是远端权威推进（可自动收敛），也可能是互斥迁移（需人工），
+    /// 只看 [`Self::reason_code`] 的维度码分不出这两类，因此落待对账事实的 reason
+    /// 必须来这儿（V12 §18 TX7）。
+    pub fn action(&self) -> VerdictAction {
+        match self {
+            Self::MissingAtVenue { .. } => VerdictAction::ReconcileRequired,
+            Self::MissingLocally { .. } => VerdictAction::ManualReview,
+            Self::StatusMismatch { local, venue, .. } => status_action(*local, *venue),
+            Self::FilledMismatch { local, venue, .. } => filled_action(local.raw(), venue.raw()),
         }
     }
 }
@@ -101,4 +117,76 @@ pub(crate) fn reconcile_issues(
             | OrderReconcileDiff::DuplicateRemote { .. } => None,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qx_core::OrderStatus;
+
+    fn fact(client_order_id: u64, status: OrderStatus, filled_raw: i128) -> OrderReconcileFact {
+        OrderReconcileFact {
+            client_order_id,
+            status: Some(status),
+            filled_raw,
+        }
+    }
+
+    /// 夹具：一对本地/远端事实过完整投影链，取出指定维度差异的 "维度码|动作码"。
+    fn codes(local: (OrderStatus, i128), venue: (OrderStatus, i128), kind: &str) -> String {
+        let issues = reconcile_issues(&[fact(1, local.0, local.1)], &[fact(1, venue.0, venue.1)]);
+        let issue = issues
+            .iter()
+            .find(|issue| issue.reason_code() == kind)
+            .unwrap_or_else(|| panic!("夹具应产出 {kind} 差异，实得 {issues:?}"));
+        format!("{}|{}", issue.reason_code(), issue.action().reason_code())
+    }
+
+    #[test]
+    fn the_same_status_dimension_reports_two_different_actions() {
+        // 本地部分成交、远端已成交：维度码同样是 status_mismatch，动作是可自动收敛。
+        assert_eq!(
+            codes(
+                (OrderStatus::PartiallyFilled, 4_000_000_000),
+                (OrderStatus::Filled, 6_000_000_000),
+                "status_mismatch"
+            ),
+            "status_mismatch|resync"
+        );
+        // 本地已成交、远端已撤销：同一维度码，动作必须是需人工——只看 kind 分不出这两类。
+        assert_eq!(
+            codes(
+                (OrderStatus::Filled, 6_000_000_000),
+                (OrderStatus::Cancelled, 6_000_000_000),
+                "status_mismatch"
+            ),
+            "status_mismatch|manual_review"
+        );
+    }
+
+    #[test]
+    fn filled_direction_and_absences_keep_their_own_actions() {
+        // 数量前进可收敛，数量回退需人工。
+        assert_eq!(
+            codes(
+                (OrderStatus::Working, 4_000_000_000),
+                (OrderStatus::PartiallyFilled, 6_000_000_000),
+                "filled_mismatch"
+            ),
+            "filled_mismatch|resync"
+        );
+        assert_eq!(
+            codes(
+                (OrderStatus::Working, 6_000_000_000),
+                (OrderStatus::PartiallyFilled, 4_000_000_000),
+                "filled_mismatch"
+            ),
+            "filled_mismatch|manual_review"
+        );
+        // 柜台缺单是"结果未知，只能继续复查"，远端孤单是"归属不明，需人工"。
+        let at_venue = reconcile_issues(&[fact(7, OrderStatus::Submitted, 0)], &[]);
+        assert_eq!(at_venue[0].action().reason_code(), "pending_reconcile");
+        let locally = reconcile_issues(&[], &[fact(7, OrderStatus::Submitted, 0)]);
+        assert_eq!(locally[0].action().reason_code(), "manual_review");
+    }
 }

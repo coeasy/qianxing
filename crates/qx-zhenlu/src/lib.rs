@@ -60,8 +60,10 @@ impl RiskContext {
 
     /// 与 [`Self::evaluate_order`] 同一份判定，但叠加配置化静态规则集。
     ///
-    /// 三条执行路径（回测、Paper、实盘）都应经由本方法或
-    /// `qx_risk::RiskEngine::evaluate_order_with_rules`，不要再各自解释规则。
+    /// 规则的解释实现只有一份（`qx_risk::RuleSet`），三条路径按各自缺的输入选不同方法（逐个 grep
+    /// 生产调用点确认，旧注释说"三条路都经由本方法"是错的）：意图闸门走 `RiskGate::check*` →
+    /// `evaluate_rules_only`（`runtime_wiring.rs` 装配），提交端口走 `evaluate_order` → `account_limits_only`，
+    /// 本方法这条组合口径只有 `risk_parity.rs` 拿它做三入口一致性取证。
     pub fn evaluate_order_with_rules(
         &self,
         order: &Order,
@@ -1220,10 +1222,12 @@ impl PaperVenue {
         }
     }
 
-    /// 当前费用模型描述子。`fee_model` 是私有字段，这一颗是它在仓内唯一的公开出口，
-    /// 但运行清单与配置校验都不读它——只有用例点过名（V11 R7-6 登记为未接线的唯一写法；
-    /// 此前这句注释替一条并不存在的消费作保）。
-    pub fn fee_descriptor(&self) -> String {
+    /// 当前费用模型描述子。`fee_model` 是私有字段，这一颗是它在仓内唯一的出口，但运行清单与
+    /// 配置校验都不读它——只有本文件的 golden 用例点过名，生产侧一律走 `fee_model.descriptor()`。
+    /// 把它挂成公共面会让"descriptor 变了就是指纹变了"看起来像在保护一条并不存在的外部契约
+    /// （V11 R7-6 登记、V12 §16 降级：判据改由编译器而不是门禁的行号钉子付）。
+    #[cfg(test)]
+    pub(crate) fn fee_descriptor(&self) -> String {
         self.fee_model.descriptor()
     }
 
@@ -1979,7 +1983,10 @@ mod tests {
         })
         .unwrap();
         assert_eq!(oms.get(1).unwrap().status, OrderStatus::Filled);
-        assert!(oms.open_orders().is_empty());
+        assert!(oms
+            .all_orders()
+            .iter()
+            .all(|order| order.status.is_terminal()));
     }
 
     #[test]

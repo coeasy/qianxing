@@ -7,7 +7,6 @@
 
 use qx_core::{Fill, InstrumentId, Order, TradingInstrumentSpec};
 use qx_guanxing::QuoteTick;
-use std::collections::BTreeMap;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ExecutionEvent {
@@ -78,40 +77,6 @@ pub trait RiskPort {
 
 pub trait MarketDataPort {
     fn latest_quote(&self, instrument: &InstrumentId) -> Option<QuoteTick>;
-}
-
-/// 单机 Paper/回测可直接使用的最新报价簿。
-///
-/// 它只保存已经通过 `validate_quote` 的 L1 报价，不承担行情持久化；生产
-/// worker 应在写入 EventLog 后再更新此端口，避免内存报价成为唯一事实来源。
-#[derive(Clone, Default, Debug)]
-pub struct QuoteBook {
-    quotes: BTreeMap<InstrumentId, QuoteTick>,
-}
-
-impl QuoteBook {
-    pub fn upsert(&mut self, instrument: InstrumentId, quote: QuoteTick) -> Result<(), String> {
-        self.quotes.insert(instrument, validate_quote(quote)?);
-        Ok(())
-    }
-
-    pub fn clear(&mut self) {
-        self.quotes.clear();
-    }
-
-    pub fn len(&self) -> usize {
-        self.quotes.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.quotes.is_empty()
-    }
-}
-
-impl MarketDataPort for QuoteBook {
-    fn latest_quote(&self, instrument: &InstrumentId) -> Option<QuoteTick> {
-        self.quotes.get(instrument).copied()
-    }
 }
 
 pub trait ReconcilePort {
@@ -249,51 +214,10 @@ fn validate_fill_for_order(order: &Order, fill: &Fill) -> Result<(), String> {
     Ok(())
 }
 
-/// 端口层的最小报价校验，Paper/Live 共用，避免应用层接受 crossed 或无流动性报价。
-pub fn validate_quote(quote: QuoteTick) -> Result<QuoteTick, String> {
-    if quote.bid.raw() <= 0
-        || quote.ask.raw() <= 0
-        || quote.bid.raw() > quote.ask.raw()
-        || quote.bid_qty.raw() <= 0
-        || quote.ask_qty.raw() <= 0
-    {
-        return Err("行情报价非法".into());
-    }
-    Ok(quote)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use qx_core::{Price, Quantity};
-
-    #[test]
-    fn quote_book_rejects_invalid_quotes_and_keeps_latest_valid_quote() {
-        let instrument = InstrumentId::parse("BTC/USDT.BINANCE").unwrap();
-        let mut book = QuoteBook::default();
-        let invalid = QuoteTick::new(
-            1,
-            Price::from_i64(101),
-            Quantity::from_i64(1),
-            Price::from_i64(100),
-            Quantity::from_i64(1),
-            1,
-        );
-        assert!(book.upsert(instrument.clone(), invalid).is_err());
-        assert!(book.is_empty());
-
-        let valid = QuoteTick::new(
-            2,
-            Price::from_i64(100),
-            Quantity::from_i64(2),
-            Price::from_i64(101),
-            Quantity::from_i64(3),
-            2,
-        );
-        book.upsert(instrument.clone(), valid).unwrap();
-        assert_eq!(book.len(), 1);
-        assert_eq!(book.latest_quote(&instrument), Some(valid));
-    }
 
     fn test_order() -> Order {
         Order {

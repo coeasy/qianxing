@@ -1,5 +1,7 @@
 use crate::StrategyContext;
-use qx_core::{Fnv1a, RunManifest};
+use qx_core::Fnv1a;
+#[cfg(test)]
+use qx_core::RunManifest;
 use qx_data::{DatasetManifest, DatasetRef, DatasetResolver};
 use qx_factor::FactorExecutionPlan;
 use serde::{Deserialize, Serialize};
@@ -42,7 +44,14 @@ impl RuntimeDatasetBinding {
         Ok(())
     }
 
-    pub fn validate_for_run_manifest(&self, run: &RunManifest) -> Result<(), String> {
+    /// 血缘复核：RunManifest 的数据指纹必须就是这条 binding 的 dataset 指纹。
+    ///
+    /// 降为 `pub(crate)`：CLI 侧所有 manifest 生产者写的是带前缀的口径
+    /// （`dataset-bundle:<fp>` / `barframe:<src>` / `scheduler:<day>`），没有一处会等于裸
+    /// fingerprint，所以对外承诺"复核过血缘"的公共入口其实永远不可达（V12 §16 #121）。
+    /// 要恢复成公共面，先让某一格生产者真的写裸 fingerprint。
+    #[cfg(test)]
+    pub(crate) fn validate_for_run_manifest(&self, run: &RunManifest) -> Result<(), String> {
         self.validate()?;
         run.validate()?;
         if run.data_fingerprint != self.reference.fingerprint {
@@ -140,7 +149,8 @@ impl RuntimeResearchBinding {
         Ok(())
     }
 
-    pub fn validate_for_run_manifest(&self, run: &RunManifest) -> Result<(), String> {
+    #[cfg(test)]
+    pub(crate) fn validate_for_run_manifest(&self, run: &RunManifest) -> Result<(), String> {
         self.validate()?;
         self.dataset.validate_for_run_manifest(run)
     }
@@ -162,7 +172,11 @@ impl RuntimeResearchBinding {
 impl StrategyContext {
     /// Verify that this strategy decision context is backed by one resolved,
     /// immutable dataset and the exact factor plan compiled for that dataset.
-    pub fn validate_research_binding(
+    ///
+    /// 校验只有一条方向：口径住在 binding 上（[`RuntimeResearchBinding::validate_for_strategy_context`]），
+    /// 这里只做参数翻转的转发，避免同一个不变量出现第二个入口（V12 §16）。
+    #[cfg(test)]
+    pub(crate) fn validate_research_binding(
         &self,
         binding: &RuntimeResearchBinding,
     ) -> Result<(), String> {
@@ -173,7 +187,7 @@ impl StrategyContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qx_core::InstrumentId;
+    use qx_core::{InstrumentId, RunManifest};
     use qx_data::DatasetRegistry;
     use qx_factor::{
         CandidateRequest, FactorCatalog, FactorReport, FeatureArtifact, FeatureDefinition,

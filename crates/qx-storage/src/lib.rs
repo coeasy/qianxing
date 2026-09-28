@@ -445,7 +445,7 @@ pub fn project_event_log_to_outbox(
                     event.correlation_id.clone()
                 },
                 sequence: event.seq,
-                schema_version: 1,
+                schema_version: OutboxEvent::LATEST_SCHEMA_VERSION,
                 trace_id: event.correlation_id.clone(),
                 payload: serde_json::to_string(event).map_err(|error| {
                     StorageError::Io(format!("EventLog Outbox 序列化失败: {error}"))

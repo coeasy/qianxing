@@ -79,10 +79,6 @@ impl RuntimeSupervisor {
         Arc::clone(&self.health)
     }
 
-    pub fn shutdown_token(&self) -> ShutdownToken {
-        self.shutdown.clone()
-    }
-
     pub fn request_shutdown(&self) {
         self.shutdown.request();
         if let Ok(mut health) = self.health.lock() {

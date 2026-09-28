@@ -3,6 +3,9 @@
 //! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须
 //! 进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
 
+mod event_cursor;
+
+use event_cursor::{events_after_cursor, parse_after_cursor};
 use qx_control::{
     AuditRecord, ControlCommand, ControlError, ControlPlane, Permission, RetirementSummary,
 };
@@ -134,31 +137,9 @@ impl ApiEventBus {
     }
 }
 
+/// 游标 → 事件批次的唯一实现在 `event_cursor`（V12 R4-g）。
 fn read_bus_events(state: &EventBusState, after: Option<u64>) -> Result<Vec<Event>, EventBusError> {
-    if let Some(after) = after {
-        if after >= state.next_seq {
-            return Err(EventBusError::CursorAhead {
-                requested: after,
-                next_seq: state.next_seq,
-            });
-        }
-        if let Some(oldest) = state.events.front().map(|event| event.seq) {
-            if after.saturating_add(1) < oldest {
-                return Err(EventBusError::CursorTooOld {
-                    requested: after,
-                    oldest,
-                });
-            }
-        }
-        Ok(state
-            .events
-            .iter()
-            .filter(|event| event.seq > after)
-            .cloned()
-            .collect())
-    } else {
-        Ok(state.events.iter().cloned().collect())
-    }
+    event_cursor::events_after_cursor(state.events.iter(), state.next_seq, after)
 }
 
 /// 可热替换的 TLS 服务端配置。新连接读取最新配置，已有连接继续使用握手时的配置。
@@ -615,6 +596,12 @@ pub struct ApiState {
     pub projection_refresher: ProjectionRefresher,
 }
 
+/// API 限流额度只有一处定义：进程内令牌桶、`with_rate_limit`、以及 `qx-cli`
+/// 装配的文件/SQLite 共享桶都必须引用这两个常量，否则"换一个存储后端"会
+/// 顺带改掉限流策略（V12 §16）。
+pub const DEFAULT_RATE_LIMIT_CAPACITY: u64 = 100;
+pub const DEFAULT_RATE_LIMIT_REFILL_PER_SECOND: u64 = 100;
+
 #[derive(Clone, Debug)]
 pub struct ApiRateLimiter {
     capacity: u64,
@@ -753,10 +740,6 @@ impl ApiState {
         self.projections
             .get(&ApiProjectionKey::new(account_id, venue_id))
             .and_then(|projection| projection.snapshot.clone())
-    }
-
-    pub fn projection_keys(&self) -> Vec<ApiProjectionKey> {
-        self.projections.keys().cloned().collect()
     }
 
     pub fn projection_health(&self, account_id: &str, venue_id: &str) -> Option<ProjectionHealth> {
@@ -1042,7 +1025,10 @@ impl ApiService {
             state: Arc::new(Mutex::new(state)),
             policy: None,
             rate_limiter: Arc::new(LocalRateLimitBackend {
-                limiter: Mutex::new(ApiRateLimiter::new(100, 100)),
+                limiter: Mutex::new(ApiRateLimiter::new(
+                    DEFAULT_RATE_LIMIT_CAPACITY,
+                    DEFAULT_RATE_LIMIT_REFILL_PER_SECOND,
+                )),
             }),
             control_submitter: None,
             command_enqueuer: None,
@@ -1059,7 +1045,10 @@ impl ApiService {
             state: Arc::new(Mutex::new(state)),
             policy: Some(policy),
             rate_limiter: Arc::new(LocalRateLimitBackend {
-                limiter: Mutex::new(ApiRateLimiter::new(100, 100)),
+                limiter: Mutex::new(ApiRateLimiter::new(
+                    DEFAULT_RATE_LIMIT_CAPACITY,
+                    DEFAULT_RATE_LIMIT_REFILL_PER_SECOND,
+                )),
             }),
             control_submitter: None,
             command_enqueuer: None,
@@ -1301,15 +1290,13 @@ impl ApiService {
     }
 
     fn snapshot_for_query(&self, query: &str) -> Result<Option<AccountSnapshot>, String> {
-        let key = projection_key_from_query(query)?;
+        // 带 account_id/venue_id 的查询走与公共键读法同一处查找，避免路由与嵌入方
+        // 各自实现一遍"键怎么映射到投影"。
+        if let Some(key) = projection_key_from_query(query)? {
+            return Ok(self.account_snapshot_for(&key.account_id, &key.venue_id));
+        }
         let state = self.state.lock().expect("api state mutex poisoned");
-        Ok(match key {
-            Some(key) => state
-                .projections
-                .get(&key)
-                .and_then(|projection| projection.snapshot.clone()),
-            None => state.snapshot.clone(),
-        })
+        Ok(state.snapshot.clone())
     }
 
     fn projection_events_for_query(&self, query: &str) -> Result<Vec<Event>, String> {
@@ -1326,7 +1313,7 @@ impl ApiService {
     fn snapshot_envelope_for_query(
         &self,
         query: &str,
-    ) -> Result<Option<ProjectionEnvelope<AccountSnapshot>>, String> {
+    ) -> Result<Option<ProjectionEnvelope<serde_json::Value>>, String> {
         let key = projection_key_from_query(query)?;
         let state = self.state.lock().expect("api state mutex poisoned");
         let (snapshot, source_digest) = match key {
@@ -1375,12 +1362,16 @@ impl ApiService {
                     source_digest: Some(format!("{source_digest:016x}")),
                     ..ProjectionLineage::default()
                 },
-                data: snapshot,
+                // `data` 只认 `to_json` 这一份线格式（V12 R4-h）：`/schema/account-snapshot-v1`
+                // 公布的就是它。`AccountSnapshot` 的 serde 派生形状没有 `protocol`/顶层
+                // `schema_version`，照 schema 校验必失败——同一端点家族不能发两种契约。
+                data: serde_json::from_str(&snapshot.to_json()).expect("账户快照线格式必须可解析"),
             }
         }))
     }
 
-    pub fn with_rate_limit(mut self, capacity: u64, refill_per_second: u64) -> Self {
+    #[cfg(test)]
+    pub(crate) fn with_rate_limit(mut self, capacity: u64, refill_per_second: u64) -> Self {
         self.rate_limiter = Arc::new(LocalRateLimitBackend {
             limiter: Mutex::new(ApiRateLimiter::new(capacity, refill_per_second)),
         });
@@ -1404,8 +1395,11 @@ impl ApiService {
         self.handle_inner(method, path, body, ts, None)
     }
 
-    /// 带可信身份的入口。`operator_id` 必须由认证网关/进程边界注入，不能来自命令体。
-    pub fn handle_as(
+    /// 带可信身份的入口（仅 crate 内可见）。`operator_id` 必须由认证网关/进程边界
+    /// 注入，不能来自命令体；产品装配只经 `serve_*` 的 mTLS 身份映射走到这里，
+    /// 因此不对外公开，避免宿主把认证入口当成可伪造的公共 API（V12 §16）。
+    #[cfg(test)]
+    pub(crate) fn handle_as(
         &self,
         operator_id: &str,
         method: &str,
@@ -1586,25 +1580,20 @@ impl ApiService {
                     Ok(events) => events,
                     Err(error) => return ApiResponse::json(400, error_json(&error)),
                 };
-                let after = match query_value(query, "after") {
-                    None => u64::MAX,
-                    Some(value) => match value.parse::<u64>() {
-                        Ok(value) => value,
-                        Err(_) => {
-                            return ApiResponse::json(
-                                400,
-                                error_json("after must be an unsigned integer"),
-                            )
-                        }
-                    },
+                let after = match parse_after_cursor(query) {
+                    Ok(after) => after,
+                    Err(error) => return ApiResponse::json(400, error_json(error)),
                 };
-                if after != u64::MAX && after >= all_events.len() as u64 {
-                    return ApiResponse::json(409, error_json("event_cursor_requires_snapshot"));
-                }
-                let events = if after == u64::MAX {
-                    all_events
-                } else {
-                    all_events[(after as usize + 1).min(all_events.len())..].to_vec()
+                // V12 R4-g：`after` 与 `/events/live` 同一个口径——事件序号，不是这条投影
+                // 日志的下标。投影日志的 `next_seq` 恒等于末条 seq+1（`validate` 保证），
+                // 因此这里按末条推导。
+                let next_seq = all_events.last().map_or(0, |event| event.seq + 1);
+                let events = match events_after_cursor(all_events.iter(), next_seq, after) {
+                    Ok(events) => events,
+                    Err(EventBusError::CursorTooOld { .. } | EventBusError::CursorAhead { .. }) => {
+                        return ApiResponse::json(409, error_json("event_cursor_requires_snapshot"))
+                    }
+                    Err(error) => return ApiResponse::json(500, error_json(&format!("{error:?}"))),
                 };
                 match serde_json::to_string(&events) {
                     Ok(events) => ApiResponse::json(200, events),
@@ -1618,14 +1607,9 @@ impl ApiService {
     }
 
     fn live_events(&self, query: &str) -> ApiResponse {
-        let after = match query_value(query, "after") {
-            None => None,
-            Some(value) => match value.parse::<u64>() {
-                Ok(value) => Some(value),
-                Err(_) => {
-                    return ApiResponse::json(400, error_json("after must be an unsigned integer"))
-                }
-            },
+        let after = match parse_after_cursor(query) {
+            Ok(after) => after,
+            Err(error) => return ApiResponse::json(400, error_json(error)),
         };
         let key = match projection_key_from_query(query) {
             Ok(key) => key,
@@ -1778,8 +1762,10 @@ impl ApiService {
         }
     }
 
-    /// 处理一个 HTTP/1.1 请求；用于本地控制面和集成测试。
-    pub fn serve_once(&self, listener: &TcpListener, ts: u64) -> std::io::Result<()> {
+    /// 处理一条 HTTP/1.1 连接（仅 crate 内可见）：与 `serve` 的区别只在它同步处理
+    /// 单条连接、不起线程，供本 crate 的集成用例钉住确定性的请求/响应顺序（V12 §16）。
+    #[cfg(test)]
+    pub(crate) fn serve_once(&self, listener: &TcpListener, ts: u64) -> std::io::Result<()> {
         let (stream, _) = listener.accept()?;
         configure_connection(&stream)?;
         self.serve_stream_as(stream, ts, None)
@@ -1790,7 +1776,8 @@ impl ApiService {
     /// `ServerConfig` 必须由部署边界构造并安全加载证书/私钥；API 层不提供跳过
     /// TLS 或动态信任任何客户端的快捷开关。HTTP 与 WebSocket 处理仍复用同一套
     /// 权限、审计、快照和事件游标语义。
-    pub fn serve_once_tls(
+    #[cfg(test)]
+    pub(crate) fn serve_once_tls(
         &self,
         listener: &TcpListener,
         config: Arc<ServerConfig>,
@@ -1798,14 +1785,7 @@ impl ApiService {
     ) -> std::io::Result<()> {
         let (stream, _) = listener.accept()?;
         configure_connection(&stream)?;
-        self.serve_stream(tls_stream(stream, config)?, ts)
-    }
-
-    fn serve_stream<S>(&self, stream: S, ts: u64) -> std::io::Result<()>
-    where
-        S: Read + Write,
-    {
-        self.serve_stream_as(stream, ts, None)
+        self.serve_stream_as(tls_stream(stream, config)?, ts, None)
     }
 
     fn serve_stream_as<S>(

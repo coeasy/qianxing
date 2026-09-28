@@ -393,13 +393,6 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         self
     }
 
-    /// 为本次提交绑定控制面/策略意图关联号。它只影响首次订单登记，重复
-    /// 提交仍由 EventLog 中已有的 client_order_id 状态决定。
-    pub fn with_registration_correlation(mut self, correlation_id: impl Into<String>) -> Self {
-        self.registration_correlation = Some(correlation_id.into());
-        self
-    }
-
     pub fn with_instrument_spec(mut self, spec: TradingInstrumentSpec) -> Self {
         self.instrument_spec = Some(spec);
         self
@@ -1299,7 +1292,7 @@ fn ingest_venue_events_with_pipeline<P: ExecutionEventPort>(
     Ok(event_count)
 }
 
-/// 执行一条已经通过控制面审计的 SubmitOrder。
+/// 提交一条已通过控制面审计的 SubmitOrder：框架唯一的订单提交入口。
 ///
 /// 这里不负责账户/Venue 拓扑授权，也不负责 ControlPlane 的 Accepted/终态回写；
 /// 它只负责订单事实注册、未知结果保护、Venue submit 和标准回报归约。这样
@@ -1307,46 +1300,9 @@ fn ingest_venue_events_with_pipeline<P: ExecutionEventPort>(
 ///
 /// `spread_store` 是多腿订单组快照来源：带 `spread_group_id` 的命令必须由注入了
 /// 组存储的提交路径执行，否则 [`spread_group_barrier`] 以 fail-closed 拒绝。
-#[allow(clippy::too_many_arguments)]
-pub fn submit_order_via_gateway<V: VenuePort, P: ExecutionEventPort>(
-    command: &ControlCommand,
-    venue: &mut V,
-    events: &mut P,
-    worker_id: &str,
-    now: u64,
-    source_seq: &mut u64,
-    spread_store: Option<&dyn SpreadOrderGroupStore>,
-) -> Result<PortExecutionResult, String> {
-    spread_group_barrier(spread_store, command)?;
-    let mut gateway = ExecutionGateway::new(venue, events, worker_id, now, source_seq);
-    if let Some(store) = spread_store {
-        gateway = gateway.with_spread_group_store(store);
-    }
-    gateway.submit_command(command)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn submit_order<V: Venue, P: ExecutionEventPort>(
-    command: &ControlCommand,
-    venue: &mut V,
-    pipeline: &mut P,
-    worker_id: &str,
-    now: u64,
-    source_seq: &mut u64,
-    spread_store: Option<&dyn SpreadOrderGroupStore>,
-) -> Result<String, String> {
-    spread_group_barrier(spread_store, command)?;
-    let mut venue = BorrowedVenuePort::new(venue);
-    let mut gateway = ExecutionGateway::new(&mut venue, pipeline, worker_id, now, source_seq);
-    if let Some(store) = spread_store {
-        gateway = gateway.with_spread_group_store(store);
-    }
-    let result = gateway.submit_command(command)?;
-    Ok(result.message)
-}
-
-/// `submit_order` 的账户级风控版本，供 Paper/CCXT/Binance worker 在已有账户
-/// 快照和市场规格时统一使用；Venue 仍只接收通过预检的订单。
+///
+/// 账户级风控走 `context`（快照与市场规格），供 Paper/CCXT/Binance worker 统一使用；
+/// Venue 仍只接收通过预检的订单。
 #[allow(clippy::too_many_arguments)]
 pub fn submit_order_with_risk<V: Venue, P: ExecutionEventPort>(
     command: &ControlCommand,

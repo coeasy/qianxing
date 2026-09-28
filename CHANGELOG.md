@@ -108,7 +108,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   审计链的 append-only、幂等与防篡改覆盖一条没少。
 
 - **投影桥没起来时 `/ready` 念出停摆与原因**（I1）：新增 `ProjectionRefresher { Unreported, Running,
-  Stopped(String) }`，写入口唯一（`report_projection_refresher`，`crates/qx-api/src/lib.rs:1082`）；桥的三条
+  Stopped(String) }`，写入口唯一（`report_projection_refresher`，`crates/qx-api/src/lib.rs:1071`）；桥的三条
   提前返回路径各自报 `Stopped(原因)`（拓扑里没有账户级 EventLog 那一条此前完全静默），启动成功先报
   `Running`；线程退出（含 panic）由自带的 `ProjectionRefresherGuard` 在 `Drop` 里报停摆。`/ready` 只在读模型
   里确有投影时判定，且判定排在健康扫描之前——boot 那份投影永远"健康"，因为它就是被成功
@@ -127,7 +127,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   `consume_batch_with_projection`、耕禄的 `sharpe_ratio()` 等——分界是"先找能力再找名字"，
   删掉唯一实现会把部署手册里那条命令变成没有对应实现的话。
 - **API 的 accept 循环读停机令牌**（J2）：`serve` 此前是 `for stream in listener.incoming()`，阻塞迭代器，
-  令牌翻起来也不回来。新增 `fn accept_polling`（`crates/qx-api/src/lib.rs:1911`）作为两条长驻入口
+  令牌翻起来也不回来。新增 `fn accept_polling`（`crates/qx-api/src/lib.rs:1891`）作为两条长驻入口
   （明文 `serve` 与 `serve_tls_mtls_with_stores`）共用的那颗循环：监听套接字转非阻塞、每轮先问令牌、
   `WouldBlock` 时按 20 ms 节拍睡、被接出来的流显式转回阻塞再设读超时。两处生产装配传
   `|| context.should_stop()`，与其余 worker 共用监督器那一枚令牌；参数是回调而不是 `Arc<AtomicBool>`，
@@ -136,7 +136,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   `ccxt_respawn_delay`（500 ms 起指数翻倍、封顶 10 秒，委托 `qx_core::retry::Backoff` 而不是自己写位移）、
   `ccxt_dead_cycle_ledger`（只有整轮全失败才算死轮，任何一次成功清零，`attempted == 0` 不算）与
   `CCXT_DEAD_CYCLE_BUDGET = 5` 让"子进程持续不可用"从每秒两次的空转变成有界退避后 `Failed` 退出；
-  用户流侧 `ccxt_execution.rs:333` 读同一颗预算。R3 是同一族，这次两条腿都在 CCXT 侧。
+  用户流侧 `ccxt_execution.rs:338` 读同一颗预算。R3 是同一族，这次两条腿都在 CCXT 侧。
 - **Outbox 的毒事件不再无限阻断链尾**（K2）：`OUTBOX_MAX_ATTEMPTS` + `outbox_exhausted` 是出站侧唯一的
   尝试判据（三本后端不自己数次数），relay 在 `claim_outbox` **之前**跳过用尽的事件并计入 `report.parked`；
   `parked` 一路到 Prometheus `qx_outbox_relay_parked` 与 relay worker 的自报行——数了却读不到，等于把
@@ -159,7 +159,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   （进程内总线没有可发布的整体摘要，把总线名填进 `*_digest` 是外销一个不是摘要的摘要），无键读路
   拿不到镜像投影时"宁可不给信封"而不是编一个 0。§37.5 第 2 条（S9）随之关闭。
 - **原子投影链的登记补上读侧那一半**（L3）：J1 只登记了写侧三颗，L3 复核时把读侧 `load_projection`
-  （`lib.rs:797` 与三本后端各一颗）与那条实际走的不带投影的 `consume_batch` 一起点名——那份落盘的投影
+  （`crates/qx-storage/src/lib.rs:803` 与三本后端各一颗）与那条实际走的不带投影的 `consume_batch` 一起点名——那份落盘的投影
   至今只有 `outbox_backend_semantics.rs` 的两条契约用例读过，**没有生产读者**。登记改为七条行号锁，
   漂了就红：漂掉的登记会把读者支到另一段代码上。
 - **`shutdown_timeout_ms` 第一次真的接成上界**（L4）：托管收尾从 supervisor 的 `child.wait()`
@@ -179,7 +179,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   保持 `{worker}:submit:{client_id}`、补偿腿登记点名 worker / 组 / 腿。
 - **调度链的四格：单位、超时收口、唯一派发判据、派不动的声明当场拒**（N1–N4）：
   `start_run_at`（`crates/qx-scheduler/src/lib.rs:506`）把 `timeout_seconds` 当毫秒加，一份 30 秒超时的作业
-  deadline 落在启动后 30 **毫秒**，与 `crates/qx-cli/src/workers.rs:119` 的 `now.saturating_add(60_000)` 分叉；
+  deadline 落在启动后 30 **毫秒**，与 `crates/qx-cli/src/workers.rs:119`（改动前坐标：那颗 `now.saturating_add(60_000)` 已随 N1 删掉，秒域换算只由 `lease_clock` 交出）分叉；
   卡死的 `Running` 永久占着并发键（`is_timed_out` / `mark_timed_out` 两颗零生产读者），新增 `sweep_timed_out(now)`
   作唯一收口、生产派发每轮先扫；窗口与交易日历的判据只住在 `due_jobs_with_calendar`，生产却走 `due_jobs`，
   于是 `JobWindow` 与 `TradingCalendar` 两份声明在运行时静默不生效；注册表派不动的 `Retry` / `Event` / `Manual`
@@ -194,13 +194,13 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
 - **`strategies[i].cost_rules_path` 从"静默丢掉"改成"当场拒"**（N5）：`config validate` 逐条校验并打印 PASS、
   回测链会投影进 `.strategy` 后读取，而 Paper / Execution worker 只读顶层 `config.strategy.cost_rules_path`。
   `execution_cost_binding_from_config`（`crates/qx-cli/src/runtime_wiring.rs:184`）先问
-  `unapplied_cost_rules_declaration`（`runtime_check.rs:175`），报法直接点名那一格；`config validate` 与装配走
+  `unapplied_cost_rules_declaration`（`runtime_check.rs:164`），报法直接点名那一格；`config validate` 与装配走
   同一颗判据，"校验说没问题、装配跑不动"不可能再分裂。本轮**没有**把绑定做完（执行平面接受多份 binding
   是另一件事），处置是 R11 那条口径的第二次应用：不支持就说不支持。
 - **两颗零引用重复写法删除，M4 那把尺子改认可达性**（N6–N7）：`submit_order_via_gateway_with_risk` 只是
   转发壳、`complete_reconcile` 零引用而 `reconcile_snapshot` 自己会把状态推到 `Live`（留着等于允许跳过真实
   比对直接改状态）；`m4_zero_caller_surface_check` 的"活替代仍被生产走到"原先只问符号有没有出现在文件文本里，
-  于是替代那颗其实住在 `#[cfg(test)]` 之后也能绿——新增 `m4_production_text()`（`tools/check_architecture.py:3336`）
+  于是替代那颗其实住在 `#[cfg(test)]` 之后也能绿——新增 `m4_production_text()`（`tools/check_architecture.py:5828`）
   把正文收成"第一个测试模块之前"。J1 已登记过"认名字不认能力"，这次是同族的另一格，且这格能修就修了。
 - **子进程 stdin 的写第一次有预算**（N8）：新增 `crates/qx-adapter/src/io_budget.rs` 的 `write_all_within`，
   把写交给一颗命名线程、用带截止时间的 channel 收它，预算内没收回来就 `on_timeout`（生产里是杀子进程，
@@ -213,7 +213,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   `seen_fill_keys` / `venue_order_ids` 五份派生索引。**两条限制是设计的一部分**：活跃订单永不退场（去掉
   `is_terminal` 那层筛选就是拿丢活跃单换内存），以及被退场的单迟到回报仍按"未知本地订单"升级对账而不是静默。
 - **一条薄行情不再能带走整台节点**（N10）：静默原先在读侧被当故障返回 `Err`、会话层把它读成"这条流完了"
-  直接 `return`，而 `crates/qx-orchestrator/src/lib.rs:282-299` 那颗监督器是**进程粒度**的（任一托管 worker
+  直接 `return`，而 `crates/qx-orchestrator/src/lib.rs:297-308` 那颗监督器是**进程粒度**的（任一托管 worker
   退出即 `Err("managed worker {id} exited…")`，仓内没有线程级重启）。修法是三态而不是多包一层重试：
   `WebSocketRead::{Message, Idle, Closed}` → `BinanceStreamRead` 同名三态 → 共用引擎 `run_binance_stream`；
   `Idle` **只**在帧边界成立（`filled == 0` 且 `WouldBlock | TimedOut`），既不切断会话也不复位预算（否则又回到
@@ -250,7 +250,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   测试客户端改成先 `set_read_timeout(5s)` 再读，超时以断言红收掉。
 - **WebSocket 握手块有整体截止**（O7）：逐字节读意味着"单次读有界"不等于"整块有界"——socket 超时只管
   一次 `read_exact`，一个每 9 秒吐一个字节的对端能把一次握手占住 65536 × 超时，而 64 KiB 上限只在累计
-  之后才问。新增 `read_header_block(reader, budget)`（`qx-adapter/src/lib.rs:509`），每一字节之前问一次墙钟。
+  之后才问。新增 `read_header_block(reader, budget)`（`qx-adapter/src/lib.rs:350`），每一字节之前问一次墙钟。
 - **PostgreSQL 取锁与连接阶段第一次真的有界**（O8）：两颗取锁入口原本裸 `Mutex::lock()`，一条被黑洞掉的
   连接能让持有者永远停在 socket read、后来者跟着无限排队（停机令牌问不到、`/ready` 读不到新东西）；
   新增 `lock_slot`（`try_lock` 轮询 + 60 秒预算，`Busy` 文案点名"持有者卡在往返里，不是慢"）。M1 那颗
@@ -259,7 +259,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
 - **三处地址解析共用一颗带预算的入口**（O9）：`to_socket_addrs()` 走系统解析器且代码侧原本一个界都没有，
   一台黑洞掉的 DNS 能让 worker 停在 `send` 里几十分钟，既读不到停机令牌也回不到循环头，而
   `connect_timeout` 只界住解析**之后**那一跳。新增 `within_budget` + `resolve_socket_address`
-  （`qx-adapter/src/lib.rs:469`、`:488`），WSS / TLS HTTP / plain HTTP 三处共用；裸 `to_socket_addrs()`
+  （`qx-adapter/src/lib.rs:329`、`:338`），WSS / TLS HTTP / plain HTTP 三处共用；裸 `to_socket_addrs()`
   全仓只剩实现内部那一处。**代价如实记下**：预算管的是调用方最多等多久，不取消那颗解析线程。
 - **没有执行者的控制命令在受理处当场拒**（P1）：八类 `CommandKind` 里只有 `SubmitOrder`（venue 执行
   worker 领）与 `PauseStrategy` / `ResumeStrategy`（Strategy worker 领）有人领取，其余五类过去拿到 202
@@ -274,7 +274,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   都在为"确定性时钟""因果事件队列""不用系统时间"作保。`clock.rs` 不能整份删（`pub type Ts = u64;` 被
   event/order/sourcing 使用），收成那一格单位口径；口径改到两条**真实推进路径**——回测按 bar 序列推进
   （`qx-xingban`）、实盘按到达顺序把交易所/进程戳推进 `EventLog`（`qx-runtime/src/pipeline.rs`），
-  因果优先级 `Priority` 留在 `event.rs:126` 由 `(ts, prio)` 单调落盘判据执行，不再假设有乱序调度队列。
+  因果优先级 `Priority` 留在 `event.rs:121` 由 `(ts, prio)` 单调落盘判据执行，不再假设有乱序调度队列。
   `validate_core.py` 把 `CausalQueue` / `TestClock` 标成本文件自用的参考形状，同时保留一条真判据：
   `PRIO_*` 数值必须与 `event.rs` 的 `prio` 逐项相同（由门禁钉住）。
 - **有实现、没接线的那颗留在原地并登记**（P3）：`crates/qx-runtime/src/data_binding.rs` 的三颗公开面
@@ -321,15 +321,15 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   `BINANCE_STREAM_FILE`（N10 之后就没再走过）。地板排在孤儿之前是故意的：**判据被改瞎时孤儿列表天然为空、
   看着像通过**，所以必须先红在地板。
 - **插件的两颗生命周期超时进了口径与判据**（R4-3）：`healthcheck_timeout_ms`
-  （`crates/qx-plugin/src/lib.rs:122`）与 `shutdown_timeout_ms`（:123）被 `validate`（:169）问非 0、被
-  `canonical_hash`（:240）计入指纹——两件事都不构成等待，仓内没有一处把它们换算成 `Duration`，是 L4 的
-  同族漏网。README 两处（crate 表速查行 :38、"三条容易被读过头的边界" :307）改到与实际可达性同口径；
-  `plugin_claim_honesty_check`（:6730）带一颗**反向排除**，正则把 `config.shutdown_timeout_ms` 那处合法的
+  （`crates/qx-plugin/src/lib.rs:55`）与 `shutdown_timeout_ms`（:56）被 `validate`（:86）问非 0、被
+  `canonical_hash`（`crates/qx-plugin/src/lib.rs:143`）计入指纹——两件事都不构成等待，仓内没有一处把它们换算成 `Duration`，是 L4 的
+  同族漏网。README 两处（crate 表速查行 :38、"三条容易被读过头的边界" :437）改到与实际可达性同口径；
+  `plugin_claim_honesty_check`（`tools/check_architecture.py:9489`）带一颗**反向排除**，正则把 `config.shutdown_timeout_ms` 那处合法的
   真接线排除掉，撤掉它门禁当场把真接线读成违规。
 - **三处契约面同时补齐，且契约只有一份**（R4-4）：`on_order_update` 除适配器自身之外仓内零派发，判据把
   这份零派发钉成在册状态而不是让它伪装成一条活链；`schemas/strategy_api_v1.schema.json` 此前**零读者且与
   读侧矛盾**（顶层漏了写侧恒印的 `instrument` / `target_qty`、意图层漏了多腿那三格政策、
-  `additionalProperties: false` 让每份真实载荷都过不了它），现在有三个常驻读者并由判据逐颗点名（:4908），
+  `additionalProperties: false` 让每份真实载荷都过不了它），现在有三个常驻读者并由判据逐颗点名（`tools/check_architecture.py:9512`），
   另加"多抄一份 `*strategy*.json` 即红"；账户快照契约补齐 `header.trading_day`、`positions` 少的那一格必填
   与 `orders` 键本身的形状。新壳 `crates/qx-runtime/tests/strategy_api_schema_contract.rs`（275 行、4 颗）。
 - **`strategy.leverage` / `position_mode` 在回测链当场拒**（R4-5）：O2 / N5 同族的最后两格——两条 Bar
@@ -343,23 +343,23 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   （:19），`insert`（:31）先把这次写入的摘要**挪回队尾**、再从队首退到界内（:37）。"挪回队尾"是关键一步：
   安静账户里那份唯一的历史基线会一直停在队首，不挪就会被下一轮波动连同客户端正在用的 `base` 一起退掉，
   而这条端点对退掉的 base 只有 409。全局那一格与每份带 `account_id`/`venue_id` 的投影各持一份
-  （`crates/qx-api/src/lib.rs:507` / :603）——只封全局等于没封。
+  （`crates/qx-api/src/lib.rs:488` / :584）——只封全局等于没封。
 - **针路 OMS 的订单表刻意不共用 venue 那把封顶**（R4-8）：`Oms { orders }`（`crates/qx-zhenlu/src/oms.rs:14`）
-  被 `pipeline.rs:444` 长期持有，照抄 `MAX_CACHED_ORDERS` + `evict_stale_terminal_orders`
+  被 `crates/qx-runtime/src/pipeline.rs:436` 长期持有，照抄 `MAX_CACHED_ORDERS` + `evict_stale_terminal_orders`
   （`crates/qx-adapter/src/venue_cache.rs:18` / :25）是错的——那条退场规则的前提"被退场的订单再有回报就走
-  `ReconcileRequired`"在实盘 ingest 一侧成立（`pipeline.rs:1390`），在冷启动回填一侧不成立：
-  `rebuild_runtime_indexes`（:1224）按事件顺序把整条 EventLog 重放进 OMS，其中 :1244 对
+  `ReconcileRequired`"在实盘 ingest 一侧成立（`crates/qx-runtime/src/pipeline.rs:1385`），在冷启动回填一侧不成立：
+  `rebuild_runtime_indexes`（:1219）按事件顺序把整条 EventLog 重放进 OMS，其中 :1239 对
   `apply_fill(fill)?` 直接打问号上抛，于是退掉一笔早期终态订单就等于把它之后每一笔成交都变成"订单不存在"。
   **照抄封顶的净效果不是省内存，是把代价从内存换成一份再也打不开的长日志。** 本轮登记"刻意的不同"与两头
   代价各一颗判据（:4213 / :4231）。
 - **API 自己的 HTTP 读侧有了整体截止**（R4-9）：O7 收的是 WSS 握手块，这颗是同族的另一侧。`serve_stream_as`
-  （`crates/qx-api/src/lib.rs:1811`）在 :1820 把 `HTTP_REQUEST_BUDGET`（:2186，5 秒）交给 `read_request`，
+  （`crates/qx-api/src/lib.rs:1777`）在 :1787 把 `HTTP_REQUEST_BUDGET`（:2146，5 秒）交给 `read_request`，
   截止排在循环里**每一轮 read 之前**；此前只有单次 read 的 100 ms 套接字超时——一个每次挤 1 字节的客户端
   可以把一条连接无限占住，而 `/ready` 那侧一切正常。两颗常驻用例
   （`a_dribbling_client_hits_the_overall_budget_not_the_size_cap` :3378 与
   `a_header_split_across_reads_ends_the_request_at_its_own_length` :3406）。
 - **两条补散度恢复循环不再以 100 ms 重生 venue**（R4-10）：`worker_entry.rs` 里 Binance（:199）与
-  CCXT（:444）两条恢复循环过去把"每 100 ms 重建一次 venue"当空闲轮询，而 CCXT 那侧重建 venue 就是重启一个
+  CCXT（:440）两条恢复循环过去把"每 100 ms 重建一次 venue"当空闲轮询，而 CCXT 那侧重建 venue 就是重启一个
   Python 子进程——停滞期间以 10 Hz 反复 spawn。新增共用的 `spread_recovery_poll_interval(stalled_rounds)`
   （`crates/qx-cli/src/spread.rs:240`）：停滞 0 轮回到 100 ms 常规轮询，此后取 K1 那份指数退避
   （`ccxt_respawn_delay`）封顶 10 秒。
@@ -371,10 +371,10 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   只由 `trim_audit_window` 一处裁剪、一次裁到配额的一半，且**成对裁**（`Accepted` 与终态记录同进同出，
   留半对等于写一份自家 `from_json` 会拒收的状态）；窗口之外只剩 `RetirementSummary` 的累计计数，
   `/control/audit` 一次交出 `records` 与 `retirement` 两格。"什么算终态"只有一颗
-  `CommandStatus::is_final`（qx-control/src/lib.rs:131），退场、裁剪、恢复期配对三处都问它。
+  `CommandStatus::is_final`（qx-control/src/lib.rs:132），退场、裁剪、恢复期配对三处都问它。
 - **哈希审计链的两半都接上了**（R5-2，即 H3 的裁决落地；本轮先把定性改口：此前说的"写侧有、读侧无人验"
   是错的，当时**写侧与读侧都不存在**）：写侧 `chain_audit`（qx-storage/src/lib.rs:1538）是三本后端唯一写入者，
-  各自在已经持有锁/事务的 `transact_control` 里接一次（file/state.rs:82、sqlite.rs:1046、postgres.rs:1511），
+  各自在已经持有锁/事务的 `transact_control` 里接一次（file/state.rs:88、sqlite.rs:1046、postgres.rs:1498），
   `AuditChainWriter` 的 `tail` / `drop_from` / `append_entries` 三个动作都不越出那次事务；顺序是**链先落、
   状态后落**，崩在中间留下的残尾由下一笔事务按检查点截掉（`truncate_from_unlocked`，只认 65_536 字节尾部窗口），
   检查点比对失败直接失败关闭——**写不进链的命令也不会写进状态**。读侧 `verify_audit_chain`（:1491）判两件事：
@@ -382,9 +382,9 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   （crates/qx-cli/src/doctor_report.rs:318），文件与 SQLite 两本逐环核对，PostgreSQL 那本按"不触网"的口径
   报**未扫描**而不是通过。
 - **内置策略的轮内序号不再被当成全店身份**（R5-3）：`BuiltinStrategy::new` 每轮把 `next_intent_id` 置 1
-  （qx-strategy/src/builtin.rs:227）而 worker 每轮新建一份，契约侧过去把 `intent.intent_id` 直接当 `client_id`，
-  后者又同时是 `command_id` 与 `request_id`（strategy_contract.rs:712-713）——第二次产生订单必然撞
-  `DuplicateRequest`，digest 不同时在 spread.rs:460 硬错。改法是换身份来源而不是让策略记数：
+  （qx-strategy/src/builtin.rs:248）而 worker 每轮新建一份，契约侧过去把 `intent.intent_id` 直接当 `client_id`，
+  后者又同时是 `command_id`/`request_id`（strategy_contract.rs:712/713）——第二次产生订单必然撞
+  `DuplicateRequest`，digest 不同时在 spread.rs:462 硬错。改法是换身份来源而不是让策略记数：
   `strategy_order_identity(round_scope, intent_id)`（:443）把"哪一轮"与"轮内第几条"折成 `client_id`，
   `round_scope` 取契约输入的 `request_id`；同轮重放幂等、换轮得新身份，`trace.intent_id` 保留原值不影响归因。
   与 R5-1 是耦合的：控制面一旦开始退场，"身份按轮稳定"就从洁癖变成前提。
@@ -393,10 +393,10 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   "受理期拒绝"这一格在生产里根本不会留下记录。R5-1 顺手加进 `RetirementSummary` 的 `rejected` 那一格随之
   结构性为 0，却和其余三格一起外销给 `/control/audit`（L2 同族）。两颗一起删：词表只剩 `Accepted` / `Executed` /
   `Failed`，`is_final`（crates/qx-control/src/lib.rs:132）认领两颗终态，摘要剩 `retired_total` / `executed` /
-  `failed` / `last_retired_ts`。新增一颗**闭合性**判据（tools/check_architecture.py:3408）：声明的变体、有生产者
+  `failed` / `last_retired_ts`。新增一颗**闭合性**判据（tools/check_architecture.py:5452）：声明的变体、有生产者
   的变体、`is_final` 认领的集合三者必须互相推出。
 - **paper-check / paper-e2e 只认本轮新增的事实**（R6-2）：`run_paper_pipeline_once`
-  （crates/qx-cli/src/venue_runtime/paper_worker.rs:287）过去拿 `pipeline.orders()[0]` 的 `Executed` 审计作保
+  （crates/qx-cli/src/venue_runtime/paper_worker.rs:291）过去拿 `pipeline.orders()[0]` 的 `Executed` 审计作保
   ——那是 OMS 里**最旧**的一条，而 `data_dir` 是持久的，第二轮在上一轮的订单上照样打印 ✓。现在开跑前先取基线
   （`baseline_orders` :332 / `baseline_ledger` :337，且必须早于 `run_scheduler_worker`），"本轮"是差集而不是
   存在集（:373 的基线过滤），每颗新增各自要有一颗 `Executed`（:407-410：停在 `Accepted` 的也算有一条审计），
@@ -404,20 +404,20 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   （:381），验收行把 `new_orders={}` 念出来（:424）。`paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 跑两轮并断言订单总数仍是 1。
 - **入队失败不再被念成已交给执行者**（R6-3）：`POST /control/commands` 把命令写进 store 之后
   `let _ = enqueuer(...)` 吞掉队列失败仍回 202，而 202 那句话的内容正是"已经交给执行者"。现在失败当场 503 +
-  错误体点名 `control_command_not_queued`（crates/qx-api/src/lib.rs:1754），受理那一半不回滚（记录仍在审计里等补投），
-  装配处的接线格子 `with_command_enqueuer`（crates/qx-cli/src/api_service.rs:103）把入队错误原样上抛；常驻用例
+  错误体点名 `control_command_not_queued`（crates/qx-api/src/lib.rs:1738），受理那一半不回滚（记录仍在审计里等补投），
+  装配处的接线格子 `with_command_enqueuer`（crates/qx-cli/src/api_service.rs:106）把入队错误原样上抛；常驻用例
   `a_command_that_cannot_be_queued_answers_503_not_202`（crates/qx-api/src/tests.rs:323）两面都判——换成一写得进
   的队列必须照常 202，否则判据就退化成"什么都不受理"也照样绿。
 - **"什么算终态"在跨进程那一侧也不再各写一遍**（R6-4）：worker 重放审计时四处各自 `matches!` 过状态，现在
-  `command_is_final`（crates/qx-cli/src/spread.rs:481）是 qx-cli 侧唯一入口，四个调用者
-  （binance_submit.rs:295 / ccxt_execution.rs:118 / paper_worker.rs:149 / workers.rs:376）只是把控制面那颗
-  `is_final` 搬到 `latest_audit` 上；门禁 :3391 随之从"三处"改口成"四处"，并加上 `.is_final(` 调用数下界。
-- **死信重放不再是"取一页再筛"**（R7-1）：`replay_dead_letter_from_store`（`crates/qx-cli/src/event_pipeline.rs:665`）
+  `command_is_final`（crates/qx-cli/src/spread.rs:483）是 qx-cli 侧唯一入口，四个调用者
+  （binance_submit.rs:297 / ccxt_execution.rs:120 / paper_worker.rs:155 / workers.rs:213）只是把控制面那颗
+  `is_final` 搬到 `latest_audit` 上；门禁 `tools/check_architecture.py:7464` 随之从"三处"改口成"四处"，并加上 `.is_final(` 调用数下界。
+- **死信重放不再是"取一页再筛"**（R7-1）：`replay_dead_letter_from_store`（`crates/qx-cli/src/event_pipeline.rs:661`）
   此前按窗口取最旧的一页、再在那一页里筛点名的 `event_id`，于是一份确实躺在死信表里的事件被念成"找不到"——
   危害是假阴性而不是慢：运维按这一句决定不用管，那笔已经放弃自动重试的投递就静默留在原地。现在 trait 只留点查
   一颗入口 `dead_letter`（`crates/qx-storage/src/lib.rs:707`），三份后端各自取 `attempts` 最大的那一行（重放会追加
   新行，最大次数才是最后一次入账）：`max_by_key`（`crates/qx-storage/src/file/consumers.rs:192`）、
-  `ORDER BY attempts DESC LIMIT 1`（`crates/qx-storage/src/sqlite.rs:337`）、同型的 `dead_letter`（`crates/qx-storage/src/postgres.rs:504`）；
+  `ORDER BY attempts DESC LIMIT 1`（`crates/qx-storage/src/sqlite.rs:337`）、同型的 `dead_letter`（`crates/qx-storage/src/postgres.rs:491`）；
   契约用例共用 `assert_dead_letter_point_query`（`crates/qx-storage/tests/outbox_backend_semantics.rs:56`），夹具刻意跨过
   2 与 10 的数位边界——那同时是"取最大"对"取最新"、以及 R7-2 那颗字典序的分界。
 - **TEXT 存的 u64 列在三处排序上收进同一口径**（R7-2）：`created_ts`、`enqueued_ts`、`command_id` 在文件后端是数字、
@@ -426,27 +426,27 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   `ORDER BY CAST(c.enqueued_ts AS INTEGER)`（`crates/qx-storage/src/sqlite.rs:1177`），Rust 侧
   `jobs.sort_by_key`（`crates/qx-storage/src/sqlite.rs:1664`）、`events.sort_by_key`（`crates/qx-storage/src/file/outbox.rs:58`）、
   `commands.sort_by_key`（`crates/qx-storage/src/lib.rs:1220`）；Postgres 不把判据搬回应用层重排，而是换表达式索引：
-  `qx_outbox_pending_numeric_idx`（`crates/qx-storage/src/postgres.rs:315`）替掉旧的裸列索引那一句
-  （`crates/qx-storage/src/postgres.rs:314`）——只改 `ORDER BY`、留着旧索引，等于让规划器继续按一串没人按的键做写放大。
+  `qx_outbox_pending_numeric_idx`（`crates/qx-storage/src/postgres.rs:302`）替掉旧的裸列索引那一句
+  （`crates/qx-storage/src/postgres.rs:301`）——只改 `ORDER BY`、留着旧索引，等于让规划器继续按一串没人按的键做写放大。
 - **快照键表的行内自指 id 由约束兜住**（R7-3）：`state_hash` 只吃 map 的键，行内那一份 `order_id`/`fill_id`/`transfer_id`
   从不进摘要，所以"写侧恰好一致"不是契约——改过 `fill_id` 的快照照样通过校验。四张表共用的一条纪律收进
   `check_keys`（`crates/qx-protocol/src/lib.rs:203`），反例用例是
-  `key_tables_reject_rows_whose_inline_id_disagrees_with_their_key`（`crates/qx-protocol/tests/snapshot_single_source.rs:775`）。
+  `key_tables_reject_rows_whose_inline_id_disagrees_with_their_key`（`crates/qx-protocol/tests/snapshot_single_source/stable_json_tables.rs:113`）。
 - **作业声明里的三格无人格删掉，读侧继续容忍**（R7-4）：`JobSpec`（`crates/qx-scheduler/src/job_spec.rs:98`）此前的
   `input_refs`/`output_refs`/`permission_scope` 没有任何读者，却是作业 JSON 的**必填**格——运行者手抄三份没人执行的声明，
   其中 `permission_scope` 这个名字还替一种并不存在的授权作保（权限判定在控制面那边）。删之后不改 `deny_unknown_fields`：
   升级前写下的调度状态与队列信封还带着那三格，读崩旧状态不是收口，
   `retired_job_spec_keys_are_ignored_by_the_loader`（`crates/qx-scheduler/src/lib.rs:830`）钉的就是这个选择。
 - **`/control/audit` 的流水与摘要出自同一次现读**（R7-8）：H1 收的是"念 boot 那一份"，本轮收另一半——trait 侧
-  `control_retirement`（`crates/qx-api/src/lib.rs:2146`）此前分两次读，两次读会把"这一页窗口"和"窗口外累计"念成
-  两个时刻的账。降级从此只住在唯一出口里：`control_plane_last_known`（`crates/qx-api/src/lib.rs:1209`），
-  `control_audit`（`crates/qx-api/src/lib.rs:2139`）与摘要各取自己那一格、共用同一份现读结果。
+  `control_retirement`（`crates/qx-api/src/lib.rs:2126`）此前分两次读，两次读会把"这一页窗口"和"窗口外累计"念成
+  两个时刻的账。降级从此只住在唯一出口里：`control_plane_last_known`（`crates/qx-api/src/lib.rs:1198`），
+  `control_audit`（`crates/qx-api/src/lib.rs:2119`）与摘要各取自己那一格、共用同一份现读结果。
 - **锁的年龄只由判据交出**（R7-9）：`decide_lock`（`crates/qx-core/src/file_lock.rs:51`）已经收了"同一场竞争只接管一次"，
   本轮收的是抢锁循环在 `Takeover` 支里自己再 `age_of` 一次——同一个判断的两种写法，删不删取决于两次读之间的抖动。
-  现在两条支路只按判据带回来的年龄说话（`crates/qx-core/src/file_lock.rs:148`、`crates/qx-core/src/file_lock.rs:162`）。
+  现在两条支路只按判据带回来的年龄说话（`crates/qx-core/src/file_lock.rs:143`、`crates/qx-core/src/file_lock.rs:157`）。
 - **审计链的摘要输入形状由金色记录钉住**（R7-7）：词表钉子
-  `audit_chain_status_vocabulary_is_pinned_by_literal_words`（`crates/qx-storage/src/tests.rs:478`）只钉住名字，本轮补上
-  整张输入的摆法：`audit_chain_digest_inputs_are_pinned_by_a_golden_record`（`crates/qx-storage/src/tests.rs:515`）——
+  `audit_chain_status_vocabulary_is_pinned_by_literal_words`（`crates/qx-storage/src/tests.rs:493`）只钉住名字，本轮补上
+  整张输入的摆法：`audit_chain_digest_inputs_are_pinned_by_a_golden_record`（`crates/qx-storage/src/tests.rs:530`）——
   改输入形状的人要在用例里改口，而不是在别人的机器上看到断链。
 
 ### Added（常驻用例与门禁）
@@ -617,7 +617,7 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   `From<&Order> for OrderSnapshot` 的注释此前漏了 `policy` 一格、并把 `order_id == client_order_id`
   归因给"EventLog 恢复路径"，实际原因是 `qx_core::Order` 本身只有 `client_id`。
 
-- R5 轮新增 **6 格常驻判据**：`control_retirement_check`（tools/check_architecture.py:3355）五颗——退场路唯一、
+- R5 轮新增 **6 格常驻判据**：`control_retirement_check`（tools/check_architecture.py:5399）五颗——退场路唯一、
   裁剪出口唯一且配额由常量推出、终态判据唯一、两格一起外销、五颗常驻用例点名到形状；
   `api_control_audit_check` 的读侧那颗——"审计链有生产读者：doctor 在文件与 sqlite 两本上逐环核对并把
   检查点对到链尾"。门禁总数本轮实测 **524 项全绿**。
@@ -633,7 +633,7 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
 - 取证 **14 跑 / 12 颗 KILLED / 1 颗刻意 SURVIVED（只改注释的负对照）/ 还原异常 0**，明细与两条按取证改掉的
   判据写在 §53.7。
 - R6 轮新增 **8 格常驻判据**（门禁 **524 项 → 532 项全绿**）：`control_retirement_check`
-  （tools/check_architecture.py:3355）里的词表闭合那颗（:3408 / :3412）与 `is_final` 那颗加上的调用数下界（:3391），
+  （tools/check_architecture.py:5399）里的词表闭合那颗（:5452 / :5456）与 `is_final` 那颗加上的调用数下界（:5435），
   `paper_acceptance_attribution_check`（:3456）四颗（:3466 基线定序 / :3478 语句级条件 / :3487 自报新增数 /
   :3494 两轮用例），`command_queue_honesty_check`（:5975）三颗（:5988 503 与错误名 / :5998 用例两面 / :6006 装配
   不吞错）。常驻用例新增 qx-api `a_command_that_cannot_be_queued_answers_503_not_202`（一条判两面），qx-cli
@@ -646,24 +646,24 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   不在"的判据（:2473 / :2967 / :4545 / :5977）仍按路径只读 `lib.rs`，其中 :5977 正是 R6-3 新写的那颗——四处改成
   `source_with_tests` 成对读（§54.6）。
 - **四份文本的 `path:line` 第一次由同一颗判据逐颗核对**（R6-7 / R6-8 / R6-9）：起点是白皮书、变更日志与
-  方案书里的行号没人量过（R6-7 逐颗复位），落点是把台账那套 `capabilities_citation_check`（`tools/check_architecture.py:6443`）泛化成
-  一颗共用扫描器 `citation_audit`（`tools/check_architecture.py:6316`）加文档侧薄壳 `doc_citation_check`（`tools/check_architecture.py:6457`），
-  常驻门禁 532 项 → **550 项全绿**（三份长文档各六颗；地板逐份钉在 `DOC_CITATION_TARGETS`（`tools/check_architecture.py:6261`）里：
+  方案书里的行号没人量过（R6-7 逐颗复位），落点是把台账那套 `capabilities_citation_check`（`tools/check_architecture.py:8786`）泛化成
+  一颗共用扫描器 `citation_audit`（`tools/check_architecture.py:8646`）加文档侧薄壳 `doc_citation_check`（`tools/check_architecture.py:8800`），
+  常驻门禁 532 项 → **550 项全绿**（三份长文档各六颗；地板逐份钉在 `DOC_CITATION_TARGETS`（`tools/check_architecture.py:8591`）里：
   方案书 580 引用 / 50 带名、变更日志 220/25、白皮书 410/60，台账沿用 90/20）。搬过来第一份取证就是它自己
   把 5 处文档锚点打红——门禁长一行，指进门禁的行号就集体下移一次；那不是判据过敏，是"文档按行号引用代码"
   这件事本身的代价。三口径（名字右边界、破折号区间远端、裸引用位置化归属）之外，R6-9 再把裸引用的归属扩到
-  "同一行只点了文件名、没带行号"那一颗：`CAP_BARE_PATH`（`tools/check_architecture.py:6241`）一次多量到 61 颗、当场红 12 颗，
+  "同一行只点了文件名、没带行号"那一颗：`CAP_BARE_PATH`（`tools/check_architecture.py:8571`）一次多量到 61 颗、当场红 12 颗，
   其中一颗是"数字恰好落在误认文件长度之内"的假通过。取证 6 颗变异、杀 6、存活 0，每颗在三种判据形状下逐列
   回放（明细在 §54.9–§54.12）。修完仍剩 349 颗无人核对的裸行号，按限制登记在 `maturity/capabilities.yaml`（R7 轮按同一条规则复测仍是 349，逐份拆分见 §55.11）。
 - **常驻门禁 550 项 → 553 项全绿**（本轮新增三颗）：`JobSpec 字段名单可解析，且不含三格只有写侧的退役键`
-  （`tools/check_architecture.py:6973`）、`deploy 里 3 份作业清单示例的每一格顶层键都在 JobSpec 名单里`
-  （`tools/check_architecture.py:6985`，只删代码不删示例，下一个人会照示例抄回来）、
-  `窗口与累计摘要在两个读面上同源`（`tools/check_architecture.py:3439`）。锁那一颗（`tools/check_architecture.py:7598`）
+  （`tools/check_architecture.py:9316`）、`deploy 里 3 份作业清单示例的每一格顶层键都在 JobSpec 名单里`
+  （`tools/check_architecture.py:9328`，只删代码不删示例，下一个人会照示例抄回来）、
+  `窗口与累计摘要在两个读面上同源`（`tools/check_architecture.py:5483`）。锁那一颗（`tools/check_architecture.py:9978`）
   不是新增而是加严：它现在同时要求"计数喂回判据"与"循环只按判据交出的年龄说话"。
-- **R7-6 的一批"仓内唯一写法、零生产调用"进保留表**：15 颗登记在 `tools/check_architecture.py:3759` 起的那一段，
-  批次理由与"留还是删"的分界写在 `tools/check_architecture.py:3755`；同批里的 `DataSchemaVersion` 走了相反的方向——
+- **R7-6 的一批"仓内唯一写法、零生产调用"进保留表**：15 颗登记在 `tools/check_architecture.py:5788` 起的那一段，
+  批次理由与"留还是删"的分界写在 `tools/check_architecture.py:5784`；同批里的 `DataSchemaVersion` 走了相反的方向——
   它是 `DATA_SCHEMA_VERSION`（`crates/qx-data/src/schema.rs:3`）那一格事实的第二种写法，按 Q3 口径直接删。
-- **点名表改为派生，不再手抄第二份行号**（R7-10b）：`m4_unnamed_citations`（`tools/check_architecture.py:3788`）过去拿
+- **点名表改为派生，不再手抄第二份行号**（R7-10b）：`m4_unnamed_citations`（`tools/check_architecture.py:5811`）过去拿
   一份手抄清单，R7-10 把文档里一颗从旧号改到新号之后，手抄的那份仍按旧号要求——同一个判断留两种写法，
   改对的那一半反而把判据弄红。现在它由保留表派生。
 - **本轮基线的用例数按实测记下**（是当轮日志里的数，不是增量）：outbox 后端语义 12、队列后端语义 2、
@@ -842,7 +842,7 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   `.iter().take(0)` 与 `&new_client_ids[..0]` 两颗能编译的写法才拿到证据（§54.7）。
 - **一条扫描结论里"后果"那一半也要量**：R6-5 报上来的时候写作"worker 拿不到 ack 会无限重投"，量下来不是——
   `QueuedControlCommand`（crates/qx-storage/src/lib.rs:1100）没有重试计数，但 worker 拿到 `Err(UnknownCommand)`
-  就以非零码退出，`supervise_workers`（crates/qx-orchestrator/src/lib.rs:224）的 `loop` 在子进程退出时
+  就以非零码退出，`supervise_workers`（crates/qx-orchestrator/src/lib.rs:246）的 `loop` 在子进程退出时
   `return Err(...)`（:298）停掉其余 worker：**一次整店停机**而不是空转。本轮按实测改口才写进 §54.5，没有把那句
   抄进文档；同一族更早的一次是 §53.1 里那句"写侧有、读侧无人验"（当时写侧也不存在）。
 - **门禁脚本自己的行号又漂了一格**：R6-2 的说明文字让 `plugin_claim_honesty_check` 定义行从 6994 漂到 6996，
@@ -853,8 +853,8 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   于是"对得上"。两处的修法都不是再加判据，而是**把名字请回同一行**——点名只对点了名的引用有效。
   这一格今天仍然成立（跨行折行就丢点名），已写进白皮书 §10 的 G-6 边界。
   台账第 52 行跟着红——与 §53.7 那两条同一根绳，本轮按实测改口。
-- **区间远端可以"在界内却指错东西"，判据看不见**：`CAP_RANGE_END`（`tools/check_architecture.py:6253`）只量越界与空行，
-  不参与名字对齐。变更日志里 `write_optional_money`（`crates/qx-protocol/src/lib.rs:267`）那颗此前写作一个区间，两端写成
+- **区间远端可以"在界内却指错东西"，判据看不见**：`CAP_RANGE_END`（`tools/check_architecture.py:8583`）只量越界与空行，
+  不参与名字对齐。变更日志里 `write_optional_money`（`crates/qx-protocol/src/lib.rs:270`）那颗此前写作一个区间，两端写成
   `crates/qx-protocol/src/lib.rs:287-288`，而 287 那一格其实是 `scalar_money_raw` <!-- 史 -->。两个数字都在这份 877 行的
   文件里、都不是空行，判据一路绿；它是 R7-10 人工逐颗复核时抓到的，不是门禁报的。把区间拆成具名引用之后，
   那颗假通过才变成三颗要核对的裸引用（§55.11）。
@@ -901,7 +901,7 @@ L / M 轮之后新增四条（逐条见 §47.9）：**L2-M3 那颗 fallback 变�
 N 轮之后新增七条（逐条见 §48.11）：**`TradingCalendar` 在仓内没有任何写入者**——N3 把判据接上了，日历
 本体还是空的，要的是仓外数据源与更新口径；**重试重投撞 `FileJobQueue` 按 `run_id` 落盘的 `Conflict`**，
 `retry_run_at` 因此仍是一颗只有用例走得到的入口；**`Oms { orders }` 没有封顶**（`qx-zhenlu/src/oms.rs:14`），
-N9 那颗住在两个 venue 适配器里，要不要共用同一判据是裁决题；**`RestVenue`（`qx-adapter/src/lib.rs:968`）
+N9 那颗住在两个 venue 适配器里，要不要共用同一判据是裁决题；**`RestVenue`（`qx-adapter/src/lib.rs:968`） <!-- 史 -->
 与 `ProjectionEnvelope::validate()`（`qx-protocol/src/lib.rs:78`）两颗零调用**按 J1 就地登记，没有替它们
 编一个调用方——`validate()` 接不接要连"读侧要不要在反序列化之后重问一遍身份字段"一起定；**静默没有活性
 上界**（N10 的反面：半开、永不 tick、不 FIN 的连接会一直占着线程与 socket，每圈读阻塞 10 秒、令牌每圈问
@@ -928,9 +928,705 @@ R5 轮之后新增四颗（逐条见 §53.8）：**Postgres 那本审计链端�
 
 R7 轮之后新增三条（逐条见 §55.13）：**R7-2 与 R7-3 没有形状判据**——再写一处 TEXT 列 `ORDER BY`、再长出一张不校验
 行内 id 的键表，仓内没有任何东西会红，只有契约用例在原地挡着，用例数地板只挡"整批被删"；**R7-5 量下来不是缺陷**——
-`fetch_remote_snapshot`（`crates/qx-adapter/src/binance.rs:1200`）的分页被限频预算界住，超预算是 `Err` 而不是静默截断，
-要收它得先给"页数上限"这件事一个真实故障模型；**R7-6 那 15 颗是"唯一实现但没接线"**（`tools/check_architecture.py:3759`），
+`fetch_remote_snapshot`（`crates/qx-adapter/src/binance.rs:1138`）的分页被限频预算界住，超预算是 `Err` 而不是静默截断，
+要收它得先给"页数上限"这件事一个真实故障模型；**R7-6 那 15 颗是"唯一实现但没接线"**（`tools/check_architecture.py:5788`），
 接不接待是裁决题，本轮只把登记的两侧口径改到与可达性一致。
+
+## Unreleased — V12 §20：安装面三条路径各有退出码，并把上游 4 个提交真正合回来（2026-09-26）
+
+§19 那一遍的产物全部留在未提交的工作树里，且 `origin/main` 领先 4 个提交。这一遍做两件事：把
+"别人拿到仓库怎么装"写成实测过而不是期望中的路径，以及用一个**可复算的**合流判据替代"我看过了"。
+
+### Added（安装面，README 新增「安装」章）
+
+- **A 档 `cargo install --path crates/qx-cli --locked`**：2m10s 装出单个 `qx-cli.exe`，**在仓库外**
+  跑 `help` / `init` / `doctor` / `backtest` / `report` / `status` 六条命令退出码全 0，回测落
+  `result_hash=26fdd6b52d020700`；这一档不需要 Python（日志 `s22_cargo_install.txt`、`s22_installed_*.txt`）。
+- **B 档 `build.bat` / `bash build.sh`** 与 **C 档 wheel** 各写清前置：wheel 216439 字节，内嵌
+  `_qianxing_native.pyd` 的 md5 与当轮 `target/release/_qianxing_native.dll` 同为
+  `3e3c793385cf155e92c2cdc4f3694eba`，干净 venv 里 `available()` 为真（`s21_*.txt`）。
+- **「装不上时的四个坑」表**：WindowsApps 的裸 `python` 占位桩、PowerShell 未签名脚本要
+  `-ExecutionPolicy Bypass`、缺 `tzdata` 时 A 股用例的失败形状、`sed -i` 会抹掉 `.bat` 的 CRLF。
+- **如实记录一处缺口**：`qx-cli --version` 没有实现，会按未知参数 fail closed 退 2；确认安装用
+  `qx-cli help` 首行。（挂在 §20.5 未收口。）
+
+### Changed（合流 origin/main 的 4 个提交：`b4921ea` / `5cd11f8` / `2bf8ad6` / `dbfc429`）
+
+- **合并提交 `dbaa9d9`** 把远端 `main` 接进本地历史；15 个冲突文件全部取我方，理由是两条判据：
+  合流后 `git diff --cached HEAD` **为空**（206 个文件与提交后的树逐字节相同），且逐行审计 61 个
+  上游路径后只有 65 行不在我们树里、逐行确认全是同一事实的另一种写法（`production_text()` 取代
+  `.split("#[cfg(test)]")[0]`、`report.consecutive_failures` 取代局部 `consecutive`、文案与
+  `line_budgets` 数字的先后版本、12 行已拆进 `snapshot_single_source/` 目录的旧单文件正文）。
+- **推送走显式 `git@github.com:coeasy/qianxing.git`**（HTTPS 在本机被重置），不改 `git config`；
+  推送后 `git ls-remote` 与 `HEAD` 同为 `dbaa9d9c2a4bd94e7fdfa65486df79b1793120e1`。
+
+### Known（本轮新增的一类盲区，挂 §20.3 / #138）
+
+- **自动合并会把"双方各加同一段"首尾相接，且不产生任何冲突标记**：`snapshot_row_wire_check()` 里
+  上游那份 R10 对账判据落在我方那份之后，第一次运行以 `NameError: reader is not defined` 崩在中途 ——
+  而门禁此时 `GATE_EXIT=1`、**0 条 FAIL**，看起来像环境问题而不是内容问题；两段都跑还会让同一条检查
+  印两行 PASS，靠"判据条数"量的量具会被抬高。本轮用一个一次性扫描器（对合流改动的文件找出现两次以上
+  的 8 行窗口）证明全树无第二例，常驻判据待 §20.5。
+- **本轮没有重跑 `build.bat` 全 8 步**（§18.7 第 2 条）：推送的树与 §19 那一遍逐字节相同，八步在 §19
+  已实跑通过（`s19_build_bat_fix.txt`）。
+
+### Verified（本回合实测，逐条可 grep）
+
+| 门槛 | 结果 | 日志 |
+|---|---|---|
+| 架构门禁（文档回写前） | `GATE_EXIT=0`，455 项全绿 | `s23_gate_after_install_docs.txt` |
+| 架构门禁（合流后修复前） | `GATE_EXIT=1`、0 条 FAIL、`NameError: reader` | `s24_gate_merge1.txt` |
+| 架构门禁（合流完成） | `GATE_EXIT=0`，455 项全绿 | `s24_gate_merge2.txt` |
+| 整树测试（合流后的树） | `TEST_EXIT=0`，92 段 / 843 passed / 0 failed / 0 ignored | `s24_test_workspace_after_merge.txt` |
+| 安装 A 档 | 仓库外六条命令退出码全 0 | `s22_installed_help/init/doctor/backtest/report/status.txt` |
+| 推送 | `dbfc429..dbaa9d9 → main`，`PUSH_EXIT=0` | `s24_push.txt` |
+
+
+## Unreleased — V12 §19：第一次把 `build.bat` 全 8 步端到端跑通，当场抓到一条从未生效过的解释器交接（2026-09-26）
+
+§18.7 第 2 条欠的账：「每遍都要重跑 `build.bat` 全 8 步」这条口径没有判据能执行 `cargo`。这一遍不写判据，
+直接实跑 —— 第一次跑就抓到 **#133**：`[0/8]` 探测出的解释器只留在脚本自己的变量里，Rust 侧读的是
+`QX_PYTHON`，所以 §17 加进来的那一步**从来没生效过**，`[3/8]` 照旧回落 PATH 占位桩。顺带清掉 §18-B 删面的
+残留孤儿（#134）与零读者判据根本不看的那半边类型面（#135）。更有价值的是变异反向验证当场抓出**两颗永远不会红**
+的新判据（#136 / #138）：本轮新增的 6 条里有 2 条第一眼是绿的、其实是假的。全过程见
+[docs/自研量化框架审计与重构方案-V12.md](docs/自研量化框架审计与重构方案-V12.md) §19，日志在 `%TEMP%/qx_v12p2/logs/`。
+
+### Fixed（§19 #133：构建脚本的解释器交接）
+
+- **`build.bat` / `build.sh` 把探测选中的解释器导出成 `QX_PYTHON`**：`[3/8]` 的两条 Python 桥契约用例与
+  `[7/8]` 的策略 worker 由 Rust 去起 Python，而 Rust 只读 `QX_PYTHON` 一个变量
+  （`crates/qx-cli/src/main.rs` 的 `python_interpreter_origin()`）。修前 `BUILD_BAT_EXIT=1` 且
+  `[3/8]` 是 `202 passed; 2 failed`；修后 `[0/8]` 多印一行交接、八步全过、`[3/8]` 92 段全 ok / 843 passed。
+  只改"仓库 venv"那一档：用户已设 `QX_PYTHON` 时原样保留，PATH 上的裸 `python` 不改写成不存在的路径，
+  留给它自己的占位桩诊断。
+- **编辑面硬约束**：`sed -i` 改 `.bat` 会把 CRLF 抹成 LF（实测 98 个孤立 LF，门禁立刻红），归一化只能按字节做。
+
+### Removed（§19 #134 / #135：类型面孤儿）
+
+- **`QualityIssue::CrossedBook` 连同 `verdict()` 的致命臂删除**：§18-B 把交叉报价判定收到
+  `crates/qx-adapter/src/binance.rs` 的报价入口时只删了构造点，留下一个"永远构造不出来却声称致命"的变体。
+- **`crates/qx-data/src/calendar.rs` 整文件删除 + 摘挂载**：16 行 `TradingCalendar` trait 全仓零实现
+  （V11 §5 早已写明），还与 `crates/qx-scheduler` 真在驱动调度的同名 struct 撞名。
+- **`qx-guanxing` 的 `NumericExt` / `to_display` 删除**：定义之外零出现的定点展示辅助，躲在"零读者判据只扫
+  `pub fn` / `pub const`"的覆盖面之外。
+
+### Gates（本轮 +6 条，地板 449 → 455）
+
+- `build_script_parity_check` 两条：每个构建脚本都必须有把解释器导出成 `QX_PYTHON` 的**命令**，且早于 `[1/8]`。
+- `quality_issue_producer_check` 两条：`QualityIssue` 每个变体都有构造它的生产者（判定臂不算）；
+  `CrossedBook` 这个名字不得在任何 `crates/*/src` 生产文本复活，且 adapter 必须留着 `.is_crossed()` 那位真读者。
+- `dead_type_surface_check` 两条：`NumericExt` / `to_display` 这类"定义之外零出现"的类型面删除后不得复活；
+  同名日历类型只能有一个定义，且就在真的驱动调度的 crate 里（按**裸名字**数读者的判据会被同名类型误判，这条是自纠）。
+- **两颗假绿判据的修正**：`interpreter_handoff()` 原先把 `build.sh` 报错提示里那句
+  `echo " 或: export QX_PYTHON=…"` 当成脚本自己的导出行为（M2 因此整颗不咬，#136）；
+  `CROSSED_QUOTE_NAME in _production_lines(text)` 对**行列表**用 `in`，判的是"存在一整行正好等于该名字"，
+  于是 `revived` 恒空、判据恒绿（M3 因此只红一条，#138）。收口口径：**新增判据必须当场配一颗让它红的变异**。
+- **变异协议补 `try/finally`**：第一次 M2 未咬时脚本 `AssertionError` 退出，把变异**留在了 `build.sh` 里**，
+  靠 `%TEMP%` 镜像才还原。
+
+### Docs
+
+- `README.md`：`[0/8]` 那段补"挑中之后必须外传成 `QX_PYTHON`"的口径与被否证的旧表述；当前状态数字
+  449 → 455；`build.bat` 全 8 步一次跑通写进实测台账。
+- **README 新增「安装」章，把"快速装好并用起来"变成一条可复制路径**：三档安装（A `cargo install
+  --path crates/qx-cli --locked` 只装 CLI、不需要 Python；B `build.bat`/`build.sh` 八道门禁；
+  C 两条 wheel 入口 + 干净 venv 复核），每档末尾带本轮实测值。实测口径：`cargo install` 2m10s 产出
+  `qx-cli.exe`，在**仓库外**的临时目录里 `help`/`init`/`doctor`/`backtest`/`report`/`status` 六条全部
+  退出码 0，`init --strategy macd` 生成的项目自包含，回测写出四份产物、`result_hash=26fdd6b52d020700`
+  （`s22_cargo_install.txt`、`s22_installed_*.txt`）。另加「装不上时的四个坑」表（Store 占位桩 /
+  执行策略 / 缺 tzdata / 用 `sed` 改 `.bat` 抹掉 CRLF），以及一条如实记录：安装后的 binary **没有**
+  `--version` 旗标，`--version` 按未知参数 fail closed 退出 2，确认安装用 `qx-cli help`。
+- `docs/工业化易用性收口指南-V1.md` §1 写明"源码前缀 `cargo run -p qx-cli --` ↔ 安装后 `qx-cli`"是同一条
+  clap 命令表，两条路径不必分别维护；`docs/外部链路验收执行方案-V1.md` §6 补上解释器外传的口径。
+
+### Verified（本回合实测，逐条可 grep）
+
+| 门槛 | 结果 | 日志 |
+|---|---|---|
+| `build.bat` 全 8 步 | 修前 `BUILD_BAT_EXIT=1`（`[3/8]` `202 passed; 2 failed`）→ 修后 `BUILD_BAT_EXIT=0`，843 passed / 0 failed | `s20r_build_bat_full.txt`、`s19_build_bat_fix.txt` |
+| 架构门禁 | `GATE_EXIT=0`，**455 项全绿 / 0 条 FAIL**；爬升 449 → 453 → 455 | `s19_gate_judgefix2.txt`（两颗假绿判据修完复跑） |
+| 本轮变异 | 6 颗：M1/M4/M5/M6 一次咬；M2 第一遍不咬 → 抓出 #136，修后红在唯一目标判据；M3 第一遍只红 1/2 → 抓出 #138，修后一次红两条。颗颗 `RESTORE EXACT` + 还原后 455 全绿 | `s19_mut_round19b.txt`、`s19_mut_m3_recheck.txt` |
+| 安装包重建 | `SH_EXIT=0` + `PS_EXIT=0`，两条腿都 `Created wheel … size=216439` | `s21_wheel_rebuild.txt` |
+| 安装包与当轮代码一致 | wheel md5 `fe94d8e5…`；内嵌 `_qianxing_native.pyd` 353280 字节 md5 `3e3c793385cf155e92c2cdc4f3694eba` **等于**本轮 `target/release/_qianxing_native.dll`（`MATCH`），12 份 `*.py` `mismatch: none` | `s21_wheel_verify.txt` |
+| 干净 venv 复核 | `PROBE_EXIT=0`：`native.available() → True`、四个包全部导入成功、衍生品三字段 `cross/hedge/3` 往返 `True`、`margin_mode="weird"` 仍 `ValueError` | `s21_install_probe.txt` |
+
+## Unreleased — V12 §18：第五遍逐条判定 §16 留下的 13 颗断链，4 颗接进生产、8 颗拆掉假装接上的桥（2026-09-26）
+
+§16.6 第 3 条欠的账：13 颗"零消费者 / 无生产装配"的断链发现。这一遍不新增发现，逐条判**该接还是该写明没接**：
+钱与账的 4 颗接进生产（§18-A），数据与血缘的 8 颗**删掉那条假装接上的桥**并写进对外矩阵（§18-B），
+第 13 颗（#129）判为"接了更危险"，只改语义。轮末验证链又抓到两颗：一颗 clippy lint（本轮新用例自己留的），
+一颗 README 承诺的 PowerShell 入口在本机默认策略下**一行都不执行**就退出（§18-C #132）。
+全过程与 70 颗变异见 [docs/自研量化框架审计与重构方案-V12.md](docs/自研量化框架审计与重构方案-V12.md) §18，
+日志在 `%TEMP%/qx_v12p2/logs/`。
+
+### Fixed（§18-A：接进生产的四条）
+
+- **柜台未报的币种不再折成 0（#109，交易 TX6）**：`crates/qx-runtime/src/pipeline.rs` 的
+  `venue_raw` 改成 `Option<i128>`，只有 `Some(ledger_raw)` 才可能判一致；Binance 对账播报里缺席的币种印「未报」。
+  新集成用例 `crates/qx-runtime/tests/settlement_balance_absence.rs` 钉住三条读法（报了 0 不算差异、
+  没报落 `None` 且与"只报别的币种"同形、报过数仍是那个数）。
+- **对账裁决的动作归类真的有读者（#108）**：`status_action` / `filled_action` 在
+  `crates/qx-genglu/src/reconcile/order.rs` 各定义一次，裁决只调用不另起比较，`crates/qx-adapter/src/reconcile.rs`
+  的 `action()` 委托同一对判据，报告多印一栏 `action`，待对账事实的 `reason` 从维度码改成动作口径。
+- **超时作业会升级、并发键会释放（#110）**：`dispatch_scheduled_jobs` 每轮遍历运行做
+  `is_timed_out` → `mark_timed_out`（升级 `NeedsIntervention`、释放并发键），`NotReady` 只跳过本轮，
+  播报加 `timed_out=` 一栏；顺带把租约时钟统一到秒域（`lease_clock` 是唯一换算入口，八处命令队列入口 +
+  派发写入的 `JobRun` 全按秒 —— 30 秒租约此前会被写成 30 毫秒）。
+- **一次运行只交一个终态（#129）**：`finish_run_with_code` 的 `error_code` 只在失败侧保留，成功一律 `None`；
+  Strategy worker 的收口改传 `None`（结果码只走 stdout），于是 `/scheduler/runs` 不会再显示一条带着
+  `3 orders: SUBMITTED` 的"成功"作业。**自动重跑刻意不接** —— 交易作业失败时无法判定订单是否已出网，
+  重跑等于二次提交；`JobStatus::Failed` / `next_retry_ts` / `retry_run_at` 这条链改为立成 limitation
+  `scheduler_run_retry_has_no_production_path`，并由判据去数生产调用点。
+
+### Fixed（§18-C：安装面的一颗）
+
+- **README 的 PowerShell wheel 入口带执行策略**：`powershell -File tools/build_python_wheel.ps1` 与
+  `./tools/build_python_wheel.ps1` 在 Windows 客户端默认策略（本机 `Get-ExecutionPolicy -List` 五个作用域
+  全 `Undefined`，即 Restricted）下以 `UnauthorizedAccess` 退出、一行脚本都不执行。入口写成
+  `powershell -NoProfile -ExecutionPolicy Bypass -File …`，`.ps1` 文件头同步写明；§17.8 记的 `PS_EXIT=0`
+  因此被否证为"当时那个进程的策略恰好放行"。
+
+### Removed（§18-B：拆掉假装接上的桥）
+
+- **静态帧到 `ProviderRegistry` 的注册桥整条删除（#112/#114）**：`with_received_at`、`with_registry_capability`、
+  `registry_received_at`、`registry_capability`、`default_registry_capability`、`RegistryDataProvider` 六个名字
+  全仓清零；帧读侧不再有 `as_of` / `receive_time` / `received_at` / `unwrap_or(query.end)`（桥把
+  `query.end` 当"数据到达时间"哈希进血缘，是一条不可能失败的 PIT 断言）；`crates/qx-data/Cargo.toml`
+  卸下只为这条桥存在的 `qx-provider` + `qx-guanxing` 依赖边。
+- **`TestClock` / `advance_to` 删除（#116）**：README 的"回测不用系统时间"改指三处真闸门
+  （入库前排序 + 同标的 `ts` 严格递增 + 帧读侧乱序报错），各配行为用例。
+
+### Registered（§18-B：接不了的事实写进对外矩阵）
+
+- **#115**：`event_verified` 不再是快照里手抄的一格 bool —— `crates/qx-cli/src/readiness.rs` 按本地
+  `runs/*.json` 的 `RunManifest` 重算摘要并核对血缘与区间覆盖，摘要口径取自 qx-factor 的 `mark_event_verified`；
+  三个研究快照读点都必经绑定入口。
+- **#117**：调度装载入口按运行时真实能力拒形状（`unsupported_dispatch_shape`，写状态之前即拒并点名作业），
+  一次 tick 先 `manifest.validate()` 再给 `JobRun` 盖血缘。
+- **#118 / #119**：公司行为三条只读查询、因子物化写侧五个入口、`artifacts[].values` 全部进允许清单 +
+  limitation（`corporate_action_read_side_has_no_production_reader`、
+  `factor_snapshot_json_has_no_in_repo_producer`、`feature_artifact_values_have_no_production_reader`），
+  接口文档逐层对齐五层快照字段并声明"由仓库外导出、拼错的键会被拒"。
+
+### Added（门禁，397 → **449**）
+
+- 九颗新判据函数共 51 条：`reconcile_action_and_absence_check` 8、`lease_clock_domain_check` 11、
+  `bar_frame_pit_honesty_check` 4、`event_backtest_evidence_check` 5、`backtest_clock_honesty_check` 5、
+  `scheduler_dispatch_honesty_check` 5、`corporate_action_read_side_check` 2、
+  `factor_research_honesty_check` 7、`scheduler_retry_honesty_check` 4。
+- `wheel_builder_check` 第 4 条（#132）：README 里每条 ASCII 的 PowerShell 入口都必须带
+  `-ExecutionPolicy Bypass`，一条入口都没有也红。
+- **#87 收口**：能力矩阵证据路径判据从"只认行首唯一路径"改成**整行每个 repo 前缀 token 都核对**
+  （带 `:行号` 的剥后缀、glob 不强判）—— §16 把四份用例集拆目录后，五条指向已消失单文件的证据行
+  在旧口径下继续全绿。
+- `GATE_CHECK_FLOOR = 449`、`WORKSPACE_TEST_FLOOR = 851`（都是本轮实测值）。
+- 两条正则口径修正：数生产调用点时接收者前缀 `.`/`::` 已是分隔符，再加 `(?<!\w)` 会让判据恒绿
+  （#119 的 t3 首版就是这样不咬）；`SCHEDULER_FINISH_CALL` 之类紧化断言不能带尾参（rustfmt 保留尾逗号）。
+
+### Docs
+
+- `deploy/README.md`：一次作业运行的收口口径（不自动重跑、结果码不进 `JobRun`、超时如何升级）、
+  调度派发只认 Cron + `window=Any`、研究快照五层字段与"仓库外导出"的契约。
+- `README.md`：wheel 入口与三条前置（pip 探测、ASCII 行尾、执行策略）；`maturity/capabilities.yaml`
+  新增 3 条 limitation + 8 条证据行。
+
+### Verified（本回合实测，逐条可 grep）
+
+| 门槛 | 结果 | 日志 |
+|---|---|---|
+| 架构门禁 | `GATE_EXIT=0`，**449 项全绿 / 0 条 FAIL**；爬升 405→425→430→435→444→448→449 | `s20r_gate_after_docs.txt`（README 台账与 §18.6 回写后复跑） |
+| 整树测试 | `TEST_EXIT=0`，**92 段全 ok / 843 passed / 0 failed / 0 ignored**（§16.7 归零后的 821 → 843；逐名归账 = 新增 24 颗、删除 2 颗，删掉的两颗分别跟着 #116 的 `TestClock` 与 #112/#114 的三条假桥走） | `s20q_test_workspace.txt`（clippy 修复后重跑；修复前的 `s20a` 同数，中间还有一次因 `QX_PYTHON` 被我写成目录路径而作废的 `s20p`） |
+| 全仓 `#[test]` 属性 | **851**（829 → 851，与整树同 +22；差的 8 条被 `nats`/`sqlite` feature 门控） | 门禁的 `workspace_test_floor_check`（同一份 `s20r_gate_after_docs.txt`） |
+| 存储（sqlite feature） | `EXIT=0`，**56 passed / 0 failed** | `s20d_storage_sqlite.txt` |
+| Clippy | **先 101 后 0**：`crates/qx-cli/src/tests/scheduler_dispatch_support.rs:92` 的 `&[job.clone()]`（`cloned_ref_to_slice_refs`）改 `std::slice::from_ref` | `s20b_clippy.txt`、`s20c_clippy2.txt` |
+| 格式 | `cargo fmt --all -- --check` 退出码 0 | `s20f_fmt.txt` |
+| Release 构建 | `cargo build --release --offline` `REL_EXIT=0` | `s20g_chain.txt` |
+| Python 边界 / 核心语义 | `Ran 49 tests … OK (skipped=1)`；`全部自校验通过 ✓` | `s20e_pytests.txt`、`s20e_validate.txt` |
+| 安装包（两条入口） | `SH_EXIT=0`（`sha256=4ef59cf7…`）、`PS_EXIT=0`（`sha256=c352502f…`，带 Bypass） | `s20g_chain.txt`、`s20i_wheel_ps1_bypass.log` |
+| 安装包 = 当轮代码 | wheel 216440 字节；内嵌 `_qianxing_native.pyd` md5 `372906ad…` **等于**本轮 `target/release/_qianxing_native.dll`；12 份 `*.py` 与 `python/` 逐文件相等 `mismatch: none` | `s20j_wheel_verify.txt` |
+| 装进干净 venv | `native.available() → True`；三字段 `cross/hedge/3` 往返 `True`；`margin_mode="weird"` 仍被拒 | `s20k_wheel_install_probe.txt` |
+| 变异反向验证 | **70 颗**（结构 64 + 行为 6）逐颗红在预期判据、按字节还原后全绿 | §18.4 的表 + `s20h/s20l/s20m/s20n` 四份补跑日志 |
+
+### 未收口（如实记录）
+
+1. `sandbox_tested` 全部保持 `false`：本轮没有任何外部服务与凭据参与。
+2. "每遍都要重跑 `build.bat` 全 8 步"仍无量具 —— 本轮那颗 clippy 命中正是第 4 步补跑才红的。
+3. 门禁总数地板与用例地板只咬下跌侧，449 / 851 仍是人工回合的产物。
+4. #106 / #107 待确认后关单（R4-d 的 `zero_reference_public_surface_check` 已实现同一口径）；
+   #53（Q1b 可复现性绑定）未排期；`build.sh` 可执行位与 wheel 脚本的 `--offline` 口径未动。
+5. 本地 `main` 与 `origin/main` 分叉未解：本轮成果全在工作树，未 stage、未 commit、未 push。
+
+
+## Unreleased — V12 §17：第四遍清点构建与安装面，判据可以整段消失而门禁全绿（2026-09-25）
+
+前三遍数的是产品代码，这一遍数的是"用户怎么把这个仓库跑起来"。结果是 `build.bat` 三处互相独立的缺陷
+同时在场：双击必然中途死在 `\'不是内部或外部命令\'`、解释器探测只认退出码所以把 WindowsApps 的 `python`
+存根当成可用解释器、步骤口径与 `build.sh` 已经分叉。收口时又撞到第四类：README 承诺的两条 wheel 入口
+**两条都不通**（`.ps1` 的中文行尾被 PowerShell 5.1 按 ANSI 码页吞掉换行，紧跟其后的 pip 探测整行被并进注释、从不执行；`build.sh`
+用的 `python/.venv` 是 uv 建的、里面没有 pip），而 `dist/` 里那份 wheel 内嵌的原生扩展是六天前的。
+全过程与十一颗变异记录见
+[docs/自研量化框架审计与重构方案-V12.md](docs/自研量化框架审计与重构方案-V12.md) §17，日志在 `%TEMP%/qx_v12p2/logs/`。
+本遍被改动的产品代码只有一颗，而且是收口重跑 8 步时才红的：`[4/8]` clippy
+（`crates/qx-genglu/src/reconcile/tests.rs:43` 两处 `cloned_ref_to_slice_refs`，V12 §17.6）；
+其余改动全在构建脚本、`.gitattributes`、门禁与文档。收获是一条量具盲区：
+**门禁自己的判据可以被整段删掉而它照样打印"全部通过 ✓"**。
+
+### Fixed（构建与安装面）
+
+- **`build.bat` 重写**：`chcp 65001` 只修显示、不修解析，带 UTF-8 中文的 LF 版批处理 cmd.exe 读不了，
+  于是强制 CRLF 并保证每行以 ASCII 字节结尾；第 `[0/8]` 步的探测改为要求候选**把版本号印出来**
+  （退出码不算证据：Store 存根与 `cmd.exe` 都能以 0 退出而不打印任何 Python 版本），随后再探
+  `import tzdata`（`python/pyproject.toml` 里声明的 Windows 依赖）。候选顺序 `QX_PYTHON` →
+  `python\.venv\Scripts\python.exe` → PATH `python`，三项都不合格时退出码 1 并印出候选清单与两条修法。
+- **`build.sh` 同口径重写**：同一组 8 步、同一串 7 条 `cargo` 命令、同一个探测契约（`QX_PYTHON` →
+  `python/.venv/bin/python` → `python`）。
+- **新增 `.gitattributes`**：`*.bat`/`*.cmd` 钉 `eol=crlf`、`*.sh` 钉 `eol=lf`。在此之前 CRLF 只是本机的
+  巧合（`core.autocrlf=true`），换一台机器或换一种 checkout 方式就会把可运行的 `build.bat` 变成跑不了的。
+- **仓库 venv 离线重建**（`uv venv .venv --python 3.12 --clear` + `uv pip install tzdata`，3.12.13 /
+  tzdata 2026.4）：它曾在并发 uv 进程干扰下消失，导致 `[5/8]` 的 A 股用例以 `ZoneInfoNotFoundError` 失败。
+  重建后 Python 边界测试从 `Ran 34 … FAILED(errors=1)` 变成 **`Ran 49 tests … OK (skipped=1)`** ——
+  `test_ashare.py` 的 16 条原本整文件不跑（导入期 `ZoneInfoNotFoundError`），只留 1 条 loader 占位用例，
+  所以差值是 15（`s17_py_no_tzdata.log`，本回合用缺 tzdata 的解释器复现）。
+- **`[4/8]` clippy 补跑抓到的一颗 lint**：`crates/qx-genglu/src/reconcile/tests.rs:43` 用
+  `&[local.clone()]` 造单元素切片，`-D warnings` 下 `CLIPPY_EXIT=101`（`cargo test`、架构门禁、
+  release 构建全都不会红）。改法即 clippy 建议的 `std::slice::from_ref(&local)`，行为不变。
+  这颗在 §16 那一遍改这个文件时就该红 —— 那一遍没跑第 4 步，也没写下"没跑"（V12 §17.6）。
+- **两条 wheel 构建入口修通**：`tools/build_python_wheel.ps1` 与 `.sh` 都在跑 `cargo` 之前先探测
+  `-m pip --version`，缺 pip 即以退出码 1 停下并印两条修法（装 pip / 离线 `uv build --no-build-isolation`）；
+  `.ps1` 的注释与抛出消息改为 ASCII-only（中文行尾会被 PowerShell 5.1 按 ANSI 码页解码、吞掉换行，
+  让下一行代码整行消失），并把被 dedent 出 `try` 块的四段缩进归位。两条入口修好后**各自真跑通一次**
+  （`PS_EXIT=0` / `SH_EXIT=0`，`s17_wheel_ps1_2.log`、`s17_wheel_sh.log`）。
+- **安装包按当轮代码重建**：旧 wheel 先 `cp -p` 镜像到 `%TEMP%`，重跑 `cargo build -p qx-python --release`
+  → 新的 `_qianxing_native.dll`（md5 `c1991c58…`）→ 打包 → `dist/qianxing_bridge-0.1.0-cp312-cp312-win_amd64.whl`
+  （216440 字节）。否证与复核都按 md5 而不是"文件存在"：旧 wheel 内嵌的是 `0cb3981c…`（六天前的扩展），
+  新 wheel 内嵌的 `.pyd` 与本轮 `.dll` 同 md5，wheel 里 12 份 Python 源逐文件与仓库相等
+  （`s17_wheel_verify.txt`）。`/dist/` 在 `.gitignore` 里，所以安装包是**本地产物**、不随提交分发。
+
+### Added（门禁，387 → **397**）
+
+- `windows_batch_parse_check`（4 条 + 1 条属性判据）：逐个 `.bat`/`.cmd` 核对无孤立 LF、每行以 ASCII 结尾，
+  并**按实际存在的扩展名**各自要求一条 `eol=crlf` 属性规则（早先写法允许 `*.cmd` 替 `*.bat` 交差，被变异 M4 证伪后收紧）。
+- `build_script_parity_check`（2 条）：两份构建脚本的 `echo [n/N]` 步骤逐项同名同序（8 步），
+  `cargo` 命令多重集相等（7 条）。
+- `wheel_builder_check`（3 条）：两个 wheel 脚本都要在 `-m pip wheel` **之前**探测 `-m pip --version`
+  （按字符位置比较，缺一或顺序颠倒即红），且 `.ps1` 每一行以 ASCII 字节结尾 —— 这条正是本轮那两处
+  安装面失效各自的判据。
+- `GATE_CHECK_FLOOR = 397` 门禁自身总数地板：本轮两次手滑删掉 `TEST_MODULES` 的元组项时，
+  门禁静默少跑 4 条判据却仍然报"全部通过 ✓" —— 现在少一条就红。
+
+### Docs
+
+- `README.md`：构建段从"Windows 下可直接双击 `build.bat`"扩成解释器契约 + 两份脚本同口径 + `.gitattributes`
+  的因果；"当前状态"按本轮重测回写（387 → **397 项**、Python 边界 47 → **49 条**、
+  `qx-storage --features sqlite` 9 段 51 → **10 段 56 passed**、venv 已重建但探测不因此取消）；文档指向段补 §17。
+- V12 §17：三处缺陷的四象限否证表、修到什么程度、venv 重建前后对比、10 条判据的逐颗变异反向验证、
+  本轮测量表、§17.7 未收口、§17.8 安装包重建（两条入口的失败原因表 + 修后跑通与 md5 复核）。
+
+### Verified（本轮日志，非旧文档摘录）
+
+| 门槛 | 本轮结果 |
+|---|---|
+| 架构门禁 | 退出码 0，**397 项全绿**（`s17_gate_397.txt` 抬地板后首跑；本轮文档回写后再跑一次仍 0 / 397、无 `FAIL` 行） |
+| 整树测试 | `TEST_EXIT=0`，90 段全 ok / **821 passed** / 0 failed（`s17_full_test_225330.log`；lint 修好后复跑 `s17_full_test_230131.log` 同数） |
+| fmt / release / clippy | `FMT_EXIT=0`、`REL_EXIT=0`（`s17_final_225640.log`）；`CLIPPY_EXIT` 从 101 → **0**（`s17_clippy.log`、`s17_clippy2.log`） |
+| `qx-storage --features sqlite` | 退出码 0，10 段 / **56 passed** / 0 failed（`s17_storage_sqlite.log`） |
+| Python 边界 / 核心语义 | `Ran 49 tests … OK (skipped=1)`、`全部自校验通过 ✓`，均退出码 0 |
+| wheel 两条入口 | `PS_EXIT=0`（sha256 `8c6906c9…`）、`SH_EXIT=0`（sha256 `f58d2a62…`），同尺寸 216440；安装到干净 venv 后 `native.available()` 为 `True`，三字段往返相等 |
+| 反向验证 | 十一颗变异（M1–M7 + M8/M8b/M9/M10）各自**只红一条**，`cp -p` 还原后逐字节 `identical=True` |
+| 解释器回落 | 5 个 `QX_PYTHON` 场景 × `build.bat`/`build.sh` 两侧，全部按预期成功或 fail closed |
+
+**仍不宣称**：`sandbox_tested` 依旧全为 `false`（本轮没有任何外部服务或凭据参与）；门禁总数地板只咬下跌侧；
+wheel 脚本里的 `cargo build -p qx-python` 不带 `--offline`，且 wheel 文件名不带世代（V12 §17.7 第 5、6 条）。
+
+
+## Unreleased — V12 §16：三遍连通性清点在合流后的代码上重跑，量具的第三类瞎法被点名（2026-09-25）
+
+按"至少三遍、每遍全修再进下一遍"的口径，三遍分别在合流之后的工作树上重跑：第一遍找孤儿逻辑，
+第二遍找无退出条件的循环，第三遍找前后端/三语言契约断链。全过程与逐颗反向验证记录见
+[docs/自研量化框架审计与重构方案-V12.md](docs/自研量化框架审计与重构方案-V12.md) §16。
+本轮产品侧只修 4 个点，另加 6 条门禁判据 —— 收获是识别出**契约判据只覆盖三语言里的两种**这类失效：
+它不会误报，也不会红，只会让第三种语言静默漂移。
+
+### Fixed（三遍各一颗到两颗）
+
+- **健康快照的 stale 判定不再恒不成立**（§16.1 #122）：`runtime-check` 调
+  `HealthRegistry::snapshot(now_ms, stale_after_ms)` 时把 `now_ms` 传成 `0`、把预算传成
+  `shutdown_timeout_ms`，饱和减法使"心跳过期"在任何配置下都不成立。现在传
+  `runtime_timestamp_ms()` 与 `messaging.worker_stale_after_ms` —— "心跳多久算陈旧"全仓库只剩这一个窗口。
+  同轮把 `runtime_check.rs` 里两处重复的报告数组读取抽成 `string_array()`（缺字段/非数组按空处理），
+  以付该文件 500 行的预算账，落 498 行。
+- **API 两条 accept 循环接上停机出口**（§16.2）：明文 `serve` 与 mTLS `serve_tls_mtls_with_stores`
+  原先都阻塞在 `incoming()` 上，监督器的 `ShutdownToken` 递不进去 —— 没有连接就一直等。两条循环现在
+  共用 `await_connection`（先 `stopped()` 判定，再 `set_nonblocking(false)` 取连接），并由 3 条用例
+  （`crates/qx-api/tests/accept_loop_shutdown.rs`）+ 6 条判据按名字钉住。`SchedulerWorker` 与策略宿主
+  循环也改为读同一个停机令牌。
+- **Python SDK 的多腿衍生品意图补回三个字段**（§16.3 #123）：Rust `StrategyContractIntent` 与
+  `schemas/strategy_api_v1.schema.json` 都认 `margin_mode` / `position_mode` / `leverage`，
+  `python/qianxing_bridge/strategy.py` 的 `StrategyIntent` 没有这三格 —— Python 策略作者写不出这三字段，
+  而带这三键的输入会被 Rust 的 `deny_unknown_fields` 整体拒绝。声明、校验、序列化、反序列化四段一并补齐，
+  校验档位与 `contract.rs` 同口径（`cash|cross|isolated`、`one_way|hedge`、`leverage > 0`）。
+- **outbox 的 `schema_version` 回到常量**（#120）、**`run_manifest.input_components` 有人写也有人读**（#121）。
+
+### Added（门禁）
+
+- `health_snapshot_knob_check`：读 `collect_runtime_check_report` 的**函数体**，要求真时钟与
+  `worker_stale_after_ms` 在场、`snapshot(0` 与 `shutdown_timeout_ms` 不在场（只读代码，不接受注释）。
+- `strategy_intent_three_language_check`：三侧字段集**两两逐项相等**（Python SDK↔Rust、JSON schema↔Rust）
+  + 三条衍生品字段在位 + 两条跨语言往返用例点名钉住。这是本仓库第一条"schema 文件真的被门禁读过"的判据。
+- `CLI_TEST_FLOOR` 243 → **244**（磁盘重测：`src/tests` 192 + `crates/qx-cli/tests` 递归 52）。
+- `workspace_test_floor_check` / `WORKSPACE_TEST_FLOOR = 829`：递归数 `crates/*/src` 与 `crates/*/tests`
+  下的 `#[test]`，全仓总数跌破即红，失败信息按 crate 印出分布。这条是本轮账目回合的直接产物 ——
+  两个 crate 的地板护得住那两个 crate，护不住另外二十个（见下"Reconciled"）。
+
+### Reconciled（整树 passed 从 §15 的 843 掉到 821，逐名归零后才写进文档）
+
+用例只增不减是这批工作的自述，所以一次下降必须被解释。把两份日志的 `test <name> ... ok` 做集合差：
+本轮少 39 个名字、多 17 个名字。39 个里 15 个住在本批整份删除的文件里（`qx-core/src/{engine,queue,fenye}.rs`、
+`qx-data/src/cache.rs`、`qx-genglu/src/reconcile/account.rs`、`qx-zhenlu/src/portfolio/optimizer.rs`，
+以及被目录模块接管的 3 份用例单文件，`git status` 里全是 `D`）；其余 24 个逐条判过，结论都是
+**被测代码本身也不在了**或**同批改名且新名在跑**：`RestVenue`/`RequestSigner` 脚手架那 7 条（模块头就写明随装配读者一起删）、
+`crossed_quote`/`vector_scan`/`signed_transport`/`hmac_signer`/`QuoteBook` 在整棵 `crates/` grep 为零、
+`drawdown_computed`/`total_return_signed`/`attribution_keeps_strategy_chain` 是 V10 §4.8 的重复概念归位、
+5 条旧对账用例由同文件的 canonical 裁决用例承担、重试分类改由 `qx-core/src/retry.rs` 的 3 条钉住。
+**没有一条是"代码还活着而用例消失"**；全仓 `#[test]` 属性总数 `HEAD = 72c347e` 的 752 → 工作树 829。
+
+### Docs
+
+- `deploy/README.md`：新增"心跳新鲜度只有一个窗口"段（并明写 `runtime-check` 的 `health` 块是拓扑快照、
+  全部 `starting`，运行期健康以 `/ready`、`/metrics` 为准）；新增 `## 自检与内部命令` 段覆盖
+  `ecosystem` / `paper` / `verify` / `all` 四条此前无文档的命令，**每条文案都用
+  `./target/debug/qx-cli.exe <cmd>` 实跑否证或证实过**（第一版把 `ecosystem` 写成覆盖 PaperVenue，
+  实测 `grep -c PaperVenue` 得 0，已改为实测口径；`all` 改为"`verify` 与 `paper` 的并集"）。
+- `maturity/line_budgets.yaml` 按 `--snapshot` 重算：37 项，46395 → **44120（−2275）**，20 项下降共 −2208。
+  两处增长逐条判过并留结论：`crates/qx-cli/src/strategy_contract.rs` 822 → 840（R4-k 与 #123 的三侧口径
+  都落在这里）、`crates/qx-storage/src/lib.rs` 2405 → 2406（#120 的常量绑定 1 行）。形状变化 4 项：跌出
+  `qx-factor/src/materializer.rs`（507）与 `qx-plugin/src/lib.rs`（583），新进 `qx-cli/src/worker_entry.rs`（505）
+  与 `qx-cli/src/tests/api_snapshot_money_fields.rs`（518）。
+
+### Verified（本回合实测，逐条可 grep）
+
+| 门槛 | 命令 | 本轮结果 |
+|---|---|---|
+| 架构门禁 | `tools/check_architecture.py` | `ARCH_EXIT=0`、**387 项全绿**；6 条新判据 `[PASS]` 文案逐字点名在 §16.5 |
+| 全仓用例地板 | 同上 | `[PASS] 全仓行为用例不少于 829 条`；变异：抽掉 `qx-guanxing/src/lib.rs` 一条 `#[test]` → **只红这一条**（`当前 828 条 … qx-guanxing=7`），`cp -p` 还原 `RESTORED-IDENTICAL` 后回到 387 项全绿（`%TEMP%/qx_v12p2/logs/arch_mut1.log`、`arch_restored.log`） |
+| 整树测试（带解释器） | `QX_PYTHON=<解释器> cargo test --offline --workspace` | `exit=0`、**90 段 / 821 passed / 0 failed / 0 ignored** —— 两次抓到同一组数：`final_r3_205909.log`（venv 解释器）与文档回写后的 `final_s16_docs.log`（基础解释器），均在 `%TEMP%/qx_v12p2/logs/` |
+| Python 契约 | `cd python && PYTHONPATH=. .venv/Scripts/python.exe -m unittest discover -s tests -p "test_strategy_contract.py"` | `Ran 10 tests … OK`（含本轮新增 2 条跨语言往返用例） |
+| fmt / check | `cargo fmt --all -- --check` / `cargo check --offline -p qx-cli --all-targets` | 退出码 0 / 无 warning |
+| 命令面 | `./target/debug/qx-cli.exe ecosystem` / `paper` / `verify` / `all` | 四条均退出码 0 |
+| 能力矩阵 | `tools/check_architecture.py` 的 `未拿到外部沙盒记录前 sandbox_tested 全为 false` | `[PASS]` —— 本轮没有任何外部服务或凭据参与 |
+
+上表的 Python 两行是同一回合抓到两次的：第一次用 `python/.venv/Scripts/python.exe`（386 项全绿 / `Ran 10 tests OK`），
+第二次在文档回写之后。两次之间本机 `python/.venv/Scripts/python.exe` 被一个并发的 uv 进程删掉了（该目录 mtime 21:39，
+同机可见的并发命令行属于另一份仓库的 `-m pytest tests/architecture`），所以复跑改用 uv 基础解释器
+`%APPDATA%\uv\python\cpython-3.12.13-windows-x86_64-none\python.exe`，结果一致（387 项 / `Ran 10 tests … OK`）。
+这条不是链路缺陷，但它证伪了 README 与 `build.bat` 里"`python/.venv` 恒可依赖"的假设 —— 本机 venv 的启动器
+仍缺 `python.exe`，需要 `uv venv` 重建（见 V12 §16.5 表下的说明）。
+
+### 未收口（如实记录，不写进"已达成"）
+
+1. `RuntimeSupervisor::new()` 只 `register`（状态 `Starting`）、从不 `spawn`，所以修好的 stale 判定在 CLI
+   自检路径上仍无生产触发者；真读者在 `qx-api` 的 `/ready`。本轮把口径写进文档，没有把 `health` 块伪装成运行期健康。
+2. "地板等于磁盘值"这件事仍无判据，244 与 829 两个数仍是人工回合的产物（§15.6 第 5 条原样成立）。
+   新增的全仓地板补的是**下跌侧**：删用例现在会红；写歪的数它不知道，它只知道不得低于 829。
+3. 三遍清点不动公共 API，13 颗零消费者/无生产装配的断链发现（#106/#107/#108/#109/#110/#112/#114–#119）
+   留给单独一轮。
+4. `maturity/capabilities.yaml` 的 `sandbox_tested` 保持 `false`。
+
+
+## Unreleased — V12 §15：上游 4 个提交合流到本地 V12 R4 工作树，冲突面全在口径而不是代码（2026-09-25）
+
+`origin/main` 领先 4 个提交（`b4921ea` V11 R/S 两轮、`5cd11f8` T1–T4 常驻牙齿、`2bf8ad6` 与
+`dbfc429` 两次把 `main` 合进 `p0-on-v10`），且本地 `HEAD = 72c347e` 是它的祖先 —— 提交层面是纯
+fast-forward，未提交层面 61 个文件与本批 V12 R4 改动重叠，逐文件走三方合并（`git merge-file -p`，
+输出留在 `%TEMP%/qx_v12r5_pull/merge2/`）。判定口径：**同一缺陷的双轨修复，编码单源化取上游、
+结构取本地**。合流记录（7 颗变异、门禁量具自身被打坏的三处）见
+[docs/自研量化框架审计与重构方案-V12.md](docs/自研量化框架审计与重构方案-V12.md) §15。
+
+### Fixed（口径以哪一份为准，这一轮逐点判过）
+
+- **账户快照四张键表的编码整份交给 serde，取上游那份更彻底的实现**（V11 R14/R15 → 与本地 TX5 同点）：
+  `json_table_entries` / `json_position_entries` / `instrument_key` 三个渲染点各一处，`to_json` 的写入段
+  不再自己抄序列化；`side_code` / `order_status_code` 只服务 `state_hash`，JSON 通道与读侧折算层都碰不到它们。
+  上游在同批带来的两条协议用例（`stable_json_tables_round_trip_through_the_reader`、
+  `the_cross_language_sample_is_what_the_writer_emits`）搬进本地的目录模块新文件
+  `crates/qx-protocol/tests/snapshot_single_source/stable_json_tables.rs`，与 `optional_money.rs`
+  共用同一个 `position_row`（可见性改成 `pub(super)`，仓库那份夹具由它产出）。
+- **上游其余单源化一并取入**：`schemas/account-snapshot-v1.json` 经 `include_str!` 成为契约正文的唯一来源、
+  `INIT_PROFILES` 一张表、`default_account_event_log`（无键读模型说的是哪个账户只有一处答案）、
+  `ApiQueryModels::with_query_models_provider`（运维读模型每请求现读）、`publish_snapshot_for`、
+  对账两格 `Option` + `apply_reconcile_reports`（没有报告 = `null`，对过且无差异 = `Some(0)`）。
+- **`doctor` 的拓扑那一项改名 `runtime_supervisor_build`**（上游）：`doctor` 从不启动 worker，
+  旧的 `runtime_topology: pass` 会被读成"运行拓扑健康"。现在通过语是
+  `监督器可构建，启用 worker=<N>（未启动，不代表运行健康）`，运行健康仍归 `runtime-check`。
+- **门禁量具被合流打坏三处，本轮修好并逐颗证明它咬得住**（`tools/check_architecture.py`）：
+  `snapshot_row_wire_check` 里那份合并残留引用了本函数根本不存在的变量、钉的是已被删掉的手写编码器，
+  整段重写为"写入段自己不碰 serde、持仓换键只在编码器里发生一次"；它与上游新增的
+  `snapshot_json_table_check` 的重复判据删掉（同一条纪律两处钉，漂移时只会红错的那一处）；
+  把合法业务档位 `OrderStatus::Unknown` 误判成 serde 兜底变体的子判据删掉，改名或兜底仍由
+  `#[serde(...)]`/`#[repr(...)]` 那两条属性判据守住。`snapshot_contract_version_check` 的 needle 按
+  当前代码逐条重校准，并新增 `without_line_comments()` —— 注释里复述一遍判据字符串，不该让门禁变绿。
+  `case_source()` 改为递归读目录模块，用例搬家不再改常量。CLI 用例地板按磁盘重测抬起：合流后
+  `^#[test]$` 实测 **243** 条（`src/tests` 191 + `crates/qx-cli/tests` 递归 52），而地板停在合流前的
+  历史值 210 —— 落后 33 条的地板等于没有防守（`qx-execution` 同轮重测 15 + 10 = 25，恰好仍是磁盘值）。
+- **README 两处说假话当场改掉**（本轮实测否证）：`--fill-tier` 只有 `l1`/`l2` 两档，原文写的"l2/l3 走
+  订单簿内核"里那一档旗标根本不存在；`reconcile` 无参数运行打印的是用法并以退出码 2 结束，原文把它写成
+  了一条"本地对账契约 smoke"命令。`multi-builtin` 的产物口径同时补上：只有 `--root` 点名时写 1 份归因产物。
+- **行数棘轮按合并后的真实形状重算**（`maturity/line_budgets.yaml --snapshot`）：39 项，
+  `crates/qx-adapter/src/binance.rs` 2291 → 2221（上游重连预算与本地拆分的净效果），
+  新登记两项越过 500 行的文件（`qx-cli/src/worker_entry.rs` 505、`qx-cli/src/tests/api_snapshot_money_fields.rs` 518），
+  六处因合并下降的文件同步下调。
+
+### Verified（本轮实测，逐条可在 `%TEMP%/qx_v12r5_merge/` 的日志里 grep 到）
+
+| 门槛 | 命令 | 本轮结果 |
+|---|---|---|
+| 架构门禁 | `python/.venv/Scripts/python.exe tools/check_architecture.py` | `ARCH_EXIT=0`、**370 项全绿**（`arch5.log`；合并当场红 9 项 + 残留 2 项，见 §15.3） |
+| 整树测试（带解释器） | `QX_PYTHON=python/.venv/Scripts/python.exe cargo test --offline --workspace` | `TEST_EXIT=0`、**88 段 / 843 passed / 0 failed**（`test5.log`） |
+| 整树测试（不带 `QX_PYTHON`） | 同上，去掉 `QX_PYTHON` | `TEST_EXIT=101`、**2 条 Python 桥用例红**（`test2.log`，本机 PATH `python` 是 WindowsApps 占位桩 —— 环境门槛，不是链路缺陷） |
+| SQLite 后端 | `cargo test --offline -p qx-storage --features sqlite` | `SQLITE_EXIT=0`、9 段 / 51 passed / 0 failed（`sqlite4.log`） |
+| fmt / clippy | `cargo fmt --all -- --check` / `cargo clippy --offline --workspace --all-targets -- -D warnings` | 均退出码 0（`clippy2.log`，`CLIPPY_EXIT=0`） |
+| Python 侧 | `tools/validate_core.py` / `python -m unittest discover -s python/tests -q` | 退出码 0 / `Ran 47 tests … OK (skipped=1)`（`validate4.log`、`pyunit4.log`） |
+| 命令面 | `qx-cli help` / `qx-cli strategy list` | 52 行用法 / 去重 41 个入口名（documented = clap 40 ∪ `help` = dispatched）；17 个内置策略 |
+| 反向验证 | 7 颗变异（写入段自抄 serde、`side_from_code` 复活、版本闸门 `!=`→`>`、header 声明洗成合法值、`Side` 加 `#[serde(rename_all)]`、夹具被篡改、编码器不剥大括号） | **7/7 红在预期的那一条判据或用例上**，`cp -p` 还原后 `diff` 逐字节相同（`mut_m*.log`） |
+
+
+
+## Unreleased — V12 R4：三遍清点（孤儿逻辑 / 无退出条件 / 契约贯通），当场抓出两条"账户一下单就读不回来"的断链（2026-09-24）
+
+发布条件三遍清点的落地批。**第一遍**查孤儿逻辑：公共面上"只有别处测试在调"的死入口、看起来在读其实
+读的是清单外的值；**第二遍**查无退出条件与阻塞点：停机令牌只有消费者没有生产者、重连上限按累计次数计、
+一条用户流根本没有预算；**第三遍**查前后端与契约贯通，并当场抓出三条客户端或存储**立刻会失败**的断链
+（包络不满足本进程自己公布的 schema、契约正文有两份互相矛盾的手抄、带订单的快照写得出读不回）。
+收口记录（44 颗变异逐条对账、本轮量具自身失效的三处）见
+[docs/自研量化框架审计与重构方案-V12.md](docs/自研量化框架审计与重构方案-V12.md) §14。
+
+### Fixed（死入口删掉、等待有上限、契约与实现对齐）
+
+- **三条零生产消费者的公共入口全部删除**（V12 §4.6 / R4-d）：`submit_order_via_gateway`、
+  `submit_order_via_gateway_with_risk` 与第二条多腿编排入口（`MultiVenueSpreadExecutionService` +
+  `VenueRouterMap`）—— 现在 `git grep` 这四个符号在 `*.rs` 里 0 命中。同时把这条纪律变成判据：
+  受管入口族（`pub fn submit_order*`、`pub fn (load|save)_control_state`）的每个 `pub fn` 必须在
+  **定义文件之外、且不在测试路径里**有引用（`dead_public_entry_check`）。D3 搬家之前这三条入口
+  谁都看不见，搬家之后 `git grep` 才第一次暴露"只有测试在调"。
+- **停机阶梯接上了生产者**（R4-a）：`ShutdownToken` 此前只有读它的人，`Ctrl+C`/`SIGTERM` 从不落到
+  `RuntimeSupervisor::request_shutdown`，所以那条按预算汇合 worker 的阶梯永远等不到令牌。
+  新增 `crates/qx-runtime/src/supervision/shutdown.rs`（80 行）：信号处理置进程级标志、阶梯把请求转发给
+  supervisor、到 `shutdown_timeout_ms` 报 `StopTimedOut` 而不是无限等 —— 不假装能强杀线程。
+- **两条用户流的重连预算改成按连续失败计**（R4-b/R4-c）：Binance 用户流原上限按**累计**次数计，
+  一条长期健康的流只要累计满 10 次就永久放弃、失败一次也不清零；CCXT Pro `watch_orders` 会话
+  **完全没有预算**（固定 `base_delay` 无限重连）。现在前者 `delivered > 0 && !callback_failed` 才清零、退避统一走
+  `qx-core::retry`，后者抽出 `ccxt_stream_retry.rs::CcxtStreamReconnectBudget`
+  （500ms 起 / 8s 封顶 / 10 次连续），放弃时给具名原因。
+- **`run backtest <cfg> <outer>` 的外层位置参数不再被静默吞掉**（R4-e）：以前传了东西没人读，
+  现在 `cli.rs` / `cli_args.rs` 当场拒（`backtest_subcommand_rejects_outer_positionals_it_never_reads`）。
+- **`--json` 必须真的产出机器可读正文**（R4-f）：`config explain` / `config doctor` 等命令上那个旗标
+  原先只是把人类文案换个地方印；现在三条命令各自有用例钉住"旗标兑现"，
+  `config validate` 保留它那行人读 PASS 线（`cli_json_surface.rs` 3 条）。
+- **两条事件读链的 `after` 语义统一成"严格大于"**（R4-g）：内存游标含 `after`、SQLite 不含，
+  同一个请求两处给出不同条数；`qx-api` + `qx-storage` 现在同侧（`event_cursor_after_semantics.rs` 2 条，
+  其中一条同时跑两条链、另一条钉住过期与超前游标的拒绝）。
+- **账户快照包络真的满足本进程公布的 schema**（R4-h）：`/account/snapshot/envelope` 原先把 serde 派生
+  形状塞进 `data`，而 `/schema/account-snapshot-v1` 公布的是 `to_json()` 线格式（无 `protocol`、
+  无顶层 `schema_version`、键从数字变字符串）—— 客户端照第 7 号路由的 schema 校验，第一道门就过不去。
+  现在包络复用唯一编码器，`data` 与扁平路由逐字段等值（`snapshot_envelope_contract.rs` 2 条）。
+- **服务端不再公布手抄的第二份 schema**（A2）：`ACCOUNT_SNAPSHOT_JSON_SCHEMA` 改成
+  `include_str!("../../../schemas/account-snapshot-v1.json")`，仓库那份成为唯一正文 —— 内嵌那份
+  少了 `positions/orders/fills/transfers` 的 `additionalProperties` 与顶层 `additionalProperties:true`，
+  而 `deploy/README.md` 一直宣称两边是同一份。
+- **`RunManifest` 的指针有了生产读者**（R4-i）：`run_manifest.json` 兄弟路径、`data_fingerprint`、
+  产物身份此前只写不读，等于声明了一条永远不会失败的复核。现在数据集指纹回落接**被复核过**的那一份、
+  引擎自哈希不得冒充输入身份，`report` 真的按声明比对兄弟 manifest，缺失/被篡改都拒。
+- **回测摘要落"这一轮按哪几个参数跑"**（R4-j）：`backtests/artifacts.rs` 写 `signal{knobs,declared_unused}`
+  与下单数量格，两条 Bar 链各按自己的 `--config` 读，读者第一次能从产物里区分"没配"与"配了但不生效"。
+- **`schemas/strategy_api_v1.schema.json` 与 Rust/Python 两份实现对齐**（R4-k）：`required` 名单按
+  Rust 非 `#[serde(default)]` 字段逐项重排、`raw` 定点值只走 JSON 整数（原先放行十进制字符串）、
+  补上 `margin_mode`/`position_mode`/`leverage` 三格、`additionalProperties:false` 对齐
+  `deny_unknown_fields`；"大写枚举名过得了运行时但过不了 schema"这条差异写进 `description` 而不是靠
+  改口径掩盖，Python 桥 `_reject_unknown_keys` 同步。
+- **带订单的账户快照写得出也读得回**（交易 TX5，本轮唯一一条"账户一旦真下过单就坏"的缺陷）：
+  `AccountSnapshot::to_json()` 是手写稳定编码器，而 `orders`/`fills`/`transfers` 按 `u64` 建键 ——
+  键原样拼进 `{}` **产出的不是合法 JSON**；订单行的 `instrument` 落显示串、`side`/`status` 落数字码，
+  而 `OrderSnapshot` 的派生反序列化认的是内核身份对象与枚举名，折算层根本不存在。合起来的后果是
+  `SqliteSnapshotStore`、`FileSnapshotStore`、`GET /account/snapshot` 三条读法在"下过单"的快照上当场失败，
+  而仓库原有往返用例只放 `cash_raw` 与 `positions`。写侧三张表的键改由唯一那份编码器加引号
+  `json_table_entries`（`crates/qx-protocol/src/lib.rs:545`）与持仓换键的 `json_position_entries`（`:570`），写入段四张表各只取一次它们的输出（`:412`–`:415`）；读侧不再有手写行的折算层——
+  `OrderSnapshot` 按派生的 serde 变体名读回，`side_code`（`:803`）与 `order_status_code`（`:810`）
+  只喂 `state_hash`：JSON 通道碰不到数字码，未知码因此在读侧根本进不来，拼错的变体名由 serde 当场拒。
+
+### Added（旋钮单源、用例、门禁判据）
+
+- **#102：四个信号旋钮按 kind 收成一张表**（本轮最实质的口径修正）。`fast_window`/`slow_window`/
+  `period`/`threshold_bps` 此前无条件接受配置，但 `macd` 一个都不读（写死 `MACD_WINDOWS (12,26,9)`、
+  `MACD_REQUIRED_BARS 35`）、`rsi` 只读 `period` —— "改了参数没反应"是设计内的，**播报和产物却把它说成
+  生效了**。现在 `BuiltinStrategyKind::signal_knobs()`（Macd 为 `&[]`）是唯一一张表，
+  内核历史需求、运行时体检、`builtin-strategies` 的生效列、stdout 的 `knobs=… declared_unused=…`、
+  摘要的 `signal{}` 块全部问它，四条"看起来在读"的 phantom 通道删除。
+  **一条对 §6 原方案的偏离写清楚**：清单外的旋钮**不 fail-closed**，照常跑并列进 `declared_unused` ——
+  这些键同时是历史配置项，拒跑会让既有 runtime 全部起不来；代价是"配了但不生效"只在播报与产物里可见。
+- **TX5 用例三层**：协议层 `rows_keyed_by_integer_still_produce_and_recover_valid_json`
+  （写出→读回→篡改 `side=9`/`status=99` 必须被拒）、存储层新增
+  `crates/qx-storage/tests/snapshot_rows_persist.rs`（110 行，文件与 `--features sqlite` 两个后端
+  各跑一次带 order/fill/transfer 行的密封快照，SQLite 那一条带 `#[cfg(feature = "sqlite")]`）、
+  门禁层 `snapshot_row_wire_check` 6 项（键引号恰好 3 次、折算调用点恰好 1 次、码表在 crate 根缺席且
+  在 `wire.rs` 单源、读侧不得出现 `unwrap_or`/`.or(Some` 兜底、两侧用例名在位）。
+- **R4 用例新增/扩充**：`crates/qx-runtime/src/supervision/tests.rs`（停机阶梯 4 条 + 汇合工具）、
+  `crates/qx-adapter/tests/binance_stream_retry.rs`（合流后住在这里，实测 10 条）、
+  `crates/qx-cli/src/tests/ccxt_stream_retry_budget.rs`（2 条）、
+  `crates/qx-api/tests/event_cursor_after_semantics.rs`（2 条）、
+  `crates/qx-api/tests/snapshot_envelope_contract.rs`（2 条）、
+  `crates/qx-cli/src/tests/cli_json_surface.rs`（3 条）、
+  `crates/qx-cli/src/tests/backtest_input_provenance.rs`（基线 9 条）、
+  `crates/qx-cli/src/tests/backtest_signal_provenance.rs`（5 条）、
+  `crates/qx-strategy/tests/builtin_signal_knobs.rs`（4 条：清单外旋钮改不动一步、清单内每个旋钮仍改得动、
+  Macd 无可调旋钮仍出信号、清单覆盖全部 kind）、
+  `crates/qx-runtime/tests/strategy_contract_schema.rs`（新增 4 条）与
+  `python/tests/test_strategy_contract.py`（新增 1 条，output 与 intent 两类未知键各一次断言）。
+- **门禁 315 → 336 项**（+21）：`dead_public_entry_check`（1）、`snapshot_row_wire_check`（6）、
+  `builtin_knob_list_check`（9），以及 A2/R4-i/R4-j 在既有函数里补的判据 —— 其中
+  `snapshot_contract_version_check` 那条"常量与内嵌文本同号"改成"常量/仓库契约/Python 桥三处同号"，
+  因为内嵌那份已经没了，旧判据会自证成空转。
+- **行数棘轮在本轮的处理方式**：`crates/qx-protocol/src/lib.rs` 因 TX5 涨到 902 行 > 预算 831，
+  做法是**把折算搬进 `wire.rs`**（198 → 277 行，低于 500 行登记门槛）而不是抬预算；
+  `crates/qx-storage/src/sqlite.rs` 的落库用例同理（2579 → 2593 > 预算）改写成独立集成用例文件。
+
+### 验收（`/tmp/qx_v12r4_close/`，2026-09-24 收口本轮台账后重跑）
+
+- 门禁：`tools/check_architecture.py` `ARCH_EXIT=0`、`架构不变量自检全部通过 ✓（336 项）`
+  （`arch.log`），含"能力矩阵证据路径全部存在""未拿到外部沙盒记录前 `sandbox_tested` 全为 false"
+  "单文件行数预算只降不升"三条。
+- 整树 `cargo test --offline --workspace`（带 `QX_PYTHON`）：`SUITES=84 / PASSED_TOTAL=807 /
+  test result: FAILED 0 行 / WS_EXIT=0`（`workspace.log`），其中 `--bin qx-cli` 那一段
+  `169 passed; 0 failed`。
+- 被 `#[cfg(feature = "sqlite")]` 挡住的那一条必须单独跑：`cargo test --offline -p qx-storage --features sqlite`
+  → `SQLITE_EXIT=0`，`tests/snapshot_rows_persist.rs` 段 `2 passed; 0 failed`
+  （`storage-sqlite.log`）—— 不带 `--features sqlite` 时 rusqlite 后端整段被编译掉，"全绿"里根本没有它。
+- **fmt 与 clippy 两道门槛是写台账这一轮才补跑的，且各抓到东西**：`cargo fmt --all --check` 先报 4 处
+  rustfmt 漂移（`wire.rs:245/261/270` 与 `snapshot_rows_persist.rs:58`，全在 TX5 新写的代码里）， <!-- 史 -->
+  按 rustfmt 期望手工落定后 `^Diff in` 计数为 0；`cargo clippy --offline --workspace --all-targets
+  --features qx-storage/sqlite -- -D warnings` 抓到三处本轮新代码的 lint
+  （`qx-strategy/src/builtin.rs:196` collapsible_if、`qx-strategy/tests/builtin_signal_knobs.rs` 三处
+  manual_is_multiple_of、`qx-runtime/tests/strategy_contract_schema.rs` 两处 err_expect），
+  改掉后 `CLIPPY_EXIT=0` 且 `CHECKED=22` 个 crate 全部在这次里被重查。
+  改过的包逐个复测：qx-protocol 10+10、qx-storage(sqlite) 49、qx-strategy 18+4、
+  strategy_contract_schema 4，门禁复跑仍 `336 项 / EXIT=0`（文本判据最怕重排版，实测未失效）。
+  **教训与 §13.4 第 5 类同形**：R4 的收口只跑了门禁与整树测试，"用例红绿成对"证明的是判据咬得住，
+  不证明代码过了 lint 或 fmt —— 三道门槛得各走一遍。
+- 变异反向验证 44 颗（43 颗必须打红 + 1 颗正对照必须保持绿），颗颗在对应日志里 grep 得到"红"与"还原复绿"
+  （§14.6 的表按项给出颗数与日志名；该表第一次写的合计是 43，与自己的列和不等，本轮按日志重数后改正）。
+  本轮**另有三处失败红在量具而不是代码上**并一并留档：R4-e 的第一次测量 `gate.log` 里 `MUTATED_=0`
+  （红绿探测没跑起来）、R4-f 的 `r4f.log` 里 M4FC `RESTORE_M4FC=identical` 却 `FAILED_CASES=3`
+  （还原了源码没重建被测 binary）、TX5 的 T3 第一次测时门禁不红（判据只扫 `fold_stable_order_row`
+  函数体，兜底落在 `side_from_code` 里）—— 三处修完才复跑成对红。
+- **README 的"当前状态"三处数字按本轮实测改正**（细节见 V12 §14.9 末条）：门禁 315 → **336 项**
+  （`qx_v12r4_readme/arch.log`、`arch2.log` 两次都是 `ARCH_EXIT=0`）；整树 58 段 / 768 passed →
+  **84 段 / 807 passed / 0 failed**（`qx_v12r4_close/workspace2.log`，`WS2_EXIT=0`），并补一句
+  "`--features sqlite` 那一段不在整树里、必须另跑"；`help` 的用法行按门禁自己的两个口径重数成
+  **52 行 / 去重 41 个入口名**。链路表四行同步补上本轮能力：回测行加 #102 旋钮单源与 R4-i 的
+  manifest 生产读者，Paper 行加 TX5 的"带订单写得出也读得回"，实盘行加 R4-b/R4-c 两条重连预算，
+  运行时行加 R4-a 停机生产者与 R4-h/A2/R4-g 的契约贯通；四条对应 limitation 一并进表。
+- 本轮**没有**接任何外部服务或凭据，`sandbox_tested` 全部维持 `false`：停机阶梯、两条重连预算与
+  契约贯通只在进程内与本机后端上证过。
+
+
+## Unreleased — V12 R1+R2+R3+D3：读侧不许把缺席念成数、契约版本真的认版本、一份 runtime 一个本金口径（2026-09-24）
+
+V12 §4 前四条 P0 的落地轮。前三轮（Q67/Q68/Q70/Q72）把"没算过的钱"从**写侧**赶了出去，
+本轮管的是另外三件同类的事：**读侧**仍然能把缺席念成一个合法值、账户快照的"版本校验"其实不会失败、
+同一份 runtime 里可以并存两个互不相等的账户本金而没人说一句话。
+收口记录（含 20 颗变异逐条对账、门禁量具本轮修掉的六类静默失效）见
+[docs/自研量化框架审计与重构方案-V12.md](docs/自研量化框架审计与重构方案-V12.md) §13。
+
+### Fixed（缺席就是缺席，版本必须会失败，本金只有一份）
+
+- **报告与 `status` 的读侧换成 `Option` 语义**（V12 §4.1 / R1）：`report` 与 `[Latest Backtest]`
+  原先用 `pointer(...).unwrap_or(0)` / `unwrap_or_default()` 渲染缺键，把 v1/v2 世代的产物念成
+  `fills=0 return_bps=0 final_equity_raw=0`。现在排版集中在唯一一处
+  `crates/qx-cli/src/report_readout.rs:96`（`report_readout_lines`）与 `:143`
+  （`latest_backtest_readout_lines`），缺键一律印 `absent`，而**声明过的 0 仍印 0** ——
+  两者必须在同一条断言里成对出现才算区分了"没数"与"数是零"。
+  多腿 `cost_bps` 在 `turnover_raw == 0` 时报"算不出"（没有分母），`i64` 越界不再夹到 `i64::MAX`。
+- **`report` 先报产物自己的世代**（`crates/qx-cli/src/report_readout.rs:68` `summary_generation_note`）：
+  `input` / `account` / `replay` 三块分别说清是"那一代还没这个块"（`not_declared_before_vN`）
+  还是"本世代缺这块"（`MISSING_IN_THIS_GENERATION`），不再用同一句"没声明"糊住两种事实。
+- **两个排队入口补做 A 股段闸门**（V12 §4.20 的漏项）：`api_service.rs`（`serve` 受理 Trading 命令）
+  与 `workers.rs`（`strategy-worker` 入队）原先只在提交路径上问过 §4.20 的检查，排队路径放行 A 股段
+  —— 订单形状在入队前就定死了，等到提交时再拒已经晚了。现在两处都调
+  `reject_ashare_rules_on_submit_path`。
+- **账户快照的"版本校验"现在真的会失败**（V12 §4.2 / R2）：`qx-protocol` 引入
+  `ACCOUNT_SNAPSHOT_SCHEMA_VERSION: u32 = 1`（`crates/qx-protocol/src/lib.rs:37`，与内嵌契约、仓库契约文件、Python 桥四处同号），
+  结构体入口（`validate()`，`crates/qx-protocol/src/lib.rs:198`）与字节入口（`from_json`，`crates/qx-protocol/src/lib.rs:451`）各有一道常量闸门。
+  改之前只看"顶层与 header 自不自洽"，所以一份两边都写 7 的快照进得来。
+  **§6 原文"缺 header 版本就拒"这一支被实测否证**：写侧本来就不在 header 里抄第二份版本号
+  （契约的 header `required` 里没有它，`to_json` 与 `FileSnapshotStore` 也不写），拒缺席等于让自家存储读不回来 ——
+  现口径是"缺席按顶层归一，声明了却读不出整数即拒"，边界钉在
+  `header_without_version_is_the_stored_shape_and_still_round_trips`。
+- **一份 runtime 只有一个账户本金口径**（V12 §4.4 / R3）：`strategy.initial_cash_raw`（回测）与
+  `worker.paper_initial_cash_raw`（paper）此前互不知情，使用者可以回测按 A、paper 按 B 再拿两边数字互相印证。
+  现在 `reject_split_account_principal()`（`backtests/account_base.rs:96`）在回测出口
+  （`account_base_from_config`，`:117`）与**两个 Paper 入账入口**（`venue_runtime/paper_submit.rs:55`、
+  `venue_runtime/paper_worker.rs:103`）三处都先拒，报错并列点出两侧名字与各自的数
+  （`strategy.initial_cash_raw=… vs worker[<id>]=…`）；两处等值时来源才改口成第四格
+  `strategy-initial-cash+paper-worker-cash`（`BACKTEST_ACCOUNT_BASE_BOTH_DECLARED_SOURCE`，`:21`），
+  孤立声明不许冒充"两处一致"，Paper 侧等值时另印一行 `[Paper · Account] 账户本金两处声明一致`。
+
+### Added（用例、门禁判据、棘轮范围）
+
+- **读侧用例 11 条**：`crates/qx-cli/tests/report_readout_honesty.rs`（5 条真子进程：v1 产物缺键印
+  `absent`、v4 声明过的 0 印 0、`status` 与 `report` 同一份排版、无产物要说没有产物、
+  复核结论 `input_verified=` 单列一格）+ `src/tests/report_readout.rs`（6 条排版单元）。
+- **本金单源用例 4 条**（`src/tests/account_principal_source.rs`）与命令行侧 2 条
+  （`crates/qx-cli/tests/backtest_account_base.rs`）；排队入口的 A 股闸门用例并进
+  `src/tests/ashare_submit_guard.rs`（现 7 条）。
+- **契约版本用例 5 条**（`crates/qx-protocol/src/tests.rs`，从 `lib.rs` 末尾搬家）：自洽高版本被拒、
+  假版本号（`"1"`/`true`/`null`/`0`/`-1`/`1.0`）被拒、缺席仍是存储常态、常量与契约同号、
+  **未来版本且本构建读不出的文档也必须先被版本闸门叫住**（最后一条把字节入口那道闸门的独有职责钉住）。
+- **门禁 293 → 315 项**（`tools/check_architecture.py` +435 行）：新增三个判据函数
+  `report_readout_honesty_check()`、`snapshot_contract_version_check()`、
+  `account_principal_single_source_check()`。每条新判据都配了一颗"摘掉它"的变异：
+  M1–M8 与 M10–M14 静态红且行为红，M9/M15–M20 注入的是测试代码/路径/行数本身，故 static-only。
+- **证据路径判据从"整行只有一个路径"收紧成"行首第一个 token 是路径就要存在"**：旧口径从不核对
+  "路径 + 一句说明"这类最好写的证据行，于是 D3 搬家后 7 处死路径留在 `maturity/capabilities.yaml` 里
+  而 315 项全绿。M20 专门注入这一类行，轮 7 实测 `ARCH_FAIL_LINES=1 / WANT_HITS=1 / OTHER_FAILS=0`。
+  台账同步补齐：R1/R2/R3 共 14 条证据行、撤销一条已被 R3 闭合的 limitation
+  （`backtest_initial_cash_and_paper_worker_cash_never_meet`）、新增 #82 那条未跟踪产物限制。
+- **500 行棘轮扩到 `crates/*/tests/**/*.rs`（D3）并当场把 4 个超线文件搬家**：
+  `multi_leg_attribution` 792 → 3 文件（最长 388）、`ledger` 1031 → 4 文件（最长 446）、
+  `venue_report_contract` 943 → 3 文件（最长 467）、`snapshot_single_source` 669 → 3 文件（最长 333）；
+  扩口径后登记表里 `crates/*/tests/` 条目为 0。`workers.rs` 里与 worker 循环无关的"闭合 Bar 指纹"
+  那一簇搬进 `src/strategy_live_state.rs`（137 行）。用例计数判据改为按**目录拼接**取数
+  （`case_source()`），搬家不再让任何一条"某个用例必须在位"的判据失效。
+- **`CLI_TEST_FLOOR` 191 → 208 → 210**、`DISK_CLI_TESTS=210`、`DISK_EXEC_TESTS=25`。
+
+### 验收（`/tmp/qx_v12_gate7.log`，2026-09-24 01:46:20–01:53:07 +08:00；567 行）
+
+轮 6（01:16–01:23）是修好量具后的第一次有效测量，本轮把台账、地板与证据路径判据都改完之后
+用**同一套脚本重跑一轮**作为收口口径 —— 下面每个数字都在这份日志里 grep 得到。
+
+- 前置门槛：`cargo check --workspace --all-targets` `STAGE1_CHECK_EXIT=0`、`cargo fmt --all --check`
+  `STAGE3_FMT_EXIT=0`、`clippy -D warnings` 四家 `WARNLINES=0`、20 颗变异锚点 `PREFLIGHT_BAD=0`。
+- 变异反向验证：`grep -c 'MUT_STATE' = 20`，且 20 行状态全是 `= red`（`green`/`unexpected` 各 0），
+  每颗 `ARCH_FAIL_LINES=1 / OTHER_FAILS=0`；`RESTORE_EXACT` 20 行、`RESTORE_DRIFT` 0 行、
+  `RESIDUE_FILES=0 none`、`RESIDUE_MUTATIONS=none`、`PRISTINE_OK final`。
+  行为口径 13 颗全红（M1/M2 各 `6 passed; 1 failed`，M3 `4;2`，M4 两口径 `4;1` 与 `5;1`，
+  M5/M6 各 `8;1`，M7 `7;2`，M8 两段 `2;7` 与 `8;2`，M10 `6;1`，M11/M12 各 `3;1`+`6;1`，
+  M13 `3;1`，M14 `2;2`）；其余 7 颗（M9、M15–M20）注入的是测试代码/路径/行数本身，static-only。
+- 整树（带 `QX_PYTHON`）：`WS_SUITES=58 / WS_OK_SUITES=58 / WS_PASSED_TOTAL=768 / WS_FAILED_TOTAL=0`、
+  `STAGE8_WS_EXIT=0`；整树（不带 `QX_PYTHON`）：`WS_NOPY_SUITES=78 / WS_NOPY_OK_SUITES=77 /
+  WS_NOPY_FAILED_TOTAL=2`（`STAGE8_WS_NOPY_EXIT=101`），两条失败点名
+  `rust_invokes_python_multi_intent_strategy_contract` 与 `…strategy_jsonl_worker_through_versioned_contract`
+  （同一段 `153 passed; 2 failed`）—— §4.19 那条"Python 桥用例需要解释器"从断言变成实测。
+- 门禁项数 `BASELINE_ARCH=315 → FINAL_ARCH_TOTAL=315`（`STAGE9_ARCH_EXIT=0`）；
+  `DISK_CLI_TESTS=210`、`DISK_EXEC_TESTS=25`。
+- 静态 `#[test]` 776 条（144 个文件；其中包内 `crates/<pkg>/tests/` 157 条 + `src/tests/` 173 条）
+  − 执行 768 = **8**，与 V12 §12 R0 的归因表（5 条 `nats` + 3 条 `postgres`）逐条对上。
+- 行数棘轮 `BUDGET_DIFF_LINES=0`（快照没改写任何预算）、`FINAL_BUDGET_SUM=37 files 46160 lines`、
+  `TESTS_DIR_REGISTERED=0`；被跟踪的 `deploy` 产物被改写 `MODIFIED_DEPLOY=0` 项，
+  但跑完仍有 **72 条未跟踪产物**（任务 #82 的根因，已作为 limitation 记进能力矩阵）。
+- **门禁量具本轮修掉六类静默失效**（CRLF 污染 `mapfile`、heredoc 里的管道解析、`env -u` 被
+  `~/.local/bin/env` 遮蔽、grep 不存在的键、**`-- <filter> --no-fail-fast` 被 libtest 拒认而基线 spec
+  整轮空转**、**证据路径判据只核对"整行只有一个路径"的行**）。纪律随本轮钉下：
+  **退出码与"0 失败"都不构成测量发生的证据，必须同时取到该跑必然产生的标记行**。
+- 本轮**没有**接任何外部服务或凭据，`sandbox_tested` 全部维持 `false`。
 
 ## Unreleased — V11 合流轮（两次）：第一次契约对自家写侧说了谎，第二次冲突的全是文档口径（2026-09-23）
 
@@ -951,16 +1647,16 @@ T 轮落进本地之后 `git fetch` 才看到 `origin/main` 上多了 Q70/Q71 �
 - **门禁的一条失败文案停在旧口径**：`/account/balances` 那一项的条件里 `equity_raw` 是第三条，文案只点名
   available/margin——判据对、文案错，一样会把人往错的方向上带（M5 顺手查出来的）。
 - 合流余下的三处编译错与一处夹具分叉：T3 的两份夹具赋值补 `Some(...)`（`snapshot_schema_contract.rs:279`、 <!-- 史 -->
-  `snapshot_single_source.rs:679`），`api_snapshot_money_fields.rs:249` 改调 `src/tests/mod.rs` 里那份共享
+  `snapshot_single_source.rs:679` <!-- 史 -->），`api_snapshot_money_fields.rs:249` 改调 `src/tests/mod.rs` 里那份共享
   paper 夹具 `paper_runtime_config`。
 
 ### 合流时塌掉的那一份夹具
 
 - 上游那份文件顶部的 `paper_runtime`（`origin/main` 版 `:13`）与本仓 `crates/qx-cli/src/tests/mod.rs:192` 的
   `paper_runtime_config` 是同一份配置的两份手写字面量——逐行比过，除函数名与 `pub(crate)` 外完全相同；
-  `seed_paper_fill_with_fee` 在 `:31` 与 `mod.rs:209` 也是同一对。合流取共享那一份，上游新增用例的调用点改名到
+  `seed_paper_fill_with_fee` 在 `:31` 与 `crates/qx-cli/src/tests/mod.rs:209` 也是同一对。合流取共享那一份，上游新增用例的调用点改名到
   `paper_runtime_config`（`api_snapshot_money_fields.rs:249`）。合并后"同一张 paper 模板 + 临时 data_dir"这一族
-  只剩 `mod.rs` 一处公共夹具；`ashare_submit_guard.rs:22` 那个同名 helper 读的是同一张模板但额外写那三个
+  只剩 `mod.rs` 一处公共夹具；`ashare_submit_guard.rs:26` 那个同名 helper 读的是同一张模板但额外写那三个
   A 股键、返回的是路径对，它是这一族的第三个成员，本轮不动它（动它就是又一次夹具收敛）。
 
 ### 第二次合流（Q72）：代码零重叠，四处口径要判
@@ -969,10 +1665,10 @@ Q72 动的是 `crates/qx-cli/src/backtests/*` 与新增的 `account_base.rs`，�
 全是文档与门禁。判断逐条落在 V11 §39.5，这里只记结论：
 
 - **上游那份收口指南仍写 `--fill-tier` 有 `l2`/`l3` 两档订单簿内核**，合流后的代码只认 `l1`/`l2`
-  （`cli_help.rs:67-68`，R11 的收口）。照抄上游就是把一条已修的缺陷重新写成现状：取本仓那份，
+  （`cli_help.rs:130-131`，R11 的收口）。照抄上游就是把一条已修的缺陷重新写成现状：取本仓那份，
   只把"多腿链当场拒收 `strategy.initial_cash_raw`"折进同一格。
 - **README 的 blessed 摘要那格两侧都漂**：实测被 git 跟踪的 16 份 `*.summary.json` 全停在
-  `schema_version: 1` 且缺 `input`/`account` 两块，当前代码写 4（`backtests/artifacts.rs:301`）——
+  `schema_version: 1` 且缺 `input`/`account` 两块，当前代码写 4（`backtests/artifacts.rs:346`）——
   本仓那句"（无 `input` 块）"已经少说了一块。
 - **上游 §34.5 的"只报不修"清单回读过现状**：`multi_builtin.rs` 498 行 / 线 500 行属实，回测与 paper
   两格本金互不知情属实（`strategy_schema.rs:133` 的注释自己就写着"回测读不到它"），两条原样留在 README。
@@ -1006,7 +1702,7 @@ Q72 动的是 `crates/qx-cli/src/backtests/*` 与新增的 `account_base.rs`，�
 ### Fixed（本金从三处字面量变成一格可声明、四处可见）
 
 - **默认本金只剩一处具名常数**：`Money::from_i64(100_000)` 在生产代码里原有 **6 次**
-  （`backtests/mod.rs:49` 那个从没被人读过的装配默认、`depth.rs:80/81/144/157`、
+  （`backtests/mod.rs:49` 那个从没被人读过的装配默认、`depth.rs:80/81/148/157`、
   `single_strategy.rs:58`，另加 `ecosystem_smoke.rs` 的自检副本）。现在它是
   `crates/qx-cli/src/backtests/account_base.rs:12` 的 `DEFAULT_BACKTEST_INITIAL_CASH`，
   门禁把"全 qx-cli 生产代码扫不到 `from_i64(100_000)` 字面量"写成判据（跳过 `tests` 目录与
@@ -1014,7 +1710,7 @@ Q72 动的是 `crates/qx-cli/src/backtests/*` 与新增的 `account_base.rs`，�
 - **本金改成装配的必答题**：`BarBacktestAssembly::new` 多一个 `initial_cash: Money` 入参
   （`backtests/mod.rs:48`），字段去掉 `pub(crate)`（`:16`）—— 新链漏答过不了编译，答完也不许事后改写，
   `single_strategy.rs` 那行 `assembly.initial_cash = initial_cash;` 随之删除。
-- **非正声明当场报错而不是回落默认**（`account_base.rs:31-48`）：0 元账户上的 `return_bps=0`
+- **非正声明当场报错而不是回落默认**（`account_base.rs:37-48`）：0 元账户上的 `return_bps=0`
   是一句假话，报错文案格出键名、值与理由。
 - **多腿链当场拒收那一格单账户数字**（`leg_funding.rs:73-85` 的 `reject_configured_initial_cash`，
   `multi_builtin.rs:44` 调用）：两条腿的本金各按本腿行情定资，一份数字定不了两条腿，收下再静默丢掉
@@ -1027,11 +1723,11 @@ Q72 动的是 `crates/qx-cli/src/backtests/*` 与新增的 `account_base.rs`，�
 
 ### Added（来源可见、摘要落盘、用例与门禁）
 
-- **stdout 三行本金播报**：`[Strategy · Account]`（`single_strategy.rs:215-216`）、
+- **stdout 三行本金播报**：`[Strategy · Account]`（`single_strategy.rs:222-216`）、
   `[Builtin · Account]`（`:371-372`，这条链不落摘要，stdout 是本金对使用者唯一的出口）、
-  `[Depth · Account]`（`depth.rs:228-229`），排版函数只有一处。来源分三种且可区分：
+  `[Depth · Account]`（`depth.rs:232-233`），排版函数只有一处。来源分三种且可区分：
   `builtin-default` / `strategy-initial-cash` / `multi-leg-funding-rule` —— "没配"与"配了同一个数"必须分得开。
-- **摘要升到 schema v4**（`artifacts.rs:301`）：`BacktestArtifactsInput` 多一个必填字段
+- **摘要升到 schema v4**（`artifacts.rs:346`）：`BacktestArtifactsInput` 多一个必填字段
   `account_base`（`:223`，新增落摘要的链必须答它），`:305-308` 落 `account` 块两格
   （期初本金与来源，定点整数按仓库惯例写成字符串）。
 - **配置面那一格**（`crates/qx-runtime/src/runtime_config/strategy_schema.rs:129-137`）：
@@ -1080,7 +1776,7 @@ CI 会不会响"。四项共 **33 颗变异逐颗验证**，每颗跑完按字�
   此前只核对"顶层与表内版本号是否自相矛盾"，一份按别的
   版本自洽封存的文档会被当 v1 解出来，而对面 Python `load_account_snapshot` 对同一份产物直接抛错；现在补
   `ACCOUNT_SNAPSHOT_SCHEMA_VERSION` 闸门，Python 侧必填集合同步补 `equity_raw`（必填说的是键必须在，值可以是 null）。
-- **T4（S12）`reconcile` 的默认 worker 名是字面量**：`cli_args.rs:269` 是全仓唯一一个可选 `worker_id`，省略时
+- **T4（S12）`reconcile` 的默认 worker 名是字面量**：`cli_args.rs:274` 是全仓唯一一个可选 `worker_id`，省略时
   HEAD 回落 `"reconciler-main"`，而 CCXT 那条链的 reconciler 实际叫 `ccxt-reconciler-main`。两个方向都撒谎：
   名字合法改动的拓扑上报"找不到 worker: reconciler-main"（把"没解析"说成"不存在"），恰好有个同名 execution
   worker 时会真跑一次下单执行。现在按 **role + Venue 绑定**解析（与 S1 同一判据），零个或多个候选都报错并列出
@@ -1256,7 +1952,7 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
   `multi_leg_leg_cash` 各按**本腿行情帧的最高价**定资，天然不等 —— 仓库自带的那对现货夹具按 `quantity=100`
   跑，主腿本金正好是对冲腿的 **21.0 倍**，两腿分别 -197bp 与 -7bp，平均念 **-102bp**，按钱算实际是
   **-189bp**：这个组合的真实亏损被念轻了 87bp，接近一半。现在口径只有一处
-  `Σ(期末权益 − 期初本金) × 10000 ÷ Σ期初本金`（`crates/qx-cli/src/backtests/leg_funding.rs:161-185`，
+  `Σ(期末权益 − 期初本金) × 10000 ÷ Σ期初本金`（`crates/qx-cli/src/backtests/leg_funding.rs:166-190`，
   与定资同处一文件，"权重"因此不再有第二个答案）。
 - **算不出时报错而不是折成 0**：合计本金 ≤ 0、`× 10000` 越界、结果超出 `i64` 三种情形一律 `Err`。
   印 0 会把"这个组合根本没法度量"伪装成"这单套利不赚不赔"，与 `multi_leg_leg_cash` 撤掉静默截断同一条纪律。
@@ -1272,11 +1968,11 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
   （`multi_leg_combined_return_weights_each_leg_by_its_own_capital`）：本金 3:1、两腿 +100bp/+1000bp 时必须
   给 **325bp** 而不是等权的 550bp；本金相等时两口径重合（排除"只是换了个说法"）；亏 1000bp 的主腿压过
   持平的对冲腿给 -750bp 而不是 -500bp；全零本金必须 `Err` 且文案含"本金合计必须为正"。
-- `crates/qx-cli/tests/multi_leg_attribution.rs:726-792`
+- `crates/qx-cli/tests/multi_leg_attribution/margin_and_return.rs:297-363`
   （`combined_return_pools_both_legs_by_capital_instead_of_averaging_bps`）：跑真实 CLI，用产物自己声明的
   `accounts/*_initial_cash` 与 `accounts/*_final_equity_raw` 复算钱口径，要求 stdout 与
   `totals.combined_return_bps` 都等于它，并**另加一条 `!=` 两腿平均** —— 少了这条，用例在旧实现下也是绿的。
-- **产物补齐复算所需的两端**：`multi_builtin.rs:445-446` 把两条腿的期末权益写进 `accounts`（期初本金本来就在
+- **产物补齐复算所需的两端**：`multi_builtin.rs:443-444` 把两条腿的期末权益写进 `accounts`（期初本金本来就在
   同一块，缺一端别人复算不出来），`:459` 落 `totals.combined_return_bps`。
 - `tools/check_architecture.py` 门禁 280 → **283 项**（四缩进 `check(` 201 → 204），
   `multi_leg_honesty_check()` 十二条长到十五条：调用点只许出现那一份实现且 `i64::from(primary_report.return_bps)`
@@ -1290,7 +1986,7 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
 - `STAGE1_CHECK_EXIT=0`、`STAGE3_FMT_EXIT=0`、`STAGE4_CLIPPY[qx-cli]_EXIT=0`；`SNAPSHOT_EXIT=0` 且
   `BUDGET_DIFF_LINES=0`；基线三组用例 11 / 1 / 7 条通过，`0 failed`；
 - 四条变异全部 `MUT_STATE=red`、`ARCH_FAIL_LINES=1`、`OTHER_FAILS=0`、`PASS_LINES=282`（每条只点亮被测那一项），
-  四次还原全 `RESTORE_EXACT`。M1（调用点退回平均）红在 `multi_leg_attribution.rs:774`，M2（`Ok(0)`）红在
+  四次还原全 `RESTORE_EXACT`。M1（调用点退回平均）红在 `multi_leg_attribution.rs:774` <!-- 史 -->，M2（`Ok(0)`）红在
   `execution_and_multi_leg.rs:326`，M3（产物缺两腿期末权益）红在 `:756` 的缺键 panic，M4（入口重新自己折 <!-- 史 -->
   合计）只有结构项红 —— 算的是同一份五元组，行为用例分不出来，本轮如实记为"静态防守"而未补假用例；
 - `QX_PYTHON` 指向 venv 的整树 `STAGE7_WS_EXIT=0`、`WS_OK_LINES=76`、合计 `736 passed / 0 failed`；
@@ -1304,7 +2000,7 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
 - **rustfmt 按 76 字符把元组实参拆成 4 行**，两处共 8 行的增量正好把入口文件顶过 500 行线。修法不是压注释，
   而是先 `let primary_equity = primary_report.final_equity();` 再传，且这两个绑定在产物侧复用 —— 调用点与
   `accounts` 读的是同一个值。
-- **零成交那档新旧口径恰好重合**：`crates/qx-cli/tests/builtin_signal_from_config.rs:433` 要求
+- **零成交那档新旧口径恰好重合**：`crates/qx-cli/tests/builtin_signal_from_config.rs:447` 要求
   `combined_return_bps == "0"`（远档 `fills=0`，两腿权益都等于各自本金）。它在旧实现下也成立，因此**不构成
   新口径的证据**；加权与平均的分叉必须由本金不等的真实夹具来证明。
 
@@ -1315,7 +2011,7 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
 
 ### Fixed（最后一个不可区分的钱标量）
 
-- **读模型不再替账户宣称"压在持仓上的那一腿不值钱"**：`crates/qx-cli/src/api_service.rs:268-272` 此前写
+- **读模型不再替账户宣称"压在持仓上的那一腿不值钱"**：`crates/qx-cli/src/api_service.rs:268-290` 此前写
   `equity_for(...).unwrap_or_else(|| cash_for(...))`。内核 `Ledger::equity_for`
   （`crates/qx-core/src/ledger/query.rs:156-203`）的 `None` 含义明确 —— 有任意一条持仓拿不到标记价、或估值
   溢出。折成剩余现金之后，一个只有成交、没有行情事实的账户会把现金长期报成权益，且哈希/稳定 JSON/线格式/
@@ -1494,24 +2190,24 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
 ### Fixed（交易链路：持仓行的三个钱字段与方向）
 
 - **内核持仓观察的 `unrealized_pnl` / `initial_margin` / `maintenance_margin` 改 `Option<Money>`**
-  （`crates/qx-core/src/event.rs:187-191`，各带 `#[serde(default)]` 让老日志缺键读成未报）：改前三者是裸
+  （`crates/qx-core/src/event.rs:176-181`，各带 `#[serde(default)]` 让老日志缺键读成未报）：改前三者是裸
   `Money`，摘要里 `h.write_i128(position.unrealized_pnl.raw())`（HEAD `:451-453`）——"这个交易所不报维护保证金"
   与"报了零"在类型、在 `Event::digest`、在线格式上是同一份状态。现在摘要逐字段先写存在性标记再写值（`:463-466`）。
 - **线格式行的两列钱改 `Option<i128>`，`Default` 不再兜 0**（`crates/qx-protocol/src/wire.rs:34-35`、`:46-47`）：
   任何 `..PositionSnapshot::default()` 起步的构造不再自动"报一个零"。**价格列刻意保持不变** —— 定点价格里 `0`
   不是合法值，钱没有这个性质；这条区分写进字段文档并由门禁钉住。
-- **读模型的 Ledger 回退行不再替交易所报数**（`crates/qx-cli/src/api_service.rs:350-354`）：改前是写死的
+- **读模型的 Ledger 回退行不再替交易所报数**（`crates/qx-cli/src/api_service.rs:350-372`）：改前是写死的
   `unrealized_pnl_raw: 0, margin_raw: 0`（HEAD `:332-333`），而 Ledger 里没有这两个量（要按冻结的 market spec
   逐标的算，读侧没有规格来源）——一个上涨 5% 的现货仓位会长期报着"没有浮亏"。
 - **CCXT 持仓方向不再靠猜**（`crates/qx-cli/src/ccxt_facts.rs:110-122`）：改前
   `.unwrap_or("long")`（HEAD `:109`），而上游连接器（`python/qianxing_ccxt/__init__.py:1240`）在交易所不给方向时
   印的是字面量 `"unknown"` —— HEAD 的实际行为是数量按**正数**入账、`position_side` 记 `"unknown"`，同一份观察里
   数量与方向自相矛盾。现在只接受 `long`/`short`，其余连 symbol 带"读到什么"一起拒绝；零数量行仍在闸门**之前**跳过。
-- **CCXT 三项钱读成"没报"而不是零**（`:146-154`）：改前缺键与 `null` 一律 `Ok(Money::ZERO)`（HEAD `:131-140`），
-  即生产方说"没报"、消费方改口说"零"。守卫侧（`crates/qx-runtime/src/pipeline.rs:1649-1657`）改成"报了才判"，
+- **CCXT 三项钱读成"没报"而不是零**（`crates/qx-cli/src/ccxt_facts.rs:146-167`）：改前缺键与 `null` 一律 `Ok(Money::ZERO)`（HEAD `:131-140`），
+  即生产方说"没报"、消费方改口说"零"。守卫侧（`crates/qx-runtime/src/pipeline.rs:1623-1636`）改成"报了才判"，
   不报保证金的交易所不会被判非法回报。
-- **折算与哈希收口到共用写法**：行哈希与账户标量共用 `write_optional_money`（定义 `crates/qx-protocol/src/lib.rs:267`、两处调用
-  `:274` / `:319`），`null` 的写法全仓唯一（`:279` `money_json`），线格式没有的那一列保证金折算回 `None` 而不是 0。
+- **折算与哈希收口到共用写法**：行哈希与账户标量共用 `write_optional_money`（定义 `crates/qx-protocol/src/lib.rs:270`、两处调用
+  `:277` / `:322`），`null` 的写法全仓唯一（`:282` `money_json`），线格式没有的那一列保证金折算回 `None` 而不是 0。
 
 ### Added（用例与门禁）
 
@@ -1520,7 +2216,7 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
   （回退行缺席、venue 报的行保留两态）、`event.rs` 的摘要两态用例、`snapshot_single_source.rs` 加 3 条
   （折算两态、行两态逐个字段跑哈希/seal/两种线格式往返/增量双向、`Default` 不报钱）；`pipeline.rs` 落盘回读用例
   加第二行，让"报了零"与"没报"同时出现在一份快照里并要求回读后不收敛。
-- `tools/check_architecture.py:2125` `position_money_honesty_check()` 13 项（静态门禁 256 → **269**）：内核
+- `tools/check_architecture.py:3029` `position_money_honesty_check()` 13 项（静态门禁 256 → **269**）：内核
   Option 形状、摘要标记唯一、行字段形状**且价格列保持 0 哨兵**、折算与槽位各只有一处写法、全仓逐行禁止给这五个
   字段兜 `0`/`Money::ZERO`、方向闸门禁抄列表、跳过点必须先于闸门、守卫的 `is_some_and` 序列、八处用例按
   `fn NAME(` 取证。`CLI_TEST_FLOOR` 173 → **178**；行数棘轮重登记 `event.rs` 674→749、
@@ -1550,7 +2246,7 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
 - 持仓行的浮亏仍然**没有生产者**（只是不再撒谎）：要先把冻结的 market spec 送到读侧。账户级五个字段同样仍无生产者。
 - `crates/qx-cli/src/ccxt_facts.rs:195-198` 资金费的 `timestamp_ms` 缺失仍回落 `0`（本轮只收了持仓侧）。
 - ~~CCXT 对账的两半仍不相交（in-loop 发现只进事实流、`open_order_issues` 只进报告，worker 在已有单子"结果未知"时
-  仍标 `Ready`）；`binance_reconcile.rs:154-156` 三个覆盖度计数恒 0~~ —— 两条均已由同日的 Q69 关闭（见顶部与 §31）。
+  仍标 `Ready`）；`binance_reconcile.rs:156-158` 三个覆盖度计数恒 0~~ —— 两条均已由同日的 Q69 关闭（见顶部与 §31）。
 
 ## Unreleased — V11 Q67：账户快照不再把"没算过的钱"印成 0（2026-09-22）
 
@@ -1559,20 +2255,20 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
 
 ### Fixed（交易链路：七个汇总钱字段里六个没有生产者）
 
-- **`available_raw` 不再是 `equity_raw` 的副本**：改前 `crates/qx-cli/src/api_service.rs:273` 就是
+- **`available_raw` 不再是 `equity_raw` 的副本**：改前 `crates/qx-cli/src/api_service.rs:291` 就是
   `snapshot.available_raw = snapshot.equity_raw;` —— 把已经压在持仓上的那段钱说成可自由花掉。现在取本条快照记账
-  的那一本结算账簿现金 `cash_for(account_id, settlement_currency())`（`:276`）。
+  的那一本结算账簿现金 `cash_for(account_id, settlement_currency())`（`:383`）。
 - **`fees_raw` 与同一条快照的逐笔成交同源**：此前账户级恒 0，而同一份 JSON 的 `fills[].fee_raw` 逐笔是真数。
-  现在由这些 `fee_raw` 以 `checked_add` 加出（`:296-302`），**合计溢出即拒绝发布这份快照**而不是印一个回绕过的
+  现在由这些 `fee_raw` 以 `checked_add` 加出（`:403-409`），**合计溢出即拒绝发布这份快照**而不是印一个回绕过的
   数（用例把账户现金精确压到 `i128::MIN`，证明溢出只可能出现在读模型这一侧）。
 - **算不出来的钱在协议上必须能缺席**：`AccountSnapshot` 的七个汇总钱字段由裸 `i128` 改 `Option<i128>`（权益仍
   是恒算得出的 `i128`）。改前 `frozen_raw` 在 `git grep` 下只命中 `crates/qx-protocol/src/lib.rs` 一个文件
   ——生产者数量为零，每条对外快照都在宣布"这个账户没有冻结资金"。`margin`/`realized_pnl`/`unrealized_pnl`/
   `funding` 同样只有读法。现在 `new()` 一律 `None`，稳定 JSON 与线格式印 `null`，`/account/balances`
-  （`crates/qx-api/src/lib.rs:1459-1460`）随之从 `map(…)` 改 `and_then(…)`。
+  （`crates/qx-api/src/lib.rs:1514-1515`）随之从 `map(…)` 改 `and_then(…)`。
 - **`None` 与 `Some(0)` 是两份状态**：`state_hash` / `scalar_hash` 共用的那一次标量写入先写存在性标记
-  `write_u64(u64::from(value.is_some()))` 再写数值（`crates/qx-protocol/src/lib.rs:268`），八个钱的取法收敛到
-  `scalar_money_raw()`（`:251`）唯一一处，稳定 JSON 槽位只由 `scalar_json_values()`（`:286`）填。未算状态再也
+  `write_u64(u64::from(value.is_some()))` 再写数值（`crates/qx-protocol/src/lib.rs:271`），八个钱的取法收敛到
+  `scalar_money_raw()`（`:254`）唯一一处，稳定 JSON 槽位只由 `scalar_json_values()`（`:289`）填。未算状态再也
   改不出一个"看起来算过"的 0。
 
 ### Added（用例与门禁）
@@ -1582,7 +2278,7 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
 - `crates/qx-protocol/tests/snapshot_single_source.rs` 新增 `uncomputed_money_is_not_the_same_state_as_computed_zero`：
   七个字段逐个跑"哈希不同 → seal/validate 自洽 → 稳定 JSON `null` vs `0` → 两种线格式往返保住区分 →
   `diff`+`apply` 两个方向都是一次真实改动"。`qx-api` 新增端点用例锁 `margin_raw: null`。
-- `tools/check_architecture.py:2322` `snapshot_money_honesty_check()` 11 项（静态门禁 245 → **256**）：Option
+- `tools/check_architecture.py:3847` `snapshot_money_honesty_check()` 11 项（静态门禁 245 → **256**）：Option
   形状、取法唯一、两处哈希共用、存在性标记、槽位唯一写法、"权益副本"禁抄（含改类型后**仍可写出**的四种形状）、
   available 取结算现金、费用 checked 加总、五个未算字段在任何产码里都不得出现赋值写法、端点两处 `and_then`、
   六条用例按 `fn NAME(` 取证。`CLI_TEST_FLOOR` 169 → **173**；`maturity/line_budgets.yaml` 重登记
@@ -1603,13 +2299,13 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
 
 ### Known issues（本轮实测钉出的，交给下一轮）
 
-- **同一份 JSON 的持仓行仍犯同一个错**：`api_service.rs:340-351` 走 Ledger 回退时写死
+- **同一份 JSON 的持仓行仍犯同一个错**：`api_service.rs:358-351` 走 Ledger 回退时写死
   `unrealized_pnl_raw: 0, margin_raw: 0`，协议上这两项也是裸 `i128`（TX2 下半截）。
 - **CCXT 事实折算把缺字段读成零/多头**：`crates/qx-cli/src/ccxt_facts.rs:106-110` 缺 `side` 默认 `"long"`、
   `:131-140` 缺失或 `null` 的三项保证金/盈亏一律 `Money::ZERO`、`:181-184` 缺时间戳回落 0。
 - ~~**CCXT 对账的两半不相交**：`ccxt_reconcile_worker.rs:249`/`:283` 的发现只进事实流（把订单推到
   `OrderStatus::Unknown`），不进报告也不参与健康判定 → 已有单子"结果未知"时 worker 仍标 `Ready`；
-  `open_order_issues` 反之只进报告。`binance_reconcile.rs:154-156` 三个覆盖度计数恒 0~~ —— 已由同日的 Q69 关闭（见顶部与 §31）。
+  `open_order_issues` 反之只进报告。`binance_reconcile.rs:156-158` 三个覆盖度计数恒 0~~ —— 已由同日的 Q69 关闭（见顶部与 §31）。
 
 ## Unreleased — V11 Q66：回测产物声明"跑的是哪一份输入"，这句话由别人重算得出（2026-09-22）
 
@@ -1651,7 +2347,7 @@ Q1b（可复现性绑定）的第一批，不在 V11 §6 排期内。收口记�
 
 - 产物文件名只由 `run_id` + `manifest.digest()` 决定，而 `digest()` 覆盖输入与模型、**不含摘要自身的
   schema 版本**。因此"只改摘要形状"的变更会让同一条示例命令在原地撞旧文件：本轮 STAGE8 三条集成用例
-  （`builtin_signal_from_config.rs:292`、`fast_backtest_manifest.rs:65` / `:96`）就是如此，报"同一回测回测摘要
+  （`builtin_signal_from_config.rs:299`、`fast_backtest_manifest.rs:66` / `:103`）就是如此，报"同一回测回测摘要
   路径已存在不同内容"。把 12 份改动前的本地 v2 产物移到 `%TEMP%\qx_q66_stale_v2_artifacts\` 复跑后
   `716 passed; 0 failed`。闸门本身没做错，缺的是一次真正的决策：摘要世代进文件名，或给示例集一条重 bless 命令。
 - 被跟踪的 16 份示例摘要仍停在 `schema_version: 1`、`input` 块 0 份，当前代码在那些路径上不再落盘
@@ -1677,8 +2373,8 @@ Q1b（可复现性绑定）的第一批，不在 V11 §6 排期内。收口记�
 - **来源只在 loader 问一次**：`backtests/mod.rs:84` `market_spec_with_margin` 返回
   `MarketSpecLoad { spec, margin, source }`（结构体住在 `market_spec.rs:34`），`:108` 是全仓唯一一次
   `market_spec_source_label` 取用，"没给规格"那一档由 loader 独占。策略链与深度链以字段简写原样写进
-  `RunManifestIdentity`（`single_strategy.rs:169`、`depth.rs:182`），不落摘要的内置链把它印成
-  `[Builtin · Execution] … spec_source={}`（`single_strategy.rs:431`）。多腿链 `source: _`：一条命令两份帧、
+  `RunManifestIdentity`（`single_strategy.rs:176`、`depth.rs:186`），不落摘要的内置链把它印成
+  `[Builtin · Execution] … spec_source={}`（`single_strategy.rs:440`）。多腿链 `source: _`：一条命令两份帧、
   两条腿各一规格路径，产物上没有"这一份规格"可标，本轮不给它编一个。
 - **示例集为什么看不出这条缺陷（如实记录）**：`deploy/data` 下带这个字段的 21 份 run.json 逐份读过 —— 被跟踪的
   18 份里 3 份 `ccxt-market-spec-v1` 全部来自真 CCXT 形状的 A 股规格（换口径前后同一标签）、15 份
@@ -1727,7 +2423,7 @@ Q1b（可复现性绑定）的第一批，不在 V11 §6 排期内。收口记�
 - **闸门排在结果出口**：`qx-xingban` 两条链的 `run()` 各以
   `ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;` 收尾（`backtest.rs:1049`、
   `orderbook_backtest.rs:742`），重放不过就不返回报告；`qx-cli` 落盘侧再问一次且问在写任何工件之前
-  （`backtests/artifacts.rs:107`，首个写文件在 :164），另加 `replay.log_digest != result_hash` 即拒。
+  （`backtests/artifacts.rs:107`，首个写文件在 :200），另加 `replay.log_digest != result_hash` 即拒。
 - **摘要形状换成可核对的三个事实**：`schema_version` 升到 2，`replay_hash` 键删除，代之以
   `"replay": { log_digest, events, ledger_entries, run_ledger_entries }`；`qx-cli report` 打印
   `replay_log_digest=` 与 `replay_events=` / `replay_ledger_entries=n/m`，读者能自己数而不必接受一个哈希。
@@ -1922,11 +2618,11 @@ MQ62e（内核整本 `validate`）、MQ62h（入金槽位）、GA62e（`.ok();` 
 
 ### Fixed（回测链路：涨跌停的锚锚错了对象）
 
-- **`AshareRuleConfig::previous_close` 拿"上一根 Bar"当昨收**（HEAD 版 `ashare/trading.rs:28-35`：
+- **`AshareRuleConfig::previous_close` 拿"上一根 Bar"当昨收**（HEAD 版 `ashare/trading.rs:35-42`：
   覆盖表 miss 就 `index.checked_sub(1)`）。日线数据上上一根恰好是昨天，缺陷因此不可见；
   分钟线上进来的是同一个交易日里 5 分钟前的收价 —— ±10% 的板被窄化成"最近 5 分钟 ±10%"，
   于是**涨停封死的那根分钟线照样买入成交**、跌停封死的照样卖出。
-- **改后的锚（`ashare/trading.rs:40-51`）**：`previous_close_raw` 仍按当前 Bar 的 ts 优先
+- **改后的锚（`ashare/trading.rs:47-51`）**：`previous_close_raw` 仍按当前 Bar 的 ts 优先
   （除权除息日的昨收只能由数据侧给，仓库内不产生该映射 —— `deploy/qianxing.ashare.rules.json:17`
   里它就是空的），否则向前扫到第一根跨日的 Bar，即上一交易日的**最后一根**（`.rev()` +
   `Self::day_key(bar.ts) != day`）；整个历史里没有上一交易日时返回 `None`，`blocks_fill` 因此不判板 ——
@@ -1963,7 +2659,7 @@ MQ62e（内核整本 `validate`）、MQ62h（入金槽位）、GA62e（`.ok();` 
 - 静态门禁：`STAGE5_ARCH_EXIT=0`、`架构不变量自检全部通过 ✓（173 项）`、`STAGE5_ARCH_FAIL_LINES=0`、
   `STAGE5_ARCH_PASS_LINES=173`。
 - 变异成对（cargo 级）：MQ60a（锚退回上一根 Bar）红在集成 `ashare_limit_anchor.rs:143` 与单元
-  `ashare/tests.rs:361`，`1 passed; 1 failed` / `0 passed; 1 failed`；MQ60b（覆盖表失效）
+  `ashare/tests.rs:432`，`1 passed; 1 failed` / `0 passed; 1 failed`；MQ60b（覆盖表失效）
   红在**另一条**集成用例 `:163` 与单元 `:377`；MQ60c（去掉 `.rev()`，锚落到整段历史的第一根）
   红在 `:143` 与单元 `:362`。三处还原后各自回到 `2 passed; 0 failed` 与 `1 passed; 0 failed`。
 - 变异成对（静态门禁级）：G1 删"不复权"口径文案 → `[FAIL] 锚的口径与…写进代码文档`；
@@ -1986,7 +2682,7 @@ MQ62e（内核整本 `validate`）、MQ62h（入金槽位）、GA62e（`.ok();` 
 
 ### Fixed（回测链路：`multi-builtin` 的记账前提没人守）
 
-- **原有守卫是死代码**：`multi_builtin.rs`（HEAD 版 :133-139）判的是"主腿 spec 是衍生品 **且**
+- **原有守卫是死代码**：`multi_builtin.rs`（HEAD 版 :134-139）判的是"主腿 spec 是衍生品 **且**
   `primary_spec_path` 没给"，而 spec 只可能从那个 path 解析出来 —— 条件永不成立。于是
   `--funding-bps 25` 一条 spec 都不给也照样跑通：名义额按现货乘数 1 记账、保证金与资金费
   静默记 0，而 stdout 与产物里硬编码的 `margin_model=realized-initial-margin-leverage-1`
@@ -1995,19 +2691,19 @@ MQ62e（内核整本 `validate`）、MQ62h（入金槽位）、GA62e（`.ok();` 
   不看产品形态。Bar 引擎对现货用 `NoMargin`（衍生品规格才有 `leverage_tiers`），归因侧却给
   现货腿再记一笔等于全额现金的保证金 —— 同一笔现金算两次，`margin_peak_raw` 与引擎口径直接矛盾。
 - **资金费落到现货腿 = 造一笔不存在的成本**：`multi_leg_leg_buckets` 同样只看"有没有 spec"。
-- **新的规格闸门 `multi_leg_spec_guard`（`backtests/leg_funding.rs:114-157`）四条判据，先于任何腿级
-  撮合**（`multi_builtin.rs:69-78`，腿级 `run_leg` 在 :204）：① `--config` 声明衍生品却没给主腿
-  spec 直接拒；② `--funding-bps` 非零时两条腿都必须带 spec（缺 spec 既算不出金额也判不出形态）；
-  ③ 两条腿都不是衍生品时拒绝计提资金费；④ 其余组合放行。产品形态的第二个事实来源由
-  `configured_instrument_product`（同文件 :66-80）读 `strategy.product`，与 `backtest_risk_binding`
+- **新的规格闸门 `multi_leg_spec_guard`（`backtests/leg_funding.rs:119-182`）五条判据，先于任何腿级
+  撮合**（`multi_builtin.rs:90-98`，腿级 `run_leg` 在 :231）：① `--config` 声明衍生品却没给主腿
+  spec 直接拒；② 两条腿的结算币种不同直接拒（它判的是『两条腿记不记在同一本账上』，与资金费无关，所以排在 `funding_bps == 0` 的提前返回之前）；③ `--funding-bps` 非零时两条腿都必须带 spec（缺 spec 既算不出金额也判不出形态）；
+  ④ 两条腿都不是衍生品时拒绝计提资金费；⑤ 其余组合放行。产品形态的第二个事实来源由
+  `configured_instrument_product`（同文件 :98-109）读 `strategy.product`，与 `backtest_risk_binding`
   / `configured_fill_model` 同构：给了 `--config` 就必须认它。
 - **计费只向衍生品腿**：`multi_leg.rs:191-195`（资金费）与 `:241-244`（保证金）都改成
   `leg.spec.filter(|spec| spec.product.is_derivative())`，其余腿记 0；衍生品缺 spec 那种
   组合已在闸门处被拒，所以这里不会再静默把衍生品腿的钱记成 0。
-- **产物与 stdout 如实披露**：`margin_model` 按规格真实推导（`multi_builtin.rs:153-161`，
+- **产物与 stdout 如实披露**：`margin_model` 按规格真实推导（`multi_builtin.rs:172-180`，
   有衍生品腿规格 → `realized-initial-margin-leverage-1`，否则 `none-no-derivative-leg-spec`），
-  stdout 的 Attribution 行带上它（:366），产物新增 `market_specs`（逐腿 spec 路径来源，:415-417）
-  与 `margin_model`（:419），`assumptions` 里的资金费/保证金口径同步改写。`cli_help.rs` 的
+  stdout 的 Attribution 行带上它（:385），产物新增 `market_specs`（逐腿 spec 路径来源，:435-437）
+  与 `margin_model`（`multi_builtin.rs:437`），`assumptions` 里的资金费/保证金口径同步改写。`cli_help.rs` 的
   `multi-builtin` 说明补上这条命令面契约。
 
 ### Added（门禁与用例）
@@ -2039,7 +2735,7 @@ MQ62e（内核整本 `validate`）、MQ62h（入金槽位）、GA62e（`.ok();` 
 - 静态门禁：`STAGE5_ARCH_EXIT=0`、`架构不变量自检全部通过 ✓（169 项）`、`STAGE5_ARCH_FAIL_LINES=0`、
   `STAGE5_ARCH_PASS_LINES=169`。
 - 变异成对（cargo 级，整跑 `--test multi_leg_attribution` 全 10 条）：MQ58a（现货腿也记保证金）
-  红在 `multi_leg_attribution.rs:653`、`9 passed; 1 failed`；MQ58b（现货腿也计提资金费）红在 `:654`；
+  红在 `multi_leg_attribution.rs:653` <!-- 史 -->、`9 passed; 1 failed`；MQ58b（现货腿也计提资金费）红在 `:654`；
   MQ58c（`funding_bps >= 0` 让两条资金费判据重新变死代码）一次点亮两条用例、`8 passed; 2 failed`
   （`:577` 与 `:616`）；MQ58d（声明侧判据永不成立）红在 `:703`；MQ58e（`margin_model` 退回常量）
   红在库侧入口用例 `src/tests/backtest_entries.rs:141`（`8 passed; 1 failed`）。还原侧
@@ -2249,11 +2945,11 @@ MQ62e（内核整本 `validate`）、MQ62h（入金槽位）、GA62e（`.ok();` 
 - `strategy.fill_model`（`crates/qx-runtime/src/runtime_config/strategy_schema.rs:162`）：
   `#[serde(default, skip_serializing_if = "Option::is_none")]`，与 `cost_rules_path` 同口径。
   三条 Bar 装配链（策略 / 内置 / 多腿的每一条腿）都读它；深度链不读，因为它不经过 `FillModel`。
-- 产物留痕三处：策略链摘要 `fill_model: {name, source}`（`backtests/artifacts.rs:137`）、
+- 产物留痕三处：策略链摘要 `fill_model: {name, source}`（`backtests/artifacts.rs:173`）、
   多腿归因产物同键（`multi_builtin.rs`）、stdout 的 `[Builtin · Execution]` 与
   `[Multi-leg · Execution]` 两行。内核侧 `model_descriptors[0]` 从此不再是恒为
   `NextBarOpen@v1` 的假话。
-- **多腿腿级口径守卫**（`multi_builtin.rs:214-223`）：逐腿记录 `(name, source)`，两腿不一致或
+- **多腿腿级口径守卫**（`multi_builtin.rs:215-224`）：逐腿记录 `(name, source)`，两腿不一致或
   一条都没记录都报错；一档滑点的**大小**允许随各腿自己的 `price_tick` 变化（标的规格，非口径分叉）。
 - **不可达者按档位 fail-closed**：`probabilistic` → "需要 L1 一档盘口"、`volume_sensitive` →
   "需要 L2/L3 深度盘口"，并说明 Bar 输入只有 OHLCV、深度链不经过 `FillModel`；
@@ -2277,7 +2973,7 @@ MQ62e（内核整本 `validate`）、MQ62h（入金槽位）、GA62e（`.ok();` 
 
 ### Added（用例：5 条，删 0 条）
 
-- `crates/qx-cli/src/tests/backtest_fill_model.rs`（新，368 行，挂在 `tests/mod.rs:243`）：
+- `crates/qx-cli/src/tests/backtest_fill_model.rs`（新，368 行，挂在 `crates/qx-cli/src/tests/mod.rs:341`）：
   `each_reachable_fill_model_changes_the_result_and_is_declared`（三种口径逐个与同 spec 基线比
   `result_hash` 与 `turnover_raw`，并断言名称/来源/描述子三处留痕）、
   `unconfigured_fill_model_is_absent_from_the_runtime_bytes`（省略即序列化字节不变，护住 66 份
@@ -2346,7 +3042,7 @@ Bar 链的 `--fill-model` / `--virtual-trading` 未做（前置条件见同文�
 
 ### Fixed（信号层：内置策略此前"永远不交叉"与"永远不信号"）
 
-- `crates/qx-strategy/src/builtin.rs:777`：`ema()` 的旧值权重从 `window` 改成 `window-1`。
+- `crates/qx-strategy/src/builtin/indicator.rs:20` 的 `ema()`：旧值权重从 `window` 改成 `window-1`（那一乘在 :37）。
   α = 2/(window+1) 时旧值权重必须是 1−α，写成 `window` 让两权重之和成为 `(window+2)/(window+1)`，
   直流增益不为 1、常数价格列收敛到 2× 该常数，快慢线相对位置随窗口大小漂移。`ema_cross` /
   `macd` / `keltner_trend` 共用该函数，交叉判定此前无从谈起。
@@ -2360,14 +3056,14 @@ Bar 链的 `--fill-model` / `--virtual-trading` 未做（前置条件见同文�
 
 ### Added（命令面：高保真撮合参数接线）
 
-- `backtest book` 新增 `--latency-snapshots`（`cli_args.rs:479`）/ `--market-impact-bps`（`cli_args.rs:477`，
+- `backtest book` 新增 `--latency-snapshots`（`cli_args.rs:488`）/ `--market-impact-bps`（`cli_args.rs:486`，
   越界由 `parse_bps()` `:34` 在 clap 层挡住）→ `DepthExecutionModel`（`backtests/depth.rs:13`）
   → 内核 `OrderBookExecutionModel`，L1 与 L2 两条装配各自 `with_execution_model()`。三处同时留痕：
   `[Depth · Execution]` 行、产物 `model_descriptors` 的四参数描述子
-  （`orderbook_backtest.rs:361`）、`depth_run_config_hash()`（`depth.rs:258-259`）——参数不进
+  （`orderbook_backtest.rs:361`）、`depth_run_config_hash()`（`depth.rs:263-264`）——参数不进
   config hash 会让两个不同结果抢同一个内容寻址路径。缺省全 0 时与改动前逐位一致。
 - **内核第三项 `queue_position_bps` 故意不做成旗标**：它只作用于限价单档位
-  （`orderbook.rs:332`），而内置策略 intent 恒 `limit: None`（`builtin.rs:721`），17 条策略全发
+  （`orderbook.rs:332`），而内置策略 intent 恒 `limit: None`（`builtin.rs:743`），17 条策略全发
   市价单。用例反向钉住它不存在（`--queue-position-bps` 退非 0 并点名旗标）。
 - 拒单事实从 Q0e 的多腿私有实现提升为三条链共用：`backtests/artifacts.rs:43/63/76`
   （`rejection_facts` / `rejection_facts_line` / `rejection_count`），摘要产物新增
@@ -2381,7 +3077,7 @@ Bar 链的 `--fill-model` / `--virtual-trading` 未做（前置条件见同文�
   先跌后涨；`python/examples/backtest_momentum.py` 的目标仓位 `1` → `ONE_UNIT = 1e9`（raw 口径）；
   四份 runtime 模板共 5 处 `builtin_quantity: 1 → 1000000000`，并在 `strategy_schema.rs` 写明
   runtime 用 raw、CLI 位置参数用整数单位，两者相差 1e9 倍。
-- Q0c 的深度链延迟冲突文案改成可执行指令（`depth.rs:99`）：点名"把 `latency_base_ns` /
+- Q0c 的深度链延迟冲突文案改成可执行指令（`depth.rs:119`）：点名"把 `latency_base_ns` /
   `latency_insert_ns` 置 0，或改用 `--latency-snapshots`"。
 
 ### Added（用例：6 条，删 0 条）
@@ -2458,7 +3154,7 @@ Bar 链的 `--fill-model` / `--virtual-trading` 未做（前置条件见同文�
 - 产物升 `schema_version: 2`，新增 `accounts`（两腿初始现金与定资规则原文）、`legs`、
   `pending_reconcile`；stdout 增 `[Multi-leg · Integrity]` 与 `[Multi-leg · Reconcile]` 两行，
   归因行增 `residual_filled_qty_raw` / `residual_fees_raw`。两道闭合守卫
-  （`multi_builtin.rs:285`、`:301`）让"裸腿事实 vs 残余成交"和"归因成交量 vs 撮合 fills"
+  （`multi_builtin.rs:286`、`:302`）让"裸腿事实 vs 残余成交"和"归因成交量 vs 撮合 fills"
   不闭合时直接失败。
 
 ### Added（用例与门禁）
@@ -2516,7 +3212,7 @@ Bar 链的 `--fill-model` / `--virtual-trading` 未做（前置条件见同文�
 - `crates/qx-xingban/src/orderbook.rs` 模块文档：原第 3 行"可被历史 Tick 回放、Paper 模拟和性能基准
   共同使用"不成立。新文档给出真实消费者两处、**Paper 不走这里**（首档一次性 touch、无逐档队列、
   无排队中的部分成交）、paper 与回测目前真正共享的只有执行平面下游三件
-  （`FeeModel`、`qx_core::apply_fill_to_books`（调用点：`qx-runtime/src/pipeline.rs:1448,1462`、
+  （`FeeModel`、`qx_core::apply_fill_to_books`（调用点：`qx-runtime/src/pipeline.rs:1443,1462`、
   `qx-xingban/src/backtest.rs:848`、`qx-xingban/src/orderbook_backtest.rs:405`）、`Ledger`），
   并把"改接本内核"显式指向 V11 §9 的 Q1d。
 - `crates/qx-cli/src/backtests/kernels.rs`：该文件是产物清单里 `matching_kernel` 三个名字的家，
@@ -2572,21 +3268,21 @@ Bar 链的 `--fill-model` / `--virtual-trading` 未做（前置条件见同文�
   此前全仓零消费者，`deploy/qianxing.costs.example.json` 是一行"宣称能配、实际没人读"的死配置。
   现在唯一读取点是 `runtime_wiring::execution_cost_binding_from_config`（`crates/qx-cli/src/runtime_wiring.rs:184`），
   它返回的 `ExecutionCostBinding`（`runtime_wiring.rs:156`）同时提供 `fee_model()` 与 `latency_model()`，
-  消费方为 Bar 两条链（`backtests/single_strategy.rs:94` 与 `:278`）、多腿链
-  （`backtests/multi_builtin.rs:155`，两条腿共用同一份绑定）、深度档（`backtests/depth.rs:69`）
-  与三处 Paper 构造点（`venue_runtime/paper_worker.rs:48/191/244`、`paper_submit.rs:121`）——
+  消费方为 Bar 两条链（`backtests/single_strategy.rs:94` 与 `:286`）、多腿链
+  （`backtests/multi_builtin.rs:156`，两条腿共用同一份绑定）、深度档（`backtests/depth.rs:69`）
+  与三处 Paper 构造点（`venue_runtime/paper_worker.rs:48/197/250`、`paper_submit.rs:128`）——
   Q0a 解决的"两条链取同一个模型"从此不必再靠两边都写同一个常数。
-- **产物记录成本来源**：回测摘要新增 `execution_costs.source`（`backtests/artifacts.rs:344`），
+- **产物记录成本来源**：回测摘要新增 `execution_costs.source`（`backtests/artifacts.rs:389`），
   取值 `cost-rules-file:<绝对路径>` / `runtime-config-default`（给了配置但没配这一项）/
   `builtin-default`（根本没给配置）三态；A 股规则链自带佣金模型时打印
   `ashare-rules:<path>+cost-rules-file:<path>`，把"费率来自规则快照、延迟来自成本文件"两件事分开记账
-  （`backtests/single_strategy.rs:105-118`）。`backtest builtin` 另印一行 `[Builtin · Cost] source=… maker_bp=… taker_bp=… latency_base_ns=… latency_insert_ns=…`。
+  （`backtests/single_strategy.rs:108-125`）。`backtest builtin` 另印一行 `[Builtin · Cost] source=… maker_bp=… taker_bp=… latency_base_ns=… latency_insert_ns=…`。
 - **深度档的三层优先级**：显式 `--fee-bps` > 成本文件 `taker_bp` > 内核默认
   （`backtests/depth.rs` 的 `fee_bps.unwrap_or(costs.rules.taker_bp)`）。深度内核只有单一吃单费率，
   成本规则里的延迟与 maker 费率在这条链上无处落地，因此**延迟非零时直接报错**并点名来源文件，
   而不是静默跑出一份"配置写着 2ms、实际零延迟"的产物（Q0b 删 `--config` 判掉的正是这个形状）。
 - **校验与装配同一个读者**：`config validate` / `runtime-check` 走 `cost_rules_problem()`
-  （`runtime_check.rs:306-312`），与装配调用同一份 `ExecutionCostRules::load`，
+  （`runtime_check.rs:306-309`），与装配调用同一份 `ExecutionCostRules::load`，
   缺文件、坏 JSON、bp 越界都带解析后的路径失败，不可能再出现"校验说没问题、装配跑不动"。
 - 新用例文件 `crates/qx-cli/src/tests/backtest_cost_provenance.rs`（334 行、5 条）逐条钉住上面四件事，
   共享夹具 `read_first_artifact` / `read_first_backtest_summary` 上移到 `tests/mod.rs`
@@ -3289,7 +3985,7 @@ CLI 冒烟退出码：verify=0 all=0 runtime-check=0 runtime-check-binance=0 pap
          → 确认 OLD_SINGLE_FILE_REMOVED=yes、RESTORED_K_ARCH_EXIT=0
 用例反向验证 L（搬进 tests/ 的 18 例仍咬得住语义）：把 `apply_position_state_delta` 判定平仓方向的
          `if current > 0 {` 改成 `if current < -1 {`（多/空已实现盈亏符号分支互换）
-         → MUTATED_L_TEST_EXIT=101、L_FAILED_CASES=3，含 tests/ledger.rs:285
+         → MUTATED_L_TEST_EXIT=101、L_FAILED_CASES=3，含 tests/ledger.rs:285 <!-- 史 -->
            （accounts_and_realized_pnl_are_isolated）与 :452
            （multiplier_is_preserved_in_realized_pnl_replay）
          → RESTORE[L]=identical、RESTORED_L_TEST_EXIT=0（lib 34 + 集成 18 两侧复绿）

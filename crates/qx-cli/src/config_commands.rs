@@ -245,20 +245,17 @@ pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
     }
 
     println!("[Report] summary={}", summary_path.display());
-    let input_line = match &declared_input {
+    // 正文的排印与缺席口径统一在 `report_readout.rs`：这里只交摘要与"输入是否复核过"。
+    let input_verified = match &declared_input {
         Some(input) => format!(
-            "input_verified={} input_kind={} input_id={} input_fingerprint={}",
+            "{} input_kind={} input_id={} input_fingerprint={}",
             input.path, input.kind, input.dataset_id, input.fingerprint
         ),
-        None => format!("input_verified={NOT_DECLARED}（该摘要没有 input 块，输入身份未经核对）"),
+        None => format!("{NOT_DECLARED}（该摘要没有 input 块，输入身份未经核对）"),
     };
-    for line in backtest_report_lines(&summary, &input_line) {
+    for line in report_readout_lines(&summary, &input_verified) {
         println!("{line}");
     }
-    println!(
-        "  risk_rule_set_version={}",
-        summary_text(&summary, "/risk_rules/rule_set_version", "-")
-    );
     Ok(())
 }
 
@@ -328,17 +325,10 @@ pub(crate) fn run_status(path: &Path, as_json: bool) -> Result<(), String> {
         );
     }
     if let Some(summary) = latest_summary {
-        // 与 `report` 同一套"缺失怎么念"的口径：旧摘要在这里也会被印成
-        // `fills=0 return_bps=0`，而它只是没写过这两格（V11 D 轮 S6 的另一半）。
-        println!(
-            "[Latest Backtest] strategy={} instrument={} fills={} return_bps={} max_drawdown_bps={} result_hash={}",
-            summary_text(&summary, "/strategy_id", "-"),
-            summary_text(&summary, "/instrument", "-"),
-            summary_number(&summary, "/fills"),
-            summary_number(&summary, "/metrics/return_bps"),
-            summary_number(&summary, "/metrics/max_drawdown_bps"),
-            summary_text(&summary, "/result_hash", "-")
-        );
+        // 与 `report` 共用 `report_readout.rs` 的读法：没写的格子印 absent（V12 R1）。
+        for line in latest_backtest_readout_lines(&summary) {
+            println!("{line}");
+        }
     } else {
         println!("[Latest Backtest] 暂无已保存回测摘要");
     }

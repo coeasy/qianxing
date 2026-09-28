@@ -146,6 +146,7 @@ fn file_state_stores_share_one_envelope_io_and_the_audit_chain_is_the_named_exce
     let json_state = read("crates/qx-storage/src/file/state.rs");
     assert!(json_state.contains("read_json_file"));
     assert!(json_state.contains("write_json_file"));
+    assert!(json_state.contains("read_state_text"));
     assert!(json_state.contains("write_state_text"));
 }
 

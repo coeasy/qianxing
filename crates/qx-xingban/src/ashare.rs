@@ -93,10 +93,6 @@ fn default_price_tick() -> i128 {
     SCALE / 100
 }
 
-fn default_limit_bp() -> i64 {
-    1_000
-}
-
 fn default_commission_bp() -> i64 {
     3
 }
@@ -466,9 +462,9 @@ pub struct AshareRuleConfig {
     pub lot_size: i128,
     #[serde(default = "default_true")]
     pub allow_odd_lot_sell: bool,
-    #[serde(default = "default_limit_bp")]
+    #[serde(default = "trading::unspecified_limit_bp")]
     pub limit_up_bp: i64,
-    #[serde(default = "default_limit_bp")]
+    #[serde(default = "trading::unspecified_limit_bp")]
     pub limit_down_bp: i64,
     #[serde(default = "default_price_tick")]
     pub price_tick: i128,
@@ -508,8 +504,8 @@ impl Default for AshareRuleConfig {
             t_plus_one: true,
             lot_size: default_lot_size(),
             allow_odd_lot_sell: true,
-            limit_up_bp: default_limit_bp(),
-            limit_down_bp: default_limit_bp(),
+            limit_up_bp: trading::unspecified_limit_bp(),
+            limit_down_bp: trading::unspecified_limit_bp(),
             price_tick: default_price_tick(),
             commission_bp: default_commission_bp(),
             min_commission: default_min_commission(),
@@ -956,12 +952,15 @@ impl AshareRuleConfig {
         if self.lot_size <= 0 || self.price_tick <= 0 || self.min_commission < 0 {
             return Err("A 股 lot_size/price_tick 必须为正，min_commission 不能为负".into());
         }
-        if self.limit_up_bp <= 0
-            || self.limit_down_bp <= 0
-            || self.limit_up_bp > 10_000
-            || self.limit_down_bp > 10_000
+        // 0 = 未声明，由板块表推导生效值；声明值必须落在 1..=10000。
+        if [self.limit_up_bp, self.limit_down_bp]
+            .iter()
+            .any(|bp| *bp < 0 || *bp > 10_000)
         {
-            return Err("A 股涨跌停基点必须在 1..=10000".into());
+            return Err("A 股涨跌停基点只能是 0（按板块推导）或 1..=10000".into());
+        }
+        if self.effective_limit_up_bp() <= 0 || self.effective_limit_down_bp() <= 0 {
+            return Err("A 股生效涨跌停基点必须为正".into());
         }
         if self.commission_bp < 0 || self.stamp_duty_bp < 0 || self.transfer_fee_bp < 0 {
             return Err("A 股费用基点不能为负".into());

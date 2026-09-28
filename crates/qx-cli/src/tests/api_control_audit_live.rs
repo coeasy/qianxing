@@ -94,15 +94,13 @@ fn control_audit_reads_the_store_the_workers_write_into() {
     );
     // `QueryPort` 的 trait 读点与 HTTP 端点必须走同一个出口，而不是各念一份（V11 S3 的理由）。
     assert_eq!(
-        cold_audit,
-        audit,
+        cold_audit, audit,
         "trait 读点与 HTTP 端点说的是同一份审计流水"
     );
     // 窗口之外那一半也要走得到 trait：只挂在 HTTP 响应里，进程内的读者就只能把"最近这么多
     // 条"当成"总共这么多条"——正是这颗缺陷在 L1/L2 那一族里的形状（V11 R7-8）。
     assert_eq!(
-        cold_retirement,
-        retirement,
+        cold_retirement, retirement,
         "退场累计摘要必须与流水同源：两个读面不能各说一份总量"
     );
     // 回填：`ApiState.control` 是 pub 字段、提交路径会写它，现读之后它不能还停在 boot。

@@ -326,6 +326,83 @@ fn the_multi_leg_entry_refuses_a_single_account_number_and_names_its_own_rule() 
     );
 }
 
+/// 往配置里加一个**真正会读这个数的** Paper 账户：`paper_initial_cash_raw` 只能配在
+/// Execution 角色且 venue 为 paper 的 worker 上（角色校验会拒掉别处），所以第二处声明
+/// 只能长成这样 —— 回测侧那格被一个真实的入账账户按同一个数再声明一遍。
+fn with_paper_principal(value: &mut serde_json::Value, raw: i64) {
+    let worker = serde_json::json!({
+        "id": "paper-principal",
+        "role": "execution",
+        "enabled": true,
+        "account_id": "main",
+        "venue_id": "paper",
+        "instrument_spec_path": deploy("qianxing.binance.spot.spec.json")
+            .to_string_lossy()
+            .into_owned(),
+        "paper_initial_cash_raw": raw,
+    });
+    value["workers"]
+        .as_array_mut()
+        .expect("示例运行时配置的 workers 必须是数组")
+        .push(worker);
+}
+
+/// 一份 runtime 里的两处本金声明等值时，来源要说出"这一格被另一处确认过"（V12 R3）。
+/// 判据住在 `account_base.rs`，这里证明它真的走到了 stdout 与摘要两格里。
+#[test]
+fn a_principal_declared_the_same_way_on_both_sides_is_landed_as_agreeing() {
+    let root = temp_dir("agreeing-principal");
+    let config = runtime_with(&root, "agreeing-principal", |value| {
+        value["strategy"]["initial_cash_raw"] = serde_json::Value::from(TWO_UNIT_RAW);
+        with_paper_principal(value, TWO_UNIT_RAW);
+    });
+    let (code, stdout, stderr) = run(&[
+        "strategy".into(),
+        "backtest".into(),
+        config.to_string_lossy().into_owned(),
+        deploy("qianxing.bar-frame.example.json")
+            .to_string_lossy()
+            .into_owned(),
+        deploy("qianxing.binance.spot.spec.json")
+            .to_string_lossy()
+            .into_owned(),
+    ]);
+    assert_eq!(code, 0, "两处等值声明不是冲突: {stderr}");
+    assert!(
+        line_with(&stdout, "[Strategy · Account]")
+            .contains("account_base_source=strategy-initial-cash+paper-worker-cash"),
+        "等值声明要在来源格里可见: {}",
+        line_with(&stdout, "[Strategy · Account]")
+    );
+    assert_eq!(
+        first_summary(&root.join("data").join("runs"))["account"]["source"],
+        serde_json::Value::String("strategy-initial-cash+paper-worker-cash".into()),
+        "摘要里的来源必须与 stdout 同一份说法"
+    );
+}
+
+/// 两份不等的本金在回测入口同样当场拒：分母只能有一个数，取哪一格都是替使用者做决定。
+#[test]
+fn two_different_principals_in_one_runtime_fail_at_the_backtest_entry() {
+    let root = temp_dir("split-principal");
+    let config = runtime_with(&root, "split-principal", |value| {
+        value["strategy"]["initial_cash_raw"] = serde_json::Value::from(TWO_UNIT_RAW);
+        with_paper_principal(value, TWO_UNIT_RAW * 2);
+    });
+    let (code, _, stderr) = run(&builtin_args(
+        &deploy("qianxing.bar-frame.pairs-primary.example.json"),
+        "1",
+        Some(&config),
+    ));
+    assert_eq!(code, 2, "两份互不相等的本金必须当场拒绝");
+    assert!(
+        stderr.contains("两份互不相等的账户本金")
+            && stderr.contains(&format!("strategy.initial_cash_raw={TWO_UNIT_RAW}"))
+            && stderr.contains(&format!("worker[paper-principal]={}", TWO_UNIT_RAW * 2)),
+        "报错要并列点出两处名字与各自的数: {stderr}"
+    );
+}
+
 fn first_summary(runs_dir: &Path) -> serde_json::Value {
     let path = std::fs::read_dir(runs_dir)
         .unwrap_or_else(|error| panic!("读取回测产物目录失败 {}: {error}", runs_dir.display()))

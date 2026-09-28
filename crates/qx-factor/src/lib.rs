@@ -752,6 +752,7 @@ fn average_exposures(
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactorReport {
     pub feature_key: String,
     #[serde(default)]
@@ -889,6 +890,8 @@ impl CandidateBinding {
         Ok(())
     }
 
+    /// 用一本事件回测 RunManifest 给 candidate 盖章：`event_verified` 与证据摘要永远成对写出。
+    /// 运行时复核声明时也走它（`qx-cli` 就绪判定），于是「什么算证据摘要」只有一处定义。
     pub fn mark_event_verified(mut self, manifest: &RunManifest) -> Result<Self, FactorError> {
         manifest
             .validate()
@@ -924,13 +927,18 @@ pub struct StrategyResearchSnapshot {
     pub as_of: u64,
 }
 
+/// 研究快照的对外 JSON 形状：快照由仓库外的因子工程环节导出，因此每个 wire 结构都对
+/// 未知字段一律拒绝——一个拼错的键若被 serde 静默丢掉，闸门就会拿着缺格的默认值放行
+/// 一份生产者以为完整的声明。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InstrumentValueWire {
     instrument: String,
     value: i128,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CandidateConfigWire {
     strategy_version: String,
     universe_version: String,
@@ -944,6 +952,7 @@ struct CandidateConfigWire {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CandidateBindingWire {
     config: CandidateConfigWire,
     factor_keys: Vec<String>,
@@ -957,6 +966,7 @@ struct CandidateBindingWire {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FeatureArtifactWire {
     feature_key: String,
     input_fingerprint: String,
@@ -966,6 +976,7 @@ struct FeatureArtifactWire {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StrategyResearchSnapshotWire {
     schema_version: u32,
     candidate: CandidateBindingWire,
@@ -1340,10 +1351,6 @@ impl FactorCatalog {
 
     pub fn artifact(&self, key: &str) -> Option<&FeatureArtifact> {
         self.artifacts.get(key)
-    }
-
-    pub fn feature_keys(&self) -> BTreeSet<String> {
-        self.artifacts.keys().cloned().collect()
     }
 
     /// 返回所有已注册定义的确定性依赖顺序，供物化 Worker 使用。

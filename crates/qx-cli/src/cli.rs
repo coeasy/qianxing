@@ -10,10 +10,6 @@ use super::cli_args::{BacktestCommand, Cli, Command, ConfigCommand, RunCommand, 
 use super::*;
 use clap::Parser;
 
-fn print_banner() {
-    println!("牵星 Qianxing — 分级校准，量天定位\n");
-}
-
 /// 旧派发在用法错误（未知命令/未知参数）时同样先打印横幅，再打印帮助并退出 2。
 fn fail_usage(error: clap::Error) -> ! {
     if matches!(
@@ -148,6 +144,7 @@ pub(crate) fn run() {
     if !command.machine_output() {
         print_banner();
     }
+    command.reject_shadowed_backtest_inputs();
     match command {
         Command::Init {
             output,
@@ -296,23 +293,6 @@ pub(crate) fn run() {
             spec,
             action,
         } => {
-            // 外层三个位置参数只服务"无子命令"的统一回测形态；点了子命令还带着它们，
-            // 说明有一份输入被 clap 绑走却无人使用。宁可退出 2 也不猜用户要哪一份。
-            let ignored: Vec<&str> = [
-                runtime.as_ref().map(|_| "runtime"),
-                frame.as_ref().map(|_| "frame"),
-                spec.as_ref().map(|_| "spec"),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
-            if action.is_some() && !ignored.is_empty() {
-                eprintln!(
-                    "backtest 的子命令自带数据参数，外层的 {} 不参与回测；请删除它们，或改用不带子命令的 `qx-cli backtest <runtime> <frame> [spec]`",
-                    ignored.join("/")
-                );
-                std::process::exit(2);
-            }
             match action {
                 None => {
                     if let Err(error) =

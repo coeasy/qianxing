@@ -187,19 +187,6 @@ impl PostgresStorage {
         })
     }
 
-    pub fn migrate(&self) -> Result<(), StorageError> {
-        let mut client = self.lock_client()?;
-        migrate_client(&mut client)
-    }
-
-    pub fn health_check(&self) -> Result<(), StorageError> {
-        let mut client = self.lock_client()?;
-        client
-            .query_one("SELECT 1", &[])
-            .map(|_| ())
-            .map_err(pg_error)
-    }
-
     fn lock_client(&self) -> Result<MutexGuard<'_, Client>, StorageError> {
         let index = self.next_client.fetch_add(1, Ordering::Relaxed) % self.clients.len();
         lock_slot(&self.clients, index, SLOT_WAIT_BUDGET).map_err(|failure| match failure {

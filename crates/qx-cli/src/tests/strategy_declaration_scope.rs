@@ -1,6 +1,6 @@
 use super::*;
 
-/// 命令行回测的四处读点（`configured_fill_model`、`configured_initial_cash_raw`、
+/// 命令行回测的四处读点（`configured_fill_model`、`configured_account_base`、
 /// `configured_instrument_product`、`backtest_risk_binding`）取的都是顶层
 /// `strategy.<字段>`，而 `config validate` 的逐块体检把 `strategies[]` 也算在内：一份"只在
 /// 实例里写了撮合口径"的配置能校验通过、跑起来却按内核默认走。风控门那一处一次取走
@@ -76,7 +76,7 @@ fn read_all_four(runtime: &Path) -> [(&'static str, Result<(), String>); 4] {
         ),
         (
             "initial_cash_raw",
-            configured_initial_cash_raw(Some(runtime)).map(|_| ()),
+            configured_account_base(Some(runtime)).map(|_| ()),
         ),
         (
             "product",
@@ -155,8 +155,11 @@ fn the_same_declaration_on_both_blocks_still_assembles() {
         Some("immediate")
     );
     assert_eq!(
-        configured_initial_cash_raw(Some(&agree_runtime)).unwrap(),
-        Some(250_000)
+        configured_account_base(Some(&agree_runtime))
+            .unwrap()
+            .cash
+            .raw(),
+        250_000
     );
     assert_eq!(
         configured_instrument_product(Some(&agree_runtime)).unwrap(),

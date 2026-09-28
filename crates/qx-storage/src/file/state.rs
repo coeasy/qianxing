@@ -1,8 +1,23 @@
 //! 通用 JSON 状态存储（控制面 / 调度器 / 任意受约束的 JSON 快照）。
 //!
 //! P1c（§4.9）收敛：所有落盘写一律经由 `state_envelope` 的原子替换 helper
-//! （`write_json_file` / `write_state_text` / `read_json_file` / `read_state_text*`）；
-//! 本模块不再自持 temp+rename 样板，且保持对 qx-cli 的公开方法签名逐字不变。
+//! （`write_json_file` / `write_state_text` / `read_state_text*`）；
+//! 本模块不再自持 temp+rename 样板。
+//!
+//! 这里只保留有生产读者或对外契约读者的入口：写侧 `save_json_at`（对账
+//! worker 落报告）、`save_scheduler_at` / `transact_*`，读侧
+//! `load_control_if_exists`（runtime 重启装载）/ `load_scheduler_at`
+//! （API 现读调度）。
+//!
+//! 已删除的公共面都是"同一件事的第二答案"，且零读者：
+//! - `save_control` / `load_control` / `update_control`：非事务的整体覆盖与
+//!   `transact_control` 会在两个进程间互相丢更新与审计尾部；
+//! - `save_scheduler` / `load_scheduler`：隐式的默认 `scheduler.json` 与多运行
+//!   拓扑（每个运行有自己的 `state_path`）冲突。
+//!
+//! `load_json_at` 是唯一按受约束路径读回 `reconcile/<worker-id>.json` 的入口
+//! （deploy/README.md 把该报告文件写成对外运维契约），与 `save_json_at` 共用
+//! 同一套路径越界防线；API 侧的目录扫描读的是全部 worker 的报告，两者不重复。
 
 use super::*;
 
@@ -36,25 +51,16 @@ impl JsonStateStore {
         Ok(path)
     }
 
+    /// 按 `save_json_at` 的同一套路径约束读回状态文件。
+    ///
+    /// 这是写侧唯一带越界防线的对称读法：绕过它直接读盘会丢掉
+    /// "相对路径不得越出 data root" 的检查。
     pub fn load_json_at<T: DeserializeOwned>(
         &self,
         relative_path: impl AsRef<Path>,
     ) -> Result<T, StorageError> {
         let path = self.state_path(relative_path)?;
         read_json_file(&path, "JSON 状态")
-    }
-
-    /// 在同一把文件锁内读取、修改并原子保存控制面状态。
-    ///
-    /// API 接收命令和执行器回写终态都必须通过这个事务边界，避免两个进程
-    /// 分别基于旧快照保存而互相覆盖命令或审计尾部。这里刻意不提供"整份保存一个
-    /// 现成 `ControlPlane`"的入口：那样会绕过哈希链的接入点，写出链上没有的流水。
-    pub fn update_control<T, F>(&self, update: F) -> Result<(ControlPlane, T), StorageError>
-    where
-        F: FnOnce(&mut ControlPlane) -> Result<T, String>,
-    {
-        let (plane, result) = self.transact_control(update)?;
-        result.map(|value| (plane, value)).map_err(StorageError::Io)
     }
 
     /// 控制面事务的保留错误类型版本。业务拒绝（重复请求/权限不足等）不会
@@ -94,14 +100,6 @@ impl JsonStateStore {
             )),
             None => Ok(None),
         }
-    }
-
-    pub fn save_scheduler(&self, scheduler: &Scheduler) -> Result<PathBuf, StorageError> {
-        self.save_scheduler_at("scheduler.json", scheduler)
-    }
-
-    pub fn load_scheduler(&self) -> Result<Scheduler, StorageError> {
-        self.load_scheduler_at("scheduler.json")
     }
 
     /// 将调度状态保存到 data root 下的显式相对路径；路径越界会被拒绝。

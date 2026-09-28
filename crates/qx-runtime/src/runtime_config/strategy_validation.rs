@@ -131,39 +131,52 @@ impl RuntimeConfig {
         {
             return Err(format!("{label} builtin_quantity 必须为正整数"));
         }
-        if strategy
-            .builtin_fast_window
-            .is_some_and(|window| window == 0)
-            || strategy
-                .builtin_slow_window
-                .is_some_and(|window| window == 0)
-        {
-            return Err(format!("{label} builtin fast/slow window 必须大于 0"));
-        }
-        if let (Some(fast), Some(slow)) =
-            (strategy.builtin_fast_window, strategy.builtin_slow_window)
-        {
-            if fast >= slow {
-                return Err(format!(
-                    "{label} builtin_fast_window 必须小于 builtin_slow_window"
-                ));
-            }
-        }
-        if strategy.builtin_period.is_some_and(|period| period < 2) {
-            return Err(format!("{label} builtin_period 必须大于等于 2"));
-        }
-        if strategy
-            .builtin_threshold_bps
-            .is_some_and(|threshold| threshold < 0)
-        {
-            return Err(format!("{label} builtin_threshold_bps 不能为负"));
-        }
+        // 四个信号旋钮按 kind 清单体检（V12 #102）：一份运行时配置会喂给多种 kind
+        // （`backtest builtin <kind>` 的 kind 来自命令行），而清单外的一项进不了那一轮的结果，
+        // 就不该有拒那一轮的权力。清单与内核读法同源，见 `qx_strategy::BuiltinStrategyKind`。
         let builtin_kind = strategy
             .builtin_strategy
             .as_deref()
             .map(qx_strategy::BuiltinStrategyKind::parse)
             .transpose()
             .map_err(|error| format!("{label} builtin_strategy 非法: {error}"))?;
+        let uses = |knob: qx_strategy::builtin_signal::BuiltinSignalKnob| {
+            builtin_kind.is_some_and(|kind| kind.uses_signal_knob(knob))
+        };
+        if uses(qx_strategy::builtin_signal::BuiltinSignalKnob::FastWindow)
+            || uses(qx_strategy::builtin_signal::BuiltinSignalKnob::SlowWindow)
+        {
+            if strategy
+                .builtin_fast_window
+                .is_some_and(|window| window == 0)
+                || strategy
+                    .builtin_slow_window
+                    .is_some_and(|window| window == 0)
+            {
+                return Err(format!("{label} builtin fast/slow window 必须大于 0"));
+            }
+            if let (Some(fast), Some(slow)) =
+                (strategy.builtin_fast_window, strategy.builtin_slow_window)
+            {
+                if fast >= slow {
+                    return Err(format!(
+                        "{label} builtin_fast_window 必须小于 builtin_slow_window"
+                    ));
+                }
+            }
+        }
+        if uses(qx_strategy::builtin_signal::BuiltinSignalKnob::Period)
+            && strategy.builtin_period.is_some_and(|period| period < 2)
+        {
+            return Err(format!("{label} builtin_period 必须大于等于 2"));
+        }
+        if uses(qx_strategy::builtin_signal::BuiltinSignalKnob::ThresholdBps)
+            && strategy
+                .builtin_threshold_bps
+                .is_some_and(|threshold| threshold < 0)
+        {
+            return Err(format!("{label} builtin_threshold_bps 不能为负"));
+        }
         let needs_reference = builtin_kind.is_some_and(|kind| kind.needs_reference_leg());
         if needs_reference
             && (strategy.builtin_reference_instrument.is_none()

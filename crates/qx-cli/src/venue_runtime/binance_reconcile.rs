@@ -1,9 +1,11 @@
 use crate::*;
 
 pub(crate) fn reconcile_issue_json(issue: &AdapterReconcileIssue) -> serde_json::Value {
-    // kind 与单号复用适配器内唯一的一份枚举翻译（reason_code），这里只展开维度值。
+    // kind 是维度码（哪个维度对不上），action 是裁决动作码（能不能自动收敛）：两者
+    // 都由适配器对唯一裁决口径的投影给出，这里只展开维度值。
     let mut value = serde_json::json!({
         "kind": issue.reason_code(),
+        "action": issue.action().reason_code(),
         "client_order_id": issue.client_order_id(),
     });
     let object = value.as_object_mut().expect("json object");
@@ -175,11 +177,12 @@ pub(crate) fn run_binance_reconcile_worker(
                 balance_correlation,
             ))
             .map_err(|error| format!("账户余额事实归约失败: {error:?}"))?;
-        // 待对账事实的归类只复用适配器对裁决口径的投影（client_order_id/reason_code），
-        // 调用点不复制差异判定分支。
+        // 待对账事实的 reason 只用裁决动作码（resync / pending_reconcile / manual_review），
+        // 不再写维度码：`status_mismatch` 分不出"远端权威推进"和"互斥迁移需人工"，
+        // 下游按 reason 分流时两类单子会被当成同一件事处理（V12 §18 TX7）。
         for issue in &issues {
             EventLogReconcilePort::new(&mut pipeline, &worker.id, received_ts, &mut source_seq)
-                .require_reconcile(issue.client_order_id(), issue.reason_code())
+                .require_reconcile(issue.client_order_id(), issue.action().reason_code())
                 .map_err(|error| format!("对账事实归约失败: {error}"))?;
         }
         context.heartbeat(received_ts)?;
@@ -188,7 +191,12 @@ pub(crate) fn run_binance_reconcile_worker(
             .map(|discrepancy| {
                 format!(
                     "{}:{}->{}",
-                    discrepancy.asset, discrepancy.ledger_raw, discrepancy.venue_raw
+                    discrepancy.asset,
+                    discrepancy.ledger_raw,
+                    // 柜台没报该币种时印"未报"，不印 0：0 是替交易所报数。
+                    discrepancy
+                        .venue_raw
+                        .map_or_else(|| "未报".to_string(), |raw| raw.to_string())
                 )
             })
             .collect::<Vec<_>>()

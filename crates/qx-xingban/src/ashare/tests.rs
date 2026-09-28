@@ -310,6 +310,77 @@ fn calendar_json_controls_daily_and_intraday_trading_windows() {
     assert!(!rules.is_trading(day + DAY_MS));
 }
 
+/// 未声明涨跌停带时按板块表推导：创业板/科创板 ±20%、北交所 ±30%，不再是扁平 ±10%。
+/// 板块表此前写好了却没有读者，serde 默认把所有人都按 ±10% 封板。
+#[test]
+fn unset_limit_band_comes_from_the_board_not_a_flat_ten_percent() {
+    let previous_close = 10 * SCALE;
+    for (board, band) in [
+        (AshareBoard::Main, 1_000),
+        (AshareBoard::ChiNext, 2_000),
+        (AshareBoard::Star, 2_000),
+        (AshareBoard::Beijing, 3_000),
+    ] {
+        let rules = AshareRuleConfig {
+            enabled: true,
+            board,
+            ..AshareRuleConfig::default()
+        };
+        rules.validate().unwrap();
+        assert_eq!(
+            (
+                rules.effective_limit_up_bp(),
+                rules.effective_limit_down_bp()
+            ),
+            (band, band),
+            "{board:?} 未声明时必须按板块表推导"
+        );
+        assert_eq!(
+            rules.limits(previous_close),
+            (
+                previous_close * (10_000 + i128::from(band)) / 10_000,
+                previous_close * (10_000 - i128::from(band)) / 10_000
+            ),
+            "{board:?} 涨跌停价必须按生效带宽算"
+        );
+        assert!(
+            rules.descriptor().contains(&format!("limit_up_bp={band}")),
+            "{board:?} 的生效带宽要能在产物指纹里看出来"
+        );
+    }
+}
+
+/// 显式声明仍然压过板块表：既有规则 JSON 的口径不变。
+#[test]
+fn declared_limit_band_still_overrides_the_board_table() {
+    let rules = AshareRuleConfig {
+        enabled: true,
+        board: AshareBoard::ChiNext,
+        limit_up_bp: 1_000,
+        limit_down_bp: 1_000,
+        ..AshareRuleConfig::default()
+    };
+    rules.validate().unwrap();
+    assert_eq!(
+        rules.limits(10 * SCALE),
+        (11 * SCALE, 9 * SCALE),
+        "声明 ±10% 的创业板规则不能被板块表改成 ±20%"
+    );
+}
+
+#[test]
+fn negative_declared_limit_band_is_rejected_at_the_gate() {
+    let rules = AshareRuleConfig {
+        enabled: true,
+        limit_up_bp: -1,
+        ..AshareRuleConfig::default()
+    };
+    assert!(
+        rules.validate().is_err(),
+        "0 才是\"按板块推导\"的哨兵，负数不能混过去"
+    );
+}
+
 #[test]
 fn limit_band_anchors_to_the_previous_session_close_not_the_previous_bar() {
     let rules = AshareRuleConfig {

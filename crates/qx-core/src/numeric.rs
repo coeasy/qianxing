@@ -96,11 +96,6 @@ macro_rules! impl_fixed {
                 parse_dec(s).map(Self)
             }
 
-            /// 仅用于可视化与对外展示，**不得进入撮合/记账路径**。
-            pub fn to_f64(self) -> f64 {
-                self.0 as f64 / SCALE as f64
-            }
-
             pub fn checked_add(self, o: Self) -> Option<Self> {
                 self.0.checked_add(o.0).map(Self)
             }
@@ -120,18 +115,6 @@ macro_rules! impl_fixed {
                     return None;
                 }
                 self.0.checked_mul(SCALE).map(|v| Self(v / o.0))
-            }
-
-            /// 按整数比例缩放，如手续费率万三：`amt.scale_by(3, 10000)`
-            pub fn scale_by(self, num: i128, den: i128) -> Option<Self> {
-                if den == 0 {
-                    return None;
-                }
-                self.0.checked_mul(num).map(|v| Self(v / den))
-            }
-
-            pub fn is_negative(self) -> bool {
-                self.0 < 0
             }
 
             pub fn is_zero(self) -> bool {

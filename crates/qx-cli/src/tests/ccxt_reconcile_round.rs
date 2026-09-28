@@ -164,7 +164,7 @@ fn ccxt_reconcile_service_status_degrades_on_a_local_only_finding() {
         venue_id: "okx".into(),
         asset: "USDT".into(),
         ledger_raw: 0,
-        venue_raw: qx_core::Money::from_i64(10).raw(),
+        venue_raw: Some(qx_core::Money::from_i64(10).raw()),
     };
     let clean = ccxt_reconcile_round(&[], &[]);
     assert_eq!(

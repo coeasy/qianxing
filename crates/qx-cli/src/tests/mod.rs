@@ -244,6 +244,7 @@ pub(crate) fn seed_paper_fill_with_fee(data_dir: &Path, config: &RuntimeConfig) 
 }
 
 mod account_event_log_identity;
+mod account_principal_source;
 mod api_control_audit_live;
 mod api_default_account_reads;
 mod api_projection_refresher_ready;
@@ -252,6 +253,7 @@ mod api_serve_stop_token;
 mod api_snapshot_money_fields;
 mod api_snapshot_republish;
 mod ashare_submit_guard;
+mod cli_json_surface;
 
 /// 子进程用例的被测面：`src/` 下除 `src/tests/` 之外的每个 `.rs` 都编进 `qx-cli.exe`。
 ///
@@ -292,16 +294,16 @@ fn assert_binary_fresh(binary: &Path) {
         .metadata()
         .and_then(|m| m.modified())
         .expect("读取被测 binary 修改时间失败");
-    for path in qx_cli_compiled_sources() {
-        let edited = path
+    for source in qx_cli_compiled_sources() {
+        let edited = source
             .metadata()
             .and_then(|m| m.modified())
-            .unwrap_or_else(|error| panic!("读取被测源码 {} 失败: {error}", path.display()));
+            .unwrap_or_else(|error| panic!("读取被测源码 {} 失败: {error}", source.display()));
         assert!(
             built >= edited,
             "被测 binary {} 比 {} 旧，请先 cargo build -p qx-cli 再跑本用例",
             binary.display(),
-            path.display()
+            source.display()
         );
     }
 }
@@ -339,6 +341,7 @@ mod backtest_input_provenance;
 mod backtest_product_policy;
 mod backtest_replay_gate;
 mod backtest_risk_provenance;
+mod backtest_signal_provenance;
 mod builtin_command_identity;
 mod calendar_component_fingerprint;
 mod ccxt_position_facts_honesty;
@@ -347,8 +350,10 @@ mod ccxt_respawn_budget;
 mod cli_surface;
 mod config_json_output;
 mod e2e_and_python_contract;
+mod event_backtest_evidence;
 mod execution_and_multi_leg;
 mod init_onboarding;
+mod lease_clock_domain;
 mod live_submit_fail_closed;
 mod market_spec_single_source;
 mod paper_and_strategy_worker;
@@ -357,9 +362,10 @@ mod paper_hedge_recovery;
 mod paper_margin_valuation;
 mod paper_settlement_currency;
 mod reconcile_worker_identity;
-mod report_honesty;
+mod report_readout;
 mod runtime_api_worker_identity;
 mod runtime_check_roster;
+mod scheduler_dispatch_support;
 mod scheduler_owner_routing;
 mod settlement_currency_caliper;
 mod storage_root_report;

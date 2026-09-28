@@ -126,11 +126,13 @@ fn control_state_round_trips_after_restart() {
     let store = JsonStateStore::new(&root);
     let command = queued_control(1);
     store
-        .update_control(|plane| {
+        .transact_control(|plane| {
             plane
                 .submit(command.clone(), 1)
                 .map_err(|error| format!("{error:?}"))
         })
+        .unwrap()
+        .1
         .unwrap();
     let restored = store
         .load_control_if_exists()
@@ -202,8 +204,13 @@ fn scheduler_state_round_trips_after_restart() {
             dry_run: true,
         })
         .unwrap();
-    store.save_scheduler(&scheduler).unwrap();
-    let restored = store.load_scheduler().unwrap();
+    store
+        .save_scheduler_at("scheduler-state.json", &scheduler)
+        .unwrap();
+    // 换一个新的 store 实例再读：同一个实例里的内存态读通了不算"重启后还在"。
+    let restored = JsonStateStore::new(&root)
+        .load_scheduler_at("scheduler-state.json")
+        .unwrap();
     assert_eq!(restored.job("bars").unwrap().job_version, "v1");
     let _ = std::fs::remove_dir_all(root);
 }
@@ -373,20 +380,24 @@ fn control_state_update_is_atomic_and_restores() {
             .as_nanos()
     ));
     let store = JsonStateStore::new(&root);
-    let (_, accepted) = store
-        .update_control(|plane| {
+    let accepted = store
+        .transact_control(|plane| {
             plane
                 .submit(queued_control(601), 10)
                 .map_err(|error| format!("{error:?}"))
         })
+        .unwrap()
+        .1
         .unwrap();
     assert_eq!(accepted.status, qx_control::CommandStatus::Accepted);
-    let (_, executed) = store
-        .update_control(|plane| {
+    let executed = store
+        .transact_control(|plane| {
             plane
                 .execute(601, 11, |_| Ok("DRY_RUN_VALIDATED".into()))
                 .map_err(|error| format!("{error:?}"))
         })
+        .unwrap()
+        .1
         .unwrap();
     assert_eq!(executed.status, qx_control::CommandStatus::Executed);
     let restored = store
@@ -404,7 +415,7 @@ fn control_state_update_is_atomic_and_restores() {
 }
 
 /// 链的篡改可见性。整条链只由控制面事务写（V11 R5-2 删掉了链上的第二个写入者），
-/// 所以用例从 `update_control` 进去造一条两环链，再从落盘文件里改掉第一环的摘要：
+/// 所以用例从 `transact_control` 进去造一条两环链，再从落盘文件里改掉第一环的摘要：
 /// 冷读与尾部读必须同时抓住——写入侧只回看尾部窗口，尾部篡改逃过这里就等于下一次
 /// 追加会把一条被动过的链接下去。
 #[test]
@@ -412,18 +423,22 @@ fn audit_file_chain_is_written_by_the_transaction_and_tamper_evident() {
     let root = audit_root("audit");
     let store = JsonStateStore::new(&root);
     store
-        .update_control(|plane| {
+        .transact_control(|plane| {
             plane
                 .submit(queued_control(77), 10)
                 .map_err(|error| format!("{error:?}"))
         })
+        .unwrap()
+        .1
         .unwrap();
     store
-        .update_control(|plane| {
+        .transact_control(|plane| {
             plane
                 .execute(77, 11, |_| Ok("DONE".into()))
                 .map_err(|error| format!("{error:?}"))
         })
+        .unwrap()
+        .1
         .unwrap();
     let audit = AuditFileStore::new(&root);
     let chain = audit.read().unwrap();
@@ -633,12 +648,12 @@ fn audit_file_chain_serializes_concurrent_transactions() {
         std::thread::spawn(move || {
             barrier.wait();
             store
-                .update_control(|plane| {
+                .transact_control(|plane| {
                     plane
                         .submit(queued_control(command_id), command_id)
                         .map_err(|error| format!("{error:?}"))
                 })
-                .map(|(_, record)| record)
+                .and_then(|(_, result)| result.map_err(StorageError::Io))
         })
     });
     let records: Vec<AuditRecord> = handles

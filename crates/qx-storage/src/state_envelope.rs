@@ -284,4 +284,30 @@ mod tests {
         let validated = decode_state_json::<Probe>(r#"{"schema_version":1,"note":""}"#);
         assert!(matches!(validated, Err(StorageError::Conflict(_))));
     }
+
+    /// 锁引擎的两种失败形状在存储侧必须分开：把"锁目录建不出来"报成"有人在写"，会让人
+    /// 去排查一个不存在的并发写者（V11 §40 D1）。等待预算与接管判据由 qx-core::file_lock
+    /// 的用例钉住，这里只钉住映射。
+    #[test]
+    fn an_unusable_lock_path_is_reported_as_io_not_as_contention() {
+        let dir = std::env::temp_dir().join(format!(
+            "qianxing-storage-lock-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 父目录位置放一个普通文件：create_dir_all 必然失败，而且失败在抢锁之前。
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, "held").unwrap();
+        let error = acquire_storage_lock(blocker.join("nested.write.lock"))
+            .expect_err("锁目录不可用时不能报成拿到锁");
+        assert!(
+            matches!(error, StorageError::Io(_)),
+            "目录不可用的口径必须是 Io，实际 {error:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
