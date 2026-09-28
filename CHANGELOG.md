@@ -200,7 +200,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
 - **两颗零引用重复写法删除，M4 那把尺子改认可达性**（N6–N7）：`submit_order_via_gateway_with_risk` 只是
   转发壳、`complete_reconcile` 零引用而 `reconcile_snapshot` 自己会把状态推到 `Live`（留着等于允许跳过真实
   比对直接改状态）；`m4_zero_caller_surface_check` 的"活替代仍被生产走到"原先只问符号有没有出现在文件文本里，
-  于是替代那颗其实住在 `#[cfg(test)]` 之后也能绿——新增 `m4_production_text()`（`tools/check_architecture.py:5828`）
+  于是替代那颗其实住在 `#[cfg(test)]` 之后也能绿——新增 `m4_production_text()`（`tools/check_architecture.py:6663`）
   把正文收成"第一个测试模块之前"。J1 已登记过"认名字不认能力"，这次是同族的另一格，且这格能修就修了。
 - **子进程 stdin 的写第一次有预算**（N8）：新增 `crates/qx-adapter/src/io_budget.rs` 的 `write_all_within`，
   把写交给一颗命名线程、用带截止时间的 channel 收它，预算内没收回来就 `on_timeout`（生产里是杀子进程，
@@ -324,12 +324,12 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   （`crates/qx-plugin/src/lib.rs:55`）与 `shutdown_timeout_ms`（:56）被 `validate`（:86）问非 0、被
   `canonical_hash`（`crates/qx-plugin/src/lib.rs:143`）计入指纹——两件事都不构成等待，仓内没有一处把它们换算成 `Duration`，是 L4 的
   同族漏网。README 两处（crate 表速查行 :38、"三条容易被读过头的边界" :437）改到与实际可达性同口径；
-  `plugin_claim_honesty_check`（`tools/check_architecture.py:10776`）带一颗**反向排除**，正则把 `config.shutdown_timeout_ms` 那处合法的
+  `plugin_claim_honesty_check`（`tools/check_architecture.py:11052`）带一颗**反向排除**，正则把 `config.shutdown_timeout_ms` 那处合法的
   真接线排除掉，撤掉它门禁当场把真接线读成违规。
 - **三处契约面同时补齐，且契约只有一份**（R4-4）：`on_order_update` 除适配器自身之外仓内零派发，判据把
   这份零派发钉成在册状态而不是让它伪装成一条活链；`schemas/strategy_api_v1.schema.json` 此前**零读者且与
   读侧矛盾**（顶层漏了写侧恒印的 `instrument` / `target_qty`、意图层漏了多腿那三格政策、
-  `additionalProperties: false` 让每份真实载荷都过不了它），现在有三个常驻读者并由判据逐颗点名（`tools/check_architecture.py:9512`），
+  `additionalProperties: false` 让每份真实载荷都过不了它），现在有三个常驻读者并由判据逐颗点名（`tools/check_architecture.py:8262`），
   另加"多抄一份 `*strategy*.json` 即红"；账户快照契约补齐 `header.trading_day`、`positions` 少的那一格必填
   与 `orders` 键本身的形状。新壳 `crates/qx-runtime/tests/strategy_api_schema_contract.rs`（275 行、4 颗）。
 - **`strategy.leverage` / `position_mode` 在回测链当场拒**（R4-5）：O2 / N5 同族的最后两格——两条 Bar
@@ -347,7 +347,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
 - **针路 OMS 的订单表刻意不共用 venue 那把封顶**（R4-8）：`Oms { orders }`（`crates/qx-zhenlu/src/oms.rs:14`）
   被 `crates/qx-runtime/src/pipeline.rs:436` 长期持有，照抄 `MAX_CACHED_ORDERS` + `evict_stale_terminal_orders`
   （`crates/qx-adapter/src/venue_cache.rs:18` / :25）是错的——那条退场规则的前提"被退场的订单再有回报就走
-  `ReconcileRequired`"在实盘 ingest 一侧成立（`crates/qx-runtime/src/pipeline.rs:1385`），在冷启动回填一侧不成立：
+  `ReconcileRequired`"在实盘 ingest 一侧成立（`crates/qx-runtime/src/pipeline.rs:1380`），在冷启动回填一侧不成立：
   `rebuild_runtime_indexes`（:1219）按事件顺序把整条 EventLog 重放进 OMS，其中 :1239 对
   `apply_fill(fill)?` 直接打问号上抛，于是退掉一笔早期终态订单就等于把它之后每一笔成交都变成"订单不存在"。
   **照抄封顶的净效果不是省内存，是把代价从内存换成一份再也打不开的长日志。** 本轮登记"刻意的不同"与两头
@@ -374,7 +374,7 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   `CommandStatus::is_final`（qx-control/src/lib.rs:132），退场、裁剪、恢复期配对三处都问它。
 - **哈希审计链的两半都接上了**（R5-2，即 H3 的裁决落地；本轮先把定性改口：此前说的"写侧有、读侧无人验"
   是错的，当时**写侧与读侧都不存在**）：写侧 `chain_audit`（qx-storage/src/lib.rs:1542）是三本后端唯一写入者，
-  各自在已经持有锁/事务的 `transact_control` 里接一次（file/state.rs:88、sqlite.rs:1080、postgres.rs:1528），
+  各自在已经持有锁/事务的 `transact_control` 里接一次（file/state.rs:88、sqlite.rs:1075、postgres.rs:1533），
   `AuditChainWriter` 的 `tail` / `drop_from` / `append_entries` 三个动作都不越出那次事务；顺序是**链先落、
   状态后落**，崩在中间留下的残尾由下一笔事务按检查点截掉（`truncate_from_unlocked`，只认 65_536 字节尾部窗口），
   检查点比对失败直接失败关闭——**写不进链的命令也不会写进状态**。读侧 `verify_audit_chain`（:1491）判两件事：
@@ -393,10 +393,10 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   "受理期拒绝"这一格在生产里根本不会留下记录。R5-1 顺手加进 `RetirementSummary` 的 `rejected` 那一格随之
   结构性为 0，却和其余三格一起外销给 `/control/audit`（L2 同族）。两颗一起删：词表只剩 `Accepted` / `Executed` /
   `Failed`，`is_final`（crates/qx-control/src/lib.rs:132）认领两颗终态，摘要剩 `retired_total` / `executed` /
-  `failed` / `last_retired_ts`。新增一颗**闭合性**判据（tools/check_architecture.py:5452）：声明的变体、有生产者
+  `failed` / `last_retired_ts`。新增一颗**闭合性**判据（tools/check_architecture.py:6282）：声明的变体、有生产者
   的变体、`is_final` 认领的集合三者必须互相推出。
 - **paper-check / paper-e2e 只认本轮新增的事实**（R6-2）：`run_paper_pipeline_once`
-  （crates/qx-cli/src/venue_runtime/paper_worker.rs:291）过去拿 `pipeline.orders()[0]` 的 `Executed` 审计作保
+  （crates/qx-cli/src/venue_runtime/paper_worker.rs:299）过去拿 `pipeline.orders()[0]` 的 `Executed` 审计作保
   ——那是 OMS 里**最旧**的一条，而 `data_dir` 是持久的，第二轮在上一轮的订单上照样打印 ✓。现在开跑前先取基线
   （`baseline_orders` :332 / `baseline_ledger` :337，且必须早于 `run_scheduler_worker`），"本轮"是差集而不是
   存在集（:373 的基线过滤），每颗新增各自要有一颗 `Executed`（:407-410：停在 `Accepted` 的也算有一条审计），
@@ -410,8 +410,8 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   的队列必须照常 202，否则判据就退化成"什么都不受理"也照样绿。
 - **"什么算终态"在跨进程那一侧也不再各写一遍**（R6-4）：worker 重放审计时四处各自 `matches!` 过状态，现在
   `command_is_final`（crates/qx-cli/src/spread.rs:499）是 qx-cli 侧唯一入口，四个调用者
-  （binance_submit.rs:297 / ccxt_execution.rs:120 / paper_worker.rs:155 / workers.rs:213）只是把控制面那颗
-  `is_final` 搬到 `latest_audit` 上；门禁 `tools/check_architecture.py:7464` 随之从"三处"改口成"四处"，并加上 `.is_final(` 调用数下界。
+  （binance_submit.rs:281 / ccxt_execution.rs:120 / paper_worker.rs:163 / workers.rs:213）只是把控制面那颗
+  `is_final` 搬到 `latest_audit` 上；门禁 `tools/check_architecture.py:6263` 随之从"三处"改口成"四处"，并加上 `.is_final(` 调用数下界。
 - **死信重放不再是"取一页再筛"**（R7-1）：`replay_dead_letter_from_store`（`crates/qx-cli/src/event_pipeline.rs:661`）
   此前按窗口取最旧的一页、再在那一页里筛点名的 `event_id`，于是一份确实躺在死信表里的事件被念成"找不到"——
   危害是假阴性而不是慢：运维按这一句决定不用管，那笔已经放弃自动重试的投递就静默留在原地。现在 trait 只留点查
@@ -423,8 +423,8 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
 - **TEXT 存的 u64 列在三处排序上收进同一口径**（R7-2）：`created_ts`、`enqueued_ts`、`command_id` 在文件后端是数字、
   在 SQL 后端是 TEXT 里存着的数字，于是 `ORDER BY` 给的是字符串序。三处排序各有一份 file/sqlite/postgres 实现，收的是
   同一条口径：sqlite 侧 `CAST(e.created_ts AS INTEGER)`（`crates/qx-storage/src/sqlite.rs:600`）与
-  `ORDER BY CAST(c.enqueued_ts AS INTEGER)`（`crates/qx-storage/src/sqlite.rs:1211`），Rust 侧
-  `jobs.sort_by_key`（`crates/qx-storage/src/sqlite.rs:1698`）、`group.sort_by_key`（`crates/qx-storage/src/file/outbox.rs:67`）、
+  `ORDER BY CAST(c.enqueued_ts AS INTEGER)`（`crates/qx-storage/src/sqlite.rs:1207`），Rust 侧
+  `jobs.sort_by_key`（`crates/qx-storage/src/sqlite.rs:1694`）、`group.sort_by_key`（`crates/qx-storage/src/file/outbox.rs:66`）、
   `commands.sort_by_key`（`crates/qx-storage/src/lib.rs:1224`）；Postgres 不把判据搬回应用层重排，而是换表达式索引：
   `qx_outbox_pending_numeric_idx`（`crates/qx-storage/src/postgres.rs:302`）替掉旧的裸列索引那一句
   （`crates/qx-storage/src/postgres.rs:301`）——只改 `ORDER BY`、留着旧索引，等于让规划器继续按一串没人按的键做写放大。
@@ -617,7 +617,7 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   `From<&Order> for OrderSnapshot` 的注释此前漏了 `policy` 一格、并把 `order_id == client_order_id`
   归因给"EventLog 恢复路径"，实际原因是 `qx_core::Order` 本身只有 `client_id`。
 
-- R5 轮新增 **6 格常驻判据**：`control_retirement_check`（tools/check_architecture.py:6131）五颗——退场路唯一、
+- R5 轮新增 **6 格常驻判据**：`control_retirement_check`（tools/check_architecture.py:6228）五颗——退场路唯一、
   裁剪出口唯一且配额由常量推出、终态判据唯一、两格一起外销、五颗常驻用例点名到形状；
   `api_control_audit_check` 的读侧那颗——"审计链有生产读者：doctor 在文件与 sqlite 两本上逐环核对并把
   检查点对到链尾"。门禁总数本轮实测 **524 项全绿**。
@@ -633,9 +633,9 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
 - 取证 **14 跑 / 12 颗 KILLED / 1 颗刻意 SURVIVED（只改注释的负对照）/ 还原异常 0**，明细与两条按取证改掉的
   判据写在 §53.7。
 - R6 轮新增 **8 格常驻判据**（门禁 **524 项 → 532 项全绿**）：`control_retirement_check`
-  （tools/check_architecture.py:5399）里的词表闭合那颗（:5452 / :5456）与 `is_final` 那颗加上的调用数下界（:5435），
-  `paper_acceptance_attribution_check`（:3456）四颗（:3466 基线定序 / :3478 语句级条件 / :3487 自报新增数 /
-  :3494 两轮用例），`command_queue_honesty_check`（:5975）三颗（:5988 503 与错误名 / :5998 用例两面 / :6006 装配
+  （tools/check_architecture.py:6228）里的词表闭合那颗（:6282 / :6286）与 `is_final` 那颗加上的调用数下界（:6263），
+  `paper_acceptance_attribution_check`（tools/check_architecture.py:6344）四颗（tools/check_architecture.py:6350 基线定序 / :6357 语句级条件 / :6373 自报新增数 /
+  tools/check_architecture.py:6379 两轮用例），`command_queue_honesty_check`（tools/check_architecture.py:9299）三颗（:9314 503 与错误名 / :9321 用例两面 / :9332 装配
   不吞错）。常驻用例新增 qx-api `a_command_that_cannot_be_queued_answers_503_not_202`（一条判两面），qx-cli
   `paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 从跑一轮改成跑两轮。本轮末 `cargo test --workspace --all-features -j 2`：**87 个目标 /
   916 passed / 0 failed / 4 ignored / 0 warnings**。取证 **14 颗变异 + 1 颗负对照 / 25 跑 / 还原异常 0**，
@@ -646,24 +646,24 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   不在"的判据（:2473 / :2967 / :4545 / :5977）仍按路径只读 `lib.rs`，其中 :5977 正是 R6-3 新写的那颗——四处改成
   `source_with_tests` 成对读（§54.6）。
 - **四份文本的 `path:line` 第一次由同一颗判据逐颗核对**（R6-7 / R6-8 / R6-9）：起点是白皮书、变更日志与
-  方案书里的行号没人量过（R6-7 逐颗复位），落点是把台账那套 `capabilities_citation_check`（`tools/check_architecture.py:9744`）泛化成
-  一颗共用扫描器 `citation_audit`（`tools/check_architecture.py:9604`）加文档侧薄壳 `doc_citation_check`（`tools/check_architecture.py:9758`），
-  常驻门禁 532 项 → **550 项全绿**（三份长文档各六颗；地板逐份钉在 `DOC_CITATION_TARGETS`（`tools/check_architecture.py:9546`）里：
+  方案书里的行号没人量过（R6-7 逐颗复位），落点是把台账那套 `capabilities_citation_check`（`tools/check_architecture.py:10020`）泛化成
+  一颗共用扫描器 `citation_audit`（`tools/check_architecture.py:9880`）加文档侧薄壳 `doc_citation_check`（`tools/check_architecture.py:10034`），
+  常驻门禁 532 项 → **550 项全绿**（三份长文档各六颗；地板逐份钉在 `DOC_CITATION_TARGETS`（`tools/check_architecture.py:9822`）里：
   方案书 580 引用 / 50 带名、变更日志 220/25、白皮书 410/60，台账沿用 90/20）。搬过来第一份取证就是它自己
   把 5 处文档锚点打红——门禁长一行，指进门禁的行号就集体下移一次；那不是判据过敏，是"文档按行号引用代码"
   这件事本身的代价。三口径（名字右边界、破折号区间远端、裸引用位置化归属）之外，R6-9 再把裸引用的归属扩到
-  "同一行只点了文件名、没带行号"那一颗：`CAP_BARE_PATH`（`tools/check_architecture.py:9526`）一次多量到 61 颗、当场红 12 颗，
+  "同一行只点了文件名、没带行号"那一颗：`CAP_BARE_PATH`（`tools/check_architecture.py:9802`）一次多量到 61 颗、当场红 12 颗，
   其中一颗是"数字恰好落在误认文件长度之内"的假通过。取证 6 颗变异、杀 6、存活 0，每颗在三种判据形状下逐列
   回放（明细在 §54.9–§54.12）。修完仍剩 349 颗无人核对的裸行号，按限制登记在 `maturity/capabilities.yaml`（R7 轮按同一条规则复测仍是 349，逐份拆分见 §55.11）。
 - **常驻门禁 550 项 → 553 项全绿**（本轮新增三颗）：`JobSpec 字段名单可解析，且不含三格只有写侧的退役键`
-  （`tools/check_architecture.py:9316`）、`deploy 里 3 份作业清单示例的每一格顶层键都在 JobSpec 名单里`
-  （`tools/check_architecture.py:9328`，只删代码不删示例，下一个人会照示例抄回来）、
-  `窗口与累计摘要在两个读面上同源`（`tools/check_architecture.py:5483`）。锁那一颗（`tools/check_architecture.py:9978`）
+  （`tools/check_architecture.py:10879`）、`deploy 里 3 份作业清单示例的每一格顶层键都在 JobSpec 名单里`
+  （`tools/check_architecture.py:10891`，只删代码不删示例，下一个人会照示例抄回来）、
+  `窗口与累计摘要在两个读面上同源`（`tools/check_architecture.py:6312`）。锁那一颗（`tools/check_architecture.py:11541`）
   不是新增而是加严：它现在同时要求"计数喂回判据"与"循环只按判据交出的年龄说话"。
-- **R7-6 的一批"仓内唯一写法、零生产调用"进保留表**：15 颗登记在 `tools/check_architecture.py:5788` 起的那一段，
-  批次理由与"留还是删"的分界写在 `tools/check_architecture.py:5784`；同批里的 `DataSchemaVersion` 走了相反的方向——
+- **R7-6 的一批"仓内唯一写法、零生产调用"进保留表**：15 颗登记在 `tools/check_architecture.py:6578` 起的那一段，
+  批次理由与"留还是删"的分界写在 `tools/check_architecture.py:6387`；同批里的 `DataSchemaVersion` 走了相反的方向——
   它是 `DATA_SCHEMA_VERSION`（`crates/qx-data/src/schema.rs:3`）那一格事实的第二种写法，按 Q3 口径直接删。
-- **点名表改为派生，不再手抄第二份行号**（R7-10b）：`m4_unnamed_citations`（`tools/check_architecture.py:6549`）过去拿
+- **点名表改为派生，不再手抄第二份行号**（R7-10b）：`m4_unnamed_citations`（`tools/check_architecture.py:6646`）过去拿
   一份手抄清单，R7-10 把文档里一颗从旧号改到新号之后，手抄的那份仍按旧号要求——同一个判断留两种写法，
   改对的那一半反而把判据弄红。现在它由保留表派生。
 - **本轮基线的用例数按实测记下**（是当轮日志里的数，不是增量）：outbox 后端语义 12、队列后端语义 2、
@@ -853,7 +853,7 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   于是"对得上"。两处的修法都不是再加判据，而是**把名字请回同一行**——点名只对点了名的引用有效。
   这一格今天仍然成立（跨行折行就丢点名），已写进白皮书 §10 的 G-6 边界。
   台账第 52 行跟着红——与 §53.7 那两条同一根绳，本轮按实测改口。
-- **区间远端可以"在界内却指错东西"，判据看不见**：`CAP_RANGE_END`（`tools/check_architecture.py:9538`）只量越界与空行，
+- **区间远端可以"在界内却指错东西"，判据看不见**：`CAP_RANGE_END`（`tools/check_architecture.py:9814`）只量越界与空行，
   不参与名字对齐。变更日志里 `write_optional_money`（`crates/qx-protocol/src/lib.rs:270`）那颗此前写作一个区间，两端写成
   `crates/qx-protocol/src/lib.rs:287-288`，而 287 那一格其实是 `scalar_money_raw` <!-- 史 -->。两个数字都在这份 877 行的
   文件里、都不是空行，判据一路绿；它是 R7-10 人工逐颗复核时抓到的，不是门禁报的。把区间拆成具名引用之后，
@@ -929,7 +929,7 @@ R5 轮之后新增四颗（逐条见 §53.8）：**Postgres 那本审计链端�
 R7 轮之后新增三条（逐条见 §55.13）：**R7-2 与 R7-3 没有形状判据**——再写一处 TEXT 列 `ORDER BY`、再长出一张不校验
 行内 id 的键表，仓内没有任何东西会红，只有契约用例在原地挡着，用例数地板只挡"整批被删"；**R7-5 量下来不是缺陷**——
 `fetch_remote_snapshot`（`crates/qx-adapter/src/binance.rs:1143`）的分页被限频预算界住，超预算是 `Err` 而不是静默截断，
-要收它得先给"页数上限"这件事一个真实故障模型；**R7-6 那 15 颗是"唯一实现但没接线"**（`tools/check_architecture.py:5788`），
+要收它得先给"页数上限"这件事一个真实故障模型；**R7-6 那 15 颗是"唯一实现但没接线"**（`tools/check_architecture.py:6578`），
 接不接待是裁决题，本轮只把登记的两侧口径改到与可达性一致。
 ## Unreleased — V11 合流轮（origin/main `ad2908b`）：上游四份提交接进 245 份文件，真冲突 20 颗，三颗残留在编译层，81 颗行号重钉（2026-09-28）
 
@@ -960,7 +960,7 @@ R7 轮之后新增三条（逐条见 §55.13）：**R7-2 与 R7-3 没有形状�
   因为 W8 那颗 `ShutdownToken` 无写者的限制仍在。
 - `WORKSPACE_TEST_FLOOR`（`tools/check_architecture.py:792`）1028 → **1024**：降掉的四颗是被删的重复用例，不是覆盖率——删后整树
   `cargo test --workspace` 实测 97 段 / 1014 passed / 0 failed / 0 ignored。`COVERAGE_PRODUCTION_READERS` 名册里那颗生产读点按新落点改口
-  （`tools/check_architecture.py:12019`）；行数棘轮重生成后在册 46 份里只有 1 颗数值变化（`crates/qx-cli/src/tests/deploy_template_coverage.rs` 779 → **784**），
+  （`tools/check_architecture.py:12491`）；行数棘轮重生成后在册 46 份里只有 1 颗数值变化（`crates/qx-cli/src/tests/deploy_template_coverage.rs` 779 → **784**），
   其余 45 颗一格未动。
 
 ### Added（文档行号重钉 81 颗：自动 48 + 人工 33）
@@ -969,7 +969,7 @@ R7 轮之后新增三条（逐条见 §55.13）：**R7-2 与 R7-3 没有形状�
   目标文件里的定义行"逐颗改，只动 `path:old` 那一颗 token、字节级读写、按各文件自己的行尾落盘（V11/V12/CHANGELOG/capabilities 纯 CRLF，
   `docs/SECURITY.md` 纯 LF），落盘后回读磁盘证明旧 token 零残留；解析不出定义行的不猜，转人工。
 - 人工那 33 颗里有 **6 颗是"号对了、话过期了"**，改号不改话就还在替不存在的东西作保：`RuntimeIngestReceipt.primary_seq` 已被上游
-  §9.12 #170 删除，改指在场的 `derived_seqs`（`crates/qx-runtime/src/pipeline.rs:279`）与 `engine_ts`（`:280`）；执行侧 `RiskDecision`
+  §9.12 #170 删除，改指在场的 `derived_seqs`（`crates/qx-runtime/src/pipeline.rs:278`）与 `engine_ts`（`:279`）；执行侧 `RiskDecision`
   已被 #172 改名 `RiskVerdict`，V12 的"同名异物"那一行按今天的词表整行重写；V11 租约那一格重钉到
   `crates/qx-cli/src/venue_runtime/binance_submit.rs:276` 与 `:363`；CHANGELOG 里"唯一一条 `docs` 证据行"那句与事实相反，改成真实在场的两份；
   "venue 判定散在 10 处"被上游 A3 收成一颗函数，只留今日事实——真分支只剩 `crates/qx-core/src/venue.rs:32` 一处。
@@ -2803,7 +2803,7 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
 - **算不出时报错而不是折成 0**：合计本金 ≤ 0、`× 10000` 越界、结果超出 `i64` 三种情形一律 `Err`。
   印 0 会把"这个组合根本没法度量"伪装成"这单套利不赚不赔"，与 `multi_leg_leg_cash` 撤掉静默截断同一条纪律。
 - **一次被行数逼出来的搬家**：`multi_builtin.rs` 加完新代码会越过 Phase 4s 的
-  `cli_backtest_module_check()`（`tools/check_architecture.py:723`，`>= OVERSIZED(500)` 即红，登记进预算表
+  `cli_backtest_module_check()`（`tools/check_architecture.py:1373`，`>= OVERSIZED(500)` 即红，登记进预算表
   也救不了）。把入口那 11 行组级合计折叠搬进归因内核 `crates/qx-cli/src/multi_leg.rs:452-470`
   （新增 `multi_leg_group_totals`，保证金仍取各组峰值而非求和），入口只留 1 行调用；
   `maturity/line_budgets.yaml` 本轮**一个字节都没动**。
@@ -3124,7 +3124,7 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
 - `crates/qx-protocol/tests/snapshot_single_source.rs` 新增 `uncomputed_money_is_not_the_same_state_as_computed_zero`：
   七个字段逐个跑"哈希不同 → seal/validate 自洽 → 稳定 JSON `null` vs `0` → 两种线格式往返保住区分 →
   `diff`+`apply` 两个方向都是一次真实改动"。`qx-api` 新增端点用例锁 `margin_raw: null`。
-- `tools/check_architecture.py:3847` `snapshot_money_honesty_check()` 11 项（静态门禁 245 → **256**）：Option
+- `tools/check_architecture.py:4540` `snapshot_money_honesty_check()` 11 项（静态门禁 245 → **256**）：Option
   形状、取法唯一、两处哈希共用、存在性标记、槽位唯一写法、"权益副本"禁抄（含改类型后**仍可写出**的四种形状）、
   available 取结算现金、费用 checked 加总、五个未算字段在任何产码里都不得出现赋值写法、端点两处 `and_then`、
   六条用例按 `fn NAME(` 取证。`CLI_TEST_FLOOR` 169 → **173**；`maturity/line_budgets.yaml` 重登记
@@ -3507,7 +3507,7 @@ MQ62e（内核整本 `validate`）、MQ62h（入金槽位）、GA62e（`.ok();` 
 - 变异成对（cargo 级）：MQ60a（锚退回上一根 Bar）红在集成 `ashare_limit_anchor.rs:143` 与单元
   `ashare/tests.rs:432`，`1 passed; 1 failed` / `0 passed; 1 failed`；MQ60b（覆盖表失效）
   红在**另一条**集成用例 `:163` 与单元 `:377`；MQ60c（去掉 `.rev()`，锚落到整段历史的第一根）
-  红在 `:143` 与单元 `:362`。三处还原后各自回到 `2 passed; 0 failed` 与 `1 passed; 0 failed`。
+  红在 `:143` 与单元 `:362`。三处还原后各自回到 `2 passed; 0 failed` 与 `1 passed; 0 failed`。 <!-- 史 -->
 - 变异成对（静态门禁级）：G1 删"不复权"口径文案 → `[FAIL] 锚的口径与…写进代码文档`；
   G2 删 `.rev()`、G3 把覆盖表按错的 key 取 → 双双点亮 `昨收锚按上一交易日推导`；
   G4 在引擎里再抄一份锚 → `涨跌停的昨收锚只有一个定义点与一个引擎调用点 — 定义 1 处、引擎调用 2 处`；

@@ -1,7 +1,7 @@
 # 单文件行数棘轮快照，由 tools/check_architecture.py --snapshot 生成。
 # 只允许数值下降；确需增长或新增超 500 行文件时重新生成并审阅 diff。
 crates/qx-adapter/src/binance.rs: 2342
-crates/qx-adapter/src/ccxt.rs: 1165
+crates/qx-adapter/src/ccxt.rs: 1241
 crates/qx-adapter/src/lib.rs: 1033
 crates/qx-api/src/lib.rs: 2566
 crates/qx-api/src/tests.rs: 1248
@@ -28,14 +28,14 @@ crates/qx-guanxing/src/lib.rs: 577
 crates/qx-protocol/src/lib.rs: 815
 crates/qx-protocol/tests/snapshot_schema_contract.rs: 655
 crates/qx-provider/src/lib.rs: 743
-crates/qx-runtime/src/pipeline.rs: 2379
+crates/qx-runtime/src/pipeline.rs: 2375
 crates/qx-scheduler/src/lib.rs: 1556
 crates/qx-storage/src/lib.rs: 1704
 crates/qx-storage/src/nats.rs: 638
-crates/qx-storage/src/postgres.rs: 2191
-crates/qx-storage/src/sqlite.rs: 2342
+crates/qx-storage/src/postgres.rs: 2187
+crates/qx-storage/src/sqlite.rs: 2338
 crates/qx-storage/src/tests.rs: 978
-crates/qx-storage/tests/outbox_backend_semantics.rs: 745
+crates/qx-storage/tests/outbox_backend_semantics.rs: 743
 crates/qx-strategy/src/builtin.rs: 991
 crates/qx-strategy/src/c_api.rs: 1106
 crates/qx-strategy/src/lib.rs: 551

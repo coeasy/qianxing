@@ -387,8 +387,8 @@ if self.header.state_hash != 0 && self.header.state_hash != self.state_hash() {
 
 **C2 的强度也要说准**：链是**未加键**的，能改写存储的人可以整条重算；
 头锚点取自同一个后端的控制面状态（`crates/qx-storage/src/lib.rs:1503-1506`），没有带外锚。
-链校验三个后端都有（`crates/qx-storage/src/file/audit.rs:60`、`crates/qx-storage/src/sqlite.rs:1421`、
-`crates/qx-storage/src/postgres.rs:1371`），问题不在"某个后端不扫"，而在它**只长在
+链校验三个后端都有（`crates/qx-storage/src/file/audit.rs:60`、`crates/qx-storage/src/sqlite.rs:1417`、
+`crates/qx-storage/src/postgres.rs:1367`），问题不在"某个后端不扫"，而在它**只长在
 `read_entries()` 这一条读路上**：生产里走这条路的只有 doctor 的两支
 （`crates/qx-cli/src/doctor_report.rs:350`、`crates/qx-cli/src/doctor_report.rs:436`，分别是 file 与 sqlite，**没有 postgres 支**），
 而 `/control/audit` 念的是内存控制面的 `plane.audit()`（`crates/qx-api/src/lib.rs:1548`、`crates/qx-api/src/lib.rs:2123`），
@@ -748,8 +748,8 @@ let granted = match &self.policy {
   带 `schema_version` 且读侧先比。
 * **G-5 防伪位置不用无键哈希**：`Fnv1a` 的构造点白名单（`crates/qx-core/src/sourcing.rs`、`qx-guanxing` 的数据哈希等），
   出现在 C1/C3/C4/C5 任一格即红——这一条要等 §4.10 的修法落地才可能绿。
-* **G-6 本文的每条 `path:line` 都算数**：本文由 `doc_citation_check`（`tools/check_architecture.py:9758`）逐颗核对，它与台账
-  共用同一颗扫描器 `citation_audit`（`tools/check_architecture.py:9604`）——R6-8 起带三口径，R6-9 起裸引用的归属再扩到
+* **G-6 本文的每条 `path:line` 都算数**：本文由 `doc_citation_check`（`tools/check_architecture.py:10034`）逐颗核对，它与台账
+  共用同一颗扫描器 `citation_audit`（`tools/check_architecture.py:9880`）——R6-8 起带三口径，R6-9 起裸引用的归属再扩到
   "同一行只点了文件名、没带行号"那一颗。行号漂移即红。
 * **G-6 看不见的那两格**（写进契约，免得下一个人把绿读成"全对上了"）：判据按行扫描，所以①一行里既没有带行号的
   引用、也没有能唯一解析的文件名时，那颗裸行号无人核对——R6-9 之后四份文本仍剩 349 颗这种形状
@@ -776,5 +776,5 @@ let granted = match &self.policy {
 | 日期 | 变更 | 依据 |
 |---|---|---|
 | 2026-09-26 | 首版：12 类逐项判定 + 12 项缺陷登记 + 14 项负行 + 配置清单与轮换流程 | 本轮实测（`crates/` 23 个 crate、`python/` 23 个 `.py`、`deploy/` 全量、门禁与用例逐条读；首版当日工作树 359 个未提交改动） |
-| 2026-09-26 | 引用收口：三种门禁扫不到的形状各改一类——逗号串号 3 处、裸 `:NNN` 全部展开成自足 `path:line`、range 首行的窗口打不到尾部名字时另给精确锚点6 处「名字与锚点对不上」挪到声明处（`external_executable`、`consumer_handler_executable`/`consumer_handler_args`、签名头、`credential_env`、`postgres_dsn_env`、`python_module`）；2 处过强断言收窄（`deny_unknown_fields` 的适用范围、`OutboxEvent` 在 `crates/qx-storage/src/lib.rs:368-374` 有字段但无人比）；1 处指错锚点（`CancelOrder` 负行 252-257 → 281-286）；负行 14 → 16 | 判据按 AST 从 `doc_citation_check`（`tools/check_architecture.py:9758`）取出后重放：本文全部 `path:line` 逐颗对得上，引用数与带名绑定数由常驻门禁当轮打印、不在这里抄一份会过期的副本；名字档另判，剩余 3 处 hard 全是「断言某物不存在」，已升成 §9 负行
-| 2026-09-26 | R7 轮重钉：本文 51 行的行号按当前代码改口，并逐颗人工复核"被引那一格里是不是那颗东西"——机械 0 红不等于语义对：区间远端只量越界与空行（`CAP_RANGE_END`，`tools/check_architecture.py:8583`），同一条规则本轮在变更日志里抓到一例"数字恰好落在界内、那一格却是别的东西"的假通过，逐颗明细记在方案书 §55.10、§55.11；上一行那句"引用数不在这里抄副本"本轮同样回落到 §10 的 G-6——逐份拆分只留在方案书与台账，本文不再放第二份会过期的数 | 第 5 轮三扫之后的 R7 收口 |
+| 2026-09-26 | 引用收口：三种门禁扫不到的形状各改一类——逗号串号 3 处、裸 `:NNN` 全部展开成自足 `path:line`、range 首行的窗口打不到尾部名字时另给精确锚点6 处「名字与锚点对不上」挪到声明处（`external_executable`、`consumer_handler_executable`/`consumer_handler_args`、签名头、`credential_env`、`postgres_dsn_env`、`python_module`）；2 处过强断言收窄（`deny_unknown_fields` 的适用范围、`OutboxEvent` 在 `crates/qx-storage/src/lib.rs:368-374` 有字段但无人比）；1 处指错锚点（`CancelOrder` 负行 252-257 → 281-286）；负行 14 → 16 | 判据按 AST 从 `doc_citation_check`（`tools/check_architecture.py:10034`）取出后重放：本文全部 `path:line` 逐颗对得上，引用数与带名绑定数由常驻门禁当轮打印、不在这里抄一份会过期的副本；名字档另判，剩余 3 处 hard 全是「断言某物不存在」，已升成 §9 负行
+| 2026-09-26 | R7 轮重钉：本文 51 行的行号按当前代码改口，并逐颗人工复核"被引那一格里是不是那颗东西"——机械 0 红不等于语义对：区间远端只量越界与空行（`CAP_RANGE_END`，`tools/check_architecture.py:9814`），同一条规则本轮在变更日志里抓到一例"数字恰好落在界内、那一格却是别的东西"的假通过，逐颗明细记在方案书 §55.10、§55.11；上一行那句"引用数不在这里抄副本"本轮同样回落到 §10 的 G-6——逐份拆分只留在方案书与台账，本文不再放第二份会过期的数 | 第 5 轮三扫之后的 R7 收口 |

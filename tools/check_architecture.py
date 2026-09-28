@@ -6576,7 +6576,7 @@ M4_GATEWAY_CORRELATION = ("crates/qx-execution/src/lib.rs", 'format!("control:{}
 # `#[cfg(test)] pub(crate)`（V12 §16 那一族的收口）：它们只在测试构建里存在，就不是"对外的
 # 唯一写法留着待接线"，一并撤掉——那一格的代价由编译器付，不由门禁的行号钉子付。
 M4_KEPT_SURFACES = (
-    ("crates/qx-runtime/src/pipeline.rs", 752, "pub fn register_order("),
+    ("crates/qx-runtime/src/pipeline.rs", 751, "pub fn register_order("),
     # V11 N4b：qx-scheduler 库里那份"内嵌执行面"——`Trigger::Event`/`Trigger::Manual`
     # 在仓内唯一的派发者，加上唯一把退避判定变成真实重投的入口。零生产调用不等于零能力。
     ("crates/qx-scheduler/src/lib.rs", 206, "pub trait JobExecutor"),
@@ -6625,15 +6625,15 @@ M4_KEPT_SURFACES = (
     # `deduplicated` 有生产读者（ccxt_facts 用它决定现金流水计不计入），另两格仍然是"每笔都写、
     # 只有本 crate 用例读"——它们是这张表里剩下的那颗零读者面，逐格钉住而不是合钉一行：
     # 哪天接上读者，要看得见是哪一格接上的。
-    ("crates/qx-runtime/src/pipeline.rs", 279, "pub derived_seqs: Vec<u64>,"),
-    ("crates/qx-runtime/src/pipeline.rs", 280, "pub engine_ts: u64,"),
+    ("crates/qx-runtime/src/pipeline.rs", 278, "pub derived_seqs: Vec<u64>,"),
+    ("crates/qx-runtime/src/pipeline.rs", 279, "pub engine_ts: u64,"),
     ("crates/qx-protocol/src/wire.rs", 74, "pub struct TransferSnapshot"),
 )
 M4_KEPT_SURFACE_KEY = "zero_caller_library_surface_kept_by_design"
 # 对账维度：账户维那四颗判据随 V12 §17 整份删除（`qx-genglu/src/reconcile/account.rs` 已不存在），
 # 于是每一维在仓内只剩一处实现。下面两行钉的不是"零调用面"，而是"删掉重复写法之后正主还指得到"。
 M4_RECONCILE_LIVE_REFS = (
-    ("crates/qx-runtime/src/pipeline.rs", 702, "pub fn settlement_balance_discrepancies"),
+    ("crates/qx-runtime/src/pipeline.rs", 701, "pub fn settlement_balance_discrepancies"),
     ("crates/qx-adapter/src/reconcile.rs", 89, "reconcile_order_facts(local, remote)"),
 )
 M4_RECONCILE_KEY = "reconcile_dimensions_have_one_implementation_each"
@@ -7230,7 +7230,7 @@ def termination_budget_check() -> None:
     )
     check(
         -1 < pump.find("outbox_exhausted(event.attempts)") < pump.find("claim_outbox")
-        and pump.count("report.parked =") == 1
+        and pump.count("OutboxRelayReport { parked, ..empty }") == 1 and pump.count("report.parked =") == 0
         and pump.count("self.store.available_outbox(now, limit)?") == 1
         and "delivered >= limit" not in pump,
         "relay 在 claim 之前跳过停摆事件，页数上界只在 store 那一处读（V11 K2、R7-d）",
@@ -7269,8 +7269,8 @@ def termination_budget_check() -> None:
             and text.count("pub fn count_parked(&self) -> Result<u64, StorageError>") == 1
             for text in backends.values()
         )
-        and "report.parked = self.store.count_parked_outbox()?;" in pump
-        and "report.parked.saturating_add(1)" not in pump,
+        and "let parked = self.store.count_parked_outbox()?;" in pump and "report.parked.saturating_add(1)" not in pump
+        and "OutboxRelayReport { parked, ..empty }" in pump,
         "停摆条数向库里问、再进 report：三本后端各一份不问页数的计数（V11 R7-d）",
         "逐行数 parked 的形状（`report.parked.saturating_add(1)`）在候选集被 limit 截断后只报这一页"
         "的观察值：库里三条都停摆而 limit=1 时运维看到 1 条，毒事件于是又消失三分之二。"

@@ -577,10 +577,10 @@ where
         if limit == 0 {
             return Ok(OutboxRelayReport::default());
         }
-        let mut report = OutboxRelayReport::default();
-        // 停摆条数问的是「库里现在有几条发不出去」，不是「这一页里数到几条」：候选集被
-        // `limit` 截断后逐行数会随页数漂移，少报等于运维面上那条毒事件消失（V11 R7-d）。
-        report.parked = self.store.count_parked_outbox()?;
+        // 停摆条数问的是「库里现在有几条发不出去」而不是这一页数到几条（V11 R7-d）：少报等于毒事件在运维面上消失。
+        let parked = self.store.count_parked_outbox()?;
+        let empty = OutboxRelayReport::default();
+        let mut report = OutboxRelayReport { parked, ..empty };
         // 页数上界只有 store 那一处读：这里再数一遍 `delivered >= limit` 是一份走不到的第二判据
         // ——三本后端的 LIMIT 由跨后端契约用例钉住，relay 只负责「端上来的这一页逐条投递」。
         for event in self.store.available_outbox(now, limit)? {
