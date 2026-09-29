@@ -193,3 +193,43 @@ fn status_reports_no_summary_instead_of_an_empty_backtest() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// 三格溯源（撮合内核 / 成本绑定来源 / 被挡下的委托数）在写侧一直有，正文此前不念。
+/// 单元侧证明排版函数会读这三格，这里证明**真命令**印的就是那一行，且 `0` 与缺席分得开：
+/// 排版函数少印一行不会让本文件任何别的断言变红，读者只会看到少了一栏而看不到"没挡单"
+/// 与"没记这笔账"其实是两个答案（V13 第 8 轮 A6）。
+#[test]
+fn report_prints_kernel_cost_source_and_rejection_count_from_a_real_summary() {
+    let root = temp_root("provenance");
+    let declared = write_summary(
+        &root,
+        "v4.summary.json",
+        &serde_json::json!({
+            "schema_version": 4,
+            "strategy_id": "ema_cross",
+            "matching_kernel": "qx-xingban::BacktestEngine(bar)",
+            "execution_costs": { "source": "cost-rules-file:/cfg/cost.json" },
+            "rejected_orders": 0,
+        }),
+    );
+    let (code, stdout, stderr) = run(&["report", &declared.to_string_lossy()]);
+    assert_eq!(code, 0, "report 读一份带溯源格的 v4 摘要应当成功: {stderr}");
+    let expected = "matching_kernel=qx-xingban::BacktestEngine(bar) cost_source=cost-rules-file:/cfg/cost.json rejected_orders=0";
+    assert!(stdout.contains(expected), "三格必须同行念出: {stdout}");
+
+    // 反向：v1 世代没写过这三格，答案只能是 absent，不能沿用上一格的值也不能落 0。
+    let old_root = temp_root("provenance-v1");
+    let old = write_summary(
+        &old_root,
+        "v1.summary.json",
+        &v1_summary_without_those_blocks(),
+    );
+    let (code, stdout, _) = run(&["report", &old.to_string_lossy()]);
+    assert_eq!(code, 0, "report 读旧世代摘要应当成功: {stdout}");
+    assert!(
+        stdout.contains("matching_kernel=absent cost_source=absent rejected_orders=absent"),
+        "旧产物的溯源格要说成没声明过，而不是 0: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(old_root);
+}

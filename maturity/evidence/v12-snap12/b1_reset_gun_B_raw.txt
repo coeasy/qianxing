@@ -1,0 +1,37 @@
+还原 一致 期望 37883503464a2ad1 实际 37883503464a2ad1
+rc=3221226505
+---- 正文（全部行） ----
+1: 
+2: running 10 tests
+3: test connect_failures_still_escalate_backoff_and_stop_at_the_budget ... ok
+4: test market_stream_runner_gives_up_after_consecutive_transport_failures ... ok
+5: test market_stream_runner_survives_silence_and_uses_the_injected_clock ... ok
+6: test user_stream_runner_does_not_reset_the_budget_on_callback_failures ...    Compiling qx-adapter v0.1.0 (D:\aex_work\qianxing\crates\qx-adapter)
+7: warning: variable `callback_failed` is assigned to, but never used
+8:    --> crates\qx-adapter\src\binance.rs:476:13
+9:     |
+10: 476 |         let mut callback_failed = false;
+11:     |             ^^^^^^^^^^^^^^^^^^^
+12:     |
+13:     = note: consider using `_callback_failed` instead
+14:     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+15: 
+16: warning: value assigned to `callback_failed` is never read
+17:    --> crates\qx-adapter\src\binance.rs:486:25
+18:     |
+19: 486 |                         callback_failed = true;
+20:     |                         ^^^^^^^^^^^^^^^^^^^^^^
+21:     |
+22:     = help: maybe it is overwritten before being read?
+23:     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+24: 
+25: warning: `qx-adapter` (lib) generated 2 warnings
+26:     Finished `test` profile [unoptimized + debuginfo] target(s) in 1.83s
+27:      Running tests\binance_stream_retry.rs (target\debug\deps\binance_stream_retry-f99d27ae1b7fc8e2.exe)
+28: memory allocation of 1073741824 bytes failed
+29: note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+30: error: test failed, to rerun pass `-p qx-adapter --test binance_stream_retry`
+31: 
+32: Caused by:
+33:   process didn't exit successfully: `D:\aex_work\qianxing\target\debug\deps\binance_stream_retry-f99d27ae1b7fc8e2.exe --test-threads=1` (exit code: 0xc0000409, STATUS_STACK_BUFFER_OVERRUN)
+34: note: test exited abnormally; to see the full output pass --no-capture to the harness.

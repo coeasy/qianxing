@@ -170,11 +170,11 @@ impl PythonStrategyClient {
             StrategyTransport::SharedMemoryJson | StrategyTransport::SharedMemoryColumnar
         );
         let mut child = command
-            .stdin(if shared {
-                Stdio::null()
-            } else {
-                Stdio::piped()
-            })
+            // 共享内存模式也留着这根 stdin 管道，并且不把写端丢掉：句柄活在 `self.stdin` 里，
+            // 父进程一退出（包括 `std::process::exit` 跳过 Drop 那几条路）OS 就关掉写端，
+            // 子进程读到 EOF 即自收摊。此前这里是 Stdio::null()，worker 只能干等 ring 里永远
+            // 不再来的下一颗请求，变成 1 kHz 永久自转的孤儿并留下两份 ring 文件（V13 C4）。
+            .stdin(Stdio::piped())
             .stdout(if shared {
                 Stdio::null()
             } else {
@@ -186,9 +186,9 @@ impl PythonStrategyClient {
             .map_err(|error| {
                 format!("启动 {label} worker 失败: {diagnostic_program} 无法执行: {error}")
             })?;
-        let stdin = if shared { None } else { child.stdin.take() };
+        let stdin = child.stdin.take();
         let stdout = if shared { None } else { child.stdout.take() };
-        if !shared && (stdin.is_none() || stdout.is_none()) {
+        if stdin.is_none() || (!shared && stdout.is_none()) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!("{label} worker stdin/stdout 不可用"));
@@ -222,13 +222,13 @@ impl PythonStrategyClient {
             None
         } else {
             let stdout = stdout.expect("non-shared worker stdout checked above");
-            let (sender, responses) = mpsc::channel();
+            let (sender, responses) = mpsc::sync_channel(STRATEGY_PUMP_BACKLOG);
             thread::spawn(move || match transport {
                 StrategyTransport::Jsonl => {
-                    let reader = BufReader::new(stdout);
-                    for line in reader.lines() {
-                        match line {
-                            Ok(line) => {
+                    let mut reader = BufReader::new(stdout);
+                    loop {
+                        match read_jsonl_line_within(&mut reader, jsonl_line_cap_bytes()) {
+                            Ok(Some(line)) => {
                                 if sender
                                     .send(Ok(StrategyWireResponse::JsonLine(line)))
                                     .is_err()
@@ -236,9 +236,9 @@ impl PythonStrategyClient {
                                     return;
                                 }
                             }
+                            Ok(None) => break,
                             Err(error) => {
-                                let _ = sender
-                                    .send(Err(format!("读取 Strategy worker 响应失败: {error}")));
+                                let _ = sender.send(Err(error));
                                 return;
                             }
                         }
@@ -384,6 +384,9 @@ impl PythonStrategyClient {
                     .stdin
                     .take()
                     .ok_or_else(|| format!("{} worker stdin 不可用", label))?;
+                // 走到这里上一次应答要么已被取走、要么本次请求还没写出去，通道里剩下的都是迟到的残粒。
+                // 留着它，下一次 `recv` 就先读到上一颗——JSONL 的线格式不带序号，挡不住这种错位。
+                let _ = self.responses.as_ref().map(drain_stale_responses);
                 let frame = if self.transport == StrategyTransport::Jsonl {
                     format!("{payload}\n").into_bytes()
                 } else {
@@ -803,4 +806,77 @@ pub(crate) fn invoke_builtin_strategy(
 pub(crate) enum ContractStrategyClient {
     Process(Box<PythonStrategyClient>),
     Native(Box<DynamicCAbiStrategy>),
+}
+
+/// 响应泵替调用方排队的深度。此前这里是无界的 `mpsc::channel()`：一颗话痨 worker 在父进程
+/// 一次都没读的情况下可以一直往通道里塞，把内存吃光而压力从不回到子进程。
+pub(crate) const STRATEGY_PUMP_BACKLOG: usize = 64;
+
+/// JSONL 支单行响应的长度上界。分帧支早就按 `DEFAULT_MAX_FRAME_BYTES` 读，JSONL 支此前用
+/// `BufRead::lines()`：worker 只写半行不换行，父进程就把那半行无限攒下去。这里复用同一颗
+/// 常量，不再写第二个数。
+pub(crate) fn jsonl_line_cap_bytes() -> usize {
+    DEFAULT_MAX_FRAME_BYTES
+}
+
+/// 读一行，但不许超过 `cap`。`Ok(None)` 表示对端 EOF 且没有残行，与 `BufRead::lines()` 的
+/// 收尾一致；末行没有换行也照样交出去（同样是 `lines()` 的旧行为）。
+pub(crate) fn read_jsonl_line_within<R: BufRead>(
+    reader: &mut R,
+    cap: usize,
+) -> Result<Option<String>, String> {
+    let mut collected: Vec<u8> = Vec::new();
+    loop {
+        let window = reader
+            .fill_buf()
+            .map_err(|error| format!("读取 Strategy worker 响应失败: {error}"))?;
+        if window.is_empty() {
+            if collected.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(
+                String::from_utf8(std::mem::take(&mut collected))
+                    .map_err(|error| format!("Strategy worker 响应不是 UTF-8: {error}"))?,
+            ));
+        }
+        let end = match window.iter().position(|byte| *byte == b'\n') {
+            Some(newline) => newline + 1,
+            None => window.len(),
+        };
+        // `consume` 会让 `window` 失效，所以对尾判据必须先读再消费。
+        let ended_with_newline = window[..end].ends_with(b"\n");
+        collected.extend_from_slice(&window[..end]);
+        reader.consume(end);
+        if collected.len() > cap {
+            return Err(format!(
+                "Strategy worker 单行响应超过 {cap} 字节上限，已停止读取"
+            ));
+        }
+        if ended_with_newline {
+            collected.pop();
+            if collected.last() == Some(&b'\r') {
+                collected.pop();
+            }
+            return Ok(Some(String::from_utf8(collected).map_err(|error| {
+                format!("Strategy worker 响应不是 UTF-8: {error}")
+            })?));
+        }
+    }
+}
+
+/// 丢掉队列里已经躺着的答复。`recv_timeout` 超时之后 worker 那颗迟到的答复还留在通道里，
+/// 而下一次 `recv` 会先读到它——分帧支有 `frame.sequence` 比对挡住这条路，JSONL 的线格式
+/// 不带序号，所以每次写新输入之前先把残粒清干净。返回清掉的条数，让用例能量牙齿。
+pub(crate) fn drain_stale_responses(
+    responses: &Receiver<Result<StrategyWireResponse, String>>,
+) -> usize {
+    let mut dropped = 0;
+    loop {
+        match responses.try_recv() {
+            Ok(_) => dropped += 1,
+            Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => {
+                return dropped;
+            }
+        }
+    }
 }

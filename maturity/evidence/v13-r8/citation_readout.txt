@@ -1,0 +1,44 @@
+
+=== maturity/capabilities.yaml 第 418 行：3 颗带路径 + 5 颗裸引用 ===
+  crates/qx-api/src/lib.rs:2094  |if stop() {
+  crates/qx-api/src/lib.rs（承上）:1952  |fn spawn_connection<S>(&self, stream: S, ts: u64, operator_id: Option<String>, stop: StopToken)
+  crates/qx-api/src/lib.rs（承上）:1956  |let Some(slot) = self.live.reserve() else {
+  crates/qx-api/src/lib.rs（承上）:2271  |const MAX_LIVE_CONNECTIONS: usize = 64;
+  crates/qx-api/src/lib.rs（承上）:2430  |fn reject_overloaded<S: Read + Write>(mut stream: S) {
+  crates/qx-api/src/lib.rs（承上）:2283  |stream.set_write_timeout(Some(Duration::from_secs(10)))
+  crates/qx-api/src/tests.rs:1116  |fn websocket_stream_terminates_on_the_stop_token_without_client_close() {
+  crates/qx-api/src/tests.rs:1063  |fn live_connection_ceiling_refuses_and_gives_the_slot_back() {
+
+=== maturity/capabilities.yaml 第 479 行：1 颗带路径 + 4 颗裸引用 ===
+  crates/qx-adapter/src/lib.rs:329  |fn resolve_socket_address(
+  crates/qx-adapter/src/lib.rs（承上）:142  |let address = resolve_socket_address(&host, port, timeout, "WSS")?;
+  crates/qx-adapter/src/lib.rs（承上）:257  |resolve_socket_address(&request.host, request.port, self.timeout, "TLS HTTP")?;
+  crates/qx-adapter/src/lib.rs（承上）:696  |let address = resolve_socket_address(&request.host, request.port, self.timeout, "HTTP")?;
+  crates/qx-adapter/src/lib.rs（承上）:310  |fn within_budget<T, F>(thread_name: &str, budget: Duration, work: F) -> Result<T, RecvTimeoutError>
+
+=== maturity/capabilities.yaml 第 487 行：2 颗带路径 + 6 颗裸引用 ===
+  crates/qx-adapter/src/lib.rs:453  |const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+  crates/qx-adapter/src/lib.rs:515  |if length > MAX_WEBSOCKET_MESSAGE_BYTES as u64 {
+  crates/qx-adapter/src/lib.rs（承上）:590  |if current.payload.len() + payload.len() > MAX_WEBSOCKET_MESSAGE_BYTES {
+  crates/qx-adapter/src/lib.rs（承上）:460  |const WEBSOCKET_MESSAGE_BUDGET: Duration = Duration::from_secs(120);
+  crates/qx-adapter/src/lib.rs（承上）:465  |const MAX_WEBSOCKET_FRAMES_PER_MESSAGE: usize = 8_192;
+  crates/qx-adapter/src/lib.rs（承上）:539  |WEBSOCKET_MESSAGE_BUDGET,
+  crates/qx-adapter/src/lib.rs（承上）:540  |MAX_WEBSOCKET_FRAMES_PER_MESSAGE,
+  crates/qx-adapter/src/lib.rs（承上）:546  |fn read_websocket_message_within<R: Read + Write>(
+
+=== maturity/capabilities.yaml 第 656 行：2 颗带路径 + 10 颗裸引用 ===
+  crates/qx-storage/src/nats.rs:16  |const NATS_BOOT_BUDGET: Duration = Duration::from_secs(10);
+  crates/qx-storage/src/nats.rs（承上）:18  |const NATS_PUBLISH_ACK_BUDGET: Duration = Duration::from_secs(5);
+  crates/qx-storage/src/nats.rs（承上）:483  |async fn bounded_ack<F, E>(ack: F) -> Result<(), String>
+  crates/qx-storage/src/nats.rs（承上）:525  |fn block_on_runtime_within<F, T>(
+  crates/qx-storage/src/nats.rs（承上）:60  |let client = block_on_runtime_within(
+  crates/qx-storage/src/nats.rs（承上）:99  |match block_on_runtime_within(
+  crates/qx-storage/src/nats.rs（承上）:196  |let jetstream_consumer = block_on_runtime_within(
+  crates/qx-storage/src/nats.rs（承上）:115  |self.wedged.store(true, Ordering::Relaxed);
+  crates/qx-storage/src/nats.rs（承上）:89  |if self.wedged.load(Ordering::Relaxed) {
+  crates/qx-storage/src/nats.rs（承上）:247  |block_on_runtime(&self.runtime, async move {
+  crates/qx-storage/src/nats.rs（承上）:370  |block_on_runtime(&self.runtime, async move {
+  crates/qx-storage/src/nats.rs:610  |fn every_nats_await_site_goes_through_the_bounded_wait() {
+
+合计 33 颗（其中裸引用 25 颗）：读不出目标行 0 颗
+本格只摊原文不判红——判「这一行说的是不是文案指的东西」要人读。

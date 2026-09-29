@@ -423,6 +423,7 @@ mod settlement_currency_single_source;
 mod spread_recovery_cadence;
 mod storage_root_report;
 mod strategy_declaration_scope;
+mod strategy_pump_bounds;
 mod strategy_worker_entries;
 mod worker_observability;
 mod zero_reader_fields;

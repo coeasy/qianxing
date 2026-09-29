@@ -452,6 +452,18 @@ fn write_client_frame<W: Write>(writer: &mut W, opcode: u8, payload: &[u8]) -> R
 /// 一条 WebSocket 消息的长度预算：单帧与分片累计共用同一个数，分片不额外放宽。
 const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 
+/// 读出一条完整消息的墙钟预算。socket 的读超时（shipped 10 s，
+/// crates/qx-cli/src/venue_runtime/binance_stream_worker.rs:40）只界住"这一轮有没有字节"：
+/// 对端只要每个读窗滴一帧，下面的循环就永不出头，而调用点的停机令牌与心跳一起被饿死
+/// ——那颗内层 `while !should_stop()` 要等这条调用返回才轮得到下一次判定（V13 第 8 轮 C5）。
+/// 120 s 是 12 个读窗：预算之内的合法最坏情况是一条 16 MiB 的消息，健康链路几秒就能收完。
+const WEBSOCKET_MESSAGE_BUDGET: Duration = Duration::from_secs(120);
+
+/// 单次调用允许吞下的帧数上界。长度预算管字节，这颗管圈数：滴 1 字节控制帧的对端
+/// 在一颗读窗里就能转上成千圈，把行情读侧变成 CPU 与 Pong 写回的永动机。
+/// 8 192 帧配 16 MiB 的消息预算，等价于要求整条消息的平均帧不小于 2 KiB。
+const MAX_WEBSOCKET_FRAMES_PER_MESSAGE: usize = 8_192;
+
 /// 这次读失败是否只是"此刻没有数据"。
 ///
 /// 两种错误码都得认：`set_read_timeout` 到期时 std 给 `TimedOut`，而 rustls 会把底层
@@ -522,8 +534,34 @@ fn read_server_frame_or_idle<R: Read>(
 /// 超大消息切成一串各自合法的片段，就能让这里的缓冲无界长大，而这条链路是行情
 /// 用户流的共用读侧——它先 OOM，同一颗进程里的所有订阅就一起没了。
 fn read_websocket_message<R: Read + Write>(stream: &mut R) -> Result<WebSocketRead, String> {
+    read_websocket_message_within(
+        stream,
+        WEBSOCKET_MESSAGE_BUDGET,
+        MAX_WEBSOCKET_FRAMES_PER_MESSAGE,
+    )
+}
+
+/// 预算与帧数上界做成形参，只为用例能在几十毫秒的窗口里打到这两颗名——
+/// 生产只走上面那两颗常量。
+fn read_websocket_message_within<R: Read + Write>(
+    stream: &mut R,
+    budget: Duration,
+    max_frames: usize,
+) -> Result<WebSocketRead, String> {
+    let deadline = Instant::now() + budget;
+    let mut frames = 0_usize;
     let mut message = None;
     loop {
+        if frames >= max_frames {
+            return Err(format!(
+                "WebSocket 分片帧数超过 {max_frames} 上界，断开重连"
+            ));
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "WebSocket 单条消息读取超过整体截止 {budget:?}，断开重连"
+            ));
+        }
         let Some((fin, opcode, payload)) = read_server_frame_or_idle(stream)? else {
             // 攒着半条消息时静默不能当好消息交出去：续帧随后就到，届时 `0x0` 会被
             // 当成非法首帧。宁可让上层重连一次，也不能把已收下的片段装作没发生。
@@ -532,6 +570,7 @@ fn read_websocket_message<R: Read + Write>(stream: &mut R) -> Result<WebSocketRe
             }
             return Ok(WebSocketRead::Idle);
         };
+        frames += 1;
         match opcode {
             0x8 => return Ok(WebSocketRead::Closed),
             0x9 => {
@@ -951,6 +990,81 @@ mod tests {
         assert!(
             error.contains("MiB 限制"),
             "要说是预算挡下的，不是读取失败: {error}"
+        );
+    }
+
+    /// 滴控制帧的对端不吃长度预算：每帧才两字节，永远凑不满 16 MiB，走的又是
+    /// `0x9` 那臂的 `continue`。这里只有帧数上界拦得住，摘掉它就是一次无人接管的永动。
+    #[test]
+    fn websocket_frame_dribble_stops_at_its_frame_ceiling() {
+        const TEST_FRAMES: usize = 12;
+        let mut socket =
+            ScriptedSocket::new(vec![Ok(server_frame(true, 0x9, &[])); TEST_FRAMES + 4]);
+        let error =
+            read_websocket_message_within(&mut socket, Duration::from_secs(3_600), TEST_FRAMES)
+                .expect_err("滴 Ping 的对端不能让这次调用一直不返回");
+        assert!(error.contains("帧数"), "要说清是帧数上界挡下的: {error}");
+        // 上界要正好落在第 TEST_FRAMES 帧：多吞一圈就说明数的是别的什么。
+        assert_eq!(socket.index, TEST_FRAMES, "帧数上界没有按这颗数收口");
+        assert!(
+            !socket.written.is_empty(),
+            "没写出 Pong 就没走过 Ping 那臂，用例打的不是滴帧这条路径"
+        );
+    }
+
+    /// 每读一次先睡 `delay` 再给一帧的假 socket：这正是"每个读窗滴一帧"的对端形状。
+    /// socket 的读超时在这里永远等不到，因为字节一直在来——只有墙钟拦得住。
+    struct DribblingSocket {
+        frame: Vec<u8>,
+        delay: Duration,
+        reads: usize,
+    }
+
+    impl Read for DribblingSocket {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            std::thread::sleep(self.delay);
+            self.reads += 1;
+            let length = self.frame.len().min(buffer.len());
+            buffer[..length].copy_from_slice(&self.frame[..length]);
+            Ok(length)
+        }
+    }
+
+    impl Write for DribblingSocket {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// 反面：帧数那颗不能替墙钟背锅。把预算之外的都留给帧数上界，这里必须报"整体截止"。
+    #[test]
+    fn websocket_dribble_hits_the_wall_clock_before_the_frame_ceiling() {
+        let mut socket = DribblingSocket {
+            frame: server_frame(true, 0x9, &[]),
+            delay: Duration::from_millis(15),
+            reads: 0,
+        };
+        let started = Instant::now();
+        let error = read_websocket_message_within(
+            &mut socket,
+            Duration::from_millis(40),
+            MAX_WEBSOCKET_FRAMES_PER_MESSAGE,
+        )
+        .expect_err("每窗滴一帧的对端必须被整体截止拦下");
+        assert!(error.contains("整体截止"), "要说清是墙钟挡下的: {error}");
+        assert!(
+            socket.reads < MAX_WEBSOCKET_FRAMES_PER_MESSAGE,
+            "真吞下的帧数远不到上界，报的却该是截止: 实际 {} 帧",
+            socket.reads
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "截止要在预算附近收口，实际等了 {:?}",
+            started.elapsed()
         );
     }
 

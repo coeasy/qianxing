@@ -1,0 +1,152 @@
+== 存档说明（作废理由 + 可复核证据）
+这一份是 V13 第 8 轮 C8 泵枪在**终态字节**上的第 3 次整跑（rustfmt 与 clippy 修完之后重放）。
+它的 16 发判定、合计行与收尾 sha 全部合格，被 `r8_measures.py` 拒读的唯一理由是日志里没有
+`BATTERY_EXIT=0`——那行原本由启动命令的 `echo $?` 补写，这一份用 nohup 起，没人补。
+处置：把标记的所有权收进脚本自己（`c8_pump_guns.py` 末尾 `print("BATTERY_EXIT=0")`），整批重放，
+重放那份 `c8_pump_guns.txt` 才是记账用的。本份正文按字节原样保留在下面。
+原始正文 sha256：4c45c2a58f1bf94468b7b6a9fce74182ed05234981a66959cf383de8800139dd
+原始正文行数：138　换行风格：CRLF
+合计行（原样）：合计 16 发：KILLED 14 / GREEN（对照）2 / SURVIVED 或红错了格 0 / 未放枪 0
+收尾 sha 复核（原样 4 行）：
+  OK  crates/qx-cli/src/strategy_host.rs d6c081663f23
+  OK  crates/qx-cli/src/tests/strategy_pump_bounds.rs cd49c0e2b4fa
+  OK  crates/qx-cli/src/tests/mod.rs ab0c13f7b855
+  OK  tools/check_architecture.py 01a48a8f4030
+  EOL crates/qx-cli/src/strategy_host.rs: b'\n'（882 行）
+  EOL crates/qx-cli/src/tests/strategy_pump_bounds.rs: b'\n'（148 行）
+  EOL crates/qx-cli/src/tests/mod.rs: b'\r\n'（429 行）
+  EOL tools/check_architecture.py: b'\n'（13260 行）
+
+== stage-0：锚点普查（先数枪，不放枪）
+  G1 strategy_host.rs         行 225 命中 1 可放　通道还原成无界 mpsc::channel()
+  G2 strategy_host.rs         行 225 命中 1 可放　有界常量换成字面量 64（数字对、名字不对）
+  G3 strategy_host.rs         行 230 命中 1 可放　JSONL 支退回 BufRead::lines()
+  G4 strategy_host.rs         行 230 命中 1 可放　单行上限从共享函数改成现场字面量 usize::MAX
+  G5 strategy_host.rs         行 389 命中 1 可放　排空调用被掏空（不再 map 到 helper）
+  G6 换位锚点 389/412 可放
+  G7 strategy_host.rs         行 225 命中 1 可放　通道那行整体注释掉：针尖只活在注释里
+  G8 mod.rs                   行 426 命中 1 可放　tests 目录模块挂载行注释掉
+  G9 strategy_pump_bounds.rs  行 124 命中 1 可放　一颗用例改名（名册针尖不在）
+  T1 strategy_host.rs         行 819 命中 1 可放　上限常量 +1（不再等于分帧预算）
+  T2 strategy_host.rs         行 850 命中 1 可放　上限比较放宽成 cap * 8
+  T3 strategy_host.rs         行 847 命中 1 可放　行终止判据强制为真
+  T4 strategy_host.rs         行 857 命中 1 可放　CR 剔除认错了字节
+  T5 strategy_host.rs         行 876 命中 1 可放　排空读到第一颗就返回
+
+== C0 基线（放枪前两个 oracle 都必须绿）
+  GATE_EXIT=0 [PASS]=815 ✗=0
+  ROWS_EXIT=0 running=7 passed=7 failed=0 ok
+
+== G1 通道还原成无界 mpsc::channel()
+  GATE_EXIT=1 [PASS]=814 ✗=1 → 目标红 1 / 附带红 0
+    目标红：策略 worker 响应泵：队列有界、单行有上限、迟到答复在写入前排空（V13 第 8 轮 C8） — 又出现无界的 `mpsc::channel()`；泵通道取有界常量 0 处（三格坏的都是同一件事：无界队列让父进程替话痨 worker 囤货，无上限的单行让半行永远攒着，残留的应答让下一轮把上一颗
+  ROWS_EXIT=0 running=7 passed=7 failed=0 诊断=ok
+  判定：KILLED
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== G2 有界常量换成字面量 64（数字对、名字不对）
+  GATE_EXIT=1 [PASS]=814 ✗=1 → 目标红 1 / 附带红 0
+    目标红：策略 worker 响应泵：队列有界、单行有上限、迟到答复在写入前排空（V13 第 8 轮 C8） — 泵通道取有界常量 0 处（三格坏的都是同一件事：无界队列让父进程替话痨 worker 囤货，无上限的单行让半行永远攒着，残留的应答让下一轮把上一颗当这一颗读）
+  ROWS_EXIT=0 running=7 passed=7 failed=0 诊断=ok
+  判定：KILLED
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== G3 JSONL 支退回 BufRead::lines()
+  GATE_EXIT=1 [PASS]=814 ✗=1 → 目标红 1 / 附带红 0
+    目标红：策略 worker 响应泵：队列有界、单行有上限、迟到答复在写入前排空（V13 第 8 轮 C8） — JSONL 支退回 `BufRead::lines()`；单行读带上限的写法 0 处（三格坏的都是同一件事：无界队列让父进程替话痨 worker 囤货，无上限的单行让半行永远攒着，残留的应答让下一
+  ROWS_EXIT=101 running=-1 passed=-1 failed=-1 诊断=COMPILE_RED
+  判定：KILLED（用例 oracle 到编译层为止）
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== G4 单行上限从共享函数改成现场字面量 usize::MAX
+  GATE_EXIT=1 [PASS]=814 ✗=1 → 目标红 1 / 附带红 0
+    目标红：策略 worker 响应泵：队列有界、单行有上限、迟到答复在写入前排空（V13 第 8 轮 C8） — 单行读带上限的写法 0 处（三格坏的都是同一件事：无界队列让父进程替话痨 worker 囤货，无上限的单行让半行永远攒着，残留的应答让下一轮把上一颗当这一颗读）
+  ROWS_EXIT=0 running=7 passed=7 failed=0 诊断=ok
+  判定：KILLED
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== G5 排空调用被掏空（不再 map 到 helper）
+  GATE_EXIT=1 [PASS]=814 ✗=1 → 目标红 1 / 附带红 0
+    目标红：策略 worker 响应泵：队列有界、单行有上限、迟到答复在写入前排空（V13 第 8 轮 C8） — 排空迟到答复没有排在写入之前（`fn request(` 11198、排空 -1、写入 14802）（三格坏的都是同一件事：无界队列让父进程替话痨 worker 囤货，无上限的单行让半行永远攒着，
+  ROWS_EXIT=0 running=7 passed=7 failed=0 诊断=ok
+  判定：KILLED
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== G6 排空整句挪到写入之后（两行换位，行数不变）
+  GATE_EXIT=1 [PASS]=814 ✗=1 → 目标红 1 / 附带红 0
+    目标红：策略 worker 响应泵：队列有界、单行有上限、迟到答复在写入前排空（V13 第 8 轮 C8） — 排空迟到答复没有排在写入之前（`fn request(` 11198、排空 15266、写入 14789）（三格坏的都是同一件事：无界队列让父进程替话痨 worker 囤货，无上限的单行让半行永远
+  ROWS_EXIT=101 running=-1 passed=-1 failed=-1 诊断=COMPILE_RED
+  判定：KILLED（用例 oracle 到编译层为止）
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== G7 通道那行整体注释掉：针尖只活在注释里
+  GATE_EXIT=1 [PASS]=814 ✗=1 → 目标红 1 / 附带红 0
+    目标红：策略 worker 响应泵：队列有界、单行有上限、迟到答复在写入前排空（V13 第 8 轮 C8） — 泵通道取有界常量 0 处（三格坏的都是同一件事：无界队列让父进程替话痨 worker 囤货，无上限的单行让半行永远攒着，残留的应答让下一轮把上一颗当这一颗读）
+  ROWS_EXIT=101 running=-1 passed=-1 failed=-1 诊断=COMPILE_RED
+  判定：KILLED（用例 oracle 到编译层为止）
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== G8 tests 目录模块挂载行注释掉
+  GATE_EXIT=1 [PASS]=813 ✗=2 → 目标红 1 / 附带红 1
+    目标红：C8 的七颗泵用例逐颗在位，且那份文件真被 tests 目录模块挂载（V13 第 8 轮 C8） — 缺位的用例 []；`mod strategy_pump_bounds;` 挂载=False。没挂进模块的用例既不入 CI的编译面也不被执行面覆盖，逐颗点名而不是数总数：总数能靠新增无关用例凑够
+    附带红：crate 源码树每个 .rs 都被某处 mod 挂载（未挂载即死源码，编译与用例都不覆盖） — 未挂载 ['crates/qx-cli/src/tests/strategy_pump_bounds.rs']
+  ROWS_EXIT=0 running=0 passed=0 failed=0 诊断=ok
+  判定：KILLED
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== G9 一颗用例改名（名册针尖不在）
+  GATE_EXIT=1 [PASS]=814 ✗=1 → 目标红 1 / 附带红 0
+    目标红：C8 的七颗泵用例逐颗在位，且那份文件真被 tests 目录模块挂载（V13 第 8 轮 C8） — 缺位的用例 ['drain_clears_queued_responses_and_reports_the_count']；`mod strategy_pump_bounds;` 挂载=True。没
+  ROWS_EXIT=0 running=7 passed=7 failed=0 诊断=ok
+  判定：KILLED
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== T1 上限常量 +1（不再等于分帧预算）
+  GATE_EXIT=0 [PASS]=815 ✗=0 → 目标红 0 / 附带红 0
+  ROWS_EXIT=101 running=7 passed=6 failed=1 诊断=FAILED
+    FAILED tests::strategy_pump_bounds::jsonl_line_cap_reuses_the_frame_budget
+  判定：KILLED
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== T2 上限比较放宽成 cap * 8
+  GATE_EXIT=0 [PASS]=815 ✗=0 → 目标红 0 / 附带红 0
+  ROWS_EXIT=101 running=7 passed=6 failed=1 诊断=FAILED
+    FAILED tests::strategy_pump_bounds::oversized_line_is_rejected_instead_of_buffered
+  判定：KILLED
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== T3 行终止判据强制为真
+  GATE_EXIT=0 [PASS]=815 ✗=0 → 目标红 0 / 附带红 0
+  ROWS_EXIT=101 running=7 passed=4 failed=3 诊断=FAILED
+    FAILED tests::strategy_pump_bounds::crlf_terminates_a_line_without_leaking_the_carriage_return
+    FAILED tests::strategy_pump_bounds::line_spanning_several_fill_windows_is_reassembled
+    FAILED tests::strategy_pump_bounds::trailing_line_without_newline_is_still_delivered
+  判定：KILLED
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== T4 CR 剔除认错了字节
+  GATE_EXIT=0 [PASS]=815 ✗=0 → 目标红 0 / 附带红 0
+  ROWS_EXIT=101 running=7 passed=6 failed=1 诊断=FAILED
+    FAILED tests::strategy_pump_bounds::crlf_terminates_a_line_without_leaking_the_carriage_return
+  判定：KILLED
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== T5 排空读到第一颗就返回
+  GATE_EXIT=0 [PASS]=815 ✗=0 → 目标红 0 / 附带红 0
+  ROWS_EXIT=101 running=7 passed=6 failed=1 诊断=FAILED
+    FAILED tests::strategy_pump_bounds::drain_clears_queued_responses_and_reports_the_count
+  判定：KILLED
+  还原 HOST/CASES/MOUNT sha=d6c081663f23/cd49c0e2b4fa/ab0c13f7b855 复核通过
+
+== C10 不放枪对照：还原之后两个 oracle 必须回到基线
+  GATE_EXIT=0 [PASS]=815 ✗=0
+  ROWS_EXIT=0 running=7 passed=7 failed=0 ok
+
+== 收尾 sha 复核（四份文件逐一对回基线）
+  OK  crates/qx-cli/src/strategy_host.rs d6c081663f23
+  OK  crates/qx-cli/src/tests/strategy_pump_bounds.rs cd49c0e2b4fa
+  OK  crates/qx-cli/src/tests/mod.rs ab0c13f7b855
+  OK  tools/check_architecture.py 01a48a8f4030
+
+判定： {'C0': 'GREEN', 'G1': 'KILLED', 'G2': 'KILLED', 'G3': 'KILLED（用例 oracle 到编译层为止）', 'G4': 'KILLED', 'G5': 'KILLED', 'G6': 'KILLED（用例 oracle 到编译层为止）', 'G7': 'KILLED（用例 oracle 到编译层为止）', 'G8': 'KILLED', 'G9': 'KILLED', 'T1': 'KILLED', 'T2': 'KILLED', 'T3': 'KILLED', 'T4': 'KILLED', 'T5': 'KILLED', 'C10': 'GREEN'}
+合计 16 发：KILLED 14 / GREEN（对照）2 / SURVIVED 或红错了格 0 / 未放枪 0

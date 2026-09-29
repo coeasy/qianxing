@@ -324,12 +324,12 @@ D…M 那十轮的形状没有再报上来；这一轮的十一颗全部发生�
   （`crates/qx-plugin/src/lib.rs:55`）与 `shutdown_timeout_ms`（:56）被 `validate`（:86）问非 0、被
   `canonical_hash`（`crates/qx-plugin/src/lib.rs:143`）计入指纹——两件事都不构成等待，仓内没有一处把它们换算成 `Duration`，是 L4 的
   同族漏网。README 两处（crate 表速查行 :38、"三条容易被读过头的边界" :437）改到与实际可达性同口径；
-  `plugin_claim_honesty_check`（`tools/check_architecture.py:11052`）带一颗**反向排除**，正则把 `config.shutdown_timeout_ms` 那处合法的
+  `plugin_claim_honesty_check`（`tools/check_architecture.py:11228`）带一颗**反向排除**，正则把 `config.shutdown_timeout_ms` 那处合法的
   真接线排除掉，撤掉它门禁当场把真接线读成违规。
 - **三处契约面同时补齐，且契约只有一份**（R4-4）：`on_order_update` 除适配器自身之外仓内零派发，判据把
   这份零派发钉成在册状态而不是让它伪装成一条活链；`schemas/strategy_api_v1.schema.json` 此前**零读者且与
   读侧矛盾**（顶层漏了写侧恒印的 `instrument` / `target_qty`、意图层漏了多腿那三格政策、
-  `additionalProperties: false` 让每份真实载荷都过不了它），现在有三个常驻读者并由判据逐颗点名（`tools/check_architecture.py:8262`），
+  `additionalProperties: false` 让每份真实载荷都过不了它），现在有三个常驻读者并由判据逐颗点名（`tools/check_architecture.py:8438`），
   另加"多抄一份 `*strategy*.json` 即红"；账户快照契约补齐 `header.trading_day`、`positions` 少的那一格必填
   与 `orders` 键本身的形状。新壳 `crates/qx-runtime/tests/strategy_api_schema_contract.rs`（275 行、4 颗）。
 - **`strategy.leverage` / `position_mode` 在回测链当场拒**（R4-5）：O2 / N5 同族的最后两格——两条 Bar
@@ -635,7 +635,7 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
 - R6 轮新增 **8 格常驻判据**（门禁 **524 项 → 532 项全绿**）：`control_retirement_check`
   （tools/check_architecture.py:6228）里的词表闭合那颗（:6282 / :6286）与 `is_final` 那颗加上的调用数下界（:6263），
   `paper_acceptance_attribution_check`（tools/check_architecture.py:6344）四颗（tools/check_architecture.py:6350 基线定序 / :6357 语句级条件 / :6373 自报新增数 /
-  tools/check_architecture.py:6379 两轮用例），`command_queue_honesty_check`（tools/check_architecture.py:9299）三颗（:9314 503 与错误名 / :9321 用例两面 / :9332 装配
+  tools/check_architecture.py:6379 两轮用例），`command_queue_honesty_check`（tools/check_architecture.py:9475）三颗（:9441 503 与错误名 / :9448 用例两面 / :9459 装配
   不吞错）。常驻用例新增 qx-api `a_command_that_cannot_be_queued_answers_503_not_202`（一条判两面），qx-cli
   `paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger` 从跑一轮改成跑两轮。本轮末 `cargo test --workspace --all-features -j 2`：**87 个目标 /
   916 passed / 0 failed / 4 ignored / 0 warnings**。取证 **14 颗变异 + 1 颗负对照 / 25 跑 / 还原异常 0**，
@@ -646,19 +646,19 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   不在"的判据（:2473 / :2967 / :4545 / :5977）仍按路径只读 `lib.rs`，其中 :5977 正是 R6-3 新写的那颗——四处改成
   `source_with_tests` 成对读（§54.6）。
 - **四份文本的 `path:line` 第一次由同一颗判据逐颗核对**（R6-7 / R6-8 / R6-9）：起点是白皮书、变更日志与
-  方案书里的行号没人量过（R6-7 逐颗复位），落点是把台账那套 `capabilities_citation_check`（`tools/check_architecture.py:10020`）泛化成
-  一颗共用扫描器 `citation_audit`（`tools/check_architecture.py:9880`）加文档侧薄壳 `doc_citation_check`（`tools/check_architecture.py:10034`），
-  常驻门禁 532 项 → **550 项全绿**（三份长文档各六颗；地板逐份钉在 `DOC_CITATION_TARGETS`（`tools/check_architecture.py:9822`）里：
+  方案书里的行号没人量过（R6-7 逐颗复位），落点是把台账那套 `capabilities_citation_check`（`tools/check_architecture.py:10196`）泛化成
+  一颗共用扫描器 `citation_audit`（`tools/check_architecture.py:10056`）加文档侧薄壳 `doc_citation_check`（`tools/check_architecture.py:10210`），
+  常驻门禁 532 项 → **550 项全绿**（三份长文档各六颗；地板逐份钉在 `DOC_CITATION_TARGETS`（`tools/check_architecture.py:9998`）里：
   方案书 580 引用 / 50 带名、变更日志 220/25、白皮书 410/60，台账沿用 90/20）。搬过来第一份取证就是它自己
   把 5 处文档锚点打红——门禁长一行，指进门禁的行号就集体下移一次；那不是判据过敏，是"文档按行号引用代码"
   这件事本身的代价。三口径（名字右边界、破折号区间远端、裸引用位置化归属）之外，R6-9 再把裸引用的归属扩到
-  "同一行只点了文件名、没带行号"那一颗：`CAP_BARE_PATH`（`tools/check_architecture.py:9802`）一次多量到 61 颗、当场红 12 颗，
+  "同一行只点了文件名、没带行号"那一颗：`CAP_BARE_PATH`（`tools/check_architecture.py:9978`）一次多量到 61 颗、当场红 12 颗，
   其中一颗是"数字恰好落在误认文件长度之内"的假通过。取证 6 颗变异、杀 6、存活 0，每颗在三种判据形状下逐列
   回放（明细在 §54.9–§54.12）。修完仍剩 349 颗无人核对的裸行号，按限制登记在 `maturity/capabilities.yaml`（R7 轮按同一条规则复测仍是 349，逐份拆分见 §55.11）。
 - **常驻门禁 550 项 → 553 项全绿**（本轮新增三颗）：`JobSpec 字段名单可解析，且不含三格只有写侧的退役键`
-  （`tools/check_architecture.py:10879`）、`deploy 里 3 份作业清单示例的每一格顶层键都在 JobSpec 名单里`
-  （`tools/check_architecture.py:10891`，只删代码不删示例，下一个人会照示例抄回来）、
-  `窗口与累计摘要在两个读面上同源`（`tools/check_architecture.py:6312`）。锁那一颗（`tools/check_architecture.py:11541`）
+  （`tools/check_architecture.py:11055`）、`deploy 里 3 份作业清单示例的每一格顶层键都在 JobSpec 名单里`
+  （`tools/check_architecture.py:11067`，只删代码不删示例，下一个人会照示例抄回来）、
+  `窗口与累计摘要在两个读面上同源`（`tools/check_architecture.py:6312`）。锁那一颗（`tools/check_architecture.py:11717`）
   不是新增而是加严：它现在同时要求"计数喂回判据"与"循环只按判据交出的年龄说话"。
 - **R7-6 的一批"仓内唯一写法、零生产调用"进保留表**：15 颗登记在 `tools/check_architecture.py:6578` 起的那一段，
   批次理由与"留还是删"的分界写在 `tools/check_architecture.py:6387`；同批里的 `DataSchemaVersion` 走了相反的方向——
@@ -853,7 +853,7 @@ M3 之后新进矩阵的 `nats,postgres,sqlite` 单独实测 EXIT=0，本轮没�
   于是"对得上"。两处的修法都不是再加判据，而是**把名字请回同一行**——点名只对点了名的引用有效。
   这一格今天仍然成立（跨行折行就丢点名），已写进白皮书 §10 的 G-6 边界。
   台账第 52 行跟着红——与 §53.7 那两条同一根绳，本轮按实测改口。
-- **区间远端可以"在界内却指错东西"，判据看不见**：`CAP_RANGE_END`（`tools/check_architecture.py:9814`）只量越界与空行，
+- **区间远端可以"在界内却指错东西"，判据看不见**：`CAP_RANGE_END`（`tools/check_architecture.py:9990`）只量越界与空行，
   不参与名字对齐。变更日志里 `write_optional_money`（`crates/qx-protocol/src/lib.rs:270`）那颗此前写作一个区间，两端写成
   `crates/qx-protocol/src/lib.rs:287-288`，而 287 那一格其实是 `scalar_money_raw` <!-- 史 -->。两个数字都在这份 877 行的
   文件里、都不是空行，判据一路绿；它是 R7-10 人工逐颗复核时抓到的，不是门禁报的。把区间拆成具名引用之后，
@@ -931,6 +931,128 @@ R7 轮之后新增三条（逐条见 §55.13）：**R7-2 与 R7-3 没有形状�
 `fetch_remote_snapshot`（`crates/qx-adapter/src/binance.rs:1143`）的分页被限频预算界住，超预算是 `Err` 而不是静默截断，
 要收它得先给"页数上限"这件事一个真实故障模型；**R7-6 那 15 颗是"唯一实现但没接线"**（`tools/check_architecture.py:6578`），
 接不接待是裁决题，本轮只把登记的两侧口径改到与可达性一致。
+## Unreleased — V13 第 8 轮：三扫的 17 颗票面逐颗裁决，六颗终止性与六颗"没人读"落地，一颗 FFI 只登记（2026-09-29）
+
+本轮按 A 连通性 / B 孤儿逻辑与文档失配 / C 死循环与终止性各扫一遍，产出 17 颗票面（C 组 7 / A 组 6 / B 组 4；
+那颗数按 V13 §9.13 的逐颗裁定数到，票号 `#207`–`#221` 是当轮会话的票册、不在仓内），逐颗给"可修 / 走不到 /
+只能登记"的裁决：可修的按同一形状落地（一处生产修复 + 常驻用例 + 门禁判据 + 变异枪），只登记的写进 V13 遗留
+限制与 `maturity/capabilities.yaml`，不写进代码注释当交付。逐颗裁定与取证见 V13 §9.13。
+
+### Fixed（C 组 · 终止性，六颗可修）
+
+- **NATS 消费侧的同步端口没有任何截止**（C1，`crates/qx-storage/src/nats.rs`）：一次 `join()` 与六处 `ack.await` 都落在
+  "运行时卡住就一直等"上，停机与心跳都要等这条调用返回。补 `block_on_runtime_within`（整体墙钟）与 `bounded_ack`
+  （每颗 await 各自有界），超时时闩真的落下——此前 `wedged` 只有写侧没有读侧，等于"知道自己卡了但没人问"。
+- **Postgres 的持锁者停在 socket read 上时永远不判死**（C2，`crates/qx-storage/src/postgres.rs`）：DSN 缺三颗 TCP
+  keepalive 键，半开连接下排队截止形同虚设。`dsn_with_socket_defaults` 只补调用方没写过的三颗，键名逐字停在驱动
+  自己的词表上；Windows 的 `tcp_keepalive` 结构没有 retries 那一格，那一颗由驱动忽略——写进判据而不是假装三平台等义。
+- **共享内存策略 worker 没有"父进程已经不在了"这一格**（C4，`crates/qx-cli/src/strategy_host.rs` + `python/qianxing_strategy/worker.py`）：
+  ring 子进程只认显式停止命令，父进程被 `kill` 后它继续服务并留着环文件。stdin 写端由 `self.stdin` 保住（父进程退出
+  时由 OS 关掉句柄），worker 侧轮询循环读这条存活事件，补删环文件只走那一格。实测 7 轮：启动中位数 `0.119` s、
+  关 stdin 到自收摊中位数 `0.012` s，两份环文件都被补删（预算 15 s / 5 s）。
+- **`read_websocket_message` 既不读停机令牌也没有轮次上界**（C5，`crates/qx-adapter/src/lib.rs`）：socket 的读超时只界住
+  "这一轮有没有字节"，对端每个读窗滴一帧就永不出头。整体墙钟与帧数上界两道界都挪到每轮读之前。
+- **验收脚本的每一腿都没有 `timeout`**（C7，`tools/binance_testnet_acceptance.py`）：`subprocess.run(capture_output=True)` 的
+  读侧没有截止，而被测链上挂着若干"连得上但不回话"的形状——验收因此**阻塞而不是失败**，这是它最坏的失效：它替挂死
+  作保。补 `LEG_BUDGET_SECONDS = 180`，超时按失败退出码收口并先写进阶段记录。
+- **策略 worker 的响应泵队列无界、单行无上限、迟到答复会错位**（C8，`crates/qx-cli/src/strategy_host.rs`）：无界
+  `mpsc::channel()` 让父进程替话痨 worker 囤货，`BufRead::lines()` 让半行永远攒着，请求前不排空让下一轮把上一颗当这
+  一颗读。改成有界 `sync_channel(STRATEGY_PUMP_BACKLOG)` + 带上限的单行读（上限复用分帧预算）+ 写入前排空。
+
+### Fixed（A 组 · 孤儿逻辑与"只有写侧"）
+
+- **`mod nats` 那五颗用例此前在 CI 里既不编译也不执行**（A3）：`cargo test --workspace` 走默认特性，`qx-storage` 的
+  `default = []` 让整段进不了编译面——C1 的取证因此建立在"用例存在"而不是"用例跑过"上。新增一条 CI 腿
+  `cargo test -p qx-storage --features sqlite,postgres,nats --lib`（`.github/workflows/ci.yml`），tokio 可选特性补齐
+  `rt-multi-thread`/`sync`/`time`；门禁逐颗点名那五颗的名字**并带左括号**，且要求那一行逐字等于这条命令——加
+  `--no-run` 或 `--ignored` 都等于把执行者换成没有。
+- **Postgres 后端的人工出口与页尾排序没有执行者**（A4，`crates/qx-storage/tests/outbox_backend_semantics.rs`）：sqlite 有的
+  那颗断言在 postgres 用例里缺席，页尾夹具的 8 与 8 让"按数字比"与"按文本比"给出同一个答案，R7-2 那族 TEXT 存 u64
+  的排序缺陷因此在 postgres 一侧不可见。补 `assert_parked_outbox_has_an_operator_exit(&store, "postgres-park")`、夹具跨数位
+  边界（8 与 14）、停摆条数按增量现读库里的状态量。
+- **`/metrics` 的两颗新计数既没有告警规则也没有渲染器**（A5，`deploy/prometheus/qianxing-alerts.yml`）：补
+  `QianxingApiConnectionRejections` 与 `QianxingOutboxParkedEvents` 两条 expr，并把判据从"某份生产源码的某处文字"改成
+  "两格各住在自己的渲染器体内"——API 那份在 `to_prometheus`，worker 那份在 `RelayMetricTotals::render` 的窗口里；R7-i
+  那个"整份文本挤成一行"的同族形状由 `{name}` 的 render 必须用真换行分隔每一格钉住。
+- **回测产物的三颗定性键在报告文本面一格都不念**（A6，`crates/qx-cli/src/report_readout.rs`）：`fills=0` 分不清"策略没发
+  信号"与"信号全被风控挡下"，而 Bar 内核与深度内核的结论强度不同。读侧同行印出 `matching_kernel=` / `cost_source=` /
+  `rejected_orders=`，三格各有一次自己的读法；写侧三键各只落一处，命令侧不再拼这三格。
+- **台账替两条已经修掉的缺口作保**（A1/A2）：`maturity/capabilities.yaml` 里 NATS 墙钟与 WS 停机/上界那两行登记的是
+  修复的反面。按"补读侧还是登记"的口径处置：这两颗的另一侧本来就有读者（C1/C5 的常驻用例与门禁判据），改的是登记文字。
+
+### Added（常驻判据与用例）
+
+- 门禁新增 **6 颗**判据：`ci_citation_coverage_check`（`tools/check_architecture.py:12937`）、
+  `postgres_parked_leg_has_teeth_check`（:12961）、`report_readout_provenance_check`（:13036）、
+  `alert_names_render_inside_their_bodies_check`（:13079）、`strategy_ring_parent_liveness_check`（:13132）、
+  `strategy_pump_bounds_check`（:13205）。加严的那几行各有归属，颗数是门禁自己那行标签数出来的：A3 在
+  `ci_feature_matrix_check`（:6789）里 1 行、C2 与 C5 在 `termination_budget_check`（:7160）里 5 + 1
+  行、C7 在 `external_acceptance_check`（:8050）里 1 行；C1 本轮一颗门禁行都没有（0 行），它的牙齿是常驻
+  判据 `every_nats_await_site_goes_through_the_bounded_wait`（`crates/qx-storage/src/nats.rs:610`）与 A3 那条新 CI 腿。
+  常驻门禁现共 `GATE_EXIT=0`、`[PASS]` **815** 条、✗ **0** 条，地板 `GATE_CHECK_FLOOR=515`
+  条；带"V13 第 8 轮"标签的行 **26** 条，按票面标签分颗合计 26 条，两边对得上才回写。
+- 常驻用例新增 `crates/qx-cli/src/tests/strategy_pump_bounds.rs`（7 颗，挂在
+  `crates/qx-cli/src/tests/mod.rs:426`）、
+  `crates/qx-cli/tests/report_readout_honesty.rs` 与 `crates/qx-cli/src/tests/report_readout.rs` 的溯源那颗、
+  `python/tests/test_strategy_contract.py` 的父存活两颗、`crates/qx-storage` 的有界等待名册那颗。
+
+### 取证（变异枪，12 份枪日志在 `maturity/evidence/v13-r8/`）
+
+- 合计放枪 **91** 发：KILLED **84** / 不放枪对照 **7** / SURVIVED **0** / 未放枪 **0**。
+  分颗：C1 9、C2 7+对照 1、C4 5+对照 1、C5 11、C7 4、C8 14+对照 2、
+  A3 6、A4 7、A5 4+隔离对照 1、A6 7、引用名册两批 7 + 3。
+- **三处当轮自我打回**：一是 C8 的取证脚本第一版按精确字符串分档，把三颗 `KILLED（用例 oracle 到编译层为止）` 读成
+  SURVIVED，全绿批次因此 `BATTERY_EXIT=1`——作废那份留在 `c8_pump_guns_run1_summary-binning-defect.txt` 并写明理由，
+  改成分档前缀匹配 + 算术断言后**整批重放**；二是六腿脚本的分类器第一版只数 `[PASS]` 不数 ✗（红腿也能报 `GATE GREEN`），
+  补红行计数与过期二进制守卫后重跑（`r8_six_legs_run1_classifier-dead.txt`、`r8_six_legs_run2_target-lock.txt`）；
+  三是名字与内容不符——`c7_acceptance_timeout_guns.txt` 这个名字曾一度装着本轮中途那支 11 颗混编枪表
+  （C7 四颗 + A3 两颗 + B 五颗同场），而它自己的合计行写着 `KILLED 10 / SURVIVED 1`：那根本不是一支 C7 批次，
+  里面还躺着一颗属于 B-3 的 SURVIVED。A3 与 B 两组后来各有自己的批次，只有 C7 一直缺一份自己的；这一格现在按 C7 的名字
+  重放（`c7_acceptance_timeout_guns.py`），旧那份整跑日志连同原字节 sha、行数与三条作废理由存成
+  `c7_acceptance_timeout_guns_run1_mixed-w98-dump.txt`，读数脚本在存档不在场时直接拒绝按收口回写。
+  **前两处骗的是数字，第三处骗的是"这份日志说的是哪一颗"**——名字挂着谁的结论，内容就必须是谁那一支。
+- **按终态字节复测又打回三处**（同一套纪律的第二遍）：中段那份六腿日志跑在 C8 的泵代码落地之前，`fill`
+  照它发布的整树通过数比终态少 7 颗，`verify` 在终态字节重算时才报成漂移；泵代码自己也不合格，
+  `r8_six_legs_run3_pump-landed-unformatted.txt` 报 `RESULT legs_failed=2`（fmt 有差异、clippy 有
+  `byte_char_slices` 诊断行），中段那份全绿看不见它；修完这两处再重放，`T3` 的字节针尖与 `G9` 的行号已经
+  指到别处，旧锚点只会安静地一枪不放，所以重放前先把整张枪表按「文件 + 行号 + 整行相等」逐颗核位。作废那
+  一份整跑连同原字节 sha、行数与三条失效理由存成 `c8_pump_guns_run2_pre-rustfmt.txt`，重放那份 16
+  发逐颗复算回到 KILLED 14 / 对照 2，四份被改文件按 sha 对回基线。
+- C5 的第一遍里 `C5-7b` 是**计划内 SURVIVED**：门禁的用例名钉没带 `(`，"改名但保留被钉前缀"吃得下。它报的是判据的洞
+  而不是修复的洞，补钉后整批重放 → 11 全咬。A3 的第一遍因为量具自己起不了 `cargo` 而基线不绿、整批停手，那一遍
+  按"未放枪"记账而不是跳过。
+
+### 文档与量具（B 组）
+
+- 引用名册第一次看得见 `.github`，逗号并列的行号不再被静默丢弃（`CAP_CONTINUATION`，
+  `tools/check_architecture.py:9981`）：修复前斜杠尾巴被核对 31 颗、逗号尾巴被丢弃 **38** 颗，
+  把这 38 颗交给当时的判据**会红 0 颗**（`citation_blind_spot_census.txt`）。V13 方案书进
+  `DOC_CITATION_TARGETS` 名册，地板引用 `74` / 带名 `2`。
+- 本文开头那段"`logs/s24_*.txt`"口径改口：`logs/` 在 `.gitignore` 里、仓内不可达，它们是起草现场不是复跑件；本轮新增
+  取证一律落 `maturity/evidence/v13-r8/`，上一轮迁进来的十处 scratch 指针按新落点改口。
+
+| 腿 | 本轮末实测 | 日志 |
+|---|---|---|
+| `python -X utf8 tools/validate_core.py` | `exit=0` | `maturity/evidence/v13-r8/r8_six_legs_final.txt` |
+| `python -X utf8 tools/check_architecture.py` | `GATE_EXIT=0`、`[PASS]` **815**、✗ **0** | 同上 |
+| `python -X utf8 -m unittest discover -s python/tests -q` | `Ran 62 tests`、`OK (skipped=2)` | 同上 |
+| `cargo fmt --all -- --check` | `rc=0`、差异 **0** 行 | 同上 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | `rc=0`、诊断行 **0** | 同上 |
+| `cargo test --workspace --all-targets --no-fail-fast` | **77 段 / 1032 passed / 0 failed** | 同上 |
+| `cargo test -p qx-storage --features sqlite,postgres,nats --lib`（A3 的新腿） | **1 段 / 36 passed / 0 failed** | 同上 |
+
+### 本轮没做（登记在册）
+
+- **C3 · 第三方插件的 vtable 调用没有界**：只能登记。在 FFI 调用外面套 `recv_timeout` 会把宿主线程放回，而插件的
+  native 代码还在跑，随后 `destroy` / `free_decision` / `dlclose` 与调用方缓冲复用都是未定义行为；唯一 Sound 的边界是
+  进程边界，那需要独立的架构决定。
+- **`maturity/capabilities.yaml` 名为 YAML 但从来没被解析过**：`yaml.safe_load` 在第 59 行就失败，
+  563 条 `- ` 里 6 条以反引号开头。本轮只登记不重排这 738 行——重排会把每一颗行号锚点全部作废。
+- **门禁仍不核对"文档引用的路径在不在被核对的前缀集里"**：本轮只把 `.github` 加进名册，其余前缀面（`docs/archive`
+  之外新写出的路径写法）还没量。
+- 字段级"零读者即报"的门禁判据（`#174`）依旧只在册；`#169` 的全量重放与压缩策略没动；`sandbox_tested` 与
+  `production_approved` 照旧全为 `false`——C7 那颗 `timeout` 是给"将来真去验收"准备的，本轮没有连任何外部服务。
+
 ## Unreleased — V11 合流轮（origin/main `ad2908b`）：上游四份提交接进 245 份文件，真冲突 20 颗，三颗残留在编译层，81 颗行号重钉（2026-09-28）
 
 上一轮合流（`964ca66`，W1–W11）之后上游又推四份提交：`328d450`（R1 A1–A6）、`228fe4f`（文档归档与 README 重写）、`d9750eb`（R1-A5）、`ad2908b`（R2 第四、五遍）。
@@ -960,7 +1082,7 @@ R7 轮之后新增三条（逐条见 §55.13）：**R7-2 与 R7-3 没有形状�
   因为 W8 那颗 `ShutdownToken` 无写者的限制仍在。
 - `WORKSPACE_TEST_FLOOR`（`tools/check_architecture.py:792`）1028 → **1024**：降掉的四颗是被删的重复用例，不是覆盖率——删后整树
   `cargo test --workspace` 实测 97 段 / 1014 passed / 0 failed / 0 ignored。`COVERAGE_PRODUCTION_READERS` 名册里那颗生产读点按新落点改口
-  （`tools/check_architecture.py:12491`）；行数棘轮重生成后在册 46 份里只有 1 颗数值变化（`crates/qx-cli/src/tests/deploy_template_coverage.rs` 779 → **784**），
+  （`tools/check_architecture.py:12667`）；行数棘轮重生成后在册 46 份里只有 1 颗数值变化（`crates/qx-cli/src/tests/deploy_template_coverage.rs` 779 → **784**），
   其余 45 颗一格未动。
 
 ### Added（文档行号重钉 81 颗：自动 48 + 人工 33）
@@ -983,11 +1105,11 @@ R7 轮之后新增三条（逐条见 §55.13）：**R7-2 与 R7-3 没有形状�
 |---|---|---|
 | `cargo fmt --all -- --check` | 三处需重排，`cargo fmt --all` 后归零 | 当场 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | `rc=0`、诊断行 0 | 当场 |
-| `cargo test --workspace` | 97 段 / 1014 passed / 0 failed / 0 ignored | `scratch_r8/test_w10.txt` |
+| `cargo test --workspace` | 97 段 / 1014 passed / 0 failed / 0 ignored | `maturity/evidence/v12-w10/test_w10.txt` |
 | `python -m unittest discover -s python/tests` | 60 条 OK（2 skip） | 当场 |
-| `python tools/validate_core.py` | `exit=0` | `scratch_r8/validate_core_w10.txt` |
-| `python tools/check_architecture.py` | 合流后首跑 3 颗 FAIL（用例地板、名册指针、行数预算）→ 处置后 `exit=0`、755 项全绿 | `scratch_r8/gate_w10.txt` 到 `scratch_r8/gate_w10b.txt` |
-| qx-cli 特性矩阵五组合 × clippy/check/test | 逐组 `rc=0`、诊断 0 | `scratch_r8/feat_matrix.txt` |
+| `python tools/validate_core.py` | `exit=0` | `maturity/evidence/v12-w10/validate_core_w10.txt` |
+| `python tools/check_architecture.py` | 合流后首跑 3 颗 FAIL（用例地板、名册指针、行数预算）→ 处置后 `exit=0`、755 项全绿 | `maturity/evidence/v12-w10/gate_w10.txt` 到 `maturity/evidence/v12-w10/gate_w10b.txt` |
+| qx-cli 特性矩阵五组合 × clippy/check/test | 逐组 `rc=0`、诊断 0 | `maturity/evidence/v12-w10/feat_matrix.txt` |
 
 
 ## Unreleased — V13 R2 第五遍：字段级的"没人读"与"没人写"（三处修复，一处是真断链）（2026-09-27）
@@ -4193,7 +4315,7 @@ Bar 链的 `--fill-model` / `--virtual-trading` 未做（前置条件见同文�
   `qx-cli config validate` → `TEMPLATE_SWEEP_OK=17 FAIL=1`，唯一红项是 production 模板的
   `[FAIL] strategy.research_snapshot_path / dataset_bundle_path 文件不存在: /var/lib/qianxing/research/*`
   两条（部署机绝对路径，与成本面无关，自 V10 起就是记录性条目）；
-  CI 侧 `deploy/qianxing.runtime*.json` 的 for-loop（`.github/workflows/ci.yml:204-213`）
+  CI 侧 `deploy/qianxing.runtime*.json` 的 for-loop（`.github/workflows/ci.yml:216-225`）
   经过 `runtime_check.rs:306` 的新校验，因此成本文件错误会在这 18 份模板上自动暴露。
 
 ### Known issues（本轮记录、未修）

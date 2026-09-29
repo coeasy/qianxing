@@ -292,16 +292,28 @@ fn assert_outbox_delivery_order(store: &dyn OutboxStore, namespace: &str) {
 /// 一条确认过的事件取走，而不是让它永远压在候选集里（读全量时停摆的行也在其中）。
 /// 反方向——把 `attempts` 调回去重投——三本后端都没有原语，已按缺口登记在 capabilities.yaml。
 fn assert_parked_outbox_has_an_operator_exit(store: &dyn OutboxStore, namespace: &str) {
-    for sequence in [1u64, 2] {
+    // 库里原本有几条不去管，问的是"我自己这两条进没进这个数"：三本后端共用一份 DSN/目录时
+    // 绝对值不属于任何一颗用例（V13 第 8 轮 A4）。
+    let before = store.count_parked_outbox().unwrap();
+    // 两行都停摆，但 attempts 刻意跨数位边界（8 与 14）：这一列在三本后端都存成文本，
+    // 两边都写预算值时"按数字比"与"按字典比"给出同一个答案，SQL 里摘掉 `::numeric`/`CAST`
+    // 也量不出来（V13 第 8 轮 A4）。
+    for (sequence, attempts) in [(1u64, OUTBOX_MAX_ATTEMPTS), (2, OUTBOX_MAX_ATTEMPTS + 6)] {
         store
             .append_outbox(OutboxEvent {
                 event_id: format!("{namespace}-parked-{sequence}"),
                 sequence,
-                attempts: OUTBOX_MAX_ATTEMPTS,
+                attempts,
                 ..event()
             })
             .unwrap();
     }
+    let counted = store.count_parked_outbox().unwrap();
+    assert_eq!(
+        counted,
+        before + 2,
+        "停摆条数是库里的状态量: {counted} vs {before}"
+    );
     let parked: Vec<String> = store
         .available_outbox(20, usize::MAX)
         .unwrap()
@@ -328,12 +340,20 @@ fn assert_parked_outbox_has_an_operator_exit(store: &dyn OutboxStore, namespace:
         vec![parked[1].clone()],
         "确认过的那条要真的离开候选集"
     );
+    let drained = store.count_parked_outbox().unwrap();
+    assert_eq!(
+        drained,
+        before + 1,
+        "计数要跟着人工确认走，不是入账那一刻的快照"
+    );
 }
 
 /// 分页上界与「停摆不占页首」（V11 R7-d）：修前每轮 pump 都全表读 payload，而停摆的行按
 /// `created_ts` 永远排在最前——`limit` 再小也白拿。这一颗钉两面：
 /// 读全量时自己那两行的相对顺序必须是「投得出去的在前、停摆的在后」（即便停摆那条更旧），
 /// 而 `limit=1` 的一页只准端回一行（把 LIMIT 写没后端就红）。
+/// 停摆那行的 attempts 用 `预算 + 6` 而不是预算本身：这一列存成文本时 14 的字典序在 8 之前，
+/// 「按数字比是否用尽预算」与「按字典比」在这里分岔，摘掉 CAST 就退回按落盘时间占住页首。
 /// 只按 `namespace` 过滤自己那几行，因此可以多后端共用一个库/目录。
 fn assert_parked_rows_yield_the_page_head(store: &dyn OutboxStore, namespace: &str) {
     store
@@ -341,7 +361,7 @@ fn assert_parked_rows_yield_the_page_head(store: &dyn OutboxStore, namespace: &s
             event_id: format!("{namespace}-parked"),
             created_ts: 1,
             sequence: 1,
-            attempts: OUTBOX_MAX_ATTEMPTS,
+            attempts: OUTBOX_MAX_ATTEMPTS + 6,
             ..event()
         })
         .unwrap();
@@ -542,6 +562,7 @@ fn postgres_outbox_lease_fencing_and_retry_contract() {
         .all(|event| event.event_id != event_id));
     assert_outbox_delivery_order(&store, "postgres-order");
     assert_parked_rows_yield_the_page_head(&store, "postgres-page");
+    assert_parked_outbox_has_an_operator_exit(&store, "postgres-park");
 }
 /// 只拒绝点名事件的投递器：让"某一条永远发不出去"成为确定现场，其余照常ack。
 struct SelectivePublisher {

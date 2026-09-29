@@ -136,11 +136,13 @@ URL 路径不进入任何文件系统调用；查询参数只被 `projection_key
 
 ### 4.4 SQL 注入 — 不存在｜None
 
-实测两本后端的**构造形状**（本轮直接读，不采信二手结论）：
+实测两本后端的**构造形状**（V13 第 8 轮直接读，不采信二手结论；两颗"处数"的取数口径是
+`.execute(` / `.query(` / `.query_row(` 与 `format!(` 的字面出现次数，文件行数**不在这里抄**——
+`maturity/line_budgets.yaml` 已按磁盘量过同一格，抄一份就是造出第二张会漂的脸）：
 
-* `crates/qx-storage/src/sqlite.rs`（2352 行）：61 处 `execute`/`query`/`query_row`，
-  全部走 `params![...]` 与 `?N` 占位；`format!` 出现 42 次，**没有一次拼 SQL**。
-* `crates/qx-storage/src/postgres.rs`（2165 行）：39 处调用，`$N` 占位 + `&[&...]` 绑定；
+* `crates/qx-storage/src/sqlite.rs`：62 处 `execute`/`query`/`query_row`，
+  全部走 `params![...]` 与 `?N` 占位；`format!` 出现 41 次，**没有一次拼 SQL**。
+* `crates/qx-storage/src/postgres.rs`：39 处调用，`$N` 占位 + `&[&...]` 绑定；
   `format!` 39 次，同样无一拼 SQL。
 * 全仓唯一含插值的 SQL 字面量是一个**故意伪造被篡改行**的用例：
   `crates/qx-storage/src/sqlite/tests.rs:204`（`UPDATE qx_snapshots SET content = '{...}'`）。
@@ -178,7 +180,7 @@ WS 那半边**完全由配置决定**，`worker.endpoint`
 
 旁支：`messaging.nats_url`（`crates/qx-runtime/src/runtime_config/schema.rs:150-151`，缺省 `nats://127.0.0.1:4222`）同样任指主机端口，
 且 `async_nats::connect(url)`（`crates/qx-storage/src/nats.rs:63`、`crates/qx-storage/src/nats.rs:199`）各有 `NATS_BOOT_BUDGET`（`crates/qx-storage/src/nats.rs:16`）10 秒的建链截止，
-`publish` 等 ack 另有 `NATS_PUBLISH_ACK_BUDGET`（`crates/qx-storage/src/nats.rs:18`）5 秒，用尽后本进程停止投递。M 轮当时的裁定写在 `CHANGELOG.md:27`（三处里两处本就带库内给的界、第三处只是把界传下去），
+`publish` 等 ack 另有 `NATS_PUBLISH_ACK_BUDGET`（`crates/qx-storage/src/nats.rs:18`）5 秒，用尽后本进程停止投递；消费侧十次 ack 往返各有 `NATS_CONSUMER_ACK_BUDGET`（`crates/qx-storage/src/nats.rs:478`）5 秒，用尽后这一轮以 `ack_failures` 点名并中断（V13 第 8 轮 C1）。M 轮当时的裁定写在 `CHANGELOG.md:27`（三处里两处本就带库内给的界、第三处只是把界传下去），
 R7-c 把那颗“只是把界传下去”的界换成自己数的预算；这一格的风险不变——截止只挡住挂死，不挡目的地。`python/qianxing_ccxt/__init__.py:266` 把 `options` 原样摊进 ccxt 构造器，
 未知键不拒，因此 ccxt 自己的 URL 覆盖键可以经配置生效——这一格记为**待裁决**（§11 Q-2）。
 
@@ -207,7 +209,7 @@ R7-c 把那颗“只是把界传下去”的界换成自己数的预算；这一
 | 配置 DTO 有 `deny_unknown_fields` | `crates/qx-runtime/src/runtime_config/schema.rs:40`、`crates/qx-runtime/src/runtime_config/schema.rs:223` 等 | 16 处，5 个文件 |
 | 网络 DTO 一个都没有 | `crates/qx-control/src/lib.rs:60-71`、`crates/qx-storage/src/lib.rs:368-381`、`crates/qx-plugin/src/lib.rs:43-64` | `qx-control`/`qx-api`/`qx-protocol`/`qx-plugin`/`qx-storage` 命中 **0** |
 | `ControlCommand` 无版本锚 | `crates/qx-control/src/lib.rs:61-71` | 结构体里根本没有 `schema_version` 字段 |
-| `OutboxEvent` 有版本但从不比较 | `crates/qx-storage/src/lib.rs:373-374`（`#[serde(default = ...)]`）、`crates/qx-storage/src/nats.rs:275`、`crates/qx-storage/src/nats.rs:394` | 读侧无任何 `schema_version` 判断 |
+| `OutboxEvent` 有版本但从不比较 | `crates/qx-storage/src/lib.rs:373-374`（`#[serde(default = ...)]`）、`crates/qx-storage/src/nats.rs:275`、`crates/qx-storage/src/nats.rs:392` | 读侧无任何 `schema_version` 判断 |
 | 快照有版本且**先比后解** | `crates/qx-protocol/src/lib.rs:461-463` | 正面样本：`ACCOUNT_SNAPSHOT_SCHEMA_VERSION` 不匹配当场拒 |
 | 子进程 stdout 当 typed 事实 | `crates/qx-adapter/src/ccxt.rs:189-191` | 无类型 `Value`，形状靠 `get()` 逐格试 |
 
@@ -506,7 +508,7 @@ let granted = match &self.policy {
 `strategy_artifact_sha256` 缺失时 `return Ok(())`（`crates/qx-cli/src/path_resolution.rs:186-188`）；`external_executable`
 这条确实在 spawn 前校验（`crates/qx-cli/src/workers.rs:104` 早于 `crates/qx-cli/src/workers.rs:145`，用例
 `crates/qx-cli/src/tests/paper_bridge_and_bundles.rs:364` 钉着）；但可 import 的 `python_module` 走 `crates/qx-cli/src/path_resolution.rs:193-208` 的
-提前返回，交由 Python 侧验，而 `python/qianxing_strategy/worker.py:36-39` 是
+提前返回，交由 Python 侧验，而 `python/qianxing_strategy/worker.py:37-40` 是
 **先 `exec_module` / `import_module`，后校验指纹**——代码已经跑过了。
 `consumer_handler_executable` 完全没有这一格。
 
@@ -519,6 +521,14 @@ let granted = match &self.policy {
 路径经 argv 交给子进程（`crates/qx-cli/src/strategy_host.rs:148-151`）。
 在多用户 Linux 主机上，一个同 temp 命名空间的本机进程可以预建同名文件（含符号链接）
 → 启动期一次任意路径覆写；或者在中途改写环里的**决策帧** → 篡改进入主机的策略意图。
+
+这条向量原本还多一格**活性**放大：环传输只带得来"下一颗请求"，带不来"父进程已经不在了"，
+宿主走 `std::process::exit`（跳过 `impl Drop`，两侧都不打招呼）时子进程留在 1 kHz 轮询里永久自转、
+两份环文件留在 temp 里——被劫持过的环因此长期仍有人读写，攻击面不随宿主退出而关。
+V13 第 8 轮 C4 收住了这一半：`crates/qx-cli/src/strategy_host.rs` 在共享模式下同样
+`.stdin(Stdio::piped())` 且无条件把写端收进 `self.stdin`（进程一退由 OS 关掉），
+`python/qianxing_strategy/worker.py` 的 `_watch_parent_exit` 读到 EOF 就让轮询循环收摊并补删两份环文件。
+**上面 (c) 的三项事实（可预测名、非独占创建、决策帧可改写）一项都没被它改变**，评级不因这条下降。
 
 `CVSS:4.1`（a）与 §4.8 同向量，**Critical / High**；（b）
 `AV:L/AC:L/AT:P/PR:L/UI:N/VC:N/VI:H/VA:N/SC:H/SI:H/SA:N` → **High**；
@@ -578,14 +588,17 @@ let granted = match &self.policy {
 | 入站 HTTP 请求（头+体） | 1 MiB | `crates/qx-api/src/lib.rs:2279`，在 `crates/qx-api/src/lib.rs:2340-2345` 与 `crates/qx-api/src/lib.rs:2382-2387` 两处判 |
 | 完整请求整体截止 | 5 s | `crates/qx-api/src/lib.rs:2276`，每轮检查 `crates/qx-api/src/lib.rs:2326-2334` |
 | 单帧 / 分片累计 WS（入站 API） | 无长度解析 | `crates/qx-api/src/lib.rs:2090` 只给 2048 字节缓冲，帧长不判（与下一行不同） |
-| 出站 WS 单帧 + 分片累计 | 16 MiB | `crates/qx-adapter/src/lib.rs:453`，帧头 `crates/qx-adapter/src/lib.rs:344-506`、累计 `crates/qx-adapter/src/lib.rs:551-395` |
-| 出站 **HTTP 响应体** | **无上限** | `crates/qx-adapter/src/lib.rs:275-276` `read_to_end`（TLS 路径），`crates/qx-adapter/src/lib.rs:672-673` 同形状 |
+| 出站 WS 单帧 + 分片累计 | 16 MiB | `MAX_WEBSOCKET_MESSAGE_BYTES`（`crates/qx-adapter/src/lib.rs:453`），单帧在 `crates/qx-adapter/src/lib.rs:515` 判、分片累计在 `crates/qx-adapter/src/lib.rs:590` 判 |
+| 出站 WS 单条消息读取 | 120 s 整体截止 + 8 192 帧 | `WEBSOCKET_MESSAGE_BUDGET/MAX_WEBSOCKET_FRAMES_PER_MESSAGE`（`crates/qx-adapter/src/lib.rs:460/465`），两道界都在每轮读之前（`crates/qx-adapter/src/lib.rs:555`、`:560`） |
+| 出站 WS 握手块 | 64 KiB + 整体截止（= socket 读超时） | `read_header_block`（`crates/qx-adapter/src/lib.rs:350`）起算 `crates/qx-adapter/src/lib.rs:355`、逐字节问一次 `crates/qx-adapter/src/lib.rs:358` |
+| 出站 **HTTP 响应体** | **无上限** | `crates/qx-adapter/src/lib.rs:275-276` `read_to_end`（TLS 路径），`crates/qx-adapter/src/lib.rs:711-712` 同形状 |
 | 插件 intents | 100 000 | `crates/qx-strategy/src/c_api.rs:22`：先判 `intents_len`（`crates/qx-strategy/src/c_api.rs:442`），之后才 `from_raw_parts`（`crates/qx-strategy/src/c_api.rs:450`） |
 | 插件库体积 / 分帧 | 256 MiB / 16 MiB | `crates/qx-strategy/src/c_api.rs:19`、`crates/qx-strategy/src/frame.rs:13` |
 | Binance 权重桶 / recvWindow | 6000 / 5000（不校验取值范围，只有这一处写死的初值） | `crates/qx-adapter/src/binance.rs:919`、`crates/qx-adapter/src/binance.rs:158`、`crates/qx-adapter/src/binance.rs:204` |
 | 行情流重连 | 连续 10 次，1 s→30 s | `crates/qx-cli/src/venue_runtime/binance_stream_worker.rs:26`、`crates/qx-cli/src/venue_runtime/binance_stream_worker.rs:103` |
 | Outbox 投递预算 | 8 次后停投 | `crates/qx-storage/src/lib.rs:482-486` |
 | 审计窗口 | 1000 条 | `crates/qx-control/src/lib.rs:199` |
+| PostgreSQL 连接的对端判死 | 最坏 19 s = 空闲 10 s + 探测 3 s × 3 次 | `dsn_with_socket_defaults`（`crates/qx-storage/src/postgres.rs:2151`）在 `crates/qx-storage/src/postgres.rs:170` 于连接之前把三颗键补进 DSN，三颗常量在 `crates/qx-storage/src/postgres.rs:2133`、`crates/qx-storage/src/postgres.rs:2136`、`crates/qx-storage/src/postgres.rs:2140`。**界挂在内核的 TCP 保活上，不是进程内计时**：走 Unix 域套接字时这三颗键被忽略，Windows 不实现重试那颗；"慢而活着"的对端由 `crates/qx-storage/src/postgres.rs:215` 的 30 秒 `statement_timeout` 与 `crates/qx-storage/src/postgres.rs:217` 的 60 秒 `idle_in_transaction_session_timeout` 分头兜（后者与 `crates/qx-storage/src/postgres.rs:51` 的连接槽等待预算是同一个数） |
 
 **两处"远端配合才终止"的循环**要记名，别当成有界：`crates/qx-adapter/src/binance.rs:249-250` 那颗重连预算的复位判据
 在注释里自陈为"交付过事件的会话证明链路可用：退避预算重新计"（实现 `crates/qx-adapter/src/binance.rs:501-506`，回调失败不复位的理由在 :503-504），
@@ -613,7 +626,7 @@ let granted = match &self.policy {
 | S-R2 | 限流器常量毫秒快照 → 100 条后永久 429（含健康检查）；WS 完全绕过 | High | `crates/qx-api/src/lib.rs:624-625`、`crates/qx-cli/src/strategy_contract.rs:759` |
 | S-R3 | `permission` 由请求体自授；`target: "*"` 停全部策略 | Critical（随 S-R1） | `crates/qx-api/src/lib.rs:1693`、`crates/qx-cli/src/workers.rs:186`、`crates/qx-cli/src/workers.rs:200` |
 | S-R4 | `Fnv1a` 在 5 处承担防伪；`state_hash: 0` 免检；`fnv1a:` 被当签名 | High | `crates/qx-control/src/lib.rs:102-116`、`crates/qx-protocol/src/lib.rs:221-220`、`crates/qx-plugin/src/lib.rs:118-134` |
-| S-R5 | 插件/C ABI 无信任根；C ABI 默认不验签；Python 模块"先执行后校验" | High | `crates/qx-plugin/src/lib.rs:127-134`、`crates/qx-strategy/src/c_api.rs:658-660`、`python/qianxing_strategy/worker.py:36-39` |
+| S-R5 | 插件/C ABI 无信任根；C ABI 默认不验签；Python 模块"先执行后校验" | High | `crates/qx-plugin/src/lib.rs:127-134`、`crates/qx-strategy/src/c_api.rs:658-660`、`python/qianxing_strategy/worker.py:37-40` |
 | S-R6 | 策略共享内存环：公共 temp + 可预测名 + 非独占创建 + 无权限位 | High | `crates/qx-cli/src/strategy_host.rs:127-133`、`crates/qx-strategy/src/ring.rs:120-129` |
 | S-R7 | 配置可把 Binance 凭据发到任意 host:port；`ws://` 静默 TLS | Medium | `crates/qx-cli/src/venue_runtime/binance_venue.rs:42-70`、`crates/qx-adapter/src/binance.rs:199`、`crates/qx-adapter/src/binance.rs:220`、`crates/qx-adapter/src/binance.rs:228` |
 | S-R8 | `qx-control`/`qx-protocol`/`qx-storage` 三个线上面 0 处 `deny_unknown_fields`；`ControlCommand` 无版本锚；`OutboxEvent` 有版本字段但全仓无人比较 | Medium | `crates/qx-control/src/lib.rs:60-71`、`crates/qx-storage/src/lib.rs:368-374`、`crates/qx-storage/src/lib.rs:1024` |
@@ -662,8 +675,8 @@ let granted = match &self.policy {
 
 **环境变量（代码读取的全部）**：`QX_PYTHON`（`crates/qx-cli/src/main.rs:284-286`，
 缺省 `"python"`——**这是"选哪个解释器"，也就是一条代码执行链**）、`PYTHONPATH`
-（`crates/qx-cli/src/strategy_host.rs:512`、`crates/qx-adapter/src/ccxt.rs:107`）、`PATH`（子进程白名单，
-`crates/qx-cli/src/strategy_host.rs:467`、`crates/qx-cli/src/event_pipeline.rs:406-407`）、`QX_EVENT_CONSUMER`（子进程标记，
+（`crates/qx-cli/src/strategy_host.rs:515`、`crates/qx-adapter/src/ccxt.rs:107`）、`PATH`（子进程白名单，
+`crates/qx-cli/src/strategy_host.rs:470`、`crates/qx-cli/src/event_pipeline.rs:406-407`）、`QX_EVENT_CONSUMER`（子进程标记，
 `crates/qx-cli/src/event_pipeline.rs:402`），以及**由配置命名的**凭据变量：
 `credential_env` 里的名字（声明 `crates/qx-runtime/src/runtime_config/schema.rs:237`，按名读取 `crates/qx-adapter/src/binance.rs:58-70`）、CCXT 的
 `api_key` / `secret` / `password` / `uid` 四类（`crates/qx-adapter/src/ccxt.rs:117-130`）、
@@ -719,7 +732,7 @@ let granted = match &self.policy {
 6. **TLS 证书校验的可关闭开关**：0（§4.10）——两种传输都是真验证，且服务端拒空根。
 7. **被跟踪的 `.env` / `.pem` / `.key` / 密钥字面量**：0（§4.7）；`deploy/data/` 71 个被跟踪文件里
    0 处凭据形状。
-8. **HTTP 重定向跟随**：0（`crates/qx-adapter/src/lib.rs:678-852` 只解析状态与体，不碰 `Location`）
+8. **HTTP 重定向跟随**：0（`crates/qx-adapter/src/lib.rs:717-732` 只解析状态与体，不碰 `Location`）
    → 因此不存在"重定向把凭据带走"这一格；§4.5 的问题更直接：目的地本身可配。
 9. **代理配置（`HTTP_PROXY` 等）**：0 → 既没有代理注入面，也**没有出口管控点**（§4.5 的允许列表
    修法要在本仓自己实现）。
@@ -748,8 +761,8 @@ let granted = match &self.policy {
   带 `schema_version` 且读侧先比。
 * **G-5 防伪位置不用无键哈希**：`Fnv1a` 的构造点白名单（`crates/qx-core/src/sourcing.rs`、`qx-guanxing` 的数据哈希等），
   出现在 C1/C3/C4/C5 任一格即红——这一条要等 §4.10 的修法落地才可能绿。
-* **G-6 本文的每条 `path:line` 都算数**：本文由 `doc_citation_check`（`tools/check_architecture.py:10034`）逐颗核对，它与台账
-  共用同一颗扫描器 `citation_audit`（`tools/check_architecture.py:9880`）——R6-8 起带三口径，R6-9 起裸引用的归属再扩到
+* **G-6 本文的每条 `path:line` 都算数**：本文由 `doc_citation_check`（`tools/check_architecture.py:10210`）逐颗核对，它与台账
+  共用同一颗扫描器 `citation_audit`（`tools/check_architecture.py:10056`）——R6-8 起带三口径，R6-9 起裸引用的归属再扩到
   "同一行只点了文件名、没带行号"那一颗。行号漂移即红。
 * **G-6 看不见的那两格**（写进契约，免得下一个人把绿读成"全对上了"）：判据按行扫描，所以①一行里既没有带行号的
   引用、也没有能唯一解析的文件名时，那颗裸行号无人核对——R6-9 之后四份文本仍剩 349 颗这种形状
@@ -776,5 +789,5 @@ let granted = match &self.policy {
 | 日期 | 变更 | 依据 |
 |---|---|---|
 | 2026-09-26 | 首版：12 类逐项判定 + 12 项缺陷登记 + 14 项负行 + 配置清单与轮换流程 | 本轮实测（`crates/` 23 个 crate、`python/` 23 个 `.py`、`deploy/` 全量、门禁与用例逐条读；首版当日工作树 359 个未提交改动） |
-| 2026-09-26 | 引用收口：三种门禁扫不到的形状各改一类——逗号串号 3 处、裸 `:NNN` 全部展开成自足 `path:line`、range 首行的窗口打不到尾部名字时另给精确锚点6 处「名字与锚点对不上」挪到声明处（`external_executable`、`consumer_handler_executable`/`consumer_handler_args`、签名头、`credential_env`、`postgres_dsn_env`、`python_module`）；2 处过强断言收窄（`deny_unknown_fields` 的适用范围、`OutboxEvent` 在 `crates/qx-storage/src/lib.rs:368-374` 有字段但无人比）；1 处指错锚点（`CancelOrder` 负行 252-257 → 281-286）；负行 14 → 16 | 判据按 AST 从 `doc_citation_check`（`tools/check_architecture.py:10034`）取出后重放：本文全部 `path:line` 逐颗对得上，引用数与带名绑定数由常驻门禁当轮打印、不在这里抄一份会过期的副本；名字档另判，剩余 3 处 hard 全是「断言某物不存在」，已升成 §9 负行
-| 2026-09-26 | R7 轮重钉：本文 51 行的行号按当前代码改口，并逐颗人工复核"被引那一格里是不是那颗东西"——机械 0 红不等于语义对：区间远端只量越界与空行（`CAP_RANGE_END`，`tools/check_architecture.py:9814`），同一条规则本轮在变更日志里抓到一例"数字恰好落在界内、那一格却是别的东西"的假通过，逐颗明细记在方案书 §55.10、§55.11；上一行那句"引用数不在这里抄副本"本轮同样回落到 §10 的 G-6——逐份拆分只留在方案书与台账，本文不再放第二份会过期的数 | 第 5 轮三扫之后的 R7 收口 |
+| 2026-09-26 | 引用收口：三种门禁扫不到的形状各改一类——逗号串号 3 处、裸 `:NNN` 全部展开成自足 `path:line`、range 首行的窗口打不到尾部名字时另给精确锚点6 处「名字与锚点对不上」挪到声明处（`external_executable`、`consumer_handler_executable`/`consumer_handler_args`、签名头、`credential_env`、`postgres_dsn_env`、`python_module`）；2 处过强断言收窄（`deny_unknown_fields` 的适用范围、`OutboxEvent` 在 `crates/qx-storage/src/lib.rs:368-374` 有字段但无人比）；1 处指错锚点（`CancelOrder` 负行 252-257 → 281-286）；负行 14 → 16 | 判据按 AST 从 `doc_citation_check`（`tools/check_architecture.py:10210`）取出后重放：本文全部 `path:line` 逐颗对得上，引用数与带名绑定数由常驻门禁当轮打印、不在这里抄一份会过期的副本；名字档另判，剩余 3 处 hard 全是「断言某物不存在」，已升成 §9 负行
+| 2026-09-26 | R7 轮重钉：本文 51 行的行号按当前代码改口，并逐颗人工复核"被引那一格里是不是那颗东西"——机械 0 红不等于语义对：区间远端只量越界与空行（`CAP_RANGE_END`，`tools/check_architecture.py:9990`），同一条规则本轮在变更日志里抓到一例"数字恰好落在界内、那一格却是别的东西"的假通过，逐颗明细记在方案书 §55.10、§55.11；上一行那句"引用数不在这里抄副本"本轮同样回落到 §10 的 G-6——逐份拆分只留在方案书与台账，本文不再放第二份会过期的数 | 第 5 轮三扫之后的 R7 收口 |

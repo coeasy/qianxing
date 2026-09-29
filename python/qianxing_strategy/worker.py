@@ -16,6 +16,7 @@ import importlib.util
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -105,6 +106,30 @@ def serve_framed(handler: Callable[[StrategyInput], Any]) -> None:
         output_stream.flush()
 
 
+def _watch_parent_exit() -> threading.Event:
+    """父进程关掉这根 stdin 管道时置位——共享内存 ring 自己没有 EOF。
+
+    ring 传输只有"下一颗请求"，没有"父进程已经不在了"这一格：父进程走
+    `std::process::exit` 时不展开任何析构，这里的循环就留在 1 kHz 轮询里自转到
+    天荒地老，两份 ring 文件也留在 temp 里。`strategy_host.rs` 现在在共享模式下
+    同样为子进程留着 stdin 管道的写端，进程一死写端由 OS 关掉，这条阻塞读拿到
+    EOF 就是父进程已经不在了的信号。
+    """
+    gone = threading.Event()
+
+    def watch() -> None:
+        stream = getattr(sys.stdin, "buffer", None) or sys.stdin
+        try:
+            while stream.read(1):
+                pass
+        except (OSError, ValueError):
+            pass  # 管道被拆封与读到 EOF 是同一件事：父进程没了
+        gone.set()
+
+    threading.Thread(target=watch, name="qx-parent-exit-watch", daemon=True).start()
+    return gone
+
+
 def serve_shared(
     handler: Callable[[StrategyInput], Any],
     input_path: str,
@@ -114,10 +139,11 @@ def serve_shared(
     columnar: bool = False,
 ) -> None:
     """Serve QXSF requests over two SPSC mmap rings."""
+    parent_gone = _watch_parent_exit()
     with SharedMemoryRing(input_path, capacity, slot_bytes) as input_ring, SharedMemoryRing(
         output_path, capacity, slot_bytes
     ) as output_ring:
-        while True:
+        while not parent_gone.is_set():
             try:
                 encoded = input_ring.try_pop()
             except RingEmpty:
@@ -136,6 +162,15 @@ def serve_shared(
                 response = _handle_line(handler, payload.decode("utf-8"))
             encoded_response = encode_frame(RESPONSE, sequence, response.encode("utf-8"))
             output_ring.push_wait(encoded_response, time.monotonic() + 30.0)
+
+    if parent_gone.is_set():
+        # 能走出上面那个循环只有"父进程已经不在了"一条路：正常情况下这两份文件由父进程
+        # 的析构删除（它也只会在这之后 kill 子进程）。mmap 已经随 with 解掉，这里补删。
+        for path in (input_path, output_path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
 
 def main() -> int:

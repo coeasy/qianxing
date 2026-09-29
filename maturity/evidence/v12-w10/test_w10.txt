@@ -1,0 +1,1627 @@
+   Compiling qx-core v0.1.0 (D:\aex_work\qianxing\crates\qx-core)
+   Compiling pyo3-ffi v0.29.2
+   Compiling pyo3 v0.29.2
+   Compiling qx-guanxing v0.1.0 (D:\aex_work\qianxing\crates\qx-guanxing)
+   Compiling qx-protocol v0.1.0 (D:\aex_work\qianxing\crates\qx-protocol)
+   Compiling qx-control v0.1.0 (D:\aex_work\qianxing\crates\qx-control)
+   Compiling qx-scheduler v0.1.0 (D:\aex_work\qianxing\crates\qx-scheduler)
+   Compiling qx-risk v0.1.0 (D:\aex_work\qianxing\crates\qx-risk)
+   Compiling qx-strategy v0.1.0 (D:\aex_work\qianxing\crates\qx-strategy)
+   Compiling qx-data v0.1.0 (D:\aex_work\qianxing\crates\qx-data)
+   Compiling qx-genglu v0.1.0 (D:\aex_work\qianxing\crates\qx-genglu)
+   Compiling qx-plugin v0.1.0 (D:\aex_work\qianxing\crates\qx-plugin)
+   Compiling qx-zhenlu v0.1.0 (D:\aex_work\qianxing\crates\qx-zhenlu)
+   Compiling qx-factor v0.1.0 (D:\aex_work\qianxing\crates\qx-factor)
+   Compiling qx-provider v0.1.0 (D:\aex_work\qianxing\crates\qx-provider)
+   Compiling qx-datastruct v0.1.0 (D:\aex_work\qianxing\crates\qx-datastruct)
+   Compiling qx-storage v0.1.0 (D:\aex_work\qianxing\crates\qx-storage)
+   Compiling qx-execution v0.1.0 (D:\aex_work\qianxing\crates\qx-execution)
+   Compiling qx-adapter v0.1.0 (D:\aex_work\qianxing\crates\qx-adapter)
+   Compiling qx-xingban v0.1.0 (D:\aex_work\qianxing\crates\qx-xingban)
+   Compiling qx-runtime v0.1.0 (D:\aex_work\qianxing\crates\qx-runtime)
+   Compiling qx-api v0.1.0 (D:\aex_work\qianxing\crates\qx-api)
+   Compiling qx-python v0.1.0 (D:\aex_work\qianxing\crates\qx-python)
+   Compiling qx-orchestrator v0.1.0 (D:\aex_work\qianxing\crates\qx-orchestrator)
+   Compiling qx-cli v0.1.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.61s
+     Running unittests src\lib.rs (target\debug\deps\qx_adapter-bea51e244deeace1.exe)
+
+running 48 tests
+test binance::tests::binance_book_ticker_accepts_official_rest_field_names ... ok
+test binance::tests::binance_book_ticker_maps_to_l1_quote_and_rejects_crossed_market ... ok
+test binance::tests::binance_account_snapshot_and_position_events_update_balances ... ok
+test binance::tests::binance_five_xx_is_ambiguous_and_requires_reconcile ... ok
+test binance::tests::binance_hmac_matches_official_ascii_payload ... ok
+test binance::tests::binance_market_data_fetches_public_rest_book_ticker ... ok
+test binance::tests::binance_reconcile_uses_all_orders_and_restores_remote_order_id ... ok
+test binance::tests::binance_submit_is_form_signed_and_maps_full_fill ... ok
+test binance::tests::binance_user_stream_subscription_payload_is_signed_and_explicit ... ok
+test binance::tests::book_ticker_decode_guards_symbol_and_falls_back_to_receive_ts ... ok
+test binance::tests::credentials_redact_secret_and_construct_auth ... ok
+test binance::tests::read_or_forward_keeps_silence_and_closure_out_of_the_decoder ... ok
+test binance::tests::restored_orders_are_available_before_user_stream_events ... ok
+test binance::tests::user_event_is_idempotent_and_cancel_is_mapped ... ok
+test binance::tests::user_stream_run_config_rejects_missing_endpoint_context ... ok
+test ccxt::tests::ccxt_closed_partial_order_requires_reconciliation_without_mutating_local_progress ... ok
+test ccxt::tests::ccxt_order_policy_is_translated_before_create_order ... ok
+test ccxt::tests::ccxt_partial_cancel_emits_terminal_cancel_and_preserves_fill ... ok
+test ccxt::tests::ccxt_partial_sync_uses_incremental_price_from_cumulative_average ... ok
+test ccxt::tests::ccxt_process_venue_enriches_missing_order_fee_from_incremental_trades ... ok
+test ccxt::tests::ccxt_process_venue_submits_and_syncs_fill_without_custom_exchange_protocol ... ok
+test ccxt::tests::ccxt_rpc_failure_marks_venue_disconnected_until_rpc_replacement ... ok
+test ccxt::tests::ccxt_unknown_status_fails_closed_without_mutating_local_progress ... ok
+test io_budget::tests::a_broken_pipe_reports_the_io_error_without_the_timeout_path ... ok
+test reconcile::tests::filled_direction_and_absences_keep_their_own_actions ... ok
+test io_budget::tests::a_draining_pipe_writes_through_and_gives_the_writer_back ... ok
+test reconcile::tests::the_same_status_dimension_reports_two_different_actions ... ok
+test tests::http_transport_preserves_vendor_form_content_type ... ok
+test binance::tests::credentials_load_from_projected_files_and_reject_control_bytes ... ok
+test ccxt::tests::ccxt_worker_environment_is_minimal_and_validates_credential_names ... ok
+test tests::tls_transport_rejects_invalid_server_name_before_connecting ... ok
+test tests::websocket_frame_announcing_more_than_the_budget_fails_before_reading_payload ... ok
+test tests::websocket_handshake_header_block_stops_at_its_own_deadline ... ok
+test tests::websocket_silence_at_a_frame_boundary_keeps_the_connection_usable ... ok
+test tests::websocket_timeout_after_the_first_header_byte_fails_instead_of_claiming_silence ... ok
+test tests::websocket_timeout_between_fragments_discards_the_partial_message ... ok
+test tests::websocket_user_stream_validates_rfc_handshake_and_server_frames ... ok
+test tests::tcp_transport_executes_a_real_http_request ... ok
+test venue_cache::tests::below_the_cap_nothing_is_touched ... ok
+test venue_cache::tests::eviction_drops_the_oldest_terminal_orders_down_to_the_hysteresis_line ... ok
+test venue_cache::tests::live_orders_are_never_evicted_even_over_the_cap ... ok
+test venue_cache::tests::mixed_book_evicts_only_terminal_orders ... ok
+test binance::tests::order_cache_cap_evicts_terminal_orders_and_cascades_derived_indexes ... ok
+test tests::address_resolution_returns_to_its_caller_at_the_budget ... ok
+test tests::websocket_fragment_accumulation_is_bounded_by_the_message_budget ... ok
+test ccxt::tests::ccxt_order_cache_cap_cascades_remote_ids_dedup_keys_and_costs ... ok
+test io_budget::tests::a_pipe_that_never_drains_stops_at_the_budget_and_kills ... ok
+test binance::tests::binance_submit_events_reach_live_pipeline_and_ledger ... ok
+
+test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\binance_stream_retry.rs (target\debug\deps\binance_stream_retry-d51a1e557e4f7b59.exe)
+
+running 11 tests
+test connect_failures_still_escalate_backoff_and_stop_at_the_budget ... ok
+test market_stream_runner_gives_up_after_consecutive_transport_failures ... ok
+test market_stream_runner_survives_silence_and_uses_the_injected_clock ... ok
+test user_stream_runner_counts_idle_windows_without_charging_the_reconnect_budget ... ok
+test user_stream_runner_does_not_reset_the_budget_on_callback_failures ... ok
+test user_stream_runner_does_not_reset_the_budget_on_silence ... ok
+test user_stream_runner_keeps_the_session_open_across_silence ... ok
+test user_stream_runner_reconnects_after_session_or_callback_error ... ok
+test user_stream_runner_reconnects_with_injected_clock_and_stop ... ok
+test user_stream_runner_still_gives_up_when_sessions_never_deliver ... ok
+test user_stream_runner_survives_reconnects_after_healthy_sessions ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_api-a8e92d53afc136b7.exe)
+
+running 32 tests
+test tests::a_header_split_across_reads_ends_the_request_at_its_own_length ... ok
+test tests::a_command_that_cannot_be_queued_answers_503_not_202 ... ok
+test tests::account_projection_rejects_identity_drift_and_marks_readiness_stale ... ok
+test tests::api_projection_is_idempotent_and_rejects_gaps_or_drift ... ok
+test tests::api_rate_limit_is_deterministic_for_a_single_process ... ok
+test tests::account_projections_isolate_snapshots_events_and_cursors ... ok
+test tests::balances_endpoint_publishes_absent_money_as_null_not_zero ... ok
+test tests::configured_api_policy_rejects_self_asserted_permission ... ok
+test tests::control_and_query_routes_are_audited ... ok
+test tests::control_submitter_persists_before_api_accepts ... ok
+test tests::event_bus_wakes_waiters_and_reports_retention_gaps ... ok
+test tests::kinds_without_an_executor_get_400_before_any_audit ... ok
+test tests::live_event_route_uses_the_realtime_cursor_contract ... ok
+test tests::metrics_route_appends_supervised_worker_metrics ... ok
+test tests::mtls_identity_policy_maps_exact_certificate_der ... ok
+test tests::mtls_identity_store_replaces_operator_mapping_atomically ... ok
+test tests::protected_api_does_not_accept_operator_from_command_body ... ok
+test tests::readiness_blames_the_refresher_only_when_the_read_model_holds_projections ... ok
+test tests::query_port_exposes_account_orders_positions_balances_and_audit ... ok
+test tests::readiness_separates_liveness_from_dependency_health ... ok
+test tests::websocket_accept_matches_rfc_example ... ok
+test tests::tls_config_store_exposes_rotation_boundary ... ok
+test tests::trusted_api_identity_overrides_command_body_identity ... ok
+test tests::snapshot_diff_and_event_cursor_require_a_valid_base ... ok
+test snapshot_history::tests::republishing_keeps_the_live_baseline_at_the_newest_end ... ok
+test tests::a_dribbling_client_hits_the_overall_budget_not_the_size_cap ... ok
+test snapshot_history::tests::the_window_holds_the_newest_snapshots_and_forgets_the_oldest ... ok
+test tests::tls_server_rejects_plaintext_before_http_dispatch ... ok
+test tests::http_server_serves_health_route ... ok
+test tests::websocket_server_sends_connection_and_event_batches ... ok
+test tests::shared_file_rate_limit_is_visible_to_multiple_api_services ... ok
+test snapshot_history::tests::republishing_the_same_snapshot_never_grows_the_window ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\accept_loop_shutdown.rs (target\debug\deps\accept_loop_shutdown-b470cc897e4f4f19.exe)
+
+running 3 tests
+test plaintext_accept_loop_serves_then_returns_on_the_stop ... ok
+test plaintext_accept_loop_returns_without_any_connection ... ok
+test mtls_accept_loop_returns_on_the_stop ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests\account_projection_identity.rs (target\debug\deps\account_projection_identity-beb2432845f7f1c7.exe)
+
+running 1 test
+test account_projection_checks_venue_less_facts_by_account_identity_only ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\event_cursor_after_semantics.rs (target\debug\deps\event_cursor_after_semantics-e52223d403e3ad0f.exe)
+
+running 2 tests
+test stale_or_ahead_cursors_are_rejected_on_both_chains ... ok
+test both_event_read_chains_answer_the_same_cursor_the_same_way ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\snapshot_envelope_contract.rs (target\debug\deps\snapshot_envelope_contract-4a11cdbcb078ef6e.exe)
+
+running 2 tests
+test envelope_data_is_the_same_wire_document_the_flat_route_serves ... ok
+test envelope_data_satisfies_the_schema_the_same_server_publishes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\snapshot_envelope_lineage.rs (target\debug\deps\snapshot_envelope_lineage-556174824ba32725.exe)
+
+running 2 tests
+test the_event_envelopes_claim_no_lineage_they_cannot_back ... ok
+test the_snapshot_envelope_publishes_the_projection_source_digest ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\qx_cli-b537f9a971ae51ed.exe)
+
+running 254 tests
+test tests::account_event_log_identity::account_identity_normalizes_its_key_in_one_place ... ok
+test tests::account_event_log_identity::account_log_writers_fail_closed_without_an_identity ... ok
+test tests::account_event_log_identity::every_account_log_writer_derives_the_same_name ... ok
+test tests::account_event_log_identity::projection_sources_dedupe_by_account_identity ... ok
+test tests::account_principal_source::the_same_principal_declared_twice_is_reported_as_one_agreeing_number ... ok
+test tests::account_principal_source::a_lone_backtest_declaration_is_not_reported_as_agreeing_with_anything ... ok
+test tests::api_query_models_live::each_query_port_slot_reads_the_live_provider_before_any_backfill ... ok
+test tests::account_principal_source::two_paper_accounts_may_be_funded_differently_without_a_backtest_declaration ... ok
+test tests::api_query_models_live::query_port_keeps_the_last_known_models_when_the_provider_fails ... ok
+test tests::account_event_log_identity::doctor_reports_the_orphan_scan_skips_non_file_backends ... ok
+test tests::account_principal_source::two_different_principals_in_one_runtime_are_rejected_everywhere_they_are_read ... ok
+test tests::account_event_log_identity::doctor_reports_event_logs_no_identity_owns ... ok
+test tests::api_query_models_live::reconcile_report_endpoint_follows_the_worker_written_file ... ok
+test tests::api_control_audit_live::control_audit_reads_the_store_the_workers_write_into ... ok
+test tests::account_event_log_identity::renaming_an_account_log_preserves_fact_and_manifest_digests ... ok
+test tests::api_serve_stop_token::serve_returns_once_the_supervisor_requests_shutdown ... ok
+test tests::account_event_log_identity::paper_submit_order_seeds_the_account_log_the_worker_reduces ... ok
+test tests::ashare_submit_guard::api_surface_refuses_the_ashare_section_before_creating_data_dir ... ok
+test tests::ashare_submit_guard::binance_submit_entry_refuses_the_ashare_section_before_reading_the_command ... ok
+test tests::ashare_submit_guard::ccxt_worker_entry_refuses_the_ashare_section_before_touching_the_ccxt_config ... ok
+test tests::ashare_submit_guard::only_roles_that_submit_orders_meet_the_ashare_gate ... ok
+test tests::ashare_submit_guard::paper_submit_entry_refuses_the_ashare_section_before_touching_anything ... ok
+test tests::ashare_submit_guard::paper_worker_entry_refuses_to_start_an_execution_worker_with_ashare_rules ... ok
+test tests::api_snapshot_money_fields::equity_without_a_mark_price_is_absent_rather_than_the_remaining_cash ... ok
+test tests::ashare_submit_guard::the_ashare_gate_also_reads_the_strategies_list ... ok
+test tests::backtest_account_base::declared_backtest_cash_lands_verbatim_with_its_own_source ... ok
+test tests::backtest_account_base::non_positive_declared_cash_fails_rather_than_becoming_a_default ... ok
+test tests::backtest_account_base::undeclared_backtest_cash_answers_with_the_one_named_default ... ok
+test tests::api_snapshot_money_fields::overflowing_fee_total_is_refused_instead_of_wrapping ... ok
+test tests::ashare_submit_guard::strategy_worker_entry_refuses_the_ashare_section_before_creating_any_state ... ok
+test tests::backtest_cost_provenance::cost_rules_file_changes_backtest_fees ... ok
+test tests::backtest_cost_provenance::cost_rules_latency_reaches_the_bar_kernel_and_is_refused_by_depth ... ok
+test tests::backtest_cost_provenance::cost_source_distinguishes_unset_from_default_rates ... ok
+test tests::backtest_entries::backtest_and_paper_worker_share_one_risk_gate_builder ... ok
+test tests::backtest_entries::backtest_assembly_books_in_the_instrument_settlement_currency ... ok
+test tests::backtest_cost_provenance::dangling_or_invalid_cost_rules_file_fails_closed ... ok
+test tests::backtest_entries::bar_backtest_assembly_pins_the_shared_engine_defaults ... ok
+test tests::backtest_entries::builtin_backtest_entry_validates_inputs_and_runs_on_the_shared_kernel ... ok
+test tests::api_query_models_live::ledger_endpoint_sees_fills_appended_after_boot ... ok
+test tests::api_snapshot_money_fields::ledger_fallback_position_row_leaves_uncomputed_money_absent ... ok
+test tests::api_snapshot_money_fields::available_is_the_settlement_cash_and_not_a_copy_of_equity ... ok
+test tests::api_snapshot_money_fields::published_fees_are_the_sum_of_the_fills_on_the_same_snapshot ... ok
+test tests::backtest_entries::multi_builtin_backtest_entry_writes_spread_attribution_from_leg_fills ... ok
+test tests::backtest_fill_model::depth_chain_refuses_a_configured_fill_model ... ok
+test tests::api_snapshot_money_fields::uncomputed_money_is_absent_rather_than_zero ... ok
+test tests::backtest_entries::run_manifests_bear_the_built_code_identity ... ok
+test tests::backtest_entries::strategy_backtest_accepts_builtin_runtime_config ... ok
+test tests::backtest_fill_model::unconfigured_fill_model_is_absent_from_the_runtime_bytes ... ok
+test tests::backtest_fill_model::unreachable_or_under_specified_fill_models_fail_closed ... ok
+test tests::backtest_cost_provenance::explicit_fee_flag_beats_the_cost_rules_file_on_depth ... ok
+test tests::backtest_fill_model::depth_summary_carries_no_fill_model_key ... ok
+test tests::backtest_entries::backtest_summary_records_the_effective_risk_rule_set_version ... ok
+test tests::backtest_fill_model::command_line_entries_read_the_declared_fill_model ... ok
+test tests::backtest_input_provenance::depth_chain_declares_and_revalidates_its_own_frame ... ok
+test tests::backtest_input_provenance::bar_chain_declares_the_identity_the_registry_already_verified ... ok
+test tests::backtest_input_provenance::summary_without_an_input_block_is_not_declared_rather_than_verified ... ok
+test tests::api_query_models_live::query_port_trait_read_points_load_without_an_http_request ... ok
+test tests::backtest_input_provenance::report_refuses_when_the_declared_input_changed_after_the_run ... ok
+test tests::backtest_input_provenance::report_refuses_when_the_declared_input_file_is_gone ... ok
+test tests::backtest_product_policy::an_instance_only_product_policy_declaration_is_refused_too ... ok
+test tests::backtest_replay_gate::artifacts_refuse_to_land_when_a_ledger_entry_has_no_fact_event ... ok
+test tests::backtest_replay_gate::artifacts_refuse_to_land_when_the_fact_stream_is_not_canonically_ordered ... ok
+test tests::backtest_input_provenance::report_refuses_when_the_declared_run_manifest_is_gone_or_unreadable ... ok
+test tests::backtest_replay_gate::summary_publishes_the_replay_facts_it_actually_checked ... ok
+test tests::backtest_input_provenance::report_refuses_when_the_sibling_run_manifest_no_longer_matches ... ok
+test tests::api_snapshot_money_fields::venue_reported_row_keeps_reported_zero_and_unreported_absent ... ok
+test tests::backtest_input_provenance::summary_that_omits_the_run_manifest_pointer_fails_instead_of_skipping_the_check ... ok
+test tests::backtest_input_provenance::tampered_frame_cannot_take_the_registered_identity_of_the_clean_one ... ok
+test tests::backtest_product_policy::the_strategy_backtest_builtin_branch_yields_once_the_policy_has_a_landing_site ... ok
+test tests::backtest_signal_provenance::depth_summary_declares_signal_params_with_raw_quantity ... ok
+test tests::backtest_fill_model::each_reachable_fill_model_changes_the_result_and_is_declared ... ok
+test tests::builtin_command_identity::intents_of_one_round_keep_distinct_command_identities ... ok
+test tests::backtest_signal_provenance::declaring_the_default_values_says_config_without_changing_the_result ... ok
+test tests::calendar_component_fingerprint::calendar_component_fingerprints_match_the_shared_python_digest ... ok
+test tests::backtest_risk_provenance::every_backtest_entry_reads_the_same_risk_rules_from_one_config ... ok
+test tests::calendar_component_fingerprint::calendar_fixtures_load_through_the_backtest_rules_registry ... ok
+test tests::calendar_component_fingerprint::calendar_digest_follows_the_canonical_fields_not_the_document_layout ... ok
+test tests::ccxt_idle_heartbeat::ccxt_idle_heartbeat_literals_exist_on_both_sides_of_the_boundary ... ok
+test tests::ccxt_idle_heartbeat::ccxt_user_stream_reads_shutdown_idle_and_failure_as_three_states ... ok
+test tests::ccxt_idle_heartbeat::ccxt_watch_reply_only_treats_explicit_idle_flag_as_idle ... ok
+test tests::ccxt_position_facts_honesty::flat_position_without_side_is_skipped_before_the_direction_gate ... ok
+test tests::ccxt_position_facts_honesty::unknown_position_side_is_refused_instead_of_guessed_as_long ... ok
+test tests::builtin_command_identity::a_later_round_with_a_different_intent_is_not_a_command_collision ... ok
+test tests::ccxt_position_facts_honesty::unreported_position_money_stays_unreported_and_zero_stays_zero ... ok
+test tests::backtest_signal_provenance::the_list_names_the_kind_knobs_regardless_of_the_declaration ... ok
+test tests::ccxt_reconcile_round::ccxt_reconcile_round_routes_both_discovery_halves_to_report_and_fact_stream ... ok
+test tests::ccxt_reconcile_round::ccxt_reconcile_service_status_degrades_on_a_local_only_finding ... ok
+test tests::ccxt_respawn_budget::a_symbol_that_never_recovers_stops_buying_resurrections ... ok
+test tests::ccxt_respawn_budget::ccxt_dead_cycle_ledger_counts_only_wholly_failed_rounds ... ok
+test tests::ccxt_respawn_budget::ccxt_respawn_delay_backs_off_and_caps ... ok
+test tests::backtest_signal_provenance::knobs_outside_the_list_neither_fail_the_run_nor_change_the_summary_numbers ... ok
+test tests::backtest_signal_provenance::the_summary_tracks_the_effective_windows_and_the_result_changes ... ok
+test tests::api_snapshot_republish::account_snapshots_reload_the_state_written_after_boot ... ok
+test tests::api_default_account_reads::unkeyed_read_models_describe_the_same_account ... ok
+test tests::cli_surface::clap_command_table_passes_debug_asserts ... ok
+test tests::builtin_command_identity::replaying_the_same_round_stays_idempotent ... ok
+test tests::backtest_product_policy::every_builtin_strategy_chain_refuses_a_product_policy_it_cannot_apply ... ok
+test tests::builtin_command_identity::a_later_round_with_the_same_intent_still_places_its_order ... ok
+test tests::cli_surface::doctor_report_is_machine_readable_and_never_claims_network_or_orders ... ok
+test tests::cli_surface::init_creates_self_contained_project_assets_and_builtin_strategy ... ok
+test tests::cli_surface::config_lock_writes_and_verifies_published_fingerprint ... ok
+test tests::cli_surface::report_resolves_explicit_summary_and_runtime_latest_paths ... ok
+test tests::cli_surface::runtime_path_positionals_fail_closed_when_omitted ... ok
+test tests::cli_surface::runtime_relative_paths_resolve_from_runtime_config_directory ... ok
+test tests::ccxt_reconcile_round::balance_facts_stay_unique_across_a_reconciler_restart ... ok
+test tests::api_query_models_live::file_backend_services_share_one_rate_limit_bucket ... ok
+test tests::deploy_template_coverage::every_deploy_template_is_registered_with_a_reader ... ok
+test tests::deploy_template_coverage::every_reader_class_rejects_a_broken_template ... ok
+test tests::cli_surface::init_profiles_rewrite_deploy_paths_and_validate_references ... ok
+test tests::deploy_template_coverage::every_deploy_template_loads_through_its_registered_reader ... ok
+test tests::e2e_and_python_contract::api_snapshot_is_rebuilt_from_persisted_account_eventlog ... ok
+test tests::api_projection_refresher_ready::ready_reports_a_read_model_that_nobody_refreshes_anymore ... ok
+test tests::e2e_and_python_contract::paper_strategy_reads_filled_position_before_emitting_next_order ... ok
+test tests::e2e_and_python_contract::reconcile_report_persists_structured_balance_discrepancy ... ok
+test tests::api_snapshot_money_fields::account_snapshot_reconcile_fields_come_from_the_reports_on_disk ... ok
+test tests::e2e_and_python_contract::paper_worker_cleans_stale_queue_after_terminal_commit ... ok
+test tests::event_backtest_evidence::a_claim_that_forgets_its_digest_is_refused_before_any_lookup ... ok
+test tests::event_backtest_evidence::a_claim_with_no_local_artifact_is_refused ... ok
+test tests::event_backtest_evidence::a_manifest_whose_content_disagrees_with_its_name_is_refused ... ok
+test tests::event_backtest_evidence::evidence_from_another_run_is_refused ... ok
+test tests::event_backtest_evidence::evidence_that_does_not_cover_the_validation_window_is_refused ... ok
+test tests::event_backtest_evidence::evidence_with_the_wrong_lineage_is_refused ... ok
+test tests::event_backtest_evidence::honest_evidence_passes_and_an_unclaimed_snapshot_needs_no_artifact ... ok
+test tests::execution_and_multi_leg::dry_run_submit_order_is_audited_without_credentials_or_network ... ok
+test tests::execution_and_multi_leg::multi_leg_combined_return_weights_each_leg_by_its_own_capital ... ok
+test tests::e2e_and_python_contract::paper_e2e_with_sqlite_backend_replays_from_transactional_eventlog ... ok
+test tests::execution_and_multi_leg::strategy_multileg_group_snapshot_is_idempotent_and_reconciles_eventlog_state ... ok
+test tests::execution_and_multi_leg::paper_multi_leg_spread_submits_each_leg_through_single_track_and_reduces_group ... ok
+test tests::api_snapshot_republish::api_projection_bridge_republishes_snapshots_until_the_endpoint_moves ... ok
+test tests::e2e_and_python_contract::paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger ... ok
+test tests::backtest_entries::builtin_strategy_entries_match_the_printed_partition ... ok
+test tests::cli_json_surface::config_validate_keeps_its_human_pass_line ... ok
+test tests::lease_clock_domain::a_thirty_second_lease_survives_twenty_nine_seconds_of_work ... ok
+test tests::lease_clock_domain::an_overdue_running_job_is_escalated_and_frees_its_concurrency_key ... ok
+test tests::lease_clock_domain::escalating_the_stuck_run_lets_the_next_trading_day_dispatch ... ok
+test tests::lease_clock_domain::lease_clock_truncates_the_wall_clock_to_seconds ... ok
+test tests::lease_clock_domain::live_strategy_run_deadline_is_measured_in_the_lease_domain ... ok
+test tests::live_submit_fail_closed::binance_submit_without_market_spec_fails_closed_with_no_order_fact ... ok
+test tests::live_submit_fail_closed::submit_risk_gate_is_shared_across_venues_and_rejects_broken_specs ... ok
+test tests::market_spec_single_source::a_spec_for_another_instrument_fails_closed ... ok
+test tests::market_spec_single_source::an_under_specified_ccxt_market_is_refused_not_invented ... ok
+test tests::market_spec_single_source::both_market_spec_shapes_resolve_to_the_same_spec ... ok
+test tests::market_spec_single_source::each_market_spec_shape_publishes_its_own_source_label ... ok
+test tests::market_spec_single_source::the_backtest_chain_reads_a_ccxt_shaped_spec_to_the_same_result ... ok
+test tests::market_spec_single_source::the_backtest_chain_reads_the_generated_frozen_spec ... ok
+test tests::market_spec_single_source::the_depth_chain_publishes_the_shape_it_actually_read ... ok
+test tests::paper_and_strategy_worker::derivative_strategy_emits_leveraged_short_policy_without_no_short_rule ... ok
+test tests::paper_and_strategy_worker::paper_submit_order_runs_queue_pipeline_ledger_and_ack ... ok
+test tests::paper_and_strategy_worker::paper_worker_refuses_next_leg_when_spread_group_awaits_reconciliation ... ok
+test tests::paper_and_strategy_worker::strategy_signal_portfolio_risk_emits_idempotent_submit_order ... ok
+test tests::paper_and_strategy_worker::strategy_target_zero_emits_close_order_for_existing_position ... ok
+test tests::paper_and_strategy_worker::strategy_worker_executes_pause_command_through_persistent_queue ... ok
+test tests::paper_and_strategy_worker::strategy_worker_reads_candidate_factor_bundle_as_context ... ok
+test tests::paper_bridge_and_bundles::paper_market_bridge_filters_symbols_and_accepts_account_wildcard ... ok
+test tests::paper_bridge_and_bundles::paper_market_bridge_mirrors_quote_into_account_event_log ... ok
+test tests::paper_bridge_and_bundles::strategy_artifact_sha256_is_checked_before_spawn ... ok
+test tests::paper_bridge_and_bundles::strategy_backtest_rejects_dataset_bundle_bar_mismatch ... ok
+test tests::paper_bridge_and_bundles::strategy_bundle_binds_arrow_component_manifest ... ok
+test tests::paper_bridge_and_bundles::strategy_bundle_binds_explicit_generic_component_path ... ok
+test tests::paper_bridge_and_bundles::strategy_bundle_binds_non_bar_component_content ... ok
+test tests::paper_hedge_recovery::paper_hedge_recovery_ingests_venue_fills_through_the_worker_frozen_spec ... ok
+test tests::paper_hedge_recovery::paper_hedge_recovery_replays_partial_fill_to_hedged ... ok
+test tests::paper_margin_valuation::paper_margin_budget_values_derivative_positions_without_their_notional ... ok
+test tests::paper_settlement_currency::paper_submit_order_books_in_the_worker_settlement_currency ... ok
+test tests::reconcile_worker_identity::ambiguous_reconciler_candidates_are_not_resolved_by_choosing_one ... ok
+test tests::reconcile_worker_identity::paper_reconciler_is_not_a_candidate_for_the_binance_entry ... ok
+test tests::reconcile_worker_identity::published_runtimes_resolve_their_own_reconciler ... ok
+test tests::reconcile_worker_identity::reconcile_lookup_fails_closed_without_an_enabled_reconciler ... ok
+test tests::reconcile_worker_identity::renamed_binance_reconciler_is_the_one_reconcile_resolves ... ok
+test tests::report_readout::absent_keys_print_absent_while_declared_zero_still_prints_zero ... ok
+test tests::report_readout::explicitly_null_cells_read_as_absent_rather_than_zero_or_literal_null ... ok
+test tests::report_readout::generation_note_tells_apart_older_schema_from_missing_block ... ok
+test tests::report_readout::multi_leg_cost_bps_reports_no_denominator_and_refuses_an_unprintable_ratio ... ok
+test tests::report_readout::readout_gives_the_recompute_verdict_its_own_field_verbatim ... ok
+test tests::report_readout::sample_unit_is_printed_next_to_bars_and_absent_when_undeclared ... ok
+test tests::report_readout::status_latest_backtest_lines_use_the_same_absent_wording ... ok
+test tests::report_readout::string_typed_and_negative_money_fields_still_read_as_numbers ... ok
+test tests::risk_port_channel::risk_port_verdicts_and_port_failures_keep_separate_broadcasts ... ok
+test tests::runtime_api_worker_identity::api_worker_lookup_fails_closed_without_an_enabled_one ... ok
+test tests::runtime_api_worker_identity::both_serve_branches_join_the_api_worker_through_the_shutdown_ladder ... ok
+test tests::runtime_api_worker_identity::join_worker_handle_propagates_the_worker_error_instead_of_swallowing_it ... ok
+test tests::runtime_api_worker_identity::join_worker_handle_waits_for_the_worker_thread_to_finish_its_tail ... ok
+test tests::runtime_api_worker_identity::renamed_api_worker_is_the_one_the_supervisor_accepts ... ok
+test tests::runtime_api_worker_identity::stop_api_projection_bridge_joins_and_clears_the_projection_thread ... ok
+test tests::runtime_check_roster::runtime_check_health_block_is_a_roster_and_not_a_live_probe ... ok
+test tests::runtime_check_roster::runtime_check_report_is_machine_readable_and_safe ... ok
+test tests::scheduler_dispatch_support::dispatch_refuses_a_manifest_that_cannot_be_reproduced ... ok
+test tests::scheduler_dispatch_support::load_refuses_dispatch_shapes_the_tick_will_never_honor ... ok
+test tests::scheduler_dispatch_support::load_still_accepts_the_cron_any_shape_the_tick_dispatches ... ok
+test tests::scheduler_dispatch_support::loaded_state_file_is_revalidated_for_the_dispatch_shape ... ok
+test tests::scheduler_owner_routing::disabled_jobs_are_not_required_to_be_routable ... ok
+test tests::scheduler_owner_routing::loaded_state_is_revalidated_against_the_current_topology ... ok
+test tests::scheduler_owner_routing::shipped_example_topology_routes_its_wildcard_jobs ... ok
+test tests::scheduler_owner_routing::undispatchable_trigger_shape_fails_closed_at_assembly ... ok
+test tests::scheduler_owner_routing::unroutable_job_owner_fails_closed_instead_of_quietly_never_running ... ok
+test tests::scheduler_owner_routing::wildcard_owner_is_routable_only_when_someone_listens ... ok
+test tests::settlement_currency_caliper::agreeing_settlement_declarations_on_one_account_log_are_accepted ... ok
+test tests::settlement_currency_caliper::api_account_snapshot_reports_the_worker_settlement_currency ... ok
+test tests::settlement_currency_caliper::api_projection_bridge_sources_use_the_worker_settlement_currency ... ok
+test tests::settlement_currency_caliper::api_snapshots_deduplicate_by_normalized_account_identity ... ok
+test tests::settlement_currency_caliper::conflicting_settlement_declarations_block_the_writers_that_book_the_log ... ok
+test tests::settlement_currency_caliper::conflicting_settlement_declarations_on_one_account_log_fail_closed ... ok
+test tests::settlement_currency_caliper::paper_execution_worker_books_fills_in_the_worker_settlement_currency ... ok
+test tests::settlement_currency_caliper::risk_context_refuses_a_spec_currency_that_is_not_the_ledger_book ... ok
+test tests::settlement_currency_caliper::strategy_account_context_reads_the_worker_settlement_currency ... ok
+test tests::settlement_currency_single_source::changing_only_the_settlement_currency_moves_the_published_fingerprint ... ok
+test tests::settlement_currency_single_source::declaring_the_default_currency_matches_declaring_nothing ... ok
+test tests::settlement_currency_single_source::every_settlement_currency_fallback_reads_the_same_default ... ok
+test tests::spread_recovery_cadence::every_recovery_loop_polls_through_the_shared_cadence ... ok
+test tests::spread_recovery_cadence::spread_recovery_backoff_is_capped_but_never_gives_up ... ok
+test tests::storage_root_report::doctor_fails_when_no_landing_point_can_be_created ... ok
+test tests::storage_root_report::doctor_reports_the_landing_point_where_data_dir_will_be_created ... ok
+test tests::storage_root_report::doctor_warns_when_the_two_storage_landing_points_diverged ... ok
+test tests::storage_root_report::storage_root_report_follows_the_directory_actually_in_use ... ok
+test tests::strategy_declaration_scope::a_conflicting_declaration_between_the_two_blocks_is_refused ... ok
+test tests::strategy_declaration_scope::an_instance_only_declaration_is_refused_rather_than_silently_ignored ... ok
+test tests::strategy_declaration_scope::the_same_declaration_on_both_blocks_still_assembles ... ok
+test tests::strategy_worker_entries::builtin_strategy_worker_path_reads_bar_snapshot ... ok
+test tests::strategy_worker_entries::builtin_worker_reads_the_declared_signal_parameters ... ok
+test tests::strategy_worker_entries::dedicated_paper_spread_recovery_worker_runs_one_scan_without_orders ... ok
+test tests::strategy_worker_entries::dedicated_spread_recovery_disables_legacy_execution_scan_only_for_same_account_and_venue ... ok
+test tests::worker_observability::absent_worker_metrics_are_not_reported_as_dependencies_ready ... ok
+test tests::worker_observability::ccxt_cashflow_facts_map_signed_bills_and_stable_external_ids ... ok
+test tests::worker_observability::ccxt_derivative_snapshots_map_to_signed_positions_and_funding_facts ... ok
+test tests::worker_observability::ccxt_market_cycle_health_degrades_on_any_failed_call ... ok
+test tests::worker_observability::ccxt_market_tiers_drive_backtest_margin_rule ... ok
+test tests::worker_observability::ccxt_open_orders_report_unknown_and_unmapped_remote_risk ... ok
+test tests::worker_observability::ccxt_private_worker_reads_credentials_from_endpoint_config ... ok
+test tests::worker_observability::ccxt_worker_rejects_exchange_config_mismatch ... ok
+test tests::worker_observability::live_check_report_is_structured_and_fail_closed_for_template ... ok
+test tests::worker_observability::live_strategy_rejects_future_or_stale_bar_snapshots ... ok
+test tests::worker_observability::paper_initial_cash_is_idempotent_and_replayed_into_ledger ... ok
+test tests::worker_observability::production_readiness_requires_private_worker_assets ... ok
+test tests::worker_observability::strategy_child_environment_rejects_credentials_and_keeps_runtime_allowlist ... ok
+test tests::worker_observability::supervisor_maps_paper_topology_and_rejects_unknown_venue_without_opt_in ... ok
+test tests::worker_observability::supervisor_routes_endpoint_backed_execution_to_public_ccxt ... ok
+test tests::worker_observability::unhealthy_worker_metrics_block_readiness ... ok
+test tests::zero_reader_fields::ingest_receipt_carries_only_the_fields_someone_reads ... ok
+test tests::zero_reader_fields::order_risk_projection_fields_stay_documented_as_unread_in_production ... ok
+test tests::cli_surface::reconcile_without_sources_is_a_usage_error_not_a_demo ... ok
+test tests::cli_surface::run_help_entry_list_equals_dispatched_entries ... ok
+test tests::config_json_output::config_validate_json_reports_a_clean_project_as_ok ... ok
+test tests::e2e_and_python_contract::rust_invokes_python_multi_intent_strategy_contract ... ok
+test tests::cli_json_surface::config_explain_and_doctor_still_emit_machine_readable_json ... ok
+test tests::cli_surface::backtest_rejects_the_config_flag_it_used_to_swallow ... ok
+test tests::config_json_output::config_validate_json_carries_the_verdict_and_keeps_exit_code_two ... ok
+test tests::e2e_and_python_contract::rust_invokes_python_strategy_jsonl_worker_through_versioned_contract ... ok
+test tests::cli_surface::backtest_subcommand_rejects_outer_positionals_it_never_reads has been running for over 60 seconds
+test tests::config_json_output::config_fingerprint_and_lock_json_agree_with_the_locked_file_they_write has been running for over 60 seconds
+test tests::init_onboarding::init_lands_nine_files_and_the_advertised_backtest_adds_five ... ok
+test tests::init_onboarding::strategy_init_writes_a_self_contained_project ... ok
+test tests::init_onboarding::advertised_backtest_commands_run_as_printed has been running for over 60 seconds
+test tests::init_onboarding::advertised_commands_only_name_files_the_profile_generated has been running for over 60 seconds
+test tests::cli_surface::backtest_subcommand_rejects_outer_positionals_it_never_reads ... ok
+test tests::config_json_output::config_fingerprint_and_lock_json_agree_with_the_locked_file_they_write ... ok
+test tests::init_onboarding::two_leg_builtin_strategies_are_refused_with_the_real_entry has been running for over 60 seconds
+test tests::init_onboarding::advertised_commands_only_name_files_the_profile_generated ... ok
+test tests::init_onboarding::advertised_backtest_commands_run_as_printed ... ok
+test tests::init_onboarding::two_leg_builtin_strategies_are_refused_with_the_real_entry ... ok
+
+test result: ok. 254 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 66.19s
+
+     Running tests\ashare_builtin_backtest.rs (target\debug\deps\ashare_builtin_backtest-87d9f9d20891f409.exe)
+
+running 5 tests
+test strategy_chain_rejects_the_same_broken_pairing ... ok
+test ashare_fee_model_replaces_the_builtin_cost_rates ... ok
+test builtin_entry_binds_the_declared_ashare_rules ... ok
+test entries_without_ashare_hooks_reject_the_config ... ok
+test broken_ashare_sections_fail_closed_on_the_builtin_entry ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.15s
+
+     Running tests\backtest_account_base.rs (target\debug\deps\backtest_account_base-20195c62573b0d5f.exe)
+
+running 7 tests
+test builtin_entry_prints_the_default_it_booked_with ... ok
+test a_principal_declared_the_same_way_on_both_sides_is_landed_as_agreeing ... ok
+test two_different_principals_in_one_runtime_fail_at_the_backtest_entry ... ok
+test a_non_positive_declaration_fails_closed ... ok
+test summary_chains_land_the_account_base_they_actually_used ... ok
+test the_multi_leg_entry_refuses_a_single_account_number_and_names_its_own_rule ... ok
+test a_declared_account_base_is_what_makes_the_second_unit_fillable ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.69s
+
+     Running tests\builtin_signal_from_config.rs (target\debug\deps\builtin_signal_from_config-74e8b960ecd875f8.exe)
+
+running 7 tests
+test illegal_declared_parameters_fail_closed ... ok
+test both_bar_chains_read_the_same_declared_signal ... ok
+test declared_windows_change_the_builtin_result ... ok
+test depth_chain_applies_the_declared_signal ... ok
+test multi_leg_chain_applies_the_declared_signal ... ok
+test single_sided_override_is_rechecked_before_the_provenance_line ... ok
+test declared_period_and_threshold_each_move_the_result ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.09s
+
+     Running tests\cli_dispatch.rs (target\debug\deps\cli_dispatch-4dc0bce8fc31723f.exe)
+
+running 12 tests
+test all_extends_verify_with_plugin_and_paper_stages ... ok
+test backtest_rejects_positionals_shadowed_by_a_subcommand ... ok
+test ecosystem_smoke_runs_the_whole_assembly ... ok
+test live_check_fails_closed_on_the_production_example ... ok
+test unknown_command_fails_closed ... ok
+test verify_runs_the_deterministic_kernel_only ... ok
+test backtest_still_accepts_either_argument_shape ... ok
+test doctor_and_runtime_check_answer_on_the_packaged_examples ... ok
+test nested_surfaces_answer_by_their_own_names ... ok
+test feature_gated_entries_are_honest_about_the_feature ... ok
+test paper_check_and_paper_e2e_share_one_entry ... ok
+test offline_entries_name_their_own_failure ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.29s
+
+     Running tests\dataset_registry_readside.rs (target\debug\deps\dataset_registry_readside-dfb5550e41d36a33.exe)
+
+running 3 tests
+test a_component_with_no_record_is_reported_unchecked ... ok
+test a_declaration_that_disagrees_with_the_record_fails_closed ... ok
+test an_ingested_record_is_read_back_by_a_bundle_that_declares_it ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.47s
+
+     Running tests\depth_backtest.rs (target\debug\deps\depth_backtest-9c4dc59607aecdf2.exe)
+
+running 3 tests
+test l1_depth_backtest_runs_and_rejects_multi_level_books ... ok
+test depth_backtest_writes_unified_artifacts_and_stays_deterministic ... ok
+test depth_execution_model_flags_change_results_and_are_recorded ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.30s
+
+     Running tests\fast_backtest_manifest.rs (target\debug\deps\fast_backtest_manifest-906aeaf500141632.exe)
+
+running 5 tests
+test ashare_manifest_carries_recorded_dataset_provenance ... ok
+test manifest_validation_rejects_empty_jobs_and_missing_fields ... ok
+test blocked_signals_are_distinguishable_from_silent_strategies ... ok
+test crypto_manifest_runs_every_job_in_parallel_and_is_reproducible ... ok
+test shipped_examples_fill_positions_and_pay_nonzero_fees ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.44s
+
+     Running tests\multi_leg_attribution\main.rs (target\debug\deps\multi_leg_attribution-9c9fa46971a74395.exe)
+
+running 14 tests
+test entries::multi_leg_attribution_rejects_unknown_flags ... ok
+test entries::multi_leg_funding_bound_fails_loudly_instead_of_capping_cash ... ok
+test margin_and_return::combined_return_pools_both_legs_by_capital_instead_of_averaging_bps ... ok
+test margin_and_return::funding_without_leg_spec_is_refused_before_matching ... ok
+test entries::vetoed_leg_never_pairs_against_a_filled_counterpart ... ok
+test margin_and_return::only_derivative_legs_bear_margin_and_funding ... ok
+test margin_and_return::missing_spec_reports_the_default_booking_currency_instead_of_an_empty_one ... ok
+test margin_and_return::leg_without_a_spec_is_compared_by_the_currency_it_actually_books_in ... ok
+test margin_and_return::declared_derivative_product_without_primary_spec_is_refused ... ok
+test margin_and_return::legs_on_different_booking_currencies_are_refused_before_matching ... ok
+test margin_and_return::funding_on_spot_only_legs_is_refused ... ok
+test entries::derivative_multi_leg_attribution_charges_margin_and_funding_on_realized_fills ... ok
+test entries::spot_multi_leg_attribution_closes_fees_and_stays_deterministic ... ok
+test entries::every_multi_leg_kind_reports_fully_filled_legs ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.54s
+
+     Running tests\process_recovery.rs (target\debug\deps\process_recovery-c937f3d87f31b0af.exe)
+
+running 1 test
+test process_restart_recovers_expired_execution_lease_and_rejects_stale_ack ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+     Running tests\reducer_equivalence.rs (target\debug\deps\reducer_equivalence-27bdce7dcf543602.exe)
+
+running 2 tests
+test perpetual_fills_reduce_identically_on_both_chains ... ok
+test spot_fills_reduce_identically_on_both_chains ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests\report_readout_honesty.rs (target\debug\deps\report_readout_honesty-dacf9b7f375fc6e1.exe)
+
+running 5 tests
+test report_reads_a_declared_zero_as_zero_not_absent ... ok
+test report_prints_absent_for_keys_this_generation_never_declared ... ok
+test report_prints_the_recompute_verdict_as_its_own_field ... ok
+test status_reports_no_summary_instead_of_an_empty_backtest ... ok
+test status_latest_backtest_line_shares_the_same_readout ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+
+     Running tests\worker_launch_diagnostics.rs (target\debug\deps\worker_launch_diagnostics-49e57b8402427738.exe)
+
+running 3 tests
+test silent_worker_reports_program_origin_and_stderr ... ok
+test missing_interpreter_is_named_in_the_launch_failure ... ok
+test fallback_interpreter_names_its_source_when_it_fails ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_control-8826a01bbb3cdc70.exe)
+
+running 15 tests
+test tests::a_retired_identity_is_still_refused_within_the_window ... ok
+test tests::a_final_command_leaves_the_main_table_with_its_audit_pair ... ok
+test tests::control_command_is_audited_and_idempotent ... ok
+test tests::declared_permission_cannot_exceed_server_grant ... ok
+test tests::a_legacy_append_only_state_file_retires_on_load ... ok
+test tests::execution_is_audited_and_idempotent_after_completion ... ok
+test tests::insufficient_permission_is_rejected_before_queueing ... ok
+test tests::kinds_with_an_executor_stay_acceptable ... ok
+test tests::kinds_without_an_executor_are_refused_at_acceptance ... ok
+test tests::every_retired_command_is_counted_by_its_terminal_status ... ok
+test tests::persisted_commands_without_an_executor_still_restore ... ok
+test tests::restore_refuses_window_records_that_were_never_chained ... ok
+test tests::restore_rejects_an_accepted_record_without_body_or_terminal ... ok
+test tests::restore_rejects_terminal_audit_without_acceptance ... ok
+test tests::the_audit_window_stays_bounded_across_a_long_run ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.18s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_core-9f55192cfce8ce34.exe)
+
+running 58 tests
+test error::tests::each_variant_has_one_machine_readable_code ... ok
+test event::tests::digest_preserves_text_boundaries ... ok
+test event::tests::priority_order_is_deterministic ... ok
+test fee::tests::ashare_stamp_duty_is_sell_side_only ... ok
+test event::tests::metadata_is_part_of_event_identity_and_round_trips ... ok
+test event::tests::unreported_position_money_is_not_hashed_as_zero ... ok
+test fee::tests::descriptors_are_stable ... ok
+test fee::tests::maker_cheaper_than_taker ... ok
+test fee::tests::min_commission_floor ... ok
+test file_lock::tests::clock_skew_never_yields_negative_age ... ok
+test file_lock::tests::decision_is_pure_and_bounded ... ok
+test file_lock::tests::second_stale_sighting_in_one_competition_waits_instead_of_deleting ... ok
+test fill_apply::tests::accepted_fill_updates_both_books ... ok
+test fill_apply::tests::ledger_only_path_shares_the_same_terms_rule ... ok
+test fill_apply::tests::missing_local_order_requires_reconcile_not_panic ... ok
+test fill_apply::tests::rejected_fill_leaves_both_books_untouched ... ok
+test fill_apply::tests::spec_and_legacy_multiplier_paths_book_the_same_spot_cash ... ok
+test fill_apply::tests::state_machine_rejection_precedes_any_ledger_write ... ok
+test fill_apply::tests::terms_resolution_prefers_instrument_spec ... ok
+test identity::tests::canonical_is_not_instrument ... ok
+test identity::tests::parse_instrument_id ... ok
+test numeric::tests::extreme_absolute_value_is_checked_without_panicking ... ok
+test file_lock::tests::contention_message_covers_all_three_observations ... ok
+test numeric::tests::fixed_point_mul_div ... ok
+test numeric::tests::negative_value ... ok
+test numeric::tests::parse_and_display_roundtrip ... ok
+test numeric::tests::rejects_over_precision ... ok
+test order::tests::invalid_order_shape_is_rejected_before_submission ... ok
+test order::tests::remaining_decreases ... ok
+test order::tests::unknown_requires_reconcile_before_recovery ... ok
+test retry::tests::attempt_boundaries_and_terminal_match_legacy_sites ... ok
+test retry::tests::exponential_matches_legacy_binance_schedule ... ok
+test retry::tests::fixed_matches_legacy_scheduler_schedule ... ok
+test sourcing::tests::append_checked_rejects_out_of_order_facts_before_reduction ... ok
+test sourcing::tests::append_updates_cursor_and_validation_rejects_gaps ... ok
+test sourcing::tests::different_events_different_digest ... ok
+test sourcing::tests::json_round_trip_preserves_event_digest ... ok
+test sourcing::tests::manifest_validates_and_round_trips_without_boundary_collisions ... ok
+test sourcing::tests::replay_counts_the_ledger_facts_the_log_actually_carries ... ok
+test sourcing::tests::replay_rederives_the_digest_through_the_checked_path ... ok
+test sourcing::tests::replay_rejects_a_log_a_blind_rehash_would_accept ... ok
+test sourcing::tests::same_events_same_digest ... ok
+test sourcing::tests::verify_fails_when_the_run_ledger_carries_a_fact_the_log_does_not ... ok
+test file_lock::tests::acquire_creates_then_removes_on_drop ... ok
+test target::tests::single_target_declares_no_lineage ... ok
+test trading::tests::inverse_contract_uses_settlement_currency_notional_and_pnl ... ok
+test trading::tests::linear_contract_margin_pnl_and_funding_are_deterministic ... ok
+test trading::tests::margin_state_exposes_available_and_liquidation_boundary ... ok
+test trading::tests::order_policy_rejects_invalid_spot_and_hedge_combinations ... ok
+test file_lock::tests::drop_does_not_delete_a_lock_somebody_else_holds_now ... ok
+test trading::tests::order_spec_rejects_unaligned_quantity_and_price_without_rounding ... ok
+test venue::tests::absent_venue_stays_absent_instead_of_becoming_other ... ok
+test venue::tests::binance_family_is_matched_by_substring_regardless_of_case ... ok
+test venue::tests::paper_is_exact_and_a_paper_prefixed_venue_is_not_paper ... ok
+test file_lock::tests::orphan_lock_is_taken_over ... ok
+test file_lock::tests::takeover_happens_at_most_once_per_competition ... ok
+test file_lock::tests::a_holder_that_releases_inside_the_budget_lets_the_waiter_in ... ok
+test file_lock::tests::fresh_lock_fails_boundedly_and_names_the_holder ... ok
+
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\ledger\main.rs (target\debug\deps\ledger-422d63737e25aa5e.exe)
+
+running 25 tests
+test core_facts::base_asset_fee_is_refused_when_the_symbol_does_not_name_it ... ok
+test core_facts::accounts_and_realized_pnl_are_isolated ... ok
+test core_facts::base_asset_fee_that_converts_to_zero_leaves_no_fee_leg ... ok
+test core_facts::cross_currency_equity_requires_and_applies_explicit_fx_rates ... ok
+test core_facts::derivative_fill_uses_contract_pnl_without_debiting_full_notional ... ok
+test core_facts::derivative_fill_with_foreign_fee_currency_is_rejected ... ok
+test core_facts::equity_uses_explicit_contract_multiplier ... ok
+test core_facts::fee_currency_gate_only_bites_on_reported_foreign_currency ... ok
+test core_facts::fill_changes_cash_and_position ... ok
+test core_facts::fill_with_foreign_fee_currency_is_not_booked_at_face_value ... ok
+test core_facts::hedge_mode_keeps_long_and_short_legs_separate_through_replay ... ok
+test core_facts::ledger_entries_replay_to_same_state ... ok
+test core_facts::multiplier_is_preserved_in_realized_pnl_replay ... ok
+test core_facts::multiplier_path_does_not_convert_base_asset_fees ... ok
+test core_facts::replay_entries_are_append_only ... ok
+test core_facts::spot_base_asset_fee_converts_at_the_fill_price ... ok
+test corporate_actions::cash_dividend_entitlement_pays_by_record_date_position ... ok
+test corporate_actions::convertible_bond_issue_interest_and_tender_replay ... ok
+test corporate_actions::corporate_action_dividend_and_split_replay ... ok
+test rights_entitlements::convertible_conversion_transfers_two_instruments ... ok
+test rights_entitlements::rights_entitlement_can_be_granted_then_subscribed_after_position_changes ... ok
+test rights_entitlements::rights_entitlement_rejects_insufficient_expiry_and_subscription_atomically ... ok
+test rights_entitlements::rights_entitlement_lifecycle_supports_partial_subscription_and_expiry ... ok
+test rights_entitlements::rights_subscription_requires_a_granted_entitlement_and_is_replayable ... ok
+test rights_entitlements::subscription_rejects_insufficient_cash_without_partial_entries ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_data-c72f73dc0eec99ba.exe)
+
+running 29 tests
+test batch::tests::batch_loader_canonicalizes_each_request ... ok
+test catalog::tests::arrow_dataset_manifest_validates_schema_and_round_trips ... ok
+test catalog::tests::bundle_rejects_untyped_or_empty_components ... ok
+test catalog::tests::bundle_binds_typed_components_and_has_stable_fingerprint ... ok
+test fingerprint::tests::fingerprint_changes_when_data_changes ... ok
+test fingerprint::tests::fingerprint_is_order_independent_after_canonicalization ... ok
+test incremental::tests::incoming_rows_replace_same_identity_and_append_new_rows ... ok
+test incremental::tests::merge_order_is_stable_across_instruments ... ok
+test pipeline::tests::canonicalizes_across_instruments ... ok
+test pipeline::tests::canonicalizes_before_validation ... ok
+test provider::tests::bar_frame_contract_legacy_document_keeps_compatible_branch ... ok
+test provider::tests::bar_frame_contract_v1_rejects_unknown_field_blank_source_and_future_version ... ok
+test registry::tests::conflicting_manifest_is_rejected ... ok
+test registry::tests::exact_duplicate_registration_is_idempotent ... ok
+test registry::tests::fingerprint_is_verified ... ok
+test resolver::tests::registry_resolution_locks_fingerprint ... ok
+test storage::tests::save_is_canonical_and_range_reads_are_bounded ... ok
+test storage::tests::upsert_replaces_existing_identity ... ok
+test validation::tests::rejects_invalid_ohlc ... ok
+test validation::tests::validates_per_instrument_time_order ... ok
+test ingestion::tests::provider_ingestion_merges_and_registers_manifest ... ok
+test provider::tests::json_bar_frame_provider_rejects_column_mismatch_and_non_monotonic_input ... ok
+test provider::tests::bar_frame_contract_v1_is_strict_and_tracks_source ... ok
+test provider::tests::json_bar_frame_provider_preserves_fixed_point_columns_and_range ... ok
+test storage::tests::json_file_storage_is_atomic_and_rejects_unsafe_dataset_ids ... ok
+test resolver::tests::persistent_registry_resolves_the_same_reference_after_reopen ... ok
+test catalog::tests::json_bundle_store_round_trips_and_returns_stable_fingerprint ... ok
+test registry::tests::json_registry_survives_process_restart_and_rejects_conflicting_versions ... ok
+test registry::tests::orphaned_lock_is_taken_over_and_fresh_lock_is_reported ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_datastruct-c7eaa40f50822396.exe)
+
+running 2 tests
+test tests::arrow_views_are_zero_copy_and_reject_decimal_overflow ... ok
+test tests::frame_is_pit_bounded_and_round_trips_columns ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\frame_contract.rs (target\debug\deps\frame_contract-2469e819d7720522.exe)
+
+running 5 tests
+test a_versionless_document_still_reads_as_legacy ... ok
+test a_frame_from_a_newer_contract_version_is_refused ... ok
+test a_versioned_frame_with_an_unnamed_key_is_refused ... ok
+test a_versionless_frame_still_tolerates_an_unnamed_key ... ok
+test a_written_frame_declares_the_version_its_readers_honour ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_execution-e6a26047155776b3.exe)
+
+running 18 tests
+test application::tests::execution_contract_accepts_immediate_fill_and_valid_cancel ... ok
+test application::tests::execution_contract_rejects_cross_order_or_invalid_fill ... ok
+test tests::gateway_port::canonical_risk_port_separates_verdict_from_port_failure ... ok
+test tests::gateway_port::port_execution_service_fails_closed_on_empty_venue_response ... ok
+test tests::gateway_port::port_execution_service_fails_closed_on_invalid_venue_fact ... ok
+test tests::gateway_port::control_submits_register_correlation_and_plain_submit_keeps_worker_shape ... ok
+test tests::gateway_port::port_execution_service_registers_and_appends_standard_facts ... ok
+test tests::gateway_port::port_execution_service_rejects_before_registration_or_venue_side_effect ... ok
+test tests::venue_submit_contract::fill_tag_distinguishes_facts_that_only_differ_in_fee_or_venue_order ... ok
+test tests::venue_submit_contract::paper_ccxt_and_binance_share_submit_cancel_port_contract ... ok
+test tests::venue_submit_contract::paper_ccxt_and_binance_share_unknown_submit_fact_contract ... ok
+test tests::venue_submit_contract::submit_returned_fills_share_the_precision_gate_with_user_stream_reports ... ok
+test tests::spread_group_barrier::grouped_leg_without_injected_group_store_fails_closed_instead_of_skipping ... ok
+test tests::spread_group_barrier::gateway_blocks_next_leg_of_reconcile_required_group_and_classifies_fail_closed ... ok
+test tests::spread_group_barrier::clean_group_still_submits_its_next_leg_through_the_gateway ... ok
+test tests::spread_group_barrier::gateway_risk_submit_entry_shares_the_same_spread_barrier ... ok
+test tests::recovery_and_replay::hedge_recovery_worker_is_idempotent_and_fails_closed_on_unknown_state ... ok
+test tests::recovery_and_replay::hedge_compensation_submit_shares_the_submit_precision_gate_and_spec_bookkeeping ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\paper_accounting.rs (target\debug\deps\paper_accounting-0d3d700302e5ded9.exe)
+
+running 4 tests
+test paper_submit_fails_closed_without_risk_context_or_market_quote ... ok
+test paper_derivative_fill_uses_spec_pnl_accounting_instead_of_spot_cash ... ok
+test paper_spot_fill_charges_the_shared_fee_model_into_the_ledger ... ok
+test paper_submit_reuses_gateway_idempotency_without_new_facts ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests\reconcile_port_contract.rs (target\debug\deps\reconcile_port_contract-e9f69eb980af6807.exe)
+
+running 3 tests
+test reconcile_port_contract_holds_on_ccxt_worker_port ... ok
+test reconcile_port_reports_reason_when_append_fails ... ok
+test reconcile_port_contract_holds_on_paper_event_log ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\recovery_and_replay.rs (target\debug\deps\recovery_and_replay-0afd077f8e76e859.exe)
+
+running 2 tests
+test risk_preflight_rejects_before_event_log_or_venue_side_effect ... ok
+test accepted_events_replay_by_correlation_even_when_local_sequence_changes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\venue_report_contract\main.rs (target\debug\deps\venue_report_contract-8c501e310739d36b.exe)
+
+running 1 test
+test venues::paper_ccxt_and_binance_share_late_and_imprecise_report_contract ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_factor-a8af407e7fd29d67.exe)
+
+running 18 tests
+test execution_plan::tests::plan_rejects_missing_duplicate_and_time_reversal ... ok
+test execution_plan::tests::definition_data_and_time_are_bound_into_cache_lineage ... ok
+test execution_plan::tests::plan_reuses_shared_dependency_and_is_request_order_independent ... ok
+test execution_plan::tests::incremental_provenance_distinguishes_append_time_from_lineage_change ... ok
+test materializer::tests::evaluator_cannot_return_wrong_lineage ... ok
+test materializer::tests::incremental_materialization_passes_dirty_range_and_previous_artifact ... ok
+test materializer::tests::lineage_change_disables_incremental_previous_artifact ... ok
+test materializer::tests::materializer_executes_real_factor_kernel_and_reuses_cache ... ok
+test tests::candidate_requires_registered_factor ... ok
+test tests::candidate_windows_are_explicit_and_non_overlapping ... ok
+test tests::factor_analysis_never_silently_accepts_missing_values ... ok
+test tests::factor_analysis_computes_cross_sectional_metrics_deterministically ... ok
+test tests::factor_dependencies_have_deterministic_topological_order ... ok
+test tests::finkit_binding_requires_matching_artifact_digest ... ok
+test tests::momentum_is_point_in_time_and_transform_is_deterministic ... ok
+test tests::reports_cannot_silently_overwrite_each_other ... ok
+test tests::versions_and_artifacts_are_immutable ... ok
+test tests::strategy_research_snapshot_requires_complete_pit_bundle ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\research_snapshot_json.rs (target\debug\deps\research_snapshot_json-1f624bcc6124a3ad.exe)
+
+running 2 tests
+test research_snapshot_json_requires_every_required_field ... ok
+test research_snapshot_json_rejects_unknown_field_names_at_every_level ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_genglu-171597a4732b8151.exe)
+
+running 7 tests
+test reconcile::tests::canonical_flags_status_and_filled_independently ... ok
+test reconcile::tests::canonical_reports_directional_presence_and_duplicates ... ok
+test reconcile::tests::canonical_skips_status_when_a_side_is_unknown ... ok
+test reconcile::tests::partial_local_converges_to_remote_filled_terminal ... ok
+test reconcile::tests::remote_qty_conflict_is_needs_human ... ok
+test reconcile::tests::submitted_without_remote_report_is_pending_reconcile_not_resubmitted ... ok
+test reconcile::tests::terminal_status_conflict_is_needs_human_not_auto_converge ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_guanxing-50f563db669c9a1d.exe)
+
+running 8 tests
+test tests::as_of_never_returns_future ... ok
+test tests::checked_view_rejects_unsorted_input_without_reordering ... ok
+test tests::clean_data_passes ... ok
+test tests::empty_inputs_are_rejected_by_quality_gate ... ok
+test tests::non_monotonic_is_fatal ... ok
+test tests::data_view_exposes_immutable_metadata_and_hash ... ok
+test tests::financial_view_obeys_publish_and_effective_time_pit ... ok
+test tests::zero_volume_only_warns ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_orchestrator-8f1f2a640b4a49c7.exe)
+
+running 20 tests
+test reap::tests::a_fully_reaped_roster_wins_over_the_expired_budget ... ok
+test reap::tests::nothing_to_reap_is_done_without_consuming_the_budget ... ok
+test reap::tests::reaping_an_empty_roster_is_ok ... ok
+test reap::tests::the_budget_expires_exactly_on_the_dot ... ok
+test reap::tests::waiting_never_sleeps_past_the_remaining_budget ... ok
+test reap::tests::the_timeout_message_names_every_straggler ... ok
+test supervisor_stop::tests::a_late_shutdown_signal_still_gets_the_full_budget ... ok
+test supervisor_stop::tests::shutdown_signal_turns_worker_exit_into_graceful_stop ... ok
+test supervisor_stop::tests::stop_waits_for_the_last_child_before_reporting_graceful_stop ... ok
+test supervisor_stop::tests::stuck_child_only_fails_after_the_shutdown_budget ... ok
+test supervisor_stop::tests::worker_exit_without_shutdown_is_reported_as_failure ... ok
+test tests::worker_plan_is_deterministic_and_routes_ccxt_endpoints ... ok
+test tests::worker_plan_routes_a_testnet_binance_venue_to_the_private_worker ... ok
+test tests::worker_plan_rejects_unknown_venue_without_explicit_external_management ... ok
+test tests::worker_plan_routes_event_consumer_to_builtin_worker ... ok
+test tests::worker_plan_routes_ccxt_user_stream_to_public_worker ... ok
+test tests::worker_plan_routes_outbox_relay_to_builtin_worker ... ok
+test tests::worker_plan_routes_only_the_exact_paper_venue_to_the_local_worker ... ok
+test tests::worker_plan_routes_spread_recovery_to_the_matching_venue_worker ... ok
+test reap::tests::a_real_child_is_killed_and_reaped_inside_the_budget ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests\process_supervisor_stop_token.rs (target\debug\deps\process_supervisor_stop_token-75deaee47438303e.exe)
+
+running 2 tests
+test supervisor_fails_fast_when_a_child_exits_on_its_own ... ok
+test supervisor_returns_ok_when_the_stop_token_is_requested ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_plugin-c39b663ae3b26e3f.exe)
+
+running 7 tests
+test tests::duplicate_id_rejected ... ok
+test tests::dependency_decides_order_not_writing_order ... ok
+test tests::exclusive_conflict_detected ... ok
+test tests::explicit_replaces_resolves_conflict ... ok
+test tests::missing_dependency_is_error_not_silence ... ok
+test tests::manifest_hash_signature_and_json_round_trip_are_verified ... ok
+test tests::ed25519_manifest_signature_is_verified_and_tamper_evident ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_protocol-1beca7ad0fa73851.exe)
+
+running 10 tests
+test tests::diff_is_deterministic_and_replayable ... ok
+test tests::future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_problem ... ok
+test tests::known_version_constant_matches_the_served_contract ... ok
+test tests::header_without_version_is_the_stored_shape_and_still_round_trips ... ok
+test tests::json_wire_format_is_stable_and_uses_raw_integers ... ok
+test tests::wrong_base_is_rejected ... ok
+test tests::self_consistent_unknown_schema_version_is_rejected_by_every_entry ... ok
+test tests::rows_keyed_by_integer_still_produce_and_recover_valid_json ... ok
+test tests::header_version_that_is_not_the_declared_integer_is_rejected ... ok
+test tests::stable_json_and_file_snapshot_store_are_recoverable_and_idempotent ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\projection_lineage.rs (target\debug\deps\projection_lineage-4dd81f695d405c4d.exe)
+
+running 2 tests
+test an_undeclared_lineage_cell_stays_off_the_wire ... ok
+test declared_lineage_round_trips_and_absence_reads_as_none ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\snapshot_schema_contract.rs (target\debug\deps\snapshot_schema_contract-340320b93d7119f0.exe)
+
+running 9 tests
+test reader_refuses_a_self_consistent_document_from_another_version ... ok
+test schema_frame_matches_the_protocol_it_describes ... ok
+test served_schema_is_the_repository_file_verbatim ... ok
+test nested_rows_declare_exactly_the_keys_the_writer_prints ... ok
+test served_schema_declares_every_key_the_writer_emits ... ok
+test schema_keeps_uncomputed_money_nullable ... ok
+test key_tables_declare_the_shape_the_reader_enforces ... ok
+test reader_rejects_versions_the_served_schema_does_not_declare ... ok
+test nested_required_lists_cover_every_key_the_reader_cannot_default ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\snapshot_single_source\main.rs (target\debug\deps\snapshot_single_source-d61893844844b473.exe)
+
+running 13 tests
+test optional_money::default_position_row_reports_no_money ... ok
+test single_source::absent_venue_money_stays_absent_through_the_wire_folding ... ok
+test single_source::core_observation_converts_through_the_single_wire_layer ... ok
+test single_source::net_cash_uses_the_single_kernel_formula ... ok
+test single_source::order_and_fill_facts_use_the_same_wire_projection ... ok
+test single_source::protocol_reexports_the_kernel_observation_types ... ok
+test stable_json_tables::key_tables_reject_rows_whose_inline_id_disagrees_with_their_key ... ok
+test optional_money::uncomputed_position_money_is_not_the_same_state_as_computed_zero ... ok
+test stable_json_tables::stable_json_tables_round_trip_through_the_reader ... ok
+test stable_json_tables::the_cross_language_sample_is_what_the_writer_emits ... ok
+test optional_money::uncomputed_money_is_not_the_same_state_as_computed_zero ... ok
+test single_source::no_crate_aliases_the_two_snapshot_names_over_each_other ... ok
+test single_source::concept_definitions_are_single_sourced ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_provider-57094b8857a1c732.exe)
+
+running 8 tests
+test tests::in_memory_provider_applies_as_of_cutoff ... ok
+test tests::failover_keeps_retry_chain ... ok
+test tests::manual_intervention_stops_automatic_failover ... ok
+test tests::provider_result_rejects_wrong_source_or_unsorted_records ... ok
+test tests::registry_rejects_incomplete_capability_declarations ... ok
+test tests::provider_query_and_result_json_round_trip_preserve_provenance ... ok
+test tests::selection_is_stable_and_explainable ... ok
+test tests::source_hash_is_verified_before_accepting_provider_result ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\_qianxing_native-500fc043918855a5.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_risk-77b9e9d2120c5830.exe)
+
+running 3 tests
+test tests::exposure_and_drawdown_limits_are_ordered ... ok
+test tests::invalid_snapshot_fails_closed ... ok
+test tests::order_risk_engine_returns_auditable_decision_without_duplicate_rules ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\risk_parity.rs (target\debug\deps\risk_parity-17404b5b0bced171.exe)
+
+running 5 tests
+test account_level_position_limit_and_rule_express_the_same_constraint ... ok
+test allow_path_agrees_across_all_three_entries ... ok
+test known_gap_account_level_margin_is_invisible_to_legacy_gate ... ok
+test notional_violation_agrees_across_all_three_entries ... ok
+test reduce_only_invariant_agrees_across_all_three_entries ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_runtime-3d8157d2df30f533.exe)
+
+running 55 tests
+test data_binding::tests::factor_plan_must_match_dataset_time_and_fingerprint ... ok
+test data_binding::tests::dataset_factor_strategy_and_run_manifest_share_one_lineage ... ok
+test data_binding::tests::lineage_mismatch_fails_closed ... ok
+test pipeline::tests::submit_order_command_is_bound_to_audited_order_payload ... ok
+test runtime_config::schema_tests::binance_private_workers_require_one_valid_credential_source ... ok
+test runtime_config::schema_tests::environment_spelling_variants_hit_the_same_production_gates ... ok
+test runtime_config::schema_tests::execution_risk_limits_require_a_frozen_instrument_spec ... ok
+test runtime_config::schema_tests::execution_worker_requires_account_venue_and_credentials ... ok
+test runtime_config::schema_tests::messaging_worker_requires_valid_runtime_contract ... ok
+test runtime_config::schema_tests::postgres_storage_requires_secret_manager_environment_name ... ok
+test pipeline::tests::settlement_balance_reconciliation_reports_without_mutating_ledger ... ok
+test runtime_config::schema_tests::runtime_environment_must_come_from_the_closed_vocabulary ... ok
+test runtime_config::schema_tests::segmented_event_log_storage_configuration_is_positive_and_optional ... ok
+test runtime_config::schema_tests::runtime_config_round_trips_and_rejects_production_plaintext ... ok
+test runtime_config::schema_tests::single_node_profile_rejects_postgres_and_nats ... ok
+test runtime_config::schema_tests::spread_recovery_requires_the_same_account_boundary_as_execution ... ok
+test runtime_config::schema_tests::storage_consistency_matches_backend_and_messaging_topology ... ok
+test runtime_config::schema_tests::worker_field_policy_is_enforced_when_validating_runtime_config ... ok
+test runtime_config::schema_tests::runtime_config_fingerprint_locks_published_configuration ... ok
+test runtime_config::schema_tests::worker_ids_are_safe_for_runtime_artifact_names ... ok
+test runtime_config::strategy_tests::builtin_strategy_requires_valid_name_snapshot_and_exclusive_source ... ok
+test runtime_config::strategy_tests::c_abi_strategy_requires_digest_and_exclusive_source ... ok
+test runtime_config::strategy_tests::live_builtin_and_pair_arbitrage_require_stream_inputs ... ok
+test runtime_config::strategy_tests::live_strategy_requires_market_data_and_execution_topology ... ok
+test runtime_config::strategy_tests::multi_strategy_instances_are_bound_to_workers_and_jobs_can_select_them ... ok
+test runtime_config::strategy_tests::production_bound_strategy_requires_research_snapshot ... ok
+test runtime_config::schema_tests::runtime_config_rejects_unknown_keys_and_strips_comment_keys ... ok
+test runtime_config::strategy_tests::production_c_abi_strategy_requires_detached_signature ... ok
+test runtime_config::strategy_tests::production_external_strategy_requires_artifact_lock ... ok
+test runtime_config::strategy_tests::research_snapshot_required_rejects_missing_path ... ok
+test runtime_config::strategy_tests::strategy_binding_requires_a_matching_enabled_worker_and_nonnegative_target ... ok
+test runtime_config::strategy_tests::strategy_process_configuration_is_exclusive_and_validated ... ok
+test runtime_config::strategy_tests::strategy_target_snapshot_is_bound_to_runtime_version_and_time ... ok
+test strategy_contract::tests::legacy_target_contract_emits_close_rebalance_for_zero_target ... ok
+test strategy_contract::tests::python_strategy_contract_is_versioned_pit_bounded_and_identity_bound ... ok
+test strategy_contract::tests::strategy_columnar_input_preserves_metadata_and_fixed_width_columns ... ok
+test strategy_contract::tests::strategy_contract_accepts_multiple_order_intents ... ok
+test supervision::tests::health_snapshot_detects_stale_ready_service ... ok
+test supervision::tests::supervisor_registers_only_enabled_workers_and_exposes_shutdown ... ok
+test supervision::tests::supervisor_converts_worker_panic_to_failed_health ... ok
+test supervision::tests::supervisor_runs_worker_and_records_terminal_state ... ok
+test supervision::tests::shutdown_request_reaches_the_worker_token_before_the_budget_runs_out ... ok
+test supervision::tests::token_pressed_before_joining_still_counts_as_stopped_not_finished ... ok
+test supervision::tests::worker_that_finishes_on_its_own_is_not_reported_as_shutdown ... ok
+test pipeline::tests::external_fact_metadata_is_persisted_and_explicit_dedup_is_authoritative ... ok
+test pipeline::tests::unknown_fill_is_not_persisted_and_reconcile_marks_unknown ... ok
+test pipeline::tests::account_workers_refresh_shared_eventlog_before_appending ... ok
+test supervision::tests::a_late_shutdown_signal_still_gets_the_full_graceful_window ... ok
+test pipeline::tests::segmented_pipeline_reopens_with_identical_state ... ok
+test supervision::tests::a_late_signal_still_bounds_a_worker_that_ignores_it ... ok
+test pipeline::tests::derivative_position_and_funding_snapshots_are_recoverable_facts ... ok
+test pipeline::tests::outbox_projection_does_not_resurrect_acked_events ... ok
+test pipeline::tests::market_and_fill_facts_reach_eventlog_ledger_and_recover ... ok
+test pipeline::tests::sqlite_pipeline_persists_replays_and_dedups_across_reopen ... ok
+test supervision::tests::worker_that_ignores_the_token_fails_after_the_shutdown_budget ... ok
+
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests\production_safety.rs (target\debug\deps\production_safety-822b25749a7d9f89.exe)
+
+running 6 tests
+test production_example_is_fail_closed_and_valid ... ok
+test production_execution_requires_explicit_order_and_position_notional_limits ... ok
+test production_example_rejects_environments_outside_the_vocabulary ... ok
+test production_execution_requires_frozen_instrument_spec_even_for_paper_venue ... ok
+test production_requires_postgres_transactional_event_store ... ok
+test production_money_gates_survive_environment_spelling ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\settlement_balance_absence.rs (target\debug\deps\settlement_balance_absence-cd66b17993c94c22.exe)
+
+running 3 tests
+test reported_balance_keeps_the_number ... ok
+test reported_zero_balance_is_not_a_discrepancy ... ok
+test missing_settlement_asset_is_reported_absent_not_as_zero ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\strategy_api_schema_contract.rs (target\debug\deps\strategy_api_schema_contract-9d6db5658379385f.exe)
+
+running 4 tests
+test the_schema_declares_exactly_the_fields_the_writer_emits ... ok
+test the_schema_versions_the_contract_the_runtime_serves ... ok
+test every_required_key_is_something_the_reader_actually_cannot_default ... ok
+test the_schema_words_are_the_ones_the_writer_emits_and_the_reader_accepts ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\strategy_contract_schema.rs (target\debug\deps\strategy_contract_schema-296060979ea9395e.exe)
+
+running 2 tests
+test unknown_keys_are_rejected_rather_than_dropped ... ok
+test fixed_point_fields_travel_as_json_integers_only ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\worker_policy.rs (target\debug\deps\worker_policy-0d85000610df6ace.exe)
+
+running 8 tests
+test every_role_declares_every_field_scope ... ok
+test half_empty_credential_source_fails_on_any_venue ... ok
+test infra_roles_reject_venue_bound_fields ... ok
+test market_data_requires_endpoint_and_never_holds_execution_bounds ... ok
+test paper_cash_stays_on_paper_execution_workers ... ok
+test role_predicts_agree_with_field_scopes ... ok
+test strategy_role_cannot_hold_credentials_or_execution_bounds ... ok
+test trading_roles_require_account_and_credential_source_is_single ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_scheduler-8f0674854c441ab7.exe)
+
+running 19 tests
+test tests::a_successful_finish_drops_the_error_code_a_failed_one_keeps_it ... ok
+test tests::a_successful_finish_refuses_an_error_code ... ok
+test tests::calendar_is_explicit ... ok
+test tests::calendar_worker_manifest_path_enforces_window ... ok
+test tests::dependencies_are_deterministic ... ok
+test tests::cron_trigger_and_retry_are_deterministic ... ok
+test tests::event_and_manual_triggers_are_executable_and_manifest_bound ... ok
+test tests::invalid_cron_is_rejected_at_registration_and_query ... ok
+test tests::missing_dependency_and_cycle_are_rejected ... ok
+test tests::restored_scheduler_rejects_inconsistent_run_indexes ... ok
+test tests::retry_policy_enforces_error_code_and_backoff ... ok
+test tests::retired_job_spec_keys_are_ignored_by_the_loader ... ok
+test tests::run_records_deadline_for_timeout_monitoring ... ok
+test tests::runs_are_idempotent_and_respect_dependencies ... ok
+test tests::scheduler_worker_executes_due_jobs_and_records_failure ... ok
+test tests::sweeping_a_stalled_run_gives_the_concurrency_key_back ... ok
+test tests::trading_calendar_and_job_window_are_enforced ... ok
+test tests::worker_accepts_only_a_valid_run_manifest ... ok
+test tests::worker_tick_sweeps_a_run_left_running_by_a_crash ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\job_owner_routing.rs (target\debug\deps\job_owner_routing-295a3c1b2322c9c7.exe)
+
+running 3 tests
+test exact_owner_is_claimable_only_by_that_worker_id ... ok
+test owner_that_matches_nothing_is_claimable_by_no_one ... ok
+test wildcard_owner_is_claimable_by_any_worker_id ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_storage-b0892ae925a2d0d9.exe)
+
+running 28 tests
+test state_envelope::tests::envelope_round_trips_and_rejects_corrupt_or_too_new_state ... ok
+test tests::audit_chain_digest_inputs_are_pinned_by_a_golden_record ... ok
+test tests::audit_chain_status_vocabulary_is_pinned_by_literal_words ... ok
+test state_envelope::tests::an_unusable_lock_path_is_reported_as_io_not_as_contention ... ok
+test tests::file_job_queue_revalidates_forged_payload_before_claim ... ok
+test tests::control_state_round_trips_after_restart ... ok
+test tests::audit_file_chain_truncates_uncommitted_residue_before_appending ... ok
+test tests::event_log_store_does_not_silently_overwrite_concurrent_extensions ... ok
+test tests::control_command_queue_is_idempotent_and_fenced ... ok
+test tests::file_consumer_checkpoint_is_idempotent_and_dead_letters_after_retries ... ok
+test tests::audit_file_chain_serializes_concurrent_transactions ... ok
+test tests::audit_file_chain_is_written_by_the_transaction_and_tamper_evident ... ok
+test tests::control_state_update_is_atomic_and_restores ... ok
+test tests::audit_file_chain_rewinds_to_the_state_checkpoint ... ok
+test tests::file_job_queue_serializes_concurrent_claims_on_shared_filesystem ... ok
+test tests::json_state_store_round_trips_nested_report_atomically ... ok
+test tests::file_job_queue_is_idempotent_and_recoverable ... ok
+test tests::scheduler_state_round_trips_after_restart ... ok
+test tests::file_store_round_trips_and_rejects_path_escape ... ok
+test tests::file_token_bucket_is_persistent_and_serializes_concurrent_consumers ... ok
+test tests::segmented_event_store_is_append_only_and_manifest_verified ... ok
+test tests::outbox_relay_publishes_then_acknowledges_and_retries_failures ... ok
+test tests::file_outbox_is_idempotent_fenced_and_retryable ... ok
+test sqlite::tests::sqlite_audit_chain_is_written_by_the_transaction_and_tamper_evident ... ok
+test sqlite::tests::sqlite_token_bucket_is_transactional_and_persistent ... ok
+test sqlite::tests::sqlite_snapshot_store_seals_and_revalidates_account_state ... ok
+test sqlite::tests::sqlite_job_queue_preserves_fencing_and_expiry_semantics ... ok
+test sqlite::tests::sqlite_control_state_and_command_queue_are_transactional_and_fenced ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests\control_audit_chain_wired.rs (target\debug\deps\control_audit_chain_wired-af1a3ad0969abfc7.exe)
+
+running 4 tests
+test a_business_rejected_transaction_grows_neither_the_snapshot_nor_the_chain ... ok
+test a_chain_trimmed_below_its_checkpoint_fails_closed_on_both_sides ... ok
+test every_committed_control_transaction_extends_the_durable_audit_chain ... ok
+test sqlite_control_transaction_feeds_the_same_audit_table ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\nats_jetstream.rs (target\debug\deps\nats_jetstream-7af33feaa89a5921.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\outbox_backend_semantics.rs (target\debug\deps\outbox_backend_semantics-10037d155f33ef67.exe)
+
+running 12 tests
+test outbox_attempt_budget_boundaries ... ok
+test file_transactional_projection_failure_is_side_effect_free ... ok
+test file_transactional_consumer_projection_contract ... ok
+test file_outbox_relay_unblocks_the_tail ... ok
+test file_consumer_contract ... ok
+test sqlite_transactional_projection_failure_is_side_effect_free ... ok
+test file_outbox_contract ... ok
+test sqlite_outbox_relay_unblocks_the_tail ... ok
+test file_outbox_relay_parks_events_after_the_attempt_budget ... ok
+test sqlite_consumer_contract ... ok
+test sqlite_transactional_consumer_projection_contract ... ok
+test sqlite_outbox_contract ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests\p1c_single_write_path_invariant.rs (target\debug\deps\p1c_single_write_path_invariant-3c0a1c51d118e130.exe)
+
+running 3 tests
+test file_state_stores_share_one_envelope_io_and_the_audit_chain_is_the_named_exception ... ok
+test attempt_counting_uses_the_single_policy_arithmetic ... ok
+test exponential_backoff_arithmetic_exists_once ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests\queue_backend_semantics.rs (target\debug\deps\queue_backend_semantics-fc8e8d4e2e9df003.exe)
+
+running 2 tests
+test file_backends_share_the_persistent_queue_contract ... ok
+test sqlite_backends_share_the_persistent_queue_contract ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running tests\snapshot_rows_persist.rs (target\debug\deps\snapshot_rows_persist-41267f718afa3f64.exe)
+
+running 2 tests
+test file_snapshot_store_recovers_a_snapshot_that_has_rows ... ok
+test sqlite_snapshot_store_recovers_a_snapshot_that_has_rows ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests\sqlite_event_log.rs (target\debug\deps\sqlite_event_log-8d7aa90520f99c4b.exe)
+
+running 6 tests
+test file_event_log_contract_baseline ... ok
+test sqlite_event_log_is_manifest_verified_across_restart ... ok
+test sqlite_event_log_delivers_in_seq_order_and_rejects_rewrites ... ok
+test sqlite_event_log_and_outbox_commit_atomically ... ok
+test sqlite_event_log_contract_matches_file_backend ... ok
+test sqlite_event_log_append_is_idempotent_by_dedup_key ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests\state_envelope_consistency.rs (target\debug\deps\state_envelope_consistency-dc914567b3ee239f.exe)
+
+running 5 tests
+test envelope_rejects_future_schema_version_on_read ... ok
+test envelope_rejects_corrupt_state_files ... ok
+test envelope_keeps_on_disk_json_shapes ... ok
+test file_outbox_envelope_semantics_are_stable ... ok
+test file_and_sqlite_share_outbox_envelope_semantics ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_strategy-954c0362a490c380.exe)
+
+running 18 tests
+test builtin::tests::ema_keeps_unit_dc_gain_and_lags_on_the_trend_side ... ok
+test builtin::tests::momentum_emits_a_target_order_after_warmup ... ok
+test builtin::tests::registry_contains_fifteen_builtin_strategies ... ok
+test c_api::tests::c_abi_strategy_copies_plugin_decision_before_freeing_it ... ok
+test c_api::tests::c_layout_matches_expected_pointer_free_sizes ... ok
+test c_api::tests::raw128_round_trips_signed_extremes ... ok
+test frame::tests::frame_rejects_crc_and_size_errors ... ok
+test frame::tests::frame_rejects_unknown_flags_and_version ... ok
+test frame::tests::frame_round_trip_preserves_sequence_and_payload ... ok
+test tests::decision_validates_multi_intent_and_context_identity ... ok
+test tests::sma_cross_emits_a_native_order_intent_after_warmup ... ok
+test builtin::tests::macd_signals_within_the_rolling_history_cap ... ok
+test c_api::tests::verified_loader_rejects_invalid_digest_and_size ... ok
+test ring::tests::ring_can_carry_versioned_strategy_frames ... ok
+test ring::tests::spsc_ring_preserves_order_and_applies_capacity_backpressure ... ok
+test ring::tests::ring_rejects_bad_header_and_payload_crc ... ok
+test builtin::tests::every_builtin_strategy_survives_a_warmup_and_signal_cycle ... ok
+test c_api::tests::verified_loader_accepts_and_rejects_detached_ed25519_signature ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\builtin_signal_knobs.rs (target\debug\deps\builtin_signal_knobs-118bdbe0c89eea03.exe)
+
+running 4 tests
+test the_list_covers_every_builtin_kind ... ok
+test macd_has_no_tunable_signal_knob_and_still_signals ... ok
+test every_knob_on_the_list_can_still_change_the_run ... ok
+test knobs_outside_the_list_cannot_change_a_single_run ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_xingban-f06f2662283b9614.exe)
+
+running 84 tests
+test ashare::tests::calendar_json_controls_daily_and_intraday_trading_windows ... ok
+test ashare::tests::capital_change_from_data_maps_absolute_supply_fields ... ok
+test ashare::tests::capital_change_requires_explicit_issuer_snapshot ... ok
+test ashare::tests::declared_limit_band_still_overrides_the_board_table ... ok
+test ashare::tests::ex_rights_anchor_folds_dividend_bonus_shares_and_rights_issue_together ... ok
+test ashare::tests::ex_rights_anchor_folds_the_cash_dividend_loaded_with_the_rules ... ok
+test ashare::tests::limit_band_anchors_to_the_previous_session_close_not_the_previous_bar ... ok
+test ashare::tests::negative_declared_limit_band_is_rejected_at_the_gate ... ok
+test ashare::tests::python_action_json_accepts_convertible_bond_lifecycle_fields ... ok
+test ashare::tests::python_action_json_accepts_explicit_rights_expiry_quantity ... ok
+test ashare::tests::python_action_json_is_converted_with_suspension_and_pit_fields ... ok
+test ashare::tests::python_action_json_keeps_explicit_complex_instruction_fields ... ok
+test ashare::tests::python_action_json_rejects_invalid_ratio_and_instrument ... ok
+test ashare::tests::python_rights_action_json_preserves_lifecycle_dates ... ok
+test ashare::tests::sealed_limit_and_halt_block_the_correct_side ... ok
+test ashare::tests::supported_data_actions_convert_and_complex_actions_fail_closed ... ok
+test ashare::tests::t_plus_one_and_lot_rules_are_enforced ... ok
+test ashare::tests::unset_limit_band_comes_from_the_board_not_a_flat_ten_percent ... ok
+test ashare::tests::python_written_action_envelope_round_trips_into_the_rust_reader ... ok
+test ashare::tests::python_written_actions_fold_into_the_shared_ex_rights_reference ... ok
+test backtest::tests::backtest_report_keeps_issuer_capital_snapshots_outside_ledger ... ok
+test backtest::tests::deep_fill_model_cannot_run_on_bar_data ... ok
+test backtest::tests::batch_backtests_use_isolated_accounts_and_are_reproducible ... ok
+test backtest::tests::derivative_backtest_uses_spec_pnl_instead_of_full_notional_cashflow ... ok
+test backtest::tests::derivative_backtest_preserves_hedge_legs_and_replays_them ... ok
+test backtest::tests::derivative_backtest_uses_tiered_initial_and_maintenance_margin ... ok
+test backtest::tests::fees_scale_with_raw_notional_for_spot_and_derivative ... ok
+test backtest::tests::margin_product_uses_leverage_for_initial_margin ... ok
+test backtest::tests::native_strategy_adapter_sees_only_previous_bar ... ok
+test backtest::tests::forced_liquidation_pays_the_same_commission_as_a_strategy_close ... ok
+test backtest::tests::reduce_only_order_cannot_open_a_new_virtual_position ... ok
+test backtest::tests::spot_buy_cash_floor_includes_the_estimated_fee ... ok
+test backtest::tests::spot_buys_cannot_be_funded_by_position_value ... ok
+test backtest::tests::timed_cash_dividend_pays_after_post_record_date_sale ... ok
+test backtest::tests::runner_preserves_next_bar_causality_and_replay ... ok
+test backtest::tests::timed_convertible_bond_issue_interest_and_redemption_flow ... ok
+test backtest::tests::timed_rights_issue_lifecycle_uses_record_date_and_expires_remaining_rights ... ok
+test cost::tests::latency_is_additive ... ok
+test backtest::tests::virtual_funding_interest_and_delivery_enter_event_log_and_ledger ... ok
+test cost::tests::latency_rounds_up_to_whole_milliseconds ... ok
+test cost::tests::leverage_and_tiered_margin_are_deterministic ... ok
+test cost_rules::tests::absurd_rates_are_rejected ... ok
+test cost_rules::tests::defaults_match_the_previous_hardcoded_rates ... ok
+test cost_rules::tests::json_only_overrides_present_fields ... ok
+test cost_rules::tests::nonzero_latency_switches_to_static_model ... ok
+test fill::tests::halted_never_fills ... ok
+test fill::tests::limit_price_is_respected ... ok
+test fill::tests::next_bar_open_fills_at_open ... ok
+test fill::tests::probabilistic_respects_seed ... ok
+test fill::tests::volume_caps_fill_size ... ok
+test orderbook::tests::cancellation_before_snapshot_prevents_fill_and_preserves_event_order ... ok
+test orderbook::tests::duplicate_order_and_non_monotonic_snapshot_are_rejected ... ok
+test orderbook::tests::execution_model_applies_latency_queue_and_market_impact ... ok
+test orderbook::tests::limit_order_waits_when_best_price_is_not_executable ... ok
+test orderbook::tests::limit_orders_do_not_resell_the_same_snapshot_liquidity ... ok
+test orderbook::tests::market_buy_consumes_multiple_ask_levels_and_keeps_partial_order ... ok
+test orderbook::tests::one_snapshot_liquidity_is_not_reused_by_multiple_orders ... ok
+test orderbook::tests::partially_filled_order_keeps_queue_priority_over_later_order ... ok
+test orderbook_backtest::tests::conflicting_execution_model_fee_is_rejected_not_silently_applied ... ok
+test orderbook_backtest::tests::depth_bar_view_lets_bar_only_strategies_trade_on_order_book_snapshots ... ok
+test orderbook_backtest::tests::derivative_order_book_uses_margin_ledger_semantics ... ok
+test orderbook_backtest::tests::fractional_contract_sizes_fee_on_spec_notional ... ok
+test orderbook_backtest::tests::native_strategy_adapter_uses_the_same_order_book_causal_path ... ok
+test orderbook_backtest::tests::order_book_backtest_rejects_bar_data_tier ... ok
+test orderbook_backtest::tests::order_book_backtest_is_causal_and_replays_fill ... ok
+test rng::tests::different_seed_differs ... ok
+test orderbook_backtest::tests::specless_spot_buy_beyond_available_cash_is_rejected_not_overdrawn ... ok
+test rng::tests::prob_in_range ... ok
+test rng::tests::same_seed_same_sequence ... ok
+test orderbook_backtest::tests::order_book_report_is_deterministic_and_carries_unified_metrics ... ok
+test tick_backtest::tests::depth_frame_to_ticks_requires_single_level_books ... ok
+test tick_backtest::tests::depth_bar_view_folds_l1_ticks_into_bars ... ok
+test tick_backtest::tests::tick_backtest_applies_the_injected_risk_gate ... ok
+test venue::tests::ashare_fees_charge_commission_stamp_and_transfer ... ok
+test tick_backtest::tests::tick_backtest_is_causal_and_reuses_l1_ask_liquidity ... ok
+test venue::tests::default_fee_multiplier_charges_real_scale_fees ... ok
+test tick_backtest::tests::tick_backtest_shares_the_configured_risk_gate ... ok
+test venue::tests::fractional_fee_multiplier_stays_in_fixed_scale ... ok
+test venue::tests::halted_blocks_every_fill_model ... ok
+test venue::tests::inverse_contract_uses_coin_notional_for_fees ... ok
+test venue::tests::latency_delays_order_eligibility ... ok
+test venue::tests::limit_order_is_taker_unless_post_only ... ok
+test venue::tests::order_fills_on_next_bar_open ... ok
+test venue::tests::out_of_bounds_fill_model_is_clamped_by_engine ... ok
+
+test result: ok. 84 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\ashare_limit_anchor.rs (target\debug\deps\ashare_limit_anchor-bda922f0d98203a6.exe)
+
+running 2 tests
+test a_sealed_intraday_limit_up_blocks_the_fill_when_anchored_to_the_session_close ... ok
+test anchoring_to_the_previous_bar_would_fill_on_that_same_board ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\ashare_pit_asof.rs (target\debug\deps\ashare_pit_asof-8391a59548e092fd.exe)
+
+running 3 tests
+test research_cutoff_before_publication_hides_the_recorded_dividend ... ok
+test a_single_cutoff_stays_reproducible ... ok
+test same_dataset_under_different_as_of_produces_distinguishable_backtests ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\latency_timeline_units.rs (target\debug\deps\latency_timeline_units-19c137d3d29a468d.exe)
+
+running 2 tests
+test millisecond_latency_eligibilizes_on_the_next_bar ... ok
+test realistic_latency_stays_inside_the_bar_cadence ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\no_lookahead.rs (target\debug\deps\no_lookahead-e78aaa64a042e908.exe)
+
+running 1 test
+test pre_trade_risk_uses_last_visible_close_not_current_bar_close ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\risk_gate_blessed_construction.rs (target\debug\deps\risk_gate_blessed_construction-57b78a04d6e7bc1e.exe)
+
+running 2 tests
+test conservative_default_gate_is_named_and_fails_closed_on_oversized_orders ... ok
+test no_bare_risk_gate_construction_survives_in_the_tree ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running unittests src\lib.rs (target\debug\deps\qx_zhenlu-fc5eb68ccca6179a.exe)
+
+running 27 tests
+test oms::tests::rejected_fill_leaves_no_partial_order_state ... ok
+test oms::tests::oms_is_idempotence_boundary_for_client_order_and_fills ... ok
+test portfolio::rebalance::tests::invalid_constraints_are_rejected_before_planning ... ok
+test portfolio::rebalance::tests::positions_missing_from_target_are_closed ... ok
+test portfolio::rebalance::tests::turnover_is_reported_in_basis_points ... ok
+test tests::disconnected_submit_is_ambiguous ... ok
+test tests::duplicate_client_id_rejected ... ok
+test tests::duplicate_signal_replay_does_not_change_target ... ok
+test tests::fill_updates_status ... ok
+test tests::market_order_requires_reference_price_for_notional_risk ... ok
+test tests::no_short_blocks_overselling ... ok
+test tests::opposing_signals_are_netted_deterministically ... ok
+test tests::paper_venue_accepts_and_fills_from_l1 ... ok
+test tests::paper_venue_charges_fills_with_the_shared_fee_model ... ok
+test tests::paper_venue_consumes_quote_capacity_once ... ok
+test tests::rate_limit_is_weighted_and_deterministic ... ok
+test tests::rebalance_intent_rejects_quantity_overflow ... ok
+test tests::reconnect_requires_snapshot_reconciliation ... ok
+test tests::risk_context_enforces_spec_leverage_and_available_margin ... ok
+test tests::risk_gate_collects_all_reasons ... ok
+test tests::spread_group_attribution_rejects_leg_mismatch_and_tampered_totals ... ok
+test tests::spread_group_attribution_sums_leg_costs_and_round_trips_json ... ok
+test tests::spread_group_is_filled_only_when_every_leg_is_filled ... ok
+test tests::spread_group_requires_explicit_compensation_after_partial_fill ... ok
+test tests::strategy_lifecycle_and_quota_are_separate_from_risk ... ok
+test tests::spread_group_file_store_claim_is_exclusive_and_expires ... ok
+test tests::spread_group_file_store_round_trips_in_progress_fills ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\portfolio_target_position_single_source.rs (target\debug\deps\portfolio_target_position_single_source-596bf97c636b74cf.exe)
+
+running 3 tests
+test portfolio_reuses_the_kernel_target_position_type ... ok
+test non_roundtrip_instrument_keys_fail_closed ... ok
+test rebalance_plan_emits_the_shared_typed_target ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\risk_projection.rs (target\debug\deps\risk_projection-9007a9a6f4acc008.exe)
+
+running 6 tests
+test empty_risk_gate_still_enforces_reduce_only_account_invariant ... ok
+test hedge_reduce_only_uses_the_selected_leg_and_cannot_cross_zero ... ok
+test max_notional_rule_uses_projected_exposure ... ok
+test reduce_only_cannot_increase_or_flip_a_one_way_position ... ok
+test reduce_only_close_uses_projected_exposure_instead_of_gross_plus_order ... ok
+test risk_gate_wrapper_delegates_to_rule_set ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\target_position_single_source.rs (target\debug\deps\target_position_single_source-a54a9643f6a2f778.exe)
+
+running 2 tests
+test merged_targets_feed_the_intent_builder_and_keep_provenance ... ok
+test zhenlu_reuses_the_kernel_target_position_type ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_adapter
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_api
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_control
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_data
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_datastruct
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_execution
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_factor
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_genglu
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_guanxing
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_orchestrator
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_plugin
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_provider
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_risk
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_runtime
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_scheduler
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_storage
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_strategy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_xingban
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qx_zhenlu
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

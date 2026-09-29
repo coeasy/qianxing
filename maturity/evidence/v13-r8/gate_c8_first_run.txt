@@ -1,0 +1,818 @@
+[PASS] 文件写锁 FileLock 只有一个定义点（qx-core::file_lock）
+[PASS] 锁文件的抢占与释放不再各写一份（只有内核删自己的锁）
+[PASS] registry.rs 的写锁委托 qx-core::file_lock
+[PASS] lib.rs 的写锁委托 qx-core::file_lock
+[PASS] state_envelope.rs 的写锁委托 qx-core::file_lock
+[PASS] jobs.rs 的写锁委托 qx-core::file_lock
+[PASS] 锁的『同一场竞争只接管一次』住在 decide_lock 里，且抢锁循环把计数喂回判据、只按判据交出的年龄说话
+[PASS] 成交费用腿只有一个记账点
+[PASS] 手续费币种判定住在唯一的折算函数里，现货与衍生两条记账入口都过它
+[PASS] 费用腿一律记折算后的数，不记回报里的原数（按面值入账正是 D2 的原始缺陷）
+[PASS] 基准资产费用用成交自身价格折算（定点乘除，不引入外部汇率）
+[PASS] 折算只对乘数为 1 的现货口径开放，衍生条款严格认结算币种
+[PASS] 五条用例分别钉住「基准资产费用按成交价折算、符号没点名则拒、乘数路径不折算、折到 0 不留腿、第三币种拒记」
+[PASS] tools 下的门禁脚本没有逐字重复的连续窗口：同一段判据只存在一份
+[PASS] 每条判据的描述文本只写一次：两条 PASS 共用一句话就是判据被抄了第二份
+[PASS] V9 删除的 crate 未复活
+[PASS] QX_PYTHON 解释器只在 python_interpreter() 一处读取
+[PASS] 解释器来源判定只在 python_interpreter_origin() 一处
+[PASS] 策略 worker 失败诊断（程序/来源/退出码/stderr）只有一处实现并接满每个出口
+[PASS] worker 无响应的协议错误必须附诊断后再冒泡（不得用两个问号裸传）
+[PASS] CCXT 无响应既保留未知结果语义又点名解释器
+[PASS] main.rs 只做薄入口，命令分派不在 crate 根
+[PASS] 命令名分派只存在于 cli.rs
+[PASS] help 印出的入口、clap 命令表与 cli.rs 显式派发分支三者相等
+[PASS] run 的帮助入口、RUN_ENTRY_POINTS 常量与 match 分支三者相等
+[PASS] clap 命令表解析出 49 个命令名（含嵌套子命令）
+[PASS] clap 命令表的每一颗都被 qx-cli 用例点过名（72 份用例、免检登记 0 颗）
+[PASS] cli.rs 分派不得把 clap 字段绑成 `_` 后丢弃
+[PASS] cli_args.rs 声明的 14 个长旗标全部被 cli.rs 读到
+[PASS] cli_args.rs 里读得到 ConfigCommand 命令表
+[PASS] ConfigCommand 的 4 条子命令逐个解析出来
+[PASS] help 的 config 入口集合与 clap 的 ConfigCommand 子命令集合相等
+[PASS] config 的 4 条子命令在帮助里都标了 [--json]
+[PASS] 每条声明 --json 的 config 子命令都在处理器里真的分出机读分支
+[PASS] cli.rs 把旗标真的传给 4 条 config 处理器的 as_json 形参位
+[PASS] qx-cli 用例单文件 tests_main.rs 已拆分且不得复活
+[PASS] qx-cli 用例以目录模块挂载，不得用 #[path] 指回单文件
+[PASS] qx-cli 行为用例不少于 324 条
+[PASS] qx-cli 共享测试夹具只在 tests/mod.rs 定义一份
+[PASS] qx-execution 用例单文件 tests.rs 已拆分且不得复活
+[PASS] qx-execution 用例以目录模块挂载，不得用 #[path] 指回单文件
+[PASS] qx-execution 行为用例不少于 26 条
+[PASS] qx-execution 共享测试夹具只在 tests/mod.rs 定义一份
+[PASS] Phase 4p/4q 拆出的兄弟模块逐个在单文件行数门槛内
+[PASS] 拆出的模块在 crate 根以 mod + pub(crate) use x::* 成对挂载
+[PASS] crate 根顶层条目不多于 7 个（实现不得长回 main.rs）
+[PASS] crate 根 main.rs 已退出行数登记集（低于门槛且不在预算表内）
+[PASS] 链路入口 run_ecosystem_smoke 的定义点唯一且在 ecosystem_smoke.rs
+[PASS] 链路入口 run_paper_smoke 的定义点唯一且在 ecosystem_smoke.rs
+[PASS] 链路入口 run_backtest 的定义点唯一且在 ecosystem_smoke.rs
+[PASS] 链路入口 DemoProvider 的定义点唯一且在 ecosystem_smoke.rs
+[PASS] 链路入口 collect_runtime_check_report 的定义点唯一且在 runtime_check.rs
+[PASS] 链路入口 collect_live_check_report 的定义点唯一且在 live_check.rs
+[PASS] 链路入口 collect_doctor_report 的定义点唯一且在 doctor_report.rs
+[PASS] 链路入口 check_audit_chain 的定义点唯一且在 doctor_report.rs
+[PASS] 链路入口 dispatch_scheduled_jobs 的定义点唯一且在 scheduler.rs
+[PASS] 链路入口 open_paper_market_bridges 的定义点唯一且在 market_bridges.rs
+[PASS] 链路入口 resolve_strategy_runtime_paths 的定义点唯一且在 path_resolution.rs
+[PASS] 链路入口 build_strategy_contract_input 的定义点唯一且在 strategy_binding.rs
+[PASS] 链路入口 run_init_with_profile 的定义点唯一且在 init_project.rs
+[PASS] 链路入口 run_strategy_init 的定义点唯一且在 init_project.rs
+[PASS] 链路入口 repository_deploy_path 的定义点唯一且在 init_project.rs
+[PASS] 链路入口 market_spec_from_value 的定义点唯一且在 market_spec.rs
+[PASS] 链路入口 ccxt_market_to_spec 的定义点唯一且在 market_spec.rs
+[PASS] 链路入口 ccxt_margin_rule_from_market 的定义点唯一且在 market_spec.rs
+[PASS] qx-cli 子进程用例的被测面按 src 目录递归取，且排除只编进测试壳的 src/tests
+[PASS] 两条取 binary 的路径都过新鲜度护栏（含 --bin 取不到的回落分支）
+[PASS] 回测编排单文件 backtests.rs 已拆分且不得复活
+[PASS] Phase 4s 拆出的回测主题模块逐个在单文件行数门槛内
+[PASS] 回测主题模块在 backtests/mod.rs 以 mod + pub(crate) use x::* 成对挂载
+[PASS] 回测共享装配在 mod.rs 的顶层条目不多于 8 个（实现不得长回 mod.rs）
+[PASS] backtests/mod.rs 挂载的主题模块与登记表一致
+[PASS] 回测入口 run_multi_builtin_backtest 的定义点唯一且在 backtests/multi_builtin.rs
+[PASS] 回测入口 run_ccxt_builtin_backtest 的定义点唯一且在 backtests/single_strategy.rs
+[PASS] 回测入口 run_strategy_backtest 的定义点唯一且在 backtests/strategy_backtest.rs
+[PASS] 回测入口 persist_backtest_artifacts 的定义点唯一且在 backtests/artifacts.rs
+[PASS] 回测入口 run_fast_backtest_manifest 的定义点唯一且在 backtests/fast_backtest.rs
+[PASS] 回测入口 run_single_strategy_backtest 的定义点唯一且在 backtests/single_strategy.rs
+[PASS] 回测入口 run_builtin_backtest 的定义点唯一且在 backtests/single_strategy.rs
+[PASS] 回测入口 run_depth_backtest 的定义点唯一且在 backtests/depth.rs
+[PASS] 回测入口 ashare_backtest_binding 的定义点唯一且在 backtests/ashare_binding.rs
+[PASS] 回测入口 configured_ashare_binding 的定义点唯一且在 backtests/ashare_binding.rs
+[PASS] 回测入口 reject_ashare_rules_config 的定义点唯一且在 backtests/ashare_binding.rs
+[PASS] 回测入口 read_bar_frame_for_backtest 的定义点唯一且在 backtests/artifacts.rs
+[PASS] 回测入口 read_depth_frame_for_backtest 的定义点唯一且在 backtests/artifacts.rs
+[PASS] 回测入口 barframe_dataset_identity 的定义点唯一且在 backtests/artifacts.rs
+[PASS] 回测入口 barframe_input_provenance 的定义点唯一且在 backtests/artifacts.rs
+[PASS] 回测入口 depth_frame_input_provenance 的定义点唯一且在 backtests/artifacts.rs
+[PASS] 回测入口 recompute_declared_backtest_input 的定义点唯一且在 backtests/artifacts.rs
+[PASS] 生产代码不存在未登记/无规则的风控门
+[PASS] 第二套执行实现（ExecutionService/SpreadExecutionService）已彻底移除且不得复活
+[PASS] 第二多腿编排入口（MultiVenueSpreadExecutionService/VenueRouterMap）已彻底移除且不得复活
+[PASS] Paper 提交与 worker 共用 ExecutionGateway，不回退第二套实现
+[PASS] 单腿网关别名只有一处定义（新增第二套实现须先改本门禁）
+[PASS] 多腿停止提交的安全谓词只在 qx-zhenlu 定义一处（唯一口径）
+[PASS] 多腿屏障判定只在 qx-execution 定义一处（下沉网关后不得再有第二处）
+[PASS] qx-cli 不得定义或内联多腿屏障（判定只在 qx-execution 网关）
+[PASS] qx-cli 每个腿提交入口都显式给出 spread_store 形参/实参
+[PASS] qx-cli 生产提交路径不得以裸 None 交出组存储（那等于跳过屏障）
+[PASS] 受管入口族的每个 pub fn 都有生产消费者（V12 D6：死入口不得留下）
+[PASS] 重导出行确实被分类出来了：首行与多行块的续行都数到（V11 R7-g）
+[PASS] 零读者报告里的每一颗行号都点得到那个定义本身（V12 §17 的指针必须可达）
+[PASS] 每个 pub fn/pub const 都有生产读者，或在允许清单里写明理由（V12 §17）
+[PASS] 允许清单里的条目仍然没有生产读者（长出读者就要从清单删掉）
+[PASS] 夹具：只被 `pub use` 续行点名的 pub fn 仍算零读者（V11 R7-g：重导出不得自证为读者）
+[PASS] 夹具：一块多行 `pub use` 的首行、续行与闭括号行都归进同一块（V11 R7-g）
+[PASS] NumericExt/to_display/ShareSubscription 这类「定义之外零出现」的类型面已删除且不复活
+[PASS] 同名日历类型只有一个定义，且就在真的驱动调度的 crates/qx-scheduler
+[PASS] 门禁读生产文本一律经 production_text 按项剥测试代码，不再按第一次 cfg(test) 截断
+[PASS] 三个后端的 transact_control 都在事务体内调用 `chain_audit(&mut plane,` 喂审计链
+[PASS] 审计链用例在位：事务喂链（三后端）、业务拒绝不长链、残尾截掉、检查点与链尾不互相指认必拒、篡改冷读与尾读同时抓住
+[PASS] accept 循环 `pub fn serve(` 经 accept_polling 取连接（无 incoming() 死循环）
+[PASS] accept 循环 `pub fn serve_tls_mtls_with_stores(` 经 accept_polling 取连接（无 incoming() 死循环）
+[PASS] accept_polling 里 `stop()` 在位（停机判定 + accepted socket 回到阻塞态）
+[PASS] accept_polling 里 `set_nonblocking(false)` 在位（停机判定 + accepted socket 回到阻塞态）
+[PASS] run_runtime_api 把监督器的停机请求接成两条 serve 的 stopped 闭包
+[PASS] accept 停机用例在位：明文先服务后停机、明文零连接可停、mTLS 可停
+[PASS] runtime-check 的 snapshot 传真时钟 + worker_stale_after_ms，不传 0/停机预算
+[PASS] 策略意图字段集 Python SDK 与 Rust StrategyContractIntent 逐项相等
+[PASS] 策略意图字段集 JSON schema 与 Rust StrategyContractIntent 逐项相等
+[PASS] Python 意图能表达多腿的保证金/持仓模式与杠杆（Rust 写出的键读得回来）
+[PASS] 跨语言意图往返用例在位：三字段随 Rust 产出可读回、Rust 拒绝的取值 Python 也拒绝
+[PASS] 全仓行为用例不少于 1024 条
+[PASS] Windows 构建脚本仍在仓库里
+[PASS] build.bat 用 CRLF 换行（cmd.exe 读不了 LF 版中文批处理）
+[PASS] build.bat 每行以 ASCII 结尾（中文不留行尾）
+[PASS] .gitattributes 把 .bat 钉成 eol=crlf
+[PASS] build.bat 与 build.sh 的门禁步骤逐项同名同序
+[PASS] 两个构建脚本调用的是同一组 cargo 命令
+[PASS] build.bat 把探测选中的解释器导出成 QX_PYTHON，且早于 [1/9]
+[PASS] build.sh 把探测选中的解释器导出成 QX_PYTHON，且早于 [1/9]
+[PASS] build.bat 与 build.sh 各自真的调用一次架构门禁脚本
+[PASS] 架构门禁失败会中止构建脚本，而不是继续跑后面的步骤
+[PASS] 架构门禁排在任何 cargo 命令之前（最便宜的全量判据先跑）
+[PASS] build_python_wheel.ps1 在跑 pip wheel 之前先探测 pip
+[PASS] build_python_wheel.sh 在跑 pip wheel 之前先探测 pip
+[PASS] build_python_wheel.ps1 每行以 ASCII 结尾（中文不留行尾）
+[PASS] README 的每条 PowerShell wheel 入口都显式带 -ExecutionPolicy Bypass
+[PASS] 第二道 A 股 PIT 闸门（is_visible_at/corporate_actions_visible_at）已彻底移除
+[PASS] A 股 PIT 可见性判定只有一个谓词函数、一个加载闸门调用点
+[PASS] 回测引擎不自行判定 PIT 可见性（只消费加载后的快照）
+[PASS] A 股 PIT 结果可区分测试在位（同一数据集、不同 as_of）
+[PASS] 涨跌停的昨收锚只有一个定义点与一个引擎调用点
+[PASS] 昨收锚按上一交易日推导（覆盖表优先、跨日后取该日最后一根）
+[PASS] 锚的口径与'覆盖表才是除权除息出口'写进代码文档
+[PASS] 同一根封板线在两种锚下结果不同，且有单元测试钉住锚本身
+[PASS] 除权除息折算读已装载的公司行为，结果落到最小报价单位
+[PASS] 折算只在跨日推导之后发生，手工覆盖表仍是锚的第一个出口
+[PASS] 除权除息锚有行为用例：红利扣减到 9.50、红利+送转+配股一次折算到 6.88
+[PASS] 公司行为装载有非测试写点：回测绑定与运行自检各一处
+[PASS] A 股契约版本号两侧同一格
+[PASS] 信封顶层字段名册两侧逐项一致（5 项，含顺序与 Rust 声明长度）
+[PASS] 单条公司行为字段名册两侧逐项一致（35 项，含顺序与 Rust 声明长度）
+[PASS] 交易日历字段名册两侧逐项一致（5 项，含顺序与 Rust 声明长度）
+[PASS] 公司行为动作名册两侧同一份（Rust 变体的 snake_case 名，16 个）
+[PASS] 写侧的行读取器认得自己写出的每一个动作名
+[PASS] 动作名往返有行为用例兜着（名册里每个名字逐个认回）
+[PASS] A 股行数据的定点单位口径只有一处规则（`*_raw` 已定点，别名按元/股；15 个字段走它）
+[PASS] 公告日期认得空格与 `T` 两种 ISO 分隔，不会回落成除权日
+[PASS] 日期与单位两处口径各有行为用例钉住
+[PASS] 跨语言对照夹具齐备（3 份）
+[PASS] 两侧读的是同一份对照夹具（Python 词根与 Rust 夹具名逐字相同）
+[PASS] Rust 读侧把信封读回并喂进折算锚，期望值取自共读的那份夹具
+[PASS] Python 侧在进程内重算 payload、期望值与折算锚，夹具不可手抄
+[PASS] 成交回报精度闸门只在唯一归约入口生效并转待对账
+[PASS] 提交同步返回的成交也过同一精度闸门并转待对账（V11 Q56）
+[PASS] 两道提交入口共用同一个提交闸门，不得有第三份内联校验（V11 Q57）
+[PASS] 对冲补偿提交过同一道闸门，且规格解析失败时拒绝补偿并转待对账（V11 Q57）
+[PASS] 补偿成交落库时带上冻结规格，衍生品腿不得退回乘数 1 记账（V11 Q57）
+[PASS] 精度闸门调用点恰为两处：归约入口 + 共用提交闸门（不得有第三处）
+[PASS] 提交未知的两类原因段各只有一处定义（放在共用闸门的 reason_tag 里）
+[PASS] 回报精度判定只有一个谓词（不在 Ledger/回测侧重复判定，调用点只允许归约入口与提交闸门）
+[PASS] 存在「提交同步回报越界 → 只留一条待对账事实」的行为用例（V11 Q56 证据）
+[PASS] 存在「补偿回包越界只留待对账 / 在 tick 上带规格落库 / 规格解析失败不提交」的行为用例（V11 Q57 证据）
+[PASS] 每条生产回报路径都把冻结产品规格交给归约入口
+[PASS] Paper / CCXT / Binance 三家共用迟到回报与精度越界契约测试
+[PASS] A 股规则快照的 JSON 读法全仓只有一处（新增读法即第二份口径）
+[PASS] 配了快照就必须启用，这条判定也只有一处
+[PASS] 两条 Bar 回测链各自绑定 A 股规则与费率，并把它印进 stdout
+[PASS] depth.rs 承不了 A 股段，必须当场拒绝 backtest book
+[PASS] multi_builtin.rs 承不了 A 股段，必须当场拒绝 backtest multi-builtin
+[PASS] 命令行子进程用例逐条咬住 Q61 口径（结果变化 + 两处拒绝）
+[PASS] 提交侧的 A 股闸门只定义一处，且只管会提交新订单的角色
+[PASS] 提交侧复用回测侧那一份拒绝文案，并点名缺的能力是 T+1 结算状态
+[PASS] worker_entry.rs 每个提交/排队入口都问过 A 股闸门（binance-worker、ccxt-worker）
+[PASS] paper_worker.rs 每个提交/排队入口都问过 A 股闸门（paper-worker）
+[PASS] paper_submit.rs 每个提交/排队入口都问过 A 股闸门（paper-submit-order）
+[PASS] binance_submit.rs 每个提交/排队入口都问过 A 股闸门（binance-submit-order）
+[PASS] workers.rs 每个提交/排队入口都问过 A 股闸门（strategy-worker）
+[PASS] api_service.rs 每个提交/排队入口都问过 A 股闸门（serve）
+[PASS] 提交侧不得自己装配 A 股规则或费率（半接半丢比不接更危险）
+[PASS] 进程内用例逐条咬住 Q65 口径（五个提交入口 + 两个排队入口的拒绝、不提交角色放行、副作用顺序）
+[PASS] 帮助文本写明提交类入口会当场拒绝 A 股段，而策略 worker 不受影响
+[PASS] strategy.builtin_* 四项的覆盖赋值全仓只有一处（新增赋值点即第二份口径）
+[PASS] 读点定义一处，且 `strategy backtest`/paper 那条链确实问过它
+[PASS] 内置链侧的包装定义一处，三条链各问过它一次（调用点检查在下面的逐链表里）
+[PASS] single_strategy.rs 必须读 `--config` 里的信号参数（backtest builtin）
+[PASS] depth.rs 必须读 `--config` 里的信号参数（backtest book）
+[PASS] multi_builtin.rs 必须读 `--config` 里的信号参数（backtest multi-builtin）
+[PASS] 策略链的内置配置只能由那一个构造点装配（否则第二处会绕过覆盖）
+[PASS] 覆盖之后必须重做参数体检，非法信号组合整轮失败
+[PASS] 策略链那条链也要在覆盖之后复检，非法组合不许走到印口径
+[PASS] 四条 Bar 链各印一行生效口径，且判词由共用的那句生成（builtin/strategy/book/multi）
+[PASS] 生效口径的措辞全仓只定义一次（各链自己拼字符串就会各说一套）
+[PASS] 帮助文本点名四个信号键并承诺写了就必须生效
+[PASS] 深度档与多腿链的帮助都写明信号参数在本链生效
+[PASS] 命令行子进程用例逐条咬住 Q64 口径（四条链 + 两类非法组合）
+[PASS] 交易链路（paper/live）那侧也有一条进程内用例钉住同一份声明信号
+[PASS] kind→旋钮清单全仓只定义一处（第二处就会与各消费点的读法分叉）
+[PASS] 清单所在的那一份同时持有四个旋钮、MACD 常数与历史上限地板（暗通道的两个源头）
+[PASS] crates/qx-strategy/src/builtin.rs 问过清单（内核读法与参数体检）
+[PASS] crates/qx-runtime/src/runtime_config/strategy_validation.rs 问过清单（运行时配置侧体检）
+[PASS] crates/qx-cli/src/strategy_binding.rs 问过清单（`--config` 侧播报）
+[PASS] crates/qx-cli/src/cli_help.rs 问过清单（`builtin-strategies` 列表）
+[PASS] 运行时配置侧的四个旋钮体检逐项问过清单（少一项=有一项重新无条件拒掉一轮）
+[PASS] 历史上限只经清单取窗口，每个窗口至多读一次（`slow_window.max(period)` 曾让不读窗口的 kind 换结果）
+[PASS] 不读周期/窗口的 kind 预热门槛不跟着旋钮走（基差与 grid 各占一行，等一个不读的指标=白等）
+[PASS] 帮助文本说出 knobs / declared_unused 两格的含义
+[PASS] `builtin-strategies` 列表真把那列印进格式串（不是只写在注释里）
+[PASS] 播报行与摘要 signal 块各写一次「这一轮真正生效的是哪几项」
+[PASS] 两侧成对用例都在：清单外改不动结果、清单内改得动结果、清单覆盖每个 kind、产物点名生效面
+[PASS] 重放只有一个内核函数，其余口径都是它的投影
+[PASS] 重放内核三条都做：逐条重新接受事实、重新入账、整本再校验
+[PASS] 报告侧留有一条真会失败的判据：重放账簿条数必须等于运行账簿条数
+[PASS] 被证伪的恒等口径（rebuild_from / replay_hash）不得在任何 crate 复活
+[PASS] backtest.rs 的报告出口先过重放校验才返回，失败向上抛而不是就地吞掉
+[PASS] orderbook_backtest.rs 的报告出口先过重放校验才返回，失败向上抛而不是就地吞掉
+[PASS] 摘要落盘前问过重放，且问在写任何工件之前
+[PASS] 摘要把重放做过的三件事写成人各自可核对的字段
+[PASS] 深度链把迟到成交回报排在同戳命令之前、初始入金排在观测起点（否则事实流不可重放）
+[PASS] 落盘侧三条用例钉住「该写的写了、两种坏事实源都拒落盘」
+[PASS] Bar 链逐条比对重放账簿，并留有一条「凭空多记」的反向证据
+[PASS] 摘要以当前 schema 版本落一个 `input` 块，且这份形状只由 input_provenance_json 写一次
+[PASS] 三条会落产物的链都不自己解帧：入口读与复核读都问 artifacts.rs 的读点
+[PASS] BarFrame → 数据集身份那一步既过 Provider 又逐列比对，声明的指纹就是被复核过的那个
+[PASS] 复核走同一读点重算，三格逐字段比，坏 kind 与缺字段都判失败
+[PASS] 报告出口把复核失败向上抛，且旧 schema 只能被说成「没声明」而不是「已核对」（措辞取自读法侧的共用常量，那一格由 report_readout_lines 印出）
+[PASS] RunManifest 的 data_fingerprint 回落用被复核过的数据集指纹，引擎自哈希不再冒充输入身份
+[PASS] 两档输入形状（BarFrame / 深度帧）各有唯一版本号，且没共用同一个标签
+[PASS] 版本号字面量只在 artifacts.rs 出现一次，链上不得自带兜底版本
+[PASS] 六条用例钉住「声明等于重算、篡改即拒、缺文件即拒、同一身份不容两种内容、深度链同形、未声明不等于通过」
+[PASS] 内核 Ledger 单文件已拆分且不得复活
+[PASS] 账簿状态结构体只有一处定义
+[PASS] 账簿归约实现按资产类别分文件，且不在目录外另起 impl Ledger
+[PASS] 账簿各子模块都在单文件行数门槛之内
+[PASS] 概念 Bar 的定义位置与登记表一致
+[PASS] 概念 OrderIntent 的定义位置与登记表一致
+[PASS] 概念 OrderRiskPosition 的定义位置与登记表一致
+[PASS] 概念 PositionSnapshot 的定义位置与登记表一致
+[PASS] 概念 PositionState 的定义位置与登记表一致
+[PASS] 概念 QxOrderIntent 的定义位置与登记表一致
+[PASS] 概念 StrategyContractIntent 的定义位置与登记表一致
+[PASS] 概念 StrategyOrderIntent 的定义位置与登记表一致
+[PASS] 数据集列式 BarFrame 到引擎 Bar 只有一次投影定义
+[PASS] 已删除的第二套持仓归约与死校验器不得复活
+[PASS] 持仓可用量判定只有一个实现
+[PASS] Venue 家族与标的级 Binance 判定各只有一处定义
+[PASS] 已收拢的 venue 判定式不得在生产代码里另起第二份
+[PASS] 读取 Venue 家族的消费者与登记表逐一对应（新增判定必须登记）
+[PASS] 家族口径的三条用例在册：子串、整名、缺席不得折进 Other
+[PASS] testnet 写法必须被编排认成 Binance 私有 worker（用例在断言现场，不在别处）
+[PASS] 编排的 Paper 分支钉住整名口径：空白写法仍本地，paper 前缀写法必须被拒
+[PASS] 账户日志命名的用例钉住同一家族口径：testnet 不得换前缀把账户拆成两本账
+[PASS] 两份口径的差异写在各自定义处注释里（家族读账户域、整名读产品 venue）
+[PASS] 记账币种的缺省值只有一处定义，且值仍是 USDT（换币种要改这一格，不是四处）
+[PASS] 全仓只有定义点那一颗 *SETTLEMENT_CURRENCY* 公共常量
+[PASS] 币种兜底已全部接回常量：生产代码里除定义点外没有第二处写死的 "USDT"
+[PASS] 单源常量自己带着币种字面量与口径说明（缺省值≠合法币种白名单）
+[PASS] 回落链消费者与登记表逐一对应（新增兜底必须登记，不许静默新增第五处）
+[PASS] 回落链仍读单源常量：crates/qx-cli/src/backtests/mod.rs 的 .unwrap_or_else(||DEFAULT_SETTLEMENT_CURRENCY.into())
+[PASS] 回落链仍读单源常量：crates/qx-cli/src/venue_runtime/worker_runtime.rs 的 .unwrap_or(DEFAULT_SETTLEMENT_CURRENCY).to_ascii_uppercase()
+[PASS] 回落链仍读单源常量：crates/qx-cli/src/venue_runtime/worker_runtime.rs 的 .unwrap_or_else(||DEFAULT_SETTLEMENT_CURRENCY.to_string())
+[PASS] 回落链仍读单源常量：crates/qx-cli/src/ecosystem_smoke.rs 的 cash:BTreeMap::from([(DEFAULT_SETTLEMENT_CURRENCY.into(),Money::from_i64(crate::backtests::DEFAULT_BACKTEST_INITIAL_CASH).raw(),)]),
+[PASS] 单源口径的三条用例在册：三条回落链同值、声明缺省==不声明、换币种动产物哈希
+[PASS] 币种指纹用例钉的是产物里的 result_hash，且同币种重跑必须相等（不许改用会随墙钟动的 digest）
+[PASS] 存储信封原语 encode_state_json 只有一个定义点
+[PASS] 存储信封原语 decode_state_json 只有一个定义点
+[PASS] 存储信封原语 write_state_json 只有一个定义点
+[PASS] 存储信封原语 transact_state_json 只有一个定义点
+[PASS] 存储信封原语 write_atomic_path 只有一个定义点
+[PASS] 存储信封原语 acquire_storage_lock 只有一个定义点
+[PASS] qx-storage 生产代码只有信封一处落盘（绕过即失去原子替换）
+[PASS] 退避形状 Backoff 只有一个定义点
+[PASS] 退避策略为纯函数、不读系统时钟
+[PASS] binance.rs 的重试判定委托 qx-core::retry
+[PASS] ccxt_market_worker.rs 的重试判定委托 qx-core::retry
+[PASS] retry_policy.rs 的重试判定委托 qx-core::retry
+[PASS] lib.rs 的重试判定委托 qx-core::retry
+[PASS] 文件状态存储 FileConsumerStateStore 只有目录模块里的一份定义
+[PASS] 文件状态存储 FileJobQueue 只有目录模块里的一份定义
+[PASS] 文件状态存储 FileOutboxStore 只有目录模块里的一份定义
+[PASS] 文件状态存储 JsonStateStore 只有目录模块里的一份定义
+[PASS] crate 源码树每个 .rs 都被某处 mod 挂载（未挂载即死源码，编译与用例都不覆盖）
+[PASS] 运行时配置结构体全部拒绝未知键
+[PASS] 运行时配置结构体名单与登记表一致
+[PASS] 配置注释键剥离只有一处实现且被 from_json 使用
+[PASS] worker 角色字段可见性策略只有一处声明
+[PASS] 角色字段策略逐角色声明，不得使用通配臂
+[PASS] 角色字段策略覆盖全部 WorkerRole 变体
+[PASS] 凭据来源唯一性判定与 Venue 无关
+[PASS] 字段可见性判定先于 enabled 短路
+[PASS] 角色白名单不得在策略表之外另抄一份
+[PASS] 运行时 environment 词表以 RUNTIME_ENVIRONMENTS 单点声明
+[PASS] environment 词表自洽：数组长度、字面量个数、去重集合一致且含 production
+[PASS] production 判定没有任何就地字面量，唯一出口只问词表常量
+[PASS] is_production 是 production 判定的唯一出口，14 处分支全部经它
+[PASS] validate() 对词表外 environment fail closed，而不是当作非 production 放行
+[PASS] deploy 下运行时配置的环境名全部落在词表内
+[PASS] 通配 owner 只有一个常量，领取判据不再就地比较 "*"
+[PASS] 作业 owner 在装配处 fail closed，且新建与载入两条路径都要问
+[PASS] deploy 示例声明的作业清单文件都在其相对布局下找得到
+[PASS] deploy 示例里每个启用作业都有可领取的启用 Strategy worker（owner 路由连通）
+[PASS] JobSpec 字段名单可解析，且不含三格只有写侧的退役键
+[PASS] deploy 里 3 份作业清单示例的每一格顶层键都在 JobSpec 名单里
+[PASS] Bar 回测引擎装配只有一份（BarBacktestAssembly::into_config）
+[PASS] market spec 读取共用单一入口
+[PASS] 回测风控门全部经 strategy_risk_gate 构造
+[PASS] Bar 撮合模型只在 fill_model.rs 构造，装配字段取自绑定
+[PASS] Bar 回测入口的撮合口径全部经 bar_fill_model 解析
+[PASS] 运行时配置声明 strategy.fill_model
+[PASS] config validate 覆盖 fill_model（与装配同一张表）
+[PASS] 存在「换撮合模型 → 回测结果与产物描述子随之变化」的行为用例（Q1a 第二批证据）
+[PASS] 默认 maker/taker 费率常数只在 qx-core::fee 定义（再导出不算第二处）
+[PASS] cost_rules 只再导出费率常数，不重复定义默认值
+[PASS] 执行成本口径只有一个构造点（execution_cost_binding*）
+[PASS] 成本规则文件的读者全仓唯一（runtime_wiring）
+[PASS] 成本规则模板随仓库发布（配置面的可复制起点）
+[PASS] qx-cli 每个 Paper 构造点都显式给出费用模型
+[PASS] qx-cli 生产代码不得以零费构造 Paper（零费只允许出现在用例里）
+[PASS] Bar 回测装配的费用与延迟成对来自同一份成本绑定（Q0a 同源 + Q0c 来自配置）
+[PASS] Bar 回测装配不再写死零延迟（零延迟只能由成本绑定推导）
+[PASS] 存在把 Paper 费用记进 Ledger 的可执行用例（Q0a 的行为面证据）
+[PASS] 深度档缺省费率不再由分派层写死
+[PASS] 深度档缺省费率取自成本绑定（三层优先级在入口落地）
+[PASS] 运行时配置声明 strategy.cost_rules_path
+[PASS] config validate 覆盖 cost_rules_path（与装配同一个读者）
+[PASS] 存在「改配置里的 taker_bp → 回测手续费产物随之变化」的行为用例（Q0c 证据）
+[PASS] Paper 侧（qx-zhenlu）不引用逐档簿内核符号（成交由首档 touch 产生）
+[PASS] 文档指向的 paper 成交入口真实存在（PaperVenue::on_quote）
+[PASS] Tick 链确实复用 L2 的 OrderBookBacktestEngine（文档中的正向同源表述）
+[PASS] 簿内核文档点名真实消费者（L2 深度回测 + L1 Tick 回测）
+[PASS] 簿内核文档写明 paper 走首档 touch 并挂上 Q1d 排期
+[PASS] 「Paper 与回测同一撮合内核」类表述必须同句引用真实共享符号
+[PASS] 多腿成组配对只看实际成交（不得用信号计划量配对）
+[PASS] 一腿成交、对手腿落空时必须登记裸腿待对账事实
+[PASS] 多腿单腿定资越界必须报错，可表示上限只允许出现在诊断文案里
+[PASS] 多腿定资逐腿取本腿行情帧与生效费率，不得共用全局口径
+[PASS] 多腿计划与成交的差距必须同时进 stdout 与产物，并有闭合守卫
+[PASS] 四条多腿 kind 与两个反向验证用例必须齐备
+[PASS] 多腿产物必须声明两腿共用一份成本绑定（spec 无费率字段的既有偏离）
+[PASS] 多腿规格闸门必须对缺规格与全现货两种组合都报错
+[PASS] 两条腿的记账币种只问那一处兜底，闸门里不另抄 spec 字段
+[PASS] 规格闸门必须先于任何腿级撮合，而不是跑完再补声明
+[PASS] 资金费与保证金只向 market spec 声明为衍生品的腿计提，其余腿记 0
+[PASS] 产物必须写出每条腿规格的来源，并按规格真实推导 margin_model
+[PASS] 四种规格组合（缺规格/全现货/混合/只声明衍生品）必须各有行为用例
+[PASS] 多腿组合收益只有一处算法：合计盈亏 ÷ 合计本金，且算不出时报错而不是折成 0
+[PASS] 组合收益必须同时有加权/平均分叉的行为用例与可复算的产物两端
+[PASS] 组级合计只在 multi_leg_group_totals 一处折叠，编排入口不得再各自 loop 一遍
+[PASS] 产品规格只在 market_spec.rs 解析或构造，其余链路一律走 loader
+[PASS] 三项定点精度必须显式声明，缺失即拒绝而非兜底
+[PASS] market spec 的两种形状按 base_currency 判定，而非 try-parse 回落
+[PASS] 回测链 经 market_spec_from_value 读产品规格
+[PASS] worker 链 经 market_spec_from_value 读产品规格
+[PASS] 存在两种形状同源、缺精度即拒、回测链吃冻结规格的行为用例（V11 Q54 证据）
+[PASS] 形状判定只有一处，来源标签向它问同一个问题
+[PASS] 形状问题只在谓词里问一次，标签不复述判据
+[PASS] 三档来源（CCXT 形状/产品形状/无规格）各自有名，且没有两档共用一个标签
+[PASS] 来源标签只在 loader 单点问一次：定义在 market_spec.rs、取用在 backtests/mod.rs
+[PASS] 没传规格那一档由 loader 独占，链上不得自带兜底标签
+[PASS] 策略回测 的 identity 块里来源只可能是 loader 返回的那个变量
+[PASS] 深度回测 的 identity 块里来源只可能是 loader 返回的那个变量
+[PASS] 不落摘要的 builtin 链把同一个来源打印出来，占位符与实际参数一一对应
+[PASS] 两条写来源的链各有经过真实入口、逐档核对产物标签的行为用例（V11 Q63 证据）
+[PASS] 双腿套利 kind 的内核谓词与 CLI 准入名单逐项相等
+[PASS] init 的两个单标的入口必须按内核谓词拒绝双腿 kind
+[PASS] deploy 模板覆盖登记表在册（文件名→读取器→预期三列逐条对齐）
+[PASS] 登记表与 deploy 顶层 JSON 清单逐名相等（新增不登记即红、删除不销账也红）
+[PASS] 读取器变体清点得出来（新增一类却不登记就红）
+[PASS] Reader 的每个变体都至少被一份模板用到（没有无人验证的读取器）
+[PASS] Reader 的每个变体都进了坏内容探针（走过场的读取器当场可检出）
+[PASS] 每类模板的读取都落在生产读点上，而不是覆盖用例里另写一份校验
+[PASS] 覆盖用例的三条判据在位且模块已挂载（半挂载的拆分会让判据静默失效）
+[PASS] 每份模板都写明了预期结果，Refuses 只点名在册的已知缺口
+[PASS] 登记表里点名的配对来源必须仍是磁盘上存在的模板（配对失效不能静默换文件）
+[PASS] 八个汇总钱字段在协议上全是 Option<i128>，没有任何一个还能退回不可区分的 i128（V11 Q70）
+[PASS] 八个标量钱的取法只有一处、八项逐字段直取，体内没有 Some/unwrap_or 能把未算折成零
+[PASS] state_hash 与 scalar_hash 共用同一份标量写入，两处不会各说一套
+[PASS] 哈希带存在性标记：None 与 Some(0) 是两份状态，未算永远改不出一个「看起来算过」的 0
+[PASS] 稳定 JSON 的八个钱槽位只由 scalar_json_values 填，未算印 null 而不是合法的 0
+[PASS] 「可用资金 = 权益副本」这条抄法不得回到任何一处（含 Some(…) 包起来的可编译写法）
+[PASS] 权益只在现金与每一条持仓的标记价都读得出时发布；算不出即缺席，不退回纯现金（V11 Q70）
+[PASS] 可用资金取本条快照记账的那一本结算账簿现金
+[PASS] 账户费用合计由本快照的逐笔成交费用加出，且溢出即拒而不是回绕
+[PASS] 保证金/冻结/已实现/未实现/资金费这五个字段在本层没有来源，产码里不得出现给它们赋值的写法
+[PASS] /account/balances 把未算发布成 null，而不是给它兜一个 0
+[PASS] 五条读模型用例（结算账簿口径/费用同源/未算缺席/溢出即拒/缺标记价的权益缺席）加协议侧缺席≠零、端点侧 null 发布各一条在位
+[PASS] 无生产者的账户钱字段由源码派生，与判据常量同一份：谁接上生产者这一步先知道
+[PASS] 生产代码构造账户快照只能走 AccountSnapshot::new()（八格默认 None），凭空造数必须留在赋值点上、被派生清单抓到
+[PASS] 对外公布的契约逐字段写明 null 的含义：未算的点名、有算点的点名，两种标记互斥且不漏格
+[PASS] 能力矩阵把每一个无生产者字段各立一条 limitation：接上生产者就必须撤那一行，合并命名那句 blob 也不许回来
+[PASS] 接口文档向运维点名这份名单，并写明 null 不是 0：读侧不会把「没算」当成「没有」
+[PASS] 读侧那条 null 用例逐字段点名这五格，并真的断言了线格式与稳定 JSON 印 null 而不是 0
+[PASS] 已知版本常量声明一处，两个读入口各有一道常量闸门，validate 只做自洽体检
+[PASS] Rust 常量、公布契约与 Python 桥三处版本号同号，跨语言不会一个认一个不认
+[PASS] 服务端公布的契约正文由 include_str 取仓库那一份，Rust 代码里不再手写第二份 schema
+[PASS] header 里的版本副本先取出再判定：读不出与顶层相同整数即拒，缺席才按顶层归一
+[PASS] R2 用例在位：自洽高版本被拒、假版本号被拒、缺席仍是存储常态、常量与契约同号、读不出的高版本也报版本问题
+[PASS] 协议用例住在 src/tests.rs 并由 crate 根挂载，crate 根不再替测试付行数
+[PASS] 写入段的四张表各取一次编码器输出、自己不序列化，持仓换键只在编码器里发生一次
+[PASS] 方向/状态数字码只有一处定义且只走 state_hash 通道，JSON 写入段与读侧折算层都碰不到它
+[PASS] Side/OrderStatus 按变体名裸派生，两个枚举上没有任何 #[serde(...)] 改名或兜底
+[PASS] TX5 用例在位：四张表带行的快照写出→读回，且未知数字码与拼错的变体名同路被拒
+[PASS] 落库读回用例在位：文件与 SQLite 两个后端各跑一次带行快照，且真带了一行订单
+[PASS] 对账两格由「本账户有没有报告」这一个问题决定在不在，缺席与算出的零在类型/哈希/JSON 上都不是同一份
+[PASS] 内核持仓观察的三个钱字段是 Option<Money>，且每个都带 #[serde(default)]（老日志缺键读成未报）
+[PASS] 事件摘要逐字段带存在性标记：未报与报为零是两份内容，改日志里的 null 为 0 会改动摘要
+[PASS] 线格式行的两个钱列是 Option<i128> 且默认缺席，价格列仍按 0 哨兵保持不变
+[PASS] 内核观察 ↔ 线格式行的钱列折算各只有一处，线格式没有的那一列折算回未报而不是 0
+[PASS] 行哈希与账户标量共用同一个带存在性标记的写入助手，两处不会各说一套
+[PASS] 持仓行的钱槽位不再手抄：整行交给 serde、未报由 Option 印成 null，手填槽位只剩 money_json 一个来源
+[PASS] 生产与用例里都不给持仓行的钱字段兜一个写死的 0
+[PASS] 读模型用 Ledger 自拼的那一行持仓承认自己算不出这两个钱字段
+[PASS] CCXT 持仓方向只认 long/short（大小写归一），缺失与连接器占位的 unknown 一律 fail-closed
+[PASS] 零数量行在方向闸门之前跳过：平仓位通常不带方向，不该被 fail-closed 连带打死
+[PASS] CCXT 回报的三个钱字段只由一个 optional_money 读法取，省略与 null 都读成未报
+[PASS] 持仓快照的非法保证金守卫建立在「报了才判」上，不给未报补一个可比较的零
+[PASS] Q68 的八处行为用例在位（方向 fail-closed/平仓位跳过/钱字段未报/摘要区分/折算区分/行两态/默认行不报钱/落盘回读）
+[PASS] CCXT 一轮对账的两半发现只经 ccxt_reconcile_round 汇总一次
+[PASS] 报告写入与健康判定排在汇总之后：先落报告再降级，顺序倒了等于本轮结论丢失
+[PASS] 对账报告的清单就是汇总后的两半，不再回手只挑远端那份
+[PASS] worker 健康判定读同一份 round.order_issues（本地-only 的发现也要降级）
+[PASS] 待对账事实的写入点只有一处，条目与标签都来自汇总清单
+[PASS] 只有能对上本地订单的发现才落 ReconcileRequired：对不上的远端孤单不得把字符串客户号当本地句柄
+[PASS] 报告的三个覆盖度计数是 Option<usize> 且带 serde default：没取≠取了且为空，老报告缺键仍读得回来
+[PASS] Binance 现货这条链对自己从不查询的三项报「没取」，不再写死 0
+[PASS] CCXT 侧每个覆盖度计数都由「本轮真的取到了」的观测位门控，能力缺失被跳过时报缺席而不是零
+[PASS] Q69 用例在位：两半发现同时进报告与事实流，四类远端归并口径另有独立用例咬住
+[PASS] 柜台余额是 Option<i128> 且只在报过数时才可能判为一致：没报与该币种为零是两种状态
+[PASS] 余额对账不再用 unwrap_or(0) 替柜台补一个数，溢出仍然硬失败
+[PASS] Binance 播报里缺席的币种印「未报」，不印 0
+[PASS] 缺席口径三条用例在位：报了 0 不算差异、没报落 None 且与「只报别的币种」同形、报过数仍是那个数
+[PASS] 状态与数量两个维度的动作判据各只有一处定义，裁决本身只调用不另起比较
+[PASS] 适配器把动作归类委托给 qx-genglu 的同一对判据，自己不重复比较状态或数量
+[PASS] 待对账事实的 reason 与报告 action 都取自动作口径：维度码 status_mismatch 不再是事实 reason
+[PASS] 同一维度两种动作有配对用例：状态合法前进 resync、互斥迁移 manual_review
+[PASS] serve 把 API 服务注册到按 role 解析出的 worker 名下，且缺该 role 时报错而不是回落字面量
+[PASS] S1 用例在位：改名后的 api worker 仍能注册，而字面量必须失败
+[PASS] 三个只读运维端点装了现读 provider，且 provider 与启动装载共用同一个读点
+[PASS] 调度/账簿/对账三个端点全部改读现读结果，读不到就报 503 而不是念启动那份
+[PASS] S3 用例在位：启动之后落盘的报告与成交都必须读得到，两条机制各自验证
+[PASS] Scheduler 与 Strategy 两个生产循环读停机令牌，与其他 worker 循环同一口径
+[PASS] init --profile 的可用值只有一份：help 的表、错误文案与实际接受的集合三处相等
+[PASS] 子进程用例的两条 binary 取用分支都过新鲜度守卫（V11 S6）
+[PASS] 数据集登记记录的读侧只有一处实现（V11 F2）
+[PASS] 读侧按声明身份走 resolver 解析，DatasetResolver 自此有生产调用者
+[PASS] 读侧把 resolver 的失败原样往上传，不吞成『已经核过』
+[PASS] 没有登记记录的组件被记成未核对，而不是静默算过
+[PASS] 登记记录有两个读点：`dataset-bundle` 与策略回测链
+[PASS] 两侧都把核对条数印出来，读者分得出核过与没核过
+[PASS] 读侧用例在位：核得上、对不上、没登记过各一条
+[PASS] 策略回测链不保留登记后自核那句空转判据（V11 F2）
+[PASS] ApiState 没有全局事件面：事件与实时游标只住在账户投影里（V11 F1）
+[PASS] 两个零生产调用的事件兼容入口没有以别的名义回来
+[PASS] ApiState 与 ApiService 各一处、合起来唯一的事件写入者
+[PASS] 事件读路径缺账户键时报错，而不是退回那份空的全局面
+[PASS] 实时游标端点缺键走 400，而不是回一条空 200
+[PASS] WebSocket 在印出 101 升级之前先解析出投影键
+[PASS] 订阅接的是账户投影的实时游标
+[PASS] 事件用例的数据源就是生产写路径本身
+[PASS] 血缘三格是可缺席的 `Option<String>`，未声明的格子不出现在 JSON 里（V11 L2）
+[PASS] 快照信封的摘要取那份被投影的事件源，且以 `Some` 说出
+[PASS] 事件信封不再声称一份它背不起的血缘
+[PASS] L2 用例在位：协议侧钉缺席/往返两侧，产品侧带键与无键两条读路各按真实产物反查摘要
+[PASS] 账户快照进读模型只有一个装载出口，boot 经它（V11 G1）
+[PASS] 投影桥每轮重装快照，装载不在轮询循环之外只跑一次
+[PASS] 端到端用例在起桥前后各写一笔账户事实
+[PASS] 全局读模型与每份账户投影共用同一个有界快照容器，无界 BTreeMap 字段没有回潮（V11 R4-6）
+[PASS] 快照窗口按最近写入排序退场：重装把摘要挪回队尾，越限从队首退最旧那一份（V11 R4-6）
+[PASS] 控制面进 HTTP 只经 control_plane 这一个现读出口，路由与 trait 都走它（V11 H1）
+[PASS] 控制面的读侧与提交侧从同一本 store 解析，读侧经 with_control_provider 装进去
+[PASS] 控制面用例在装配服务前后各走完一次命令生命周期（V11 H1）
+[PASS] 审计链只有一个写入者 chain_audit，三本后端各自在控制面事务里接它一次，被删的 sync_control 不得复活（V11 H2、R5-2）
+[PASS] 审计链有生产读者：doctor 的 audit_chain 检查在文件与 sqlite 两本链上逐环核对并把检查点对到链尾（V11 R5-2）
+[PASS] 命令离开主表只有 retire 一处（另一次是恢复期收敛旧状态），执行路径不自己删表（V11 R5-1）
+[PASS] 审计窗口只由 trim_audit_window 一处裁剪，配额由常量推出而不是字面量（V11 R5-1）
+[PASS] 「什么算终态」只由 CommandStatus::is_final 回答，退场/裁剪/幂等/恢复期配对四处都问它（V11 R5-1、R6-4）
+[PASS] CommandStatus 的每一颗都有生产者、每一颗终态都被 is_final 认领（V11 R6-1）
+[PASS] /control/audit 一次交出两格：有界窗口与窗口外的累计摘要，用例两格都读（V11 R5-1）
+[PASS] 窗口与累计摘要在两个读面上同源：QueryPort 与 HTTP 端点共用同一个现读降级出口（V11 R7-8）
+[PASS] 五颗常驻用例钉住退场形状：成对退场、窗口内仍认身份、长跑有界、旧状态收敛、半对历史拒收（V11 R5-1）
+[PASS] 验收在开跑前取账户日志基线，晚于 Scheduler 的基线不是基线（V11 R6-2）
+[PASS] 本轮每颗新订单各自要有一颗 Executed 审计，账本既不能缩短也不能在本轮下单后原地不动（V11 R6-2）
+[PASS] 验收行把本轮新增数念出来，继承来的总数只当背景（V11 R6-2）
+[PASS] 常驻用例跑两轮并断言订单总数仍是 1：第二轮必须被当成无事可做，而不是假绿（V11 R6-2）
+[PASS] qx-api 的公开网络入口只有两颗，其余 serve* 不回来（V11 J1、V12 §19 #135）
+[PASS] 队列只留有 fencing 的 ack 入口，Postgres store 只有一条构造路（V11 J1）
+[PASS] 留下的那两颗网络入口确有生产调用点（V11 J1）
+[PASS] 原子投影链的登记行号逐条仍指到那个定义本身（V11 L3）
+[PASS] 该链的零生产调用登记在位，且写侧与读侧两侧都点名（V11 L3）
+[PASS] 三本后端的 `load_projection` 仍没有生产读者，进程内消费方仍只走不带投影的那一条
+[PASS] M4 删掉的 22 颗零调用公开项没有一颗以原名回来（V11 M4、N4b、N6、Q3）
+[PASS] 被删入口的替代写法仍然被生产走到（V11 M4、N7、Q3）
+[PASS] M4 留下的零调用公开面与对账维度的那一处正主，行号逐条仍指到定义本身（V11 M4）
+[PASS] 两条 M4 登记各占一行，且各自把点名的行号逐颗写全（V11 M4、Q3、V12 §17）
+[PASS] 策略的订单回报回调仍然零派发：除适配器自身之外，仓内没有一处 `.on_order_update(`（V11 R4-4）
+[PASS] qx-cli 的特性矩阵点亮代码里每一颗特性闸门，也点亮部署文档教出的每一颗构建（V11 M3）
+[PASS] 每颗矩阵条目都单独跑 `clippy --all-targets -D warnings`（V11 M3）
+[PASS] NATS 适配层那五颗用例有一条真会执行的 CI 腿（V13 第 8 轮 A3）
+[PASS] 长驻 accept 循环每轮问一次停机令牌，且被接出来的流转回阻塞才设超时（V11 J2）
+[PASS] 两条长驻入口都把同一个 stop 交给同一颗循环，不再各写一份阻塞循环（V11 J2）
+[PASS] 两处生产调用点把监督器的停机令牌喂进 accept 循环（V11 J2）
+[PASS] 停机用例限时等 `serve` 返回，且首行读自己带读超时：超时是判据红而不是挂死（V11 J2、O6）
+[PASS] 长连接上界只有一处声明，且两处构造点都按它开一档名额（V11 R7-e）
+[PASS] 接一条先领一格：领不到就地拒绝而不是再起线程，凭证随连接线程收尾（V11 R7-e）
+[PASS] WebSocket 事件循环每轮问一次停机令牌（V11 R7-e）
+[PASS] 两条长驻入口都把同一枚令牌递进连接线程（V11 R7-e）
+[PASS] 被拒条数既有写侧也有读侧：数不出来的拒绝等于没有拒绝（V11 R7-e）
+[PASS] 名额判据有常驻用例：撞满被拒、收尾归还、令牌能收掉正在场的流（V11 R7-e）
+[PASS] `crates/qx-api/src/lib.rs` 的 to_prometheus 用真换行分隔每一格（V11 R7-i）
+[PASS] `crates/qx-runtime/src/pipeline.rs` 的 to_prometheus 用真换行分隔每一格（V11 R7-i）
+[PASS] Prometheus 告警规则点名的指标都有生产渲染器（V11 R7-i）
+[PASS] 告警名册不是空表：判据不能读一份被删空的规则文件来证明监控在（V11 R7-i）
+[PASS] API 能写到线上的每个状态码都有原因短语，不靠 catch-all 冒充（V11 R7-i）
+[PASS] 两条 CCXT 复活链共用一份退避与一颗预算，固定 500 ms 空转没有回潮（V11 K1）
+[PASS] 成功一次即复位连胜计数，预算用尽两侧都标 Failed，用户流那道闸门真的在判连胜数（V11 K1）
+[PASS] K1 与 O5 判据的纯函数用例在位并已挂进测试壳，轮间隔那一份不在这里重写（V11 K1、O5、V13 #168c）
+[PASS] 按标的的复活上界接在 ticker 与 OHLCV 两个失败点上，成功一侧逐点复位（V11 O5）
+[PASS] 两条补散度恢复链共用一颗轮间隔函数，Binance 与 CCXT 各接一处（V11 R4-10、V13 #168c）
+[PASS] 恢复循环里 100 ms 固定空转没有回潮，停滞计数由扫描前后的分组数差推进（V11 R4-10、V13 #168c）
+[PASS] 出站投递预算只有一个判据出口，三本后端都不自己数次数、也不把阈值抄成字面量（V11 K2、R7-d）
+[PASS] relay 在 claim 之前跳过停摆事件，页数上界只在 store 那一处读（V11 K2、R7-d）
+[PASS] 投递页数从 trait 一路绑到三本后端：每家的读各自带一份上界（V11 R7-d）
+[PASS] 阈值两处都绑回 `OUTBOX_MAX_ATTEMPTS`：候选集排序与停摆计数各一次（V11 R7-d）
+[PASS] 停摆条数向库里问、再进 report：三本后端各一份不问页数的计数（V11 R7-d）
+[PASS] 停摆数一路到 Prometheus 指标与 relay worker 的自报行（V11 K2）
+[PASS] K2 用例在位：链尾解封在 file/sqlite 两后端各跑一次，停摆由重试一路跑出来（V11 K2）
+[PASS] R7-d 用例在位：三本后端各钉一次「停摆退到页尾 + limit 真截页」，relay 侧两后端各钉一次「停摆数不问页数」（V11 R7-d）
+[PASS] FileLock 的 Drop 先比对所有权令牌再删，读不到就按『不是我的』留下（V11 K3）
+[PASS] 接管动手前复读年龄、只在仍然够老时才删（V11 K3）
+[PASS] 进程监督循环每轮都读停机令牌，命中即压过同轮的『谁退出了』判定、在预算内有序收工（V11 K4）
+[PASS] 唯一的生产调用点把真令牌喂进监督循环，而不是常量判据（V11 K4）
+[PASS] K4 用例一正一反：令牌命中报 Ok、子进程自行退出仍报 Err（V11 K4）
+[PASS] 被遮蔽的外层位置参数只由一处拒绝，且这处拒绝在分派之前生效（V11 K5）
+[PASS] 托管收尾只有一处实现、按预算轮询而不是无条件 wait，预算从配置一路接到那里（V11 L4）
+[PASS] 轮询的有界性是一条可判定的算术：步长塞进剩余预算、先判收工再判超时（V11 L4）
+[PASS] runtime-check 用真实时钟做新鲜度比较，并把健康块声明成配置派生花名册（V11 L4）
+[PASS] L4 用例在位：回收判据逐条断言 + 点名消息 + 真子进程 + 体检花名册语义（V11 L4）
+[PASS] 三处子进程 stdin 写入都走 write_all_within，没有一处退回裸 write_all（V11 N8）
+[PASS] 预算只按截止时间收写线程，且只有超时那一格负责把打断管道的责任交给调用方（V11 N8）
+[PASS] CCXT 的 RPC 通道队列有界，开口之前先确认上一轮已经收干净（V11 R7-f）
+[PASS] WebSocket 长度预算按整条消息算，与单帧共用同一个常量（V11 N11）
+[PASS] venue 订单缓存封顶只挑终态订单，且越限才扫表、一次退到迟滞线（V11 N9）
+[PASS] 两个常驻 venue 的每处订单写入都过封顶，退场时级联清掉全部派生索引（V11 N9）
+[PASS] 已退场订单的回报仍按分歧升级对账，不被缓存策略静默收下（V11 N9）
+[PASS] 针路 OMS 的订单表没有偷偷共用 venue 那把封顶（V11 R4-8：登记的是刻意的不同）
+[PASS] OMS 无界的代价两头都看得见：回填对上抛打问号、实盘认不到订单才升级对账（V11 R4-8）
+[PASS] WebSocket 读侧分成消息/静默/关闭三态，且静默只在帧边界上成立（V11 N10）
+[PASS] 用户流与行情流共用同一颗重连引擎，静默既不切断会话也不充抵预算（V11 N10）
+[PASS] 行情 worker 经共用车间重连，与用户流同一条预算，不再自己持有 socket（V11 N10）
+[PASS] 两条 Binance 流的三态映射共用 read_or_forward，全仓只有一份（V11 N10）
+[PASS] 两条 Binance 流的停机自报同时带事件数与重连数（V11 O4）
+[PASS] WebSocket 握手块带整体截止，逐字节读不再等于无界累计（V11 O7）
+[PASS] WebSocket 单条消息读取有整体截止与帧数上界，两道界都在每轮读之前（V13 第 8 轮 C5）
+[PASS] HTTP 请求读取带整体截止，且截止排在每一轮 read 之前（V11 R4-9）
+[PASS] 体量上限只写一遍、头部扫描不回看整缓冲区（V11 R4-9）
+[PASS] 三处地址解析共用一颗带预算的解析入口，裸 to_socket_addrs 全仓只剩一处（V11 O9）
+[PASS] PostgreSQL 连接槽取锁有界、连接阶段的界在仓内落地（V11 O8）
+[PASS] DSN 里 socket 保活的判死上界排在连接槽等待预算之前（V13 第 8 轮 C2）
+[PASS] 补齐的三颗键逐字停在驱动的 DSN 词表上（V13 第 8 轮 C2）
+[PASS] 调用方写过的保活键一字不动（V13 第 8 轮 C2）
+[PASS] 带 fragment 的 URL 不是该由仓库重写的形状（V13 第 8 轮 C2）
+[PASS] socket 层的界只有一份实现、且有一条常驻用例问它（V13 第 8 轮 C2）
+[PASS] 投影桥每条启动失败路径都报停摆、线程退出由守卫报停摆（V11 I1）
+[PASS] `/ready` 先判刷新者再判健康位，且只在读模型里确实有账户投影时降级（V11 I1）
+[PASS] 端到端用例真起桥并让它退出，退出之后再问一次 `/ready`（V11 I1）
+[PASS] QueryPort 的三格读点与端点问同一个现读出口，用例在第一个请求之前就读（V11 I2）
+[PASS] QueryPort 的每一格各有一台『第一次现读』的服务，现读失败退回最后已知副本（V11 I2）
+[PASS] 毫秒墙钟到租约秒只有一个换算入口，且它确实除以 1000
+[PASS] 作业队列与命令队列的 claim/available 一律拿秒域时钟：30 秒租约不再 30 毫秒就过期
+[PASS] 执行 worker 收尾确认与领取用同一把秒域时钟，作业不会被自己的租约判过期
+[PASS] 八处命令队列入口全部按秒域写时间戳，且没有第九处绕开换算（同一队列混单位会让出队顺序倒置）
+[PASS] 三个 Outbox relay 出口都把墙钟换算成秒后才比较租约，relay 不会把在途事件判为可重发
+[PASS] 调度 tick 每轮先收超时运行，而收口只有 sweep_timed_out 一颗：判定复用 is_timed_out、改写复用 mark_timed_out，不在装配处再抄一遍循环
+[PASS] 派发写入的 JobRun 与入队时间戳都在秒域，与升级判定同一把时钟
+[PASS] 库内登记的 JobRun deadline 与派发写入同用秒域：timeout_seconds 不被换算成毫秒，sweep_timed_out 才真的收得到卡死的运行
+[PASS] 并发键被占用只跳过本轮，不让一个作业打死整个调度器
+[PASS] 实时策略作业的运行记录以秒填写，deadline 直接由 timeout_seconds 推出
+[PASS] 超时升级数量对运维可见，不是只在状态文件里默默变化
+[PASS] 租约存活、未到期不误判、超时升级、并发键重新派发四断言各有用例钉住
+[PASS] deploy/README.md 的端点表与 qx-api 路由集合完全一致
+[PASS] 端点表声明的兜底口径与代码一致：未列路径 404 而不是静默 200
+[PASS] 外部链路验收的脚本与方案文档同在场
+[PASS] 验收脚本的被测常量齐备（下面几项按名字取值）
+[PASS] 验收脚本点名的 8 个入口全部存在于 clap 命令表
+[PASS] 验收脚本点名的入口都写进了 help（照方案敲与照 help 敲是同一件事）
+[PASS] 验收脚本唯一那条子进程调用带整体截止（V13 第 8 轮 C7）
+[PASS] 挂住那一腿按正数预算超时，且超时处被接住而不是抛成 traceback
+[PASS] 超时按失败退出码收口并先写进阶段记录，结果包里的挂死有可核对的那一格
+[PASS] 验收配置 BASE_CONFIG 指向仓库里的真文件
+[PASS] 验收脚本点名的 worker 在验收配置里存在且已启用
+[PASS] 验收配置的凭据引用与脚本检查的环境变量是同一组名字
+[PASS] 账户快照 JSON Schema 只有一份文本：常量按字节包含 schemas/ 那份，生产 Rust 侧无第二份手抄
+[PASS] 契约自身自洽：required 的每一项都在 properties 里，八个钱字段各自有声明
+[PASS] 契约声明的顶层键集合正好等于写侧产物印出的那些：少一格是漏说，多一格是空头承诺
+[PASS] 六张嵌套行各自声明 required 与 properties，两份名单都正好盖住写侧那一行的键集合
+[PASS] 四张键表声明了键本身的形状（propertyNames.pattern），没把键位留成任意字符串
+[PASS] 契约里的订单方向与状态词表逐项等于内核枚举变体
+[PASS] 钱字段的可空声明逐项等于协议类型：`Option<i128>` 才可空，夹具里两种状态同时存在
+[PASS] 契约里的协议名与版本号，就是读侧 `from_json` 认的那一对
+[PASS] GET /schema/account-snapshot-v1 发出的就是这份常量，且客户端取契约不必带操作者凭据
+[PASS] 对面 Python 的快照读侧与契约同宽：认同一个版本号、要求同一组必填键
+[PASS] 契约的九条判据各有常驻用例：一份文本、键集合覆盖写侧、可空口径、版本闸门与跨版本文档、嵌套行必填、读侧缺字段探针、键表键形状
+[PASS] 策略契约文本只有一份：schemas/ 下第二份 *strategy*.json 就会有两套形状真相
+[PASS] 这份契约有三个常驻读者：Rust 形状用例、Python 桥用例、对外文档
+[PASS] 契约的四条判据各有常驻用例：字段集等于写侧、必填等于读侧不能缺省的、版本 const 同源、词表是写侧发得出且读侧收得下的那一套
+[PASS] 契约自洽：两层各自点名必填的键都在自己的 properties 里，且意图行的形状只有一份写法
+[PASS] 契约里 `schema_version` 那格 const 就是运行时版本号，不在第二处手写
+[PASS] 文档那两行必填名单逐项等于契约的 required：两份名单各写一遍就会漂
+[PASS] 意图层四格词表逐项等于内核枚举的 snake_case 变体，null 只出现在可省的三格上
+[PASS] 契约词的两条来路（写侧 Debug 小写 / serde snake_case）在现有全部变体上重合
+[PASS] 写侧投影到契约词表的那几颗字面量，每颗都在契约里、每颗都对着真变体
+[PASS] 文档那句『Python 桥发出 N / M 格意图字段』的两个数是当场量的
+[PASS] 日历夹具与摘要成对存在，两侧用例读的是同一对文件
+[PASS] 期望摘要只在夹具旁边那一份文件里：代码与用例都读文件，不各自抄一份数
+[PASS] 日历文档的字段白名单与契约版本号在两侧逐项相等，声明的个数也等于白名单长度
+[PASS] 日历指纹的三条 Rust 与两条 Python 常驻反例都在：共摘要、只随规范字段动、夹具能被回测链装载
+[PASS] C ABI 的头文件与 Rust `#[repr(C)]` 是同一组类型，两侧都没有多出或缺失的一份
+[PASS] 每个 C ABI 结构的字段名与顺序在头文件与 Rust 侧逐位相等
+[PASS] 每个 C ABI 字段的类型按映射表逐字段相等（定宽整数、指针与嵌套结构都核对）
+[PASS] 枚举判别值序列与 ABI 版本常量两侧相等
+[PASS] 四张键表的稳定 JSON 只有一个渲染点，且它委托 serde 而不是再抄一份字段顺序
+[PASS] 持仓/订单/成交/划转全部经该渲染点，标的键只有一个写法，文件里没有剩下的手抄键值模板
+[PASS] 往返用例在位：稳定 JSON 既是合法 JSON、又与 serde 那份同源、还能被 from_json 解回同一份状态
+[PASS] 跨语言夹具带着写侧的真实编码：四张键表的键是字符串、枚举是变体名，不是数字键/数字码
+[PASS] 同一份夹具两侧各钉一次：Rust 比对 `to_json` 全等，Python 把它喂进 `load_account_snapshot`——读侧不再只吃手抄的空表字典
+[PASS] BarFrame 的三处契约版本常量同为一个数字，写侧把它印成文档第一格、读侧对更高版本 fail closed
+[PASS] 写侧印出的键集合 = Python v1 严格模式允许的键集合（少一格就会被判未知键）
+[PASS] BarFrame 的顶层键名单三处同为一串：Rust 读侧认的 = 写侧印出的 = Python 严格模式允许的
+[PASS] deploy 里 5 份 bar-frame 示例的每一格顶层键都被读侧读到
+[PASS] 帧契约用例在位：声明版本、拒绝未来版本、无版本老文档仍走兼容分支
+[PASS] 帧到 ProviderRegistry 的桥与它的接收时间旋钮都不存在，全仓无一处复活
+[PASS] 帧读侧不声明数据到达时间：没有入口能把查询窗口末端写成 PIT 可见性
+[PASS] qx-data 不再为一条没人走的注册桥背着 qx-provider/qx-guanxing
+[PASS] 能力矩阵不再拿 qx-provider 充当帧注册入口的证据
+[PASS] QualityIssue 每个变体都有构造它的生产者（判定臂不算）
+[PASS] 交叉报价只在 adapter 的报价入口判，质量闸门不再声明一个构造不出来的致命变体
+[PASS] 变体生产者判据扫到了全仓的 pub enum（解析退化会让零变体假绿）
+[PASS] 每个 pub enum 变体都有生产代码里的限定名生产者，或在允许清单里说明它的生产者在线格式上
+[PASS] 线格式允许清单逐条可复核：变体仍在册、所在枚举确实 Deserialize、且确实零生产者
+[PASS] 研究快照绑定入口一定会走事件回测复核，不是摆在旁边等人想起来调用
+[PASS] 三个研究快照读点都把 runtime root 交给绑定入口，没有第二处绕开复核
+[PASS] 证据按文件内容重算摘要，且摘要口径取自 qx-factor 的盖章入口而不是运行时另抄一份
+[PASS] 没声明的不拦、声明了缺摘要的当场拒、清单必须同血缘且覆盖整个验证窗口
+[PASS] 事件回测证据复核有四类拒绝与一类放行的行为用例（门禁只看文本，用例才证明它会拒）
+[PASS] 回测时钟口径不再挂在一个没人推进的类型上：全仓代码找不到 TestClock/advance_to
+[PASS] README 的「不用系统时间」底线把时间轴责任交给数据侧闸门，不再许诺虚拟时钟
+[PASS] 回测与重放路径的 crate 在生产文本里一次系统时间都不读（读一次就等于放弃可重放）
+[PASS] 墙钟豁免的每一份文件都还在场（否则豁免就是一张没人核对的空头支票）
+[PASS] 时间轴由数据侧决定：入库前排序 + 同标的 ts 严格递增 + 帧读侧乱序报错，三处缺一不可
+[PASS] 非严格递增的时间轴会被当场拒掉，且排序、Bar 入库与 BarFrame 读侧三处都有行为用例
+[PASS] 形状判据在装配侧只有一处，且它复用库侧派发器同一颗 undispatchable_by_registry；新建与载入两条路径各问一遍，拒绝发生在写入 Scheduler 状态之前
+[PASS] 一次 tick 先复核 RunManifest 再拿它的摘要给 JobRun 盖血缘，到期判定只有 due_jobs_with_calendar 这一个入口
+[PASS] 库里那两条带事件/手工的到期判定在 qx-scheduler 之外没有生产读者，而带日历的那条确实被生产派发走着（口径仍如实降级）
+[PASS] 四种被拒形状、被支持形状、载入分支复核与非法 manifest 四类各有经过真实入口的用例，且每个形状各自断言它命中的那一格拒因
+[PASS] 对外能力矩阵把这条派发边界写成了 limitation，不是留在代码注释里
+[PASS] 能力矩阵声明了「公司行为读侧三条查询无生产读者」，不是只在代码注释里承认
+[PASS] 这三条查询在全部 crate 的生产文本里一次都没被调用（声明与现状同源，接上读者就要撤声明）
+[PASS] 能力矩阵把「快照无仓库内生产者」与「工件值无读者」立成 limitation，不是写在代码注释里
+[PASS] 物化/增量物化/计划编译/finkit 校验/动量计算在 src 生产文本里零调用（写侧确实无人装配）
+[PASS] 四处读侧确实只认 candidate 血缘与指纹，没有读 artifacts 里的逐标的因子值
+[PASS] 接口文档逐层列出的快照字段与 serde 结构体的字段一一对齐（不多不少）
+[PASS] 接口文档直说快照由仓库外导出、且拼错的键会被拒绝，不让读者以为框架会生成
+[PASS] 五层快照 JSON 结构全部带 deny_unknown_fields（文档承诺与解析行为同源）
+[PASS] 快照读侧仍在就绪判定与两条策略装配里被真的解析（limitation 只承认写侧缺，不掩盖读侧）
+[PASS] 能力矩阵把「自动重试链无生产装配」立成 limitation，而不是只写在代码注释里
+[PASS] 到期重试入口在 qx-scheduler 之外零生产调用（limitation 说的确实是目前的事实）
+[PASS] 接口文档写明一次运行的收口口径：不自动重跑，且成功运行不带 error_code
+[PASS] Strategy worker 的成功收口只交终态，不再把结果码当作 error_code 传给 JobRun
+[PASS] 默认回测本金是 account_base.rs 里唯一一处具名常数，生产代码不得再抄 100,000 字面量（V11 Q72）
+[PASS] 4 种本金来源各有常量，多腿链只报自己的定资口径、不会冒充默认本金
+[PASS] BarBacktestAssembly 的本金只能由构造参数给出：字段私有、装配处无默认、事后不可回写（V11 Q72）
+[PASS] 回测链一律经 account_base 的出口拿本金，没有一条链自己摸那一格配置，也不存在第二个读键 helper（V11 Q72 / V12 R3）
+[PASS] 三条单腿链各印一行本金，且都经 backtest_account_base_note 排版（V11 Q72）
+[PASS] 非正声明当场报错而不是回落默认，正数声明原样折成 Money（V11 Q72）
+[PASS] 摘要以 v4 落 account 块，期初本金与来源两格都取自真正记账的那一份（V11 Q72）
+[PASS] strategy.initial_cash_raw 是 Option<i128> 定点数、省略时不落键，默认构造写 None（V11 Q72）
+[PASS] 两条腿各有本金的多腿链当场拒收那格单账户声明，拒绝理由住在共用读法里（V11 Q72）
+[PASS] Q72 用例在位：三条读法各一条单元，命令行侧默认/改结果/拒非正/摘要/多腿拒收各一条
+[PASS] 交付面 CSV 的两份表头在写侧各只出现一次（第二处就是第二把尺）（V12 R7-h）
+[PASS] 交付面 CSV 的两份表头都被常驻用例整串读过（列序也是契约，逐列 contains 钉不住）（V12 R7-h）
+[PASS] 两份 CSV 逐行核对列数，成交明细的行数还对回摘要声明的成交笔数（V12 R7-h）
+[PASS] README 仍以「现状」口径报台账读数的那一段在场（整段被删就是读者又没了）（V12 R7-h）
+[PASS] README 的台账六格读数与磁盘同数（写完不再量就是这一条要抓的）（V12 R7-h）
+[PASS] 安全白皮书范围行的 crate 数与 .py 数与磁盘同数（两个 23 撞车时读者分不出谁过期了）（V12 R7-h）
+[PASS] 「声明了没人应用」的判据只有一处实现，且文案同时交代后果与读点（V11 O2）
+[PASS] 六格各有自己的判据，且就长在取顶层值的那处读点里（V11 O2）
+[PASS] config validate 不接管这条判据：实例声明在 `strategy backtest` 那条链上是真生效的（V11 O2）
+[PASS] O2 用例三颗在位并已挂进测试壳：实例单独声明拒、两侧同一份照常装配、真冲突点名顶层（V11 O2）
+[PASS] 两格产品政策的落点判据只有一处实现，字段表与后果文案同住在那里（V11 R4-5）
+[PASS] 落点判据扫的是每一条策略块，实例块绕不过这道闸门（V11 R1 同判据）
+[PASS] 四条内置策略链各有自己的接线：三条磁盘读点 + strategy backtest 的内置分支（V11 R4-5）
+[PASS] strategy backtest 只在派生不出政策时拒，且不早于 `[Strategy · Signal]` 那行播报（V11 R4-5）
+[PASS] R4-5 用例三颗在位并已挂进测试壳：四条链各自拒、有落点时让路、实例块同样拒（V11 R4-5）
+[PASS] config validate 不接管这条判据：两格在实盘/Paper/跨语言回测上都是真生效的（V11 R4-5）
+[PASS] 「有没有执行者」只判一次，且这一处逐格点名那三类可执行命令（V11 P1）
+[PASS] 受理处拒在写入 `Accepted` 之前，理由点名「没人执行」而不是别的检查顺路顶上（V11 P1）
+[PASS] 可执行性判据不侵入结构性校验与恢复读侧：修复前落盘的历史命令仍要读得回来（V11 P1）
+[PASS] 八类命令种类仍全部留在契约里：历史审计记录要能反序列化（V11 P1）
+[PASS] 5 类无执行者的逐格拒、3 类有执行者的逐格照常受理，两份都是常驻用例（V11 P1）
+[PASS] 旧记录读回来处置、以及 HTTP 侧拿到 400 而不是 202，两端各有一颗常驻用例（V11 P1）
+[PASS] 受理落账之后入队失败回 503 `control_command_not_queued`，202 只代表真的进了队列（V11 R6-3）
+[PASS] 入队这一半的常驻用例两面都在：失败必须 503、可入队必须照常 202 且命令真进了队列
+[PASS] 装配处把队列写入失败原样报成 Err，不在源头吞掉（V11 R6-3）
+[PASS] 被删掉的引擎、因果队列与时钟没有以原名回到 crates/（V11 P2）
+[PASS] `clock.rs` 只剩一格单位口径 `pub type Ts = u64;`，且它是内核里唯一一份（V11 P2）
+[PASS] 三份口径来源都不再承诺那三件死实现（V11 P2）
+[PASS] 设计底线改口到真实推进路径：回测按 bar 序列、实盘按到达顺序推进 `EventLog`（V11 P2）
+[PASS] 因果优先级的数值只有一处真相，Python 参考形状逐项跟着它走（V11 P2）
+[PASS] (ts, prio) 单调落盘的判据只有写入处那一份，且在正文不在用例里（V11 P2）
+[PASS] 本金交叉判据的四处部件与两处名字各只有一份定义，第四格来源是具名常量（V12 R3）
+[PASS] 回测出口先拒两份互不相等的本金，再折成本金（V12 R3）
+[PASS] 两处等值时才把来源改口成第四格，孤立声明不得冒充「两处一致」（V12 R3）
+[PASS] 带 config 的路径只能经带闸门的读法拿本金，不带 config 的按默认（V12 R3）
+[PASS] crates/qx-cli/src/venue_runtime/paper_submit.rs 在按 worker 那一格入账之前先拒两份本金、再把一致说出来（V12 R3）
+[PASS] crates/qx-cli/src/venue_runtime/paper_worker.rs 在按 worker 那一格入账之前先拒两份本金、再把一致说出来（V12 R3）
+[PASS] 冲突报错并列点出回测侧与 Paper 侧两处名字与各自的数（V12 R3）
+[PASS] R3 用例在位：等值/孤立声明/多 paper 账户各自定资/两份不等四条读法，且已挂载
+[PASS] 读侧的缺席词只有 report_readout.rs 一处定义，命令侧不再兜底成 0（V12 R1）
+[PASS] 复核结论的缺席词同样只在 report_readout.rs 定义一处，命令面不得自带第二份字面量
+[PASS] 两个命令各用一份正文函数，正文函数各只定义一处（report_readout_lines / latest_backtest_readout_lines）
+[PASS] 样本单位与 bars 在同一行成对印出，且只有读侧一处
+[PASS] 产物世代由正文第一行说出，且只在共用读法里拼一次
+[PASS] 读侧世代表里最新的块与摘要写侧的 schema_version 同号（写侧升级必须带着读侧一起升）
+[PASS] 多腿 cost_bps 的口径定义一处、调用一处，产物假设行同时说明零换手是 null
+[PASS] R1 用例在位：七条排版/读法单元 + 四条 report/status 命令行用例
+[PASS] report_readout 在 crate 根以 mod + pub(crate) use 成对挂载
+[PASS] API 入口两臂都在停机阶梯上等 worker，而阶梯是仓内唯一装终止信号处理函数的地方（V12 W9）
+[PASS] qx-cli 每一处 supervisor.spawn_worker 都配一颗停机阶梯汇合，而不只 API 那两处（V12 W9）
+[PASS] Python SDK 读策略契约的宽严逐项等于契约：必填的每一格缺失即拒、可省的那一组才允许补默认，且这条同宽有常驻用例在跑（V12 W10）
+[PASS] 能力矩阵每条都带四档状态、证据与未实现原因
+[PASS] 能力矩阵证据路径全部存在（一行里的每个路径 token 都核对，不止行首）
+[PASS] 未拿到外部沙盒记录前 sandbox_tested 全为 false
+[PASS] 行号判据扫得到台账（引用数与带名绑定数都站在地板之上）
+[PASS] 台账引用的文件都在场
+[PASS] 并列的名字与并列的行号一颗对一颗（少写一颗就是整体错位）
+[PASS] 台账的行号没有越出被引文件的长度
+[FAIL] 台账指过去的那一行不是空行 — 空行 ['tools/check_architecture.py:12963 裸引用落在空行（同行只点了文件名，台账第 233 行）', 'tools/check_architecture.py:13078（台账第 673 行）']（共 2 处）
+[PASS] 台账的 `path:line` 只落在一份文件上（同名候选会让空行与点名两格判据整段跳过）
+[PASS] 台账点名某颗东西时，被引那一格里就是那颗
+[PASS] 行号判据扫得到V11 方案书（引用数与带名绑定数都站在地板之上）
+[PASS] V11 方案书引用的文件都在场
+[PASS] 并列的名字与并列的行号一颗对一颗（少写一颗就是整体错位）
+[PASS] V11 方案书的行号没有越出被引文件的长度
+[PASS] V11 方案书指过去的那一行不是空行
+[PASS] V11 方案书的 `path:line` 只落在一份文件上（同名候选会让空行与点名两格判据整段跳过）
+[PASS] V11 方案书点名某颗东西时，被引那一格里就是那颗
+[PASS] 行号判据扫得到变更日志（引用数与带名绑定数都站在地板之上）
+[PASS] 变更日志引用的文件都在场
+[PASS] 并列的名字与并列的行号一颗对一颗（少写一颗就是整体错位）
+[PASS] 变更日志的行号没有越出被引文件的长度
+[PASS] 变更日志指过去的那一行不是空行
+[PASS] 变更日志的 `path:line` 只落在一份文件上（同名候选会让空行与点名两格判据整段跳过）
+[PASS] 变更日志点名某颗东西时，被引那一格里就是那颗
+[PASS] 行号判据扫得到安全白皮书（引用数与带名绑定数都站在地板之上）
+[PASS] 安全白皮书引用的文件都在场
+[PASS] 并列的名字与并列的行号一颗对一颗（少写一颗就是整体错位）
+[PASS] 安全白皮书的行号没有越出被引文件的长度
+[PASS] 安全白皮书指过去的那一行不是空行
+[PASS] 安全白皮书的 `path:line` 只落在一份文件上（同名候选会让空行与点名两格判据整段跳过）
+[PASS] 安全白皮书点名某颗东西时，被引那一格里就是那颗
+[PASS] 行号判据扫得到V13 方案书（引用数与带名绑定数都站在地板之上）
+[PASS] V13 方案书引用的文件都在场
+[PASS] 并列的名字与并列的行号一颗对一颗（少写一颗就是整体错位）
+[PASS] V13 方案书的行号没有越出被引文件的长度
+[PASS] V13 方案书指过去的那一行不是空行
+[PASS] V13 方案书的 `path:line` 只落在一份文件上（同名候选会让空行与点名两格判据整段跳过）
+[PASS] V13 方案书点名某颗东西时，被引那一格里就是那颗
+[PASS] 行号判据扫得到V12 方案书（引用数与带名绑定数都站在地板之上）
+[PASS] V12 方案书引用的文件都在场
+[PASS] 并列的名字与并列的行号一颗对一颗（少写一颗就是整体错位）
+[PASS] V12 方案书的行号没有越出被引文件的长度
+[PASS] V12 方案书指过去的那一行不是空行
+[PASS] V12 方案书的 `path:line` 只落在一份文件上（同名候选会让空行与点名两格判据整段跳过）
+[PASS] V12 方案书点名某颗东西时，被引那一格里就是那颗
+[PASS] 卯眼逐颗对齐：README 说它走不到 ⟺ 生产文本里零调用点
+[PASS] README 的 crate 表逐族点名未接线能力，与实际可达性同口径
+[PASS] README 说清卯眼真正走到的是 fnv1a 自检签名，且不与 C ABI 那条接到的 Ed25519 混读
+[PASS] 卯眼那两颗生命周期超时报成未接线声明，且确实没人把它们换算成等待（V11 R4-3）
+[PASS] README 自己印出的三处卯眼行号仍指到定义本身
+[PASS] 卯眼的静态装配计划按『已随实现删除』作保：代码不长回那两颗写法，README 的速查行也不撤这句（V12 §16、合流第二次收口）
+[PASS] 门禁脚本自身解析出的模块级常量数不低于地板（判据改瞎了先红在这里）
+[PASS] 门禁脚本里每一颗模块级常量都被引用（审计者不得给自己留孤儿）
+[PASS] 门禁脚本里每颗模块级常量只定义一次（同名二次定义会静默覆盖先写的那把尺）
+[PASS] 门禁里每一颗 *_check 判据都被 runner 调用（定义了不等于在跑）
+[PASS] 单文件行数预算只降不升、无未登记的超大文件
+[PASS] CI 作业文件的行号引用真落在名册的解析面里（V13 第 8 轮 B）
+[PASS] 人工出口那颗 helper 在三本后端各自的用例里各被调用一次，postgres 也在内（V13 第 8 轮 A4）
+[PASS] 停摆夹具跨数位边界（8 与 14），让『按数字比』与『按文本比』在两颗 helper 里各分岔一次（V13 第 8 轮 A4）
+[PASS] 停摆条数按增量问库里的状态量：入账 +2、人工确认之后 +1，两处都现读（V13 第 8 轮 A4）
+[PASS] 三格溯源由读侧一处印出，每格各有一次自己的读法（V13 第 8 轮 A6）
+[PASS] 写侧三键各只落一处，读侧念的正是写侧那三格（V13 第 8 轮 A6）
+[PASS] 排版侧与命令行侧各有一颗用例钉住这一行（V13 第 8 轮 A6）
+[PASS] 命令侧不再拼这三格，正文只从共用读法里出（V13 第 8 轮 A6）
+[PASS] 两条 R7 计数在告警规则里各占一条 expr（V13 第 8 轮 A5）
+[PASS] 两格各住在自己的渲染器体内：API 那份在 `to_prometheus`，worker 那份在 RelayMetricTotals 的 render 窗口里（V13 第 8 轮 A5）
+[PASS] `RelayMetricTotals` 的 render 用真换行分隔每一格（V13 第 8 轮 A5，R7-i 的同族形状）
+[PASS] `ConsumerMetricTotals` 的 render 用真换行分隔每一格（V13 第 8 轮 A5，R7-i 的同族形状）
+[PASS] 共享内存模式也保住子进程 stdin 的写端：句柄进 self.stdin，父进程退出时由 OS 关掉（V13 第 8 轮 C4）
+[PASS] worker 侧的轮询循环读父进程存活事件（V13 第 8 轮 C4）
+[PASS] 补删环文件只走『父进程已经不在了』那一格（V13 第 8 轮 C4）
+[PASS] 两格常驻用例都在位：stdin 还开着时必须仍在服务，关掉之后必须在预算内自收摊（V13 第 8 轮 C4）
+[PASS] 策略 worker 响应泵：队列有界、单行有上限、迟到答复在写入前排空（V13 第 8 轮 C8）
+[PASS] C8 的七颗泵用例逐颗在位，且那份文件真被 tests 目录模块挂载（V13 第 8 轮 C8）
+[PASS] 门禁自身至少执行 515 条判据（少一条就是有人整段删掉了判据）
+
+架构不变量自检失败 1 项：
+  ✗ 台账指过去的那一行不是空行 — 空行 ['tools/check_architecture.py:12963 裸引用落在空行（同行只点了文件名，台账第 233 行）', 'tools/check_architecture.py:13078（台账第 673 行）']（共 2 处）

@@ -1833,7 +1833,7 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-protocol::from_wire_json": "成对的读侧，且与 from_json 共用 R2 那一道契约版本闸门，删掉就没有第二处能证明闸门在 wire 入口也生效",
     "qx-protocol::to_qifi": "见 capabilities.yaml account_snapshot_qifi_export_is_taken_by_a_test_only：QIFI 的真实消费者在仓外，仓内只有 src/tests.rs:62 驱动它",
     "qx-runtime::to_json_for": (
-        "策略输出契约的 Rust 侧序列化；生产方向是 Python→Rust（from_json_for 在 strategy_host.rs:545），"
+        "策略输出契约的 Rust 侧序列化；生产方向是 Python→Rust（from_json_for 在 strategy_host.rs:548），"
         "这颗由 strategy_api_schema_contract.rs 的四条用例钉住「两侧同一形状」"
     ),
     "qx-xingban::corporate_actions_from_data": (
@@ -6452,7 +6452,7 @@ CONSUMER_CHAIN_PROJECTIONS = (
     "crates/qx-storage/src/postgres.rs",
 )
 CONSUMER_CHAIN_REFS = (
-    ("crates/qx-storage/src/nats.rs", 352, "pub fn consume_batch_with_projection"),
+    ("crates/qx-storage/src/nats.rs", 350, "pub fn consume_batch_with_projection"),
     ("crates/qx-storage/src/lib.rs", 918, "pub fn consume_with_projection"),
     ("crates/qx-storage/src/lib.rs", 807, "fn load_projection"),
     ("crates/qx-storage/src/file/consumers.rs", 285, "fn load_projection"),
@@ -6769,6 +6769,21 @@ CI_MATRIX_LINT = (
     'cargo clippy -p qx-cli --no-default-features --features "${{ matrix.features }}" '
     "--all-targets -- -D warnings"
 )
+# V13 第 8 轮 A3：`cargo test --workspace` 走默认特性，qx-storage 的 `default = []` 把整段
+# `mod nats` cfg 掉，而 service-backends 那一腿只跑 `--ignored`——nats.rs 的那五颗用例
+# 从此没有任何作业执行过。这条腿不带 `--ignored`，跑的就是它们。
+CI_NATS_LIB_LEG = "cargo test -p qx-storage --features sqlite,postgres,nats --lib"
+CI_NATS_GUARD_FILE = "crates/qx-storage/src/nats.rs"
+# 这条腿唯一的执行对象：`mod tests` 里那五颗 `#[test]`（两颗静态守卫数源码接线、三颗行为用例
+# 跑真等待）。逐颗点名是因为只数命令行等于没有判据——删掉一颗、给它加上 `#[ignore]`、改个名，
+# `--lib` 腿都照样绿，而「把有界等待改回裸 block_on_runtime」这种挂法就再没有人执行过。
+CI_NATS_GUARD_TESTS = (
+    "bounded_wait_returns_the_completion_inside_its_budget",
+    "bounded_wait_names_a_reply_that_never_lands",
+    "every_nats_await_site_goes_through_the_bounded_wait",
+    "the_wedged_latch_has_exactly_one_setter_and_one_reader",
+    "bounded_ack_passes_through_or_names_the_stall",
+)
 
 
 def ci_feature_matrix_check() -> None:
@@ -6830,6 +6845,23 @@ def ci_feature_matrix_check() -> None:
         "每颗矩阵条目都单独跑 `clippy --all-targets -D warnings`（V11 M3）",
         "只补条目不补 lint 等于把新组合交给 check/test：门后 rot 的第一现场是 unused import "
         "告警，告警不升级为错误就还是没人看见（第 11 项补 Clippy 的同一个理由）",
+    )
+    nats_leg = [line for line in workflow if CI_NATS_LIB_LEG in line]
+    nats_mod = source_with_tests(CI_NATS_GUARD_FILE).split("mod tests", 1)
+    nats_tests = nats_mod[1] if len(nats_mod) == 2 else ""
+    nats_missing = [name for name in CI_NATS_GUARD_TESTS if f"fn {name}(" not in nats_tests]
+    check(
+        len(nats_leg) == 1
+        and nats_leg[0].strip() == f"run: {CI_NATS_LIB_LEG}"
+        and not nats_missing
+        and "#[ignore" not in nats_tests,
+        "NATS 适配层那五颗用例有一条真会执行的 CI 腿（V13 第 8 轮 A3）",
+        f"读到 {len(nats_leg)} 条 `--lib` 腿（要恰好一条，且那一行逐字等于这条命令——加 "
+        f"`--ignored`、`--no-run` 之类旗标都等于把执行者换成没有）；名字缺席 {sorted(nats_missing)}、"
+        f"`#[ignore` 在场 {nats_tests.count('#[ignore')} 处："
+        "`cargo test --workspace` 走默认特性，qx-storage 的 `default = []` 把整段 `mod nats` "
+        "cfg 掉；service-backends 那一腿只跑 `--ignored`。这条 `--lib` 是那五颗唯一的执行者，"
+        "用例上加 `#[ignore]`、改名或删颗同样把守卫摘了——改回裸 `block_on_runtime` 会一路绿到生产",
     )
 
 
@@ -6967,7 +6999,7 @@ def api_live_connection_ceiling_check() -> None:
 
 
 # V11 R7-i：`/metrics` 的整份文本此前挤成一行（分隔符是两字符的字面反斜杠加 n），端点照样回
-# 200、`contains` 照样绿，而六条告警一条都取不到样本。这一族要两条判据：写出的形状 + 告警
+# 200、`contains` 照样绿，而那批告警一条都取不到样本。这一族要两条判据：写出的形状 + 告警
 # 名册与生产渲染器对得上，缺后者则改名一条指标照样全绿。
 PROMETHEUS_ALERTS_FILE = "deploy/prometheus/qianxing-alerts.yml"
 BACKSLASH = chr(92)  # 门禁里没有字符串转义的旁路，按字符码写出这一枚才不会有歧义
@@ -6976,7 +7008,7 @@ REAL_NEWLINE_ESCAPE = BACKSLASH + "n"  # 反斜杠、n：Rust 源码里的换行
 
 
 def prometheus_exposition_check() -> None:
-    """两份 exposition 的分隔符必须是真换行，且告警规则点到的指标都有生产渲染器。"""
+    """两份 exposition 的分隔符必须是真换行，且告警规则点到的指标都出现在剥掉注释与测试之后的生产代码里。"""
     for rel in ("crates/qx-api/src/lib.rs", "crates/qx-runtime/src/pipeline.rs"):
         body = fn_body(
             production_text((ROOT / rel).read_text(encoding="utf-8")), "to_prometheus"
@@ -6997,7 +7029,7 @@ def prometheus_exposition_check() -> None:
     for path in rust_sources():
         if not production_rust_source(path):
             continue
-        text = path.read_text(encoding="utf-8")
+        text = production_text(path.read_text(encoding="utf-8"))
         rendered.update(re.findall(r"\bqx_[a-z0-9_]+\b", text))
     check(
         bool(demanded) and all(name in rendered for name in demanded),
@@ -7657,9 +7689,10 @@ def termination_budget_check() -> None:
     # **接线形状**：调用点交的是 socket 那一份超时、三处解析都从同一颗入口走——这些在
     # 单测里摸不到真 socket，只能数文本。
     adapter_all = (ROOT / ADAPTER_ROOT_FILE).read_text(encoding="utf-8")
+    header_body = fn_body(adapter, "read_header_block")
     check(
         adapter.count("fn read_header_block<R: Read>(reader: &mut R, budget: Duration)") == 1
-        and adapter.count("let deadline = Instant::now() + budget;") == 1
+        and header_body.count("let deadline = Instant::now() + budget;") == 1
         and adapter_flat.count("read_header_block(&mutsession.stream,timeout)") == 1
         and adapter_all.count(
             "fn websocket_handshake_header_block_stops_at_its_own_deadline"
@@ -7670,7 +7703,42 @@ def termination_budget_check() -> None:
         "占住 65536 × 超时，而 64 KiB 那道上限只在累计之后才问。这一项数的是接线（签名带 "
         "budget、截止变量在位、调用点交的是 socket 超时、用例挂在那儿）；只把截止检查挪出循环"
         "而其余形状不动，红的是用例那一格（O7-M1 实测：仅断言红），把 budget 从签名里摘掉则"
-        "两边一起红",
+        "两边一起红。截止那格按 `read_header_block` 的函数体数，不按整份文件数：V13 第 8 轮 C5 "
+        "把同一形状复制到了消息读取侧，全文件计数因此从 1 变 2，那样数会红在无关的搬家上",
+    )
+    # V13 第 8 轮 C5：一条消息的读取圈数没有上界时，"每轮都有界"不等于"整体有界"——这与 O7
+    # 握手块是同一颗缺陷，只是这次在分片侧。两颗界各管一个维度（墙钟管慢，帧数管圈），
+    # 且都必须排在真正的读之前：放在读之后等于每轮多放行一次无界读。机制由两颗滴帧用例
+    # 各自咬一次（帧数上界与墙钟各一条），门禁数用例摸不到的那几格：值、接线、只有一颗入口。
+    within_body = fn_body(adapter, "read_websocket_message_within")
+    within_flat = "".join(within_body.split())
+    msg_frame_at = within_flat.find("".join("if frames >= max_frames {".split()))
+    msg_deadline_at = within_flat.find("".join("if Instant::now() >= deadline {".split()))
+    msg_read_at = within_flat.find("".join("read_server_frame_or_idle(stream)?".split()))
+    check(
+        adapter.count("const WEBSOCKET_MESSAGE_BUDGET: Duration = Duration::from_secs(120);") == 1
+        and adapter.count("const MAX_WEBSOCKET_FRAMES_PER_MESSAGE: usize = 8_192;") == 1
+        and "".join(fn_body(adapter, "read_websocket_message").split()).count(
+            "read_websocket_message_within(stream,WEBSOCKET_MESSAGE_BUDGET,"
+            "MAX_WEBSOCKET_FRAMES_PER_MESSAGE,)"
+        )
+        == 1
+        and adapter.count("read_websocket_message_within(") == 1
+        and within_body.count("let deadline = Instant::now() + budget;") == 1
+        and within_body.count("let mut frames = 0_usize;") == 1
+        and adapter_all.count("fn websocket_frame_dribble_stops_at_its_frame_ceiling(") == 1
+        and adapter_all.count(
+            "fn websocket_dribble_hits_the_wall_clock_before_the_frame_ceiling("
+        )
+        == 1
+        and 0 <= within_flat.find("loop{") < msg_frame_at < msg_deadline_at < msg_read_at,
+        "WebSocket 单条消息读取有整体截止与帧数上界，两道界都在每轮读之前（V13 第 8 轮 C5）",
+        "socket 的读超时只界住『这一轮有没有字节』：对端每个读窗滴一帧，这条调用就永不出头，"
+        "而调用点在 `while !should_stop()` 里，停机令牌与心跳都要等它返回，进程只能靠外部监督器硬杀。"
+        "摘掉帧数上界，滴帧用例只剩脚本耗尽后的读错误，红在错误名；摘掉墙钟则要靠 8 192 帧才收口，"
+        "实测 129 秒，而每帧最坏能等满 socket 的 10 秒超时。两道界挪到读之后＝每轮多放行一次无界读："
+        "帧数那道由用例的 socket.index 断言看到，墙钟那道用例只看得到返回、只有位置钉看到。"
+        "预算值若被接成 socket 超时本身，停机窗口（≤300 s）与这条读取的关系就没人能解释",
     )
     # V11 R4-9：API 的 HTTP 读侧与 O7 的握手块同族——`configure_connection` 那 100 ms 只界住
     # **单次** `read`，每 99 ms 挤一个字节对端从不触发它，而 1 MiB 的体积上限要 29 小时才问得到。
@@ -7735,7 +7803,7 @@ def termination_budget_check() -> None:
         and postgres.count("lock_slot(&self.clients, index, SLOT_WAIT_BUDGET)") == 2
         and "self.clients[index].lock()" not in postgres
         and postgres.count(
-            "let dsn = dsn_with_connect_timeout(dsn, CONNECT_TIMEOUT_SECONDS);"
+            "let dsn = dsn_with_socket_defaults(dsn, CONNECT_TIMEOUT_SECONDS);"
         )
         == 1
         and postgres.count("fn a_slot_that_never_releases_gives_its_waiter_an_end") == 1
@@ -7746,6 +7814,78 @@ def termination_budget_check() -> None:
         "连接能让持有者永远停在 socket read，而裸 `Mutex::lock()` 把后来者一起排到无限远，"
         f"停机令牌与 /ready 都问不到。{POSTGRES_FILE} 在 `postgres` 特性门后，"
         "CI 的 sqlite,postgres,nats 组合才会编译到里面的用例",
+    )
+    # V13 第 8 轮 C2：上面那一格治的是排队的那一侧。持锁者停在 socket read 上时它永远
+    # 不放手，而这一档只能由 DSN 给到内核——驱动默认 2 小时才发首个保活探测。
+    keepalive_values = {
+        key: re.search(rf"const {key}: u64 = (\d+);", postgres)
+        for key in (
+            "KEEPALIVE_IDLE_SECONDS",
+            "KEEPALIVE_INTERVAL_SECONDS",
+            "KEEPALIVE_RETRIES",
+        )
+    }
+    budget_read = re.search(
+        r"const SLOT_WAIT_BUDGET: Duration = Duration::from_secs\((\d+)\);", postgres
+    )
+    keepalive_read = all(value is not None for value in keepalive_values.values())
+    socket_bound = (
+        int(keepalive_values["KEEPALIVE_IDLE_SECONDS"].group(1))
+        + int(keepalive_values["KEEPALIVE_INTERVAL_SECONDS"].group(1))
+        * int(keepalive_values["KEEPALIVE_RETRIES"].group(1))
+        if keepalive_read
+        else -1
+    )
+    check(
+        keepalive_read
+        and budget_read is not None
+        and socket_bound < int(budget_read.group(1))
+        and postgres.count(
+            "KEEPALIVE_IDLE_SECONDS + KEEPALIVE_INTERVAL_SECONDS * KEEPALIVE_RETRIES"
+        )
+        == 1,
+        "DSN 里 socket 保活的判死上界排在连接槽等待预算之前（V13 第 8 轮 C2）",
+        f"三颗默认值从 {POSTGRES_FILE} 当场读出而不是抄在这一格里：判死最坏 "
+        f"{socket_bound} 秒、槽位等待预算 "
+        f"{budget_read.group(1) if budget_read else '读到 None'} 秒。持锁者要么在这一档拿到 "
+        "socket 错误自己放手，要么在 30 秒被服务端 statement_timeout 掐掉，两者都早于排队侧"
+        "的失败——先撑不住的不能是等锁的那一位。把 idle 抬回驱动默认的两小时（C2-M1）红这一格，"
+        "而用例那一侧红的是字面量；把用例里那句通约关系抄没了（C2-M6）也红这一格，"
+        "因为它同时是这条判据的第二条款",
+    )
+    declared_keys: list[str] = []
+    vocabulary = re.findall(
+        r"const SOCKET_KEEPALIVE_KEYS: \[&str; \d+\] =\s*\[(.*?)\];", postgres, re.S
+    )
+    if len(vocabulary) == 1:
+        declared_keys = re.findall(r'"([a-z_]+)"', vocabulary[0])
+    check(
+        declared_keys == ["keepalives_idle", "keepalives_interval", "keepalives_retries"],
+        "补齐的三颗键逐字停在驱动的 DSN 词表上（V13 第 8 轮 C2）",
+        "词表之外的键不是「被忽略」，而是让整条 DSN 当场解析失败——连不上线比卡住更早发生。"
+        "名单从 " + POSTGRES_FILE + " 当场读出，不抄布局：把其中一颗键名打错（C2-M2）红这一格，"
+        "同时红在那条常驻用例的字面量上；把三颗改成两颗或换一份写法，读出来的就不是这三颗",
+    )
+    check(
+        postgres.count("if lowered.contains(key) {") == 1,
+        "调用方写过的保活键一字不动（V13 第 8 轮 C2）",
+        "这三颗是「运维没写时仓库的默认」，不是「仓库说了算」：运维写 `keepalives_idle=90` 就要"
+        "用 90。把这一格守卫去掉变成无条件追加（C2-M3），红这一格，也红在用例那条 "
+        "`assert!(!half.contains(...))` 上",
+    )
+    check(
+        postgres.count("if rest.contains('#') {") == 2,
+        "带 fragment 的 URL 不是该由仓库重写的形状（V13 第 8 轮 C2）",
+        "两份 pass-through（connect_timeout 那一步与这里）口径要一致：只数出一处（C2-M4）"
+        "就等于把 fragment 拼进查询串里交回给驱动，而用例那一侧读的是原样交回那一条断言",
+    )
+    check(
+        postgres.count("fn dsn_with_socket_defaults(") == 1
+        and postgres.count("fn a_postgres_dsn_without_socket_keepalive") == 1,
+        "socket 层的界只有一份实现、且有一条常驻用例问它（V13 第 8 轮 C2）",
+        f"{POSTGRES_FILE} 在 `postgres` 特性门后，用例由 CI 的 "
+        "`cargo test -p qx-storage --features sqlite,postgres,nats --lib` 那一腿执行；"
+        "把用例改个名字（C2-M5）红这一格——生产调用方照常连、照常卡，没有第二条判据知道这一档没了读者",
     )
 
 
@@ -7896,6 +8036,15 @@ ACCEPTANCE_INVOKE = re.compile(
 ACCEPTANCE_CONSTANT = re.compile(
     r'^(KEY_ENV|SECRET_ENV|EXECUTION_WORKER|RECONCILE_WORKER|BASE_CONFIG) = .*"([^"]*)"$', re.M
 )
+# 子进程调用体：注释行里写的反例（"`subprocess.run(capture_output=True)` 没有截止"）不是调用点，
+# 先按行剥掉 `#` 开头的行再取，否则调用计数会被自己的说明文字加一个。
+ACCEPTANCE_RUN_CALL = re.compile(r"subprocess\.run\((.*?)\)", re.S)
+
+
+def acceptance_run_calls(script: str) -> list[str]:
+    """返回验收脚本里的 subprocess.run 调用体（排除整行注释）。"""
+    code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+    return ACCEPTANCE_RUN_CALL.findall(code)
 
 
 def external_acceptance_check() -> None:
@@ -7933,6 +8082,33 @@ def external_acceptance_check() -> None:
         bool(invoked) and invoked <= documented,
         "验收脚本点名的入口都写进了 help（照方案敲与照 help 敲是同一件事）",
         f"帮助里没写 {sorted(invoked - documented) or '无'}",
+    )
+    # V13 第 8 轮 C7：验收脚本的每一腿都敲真子进程，而 `capture_output=True` 的读侧没有截止。
+    # 被测链上一旦出现"连得上但不回话"的形状（NATS ack、WS 帧滴答、DB 持锁），挂住的那一腿
+    # 既不失败也不通过——验收门禁替一次阻塞作保，是这类门禁最坏的失效方式。
+    calls = acceptance_run_calls(script)
+    check(
+        len(calls) == 1 and "timeout=LEG_BUDGET_SECONDS" in calls[0],
+        "验收脚本唯一那条子进程调用带整体截止（V13 第 8 轮 C7）",
+        f"读到 {len(calls)} 条 subprocess.run 调用，带 timeout=LEG_BUDGET_SECONDS 的 "
+        f"{sum('timeout=LEG_BUDGET_SECONDS' in body for body in calls)} 条"
+        "（多一条无截止的调用就是多一条能挂死的腿；摘掉 timeout= 同理）",
+    )
+    budget = re.search(r"^LEG_BUDGET_SECONDS = (\d+)$", script, re.M)
+    check(
+        budget is not None and int(budget.group(1)) > 0
+        and "except subprocess.TimeoutExpired as expired:" in script,
+        "挂住那一腿按正数预算超时，且超时处被接住而不是抛成 traceback",
+        f"预算 = {budget.group(1) if budget else '没钉'} / 超时捕获 "
+        f"{'在' if 'except subprocess.TimeoutExpired as expired:' in script else '不在'}"
+        "（预算为 0 会让每一腿当场超时；没接住则 CI 读到的是崩溃而不是验收失败）",
+    )
+    check(
+        "raise SystemExit(" in script
+        and "sys.exit(EXIT_FAILURE)" in script
+        and '"exit_code": None' in script,
+        "超时按失败退出码收口并先写进阶段记录，结果包里的挂死有可核对的那一格",
+        "抛出、退出码或阶段记录缺一：挂住的那腿就变成 pass 或无声消失",
     )
     base = ROOT / "deploy" / constants.get("BASE_CONFIG", "")
     check(base.is_file(), "验收配置 BASE_CONFIG 指向仓库里的真文件", f"缺 {base}")
@@ -8917,7 +9093,7 @@ README_LEDGER_FILE = "README.md"
 SECURITY_LEDGER_FILE = "docs/SECURITY.md"
 # 与 capabilities_check 核存在性时同一组前缀：数"以仓库内路径开头"与核对它存在必须共用一把尺，
 # 否则同一条证据在两颗判据里各量各的口径。
-CAP_LEDGER_PATH_PREFIX = re.compile(r"^(?:crates|tools|deploy|maturity|docs|schemas|python)/")
+CAP_LEDGER_PATH_PREFIX = re.compile(r"^(?:crates|tools|deploy|maturity|docs|schemas|python|\.github)/")
 README_LEDGER_SECTION = re.compile(
     r"能力矩阵把每条能力钉在四档证据上.*?只有 feature 矩阵或接口占位。", re.S
 )
@@ -9749,7 +9925,7 @@ def capabilities_check() -> None:
     # 说明各有豁免；散文里不带前缀的简写（"depth.rs and …"）不强判。字符类里排掉 `"`，
     # 于是 `include_str!("../../../schemas/x.json")` 取到的是仓库里那份真文件。
     evidence_path = re.compile(
-        r"(?:crates|tools|deploy|maturity|docs|schemas|python)/[^\s，。；、：（）()「」\"`]+"
+        CAP_LEDGER_PATH_PREFIX.pattern.removeprefix("^") + r"[^\s，。；、：（）()「」\"`]+"
     )
     missing = set()
     for line in lines:
@@ -9792,17 +9968,17 @@ def capabilities_check() -> None:
 #   ④ 取证记录（变异日志、已声明为立项时点快照的段落）钉上 `<!-- 史 -->` 才豁免今天的对齐，
 #     豁免的行数照常打印，不悄悄吞。
 CAPABILITIES_FILE = "maturity/capabilities.yaml"
-CAP_CITATION_ROOTS = ("crates", "python", "tools", "schemas", "deploy")
-CAP_CITATION_EXTS = (".rs", ".py", ".json", ".yaml", ".md", ".toml", ".sh", ".ps1")
+CAP_CITATION_ROOTS = ("crates", "python", "tools", "schemas", "deploy", ".github")  # 第 8 轮补 `.github`：ci.yml 的行号引用今天没人核对，实测已漂过一颗（V11 §56.11 的 `ci.yml:315`）。
+CAP_CITATION_EXTS = (".rs", ".py", ".json", ".yaml", ".md", ".toml", ".sh", ".ps1", ".yml")
 CAP_PATHED_CITATION = re.compile(
-    r"([A-Za-z0-9_][A-Za-z0-9_./\-一-鿿]*\.(?:rs|py|json|yaml|md|toml|sh|ps1)):(\d+)"  # 首字符限 ASCII、类内收中文（V12 W11）：`docs/中文名.md:74` 吃得下，`见文档crates/x.rs` 不会连中文一起收进路径。
-)  # 这两颗的行数就是门禁自己的行号锚点：注释只准挂行尾，不准另起一行（三份长文档按行引到 9978）。
+    r"([A-Za-z0-9_][A-Za-z0-9_./\-一-鿿]*\.(?:rs|py|json|yaml|yml|md|toml|sh|ps1)):(\d+)"  # 首字符限 ASCII、类内收中文（V12 W11）：`docs/中文名.md:74` 吃得下，`见文档crates/x.rs` 不会连中文一起收进路径。
+)  # 这两颗的行数就是门禁自己的行号锚点：注释只准挂行尾，不准另起一行（五份名册文本按行引到本文件，今天最大一颗在 12707）。
 # 同一行里只点了文件名、没带行号的写法（`crates/x/src/lib.rs 的 X（:590）`）。
 # 裸 `:NNN` 在没有带行号引用在前时，归属退到这一颗——否则它永远无人核对。
 CAP_BARE_PATH = re.compile(
-    r"([A-Za-z0-9_][A-Za-z0-9_./\-一-鿿]*\.(?:rs|py|json|yaml|md|toml|sh|ps1))(?!:)"  # 与上一颗同形状：只点了文件名、没带行号的写法也吃得到中文尾段。
+    r"([A-Za-z0-9_][A-Za-z0-9_./\-一-鿿]*\.(?:rs|py|json|yaml|yml|md|toml|sh|ps1))(?!:)"  # 与上一颗同形状：只点了文件名、没带行号的写法也吃得到中文尾段。
 )
-CAP_CONTINUATION = re.compile(r"(?:/\d+)+")
+CAP_CONTINUATION = re.compile(r"(?:[/,]\d+)+")  # 逗号并列也核对（V13 第 8 轮 B 轮）：`x.rs:38,281` 的 281 不能只当散文。
 # 裸引用（`impl 在 :1006 / :1233`）沿用同一行里在它之前最近一次唯一解析成功的那份文件。
 CAP_BARE_CITATION = re.compile(r"(?<![\w/.:\-]):(\d+)")
 # 名字↔行号的两张贴法：`name`（path:NNN……——可斜杠并列并按位置对齐、可带 trailing `()`；
@@ -9817,14 +9993,14 @@ CITATION_HISTORY_MARK = "<!-- 史 -->"
 # 引用密度地板：低于地板说明解析器或这份文本本身坏了，判据会退化成"什么都不看也绿"。
 CAP_CITATION_FLOOR = 90
 CAP_BOUND_NAME_FLOOR = 20
-# 四份长文档各自的地板（W11 实测：V11 与 V12 走同一颗 citation_audit，余量留一成到两成）。
+# 五份长文档各自的地板（W11 实测：V11 与 V12 走同一颗 citation_audit，余量留一成到两成）。
 # 逐份钉而不是共用一颗：某一份被整体挪走时，另外几份的密度不该替它作保。
 DOC_CITATION_TARGETS = (
     ("docs/archive/自研量化框架重构方案-V11.md", "V11 方案书", 580, 50),
     ("CHANGELOG.md", "变更日志", 220, 25),
     ("docs/SECURITY.md", "安全白皮书", 410, 60),
-    # 归档不等于免检：V11/V12 挪进 docs/archive/ 之后，行号引用仍逐颗核对（W11 实测 V12 152/22、
-    # 史钉豁免 13 行）。归档那一步只改路径，不改"方案书里点到的代码今天还在不在那一格"这条判据。
+    ("docs/自研量化框架审计与重构方案-V13.md", "V13 方案书", 74, 2),  # 第 8 轮进名册；逗号尾巴进核后实测 93 引用 / 3 带名 / 史钉 3 行，地板按两成余量钉 74（复测器先量后抬，见 maturity/evidence/v13-r8/citation_roster_guns.py）
+    # 归档不等于免检：V11/V12 挪进 docs/archive/ 后仍逐颗核对——归档只改路径，不改"点到的代码今天还在不在那一格"这条判据。
     ("docs/archive/自研量化框架审计与重构方案-V12.md", "V12 方案书", 130, 18),
 )
 _CAP_CITED_LINES: dict[str, list[str]] = {}
@@ -9892,7 +10068,7 @@ def citation_audit(
         if CITATION_HISTORY_MARK in line:
             pinned += 1
             continue
-        hint = set(re.findall(r"(?:crates/)?(qx-[a-z][a-z0-9\-]*)", line))
+        hint = set(re.findall(r"(?:crates/)?(qx-[a-z][a-z0-9\-]*)(?![\w./\-])", line))  # 只认整颗提及：同行别颗锚点的路径不许替这一颗决定落地文件（V13 第 8 轮 L2 反证）。
         owners: list[tuple[int, str, bool]] = []
         current: str | None = None
         spans: list[tuple[int, int]] = []
@@ -9900,7 +10076,7 @@ def citation_audit(
             raw = match.group(1)
             tail = CAP_CONTINUATION.match(line, match.end())
             refs = [int(match.group(2))] + (
-                [int(part) for part in tail.group(0).split("/")[1:]] if tail else []
+                [int(part) for part in re.split(r"[/,]", tail.group(0))[1:]] if tail else []
             )
             spans.append((match.start(2), match.end(2)))
             if tail:
@@ -12734,6 +12910,12 @@ def main() -> int:
     plugin_claim_honesty_check()
     gate_self_honesty_check()
     line_budget_check()
+    ci_citation_coverage_check()
+    postgres_parked_leg_has_teeth_check()
+    report_readout_provenance_check()
+    alert_names_render_inside_their_bodies_check()
+    strategy_ring_parent_liveness_check()
+    strategy_pump_bounds_check()
     # 含本条自身：+1 才是本轮真正会打印的总条数，所以地板常量按"含这一条"取值。
     check(
         checks + 1 >= GATE_CHECK_FLOOR,
@@ -12748,6 +12930,330 @@ def main() -> int:
         return 1
     print(f"架构不变量自检全部通过 ✓（{checks} 项）")
     return 0
+
+
+# 定义放在 main 之后、只按名字在 runner 里调用：三份长文档按行引到 12707，在这条线之前插一行
+# 就要重钉 66 颗引用（V13 第 8 轮 B 实测），留在这里是刻意的落点而不是遗漏。
+def ci_citation_coverage_check() -> None:
+    """`.github` 进了引用名册，就得有人核对 CI 作业文件的锚点真被解析到。"""
+    cited = 0
+    unresolved: list[str] = []
+    for rel in [CAPABILITIES_FILE, *[entry[0] for entry in DOC_CITATION_TARGETS]]:
+        path = ROOT / rel
+        if not path.is_file():
+            continue
+        for raw, number in CAP_PATHED_CITATION.findall(path.read_text(encoding="utf-8")):
+            if not raw.endswith(".yml"):
+                continue
+            if len(_citation_candidates(raw, set())) == 1:
+                cited += 1
+            else:
+                unresolved.append(f"{rel} 的 {raw}:{number}")
+    check(
+        cited >= 10 and not unresolved,
+        "CI 作业文件的行号引用真落在名册的解析面里（V13 第 8 轮 B）",
+        f"解析到 {cited} 颗 `.yml` 引用（地板是至少 10 颗）、解析失败 {unresolved[:5] or '无'}"
+        f"——把 `yml` 从 CAP_PATHED_CITATION 的扩展名类摘掉，那 {cited} 颗引用是静默消失而不是变红，"
+        "这一条就是替那一格作保的牙齿",
+    )
+
+
+def postgres_parked_leg_has_teeth_check() -> None:
+    """停摆计数与「停摆退到页尾」在 postgres 上第一次有腿可跑，而这条腿必须有数字-vs-文本的牙齿。
+
+    共用 helper 定义了没人调，在 test 二进制里只会被 `dead_code` 挡一半（`fn` 带 `&dyn` 参数时
+    连这条都没有），而 postgres 那两条挂在 `#[ignore]` 后——本地永不执行，CI 是唯一读者。
+    所以这里读调用点归属，不看 helper 是否定义（V13 第 8 轮 A4）。
+    """
+    cases = (ROOT / OUTBOX_PARK_CASE_FILE).read_text(encoding="utf-8")
+    park_body = fn_body(cases, "assert_parked_outbox_has_an_operator_exit")
+    page_body = fn_body(cases, "assert_parked_rows_yield_the_page_head")
+    check(
+        all(
+            f'assert_parked_outbox_has_an_operator_exit(&store, "{rel}-park");'
+            in fn_body(cases, test)
+            for rel, test in (
+                ("file", "file_outbox_contract"),
+                ("sqlite", "sqlite_outbox_contract"),
+                ("postgres", "postgres_outbox_lease_fencing_and_retry_contract"),
+            )
+        ),
+        "人工出口那颗 helper 在三本后端各自的用例里各被调用一次，postgres 也在内（V13 第 8 轮 A4）",
+        "`count_parked` 的 postgres 实现（`WHERE attempts::numeric >= $1::numeric`）此前在任何"
+        "一条腿上都没有调用者：写错 SQL、把停摆条数念成 0，CI 与本地都不会红。把这颗调用点从"
+        " postgres 用例里摘掉，这一格是唯一的读者",
+    )
+    check(
+        park_body.count("OUTBOX_MAX_ATTEMPTS + 6") == 1
+        and page_body.count("attempts: OUTBOX_MAX_ATTEMPTS + 6,") == 1,
+        "停摆夹具跨数位边界（8 与 14），让『按数字比』与『按文本比』在两颗 helper 里各分岔一次（V13 第 8 轮 A4）",
+        "这一列三本后端都存成文本，两行都写预算值时 8 与 8 的字典序结果和数字结果同一个答案——"
+        "摘掉 sqlite 的 `CAST(attempts AS INTEGER)`、摘掉 postgres 的 `::numeric`，用例照样绿。"
+        "把 `+ 6` 摘掉就是把这把尺子收回：这一格是那两处 SQL 唯一的间接读者",
+    )
+    check(
+        "let before = store.count_parked_outbox().unwrap();" in park_body
+        and park_body.count("before + 2") == 1
+        and park_body.count("before + 1") == 1,
+        "停摆条数按增量问库里的状态量：入账 +2、人工确认之后 +1，两处都现读（V13 第 8 轮 A4）",
+        "服务容器作业里多条 postgres 腿共用同一个 DSN，写死绝对值会先被别人的夹具撞红；"
+        "只读一次 `before` 当作快照（少掉确认后的那次现读）则把『ack 之后停摆行数掉下来』这件事"
+        "重新变成没人问的一格",
+    )
+
+
+# V13 第 8 轮 A5/A6 的两颗判据。落点在文件尾部而不是并进 `prometheus_exposition_check` 与
+# `report_readout_honesty_check`：那两颗所在的区段有行号引用按行钉着，往里插一行就要重钉一片
+# （同一颗理由见 `ci_citation_coverage_check` 上方那条注释）。
+READOUT_PROVENANCE_LAYOUT = '"  matching_kernel={} cost_source={} rejected_orders={}"'
+READOUT_PROVENANCE_READS = (
+    'summary_text(summary, "/matching_kernel")',
+    'summary_text(summary, "/execution_costs/source")',
+    'summary_number(summary, "/rejected_orders")',
+)
+# 写侧三键的落点：任何一处改名或落空，读侧那一格就只能念 absent。
+SUMMARY_PROVENANCE_KEYS = (
+    '"matching_kernel": input.matching_kernel,',
+    '"execution_costs": { "source": input.cost_source },',
+    '"rejected_orders": rejection_count(input.rejections),',
+)
+READOUT_PROVENANCE_TESTS = (
+    ("provenance_line_prints_kernel_cost_source_and_rejection_count_together", "unit_cases"),
+    ("report_prints_kernel_cost_source_and_rejection_count_from_a_real_summary", "cli_cases"),
+)
+# 三格的名字不得在命令侧再拼一遍：那是第二份真值，它会与 absent 口径漂移。
+PROVENANCE_FIELD_NAMES = ("matching_kernel", "cost_source", "rejected_orders")
+# A5：R7 就写出的两格计数第一次进告警名册，名字必须同时住在规则的 expr 与自己的渲染器体内。
+NEW_ALERT_METRICS = ("qx_api_connections_rejected_total", "qx_outbox_relay_parked")
+API_EXPOSITION_FILE = "crates/qx-api/src/lib.rs"
+RELAY_EXPOSITION_FILE = "crates/qx-cli/src/event_pipeline.rs"
+# worker 侧有两本同名 `fn render`，`fn_body` 只认先出现的那一颗；按相邻两本 struct 的名字切
+# 窗口，才不会把"格挪到了另一本名下"读成还在原位。第三颗锚点取到文件尾：这个文件里只有这两本
+# 渲染器写 `qx_` 指标名，一侧有界就够。
+RELAY_RENDER_ANCHORS = ("struct RelayMetricTotals", "struct ConsumerMetricTotals")
+
+
+def report_readout_provenance_check() -> None:
+    """`report` 正文的三格溯源：读侧一处、写侧三键、用例两侧、命令侧不得再拼一遍（V13 第 8 轮 A6）。
+
+    这三格回答的是"这组数字从哪来"：撮合内核（Bar 与深度的结论强度不同）、成本绑定的来源
+    （没配与配了同一个数不是同一件事）、被挡下的委托数（`fills=0` 分不清策略没发信号与信号
+    全被挡下）。写侧一直落着，缺的是人读那一行的读者。
+    """
+    readout = production_text((ROOT / REPORT_READOUT_MODULE).read_text(encoding="utf-8"))
+    commands = (ROOT / REPORT_READOUT_COMMANDS).read_text(encoding="utf-8")
+    writer = (ROOT / SUMMARY_MODULE).read_text(encoding="utf-8")
+    cases = {
+        "unit_cases": (ROOT / REPORT_READOUT_UNIT_CASES).read_text(encoding="utf-8"),
+        "cli_cases": (ROOT / REPORT_READOUT_CLI_CASES).read_text(encoding="utf-8"),
+    }
+    check(
+        readout.count(READOUT_PROVENANCE_LAYOUT) == 1
+        and all(readout.count(read) == 1 for read in READOUT_PROVENANCE_READS),
+        "三格溯源由读侧一处印出，每格各有一次自己的读法（V13 第 8 轮 A6）",
+        f"排版 {readout.count(READOUT_PROVENANCE_LAYOUT)} 处 / 读法 "
+        f"{[(read, readout.count(read)) for read in READOUT_PROVENANCE_READS]}。删掉这一行只会让"
+        "报告少一栏，读者看不出「没挡单」与「这笔账没记」是两个答案；把名字写进注释同样算假绿，"
+        "这里读的是剥掉注释之后的正文",
+    )
+    check(
+        all(writer.count(key) == 1 for key in SUMMARY_PROVENANCE_KEYS),
+        "写侧三键各只落一处，读侧念的正是写侧那三格（V13 第 8 轮 A6）",
+        f"落点 {[(key, writer.count(key)) for key in SUMMARY_PROVENANCE_KEYS]}：两侧是同一件事的"
+        "两面，任何一侧单独动都会让报告把那格念成 absent",
+    )
+    check(
+        all(f"fn {name}(" in cases[side] for name, side in READOUT_PROVENANCE_TESTS),
+        "排版侧与命令行侧各有一颗用例钉住这一行（V13 第 8 轮 A6）",
+        f"缺 {[name for name, side in READOUT_PROVENANCE_TESTS if f'fn {name}(' not in cases[side]]}"
+        "：排版函数少印一行不会让别的断言变红，这两颗是它唯一的读者",
+    )
+    check(
+        not any(name in commands for name in PROVENANCE_FIELD_NAMES),
+        "命令侧不再拼这三格，正文只从共用读法里出（V13 第 8 轮 A6）",
+        f"命令侧出现 {[(name, commands.count(name)) for name in PROVENANCE_FIELD_NAMES if name in commands]}"
+        "——那是第二份真值，它会与 absent 的措辞各自漂移",
+    )
+
+
+def alert_names_render_inside_their_bodies_check() -> None:
+    """两条新告警点名的计数必须住在自己的渲染器体内，而不是"某份生产源码的某处文字"里（V13 第 8 轮 A5）。"""
+    alerts = (ROOT / PROMETHEUS_ALERTS_FILE).read_text(encoding="utf-8")
+    exprs = [line for line in alerts.splitlines() if line.lstrip().startswith("expr:")]
+    demanded = {name for line in exprs for name in re.findall(r"\bqx_[a-z0-9_]+\b", line)}
+    api_body = fn_body(
+        production_text((ROOT / API_EXPOSITION_FILE).read_text(encoding="utf-8")),
+        "to_prometheus",
+    )
+    pipeline = production_text((ROOT / RELAY_EXPOSITION_FILE).read_text(encoding="utf-8"))
+    anchors = [pipeline.find(anchor) for anchor in RELAY_RENDER_ANCHORS]
+    relay_body = (
+        pipeline[anchors[0] : anchors[1]]
+        if min(anchors) >= 0 and anchors[0] < anchors[1]
+        else ""
+    )
+    consumer_body = pipeline[anchors[1] :] if anchors[1] >= 0 else ""
+    check(
+        all(name in demanded for name in NEW_ALERT_METRICS),
+        "两条 R7 计数在告警规则里各占一条 expr（V13 第 8 轮 A5）",
+        f"规则点到 {len(demanded)} 格，缺 {[n for n in NEW_ALERT_METRICS if n not in demanded]}"
+        "——计数照样逐格写出、端点照样回 200，只是没有任何一条规则会因它响",
+    )
+    check(
+        NEW_ALERT_METRICS[0] in api_body and NEW_ALERT_METRICS[1] in relay_body,
+        "两格各住在自己的渲染器体内：API 那份在 `to_prometheus`，worker 那份在 RelayMetricTotals 的 render 窗口里（V13 第 8 轮 A5）",
+        f"API 体取到 {len(api_body)} 字符 / relay 窗口取到 {len(relay_body)} 字符。上一颗判据读的"
+        "是整份生产文本：把指标名写进注释、或写进另一本 worker 的 render 里都照样绿，而那两处"
+        "都不是这份 exposition 的出口",
+    )
+    # R7-i 那一族的形状判据此前只走 qx-api 与 qx-runtime 两颗文件，worker 的两本 render 不在
+    # 循环里：把分隔符改回两字符的字面反斜杠加 n，落盘的文件与 `/metrics` 都会挤成一行。
+    for name, body in (("RelayMetricTotals", relay_body), ("ConsumerMetricTotals", consumer_body)):
+        check(
+            bool(body)
+            and LITERAL_BACKSLASH_N not in body
+            and REAL_NEWLINE_ESCAPE in body,
+            f"`{name}` 的 render 用真换行分隔每一格（V13 第 8 轮 A5，R7-i 的同族形状）",
+            f"窗口取到 {len(body)} 字符：字面 `反斜杠反斜杠n` 在场={LITERAL_BACKSLASH_N in body}、"
+            f"换行转义在场={REAL_NEWLINE_ESCAPE in body}。告警规则按行取样本，整份挤成一行时"
+            "一条都不响，而 worker 侧仍然自认为在往外销指标",
+        )
+
+
+RING_PARENT_HOST_FILE = "crates/qx-cli/src/strategy_host.rs"
+RING_PARENT_WORKER_FILE = "python/qianxing_strategy/worker.py"
+RING_PARENT_CASE_FILE = "python/tests/test_strategy_contract.py"
+RING_PARENT_CASES = (
+    "test_shared_ring_worker_keeps_serving_while_parent_stdin_stays_open",
+    "test_shared_ring_worker_exits_and_unlinks_rings_on_parent_stdin_eof",
+)
+
+
+def strategy_ring_parent_liveness_check() -> None:
+    """共享内存策略 worker 必须有一条"父进程已经不在了"的通道（V13 第 8 轮 C4）。
+
+    ring 传输只带得来"下一颗请求"，带不来"父进程已经走了"：`std::process::exit` 那几条路
+    不展开析构，两侧都不打招呼，子进程留在 1 kHz 轮询里自转到天荒地老，两份环文件留在
+    temp 里。三格各有各的失效面，逐颗钉形状。
+    """
+    host = production_text((ROOT / RING_PARENT_HOST_FILE).read_text(encoding="utf-8"))
+    worker = (ROOT / RING_PARENT_WORKER_FILE).read_text(encoding="utf-8")
+    cases = (ROOT / RING_PARENT_CASE_FILE).read_text(encoding="utf-8")
+    shared_start = worker.find("def serve_shared(")
+    shared_body = worker[shared_start : worker.find("def main(", shared_start)]
+    piped = host.count(".stdin(Stdio::piped())")
+    branched = host.count(".stdin(if shared {")
+    taken = host.count("let stdin = child.stdin.take();")
+    dropped = host.count("let stdin = if shared { None } else { child.stdin.take() };")
+    check(
+        piped == 1 and branched == 0 and taken == 1 and dropped == 0,
+        "共享内存模式也保住子进程 stdin 的写端：句柄进 self.stdin，父进程退出时由 OS 关掉（V13 第 8 轮 C4）",
+        f"实测 `.stdin(Stdio::piped())` {piped} 处、按 shared 分流的写法 {branched} 处、无条件 take {taken} 处、"
+        f"shared 下丢弃写端 {dropped} 处。写端一丢，worker 在 ring 上永远等不到『父进程已经不在了』，"
+        "变成 1 kHz 永久自转的孤儿并留下两份环文件",
+    )
+    watch_def = worker.count("def _watch_parent_exit(")
+    watch_call = shared_body.count("parent_gone = _watch_parent_exit()")
+    guard = shared_body.count("while not parent_gone.is_set():")
+    check(
+        shared_start >= 0
+        and watch_def == 1
+        and watch_call == 1
+        and guard == 1
+        and "while True:" not in shared_body,
+        "worker 侧的轮询循环读父进程存活事件（V13 第 8 轮 C4）",
+        f"serve_shared 取得到={shared_start >= 0}，观测线程定义 {watch_def} 处、调用 {watch_call} 处、"
+        f"带守卫的循环 {guard} 处、无守卫 `while True:` 在场={'while True:' in shared_body}。"
+        "循环不读那颗事件时，父进程关掉写端之后那次退出根本不发生",
+    )
+    unlinked = shared_body.count("os.unlink(path)")
+    guarded_at = shared_body.find("if parent_gone.is_set():")
+    unlink_guarded = -1 < guarded_at < shared_body.find("os.unlink(path)")
+    check(
+        unlinked == 1 and unlink_guarded,
+        "补删环文件只走『父进程已经不在了』那一格（V13 第 8 轮 C4）",
+        f"补删 {unlinked} 处（在守卫之后={unlink_guarded}）。补删不绑事件时，正常析构路径上子进程会"
+        "抢在父进程之前删掉父进程自己的环文件",
+    )
+    present = [name for name in RING_PARENT_CASES if f"def {name}(" not in cases]
+    close_calls = cases.count("process.stdin.close()")
+    exit_waits = cases.count("process.wait(timeout=SHARED_WORKER_EXIT_BUDGET_SECONDS)")
+    check(
+        not present and close_calls == 1 and exit_waits == 1,
+        "两格常驻用例都在位：stdin 还开着时必须仍在服务，关掉之后必须在预算内自收摊（V13 第 8 轮 C4）",
+        f"缺位的用例 {present}、`process.stdin.close()` {close_calls} 处、按退出预算 wait {exit_waits} 处。"
+        "只留'关掉就退'那一格时，'子进程一启动就自己死了'同样能把它跑绿——前向证据靠的是仍在服务那一格",
+    )
+
+
+STRATEGY_PUMP_HOST_FILE = "crates/qx-cli/src/strategy_host.rs"
+STRATEGY_PUMP_CASE_FILE = "crates/qx-cli/src/tests/strategy_pump_bounds.rs"
+STRATEGY_PUMP_MOUNT_FILE = "crates/qx-cli/src/tests/mod.rs"
+STRATEGY_PUMP_MOUNT = "mod strategy_pump_bounds;"
+# 七颗逐颗点名：少一颗就是那一格的反例没了，而"文件还在"证明不了任何一格有人测。
+STRATEGY_PUMP_CASES = (
+    "response_backlog_is_a_bounded_channel",
+    "jsonl_line_cap_reuses_the_frame_budget",
+    "oversized_line_is_rejected_instead_of_buffered",
+    "trailing_line_without_newline_is_still_delivered",
+    "crlf_terminates_a_line_without_leaking_the_carriage_return",
+    "line_spanning_several_fill_windows_is_reassembled",
+    "drain_clears_queued_responses_and_reports_the_count",
+)
+
+
+def strategy_pump_bounds_check() -> None:
+    """策略 worker 响应泵的有界形状，以及测它的那七颗常驻用例（V13 第 8 轮 C8）。
+
+    三格形状是同一句话的三个部分——"worker 不守规矩时，父进程不替它兜账"：队列无界时一颗
+    话痨 worker 能在父进程一次都没读的情况下把内存吃光；JSONL 支此前用 `BufRead::lines()`，
+    worker 只写半行不换行就让父进程无限攒那半行（分帧支早就按 `DEFAULT_MAX_FRAME_BYTES` 读）；
+    超时后迟到那颗答复留在通道里，而 JSONL 的线格式不带序号，下一次 `recv` 会把它当成本轮
+    的回答。与 N8、R7-f 同一口径：这些失效面没有能在不挂死前提下断言的用例，所以钉形状。
+    """
+    host = production_text((ROOT / STRATEGY_PUMP_HOST_FILE).read_text(encoding="utf-8"))
+    bounded = "mpsc::sync_channel(STRATEGY_PUMP_BACKLOG);"
+    regressions: list[str] = []
+    if "mpsc::channel()" in host:
+        regressions.append("又出现无界的 `mpsc::channel()`")
+    if host.count(bounded) != 1:
+        regressions.append(f"泵通道取有界常量 {host.count(bounded)} 处")
+    jsonl_start = host.find("StrategyTransport::Jsonl => {")
+    jsonl_end = host.find("StrategyTransport::FramedJson => {", jsonl_start)
+    if jsonl_start < 0 or jsonl_end <= jsonl_start:
+        regressions.append("找不到 JSONL 支那一格的边界")
+    elif "reader.lines()" in host[jsonl_start:jsonl_end]:
+        regressions.append("JSONL 支退回 `BufRead::lines()`")
+    capped = "read_jsonl_line_within(&mut reader, jsonl_line_cap_bytes())"
+    if host.count(capped) != 1:
+        regressions.append(f"单行读带上限的写法 {host.count(capped)} 处")
+    request_start = host.find("fn request(")
+    drained = host.find("drain_stale_responses)")
+    wrote = host.find("write_all_within(", request_start)
+    if not 0 <= request_start < drained < wrote:
+        regressions.append(
+            f"排空迟到答复没有排在写入之前（`fn request(` {request_start}、排空 {drained}、写入 {wrote}）"
+        )
+    check(
+        not regressions,
+        "策略 worker 响应泵：队列有界、单行有上限、迟到答复在写入前排空（V13 第 8 轮 C8）",
+        "；".join(regressions)
+        + "（三格坏的都是同一件事：无界队列让父进程替话痨 worker 囤货，无上限的单行让半行永远攒着，"
+        "残留的应答让下一轮把上一颗当这一颗读）",
+    )
+    case_path = ROOT / STRATEGY_PUMP_CASE_FILE
+    cases = case_path.read_text(encoding="utf-8") if case_path.is_file() else ""
+    missing = [name for name in STRATEGY_PUMP_CASES if f"fn {name}(" not in cases]
+    mounted = any(
+        line.strip() == STRATEGY_PUMP_MOUNT
+        for line in (ROOT / STRATEGY_PUMP_MOUNT_FILE).read_text(encoding="utf-8").splitlines()
+    )
+    check(
+        not missing and mounted,
+        "C8 的七颗泵用例逐颗在位，且那份文件真被 tests 目录模块挂载（V13 第 8 轮 C8）",
+        f"缺位的用例 {missing}；`{STRATEGY_PUMP_MOUNT}` 挂载={mounted}。没挂进模块的用例既不入 CI"
+        "的编译面也不被执行面覆盖，逐颗点名而不是数总数：总数能靠新增无关用例凑够",
+    )
 
 
 if __name__ == "__main__":

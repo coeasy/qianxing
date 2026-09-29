@@ -1,0 +1,33 @@
+== stage-0 锚点普查
+   注入锚点 ×1（台账第 122 行）、前缀常量定义 ×1
+   基线 sha：capabilities.yaml=fe31ef5f450a check_architecture.py=01a48a8f4030
+== 基线（未注入、常量原样）
+   注入在场 = False / 前缀常量已还原 = False
+   红 2 颗：['README 的台账六格读数与磁盘同数', '能力矩阵证据路径全部存在']
+   存在性核对点到注入路径 = False
+   那一行红里带出的 .github token = 无
+   README 那颗报的『以仓库内路径开头』磁盘数 = ['337']
+== P1 只注入：`.github` 仍在被核对前缀里
+   注入在场 = True / 前缀常量已还原 = False
+   红 2 颗：['README 的台账六格读数与磁盘同数', '能力矩阵证据路径全部存在']
+   存在性核对点到注入路径 = True
+   那一行红里带出的 .github token = ['.github/workflows/ci-absent-probe.yml']
+   README 那颗报的『以仓库内路径开头』磁盘数 = ['337']
+== P2 同一份注入 + 还原前缀常量：`.github` 不在被核对前缀里
+   注入在场 = True / 前缀常量已还原 = True
+   红 2 颗：['README 的台账六格读数与磁盘同数', '能力矩阵证据路径全部存在']
+   存在性核对点到注入路径 = False
+   那一行红里带出的 .github token = 无
+   README 那颗报的『以仓库内路径开头』磁盘数 = ['330']
+== 收枪复跑（两份字节都回到基线）
+   注入在场 = False / 前缀常量已还原 = False
+   红 2 颗：['README 的台账六格读数与磁盘同数', '能力矩阵证据路径全部存在']
+   存在性核对点到注入路径 = False
+   那一行红里带出的 .github token = 无
+   README 那颗报的『以仓库内路径开头』磁盘数 = ['337']
+== 合计
+   2 发：P1 咬（widening 界得住那颗不存在的路径）/ P2 隔离对照（红来自那一颗常量，两颗判据共用同一把尺）
+   共用量规实测：带 `.github` 时 337 行、摘掉后 330 行，差 7 颗（= 台账里以 `.github/` 开头的证据行颗数）
+   基线不是全绿那份：填充前那两颗前向引用红必然在场，见 gate_forward-ref_red.txt
+   收尾 sha 复核：capabilities.yaml=fe31ef5f450a check_architecture.py=01a48a8f4030（与基线同行同值）
+PROBE_EXIT=0

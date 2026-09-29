@@ -1,0 +1,118 @@
+python=3.13.13 cwd=D:\aex_work\qianxing out=r8_six_legs_final.txt
+CLASSIFIER_SELFTEST rows=2 ok
+[stage-0] sha check_architecture.py=01a48a8f4030 capabilities.yaml=5b723d233026 postgres.rs=3fc31d8f622d nats.rs=1b8137d60424 lib.rs=01866362bd3e SECURITY.md=73099f5f85e8 README.md=b6c05a95a846
+== LEG validate_core: D:\dev\miniforge3\python.exe -X utf8 tools/validate_core.py
+-- LEG validate_core rc=0 elapsed=0s
+   tail: [牵星 · (ts, prio) 全序] 参考形状出队顺序=['cmd', 'market', 'post'] | [星板 · 撮合模型] NextBarOpen/VolumeSensitive/Probabilistic: ✓ | 全部自校验通过 ✓
+== LEG check_architecture: D:\dev\miniforge3\python.exe -X utf8 tools/check_architecture.py
+-- LEG check_architecture rc=0 elapsed=42s
+   GATE_EXIT=0 [PASS]=815 [FAIL]=0 cross-mark=0
+== LEG python_tests: D:\dev\miniforge3\python.exe -X utf8 -m unittest discover -s python/tests -q
+-- LEG python_tests rc=0 elapsed=1s
+   tail: ---------------------------------------------------------------------- | Ran 62 tests in 0.283s | OK (skipped=2)
+[before-cargo] sha check_architecture.py=01a48a8f4030 capabilities.yaml=5b723d233026 postgres.rs=3fc31d8f622d nats.rs=1b8137d60424 lib.rs=01866362bd3e SECURITY.md=73099f5f85e8 README.md=b6c05a95a846
+== LEG cargo_fmt: cargo fmt --all -- --check
+-- LEG cargo_fmt rc=1 elapsed=3s
+   FMT_EXIT=1 diff-lines=40
+== LEG cargo_build_cli_nats: cargo build -p qx-cli --features nats
+-- LEG cargo_build_cli_nats rc=0 elapsed=4s
+== LEG clippy: cargo clippy --workspace --all-targets -- -D warnings
+-- LEG clippy rc=101 elapsed=10s
+   CLIPPY_EXIT=101 non-empty-lines=19 diagnostic-lines=9
+   DIAG error: can be more succinctly written as a byte str
+   DIAG     |
+   DIAG 847 |         let ended_with_newline = window[..end].ends_with(&[b'\n']);
+   DIAG     |                                                          ^^^^^^^^ help: try: `b"\n"`
+   DIAG     |
+   DIAG     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#byte_char_slices
+   DIAG     = note: `-D clippy::byte-char-slices` implied by `-D warnings`
+   DIAG     = help: to override `-D warnings` add `#[allow(clippy::byte_char_slices)]`
+   DIAG warning: build failed, waiting for other jobs to finish...
+[before-test] sha check_architecture.py=01a48a8f4030 capabilities.yaml=5b723d233026 postgres.rs=3fc31d8f622d nats.rs=1b8137d60424 lib.rs=01866362bd3e SECURITY.md=73099f5f85e8 README.md=b6c05a95a846
+== LEG cargo_test_workspace: cargo test --workspace --all-targets --no-fail-fast
+-- LEG cargo_test_workspace rc=0 elapsed=75s
+   SEGMENTS=77 non-ok=0 passed=1032 failed=0 ignored=0
+   ROW test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+   ROW test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+   ROW test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+   ROW test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 263 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.69s
+   ROW test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.22s
+   ROW test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.72s
+   ROW test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.19s
+   ROW test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.09s
+   ROW test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.44s
+   ROW test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.24s
+   ROW test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.47s
+   ROW test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.25s
+   ROW test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.09s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+   ROW test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.75s
+   ROW test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+   ROW test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.20s
+   ROW test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+   ROW test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+   ROW test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+   ROW test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+   ROW test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+   ROW test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+   ROW test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+   ROW test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+   ROW test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+   ROW test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+   ROW test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+   ROW test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+   ROW test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+   ROW test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+   ROW test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+   ROW test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 84 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+   ROW test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+   ROW test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   ROW test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== LEG feature_matrix_lib: cargo test -p qx-storage --features sqlite,postgres,nats --lib --no-fail-fast
+-- LEG feature_matrix_lib rc=0 elapsed=5s
+   SEGMENTS=1 non-ok=0 passed=36 failed=0 ignored=0
+   ROW test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+[final] sha check_architecture.py=01a48a8f4030 capabilities.yaml=5b723d233026 postgres.rs=3fc31d8f622d nats.rs=1b8137d60424 lib.rs=01866362bd3e SECURITY.md=73099f5f85e8 README.md=b6c05a95a846
+RESULT legs_failed=2
+DONE

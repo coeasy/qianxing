@@ -1,0 +1,50 @@
+=== 第 0 遍：锚点普查 ===
+C1-1 consume_batch 的 Applied 臂摘掉包装: 锚点 1 次 / 新文本已在场 0 次 / 腿 rust
+C1-1b consume_batch_with_projection 的 Applied 臂摘掉包装: 锚点 1 次 / 新文本已在场 0 次 / 腿 rust
+C1-2 把消费侧预算改成 0 秒: 锚点 1 次 / 新文本已在场 0 次 / 腿 rust
+C1-3 helper 接到别的时长上: 锚点 1 次 / 新文本已在场 0 次 / 腿 rust
+C1-4 吞掉「没落回」这颗名: 锚点 1 次 / 新文本已在场 0 次 / 腿 rust
+C1-5 把预算摘掉但保留一颗没人等的 timeout: 锚点 1 次 / 新文本已在场 0 次 / 腿 rust-hang
+C1-6 登记行号回到旧钉: 锚点 1 次 / 新文本已在场 0 次 / 腿 gate
+C1-7 行数预算往下压一颗: 锚点 1 次 / 新文本已在场 0 次 / 腿 gate
+C1-8 门禁元组里的行号漂一颗: 锚点 1 次 / 新文本已在场 0 次 / 腿 gate
+原件 crates/qx-storage/src/nats.rs sha 1b8137d60424838a
+原件 maturity/capabilities.yaml sha ef3a0a7fbdf0a086
+原件 maturity/line_budgets.yaml sha 26a8542ece70b207
+原件 tools/check_architecture.py sha 628a89e9fb6c4bca
+
+=== 基线（未放枪）===
+rust 腿 rc=0 4.2s rc=0 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measur 红 [无]
+gate 腿 rc=0 44.5s rc=0 红 0 条 
+挂死枪的截止 180s（基线 rust 腿 4.2s）
+
+=== 逐颗放枪 ===
+[KILLED] C1-1 consume_batch 的 Applied 臂摘掉包装 预期『every_nats_await_site（十次包装只剩九次）』 4.9s
+        实测 rc=101 test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 me 红 [nats::tests::every_nats_await_site_goes_through_the_bounded_wait]
+[KILLED] C1-1b consume_batch_with_projection 的 Applied 臂摘掉包装 预期『every_nats_await_site（计数覆盖第二个批量方法）』 4.3s
+        实测 rc=101 test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 me 红 [nats::tests::every_nats_await_site_goes_through_the_bounded_wait]
+[KILLED] C1-2 把消费侧预算改成 0 秒 预期『every_nats_await_site（数值钉）』 9.1s
+        实测 rc=101 test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 me 红 [nats::tests::every_nats_await_site_goes_through_the_bounded_wait]
+[KILLED] C1-3 helper 接到别的时长上 预期『every_nats_await_site（接线钉 + 常量引用点）』 4.7s
+        实测 rc=101 test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 me 红 [nats::tests::every_nats_await_site_goes_through_the_bounded_wait]
+[KILLED] C1-4 吞掉「没落回」这颗名 预期『bounded_ack_passes_through_or_names_the_stall』 4.7s
+        实测 rc=101 test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 me 红 [nats::tests::bounded_ack_passes_through_or_names_the_stall]
+[KILLED] C1-5 把预算摘掉但保留一颗没人等的 timeout 预期『整腿超时（那颗计数钉照常绿，用例唯一的出口就是被摘掉的截止）』 180.3s
+        实测 整腿超时；挂死前已见 test nats::tests::bounded_wait_returns_the_completion_inside_its_budge; test nats::tests::every_nats_await_site_goes_through_the_bounded_wait ; test nats::tests::bounded_wait_names_a_reply_that_never_lands ... ok; test nats::tests::bounded_ack_passes_through_or_names_the_stall has be
+[KILLED] C1-6 登记行号回到旧钉 预期『原子投影链两侧点名』 43.7s
+        实测 rc=1 红 1 条 [FAIL] 该链的零生产调用登记在位，且写侧与读侧两侧都点名（V11 L3） — 登记条目 1 行；只登记写侧会让『落盘的投影只有测试读过』这半条没人知道
+[KILLED] C1-7 行数预算往下压一颗 预期『单文件行数预算只降不升、无未登记的超大文件』 43.3s
+        实测 rc=1 红 1 条 [FAIL] 单文件行数预算只降不升、无未登记的超大文件 — crates/qx-storage/src/nats.rs 722 行 > 预算 721
+[KILLED] C1-8 门禁元组里的行号漂一颗 预期『登记行号逐条仍指到定义本身（V11 L3）』 43.4s
+        实测 rc=1 红 3 条 [FAIL] 原子投影链的登记行号逐条仍指到那个定义本身（V11 L3） — 漂移 ['crates/qx-storage/src/nats.rs:352 实际是 store: S,']：行号漂了的登记会把读者支到另一段代码上，改代码就同步改这里与 capab | [FAIL] 该链的零生产调用登记在位，且写侧与读侧两侧都点名（V11 L3） — 登记条目 1 行；只登记写侧会让『落盘的投影只有测试读过』这半条没人知道 | [FAIL] 单文件行数预算只降不升、无未登记的超大文件 — crates/qx-adapter/src/lib.rs 1070 行 > 预算 1033
+
+=== 收枪复跑 ===
+rust 腿 rc=0 4.8s rc=0 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measur 红 [无]
+gate 腿 rc=1 43.4s rc=1 红 3 条 [FAIL] WebSocket 握手块带整体截止，逐字节读不再等于无界累计（V11 O7） — socket 的读超时只界住单次 read_exact：一个每 9 秒吐一个字节的对端过去能把一次握手占住 65536 × 超时，而 64 KiB 那道上限只在累 | [FAIL] V12 方案书点名某颗东西时，被引那一格里就是那颗 — 对不上 ['crates/qx-adapter/src/lib.rs:696 那一格不是 AdapterReconcileIssue（V12 方案书第 111 行）']（共 1 处） | [FAIL] 单文件行数预算只降不升、无未登记的超大文件 — crates/qx-adapter/src/lib.rs 1070 行 > 预算 1033
+BAD 收枪 gate 不绿
+残留检查 crates/qx-storage/src/nats.rs sha 1b8137d60424838a 原件 1b8137d60424838a
+残留检查 maturity/capabilities.yaml sha ef3a0a7fbdf0a086 原件 ef3a0a7fbdf0a086
+残留检查 maturity/line_budgets.yaml sha 26a8542ece70b207 原件 26a8542ece70b207
+残留检查 tools/check_architecture.py sha 628a89e9fb6c4bca 原件 628a89e9fb6c4bca
+
+合计 9 颗：KILLED 9 / SURVIVED 0 / 未放枪 0

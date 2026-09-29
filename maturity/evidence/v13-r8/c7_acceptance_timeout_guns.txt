@@ -1,0 +1,26 @@
+== 第 0 遍：整张枪表的锚点普查（任一颗不合格就一颗都不放）
+  C7-1 咬 binance_testnet_acceptance.py 旧块×1 新块×0 ← 'timeout=LEG_BUDGET_SECONDS,'
+  C7-2 咬 binance_testnet_acceptance.py 旧块×1 新块×0 ← 'def fail(step: str, result: subprocess.Completed'
+  C7-3 咬 binance_testnet_acceptance.py 旧块×1 新块×0 ← 'LEG_BUDGET_SECONDS = 180'
+  C7-4 咬 binance_testnet_acceptance.py 旧块×1 新块×0 ← 'sys.exit(EXIT_FAILURE)'
+  C7-C 对照 binance_testnet_acceptance.py 旧块×1 新块×0 ← 'result = subprocess.run('
+
+== 基线 sha（1 份）
+   269fb1f36bbdfa20 tools/binance_testnet_acceptance.py
+
+== 基线门禁 rc=0 [PASS]=815 ✗=0 []
+C7-1 KILLED 「验收脚本唯一那条子进程调用带整体截止」| rc=1 [PASS]=814 ✗=1 命中=True 其余红=0
+C7-2 KILLED 「验收脚本唯一那条子进程调用带整体截止」| rc=1 [PASS]=814 ✗=1 命中=True 其余红=0
+C7-3 KILLED 「挂住那一腿按正数预算超时」| rc=1 [PASS]=814 ✗=1 命中=True 其余红=0
+C7-4 KILLED 「超时按失败退出码收口并先写进阶段记录」| rc=1 [PASS]=814 ✗=1 命中=True 其余红=0
+C7-C GREEN 「等价写法对照」| rc=0 [PASS]=815 ✗=0 等价写法后门禁全绿
+
+== 合计
+  C7-1 KILLED    摘掉唯一那条调用的整体截止 | rc=1 [PASS]=814 ✗=1 命中=True 其余红=0
+  C7-2 KILLED    补一条没有截止的第二调用（同一颗判据的第二张脸） | rc=1 [PASS]=814 ✗=1 命中=True 其余红=0
+  C7-3 KILLED    预算从 180 改成 0（每一腿当场超时） | rc=1 [PASS]=814 ✗=1 命中=True 其余红=0
+  C7-4 KILLED    挂住那一腿的退出码从 failure 换成 skipped | rc=1 [PASS]=814 ✗=1 命中=True 其余红=0
+  C7-C GREEN     等价写法：timeout= 挪到参数表首位，门禁必须照旧全绿 | rc=0 [PASS]=815 ✗=0 等价写法后门禁全绿
+合计 5 颗：KILLED 4 / GREEN（对照）1 / SURVIVED 0 / 未放枪 0
+   收尾 sha 复核通过（注入过的文件回到基线）
+C7_BATTERY_EXIT=0

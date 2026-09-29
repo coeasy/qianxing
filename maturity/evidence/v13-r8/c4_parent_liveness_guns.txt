@@ -1,0 +1,69 @@
+  EOL crates/qx-cli/src/strategy_host.rs: b'\n'（806 行）
+  EOL python/qianxing_strategy/worker.py: b'\r\n'（210 行）
+  EOL python/tests/test_strategy_contract.py: b'\r\n'（441 行）
+  EOL tools/check_architecture.py: b'\r\n'（13117 行）
+
+== stage-0-A：Rust 侧到底有没有以共享传输起过 Python worker 的用例（决定 G2 的定性）
+  crates/**/tests 里出现 SharedMemoryJson/Columnar：0 处
+  crates/** 里以 argv 直接起 Python worker 的写法：0 处
+  → 实测 0：Rust 那一格只有门禁牙齿，用例面走不到（记入遗留限制）
+
+== stage-0-B：锚点普查（先数枪，不放枪）
+  G1 worker.py                锚点 1 颗 ×命中 [1] 可放
+  G2 strategy_host.rs         锚点 7 颗 ×命中 [1, 1, 1, 1, 1, 1, 1] 可放
+  G3 worker.py                锚点 1 颗 ×命中 [1] 可放
+  G4 test_strategy_contract.py 锚点 1 颗 ×命中 [1] 可放
+  G5 check_architecture.py    锚点 1 颗 ×命中 [1] 可放
+
+== 基线（放枪前两颗 oracle 都必须绿）
+  GATE_EXIT=0 [PASS]=808 ✗=0
+  CASE_EXIT=0 Ran=62 OK (skipped=2)
+
+== G1 轮询循环不再读父进程存活事件（行为牙齿）
+  GATE_EXIT=1 [PASS]=807（基线 808）✗=1 → 目标红 1 颗 / 附带红 0 颗
+    目标红：worker 侧的轮询循环读父进程存活事件（V13 第 8 轮 C4） — serve_shared 取得到=True，观测线程定义 1 处、调用 1 处、带守卫的循环 0 处、无守卫 `while True:` 在场=True。循环不读那颗事件时，父进程关掉写端之后那次退出根本不发生
+  CASE_EXIT=1 Ran=62（基线 62）FAILED (errors=1, skipped=2)
+    ERROR: test_shared_ring_worker_exits_and_unlinks_rings_on_parent_stdin_eof
+  判定：KILLED
+  还原 worker.py sha=d27de6ac61c4 复核通过
+
+== G2 Rust 侧写端还原成修复前（Rust 面无用例牙齿（见 stage-0））
+  GATE_EXIT=1 [PASS]=807（基线 808）✗=1 → 目标红 1 颗 / 附带红 0 颗
+    目标红：共享内存模式也保住子进程 stdin 的写端：句柄进 self.stdin，父进程退出时由 OS 关掉（V13 第 8 轮 C4） — 实测 `.stdin(Stdio::piped())` 0 处、按 shared 分流的写法 1 处、无条件 take 0 处、shared 下丢弃写端 1 处。写端一丢，worker 在 ring 上永
+  CASE_EXIT=0 Ran=62（基线 62）OK (skipped=2)
+  判定：KILLED
+  还原 strategy_host.rs sha=63a7165e6d47 复核通过
+
+== G3 补删的守卫换成恒真（等价变异）（形状钉，非行为差异）
+  GATE_EXIT=1 [PASS]=807（基线 808）✗=1 → 目标红 1 颗 / 附带红 0 颗
+    目标红：补删环文件只走『父进程已经不在了』那一格（V13 第 8 轮 C4） — 补删 1 处（在守卫之后=False）。补删不绑事件时，正常析构路径上子进程会抢在父进程之前删掉父进程自己的环文件
+  CASE_EXIT=0 Ran=62（基线 62）OK (skipped=2)
+  判定：KILLED
+  还原 worker.py sha=d27de6ac61c4 复核通过
+
+== G4 前向对照用例改名不再被收集（名册钉）
+  GATE_EXIT=1 [PASS]=807（基线 808）✗=1 → 目标红 1 颗 / 附带红 0 颗
+    目标红：两格常驻用例都在位：stdin 还开着时必须仍在服务，关掉之后必须在预算内自收摊（V13 第 8 轮 C4） — 缺位的用例 ['test_shared_ring_worker_keeps_serving_while_parent_stdin_stays_open']、`process.stdin.close()` 1 处、按退出预算 w
+  CASE_EXIT=0 Ran=61（基线 62）OK (skipped=2)
+  判定：KILLED
+  还原 test_strategy_contract.py sha=417b0eedc202 复核通过
+
+== G5 删掉 runner 里那颗调用行（门禁自检钉）
+  GATE_EXIT=1 [PASS]=802（基线 808）✗=2 → 目标红 1 颗 / 附带红 1 颗
+    目标红：门禁里每一颗 *_check 判据都被 runner 调用（定义了不等于在跑） — 判据 120 颗（地板 60）；未被调用 ['strategy_ring_parent_liveness_check']
+    附带红：台账点名某颗东西时，被引那一格里就是那颗 — 对不上 ['tools/check_architecture.py:13006 那一格不是 alert_names_render_inside_their_bodies_check（台账第 665 行）']（共 1 处）
+  CASE_EXIT=0 Ran=62（基线 62）OK (skipped=2)
+  判定：KILLED
+  还原 check_architecture.py sha=73a53d06efd9 复核通过
+
+== G6 不放枪对照：还原之后两颗 oracle 必须回到基线
+  GATE_EXIT=0 [PASS]=808 ✗=0 / CASE_EXIT=0 Ran=62 OK (skipped=2)
+
+== 收尾 sha 复核
+  OK  crates/qx-cli/src/strategy_host.rs 63a7165e6d47
+  OK  python/qianxing_strategy/worker.py d27de6ac61c4
+  OK  python/tests/test_strategy_contract.py 417b0eedc202
+  OK  tools/check_architecture.py 73a53d06efd9
+
+判定： {'G1': 'KILLED', 'G2': 'KILLED', 'G3': 'KILLED', 'G4': 'KILLED', 'G5': 'KILLED', 'G6': 'GREEN'}
+合计 6 发：KILLED 5 / GREEN（对照）1 / SURVIVED 或红错了格 0 / 未放枪 0

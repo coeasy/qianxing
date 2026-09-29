@@ -165,9 +165,9 @@ impl PostgresStorage {
                 "PostgreSQL pool_size 必须在 1..=128 内".into(),
             ));
         }
-        // 连接阶段的界由 DSN 给；调用方没写的时候补上仓内默认值，让"连不上要等多久"
-        // 这件事在仓内就有答案，而不是随平台漂移（V11 O8）。
-        let dsn = dsn_with_connect_timeout(dsn, CONNECT_TIMEOUT_SECONDS);
+        // 连接阶段的界与 socket 层的界都由 DSN 给；调用方没写的时候补上仓内默认值，让
+        // "连不上要等多久""对端已经不在了要等多久"在仓内就有答案，而不是随平台漂移（V11 O8、V13 C2）。
+        let dsn = dsn_with_socket_defaults(dsn, CONNECT_TIMEOUT_SECONDS);
         let mut clients = Vec::with_capacity(pool_size);
         for index in 0..pool_size {
             let tls = native_tls::TlsConnector::builder()
@@ -2125,6 +2125,58 @@ impl JobQueueBackend for PostgresJobQueue {
     }
 }
 
+/// 连接上"卡在哪"的界分三档：连不上由 `connect_timeout` 管，服务端慢由
+/// `configure_client` 的 `statement_timeout` 管，而**对端已经不在了**这一档原先谁都没管
+/// ——驱动默认 2 小时才发首个 TCP 保活探测，于是一条被黑洞掉的连接让持锁者停在 socket
+/// read 上，后面的每个调用方都排满 [`SLOT_WAIT_BUDGET`] 才拿到一句"卡在往返里"，而那位
+/// 持锁者一直等不到错误、也就一直不放手（V13 第 8 轮 C2）。
+const KEEPALIVE_IDLE_SECONDS: u64 = 10;
+
+/// 首个探测之后每隔几秒重发一次。
+const KEEPALIVE_INTERVAL_SECONDS: u64 = 3;
+
+/// 重发几次就判连接已死。Windows 的 `tcp_keepalive` 结构没有这一格，驱动会忽略它，那里
+/// 由系统的重试次数决定（默认 5 次 → 约 25 秒），仍收在 [`SLOT_WAIT_BUDGET`] 之内。
+const KEEPALIVE_RETRIES: u64 = 3;
+
+/// 驱动 DSN 词表里管 socket 保活的三颗键。逐字照词表：词表之外的键让整条 DSN 当场解析失败。
+const SOCKET_KEEPALIVE_KEYS: [&str; 3] = [
+    "keepalives_idle",
+    "keepalives_interval",
+    "keepalives_retries",
+];
+
+/// 在 [`dsn_with_connect_timeout`] 之上补齐 socket 层的界：调用方已经写过的键一字不动，
+/// 带 fragment 的 URL 与它同口径原样交回。
+fn dsn_with_socket_defaults(dsn: &str, seconds: u64) -> String {
+    let base = dsn_with_connect_timeout(dsn, seconds);
+    let lowered = base.to_ascii_lowercase();
+    let mut missing: Vec<String> = Vec::new();
+    for key in SOCKET_KEEPALIVE_KEYS {
+        if lowered.contains(key) {
+            continue;
+        }
+        let value = match key {
+            "keepalives_idle" => KEEPALIVE_IDLE_SECONDS,
+            "keepalives_interval" => KEEPALIVE_INTERVAL_SECONDS,
+            _ => KEEPALIVE_RETRIES,
+        };
+        missing.push(format!("{key}={value}"));
+    }
+    if missing.is_empty() {
+        return base;
+    }
+    if let Some(scheme_end) = base.find("://") {
+        let (head, rest) = base.split_at(scheme_end + 3);
+        if rest.contains('#') {
+            return base;
+        }
+        let separator = if rest.contains('?') { '&' } else { '?' };
+        return format!("{head}{rest}{separator}{}", missing.join("&"));
+    }
+    format!("{base} {}", missing.join(" "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2182,6 +2234,41 @@ mod tests {
             dsn_with_connect_timeout(explicit, 10),
             explicit,
             "调用方写过的界不能被默认值盖掉"
+        );
+    }
+
+    /// "对端已经不在了"这一档要在仓内有界：默认 2 小时才发首个探测，持锁者会停在
+    /// socket read 上不放槽位。这里只补调用方没写过的键（V13 第 8 轮 C2）。
+    #[test]
+    fn a_postgres_dsn_without_socket_keepalive_gets_the_repo_bounds() {
+        assert_eq!(
+            dsn_with_socket_defaults("host=db port=5432 dbname=qx", 10),
+            "host=db port=5432 dbname=qx connect_timeout=10 keepalives_idle=10 keepalives_interval=3 keepalives_retries=3"
+        );
+        assert_eq!(
+            dsn_with_socket_defaults("postgresql://u:p@db:5432/qx?sslmode=require", 10),
+            "postgresql://u:p@db:5432/qx?sslmode=require&connect_timeout=10&keepalives_idle=10&keepalives_interval=3&keepalives_retries=3"
+        );
+        // 三颗键各管一档，写过的那颗一字不动、没写过的照常补——不能整组一起让位。
+        let half = dsn_with_socket_defaults("postgres://u:p@db:5432/qx?keepalives_idle=90", 10);
+        assert!(half.contains("keepalives_idle=90"), "{half}");
+        assert!(!half.contains("keepalives_idle=10"), "{half}");
+        assert!(half.contains("keepalives_interval=3"), "{half}");
+        assert!(half.contains("keepalives_retries=3"), "{half}");
+        // 带 fragment 的 URL 不是该由我们重写的形状，与 connect_timeout 那一步同口径。
+        let fragment = "postgres://u:p@db:5432/qx?sslmode=require#extra";
+        assert_eq!(
+            dsn_with_socket_defaults(fragment, 10),
+            fragment,
+            "原样交回，不往 fragment 后面拼查询串"
+        );
+        // 界与界的算术关系：socket 判死最坏 10 + 3×3 = 19 秒，服务端 statement_timeout
+        // 30 秒，两者都早于排队侧的 60 秒预算——先撑不住的不能是等锁的那一位。
+        assert!(
+            Duration::from_secs(
+                KEEPALIVE_IDLE_SECONDS + KEEPALIVE_INTERVAL_SECONDS * KEEPALIVE_RETRIES
+            ) < SLOT_WAIT_BUDGET,
+            "socket 层的界要收在槽位等待预算之内，否则补了默认值也救不了持锁者"
         );
     }
 }

@@ -1,0 +1,21 @@
+stage-0 锚点普查（每颗 needle 在目标文件里必须恰好出现一次）
+  G1 outbox_backend_semantics.rs …b'    assert_parked_outbox_has' → 1 次
+  G2 outbox_backend_semantics.rs …b'    assert_parked_outbox_has' → 1 次
+  G2 outbox_backend_semantics.rs …b'    assert_parked_outbox_has' → 1 次
+  G3 outbox_backend_semantics.rs …b'(2, OUTBOX_MAX_ATTEMPTS + 6)' → 1 次
+  G4 outbox_backend_semantics.rs …b'attempts: OUTBOX_MAX_ATTEMPT' → 1 次
+  G5 outbox_backend_semantics.rs …b'    let before = store.count' → 1 次
+  M1 sqlite.rs …b'ORDER BY CAST(e.attempts AS ' → 1 次
+  M2 sqlite.rs …b'WHERE CAST(attempts AS INTEG' → 1 次
+基线 sha：{'crates/qx-storage/tests/outbox_backend_semantics.rs': 'a0f8e3b5dd732e66', 'crates/qx-storage/src/sqlite.rs': '5979f68d057b6554'}
+G1 KILLED 期望(None,人工出口那颗 helper 在三本后端各自的用例里各被调用一次) | cargo: green rc=0 test result: ok. 14 passed; 0 failed; 0 igno 红腿=[] | 门禁: red/3 rc=1 命中=True 人工出口那颗 helper 在三本后端各自的用例里各被调用一次，postgres 也在内（V13 第 8 轮 A4） —
+G2 KILLED 期望(None,人工出口那颗 helper 在三本后端各自的用例里各被调用一次) | cargo: green rc=0 test result: ok. 14 passed; 0 failed; 0 igno 红腿=[] | 门禁: red/2 rc=1 命中=True 人工出口那颗 helper 在三本后端各自的用例里各被调用一次，postgres 也在内（V13 第 8 轮 A4） —
+G3 KILLED 期望(green,停摆夹具跨数位边界) | cargo: green rc=0 test result: ok. 14 passed; 0 failed; 0 igno 红腿=[] | 门禁: red/1 rc=1 命中=True 停摆夹具跨数位边界（8 与 14），让『按数字比』与『按文本比』在两颗 helper 里各分岔一次（V13 第 8 轮 
+G4 KILLED 期望(green,停摆夹具跨数位边界) | cargo: green rc=0 test result: ok. 14 passed; 0 failed; 0 igno 红腿=[] | 门禁: red/1 rc=1 命中=True 停摆夹具跨数位边界（8 与 14），让『按数字比』与『按文本比』在两颗 helper 里各分岔一次（V13 第 8 轮 
+G5 KILLED 期望(green,停摆条数按增量问库里的状态量) | cargo: green rc=0 test result: ok. 14 passed; 0 failed; 0 igno 红腿=[] | 门禁: red/2 rc=1 命中=True 停摆条数按增量问库里的状态量：入账 +2、人工确认之后 +1，两处都现读（V13 第 8 轮 A4） — 服务容器作业里
+M1 KILLED 期望(red,None) | cargo: red rc=101 test result: FAILED. 13 passed; 1 failed; 0  红腿=['sqlite_outbox_contract'] | 门禁: -
+M2 KILLED 期望(red,None) | cargo: red rc=101 test result: FAILED. 13 passed; 1 failed; 0  红腿=['sqlite_outbox_contract'] | 门禁: -
+
+合计： {'KILLED': 7, 'SURVIVED': 0, '未放枪': 0}  共 7 颗
+收尾 sha 复核通过（两份文件都回到基线）
+A4_BATTERY_EXIT=0

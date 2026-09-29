@@ -1,0 +1,27 @@
+[基准] crates/qx-adapter/src/binance.rs 37883503464a2ad1
+  cargo test: rc=0 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s 失败用例=[]
+  门禁: rc=0 项数=688 红项=0
+
+[A 整段清零拿掉]
+  cargo test: rc=101 test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s 失败用例=['user_stream_runner_survives_reconnects_after_healthy_sessions']
+  门禁: rc=1 项数=- 红项=1 | 用户流与行情流共用同一颗重连引擎，静默既不切断会话也不充抵预算（V11 N10） — Idle 分支一旦写成 break 或 served=true，一条只会静默的流要么被当成故障重连到上限然后退出，要么被当成健康而永不收口；行情流退出实现则它会退回自己那份手写循环，这两格口径就又分叉了。复位只认『这一条会话真交付过事件、且回调没报错』——回调失败是确定性错误，替它复位等于把同一个错误无限重试
+  还原 一致 37883503464a2ad1
+
+[B 只去掉 !callback_failed 那一半]
+  cargo test: rc=3221226505 无 test result 行 失败用例=[]
+  门禁: rc=1 项数=- 红项=1 | 用户流与行情流共用同一颗重连引擎，静默既不切断会话也不充抵预算（V11 N10） — Idle 分支一旦写成 break 或 served=true，一条只会静默的流要么被当成故障重连到上限然后退出，要么被当成健康而永不收口；行情流退出实现则它会退回自己那份手写循环，这两格口径就又分叉了。复位只认『这一条会话真交付过事件、且回调没报错』——回调失败是确定性错误，替它复位等于把同一个错误无限重试
+  还原 一致 37883503464a2ad1
+
+[用例名册] binance_stream_retry.rs 的每条用例与行号：
+  43: idle
+  47: closed
+  61: user_stream_runner_reconnects_with_injected_clock_and_stop
+  92: user_stream_runner_reconnects_after_session_or_callback_error
+  132: connect_failures_still_escalate_backoff_and_stop_at_the_budget
+  161: user_stream_runner_survives_reconnects_after_healthy_sessions
+  198: user_stream_runner_still_gives_up_when_sessions_never_deliver
+  218: user_stream_runner_does_not_reset_the_budget_on_callback_failures
+  247: user_stream_runner_keeps_the_session_open_across_silence
+  280: user_stream_runner_does_not_reset_the_budget_on_silence
+  306: market_stream_runner_survives_silence_and_uses_the_injected_clock
+  371: market_stream_runner_gives_up_after_consecutive_transport_failures

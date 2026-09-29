@@ -276,8 +276,7 @@ impl NatsJetStreamConsumer {
                     Ok(event) => event,
                     Err(error) => {
                         let error = format!("Outbox envelope 解析失败: {error}");
-                        message
-                            .double_ack_with(async_nats::jetstream::AckKind::Term)
+                        bounded_ack(message.double_ack_with(async_nats::jetstream::AckKind::Term))
                             .await
                             .map_err(|ack_error| {
                                 report.ack_failures += 1;
@@ -308,29 +307,28 @@ impl NatsJetStreamConsumer {
                 .map_err(|error| format!("consumer worker thread 失败: {error}"))??;
                 match outcome {
                     ConsumerOutcome::Applied => {
-                        message.double_ack().await.map_err(|error| {
+                        bounded_ack(message.double_ack()).await.map_err(|error| {
                             report.ack_failures += 1;
                             format!("JetStream ACK 失败: {error}")
                         })?;
                         report.applied += 1;
                     }
                     ConsumerOutcome::Duplicate => {
-                        message.double_ack().await.map_err(|error| {
+                        bounded_ack(message.double_ack()).await.map_err(|error| {
                             report.ack_failures += 1;
                             format!("JetStream duplicate ACK 失败: {error}")
                         })?;
                         report.duplicates += 1;
                     }
                     ConsumerOutcome::DeadLettered => {
-                        message.double_ack().await.map_err(|error| {
+                        bounded_ack(message.double_ack()).await.map_err(|error| {
                             report.ack_failures += 1;
                             format!("JetStream dead-letter ACK 失败: {error}")
                         })?;
                         report.dead_lettered += 1;
                     }
                     ConsumerOutcome::Retried { error } => {
-                        message
-                            .ack_with(async_nats::jetstream::AckKind::Nak(None))
+                        bounded_ack(message.ack_with(async_nats::jetstream::AckKind::Nak(None)))
                             .await
                             .map_err(|ack_error| {
                                 report.ack_failures += 1;
@@ -395,8 +393,7 @@ impl NatsJetStreamConsumer {
                     Ok(event) => event,
                     Err(error) => {
                         let error = format!("Outbox envelope 解析失败: {error}");
-                        message
-                            .double_ack_with(async_nats::jetstream::AckKind::Term)
+                        bounded_ack(message.double_ack_with(async_nats::jetstream::AckKind::Term))
                             .await
                             .map_err(|ack_error| {
                                 report.ack_failures += 1;
@@ -431,29 +428,28 @@ impl NatsJetStreamConsumer {
                 .map_err(|error| format!("consumer worker thread 失败: {error}"))??;
                 match outcome {
                     ConsumerOutcome::Applied => {
-                        message.double_ack().await.map_err(|error| {
+                        bounded_ack(message.double_ack()).await.map_err(|error| {
                             report.ack_failures += 1;
                             format!("JetStream ACK 失败: {error}")
                         })?;
                         report.applied += 1;
                     }
                     ConsumerOutcome::Duplicate => {
-                        message.double_ack().await.map_err(|error| {
+                        bounded_ack(message.double_ack()).await.map_err(|error| {
                             report.ack_failures += 1;
                             format!("JetStream duplicate ACK 失败: {error}")
                         })?;
                         report.duplicates += 1;
                     }
                     ConsumerOutcome::DeadLettered => {
-                        message.double_ack().await.map_err(|error| {
+                        bounded_ack(message.double_ack()).await.map_err(|error| {
                             report.ack_failures += 1;
                             format!("JetStream dead-letter ACK 失败: {error}")
                         })?;
                         report.dead_lettered += 1;
                     }
                     ConsumerOutcome::Retried { error } => {
-                        message
-                            .ack_with(async_nats::jetstream::AckKind::Nak(None))
+                        bounded_ack(message.ack_with(async_nats::jetstream::AckKind::Nak(None)))
                             .await
                             .map_err(|ack_error| {
                                 report.ack_failures += 1;
@@ -474,6 +470,35 @@ impl NatsJetStreamConsumer {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_secs())
     }
+}
+
+/// 消费侧一次 JetStream ack 往返的墙钟预算：等的是 broker 的回话，不是 handler 的工作时间。
+/// 整轮拉取故意不带墙钟——一轮的工作量是 `limit × handler 预算`，shipped 配置是 1024 × 5 s，
+/// 任何固定截止都会把正常批次误判成超时；截止只能落在每一次 ack 上（V13 第 8 轮 C1）。
+const NATS_CONSUMER_ACK_BUDGET: Duration = Duration::from_secs(5);
+
+/// 在预算内等一次 ack 落回。事件早已写进存储层，JetStream 之后会按 max_deliver 重投，
+/// `ConsumerEngine` 的幂等判定接住重复投递；所以宁可这一轮点名失败并中断，
+/// 也不让整轮停在无人答复的 await 上——那会让消费 worker 再也读不到停机令牌。
+async fn bounded_ack<F, E>(ack: F) -> Result<(), String>
+where
+    F: Future<Output = Result<(), E>>,
+    E: std::fmt::Display,
+{
+    ack_within(NATS_CONSUMER_ACK_BUDGET, ack).await
+}
+
+/// 预算做成形参只为用例能在 120 ms 的窗口里验到"没落回"这颗名——生产只经 `bounded_ack`
+/// 传 5 秒那颗，用例不去等它。
+async fn ack_within<F, E>(budget: Duration, ack: F) -> Result<(), String>
+where
+    F: Future<Output = Result<(), E>>,
+    E: std::fmt::Display,
+{
+    tokio::time::timeout(budget, ack)
+        .await
+        .map_err(|_| format!("在 {budget:?} 内没有落回"))?
+        .map_err(|error| error.to_string())
 }
 
 fn block_on_runtime<F, T>(runtime: &Arc<Runtime>, future: F) -> Result<T, String>
@@ -593,12 +618,34 @@ mod tests {
             3,
             "带预算的等待必须恰好落在连接、ack 与消费端装配三处"
         );
-        // 无截止的两处只能是批量拉取：它们靠 JetStream pull 的到期收尾，
-        // 半路掐断会把已经落盘的 ACK 留在孤儿任务里，比原地等待更危险。
+        // 无截止的两处只能是批量拉取：整轮的工作量由 limit 与 handler 预算相乘决定，
+        // 固定墙钟会误判正常批次。轮内十次 ack 往返各有 bounded_ack 的截止兜着——
+        // 摘掉它才会让整轮停在无人答复的 await 上，那时 join() 也跟着挂死。
         assert_eq!(
             production.matches("block_on_runtime(&self.runtime").count(),
             2,
             "不带截止的等待只允许 consume_batch 与 consume_batch_with_projection 两处"
+        );
+        assert_eq!(
+            production.matches("bounded_ack(").count(),
+            10,
+            "十次 JetStream ack 往返（六次确认、两次终止、两次 NAK）必须都过预算"
+        );
+        assert_eq!(
+            production.matches("tokio::time::timeout(").count(),
+            1,
+            "消费侧的截止只由 helper 实现一处：多处各写一份就会口径分叉"
+        );
+        // 预算的数值与接线各钉一颗：把 5 秒改成 0 秒、或把 helper 接到别的时长上，
+        // 生产看着照常跑、实则每轮 ack 立刻失败——除了这两颗没有别的判据会红。
+        assert!(
+            production
+                .contains("const NATS_CONSUMER_ACK_BUDGET: Duration = Duration::from_secs(5);"),
+            "消费侧 ack 预算的数值被改了，shipped 配置与文档口径得跟着改"
+        );
+        assert!(
+            production.contains("ack_within(NATS_CONSUMER_ACK_BUDGET, ack)"),
+            "十次 ack 用的预算不是这颗常量"
         );
         assert_eq!(
             production
@@ -607,11 +654,22 @@ mod tests {
             2,
             "批量拉取的 pull 到期被摘掉，那两处无截止等待就没有兜底了"
         );
-        assert!(
-            production.contains("NATS_PUBLISH_ACK_BUDGET")
-                && production.contains("NATS_BOOT_BUDGET"),
-            "两颗预算常量有一颗没了引用点，就是有人把截止摘了"
-        );
+        // 引用点要落在定义行之外：只看 `contains(名字)` 的话，常量删光用处也照样绿，
+        // 而 `mod nats` 在默认特性的 clippy 作业里根本不编译，dead_code 也兜不住。
+        for budget in [
+            "NATS_BOOT_BUDGET",
+            "NATS_PUBLISH_ACK_BUDGET",
+            "NATS_CONSUMER_ACK_BUDGET",
+        ] {
+            let uses = production
+                .lines()
+                .filter(|line| line.contains(budget) && !line.trim_start().starts_with("const "))
+                .count();
+            assert!(
+                uses >= 1,
+                "{budget} 只剩定义行自己念到名字，说明有人把它的截止摘了"
+            );
+        }
     }
 
     /// 停投递的闩必须两头都在：只置位不读就是每轮再攒一个孤儿任务，只读不置位就是根空守卫。
@@ -633,6 +691,32 @@ mod tests {
                 .count(),
             1,
             "闩的读取点必须只有一颗，没人读的话它就只是一块写不出的内存"
+        );
+    }
+
+    /// ack 在预算内落回就透传结果，失败原样报名；用尽必须报成"没落回"这颗名，
+    /// 而不是把整轮连同 `join()` 一起带走（V13 第 8 轮 C1）。
+    #[test]
+    fn bounded_ack_passes_through_or_names_the_stall() {
+        let runtime = runtime();
+        assert_eq!(
+            runtime.block_on(bounded_ack(async { Ok::<(), &str>(()) })),
+            Ok(())
+        );
+        assert_eq!(
+            runtime.block_on(bounded_ack(async { Err("broker 拒收这条 ack") })),
+            Err("broker 拒收这条 ack".to_string())
+        );
+        // sender 留在本线程且一直活着：预算用尽前不会有人答复，这正是 wedged broker 的形状。
+        let (_sender, never) = tokio::sync::oneshot::channel::<()>();
+        let outcome = runtime.block_on(ack_within(Duration::from_millis(120), async move {
+            let _ = never.await;
+            Ok::<(), &str>(())
+        }));
+        assert_eq!(
+            outcome,
+            Err("在 120ms 内没有落回".to_string()),
+            "预算用尽没报成点名，调用方会把挂死当成一次正常 ack"
         );
     }
 }

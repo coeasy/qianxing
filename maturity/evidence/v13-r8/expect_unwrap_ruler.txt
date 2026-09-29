@@ -1,0 +1,23 @@
+# 尺子复算件（生产文件 167 份）
+
+== 尺子 D 扣掉 cfg(test) 条目
+   全仓：.unwrap(=786  .expect(=125  panic!=12  todo!=0  unimplemented!=0
+   unwrap 前列：qx-adapter 101、qx-strategy 89、qx-factor 85、qx-scheduler 83
+   qx-api .expect( = 48
+
+== 尺子 B 截到第一颗 cfg(test) 之前
+   全仓：.unwrap(=61  .expect(=68  panic!=0  todo!=0  unimplemented!=0
+   unwrap 前列：qx-strategy 33、qx-cli 22、qx-core 3、qx-plugin 3
+   qx-api .expect( = 30
+
+== §3 qx-api/src/lib.rs 里 `.expect(` 的真实行号（尺子 D）
+   共 48 颗，前 8 颗：[58, 82, 102, 107, 118, 131, 159, 166]
+
+== V13 第 278 行原文那七颗行号各自落在哪一行
+   :77 → }
+   :97 → 空行
+   :102 → .expect("event bus mutex poisoned")
+   :113 → &self,
+   :126 → if remaining.is_zero() {
+   :154 → current: Arc::new(RwLock::new(config)),
+   :161 → 空行

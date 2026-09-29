@@ -212,6 +212,38 @@ fn readout_gives_the_recompute_verdict_its_own_field_verbatim() {
     }
 }
 
+/// 三格溯源：撮合内核、成本绑定的来源、被挡下的委托数。写侧在 `artifacts.rs` 里各落了一格，
+/// 正文此前一格都不念——只看 `fills=` 分不出"策略没发信号"与"信号全被挡下"，这两个结论对
+/// 使用者的含义相反（V13 第 8 轮 A6）。成对的两半：写了 0 要印 0，没写过才印 absent。
+#[test]
+fn provenance_line_prints_kernel_cost_source_and_rejection_count_together() {
+    let declared = serde_json::json!({
+        "schema_version": 4,
+        "matching_kernel": "qx-xingban::BacktestEngine(bar)",
+        "execution_costs": { "source": "cost-rules-file:/cfg/cost.json" },
+        "rejected_orders": 7,
+    });
+    let text = joined(&report_readout_lines(&declared, "verified"));
+    let expected =
+        "matching_kernel=qx-xingban::BacktestEngine(bar) cost_source=cost-rules-file:/cfg/cost.json rejected_orders=7";
+    assert!(text.contains(expected), "三格必须同行成对念出: {text}");
+    // 反向：`rejected_orders=0` 是"一趟都没挡"，不是"没记这笔账"。
+    let zeroed = serde_json::json!({
+        "schema_version": 4,
+        "matching_kernel": "qx-xingban::TickBacktestEngine(l1-top-of-book)",
+        "rejected_orders": 0,
+    });
+    let text = joined(&report_readout_lines(&zeroed, "verified"));
+    assert!(
+        text.contains("matching_kernel=qx-xingban::TickBacktestEngine(l1-top-of-book)"),
+        "深度内核的名字被截断或改写: {text}"
+    );
+    assert!(
+        text.contains("cost_source=absent rejected_orders=0"),
+        "没写成本来源要印 absent，写了 0 要印 0: {text}"
+    );
+}
+
 #[test]
 fn multi_leg_cost_bps_reports_no_denominator_and_refuses_an_unprintable_ratio() {
     // 换手为 0：没有分母，是算不出，不是"成本为零"。

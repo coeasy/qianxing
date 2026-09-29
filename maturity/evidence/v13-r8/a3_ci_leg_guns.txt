@@ -1,0 +1,42 @@
+=== 第 0 遍：锚点普查 ===
+A3-1 CI 腿加上 `-- --ignored`: 锚点 1 次 / 新文本已在场 0 次（须缺席） / 腿 ['gate', 'ci']
+A3-2 CI 腿加上 `--no-run`（编译但不执行）: 锚点 1 次 / 新文本已在场 0 次（须缺席） / 腿 ['gate', 'ci']
+A3-3 给一颗用例加上 `#[ignore]`（写在同一行，行数不动）: 锚点 1 次 / 新文本已在场 0 次（须缺席） / 腿 ['gate', 'ci']
+A3-4 把一颗静态守卫改名但保留门禁钉的整个前缀: 锚点 1 次 / 新文本已在场 0 次（须缺席） / 腿 ['gate', 'ci']
+A3-5 把腿的特性组合改成不含 nats（整段 `mod nats` 从此不编译）: 锚点 1 次 / 新文本已在场 0 次（须缺席） / 腿 ['gate', 'ci']
+A3-6 反面对照：只把门禁名册里的一颗改成仓内不存在的名字: 锚点 1 次 / 新文本已在场 0 次（须缺席） / 腿 ['gate']
+原件 .github/workflows/ci.yml sha 44d3314a6418e5b0 行数 328
+原件 crates/qx-storage/src/nats.rs sha 1b8137d60424838a 行数 722
+原件 tools/check_architecture.py sha 462425fce674d345 行数 12885
+
+=== 基线（未放枪）===
+ci 腿 rc=0 7.0s rc=0 test result: ok. 35 passed; 0 failed; 0 ignored; 0 measu nats 用例 5 颗在场 / 0 颗被标 ignored
+gate 腿 rc=0 52.9s rc=0 红 0 条 
+
+=== 逐颗放枪 ===
+[KILLED] A3-1 CI 腿加上 `-- --ignored` 预期『整行逐字钉；ci 腿这五颗全被过滤掉』
+    gate: 红 47.9s rc=1 红 1 条   ✗ NATS 适配层那五颗用例有一条真会执行的 CI 腿（V13 第 8 轮 A3） — 读到 1 条 `--lib` 腿（要恰好一条，且那一行逐字等于这条命令——加 `--ignored`、`--no-run` 之类旗标都等于把执行者换成没有）；名字缺席 []、`#[ignore` 在场 0 处：`cargo test --workspace` 走默认特性，qx-storage 的 `default = []` 把整段 `mod 
+    ci: 绿 1.4s rc=0 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measur nats 用例 0 颗在场 / 0 颗被标 ignored
+[KILLED] A3-2 CI 腿加上 `--no-run`（编译但不执行） 预期『第一版判据漏掉的那一面：命令名还在、也不带 `--ignored`，只有整行等式看得见』
+    gate: 红 45.1s rc=1 红 1 条   ✗ NATS 适配层那五颗用例有一条真会执行的 CI 腿（V13 第 8 轮 A3） — 读到 1 条 `--lib` 腿（要恰好一条，且那一行逐字等于这条命令——加 `--ignored`、`--no-run` 之类旗标都等于把执行者换成没有）；名字缺席 []、`#[ignore` 在场 0 处：`cargo test --workspace` 走默认特性，qx-storage 的 `default = []` 把整段 `mod 
+    ci: 绿 4.8s rc=0 无 test result 行 nats 用例 0 颗在场 / 0 颗被标 ignored
+[KILLED] A3-3 给一颗用例加上 `#[ignore]`（写在同一行，行数不动） 预期『`#[ignore` 那颗面；ci 腿少跑一颗仍然全绿，只有门禁看得见』
+    gate: 红 46.1s rc=1 红 1 条   ✗ NATS 适配层那五颗用例有一条真会执行的 CI 腿（V13 第 8 轮 A3） — 读到 1 条 `--lib` 腿（要恰好一条，且那一行逐字等于这条命令——加 `--ignored`、`--no-run` 之类旗标都等于把执行者换成没有）；名字缺席 []、`#[ignore` 在场 1 处：`cargo test --workspace` 走默认特性，qx-storage 的 `default = []` 把整段 `mod 
+    ci: 绿 6.4s rc=0 test result: ok. 34 passed; 0 failed; 1 ignored; 0 measu nats 用例 5 颗在场 / 1 颗被标 ignored
+[KILLED] A3-4 把一颗静态守卫改名但保留门禁钉的整个前缀 预期『名册逐颗带左括号（C5-7b 那一课）；ci 腿照跑不误，只是名换了』
+    gate: 红 47.4s rc=1 红 1 条   ✗ NATS 适配层那五颗用例有一条真会执行的 CI 腿（V13 第 8 轮 A3） — 读到 1 条 `--lib` 腿（要恰好一条，且那一行逐字等于这条命令——加 `--ignored`、`--no-run` 之类旗标都等于把执行者换成没有）；名字缺席 ['every_nats_await_site_goes_through_the_bounded_wait']、`#[ignore` 在场 0 处：`cargo test --w
+    ci: 绿 7.8s rc=0 test result: ok. 35 passed; 0 failed; 0 ignored; 0 measu nats 用例 5 颗在场 / 0 颗被标 ignored
+[KILLED] A3-5 把腿的特性组合改成不含 nats（整段 `mod nats` 从此不编译） 预期『恰一条那颗面（腿没了）；ci 腿里这五颗连同 `mod nats` 一起消失，但仍 rc=0』
+    gate: 红 49.3s rc=1 红 1 条   ✗ NATS 适配层那五颗用例有一条真会执行的 CI 腿（V13 第 8 轮 A3） — 读到 0 条 `--lib` 腿（要恰好一条，且那一行逐字等于这条命令——加 `--ignored`、`--no-run` 之类旗标都等于把执行者换成没有）；名字缺席 []、`#[ignore` 在场 0 处：`cargo test --workspace` 走默认特性，qx-storage 的 `default = []` 把整段 `mod 
+    ci: 绿 9.5s rc=0 test result: ok. 30 passed; 0 failed; 0 ignored; 0 measu nats 用例 0 颗在场 / 0 颗被标 ignored
+[KILLED] A3-6 反面对照：只把门禁名册里的一颗改成仓内不存在的名字 预期『名册不是空转的字符串集合：不现场就红（这一颗不需要 ci 腿）』
+    gate: 红 45.7s rc=1 红 1 条   ✗ NATS 适配层那五颗用例有一条真会执行的 CI 腿（V13 第 8 轮 A3） — 读到 1 条 `--lib` 腿（要恰好一条，且那一行逐字等于这条命令——加 `--ignored`、`--no-run` 之类旗标都等于把执行者换成没有）；名字缺席 ['bounded_ack_passes_through_or_names_the_statl']、`#[ignore` 在场 0 处：`cargo test --workspa
+
+=== 收枪复跑 ===
+ci 腿 rc=0 6.4s rc=0 test result: ok. 35 passed; 0 failed; 0 ignored; 0 measu nats 用例 5 颗在场 / 0 颗被标 ignored
+gate 腿 rc=0 48.1s rc=0 红 0 条 
+残留检查 .github/workflows/ci.yml sha 44d3314a6418e5b0 原件 44d3314a6418e5b0 行数 328 / 原 328
+残留检查 crates/qx-storage/src/nats.rs sha 1b8137d60424838a 原件 1b8137d60424838a 行数 722 / 原 722
+残留检查 tools/check_architecture.py sha 462425fce674d345 原件 462425fce674d345 行数 12885 / 原 12885
+
+合计 6 颗：KILLED 6 / SURVIVED 0 / 未放枪 0

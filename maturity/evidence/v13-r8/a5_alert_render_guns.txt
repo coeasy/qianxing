@@ -1,0 +1,45 @@
+== 分类器自检
+   五条 cargo 串 + 两条门禁串 + A3 拼接，判定与预期一致
+
+== stage-0 锚点普查（含对照那颗的归属自证）
+   tools/check_architecture.py：单行读法 ×2、三行上下文 ×1
+   三行块属于 def prometheus_exposition_check()（要 prometheus_exposition_check）；还原块在场 ×0（要 0）
+  A2 event_pipeline.rs ×1 ← 'qx_outbox_relay_parked{{worker=\\"{worker}\\"}'
+  A3 event_pipeline.rs ×1 ← 'qx_outbox_relay_parked{{worker=\\"{worker}\\"}'
+  A3 event_pipeline.rs ×1 ← 'qx_event_consumer_dead_lettered_total{{worke'
+  A4 event_pipeline.rs ×1 ← 'qx_outbox_relay_parked{{worker=\\"{worker}\\"}'
+  A5 qianxing-alerts.yml ×1 ← 'description: "worker={{ $labels.worker }} ha'
+  A5 event_pipeline.rs ×1 ← 'fn apply(&mut self, report: &qx_storage::Out'
+
+== 基线 sha（3 份）
+   9d4434af9ccf64ee crates/qx-cli/src/event_pipeline.rs
+   2520d0aab1cf5be7 deploy/prometheus/qianxing-alerts.yml
+   fba7de0cf7ed8bad tools/check_architecture.py
+
+== 基线门禁 green/815 rc=0
+
+== 干净树的 nats 整跑基线（先重链，再整跑）
+   build rc=0
+   基线 cargo green rc=0 1 腿 / 通过 266 / 失败 0 / 过期守卫命中 0 过期守卫行=0
+A2 KILLED 「两格各住在自己的渲染器体内」| cargo green rc=0 1 腿 / 通过 266 / 失败 0 / 过期守卫命中 0 | 门禁 red/4 rc=1 命中=两格各住在自己的渲染器体内：API 那份在 `to_prometheus`，worker 那份在 RelayMe
+   A2 的其余红行 3 颗：['Prometheus 告警规则点名的指标都有生产渲染器（V11 R7-i） — ', '停摆数一路到 Prometheus 指标与 relay worker 的自报行（', "V11 方案书点名某颗东西时，被引那一格里就是那颗 — 对不上 ['crates"]
+A3 KILLED 「两格各住在自己的渲染器体内」| cargo green rc=0 1 腿 / 通过 266 / 失败 0 / 过期守卫命中 0 | 门禁 red/2 rc=1 命中=两格各住在自己的渲染器体内：API 那份在 `to_prometheus`，worker 那份在 RelayMe
+   A3 的其余红行 1 颗：["V11 方案书点名某颗东西时，被引那一格里就是那颗 — 对不上 ['crates"]
+A4 KILLED 「的 render 用真换行分隔每一格」| cargo green rc=0 1 腿 / 通过 266 / 失败 0 / 过期守卫命中 0 | 门禁 red/1 rc=1 命中=`RelayMetricTotals` 的 render 用真换行分隔每一格（V13 第 8 轮 A5，R7-i
+   A4 的其余红行 0 颗：[]
+A5 KILLED 「Prometheus 告警规则点名的指标都有生产渲染器」| cargo green rc=0 1 腿 / 通过 266 / 失败 0 / 过期守卫命中 0 | 门禁 red/4 rc=1 命中=Prometheus 告警规则点名的指标都有生产渲染器（V11 R7-i） — 规则里 9 格：['qx_com
+   A5 的其余红行 3 颗：["原子投影链的登记行号逐条仍指到那个定义本身（V11 L3） — 漂移 ['cra", "台账指过去的那一行不是空行 — 空行 ['crates/qx-cli/src/e", '单文件行数预算只降不升、无未登记的超大文件 — crates/qx-cli/sr']
+
+== 隔离对照 A5-C：同一发注入 + 门禁那一行还原成整份文本读法，「有生产渲染器」必须不红
+   对照的判据是集合相等：对照红的面 = A5 那一发红的面 减掉「有生产渲染器」自己，多一颗少一颗都不算通过
+   对照：门禁 red/3 rc=1｜「有生产渲染器」红=False（期望 False）
+   对照红 3 颗 vs A5 那发的其余红 3 颗
+
+== 合计
+  A2 KILLED    cargo=green rc=0 1 腿 / 通过 266 / 失败 0 / 过期守卫命中 0 build_rc=0 | 门禁 red/4 命中=True 其余红=3
+  A3 KILLED    cargo=green rc=0 1 腿 / 通过 266 / 失败 0 / 过期守卫命中 0 build_rc=0 | 门禁 red/2 命中=True 其余红=1
+  A4 KILLED    cargo=green rc=0 1 腿 / 通过 266 / 失败 0 / 过期守卫命中 0 build_rc=0 | 门禁 red/1 命中=True 其余红=0
+  A5 KILLED    cargo=green rc=0 1 腿 / 通过 266 / 失败 0 / 过期守卫命中 0 build_rc=0 | 门禁 red/4 命中=True 其余红=3
+    {'KILLED': 4, 'SURVIVED': 0, '未放枪': 0}  共 4 颗；A5-C 通过 = True
+   收尾 sha 复核通过（三份文件回到基线）
+A5_BATTERY_EXIT=0

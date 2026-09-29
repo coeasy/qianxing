@@ -136,6 +136,15 @@ pub(crate) fn report_readout_lines(summary: &Value, input_verified: &str) -> Vec
             "  risk_rule_set_version={}",
             render_text(summary_text(summary, "/risk_rules/rule_set_version"))
         ),
+        // 写侧三格各有其主（`matching_kernel` / `execution_costs.source` / `rejected_orders`），
+        // 正文此前一格都不念：`fills=0` 分不清"策略没发信号"与"信号全被风控挡下"，而 Bar 内核
+        // 与深度内核的结论强度不同。同行印出才不会被读成三次互不相干的测量（V13 第 8 轮 A6）。
+        format!(
+            "  matching_kernel={} cost_source={} rejected_orders={}",
+            render_text(summary_text(summary, "/matching_kernel")),
+            render_text(summary_text(summary, "/execution_costs/source")),
+            render_number(summary_number(summary, "/rejected_orders"))
+        ),
     ]
 }
 

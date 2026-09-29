@@ -815,9 +815,15 @@ MQ、用户流、对账和交易安全状态继续接入同一 readiness provide
 `/schema/account-snapshot-v1` 外都要求已认证 operator，否则 403
 `authenticated_operator_required`。
 
-Prometheus 告警规则模板位于 `deploy/prometheus/qianxing-alerts.yml`，覆盖 worker 失联、心跳
-过期、Outbox 发布失败、Consumer 死信和 ACK 失败；生产环境应根据实际抓取间隔、租约窗口和
-值班策略调整 `for` 与 heartbeat 阈值。
+Prometheus 告警规则模板位于 `deploy/prometheus/qianxing-alerts.yml`，八条规则覆盖 worker 失联、
+心跳过期、指标文件过期、Outbox 发布失败、Outbox 停摆残留、Consumer 死信、Consumer ACK 失败、
+API 长连接被上限拒绝。抓取面是两份：`qx_api_*` 由 API 的 `/metrics` 现场外销，`qx_worker_*`、
+`qx_outbox_relay_*`、`qx_event_consumer_*` 由 worker 落盘的指标文件外销——后者只在 worker 真的
+在写那份文件时才有样本，而 `qx_outbox_relay_parked` 还要求 worker 带 `nats` 特性构建（不带这个
+特性时整本 `RelayMetricTotals` 不参与编译）。没有样本时规则不触发、而不是触发，所以 worker 侧的
+静默由 `QianxingWorkerDown` 与 `QianxingWorkerMetricsStale` 兜住。停摆残留按当前值判定
+（`qx_outbox_relay_parked > 0`）而不是按增量：那一格是"现在还剩几条"的状态量，不是累计量。
+生产环境应根据实际抓取间隔、租约窗口和值班策略调整 `for` 与 heartbeat 阈值。
 
 ## 自检与内部命令
 

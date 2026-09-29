@@ -1,0 +1,17 @@
+sqlite                   clippy  rc=0 clippy诊断=0
+sqlite                   check   rc=0 clippy诊断=0
+sqlite                   test    rc=0 clippy诊断=0
+postgres                 clippy  rc=0 clippy诊断=0
+postgres                 check   rc=0 clippy诊断=0
+postgres                 test    rc=0 clippy诊断=0
+nats                     clippy  rc=0 clippy诊断=0
+nats                     check   rc=0 clippy诊断=0
+nats                     test    rc=0 clippy诊断=0
+postgres+nats            clippy  rc=0 clippy诊断=0
+postgres+nats            check   rc=0 clippy诊断=0
+postgres+nats            test    rc=0 clippy诊断=0
+nats+postgres+sqlite     clippy  rc=0 clippy诊断=0
+nats+postgres+sqlite     check   rc=0 clippy诊断=0
+nats+postgres+sqlite     test    rc=0 clippy诊断=0
+特性矩阵总计 rc=0
+matrix_rc=0

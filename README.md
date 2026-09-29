@@ -482,13 +482,15 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 2026-09-28 的 R7-h 轮复测磁盘 **1035** 条（按 crate 点名：qx-cli=325、qx-xingban=94、qx-core=83、qx-runtime=78、
 qx-storage=75，其余 17 个 crate 合计 380）。
 
-能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，下面这组是 **2026-09-28 的 V12 R7-h 轮**实测；
+能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，下面这组是 **2026-09-30 的 V13 第 8 轮**实测；
 上面「当前状态」那三条里的 533→537 行、255 证据行是**各自那一轮**的读数，这份台账此后只增不减）：
 缩进两格的条目 21 个，
-其中带 `implementation` 键的能力块 19 个、393 条证据行（其中 316 行以仓库内路径开头 —— 前缀集合取门禁
-`capabilities_check` 自己那条正则的 `crates|tools|deploy|maturity|docs|schemas|python`，一行里每个路径 token
-逐个核对存在性，不止行首）、140 条 limitation，文件 708 行。**19 个能力块中 16 个同时满足
-`implementation` 与 `code_tested`；`sandbox_tested` 与 `production_approved` 无一为真**（这两档在 19 块里全为 `false`）；
+其中带 `implementation` 键的能力块 19 个、410 条证据行（其中 337 行以仓库内路径开头 —— 前缀取门禁自己那一颗常量 `CAP_LEDGER_PATH_PREFIX`，本轮把
+`.github/` 补进这组前缀，并把 `capabilities_check` 里那份手抄的同一条清单删掉、改成从这颗常量派生，于是"数多少行"与"核不核存在"用的是同一把尺；
+一行里每个路径 token 逐个核对存在性，不止行首。另有 73 行不以那组前缀开头，其中 39 行行内仍点到带前缀的路径、被那颗逐 token 的核对覆盖，
+剩下 34 行今天没有任何判据核对它们指向的东西在不在场，这一格登记在台账的 `ledger_evidence_paths_have_partial_prefix_coverage`）、153 条 limitation，文件 738 行。
+**19 个能力块里 16 个同时满足 `implementation` 与 `code_tested`；`sandbox_tested` 与
+`production_approved` 无一为真**（这两档在名册里实测为 0 / 0 颗 `true`）；
 `postgres` / `nats` / `broker_gateway` 三条的 `implementation` 都不是 `true`（前两条是 `optional`，
 最后一条写的是 `unavailable_without_vendor_protocol`），只有 feature 矩阵或接口占位。
 因此可宣称的边界是：

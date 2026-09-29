@@ -876,7 +876,7 @@ pub struct ApiMetricsSnapshot {
 impl ApiMetricsSnapshot {
     pub fn to_prometheus(self) -> String {
         // 每格指标各占一行，分隔符必须是真换行：上一版这里写的是两字符的字面反斜杠加 n，于是
-        // `/metrics` 整份文本挤成一行，`deploy/prometheus/qianxing-alerts.yml` 那六条告警一条都
+        // `/metrics` 整份文本挤成一行，`deploy/prometheus/qianxing-alerts.yml` 那批告警一条都
         // 取不到样本——端点仍回 200，链路却是断的（V11 R7-i）。
         format!(
             "# HELP qx_api_requests_total Total API requests received.\n\

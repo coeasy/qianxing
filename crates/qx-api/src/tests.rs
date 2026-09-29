@@ -69,7 +69,7 @@ fn metrics_route_appends_supervised_worker_metrics() {
 }
 
 /// `/metrics` 必须是**多行** Prometheus 文本：这一版之前每格之间写的是两字符的字面反斜杠加 n，
-/// 端点照样回 200、`contains` 照样绿，而 `deploy/prometheus/qianxing-alerts.yml` 的六条告警
+/// 端点照样回 200、`contains` 照样绿，而 `deploy/prometheus/qianxing-alerts.yml` 那批告警
 /// 一条都取不到样本——对外通告健康、实际链路断开（V11 R7-i）。按行断言，字面 `\n` 一出现就红。
 #[test]
 fn metrics_exposition_puts_every_metric_on_its_own_line() {

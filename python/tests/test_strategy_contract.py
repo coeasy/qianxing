@@ -4,8 +4,10 @@ import io
 import json
 import os
 import struct
+import subprocess
 import tempfile
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +19,16 @@ from qianxing_strategy.frame import REQUEST, RESPONSE, encode_frame, read_frame
 from qianxing_strategy.ring import RingEmpty, RingFull, SharedMemoryRing
 from qianxing_strategy.columnar import decode_request
 from qianxing_strategy.worker import _load_handler
+
+# 共享内存那一族用例与 worker 的默认值分开取小数：两份环文件各 32KB，跑完就随临时目录消失。
+SHARED_RING_CAPACITY = 8
+SHARED_RING_SLOT_BYTES = 4096
+# 两颗预算各按本机实测放大：起解释器到答上第一颗请求七轮最大 0.121s，关掉 stdin 到自收摊
+# 最大 0.017s（`maturity/evidence/v13-r8/c4_worker_latency.py` 的落盘读数）。回复那颗留到 15s
+# 是因为冷启动要过杀软；退出那颗只留 5s——回归时这条链是永久自转，预算越短 CI 付出的代价越小，
+# 而 5s 仍是实测最大值的近三百倍，不会把调度抖动读成终止性缺陷。
+SHARED_WORKER_REPLY_BUDGET_SECONDS = 15
+SHARED_WORKER_EXIT_BUDGET_SECONDS = 5
 
 
 class StrategyContractTest(unittest.TestCase):
@@ -291,6 +303,110 @@ class StrategyContractTest(unittest.TestCase):
                     writer.try_push(b"three")
                     self.assertEqual(reader.try_pop(), b"two")
                     self.assertEqual(reader.try_pop(), b"three")
+
+    def _spawn_shared_ring_worker(self, input_ring: Path, output_ring: Path) -> subprocess.Popen:
+        """按 `strategy_host.rs` 共享内存那条路的同一份 argv 起一颗真 worker。
+
+        stdin 必须是管道：ring 传输自己带不来"父进程已经不在了"这一格，子进程收摊靠的
+        就是这根管道的 EOF（`strategy_host.rs` 因此在共享模式下也留着写端）。
+        """
+        return subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "qianxing_strategy.worker",
+                "--module",
+                str(Path(__file__).resolve().parent / "fixtures" / "strategy_target.py"),
+                "--protocol",
+                "shared_memory_json",
+                "--input-ring",
+                str(input_ring),
+                "--output-ring",
+                str(output_ring),
+                "--ring-capacity",
+                str(SHARED_RING_CAPACITY),
+                "--ring-slot-bytes",
+                str(SHARED_RING_SLOT_BYTES),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=str(Path(__file__).resolve().parents[1]),
+        )
+
+    def _shared_ring_round_trip(self, input_ring: Path, output_ring: Path) -> dict:
+        """往输入环压一颗真请求，等子进程把应答放回输出环。
+
+        两格用例都先走这一步：它证明子进程已经 import 完、进了轮询循环，于是"关掉 stdin
+        它就退出"这条判据不会把"子进程在启动阶段就死了"读成终止性正确。
+        """
+        frame = encode_frame(REQUEST, 1, self.request.to_json().encode("utf-8"))
+        with SharedMemoryRing(input_ring, SHARED_RING_CAPACITY, SHARED_RING_SLOT_BYTES) as writer:
+            writer.push_wait(frame, time.monotonic() + SHARED_WORKER_REPLY_BUDGET_SECONDS)
+        deadline = time.monotonic() + SHARED_WORKER_REPLY_BUDGET_SECONDS
+        while True:
+            with SharedMemoryRing(
+                output_ring, SHARED_RING_CAPACITY, SHARED_RING_SLOT_BYTES
+            ) as reader:
+                try:
+                    encoded = reader.try_pop()
+                    break
+                except RingEmpty:
+                    if time.monotonic() >= deadline:
+                        self.fail("共享内存 worker 在预算内没有回答这一颗请求")
+            time.sleep(0.005)
+        kind, sequence, payload = read_frame(io.BytesIO(encoded))
+        self.assertEqual((kind, sequence), (RESPONSE, 1))
+        return json.loads(payload)
+
+    def _reap_shared_worker(self, process: subprocess.Popen) -> None:
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=SHARED_WORKER_REPLY_BUDGET_SECONDS)
+
+    def test_shared_ring_worker_keeps_serving_while_parent_stdin_stays_open(self):
+        with tempfile.TemporaryDirectory() as directory:
+            input_ring = Path(directory) / "input.ring"
+            output_ring = Path(directory) / "output.ring"
+            SharedMemoryRing.create(input_ring, SHARED_RING_CAPACITY, SHARED_RING_SLOT_BYTES).close()
+            SharedMemoryRing.create(output_ring, SHARED_RING_CAPACITY, SHARED_RING_SLOT_BYTES).close()
+            process = self._spawn_shared_ring_worker(input_ring, output_ring)
+            try:
+                reply = self._shared_ring_round_trip(input_ring, output_ring)
+                self.assertTrue(reply["ok"], reply)
+                self.assertEqual(reply["output"]["target_qty"], 3)
+                self.assertIsNone(
+                    process.poll(),
+                    "stdin 还开着，worker 却已经自己退出——下一条判据里那次退出就不是父进程"
+                    "存活信号带来的，而是子进程根本服务不起来",
+                )
+                self.assertTrue(input_ring.exists() and output_ring.exists())
+            finally:
+                self._reap_shared_worker(process)
+
+    def test_shared_ring_worker_exits_and_unlinks_rings_on_parent_stdin_eof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            input_ring = Path(directory) / "input.ring"
+            output_ring = Path(directory) / "output.ring"
+            SharedMemoryRing.create(input_ring, SHARED_RING_CAPACITY, SHARED_RING_SLOT_BYTES).close()
+            SharedMemoryRing.create(output_ring, SHARED_RING_CAPACITY, SHARED_RING_SLOT_BYTES).close()
+            process = self._spawn_shared_ring_worker(input_ring, output_ring)
+            try:
+                self.assertTrue(self._shared_ring_round_trip(input_ring, output_ring)["ok"])
+                process.stdin.close()
+                self.assertEqual(
+                    process.wait(timeout=SHARED_WORKER_EXIT_BUDGET_SECONDS),
+                    0,
+                    "父进程关掉 stdin 之后 worker 没有自己收摊：它会留在 1 kHz 轮询里空转到"
+                    "天荒地老，两份环文件也留在原地",
+                )
+            finally:
+                self._reap_shared_worker(process)
+            for path in (input_ring, output_ring):
+                self.assertFalse(path.exists(), f"worker 自收摊之后环文件还在: {path}")
 
     def test_columnar_request_restores_bar_columns(self):
         metadata = json.loads(self.request.to_json())

@@ -1,0 +1,55 @@
+!! 这一份作废，只作对照留存：它是 A5 与 A6 混在同一脚本里的第一遍。
+!! 混放的两个后果：1) A5/A6 的判定挤在同一份日志里，读者要自己分行认领票面；
+!! 2) 跑到 A5 那批时，门禁文件里的锚点 `text = production_text(...)` 实测出现 2 次，
+!!    量具自己 assert 退出（battery rc=1），因此这份没有合计行、也没有 A6_BATTERY_EXIT。
+!! 现在：A6 那七颗住在 a6_report_readout_guns.py，A5 那批住在 a5_alert_render_guns.py，
+!!    两份各自收口、各自带合计行。下面原文逐字保留。
+
+== 分类器自检（真串来自本轮与上一轮的实测输出）
+   五条 cargo 串 + 两条门禁串 + 四块拼接与改名自测，判定与预期一致
+
+== stage-0 锚点普查
+  P1 report_readout.rs ×1 ← 'format!('
+  P2 report_readout.rs ×1 ← 'format!('
+  P3 report_readout.rs ×1 ← 'render_text(summary_text(summary, "/executio'
+  P4 artifacts.rs ×1 ← '"execution_costs": { "source": input.cost_so'
+  P5 report_readout.rs ×1 ← 'fn provenance_line_prints_kernel_cost_source'
+  P6 config_commands.rs ×1 ← 'println!("[Report] summary={}", summary_path'
+  A1 qianxing-alerts.yml ×1 ← '- alert: QianxingApiConnectionRejections'
+  A2 event_pipeline.rs ×1 ← 'qx_outbox_relay_parked{{worker=\\"{worker}\\"}'
+  A3 event_pipeline.rs ×1 ← 'qx_outbox_relay_parked{{worker=\\"{worker}\\"}'
+  A3 event_pipeline.rs ×1 ← 'qx_event_consumer_dead_lettered_total{{worke'
+  A4 event_pipeline.rs ×1 ← 'qx_outbox_relay_parked{{worker=\\"{worker}\\"}'
+  A5 qianxing-alerts.yml ×1 ← 'description: "worker={{ $labels.worker }} ha'
+  A5 event_pipeline.rs ×1 ← 'fn apply(&mut self, report: &qx_storage::Out'
+
+== 基线 sha（7 份）
+   85cbb0b52bd139e5 crates/qx-cli/src/backtests/artifacts.rs
+   79a92f32d454fea0 crates/qx-cli/src/config_commands.rs
+   9d4434af9ccf64ee crates/qx-cli/src/event_pipeline.rs
+   4bf79436ea9c88ea crates/qx-cli/src/report_readout.rs
+   c7af40370f9bc003 crates/qx-cli/src/tests/report_readout.rs
+   a6b36178aee36692 deploy/prometheus/qianxing-alerts.yml
+   367a6d07c71e2d8d tools/check_architecture.py
+P1 KILLED 期望(cargo=red, 门禁「三格溯源由读侧一处印出」) | cargo: red rc=101 1 腿 / 通过 8 / 失败 1 | 门禁: red/1 rc=1 命中=三格溯源由读侧一处印出，每格各有一次自己的读法（V13 第 8 轮 A6） — 排版 0 处 / 读法 [('sum
+P2 KILLED 期望(cargo=red, 门禁「三格溯源由读侧一处印出」) | cargo: red rc=101 1 腿 / 通过 8 / 失败 1 | 门禁: red/1 rc=1 命中=三格溯源由读侧一处印出，每格各有一次自己的读法（V13 第 8 轮 A6） — 排版 0 处 / 读法 [('sum
+P3 KILLED 期望(cargo=red, 门禁「三格溯源由读侧一处印出」) | cargo: red rc=101 1 腿 / 通过 8 / 失败 1 | 门禁: red/1 rc=1 命中=三格溯源由读侧一处印出，每格各有一次自己的读法（V13 第 8 轮 A6） — 排版 1 处 / 读法 [('sum
+P4 KILLED 期望(cargo=green, 门禁「写侧三键各只落一处」) | cargo: green rc=0 1 腿 / 通过 6 / 失败 0 | 门禁: red/1 rc=1 命中=写侧三键各只落一处，读侧念的正是写侧那三格（V13 第 8 轮 A6） — 落点 [('"matching_kern
+P5 KILLED 期望(cargo=green, 门禁「排版侧与命令行侧各有一颗用例钉住这一行」) | cargo: green rc=0 1 腿 / 通过 9 / 失败 0 | 门禁: red/1 rc=1 命中=排版侧与命令行侧各有一颗用例钉住这一行（V13 第 8 轮 A6） — 缺 ['provenance_line_pr
+P6 KILLED 期望(cargo=green, 门禁「命令侧不再拼这三格」) | cargo: green rc=0 1 腿 / 通过 6 / 失败 0 | 门禁: red/1 rc=1 命中=命令侧不再拼这三格，正文只从共用读法里出（V13 第 8 轮 A6） — 命令侧出现 [('matching_ker
+A1 KILLED 期望(cargo=green, 门禁「两条 R7 计数在告警规则里各占一条 expr」) | cargo: green rc=0 1 腿 / 通过 9 / 失败 0 | 门禁: red/1 rc=1 命中=两条 R7 计数在告警规则里各占一条 expr（V13 第 8 轮 A5） — 规则点到 7 格，缺 ['qx_ap
+A2 SURVIVED 期望(cargo=green, 门禁「两格各住在自己的渲染器体内」) | cargo: red rc=101 1 腿 / 通过 244 / 失败 15 | 门禁: red/4 rc=1 命中=两格各住在自己的渲染器体内：API 那份在 `to_prometheus`，worker 那份在 RelayMetr
+A3 SURVIVED 期望(cargo=green, 门禁「两格各住在自己的渲染器体内」) | cargo: red rc=101 1 腿 / 通过 244 / 失败 15 | 门禁: red/2 rc=1 命中=两格各住在自己的渲染器体内：API 那份在 `to_prometheus`，worker 那份在 RelayMetr
+A4 SURVIVED 期望(cargo=green, 门禁「的 render 用真换行分隔每一格」) | cargo: red rc=101 1 腿 / 通过 244 / 失败 15 | 门禁: red/1 rc=1 命中=`RelayMetricTotals` 的 render 用真换行分隔每一格（V13 第 8 轮 A5，R7-i 的
+A5 SURVIVED 期望(cargo=green, 门禁「Prometheus 告警规则点名的指标都有生产渲染器」) | cargo: red rc=101 1 腿 / 通过 244 / 失败 15 | 门禁: red/3 rc=1 命中=Prometheus 告警规则点名的指标都有生产渲染器（V11 R7-i） — 规则里 9 格：['qx_comme
+
+== 隔离对照 A5-C：同一发注入，把门禁那一行还原成整份文本读法
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\scratch_r8\w190_guns_a56.py", line 358, in <module>
+    apply_edit(rel, old, new)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "D:\aex_work\qianxing\scratch_r8\w190_guns_a56.py", line 229, in apply_edit
+    assert hits == 1, f"{rel} 锚点出现 {hits} 次：{old_lines[0].strip()[:40]!r}"
+           ^^^^^^^^^
+AssertionError: tools/check_architecture.py 锚点出现 2 次：'text = production_text(path.read_text(en'
+battery rc=1
