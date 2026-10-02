@@ -22,10 +22,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_HOST: &str = "api.binance.com";
 const DEFAULT_PORT: u16 = 443;
-const DEFAULT_WS_HOST: &str = "ws-api.binance.com";
 const DEFAULT_WS_PATH: &str = "/ws-api/v3";
 const TESTNET_HOST: &str = "testnet.binance.vision";
-const TESTNET_WS_HOST: &str = "ws-api.testnet.binance.vision";
 
 /// Binance Spot HMAC API 凭据与参数签名边界。
 #[derive(Clone)]
@@ -457,50 +455,6 @@ where
     Ok(report)
 }
 
-/// 使用官方端点建立并持续维护 Binance 用户流的便捷入口。
-///
-/// 该函数适合由独立 worker 线程/进程调用；`should_stop` 负责优雅停机，事件回调
-/// 通常直接调用 `BinanceSpotVenue::ingest_user_event`，因此不会绕过订单事实边界。
-pub fn run_binance_user_stream_live<Stop, Sleep, Event>(
-    auth: &BinanceSpotAuth,
-    request_id_prefix: &str,
-    timeout: std::time::Duration,
-    policy: BinanceStreamRetryPolicy,
-    should_stop: Stop,
-    sleep: Sleep,
-    on_event: Event,
-) -> Result<BinanceStreamRunReport, String>
-where
-    Stop: FnMut() -> bool,
-    Sleep: FnMut(std::time::Duration),
-    Event: FnMut(&str) -> Result<(), String>,
-{
-    let config =
-        BinanceUserStreamRunConfig::new(DEFAULT_WS_HOST, request_id_prefix, timeout, policy)?;
-    run_binance_user_stream_with_config(auth, config, should_stop, sleep, on_event)
-}
-
-pub fn run_binance_user_stream_with_config<Stop, Sleep, Event>(
-    auth: &BinanceSpotAuth,
-    config: BinanceUserStreamRunConfig,
-    should_stop: Stop,
-    sleep: Sleep,
-    on_event: Event,
-) -> Result<BinanceStreamRunReport, String>
-where
-    Stop: FnMut() -> bool,
-    Sleep: FnMut(std::time::Duration),
-    Event: FnMut(&str) -> Result<(), String>,
-{
-    run_binance_user_stream_with_config_loader(
-        || Ok(auth.clone()),
-        config,
-        should_stop,
-        sleep,
-        on_event,
-    )
-}
-
 /// 使用凭据加载器维护用户流；每次建立新 WebSocket 会话前重新读取凭据。
 ///
 /// 这允许部署系统原子替换 Secret Manager 投影的 key/secret 文件：已有会话
@@ -542,26 +496,6 @@ where
         sleep,
         on_event,
     )
-}
-
-/// 使用 Spot Testnet 官方 WebSocket API 运行用户流。
-pub fn run_binance_user_stream_testnet<Stop, Sleep, Event>(
-    auth: &BinanceSpotAuth,
-    request_id_prefix: &str,
-    timeout: std::time::Duration,
-    policy: BinanceStreamRetryPolicy,
-    should_stop: Stop,
-    sleep: Sleep,
-    on_event: Event,
-) -> Result<BinanceStreamRunReport, String>
-where
-    Stop: FnMut() -> bool,
-    Sleep: FnMut(std::time::Duration),
-    Event: FnMut(&str) -> Result<(), String>,
-{
-    let config =
-        BinanceUserStreamRunConfig::new(TESTNET_WS_HOST, request_id_prefix, timeout, policy)?;
-    run_binance_user_stream_with_config(auth, config, should_stop, sleep, on_event)
 }
 
 /// Binance Spot 公共 L1 行情快照与 `bookTicker` 流。

@@ -45,6 +45,9 @@ pub use postgres::{
     PostgresSnapshotStore, PostgresStorage,
 };
 
+mod wait_budget;
+pub use wait_budget::NatsWaitBudget;
+
 #[cfg(feature = "nats")]
 mod nats;
 #[cfg(feature = "nats")]
@@ -419,20 +422,19 @@ impl OutboxEvent {
     }
 }
 
+/// 把 EventLog 的 `[projection_cursor, +∞)` 区间投影成 Outbox 事件。
+/// 游标前先在序号上过滤再序列化：先全量序列化后按游标丢弃会让每笔追加都为已投递的事实
+/// 付一遍 serde 与 `validate`，代价随日志长度线性增长。
 pub fn project_event_log_to_outbox(
     log_name: &str,
     log: &EventLog,
+    projection_cursor: u64,
 ) -> Result<Vec<OutboxEvent>, StorageError> {
-    if log_name.trim().is_empty()
-        || !log_name
-            .chars()
-            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '-' | '_'))
-    {
-        return Err(StorageError::InvalidName(log_name.into()));
-    }
+    validate_segment_name(log_name)?;
     log.validate().map_err(StorageError::Core)?;
     log.events()
         .iter()
+        .filter(|event| event.seq >= projection_cursor)
         .map(|event| {
             let outbox = OutboxEvent {
                 event_id: format!("{log_name}:{}", event.seq),
@@ -1584,7 +1586,8 @@ struct TokenBucketState {
 /// 共享文件系统上的持久化令牌桶。
 ///
 /// 这是 API/worker 在没有外部缓存时的跨进程限流后端；它使用同一套原子锁和
-/// 临时文件替换语义。高可用集群仍应接入具备事务/租约能力的外部存储。
+/// 临时文件替换语义。高可用集群仍应接入具备事务/租约能力的外部存储。`now` 的时钟域由调用方
+/// 决定，`refill_per_second` 的"每秒"就是那个域里的一格（V13 R2 第十六遍）。
 #[derive(Clone, Debug)]
 pub struct FileTokenBucket {
     root: PathBuf,

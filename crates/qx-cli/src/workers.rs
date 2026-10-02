@@ -201,14 +201,12 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                 {
                     continue;
                 }
-                let lease = match command_queue
-                    .claim_command(command.command_id, context.id(), lease_now, 30)
-                {
+                let claim =
+                    command_queue.claim_command(command.command_id, context.id(), lease_now, 30);
+                let lease = match claim {
                     Ok(lease) => lease,
                     Err(StorageError::LeaseHeld { .. }) => continue,
-                    Err(error) => {
-                        return Err(format!("领取 Strategy 控制命令租约失败: {error:?}"))
-                    }
+                    Err(error) => return Err(format!("领取 Strategy 控制命令租约失败: {error:?}")),
                 };
                 if command_is_final(&control, command.command_id) {
                     command_queue
@@ -250,7 +248,8 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                     .map_err(|error| format!("确认 Strategy 控制命令失败: {error:?}"))?;
             }
             let mut processed = 0_usize;
-            if matches!(strategy.state, qx_zhenlu::StrategyState::Running) {
+            // 只有 Running 状态的策略才读队列：暂停/停止时这一轮没有任何待办。
+            let pending = if matches!(strategy.state, qx_zhenlu::StrategyState::Running) {
                 if let Some(data_fingerprint) =
                     live_strategy_snapshot_digest(&strategy_runtime_config.strategy, now)?
                 {
@@ -269,21 +268,37 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                         last_live_digest = Some(data_fingerprint);
                     }
                 }
-                for queued in queue
+                queue
                     .available(lease_now)
                     .map_err(|error| format!("读取 Strategy JobQueue 失败: {error:?}"))?
-                {
-                    if queued.job.owner != context.id() && queued.job.owner != "*" {
-                        continue;
+            } else {
+                Vec::new()
+            };
+            for queued in pending {
+                if queued.job.owner != context.id() && queued.job.owner != "*" {
+                    continue;
+                }
+                let lease = match queue.claim(queued.run.run_id, context.id(), lease_now, 30) {
+                    Ok(lease) => lease,
+                    Err(StorageError::LeaseHeld { .. }) => continue,
+                    Err(error) => {
+                        return Err(format!("领取 Strategy JobQueue 租约失败: {error:?}"))
                     }
-                    let lease =
-                        match queue.claim(queued.run.run_id, context.id(), lease_now, 30) {
-                        Ok(lease) => lease,
-                        Err(StorageError::LeaseHeld { .. }) => continue,
-                        Err(error) => {
-                            return Err(format!("领取 Strategy JobQueue 租约失败: {error:?}"))
-                        }
-                    };
+                };
+                // 队列条目可能在回写终态之后、确认之前掉电：条目还在，运行却已经收口。
+                // 再执行一次就是二次提交，所以领取租约后先认 Scheduler 的终态（V13 R2 第十二遍 #190）。
+                if strategy_run_is_final(&state_store, &state_path, queued.run.run_id)? {
+                    // 这句钉住不交给 rustfmt：门禁 LEASE_CALL_SITES 按剥掉空白的字面量认「租约域时钟」，
+                    // 而四个参数合计 63 列超出 rustfmt 的参数预算，它总会竖排并补一个尾逗号。
+                    #[rustfmt::skip]
+                    queue
+                        .ack_at(queued.run.run_id, context.id(), lease.fencing_token, lease_now)
+                        .map_err(|error| format!("确认已终态 Strategy Job 失败: {error:?}"))?;
+                    continue;
+                }
+                // 一次作业的结局只有落进闭包才谈得上收口：抛出去的错先写成 Failed，
+                // 否则这条运行只剩「被下一轮 tick 升级成 TIMEOUT」一条出口。
+                let outcome = (|| -> Result<(), String> {
                     let live_job_digest = if queued.job.job_id.starts_with("live-strategy:") {
                         Some(queued.run.manifest_digest.ok_or_else(|| {
                             "实时 Strategy Job 缺少 manifest_digest，拒绝执行".to_string()
@@ -291,34 +306,24 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                     } else {
                         None
                     };
-                    if let Some(expected_digest) = live_job_digest {
-                        let current_digest = live_strategy_snapshot_digest(
-                            &strategy_runtime_config.strategy,
-                            now,
-                        )?;
-                        if current_digest != Some(expected_digest) {
-                            queue
-                                .ack_at(
-                                    queued.run.run_id,
-                                    context.id(),
-                                    lease.fencing_token,
-                                    lease_now,
-                                )
-                                .map_err(|error| {
-                                    format!("确认过期实时 Strategy Job 失败: {error:?}")
-                                })?;
-                            processed += 1;
-                            println!(
-                                "[策略 · Strategy] worker={} job={} skipped=stale-market-digest expected={:016x} actual={}",
-                                context.id(),
-                                queued.job.job_id,
-                                expected_digest,
-                                current_digest
-                                    .map(|digest| format!("{digest:016x}"))
-                                    .unwrap_or_else(|| "none".into())
-                            );
-                            continue;
-                        }
+                    // 执行前与执行中两处闸门共用同一份现场：队列、条目、worker 身份与租约。
+                    let job_lease = StrategyJobLease {
+                        queue: &queue,
+                        queued: &queued,
+                        worker_id: context.id(),
+                        fencing_token: lease.fencing_token,
+                        lease_now,
+                    };
+                    if live_strategy_job_is_stale(
+                        &job_lease,
+                        &strategy_runtime_config.strategy,
+                        live_job_digest,
+                        now,
+                        "stale-market-digest",
+                        "确认过期实时 Strategy Job 失败",
+                    )? {
+                        processed += 1;
+                        return Ok(());
                     }
                     let instrument = strategy_runtime_config
                         .strategy
@@ -326,73 +331,17 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                         .as_deref()
                         .and_then(InstrumentId::parse)
                         .ok_or_else(|| "Strategy instrument 非法或未配置".to_string())?;
-                    let (target_qty, contract_output) = if strategy_runtime_config
-                        .strategy
-                        .builtin_strategy
-                        .is_some()
-                    {
-                        let output = invoke_builtin_strategy(
-                            &root,
-                            &strategy_runtime_config,
-                            &instrument,
-                            &queued.run.run_id.to_string(),
-                            now,
-                        )?;
-                        (output.target_qty, Some(output))
-                    } else if let Some(module) =
-                        strategy_runtime_config.strategy.python_module.as_deref()
-                    {
-                        let input = build_strategy_contract_input(
-                            &root,
-                            &strategy_runtime_config,
-                            &instrument,
-                            &queued.run.run_id.to_string(),
-                            now,
-                        )?;
-                        let output = if let Some(client) = python_client.as_mut() {
-                            invoke_python_strategy_with_client(client, &input)?
-                        } else {
-                            invoke_python_strategy(module, &input)?
-                        };
-                        (output.target_qty, Some(output))
-                    } else if let Some(client) = external_client.as_mut() {
-                        let input = build_strategy_contract_input(
-                            &root,
-                            &strategy_runtime_config,
-                            &instrument,
-                            &queued.run.run_id.to_string(),
-                            now,
-                        )?;
-                        let output = client.request(&input)?;
-                        (output.target_qty, Some(output))
-                    } else if let Some(client) = native_client.as_mut() {
-                        let input = build_strategy_contract_input(
-                            &root,
-                            &strategy_runtime_config,
-                            &instrument,
-                            &queued.run.run_id.to_string(),
-                            now,
-                        )?;
-                        let context =
-                            native_strategy_context(&strategy_runtime_config.strategy, &input);
-                        let event = qx_strategy::MarketEvent::Timer {
-                            name: format!("job:{}", queued.run.run_id),
-                            ts: now,
-                        };
-                        let output = invoke_c_abi_strategy(
-                            client,
-                            &mut native_initialized,
-                            &context,
-                            &input,
-                            &event,
-                        )?;
-                        (output.target_qty, Some(output))
-                    } else {
-                        (
-                            strategy_target_qty(&root, &strategy_runtime_config, &instrument, now)?,
-                            None,
-                        )
-                    };
+                    let (target_qty, contract_output) = evaluate_strategy_contract(
+                        &root,
+                        &strategy_runtime_config,
+                        &instrument,
+                        queued.run.run_id,
+                        now,
+                        &mut python_client,
+                        &mut external_client,
+                        &mut native_client,
+                        &mut native_initialized,
+                    )?;
                     let orders = if let Some(output) = contract_output.as_ref() {
                         if output.intents.is_empty() {
                             let current_qty = strategy_current_qty_for(
@@ -432,6 +381,7 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                                         &strategy_runtime_config,
                                         context.id(),
                                         output.signal_id,
+                                        &output.request_id,
                                         intent,
                                         now,
                                         current_qty,
@@ -454,34 +404,16 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                         .into_iter()
                         .collect::<Vec<_>>()
                     };
-                    if let Some(expected_digest) = live_job_digest {
-                        let current_digest = live_strategy_snapshot_digest(
-                            &strategy_runtime_config.strategy,
-                            runtime_timestamp_ms(),
-                        )?;
-                        if current_digest != Some(expected_digest) {
-                            queue
-                                .ack_at(
-                                    queued.run.run_id,
-                                    context.id(),
-                                    lease.fencing_token,
-                                    lease_now,
-                                )
-                                .map_err(|error| {
-                                    format!("确认执行期间过期实时 Strategy Job 失败: {error:?}")
-                                })?;
-                            processed += 1;
-                            println!(
-                                "[策略 · Strategy] worker={} job={} skipped=market-changed-during-evaluation expected={:016x} actual={}",
-                                context.id(),
-                                queued.job.job_id,
-                                expected_digest,
-                                current_digest
-                                    .map(|digest| format!("{digest:016x}"))
-                                    .unwrap_or_else(|| "none".into())
-                            );
-                            continue;
-                        }
+                    if live_strategy_job_is_stale(
+                        &job_lease,
+                        &strategy_runtime_config.strategy,
+                        live_job_digest,
+                        runtime_timestamp_ms(),
+                        "market-changed-during-evaluation",
+                        "确认执行期间过期实时 Strategy Job 失败",
+                    )? {
+                        processed += 1;
+                        return Ok(());
                     }
                     let spread_group_id = if orders.len() >= 2 {
                         Some(spread_group_id(
@@ -541,12 +473,7 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                         state_store
                             .transact_scheduler_at(&state_path, |scheduler| {
                                 scheduler
-                                    .finish_run_with_code(
-                                        queued.run.run_id,
-                                        true,
-                                        None,
-                                        lease_now,
-                                    )
+                                    .finish_run_with_code(queued.run.run_id, true, None, lease_now)
                                     .map(|_| ())
                                     .map_err(|error| format!("完成 JobRun 失败: {error:?}"))
                             })
@@ -555,7 +482,12 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                             .map_err(|error| format!("完成 JobRun 被拒绝: {error}"))?;
                     }
                     queue
-                        .ack_at(queued.run.run_id, context.id(), lease.fencing_token, lease_now)
+                        .ack_at(
+                            queued.run.run_id,
+                            context.id(),
+                            lease.fencing_token,
+                            lease_now,
+                        )
                         .map_err(|error| format!("确认 Strategy JobQueue 失败: {error:?}"))?;
                     processed += 1;
                     println!(
@@ -565,6 +497,17 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                         queued.run.run_id,
                         result
                     );
+                    Ok(())
+                })();
+                if let Err(error) = outcome {
+                    fail_strategy_job_run(
+                        &state_store,
+                        &state_path,
+                        &queued.job.job_id,
+                        queued.run.run_id,
+                        lease_now,
+                    )?;
+                    return Err(error);
                 }
             }
             context.heartbeat(now)?;

@@ -18,6 +18,37 @@ pub(crate) fn is_explicit_absolute_path(configured: &str) -> bool {
         || configured.starts_with("\\\\")
 }
 
+/// `init` / `strategy init` 生成项目时，把 `storage.data_dir` 钉成项目目录下的绝对落点。
+///
+/// 回测产物自 V13 R2 第二十七遍 #255 起只有一条落点口径：相对进程当前目录。模板里那份
+/// `data/qianxing-*` 是仓库内写法（使用者从仓库根启动才成立），照抄进用户项目就等于把
+/// 「先 cd 到项目目录」这条从未写在屏幕上的前提，变成产物落在项目之外；已写成绝对路径的
+/// 模板（production 的 /var/lib/qianxing）原样保留。
+pub(crate) fn anchor_init_data_dir(document: &mut serde_json::Value, project_root: &Path) {
+    let Some(storage) = document
+        .get_mut("storage")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    let Some(configured) = storage
+        .get("data_dir")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    if configured.is_empty() || is_explicit_absolute_path(&configured) {
+        return;
+    }
+    let joined = project_root.join(&configured);
+    let anchored = std::path::absolute(&joined).unwrap_or(joined);
+    storage.insert(
+        "data_dir".into(),
+        serde_json::Value::String(anchored.to_string_lossy().into_owned()),
+    );
+}
+
 pub(crate) fn resolve_runtime_relative_path(runtime_path: &Path, configured: &str) -> PathBuf {
     if is_explicit_absolute_path(configured) {
         PathBuf::from(configured)
@@ -62,11 +93,10 @@ pub(crate) fn resolve_runtime_asset_path(
 
 /// `storage.data_dir` 实际被打开的落点。
 ///
-/// 这个字段有两种口径：可写运行态（控制面、队列、EventLog、outbox、metrics）按进程
-/// 当前目录打开，回测产物（`runs/`、`datasets.manifest.json`）按 runtime.json 同级目录
-/// 写入。相对配置值在两个口径下会指向不同目录，所以诊断命令必须报告真正在用的那个，
-/// 而不是任选一种折算：以进程目录口径为主，只有它不存在而配置目录口径存在时才报告后者。
-/// 两处都有状态时由调用方并列提示——那意味着同一份配置换了启动目录，账本和回测已分家。
+/// 写入侧只有一条口径：运行态与回测产物都按进程当前目录打开。第二个候选「相对
+/// runtime.json 同级目录」曾专供回测产物，V13 R2 第二十七遍 #255 把它并回第一条，此后没有
+/// 写入者——留着只为把旧版本留下的那棵树报出来。所以诊断命令要报告真正有状态的那个落点，
+/// 而不是任选一种折算；两处都有状态时由调用方并列提示（那是同目录下并存的第二份旧账）。
 pub(crate) fn effective_storage_root(runtime_path: &Path, configured: &str) -> PathBuf {
     let process_root = Path::new(configured);
     if process_root.exists() {
@@ -118,7 +148,7 @@ pub(crate) fn check_storage_data_dir(
         .collect::<Vec<_>>();
     if canonical.len() == 2 && canonical[0] != canonical[1] {
         let message = format!(
-            "storage.data_dir 有两个已存在的落点: {}（进程目录口径，运行态写在这里）与 {}（配置目录口径，回测产物写在这里）；请固定启动目录或改用绝对路径，否则同一配置的账本与回测互不可见",
+            "storage.data_dir 有两个已存在的落点: {}（进程目录口径，运行态与回测产物都写在这里）与 {}（配置目录口径，只有旧版本的回测产物）；请固定启动目录或改用绝对路径，否则换目录启动会读到另一棵树",
             process_root.display(),
             config_relative_root.display()
         );
@@ -255,6 +285,19 @@ pub(crate) fn check_orphan_event_logs(
         "message": message
     }));
     warnings.push(message);
+}
+
+/// `backtest <runtime>` 只喂配置时的 BarFrame：用配置顶层声明的那份 bars。
+///
+/// 这里曾无条件回落到 `qianxing.bar-frame.example.json`（仓库那份 BTCUSDT 夹具）。于是
+/// `init --profile ashare` 生成的项目照 README 敲 `backtest qianxing.runtime.json`，读到的
+/// 是另一个标的的行情：带 bundle 声明的配置以指纹不匹配 fail closed，不带的会直接跑出一份
+/// 使用者从未声明过的结果。只认顶层 `strategy.bars_snapshot_path`——与 `init_guidance` 那条
+/// 首屏命令读的是同一份声明；多策略配置各腿另指 bars 时不猜，落回示例夹具由下游如实报错。
+pub(crate) fn backtest_frame_from_config(runtime: &Path) -> Option<PathBuf> {
+    let config = read_runtime_config(runtime).ok()?;
+    let configured = config.strategy.bars_snapshot_path.as_deref()?;
+    Some(resolve_runtime_relative_path(runtime, configured))
 }
 
 pub(crate) fn resolve_strategy_runtime_paths(

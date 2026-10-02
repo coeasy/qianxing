@@ -118,7 +118,7 @@ pub(crate) const RUN_ENTRY_POINTS: [&str; 7] = [
     "report",
 ];
 
-fn run_usage(phrase: &str) -> String {
+pub(crate) fn run_usage(phrase: &str) -> String {
     format!("run {phrase}；可用入口：{}", RUN_ENTRY_POINTS.join("、"))
 }
 
@@ -147,48 +147,28 @@ pub(crate) fn run_unified_command(arguments: &[String]) -> Result<(), String> {
             )
         }
         "paper" | "paper-check" => {
-            let path = arguments.get(1).map(PathBuf::from).unwrap_or_else(|| {
+            let (path, _) = run_entry_arguments(arguments, action, false, || {
                 repository_deploy_path("qianxing.runtime.paper-strategy.example.json")
-            });
+            })?;
             run_paper_pipeline_once(&path)
         }
         "doctor" => {
-            let path = arguments
-                .iter()
-                .skip(1)
-                .find(|value| !value.starts_with('-'))
-                .map(PathBuf::from)
-                .unwrap_or_else(default_runtime_path);
-            run_doctor(&path, arguments.iter().any(|argument| argument == "--json"))
+            let (path, json) = run_entry_arguments(arguments, action, true, default_runtime_path)?;
+            run_doctor(&path, json)
         }
         "live-check" => {
-            let path = arguments
-                .iter()
-                .skip(1)
-                .find(|value| !value.starts_with('-'))
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    repository_deploy_path("qianxing.runtime.production.example.json")
-                });
-            run_live_check(&path, arguments.iter().any(|argument| argument == "--json"))
+            let (path, json) = run_entry_arguments(arguments, action, true, || {
+                repository_deploy_path("qianxing.runtime.production.example.json")
+            })?;
+            run_live_check(&path, json)
         }
         "runtime-check" => {
-            let path = arguments
-                .iter()
-                .skip(1)
-                .find(|value| !value.starts_with('-'))
-                .map(PathBuf::from)
-                .unwrap_or_else(default_runtime_path);
-            run_runtime_check(&path, arguments.iter().any(|argument| argument == "--json"))
+            let (path, json) = run_entry_arguments(arguments, action, true, default_runtime_path)?;
+            run_runtime_check(&path, json)
         }
         "report" => {
-            let path = arguments
-                .iter()
-                .skip(1)
-                .find(|value| !value.starts_with('-'))
-                .map(PathBuf::from)
-                .unwrap_or_else(default_runtime_path);
-            run_report(&path, arguments.iter().any(|argument| argument == "--json"))
+            let (path, json) = run_entry_arguments(arguments, action, true, default_runtime_path)?;
+            run_report(&path, json)
         }
         _ => Err(run_usage(&format!("不支持 {action}"))),
     }
@@ -238,7 +218,7 @@ pub(crate) fn resolve_backtest_summary_path(path: &Path) -> Result<PathBuf, Stri
         return Err(format!("指定回测摘要不存在: {}", path.display()));
     }
     let config = read_runtime_config(path)?;
-    let data_dir = resolve_runtime_relative_path(path, &config.storage.data_dir);
+    let data_dir = Path::new(&config.storage.data_dir).to_path_buf();
     let summaries = list_backtest_summary_paths(&data_dir.join("runs"))?;
     summaries
         .last()
@@ -259,6 +239,7 @@ pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
     if as_json {
         let report = serde_json::json!({
             "schema_version": 1,
+            "runtime_version": build_identity::RUNTIME_VERSION,
             "summary_path": summary_path.display().to_string(),
             "input_check": match &declared_input {
                 Some(input) => serde_json::json!({
@@ -302,7 +283,7 @@ pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
 
 pub(crate) fn run_status(path: &Path, as_json: bool) -> Result<(), String> {
     let config = read_runtime_config(path)?;
-    let data_dir = resolve_runtime_relative_path(path, &config.storage.data_dir);
+    let data_dir = Path::new(&config.storage.data_dir).to_path_buf();
     let runs_dir = data_dir.join("runs");
     let summaries = list_backtest_summary_paths(&runs_dir)?;
     let latest_summary = summaries.last().and_then(|summary_path| {
@@ -327,6 +308,7 @@ pub(crate) fn run_status(path: &Path, as_json: bool) -> Result<(), String> {
         let status = serde_json::json!({
             "schema_version": 1,
             "runtime_path": path,
+            "runtime_version": build_identity::RUNTIME_VERSION,
             "environment": config.environment,
             "profile": config.profile,
             "storage_backend": config.storage.backend,
@@ -379,7 +361,8 @@ pub(crate) fn run_status(path: &Path, as_json: bool) -> Result<(), String> {
 pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, String> {
     let config = read_runtime_config(path)?;
     let fingerprint = config.fingerprint()?;
-    let mut checks = Vec::new();
+    // 诊断的第一格先回答"我是哪个构建在说这句话"（U1）。
+    let mut checks = vec![crate::build_identity::doctor_check()];
     let mut failures = Vec::new();
     let mut warnings = Vec::new();
 
@@ -538,10 +521,7 @@ pub(crate) fn run_doctor(path: &Path, as_json: bool) -> Result<(), String> {
                 println!("[{status}] {name}: {message}");
             }
             if ok {
-                println!(
-                    "[Doctor] 通过：{} 个警告；未连接交易所、未发送订单",
-                    warnings
-                );
+                println!("[Doctor] 通过：{warnings} 个警告；未连接交易所、未发送订单");
             } else if let Some(items) = report.get("failures").and_then(serde_json::Value::as_array)
             {
                 for failure in items.iter().filter_map(serde_json::Value::as_str) {

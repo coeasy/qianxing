@@ -67,15 +67,6 @@ pub struct CorporateAction {
     pub split_den: i128,
 }
 
-/// 配股/增发的显式认购事实。配额不是自动成交，必须由上层策略或
-/// 账户指令明确给出认购数量；这样回测与实盘对账不会凭空增加持仓。
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct ShareSubscription {
-    pub entitled_qty_raw: i128,
-    pub subscription_qty_raw: i128,
-    pub subscription_price_raw: i128,
-}
-
 /// 一次配股登记事实及其可选的账户级认购结果。未认购部分不会自动变成
 /// 普通持仓，而是保留为独立权利余额，等待后续认购或失效事实。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

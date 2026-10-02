@@ -37,6 +37,7 @@
 - 多标的/多币种通过同一 MarketData worker 的 `symbols[]` 和多个 Strategy worker/`strategies[]` 实例配置；不同结算币种在每个 worker 上用 `settlement_currency` 显式隔离，行情、执行和对账 EventLog 不再固定使用 USDT。
 - CCXT Python worker 启动时会清空父进程环境，只保留 Python/Windows 运行所需基础变量和 `credential_env` 声明的变量；不相关的交易所凭证不会跨进程继承。凭证值仍只从环境变量读取，不进入 Rust 日志或配置摘要。
 - Rust `CcxtProcessClient` 按配置读取 `timeout_ms`，通过独立响应读取线程和有界等待避免交易线程永久阻塞；超时、worker 退出和通道断开都按“提交结果未知”处理，不自动重试下单。
+- `timeout_ms` 的合法区间是 `1000..=300000`（`crates/qx-adapter/src/ccxt.rs` 的 `CCXT_WORKER_MIN_TIMEOUT_MS`/`CCXT_WORKER_MAX_TIMEOUT_MS`），越界在启动前就具名拒绝，不落进读窗。下界存在的理由：CCXT Pro 用户流的空闲回话窗口按读窗的 4/5 推导（`ccxt_idle_window_ms`），`timeout_ms: 1` 会把“等下一次事件”打成毫秒级热循环，EventLog 与健康 mark 每分钟被写上万次。改小读窗时不要绕开这条下界，两侧现在共用同一个推导函数，不会再各自漂移。
 - `CcxtProcessVenue` 对订单状态采用 fail-closed 归约：未知状态、已关闭但部分成交、拒绝但已有成交均进入 `ReconcileRequired`，RPC 传输失败会把 Venue 标记为断开，必须先替换连接或由对账流程恢复；不会在异常状态下继续提交或污染累计成交成本。
 - ExecutionService 接收到冻结 `TradingInstrumentSpec` 时，Paper/CCXT 的成交统一使用产品规格归约：Spot 走现金成交，Margin/Perpetual/Future 走持仓、已实现 PnL、手续费和资金结算语义；规格生成的 LedgerApplied 事实可在重启后直接重放。
 - `qx-cli ccxt-fetch-ohlcv ccxt-config.json instrument start_ms end_ms output.json [timeframe]`：下载一次 OHLCV 并冻结为回测输入快照。

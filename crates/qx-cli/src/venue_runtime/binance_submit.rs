@@ -110,71 +110,14 @@ pub(crate) fn run_binance_submit_order(
     } else if let Err(reason) = require_worker_risk_spec(&worker, &command, Some(path)) {
         Err(reason)
     } else {
-        let mut pipeline = pipeline_storage
-            .open(
-                binance_event_log_name(&worker)?,
-                settlement_currency.clone(),
-            )
-            .map_err(|error| format!("打开执行 EventLog 失败: {error}"))?;
-        let auth = load_binance_worker_auth(&worker);
-        // 屏障判定已下沉 `qx-execution` 网关（V10 §6.1）：CLI 不再预跑一遍，只把
-        // 存储根解析出的组快照注入提交路径。
-        let spread_store = open_spread_group_store(&pipeline_storage.root)?;
-        match auth.and_then(|auth| new_binance_venue(&worker, auth)) {
-            Ok(mut venue) => {
-                let mut source_seq = 0_u64;
-                let validator = recovery_order_validator(&worker, &pipeline, Some(path));
-                let result = execute_binance_submit_effect(
-                    &command,
-                    &worker,
-                    &mut pipeline,
-                    &mut venue,
-                    now,
-                    &mut source_seq,
-                    Some(path),
-                    Some(&spread_store),
-                );
-                if is_fail_closed_rejection(&result) {
-                    // 网关在写入任何事实之前就拒绝了：这条腿没有 EventLog 事实可
-                    // 归约，也没有敞口需要补偿，原样把 FAIL_CLOSED 原因交控制面。
-                    drop(venue);
-                } else {
-                    let latest_pipeline = pipeline_storage
-                        .open(
-                            binance_event_log_name(&worker)?,
-                            settlement_currency.clone(),
-                        )
-                        .map_err(|error| {
-                            format!("刷新 Binance 多腿订单组 EventLog 失败: {error}")
-                        })?;
-                    sync_spread_group_after_order(
-                        &pipeline_storage.root,
-                        &latest_pipeline,
-                        &command,
-                        now,
-                    )?;
-                    let (venue, recovery) = recover_spread_groups_for_venue(
-                        SpreadRecoveryContext {
-                            root: &pipeline_storage.root,
-                            venue_id: worker.venue_id.as_deref().unwrap_or("BINANCE"),
-                            accept_any_venue: false,
-                            order_validator: Some(&validator),
-                            pipeline: &mut pipeline,
-                            worker_id: &worker.id,
-                            now,
-                            source_seq: &mut source_seq,
-                        },
-                        venue,
-                    )?;
-                    for message in recovery {
-                        eprintln!("[HedgeRecovery] {message}");
-                    }
-                    drop(venue);
-                }
-                result
-            }
-            Err(error) => Err(error),
-        }
+        binance_submit_action(
+            &command,
+            &worker,
+            &pipeline_storage,
+            &settlement_currency,
+            path,
+            now,
+        )
     };
     let (_, record_result) = store
         .transact(|plane| plane.execute(command.command_id, now, |_| action.clone()))
@@ -188,6 +131,89 @@ pub(crate) fn run_binance_submit_order(
         return Err(record.result_code);
     }
     Ok(())
+}
+
+/// Accepted 之后到终态回写之间不允许提前退出函数：失败按「这一手有没有可能已经进交易所」分两类。
+///
+/// - 还没写入任何事实（EventLog 名解析不了、日志或订单组存储打不开）：作为 `Err` 返回，让控制面
+///   当场记下终态。这些位置原先是 `?`，函数直接退出，命令永远停在 `Accepted`，同 `request_id`
+///   重投只会撞幂等闸门（V13 第三十一遍 ② #273，与 `paper-submit-order` 同一缺陷类）。
+/// - 成交之后才失败（订单组快照同步、对冲恢复）：只在 stderr 告警，终态仍归交易所那一手的裁决 ——
+///   把已经报出去的订单写成 `Failed` 比留着不管更危险，修复走恢复 worker。
+fn binance_submit_action(
+    command: &ControlCommand,
+    worker: &WorkerConfig,
+    pipeline_storage: &PipelineStorage,
+    settlement_currency: &str,
+    runtime_config_path: &Path,
+    now: u64,
+) -> Result<String, String> {
+    let log_name = binance_event_log_name(worker).map_err(|error| {
+        terminal_submit_rejection(format!("解析 Binance 执行 EventLog 名失败: {error}"))
+    })?;
+    let mut pipeline = pipeline_storage
+        .open(log_name.clone(), settlement_currency.to_string())
+        .map_err(|error| terminal_submit_rejection(format!("打开执行 EventLog 失败: {error}")))?;
+    // 凭证与网关装配失败原本就是 `action` 的值，这里保持原文案不变。
+    let auth = load_binance_worker_auth(worker);
+    let mut venue = auth.and_then(|auth| new_binance_venue(worker, auth))?;
+    // 屏障判定已下沉 `qx-execution` 网关（V10 §6.1）：CLI 不再预跑一遍，只把
+    // 存储根解析出的组快照注入提交路径。
+    let spread_store = open_spread_group_store(&pipeline_storage.root)
+        .map_err(|error| terminal_submit_rejection(format!("打开多腿订单组存储失败: {error}")))?;
+    let mut source_seq = 0_u64;
+    let validator = recovery_order_validator(worker, &pipeline, Some(runtime_config_path));
+    let result = execute_binance_submit_effect(
+        command,
+        worker,
+        &mut pipeline,
+        &mut venue,
+        now,
+        &mut source_seq,
+        Some(runtime_config_path),
+        Some(&spread_store),
+    );
+    if is_fail_closed_rejection(&result) {
+        // 网关在写入任何事实之前就拒绝了：这条腿没有 EventLog 事实可
+        // 归约，也没有敞口需要补偿，原样把 FAIL_CLOSED 原因交控制面。
+        return result;
+    }
+    match pipeline_storage.open(log_name, settlement_currency.to_string()) {
+        Ok(latest_pipeline) => {
+            if let Err(error) = sync_spread_group_after_order(
+                &pipeline_storage.root,
+                &latest_pipeline,
+                command,
+                now,
+            ) {
+                eprintln!("[SpreadGroupSync] {error}");
+            }
+            match recover_spread_groups_for_venue(
+                SpreadRecoveryContext {
+                    root: &pipeline_storage.root,
+                    venue_id: worker.venue_id.as_deref().unwrap_or("BINANCE"),
+                    accept_any_venue: false,
+                    order_validator: Some(&validator),
+                    pipeline: &mut pipeline,
+                    worker_id: &worker.id,
+                    now,
+                    source_seq: &mut source_seq,
+                },
+                venue,
+            ) {
+                Ok((_, recovery)) => {
+                    for message in recovery {
+                        eprintln!("[HedgeRecovery] {message}");
+                    }
+                }
+                Err(error) => eprintln!("[HedgeRecovery] {error}"),
+            }
+        }
+        Err(error) => {
+            eprintln!("[SpreadGroupSync] 刷新 Binance 多腿订单组 EventLog 失败: {error}");
+        }
+    }
+    result
 }
 
 /// 运行持久化控制命令队列的 Binance 执行 worker。
@@ -209,50 +235,71 @@ pub(crate) fn run_binance_execution_worker(
         "execution queue polling",
         Some(runtime_timestamp_ms()),
     )?;
+    // 内联恢复扫描按共享节律自节流：循环仍每 100ms 扫一次队列，但两次恢复扫描之间的
+    // 间隔走 `spread_recovery_poll_delay`，分组原地不动时不会每秒起灭 10 次 venue 重建。
+    let mut recovery_stalls = 0_u32;
+    let mut recovery_next_at = 0_u64;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
         // 命令队列租约/入队时间在秒域，控制面审计戳保持毫秒（见 `lease_clock`）。
         let lease_now = lease_clock(now);
         let control = control_store.load()?;
         let venue_id = worker.venue_id.as_deref().unwrap_or("BINANCE");
-        if !dedicated_spread_recovery
-            && has_pending_spread_recovery(&pipeline_storage.root, venue_id)?
-        {
-            let mut recovery_pipeline = pipeline_storage
-                .open(
-                    binance_event_log_name(&worker)?,
-                    settlement_currency.clone(),
-                )
-                .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
-            let auth = load_binance_worker_auth(&worker)?;
-            let mut recovery_venue = new_binance_venue(&worker, auth)?;
-            recovery_venue
-                .restore_orders(recovery_pipeline.orders())
-                .map_err(|error| format!("恢复 Binance 多腿订单状态失败: {error:?}"))?;
-            let mut recovery_seq = recovery_pipeline
-                .log()
-                .events()
-                .last()
-                .map(|event| event.source_seq)
-                .unwrap_or(0);
-            let validator =
-                recovery_order_validator(&worker, &recovery_pipeline, Some(&runtime_config_path));
-            let (_, diagnostics) = recover_spread_groups_for_venue(
-                SpreadRecoveryContext {
-                    root: &pipeline_storage.root,
-                    venue_id,
-                    accept_any_venue: false,
-                    order_validator: Some(&validator),
-                    pipeline: &mut recovery_pipeline,
-                    worker_id: &worker.id,
-                    now,
-                    source_seq: &mut recovery_seq,
-                },
-                recovery_venue,
-            )?;
-            for message in diagnostics {
-                eprintln!("[HedgeRecovery] {message}");
+        if !dedicated_spread_recovery && now >= recovery_next_at {
+            let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, venue_id)?;
+            if pending_before > 0 {
+                let mut recovery_pipeline = pipeline_storage
+                    .open(
+                        binance_event_log_name(&worker)?,
+                        settlement_currency.clone(),
+                    )
+                    .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
+                let auth = load_binance_worker_auth(&worker)?;
+                let mut recovery_venue = new_binance_venue(&worker, auth)?;
+                recovery_venue
+                    .restore_orders(recovery_pipeline.orders())
+                    .map_err(|error| format!("恢复 Binance 多腿订单状态失败: {error:?}"))?;
+                let mut recovery_seq = recovery_pipeline
+                    .log()
+                    .events()
+                    .last()
+                    .map(|event| event.source_seq)
+                    .unwrap_or(0);
+                let validator = recovery_order_validator(
+                    &worker,
+                    &recovery_pipeline,
+                    Some(&runtime_config_path),
+                );
+                let (_, diagnostics) = recover_spread_groups_for_venue(
+                    SpreadRecoveryContext {
+                        root: &pipeline_storage.root,
+                        venue_id,
+                        accept_any_venue: false,
+                        order_validator: Some(&validator),
+                        pipeline: &mut recovery_pipeline,
+                        worker_id: &worker.id,
+                        now,
+                        source_seq: &mut recovery_seq,
+                    },
+                    recovery_venue,
+                )?;
+                for message in diagnostics {
+                    eprintln!("[HedgeRecovery] {message}");
+                }
+                let pending_after =
+                    pending_spread_recovery_groups(&pipeline_storage.root, venue_id)?;
+                recovery_stalls = if pending_after >= pending_before {
+                    recovery_stalls.saturating_add(1)
+                } else {
+                    0
+                };
+            } else {
+                recovery_stalls = 0;
             }
+            recovery_next_at = now.saturating_add(
+                u64::try_from(spread_recovery_poll_delay(recovery_stalls).as_millis())
+                    .unwrap_or(u64::MAX),
+            );
         }
         for command in control.pending().filter(|command| {
             matches!(&command.kind, CommandKind::SubmitOrder)

@@ -145,3 +145,34 @@ fn stop_api_projection_bridge_joins_and_clears_the_projection_thread() {
         "句柄没置空，第二次收摊会重复 join 同一个线程"
     );
 }
+
+/// #221 的装配侧：`serve` 的两条分支交给 API 的必须是**那只钟本身**，不是提前取好的一份值。
+///
+/// 立案现场是签名之前：两条分支传的是 `runtime_timestamp_ms()` 的结果，而 `serve` 把它按连接
+/// 复用，于是限流桶、审计时间、命令租约三条通道在进程生命周期里共用同一个戳。签名换成
+/// `impl FnMut() -> u64` 之后，传一个 `u64` 已经编译不过，但**换一只冻住的钟**（在闭包里捕获
+/// 一个常数）类型上照样合法——那只有长跑进程才看得见，所以按源码点名。
+///
+/// 口径如实写出：这条判据钉的是"传的是函数、且每条分支只有一处"这种最简形态。改成
+/// `|| runtime_timestamp_ms()` 那种等价写法会红在这里，那是有意的摩擦——两条分支写法一致，
+/// 运维读一处就知道另一处。行为侧（每接受一条连接现取一次）由
+/// `crates/qx-api/tests/request_timestamp_clock.rs` 用真 socket 钉。
+#[test]
+fn both_serve_branches_pass_a_live_clock_to_the_api_worker() {
+    let text = workspace_source("crates/qx-cli/src/strategy_contract.rs");
+    let stripped = text
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>();
+    for call in [
+        "serve(listener,runtime_timestamp_ms,",
+        "serve_tls_mtls_with_stores(listener,&store,&identity_store,runtime_timestamp_ms,",
+    ] {
+        assert_eq!(
+            stripped.matches(call).count(),
+            1,
+            "serve 的某一条分支不再把 `runtime_timestamp_ms` 本身交给 API worker（点名的形态：\
+             {call}）。传它的结果、或在闭包里捕获一份常数，都是把那三条通道冻在启动那一刻。"
+        );
+    }
+}

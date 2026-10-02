@@ -105,6 +105,45 @@ def serve_framed(handler: Callable[[StrategyInput], Any]) -> None:
         output_stream.flush()
 
 
+# 空闲侧最多每这么多秒确认一次父进程还在（每次确认都要开一次进程句柄）。
+PARENT_LIVENESS_PROBE_SECONDS = 1.0
+
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_ERROR_ACCESS_DENIED = 5
+_PROCESS_STILL_ACTIVE = 259
+
+
+def _parent_process_alive(pid: int) -> bool:
+    """父进程是否还在运行。
+
+    问不出结论时一律回答"还在"：把健康的 worker 误杀比让它多活一会儿更糟。
+    """
+    if pid <= 0:
+        return True
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # 打不开句柄：被安全策略拒绝时进程仍在，只有 pid 已不存在才当真没了。
+            return ctypes.GetLastError() == _ERROR_ACCESS_DENIED
+        try:
+            exit_code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return True
+            return exit_code.value == _PROCESS_STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def serve_shared(
     handler: Callable[[StrategyInput], Any],
     input_path: str,
@@ -112,16 +151,29 @@ def serve_shared(
     capacity: int,
     slot_bytes: int,
     columnar: bool = False,
+    parent_pid: int = 0,
 ) -> None:
-    """Serve QXSF requests over two SPSC mmap rings."""
+    """Serve QXSF requests over two SPSC mmap rings.
+
+    ``parent_pid`` is the Rust process that spawned this worker. The ring transport has
+    no stdin to close, so the only normal exit is the parent's ``Drop`` killing us; if the
+    parent is killed outright, the idle loop checks the parent's liveness and returns
+    instead of spinning forever on the ring files.
+    """
     with SharedMemoryRing(input_path, capacity, slot_bytes) as input_ring, SharedMemoryRing(
         output_path, capacity, slot_bytes
     ) as output_ring:
+        next_parent_check = time.monotonic() + PARENT_LIVENESS_PROBE_SECONDS
         while True:
             try:
                 encoded = input_ring.try_pop()
             except RingEmpty:
                 time.sleep(0.001)
+                now = time.monotonic()
+                if parent_pid > 0 and now >= next_parent_check:
+                    next_parent_check = now + PARENT_LIVENESS_PROBE_SECONDS
+                    if not _parent_process_alive(parent_pid):
+                        return
                 continue
             frame = read_frame(io.BytesIO(encoded))
             if frame is None:
@@ -151,6 +203,12 @@ def main() -> int:
     parser.add_argument("--output-ring", help="shared-memory output ring path")
     parser.add_argument("--ring-capacity", type=int, default=1024)
     parser.add_argument("--ring-slot-bytes", type=int, default=64 * 1024)
+    parser.add_argument(
+        "--parent-pid",
+        type=int,
+        default=0,
+        help="spawned-by process id; the shared-memory loop exits when it is gone (0 disables the check)",
+    )
     args = parser.parse_args()
     handler = _load_handler(args.module)
     if args.protocol == "framed_json":
@@ -165,6 +223,7 @@ def main() -> int:
             args.ring_capacity,
             args.ring_slot_bytes,
             columnar=args.protocol == "shared_memory_columnar",
+            parent_pid=args.parent_pid,
         )
     else:
         serve(handler)

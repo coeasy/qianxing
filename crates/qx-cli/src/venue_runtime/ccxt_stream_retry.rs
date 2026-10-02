@@ -2,8 +2,9 @@
 //!
 //! 口径与 Binance 用户流一致（V12 R4-c）：终态判定只看**连续**失败次数，拿到一次成功的
 //! 应答就清零；退避公式一律走 `qx-core::retry`，不在连接器里就地重算。
-//! 用户流（`watch_orders`）与行情 RPC（`fetch_ticker`/`fetch_ohlcv`）共用这一份预算，
-//! 只按 `subject` 区分放弃时点名的那条通道。
+//! 用户流（`watch_orders`）与行情 RPC（`fetch_ticker`/`fetch_ohlcv`）共用同一套预算口径，
+//! 放弃时按 `subject` 点名是哪条链；行情 RPC 侧再按 instrument 分通道
+//! （`CcxtChannelBudgets`），免得一个健康标的替死掉的标的销账。
 
 use qx_core::retry::{Backoff, RetryPolicy};
 use std::time::Duration;
@@ -73,6 +74,50 @@ impl CcxtReconnectBudget {
     /// 会话成功应答：连续失败计数清零。
     pub(crate) fn note_success(&mut self) {
         self.consecutive_failures = 0;
+    }
+}
+
+/// 同一份重连预算按通道分开记账（V13 R2 #202）。
+///
+/// 一条共享预算会被任何一次成功应答复位：行情 worker 每轮要跑 `fetch_ticker` 与
+/// `fetch_ohlcv` 两类调用、每个 instrument 各一次，所以"A 应答正常、B 在柜台已下架"
+/// 这种形状下 `MAX_RECONNECTS` 永远触不到上限，B 每轮重生一个子进程且无上限 —— 正是 #167
+/// 要收掉的形状，只是共享计数把它换了个方向留下。按通道键控后，健康通道不再替
+/// 坏通道销账，坏通道触顶时报错点名的是它自己。
+#[derive(Default)]
+pub(crate) struct CcxtChannelBudgets {
+    per_channel: std::collections::BTreeMap<String, CcxtReconnectBudget>,
+}
+
+impl CcxtChannelBudgets {
+    pub(crate) fn market_rpc() -> Self {
+        Self::default()
+    }
+
+    /// 某个通道的成功应答：只销这一条通道的账。
+    pub(crate) fn note_success(&mut self, channel: &str) {
+        if let Some(budget) = self.per_channel.get_mut(channel) {
+            budget.note_success();
+        }
+    }
+
+    /// 某个通道的一次失败：返回该通道重连前该等多久；该通道超上限时具名放弃。
+    pub(crate) fn note_failure(&mut self, channel: &str) -> Result<Duration, String> {
+        let mut budget = self
+            .per_channel
+            .get(channel)
+            .copied()
+            .unwrap_or_else(CcxtReconnectBudget::market_rpc);
+        let outcome = budget.note_failure();
+        self.per_channel.insert(channel.to_string(), budget);
+        outcome.map_err(|error| format!("{error}（通道 {channel}）"))
+    }
+
+    pub(crate) fn consecutive_failures(&self, channel: &str) -> u32 {
+        self.per_channel
+            .get(channel)
+            .map(CcxtReconnectBudget::consecutive_failures)
+            .unwrap_or_default()
     }
 }
 

@@ -378,7 +378,6 @@ pub(crate) fn worker_credentials_ready(
     Ok(env_value("api_key") && env_value("secret") && optional_env_value("password"))
 }
 
-#[cfg(feature = "nats")]
 pub(crate) fn prometheus_label(value: &str) -> String {
     value
         .replace('\\', "\\\\")

@@ -16,8 +16,15 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use super::parse_deploy_path;
+
+/// 使用者要敲的程序名：`#[command(name = …)]` 与所有引导文案共用这一份。
+/// 不在别处再抄：`init` 的「下一步」曾印成 `qianxing …`，而装好的机器上根本没有
+/// 那个名字，首跑第二句就是 command not found（V13 R2 #260）。
+pub(crate) const PROGRAM_NAME: &str = "qx-cli";
+
 #[derive(Parser)]
-#[command(name = "qx-cli", disable_help_subcommand = true)]
+#[command(name = PROGRAM_NAME, bin_name = PROGRAM_NAME, disable_help_subcommand = true)]
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
@@ -54,6 +61,12 @@ pub(crate) enum Command {
         #[arg(long)]
         profile: Option<String>,
     },
+    #[command(name = "quickstart")]
+    Quickstart {
+        project: Option<PathBuf>,
+        #[arg(long)]
+        force: bool,
+    },
     #[command(name = "doctor")]
     Doctor {
         path: Option<PathBuf>,
@@ -84,13 +97,15 @@ pub(crate) enum Command {
     },
     #[command(name = "live-check")]
     LiveCheck {
-        path: Option<PathBuf>,
+        #[arg(default_value = "deploy/qianxing.runtime.production.example.json", value_parser = parse_deploy_path)]
+        path: PathBuf,
         #[arg(long)]
         json: bool,
     },
     #[command(name = "runtime-check")]
     RuntimeCheck {
-        path: Option<PathBuf>,
+        #[arg(default_value = "deploy/qianxing.runtime.example.json", value_parser = parse_deploy_path)]
+        path: PathBuf,
         #[arg(long)]
         json: bool,
     },
@@ -99,15 +114,16 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<StrategyCommand>,
     },
-    // V12 R4-e：外层 `[runtime] [frame] [spec]` 与子命令自带的那套输入参数属于两条链，
-    // 混写时子命令那条链根本不读外层值——用户以为传了运行时配置与行情帧，实际跑的是
-    // 另一份输入。clap 4.6 的 `args_conflicts_with_subcommands` 在这三个可选位置参数存在
-    // 时会把子命令名当成第三个位置参数吃掉、报错口径也随之错位，所以互斥改在派发处显式
-    // 拒绝（`reject_shadowed_backtest_inputs`）。
+    // V12 R4-e：外层 `[runtime] [frame] [spec]` 与子命令自带的输入是两条链，混写时子命令
+    // 那条链不读外层值。clap 4.6 的 `args_conflicts_with_subcommands` 会把子命令名当第三个
+    // 位置参数吃掉，所以互斥改在派发处拒绝（`reject_shadowed_backtest_inputs`）。
     #[command(name = "backtest")]
     Backtest {
+        #[arg(value_parser = parse_deploy_path)]
         runtime: Option<PathBuf>,
+        #[arg(value_parser = parse_deploy_path)]
         frame: Option<PathBuf>,
+        #[arg(value_parser = parse_deploy_path)]
         spec: Option<PathBuf>,
         #[command(subcommand)]
         action: Option<BacktestCommand>,
@@ -137,12 +153,12 @@ pub(crate) enum Command {
     },
     #[command(name = "serve")]
     Serve {
-        #[arg(default_value = "deploy/qianxing.runtime.example.json")]
+        #[arg(default_value = "deploy/qianxing.runtime.example.json", value_parser = parse_deploy_path)]
         path: PathBuf,
     },
     #[command(name = "supervise")]
     Supervise {
-        #[arg(default_value = "deploy/qianxing.runtime.example.json")]
+        #[arg(default_value = "deploy/qianxing.runtime.example.json", value_parser = parse_deploy_path)]
         path: PathBuf,
         #[arg(long)]
         allow_unmanaged_roles: bool,
@@ -242,7 +258,7 @@ pub(crate) enum Command {
     },
     #[command(name = "binance-private-probe")]
     BinancePrivateProbe {
-        #[arg(default_value = "deploy/qianxing.runtime.production.example.json")]
+        #[arg(default_value = "deploy/qianxing.runtime.production.example.json", value_parser = parse_deploy_path)]
         path: PathBuf,
         #[arg(default_value = "binance-execution-main")]
         worker_id: String,
@@ -255,21 +271,24 @@ pub(crate) enum Command {
     },
     #[command(name = "paper-submit-order")]
     PaperSubmitOrder {
+        #[arg(value_parser = parse_deploy_path)]
         path: PathBuf,
+        #[arg(value_parser = parse_deploy_path)]
         command_path: PathBuf,
     },
     #[command(name = "paper-e2e")]
     PaperE2e {
-        #[arg(default_value = "deploy/qianxing.runtime.paper-strategy.example.json")]
+        #[arg(default_value = "deploy/qianxing.runtime.paper-strategy.example.json", value_parser = parse_deploy_path)]
         path: PathBuf,
     },
     #[command(name = "paper-check")]
     PaperCheck {
-        #[arg(default_value = "deploy/qianxing.runtime.paper-strategy.example.json")]
+        #[arg(default_value = "deploy/qianxing.runtime.paper-strategy.example.json", value_parser = parse_deploy_path)]
         path: PathBuf,
     },
     #[command(name = "reconcile")]
     Reconcile {
+        #[arg(value_parser = parse_deploy_path)]
         path: Option<PathBuf>,
         worker_id: Option<String>,
     },
@@ -281,6 +300,8 @@ pub(crate) enum Command {
     All,
     #[command(name = "verify")]
     Verify,
+    #[command(name = "version")]
+    Version,
 }
 
 impl Command {
@@ -294,6 +315,8 @@ impl Command {
             | Self::RuntimeCheck { json, .. } => *json,
             Self::Config { action } => action.as_ref().is_some_and(ConfigCommand::machine_output),
             Self::Run { action } => action.as_ref().is_some_and(RunCommand::machine_output),
+            // version 只打一行构建身份，与 --json 同口径抑制横幅，便于脚本直接取值（U1）。
+            Self::Version => true,
             _ => false,
         }
     }
@@ -322,10 +345,8 @@ pub(crate) enum ConfigCommand {
 
 impl ConfigCommand {
     fn machine_output(&self) -> bool {
-        // V12 R4-f：`config validate|fingerprint|lock` 曾收下 `--json` 却只用它压掉横幅，
-        // stdout 依旧是 `[PASS] …` 这类人读文本——帮助里也从没承诺过这三个入口有机读输出
-        // （只有 `config explain --json` 真的产 JSON，CI 用的就是它）。旗标按"说谎即删"摘掉，
-        // 现在传 --json 会由 clap 报未知参数。
+        // V12 R4-f：`config validate|fingerprint|lock` 曾收下 `--json` 却不产机读输出（只有
+        // `config explain --json` 真的产 JSON）。旗标按“说谎即删”摘掉，现传 --json 由 clap 报未知参数。
         match self {
             Self::Explain { json, .. } => *json,
             Self::Validate { .. } | Self::Fingerprint { .. } | Self::Lock { .. } => false,

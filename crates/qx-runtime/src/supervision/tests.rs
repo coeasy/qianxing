@@ -201,3 +201,43 @@ fn worker_that_ignores_the_token_fails_after_the_shutdown_budget() {
     }
     assert!(worker.join().unwrap().is_ok());
 }
+
+#[test]
+fn the_grace_budget_is_counted_from_the_request_not_from_the_start_of_waiting() {
+    // 反向验证依据：预算从 `wait_for_worker_finish` 进门那刻计时时，请求落下的那一轮
+    // `waited_ms` 已经是 10 倍预算，长跑 worker 一分宽限都拿不到就被判超时。
+    let supervisor = RuntimeSupervisor::new(config()).unwrap();
+    let budget = supervisor.config().shutdown_timeout_ms;
+    let worker = supervisor
+        .spawn_worker("market", move |context| loop {
+            if context.should_stop() {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(1));
+        })
+        .unwrap();
+    // 假时钟：每次注入的等待推进 POLL_INTERVAL_MS，因此"请求之前的等待"可以按预算倍数复现，
+    // 而不必真等 —— `advance` 仍真睡 1ms，让被测 worker 有机会读到令牌。
+    let clock = Arc::new(AtomicU64::new(0));
+    let for_signal = Arc::clone(&clock);
+    let for_now = Arc::clone(&clock);
+    let for_sleep = Arc::clone(&clock);
+    let ladder = wait_for_worker_finish(
+        &supervisor,
+        || worker.is_finished(),
+        move || for_signal.load(Ordering::SeqCst) >= 10 * budget,
+        move || for_now.load(Ordering::SeqCst),
+        move |millis| advance(&for_sleep, millis),
+    );
+    match ladder {
+        WorkerLadder::StoppedWithinBudget { waited_ms } => {
+            assert!(
+                waited_ms <= budget,
+                "请求之前的等待被算进宽限预算: waited_ms={waited_ms} budget={budget}"
+            );
+        }
+        other => unreachable!("长跑之后按停机请求退出不能判超时: {other:?}"),
+    }
+    assert!(supervisor.is_shutdown_requested());
+    assert!(worker.join().unwrap().is_ok());
+}

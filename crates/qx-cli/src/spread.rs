@@ -213,8 +213,8 @@ pub(crate) fn recover_spread_groups_for_venue<V: Venue>(
 
 /// 待恢复的多腿分组数：`HedgeRequired` 且本 venue 至少有一条腿已成交。
 ///
-/// 两条恢复循环要的不是"有没有"而是"这一轮扫描之后少了没有"，所以计数住在这里，
-/// `has_pending_spread_recovery` 退化成它的一次 `> 0`，避免两处各扫一遍口径。
+/// 两条恢复循环要的都不是"有没有"而是"这一轮扫描之后少了没有"，所以这里给的是计数：
+/// 扫描前后各数一次，分组没减少就计一轮原地不动（V13 R2 #201 让第五处内联扫描也这么记）。
 pub(crate) fn pending_spread_recovery_groups(root: &Path, venue_id: &str) -> Result<usize, String> {
     let store = FileSpreadOrderGroupStore::new(root.join("spread-groups"))?;
     let mut pending = 0_usize;
@@ -233,10 +233,6 @@ pub(crate) fn pending_spread_recovery_groups(root: &Path, venue_id: &str) -> Res
         }
     }
     Ok(pending)
-}
-
-pub(crate) fn has_pending_spread_recovery(root: &Path, venue_id: &str) -> Result<bool, String> {
-    Ok(pending_spread_recovery_groups(root, venue_id)? > 0)
 }
 
 /// 一轮多腿恢复扫描之后隔多久再看（V13 R2 #168c）。

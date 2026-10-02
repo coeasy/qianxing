@@ -50,48 +50,69 @@ pub(crate) fn run_ccxt_execution_worker(
         ),
         Some(runtime_timestamp_ms()),
     )?;
+    // 内联恢复扫描按共享节律自节流：队列轮询仍每 100ms 一轮，但原地不动时不会再
+    // 每轮起灭一个公共 CCXT 子进程（V13 R2 #168c 的节律，此前只落在另三条循环上）。
+    let mut recovery_stalls = 0_u32;
+    let mut recovery_next_at = 0_u64;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
         // 命令队列租约/入队时间在秒域，控制面审计戳保持毫秒（见 `lease_clock`）。
         let lease_now = lease_clock(now);
         let control = control_store.load()?;
         let venue_id = worker.venue_id.as_deref().unwrap_or("ccxt");
-        if !dedicated_spread_recovery
-            && has_pending_spread_recovery(&pipeline_storage.root, venue_id)?
-        {
-            let mut recovery_pipeline = pipeline_storage
-                .open(
-                    required_account_event_log(&worker)?,
-                    settlement_currency.clone(),
-                )
-                .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
-            let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
-                .map_err(|error| format!("启动公共 CCXT 恢复 Worker 失败: {error}"))?;
-            let recovery_venue = CcxtProcessVenue::new(venue_id, Box::new(client));
-            let mut recovery_seq = recovery_pipeline
-                .log()
-                .events()
-                .last()
-                .map(|event| event.source_seq)
-                .unwrap_or(0);
-            let validator =
-                recovery_order_validator(&worker, &recovery_pipeline, Some(&runtime_config_path));
-            let (_, diagnostics) = recover_spread_groups_for_venue(
-                SpreadRecoveryContext {
-                    root: &pipeline_storage.root,
-                    venue_id,
-                    accept_any_venue: false,
-                    order_validator: Some(&validator),
-                    pipeline: &mut recovery_pipeline,
-                    worker_id: &worker.id,
-                    now,
-                    source_seq: &mut recovery_seq,
-                },
-                recovery_venue,
-            )?;
-            for message in diagnostics {
-                eprintln!("[HedgeRecovery] {message}");
+        if !dedicated_spread_recovery && now >= recovery_next_at {
+            let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, venue_id)?;
+            if pending_before > 0 {
+                let mut recovery_pipeline = pipeline_storage
+                    .open(
+                        required_account_event_log(&worker)?,
+                        settlement_currency.clone(),
+                    )
+                    .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
+                let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
+                    .map_err(|error| format!("启动公共 CCXT 恢复 Worker 失败: {error}"))?;
+                let recovery_venue = CcxtProcessVenue::new(venue_id, Box::new(client));
+                let mut recovery_seq = recovery_pipeline
+                    .log()
+                    .events()
+                    .last()
+                    .map(|event| event.source_seq)
+                    .unwrap_or(0);
+                let validator = recovery_order_validator(
+                    &worker,
+                    &recovery_pipeline,
+                    Some(&runtime_config_path),
+                );
+                let (_, diagnostics) = recover_spread_groups_for_venue(
+                    SpreadRecoveryContext {
+                        root: &pipeline_storage.root,
+                        venue_id,
+                        accept_any_venue: false,
+                        order_validator: Some(&validator),
+                        pipeline: &mut recovery_pipeline,
+                        worker_id: &worker.id,
+                        now,
+                        source_seq: &mut recovery_seq,
+                    },
+                    recovery_venue,
+                )?;
+                for message in diagnostics {
+                    eprintln!("[HedgeRecovery] {message}");
+                }
+                let pending_after =
+                    pending_spread_recovery_groups(&pipeline_storage.root, venue_id)?;
+                recovery_stalls = if pending_after >= pending_before {
+                    recovery_stalls.saturating_add(1)
+                } else {
+                    0
+                };
+            } else {
+                recovery_stalls = 0;
             }
+            recovery_next_at = now.saturating_add(
+                u64::try_from(spread_recovery_poll_delay(recovery_stalls).as_millis())
+                    .unwrap_or(u64::MAX),
+            );
         }
         for command in control.pending().filter(|command| {
             matches!(&command.kind, CommandKind::SubmitOrder)
@@ -295,7 +316,8 @@ pub(crate) fn run_ccxt_user_stream_worker(
         .map_err(|error| format!("启动公共 CCXT Pro Worker 失败: {error}"))?;
     // 空闲回话上限取自身读窗的 4/5：让"这一窗没有事件"先答回来，读窗到期就重新只
     // 表示子进程真的卡住 —— 而不是一个没有成交的账户在十个窗口后被具名放弃。
-    let watch_idle_ms = client.timeout_ms().saturating_mul(4) / 5;
+    // 这条循环自身不睡，节律全靠这个窗口，所以下界由 ccxt.rs 的读窗校验兜住（#214）。
+    let watch_idle_ms = qx_adapter::ccxt_idle_window_ms(client.timeout_ms());
     let mut venue = CcxtProcessVenue::new(
         worker.venue_id.clone().unwrap_or_else(|| "ccxt".into()),
         Box::new(client),

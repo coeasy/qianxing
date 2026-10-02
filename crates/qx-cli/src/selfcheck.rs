@@ -44,7 +44,7 @@ pub(crate) fn run(scope: Scope) {
 
     let manifest = RunManifest {
         run_id: "cli-demo".into(),
-        code_commit: env!("QX_GIT_COMMIT").into(),
+        code_commit: build_identity::BUILD_REVISION.into(),
         config_hash: "fast=5;slow=20;seed=42".to_string(),
         data_fingerprint: format!("synthetic:{}", bars.len()),
         input_components: BTreeMap::new(),
@@ -58,7 +58,7 @@ pub(crate) fn run(scope: Scope) {
         model_fingerprint: "next-open+maker-taker".into(),
         input_event_hash: format!("bars:{}", bars.len()),
         output_event_hash: format!("{:016x}", a.hash),
-        runtime_version: env!("CARGO_PKG_VERSION").into(),
+        runtime_version: build_identity::RUNTIME_VERSION.into(),
     };
     println!(
         "[更路 · RunManifest · DEMO 合成输入] digest={:016x}",

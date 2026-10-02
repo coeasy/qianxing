@@ -3,6 +3,7 @@
 //! 该模块只负责把运行时输入文件绑定到不可变 DatasetBundle；数据模型和
 //! 持久化仍由 qx-data 提供，回测编排不再直接承担组件指纹细节。
 
+use super::read_example_json;
 use qx_data::{JsonBarFrameProvider, JsonDatasetRegistry};
 use qx_datastruct::BarFrame;
 use qx_guanxing::Bar;
@@ -15,8 +16,7 @@ pub(crate) fn run_dataset_ingest(
     dataset_version: &str,
     data_root: &Path,
 ) -> Result<(), String> {
-    let payload = std::fs::read_to_string(frame_path)
-        .map_err(|error| format!("读取数据集 BarFrame 失败 {}: {error}", frame_path.display()))?;
+    let payload = read_example_json(frame_path, "数据集 BarFrame ")?;
     let frame = BarFrame::from_json(&payload)
         .map_err(|error| format!("数据集 BarFrame 校验失败: {error:?}"))?;
     let start = frame
@@ -63,21 +63,11 @@ pub(crate) fn run_dataset_bundle(
     data_root: &Path,
     bars_frame_path: Option<&Path>,
 ) -> Result<(), String> {
-    let payload = std::fs::read_to_string(bundle_path).map_err(|error| {
-        format!(
-            "读取 DatasetBundleManifest 失败 {}: {error}",
-            bundle_path.display()
-        )
-    })?;
+    let payload = read_example_json(bundle_path, " DatasetBundleManifest ")?;
     let bundle: qx_data::DatasetBundleManifest = serde_json::from_str(&payload)
         .map_err(|error| format!("DatasetBundleManifest JSON 无效: {error}"))?;
     if let Some(frame_path) = bars_frame_path {
-        let frame_payload = std::fs::read_to_string(frame_path).map_err(|error| {
-            format!(
-                "读取 DatasetBundle bars BarFrame 失败 {}: {error}",
-                frame_path.display()
-            )
-        })?;
+        let frame_payload = read_example_json(frame_path, " DatasetBundle bars BarFrame ")?;
         let frame = BarFrame::from_json(&frame_payload).map_err(|error| {
             format!(
                 "DatasetBundle bars BarFrame 校验失败 {}: {error:?}",
@@ -149,12 +139,7 @@ pub(crate) fn verify_dataset_bundle_binding(
     bars_manifest: &qx_data::DatasetManifest,
     bars_len: usize,
 ) -> Result<String, String> {
-    let payload = std::fs::read_to_string(bundle_path).map_err(|error| {
-        format!(
-            "读取策略 dataset_bundle_path 失败 {}: {error}",
-            bundle_path.display()
-        )
-    })?;
+    let payload = read_example_json(bundle_path, "策略 dataset_bundle_path ")?;
     let bundle: qx_data::DatasetBundleManifest =
         serde_json::from_str(&payload).map_err(|error| {
             format!(
@@ -220,12 +205,7 @@ pub(crate) fn arrow_dataset_manifest_fingerprint(
     path: &Path,
     kind: &str,
 ) -> Result<(String, u64), String> {
-    let payload = std::fs::read_to_string(path).map_err(|error| {
-        format!(
-            "读取 Arrow DatasetBundle 组件 manifest 失败 {}: {error}",
-            path.display()
-        )
-    })?;
+    let payload = read_example_json(path, " Arrow DatasetBundle 组件 manifest ")?;
     let manifest = qx_data::ArrowDatasetManifest::from_json(&payload).map_err(|error| {
         format!(
             "Arrow DatasetBundle 组件 manifest 非法 {}: {error}",
@@ -245,8 +225,7 @@ pub(crate) fn dataset_component_file_fingerprint(
     path: &Path,
     kind: &str,
 ) -> Result<(String, u64), String> {
-    let payload = std::fs::read_to_string(path)
-        .map_err(|error| format!("读取 DatasetBundle 组件失败 {}: {error}", path.display()))?;
+    let payload = read_example_json(path, " DatasetBundle 组件")?;
     let value: serde_json::Value = serde_json::from_str(&payload)
         .map_err(|error| format!("DatasetBundle 组件 JSON 无效 {}: {error}", path.display()))?;
     match kind {

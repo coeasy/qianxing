@@ -4,17 +4,13 @@
 //! 真正读取运行时配置和回测的入口仍复用 crate 根上的同一批辅助函数。
 
 use super::*;
+/// 默认示例配置的取数入口（链路入口符号，定义点由架构门禁点名本文件）。
+///
+/// 查找链本身在 `deploy_lookup.rs`；全缺时回落到「当前目录的 `deploy/`」这一写法，
+/// 让错误文案仍然指向使用者刚敲下的那条相对路径。
 pub(crate) fn repository_deploy_path(file_name: &str) -> PathBuf {
-    let source_tree_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("deploy")
-        .join(file_name);
-    if source_tree_path.exists() {
-        source_tree_path
-    } else {
-        PathBuf::from("deploy").join(file_name)
-    }
+    locate_deploy_file(&current_deploy_roots(), file_name)
+        .unwrap_or_else(|| PathBuf::from(DEPLOY_DIR_NAME).join(file_name))
 }
 
 pub(crate) fn copy_init_asset(
@@ -24,7 +20,11 @@ pub(crate) fn copy_init_asset(
 ) -> Result<PathBuf, String> {
     let source = repository_deploy_path(file_name);
     if !source.is_file() {
-        return Err(format!("找不到初始化样例文件: {}", source.display()));
+        return Err(format!(
+            "找不到初始化样例文件: {}\n{}",
+            source.display(),
+            deploy_miss_note(file_name, &current_deploy_roots())
+        ));
     }
     let target = root.join(file_name);
     if target.exists() {
@@ -187,82 +187,6 @@ pub(crate) fn normalize_init_template_paths(
     }
 }
 
-/// init 生成的项目里那条回测命令：只承认"文件真的被复制进项目、入口真的读得动这份绑定"的组合。
-///
-/// 以前 7 个 profile 打印同一行 `backtest <runtime> qianxing.bar-frame.example.json
-/// qianxing.binance.spot.spec.json`，而 `base`/`paper` 没绑策略（必报"跨语言回测必须配置
-/// strategy.python_module…"），`ccxt`/`multi-venue` 连 BarFrame 都没复制（必报"找不到文件"）。
-/// 首屏命令自己先失败等于没有文档，所以宁可不印也不能印一条注定报错的命令。
-/// 印出来的行情与规格路径一律带上项目目录：裸文件名等于把"先 cd 到项目目录"这条从未写在
-/// 屏幕上的前提，变成一次必然的"找不到文件"。
-fn init_backtest_step(
-    project_root: &Path,
-    output: &Path,
-    config: &RuntimeConfig,
-) -> Option<String> {
-    let copied = |name: &str| project_root.join(name).is_file().then(|| name.to_owned());
-    let declared = config
-        .strategy
-        .bars_snapshot_path
-        .as_deref()
-        .and_then(|path| Path::new(path).file_name())
-        .and_then(|name| name.to_str())
-        .and_then(copied);
-    let frame = declared
-        .or_else(|| copied("qianxing.bar-frame.example.json"))
-        .or_else(|| copied("qianxing.ashare.bar-frame.example.json"))?;
-    let spec = if frame.starts_with("qianxing.ashare.") {
-        copied("qianxing.ashare.spot.spec.json")
-    } else {
-        copied("qianxing.binance.spot.spec.json")
-    };
-    let spec_arg = spec
-        .map(|name| format!(" {}", project_root.join(name).display()))
-        .unwrap_or_default();
-    let frame = project_root.join(&frame).display().to_string();
-    let strategy = &config.strategy;
-    // 绑定了策略就让它自己的配置跑；否则退回不读运行时的内置策略入口。
-    Some(
-        if strategy.builtin_strategy.is_some()
-            || strategy.python_module.is_some()
-            || strategy.external_executable.is_some()
-            || strategy.c_abi_library.is_some()
-        {
-            format!("qianxing backtest {} {frame}{spec_arg}", output.display())
-        } else {
-            format!("qianxing backtest builtin sma_cross {frame}{spec_arg}")
-        },
-    )
-}
-
-pub(crate) fn init_readme(
-    output: &Path,
-    strategy: Option<&str>,
-    profile: &str,
-    backtest_step: Option<&str>,
-) -> String {
-    let strategy_line = strategy
-        .map(|name| format!("已绑定内置策略：`{name}`。"))
-        .unwrap_or_else(|| {
-            "当前配置为基础运行时，可通过 `qianxing init --strategy macd --force` 绑定内置策略。"
-                .into()
-        });
-    let backtest_line = backtest_step.unwrap_or(
-        "本 profile 未附带 BarFrame，暂无本地回测命令；自备行情文件后走 `qianxing strategy init`。",
-    );
-    format!(
-        "# Qianxing 本地项目\n\n运行时配置：`{}`。profile=`{}`。{}\n\n## 推荐流程\n\n```text\nqianxing doctor {}\nqianxing config explain {}\nqianxing config validate {}\n{}\nqianxing paper-check {}\n```\n\n初始化生成的样例文件只用于本地回测和 Paper 验收，不包含交易密钥，也不会自动发送真实订单。CCXT/多交易所 profile 只生成公共配置和凭据引用，必须自行配置环境变量后再做 sandbox 验收。\n",
-        output.display(),
-        profile,
-        strategy_line,
-        output.display(),
-        output.display(),
-        output.display(),
-        backtest_line,
-        output.display()
-    )
-}
-
 pub(crate) fn run_init_with_profile(
     output: &Path,
     force: bool,
@@ -273,7 +197,11 @@ pub(crate) fn run_init_with_profile(
         init_profile_template(profile, strategy_name)?;
     let template = repository_deploy_path(template_name);
     if !template.exists() {
-        return Err(format!("找不到运行时模板: {}", template.display()));
+        return Err(format!(
+            "找不到运行时模板: {}\n{}",
+            template.display(),
+            deploy_miss_note(template_name, &current_deploy_roots())
+        ));
     }
     if output.exists() && !force {
         return Err(format!(
@@ -295,6 +223,10 @@ pub(crate) fn run_init_with_profile(
     .map_err(|error| format!("运行时模板 JSON 无效 {}: {error}", template.display()))?;
     let mut init_assets = profile_assets.into_iter().map(str::to_owned).collect();
     normalize_init_template_paths(&mut document, &mut init_assets);
+    let project_root = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     if let Some(strategy_name) = strategy_name {
         let kind = single_leg_builtin_strategy(strategy_name)?;
         let strategy = document
@@ -331,15 +263,12 @@ pub(crate) fn run_init_with_profile(
             );
         }
     }
+    anchor_init_data_dir(&mut document, project_root);
     let payload = serde_json::to_string_pretty(&document)
         .map_err(|error| format!("编码初始化运行时配置失败: {error}"))?;
     RuntimeConfig::from_json(&payload)?;
     std::fs::write(output, payload)
         .map_err(|error| format!("写入运行时配置失败 {}: {error}", output.display()))?;
-    let project_root = output
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
     for asset in &init_assets {
         copy_init_asset(project_root, asset, force)?;
     }
@@ -347,15 +276,17 @@ pub(crate) fn run_init_with_profile(
         .map_err(|error| format!("创建项目数据目录失败: {error}"))?;
     let readme_path = project_root.join("README.qianxing.md");
     let config = read_runtime_config(output)?;
-    let backtest_step = init_backtest_step(project_root, output, &config);
+    let backtest_step = init_guidance::init_backtest_step(project_root, output, &config);
+    let flow_tail = init_guidance::init_flow_tail(output, profile_name, &config);
     if force || !readme_path.exists() {
         std::fs::write(
             &readme_path,
-            init_readme(
+            init_guidance::init_readme(
                 output,
                 strategy_name,
                 profile_name,
                 backtest_step.as_deref(),
+                flow_tail.as_deref(),
             ),
         )
         .map_err(|error| format!("写入初始化说明失败 {}: {error}", readme_path.display()))?;
@@ -369,8 +300,9 @@ pub(crate) fn run_init_with_profile(
         init_assets.len(),
         strategy_name.unwrap_or("none")
     );
+    let program = cli_args::PROGRAM_NAME;
     println!(
-        "下一步：qianxing doctor {}{}",
+        "下一步：{program} doctor {}{}",
         output.display(),
         backtest_step
             .map(|step| format!("；{step}"))
@@ -386,10 +318,11 @@ pub(crate) fn run_init_with_profile(
 /// 报错，所以在这里点名真正的缺口。
 fn single_leg_builtin_strategy(name: &str) -> Result<BuiltinStrategyKind, String> {
     let kind = BuiltinStrategyKind::parse(name)?;
+    let program = cli_args::PROGRAM_NAME;
     if kind.needs_reference_leg() {
         return Err(format!(
             "内置策略 {} 是双腿套利，需要第二条 BarFrame 与 reference_instrument：\
-             初始化只生成单标的项目，请改用 `qianxing backtest multi-builtin {}` 配两份行情\
+             初始化只生成单标的项目，请改用 `{program} backtest multi-builtin {}` 配两份行情\
              夹具（deploy 里的 pairs-primary/pairs-reference 示例），或选一个单标的策略。",
             kind.name(),
             kind.name()
@@ -455,6 +388,11 @@ pub(crate) fn run_strategy_init(
     // `<配置目录>/deploy/…`，于是刚生成的配置自己读不到自己的行情夹具。
     let mut copied_assets = BTreeSet::new();
     normalize_init_template_paths(&mut document, &mut copied_assets);
+    let project_root = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    anchor_init_data_dir(&mut document, project_root);
     let bars = document
         .pointer("/strategy/bars_snapshot_path")
         .and_then(serde_json::Value::as_str)
@@ -472,10 +410,6 @@ pub(crate) fn run_strategy_init(
     }
     std::fs::write(output, result)
         .map_err(|error| format!("写入策略配置失败 {}: {error}", output.display()))?;
-    let project_root = output
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
     for asset in &copied_assets {
         copy_init_asset(project_root, asset, force)?;
     }
@@ -487,8 +421,9 @@ pub(crate) fn run_strategy_init(
         copied_assets.len()
     );
     // 打印绝对路径：命令行里的裸文件名等于要求使用者先 cd 到配置所在目录，而首屏只给命令不给目录。
+    let program = cli_args::PROGRAM_NAME;
     println!(
-        "下一步：qianxing strategy backtest {} {}",
+        "下一步：{program} strategy backtest {} {}",
         output.display(),
         project_root.join(&bars).display()
     );

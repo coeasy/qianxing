@@ -170,7 +170,7 @@ pub(crate) fn run_single_strategy_backtest(
     let run_manifest = report.run_manifest_with_input_components(
         RunManifestIdentity {
             run_id: &format!("strategy-backtest:{strategy_id}:{}", frame.instrument),
-            code_commit: env!("QX_GIT_COMMIT"),
+            code_commit: build_identity::BUILD_REVISION,
             config_hash: &config.fingerprint()?,
             strategy_version: &config.strategy.version,
             instrument_spec_version,
@@ -266,12 +266,7 @@ pub(crate) fn run_builtin_backtest(
         return Err("内置策略 quantity 必须为正整数".into());
     }
     let kind = BuiltinStrategyKind::parse(strategy_name)?;
-    let payload = std::fs::read_to_string(frame_path).map_err(|error| {
-        format!(
-            "读取内置策略 BarFrame 失败 {}: {error}",
-            frame_path.display()
-        )
-    })?;
+    let payload = read_example_json(frame_path, "内置策略 BarFrame ")?;
     let frame = BarFrame::from_json(&payload).map_err(|error| {
         format!(
             "内置策略 BarFrame 校验失败 {}: {error:?}",

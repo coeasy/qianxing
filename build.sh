@@ -22,7 +22,7 @@ if ! QX_PY_VER="$("$QX_PY" -c 'import sys;print(sys.version.split()[0])' 2>/dev/
 fi
 if ! "$QX_PY" -c "import tzdata" >/dev/null 2>&1; then
   echo "[失败] 解释器 '$QX_PY' 能跑, 但缺 tzdata (见 python/pyproject.toml)" >&2
-  echo "       缺它时 [6/9] 的 A 股用例会以 ZoneInfoNotFoundError 失败" >&2
+  echo "       缺它时 [6/9] 的 A 股用例会以 AshareProviderError 失败, 报错原文点名 pip install tzdata" >&2
   echo "       修法: \"$QX_PY\" -m pip install tzdata" >&2
   exit 1
 fi

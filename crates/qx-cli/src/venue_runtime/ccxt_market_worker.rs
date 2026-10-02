@@ -77,25 +77,34 @@ pub(crate) fn run_ccxt_market_worker(
     // 旧口径只在每轮把 `cycle_failures` 报出去、下一轮又清零，于是柜台彻底不可用时
     // 这个循环会无上限地重生 Python 子进程（每 500ms 一个）。预算按**连续** RPC 失败计，
     // 任一成功应答清零，超过上限即具名放弃（V13 R2 #167）。
-    let mut reconnect_budget = CcxtReconnectBudget::market_rpc();
+    //
+    // 但一份预算管所有标的会被健康 symbol 反复清零：一个坏 instrument 每轮排在一个好
+    // instrument 后面，永远攒不到第 10 次，子进程被它无限重生（V13 R2 #202）。所以按
+    // `op:instrument` 分通道记账，放弃时点名的那条就是真正死掉的那条。
+    let mut reconnect_budget = CcxtChannelBudgets::market_rpc();
     while !context.should_stop() {
         let cycle_now = runtime_timestamp_ms();
         let mut cycle_failures = 0_u32;
         for instrument in &instruments {
+            let channel = format!("fetch_ticker:{instrument}");
             let result = match client.call(serde_json::json!({
                 "op": "fetch_ticker",
                 "instrument": instrument.to_string(),
             })) {
                 Ok(result) => {
-                    reconnect_budget.note_success();
+                    reconnect_budget.note_success(&channel);
                     result
                 }
                 Err(error) => {
                     cycle_failures = cycle_failures.saturating_add(1);
-                    let delay = reconnect_budget.note_failure()?;
+                    let delay = reconnect_budget.note_failure(&channel)?;
                     context.mark(
                         qx_runtime::ServiceStatus::Degraded,
-                        format!("CCXT ticker 暂时失败 {}: {error}; reconnecting", instrument),
+                        format!(
+                            "CCXT ticker 暂时失败 {}: {error}; reconnecting (本通道连续 {} 次)",
+                            instrument,
+                            reconnect_budget.consecutive_failures(&channel)
+                        ),
                         Some(cycle_now),
                     )?;
                     client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None).map_err(
@@ -155,6 +164,7 @@ pub(crate) fn run_ccxt_market_worker(
             context.heartbeat(received_ts)?;
         }
         for spec in &live_specs {
+            let channel = format!("fetch_ohlcv:{}", spec.instrument);
             let start_ms = cycle_now.saturating_sub(
                 spec.timeframe_ms
                     .saturating_mul(spec.history_limit.saturating_add(2) as u64),
@@ -168,17 +178,18 @@ pub(crate) fn run_ccxt_market_worker(
                 "limit": spec.history_limit.saturating_add(2),
             })) {
                 Ok(result) => {
-                    reconnect_budget.note_success();
+                    reconnect_budget.note_success(&channel);
                     result
                 }
                 Err(error) => {
                     cycle_failures = cycle_failures.saturating_add(1);
-                    let delay = reconnect_budget.note_failure()?;
+                    let delay = reconnect_budget.note_failure(&channel)?;
                     context.mark(
                         qx_runtime::ServiceStatus::Degraded,
                         format!(
-                            "CCXT OHLCV 暂时失败 {}: {error}; reconnecting",
-                            spec.instrument
+                            "CCXT OHLCV 暂时失败 {}: {error}; reconnecting (本通道连续 {} 次)",
+                            spec.instrument,
+                            reconnect_budget.consecutive_failures(&channel)
                         ),
                         Some(cycle_now),
                     )?;

@@ -43,7 +43,7 @@ pub use self::identity::{
 };
 pub use self::ledger::{
     ConvertibleBondConversion, CorporateAction, Ledger, LedgerEntry, LedgerEntryKind,
-    PositionState, RightsIssueEvent, ShareSubscription,
+    PositionState, RightsIssueEvent,
 };
 pub use self::numeric::{Fixed, Money, Price, Quantity, SCALE};
 pub use self::order::{Fill, Order, OrderStatus, OrderTrace, Side};

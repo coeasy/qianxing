@@ -99,6 +99,6 @@ exit /b 1
 
 :err_tz
 echo [失败] 解释器 "%QX_PY%" 能跑, 但缺 tzdata (Windows 必需, 见 python/pyproject.toml)
-echo        缺它时 [6/9] 的 A 股用例会以 ZoneInfoNotFoundError 失败 (tzdata missing)
+echo        缺它时 [6/9] 的 A 股用例会以 AshareProviderError 失败, 报错原文点名 pip install tzdata (tzdata missing)
 echo        修法: 执行 "%QX_PY%" -m pip install tzdata
 exit /b 1

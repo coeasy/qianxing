@@ -13,7 +13,8 @@ pub(crate) fn run_file_outbox_relay(
     limit: usize,
 ) -> Result<(), String> {
     let store = FileOutboxStore::new(data_root);
-    let publisher = NatsJetStreamPublisher::connect(nats_url, subject_prefix)?;
+    let publisher =
+        NatsJetStreamPublisher::connect(nats_url, subject_prefix, NatsWaitBudget::default())?;
     let relay = OutboxRelay::new(
         store,
         publisher,
@@ -49,7 +50,8 @@ pub(crate) fn run_postgres_outbox_relay(
     let store =
         PostgresOutboxStore::connect_with_pool_size(&dsn, config.storage.postgres_pool_size)
             .map_err(|error| format!("打开 PostgreSQL Outbox 失败: {error:?}"))?;
-    let publisher = NatsJetStreamPublisher::connect(nats_url, subject_prefix)?;
+    let publisher =
+        NatsJetStreamPublisher::connect(nats_url, subject_prefix, NatsWaitBudget::default())?;
     let relay = OutboxRelay::new(
         store,
         publisher,
@@ -276,6 +278,7 @@ pub(crate) fn run_outbox_relay_worker(
     let publisher = NatsJetStreamPublisher::connect(
         &config.messaging.nats_url,
         &config.messaging.subject_prefix,
+        config.messaging.nats_wait_budget(),
     )?;
     let relay_owner = format!("qx-relay-{worker_id}-{}", std::process::id());
     let lease_seconds = config.messaging.lease_seconds;
@@ -569,6 +572,7 @@ pub(crate) fn run_event_consumer_worker(
         consumer_name,
         group_id,
         config.messaging.consumer_max_attempts,
+        config.messaging.nats_wait_budget(),
     )?;
     let messaging = config.messaging.clone();
     let supervisor = RuntimeSupervisor::new(config.clone())?;
@@ -694,6 +698,7 @@ pub(crate) fn run_dead_letter_replay(
     let publisher = NatsJetStreamPublisher::connect(
         &config.messaging.nats_url,
         &config.messaging.subject_prefix,
+        config.messaging.nats_wait_budget(),
     )?;
     match config.storage.backend {
         StorageBackend::Files => replay_dead_letter_from_store(

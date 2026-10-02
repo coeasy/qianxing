@@ -45,7 +45,7 @@ pub(crate) fn scheduler_manifest(
 ) -> qx_core::RunManifest {
     qx_core::RunManifest {
         run_id: format!("{worker_id}-{trading_day}-{now}"),
-        code_commit: env!("QX_GIT_COMMIT").into(),
+        code_commit: build_identity::BUILD_REVISION.into(),
         config_hash: "runtime-scheduler-v1".into(),
         data_fingerprint: format!("scheduler:{trading_day}"),
         input_components: BTreeMap::new(),
@@ -59,7 +59,7 @@ pub(crate) fn scheduler_manifest(
         model_fingerprint: "scheduler-dispatch".into(),
         input_event_hash: format!("input-{now}"),
         output_event_hash: format!("output-{now}"),
-        runtime_version: env!("CARGO_PKG_VERSION").into(),
+        runtime_version: build_identity::RUNTIME_VERSION.into(),
     }
 }
 
@@ -69,7 +69,9 @@ pub(crate) const LIVE_STRATEGY_TIMEOUT_SECONDS: u64 = 60;
 /// 实时策略 worker 每一根闭合 Bar 对应的作业规格与运行记录。
 ///
 /// `idempotency_key` 就是 BarFrame 指纹：同一根闭合 Bar 重放不会二次下单；
-/// `dry_run` 只按环境的 `paper` 判定，与 worker 角色无关。
+/// `dry_run` 只按环境的 `paper` 判定，与 worker 角色无关。能走到这里的写法已由
+/// `RuntimeConfig::validate` 的闭合名单 `ENVIRONMENT_VOCAB` 收口，四种写法各自的提交臂
+/// 由 `tests/environment_submit_arm_table.rs` 钉住。
 pub(crate) fn live_strategy_job(
     strategy: &StrategyRuntimeConfig,
     worker_id: &str,
@@ -267,4 +269,106 @@ pub(crate) fn dispatch_scheduled_jobs(
         })
         .map_err(|error| format!("Scheduler 状态事务失败: {error:?}"))?;
     result
+}
+
+/// 这条运行是否已经收口。队列条目可能在 Scheduler 回写终态之后、`ack` 之前掉电：条目还在，
+/// 运行却已经是终态，再执行一次就是二次提交，所以 worker 领取租约后先问这一句（V13 R2 第十二遍 #190）。
+///
+/// 读不到运行记录按「未终态」处理：实时策略作业的运行从来不入 Scheduler 状态（只在 JobQueue 里），
+/// 把它当成终态会让这类作业永远跑不了。`Paused` 也不是终态 —— 恢复后仍要能执行。
+pub(crate) fn strategy_run_is_final(
+    state_store: &JsonStateStore,
+    state_path: &Path,
+    run_id: u64,
+) -> Result<bool, String> {
+    Ok(state_store
+        .load_scheduler_at(state_path)
+        .map_err(|error| format!("读取 JobRun 终态失败: {error:?}"))?
+        .run(run_id)
+        .is_some_and(|run| {
+            matches!(
+                run.status,
+                JobStatus::Succeeded | JobStatus::Failed | JobStatus::NeedsIntervention
+            )
+        }))
+}
+
+/// 把策略作业的失败写回它自己的 JobRun（`JobStatus::Failed` + 固定错误码）。
+///
+/// 失败不回写的话，这条运行只剩「被下一轮调度 tick 升级成 `error_code="TIMEOUT"`」这一条出口，
+/// 于是「策略自己报错了」会被读成「策略跑太久」，而 `JobStatus::Failed` 在生产里一个生产者都没有。
+/// 错误码是固定的 `STRATEGY_JOB_FAILED`：结果码（`3 orders: ORDER_INTENT_ACCEPTED`）不进 `JobRun`，
+/// 那是接口文档写明的口径。实时策略作业没有 Scheduler 侧的运行记录，与成功收口共用同一条豁免。
+pub(crate) fn fail_strategy_job_run(
+    state_store: &JsonStateStore,
+    state_path: &Path,
+    job_id: &str,
+    run_id: u64,
+    finished_ts: u64,
+) -> Result<(), String> {
+    if job_id.starts_with("live-strategy:") {
+        return Ok(());
+    }
+    state_store
+        .transact_scheduler_at(state_path, |scheduler| {
+            scheduler
+                .finish_run_with_code(run_id, false, Some("STRATEGY_JOB_FAILED"), finished_ts)
+                .map(|_| ())
+                .map_err(|error| format!("失败收口 JobRun 被拒绝: {error:?}"))
+        })
+        .map_err(|error| format!("回写失败 JobRun 状态失败: {error:?}"))?
+        .1
+}
+
+/// 一条队列条目此刻的执行现场：确认条目（`ack_at`）要用到的队列、租约与身份。
+///
+/// 与快照指纹一起，正是 `live_strategy_job_is_stale` 需要的全部入参；把它打包是因为
+/// 执行前与执行中两处调用共用同一份现场，而十入参的函数在 `clippy::too_many_arguments`
+/// 那格里是判红的（V13 R2 收口 #209：九步构建的 `[5/9]` 才第一次跑到这条）。
+pub(crate) struct StrategyJobLease<'a> {
+    pub(crate) queue: &'a ConfiguredJobQueue,
+    pub(crate) queued: &'a qx_storage::QueuedJob,
+    pub(crate) worker_id: &'a str,
+    pub(crate) fencing_token: u64,
+    pub(crate) lease_now: u64,
+}
+
+/// 实时策略作业的快照指纹闸门：指纹一变，这笔订单的依据就不是生成时看到的那一根闭合 Bar，
+/// 于是确认掉条目并播报跳过。执行前与执行中两处判定共用这段收口（V13 R2 第十二遍 #190 顺带收口）。
+///
+/// 返回 `true` 表示调用方应当跳过这次执行；`expected_digest` 为 `None` 的不是实时策略作业，直接放行。
+/// `digest_now` 是取快照指纹的时钟：执行前用本轮 tick，执行中用重新读取的墙钟。
+pub(crate) fn live_strategy_job_is_stale(
+    lease: &StrategyJobLease<'_>,
+    strategy: &StrategyRuntimeConfig,
+    expected_digest: Option<u64>,
+    digest_now: u64,
+    reason: &str,
+    ack_failure: &str,
+) -> Result<bool, String> {
+    let Some(expected_digest) = expected_digest else {
+        return Ok(false);
+    };
+    let current_digest = live_strategy_snapshot_digest(strategy, digest_now)?;
+    if current_digest == Some(expected_digest) {
+        return Ok(false);
+    }
+    lease
+        .queue
+        .ack_at(
+            lease.queued.run.run_id,
+            lease.worker_id,
+            lease.fencing_token,
+            lease.lease_now,
+        )
+        .map_err(|error| format!("{ack_failure}: {error:?}"))?;
+    println!(
+        "[策略 · Strategy] worker={} job={} skipped={reason} expected={expected_digest:016x} actual={}",
+        lease.worker_id,
+        lease.queued.job.job_id,
+        current_digest
+            .map(|digest| format!("{digest:016x}"))
+            .unwrap_or_else(|| "none".into())
+    );
+    Ok(true)
 }

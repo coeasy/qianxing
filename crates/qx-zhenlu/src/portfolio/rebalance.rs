@@ -36,12 +36,6 @@ pub struct RebalancePlan {
     pub turnover_bps: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RebalanceDelta {
-    pub instrument: String,
-    pub quantity_delta: i128,
-}
-
 pub fn rebalance(
     current: &PortfolioState,
     target: &[TargetPosition],
@@ -103,34 +97,6 @@ pub fn rebalance(
         positions,
         turnover_bps,
     })
-}
-
-pub fn build_rebalance(
-    current: &PortfolioState,
-    target: &[(String, i128)],
-    constraints: &PortfolioConstraint,
-) -> Result<Vec<RebalanceDelta>, String> {
-    constraints.validate()?;
-    current.validate()?;
-    let mut result = Vec::new();
-    for (instrument, target_qty) in target {
-        if instrument.trim().is_empty() {
-            return Err("empty target instrument id".into());
-        }
-        let current_qty = current
-            .positions
-            .get(instrument)
-            .copied()
-            .unwrap_or_default();
-        let delta = target_qty.saturating_sub(current_qty);
-        if delta.unsigned_abs() >= constraints.min_trade_size as u128 {
-            result.push(RebalanceDelta {
-                instrument: instrument.clone(),
-                quantity_delta: delta,
-            });
-        }
-    }
-    Ok(result)
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 
 use super::{
     ConsumerCheckpoint, ConsumerEngine, ConsumerOutcome, ConsumerProjection, ConsumerStateStore,
-    OutboxEvent, OutboxPublisher, TransactionalConsumerStateStore,
+    NatsWaitBudget, OutboxEvent, OutboxPublisher, TransactionalConsumerStateStore,
 };
 use async_nats::jetstream;
 use futures_util::StreamExt;
@@ -37,10 +37,15 @@ impl NatsJetStreamPublisher {
     /// Connect to NATS and use an existing JetStream stream. Stream creation is
     /// intentionally deployment-owned so production retention/replication
     /// policy cannot be silently changed by a trading process.
-    pub fn connect(url: &str, subject_prefix: &str) -> Result<Self, String> {
+    pub fn connect(
+        url: &str,
+        subject_prefix: &str,
+        budget: NatsWaitBudget,
+    ) -> Result<Self, String> {
         if url.trim().is_empty() || subject_prefix.trim().is_empty() {
             return Err("NATS url 和 subject_prefix 不能为空".into());
         }
+        budget.validate()?;
         validate_subject(subject_prefix)?;
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
@@ -49,14 +54,27 @@ impl NatsJetStreamPublisher {
                 .map_err(|error| format!("NATS Tokio runtime 初始化失败: {error}"))?,
         );
         let url = url.to_string();
-        let client = block_on_runtime(&runtime, async move {
-            async_nats::connect(url)
+        let connect_timeout = budget.connect_timeout();
+        let request_timeout = budget.request_timeout();
+        // `jetstream::new` spawns the ack-watcher task, so it must run while the
+        // Tokio runtime is entered; calling it after `block_on` returned would
+        // panic ("there is no reactor running") on any plain worker thread.
+        let context = block_on_runtime(&runtime, async move {
+            let client = async_nats::ConnectOptions::default()
+                .connection_timeout(connect_timeout)
+                // `$JS.API.*` 请求的界在连接层（client.request 用 Connection::request_timeout），
+                // 不是 Context::timeout；只设后者会让发布有界、查询仍退回依赖默认的 10s。
+                .request_timeout(Some(request_timeout))
+                .connect(url)
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(|error| error.to_string())?;
+            let mut context = jetstream::new(client);
+            context.set_timeout(request_timeout);
+            Ok::<_, String>(context)
         })
         .map_err(|error| format!("NATS 连接失败: {error}"))?;
         Ok(Self {
-            context: jetstream::new(client),
+            context,
             runtime,
             subject_prefix: subject_prefix.trim_end_matches('.').into(),
         })
@@ -114,6 +132,7 @@ pub struct NatsJetStreamConsumer {
     consumer: jetstream::consumer::PullConsumer,
     group_id: String,
     max_attempts: u32,
+    pull_expires: std::time::Duration,
 }
 
 impl std::fmt::Debug for NatsJetStreamConsumer {
@@ -136,6 +155,7 @@ impl NatsJetStreamConsumer {
         consumer: &str,
         group_id: &str,
         max_attempts: u32,
+        budget: NatsWaitBudget,
     ) -> Result<Self, String> {
         for (value, field) in [
             (url, "NATS url"),
@@ -150,6 +170,7 @@ impl NatsJetStreamConsumer {
         if max_attempts == 0 {
             return Err("NATS consumer max_attempts 必须大于 0".into());
         }
+        budget.validate()?;
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -159,11 +180,20 @@ impl NatsJetStreamConsumer {
         let url = url.to_string();
         let stream = stream.to_string();
         let consumer_name = consumer.to_string();
+        let connect_timeout = budget.connect_timeout();
+        let request_timeout = budget.request_timeout();
         let jetstream_consumer = block_on_runtime(&runtime, async move {
-            let client = async_nats::connect(url)
+            let client = async_nats::ConnectOptions::default()
+                .connection_timeout(connect_timeout)
+                .request_timeout(Some(request_timeout))
+                .connect(url)
                 .await
                 .map_err(|error| error.to_string())?;
-            jetstream::new(client)
+            let mut context = jetstream::new(client);
+            // 连接层的 `request_timeout` 管到 `$JS.API.*` 请求本身，`set_timeout` 管到
+            // 发布 ack；两者都接同一个预算，否则有一侧仍退回依赖默认值。
+            context.set_timeout(request_timeout);
+            context
                 .get_stream(stream)
                 .await
                 .map_err(|error| error.to_string())?
@@ -177,6 +207,7 @@ impl NatsJetStreamConsumer {
             consumer: jetstream_consumer,
             group_id: group_id.into(),
             max_attempts,
+            pull_expires: budget.pull_expires(),
         })
     }
 
@@ -200,6 +231,7 @@ impl NatsJetStreamConsumer {
         let consumer = self.consumer.clone();
         let group_id = self.group_id.clone();
         let max_attempts = self.max_attempts;
+        let pull_expires = self.pull_expires;
         block_on_runtime(&self.runtime, async move {
             // The storage implementations intentionally use synchronous
             // transactions. Keep them off the Tokio reactor so a slow disk or
@@ -214,7 +246,7 @@ impl NatsJetStreamConsumer {
                 // Bound an empty pull so the owning worker can observe its
                 // shutdown token promptly instead of waiting for JetStream's
                 // long default batch expiry.
-                .expires(std::time::Duration::from_secs(1))
+                .expires(pull_expires)
                 .messages()
                 .await
                 .map_err(|error| format!("JetStream pull 请求失败: {error}"))?;
@@ -325,6 +357,7 @@ impl NatsJetStreamConsumer {
         let consumer = self.consumer.clone();
         let group_id = self.group_id.clone();
         let max_attempts = self.max_attempts;
+        let pull_expires = self.pull_expires;
         block_on_runtime(&self.runtime, async move {
             ConsumerEngine::new(store.clone(), group_id.clone(), max_attempts)
                 .map_err(|error| format!("{error:?}"))?;
@@ -333,7 +366,7 @@ impl NatsJetStreamConsumer {
             let mut messages = consumer
                 .fetch()
                 .max_messages(limit)
-                .expires(std::time::Duration::from_secs(1))
+                .expires(pull_expires)
                 .messages()
                 .await
                 .map_err(|error| format!("JetStream pull 请求失败: {error}"))?;

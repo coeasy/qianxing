@@ -38,9 +38,10 @@ pub fn shutdown_signalled() -> bool {
 pub enum WorkerLadder {
     /// worker 自己结束了，停机令牌从未被按下。
     Finished,
-    /// 停机请求被转发，worker 在预算内退出。
+    /// 停机请求被转发，worker 在预算内退出；`waited_ms` 是**收到请求之后**等的时长。
     StoppedWithinBudget { waited_ms: u64 },
     /// 停机请求被按下但 worker 到预算仍未退出；调用方只能报告而不能强杀线程。
+    /// `waited_ms` 同样从请求落下起算，不是从开始等待起算。
     StopTimedOut { waited_ms: u64 },
 }
 
@@ -58,9 +59,13 @@ pub fn wait_for_worker_finish(
     let budget = supervisor.config().shutdown_timeout_ms;
     let start = now_ms();
     let mut requested = supervisor.is_shutdown_requested();
+    // 预算与 `waited_ms` 都从**观察到停机请求**起算。worker 可能在请求到来之前已经被等了一整天，
+    // 从 `start` 起算会让它在请求落下的第一次轮询就判 `StopTimedOut`，一次宽限时间都不给。
+    let mut requested_at = if requested { Some(start) } else { None };
     loop {
         if worker_finished() {
-            let waited_ms = now_ms().saturating_sub(start);
+            let base = requested_at.unwrap_or(start);
+            let waited_ms = now_ms().saturating_sub(base);
             return if requested {
                 WorkerLadder::StoppedWithinBudget { waited_ms }
             } else {
@@ -70,10 +75,13 @@ pub fn wait_for_worker_finish(
         if !requested && signalled() {
             supervisor.request_shutdown();
             requested = true;
+            requested_at = Some(now_ms());
         }
-        let waited_ms = now_ms().saturating_sub(start);
-        if requested && waited_ms > budget {
-            return WorkerLadder::StopTimedOut { waited_ms };
+        if let Some(at) = requested_at {
+            let waited_ms = now_ms().saturating_sub(at);
+            if waited_ms > budget {
+                return WorkerLadder::StopTimedOut { waited_ms };
+            }
         }
         sleep_ms(POLL_INTERVAL_MS);
     }

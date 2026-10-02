@@ -31,8 +31,9 @@ pub(crate) fn build_configured_api_service(
     for (account_id, venue_id, log_name, currency) in configured_account_event_logs(config)? {
         let root = Path::new(&config.storage.data_dir);
         if event_log_exists(config, root, &log_name)? {
-            let pipeline = open_runtime_pipeline(config, root, log_name, currency)
-                .map_err(|error| format!("读取 API 事件投影失败: {error}"))?;
+            let pipeline =
+                open_runtime_pipeline(config, root, log_name, currency, OutboxRecovery::ReadOnly)
+                    .map_err(|error| format!("读取 API 事件投影失败: {error}"))?;
             state
                 .project_account_event_log(&account_id, &venue_id, pipeline.log())
                 .map_err(|error| format!("初始化 API 账户事件投影失败: {error}"))?;
@@ -200,7 +201,7 @@ pub(crate) fn load_api_query_models(config: &RuntimeConfig) -> Result<ApiQueryMo
 
     let mut ledger_entries = Vec::new();
     if let Some(log_name) = default_account_event_log(config, root)? {
-        let pipeline = open_account_pipeline(config, root, &log_name)
+        let pipeline = open_account_pipeline(config, root, &log_name, OutboxRecovery::ReadOnly)
             .map_err(|error| format!("读取 API Ledger 读模型失败: {error}"))?;
         ledger_entries = pipeline.ledger().entries().to_vec();
     }
@@ -336,7 +337,7 @@ pub(crate) fn load_api_account_snapshot_for_worker(
     if !event_log_exists(config, root, &log_name)? {
         return Ok(None);
     }
-    let pipeline = open_account_pipeline(config, root, &log_name)
+    let pipeline = open_account_pipeline(config, root, &log_name, OutboxRecovery::ReadOnly)
         .map_err(|error| format!("打开 API 账户 EventLog 失败: {error}"))?;
     let runtime_snapshot = pipeline.snapshot();
     let as_of = runtime_snapshot.last_engine_ts.max(1);

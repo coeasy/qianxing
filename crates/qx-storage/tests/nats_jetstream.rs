@@ -9,8 +9,8 @@
 #![cfg(feature = "nats")]
 
 use qx_storage::{
-    FileConsumerStateStore, NatsJetStreamConsumer, NatsJetStreamPublisher, OutboxEvent,
-    OutboxPublisher,
+    FileConsumerStateStore, NatsJetStreamConsumer, NatsJetStreamPublisher, NatsWaitBudget,
+    OutboxEvent, OutboxPublisher,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -169,21 +169,37 @@ fn drain(
 
 #[test]
 fn nats_adapters_reject_blank_configuration_without_connecting() {
-    let error = NatsJetStreamPublisher::connect("", "qx").unwrap_err();
+    let error = NatsJetStreamPublisher::connect("", "qx", NatsWaitBudget::default()).unwrap_err();
     assert!(error.contains("不能为空"), "空 url 必须被拒绝: {error}");
-    let error = NatsJetStreamPublisher::connect("nats://127.0.0.1:4222", "").unwrap_err();
+    let error =
+        NatsJetStreamPublisher::connect("nats://127.0.0.1:4222", "", NatsWaitBudget::default())
+            .unwrap_err();
     assert!(
         error.contains("不能为空"),
         "空 subject_prefix 必须被拒绝: {error}"
     );
-    let error = NatsJetStreamConsumer::connect("nats://127.0.0.1:4222", "", "worker", "grp", 3)
-        .unwrap_err();
+    let error = NatsJetStreamConsumer::connect(
+        "nats://127.0.0.1:4222",
+        "",
+        "worker",
+        "grp",
+        3,
+        NatsWaitBudget::default(),
+    )
+    .unwrap_err();
     assert!(
         error.contains("stream 不能为空"),
         "空 stream 必须被拒绝: {error}"
     );
-    let error = NatsJetStreamConsumer::connect("nats://127.0.0.1:4222", "QX", "worker", "grp", 0)
-        .unwrap_err();
+    let error = NatsJetStreamConsumer::connect(
+        "nats://127.0.0.1:4222",
+        "QX",
+        "worker",
+        "grp",
+        0,
+        NatsWaitBudget::default(),
+    )
+    .unwrap_err();
     assert!(
         error.contains("max_attempts"),
         "max_attempts 为 0 必须被拒绝: {error}"
@@ -196,10 +212,18 @@ fn nats_adapters_reject_blank_configuration_without_connecting() {
 fn nats_jetstream_publish_consume_deduplicates_by_event_id() {
     let run = format!("{}-{}", std::process::id(), now_nanos());
     let (url, stream, consumer_name, subject_prefix) = broker(&run);
-    let publisher = NatsJetStreamPublisher::connect(&url, &subject_prefix)
-        .expect("connect NATS publisher; is the broker and stream available?");
-    let consumer = NatsJetStreamConsumer::connect(&url, &stream, &consumer_name, &run, 3)
-        .expect("connect NATS consumer; is the durable pull consumer provisioned?");
+    let publisher =
+        NatsJetStreamPublisher::connect(&url, &subject_prefix, NatsWaitBudget::default())
+            .expect("connect NATS publisher; is the broker and stream available?");
+    let consumer = NatsJetStreamConsumer::connect(
+        &url,
+        &stream,
+        &consumer_name,
+        &run,
+        3,
+        NatsWaitBudget::default(),
+    )
+    .expect("connect NATS consumer; is the durable pull consumer provisioned?");
     let root = temp_root("consumer");
     let store = FileConsumerStateStore::new(&root);
     let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));

@@ -135,14 +135,31 @@ fn ccxt_worker_environment(config_path: &str) -> Result<BTreeMap<String, String>
     Ok(environment)
 }
 
+/// Worker 读窗的下界。用户流的空闲回话窗口由 `ccxt_idle_window_ms` 从它推导，
+/// 而那条循环自身不睡 —— 下界低于一次 IPC 往返时，一个当天没有成交的账户会把
+/// "刷新 EventLog + 写健康 mark"打成毫秒级热循环（V13 R2 第十四遍 #214）。
+pub(crate) const CCXT_WORKER_MIN_TIMEOUT_MS: u64 = 1_000;
+/// 读窗的上界：再长就等于提交结果未知要挂这么久才具名上报。
+pub(crate) const CCXT_WORKER_MAX_TIMEOUT_MS: u64 = 300_000;
+
+/// 用户流给子进程的回话窗口：读窗的 4/5，让"这一窗没有事件"的回话先于读窗到期
+/// 到达，读窗到期因此只代表子进程真的卡住。定义挪到读窗的同一侧，是为了让
+/// "下界 → 节律"这条不变式有用例可咬；原先它写在调用方的循环里，两侧各自漂移。
+pub fn ccxt_idle_window_ms(timeout_ms: u64) -> u64 {
+    timeout_ms.saturating_mul(4) / 5
+}
+
 fn ccxt_worker_timeout_ms(config_path: &str) -> Result<u64, String> {
     let config = ccxt_worker_config(config_path)?;
     let timeout_ms = config
         .get("timeout_ms")
         .and_then(Value::as_u64)
         .unwrap_or(30_000);
-    if timeout_ms == 0 || timeout_ms > 300_000 {
-        return Err("CCXT timeout_ms 必须在 1..=300000 内".into());
+    if !(CCXT_WORKER_MIN_TIMEOUT_MS..=CCXT_WORKER_MAX_TIMEOUT_MS).contains(&timeout_ms) {
+        return Err(format!(
+            "CCXT timeout_ms 必须在 {}..={} 内",
+            CCXT_WORKER_MIN_TIMEOUT_MS, CCXT_WORKER_MAX_TIMEOUT_MS
+        ));
     }
     Ok(timeout_ms)
 }
@@ -762,6 +779,54 @@ mod tests {
         assert!(!environment.contains_key("QX_UNRELATED_PARENT_SECRET"));
         let _ = std::fs::write(&path, r#"{"credential_env":{"secret":"BAD=VARIABLE"}}"#);
         assert!(ccxt_worker_environment(&path.to_string_lossy()).is_err());
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// #214：读窗下界必须大到导得出的空闲窗口还能当真是一次回话往返。
+    /// 用户流那条循环自身不睡，节律全靠这个窗口 —— 下界退化成 1 时窗口是 0，
+    /// 一个没有成交的账户就把 EventLog 刷新与健康 mark 打成毫秒级热循环。
+    #[test]
+    fn ccxt_idle_window_keeps_real_pacing_at_the_timeout_floor() {
+        let floor_window = ccxt_idle_window_ms(CCXT_WORKER_MIN_TIMEOUT_MS);
+        assert!(
+            floor_window >= 500,
+            "读窗下界 {CCXT_WORKER_MIN_TIMEOUT_MS}ms 导出的空闲窗口只有 {floor_window}ms，用户流会打成热循环"
+        );
+        // 回话必须先于读窗到期到达，否则"空闲"永远被读成断链。
+        for timeout_ms in [
+            CCXT_WORKER_MIN_TIMEOUT_MS,
+            5_000,
+            30_000,
+            CCXT_WORKER_MAX_TIMEOUT_MS,
+        ] {
+            assert!(
+                ccxt_idle_window_ms(timeout_ms) < timeout_ms,
+                "读窗 {timeout_ms} 的空闲窗口不再短于读窗，空闲会被具名成链路故障"
+            );
+        }
+    }
+
+    /// #214：校验的两端都要真的挡 —— 下界以下与上界以上都拒绝，界内按值返回。
+    #[test]
+    fn ccxt_worker_timeout_bounds_are_enforced_from_config() {
+        let path =
+            std::env::temp_dir().join(format!("qianxing-ccxt-timeout-{}.json", std::process::id()));
+        let read = |payload: &str| {
+            std::fs::write(&path, payload).unwrap();
+            ccxt_worker_timeout_ms(&path.to_string_lossy())
+        };
+        // 低于下界：过去这条是合法的 1，热循环就是从这一格进来的。
+        let error = read(r#"{"timeout_ms": 1}"#).unwrap_err();
+        assert!(
+            error.contains("timeout_ms 必须在"),
+            "下界没挡住 timeout_ms=1: {error}"
+        );
+        assert!(read(r#"{"timeout_ms": 0}"#).is_err());
+        assert!(read(r#"{"timeout_ms": 300001}"#).is_err());
+        assert_eq!(read(r#"{"timeout_ms": 1000}"#).unwrap(), 1_000);
+        assert_eq!(read(r#"{"timeout_ms": 300000}"#).unwrap(), 300_000);
+        // 不写字段时仍按默认 30 秒，不受下界改动影响。
+        assert_eq!(read("{}").unwrap(), 30_000);
         let _ = std::fs::remove_file(path);
     }
 

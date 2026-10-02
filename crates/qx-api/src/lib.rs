@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -447,8 +447,6 @@ pub struct ApiProjectionKey {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ProjectionHealth {
     pub healthy: bool,
-    pub last_projected_seq: Option<u64>,
-    pub source_digest: Option<u64>,
     pub error: Option<String>,
 }
 
@@ -456,8 +454,6 @@ impl Default for ProjectionHealth {
     fn default() -> Self {
         Self {
             healthy: true,
-            last_projected_seq: None,
-            source_digest: None,
             error: None,
         }
     }
@@ -515,8 +511,6 @@ impl ApiAccountProjection {
         match &result {
             Ok(_) => {
                 self.health.healthy = true;
-                self.health.last_projected_seq = self.events.events().last().map(|event| event.seq);
-                self.health.source_digest = Some(source.digest());
                 self.health.error = None;
             }
             Err(error) => {
@@ -536,11 +530,7 @@ impl ApiAccountProjection {
         for event in source.events() {
             validate_projection_event(key, event)?;
             if event.seq < self.events.next_seq() {
-                let existing = self
-                    .events
-                    .events()
-                    .iter()
-                    .find(|current| current.seq == event.seq);
+                let existing = projected_event(self.events.events(), event.seq);
                 if existing == Some(event) {
                     continue;
                 }
@@ -604,7 +594,8 @@ impl ApiRateLimiter {
         }
     }
 
-    /// `now` 使用 API 调用方约定的秒级单调时间；生产网关应在边界统一时间单位。
+    /// `now` 的时钟域是 **epoch 秒**：`refill_per_second` 按这个域逐格补充。运行时唯一的墙钟是
+    /// 毫秒，所以 `handle_inner` 在进桶之前换算一次（[`ApiService::handle`] 的 `ts` 是毫秒）。
     pub fn try_acquire(&mut self, now: u64) -> bool {
         let elapsed = now.saturating_sub(self.last_ts);
         let refill = elapsed.saturating_mul(self.refill_per_second);
@@ -616,6 +607,12 @@ impl ApiRateLimiter {
         self.tokens -= 1;
         true
     }
+}
+
+/// 请求毫秒戳 → 限流桶的 epoch 秒：跨进桶域只在这一处换算（V13 R2 第十六遍，与 `qx-cli` 的
+/// `lease_clock` 同族）。直接按毫秒喂会让每格补充放大 1000 倍，声明的"每秒"就不是它真的政策。
+fn rate_limit_bucket_seconds(timestamp_ms: u64) -> u64 {
+    timestamp_ms / 1_000
 }
 
 trait ApiRateLimitBackend: Send + Sync {
@@ -725,12 +722,6 @@ impl ApiState {
             .and_then(|projection| projection.snapshot.clone())
     }
 
-    pub fn projection_health(&self, account_id: &str, venue_id: &str) -> Option<ProjectionHealth> {
-        self.projections
-            .get(&ApiProjectionKey::new(account_id, venue_id))
-            .map(|projection| projection.health.clone())
-    }
-
     fn append_projected_event(&mut self, event: Event) -> Result<(), String> {
         let expected = self.events.next_seq();
         let bus_expected = self.event_bus.next_seq();
@@ -776,11 +767,7 @@ impl ApiState {
         let mut projected = 0;
         for event in source.events() {
             if event.seq < self.events.next_seq() {
-                let existing = self
-                    .events
-                    .events()
-                    .iter()
-                    .find(|current| current.seq == event.seq);
+                let existing = projected_event(self.events.events(), event.seq);
                 if existing == Some(event) {
                     continue;
                 }
@@ -812,6 +799,13 @@ impl ApiState {
     }
 }
 
+/// 投影日志的 seq 严格递增（`EventLog::append_checked` 拒收重复与倒退），因此按序号二分。
+/// 线性 `find` 会让每轮刷新为已投影前缀付一遍与长度成正比的扫描，叠加轮询后是 O(n²)（V13 R2 第十七遍 #169c）。
+fn projected_event(events: &[Event], seq: u64) -> Option<&Event> {
+    let index = events.partition_point(|current| current.seq < seq);
+    events.get(index).filter(|current| current.seq == seq)
+}
+
 fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<(), String> {
     let identity = match &event.kind {
         EventKind::AccountBalanceSnapshot {
@@ -834,9 +828,7 @@ fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<()
         EventKind::OrderSubmitted { order } => Some((order.account_id.as_str(), None)),
         EventKind::Filled { fill } => Some((fill.account_id.as_str(), fill.venue_id.as_deref())),
         EventKind::LedgerApplied { entry } => Some((entry.account_id.as_str(), None)),
-        EventKind::Timer { .. }
-        | EventKind::MarketBar { .. }
-        | EventKind::MarketQuote { .. }
+        EventKind::MarketQuote { .. }
         | EventKind::FundingRateSnapshot { .. }
         | EventKind::Submit { .. }
         | EventKind::Accepted { .. }
@@ -886,6 +878,8 @@ impl ApiPolicy {
 #[derive(Clone)]
 pub struct ApiService {
     state: Arc<Mutex<ApiState>>,
+    /// 监听循环收摊时置位，让已在飞行中的 WebSocket 会话也有出口（V13 R2 #218）。
+    session_shutdown: Arc<AtomicBool>,
     /// None 表示仅供已受信的进程内调用；网络/生产入口应使用 `with_policy`。
     policy: Option<ApiPolicy>,
     rate_limiter: Arc<dyn ApiRateLimitBackend>,
@@ -902,6 +896,7 @@ struct ApiMetrics {
     requests_total: AtomicU64,
     rate_limit_rejected_total: AtomicU64,
     authentication_rejected_total: AtomicU64,
+    command_enqueue_failures_total: AtomicU64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -909,21 +904,30 @@ pub struct ApiMetricsSnapshot {
     pub requests_total: u64,
     pub rate_limit_rejected_total: u64,
     pub authentication_rejected_total: u64,
+    /// 已受理的控制命令写进执行队列失败多少次。受理仍然成立（命令已落控制面，worker
+    /// 每轮会按 `pending()` 补入），但这条计数是那种失败唯一的出口（V13 R2 #189）。
+    pub command_enqueue_failures_total: u64,
 }
 
 impl ApiMetricsSnapshot {
     pub fn to_prometheus(self) -> String {
         format!(
-            "# HELP qx_api_requests_total Total API requests received.\\n\
-# TYPE qx_api_requests_total counter\\n\
-qx_api_requests_total {}\\n\
-# HELP qx_api_rate_limit_rejected_total Requests rejected by the rate limiter.\\n\
-# TYPE qx_api_rate_limit_rejected_total counter\\n\
-qx_api_rate_limit_rejected_total {}\\n\
-# HELP qx_api_authentication_rejected_total Requests rejected by the API policy.\\n\
-# TYPE qx_api_authentication_rejected_total counter\\n\
-qx_api_authentication_rejected_total {}\\n",
-            self.requests_total, self.rate_limit_rejected_total, self.authentication_rejected_total
+            "# HELP qx_api_requests_total Total API requests received.\n\
+# TYPE qx_api_requests_total counter\n\
+qx_api_requests_total {}\n\
+# HELP qx_api_rate_limit_rejected_total Requests rejected by the rate limiter.\n\
+# TYPE qx_api_rate_limit_rejected_total counter\n\
+qx_api_rate_limit_rejected_total {}\n\
+# HELP qx_api_authentication_rejected_total Requests rejected by the API policy.\n\
+# TYPE qx_api_authentication_rejected_total counter\n\
+qx_api_authentication_rejected_total {}\n\
+# HELP qx_api_command_enqueue_failures_total Accepted control commands whose queue write failed.\n\
+# TYPE qx_api_command_enqueue_failures_total counter\n\
+qx_api_command_enqueue_failures_total {}\n",
+            self.requests_total,
+            self.rate_limit_rejected_total,
+            self.authentication_rejected_total,
+            self.command_enqueue_failures_total
         )
     }
 }
@@ -1064,6 +1068,7 @@ impl ApiService {
     pub fn new(state: ApiState) -> Self {
         Self {
             state: Arc::new(Mutex::new(state)),
+            session_shutdown: Arc::new(AtomicBool::new(false)),
             policy: None,
             rate_limiter: Arc::new(LocalRateLimitBackend {
                 limiter: Mutex::new(ApiRateLimiter::new(
@@ -1083,6 +1088,7 @@ impl ApiService {
     pub fn with_policy(state: ApiState, policy: ApiPolicy) -> Self {
         Self {
             state: Arc::new(Mutex::new(state)),
+            session_shutdown: Arc::new(AtomicBool::new(false)),
             policy: Some(policy),
             rate_limiter: Arc::new(LocalRateLimitBackend {
                 limiter: Mutex::new(ApiRateLimiter::new(
@@ -1113,6 +1119,10 @@ impl ApiService {
             authentication_rejected_total: self
                 .metrics
                 .authentication_rejected_total
+                .load(Ordering::Relaxed),
+            command_enqueue_failures_total: self
+                .metrics
+                .command_enqueue_failures_total
                 .load(Ordering::Relaxed),
         }
     }
@@ -1249,13 +1259,6 @@ impl ApiService {
             .account_snapshot_for(account_id, venue_id)
     }
 
-    pub fn projection_health(&self, account_id: &str, venue_id: &str) -> Option<ProjectionHealth> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .projection_health(account_id, venue_id)
-    }
-
     fn projection_readiness(&self) -> Option<String> {
         let state = self.state.lock().expect("api state mutex poisoned");
         state
@@ -1270,6 +1273,26 @@ impl ApiService {
                     projection.health.error.as_deref().unwrap_or("unknown")
                 )
             })
+    }
+
+    /// 带键读面的统一收口：键的形状非法回 400，形状合法但仓内没有这份账户投影回 404，
+    /// 其余情况（不带键，或投影存在）返回 `None` 交给各读面自己处理（V13 R2 #191）。
+    ///
+    /// "投影存在但还没发布快照"不在这里：那一格文档承诺的是 200 空数组/`null`，
+    /// 与"这个账户根本不在这份部署里"是两件事，合并成一个码就读不回来了。
+    fn missing_projection_response(&self, query: &str) -> Option<ApiResponse> {
+        let key = match projection_key_from_query(query) {
+            Ok(key) => key,
+            Err(error) => return Some(ApiResponse::json(400, error_json(&error))),
+        };
+        let key = key?;
+        let known = self
+            .state
+            .lock()
+            .expect("api state mutex poisoned")
+            .projections
+            .contains_key(&key);
+        (!known).then(|| ApiResponse::json(404, error_json("account_projection_not_found")))
     }
 
     fn snapshot_for_query(&self, query: &str) -> Result<Option<AccountSnapshot>, String> {
@@ -1363,6 +1386,9 @@ impl ApiService {
         self
     }
 
+    /// `ts` 是这条请求的**毫秒** epoch 戳，与 `runtime_timestamp_ms()` 同源：它进审计、进控制命令
+    /// 与租约（后者按秒，由调用方换算），进限流桶之前先换算成秒。`serve` 必须按连接现取而不是
+    /// 在监听入口取一次 —— 定格的戳会让令牌桶永不回血（V13 R2 第十六遍）。
     pub fn handle(&self, method: &str, path: &str, body: &str, ts: u64) -> ApiResponse {
         self.handle_inner(method, path, body, ts, None)
     }
@@ -1391,7 +1417,7 @@ impl ApiService {
         authenticated_operator: Option<&str>,
     ) -> ApiResponse {
         self.metrics.requests_total.fetch_add(1, Ordering::Relaxed);
-        match self.rate_limiter.try_acquire(ts) {
+        match self.rate_limiter.try_acquire(rate_limit_bucket_seconds(ts)) {
             Ok(true) => {}
             Ok(false) => {
                 self.metrics
@@ -1419,6 +1445,19 @@ impl ApiService {
                     .fetch_add(1, Ordering::Relaxed);
                 return ApiResponse::json(403, error_json("authenticated_operator_required"));
             }
+        }
+        // 带键读面的共同前置：`account_id`/`venue_id` 形状合法但仓内没有这份投影时，
+        // 下面那些"摊成数组/原样搬运"的读面会回一份空的 200，把"这个账户没有单"说成事实，
+        // 而 `/account/snapshot` 同一条件下回 404 —— 一个拼错的账户 id 因此能读成"干净的空账户"
+        // （V13 R2 #191）。判定放在分派之前做一次，七个读面共用。
+        if PROJECTION_SCOPED_ROUTES.contains(&route) {
+            if let Some(response) = self.missing_projection_response(query) {
+                return response;
+            }
+        } else if KEYLESS_READ_ROUTES.contains(&route) && !query.is_empty() {
+            // #205：这四条读的是整份现读模型，没有收窄键；`?account_id=` 落在它们身上只会
+            // 把默认账户那份念成那个账户的日志。
+            return ApiResponse::json(400, error_json(&format!("{route} 不接受查询参数")));
         }
         match (method, route) {
             ("GET", "/health") => ApiResponse::json(200, "{\"status\":\"ok\"}"),
@@ -1626,11 +1665,12 @@ impl ApiService {
             }
             None => (&state.snapshot_history, state.snapshot.as_ref()),
         };
-        let Some(base) = history.get(&base_hash) else {
+        // 基准查得到就一定有当前快照：`publish_snapshot`（全局与按账户那两处）都把
+        // `snapshot_history` 与 `snapshot` 同批写入，没有任何入口能把前者写上不写后者。
+        // 所以这里不再单独声明一个两张端点表都没有的 `404 snapshot_not_found`（V13 R2 #205）——
+        // 那个码在这条路上取不到，留着它等于让文档去解释一条永不返回的分支。
+        let (Some(base), Some(target)) = (history.get(&base_hash), target) else {
             return ApiResponse::json(409, error_json("snapshot_base_not_found"));
-        };
-        let Some(target) = target else {
-            return ApiResponse::json(404, error_json("snapshot_not_found"));
         };
         match base.diff(target) {
             Ok(diff) => ApiResponse::json(
@@ -1687,7 +1727,15 @@ impl ApiService {
             };
             self.state.lock().expect("api state mutex poisoned").control = plane;
             if let Some(enqueuer) = &self.command_enqueuer {
-                let _ = enqueuer(queued_command, ts);
+                // 入队失败不推翻已经成立的受理：命令已写进控制面，worker 每轮按
+                // `pending()` 补入同一条命令。但"补入了"是假设，不是事实——失败必须
+                // 有一条能被看见的通道，所以计数 + 落日志，而不是 `let _ =` 吞掉（#189）。
+                if let Err(error) = enqueuer(queued_command, ts) {
+                    self.metrics
+                        .command_enqueue_failures_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    eprintln!("[qx-api] 控制命令入队失败，等 worker 补入: {error}");
+                }
             }
             return ApiResponse::json(
                 202,
@@ -1784,26 +1832,35 @@ impl ApiService {
 
     /// 持续接受 mTLS 连接，并在每个新连接握手时读取当前 TLS 配置和 Operator
     /// 身份映射。两份配置均由调用方的轮询重载器原子替换。
+    ///
+    /// `now` 与 [`Self::serve`] 同一条口径：每条连接现取一次墙钟，TLS 重载读的是同一份"现在"。
     pub fn serve_tls_mtls_with_stores(
         &self,
         listener: TcpListener,
         configs: &TlsConfigStore,
         identities: &MtlsIdentityStore,
-        ts: u64,
+        mut now: impl FnMut() -> u64,
         stopped: impl Fn() -> bool,
     ) -> std::io::Result<()> {
         listener.set_nonblocking(true)?;
-        loop {
-            let Some(stream) = Self::await_connection(&listener, &stopped)? else {
-                return Ok(());
+        let outcome = loop {
+            let stream = match Self::await_connection(&listener, &stopped) {
+                Ok(Some(stream)) => stream,
+                Ok(None) => break Ok(()),
+                Err(error) => break Err(error),
             };
-            let stream = tls_stream(stream, configs.current())?;
+            let secured = match tls_stream(stream, configs.current()) {
+                Ok(stream) => stream,
+                Err(error) => break Err(error),
+            };
             let policy = identities.current();
             let operator_id = policy
-                .operator_for(stream.conn.peer_certificates())
+                .operator_for(secured.conn.peer_certificates())
                 .map(str::to_string);
-            self.spawn_connection(stream, ts, operator_id);
-        }
+            self.spawn_connection(secured, now(), operator_id);
+        };
+        self.session_shutdown.store(true, Ordering::Release);
+        outcome
     }
 
     /// 每个长连接独立处理，避免 WebSocket 或慢客户端占住监听循环。
@@ -1857,6 +1914,10 @@ impl ApiService {
 
     /// 持续接受明文连接，直到 `stopped()` 为真。
     ///
+    /// `now` 是这条循环每次接受连接时读取的墙钟（毫秒，`runtime_timestamp_ms`），不是调用方在
+    /// 进入循环前取好的一份常数：请求戳同时驱动限流桶的补充、控制命令的审计时间与租约秒，取一次
+    /// 就把这三条通道一起定格的进程启动那一刻（V13 R2 第十六遍）。
+    ///
     /// 停机出口是必需的而不是可选的：`for stream in listener.incoming()` 永不结束，
     /// Ctrl+C 之后监督器只能把 worker 标成"已请求停机"，而 worker 线程仍卡在
     /// `accept` 里，`join()` 永远回不来，投影线程与 TLS 重载线程也就永远停不掉
@@ -1864,16 +1925,20 @@ impl ApiService {
     pub fn serve(
         &self,
         listener: TcpListener,
-        ts: u64,
+        mut now: impl FnMut() -> u64,
         stopped: impl Fn() -> bool,
     ) -> std::io::Result<()> {
         listener.set_nonblocking(true)?;
-        loop {
-            let Some(stream) = Self::await_connection(&listener, &stopped)? else {
-                return Ok(());
-            };
-            self.spawn_connection(stream, ts, None);
-        }
+        let outcome = loop {
+            match Self::await_connection(&listener, &stopped) {
+                Ok(Some(stream)) => self.spawn_connection(stream, now(), None),
+                Ok(None) => break Ok(()),
+                Err(error) => break Err(error),
+            }
+        };
+        // 无论监听循环怎么收摊，飞行中的会话都得拿到同一个令牌。
+        self.session_shutdown.store(true, Ordering::Release);
+        outcome
     }
 
     fn serve_websocket<S: Read + Write>(
@@ -1925,6 +1990,13 @@ impl ApiService {
         let mut cursor = initial_cursor;
         let mut client_buffer = [0_u8; 2048];
         loop {
+            // 会话循环的出口不能只有"客户端自己关"：监听循环按 `stopped()` 收摊后，
+            // 已经握手的会话若不读这个令牌，线程就永远等在 `wait_after` 的 100ms 轮询里，
+            // `join()` 回不来，停机只能靠强杀（V13 R2 #218）。
+            if self.session_shutdown.load(Ordering::Acquire) {
+                write_ws_text(stream, "{\"type\":\"server_shutdown\"}")?;
+                return Ok(());
+            }
             match event_bus.wait_after(cursor, Duration::from_millis(100)) {
                 Ok(events) => {
                     for event in events {
@@ -2207,15 +2279,23 @@ fn parse_http_request(request: &str) -> Result<(String, String, String), String>
     Ok((method.into(), path.into(), body.into()))
 }
 
+/// 状态行的短语必须与状态码本身说的是同一件事：`403` 与 `503` 过去一起落进 `_ => "Internal
+/// Server Error"`，于是"认证没过"和"后端暂时不接"在 HTTP 层都被读成"服务坏了"（与 #172 把
+/// 风控端口的"拒绝"与"端口坏了"分成两条通道同族，V13 R2 第十六遍）。
+/// `_` 那格给的是 `Unknown` 而不是复用 500 的短语：本构建写出的每个状态码都在上面的名单里，
+/// 落到这里就是新增了没登记的状态码，不该由一个听起来正确的词把差异盖住。
 fn write_http_response<S: Write>(stream: &mut S, response: &ApiResponse) -> std::io::Result<()> {
     let reason = match response.status {
         200 => "OK",
         202 => "Accepted",
         400 => "Bad Request",
+        403 => "Forbidden",
         404 => "Not Found",
         409 => "Conflict",
         429 => "Too Many Requests",
-        _ => "Internal Server Error",
+        500 => "Internal Server Error",
+        503 => "Service Unavailable",
+        _ => "Unknown",
     };
     let head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -2252,6 +2332,29 @@ fn projection_key_from_query(query: &str) -> Result<Option<ApiProjectionKey>, St
         _ => Err("account_id 和 venue_id 必须同时提供".into()),
     }
 }
+
+/// 接受 `?account_id=&venue_id=` 的读面，即"键指向某一份账户投影"的那些入口。
+/// 它们在分派前共用 `ApiService::missing_projection_response` 那道 404（V13 R2 #191）；
+/// `/account/snapshot/diff` 不在列——它的定位符是 `base_hash`，投影缺失时
+/// `409 snapshot_base_not_found` 说的就是"这份基线不在这条链上"，不是账户不存在。
+const PROJECTION_SCOPED_ROUTES: [&str; 7] = [
+    "/account/snapshot",
+    "/account/snapshot/envelope",
+    "/account/orders",
+    "/account/positions",
+    "/account/balances",
+    "/events",
+    "/events/live",
+];
+
+/// 反过来：这四条读的是整份现读模型（账簿流水、作业运行、对账报告、控制面审计），没有任何
+/// 收窄键。带查询串进来必须回 400 而不是照常 200——按账户读请走 `/account/snapshot` 一族（V13 R2 #205）。
+const KEYLESS_READ_ROUTES: [&str; 4] = [
+    "/scheduler/runs",
+    "/account/ledger",
+    "/reconcile/reports",
+    "/control/audit",
+];
 
 fn json_string(value: &str) -> String {
     serde_json::to_string(value).expect("string serialization cannot fail")
@@ -2383,7 +2486,12 @@ mod tests {
         assert_eq!(service.handle("GET", "/health", "", 1).status, 200);
         let metrics = service.handle("GET", "/metrics", "", 1);
         assert_eq!(metrics.status, 200);
-        assert!(metrics.body.contains("qx_api_requests_total"));
+        let samples = metrics
+            .body
+            .lines()
+            .filter(|line| !line.starts_with("# "))
+            .count();
+        assert_eq!(samples, 4, "自身样本行:\n{}", metrics.body);
         let command = ControlCommand {
             command_id: 1,
             request_id: "api-1".into(),
@@ -2401,15 +2509,6 @@ mod tests {
             202
         );
         assert_eq!(service.state().lock().unwrap().control.audit().len(), 1);
-    }
-
-    #[test]
-    fn metrics_route_appends_supervised_worker_metrics() {
-        let service = ApiService::new(ApiState::default())
-            .with_worker_metrics_provider(|| "qx_worker_up{worker=\"relay\"} 1\n".into());
-        let metrics = service.handle("GET", "/metrics", "", 1);
-        assert_eq!(metrics.status, 200);
-        assert!(metrics.body.contains("qx_worker_up{worker=\"relay\"} 1"));
     }
 
     /// 端点侧的"未算 ≠ 零"（V11 Q67，Q70 把权益并进来）：同一份快照在 `/account/balances` 上必须把算出来
@@ -2654,8 +2753,10 @@ mod tests {
             request_id: "api-trusted-1".into(),
             operator_id: "forged".into(),
             reason: "trusted boundary test".into(),
-            kind: CommandKind::CancelOrder,
-            target: "order-1".into(),
+            // 受理面只覆盖有派发者的类型（V13 #188），这条用例要的是"身份以认证边界为准"，
+            // 所以它必须真的能被受理。
+            kind: CommandKind::PauseStrategy,
+            target: "strategy-1".into(),
             payload: BTreeMap::new(),
             permission: Permission::Trading,
             dry_run: true,
@@ -2775,8 +2876,9 @@ mod tests {
                 0,
                 10,
                 Priority::POST,
-                EventKind::Timer {
-                    name: "paper".into(),
+                EventKind::Rejected {
+                    client_order_id: 1,
+                    reason: "paper".into(),
                 },
             ))
             .unwrap();
@@ -2786,8 +2888,9 @@ mod tests {
                 0,
                 10,
                 Priority::POST,
-                EventKind::Timer {
-                    name: "binance".into(),
+                EventKind::Rejected {
+                    client_order_id: 2,
+                    reason: "binance".into(),
                 },
             ))
             .unwrap();
@@ -2861,11 +2964,13 @@ mod tests {
         assert!(state
             .project_account_event_log("account-a", "paper", &source)
             .is_err());
-        let health = state
-            .projection_health("account-a", "paper")
-            .expect("failed projection keeps health state");
+        let health = &state
+            .projections
+            .get(&ApiProjectionKey::new("account-a", "paper"))
+            .expect("failed projection keeps health state")
+            .health;
         assert!(!health.healthy);
-        assert!(health.error.unwrap().contains("身份"));
+        assert!(health.error.as_deref().unwrap().contains("身份"));
         let service = ApiService::new(state);
         let ready = service.handle("GET", "/ready", "", 1);
         assert_eq!(ready.status, 503);

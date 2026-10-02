@@ -36,6 +36,28 @@ impl CommandKind {
             Self::ChangeRiskLimit | Self::SwitchVenue => Permission::Admin,
         }
     }
+
+    /// 这一份构建里**真的有执行者**的命令类型：提交入口按它裁决，其余变体在仓内没有任何
+    /// 派发者，接受了只会以 `Accepted` 永远停在审计里（新增变体默认落在"拒绝"这一侧）。
+    /// 判定式与执行者文件的对应关系由常驻用例 `control_command_kinds_match_executors` 钉住。
+    pub fn executed(&self) -> bool {
+        matches!(
+            self,
+            Self::SubmitOrder | Self::PauseStrategy | Self::ResumeStrategy
+        )
+    }
+
+    /// 全部 8 颗变体，供用例与文档按序遍历（新增变体必须在这里出现，否则用例会红）。
+    pub const ALL: [CommandKind; 8] = [
+        Self::SubmitOrder,
+        Self::PauseStrategy,
+        Self::ResumeStrategy,
+        Self::ChangeRiskLimit,
+        Self::CancelOrder,
+        Self::ReconcileAccount,
+        Self::RetryJob,
+        Self::SwitchVenue,
+    ];
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -195,6 +217,14 @@ impl ControlPlane {
         command: ControlCommand,
         ts: u64,
     ) -> Result<AuditRecord, ControlError> {
+        // 只有提交入口裁决"有没有执行者"：`ControlCommand::validate` 同时被恢复路径调用，
+        // 把这条规则放进 `validate` 会让历史队列里已存在的旧命令在重启时读不回来。
+        if !command.kind.executed() {
+            return Err(ControlError::Invalid(format!(
+                "{:?} 在当前构建里没有派发者，控制面不接受",
+                command.kind
+            )));
+        }
         if self.requests.contains_key(&command.request_id) {
             return Err(ControlError::DuplicateRequest(command.request_id));
         }
@@ -380,8 +410,9 @@ mod tests {
             request_id: "req-1".into(),
             operator_id: "operator".into(),
             reason: "incident recovery".into(),
-            kind: CommandKind::CancelOrder,
-            target: "order-1".into(),
+            // PauseStrategy 而不是 CancelOrder：提交入口只接受有派发者的命令类型。
+            kind: CommandKind::PauseStrategy,
+            target: "strategy-1".into(),
             payload: BTreeMap::new(),
             permission,
             dry_run: true,

@@ -359,7 +359,12 @@ mod tests {
                 let _ = std::fs::remove_file(path);
             })
         };
-        let lock = acquire_storage_lock_within(path.clone(), std::time::Duration::from_millis(500));
+        // 预算取生产承诺 `STORAGE_LOCK_WAIT` 而不是随手一个小数值：整树并发构建下，一次
+        // `create_new` 失败要付的墙钟可远超轮询退避（实测 500 毫秒预算内只试着重试 3 次就把
+        // 这条用例打红 —— 见 logs/s136 的 `Conflict("存储追加锁被占用（3 次尝试、500 毫秒内未取得）…")`）。
+        // 要验的判据是"占用方在**产品**预算内释放时写不能失败"，所以两侧都必须用同一个常数；
+        // 预算太紧的下界由隔壁的 30 毫秒超预算用例守住。
+        let lock = acquire_storage_lock_within(path.clone(), STORAGE_LOCK_WAIT);
         releaser.join().unwrap();
         assert!(
             lock.is_ok(),

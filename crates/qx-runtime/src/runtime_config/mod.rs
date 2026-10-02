@@ -75,6 +75,8 @@ mod strategy_tests;
 mod strategy_validation;
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod topology_tests;
 mod topology_validation;
 mod validate;
 

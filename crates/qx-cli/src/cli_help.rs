@@ -78,6 +78,9 @@ pub(crate) fn print_cli_help() {
       按场景创建自包含项目；会自动改写 deploy/ 样例路径并复制依赖文件。
   init [runtime.json] --strategy <name> [--force]
       创建绑定内置策略和样例 BarFrame 的可直接回测项目。
+  quickstart [项目目录] [--force]
+      一条命令跑完首跑链条：建 macd 项目 → doctor → backtest → report → status；
+      只写指定目录，任一步失败只回显那一步的命令原文并以 2 退出。
   doctor [runtime.json] [--json]
       一次检查配置、路径、策略输入和"这份配置能否构建出运行时监督器"；不启动 worker，
       因此不判运行健康，也不连接交易所、不发送订单。
@@ -219,7 +222,9 @@ pub(crate) fn print_cli_help() {
   paper
       Paper venue 的进程内冒烟，不写入任何账本产物。
   help
-      打印本入口摘要；--help 与 -h 是同一条入口的别名。未知命令也会打印它并退出 2。
+      打印本入口摘要；--help 与 -h 是同一条入口的别名。用法错误不再打印它，只回错误正文与下一步。
+  version
+      打印一行构建身份：版本、git 提交前 7 位、目标三元组与构建档；--version 与 -V 是同一条入口的别名。
 
 使用 `qx-cli help` 查看入口摘要；worker 与下单入口必须显式给出 runtime 配置，完整说明见 README.md 与 deploy/README.md。"#
     );

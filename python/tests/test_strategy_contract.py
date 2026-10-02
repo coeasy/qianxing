@@ -4,8 +4,10 @@ import io
 import json
 import os
 import struct
+import subprocess
 import tempfile
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -16,7 +18,7 @@ from qianxing_strategy import StrategyBars, StrategyInput, StrategyIntent, Strat
 from qianxing_strategy.frame import REQUEST, RESPONSE, encode_frame, read_frame
 from qianxing_strategy.ring import RingEmpty, RingFull, SharedMemoryRing
 from qianxing_strategy.columnar import decode_request
-from qianxing_strategy.worker import _load_handler
+from qianxing_strategy.worker import PARENT_LIVENESS_PROBE_SECONDS, _load_handler
 
 
 class StrategyContractTest(unittest.TestCase):
@@ -215,6 +217,99 @@ class StrategyContractTest(unittest.TestCase):
             payload.extend(b"".join(int(value).to_bytes(16, "little", signed=True) for value in bars[key]))
         restored = decode_request(bytes(payload))
         self.assertEqual(restored, self.request)
+
+    @staticmethod
+    def _spawned_dead_pid() -> int:
+        process = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+        process.wait()
+        return process.pid
+
+    _WORKER_STRATEGY_SOURCE = (
+        "from qianxing_bridge.strategy import StrategyOutput\n"
+        "\n"
+        "def on_event(request):\n"
+        "    return StrategyOutput(\n"
+        "        request_id=request.request_id,\n"
+        "        strategy_id=request.strategy_id,\n"
+        "        signal_id=1,\n"
+        "        instrument=request.instrument,\n"
+        "        target_qty=1,\n"
+        "    )\n"
+    )
+
+    def _start_shared_worker(self, directory: str, parent_pid: int) -> subprocess.Popen:
+        module = Path(directory) / "strategy.py"
+        module.write_text(self._WORKER_STRATEGY_SOURCE, encoding="utf-8")
+        worker = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "qianxing_strategy.worker",
+                "--module",
+                str(module),
+                "--protocol",
+                "shared_memory_json",
+                "--input-ring",
+                str(Path(directory) / "input.bin"),
+                "--output-ring",
+                str(Path(directory) / "output.bin"),
+                "--ring-capacity",
+                "8",
+                "--ring-slot-bytes",
+                "4096",
+                "--parent-pid",
+                str(parent_pid),
+            ],
+            cwd=str(Path(__file__).resolve().parents[1]),
+        )
+        return worker
+
+    def test_shared_worker_exits_when_the_parent_process_is_gone(self):
+        """#215：ring 传输没有 stdin 可关，父进程被强杀后这条循环只能自己认出口。"""
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ("input.bin", "output.bin"):
+                SharedMemoryRing.create(Path(directory) / name, 8, 4096).close()
+            worker = self._start_shared_worker(directory, self._spawned_dead_pid())
+            try:
+                self.assertEqual(
+                    worker.wait(timeout=PARENT_LIVENESS_PROBE_SECONDS * 30),
+                    0,
+                    "父进程早就不在了，worker 仍在 ring 上以 1 kHz 空转",
+                )
+            finally:
+                if worker.poll() is None:
+                    worker.kill()
+                    worker.wait()
+
+    def test_shared_worker_keeps_serving_while_the_parent_is_alive(self):
+        """同一条闸门不能把健康的 worker 一起误杀：父进程在时请求必须答得回来。"""
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "input.bin"
+            output_path = Path(directory) / "output.bin"
+            SharedMemoryRing.create(input_path, 8, 4096).close()
+            SharedMemoryRing.create(output_path, 8, 4096).close()
+            worker = self._start_shared_worker(directory, os.getpid())
+            try:
+                deadline = time.monotonic() + 20.0
+                with SharedMemoryRing(input_path, 8, 4096) as client_input, SharedMemoryRing(
+                    output_path, 8, 4096
+                ) as client_output:
+                    client_input.try_push(
+                        encode_frame(REQUEST, 11, self.request.to_json().encode("utf-8"))
+                    )
+                    payload = None
+                    while payload is None:
+                        try:
+                            payload = client_output.try_pop()
+                        except RingEmpty:
+                            if time.monotonic() >= deadline:
+                                self.fail("父进程还活着时 worker 没有回话")
+                    kind, sequence, response = read_frame(io.BytesIO(payload))
+                    self.assertEqual((kind, sequence), (RESPONSE, 11))
+                    self.assertTrue(json.loads(response)["ok"])
+            finally:
+                worker.kill()
+                worker.wait()
 
     def test_worker_verifies_file_backed_strategy_artifact(self):
         with tempfile.TemporaryDirectory() as directory:

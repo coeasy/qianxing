@@ -1,6 +1,5 @@
 use super::*;
 
-#[cfg(feature = "nats")]
 #[test]
 fn worker_metrics_are_atomic_and_aggregated_deterministically() {
     let root = std::env::temp_dir().join(format!(
@@ -32,7 +31,6 @@ fn worker_metrics_are_atomic_and_aggregated_deterministically() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-#[cfg(feature = "nats")]
 #[test]
 fn stale_worker_metrics_are_exposed_as_down() {
     let root = std::env::temp_dir().join(format!(
@@ -154,7 +152,11 @@ fn production_readiness_requires_private_worker_assets() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-#[cfg(feature = "nats")]
+/// worker 标签里混进反斜杠/引号/换行时，正文必须还能按行解析（#177 的同一族形状）。
+///
+/// 原先这段挂在 `nats` feature 后：那时 `prometheus_label` 只有 NATS 那条 worker 用得上。
+/// #178 之后 paper 侧的 `.prom` 出口也在默认 feature 集里用它，继续挂门后就是"默认构建
+/// 编译着一份没人测的转义实现"。
 #[test]
 fn prometheus_labels_escape_control_characters() {
     assert_eq!(prometheus_label("a\\b\"c\nd\re"), "a\\\\b\\\"c\\nd\\re");

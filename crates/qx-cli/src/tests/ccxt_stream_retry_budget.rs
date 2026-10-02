@@ -118,9 +118,56 @@ fn ccxt_market_rpc_budget_gives_up_and_names_the_market_channel() {
     );
 }
 
+/// #202 行为判据：一条通道的成功应答只能销自己那条通道的账。
+///
+/// 共享预算下"A 正常、B 已下架"的形状永远触不到上限（B 每轮被 A 清零），坏标的于是
+/// 每轮重生一个 Python 子进程且无上限 —— #167 收掉的死循环换了个方向回来。这里让健康
+/// 通道每轮都成功，坏通道必须照样在第 11 次连续失败时具名放弃，且点名要点到它自己。
+#[test]
+fn ccxt_market_budget_is_per_channel_so_a_healthy_symbol_cannot_reset_a_dead_one() {
+    let mut budgets = CcxtChannelBudgets::market_rpc();
+    let dead = "fetch_ticker:BAD/USDT";
+    let alive = "fetch_ohlcv:GOOD/USDT";
+    let mut solo = CcxtReconnectBudget::market_rpc();
+    // 健康通道先抖一次再恢复：这次复位不能顺手把别的通道的账也清了。
+    budgets
+        .note_failure(alive)
+        .expect("单次抖动不该放弃健康通道");
+    budgets.note_success(alive);
+    assert_eq!(
+        budgets.consecutive_failures(alive),
+        0,
+        "健康通道自己的成功应答没把它复位"
+    );
+    for cycle in 1..=CcxtReconnectBudget::MAX_RECONNECTS {
+        assert_eq!(
+            budgets.note_failure(dead).unwrap(),
+            solo.note_failure().unwrap(),
+            "第 {cycle} 次坏通道的退避必须与独占该预算时同源"
+        );
+        budgets.note_success(alive);
+    }
+    let error = match budgets.note_failure(dead) {
+        Ok(delay) => unreachable!("健康 symbol 每轮成功不该救回坏 symbol: {delay:?}"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains("CCXT 行情子进程") && error.contains(dead),
+        "放弃文案没点名真正死掉的那条通道: {error}"
+    );
+    assert_eq!(
+        budgets.consecutive_failures(alive),
+        0,
+        "坏通道触顶时把健康通道也拖进了计数"
+    );
+}
+
 /// #167 接线判据：`run_ccxt_market_worker` 的每一处重生子进程都得先过预算，
 /// 成功应答要能把计数复位。光测预算本身不会发现 worker 把 `note_failure()` 摘掉、
 /// 退回"每轮清零 + 固定 500ms 重生"的旧形状，所以这里按调用点逐个数。
+///
+/// #202 把这条判据收到通道粒度：不带通道键的 `note_failure()?` 就是退回共享预算，
+/// 一个健康 symbol 的成功应答会把坏 symbol 的账一起销掉。
 #[test]
 fn ccxt_market_worker_routes_every_respawn_through_the_reconnect_budget() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
@@ -133,7 +180,7 @@ fn ccxt_market_worker_routes_every_respawn_through_the_reconnect_budget() {
     )
     .unwrap();
     assert!(
-        source.contains("CcxtReconnectBudget::market_rpc()"),
+        source.contains("CcxtChannelBudgets::market_rpc()"),
         "行情 worker 不再持有重连预算"
     );
     // 1 处初次 spawn + ticker/OHLCV 两个失败分支各 1 处预算内重生。
@@ -143,14 +190,43 @@ fn ccxt_market_worker_routes_every_respawn_through_the_reconnect_budget() {
         "spawn 点数目变了：新增的重生点必须带预算，否则会退回无限重启子进程"
     );
     assert_eq!(
-        source.matches("reconnect_budget.note_failure()?").count(),
+        source
+            .matches("reconnect_budget.note_failure(&channel)?")
+            .count(),
         2,
-        "两个失败分支不是都过预算"
+        "两个失败分支不是都按通道过预算"
     );
     assert_eq!(
-        source.matches("reconnect_budget.note_success()").count(),
+        source
+            .matches("reconnect_budget.note_success(&channel)")
+            .count(),
         2,
         "成功应答不再复位连续失败计数，偶发失败会累计成误判"
+    );
+    // 带 `&channel` 的两处各有 1 处 `let channel` 赋值，共 4 处含 "channel" 的行。
+    assert_eq!(
+        source.matches("let channel = format!(").count(),
+        2,
+        "两个循环各自命名自己的通道，缺一个就等于把那条链放回共享预算"
+    );
+    assert!(
+        source.contains("\"fetch_ticker:{instrument}\"")
+            && source.contains("\"fetch_ohlcv:{}\", spec.instrument"),
+        "通道键必须带上 op 与 instrument，否则两类调用会互相销账"
+    );
+    assert!(
+        !source.contains("reconnect_budget.note_failure()?")
+            && !source.contains("reconnect_budget.note_success()"),
+        "不带通道键的预算调用回来了：健康 symbol 会替死掉的 symbol 清零"
+    );
+    // 专职恢复之外，运维还要看得见"离放弃还有几次"：两个失败分支都得把本通道的
+    // 连续次数写进 Degraded 明细，否则这个计数只有用例读得到。
+    assert_eq!(
+        source
+            .matches("reconnect_budget.consecutive_failures(&channel)")
+            .count(),
+        2,
+        "按通道记账的连续次数没上报，放弃前最后几次在健康快照里是隐形的"
     );
     assert!(
         !source.contains("thread::sleep(Duration::from_millis(500))"),

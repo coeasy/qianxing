@@ -101,12 +101,7 @@ pub(crate) fn market_spec_with_margin(
             source: DEFAULT_INSTRUMENT_SPEC_VERSION,
         });
     };
-    let payload = std::fs::read_to_string(spec_path).map_err(|error| {
-        format!(
-            "读取{label} market spec 失败 {}: {error}",
-            spec_path.display()
-        )
-    })?;
+    let payload = read_example_json(spec_path, &format!("{label} market spec "))?;
     let market: serde_json::Value = serde_json::from_str(&payload).map_err(|error| {
         format!(
             "{label} market spec JSON 无效 {}: {error}",
@@ -230,8 +225,7 @@ pub(crate) fn read_bar_frame_for_multi_backtest(
     path: &Path,
     label: &str,
 ) -> Result<BarFrame, String> {
-    let payload = std::fs::read_to_string(path)
-        .map_err(|error| format!("读取{label} BarFrame 失败 {}: {error}", path.display()))?;
+    let payload = read_example_json(path, &format!("{label} BarFrame "))?;
     BarFrame::from_json(&payload)
         .map_err(|error| format!("{label} BarFrame 校验失败 {}: {error:?}", path.display()))
 }

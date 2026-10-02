@@ -16,8 +16,10 @@ fn command(id: u64) -> ControlCommand {
         request_id: format!("req-{id}"),
         operator_id: "operator".into(),
         reason: "audit chain wiring".into(),
-        kind: CommandKind::CancelOrder,
-        target: format!("order-{id}"),
+        // 必须是**有派发者**的命令类型：控制面会拒绝没有执行者的类型（V13 #188），
+        // 而本文件要钉的是"受理后审计链变长"，不是受理本身。
+        kind: CommandKind::PauseStrategy,
+        target: format!("strategy-{id}"),
         payload: BTreeMap::new(),
         permission: Permission::Trading,
         dry_run: true,

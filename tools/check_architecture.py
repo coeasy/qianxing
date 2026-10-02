@@ -875,6 +875,8 @@ CLI_P4P_MODULES = (
     # V11 Q54 起 `init` 一族与产品规格读法也按同一形状拆出（纯搬家，语义不变）。
     "init_project",
     "market_spec",
+    # V13 第三十一遍 ②-a/#266：示例配置的查找面也是同一形状的兄弟模块。
+    "deploy_lookup",
 )
 # 两批搬家后 crate 根只剩 7 个顶层条目（分派薄壳）；写成上限而不是快照，防止职责又长回根文件。
 CLI_ROOT_ITEM_CEILING = 7
@@ -932,6 +934,28 @@ CLI_CHAIN_SYMBOLS = {
     "ccxt_margin_rule_from_market": (
         "market_spec.rs",
         r"^(?:pub(?:\(crate\))? )?fn ccxt_margin_rule_from_market\(",
+    ),
+    # 查找面三个入口各自只许有一处定义：默认路径重新分叉（`doctor` 一族回落到仓库、
+    # `runtime-check` 一族拼当前目录）就是 V13 第三十一遍 ① 那一轮的起点。
+    "resolve_deploy_path": (
+        "deploy_lookup.rs",
+        r"^(?:pub(?:\(crate\))? )?fn resolve_deploy_path\(",
+    ),
+    "pick_deploy_file": (
+        "deploy_lookup.rs",
+        r"^(?:pub(?:\(crate\))? )?fn pick_deploy_file\(",
+    ),
+    "locate_deploy_file": (
+        "deploy_lookup.rs",
+        r"^(?:pub(?:\(crate\))? )?fn locate_deploy_file\(",
+    ),
+    "read_example_json": (
+        "deploy_lookup.rs",
+        r"^(?:pub(?:\(crate\))? )?fn read_example_json\(",
+    ),
+    "relocate_deploy_path": (
+        "deploy_lookup.rs",
+        r"^(?:pub(?:\(crate\))? )?fn relocate_deploy_path\(",
     ),
 }
 ROOT_ITEM = re.compile(
@@ -4958,7 +4982,13 @@ def lease_clock_domain_check() -> None:
         "lease_clock 定义数或换算式变了",
     )
     def tight(path: str) -> str:
-        return "".join(production_text((ROOT / path).read_text(encoding="utf-8")).split())
+        # 尾逗号归一：rustfmt 把长实参拆成多行时会给最后一个实参补上尾逗号，按字面比对的
+        # 判据立刻读出 0 处 —— 本轮 paper_worker.rs 的 `ack_command_at` 秒域判据就是这么红的。
+        # 判据要认的是「第 4 个实参拿的是哪把时钟」，不是换行与尾逗号（见 `_collapsed_code`）。
+        return _collapsed_code(
+            production_text((ROOT / path).read_text(encoding="utf-8")),
+            tight=True,
+        )
 
     bad_units = [
         f"{path}: 缺 {ok}" if ok not in tight(path) else f"{path}: 退回 {bad}"
@@ -7893,6 +7923,151 @@ def _balanced_paren_args(text: str, open_index: int) -> str:
     return ""
 
 
+# —— 示例配置的唯一读取口（V13 第三十一遍 ① 尾 #271）——
+# 改前每个入口各写一遍 `读取…失败 {path}: {error}`，只有 `runtime-check` 那一族把
+# 「这一份示例在别处存在」接进了报错正文。于是同一棵树、同一个无关启动目录里
+# `runtime-check` 会指路，而 `fast-backtest` 只留一行 os error 3
+# （`logs/s750_pass31_standalone_fast_backtest.txt`）。现在收成一处，下面这几条钉的是
+# "不许再有人手写第二份"：漏斗的定义位置、它是否真的把补话接上、以及每条链是否在用它。
+FUNNEL_FILE = "crates/qx-cli/src/deploy_lookup.rs"
+CLI_ARGS_FILE = "crates/qx-cli/src/cli_args.rs"
+LOOKUP_PARSER = "parse_deploy_path"
+EXAMPLE_DEFAULT_PREFIX = 'default_value = "deploy/'
+# 「别处那一份」的补话只许由唯一读取口接上：别的文件一旦自己拼 `读取…失败 …: 原因`，
+# 那句补话就漏了，而报错形状看着仍然对——`read_runtime_config` 曾长期是这样。
+RELOCATION_HINT_CALLER = "deploy_relocation_hint("
+# V13 #274：`example_defaults` 那条只扫带 `default_value` 的路径参数，看不见「读取示例输入」
+# 却没有默认值（甚至必填）的位置参数。改前同一棵树上 `runtime-check` 会搬迁、而 `backtest`
+# /`paper-submit-order`/`reconcile` 只回一行 os error 3（`logs/s774_pass32_lookup_unmounted_before.txt`）。
+# 逐变体点名这些读取入口的路径参数必须挂上查找面解析器，半接面不再可能悄悄回来。
+LOOKUP_MOUNTED_READ_ARGS = {
+    "Backtest": ["runtime", "frame", "spec"],
+    "PaperSubmitOrder": ["path", "command_path"],
+    "Reconcile": ["path"],
+}
+# 每份文件至少要有这么多次漏斗调用：少于登记数，就是有人把某一格读取改回了直写文案。
+FUNNEL_CONSUMERS = {
+    "crates/qx-cli/src/runtime_wiring.rs": 1,
+    "crates/qx-cli/src/backtests/fast_backtest.rs": 1,
+    "crates/qx-cli/src/backtests/mod.rs": 2,
+    "crates/qx-cli/src/backtests/artifacts.rs": 2,
+    "crates/qx-cli/src/backtests/single_strategy.rs": 1,
+    "crates/qx-cli/src/backtests/strategy_backtest.rs": 2,
+    "crates/qx-cli/src/backtests/ashare_binding.rs": 3,
+    "crates/qx-cli/src/dataset_commands.rs": 6,
+}
+
+
+def example_read_funnel_check() -> None:
+    """示例配置的读取报错只在查找面拼一份，且三条链上的每个入口都经它。"""
+    source = (ROOT / FUNNEL_FILE).read_text(encoding="utf-8")
+    start = source.find("pub(crate) fn read_example_json(")
+    check(
+        start >= 0,
+        "示例配置的唯一读取口定义在查找面模块里",
+        f"{FUNNEL_FILE} 里没有 read_example_json 的定义",
+    )
+    body = source[start:] if start >= 0 else ""
+    body = body[: body.find("\n}")]
+    check(
+        "std::fs::read_to_string(" in body and "deploy_relocation_hint(" in body,
+        "唯一读取口自己读文件，并把「别处那一份」接在同一句报错里",
+        f"漏斗函数体缺读点或缺补话: {body[:120]!r}",
+    )
+    shortfall = []
+    for relative, required in sorted(FUNNEL_CONSUMERS.items()):
+        actual = (ROOT / relative).read_text(encoding="utf-8").count("read_example_json(")
+        if actual < required:
+            shortfall.append(f"{relative} 只剩 {actual} 处（登记 {required} 处）")
+    check(
+        not shortfall,
+        "快速回测 / 数据集 / A 股规则三条链上的示例读取全部经唯一读取口",
+        "有人把某格读取改回了手写文案: " + "; ".join(shortfall),
+    )
+    # 屏幕上的第一句口径已经被产物与用例钉住（src/tests/backtest_input_provenance.rs），
+    # 漏斗一旦改口，那两处读者会各说各话；这里把格式串本身登记住。
+    check(
+        '"读取{label}失败 {}: {error}{}"' in body,
+        "报错正文沿用各入口改前的第一句措辞，只是末尾接上补话",
+        f"漏斗的格式串改了: {body[:200]!r}",
+    )
+    copies = {}
+    for path in rust_sources():
+        relative = path.relative_to(ROOT).as_posix()
+        if relative == FUNNEL_FILE or "/tests/" in relative:
+            continue
+        count = path.read_text(encoding="utf-8").count(RELOCATION_HINT_CALLER)
+        if count:
+            copies[relative] = count
+    check(
+        not copies,
+        "「这一份示例在别处存在」的补话只在唯一读取口拼装（没有第二处手写同一句）",
+        f"有人手抄了第二处报错拼装: {copies}",
+    )
+    # 哪些入口的默认值该走查找面，由命令表自己回答，不留给散文：
+    # 少挂一处解析器，同一棵树上就会出现「默认值读得到、显式给同一条路径读不到」那格不对称。
+    table = (ROOT / CLI_ARGS_FILE).read_text(encoding="utf-8")
+    example_defaults = [
+        line.strip() for line in table.splitlines() if EXAMPLE_DEFAULT_PREFIX in line
+    ]
+    unwired = [
+        line for line in example_defaults if LOOKUP_PARSER not in line
+    ]
+    check(
+        bool(example_defaults),
+        "命令表里确实存在以示例配置形状作默认值的路径参数（判据无对象即报，不静默给绿）",
+        f"{CLI_ARGS_FILE} 里找不到 {EXAMPLE_DEFAULT_PREFIX} 的默认值，这条判据已失去对象",
+    )
+    check(
+        not unwired,
+        "以示例配置形状作默认值的路径参数全部挂上查找面解析器",
+        f"这些默认值不经过查找面（少挂 {LOOKUP_PARSER}）: {unwired}",
+    )
+    # 必填/可选的「读取示例输入」位置参数逐个必须挂解析器。上面的 default_value 扫描看不见它们，
+    # 少了这条就会重现「默认值读得到、手打同一条路径读不到」的半接面（#274）。
+    table_lines = table.splitlines()
+    missing_mount = []
+    for variant, fields in sorted(LOOKUP_MOUNTED_READ_ARGS.items()):
+        opened = [
+            index
+            for index, line in enumerate(table_lines)
+            if line.strip() == f"{variant} {{"
+        ]
+        if not opened:
+            missing_mount.append(f"{variant} 变体找不到（判据失去对象）")
+            continue
+        for field in fields:
+            decl = next(
+                (
+                    index
+                    for index in range(opened[0] + 1, len(table_lines))
+                    if table_lines[index].strip() in ("}", "},")
+                    or (
+                        table_lines[index].strip().startswith(f"{field}: ")
+                        and "PathBuf" in table_lines[index]
+                    )
+                ),
+                None,
+            )
+            if decl is None or not table_lines[decl].strip().startswith(f"{field}: "):
+                missing_mount.append(f"{variant}.{field} 路径参数找不到（判据失去对象）")
+                continue
+            mounted = False
+            probe = decl - 1
+            while probe >= 0 and table_lines[probe].lstrip().startswith(("#[", "//")):
+                if "value_parser = parse_deploy_path" in table_lines[probe]:
+                    mounted = True
+                    break
+                probe -= 1
+            if not mounted:
+                missing_mount.append(f"{variant}.{field} 未挂 {LOOKUP_PARSER}")
+    check(
+        not missing_mount,
+        "读取示例输入的位置参数（含无默认值的必填项）全部挂上查找面解析器",
+        f"查找面又只剩一半，无关目录里这些入口会只回 os error 3: {missing_mount}",
+    )
+
+
 def deploy_template_coverage_check() -> None:
     """deploy 模板的读取覆盖登记表与磁盘清单、与生产读点、与坏内容探针三方对齐。"""
     source = (ROOT / COVERAGE_SOURCE).read_text(encoding="utf-8")
@@ -7980,6 +8155,355 @@ def deploy_template_coverage_check() -> None:
     )
 
 
+# 一次性提交入口的终态不变量（V13 第三十一遍 ② #273）。
+#
+# 命令一旦被控制面记成 Accepted，它同时也已经(或即将)进了队列：这一段里任何用 `?` 或 `return`
+# 抛出函数的失败，都会留下一条永不结束的 Accepted、一份没人释放的租约，而同 request_id 重投
+# 只会撞幂等闸门（控制面对 command_id 与 request_id 都做幂等），文案却还在指人"重试"。
+# 缺行情是这条路径上最常命中的失败，实测见 `logs/s769_pass32_btc_paper_submit.txt`。
+SUBMIT_TERMINAL_ENTRIES = {
+    "Paper": (
+        "crates/qx-cli/src/venue_runtime/paper_submit.rs",
+        "pub(crate) fn run_paper_submit_order(",
+    ),
+    "Binance": (
+        "crates/qx-cli/src/venue_runtime/binance_submit.rs",
+        "pub(crate) fn run_binance_submit_order(",
+    ),
+}
+# Accepted 绑定与终态回写按语句取段：改掉任一形状都会让判据失去取段的位置，当场报而不是静默瞎。
+ACCEPTED_BIND = "let accepted = accepted_result"
+TERMINAL_WRITEBACK = ".transact(|plane| plane.execute(command.command_id, now, |_| action.clone()))"
+SUBMIT_ACCEPT_CALL = "plane.submit_as("
+# Accepted 之后、动作值之前仍在册的队列管线退出点。它们与动作失败不同：入队或领取失败时命令
+# 可能已被常驻 worker 领走，把它写成 Failed 会覆盖别人的裁决，所以收口口径要单独定（#273 残口）。
+QUEUE_ESCAPES_AFTER_ACCEPTED = {
+    "Paper": ("enqueue_command", "claim_command"),
+    "Binance": (),
+}
+# 队列确认只按「领到过租约」计，不按裁决计：裁决为 Failed 时同样要 ack，否则条目要等租约过期才出队。
+QUEUE_ACK_CALL = ".ack_command_at("
+TERMINAL_REJECTION_HELPER = "terminal_submit_rejection"
+TERMINAL_REJECTION_DEF = "fn terminal_submit_rejection("
+TERMINAL_REJECTION_TAIL = "换新的 command_id 与 request_id 重新提交"
+SUBMIT_ATTEMPT_HELPER = "paper_submit_match_attempt"
+SUBMIT_ATTEMPT_DEF = "fn paper_submit_match_attempt("
+SUBMIT_ATTEMPT_CONSUMERS = {
+    "crates/qx-cli/src/venue_runtime/paper_submit.rs",
+    "crates/qx-cli/src/venue_runtime/paper_worker.rs",
+}
+TERMINAL_STATE_CASE_FILE = "crates/qx-cli/src/tests/paper_submit_terminal_state.rs"
+TERMINAL_STATE_CASE_FNS = (
+    "paper_submit_order_without_market_quote_terminates_and_acks_the_queue",
+    "paper_submit_order_with_market_quote_still_reaches_executed",
+    "paper_execution_worker_terminates_a_quote_less_command_and_keeps_running",
+)
+SUBMIT_ENTRY_FILES = {
+    "Paper": "crates/qx-cli/src/venue_runtime/paper_submit.rs",
+    "Binance": "crates/qx-cli/src/venue_runtime/binance_submit.rs",
+}
+STRING_LITERAL_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
+PUNCT_SPACING_RE = re.compile(r"\s*([(),;])\s*")
+QUESTION_RE = re.compile(r"\?")
+RETURN_RE = re.compile(r"\breturn\b")
+
+
+def _collapsed_code(text: str, strip_strings: bool = False, tight: bool = False) -> str:
+    """去掉换行与尾逗号后的代码文本：判据认的是语句与顺序，不是 rustfmt 的换行选择。
+
+    本轮把 venue_runtime 过一遍 rustfmt 就抓到这格盲区 —— 多行拆分会给最后一个实参补上尾逗号，
+    按字面比对的判据立刻读出 0 处（`lease_clock_domain_check` 的 ack 判据就是这么红的）。
+    改名要连改判据，可格式一变判据必须自己认得两种写法，所以这里把「换行与尾逗号」移出取数口径。
+    默认口径把空白压成单空格、再抹掉 `(),;` 旁的空白，在册字面量按可读写法登记、匹配时用
+    `_squeezed()` 走同一条变换；`tight=True` 是全删空白，只服务那些本来就按无空格登记的判据。
+    `strip_strings` 只给按 `?` 找退出点的判据用：插值 `{error:?}` 里的 `?` 不是退出点；
+    而指路尾句那族判据必须看得见字面量本身，走默认的不剥字符串口径。
+    """
+    body = STRING_LITERAL_RE.sub('""', text) if strip_strings else text
+    if tight:
+        return "".join(body.split()).replace(",)", ")")
+    flat = PUNCT_SPACING_RE.sub(r"\1", " ".join(body.split()))
+    return flat.replace(",)", ")")
+
+
+def _squeezed(needle: str) -> str:
+    """把可读写法的在册字面量换成与 `_collapsed_code` 同一条变换，两侧才在同一口径上比对。"""
+    return PUNCT_SPACING_RE.sub(r"\1", " ".join(needle.split()))
+
+
+def _accepted_flow(path: str, signature: str) -> tuple[str, str, str]:
+    """一条提交入口的（Accepted 之后到终态回写的代码段, 回写之后的代码段, 缺口说明）。"""
+    flat = _collapsed_code(_code_body(path, signature), strip_strings=True)
+    if not flat:
+        return "", "", f"{signature} 的函数体取不到（改名、搬家或半挂载）"
+    submit = flat.find(_squeezed(SUBMIT_ACCEPT_CALL))
+    bind = flat.find(_squeezed(ACCEPTED_BIND))
+    writeback = flat.find(_squeezed(TERMINAL_WRITEBACK))
+    if submit < 0 or bind < 0 or writeback < 0 or not submit < bind < writeback:
+        return "", "", (
+            "submit_as/Accepted 绑定/终态回写缺失或顺序颠倒"
+            f"(submit_as@{submit} Accepted@{bind} 终态@{writeback})"
+        )
+    bind_end = flat.find("?", bind)
+    if bind_end < 0:
+        return "", "", "Accepted 绑定之后没有 `?`，取段位置失效"
+    return flat[bind_end + 1 : writeback], flat[writeback + len(_squeezed(TERMINAL_WRITEBACK)) :], ""
+
+
+def submit_terminal_state_check() -> None:
+    """Accepted → 动作值 → 终态回写 → 队列确认是一条不许中途跑路的链（#273）。"""
+    shapes = []
+    regions = {}
+    ack_paths = {}
+    for label, (relative, signature) in sorted(SUBMIT_TERMINAL_ENTRIES.items()):
+        region, after_writeback, gap = _accepted_flow(relative, signature)
+        if gap:
+            shapes.append(f"{label} {gap}")
+            continue
+        regions[label] = region
+        index = after_writeback.find(_squeezed(QUEUE_ACK_CALL))
+        if index >= 0:
+            ack_paths[label] = after_writeback[:index]
+    check(
+        not shapes,
+        "两条一次性提交入口都保住「submit_as → Accepted 绑定 → 动作值 → 终态回写」这一段",
+        "; ".join(shapes),
+    )
+    escape_gap = []
+    for label, region in sorted(regions.items()):
+        statements = []
+        start = 0
+        for match in QUESTION_RE.finditer(region):
+            statements.append(region[start : match.end()])
+            start = match.end()
+        pending = list(QUEUE_ESCAPES_AFTER_ACCEPTED[label])
+        for index, statement in enumerate(statements):
+            # 一处退出认给「离它最近的那个在册调用」：合并成一条语句时，早先的调用不该顶掉它。
+            hit = None
+            for name in pending:
+                if name in statement and (hit is None or statement.rfind(name) > statement.rfind(hit)):
+                    hit = name
+            if hit is None:
+                escape_gap.append(f"{label} 第 {index + 1} 处 `?` 退出不在册: …{statement[-50:]}")
+            else:
+                pending.remove(hit)
+        for name in pending:
+            escape_gap.append(f"{label} 在册退出点 {name} 已经没有 `?`，登记该删")
+    check(
+        not escape_gap,
+        "Accepted 之后的 `?` 退出只允许在册的那几处队列管线调用（新增或修好都要当场改登记）",
+        "; ".join(escape_gap),
+    )
+    early = {
+        label: len(RETURN_RE.findall(region))
+        for label, region in sorted(regions.items())
+        if RETURN_RE.search(region)
+    }
+    check(
+        not early,
+        "Accepted 之后到终态回写之间不得用 `return` 绕过回写",
+        f"这些入口里有提前返回: {early}",
+    )
+    check(
+        set(ack_paths) == {"Paper"}
+        and not any(RETURN_RE.search(gap) for gap in ack_paths.values()),
+        "Paper 入口的队列确认排在终态回写之后，且中间不夹裁决分支（失败也要 ack）",
+        f"实际有队列确认的入口: {sorted(ack_paths)}，夹了返回的: "
+        f"{sorted(label for label, gap in ack_paths.items() if RETURN_RE.search(gap))}",
+    )
+    definitions = {}
+    copies = {}
+    routed = {}
+    attempt_defs = {}
+    attempt_calls = {}
+    for path in rust_sources():
+        relative = path.relative_to(ROOT).as_posix()
+        if "/tests/" in relative:
+            continue
+        source = _collapsed_code(production_text(path.read_text(encoding="utf-8")))
+        defs = source.count(_squeezed(TERMINAL_REJECTION_DEF))
+        if defs:
+            definitions[relative] = defs
+        if TERMINAL_REJECTION_TAIL in source and not defs:
+            copies[relative] = source.count(TERMINAL_REJECTION_TAIL)
+        calls = source.count(_squeezed(f"{TERMINAL_REJECTION_HELPER}(")) - defs
+        if calls:
+            routed[relative] = calls
+        if source.count(_squeezed(SUBMIT_ATTEMPT_DEF)):
+            attempt_defs[relative] = source.count(_squeezed(SUBMIT_ATTEMPT_DEF))
+        used = source.count(_squeezed(f"{SUBMIT_ATTEMPT_HELPER}(")) - source.count(
+            _squeezed(SUBMIT_ATTEMPT_DEF)
+        )
+        if used:
+            attempt_calls[relative] = used
+    check(
+        definitions == {SUBMIT_ENTRY_FILES["Paper"]: 1},
+        "「这一手已记为终态失败」的指路口径只有一个定义点",
+        f"定义点分布: {definitions}",
+    )
+    check(
+        not copies,
+        "指路尾句没有被手抄到第二处（要换措辞就改定义点，不能在调用点各写一份）",
+        f"手抄处: {copies}",
+    )
+    check(
+        set(routed) == set(SUBMIT_ENTRY_FILES.values()),
+        "Paper 与 Binance 两条一次性提交链路都经这族指路口径",
+        f"实际经它的文件: {routed}",
+    )
+    check(
+        attempt_defs == {SUBMIT_ENTRY_FILES["Paper"]: 1},
+        "同一次撮合尝试只有一个定义点",
+        f"定义点分布: {attempt_defs}",
+    )
+    check(
+        attempt_calls == {relative: 1 for relative in sorted(SUBMIT_ATTEMPT_CONSUMERS)},
+        "一次性验收入口与常驻 worker 循环各调用一次同一个撮合尝试（第三条手写裁决当场可检出）",
+        f"实际调用点: {attempt_calls}",
+    )
+    mounted = (ROOT / "crates/qx-cli/src/tests/mod.rs").read_text(encoding="utf-8")
+    case_text = (ROOT / TERMINAL_STATE_CASE_FILE).read_text(encoding="utf-8")
+    missing = [name for name in TERMINAL_STATE_CASE_FNS if f"fn {name}()" not in case_text]
+    check(
+        "mod paper_submit_terminal_state;" in mounted and not missing,
+        "缺行情终态用例的三条判据在位且模块已挂载（半挂载的拆分会让判据静默失效）",
+        f"挂载={('mod paper_submit_terminal_state;' in mounted)}，缺的用例: {missing}",
+    )
+
+
+PAPER_PIPELINE_FILE = "crates/qx-cli/src/venue_runtime/paper_worker.rs"
+# 这四格缺任意一格，就说明末行又退回读累计量、或零新增/真验收两条通道塌回一条。
+PAPER_PIPELINE_DELTA_NEEDLES = (
+    "let orders_before = market_pipeline.orders().len();",
+    "let new_orders = orders_now.saturating_sub(orders_before);",
+    "if new_orders > 0 {",
+    "本轮零新增",
+)
+# 改前那条无条件成功句：只印累计 orders/ledger 并打 ✓，同日空转也照打（#275 现场）。
+PAPER_PIPELINE_LEGACY_GREEN = "ledger_entries={} ✓"
+# 顺序锚：成功 ✓ 必须在增量守卫那一支里，零新增那句在其后。
+PAPER_PIPELINE_DELTA_GUARD = "if new_orders > 0 {"
+PAPER_PIPELINE_SUCCESS_NEEDLE = "本轮新增) ✓"
+PAPER_PIPELINE_ZERO_NEW_NEEDLE = "本轮零新增"
+
+
+def paper_check_delta_honesty_check() -> None:
+    """`paper-check` 末行按「本轮新增」给结论，同日空转不得再打验收 ✓（#275）。
+
+    改前同一目录同日连跑两遍，第二遍调度 `skipped=1`、策略与执行各 `processed=0`，
+    末行却照旧印累计数并打 ✓（`logs/s783_pass32_paper_check_doublerun_after_fix.txt` 记的那次
+    现场）——把一次空转报成一次端到端验收通过。这里不锁 rustfmt 的换行，只锁这条链的
+    取数口径：进场基线、增量子、增量分支与零新增分支四格都在位，旧的无条件累计 ✓ 不得
+    复活，且成功 ✓ 必须排在 `new_orders > 0` 分支里、零新增那句排在 `else` 之后。
+    """
+    source = (ROOT / PAPER_PIPELINE_FILE).read_text(encoding="utf-8")
+    missing = [needle for needle in PAPER_PIPELINE_DELTA_NEEDLES if needle not in source]
+    check(
+        not missing,
+        "paper-check 末行按本轮增量给结论：进场基线、增量子、增量分支与零新增分支都在位",
+        f"缺这些构件: {missing}",
+    )
+    check(
+        PAPER_PIPELINE_LEGACY_GREEN not in source,
+        "旧的无条件累计 ✓ 语句不得复活（同日重跑空转不许再冒充端到端验收通过）",
+        f"源码里仍有无条件成功句: {PAPER_PIPELINE_LEGACY_GREEN!r}",
+    )
+    guard = source.find(PAPER_PIPELINE_DELTA_GUARD)
+    success = source.find(PAPER_PIPELINE_SUCCESS_NEEDLE)
+    zero_new = source.find(PAPER_PIPELINE_ZERO_NEW_NEEDLE)
+    check(
+        0 <= guard < success < zero_new,
+        "成功 ✓ 排在增量守卫之后、零新增那句排在其后（顺序颠倒即空转与真验收又混成一格）",
+        f"增量守卫@{guard} 成功句@{success} 零新增@{zero_new}",
+    )
+
+
+PYPROJECT_FILE = "python/pyproject.toml"
+CCXT_ADAPTER_FILE = "python/qianxing_ccxt/__init__.py"
+ASHARE_PROVIDER_FILE = "python/qianxing_ashare/__init__.py"
+# #276：基础安装（`pip install <wheel>`，不带 extras、没有索引）必须一次装成，所以顶层
+# dependencies 里不许再有 ccxt/tzdata 这类「要到调用点才需要」的第三方运行时包。
+WHEEL_FORBIDDEN_MANDATORY_DEPS = ("ccxt", "tzdata")
+# 交易所适配与 A 股时区/数据源都是可选能力，各自要有能装回来的 extra。
+WHEEL_REQUIRED_EXTRAS = (
+    "ccxt",
+    "ccxt-pro",
+    "tz",
+    "a-share",
+    "a-share-akshare",
+    "a-share-baostock",
+    "a-share-easy-tdx",
+)
+
+
+def wheel_optional_dependency_check() -> None:
+    """wheel 把 ccxt/tzdata 降为可选 extras，让离线 `pip install` 一次装成（V13 #276）。
+
+    改前它们写在顶层 `dependencies`，没有索引时 `pip install <wheel>` 以
+    "ccxt was not found ... cannot be used" 直接失败，而四个包 import 时都不碰它们——
+    `qianxing_ccxt` 在调用点 `importlib.import_module("ccxt")` 惰性加载、缺时抛点名
+    `[ccxt]` 的可执行错误。项目自己的安装文档因此一直挂 `--offline --no-deps`。
+    三查：顶层 dependencies 不含 ccxt/tzdata；能力 extras 全套定义；适配器报错点名的
+    `qianxing-bridge[extra]` 每一个都在 pyproject 真有其名（#157 一族：报错指的东西不许不存在）。
+    """
+    import tomllib
+
+    data = tomllib.loads((ROOT / PYPROJECT_FILE).read_text(encoding="utf-8"))
+    mandatory = data["project"].get("dependencies", [])
+    offenders = [d for d in mandatory if any(name in d for name in WHEEL_FORBIDDEN_MANDATORY_DEPS)]
+    check(
+        not offenders,
+        "wheel 顶层 dependencies 不含 ccxt/tzdata：基础安装离线可装成（#276）",
+        f"这些又变回强制依赖: {offenders}；改前离线 pip install 报 'ccxt was not found ... cannot be used'",
+    )
+    extras = data["project"].get("optional-dependencies", {})
+    missing_extras = [name for name in WHEEL_REQUIRED_EXTRAS if name not in extras]
+    check(
+        not missing_extras,
+        "wheel 定义了 ccxt/ccxt-pro/tz/a-share* 全套可选 extras",
+        f"缺这些 extras: {missing_extras}",
+    )
+    adapter = (ROOT / CCXT_ADAPTER_FILE).read_text(encoding="utf-8")
+    referenced = set(re.findall(r"qianxing-bridge\[([a-z0-9][a-z0-9-]*)\]", adapter))
+    check(
+        bool(referenced) and referenced <= set(extras),
+        "适配器报错点名的 qianxing-bridge[extra] 全部有定义（不许指一个不存在的 extra）",
+        f"报错引用 {sorted(referenced)}；未定义 {sorted(referenced - set(extras))}",
+    )
+    # #278：A 股数据源缺件时的可执行提示过去写成 `pip install -e '.[a-share-*]'`，那只在源码
+    # checkout 里成立——按 #276 装了 wheel 的用户手里没有本地工程可 `-e`，这条指路把最容易撞上的
+    # 缺件提示指回一条走不通的命令。收成与 ccxt 同族的 `qianxing-bridge[a-share-*]`，两类受众都能执行。
+    provider = (ROOT / ASHARE_PROVIDER_FILE).read_text(encoding="utf-8")
+    check(
+        "pip install -e '.[" not in provider,
+        "A 股缺件提示不再用源码专用 `pip install -e '.[...]'`（wheel 用户执行不了，#278）",
+        "qianxing_ashare 里仍能找到 `-e '.[` 形式的安装提示",
+    )
+    ashare_referenced = set(re.findall(r"qianxing-bridge\[([a-z0-9][a-z0-9-]*)\]", provider))
+    a_share_refs = {name for name in ashare_referenced if name.startswith("a-share")}
+    check(
+        bool(a_share_refs) and a_share_refs <= set(extras),
+        "A 股缺件提示点名的 qianxing-bridge[a-share-*] 全部有定义（#278）",
+        f"引用 {sorted(a_share_refs)}；未定义 {sorted(a_share_refs - set(extras))}",
+    )
+    # #278 补：上面几条把这两个文件当文本 grep（安装提示 / 指针判据），从不确认它们仍是合法
+    # Python。#278 一度把缺件消息改成 "..." 里套 "..."，grep 全绿而模块 import 当场 SyntaxError——
+    # 正是三查要防的断链。这里用内置 compile() 逐个语法核对四个发布包的每个 .py（只检语法、
+    # 不落 .pyc、无副作用），让「改一句面向用户的提示把整个包改崩」这类回归在门禁就被点名。
+    broken_modules = []
+    for _pkg in ("qianxing_bridge", "qianxing_strategy", "qianxing_ashare", "qianxing_ccxt"):
+        for _src in sorted((ROOT / "python" / _pkg).rglob("*.py")):
+            try:
+                compile(_src.read_text(encoding="utf-8"), str(_src), "exec")
+            except SyntaxError as _exc:
+                broken_modules.append(f"{_src.relative_to(ROOT)}:{_exc.lineno}: {_exc.msg}")
+    check(
+        not broken_modules,
+        "四个发布包的每个 .py 都是合法 Python（门禁不止 grep 文本，#278 补）",
+        f"这些模块语法错误、import 即崩: {broken_modules}",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -8031,7 +8555,11 @@ def main() -> int:
     market_spec_single_reader_check()
     market_spec_source_check()
     two_leg_partition_check()
+    example_read_funnel_check()
     deploy_template_coverage_check()
+    submit_terminal_state_check()
+    paper_check_delta_honesty_check()
+    wheel_optional_dependency_check()
     snapshot_money_honesty_check()
     account_money_field_registry_check()
     snapshot_contract_version_check()

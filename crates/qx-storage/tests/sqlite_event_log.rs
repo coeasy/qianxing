@@ -295,7 +295,7 @@ fn sqlite_event_log_and_outbox_commit_atomically() {
     let store = SqliteEventLogStore::new(&path).unwrap();
     let outbox = SqliteOutboxStore::new(&path).unwrap();
     let log = sample_log(2);
-    let events = project_event_log_to_outbox("run", &log).unwrap();
+    let events = project_event_log_to_outbox("run", &log, 0).unwrap();
     store.write_with_outbox("run", &log, &events).unwrap();
     assert_eq!(store.event_count("run").unwrap(), 2);
     assert_eq!(outbox.available(0).unwrap().len(), 2);
@@ -307,7 +307,7 @@ fn sqlite_event_log_and_outbox_commit_atomically() {
 
     // Outbox 冲突必须回滚同事务内的 EventLog 追加。
     let extended = sample_log(5);
-    let mut events = project_event_log_to_outbox("run", &extended).unwrap();
+    let mut events = project_event_log_to_outbox("run", &extended, 0).unwrap();
     events[0].payload = "{\"tampered\":true}".into();
     assert!(matches!(
         store.write_with_outbox("run", &extended, &events),
@@ -318,7 +318,7 @@ fn sqlite_event_log_and_outbox_commit_atomically() {
     assert_eq!(outbox.available(0).unwrap().len(), 2);
 
     // 事实与出站事件一起推进。
-    let extended_events = project_event_log_to_outbox("run", &extended).unwrap();
+    let extended_events = project_event_log_to_outbox("run", &extended, 0).unwrap();
     store
         .write_with_outbox("run", &extended, &extended_events)
         .unwrap();

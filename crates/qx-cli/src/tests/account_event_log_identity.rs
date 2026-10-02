@@ -311,6 +311,106 @@ fn renaming_an_account_log_preserves_fact_and_manifest_digests() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// 换后端等于给同一账户换一本账：两套文件后端写的是互不相交的文件，数据库后端又完全
+/// 读不到 `data_dir` 里的旧历史，而"自己的数据不在"在打开时被一律当成首次启动。
+/// 于是改一个存储字段就能让账户从空账本起步，并当场开始写第二本从 seq 0 起算的历史。
+/// 打开编排必须拦在归零之前（V13 R2 第十八遍 #225）。
+#[test]
+fn switching_event_log_backend_refuses_to_start_an_account_from_an_empty_book() {
+    let root = temp_cli_case_dir("backend-switch");
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let log_name = paper_account_log();
+    let mut pipeline = LiveEventPipeline::open(&data_dir, &log_name, "USDT").unwrap();
+    pipeline
+        .ingest(RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::AccountCashflow {
+                cashflow: AccountCashflow {
+                    account_id: "main".into(),
+                    venue_id: "paper".into(),
+                    currency: "USDT".into(),
+                    kind: CashflowKind::Transfer,
+                    amount: Money::from_i64(1_000),
+                    external_id: "seed".into(),
+                },
+            },
+            1,
+            1,
+            1,
+            "seed",
+        ))
+        .unwrap();
+    drop(pipeline);
+    let seeded = LiveEventPipeline::open(&data_dir, &log_name, "USDT").unwrap();
+    assert!(
+        !seeded.log().is_empty(),
+        "夹具必须先在文件后端写下事实，否则闸门无从判断"
+    );
+    let seeded_digest = seeded.log().digest();
+
+    // 文件后端 → 分段：同一 data_dir，只改一个字段。
+    let mut segmented = paper_identity_runtime(&data_dir);
+    segmented.storage.event_log_segment_events = Some(500);
+    let error = match PipelineStorage::from_config(&segmented)
+        .unwrap()
+        .open(log_name.clone(), "USDT")
+    {
+        Ok(_) => panic!("换成分段后端绕过了换后端闸门：账户会读到空账本并从 seq 0 另起一本"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains("换后端") && error.contains(&format!("{log_name}.json")),
+        "拒绝必须说是换后端、并点名那份被留下的历史: {error}"
+    );
+    assert_eq!(
+        seeded_digest,
+        LiveEventPipeline::open(&data_dir, &log_name, "USDT")
+            .unwrap()
+            .log()
+            .digest(),
+        "拒绝打开不得动旧历史"
+    );
+    assert!(
+        !data_dir.join("segments").exists(),
+        "被拒的分段打开还是建出了第二本后端的目录"
+    );
+
+    // 文件后端 → 数据库：数据库分支里同样要先过闸门。未编译 sqlite feature 时
+    // "未启用"那句错误在闸门之后，所以这条断言同时核对了两者的先后。
+    let mut db = paper_identity_runtime(&data_dir);
+    db.storage.backend = StorageBackend::Sqlite;
+    db.storage.sqlite_path = Some(
+        data_dir
+            .join("qx-events.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let error = match PipelineStorage::from_config(&db)
+        .unwrap()
+        .open(log_name.clone(), "USDT")
+    {
+        Ok(_) => panic!("换成 SQLite 后端绕过了换后端闸门：数据库里的空表会被当成首次启动"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains("换后端") && error.contains(&format!("{log_name}.json")),
+        "数据库后端的拒绝必须点名文件里的旧历史，而不是先报 feature: {error}"
+    );
+
+    // 反向对照：仍是原来的后端时，同一份配置照常开册。
+    let same = paper_identity_runtime(&data_dir);
+    let reopened = PipelineStorage::from_config(&same)
+        .unwrap()
+        .open(log_name.clone(), "USDT")
+        .expect("同一后端的正常打开被闸门误伤");
+    assert_eq!(
+        reopened.log().digest(),
+        seeded_digest,
+        "同一后端的正常打开必须原样读到旧历史"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// 用事件摘要造一份运行 Manifest 指纹，锁住"日志名不在摘要口径里"这件事。
 fn account_log_manifest_digest(event_hash: u64) -> u64 {
     let text = format!("{event_hash:016x}");

@@ -33,20 +33,17 @@ pub(crate) fn ashare_backtest_binding(
     let Some(path) = rules_path else {
         return Ok(None);
     };
-    let payload = std::fs::read_to_string(path)
-        .map_err(|error| format!("读取 A 股规则快照失败 {path}: {error}"))?;
+    let payload = read_example_json(Path::new(path), " A 股规则快照")?;
     let mut rules: AshareRuleConfig = serde_json::from_str(&payload)
         .map_err(|error| format!("A 股规则快照 JSON 无效 {path}: {error}"))?;
     if let Some(actions_path) = actions_path {
-        let actions_payload = std::fs::read_to_string(actions_path)
-            .map_err(|error| format!("读取 A 股公司行为 JSON 失败 {actions_path}: {error}"))?;
+        let actions_payload = read_example_json(Path::new(actions_path), " A 股公司行为 JSON")?;
         rules
             .apply_corporate_actions_json(instrument, &actions_payload)
             .map_err(|error| format!("A 股公司行为 JSON 非法: {error}"))?;
     }
     if let Some(calendar_path) = calendar_path {
-        let calendar_payload = std::fs::read_to_string(calendar_path)
-            .map_err(|error| format!("读取 A 股交易日历 JSON 失败 {calendar_path}: {error}"))?;
+        let calendar_payload = read_example_json(Path::new(calendar_path), " A 股交易日历 JSON")?;
         rules
             .apply_calendar_json(&calendar_payload)
             .map_err(|error| format!("A 股交易日历 JSON 非法: {error}"))?;

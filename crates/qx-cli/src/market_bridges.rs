@@ -148,7 +148,7 @@ pub(crate) fn spawn_api_projection_bridge(
                 if let std::collections::btree_map::Entry::Vacant(entry) =
                     pipelines.entry(pipeline_key.clone())
                 {
-                    match storage.open(log_name.clone(), currency.clone()) {
+                    match storage.open_read_only(log_name.clone(), currency.clone()) {
                         Ok(opened) => {
                             entry.insert(opened);
                         }

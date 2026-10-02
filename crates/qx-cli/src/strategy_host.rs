@@ -28,6 +28,39 @@ pub(crate) struct PythonStrategyClient {
 
 pub(crate) type StrategyProcessClient = PythonStrategyClient;
 
+/// 共享内存传输交给 worker 的启动实参：协议名、两条 ring 的路径与容量，以及父进程身份。
+///
+/// 拆成纯函数是为了让"worker 是否拿得到父进程 pid"有一条能咬的用例。这条传输没有 stdin
+/// 可关，父进程被强杀时 Rust 侧的 `Drop` 不会跑，`--parent-pid` 一断，子进程的空闲循环
+/// 就只剩 1 kHz 空转这一种结局（V13 R2 第十四遍 #215）。
+pub(crate) fn shared_ring_arguments(
+    transport: StrategyTransport,
+    input_path: &Path,
+    output_path: &Path,
+    ring_config: SharedRingConfig,
+    parent_pid: u32,
+) -> Vec<String> {
+    let protocol = if transport == StrategyTransport::SharedMemoryColumnar {
+        "shared_memory_columnar"
+    } else {
+        "shared_memory_json"
+    };
+    vec![
+        "--protocol".into(),
+        protocol.into(),
+        "--input-ring".into(),
+        input_path.to_string_lossy().into_owned(),
+        "--output-ring".into(),
+        output_path.to_string_lossy().into_owned(),
+        "--ring-capacity".into(),
+        ring_config.capacity.to_string(),
+        "--ring-slot-bytes".into(),
+        ring_config.slot_bytes.to_string(),
+        "--parent-pid".into(),
+        parent_pid.to_string(),
+    ]
+}
+
 impl PythonStrategyClient {
     fn start(module: &str, timeout_ms: u64) -> Result<Self, String> {
         Self::start_with_transport(module, timeout_ms, StrategyTransport::Jsonl)
@@ -138,22 +171,13 @@ impl PythonStrategyClient {
             drop(output);
             let reader = SharedRingReader::open(&output_path, ring_config)
                 .map_err(|error| format!("打开 {label} 输出 ring 失败: {error}"))?;
-            actual_args.extend([
-                "--protocol".into(),
-                if transport == StrategyTransport::SharedMemoryColumnar {
-                    "shared_memory_columnar".into()
-                } else {
-                    "shared_memory_json".into()
-                },
-                "--input-ring".into(),
-                input_path.to_string_lossy().into_owned(),
-                "--output-ring".into(),
-                output_path.to_string_lossy().into_owned(),
-                "--ring-capacity".into(),
-                ring_config.capacity.to_string(),
-                "--ring-slot-bytes".into(),
-                ring_config.slot_bytes.to_string(),
-            ]);
+            actual_args.extend(shared_ring_arguments(
+                transport,
+                &input_path,
+                &output_path,
+                ring_config,
+                std::process::id(),
+            ));
             shared_input = Some(input);
             shared_output = Some(reader);
             ring_paths = Some((input_path, output_path));
@@ -205,16 +229,16 @@ impl PythonStrategyClient {
         let stderr_tail_reader = Arc::clone(&stderr_tail);
         thread::spawn(move || {
             let reader = BufReader::new(stderr);
-            for line in reader.lines().map_while(Result::ok) {
-                let line = line.trim().to_string();
-                if line.is_empty() {
-                    continue;
-                }
+            for line in reader.lines() {
+                // 读管道断了也要记账：静默丢掉只会让诊断说成"worker 无 stderr 输出"（#203）。
+                let broken = line.is_err();
                 if let Ok(mut tail) = stderr_tail_reader.lock() {
-                    tail.push_back(line.chars().take(512).collect());
-                    while tail.len() > 16 {
-                        tail.pop_front();
+                    if let Some(note) = stderr_tail_note(line) {
+                        record_stderr_tail(&mut tail, note);
                     }
+                }
+                if broken {
+                    break;
                 }
             }
         });
@@ -379,28 +403,27 @@ impl PythonStrategyClient {
             }
             StrategyTransport::Jsonl | StrategyTransport::FramedJson => {
                 let label = self.label.clone();
-                let diagnostics = self.diagnostics();
                 let stdin = self
                     .stdin
                     .as_mut()
                     .ok_or_else(|| format!("{} worker stdin 不可用", label))?;
-                if self.transport == StrategyTransport::Jsonl {
-                    stdin
-                        .write_all(format!("{payload}\n").as_bytes())
-                        .map_err(|error| {
-                            format!("写入 {} 输入失败: {error}{}", label, diagnostics)
-                        })?;
+                let write_result = if self.transport == StrategyTransport::Jsonl {
+                    stdin.write_all(format!("{payload}\n").as_bytes())
                 } else {
                     let frame = StrategyFrame::request(sequence, payload.into_bytes())
                         .encode(DEFAULT_MAX_FRAME_BYTES)
-                        .map_err(|error| format!("编码 {} 分帧输入失败: {error}", self.label))?;
-                    stdin.write_all(&frame).map_err(|error| {
-                        format!("写入 {} 分帧输入失败: {error}{}", label, diagnostics)
-                    })?;
+                        .map_err(|error| format!("编码 {label} 分帧输入失败: {error}"))?;
+                    stdin.write_all(&frame)
+                };
+                // 管道读端由子进程持有：它一退出，写侧只能拿到断管道（os error 232/32），
+                // 这与"worker 一个字都没输出就退出"是同一次死亡的两面，所以失败并回 death_note。
+                let failure = write_result
+                    .and_then(|()| stdin.flush())
+                    .err()
+                    .map(|error| format!("写入 {label} 输入失败: {error}"));
+                if let Some(failure) = failure {
+                    return Err(format!("{failure}{}", self.death_note()));
                 }
-                stdin
-                    .flush()
-                    .map_err(|error| format!("刷新 {} 输入失败: {error}{}", label, diagnostics))?;
                 let received = self
                     .responses
                     .as_ref()
