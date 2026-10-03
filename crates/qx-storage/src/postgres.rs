@@ -29,6 +29,15 @@ const EVENT_LOG_LOCK_KEY: i64 = 7_381_922_401_131;
 const OUTBOX_LOCK_KEY: i64 = 7_381_922_401_137;
 const CONSUMER_LOCK_KEY: i64 = 7_381_922_401_139;
 
+/// 建池时每个连接的握手时间预算（TCP 连接 + TLS 协商 + 认证）。
+///
+/// `Client::connect` 在此之前没有任何界：一台接受了 TCP 却迟迟不完成握手的
+/// Postgres（或一个挂起的 DNS）会让同步的启动路径按存储后端逐个无限阻塞，
+/// 而单次启动会串行建控制面 / 命令队列 / JobQueue / EventLog / Outbox 多个池。
+/// 会话级 `statement_timeout` 等三条 SET 只在连接成功之后才生效，管不到这一段。
+/// （V13 R2 第三十三遍 #263）
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn pg_error(error: postgres::Error) -> StorageError {
     StorageError::Io(format!("PostgreSQL: {error}"))
 }
@@ -105,13 +114,17 @@ impl PostgresStorage {
                 "PostgreSQL pool_size 必须在 1..=128 内".into(),
             ));
         }
+        // DSN 解析与 `Client::connect(dsn, ..)` 完全同路（后者内部就是 dsn.parse()
+        // ?.connect(..)），这里只是把它拆出来好挂上 connect_timeout，让握手有界。
+        let mut config: postgres::Config = dsn.parse().map_err(pg_error)?;
+        config.connect_timeout(CONNECT_TIMEOUT);
         let mut clients = Vec::with_capacity(pool_size);
         for index in 0..pool_size {
             let tls = native_tls::TlsConnector::builder()
                 .build()
                 .map_err(|error| StorageError::Io(format!("PostgreSQL TLS 初始化失败: {error}")))?;
             let connector = postgres_native_tls::MakeTlsConnector::new(tls);
-            let mut client = Client::connect(dsn, connector).map_err(pg_error)?;
+            let mut client = config.connect(connector).map_err(pg_error)?;
             if index == 0 {
                 migrate_client(&mut client)?;
             }

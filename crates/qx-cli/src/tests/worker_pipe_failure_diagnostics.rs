@@ -159,3 +159,43 @@ fn dead_worker_write_failure_names_program_origin_and_exit_state() {
         "子进程已退出时，写侧失败必须带上它留下的 stderr 尾部: {error}"
     );
 }
+
+/// #281 行为判据：子进程"活着但从不读 stdin"时，写侧必须受 timeout_ms 收口。
+///
+/// 与本文件另一条 `dead_worker_write_failure_*` 用例互补：那条造的是"worker 先死"，
+/// 写侧只能拿到断管道并快速失败；这一条造的是"worker 存活却不接收输入"，超管道缓冲的
+/// write_all 会永久阻塞——修复前 `timeout_ms` 只守读侧 recv，本调用永不返回。ping 继承 stdin
+/// 读端却一字节都不取，且是被直接跟踪的子进程，`kill()` 即关闭读端、放行写线程。
+#[test]
+fn live_but_non_draining_worker_write_is_bounded_not_hanging() {
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let ping = format!("{system_root}\\System32\\PING.EXE");
+    let mut client = PythonStrategyClient::start_process_with_transport_config(
+        &ping,
+        &["-n".into(), "300".into(), "127.0.0.1".into()],
+        &BTreeMap::new(),
+        PYTHON_STRATEGY_TIMEOUT_MS,
+        "Python Strategy",
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        Some("来自 QX_PYTHON"),
+    )
+    .expect("启动存活但不读 stdin 的假 worker 失败");
+    let started = std::time::Instant::now();
+    let error = client
+        .request(&oversized_input(40_000))
+        .expect_err("worker 存活但不接收输入：写入必须在预算内失败，而不是永久阻塞");
+    let elapsed = started.elapsed();
+    assert!(
+        error.contains("输入超时") && error.contains("worker 存活但不接收输入"),
+        "写侧失败没走到超时通道（说明仍在无限阻塞或误落断管道通道）: {error}",
+    );
+    assert!(
+        error.contains("退出码") || error.contains("进程未退出"),
+        "超时通道也要交代子进程状态: {error}",
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(PYTHON_STRATEGY_TIMEOUT_MS * 5),
+        "写入没有被 timeout_ms 收口：耗时 {elapsed:?} 说明调用仍在无限阻塞",
+    );
+}

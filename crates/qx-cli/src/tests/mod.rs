@@ -400,6 +400,8 @@ mod e2e_and_python_contract;
 mod enum_variant_surface;
 mod environment_submit_arm_table;
 mod event_backtest_evidence;
+#[cfg(feature = "nats")]
+mod event_consumer_write_budget;
 mod event_kind_variant_ledger;
 mod event_log_face_wiring;
 mod execution_and_multi_leg;

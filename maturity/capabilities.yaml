@@ -563,9 +563,11 @@ capabilities:
     evidence:
       - crates/qx-storage/src/postgres.rs
       - crates/qx-storage/tests/outbox_backend_semantics.rs postgres lease/fencing/retry contract
+      - crates/qx-storage/src/postgres.rs 的 connect_with_pool_size 建池走带 `connect_timeout` 的 `Config::connect`（原 `Client::connect(dsn, ..)` 对握手无界：一台接受 TCP 却不完成握手的库、或一个挂起的 DNS，会让同步启动路径按存储后端逐个无限阻塞，而会话级 statement/lock/idle 三条 SET 只在连上之后生效、管不到这一段）；预算常量 `CONNECT_TIMEOUT = Duration::from_secs(5)`。tools/check_architecture.py postgres_connect_budget_check 两条钉住「建池调用点有且仅有一处 connect_timeout 且无裸 Client::connect( 残留」与「预算常量是正的 from_secs(N)」；镜像树注入两种变异（删 timeout、预算改 0）各只咬对应一条、真文件不动。门禁 549 全绿见 logs/s830_pass33_gate_263.txt，变异取证见 logs/s831_pass33_263_mutation.txt (V13 R2 第三十三遍 #263)
       - .github/workflows/ci.yml service-backends job
     limitations:
       - contract_test_is_ignored_without_QX_TEST_POSTGRES_DSN_and_has_no_ci_record_yet
+      - postgres_connect_timeout_bounds_verified_by_compile_and_gate_only：5s 握手预算本机只证到「--features postgres 下 cargo clippy/check 通过 + 门禁两条判据在位且各咬一种变异」；本机无 Docker/Postgres，真库上「接受 TCP 却不完成握手」被 5s 掐断这一格仍无实测记录，sandbox_tested 保持 false (V13 R2 第三十三遍 #263)
 
   nats:
     implementation: optional
@@ -609,6 +611,8 @@ capabilities:
       - python/tests/test_strategy_contract.py test_output_rejects_unknown_keys_rather_than_dropping_them keeps the Python bridge on the same deny-unknown-keys footing as Rust for both the output and each intent (V12 R4-k)
       - crates/qx-cli/src/strategy_stderr_tail.rs 把一次 stderr 读取的三种结果分开记账：有内容、干净 EOF、读不下去 —— 第三种写一条 `stderr 读取中断: <error>` 尾行，于是 `death_note` 不会把「管道被掐断」说成「worker 无 stderr 输出」（V13 R2 #203）
       - crates/qx-cli/src/tests/worker_pipe_failure_diagnostics.rs 四条：三态判别各自成话、尾部窗口只留最后 N 行且淘汰最旧、`strategy_host.rs` 的读侧不再只收 `Ok` 行并且 `fuse()`（坏管道不会空转）（V13 R2 #203）
+      - crates/qx-cli/src/strategy_host.rs 的 Jsonl/FramedJson 传输把 stdin.write_all+flush 交给 spawned 线程，主路径按 write_done.recv_timeout(self.timeout_ms) 收口：worker「活着但不再读 stdin」时，超出 OS 匿名管道缓冲（~64KB）的那段写入不再永久阻塞（timeout_ms 此前只守读侧 recv，管不到写侧），超时即 kill worker 并回「worker 存活但不接收输入」诊断、成功分支回收 stdin 句柄；回归用例在 crates/qx-cli/src/tests/worker_pipe_failure_diagnostics.rs 用一颗被直接跟踪的 PING.EXE（继承 stdin 读端却一字节不取、kill 即关闭读端放行写线程）断言 request() 在预算内失败而非挂死；判据 tools/check_architecture.py strategy_pipe_write_budget_check 三条，变异反向验证只咬这三条（V13 R2 第三十四遍 #281）
+      - crates/qx-cli/src/event_pipeline.rs 的 invoke_event_consumer_handler（#[cfg(feature = "nats")]）把事件 consumer handler 的 stdin.write_all 交给 spawned 线程并在线程内先 drop 落 EOF，主路径按 write_done.recv_timeout(Duration::from_millis(handler.timeout_ms)) 收口：handler「活着但不再读 stdin」时，跨进程 AccountPositionSnapshot/AccountBalanceSnapshot 内联整段 Vec 使单条 Outbox payload 越过 OS 匿名管道缓冲（~64KB）的那段写入不再永久阻塞（handler.timeout_ms 此前只守后面的 child.try_wait 轮询），超时即 kill handler 并回「handler 存活但不接收输入」诊断；回归用例在 crates/qx-cli/src/tests/event_consumer_write_budget.rs 里（随 nats 门控）用一颗被直接跟踪的 PING.EXE + 200_000 字节 OutboxEvent payload 断言调用在预算内失败（本轮实测 2.02s、timeout_ms=2000）而非挂死，为此给私有的 EventConsumerHandler 加了 #[cfg(all(test, feature = "nats"))] for_test 构造入口；判据 tools/check_architecture.py event_consumer_pipe_write_budget_check 三条，变异反向验证 baseline 3/3、摘 thread::spawn/换 3_600_000/改措辞各咬一条且真树逐字节还原（logs/s838_pass35_gate_green.txt 555 全绿、logs/s839_pass35_gate_mutation.txt）（V13 R2 第三十五遍 #282）
       - crates/qx-cli/src/strategy_host.rs 的 shared_ring_arguments 把 --parent-pid 连同 ring 参数交给 worker，python/qianxing_strategy/worker.py 每轮等待前查该 pid 是否存活、父进程已消失即以 0 退出，不再留一个无人驱动却占着 mmap 的常驻子进程；旗标名由 crates/qx-cli/src/tests/strategy_worker_entries.rs 在同一条用例里对照两侧（V13 R2 第十四遍 #215）
       - python/qianxing_ashare/__init__.py 的 _shanghai() 把 Asia/Shanghai 取值从模块顶层挪到用时，缺 tzdata 的 Windows 机器上 `import qianxing_ashare` 不再当场抛 ZoneInfoNotFoundError，而是走到时间换算入口时才抛 AshareProviderError 并点名 pip install tzdata（与同文件三个数据源模块的惰性加载惯例一致；不做静默回落，因时区口径进 build_dataset_bundle_manifest 的跨语言指纹）；python/tests/test_ashare.py 两条判据把裸日期 2024-01-02 → 1704124800000 毫秒与「打桩 ZoneInfo 后走 normalize_bar_rows 必抛并带修法」钉住，干净 venv 不带 tzdata 装 wheel 复跑四包 import 全 OK（V13 R2 第二十六遍 #253）
       - python/qianxing_ashare/__init__.py 三个 A 股数据源缺件时抛的 AshareProviderError，修法从源码专用的 `pip install -e '.[a-share-*]'`（按 wheel 装包、手里没有本地工程的用户执行不了）收成两类受众都执行得了的 `pip install 'qianxing-bridge[a-share-*]'`，与 qianxing_ccxt 同族（V13 R2 第三十二遍 ② #278）
@@ -619,6 +623,8 @@ capabilities:
     limitations:
       - wheel_matrix_has_not_produced_a_ci_record_yet
       - uppercase_enum_names_pass_the_runtime_but_not_the_schema：Rust accepts both spellings so the difference is stated in the schema description instead of being closed by a second validator; the Python SDK and the C++ worker still do not cover every schema field (V12 R4-k, schemas/strategy_api_v1.md Language coverage)
+      - strategy_pipe_write_bounded_by_killing_worker：写侧超时只能靠杀掉子进程来关闭管道读端、放行阻塞的写线程，故 worker 一旦 wedge 需重启而非复用；单请求最坏墙钟约为 2×timeout_ms（写侧预算与读侧预算各等一次），且本机无 Python worker 沙盒，该有界性只由编译、回归用例与门禁自证（V13 R2 第三十四遍 #281）
+      - event_consumer_pipe_write_bounded_by_killing_handler：事件 consumer handler 的写侧超时只能靠杀掉子进程来关闭管道读端、放行阻塞的写线程，故 handler 一旦 wedge 需重启而非复用；单事件最坏墙钟约为 2×timeout_ms（写侧预算与退出轮询各等一次）；这条整段在 #[cfg(feature = "nats")] 下、不在默认特性（DEFAULT=["sqlite"]），既不进默认发布 exe 也不进 wheel，且本机无 NATS/handler 沙盒，有界性只由 nats 编译+回归用例+门禁自证（V13 R2 第三十五遍 #282）
 
   cpp_strategy_sdk:
     implementation: true

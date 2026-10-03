@@ -4305,6 +4305,108 @@ def without_line_comments(text: str) -> str:
     )
 
 
+def strategy_pipe_write_budget_check() -> None:
+    """Python 策略管道传输的 stdin 写入必须与读取同受 timeout_ms 约束（V13 R2 第三十四遍 #281）。
+
+    `Jsonl`/`FramedJson` 是默认发布路径（strategy_schema.rs 默认 Jsonl）。修复前 write_all 直接
+    跑在主线程，只有后面的 recv_timeout 收口——一旦子进程"活着但不再读 stdin"，超出 OS 匿名
+    管道缓冲（~64KB）的那段 write_all 会永久阻塞，timeout_ms 管不到，本进程就此卡死。修复把写入
+    交给 spawned 线程，主路径按 write_done.recv_timeout 等它的结果，超时即杀 worker 并留可读诊断。
+    """
+    host = (CRATES / "qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
+    start = host.index("StrategyTransport::Jsonl | StrategyTransport::FramedJson => {")
+    end = host.index("let line = match response", start)
+    region = host[start:end]
+    check(
+        region.count("stdin.write_all(") == 1
+        and "thread::spawn(move ||" in region
+        and region.index("thread::spawn(move ||") < region.index("stdin.write_all(")
+        and "write_done.recv_timeout(" in region
+        and region.index("stdin.write_all(") < region.index("write_done.recv_timeout(")
+        and "self.stdin.as_mut()" not in region,
+        "策略管道写入被交给 spawned 线程并按 write_done.recv_timeout 有界等待，请求路径不再直接写 stdin",
+        f"write_all {region.count('stdin.write_all(')}（期望 1）、"
+        f"有界等待={'write_done.recv_timeout(' in region}、"
+        f"残留 as_mut 直接写={'self.stdin.as_mut()' in region}",
+    )
+    # 预算必须真的取自 timeout_ms，而不是拍一个大常数把无限阻塞换成"很久后才失败"。
+    check(
+        "write_done.recv_timeout(Duration::from_millis(self.timeout_ms))" in region,
+        "写侧等待预算与读侧同源，取自 self.timeout_ms",
+        "写侧 recv_timeout 没有引用 self.timeout_ms",
+    )
+    # 超时是可观测事实：点名 worker 存活但不接收输入，且两个成功分支各回收一次句柄。
+    check(
+        "worker 存活但不接收输入" in region
+        and region.count("self.stdin = Some(stdin)") == 2,
+        "写侧超时留下可读诊断并在成功分支回收 stdin 句柄（不吞成断链/超时噪声）",
+        f"超时诊断在位={'worker 存活但不接收输入' in region}、"
+        f"句柄回收点 {region.count('self.stdin = Some(stdin)')}（期望 2）",
+    )
+
+def event_consumer_pipe_write_budget_check() -> None:
+    """事件 consumer handler 的 stdin 写入必须与退出轮询同受 handler.timeout_ms 约束
+    （V13 R2 第三十五遍 #282）。
+
+    `invoke_event_consumer_handler`（event_pipeline.rs，`#[cfg(feature = "nats")]` 下）修复前把
+    write_all 直接跑在主线程，只有后面的 try_wait 轮询守 timeout_ms——一旦用户配置的外部 handler
+    "存活却不从 stdin 取字节"，超出 OS 匿名管道缓冲（~64KB）的那段 write_all 会永久阻塞，timeout_ms
+    管不到，本进程就此卡死。跨进程 Outbox 事件里 AccountPositionSnapshot/AccountBalanceSnapshot 把
+    整段 Vec 内联进单条 payload，足以越过 64KB，故不是假设场景。修复把写入交给 spawned 线程，主路径按
+    write_done.recv_timeout(handler.timeout_ms) 等它的结果，超时即杀 handler 并留可读诊断。
+    与 #281 不同：这条在 opt-in 的 nats 特性下、不在默认 exe，但仍是同一族不可恢复的阻塞点。
+    """
+    pipeline = (CRATES / "qx-cli/src/event_pipeline.rs").read_text(encoding="utf-8")
+    start = pipeline.index("let (write_sender, write_done) = std::sync::mpsc::channel();")
+    end = pipeline.index("let started = Instant::now();", start)
+    region = pipeline[start:end]
+    check(
+        region.count(".write_all(") == 2
+        and "thread::spawn(move ||" in region
+        and region.index("thread::spawn(move ||") < region.index(".write_all(")
+        and "write_done.recv_timeout(" in region
+        and region.index(".write_all(") < region.index("write_done.recv_timeout("),
+        "事件 consumer 写入被交给 spawned 线程并按 write_done.recv_timeout 有界等待，主路径不再直接阻塞在 stdin",
+        f".write_all( {region.count('.write_all(')}（期望 2）、"
+        f"线程内先写={'thread::spawn(move ||' in region and region.index('thread::spawn(move ||') < region.index('.write_all(')}、"
+        f"有界等待在位={'write_done.recv_timeout(' in region}",
+    )
+    # 预算必须真的取自 handler.timeout_ms，而不是拍一个大常数把无限阻塞换成"很久后才失败"。
+    check(
+        "write_done.recv_timeout(Duration::from_millis(handler.timeout_ms))" in region,
+        "写侧等待预算与退出轮询同源，取自 handler.timeout_ms",
+        "写侧 recv_timeout 没有引用 handler.timeout_ms",
+    )
+    # 超时是可观测事实：点名 handler 存活但不接收输入。
+    check(
+        "handler 存活但不接收输入" in region,
+        "写侧超时留下可读诊断（不吞成断链/超时噪声）",
+        f"超时诊断在位={'handler 存活但不接收输入' in region}",
+    )
+
+
+def postgres_connect_budget_check() -> None:
+    """PostgreSQL 建池的握手必须有时间预算：否则一台接受 TCP 却不完成握手的库
+    （或挂起的 DNS）会让同步启动路径按存储后端逐个无限阻塞（V13 R2 第三十三遍 #263）。"""
+    raw = (ROOT / "crates/qx-storage/src/postgres.rs").read_text(encoding="utf-8")
+    code = without_line_comments(raw)
+    check(
+        code.count(".connect_timeout(") == 1 and code.count("Client::connect(") == 0,
+        "PostgreSQL 建池走带 connect_timeout 的 Config::connect，握手不再无界阻塞",
+        f"connect_timeout 调用 {code.count('.connect_timeout(')}（期望 1）、"
+        f"无界 Client::connect( 残留 {code.count('Client::connect(')}（期望 0）",
+    )
+    # 预算常量必须是正秒数：把它改成 0 或删掉，等于没设界。
+    positive = re.search(
+        r"const\s+CONNECT_TIMEOUT[^;]*?Duration::from_secs\(\s*([1-9]\d*)\s*\)\s*;", raw
+    )
+    check(
+        positive is not None,
+        "握手预算常量是一个正的 Duration::from_secs(N)，不是 0/未定义",
+        "未找到正的 CONNECT_TIMEOUT = ... Duration::from_secs(N)",
+    )
+
+
 def snapshot_contract_version_check() -> None:
     """账户快照的版本校验必须认"已知版本"，而不是只认"前后自洽"（V12 R2 / §4.2）。"""
     protocol = production_text((ROOT / SNAPSHOT_PROTOCOL_FILE).read_text(encoding="utf-8"))
@@ -8562,6 +8664,9 @@ def main() -> int:
     wheel_optional_dependency_check()
     snapshot_money_honesty_check()
     account_money_field_registry_check()
+    postgres_connect_budget_check()
+    strategy_pipe_write_budget_check()
+    event_consumer_pipe_write_budget_check()
     snapshot_contract_version_check()
     snapshot_row_wire_check()
     position_money_honesty_check()

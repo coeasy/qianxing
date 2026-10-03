@@ -6,10 +6,10 @@ crates/qx-adapter/src/lib.rs: 681
 crates/qx-api/src/lib.rs: 3185
 crates/qx-cli/src/cli.rs: 670
 crates/qx-cli/src/config_commands.rs: 539
-crates/qx-cli/src/event_pipeline.rs: 753
+crates/qx-cli/src/event_pipeline.rs: 788
 crates/qx-cli/src/spread.rs: 514
 crates/qx-cli/src/strategy_contract.rs: 860
-crates/qx-cli/src/strategy_host.rs: 824
+crates/qx-cli/src/strategy_host.rs: 846
 crates/qx-cli/src/tests/api_snapshot_money_fields.rs: 518
 crates/qx-cli/src/tests/deploy_template_coverage.rs: 779
 crates/qx-cli/src/tests/e2e_and_python_contract.rs: 503
@@ -27,7 +27,7 @@ crates/qx-provider/src/lib.rs: 743
 crates/qx-runtime/src/pipeline.rs: 2332
 crates/qx-scheduler/src/lib.rs: 1560
 crates/qx-storage/src/lib.rs: 2409
-crates/qx-storage/src/postgres.rs: 2070
+crates/qx-storage/src/postgres.rs: 2083
 crates/qx-storage/src/sqlite.rs: 2535
 crates/qx-strategy/src/builtin.rs: 991
 crates/qx-strategy/src/c_api.rs: 1106

@@ -402,27 +402,49 @@ impl PythonStrategyClient {
                 }
             }
             StrategyTransport::Jsonl | StrategyTransport::FramedJson => {
-                let label = self.label.clone();
-                let stdin = self
-                    .stdin
-                    .as_mut()
-                    .ok_or_else(|| format!("{} worker stdin 不可用", label))?;
-                let write_result = if self.transport == StrategyTransport::Jsonl {
-                    stdin.write_all(format!("{payload}\n").as_bytes())
+                // 写入必须与读取同受 timeout_ms 约束：管道读端由子进程持有，它一旦"活着但不再
+                // 接收输入"，超出 OS 管道缓冲（~64KB）的那段 write_all 会永久阻塞，而原 timeout_ms
+                // 只守着读侧 recv——本进程就此卡死，连关停令牌都读不到（V13 R2 #281）。故把
+                // write_all+flush 交给独立线程，主路径按预算 recv_timeout 收口，超时即杀 worker。
+                let bytes = if self.transport == StrategyTransport::Jsonl {
+                    format!("{payload}\n").into_bytes()
                 } else {
-                    let frame = StrategyFrame::request(sequence, payload.into_bytes())
+                    StrategyFrame::request(sequence, payload.into_bytes())
                         .encode(DEFAULT_MAX_FRAME_BYTES)
-                        .map_err(|error| format!("编码 {label} 分帧输入失败: {error}"))?;
-                    stdin.write_all(&frame)
+                        .map_err(|error| format!("编码 {} 分帧输入失败: {error}", self.label))?
                 };
-                // 管道读端由子进程持有：它一退出，写侧只能拿到断管道（os error 232/32），
-                // 这与"worker 一个字都没输出就退出"是同一次死亡的两面，所以失败并回 death_note。
-                let failure = write_result
-                    .and_then(|()| stdin.flush())
-                    .err()
-                    .map(|error| format!("写入 {label} 输入失败: {error}"));
-                if let Some(failure) = failure {
-                    return Err(format!("{failure}{}", self.death_note()));
+                let mut stdin = self
+                    .stdin
+                    .take()
+                    .ok_or_else(|| format!("{} worker stdin 不可用", self.label))?;
+                let label = self.label.clone();
+                let (write_sender, write_done) = mpsc::channel();
+                thread::spawn(move || {
+                    let write_result = stdin.write_all(&bytes);
+                    let failure = write_result
+                        .and_then(|()| stdin.flush())
+                        .err()
+                        .map(|error| format!("写入 {label} 输入失败: {error}"));
+                    let _ = write_sender.send((failure, stdin));
+                });
+                // 断管道（os error 232/32）与"worker 一个字都没输出就退出"是同一次死亡的两面，
+                // 故写侧失败连同回传的 stdin 一起并回 death_note。
+                match write_done.recv_timeout(Duration::from_millis(self.timeout_ms)) {
+                    Ok((Some(failure), stdin)) => {
+                        self.stdin = Some(stdin);
+                        return Err(format!("{failure}{}", self.death_note()));
+                    }
+                    Ok((None, stdin)) => {
+                        self.stdin = Some(stdin);
+                    }
+                    Err(_) => {
+                        let note = self.death_note();
+                        let _ = self.child.kill();
+                        return Err(format!(
+                            "写入 {} 输入超时 timeout_ms={}{}（worker 存活但不接收输入）",
+                            self.label, self.timeout_ms, note
+                        ));
+                    }
                 }
                 let received = self
                     .responses

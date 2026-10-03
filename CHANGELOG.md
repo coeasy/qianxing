@@ -1,6 +1,30 @@
 # Changelog
 
 
+## Unreleased — V13 R2 第三十五遍 #282：NATS 事件 consumer handler 的 stdin 写入接上 handler.timeout_ms 预算，handler 存活却不接收输入时从永久卡死变成可观测超时（阻塞点 / 预算 / opt-in 面）（2026-10-03）
+
+第三十五遍沿「无预算等待」这一族继续查（#281/#263/#220 同源），扫到 #281 的同构残留：`crates/qx-cli/src/event_pipeline.rs` 的 `invoke_event_consumer_handler`（`#[cfg(feature = "nats")]`）先把 `stdin.write_all(payload)` 直接跑在主线程，之后才用 `handler.timeout_ms` 守后面的 `try_wait` 轮询——timeout_ms 管不到写侧。一旦用户配置的外部 consumer handler 进程仍存活却不再从 stdin 取字节，超出 OS 匿名管道缓冲（~64KB）的那段写入永久阻塞在 write_all 上，本进程就此卡死、连关停都读不到。这不是假设：跨进程 Outbox 事件里 AccountPositionSnapshot/AccountBalanceSnapshot 把整段 Vec 内联进单条 payload，足以越过 64KB。修法与 #281 一致：把 write_all 交给 spawned 线程并先 `drop(stdin)` 落 EOF，主路径按 `write_done.recv_timeout(Duration::from_millis(handler.timeout_ms))` 等它回传结果，超时即 kill handler（关管道读端、放行写线程）并回「handler 存活但不接收输入」诊断，把无限阻塞变成可观测超时。
+
+回归用例 `crates/qx-cli/src/tests/event_consumer_write_budget.rs::live_but_non_draining_event_consumer_write_is_bounded_not_hanging`（随 nats 特性门控）直接跟踪一颗 `PING.EXE`（继承 stdin 读端却一字节不取，`kill()` 即关闭读端放行写线程），喂一份 200_000 字节 payload 的 `OutboxEvent` 使写入必然超出管道缓冲，断言调用在预算内以超时通道失败——本轮实测耗时 2.02s（timeout_ms=2000）而非挂死。为此给私有的 `EventConsumerHandler` 加了 `#[cfg(all(test, feature = "nats"))] for_test` 构造入口。新建门禁 `event_consumer_pipe_write_budget_check` 三条：写入被交给 spawned 线程且被 `write_done.recv_timeout` 有界等待、写侧预算取自 `handler.timeout_ms`、超时诊断在位。架构自检本轮实测 555 项全绿（logs/s838_pass35_gate_green.txt），变异反向验证把 thread::spawn 摘掉、把 handler.timeout_ms 换成 3_600_000、改掉超时措辞后恰只各咬对应的一条（baseline 3/3、三颗变异分别 2/1，真树按镜像还原逐字节一致）。event_pipeline.rs 行数预算 775→788（本轮多出的 for_test impl）。
+
+与 #281 的边界不同：这条落在 `#[cfg(feature = "nats")]` 的 opt-in 后端，不在默认发布 exe、也不在 wheel，所以「按终树重打独立 exe 与 wheel」不是本条的收口步骤——默认 `cargo build --release` 的 qx-cli 与 wheel 不因本条改变；本轮只证明 `cargo check`/`cargo clippy -p qx-cli --features nats --all-targets -- -D warnings` 干净、nats 门控用例实跑 bounded。尚未 `git add`、未推送。capabilities.yaml 记入 limitation `event_consumer_pipe_write_bounded_by_killing_handler`：写侧超时只能靠杀掉 handler 子进程关闭管道读端、放行阻塞的写线程，故 handler 一旦 wedge 需重启而非复用；单事件最坏墙钟约 2×timeout_ms（写侧与退出轮询各等一次）；本机无 NATS/handler 沙盒，有界性只由 nats 编译+回归用例+门禁自证，`sandbox_tested` 保持 false。
+
+
+## Unreleased — V13 R2 第三十四遍 #281：默认策略管道传输的 stdin 写入接上 timeout_ms 预算，worker 存活却不接收输入时从永久卡死变成可观测超时（阻塞点 / 预算 / 发布物）（2026-10-03）
+
+第三十四遍查「无预算等待」这一族（#263/#220 同源）。`crates/qx-cli/src/strategy_host.rs` 的 `PythonStrategyClient::request` 在默认 `Jsonl`/`FramedJson` 传输上先直接 `stdin.write_all`+flush、之后才 `responses.recv_timeout(timeout_ms)`——timeout_ms 只守读侧。一旦 Python worker 进程仍存活却不再从 stdin 取字节，超出 OS 匿名管道缓冲（~64KB）的那段写入会永久阻塞在 write_all 上，主进程就此卡死、连关停令牌都读不到，而这条是编译进发布 exe 的默认路径（`crates/qx-runtime/src/runtime_config/strategy_schema.rs` 的 transport 默认 `Jsonl`）。修法是让写入与读取同受 timeout_ms 约束：把 write_all+flush 交给 spawned 线程，主路径按 `write_done.recv_timeout(self.timeout_ms)` 等它回传结果，成功即回收 stdin 句柄、超时即 kill worker 并回「worker 存活但不接收输入」诊断，把无限阻塞变成可观测超时。
+
+回归用例 `crates/qx-cli/src/tests/worker_pipe_failure_diagnostics.rs::live_but_non_draining_worker_write_is_bounded_not_hanging` 直接跟踪一颗 `PING.EXE`（继承 stdin 读端却一字节不取，`kill()` 即关闭读端放行写线程），喂 40_000 行 Bar 使写入必然超出管道缓冲，断言 `request()` 在预算内失败——本轮实测耗时 2.06s（timeout_ms=2000）而非挂死。新建门禁 `strategy_pipe_write_budget_check` 三条：写入被交给 spawned 线程且被 `write_done.recv_timeout` 有界等待、写侧预算取自 `self.timeout_ms`、超时诊断在位且两个成功分支各回收一次句柄。架构自检本轮实测 552 项全绿（logs/s835_pass34_gate_green.txt），变异反向验证把 thread::spawn 摘掉、把 timeout_ms 换成 3600_000、改掉超时措辞后恰只咬这三条（logs/s836_pass34_gate_mutation.txt）；strategy_host.rs 行数预算 824→846。
+
+与 #263 的诚实边界不同：这条改动落在默认编译进发布 exe 的 qx-cli，不是 opt-in feature，发布产物会随重建而变，所以「按终树重打发布 exe」是本条的收口步骤——本轮已按终树整跑九步 `build.bat` 全绿（logs/s837_pass34_ninestep_green.txt：门禁 552、全 workspace 测试含两条 Python e2e 全 ok、clippy 干净、runtime-check 通过，尾「全部完成」），且 `find crates -name '*.rs' -newer target/release/qx-cli.exe` 得 0，独立 exe 确已携带本条 #281；wheel 不受本条影响（#281 只在 qx-cli 的 `strategy_host.rs`，既不碰 wheel 原生扩展的源 crate qx-python、也不碰纯 Python 发布包）。尚未 `git add`、未推送。capabilities.yaml 记入 limitation `strategy_pipe_write_bounded_by_killing_worker`：写侧超时只能靠杀掉子进程来关闭管道读端、放行阻塞的写线程，故 worker 一旦 wedge 需重启而非复用；单请求最坏墙钟约 2×timeout_ms（写侧与读侧各等一次）；本机无 Python worker 沙盒，有界性只由编译+回归用例+门禁自证，`sandbox_tested` 保持 false。
+
+
+## Unreleased — V13 R2 第三十三遍 #263：origin/main 竞争架构以 -s ours 合流收口，PostgreSQL 建池握手补上 connect_timeout（合流 / 阻塞点 / 预算）（2026-10-03）
+
+第三十三遍收两件事。其一是分叉合流：origin/main 上另有一套互斥的 V11/V12 qx-cli 拆法，与当轮已实测到发布条件的 V13 R2 发布线不可共存，按「保留当轮发布线」裁定，用 `git merge -s ours` 把 origin/main（f5b9a09）记为祖先而工作树逐字节不变（合流提交 4e2fb6b，树 ≡ 3b14cac，已推送，HEAD..origin/main 归零），此后不再反复撞同一处分叉。其二是 #263 阻塞点：`PostgresStorage::connect_with_pool_size` 串行建池（1..=128）时每条连接走 `Client::connect(dsn, ..)`，握手（TCP 连接 + TLS 协商 + 认证）无时间预算，一台接受了 TCP 却迟迟不完成握手的库、或一个挂起的 DNS，会让同步的启动路径按存储后端逐个无限阻塞——会话级 `statement_timeout` 等三条 SET 只在连接成功之后才生效，管不到这一段。修法是让 DSN 解析与 `Client::connect` 完全同路（后者内部就是 `dsn.parse()?.connect(..)`）：改为 `postgres::Config` 一次解析、`connect_timeout(CONNECT_TIMEOUT)`（正的 5s 预算）后 `config.connect(connector)`，握手从无限收成有界。新建门禁判据 `postgres_connect_budget_check` 两条：`.connect_timeout(` 恰 1 处、无界 `Client::connect(` 残留恰 0，且 `CONNECT_TIMEOUT` 常量必须是正的 `Duration::from_secs(N)`（改成 0 或删掉都判红）。架构自检本轮实测 549 项全绿（logs/s832_pass33_gate_reconfirm.txt），本轮新增 2 条判据。
+
+发布产物逐字节不受影响：`postgres` 是 opt-in feature，默认 `qx-cli`（features = ["sqlite"]）根本不把这段编译进 exe/wheel，本轮无需重打包。诚实边界记入 capabilities.yaml：`sandbox_tested` 保持 false——本机无 Docker/Postgres，connect_timeout 的有界性只由编译与门禁自证，真库下的握手（含慢 ack、DNS 挂起）仍无实测记录。
+
 ## Unreleased — V13 R2 第三十二遍 ③ #279：发布条件复核 —— 当轮重打的 wheel 离线装回后带的是修好的 A 股提示，未过时的独立 exe 就地兑现 A 股 / BTC 快速回测端到端（发布 / 易用性）（2026-10-02）
 
 第三十二遍 ③ 不改代码，只把 ①（#276 可选 extras）、②（#278 A 股断链 + 编译门禁）确认落进**当轮重打的发布物**，并在最终 exe 上跑通核心链路。
