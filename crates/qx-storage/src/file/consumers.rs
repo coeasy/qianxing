@@ -173,23 +173,25 @@ impl ConsumerStateStore for FileConsumerStateStore {
         )
     }
 
-    fn dead_letter(
+    fn dead_letters(
         &self,
         group_id: &str,
-        event_id: &str,
-    ) -> Result<Option<DeadLetterRecord>, StorageError> {
+        limit: usize,
+    ) -> Result<Vec<DeadLetterRecord>, StorageError> {
         validate_outbox_name(group_id, "group_id")?;
-        validate_outbox_name(event_id, "event_id")?;
-        let mut records = Vec::new();
+        let mut result = Vec::new();
         for path in self.list_records()? {
-            records.extend(
-                self.read_state(&path)?
+            let state = self.read_state(&path)?;
+            result.extend(
+                state
                     .dead_letters
                     .into_iter()
-                    .filter(|record| record.group_id == group_id && record.event_id == event_id),
+                    .filter(|record| record.group_id == group_id),
             );
         }
-        Ok(records.into_iter().max_by_key(|record| record.attempts))
+        result.sort_by_key(|record| (record.failed_ts, record.event_id.clone()));
+        result.truncate(limit);
+        Ok(result)
     }
 }
 

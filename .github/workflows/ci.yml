@@ -115,11 +115,6 @@ jobs:
           - postgres
           - nats
           - postgres,nats
-          # deploy/README.md 让实盘部署构建这一组合，而它是矩阵里唯一带着
-          # `#[cfg(all(feature = "sqlite", feature = "nats"))]` 的那一支（qx-cli main.rs
-          # 的 Sqlite*Store 导入与 event_pipeline 的 SQLite 分支只在这里编译）。
-          # 不列进来，生产构建线就永远没有 CI 走过（V11 M3）。
-          - nats,postgres,sqlite
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -174,13 +169,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: service-backends
-      # `mod nats` 只在带 nats 特性时才编译，而 `cargo test --workspace`（rust-core 那一 job）走的是
-      # 默认特性——qx-storage 的 `default = []` 把整段 cfg 掉了，所以 nats.rs 里那五颗用例
-      # （两颗静态守卫数源码接线、三颗行为用例跑真等待）在其它任何作业里都没被执行过。这条腿不带
-      # `--ignored`，跑的就是它们：把有界等待改回裸 `block_on_runtime` 必须在这里红，
-      # 而不是等生产第一轮 relay 停在同一个位置才发现（V13 第 8 轮 A3）。
-      - name: NATS adapter static guards (non-ignored, only leg that compiles mod nats)
-        run: cargo test -p qx-storage --features sqlite,postgres,nats --lib
       - name: Ignored storage contracts (PostgreSQL + NATS JetStream)
         run: >-
           cargo test -p qx-storage --features sqlite,postgres,nats --

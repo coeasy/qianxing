@@ -1,7 +1,0 @@
-轮数：7（capacity=8, slot_bytes=4096，argv 与用例里那颗 helper 同一份）
-启动→答上话 (s): [0.106, 0.119, 0.114, 0.116, 0.119, 0.12, 0.121]
-关 stdin→退出 (s): [0.011, 0.017, 0.011, 0.011, 0.014, 0.012, 0.012]
-退出码: [0] 两份环文件都被补删: [True]
-中位数  启动=0.119  退出=0.012
-最大值  启动=0.121  退出=0.017
-用例预算：SHARED_WORKER_REPLY_BUDGET_SECONDS=15、SHARED_WORKER_EXIT_BUDGET_SECONDS=5

@@ -52,14 +52,14 @@
 
 | 模块 | 职责 |
 |---|---|
-| `qx-core` **牵星** | 确定性内核：事件溯源、重放校验，以及 `VenueId` / `InstrumentId` / `MarketId` / `CanonicalProduct` 身份契约 |
+| `qx-core` **牵星** | 确定性内核：时钟、因果事件队列、事件溯源、重放校验，以及 `VenueId` / `InstrumentId` / `MarketId` / `CanonicalProduct` 身份契约；内含 **分野** `fenye` 模块（合约规格与市场状态分离、符号映射只增不覆盖） |
 | `qx-guanxing` **观星** | 数据平面：`DataSourceId`、质量门、标准化、`as_of()` point-in-time 可见性 |
 | `qx-data` | 多资产数据基础设施：统一市场数据契约、目录、摄取与增量管道（提供方不进内核） |
 | `qx-xingban` **星板** | Bar/L1 Tick/L2 订单簿撮合与仿真：成本、延迟、保证金、因果回测 |
 | `qx-zhenlu` **针路** | 执行与路由：风控门禁、OMS、路由决策 |
 | `qx-risk` | 风控规则集：`RiskRule`（禁空 / 最大数量 / 最大名义）与保守默认规则集版本 |
 | `qx-genglu` **更路** | 审计与对账：绩效指标、归因、订单对账 |
-| `qx-plugin` **卯眼/榫头** | 能力清单注册表：manifest schema/哈希校验、`fnv1a` 自检签名、扩展点贡献声明、独占冲突检测、依赖求解（Ed25519 未接线、静态装配计划已连同实现删除、生命周期超时未接线；不含运行时动态加载） |
+| `qx-plugin` **卯眼/榫头** | 能力清单注册表：manifest schema/哈希校验与 Ed25519 签名、扩展点贡献声明、独占冲突检测、依赖求解、Profile/Bundle/Patch 静态装配计划（不含运行时动态加载） |
 | `qx-factor` | 因子与特征：版本、PIT 工件、分析报告、候选策略绑定 |
 | `qx-protocol` | 账户协议：Canonical Snapshot、Diff、QIFI 兼容边界 |
 | `qx-provider` | 数据提供方：能力矩阵、稳定选择、主备故障切换 |
@@ -78,7 +78,7 @@
 | `cpp/` | C++ Strategy API v1 稳定 C ABI、CMake 示例 |
 | `qx-cli` | 单一 CLI binary：命令分派、worker 装配、回测与运维命令，外加进程内确定性自校验 |
 
-`qx-cli` 是单个 binary（决策：不为拆进程而拆 crate），内部按职责分文件：命令语法与命令表只有一份，在 `cli_args.rs` 由 clap 派生（V10 P2b，旧手写字符串解析已整体删除、不留双轨），`cli.rs` 保留对 `Command` 的一次显式 `match`，未识别的命令或未知参数打印 `未知命令或未知参数: <x>` 并以退出码 2 fail closed，`tools/check_architecture.py` 校验「clap 命令表 ≡ `cli.rs` 分支集合 ≡ help 印出的入口」；`worker_entry.rs` 用类型系统里的 `WorkerRole::is_venue_role()` 加一张 `VenueEntry` 登记表同时服务 `ccxt-worker` 与 `binance-worker`，新增角色只需在登记表上补一条 Venue 绑定判定；跨语言子进程的 Python 解释器统一由 `QX_PYTHON` 解析（缺省 `python`）。
+`qx-cli` 是单个 binary（决策：不为拆进程而拆 crate），内部按职责分文件：命令语法与命令表只有一份，在 `cli_args.rs` 由 clap 派生（V10 P2b，旧手写字符串解析已整体删除、不留双轨），`cli.rs` 保留对 `Command` 的一次显式 `match`，未识别的命令或未知参数只回错误正文、clap 给出的最接近入口建议与该入口自己的 `Usage:`，再补两行「下一步」，仍以退出码 2 fail closed（改前每条用法错误甩出的是整篇入口摘要：实测 162 行 / 12,319 B（`logs/s691_pass28_before_fix_error_wall.txt`，改前 debug 树上五条命令 162–164 行）；V13 R2 #257/#258 收成未知入口 8 行 / 289 B、参数形状不对 10 行 / 359 B，退出码仍 2），`tools/check_architecture.py` 校验「clap 命令表 ≡ `cli.rs` 分支集合 ≡ help 印出的入口」；`worker_entry.rs` 用类型系统里的 `WorkerRole::is_venue_role()` 加一张 `VenueEntry` 登记表同时服务 `ccxt-worker` 与 `binance-worker`，新增角色只需在登记表上补一条 Venue 绑定判定；跨语言子进程的 Python 解释器统一由 `QX_PYTHON` 解析（缺省 `python`）。
 
 ## 安装
 
@@ -96,24 +96,58 @@ cargo install --path crates/qx-cli --locked      # 完全离线的机器再加 -
 ```
 
 得到 `qx-cli`（Windows 上是 `qx-cli.exe`），落在 `~/.cargo/bin`；把该目录加进 PATH 之后，**在任意目录**
-都能开一个自包含项目并跑通回测，不依赖仓库里的任何相对路径：
+都能开一个自包含项目并跑通回测，不依赖仓库里的任何相对路径（`init` 会把 `storage.data_dir`
+钉成项目目录下的绝对落点，所以下面几条命令换哪个目录启动都读写同一棵树）：
+
+```bash
+qx-cli quickstart my-qx        # 一条命令跑完下面那五条：建 macd 项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
+```
+
+`quickstart` 只写 `my-qx/` 这一个目录：回测产物落项目内的 `data/`，既不碰仓库的 `deploy/data/`，也不碰启动时的
+当前目录。任一步失败就停下，只回显**那一步**的命令原文和重跑整条的写法，以退出码 2 结束；成功时五步逐条印
+「[完成]」，收尾给「你刚做完了什么」+ 三条能直接敲的下一步。它直调下面那五条入口所用的同一批函数，所以同一份输入
+下 `result_hash` 与逐条敲完全相同 —— 这条相等关系由 `crates/qx-cli/tests/quickstart_first_run.rs` 钉成用例，
+而不是文档上的一句承诺。
+
+同样的链条逐条敲（`quickstart` 内部执行的就是这五条）：
 
 ```bash
 mkdir my-qx && cd my-qx
 qx-cli init qianxing.runtime.json --strategy macd   # 生成配置 + 样例 BarFrame + README.qianxing.md
 qx-cli doctor qianxing.runtime.json                 # 静态检查：不联网、不启动 worker、不下单
-qx-cli backtest qianxing.runtime.json               # 真跑一轮 MACD 回测，产物落 data/<root>/runs/
+qx-cli backtest qianxing.runtime.json               # 真跑一轮 MACD 回测，产物落 data_dir 指向的 runs/
 qx-cli report qianxing.runtime.json                 # 读回最新一份摘要
 qx-cli status qianxing.runtime.json                 # 本地配置/worker/回测结果的安全状态；不连交易所
 qx-cli help                                         # 全部入口清单
+qx-cli version                                      # 一行构建身份：版本 / git 提交 / 目标三元组 / 构建档
 ```
 
-实测（本轮 2026-09-26 重跑，`logs/s47_*.txt` 与 `logs/s48_*.txt`）：`cargo install` 用时 2m14s、
+实测（2026-09-26 那一轮，`logs/s47_*.txt` 与 `logs/s48_*.txt`）：`cargo install` 用时 2m14s、
 `INSTALL_EXIT=0`；在仓库外的临时目录里 `help` / `init` / `doctor` / `backtest` / `report` /
 `status` 六条全部退出码 0，回测写出 summary / equity.csv / fills.csv 与 RunManifest，
 `result_hash=26fdd6b52d020700`（与 V12 §22 那一轮同一条命令的哈希逐字符相同 —— 这就是"同样输入必得
 同样结果"的口径）。纯回测与 Paper 链路只有这一个 binary —— 只有跨语言策略 worker 与 CCXT
 worker 才需要 Python（见 C）。
+
+一条命令版在本轮（2026-10-01）用同一台机器、同一棵源码树实跑过（`cargo build -p qx-cli` 的产物，项目目录建在
+仓库外的临时目录，日志 `logs/s700_pass29_quickstart_chain_measure.txt`）：`qx-cli quickstart <目录>` 退出码 0，
+项目内 **14** 份文件（`init` 的 9 份 + 首轮回测的 5 份），`result_hash=26fdd6b52d020700` 与上面逐条敲那五条得到的
+哈希逐字符相同；启动目录里除项目目录本身之外零新增，仓库 `deploy/data/` 跑前跑后都是 71 份跟踪文件；把同一条命令
+在已建好的目录上重跑，则如实退 2 并回显那一步的原文 `qx-cli init <目录>/qianxing.runtime.json --strategy macd`
+（要覆盖得显式加 `--force`）。收尾印出的三条下一步——`report --json`、`strategy list`、
+`init --profile ashare`——也在同一轮里从无关目录逐条敲过，三条都退 0。
+
+发布产物那一侧在 2026-10-01 那一遍一并复核：`cargo build --release` 出的 `target/release/qx-cli.exe` 跑同一条
+`quickstart` 同样退 0、同样 14 份文件、同样 `result_hash=26fdd6b52d020700`
+（`logs/s708_pass29_release_exe_probe.txt`）。两档构建的 `result_hash` 相同而 RunManifest 的 `digest` 不同
+（debug `61edf8801c0df856`、release `bad55f99ef068572`）——`digest` 覆盖构建身份，`result_hash` 只覆盖回测结果，
+「同样输入必得同样结果」这条口径说的是后者。
+
+装好的是哪个构建不必靠文件哈希自证：`qx-cli version` 那一行与 `doctor` 的第一格 `build_identity`、`status --json` 与 `report --json` 里的 `runtime_version` 同出一处（`crates/qx-cli/src/build_identity.rs`），值由构建期注入的包版本、git 提交、目标三元组与构建档拼成，源码里没有硬编码的版本号；`--version` 与 `-V` 是同一条入口的两个别名，三条写法逐字相同且都退 0。
+
+装好的 exe 不用把仓库带着走。示例配置只经**一条**查找链解析（`crates/qx-cli/src/deploy_lookup.rs`，V13 第三十一遍 ①/#266，另有常驻门禁判据钉住这条链的入口只有一处定义、示例读取的报错只由一处拼装）：`QX_DEPLOY_DIR` → 可执行文件同级 `deploy/` → 再往外一层 → 构建期源码树的 `deploy/` → 当前目录的 `deploy/` → **二进制里的内置模板清单**。最后一层由 `crates/qx-cli/build.rs` 在构建期把本目录顶层那 52 份 JSON 原样快照进 exe，需要时把**整份清单**落进当前用户的临时目录（不是只落被点名的那一份——`fast-backtest` 的 manifest 里作业按同级文件名引用 runtime/bars/spec，只落一份会让这条链在下一格读取上断掉），并按清单内容签名分桶；只读入口那 7 处以 deploy 目录示例文件名为默认值的路径参数全部挂着 `parse_deploy_path`，这条挂载面本身也是常驻判据（少挂一处就报，判据没有对象时同样报，不会静默给绿），所以同名目录里的陈旧副本不可能被新二进制读到；清单为空时构建直接失败，模板缺失这件事不该跟发布物一起出门。
+
+这一格在 2026-10-02 用**第二棵源码树**实测过（`logs/s744_pass31_standalone_exe_probe.txt`、`logs/s752_pass31_standalone_fast_backtest.txt`）：把整棵工作树复制到仓库外另起一份，`cargo build` 出第二颗 exe（那棵副本里没有 `.git`，`qx-cli version` 回 `build unknown` 就是它与仓库那棵无关的自证），然后把那份副本的 `deploy/` 整目录删掉。四格候选根逐条打印为"不存在"之后，`init`（项目内 9 份）、`doctor`、`status`、裸 `backtest`，以及两条排队入口 `fast-backtest deploy/qianxing.fast-backtest.ashare.example.json` 与 `fast-backtest deploy/qianxing.fast-backtest.example.json` 全部退出码 0：A 股那条 `jobs=1 completed=1`、`result_hash=6be034a4cb0760fa`，BTC 那条 `jobs=2 completed=2`、两枚 `result_hash` 分别是 `1189853a7c12447d` 与 `bd323a37d6186dcc`；三枚哈希与同一批输入在仓库树里跑出的逐字符相同（`logs/s665_pass27_ashare_fast_after.txt`、`logs/s666_pass27_btc_fast_after.txt`、`logs/s724_pass30_release_criteria.txt`）。那一轮内置层落的是整份 52 份清单，不是被点名的那一份。两条口径要分开：**接了查找面的入口**（只读入口的默认值，加上 `fast-backtest` 的 manifest——它在读取点自己走这条链）里，只要那是"示例配置形状"的路径且当前目录没有这一份，就按上面的顺序搬走，并在 stderr 说一句 `[查找 · Lookup]`，不做静默替换；**没接这条链的入口**（`scheduler-worker` 一类精确路径）按当前目录原样解析，读不到时错误正文点名"这一份示例在别处存在: <路径>"。屏幕上那行 `config_fingerprint=` 描述的是哪一份文件，两种情形下都始终可查。
 
 ### B. 装开发 / 发布环境 —— 跑全部九道门禁
 
@@ -167,13 +201,15 @@ PYTHON=python/.venv/bin/python bash tools/build_python_wheel.sh
 
 ```bash
 uv venv .venv-qx --python 3.12
-uv pip install --offline --no-deps dist/qianxing_bridge-0.1.0-cp312-cp312-win_amd64.whl
-uv pip install --offline tzdata          # Windows 必需：qianxing_ashare 导入时即解析 Asia/Shanghai
+# #276：基础安装零强制第三方依赖，离线也能装成，不再需要 --no-deps
+uv pip install --offline dist/qianxing_bridge-0.1.0-cp312-cp312-win_amd64.whl
 python -c "import qianxing_bridge.native as n; print(n.available())"
+# 按能力选装 extras（不装也 import 得动，用到才在调用点给可执行提示）
+uv pip install --offline "qianxing-bridge[ccxt]"     # CCXT 行情/交易 worker
+uv pip install --offline "qianxing-bridge[a-share]"  # A 股数据源（Windows 连 tzdata 一起带）
 ```
 
-`--no-deps` 是诚实口径：wheel 自身只带四个包与原生扩展，`ccxt` 只在真的跑 CCXT worker 时才需要（运行时
-才 import），装它请走你自己的索引或本地缓存。实测（`logs/s52_*.txt`、`logs/s53_*.txt` 是文档轮那次的重建与
+#276 之后 wheel 的强制依赖清单是空的：`ccxt` 与 Windows 的 `tzdata` 都改成可选 extras（`[ccxt]` / `[ccxt-pro]` / `[tz]` / `[a-share*]`），`pip install <wheel>` 在任何索引状态下都能装成，`--no-deps` 不再是必需项。`ccxt` 只在真的跑 CCXT worker 时才 import，`Asia/Shanghai` 只在真的取 A 股时区时才解析（#253 把顶层求值挪到用时），缺谁都在调用点抛带 extras 名字的可执行提示。实测（`logs/s52_*.txt`、`logs/s53_*.txt` 是文档轮那次的重建与
 干净 venv 复核；`logs/s74_a5_package_rebuild.txt` 是 A5 那轮按当轮代码重跑的那次）：wheel **217,025 字节 / 17 个
 条目**，A5 那轮重 build 与文档轮那份**逐条目 CRC 全同**（A5 只改契约 JSON，而契约不在 wheel 里），内嵌
 `_qianxing_native.pyd` 的 md5 与当轮 `target/release/_qianxing_native.dll` 逐字节相同
@@ -183,19 +219,53 @@ python -c "import qianxing_bridge.native as n; print(n.available())"
 `margin_mode="weird"`、`position_mode="both"`、`leverage=0`、`position_side="Weird"` 四种非法取值
 各自按契约抛 `ValueError`。**为什么这里不报整档 sha256**：同一份载荷重打包出来的 sha 就会变（文档轮实测：
 17 个条目 CRC 全同，整档 sha 因 4 个条目的 zip 时间戳从 `2603b5c2…` 换成 `54c5ed36…`），所以产物身份只按
-载荷报（尺寸 / 条目数 / 条目 CRC / 内嵌扩展的 md5），已立案 #159。契约那份 JSON 是 `include_str!` 编进
+载荷报（尺寸 / 条目数 / 条目 CRC / 内嵌扩展的 md5），这条口径由 `crates/qx-cli/src/tests/artifact_identity_doc.rs`
+常驻核对：它不许交付文档里出现 64 位十六进制的整档摘要，并要求上面那套骨架与判据文件互相点名（#159 收口）。
+契约那份 JSON 是 `include_str!` 编进
 **CLI 二进制**的（`crates/qx-protocol/src/lib.rs:34`），本轮重链的 `cargo build --release -p qx-cli` 产物里
 按字节数到契约措辞（"本构建这一层没有生产者" 5 次、"本构建有生产者" 3 次），新 exe 实跑 `ecosystem`
 冒烟 `ECO_EXIT=0`。
 
-最近一次（V13 R2 第五遍，2026-09-27）又按当轮代码重建并复装过一遍：wheel **217,415 字节 / 17 条目**，与上一轮
-比真改的载荷只有 **2** 条 —— 重链接的 `_qianxing_native.pyd`（353,280 字节，md5 `87fc3005676cce1a…` 等于当轮
-`target/release/_qianxing_native.dll`）和跟着换哈希的 `RECORD`，12 份 `.py` 与仓库 `python/` 逐字节相同（那一轮
-没有改动 `python/`）。干净 venv 里四包从 **site-packages** 导入、`native.available() → True`、线格式往返一致、
-四种非法取值各自按契约抛 `ValueError`（`logs/s118_*.txt`、`logs/s119_*.txt`、`logs/s120_*.txt`）。**该轮改的是
-Rust 侧的风控端口契约，所以发布物上的落点在 CLI 二进制而不是 wheel**：11,921,920 字节的 `target/release/qx-cli.exe`
-里「账户级 RiskPort 拒绝订单」与「账户级 RiskPort 执行失败」各出现 **1** 次 —— 即"业务拒绝"与"端口给不出裁决"
-两条播报在装机产物里都可达。
+第八遍（2026-09-27）那次也按当轮代码重建并复装过一遍：wheel **217,415 字节 / 17 条目**，与第五遍
+那份逐条目对证下来真改的载荷只有 **2** 条 —— 重链接的 `_qianxing_native.pyd`（353,280 字节，md5
+`f0437740060ac42e…` 等于当轮 `target/release/_qianxing_native.dll`）和跟着换哈希的 `RECORD`；另有 3 条只是 zip
+时间戳变了，12 份 `.py` 与仓库 `python/` 逐字节相同（这两轮都没改 `python/`）。装进干净 venv 复测：四包从
+**site-packages** 导入、`native.available() -> True`、线格式往返一致、四种非法取值各自按契约抛 `ValueError`
+（`logs/s164_*.txt`、`logs/s165_*.txt`、`logs/s169_*.txt`）。同一轮还拿装机产物本身走了两次读面：
+11,921,920 字节的 `target/release/qx-cli.exe`（md5 `4335cac6732b0a7b…`）里「账户级 RiskPort 拒绝订单」与「账户级
+RiskPort 执行失败」各出现 **1** 次 —— 即"业务拒绝"与"端口给不出裁决"两条播报在装机产物里都可达；`serve` 起来后
+16 条读面入口逐条对证 `deploy/README.md` 的端点表（键集与状态码都从文档取数）全部吻合，`/metrics` 被抓出
+**3** 条样本、0 条解析失败（`logs/s167_*.txt`、`logs/s168_*.txt`）。
+
+**上面这种 exe 字面量计数是单向证据（#179）**：数到 **N>0** 次能证明这条播报进了装机产物；数到 **0** 次
+证明不了"这个构建没有这个能力"——链接器会把重复常量池化、会把没用到的分支整个丢掉，一次改名或一次
+字符串拼接就能让计数归零而行为照旧。所以计数只用作"当轮改动真的落进了发布物"的正向核对，反向结论
+（某能力在发布物里缺席）一律回源码、用例与 `--features` 组合去判，不从二进制计数推。
+
+**最近一次重建安装包是 V13 R2 第十七遍（2026-09-29）**，做法与上一遍相同：代码、用例与文档全部定稿后，按
+`tools/build_python_wheel.ps1`（显式 `-Python` 指仓库 venv）从终树重打包，得到 wheel **218,449 字节 / 17 个条目**，内嵌
+`_qianxing_native.pyd`（353,280 字节，md5 `1711ce0a46f80e41…`）**等于**重打包后的 `target/release/_qianxing_native.dll`，
+12 份 `.py` 与仓库 `python/` 逐字节一致（0 处不符）。装进干净 venv（`uv venv --seed --python 3.12` + `pip install --no-deps`）
+复测（`logs/s393_pass17_clean_venv_smoke.txt`）：四包从 site-packages 导入、`native.available() -> True`、线格式归一成
+`buy cross hedge 2` 且读回一致、`margin_mode="weird"` / `position_mode="both"` / `leverage=0` 三类非法取值各自按契约抛
+`ValueError`、已安装的 `qianxing_strategy/worker.py` 在父进程消失时以退出码 **0** 收口、`qx-cli help` 退出 0 并印出 155 行；
+那份 12,063,232 字节的 `target/release/qx-cli.exe`（md5 `c7cdfbe97850eb03…`）里本轮起继续点名的前两遍新增播报
+（`api_rate_limit_backend_unavailable` 1 次、`Service Unavailable` 1 次、`{"type":"server_shutdown"` 1 次、「收到停机请求后」2 次）
+计数与 debug 构建（21,869,568 字节）一致。**本轮的读面收口没有新增可点名的字面量**（它改的是"打开时写不写 Outbox"这件事），
+所以证据换成运行结果：拿这份发布 exe 起 `serve`，三遍各 10 次读请求（共 30 次）之后账户日志 40,988 字节的 md5 与
+Outbox 文件计数（3 → 3）**都不变**（`logs/s391_pass17_serve_read_face_e2e.txt`）——读面在装机产物里也是一个字节都不写。
+两种口径的边界都要说清：字面量计数按上面那条 #179 只能单向证明；那份 e2e 夹具只有 56 条事实，证的是"零写入"的形状，
+不是接口文档里 N=4000 那一档的耗时。
+
+**为什么"定稿之后还要再打一次包"**：`.pyd` 与 dll 相等这条核对是有窗口的（#194 立案，第十一、十五、十六、十七遍各现场复现一次）
+—— 打包之后只要再跑过一次 release 构建（变异复跑、九步整跑都算），dll 就会在源码不变的情况下重链接，核对随之转红，而红话说的不是
+"包坏了"是"包旧了"。本轮又当场量到一次：重打包之前 `dist/` 里那份 wheel（218,451 字节，第十六遍交付件）内嵌 `.pyd` 是
+`53622351501d0c06…`，而当时的 dll 已经是 `a77530e17a10cd8a…`（不同源）。**上一遍写清的那半句仍然成立**：打包脚本自己就会重链 ——
+`tools/build_python_wheel.ps1` 里那条 `cargo build -p qx-python --release` 在 stage 之前把原生扩展换了一遍（本轮重打包前后 dll 的
+md5 不相等，`a77530e1…` → `1711ce0a…`），所以"wheel 内 `.pyd` ≡ 九步构建那份 dll"这类**跨构建**核对只在重打包之前量得到，
+打完之后量到的是"同一次调用里 stage 的那一份"（#181 那条顺序判据管的就是它）。`.pyd` 在 zip 里是 deflate（353,280 → 164,478 字节），
+这就是一次重链连 Python 侧一行没改也会让 wheel 本体字节数变化的原因。所以**安装包必须排在本轮最后一次构建之后**，
+读者按上面那份数字核对才不会拿到旧载荷。
 
 ### 装不上时的四个坑（都是本机踩过的）
 
@@ -203,15 +273,15 @@ Rust 侧的风控端口契约，所以发布物上的落点在 CLI 二进制而�
 |---|---|---|
 | `[0/9]` 报「找不到可用的 Python 3 解释器」，或 `[4/9]` 恰好 2 条 Python 桥用例失败 | Windows 上 PATH 里的 `python` 是 Microsoft Store 占位桩：退出码 0、什么都不打印 | 按 `[0/9]` 印出的两条修法之一：建仓库 venv，或 `set QX_PYTHON=<完整绝对路径>`（必须是文件路径，写成目录会让整树测试以 `TEST_EXIT=101` 崩） |
 | 跑 `.ps1` 入口直接 `SecurityError / UnauthorizedAccess`，一行脚本都没执行 | Windows 客户端默认执行策略是 Restricted，未签名脚本一律拒 | 用上面写着的形式：`-ExecutionPolicy Bypass -File`；README 里每条 PowerShell 入口都由门禁核对带着 Bypass |
-| `[6/9]` 或 A 股相关用例 `ZoneInfoNotFoundError` | Windows 没有系统 IANA 时区库，`tzdata` 是 `python/pyproject.toml` 里声明的平台依赖 | `python -m pip install tzdata`（或 `uv pip install tzdata`） |
+| `[6/9]` 或 A 股相关用例 `AshareProviderError`（报错原文点名 `pip install tzdata`） | Windows 没有系统 IANA 时区库，`tzdata` 是 `python/pyproject.toml` 里声明的平台依赖；`import qianxing_ashare` 本身已不再需要它（V13 #253 把时区取值挪到用时） | `python -m pip install tzdata`（或 `uv pip install tzdata`） |
 | 改了 `build.bat` 之后 `[1/9]` 之前就炸，报 `\'不是内部或外部命令\'` | 用 `sed -i`/MSYS 工具编辑会把 CRLF 抹成 LF，cmd.exe 读不了带中文的 LF 批处理 | 归一化回 CRLF，且按字节做（`raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")`）；门禁会数孤立 LF |
 
 ## 快速开始
 
 下面这段是可复制的常用链路示例，写法是在**源码仓库里**直接用 cargo 跑；已经按上面「安装 A」装好的人会
 得到同名 binary，把 `cargo run -p qx-cli -- ` 换成 `qx-cli ` 即可，参数与行为完全一致（同一份 clap 命令表）。
-参数与入口的权威来源是 `cargo run -p qx-cli -- help`
-（本轮实测 41 个顶层入口、`deploy/` 下 52 份示例配置），完整使用口径见
+参数与入口的权威来源是 `cargo run -p qx-cli -- help`——入口清单每加一条就变一次，所以这里不抄份数；
+`deploy/` 下 52 份示例配置有登记表逐名核对（`crates/qx-cli/src/tests/deploy_template_coverage.rs`），完整使用口径见
 [工业化易用性收口指南](docs/工业化易用性收口指南-V1.md)。
 
 ```bash
@@ -279,7 +349,7 @@ cargo run -p qx-cli -- live-check deploy/qianxing.runtime.production.example.jso
 # 内置 Rust、Python/C++ JSONL 策略直接复用 Bar 回测引擎；CCXT 实时模式会持续维护闭合 BarFrame 并按 digest 触发策略
 cargo run -p qx-cli -- backtest deploy/qianxing.runtime.strategy-backtest.example.json deploy/qianxing.bar-frame.example.json
 
-# backtest 会在运行时 data_dir/runs 下生成 summary.json、equity.csv、fills.csv，
+# backtest 会在 storage.data_dir（相对值按当前工作目录解析）下的 runs/ 生成 summary.json、equity.csv、fills.csv，
 # 并与同一回测的 RunManifest 使用相同前缀，便于归档和二次分析
 
 # 校验运行时拓扑配置，并启动 paper API（默认示例配置）
@@ -343,7 +413,15 @@ Windows 下用 `build.bat`（cmd.exe 里跑；全部 9 步端到端跑通的那�
 行尾的中文会让下一行代码整行消失。第三条前置是**执行策略**：Windows 客户端默认策略禁止运行未签名脚本，
 `powershell -File tools/build_python_wheel.ps1` 与 `./tools/build_python_wheel.ps1` 都会在一行代码都不执行的
 情况下以 `UnauthorizedAccess` 退出，所以上面的入口写成 `-ExecutionPolicy Bypass -File`（同一条判据核对
-"README 里每一行 PowerShell 入口都带着 Bypass"）。安装包产物落在 `dist/`，而 `/dist/` 在 `.gitignore` 里，
+"README 里每一行 PowerShell 入口都带着 Bypass"）。第四条前置是**不许绕开这两个脚本**（第八遍 #181 实测）：
+`pip wheel ./python` 打的是包目录里已经就位的那一份原生扩展，而"删掉 `python/qianxing_bridge/` 里旧的那份、
+再把当轮 `target/release/` 的构建产物 copy 成导入名"只有脚本中段做得到。自己拼 `cargo build --release -p
+qx-python` + `pip wheel` 两步，打包器一声不响，产出的却是上一轮扩展的 wheel —— 本轮现场：那样打出的 wheel
+217,414 字节、内嵌 `.pyd` md5 `dfef616ed9537aae…` 对不上当轮 dll 的 `f0437740060ac42e…`；按脚本重打成
+217,415 字节、两者相等（`logs/s164_release_payload.py` 与 `logs/s165_*.txt`）。`.pyd` 在 `.gitignore` 里，
+腐坏的是发布物而不是仓库，所以这条先后顺序（构建 → 删旧 → stage → 打包）由
+`crates/qx-cli/src/tests/artifact_identity_doc.rs` 的 `wheel_packaging_entry_stages_the_fresh_native_extension`
+逐脚本按位置核对。安装包产物落在 `dist/`，而 `/dist/` 在 `.gitignore` 里，
 故它是本地产物、不随仓库分发。
 
 实现状态与未完成外部边界的**现行**版本只有一份：
@@ -418,17 +496,13 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 
 1. **热路径不用浮点** —— 金额/价格/数量一律 128-bit 定点（`SCALE = 1e9`）。
    IEEE-754 的 NaN 位模式不确定，会直接破坏 bit-level 可重放。
-2. **不用系统时间，时间轴由推进方决定** —— 内核里没有时钟对象（曾有一份 `TestClock`，全仓无人接线，已删）。
-   回测的时间轴由数据侧闸门决定：`qx-data` 入库前排序、同标的 ts 必须严格递增、帧读侧对乱序直接报错；
-   排好的 bar 序列交给 `qx-xingban` 撮合，实盘的时间取自交易所/进程戳（`qx-runtime`），
-   两条路径都把时间随事件写进 `EventLog`，重放只认落盘的那一列，从不读系统时间。
+2. **不用系统时间** —— 回测只消费输入数据自带的时间戳；时间轴由 `qx-data` 先排序、再用
+   「同一标的 ts 必须严格递增」的闸门决定，帧读侧对乱序同样直接报错。内核不提供虚拟时钟对象，
+   真实墙钟只出现在 paper/live 的 worker 循环里。
 3. **不用无序容器做顺序敏感迭代** —— 顺序敏感处一律 `BTreeMap` / `Vec` + 排序。
 4. **不用 `DefaultHasher` 做摘要** —— 其输出不保证跨版本稳定，改用内置 FNV-1a。
 5. **不用外部 RNG** —— `rand` 实现细节可能随版本变化，自实现 xorshift64\* 锁定种子语义。
-6. **同时间戳按因果优先级排序** —— 不是任意顺序。`TIMER < FEEDBACK < MARKET < COMMAND < MATCH < APPLY < POST`
-   （`qx-core/src/event.rs` 的 `Priority`）。这条序不是靠一个可乱序的调度队列维持的，而是长在写入处：
-   `EventLog` 按 `(ts, prio, seq)` 单调落盘，`(ts, prio)` 不比上一格靠后就先把引擎时间推进一格
-   （`qx-runtime/src/pipeline.rs` 的 `append_at_engine`），因此重放读到的顺序就是当时决定的顺序。
+6. **同时间戳按因果优先级排序** —— 不是任意顺序。`MARKET < COMMAND < MATCH < APPLY < POST`。
 7. **bar t 决策，bar t+1 开盘成交** —— 从结构上杜绝 cheat-on-close。
 8. **只读投影不做第二个事实源** —— API、状态查看与任何前端只消费 EventLog 派生的快照与游标，
    写操作一律经 `ControlPlane` 落审计后再进内核；投影不得回写交易状态。
@@ -436,6 +510,11 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
    只有价格为保留哨兵语义继续用 `0`（0 不是合法定点价格）。缺数据的字段兜一个合法的 0 等于替交易所报数。
 
 ## 当前状态
+
+> 这一节的数字是 **2026-09-26** 那一轮（V13 R1）的快照，保留是为了让"门禁条数怎么一路涨上来"可对照。
+> **要读最新一门的实测数**看 `docs/自研量化框架审计与重构方案-V13.md` 各章末的「收口」段：第十七遍
+> （2026-09-29）的当轮数是门禁 **515 项 PASS**、`cargo test --workspace --all-targets` **99 段 / 951 passed / 0 failed / 1 ignored**、
+> 九步构建 `exit=0`（`logs/s389_*.txt`、`logs/s388_*.txt`、`logs/s390_*.txt`）。
 
 下面这组数字全部是 2026-09-26 在本机实测得到的，分三次抓取（最新一次在最前）：
 
@@ -446,7 +525,6 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
   接口文档与门禁四处口径，**Rust 一行未动**，所以测试条数与文档轮同为 858。
   能力矩阵那一格的具体变化：把五格挤进的一条合并命名 limitation 拆成 **5 条逐字段 limitation**
   （文件 533 → 537 行；以仓库内路径开头的证据行 **255** 未动；`sandbox_tested` 为真的仍 **0** 条）。
-  那三个数是**那一轮自己的读数**，其后各轮只增不减 —— 本段下面「能力矩阵」那一路的 2026-09-28 实测才是现状。
   发布面这一轮也真的重跑了：`build.bat` 九步端到端 `BUILD_BAT_EXIT=0`（`logs/s75_a5_build_bat_full.txt`，
   `[1/9]` 515 项、`[4/9]` 92 段 / 858 passed / 0 failed，跑完 `git status --porcelain` 逐行不变、未跟踪新产物 0 份），
   安装包按当轮代码重建（`logs/s74_a5_package_rebuild.txt`：wheel 与 CLI 二进制两件都重跑，契约措辞在新 exe 里
@@ -475,32 +553,25 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 （13 个单标的 + 4 个只被 `backtest multi-builtin` 接受的套利 kind）、`git ls-files deploy` 里 44 份
 `*example*.json` 配置（顶层 JSON 模板 52 份，逐份由 `crates/qx-cli/src/tests/deploy_template_coverage.rs`
 按登记表点名的生产读法真读一遍，15 类读取器各自还要拒一份坏内容）、
-`python tools/check_architecture.py` 在那一轮 515 项不变量全绿（`logs/s69_a5_full_gate_after_hardening.txt`）。
-其中那条全仓地板值得单独改口：门禁打印的那一行是**「全仓行为用例不少于 1024 条」**（`WORKSPACE_TEST_FLOOR`，
-递归 `crates/*/src` 与 `crates/*/tests`、正则 `^[ \t]*#\[test\]$`），上一版把它写成"不得低于磁盘实测的 866" ——
-866 是 s69 那一轮的磁盘实测值，两条线合流后按磁盘重测得 1028、地板取整留余量到 1024，
-2026-09-28 的 R7-h 轮复测磁盘 **1035** 条（按 crate 点名：qx-cli=325、qx-xingban=94、qx-core=83、qx-runtime=78、
-qx-storage=75，其余 17 个 crate 合计 380）。
+`python tools/check_architecture.py` 515 项不变量全绿（`logs/s69_a5_full_gate_after_hardening.txt`；其中含一条全仓地板：
+`crates/*/src` 与 `crates/*/tests` 递归的 `#[test]` 总数不得低于磁盘实测的 866）。
 
-能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，下面这组是 **2026-09-30 的 V13 第 8 轮**实测；
-上面「当前状态」那三条里的 533→537 行、255 证据行是**各自那一轮**的读数，这份台账此后只增不减）：
+能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，下面这组是**文档轮那一次**的读数；V13 R1-A5
+之后 limitation 那一路多了 5 条逐字段条目、以仓库内路径开头的 255 行未动，见上面「当前状态」第一条）：
 缩进两格的条目 21 个，
-其中带 `implementation` 键的能力块 19 个、410 条证据行（其中 337 行以仓库内路径开头 —— 前缀取门禁自己那一颗常量 `CAP_LEDGER_PATH_PREFIX`，本轮把
-`.github/` 补进这组前缀，并把 `capabilities_check` 里那份手抄的同一条清单删掉、改成从这颗常量派生，于是"数多少行"与"核不核存在"用的是同一把尺；
-一行里每个路径 token 逐个核对存在性，不止行首。另有 73 行不以那组前缀开头，其中 39 行行内仍点到带前缀的路径、被那颗逐 token 的核对覆盖，
-剩下 34 行今天没有任何判据核对它们指向的东西在不在场，这一格登记在台账的 `ledger_evidence_paths_have_partial_prefix_coverage`）、153 条 limitation，文件 738 行。
-**19 个能力块里 16 个同时满足 `implementation` 与 `code_tested`；`sandbox_tested` 与
-`production_approved` 无一为真**（这两档在名册里实测为 0 / 0 颗 `true`）；
+其中带 `implementation` 键的能力块 19 个、287 条证据行（其中 255 行以仓库内路径开头，逐行经门禁核对
+存在性）、76 条 limitation。**19 个能力块中 16 个同时满足
+`implementation` 与 `code_tested`；`sandbox_tested` 与 `production_approved` 无一为真**；
 `postgres` / `nats` / `broker_gateway` 三条的 `implementation` 都不是 `true`（前两条是 `optional`，
-最后一条写的是 `unavailable_without_vendor_protocol`），只有 feature 矩阵或接口占位。
+最后一条写着"没有厂商协议就没有实现"），只有 feature 矩阵或接口占位。
 因此可宣称的边界是：
 **本机可重放的确定性回测、Paper 闭环、以及 CCXT/Binance 的代码级契约** —— 不是"已对接真实账户"。
 整树测试（带 Python 解释器，`QX_PYTHON` 指向可用的 CPython）`cargo test --workspace` 92 个
 `test result:` 段全 ok、858 passed、0 failed（那 21 段 Doc-tests 全 ok、0 passed，仓库没有 doctest；
 单独 `cargo test --workspace --doc` 复跑同样 21 段全 ok；V13 R1-A5 那轮改的是契约与文档，Rust 一行未动，
 其整跑走 `--all-targets`（不含 doctest 那 21 段）= 72 段 / 同样 858 passed / 0 failed，
-`logs/s71_a5_cargo_workspace.txt`）。磁盘在册的 `#[test]` 是 866 条、`test result:` 报 858 条，都是**那一次**的两个数
-（现状口径见上面那条地板：磁盘 1035 条 / 地板 1024），866 − 858 = 8 条，与 V13 §4 L4 第 1 条点名的那批 feature 门后用例（`nats` / `sqlite`）数目相符 ——
+`logs/s71_a5_cargo_workspace.txt`）。磁盘在册的 `#[test]` 是 866 条，
+866 − 858 = 8 条，与 V13 §4 L4 第 1 条点名的那批 feature 门后用例（`nats` / `sqlite`）数目相符 ——
 本轮没有逐名复算，#144 仍开着；不带 `QX_PYTHON` 时那 2 条 Python 桥用例必红（本机事实，见 V12 §15.4），
 而 `build.bat` 自 V12 §19 起会把 `[0/9]` 探测出的解释器真的导出成 `QX_PYTHON`，所以整脚本能一次跑通：
 九步全过、`BUILD_BAT_EXIT=0`（§19.1 #133 修的是解释器交接，§22 #139 加的是第 `[1/9]` 道架构门禁）。
@@ -515,11 +586,11 @@ qx-storage=75，其余 17 个 crate 合计 380）。
 
 | 链路 | 已落地且有本地测试证据 | 明确未收口（不得当作已完成） |
 |---|---|---|
-| 回测 | Bar 单标的链（撮合/成本/延迟/保证金四模型可配）、深度 `backtest book`（`--fill-tier` 只认 `l1`/`l2`：前者走 Tick 且要求帧内每档单档盘口，多一档即拒；后者走订单簿，按 `L2L3` 吃掉帧里带的全部深度，没有第三个 `l3` 旗标）、双腿 `multi-builtin`（组合收益按两条腿的钱合算，并落两腿期初本金与期末权益）、`fast-backtest` 并行、Bar 与深度链各写四份同前缀产物与可重算的输入指纹、事件重放结论；账户本金可经 `strategy.initial_cash_raw` 声明，三条单腿链各印一行生效本金与来源，摘要 v4 落 `account` 块，非法声明与非正本金当场报错（V11 Q71/Q72）；一份 runtime 里回测侧与 Paper 侧的本金必须同号，否则三条链与两个 Paper 入账入口都在任何副作用之前拒掉（V12 R3）；`report`/`status` 的读侧改成 `Option` 语义：缺键印 `absent`、声明过的 0 仍印 0，首行报产物世代与三块的有无，复核结论独占 `input_verified=` 一格（V12 R1）；四个信号旋钮按 kind 收成唯一一张表（`BuiltinStrategyKind::signal_knobs()`），内核需求、运行时体检、stdout 播报与摘要的 `signal{knobs,declared_unused}` 全问它，读者第一次能从产物里区分"没配"与"配了但不生效"（V12 R4 / #102）；`run_manifest.json` 的兄弟路径、`data_fingerprint` 与产物身份有了真正的生产读者，缺失或被篡改都拒（V12 R4-i） | 被 git 跟踪的 16 份 blessed 摘要停在 `schema_version: 1`（当前代码落 v4，缺 `input` 与 `account` 两块），且没有任何用例校验这些跟踪产物；重 bless 与"摘要世代写进文件名"的取舍仍未拍板（V11 §27.5 / §34.5 第 3 条，任务 #53）；多腿链仍无 `[X · Account]` 播报，因为它同时是四条链里最长的一条（V11 Q72 §34.5 第 1、4 条）；`multi-builtin` 只在 `--root` 点名时写 1 份归因产物，没有 Bar/深度链那四份同前缀产物、也没有 RunManifest；清单外的旋钮**不 fail-closed**、照常跑只列进 `declared_unused`，"配了但不生效"只有看播报与产物才看得见（V12 §14.2 的偏离记录）；集成用例把产物写进仓库 `deploy/data/**/runs/`（跑完 72 条未跟踪产物），#82 未修 |
+| 回测 | Bar 单标的链（撮合/成本/延迟/保证金四模型可配）、深度 `backtest book`（`--fill-tier` 只认 `l1`/`l2`：前者走 Tick 且要求帧内每档单档盘口，多一档即拒；后者走订单簿，按 `L2L3` 吃掉帧里带的全部深度，没有第三个 `l3` 旗标）、双腿 `multi-builtin`（组合收益按两条腿的钱合算，并落两腿期初本金与期末权益）、`fast-backtest` 并行、Bar 与深度链各写四份同前缀产物与可重算的输入指纹、事件重放结论；账户本金可经 `strategy.initial_cash_raw` 声明，三条单腿链各印一行生效本金与来源，摘要 v4 落 `account` 块，非法声明与非正本金当场报错（V11 Q71/Q72）；一份 runtime 里回测侧与 Paper 侧的本金必须同号，否则三条链与两个 Paper 入账入口都在任何副作用之前拒掉（V12 R3）；`report`/`status` 的读侧改成 `Option` 语义：缺键印 `absent`、声明过的 0 仍印 0，首行报产物世代与三块的有无，复核结论独占 `input_verified=` 一格（V12 R1）；四个信号旋钮按 kind 收成唯一一张表（`BuiltinStrategyKind::signal_knobs()`），内核需求、运行时体检、stdout 播报与摘要的 `signal{knobs,declared_unused}` 全问它，读者第一次能从产物里区分"没配"与"配了但不生效"（V12 R4 / #102）；`run_manifest.json` 的兄弟路径、`data_fingerprint` 与产物身份有了真正的生产读者，缺失或被篡改都拒（V12 R4-i） | 被 git 跟踪的 16 份 blessed 摘要停在 `schema_version: 1`（当前代码落 v4，缺 `input` 与 `account` 两块），且没有任何用例校验这些跟踪产物；重 bless 与"摘要世代写进文件名"的取舍仍未拍板（V11 §27.5 / §34.5 第 3 条，任务 #53）；多腿链仍无 `[X · Account]` 播报，因为它同时是四条链里最长的一条（V11 Q72 §34.5 第 1、4 条）；`multi-builtin` 只在 `--root` 点名时写 1 份归因产物，没有 Bar/深度链那四份同前缀产物、也没有 RunManifest；清单外的旋钮**不 fail-closed**、照常跑只列进 `declared_unused`，"配了但不生效"只有看播报与产物才看得见（V12 §14.2 的偏离记录）；集成用例仍会把产物写进启动目录口径下的 `data/**/runs/`（本轮终树整跑为 0 条，去掉 init 绝对化那一跑立刻写出 26 条未跟踪产物），#82 未修；被 git 跟踪的 `deploy/data/**` 自 #255 起不再被写脏 |
 | 交易 · Paper | 控制面→队列→成交→Ledger、三条入账入口共用精度闸门、拒单与拒绝原因写进产物、崩溃窗口恢复；账户快照的八个钱标量全部区分"算过"与"没算"，权益在任一持仓缺标记价时报 `null` 而不是剩余现金（V11 Q67/Q68/Q70）；七个会提交/排队订单的入口（含 `serve` 与 `strategy-worker`）一律在第一个语句拒 A 股段（V11 Q65 + V12 R1）；账户快照的契约版本真的认版本 —— 只认 `schema_version=1`，且版本判定排在字段解析之前（V12 R2）；带订单的快照写得出也读得回 —— 四张键表（`positions`/`orders`/`fills`/`transfers`）整份交给 `from_json` 认的那一份 serde 编码（`json_table_entries` / `json_position_entries`），键一律是带引号的字符串，`Side`/`OrderStatus` 印变体名而不是数字码，未知变体名当场拒（V12 R4 / TX5，与 V11 R14/R15/R18 同一收口点） | 本地 Ledger 拼出的持仓行没有浮盈/保证金生产者，恒定报 `null`；账户级五个钱字段同样无来源；权益报 `null` 时读侧看不出缺的是哪条标记价（V11 §32.5 第 5 条）；`fills`/`transfers` 行只编码数值与已同形的字符串，因此没有读侧折算层，也就没有"未知码"可拒（V12 §14.5 记为口径而非缺陷） |
-| 交易 · 实盘 | Binance Spot 直连与公共 CCXT 的提交/回报/对账代码路径，缺凭据即退出码 3 fail closed；一轮 CCXT 对账的两半发现（远端孤单 / 本地无远端结果）经同一份清单同时落到事实流、持久报告与健康判定（V11 Q69）；两条用户流的重连都有连续失败预算 —— Binance 按累计次数计改为 `delivered > 0 && !callback_failed` 才清零并统一走 `qx-core::retry`，CCXT Pro `watch_orders` 从"固定间隔无限重连"补上 500ms 起 / 8s 封顶 / 10 次连续（V12 R4-b/R4-c） | 零真实账户往返：`sandbox_tested=false`；预算与退避只在进程内证过，网络真断时的重连语义无外部记录；Binance 对账链从不查询持仓/资金费/账单，报告只能报 `null`（取数器仍缺，V11 §31.5 第 5 条）；CCXT 资金费快照缺 `timestamp_ms` 时仍兜 0（§31.5 第 1 条）；远端孤单挂单只有报告与健康两面，没有可落事实流的本地句柄（§31.5 第 4 条，口径而非缺陷）；衍生品无直连（只经 CCXT） |
+| 交易 · 实盘 | Binance Spot 直连与公共 CCXT 的提交/回报/对账代码路径，缺凭据即退出码 3 fail closed；一轮 CCXT 对账的两半发现（远端孤单 / 本地无远端结果）经同一份清单同时落到事实流、持久报告与健康判定（V11 Q69）；两条用户流的重连都有连续失败预算 —— Binance 按累计次数计改为 `delivered > 0` 清零并统一走 `qx-core::retry`，CCXT Pro `watch_orders` 从"固定间隔无限重连"补上 500ms 起 / 8s 封顶 / 10 次连续（V12 R4-b/R4-c） | 零真实账户往返：`sandbox_tested=false`；预算与退避只在进程内证过，网络真断时的重连语义无外部记录；Binance 对账链从不查询持仓/资金费/账单，报告只能报 `null`（取数器仍缺，V11 §31.5 第 5 条）；CCXT 资金费快照缺 `timestamp_ms` 时仍兜 0（§31.5 第 1 条）；远端孤单挂单只有报告与健康两面，没有可落事实流的本地句柄（§31.5 第 4 条，口径而非缺陷）；衍生品无直连（只经 CCXT） |
 | 数据 | 四级质量门、PIT `as_of()` 可见性、DatasetBundle 与组件指纹、A 股公司行为台账与八条交易制度；台账的两侧线格式（信封 5 键、动作 35 键、16 个规范动作名、`*_raw` 的定点单位、ISO 日期的空格/`T` 两种分隔）钉在 `python/tests/fixtures/ashare_actions_cross_check.*` 这一份共读夹具上：Python 侧在进程内复算 payload、期望值与除权参考价，Rust 侧读同一格而不是各自抄一份，除权除息日的锚由已装载的公司行为折算（V13 R1-A1/A2，口径见 [`deploy/README.md`](deploy/README.md) 的"公司行为 v1 线格式"一节） | 外部数据源正确性只能按供应商逐个验收，本机不可证明 —— 上面那份夹具是本机自造的对照样本，不是 akshare/交易所落下来的记录 |
-| 运行时 | worker 监督与停机阶梯、共享文件系统租约/fencing token、outbox relay（sqlite/postgres/nats 四种 feature 组合可编译）；停机阶梯接上了生产者 —— `Ctrl+C`/`SIGTERM` 真的落到 `RuntimeSupervisor::request_shutdown`，等到 `shutdown_timeout_ms` 报 `StopTimedOut` 而不是无限等（V12 R4-a）；只读投影的契约贯通同轮收口：`/account/snapshot/envelope` 的 `data` 复用唯一编码器、与本进程公布的 schema 逐字段等值，schema 正文改成 `include_str!` 单一来源，两条事件读链的 `after` 统一为严格大于（V12 R4-h/A2/R4-g） | PostgreSQL/NATS 无生产批准；券商柜台无供应商协议；停机信号投递本身没有用例 —— 用例钉住的是阶梯与预算，不是真把 `SIGTERM` 发给进程（Windows 下也没有可投递的 `SIGTERM`，V12 §14.8）；`supervise` 入口自带的那颗 `ShutdownToken` 没有写者，父进程停得下来靠的是 `supervise_workers` 读的 `shutdown_signalled()`（V12 W8） |
+| 运行时 | worker 监督与停机阶梯、共享文件系统租约/fencing token、outbox relay（sqlite/postgres/nats 四种 feature 组合可编译）；停机阶梯接上了生产者 —— `Ctrl+C`/`SIGTERM` 真的落到 `RuntimeSupervisor::request_shutdown`，等到 `shutdown_timeout_ms` 报 `StopTimedOut` 而不是无限等（V12 R4-a）；只读投影的契约贯通同轮收口：`/account/snapshot/envelope` 的 `data` 复用唯一编码器、与本进程公布的 schema 逐字段等值，schema 正文改成 `include_str!` 单一来源，两条事件读链的 `after` 统一为严格大于（V12 R4-h/A2/R4-g） | PostgreSQL/NATS 无生产批准；券商柜台无供应商协议；停机信号投递本身没有用例 —— 用例钉住的是阶梯与预算，不是真把 `SIGTERM` 发给进程（Windows 下也没有可投递的 `SIGTERM`，V12 §14.8） |
 
 跨语言策略传输默认兼容 JSONL，也支持 `transport: "framed_json"` 的 QXSF 二进制分帧（版本、序号、长度上限、CRC32）；`transport: "shared_memory_json"` 会将同一 QXSF 帧放入双向固定槽位 SPSC mmap ring；`transport: "shared_memory_columnar"` 会将 Bar 历史编码为 QXCB 固定宽度列后放入同一 ring，适合减少行情数值 JSON 解析。三种传输的载荷由同一份 `schemas/strategy_api_v1.schema.json` 描述：`required` 名单按 Rust 非 `#[serde(default)]` 字段逐项对齐，定点 `raw` 值只走 JSON 整数，未知键两侧同拒；一条已知差异写进 schema 的 `description` 而不是靠改口径掩盖 —— 大写枚举名过得了 Rust 运行时、过不了 schema。示例：
 
@@ -551,16 +622,8 @@ Paper 主链路还提供 `paper-e2e` 统一验收入口，按 Scheduler→Strate
 
 三条容易被读过头的边界，写在这里而不是散落在阶段表里：
 
-- **插件只有启动期装配，签名只接到了一半**：`qx-plugin` 做 manifest schema/哈希校验、扩展点贡献声明、
-  独占冲突检测与依赖求解；`qx verify` 注册的清单用 `sign()` 打 `fnv1a:` 自检签名，这一条是接到的。
-  **Ed25519 未接线**：`sign_ed25519`（`crates/qx-plugin/src/lib.rs:194`）与 `Manifest::validate` 里的
-  `ed25519:` 校验分支在全部 crate 的生产文本里零调用点，仓里没有第二个生产者，所以"卯眼清单可离线验证
-  发布签名"今天不成立 —— 也别与 C ABI 那条**接到的** Ed25519 混读：动态库字节的 detached 签名由
-  `qx-strategy` 校验、production 配置强制公钥与签名成对填写。静态装配计划不在这份清单里：
-  `bootstrap_plan` 与 `Profile::assemble` 已连同实现删除（`crates/qx-plugin/src/lib.rs:15` 的模块注释记着这一格），启动顺序只由 `Registry::resolve_order` 的依赖拓扑单点决定。两颗生命周期超时也一样：
-  `healthcheck_timeout_ms` 与 `shutdown_timeout_ms` 是未接线的声明——只被 `validate` 问非 0、被
-  `canonical_hash` 计入，仓里没有插件宿主把它们换算成等待（区别于 `qx-orchestrator` 那份同名配置，它从 V11 L4
-  起真的界住了收尾）。运行时动态加载与热替换则没有实现，内核组件由编译期决定。
+- **插件只有启动期装配**：`qx-plugin` 做 manifest schema/哈希校验与 Ed25519 签名验证、扩展点贡献声明、
+  独占冲突检测、依赖求解并产出静态装配计划；运行时动态加载与热替换**没有实现**，内核组件由编译期决定。
 - **回测与实盘同源的是规则，不是撮合**：风控、费用、延迟、保证金四模型与事件归约同源且有门禁；
   撮合按数据档位分内核（Bar / Tick / 订单簿三套回测内核，Paper 成交由 `PaperVenue::on_quote` 首档 touch 产生），
   与回测簿内核**不是**同一台撮合机 —— 读到"同一内核"时不要把"同一撮合"一起读进去。

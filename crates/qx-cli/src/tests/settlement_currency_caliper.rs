@@ -232,7 +232,7 @@ fn conflicting_settlement_declarations_on_one_account_log_fail_closed() {
         "投影源不得带着猜测出来的账簿口径启动"
     );
     assert!(
-        open_account_pipeline(&config, &data_dir, &log_name)
+        open_account_pipeline(&config, &data_dir, &log_name, OutboxRecovery::ReadOnly,)
             .err()
             .is_some(),
         "读模型打开账户日志必须失败，而不是读到半本账"

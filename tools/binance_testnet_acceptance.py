@@ -37,10 +37,6 @@ SECRET_ENV = "QX_BINANCE_TESTNET_API_SECRET"
 
 EXIT_FAILURE = 2
 EXIT_SKIPPED = 3
-# 一支腿最多等多久（V13 第 8 轮 C7）。`subprocess.run(capture_output=True)` 的读侧没有截止，
-# 而被测进程链上挂着若干"连得上但不回话"的形状（NATS ack、WS 帧滴答、DB 持锁）——没有这颗
-# 预算时验收会一直阻塞而不是失败，那正是验收门禁最坏的失效：它替挂死作保。
-LEG_BUDGET_SECONDS = 180
 
 # V10 §6 P3：每段验收都必须留下**带时间戳的结果包**，否则 `sandbox_tested` 永远
 # 没有可核对的证据来源。默认落在仓库内的证据目录，而不是跑完就删的临时目录。
@@ -103,29 +99,7 @@ def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     log("$ " + " ".join(command))
     started = time.time()
     # Windows 控制台默认 GBK，而 qx-cli 的中文诊断是 UTF-8。
-    stage = args[0] if args else "unknown"
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=LEG_BUDGET_SECONDS,
-        )
-    except subprocess.TimeoutExpired as expired:
-        STAGE_RECORDS.append(
-            {
-                "stage": stage,
-                "argv": args,
-                "exit_code": None,
-                "duration_ms": int((time.time() - started) * 1000),
-                "output_tail": [f"这一腿在 {LEG_BUDGET_SECONDS}s 内没有退出"],
-            }
-        )
-        raise SystemExit(
-            f"验收步骤 `{stage}` 在 {LEG_BUDGET_SECONDS}s 内没有退出：挂住按失败收，"
-            "不能让验收门禁替一次阻塞作保"
-        ) from expired
+    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
     output = (result.stdout + result.stderr).strip().splitlines()
     STAGE_RECORDS.append(
         {

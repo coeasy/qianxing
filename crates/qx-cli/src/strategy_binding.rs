@@ -204,7 +204,7 @@ pub(crate) fn strategy_current_qty_for(
     } else {
         return Ok(0);
     };
-    let pipeline = open_account_pipeline(config, root, &log_name)
+    let pipeline = open_account_pipeline(config, root, &log_name, OutboxRecovery::ReadOnly)
         .map_err(|error| format!("恢复 Strategy 账户 EventLog 失败: {error}"))?;
     Ok(pipeline
         .ledger()
@@ -269,7 +269,7 @@ pub(crate) fn build_strategy_contract_input(
             risk_state,
         };
         context
-            .validate(now, config.is_production())
+            .validate(now, config.environment.eq_ignore_ascii_case("production"))
             .map_err(|error| format!("Python StrategyContext 校验失败: {error}"))?;
         let bars = load_strategy_contract_bars(root, config, instrument, research_as_of)?
             .map(|(bars, _, _)| bars);
@@ -305,4 +305,51 @@ pub(crate) fn build_strategy_contract_input(
     };
     input.validate()?;
     Ok(input)
+}
+
+/// 五家策略后端的选择梯：按声明的后端算出目标仓位，走契约后端时连同契约输出一起带回。
+///
+/// 顺序就是生效顺序：`builtin_strategy` > `python_module`（常驻子进程优先，没有就冷启动一次）>
+/// 外部可执行 > C ABI 动态库 > 配置直给目标仓位。worker 侧新增一档只能加在这里，
+/// 不允许在调用点再写一份 if-else 链（V13 R2 第十二遍 #190 抽出，纯搬运不改判定）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn evaluate_strategy_contract(
+    root: &Path,
+    config: &RuntimeConfig,
+    instrument: &InstrumentId,
+    run_id: u64,
+    now: u64,
+    python_client: &mut Option<PythonStrategyClient>,
+    external_client: &mut Option<StrategyProcessClient>,
+    native_client: &mut Option<DynamicCAbiStrategy>,
+    native_initialized: &mut bool,
+) -> Result<(i128, Option<StrategyContractOutput>), String> {
+    let request_id = run_id.to_string();
+    Ok(if config.strategy.builtin_strategy.is_some() {
+        let output = invoke_builtin_strategy(root, config, instrument, &request_id, now)?;
+        (output.target_qty, Some(output))
+    } else if let Some(module) = config.strategy.python_module.as_deref() {
+        let input = build_strategy_contract_input(root, config, instrument, &request_id, now)?;
+        let output = if let Some(client) = python_client.as_mut() {
+            invoke_python_strategy_with_client(client, &input)?
+        } else {
+            invoke_python_strategy(module, &input)?
+        };
+        (output.target_qty, Some(output))
+    } else if let Some(client) = external_client.as_mut() {
+        let input = build_strategy_contract_input(root, config, instrument, &request_id, now)?;
+        let output = client.request(&input)?;
+        (output.target_qty, Some(output))
+    } else if let Some(client) = native_client.as_mut() {
+        let input = build_strategy_contract_input(root, config, instrument, &request_id, now)?;
+        let context = native_strategy_context(&config.strategy, &input);
+        let event = qx_strategy::MarketEvent::Timer {
+            name: format!("job:{run_id}"),
+            ts: now,
+        };
+        let output = invoke_c_abi_strategy(client, native_initialized, &context, &input, &event)?;
+        (output.target_qty, Some(output))
+    } else {
+        (strategy_target_qty(root, config, instrument, now)?, None)
+    })
 }

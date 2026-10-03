@@ -5,78 +5,13 @@
 
 use super::*;
 
+mod pipeline_storage;
+
+pub(crate) use pipeline_storage::PipelineStorage;
+
 pub(crate) fn read_runtime_config(path: &Path) -> Result<RuntimeConfig, String> {
-    let payload = std::fs::read_to_string(path)
-        .map_err(|error| format!("读取运行时配置失败 {}: {error}", path.display()))?;
+    let payload = read_example_json(path, "运行时配置")?;
     RuntimeConfig::from_json(&payload)
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct PipelineStorage {
-    pub(crate) root: PathBuf,
-    segment_events: Option<usize>,
-    postgres_dsn: Option<String>,
-    sqlite_db: Option<PathBuf>,
-    #[cfg(feature = "postgres")]
-    postgres_pool_size: usize,
-}
-
-impl PipelineStorage {
-    pub(crate) fn from_config(config: &RuntimeConfig) -> Result<Self, String> {
-        Ok(Self {
-            root: Path::new(&config.storage.data_dir).to_path_buf(),
-            segment_events: config.storage.event_log_segment_events,
-            postgres_dsn: configured_postgres_dsn(config)?,
-            sqlite_db: configured_sqlite_event_log(config)?,
-            #[cfg(feature = "postgres")]
-            postgres_pool_size: config.storage.postgres_pool_size,
-        })
-    }
-
-    pub(crate) fn open(
-        &self,
-        log_name: impl Into<String>,
-        currency: impl Into<String>,
-    ) -> Result<LiveEventPipeline, String> {
-        if let Some(dsn) = self.postgres_dsn.as_deref() {
-            #[cfg(not(feature = "postgres"))]
-            {
-                let _ = dsn;
-                return Err(
-                    "当前 qx-cli 未启用 postgres feature，无法打开 PostgreSQL EventLog".into(),
-                );
-            }
-            #[cfg(feature = "postgres")]
-            {
-                return LiveEventPipeline::open_postgres_with_pool_size(
-                    dsn,
-                    self.postgres_pool_size,
-                    log_name,
-                    currency,
-                )
-                .map_err(|error| format!("打开 PostgreSQL EventLog 失败: {error:?}"));
-            }
-        }
-        if let Some(db) = self.sqlite_db.as_deref() {
-            #[cfg(not(feature = "sqlite"))]
-            {
-                let _ = db;
-                return Err("当前 qx-cli 未启用 sqlite feature，无法打开 SQLite EventLog".into());
-            }
-            #[cfg(feature = "sqlite")]
-            {
-                return LiveEventPipeline::open_sqlite(db, log_name, currency)
-                    .map_err(|error| format!("打开 SQLite EventLog 失败: {error:?}"));
-            }
-        }
-        LiveEventPipeline::open_configured(
-            self.root.clone(),
-            log_name,
-            currency,
-            self.segment_events,
-        )
-        .map_err(|error| format!("打开运行时 EventLog 失败: {error:?}"))
-    }
 }
 
 pub(crate) fn configured_sqlite_event_log(
@@ -185,9 +120,6 @@ pub(crate) fn execution_cost_binding_from_config(
     config: &RuntimeConfig,
     runtime_config_path: Option<&Path>,
 ) -> Result<ExecutionCostBinding, String> {
-    if let Some(problem) = unapplied_cost_rules_declaration(config, runtime_config_path) {
-        return Err(problem);
-    }
     let Some(configured) = config.strategy.cost_rules_path.as_deref() else {
         return Ok(ExecutionCostBinding {
             from_runtime_config: runtime_config_path.is_some(),
@@ -279,25 +211,33 @@ pub(crate) fn open_runtime_pipeline(
     root: &Path,
     log_name: impl Into<String>,
     currency: impl Into<String>,
+    recovery: OutboxRecovery,
 ) -> Result<LiveEventPipeline, String> {
     let storage = PipelineStorage::from_config(config)?;
     let mut storage = storage;
     storage.root = root.to_path_buf();
-    storage.open(log_name, currency)
+    storage.open_with(log_name, currency, recovery)
 }
 
-/// 读模型打开账户级 EventLog 的统一入口：记账币种跟着日志身份走，打开之后
-/// 再按 [`LiveEventPipeline::settlement_currency`] 回读，调用处不再各写一本账。
+/// 打开账户级 EventLog 的统一入口：记账币种跟着日志身份走，打开之后再按
+/// [`LiveEventPipeline::settlement_currency`] 回读，调用处不再各写一本账。
+///
+/// `recovery` 由调用处声明自己是哪一面：只读的读模型（账户快照、Ledger 读模型、
+/// StrategyContext）给 [`OutboxRecovery::ReadOnly`]，会追加事实的 worker/提交路径给
+/// [`OutboxRecovery::ReprojectOnOpen`]。这个区分过去只写在注释里，于是每个 GET 都在
+/// 补投影整本日志——一次读请求变成一次写（第十七遍 #169）。
 pub(crate) fn open_account_pipeline(
     config: &RuntimeConfig,
     root: &Path,
     log_name: &str,
+    recovery: OutboxRecovery,
 ) -> Result<LiveEventPipeline, String> {
     open_runtime_pipeline(
         config,
         root,
         log_name.to_string(),
         settlement_currency_for_log(config, log_name)?,
+        recovery,
     )
 }
 
@@ -354,7 +294,9 @@ pub(crate) fn runtime_timestamp_ms() -> u64 {
 }
 
 /// 租约域时钟：epoch 秒。租约（`JobLease`/`ControlCommandLease`/outbox）、`JobSpec.timeout_seconds`
-/// 与 `JobRun` 的三个时间戳全按秒比较，喂毫秒会让 30 秒租约在 30 毫秒后"过期"；跨域只在这里换算一次。
+/// 与 `JobRun` 的 `started_ts`/`deadline_ts`/`next_retry_ts` 全按秒相加比较，而运行时唯一的墙钟是毫秒：
+/// 直接喂毫秒会让 30 秒租约在 30 毫秒后"过期"，作业还在跑就被别的 worker 抢走、收尾 `ack_at` 变
+/// `LeaseExpired`、`deadline_ts` 在启动瞬间就已超时。跨进租约域的调用点只在这里换算一次。
 pub(crate) fn lease_clock(timestamp_ms: u64) -> u64 {
     timestamp_ms / 1_000
 }
@@ -363,12 +305,10 @@ pub(crate) fn worker_metrics_dir(config: &RuntimeConfig) -> PathBuf {
     Path::new(&config.storage.data_dir).join("worker-metrics")
 }
 
-#[cfg(feature = "nats")]
 pub(crate) fn worker_metrics_path(config: &RuntimeConfig, worker_id: &str) -> PathBuf {
     worker_metrics_dir(config).join(format!("{worker_id}.prom"))
 }
 
-#[cfg(feature = "nats")]
 pub(crate) fn write_worker_metrics(path: &Path, body: &str) -> Result<(), String> {
     let parent = path
         .parent()

@@ -43,10 +43,13 @@ A 股专用撮合规则（T+1、涨跌停、100 股一手、费用、停牌）
 安装方式：
 
 ```powershell
-pip install -e python
-pip install -e "python[a-share-akshare]"     # 通用首选
-pip install -e "python[a-share-baostock]"    # 日线/分钟线备用
-pip install -e "python[a-share-easy-tdx]"    # 通达信在线或本地数据
+# 装了 wheel 的用户：补带数据源的 extra 即可（extra 名与源码安装派完全一致，#278）
+pip install "qianxing-bridge[a-share-akshare]"     # 通用首选
+pip install "qianxing-bridge[a-share-baostock]"    # 日线/分钟线备用
+pip install "qianxing-bridge[a-share-easy-tdx]"    # 通达信在线或本地数据
+# 离线无索引：先按 README 装本地 wheel，再对同一个 extra 用 uv pip install --offline
+# 从源码仓库根目录跑：等价的 editable 写法
+pip install -e "python[a-share-akshare]"
 ```
 
 示例：

@@ -1,11 +1,11 @@
 //! # qx-core — 牵星内核
 //!
-//! 确定性内核：身份、定点数值、订单状态机、事件溯源与重放校验。
+//! 确定性内核：时钟、身份、定点数值、订单状态机、事件溯源与重放校验。
 //!
 //! 设计底线（改动前请先读）：
 //! 1. **热路径不用浮点**：所有金额/价格/数量走 128-bit 定点 [`Fixed`]。
-//! 2. **时间轴由推进方决定**：回测按 bar 序列推进（`qx-xingban`），实盘按到达顺序把交易所/
-//!    进程毫秒戳推进 `EventLog`（`qx-runtime/src/pipeline.rs`）。内核里没有时钟对象。
+//! 2. **不用系统时间**：回测只认输入数据自带的时间戳，时间轴由 `qx-data` 的排序与
+//!    「严格递增」闸门决定（见 [`clock`] 模块说明），内核不提供虚拟时钟对象。
 //! 3. **不用无序容器做顺序敏感迭代**：`HashMap` 只用于查找，遍历一律排序。
 //! 4. **事件即事实**：状态由事件日志重建，任何旁路写入都是 bug。
 //!    因果序（`(ts, prio, seq)` 全序）由 [`EventLog::validate`] 单点裁决；
@@ -16,7 +16,6 @@ pub mod clock;
 pub mod error;
 pub mod event;
 pub mod fee;
-pub mod file_lock;
 pub mod fill_apply;
 pub mod identity;
 pub mod ledger;
@@ -37,10 +36,6 @@ pub use self::event::{
 pub use self::fee::{
     bp_amount, notional, AShareFeeModel, FeeModel, MakerTakerFeeModel, ZeroFeeModel,
     DEFAULT_MAKER_BP, DEFAULT_TAKER_BP,
-};
-pub use self::file_lock::{
-    decide_lock, lock_age, lock_contention_message, FileLock, LockDecision, LockError, LockPolicy,
-    DEFAULT_LOCK_STALE_AFTER,
 };
 pub use self::fill_apply::{apply_fill_to_books, apply_ledger_fill, FillTerms, OrderFillBook};
 pub use self::identity::{

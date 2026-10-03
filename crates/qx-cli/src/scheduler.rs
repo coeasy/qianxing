@@ -45,7 +45,7 @@ pub(crate) fn scheduler_manifest(
 ) -> qx_core::RunManifest {
     qx_core::RunManifest {
         run_id: format!("{worker_id}-{trading_day}-{now}"),
-        code_commit: env!("QX_GIT_COMMIT").into(),
+        code_commit: build_identity::BUILD_REVISION.into(),
         config_hash: "runtime-scheduler-v1".into(),
         data_fingerprint: format!("scheduler:{trading_day}"),
         input_components: BTreeMap::new(),
@@ -59,7 +59,7 @@ pub(crate) fn scheduler_manifest(
         model_fingerprint: "scheduler-dispatch".into(),
         input_event_hash: format!("input-{now}"),
         output_event_hash: format!("output-{now}"),
-        runtime_version: env!("CARGO_PKG_VERSION").into(),
+        runtime_version: build_identity::RUNTIME_VERSION.into(),
     }
 }
 
@@ -69,7 +69,9 @@ pub(crate) const LIVE_STRATEGY_TIMEOUT_SECONDS: u64 = 60;
 /// 实时策略 worker 每一根闭合 Bar 对应的作业规格与运行记录。
 ///
 /// `idempotency_key` 就是 BarFrame 指纹：同一根闭合 Bar 重放不会二次下单；
-/// `dry_run` 只按环境的 `paper` 判定，与 worker 角色无关。
+/// `dry_run` 只按环境的 `paper` 判定，与 worker 角色无关。能走到这里的写法已由
+/// `RuntimeConfig::validate` 的闭合名单 `ENVIRONMENT_VOCAB` 收口，四种写法各自的提交臂
+/// 由 `tests/environment_submit_arm_table.rs` 钉住。
 pub(crate) fn live_strategy_job(
     strategy: &StrategyRuntimeConfig,
     worker_id: &str,
@@ -86,6 +88,8 @@ pub(crate) fn live_strategy_job(
         trigger: Trigger::Manual,
         window: JobWindow::Any,
         depends_on: Vec::new(),
+        input_refs: vec![format!("barframe:{data_fingerprint:016x}")],
+        output_refs: vec!["strategy-submit-order".into()],
         timeout_seconds: LIVE_STRATEGY_TIMEOUT_SECONDS,
         retry_policy: RetryPolicy::default(),
         concurrency_key: format!(
@@ -93,6 +97,7 @@ pub(crate) fn live_strategy_job(
             strategy.instrument.as_deref().unwrap_or("")
         ),
         idempotency_key: format!("barframe:{data_fingerprint:016x}"),
+        permission_scope: "strategy".into(),
         audit_reason: "live-closed-bar".into(),
         dry_run: environment.eq_ignore_ascii_case("paper"),
     };
@@ -119,6 +124,25 @@ pub(crate) fn scheduler_jobs_path(runtime_config_path: &Path, configured: &str) 
     resolve_runtime_relative_path(runtime_config_path, configured)
 }
 
+/// 运行时 tick 能派发的 JobSpec 形状；不在集合内的形状必须**在装载时就拒**，
+/// 不能收下之后再静默不跑（V12 §18-B #117）。
+///
+/// `dispatch_scheduled_jobs` 走 `due_jobs`：只认 Cron 触发，且没有任何生产路径能造出
+/// `TradingCalendar` 的时段数据 —— 库侧的 `due_jobs_with_calendar` 需要一张有人填的日历，
+/// 而日历的 `Session` 至今只在用例里出现过。于是把 `window` 写成 `Session`/`PostClose`
+/// 的作业要么永远不出队，要么（今天的 `due_jobs` 不看 window）在收盘前后一样触发。
+/// 两种都是"配置声明了、运行时不认"，比拒绝更难发现。
+pub(crate) fn unsupported_dispatch_shape(job: &JobSpec) -> Option<String> {
+    let cron = matches!(&job.trigger, Trigger::Cron(_));
+    if !cron || job.window != JobWindow::Any {
+        return Some(format!(
+            "作业 {} 声明了运行时不会派发的形状：trigger={:?} window={:?}；scheduler-worker 的 tick 只跑 Cron 触发且 window=Any 的作业（交易日历/事件/手工触发没有生产派发者，窗口判定没有交易日历数据源）",
+            job.job_id, job.trigger, job.window
+        ));
+    }
+    None
+}
+
 pub(crate) fn load_scheduler_state(
     config: &RuntimeConfig,
     root: &Path,
@@ -140,81 +164,25 @@ pub(crate) fn load_scheduler_state(
                     .map_err(|error| format!("读取 Scheduler JobSpec 失败: {error}"))?,
             )
             .map_err(|error| format!("Scheduler JobSpec JSON 无效: {error}"))?;
+            let refused = jobs
+                .iter()
+                .filter_map(unsupported_dispatch_shape)
+                .collect::<Vec<_>>();
+            if !refused.is_empty() {
+                return Err(refused.join("；"));
+            }
             for job in jobs {
                 scheduler
                     .register(job)
                     .map_err(|error| format!("注册 Scheduler JobSpec 失败: {error:?}"))?;
             }
         }
-        // 先判再落盘：被拒绝的拓扑不该留下一份调度状态文件让下一次运行继续读它。
-        validate_job_owners(config, &scheduler)?;
-        validate_job_triggers(&scheduler)?;
         store
             .save_scheduler_at(&state_reference, &scheduler)
             .map_err(|error| format!("初始化 Scheduler 状态失败: {error:?}"))?;
         scheduler
     };
-    // 载入的既有状态同样要问：状态文件可能是另一套拓扑或改坏的 owner 留下的。
-    validate_job_owners(config, &scheduler)?;
-    validate_job_triggers(&scheduler)?;
     Ok((store, scheduler, state_reference))
-}
-
-/// 作业 owner 必须真有人领取。Scheduler 只负责入队，领取判据在
-/// `workers.rs` 的 `queued.job.owner != context.id()`；owner 拼错或指向未启用的
-/// worker 时，作业永远留在队列里，而 `start_run_at` 已把 JobRun 标成 Running，
-/// 命令面照样打印 `READY processed=0`——整段调度事实就这样丢了（V11 §41 E7）。
-fn validate_job_owners(config: &RuntimeConfig, scheduler: &Scheduler) -> Result<(), String> {
-    let claimants = config
-        .workers
-        .iter()
-        .filter(|worker| worker.enabled && worker.role == WorkerRole::Strategy)
-        .map(|worker| worker.id.as_str())
-        .collect::<Vec<_>>();
-    let claimants_note = if claimants.is_empty() {
-        "该拓扑没有启用的 Strategy worker".to_string()
-    } else {
-        format!("启用的 Strategy worker: {}", claimants.join(", "))
-    };
-    for job in scheduler.jobs() {
-        if !job.enabled {
-            continue;
-        }
-        let routable = claimants
-            .iter()
-            .any(|claimant| qx_scheduler::claimable_by(&job.owner, claimant));
-        if !routable {
-            return Err(format!(
-                "Scheduler 作业 {} 的 owner {:?} 无人领取（{claimants_note}）；\
-                 请把 owner 改成启用的 Strategy worker id，或使用 {:?} 交给任意 worker",
-                job.job_id,
-                job.owner,
-                qx_scheduler::JOB_OWNER_ANY
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// 作业文件里的触发形状必须落在派发器真走得到的那一面上。运行时注册表只派发
-/// `Trigger::Cron` + `JobWindow::Any` + 一次尝试：其余声明今天**什么都不触发**，
-/// 而 `config validate` 会把它们逐条打印成合法——挡在启动前比留着当暗雷诚实
-/// （判据与派发器共用 `qx_scheduler::undispatchable_by_registry`，V11 N4）。
-fn validate_job_triggers(scheduler: &Scheduler) -> Result<(), String> {
-    for job in scheduler.jobs() {
-        if !job.enabled {
-            continue;
-        }
-        if let Some(reason) = qx_scheduler::undispatchable_by_registry(job) {
-            return Err(format!(
-                "Scheduler 作业 {} 的触发声明在运行时派发不到：{reason}；\
-                 请改成 `\"trigger\": {{\"Cron\": ...}}` + `\"window\": \"Any\"` + \
-                 `retry_policy.max_attempts: 1`，或把这类作业交给自己的派发端",
-                job.job_id
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// 一次调度 tick 的三类结果：真正入队的作业、被升级的超时运行、到期但没派发出去的作业。
@@ -241,27 +209,23 @@ pub(crate) fn dispatch_scheduled_jobs(
     let lease_now = lease_clock(now);
     let (_, result) = state_store
         .transact_scheduler_at(state_path, |scheduler| {
-            // 先收超时：一条卡死的 Running 会一直占着并发键，之后每一轮派发都拿
-            // NotReady，而这份事实只在状态文件里躺着（V11 N2）。收口只有 `sweep_timed_out`
-            // 这一颗，升级数同时喂给摘要的 `timed_out`；deadline 由 `start_run_at` 写在
-            // 秒域，所以这里传 `lease_now` 而不是毫秒墙钟。
-            let timed_out = scheduler
-                .sweep_timed_out(lease_now)
-                .map_err(|error| format!("收口超时 JobRun 失败: {error:?}"))?
-                .len();
+            // 先把已过截止时间的 Running 运行升级为人工接管：Running 运行持有并发键，
+            // 不升级就会永远挡住同一 key 的后续交易日，且卡住的作业自身再也不会出队。
+            let mut timed_out = 0_usize;
+            for run in scheduler.runs() {
+                if scheduler
+                    .is_timed_out(run.run_id, lease_now)
+                    .map_err(|error| format!("判定 JobRun 超时失败: {error:?}"))?
+                {
+                    scheduler
+                        .mark_timed_out(run.run_id, lease_now)
+                        .map_err(|error| format!("升级超时 JobRun 失败: {error:?}"))?;
+                    timed_out += 1;
+                }
+            }
             let completed = scheduler.completed_jobs();
-            // 窗口与交易日历的判定只有 `due_jobs_with_calendar` 这一颗；生产派发走它，
-            // 传空历是因为运行时还没有日历写入者——装配处已经挡掉非 `Any` 窗口的作业，
-            // 所以空历不改变任何被接受作业的判定结果。接上日历源时把这一颗的入参换掉，
-            // 不要再起一颗只看 Cron、不看窗口的第二判据（那等于把窗口判定重新变成孤儿）。
             let job_ids = scheduler
-                .due_jobs_with_calendar(
-                    tick,
-                    trading_day,
-                    now,
-                    &qx_scheduler::TradingCalendar::default(),
-                    &completed,
-                )
+                .due_jobs(tick, &completed)
                 .map_err(|error| format!("计算 Scheduler 到期任务失败: {error:?}"))?
                 .into_iter()
                 .map(|job| job.job_id.clone())
@@ -305,4 +269,106 @@ pub(crate) fn dispatch_scheduled_jobs(
         })
         .map_err(|error| format!("Scheduler 状态事务失败: {error:?}"))?;
     result
+}
+
+/// 这条运行是否已经收口。队列条目可能在 Scheduler 回写终态之后、`ack` 之前掉电：条目还在，
+/// 运行却已经是终态，再执行一次就是二次提交，所以 worker 领取租约后先问这一句（V13 R2 第十二遍 #190）。
+///
+/// 读不到运行记录按「未终态」处理：实时策略作业的运行从来不入 Scheduler 状态（只在 JobQueue 里），
+/// 把它当成终态会让这类作业永远跑不了。`Paused` 也不是终态 —— 恢复后仍要能执行。
+pub(crate) fn strategy_run_is_final(
+    state_store: &JsonStateStore,
+    state_path: &Path,
+    run_id: u64,
+) -> Result<bool, String> {
+    Ok(state_store
+        .load_scheduler_at(state_path)
+        .map_err(|error| format!("读取 JobRun 终态失败: {error:?}"))?
+        .run(run_id)
+        .is_some_and(|run| {
+            matches!(
+                run.status,
+                JobStatus::Succeeded | JobStatus::Failed | JobStatus::NeedsIntervention
+            )
+        }))
+}
+
+/// 把策略作业的失败写回它自己的 JobRun（`JobStatus::Failed` + 固定错误码）。
+///
+/// 失败不回写的话，这条运行只剩「被下一轮调度 tick 升级成 `error_code="TIMEOUT"`」这一条出口，
+/// 于是「策略自己报错了」会被读成「策略跑太久」，而 `JobStatus::Failed` 在生产里一个生产者都没有。
+/// 错误码是固定的 `STRATEGY_JOB_FAILED`：结果码（`3 orders: ORDER_INTENT_ACCEPTED`）不进 `JobRun`，
+/// 那是接口文档写明的口径。实时策略作业没有 Scheduler 侧的运行记录，与成功收口共用同一条豁免。
+pub(crate) fn fail_strategy_job_run(
+    state_store: &JsonStateStore,
+    state_path: &Path,
+    job_id: &str,
+    run_id: u64,
+    finished_ts: u64,
+) -> Result<(), String> {
+    if job_id.starts_with("live-strategy:") {
+        return Ok(());
+    }
+    state_store
+        .transact_scheduler_at(state_path, |scheduler| {
+            scheduler
+                .finish_run_with_code(run_id, false, Some("STRATEGY_JOB_FAILED"), finished_ts)
+                .map(|_| ())
+                .map_err(|error| format!("失败收口 JobRun 被拒绝: {error:?}"))
+        })
+        .map_err(|error| format!("回写失败 JobRun 状态失败: {error:?}"))?
+        .1
+}
+
+/// 一条队列条目此刻的执行现场：确认条目（`ack_at`）要用到的队列、租约与身份。
+///
+/// 与快照指纹一起，正是 `live_strategy_job_is_stale` 需要的全部入参；把它打包是因为
+/// 执行前与执行中两处调用共用同一份现场，而十入参的函数在 `clippy::too_many_arguments`
+/// 那格里是判红的（V13 R2 收口 #209：九步构建的 `[5/9]` 才第一次跑到这条）。
+pub(crate) struct StrategyJobLease<'a> {
+    pub(crate) queue: &'a ConfiguredJobQueue,
+    pub(crate) queued: &'a qx_storage::QueuedJob,
+    pub(crate) worker_id: &'a str,
+    pub(crate) fencing_token: u64,
+    pub(crate) lease_now: u64,
+}
+
+/// 实时策略作业的快照指纹闸门：指纹一变，这笔订单的依据就不是生成时看到的那一根闭合 Bar，
+/// 于是确认掉条目并播报跳过。执行前与执行中两处判定共用这段收口（V13 R2 第十二遍 #190 顺带收口）。
+///
+/// 返回 `true` 表示调用方应当跳过这次执行；`expected_digest` 为 `None` 的不是实时策略作业，直接放行。
+/// `digest_now` 是取快照指纹的时钟：执行前用本轮 tick，执行中用重新读取的墙钟。
+pub(crate) fn live_strategy_job_is_stale(
+    lease: &StrategyJobLease<'_>,
+    strategy: &StrategyRuntimeConfig,
+    expected_digest: Option<u64>,
+    digest_now: u64,
+    reason: &str,
+    ack_failure: &str,
+) -> Result<bool, String> {
+    let Some(expected_digest) = expected_digest else {
+        return Ok(false);
+    };
+    let current_digest = live_strategy_snapshot_digest(strategy, digest_now)?;
+    if current_digest == Some(expected_digest) {
+        return Ok(false);
+    }
+    lease
+        .queue
+        .ack_at(
+            lease.queued.run.run_id,
+            lease.worker_id,
+            lease.fencing_token,
+            lease.lease_now,
+        )
+        .map_err(|error| format!("{ack_failure}: {error:?}"))?;
+    println!(
+        "[策略 · Strategy] worker={} job={} skipped={reason} expected={expected_digest:016x} actual={}",
+        lease.worker_id,
+        lease.queued.job.job_id,
+        current_digest
+            .map(|digest| format!("{digest:016x}"))
+            .unwrap_or_else(|| "none".into())
+    );
+    Ok(true)
 }

@@ -7,29 +7,43 @@ name = "qianxing-bridge"
 version = "0.1.0"
 description = "Qianxing JSON/DataStruct bridge"
 requires-python = ">=3.10"
-dependencies = [
-    "ccxt>=4.4.0",
-    # Windows 没有系统 IANA 时区库；`qianxing_ashare` 导入时即解析 Asia/Shanghai。
-    "tzdata; sys_platform == 'win32'",
-]
+# 核心桥接层（qianxing_bridge / qianxing_strategy / qianxing_ashare 标准化 / qianxing_ccxt 连接层）
+# 在 import 与离线使用时不需要任何第三方运行时包：ccxt 由 qianxing_ccxt 在调用点惰性加载并抛
+# 点名 extras 的可执行错误；缺 tzdata 时 qianxing_ashare 抛点名 pip install tzdata 的错误。把 ccxt
+# 与 tzdata 放进 optional extras 而非顶层 dependencies，`pip install <wheel>` 才能离线一次装成（V13 #276，
+# 收口此前只能用 --offline --no-deps 绕开强制 ccxt 的脚枪）。
+dependencies = []
 
 [project.optional-dependencies]
+# 交易所适配：公共 ccxt（REST/交易）；实时 watch_* 另需 ccxt Pro。
+ccxt = [
+    "ccxt>=4.4.0",
+]
 ccxt-pro = [
+    "ccxt>=4.4.0",
     "ccxtpro>=1.0.0",
+]
+# A 股时间戳按 Asia/Shanghai 解释；Windows 没有系统 IANA 时区库时需要 tzdata。
+tz = [
+    "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 a-share-akshare = [
     "akshare>=1.16.0",
+    "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 a-share-baostock = [
     "baostock>=0.8.9",
+    "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 a-share-easy-tdx = [
     "easy-tdx>=0.1.0",
+    "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 a-share = [
     "akshare>=1.16.0",
     "baostock>=0.8.9",
     "easy-tdx>=0.1.0",
+    "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 
 [tool.setuptools.packages.find]

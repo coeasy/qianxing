@@ -13,7 +13,8 @@ pub(crate) fn run_file_outbox_relay(
     limit: usize,
 ) -> Result<(), String> {
     let store = FileOutboxStore::new(data_root);
-    let publisher = NatsJetStreamPublisher::connect(nats_url, subject_prefix)?;
+    let publisher =
+        NatsJetStreamPublisher::connect(nats_url, subject_prefix, NatsWaitBudget::default())?;
     let relay = OutboxRelay::new(
         store,
         publisher,
@@ -49,7 +50,8 @@ pub(crate) fn run_postgres_outbox_relay(
     let store =
         PostgresOutboxStore::connect_with_pool_size(&dsn, config.storage.postgres_pool_size)
             .map_err(|error| format!("打开 PostgreSQL Outbox 失败: {error:?}"))?;
-    let publisher = NatsJetStreamPublisher::connect(nats_url, subject_prefix)?;
+    let publisher =
+        NatsJetStreamPublisher::connect(nats_url, subject_prefix, NatsWaitBudget::default())?;
     let relay = OutboxRelay::new(
         store,
         publisher,
@@ -99,7 +101,6 @@ pub(crate) struct RelayMetricTotals {
     retried: u64,
     lease_conflicts: u64,
     publish_failures: u64,
-    parked: u64,
 }
 
 #[cfg(feature = "nats")]
@@ -110,8 +111,6 @@ impl RelayMetricTotals {
         self.retried += report.retried;
         self.lease_conflicts += report.lease_conflicts;
         self.publish_failures += report.publish_failures;
-        // parked 是"当前还有几条停在 outbox 里"的状态量，不是累计量：取最近一轮的观察值。
-        self.parked = report.parked;
     }
 
     fn render(&self, sink: &WorkerMetricsSink, up: bool, now_ms: u64) -> String {
@@ -123,8 +122,7 @@ qx_outbox_relay_scanned_total{{worker=\"{worker}\"}} {}\n\
 qx_outbox_relay_published_total{{worker=\"{worker}\"}} {}\n\
 qx_outbox_relay_retried_total{{worker=\"{worker}\"}} {}\n\
 qx_outbox_relay_lease_conflicts_total{{worker=\"{worker}\"}} {}\n\
-qx_outbox_relay_publish_failures_total{{worker=\"{worker}\"}} {}\n\
-qx_outbox_relay_parked{{worker=\"{worker}\"}} {}\n",
+qx_outbox_relay_publish_failures_total{{worker=\"{worker}\"}} {}\n",
             u8::from(up),
             now_ms / 1_000,
             self.scanned,
@@ -132,7 +130,6 @@ qx_outbox_relay_parked{{worker=\"{worker}\"}} {}\n",
             self.retried,
             self.lease_conflicts,
             self.publish_failures,
-            self.parked,
         )
     }
 }
@@ -223,14 +220,13 @@ where
         metrics.write(&totals.render(&metrics, true, now));
         context.heartbeat(now)?;
         println!(
-            "[Outbox relay worker={}] scanned={} published={} retried={} failures={} conflicts={} parked={} last_error={:?}",
+            "[Outbox relay worker={}] scanned={} published={} retried={} failures={} conflicts={} last_error={:?}",
             context.id(),
             report.scanned,
             report.published,
             report.retried,
             report.publish_failures,
             report.lease_conflicts,
-            report.parked,
             report.last_error
         );
         if once {
@@ -282,6 +278,7 @@ pub(crate) fn run_outbox_relay_worker(
     let publisher = NatsJetStreamPublisher::connect(
         &config.messaging.nats_url,
         &config.messaging.subject_prefix,
+        config.messaging.nats_wait_budget(),
     )?;
     let relay_owner = format!("qx-relay-{worker_id}-{}", std::process::id());
     let lease_seconds = config.messaging.lease_seconds;
@@ -380,6 +377,19 @@ pub(crate) struct EventConsumerHandler {
     timeout_ms: u64,
 }
 
+#[cfg(all(test, feature = "nats"))]
+impl EventConsumerHandler {
+    /// 测试构造：三个字段是本模块私有的，`tests/` 作为兄弟模块拿不到写权限，
+    /// 只能由定义模块开一个仅在 `test + nats` 下编译的门控入口。
+    pub(crate) fn for_test(executable: String, args: Vec<String>, timeout_ms: u64) -> Self {
+        Self {
+            executable,
+            args,
+            timeout_ms,
+        }
+    }
+}
+
 #[cfg(feature = "nats")]
 pub(crate) struct EventConsumerRuntime {
     messaging: MessagingRuntimeConfig,
@@ -409,28 +419,41 @@ pub(crate) fn invoke_event_consumer_handler(
     let mut child = command
         .spawn()
         .map_err(|error| format!("启动事件 consumer handler 失败: {error}"))?;
-    if let Some(stdin) = child.stdin.take() {
-        // 写也要进预算（V11 N8）：handler 若不读 stdin，管道写满后 `write_all` 再也不返回，
-        // 而下面那圈 timeout_ms 判定排在它后面，压根没机会开始。
-        let mut envelope = payload;
-        envelope.push(b'\n');
-        let written = qx_adapter::write_all_within(
-            stdin,
-            envelope,
-            Duration::from_millis(handler.timeout_ms),
-            || {
-                let _ = child.kill();
-            },
-        );
-        if let Err(error) = written {
+    let Some(mut stdin) = child.stdin.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("事件 consumer handler stdin 不可用".into());
+    };
+    // 写入必须与下面的退出轮询同受 handler.timeout_ms 约束：consumer handler 是用户配置的任意外部
+    // 程序，一旦存活却不从 stdin 取字节（或自身卡在网络/磁盘），超出 OS 匿名管道缓冲（~64KB）的那段
+    // write_all 会永久阻塞，而原 timeout_ms 只守着下面的 try_wait 轮询——本进程就此卡死。跨进程 Outbox
+    // 事件里 AccountPositionSnapshot/AccountBalanceSnapshot 把整段 Vec 内联进单条 payload，足以越过
+    // 64KB，所以这不是假设场景。故把 write_all 交给独立线程，先落 EOF 再回报，主路径按预算 recv_timeout
+    // 收口，超时即杀 handler（同时关闭管道读端、放行阻塞的写线程）（V13 R2 第三十五遍 #282）。
+    let (write_sender, write_done) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let failure = stdin
+            .write_all(&payload)
+            .and_then(|_| stdin.write_all(b"\n"))
+            .err();
+        drop(stdin);
+        let _ = write_sender.send(failure);
+    });
+    match write_done.recv_timeout(Duration::from_millis(handler.timeout_ms)) {
+        Ok(Some(error)) => {
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!("写入事件 consumer handler stdin 失败: {error}"));
         }
-    } else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err("事件 consumer handler stdin 不可用".into());
+        Ok(None) => {}
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "写入事件 consumer handler stdin 超时 timeout_ms={}（handler 存活但不接收输入）",
+                handler.timeout_ms
+            ));
+        }
     }
     let started = Instant::now();
     loop {
@@ -584,6 +607,7 @@ pub(crate) fn run_event_consumer_worker(
         consumer_name,
         group_id,
         config.messaging.consumer_max_attempts,
+        config.messaging.nats_wait_budget(),
     )?;
     let messaging = config.messaging.clone();
     let supervisor = RuntimeSupervisor::new(config.clone())?;
@@ -667,9 +691,13 @@ pub(crate) fn replay_dead_letter_from_store<S>(
 where
     S: ConsumerStateStore,
 {
-    let record = store
-        .dead_letter(group_id, event_id)
-        .map_err(|error| format!("读取消费者死信失败: {error:?}"))?
+    let records = store
+        .dead_letters(group_id, 10_000)
+        .map_err(|error| format!("读取消费者死信失败: {error:?}"))?;
+    let record = records
+        .into_iter()
+        .filter(|record| record.event_id == event_id)
+        .max_by_key(|record| record.attempts)
         .ok_or_else(|| format!("找不到 group={group_id} event_id={event_id} 的死信记录"))?;
     let mut replay = record.event;
     // Replay is a new logical delivery. The deterministic suffix makes an
@@ -705,6 +733,7 @@ pub(crate) fn run_dead_letter_replay(
     let publisher = NatsJetStreamPublisher::connect(
         &config.messaging.nats_url,
         &config.messaging.subject_prefix,
+        config.messaging.nats_wait_budget(),
     )?;
     match config.storage.backend {
         StorageBackend::Files => replay_dead_letter_from_store(

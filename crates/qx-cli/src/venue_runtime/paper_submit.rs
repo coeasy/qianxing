@@ -74,9 +74,13 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
         })
         .cloned();
     if let Some(worker) = paper_worker.as_ref() {
-        let mut pipeline =
-            open_account_pipeline(&config, &root, &required_account_event_log(worker)?)
-                .map_err(|error| format!("打开 Paper 初始资金 EventLog 失败: {error}"))?;
+        let mut pipeline = open_account_pipeline(
+            &config,
+            &root,
+            &required_account_event_log(worker)?,
+            OutboxRecovery::ReprojectOnOpen,
+        )
+        .map_err(|error| format!("打开 Paper 初始资金 EventLog 失败: {error}"))?;
         seed_paper_initial_cash(&mut pipeline, worker, now)?;
     }
     let (_, accepted_result) = store
@@ -97,37 +101,7 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
         .as_ref()
         .filter(|worker| worker.instrument_spec_path.is_some())
     {
-        // 跨腿屏障已下沉 `qx-execution` 网关：这里只把存储根解析出的组快照注入提交，
-        // 带 `spread_group_id` 的腿若拿不到组存储会在网关内以 FAIL_CLOSED 被拒绝。
-        let spread_store = open_spread_group_store(&root)?;
-        let mut pipeline =
-            open_account_pipeline(&config, &root, &required_account_event_log(worker)?)
-                .map_err(|error| format!("打开 Paper 风控 EventLog 失败: {error}"))?;
-        let order = order_from_submit_command(&command)
-            .map_err(|error| format!("Paper 订单载荷非法: {error:?}"))?;
-        let (risk, position) = worker_risk_context(worker, &order, &pipeline, Some(path))?
-            .ok_or_else(|| "Paper worker 风控配置缺少 RiskContext".to_string())?;
-        // fail-closed：撮合行情必须来自同一 EventLog 的行情事实，缺行情拒绝执行。
-        let market_quote = pipeline
-            .latest_quote_with_depth(&order.instrument)
-            .ok_or_else(|| {
-                format!(
-                    "FAIL_CLOSED: Paper SubmitOrder 缺少 {} 的最新行情事实，等待 MarketData worker 注入后重试",
-                    order.instrument
-                )
-            })?;
-        execute_paper_submit_effect(
-            &command,
-            &mut pipeline,
-            now,
-            Some(risk),
-            Some(position),
-            Some(market_quote),
-            // 与回测装配同一份成本口径：费率只从运行时配置的 `cost_rules_path` 来。
-            execution_cost_binding_from_config(&config, Some(path))?.fee_model(),
-            false,
-            Some(&spread_store),
-        )
+        paper_submit_action(&config, path, &command, worker, &root, now)
     } else {
         Err(
             "FAIL_CLOSED: Paper worker 缺少风控配置（instrument_spec_path），拒绝提交订单"
@@ -154,6 +128,104 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
         return Err(record.result_code);
     }
     Ok(())
+}
+
+/// Accepted 之后到终态回写之间的每一条失败都必须变成 `action` 的值，不允许提前退出函数。
+///
+/// 命令在进到这一步之前已经写进控制面并入了队列：这里再用 `?` 把错误抛出函数，就会留下一条
+/// 永远停在 `Accepted` 的命令、一份没人释放的租约，而运营者按提示重投同一条命令只会撞
+/// `DuplicateRequest`（控制面对 `command_id` 与 `request_id` 都做幂等）。缺行情是这条路径上
+/// 最常命中的失败，实测见 `logs/s769_pass32_btc_paper_submit.txt`（V13 第三十一遍 ② #273）。
+fn paper_submit_action(
+    config: &RuntimeConfig,
+    runtime_config_path: &Path,
+    command: &ControlCommand,
+    worker: &WorkerConfig,
+    root: &Path,
+    now: u64,
+) -> Result<String, String> {
+    // 跨腿屏障已下沉 `qx-execution` 网关：这里只把存储根解析出的组快照注入提交，
+    // 带 `spread_group_id` 的腿若拿不到组存储会在网关内以 FAIL_CLOSED 被拒绝。
+    let spread_store = open_spread_group_store(root).map_err(|error| {
+        terminal_submit_rejection(format!("打开 Paper 分组屏障存储失败: {error}"))
+    })?;
+    let mut pipeline = open_account_pipeline(
+        config,
+        root,
+        &required_account_event_log(worker).map_err(|error| {
+            terminal_submit_rejection(format!("Paper 执行 worker 缺少 event_log: {error}"))
+        })?,
+        OutboxRecovery::ReprojectOnOpen,
+    )
+    .map_err(|error| {
+        terminal_submit_rejection(format!("打开 Paper 风控 EventLog 失败: {error}"))
+    })?;
+    paper_submit_match_attempt(
+        config,
+        runtime_config_path,
+        command,
+        worker,
+        &mut pipeline,
+        &spread_store,
+        now,
+    )
+}
+
+/// Accepted/领取之后那一段的唯一撮合尝试：一次性验收入口与常驻 worker 循环共用。
+///
+/// 这里的每一条失败都必须以 `Err` 返回，让调用方把它写成命令的终态 —— 命令走到这一步已经
+/// 进了控制面与队列，`?` 抛出函数只会留下一条永不结束的 `Accepted` 和一份没人释放的租约。
+/// 同一条命令在两个消费者那里必须拿到同一个裁决，否则一次性入口判失败、worker 循环却把
+/// 整个执行 worker 打停（V13 第三十一遍 ② #273）。
+pub(crate) fn paper_submit_match_attempt(
+    config: &RuntimeConfig,
+    runtime_config_path: &Path,
+    command: &ControlCommand,
+    worker: &WorkerConfig,
+    pipeline: &mut LiveEventPipeline,
+    spread_store: &FileSpreadOrderGroupStore,
+    now: u64,
+) -> Result<String, String> {
+    let order = order_from_submit_command(command)
+        .map_err(|error| terminal_submit_rejection(format!("Paper 订单载荷非法: {error:?}")))?;
+    let (risk, position) = worker_risk_context(worker, &order, pipeline, Some(runtime_config_path))
+        .map_err(|error| terminal_submit_rejection(format!("Paper 风控快照构造失败: {error}")))?
+        .ok_or_else(|| {
+            terminal_submit_rejection(
+                "FAIL_CLOSED: Paper worker 缺少风控配置（instrument_spec_path），拒绝提交订单"
+                    .to_string(),
+            )
+        })?;
+    // fail-closed：撮合行情必须来自同一 EventLog 的行情事实，缺行情拒绝执行。
+    let market_quote = pipeline
+        .latest_quote_with_depth(&order.instrument)
+        .ok_or_else(|| {
+            terminal_submit_rejection(format!(
+                "FAIL_CLOSED: Paper SubmitOrder 缺少 {} 的最新行情事实",
+                order.instrument
+            ))
+        })?;
+    execute_paper_submit_effect(
+        command,
+        pipeline,
+        now,
+        Some(risk),
+        Some(position),
+        Some(market_quote),
+        // 与回测装配同一份成本口径：费率只从运行时配置的 `cost_rules_path` 来。
+        execution_cost_binding_from_config(config, Some(runtime_config_path))
+            .map_err(|error| terminal_submit_rejection(format!("读取执行成本规则失败: {error}")))?
+            .fee_model(),
+        false,
+        Some(spread_store),
+    )
+}
+
+/// 终态拒绝的文案：命令出不了 `Accepted`，所以必须把运营者真正能走的下一步说清楚。
+///
+/// Paper 与 Binance 的一次性提交入口共用这一条，两处对同一次拒绝给同一句指路。
+pub(crate) fn terminal_submit_rejection(reason: String) -> String {
+    format!("{reason}；本命令已记为终态失败，修好之后换新的 command_id 与 request_id 重新提交")
 }
 
 pub(crate) fn paper_submit_matches_worker(command: &ControlCommand, worker: &WorkerConfig) -> bool {

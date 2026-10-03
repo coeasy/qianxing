@@ -43,6 +43,17 @@ fn worker_plan_rejects_unknown_venue_without_explicit_external_management() {
     assert!(plan_workers(&config, Path::new("runtime.json"), true).is_ok());
 }
 
+/// 两份平台入口脚本里禁止出现的进程入口字面量：它们只能由 `plan_workers` 派生。
+const WORKER_ENTRYPOINTS: [&str; 7] = [
+    "binance-worker",
+    "paper-worker",
+    "ccxt-worker",
+    "scheduler-worker",
+    "strategy-worker",
+    "outbox-relay-worker",
+    "event-consumer-worker",
+];
+
 #[test]
 fn worker_plan_routes_ccxt_user_stream_to_public_worker() {
     let mut config = example_config();
@@ -222,4 +233,62 @@ fn worker_plan_routes_event_consumer_to_builtin_worker() {
         launch.worker_id == "ledger-reducer"
             && launch.args.first().map(String::as_str) == Some("event-consumer-worker")
     }));
+}
+
+/// 两份平台入口都必须把拓扑交给唯一的实现 `qx-cli supervise`，不许在脚本里再写一份
+/// 角色→进程入口映射（V13 R2 #192）。PowerShell 那份副本曾经漂移过四处：CCXT 的 endpoint
+/// 只对其中一个角色生效、paper 判定用精确字符串而不是 `VenueFamily` 归一、`plan_workers`
+/// 会拒绝的拓扑被静默派给币安那条线、有内建入口的两个角色被当成不可托管。
+///
+/// 判据按"字面量不得出现"而不是"结构长得对"取数：注释里提到某个进程入口名同样会红，
+/// 因为副本一旦被重新抄回来，第一件事就是把这个名字写回脚本。
+#[test]
+fn launchers_delegate_worker_topology_to_supervise() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy");
+    let launchers = [
+        (
+            "start-qianxing.ps1",
+            std::fs::read_to_string(root.join("start-qianxing.ps1")).unwrap(),
+        ),
+        (
+            "start-qianxing.sh",
+            std::fs::read_to_string(root.join("start-qianxing.sh")).unwrap(),
+        ),
+    ];
+    for (name, text) in &launchers {
+        assert!(
+            text.contains("supervise"),
+            "{name} 没有把 worker 拓扑委派给 supervise"
+        );
+        for entry in WORKER_ENTRYPOINTS {
+            assert!(
+                !text.contains(entry),
+                "{name} 里又出现一份 {entry} 的进程入口映射；唯一实现是 plan_workers"
+            );
+        }
+    }
+    assert!(
+        launchers[0].1.contains("--allow-unmanaged-roles"),
+        "start-qianxing.ps1 丢了 -AllowUnmanagedRoles 到 supervise 旗标的映射"
+    );
+}
+
+/// 一份 enabled worker 都没有的配置必须被拒，而不是"规划出空集合、监督器管零个子进程"：
+/// 后者在旧 PowerShell 入口里表现为不退出循环（进程活着、什么都没跑，读侧看是健康）。
+#[test]
+fn worker_plan_rejects_a_runtime_without_any_enabled_worker() {
+    let mut config = example_config();
+    for worker in config.workers.iter_mut() {
+        worker.enabled = false;
+    }
+    let error = plan_workers(&config, Path::new("deploy/runtime.json"), false)
+        .err()
+        .unwrap_or_default();
+    assert!(
+        error.contains("没有可托管"),
+        "空拓扑应被拒绝，实际返回 {error}"
+    );
 }

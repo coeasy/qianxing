@@ -28,6 +28,39 @@ pub(crate) struct PythonStrategyClient {
 
 pub(crate) type StrategyProcessClient = PythonStrategyClient;
 
+/// 共享内存传输交给 worker 的启动实参：协议名、两条 ring 的路径与容量，以及父进程身份。
+///
+/// 拆成纯函数是为了让"worker 是否拿得到父进程 pid"有一条能咬的用例。这条传输没有 stdin
+/// 可关，父进程被强杀时 Rust 侧的 `Drop` 不会跑，`--parent-pid` 一断，子进程的空闲循环
+/// 就只剩 1 kHz 空转这一种结局（V13 R2 第十四遍 #215）。
+pub(crate) fn shared_ring_arguments(
+    transport: StrategyTransport,
+    input_path: &Path,
+    output_path: &Path,
+    ring_config: SharedRingConfig,
+    parent_pid: u32,
+) -> Vec<String> {
+    let protocol = if transport == StrategyTransport::SharedMemoryColumnar {
+        "shared_memory_columnar"
+    } else {
+        "shared_memory_json"
+    };
+    vec![
+        "--protocol".into(),
+        protocol.into(),
+        "--input-ring".into(),
+        input_path.to_string_lossy().into_owned(),
+        "--output-ring".into(),
+        output_path.to_string_lossy().into_owned(),
+        "--ring-capacity".into(),
+        ring_config.capacity.to_string(),
+        "--ring-slot-bytes".into(),
+        ring_config.slot_bytes.to_string(),
+        "--parent-pid".into(),
+        parent_pid.to_string(),
+    ]
+}
+
 impl PythonStrategyClient {
     fn start(module: &str, timeout_ms: u64) -> Result<Self, String> {
         Self::start_with_transport(module, timeout_ms, StrategyTransport::Jsonl)
@@ -138,22 +171,13 @@ impl PythonStrategyClient {
             drop(output);
             let reader = SharedRingReader::open(&output_path, ring_config)
                 .map_err(|error| format!("打开 {label} 输出 ring 失败: {error}"))?;
-            actual_args.extend([
-                "--protocol".into(),
-                if transport == StrategyTransport::SharedMemoryColumnar {
-                    "shared_memory_columnar".into()
-                } else {
-                    "shared_memory_json".into()
-                },
-                "--input-ring".into(),
-                input_path.to_string_lossy().into_owned(),
-                "--output-ring".into(),
-                output_path.to_string_lossy().into_owned(),
-                "--ring-capacity".into(),
-                ring_config.capacity.to_string(),
-                "--ring-slot-bytes".into(),
-                ring_config.slot_bytes.to_string(),
-            ]);
+            actual_args.extend(shared_ring_arguments(
+                transport,
+                &input_path,
+                &output_path,
+                ring_config,
+                std::process::id(),
+            ));
             shared_input = Some(input);
             shared_output = Some(reader);
             ring_paths = Some((input_path, output_path));
@@ -170,11 +194,11 @@ impl PythonStrategyClient {
             StrategyTransport::SharedMemoryJson | StrategyTransport::SharedMemoryColumnar
         );
         let mut child = command
-            // 共享内存模式也留着这根 stdin 管道，并且不把写端丢掉：句柄活在 `self.stdin` 里，
-            // 父进程一退出（包括 `std::process::exit` 跳过 Drop 那几条路）OS 就关掉写端，
-            // 子进程读到 EOF 即自收摊。此前这里是 Stdio::null()，worker 只能干等 ring 里永远
-            // 不再来的下一颗请求，变成 1 kHz 永久自转的孤儿并留下两份 ring 文件（V13 C4）。
-            .stdin(Stdio::piped())
+            .stdin(if shared {
+                Stdio::null()
+            } else {
+                Stdio::piped()
+            })
             .stdout(if shared {
                 Stdio::null()
             } else {
@@ -186,9 +210,9 @@ impl PythonStrategyClient {
             .map_err(|error| {
                 format!("启动 {label} worker 失败: {diagnostic_program} 无法执行: {error}")
             })?;
-        let stdin = child.stdin.take();
+        let stdin = if shared { None } else { child.stdin.take() };
         let stdout = if shared { None } else { child.stdout.take() };
-        if stdin.is_none() || (!shared && stdout.is_none()) {
+        if !shared && (stdin.is_none() || stdout.is_none()) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!("{label} worker stdin/stdout 不可用"));
@@ -205,16 +229,16 @@ impl PythonStrategyClient {
         let stderr_tail_reader = Arc::clone(&stderr_tail);
         thread::spawn(move || {
             let reader = BufReader::new(stderr);
-            for line in reader.lines().map_while(Result::ok) {
-                let line = line.trim().to_string();
-                if line.is_empty() {
-                    continue;
-                }
+            for line in reader.lines() {
+                // 读管道断了也要记账：静默丢掉只会让诊断说成"worker 无 stderr 输出"（#203）。
+                let broken = line.is_err();
                 if let Ok(mut tail) = stderr_tail_reader.lock() {
-                    tail.push_back(line.chars().take(512).collect());
-                    while tail.len() > 16 {
-                        tail.pop_front();
+                    if let Some(note) = stderr_tail_note(line) {
+                        record_stderr_tail(&mut tail, note);
                     }
+                }
+                if broken {
+                    break;
                 }
             }
         });
@@ -222,13 +246,13 @@ impl PythonStrategyClient {
             None
         } else {
             let stdout = stdout.expect("non-shared worker stdout checked above");
-            let (sender, responses) = mpsc::sync_channel(STRATEGY_PUMP_BACKLOG);
+            let (sender, responses) = mpsc::channel();
             thread::spawn(move || match transport {
                 StrategyTransport::Jsonl => {
-                    let mut reader = BufReader::new(stdout);
-                    loop {
-                        match read_jsonl_line_within(&mut reader, jsonl_line_cap_bytes()) {
-                            Ok(Some(line)) => {
+                    let reader = BufReader::new(stdout);
+                    for line in reader.lines() {
+                        match line {
+                            Ok(line) => {
                                 if sender
                                     .send(Ok(StrategyWireResponse::JsonLine(line)))
                                     .is_err()
@@ -236,9 +260,9 @@ impl PythonStrategyClient {
                                     return;
                                 }
                             }
-                            Ok(None) => break,
                             Err(error) => {
-                                let _ = sender.send(Err(error));
+                                let _ = sender
+                                    .send(Err(format!("读取 Strategy worker 响应失败: {error}")));
                                 return;
                             }
                         }
@@ -378,37 +402,50 @@ impl PythonStrategyClient {
                 }
             }
             StrategyTransport::Jsonl | StrategyTransport::FramedJson => {
-                let label = self.label.clone();
-                let diagnostics = self.diagnostics();
-                let stdin = self
-                    .stdin
-                    .take()
-                    .ok_or_else(|| format!("{} worker stdin 不可用", label))?;
-                // 走到这里上一次应答要么已被取走、要么本次请求还没写出去，通道里剩下的都是迟到的残粒。
-                // 留着它，下一次 `recv` 就先读到上一颗——JSONL 的线格式不带序号，挡不住这种错位。
-                let _ = self.responses.as_ref().map(drain_stale_responses);
-                let frame = if self.transport == StrategyTransport::Jsonl {
+                // 写入必须与读取同受 timeout_ms 约束：管道读端由子进程持有，它一旦"活着但不再
+                // 接收输入"，超出 OS 管道缓冲（~64KB）的那段 write_all 会永久阻塞，而原 timeout_ms
+                // 只守着读侧 recv——本进程就此卡死，连关停令牌都读不到（V13 R2 #281）。故把
+                // write_all+flush 交给独立线程，主路径按预算 recv_timeout 收口，超时即杀 worker。
+                let bytes = if self.transport == StrategyTransport::Jsonl {
                     format!("{payload}\n").into_bytes()
                 } else {
                     StrategyFrame::request(sequence, payload.into_bytes())
                         .encode(DEFAULT_MAX_FRAME_BYTES)
                         .map_err(|error| format!("编码 {} 分帧输入失败: {error}", self.label))?
                 };
-                // 写也要进预算（V11 N8）：worker 卡在别处不读 stdin 时，管道写满后这条
-                // `write_all` 再也不返回，而下面那圈"响应超时"排在它后面，压根没机会开始。
-                // 超时即按"这条管道已不归我们掌控"处理：杀掉子进程，句柄不回置。
-                let written = qx_adapter::write_all_within(
-                    stdin,
-                    frame,
-                    Duration::from_millis(self.timeout_ms),
-                    || {
+                let mut stdin = self
+                    .stdin
+                    .take()
+                    .ok_or_else(|| format!("{} worker stdin 不可用", self.label))?;
+                let label = self.label.clone();
+                let (write_sender, write_done) = mpsc::channel();
+                thread::spawn(move || {
+                    let write_result = stdin.write_all(&bytes);
+                    let failure = write_result
+                        .and_then(|()| stdin.flush())
+                        .err()
+                        .map(|error| format!("写入 {label} 输入失败: {error}"));
+                    let _ = write_sender.send((failure, stdin));
+                });
+                // 断管道（os error 232/32）与"worker 一个字都没输出就退出"是同一次死亡的两面，
+                // 故写侧失败连同回传的 stdin 一起并回 death_note。
+                match write_done.recv_timeout(Duration::from_millis(self.timeout_ms)) {
+                    Ok((Some(failure), stdin)) => {
+                        self.stdin = Some(stdin);
+                        return Err(format!("{failure}{}", self.death_note()));
+                    }
+                    Ok((None, stdin)) => {
+                        self.stdin = Some(stdin);
+                    }
+                    Err(_) => {
+                        let note = self.death_note();
                         let _ = self.child.kill();
-                    },
-                );
-                self.stdin = Some(
-                    written
-                        .map_err(|error| format!("写入 {label} 输入失败: {error}{diagnostics}"))?,
-                );
+                        return Err(format!(
+                            "写入 {} 输入超时 timeout_ms={}{}（worker 存活但不接收输入）",
+                            self.label, self.timeout_ms, note
+                        ));
+                    }
+                }
                 let received = self
                     .responses
                     .as_ref()
@@ -806,77 +843,4 @@ pub(crate) fn invoke_builtin_strategy(
 pub(crate) enum ContractStrategyClient {
     Process(Box<PythonStrategyClient>),
     Native(Box<DynamicCAbiStrategy>),
-}
-
-/// 响应泵替调用方排队的深度。此前这里是无界的 `mpsc::channel()`：一颗话痨 worker 在父进程
-/// 一次都没读的情况下可以一直往通道里塞，把内存吃光而压力从不回到子进程。
-pub(crate) const STRATEGY_PUMP_BACKLOG: usize = 64;
-
-/// JSONL 支单行响应的长度上界。分帧支早就按 `DEFAULT_MAX_FRAME_BYTES` 读，JSONL 支此前用
-/// `BufRead::lines()`：worker 只写半行不换行，父进程就把那半行无限攒下去。这里复用同一颗
-/// 常量，不再写第二个数。
-pub(crate) fn jsonl_line_cap_bytes() -> usize {
-    DEFAULT_MAX_FRAME_BYTES
-}
-
-/// 读一行，但不许超过 `cap`。`Ok(None)` 表示对端 EOF 且没有残行，与 `BufRead::lines()` 的
-/// 收尾一致；末行没有换行也照样交出去（同样是 `lines()` 的旧行为）。
-pub(crate) fn read_jsonl_line_within<R: BufRead>(
-    reader: &mut R,
-    cap: usize,
-) -> Result<Option<String>, String> {
-    let mut collected: Vec<u8> = Vec::new();
-    loop {
-        let window = reader
-            .fill_buf()
-            .map_err(|error| format!("读取 Strategy worker 响应失败: {error}"))?;
-        if window.is_empty() {
-            if collected.is_empty() {
-                return Ok(None);
-            }
-            return Ok(Some(
-                String::from_utf8(std::mem::take(&mut collected))
-                    .map_err(|error| format!("Strategy worker 响应不是 UTF-8: {error}"))?,
-            ));
-        }
-        let end = match window.iter().position(|byte| *byte == b'\n') {
-            Some(newline) => newline + 1,
-            None => window.len(),
-        };
-        // `consume` 会让 `window` 失效，所以对尾判据必须先读再消费。
-        let ended_with_newline = window[..end].ends_with(b"\n");
-        collected.extend_from_slice(&window[..end]);
-        reader.consume(end);
-        if collected.len() > cap {
-            return Err(format!(
-                "Strategy worker 单行响应超过 {cap} 字节上限，已停止读取"
-            ));
-        }
-        if ended_with_newline {
-            collected.pop();
-            if collected.last() == Some(&b'\r') {
-                collected.pop();
-            }
-            return Ok(Some(String::from_utf8(collected).map_err(|error| {
-                format!("Strategy worker 响应不是 UTF-8: {error}")
-            })?));
-        }
-    }
-}
-
-/// 丢掉队列里已经躺着的答复。`recv_timeout` 超时之后 worker 那颗迟到的答复还留在通道里，
-/// 而下一次 `recv` 会先读到它——分帧支有 `frame.sequence` 比对挡住这条路，JSONL 的线格式
-/// 不带序号，所以每次写新输入之前先把残粒清干净。返回清掉的条数，让用例能量牙齿。
-pub(crate) fn drain_stale_responses(
-    responses: &Receiver<Result<StrategyWireResponse, String>>,
-) -> usize {
-    let mut dropped = 0;
-    loop {
-        match responses.try_recv() {
-            Ok(_) => dropped += 1,
-            Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => {
-                return dropped;
-            }
-        }
-    }
 }

@@ -23,14 +23,15 @@ fn qx_cli(args: &[&str]) -> (Option<i32>, String) {
 
 /// 从输出里取那条回测命令；profile 没有可跑的绑定时应当一行都不许出现。
 fn advertised_backtest(text: &str) -> Option<String> {
-    let line = text
-        .lines()
-        .find(|line| line.contains("qianxing backtest"))?;
-    let start = line.find("qianxing backtest")?;
+    // #260：针脚从 `PROGRAM_NAME` 取，而不是在这里再抄一份字面量——文案硬编码回
+    // `qianxing` 时这一行查找直接落空，本文件的判据随即判红。
+    let needle = format!("{} backtest", cli_args::PROGRAM_NAME);
+    let line = text.lines().find(|line| line.contains(&needle))?;
+    let start = line.find(&needle)?;
     Some(line[start..].trim_end().to_string())
 }
 
-/// 照屏幕上的样子把命令交给 binary：`qianxing` 只是提示符，参数按空白切开。
+/// 照屏幕上的样子把命令交给 binary：行首的程序名只是提示符，参数按空白切开。
 /// 临时目录带空格时切分会失真，所以先把它当成前置条件钉住。
 fn run_as_printed(command: &str) -> (Option<i32>, String) {
     let args = command
@@ -48,7 +49,7 @@ fn run_as_printed(command: &str) -> (Option<i32>, String) {
 
 /// 每个 profile 都跑：有 BarFrame 才许印回测命令，印出来的文件名必须真在项目里。
 ///
-/// 反向验证：删掉 `init_backtest_step` 的 `?`（缺 BarFrame 时返回 None 的那一步），
+/// 反向验证：删掉 `init_guidance::init_backtest_step` 的 `?`（缺 BarFrame 时返回 None 的那一步），
 /// `ccxt`/`multi-venue` 就会带着根本没复制的行情文件名重新印出命令，本用例的
 /// `assert_eq!(advertised.is_some(), has_frame)` 与逐文件存在性当场不成立。
 #[test]
@@ -76,7 +77,7 @@ fn advertised_commands_only_name_files_the_profile_generated() {
         let advertised = advertised_backtest(&stdout);
         assert_eq!(
             advertised.is_some(),
-            readme.contains("qianxing backtest"),
+            readme.contains(&format!("{} backtest", cli_args::PROGRAM_NAME)),
             "profile={profile} 的首屏与 README 对不上: stdout={stdout}\n{readme}"
         );
         let has_frame = [
@@ -154,6 +155,90 @@ fn advertised_backtest_commands_run_as_printed() {
             assert!(
                 normalize(&summary).starts_with(&normalize(&root.to_string_lossy())),
                 "产物写到了项目之外: {summary}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+/// README 的「推荐流程」整段照抄必须逐条退出 0（#261）。
+///
+/// 这一格以前对 7 个 profile 一律以 `paper-check <runtime>` 收尾，而只有 paper 模板带着启用的
+/// Scheduler worker，其余 profile 把最后一行敲下去必然以 2 退出。现在收尾行按谓词给：paper 给
+/// `paper-check`，回测行吃运行时（会写 summary）的给 `report --json`，两者都不是就不印收尾行。
+///
+/// 反向验证：把 `init_flow_tail` 的第一个分支改成无条件返回 paper-check，base/ashare 两轮全部
+/// 死在「Paper 主链路缺少启用的 Scheduler worker」；把 `bound_strategy` 改成恒真，base 会带着
+/// 一条读不到摘要的 `report --json` 判红。
+#[test]
+fn readme_recommended_flow_runs_line_by_line() {
+    let names = cli_args::PROGRAM_NAME;
+    for (profile, strategy) in [
+        ("base", None),
+        ("builtin", Some("macd")),
+        ("paper", None),
+        ("ashare", None),
+    ] {
+        let root = temp_cli_case_dir(&format!("u4-readme-flow-{profile}"));
+        let runtime = root.join("runtime.json").to_string_lossy().into_owned();
+        let mut args = vec!["init", &runtime, "--profile", profile];
+        if let Some(name) = strategy {
+            args.push("--strategy");
+            args.push(name);
+        }
+        let (code, stdout) = qx_cli(&args);
+        assert_eq!(code, Some(0), "init --profile {profile} 失败:\n{stdout}");
+        let readme = std::fs::read_to_string(root.join("README.qianxing.md"))
+            .expect("init 必须生成 README.qianxing.md");
+        let flow = readme
+            .split("```text\n")
+            .nth(1)
+            .and_then(|tail| tail.split("\n```").next())
+            .unwrap_or_else(|| panic!("profile={profile} 的 README 没有推荐流程代码块:\n{readme}"));
+        let commands = flow
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with(&format!("{names} ")))
+            .collect::<Vec<_>>();
+        assert!(
+            !commands.is_empty(),
+            "profile={profile} 的推荐流程一行命令都没有:\n{flow}"
+        );
+        for line in &commands {
+            let (code, output) = run_as_printed(line);
+            assert_eq!(
+                code,
+                Some(0),
+                "profile={profile} 的 README 有一行照抄跑不通: {line}\n{output}"
+            );
+        }
+        // 收尾行的口径必须与回测行的形状一致：只有吃运行时的回测才写得出可回读的 summary。
+        let backtest_prefix = format!("{names} backtest ");
+        let bound_backtest = commands.iter().any(|line| {
+            line.strip_prefix(backtest_prefix.as_str())
+                .is_some_and(|arguments| {
+                    arguments.split_whitespace().next() == Some(runtime.as_str())
+                })
+        });
+        let tail = *commands.last().expect("推荐流程至少有一行");
+        if profile == "paper" {
+            assert!(
+                tail.starts_with(&format!("{names} paper-check")),
+                "paper 项目要以 paper-check 收尾: {tail}"
+            );
+        } else if bound_backtest {
+            assert!(
+                !tail.contains("paper-check"),
+                "profile={profile} 没有启用的 Scheduler worker，收尾行不许是 paper-check: {tail}"
+            );
+            assert!(
+                tail.starts_with(&format!("{names} report")) && tail.ends_with("--json"),
+                "上一条回测写了 summary，收尾行要读回它: {tail}"
+            );
+        } else {
+            assert!(
+                tail.starts_with(&format!("{names} backtest")),
+                "没有 summary 可读时不印收尾行，末行应是回测本身: {tail}"
             );
         }
         let _ = std::fs::remove_dir_all(root);

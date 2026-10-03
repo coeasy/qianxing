@@ -5,17 +5,16 @@
 //! Kernel 或调度器；生产环境可以在同一 trait 上替换为 PostgreSQL/MQ 实现。
 
 use super::{
-    chain_audit, validate_audit_chain, AuditChainWriter, AuditEntry, AuditStore,
-    ConsumerCheckpoint, ConsumerProjection, ConsumerStateStore, ControlCommandLease,
-    ControlCommandQueueBackend, DeadLetterRecord, EventLogStore, JobLease, JobQueueBackend,
-    OutboxEvent, OutboxLease, OutboxStore, QueuedControlCommand, QueuedJob, StorageError,
-    TransactionalConsumerStateStore,
+    audit_entry_hash, validate_audit_chain, AuditEntry, AuditStore, ConsumerCheckpoint,
+    ConsumerProjection, ConsumerStateStore, ControlCommandLease, ControlCommandQueueBackend,
+    DeadLetterRecord, EventLogStore, JobLease, JobQueueBackend, OutboxEvent, OutboxLease,
+    OutboxStore, QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
 };
-use qx_control::{ControlCommand, ControlPlane};
+use qx_control::{AuditRecord, ControlCommand, ControlPlane};
 use qx_core::{Event, EventLog, QxResult};
 use qx_protocol::{AccountSnapshot, ProtocolError, SnapshotStore};
 use qx_scheduler::{JobRun, JobSpec};
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -324,28 +323,29 @@ impl ConsumerStateStore for SqliteConsumerStateStore {
         Ok(())
     }
 
-    fn dead_letter(
+    fn dead_letters(
         &self,
         group_id: &str,
-        event_id: &str,
-    ) -> Result<Option<DeadLetterRecord>, StorageError> {
+        limit: usize,
+    ) -> Result<Vec<DeadLetterRecord>, StorageError> {
         let connection = open(&self.path)?;
-        let content = connection
-            .query_row(
+        let mut statement = connection
+            .prepare(
                 "SELECT record_json FROM qx_consumer_dead_letters
-                 WHERE group_id = ?1 AND event_id = ?2
-                 ORDER BY attempts DESC LIMIT 1",
-                params![group_id, event_id],
-                |row| row.get::<_, String>(0),
+                 WHERE group_id = ?1 ORDER BY attempts, event_id LIMIT ?2",
             )
-            .optional()
             .map_err(map_sqlite)?;
-        content
-            .map(|content| {
-                serde_json::from_str(&content)
-                    .map_err(|error| StorageError::Io(format!("死信记录解析失败: {error}")))
+        let rows = statement
+            .query_map(params![group_id, limit as i64], |row| {
+                row.get::<_, String>(0)
             })
-            .transpose()
+            .map_err(map_sqlite)?;
+        rows.map(|row| {
+            let content = row.map_err(map_sqlite)?;
+            serde_json::from_str(&content)
+                .map_err(|error| StorageError::Io(format!("死信记录解析失败: {error}")))
+        })
+        .collect()
     }
 }
 
@@ -585,10 +585,8 @@ impl SqliteOutboxStore {
         transaction.commit().map_err(map_sqlite)
     }
 
-    pub fn available(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
+    pub fn available(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
         let connection = open(&self.path)?;
-        // 用尽投递预算的行排在最后再截页：它们仍要被运维看得见（K2 的人工出口），
-        // 但不能占住页首把后面投得出去的事件挤出一页——阈值由 `?2` 绑定，SQL 里不写第二个 8。
         let mut statement = connection
             .prepare(
                 "SELECT e.event_id, e.topic, e.partition_key, e.sequence, e.schema_version,
@@ -596,32 +594,23 @@ impl SqliteOutboxStore {
                  FROM qx_outbox_events e
                  LEFT JOIN qx_outbox_leases l ON l.event_id = e.event_id
                  WHERE l.event_id IS NULL OR CAST(l.expires_ts AS INTEGER) <= CAST(?1 AS INTEGER)
-                 ORDER BY CAST(e.attempts AS INTEGER) >= CAST(?2 AS INTEGER),
-                          CAST(e.created_ts AS INTEGER), CAST(e.sequence AS INTEGER), e.event_id
-                 LIMIT ?3",
+                 ORDER BY CAST(e.created_ts AS INTEGER), CAST(e.sequence AS INTEGER), e.event_id",
             )
             .map_err(map_sqlite)?;
         let rows = statement
-            .query_map(
-                params![
-                    db_string(now),
-                    db_string(crate::OUTBOX_MAX_ATTEMPTS as u64),
-                    i64::try_from(limit).unwrap_or(i64::MAX),
-                ],
-                |row| {
-                    Ok(OutboxEvent {
-                        event_id: row.get(0)?,
-                        topic: row.get(1)?,
-                        partition_key: row.get(2)?,
-                        sequence: parse_sqlite_u64(&row.get::<_, String>(3)?)?,
-                        schema_version: row.get::<_, i64>(4)? as u32,
-                        trace_id: row.get(5)?,
-                        payload: row.get(6)?,
-                        created_ts: parse_sqlite_u64(&row.get::<_, String>(7)?)?,
-                        attempts: parse_sqlite_u64(&row.get::<_, String>(8)?)? as u32,
-                    })
-                },
-            )
+            .query_map(params![db_string(now)], |row| {
+                Ok(OutboxEvent {
+                    event_id: row.get(0)?,
+                    topic: row.get(1)?,
+                    partition_key: row.get(2)?,
+                    sequence: parse_sqlite_u64(&row.get::<_, String>(3)?)?,
+                    schema_version: row.get::<_, i64>(4)? as u32,
+                    trace_id: row.get(5)?,
+                    payload: row.get(6)?,
+                    created_ts: parse_sqlite_u64(&row.get::<_, String>(7)?)?,
+                    attempts: parse_sqlite_u64(&row.get::<_, String>(8)?)? as u32,
+                })
+            })
             .map_err(map_sqlite)?;
         rows.map(|row| {
             let event = row.map_err(map_sqlite)?;
@@ -629,21 +618,6 @@ impl SqliteOutboxStore {
             Ok(event)
         })
         .collect()
-    }
-
-    /// 不问页数、不读 payload 的停摆条数：`available` 被 `limit` 截断后，逐行数出来的
-    /// parked 只是这一页的观察值，而运维要的是库里的状态量（V11 R7-d）。
-    pub fn count_parked(&self) -> Result<u64, StorageError> {
-        let connection = open(&self.path)?;
-        let count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM qx_outbox_events
-                 WHERE CAST(attempts AS INTEGER) >= CAST(?1 AS INTEGER)",
-                params![db_string(crate::OUTBOX_MAX_ATTEMPTS as u64)],
-                |row| row.get(0),
-            )
-            .map_err(map_sqlite)?;
-        Ok(count as u64)
     }
 
     pub fn claim(
@@ -896,12 +870,8 @@ impl OutboxStore for SqliteOutboxStore {
         self.append(event)
     }
 
-    fn available_outbox(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
-        self.available(now, limit)
-    }
-
-    fn count_parked_outbox(&self) -> Result<u64, StorageError> {
-        self.count_parked()
+    fn available_outbox(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
+        self.available(now)
     }
 
     fn claim_outbox(
@@ -1046,7 +1016,6 @@ impl SqliteControlStore {
 
     /// SQLite Immediate transaction version of the file control-state update.
     /// Business errors are returned untouched and do not commit a partial state.
-    /// 新产出的审计流水在同一次 commit 里接进哈希链（V11 R5-2）。
     pub fn transact_control<T, E, F>(
         &self,
         update: F,
@@ -1055,7 +1024,7 @@ impl SqliteControlStore {
         F: FnOnce(&mut ControlPlane) -> Result<T, E>,
     {
         let mut connection = open(&self.path)?;
-        let mut transaction = connection
+        let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sqlite)?;
         let content: Option<String> = transaction
@@ -1072,7 +1041,6 @@ impl SqliteControlStore {
         };
         let result = update(&mut plane);
         if result.is_ok() {
-            chain_audit(&mut plane, &mut SqliteChainWriter(&mut transaction))?;
             let content = plane.to_json().map_err(StorageError::Io)?;
             transaction
                 .execute(
@@ -1084,55 +1052,13 @@ impl SqliteControlStore {
                 .map_err(map_sqlite)?;
         }
         transaction.commit().map_err(map_sqlite)?;
+        if result.is_ok() {
+            // 与文件后端同一口径：控制面事务成功后，把新增的审计尾部追加进
+            // `qx_audit_entries` 的哈希链。链落后于快照会被下一次事务自愈。
+            SqliteAuditStore::new(&self.path)?.sync_control(&plane)?;
+        }
         Ok((plane, result))
     }
-}
-
-/// 控制面事务的 SQLite 审计链写入器：借用同一笔还没有提交的事务，所以链与状态
-/// 要么一起 commit、要么一起 rollback，不存在"链领先于状态"的中间态（V11 R5-2）。
-struct SqliteChainWriter<'a, 'conn>(&'a mut Transaction<'conn>);
-
-impl AuditChainWriter for SqliteChainWriter<'_, '_> {
-    fn tail(&mut self) -> Result<Option<AuditEntry>, StorageError> {
-        audit_tail(self.0)
-    }
-
-    fn drop_from(&mut self, sequence: u64) -> Result<(), StorageError> {
-        self.0
-            .execute(
-                "DELETE FROM qx_audit_entries WHERE sequence >= ?1",
-                params![sqlite_sequence(sequence)?],
-            )
-            .map_err(map_sqlite)?;
-        Ok(())
-    }
-
-    fn append_entries(&mut self, entries: &[AuditEntry]) -> Result<(), StorageError> {
-        for entry in entries {
-            let record_json = serde_json::to_string(&entry.record)
-                .map_err(|error| StorageError::Io(format!("审计序列化失败: {error}")))?;
-            self.0
-                .execute(
-                    "INSERT INTO qx_audit_entries
-                     (sequence, record_json, previous_hash, entry_hash)
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![
-                        sqlite_sequence(entry.sequence)?,
-                        record_json,
-                        db_string(entry.previous_hash),
-                        db_string(entry.entry_hash)
-                    ],
-                )
-                .map_err(map_sqlite)?;
-        }
-        Ok(())
-    }
-}
-
-/// `sequence` 落在 INTEGER 主键上，超出有符号范围就不是审计链而是坏检查点。
-fn sqlite_sequence(sequence: u64) -> Result<i64, StorageError> {
-    i64::try_from(sequence)
-        .map_err(|_| StorageError::Conflict("审计 sequence 超出整数范围".to_string()))
 }
 
 impl SqliteControlCommandQueue {
@@ -1197,14 +1123,11 @@ impl SqliteControlCommandQueue {
         let connection = open(&self.path)?;
         let mut statement = connection
             .prepare(
-                // `enqueued_ts`/`command_id` 都是 u64 存 TEXT：字典序会把 command_id 10
-                // 排在 2 前面，让同一毫秒入队的命令念反执行顺序（V11 R7-2，
-                // 与文件后端的 (enqueued_ts, command_id) 数字序一致）。
                 "SELECT c.command_json, c.enqueued_ts, l.expires_ts
                  FROM qx_control_commands c
                  LEFT JOIN qx_control_command_leases l ON l.command_id = c.command_id
                  WHERE c.done = 0
-                 ORDER BY CAST(c.enqueued_ts AS INTEGER), CAST(c.command_id AS INTEGER)",
+                 ORDER BY c.enqueued_ts, c.command_id",
             )
             .map_err(map_sqlite)?;
         let rows = statement
@@ -1392,7 +1315,65 @@ impl SqliteAuditStore {
         &self.path
     }
 
-    pub(crate) fn read(&self) -> Result<Vec<AuditEntry>, StorageError> {
+    pub fn append(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
+        let mut connection = open(&self.path)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite)?;
+        let last: Option<(i64, String, String)> = transaction
+            .query_row(
+                "SELECT sequence, previous_hash, entry_hash
+                 FROM qx_audit_entries ORDER BY sequence DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(map_sqlite)?;
+        let (sequence, previous_hash) = last
+            .as_ref()
+            .map_or((0, "0".into()), |(sequence, _, hash)| {
+                (sequence + 1, hash.clone())
+            });
+        if let Some((_, record_json, _)) = transaction
+            .query_row(
+                "SELECT sequence, record_json, entry_hash
+                 FROM qx_audit_entries ORDER BY sequence DESC LIMIT 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(map_sqlite)?
+        {
+            let current: AuditRecord = serde_json::from_str(&record_json)
+                .map_err(|error| StorageError::Io(format!("审计 JSON 非法: {error}")))?;
+            if current == record {
+                transaction.commit().map_err(map_sqlite)?;
+                return Ok(self.path.clone());
+            }
+        }
+        let previous_hash_u64 = parse_db_u64(&previous_hash, "previous_hash")?;
+        let entry_hash = audit_entry_hash(sequence as u64, previous_hash_u64, &record);
+        let record_json = serde_json::to_string(&record)
+            .map_err(|error| StorageError::Io(format!("审计序列化失败: {error}")))?;
+        transaction
+            .execute(
+                "INSERT INTO qx_audit_entries
+                 (sequence, record_json, previous_hash, entry_hash)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![sequence, record_json, previous_hash, db_string(entry_hash)],
+            )
+            .map_err(map_sqlite)?;
+        transaction.commit().map_err(map_sqlite)?;
+        Ok(self.path.clone())
+    }
+
+    pub fn read(&self) -> Result<Vec<AuditEntry>, StorageError> {
         let connection = open(&self.path)?;
         let mut statement = connection
             .prepare(
@@ -1412,53 +1393,66 @@ impl SqliteAuditStore {
             .map_err(map_sqlite)?;
         let mut entries = Vec::new();
         for row in rows {
-            entries.push(build_audit_entry(row.map_err(map_sqlite)?)?);
+            let (sequence, record_json, previous_hash, entry_hash) = row.map_err(map_sqlite)?;
+            let record = serde_json::from_str(&record_json)
+                .map_err(|error| StorageError::Io(format!("审计 JSON 非法: {error}")))?;
+            entries.push(AuditEntry {
+                sequence: u64::try_from(sequence)
+                    .map_err(|_| StorageError::Conflict("审计 sequence 为负数".into()))?,
+                record,
+                previous_hash: parse_db_u64(&previous_hash, "previous_hash")?,
+                entry_hash: parse_db_u64(&entry_hash, "entry_hash")?,
+            });
         }
         validate_audit_chain(&entries)?;
         Ok(entries)
     }
-}
 
-/// 链尾查询：`ORDER BY sequence DESC LIMIT 1` 直接落在主键索引上，是 O(1) 读。
-/// 入参取 `&Connection`，事务侧经由 `Transaction: Deref<Target = Connection>` 复用同一份。
-fn audit_tail(connection: &Connection) -> Result<Option<AuditEntry>, StorageError> {
-    connection
-        .query_row(
-            "SELECT sequence, record_json, previous_hash, entry_hash
-             FROM qx_audit_entries ORDER BY sequence DESC LIMIT 1",
-            [],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(map_sqlite)?
-        .map(build_audit_entry)
-        .transpose()
-}
-
-fn build_audit_entry(
-    (sequence, record_json, previous_hash, entry_hash): (i64, String, String, String),
-) -> Result<AuditEntry, StorageError> {
-    let record = serde_json::from_str(&record_json)
-        .map_err(|error| StorageError::Io(format!("审计 JSON 非法: {error}")))?;
-    Ok(AuditEntry {
-        sequence: u64::try_from(sequence)
-            .map_err(|_| StorageError::Conflict("审计 sequence 为负数".into()))?,
-        record,
-        previous_hash: parse_db_u64(&previous_hash, "previous_hash")?,
-        entry_hash: parse_db_u64(&entry_hash, "entry_hash")?,
-    })
+    pub fn sync_control(&self, plane: &ControlPlane) -> Result<usize, StorageError> {
+        let existing = self.read()?;
+        let records = plane.audit();
+        if existing.len() > records.len()
+            || existing
+                .iter()
+                .zip(records)
+                .any(|(entry, record)| entry.record != *record)
+        {
+            return Err(StorageError::Conflict(
+                "控制面审计与 SQLite 审计前缀不一致".into(),
+            ));
+        }
+        let mut appended = 0;
+        for record in records.iter().skip(existing.len()) {
+            self.append(record.clone())?;
+            appended += 1;
+        }
+        Ok(appended)
+    }
 }
 
 impl AuditStore for SqliteAuditStore {
+    fn append_record(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
+        self.append(record)
+    }
+
     fn read_entries(&self) -> Result<Vec<AuditEntry>, StorageError> {
         self.read()
+    }
+
+    fn query_command_entries(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError> {
+        Ok(self
+            .read()?
+            .into_iter()
+            .filter(|entry| entry.record.command_id == command_id)
+            .collect())
+    }
+
+    fn entries_after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError> {
+        Ok(self
+            .read()?
+            .into_iter()
+            .filter(|entry| entry.sequence > sequence)
+            .collect())
     }
 }
 
@@ -1664,9 +1658,6 @@ impl SqliteJobQueue {
         let connection = open(&self.path)?;
         let mut statement = connection
             .prepare(
-                // 作业的外发序不在这里决定：函数末尾按 `(trading_day, run_id)` 重排，
-                // 与 PostgreSQL 后端和文件后端同一口径（V11 R7-2 核过：SQL 的 ORDER BY
-                // 对本函数的输出是装饰性的，改它既不会也被观察不到，所以不写第二套口径）。
                 "SELECT j.envelope_json, l.expires_ts
                  FROM qx_jobs j LEFT JOIN qx_job_leases l ON l.run_id = j.run_id
                  WHERE j.done = 0 ORDER BY j.run_id",
@@ -1887,6 +1878,10 @@ impl JobQueueBackend for SqliteJobQueue {
         lease_seconds: u64,
     ) -> Result<JobLease, StorageError> {
         self.claim(run_id, worker, now, lease_seconds)
+    }
+
+    fn ack_job(&self, run_id: u64, worker: &str) -> Result<PathBuf, StorageError> {
+        self.ack(run_id, worker)
     }
 
     fn ack_job_at(
@@ -2335,4 +2330,206 @@ impl EventLogStore for SqliteEventLogStore {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use qx_control::{CommandKind, CommandStatus, Permission};
+    use qx_protocol::AccountSnapshot;
+    use qx_scheduler::{JobStatus, JobWindow, RetryPolicy, Trigger};
+    use std::collections::BTreeMap;
+
+    fn temp_db(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "qianxing-{label}-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn queued_job() -> (JobSpec, JobRun) {
+        let job = JobSpec {
+            job_id: "sqlite-job".into(),
+            job_version: "v1".into(),
+            owner: "research".into(),
+            enabled: true,
+            trigger: Trigger::Manual,
+            window: JobWindow::Any,
+            depends_on: Vec::new(),
+            input_refs: vec!["input".into()],
+            output_refs: vec!["output".into()],
+            timeout_seconds: 60,
+            retry_policy: RetryPolicy::default(),
+            concurrency_key: "sqlite-job".into(),
+            idempotency_key: "sqlite-job-daily".into(),
+            permission_scope: "research".into(),
+            audit_reason: "sqlite test".into(),
+            dry_run: true,
+        };
+        let run = JobRun {
+            run_id: job.stable_key("20260910"),
+            job_id: job.job_id.clone(),
+            trading_day: "20260910".into(),
+            attempt: 1,
+            status: JobStatus::Running,
+            manifest_digest: Some(7),
+            error_code: None,
+            next_retry_ts: None,
+            started_ts: 10,
+            deadline_ts: 70,
+        };
+        (job, run)
+    }
+
+    fn queued_command(command_id: u64) -> ControlCommand {
+        ControlCommand {
+            command_id,
+            request_id: format!("sqlite-command-{command_id}"),
+            operator_id: "ops".into(),
+            reason: "sqlite command queue test".into(),
+            kind: CommandKind::SubmitOrder,
+            target: command_id.to_string(),
+            payload: BTreeMap::new(),
+            permission: Permission::Trading,
+            dry_run: true,
+        }
+    }
+
+    #[test]
+    fn sqlite_audit_is_idempotent_and_tamper_evident() {
+        let path = temp_db("audit");
+        let store = SqliteAuditStore::new(&path).unwrap();
+        let record = AuditRecord {
+            command_id: 1,
+            request_id: "sqlite-audit".into(),
+            operator_id: "ops".into(),
+            command_digest: 7,
+            status: CommandStatus::Accepted,
+            result_code: "ACCEPTED".into(),
+            ts: 10,
+        };
+        store.append(record.clone()).unwrap();
+        store.append(record).unwrap();
+        assert_eq!(store.read().unwrap().len(), 1);
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE qx_audit_entries SET entry_hash = '1' WHERE sequence = 0",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            store.read(),
+            Err(StorageError::Conflict(message)) if message.contains("摘要不一致")
+        ));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn sqlite_job_queue_preserves_fencing_and_expiry_semantics() {
+        let path = temp_db("jobs");
+        let queue = SqliteJobQueue::new(&path).unwrap();
+        let (job, run) = queued_job();
+        let run_id = run.run_id;
+        queue.enqueue(job.clone(), run.clone(), 10).unwrap();
+        queue.enqueue(job, run, 10).unwrap();
+        assert_eq!(queue.available(10).unwrap().len(), 1);
+        let first = queue.claim(run_id, "worker-a", 10, 10).unwrap();
+        assert_eq!(first.fencing_token, 1);
+        assert!(matches!(
+            queue.ack_at(run_id, "worker-a", first.fencing_token, 20),
+            Err(StorageError::LeaseExpired { .. })
+        ));
+        assert_eq!(queue.recover_expired(20).unwrap(), vec![run_id]);
+        let takeover = queue.claim(run_id, "worker-b", 21, 10).unwrap();
+        assert_eq!(takeover.fencing_token, 2);
+        assert!(matches!(
+            queue.ack_at(run_id, "worker-a", first.fencing_token, 21),
+            Err(StorageError::Unauthorized(_))
+        ));
+        queue
+            .ack_at(run_id, "worker-b", takeover.fencing_token, 21)
+            .unwrap();
+        assert!(queue.available(22).unwrap().is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn sqlite_token_bucket_is_transactional_and_persistent() {
+        let path = temp_db("bucket");
+        let first = SqliteTokenBucket::new(&path, "api", 2, 0).unwrap();
+        assert!(first.try_acquire(10, 1).unwrap());
+        let second = SqliteTokenBucket::new(&path, "api", 2, 0).unwrap();
+        assert!(second.try_acquire(10, 1).unwrap());
+        assert!(!first.try_acquire(10, 1).unwrap());
+        assert!(matches!(
+            first.try_acquire(10, 3),
+            Err(StorageError::Conflict(_))
+        ));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn sqlite_control_state_and_command_queue_are_transactional_and_fenced() {
+        let path = temp_db("control");
+        let store = SqliteControlStore::new(&path).unwrap();
+        let command = queued_command(91);
+        let (_, accepted) = store
+            .transact_control(|plane| plane.submit(command.clone(), 10))
+            .unwrap();
+        assert_eq!(accepted.unwrap().status, CommandStatus::Accepted);
+        let (_, duplicate) = store
+            .transact_control(|plane| plane.submit(command.clone(), 11))
+            .unwrap();
+        assert!(duplicate.is_err());
+        assert_eq!(store.load_if_exists().unwrap().unwrap().audit().len(), 1);
+
+        let queue = SqliteControlCommandQueue::new(&path).unwrap();
+        queue.enqueue(command.clone(), 10).unwrap();
+        queue.enqueue(command, 10).unwrap();
+        assert_eq!(queue.available(10).unwrap().len(), 1);
+        let lease = queue.claim(91, "execution-a", 10, 10).unwrap();
+        assert!(matches!(
+            queue.claim(91, "execution-b", 11, 10),
+            Err(StorageError::LeaseHeld { .. })
+        ));
+        let takeover = queue.claim(91, "execution-b", 20, 10).unwrap();
+        assert_eq!(takeover.fencing_token, lease.fencing_token + 1);
+        assert!(matches!(
+            queue.ack_at(91, "execution-a", lease.fencing_token, 21),
+            Err(StorageError::Unauthorized(_))
+        ));
+        queue
+            .ack_at(91, "execution-b", takeover.fencing_token, 21)
+            .unwrap();
+        assert!(queue.available(22).unwrap().is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn sqlite_snapshot_store_seals_and_revalidates_account_state() {
+        let path = temp_db("snapshot");
+        let store = SqliteSnapshotStore::new(&path).unwrap();
+        let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
+        snapshot.cash_raw.insert("USDT".into(), 1000);
+        snapshot.seal();
+        store.save(&snapshot).unwrap();
+        store.save(&snapshot).unwrap();
+        let json = store
+            .load_json(snapshot.header.snapshot_id, snapshot.state_hash())
+            .unwrap();
+        assert_eq!(AccountSnapshot::from_json(&json).unwrap(), snapshot);
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE qx_snapshots SET content = '{\"tampered\":true}'",
+                [],
+            )
+            .unwrap();
+        assert!(store
+            .load_json(snapshot.header.snapshot_id, snapshot.state_hash())
+            .is_err());
+        let _ = std::fs::remove_file(path);
+    }
+}

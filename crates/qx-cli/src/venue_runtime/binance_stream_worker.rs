@@ -22,72 +22,67 @@ pub(crate) fn run_binance_market_worker(
         )
         .map_err(|error| format!("创建行情事件管线失败: {error}"))?;
     let mut paper_bridges = open_paper_market_bridges(&pipeline_storage, &all_workers)?;
-    let policy =
-        BinanceStreamRetryPolicy::new(10, Duration::from_secs(1), Duration::from_secs(30))?;
-    // 静默与故障在行情流上同样要分开：一条薄行情 10 秒不 tick 曾经会让这颗 worker
-    // 直接 return，而监督器按进程粒度收工——同机的其它 worker 一起没了。
-    let connect_context = context.clone();
-    let stop_context = context.clone();
-    let sleep_context = context.clone();
-    let connect_instrument = instrument.clone();
-    let worker_id = worker.id.clone();
-    let report = qx_adapter::run_binance_stream(
-        move || {
-            let stream = BinanceSpotMarketStream::connect_with_endpoint(
-                connect_instrument.clone(),
-                host.as_str(),
-                port,
-                Duration::from_secs(10),
-            )?;
-            connect_context.mark(
-                qx_runtime::ServiceStatus::Ready,
-                "market stream connected",
-                Some(runtime_timestamp_ms()),
-            )?;
-            Ok(stream)
-        },
-        policy,
-        move || stop_context.should_stop(),
-        move |delay| {
-            thread::sleep(delay);
-            let _ = sleep_context.heartbeat(runtime_timestamp_ms());
-        },
-        runtime_timestamp_ms,
-        |quote| {
-            let received_ts = runtime_timestamp_ms();
-            pipeline
-                .ingest(RuntimeEventEnvelope::market_quote(
-                    instrument.clone(),
-                    quote,
-                    received_ts,
-                    quote.source_seq,
-                    format!("{worker_id}:quote:{}", quote.source_seq),
-                ))
-                .map_err(|error| format!("行情事实归约失败: {error:?}"))?;
-            bridge_market_quote_to_paper(
-                &mut paper_bridges,
-                PaperMarketQuote {
-                    source_worker_id: &worker_id,
-                    instrument: &instrument,
-                    bid: quote.bid,
-                    bid_qty: quote.bid_qty,
-                    ask: quote.ask,
-                    ask_qty: quote.ask_qty,
-                    event_ts: quote.ts,
-                    receive_ts: received_ts,
-                    source_seq: quote.source_seq,
-                },
-            )?;
-            context.heartbeat(received_ts)?;
-            Ok(())
-        },
+    let mut stream = BinanceSpotMarketStream::connect_with_endpoint(
+        instrument.clone(),
+        host,
+        port,
+        Duration::from_secs(10),
     )?;
     context.mark(
+        qx_runtime::ServiceStatus::Ready,
+        "market stream connected",
+        Some(runtime_timestamp_ms()),
+    )?;
+    let mut quotes = 0_u64;
+    let mut idle_windows = 0_u64;
+    while !context.should_stop() {
+        match stream.recv_quote(runtime_timestamp_ms())? {
+            BinanceQuotePoll::Quote(quote) => {
+                idle_windows = 0;
+                let received_ts = runtime_timestamp_ms();
+                pipeline
+                    .ingest(RuntimeEventEnvelope::market_quote(
+                        instrument.clone(),
+                        quote,
+                        received_ts,
+                        quote.source_seq,
+                        format!("{}:quote:{}", worker.id, quote.source_seq),
+                    ))
+                    .map_err(|error| format!("行情事实归约失败: {error:?}"))?;
+                bridge_market_quote_to_paper(
+                    &mut paper_bridges,
+                    PaperMarketQuote {
+                        source_worker_id: &worker.id,
+                        instrument: &instrument,
+                        bid: quote.bid,
+                        bid_qty: quote.bid_qty,
+                        ask: quote.ask,
+                        ask_qty: quote.ask_qty,
+                        event_ts: quote.ts,
+                        receive_ts: received_ts,
+                        source_seq: quote.source_seq,
+                    },
+                )?;
+                quotes = quotes.saturating_add(1);
+                context.heartbeat(received_ts)?;
+            }
+            // 一个读窗没行情不是致命错误：降级健康、继续等。旧口径让 `?` 把静默上抛，
+            // 于是薄成交对的 symbol 十分钟没跳动就会让整个 runtime 停摆。
+            BinanceQuotePoll::Idle => {
+                idle_windows = idle_windows.saturating_add(1);
+                context.mark(
+                    qx_runtime::ServiceStatus::Degraded,
+                    format!("market stream idle consecutive_windows={idle_windows}"),
+                    Some(runtime_timestamp_ms()),
+                )?;
+            }
+            BinanceQuotePoll::Closed => break,
+        }
+    }
+    let _ = stream.close();
+    context.mark(
         qx_runtime::ServiceStatus::Stopped,
-        format!(
-            "market stream stopped quotes={} idle_windows={} reconnects={}",
-            report.events, report.idle_windows, report.reconnects
-        ),
+        format!("market stream stopped quotes={quotes} idle_windows={idle_windows}"),
         Some(runtime_timestamp_ms()),
     )?;
     Ok(())
@@ -190,10 +185,7 @@ pub(crate) fn run_binance_user_worker(
     )?;
     context.mark(
         qx_runtime::ServiceStatus::Stopped,
-        format!(
-            "user stream stopped events={} idle_windows={} reconnects={}",
-            report.events, report.idle_windows, report.reconnects
-        ),
+        format!("user stream stopped events={}", report.events),
         Some(runtime_timestamp_ms()),
     )?;
     Ok(())

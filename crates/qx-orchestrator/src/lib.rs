@@ -3,14 +3,12 @@
 //! 该 crate 只负责把已验证的 RuntimeConfig 转换为 worker 启动计划，以及管理
 //! worker 子进程的日志、退出传播和停止顺序；不执行策略、下单、对账或账簿副作用。
 
-mod reap;
 mod supervisor_stop;
 
 use qx_core::VenueFamily;
 use qx_runtime::{RuntimeConfig, WorkerRole};
-use reap::{stop_managed_children, ManagedChild};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -196,6 +194,11 @@ pub fn plan_workers(
     Ok(launches)
 }
 
+struct ManagedChild {
+    id: String,
+    child: Child,
+}
+
 impl ManagedProcess for ManagedChild {
     fn id(&self) -> &str {
         &self.id
@@ -215,19 +218,22 @@ impl ManagedProcess for ManagedChild {
     }
 }
 
+fn stop_managed_children(children: &mut [ManagedChild]) {
+    for managed in children.iter_mut() {
+        let _ = managed.child.kill();
+    }
+    for managed in children.iter_mut() {
+        let _ = managed.child.wait();
+    }
+}
+
 /// 启动并监督一组 worker 子进程。任一 worker 异常退出时停止其余 worker。
-///
-/// `stop` 是停机令牌的读侧：每轮 `try_wait` 之前先看它，命中就按"有序收工"返回
-/// `Ok(())`。托管对象是独立 OS 进程、父子间没有信号通道（引依赖不在本轮范围），
-/// 所以令牌的落地方式与 fail-fast 共用 `stop_managed_children` 的 kill + 限时回收；
-/// 那段等待的上界就是配置里的 `shutdown_timeout_ms`，超预算没收回来的 worker 会被点名报出去。
 pub fn supervise_workers(
     config: &RuntimeConfig,
     config_path: &Path,
     executable: &Path,
     work_dir: &Path,
     allow_unmanaged_roles: bool,
-    stop: impl Fn() -> bool,
 ) -> Result<(), String> {
     let launches = plan_workers(config, config_path, allow_unmanaged_roles)?;
     // 在派生任何子进程之前就接管终止信号：否则规划/启动窗口内的 Ctrl+C 会直接打死
@@ -275,7 +281,7 @@ pub fn supervise_workers(
         let started = std::time::Instant::now();
         match wait_for_children(
             &mut children,
-            || stop() || qx_runtime::shutdown_signalled(),
+            qx_runtime::shutdown_signalled,
             || u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             |millis| thread::sleep(Duration::from_millis(millis)),
             config.shutdown_timeout_ms,
@@ -299,15 +305,8 @@ pub fn supervise_workers(
         }
         Ok(())
     })();
-    let reaped = stop_managed_children(
-        &mut children,
-        Duration::from_millis(config.shutdown_timeout_ms),
-    );
-    match (result, reaped) {
-        (Ok(()), reap) => reap,
-        (Err(error), Ok(())) => Err(error),
-        (Err(error), Err(reap_error)) => Err(format!("{error}; 且收尾未收干净: {reap_error}")),
-    }
+    stop_managed_children(&mut children);
+    result
 }
 
 #[cfg(test)]

@@ -2,10 +2,7 @@
 
 策略进程只能接收不可变定点输入并返回 Signal/Portfolio/OrderIntent 目标，不得直接访问
 交易所、控制面或账簿。协议与 Rust ``qx_runtime`` 中的
-``StrategyContractInput/Output`` 同一份形状，逐键钉在
-``crates/qx-runtime/tests/strategy_api_schema_contract.rs``；本桥接的 ``StrategyIntent``
-写满 11 格意图字段，逐腿 ``margin_mode`` / ``position_mode`` / ``leverage``
-也一并写出去（V12 §16 第三遍接线，V11 R4-4 登记的那处缺口由此收口）。
+``StrategyContractInput/Output`` 一一对应，便于 JSONL、Arrow 和其他语言复用。
 """
 
 from __future__ import annotations
@@ -219,9 +216,8 @@ class StrategyIntent:
             "short",
         }:
             raise ValueError("intent.position_side must be net, long or short")
-        # 三个衍生品档位与 Rust StrategyContractOutput::validate_for 的意图那一半同口径：
-        # 空值表示沿用运行时主策略配置，非空值必须是运行时认识的规范小写形式，
-        # leverage 不允许 0（V12 §16 第三遍）。
+        # 三个衍生品档位与 Rust StrategyContractIntent::validate 同口径：空值表示沿用运行时
+        # 主策略配置，非空值必须是运行时认识的规范小写形式，leverage 不允许 0（V12 §16 第三遍）。
         if self.margin_mode is not None and self.margin_mode.lower() not in {
             "cash",
             "cross",
@@ -332,17 +328,15 @@ class StrategyOutput:
     def from_dict(cls, value: Mapping[str, Any], request: StrategyInput) -> "StrategyOutput":
         _reject_unknown_keys(value, cls, "strategy output")
         result = cls(
-            # 契约声明必填的那九格一律按缺失即拒（与本文件意图层 `from_dict` 同一写法）：
-            # 这里补零等于给同一份契约留第二个更宽的读法，作者本地过得去的载荷会在运行时被拒。
-            schema_version=int(value["schema_version"]),
+            schema_version=int(value.get("schema_version", 0)),
             request_id=str(value["request_id"]),
             strategy_id=str(value["strategy_id"]),
             signal_id=int(value["signal_id"]),
             instrument=str(value["instrument"]),
             target_qty=int(value["target_qty"]),
-            confidence=int(value["confidence"]),
-            priority=int(value["priority"]),
-            expires_at=int(value["expires_at"]),
+            confidence=int(value.get("confidence", 0)),
+            priority=int(value.get("priority", 0)),
+            expires_at=int(value.get("expires_at", 0)),
             intents=tuple(StrategyIntent.from_dict(item) for item in value.get("intents", [])),
         )
         result.validate_for(request)

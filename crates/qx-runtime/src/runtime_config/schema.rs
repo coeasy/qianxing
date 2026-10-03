@@ -4,17 +4,12 @@ use super::*;
 
 pub const RUNTIME_SCHEMA_VERSION: u32 = 1;
 
-/// 运行时 `environment` 的合法取值。历史口径只有"非空"这一条判定，而十余处硬
-/// 风控分支去比较 `production` 字面量：`prod`、`producion`、带空格的 `" production "`
-/// 都能通过校验，同时在运行时被读成"非 production"，于是 production 专属的
-/// `max_order_notional_raw` / `instrument_spec_path` / C ABI 签名 / 研究快照闸门
-/// 全部静默失效，而 `config validate` 依旧打印 [PASS]（V11 §41 E1）。
-/// 词表外一律 fail closed；归一化只做大小写与首尾空白，见 `RuntimeConfig::environment_kind`。
-pub const RUNTIME_ENVIRONMENTS: [&str; 4] = ["production", "paper", "sandbox", "testnet"];
-
-/// 唯一带硬风控的环境名。字面量只许出现在这里与词表里，判定必须走
-/// `RuntimeConfig::is_production`。
-pub const RUNTIME_ENVIRONMENT_PRODUCTION: &str = "production";
+/// `environment` 的闭合写法名单（大小写不敏感、不含首尾空白）。
+///
+/// 这个字符串同时决定两件事：14 处 `production` 专属闸门里有 9 处就在运行时配置校验内
+/// （另外 5 处在 CLI 侧的体检与就绪判定），以及实时策略作业的 `dry_run` 走模拟还是真实
+/// 提交（只有 `paper` 模拟）。名单本身在这里单源，校验闸门与用例都读同一份。
+pub const ENVIRONMENT_VOCAB: [&str; 4] = ["paper", "sandbox", "testnet", "production"];
 
 /// 运行时部署 profile。
 ///
@@ -100,6 +95,11 @@ pub struct StorageRuntimeConfig {
     pub postgres_pool_size: usize,
     /// 可选的 EventLog 分段大小。未配置时使用兼容的单文件日志；配置后
     /// 运行时应通过 `LiveEventPipeline::open_configured` 打开不可变分段日志。
+    ///
+    /// 两种形状写的是互不相交的文件（`{name}.json` 与 `{name}.manifest.json` +
+    /// `segments/`），改这个字段等于换一本账：同一 `storage.data_dir` 下留着另一本
+    /// 历史时打开会当场拒绝，账户不会静默归零（`LiveEventPipeline` 的换后端闸门）。
+    /// 分段换来的是按段归档与摘要校验，不是更省的稳态写入。
     #[serde(default)]
     pub event_log_segment_events: Option<usize>,
 }
@@ -180,6 +180,40 @@ pub struct MessagingRuntimeConfig {
     /// API 聚合 worker 指标时使用的失联判定窗口。
     #[serde(default = "default_messaging_worker_stale_after_ms")]
     pub worker_stale_after_ms: u64,
+    /// 建立 NATS 连接的预算；此前只能退回 async-nats 自己的默认值。
+    #[serde(default = "default_messaging_connect_timeout_ms")]
+    pub connect_timeout_ms: u64,
+    /// 一次 JetStream 请求（含发布确认）的预算。
+    #[serde(default = "default_messaging_request_timeout_ms")]
+    pub request_timeout_ms: u64,
+    /// 空拉取的 batch expiry，决定 worker 多久能观察到停机令牌。
+    #[serde(default = "default_messaging_pull_expires_ms")]
+    pub pull_expires_ms: u64,
+}
+
+/// 三条 NATS 等待预算的默认值取自 `qx_storage::NatsWaitBudget::default()`，
+/// 与它们所替换的依赖默认逐项相等；数值只在那一处写，改这里就会改运行时行为。
+fn default_messaging_connect_timeout_ms() -> u64 {
+    qx_storage::NatsWaitBudget::default().connect_timeout_ms
+}
+
+fn default_messaging_request_timeout_ms() -> u64 {
+    qx_storage::NatsWaitBudget::default().request_timeout_ms
+}
+
+fn default_messaging_pull_expires_ms() -> u64 {
+    qx_storage::NatsWaitBudget::default().pull_expires_ms
+}
+
+impl MessagingRuntimeConfig {
+    /// 把配置面上的三条等待预算交给 NATS 适配器。
+    pub fn nats_wait_budget(&self) -> qx_storage::NatsWaitBudget {
+        qx_storage::NatsWaitBudget {
+            connect_timeout_ms: self.connect_timeout_ms,
+            request_timeout_ms: self.request_timeout_ms,
+            pull_expires_ms: self.pull_expires_ms,
+        }
+    }
 }
 
 impl Default for MessagingRuntimeConfig {
@@ -200,6 +234,9 @@ impl Default for MessagingRuntimeConfig {
             consumer_handler_args: Vec::new(),
             consumer_handler_timeout_ms: default_messaging_consumer_handler_timeout_ms(),
             worker_stale_after_ms: default_messaging_worker_stale_after_ms(),
+            connect_timeout_ms: default_messaging_connect_timeout_ms(),
+            request_timeout_ms: default_messaging_request_timeout_ms(),
+            pull_expires_ms: default_messaging_pull_expires_ms(),
         }
     }
 }

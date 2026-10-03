@@ -122,11 +122,6 @@ pub(crate) fn run_single_strategy_backtest(
             BuiltinSignalProvenance::render(builtin_config.kind, &config.strategy);
         // 口径要在 `builtin_config` 被策略吃掉之前取走，摘要才有这句话可写（V12 R4-j）。
         builtin_signal = Some(builtin_signal_params(&builtin_config, &signal_provenance));
-        // 落点判据要问派生出来的那份政策，而不是问配置里有没有写：声明了对冲腿时
-        // `primary_policy` 才带得上杠杆，单腿内置策略永远带 None 进内核（V11 R4-5）。
-        if builtin_config.primary_policy.is_none() {
-            reject_unapplied_product_policy(config, "strategy backtest 的内置策略分支")?;
-        }
         println!(
             "[Strategy · Signal] {}",
             builtin_signal_note(&builtin_config, &signal_provenance)
@@ -175,7 +170,7 @@ pub(crate) fn run_single_strategy_backtest(
     let run_manifest = report.run_manifest_with_input_components(
         RunManifestIdentity {
             run_id: &format!("strategy-backtest:{strategy_id}:{}", frame.instrument),
-            code_commit: env!("QX_GIT_COMMIT"),
+            code_commit: build_identity::BUILD_REVISION,
             config_hash: &config.fingerprint()?,
             strategy_version: &config.strategy.version,
             instrument_spec_version,
@@ -271,12 +266,7 @@ pub(crate) fn run_builtin_backtest(
         return Err("内置策略 quantity 必须为正整数".into());
     }
     let kind = BuiltinStrategyKind::parse(strategy_name)?;
-    let payload = std::fs::read_to_string(frame_path).map_err(|error| {
-        format!(
-            "读取内置策略 BarFrame 失败 {}: {error}",
-            frame_path.display()
-        )
-    })?;
+    let payload = read_example_json(frame_path, "内置策略 BarFrame ")?;
     let frame = BarFrame::from_json(&payload).map_err(|error| {
         format!(
             "内置策略 BarFrame 校验失败 {}: {error:?}",
@@ -294,12 +284,6 @@ pub(crate) fn run_builtin_backtest(
         source: instrument_spec_version,
     } = market_spec_with_margin(&frame.instrument, spec_path, "内置策略")?;
     let risk_binding = backtest_risk_binding(runtime_config_path, false)?;
-    // 单腿内置策略派生不出 `OrderPolicy`（`BuiltinStrategyConfig::new` 只给 None），所以这两格
-    // 在本链没有任何落点：`backtest ccxt-builtin` 也走这一处，故一并点名两个命令。
-    reject_configured_product_policy(
-        runtime_config_path,
-        "backtest builtin / backtest ccxt-builtin",
-    )?;
     let costs = execution_cost_binding(runtime_config_path)?;
     // 撮合口径与风控、成本同一来源：给了 `--config` 就必须认它声明的 `strategy.fill_model`，
     // 否则同一份配置在 `strategy backtest` 与 `backtest builtin` 上会得到两种成交价（V11 §15.4）。

@@ -153,10 +153,8 @@ impl From<&PositionSnapshot> for AccountPositionSnapshot {
 
 /// 内核订单 → 线格式订单的**唯一**折算。
 ///
-/// 只到查询投影：`limit` / `account_id` / `trace` / `policy` 四格不进线格式，
-/// 而 `policy` 带着杠杆、保证金模式、持仓方向与 `reduce_only`——所以这里不是
-/// 订单的完整往返，只读回来就丢掉那些格子。`order_id` 与 `client_order_id` 同值，
-/// 因为 `qx_core::Order` 本身只有 `client_id`，这条链上没有独立的 venue order id。
+/// 线格式不携带限价/账户/追踪信息，只做查询投影；`order_id` 与
+/// `client_order_id` 同值（EventLog 恢复路径没有独立的 venue order id）。
 impl From<&Order> for OrderSnapshot {
     fn from(order: &Order) -> Self {
         Self {

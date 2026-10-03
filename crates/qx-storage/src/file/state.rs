@@ -63,11 +63,12 @@ impl JsonStateStore {
         read_json_file(&path, "JSON 状态")
     }
 
-    /// 控制面事务的保留错误类型版本。业务拒绝（重复请求/权限不足等）不会
-    /// 被误包装成存储故障，也不会写入半成品状态；只有成功变更才会原子保存。
+    /// 在同一把文件锁内读取、修改并原子保存控制面状态。
     ///
-    /// 成功变更还会先把自己的审计流水接进哈希链：链落盘在前、状态落盘在后，
-    /// 崩在两者之间留下的残尾由下一笔事务截掉（V11 R5-2）。
+    /// API 接收命令和执行器回写终态都必须通过这个事务边界，避免两个进程
+    /// 分别基于旧快照保存而互相覆盖命令或审计尾部。业务拒绝（重复请求/权限
+    /// 不足等）不会被误包装成存储故障，也不会写入半成品状态；只有成功变更
+    /// 才会原子保存，并把这一步新增的审计尾部追加进同 root 的哈希链。
     pub fn transact_control<T, E, F>(
         &self,
         update: F,
@@ -84,15 +85,16 @@ impl JsonStateStore {
         };
         let result = update(&mut plane);
         if result.is_ok() {
-            let mut writer = FileChainWriter::lock(&self.root)?;
-            chain_audit(&mut plane, &mut writer)?;
             self.save_control_unlocked(&plane)?;
+            // 控制面每次成功提交都把审计尾部补进只追加的哈希链。顺序不能反：
+            // 链落后于快照会被下一次事务自愈，链超前于快照则让 sync_control 的
+            // 前缀校验从此永久失败（快照回滚不了已经多出来的链尾）。
+            AuditFileStore::new(&self.root).sync_control(&plane)?;
         }
         Ok((plane, result))
     }
 
     /// 加载可选的控制面状态；首次启动没有文件时返回空控制面。
-    /// 文件后端的读侧只有这一颗（`qx-runtime::load_control_state` 走它）。
     pub fn load_control_if_exists(&self) -> Result<Option<ControlPlane>, StorageError> {
         match read_state_text(&self.root.join("control-plane.json"))? {
             Some(text) => Ok(Some(

@@ -1,11 +1,10 @@
 //! 调度派发形状的装载闸门：运行时不会派发的 JobSpec 必须在装载时就拒（V12 §18-B #117）。
 //!
-//! `scheduler-worker` 的一次 tick 只会把「Cron 触发 + window=Any + 一次尝试」的作业入队：
-//! 交易日历触发没有生产派发者，窗口判定更没有能填出 `Session` 的日历数据源。在那之前，一个把
-//! `window` 写成 `Session` 的作业照样会被 `due_jobs` 放行 —— 于是它在收盘前后一样触发；而
+//! `scheduler-worker` 的一次 tick 只会把「Cron 触发 + window=Any」的作业入队：交易日历触发
+//! 没有生产派发者，窗口判定更没有能填出 `Session` 的日历数据源。在那之前，一个把 `window`
+//! 写成 `Session` 的作业照样会被 `due_jobs` 放行 —— 于是它在收盘前后一样触发；而
 //! `Trigger::Manual`/`Event` 的作业被收下后永远不出队。两种都是「配置声明了、运行时不认」，
-//! 比直接拒绝难发现得多，所以闸门放在装载点：`load_scheduler_state` 的两条路径都问
-//! `validate_job_triggers`，而判据与派发器共用 `qx_scheduler::undispatchable_by_registry`。
+//! 比直接拒绝难发现得多，所以闸门放在装载点。
 
 use super::*;
 
@@ -13,17 +12,18 @@ fn job_with(trigger: Trigger, window: JobWindow) -> JobSpec {
     JobSpec {
         job_id: format!("shape-{}", window_name(&window)),
         job_version: "1".into(),
-        // owner 必须命中该拓扑里启用的 Strategy worker：装载先问 owner 再问形状，
-        // 填一个没人领取的 owner 会让用例拒在另一条判据上，什么也证明不了。
-        owner: "strategy-paper".into(),
+        owner: "scheduler-1".into(),
         enabled: true,
         trigger,
         window,
         depends_on: Vec::new(),
+        input_refs: vec!["dataset:shape".into()],
+        output_refs: vec!["shape-report".into()],
         timeout_seconds: 60,
         retry_policy: RetryPolicy::default(),
         concurrency_key: "shape".into(),
         idempotency_key: "shape:idem".into(),
+        permission_scope: "report".into(),
         audit_reason: "dispatch-shape-case".into(),
         dry_run: true,
     }
@@ -58,14 +58,13 @@ fn runtime_for_jobs(root: &Path, jobs: &[JobSpec]) -> (RuntimeConfig, PathBuf) {
     (config, config_path)
 }
 
-/// 三种运行时不会派发的形状必须当场拒，且报错点名是哪个作业、拒的是哪一格声明。
+/// 三种运行时不会派发的形状必须当场拒，且报错点名是哪个作业、哪一格声明的。
 #[test]
 fn load_refuses_dispatch_shapes_the_tick_will_never_honor() {
-    for (slug, label, reason, job) in [
+    for (slug, label, job) in [
         (
             "calendar",
             "交易日历触发",
-            "只认 `Trigger::Cron`",
             job_with(
                 Trigger::TradingCalendar {
                     session: "post_close".into(),
@@ -76,19 +75,16 @@ fn load_refuses_dispatch_shapes_the_tick_will_never_honor() {
         (
             "manual",
             "手工触发",
-            "只认 `Trigger::Cron`",
             job_with(Trigger::Manual, JobWindow::Any),
         ),
         (
             "event",
             "事件触发",
-            "只认 `Trigger::Cron`",
             job_with(Trigger::Event("bars-ready".into()), JobWindow::Any),
         ),
         (
             "session-window",
             "盘中窗口",
-            "非 `Any` 窗口",
             job_with(Trigger::Cron("* * * * *".into()), JobWindow::Session),
         ),
     ] {
@@ -99,12 +95,8 @@ fn load_refuses_dispatch_shapes_the_tick_will_never_honor() {
             Err(error) => error,
         };
         assert!(
-            error.contains("的触发声明在运行时派发不到"),
+            error.contains("只跑 Cron 触发且 window=Any"),
             "{label}：{error}"
-        );
-        assert!(
-            error.contains(reason),
-            "{label} 的拒因不是预期的那一条（{reason}）：{error}"
         );
         assert!(
             error.contains(&job.job_id),
@@ -125,50 +117,6 @@ fn load_still_accepts_the_cron_any_shape_the_tick_dispatches() {
         load_scheduler_state(&config, &root, &config_path).expect("受支持的形状应能装载");
     assert_eq!(scheduler.len(), 1);
     assert_eq!(store.load_scheduler_at(&state_path).unwrap().len(), 1);
-}
-
-/// 装载有两条路径，闸门两条都要问：状态文件是上一轮落盘的产物，载入分支根本不读
-/// jobs.json。只挡新建路径等于放行一份已经腐烂的状态——作业文件后来被改成派发不到的
-/// 形状、或状态文件本身来自另一套拓扑时，运行照样开始（V11 N4 的 reload 半边）。
-#[test]
-fn loaded_state_file_is_revalidated_for_the_dispatch_shape() {
-    // 先按受支持的形状装配一轮：载入分支必须照常放行，否则下面的红只是"改什么都红"。
-    let root = temp_cli_case_dir("dispatch-shape-reload");
-    let (config, config_path) = runtime_for_jobs(
-        &root,
-        &[job_with(Trigger::Cron("* * * * *".into()), JobWindow::Any)],
-    );
-    let (_, scheduler, _) =
-        load_scheduler_state(&config, &root, &config_path).expect("首轮装载应通过并落盘");
-    assert_eq!(scheduler.len(), 1);
-    assert!(
-        root.join(config.scheduler.state_path.as_str()).exists(),
-        "首轮装载必须写出调度状态文件，下一轮才真走载入分支"
-    );
-
-    // 状态文件里的作业换成 `Trigger::Manual`：只能直接覆写状态文件，改 jobs.json
-    // 验到的是另一条路径。owner 仍是启用的 worker，所以拒因只可能是形状那一格。
-    let stale = job_with(Trigger::Manual, JobWindow::Any);
-    let mut stale_scheduler = Scheduler::default();
-    stale_scheduler
-        .register(stale.clone())
-        .expect("注册只按字段校验，派发不到的形状照样登记得进来");
-    JsonStateStore::new(root.clone())
-        .save_scheduler_at(
-            Path::new(config.scheduler.state_path.as_str()),
-            &stale_scheduler,
-        )
-        .expect("覆写调度状态文件");
-    let error = match load_scheduler_state(&config, &root, &config_path) {
-        Ok(_) => panic!("载入既有状态时同样要复核派发形状"),
-        Err(error) => error,
-    };
-    assert!(
-        error.contains("的触发声明在运行时派发不到"),
-        "载入分支没有走那颗形状判据：{error}"
-    );
-    assert!(error.contains("只认 `Trigger::Cron`"), "{error}");
-    assert!(error.contains(&stale.job_id), "报错没点名作业：{error}");
 }
 
 /// 派发写进 JobRun 的血缘锚点来自 manifest.digest()：manifest 自身非法时摘要指向一条

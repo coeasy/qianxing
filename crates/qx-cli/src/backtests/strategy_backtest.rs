@@ -13,11 +13,17 @@ pub(crate) fn run_strategy_backtest(
         return Err("跨语言 Bar 回测至少需要两根 Bar".into());
     }
     let (bars, manifest) = barframe_dataset_identity(frame_path, &frame)?;
-    let data_root = resolve_runtime_relative_path(runtime_path, &config.storage.data_dir);
+    // `storage.data_dir` 只有一条落点：相对进程当前目录，与可写运行态、`report`/`status` 读侧
+    // 和事件回测证据闸门同指一棵树。产物曾按「相对 runtime.json 同级」另立口径，于是同一份配置
+    // 下 `fast-backtest` 写出的 runs/ 落在闸门永远不看的那棵树里（V13 R2 第二十七遍 #255）。
+    let data_root = Path::new(&config.storage.data_dir).to_path_buf();
     let mut dataset_registry = JsonDatasetRegistry::open(data_root.join("datasets.manifest.json"))?;
-    // 登记本身就是漂移检查：同一 `(dataset_id, version)` 已有不同内容时 `register` 直接失败。
-    // 它后面曾跟着一句对同一个对象的 `verify`，那条永远不会红，已删（V11 F2）。
     dataset_registry.register(manifest.clone())?;
+    dataset_registry.verify(
+        &manifest.dataset_id,
+        &manifest.version,
+        &manifest.fingerprint,
+    )?;
     println!(
         "[Data · Dataset] dataset={} version={} source={} fingerprint={}",
         manifest.dataset_id, manifest.version, manifest.source, manifest.fingerprint
@@ -40,12 +46,8 @@ pub(crate) fn run_strategy_backtest(
         resolve_strategy_runtime_paths(&mut strategy_config.strategy, runtime_path);
         let (bundle_fingerprint, bundle_components) =
             if let Some(bundle_path) = strategy_config.strategy.dataset_bundle_path.as_deref() {
-                let bundle_payload = std::fs::read_to_string(bundle_path).map_err(|error| {
-                    format!(
-                        "读取策略 DatasetBundleManifest 组件失败 {}: {error}",
-                        bundle_path
-                    )
-                })?;
+                let bundle_payload =
+                    read_example_json(Path::new(bundle_path), "策略 DatasetBundleManifest 组件 ")?;
                 let bundle: qx_data::DatasetBundleManifest = serde_json::from_str(&bundle_payload)
                     .map_err(|error| format!("策略 DatasetBundleManifest JSON 无效: {error}"))?;
                 let fingerprint =
@@ -55,21 +57,6 @@ pub(crate) fn run_strategy_backtest(
                     &strategy_config.strategy,
                     &strategy_id,
                 )?;
-                // 声明的身份还要回数据集注册表解析一遍（V11 F2）：`dataset-ingest` 登记的那一份
-                // 与 Bundle 声明的不是同一内容时，这条链不能拿着两个"同一个数据集"继续跑。
-                let (checked, unrecorded) =
-                    verify_dataset_registry_declarations(&dataset_registry, &bundle)?;
-                println!(
-                    "[Data · Registry] bundle={} registry_checked={}/{}{}",
-                    bundle.bundle_id,
-                    checked,
-                    bundle.components.len(),
-                    if unrecorded.is_empty() {
-                        String::new()
-                    } else {
-                        format!("；未登记的组件: {}", unrecorded.join(", "))
-                    },
-                );
                 let components = bundle
                     .components
                     .iter()
@@ -80,12 +67,8 @@ pub(crate) fn run_strategy_backtest(
                 (None, None)
             };
         if let Some(bundle_path) = strategy_config.strategy.dataset_bundle_path.as_deref() {
-            let bundle_payload = std::fs::read_to_string(bundle_path).map_err(|error| {
-                format!(
-                    "读取策略 DatasetBundleManifest 组件失败 {}: {error}",
-                    bundle_path
-                )
-            })?;
+            let bundle_payload =
+                read_example_json(Path::new(bundle_path), "策略 DatasetBundleManifest 组件 ")?;
             let bundle: qx_data::DatasetBundleManifest = serde_json::from_str(&bundle_payload)
                 .map_err(|error| format!("策略 DatasetBundleManifest JSON 无效: {error}"))?;
             if bundle.component("corporate_actions").is_some()

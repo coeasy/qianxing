@@ -60,25 +60,3 @@ groups:
         annotations:
           summary: "Qianxing consumer ACK failures"
           description: "worker={{ $labels.worker }} could not acknowledge JetStream messages."
-
-      # 两条计数在 R7 就已经写出（API 长连接上限、Outbox 停摆），但规则名册里没有它们：
-      # 端点仍回 200、指标仍逐格写出，告警却永不触发——"有监控"这句话是空的（V13 第 8 轮 A5）。
-      - alert: QianxingApiConnectionRejections
-        expr: increase(qx_api_connections_rejected_total[5m]) > 0
-        for: 1m
-        labels:
-          severity: warning
-          service: qianxing
-        annotations:
-          summary: "Qianxing API refused long connections"
-          description: "The live-connection ceiling rejected /events/live connections in the last 5 minutes."
-
-      - alert: QianxingOutboxParkedEvents
-        expr: qx_outbox_relay_parked > 0
-        for: 5m
-        labels:
-          severity: critical
-          service: qianxing
-        annotations:
-          summary: "Qianxing Outbox has parked events"
-          description: "worker={{ $labels.worker }} has {{ $value }} events parked past the retry budget; the relay head stays blocked until an operator resolves them."

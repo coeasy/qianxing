@@ -17,12 +17,7 @@ pub(crate) struct FastBacktestJob {
 pub(crate) fn parse_fast_backtest_manifest(
     manifest_path: &Path,
 ) -> Result<Vec<FastBacktestJob>, String> {
-    let payload = std::fs::read_to_string(manifest_path).map_err(|error| {
-        format!(
-            "读取快速回测 manifest 失败 {}: {error}",
-            manifest_path.display()
-        )
-    })?;
+    let payload = read_example_json(manifest_path, "快速回测 manifest ")?;
     let document: serde_json::Value = serde_json::from_str(&payload)
         .map_err(|error| format!("快速回测 manifest JSON 无效: {error}"))?;
     let jobs = document
@@ -72,6 +67,9 @@ pub(crate) fn parse_fast_backtest_manifest(
 }
 
 pub(crate) fn run_fast_backtest_manifest(manifest_path: &Path) -> Result<(), String> {
+    // 文档那条命令是从任何目录敲的，manifest 得先按查找面定位；作业里引用的是 manifest 的
+    // 同级文件，所以这一步决定了后面几格读取按哪个目录展开。
+    let manifest_path = &relocate_deploy_path(manifest_path);
     let parsed = parse_fast_backtest_manifest(manifest_path)?;
     let jobs = parsed.len();
     let results = std::thread::scope(|scope| {

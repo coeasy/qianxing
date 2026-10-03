@@ -4,6 +4,15 @@
 //! Kernel 语义写入 EventLog，并在同一事务边界内更新 OMS/Ledger。事件日志
 //! 采用文件后端时，每次成功归约都会原子保存，因此进程重启可以先恢复账簿
 //! 和订单状态，再继续接收新的行情或用户流事实。
+//!
+//! 两个子模块按职责切出去，本文件只留归约本身：
+//! [`backend_switch`] 是打开时的 EventLog 后端切换闸门，[`fact_context`] 是
+//! 事实进入日志前的元数据与归因上下文补全。
+
+mod backend_switch;
+mod fact_context;
+
+use fact_context::{enrich_runtime_event_context, runtime_event_metadata};
 
 pub use qx_control::order_from_submit_command;
 use qx_core::{
@@ -143,127 +152,6 @@ impl RuntimeEventEnvelope {
     }
 }
 
-fn runtime_event_metadata(
-    correlation_id: &str,
-    source_seq: u64,
-    source_kind: &str,
-) -> EventMetadata {
-    let source_id = correlation_id
-        .split(':')
-        .next()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("runtime")
-        .to_string();
-    let dedup_key = if correlation_id.trim().is_empty() {
-        format!("runtime:source:{source_seq}")
-    } else {
-        format!("{correlation_id}:source:{source_seq}")
-    };
-    EventMetadata {
-        schema_version: qx_core::EVENT_METADATA_SCHEMA_VERSION,
-        source_id,
-        source_kind: source_kind.into(),
-        dedup_key,
-        rule_version: "runtime-v1".into(),
-        context: EventContext::default(),
-    }
-}
-
-fn enrich_runtime_event_context(metadata: &mut EventMetadata, event: &RuntimeExternalEvent) {
-    let context = &mut metadata.context;
-    match event {
-        RuntimeExternalEvent::AccountBalanceSnapshot {
-            account_id,
-            venue_id,
-            ..
-        }
-        | RuntimeExternalEvent::AccountPositionSnapshot {
-            account_id,
-            venue_id,
-            ..
-        } => {
-            if context.account_id.trim().is_empty() {
-                context.account_id = account_id.clone();
-            }
-            if context.portfolio_id.trim().is_empty() {
-                context.portfolio_id = account_id.clone();
-            }
-            if context.tenant_id.trim().is_empty() {
-                context.tenant_id = account_id.clone();
-            }
-            if context.run_id.trim().is_empty() {
-                context.run_id = format!("account:{account_id}");
-            }
-            if context.strategy_id.trim().is_empty() {
-                context.strategy_id = "external-account-state".into();
-            }
-            if context.signal_id.trim().is_empty() {
-                context.signal_id = venue_id.clone();
-            }
-        }
-        RuntimeExternalEvent::AccountCashflow { cashflow } => {
-            if context.account_id.trim().is_empty() {
-                context.account_id = cashflow.account_id.clone();
-            }
-            if context.portfolio_id.trim().is_empty() {
-                context.portfolio_id = cashflow.account_id.clone();
-            }
-            if context.tenant_id.trim().is_empty() {
-                context.tenant_id = cashflow.account_id.clone();
-            }
-            if context.run_id.trim().is_empty() {
-                context.run_id = format!("account:{}", cashflow.account_id);
-            }
-            if context.strategy_id.trim().is_empty() {
-                context.strategy_id = "external-cashflow".into();
-            }
-            if context.signal_id.trim().is_empty() {
-                context.signal_id = cashflow.venue_id.clone();
-            }
-        }
-        RuntimeExternalEvent::Fill { fill } => enrich_fill_context(context, fill),
-        RuntimeExternalEvent::FillWithSpec { fill, .. } => enrich_fill_context(context, fill),
-        RuntimeExternalEvent::MarketQuote { .. }
-        | RuntimeExternalEvent::FundingRateSnapshot { .. }
-        | RuntimeExternalEvent::Accepted { .. }
-        | RuntimeExternalEvent::Cancelled { .. }
-        | RuntimeExternalEvent::ReconcileRequired { .. } => {}
-    }
-}
-
-fn enrich_fill_context(context: &mut EventContext, fill: &Fill) {
-    if context.account_id.trim().is_empty() {
-        context.account_id = fill.account_id.clone();
-    }
-    if context.strategy_id.trim().is_empty() {
-        context.strategy_id = fill
-            .strategy_id
-            .clone()
-            .unwrap_or_else(|| "external-execution".into());
-    }
-    if context.signal_id.trim().is_empty() {
-        context.signal_id = fill
-            .signal_id
-            .map(|value| value.to_string())
-            .unwrap_or_default();
-    }
-    if context.intent_id.trim().is_empty() {
-        context.intent_id = fill
-            .intent_id
-            .map(|value| value.to_string())
-            .unwrap_or_default();
-    }
-    if context.run_id.trim().is_empty() && !context.account_id.trim().is_empty() {
-        context.run_id = format!("account:{}", context.account_id);
-    }
-    if context.portfolio_id.trim().is_empty() && !context.account_id.trim().is_empty() {
-        context.portfolio_id = context.account_id.clone();
-    }
-    if context.tenant_id.trim().is_empty() && !context.account_id.trim().is_empty() {
-        context.tenant_id = context.account_id.clone();
-    }
-}
-
 /// `ingest` 的回执：这次归约是否幂等命中、落了哪几条事件、引擎时间推进到哪。
 ///
 /// 不带主事件序号与日志摘要：事实流是唯一事实源，要按序号或摘要读请走 `log()`；
@@ -293,37 +181,6 @@ pub struct PipelineMetricsSnapshot {
 struct EventFact {
     metadata: EventMetadata,
     kind: EventKind,
-}
-
-impl PipelineMetricsSnapshot {
-    pub fn to_prometheus(self) -> String {
-        format!(
-            "# HELP qx_pipeline_ingest_attempts_total Events presented to the live pipeline.\n\
-# TYPE qx_pipeline_ingest_attempts_total counter\n\
-qx_pipeline_ingest_attempts_total {}\n\
-# HELP qx_pipeline_ingested_events_total Events appended to the live pipeline.\n\
-# TYPE qx_pipeline_ingested_events_total counter\n\
-qx_pipeline_ingested_events_total {}\n\
-# HELP qx_pipeline_deduplicated_events_total Duplicate facts accepted without reapplying effects.\n\
-# TYPE qx_pipeline_deduplicated_events_total counter\n\
-qx_pipeline_deduplicated_events_total {}\n\
-# HELP qx_pipeline_transient_retries_total Transient storage retries.\n\
-# TYPE qx_pipeline_transient_retries_total counter\n\
-qx_pipeline_transient_retries_total {}\n\
-# HELP qx_pipeline_refreshes_total Shared EventLog refreshes.\n\
-# TYPE qx_pipeline_refreshes_total counter\n\
-qx_pipeline_refreshes_total {}\n\
-# HELP qx_pipeline_failures_total Pipeline ingestion or refresh failures.\n\
-# TYPE qx_pipeline_failures_total counter\n\
-qx_pipeline_failures_total {}\n",
-            self.ingest_attempts,
-            self.ingested_events,
-            self.deduplicated_events,
-            self.transient_retries,
-            self.refreshes,
-            self.failures,
-        )
-    }
 }
 
 #[derive(Default)]
@@ -412,9 +269,9 @@ impl RuntimeEventStore {
     ) -> Result<std::path::PathBuf, StorageError> {
         // 只投影游标之后的新事件。文件后端在 ack 时会删除事件文件，整段重投影会把
         // 已投递并确认的事实重新放回 Outbox，relay/consumer 于是永远重复消费同一批
-        // 事件；写放大也随日志长度变成平方级。
-        let mut outbox_events = project_event_log_to_outbox(name, log)?;
-        outbox_events.retain(|event| event.sequence >= projection_cursor);
+        // 事件；写放大也随日志长度变成平方级。过滤发生在序列化之前（见
+        // `project_event_log_to_outbox`），所以游标之后的序号不再为已投递的事实付 serde。
+        let outbox_events = project_event_log_to_outbox(name, log, projection_cursor)?;
         match self {
             Self::Flat(store, outbox) => {
                 let path = store.write(name, log)?;
@@ -438,6 +295,17 @@ impl RuntimeEventStore {
     }
 }
 
+/// 打开管线时对「EventLog 已落盘、Outbox 未写完」崩溃缺口的处理方式。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OutboxRecovery {
+    /// 写面（worker、提交路径）：日志非空时整段补投影一次，填掉崩溃留下的缺口。
+    /// 已 ack 的事实可能因此重放——Outbox 本来就是至少一次投递，消费端按 event_id 幂等。
+    ReprojectOnOpen,
+    /// 读模型（账户快照、Ledger 读模型、StrategyContext）：打开不写任何东西。
+    /// 读请求不能产生写副作用；缺口留给写面下一次打开补齐。
+    ReadOnly,
+}
+
 /// Kernel EventLog、OMS 订单状态、Ledger 和可恢复存储的单进程归约器。
 #[derive(Clone)]
 pub struct LiveEventPipeline {
@@ -455,7 +323,8 @@ pub struct LiveEventPipeline {
     last_engine_ts: u64,
     /// Outbox 投影游标：小于该序号的事实已投影过，等于/大于的仍需投影。序号从 0
     /// 开始，因此这里存"下一条待投影"而不是"最后一条已投影"。游标只在本进程内推进：
-    /// `open` 时仍会整段补投影一次，以便填掉"EventLog 已落盘、Outbox 未写完"的崩溃缺口。
+    /// 写面 `open` 时仍会整段补投影一次（[`OutboxRecovery::ReprojectOnOpen`]），以便
+    /// 填掉"EventLog 已落盘、Outbox 未写完"的崩溃缺口；读面打开一次都不补。
     outbox_projection_cursor: u64,
     metrics: Arc<PipelineMetrics>,
 }
@@ -463,54 +332,96 @@ pub struct LiveEventPipeline {
 impl LiveEventPipeline {
     /// 打开一个可恢复的运行日志。已有文件损坏或违反事件不变量时直接失败，
     /// 不会用空状态掩盖生产数据问题。
+    ///
+    /// 这条入口在日志非空时会做一次启动补投影，因此它是**写面**入口。只读方
+    /// （账户快照、Ledger 读模型、StrategyContext）必须走 [`Self::open_read_only`]：
+    /// 否则每个 GET 请求都会把整本日志重新投影进 Outbox，一次读变成一次写。
     pub fn open(
         root: impl Into<std::path::PathBuf>,
         log_name: impl Into<String>,
         currency: impl Into<String>,
     ) -> QxResult<Self> {
-        Self::open_configured(root, log_name, currency, None)
+        Self::open_stored(
+            root,
+            log_name,
+            currency,
+            None,
+            OutboxRecovery::ReprojectOnOpen,
+        )
     }
 
     /// 按运行时存储配置打开 EventLog。`None` 保持兼容的单文件后端；`Some`
-    /// 使用完整段不可变、尾段追加和 manifest 校验的分段后端。
+    /// 使用完整段不可变、尾段追加并由 manifest 摘要校验的分段后端，
+    /// `max_events_per_segment` 决定恢复和归档粒度。
+    ///
+    /// 分段换来的是**不可变段与按段归档/摘要校验**，不是更快的稳态运行：本轮实测
+    /// 8000 条日志下每次追加的稳态代价是分段 0.417s vs 单文件 0.343s（约 +21%），
+    /// 因为两种后端每次写都要按 chunk 重新序列化整本日志（见 #169）。
+    /// 另外：两套文件后端写的是互不相交的文件，换这个参数等于换一本账。三条打开入口
+    /// 都会在同一目录下发现另一本历史时当场拒绝（口径同
+    /// [`Self::assert_no_abandoned_file_log`]），不会静默从空账本起步。
     pub fn open_configured(
         root: impl Into<std::path::PathBuf>,
         log_name: impl Into<String>,
         currency: impl Into<String>,
         max_events_per_segment: Option<usize>,
     ) -> QxResult<Self> {
-        let root = root.into();
-        match max_events_per_segment {
-            Some(max_events_per_segment) => {
-                Self::open_segmented(root, log_name, currency, max_events_per_segment)
-            }
-            None => Self::open_with_store(
-                RuntimeEventStore::Flat(
-                    EventLogFileStore::new(root.clone()),
-                    FileOutboxStore::new(root),
-                ),
-                log_name,
-                currency,
-            ),
-        }
+        Self::open_stored(
+            root,
+            log_name,
+            currency,
+            max_events_per_segment,
+            OutboxRecovery::ReprojectOnOpen,
+        )
     }
 
-    /// 使用追加分段日志打开运行时。完整 segment 不会被覆盖，适合长时间
-    /// 高频运行；`max_events_per_segment` 决定恢复和归档粒度。
-    pub fn open_segmented(
+    /// 读模型入口：后端选择与 [`Self::open_configured`] 完全一致，但打开过程不写
+    /// 任何东西。补投影要填的崩溃缺口留给写面（worker、提交路径）的下一次打开处理
+    /// ——Outbox 本来就是至少一次投递，读请求不是补齐它的时机。
+    pub fn open_read_only(
         root: impl Into<std::path::PathBuf>,
         log_name: impl Into<String>,
         currency: impl Into<String>,
-        max_events_per_segment: usize,
+        max_events_per_segment: Option<usize>,
     ) -> QxResult<Self> {
-        let root = root.into();
-        let store = SegmentedEventLogStore::new(root.clone(), max_events_per_segment)
-            .map_err(storage_error)?;
-        Self::open_with_store(
-            RuntimeEventStore::Segmented(store, FileOutboxStore::new(root)),
+        Self::open_stored(
+            root,
             log_name,
             currency,
+            max_events_per_segment,
+            OutboxRecovery::ReadOnly,
         )
+    }
+
+    fn open_stored(
+        root: impl Into<std::path::PathBuf>,
+        log_name: impl Into<String>,
+        currency: impl Into<String>,
+        max_events_per_segment: Option<usize>,
+        recovery: OutboxRecovery,
+    ) -> QxResult<Self> {
+        let root = root.into();
+        let store = match max_events_per_segment {
+            Some(max_events_per_segment) => RuntimeEventStore::Segmented(
+                SegmentedEventLogStore::new(root.clone(), max_events_per_segment)
+                    .map_err(storage_error)?,
+                FileOutboxStore::new(root),
+            ),
+            None => RuntimeEventStore::Flat(
+                EventLogFileStore::new(root.clone()),
+                FileOutboxStore::new(root),
+            ),
+        };
+        Self::open_with_store(store, log_name, currency, recovery)
+    }
+
+    /// 选定**数据库**后端（SQLite / PostgreSQL）之前要过的闸门：`storage.root` 下还留着
+    /// 这个账户的文件后端历史就当场拒绝。为什么要拦、拦到哪几本历史，口径都在 [`backend_switch`]。
+    pub fn assert_no_abandoned_file_log(
+        root: impl Into<std::path::PathBuf>,
+        log_name: impl Into<String>,
+    ) -> QxResult<()> {
+        backend_switch::guard_database_backend(&root.into(), &log_name.into())
     }
 
     /// 使用 SQLite 事务 EventLog 打开单机持久运行管线。事件事实与 Outbox
@@ -521,15 +432,40 @@ impl LiveEventPipeline {
         log_name: impl Into<String>,
         currency: impl Into<String>,
     ) -> QxResult<Self> {
+        Self::open_sqlite_stored(path, log_name, currency, OutboxRecovery::ReprojectOnOpen)
+    }
+
+    /// SQLite 后端的读模型入口，语义同 [`Self::open_read_only`]：打开事务里只读
+    /// EventLog，不再把整本日志重新投影进 Outbox 表。
+    #[cfg(feature = "sqlite")]
+    pub fn open_sqlite_read_only(
+        path: impl Into<std::path::PathBuf>,
+        log_name: impl Into<String>,
+        currency: impl Into<String>,
+    ) -> QxResult<Self> {
+        Self::open_sqlite_stored(path, log_name, currency, OutboxRecovery::ReadOnly)
+    }
+
+    #[cfg(feature = "sqlite")]
+    fn open_sqlite_stored(
+        path: impl Into<std::path::PathBuf>,
+        log_name: impl Into<String>,
+        currency: impl Into<String>,
+        recovery: OutboxRecovery,
+    ) -> QxResult<Self> {
         let store = SqliteEventLogStore::new(path)
             .map_err(|error| QxError::Permanent(format!("打开 SQLite EventLog 失败: {error:?}")))?;
-        Self::open_with_store(RuntimeEventStore::Sqlite(store), log_name, currency)
+        Self::open_with_store(
+            RuntimeEventStore::Sqlite(store),
+            log_name,
+            currency,
+            recovery,
+        )
     }
 
     /// 使用 PostgreSQL 事务 EventLog 打开运行管线。队列、控制面和 EventLog
     /// 可以共享同一个 `PostgresStorage`，当前方法通过 DSN 建立独立安全连接，
-    /// 由部署层连接池和数据库 HA 提供跨节点可用性。池大小只从这里进，
-    /// 生产构造点（`runtime_wiring.rs`）传运行时配置的那一格。
+    /// 由部署层连接池和数据库 HA 提供跨节点可用性。
     #[cfg(feature = "postgres")]
     pub fn open_postgres_with_pool_size(
         dsn: &str,
@@ -537,24 +473,54 @@ impl LiveEventPipeline {
         log_name: impl Into<String>,
         currency: impl Into<String>,
     ) -> QxResult<Self> {
+        Self::open_postgres_stored(
+            dsn,
+            pool_size,
+            log_name,
+            currency,
+            OutboxRecovery::ReprojectOnOpen,
+        )
+    }
+
+    /// PostgreSQL 后端的读模型入口，语义同 [`Self::open_read_only`]。
+    #[cfg(feature = "postgres")]
+    pub fn open_postgres_read_only(
+        dsn: &str,
+        pool_size: usize,
+        log_name: impl Into<String>,
+        currency: impl Into<String>,
+    ) -> QxResult<Self> {
+        Self::open_postgres_stored(dsn, pool_size, log_name, currency, OutboxRecovery::ReadOnly)
+    }
+
+    #[cfg(feature = "postgres")]
+    fn open_postgres_stored(
+        dsn: &str,
+        pool_size: usize,
+        log_name: impl Into<String>,
+        currency: impl Into<String>,
+        recovery: OutboxRecovery,
+    ) -> QxResult<Self> {
         let store =
             PostgresEventLogStore::connect_with_pool_size(dsn, pool_size).map_err(|error| {
                 QxError::Permanent(format!("打开 PostgreSQL EventLog 失败: {error:?}"))
             })?;
-        Self::open_with_store(RuntimeEventStore::Postgres(store), log_name, currency)
+        Self::open_with_store(
+            RuntimeEventStore::Postgres(store),
+            log_name,
+            currency,
+            recovery,
+        )
     }
 
     fn open_with_store(
         store: RuntimeEventStore,
         log_name: impl Into<String>,
         currency: impl Into<String>,
+        recovery: OutboxRecovery,
     ) -> QxResult<Self> {
         let log_name = log_name.into();
-        if log_name.trim().is_empty()
-            || !log_name
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-        {
+        if !is_valid_log_name(&log_name) {
             return Err(QxError::BusinessViolation(
                 "live event log name 非法".into(),
             ));
@@ -563,15 +529,19 @@ impl LiveEventPipeline {
         if currency.trim().is_empty() {
             return Err(QxError::BusinessViolation("Ledger 结算币种不能为空".into()));
         }
+        backend_switch::guard_file_backends(&store, &log_name)?;
         let log = store
             .read_if_exists(&log_name)
             .map_err(storage_error)?
             .unwrap_or_default();
-        if !log.is_empty() {
+        if recovery == OutboxRecovery::ReprojectOnOpen && !log.is_empty() {
             // 启动恢复时重新投影一次，补齐进程在 EventLog 写成功、Outbox
             // 尚未写完时崩溃留下的文件后端缺口。这里的补投影是整段的，因此运行期
             // 已 ack 的事件可能在重启后重新出现：Outbox 只保证至少一次投递，
             // 消费端必须按 event_id 幂等。
+            // 读面（[`OutboxRecovery::ReadOnly`]）不做这一步：账户快照/读模型每来一个
+            // 请求就打开一次管线，整段补投影会把一次 GET 变成一次写（文件后端是每事件
+            // 一把全局锁 + 一个文件），并把写面已经 ack 的事实重新放回待投递队列。
             store.write(&log_name, &log, 0).map_err(storage_error)?;
         }
         let outbox_projection_cursor = log
@@ -752,9 +722,6 @@ impl LiveEventPipeline {
         self.register_order_with_correlation(order, ts, None)
     }
 
-    /// 登记入口只有一颗：控制面来源的订单由 `qx-execution` 网关在登记时写入
-    /// `control:{command_id}` 关联号（见其 `submit_command*`），这里不再另开一颗
-    /// "从命令注册"的壳，否则同一笔订单有两个地方决定自己的来源关联号（V11 M4）。
     pub fn register_order_with_correlation(
         &mut self,
         order: Order,
@@ -1280,8 +1247,6 @@ impl LiveEventPipeline {
                 }
                 EventKind::AccountCashflow { .. }
                 | EventKind::LedgerApplied { .. }
-                | EventKind::MarketBar { .. }
-                | EventKind::Timer { .. }
                 | EventKind::Submit { .. }
                 | EventKind::Rejected { .. }
                 | EventKind::Settle => {}
@@ -1665,6 +1630,14 @@ fn storage_error(error: StorageError) -> QxError {
     QxError::Permanent(format!("运行时事件存储失败: {error:?}"))
 }
 
+/// EventLog 名字同时充当文件名，所以它必须能安全落盘。
+fn is_valid_log_name(name: &str) -> bool {
+    !name.trim().is_empty()
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1821,19 +1794,6 @@ mod tests {
         assert_eq!(metrics.ingested_events, 5);
         assert_eq!(metrics.deduplicated_events, 1);
         assert!(metrics.refreshes >= metrics.ingest_attempts);
-        let exposition = metrics.to_prometheus();
-        assert!(
-            !exposition.contains("\\n"),
-            "指标之间仍是字面反斜杠加 n：{}",
-            exposition.replace("\\n", "⏎")
-        );
-        assert!(
-            exposition
-                .lines()
-                .any(|line| line == "qx_pipeline_ingested_events_total 5"),
-            "这一格没独占一行：{}",
-            exposition.replace("\\n", "⏎")
-        );
         let outbox_count = std::fs::read_dir(root.join("outbox/events"))
             .unwrap()
             .filter_map(Result::ok)
@@ -1928,7 +1888,7 @@ mod tests {
         let outbox = FileOutboxStore::new(&root);
         pipeline.register_order(order(), 100).unwrap();
         let acked_ids: Vec<String> = outbox
-            .available(1_000, usize::MAX)
+            .available(1_000)
             .unwrap()
             .iter()
             .map(|event| {
@@ -1942,7 +1902,7 @@ mod tests {
             })
             .collect();
         assert_eq!(acked_ids.len(), pipeline.log().len());
-        assert!(outbox.available(1_000, usize::MAX).unwrap().is_empty());
+        assert!(outbox.available(1_000).unwrap().is_empty());
 
         pipeline
             .ingest(RuntimeEventEnvelope::venue(
@@ -1972,7 +1932,7 @@ mod tests {
             ))
             .unwrap();
         let pending: Vec<String> = {
-            let mut events = outbox.available(1_000, usize::MAX).unwrap();
+            let mut events = outbox.available(1_000).unwrap();
             events.sort_by_key(|event| event.sequence);
             events.into_iter().map(|event| event.event_id).collect()
         };
@@ -1989,12 +1949,9 @@ mod tests {
 
         let restored = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
         assert_eq!(restored.snapshot(), pipeline.snapshot());
-        assert_eq!(
-            outbox.available(1_000, usize::MAX).unwrap().len(),
-            pipeline.log().len()
-        );
+        assert_eq!(outbox.available(1_000).unwrap().len(), pipeline.log().len());
         assert!(acked_ids.iter().all(|id| outbox
-            .available(1_000, usize::MAX)
+            .available(1_000)
             .unwrap()
             .iter()
             .any(|event| &event.event_id == id)));
@@ -2062,7 +2019,7 @@ mod tests {
     fn segmented_pipeline_reopens_with_identical_state() {
         let root = temp_root("segmented-recover");
         let mut pipeline =
-            LiveEventPipeline::open_segmented(&root, "paper-segmented", "USDT", 2).unwrap();
+            LiveEventPipeline::open_configured(&root, "paper-segmented", "USDT", Some(2)).unwrap();
         pipeline.register_order(order(), 100).unwrap();
         pipeline
             .ingest(RuntimeEventEnvelope::venue(
@@ -2077,7 +2034,7 @@ mod tests {
             ))
             .unwrap();
         let restored =
-            LiveEventPipeline::open_segmented(&root, "paper-segmented", "USDT", 2).unwrap();
+            LiveEventPipeline::open_configured(&root, "paper-segmented", "USDT", Some(2)).unwrap();
         assert_eq!(restored.snapshot(), pipeline.snapshot());
         assert!(root.join("paper-segmented.manifest.json").exists());
         let _ = std::fs::remove_dir_all(root);

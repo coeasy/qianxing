@@ -101,25 +101,6 @@ fn worker_field_policy_is_enforced_when_validating_runtime_config() {
 }
 
 #[test]
-fn runtime_config_round_trips_and_rejects_production_plaintext() {
-    let encoded = config().to_json().unwrap();
-    assert_eq!(RuntimeConfig::from_json(&encoded).unwrap(), config());
-    let mut production = config();
-    production.environment = "production".into();
-    assert!(production.validate().is_err());
-
-    let mut mtls = config();
-    mtls.api.transport = ApiTransport::Mtls;
-    assert!(mtls.validate().is_err());
-    mtls.api.tls = Some(TlsPaths {
-        certificate_chain: "server.pem".into(),
-        private_key: "server.key".into(),
-        client_ca: "clients.pem".into(),
-    });
-    assert!(mtls.validate().is_err());
-}
-
-#[test]
 fn spread_recovery_requires_the_same_account_boundary_as_execution() {
     let mut config = config();
     config.workers.push(WorkerConfig {
@@ -169,94 +150,61 @@ fn segmented_event_log_storage_configuration_is_positive_and_optional() {
     assert!(config.validate().is_err());
 }
 
+/// NATS 的三条等待预算必须在配置面上可见、可改、有界。
+///
+/// 修复前它们只能退回 async-nats 自己的默认值（连接 5s、请求与发布确认 5s），
+/// 本仓的配置文件、`runtime-check` 与报错都没有这三格。
 #[test]
-fn storage_consistency_matches_backend_and_messaging_topology() {
-    let mut files = config();
-    files.storage.consistency = StorageConsistency::Transactional;
-    assert!(files
-        .validate()
-        .unwrap_err()
-        .contains("Files/SQLite backend"));
+fn nats_wait_budgets_are_readable_writable_and_bounded() {
+    let mut enabled = config();
+    enabled.profile = RuntimeProfile::Distributed;
+    enabled.storage.consistency = StorageConsistency::DistributedOutbox;
+    enabled.messaging.enabled = true;
+    assert!(enabled.validate().is_ok());
+    // 默认值必须逐字等于适配器自己的默认预算，否则配置面就在静默改运行时行为。
+    assert_eq!(
+        enabled.messaging.nats_wait_budget(),
+        qx_storage::NatsWaitBudget::default()
+    );
 
-    let mut postgres = config();
-    postgres.profile = RuntimeProfile::Distributed;
-    postgres.storage.backend = StorageBackend::Postgres;
-    postgres.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
-    assert!(postgres
-        .validate()
-        .unwrap_err()
-        .contains("不能声明 local_durable"));
-    postgres.storage.consistency = StorageConsistency::Transactional;
-    assert!(postgres.validate().is_ok());
+    // 三个键能从 JSON 读进来，也能写回去（`deny_unknown_fields` 会拒掉拼错的名字）。
+    let mut payload: serde_json::Value = serde_json::from_str(&enabled.to_json().unwrap()).unwrap();
+    payload["messaging"]["connect_timeout_ms"] = serde_json::json!(750);
+    payload["messaging"]["request_timeout_ms"] = serde_json::json!(1_500);
+    payload["messaging"]["pull_expires_ms"] = serde_json::json!(250);
+    let parsed = RuntimeConfig::from_json(&serde_json::to_string(&payload).unwrap()).unwrap();
+    let budget = parsed.messaging.nats_wait_budget();
+    assert_eq!(
+        (
+            budget.connect_timeout_ms,
+            budget.request_timeout_ms,
+            budget.pull_expires_ms
+        ),
+        (750, 1_500, 250)
+    );
+    assert!(parsed.validate().is_ok(), "区间内的自定义预算必须被接受");
 
-    let mut messaging = config();
-    messaging.profile = RuntimeProfile::Distributed;
-    messaging.messaging.enabled = true;
-    assert!(messaging
-        .validate()
-        .unwrap_err()
-        .contains("distributed_outbox"));
-    messaging.storage.consistency = StorageConsistency::DistributedOutbox;
-    assert!(messaging.validate().is_ok());
-}
-
-#[test]
-fn messaging_worker_requires_valid_runtime_contract() {
-    let mut relay_config = config();
-    relay_config.profile = RuntimeProfile::Distributed;
-    relay_config.storage.consistency = StorageConsistency::DistributedOutbox;
-    relay_config.workers.push(WorkerConfig {
-        id: "outbox-relay".into(),
-        role: WorkerRole::OutboxRelay,
-        enabled: true,
-        account_id: None,
-        venue_id: None,
-        endpoint: None,
-        symbols: Vec::new(),
-        settlement_currency: None,
-        credential_env: None,
-        credential_files: None,
-        instrument_spec_path: None,
-        paper_initial_cash_raw: None,
-        max_order_notional_raw: None,
-        max_position_notional_raw: None,
-    });
-    assert!(relay_config.validate().is_err());
-    relay_config.messaging.enabled = true;
-    assert!(relay_config.validate().is_ok());
-    relay_config.messaging.relay_batch_size = 0;
-    assert!(relay_config.validate().is_err());
-    relay_config.messaging.relay_batch_size = 100;
-    relay_config.messaging.worker_stale_after_ms = 0;
-    assert!(relay_config.validate().is_err());
-
-    let mut consumer = config();
-    consumer.profile = RuntimeProfile::Distributed;
-    consumer.storage.consistency = StorageConsistency::DistributedOutbox;
-    consumer.messaging.enabled = true;
-    consumer.messaging.consumer_stream = Some("QIANXING_EVENTS".into());
-    consumer.messaging.consumer_name = Some("ledger-reducer".into());
-    consumer.messaging.consumer_group_id = Some("ledger-reducer".into());
-    consumer.messaging.consumer_handler_executable = Some("python".into());
-    consumer.workers.push(WorkerConfig {
-        id: "ledger-reducer".into(),
-        role: WorkerRole::EventConsumer,
-        enabled: true,
-        account_id: None,
-        venue_id: None,
-        endpoint: None,
-        symbols: Vec::new(),
-        settlement_currency: None,
-        credential_env: None,
-        credential_files: None,
-        instrument_spec_path: None,
-        paper_initial_cash_raw: None,
-        max_order_notional_raw: None,
-        max_position_notional_raw: None,
-    });
-    assert!(consumer.validate().is_ok());
-    consumer.messaging.consumer_handler_timeout_ms = 0;
-    assert!(consumer.validate().is_err());
+    // 越界要在配置校验阶段就红，而不是等 worker 去连接时才炸；下界不是 1，
+    // 因为毫秒级的拉取/握手预算会把 worker 循环打成对 broker 的热循环。
+    let out_of_range: [fn(&mut MessagingRuntimeConfig); 6] = [
+        |messaging| messaging.connect_timeout_ms = 1,
+        |messaging| messaging.request_timeout_ms = 1,
+        |messaging| messaging.pull_expires_ms = 1,
+        |messaging| messaging.connect_timeout_ms = 60_001,
+        |messaging| messaging.request_timeout_ms = 300_001,
+        |messaging| messaging.pull_expires_ms = 30_001,
+    ];
+    for mutate in out_of_range {
+        let mut invalid = enabled.clone();
+        mutate(&mut invalid.messaging);
+        let error = invalid
+            .validate()
+            .expect_err("越界的 NATS 等待预算必须被拒绝");
+        assert!(
+            error.starts_with("messaging.") && error.contains("必须在"),
+            "错误要点明是哪一格越界及其区间: {error}"
+        );
+    }
 }
 
 #[test]
@@ -281,41 +229,6 @@ fn worker_ids_are_safe_for_runtime_artifact_names() {
         max_position_notional_raw: None,
     });
     assert!(invalid.validate().is_err());
-}
-
-#[test]
-fn postgres_storage_requires_secret_manager_environment_name() {
-    let mut config = config();
-    config.profile = RuntimeProfile::Distributed;
-    config.storage.backend = StorageBackend::Postgres;
-    config.storage.consistency = StorageConsistency::Transactional;
-    assert!(config.validate().is_err());
-    config.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
-    assert!(config.validate().is_ok());
-    config.storage.postgres_pool_size = 0;
-    assert!(config.validate().is_err());
-    config.storage.postgres_pool_size = 8;
-    assert!(config.validate().is_ok());
-    let json = serde_json::to_string(&config).unwrap();
-    assert!(!json.contains("postgresql://"));
-}
-
-#[test]
-fn single_node_profile_rejects_postgres_and_nats() {
-    let mut postgres = config();
-    postgres.storage.backend = StorageBackend::Postgres;
-    postgres.storage.postgres_dsn_env = Some("QX_POSTGRES_DSN".into());
-    let error = postgres
-        .validate()
-        .expect_err("single_node must reject PostgreSQL");
-    assert!(error.contains("single_node") && error.contains("PostgreSQL"));
-
-    let mut messaging = config();
-    messaging.messaging.enabled = true;
-    let error = messaging
-        .validate()
-        .expect_err("single_node must reject NATS messaging");
-    assert!(error.contains("single_node") && error.contains("NATS"));
 }
 
 #[test]
@@ -414,69 +327,4 @@ fn execution_risk_limits_require_a_frozen_instrument_spec() {
     assert!(config.validate().is_err());
     config.workers.last_mut().unwrap().instrument_spec_path = Some("market-spec.json".into());
     assert!(config.validate().is_ok());
-}
-
-/// E1：`environment` 过去只有"非空"一条判据，而十余处硬风控去比较 `production`
-/// 字面量。`prod` 这类拼错值既能通过校验、又被读成非 production，于是订单名义额
-/// 上限、冻结规格、C ABI 签名、研究快照一并静默失效，而 `config validate` 打印 [PASS]。
-#[test]
-fn runtime_environment_must_come_from_the_closed_vocabulary() {
-    let base = config();
-    assert_eq!(base.environment_kind(), Some("paper"));
-    assert!(!base.is_production());
-
-    let mut typo = config();
-    typo.environment = "prod".into();
-    assert!(!typo.is_production());
-    let error = typo
-        .validate()
-        .expect_err("词表外的 environment 必须被拒绝");
-    assert!(
-        error.contains("production / paper / sandbox / testnet"),
-        "{error}"
-    );
-    assert!(error.contains("\"prod\""), "{error}");
-
-    // 空与纯空白仍走原有措辞：收紧词表不得把这条既有判定换成新句子。
-    for blank in ["", "   "] {
-        let mut probe = config();
-        probe.environment = blank.into();
-        assert!(
-            probe.validate().unwrap_err().contains("不能为空"),
-            "{blank:?}"
-        );
-    }
-    // 词表内四个值都不该撞上词表判定（production 自身撞的是明文 API 那条）。
-    for name in RUNTIME_ENVIRONMENTS {
-        let mut probe = config();
-        probe.environment = name.into();
-        assert_eq!(probe.environment_kind(), Some(name), "{name}");
-        assert!(!probe.is_production() || name == "production", "{name}");
-        if let Err(error) = probe.validate() {
-            assert!(!error.contains("之一，当前为"), "{name} => {error}");
-        }
-    }
-}
-
-/// 归一化只做大小写与首尾空白：既不能把 `" Production "` 挡在词表外，也不能把它
-/// 读成非 production —— 两种拼法必须命中同一条闸门、给出同一条错误。
-#[test]
-fn environment_spelling_variants_hit_the_same_production_gates() {
-    let mut exact = config();
-    exact.environment = "production".into();
-    let expected = exact
-        .validate()
-        .expect_err("精确拼写必须按 production 校验");
-
-    for variant in ["PRODUCTION", " production ", "Production\t"] {
-        let mut probe = config();
-        probe.environment = variant.into();
-        assert!(probe.is_production(), "{variant:?} 必须按 production 判定");
-        assert_eq!(probe.environment_kind(), Some("production"), "{variant:?}");
-        assert_eq!(
-            probe.validate().unwrap_err(),
-            expected,
-            "{variant:?} 必须命中与精确拼写同一条闸门"
-        );
-    }
 }

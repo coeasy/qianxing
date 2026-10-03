@@ -98,17 +98,13 @@ pub(crate) fn reject_configured_initial_cash(
 pub(crate) fn configured_instrument_product(
     config_path: Option<&Path>,
 ) -> Result<Option<TradingProduct>, String> {
-    let Some(path) = config_path else {
-        return Ok(None);
-    };
-    let config = read_runtime_config(path)?;
-    unapplied_strategy_declaration(&config, "product", |strategy| {
-        strategy.product.map(|product| format!("{product:?}"))
-    })?;
-    Ok(config.strategy.product)
+    Ok(match config_path {
+        Some(path) => read_runtime_config(path)?.strategy.product,
+        None => None,
+    })
 }
 
-/// 多腿链的规格闸门：先问清"每条腿按什么产品记账、两条腿记不记在同一本账上"，再开始跑腿级回测。
+/// 多腿链的规格闸门：先问清"每条腿按什么产品记账"，再开始跑腿级回测。
 ///
 /// 归因侧的两笔钱都只在衍生品腿上计提（`multi_leg_leg_buckets` 的资金费、
 /// `multi_leg_leg_margin` 的保证金），而产品形态只有两个事实来源：该腿的 market spec，
@@ -127,24 +123,6 @@ pub(crate) fn multi_leg_spec_guard(
             return Err(format!(
                 "主腿衍生品（strategy.product={product:?}）多腿回测必须提供 {primary_label} 腿的 \
                  market spec：缺它时名义额按现货乘数 1 记账，保证金与资金费也无从计提"
-            ));
-        }
-    }
-    // 组合收益是"两条腿合计赚的钱 ÷ 两条腿合计投的钱"，因此两条腿必须落在同一本账上。
-    // 币种取 [`backtest_settlement_currency`]——腿级引擎真正拿它落现金腿的那一份，而不是
-    // spec 里另一格字段：一条 USDT 结算、一条 USD 结算的两腿，把各自的 raw 相加得到的数
-    // 既不是任何一本账的收益，也不会在产物里留下任何可比痕迹（V11 D 轮 S2）。这一判据与
-    // 资金费无关，所以放在 `funding_bps == 0` 的提前返回之前。
-    let books: Vec<(&str, String)> = legs
-        .iter()
-        .map(|(label, spec)| (*label, backtest_settlement_currency(*spec)))
-        .collect();
-    if let [(first_label, first), (second_label, second)] = &books[..] {
-        if !first.trim().eq_ignore_ascii_case(second.trim()) {
-            return Err(format!(
-                "两条腿的记账币种不同（{first_label}={first}、{second_label}={second}）：多腿组合收益\
-                 把两条腿的本金与权益直接相加，跨币种相加得到的不是任何一本账上的收益。请换用同结算\
-                 币种的两条腿，或分别单标的回测后再自行折算"
             ));
         }
     }

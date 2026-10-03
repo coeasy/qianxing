@@ -2,6 +2,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from zoneinfo import ZoneInfoNotFoundError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -11,6 +12,7 @@ from qianxing_ashare import (  # noqa: E402
     AshareActionQuery,
     AshareManifest,
     AsharePITRecord,
+    AshareProviderError,
     AshareQuery,
     AshareTradingCalendar,
     AshareCorporateAction,
@@ -23,6 +25,7 @@ from qianxing_ashare import (  # noqa: E402
     screen_bar_frames,
     SCALE,
 )
+import qianxing_ashare  # noqa: E402  只有用例替换模块属性时才需要包对象。
 
 #: 与 Rust `crates/qx-cli/src/tests/calendar_component_fingerprint.rs` 共用的那一对夹具。
 CALENDAR_FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -423,6 +426,45 @@ class AshareTest(unittest.TestCase):
             bundle["components"]["bars"]["start_timestamp"],
             bundle["components"]["bars"]["end_timestamp"],
         )
+
+
+    def test_naive_dates_are_stamped_at_shanghai_midnight(self):
+        #: 时区口径固定为 UTC+08:00；换成 UTC 或本机时区会让跨语言指纹静默漂移。
+        frame = normalize_bar_rows(
+            [{"date": "2024-01-02", "open": 1, "high": 2, "low": 0.9, "close": 1.5, "volume": 10}],
+            code="sz.000001",
+            source="test",
+        )
+        self.assertEqual(frame.ts[0], 1_704_124_800_000)
+
+    def test_missing_tzdata_fails_at_first_use_and_names_the_remedy(self):
+        #: Windows 的 zoneinfo 不自带时区库：缺 tzdata 只许让取时间的那一步失败，
+        #: 不许让 import qianxing_ashare 整体失败（本模块对外承诺核心包不装数据源依赖）。
+        def refuse(_key):
+            raise ZoneInfoNotFoundError("No time zone found with key Asia/Shanghai")
+
+        original = qianxing_ashare.ZoneInfo
+        qianxing_ashare.ZoneInfo = refuse
+        try:
+            with self.assertRaises(AshareProviderError) as raised:
+                normalize_bar_rows(
+                    [
+                        {
+                            "date": "2024-01-02",
+                            "open": 1,
+                            "high": 2,
+                            "low": 0.9,
+                            "close": 1.5,
+                            "volume": 10,
+                        }
+                    ],
+                    code="sz.000001",
+                    source="test",
+                )
+        finally:
+            qianxing_ashare.ZoneInfo = original
+        self.assertIn("pip install tzdata", str(raised.exception))
+        self.assertTrue(callable(qianxing_ashare.normalize_bar_rows))
 
 
 if __name__ == "__main__":

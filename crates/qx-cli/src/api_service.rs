@@ -31,17 +31,31 @@ pub(crate) fn build_configured_api_service(
     for (account_id, venue_id, log_name, currency) in configured_account_event_logs(config)? {
         let root = Path::new(&config.storage.data_dir);
         if event_log_exists(config, root, &log_name)? {
-            let pipeline = open_runtime_pipeline(config, root, log_name, currency)
-                .map_err(|error| format!("读取 API 事件投影失败: {error}"))?;
+            let pipeline =
+                open_runtime_pipeline(config, root, log_name, currency, OutboxRecovery::ReadOnly)
+                    .map_err(|error| format!("读取 API 事件投影失败: {error}"))?;
             state
                 .project_account_event_log(&account_id, &venue_id, pipeline.log())
                 .map_err(|error| format!("初始化 API 账户事件投影失败: {error}"))?;
         }
     }
-    // 账户快照与事件投影共用同一个刷新节拍，装载规则也共用同一个出口（V11 G1）：读模型
-    // 的事件半边每 250 毫秒重投影，快照半边若只在 boot 装一次，`/account/snapshot` 那一族
-    // 就会把启动那一刻的权益一路念下去。
-    publish_api_account_snapshots(&mut state, config)?;
+    // 只有默认账户能占用无键端点读到的那格全局兼容快照；其余账户按身份进各自的投影，
+    // 带 account_id/venue_id 的查询照旧读得到（V11 R12，与上面的 Ledger 共用同一个判据）。
+    let default_log = default_account_event_log(config, Path::new(&config.storage.data_dir))?;
+    for snapshot in load_api_account_snapshots(config)? {
+        let identity =
+            account_event_log_name(&snapshot.header.account_id, &snapshot.header.venue_id);
+        let loaded = if identity.is_some() && identity == default_log {
+            state.publish_snapshot(snapshot)
+        } else {
+            state.publish_snapshot_for(
+                snapshot.header.account_id.clone(),
+                snapshot.header.venue_id.clone(),
+                snapshot,
+            )
+        };
+        loaded.map_err(|error| format!("装载 API 账户查询快照失败: {error}"))?;
+    }
     let mut policy = ApiPolicy::new();
     for (operator_id, operator) in &config.api.operators {
         policy = policy.grant(operator_id.clone(), operator.permission);
@@ -77,12 +91,6 @@ pub(crate) fn build_configured_api_service(
         )
     })
     .with_query_models_provider(move || load_api_query_models(&query_models_config))
-    .with_control_provider({
-        // 与提交端同一个 store：worker 在另一个进程把 Executed/Failed 追加进这本控制面，
-        // `/control/audit` 只有现读才看得见它（V11 H1，与 S3/G1 同族）。
-        let store = control_store.clone();
-        move || store.load()
-    })
     .with_control_submitter({
         let store = control_store.clone();
         move |command, granted, ts| {
@@ -193,7 +201,7 @@ pub(crate) fn load_api_query_models(config: &RuntimeConfig) -> Result<ApiQueryMo
 
     let mut ledger_entries = Vec::new();
     if let Some(log_name) = default_account_event_log(config, root)? {
-        let pipeline = open_account_pipeline(config, root, &log_name)
+        let pipeline = open_account_pipeline(config, root, &log_name, OutboxRecovery::ReadOnly)
             .map_err(|error| format!("读取 API Ledger 读模型失败: {error}"))?;
         ledger_entries = pipeline.ledger().entries().to_vec();
     }
@@ -233,35 +241,6 @@ pub(crate) fn load_reconcile_reports(root: &Path) -> Result<Vec<ReconcileReportS
         reconcile_reports.sort_by(|left, right| left.worker_id.cmp(&right.worker_id));
     }
     Ok(reconcile_reports)
-}
-
-/// 把存储里当前的账户快照装载进 API 读模型 —— boot 与投影桥唯一的共用装载出口。
-///
-/// 只有默认账户能占用无键端点读到的那格全局兼容快照；其余账户按身份进各自的投影，
-/// 带 account_id/venue_id 的查询照旧读得到（V11 R12，与事件投影共用同一个判据）。
-/// 桥每轮调用它一次，同一份快照重装的幂等成本由 `ApiState` 的按摘要去重守住。
-pub(crate) fn publish_api_account_snapshots(
-    state: &mut ApiState,
-    config: &RuntimeConfig,
-) -> Result<usize, String> {
-    let default_log = default_account_event_log(config, Path::new(&config.storage.data_dir))?;
-    let mut published = 0;
-    for snapshot in load_api_account_snapshots(config)? {
-        let identity =
-            account_event_log_name(&snapshot.header.account_id, &snapshot.header.venue_id);
-        let loaded = if identity.is_some() && identity == default_log {
-            state.publish_snapshot(snapshot)
-        } else {
-            state.publish_snapshot_for(
-                snapshot.header.account_id.clone(),
-                snapshot.header.venue_id.clone(),
-                snapshot,
-            )
-        };
-        loaded.map_err(|error| format!("装载 API 账户查询快照失败: {error}"))?;
-        published += 1;
-    }
-    Ok(published)
 }
 
 /// 从已持久化的账户 EventLog 构造 API 查询快照。
@@ -358,7 +337,7 @@ pub(crate) fn load_api_account_snapshot_for_worker(
     if !event_log_exists(config, root, &log_name)? {
         return Ok(None);
     }
-    let pipeline = open_account_pipeline(config, root, &log_name)
+    let pipeline = open_account_pipeline(config, root, &log_name, OutboxRecovery::ReadOnly)
         .map_err(|error| format!("打开 API 账户 EventLog 失败: {error}"))?;
     let runtime_snapshot = pipeline.snapshot();
     let as_of = runtime_snapshot.last_engine_ts.max(1);

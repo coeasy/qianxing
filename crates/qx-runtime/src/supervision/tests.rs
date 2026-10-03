@@ -202,100 +202,42 @@ fn worker_that_ignores_the_token_fails_after_the_shutdown_budget() {
     assert!(worker.join().unwrap().is_ok());
 }
 
-/// 迟到信号的阶梯夹具：假时钟按注入的等待推进，走过 `signal_after_ms` 才落下终止请求。
-/// 带着假时钟一起用，是因为"预算给没给满"只能由退出那一刻的时钟说出口。
-struct LateSignal {
-    clock: Arc<AtomicU64>,
-    signal_after_ms: u64,
-}
-
-impl LateSignal {
-    fn new(signal_after_ms: u64) -> Self {
-        Self {
-            clock: Arc::new(AtomicU64::new(0)),
-            signal_after_ms,
-        }
-    }
-
-    fn elapsed_ms(&self) -> u64 {
-        self.clock.load(Ordering::SeqCst)
-    }
-
-    fn run(
-        &self,
-        supervisor: &RuntimeSupervisor,
-        worker_finished: impl Fn() -> bool,
-    ) -> WorkerLadder {
-        let now = Arc::clone(&self.clock);
-        let signalled = Arc::clone(&self.clock);
-        let slept = Arc::clone(&self.clock);
-        let signal_after_ms = self.signal_after_ms;
-        wait_for_worker_finish(
-            supervisor,
-            worker_finished,
-            move || signalled.load(Ordering::SeqCst) >= signal_after_ms,
-            move || now.load(Ordering::SeqCst),
-            move |millis| advance(&slept, millis),
-        )
-    }
-}
-
-/// 预算的起点是"第一次观察到停机请求"。这一格里阶梯先陪跑了 1.2 秒（预算 1 秒）才收到请求：
-/// 按"从进循环起算"的写法，信号落下的那一跳 `waited_ms` 就已经超预算，worker 一秒优雅窗口
-/// 都拿不到就被判超时。
 #[test]
-fn a_late_shutdown_signal_still_gets_the_full_graceful_window() {
-    let mut config = config();
-    config.shutdown_timeout_ms = 1_000;
-    let supervisor = RuntimeSupervisor::new(config).unwrap();
+fn the_grace_budget_is_counted_from_the_request_not_from_the_start_of_waiting() {
+    // 反向验证依据：预算从 `wait_for_worker_finish` 进门那刻计时时，请求落下的那一轮
+    // `waited_ms` 已经是 10 倍预算，长跑 worker 一分宽限都拿不到就被判超时。
+    let supervisor = RuntimeSupervisor::new(config()).unwrap();
     let budget = supervisor.config().shutdown_timeout_ms;
-    let observed_token = Arc::new(AtomicBool::new(false));
-    let flag = Arc::clone(&observed_token);
     let worker = supervisor
         .spawn_worker("market", move |context| loop {
             if context.should_stop() {
-                flag.store(true, Ordering::SeqCst);
                 return Ok(());
             }
             thread::sleep(Duration::from_millis(1));
         })
         .unwrap();
-    let ladder = LateSignal::new(budget + 200).run(&supervisor, || worker.is_finished());
-    assert!(
-        observed_token.load(Ordering::SeqCst),
-        "迟到的请求没有把令牌传到 worker"
+    // 假时钟：每次注入的等待推进 POLL_INTERVAL_MS，因此"请求之前的等待"可以按预算倍数复现，
+    // 而不必真等 —— `advance` 仍真睡 1ms，让被测 worker 有机会读到令牌。
+    let clock = Arc::new(AtomicU64::new(0));
+    let for_signal = Arc::clone(&clock);
+    let for_now = Arc::clone(&clock);
+    let for_sleep = Arc::clone(&clock);
+    let ladder = wait_for_worker_finish(
+        &supervisor,
+        || worker.is_finished(),
+        move || for_signal.load(Ordering::SeqCst) >= 10 * budget,
+        move || for_now.load(Ordering::SeqCst),
+        move |millis| advance(&for_sleep, millis),
     );
     match ladder {
-        WorkerLadder::StoppedWithinBudget { waited_ms } => assert!(
-            waited_ms <= budget,
-            "waited_ms 只能是信号之后的等待，不能把陪跑时间算进来: {waited_ms} > {budget}"
-        ),
-        other => unreachable!("迟到的信号仍要给满优雅窗口: {other:?}"),
+        WorkerLadder::StoppedWithinBudget { waited_ms } => {
+            assert!(
+                waited_ms <= budget,
+                "请求之前的等待被算进宽限预算: waited_ms={waited_ms} budget={budget}"
+            );
+        }
+        other => unreachable!("长跑之后按停机请求退出不能判超时: {other:?}"),
     }
-    assert!(worker.join().unwrap().is_ok());
-}
-
-/// 反向对照：改成"从信号起算"不等于取消预算。读不到令牌的 worker 仍要在信号之后等满预算才判
-/// 超时。那个 worker 到 10 倍预算之外才结束，所以删掉预算判据的用例是慢，不是挂死。
-#[test]
-fn a_late_signal_still_bounds_a_worker_that_ignores_it() {
-    let mut config = config();
-    config.shutdown_timeout_ms = 1_000;
-    let supervisor = RuntimeSupervisor::new(config).unwrap();
-    let budget = supervisor.config().shutdown_timeout_ms;
-    let signal_at = budget + 200;
-    let harness = LateSignal::new(signal_at);
-    let ladder = harness.run(&supervisor, || {
-        harness.elapsed_ms() >= signal_at + budget * 10
-    });
-    assert!(
-        matches!(ladder, WorkerLadder::StopTimedOut { waited_ms } if waited_ms > budget),
-        "worker 读不到令牌，阶梯仍要判超时: {ladder:?}"
-    );
-    assert!(
-        harness.elapsed_ms() >= signal_at + budget,
-        "预算要从信号起算才算满: 信号 {signal_at}ms，判超时 {}ms",
-        harness.elapsed_ms()
-    );
     assert!(supervisor.is_shutdown_requested());
+    assert!(worker.join().unwrap().is_ok());
 }

@@ -5,96 +5,27 @@ param(
     [switch]$AllowUnmanagedRoles
 )
 
+# 角色到进程入口的映射、按 worker 分离的进程日志、以及"任一子进程退出就停掉其余子进程"
+# 的 fail-fast 生命周期都只有一份实现：`qx-cli supervise`（crates/qx-orchestrator 的 plan_workers）。
+# 本文件此前自带一份 PowerShell 副本，那份副本与 plan_workers 漂移过四处（V13 R2 #192）：
+# CCXT 的 endpoint 只对 spread_recovery 一个角色生效、paper 判定用精确字符串而不是 VenueFamily 归一、
+# plan_workers 会拒绝的拓扑在这里被静默派给币安那条线、有内建入口的 outbox_relay 与
+# event_consumer 角色在这里被当成不可托管。副本还会在没有任何可托管 worker 时进入不退出循环。
+# 删掉副本，只保留启动器与 runtime-check 前置闸门。
+
 $ErrorActionPreference = "Stop"
 
 $configPath = (Resolve-Path -LiteralPath $Config).Path
 $binaryPath = (Resolve-Path -LiteralPath $Binary).Path
-$workDir = (Get-Location).Path
-$runtime = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
 
 & $binaryPath runtime-check $configPath
 if ($LASTEXITCODE -ne 0) {
     throw "runtime-check failed; no child process was started"
 }
 
-$dataDir = [string]$runtime.storage.data_dir
-if (-not [IO.Path]::IsPathRooted($dataDir)) {
-    $dataDir = Join-Path $workDir $dataDir
+$supervise = @("supervise", $configPath)
+if ($AllowUnmanagedRoles) {
+    $supervise += "--allow-unmanaged-roles"
 }
-$logDir = Join-Path $dataDir "process-logs"
-New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-
-$launches = @()
-$unmanaged = @()
-foreach ($worker in $runtime.workers) {
-    if (-not [bool]$worker.enabled) {
-        continue
-    }
-    $role = [string]$worker.role
-    switch ($role) {
-        "api" {
-            $launches += [pscustomobject]@{ Id = $worker.id; Args = @("serve", $configPath) }
-        }
-        "market_data" { $launches += [pscustomobject]@{ Id = $worker.id; Args = @("binance-worker", $configPath, $worker.id) } }
-        "user_stream" { $launches += [pscustomobject]@{ Id = $worker.id; Args = @("binance-worker", $configPath, $worker.id) } }
-        "execution" {
-            if ([string]$worker.venue_id -eq "paper") {
-                $launches += [pscustomobject]@{ Id = $worker.id; Args = @("paper-worker", $configPath, $worker.id) }
-            } else {
-                $launches += [pscustomobject]@{ Id = $worker.id; Args = @("binance-worker", $configPath, $worker.id) }
-            }
-        }
-        "spread_recovery" {
-            if ([string]$worker.venue_id -eq "paper") {
-                $launches += [pscustomobject]@{ Id = $worker.id; Args = @("paper-worker", $configPath, $worker.id) }
-            } elseif (-not [string]::IsNullOrWhiteSpace([string]$worker.endpoint)) {
-                $ccxtConfigPath = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $configPath) ([string]$worker.endpoint)))
-                $launches += [pscustomobject]@{ Id = $worker.id; Args = @("ccxt-worker", $configPath, $worker.id, $ccxtConfigPath) }
-            } else {
-                $launches += [pscustomobject]@{ Id = $worker.id; Args = @("binance-worker", $configPath, $worker.id) }
-            }
-        }
-        "reconciler" { $launches += [pscustomobject]@{ Id = $worker.id; Args = @("binance-worker", $configPath, $worker.id) } }
-        "scheduler" { $launches += [pscustomobject]@{ Id = $worker.id; Args = @("scheduler-worker", $configPath, $worker.id) } }
-        "strategy" { $launches += [pscustomobject]@{ Id = $worker.id; Args = @("strategy-worker", $configPath, $worker.id) } }
-        default { $unmanaged += $worker.id }
-    }
-}
-
-if ($unmanaged.Count -gt 0 -and -not $AllowUnmanagedRoles) {
-    throw "enabled roles have no qx-cli process entrypoint: $($unmanaged -join ', '); use the dedicated scheduler/strategy supervisor or pass -AllowUnmanagedRoles"
-}
-
-$children = @()
-try {
-    foreach ($launch in $launches) {
-        $stdout = Join-Path $logDir "$($launch.Id).out.log"
-        $stderr = Join-Path $logDir "$($launch.Id).err.log"
-        $process = Start-Process -FilePath $binaryPath `
-            -ArgumentList $launch.Args `
-            -WorkingDirectory $workDir `
-            -RedirectStandardOutput $stdout `
-            -RedirectStandardError $stderr `
-            -WindowStyle Hidden `
-            -PassThru
-        $children += $process
-        Write-Host "started $($launch.Id) pid=$($process.Id)"
-    }
-    while ($true) {
-        Start-Sleep -Seconds 1
-        foreach ($process in $children) {
-            $process.Refresh()
-            if ($process.HasExited) {
-                throw "managed worker pid=$($process.Id) exited with code $($process.ExitCode)"
-            }
-        }
-    }
-}
-finally {
-    foreach ($process in $children) {
-        $process.Refresh()
-        if (-not $process.HasExited) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-        }
-    }
-}
+& $binaryPath @supervise
+exit $LASTEXITCODE

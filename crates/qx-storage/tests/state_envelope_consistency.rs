@@ -81,18 +81,18 @@ fn drive_outbox_semantics(store: &dyn OutboxStore) -> Vec<u32> {
     store
         .retry_outbox("p1c-event", "relay-a", lease.fencing_token, 102)
         .unwrap();
-    attempts_trace.push(store.available_outbox(103, usize::MAX).unwrap()[0].attempts);
+    attempts_trace.push(store.available_outbox(103).unwrap()[0].attempts);
     let second = store.claim_outbox("p1c-event", "relay-a", 103, 10).unwrap();
     store
         .retry_outbox("p1c-event", "relay-a", second.fencing_token, 104)
         .unwrap();
-    attempts_trace.push(store.available_outbox(105, usize::MAX).unwrap()[0].attempts);
+    attempts_trace.push(store.available_outbox(105).unwrap()[0].attempts);
     // ack 后事件消失，租约清理。
     let third = store.claim_outbox("p1c-event", "relay-a", 105, 10).unwrap();
     store
         .ack_outbox("p1c-event", "relay-a", third.fencing_token, 106)
         .unwrap();
-    assert!(store.available_outbox(107, usize::MAX).unwrap().is_empty());
+    assert!(store.available_outbox(107).unwrap().is_empty());
     attempts_trace
 }
 
@@ -193,10 +193,7 @@ fn envelope_rejects_corrupt_state_files() {
     outbox.append(event("corrupt-event")).unwrap();
     let event_file = single_json_in(&root.join("outbox/events"));
     std::fs::write(&event_file, "{\"event_id\": truncated").unwrap();
-    assert!(matches!(
-        outbox.available(999, usize::MAX),
-        Err(StorageError::Io(_))
-    ));
+    assert!(matches!(outbox.available(999), Err(StorageError::Io(_))));
 
     let consumer = FileConsumerStateStore::new(&root);
     consumer
@@ -231,7 +228,7 @@ fn envelope_rejects_future_schema_version_on_read() {
     assert_ne!(bumped, text, "fixture must contain embedded version key");
     std::fs::write(&event_file, bumped).unwrap();
     assert!(matches!(
-        outbox.available(999, usize::MAX),
+        outbox.available(999),
         Err(StorageError::Conflict(_))
     ));
     let _ = std::fs::remove_dir_all(root);
@@ -294,10 +291,13 @@ fn qx_job_and_run(run_id_seed: &str) -> (qx_scheduler::JobSpec, qx_scheduler::Jo
         trigger: Trigger::Manual,
         window: JobWindow::Any,
         depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_refs: Vec::new(),
         timeout_seconds: 60,
         retry_policy: RetryPolicy::default(),
         concurrency_key: format!("p1c-{run_id_seed}"),
         idempotency_key: format!("p1c-{run_id_seed}"),
+        permission_scope: "read".into(),
         audit_reason: "p1c test".into(),
         dry_run: false,
     };

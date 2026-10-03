@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/strategy-api-v1.json",
   "title": "Qianxing Strategy API v1",
-  "description": "策略进程返回给运行时的 output 载荷。required 逐项等于 Rust 侧 StrategyContractOutput / StrategyContractIntent 的非 #[serde(default)] 字段；additionalProperties: false 等于这两个结构体的 #[serde(deny_unknown_fields)]。定点数量按 Rust i128 交换，只允许 JSON 整数：Rust 读写都是整数（含 i64 范围外），Python SDK 写的也是整数；十进制字符串会被运行时判为 invalid number，所以这里不放行字符串形态（见 $defs 的 raw_signed）。side/position_side/margin_mode/position_mode 按 Rust 序列化的规范小写形式约束；运行时读入时会先 to_ascii_lowercase，因此大写载荷能过运行时但过不了本 schema——这是有意的：schema 是作者侧的严格口径，比运行时严不会放行坏载荷。键集、必填集与版本 const 不由本文件自证：`crates/qx-runtime/tests/strategy_api_schema_contract.rs` 拿写侧真正序列化出来的 JSON 逐键比对，并验读侧收得下本文件声明的每一个词（V11 R4-4）；`crates/qx-runtime/tests/strategy_contract_schema.rs` 只补未知键拒绝与定点值的线上形态（V12 R4-k）。形状漂移红在用例而不在这里。",
+  "description": "策略进程返回给运行时的 output 载荷。required 逐项等于 Rust 侧 StrategyContractOutput / StrategyContractIntent 的非 #[serde(default)] 字段；additionalProperties: false 等于这两个结构体的 #[serde(deny_unknown_fields)]。定点数量按 Rust i128 交换，只允许 JSON 整数：Rust 读写都是整数（含 i64 范围外），Python SDK 写的也是整数；十进制字符串会被运行时判为 invalid number，所以这里不放行字符串形态（见 $defs 的 raw_signed）。side/position_side/margin_mode/position_mode 按 Rust 序列化的规范小写形式约束；运行时读入时会先 to_ascii_lowercase，因此大写载荷能过运行时但过不了本 schema——这是有意的：schema 是作者侧的严格口径，比运行时严不会放行坏载荷。",
   "type": "object",
   "required": [
     "schema_version",
@@ -27,7 +27,6 @@
     "expires_at": {"type": "integer", "minimum": 0},
     "intents": {
       "type": "array",
-      "description": "缺省或空数组时走旧版 target_qty 兼容路径；非空时 intents 不再二次推导目标仓位。intent_id 必须唯一，这一条由读侧逐张查（contract.rs 的 intent_ids.insert 判据），JSON Schema 表达不了按键唯一——uniqueItems 只挡得住两颗逐字相同的意图，挡不住同 id 不同数量。",
       "uniqueItems": true,
       "items": {"$ref": "#/$defs/intent"}
     }

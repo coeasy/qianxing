@@ -4,7 +4,7 @@ use super::*;
 
 pub(crate) fn collect_runtime_check_report(path: &Path) -> Result<serde_json::Value, String> {
     let config = read_runtime_config(path)?;
-    let (failures, reference_warnings) = validate_runtime_references(path, &config);
+    let (reference_failures, reference_warnings) = validate_runtime_references(path, &config);
     let supervisor = RuntimeSupervisor::new(config.clone())?;
     // 心跳新鲜度只有一个口径：serve 侧读 worker 指标用的 `messaging.worker_stale_after_ms`；
     // 曾传 `0` 当时刻、`shutdown_timeout_ms` 当预算，前者使过期判定恒不成立（V12 §16 #122）。
@@ -14,14 +14,6 @@ pub(crate) fn collect_runtime_check_report(path: &Path) -> Result<serde_json::Va
         .lock()
         .map_err(|_| "运行时健康锁已中毒".to_string())?
         .snapshot(runtime_timestamp_ms(), stale_ms);
-    // 体检跑在任何 worker 启动之前，注册表里只有 `register()` 写下的 Starting 行：`overall`
-    // 到不了 Failed，健康半边对 `ok` 投不出反对票。所以这块如实声明成"配置派生的花名册、没有
-    // 心跳事实"（health_observed），别让人把 Starting 读成活体探测过了；真正会反对的是上面的
-    // 引用校验与 `RuntimeSupervisor::new` 的拓扑校验这两处。
-    let health_observed = health
-        .services
-        .iter()
-        .any(|service| service.last_heartbeat_ms.is_some());
     let fingerprint = config.fingerprint()?;
     let environment = config.environment.clone();
     let profile = config.profile;
@@ -29,7 +21,8 @@ pub(crate) fn collect_runtime_check_report(path: &Path) -> Result<serde_json::Va
     let storage_backend = config.storage.backend;
     let storage_consistency = config.storage.consistency;
     let fingerprint_locked = config.config_fingerprint.is_some();
-    let ok = failures.is_empty() && !matches!(health.overall, qx_runtime::OverallHealth::Failed);
+    let ok = reference_failures.is_empty()
+        && !matches!(health.overall, qx_runtime::OverallHealth::Failed);
     Ok(serde_json::json!({
         "schema_version": 1,
         "runtime_path": path.display().to_string(),
@@ -41,9 +34,8 @@ pub(crate) fn collect_runtime_check_report(path: &Path) -> Result<serde_json::Va
         "config_fingerprint": fingerprint,
         "config_fingerprint_locked": fingerprint_locked,
         "health": health,
-        "health_observed": health_observed,
         "warnings": reference_warnings,
-        "failures": failures,
+        "failures": reference_failures,
         "ok": ok,
         "network_accessed": false,
         "orders_sent": false
@@ -110,15 +102,11 @@ pub(crate) fn run_runtime_check(path: &Path, as_json: bool) -> Result<(), String
         fingerprint, locked
     );
     println!(
-        "[运行时 · 健康] overall={} observed={}（observed=false 表示这份花名册来自配置，没有心跳事实）",
+        "[运行时 · 健康] overall={}",
         health
             .and_then(|value| value.get("overall"))
             .and_then(serde_json::Value::as_str)
-            .unwrap_or("unknown"),
-        report
-            .get("health_observed")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
+            .unwrap_or("unknown")
     );
     if let Some(services) = health
         .and_then(|value| value.get("services"))
@@ -155,42 +143,6 @@ pub(crate) fn run_runtime_check(path: &Path, as_json: bool) -> Result<(), String
             failures.len().max(1)
         ))
     }
-}
-
-/// 只在 `strategies[]` 上声明、而顶层 `strategy` 段没有同一路径的成本口径，没有任何执行
-/// 入口会去应用它：装配走的是 [`execution_cost_binding_from_config`]，那里读的是顶层那一份。
-/// `config validate` 会把实例那一份文件读一遍并说"没问题"，跑起来用的却是顶层路径或内核
-/// 默认费率——声明与生效之间是断的，所以在装配处与校验处一起拒（V11 N5）。
-pub(crate) fn unapplied_cost_rules_declaration(
-    config: &RuntimeConfig,
-    runtime_config_path: Option<&Path>,
-) -> Option<String> {
-    let resolve = |configured: &str| match runtime_config_path {
-        Some(base) => resolve_runtime_relative_path(base, configured),
-        None => PathBuf::from(configured),
-    };
-    let applied = config.strategy.cost_rules_path.as_deref().map(resolve);
-    for strategy in &config.strategies {
-        let Some(configured) = strategy.cost_rules_path.as_deref() else {
-            continue;
-        };
-        let declared = resolve(configured);
-        if applied.as_ref() == Some(&declared) {
-            continue;
-        }
-        let applied_note = match &applied {
-            Some(path) => format!("顶层当前生效的是 {}", path.display()),
-            None => "顶层没有声明，当前生效的是内核默认费率".to_string(),
-        };
-        return Some(format!(
-            "strategies[{}] 声明的 cost_rules_path {} 不会被应用：执行平面只读顶层 `strategy.cost_rules_path`（{}）；\
-             请把这条声明挪到顶层，或从实例里删掉它",
-            strategy.id.as_deref().unwrap_or("<missing-id>"),
-            declared.display(),
-            applied_note
-        ));
-    }
-    None
 }
 
 /// 报告里的一个字符串数组字段：缺失或非数组一律按空处理，两处读点因此不必各写一遍兜底。
@@ -276,12 +228,6 @@ pub(crate) fn validate_runtime_references(
                 &config.scheduler.jobs_path,
             );
         }
-    }
-
-    // 成本口径"声明了却没人应用"要在装配处之外同样报出来：`config validate` 是唯一能
-    // 一次列全这类问题的入口，它不能比执行平面更宽松（V11 N5）。
-    if let Some(problem) = unapplied_cost_rules_declaration(config, Some(runtime_path)) {
-        failures.push(problem);
     }
 
     let mut strategies = Vec::with_capacity(config.strategies.len() + 1);
@@ -410,4 +356,143 @@ pub(crate) fn validate_runtime_references(
     }
 
     (failures, warnings)
+}
+
+pub(crate) fn validate_ashare_component_json(
+    runtime_path: &Path,
+    failures: &mut Vec<String>,
+    label: String,
+    configured: &str,
+    kind: &str,
+    instrument: Option<&str>,
+) {
+    let resolved = resolve_runtime_relative_path(runtime_path, configured);
+    if !resolved.is_file() {
+        failures.push(format!(
+            "{label} 文件不存在: {} (configured={configured})",
+            resolved.display()
+        ));
+        return;
+    }
+    let payload = match std::fs::read_to_string(&resolved) {
+        Ok(payload) => payload,
+        Err(error) => {
+            failures.push(format!(
+                "{label} 文件不可读 {}: {error}",
+                resolved.display()
+            ));
+            return;
+        }
+    };
+    let validation = if kind == "calendar" {
+        let mut rules = AshareRuleConfig::default();
+        rules.apply_calendar_json(&payload).map(|_| ())
+    } else if let Some(instrument) = instrument {
+        let mut rules = AshareRuleConfig::default();
+        rules
+            .apply_corporate_actions_json(instrument, &payload)
+            .map(|_| ())
+    } else {
+        serde_json::from_str::<serde_json::Value>(&payload)
+            .map_err(|error| format!("JSON 无效: {error}"))
+            .and_then(|document| {
+                let is_array = document.is_array();
+                let is_wrapped = document
+                    .get("actions")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some();
+                if is_array || is_wrapped {
+                    Ok(())
+                } else {
+                    Err("必须是数组或包含 actions 数组的对象".into())
+                }
+            })
+    };
+    match validation {
+        Ok(()) => {}
+        Err(error) => failures.push(format!("{label} 内容非法: {error}")),
+    }
+}
+
+pub(crate) fn validate_dataset_bundle_component_references(
+    runtime_path: &Path,
+    failures: &mut Vec<String>,
+    label: &str,
+    configured_bundle: &str,
+    strategy: &StrategyRuntimeConfig,
+) {
+    let bundle_path = resolve_runtime_relative_path(runtime_path, configured_bundle);
+    let payload = match std::fs::read_to_string(&bundle_path) {
+        Ok(payload) => payload,
+        Err(_) => return,
+    };
+    let bundle: qx_data::DatasetBundleManifest = match serde_json::from_str(&payload) {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            failures.push(format!("{label}.dataset_bundle_path JSON 无效: {error}"));
+            return;
+        }
+    };
+    if let Err(error) = bundle.validate() {
+        failures.push(format!("{label}.dataset_bundle_path 校验失败: {error}"));
+        return;
+    }
+    for kind in bundle
+        .components
+        .keys()
+        .filter(|kind| kind.as_str() != "bars")
+    {
+        let configured = strategy
+            .dataset_component_paths
+            .get(kind)
+            .map(String::as_str)
+            .or(match kind.as_str() {
+                "corporate_actions" => strategy.ashare_actions_path.as_deref(),
+                "calendar" => strategy.ashare_calendar_path.as_deref(),
+                _ => None,
+            });
+        let Some(configured) = configured else {
+            failures.push(format!(
+                "{label}.dataset_bundle_path 组件 {kind} 没有绑定输入文件"
+            ));
+            continue;
+        };
+        let path = resolve_runtime_relative_path(runtime_path, configured);
+        if !path.is_file() {
+            failures.push(format!(
+                "{label}.dataset_component_paths.{kind} 文件不存在: {}",
+                path.display()
+            ));
+        } else if matches!(
+            bundle
+                .components
+                .get(kind)
+                .map(|component| &component.format),
+            Some(qx_data::DatasetComponentFormat::Arrow)
+        ) {
+            match dataset_commands::arrow_dataset_manifest_fingerprint(&path, kind) {
+                Ok((fingerprint, row_count)) => {
+                    let component = bundle
+                        .components
+                        .get(kind)
+                        .expect("bundle component exists");
+                    if fingerprint != component.dataset.fingerprint {
+                        failures.push(format!(
+                            "{label}.dataset_component_paths.{kind} Arrow fingerprint 不匹配: bundle={} input={fingerprint}",
+                            component.dataset.fingerprint
+                        ));
+                    }
+                    if row_count != component.row_count {
+                        failures.push(format!(
+                            "{label}.dataset_component_paths.{kind} Arrow 行数不匹配: bundle={} input={row_count}",
+                            component.row_count
+                        ));
+                    }
+                }
+                Err(error) => failures.push(format!(
+                    "{label}.dataset_component_paths.{kind} Arrow manifest 校验失败: {error}"
+                )),
+            }
+        }
+    }
 }

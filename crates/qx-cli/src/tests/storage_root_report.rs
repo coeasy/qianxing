@@ -44,7 +44,7 @@ fn storage_root_report_follows_the_directory_actually_in_use() {
         effective_storage_root(&runtime_path, configured),
         PathBuf::from(configured)
     );
-    // 只有 runtime.json 同级存在状态（回测产物口径）：报告它，而不是提示"首次运行时创建"。
+    // 只有 runtime.json 同级存在状态（旧版本的回测产物落点）：报告它，而不是提示"首次运行时创建"。
     std::fs::create_dir_all(root.join("conf").join(configured)).unwrap();
     assert_eq!(
         effective_storage_root(&runtime_path, configured),
@@ -57,8 +57,8 @@ fn storage_root_report_follows_the_directory_actually_in_use() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// 同一份配置换了启动目录：账本落在进程目录口径、回测产物落在配置目录口径，两边互不
-/// 可见。doctor 必须并列提示，而不是静默挑一个说"一切正常"。
+/// 同一份配置换了启动目录：现在的账本落在进程目录口径，配置目录口径只剩旧版本的回测
+/// 产物。doctor 必须并列提示，而不是静默挑一个说"一切正常"。
 #[test]
 fn doctor_warns_when_the_two_storage_landing_points_diverged() {
     let root = temp_cli_case_dir("storage-root-split");

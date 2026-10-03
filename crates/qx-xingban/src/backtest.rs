@@ -2711,18 +2711,15 @@ mod tests {
             Bar::new(2, 102, 103, 101, 102, 10),
             Bar::new(3, 104, 105, 103, 104, 10),
         ];
-        // 生产形状：两条链各自按候选循环、每个候选新建一份策略与引擎（
-        // crates/qx-cli/src/backtests/single_strategy.rs、multi_builtin.rs），
-        // 这里按同一形状驱动两次 `run`，断言的是"候选之间不共享可变状态"这一格。
-        let reports: Vec<_> = [0, 1]
+        let reports = [0, 1]
             .into_iter()
             .map(|_| {
-                let mut strategy = BuyOnce { done: false };
+                let mut strategy: Box<dyn BarStrategy> = Box::new(BuyOnce { done: false });
                 BacktestEngine::new(simple_config())
-                    .run(&bars, &mut strategy)
+                    .run(&bars, strategy.as_mut())
                     .unwrap()
             })
-            .collect();
+            .collect::<Vec<_>>();
         assert_eq!(reports.len(), 2);
         assert_eq!(reports[0].result_hash(), reports[1].result_hash());
         assert_eq!(

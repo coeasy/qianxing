@@ -18,6 +18,37 @@ pub(crate) fn is_explicit_absolute_path(configured: &str) -> bool {
         || configured.starts_with("\\\\")
 }
 
+/// `init` / `strategy init` 生成项目时，把 `storage.data_dir` 钉成项目目录下的绝对落点。
+///
+/// 回测产物自 V13 R2 第二十七遍 #255 起只有一条落点口径：相对进程当前目录。模板里那份
+/// `data/qianxing-*` 是仓库内写法（使用者从仓库根启动才成立），照抄进用户项目就等于把
+/// 「先 cd 到项目目录」这条从未写在屏幕上的前提，变成产物落在项目之外；已写成绝对路径的
+/// 模板（production 的 /var/lib/qianxing）原样保留。
+pub(crate) fn anchor_init_data_dir(document: &mut serde_json::Value, project_root: &Path) {
+    let Some(storage) = document
+        .get_mut("storage")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    let Some(configured) = storage
+        .get("data_dir")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    if configured.is_empty() || is_explicit_absolute_path(&configured) {
+        return;
+    }
+    let joined = project_root.join(&configured);
+    let anchored = std::path::absolute(&joined).unwrap_or(joined);
+    storage.insert(
+        "data_dir".into(),
+        serde_json::Value::String(anchored.to_string_lossy().into_owned()),
+    );
+}
+
 pub(crate) fn resolve_runtime_relative_path(runtime_path: &Path, configured: &str) -> PathBuf {
     if is_explicit_absolute_path(configured) {
         PathBuf::from(configured)
@@ -62,11 +93,10 @@ pub(crate) fn resolve_runtime_asset_path(
 
 /// `storage.data_dir` 实际被打开的落点。
 ///
-/// 这个字段有两种口径：可写运行态（控制面、队列、EventLog、outbox、metrics）按进程
-/// 当前目录打开，回测产物（`runs/`、`datasets.manifest.json`）按 runtime.json 同级目录
-/// 写入。相对配置值在两个口径下会指向不同目录，所以诊断命令必须报告真正在用的那个，
-/// 而不是任选一种折算：以进程目录口径为主，只有它不存在而配置目录口径存在时才报告后者。
-/// 两处都有状态时由调用方并列提示——那意味着同一份配置换了启动目录，账本和回测已分家。
+/// 写入侧只有一条口径：运行态与回测产物都按进程当前目录打开。第二个候选「相对
+/// runtime.json 同级目录」曾专供回测产物，V13 R2 第二十七遍 #255 把它并回第一条，此后没有
+/// 写入者——留着只为把旧版本留下的那棵树报出来。所以诊断命令要报告真正有状态的那个落点，
+/// 而不是任选一种折算；两处都有状态时由调用方并列提示（那是同目录下并存的第二份旧账）。
 pub(crate) fn effective_storage_root(runtime_path: &Path, configured: &str) -> PathBuf {
     let process_root = Path::new(configured);
     if process_root.exists() {
@@ -77,6 +107,197 @@ pub(crate) fn effective_storage_root(runtime_path: &Path, configured: &str) -> P
         return config_root;
     }
     process_root.to_path_buf()
+}
+
+/// `storage.data_dir` 的两个候选落点：进程当前目录口径与 runtime 配置文件目录口径。
+/// 两者可能是同一个目录，按 canonical 去重后再扫，避免重复报告。
+fn storage_root_candidates(runtime_path: &Path, configured: &str) -> Vec<PathBuf> {
+    let process_root = Path::new(configured).to_path_buf();
+    let config_root = resolve_runtime_relative_path(runtime_path, configured);
+    let mut seen = Vec::new();
+    let mut roots = Vec::new();
+    for root in [process_root, config_root] {
+        let key = root.canonicalize().unwrap_or_else(|_| root.clone());
+        if !seen.contains(&key) {
+            seen.push(key);
+            roots.push(root);
+        }
+    }
+    roots
+}
+
+/// doctor 的 `storage.data_dir` 检查：可用性与提示按**两个**落点口径共同判断。
+///
+/// 只按其中一种折算会让 doctor 指向一个没有写入者使用的目录——真实账本已存在却被提示成
+/// "将在首次运行时创建"，两处都还没创建时又会把可创建的落点误判成父目录不可用。报告给出
+/// 真正在被使用的落点（[`effective_storage_root`]），并在两处都已落盘时提示配置分家。
+pub(crate) fn check_storage_data_dir(
+    runtime_path: &Path,
+    configured: &str,
+    checks: &mut Vec<serde_json::Value>,
+    warnings: &mut Vec<String>,
+    failures: &mut Vec<String>,
+) {
+    let process_root = Path::new(configured);
+    let config_relative_root = resolve_runtime_relative_path(runtime_path, configured);
+    let candidates = [process_root, config_relative_root.as_path()];
+    let data_dir = effective_storage_root(runtime_path, configured);
+    let canonical = candidates
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .collect::<Vec<_>>();
+    if canonical.len() == 2 && canonical[0] != canonical[1] {
+        let message = format!(
+            "storage.data_dir 有两个已存在的落点: {}（进程目录口径，运行态与回测产物都写在这里）与 {}（配置目录口径，只有旧版本的回测产物）；请固定启动目录或改用绝对路径，否则换目录启动会读到另一棵树",
+            process_root.display(),
+            config_relative_root.display()
+        );
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir.split",
+            "status": "warn",
+            "message": message
+        }));
+        warnings.push(message);
+    }
+    if let Some(blocked) = candidates
+        .iter()
+        .find(|root| root.exists() && !root.is_dir())
+    {
+        let message = format!("storage.data_dir 不是目录: {}", blocked.display());
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir",
+            "status": "fail",
+            "message": message
+        }));
+        failures.push(message);
+    } else if candidates.iter().any(|root| root.is_dir()) {
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir",
+            "status": "pass",
+            "message": data_dir.display().to_string()
+        }));
+    } else if candidates
+        .iter()
+        .any(|root| root.parent().is_some_and(|parent| parent.is_dir()))
+    {
+        let message = format!(
+            "storage.data_dir 尚不存在，将在首次运行时创建: {}",
+            data_dir.display()
+        );
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir",
+            "status": "warn",
+            "message": message
+        }));
+        warnings.push(message);
+    } else {
+        let message = format!("storage.data_dir 的父目录不存在: {}", data_dir.display());
+        checks.push(serde_json::json!({
+            "name": "storage.data_dir",
+            "status": "fail",
+            "message": message
+        }));
+        failures.push(message);
+    }
+}
+
+/// 从 EventLog 落盘文件名还原日志名：单文件 `{name}.json`，分段后端另有
+/// `{name}.manifest.json`。只认 `-events` 结尾，`control-plane.json` 之类的
+/// 相邻运行态文件不归这条检查管。
+fn event_log_name_of(path: &Path) -> Option<String> {
+    if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+        return None;
+    }
+    let stem = path.file_stem()?.to_str()?;
+    let name = stem.strip_suffix(".manifest").unwrap_or(stem);
+    name.ends_with("-events").then(|| name.to_string())
+}
+
+/// doctor 的孤儿 EventLog 检查：`data_dir` 里没有任何身份引用的 `*-events` 账本。
+///
+/// 账户日志命名口径切到 `(account_id, venue_id)` 派生身份是硬切的：旧文件既不自动
+/// 改名也不删除。让它静静躺在运行目录里，下一次只会以"这本账怎么不再增长"的形式被
+/// 重新发现，而那时没人记得它属于切换前的哪一套名字。所以 doctor 点名，但只警告不
+/// 失败——归档与否是运维决定，不是启动前置条件。
+///
+/// 扫描口径是 Files 后端的目录；其它后端没有可翻的目录，只能报告"未覆盖"，
+/// 不能把缺席当成通过。
+pub(crate) fn check_orphan_event_logs(
+    runtime_path: &Path,
+    config: &RuntimeConfig,
+    checks: &mut Vec<serde_json::Value>,
+    warnings: &mut Vec<String>,
+) {
+    if config.storage.backend != StorageBackend::Files {
+        // 扫描靠翻 `data_dir` 目录，只对 Files 后端成立。这里必须留下检查记录：
+        // 静默 return 让 doctor 的输出看起来"这项查过且干净"，非 Files 后端上那些
+        // 没人引用的账本就此隐身。
+        let backend = format!("{:?}", config.storage.backend).to_ascii_lowercase();
+        let message = format!(
+            "孤儿 EventLog 扫描只覆盖 files 后端，当前 backend={backend} 未扫描；\
+             该后端的在册/遗留账本需按存储侧自行确认"
+        );
+        checks.push(serde_json::json!({
+            "name": "event_logs.orphan",
+            "status": "warn",
+            "message": message
+        }));
+        warnings.push(message);
+        return;
+    }
+    let owned = configured_event_log_names(config);
+    let mut orphans = Vec::new();
+    for root in storage_root_candidates(runtime_path, &config.storage.data_dir) {
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for path in entries.flatten().map(|entry| entry.path()) {
+            if let Some(name) = event_log_name_of(&path) {
+                if !owned.contains(&name) {
+                    orphans.push(path);
+                }
+            }
+        }
+    }
+    orphans.sort();
+    orphans.dedup();
+    if orphans.is_empty() {
+        checks.push(serde_json::json!({
+            "name": "event_logs.orphan",
+            "status": "pass",
+            "message": "data_dir 中的 EventLog 都被当前配置引用"
+        }));
+        return;
+    }
+    let listed = orphans
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let message = format!(
+        "{} 个 EventLog 没有被当前配置的任何身份引用: {listed}；账户日志按 (account_id, venue_id) \
+         派生名字（见 deploy/README.md），请确认后归档或删除",
+        orphans.len()
+    );
+    checks.push(serde_json::json!({
+        "name": "event_logs.orphan",
+        "status": "warn",
+        "message": message
+    }));
+    warnings.push(message);
+}
+
+/// `backtest <runtime>` 只喂配置时的 BarFrame：用配置顶层声明的那份 bars。
+///
+/// 这里曾无条件回落到 `qianxing.bar-frame.example.json`（仓库那份 BTCUSDT 夹具）。于是
+/// `init --profile ashare` 生成的项目照 README 敲 `backtest qianxing.runtime.json`，读到的
+/// 是另一个标的的行情：带 bundle 声明的配置以指纹不匹配 fail closed，不带的会直接跑出一份
+/// 使用者从未声明过的结果。只认顶层 `strategy.bars_snapshot_path`——与 `init_guidance` 那条
+/// 首屏命令读的是同一份声明；多策略配置各腿另指 bars 时不猜，落回示例夹具由下游如实报错。
+pub(crate) fn backtest_frame_from_config(runtime: &Path) -> Option<PathBuf> {
+    let config = read_runtime_config(runtime).ok()?;
+    let configured = config.strategy.bars_snapshot_path.as_deref()?;
+    Some(resolve_runtime_relative_path(runtime, configured))
 }
 
 pub(crate) fn resolve_strategy_runtime_paths(

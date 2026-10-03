@@ -3,8 +3,7 @@
 //! 本模块只做配置读取、引用校验与人读/机读输出，不改变运行时语义；
 //! 真实执行链路仍复用 crate 根上的同一批 Runtime/Storage 辅助函数。
 //! 帮助文本本身不在这里，见 `cli_help.rs`（它与派发分支由架构门禁做集合相等校验）。
-//! 项目初始化一族见 `init_project.rs`；`config validate` / `fingerprint` / `lock` 的
-//! 人读与机读输出见 `config_output.rs`（V11 E4：`--json` 曾经只抑制横幅，不产出 JSON）。
+//! 项目初始化一族见 `init_project.rs`。
 
 use super::*;
 
@@ -64,6 +63,48 @@ pub(crate) fn run_config_explain(path: &Path, as_json: bool) -> Result<(), Strin
     Ok(())
 }
 
+pub(crate) fn run_config_fingerprint(path: &Path) -> Result<(), String> {
+    let config = read_runtime_config(path)?;
+    println!(
+        "[配置 · Fingerprint] path={} fingerprint={}",
+        path.display(),
+        config.fingerprint()?
+    );
+    Ok(())
+}
+
+pub(crate) fn run_config_lock(input: &Path, output: &Path, force: bool) -> Result<(), String> {
+    let config = read_runtime_config(input)?;
+    let fingerprint = config.fingerprint()?;
+    if output.exists() && !force {
+        return Err(format!(
+            "目标发布配置已存在: {}；如确认覆盖，请显式添加 --force",
+            output.display()
+        ));
+    }
+    let mut locked = config;
+    locked.config_fingerprint = Some(fingerprint.clone());
+    let payload = locked.to_json()?;
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("创建发布配置目录失败 {}: {error}", parent.display()))?;
+    }
+    std::fs::write(output, payload)
+        .map_err(|error| format!("写入发布配置失败 {}: {error}", output.display()))?;
+    let verified = read_runtime_config(output)?;
+    verified.verify_fingerprint()?;
+    println!(
+        "[配置 · Lock] input={} output={} fingerprint={} locked=true",
+        input.display(),
+        output.display(),
+        fingerprint
+    );
+    Ok(())
+}
+
 /// `run` 的可用入口清单：help 文案、缺参提示与"不支持"提示共用同一份。
 /// 三处各写一遍正是 V10 §4.3 第 4 项"文案自称支持 backtest 而 match 没有该分支"的来源；
 /// `tools/check_architecture.py` 会把本清单与 help 入口行、下面的 match 分支做集合相等校验。
@@ -77,7 +118,7 @@ pub(crate) const RUN_ENTRY_POINTS: [&str; 7] = [
     "report",
 ];
 
-fn run_usage(phrase: &str) -> String {
+pub(crate) fn run_usage(phrase: &str) -> String {
     format!("run {phrase}；可用入口：{}", RUN_ENTRY_POINTS.join("、"))
 }
 
@@ -106,48 +147,28 @@ pub(crate) fn run_unified_command(arguments: &[String]) -> Result<(), String> {
             )
         }
         "paper" | "paper-check" => {
-            let path = arguments.get(1).map(PathBuf::from).unwrap_or_else(|| {
+            let (path, _) = run_entry_arguments(arguments, action, false, || {
                 repository_deploy_path("qianxing.runtime.paper-strategy.example.json")
-            });
+            })?;
             run_paper_pipeline_once(&path)
         }
         "doctor" => {
-            let path = arguments
-                .iter()
-                .skip(1)
-                .find(|value| !value.starts_with('-'))
-                .map(PathBuf::from)
-                .unwrap_or_else(default_runtime_path);
-            run_doctor(&path, arguments.iter().any(|argument| argument == "--json"))
+            let (path, json) = run_entry_arguments(arguments, action, true, default_runtime_path)?;
+            run_doctor(&path, json)
         }
         "live-check" => {
-            let path = arguments
-                .iter()
-                .skip(1)
-                .find(|value| !value.starts_with('-'))
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    repository_deploy_path("qianxing.runtime.production.example.json")
-                });
-            run_live_check(&path, arguments.iter().any(|argument| argument == "--json"))
+            let (path, json) = run_entry_arguments(arguments, action, true, || {
+                repository_deploy_path("qianxing.runtime.production.example.json")
+            })?;
+            run_live_check(&path, json)
         }
         "runtime-check" => {
-            let path = arguments
-                .iter()
-                .skip(1)
-                .find(|value| !value.starts_with('-'))
-                .map(PathBuf::from)
-                .unwrap_or_else(default_runtime_path);
-            run_runtime_check(&path, arguments.iter().any(|argument| argument == "--json"))
+            let (path, json) = run_entry_arguments(arguments, action, true, default_runtime_path)?;
+            run_runtime_check(&path, json)
         }
         "report" => {
-            let path = arguments
-                .iter()
-                .skip(1)
-                .find(|value| !value.starts_with('-'))
-                .map(PathBuf::from)
-                .unwrap_or_else(default_runtime_path);
-            run_report(&path, arguments.iter().any(|argument| argument == "--json"))
+            let (path, json) = run_entry_arguments(arguments, action, true, default_runtime_path)?;
+            run_report(&path, json)
         }
         _ => Err(run_usage(&format!("不支持 {action}"))),
     }
@@ -197,7 +218,7 @@ pub(crate) fn resolve_backtest_summary_path(path: &Path) -> Result<PathBuf, Stri
         return Err(format!("指定回测摘要不存在: {}", path.display()));
     }
     let config = read_runtime_config(path)?;
-    let data_dir = resolve_runtime_relative_path(path, &config.storage.data_dir);
+    let data_dir = Path::new(&config.storage.data_dir).to_path_buf();
     let summaries = list_backtest_summary_paths(&data_dir.join("runs"))?;
     summaries
         .last()
@@ -218,6 +239,7 @@ pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
     if as_json {
         let report = serde_json::json!({
             "schema_version": 1,
+            "runtime_version": build_identity::RUNTIME_VERSION,
             "summary_path": summary_path.display().to_string(),
             "input_check": match &declared_input {
                 Some(input) => serde_json::json!({
@@ -230,7 +252,7 @@ pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
                     "fingerprint": input.fingerprint,
                 }),
                 None => serde_json::json!({
-                    "verdict": NOT_DECLARED,
+                    "verdict": "not_declared",
                     "declared_and_recomputed_match": false,
                 }),
             },
@@ -251,7 +273,7 @@ pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
             "{} input_kind={} input_id={} input_fingerprint={}",
             input.path, input.kind, input.dataset_id, input.fingerprint
         ),
-        None => format!("{NOT_DECLARED}（该摘要没有 input 块，输入身份未经核对）"),
+        None => "not_declared（该摘要没有 input 块，输入身份未经核对）".to_string(),
     };
     for line in report_readout_lines(&summary, &input_verified) {
         println!("{line}");
@@ -261,7 +283,7 @@ pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
 
 pub(crate) fn run_status(path: &Path, as_json: bool) -> Result<(), String> {
     let config = read_runtime_config(path)?;
-    let data_dir = resolve_runtime_relative_path(path, &config.storage.data_dir);
+    let data_dir = Path::new(&config.storage.data_dir).to_path_buf();
     let runs_dir = data_dir.join("runs");
     let summaries = list_backtest_summary_paths(&runs_dir)?;
     let latest_summary = summaries.last().and_then(|summary_path| {
@@ -286,6 +308,7 @@ pub(crate) fn run_status(path: &Path, as_json: bool) -> Result<(), String> {
         let status = serde_json::json!({
             "schema_version": 1,
             "runtime_path": path,
+            "runtime_version": build_identity::RUNTIME_VERSION,
             "environment": config.environment,
             "profile": config.profile,
             "storage_backend": config.storage.backend,
@@ -335,6 +358,128 @@ pub(crate) fn run_status(path: &Path, as_json: bool) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn collect_doctor_report(path: &Path) -> Result<serde_json::Value, String> {
+    let config = read_runtime_config(path)?;
+    let fingerprint = config.fingerprint()?;
+    // 诊断的第一格先回答"我是哪个构建在说这句话"（U1）。
+    let mut checks = vec![crate::build_identity::doctor_check()];
+    let mut failures = Vec::new();
+    let mut warnings = Vec::new();
+
+    checks.push(serde_json::json!({
+        "name": "config",
+        "status": "pass",
+        "message": "配置解析与领域校验通过"
+    }));
+    checks.push(serde_json::json!({
+        "name": "fingerprint",
+        "status": "pass",
+        "message": format!("配置指纹={fingerprint}")
+    }));
+
+    let (reference_failures, reference_warnings) = validate_runtime_references(path, &config);
+    for warning in reference_warnings {
+        checks.push(serde_json::json!({
+            "name": "runtime_reference",
+            "status": "warn",
+            "message": warning.clone()
+        }));
+        warnings.push(warning);
+    }
+    for failure in reference_failures {
+        checks.push(serde_json::json!({
+            "name": "runtime_reference",
+            "status": "fail",
+            "message": failure.clone()
+        }));
+        failures.push(failure);
+    }
+
+    for worker in config.workers.iter().filter(|worker| {
+        writes_account_ledger(worker)
+            && worker
+                .endpoint
+                .as_deref()
+                .is_some_and(|endpoint| !endpoint.contains("://"))
+    }) {
+        match worker_credentials_ready(path, worker) {
+            Ok(true) => checks.push(serde_json::json!({
+                "name": format!("worker[{}].credentials", worker.id),
+                "status": "pass",
+                "message": "CCXT 配置中的凭据环境变量可用"
+            })),
+            Ok(false) => {
+                let message = format!(
+                    "worker {} 的 CCXT 配置未提供可用 credential_env；当前仅能运行公共能力",
+                    worker.id
+                );
+                checks.push(serde_json::json!({
+                    "name": format!("worker[{}].credentials", worker.id),
+                    "status": "warn",
+                    "message": message
+                }));
+                warnings.push(message);
+            }
+            Err(error) => {
+                checks.push(serde_json::json!({
+                    "name": format!("worker[{}].credentials", worker.id),
+                    "status": "fail",
+                    "message": error
+                }));
+                failures.push(error);
+            }
+        }
+    }
+
+    check_storage_data_dir(
+        path,
+        &config.storage.data_dir,
+        &mut checks,
+        &mut warnings,
+        &mut failures,
+    );
+    check_account_log_settlement(&config, &mut checks, &mut failures);
+    check_orphan_event_logs(path, &config, &mut checks, &mut warnings);
+
+    // 判的是"这份配置能否构建出监督器"（`new` = 已判过的 validate + 按启用 worker 注册
+    // 服务），不是运行健康：此刻一个 worker 都没启动，原名 `runtime_topology: pass` 加
+    // `overall=Starting` 会让读报告的人以为拓扑被判成了健康。
+    let enabled_workers = config
+        .workers
+        .iter()
+        .filter(|worker| worker.enabled)
+        .count();
+    let (status, message) = match RuntimeSupervisor::new(config.clone()) {
+        Ok(_) => (
+            "pass",
+            format!("监督器可构建，启用 worker={enabled_workers}（未启动，不代表运行健康）"),
+        ),
+        Err(error) => ("fail", format!("运行时监督器构建失败: {error}")),
+    };
+    checks.push(serde_json::json!({
+        "name": "runtime_supervisor_build",
+        "status": status,
+        "message": message.clone()
+    }));
+    if status == "fail" {
+        failures.push(message);
+    }
+
+    Ok(serde_json::json!({
+        "schema_version": 1,
+        "runtime_path": path.display().to_string(),
+        "environment": config.environment,
+        "profile": config.profile,
+        "config_fingerprint": fingerprint,
+        "ok": failures.is_empty(),
+        "checks": checks,
+        "warnings": warnings,
+        "failures": failures,
+        "network_accessed": false,
+        "orders_sent": false
+    }))
+}
+
 pub(crate) fn run_doctor(path: &Path, as_json: bool) -> Result<(), String> {
     let report = collect_doctor_report(path)?;
     let failures = report
@@ -376,10 +521,7 @@ pub(crate) fn run_doctor(path: &Path, as_json: bool) -> Result<(), String> {
                 println!("[{status}] {name}: {message}");
             }
             if ok {
-                println!(
-                    "[Doctor] 通过：{} 个警告；未连接交易所、未发送订单",
-                    warnings
-                );
+                println!("[Doctor] 通过：{warnings} 个警告；未连接交易所、未发送订单");
             } else if let Some(items) = report.get("failures").and_then(serde_json::Value::as_array)
             {
                 for failure in items.iter().filter_map(serde_json::Value::as_str) {

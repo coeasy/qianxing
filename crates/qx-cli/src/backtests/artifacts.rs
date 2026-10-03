@@ -26,8 +26,7 @@ pub(crate) struct BacktestInputProvenance {
 /// BarFrame 文件的**唯一**入口读点：`strategy backtest` 与 `qx report` 复核走同一个函数，
 /// 所以"当时读成的形状"与"事后重读成的形状"不可能被写成两件事。
 pub(crate) fn read_bar_frame_for_backtest(path: &Path) -> Result<BarFrame, String> {
-    let payload = std::fs::read_to_string(path)
-        .map_err(|error| format!("读取策略回测 BarFrame 失败 {}: {error}", path.display()))?;
+    let payload = read_example_json(path, "策略回测 BarFrame ")?;
     BarFrame::from_json(&payload)
         .map_err(|error| format!("策略回测 BarFrame 校验失败 {}: {error:?}", path.display()))
 }
@@ -64,8 +63,7 @@ pub(crate) fn barframe_dataset_identity(
 
 /// 深度帧的**唯一**读点，理由同 [`barframe_dataset_identity`]。
 pub(crate) fn read_depth_frame_for_backtest(path: &Path) -> Result<DepthFrame, String> {
-    let payload = std::fs::read_to_string(path)
-        .map_err(|error| format!("读取深度数据帧失败 {}: {error}", path.display()))?;
+    let payload = read_example_json(path, "深度数据帧")?;
     DepthFrame::from_json(&payload).map_err(|error| format!("{}: {error}", path.display()))
 }
 

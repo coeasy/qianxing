@@ -6,14 +6,14 @@
 //! 3. 决策只用 as_of(ts) 之前的数据（无前视偏差）
 
 use qx_adapter::{
-    AdapterReconcileIssue, BinanceSpotAuth, BinanceSpotCredentials, BinanceSpotMarketData,
-    BinanceSpotMarketStream, BinanceSpotVenue, BinanceStreamRetryPolicy,
+    AdapterReconcileIssue, BinanceQuotePoll, BinanceSpotAuth, BinanceSpotCredentials,
+    BinanceSpotMarketData, BinanceSpotMarketStream, BinanceSpotVenue, BinanceStreamRetryPolicy,
     BinanceUserStreamRunConfig, CcxtProcessClient, CcxtProcessVenue, CcxtRpc, HttpTransport,
     TlsHttpTransport,
 };
 use qx_api::{
     load_mtls_server_config_from_pem, ApiPolicy, ApiQueryModels, ApiReadiness, ApiService,
-    ApiState, ControlSubmitError, MtlsIdentityPemReloader, MtlsIdentityStore, ProjectionRefresher,
+    ApiState, ControlSubmitError, MtlsIdentityPemReloader, MtlsIdentityStore,
     ReconcileReportSnapshot, TlsConfigStore, TlsPemReloader,
 };
 use qx_control::{
@@ -48,41 +48,37 @@ use qx_provider::{
 use qx_risk::{MaxNotionalRule, MaxQtyRule, NoShortRule, OrderRiskPosition, RuleSet};
 use qx_runtime::{
     encode_strategy_columnar_input, load_control_state, ApiTransport, LiveEventPipeline,
-    RuntimeBalanceDiscrepancy, RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent,
-    RuntimeSupervisor, StorageBackend, StorageConsistency, StrategyContext, StrategyContractBars,
-    StrategyContractInput, StrategyContractIntent, StrategyContractOutput, StrategyRuntimeConfig,
-    StrategyTargetSnapshot, StrategyTransport, WorkerConfig, WorkerRole,
+    OutboxRecovery, RuntimeBalanceDiscrepancy, RuntimeConfig, RuntimeEventEnvelope,
+    RuntimeExternalEvent, RuntimeSupervisor, StorageBackend, StorageConsistency, StrategyContext,
+    StrategyContractBars, StrategyContractInput, StrategyContractIntent, StrategyContractOutput,
+    StrategyRuntimeConfig, StrategyTargetSnapshot, StrategyTransport, WorkerConfig, WorkerRole,
 };
 #[cfg(feature = "nats")]
 use qx_runtime::{MessagingRuntimeConfig, WorkerContext};
-use qx_scheduler::{
-    claimable_by, JobSpec, JobStatus, JobWindow, RetryPolicy, ScheduleTick, Scheduler, Trigger,
-};
-use qx_storage::{
-    verify_audit_chain, AuditFileStore, AuditStore, ControlCommandQueue,
-    ControlCommandQueueBackend, FileJobQueue, FileTokenBucket, JobLease, JsonStateStore, QueuedJob,
-    StorageError,
-};
+use qx_scheduler::{JobSpec, JobStatus, JobWindow, RetryPolicy, ScheduleTick, Scheduler, Trigger};
 #[cfg(feature = "nats")]
 use qx_storage::{
     ConsumerStateStore, FileConsumerStateStore, FileOutboxStore, OutboxEvent, OutboxPublisher,
     OutboxRelay, OutboxStore,
 };
+use qx_storage::{
+    ControlCommandQueue, ControlCommandQueueBackend, FileJobQueue, FileTokenBucket, JobLease,
+    JsonStateStore, QueuedJob, StorageError,
+};
 #[cfg(feature = "nats")]
-use qx_storage::{NatsJetStreamConsumer, NatsJetStreamPublisher};
+use qx_storage::{NatsJetStreamConsumer, NatsJetStreamPublisher, NatsWaitBudget};
 #[cfg(all(feature = "nats", feature = "postgres"))]
 use qx_storage::{PostgresConsumerStateStore, PostgresOutboxStore};
 #[cfg(feature = "postgres")]
 use qx_storage::{
     PostgresControlCommandQueue, PostgresControlStore, PostgresEventLogStore, PostgresJobQueue,
 };
-#[cfg(feature = "sqlite")]
-use qx_storage::{
-    SqliteAuditStore, SqliteControlCommandQueue, SqliteControlStore, SqliteJobQueue,
-    SqliteTokenBucket,
-};
 #[cfg(all(feature = "sqlite", feature = "nats"))]
 use qx_storage::{SqliteConsumerStateStore, SqliteOutboxStore};
+#[cfg(feature = "sqlite")]
+use qx_storage::{
+    SqliteControlCommandQueue, SqliteControlStore, SqliteJobQueue, SqliteTokenBucket,
+};
 use qx_strategy::{
     BuiltinStrategy, BuiltinStrategyConfig, BuiltinStrategyKind, DynamicCAbiLoadPolicy,
     DynamicCAbiStrategy, MarketEvent as NativeMarketEvent, SharedRingConfig, SharedRingError,
@@ -105,27 +101,30 @@ use qx_zhenlu::{
 };
 mod api_service;
 mod backtests;
+mod build_identity;
 mod ccxt_facts;
 mod cli;
 mod cli_args;
 mod cli_help;
 mod config_commands;
-mod config_output;
 mod configured_backends;
 mod dataset_commands;
-mod doctor_report;
+mod deploy_lookup;
 mod ecosystem_smoke;
 mod event_pipeline;
+mod init_guidance;
 mod init_project;
 mod live_check;
 mod market_bridges;
 mod market_spec;
 mod multi_leg;
 mod path_resolution;
+mod pipeline_metrics_report;
+mod quickstart;
 mod readiness;
 mod report_readout;
+mod run_entry_arguments;
 mod runtime_check;
-mod runtime_components;
 mod runtime_wiring;
 mod scheduler;
 mod selfcheck;
@@ -134,6 +133,8 @@ mod strategy_binding;
 mod strategy_contract;
 mod strategy_host;
 mod strategy_live_state;
+mod strategy_stderr_tail;
+mod usage_errors;
 mod venue_runtime;
 mod worker_entry;
 mod worker_shutdown;
@@ -144,9 +145,8 @@ pub(crate) use backtests::*;
 pub(crate) use ccxt_facts::*;
 pub(crate) use cli_help::*;
 pub(crate) use config_commands::*;
-pub(crate) use config_output::*;
 pub(crate) use configured_backends::*;
-pub(crate) use doctor_report::*;
+pub(crate) use deploy_lookup::*;
 pub(crate) use ecosystem_smoke::*;
 #[allow(unused_imports)] // 默认特性下本模块条目全部为 nats/postgres 门控
 pub(crate) use event_pipeline::*;
@@ -156,10 +156,11 @@ pub(crate) use market_bridges::*;
 pub(crate) use market_spec::*;
 pub(crate) use multi_leg::*;
 pub(crate) use path_resolution::*;
+pub(crate) use pipeline_metrics_report::*;
 pub(crate) use readiness::*;
 pub(crate) use report_readout::*;
+pub(crate) use run_entry_arguments::*;
 pub(crate) use runtime_check::*;
-pub(crate) use runtime_components::*;
 pub(crate) use runtime_wiring::*;
 pub(crate) use scheduler::*;
 pub(crate) use spread::*;
@@ -167,16 +168,17 @@ pub(crate) use strategy_binding::*;
 pub(crate) use strategy_contract::*;
 pub(crate) use strategy_host::*;
 pub(crate) use strategy_live_state::*;
+pub(crate) use strategy_stderr_tail::*;
 pub(crate) use venue_runtime::*;
 pub(crate) use worker_entry::*;
 pub(crate) use worker_shutdown::*;
 
 use dataset_commands::{
     run_dataset_bundle, run_dataset_ingest, verify_dataset_bundle_binding,
-    verify_dataset_bundle_component_bindings, verify_dataset_registry_declarations,
+    verify_dataset_bundle_component_bindings,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -195,13 +197,24 @@ fn run_unified_backtest(
     frame: Option<&Path>,
     spec: Option<&Path>,
 ) -> Result<(), String> {
-    let default_runtime = repository_deploy_path("qianxing.runtime.strategy-backtest.example.json");
-    let default_frame = repository_deploy_path("qianxing.bar-frame.example.json");
-    run_strategy_backtest(
-        runtime.unwrap_or(&default_runtime),
-        frame.unwrap_or(&default_frame),
-        spec,
-    )
+    // 默认这份从「跨语言策略模板」换成「内置策略模板」（V13 R31 ① F6）：README 安装路径 A 是
+    // 只装 CLI、不装 Python，而旧默认那份策略由 Python worker 承担，`qx-cli backtest` 一敲就
+    // 撞解释器（`logs/s736_…`：无 QX_PYTHON 退 2；`logs/s737_…`：内置与 A 股模板都退 0）。
+    let default_runtime = repository_deploy_path("qianxing.runtime.builtin-strategy.example.json");
+    // 用默认那一份配置时，先把「用的哪一份、产物会落在哪」印出来：改前裸 `backtest` 在任意目录
+    // 都会静默建出一棵 data/ 产物树，屏幕上没有一句它读的是哪个配置（V13 R31 ① F5）。
+    if runtime.is_none() {
+        let cwd = std::env::current_dir()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_else(|_| "<未知目录>".to_string());
+        println!("[默认输入] 运行时配置={}", default_runtime.display());
+        println!("[默认落点] 产物写在该配置的 storage.data_dir，相对当前目录 {cwd} 解析");
+    }
+    let runtime = runtime.unwrap_or(&default_runtime);
+    // 只喂配置时，BarFrame 取这份配置自己声明的那份 bars；声明缺席才回落到仓库示例夹具。
+    let default_frame = backtest_frame_from_config(runtime)
+        .unwrap_or_else(|| repository_deploy_path("qianxing.bar-frame.example.json"));
+    run_strategy_backtest(runtime, frame.unwrap_or(&default_frame), spec)
 }
 
 /// 供跨进程恢复验收器调用的极小子进程入口。

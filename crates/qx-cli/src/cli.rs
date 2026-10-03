@@ -10,7 +10,8 @@ use super::cli_args::{BacktestCommand, Cli, Command, ConfigCommand, RunCommand, 
 use super::*;
 use clap::Parser;
 
-/// 旧派发在用法错误（未知命令/未知参数）时同样先打印横幅，再打印帮助并退出 2。
+/// 用法错误（未知命令/未知参数）走分级回显（U2）：旧形状实测 162 行 / 12 KB 入口摘要，
+/// 新手要在一面墙里找自己那半行错。`DisplayHelp*` 仍由 clap 打印单条用法并退 0。
 fn fail_usage(error: clap::Error) -> ! {
     if matches!(
         error.kind(),
@@ -20,12 +21,7 @@ fn fail_usage(error: clap::Error) -> ! {
         let _ = error.print();
         std::process::exit(0);
     }
-    print_banner();
-    // 前缀同时包含「未知命令」与「未知参数」：验收器（tests/cli_dispatch.rs、
-    // tests/multi_leg_attribution.rs）分别点名这两种失败。
-    eprintln!("未知命令或未知参数: {error}");
-    print_cli_help();
-    std::process::exit(2);
+    usage_errors::report(&error)
 }
 
 fn run_arguments(entry: &str, mut arguments: Vec<String>) -> Vec<String> {
@@ -131,6 +127,12 @@ pub(crate) fn run() {
         print_cli_help();
         return;
     }
+    // `--version` 与 `-V` 是 version 入口的别名，与 help 一样在 clap 之前接住（U1）。
+    let alias = argv.get(1).map(String::as_str).unwrap_or_default();
+    if alias == "--version" || alias == "-V" {
+        build_identity::print_identity();
+        return;
+    }
     let cli = match Cli::try_parse_from(argv.iter().map(String::as_str)) {
         Ok(cli) => cli,
         Err(error) => fail_usage(error),
@@ -168,6 +170,8 @@ pub(crate) fn run() {
                 std::process::exit(2);
             }
         }
+        // 首跑一条命令：内部直调 README 那五条入口所用的同一批函数（易用性 P2）。
+        Command::Quickstart { project, force } => quickstart::run(project, force),
         Command::Doctor { path, json } => {
             let path = path.unwrap_or_else(default_runtime_path);
             if let Err(error) = run_doctor(&path, json) {
@@ -176,23 +180,42 @@ pub(crate) fn run() {
             }
         }
         Command::Config { action } => {
+            let validate_path = match &action {
+                Some(ConfigCommand::Validate { path }) => path.clone(),
+                _ => None,
+            };
             let result = match action {
                 Some(ConfigCommand::Explain { path, json }) => {
                     run_config_explain(&path.unwrap_or_else(default_runtime_path), json)
                 }
-                Some(ConfigCommand::Validate { path, json }) => {
-                    run_config_validate(&path.unwrap_or_else(default_runtime_path), json)
-                }
-                // 不带子命令的 `config` 与迁移前同义：仍跑 validate，且仍不产出 JSON。
-                None => run_config_validate(&default_runtime_path(), false),
-                Some(ConfigCommand::Fingerprint { path, json }) => {
-                    run_config_fingerprint(&path.unwrap_or_else(default_runtime_path), json)
+                Some(ConfigCommand::Validate { .. }) | None => match read_runtime_config(
+                    &validate_path.clone().unwrap_or_else(default_runtime_path),
+                ) {
+                    Ok(config) => {
+                        let path = validate_path.unwrap_or_else(default_runtime_path);
+                        let (failures, warnings) = validate_runtime_references(&path, &config);
+                        for warning in warnings {
+                            println!("[WARN] {warning}");
+                        }
+                        if failures.is_empty() {
+                            println!("[PASS] config validate 通过: {}", path.display());
+                            Ok(())
+                        } else {
+                            for failure in &failures {
+                                eprintln!("[FAIL] {failure}");
+                            }
+                            Err(format!("配置引用校验失败，共 {} 项", failures.len()))
+                        }
+                    }
+                    Err(error) => Err(error),
+                },
+                Some(ConfigCommand::Fingerprint { path }) => {
+                    run_config_fingerprint(&path.unwrap_or_else(default_runtime_path))
                 }
                 Some(ConfigCommand::Lock {
                     path,
                     output,
                     force,
-                    json,
                 }) => {
                     let path = path.unwrap_or_else(default_runtime_path);
                     let output = output.unwrap_or_else(|| {
@@ -202,7 +225,7 @@ pub(crate) fn run() {
                             .unwrap_or("qianxing.runtime");
                         path.with_file_name(format!("{stem}.locked.json"))
                     });
-                    run_config_lock(&path, &output, force, json)
+                    run_config_lock(&path, &output, force)
                 }
             };
             if let Err(error) = result {
@@ -245,17 +268,12 @@ pub(crate) fn run() {
             }
         }
         Command::LiveCheck { path, json } => {
-            let path = path.unwrap_or_else(|| {
-                PathBuf::from("deploy/qianxing.runtime.production.example.json")
-            });
             if let Err(error) = run_live_check(&path, json) {
                 eprintln!("实盘前置检查失败: {error}");
                 std::process::exit(2);
             }
         }
         Command::RuntimeCheck { path, json } => {
-            let path =
-                path.unwrap_or_else(|| PathBuf::from("deploy/qianxing.runtime.example.json"));
             if let Err(error) = run_runtime_check(&path, json) {
                 eprintln!("运行时配置校验失败: {error}");
                 std::process::exit(2);
@@ -292,123 +310,121 @@ pub(crate) fn run() {
             frame,
             spec,
             action,
-        } => {
-            match action {
-                None => {
-                    if let Err(error) =
-                        run_unified_backtest(runtime.as_deref(), frame.as_deref(), spec.as_deref())
-                    {
-                        eprintln!("统一策略回测失败: {error}");
-                        std::process::exit(2);
-                    }
-                }
-                Some(BacktestCommand::Builtin {
-                    strategy,
-                    frame,
-                    spec,
-                    quantity,
-                    config,
-                }) => {
-                    // 命令行型回测入口的 `--config` 与 strategy 回测吃同一份 `strategy.risk_rules`。
-                    if let Err(error) = run_builtin_backtest(
-                        &strategy,
-                        &frame,
-                        spec.as_deref(),
-                        quantity.unwrap_or(1),
-                        config.as_deref(),
-                    ) {
-                        eprintln!("内置策略回测失败: {error}");
-                        std::process::exit(2);
-                    }
-                }
-                Some(BacktestCommand::MultiBuiltin {
-                    strategy,
-                    primary_bar,
-                    reference_bar,
-                    primary_spec,
-                    reference_spec,
-                    positional_quantity,
-                    quantity,
-                    funding_bps,
-                    root,
-                    config,
-                }) => {
-                    let quantity = quantity.or(positional_quantity).unwrap_or(1);
-                    if let Err(error) = run_multi_builtin_backtest(
-                        &strategy,
-                        &primary_bar,
-                        &reference_bar,
-                        primary_spec.as_deref(),
-                        reference_spec.as_deref(),
-                        quantity,
-                        funding_bps.unwrap_or(0),
-                        root.as_deref(),
-                        config.as_deref(),
-                    ) {
-                        eprintln!("多腿内置策略回测失败: {error}");
-                        std::process::exit(2);
-                    }
-                }
-                Some(BacktestCommand::CcxtBuiltin {
-                    ccxt_config,
-                    strategy,
-                    instrument,
-                    start_ms,
-                    end_ms,
-                    timeframe,
-                    spec,
-                    quantity,
-                    config,
-                }) => {
-                    if let Err(error) = run_ccxt_builtin_backtest(
-                        &ccxt_config,
-                        &strategy,
-                        &instrument,
-                        &timeframe,
-                        start_ms,
-                        end_ms,
-                        spec.as_deref(),
-                        quantity.unwrap_or(1),
-                        config.as_deref(),
-                    ) {
-                        eprintln!("CCXT 内置策略回测失败: {error}");
-                        std::process::exit(2);
-                    }
-                }
-                Some(BacktestCommand::Book {
-                    fill_tier,
-                    root,
-                    strategy,
-                    frame,
-                    spec,
-                    quantity,
-                    fee_bps,
-                    market_impact_bps,
-                    latency_snapshots,
-                    config,
-                }) => {
-                    if let Err(error) = run_depth_backtest(
-                        &fill_tier,
-                        &strategy,
-                        &frame,
-                        spec.as_deref(),
-                        quantity.unwrap_or(1),
-                        // 缺省时由深度入口向成本绑定要费率（Q0c）：命令行 > 成本规则文件 > 内核默认。
-                        fee_bps,
-                        // 缺省的全 0 与不点名旗标同口径：撮合行为不变，描述子照常写出。
-                        DepthExecutionModel {
-                            latency_snapshots: latency_snapshots.unwrap_or(0),
-                            market_impact_bps: market_impact_bps.unwrap_or(0),
-                        },
-                        &root,
-                        config.as_deref(),
-                    ) {
-                        eprintln!("深度档位回测失败: {error}");
-                        std::process::exit(2);
-                    }
+        } => match action {
+            None => {
+                if let Err(error) =
+                    run_unified_backtest(runtime.as_deref(), frame.as_deref(), spec.as_deref())
+                {
+                    eprintln!("统一策略回测失败: {error}");
+                    std::process::exit(2);
                 }
             }
-        }
+            Some(BacktestCommand::Builtin {
+                strategy,
+                frame,
+                spec,
+                quantity,
+                config,
+            }) => {
+                // 命令行型回测入口的 `--config` 与 strategy 回测吃同一份 `strategy.risk_rules`。
+                if let Err(error) = run_builtin_backtest(
+                    &strategy,
+                    &frame,
+                    spec.as_deref(),
+                    quantity.unwrap_or(1),
+                    config.as_deref(),
+                ) {
+                    eprintln!("内置策略回测失败: {error}");
+                    std::process::exit(2);
+                }
+            }
+            Some(BacktestCommand::MultiBuiltin {
+                strategy,
+                primary_bar,
+                reference_bar,
+                primary_spec,
+                reference_spec,
+                positional_quantity,
+                quantity,
+                funding_bps,
+                root,
+                config,
+            }) => {
+                let quantity = quantity.or(positional_quantity).unwrap_or(1);
+                if let Err(error) = run_multi_builtin_backtest(
+                    &strategy,
+                    &primary_bar,
+                    &reference_bar,
+                    primary_spec.as_deref(),
+                    reference_spec.as_deref(),
+                    quantity,
+                    funding_bps.unwrap_or(0),
+                    root.as_deref(),
+                    config.as_deref(),
+                ) {
+                    eprintln!("多腿内置策略回测失败: {error}");
+                    std::process::exit(2);
+                }
+            }
+            Some(BacktestCommand::CcxtBuiltin {
+                ccxt_config,
+                strategy,
+                instrument,
+                start_ms,
+                end_ms,
+                timeframe,
+                spec,
+                quantity,
+                config,
+            }) => {
+                if let Err(error) = run_ccxt_builtin_backtest(
+                    &ccxt_config,
+                    &strategy,
+                    &instrument,
+                    &timeframe,
+                    start_ms,
+                    end_ms,
+                    spec.as_deref(),
+                    quantity.unwrap_or(1),
+                    config.as_deref(),
+                ) {
+                    eprintln!("CCXT 内置策略回测失败: {error}");
+                    std::process::exit(2);
+                }
+            }
+            Some(BacktestCommand::Book {
+                fill_tier,
+                root,
+                strategy,
+                frame,
+                spec,
+                quantity,
+                fee_bps,
+                market_impact_bps,
+                latency_snapshots,
+                config,
+            }) => {
+                if let Err(error) = run_depth_backtest(
+                    &fill_tier,
+                    &strategy,
+                    &frame,
+                    spec.as_deref(),
+                    quantity.unwrap_or(1),
+                    // 缺省时由深度入口向成本绑定要费率（Q0c）：命令行 > 成本规则文件 > 内核默认。
+                    fee_bps,
+                    // 缺省的全 0 与不点名旗标同口径：撮合行为不变，描述子照常写出。
+                    DepthExecutionModel {
+                        latency_snapshots: latency_snapshots.unwrap_or(0),
+                        market_impact_bps: market_impact_bps.unwrap_or(0),
+                    },
+                    &root,
+                    config.as_deref(),
+                ) {
+                    eprintln!("深度档位回测失败: {error}");
+                    std::process::exit(2);
+                }
+            }
+        },
         Command::BuiltinStrategies => print_builtin_strategies(),
         Command::FastBacktest { manifest } => {
             if let Err(error) = run_fast_backtest_manifest(&manifest) {
@@ -612,13 +628,8 @@ pub(crate) fn run() {
                 std::process::exit(2);
             }
         }
-        Command::PaperE2e { path } => {
-            if let Err(error) = run_paper_pipeline_once(&path) {
-                eprintln!("Paper 主链路验收失败: {error}");
-                std::process::exit(2);
-            }
-        }
-        Command::PaperCheck { path } => {
+        // 两条入口同源：都只跑一次本地 Paper 主链路验收，差别只在 clap 给的默认路径。
+        Command::PaperE2e { path } | Command::PaperCheck { path } => {
             if let Err(error) = run_paper_pipeline_once(&path) {
                 eprintln!("Paper 主链路验收失败: {error}");
                 std::process::exit(2);
@@ -643,11 +654,9 @@ pub(crate) fn run() {
         }
         Command::Ecosystem => run_ecosystem_smoke(),
         Command::Paper => run_paper_smoke(),
-        Command::All => {
-            selfcheck::run(selfcheck::Scope::Full);
-        }
-        Command::Verify => {
-            selfcheck::run(selfcheck::Scope::KernelOnly);
-        }
+        Command::All => selfcheck::run(selfcheck::Scope::Full),
+        Command::Verify => selfcheck::run(selfcheck::Scope::KernelOnly),
+        // 只有一行，不带横幅：与 `--version`/`-V` 逐字相同，脚本可 `qx-cli version` 直接取。
+        Command::Version => build_identity::print_identity(),
     }
 }

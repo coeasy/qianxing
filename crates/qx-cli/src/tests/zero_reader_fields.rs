@@ -110,3 +110,52 @@ fn order_risk_projection_fields_stay_documented_as_unread_in_production() {
         "`OrderRiskDecision` 的文档得跟着读者走：有读者时这句就是假话，没读者时删掉它就是漏登记"
     );
 }
+
+/// #178 判据：`qx_pipeline_*` 有没有生产出口，源码说明、capabilities、接口文档三处必须一起改口。
+///
+/// 这六个计数在 `ingest`/`refresh` 里每笔都加。第八遍立案时全仓对 `LiveEventPipeline::metrics()`
+/// 的调用只有 `pipeline.rs` 自己的用例 —— 数据在生产里被算出来、被丢掉，当时按"留而不删 + 登记
+/// 缺口"处理，并把三处说法双向钉住（名字里的 `unpublished` 就是那一段）。第二十遍按 worker 进程
+/// 定好量纲、接上 `.prom` 出口之后，这条判据的作用不变，只是钉的三处换成了"现在说出口在哪"的
+/// 三句话：摘掉旧登记、`qx-runtime` 的公开面指认真实读者、接口文档给出带标签的样本形态。
+/// 反向同样咬：把 `pipeline_metrics_report.rs` 的调用拆掉而三处说法留着不动，就判红。
+#[test]
+fn pipeline_metrics_publication_and_docs_move_together() {
+    let readers = all_crate_production_sources()
+        .into_iter()
+        .filter(|path| {
+            !(path_under_crate(path, "qx-runtime")
+                && path.file_name().is_some_and(|name| name == "pipeline.rs"))
+        })
+        .filter(|path| {
+            let source = std::fs::read_to_string(path).unwrap();
+            // 接上出口必然在持有 `LiveEventPipeline` 的文件里调 `.metrics()`，两处都提到才算：
+            // 只按 `.metrics()` 取会把 qx-api 自己那份 `ApiMetricsSnapshot` 的读数数成读者。
+            source.contains("LiveEventPipeline") && source.contains(".metrics()")
+        })
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    let published = !readers.is_empty();
+    assert_eq!(
+        limitation_registered(
+            &workspace_source("maturity/capabilities.yaml"),
+            "paper_execution",
+            "pipeline_metrics_have_no_production_surface"
+        ),
+        !published,
+        "`qx_pipeline_*` 的生产读者清单与 capabilities limitation 必须同进同退：\
+         现在读者={readers:?}。有读者就不许再登记「没有生产出口」，没读者就得把它加回来"
+    );
+    assert_eq!(
+        workspace_source("crates/qx-runtime/src/lib.rs").contains("pipeline_metrics_report.rs"),
+        published,
+        "`PipelineMetricsSnapshot` 走的是 qx-runtime 的公开 re-export，说明就得写在那一处：\
+         出口在 `pipeline_metrics_report.rs`，读者清单里没有它时这句就是假话"
+    );
+    assert_eq!(
+        workspace_source("deploy/README.md").contains("qx_pipeline_ingested_events_total{worker="),
+        published,
+        "接口文档「指标出口」那一节是给运维看 `/metrics` 该不该出现 `qx_pipeline_*` 的地方，\
+         它必须与读者清单一致：现在读者={readers:?}"
+    );
+}

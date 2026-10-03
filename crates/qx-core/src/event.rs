@@ -225,14 +225,6 @@ pub struct AccountCashflow {
 /// 事件类型。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum EventKind {
-    Timer {
-        name: String,
-    },
-    /// 一根 bar 到达，携带收盘价（策略此刻才可见）。
-    MarketBar {
-        instrument: InstrumentId,
-        close: Price,
-    },
     /// L1 报价到达；保存最优买卖价及对应数量，供 Paper/回放保持成交容量一致。
     MarketQuote {
         instrument: InstrumentId,
@@ -378,15 +370,6 @@ impl Event {
         h.write_text(&self.metadata.context.signal_id);
         h.write_text(&self.metadata.context.intent_id);
         match &self.kind {
-            EventKind::Timer { name } => {
-                h.write_u64(1);
-                h.write_text(name);
-            }
-            EventKind::MarketBar { instrument, close } => {
-                h.write_u64(2);
-                h.write_text(&instrument.to_string());
-                h.write_i128(close.raw());
-            }
             EventKind::MarketQuote {
                 instrument,
                 bid,
@@ -617,13 +600,24 @@ mod tests {
 
     #[test]
     fn digest_preserves_text_boundaries() {
-        let left = Event::new(1, 1, Priority::TIMER, EventKind::Timer { name: "c".into() })
-            .correlated("ab");
+        let left = Event::new(
+            1,
+            1,
+            Priority::TIMER,
+            EventKind::Rejected {
+                client_order_id: 7,
+                reason: "c".into(),
+            },
+        )
+        .correlated("ab");
         let right = Event::new(
             1,
             1,
             Priority::TIMER,
-            EventKind::Timer { name: "bc".into() },
+            EventKind::Rejected {
+                client_order_id: 7,
+                reason: "bc".into(),
+            },
         )
         .correlated("a");
         let mut left_hash = crate::sourcing::Fnv1a::new();

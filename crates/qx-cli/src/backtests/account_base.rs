@@ -114,16 +114,9 @@ pub(crate) fn reject_split_account_principal(config: &RuntimeConfig) -> Result<(
 }
 
 /// 回测入口真正用的本金，连同"这一格有没有被 paper 侧同一个数确认"。
-///
-/// 两件事都要在这里判，因为它们问的是同一次读取：`strategies[]` 里写的本金不会被命令行
-/// 回测读到（这条链只取顶层 `strategy.initial_cash_raw`，V11 O2 的六格声明闸门在本金这一
-/// 格唯一的落点），而顶层与 paper 侧写两个数会让同一份配置跑出两套账（V12 R3）。
 pub(crate) fn account_base_from_config(
     config: &RuntimeConfig,
 ) -> Result<BacktestAccountBase, String> {
-    unapplied_strategy_declaration(config, "initial_cash_raw", |strategy| {
-        strategy.initial_cash_raw.map(|raw| raw.to_string())
-    })?;
     reject_split_account_principal(config)?;
     let mut base = backtest_initial_cash(config.strategy.initial_cash_raw)?;
     if base.source == BACKTEST_ACCOUNT_BASE_CONFIG_SOURCE && paper_declares_same_principal(config) {

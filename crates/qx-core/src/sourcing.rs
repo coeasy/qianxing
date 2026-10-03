@@ -16,6 +16,8 @@ pub struct Fnv1a {
 }
 
 impl Fnv1a {
+    // 仓内没有 `Fnv1a::default()` 的读者，而这条 clippy 只认 `pub fn new()` 的形状，故按"零读者公共面已删"豁免。
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             h: 0xcbf2_9ce4_8422_2325,
@@ -56,16 +58,12 @@ impl Fnv1a {
     }
 }
 
-impl Default for Fnv1a {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// 事件日志：append-only，不可变。
 #[derive(Clone, Default)]
 pub struct EventLog {
     events: Vec<Event>,
+    /// `events` 里出现过的 seq：归约器每个 tick 重放整份日志，重复检测必须与长度无关（原先每条扫一遍 `events`，整场重放因此 O(n²)）。
+    seqs: BTreeSet<u64>,
     next_seq: u64,
 }
 
@@ -86,6 +84,7 @@ impl EventLog {
 
     pub fn append(&mut self, e: Event) {
         self.next_seq = self.next_seq.max(e.seq.saturating_add(1));
+        self.seqs.insert(e.seq);
         self.events.push(e);
     }
 
@@ -94,7 +93,7 @@ impl EventLog {
         e.metadata
             .validate()
             .map_err(crate::error::QxError::Invariant)?;
-        if self.events.iter().any(|event| event.seq == e.seq) {
+        if self.seqs.contains(&e.seq) {
             return Err(crate::error::QxError::Invariant("事件 seq 重复".into()));
         }
         if let Some(previous) = self.events.last() {
@@ -111,6 +110,7 @@ impl EventLog {
             .checked_add(1)
             .ok_or_else(|| crate::error::QxError::Invariant("事件序号溢出".into()))?
             .max(self.next_seq);
+        self.seqs.insert(e.seq);
         self.events.push(e);
         Ok(())
     }

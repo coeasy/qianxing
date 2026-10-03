@@ -84,12 +84,12 @@ impl<V: Venue> VenuePortAdapter<V> {
         }
     }
 
-    /// 适配器只往一个方向走：借出去提交，用完收回底层 Venue。留在结构体上的
-    /// `venue()`/`venue_mut()` 两颗读缝给不出任何生产入口需要东西——提交路径
-    /// 全部经 `VenuePort`/`VenueRouterPort`，绕过端口直接改 Venue 反而跳过了
-    /// 路由校验（V11 M4）。
     pub fn into_inner(self) -> V {
         self.venue
+    }
+
+    pub fn venue(&self) -> &V {
+        &self.venue
     }
 }
 
@@ -1017,16 +1017,8 @@ fn build_compensation_order(
         account_id: target.account_id.clone(),
         trace: Some(OrderTrace {
             strategy_id: Some(group.strategy_id.clone()),
-            signal_id: source_leg
-                .order
-                .trace
-                .as_ref()
-                .and_then(|trace| trace.signal_id),
-            intent_id: source_leg
-                .order
-                .trace
-                .as_ref()
-                .and_then(|trace| trace.intent_id),
+            signal_id: None,
+            intent_id: None,
             rule_version: Some("spread-hedge-v1".into()),
         }),
         policy: Some(policy),

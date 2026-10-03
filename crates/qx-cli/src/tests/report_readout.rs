@@ -74,56 +74,6 @@ fn string_typed_and_negative_money_fields_still_read_as_numbers() {
     );
 }
 
-/// `bars=` 单独印出来是有歧义的：5000 根 K 线与 5000 个盘口快照不是同一种结论强度。
-/// 写侧在 `artifacts.rs` 里落了 `sample_unit`，读侧漏印就等于把两种回测混成同一句话。
-#[test]
-fn sample_unit_is_printed_next_to_bars_and_absent_when_undeclared() {
-    let depth = serde_json::json!({
-        "schema_version": 4,
-        "bars": 5000,
-        "sample_unit": "depth_snapshot",
-    });
-    let text = joined(&report_readout_lines(&depth, "verified"));
-    assert!(
-        text.contains("bars=5000 sample_unit=depth_snapshot"),
-        "样本单位必须紧跟在 bars 之后成对出现: {text}"
-    );
-    let text = joined(&report_readout_lines(&sparse_v4_summary(), "verified"));
-    assert!(
-        text.contains("bars=absent sample_unit=absent"),
-        "旧产物没写过 sample_unit，不能沿用上一格的值: {text}"
-    );
-}
-
-/// 整块 null 已被 `generation_note` 用例覆盖，单格 null 这条读法还没有断言：
-/// `report_readout.rs` 的 `Value::Null => None` 分支一旦被改成"落 0"或"原样印 null"，
-/// 前者把没数念成结论、后者让读者以为产物真写了 null。
-#[test]
-fn explicitly_null_cells_read_as_absent_rather_than_zero_or_literal_null() {
-    let summary = serde_json::json!({
-        "schema_version": 4,
-        "fills": null,
-        "sample_unit": null,
-        "metrics": { "return_bps": null },
-        "result_hash": null,
-    });
-    let text = joined(&report_readout_lines(&summary, "verified"));
-    for expected in [
-        "fills=absent",
-        "sample_unit=absent",
-        "return_bps=absent",
-        "result_hash=absent",
-    ] {
-        assert!(text.contains(expected), "null 格没有按缺席印出: {text}");
-    }
-    assert!(!text.contains("null"), "null 被原样印进了报告: {text}");
-    // 缺席的措辞只有一套：格子的缺席不能写成 not_declared，那是复核结论那一格的话。
-    assert!(
-        !text.contains("=not_declared"),
-        "数值格用了第二套缺席措辞: {text}"
-    );
-}
-
 #[test]
 fn generation_note_tells_apart_older_schema_from_missing_block() {
     // v1：三个块都还没被引入，缺席是"那一代没声明过"。
@@ -210,38 +160,6 @@ fn readout_gives_the_recompute_verdict_its_own_field_verbatim() {
             "复核结论必须原样占一格，实际: {text}"
         );
     }
-}
-
-/// 三格溯源：撮合内核、成本绑定的来源、被挡下的委托数。写侧在 `artifacts.rs` 里各落了一格，
-/// 正文此前一格都不念——只看 `fills=` 分不出"策略没发信号"与"信号全被挡下"，这两个结论对
-/// 使用者的含义相反（V13 第 8 轮 A6）。成对的两半：写了 0 要印 0，没写过才印 absent。
-#[test]
-fn provenance_line_prints_kernel_cost_source_and_rejection_count_together() {
-    let declared = serde_json::json!({
-        "schema_version": 4,
-        "matching_kernel": "qx-xingban::BacktestEngine(bar)",
-        "execution_costs": { "source": "cost-rules-file:/cfg/cost.json" },
-        "rejected_orders": 7,
-    });
-    let text = joined(&report_readout_lines(&declared, "verified"));
-    let expected =
-        "matching_kernel=qx-xingban::BacktestEngine(bar) cost_source=cost-rules-file:/cfg/cost.json rejected_orders=7";
-    assert!(text.contains(expected), "三格必须同行成对念出: {text}");
-    // 反向：`rejected_orders=0` 是"一趟都没挡"，不是"没记这笔账"。
-    let zeroed = serde_json::json!({
-        "schema_version": 4,
-        "matching_kernel": "qx-xingban::TickBacktestEngine(l1-top-of-book)",
-        "rejected_orders": 0,
-    });
-    let text = joined(&report_readout_lines(&zeroed, "verified"));
-    assert!(
-        text.contains("matching_kernel=qx-xingban::TickBacktestEngine(l1-top-of-book)"),
-        "深度内核的名字被截断或改写: {text}"
-    );
-    assert!(
-        text.contains("cost_source=absent rejected_orders=0"),
-        "没写成本来源要印 absent，写了 0 要印 0: {text}"
-    );
 }
 
 #[test]

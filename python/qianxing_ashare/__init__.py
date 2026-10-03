@@ -16,7 +16,7 @@ from datetime import date, datetime, time, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol, Sequence
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from qianxing_bridge import (
     BAR_FRAME_JSON_FIELDS,
@@ -26,7 +26,6 @@ from qianxing_bridge import (
 
 
 SCALE = 1_000_000_000
-_SHANGHAI = ZoneInfo("Asia/Shanghai")
 _ADJUSTMENTS = {"none", "qfq", "hfq"}
 _FREQUENCIES = {"daily", "weekly", "monthly", "1m", "5m", "15m", "30m", "60m"}
 _CODE_REPLACEMENTS = str.maketrans({"．": ".", "　": " "})
@@ -34,6 +33,20 @@ _CODE_REPLACEMENTS = str.maketrans({"．": ".", "　": " "})
 
 class AshareProviderError(RuntimeError):
     """数据源不可用、返回结构异常或无法安全标准化时抛出。"""
+
+
+def _shanghai() -> ZoneInfo:
+    """A 股时间戳统一按 Asia/Shanghai 解释。
+
+    Windows 的 zoneinfo 不自带时区库：把它放在模块顶层会让 `import qianxing_ashare`
+    在缺 tzdata 的机器上整体失败，而本模块对外承诺的是"核心包不需要装数据源依赖"。
+    """
+    try:
+        return ZoneInfo("Asia/Shanghai")
+    except ZoneInfoNotFoundError as exc:
+        raise AshareProviderError(
+            "Asia/Shanghai 时区数据不可用，请执行 pip install tzdata 后重试"
+        ) from exc
 
 
 _CORPORATE_ACTION_TYPES = {
@@ -506,7 +519,7 @@ def _manifest_timestamp_ms(value: str) -> int:
     if parsed is None:
         raise ValueError(f"invalid manifest date: {value}")
     day = date.fromisoformat(parsed)
-    return int(datetime.combine(day, time.min, tzinfo=_SHANGHAI).timestamp() * 1000)
+    return int(datetime.combine(day, time.min, tzinfo=_shanghai()).timestamp() * 1000)
 
 
 def _qx_data_bars_fingerprint(frame: BarFrame) -> str:
@@ -778,7 +791,7 @@ def _timestamp(value: Any) -> int:
             else:
                 raise AshareProviderError(f"cannot parse timestamp: {value!r}")
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=_SHANGHAI)
+        parsed = parsed.replace(tzinfo=_shanghai())
     return int(parsed.timestamp() * 1000)
 
 
@@ -1091,7 +1104,7 @@ class AkShareProvider:
         try:
             self._module = importlib.import_module("akshare")
         except ImportError as exc:
-            raise AshareProviderError("AkShare 未安装，请执行 pip install -e '.[a-share-akshare]'") from exc
+            raise AshareProviderError("AkShare 未安装，请执行 pip install 'qianxing-bridge[a-share-akshare]'") from exc
         return self._module
 
     def fetch(self, query: AshareQuery) -> tuple[BarFrame, AshareManifest]:
@@ -1163,7 +1176,7 @@ class BaoStockProvider:
         try:
             self._module = importlib.import_module("baostock")
         except ImportError as exc:
-            raise AshareProviderError("Baostock 未安装，请执行 pip install -e '.[a-share-baostock]'") from exc
+            raise AshareProviderError("Baostock 未安装，请执行 pip install 'qianxing-bridge[a-share-baostock]'") from exc
         return self._module
 
     def fetch(self, query: AshareQuery) -> tuple[BarFrame, AshareManifest]:
@@ -1263,7 +1276,7 @@ class EasyTdxProvider:
         try:
             self._module = importlib.import_module("easy_tdx")
         except ImportError as exc:
-            raise AshareProviderError("easy_tdx 未安装，请执行 pip install -e '.[a-share-easy-tdx]'") from exc
+            raise AshareProviderError("easy_tdx 未安装，请执行 pip install 'qianxing-bridge[a-share-easy-tdx]'") from exc
         return self._module
 
     def fetch(self, query: AshareQuery) -> tuple[BarFrame, AshareManifest]:

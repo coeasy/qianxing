@@ -5,7 +5,7 @@
 
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
 use qx_core::retry;
-use qx_core::{Event, EventLog, FileLock, Fnv1a, LockError, QxError, QxResult};
+use qx_core::{Event, EventLog, Fnv1a, QxError, QxResult};
 use qx_scheduler::{JobRun, JobSpec, JobStatus, Scheduler};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -19,16 +19,14 @@ pub use state_envelope::JsonStateEnvelope;
 use state_envelope::{
     acquire_storage_lock, encode_state_json, read_json_file, read_state_json,
     read_state_json_or_default, read_state_text, read_state_text_required, transact_state_json,
-    write_atomic_path, write_json_file, write_state_json, write_state_text, Commit,
+    write_atomic_path, write_json_file, write_state_json, write_state_text, Commit, StorageLock,
 };
 
-// 五个文件后端存储的唯一定义点在 `file` 目录模块；crate 根只负责再导出，
-// 保持 `qx_storage::{AuditFileStore, FileConsumerStateStore, FileOutboxStore,
-// FileJobQueue, JsonStateStore}` 公开路径逐字不变（其它 crate 依赖该路径）。
+// 四个文件后端存储的唯一定义点在 `file` 目录模块；crate 根只负责再导出，
+// 保持 `qx_storage::{FileConsumerStateStore, FileOutboxStore, FileJobQueue, JsonStateStore}`
+// 公开路径逐字不变（其它 crate 依赖该路径）。
 mod file;
-pub use file::{
-    AuditFileStore, FileConsumerStateStore, FileJobQueue, FileOutboxStore, JsonStateStore,
-};
+pub use file::{FileConsumerStateStore, FileJobQueue, FileOutboxStore, JsonStateStore};
 
 #[cfg(feature = "sqlite")]
 mod sqlite;
@@ -46,6 +44,9 @@ pub use postgres::{
     PostgresControlStore, PostgresEventLogStore, PostgresJobQueue, PostgresOutboxStore,
     PostgresSnapshotStore, PostgresStorage,
 };
+
+mod wait_budget;
+pub use wait_budget::NatsWaitBudget;
 
 #[cfg(feature = "nats")]
 mod nats;
@@ -421,20 +422,19 @@ impl OutboxEvent {
     }
 }
 
+/// 把 EventLog 的 `[projection_cursor, +∞)` 区间投影成 Outbox 事件。
+/// 游标前先在序号上过滤再序列化：先全量序列化后按游标丢弃会让每笔追加都为已投递的事实
+/// 付一遍 serde 与 `validate`，代价随日志长度线性增长。
 pub fn project_event_log_to_outbox(
     log_name: &str,
     log: &EventLog,
+    projection_cursor: u64,
 ) -> Result<Vec<OutboxEvent>, StorageError> {
-    if log_name.trim().is_empty()
-        || !log_name
-            .chars()
-            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '-' | '_'))
-    {
-        return Err(StorageError::InvalidName(log_name.into()));
-    }
+    validate_segment_name(log_name)?;
     log.validate().map_err(StorageError::Core)?;
     log.events()
         .iter()
+        .filter(|event| event.seq >= projection_cursor)
         .map(|event| {
             let outbox = OutboxEvent {
                 event_id: format!("{log_name}:{}", event.seq),
@@ -468,34 +468,10 @@ pub struct OutboxLease {
     pub fencing_token: u64,
 }
 
-/// 一条 Outbox 事件最多被 relay 尝试投递多少次；用尽后它不再被端出，而是留在
-/// outbox 里等人工确认（V11 K2）。
-///
-/// 修前的形状：`retry` 只把 `attempts` 加一、删掉租约，`available` 只看租约定不看
-/// `attempts`，于是一条永远发不出去的事件每轮都被重新端出，并按 `created_ts` 排在最前
-/// 挤住整条尾巴（`pump_once` 取最旧的 `limit` 条）——头部一个毒事件就让尾部全部事件
-/// 无限期停摆，relay 也以固定节拍空转。消费者侧早就有 `max_attempts` + 死信，出站侧缺
-/// 同款，这是同族缺陷的另一半。
-///
-/// 计数口径放在这里而不是三本后端的 SQL 里：判据只有一个出口，文件 / SQLite /
-/// PostgreSQL 交回的候选集形状不变，改的是 relay 的取用规则。
-pub const OUTBOX_MAX_ATTEMPTS: u32 = 8;
-
-/// 尝试次数是否已经用尽投递预算。用尽的事件不再被 relay 投递，但仍留在 outbox 里可见。
-pub const fn outbox_exhausted(attempts: u32) -> bool {
-    attempts >= OUTBOX_MAX_ATTEMPTS
-}
-
 /// 文件、SQLite、PostgreSQL 和 MQ relay 共用的出站事件语义。
 pub trait OutboxStore: Send + Sync {
     fn append_outbox(&self, event: OutboxEvent) -> Result<(), StorageError>;
-    /// 端出至多 `limit` 条可投递的事件：已持有有效租约的、以及**已用尽投递预算的**都排到最后，
-    /// 后者仍留在候选集里等人工 `claim`/`ack`（K2 的出口），只是不再占住页首。
-    /// `limit` 传 [`usize::MAX`] 表示读全量（运维列面），relay 传它自己的投递预算。
-    fn available_outbox(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError>;
-    /// 停在投递预算外的事件条数。这是状态量而不是本轮观察值：候选集被 `limit` 截断后，
-    /// 逐行数出来的条数会随页数漂移，运维面上「有几条发不出去」必须由这条不问页数的读给出。
-    fn count_parked_outbox(&self) -> Result<u64, StorageError>;
+    fn available_outbox(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError>;
     fn claim_outbox(
         &self,
         event_id: &str,
@@ -532,15 +508,11 @@ pub struct OutboxRelayReport {
     pub retried: u64,
     pub lease_conflicts: u64,
     pub publish_failures: u64,
-    /// 库里当前有几条已用尽投递预算、因而不再被尝试（V11 K2 计数、R7-d 改成不问页数的状态量）。
-    pub parked: u64,
     pub last_error: Option<String>,
 }
 
 /// 通用 Outbox relay。它不关心 NATS、Redpanda 或 HTTP 的具体 SDK，负责保证
-/// claim → publish → ack 的生命周期；发布失败只释放租约并递增 attempts，而 attempts 到达
-/// [`OUTBOX_MAX_ATTEMPTS`] 的事件由 relay 跳过、由 [`OutboxStore::count_parked_outbox`] 数出来，
-/// 既不再阻断后面的事件，也不占据每一轮的读取页数。
+/// claim → publish → ack 的生命周期；发布失败只释放租约并递增 attempts。
 pub struct OutboxRelay<S, P> {
     store: S,
     publisher: P,
@@ -577,16 +549,8 @@ where
         if limit == 0 {
             return Ok(OutboxRelayReport::default());
         }
-        // 停摆条数问的是「库里现在有几条发不出去」而不是这一页数到几条（V11 R7-d）：少报等于毒事件在运维面上消失。
-        let parked = self.store.count_parked_outbox()?;
-        let empty = OutboxRelayReport::default();
-        let mut report = OutboxRelayReport { parked, ..empty };
-        // 页数上界只有 store 那一处读：这里再数一遍 `delivered >= limit` 是一份走不到的第二判据
-        // ——三本后端的 LIMIT 由跨后端契约用例钉住，relay 只负责「端上来的这一页逐条投递」。
-        for event in self.store.available_outbox(now, limit)? {
-            if outbox_exhausted(event.attempts) {
-                continue;
-            }
+        let mut report = OutboxRelayReport::default();
+        for event in self.store.available_outbox(now)?.into_iter().take(limit) {
             report.scanned += 1;
             let lease =
                 match self
@@ -704,15 +668,11 @@ pub trait ConsumerStateStore: Send + Sync {
     fn is_processed(&self, group_id: &str, event_id: &str) -> Result<bool, StorageError>;
     fn commit_processed(&self, checkpoint: ConsumerCheckpoint) -> Result<(), StorageError>;
     fn append_dead_letter(&self, record: DeadLetterRecord) -> Result<(), StorageError>;
-    /// 点查某个事件的死信，返回 `attempts` 最大（最后一次入账）的那一行。
-    ///
-    /// 刻意不是「取一页再筛」：死信重放是点名操作，而点名的事件不在那一页时，
-    /// 「取一页」会把「存在」念成「不存在」。
-    fn dead_letter(
+    fn dead_letters(
         &self,
         group_id: &str,
-        event_id: &str,
-    ) -> Result<Option<DeadLetterRecord>, StorageError>;
+        limit: usize,
+    ) -> Result<Vec<DeadLetterRecord>, StorageError>;
 }
 
 /// A deterministic projection produced by an in-process consumer reducer.
@@ -902,7 +862,7 @@ where
             // Dead-lettering is a terminal source-consumer decision. Persist the
             // processed marker/checkpoint as well, so a broker can acknowledge
             // the source message without redelivering it forever. The complete
-            // failed event remains available through `dead_letter`.
+            // failed event remains available through `dead_letters`.
             self.store.commit_processed(checkpoint)?;
             return Ok(ConsumerOutcome::DeadLettered);
         }
@@ -1363,7 +1323,7 @@ impl ControlCommandQueue {
             .join(format!("{command_id}.lease.json")))
     }
 
-    fn acquire_claim_lock(&self, command_id: u64) -> Result<FileLock, StorageError> {
+    fn acquire_claim_lock(&self, command_id: u64) -> Result<StorageLock, StorageError> {
         std::fs::create_dir_all(self.root.join("commands"))
             .map_err(|error| StorageError::Io(error.to_string()))?;
         acquire_storage_lock(
@@ -1420,9 +1380,8 @@ fn default_fencing_token() -> u64 {
 
 /// 追加式持久化审计记录。
 ///
-/// 每条记录都携带前一条记录摘要和自身摘要。冷读侧（`read_entries`）重算整条链，
-/// 文件被截断、重排或篡改时会显式失败，而不是返回看似完整的审计结果；追加侧只
-/// 复算尾部窗口内的链段，因为每写一条都重验整条链会把写入频率乘上链长（V11 R5-2）。
+/// 每条记录都携带前一条记录摘要和自身摘要；恢复、查询和追加都会先验证整条链，
+/// 因此文件被截断、重排或篡改时会显式失败，而不会返回看似完整的审计结果。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct AuditEntry {
     pub sequence: u64,
@@ -1431,25 +1390,131 @@ pub struct AuditEntry {
     pub entry_hash: u64,
 }
 
-/// 审计后端的冷读契约：把整条链读回来并逐环校验，断链、篡改与重排都要失败而不是
-/// 返回一段看似完整的流水。
-///
-/// 它不是控制面的写入通道：控制面流水只由 `transact_control` 在后端自己的
-/// `AuditChainWriter` 里续链（V11 R5-2），尾部读与截残尾也都归那个写入器。一份链有两个
-/// 都能写的地方，正是这条链要防的那件事。
-///
-/// 生产读者是 doctor 的 `audit_chain` 检查（`qx-cli`，覆盖 Files 与 Sqlite 两个落点；
-/// Postgres 要连库才能读，doctor 不触网，只报未扫描）。按命令号或序号的游标查询在
-/// R5-2 里删掉了：它们一个读者都没有，而每次调用都得把整条链读回来再过滤。
+#[derive(Clone, Debug)]
+pub struct AuditFileStore {
+    root: PathBuf,
+}
+
+/// 审计持久化后端契约；数据库实现必须保持文件后端的链校验和游标语义。
 pub trait AuditStore {
+    fn append_record(&self, record: AuditRecord) -> Result<PathBuf, StorageError>;
     fn read_entries(&self) -> Result<Vec<AuditEntry>, StorageError>;
+    fn query_command_entries(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError>;
+    fn entries_after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError>;
+}
+
+impl AuditFileStore {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// 追加一条审计记录；重复写入完全相同的末尾记录是幂等的。
+    pub fn append(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
+        std::fs::create_dir_all(&self.root).map_err(|error| StorageError::Io(error.to_string()))?;
+        let _lock = acquire_storage_lock(self.root.join("audit.append.lock"))?;
+        self.append_unlocked(record)
+    }
+
+    fn append_unlocked(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
+        let mut entries = self.read()?;
+        if entries.last().is_some_and(|entry| entry.record == record) {
+            return Ok(self.path());
+        }
+        let previous_hash = entries.last().map_or(0, |entry| entry.entry_hash);
+        let entry = AuditEntry {
+            sequence: entries.len() as u64,
+            previous_hash,
+            entry_hash: audit_entry_hash(entries.len() as u64, previous_hash, &record),
+            record,
+        };
+        entries.push(entry);
+        let content = serde_json::to_string(&entries)
+            .map_err(|error| StorageError::Io(format!("审计序列化失败: {error}")))?;
+        write_atomic_path(&self.path(), &self.root, &content)?;
+        Ok(self.path())
+    }
+
+    /// 将控制面当前审计尾部同步到持久化链；已存在的前缀必须逐条一致。
+    pub fn sync_control(&self, plane: &ControlPlane) -> Result<usize, StorageError> {
+        std::fs::create_dir_all(&self.root).map_err(|error| StorageError::Io(error.to_string()))?;
+        let _lock = acquire_storage_lock(self.root.join("audit.append.lock"))?;
+        let existing = self.read()?;
+        let records = plane.audit();
+        if existing.len() > records.len()
+            || existing
+                .iter()
+                .zip(records)
+                .any(|(entry, record)| entry.record != *record)
+        {
+            return Err(StorageError::Conflict(
+                "控制面审计与持久化审计前缀不一致".into(),
+            ));
+        }
+        let mut appended = 0;
+        for record in records.iter().skip(existing.len()) {
+            self.append_unlocked(record.clone())?;
+            appended += 1;
+        }
+        Ok(appended)
+    }
+
+    pub fn read(&self) -> Result<Vec<AuditEntry>, StorageError> {
+        let path = self.path();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(StorageError::Io(error.to_string())),
+        };
+        let entries: Vec<AuditEntry> = serde_json::from_str(&content)
+            .map_err(|error| StorageError::Io(format!("审计 JSON 非法: {error}")))?;
+        validate_audit_chain(&entries)?;
+        Ok(entries)
+    }
+
+    pub fn query_command(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError> {
+        Ok(self
+            .read()?
+            .into_iter()
+            .filter(|entry| entry.record.command_id == command_id)
+            .collect())
+    }
+
+    pub fn after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError> {
+        Ok(self
+            .read()?
+            .into_iter()
+            .filter(|entry| entry.sequence > sequence)
+            .collect())
+    }
+
+    fn path(&self) -> PathBuf {
+        self.root.join("audit.json")
+    }
+}
+
+impl AuditStore for AuditFileStore {
+    fn append_record(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
+        self.append(record)
+    }
+
+    fn read_entries(&self) -> Result<Vec<AuditEntry>, StorageError> {
+        self.read()
+    }
+
+    fn query_command_entries(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError> {
+        self.query_command(command_id)
+    }
+
+    fn entries_after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError> {
+        self.after(sequence)
+    }
 }
 
 fn audit_entry_hash(sequence: u64, previous_hash: u64, record: &AuditRecord) -> u64 {
-    // 下面那行 `{:?}` 是本仓 `event.rs` 口径里唯一一处例外：状态名字本身就是已落盘链的
-    // 摘要输入，换成稳定编码会作废每一条款存链。因此两半都有钉子——词表由
-    // `audit_chain_status_vocabulary_is_pinned_by_literal_words` 逐颗钉住，输入的摆法由
-    // `audit_chain_digest_inputs_are_pinned_by_a_golden_record` 那颗字面量钉住（V11 R7-7）。
     let mut hash = Fnv1a::new();
     hash.write_u64(sequence);
     hash.write_u64(previous_hash);
@@ -1485,114 +1550,6 @@ fn validate_audit_chain(entries: &[AuditEntry]) -> Result<(), StorageError> {
     Ok(())
 }
 
-/// 一条审计链的可信末尾：条数与链尾摘要。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AuditChainTip {
-    pub entries: u64,
-    pub head_hash: u64,
-}
-
-/// 审计链的读侧核对，也是整条链唯一的公开校验入口（V11 R5-2）。
-///
-/// 判的是两件事，缺一件都不算通过：链自身逐环重算要连续（`read_entries`/`read` 已经
-/// 关不掉的那半），以及控制面状态里的那两格检查点正好指在链尾。只查前者会放过"链被
-/// 整段替换过"，只查后者会放过"链自身断环但末尾对得上"。
-///
-/// 这里刻意不做 IO、也不按后端分叉：三个后端都把整条链读成同一个 `Vec<AuditEntry>`，
-/// 判据因此只有一份写法。
-pub fn verify_audit_chain(
-    plane: &ControlPlane,
-    chain: &[AuditEntry],
-) -> Result<AuditChainTip, StorageError> {
-    validate_audit_chain(chain)?;
-    let tip = AuditChainTip {
-        entries: chain.len() as u64,
-        head_hash: chain.last().map(|entry| entry.entry_hash).unwrap_or(0),
-    };
-    let state = plane.audit_chain();
-    if state.seq != tip.entries || state.head_hash != tip.head_hash {
-        return Err(StorageError::Conflict(format!(
-            "控制面检查点 ({}, {:016x}) 不指向审计链尾 ({}, {:016x})：要么有流水写出时没进链，\
-             要么链被截短或整段替换过",
-            state.seq, state.head_hash, tip.entries, tip.head_hash
-        )));
-    }
-    Ok(tip)
-}
-
-/// 审计链写入侧的后端动作：读链尾、截残尾、追加已算好摘要的条目。
-///
-/// 只有 `transact_control` 会构造它，所以三个动作都跑在该事务已经持有的锁/事务里：
-/// 文件后端握着 `audit.append.lock`，数据库后端握着同一笔还没有提交的事务。
-/// 独立实现这三个方法的后端不需要导出这个 trait——链的写入者只有控制面。
-pub(crate) trait AuditChainWriter {
-    /// 链尾那一条（尾部读，不把整条链拉回来）。
-    fn tail(&mut self) -> Result<Option<AuditEntry>, StorageError>;
-    /// 丢掉 `sequence` 及其之后的行。
-    fn drop_from(&mut self, sequence: u64) -> Result<(), StorageError>;
-    /// 追加已经算好序号与摘要的条目，落盘顺序必须早于控制面状态。
-    fn append_entries(&mut self, entries: &[AuditEntry]) -> Result<(), StorageError>;
-}
-
-/// 把本轮事务新产出的审计流水接进哈希链，并把检查点回填回控制面。
-///
-/// 形状是"链先落、状态后落"：崩在两者中间只会留下链上没人引用的残尾，下一笔事务
-/// 先把它截掉；反过来就会留下"状态引用了一条没落盘的记录"，那种洞只能靠人补。
-/// 因此检查点比对失败时这里直接失败关闭——写不进链的命令也不会写进状态。
-pub(crate) fn chain_audit(
-    plane: &mut ControlPlane,
-    writer: &mut dyn AuditChainWriter,
-) -> Result<(), StorageError> {
-    let (checkpoint, head_hash, records) = {
-        let state = plane.audit_chain();
-        (state.seq, state.head_hash, state.unchained.to_vec())
-    };
-    let mut tail = writer.tail()?;
-    if tail
-        .as_ref()
-        .is_some_and(|entry| entry.sequence >= checkpoint)
-    {
-        writer.drop_from(checkpoint)?;
-        tail = writer.tail()?;
-    }
-    match &tail {
-        None if checkpoint == 0 => {}
-        None => {
-            return Err(StorageError::Conflict(format!(
-                "控制面检查点引用了 {checkpoint} 条审计记录，审计链却是空的"
-            )))
-        }
-        Some(entry) if entry.sequence.saturating_add(1) == checkpoint
-            && entry.entry_hash == head_hash => {}
-        Some(entry) => {
-            return Err(StorageError::Conflict(format!(
-                "审计链尾与控制面检查点不一致: 链尾 {} 摘要不接检查点 {checkpoint}，拒绝在不连续的链上追加",
-                entry.sequence
-            )))
-        }
-    }
-    if records.is_empty() {
-        return Ok(());
-    }
-    let mut entries = Vec::with_capacity(records.len());
-    let mut sequence = checkpoint;
-    let mut previous_hash = head_hash;
-    for record in &records {
-        let entry_hash = audit_entry_hash(sequence, previous_hash, record);
-        entries.push(AuditEntry {
-            sequence,
-            record: record.clone(),
-            previous_hash,
-            entry_hash,
-        });
-        previous_hash = entry_hash;
-        sequence = sequence.saturating_add(1);
-    }
-    writer.append_entries(&entries)?;
-    plane.note_audit_chained(entries.len(), previous_hash);
-    Ok(())
-}
-
 /// 可替换任务队列契约。数据库/消息队列实现必须保留幂等键、租约、过期接管和确认语义。
 pub trait JobQueueBackend {
     fn enqueue_job(
@@ -1609,6 +1566,7 @@ pub trait JobQueueBackend {
         now: u64,
         lease_seconds: u64,
     ) -> Result<JobLease, StorageError>;
+    fn ack_job(&self, run_id: u64, worker: &str) -> Result<PathBuf, StorageError>;
     fn ack_job_at(
         &self,
         run_id: u64,
@@ -1628,7 +1586,8 @@ struct TokenBucketState {
 /// 共享文件系统上的持久化令牌桶。
 ///
 /// 这是 API/worker 在没有外部缓存时的跨进程限流后端；它使用同一套原子锁和
-/// 临时文件替换语义。高可用集群仍应接入具备事务/租约能力的外部存储。
+/// 临时文件替换语义。高可用集群仍应接入具备事务/租约能力的外部存储。`now` 的时钟域由调用方
+/// 决定，`refill_per_second` 的"每秒"就是那个域里的一格（V13 R2 第十六遍）。
 #[derive(Clone, Debug)]
 pub struct FileTokenBucket {
     root: PathBuf,
@@ -1701,4 +1660,750 @@ impl FileTokenBucket {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use qx_control::{CommandKind, ControlCommand, Permission};
+    use qx_core::{Event, EventKind, Priority};
+    use qx_scheduler::{JobSpec, JobWindow, RetryPolicy, Trigger};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn file_store_round_trips_and_rejects_path_escape() {
+        let root = std::env::temp_dir().join(format!("qianxing-storage-{}", std::process::id()));
+        let store = EventLogFileStore::new(&root);
+        let mut log = EventLog::new();
+        let seq = log.alloc_seq();
+        log.append(Event::new(seq, 1, Priority::POST, EventKind::Settle));
+        store.write("run-1", &log).unwrap();
+        let restored = store.read("run-1").unwrap();
+        assert_eq!(restored.digest(), log.digest());
+        let mut extended = log.clone();
+        let seq = extended.alloc_seq();
+        extended.append(Event::new(seq, 2, Priority::POST, EventKind::Settle));
+        store.write("run-1", &extended).unwrap();
+        assert!(matches!(
+            store.write("run-1", &log),
+            Err(StorageError::NonAppendOnly(_))
+        ));
+        assert!(matches!(
+            store.read("../escape"),
+            Err(StorageError::InvalidName(_))
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn segmented_event_store_is_append_only_and_manifest_verified() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-segmented-storage-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = SegmentedEventLogStore::new(&root, 2).unwrap();
+        let mut log = EventLog::new();
+        for ts in 1..=3 {
+            let seq = log.alloc_seq();
+            log.append(Event::new(seq, ts, Priority::POST, EventKind::Settle));
+        }
+        store.write("run", &log).unwrap();
+        assert_eq!(store.read("run").unwrap().digest(), log.digest());
+
+        let mut extended = log.clone();
+        let seq = extended.alloc_seq();
+        extended.append(Event::new(seq, 4, Priority::POST, EventKind::Settle));
+        store.write("run", &extended).unwrap();
+        assert_eq!(store.read("run").unwrap().len(), 4);
+        assert!(matches!(
+            store.write("run", &log),
+            Err(StorageError::NonAppendOnly(_))
+        ));
+
+        std::fs::write(
+            root.join("segments").join("run-0000000000000000.jsonl"),
+            "{}\n",
+        )
+        .unwrap();
+        let corrupted = store.read("run");
+        assert!(corrupted.is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn event_log_store_does_not_silently_overwrite_concurrent_extensions() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-event-concurrent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = EventLogFileStore::new(&root);
+        let mut base = EventLog::new();
+        let seq = base.alloc_seq();
+        base.append(Event::new(seq, 1, Priority::POST, EventKind::Settle));
+        store.write("run", &base).unwrap();
+
+        let mut left = base.clone();
+        let left_seq = left.alloc_seq();
+        left.append(Event::new(left_seq, 2, Priority::POST, EventKind::Settle));
+        let mut right = base;
+        let right_seq = right.alloc_seq();
+        right.append(Event::new(right_seq, 3, Priority::POST, EventKind::Settle));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let first_store = store.clone();
+        let first_barrier = barrier.clone();
+        let first = std::thread::spawn(move || {
+            first_barrier.wait();
+            first_store.write("run", &left)
+        });
+        let second_store = store.clone();
+        let second_barrier = barrier.clone();
+        let second = std::thread::spawn(move || {
+            second_barrier.wait();
+            second_store.write("run", &right)
+        });
+        let outcomes = [first.join().unwrap(), second.join().unwrap()];
+        assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|result| matches!(result, Err(StorageError::NonAppendOnly(_))))
+                .count(),
+            1
+        );
+        assert_eq!(store.read("run").unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn control_state_round_trips_after_restart() {
+        let root = std::env::temp_dir().join(format!("qianxing-state-{}", std::process::id()));
+        let store = JsonStateStore::new(&root);
+        store
+            .transact_control(|plane| plane.submit(queued_control(1), 1))
+            .unwrap()
+            .1
+            .unwrap();
+        let restored = store.load_control_if_exists().unwrap().unwrap();
+        assert_eq!(restored.command(1).unwrap().request_id, "queue-1");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn json_state_store_round_trips_nested_report_atomically() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-json-state-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = JsonStateStore::new(&root);
+        let value = serde_json::json!({"status":"degraded","issues":[{"asset":"USDT"}]});
+        store.save_json_at("reconcile/main.json", &value).unwrap();
+        let restored: serde_json::Value = store.load_json_at("reconcile/main.json").unwrap();
+        assert_eq!(restored, value);
+        assert!(matches!(
+            store.load_json_at::<serde_json::Value>("../escape.json"),
+            Err(StorageError::InvalidName(_))
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scheduler_state_round_trips_after_restart() {
+        let root =
+            std::env::temp_dir().join(format!("qianxing-scheduler-state-{}", std::process::id()));
+        let store = JsonStateStore::new(&root);
+        let mut scheduler = Scheduler::default();
+        scheduler
+            .register(JobSpec {
+                job_id: "bars".into(),
+                job_version: "v1".into(),
+                owner: "research".into(),
+                enabled: true,
+                trigger: Trigger::Cron("0 9 * * 1-5".into()),
+                window: JobWindow::Session,
+                depends_on: Vec::new(),
+                input_refs: vec!["raw-bars".into()],
+                output_refs: vec!["bars-v1".into()],
+                timeout_seconds: 60,
+                retry_policy: RetryPolicy::default(),
+                concurrency_key: "bars".into(),
+                idempotency_key: "bars-daily".into(),
+                permission_scope: "research".into(),
+                audit_reason: "scheduler persistence test".into(),
+                dry_run: true,
+            })
+            .unwrap();
+        store
+            .save_scheduler_at("scheduler.json", &scheduler)
+            .unwrap();
+        let restored = store.load_scheduler_at("scheduler.json").unwrap();
+        assert_eq!(restored.job("bars").unwrap().job_version, "v1");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn queued_job() -> (JobSpec, JobRun) {
+        let job = JobSpec {
+            job_id: "queue-job".into(),
+            job_version: "v1".into(),
+            owner: "research".into(),
+            enabled: true,
+            trigger: Trigger::Manual,
+            window: JobWindow::Any,
+            depends_on: Vec::new(),
+            input_refs: vec!["input".into()],
+            output_refs: vec!["output".into()],
+            timeout_seconds: 60,
+            retry_policy: RetryPolicy::default(),
+            concurrency_key: "queue-job".into(),
+            idempotency_key: "queue-job-daily".into(),
+            permission_scope: "research".into(),
+            audit_reason: "queue test".into(),
+            dry_run: true,
+        };
+        let run = JobRun {
+            run_id: job.stable_key("20260910"),
+            job_id: job.job_id.clone(),
+            trading_day: "20260910".into(),
+            attempt: 1,
+            status: JobStatus::Running,
+            manifest_digest: Some(7),
+            error_code: None,
+            next_retry_ts: None,
+            started_ts: 10,
+            deadline_ts: 70,
+        };
+        (job, run)
+    }
+
+    #[test]
+    fn file_job_queue_is_idempotent_and_recoverable() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-job-queue-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let queue = FileJobQueue::new(&root);
+        let (job, run) = queued_job();
+        let run_id = run.run_id;
+        let first = queue.enqueue(job.clone(), run.clone(), 10).unwrap();
+        assert_eq!(queue.enqueue(job.clone(), run.clone(), 10).unwrap(), first);
+        assert_eq!(queue.pending().unwrap().len(), 1);
+        assert_eq!(queue.enqueue(job, run.clone(), 11).unwrap(), first);
+
+        let lease = queue.claim(run_id, "worker-a", 10, 10).unwrap();
+        assert_eq!(lease.expires_ts, 20);
+        assert_eq!(lease.fencing_token, 1);
+        assert!(queue.available(11).unwrap().is_empty());
+        assert!(matches!(
+            queue.ack_at(run_id, "worker-a", lease.fencing_token, 20),
+            Err(StorageError::LeaseExpired { .. })
+        ));
+        assert!(matches!(
+            queue.claim(run_id, "worker-b", 11, 10),
+            Err(StorageError::LeaseHeld { .. })
+        ));
+        assert!(queue.recover_expired(19).unwrap().is_empty());
+        assert_eq!(queue.recover_expired(20).unwrap(), vec![run_id]);
+        assert_eq!(queue.available(20).unwrap().len(), 1);
+        let takeover = queue.claim(run_id, "worker-b", 21, 10).unwrap();
+        assert_eq!(takeover.fencing_token, 2);
+        assert!(matches!(
+            queue.ack(run_id, "worker-a"),
+            Err(StorageError::Unauthorized(_))
+        ));
+        assert!(matches!(
+            queue.ack_at(run_id, "worker-a", lease.fencing_token, 22),
+            Err(StorageError::Unauthorized(_))
+        ));
+        let done = queue
+            .ack_at(run_id, "worker-b", takeover.fencing_token, 21)
+            .unwrap();
+        assert!(done.exists());
+        assert!(queue.pending().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn queued_control(command_id: u64) -> ControlCommand {
+        ControlCommand {
+            command_id,
+            request_id: format!("queue-{command_id}"),
+            operator_id: "ops".into(),
+            reason: "queue integration test".into(),
+            kind: CommandKind::SubmitOrder,
+            target: format!("{command_id}"),
+            payload: std::collections::BTreeMap::new(),
+            permission: Permission::Trading,
+            dry_run: true,
+        }
+    }
+
+    #[test]
+    fn control_command_queue_is_idempotent_and_fenced() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-control-queue-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let queue = ControlCommandQueue::new(&root);
+        let command = queued_control(501);
+        let path = queue.enqueue(command.clone(), 10).unwrap();
+        assert_eq!(queue.enqueue(command, 10).unwrap(), path);
+        assert_eq!(queue.pending().unwrap().len(), 1);
+        let lease = queue.claim(501, "execution-a", 10, 10).unwrap();
+        assert!(queue.available(11).unwrap().is_empty());
+        assert!(matches!(
+            queue.claim(501, "execution-b", 11, 10),
+            Err(StorageError::LeaseHeld { .. })
+        ));
+        assert!(matches!(
+            queue.ack_at(501, "execution-b", lease.fencing_token, 11),
+            Err(StorageError::Unauthorized(_))
+        ));
+        assert_eq!(queue.available(20).unwrap().len(), 1);
+        let takeover = queue.claim(501, "execution-b", 20, 10).unwrap();
+        assert_eq!(takeover.fencing_token, 2);
+        queue
+            .ack_at(501, "execution-b", takeover.fencing_token, 21)
+            .unwrap();
+        assert!(queue.pending().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn control_state_update_is_atomic_and_restores() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-control-state-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = JsonStateStore::new(&root);
+        let (_, accepted) = store
+            .transact_control(|plane| {
+                plane
+                    .submit(queued_control(601), 10)
+                    .map_err(|error| format!("{error:?}"))
+            })
+            .unwrap();
+        assert_eq!(
+            accepted.unwrap().status,
+            qx_control::CommandStatus::Accepted
+        );
+        let (_, executed) = store
+            .transact_control(|plane| {
+                plane
+                    .execute(601, 11, |_| Ok("DRY_RUN_VALIDATED".into()))
+                    .map_err(|error| format!("{error:?}"))
+            })
+            .unwrap();
+        assert_eq!(
+            executed.unwrap().status,
+            qx_control::CommandStatus::Executed
+        );
+        let restored = store.load_control_if_exists().unwrap().unwrap();
+        assert_eq!(restored.audit().len(), 2);
+        assert!(restored.pending().next().is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn audit_file_store_is_append_only_queryable_and_tamper_evident() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-audit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = AuditFileStore::new(&root);
+        let mut plane = ControlPlane::default();
+        let accepted = plane
+            .submit(
+                ControlCommand {
+                    command_id: 77,
+                    request_id: "audit-77".into(),
+                    operator_id: "ops".into(),
+                    reason: "audit persistence".into(),
+                    kind: CommandKind::PauseStrategy,
+                    target: "strategy".into(),
+                    payload: BTreeMap::new(),
+                    permission: Permission::Trading,
+                    dry_run: true,
+                },
+                10,
+            )
+            .unwrap();
+        store.append(accepted.clone()).unwrap();
+        store.append(accepted).unwrap();
+        plane.execute(77, 11, |_| Ok("DONE".into())).unwrap();
+        assert_eq!(store.sync_control(&plane).unwrap(), 1);
+        assert_eq!(store.read().unwrap().len(), 2);
+        assert_eq!(store.query_command(77).unwrap().len(), 2);
+        assert_eq!(store.after(0).unwrap().len(), 1);
+        assert_eq!(AuditFileStore::new(&root).read().unwrap().len(), 2);
+
+        let path = root.join("audit.json");
+        let mut tampered = store.read().unwrap();
+        tampered[0].entry_hash ^= 1;
+        std::fs::write(&path, serde_json::to_string(&tampered).unwrap()).unwrap();
+        assert!(matches!(
+            store.read(),
+            Err(StorageError::Conflict(message)) if message.contains("摘要不一致")
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn audit_file_store_serializes_concurrent_appends_without_losing_tail() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-audit-concurrent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = AuditFileStore::new(&root);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let first_store = store.clone();
+        let first_barrier = barrier.clone();
+        let first = std::thread::spawn(move || {
+            first_barrier.wait();
+            first_store.append(AuditRecord {
+                command_id: 1,
+                request_id: "concurrent-1".into(),
+                operator_id: "ops".into(),
+                command_digest: 1,
+                status: qx_control::CommandStatus::Accepted,
+                result_code: "ACCEPTED".into(),
+                ts: 1,
+            })
+        });
+        let second_store = store.clone();
+        let second_barrier = barrier.clone();
+        let second = std::thread::spawn(move || {
+            second_barrier.wait();
+            second_store.append(AuditRecord {
+                command_id: 2,
+                request_id: "concurrent-2".into(),
+                operator_id: "ops".into(),
+                command_digest: 2,
+                status: qx_control::CommandStatus::Accepted,
+                result_code: "ACCEPTED".into(),
+                ts: 2,
+            })
+        });
+        // 失败要带得上底层错误：整树并发跑时这条追加曾在 Windows 上偶发失败，
+        // 而 `is_ok()` 只留下一句"断言失败"，本机无法从日志判断是哪一步、哪个 os error。
+        let first_result = first.join().unwrap();
+        let second_result = second.join().unwrap();
+        assert!(
+            first_result.is_ok() && second_result.is_ok(),
+            "并发追加必须两边都成功: first={first_result:?} second={second_result:?}"
+        );
+        let entries = store.read().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].previous_hash, 0);
+        assert_eq!(entries[1].previous_hash, entries[0].entry_hash);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_job_queue_revalidates_forged_payload_before_claim() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-job-forge-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let queue = FileJobQueue::new(&root);
+        let (job, mut run) = queued_job();
+        let run_id = run.run_id;
+        queue.enqueue(job.clone(), run.clone(), 10).unwrap();
+        run.status = JobStatus::Succeeded;
+        std::fs::write(
+            queue.queue_path(run_id),
+            serde_json::to_string(&QueuedJob {
+                job,
+                run,
+                enqueued_ts: 10,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            queue.claim(run_id, "worker", 10, 10),
+            Err(StorageError::Conflict(_))
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_job_queue_serializes_concurrent_claims_on_shared_filesystem() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-job-concurrent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let queue = FileJobQueue::new(&root);
+        let (job, run) = queued_job();
+        let run_id = run.run_id;
+        queue.enqueue(job, run, 10).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let first_queue = queue.clone();
+        let first_barrier = barrier.clone();
+        let first = std::thread::spawn(move || {
+            first_barrier.wait();
+            first_queue.claim(run_id, "worker-a", 10, 10)
+        });
+        let second_queue = queue.clone();
+        let second_barrier = barrier;
+        let second = std::thread::spawn(move || {
+            second_barrier.wait();
+            second_queue.claim(run_id, "worker-b", 10, 10)
+        });
+        let outcomes = [first.join().unwrap(), second.join().unwrap()];
+        assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|result| matches!(result, Err(StorageError::LeaseHeld { .. })))
+                .count(),
+            1
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_outbox_is_idempotent_fenced_and_retryable() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-outbox-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = FileOutboxStore::new(&root);
+        let event = OutboxEvent {
+            event_id: "order-1".into(),
+            topic: "order.events".into(),
+            partition_key: "account-1".into(),
+            sequence: 1,
+            schema_version: 1,
+            trace_id: "trace-1".into(),
+            payload: "{\"status\":\"filled\"}".into(),
+            created_ts: 10,
+            attempts: 0,
+        };
+        store.append(event.clone()).unwrap();
+        store.append(event).unwrap();
+        let first = store.claim("order-1", "relay-a", 10, 5).unwrap();
+        assert!(matches!(
+            store.claim("order-1", "relay-b", 11, 5),
+            Err(StorageError::LeaseHeld { .. })
+        ));
+        assert!(matches!(
+            store.ack("order-1", "relay-a", first.fencing_token, 16),
+            Err(StorageError::LeaseExpired { .. })
+        ));
+        let second = store.claim("order-1", "relay-b", 16, 5).unwrap();
+        assert_eq!(second.fencing_token, first.fencing_token + 1);
+        store
+            .retry("order-1", "relay-b", second.fencing_token, 17)
+            .unwrap();
+        assert_eq!(store.available(17).unwrap()[0].attempts, 1);
+        let third = store.claim("order-1", "relay-a", 17, 5).unwrap();
+        store
+            .ack("order-1", "relay-a", third.fencing_token, 18)
+            .unwrap();
+        assert!(store.available(18).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn outbox_relay_publishes_then_acknowledges_and_retries_failures() {
+        struct Publisher {
+            fail: bool,
+            published: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        }
+
+        impl OutboxPublisher for Publisher {
+            fn publish(&self, event: &OutboxEvent) -> Result<(), String> {
+                if self.fail {
+                    return Err("test publisher unavailable".into());
+                }
+                self.published.lock().unwrap().push(event.event_id.clone());
+                Ok(())
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-outbox-relay-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = FileOutboxStore::new(&root);
+        store
+            .append(OutboxEvent {
+                event_id: "relay-event".into(),
+                topic: "qx.events".into(),
+                partition_key: "account".into(),
+                sequence: 1,
+                schema_version: 1,
+                trace_id: String::new(),
+                payload: "{}".into(),
+                created_ts: 1,
+                attempts: 0,
+            })
+            .unwrap();
+        let published = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let failing = OutboxRelay::new(
+            store.clone(),
+            Publisher {
+                fail: true,
+                published: published.clone(),
+            },
+            "relay",
+            10,
+        )
+        .unwrap();
+        assert_eq!(failing.pump_once(1, 10).unwrap().retried, 1);
+        assert_eq!(store.available(1).unwrap()[0].attempts, 1);
+        let working = OutboxRelay::new(
+            store.clone(),
+            Publisher {
+                fail: false,
+                published,
+            },
+            "relay",
+            10,
+        )
+        .unwrap();
+        let report = working.pump_once(2, 10).unwrap();
+        assert_eq!(report.published, 1);
+        assert!(store.available(2).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_consumer_checkpoint_is_idempotent_and_dead_letters_after_retries() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-consumer-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = FileConsumerStateStore::new(&root);
+        let engine = ConsumerEngine::new(store.clone(), "ledger-reducer", 2).unwrap();
+        let event = OutboxEvent {
+            event_id: "consumer-event-1".into(),
+            topic: "qx.eventlog".into(),
+            partition_key: "account-1".into(),
+            sequence: 1,
+            schema_version: 1,
+            trace_id: String::new(),
+            payload: "{}".into(),
+            created_ts: 10,
+            attempts: 0,
+        };
+        assert_eq!(
+            engine.consume(&event, 5, 1, 10, |_| Ok(())).unwrap(),
+            ConsumerOutcome::Applied
+        );
+        assert_eq!(
+            engine
+                .consume(&event, 5, 1, 11, |_| panic!(
+                    "duplicate must not invoke handler"
+                ))
+                .unwrap(),
+            ConsumerOutcome::Duplicate
+        );
+        let failed = OutboxEvent {
+            event_id: "consumer-event-2".into(),
+            sequence: 2,
+            ..event
+        };
+        assert!(matches!(
+            engine
+                .consume(&failed, 6, 1, 12, |_| Err("temporary".into()))
+                .unwrap(),
+            ConsumerOutcome::Retried { .. }
+        ));
+        assert_eq!(
+            engine
+                .consume(&failed, 6, 2, 13, |_| Err("permanent".into()))
+                .unwrap(),
+            ConsumerOutcome::DeadLettered
+        );
+        assert_eq!(store.dead_letters("ledger-reducer", 10).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .load_checkpoint("ledger-reducer", "qx.eventlog", "account-1")
+                .unwrap()
+                .unwrap()
+                .offset,
+            6
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_token_bucket_is_persistent_and_serializes_concurrent_consumers() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-rate-limit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let bucket = FileTokenBucket::new(&root, "api", 1, 0).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let first_bucket = bucket.clone();
+        let first_barrier = barrier.clone();
+        let first = std::thread::spawn(move || {
+            first_barrier.wait();
+            first_bucket.try_acquire(10, 1).unwrap()
+        });
+        let second_bucket = bucket.clone();
+        let second_barrier = barrier.clone();
+        let second = std::thread::spawn(move || {
+            second_barrier.wait();
+            second_bucket.try_acquire(10, 1).unwrap()
+        });
+        let granted = [first.join().unwrap(), second.join().unwrap()];
+        assert_eq!(granted.iter().filter(|value| **value).count(), 1);
+        assert!(!bucket.try_acquire(10, 1).unwrap());
+        let replenished = FileTokenBucket::new(&root, "api", 1, 1).unwrap();
+        assert!(replenished.try_acquire(11, 1).unwrap());
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

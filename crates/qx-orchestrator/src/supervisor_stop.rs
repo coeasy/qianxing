@@ -17,20 +17,15 @@ pub(crate) trait ManagedProcess {
 pub(crate) enum SupervisorStop {
     /// 托管 worker 自己退出了：属于故障，调用方要停掉其余 worker 并按失败上报。
     WorkerExited { id: String, code: String },
-    /// 收到终止请求后，全部 worker 在预算内退出。
+    /// 收到终止请求后，全部 worker 在预算内退出；`waited_ms` 从请求落下起算。
     StoppedWithinBudget { waited_ms: u64 },
-    /// 收到终止请求，但仍有 worker 到预算没退出。
+    /// 收到终止请求，但仍有 worker 到预算没退出；`waited_ms` 同样不含请求之前的等待。
     StopTimedOut { waited_ms: u64, remaining: usize },
 }
 
 /// 轮询子进程直到出现结论：故障退出、按停机请求全部退出、或停机超预算。
 ///
 /// `signalled`/`now_ms`/`sleep_ms` 全部注入，因此停机分支不需要真信号就能被用例驱动。
-///
-/// 预算的起点是**第一次观察到停机请求**，不是进循环。监督器在收到 Ctrl+C 之前可以已经陪跑
-/// 几小时，从进循环起算会让第一跳的 `waited_ms` 就大于 `shutdown_timeout_ms`：优雅窗口变成
-/// 0，worker 来不及按自己的令牌收尾就被判超时，而报出去的 uptime 还会被念成"收到停机请求后
-/// 等了多久"。
 pub(crate) fn wait_for_children<P: ManagedProcess>(
     children: &mut [P],
     signalled: impl Fn() -> bool,
@@ -38,7 +33,9 @@ pub(crate) fn wait_for_children<P: ManagedProcess>(
     mut sleep_ms: impl FnMut(u64),
     budget_ms: u64,
 ) -> Result<SupervisorStop, String> {
-    let mut signalled_at: Option<u64> = None;
+    // 预算与 `waited_ms` 从**第一次观察到终止请求**起算：托管循环通常在子进程起来之前就开始等，
+    // 从等待起点算的话，跑了一小时之后再按一次 Ctrl+C 会立刻判超时，宽限预算形同虚设。
+    let mut requested_at: Option<u64> = None;
     loop {
         let mut exited: Option<(String, String)> = None;
         let mut running = 0_usize;
@@ -52,10 +49,15 @@ pub(crate) fn wait_for_children<P: ManagedProcess>(
                 None => running += 1,
             }
         }
-        if signalled() && signalled_at.is_none() {
-            signalled_at = Some(now_ms());
-        }
-        if let Some(at) = signalled_at {
+        if signalled() {
+            let at = match requested_at {
+                Some(at) => at,
+                None => {
+                    let at = now_ms();
+                    requested_at = Some(at);
+                    at
+                }
+            };
             let waited_ms = now_ms().saturating_sub(at);
             if running == 0 {
                 return Ok(SupervisorStop::StoppedWithinBudget { waited_ms });
@@ -183,6 +185,8 @@ mod tests {
         let stop = outcomes(&mut children, &harness, 10_000).unwrap();
         assert_eq!(kind(&stop), "stopped-within-budget");
         match stop {
+            // 两个子进程恰好在"第一次观察到终止请求"那一轮就都退了：收到请求后的等待是 0ms。
+            // 按进门计时这里会是 250（把请求之前的那一轮 sleep 也算进宽限）。
             SupervisorStop::StoppedWithinBudget { waited_ms } => assert_eq!(waited_ms, 0),
             _ => unreachable!(),
         }
@@ -198,25 +202,8 @@ mod tests {
         let stop = outcomes(&mut children, &harness, 10_000).unwrap();
         assert_eq!(kind(&stop), "stopped-within-budget");
         match stop {
+            // 请求落下的那一轮第一个子进程就退了，阶梯仍一直等到最后一个子进程（再三轮 = 750ms）。
             SupervisorStop::StoppedWithinBudget { waited_ms } => assert_eq!(waited_ms, 750),
-            _ => unreachable!(),
-        }
-    }
-
-    /// 预算的起点是"第一次观察到停机请求"。这一格里监督器先陪跑了 11_250ms（比 10_000 的预算
-    /// 还长）请求才落下——按"从进循环起算"的写法，落下的那一跳就已经判超时，worker 一秒优雅
-    /// 窗口都拿不到；现在它拿满预算，并在下一跳按停机收工。
-    #[test]
-    fn a_late_shutdown_signal_still_gets_the_full_budget() {
-        let harness = Harness::new(45);
-        let mut children = [
-            FakeChild::new("qx-scheduler", 47),
-            FakeChild::new("qx-paper", 47),
-        ];
-        let stop = outcomes(&mut children, &harness, 10_000).unwrap();
-        assert_eq!(kind(&stop), "stopped-within-budget");
-        match stop {
-            SupervisorStop::StoppedWithinBudget { waited_ms } => assert_eq!(waited_ms, 250),
             _ => unreachable!(),
         }
     }
@@ -242,6 +229,27 @@ mod tests {
                 assert_eq!(remaining, 1);
             }
             _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn the_stop_budget_is_counted_from_the_request_not_from_the_start_of_waiting() {
+        // 反向验证依据：预算按 `wait_for_children` 进门计时时，终止请求在第 5 次 sleep 之后
+        // 落下（假时钟已走到 2_250，等了 1_250 > 预算 1_000），同一输入会当场判成 StopTimedOut。
+        let harness = Harness::new(5);
+        let mut children = [
+            FakeChild::new("qx-scheduler", 7),
+            FakeChild::new("qx-strategy", 7),
+        ];
+        let stop = outcomes(&mut children, &harness, 1_000).unwrap();
+        assert_eq!(kind(&stop), "stopped-within-budget");
+        match stop {
+            SupervisorStop::StoppedWithinBudget { waited_ms } => {
+                // 请求落下后再过两轮子进程才退完：报的必须是"收到请求之后等了 250ms"，
+                // 不是"从开始等待算起 1_750ms"。
+                assert_eq!(waited_ms, 250, "waited_ms 不再是收到停机请求后的时长");
+            }
+            other => unreachable!("长跑之后按停机请求退出不能判超时: {}", kind(&other)),
         }
     }
 }

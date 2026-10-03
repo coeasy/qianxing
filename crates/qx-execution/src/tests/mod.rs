@@ -6,7 +6,7 @@ use qx_adapter::{
     HttpTransport,
 };
 use qx_control::{CommandKind, ControlCommand, Permission};
-use qx_core::{InstrumentId, Order, OrderStatus, OrderTrace, Price, Quantity, Side};
+use qx_core::{InstrumentId, Order, OrderStatus, Price, Quantity, Side};
 use qx_zhenlu::{FileSpreadOrderGroupStore, SpreadOrderGroupStore, SpreadOrderLeg};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -16,7 +16,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 struct PortState {
     orders: Vec<Order>,
     events: Vec<ExecutionEventEnvelope>,
-    registrations: Vec<(u64, Option<String>)>,
 }
 
 impl OrderStore for PortState {
@@ -28,7 +27,7 @@ impl OrderStore for PortState {
         &mut self,
         order: Order,
         _ts: u64,
-        correlation_id: Option<String>,
+        _correlation_id: Option<String>,
     ) -> Result<(), String> {
         if self
             .orders
@@ -37,7 +36,6 @@ impl OrderStore for PortState {
         {
             return Err("duplicate order".into());
         }
-        self.registrations.push((order.client_id, correlation_id));
         self.orders.push(order);
         Ok(())
     }

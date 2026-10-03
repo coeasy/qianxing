@@ -50,48 +50,69 @@ pub(crate) fn run_ccxt_execution_worker(
         ),
         Some(runtime_timestamp_ms()),
     )?;
+    // 内联恢复扫描按共享节律自节流：队列轮询仍每 100ms 一轮，但原地不动时不会再
+    // 每轮起灭一个公共 CCXT 子进程（V13 R2 #168c 的节律，此前只落在另三条循环上）。
+    let mut recovery_stalls = 0_u32;
+    let mut recovery_next_at = 0_u64;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
         // 命令队列租约/入队时间在秒域，控制面审计戳保持毫秒（见 `lease_clock`）。
         let lease_now = lease_clock(now);
         let control = control_store.load()?;
         let venue_id = worker.venue_id.as_deref().unwrap_or("ccxt");
-        if !dedicated_spread_recovery
-            && has_pending_spread_recovery(&pipeline_storage.root, venue_id)?
-        {
-            let mut recovery_pipeline = pipeline_storage
-                .open(
-                    required_account_event_log(&worker)?,
-                    settlement_currency.clone(),
-                )
-                .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
-            let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
-                .map_err(|error| format!("启动公共 CCXT 恢复 Worker 失败: {error}"))?;
-            let recovery_venue = CcxtProcessVenue::new(venue_id, Box::new(client));
-            let mut recovery_seq = recovery_pipeline
-                .log()
-                .events()
-                .last()
-                .map(|event| event.source_seq)
-                .unwrap_or(0);
-            let validator =
-                recovery_order_validator(&worker, &recovery_pipeline, Some(&runtime_config_path));
-            let (_, diagnostics) = recover_spread_groups_for_venue(
-                SpreadRecoveryContext {
-                    root: &pipeline_storage.root,
-                    venue_id,
-                    accept_any_venue: false,
-                    order_validator: Some(&validator),
-                    pipeline: &mut recovery_pipeline,
-                    worker_id: &worker.id,
-                    now,
-                    source_seq: &mut recovery_seq,
-                },
-                recovery_venue,
-            )?;
-            for message in diagnostics {
-                eprintln!("[HedgeRecovery] {message}");
+        if !dedicated_spread_recovery && now >= recovery_next_at {
+            let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, venue_id)?;
+            if pending_before > 0 {
+                let mut recovery_pipeline = pipeline_storage
+                    .open(
+                        required_account_event_log(&worker)?,
+                        settlement_currency.clone(),
+                    )
+                    .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
+                let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
+                    .map_err(|error| format!("启动公共 CCXT 恢复 Worker 失败: {error}"))?;
+                let recovery_venue = CcxtProcessVenue::new(venue_id, Box::new(client));
+                let mut recovery_seq = recovery_pipeline
+                    .log()
+                    .events()
+                    .last()
+                    .map(|event| event.source_seq)
+                    .unwrap_or(0);
+                let validator = recovery_order_validator(
+                    &worker,
+                    &recovery_pipeline,
+                    Some(&runtime_config_path),
+                );
+                let (_, diagnostics) = recover_spread_groups_for_venue(
+                    SpreadRecoveryContext {
+                        root: &pipeline_storage.root,
+                        venue_id,
+                        accept_any_venue: false,
+                        order_validator: Some(&validator),
+                        pipeline: &mut recovery_pipeline,
+                        worker_id: &worker.id,
+                        now,
+                        source_seq: &mut recovery_seq,
+                    },
+                    recovery_venue,
+                )?;
+                for message in diagnostics {
+                    eprintln!("[HedgeRecovery] {message}");
+                }
+                let pending_after =
+                    pending_spread_recovery_groups(&pipeline_storage.root, venue_id)?;
+                recovery_stalls = if pending_after >= pending_before {
+                    recovery_stalls.saturating_add(1)
+                } else {
+                    0
+                };
+            } else {
+                recovery_stalls = 0;
             }
+            recovery_next_at = now.saturating_add(
+                u64::try_from(spread_recovery_poll_delay(recovery_stalls).as_millis())
+                    .unwrap_or(u64::MAX),
+            );
         }
         for command in control.pending().filter(|command| {
             matches!(&command.kind, CommandKind::SubmitOrder)
@@ -295,7 +316,8 @@ pub(crate) fn run_ccxt_user_stream_worker(
         .map_err(|error| format!("启动公共 CCXT Pro Worker 失败: {error}"))?;
     // 空闲回话上限取自身读窗的 4/5：让"这一窗没有事件"先答回来，读窗到期就重新只
     // 表示子进程真的卡住 —— 而不是一个没有成交的账户在十个窗口后被具名放弃。
-    let watch_idle_ms = client.timeout_ms().saturating_mul(4) / 5;
+    // 这条循环自身不睡，节律全靠这个窗口，所以下界由 ccxt.rs 的读窗校验兜住（#214）。
+    let watch_idle_ms = qx_adapter::ccxt_idle_window_ms(client.timeout_ms());
     let mut venue = CcxtProcessVenue::new(
         worker.venue_id.clone().unwrap_or_else(|| "ccxt".into()),
         Box::new(client),
@@ -306,7 +328,7 @@ pub(crate) fn run_ccxt_user_stream_worker(
         .last()
         .map(|event| event.source_seq)
         .unwrap_or(0);
-    let mut reconnect_streak = 0_u32;
+    let mut reconnect_budget = CcxtReconnectBudget::default();
     let mut idle_windows = 0_u64;
     loop {
         if context.should_stop() {
@@ -322,37 +344,25 @@ pub(crate) fn run_ccxt_user_stream_worker(
             "received_ts": received_ts,
             "wait_ms": watch_idle_ms,
         })) {
-            Ok(result) => {
-                // 子进程答上了话：连胜清零，长期健康的流不会累积历史故障（V11 K1）。
-                reconnect_streak = 0;
-                result
-            }
+            Ok(result) => result,
             Err(error) => {
                 let detail = format!("{error:?}");
                 if detail.contains("[unsupported]") || detail.contains("[authentication]") {
                     return Err(format!("CCXT Pro 用户流不可用: {detail}"));
                 }
-                reconnect_streak = reconnect_streak.saturating_add(1);
+                // 非致命故障也要有终点：连续失败到上限就具名报错，不再无限重启子进程。
+                let backoff = reconnect_budget
+                    .note_failure()
+                    .map_err(|gave_up| format!("{gave_up}；最后一次故障: {detail}"))?;
                 context.mark(
                     qx_runtime::ServiceStatus::Degraded,
                     format!(
-                        "ccxt pro user stream reconnecting failures={reconnect_streak}: {detail}"
+                        "ccxt pro user stream reconnecting failures={}: {detail}",
+                        reconnect_budget.consecutive_failures()
                     ),
                     Some(received_ts),
                 )?;
-                if reconnect_streak >= CCXT_DEAD_CYCLE_BUDGET {
-                    context.mark(
-                        qx_runtime::ServiceStatus::Failed,
-                        format!(
-                            "ccxt pro user stream 连续 {reconnect_streak} 次重连全部失败，预算已用尽: {detail}"
-                        ),
-                        Some(received_ts),
-                    )?;
-                    return Err(format!(
-                        "CCXT Pro 用户流连续 {reconnect_streak} 次重连失败，已放弃重连公共 Worker"
-                    ));
-                }
-                thread::sleep(ccxt_respawn_delay(reconnect_streak));
+                thread::sleep(backoff);
                 let replacement = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
                     .map_err(|spawn_error| {
                         format!("重连公共 CCXT Pro Worker 失败: {spawn_error}")
@@ -361,6 +371,8 @@ pub(crate) fn run_ccxt_user_stream_worker(
                 continue;
             }
         };
+        // 子进程答上了话：连续失败预算清零，长期健康的流不会累积历史故障。
+        reconnect_budget.note_success();
         let event = result
             .get("event")
             .ok_or_else(|| "CCXT Pro watch_orders 响应缺少 event".to_string())?;
@@ -386,11 +398,6 @@ pub(crate) fn run_ccxt_user_stream_worker(
             .get("events")
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| "CCXT Pro orders 事件缺少 events".to_string())?;
-        // 有 event、既没有 events 也不带 idle 的空回话必须节奏化：子进程秒答一张空表时，
-        // 这条链上再没有第二处等待，循环就成了吃满一颗 CPU 的热转。
-        if events.is_empty() {
-            thread::sleep(Duration::from_millis(1_000));
-        }
         let mut matched = 0_usize;
         let mut reduced = 0_usize;
         let mut reconcile_errors = 0_usize;

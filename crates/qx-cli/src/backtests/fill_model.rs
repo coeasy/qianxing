@@ -166,14 +166,10 @@ fn declared_price_tick(
 /// 与 [`super::backtest_risk_binding`] 同构：这些入口不以运行时配置为主输入，但一旦给了
 /// `--config`，配置里声明的口径就必须生效，否则"四条 Bar 链得到四种撮合"会重演 V10 §4.2。
 pub(crate) fn configured_fill_model(config_path: Option<&Path>) -> Result<Option<String>, String> {
-    let Some(path) = config_path else {
-        return Ok(None);
-    };
-    let config = read_runtime_config(path)?;
-    unapplied_strategy_declaration(&config, "fill_model", |strategy| {
-        strategy.fill_model.clone()
-    })?;
-    Ok(config.strategy.fill_model)
+    Ok(match config_path {
+        Some(path) => read_runtime_config(path)?.strategy.fill_model,
+        None => None,
+    })
 }
 
 /// `config validate` 用的名字体检：与装配共用同一张表，所以"校验通过、装配拒绝"分裂不了。

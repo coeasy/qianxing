@@ -16,7 +16,6 @@ import importlib.util
 import json
 import os
 import sys
-import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -106,28 +105,43 @@ def serve_framed(handler: Callable[[StrategyInput], Any]) -> None:
         output_stream.flush()
 
 
-def _watch_parent_exit() -> threading.Event:
-    """父进程关掉这根 stdin 管道时置位——共享内存 ring 自己没有 EOF。
+# 空闲侧最多每这么多秒确认一次父进程还在（每次确认都要开一次进程句柄）。
+PARENT_LIVENESS_PROBE_SECONDS = 1.0
 
-    ring 传输只有"下一颗请求"，没有"父进程已经不在了"这一格：父进程走
-    `std::process::exit` 时不展开任何析构，这里的循环就留在 1 kHz 轮询里自转到
-    天荒地老，两份 ring 文件也留在 temp 里。`strategy_host.rs` 现在在共享模式下
-    同样为子进程留着 stdin 管道的写端，进程一死写端由 OS 关掉，这条阻塞读拿到
-    EOF 就是父进程已经不在了的信号。
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_ERROR_ACCESS_DENIED = 5
+_PROCESS_STILL_ACTIVE = 259
+
+
+def _parent_process_alive(pid: int) -> bool:
+    """父进程是否还在运行。
+
+    问不出结论时一律回答"还在"：把健康的 worker 误杀比让它多活一会儿更糟。
     """
-    gone = threading.Event()
+    if pid <= 0:
+        return True
+    if os.name == "nt":
+        import ctypes
 
-    def watch() -> None:
-        stream = getattr(sys.stdin, "buffer", None) or sys.stdin
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # 打不开句柄：被安全策略拒绝时进程仍在，只有 pid 已不存在才当真没了。
+            return ctypes.GetLastError() == _ERROR_ACCESS_DENIED
         try:
-            while stream.read(1):
-                pass
-        except (OSError, ValueError):
-            pass  # 管道被拆封与读到 EOF 是同一件事：父进程没了
-        gone.set()
-
-    threading.Thread(target=watch, name="qx-parent-exit-watch", daemon=True).start()
-    return gone
+            exit_code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return True
+            return exit_code.value == _PROCESS_STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def serve_shared(
@@ -137,17 +151,29 @@ def serve_shared(
     capacity: int,
     slot_bytes: int,
     columnar: bool = False,
+    parent_pid: int = 0,
 ) -> None:
-    """Serve QXSF requests over two SPSC mmap rings."""
-    parent_gone = _watch_parent_exit()
+    """Serve QXSF requests over two SPSC mmap rings.
+
+    ``parent_pid`` is the Rust process that spawned this worker. The ring transport has
+    no stdin to close, so the only normal exit is the parent's ``Drop`` killing us; if the
+    parent is killed outright, the idle loop checks the parent's liveness and returns
+    instead of spinning forever on the ring files.
+    """
     with SharedMemoryRing(input_path, capacity, slot_bytes) as input_ring, SharedMemoryRing(
         output_path, capacity, slot_bytes
     ) as output_ring:
-        while not parent_gone.is_set():
+        next_parent_check = time.monotonic() + PARENT_LIVENESS_PROBE_SECONDS
+        while True:
             try:
                 encoded = input_ring.try_pop()
             except RingEmpty:
                 time.sleep(0.001)
+                now = time.monotonic()
+                if parent_pid > 0 and now >= next_parent_check:
+                    next_parent_check = now + PARENT_LIVENESS_PROBE_SECONDS
+                    if not _parent_process_alive(parent_pid):
+                        return
                 continue
             frame = read_frame(io.BytesIO(encoded))
             if frame is None:
@@ -163,15 +189,6 @@ def serve_shared(
             encoded_response = encode_frame(RESPONSE, sequence, response.encode("utf-8"))
             output_ring.push_wait(encoded_response, time.monotonic() + 30.0)
 
-    if parent_gone.is_set():
-        # 能走出上面那个循环只有"父进程已经不在了"一条路：正常情况下这两份文件由父进程
-        # 的析构删除（它也只会在这之后 kill 子进程）。mmap 已经随 with 解掉，这里补删。
-        for path in (input_path, output_path):
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Qianxing Python strategy JSONL worker")
@@ -186,6 +203,12 @@ def main() -> int:
     parser.add_argument("--output-ring", help="shared-memory output ring path")
     parser.add_argument("--ring-capacity", type=int, default=1024)
     parser.add_argument("--ring-slot-bytes", type=int, default=64 * 1024)
+    parser.add_argument(
+        "--parent-pid",
+        type=int,
+        default=0,
+        help="spawned-by process id; the shared-memory loop exits when it is gone (0 disables the check)",
+    )
     args = parser.parse_args()
     handler = _load_handler(args.module)
     if args.protocol == "framed_json":
@@ -200,6 +223,7 @@ def main() -> int:
             args.ring_capacity,
             args.ring_slot_bytes,
             columnar=args.protocol == "shared_memory_columnar",
+            parent_pid=args.parent_pid,
         )
     else:
         serve(handler)

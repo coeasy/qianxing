@@ -288,17 +288,7 @@ pub(crate) fn run_process_supervisor(
     let executable =
         std::env::current_exe().map_err(|error| format!("解析 qx-cli 可执行文件失败: {error}"))?;
     let work_dir = std::env::current_dir().map_err(|error| format!("读取工作目录失败: {error}"))?;
-    // 令牌由本函数持有并交给监督循环读，可它自己仍没有写者：终止信号今天翻的是 worker 侧
-    // 那枚监督器令牌（停机阶梯里的 `request_shutdown`），父进程循环靠 `shutdown_signalled()` 读到请求。
-    let shutdown = qx_runtime::ShutdownToken::default();
-    supervise_workers(
-        &config,
-        path,
-        &executable,
-        &work_dir,
-        allow_unmanaged_roles,
-        || shutdown.is_requested(),
-    )
+    supervise_workers(&config, path, &executable, &work_dir, allow_unmanaged_roles)
 }
 
 pub(crate) fn run_ccxt_worker(

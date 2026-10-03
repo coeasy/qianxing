@@ -168,3 +168,105 @@ fn dedicated_spread_recovery_disables_legacy_execution_scan_only_for_same_accoun
     config.workers.last_mut().unwrap().venue_id = Some("other".into());
     assert!(!dedicated_spread_recovery_configured(&config, &execution));
 }
+
+/// #215 行为判据：共享内存传输的启动实参必须带父进程身份，且旗标与值相邻成对。
+/// 这条传输没有 stdin 可关，worker 唯一的正常出口是 Rust 侧 `Drop` 把子进程杀掉；父进程
+/// 被强杀时 `Drop` 不跑，缺了 `--parent-pid` 就只剩"1 kHz 空转到天荒地老"这一种结局。
+#[test]
+fn shared_ring_launch_arguments_hand_the_worker_its_parent_identity() {
+    let arguments = shared_ring_arguments(
+        StrategyTransport::SharedMemoryJson,
+        Path::new("ring.input"),
+        Path::new("ring.output"),
+        SharedRingConfig {
+            capacity: 8,
+            slot_bytes: 4_096,
+        },
+        4242,
+    );
+    for (flag, value) in [
+        ("--protocol", "shared_memory_json"),
+        ("--input-ring", "ring.input"),
+        ("--output-ring", "ring.output"),
+        ("--ring-capacity", "8"),
+        ("--ring-slot-bytes", "4096"),
+        ("--parent-pid", "4242"),
+    ] {
+        let position = arguments
+            .iter()
+            .position(|argument| argument == flag)
+            .unwrap_or_else(|| panic!("{flag} 没交给 worker: {arguments:?}"));
+        assert_eq!(
+            arguments[position + 1],
+            value,
+            "{flag} 与它的值不是相邻成对，worker 会把下一个旗标当成取值"
+        );
+    }
+    // 两条共享传输只差协议名：columnar 若走另一套构造，parent-pid 就能只在其中一条上断。
+    let columnar = shared_ring_arguments(
+        StrategyTransport::SharedMemoryColumnar,
+        Path::new("a.input"),
+        Path::new("a.output"),
+        SharedRingConfig {
+            capacity: 2,
+            slot_bytes: 16,
+        },
+        7,
+    );
+    assert_eq!(columnar[0], "--protocol");
+    assert_eq!(columnar[1], "shared_memory_columnar");
+    assert_eq!(
+        columnar
+            .iter()
+            .position(|argument| argument == "--parent-pid")
+            .map(|position| columnar[position + 1].as_str()),
+        Some("7"),
+        "columnar 传输丢了父进程身份"
+    );
+}
+
+/// #215 跨语言判据：Rust 传出的旗标名与 Python 注册的旗标名必须两侧都还在写，而且 spawn
+/// 点交出去的必须是"本进程 pid"。单看任一侧都能自洽，名字漂移或传错 pid 只会表现为
+/// "父进程被强杀后 worker 不退出"——那正是本轮要修的故障，不会有别的用例先喊。
+#[test]
+fn strategy_parent_pid_flag_is_wired_on_both_sides_of_the_language_boundary() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let rust = std::fs::read_to_string(
+        root.join("crates")
+            .join("qx-cli")
+            .join("src")
+            .join("strategy_host.rs"),
+    )
+    .unwrap();
+    let spawn_window = rust
+        .split_once("actual_args.extend(shared_ring_arguments(")
+        .unwrap_or_else(|| panic!("spawn 点不再经由 shared_ring_arguments 构造共享 ring 实参"))
+        .1
+        .split_once(");")
+        .unwrap()
+        .0;
+    assert!(
+        spawn_window.contains("std::process::id()"),
+        "交给 worker 的不再是本进程 pid：{spawn_window}"
+    );
+    assert_eq!(
+        rust.matches("\"--parent-pid\".into()").count(),
+        1,
+        "旗标字面量要么被复制成了两份（漂移时只改一处），要么整个消失"
+    );
+    let python = std::fs::read_to_string(
+        root.join("python")
+            .join("qianxing_strategy")
+            .join("worker.py"),
+    )
+    .unwrap();
+    assert!(
+        python.contains("\"--parent-pid\",") && python.contains("parent_pid=args.parent_pid"),
+        "Python worker 不再注册或不再消费 --parent-pid，Rust 传了也没人接"
+    );
+    assert!(
+        python.contains("parent_pid > 0")
+            && python.contains("if not _parent_process_alive(parent_pid):"),
+        "Python 侧的父进程存活确认不再决定退出，空闲循环会退回无出口空转"
+    );
+}

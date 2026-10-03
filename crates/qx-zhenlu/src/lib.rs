@@ -1017,21 +1017,28 @@ impl SpreadOrderGroupStore for FileSpreadOrderGroupStore {
             .validate_persisted()
             .map_err(|error| format!("保存多腿状态前校验失败: {error:?}"))?;
         let path = self.path_for(&group.group_id)?;
-        // 写锁交给 qx-core::file_lock：进程被杀留下的 `.spread-groups.lock` 在旧实现里会让
-        // 多腿状态此后每一次写入都失败，且错误只有一句 OS 文案（V11 §40 D1）。
-        let _lock = qx_core::FileLock::acquire(self.lock_path())
+        let lock_path = self.lock_path();
+        let _lock = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
             .map_err(|error| format!("获取多腿状态写锁失败: {error}"))?;
-        let payload = serde_json::to_vec_pretty(group)
-            .map_err(|error| format!("序列化多腿状态失败: {error}"))?;
-        let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
-        std::fs::write(&temporary, payload)
-            .map_err(|error| format!("写入多腿状态临时文件失败: {error}"))?;
-        if let Err(error) = std::fs::rename(&temporary, &path) {
-            let _ = std::fs::remove_file(&path);
-            std::fs::rename(&temporary, &path)
-                .map_err(|replacement| format!("替换多腿状态失败: {error}; {replacement}"))?;
-        }
-        Ok(())
+        let result = (|| {
+            let payload = serde_json::to_vec_pretty(group)
+                .map_err(|error| format!("序列化多腿状态失败: {error}"))?;
+            let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
+            std::fs::write(&temporary, payload)
+                .map_err(|error| format!("写入多腿状态临时文件失败: {error}"))?;
+            if let Err(error) = std::fs::rename(&temporary, &path) {
+                let _ = std::fs::remove_file(&path);
+                std::fs::rename(&temporary, &path)
+                    .map_err(|replacement| format!("替换多腿状态失败: {error}; {replacement}"))?;
+            }
+            Ok::<(), String>(())
+        })();
+        drop(_lock);
+        let _ = std::fs::remove_file(lock_path);
+        result
     }
 
     fn delete(&mut self, group_id: &str) -> Result<(), String> {
@@ -1222,10 +1229,9 @@ impl PaperVenue {
         }
     }
 
-    /// 当前费用模型描述子。`fee_model` 是私有字段，这一颗是它在仓内唯一的出口，但运行清单与
-    /// 配置校验都不读它——只有本文件的 golden 用例点过名，生产侧一律走 `fee_model.descriptor()`。
-    /// 把它挂成公共面会让"descriptor 变了就是指纹变了"看起来像在保护一条并不存在的外部契约
-    /// （V11 R7-6 登记、V12 §16 降级：判据改由编译器而不是门禁的行号钉子付）。
+    /// 当前费用模型描述子，用于运行清单与配置校验的可观测性。
+    /// 冻结的执行平面成本口径：只有本文件的 golden 用例读它，生产侧一律走 `fee_model.descriptor()`。
+    /// 把它当公共面会让"descriptor 变了就是指纹变了"看起来像在保护一条并不存在的外部契约（V12 §16）。
     #[cfg(test)]
     pub(crate) fn fee_descriptor(&self) -> String {
         self.fee_model.descriptor()

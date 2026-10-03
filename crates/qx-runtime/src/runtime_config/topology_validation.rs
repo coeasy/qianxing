@@ -10,14 +10,17 @@ impl RuntimeConfig {
                 "运行时配置 schema_version 必须为 {RUNTIME_SCHEMA_VERSION}"
             ));
         }
-        if self.environment.trim().is_empty() {
-            return Err("运行时 environment 不能为空".into());
-        }
-        if self.environment_kind().is_none() {
+        // `environment` 不是自由字符串：它决定本文件与 `strategy_validation.rs` 里那 9 处
+        // `production` 专属闸门是否生效，也决定实时策略作业的 `dry_run` 走模拟还是真实提交
+        // （只有 `paper` 模拟）。只按"非空"校验时，多打一个空格就换一条分支：`"paper "` 会
+        // 去真实提交，`"production "` 会关掉全部生产加固后照常启动。名单外一律拒绝。
+        if !ENVIRONMENT_VOCAB
+            .iter()
+            .any(|spelling| self.environment.eq_ignore_ascii_case(spelling))
+        {
             return Err(format!(
-                "运行时 environment 必须是 {} 之一，当前为 {:?}；词表外的值会静默丢掉 production \
-                 专属风控，因此直接拒绝而不是当作非 production",
-                RUNTIME_ENVIRONMENTS.join(" / "),
+                "运行时 environment 必须是 {} 之一（大小写不敏感、不含首尾空白），当前为 {:?}",
+                ENVIRONMENT_VOCAB.join("/"),
                 self.environment
             ));
         }
@@ -28,7 +31,8 @@ impl RuntimeConfig {
         {
             return Err("config_fingerprint 不能为空字符串".into());
         }
-        self.api
+        let api_bind = self
+            .api
             .bind
             .parse::<SocketAddr>()
             .map_err(|error| format!("API bind 不是合法 SocketAddr: {error}"))?;
@@ -38,8 +42,20 @@ impl RuntimeConfig {
         if self.api.transport == ApiTransport::Mtls && self.api.operators.is_empty() {
             return Err("mTLS API 必须至少配置一个 Operator 证书映射".into());
         }
-        if self.api.transport == ApiTransport::Plaintext && self.is_production() {
+        if self.api.transport == ApiTransport::Plaintext
+            && self.environment.eq_ignore_ascii_case("production")
+        {
             return Err("production 环境禁止使用明文 API".into());
+        }
+        // 「非 production」不等于「可以暴露到可路由地址」：名单里的 paper/sandbox/testnet
+        // 都是合法的非生产写法，而明文面不带身份认证 —— policy 为 None 时
+        // `qx-api` 直接把请求体里的 `permission` 当授予档位（lib.rs 的 submit_command），
+        // 于是可路由 bind 就是一个无鉴权的下单/控制入口。这条闸门按地址判，不按措辞判。
+        if self.api.transport == ApiTransport::Plaintext && !api_bind.ip().is_loopback() {
+            return Err(format!(
+                "明文 API 只能绑定回环地址，当前 bind={} 不是；请改用 transport=mtls 并配置 Operator 证书",
+                self.api.bind
+            ));
         }
         if self.api.transport == ApiTransport::Plaintext && !self.api.operators.is_empty() {
             return Err("明文 API 不能声明需要 mTLS 证书的 Operator 映射".into());
@@ -87,7 +103,9 @@ impl RuntimeConfig {
                 );
             }
         }
-        if self.is_production() && self.storage.backend != StorageBackend::Postgres {
+        if self.environment.eq_ignore_ascii_case("production")
+            && self.storage.backend != StorageBackend::Postgres
+        {
             return Err(
                 "production 环境 EventLog/Outbox 必须使用 PostgreSQL transactional backend".into(),
             );
@@ -171,6 +189,11 @@ impl RuntimeConfig {
                 || self.messaging.worker_stale_after_ms > 86_400_000
             {
                 return Err("messaging.worker_stale_after_ms 必须在 1..=86400000 内".into());
+            }
+            // 三条 NATS 等待预算的区间只在 qx-storage 的 NatsWaitBudget 里写一次，
+            // 这里加上配置文件里的路径前缀后原样转达。
+            if let Err(error) = self.messaging.nats_wait_budget().validate() {
+                return Err(format!("messaging.{error}"));
             }
         }
         if self
@@ -373,7 +396,7 @@ impl RuntimeConfig {
                 worker.role,
                 WorkerRole::Execution | WorkerRole::SpreadRecovery
             ) && worker.instrument_spec_path.is_none()
-                && (self.is_production()
+                && (self.environment.eq_ignore_ascii_case("production")
                     || VenueFamily::parse_option(worker.venue_id.as_deref())
                         != Some(VenueFamily::Paper))
             {
@@ -385,7 +408,7 @@ impl RuntimeConfig {
             if matches!(
                 worker.role,
                 WorkerRole::Execution | WorkerRole::SpreadRecovery
-            ) && self.is_production()
+            ) && self.environment.eq_ignore_ascii_case("production")
             {
                 if worker.max_order_notional_raw.is_none() {
                     return Err(format!(

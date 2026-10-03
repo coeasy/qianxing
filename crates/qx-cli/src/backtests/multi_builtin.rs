@@ -42,7 +42,6 @@ pub(crate) fn run_multi_builtin_backtest(
     let fill_configured = configured_fill_model(runtime_config_path)?;
     // 本金在这条链上没有落点：两条腿的账户各按本腿行情定资，因此拒绝而不是收下再丢掉。
     reject_configured_initial_cash(runtime_config_path, "backtest multi-builtin")?;
-    reject_configured_product_policy(runtime_config_path, "backtest multi-builtin")?;
     // 每腿账户必须付得起它宣称的下单量：Bar 内核会拒绝现金不足的现货买入
     // （`qx-xingban/src/backtest.rs` 的 cash-funded spot buy 检查）。定资口径见
     // `multi_leg_leg_cash`：用**本腿自己的**最高价（全局最大值会让便宜腿背下贵腿的名义额）、

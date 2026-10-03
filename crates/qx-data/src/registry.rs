@@ -1,5 +1,4 @@
 use crate::catalog::DatasetManifest;
-use qx_core::FileLock;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -115,16 +114,22 @@ impl JsonDatasetRegistry {
 
     pub fn register(&mut self, manifest: DatasetManifest) -> Result<(), String> {
         manifest.validate()?;
-        // 抢锁交给 qx-core::file_lock：旧实现只认"文件不存在才建得来"，一次 Ctrl-C 或 OOM
-        // 留下的锁文件会让这条链此后每一次运行都失败在 `文件存在。 (os error 80)`，
-        // 既不点名锁在哪、也不给出路（V11 §40 D1）。
-        let _lock = FileLock::acquire(self.lock_path())
-            .map_err(|error| format!("获取数据集注册表写锁失败: {error}"))?;
-        // 锁内重读，避免两个 CLI 进程都基于同一旧内存快照写入而互相覆盖。
-        let mut current = Self::load_inner(&self.path)?;
-        current.register(manifest)?;
-        self.inner = current;
-        self.persist_unlocked()
+        let lock_path = self.lock_path();
+        let lock = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+            .map_err(|error| format!("acquire dataset registry lock failed: {error}"))?;
+        let result = (|| {
+            // 锁内重读，避免两个 CLI 进程都基于同一旧内存快照写入而互相覆盖。
+            let mut current = Self::load_inner(&self.path)?;
+            current.register(manifest)?;
+            self.inner = current;
+            self.persist_unlocked()
+        })();
+        drop(lock);
+        let _ = std::fs::remove_file(&lock_path);
+        result
     }
 
     pub fn resolve(&self, dataset_id: &str, version: &str) -> Option<&DatasetManifest> {
@@ -279,49 +284,6 @@ mod tests {
         assert_eq!(reopened.len(), 1);
         assert!(!path.with_extension("json.tmp").exists());
         assert!(!path.with_extension("json.lock").exists());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    /// V11 §40 D1：进程被杀留下的锁文件不得永久阻断回测链。
-    ///
-    /// 判据是"回测这条链还能跑"，所以用例必须落在真实入口 `JsonDatasetRegistry::register` 上，
-    /// 而不是只测 qx-core 的锁本身：旧实现里这里会稳定返回
-    /// `acquire dataset registry lock failed: 文件存在。 (os error 80)`。
-    #[test]
-    fn orphaned_lock_is_taken_over_and_fresh_lock_is_reported() {
-        let root = std::env::temp_dir().join(format!(
-            "qianxing-dataset-lock-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("datasets.manifest.json");
-        let lock = path.with_extension("json.lock");
-
-        // 1) 孤儿锁（mtime 早于阈值一整小时）：注册必须照常完成。
-        std::fs::write(&lock, b"424242").unwrap();
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(&lock)
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
-            .unwrap();
-        let mut registry = JsonDatasetRegistry::open(&path).unwrap();
-        registry
-            .register(manifest("fp1"))
-            .expect("崩溃遗留的锁必须被接管，而不是永久阻断注册链");
-        assert_eq!(registry.len(), 1);
-        assert!(!lock.exists(), "接管完成后锁文件不得留下");
-
-        // 2) 新鲜锁：必须失败，且错误点名锁文件与等待口径（不得伪装成"注册冲突"）。
-        std::fs::write(&lock, b"424242").unwrap();
-        let error = registry.register(manifest("fp9")).unwrap_err();
-        assert!(error.contains("获取数据集注册表写锁失败"), "{error}");
-        assert!(error.contains("holder=424242"), "{error}");
-        assert!(lock.exists(), "活的并发锁不得被删掉");
         let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -134,9 +134,6 @@ pub(crate) fn run_depth_backtest(
         "backtest book",
         "L1/L2 盘口引擎的撮合口径是四参数描述子，没有 FillModel 落点",
     )?;
-    // 同一判据管到产品政策：L1 引擎不读 `order.policy`，L2 读到的也永远是内置策略派生不出的
-    // 那份默认政策（Cash / OneWay / 1x）。声明杠杆却照样跑完，等于用 1x 的账卖出 5x 的结论。
-    reject_configured_product_policy(runtime_config_path, "backtest book")?;
     // 三层优先级：显式 --fee-bps > 成本规则文件的 taker_bp > 内核默认。
     let cost_source = if fee_bps.is_some() {
         "cli-flag".to_string()
@@ -185,7 +182,7 @@ pub(crate) fn run_depth_backtest(
     let run_manifest = report.run_manifest(
         RunManifestIdentity {
             run_id: &format!("depth-backtest:{tier}:{}:{}", kind.name(), frame.instrument),
-            code_commit: env!("QX_GIT_COMMIT"),
+            code_commit: build_identity::BUILD_REVISION,
             config_hash: &depth_run_config_hash(
                 tier,
                 kind.name(),

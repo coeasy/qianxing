@@ -4,8 +4,6 @@
 //! JSONL 协议接入既有 `Venue` 事实边界。提交结果未知时返回 ReconcileRequired，
 //! 不自动重试或补单；订单回报通过 `sync_order` 显式进入统一 VenueEvent。
 
-use crate::io_budget::write_all_within;
-use crate::venue_cache::evict_stale_terminal_orders;
 use qx_core::{
     Fill, MarginMode, Money, Order, OrderStatus, PositionMode, PositionSide, Price, Quantity,
     QxError, QxResult, SCALE,
@@ -18,9 +16,9 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
 
@@ -30,8 +28,7 @@ pub trait CcxtRpc: Send {
 
 pub struct CcxtProcessClient {
     child: Child,
-    /// 写一次取走一次：`write_all_within` 要把句柄交给写线程，成功才还得回来。
-    stdin: Option<ChildStdin>,
+    stdin: ChildStdin,
     responses: Receiver<Result<String, String>>,
     timeout_ms: u64,
 }
@@ -66,10 +63,7 @@ impl CcxtProcessClient {
             .stdout
             .take()
             .ok_or_else(|| "CCXT Worker stdout 不可用".to_string())?;
-        // 队列有界（V11 R7-f）：这条通道一问一答，每轮只取走一行，多出来的行没人认领。
-        // 无界队列会让 Worker 的杂印或上一轮迟到的应答一路攒下去；容量 1 把它变成背压——
-        // 泵线程停在第二行上等下一次 `take_turn` 来分诊，内存不再随杂印增长。
-        let (sender, responses) = mpsc::sync_channel(1);
+        let (sender, responses) = mpsc::channel();
         let worker_program = python.to_string();
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
@@ -97,7 +91,7 @@ impl CcxtProcessClient {
         });
         Ok(Self {
             child,
-            stdin: Some(stdin),
+            stdin,
             responses,
             timeout_ms,
         })
@@ -107,26 +101,6 @@ impl CcxtProcessClient {
     /// `wait_ms`，让"这一窗没有事件"的回话先于读窗到期到达。
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms
-    }
-}
-
-/// 写下一条请求之前，通道里留着的东西（V11 R7-f）。
-///
-/// 一问一答的通道只在「上一轮已经收干净」的相位上可用：`Empty` 才算干净。取到 `Ok`
-/// 说明上一轮的应答迟到了、或 Worker 多印了一行——把它当这一轮的回答，等于把上一笔的
-/// 成交读成这一笔的。取到泵线程的死讯说明 Worker 已经不在了，这条请求根本没发出去，
-/// 不能顶着「提交结果未知」的口径让人以为动过账户。残留行的内容不进错误文本，只报长度。
-enum Turn {
-    Clear,
-    Stale(usize),
-    Exited(String),
-}
-
-fn take_turn(responses: &Receiver<Result<String, String>>) -> Turn {
-    match responses.try_recv() {
-        Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => Turn::Clear,
-        Ok(Ok(line)) => Turn::Stale(line.len()),
-        Ok(Err(message)) => Turn::Exited(message),
     }
 }
 
@@ -161,14 +135,31 @@ fn ccxt_worker_environment(config_path: &str) -> Result<BTreeMap<String, String>
     Ok(environment)
 }
 
+/// Worker 读窗的下界。用户流的空闲回话窗口由 `ccxt_idle_window_ms` 从它推导，
+/// 而那条循环自身不睡 —— 下界低于一次 IPC 往返时，一个当天没有成交的账户会把
+/// "刷新 EventLog + 写健康 mark"打成毫秒级热循环（V13 R2 第十四遍 #214）。
+pub(crate) const CCXT_WORKER_MIN_TIMEOUT_MS: u64 = 1_000;
+/// 读窗的上界：再长就等于提交结果未知要挂这么久才具名上报。
+pub(crate) const CCXT_WORKER_MAX_TIMEOUT_MS: u64 = 300_000;
+
+/// 用户流给子进程的回话窗口：读窗的 4/5，让"这一窗没有事件"的回话先于读窗到期
+/// 到达，读窗到期因此只代表子进程真的卡住。定义挪到读窗的同一侧，是为了让
+/// "下界 → 节律"这条不变式有用例可咬；原先它写在调用方的循环里，两侧各自漂移。
+pub fn ccxt_idle_window_ms(timeout_ms: u64) -> u64 {
+    timeout_ms.saturating_mul(4) / 5
+}
+
 fn ccxt_worker_timeout_ms(config_path: &str) -> Result<u64, String> {
     let config = ccxt_worker_config(config_path)?;
     let timeout_ms = config
         .get("timeout_ms")
         .and_then(Value::as_u64)
         .unwrap_or(30_000);
-    if timeout_ms == 0 || timeout_ms > 300_000 {
-        return Err("CCXT timeout_ms 必须在 1..=300000 内".into());
+    if !(CCXT_WORKER_MIN_TIMEOUT_MS..=CCXT_WORKER_MAX_TIMEOUT_MS).contains(&timeout_ms) {
+        return Err(format!(
+            "CCXT timeout_ms 必须在 {}..={} 内",
+            CCXT_WORKER_MIN_TIMEOUT_MS, CCXT_WORKER_MAX_TIMEOUT_MS
+        ));
     }
     Ok(timeout_ms)
 }
@@ -181,41 +172,13 @@ fn ccxt_worker_config(config_path: &str) -> Result<Value, String> {
 
 impl CcxtRpc for CcxtProcessClient {
     fn call(&mut self, request: Value) -> Result<Value, String> {
-        // 开口之前先确认通道干净（V11 R7-f）：留着上一轮的东西就说明相位已经错位，
-        // 这一轮请求不发出、不重试，只把错位报出去并停用这个 Worker——让它接着答下一轮，
-        // 就是把上一笔的成交读成这一笔的。
-        match take_turn(&self.responses) {
-            Turn::Clear => {}
-            Turn::Stale(bytes) => {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
-                return Err(format!(
-                    "CCXT Worker 通道里残留着一行上一轮的应答（{bytes} 字节），相位已错位，这条请求没有发出"
-                ));
-            }
-            Turn::Exited(message) => {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
-                return Err(format!("{message}，这条请求没有发出"));
-            }
-        }
         let payload = serde_json::to_string(&request)
             .map_err(|error| format!("编码 CCXT Worker 请求失败: {error}"))?;
-        let stdin = self
-            .stdin
-            .take()
-            .ok_or_else(|| "CCXT Worker stdin 不可用".to_string())?;
-        // 写也要进预算（V11 N8）：Worker 卡在别处不读 stdin 时，管道写满后这条
-        // `write_all` 就再也不返回，而下面那圈"响应超时"排在它后面，压根没机会开始
-        // ——配置里的 timeout_ms 只保护了读、没保护写。超时按"这条管道已不归我们
-        // 掌控"处理：杀掉 Worker，卡住的写线程随即以 BrokenPipe 收尾。
-        let mut line = payload.into_bytes();
-        line.push(b'\n');
-        let written = write_all_within(stdin, line, Duration::from_millis(self.timeout_ms), || {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        });
-        self.stdin = Some(written.map_err(|error| format!("写入 CCXT Worker 失败: {error}"))?);
+        self.stdin
+            .write_all(payload.as_bytes())
+            .and_then(|_| self.stdin.write_all(b"\n"))
+            .and_then(|_| self.stdin.flush())
+            .map_err(|error| format!("写入 CCXT Worker 失败: {error}"))?;
         let line = match self
             .responses
             .recv_timeout(Duration::from_millis(self.timeout_ms))
@@ -284,19 +247,6 @@ impl CcxtProcessVenue {
         }
     }
 
-    /// 级联丢掉已退场订单的派生索引：远端订单号、成交去重键与累计费用。
-    fn forget_orders(&mut self, evicted: &BTreeSet<u64>) {
-        if evicted.is_empty() {
-            return;
-        }
-        self.remote_ids
-            .retain(|client_id, _| !evicted.contains(client_id));
-        self.seen_trade_ids
-            .retain(|client_id, _| !evicted.contains(client_id));
-        self.cumulative_costs
-            .retain(|client_id, _| !evicted.contains(client_id));
-    }
-
     pub fn restore_order(&mut self, order: Order, remote_id: impl Into<String>) -> QxResult<()> {
         order.validate().map_err(QxError::BusinessViolation)?;
         let remote_id = remote_id.into();
@@ -314,8 +264,6 @@ impl CcxtProcessVenue {
             self.cumulative_costs.remove(&order.client_id);
         }
         self.orders.insert(order.client_id, order);
-        let evicted = evict_stale_terminal_orders(&mut self.orders);
-        self.forget_orders(&evicted);
         Ok(())
     }
 
@@ -678,8 +626,6 @@ impl Venue for CcxtProcessVenue {
         self.remote_ids.insert(order.client_id, remote_id.clone());
         self.cumulative_costs.remove(&order.client_id);
         self.orders.insert(order.client_id, order.clone());
-        let evicted = evict_stale_terminal_orders(&mut self.orders);
-        self.forget_orders(&evicted);
         Ok(vec![VenueEvent::Accepted {
             client_order_id: order.client_id,
             venue_order_id: remote_id,
@@ -836,39 +782,52 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
-    /// 一问一答的相位（V11 R7-f）：只有空队列才算干净；留着上一轮的应答就是残留，
-    /// 留着泵线程的死讯就原话转出去。两头都是判据：把 `Disconnected` 误读成残留，等于
-    /// Worker 活得好好的却白白停用一次；把残留误读成干净，就是错位读数的那条路。
+    /// #214：读窗下界必须大到导得出的空闲窗口还能当真是一次回话往返。
+    /// 用户流那条循环自身不睡，节律全靠这个窗口 —— 下界退化成 1 时窗口是 0，
+    /// 一个没有成交的账户就把 EventLog 刷新与健康 mark 打成毫秒级热循环。
     #[test]
-    fn ccxt_rpc_channel_reports_what_is_left_before_the_next_request() {
-        let (sender, responses) = mpsc::sync_channel::<Result<String, String>>(1);
+    fn ccxt_idle_window_keeps_real_pacing_at_the_timeout_floor() {
+        let floor_window = ccxt_idle_window_ms(CCXT_WORKER_MIN_TIMEOUT_MS);
         assert!(
-            matches!(take_turn(&responses), Turn::Clear),
-            "空队列不该报残留"
+            floor_window >= 500,
+            "读窗下界 {CCXT_WORKER_MIN_TIMEOUT_MS}ms 导出的空闲窗口只有 {floor_window}ms，用户流会打成热循环"
         );
-        let leftover = "{\"ok\":true}".to_string();
-        let bytes = leftover.len();
-        sender.send(Ok(leftover)).unwrap();
-        assert!(
-            matches!(take_turn(&responses), Turn::Stale(size) if size == bytes),
-            "残留的那一行要按长度报出去"
-        );
-        assert!(
-            matches!(take_turn(&responses), Turn::Clear),
-            "一次错位只拒一轮，第二问要回到干净相位"
-        );
-        drop(sender);
-        assert!(
-            matches!(take_turn(&responses), Turn::Clear),
-            "泵线程已收摊且队列空，不是残留——请求照写，读侧自会报通道断开"
-        );
+        // 回话必须先于读窗到期到达，否则"空闲"永远被读成断链。
+        for timeout_ms in [
+            CCXT_WORKER_MIN_TIMEOUT_MS,
+            5_000,
+            30_000,
+            CCXT_WORKER_MAX_TIMEOUT_MS,
+        ] {
+            assert!(
+                ccxt_idle_window_ms(timeout_ms) < timeout_ms,
+                "读窗 {timeout_ms} 的空闲窗口不再短于读窗，空闲会被具名成链路故障"
+            );
+        }
+    }
 
-        let (sender, responses) = mpsc::sync_channel::<Result<String, String>>(1);
-        sender.send(Err("Worker 已退出".to_string())).unwrap();
+    /// #214：校验的两端都要真的挡 —— 下界以下与上界以上都拒绝，界内按值返回。
+    #[test]
+    fn ccxt_worker_timeout_bounds_are_enforced_from_config() {
+        let path =
+            std::env::temp_dir().join(format!("qianxing-ccxt-timeout-{}.json", std::process::id()));
+        let read = |payload: &str| {
+            std::fs::write(&path, payload).unwrap();
+            ccxt_worker_timeout_ms(&path.to_string_lossy())
+        };
+        // 低于下界：过去这条是合法的 1，热循环就是从这一格进来的。
+        let error = read(r#"{"timeout_ms": 1}"#).unwrap_err();
         assert!(
-            matches!(take_turn(&responses), Turn::Exited(message) if message == "Worker 已退出"),
-            "死讯要原话转出去，不能当成干净的队列"
+            error.contains("timeout_ms 必须在"),
+            "下界没挡住 timeout_ms=1: {error}"
         );
+        assert!(read(r#"{"timeout_ms": 0}"#).is_err());
+        assert!(read(r#"{"timeout_ms": 300001}"#).is_err());
+        assert_eq!(read(r#"{"timeout_ms": 1000}"#).unwrap(), 1_000);
+        assert_eq!(read(r#"{"timeout_ms": 300000}"#).unwrap(), 300_000);
+        // 不写字段时仍按默认 30 秒，不受下界改动影响。
+        assert_eq!(read("{}").unwrap(), 30_000);
+        let _ = std::fs::remove_file(path);
     }
 
     struct FakeRpc {
@@ -910,67 +869,6 @@ mod tests {
             trace: None,
             policy: None,
         }
-    }
-
-    /// V11 N9：`restore_order` 是启动期逐条灌历史订单的入口，封顶与三份派生索引的
-    /// 级联必须在这条路上真的生效——CCXT 执行 worker 是常驻进程。
-    #[test]
-    fn ccxt_order_cache_cap_cascades_remote_ids_dedup_keys_and_costs() {
-        const CAP: u64 = crate::venue_cache::MAX_CACHED_ORDERS as u64;
-        let cached = |client_id: u64| Order {
-            client_id,
-            status: if client_id == 1 {
-                OrderStatus::Working
-            } else {
-                OrderStatus::Filled
-            },
-            filled: if client_id == 1 {
-                Quantity::ZERO
-            } else {
-                Quantity::from_i64(2)
-            },
-            ..order()
-        };
-        let mut venue = CcxtProcessVenue::new("binance", Box::new(FakeRpc { calls: Vec::new() }));
-        let remote = |client_id: u64| format!("r-{client_id}");
-        let trade_key = |client_id: u64| format!("t-{client_id}");
-        for client_id in 1..=CAP {
-            venue
-                .restore_order(cached(client_id), remote(client_id))
-                .unwrap();
-        }
-        assert_eq!(venue.orders.len() as u64, CAP);
-        for client_id in [2, CAP] {
-            venue
-                .seen_trade_ids
-                .insert(client_id, BTreeSet::from([trade_key(client_id)]));
-            venue.cumulative_costs.insert(client_id, 7);
-        }
-        venue
-            .restore_order(cached(CAP + 1), remote(CAP + 1))
-            .unwrap();
-
-        assert_eq!(venue.orders.len() as u64, CAP + 1 - 1_025);
-        assert!(venue.orders.contains_key(&1), "未终态订单永不退场");
-        assert!(!venue.orders.contains_key(&2));
-        assert!(venue.orders.contains_key(&(CAP + 1)));
-        assert!(!venue.remote_ids.contains_key(&2));
-        assert!(!venue.seen_trade_ids.contains_key(&2));
-        assert!(!venue.cumulative_costs.contains_key(&2));
-        assert_eq!(
-            venue.remote_ids.get(&CAP).map(String::as_str),
-            Some(remote(CAP).as_str()),
-            "留下的订单不能被动过"
-        );
-        assert_eq!(
-            venue
-                .seen_trade_ids
-                .get(&CAP)
-                .and_then(|ids| ids.iter().next()),
-            Some(&trade_key(CAP)),
-            "成交去重键必须跟着订单一起退"
-        );
-        assert_eq!(venue.cumulative_costs.get(&CAP), Some(&7));
     }
 
     #[test]

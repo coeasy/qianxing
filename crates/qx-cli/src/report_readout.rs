@@ -5,18 +5,13 @@
 //! 不得印一个合法的 `0` 冒充"算过了、结果是零"。
 //!
 //! 为什么值得单独一个文件：这条规则只有三行代码，但它约束的是**任何**把摘要格子印出来的地方，
-//! 而 `report` 与 `status` 两处都在印（本模块与 `config_commands.rs` 都不在行数棘轮名册里，
+//! 而 `config_commands.rs` 已登记的行数预算只降不升（`maturity/line_budgets.yaml`）。
 //! 读法住在这里，两个命令共用一份，门禁才能拿"只有一处 `unwrap_or(0)` 形状"当判据。
 
 use serde_json::Value;
 
 /// 一格没写数时印出的词。它必须与 `0`（算出来是零）和空串（算出来是空）都可区分。
 pub(crate) const READOUT_ABSENT: &str = "absent";
-
-/// "这份产物没有对输入身份作过声明"的结论词，只用于 `input_verified=` 那一格与 JSON 的
-/// `input_check.verdict`。它与 [`READOUT_ABSENT`] 说的不是一件事：后者讲"某个数值格没写"，
-/// 前者讲"整条溯源链没走过"。混用一个词会让读者分不清"少了一格"与"没核对过"。
-pub(crate) const NOT_DECLARED: &str = "not_declared";
 
 /// 摘要有这个块吗（`input` 自 v3、`account` 自 v4）。用于把"这个世代的产物没声明过"说出来，
 /// 而不是把块里的每一格各自念成缺席——前者是用者需要的信息，后者会让人以为核对过却全空。
@@ -97,13 +92,10 @@ pub(crate) fn report_readout_lines(summary: &Value, input_verified: &str) -> Vec
     vec![
         format!("  {}", summary_generation_note(summary)),
         format!(
-            "  strategy={} instrument={} bars={} sample_unit={} fills={}",
+            "  strategy={} instrument={} bars={} fills={}",
             render_text(summary_text(summary, "/strategy_id")),
             render_text(summary_text(summary, "/instrument")),
             render_number(summary_number(summary, "/bars")),
-            // `bars=5000` 单独看是有歧义的：5000 根 K 线还是 5000 个盘口快照，两种回测的
-            // 结论强度不同。写侧在 artifacts.rs 里落了这一格，读侧就得把它念出来。
-            render_text(summary_text(summary, "/sample_unit")),
             render_number(summary_number(summary, "/fills"))
         ),
         format!(
@@ -135,15 +127,6 @@ pub(crate) fn report_readout_lines(summary: &Value, input_verified: &str) -> Vec
         format!(
             "  risk_rule_set_version={}",
             render_text(summary_text(summary, "/risk_rules/rule_set_version"))
-        ),
-        // 写侧三格各有其主（`matching_kernel` / `execution_costs.source` / `rejected_orders`），
-        // 正文此前一格都不念：`fills=0` 分不清"策略没发信号"与"信号全被风控挡下"，而 Bar 内核
-        // 与深度内核的结论强度不同。同行印出才不会被读成三次互不相干的测量（V13 第 8 轮 A6）。
-        format!(
-            "  matching_kernel={} cost_source={} rejected_orders={}",
-            render_text(summary_text(summary, "/matching_kernel")),
-            render_text(summary_text(summary, "/execution_costs/source")),
-            render_number(summary_number(summary, "/rejected_orders"))
         ),
     ]
 }

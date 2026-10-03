@@ -260,7 +260,7 @@ pub(crate) fn strategy_target_qty(
             risk_state,
         };
         context
-            .validate(now, config.is_production())
+            .validate(now, config.environment.eq_ignore_ascii_case("production"))
             .map_err(|error| format!("StrategyContext 校验失败: {error}"))?;
         return context.target_for(instrument).ok_or_else(|| {
             format!(
@@ -399,7 +399,7 @@ pub(crate) fn strategy_account_context(
             "account-snapshot-not-seen".into(),
         ));
     }
-    let pipeline = open_account_pipeline(config, root, &log_name)
+    let pipeline = open_account_pipeline(config, root, &log_name, OutboxRecovery::ReadOnly)
         .map_err(|error| format!("恢复 StrategyContext 账户 EventLog 失败: {error}"))?;
     let state = pipeline.ledger().position_for(account_id, instrument);
     let positions = BTreeMap::from([(instrument.to_string(), state.quantity.raw())]);
@@ -451,8 +451,8 @@ fn strategy_order_identity(round_scope: &str, intent_id: u64) -> u64 {
 /// 将跨语言 Strategy API v1 的单笔 intent 转为统一核心订单。
 /// 该转换只负责语义翻译，订单仍必须经过 RiskExecutionContext、OMS 和 Venue。
 ///
-/// `round_scope` 是这一轮的标识：worker 传 `output.request_id`（即调度器的 run id，实时作业
-/// 按 BarFrame 指纹幂等），回测链传同一份契约输入的 request_id。非空不用在这里再查一遍——
+/// `round_scope` 是这一轮的标识：worker 链与回测链都传 `output.request_id`（即调度器的
+/// run id，实时作业按 BarFrame 指纹幂等）。非空不用在这里再查一遍——
 /// `StrategyContractOutput::validate_for` 要求 output 原样回显 input 的 request_id，而
 /// `StrategyContractInput::validate` 已经拒绝空值。
 pub(crate) fn build_strategy_order_from_contract_intent(
@@ -756,9 +756,7 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
             let worker = match supervisor.spawn_worker(&api_worker_id, move |context| {
                 context.heartbeat(runtime_timestamp_ms())?;
                 service
-                    .serve(listener, runtime_timestamp_ms(), move || {
-                        context.should_stop()
-                    })
+                    .serve(listener, runtime_timestamp_ms, || context.should_stop())
                     .map_err(|error| format!("API 服务停止: {error}"))
             }) {
                 Ok(worker) => worker,
@@ -767,9 +765,9 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
                     return Err(error);
                 }
             };
-            // 这里曾是 12 处 spawn_worker 里唯一裸 join() 的两处。serve 的 accept 环本来就按
-            // `context.should_stop()` 收摊，join_worker_handle 补上令牌的另一半：装 SIGINT/SIGTERM
-            // 的写侧并走同一条停机阶梯，否则「按 Ctrl+C 停止」只能靠进程被默认信号强杀。
+            // serve 的 accept 环本来就按 `context.should_stop()` 收摊；这里补的是令牌的另一半：
+            // 走和 worker 同一条停机阶梯，把 SIGINT/SIGTERM 转成监督器的停机请求，
+            // 否则「按 Ctrl+C 停止」只能靠进程被默认信号强杀。
             let result = join_worker_handle(&supervisor, worker, "API", &api_worker_id);
             stop_api_projection_bridge(&projection_stop, &mut projection_thread);
             result
@@ -829,8 +827,8 @@ pub(crate) fn run_runtime_api(path: &Path) -> Result<(), String> {
                         listener,
                         &store,
                         &identity_store,
-                        runtime_timestamp_ms(),
-                        move || context.should_stop(),
+                        runtime_timestamp_ms,
+                        || context.should_stop(),
                     )
                     .map_err(|error| format!("mTLS API 服务停止: {error}"))
             }) {

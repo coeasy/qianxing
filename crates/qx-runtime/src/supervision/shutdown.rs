@@ -38,9 +38,10 @@ pub fn shutdown_signalled() -> bool {
 pub enum WorkerLadder {
     /// worker 自己结束了，停机令牌从未被按下。
     Finished,
-    /// 停机请求被转发，worker 在预算内退出。
+    /// 停机请求被转发，worker 在预算内退出；`waited_ms` 是**收到请求之后**等的时长。
     StoppedWithinBudget { waited_ms: u64 },
     /// 停机请求被按下但 worker 到预算仍未退出；调用方只能报告而不能强杀线程。
+    /// `waited_ms` 同样从请求落下起算，不是从开始等待起算。
     StopTimedOut { waited_ms: u64 },
 }
 
@@ -48,10 +49,6 @@ pub enum WorkerLadder {
 ///
 /// `worker_finished`/`signalled`/`now_ms`/`sleep_ms` 全部注入，因此停机阶梯不需要真信号、
 /// 也不需要真等待就能被用例驱动。
-///
-/// 预算的起点是**第一次观察到停机请求**，不是进循环：worker 入口可以先陪跑几小时，从进循环
-/// 起算会让信号落下的那一跳就地判超时，优雅窗口变成 0，而报出去的 uptime 还会被念成"收到
-/// 停机请求后等了多久"。令牌在进循环前就已被按下时，起点就是进循环那一刻。
 pub fn wait_for_worker_finish(
     supervisor: &RuntimeSupervisor,
     worker_finished: impl Fn() -> bool,
@@ -60,22 +57,24 @@ pub fn wait_for_worker_finish(
     mut sleep_ms: impl FnMut(u64),
 ) -> WorkerLadder {
     let budget = supervisor.config().shutdown_timeout_ms;
-    let mut requested_at = if supervisor.is_shutdown_requested() {
-        Some(now_ms())
-    } else {
-        None
-    };
+    let start = now_ms();
+    let mut requested = supervisor.is_shutdown_requested();
+    // 预算与 `waited_ms` 都从**观察到停机请求**起算。worker 可能在请求到来之前已经被等了一整天，
+    // 从 `start` 起算会让它在请求落下的第一次轮询就判 `StopTimedOut`，一次宽限时间都不给。
+    let mut requested_at = if requested { Some(start) } else { None };
     loop {
         if worker_finished() {
-            return match requested_at {
-                Some(at) => WorkerLadder::StoppedWithinBudget {
-                    waited_ms: now_ms().saturating_sub(at),
-                },
-                None => WorkerLadder::Finished,
+            let base = requested_at.unwrap_or(start);
+            let waited_ms = now_ms().saturating_sub(base);
+            return if requested {
+                WorkerLadder::StoppedWithinBudget { waited_ms }
+            } else {
+                WorkerLadder::Finished
             };
         }
-        if requested_at.is_none() && signalled() {
+        if !requested && signalled() {
             supervisor.request_shutdown();
+            requested = true;
             requested_at = Some(now_ms());
         }
         if let Some(at) = requested_at {

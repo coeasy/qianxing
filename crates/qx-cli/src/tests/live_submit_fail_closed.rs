@@ -15,6 +15,8 @@ fn binance_submit_without_market_spec_fails_closed_with_no_order_fact() {
         .join("qianxing.runtime.production.example.json");
     let mut config = read_runtime_config(&template).unwrap();
     config.config_fingerprint = None;
+    // 决定走真实提交臂的是下面那条 `dry_run=false` 的控制命令，不是配置里的环境名；
+    // 环境本身必须写成闭合名单里的写法（#245），曾经的 `"test"` 已无法通过校验。
     config.environment = "paper".into();
     config.storage.data_dir = data_dir.to_string_lossy().into_owned();
     config.storage.backend = StorageBackend::Files;

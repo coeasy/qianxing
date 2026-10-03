@@ -22,9 +22,19 @@ mod supervision;
 mod worker_policy;
 
 pub use data_binding::{RuntimeDatasetBinding, RuntimeResearchBinding};
+/// #178：下面这份 `PipelineMetricsSnapshot` 的六个计数每笔 `ingest`/`refresh` 都在加，
+/// 出口在 `qx-cli/src/pipeline_metrics_report.rs`：Paper worker 把本轮用到的每个 pipeline
+/// 收进按 worker 进程累计的 `PipelineMetricsReporter`，每个 tick 写进
+/// `worker-metrics/<worker>.prom`，由 `/metrics` 聚合后印出带 `worker`/`account` 标签的
+/// `qx_pipeline_*` 样本。量纲因此是"每个 worker 进程自启动起累计"，唯一的归零边界是进程重启。
+/// 计数按对象自打开起累计、读路径又按请求各开一个 pipeline，所以出口端只认 worker 循环里
+/// 用完后 absorb 的那几个；`/api` 请求内的只读 pipeline 与 live venue worker（走
+/// `PipelineStorage`，不经 `open_account_pipeline`）仍在 capabilities 里登记为未接线的缺口。
+/// 出口、capabilities 条目与本段由判据 `pipeline_metrics_publication_and_docs_move_together` 同进同退。
 pub use pipeline::{
-    order_from_submit_command, LiveEventPipeline, LivePipelineSnapshot, PipelineMetricsSnapshot,
-    RuntimeBalanceDiscrepancy, RuntimeEventEnvelope, RuntimeExternalEvent, RuntimeIngestReceipt,
+    order_from_submit_command, LiveEventPipeline, LivePipelineSnapshot, OutboxRecovery,
+    PipelineMetricsSnapshot, RuntimeBalanceDiscrepancy, RuntimeEventEnvelope, RuntimeExternalEvent,
+    RuntimeIngestReceipt,
 };
 pub use runtime_config::*;
 pub use strategy_contract::*;
@@ -120,10 +130,6 @@ impl qx_execution::MarketDataPort for LiveEventPipeline {
 }
 
 /// 加载控制面状态；首次启动返回空状态，损坏的 JSON 不会被吞掉。
-///
-/// 写入侧不在这里：控制面状态的落盘只经 `ControlStateBackend`（file/sqlite/postgres
-/// 三本后端的 `transact`），这里再抄一颗 `save_control_state` 就是第二个写入入口
-/// ——它会绕过 backend 的锁与去重语义（V11 M4，与 H2 删 `sync_control` 同族）。
 pub fn load_control_state(
     root: impl Into<std::path::PathBuf>,
 ) -> Result<qx_control::ControlPlane, String> {

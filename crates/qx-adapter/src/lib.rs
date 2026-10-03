@@ -14,25 +14,20 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use rustls_pki_types::ServerName;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
 
 mod binance;
 mod ccxt;
-mod io_budget;
 mod reconcile;
-mod venue_cache;
 pub use binance::{
-    run_binance_stream, run_binance_user_stream, run_binance_user_stream_with_config_loader,
+    run_binance_user_stream, run_binance_user_stream_with_config_loader, BinanceQuotePoll,
     BinanceSpotAuth, BinanceSpotCredentials, BinanceSpotMarketData, BinanceSpotMarketStream,
-    BinanceSpotUserStream, BinanceSpotVenue, BinanceStreamRead, BinanceStreamRetryPolicy,
-    BinanceStreamRunReport, BinanceStreamSession, BinanceUserStreamRunConfig,
+    BinanceSpotUserStream, BinanceSpotVenue, BinanceStreamPoll, BinanceStreamRetryPolicy,
+    BinanceStreamRunReport, BinanceUserStreamRunConfig, BinanceUserStreamSession,
 };
-pub use ccxt::{CcxtProcessClient, CcxtProcessVenue, CcxtRpc};
-pub use io_budget::write_all_within;
+pub use ccxt::{ccxt_idle_window_ms, CcxtProcessClient, CcxtProcessVenue, CcxtRpc};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct HttpRequest {
@@ -60,15 +55,15 @@ pub struct WebSocketMessage {
     pub payload: Vec<u8>,
 }
 
-/// 一次 WebSocket 读的三态结果：拿到消息、这一轮连接上没数据、对端正常关闭。
-///
-/// `Idle` 与"失败"必须分开（V11 N10）：会话 socket 带读超时，超时只是"此刻没有帧"，
-/// 连接依然可用。把它和真正的传输故障混成一类，一条长时间无人成交的薄行情就会
-/// 杀掉订阅它的整个进程。
+/// 一次 `recv_message` 窗口的结局。`Idle` 与 `Closed` 分开是必需的：把"这一窗没有帧"
+/// 当成链路故障，会让一个连着但长时间没有事件的账户按重连预算被判死。
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum WebSocketRead {
+pub enum WebSocketPoll {
+    /// 拿到一条数据帧。
     Message(WebSocketMessage),
+    /// 读窗口到期，链路仍在原样等待。
     Idle,
+    /// 对端发来关闭帧。
     Closed,
 }
 
@@ -139,7 +134,11 @@ impl TlsWebSocketUserStream {
         }
         let server_name =
             ServerName::try_from(host.clone()).map_err(|_| format!("TLS 主机名非法: {host}"))?;
-        let address = resolve_socket_address(&host, port, timeout, "WSS")?;
+        let address = (host.as_str(), port)
+            .to_socket_addrs()
+            .map_err(|error| error.to_string())?
+            .next()
+            .ok_or_else(|| "无法解析 WSS 地址".to_string())?;
         let stream =
             TcpStream::connect_timeout(&address, timeout).map_err(|error| error.to_string())?;
         stream
@@ -171,7 +170,7 @@ impl TlsWebSocketUserStream {
             .stream
             .write_all(request.as_bytes())
             .map_err(|error| error.to_string())?;
-        let response = read_header_block(&mut session.stream, timeout)?;
+        let response = read_header_block(&mut session.stream)?;
         validate_websocket_handshake(&response, &key)?;
         Ok(session)
     }
@@ -184,8 +183,10 @@ impl TlsWebSocketUserStream {
         write_client_frame(&mut self.stream, 0x1, payload.as_bytes())
     }
 
-    pub fn recv_message(&mut self) -> Result<WebSocketRead, String> {
-        read_websocket_message(&mut self.stream)
+    /// 读一帧。三种结局必须分开：拿到帧、这一窗没帧但链路仍在（`Idle`）、对端正常关闭。
+    /// 旧口径把超时算成 `Err`，于是空闲会话会去消费重连预算。
+    pub fn recv_message(&mut self) -> Result<WebSocketPoll, String> {
+        poll_websocket_message(&mut self.stream)
     }
 
     pub fn close(&mut self) -> Result<(), String> {
@@ -253,8 +254,11 @@ impl HttpTransport for TlsHttpTransport {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, String> {
         let server_name = ServerName::try_from(request.host.clone())
             .map_err(|_| format!("TLS 主机名非法: {}", request.host))?;
-        let address =
-            resolve_socket_address(&request.host, request.port, self.timeout, "TLS HTTP")?;
+        let address = (request.host.as_str(), request.port)
+            .to_socket_addrs()
+            .map_err(|error| error.to_string())?
+            .next()
+            .ok_or_else(|| "无法解析 TLS HTTP 地址".to_string())?;
         let stream = TcpStream::connect_timeout(&address, self.timeout)
             .map_err(|error| error.to_string())?;
         stream
@@ -303,64 +307,9 @@ fn format_http_request(request: &HttpRequest) -> String {
     )
 }
 
-/// 把一段可能不返回的阻塞工作放到一条短命线程上，只等 `budget`。
-///
-/// 界到的是**调用方的等待**，不是那条线程本身：预算用尽后它仍在原地跑，跑完才退。
-/// 这三处调用点每次构造一条、随解析结束而结束，不会攒出第二条（V11 O9）。
-fn within_budget<T, F>(thread_name: &str, budget: Duration, work: F) -> Result<T, RecvTimeoutError>
-where
-    T: Send + 'static,
-    F: FnOnce() -> T + Send + 'static,
-{
-    let (sender, receiver) = mpsc::channel();
-    std::thread::Builder::new()
-        .name(thread_name.to_string())
-        .spawn(move || {
-            let _ = sender.send(work());
-        })
-        .map_err(|_| RecvTimeoutError::Disconnected)?;
-    receiver.recv_timeout(budget)
-}
-
-/// 带预算的地址解析。`to_socket_addrs` 走系统解析器，代码侧原本一个界都没有：
-/// 一台黑洞掉的 DNS 服务器（或一份配错的 resolv.conf）能让它在几十秒到几分钟里不返回，
-/// 而这段时间调用方既读不到停机令牌也回不到循环头——`connect_timeout` 只界住解析
-/// **之后**那一跳（V11 O9）。
-fn resolve_socket_address(
-    host: &str,
-    port: u16,
-    budget: Duration,
-    label: &str,
-) -> Result<SocketAddr, String> {
-    let host = host.to_string();
-    match within_budget(&format!("qianxing-dns-{label}"), budget, move || {
-        (host.as_str(), port)
-            .to_socket_addrs()
-            .map(|mut addresses| addresses.next())
-            .map_err(|error| error.to_string())
-    }) {
-        Ok(Ok(Some(address))) => Ok(address),
-        Ok(Ok(None)) => Err(format!("{label} 地址解析不到任何 socket 地址")),
-        Ok(Err(error)) => Err(format!("{label} 地址解析失败: {error}")),
-        Err(RecvTimeoutError::Timeout) => Err(format!("{label} 地址解析超过 {budget:?} 预算")),
-        Err(RecvTimeoutError::Disconnected) => Err(format!("{label} 地址解析线程异常退出")),
-    }
-}
-
-fn read_header_block<R: Read>(reader: &mut R, budget: Duration) -> Result<String, String> {
-    // 逐字节读意味着"单次读有界"不等于"整块有界"：socket 的 10 秒读超时只管一次
-    // `read_exact`，一个每 9 秒吐一个字节的对端能把一次握手占住 65536 × 10 秒，而 64 KiB
-    // 那道上限只在累计之后才问。这里在每一字节的读之前问一次墙钟，整块的成本因此收在
-    // `budget` 之内（最坏再加一次已经被 socket 超时界住的读）（V11 O7）。
-    let deadline = Instant::now() + budget;
+fn read_header_block<R: Read>(reader: &mut R) -> Result<String, String> {
     let mut bytes = Vec::new();
     loop {
-        if Instant::now() >= deadline {
-            return Err(format!(
-                "WebSocket 握手响应超过整体截止 {budget:?}，已读 {} 字节",
-                bytes.len()
-            ));
-        }
         let mut byte = [0_u8; 1];
         reader
             .read_exact(&mut byte)
@@ -449,48 +398,96 @@ fn write_client_frame<W: Write>(writer: &mut W, opcode: u8, payload: &[u8]) -> R
     writer.write_all(&frame).map_err(|error| error.to_string())
 }
 
-/// 一条 WebSocket 消息的长度预算：单帧与分片累计共用同一个数，分片不额外放宽。
+/// 一次读帧窗口的结局：等到帧，或在**帧边界上**超时（链路仍然可用）。
+#[derive(Debug)]
+enum FramePoll {
+    Frame((bool, u8, Vec<u8>)),
+    Idle,
+}
+
+/// 单条服务端帧的长度上限。
+const MAX_WEBSOCKET_FRAME_BYTES: u64 = 16 * 1024 * 1024;
+/// 一条拼好的消息的长度上限：帧长各自有闸门，但分片可以一直续，只卡帧长的话
+/// 一条永不置 `fin` 的分片序列就能把拼帧缓冲吃到耗尽。
 const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+/// 一次 `poll_websocket_message` 里最多消费多少条帧。调用方的停机令牌只在 poll
+/// 返回之后才读得到（`binance.rs` 的 `while !should_stop()`），对端持续塞 ping 或
+/// 续帧时这条上限是这条循环唯一的出口。
+const MAX_WEBSOCKET_FRAMES_PER_POLL: usize = 64;
 
-/// 读出一条完整消息的墙钟预算。socket 的读超时（shipped 10 s，
-/// crates/qx-cli/src/venue_runtime/binance_stream_worker.rs:40）只界住"这一轮有没有字节"：
-/// 对端只要每个读窗滴一帧，下面的循环就永不出头，而调用点的停机令牌与心跳一起被饿死
-/// ——那颗内层 `while !should_stop()` 要等这条调用返回才轮得到下一次判定（V13 第 8 轮 C5）。
-/// 120 s 是 12 个读窗：预算之内的合法最坏情况是一条 16 MiB 的消息，健康链路几秒就能收完。
-const WEBSOCKET_MESSAGE_BUDGET: Duration = Duration::from_secs(120);
-
-/// 单次调用允许吞下的帧数上界。长度预算管字节，这颗管圈数：滴 1 字节控制帧的对端
-/// 在一颗读窗里就能转上成千圈，把行情读侧变成 CPU 与 Pong 写回的永动机。
-/// 8 192 帧配 16 MiB 的消息预算，等价于要求整条消息的平均帧不小于 2 KiB。
-const MAX_WEBSOCKET_FRAMES_PER_MESSAGE: usize = 8_192;
-
-/// 这次读失败是否只是"此刻没有数据"。
-///
-/// 两种错误码都得认：`set_read_timeout` 到期时 std 给 `TimedOut`，而 rustls 会把底层
-/// 的 would-block 直接透传成 `WouldBlock`。它们都代表连接仍然完好，只是静默。
-fn is_read_timeout(error: &std::io::Error) -> bool {
+/// 套接字读超时不是断链：`set_read_timeout` 之后 `read_exact` 会以 `WouldBlock`/`TimedOut`
+/// 返回，把它当成会话故障会让"连着但没数据"的账户在几个窗口内被判死。
+fn is_read_window_expired(error: &std::io::Error) -> bool {
     matches!(
         error.kind(),
         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
     )
 }
 
-/// 读出下一帧的头部与载荷；`Ok(None)` 表示**一个字节都没消耗**就超时。
-///
-/// 静默判定只能落在帧边界上：读走半个头部再按 idle 交还，下一次调用会把剩下的字节
-/// 当成新帧的起点，整条读侧从此错位下去——那种情况必须失败，让上层重连。
-fn read_server_frame_or_idle<R: Read>(
-    reader: &mut R,
-) -> Result<Option<(bool, u8, Vec<u8>)>, String> {
-    let mut head = [0_u8; 2];
-    let mut filled = 0_usize;
-    while filled < head.len() {
-        match reader.read(&mut head[filled..]) {
-            Ok(0) => return Err("WebSocket 连接已被对端关闭".into()),
-            Ok(read) => filled += read,
-            Err(error) if filled == 0 && is_read_timeout(&error) => return Ok(None),
-            Err(error) => return Err(format!("WebSocket 帧头读取失败: {error}")),
+/// 从字节流里拼出一条完整消息，并把"读窗到期"的两种位置分开：还没有半截消息时是
+/// 空闲（链路仍在），已经开始收消息时是故障（跨帧串流会把下一条帧读成这条的尾部）。
+/// 独立成泛型函数是因为 `TlsWebSocketUserStream` 的流字段是具体 TLS 类型，挂在方法上
+/// 的这条分支构造不出来 —— 变异把中途超时降级成空闲时全树仍绿。
+/// 循环的两个上限（消息总长、单次 poll 的帧数）是这条路径唯一的退出保证：见
+/// `MAX_WEBSOCKET_MESSAGE_BYTES` 与 `MAX_WEBSOCKET_FRAMES_PER_POLL`（V13 R2 第十四遍 #213）。
+fn poll_websocket_message<R: Read + Write>(reader: &mut R) -> Result<WebSocketPoll, String> {
+    let mut message = None;
+    let mut consumed_frames = 0_usize;
+    loop {
+        let (fin, opcode, payload) = match poll_server_frame(reader)? {
+            FramePoll::Frame(frame) => frame,
+            FramePoll::Idle if message.is_none() => return Ok(WebSocketPoll::Idle),
+            // 半截帧之后才超时：帧边界已经破了，不能报空闲。
+            FramePoll::Idle => return Err("WebSocket 分帧读取中途超时".into()),
+        };
+        consumed_frames = consumed_frames.saturating_add(1);
+        if consumed_frames > MAX_WEBSOCKET_FRAMES_PER_POLL {
+            return Err(format!(
+                "WebSocket 单次读取窗口内帧数超过 {MAX_WEBSOCKET_FRAMES_PER_POLL} 上限"
+            ));
         }
+        match opcode {
+            0x8 => return Ok(WebSocketPoll::Closed),
+            0x9 => {
+                write_client_frame(reader, 0xA, &payload)?;
+                continue;
+            }
+            0xA => continue,
+            0x1 | 0x2 if message.is_none() => {
+                message = Some(WebSocketMessage { opcode, payload });
+                if fin {
+                    return Ok(WebSocketPoll::Message(
+                        message.take().expect("message just set"),
+                    ));
+                }
+            }
+            0x0 if message.is_some() => {
+                let current = message.as_mut().expect("message checked");
+                if current.payload.len().saturating_add(payload.len()) > MAX_WEBSOCKET_MESSAGE_BYTES
+                {
+                    return Err(format!(
+                        "WebSocket 分片消息超过 {} MiB 上限",
+                        MAX_WEBSOCKET_MESSAGE_BYTES / (1024 * 1024)
+                    ));
+                }
+                current.payload.extend_from_slice(&payload);
+                if fin {
+                    return Ok(WebSocketPoll::Message(
+                        message.take().expect("message checked"),
+                    ));
+                }
+            }
+            _ => return Err("WebSocket 分片 opcode 或控制帧非法".into()),
+        }
+    }
+}
+
+fn poll_server_frame<R: Read>(reader: &mut R) -> Result<FramePoll, String> {
+    let mut head = [0_u8; 2];
+    // 只在帧头之前判定空闲：半截帧超时仍然算故障，否则会跨帧串流。
+    match reader.read_exact(&mut head) {
+        Err(error) if is_read_window_expired(&error) => return Ok(FramePoll::Idle),
+        result => result.map_err(|error| error.to_string())?,
     }
     let fin = head[0] & 0x80 != 0;
     let opcode = head[0] & 0x0F;
@@ -503,19 +500,19 @@ fn read_server_frame_or_idle<R: Read>(
         let mut extended = [0_u8; 2];
         reader
             .read_exact(&mut extended)
-            .map_err(|error| format!("WebSocket 扩展长度读取失败: {error}"))?;
+            .map_err(|error| error.to_string())?;
         length = u64::from(u16::from_be_bytes(extended));
     } else if length == 127 {
         let mut extended = [0_u8; 8];
         reader
             .read_exact(&mut extended)
-            .map_err(|error| format!("WebSocket 扩展长度读取失败: {error}"))?;
+            .map_err(|error| error.to_string())?;
         length = u64::from_be_bytes(extended);
     }
-    if length > MAX_WEBSOCKET_MESSAGE_BYTES as u64 {
+    if length > MAX_WEBSOCKET_FRAME_BYTES {
         return Err(format!(
             "WebSocket 帧超过 {} MiB 限制",
-            MAX_WEBSOCKET_MESSAGE_BYTES / (1024 * 1024)
+            MAX_WEBSOCKET_FRAME_BYTES / (1024 * 1024)
         ));
     }
     if opcode >= 0x8 && (!fin || length > 125) {
@@ -524,83 +521,8 @@ fn read_server_frame_or_idle<R: Read>(
     let mut payload = vec![0_u8; length as usize];
     reader
         .read_exact(&mut payload)
-        .map_err(|error| format!("WebSocket 帧载荷读取失败: {error}"))?;
-    Ok(Some((fin, opcode, payload)))
-}
-
-/// 读出一条完整的 WebSocket 消息：答 ping、跳 pong、把分片拼回一条。
-///
-/// 长度预算按**整条消息**算，不只是按帧（V11 N11）：只卡单帧的话，对端只要把一条
-/// 超大消息切成一串各自合法的片段，就能让这里的缓冲无界长大，而这条链路是行情
-/// 用户流的共用读侧——它先 OOM，同一颗进程里的所有订阅就一起没了。
-fn read_websocket_message<R: Read + Write>(stream: &mut R) -> Result<WebSocketRead, String> {
-    read_websocket_message_within(
-        stream,
-        WEBSOCKET_MESSAGE_BUDGET,
-        MAX_WEBSOCKET_FRAMES_PER_MESSAGE,
-    )
-}
-
-/// 预算与帧数上界做成形参，只为用例能在几十毫秒的窗口里打到这两颗名——
-/// 生产只走上面那两颗常量。
-fn read_websocket_message_within<R: Read + Write>(
-    stream: &mut R,
-    budget: Duration,
-    max_frames: usize,
-) -> Result<WebSocketRead, String> {
-    let deadline = Instant::now() + budget;
-    let mut frames = 0_usize;
-    let mut message = None;
-    loop {
-        if frames >= max_frames {
-            return Err(format!(
-                "WebSocket 分片帧数超过 {max_frames} 上界，断开重连"
-            ));
-        }
-        if Instant::now() >= deadline {
-            return Err(format!(
-                "WebSocket 单条消息读取超过整体截止 {budget:?}，断开重连"
-            ));
-        }
-        let Some((fin, opcode, payload)) = read_server_frame_or_idle(stream)? else {
-            // 攒着半条消息时静默不能当好消息交出去：续帧随后就到，届时 `0x0` 会被
-            // 当成非法首帧。宁可让上层重连一次，也不能把已收下的片段装作没发生。
-            if message.is_some() {
-                return Err("WebSocket 分片之间读取超时，半条消息不可恢复".into());
-            }
-            return Ok(WebSocketRead::Idle);
-        };
-        frames += 1;
-        match opcode {
-            0x8 => return Ok(WebSocketRead::Closed),
-            0x9 => {
-                write_client_frame(stream, 0xA, &payload)?;
-                continue;
-            }
-            0xA => continue,
-            0x1 | 0x2 if message.is_none() => {
-                let current = WebSocketMessage { opcode, payload };
-                if fin {
-                    return Ok(WebSocketRead::Message(current));
-                }
-                message = Some(current);
-            }
-            0x0 if message.is_some() => {
-                let current = message.as_mut().expect("message checked");
-                if current.payload.len() + payload.len() > MAX_WEBSOCKET_MESSAGE_BYTES {
-                    return Err(format!(
-                        "WebSocket 分片累计长度超过 {} MiB 限制",
-                        MAX_WEBSOCKET_MESSAGE_BYTES / (1024 * 1024)
-                    ));
-                }
-                current.payload.extend_from_slice(&payload);
-                if fin {
-                    return Ok(WebSocketRead::Message(message.expect("message checked")));
-                }
-            }
-            _ => return Err("WebSocket 分片 opcode 或控制帧非法".into()),
-        }
-    }
+        .map_err(|error| error.to_string())?;
+    Ok(FramePoll::Frame((fin, opcode, payload)))
 }
 
 fn sha1_digest(input: &[u8]) -> [u8; 20] {
@@ -693,7 +615,11 @@ fn encode_base64(bytes: &[u8]) -> String {
 
 impl HttpTransport for TcpHttpTransport {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, String> {
-        let address = resolve_socket_address(&request.host, request.port, self.timeout, "HTTP")?;
+        let address = (request.host.as_str(), request.port)
+            .to_socket_addrs()
+            .map_err(|error| error.to_string())?
+            .next()
+            .ok_or_else(|| "无法解析 HTTP 地址".to_string())?;
         let mut stream = TcpStream::connect_timeout(&address, self.timeout)
             .map_err(|error| error.to_string())?;
         stream
@@ -752,396 +678,4 @@ pub enum AdapterReconcileIssue {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Cursor;
-    use std::net::TcpListener;
-    use std::thread;
-
-    #[test]
-    fn http_transport_preserves_vendor_form_content_type() {
-        let mut headers = BTreeMap::new();
-        headers.insert(
-            "content-type".into(),
-            "application/x-www-form-urlencoded".into(),
-        );
-        let wire = format_http_request(&HttpRequest {
-            method: "POST".into(),
-            host: "api.example.test".into(),
-            port: 443,
-            path: "/api/v3/order".into(),
-            body: "symbol=BTCUSDT".into(),
-            headers,
-        });
-        assert!(wire.contains("Content-Type: application/x-www-form-urlencoded\r\n"));
-        assert!(!wire.contains("Content-Type: application/json\r\n"));
-        assert_eq!(wire.matches("Content-Type:").count(), 1);
-    }
-
-    #[test]
-    fn tls_transport_rejects_invalid_server_name_before_connecting() {
-        let error = TlsHttpTransport::default().send(HttpRequest {
-            method: "GET".into(),
-            host: "not a valid host name".into(),
-            port: 443,
-            path: "/health".into(),
-            body: String::new(),
-            headers: BTreeMap::new(),
-        });
-        assert!(error.unwrap_err().contains("TLS 主机名非法"));
-    }
-
-    #[test]
-    fn websocket_user_stream_validates_rfc_handshake_and_server_frames() {
-        assert_eq!(
-            websocket_accept_key("dGhlIHNhbXBsZSBub25jZQ=="),
-            "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
-        );
-        let response = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
-        validate_websocket_handshake(response, "dGhlIHNhbXBsZSBub25jZQ==").unwrap();
-        let mut frames = Cursor::new(vec![0x81, 0x02, b'o', b'k']);
-        assert_eq!(
-            read_server_frame_or_idle(&mut frames).unwrap(),
-            Some((true, 0x1, b"ok".to_vec()))
-        );
-    }
-
-    /// 按脚本交付字节的假 socket：`Ok(bytes)` 表示这次读给出这些字节（空 = EOF），
-    /// `Err(kind)` 表示这次读以该错误码失败。脚本走完即失败，避免用例悄悄多读。
-    struct ScriptedSocket {
-        steps: Vec<Result<Vec<u8>, std::io::ErrorKind>>,
-        index: usize,
-        written: Vec<u8>,
-    }
-
-    impl ScriptedSocket {
-        fn new(steps: Vec<Result<Vec<u8>, std::io::ErrorKind>>) -> Self {
-            Self {
-                steps,
-                index: 0,
-                written: Vec::new(),
-            }
-        }
-    }
-
-    impl Read for ScriptedSocket {
-        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-            let step = self
-                .steps
-                .get(self.index)
-                .ok_or_else(|| std::io::Error::other("脚本已用尽"))?;
-            self.index += 1;
-            match step {
-                Ok(bytes) => {
-                    let length = bytes.len().min(buffer.len());
-                    buffer[..length].copy_from_slice(&bytes[..length]);
-                    Ok(length)
-                }
-                Err(kind) => Err(std::io::Error::from(*kind)),
-            }
-        }
-    }
-
-    impl Write for ScriptedSocket {
-        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-            self.written.extend_from_slice(buffer);
-            Ok(buffer.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    /// V11 N10：读超时是"这一轮没数据"，不是故障。把它当故障会让一条无人成交的
-    /// 薄行情杀掉订阅进程，而这里返回 idle 的前提是读位置还停在帧边界上。
-    #[test]
-    fn websocket_silence_at_a_frame_boundary_keeps_the_connection_usable() {
-        let mut socket = ScriptedSocket::new(vec![
-            Err(std::io::ErrorKind::WouldBlock),
-            Ok(vec![0x81, 0x02]),
-            Ok(b"ok".to_vec()),
-            Err(std::io::ErrorKind::TimedOut),
-            Ok(server_frame(true, 0x8, &[])),
-        ]);
-        assert_eq!(
-            read_websocket_message(&mut socket).unwrap(),
-            WebSocketRead::Idle
-        );
-        // 同一颗 socket 接着给出真帧：idle 没有把读位置弄乱，两种超时错误码也都认。
-        let message = read_websocket_message(&mut socket).unwrap();
-        assert_eq!(
-            message,
-            WebSocketRead::Message(WebSocketMessage {
-                opcode: 0x1,
-                payload: b"ok".to_vec()
-            })
-        );
-        assert_eq!(
-            read_websocket_message(&mut socket).unwrap(),
-            WebSocketRead::Idle
-        );
-        assert_eq!(
-            read_websocket_message(&mut socket).unwrap(),
-            WebSocketRead::Closed
-        );
-    }
-
-    /// 反面：消耗了半个头部之后的超时不能报静默，否则下一次调用会把剩下的字节当成
-    /// 新帧起点；EOF 与真正的传输故障同样必须失败。
-    #[test]
-    fn websocket_timeout_after_the_first_header_byte_fails_instead_of_claiming_silence() {
-        let mut half_header =
-            ScriptedSocket::new(vec![Ok(vec![0x81]), Err(std::io::ErrorKind::WouldBlock)]);
-        let error = read_websocket_message(&mut half_header).unwrap_err();
-        assert!(error.contains("帧头"), "半截头部要说清是帧头: {error}");
-
-        let mut reset = ScriptedSocket::new(vec![Err(std::io::ErrorKind::ConnectionReset)]);
-        let error = read_websocket_message(&mut reset).unwrap_err();
-        assert!(error.contains("帧头"), "非超时故障不该被当成静默: {error}");
-
-        let mut eof = ScriptedSocket::new(vec![Ok(Vec::new())]);
-        let error = read_websocket_message(&mut eof).unwrap_err();
-        assert!(
-            error.contains("对端关闭"),
-            "EOF 必须失败而不是无限空转: {error}"
-        );
-    }
-
-    /// 半条分片消息上的超时同样不是静默：续帧随后就到，届时 `0x0` 会被当成非法首帧。
-    #[test]
-    fn websocket_timeout_between_fragments_discards_the_partial_message() {
-        let mut socket = ScriptedSocket::new(vec![
-            Ok(vec![0x01, 0x01]),
-            Ok(b"a".to_vec()),
-            Err(std::io::ErrorKind::WouldBlock),
-        ]);
-        let error = read_websocket_message(&mut socket).unwrap_err();
-        assert!(
-            error.contains("半条消息"),
-            "分片间超时要说清丢了一半: {error}"
-        );
-    }
-
-    /// 按 RFC 6455 编一个服务端帧（不带掩码），长度取 7/16/64 位三档里最短的那档。
-    fn server_frame(fin: bool, opcode: u8, payload: &[u8]) -> Vec<u8> {
-        let mut frame = vec![if fin { 0x80 } else { 0 } | opcode];
-        let length = payload.len();
-        if length < 126 {
-            frame.push(length as u8);
-        } else if length <= u16::MAX as usize {
-            frame.push(126);
-            frame.extend_from_slice(&(length as u16).to_be_bytes());
-        } else {
-            frame.push(127);
-            frame.extend_from_slice(&(length as u64).to_be_bytes());
-        }
-        frame.extend_from_slice(payload);
-        frame
-    }
-
-    /// V11 N11：单帧上限管不住分片，预算必须按整条消息算。
-    #[test]
-    fn websocket_fragment_accumulation_is_bounded_by_the_message_budget() {
-        // 首片留两片字节的余量，好让"正好到预算"和"越一格"两条用例共用同一份前缀。
-        let mut prefix = Vec::new();
-        prefix.extend_from_slice(&server_frame(
-            false,
-            0x1,
-            &vec![b'a'; MAX_WEBSOCKET_MESSAGE_BYTES - 2],
-        ));
-        prefix.extend_from_slice(&server_frame(false, 0x0, b"b"));
-
-        // 正向对照：整条消息恰好等于预算必须放行。只测"越界会报"的话，把预算
-        // 改成任意小的数也能让那条断言绿——这里要的是"限制正确"而非"限制存在"。
-        let mut legal = prefix.clone();
-        legal.extend_from_slice(&server_frame(true, 0x0, b"c"));
-        let reassembled = match read_websocket_message(&mut Cursor::new(legal)).unwrap() {
-            WebSocketRead::Message(message) => message,
-            other => panic!("合法的分片消息该拼成一条，实际 {other:?}"),
-        };
-        assert_eq!(reassembled.opcode, 0x1);
-        assert_eq!(reassembled.payload.len(), MAX_WEBSOCKET_MESSAGE_BYTES);
-        assert_eq!(reassembled.payload[0], b'a');
-        assert_eq!(*reassembled.payload.last().unwrap(), b'c');
-
-        // 反向：每一片单独都合法，只有整条消息的预算拦得住。
-        prefix.extend_from_slice(&server_frame(false, 0x0, b"c"));
-        prefix.extend_from_slice(&server_frame(true, 0x0, b"d"));
-        let error = match read_websocket_message(&mut Cursor::new(prefix)) {
-            Err(error) => error,
-            Ok(WebSocketRead::Message(message)) => panic!(
-                "越出一格预算的分片消息不该被收下: 长度 {:?}",
-                message.payload.len()
-            ),
-            Ok(read) => panic!("越出一格预算的分片消息不该被收下: {read:?}"),
-        };
-        assert!(error.contains("累计"), "越界要说清是分片累计: {error}");
-    }
-
-    /// 单帧那一格也要有用例：它管的是"对端一开口就声明一条超限消息"，这时一个字节
-    /// 的载荷都不该去读，更不该为此先分配缓冲。
-    #[test]
-    fn websocket_frame_announcing_more_than_the_budget_fails_before_reading_payload() {
-        let mut frame = vec![0x82, 0x7F];
-        frame.extend_from_slice(&((MAX_WEBSOCKET_MESSAGE_BYTES as u64) + 1).to_be_bytes());
-        let error = read_websocket_message(&mut Cursor::new(frame))
-            .expect_err("超限帧不该被收下，也不该先去读那 16 MiB + 1");
-        assert!(
-            error.contains("MiB 限制"),
-            "要说是预算挡下的，不是读取失败: {error}"
-        );
-    }
-
-    /// 滴控制帧的对端不吃长度预算：每帧才两字节，永远凑不满 16 MiB，走的又是
-    /// `0x9` 那臂的 `continue`。这里只有帧数上界拦得住，摘掉它就是一次无人接管的永动。
-    #[test]
-    fn websocket_frame_dribble_stops_at_its_frame_ceiling() {
-        const TEST_FRAMES: usize = 12;
-        let mut socket =
-            ScriptedSocket::new(vec![Ok(server_frame(true, 0x9, &[])); TEST_FRAMES + 4]);
-        let error =
-            read_websocket_message_within(&mut socket, Duration::from_secs(3_600), TEST_FRAMES)
-                .expect_err("滴 Ping 的对端不能让这次调用一直不返回");
-        assert!(error.contains("帧数"), "要说清是帧数上界挡下的: {error}");
-        // 上界要正好落在第 TEST_FRAMES 帧：多吞一圈就说明数的是别的什么。
-        assert_eq!(socket.index, TEST_FRAMES, "帧数上界没有按这颗数收口");
-        assert!(
-            !socket.written.is_empty(),
-            "没写出 Pong 就没走过 Ping 那臂，用例打的不是滴帧这条路径"
-        );
-    }
-
-    /// 每读一次先睡 `delay` 再给一帧的假 socket：这正是"每个读窗滴一帧"的对端形状。
-    /// socket 的读超时在这里永远等不到，因为字节一直在来——只有墙钟拦得住。
-    struct DribblingSocket {
-        frame: Vec<u8>,
-        delay: Duration,
-        reads: usize,
-    }
-
-    impl Read for DribblingSocket {
-        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-            std::thread::sleep(self.delay);
-            self.reads += 1;
-            let length = self.frame.len().min(buffer.len());
-            buffer[..length].copy_from_slice(&self.frame[..length]);
-            Ok(length)
-        }
-    }
-
-    impl Write for DribblingSocket {
-        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-            Ok(buffer.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    /// 反面：帧数那颗不能替墙钟背锅。把预算之外的都留给帧数上界，这里必须报"整体截止"。
-    #[test]
-    fn websocket_dribble_hits_the_wall_clock_before_the_frame_ceiling() {
-        let mut socket = DribblingSocket {
-            frame: server_frame(true, 0x9, &[]),
-            delay: Duration::from_millis(15),
-            reads: 0,
-        };
-        let started = Instant::now();
-        let error = read_websocket_message_within(
-            &mut socket,
-            Duration::from_millis(40),
-            MAX_WEBSOCKET_FRAMES_PER_MESSAGE,
-        )
-        .expect_err("每窗滴一帧的对端必须被整体截止拦下");
-        assert!(error.contains("整体截止"), "要说清是墙钟挡下的: {error}");
-        assert!(
-            socket.reads < MAX_WEBSOCKET_FRAMES_PER_MESSAGE,
-            "真吞下的帧数远不到上界，报的却该是截止: 实际 {} 帧",
-            socket.reads
-        );
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "截止要在预算附近收口，实际等了 {:?}",
-            started.elapsed()
-        );
-    }
-
-    /// 逐字节读的握手块要有一个**整体**截止：socket 的读超时只界住单次 `read_exact`，
-    /// 一个每 9 秒吐一个字节的对端过去能把一次握手占住 65536 × 超时，而 64 KiB 那道上限
-    /// 只在累计之后才问（V11 O7）。
-    #[test]
-    fn websocket_handshake_header_block_stops_at_its_own_deadline() {
-        struct Dribble;
-        impl Read for Dribble {
-            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                buf[0] = b'A';
-                Ok(1)
-            }
-        }
-        let error = read_header_block(&mut Dribble, Duration::ZERO)
-            .expect_err("永不结束的响应块必须在整体截止处收掉");
-        assert!(
-            error.contains("整体截止"),
-            "要说是截止挡下的，不是读取失败: {error}"
-        );
-        // 正向对照：合法而完整的响应块，只要在截止之内就必须照常读完。
-        let block = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n".to_vec();
-        let read = read_header_block(&mut Cursor::new(block), Duration::from_secs(10))
-            .expect("截止之内的完整响应块不该被拒");
-        assert!(read.contains("101"), "读回来的应是整块响应: {read}");
-    }
-
-    /// 地址解析的预算管的是"调用方最多等多久"：一条不返回的解析过去能把整个 worker 带走
-    /// ——它既读不到停机令牌也回不到循环头（V11 O9）。
-    #[test]
-    fn address_resolution_returns_to_its_caller_at_the_budget() {
-        let started = Instant::now();
-        let error = within_budget("qianxing-test-slow", Duration::from_millis(20), || {
-            std::thread::sleep(Duration::from_millis(400));
-            "never arrives in time"
-        })
-        .expect_err("超过预算的阻塞工作必须把等待交还给调用方");
-        assert!(
-            matches!(error, RecvTimeoutError::Timeout),
-            "要说是预算到点，不是线程没了: {error:?}"
-        );
-        assert!(
-            started.elapsed() < Duration::from_millis(300),
-            "预算 20ms 却等了 {:?}，等于没界",
-            started.elapsed()
-        );
-        // 正向对照：预算之内的解析照常把地址交回来。
-        let address = resolve_socket_address("127.0.0.1", 9, Duration::from_secs(5), "test")
-            .expect("字面量 IP 的解析不该失败");
-        assert_eq!(address.ip().to_string(), "127.0.0.1");
-    }
-
-    #[test]
-    fn tcp_transport_executes_a_real_http_request() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let worker = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 1024];
-            let _ = stream.read(&mut request).unwrap();
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
-                .unwrap();
-        });
-        let response = TcpHttpTransport::default()
-            .send(HttpRequest {
-                method: "GET".into(),
-                host: address.ip().to_string(),
-                port: address.port(),
-                path: "/health".into(),
-                body: String::new(),
-                headers: BTreeMap::new(),
-            })
-            .unwrap();
-        worker.join().unwrap();
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body, "ok");
-    }
-}
+mod tests;

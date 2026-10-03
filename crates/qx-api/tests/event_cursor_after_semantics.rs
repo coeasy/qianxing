@@ -4,35 +4,26 @@
 //! **事件序号**过滤。日志被裁剪过（或序号从不为 0 开始）时，下标与序号必然错位：
 //! 同一个游标会让两条链给出不同的事件批次，`after` 落在数组内还会把"游标已经失效"
 //! 印成"没有新事件"，让客户端停在旧状态而不自知。
-//!
-//! 夹具落在账户投影上：全局 `events`/`event_bus` 已在 V11 F1 删掉，事件与实时游标只
-//! 住在 `ApiAccountProjection` 里，两条读链因此都必须带 `account_id` + `venue_id`。
 
-use qx_api::{ApiAccountProjection, ApiEventBus, ApiProjectionKey, ApiService, ApiState};
+use qx_api::{ApiEventBus, ApiService, ApiState};
 use qx_core::{Event, EventKind, Priority};
 
-const KEY: &str = "account_id=acct-a&venue_id=binance";
-
 /// 让两条读链看到**同一份**被裁剪过的日志：总线按容量 3 裁到序号 5/6/7，
-/// 投影日志直接以这三条起步（下标 0/1/2、序号 5/6/7 —— 两者从此不再相等）。
+/// 事件日志直接以这三条起步（下标 0/1/2、序号 5/6/7 —— 两者从此不再相等）。
 fn service_with_trimmed_logs() -> ApiService {
-    let mut projection = ApiAccountProjection::default();
-    projection.event_bus = ApiEventBus::new(3).expect("用例总线容量必须合法");
+    let mut state = ApiState::default();
+    state.event_bus = ApiEventBus::new(3).expect("用例总线容量必须合法");
     for seq in 0..8 {
-        projection
+        state
             .event_bus
             .publish(Event::new(seq, seq + 1, Priority::POST, EventKind::Settle))
             .expect("连续序号必须能发布");
     }
     for seq in 5..8 {
-        projection
+        state
             .events
             .append(Event::new(seq, seq + 1, Priority::POST, EventKind::Settle));
     }
-    let mut state = ApiState::default();
-    state
-        .projections
-        .insert(ApiProjectionKey::new("acct-a", "binance"), projection);
     ApiService::new(state)
 }
 
@@ -59,16 +50,16 @@ fn both_event_read_chains_answer_the_same_cursor_the_same_way() {
     // 5/6/7 是这份日志剩下的全部：游标 4 之前都算失效，5 起才是有效游标。
     for (query, expected) in [
         ("", vec![5, 6, 7]),
-        ("&after=5", vec![6, 7]),
-        ("&after=6", vec![7]),
-        ("&after=7", vec![]),
+        ("?after=5", vec![6, 7]),
+        ("?after=6", vec![7]),
+        ("?after=7", vec![]),
     ] {
-        let snapshot = service.handle("GET", &format!("/events?{KEY}{query}"), "", 1);
-        let live = service.handle("GET", &format!("/events/live?{KEY}{query}"), "", 1);
+        let snapshot = service.handle("GET", &format!("/events{query}"), "", 1);
+        let live = service.handle("GET", &format!("/events/live{query}"), "", 1);
         assert_eq!(
             (snapshot.status, live.status),
             (200, 200),
-            "游标 {query:?} 有效，两条链都必须给 200: events -> {}\nlive -> {}",
+            "游标 {query:?} 有效，两条链都必须给 200: {query} -> {}\nlive -> {}",
             snapshot.status,
             live.status
         );
@@ -87,9 +78,9 @@ fn both_event_read_chains_answer_the_same_cursor_the_same_way() {
 #[test]
 fn stale_or_ahead_cursors_are_rejected_on_both_chains() {
     let service = service_with_trimmed_logs();
-    for query in ["&after=1", "&after=3", "&after=8", "&after=99"] {
-        let snapshot = service.handle("GET", &format!("/events?{KEY}{query}"), "", 1);
-        let live = service.handle("GET", &format!("/events/live?{KEY}{query}"), "", 1);
+    for query in ["?after=1", "?after=3", "?after=8", "?after=99"] {
+        let snapshot = service.handle("GET", &format!("/events{query}"), "", 1);
+        let live = service.handle("GET", &format!("/events/live{query}"), "", 1);
         assert_eq!(
             (snapshot.status, live.status),
             (409, 409),
@@ -108,16 +99,12 @@ fn stale_or_ahead_cursors_are_rejected_on_both_chains() {
     }
     // 非无符号整数仍是客户端错误，且这条口径也归一到同一个解析器。
     assert_eq!(
-        service
-            .handle("GET", &format!("/events?{KEY}&after=x"), "", 1)
-            .status,
+        service.handle("GET", "/events?after=x", "", 1).status,
         400,
         "无效游标必须是 400"
     );
     assert_eq!(
-        service
-            .handle("GET", &format!("/events/live?{KEY}&after=x"), "", 1)
-            .status,
+        service.handle("GET", "/events/live?after=x", "", 1).status,
         400,
         "live 侧的无效游标必须同样是 400"
     );

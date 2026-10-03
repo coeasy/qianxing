@@ -575,12 +575,7 @@ fn load_through_registered_reader(
                 .map_err(|error| format!("Scheduler JobSpec JSON 无效: {error}"))?;
             let refused = jobs
                 .iter()
-                .filter(|job| job.enabled)
-                .filter_map(|job| {
-                    qx_scheduler::undispatchable_by_registry(job).map(|reason| {
-                        format!("作业 {} 的触发声明在运行时派发不到：{reason}", job.job_id)
-                    })
-                })
+                .filter_map(unsupported_dispatch_shape)
                 .collect::<Vec<_>>();
             if !refused.is_empty() {
                 return Err(refused.join("；"));

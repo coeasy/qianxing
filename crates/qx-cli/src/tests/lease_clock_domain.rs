@@ -17,10 +17,13 @@ fn daily_job(job_id: &str, concurrency_key: &str, timeout_seconds: u64) -> JobSp
         trigger: Trigger::Cron("* * * * *".into()),
         window: JobWindow::Any,
         depends_on: Vec::new(),
+        input_refs: vec![format!("dataset:{job_id}")],
+        output_refs: vec![format!("{job_id}-report")],
         timeout_seconds,
         retry_policy: RetryPolicy::default(),
         concurrency_key: concurrency_key.into(),
         idempotency_key: format!("{job_id}:idem"),
+        permission_scope: "report".into(),
         audit_reason: "lease-clock-case".into(),
         dry_run: true,
     }

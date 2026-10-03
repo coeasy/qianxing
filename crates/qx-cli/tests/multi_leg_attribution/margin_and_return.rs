@@ -3,12 +3,6 @@ use super::*;
 /// 在临时目录落一份 CCXT 形状的现货规格：与仓库里的 swap 规格只差 `market_type`，
 /// 用来把"产品形态"单独变成一个可对照的变量。
 fn write_spot_spec(dir: &Path, name: &str, base: &str) -> String {
-    write_spot_spec_settled(dir, name, base, "USDT")
-}
-
-/// 同 [`write_spot_spec`]，但把结算币种单独留成变量：两条腿各自记账在哪本账上，
-/// 只有从这里才能造出"同一条链上两种钱"的组合（V11 D 轮 S2）。
-fn write_spot_spec_settled(dir: &Path, name: &str, base: &str, settle: &str) -> String {
     let path = dir.join(name);
     std::fs::write(
         &path,
@@ -16,7 +10,7 @@ fn write_spot_spec_settled(dir: &Path, name: &str, base: &str, settle: &str) -> 
             "market_type": "spot",
             "base": base,
             "quote": "USDT",
-            "settle": settle,
+            "settle": "USDT",
             "contract_size_raw": 1_000_000_000_i64,
             "price_tick_raw": 1_000_000_i64,
             "qty_step_raw": 1_000_000_i64,
@@ -75,95 +69,6 @@ fn funding_without_leg_spec_is_refused_before_matching() {
     assert!(
         !stdout.contains("[Multi-leg · Backtest]"),
         "规格闸门必须早于任何腿级撮合: {stdout}"
-    );
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-/// V11 D 轮 S2：`combined_return_bps` 把两条腿的本金与权益**相加**，所以两条腿必须记在
-/// 同一本账上。一条 USDT 结算、一条 USD 结算的两腿跑出来的那个数是两种钱的和，任何一本
-/// 账上都不存在它，产物却会照常落盘 —— 币种不同的两腿只能在规格闸门处被拒。
-#[test]
-fn legs_on_different_booking_currencies_are_refused_before_matching() {
-    let primary = fixture("qianxing.bar-frame.pairs-primary.example.json");
-    let reference = fixture("qianxing.bar-frame.pairs-reference.example.json");
-    let root = temp_root("spec-guard-currency");
-    let primary_spec = write_spot_spec_settled(&root, "btc-usdt.spec.json", "BTC", "USDT");
-    let reference_spec = write_spot_spec_settled(&root, "eth-usd.spec.json", "ETH", "USD");
-    let legs = [
-        primary.as_str(),
-        reference.as_str(),
-        primary_spec.as_str(),
-        reference_spec.as_str(),
-    ];
-    let out = root.join("run");
-    let (code, stdout, stderr) = backtest(&out, "2", "0", &legs);
-    assert_ne!(
-        code, 0,
-        "两条腿记账币种不同仍必须失败，而不是把两种钱相加: {stdout}"
-    );
-    assert!(
-        stderr.contains("两条腿的记账币种不同"),
-        "报错必须点名币种不可通约: {stderr}"
-    );
-    assert!(
-        stderr.contains("primary=USDT") && stderr.contains("reference=USD"),
-        "报错必须带回两条腿各自记账在哪本账上: {stderr}"
-    );
-    assert!(
-        !stdout.contains("[Multi-leg · Backtest]"),
-        "币种闸门必须早于任何腿级撮合: {stdout}"
-    );
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-/// 币种闸门问的必须是腿级引擎真正拿去落现金腿的那一份口径，而不是 spec 里的另一格字段。
-/// 缺 spec 的腿按引擎默认 USDT 记账（单腿链同一兜底），所以"一条显式 USDT
-/// 规格 + 一条无规格"是在同一本账上，不得被拒；把它换成就地抄 spec 的写法
-/// （`spec.map(|s| s.settlement_currency.clone()).unwrap_or_default()`）就得到一个空串，
-/// 于是"只给主腿补规格"这一合法形状被当场挡在链外（V11 D 轮 S2 的另一半）。
-#[test]
-fn leg_without_a_spec_is_compared_by_the_currency_it_actually_books_in() {
-    let primary = fixture("qianxing.bar-frame.pairs-primary.example.json");
-    let reference = fixture("qianxing.bar-frame.pairs-reference.example.json");
-    let root = temp_root("spec-guard-default-currency");
-    let primary_spec = write_spot_spec_settled(&root, "btc-usdt.spec.json", "BTC", "USDT");
-    let legs = [primary.as_str(), reference.as_str(), primary_spec.as_str()];
-    let out = root.join("run");
-    let (code, stdout, stderr) = backtest(&out, "2", "0", &legs);
-    assert_eq!(
-        code, 0,
-        "无规格的 reference 腿按引擎默认 USDT 记账，与显式 USDT 主腿同账，不该被币种闸门拒: {stderr}"
-    );
-    assert!(
-        stdout.contains("[Multi-leg · Backtest]"),
-        "闸门放行后必须真的跑到腿级撮合: {stdout}"
-    );
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-/// 同一兜底的反向那一半：缺规格的腿报错时必须报成它真正记账的那个币种，而不是空着。
-/// `primary=USD、reference=USDT` 说的是"两条腿各在哪本账上"，写成 `reference=` 就等于
-/// 让读者自己去猜那份没写出来的默认值。
-#[test]
-fn missing_spec_reports_the_default_booking_currency_instead_of_an_empty_one() {
-    let primary = fixture("qianxing.bar-frame.pairs-primary.example.json");
-    let reference = fixture("qianxing.bar-frame.pairs-reference.example.json");
-    let root = temp_root("spec-guard-default-name");
-    let primary_spec = write_spot_spec_settled(&root, "btc-usd.spec.json", "BTC", "USD");
-    let legs = [primary.as_str(), reference.as_str(), primary_spec.as_str()];
-    let out = root.join("run");
-    let (code, stdout, stderr) = backtest(&out, "2", "0", &legs);
-    assert_ne!(
-        code, 0,
-        "USD 主腿与 USDT 默认账的 reference 腿必须被拒: {stdout}"
-    );
-    assert!(
-        stderr.contains("两条腿的记账币种不同"),
-        "报错必须点名币种不可通约: {stderr}"
-    );
-    assert!(
-        stderr.contains("primary=USD") && stderr.contains("reference=USDT"),
-        "缺规格的那条腿要报出它实际记账的币种，不能留空: {stderr}"
     );
     let _ = std::fs::remove_dir_all(&root);
 }

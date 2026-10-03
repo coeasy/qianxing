@@ -1,16 +1,12 @@
-//! 发布契约的第三道钉子：`schemas/strategy_api_v1.schema.json` 里"未知键"与"定点值的线上
-//! 形态"这两件事。
+//! 发布契约的第三道钉子：`schemas/strategy_api_v1.schema.json` 必须与 Rust 结构体
+//! 逐键同形（V12 R4-k）。
 //!
 //! 这份 schema 此前**零消费者**，所以它两头都错：Rust 用 serde 强制要求的
 //! `instrument/target_qty/confidence/priority/expires_at` 不在它的 `required` 里（缺这些
 //! 键的载荷能过 schema、过不了运行时），而 Rust 自己会写出的
 //! `margin_mode/position_mode/leverage` 又被它的 `additionalProperties: false` 拒掉。
-//! 这里不引第三方 JSON Schema 校验器，只钉住可机械核对的两件事：未知键不许被当成没写、
-//! 定点值只有 JSON 整数一种形态。
-//!
-//! 键全集、必填集、版本 `const` 那三件不在这里：合流时两侧各写了一份，同一判断留两处就会
-//! 出现改一处绿一处红，那三件事由 `strategy_api_schema_contract.rs`（V11 R4-4）独家量——它走
-//! 的是生产序列化与生产读取两端，比这里直接对结构体做 serde 更宽。
+//! 这里不引第三方 JSON Schema 校验器，只钉住可机械核对的三件事：键全集、必填集、
+//! 未知键拒绝——上面两类错形正好各由一件负责。
 
 use std::collections::BTreeSet;
 
@@ -58,6 +54,88 @@ fn full_output() -> StrategyContractOutput {
             leverage: Some(3),
         }],
     }
+}
+
+fn keys_of(object: &Value) -> BTreeSet<String> {
+    object
+        .as_object()
+        .unwrap_or_else(|| panic!("契约里这一项必须是对象: {object}"))
+        .keys()
+        .cloned()
+        .collect()
+}
+
+fn required_of(node: &Value) -> BTreeSet<String> {
+    node["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("契约必须写明 required 列表: {node}"))
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .unwrap_or_else(|| panic!("required 项必须是键名字符串: {value}"))
+                .to_string()
+        })
+        .collect()
+}
+
+/// 删掉一个键再看 serde 认不认：认不下才是真的必填，而不是文档里写着必填。
+fn actually_required<T>(sample: &Value) -> BTreeSet<String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let mut result = BTreeSet::new();
+    for key in keys_of(sample) {
+        let mut payload = sample.clone();
+        payload
+            .as_object_mut()
+            .expect("样例必须是对象")
+            .remove(&key);
+        if serde_json::from_value::<T>(payload).is_err() {
+            result.insert(key);
+        }
+    }
+    result
+}
+
+#[test]
+fn the_schema_declares_exactly_the_fields_rust_writes_and_requires() {
+    let schema = schema();
+    let encoded = serde_json::to_value(full_output()).expect("契约输出必须可序列化");
+    assert_eq!(
+        keys_of(&encoded),
+        properties(&schema, "/properties"),
+        "schema 顶层的键全集与 Rust 写出的键不一致：多出来的键会让读者找不到生产方，\
+         缺掉的键会让产物里出现契约没承诺过的东西"
+    );
+    assert_eq!(
+        required_of(&schema),
+        actually_required::<StrategyContractOutput>(&encoded),
+        "schema 的 required 与 Rust 的实际必填不一致：它承诺可以缺省的键其实不能缺，\
+         或反过来放行一个会被运行时拒掉的载荷"
+    );
+
+    let intent = encoded["intents"]
+        .get(0)
+        .expect("样例必须带一条 intent 才能核对 intent 契约");
+    let intent_schema = &schema["$defs"]["intent"];
+    assert_eq!(
+        keys_of(intent),
+        properties(intent_schema, "/properties"),
+        "schema 的 intent 键全集与 Rust 写出的不一致：per-leg 档位字段曾在两边各写各的"
+    );
+    assert_eq!(
+        required_of(intent_schema),
+        actually_required::<StrategyContractIntent>(intent),
+        "schema 的 intent.required 与 Rust 的实际必填不一致"
+    );
+}
+
+fn properties(node: &Value, pointer: &str) -> BTreeSet<String> {
+    keys_of(
+        node.pointer(pointer)
+            .unwrap_or_else(|| panic!("契约缺少 {pointer} 列表: {node}")),
+    )
 }
 
 /// `additionalProperties: false` 不是装饰：拼错的可选键一旦被静默丢掉，那一腿就按
@@ -206,4 +284,16 @@ fn as_static_type(name: &str) -> Option<&'static str> {
     ]
     .into_iter()
     .find(|candidate| *candidate == name)
+}
+
+/// 契约里写的 `schema_version` 常量必须就是运行时认的那一版：它一旦与
+/// `STRATEGY_CONTRACT_SCHEMA_VERSION` 分叉，读者按契约产出的载荷就会被运行时拒收。
+#[test]
+fn the_const_schema_version_is_the_version_the_runtime_accepts() {
+    let schema = schema();
+    assert_eq!(
+        schema["properties"]["schema_version"]["const"],
+        json!(STRATEGY_CONTRACT_SCHEMA_VERSION),
+        "契约声明的策略 API 版本必须等于运行时接受的版本"
+    );
 }
