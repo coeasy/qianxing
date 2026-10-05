@@ -333,7 +333,7 @@ pub(crate) fn evaluate_strategy_contract(
         let output = if let Some(client) = python_client.as_mut() {
             invoke_python_strategy_with_client(client, &input)?
         } else {
-            invoke_python_strategy(module, &input)?
+            invoke_python_strategy(module, &input, config.strategy.python_timeout_ms)?
         };
         (output.target_qty, Some(output))
     } else if let Some(client) = external_client.as_mut() {

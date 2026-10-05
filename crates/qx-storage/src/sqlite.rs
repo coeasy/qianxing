@@ -1437,18 +1437,25 @@ impl SqliteAuditStore {
     pub fn sync_control(&self, plane: &ControlPlane) -> Result<usize, StorageError> {
         let existing = self.read()?;
         let records = plane.audit();
-        if existing.len() > records.len()
-            || existing
-                .iter()
-                .zip(records)
-                .any(|(entry, record)| entry.record != *record)
+        // 只校验公共前缀，不能拦"链比请求更长"。本方法由 transact_control 在控制面事务
+        // commit 之后调用（见 sqlite.rs 的 :1088），两进程并发时 B 的提交会包含 A 的变更，
+        // A 随后才调 sync_control，此时持久化链已经比 A 本地那份 plane 更长。链更长不是
+        // 冲突——A 想追加的记录已在链上，按幂等空操作收口即可；旧写法把这种情况报成
+        // Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"。
+        // 真正要拦的是公共前缀本身对不上（链分叉）。
+        let common = existing.len().min(records.len());
+        if existing
+            .iter()
+            .take(common)
+            .zip(records.iter().take(common))
+            .any(|(entry, record)| entry.record != *record)
         {
             return Err(StorageError::Conflict(
                 "控制面审计与 SQLite 审计前缀不一致".into(),
             ));
         }
         let mut appended = 0;
-        for record in records.iter().skip(existing.len()) {
+        for record in records.iter().skip(common) {
             self.append(record.clone())?;
             appended += 1;
         }

@@ -4,6 +4,10 @@
 //! 使回测、Paper 与 Live worker 共享同一套指纹与超时约束。
 
 use super::*;
+// 生产路径的 Python 超时一律走 `strategy.python_timeout_ms` 配置（已在
+// qx-runtime 侧按 1..=60000 校验，默认 2000）。这份常量只剩测试在用，作为
+// "冷启动 helper 拿到的是同一个默认值"的具名断言点，不进生产二进制。
+#[cfg(test)]
 pub(crate) const PYTHON_STRATEGY_TIMEOUT_MS: u64 = 2_000;
 
 pub(crate) enum StrategyWireResponse {
@@ -606,11 +610,16 @@ pub(crate) fn decode_python_strategy_response(
     StrategyContractOutput::from_json_for(&encoded, input)
 }
 
+/// 冷启动一次 Python 策略 worker 并立即回收。`timeout_ms` 必须走配置
+/// （`strategy.python_timeout_ms`，已按 1..=60000 校验）：这里若写死 `PYTHON_STRATEGY_TIMEOUT_MS`，
+/// 预热分支（`workers.rs` / `strategy_contract.rs` 都读配置）拿到 30s、冷启动分支拿到 2s，
+/// 同一个 `python_timeout_ms: 30000` 在两条路径上语义不同，用户配了 30s 却在首轮被 2s 掐死。
 pub(crate) fn invoke_python_strategy(
     module: &str,
     input: &StrategyContractInput,
+    timeout_ms: u64,
 ) -> Result<StrategyContractOutput, String> {
-    let mut client = PythonStrategyClient::start(module, PYTHON_STRATEGY_TIMEOUT_MS)?;
+    let mut client = PythonStrategyClient::start(module, timeout_ms)?;
     client.request(input)
 }
 

@@ -539,7 +539,7 @@ WORKSPACE_TEST_FLOOR = 1071  # 1070 -> 1071：V13 R7-a #284 把「版本号由�
 # 存档落空条数天花板 9 只降不升。
 # 601 → 602：V13 R1-H 重落 V11 R6-1——删掉零构造者的 `CommandStatus::Rejected`，
 # 终态词表收回到 `is_final` 体内一处（控制面 + CLI 幂等入口两个平面各一颗判据）。
-GATE_CHECK_FLOOR = 619  # 616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
+GATE_CHECK_FLOOR = 621  # 619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
 # V12 §21 / #138：合流类判据的三个参数（455 → 457 就是本轮新增的两条，仍按"当轮实测总条数"取值）。窗口取 10 行是实测拐点 —— W=8 在 `tools` 之外命中 1,180
 # 处、到 W=10 仍有 781 处合法的并列实现（三条 venue 提交链、几家存储后端），所以逐字重复零容忍
 # 只对 `tools/*.py` 生效（本轮实测该目录 5 份脚本 0 命中），Rust 那一侧交给编译器与整树用例。
@@ -9772,6 +9772,54 @@ def strategy_output_arm_diagnostics_check() -> None:
 
 
 
+# V13 R9：三个后端的 sync_control 只能比公共前缀。旧写法 `existing.len() > records.len() ||
+# zip 不等` 把"链比本地快照长、但前缀逐条一致"也报成 Conflict。sqlite/postgres 的
+# sync_control 跑在控制面事务 commit **之后**，两进程并发时后提交那份 plane 会包含先提交者的
+# 变更，链因此天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已经
+# 提交成功、transact_control 却返回 Err"。真正的分叉是公共前缀内容对不上，那一支三后端都得拦。
+SYNC_CONTROL_FILES = {
+    "文件": "crates/qx-storage/src/lib.rs",
+    "SQLite": "crates/qx-storage/src/sqlite.rs",
+    "PostgreSQL": "crates/qx-storage/src/postgres.rs",
+}
+SYNC_CONTROL_COMMON_PREFIX = "existing.len().min(records.len())"
+SYNC_CONTROL_OLD_LENGTH_TEST = "existing.len() > records.len()"
+
+# V13 R9：WS 通道不占路由表，任何带 Upgrade: websocket 的 target 都会走到准入这一支，
+# 所以查询键拒绝必须点名请求实际打到的路径，不能硬写 /events/live。
+WS_ADMISSION_FILE = "crates/qx-api/src/ws.rs"
+WS_ADMISSION_SIGNATURE = "fn admit_websocket"
+WS_REFUSED_ACTUAL_ROUTE = "{path} 不接受查询参数 {name}"
+WS_REFUSED_HARDCODED_ROUTE = "/events/live 不接受查询参数"
+
+
+def audit_sync_control_prefix_check() -> None:
+    """sync_control 三后端共用一枚公共前缀判据，不把长度当分叉信号。"""
+    blind = []
+    for label, path in SYNC_CONTROL_FILES.items():
+        body = _code_body(path, "pub fn sync_control")
+        if SYNC_CONTROL_COMMON_PREFIX not in body or SYNC_CONTROL_OLD_LENGTH_TEST in body:
+            blind.append(label)
+    check(
+        not blind,
+        "sync_control 三后端共用一枚公共前缀判据：链比请求长但前缀一致按幂等收口，只有前缀内容对不上才报 Conflict",
+        f"{blind} 的 sync_control 仍按长度判分叉：sqlite/postgres 的 sync_control 跑在控制面事务 "
+        "commit 之后，两进程并发时链天然比先跑的那方长，那一支会被报成 Conflict——控制面状态已经"
+        "提交成功，transact_control 却返回 Err。三后端同一枚判据也是换后端不换结论的前提",
+    )
+
+
+def websocket_refused_param_route_check() -> None:
+    """WS 的查询键拒绝点名请求实际打到的 target。"""
+    body = _code_body(WS_ADMISSION_FILE, WS_ADMISSION_SIGNATURE)
+    check(
+        WS_REFUSED_ACTUAL_ROUTE in body and WS_REFUSED_HARDCODED_ROUTE not in body,
+        "WS 的查询键拒绝点名请求实际打到的 target，不硬写 /events/live",
+        "WS 通道不占路由表，任何带 Upgrade: websocket 的 target 都会走到准入这一支；硬写 "
+        "/events/live 会让连到别的路径的客户端收到谎报的路由名，运维照着那句话去查会查错地方",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -9793,6 +9841,8 @@ def main() -> int:
     dead_type_surface_check()
     gate_source_truncation_check()
     control_audit_chain_check()
+    audit_sync_control_prefix_check()
+    websocket_refused_param_route_check()
     api_accept_loop_exit_check()
     health_snapshot_knob_check()
     strategy_intent_three_language_check()

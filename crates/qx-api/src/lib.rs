@@ -475,10 +475,16 @@ impl Default for ProjectionHealth {
 }
 
 impl ApiProjectionKey {
+    /// 构造时归一化两侧标识：`account_event_log_name` 内部已 trim 生成日志名，
+    /// `load_api_account_snapshot_for_worker` 也对快照 header 做 trim，若本构造器不归一化，
+    /// 配置里写 `" main "` 这种带空白的账户就会让事件投影落到 `(" main ", venue)`、
+    /// 快照落到 `("main", venue)`，同一账户在 `state.projections` 分裂成两格，
+    /// 且两格都在表里、`missing_projection_response` 都返回 `None`，运维侧看不到告警。
+    /// 在这里收口一次，查询串 / 投影桥 / 快照 header 三条路径就自动同一口径。
     pub fn new(account_id: impl Into<String>, venue_id: impl Into<String>) -> Self {
         Self {
-            account_id: account_id.into(),
-            venue_id: venue_id.into(),
+            account_id: account_id.into().trim().to_owned(),
+            venue_id: venue_id.into().trim().to_owned(),
         }
     }
 

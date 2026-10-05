@@ -1468,18 +1468,23 @@ impl AuditFileStore {
         let _lock = acquire_storage_lock(self.root.join("audit.append.lock"))?;
         let existing = self.read()?;
         let records = plane.audit();
-        if existing.len() > records.len()
-            || existing
-                .iter()
-                .zip(records)
-                .any(|(entry, record)| entry.record != *record)
+        // 只校验公共前缀，不能拦"链比请求更长"。file 后端持锁全程串行，理论上碰不到
+        // 并发交错；但 sqlite/postgres 在控制面事务 commit 之后才调本方法，两进程并发时
+        // 持久化链可能已经比本地那份 plane 更长，那种情况要按幂等空操作收口而不是报
+        // Conflict。三后端这里必须同一口径，否则同一份配置换后端会得到不同结论。
+        let common = existing.len().min(records.len());
+        if existing
+            .iter()
+            .take(common)
+            .zip(records.iter().take(common))
+            .any(|(entry, record)| entry.record != *record)
         {
             return Err(StorageError::Conflict(
                 "控制面审计与持久化审计前缀不一致".into(),
             ));
         }
         let mut appended = 0;
-        for record in records.iter().skip(existing.len()) {
+        for record in records.iter().skip(common) {
             self.append_unlocked(record.clone())?;
             appended += 1;
         }
@@ -2074,6 +2079,57 @@ mod tests {
             store.read(),
             Err(StorageError::Conflict(message)) if message.contains("摘要不一致")
         ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn audit_sync_control_treats_a_longer_chain_as_idempotent_not_conflict() {
+        let root = std::env::temp_dir().join(format!(
+            "qianxing-audit-sync-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = AuditFileStore::new(&root);
+        let make = |command_id: u64| ControlCommand {
+            command_id,
+            request_id: format!("audit-{command_id}"),
+            operator_id: "ops".into(),
+            reason: "audit sync".into(),
+            kind: CommandKind::PauseStrategy,
+            target: "strategy".into(),
+            payload: BTreeMap::new(),
+            permission: Permission::Trading,
+            dry_run: true,
+        };
+
+        // 并发实况：进程 B 的控制面事务包含 A 的变更并已提交、也已同步审计，
+        // A 随后才带着只到 [77] 的本地 plane 调 sync_control。
+        let mut ahead = ControlPlane::default();
+        ahead.submit(make(77), 10).unwrap();
+        ahead.execute(77, 11, |_| Ok("DONE".into())).unwrap();
+        assert_eq!(store.sync_control(&ahead).unwrap(), 2);
+        assert_eq!(store.read().unwrap().len(), 2);
+
+        // 链比请求更长、公共前缀一致：这是幂等空操作，不是 Conflict。
+        // 旧写法把这种情况报 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"。
+        let mut stale = ControlPlane::default();
+        stale.submit(make(77), 10).unwrap();
+        stale.execute(77, 11, |_| Ok("DONE".into())).unwrap();
+        assert_eq!(store.sync_control(&stale).unwrap(), 0);
+        assert_eq!(store.read().unwrap().len(), 2);
+
+        // 公共前缀真的对不上仍然要拦：链分叉不能一并放行。
+        let mut forked = ControlPlane::default();
+        forked.submit(make(99), 10).unwrap();
+        forked.execute(99, 11, |_| Ok("DONE".into())).unwrap();
+        assert!(matches!(
+            store.sync_control(&forked),
+            Err(StorageError::Conflict(message)) if message.contains("前缀不一致")
+        ));
+
         let _ = std::fs::remove_dir_all(root);
     }
 

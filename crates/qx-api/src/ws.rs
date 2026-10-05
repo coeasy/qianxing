@@ -58,9 +58,9 @@ impl ApiService {
         let Some(handshake_key) = header_value(request, "Sec-WebSocket-Key") else {
             return Err(ApiResponse::json(400, error_json("missing_websocket_key")));
         };
-        let query = parse_request_line(request)
-            .map(|(_, target)| split_target(target).1)
-            .unwrap_or("");
+        let (path, query) = parse_request_line(request)
+            .map(|(_, target)| split_target(target))
+            .unwrap_or_default();
         let after = match parse_after_cursor(query) {
             Ok(after) => after,
             Err(error) => return Err(ApiResponse::json(400, error_json(error))),
@@ -70,11 +70,13 @@ impl ApiService {
             Err(error) => return Err(ApiResponse::json(400, error_json(&error))),
         };
         // 名单外的键当场 400：拼错的 `account_id` 落进"没有收窄键"那一支，就会把全局事件流
-        // 念成调用方点名的那个账户，与 HTTP 七条读面同一口径（V13 R6）。
+        // 念成调用方点名的那个账户，与 HTTP 七条读面同一口径（V13 R6）。报错点名的是请求实际
+        // 打到的 target——WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端
+        // 收到谎报的路由名。
         if let Some(name) = crate::admission::refused_event_query_param(query) {
             return Err(ApiResponse::json(
                 400,
-                error_json(&format!("/events/live 不接受查询参数 {name}")),
+                error_json(&format!("{path} 不接受查询参数 {name}")),
             ));
         }
         let state = self.state.lock().expect("api state mutex poisoned");

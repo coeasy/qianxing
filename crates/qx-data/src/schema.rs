@@ -4,19 +4,6 @@ pub const DATA_SCHEMA_VERSION: u32 = 1;
 
 pub type Timestamp = u64;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DataSchemaVersion {
-    pub major: u32,
-}
-
-impl Default for DataSchemaVersion {
-    fn default() -> Self {
-        Self {
-            major: DATA_SCHEMA_VERSION,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Bar {
     pub instrument: String,

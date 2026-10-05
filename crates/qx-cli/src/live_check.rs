@@ -254,7 +254,16 @@ pub(crate) fn collect_live_check_report(path: &Path) -> Result<serde_json::Value
             }
         }
     }
-    if config.api.bind.starts_with("127.") || config.api.bind.starts_with("localhost") {
+    // 按地址判而不是按前缀判：字符串前缀 "127." 覆盖不到 IPv6 回环 `[::1]:port`，
+    // 那样 IPv6 明文部署会漏掉这条 warn。与 topology_validation 的
+    // `api_bind.ip().is_loopback()` 同一口径；`localhost` 不是 SocketAddr，单列。
+    let api_is_loopback = config
+        .api
+        .bind
+        .parse::<std::net::SocketAddr>()
+        .is_ok_and(|bind| bind.ip().is_loopback())
+        || config.api.bind.starts_with("localhost");
+    if api_is_loopback {
         let message = "API 仅绑定本机地址，适合单机部署，不适合跨节点访问".to_string();
         push_live_check(&mut checks, "api.bind", "warn", &message);
         warnings.push(message);

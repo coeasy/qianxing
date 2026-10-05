@@ -452,7 +452,12 @@ fn rust_invokes_python_strategy_jsonl_worker_through_versioned_contract() {
         research_targets: BTreeMap::from([("BTC/USDT.OKX".into(), 3_i128)]),
         bars: None,
     };
-    let output = invoke_python_strategy(module.to_string_lossy().as_ref(), &input).unwrap();
+    let output = invoke_python_strategy(
+        module.to_string_lossy().as_ref(),
+        &input,
+        PYTHON_STRATEGY_TIMEOUT_MS,
+    )
+    .unwrap();
     assert_eq!(output.target_qty, 3);
     assert_eq!(output.signal_id, 7);
     assert_eq!(output.confidence, 800);
@@ -496,7 +501,12 @@ fn rust_invokes_python_multi_intent_strategy_contract() {
         research_targets: BTreeMap::new(),
         bars: None,
     };
-    let output = invoke_python_strategy(module.to_string_lossy().as_ref(), &input).unwrap();
+    let output = invoke_python_strategy(
+        module.to_string_lossy().as_ref(),
+        &input,
+        PYTHON_STRATEGY_TIMEOUT_MS,
+    )
+    .unwrap();
     assert_eq!(output.intents.len(), 2);
     assert_eq!(output.intents[0].side, "buy");
     assert_eq!(output.intents[1].intent_id, 802);

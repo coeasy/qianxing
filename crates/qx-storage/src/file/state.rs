@@ -87,8 +87,11 @@ impl JsonStateStore {
         if result.is_ok() {
             self.save_control_unlocked(&plane)?;
             // 控制面每次成功提交都把审计尾部补进只追加的哈希链。顺序不能反：
-            // 链落后于快照会被下一次事务自愈，链超前于快照则让 sync_control 的
-            // 前缀校验从此永久失败（快照回滚不了已经多出来的链尾）。
+            // 链落后于快照会被下一次事务自愈（下一次事务会把它追加回来）。
+            // 链的分叉则由 sync_control 的公共前缀比对拦下——前缀内容对不上必须拒，
+            // 因为快照回滚不了已经写进链的历史；"链比快照长但前缀一致"不算分叉，
+            // 按幂等空操作收口（sqlite/postgres 的 sync_control 跑在控制面事务之外，
+            // 并发事务下这一支是正常路径，不能报成 Conflict）。
             AuditFileStore::new(&self.root).sync_control(&plane)?;
         }
         Ok((plane, result))
