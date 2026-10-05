@@ -164,3 +164,21 @@ fn sqlite_control_transaction_feeds_the_same_audit_table() {
     assert_eq!(entries[0].record.command_id, 1);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+#[cfg(feature = "postgres")]
+#[test]
+#[ignore = "requires QX_TEST_POSTGRES_DSN and a running PostgreSQL instance"]
+fn postgres_control_transaction_completes_with_a_single_connection() {
+    // 池容量为 1 时 `lock_client()` 恒取 `clients[0]`。事务提交之后 `sync_control` 内部
+    // 走 `read()` 会再取一次同一把 `Mutex`，而 `std::sync::Mutex` 不可重入——
+    // 不先 `drop(client)` 就是当场自死锁，事务已经提交成功却永远回不了调用方。
+    // 这条用例挂 `#[ignore]`，靠 CI 的 `--ignored` 或手工挂 DSN 来跑（V13 R13）。
+    let dsn = std::env::var("QX_TEST_POSTGRES_DSN")
+        .expect("QX_TEST_POSTGRES_DSN must point at an isolated test database");
+    let store = qx_storage::PostgresControlStore::connect_with_pool_size(&dsn, 1)
+        .expect("connect PostgreSQL with a single pooled connection");
+    let (_, result) = store
+        .transact_control(|plane| plane.submit(command(1), 1).map(|_| ()))
+        .expect("池容量为 1 时事务必须能返回，而不是卡在同步审计尾部");
+    result.expect("命令必须被受理");
+}

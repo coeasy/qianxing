@@ -32,6 +32,38 @@ pub(crate) struct PythonStrategyClient {
 
 pub(crate) type StrategyProcessClient = PythonStrategyClient;
 
+/// 共享环临时文件的清理守卫。
+///
+/// `.input`/`.output` 是 `memmap2` 打开的 mmap 文件（默认 64 MiB × 2），正常路径由
+/// `PythonStrategyClient` 的 `Drop` 回收。但在 `SharedRingWriter::create` 与
+/// `SharedRingReader::open` 任意一步失败时，`ring_paths` 还没被赋值，那条 `Drop` 不会
+/// 触发，`%TEMP%` 里就永久留下一对几十 MiB 的孤儿文件。守卫从路径生成那一刻接管，
+/// 无论成功还是中途返回都清一遍；成功时 `disown()` 把清理责任交还给客户端。
+struct RingFileGuard(Vec<PathBuf>);
+
+impl RingFileGuard {
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    fn register(&mut self, path: PathBuf) {
+        self.0.push(path);
+    }
+
+    /// 所有权移交给 `PythonStrategyClient`：从此刻起由它的 `Drop` 负责清理。
+    fn disown(&mut self) {
+        self.0.clear();
+    }
+}
+
+impl Drop for RingFileGuard {
+    fn drop(&mut self) {
+        for path in self.0.drain(..) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 /// 共享内存传输交给 worker 的启动实参：协议名、两条 ring 的路径与容量，以及父进程身份。
 ///
 /// 拆成纯函数是为了让"worker 是否拿得到父进程 pid"有一条能咬的用例。这条传输没有 stdin
@@ -157,6 +189,7 @@ impl PythonStrategyClient {
         let mut shared_input = None;
         let mut shared_output = None;
         let mut ring_paths = None;
+        let mut ring_guard = RingFileGuard::new();
         if matches!(
             transport,
             StrategyTransport::SharedMemoryJson | StrategyTransport::SharedMemoryColumnar
@@ -168,6 +201,8 @@ impl PythonStrategyClient {
             ));
             let input_path = base.with_extension("input");
             let output_path = base.with_extension("output");
+            ring_guard.register(input_path.clone());
+            ring_guard.register(output_path.clone());
             let input = SharedRingWriter::create(&input_path, ring_config)
                 .map_err(|error| format!("创建 {label} 输入 ring 失败: {error}"))?;
             let output = SharedRingWriter::create(&output_path, ring_config)
@@ -185,6 +220,7 @@ impl PythonStrategyClient {
             shared_input = Some(input);
             shared_output = Some(reader);
             ring_paths = Some((input_path, output_path));
+            ring_guard.disown();
         }
         let child_env = strategy_child_environment(env)?;
         let mut command = Command::new(executable);
@@ -325,7 +361,10 @@ impl PythonStrategyClient {
 
     fn diagnostics(&self) -> String {
         let Ok(tail) = self.stderr_tail.lock() else {
-            return String::new();
+            // 泵线程若在持锁期间 panic，锁会中毒。此时真实原因是"stderr 泵挂了"，
+            // 静默返回空等于让 `death_note()` 报"worker 无 stderr 输出"，运维会去看
+            // 一个根本没坏的方向。留一条证据让诊断面自己交代自己坏了。
+            return "; stderr=（stderr 泵锁中毒，尾部不可读）".to_string();
         };
         if tail.is_empty() {
             String::new()

@@ -52,14 +52,26 @@ impl CcxtProcessClient {
         let mut child = command
             .spawn()
             .map_err(|error| format!("启动 CCXT Worker 失败: {python} 无法执行: {error}"))?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "CCXT Worker stdin 不可用".to_string())?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "CCXT Worker stdout 不可用".to_string())?;
+        // `take()` 失败要先把子进程收掉再返回：`Stdio::piped()` 之后这两个 `Some` 是
+        // 不变式，此路径今天走不到，但上游一旦把 worker 改成无管道模式，这条 `?`
+        // 就会留下一个无人回收的孤儿进程。与 `strategy_host.rs` 的同一处防御对齐
+        // （V13 R12）。
+        let stdin = match child.stdin.take() {
+            Some(stdin) => stdin,
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("CCXT Worker stdin 不可用".to_string());
+            }
+        };
+        let stdout = match child.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("CCXT Worker stdout 不可用".to_string());
+            }
+        };
         // 队列有界：泵线程读子进程 stdout，每行都往通道里塞，而调用侧每次只取一行。
         // 无界通道让杂印与迟到的应答一路攒下去；改成有界之后泵在写满时被顶住，
         // 背压回到子进程的 stdout 管道，内存不再随运行时长增长（V13 R1-D）。

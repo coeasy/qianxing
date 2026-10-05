@@ -507,7 +507,7 @@ EXECUTION_TEST_FIXTURES = (
 # `#[tokio::test]` 同配方实测 0 条，故这个计数器没有整族漏计。
 # 1065 -> 1069：V13 R1-H 控制面终态退场那轮的四条用例（qx-control 5 -> 9），其余 crate 逐名同数。
 # 1069 -> 1070：V13 R4-C1 给两条 HTTP 读链补总量字节界那颗用例（qx-adapter 48 -> 49），其余 crate 逐名同数。
-WORKSPACE_TEST_FLOOR = 1081  # 1073 -> 1081：V13 R11 补七条（C ABI 非法 side 拒绝 1 条、WebSocket Close 帧扫描器 5 条、托管子进程退出码携带原始码 1 条）。1071 -> 1073：V13 R10 补两条（Binance 缺 trade_id 转对账、恢复 worker 缺 venue_id 拒启动）。1070 -> 1071：V13 R7-a #284 把「版本号由宿主解码入口裁决」这颗判定钉进解码入口自己的用例（qx-runtime 83 -> 84），其余 crate 逐名同数。
+WORKSPACE_TEST_FLOOR = 1083  # 1082 -> 1083：V13 R12/R13 补一条 PostgreSQL 池容量为 1 的控制面事务回归用例（挂 #[ignore]，靠 CI 的 --ignored 或手工挂 QX_TEST_POSTGRES_DSN 来跑：不先 drop(client) 就是当场自死锁，事务已提交却永远回不了调用方）。1081 -> 1082：V13 R11 收口时补一条（WebSocket Close 扫描器的累积缓冲越界 fail-closed：跨读累积是新引入的内存面，客户端故意不完成帧头就能把缓冲无限拖大）。1073 -> 1081：V13 R11 补七条（C ABI 非法 side 拒绝 1 条、WebSocket Close 帧扫描器 5 条、托管子进程退出码携带原始码 1 条）。1071 -> 1073：V13 R10 补两条（Binance 缺 trade_id 转对账、恢复 worker 缺 venue_id 拒启动）。1070 -> 1071：V13 R7-a #284 把「版本号由宿主解码入口裁决」这颗判定钉进解码入口自己的用例（qx-runtime 83 -> 84），其余 crate 逐名同数。
 # 门禁自身的判据数地板（V12 §17），取本回合实测的总条数。为什么要给量具本身再设一把尺：
 # 本回合编辑 `TEST_MODULES` 时误删了 qx-cli 那一项元组，门禁当场少跑 4 条判据，却依旧打印
 # "架构不变量自检全部通过 ✓" —— 判据可以整段消失而没人变红。这与 §16 抓到的"用例静默删除"
@@ -9870,11 +9870,15 @@ def untrusted_input_boundaries_check() -> None:
     check(
         "struct WsCloseScanner" in ws
         and "opcode == 0x8" in ws
+        and "WS_CLOSE_PENDING_CAP" in ws
+        and "self.pending.len() > WS_CLOSE_PENDING_CAP" in ws
         and ".any(|byte| (*byte & 0x0f) == 0x8)" not in ws,
-        "WebSocket Close 检测按帧头判 opcode，不得按整块缓冲逐字节扫",
+        "WebSocket Close 检测按帧头判 opcode，累积缓冲必须有上界",
         "Close 帧的 opcode 0x8 只出现在帧起点。按整个读缓冲逐字节扫 `& 0x0f == 0x8`，"
         "256 个字节值里有 16 个会命中（0x08/0x18/…/0xF8），二进制行情载荷里这类字节很常见，"
-        "客户端发一个正常的 text/binary 帧就会把服务端静默断连",
+        "客户端发一个正常的 text/binary 帧就会把服务端静默断连。改成跨读累积之后又多了"
+        "一个原先不存在的内存面：客户端每次只给一两字节、故意不完成帧头，缓冲就能无限长大，"
+        "所以上界越界必须 fail-closed 而不是继续攒",
     )
     supervisor = production_text(
         (ROOT / "crates/qx-orchestrator/src/supervisor_stop.rs").read_text(encoding="utf-8")
@@ -9897,6 +9901,51 @@ def untrusted_input_boundaries_check() -> None:
         "插件把 side 写进宿主内存。Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值"
         "本身就是未定义行为，match 里没有任何可达的拒绝臂——签名过的插件写 3 就能在宿主上"
         "触发 UB。布局改成 u32 后两侧字节完全不变，既有插件无需重编译",
+    )
+
+
+def resource_lifecycle_and_lock_reentrancy_check() -> None:
+    """资源持有者的错误路径覆盖，与连接池内 Mutex 重入。"""
+    postgres = production_text((ROOT / "crates/qx-storage/src/postgres.rs").read_text(encoding="utf-8"))
+    control_block = postgres[postgres.index("pub fn transact_control<T, E, F>"):].split(
+        "\n}"
+    )[0]
+    check(
+        "drop(client);" in control_block
+        and control_block.index("drop(client);") < control_block.index(".sync_control("),
+        "PostgreSQL 控制面事务在同步审计尾部之前必须先放掉池内连接锁",
+        "`sync_control` 内部走 `read()` 会再取一次 `lock_client()`，而池索引是 "
+        "`next_client % clients.len()`——池容量为 1 时两次都落到 `clients[0]`，"
+        "`std::sync::Mutex` 不可重入就是当场自死锁：控制面事务已经提交成功，"
+        "却永远回不了调用方，API 受理与 worker 回写两条生产路径全停。"
+        "`pool_size` 合法范围含 1（1..=128），不是假设中的边界值",
+    )
+    ccxt = production_text((ROOT / "crates/qx-adapter/src/ccxt.rs").read_text(encoding="utf-8"))
+    spawn_body = _fn_body(ccxt, "pub fn spawn(")
+    check(
+        "CCXT Worker stdin 不可用" in spawn_body
+        and "CCXT Worker stdout 不可用" in spawn_body
+        and spawn_body.count("let _ = child.kill();") >= 2
+        and spawn_body.count("let _ = child.wait();") >= 2
+        and ".ok_or_else(|| \"CCXT Worker stdin 不可用\".to_string())" not in spawn_body,
+        "CCXT 子进程 spawn 之后的管道取失败必须先把子进程收掉",
+        "`Stdio::piped()` 之后 `stdin`/`stdout` 必为 `Some`，这条路径今天走不到；"
+        "但上游一旦把 worker 改成无管道模式，裸 `?` 就会留下一个无人回收的孤儿 Python 进程。"
+        "`strategy_host.rs` 的同一处已经有 kill+wait，两处口径不该不一致。"
+        "判据只读 `spawn` 的函数体：`call()` 里那次 `take()` 是取用完就 `Some(handle)` "
+        "还给自己的恢复式取用，语义不同，不在此列",
+    )
+    strategy_host = production_text((ROOT / "crates/qx-cli/src/strategy_host.rs").read_text(encoding="utf-8"))
+    check(
+        "struct RingFileGuard" in strategy_host
+        and "impl Drop for RingFileGuard" in strategy_host
+        and "ring_guard.register(" in strategy_host
+        and "ring_guard.disown()" in strategy_host,
+        "共享环临时文件从路径生成那一刻就有清理守卫接管",
+        "`.input`/`.output` 是 memmap2 打开的 mmap 文件，默认 64 MiB 一个。正常路径由 "
+        "`PythonStrategyClient` 的 `Drop` 回收，但 `SharedRingWriter::create` 与 "
+        "`SharedRingReader::open` 任意一步失败时 `ring_paths` 还没被赋值，那条 `Drop` 不触发，"
+        "`%TEMP%` 里就永久留下一对几十 MiB 的孤儿文件",
     )
 
 
@@ -9925,6 +9974,7 @@ def main() -> int:
     websocket_refused_param_route_check()
     live_path_fail_closed_check()
     untrusted_input_boundaries_check()
+    resource_lifecycle_and_lock_reentrancy_check()
     api_accept_loop_exit_check()
     health_snapshot_knob_check()
     strategy_intent_three_language_check()

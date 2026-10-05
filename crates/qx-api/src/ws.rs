@@ -16,6 +16,13 @@ use crate::transport::write_ws_text;
 /// 静默断连。这里按 RFC 6455 的帧头逐帧前进：帧没攒够就等下一次读，只有读到完整的
 /// 帧头才看它的 opcode。非 Close 帧整体丢弃（本通道只推送事件，不消费客户端载荷），
 /// 所以不解析载荷内容，只跳过它的长度。
+///
+/// `WS_CLOSE_PENDING_CAP` 是累积缓冲的上界：跨读累积引入了一个原先不存在的内存面，
+/// 客户端可以每次只给一两个字节、故意不完成帧头，让缓冲无限长大。本通道推送的是
+/// 小 JSON 事件，客户端不会发比这个上界更大的帧；越界按连接异常处理（当作断连），
+/// 而不是继续攒——fail-closed 比无限增长划算。
+const WS_CLOSE_PENDING_CAP: usize = 1024 * 1024;
+
 struct WsCloseScanner {
     pending: Vec<u8>,
 }
@@ -30,6 +37,11 @@ impl WsCloseScanner {
     /// 并入新读到的字节，返回是否出现**完整**的 Close 帧。
     fn push(&mut self, fresh: &[u8]) -> bool {
         self.pending.extend_from_slice(fresh);
+        // 攒不下就断：一个不完成帧头的客户端不该让这份缓冲无限长。
+        if self.pending.len() > WS_CLOSE_PENDING_CAP {
+            self.pending.clear();
+            return true;
+        }
         loop {
             if self.pending.len() < 2 {
                 return false;
@@ -314,7 +326,29 @@ const WS_MAX_IDLE_ROUNDS: u32 = 18_000;
 
 #[cfg(test)]
 mod tests {
-    use super::WsCloseScanner;
+    use super::{WsCloseScanner, WS_CLOSE_PENDING_CAP};
+
+    #[test]
+    fn an_unfinished_frame_cannot_grow_the_buffer_past_the_cap() {
+        // Cross-read accumulation is a new memory surface the old byte scan did not have:
+        // a client that dribbles bytes without ever completing a frame header would
+        // otherwise grow `pending` without bound. Past the cap the connection is
+        // reported as closed instead of accumulating forever.
+        let mut scanner = WsCloseScanner::new();
+        assert!(
+            !scanner.push(&[0x81_u8, 0x7f_u8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+            "a 10-byte header with an 8-byte length is still incomplete"
+        );
+        assert_eq!(scanner.pending.len(), 10);
+        assert!(
+            scanner.push(&vec![0x18_u8; WS_CLOSE_PENDING_CAP]),
+            "overflowing the cap is treated as a close"
+        );
+        assert!(
+            scanner.pending.is_empty(),
+            "the buffer is drained, not grown"
+        );
+    }
 
     #[test]
     fn payload_bytes_matching_close_are_not_a_close_frame() {

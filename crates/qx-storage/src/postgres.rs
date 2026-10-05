@@ -1504,6 +1504,12 @@ impl PostgresControlStore {
                 .map_err(pg_error)?;
         }
         transaction.commit().map_err(pg_error)?;
+        // 追加审计尾部前必须先放掉池内锁：`sync_control` 内部走 `read()` 会再取一次
+        // `lock_client()`，池容量为 1 时两次都落到 `clients[0]`，而 `std::sync::Mutex`
+        // 不可重入——当时就是当场自死锁，控制面事务已提交成功却永远回不了调用方，
+        // API 受理与 worker 回写两条生产路径全停（V13 R13）。`commit` 已经消费掉
+        // transaction，这里要放的是它借用的那个连接锁。
+        drop(client);
         if result.is_ok() {
             // 复用同一个连接池把新增审计尾部追加进 `qx_audit_entries` 哈希链，
             // 与文件/SQLite 后端的 `transact_control` 同一口径。
