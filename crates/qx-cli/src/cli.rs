@@ -473,9 +473,20 @@ pub(crate) fn run() {
             path,
             allow_unmanaged_roles,
         } => {
-            if let Err(error) = run_process_supervisor(&path, allow_unmanaged_roles) {
-                eprintln!("进程监督器停止: {error}");
-                std::process::exit(2);
+            if let Err(failure) = run_process_supervisor(&path, allow_unmanaged_roles) {
+                eprintln!("进程监督器停止: {failure}");
+                match failure {
+                    qx_orchestrator::SuperviseFailure::Usage(_) => std::process::exit(2),
+                    // 把子进程的原始退出码原样上报：panic 的 101、OOM 的 137、干净退出的 0
+                    // 各是一格，监控才能按数值分支。被信号杀死（`None`）走 128，
+                    // 与 POSIX 的信号退出约定一致。
+                    qx_orchestrator::SuperviseFailure::WorkerExit { raw_code, .. } => {
+                        std::process::exit(match raw_code {
+                            Some(code) if code != 0 => code,
+                            _ => 128,
+                        })
+                    }
+                }
             }
         }
         Command::SchedulerWorker {

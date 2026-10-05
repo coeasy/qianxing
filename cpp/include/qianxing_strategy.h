@@ -33,10 +33,14 @@ typedef enum qx_market_event_kind {
     QX_MARKET_ORDER_BOOK = 4
 } qx_market_event_kind;
 
-typedef enum qx_order_side {
-    QX_SIDE_BUY = 1,
-    QX_SIDE_SELL = 2
-} qx_order_side;
+/* Order side is a fixed-width integer, not a C enum: the Rust host has to
+ * reject an invalid discriminant, but reading a C enum value that is not one
+ * of the declared enumerators is undefined behavior in Rust, so there is no
+ * rejection path for it. The layout is identical to the former enum
+ * (4 bytes), so existing plugins need no recompilation. */
+typedef uint32_t qx_order_side;
+#define QX_SIDE_BUY 1u
+#define QX_SIDE_SELL 2u
 
 typedef struct qx_strategy_kv {
     const char* key;

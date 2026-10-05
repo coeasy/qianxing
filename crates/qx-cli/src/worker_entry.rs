@@ -299,7 +299,7 @@ pub(crate) fn managed_worker_args(
 pub(crate) fn run_process_supervisor(
     path: &Path,
     allow_unmanaged_roles: bool,
-) -> Result<(), String> {
+) -> Result<(), qx_orchestrator::SuperviseFailure> {
     let config = read_runtime_config(path)?;
     let executable =
         std::env::current_exe().map_err(|error| format!("解析 qx-cli 可执行文件失败: {error}"))?;

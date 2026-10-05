@@ -507,7 +507,7 @@ EXECUTION_TEST_FIXTURES = (
 # `#[tokio::test]` 同配方实测 0 条，故这个计数器没有整族漏计。
 # 1065 -> 1069：V13 R1-H 控制面终态退场那轮的四条用例（qx-control 5 -> 9），其余 crate 逐名同数。
 # 1069 -> 1070：V13 R4-C1 给两条 HTTP 读链补总量字节界那颗用例（qx-adapter 48 -> 49），其余 crate 逐名同数。
-WORKSPACE_TEST_FLOOR = 1073  # 1071 -> 1073：V13 R10 补两条（Binance 缺 trade_id 转对账、恢复 worker 缺 venue_id 拒启动）。1070 -> 1071：V13 R7-a #284 把「版本号由宿主解码入口裁决」这颗判定钉进解码入口自己的用例（qx-runtime 83 -> 84），其余 crate 逐名同数。
+WORKSPACE_TEST_FLOOR = 1081  # 1073 -> 1081：V13 R11 补七条（C ABI 非法 side 拒绝 1 条、WebSocket Close 帧扫描器 5 条、托管子进程退出码携带原始码 1 条）。1071 -> 1073：V13 R10 补两条（Binance 缺 trade_id 转对账、恢复 worker 缺 venue_id 拒启动）。1070 -> 1071：V13 R7-a #284 把「版本号由宿主解码入口裁决」这颗判定钉进解码入口自己的用例（qx-runtime 83 -> 84），其余 crate 逐名同数。
 # 门禁自身的判据数地板（V12 §17），取本回合实测的总条数。为什么要给量具本身再设一把尺：
 # 本回合编辑 `TEST_MODULES` 时误删了 qx-cli 那一项元组，门禁当场少跑 4 条判据，却依旧打印
 # "架构不变量自检全部通过 ✓" —— 判据可以整段消失而没人变红。这与 §16 抓到的"用例静默删除"
@@ -539,7 +539,7 @@ WORKSPACE_TEST_FLOOR = 1073  # 1071 -> 1073：V13 R10 补两条（Binance 缺 tr
 # 存档落空条数天花板 9 只降不升。
 # 601 → 602：V13 R1-H 重落 V11 R6-1——删掉零构造者的 `CommandStatus::Rejected`，
 # 终态词表收回到 `is_final` 体内一处（控制面 + CLI 幂等入口两个平面各一颗判据）。
-GATE_CHECK_FLOOR = 624  # 621 -> 624：V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
+GATE_CHECK_FLOOR = 627  # 624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
 # V12 §21 / #138：合流类判据的三个参数（455 → 457 就是本轮新增的两条，仍按"当轮实测总条数"取值）。窗口取 10 行是实测拐点 —— W=8 在 `tools` 之外命中 1,180
 # 处、到 W=10 仍有 781 处合法的并列实现（三条 venue 提交链、几家存储后端），所以逐字重复零容忍
 # 只对 `tools/*.py` 生效（本轮实测该目录 5 份脚本 0 命中），Rust 那一侧交给编译器与整树用例。
@@ -5760,6 +5760,9 @@ def c_abi_header_check() -> None:
         "size_t": "usize",
         "char": "c_char",
         "void": "c_void",
+        # qx_order_side 是定宽整数的 typedef，不是枚举：宿主必须能拒绝非法判别值，
+        # 而 #[repr(C)] 枚举读到未声明的值本身就是 UB，match 里没有可达的拒绝臂。
+        "qx_order_side": "u32",
     }
 
     def c_type_to_rust(ctype: str) -> str:
@@ -9861,6 +9864,42 @@ def live_path_fail_closed_check() -> None:
     )
 
 
+def untrusted_input_boundaries_check() -> None:
+    """不可信输入的三处边界：WebSocket Close 帧、托管子进程退出码、C ABI 插件的 side。"""
+    ws = (ROOT / "crates/qx-api/src/ws.rs").read_text(encoding="utf-8")
+    check(
+        "struct WsCloseScanner" in ws
+        and "opcode == 0x8" in ws
+        and ".any(|byte| (*byte & 0x0f) == 0x8)" not in ws,
+        "WebSocket Close 检测按帧头判 opcode，不得按整块缓冲逐字节扫",
+        "Close 帧的 opcode 0x8 只出现在帧起点。按整个读缓冲逐字节扫 `& 0x0f == 0x8`，"
+        "256 个字节值里有 16 个会命中（0x08/0x18/…/0xF8），二进制行情载荷里这类字节很常见，"
+        "客户端发一个正常的 text/binary 帧就会把服务端静默断连",
+    )
+    supervisor = production_text(
+        (ROOT / "crates/qx-orchestrator/src/supervisor_stop.rs").read_text(encoding="utf-8")
+    )
+    check(
+        "struct ProcessExit" in supervisor
+        and "pub raw_code: Option<i32>" in supervisor
+        and "Result<Option<ProcessExit>, String>" in supervisor,
+        "托管子进程的退出码以 Option<i32> 携带，不得先转成字符串",
+        "status.code() 转成字符串之后，panic 的 101、OOM 的 137 和干净退出的 0 在监控里"
+        "长得一样，父进程只能一律按 2 退出——故障分类的工作量被推回读日志",
+    )
+    c_api = production_text((ROOT / "crates/qx-strategy/src/c_api.rs").read_text(encoding="utf-8"))
+    check(
+        "pub const QX_ORDER_SIDE_BUY: u32" in c_api
+        and "pub side: u32" in c_api
+        and "C ABI intent side 非法" in c_api
+        and "pub enum QxOrderSide" not in c_api,
+        "C ABI 的 side 是定宽整数加显式拒绝，不得是 #[repr(C)] 枚举",
+        "插件把 side 写进宿主内存。Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值"
+        "本身就是未定义行为，match 里没有任何可达的拒绝臂——签名过的插件写 3 就能在宿主上"
+        "触发 UB。布局改成 u32 后两侧字节完全不变，既有插件无需重编译",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -9885,6 +9924,7 @@ def main() -> int:
     audit_sync_control_prefix_check()
     websocket_refused_param_route_check()
     live_path_fail_closed_check()
+    untrusted_input_boundaries_check()
     api_accept_loop_exit_check()
     health_snapshot_knob_check()
     strategy_intent_three_language_check()

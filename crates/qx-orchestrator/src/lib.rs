@@ -14,7 +14,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use supervisor_stop::{wait_for_children, ManagedProcess, SupervisorStop};
+use supervisor_stop::{wait_for_children, ManagedProcess, ProcessExit, SupervisorStop};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct WorkerLaunch {
@@ -201,17 +201,58 @@ impl ManagedProcess for ManagedChild {
         &self.id
     }
 
-    fn poll_exit(&mut self) -> Result<Option<String>, String> {
+    fn poll_exit(&mut self) -> Result<Option<ProcessExit>, String> {
         let status = self
             .child
             .try_wait()
             .map_err(|error| format!("检查 worker {} 状态失败: {error}", self.id))?;
-        Ok(status.map(|status| {
-            status
+        Ok(status.map(|status| ProcessExit {
+            raw_code: status.code(),
+            label: status
                 .code()
                 .map(|code| code.to_string())
-                .unwrap_or_else(|| "signal".into())
+                .unwrap_or_else(|| "signal".into()),
         }))
+    }
+}
+
+/// 监督器停止的原因。配置与启动失败按用法错误处理；worker 异常退出额外携带它的
+/// 原始退出码，父进程应当把这个码原样上报——只有一句话字符串的话，panic 的 101、
+/// OOM 的 137 和干净退出的 0 在监控里长得一样，只能去读日志。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SuperviseFailure {
+    Usage(String),
+    WorkerExit {
+        raw_code: Option<i32>,
+        detail: String,
+    },
+}
+
+impl std::fmt::Display for SuperviseFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Usage(error) => write!(f, "{error}"),
+            Self::WorkerExit { detail, .. } => write!(f, "{detail}"),
+        }
+    }
+}
+
+impl SuperviseFailure {
+    /// 追加一条收尾错误；原始退出码不能在这一步被抹掉。
+    fn append(&self, extra: String) -> Self {
+        match self {
+            Self::Usage(detail) => Self::Usage(format!("{detail}; {extra}")),
+            Self::WorkerExit { raw_code, detail } => Self::WorkerExit {
+                raw_code: *raw_code,
+                detail: format!("{detail}; {extra}"),
+            },
+        }
+    }
+}
+
+impl From<String> for SuperviseFailure {
+    fn from(error: String) -> Self {
+        Self::Usage(error)
     }
 }
 
@@ -226,7 +267,7 @@ pub fn supervise_workers(
     executable: &Path,
     work_dir: &Path,
     allow_unmanaged_roles: bool,
-) -> Result<(), String> {
+) -> Result<(), SuperviseFailure> {
     let launches = plan_workers(config, config_path, allow_unmanaged_roles)?;
     // 在派生任何子进程之前就接管终止信号：否则规划/启动窗口内的 Ctrl+C 会直接打死
     // 监督器，留下无人回收的 worker 子进程。
@@ -242,7 +283,7 @@ pub fn supervise_workers(
         .map_err(|error| format!("创建进程日志目录失败 {}: {error}", log_dir.display()))?;
 
     let mut children = Vec::with_capacity(launches.len());
-    let result = (|| -> Result<(), String> {
+    let result = (|| -> Result<(), SuperviseFailure> {
         for launch in launches {
             let stdout_path = log_dir.join(format!("{}.out.log", launch.worker_id));
             let stderr_path = log_dir.join(format!("{}.err.log", launch.worker_id));
@@ -278,10 +319,13 @@ pub fn supervise_workers(
             |millis| thread::sleep(Duration::from_millis(millis)),
             config.shutdown_timeout_ms,
         )? {
-            SupervisorStop::WorkerExited { id, code } => {
-                return Err(format!(
-                    "managed worker {id} exited ({code}); stopping remaining workers"
-                ))
+            SupervisorStop::WorkerExited { id, code, label } => {
+                return Err(SuperviseFailure::WorkerExit {
+                    raw_code: code,
+                    detail: format!(
+                        "managed worker {id} exited ({label}); stopping remaining workers"
+                    ),
+                })
             }
             SupervisorStop::StoppedWithinBudget { waited_ms } => {
                 println!("[监督器 · Shutdown] 全部 worker 按停机请求退出 waited_ms={waited_ms}")
@@ -290,9 +334,9 @@ pub fn supervise_workers(
                 waited_ms,
                 remaining,
             } => {
-                return Err(format!(
+                return Err(SuperviseFailure::Usage(format!(
                     "{remaining} 个 worker 收到停机请求后 {waited_ms}ms 仍未退出，超过 shutdown_timeout_ms"
-                ))
+                )))
             }
         }
         Ok(())
@@ -300,11 +344,12 @@ pub fn supervise_workers(
     let reaped = stop_managed_children(
         &mut children,
         Duration::from_millis(config.shutdown_timeout_ms),
-    );
+    )
+    .map_err(SuperviseFailure::Usage);
     match (result, reaped) {
         (Ok(()), reap) => reap,
         (Err(error), Ok(())) => Err(error),
-        (Err(error), Err(reap_error)) => Err(format!("{error}; 且收尾未收干净: {reap_error}")),
+        (Err(error), Err(reap_error)) => Err(error.append(format!("且收尾未收干净: {reap_error}"))),
     }
 }
 

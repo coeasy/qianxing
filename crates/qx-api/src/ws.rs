@@ -8,6 +8,67 @@ use super::*;
 use crate::admission::{header_value, parse_request_line, split_target};
 use crate::transport::write_ws_text;
 
+/// 跨读累积地判定客户端是否发来 Close 帧。
+///
+/// WebSocket 的 Close 帧 opcode 是 0x8，但帧头**只出现在帧起点**。原实现按整个读缓冲
+/// 逐字节扫 `(*byte & 0x0f) == 0x8`——256 个字节值里有 16 个会命中（0x08/0x18/…/0xF8），
+/// 二进制行情帧的载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端
+/// 静默断连。这里按 RFC 6455 的帧头逐帧前进：帧没攒够就等下一次读，只有读到完整的
+/// 帧头才看它的 opcode。非 Close 帧整体丢弃（本通道只推送事件，不消费客户端载荷），
+/// 所以不解析载荷内容，只跳过它的长度。
+struct WsCloseScanner {
+    pending: Vec<u8>,
+}
+
+impl WsCloseScanner {
+    fn new() -> Self {
+        Self {
+            pending: Vec::new(),
+        }
+    }
+
+    /// 并入新读到的字节，返回是否出现**完整**的 Close 帧。
+    fn push(&mut self, fresh: &[u8]) -> bool {
+        self.pending.extend_from_slice(fresh);
+        loop {
+            if self.pending.len() < 2 {
+                return false;
+            }
+            let opcode = self.pending[0] & 0x0f;
+            let header_len = self.pending[1] & 0x7f;
+            let extended = if header_len == 126 {
+                2
+            } else if header_len == 127 {
+                8
+            } else {
+                0
+            };
+            let mask_bytes = usize::from((self.pending[1] & 0x80) != 0) * 4;
+            if self.pending.len() < 2 + extended {
+                return false;
+            }
+            let payload_len = if extended == 0 {
+                header_len as usize
+            } else if extended == 2 {
+                u16::from_be_bytes([self.pending[2], self.pending[3]]) as usize
+            } else {
+                let mut bytes = [0_u8; 8];
+                bytes.copy_from_slice(&self.pending[2..10]);
+                u64::from_be_bytes(bytes) as usize
+            };
+            let total = 2 + extended + mask_bytes;
+            if self.pending.len() < total || payload_len > self.pending.len() - total {
+                return false;
+            }
+            if opcode == 0x8 {
+                return true;
+            }
+            let rest = self.pending.split_off(total + payload_len);
+            self.pending = rest;
+        }
+    }
+}
+
 impl ApiService {
     /// WebSocket 会话的准入判定：跨源、身份、握手 key、查询串、作用域总线与首批事件。
     ///
@@ -164,6 +225,7 @@ impl ApiService {
         }
         let event_bus = session.event_bus;
         let mut client_buffer = [0_u8; 2048];
+        let mut close_scanner = WsCloseScanner::new();
         let mut idle_rounds = 0_u32;
         loop {
             // 会话循环的出口不能只有"客户端自己关"：监听循环按 `stopped()` 收摊后，
@@ -205,13 +267,7 @@ impl ApiService {
             }
             match stream.read(&mut client_buffer) {
                 Ok(0) => return Ok(()),
-                Ok(size)
-                    if client_buffer[..size]
-                        .iter()
-                        .any(|byte| (*byte & 0x0f) == 0x8) =>
-                {
-                    return Ok(())
-                }
+                Ok(size) if close_scanner.push(&client_buffer[..size]) => return Ok(()),
                 Ok(_) => advanced = true,
                 Err(error)
                     if matches!(
@@ -255,3 +311,65 @@ pub(crate) struct WsSession {
 /// close 帧。取得比反向代理的空闲超时（常见 60s）更长，是为了让**代理**先断开、由客户端
 /// 读到 EOF，而不是让本进程先动手；代理不在场时这一条才是唯一出口。
 const WS_MAX_IDLE_ROUNDS: u32 = 18_000;
+
+#[cfg(test)]
+mod tests {
+    use super::WsCloseScanner;
+
+    #[test]
+    fn payload_bytes_matching_close_are_not_a_close_frame() {
+        // Text frame carrying [0x18, 0x00, 0x01]: every one of those bytes satisfies
+        // the old `byte & 0x0f == 0x8` test, so the previous implementation closed
+        // the connection on a perfectly ordinary data frame.
+        let mut scanner = WsCloseScanner::new();
+        assert!(
+            !scanner.push(&[0x81, 0x03, 0x18, 0x00, 0x01]),
+            "a data frame is not a close"
+        );
+        // And the very byte 0x68 ('h') also matches the old test.
+        assert!(!scanner.push(&[0x81, 0x05, b'h', b'e', b'l', b'l', b'o']));
+    }
+
+    #[test]
+    fn a_complete_close_frame_is_detected() {
+        let mut scanner = WsCloseScanner::new();
+        assert!(scanner.push(&[0x88, 0x00]), "an empty close frame closes");
+        assert!(
+            WsCloseScanner::new().push(&[0x88, 0x02, 0x03, 0xe8]),
+            "a close frame with a status payload closes"
+        );
+    }
+
+    #[test]
+    fn a_close_frame_split_across_reads_is_still_detected() {
+        let mut scanner = WsCloseScanner::new();
+        assert!(!scanner.push(&[0x88, 0x02]));
+        assert!(
+            scanner.push(&[0x03, 0xe8]),
+            "the second half completes the frame"
+        );
+    }
+
+    #[test]
+    fn a_data_frame_before_close_in_one_read_still_reaches_the_close() {
+        // One read delivering a text frame then a close frame: the text frame is
+        // skipped whole, the close is found at its own header.
+        let mut scanner = WsCloseScanner::new();
+        assert!(scanner.push(&[0x81, 0x03, 0x18, 0x28, 0x38, 0x88, 0x00]));
+    }
+
+    #[test]
+    fn an_extended_length_frame_is_skipped_whole() {
+        // 128-byte payload: the 2-byte extended length form. The payload bytes all
+        // match the old close test; the frame must be skipped by length, not scanned.
+        let mut payload = vec![0_u8; 128];
+        payload.iter_mut().for_each(|byte| *byte = 0x18);
+        let mut frame = vec![0x81_u8, 0x7e_u8, 0x00_u8, 0x80_u8];
+        frame.extend_from_slice(&payload);
+        let mut scanner = WsCloseScanner::new();
+        assert!(
+            !scanner.push(&frame),
+            "a 128-byte text frame is not a close"
+        );
+    }
+}

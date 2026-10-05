@@ -6,17 +6,31 @@
 
 const POLL_INTERVAL_MS: u64 = 250;
 
+/// 一个子进程的退出结果：原始退出码与日志文字分开携带。
+///
+/// 只带文字的话上游没法按数值分支——Rust panic 的 101、OOM 的 137、干净退出的 0
+/// 在字符串里长得一样，只能去读日志。被信号杀死时 `raw_code` 是 `None`。
+pub(crate) struct ProcessExit {
+    pub raw_code: Option<i32>,
+    pub label: String,
+}
+
 /// 一个被托管的子进程；抽成 trait 是为了让等待阶梯能被用例驱动，不必真起进程。
 pub(crate) trait ManagedProcess {
     fn id(&self) -> &str;
 
-    /// 轮询一次退出状态；已退出时返回退出码描述。
-    fn poll_exit(&mut self) -> Result<Option<String>, String>;
+    /// 轮询一次退出状态；已退出时返回原始码与文字描述。
+    fn poll_exit(&mut self) -> Result<Option<ProcessExit>, String>;
 }
 
 pub(crate) enum SupervisorStop {
     /// 托管 worker 自己退出了：属于故障，调用方要停掉其余 worker 并按失败上报。
-    WorkerExited { id: String, code: String },
+    /// `code` 是原始退出码（`None` = 被信号杀死），`label` 是日志用的文字描述。
+    WorkerExited {
+        id: String,
+        code: Option<i32>,
+        label: String,
+    },
     /// 收到终止请求后，全部 worker 在预算内退出；`waited_ms` 从请求落下起算。
     StoppedWithinBudget { waited_ms: u64 },
     /// 收到终止请求，但仍有 worker 到预算没退出；`waited_ms` 同样不含请求之前的等待。
@@ -37,13 +51,13 @@ pub(crate) fn wait_for_children<P: ManagedProcess>(
     // 从等待起点算的话，跑了一小时之后再按一次 Ctrl+C 会立刻判超时，宽限预算形同虚设。
     let mut requested_at: Option<u64> = None;
     loop {
-        let mut exited: Option<(String, String)> = None;
+        let mut exited: Option<(String, Option<i32>, String)> = None;
         let mut running = 0_usize;
         for child in children.iter_mut() {
             match child.poll_exit()? {
-                Some(code) => {
+                Some(exit) => {
                     if exited.is_none() {
-                        exited = Some((child.id().to_string(), code));
+                        exited = Some((child.id().to_string(), exit.raw_code, exit.label));
                     }
                 }
                 None => running += 1,
@@ -68,8 +82,8 @@ pub(crate) fn wait_for_children<P: ManagedProcess>(
                     remaining: running,
                 });
             }
-        } else if let Some((id, code)) = exited {
-            return Ok(SupervisorStop::WorkerExited { id, code });
+        } else if let Some((id, code, label)) = exited {
+            return Ok(SupervisorStop::WorkerExited { id, code, label });
         }
         sleep_ms(POLL_INTERVAL_MS);
     }
@@ -101,10 +115,13 @@ mod tests {
             self.id
         }
 
-        fn poll_exit(&mut self) -> Result<Option<String>, String> {
+        fn poll_exit(&mut self) -> Result<Option<ProcessExit>, String> {
             self.polls.set(self.polls.get() + 1);
             if self.polls.get() >= self.exit_after_polls {
-                Ok(Some("0".into()))
+                Ok(Some(ProcessExit {
+                    raw_code: Some(0),
+                    label: "0".into(),
+                }))
             } else {
                 Ok(None)
             }
@@ -156,6 +173,44 @@ mod tests {
             SupervisorStop::WorkerExited { .. } => "worker-exited",
             SupervisorStop::StoppedWithinBudget { .. } => "stopped-within-budget",
             SupervisorStop::StopTimedOut { .. } => "stop-timed-out",
+        }
+    }
+
+    struct CodeChild {
+        id: &'static str,
+        code: i32,
+    }
+
+    impl ManagedProcess for CodeChild {
+        fn id(&self) -> &str {
+            self.id
+        }
+
+        fn poll_exit(&mut self) -> Result<Option<ProcessExit>, String> {
+            Ok(Some(ProcessExit {
+                raw_code: Some(self.code),
+                label: self.code.to_string(),
+            }))
+        }
+    }
+
+    #[test]
+    fn worker_exit_carries_the_raw_exit_code() {
+        // `poll_exit` 只回文字时，panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得
+        // 一样，只能去读日志。这里钉住原始码从子进程一路传到 `WorkerExited`。
+        let mut children = [CodeChild {
+            id: "qx-strategy",
+            code: 101,
+        }];
+        let stop =
+            wait_for_children(&mut children, || false, || 0_u64, |_millis| {}, 10_000).unwrap();
+        match stop {
+            SupervisorStop::WorkerExited { id, code, label } => {
+                assert_eq!(id, "qx-strategy");
+                assert_eq!(code, Some(101));
+                assert_eq!(label, "101");
+            }
+            other => panic!("expected WorkerExited, got {}", kind(&other)),
         }
     }
 

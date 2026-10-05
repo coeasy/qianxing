@@ -112,18 +112,20 @@ pub struct QxMarketEvent {
     pub timer_name: *const c_char,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum QxOrderSide {
-    Buy = 1,
-    Sell = 2,
-}
+/// Order side across the C ABI, as a fixed-width integer rather than a
+/// `#[repr(C)]` enum. The host must reject an invalid discriminant, but
+/// reading a C enum whose stored value is not one of the declared
+/// enumerators is undefined behavior in Rust — a hostile or buggy plugin that
+/// writes `side = 3` would reach the match before any check could run. The
+/// layout is unchanged (4 bytes), so existing plugins need no recompilation.
+pub const QX_ORDER_SIDE_BUY: u32 = 1;
+pub const QX_ORDER_SIDE_SELL: u32 = 2;
 
 #[repr(C)]
 pub struct QxOrderIntent {
     pub intent_id: u64,
     pub instrument: *const c_char,
-    pub side: QxOrderSide,
+    pub side: u32,
     pub qty_raw: QxRaw128,
     pub limit_price_raw: QxRaw128,
     pub has_limit_price: u8,
@@ -454,8 +456,9 @@ impl CAbiStrategy {
             let instrument = InstrumentId::parse(&instrument_text)
                 .ok_or_else(|| format!("C ABI intent instrument 非法: {instrument_text}"))?;
             let side = match raw.side {
-                QxOrderSide::Buy => Side::Buy,
-                QxOrderSide::Sell => Side::Sell,
+                QX_ORDER_SIDE_BUY => Side::Buy,
+                QX_ORDER_SIDE_SELL => Side::Sell,
+                other => return Err(format!("C ABI intent side 非法: {other}")),
             };
             let policy = if raw.position_side.is_null() {
                 None
@@ -954,7 +957,7 @@ mod tests {
         let intents = Box::new([QxOrderIntent {
             intent_id: (*event).ts,
             instrument: c"BTCUSDT.BINANCE".as_ptr(),
-            side: QxOrderSide::Buy,
+            side: QX_ORDER_SIDE_BUY,
             qty_raw: QxRaw128::from_i128(1_000_000_000),
             limit_price_raw: QxRaw128::from_i128(0),
             has_limit_price: 0,
@@ -1071,6 +1074,63 @@ mod tests {
             .with_ed25519_signature("00".repeat(32), signature_hex);
         assert!(verify_library_file(&path, &bad).is_err());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn decode_decision_rejects_an_invalid_c_side_value() {
+        // The plugin writes `side` into host-owned memory. When `side` was typed
+        // as a `#[repr(C)]` enum, a stored value of 3 is not any of the declared
+        // enumerators, so matching it is undefined behavior in Rust — there is
+        // no reachable "reject" arm, and a hostile-but-signed plugin could reach
+        // that arm before any check ran. The field is therefore a plain `u32`
+        // with an explicit rejection.
+        let intent = Box::new(QxOrderIntent {
+            intent_id: 1,
+            instrument: c"BTCUSDT.BINANCE".as_ptr(),
+            side: 3,
+            qty_raw: QxRaw128::from_i128(1_000_000_000),
+            limit_price_raw: QxRaw128::from_i128(0),
+            has_limit_price: 0,
+            reduce_only: 0,
+            post_only: 0,
+            position_side: ptr::null(),
+        });
+        let raw = QxStrategyDecision {
+            schema_version: QX_C_STRATEGY_API_VERSION,
+            request_id: c"req-1".as_ptr(),
+            strategy_id: c"abi-test".as_ptr(),
+            signal_id: 1,
+            confidence: QxRaw128::from_i128(0),
+            priority: 0,
+            expires_at: 100,
+            intents: Box::into_raw(intent).cast(),
+            intents_len: 1,
+        };
+        let context = StrategyContext {
+            strategy_id: "abi-test".into(),
+            strategy_version: "v1".into(),
+            account_id: "main".into(),
+            venue_id: "paper".into(),
+            data_fingerprint: "bars-1".into(),
+            as_of: 10,
+            positions: BTreeMap::new(),
+            cash: BTreeMap::new(),
+            available_margin_raw: Some(1_000_000_000),
+            risk_state: "ready".into(),
+        };
+        let strategy = CAbiStrategy {
+            vtable: &FAKE_VTABLE,
+            handle: ptr::null_mut(),
+        };
+        let error = strategy.decode_decision(&raw, &context, 10).unwrap_err();
+        // Two deliberate leaks: `decode_decision` returns before `free_decision`
+        // runs (that happens in `on_event`), and the strategy's `handle` is null,
+        // so its `Drop` would call `fake_destroy` on a null pointer.
+        std::mem::forget(strategy);
+        assert!(
+            error.contains("C ABI intent side 非法") && error.contains("3"),
+            "the rejection must name the offending field and value: {error}",
+        );
     }
 
     #[test]
