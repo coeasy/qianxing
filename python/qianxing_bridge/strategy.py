@@ -288,17 +288,26 @@ class StrategyOutput:
     schema_version: int = SCHEMA_VERSION
 
     def validate_for(self, request: StrategyInput) -> None:
+        # 六种失败各说各话，而不是念成同一句 "identity or expiry does not match input"：
+        # 返回 dict 时漏写 `schema_version`（`from_dict` 缺省读成 0）的作者按那句话去查
+        # request_id，永远查不出问题；`StrategyInput.validate` 早就是一臂一句，输出侧不该更钝。
         request.validate()
-        if (
-            self.schema_version != SCHEMA_VERSION
-            or self.request_id != request.request_id
-            or self.strategy_id != request.strategy_id
-            or self.signal_id <= 0
-            or self.instrument != request.instrument
-            or not self.instrument.strip()
-            or (self.expires_at != 0 and self.expires_at < request.as_of)
-        ):
-            raise ValueError("strategy output identity or expiry does not match input")
+        if self.schema_version != SCHEMA_VERSION:
+            raise ValueError(
+                f"strategy output schema_version must be {SCHEMA_VERSION}, got {self.schema_version}"
+            )
+        if self.request_id != request.request_id:
+            raise ValueError("strategy output request_id does not match input")
+        if self.strategy_id != request.strategy_id:
+            raise ValueError("strategy output strategy_id does not match input")
+        if self.signal_id <= 0:
+            raise ValueError("strategy output signal_id must be positive")
+        if not self.instrument.strip():
+            raise ValueError("strategy output instrument must be non-empty")
+        if self.instrument != request.instrument:
+            raise ValueError("strategy output instrument does not match input")
+        if self.expires_at != 0 and self.expires_at < request.as_of:
+            raise ValueError("strategy output expires_at must not precede input as_of")
         intent_ids: set[int] = set()
         for intent in self.intents:
             intent.validate()

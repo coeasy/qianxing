@@ -16,7 +16,9 @@
         "permission": "Admin",
         "certificate": "/run/secrets/qianxing/ops-client-chain.pem"
       }
-    }
+    },
+    "cors_allowed_origins": [],
+    "max_concurrent_connections": null
   },
   "storage": {
     "backend": "postgres",

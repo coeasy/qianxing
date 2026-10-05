@@ -94,14 +94,13 @@ fn paper_market_bridge_mirrors_quote_into_account_event_log() {
     )
     .unwrap();
     assert_eq!(mirrored, 1);
-    assert_eq!(
-        bridge.pipeline.latest_quote(&instrument),
-        Some((Price::from_raw(100), Price::from_raw(101), 1_000))
-    );
     let restored_quote = bridge
         .pipeline
         .latest_quote_with_depth(&instrument)
         .unwrap();
+    assert_eq!(restored_quote.ts, 1_000);
+    assert_eq!(restored_quote.bid, Price::from_raw(100));
+    assert_eq!(restored_quote.ask, Price::from_raw(101));
     assert_eq!(restored_quote.bid_qty, Quantity::from_i64(2));
     assert_eq!(restored_quote.ask_qty, Quantity::from_i64(3));
     let _ = std::fs::remove_dir_all(root);

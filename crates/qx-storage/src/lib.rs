@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 
 mod state_envelope;
-pub use state_envelope::JsonStateEnvelope;
+pub(crate) use state_envelope::JsonStateEnvelope;
 use state_envelope::{
     acquire_storage_lock, encode_state_json, read_json_file, read_state_json,
     read_state_json_or_default, read_state_text, read_state_text_required, transact_state_json,
@@ -468,10 +468,34 @@ pub struct OutboxLease {
     pub fencing_token: u64,
 }
 
+/// 一条 Outbox 事件最多被 relay 尝试投递多少次；用尽后它不再被端出，而是留在
+/// outbox 里等人工确认（V11 K2）。
+///
+/// 修前的形状：`retry` 只把 `attempts` 加一、删掉租约，`available` 只看租约定不看
+/// `attempts`，于是一条永远发不出去的事件每轮都被重新端出，并按 `created_ts` 排在最前
+/// 挤住整条尾巴（`pump_once` 取最旧的 `limit` 条）——头部一个毒事件就让尾部全部事件
+/// 无限期停摆，relay 也以固定节拍空转。消费者侧早就有 `max_attempts` + 死信，出站侧缺
+/// 同款，这是同族缺陷的另一半。
+///
+/// 计数口径放在这里而不是三本后端的 SQL 里：判据只有一个出口，文件 / SQLite /
+/// PostgreSQL 交回的候选集形状不变，改的是 relay 的取用规则。
+pub const OUTBOX_MAX_ATTEMPTS: u32 = 8;
+
+/// 尝试次数是否已经用尽投递预算。用尽的事件不再被 relay 投递，但仍留在 outbox 里可见。
+pub const fn outbox_exhausted(attempts: u32) -> bool {
+    attempts >= OUTBOX_MAX_ATTEMPTS
+}
+
 /// 文件、SQLite、PostgreSQL 和 MQ relay 共用的出站事件语义。
 pub trait OutboxStore: Send + Sync {
     fn append_outbox(&self, event: OutboxEvent) -> Result<(), StorageError>;
-    fn available_outbox(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError>;
+    /// 端出至多 `limit` 条可投递的事件：已持有有效租约的、以及**已用尽投递预算的**都排到最后，
+    /// 后者仍留在候选集里等人工 `claim`/`ack`（K2 的出口），只是不再占住页首。
+    /// `limit` 传 [`usize::MAX`] 表示读全量（运维列面），relay 传它自己的投递预算。
+    fn available_outbox(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError>;
+    /// 停在投递预算外的事件条数。这是状态量而不是本轮观察值：候选集被 `limit` 截断后，
+    /// 逐行数出来的条数会随页数漂移，运维面上「有几条发不出去」必须由这条不问页数的读给出。
+    fn count_parked_outbox(&self) -> Result<u64, StorageError>;
     fn claim_outbox(
         &self,
         event_id: &str,
@@ -508,11 +532,15 @@ pub struct OutboxRelayReport {
     pub retried: u64,
     pub lease_conflicts: u64,
     pub publish_failures: u64,
+    /// 库里当前有几条已用尽投递预算、因而不再被尝试（V11 K2 计数、R7-d 改成不问页数的状态量）。
+    pub parked: u64,
     pub last_error: Option<String>,
 }
 
 /// 通用 Outbox relay。它不关心 NATS、Redpanda 或 HTTP 的具体 SDK，负责保证
-/// claim → publish → ack 的生命周期；发布失败只释放租约并递增 attempts。
+/// claim → publish → ack 的生命周期；发布失败只释放租约并递增 attempts，而 attempts 到达
+/// [`OUTBOX_MAX_ATTEMPTS`] 的事件由 relay 跳过、由 [`OutboxStore::count_parked_outbox`] 数出来，
+/// 既不再阻断后面的事件，也不占据每一轮的读取页数。
 pub struct OutboxRelay<S, P> {
     store: S,
     publisher: P,
@@ -549,8 +577,16 @@ where
         if limit == 0 {
             return Ok(OutboxRelayReport::default());
         }
-        let mut report = OutboxRelayReport::default();
-        for event in self.store.available_outbox(now)?.into_iter().take(limit) {
+        // 停摆条数问的是「库里现在有几条发不出去」而不是这一页数到几条（V11 R7-d）：少报等于毒事件在运维面上消失。
+        let parked = self.store.count_parked_outbox()?;
+        let empty = OutboxRelayReport::default();
+        let mut report = OutboxRelayReport { parked, ..empty };
+        // 页数上界只有 store 那一处读：这里再数一遍 `delivered >= limit` 是一份走不到的第二判据
+        // ——三本后端的 LIMIT 由跨后端契约用例钉住，relay 只负责「端上来的这一页逐条投递」。
+        for event in self.store.available_outbox(now, limit)? {
+            if outbox_exhausted(event.attempts) {
+                continue;
+            }
             report.scanned += 1;
             let lease =
                 match self
@@ -1395,21 +1431,9 @@ pub struct AuditFileStore {
     root: PathBuf,
 }
 
-/// 审计持久化后端契约；数据库实现必须保持文件后端的链校验和游标语义。
-pub trait AuditStore {
-    fn append_record(&self, record: AuditRecord) -> Result<PathBuf, StorageError>;
-    fn read_entries(&self) -> Result<Vec<AuditEntry>, StorageError>;
-    fn query_command_entries(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError>;
-    fn entries_after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError>;
-}
-
 impl AuditFileStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 
     /// 追加一条审计记录；重复写入完全相同的末尾记录是幂等的。
@@ -1475,42 +1499,8 @@ impl AuditFileStore {
         Ok(entries)
     }
 
-    pub fn query_command(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        Ok(self
-            .read()?
-            .into_iter()
-            .filter(|entry| entry.record.command_id == command_id)
-            .collect())
-    }
-
-    pub fn after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        Ok(self
-            .read()?
-            .into_iter()
-            .filter(|entry| entry.sequence > sequence)
-            .collect())
-    }
-
     fn path(&self) -> PathBuf {
         self.root.join("audit.json")
-    }
-}
-
-impl AuditStore for AuditFileStore {
-    fn append_record(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
-        self.append(record)
-    }
-
-    fn read_entries(&self) -> Result<Vec<AuditEntry>, StorageError> {
-        self.read()
-    }
-
-    fn query_command_entries(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        self.query_command(command_id)
-    }
-
-    fn entries_after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        self.after(sequence)
     }
 }
 
@@ -1566,7 +1556,8 @@ pub trait JobQueueBackend {
         now: u64,
         lease_seconds: u64,
     ) -> Result<JobLease, StorageError>;
-    fn ack_job(&self, run_id: u64, worker: &str) -> Result<PathBuf, StorageError>;
+    /// 带 fencing token 的 ack 是唯一入口：租约被抢占后拿不到当前 token 就 ack 不掉，
+    /// 旧持有者不能把一个已经不属于自己的 run 标成已完成。无 token 的旧形已删（V13 R6-B）。
     fn ack_job_at(
         &self,
         run_id: u64,
@@ -2055,8 +2046,24 @@ mod tests {
         plane.execute(77, 11, |_| Ok("DONE".into())).unwrap();
         assert_eq!(store.sync_control(&plane).unwrap(), 1);
         assert_eq!(store.read().unwrap().len(), 2);
-        assert_eq!(store.query_command(77).unwrap().len(), 2);
-        assert_eq!(store.after(0).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .read()
+                .unwrap()
+                .iter()
+                .filter(|entry| entry.record.command_id == 77)
+                .count(),
+            2
+        );
+        assert_eq!(
+            store
+                .read()
+                .unwrap()
+                .iter()
+                .filter(|entry| entry.sequence > 0)
+                .count(),
+            1
+        );
         assert_eq!(AuditFileStore::new(&root).read().unwrap().len(), 2);
 
         let path = root.join("audit.json");
@@ -2234,12 +2241,12 @@ mod tests {
         store
             .retry("order-1", "relay-b", second.fencing_token, 17)
             .unwrap();
-        assert_eq!(store.available(17).unwrap()[0].attempts, 1);
+        assert_eq!(store.available(17, usize::MAX).unwrap()[0].attempts, 1);
         let third = store.claim("order-1", "relay-a", 17, 5).unwrap();
         store
             .ack("order-1", "relay-a", third.fencing_token, 18)
             .unwrap();
-        assert!(store.available(18).unwrap().is_empty());
+        assert!(store.available(18, usize::MAX).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2294,7 +2301,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(failing.pump_once(1, 10).unwrap().retried, 1);
-        assert_eq!(store.available(1).unwrap()[0].attempts, 1);
+        assert_eq!(store.available(1, usize::MAX).unwrap()[0].attempts, 1);
         let working = OutboxRelay::new(
             store.clone(),
             Publisher {
@@ -2307,7 +2314,7 @@ mod tests {
         .unwrap();
         let report = working.pump_once(2, 10).unwrap();
         assert_eq!(report.published, 1);
-        assert!(store.available(2).unwrap().is_empty());
+        assert!(store.available(2, usize::MAX).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 

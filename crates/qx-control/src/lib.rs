@@ -5,7 +5,7 @@
 
 use qx_core::{Fnv1a, Order, OrderStatus, QxError, QxResult};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Permission {
@@ -119,12 +119,25 @@ impl ControlCommand {
     }
 }
 
+/// 控制命令的审计状态。只有三个变体：受理，以及执行后的两种终态。
+///
+/// 这里**没有** `Rejected`（V13 R1-H 重落 V11 R6-1，那份交付面被合流 c07ad22 覆盖掉了）。
+/// 拒绝发生在受理之前——`submit`/`submit_as` 校验不过就返回 `ControlError`，命令与审计记录
+/// 都不会落盘，所以"已拒绝"从来不是一个能被写出来的审计状态。留着一个零构造者的变体，
+/// 会让每个 `match` 都多一条永不为真的臂，读代码的人得逐个去证它走不到。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum CommandStatus {
     Accepted,
-    Rejected,
     Executed,
     Failed,
+}
+
+impl CommandStatus {
+    /// 表达式位置上的唯一终态判据：待办筛选、`execute` 的 `AlreadyFinal`、恢复校验与
+    /// 调用方的"这条命令还动得了吗"共用这一颗。
+    pub const fn is_final(self) -> bool {
+        matches!(self, Self::Executed | Self::Failed)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -184,11 +197,35 @@ pub fn order_from_submit_command(command: &ControlCommand) -> QxResult<Order> {
     Ok(order)
 }
 
+/// 控制面终态命令的保留上界。`commands` / `requests` / `audit` 三格只追加不退场，长跑进程
+/// 每受理一条命令就永久留下三处条目；越过上界按「终态时间最旧」退场（V13 R1-H 重落 V11 R5-1，
+/// 那份交付面被合流 c07ad22 按上游树整体裁定覆盖掉了）。
+///
+/// 只退**终态**命令：`pending()` 靠 `finalized_command_ids()` 判待办，退掉一条未终态的命令等于
+/// 把一条已受理、还没人执行的命令静默丢掉。三格必须同时删——`from_json` 逐条核对「审计记录
+/// 指向的命令存在」与「每条命令至少一条审计记录」，只删一边，重启恢复就会拒读自己写的历史。
+pub const FINALIZED_COMMAND_RETENTION: usize = 4096;
+
+/// 退场摘要。控制面的**持久**审计在 `qx-storage`（`AuditFileStore`/`SqliteAuditStore`/
+/// `PostgresAuditStore` + 哈希链），这一份只是内存
+/// 工作集；退场把它压回上界之内，而压掉了多少必须有个能被读到的数——否则「有界」这句话没有
+/// 证据面。读者是 `/metrics` 的 `qx_control_retired_commands_total` 与
+/// `qx_control_retired_audit_records_total` 两条，以及持久化 JSON 里的同名字段。
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct RetirementSummary {
+    pub retired_commands: u64,
+    pub retired_audit_records: u64,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ControlPlane {
     commands: BTreeMap<u64, ControlCommand>,
     requests: BTreeMap<String, u64>,
     audit: Vec<AuditRecord>,
+    /// 累计退场量。`#[serde(default)]`：合流之前落盘的控制面 JSON 没有这一格，恢复时必须
+    /// 读得回来，否则一次升级就拒读自己的历史。
+    #[serde(default)]
+    retired: RetirementSummary,
 }
 
 impl ControlPlane {
@@ -244,6 +281,7 @@ impl ControlPlane {
             .insert(command.request_id.clone(), command.command_id);
         self.commands.insert(command.command_id, command);
         self.audit.push(record.clone());
+        self.retire_overflow();
         Ok(record)
     }
 
@@ -255,16 +293,81 @@ impl ControlPlane {
         &self.audit
     }
 
+    /// 待办命令。判据与 `execute` 的 `AlreadyFinal` 同一口径：终态审计记录一旦落下，
+    /// 这条命令就不再是待办。
+    ///
+    /// 终态集合每次现算一遍：调用方是四个 worker 的轮询循环，而 `audit` 只追加不退场，
+    /// 逐条命令回扫整段审计会把每轮轮询打成 O(commands × audit)（V13 R1-D）。
     pub fn pending(&self) -> impl Iterator<Item = &ControlCommand> {
-        self.commands.values().filter(|command| {
-            !self.audit.iter().rev().any(|record| {
-                record.command_id == command.command_id
-                    && matches!(
-                        record.status,
-                        CommandStatus::Rejected | CommandStatus::Executed | CommandStatus::Failed
-                    )
-            })
-        })
+        let finalized = self.finalized_command_ids();
+        self.commands
+            .values()
+            .filter(move |command| !finalized.contains(&command.command_id))
+    }
+
+    /// 已落终态审计记录的 command_id 集合。`execute` 对已终态的命令回 `AlreadyFinal`，
+    /// 所以每条命令至多一条终态记录——“有没有终态记录”与“最新那条是不是终态”同解。
+    fn finalized_command_ids(&self) -> BTreeSet<u64> {
+        self.audit
+            .iter()
+            .filter(|record| record.status.is_final())
+            .map(|record| record.command_id)
+            .collect()
+    }
+
+    /// 累计退场摘要。`/metrics` 读它，运维因此能看见「控制面确实被压回上界之内」。
+    pub fn retirement(&self) -> RetirementSummary {
+        self.retired
+    }
+
+    fn retire_overflow(&mut self) {
+        self.retire_overflow_with(FINALIZED_COMMAND_RETENTION)
+    }
+
+    /// 上界之外的终态命令按终态时间最旧退场，命令、请求索引、审计记录三格同时删。
+    ///
+    /// 第一句就是规模判据：`finalized ⊆ commands`，所以命令数没越过上界时终态数也不可能越过，
+    /// 直接返回。少了这句，每次 `submit`/`execute` 都要重扫整段审计并重建一个 `BTreeSet`，
+    /// 受理 n 条命令的总代价是 O(n²)——那正是 `pending()` 在 R1-D 已经躲开的那种形状。
+    fn retire_overflow_with(&mut self, retention: usize) {
+        if self.commands.len() <= retention {
+            return;
+        }
+        let finalized = self.finalized_command_ids();
+        if finalized.len() <= retention {
+            return;
+        }
+        // 每条终态命令至多一条终态记录（`execute` 对已终态命令回 `AlreadyFinal`），
+        // 所以「按终态记录的 ts 升序」就是「按退场优先级升序」，同 ts 按 command_id 定序。
+        let mut finalized_at: Vec<(u64, u64)> = self
+            .audit
+            .iter()
+            .filter(|record| record.status.is_final())
+            .map(|record| (record.ts, record.command_id))
+            .collect();
+        finalized_at.sort_unstable();
+        let overflow = finalized_at.len() - retention;
+        let victims: BTreeSet<u64> = finalized_at
+            .into_iter()
+            .take(overflow)
+            .map(|(_, command_id)| command_id)
+            .collect();
+        let mut removed_records = 0u64;
+        self.audit.retain(|record| {
+            if victims.contains(&record.command_id) {
+                removed_records += 1;
+                false
+            } else {
+                true
+            }
+        });
+        for command_id in &victims {
+            if let Some(command) = self.commands.remove(command_id) {
+                self.requests.remove(&command.request_id);
+            }
+        }
+        self.retired.retired_commands += victims.len() as u64;
+        self.retired.retired_audit_records += removed_records;
     }
 
     /// 执行器唯一的状态入口：执行结果必须回写审计记录，不能只返回字符串。
@@ -288,10 +391,7 @@ impl ControlPlane {
             .find(|record| record.command_id == command_id)
             .map(|record| record.status)
             .ok_or(ControlError::UnknownCommand(command_id))?;
-        if matches!(
-            prior,
-            CommandStatus::Rejected | CommandStatus::Executed | CommandStatus::Failed
-        ) {
+        if prior.is_final() {
             return Err(ControlError::AlreadyFinal(command_id));
         }
         let (status, result_code) = match action(command) {
@@ -308,6 +408,7 @@ impl ControlPlane {
             ts,
         };
         self.audit.push(record.clone());
+        self.retire_overflow();
         Ok(record)
     }
 
@@ -349,40 +450,30 @@ impl ControlPlane {
             {
                 return Err(format!("命令 {} 的审计摘要不一致", record.command_id));
             }
-            match (audit_state.get(&record.command_id).copied(), record.status) {
-                (None, CommandStatus::Accepted) => {
-                    audit_state.insert(record.command_id, CommandStatus::Accepted);
-                }
-                (None, _) => {
-                    return Err(format!("命令 {} 缺少 Accepted 初始记录", record.command_id));
-                }
-                (
-                    Some(CommandStatus::Accepted),
-                    CommandStatus::Rejected | CommandStatus::Executed | CommandStatus::Failed,
-                ) => {
+            // 状态词表在这里只出现一次：`is_final()`。以前这个 match 把三个终态变体又抄了
+            // 两遍（模式位置调不进 `is_final`），加变体就得同步改三处，漏一处恢复校验就松。
+            match audit_state.get(&record.command_id).copied() {
+                None if !record.status.is_final() => {
                     audit_state.insert(record.command_id, record.status);
                 }
-                (Some(CommandStatus::Accepted), CommandStatus::Accepted) => {
-                    return Err(format!("命令 {} 重复 Accepted", record.command_id));
+                None => {
+                    return Err(format!("命令 {} 缺少 Accepted 初始记录", record.command_id));
                 }
-                (
-                    Some(CommandStatus::Rejected | CommandStatus::Executed | CommandStatus::Failed),
-                    _,
-                ) => {
+                Some(prior) if prior.is_final() => {
                     return Err(format!("命令 {} 终态后仍有审计记录", record.command_id));
+                }
+                Some(_) if record.status.is_final() => {
+                    audit_state.insert(record.command_id, record.status);
+                }
+                Some(_) => {
+                    return Err(format!("命令 {} 重复 Accepted", record.command_id));
                 }
             }
         }
+        // 每条命令都必须留下审计痕迹。`audit_state` 的键只可能来自上面已核对过"命令存在"
+        // 的记录，所以这里问"有没有"就够了，不必再抄一遍状态词表。
         for command_id in plane.commands.keys() {
-            if !matches!(
-                audit_state.get(command_id),
-                Some(
-                    CommandStatus::Accepted
-                        | CommandStatus::Rejected
-                        | CommandStatus::Executed
-                        | CommandStatus::Failed,
-                )
-            ) {
+            if !audit_state.contains_key(command_id) {
                 return Err(format!("命令 {} 缺少审计记录", command_id));
             }
         }
@@ -495,5 +586,114 @@ mod tests {
         });
         let json = plane.to_json().unwrap();
         assert!(ControlPlane::from_json(&json).is_err());
+    }
+
+    fn numbered(index: u64) -> ControlCommand {
+        ControlCommand {
+            command_id: index,
+            request_id: format!("req-{index}"),
+            operator_id: "operator".into(),
+            reason: "retention probe".into(),
+            kind: CommandKind::PauseStrategy,
+            target: "strategy-1".into(),
+            payload: BTreeMap::new(),
+            permission: Permission::Trading,
+            dry_run: true,
+        }
+    }
+
+    /// 退场只碰终态命令，且命令/请求索引/审计三格同时消失——少删任何一格，
+    /// `from_json` 的恢复校验就会拒读，所以末尾那一次往返是这颗用例的牙齿。
+    #[test]
+    fn retirement_drops_oldest_finalized_commands_whole() {
+        let mut plane = ControlPlane::default();
+        for index in 1..=4u64 {
+            plane.submit(numbered(index), index * 10).unwrap();
+        }
+        for index in 1..=4u64 {
+            plane
+                .execute(index, index * 10 + 1, |_| Ok("APPLIED".into()))
+                .unwrap();
+        }
+        assert_eq!(plane.retirement(), RetirementSummary::default());
+
+        plane.retire_overflow_with(2);
+
+        assert_eq!(
+            plane.retirement(),
+            RetirementSummary {
+                retired_commands: 2,
+                // 每条命令两条记录（Accepted + 终态），退场必须把两条一起带走。
+                retired_audit_records: 4,
+            }
+        );
+        let remaining: Vec<u64> = plane.audit().iter().map(|r| r.command_id).collect();
+        // 审计是追加序：四条 Accepted 先全部落盘，四条终态记录再依次跟上，
+        // 所以幸存者是 [3, 4, 3, 4] 而不是 [3, 3, 4, 4]。写死这个顺序等于把
+        // 「Accepted 与终态是两次独立 push」这条事实也钉住。
+        assert_eq!(remaining, vec![3, 4, 3, 4]);
+        assert!(plane.command(1).is_none() && plane.command(2).is_none());
+        assert!(plane.command(3).is_some() && plane.command(4).is_some());
+        assert_eq!(plane.pending().count(), 0);
+        // 恢复校验逐条核对索引一致性：三格里漏删任何一格，这一句就红。
+        let json = plane.to_json().unwrap();
+        let restored = ControlPlane::from_json(&json).unwrap();
+        assert_eq!(restored.retirement(), plane.retirement());
+        assert_eq!(restored.audit().len(), 4);
+    }
+
+    /// 未终态的命令永不退场：把它退掉等于静默丢掉一条已受理、还没人执行的命令。
+    #[test]
+    fn retirement_never_drops_a_pending_command() {
+        let mut plane = ControlPlane::default();
+        for index in 1..=6u64 {
+            plane.submit(numbered(index), index).unwrap();
+        }
+        for index in 1..=5u64 {
+            plane
+                .execute(index, index + 100, |_| Ok("APPLIED".into()))
+                .unwrap();
+        }
+        plane.retire_overflow_with(1);
+        assert_eq!(plane.retirement().retired_commands, 4);
+        assert!(plane.command(6).is_some(), "待办命令被退场了");
+        assert_eq!(plane.pending().count(), 1);
+        assert_eq!(plane.audit().len(), 3);
+    }
+
+    /// 生产入口真的会触发退场：上界是常量，`submit`/`execute` 每次都过一遍这条判据。
+    /// 少了这颗，`retire_overflow` 可以接上却永不被越过，「有界」只是写法不是事实。
+    #[test]
+    fn production_entries_enforce_the_retention_bound() {
+        let mut plane = ControlPlane::default();
+        let bound = FINALIZED_COMMAND_RETENTION as u64;
+        for index in 1..=bound + 1 {
+            plane.submit(numbered(index), index).unwrap();
+            plane
+                .execute(index, index, |_| Ok("APPLIED".into()))
+                .unwrap();
+        }
+        assert_eq!(plane.retirement().retired_commands, 1);
+        assert_eq!(plane.retirement().retired_audit_records, 2);
+        assert!(plane.command(1).is_none(), "最旧那条终态命令没退场");
+        assert!(plane.command(bound + 1).is_some());
+        assert!(ControlPlane::from_json(&plane.to_json().unwrap()).is_ok());
+    }
+
+    /// 合流之前落盘的控制面 JSON 没有 `retired` 这一格：恢复必须照样读得回来。
+    #[test]
+    fn restore_accepts_a_plane_written_before_the_summary_existed() {
+        let mut plane = ControlPlane::default();
+        plane.submit(numbered(1), 10).unwrap();
+        plane.execute(1, 11, |_| Ok("APPLIED".into())).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&plane.to_json().unwrap()).unwrap();
+        value
+            .as_object_mut()
+            .expect("plane serializes as an object")
+            .remove("retired");
+        let legacy = value.to_string();
+        let restored = ControlPlane::from_json(&legacy).unwrap();
+        assert_eq!(restored.retirement(), RetirementSummary::default());
+        assert_eq!(restored.audit().len(), 2);
     }
 }

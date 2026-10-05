@@ -9,10 +9,10 @@
 //! 串行化，连接池只解决并发连接复用，不等同于读写分离或跨节点 HA。
 
 use super::{
-    audit_entry_hash, validate_audit_chain, AuditEntry, AuditStore, ConsumerCheckpoint,
-    ConsumerProjection, ConsumerStateStore, ControlCommandLease, ControlCommandQueueBackend,
-    DeadLetterRecord, EventLogStore, JobLease, JobQueueBackend, OutboxEvent, OutboxLease,
-    OutboxStore, QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
+    audit_entry_hash, validate_audit_chain, AuditEntry, ConsumerCheckpoint, ConsumerProjection,
+    ConsumerStateStore, ControlCommandLease, ControlCommandQueueBackend, DeadLetterRecord,
+    EventLogStore, JobLease, JobQueueBackend, OutboxEvent, OutboxLease, OutboxStore,
+    QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
 };
 use postgres::{Client, GenericClient, Transaction};
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
@@ -741,17 +741,28 @@ impl PostgresOutboxStore {
         transaction.commit().map_err(pg_error)
     }
 
-    pub fn available(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
+    pub fn available(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
         let mut client = self.storage.lock_client()?;
+        // `created_ts`/`sequence`/`expires_ts` 都是 u64 存 TEXT，字典序不等于序号序：
+        // 同一毫秒落盘的一串事件里，sequence 10 会排在 2 前面，把分区内的投递顺序念反。
+        // 口径与 SQLite/文件后端一致——三元组全部数字序（V11 R7-2）。
+        // 用尽投递预算的行排到最后再截页：它们仍留在候选集里等人工确认（K2 的出口），
+        // 但不能占住页首把后面投得出去的事件挤出一页。阈值走 `$2` 绑定，SQL 里不写第二个 8。
         let rows = client
             .query(
                 "SELECT e.event_id, e.topic, e.partition_key, e.sequence, e.schema_version,
                         e.trace_id, e.payload, e.created_ts, e.attempts
                  FROM qx_outbox_events e
                  LEFT JOIN qx_outbox_leases l ON l.event_id = e.event_id
-                 WHERE l.event_id IS NULL OR l.expires_ts <= $1
-                 ORDER BY e.created_ts, e.sequence, e.event_id",
-                &[&u64_text(now)],
+                 WHERE l.event_id IS NULL OR l.expires_ts::numeric <= $1::numeric
+                 ORDER BY e.attempts::numeric >= $2::numeric,
+                          e.created_ts::numeric, e.sequence::numeric, e.event_id
+                 LIMIT $3",
+                &[
+                    &u64_text(now),
+                    &u64_text(crate::OUTBOX_MAX_ATTEMPTS as u64),
+                    &i64::try_from(limit).unwrap_or(i64::MAX),
+                ],
             )
             .map_err(pg_error)?;
         rows.into_iter()
@@ -772,6 +783,20 @@ impl PostgresOutboxStore {
                 Ok(event)
             })
             .collect()
+    }
+
+    /// 不问页数、不读 payload 的停摆条数（V11 R7-d）：候选集被 `limit` 截断后逐行数出的
+    /// parked 只是这一页的观察值，而运维面上「有几条发不出去」要的是库里的状态量。
+    pub fn count_parked(&self) -> Result<u64, StorageError> {
+        let mut client = self.storage.lock_client()?;
+        let row = client
+            .query_one(
+                "SELECT COUNT(*) FROM qx_outbox_events WHERE attempts::numeric >= $1::numeric",
+                &[&u64_text(crate::OUTBOX_MAX_ATTEMPTS as u64)],
+            )
+            .map_err(pg_error)?;
+        let count: i64 = row.get(0);
+        Ok(count as u64)
     }
 
     pub fn claim(
@@ -949,8 +974,12 @@ impl OutboxStore for PostgresOutboxStore {
         self.append(event)
     }
 
-    fn available_outbox(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
-        self.available(now)
+    fn available_outbox(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
+        self.available(now, limit)
+    }
+
+    fn count_parked_outbox(&self) -> Result<u64, StorageError> {
+        self.count_parked()
     }
 
     fn claim_outbox(
@@ -1277,34 +1306,6 @@ impl PostgresAuditStore {
         read_audit(&mut *client)
     }
 
-    pub fn query_command(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        let command_id = u64_text(command_id);
-        let mut client = self.storage.lock_client()?;
-        let rows = client
-            .query(
-                "SELECT sequence, record_json, previous_hash, entry_hash
-                 FROM qx_audit_entries WHERE record_json::jsonb ->> 'command_id' = $1
-                 ORDER BY sequence::numeric",
-                &[&command_id],
-            )
-            .map_err(pg_error)?;
-        parse_audit_rows(rows)
-    }
-
-    pub fn after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        let sequence = u64_text(sequence);
-        let mut client = self.storage.lock_client()?;
-        let rows = client
-            .query(
-                "SELECT sequence, record_json, previous_hash, entry_hash
-                 FROM qx_audit_entries WHERE sequence::numeric > $1::numeric
-                 ORDER BY sequence::numeric",
-                &[&sequence],
-            )
-            .map_err(pg_error)?;
-        parse_audit_rows(rows)
-    }
-
     pub fn sync_control(&self, plane: &ControlPlane) -> Result<usize, StorageError> {
         let existing = self.read()?;
         let records = plane.audit();
@@ -1324,24 +1325,6 @@ impl PostgresAuditStore {
             appended += 1;
         }
         Ok(appended)
-    }
-}
-
-impl AuditStore for PostgresAuditStore {
-    fn append_record(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
-        self.append(record)
-    }
-
-    fn read_entries(&self) -> Result<Vec<AuditEntry>, StorageError> {
-        self.read()
-    }
-
-    fn query_command_entries(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        self.query_command(command_id)
-    }
-
-    fn entries_after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        self.after(sequence)
     }
 }
 
@@ -2049,22 +2032,6 @@ impl JobQueueBackend for PostgresJobQueue {
         lease_seconds: u64,
     ) -> Result<JobLease, StorageError> {
         self.claim(run_id, worker, now, lease_seconds)
-    }
-
-    fn ack_job(&self, run_id: u64, worker: &str) -> Result<PathBuf, StorageError> {
-        let lease = self.storage.clone();
-        let mut client = lease.lock_client()?;
-        let row = client
-            .query_opt(
-                "SELECT fencing_token, expires_ts FROM qx_job_leases WHERE run_id = $1",
-                &[&u64_text(run_id)],
-            )
-            .map_err(pg_error)?
-            .ok_or_else(|| StorageError::NotFound(format!("run_id {run_id} 租约")))?;
-        let token = parse_u64(row.get(0), "fencing_token")?;
-        let now = parse_u64(row.get(1), "expires_ts")?.saturating_sub(1);
-        drop(client);
-        self.ack_at(run_id, worker, token, now)
     }
 
     fn ack_job_at(

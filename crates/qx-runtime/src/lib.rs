@@ -123,12 +123,6 @@ impl qx_execution::LedgerProbe for LiveEventPipeline {
     }
 }
 
-impl qx_execution::MarketDataPort for LiveEventPipeline {
-    fn latest_quote(&self, instrument: &InstrumentId) -> Option<qx_guanxing::QuoteTick> {
-        self.latest_quote_with_depth(instrument)
-    }
-}
-
 /// 加载控制面状态；首次启动返回空状态，损坏的 JSON 不会被吞掉。
 pub fn load_control_state(
     root: impl Into<std::path::PathBuf>,

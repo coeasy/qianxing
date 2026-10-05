@@ -27,7 +27,6 @@ use qx_core::{
 };
 use qx_data::{JsonBarFrameProvider, JsonDatasetRegistry};
 use qx_datastruct::BarFrame;
-use qx_execution::ReconcilePort;
 use qx_execution::{
     execute_paper_submit_effect, ingest_venue_events, ingest_venue_events_with_spec,
     submit_order_with_risk as execute_submit_order_with_risk, EventLogReconcilePort,
@@ -178,7 +177,7 @@ use dataset_commands::{
     verify_dataset_bundle_component_bindings,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

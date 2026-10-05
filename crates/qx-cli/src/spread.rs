@@ -490,7 +490,6 @@ pub(crate) fn persist_strategy_submit(
                 qx_control::CommandStatus::Failed => {
                     Err("Strategy 原 OrderIntent 已执行失败".into())
                 }
-                qx_control::CommandStatus::Rejected => Err("Strategy 原 OrderIntent 已拒绝".into()),
             }
         }
         Err(error) => Err(format!("Strategy SubmitOrder 被控制面拒绝: {error:?}")),
@@ -503,12 +502,5 @@ pub(crate) fn command_is_final(control: &ControlPlane, command_id: u64) -> bool 
         .iter()
         .rev()
         .find(|record| record.command_id == command_id)
-        .is_some_and(|record| {
-            matches!(
-                record.status,
-                qx_control::CommandStatus::Rejected
-                    | qx_control::CommandStatus::Executed
-                    | qx_control::CommandStatus::Failed
-            )
-        })
+        .is_some_and(|record| record.status.is_final())
 }

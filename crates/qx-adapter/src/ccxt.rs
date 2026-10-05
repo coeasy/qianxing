@@ -8,15 +8,12 @@ use qx_core::{
     Fill, MarginMode, Money, Order, OrderStatus, PositionMode, PositionSide, Price, Quantity,
     QxError, QxResult, SCALE,
 };
-use qx_zhenlu::{
-    AdapterHealth, ConnectorCapabilities, ConnectorState, Venue, VenueAdapter, VenueEvent,
-    VenueOrderSnapshot,
-};
+use qx_zhenlu::{Venue, VenueEvent, VenueOrderSnapshot};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -28,7 +25,7 @@ pub trait CcxtRpc: Send {
 
 pub struct CcxtProcessClient {
     child: Child,
-    stdin: ChildStdin,
+    stdin: Option<ChildStdin>,
     responses: Receiver<Result<String, String>>,
     timeout_ms: u64,
 }
@@ -63,21 +60,26 @@ impl CcxtProcessClient {
             .stdout
             .take()
             .ok_or_else(|| "CCXT Worker stdout 不可用".to_string())?;
-        let (sender, responses) = mpsc::channel();
+        // 队列有界：泵线程读子进程 stdout，每行都往通道里塞，而调用侧每次只取一行。
+        // 无界通道让杂印与迟到的应答一路攒下去；改成有界之后泵在写满时被顶住，
+        // 背压回到子进程的 stdout 管道，内存不再随运行时长增长（V13 R1-D）。
+        let (sender, responses) = mpsc::sync_channel(1);
         let worker_program = python.to_string();
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line) {
-                    Ok(0) => {
+                // 单行有字节界：`read_line` 会一直往同一个 `String` 里长，子进程少写一个换行符
+                // 就能把本进程吃到内存耗尽。越界与 EOF 都必须让调用侧看见——静默丢掉一行，
+                // 等于把"应答没读到"说成"worker 什么都没发生"。
+                match crate::read_capped_line(&mut reader, crate::MAX_WORKER_LINE_BYTES) {
+                    Ok(None) => {
                         // "提交结果未知"是安全语义，不能被诊断文本改掉；这里只追加死掉的是哪个程序。
                         let _ = sender.send(Err(format!(
                             "CCXT Worker 已退出，提交结果未知（程序={worker_program}）"
                         )));
                         return;
                     }
-                    Ok(_) => {
+                    Ok(Some(line)) => {
                         if sender.send(Ok(line)).is_err() {
                             return;
                         }
@@ -91,7 +93,7 @@ impl CcxtProcessClient {
         });
         Ok(Self {
             child,
-            stdin,
+            stdin: Some(stdin),
             responses,
             timeout_ms,
         })
@@ -174,11 +176,41 @@ impl CcxtRpc for CcxtProcessClient {
     fn call(&mut self, request: Value) -> Result<Value, String> {
         let payload = serde_json::to_string(&request)
             .map_err(|error| format!("编码 CCXT Worker 请求失败: {error}"))?;
-        self.stdin
-            .write_all(payload.as_bytes())
-            .and_then(|_| self.stdin.write_all(b"\n"))
-            .and_then(|_| self.stdin.flush())
-            .map_err(|error| format!("写入 CCXT Worker 失败: {error}"))?;
+        // 写入必须与读取同受 timeout_ms 约束：子进程一旦"活着但不再读 stdin"，超出 OS 匿名管道
+        // 缓冲（~64KB）的那段 write_all 会永久阻塞，而 timeout_ms 只守着读侧 recv——本进程就此
+        // 卡死，连关停令牌都读不到。与策略宿主（V13 R2 #281）、event consumer handler（#282）
+        // 是同一个缺陷的第三处，故同样把写入交给独立线程，主路径按预算收口（R4-A）。
+        let bytes = format!("{payload}\n").into_bytes();
+        let mut stdin = self
+            .stdin
+            .take()
+            .ok_or_else(|| "CCXT Worker stdin 不可用".to_string())?;
+        let (write_sender, write_done) = mpsc::sync_channel(1);
+        thread::spawn(move || {
+            let failure = stdin
+                .write_all(&bytes)
+                .and_then(|()| stdin.flush())
+                .err()
+                .map(|error| format!("写入 CCXT Worker 输入失败: {error}"));
+            let _ = write_sender.send((failure, stdin));
+        });
+        match write_done.recv_timeout(Duration::from_millis(self.timeout_ms)) {
+            Ok((Some(failure), handle)) => {
+                self.stdin = Some(handle);
+                return Err(failure);
+            }
+            Ok((None, handle)) => {
+                self.stdin = Some(handle);
+            }
+            Err(_) => {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return Err(format!(
+                    "写入 CCXT Worker 输入超时 timeout_ms={}（worker 存活但不接收输入）",
+                    self.timeout_ms
+                ));
+            }
+        }
         let line = match self
             .responses
             .recv_timeout(Duration::from_millis(self.timeout_ms))
@@ -228,6 +260,12 @@ pub struct CcxtProcessVenue {
     id: String,
     rpc: Box<dyn CcxtRpc>,
     connected: bool,
+    /// 本地订单状态、远端订单号映射与下面这一格**只增不减的成交幂等台账**共用同一个上界：
+    /// 进程一生提交过的订单数。三者都**不能**按数量或时间淘汰——`trades` 查询会把同一笔
+    /// trade 重投，去掉任何一条已见 `trade_id` 就等于允许同一笔费用被累计两次（重复记账），
+    /// 而这是本仓库唯一不接受的失败方式。要封顶就得先落成交对账的持久幂等键
+    /// （P0-2 那层事务语义），在那之前刻意保持只增不减；判据只守「不得出现淘汰调用」，
+    /// 谁加一个 `retain`/`remove` 就把重复记账的口子开回来了（V13 R5）。
     orders: BTreeMap<u64, Order>,
     remote_ids: BTreeMap<u64, String>,
     seen_trade_ids: BTreeMap<u64, BTreeSet<String>>,
@@ -674,32 +712,6 @@ impl Venue for CcxtProcessVenue {
 
     fn connected(&self) -> bool {
         self.connected
-    }
-}
-
-impl VenueAdapter for CcxtProcessVenue {
-    fn capabilities(&self) -> ConnectorCapabilities {
-        ConnectorCapabilities {
-            market_data: true,
-            // 当前进程边界只实现公共 CCXT REST；CCXT Pro watch_* 必须显式
-            // 注入独立流 worker，不能把 REST 轮询冒充用户流能力。
-            user_stream: false,
-            submit: true,
-            cancel: true,
-            replace: false,
-        }
-    }
-
-    fn health(&self) -> AdapterHealth {
-        AdapterHealth {
-            state: if self.connected {
-                ConnectorState::Live
-            } else {
-                ConnectorState::ReconcileRequired
-            },
-            last_event_ts: 0,
-            reconnects: 0,
-        }
     }
 }
 

@@ -74,6 +74,8 @@ fn metrics_body_is_line_separated_prometheus_exposition() {
             "qx_api_rate_limit_rejected_total",
             "qx_api_authentication_rejected_total",
             "qx_api_command_enqueue_failures_total",
+            "qx_control_retired_commands_total",
+            "qx_control_retired_audit_records_total",
             "qx_worker_up{worker=\"relay\"}",
         ]
     );

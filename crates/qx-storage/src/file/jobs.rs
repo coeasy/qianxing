@@ -303,10 +303,6 @@ impl JobQueueBackend for FileJobQueue {
         self.claim(run_id, worker, now, lease_seconds)
     }
 
-    fn ack_job(&self, run_id: u64, worker: &str) -> Result<PathBuf, StorageError> {
-        self.ack(run_id, worker)
-    }
-
     fn ack_job_at(
         &self,
         run_id: u64,

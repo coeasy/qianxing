@@ -316,6 +316,12 @@ pub struct LiveEventPipeline {
     account_balances: BTreeMap<(String, String), Vec<AccountBalance>>,
     account_positions: BTreeMap<(String, String), Vec<AccountPositionSnapshot>>,
     funding_rates: BTreeMap<InstrumentId, FundingRateSnapshot>,
+    // 下面这一格**只增不减的成交幂等台账**共用同一个上界：进程一生 ingest 过的成交数。
+    // user stream、reconcile 与 Outbox 补投影三条路径都会把同一笔 fill 重投，`fill_key` 挡
+    // 住第二次 `oms.apply_fill`。淘汰任何一条已见键就等于允许同一笔成交被记两次账，这是本
+    // 仓库唯一不接受的失败方式；`rebuild_runtime_indexes` 重启时把整本 EventLog 的
+    // `Filled` 全插回来，重启也不缩小（V13 R6-A，与 Binance `seen_fill_keys`、CCXT
+    // `seen_trade_ids` 同族，共三本）。
     seen_fills: BTreeSet<(u64, u64, i128, i128, i128, String)>,
     store: RuntimeEventStore,
     log_name: String,
@@ -604,16 +610,6 @@ impl LiveEventPipeline {
 
     pub fn marks(&self) -> &BTreeMap<InstrumentId, Price> {
         &self.marks
-    }
-
-    /// 返回 EventLog 中最近一次 L1 价格，兼容只需要价格的调用方。
-    ///
-    /// 返回 EventLog 中最近一次完整 L1 报价及数量，供 Paper/模拟执行使用。
-    /// Paper 执行不得把固定价格当作默认市场；没有真实行情事实时应停在
-    /// 等待/失败状态，由行情 worker 先写入报价后再重试订单。
-    pub fn latest_quote(&self, instrument: &InstrumentId) -> Option<(Price, Price, u64)> {
-        self.latest_quote_with_depth(instrument)
-            .map(|quote| (quote.bid, quote.ask, quote.ts))
     }
 
     /// 返回 EventLog 中最近一次完整 L1 报价及买卖盘数量。
@@ -1888,7 +1884,7 @@ mod tests {
         let outbox = FileOutboxStore::new(&root);
         pipeline.register_order(order(), 100).unwrap();
         let acked_ids: Vec<String> = outbox
-            .available(1_000)
+            .available(1_000, usize::MAX)
             .unwrap()
             .iter()
             .map(|event| {
@@ -1902,7 +1898,7 @@ mod tests {
             })
             .collect();
         assert_eq!(acked_ids.len(), pipeline.log().len());
-        assert!(outbox.available(1_000).unwrap().is_empty());
+        assert!(outbox.available(1_000, usize::MAX).unwrap().is_empty());
 
         pipeline
             .ingest(RuntimeEventEnvelope::venue(
@@ -1932,7 +1928,7 @@ mod tests {
             ))
             .unwrap();
         let pending: Vec<String> = {
-            let mut events = outbox.available(1_000).unwrap();
+            let mut events = outbox.available(1_000, usize::MAX).unwrap();
             events.sort_by_key(|event| event.sequence);
             events.into_iter().map(|event| event.event_id).collect()
         };
@@ -1949,12 +1945,12 @@ mod tests {
 
         let restored = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
         assert_eq!(restored.snapshot(), pipeline.snapshot());
-        assert_eq!(outbox.available(1_000).unwrap().len(), pipeline.log().len());
-        assert!(acked_ids.iter().all(|id| outbox
-            .available(1_000)
-            .unwrap()
+        let replayed = outbox.available(1_000, usize::MAX).unwrap();
+        assert_eq!(replayed.len(), pipeline.log().len());
+        let acked_came_back = acked_ids
             .iter()
-            .any(|event| &event.event_id == id)));
+            .all(|id| replayed.iter().any(|event| &event.event_id == id));
+        assert!(acked_came_back);
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -87,14 +87,6 @@ pub trait RiskPort {
     fn evaluate_order(&self, order: &Order) -> Result<RiskVerdict, String>;
 }
 
-pub trait MarketDataPort {
-    fn latest_quote(&self, instrument: &InstrumentId) -> Option<QuoteTick>;
-}
-
-pub trait ReconcilePort {
-    fn require_reconcile(&mut self, client_order_id: u64, reason: &str) -> Result<(), String>;
-}
-
 pub trait VenuePort {
     fn venue_id(&self) -> &str;
     fn submit_order(&mut self, order: Order, ts: u64) -> Result<Vec<ExecutionEvent>, String>;

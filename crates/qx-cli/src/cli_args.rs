@@ -45,6 +45,17 @@ fn parse_bps(value: &str) -> Result<i64, String> {
     }
 }
 
+/// `outbox-relay` / `outbox-relay-postgres` 的位置参 `limit` 与配置孪生
+/// `relay_batch_size`（runtime_config 校验 `1..=10000`）同域。此前这里没有校验：
+/// `qx outbox-relay … 0` 会走 `limit==0` 早退、一条都不中继却退 0 报健康——一个"报告成功
+/// 的死胡同"。把域挡在 clap 层，越界当场退 2（V13 R4）。
+fn parse_relay_limit(value: &str) -> Result<usize, String> {
+    match value.parse::<usize>() {
+        Ok(parsed) if (1..=10_000).contains(&parsed) => Ok(parsed),
+        _ => Err("relay limit 必须在 1..=10000 内".to_string()),
+    }
+}
+
 /// 顶层命令表：每个变体一个 `#[command(name = "…")]`，与 `cli_help.rs` 的入口一一对应。
 #[derive(Subcommand)]
 // clap 要求每个子命令把旗标平铺在自己的变体里，最大的 `Backtest` 变体 392 字节。
@@ -214,6 +225,7 @@ pub(crate) enum Command {
         root: PathBuf,
         url: String,
         subject_prefix: String,
+        #[arg(value_parser = parse_relay_limit)]
         limit: Option<usize>,
     },
     #[command(name = "outbox-relay-postgres")]
@@ -221,6 +233,7 @@ pub(crate) enum Command {
         runtime: PathBuf,
         url: String,
         subject_prefix: String,
+        #[arg(value_parser = parse_relay_limit)]
         limit: Option<usize>,
     },
     #[command(name = "outbox-relay-worker")]

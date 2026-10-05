@@ -228,9 +228,15 @@ impl PythonStrategyClient {
         let stderr_tail = Arc::new(Mutex::new(VecDeque::new()));
         let stderr_tail_reader = Arc::clone(&stderr_tail);
         thread::spawn(move || {
-            let reader = BufReader::new(stderr);
-            for line in reader.lines() {
+            let mut reader = BufReader::new(stderr);
+            loop {
                 // 读管道断了也要记账：静默丢掉只会让诊断说成"worker 无 stderr 输出"（#203）。
+                // 行长同样有闸：一行读不完时中止这条泵并留下一行事实，而不是让缓冲一路涨。
+                let line = match read_capped_worker_line(&mut reader, DEFAULT_MAX_FRAME_BYTES) {
+                    Ok(Some(line)) => Ok(line),
+                    Ok(None) => return,
+                    Err(error) => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
+                };
                 let broken = line.is_err();
                 if let Ok(mut tail) = stderr_tail_reader.lock() {
                     if let Some(note) = stderr_tail_note(line) {
@@ -238,7 +244,7 @@ impl PythonStrategyClient {
                     }
                 }
                 if broken {
-                    break;
+                    return;
                 }
             }
         });
@@ -246,25 +252,29 @@ impl PythonStrategyClient {
             None
         } else {
             let stdout = stdout.expect("non-shared worker stdout checked above");
-            let (sender, responses) = mpsc::channel();
+            let (sender, responses) = mpsc::sync_channel(1); // 有界泵：写满即背压回子进程 stdout（V13 R2，与 CCXT 泵同族）
             thread::spawn(move || match transport {
                 StrategyTransport::Jsonl => {
-                    let reader = BufReader::new(stdout);
-                    for line in reader.lines() {
-                        match line {
-                            Ok(line) => {
-                                if sender
-                                    .send(Ok(StrategyWireResponse::JsonLine(line)))
-                                    .is_err()
-                                {
+                    let mut reader = BufReader::new(stdout);
+                    loop {
+                        // 与 `FramedJson` 那一臂共用同一把字节闸：同一份 worker 的两种传输，
+                        // 一种受帧长约束、一种不受约束，等于没有约束（V13 R5）。
+                        let line =
+                            match read_capped_worker_line(&mut reader, DEFAULT_MAX_FRAME_BYTES) {
+                                Ok(Some(line)) => line,
+                                Ok(None) => break,
+                                Err(error) => {
+                                    let _ = sender.send(Err(format!(
+                                        "读取 Strategy worker 响应失败: {error}"
+                                    )));
                                     return;
                                 }
-                            }
-                            Err(error) => {
-                                let _ = sender
-                                    .send(Err(format!("读取 Strategy worker 响应失败: {error}")));
-                                return;
-                            }
+                            };
+                        if sender
+                            .send(Ok(StrategyWireResponse::JsonLine(line)))
+                            .is_err()
+                        {
+                            return;
                         }
                     }
                     let _ = sender.send(Err("Strategy worker 已关闭输出".into()));
@@ -371,6 +381,17 @@ impl PythonStrategyClient {
                         Ok(()) => break,
                         Err(SharedRingError::Full) if Instant::now() < deadline => {
                             thread::sleep(Duration::from_millis(1));
+                        }
+                        // 到点仍是 `Full` 就是超时，不是 ring 损坏：共享输入 ring 有界，
+                        // 写满意味着 worker 停止消费输入——和输出侧的 `Empty` 超时是同一种
+                        // 死法。报成"写入失败"会把运维引向共享内存实现本身。
+                        Err(SharedRingError::Full) => {
+                            let note = self.death_note();
+                            let _ = self.child.kill();
+                            return Err(format!(
+                                "{} worker 输入写入超时 timeout_ms={}：共享输入 ring 满，worker 已停止消费{}",
+                                self.label, self.timeout_ms, note
+                            ));
                         }
                         Err(error) => {
                             return Err(format!("写入 {} 共享 ring 失败: {error}", self.label));

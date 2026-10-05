@@ -120,6 +120,18 @@ pub(crate) fn build_configured_api_service(
                 .map_err(|error| format!("写入控制命令队列失败: {error:?}"))
         }
     });
+    // 浏览器准入与并发连接预算都由配置驱动，且都是"配错了 `serve` 就起不来"的硬错误，
+    // 不是跳过坏的那一条继续跑：一份被静默削减的源 allowlist 在生产上的表现是某个前端
+    // 跨源失败，而配置侧看不出是哪一条被丢了（口径与理由写在 `ApiRuntimeConfig` 那两格）。
+    let service = if config.api.cors_allowed_origins.is_empty() {
+        service
+    } else {
+        service.with_cors_allowed_origins(config.api.cors_allowed_origins.clone())?
+    };
+    let service = match config.api.max_concurrent_connections {
+        Some(limit) => service.with_max_concurrent_connections(limit)?,
+        None => service,
+    };
     if config.storage.backend == StorageBackend::Sqlite {
         #[cfg(not(feature = "sqlite"))]
         return Err("当前 qx-cli 未启用 sqlite feature；请使用 cargo run -p qx-cli --features sqlite -- serve ...".into());

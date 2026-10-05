@@ -116,7 +116,8 @@ pub(crate) fn configured_account_event_logs(
 }
 
 /// 在 API 服务旁启动只读投影桥。它只读取 Runtime EventLog，调用 API 的
-/// `project_event_log` 更新查询/订阅读模型，不拥有订单、账本或外部副作用。
+/// `project_account_event_log`（按账户读模型）与 `project_event_log`（无键端点读的
+/// 全局兼容读模型）更新查询/订阅读模型，不拥有订单、账本或外部副作用。
 pub(crate) fn spawn_api_projection_bridge(
     config: &RuntimeConfig,
     service: ApiService,
@@ -139,12 +140,28 @@ pub(crate) fn spawn_api_projection_bridge(
             return None;
         }
     };
+    // 无键端点读的那格全局读模型只由默认账户占（与快照同一条判据）。解析失败不挡桥启动：
+    // 账户投影照常走，缺的只是全局兼容面。
+    let default_log = match default_account_event_log(config, Path::new(&config.storage.data_dir)) {
+        Ok(name) => name,
+        Err(error) => {
+            eprintln!("[运行时 · API] 解析默认账户 EventLog 失败: {error}");
+            None
+        }
+    };
     let poll_interval = Duration::from_millis(250);
     Some(thread::spawn(move || {
         let mut pipelines = BTreeMap::<(String, String), LiveEventPipeline>::new();
+        // 投影失败是内容漂移或序号缺口这类不会自愈的冲突。退场必须记在这份名单里才是终局：
+        // 只清当轮的 `pipelines` 项，下一轮 `while` 到这里是 Vacant，会重开同一本账本、
+        // 再投一遍、再刷同一行错误日志（V13 R6-A）。
+        let mut permanently_retired = BTreeSet::<(String, String)>::new();
         while !stop.load(Ordering::Acquire) {
             for (account_id, venue_id, log_name, currency) in &sources {
                 let pipeline_key = (account_id.clone(), venue_id.clone());
+                if permanently_retired.contains(&pipeline_key) {
+                    continue;
+                }
                 if let std::collections::btree_map::Entry::Vacant(entry) =
                     pipelines.entry(pipeline_key.clone())
                 {
@@ -172,14 +189,37 @@ pub(crate) fn spawn_api_projection_bridge(
                     pipelines.remove(&pipeline_key);
                     continue;
                 }
+                // 按账户投影必须先落地、先判完，再去写全局那格：它失败就是内容漂移或身份错账
+                // 这类不会自愈的冲突，此时让默认账户继续写全局，同一个账户的 `/events` 与
+                // `/events?account_id=&venue_id=` 就会各讲一份（V13 R6-A）。
                 if let Err(error) =
                     service.project_account_event_log(account_id, venue_id, current.log())
                 {
                     eprintln!(
-                        "[运行时 · API] 写入账户查询投影失败 account={} venue={}: {error}",
+                        "[运行时 · API] 写入账户查询投影失败（不会自愈，停止重试）account={} venue={}: {error}",
                         account_id, venue_id
                     );
-                    pipelines.remove(&(account_id.clone(), venue_id.clone()));
+                    permanently_retired.insert(pipeline_key.clone());
+                    pipelines.remove(&pipeline_key);
+                    continue;
+                }
+                // 无键端点（`/events`、`/events/live`、不带 account_id/venue_id 的 WS）读的是那格
+                // 全局读模型，而它过去只有按账户投影在喂——于是生产环境里这三条读面恒为空数组
+                // （V13 R5-A）。与全局兼容快照同一条判据（default_account_event_log）：只有默认
+                // 账户能占用那格，其余账户按身份进各自的投影，多账户部署下两个读面不会各讲一个账户。
+                // 它的失败同样是内容漂移或序号缺口这类不会自愈的冲突，因此和账户那条一样记入
+                // 永久退场名单而不是只清当轮的 map 项——否则下一轮会重开同一本账本再刷同一行错误。
+                // 此时账户投影已推进一格而全局那格停在原地，两个读面的分叉就此冻结并由上面的日志留证。
+                if default_log.as_deref() == Some(log_name.as_str()) {
+                    if let Err(error) = service.project_event_log(current.log()) {
+                        eprintln!(
+                            "[运行时 · API] 写入全局查询投影失败（不会自愈，停止重试）account={} venue={}: {error}",
+                            account_id, venue_id
+                        );
+                        permanently_retired.insert(pipeline_key.clone());
+                        pipelines.remove(&pipeline_key);
+                        continue;
+                    }
                 }
             }
             thread::sleep(poll_interval);

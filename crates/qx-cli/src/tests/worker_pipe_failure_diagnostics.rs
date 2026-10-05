@@ -13,6 +13,8 @@ use super::*;
 /// #203 行为判据：一次读取的三种结果要分得开——有内容、没内容、读不下去。
 /// 前两种共用"窗口里多一行/不多"的形状没问题，第三种必须留下事实，否则空窗口就会
 /// 被 `death_note()` 解释成"它一个字都没写"。
+/// 第四种结局是"一行长得读不完"（V13 R5）：它由 `read_capped_worker_line` 交出，本用例
+/// 同时验它的四种返回形状，因为这条读链的失败必须一路走到这里被记成一行事实。
 #[test]
 fn stderr_tail_records_a_broken_pipe_as_a_fact_instead_of_silence() {
     assert_eq!(
@@ -37,6 +39,34 @@ fn stderr_tail_records_a_broken_pipe_as_a_fact_instead_of_silence() {
         STDERR_TAIL_MAX_CHARS,
         "单行必须截到登记过的长度，一行 traceback 不能挤掉整条诊断链"
     );
+    // 读链本身（V13 R5）：界内的行按 `Lines` 的口径剥掉行尾，尾行没有换行也要交出，
+    // 管道 EOF 说成"没有行"，只有越界那臂中止整条泵并点名上限。
+    let mut pipe = std::io::BufReader::new(std::io::Cursor::new(b"first\r\nsecond".to_vec()));
+    assert_eq!(
+        read_capped_worker_line(&mut pipe, 16).unwrap().as_deref(),
+        Some("first"),
+        "CRLF 行尾必须剥掉，与改前的 lines() 等价"
+    );
+    assert_eq!(
+        read_capped_worker_line(&mut pipe, 6).unwrap().as_deref(),
+        Some("second"),
+        "恰好等界的尾行不能被误伤"
+    );
+    assert_eq!(
+        read_capped_worker_line(&mut pipe, 16).unwrap(),
+        None,
+        "管道 EOF 要说成没有行，而不是读取失败"
+    );
+    let mut over = std::io::BufReader::new(std::io::Cursor::new(vec![b'x'; 40]));
+    let cap_error = read_capped_worker_line(&mut over, 8).unwrap_err();
+    assert!(cap_error.contains("单行超过 8 字节上限"), "{cap_error}");
+    // 越界必须能走到尾部窗口这一臂：宿主把它包成一次读取失败，诊断就要说清是行长越界。
+    let note = stderr_tail_note(Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        cap_error,
+    )))
+    .expect("一行读不完也是一条事实，不能替 worker 宣称没输出");
+    assert!(note.contains("字节上限"), "{note}");
 }
 
 /// #203 窗口容量：只留最后若干行，且淘汰的是最旧的那条。
@@ -63,6 +93,8 @@ fn stderr_tail_window_keeps_only_the_last_lines() {
 /// #203 接线判据：`strategy_host.rs` 的 stderr 尾部不再只收 `Ok` 行。
 /// 同文件的响应（stdout）通道一直会把读取错误外传（`读取 Strategy worker 响应失败`），
 /// 两条读链一条说实话、一条替 worker 宣称"没输出"，在日志里看不出区别。
+/// V13 R5 把同一对接线判据扩到行长：两条读链都必须走 `read_capped_worker_line`，
+/// 因为 `lines()` 只在 EOF 或 io 错误处停，一字节不换行的管道能把本进程吃到内存耗尽。
 #[test]
 fn strategy_host_stderr_tailer_reports_broken_reads_too() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
@@ -86,6 +118,17 @@ fn strategy_host_stderr_tailer_reports_broken_reads_too() {
     assert!(
         source.contains("读取 Strategy worker 响应失败"),
         "响应通道的读取错误外传被摘掉：两条读链的口径差异就没人管了"
+    );
+    assert_eq!(
+        source
+            .matches("read_capped_worker_line(&mut reader, DEFAULT_MAX_FRAME_BYTES)")
+            .count(),
+        2,
+        "两条读链（stderr 诊断与 stdout 应答）的行长闸不是都在位，掉的那条把缓冲一路涨下去"
+    );
+    assert!(
+        !source.contains("for line in reader.lines()"),
+        "读链回到 `lines()`：无界的一行会连同 #203 的记账形状一起失效"
     );
 }
 

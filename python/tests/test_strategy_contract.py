@@ -57,6 +57,42 @@ class StrategyContractTest(unittest.TestCase):
         wrong["request_id"] = "other"
         with self.assertRaises(ValueError):
             StrategyOutput.from_dict(wrong, self.request)
+        # 六种失败必须各说各话：折叠成一句 "identity or expiry" 之后，返回 dict 时漏写
+        # schema_version（`from_dict` 缺省读成 0）的作者会去查 request_id，永远查不出问题。
+        arms = {
+            "schema_version": (0, "schema_version must be 1"),
+            "strategy_id": ("other", "strategy_id does not match input"),
+            "signal_id": (0, "signal_id must be positive"),
+            "expires_at": (9, "expires_at must not precede input as_of"),
+            "instrument": ("ETHUSDT.BINANCE", "instrument does not match input"),
+        }
+        for field, (value, expect) in arms.items():
+            mutated = json.loads(payload)
+            mutated[field] = value
+            with self.assertRaisesRegex(ValueError, f"strategy output {expect}") as caught:
+                StrategyOutput.from_dict(mutated, self.request)
+            self.assertIn(expect, str(caught.exception))
+        # 空标的走自己那一条，而不是被"与输入不一致"顺路念掉。
+        blank = json.loads(payload)
+        blank["instrument"] = "   "
+        with self.assertRaisesRegex(ValueError, "strategy output instrument must be non-empty"):
+            StrategyOutput.from_dict(blank, self.request)
+        # 缺键走的是 `from_dict` 那一格，不是某一臂的值比对：把缺省版本采纳成自家
+        # `SCHEMA_VERSION` 时，「漏写 schema_version」在 Python 侧变成合法产出，只有 Rust 拒它。
+        omitted = json.loads(payload)
+        del omitted["schema_version"]
+        with self.assertRaisesRegex(ValueError, "strategy output schema_version must be 1"):
+            StrategyOutput.from_dict(omitted, self.request)
+        # 逐臂点名不能退化成第二种折叠：同一句身份话术必须只出现在真正不匹配的那一臂。
+        messages = set()
+        for field, (value, _) in arms.items():
+            mutated = json.loads(payload)
+            mutated[field] = value
+            try:
+                StrategyOutput.from_dict(mutated, self.request)
+            except ValueError as error:
+                messages.add(str(error))
+        self.assertEqual(len(messages), len(arms))
 
     def test_contract_rejects_future_or_malformed_bars(self):
         value = json.loads(self.request.to_json())

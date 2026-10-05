@@ -31,7 +31,7 @@ cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.example.j
 cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.production.example.json
 # CI/部署平台可直接消费 JSON；失败时退出码非零
 cargo run --release -p qx-cli -- runtime-check deploy/qianxing.runtime.example.json --json
-cargo run --release -p qx-cli -- live-check deploy/qianxing.runtime.production.json --json
+cargo run --release -p qx-cli -- live-check deploy/qianxing.runtime.production.example.json --json
 cargo run --release -p qx-cli -- binance-public-probe testnet BTCUSDT.BINANCE
 cargo run --release -p qx-cli -- binance-private-probe deploy/qianxing.runtime.production.example.json binance-execution-main
 ```
@@ -278,7 +278,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 `/account/positions`、`/account/balances`、`/events`、`/events/live`）都接受 `?account_id=&venue_id=`：
 两者必须同时出现，否则 `400
 {"error":"account_id 和 venue_id 必须同时提供"}`；都不出现时读全局投影。`?after=` 必须是十进制
-无符号整数，含义是**事件序号**，不是这条日志的下标。
+无符号整数，含义是**事件序号**，不是这条日志的下标。方括号里的查询串是**名单**，不是「可以随便带」：`/account/snapshot`、`/account/snapshot/envelope`、`/account/orders`、`/account/positions`、`/account/balances` 只认 `account_id`/`venue_id` 这一对，`/events` 与 `/events/live` 再多认一把 `after`，`/account/snapshot/diff` 认 `base_hash` 加那一对；名单外的键当场 `400`，正文写 `{路由} 不接受查询参数 {键名}` 点名被拒的那把（V13 R6）。改前这一格反过来读才看得清：#205 只盖住四条整体现读端点，带键这几条照收任何查询串，于是 `?acount_id=` 拼错时它落到「没有收窄键」那一支，默认账户那份被念成调用方点名的账户——正是 #191 那句「拼错的账户 id 读成干净的空账户」剩下的下半格。
 带键时先查这份部署里有没有该 `(account_id, venue_id)` 的投影：没有就是 `404
 {"error":"account_projection_not_found"}`，七条入口同一口径，不再出现"订单表空数组 + 权益
 `null` + 事件空数组"这种把"没这个账户"伪装成"这个账户什么都没发生"的读法（V13 R2 第十二遍 #191）。
@@ -296,19 +296,40 @@ snapshot_not_found`）：一个账户刚挂上投影、还没算出第一份快�
 `maturity/capabilities.yaml` 的逐字段 limitation 与读侧 null 用例的点名集合逐条对齐，任一侧改口即红（V13 R1-A5）。
 `/account/snapshot/diff` 的八个汇总钱标量不在那五条差分数组里：`diff` 只按键集合化现金账簿与四张表，账户级标量整格走 `replacement`——两侧 `scalar_hash` 相同它就是 `null`。把这一格读丢的客户端会拿着基线的权益、费用与对账结论去核对目标状态哈希，`apply` 末尾那道 `target_state_hash` 比对正是为这种情况准备的；`qx-cli ecosystem` 的协议段就是按"改一格权益"跑这条回路。注意 `replacement` 是 `SnapshotDiff` 上的**私有字段**：线格式里有它，crate 外的 Rust 代码却点名不了它，所以跨语言读者只认这份文档（V13 R2 第六遍）。
 
-WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分派前转交 `serve_websocket`。
-握手需要 `Sec-WebSocket-Key`，随后依次下发 `connected`、可选的 `snapshot`、已积累的 `events`
-批量帧，再按 100ms 轮询事件总线逐条推 `event`。退出条件有五类：游标过旧/超前发
-`{"type":"resync_required"}` 后关闭、读到客户端 close 帧后关闭、对端 EOF 或
-`ConnectionReset` 后关闭、服务端监听循环按停机请求收摊时先发 `{"type":"server_shutdown"}`
+WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分派前转交
+`crates/qx-api/src/ws.rs` 的 `admit_websocket` / `serve_websocket`。升级判定只看请求头那一段
+（首个空行之前），不看正文——按整份请求文本 `contains` 的旧写法下，一条正文里正好出现
+`upgrade: websocket` 的 `POST /control/commands` 会被当成握手，命令体连同它的审计一起丢掉。
+这条通道与 HTTP 读面共用同一枚 `qx_api_requests_total` 与同一只限流桶：超额同样是 429
+`api_rate_limit_exceeded`，桶自己读不到状态同样是 503 `api_rate_limit_backend_unavailable`。
+握手需要 `Sec-WebSocket-Key`；准入判定全部排在写下 `101` 之前，所以这一层还说得出口 HTTP 状态码——
+装了 `api.cors_allowed_origins` 而请求带着名单外的 `Origin` → 403 `cors_origin_not_allowed`（浏览器
+不把 CORS 用在 WS 握手上：它照发带任意 `Origin` 的 `Upgrade` 请求、只在响应侧拦，所以这份名单必须由
+这一支自己问过，否则 HTTP 侧的名单挡不住任何跨源页面读事件流；完全不报 `Origin` 的原生客户端照常
+握手——它本来就不在 CORS 的威胁模型内，把它拒掉只会先杀掉自家 CLI 与探测脚本）；
+启用访问策略而未通过证书识别 → 403 `authenticated_operator_required`（同时计入
+`qx_api_authentication_rejected_total`）；`?account_id=`/`?venue_id=` 只给一半、或 `?after=`
+不是十进制无符号整数 → 400；这三个名字之外的查询键（拼错的 `acount_id` 就在其中）→ 400 且正文点名那把键，与 HTTP 那几条读面同一口径（V13 R6）；缺 `Sec-WebSocket-Key` → 400 `missing_websocket_key`（此前这一判定排在
+`serve_websocket` 里、已在写下 `101` 的边上，客户端只能拿到一根被掐断的套接字而没有状态码；V13 R4 把它
+提到 `admit_websocket`，让握手之前的每一支都还能说 HTTP）；带键但这份部署里没有该投影 → 404 `account_projection_not_found`；
+`after` 越出这份日志的窗口 → 409 `event_cursor_requires_snapshot`。判定通过后依次下发
+`connected`、可选的 `snapshot`、按 `after` 从**作用域**总线取出的首批 `events`（批次为空就不发
+这一帧），再按 100ms 轮询逐条推 `event`；每条事件外面套的投影信封与 `/events/live` 出自同一份
+实现，`account_id`/`venue_id` 与 `after` 在两条读链上是同一个口径，客户端从 HTTP 换成 WS 不会
+静默读到另一个账户的事件流，也不会每次连上都被重发一整份日志。
+退出条件有六类：游标过旧/超前发 `{"type":"resync_required"}` 后关闭、读到客户端 close 帧后关闭、
+对端 EOF 或 `ConnectionReset` 后关闭、服务端监听循环按停机请求收摊时先发 `{"type":"server_shutdown"}`
 再关闭（`serve` / `serve_tls_mtls_with_stores` 一退出就置位同一枚令牌，已在飞行中的会话在下一轮
-100ms 轮询里读到它就结束，所以 `Ctrl+C` 不必等前端自己关连接，V13 R2 #218）。前端把"连接被关闭"
-读成故障还是读成计划内停机，看的就是最后这一条：收到 `server_shutdown` 即后者。它有两个已知边界：走的是全局事件总线（不认 `account_id`/`venue_id`），
-并且**不经过限流桶**（限流在 `handle_inner` 里，WebSocket 分支在其之前返回）；本机明文绑定下
-可接受，公网暴露前必须先接上层代理。
+100ms 轮询里读到它就结束，所以 `Ctrl+C` 不必等前端自己关连接，V13 R2 #218）、以及两个方向同时
+静默满 `WS_MAX_IDLE_ROUNDS`（18000 轮 × 约 100ms ≈ 30 分钟）时发 `{"type":"idle_timeout"}` 后
+关闭。前端把"连接被关闭"读成故障还是读成计划内停机，看的就是最后这两条：收到 `server_shutdown`
+或 `idle_timeout` 都是计划内，重连即可。空闲上界不是给会话加寿命，而是让下面那条连接预算真的收得
+回来——对端半开（不发 FIN、也不再写一个字节）时读永远超时、写永远成功，停机令牌之外的出口一个都
+不会触发，那条线程和它占的一格预算就永久留在账上。本机明文绑定下这条通道可接受，公网暴露前仍必须
+先接上层代理。
 
 `serve` 暴露的端点就是下表这些，未列出的路径一律 404。表里第一列的 `METHOD 路径` 必须与
-`crates/qx-api/src/lib.rs` 的路由集合逐一相等（门禁与逐张表的用例各守一侧，见下「端点表按张核对」），查询串只是提示可带：
+`crates/qx-api/src/lib.rs` 的路由集合逐一相等（门禁与逐张表的用例各守一侧，见下「端点表按张核对」），而第一列方括号里的查询串是名单不是提示：那几条带键入口只认列出的键名，名单外的键一律 `400`（V13 R6）；表里那四条**全局出口**（`/health`、`/ready`、`/metrics`、`/schema/account-snapshot-v1`）不在任何名册里，走的是 `crates/qx-api/src/admission.rs:404` 那句 `else { return None }`——它们**不判查询串**，给它们带 `?account_id=` 既不会换来 400，也不会换来任何按账户收窄的数据（这四条本来就不读收窄键，判它们没有意义）。所以「名单外一律 400」这条口径的覆盖面是 12 条读面入口 + WS 那一支，剩下 4 条是这里明写的边界，不是漏网：
 
 | 端点 | 语义 | 非 200 口径 |
 | --- | --- | --- |
@@ -316,15 +337,15 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `GET /ready` | 依赖就绪：控制面存储、已声明研究快照、生产凭据/冻结规格、worker 指标 down/stale、投影缺口 | 503 未就绪（第二格那些条件）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /metrics` | Prometheus 文本，按 LF 逐行（见下「指标出口是逐行的」），追加 worker 指标 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /schema/account-snapshot-v1` | 账户快照 v1 JSON Schema，就是 `schemas/account-snapshot-v1.json` 那一份（编译期内嵌，不是第二份手抄） | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /account/snapshot[?account_id=&venue_id=]` | 账户快照 JSON；不带键时读默认账户=配置里第一个真有日志的账户 worker | 400 参数非法；404 `snapshot_not_found`；404 `account_projection_not_found`（带键但这份部署没有该投影）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /account/snapshot/envelope[?…]` | 投影信封（快照 hash 与 lineage） | 400；404 `snapshot_not_found`；404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /account/snapshot/diff?base_hash=[&…]` | 与历史基线快照的差异 | 400 参数非法（base_hash 缺失或非无符号整数，或收窄键只给一半）；409 `snapshot_base_not_found`（基准缺失与那条投影不存在是同一条码）；无 404 分支，判据与口径的来由见上段正文（V13 R2 第十三遍）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /account/orders[?…]` `GET /account/positions[?…]` | 快照里的订单表/持仓表摊成数组 | 400；无快照时 200 空数组；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /account/balances[?…]` | 四个钱字段原样，未计算的是 `null` 而不是 0 | 400；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /account/ledger` `GET /scheduler/runs` `GET /reconcile/reports` | 每次请求现读账户日志/调度记录/对账报告，启动之后落盘的读得到；读的都是默认账户那一份整体现读模型 | 400 带任何查询串——`?account_id=` 在这里不会换成那个账户的数据（详见上段正文，V13 R2 第十三遍）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /events[?after=&account_id=&venue_id=]` | 投影事件全量，或 `after` 游标之后的增量 | 400；409 `event_cursor_requires_snapshot`；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /events/live[?after=&…]` | 事件总线现读增量，游标口径与上一行同一条实现 | 400；409 `event_cursor_requires_snapshot`（游标过旧/超前，含空日志）；404 `account_projection_not_found`；500；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /control/audit` | 控制面审计流水 | 400 带任何查询串——它与上面那四条同属没有收窄键的整体现读面（V13 R2 第十三遍）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /account/snapshot[?account_id=&venue_id=]` | 账户快照 JSON；不带键时读默认账户=配置里第一个真有日志的账户 worker | 400 参数非法（键形状不合法，或点了这条入口不认的查询键——正文点名那把键，下同）；404 `snapshot_not_found`；404 `account_projection_not_found`（带键但这份部署没有该投影）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /account/snapshot/envelope[?…]` | 投影信封（快照 hash 与 lineage） | 400 键形状非法或名单外的查询键；404 `snapshot_not_found`；404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /account/snapshot/diff?base_hash=[&…]` | 与历史基线快照的差异 | 400 参数非法（base_hash 缺失或非无符号整数，收窄键只给一半，或点了这三把之外的查询键）；409 `snapshot_base_not_found`（基准缺失与那条投影不存在是同一条码）；无 404 分支，判据与口径的来由见上段正文（V13 R2 第十三遍）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /account/orders[?…]` `GET /account/positions[?…]` | 快照里的订单表/持仓表摊成数组 | 400 键形状非法或名单外的查询键；无快照时 200 空数组；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /account/balances[?…]` | 四个钱字段原样，未计算的是 `null` 而不是 0 | 400 键形状非法或名单外的查询键；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /account/ledger` `GET /scheduler/runs` `GET /reconcile/reports` | 每次请求现读账户日志/调度记录/对账报告，启动之后落盘的读得到；读的都是默认账户那一份整体现读模型 | 400 带任何查询串——`?account_id=` 在这里不会换成那个账户的数据，正文点名被拒的那把键（详见上段正文，V13 R2 第十三遍 / R6）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /events[?after=&account_id=&venue_id=]` | 投影事件全量，或 `after` 游标之后的增量 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /events/live[?after=&…]` | 事件总线现读增量，游标口径与上一行同一条实现 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`（游标过旧/超前，含空日志）；404 `account_projection_not_found`；500；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /control/audit` | 控制面审计流水 | 400 带任何查询串——它与上面那四条同属没有收窄键的整体现读面，正文点名被拒的那把键（V13 R2 第十三遍 / R6）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /control/commands` | 提交控制命令；启用访问策略时 operator 身份必须来自认证边界 | 400 请求体不合法（缺审计字段，或该命令类型在当前构建里没有派发者）；403 未认证 `authenticated_operator_required`／已认证但策略给不出权限 `forbidden`；409 命令被控制面拒绝（`ControlError` 的 Debug 形态，四个变体名见下段）；503 队列不可用 `control_state_unavailable`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 
 `POST /control/commands` 那一格的 409 是控制面按 `ControlError` 的 Debug 形态回报，四个会变 409 的
@@ -483,6 +504,54 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
 - 游标被裁剪到日志之前、或超前于下一个序号，同样回 `409 event_cursor_requires_snapshot`；
   非十进制无符号整数才是 `400`。
 
+### 浏览器准入（CORS / 预检 / 并发连接预算）
+
+这三样都住在 `crates/qx-api/src/admission.rs`，判定点在 `dispatch_request` 与它调用的
+`admit_websocket`（WS 那一支问的是同一个 `CorsPolicy`，只是自己调用、不等预检那条臂）——也就是
+限流之后、`handle_inner` 的路由分派之前，所以它们对**每一条**入口生效，不是某几条路由的特产。
+
+`api.cors_allowed_origins` 是一份**精确**源名单，每项形如 `https://host[:port]`：不接受 `*`、
+不接受通配、不接受带路径或查询串的写法，端口写了就必须是非零十进制（名单本身的校验在
+`CorsPolicy::parse`，运行时配置只透传，不另立一套口径）。`config validate` 走的是同一个
+`CorsPolicy::parse`（经 `qx_api::validate_admission_config`，因为 `qx-runtime` 的配置校验
+不许反向依赖 `qx-api`），所以坏源在部署前就报成一条 `api cors_allowed_origins 里的 …`，
+不必等 `serve` 起不来才看见。留空即"这份部署不开浏览器准入"：
+响应不带任何 `Access-Control-*` 头，`OPTIONS` 照常走分派落到 404。装了名单之后，每条出口
+（含升级前的 400/403/404/409/429、预检本身、以及正常分派的响应）都带同一份
+`Vary: Origin` + `Access-Control-Allow-Origin: <请求里的那个源>`——漏一条就是"这条路径跨源读不到"，
+而浏览器给的报错只有"被 CORS 拦了"，看不出是哪一支没带头。合法的预检（`OPTIONS` 且带
+`Access-Control-Request-Method`）回 **204** 空正文，`Access-Control-Allow-Methods` 固定
+`GET, POST, OPTIONS`、`Access-Control-Allow-Headers` 固定 `Content-Type`、`Access-Control-Max-Age`
+固定 600；源不在名单里的预检回 403 `cors_origin_not_allowed`。允许头这一格**不回显**
+`Access-Control-Request-Headers`：回显等于让调用方往响应头里写任意字串，而 operator 身份只来自
+mTLS 证书、从不来自请求头，所以这个固定值不会挡住任何已支持的调用。
+
+出厂模板这一格写的就是 `[]`（`deploy/qianxing.runtime.production.example.json:20`），所以
+**照模板起起来的部署对任何浏览器源都是关着的**：`config validate` 不会报——`[]` 正是那份合法
+的中性写法，不是「配置缺失」；响应不带任何 `Access-Control-*`；浏览器侧只看得到一句「被 CORS
+拦了」，看不出名单是空的。Web / 桌面客户端要在浏览器上下文里直连这套 API，operator 必须先把
+真实源写进 `api.cors_allowed_origins`（形如 `["https://ops.internal.example"]`）再重启；
+没有可继承的默认值，也没有别的开关能绕过——名单是精确匹配。
+
+`api.max_concurrent_connections` 是飞行中连接的条数上限；留空则用 `qx-api` 自己的默认值
+（`DEFAULT_MAX_CONCURRENT_CONNECTIONS`，256），这个数只有那一个定义点，配置里不写第二份。
+一条连接一个线程，所以上限同时是线程数上限。超出时**当场拒**而不是排队——排队只是把"拒绝"变成
+"更慢的接受"，排着的连接照样各占一个已 accept 的套接字与一份读缓冲，压力不会因为排队而消失。
+被拒的连接在读到任何路由之前就拿到 503 `connection_budget_exhausted`（正文形如
+`{"error":"connection_budget_exhausted: limit=256"}`），同时 stderr 印一行「并发连接已达上限 …
+（飞行中 …），拒绝新连接」——这两处就是这个数的读者，`/metrics` 不为它单开第五条指标。额度由
+`ConnectionGuard` 的 `Drop` 归还，所以会话线程无论怎么退出（正常关闭、写失败、停机令牌、空闲上界）
+都不会把额度留在账上；配 0 会在 `config validate` 就拒（与源名单同一个入口
+`qx_api::validate_admission_config`，它调的是 `ConnectionBudget::new` 本身），因为那等于不接
+任何连接。两格的中性写法（`[]` 与 `null`）由 `deploy/qianxing.runtime.production.example.json`
+携带，所以它们的 JSON 形状每轮都被 `deploy_template_coverage` 那条读法解析一次。
+
+查询串的百分号编码在这条边界上统一解码一次（`admission::percent_decode`）：`%XX` 与 `+`（当空格）
+都认，解出来的字节必须是一串合法 UTF-8。编码非法时那一格回 400，正文写的是
+「query string percent-encoding is malformed」这句话而不是一个码名。此前 `?account_id=main%zz`
+会把半个转义原样当成账户号去查投影，读到的是 404「没有这个账户」，而真正坏掉的是请求本身——
+一个 400 与一个 404 说的是两件事，合成后者就读不回来了。
+
 ## Binance worker
 
 用户流、执行和对账 worker 支持两种互斥凭据来源：`credential_env` 环境变量，或由 Secret Manager/CSI/容器 secrets 原子投影的 `credential_files` 文件。凭据值不会进入配置 JSON、运行时健康详情或日志；用户流新建连接、执行新订单和对账新轮次会重新读取文件，已有连接继续使用当前认证上下文。先校验拓扑，再单独启动 worker：
@@ -582,7 +651,7 @@ Paper Execution worker 可以配置 `paper_initial_cash_raw`，启动时通过�
 
 策略开发同时支持 Rust `qx-strategy`、Python `on_event`/持久 worker 和 C++ `cpp/include/qianxing_strategy.h` C ABI；三者统一返回 `StrategyDecision.intents[]`，旧 `target_qty` 仍兼容。
 
-Rust/C++ 也可以编译成独立策略进程，通过 `strategy.external_executable`、`external_args` 和 `external_env` 接入。独立进程每行读取一个 `StrategyContractInput`，每行输出一个 `{"ok":true,"output":...}` JSON；标准输出只允许协议内容，日志写标准错误。该入口与 Python 共用超时、崩溃隔离、RiskGate、OMS、执行队列和审计链路，示例见 `cpp/examples/jsonl_strategy.cpp`。
+Rust/C++ 也可以编译成独立策略进程，通过 `strategy.external_executable`、`external_args` 和 `external_env` 接入。独立进程每行读取一个 `StrategyContractInput`，每行输出一个 `{"ok":true,"output":...}` JSON；标准输出只允许协议内容，日志写标准错误。该入口与 Python 共用超时、崩溃隔离、RiskGate、OMS、执行队列和审计链路，示例见 `cpp/examples/jsonl_strategy.cpp`。**每一行都有字节上限**：`crates/qx-cli/src/strategy_host.rs:235` 与 `crates/qx-cli/src/strategy_host.rs:263` 两处泵都走 `read_capped_worker_line(&mut reader, DEFAULT_MAX_FRAME_BYTES)`，上限是 16 MiB（`crates/qx-strategy/src/frame.rs:13`）；CCXT worker 的 stdout 泵同族，落在 `crates/qx-adapter/src/ccxt.rs:77` 的 `read_capped_line(&mut reader, crate::MAX_WORKER_LINE_BYTES)`，同一格数量级（`crates/qx-adapter/src/lib.rs:663`，与 HTTP 响应总量界同值）。越界不是截断也不是丢行：这一行判为超限、整条泵中止并把「单行超过 N 字节上限」回给调用侧，比让子进程少写一个换行符就把本进程的缓冲一路吃到内存耗尽便宜得多。三处形状由门禁按调用点钉住（`read_capped_line` 一处、`read_capped_worker_line` 两处、裸 `.read_line(` 零处），越界与 EOF 两条臂各有用例（`crates/qx-cli/src/tests/worker_pipe_failure_diagnostics.rs`、`crates/qx-adapter/src/tests.rs`）。
 
 策略子进程不会继承父进程的交易凭证环境；`external_env` 仅允许非敏感业务参数，包含 `SECRET`、`TOKEN`、`PASSWORD`、`API_KEY`、`PRIVATE_KEY` 或 `CREDENTIAL` 的变量名会被拒绝。
 
@@ -1007,6 +1076,7 @@ cargo run --release -p qx-cli --features nats -- outbox-relay `
   ./data nats://127.0.0.1:4222 qianxing 100
 ```
 
+两条一次性 relay 命令都打印 `parked=`（停在门后、还要人处理的条数），退 0 只代表这一页搬完；
 PostgreSQL Outbox 使用运行时配置中的 `postgres_dsn_env`，需要同时启用两个 feature：
 
 ```powershell
@@ -1029,7 +1099,7 @@ cargo run --release -p qx-cli --features "nats postgres sqlite" -- `
 
 每个持续 worker 会将当前状态原子写入
 `storage.data_dir/worker-metrics/<worker_id>.prom`，API 的 `/metrics` 会聚合这些文件。
-Relay 指标包括 `qx_worker_up`、心跳、扫描、发布、重试、租约冲突和发布失败；Consumer
+Relay 指标包括 `qx_worker_up`、心跳、扫描、发布、重试、租约冲突、发布失败与停在门后的 `qx_outbox_relay_parked`；Consumer
 指标包括接收、成功、重复、重试、死信、格式错误和 ACK 失败。`qx_worker_up{worker="<worker_id>"} 1` 只表示最近
 一次写入仍认为进程正常，生产告警还必须结合
 `qx_worker_heartbeat_timestamp_seconds{worker="<worker_id>"}` 的新鲜度判断进程是否已经失联。

@@ -60,3 +60,17 @@ groups:
         annotations:
           summary: "Qianxing consumer ACK failures"
           description: "worker={{ $labels.worker }} could not acknowledge JetStream messages."
+
+      # 这一条读的是状态量而不是增量：`qx_outbox_relay_parked` 是"库里现在还有几条已用尽
+      # 投递预算"，relay 每轮原样写出，所以判据是 > 0 而不是 increase(...)。用尽预算的事件
+      # 不再被投递、也不再占住页首，只会静静留在 outbox 里——没有这一条，它们在运维面上
+      # 就等于消失了（V11 K2 计数、R7-d 改成不问页数的状态量）。
+      - alert: QianxingOutboxParkedEvents
+        expr: qx_outbox_relay_parked > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: qianxing
+        annotations:
+          summary: "Qianxing Outbox has parked events"
+          description: "worker={{ $labels.worker }} has {{ $value }} events past the relay retry budget; they are no longer delivered and stay in the outbox until an operator claims or acks them."

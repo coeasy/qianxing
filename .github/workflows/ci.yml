@@ -173,6 +173,15 @@ jobs:
         run: >-
           cargo test -p qx-storage --features sqlite,postgres,nats --
           --ignored --test-threads=1 --nocapture
+      # 上一条腿只跑 `--ignored`，而这 8 颗 NATS 用例没有 `#[ignore]`：默认腿 `cargo test --workspace`
+      # 走默认特性（`qx-cli` 的 default 只有 sqlite），整段 `#[cfg(feature = "nats")]` 被 cfg 掉；
+      # 特性矩阵那条腿是 `-p qx-cli`，cargo 不会为依赖 crate 构建它自己的测试目标。
+      # 三者相加，这批「有界等待 / 预算 / 空配置拒连」的判据在 CI 里一个执行者都没有——
+      # 改回裸 `block_on` 会一路绿到生产。这条腿就是它们唯一的执行者。
+      - name: NATS adapter contracts (non-ignored)
+        run: >-
+          cargo test -p qx-storage --features sqlite,postgres,nats --no-fail-fast
+          --test nats_jetstream --test nats_wait_budget
 
   runtime-contracts:
     name: Runtime and Paper contracts

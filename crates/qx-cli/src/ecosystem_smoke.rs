@@ -202,6 +202,15 @@ pub(crate) fn run_ecosystem_smoke() {
     target.seal();
     let diff = base.diff(&target).unwrap();
     assert_eq!(diff.apply(&base).unwrap(), target);
+    // 这一段的标题是「QIFI」，所以必须真的走一遍 QIFI 信封的构造→校验→往返，
+    // 否则冒烟是在为一份它没碰过的协议作保（V13 R4）。给 `to_qifi`/`QifiEnvelope::{to_json,
+    // from_json,validate}` 一个生产（冒烟）调用者，同时让下面这行 ✓ 名副其实。
+    let qifi = target.to_qifi();
+    qifi.validate().expect("QIFI 信封头非法");
+    assert_eq!(
+        qx_protocol::QifiEnvelope::from_json(&qifi.to_json()).expect("QIFI 信封往返失败"),
+        qifi
+    );
     println!(
         "[协议 · QIFI Snapshot] schema=v1 diff_base={:016x} diff_target={:016x} ✓",
         diff.base_state_hash, diff.target_state_hash

@@ -271,15 +271,34 @@ impl StrategyContractOutput {
     }
 
     pub fn validate_for(&self, input: &StrategyContractInput) -> Result<(), String> {
-        if self.schema_version != STRATEGY_CONTRACT_SCHEMA_VERSION
-            || self.request_id != input.request_id
-            || self.strategy_id != input.strategy_id
-            || self.signal_id == 0
-            || self.instrument != input.instrument
-            || InstrumentId::parse(&self.instrument).is_none()
-            || (self.expires_at != 0 && self.expires_at < input.as_of)
-        {
-            return Err("StrategyContractOutput 与输入身份、标的或有效期不一致".into());
+        // 逐臂点名，与 Python `StrategyOutput.validate_for` 同一口径：折叠成一句"与输入不一致"
+        // 时，最需要读出差在哪一格的恰好是 worker 已放行、宿主才挡下的那条跨语言分叉。
+        if self.schema_version != STRATEGY_CONTRACT_SCHEMA_VERSION {
+            return Err(format!(
+                "StrategyContractOutput schema_version 不匹配，期望 {STRATEGY_CONTRACT_SCHEMA_VERSION} 实得 {}",
+                self.schema_version
+            ));
+        }
+        if self.request_id != input.request_id {
+            return Err("StrategyContractOutput request_id 与输入不一致".into());
+        }
+        if self.strategy_id != input.strategy_id {
+            return Err("StrategyContractOutput strategy_id 与输入不一致".into());
+        }
+        if self.signal_id == 0 {
+            return Err("StrategyContractOutput signal_id 必须为正".into());
+        }
+        if self.instrument != input.instrument {
+            return Err("StrategyContractOutput instrument 与输入不一致".into());
+        }
+        if InstrumentId::parse(&self.instrument).is_none() {
+            return Err(format!(
+                "StrategyContractOutput instrument 非法: {}",
+                self.instrument
+            ));
+        }
+        if self.expires_at != 0 && self.expires_at < input.as_of {
+            return Err("StrategyContractOutput expires_at 早于输入 as_of".into());
         }
         let mut intent_ids = BTreeSet::new();
         for intent in &self.intents {
@@ -348,7 +367,11 @@ impl StrategyContractOutput {
         )
     }
 
-    pub fn to_json_for(&self, input: &StrategyContractInput) -> Result<String, String> {
+    /// 仅供契约往返用例编码一份已知良好的输出：生产链路只**解码** worker 产物
+    /// （`from_json_for`），从不需要把 `StrategyContractOutput` 再编码回去，故按 test-only 收口，
+    /// 不留一个零生产调用的公开编码器（V13 R3-B）。
+    #[cfg(test)]
+    pub(crate) fn to_json_for(&self, input: &StrategyContractInput) -> Result<String, String> {
         self.validate_for(input)?;
         serde_json::to_string(self).map_err(|error| format!("策略输出契约序列化失败: {error}"))
     }

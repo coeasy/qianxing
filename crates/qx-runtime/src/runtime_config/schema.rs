@@ -54,6 +54,21 @@ pub struct ApiRuntimeConfig {
     pub tls: Option<TlsPaths>,
     #[serde(default)]
     pub operators: BTreeMap<String, OperatorConfig>,
+    /// 允许跨源读本面的浏览器源，逐条必须是精确的 `http(s)://host[:port]`。
+    ///
+    /// 缺省（空）表示这份部署不开浏览器准入：响应里不带任何 `Access-Control-*`，
+    /// `OPTIONS` 预检照常走路由分派落到 404 兜底。口径与拒绝理由的唯一实现住在
+    /// `qx-api` 的 `admission::CorsPolicy::parse`，这里不复制第二份校验——
+    /// 装配 `ApiService` 时调用它，坏源当场让 `serve` 起不来。
+    #[serde(default)]
+    pub cors_allowed_origins: Vec<String>,
+    /// 并发连接上限。一条连接一个线程，超限的连接当场收 503 而不是排队。
+    ///
+    /// `None` 表示用 `qx-api` 自己那个默认值（`DEFAULT_MAX_CONCURRENT_CONNECTIONS`）：
+    /// 这个数字只有一个定义点，配置侧不再抄一份，否则改了默认值而配置模板里还写着旧的，
+    /// 两侧就各讲一个上限。
+    #[serde(default)]
+    pub max_concurrent_connections: Option<usize>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]

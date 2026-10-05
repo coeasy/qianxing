@@ -60,6 +60,20 @@ pub(crate) fn run_depth_backtest(
         return Err("深度档位回测只支持单标的策略，多腿配对请使用 multi-builtin".into());
     }
     let frame = read_depth_frame_for_backtest(frame_path)?;
+    // `--latency-snapshots` 数的是"提交之后还要再等几份快照"。内核每份快照只撮合一轮，最早的一次提交
+    // 也只能落在第 1 份快照撮合之后，于是成熟条件恒为 `1 + 延迟 + 1 <= 帧内快照数`。越过这条线的取值
+    // 不是"延迟更长"，而是**任何订单都永远等不到成熟**：撮合一笔都不成交，回测却照常退 0、落一份空成交
+    // 表的产物——正是 Q0b 判掉的"能配却不生效"。下面那支 `--queue-position-bps` 早按同口径当场拒。
+    let snapshot_count = frame.snapshots.len() as u64;
+    if execution.latency_snapshots > 0
+        && execution.latency_snapshots >= snapshot_count.saturating_sub(1)
+    {
+        return Err(format!(
+            "深度回测 --latency-snapshots={} 在这份帧上永远等不到成交：帧内只有 {snapshot_count} 份快照，最多用 {}（延迟按快照个数计，订单要等到提交后第 延迟+1 份才成熟）",
+            execution.latency_snapshots,
+            snapshot_count.saturating_sub(2),
+        ));
+    }
     let MarketSpecLoad {
         spec: instrument_spec,
         source: instrument_spec_version,

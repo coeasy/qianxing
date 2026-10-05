@@ -5,10 +5,10 @@
 //! Kernel 或调度器；生产环境可以在同一 trait 上替换为 PostgreSQL/MQ 实现。
 
 use super::{
-    audit_entry_hash, validate_audit_chain, AuditEntry, AuditStore, ConsumerCheckpoint,
-    ConsumerProjection, ConsumerStateStore, ControlCommandLease, ControlCommandQueueBackend,
-    DeadLetterRecord, EventLogStore, JobLease, JobQueueBackend, OutboxEvent, OutboxLease,
-    OutboxStore, QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
+    audit_entry_hash, validate_audit_chain, AuditEntry, ConsumerCheckpoint, ConsumerProjection,
+    ConsumerStateStore, ControlCommandLease, ControlCommandQueueBackend, DeadLetterRecord,
+    EventLogStore, JobLease, JobQueueBackend, OutboxEvent, OutboxLease, OutboxStore,
+    QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
 };
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
 use qx_core::{Event, EventLog, QxResult};
@@ -585,8 +585,10 @@ impl SqliteOutboxStore {
         transaction.commit().map_err(map_sqlite)
     }
 
-    pub fn available(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
+    pub fn available(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
         let connection = open(&self.path)?;
+        // 用尽投递预算的行排在最后再截页：它们仍要被运维看得见（K2 的人工出口），
+        // 但不能占住页首把后面投得出去的事件挤出一页——阈值由 `?2` 绑定，SQL 里不写第二个 8。
         let mut statement = connection
             .prepare(
                 "SELECT e.event_id, e.topic, e.partition_key, e.sequence, e.schema_version,
@@ -594,23 +596,32 @@ impl SqliteOutboxStore {
                  FROM qx_outbox_events e
                  LEFT JOIN qx_outbox_leases l ON l.event_id = e.event_id
                  WHERE l.event_id IS NULL OR CAST(l.expires_ts AS INTEGER) <= CAST(?1 AS INTEGER)
-                 ORDER BY CAST(e.created_ts AS INTEGER), CAST(e.sequence AS INTEGER), e.event_id",
+                 ORDER BY CAST(e.attempts AS INTEGER) >= CAST(?2 AS INTEGER),
+                          CAST(e.created_ts AS INTEGER), CAST(e.sequence AS INTEGER), e.event_id
+                 LIMIT ?3",
             )
             .map_err(map_sqlite)?;
         let rows = statement
-            .query_map(params![db_string(now)], |row| {
-                Ok(OutboxEvent {
-                    event_id: row.get(0)?,
-                    topic: row.get(1)?,
-                    partition_key: row.get(2)?,
-                    sequence: parse_sqlite_u64(&row.get::<_, String>(3)?)?,
-                    schema_version: row.get::<_, i64>(4)? as u32,
-                    trace_id: row.get(5)?,
-                    payload: row.get(6)?,
-                    created_ts: parse_sqlite_u64(&row.get::<_, String>(7)?)?,
-                    attempts: parse_sqlite_u64(&row.get::<_, String>(8)?)? as u32,
-                })
-            })
+            .query_map(
+                params![
+                    db_string(now),
+                    db_string(crate::OUTBOX_MAX_ATTEMPTS as u64),
+                    i64::try_from(limit).unwrap_or(i64::MAX),
+                ],
+                |row| {
+                    Ok(OutboxEvent {
+                        event_id: row.get(0)?,
+                        topic: row.get(1)?,
+                        partition_key: row.get(2)?,
+                        sequence: parse_sqlite_u64(&row.get::<_, String>(3)?)?,
+                        schema_version: row.get::<_, i64>(4)? as u32,
+                        trace_id: row.get(5)?,
+                        payload: row.get(6)?,
+                        created_ts: parse_sqlite_u64(&row.get::<_, String>(7)?)?,
+                        attempts: parse_sqlite_u64(&row.get::<_, String>(8)?)? as u32,
+                    })
+                },
+            )
             .map_err(map_sqlite)?;
         rows.map(|row| {
             let event = row.map_err(map_sqlite)?;
@@ -618,6 +629,21 @@ impl SqliteOutboxStore {
             Ok(event)
         })
         .collect()
+    }
+
+    /// 不问页数、不读 payload 的停摆条数：`available` 被 `limit` 截断后，逐行数出来的
+    /// parked 只是这一页的观察值，而运维要的是库里的状态量（V11 R7-d）。
+    pub fn count_parked(&self) -> Result<u64, StorageError> {
+        let connection = open(&self.path)?;
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM qx_outbox_events
+                 WHERE CAST(attempts AS INTEGER) >= CAST(?1 AS INTEGER)",
+                params![db_string(crate::OUTBOX_MAX_ATTEMPTS as u64)],
+                |row| row.get(0),
+            )
+            .map_err(map_sqlite)?;
+        Ok(count as u64)
     }
 
     pub fn claim(
@@ -870,8 +896,12 @@ impl OutboxStore for SqliteOutboxStore {
         self.append(event)
     }
 
-    fn available_outbox(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
-        self.available(now)
+    fn available_outbox(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
+        self.available(now, limit)
+    }
+
+    fn count_parked_outbox(&self) -> Result<u64, StorageError> {
+        self.count_parked()
     }
 
     fn claim_outbox(
@@ -1311,10 +1341,6 @@ impl SqliteAuditStore {
         Ok(store)
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
     pub fn append(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
         let mut connection = open(&self.path)?;
         let transaction = connection
@@ -1427,32 +1453,6 @@ impl SqliteAuditStore {
             appended += 1;
         }
         Ok(appended)
-    }
-}
-
-impl AuditStore for SqliteAuditStore {
-    fn append_record(&self, record: AuditRecord) -> Result<PathBuf, StorageError> {
-        self.append(record)
-    }
-
-    fn read_entries(&self) -> Result<Vec<AuditEntry>, StorageError> {
-        self.read()
-    }
-
-    fn query_command_entries(&self, command_id: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        Ok(self
-            .read()?
-            .into_iter()
-            .filter(|entry| entry.record.command_id == command_id)
-            .collect())
-    }
-
-    fn entries_after(&self, sequence: u64) -> Result<Vec<AuditEntry>, StorageError> {
-        Ok(self
-            .read()?
-            .into_iter()
-            .filter(|entry| entry.sequence > sequence)
-            .collect())
     }
 }
 
@@ -1878,10 +1878,6 @@ impl JobQueueBackend for SqliteJobQueue {
         lease_seconds: u64,
     ) -> Result<JobLease, StorageError> {
         self.claim(run_id, worker, now, lease_seconds)
-    }
-
-    fn ack_job(&self, run_id: u64, worker: &str) -> Result<PathBuf, StorageError> {
-        self.ack(run_id, worker)
     }
 
     fn ack_job_at(

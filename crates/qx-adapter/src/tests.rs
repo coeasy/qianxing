@@ -29,6 +29,49 @@ fn http_transport_preserves_vendor_form_content_type() {
     assert_eq!(wire.matches("Content-Type:").count(), 1);
 }
 
+/// 两条 HTTP 读链（`TlsHttpTransport`/`TcpHttpTransport` 的 `send`）共用 `read_capped_response`。
+/// `set_read_timeout` 每读到一块就复位、挡不住慢速滴水的上游把响应吃到内存耗尽，所以总量界是
+/// 这条链唯一的出口；这一族判据的先在形状是 `MAX_WEBSOCKET_MESSAGE_BYTES`（V13 R2 第十四遍 #213）。
+/// 同一族的"一行"版是 `read_capped_line`（CCXT 泵的常驻管道）：那条界管一次响应的总量，
+/// 这条管一根不断开的管道里的一条应答，所以四臂的形状与上面逐一对齐（界内 / 恰好等界 / 越界 / EOF）。
+#[test]
+fn http_response_read_aborts_over_the_byte_cap() {
+    // 上限之内逐字原样读出：改动不得影响 ≤ 上限 的响应（happy path 与旧行为等价）。
+    let mut within = Cursor::new(b"0123456789".to_vec());
+    assert_eq!(
+        read_capped_response(&mut within, 16).unwrap(),
+        b"0123456789".to_vec()
+    );
+    // 恰好等于上限不误伤：`take` 放行 `limit + 1`，只有真读到第 `limit + 1` 字节才判越界。
+    let mut exact = Cursor::new(vec![b'y'; 8]);
+    assert_eq!(read_capped_response(&mut exact, 8).unwrap().len(), 8);
+    // 越界那一臂提前中止，而不是把缓冲一路攒下去。
+    let mut over = Cursor::new(vec![b'x'; 20]);
+    let error = read_capped_response(&mut over, 8).unwrap_err();
+    assert!(error.contains("字节上限"), "{error}");
+    // 行长版的四臂：换行内的行按原样交出（保留行尾 `\n` 与旧 `read_line` 等价），
+    // 尾行没有换行也要交出，管道 EOF 说成"没有行"而不是错误，只有越界那臂中止整条泵。
+    let mut pipe = BufReader::new(Cursor::new(b"{\"ok\":1}\ntail".to_vec()));
+    assert_eq!(
+        read_capped_line(&mut pipe, 16).unwrap().as_deref(),
+        Some("{\"ok\":1}\n"),
+        "界内的一行必须原样交出，含行尾换行"
+    );
+    assert_eq!(
+        read_capped_line(&mut pipe, 4).unwrap().as_deref(),
+        Some("tail"),
+        "恰好等界的尾行不能被误伤"
+    );
+    assert_eq!(
+        read_capped_line(&mut pipe, 16).unwrap(),
+        None,
+        "管道 EOF 要说成没有行，而不是读取失败"
+    );
+    let mut long = BufReader::new(Cursor::new(vec![b'x'; 40]));
+    let error = read_capped_line(&mut long, 8).unwrap_err();
+    assert!(error.contains("单行超过 8 字节上限"), "{error}");
+}
+
 #[test]
 fn tls_transport_rejects_invalid_server_name_before_connecting() {
     let error = TlsHttpTransport::default().send(HttpRequest {

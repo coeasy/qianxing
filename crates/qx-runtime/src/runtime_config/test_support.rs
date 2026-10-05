@@ -13,6 +13,8 @@ pub(crate) fn config() -> RuntimeConfig {
             transport: ApiTransport::Plaintext,
             tls: None,
             operators: BTreeMap::new(),
+            cors_allowed_origins: Vec::new(),
+            max_concurrent_connections: None,
         },
         storage: StorageRuntimeConfig {
             backend: StorageBackend::Files,

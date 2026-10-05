@@ -40,7 +40,7 @@ pub enum ReconcileVerdict {
     NeedsHuman(OrderDimensionDiff),
 }
 
-/// 裁决映射出的唯一动作口径：调用点（对账 worker、报告与 `ReconcilePort`）
+/// 裁决映射出的唯一动作口径：调用点（对账 worker、报告与 `require_reconcile`）
 /// 只能按它分流与记 reason，不得再自行比较状态或数量。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VerdictAction {

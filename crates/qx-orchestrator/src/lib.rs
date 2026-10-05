@@ -3,12 +3,14 @@
 //! 该 crate 只负责把已验证的 RuntimeConfig 转换为 worker 启动计划，以及管理
 //! worker 子进程的日志、退出传播和停止顺序；不执行策略、下单、对账或账簿副作用。
 
+mod reap;
 mod supervisor_stop;
 
 use qx_core::VenueFamily;
 use qx_runtime::{RuntimeConfig, WorkerRole};
+use reap::{stop_managed_children, ManagedChild};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -194,11 +196,6 @@ pub fn plan_workers(
     Ok(launches)
 }
 
-struct ManagedChild {
-    id: String,
-    child: Child,
-}
-
 impl ManagedProcess for ManagedChild {
     fn id(&self) -> &str {
         &self.id
@@ -218,16 +215,11 @@ impl ManagedProcess for ManagedChild {
     }
 }
 
-fn stop_managed_children(children: &mut [ManagedChild]) {
-    for managed in children.iter_mut() {
-        let _ = managed.child.kill();
-    }
-    for managed in children.iter_mut() {
-        let _ = managed.child.wait();
-    }
-}
-
 /// 启动并监督一组 worker 子进程。任一 worker 异常退出时停止其余 worker。
+///
+/// 收尾的上界是配置里的 `shutdown_timeout_ms`：托管对象是独立 OS 进程、父子间没有
+/// 信号通道（引依赖不在本轮范围），所以停机令牌与 fail-fast 共用同一条 kill + 限时
+/// 回收。超预算没收回来的 worker 会被点名报出去，父进程不会带着孤儿静静退出。
 pub fn supervise_workers(
     config: &RuntimeConfig,
     config_path: &Path,
@@ -305,8 +297,15 @@ pub fn supervise_workers(
         }
         Ok(())
     })();
-    stop_managed_children(&mut children);
-    result
+    let reaped = stop_managed_children(
+        &mut children,
+        Duration::from_millis(config.shutdown_timeout_ms),
+    );
+    match (result, reaped) {
+        (Ok(()), reap) => reap,
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(reap_error)) => Err(format!("{error}; 且收尾未收干净: {reap_error}")),
+    }
 }
 
 #[cfg(test)]

@@ -72,10 +72,11 @@ channel to strings has to move the schema, the Rust structs and the SDKs togethe
 
 ## Language coverage
 
-`margin_mode`, `position_mode` and `leverage` exist on the Rust intent only. The Python
-`StrategyIntent` (8 keys) and `qx_order_intent` in `cpp/include/qianxing_strategy.h` carry
-`position_side` but not those three, so a Python or C++ strategy cannot express them and
-the leg falls back to the runtime's own product/position/margin configuration. Unknown keys
+`margin_mode`, `position_mode` and `leverage` are carried on the Rust intent and on the
+Python `StrategyIntent` (`python/qianxing_bridge/strategy.py`, which validates and serializes
+all three). Only `qx_order_intent` in `cpp/include/qianxing_strategy.h` carries `position_side`
+but not those three, so a C++ strategy cannot express them and the leg falls back to the
+runtime's own product/position/margin configuration. Unknown keys
 are rejected on both sides: Rust via `deny_unknown_fields`, the Python SDK via
 `_reject_unknown_keys`, so a mistyped optional key fails loudly instead of silently taking
 the default.

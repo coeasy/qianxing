@@ -9,10 +9,7 @@ use qx_core::{
     retry, Fill, InstrumentId, Money, Order, OrderStatus, Price, Quantity, QxError, QxResult, Side,
 };
 use qx_guanxing::QuoteTick;
-use qx_zhenlu::{
-    AdapterHealth, ConnectorCapabilities, ConnectorState, RateLimiter, Venue, VenueAdapter,
-    VenueEvent, VenueOrderSnapshot,
-};
+use qx_zhenlu::{ConnectorState, RateLimiter, Venue, VenueEvent, VenueOrderSnapshot};
 use ring::hmac;
 use serde::Deserialize;
 use serde_json::Value;
@@ -797,6 +794,12 @@ pub struct BinanceSpotVenue {
     port: u16,
     connected: bool,
     state: ConnectorState,
+    /// 本地订单状态、远端订单号映射与下面这一格**只增不减的成交幂等台账**共用同一个上界：
+    /// 进程一生提交过的订单数。三者都**不能**按数量或时间淘汰——user stream 会把同一笔
+    /// 成交重投，去掉任何一条已见键就等于允许同一笔 fill 被 `trace_fill` 两次（重复记账），
+    /// 而这正是本仓库唯一不接受的失败方式。要封顶就得先落成交对账的持久幂等键
+    /// （P0-2 那层事务语义），在那之前刻意保持只增不减；判据只守「不得出现淘汰调用」，
+    /// 谁加一个 `retain`/`remove` 就把重复记账的口子开回来了（V13 R5）。
     orders: BTreeMap<u64, Order>,
     venue_order_ids: BTreeMap<u64, String>,
     seen_fill_keys: BTreeSet<(u64, u64, i128, i128, i128)>,
@@ -1556,26 +1559,6 @@ impl Venue for BinanceSpotVenue {
     }
 }
 
-impl VenueAdapter for BinanceSpotVenue {
-    fn capabilities(&self) -> ConnectorCapabilities {
-        ConnectorCapabilities {
-            market_data: true,
-            user_stream: true,
-            submit: true,
-            cancel: true,
-            replace: false,
-        }
-    }
-
-    fn health(&self) -> AdapterHealth {
-        AdapterHealth {
-            state: self.state,
-            last_event_ts: self.last_event_ts,
-            reconnects: self.reconnects,
-        }
-    }
-}
-
 fn client_order_id(id: u64) -> String {
     format!("qx-{id}")
 }
@@ -1892,7 +1875,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(venue.balances()[0].free, Money::from_dec("13").unwrap());
-        assert_eq!(venue.health().last_event_ts, 120);
+        assert_eq!(venue.last_event_ts, 120);
     }
 
     #[test]
@@ -1929,7 +1912,7 @@ mod tests {
         let issues = venue.fetch_and_reconcile().unwrap();
 
         assert!(issues.is_empty());
-        assert_eq!(venue.health().state, ConnectorState::Live);
+        assert_eq!(venue.state, ConnectorState::Live);
         assert_eq!(venue.venue_order_ids.get(&7), Some(&"42".to_string()));
         let request = transport.requests.lock().unwrap().pop().unwrap();
         assert!(request.path.starts_with("/api/v3/allOrders?"));
@@ -2116,6 +2099,6 @@ mod tests {
             venue.submit(order(), 1_700_000_000_000),
             Err(QxError::Ambiguous(_))
         ));
-        assert_eq!(venue.health().state, ConnectorState::ReconcileRequired);
+        assert_eq!(venue.state, ConnectorState::ReconcileRequired);
     }
 }

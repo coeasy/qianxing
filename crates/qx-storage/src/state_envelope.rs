@@ -25,7 +25,11 @@ use std::sync::atomic::Ordering;
 
 /// 参与统一信封的文件状态负载类型。实现方只提供“标签 + 版本 + 结构校验”，
 /// 序列化、损坏拒绝与原子写路径一律复用本模块的同一份实现。
-pub trait JsonStateEnvelope: Serialize + DeserializeOwned {
+///
+/// `pub(crate)`：本模块所有被它约束的函数（`encode/decode/read/write/transact_state_json`）都是
+/// `pub(crate)`，crate 外无从实现也无法引用；trait 保持 `pub` 只是一个门 `zero_reference_public_surface_check`
+/// 扫不到的公开面（它只看 `pub fn`/`pub const`），故按可达性收口到 `pub(crate)`（V13 R4）。
+pub(crate) trait JsonStateEnvelope: Serialize + DeserializeOwned {
     /// 错误文案主体，保持各存储迁移前的历史措辞
     /// （例如 `"consumer 状态"` 拼出“consumer 状态解析失败: …”）。
     const LABEL: &'static str;

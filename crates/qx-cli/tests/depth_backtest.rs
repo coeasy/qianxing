@@ -318,6 +318,73 @@ fn depth_execution_model_flags_change_results_and_are_recorded() {
         "报错没有点名被拒的旗标: {stderr}"
     );
 
+    // 延迟的**帧相对**上界：内核每份快照只撮合一轮，最早的一次提交也只能落在第 1 份快照撮合之后，
+    // 成熟要等到第 `1 + 延迟 + 1` 份，所以 `延迟 > 帧内快照数 - 2` 的取值一笔都成交不了——而此前
+    // 回测照样退 0、落一份空成交表的产物。边界由夹具自己的快照数算出，不抄字面量：夹具改长改短，
+    // 这两支都跟着走。上界那一档必须仍被接受，否则这道闸会把"延迟配得大"错杀成"旗标非法"。
+    let frame_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&frame).expect("读取深度夹具失败")).unwrap();
+    let snapshots = frame_json["snapshots"]
+        .as_array()
+        .expect("夹具必须带 snapshots 数组")
+        .len();
+    assert!(snapshots >= 4, "夹具太短，测不出延迟边界: {snapshots}");
+    let boundary = (snapshots - 2).to_string();
+    let beyond = (snapshots - 1).to_string();
+
+    let (boundary_line, _, _) = run_model("latency-boundary", &["--latency-snapshots", &boundary]);
+    assert_eq!(
+        boundary_line,
+        format!("[Depth · Execution] latency_snapshots={boundary} market_impact_bps=0"),
+        "边界内一档必须照跑并把实际延迟口径印出来"
+    );
+
+    let (code, _, stderr) = run(&[
+        "backtest",
+        "book",
+        "--fill-tier",
+        "l2",
+        "--root",
+        &root.join("latency-beyond").to_string_lossy(),
+        "--latency-snapshots",
+        &beyond,
+        "sma-cross",
+        &frame,
+    ]);
+    assert_ne!(code, 0, "在这份帧上永远等不到成熟的延迟档位仍被接受");
+    assert!(
+        stderr.contains(&format!("--latency-snapshots={beyond}")),
+        "报错没有点名被拒的旗标与它的取值: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("最多用 {boundary}")),
+        "报错没有给出这份帧实际可用的延迟上界: {stderr}"
+    );
+
+    // 反过来那半格：帧本身短不是旗标的错。单快照帧上缺省的 `延迟=0` 同样等不到成熟窗口，但被拒的
+    // 必须是"旗标越界"而不是"帧太短"——否则这道闸把使用者自己的数据判成非法参数。少了上界里
+    // `延迟 > 0` 那半条件，这一支就会红。
+    let mut thin = frame_json.clone();
+    thin["snapshots"] = serde_json::Value::Array(vec![frame_json["snapshots"][0].clone()]);
+    let short_frame = root.join("one-snapshot.json");
+    std::fs::write(&short_frame, thin.to_string()).expect("写入单快照帧失败");
+    let short_path = short_frame.to_string_lossy().to_string();
+    let (code, stdout, stderr) = run(&[
+        "backtest",
+        "book",
+        "--fill-tier",
+        "l2",
+        "--root",
+        &root.join("one-snapshot-run").to_string_lossy(),
+        "sma-cross",
+        &short_path,
+    ]);
+    assert_eq!(code, 0, "单快照帧的缺省延迟被上界误判成非法旗标: {stderr}");
+    assert!(
+        stdout.contains("snapshots=1"),
+        "短帧那一跑的产物没有如实写出快照数: {stdout}"
+    );
+
     let _ = std::fs::remove_dir_all(&root);
 }
 

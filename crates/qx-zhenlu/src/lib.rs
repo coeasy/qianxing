@@ -1177,27 +1177,6 @@ impl SpreadOrderGroupStore for FileSpreadOrderGroupStore {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub struct ConnectorCapabilities {
-    pub market_data: bool,
-    pub user_stream: bool,
-    pub submit: bool,
-    pub cancel: bool,
-    pub replace: bool,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct AdapterHealth {
-    pub state: ConnectorState,
-    pub last_event_ts: u64,
-    pub reconnects: u64,
-}
-
-pub trait VenueAdapter: Venue {
-    fn capabilities(&self) -> ConnectorCapabilities;
-    fn health(&self) -> AdapterHealth;
-}
-
 /// 内存 PaperVenue：用真实的订单生命周期和 L1 报价做联调，不连接外部市场。
 pub struct PaperVenue {
     id: String,
@@ -1473,25 +1452,6 @@ impl Venue for PaperVenue {
 
     fn connected(&self) -> bool {
         self.connected
-    }
-}
-
-impl VenueAdapter for PaperVenue {
-    fn capabilities(&self) -> ConnectorCapabilities {
-        ConnectorCapabilities {
-            market_data: true,
-            user_stream: true,
-            submit: true,
-            cancel: true,
-            replace: false,
-        }
-    }
-    fn health(&self) -> AdapterHealth {
-        AdapterHealth {
-            state: self.state,
-            last_event_ts: self.last_event_ts,
-            reconnects: self.reconnects,
-        }
     }
 }
 

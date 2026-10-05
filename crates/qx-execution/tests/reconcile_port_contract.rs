@@ -1,4 +1,4 @@
-//! `ReconcilePort` 契约测试。
+//! `EventLogReconcilePort::require_reconcile` 契约测试。
 //!
 //! “结果未知，必须先对账”这一事实在 Paper（真实 EventLog 管线）与 CCXT worker
 //! （最小内存端口）两条链路上必须由同一个适配器 `EventLogReconcilePort` 产生完全
@@ -7,9 +7,7 @@
 
 use qx_core::{InstrumentId, Order, OrderStatus, Price, Quantity, Side};
 use qx_execution::EventLogReconcilePort;
-use qx_execution::{
-    EventAppender, ExecutionEvent, ExecutionEventEnvelope, OrderStore, ReconcilePort,
-};
+use qx_execution::{EventAppender, ExecutionEvent, ExecutionEventEnvelope, OrderStore};
 use qx_runtime::LiveEventPipeline;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};

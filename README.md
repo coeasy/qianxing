@@ -512,9 +512,12 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 ## 当前状态
 
 > 这一节的数字是 **2026-09-26** 那一轮（V13 R1）的快照，保留是为了让"门禁条数怎么一路涨上来"可对照。
-> **要读最新一门的实测数**看 `docs/自研量化框架审计与重构方案-V13.md` 各章末的「收口」段：第十七遍
-> （2026-09-29）的当轮数是门禁 **515 项 PASS**、`cargo test --workspace --all-targets` **99 段 / 951 passed / 0 failed / 1 ignored**、
-> 九步构建 `exit=0`（`logs/s389_*.txt`、`logs/s388_*.txt`、`logs/s390_*.txt`）。
+> **要读最新一门的实测数**看 `docs/自研量化框架审计与重构方案-V13.md` §9.54（2026-10-04 的第 7 轮三扫收口 · 台账 #284 · R7-a）：
+> 当轮本机电池全绿 —— 门禁 **610 项 PASS / 0 项 FAIL**、
+> `cargo test --workspace --all-targets` **87 段 / 1057 passed / 0 failed / 1 ignored**、
+> `cargo test --workspace` **107 段 / 同样 1057 passed**、
+> `python -m unittest discover -s python/tests` **Ran 64 tests / OK**（本轮这遍 **0 skip** —— `python/tests/test_native_extension.py` 的两颗用例只在「`target/release/_qianxing_native.pyd` 不在盘」或「`pyarrow` 没装」时才 skipTest，本轮两样都在场；口径见 V13 §9.54）。
+> 那一轮**没有**重跑 `build.bat` 九步，所以下面那些九步读数仍是 2026-09-26 的快照。
 
 下面这组数字全部是 2026-09-26 在本机实测得到的，分三次抓取（最新一次在最前）：
 
@@ -553,36 +556,74 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 （13 个单标的 + 4 个只被 `backtest multi-builtin` 接受的套利 kind）、`git ls-files deploy` 里 44 份
 `*example*.json` 配置（顶层 JSON 模板 52 份，逐份由 `crates/qx-cli/src/tests/deploy_template_coverage.rs`
 按登记表点名的生产读法真读一遍，15 类读取器各自还要拒一份坏内容）、
-`python tools/check_architecture.py` 515 项不变量全绿（`logs/s69_a5_full_gate_after_hardening.txt`；其中含一条全仓地板：
-`crates/*/src` 与 `crates/*/tests` 递归的 `#[test]` 总数不得低于磁盘实测的 866）。
+`python tools/check_architecture.py` **610 项**不变量全绿（2026-10-04 本机整跑 `[PASS]` 610 行 / `[FAIL]` 0 行 / `exit=0`；其中含一条全仓地板：
+`crates/*/src` 与 `crates/*/tests` 递归的 `#[test]` 总数不得低于磁盘实测的 **1071**）。
 
-能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，下面这组是**文档轮那一次**的读数；V13 R1-A5
-之后 limitation 那一路多了 5 条逐字段条目、以仓库内路径开头的 255 行未动，见上面「当前状态」第一条）：
-缩进两格的条目 21 个，
-其中带 `implementation` 键的能力块 19 个、287 条证据行（其中 255 行以仓库内路径开头，逐行经门禁核对
-存在性）、76 条 limitation。**19 个能力块中 16 个同时满足
+能力矩阵把每条能力钉在四档证据上（`maturity/capabilities.yaml`，下面这组是 **2026-10-04** 在本机按门禁
+同一配方现读的读数，不是从旧文档抄来的。看守这六格的 `cap_ledger_reading_check` 在合流 `c07ad22` 的
+回退面里，所以它们今天**没有门禁牙齿**、下一次照样能漂 —— 见
+`docs/自研量化框架审计与重构方案-V13.md` §9.48 ③）：
+缩进两格的条目 23 个，
+其中带 `implementation` 键的能力块 21 个、387 条证据行（其中 358 行以仓库内路径开头，口径是行首落在
+`crates|tools|deploy|maturity|docs|schemas|python|.github` 这八个前缀之一，逐行经门禁核对
+存在性）、120 条 limitation、文件 698 行。
+**21 个能力块中 17 个同时满足
 `implementation` 与 `code_tested`；`sandbox_tested` 与 `production_approved` 无一为真**；
-`postgres` / `nats` / `broker_gateway` 三条的 `implementation` 都不是 `true`（前两条是 `optional`，
-最后一条写着"没有厂商协议就没有实现"），只有 feature 矩阵或接口占位。
+`postgres` / `nats` / `broker_gateway` / `merge_c07ad22_rollback_register` 四条的 `implementation` 都不是 `true`
+（前两条是 `optional`，第三条写着"没有厂商协议就没有实现"，第四条就是合流 `c07ad22` 的回退面名册本身、
+按裁定写 `false`），只有 feature 矩阵或接口占位。新加的 `provider_capability_registry` 那一格（V13 R6）
+把"provider 声明的四格能力字段没人据此行动"从别的条目里挪到自己名下，证据是
+`crates/qx-provider/src/lib.rs` 与 `crates/qx-cli/src/ecosystem_smoke.rs`。
 因此可宣称的边界是：
 **本机可重放的确定性回测、Paper 闭环、以及 CCXT/Binance 的代码级契约** —— 不是"已对接真实账户"。
-整树测试（带 Python 解释器，`QX_PYTHON` 指向可用的 CPython）`cargo test --workspace` 92 个
-`test result:` 段全 ok、858 passed、0 failed（那 21 段 Doc-tests 全 ok、0 passed，仓库没有 doctest；
-单独 `cargo test --workspace --doc` 复跑同样 21 段全 ok；V13 R1-A5 那轮改的是契约与文档，Rust 一行未动，
-其整跑走 `--all-targets`（不含 doctest 那 21 段）= 72 段 / 同样 858 passed / 0 failed，
-`logs/s71_a5_cargo_workspace.txt`）。磁盘在册的 `#[test]` 是 866 条，
-866 − 858 = 8 条，与 V13 §4 L4 第 1 条点名的那批 feature 门后用例（`nats` / `sqlite`）数目相符 ——
-本轮没有逐名复算，#144 仍开着；不带 `QX_PYTHON` 时那 2 条 Python 桥用例必红（本机事实，见 V12 §15.4），
+整树测试（带可用的 Python 解释器：本轮 `QX_PYTHON` 未设置，CLI 按 `crates/qx-cli/src/main.rs` 的口径
+回落到 PATH 上的 CPython 3.13.13，两条 Rust↔Python 桥用例照常绿）`cargo test --workspace` **107** 个
+`test result:` 段、**1057 passed / 0 failed / 1 ignored**，其中 86 段来自 `Running` 的测试目标、
+21 段是 Doc-tests（仓库没有 doctest；单独跑 `cargo test --workspace --doc`
+复现同样 **21** 段、全 ok、**0 passed / 0 failed / 0 ignored**，所以那 21 段确实一段也没跑用例）；
+同一棵树走 `--all-targets`（不含 Doc-tests，但多一个只有它才选中的目标）= **87** 段 / 同样 **1057 passed / 0 failed / 1 ignored**，两条腿的 `FAILED.` 行数都是 0。
+**#144 那条差值到本轮仍是闭合的**（关掉它的是 V13 R1，这里的读数出自第 7 轮 R7-a 在终树上的九腿整跑；本轮 Rust 侧净增一颗用例，所以比第 4—6 轮各多 1）：磁盘在册的 `#[test]` 是 **1071** 条，
+`cargo test --workspace --all-targets -- --list` 编译出 **1058** 行，差 **13** 条，逐名可点、按特性分堆 ——
+`nats` 门后 **10** 条、`postgres` 门后 **3** 条，两堆相加正好等于那个差；
+「在册却没编译」为 **0** 条，所以这份名册是**闭合**的。
+1057 + 1（passed + ignored）= 1058，与 `--list` 的行数对得上。
+**同一批数按"名字"再核一遍也闭合**（行数是混单位的：同一颗 `#[test]` 可以被两个测试目标各编译一行）：1071 条属性解析出
+1069 个唯一用例名，`--list` 那 1058 行去重是 1056 个名字，两个单位相减都是 **13**——因为唯一的那对重名
+（`user_stream_runner_reconnects_after_session_or_callback_error` 与 `…_with_injected_clock_and_stop`，在 sqlite/postgres
+两份后端契约文件里各写一遍）在两侧都各计两次；按名字取差集，「编译出却没在册」同样是 **0** 条。
+早先这里写的 `866 − 858 = 8` 是**假恒等式**：那 8 条既没有逐名点出，也不是真实的差。
+更要紧的是**「门后」不等于「不跑」**—— `crates/qx-cli/Cargo.toml:9` 写着 `default = ["sqlite"]`，
+cargo 的特性归一让整棵 workspace 都开了 `qx-storage/sqlite`，所以按三段口径现读的 **36** 条「门后」用例里
+有 **23** 条 `sqlite` 的照常编译执行，真正不编译的只有上面那 **13** 条 —— `36 − 23 = 13` 与编译器那个差同数，
+且这 23 条的名字逐条出现在 `--list` 里、那 13 条一条都不出现。
+三段口径（少一段就少报，本轮把四种形状各跑了一遍现读）：文件顶部的 `#![cfg(feature = "…")]`、
+同文件里 `#[cfg(feature = "…")]` 压住的作用域（**按花括号深度收口**）、以及**声明那个模块的行上**的门
+（如 `crates/qx-storage/src/lib.rs` 的 `#[cfg(feature = "sqlite")] mod sqlite;`、`crates/qx-cli/src/tests/mod.rs` 的 nats 那一支）。
+三段齐 + 深度收口 = **36**（sqlite 23 / nats 10 / postgres 3，与编译器对得上）；作用域只收到列 0 的 `}` = **44**（31/10/3），
+那是**过计**——内联 `mod tests { … }` 里被门住的用例右括号落在列 4，门清不掉、一直漏到同一个块后面的用例上；
+不认第三段 = **30**（18/9/3）与 **38**（26/9/3），那是**少报**。**早先这里写过的 44/31 是第二格，本轮按编译器真相改回 36/23。**
+**「不带 `QX_PYTHON` 时那 2 条 Python 桥用例必红」这句要按代码事实改口，本轮改掉**：`crates/qx-cli/src/main.rs` 的解析是
+`QX_PYTHON` 非空才用、否则回落到 PATH 上的 `python`，所以决定红不红的是"回落到的那个 `python` 是不是可用解释器"
+（WindowsApps 的占位桩会退 2，V12 §15.4 本机事实就是这一支），而不是 `QX_PYTHON` 这个变量本身在不在。
+上面那两条桥用例本轮就是在 `QX_PYTHON` 未设置、PATH 解析到 CPython 3.13.13 的条件下跑绿的。
 而 `build.bat` 自 V12 §19 起会把 `[0/9]` 探测出的解释器真的导出成 `QX_PYTHON`，所以整脚本能一次跑通：
 九步全过、`BUILD_BAT_EXIT=0`（§19.1 #133 修的是解释器交接，§22 #139 加的是第 `[1/9]` 道架构门禁）。
 **`python/.venv/Scripts/python.exe` 不是恒可依赖的**：它在 A1 那一轮曾在一台并发 uv 进程的干扰下消失过，
 当时用 `uv venv .venv --python 3.12 --clear` + `uv pip install tzdata` 离线重建（3.12.13，tzdata 2026.4）；
-本轮它在场，上面的数字就是用它跑的。在场不改变"它会消失"这个风险，所以 `build.bat`/`build.sh` 从第 `[0/9]` 步
+**第 4 轮这遍它已不在盘上**（`ls python/.venv` 无此目录），上面的数字是用 PATH 上的 miniforge CPython 3.13.13 跑的。
+这正是"它会消失"这个风险的第二实例，所以 `build.bat`/`build.sh` 从第 `[0/9]` 步
 起就探测解释器而不是信任 venv 在场（V12 §17.2）。被这条假设牵动的还有 `python -m unittest` 一类命令 ——
 换解释器时结果不变，前提不变。
-被 `#[cfg(feature = "sqlite")]` 挡住的存储用例不在其中，必须另跑 `cargo test -p qx-storage --features sqlite`
-（本轮 10 段全 ok / 56 passed / 0 failed）。同一轮的 `tools/validate_core.py` 与
-`python -m unittest discover -s python/tests`（55 条，1 skip）均退出码 0。
+**「被 `#[cfg(feature = "sqlite")]` 挡住的存储用例必须另跑 `cargo test -p qx-storage --features sqlite`」
+这句在今天是错的，本轮改掉**：`crates/qx-cli/Cargo.toml:9` 的 `default = ["sqlite"]` 经 cargo 特性归一
+打开了 `qx-storage/sqlite`，那 23 条 `sqlite` 门后用例就在上面
+`cargo test --workspace` 的 107 段里照常执行，不需要另跑一条腿。真正需要另跑的是
+`nats` 与 `postgres` 两堆（默认特性下压根不编译）：`nats` 那 8 条非 ignore 的
+自 2026-10-04 起在 CI 里有一条专门的腿（`.github/workflows/ci.yml` 的
+`NATS adapter contracts (non-ignored)`），本机实跑 2 段 / 8 passed / 0 failed / 1 ignored。
+同一轮的 `python -X utf8 -m unittest discover -s python/tests`（按 CI 原样，不带 `-t .`）是 **Ran 64 tests / OK**（本轮这遍 0 skip：`_load_native()` 在 `target/release/_qianxing_native.pyd` 在盘时不再 skipTest，第二颗用例的 `pyarrow` 也已装 —— 这格的口径是「构建产物与可选依赖是否在场」，换一台没编译 `qx-python` 的机器照旧读成 `(skipped=2)`，所以它不是「套件有没有跳过用例」）、退出码 0
+（早先这里写的「55 条，1 skip」是 2026-09-26 的读数）。`tools/validate_core.py` 在第 4 轮那遍**进了十腿电池**，
+实测 rc 0；早先那句"本轮没有重跑、不替它报数"随本轮作废。
 
 | 链路 | 已落地且有本地测试证据 | 明确未收口（不得当作已完成） |
 |---|---|---|

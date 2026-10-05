@@ -99,6 +99,52 @@ fn projection_scoped_routes_keep_their_own_key_contract() {
         200,
         "不带键的投影读面照旧读全局"
     );
+    // R6 的另一半：#205 只盖住四条整体现读端点，带键这七条照收任何查询串。`?acount_id=` 拼错时
+    // 它落到"没有收窄键"那一支，默认账户那份就被念成调用方点名的账户——正是 #191 那句"拼错的
+    // 账户 id 读成干净的空账户"剩下的下半格。名单外的键当场 400 并点名那把键。
+    // 路由名单从源码取，不在这里抄第二份：把一条入口挪出名单，它就拒不起自己文档承诺的键。
+    let api = workspace_source("crates/qx-api/src/lib.rs");
+    let list = api
+        .find("const PROJECTION_SCOPED_ROUTES: [&str;")
+        .expect("qx-api 里找不到 PROJECTION_SCOPED_ROUTES");
+    let list_end = api[list..].find("];").expect("带键读面名单必须闭合") + list;
+    let refusal_scope = api[list..list_end]
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .chain(std::iter::once("/account/snapshot/diff"))
+        .collect::<Vec<_>>();
+    // 取数区间一旦挪偏，这个循环会一颗判据都不发就过去：七条带键读面加 `diff` 共八条，缺一即红。
+    assert_eq!(
+        refusal_scope.len(),
+        8,
+        "这一格的覆盖面挪了：{refusal_scope:?}"
+    );
+    for route in refusal_scope {
+        for (query, name) in [
+            ("?acount_id=ghost", "acount_id"),
+            ("?account_id=a&venue_id=paper&limit=10", "limit"),
+        ] {
+            let response = service.handle("GET", &format!("{route}{query}"), "", 6);
+            assert_eq!(
+                response.status, 400,
+                "{route}{query} 里的 {name} 不在这条入口的名单里，不能默默读成全局那一份: {}",
+                response.body
+            );
+            assert!(
+                response.body.contains("不接受查询参数") && response.body.contains(name),
+                "{route} 的 400 要点名被拒的那把键 {name}: {}",
+                response.body
+            );
+        }
+    }
+    // 正向臂：`after` 在事件读面上是合法键，这条通道不是"带查询串就拒"。
+    let cursor = service.handle("GET", "/events?after=0", "", 7);
+    assert!(
+        !cursor.body.contains("不接受查询参数"),
+        "事件读面认 `after`，它不能被上面那张表一起拒掉: {}",
+        cursor.body
+    );
 }
 
 /// #205 第二半：`snapshot_diff` 的非 200 口径只剩文档写的那两个码。

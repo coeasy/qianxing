@@ -43,20 +43,46 @@ impl FileOutboxStore {
         write_state_json(&self.root, &path, &event)
     }
 
-    pub fn available(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
+    pub fn available(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
         self.ensure_dirs()?;
-        let mut events = Vec::new();
+        // 两组各自按三元组数字序，用尽预算的那组排在后面再截页：它们仍留在候选集里等人工
+        // claim/ack（K2 的出口），只是不再占住页首把投得出去的事件挤出一页（V11 R7-d）。
+        let mut deliverable = Vec::new();
+        let mut parked = Vec::new();
         for path in self.list_records()? {
             let event: OutboxEvent = read_state_json(&path)?;
             let lease_path = self.lease_path(&event.event_id)?;
-            if !lease_path.exists()
-                || read_state_json::<OutboxLease>(&lease_path)?.expires_ts <= now
+            if lease_path.exists() && read_state_json::<OutboxLease>(&lease_path)?.expires_ts > now
             {
-                events.push(event);
+                continue;
+            }
+            if crate::outbox_exhausted(event.attempts) {
+                parked.push(event);
+            } else {
+                deliverable.push(event);
             }
         }
-        events.sort_by_key(|event| (event.created_ts, event.sequence, event.event_id.clone()));
-        Ok(events)
+        for group in [&mut deliverable, &mut parked] {
+            group.sort_by_key(|event| (event.created_ts, event.sequence, event.event_id.clone()));
+        }
+        deliverable.extend(parked);
+        deliverable.truncate(limit);
+        Ok(deliverable)
+    }
+
+    /// 不问 `limit` 的停摆条数：`available` 截页后逐行数只是这一页的观察值（V11 R7-d）。
+    /// 文件后端没有索引，这一问与 `available` 一样要枚举每条记录——受限的是返回集不是磁盘
+    /// 遍历，见 V11 R7-d 的遗留限制。
+    pub fn count_parked(&self) -> Result<u64, StorageError> {
+        self.ensure_dirs()?;
+        let mut count = 0_u64;
+        for path in self.list_records()? {
+            let event: OutboxEvent = read_state_json(&path)?;
+            if crate::outbox_exhausted(event.attempts) {
+                count = count.saturating_add(1);
+            }
+        }
+        Ok(count)
     }
 
     pub fn claim(
@@ -178,8 +204,12 @@ impl OutboxStore for FileOutboxStore {
         self.append(event)
     }
 
-    fn available_outbox(&self, now: u64) -> Result<Vec<OutboxEvent>, StorageError> {
-        self.available(now)
+    fn available_outbox(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
+        self.available(now, limit)
+    }
+
+    fn count_parked_outbox(&self) -> Result<u64, StorageError> {
+        self.count_parked()
     }
 
     fn claim_outbox(

@@ -25,13 +25,16 @@ pub(crate) fn run_file_outbox_relay(
     let report = relay
         .pump_once(lease_clock(runtime_timestamp_ms()), limit)
         .map_err(|error| format!("执行 Outbox relay 失败: {error:?}"))?;
+    // `parked` 是"库里还有几条发不出去"的状态量：单次批处理退 0 只说明这一页搬完了，
+    // 不念出停在门后的条数，运维面就会把"还剩 N 条毒事件"读成"中继干净"（V13 R5）。
     println!(
-        "[Outbox relay] scanned={} published={} retried={} publish_failures={} lease_conflicts={} last_error={:?}",
+        "[Outbox relay] scanned={} published={} retried={} publish_failures={} lease_conflicts={} parked={} last_error={:?}",
         report.scanned,
         report.published,
         report.retried,
         report.publish_failures,
         report.lease_conflicts,
+        report.parked,
         report.last_error
     );
     Ok(())
@@ -63,12 +66,13 @@ pub(crate) fn run_postgres_outbox_relay(
         .pump_once(lease_clock(runtime_timestamp_ms()), limit)
         .map_err(|error| format!("执行 PostgreSQL Outbox relay 失败: {error:?}"))?;
     println!(
-        "[PostgreSQL Outbox relay] scanned={} published={} retried={} publish_failures={} lease_conflicts={} last_error={:?}",
+        "[PostgreSQL Outbox relay] scanned={} published={} retried={} publish_failures={} lease_conflicts={} parked={} last_error={:?}",
         report.scanned,
         report.published,
         report.retried,
         report.publish_failures,
         report.lease_conflicts,
+        report.parked,
         report.last_error
     );
     Ok(())
@@ -101,6 +105,7 @@ pub(crate) struct RelayMetricTotals {
     retried: u64,
     lease_conflicts: u64,
     publish_failures: u64,
+    parked: u64,
 }
 
 #[cfg(feature = "nats")]
@@ -111,6 +116,8 @@ impl RelayMetricTotals {
         self.retried += report.retried;
         self.lease_conflicts += report.lease_conflicts;
         self.publish_failures += report.publish_failures;
+        // parked 是"当前还有几条停在 outbox 里"的状态量，不是累计量：取最近一轮的观察值。
+        self.parked = report.parked;
     }
 
     fn render(&self, sink: &WorkerMetricsSink, up: bool, now_ms: u64) -> String {
@@ -122,7 +129,8 @@ qx_outbox_relay_scanned_total{{worker=\"{worker}\"}} {}\n\
 qx_outbox_relay_published_total{{worker=\"{worker}\"}} {}\n\
 qx_outbox_relay_retried_total{{worker=\"{worker}\"}} {}\n\
 qx_outbox_relay_lease_conflicts_total{{worker=\"{worker}\"}} {}\n\
-qx_outbox_relay_publish_failures_total{{worker=\"{worker}\"}} {}\n",
+qx_outbox_relay_publish_failures_total{{worker=\"{worker}\"}} {}\n\
+qx_outbox_relay_parked{{worker=\"{worker}\"}} {}\n",
             u8::from(up),
             now_ms / 1_000,
             self.scanned,
@@ -130,6 +138,7 @@ qx_outbox_relay_publish_failures_total{{worker=\"{worker}\"}} {}\n",
             self.retried,
             self.lease_conflicts,
             self.publish_failures,
+            self.parked,
         )
     }
 }
@@ -220,13 +229,14 @@ where
         metrics.write(&totals.render(&metrics, true, now));
         context.heartbeat(now)?;
         println!(
-            "[Outbox relay worker={}] scanned={} published={} retried={} failures={} conflicts={} last_error={:?}",
+            "[Outbox relay worker={}] scanned={} published={} retried={} failures={} conflicts={} parked={} last_error={:?}",
             context.id(),
             report.scanned,
             report.published,
             report.retried,
             report.publish_failures,
             report.lease_conflicts,
+            report.parked,
             report.last_error
         );
         if once {

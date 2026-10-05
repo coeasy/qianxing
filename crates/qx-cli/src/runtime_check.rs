@@ -56,30 +56,12 @@ pub(crate) fn run_runtime_check(path: &Path, as_json: bool) -> Result<(), String
         return Ok(());
     }
 
-    let environment = report
-        .get("environment")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("-");
-    let profile = report
-        .get("profile")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("-");
-    let api_transport = report
-        .get("api_transport")
-        .map(ToString::to_string)
-        .unwrap_or_else(|| "-".into());
-    let storage_backend = report
-        .get("storage_backend")
-        .map(ToString::to_string)
-        .unwrap_or_else(|| "-".into());
-    let storage_consistency = report
-        .get("storage_consistency")
-        .map(ToString::to_string)
-        .unwrap_or_else(|| "-".into());
-    let fingerprint = report
-        .get("config_fingerprint")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("-");
+    let environment = text_field(&report, "environment", "-");
+    let profile = text_field(&report, "profile", "-");
+    let api_transport = text_field(&report, "api_transport", "-");
+    let storage_backend = text_field(&report, "storage_backend", "-");
+    let storage_consistency = text_field(&report, "storage_consistency", "-");
+    let fingerprint = text_field(&report, "config_fingerprint", "-");
     let locked = report
         .get("config_fingerprint_locked")
         .and_then(serde_json::Value::as_bool)
@@ -103,10 +85,7 @@ pub(crate) fn run_runtime_check(path: &Path, as_json: bool) -> Result<(), String
     );
     println!(
         "[运行时 · 健康] overall={}",
-        health
-            .and_then(|value| value.get("overall"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("unknown")
+        health.map_or("unknown", |value| text_field(value, "overall", "unknown"))
     );
     if let Some(services) = health
         .and_then(|value| value.get("services"))
@@ -115,15 +94,9 @@ pub(crate) fn run_runtime_check(path: &Path, as_json: bool) -> Result<(), String
         for service in services {
             println!(
                 "  {} role={:?} status={:?}",
-                service
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("-"),
+                text_field(service, "id", "-"),
                 service.get("role").unwrap_or(&serde_json::Value::Null),
-                service
-                    .get("status")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("unknown")
+                text_field(service, "status", "unknown")
             );
         }
     }
@@ -145,6 +118,14 @@ pub(crate) fn run_runtime_check(path: &Path, as_json: bool) -> Result<(), String
     }
 }
 
+/// 报告里的一个标量字段：缺失、为 null 或不是字符串一律读成 `fallback`，各读点因此只有一份兜底。
+fn text_field<'a>(report: &'a serde_json::Value, key: &str, fallback: &'a str) -> &'a str {
+    report
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(fallback)
+}
+
 /// 报告里的一个字符串数组字段：缺失或非数组一律按空处理，两处读点因此不必各写一遍兜底。
 fn string_array<'a>(report: &'a serde_json::Value, key: &str) -> Vec<&'a str> {
     let Some(items) = report.get(key).and_then(serde_json::Value::as_array) else {
@@ -159,6 +140,15 @@ pub(crate) fn validate_runtime_references(
 ) -> (Vec<String>, Vec<String>) {
     let mut failures = Vec::new();
     let mut warnings = Vec::new();
+
+    // 浏览器准入这两格的口径住在 `qx-api`，`qx-runtime` 不许反向依赖它，所以由同样看得见
+    // 两侧的这里调那一份实现：坏源与 0 上限此前要等到 `serve` 起不来才现身。
+    if let Err(problem) = qx_api::validate_admission_config(
+        &config.api.cors_allowed_origins,
+        config.api.max_concurrent_connections,
+    ) {
+        failures.push(format!("api {problem}"));
+    }
 
     let require_file = |failures: &mut Vec<String>, label: String, configured: &str| {
         let resolved = resolve_runtime_relative_path(runtime_path, configured);

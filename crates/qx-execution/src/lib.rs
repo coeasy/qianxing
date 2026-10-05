@@ -452,9 +452,18 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
                     event_count: 0,
                 });
             }
+            // `CancelPending` 必须和 `Submitted`/`Unknown` 同一档：状态迁移表里
+            // `CancelPending` 只能走到 `Cancelled`/`Filled`/`Unknown`，`Submitted` 非法，
+            // 所以对一条撤单在途的订单补发 `venue.submit_order` 只会用同一个
+            // `client_order_id` 再下一单，不是"重试"。
+            // `PendingSubmit` 刻意放行——只有真的调过 `venue.submit_order` 才会把状态推离
+            // `PendingSubmit`（回包归约，或 Err 分支经 `mark_reconcile` 转 `Unknown`），
+            // 因此这里的 `PendingSubmit` 等价于"已登记但远端从未收到"，补发是恢复动作。
             if matches!(
                 existing.status,
-                qx_core::OrderStatus::Submitted | qx_core::OrderStatus::Unknown
+                qx_core::OrderStatus::Submitted
+                    | qx_core::OrderStatus::CancelPending
+                    | qx_core::OrderStatus::Unknown
             ) {
                 self.append(
                     ExecutionEvent::ReconcileRequired {
@@ -463,8 +472,8 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
                     format!("{}:ambiguous-submit:{}", self.worker_id, existing.client_id),
                 )?;
                 return Err(format!(
-                    "订单 {} 已离开本地但未有 Accepted 事实，必须先对账，禁止自动补单",
-                    existing.client_id
+                    "订单 {} 状态为 {:?}，先决条件不满足：已有远端事实但未确认，或撤单在途，必须先对账，禁止自动补单",
+                    existing.client_id, existing.status
                 ));
             }
         } else {
@@ -1342,7 +1351,7 @@ pub fn submit_order_with_risk<V: Venue, P: ExecutionEventPort>(
     Ok(result.message)
 }
 
-/// 把“结果未知，必须先对账”写成运行时事实的 `ReconcilePort` 适配器（对账判定唯一口径在 qx-genglu 的 `order_reconcile_verdict`，本端口只落事实、不复制判定）。
+/// 把“结果未知，必须先对账”写成运行时事实的端口适配器（对账判定唯一口径在 qx-genglu 的 `order_reconcile_verdict`，本端口只落事实、不复制判定）。
 ///
 /// Paper、CCXT 与 Binance worker 共用同一条写入路径：`source_seq` 由端口独占推进，
 /// correlation id 形如 `<worker>:<tag>:<client_order_id>`（`tag` 默认 `reconcile`，
@@ -1381,10 +1390,11 @@ impl<'a, P: EventAppender> EventLogReconcilePort<'a, P> {
         self.tag = tag;
         self
     }
-}
 
-impl<P: EventAppender> ReconcilePort for EventLogReconcilePort<'_, P> {
-    fn require_reconcile(&mut self, client_order_id: u64, reason: &str) -> Result<(), String> {
+    /// 把「结果未知，必须先对账」落成运行时事实。私有在 trait 里时编译器不会把它当
+    /// 公共面，现在 trait 已删（全仓无 `dyn ReconcilePort`、无 `T: ReconcilePort` 约束，
+    /// 三个调用点都拿具体类型 `EventLogReconcilePort` 直接调），所以方法必须显式 `pub`。
+    pub fn require_reconcile(&mut self, client_order_id: u64, reason: &str) -> Result<(), String> {
         let reason = reason.trim();
         if reason.is_empty() {
             return Err(format!(

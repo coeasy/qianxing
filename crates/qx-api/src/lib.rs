@@ -3,8 +3,18 @@
 //! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须
 //! 进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
 
+mod admission;
+mod connections;
 mod event_cursor;
+mod snapshot_history;
+mod transport;
+mod ws;
 
+pub use admission::validate_admission_config;
+use admission::{
+    is_websocket_upgrade, preflight, query_param, ConnectionBudget, CorsPolicy, Preflight,
+    DEFAULT_MAX_CONCURRENT_CONNECTIONS,
+};
 use event_cursor::{events_after_cursor, parse_after_cursor};
 use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
 use qx_core::{Event, EventKind, EventLog, Fnv1a, LedgerEntry};
@@ -19,8 +29,9 @@ use qx_storage::SqliteTokenBucket;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
-use rustls::{RootCertStore, ServerConfig, ServerConnection, StreamOwned};
+use rustls::{RootCertStore, ServerConfig};
 use serde::{Deserialize, Serialize};
+use snapshot_history::SnapshotHistory;
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -28,6 +39,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
+pub(crate) use transport::websocket_accept;
+use transport::{
+    configure_connection, parse_http_request, read_request, tls_stream, write_http_response,
+};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum EventBusError {
@@ -478,7 +493,7 @@ impl ApiProjectionKey {
 #[derive(Default)]
 pub struct ApiAccountProjection {
     pub snapshot: Option<AccountSnapshot>,
-    snapshot_history: BTreeMap<u64, AccountSnapshot>,
+    snapshot_history: SnapshotHistory,
     pub events: EventLog,
     pub event_bus: ApiEventBus,
     pub health: ProjectionHealth,
@@ -556,7 +571,7 @@ impl ApiAccountProjection {
 #[derive(Default)]
 pub struct ApiState {
     pub snapshot: Option<AccountSnapshot>,
-    snapshot_history: BTreeMap<u64, AccountSnapshot>,
+    snapshot_history: SnapshotHistory,
     pub events: EventLog,
     pub event_bus: ApiEventBus,
     /// 按 account_id + venue_id 隔离的查询/订阅投影。旧的单账户字段保留为
@@ -889,6 +904,11 @@ pub struct ApiService {
     worker_metrics_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     readiness_provider: Option<ReadinessProvider>,
     query_models_provider: Option<QueryModelsProvider>,
+    /// 跨源准入策略。`None` 表示这份部署不开浏览器准入：`OPTIONS` 照常走分派落 404 兜底，
+    /// 响应里也不带任何 `Access-Control-*`。见 `admission` 模块头那段理由。
+    cors: Option<Arc<CorsPolicy>>,
+    /// 并发连接预算。一份连接一个线程，所以上限同时是线程数上限；超限当场 503。
+    connection_budget: Arc<ConnectionBudget>,
 }
 
 #[derive(Default)]
@@ -1013,29 +1033,31 @@ impl ReconcileReportSnapshot {
     }
 }
 
-/// API 查询端口。网络协议只依赖这些只读方法，不应直接拿到 Ledger、Venue
-/// 或可变控制面引用；未来替换为独立 QueryService 时保持同一契约。
+/// API 查询端口：只读方法集合，不持有 Ledger、Venue 或可变控制面引用；未来替换为
+/// 独立 QueryService 时保持同一契约。
+///
+/// 三条读法各有归属（V13 R4-D：这份注释原先谎称"网络协议只依赖这些只读方法"，
+/// 而 `/account/orders|positions|balances` 三个端点其实从不走下面的无身份变体）：
+/// - `/control/audit` 走 `control_audit()`——读的是 `ApiState.control` 这份进程内副本：装配期
+///   从持久化控制面载入，仅本进程 `submit_command` 走 `store.transact` 成功时刷新。worker
+///   进程 `transact(execute)` 落盘的命令终态与随之发生的退场不回流，所以这条链给的是滞后
+///   上界而非实时值（V13 R8）；
+/// - `/account/snapshot|orders|positions|balances` 先由 `snapshot_for_query` 做身份解析
+///   （按 `account_id`/`venue_id` 落到该账户自己的投影，缺省才回落到那格全局兼容快照），
+///   再在解析出的快照上取分表；
+/// - `account_orders()`/`account_positions()`/`account_cash()` 是**无身份的默认账户视图**，
+///   只有用例读者（`query_port_exposes_account_orders_positions_balances_and_audit`）。
+///   它们读不到 `account_id` 之外的账户，多账户部署下接到带身份的端点会静默串账——
+///   生产要接上去，得先长出身份感知变体（P0 的 QueryService 拆分那一层）。
 pub trait QueryPort {
     fn account_snapshot(&self) -> Option<AccountSnapshot>;
     fn account_orders(&self) -> Vec<qx_protocol::OrderSnapshot>;
     fn account_positions(&self) -> Vec<qx_protocol::PositionSnapshot>;
     fn account_cash(&self) -> BTreeMap<String, i128>;
     fn control_audit(&self) -> Vec<AuditRecord>;
-    fn events_after(&self, after: Option<u64>) -> Result<Vec<Event>, EventBusError>;
     fn job_runs(&self) -> Vec<JobRun>;
     fn ledger_entries(&self) -> Vec<LedgerEntry>;
     fn reconcile_reports(&self) -> Vec<ReconcileReportSnapshot>;
-}
-
-/// API 控制端口。提交之后是否进入队列、调用哪个 Venue 和如何归约事实，
-/// 由外部 Control/Execution worker 决定；API 只返回 Accepted 审计事实。
-pub trait ControlPort {
-    fn submit_control(
-        &self,
-        command: ControlCommand,
-        ts: u64,
-        authenticated_operator: Option<&str>,
-    ) -> ApiResponse;
 }
 
 impl ApiResponse {
@@ -1082,6 +1104,8 @@ impl ApiService {
             worker_metrics_provider: None,
             readiness_provider: None,
             query_models_provider: None,
+            cors: None,
+            connection_budget: default_connection_budget(),
         }
     }
 
@@ -1102,7 +1126,38 @@ impl ApiService {
             worker_metrics_provider: None,
             readiness_provider: None,
             query_models_provider: None,
+            cors: None,
+            connection_budget: default_connection_budget(),
         }
+    }
+
+    /// 跨源准入：装一份**精确**的源 allowlist。
+    ///
+    /// 任一条源不合口径就整份拒绝（`admission::CorsPolicy::parse` 的理由写在它自己那儿），
+    /// 所以这里返回 `Result` 而不是把坏源静默跳过：被削减的 allowlist 在生产上的表现是
+    /// "某个前端跨源失败"，而配置侧看不出是哪一条被丢了。
+    pub fn with_cors_allowed_origins(
+        mut self,
+        origins: impl IntoIterator<Item = String>,
+    ) -> Result<Self, String> {
+        self.cors = Some(Arc::new(CorsPolicy::parse(origins)?));
+        Ok(self)
+    }
+
+    /// 并发连接上限。默认 `256`（`DEFAULT_MAX_CONCURRENT_CONNECTIONS`）。
+    ///
+    /// 上限是**这份部署**的属性而不是每条连接的属性，所以它挂在 service 上、随
+    /// `Clone` 共享同一个计数器：`serve` 与 `serve_tls_mtls_with_stores` 两条监听循环
+    /// 各自 `clone()` 出 service，若预算跟着 clone 走一遍，两条循环就能各接 256 条。
+    pub fn with_max_concurrent_connections(mut self, limit: usize) -> Result<Self, String> {
+        self.connection_budget = ConnectionBudget::new(limit)?;
+        Ok(self)
+    }
+
+    /// 并发连接上限（`ConnectionBudget` 的容量）。仅供用例回读装配是否生效，生产装配走
+    /// `with_max_concurrent_connections`，不回读这个值。
+    pub fn max_concurrent_connections(&self) -> usize {
+        self.connection_budget.occupancy().1
     }
 
     pub fn state(&self) -> Arc<Mutex<ApiState>> {
@@ -1446,18 +1501,18 @@ impl ApiService {
                 return ApiResponse::json(403, error_json("authenticated_operator_required"));
             }
         }
+        // 读面的查询参数按入口点名：#205 那支只盖住四条整体现读端点，带键那七条照收任何查询串，
+        // 于是 `?acount_id=` 拼错会落到"没有收窄键"那一支，把默认账户念成调用方点名的账户（V13 R6）。
+        if let Some(name) = admission::refused_query_param(route, query) {
+            return ApiResponse::json(400, error_json(&format!("{route} 不接受查询参数 {name}")));
+        }
         // 带键读面的共同前置：`account_id`/`venue_id` 形状合法但仓内没有这份投影时，
-        // 下面那些"摊成数组/原样搬运"的读面会回一份空的 200，把"这个账户没有单"说成事实，
-        // 而 `/account/snapshot` 同一条件下回 404 —— 一个拼错的账户 id 因此能读成"干净的空账户"
-        // （V13 R2 #191）。判定放在分派之前做一次，七个读面共用。
+        // 下面那些"摊成数组/原样搬运"的读面会回一份空的 200，而 `/account/snapshot` 同一条件下回 404
+        // ——判定放在分派之前做一次，七个读面共用（V13 R2 #191）。
         if PROJECTION_SCOPED_ROUTES.contains(&route) {
             if let Some(response) = self.missing_projection_response(query) {
                 return response;
             }
-        } else if KEYLESS_READ_ROUTES.contains(&route) && !query.is_empty() {
-            // #205：这四条读的是整份现读模型，没有收窄键；`?account_id=` 落在它们身上只会
-            // 把默认账户那份念成那个账户的日志。
-            return ApiResponse::json(400, error_json(&format!("{route} 不接受查询参数")));
         }
         match (method, route) {
             ("GET", "/health") => ApiResponse::json(200, "{\"status\":\"ok\"}"),
@@ -1483,6 +1538,29 @@ impl ApiService {
             }
             ("GET", "/metrics") => {
                 let mut body = self.metrics().to_prometheus();
+                // 控制面终态退场（`qx-control` 的 `FINALIZED_COMMAND_RETENTION`）唯一的运维读面。
+                // 退场是"内存工作集有界"这条判据的执行者，而"有界"要能被看见才算成立。
+                // 口径必须写清（V13 R8）：这里读的是 `ApiState.control` 这份进程内副本——
+                // 装配期从持久化控制面载入，之后只有本进程 `submit_command` 走
+                // `store.transact` 成功时才回写。worker 进程经 `control_store.transact(execute)`
+                // 落盘的命令终态与随之发生的退场**不会**回流到本进程，所以在下一次
+                // `submit_command` 之前这两条计数是滞后的上界，不是实时值；`/control/audit`
+                // 同口径。要实时得让两处都从 store 现读，那是 P0 的 QueryService 拆分那一层。
+                let retirement = self
+                    .state
+                    .lock()
+                    .expect("api state mutex poisoned")
+                    .control
+                    .retirement();
+                body.push_str(&format!(
+                    "# HELP qx_control_retired_commands_total Finalized control commands retired by the retention bound.\n\
+# TYPE qx_control_retired_commands_total counter\n\
+qx_control_retired_commands_total {}\n\
+# HELP qx_control_retired_audit_records_total In-memory audit records dropped together with retired commands.\n\
+# TYPE qx_control_retired_audit_records_total counter\n\
+qx_control_retired_audit_records_total {}\n",
+                    retirement.retired_commands, retirement.retired_audit_records
+                ));
                 if let Some(provider) = &self.worker_metrics_provider {
                     body.push_str(&provider());
                 }
@@ -1645,8 +1723,10 @@ impl ApiService {
     }
 
     fn snapshot_diff(&self, query: &str) -> ApiResponse {
-        let Some(base_hash) = query_value(query, "base_hash") else {
-            return ApiResponse::json(400, error_json("base_hash is required"));
+        let base_hash = match query_param(query, "base_hash") {
+            Ok(Some(base_hash)) => base_hash,
+            Ok(None) => return ApiResponse::json(400, error_json("base_hash is required")),
+            Err(error) => return ApiResponse::json(400, error_json(error)),
         };
         let Ok(base_hash) = base_hash.parse::<u64>() else {
             return ApiResponse::json(400, error_json("base_hash must be an unsigned integer"));
@@ -1807,27 +1887,70 @@ impl ApiService {
         ts: u64,
         authenticated_operator: Option<&str>,
     ) -> std::io::Result<()> {
-        if request.to_ascii_lowercase().contains("upgrade: websocket") {
-            if self.policy.is_some()
-                && authenticated_operator
-                    .and_then(|operator| self.policy.as_ref()?.permission(operator))
-                    .is_none()
-            {
-                write_http_response(
-                    stream,
-                    &ApiResponse::json(403, error_json("authenticated_operator_required")),
-                )?;
-                return Ok(());
-            }
-            return self.serve_websocket(stream, request);
-        }
-        let response = match parse_http_request(request) {
-            Ok(parsed) => {
-                self.handle_inner(&parsed.0, &parsed.1, &parsed.2, ts, authenticated_operator)
-            }
-            Err(error) => ApiResponse::json(400, error_json(&error)),
+        // 跨源头随 `Origin` 而变，所以每一条出口（升级前的 400/403/409/429、预检、
+        // 以及正常分派的响应）都要带同一份；漏一条就是"这条路径跨源读不到"，而
+        // 浏览器给的报错只有"被 CORS 拦了"，看不出是哪一支没带头。
+        let cors = match &self.cors {
+            Some(policy) => policy.response_headers(request),
+            None => Vec::new(),
         };
-        write_http_response(stream, &response)
+        if is_websocket_upgrade(request) {
+            // 升级分支过去在 `handle_inner` 之前直接返回，于是这条通道既不进
+            // `qx_api_requests_total`、也不过限流桶：一条长连接在指标上完全不存在，
+            // 而它同样会读投影、同样占一份事件总线游标。两条判定在这里补上，
+            // 与 `handle_inner` 用的是同一枚计数与同一只桶。
+            self.metrics.requests_total.fetch_add(1, Ordering::Relaxed);
+            match self.rate_limiter.try_acquire(rate_limit_bucket_seconds(ts)) {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.metrics
+                        .rate_limit_rejected_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    return write_http_response(
+                        stream,
+                        &ApiResponse::json(429, error_json("api_rate_limit_exceeded")),
+                        &cors,
+                    );
+                }
+                Err(error) => {
+                    return write_http_response(
+                        stream,
+                        &ApiResponse::json(
+                            503,
+                            error_json(&format!("api_rate_limit_backend_unavailable: {error}")),
+                        ),
+                        &cors,
+                    )
+                }
+            }
+            // 握手之前的每一支都还能说 HTTP，所以准入判定一律放在 `serve_websocket` 外面：
+            // 一旦写下 101，状态码就没有第二次机会了。
+            match self.admit_websocket(request, authenticated_operator) {
+                Ok(session) => self.serve_websocket(stream, session),
+                Err(response) => write_http_response(stream, &response, &cors),
+            }
+        } else {
+            match preflight(self.cors.as_deref(), request) {
+                Preflight::NotConfigured => {}
+                Preflight::Allowed { headers } => {
+                    return write_http_response(stream, &ApiResponse::text(204, ""), &headers)
+                }
+                Preflight::Rejected => {
+                    return write_http_response(
+                        stream,
+                        &ApiResponse::json(403, error_json("cors_origin_not_allowed")),
+                        &cors,
+                    )
+                }
+            }
+            let response = match parse_http_request(request) {
+                Ok(parsed) => {
+                    self.handle_inner(&parsed.0, &parsed.1, &parsed.2, ts, authenticated_operator)
+                }
+                Err(error) => ApiResponse::json(400, error_json(&error)),
+            };
+            write_http_response(stream, &response, &cors)
+        }
     }
 
     /// 持续接受 mTLS 连接，并在每个新连接握手时读取当前 TLS 配置和 Operator
@@ -1849,33 +1972,29 @@ impl ApiService {
                 Ok(None) => break Ok(()),
                 Err(error) => break Err(error),
             };
+            let Some(guard) = self.connection_budget.acquire() else {
+                self.refuse_over_budget(&stream);
+                continue;
+            };
             let secured = match tls_stream(stream, configs.current()) {
                 Ok(stream) => stream,
-                Err(error) => break Err(error),
+                // 一次握手失败只是这一条连接的失败：探活脚本往 mTLS 端口发一条明文，
+                // 或客户端只支持一套我们没配的密码，都不该把整个监听循环带走
+                // （此前这一支写的是 `break Err(error)`，API 就此停止接受任何连接，
+                // 而监督器只看到"worker 退出了"）。
+                Err(error) => {
+                    eprintln!("[qx-api] TLS 握手失败，只关这一条连接: {error}");
+                    continue;
+                }
             };
             let policy = identities.current();
             let operator_id = policy
                 .operator_for(secured.conn.peer_certificates())
                 .map(str::to_string);
-            self.spawn_connection(secured, now(), operator_id);
+            self.spawn_connection(secured, now(), operator_id, guard);
         };
         self.session_shutdown.store(true, Ordering::Release);
         outcome
-    }
-
-    /// 每个长连接独立处理，避免 WebSocket 或慢客户端占住监听循环。
-    /// 连接线程只拥有 API 的共享读模型和不可变服务配置；领域事实仍由
-    /// Runtime owner 写入，连接处理失败只影响当前客户端。
-    fn spawn_connection<S>(&self, stream: S, ts: u64, operator_id: Option<String>)
-    where
-        S: Read + Write + Send + 'static,
-    {
-        let service = self.clone();
-        std::thread::spawn(move || {
-            if let Err(error) = service.serve_stream_as(stream, ts, operator_id.as_deref()) {
-                eprintln!("[qx-api] connection closed with error: {error}");
-            }
-        });
     }
 
     /// accept 轮询步长：拿到一条连接，或按 `stopped()` 收摊（返回 `None`）。
@@ -1931,7 +2050,10 @@ impl ApiService {
         listener.set_nonblocking(true)?;
         let outcome = loop {
             match Self::await_connection(&listener, &stopped) {
-                Ok(Some(stream)) => self.spawn_connection(stream, now(), None),
+                Ok(Some(stream)) => match self.connection_budget.acquire() {
+                    Some(guard) => self.spawn_connection(stream, now(), None, guard),
+                    None => self.refuse_over_budget(&stream),
+                },
                 Ok(None) => break Ok(()),
                 Err(error) => break Err(error),
             }
@@ -1940,111 +2062,12 @@ impl ApiService {
         self.session_shutdown.store(true, Ordering::Release);
         outcome
     }
+}
 
-    fn serve_websocket<S: Read + Write>(
-        &self,
-        stream: &mut S,
-        request: &str,
-    ) -> std::io::Result<()> {
-        let key = request
-            .lines()
-            .find_map(|line| {
-                let (name, value) = line.split_once(':')?;
-                name.eq_ignore_ascii_case("Sec-WebSocket-Key")
-                    .then_some(value.trim())
-            })
-            .ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing websocket key")
-            })?;
-        let accept = websocket_accept(key);
-        let handshake = format!(
-            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
-        );
-        stream.write_all(handshake.as_bytes())?;
-        let state = self.state.lock().expect("api state mutex poisoned");
-        let event_bus = state.event_bus.clone();
-        let initial_cursor = state.events.events().last().map(|event| event.seq);
-        write_ws_text(stream, "{\"type\":\"connected\",\"stream\":\"qianxing\"}")?;
-        if let Some(snapshot) = &state.snapshot {
-            write_ws_text(
-                stream,
-                &format!("{{\"type\":\"snapshot\",\"data\":{}}}", snapshot.to_json()),
-            )?;
-        }
-        if !state.events.is_empty() {
-            let events = state
-                .events
-                .events()
-                .iter()
-                .cloned()
-                .map(|event| event_projection_envelope(event, "api-event-bus"))
-                .collect::<Vec<_>>();
-            let events = serde_json::to_string(&events)
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-            write_ws_text(
-                stream,
-                &format!("{{\"type\":\"events\",\"data\":{events}}}"),
-            )?;
-        }
-        drop(state);
-        let mut cursor = initial_cursor;
-        let mut client_buffer = [0_u8; 2048];
-        loop {
-            // 会话循环的出口不能只有"客户端自己关"：监听循环按 `stopped()` 收摊后，
-            // 已经握手的会话若不读这个令牌，线程就永远等在 `wait_after` 的 100ms 轮询里，
-            // `join()` 回不来，停机只能靠强杀（V13 R2 #218）。
-            if self.session_shutdown.load(Ordering::Acquire) {
-                write_ws_text(stream, "{\"type\":\"server_shutdown\"}")?;
-                return Ok(());
-            }
-            match event_bus.wait_after(cursor, Duration::from_millis(100)) {
-                Ok(events) => {
-                    for event in events {
-                        let event_seq = event.seq;
-                        let envelope = event_projection_envelope(event, "api-event-bus");
-                        write_ws_text(
-                            stream,
-                            &format!(
-                                "{{\"type\":\"event\",\"data\":{}}}",
-                                serde_json::to_string(&envelope).map_err(|error| {
-                                    std::io::Error::new(std::io::ErrorKind::InvalidData, error)
-                                })?
-                            ),
-                        )?;
-                        cursor = Some(event_seq);
-                    }
-                }
-                Err(EventBusError::CursorTooOld { .. } | EventBusError::CursorAhead { .. }) => {
-                    write_ws_text(stream, "{\"type\":\"resync_required\"}")?;
-                    return Ok(());
-                }
-                Err(error) => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("event bus error: {error:?}"),
-                    ));
-                }
-            }
-            match stream.read(&mut client_buffer) {
-                Ok(0) => return Ok(()),
-                Ok(size)
-                    if client_buffer[..size]
-                        .iter()
-                        .any(|byte| (*byte & 0x0f) == 0x8) =>
-                {
-                    return Ok(())
-                }
-                Ok(_) => {}
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => return Ok(()),
-                Err(error) => return Err(error),
-            }
-        }
-    }
+/// 默认并发连接预算。256 是常量而不是 `expect` 里的一句字面量，这样
+/// `deploy/README.md` 与 `admission` 模块头提到的那个数只有这一个定义点。
+fn default_connection_budget() -> Arc<ConnectionBudget> {
+    ConnectionBudget::new(DEFAULT_MAX_CONCURRENT_CONNECTIONS).expect("默认并发连接预算必须是正数")
 }
 
 fn event_projection_envelope(event: Event, source_digest: &str) -> ProjectionEnvelope<Event> {
@@ -2133,14 +2156,6 @@ impl QueryPort for ApiService {
             .to_vec()
     }
 
-    fn events_after(&self, after: Option<u64>) -> Result<Vec<Event>, EventBusError> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .event_bus
-            .read_after(after)
-    }
-
     fn job_runs(&self) -> Vec<JobRun> {
         self.state
             .lock()
@@ -2168,160 +2183,13 @@ impl QueryPort for ApiService {
     }
 }
 
-impl ControlPort for ApiService {
-    fn submit_control(
-        &self,
-        command: ControlCommand,
-        ts: u64,
-        authenticated_operator: Option<&str>,
-    ) -> ApiResponse {
-        let body = match serde_json::to_string(&command) {
-            Ok(body) => body,
-            Err(error) => return ApiResponse::json(400, error_json(&error.to_string())),
-        };
-        self.submit_command(&body, ts, authenticated_operator)
-    }
-}
-
-fn configure_connection(stream: &TcpStream) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(Duration::from_millis(100)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(10)))
-}
-
-fn tls_stream(
-    stream: TcpStream,
-    config: Arc<ServerConfig>,
-) -> std::io::Result<StreamOwned<ServerConnection, TcpStream>> {
-    let connection = ServerConnection::new(config).map_err(|error| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("TLS server config invalid: {error}"),
-        )
-    })?;
-    Ok(StreamOwned::new(connection, stream))
-}
-
-fn write_ws_text<S: Write>(stream: &mut S, text: &str) -> std::io::Result<()> {
-    let payload = text.as_bytes();
-    let mut frame = vec![0x81_u8];
-    match payload.len() {
-        0..=125 => frame.push(payload.len() as u8),
-        126..=65_535 => {
-            frame.push(126);
-            frame.extend_from_slice(&(payload.len() as u16).to_be_bytes());
-        }
-        _ => {
-            frame.push(127);
-            frame.extend_from_slice(&(payload.len() as u64).to_be_bytes());
-        }
-    }
-    frame.extend_from_slice(payload);
-    stream.write_all(&frame)
-}
-
-fn read_request<S: Read>(stream: &mut S) -> std::io::Result<Vec<u8>> {
-    let mut request = Vec::new();
-    let mut buffer = [0_u8; 4096];
-    loop {
-        let count = stream.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        request.extend_from_slice(&buffer[..count]);
-        if request.len() > 1_048_576 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "http request too large",
-            ));
-        }
-        if let Some(header_end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-            let header_end = header_end + 4;
-            let header = String::from_utf8_lossy(&request[..header_end]);
-            let mut content_length = 0_usize;
-            for line in header.lines() {
-                let Some((name, value)) = line.split_once(':') else {
-                    continue;
-                };
-                if name.eq_ignore_ascii_case("Content-Length") {
-                    content_length = value.trim().parse::<usize>().map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "invalid Content-Length",
-                        )
-                    })?;
-                    break;
-                }
-            }
-            let expected = header_end.checked_add(content_length).ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, "request length overflow")
-            })?;
-            if expected > 1_048_576 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "http request too large",
-                ));
-            }
-            if request.len() >= expected {
-                break;
-            }
-        }
-    }
-    Ok(request)
-}
-
-fn parse_http_request(request: &str) -> Result<(String, String, String), String> {
-    let (header, body) = request
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| "malformed http request".to_string())?;
-    let mut first = header.lines().next().unwrap_or_default().split_whitespace();
-    let method = first.next().ok_or_else(|| "missing method".to_string())?;
-    let path = first.next().ok_or_else(|| "missing path".to_string())?;
-    Ok((method.into(), path.into(), body.into()))
-}
-
-/// 状态行的短语必须与状态码本身说的是同一件事：`403` 与 `503` 过去一起落进 `_ => "Internal
-/// Server Error"`，于是"认证没过"和"后端暂时不接"在 HTTP 层都被读成"服务坏了"（与 #172 把
-/// 风控端口的"拒绝"与"端口坏了"分成两条通道同族，V13 R2 第十六遍）。
-/// `_` 那格给的是 `Unknown` 而不是复用 500 的短语：本构建写出的每个状态码都在上面的名单里，
-/// 落到这里就是新增了没登记的状态码，不该由一个听起来正确的词把差异盖住。
-fn write_http_response<S: Write>(stream: &mut S, response: &ApiResponse) -> std::io::Result<()> {
-    let reason = match response.status {
-        200 => "OK",
-        202 => "Accepted",
-        400 => "Bad Request",
-        403 => "Forbidden",
-        404 => "Not Found",
-        409 => "Conflict",
-        429 => "Too Many Requests",
-        500 => "Internal Server Error",
-        503 => "Service Unavailable",
-        _ => "Unknown",
-    };
-    let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        response.status,
-        reason,
-        response.content_type,
-        response.body.len()
-    );
-    stream.write_all(head.as_bytes())?;
-    stream.write_all(response.body.as_bytes())
-}
-
 fn error_json(message: &str) -> String {
     format!("{{\"error\":{}}}", json_string(message))
 }
 
-fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
-    query.split('&').find_map(|part| {
-        let (name, value) = part.split_once('=')?;
-        (name == key).then_some(value)
-    })
-}
-
 fn projection_key_from_query(query: &str) -> Result<Option<ApiProjectionKey>, String> {
-    let account_id = query_value(query, "account_id");
-    let venue_id = query_value(query, "venue_id");
+    let account_id = query_param(query, "account_id")?;
+    let venue_id = query_param(query, "venue_id")?;
     match (account_id, venue_id) {
         (None, None) => Ok(None),
         (Some(account_id), Some(venue_id)) => {
@@ -2358,98 +2226,6 @@ const KEYLESS_READ_ROUTES: [&str; 4] = [
 
 fn json_string(value: &str) -> String {
     serde_json::to_string(value).expect("string serialization cannot fail")
-}
-
-pub fn websocket_accept(key: &str) -> String {
-    let mut input = key.as_bytes().to_vec();
-    input.extend_from_slice(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    base64_encode(&sha1(&input))
-}
-
-fn sha1(input: &[u8]) -> [u8; 20] {
-    let mut h = [
-        0x67452301_u32,
-        0xEFCDAB89,
-        0x98BADCFE,
-        0x10325476,
-        0xC3D2E1F0,
-    ];
-    let bit_len = (input.len() as u64) * 8;
-    let mut data = input.to_vec();
-    data.push(0x80);
-    while !(data.len() + 8).is_multiple_of(64) {
-        data.push(0);
-    }
-    data.extend_from_slice(&bit_len.to_be_bytes());
-    for chunk in data.chunks(64) {
-        let mut w = [0_u32; 80];
-        for (i, slot) in w.iter_mut().take(16).enumerate() {
-            let offset = i * 4;
-            *slot = u32::from_be_bytes([
-                chunk[offset],
-                chunk[offset + 1],
-                chunk[offset + 2],
-                chunk[offset + 3],
-            ]);
-        }
-        for i in 16..80 {
-            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
-        }
-        let (mut a, mut b, mut c, mut d, mut e) = (h[0], h[1], h[2], h[3], h[4]);
-        for (i, value) in w.iter().enumerate() {
-            let (f, k) = match i {
-                0..=19 => ((b & c) | ((!b) & d), 0x5A827999),
-                20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
-                _ => (b ^ c ^ d, 0xCA62C1D6),
-            };
-            let temp = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(*value);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = temp;
-        }
-        h[0] = h[0].wrapping_add(a);
-        h[1] = h[1].wrapping_add(b);
-        h[2] = h[2].wrapping_add(c);
-        h[3] = h[3].wrapping_add(d);
-        h[4] = h[4].wrapping_add(e);
-    }
-    let mut out = [0_u8; 20];
-    for (i, word) in h.iter().enumerate() {
-        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
-    }
-    out
-}
-
-fn base64_encode(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    for chunk in bytes.chunks(3) {
-        let a = chunk[0] as u32;
-        let b = chunk.get(1).copied().unwrap_or(0) as u32;
-        let c = chunk.get(2).copied().unwrap_or(0) as u32;
-        let triple = (a << 16) | (b << 8) | c;
-        out.push(TABLE[((triple >> 18) & 63) as usize] as char);
-        out.push(TABLE[((triple >> 12) & 63) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            TABLE[((triple >> 6) & 63) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            TABLE[(triple & 63) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
 }
 
 #[cfg(test)]
@@ -2491,7 +2267,9 @@ mod tests {
             .lines()
             .filter(|line| !line.starts_with("# "))
             .count();
-        assert_eq!(samples, 4, "自身样本行:\n{}", metrics.body);
+        // 4 条 `qx_api_*` 自身计数 + 2 条 `qx_control_retired_*` 退场计数：
+        // 退场计数少了读者，「内存工作集有界」就只是写法，运维面看不见它有没有真的发生。
+        assert_eq!(samples, 6, "自身样本行:\n{}", metrics.body);
         let command = ControlCommand {
             command_id: 1,
             request_id: "api-1".into(),

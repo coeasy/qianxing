@@ -19,6 +19,69 @@
 use super::*;
 use std::collections::BTreeSet;
 
+/// 读面的**全部**源码，而不是 crate 根那一个文件。
+///
+/// 立案现场：下面两条取数原先都写死 `crates/qx-api/src/lib.rs`，而读面已经拆成
+/// `lib.rs` + `transport.rs` + `ws.rs` + `admission.rs` + `event_cursor.rs`。把一段
+/// `ApiResponse::json(409, error_json("…"))` 从 lib.rs 挪进任何子模块，取数集合就静默
+/// 缩小一格：文档那一格点名的码名会从"实现产得出"变成"实现产不出"，而这条判据只红在
+/// 文档侧，读者看不出真正搬家的是代码。这与 `api_surface_doc_check` 把两张表收成并集
+/// 是同一类盲区，只是方向相反（那边是"多读一份所以看不见少一行"，这边是"少读一份所以
+/// 看不见少一个码名"）。
+///
+/// 所以这里按目录取数而不是按文件名：`crates/qx-api/src/` 下每一个写着 `ApiResponse::`
+/// 或 `error_json(` 的 `.rs` 都进扫描集，将来再拆一个模块也会自动被收进来，不需要回来改
+/// 这份名单。两条地板断言是空转守卫——扫描集缩到只剩 lib.rs（有人把子模块改成不写
+/// `ApiResponse::` 的形态）或一份都取不到时，宁让判据先红。
+pub(crate) fn read_face_source() -> String {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("crates")
+        .join("qx-api")
+        .join("src");
+    let entries = std::fs::read_dir(&dir)
+        .unwrap_or_else(|error| panic!("读不到 qx-api 源码目录 {}: {error}", dir.display()));
+    let mut files: Vec<(String, String)> = Vec::new();
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|error| panic!("读 qx-api 源码目录项失败: {error}"))
+            .path();
+        if path.extension().and_then(|value| value.to_str()) != Some("rs") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let source = workspace_source(&format!("crates/qx-api/src/{name}"));
+        if source.contains("ApiResponse::") || source.contains("error_json(") {
+            files.push((name, source));
+        }
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    let names = files
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        names.contains(&"lib.rs"),
+        "读面扫描集里没有 lib.rs，取数口径先坏了：{names:?}"
+    );
+    assert!(
+        files.len() >= 2,
+        "读面扫描集只剩 {} 份（{names:?}）：qx-api 的读面至少由 crate 根与 WebSocket 会话层\
+         两份源码构成，只剩一份说明子模块改成了不带 `ApiResponse::` 的形态，扫描会静默缩小",
+        files.len()
+    );
+    files
+        .into_iter()
+        .map(|(_, source)| source)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// 入口那一格里反引号包住的路径。
 ///
 /// `GET`/`POST` 前缀是可选的（同一格并列第二条路径时不带，例如
@@ -242,7 +305,7 @@ fn error_code_names(cell: &str) -> Vec<String> {
 /// （`error_json(&error)`、`error_json(&format!("{error:?}"))`）不在此列 —— 它们的取值不是字面量，
 /// 也就无从按名核对，第二张表那一格对此的写法是"某某的 Debug 形态"而不是承诺一个码名。
 fn emitted_error_names() -> BTreeSet<String> {
-    let api = workspace_source("crates/qx-api/src/lib.rs");
+    let api = read_face_source();
     const PREFIXES: [&str; 3] = [
         "error_json(\"",
         "error_json(&format!(\"",
@@ -269,7 +332,7 @@ fn emitted_error_names() -> BTreeSet<String> {
 
 /// 读面直接写出的非 200 状态码（`ApiResponse::json(` / `text(` 后面那个整数字面量）。
 pub(crate) fn emitted_statuses() -> BTreeSet<u16> {
-    let api = workspace_source("crates/qx-api/src/lib.rs");
+    let api = read_face_source();
     let mut statuses = BTreeSet::new();
     for marker in ["ApiResponse::json(", "ApiResponse::text("] {
         let mut cursor = 0_usize;
