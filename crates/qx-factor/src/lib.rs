@@ -799,6 +799,15 @@ impl FactorReport {
         if let Some(transform) = &self.transform {
             transform.validate()?;
         }
+        // 与 `FactorAnalysisConfig::validate` 同一口径：`FactorReport` 的 `missing_policy` 是报告侧
+        // 从 config 抄来的（见 `run_analysis`），但报告本身也能被 `from_json` 反序列化——
+        // 手改一份报告 JSON 把值写成 `"whatever"` 时，只有空串校验会放行，而下游
+        // `resolve_missing` 拿到它就直接报「missing_policy 非法」，报错落点离改错的地方很远。
+        if !matches!(self.missing_policy.as_str(), "reject" | "skip" | "zero") {
+            return Err(FactorError::Invalid(
+                "missing_policy 仅支持 reject/skip/zero".into(),
+            ));
+        }
         Ok(())
     }
 

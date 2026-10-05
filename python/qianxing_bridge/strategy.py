@@ -173,6 +173,7 @@ class StrategyInput:
             },
             bars=None if bars_value is None else StrategyBars.from_dict(bars_value),
         )
+        _reject_unknown_keys(value, cls, "strategy input")
         result.validate()
         return result
 

@@ -64,6 +64,19 @@ fn parse_u64(value: &str, field: &str) -> Result<u64, StorageError> {
         .map_err(|error| StorageError::Conflict(format!("PostgreSQL {field} 非法: {error}")))
 }
 
+/// 读回侧的 u32 范围检查。`attempts` 以 TEXT 落盘（`u64_text`），原先读回是
+/// `parse_u64(...) as u32`——u64→u32 是真截断，手工改库写成超过 `u32::MAX` 会回绕成
+/// 一个小值，被误判成「仍在正常重试」。写侧本身上界 8，正常链路碰不到。
+/// 注意 `schema_version` 那一格不是同一个问题：它以 `INTEGER`（i32）落盘，
+/// `i32 as u32` 是 32 位↔32 位按位重解释，`((x as i32) as u32) == x` 恒成立，无损。
+fn parse_u32(value: &str, field: &str) -> Result<u32, StorageError> {
+    let raw = value
+        .parse::<u64>()
+        .map_err(|error| StorageError::Conflict(format!("PostgreSQL {field} 非法: {error}")))?;
+    u32::try_from(raw)
+        .map_err(|error| StorageError::Conflict(format!("PostgreSQL {field} 越界: {error}")))
+}
+
 fn marker_path(table: &str, key: u64) -> PathBuf {
     PathBuf::from(format!("postgres://qx/{table}/{key}"))
 }
@@ -705,8 +718,7 @@ impl PostgresOutboxStore {
                     trace_id: row.get(4),
                     payload: row.get(5),
                     created_ts: parse_u64(row.get::<_, String>(6).as_str(), "outbox.created_ts")?,
-                    attempts: parse_u64(row.get::<_, String>(7).as_str(), "outbox.attempts")?
-                        as u32,
+                    attempts: parse_u32(row.get::<_, String>(7).as_str(), "outbox.attempts")?,
                 })
             })
             .transpose()?;
@@ -1194,7 +1206,7 @@ fn append_outbox_in_transaction(
                 trace_id: row.get(4),
                 payload: row.get(5),
                 created_ts: parse_u64(row.get::<_, String>(6).as_str(), "outbox.created_ts")?,
-                attempts: parse_u64(row.get::<_, String>(7).as_str(), "outbox.attempts")? as u32,
+                attempts: parse_u32(row.get::<_, String>(7).as_str(), "outbox.attempts")?,
             })
         })
         .transpose()?;

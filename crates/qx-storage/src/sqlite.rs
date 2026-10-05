@@ -38,6 +38,18 @@ fn parse_sqlite_u64(value: &str) -> Result<u64, rusqlite::Error> {
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
 
+/// 读回侧的 u32 范围检查。原先写的是 `as u32`，会把越界值静默截断：手工改库把
+/// `attempts` 或 `schema_version` 写成超过 `u32::MAX`（或负值）会回绕成一个看起来
+/// 正常的小值——前者被误判成「仍在正常重试」，后者被误判成「更老的 schema」，
+/// 读侧可能按错的格式解 payload。写侧本身有上界（`LEAST(attempts + 1, 4294967295)`），
+/// 正常链路碰不到；这里只在越界时拒读该行，而不是给一个错值。
+fn parse_sqlite_u32(value: &str) -> Result<u32, rusqlite::Error> {
+    let raw = value
+        .parse::<u64>()
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+    u32::try_from(raw).map_err(|_| rusqlite::Error::InvalidQuery)
+}
+
 fn open(path: &Path) -> Result<Connection, StorageError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| StorageError::Io(error.to_string()))?;
@@ -614,11 +626,12 @@ impl SqliteOutboxStore {
                         topic: row.get(1)?,
                         partition_key: row.get(2)?,
                         sequence: parse_sqlite_u64(&row.get::<_, String>(3)?)?,
-                        schema_version: row.get::<_, i64>(4)? as u32,
+                        schema_version: u32::try_from(row.get::<_, i64>(4)?)
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
                         trace_id: row.get(5)?,
                         payload: row.get(6)?,
                         created_ts: parse_sqlite_u64(&row.get::<_, String>(7)?)?,
-                        attempts: parse_sqlite_u64(&row.get::<_, String>(8)?)? as u32,
+                        attempts: parse_sqlite_u32(&row.get::<_, String>(8)?)?,
                     })
                 },
             )
@@ -792,8 +805,8 @@ impl SqliteOutboxStore {
                 .optional()
                 .map_err(map_sqlite)?;
             if let Some(raw) = current {
-                let attempts = parse_sqlite_u64(&raw).map_err(map_sqlite)?;
-                let next = qx_core::retry::RetryPolicy::next_attempt_count(attempts as u32);
+                let attempts = parse_sqlite_u32(&raw).map_err(map_sqlite)?;
+                let next = qx_core::retry::RetryPolicy::next_attempt_count(attempts);
                 transaction
                     .execute(
                         "UPDATE qx_outbox_events SET attempts = ?2 WHERE event_id = ?1",
@@ -836,7 +849,8 @@ fn append_outbox_event(connection: &Connection, event: &OutboxEvent) -> Result<(
                     topic: row.get(0)?,
                     partition_key: row.get(1)?,
                     sequence: parse_sqlite_u64(&row.get::<_, String>(2)?)?,
-                    schema_version: row.get::<_, i64>(3)? as u32,
+                    schema_version: u32::try_from(row.get::<_, i64>(3)?)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
                     trace_id: row.get(4)?,
                     payload: row.get(5)?,
                     created_ts: parse_sqlite_u64(&row.get::<_, String>(6)?)?,

@@ -9,6 +9,7 @@ pub const STRATEGY_CONTRACT_SCHEMA_VERSION: u32 = qx_strategy::STRATEGY_API_VERS
 /// 该对象不暴露 Rust 内部结构体或可变句柄；所有数量、金额保持定点整数，
 /// instrument 使用字符串，便于 Python/Arrow/其他语言无损解析。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StrategyContractInput {
     pub schema_version: u32,
     pub request_id: String,

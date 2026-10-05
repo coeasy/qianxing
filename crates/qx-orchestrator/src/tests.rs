@@ -263,6 +263,10 @@ fn launchers_delegate_worker_topology_to_supervise() {
             text.contains("supervise"),
             "{name} 没有把 worker 拓扑委派给 supervise"
         );
+        assert!(
+            text.contains("runtime-check"),
+            "{name} 丢了 supervise 之前的 runtime-check 前置闸门"
+        );
         for entry in WORKER_ENTRYPOINTS {
             assert!(
                 !text.contains(entry),

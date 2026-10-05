@@ -539,7 +539,7 @@ WORKSPACE_TEST_FLOOR = 1083  # 1082 -> 1083：V13 R12/R13 补一条 PostgreSQL �
 # 存档落空条数天花板 9 只降不升。
 # 601 → 602：V13 R1-H 重落 V11 R6-1——删掉零构造者的 `CommandStatus::Rejected`，
 # 终态词表收回到 `is_final` 体内一处（控制面 + CLI 幂等入口两个平面各一颗判据）。
-GATE_CHECK_FLOOR = 627  # 624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
+GATE_CHECK_FLOOR = 633  # 629 -> 633：V13 R16 补四颗，守契约与存储读回侧的防御口径一致性。第一颗守 Python `StrategyInput.from_dict` 必须像同文件的 `StrategyIntent` / `StrategyOutput` 一样调 `_reject_unknown_keys`：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，策略可能以为账户是空的而误触发。第二颗守 `FactorReport::validate` 必须像 `FactorConfig::validate` 一样校验 `missing_policy` 的 reject/skip/zero 词表：报告能被 `from_json` 反序列化，只有空串校验时手改一份 JSON 能放行到下游 `resolve_missing` 才报错，落点离改错的地方很远。第三颗守 `outbox.attempts` 读回必须走 `parse_sqlite_u32` / `parse_u32` 而不是 `as u32` 截断：attempts 以 TEXT 落盘，u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成小值、绕开死信判定。第四颗守 `FactorConfig` 的源头词表本身没被改弱——两处词表不一致时改哪一侧都会让另一侧的校验变成摆设。627 -> 629：V13 R14 补两颗，守两个平台的托管启动器都有 supervise 之前的 runtime-check 前置闸门，且 bash 侧的闸门失败不得用 $? 当退出码。`supervise` 只走 plan_workers 的拓扑校验，不检查配置引用的文件是否存在（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）——修前 start-qianxing.ps1 有这道闸门、start-qianxing.sh 没有，Linux/macOS 上的坏配置会拉起 7 个子进程再 fail-fast 全杀，而不是在任何子进程起来之前就拒绝。第二颗守 `if ! cmd; then echo ...; exit "$?"; fi` 里的 $? 拿的是上一条 echo 的状态（0），调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
 # V12 §21 / #138：合流类判据的三个参数（455 → 457 就是本轮新增的两条，仍按"当轮实测总条数"取值）。窗口取 10 行是实测拐点 —— W=8 在 `tools` 之外命中 1,180
 # 处、到 W=10 仍有 781 处合法的并列实现（三条 venue 提交链、几家存储后端），所以逐字重复零容忍
 # 只对 `tools/*.py` 生效（本轮实测该目录 5 份脚本 0 命中），Rust 那一侧交给编译器与整树用例。
@@ -9949,6 +9949,85 @@ def resource_lifecycle_and_lock_reentrancy_check() -> None:
     )
 
 
+def launcher_pregate_check() -> None:
+    """两个平台的进程托管启动器都必须有 supervise 之前的 runtime-check 前置闸门。"""
+    sh = (ROOT / "deploy/start-qianxing.sh").read_text(encoding="utf-8")
+    ps1 = (ROOT / "deploy/start-qianxing.ps1").read_text(encoding="utf-8")
+    # 顺序判据只能读可执行行：两个脚本的注释块都先提到 `supervise`（解释为什么要有这道
+    # 闸门），按整份文本取 index 会把注释里的名字当成第一次出现，判据当场变红或变绿。
+    # bash 与 PowerShell 都是 `#` 起头到行尾。
+    code_only = {name: "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    ) for name, text in (("start-qianxing.sh", sh), ("start-qianxing.ps1", ps1))}
+    check(
+        all("runtime-check" in code for code in code_only.values())
+        and all(code.index("runtime-check") < code.index("supervise") for code in code_only.values()),
+        "两个平台的托管启动器都在 supervise 之前跑 runtime-check",
+        "`supervise` 只走 `plan_workers` 的拓扑校验，不检查配置引用的文件是否真的存在"
+        "（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）。"
+        "缺一个文件时各 worker 会各自在启动阶段失败，监督器随后按 fail-fast 把其余进程停掉："
+        "7 个子进程被拉起又杀掉、process-logs 里落下日志，而不是在任何子进程起来之前就拒绝。"
+        "修前 `start-qianxing.ps1` 有这道闸门、`start-qianxing.sh` 没有，"
+        "Linux/macOS 上的坏配置与 Windows 走的是两条不同的失败路径",
+    )
+    check(
+        "exit 2" in sh
+        and "exit \"$?\"" not in sh,
+        "bash 启动器的闸门失败要退出非零，不能把 $? 当退出码",
+        "`if ! cmd; then echo ...; exit \"$?\"; fi` 里的 `$?` 拿的是上一条 `echo` 的状态（0），"
+        "调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。"
+        "固定 `exit 2` 与本脚本另外两处拒绝（配置缺失、可执行文件缺失）同码",
+    )
+
+
+def schema_defense_consistency_check() -> None:
+    """契约未知字段口径、因子缺值策略词表、存储读回侧的 u32 范围检查。"""
+    strategy_py = (ROOT / "python/qianxing_bridge/strategy.py").read_text(encoding="utf-8")
+    input_body = strategy_py[strategy_py.index('def from_dict(cls, value: Mapping[str, Any]) -> "StrategyInput":'):]
+    input_body = input_body[: input_body.index("@classmethod")]
+    check(
+        '_reject_unknown_keys(value, cls, "strategy input")' in input_body,
+        "Python StrategyInput.from_dict 拒绝契约之外的键",
+        "同一份文件里的 StrategyIntent / StrategyOutput 的 from_dict 都调用了 `_reject_unknown_keys`，"
+        "只有 StrategyInput 漏了：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，"
+        "策略可能以为账户是空的而误触发。允许集从 dataclass 字段派生，SDK 加字段时不会变成"
+        "第二份手工同步清单",
+    )
+    factor = production_text((ROOT / "crates/qx-factor/src/lib.rs").read_text(encoding="utf-8"))
+    report_body = _fn_body(factor, "impl FactorReport {\n    pub fn validate")
+    check(
+        'self.missing_policy.as_str(), "reject" | "skip" | "zero"' in report_body,
+        "FactorReport::validate 校验 missing_policy 词表",
+        "`FactorReport.missing_policy` 从 config 抄来（`run_analysis`），但报告本身能被 `from_json` "
+        "反序列化。只有 `trim().is_empty()` 校验时，手改一份报告 JSON 把值写成 `\"whatever\"` 会放行，"
+        "而下游 `resolve_missing` 拿到它才报「missing_policy 非法」——报错落点离改错的地方很远，"
+        "与 `FactorConfig::validate` 的口径不一致",
+    )
+    sqlite = production_text((ROOT / "crates/qx-storage/src/sqlite.rs").read_text(encoding="utf-8"))
+    postgres = production_text((ROOT / "crates/qx-storage/src/postgres.rs").read_text(encoding="utf-8"))
+    check(
+        "fn parse_sqlite_u32" in sqlite
+        and "fn parse_u32" in postgres
+        and "outbox.attempts\")? as u32" not in sqlite
+        and 'outbox.attempts")? as u32' not in postgres,
+        "outbox.attempts 读回走范围检查而不是 as u32 截断",
+        "`attempts` 以 TEXT 落盘（sqlite 侧 `parse_sqlite_u64`、postgres 侧 `u64_text`），"
+        "原先读回是 `... as u32`：u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成一个小值，"
+        "被误判成「仍在正常重试」而绕开死信判定。写侧本身上界 8，正常链路碰不到。"
+        "`schema_version` 那一格不是同一个问题：sqlite 侧以 i64 落盘、`i64 as u32` 是真截断（已修）；"
+        "postgres 侧以 INTEGER(i32) 落盘，`i32 as u32` 是 32 位↔32 位按位重解释，"
+        "`((x as i32) as u32) == x` 恒成立，无损，保留原样",
+    )
+    check(
+        'self.missing_policy.as_str(), "reject" | "skip" | "zero"' in _fn_body(
+            factor, "impl FactorAnalysisConfig {\n    fn validate"
+        ),
+        "FactorAnalysisConfig::validate 仍是 missing_policy 词表的源头口径",
+        "上面那颗判据守的是 FactorReport 补齐了 FactorAnalysisConfig 的口径；这颗守源头本身没被改弱——"
+        "两处词表如果不一致，改哪一侧都会让另一侧的校验变成摆设",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -9975,6 +10054,8 @@ def main() -> int:
     live_path_fail_closed_check()
     untrusted_input_boundaries_check()
     resource_lifecycle_and_lock_reentrancy_check()
+    launcher_pregate_check()
+    schema_defense_consistency_check()
     api_accept_loop_exit_check()
     health_snapshot_knob_check()
     strategy_intent_three_language_check()
