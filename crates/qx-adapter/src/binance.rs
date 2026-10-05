@@ -1020,7 +1020,9 @@ impl BinanceSpotVenue {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .into(),
-                trade_id: value.get("t").and_then(Value::as_u64).unwrap_or(0),
+                trade_id: value.get("t").and_then(Value::as_u64).ok_or_else(|| {
+                    QxError::ReconcileRequired("Binance 回报缺少 trade_id(t)".into())
+                })?,
                 transact_time: value.get("T").and_then(Value::as_u64).unwrap_or(event_ts),
             };
             if let Some(event) = self.ingest_fill_wire(client_order_id, &venue_order_id, fill)? {
@@ -2081,6 +2083,26 @@ mod tests {
             canceled.as_slice(),
             [VenueEvent::Cancelled { .. }]
         ));
+    }
+
+    #[test]
+    fn user_event_without_trade_id_requires_reconcile_instead_of_zeroing_it() {
+        let (mut venue, _transport) = venue(
+            r#"{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"qx-7","status":"NEW","transactTime":1700000000000,"fills":[]}"#,
+        );
+        venue.submit(order(), 1_700_000_000_000).unwrap();
+        // 缺 "t" 字段的成交回报必须转对账，不得把 trade_id 静默归零：trade_id 是
+        // seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重，
+        // 漏计一笔成交且无人告警。CCXT 侧（ccxt.rs）对同一情形本来就 fail-closed。
+        let error = venue
+            .ingest_user_event(
+                r#"{"e":"executionReport","E":1700000000100,"s":"BTCUSDT","c":"qx-7","S":"BUY","x":"TRADE","X":"PARTIALLY_FILLED","i":42,"l":"0.5","L":"100","n":"0.001","N":"BTC","T":1700000000100}"#,
+            )
+            .expect_err("缺 trade_id 的成交回报必须被拒，不能当成有效成交入账");
+        assert!(
+            matches!(error, QxError::ReconcileRequired(_)),
+            "缺 trade_id 应转对账而不是静默归零，实际 {error:?}"
+        );
     }
 
     #[test]

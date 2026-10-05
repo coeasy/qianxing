@@ -1,6 +1,6 @@
 # 单文件行数棘轮快照，由 tools/check_architecture.py --snapshot 生成。
 # 只允许数值下降；确需增长或新增超 500 行文件时重新生成并审阅 diff。
-crates/qx-adapter/src/binance.rs: 2104
+crates/qx-adapter/src/binance.rs: 2126
 crates/qx-adapter/src/ccxt.rs: 1151
 crates/qx-adapter/src/lib.rs: 728
 crates/qx-api/src/lib.rs: 2969
@@ -15,7 +15,7 @@ crates/qx-cli/src/tests/api_endpoint_table_routes.rs: 538
 crates/qx-cli/src/tests/api_snapshot_money_fields.rs: 518
 crates/qx-cli/src/tests/deploy_template_coverage.rs: 779
 crates/qx-cli/src/tests/e2e_and_python_contract.rs: 513
-crates/qx-cli/src/worker_entry.rs: 521
+crates/qx-cli/src/worker_entry.rs: 579
 crates/qx-cli/src/workers.rs: 527
 crates/qx-control/src/lib.rs: 699
 crates/qx-core/src/event.rs: 721

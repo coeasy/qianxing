@@ -5,6 +5,22 @@
 
 use super::*;
 
+/// 多腿恢复 worker 的 venue_id 必须显式配置。
+///
+/// 恢复扫描按 venue 过滤敞口腿（`spread.rs` 的 `pending_spread_recovery_groups`），
+/// 空值在该函数里是**有意的通配符**；先前这里的默认值产出的是非空字符串，等于把
+/// 通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue
+/// 的裸腿。宁可当场拒启动，也不要让敞口静默挂着。
+pub(crate) fn recovery_worker_venue_id(worker: &WorkerConfig) -> Result<String, String> {
+    worker.venue_id.clone().ok_or_else(|| {
+        format!(
+            "worker {}（{}）必须配置 venue_id：恢复扫描按此过滤敞口腿，缺省会静默收窄扫描范围、漏掉其他 venue 的裸腿",
+            worker.id,
+            worker_role_label(worker.role)
+        )
+    })
+}
+
 /// 角色的稳定名称，用于错误信息与运维输出。
 const fn worker_role_label(role: WorkerRole) -> &'static str {
     match role {
@@ -133,7 +149,7 @@ pub(crate) fn run_binance_spread_recovery_worker(
     runtime_config_path: PathBuf,
     once: bool,
 ) -> Result<(), String> {
-    let venue_id = worker.venue_id.clone().unwrap_or_else(|| "BINANCE".into());
+    let venue_id = recovery_worker_venue_id(&worker)?;
     let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
     context.mark(
         qx_runtime::ServiceStatus::Ready,
@@ -370,7 +386,7 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
     once: bool,
 ) -> Result<(), String> {
     let python = python_interpreter();
-    let venue_id = worker.venue_id.clone().unwrap_or_else(|| "ccxt".into());
+    let venue_id = recovery_worker_venue_id(&worker)?;
     let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
     context.mark(
         qx_runtime::ServiceStatus::Ready,
@@ -518,4 +534,46 @@ pub(crate) fn run_ccxt_market_spec(
         output_path.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qx_runtime::WorkerConfig;
+    use qx_runtime::WorkerRole;
+
+    fn worker(venue_id: Option<String>) -> WorkerConfig {
+        WorkerConfig {
+            id: "w1".into(),
+            role: WorkerRole::SpreadRecovery,
+            enabled: true,
+            account_id: Some("acct".into()),
+            venue_id,
+            endpoint: None,
+            symbols: Vec::new(),
+            settlement_currency: None,
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        }
+    }
+
+    #[test]
+    fn recovery_worker_requires_an_explicit_venue_id() {
+        // 缺 venue_id 必须当场拒启动：恢复扫描按 venue 过滤敞口腿，静默收窄范围
+        // 等于让其他 venue 的裸腿永久挂着，而运维看不到任何告警。
+        let error = recovery_worker_venue_id(&worker(None))
+            .expect_err("缺 venue_id 的恢复 worker 不得启动");
+        assert!(
+            error.contains("w1") && error.contains("venue_id"),
+            "报错要能定位到 worker 与缺失的字段，实际 {error}"
+        );
+        assert_eq!(
+            recovery_worker_venue_id(&worker(Some("binance".into()))).as_deref(),
+            Ok("binance")
+        );
+    }
 }

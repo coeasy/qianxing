@@ -35,5 +35,9 @@ pub(crate) fn join_worker_handle(
             ))
         }
     }
-    handle.join().map_err(|_| format!("{label} panic"))?
+    handle.join().map_err(|error| {
+        // JoinError 的 Debug 输出带 panic 消息与线程名；只写 "panic" 的话，运维拿到的是
+        // 「线程挂了」而看不到挂在哪里，等于把故障定位的工作量推回现场。
+        format!("{label} panic: {error:?}")
+    })?
 }
