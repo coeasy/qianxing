@@ -405,6 +405,7 @@ mod event_consumer_write_budget;
 mod event_kind_variant_ledger;
 mod event_log_face_wiring;
 mod execution_and_multi_leg;
+mod grafana_dashboard_metrics;
 mod init_onboarding;
 mod lease_clock_domain;
 mod live_submit_fail_closed;

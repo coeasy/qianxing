@@ -181,6 +181,32 @@ pub(crate) fn render_report_html(
         "neutral",
     ));
 
+    // 风险调整收益比率卡（P2/P5）：全部从摘要 `metrics.*` 读，与落盘是同一组数，不重算。
+    // 缺格（分母为 0 / 样本不足）印 `—` 而非 0，沿用摘要"没算过 ≠ 算出来是零"的口径。
+    let ratio = |key: &str| -> Option<f64> {
+        summary
+            .pointer(&format!("/metrics/{key}"))
+            .and_then(serde_json::Value::as_f64)
+    };
+    let ratio_card = |label: &str, key: &str| {
+        let value = ratio(key);
+        let tone = if value.is_some_and(|value| value > 0.0) {
+            "up"
+        } else if value.is_some_and(|value| value < 0.0) {
+            "down"
+        } else {
+            "neutral"
+        };
+        let text = value.map_or_else(|| "—".to_string(), |value| format!("{value:.2}"));
+        card(label, &text, tone)
+    };
+    let mut risk_cards = String::new();
+    risk_cards.push_str(&ratio_card("夏普(每周期)", "sharpe"));
+    risk_cards.push_str(&ratio_card("索提诺", "sortino"));
+    risk_cards.push_str(&ratio_card("卡玛", "calmar"));
+    risk_cards.push_str(&ratio_card("盈利周期占比", "win_rate"));
+    risk_cards.push_str(&ratio_card("收益因子", "profit_factor"));
+
     let equity_series: Vec<i128> = equity.iter().map(|(_, value)| *value).collect();
     let monthly = monthly_returns(equity, number("/account/initial_cash_raw"));
     let fills_points: Vec<(u64, i128, i128)> = fills
@@ -214,6 +240,11 @@ pub(crate) fn render_report_html(
          结果基于历史数据，不构成投资建议。</p>\n",
     );
     let _ = writeln!(html, "<section class=\"cards\">{cards}</section>");
+    let _ = writeln!(
+        html,
+        "<section class=\"cards\" aria-label=\"风险调整收益比率\">{risk_cards}</section>"
+    );
+    html.push_str(&credibility_panel(summary));
     html.push_str("<section class=\"charts\">\n");
     let _ = writeln!(
         html,
@@ -245,7 +276,7 @@ pub(crate) fn render_report_html(
 }
 
 /// 转义摘要中的文本字段，避免用户控制的标的名/路径被解释成 HTML 或外部资源。
-fn escape_html(value: &str) -> String {
+pub(crate) fn escape_html(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -418,6 +449,15 @@ h2 { font-size: 16px; margin: 0 0 10px; }
 .card .v.up { color: #c0392b; }
 .card .v.down { color: #1e8449; }
 .card .v.neutral { color: #202124; }
+.cred { margin: 18px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 14px; }
+.cred h2 { font-size: 16px; margin: 0 0 10px; }
+.cred table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cred th { text-align: left; color: #5f6368; font-weight: 500; padding: 4px 10px 4px 0; white-space: nowrap; vertical-align: top; }
+.cred .cdet { padding: 4px 0; color: #202124; }
+.cred .cstat { font-weight: 600; padding: 3px 8px; border-radius: 4px; white-space: nowrap; text-align: center; }
+.cred .cstat.ok { color: #0b57d0; background: #e8f0fe; }
+.cred .cstat.warn { color: #7a4f01; background: #fef7e0; }
+.cred .cstat.absent { color: #5f6368; background: #f1f3f4; }
 .charts { display: flex; flex-direction: column; gap: 18px; }
 figure { margin: 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; }
 figcaption { font-size: 13px; color: #5f6368; margin-bottom: 8px; }

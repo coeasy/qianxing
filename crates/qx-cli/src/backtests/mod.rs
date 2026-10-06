@@ -168,6 +168,9 @@ pub(crate) use multi_builtin::*;
 mod risk_binding;
 pub(crate) use risk_binding::*;
 
+mod risk_ratios;
+pub(crate) use risk_ratios::*;
+
 mod signal_binding;
 pub(crate) use signal_binding::*;
 

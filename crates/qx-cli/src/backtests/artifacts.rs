@@ -336,6 +336,9 @@ pub(crate) fn persist_backtest_artifacts(
             input.result_hash, replay.log_digest
         ));
     }
+    // P2/P5 风险调整比率：唯一写点在这一处（与上面五格同源），报告与未来的 compare 只念这组
+    // 数，不各自重算。算不出来（样本不足 / 分母为 0）写 `null`，读侧照 "absent" 处理。
+    let ratios = compute_risk_ratios(input.equity, input.max_drawdown_bps);
     let mut summary = serde_json::json!({
         // v4：摘要开始交代"这一轮压在多少钱上"（`account` 块）。v3 有 `input` 却没有期初本金，
         // 于是 `metrics.return_bps` 的分母与 `final_equity_raw` 的对照物都不在产物里（V11 Q72）。
@@ -376,6 +379,13 @@ pub(crate) fn persist_backtest_artifacts(
             "fees_raw": input.fees_raw,
             "turnover_raw": input.turnover_raw,
             "final_equity_raw": input.final_equity_raw,
+            // P2/P5 风险调整比率：唯一写点在这里（与上面五格同源），报告与未来的 compare 只念
+            // 这组数，不各自重算。算不出来（样本不足 / 分母为 0）写 `null`，读侧照"absent"处理。
+            "sharpe": ratio_to_json(ratios.sharpe),
+            "sortino": ratio_to_json(ratios.sortino),
+            "calmar": ratio_to_json(ratios.calmar),
+            "win_rate": ratio_to_json(ratios.win_rate),
+            "profit_factor": ratio_to_json(ratios.profit_factor),
         },
         "assumptions": input.assumptions,
         "model_descriptors": input.model_descriptors,

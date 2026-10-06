@@ -1,0 +1,101 @@
+{
+  "title": "牵星 Qianxing 运行概览",
+  "uid": "qianxing-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "tags": ["qianxing", "quant", "local-runtime"],
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "API 请求速率",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(qx_api_requests_total[5m]))", "legendFormat": "请求/秒" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "API 拒绝（限流 / 认证）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(qx_api_rate_limit_rejected_total[5m]))", "legendFormat": "限流" },
+        { "expr": "sum(rate(qx_api_authentication_rejected_total[5m]))", "legendFormat": "认证" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "命令入队失败",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "sum(rate(qx_api_command_enqueue_failures_total[5m]))", "legendFormat": "入队失败/秒" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "控制面 retired 命令 / 审计",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "sum(rate(qx_control_retired_commands_total[5m]))", "legendFormat": "retired 命令" },
+        { "expr": "sum(rate(qx_control_retired_audit_records_total[5m]))", "legendFormat": "审计记录" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Worker 在线",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "max by (worker) (qx_worker_up)", "legendFormat": "{{worker}}" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Worker 心跳陈旧（秒）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 16 },
+      "targets": [
+        { "expr": "time() - max by (worker) (qx_worker_heartbeat_timestamp_seconds)", "legendFormat": "{{worker}}" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Pipeline 失败",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        { "expr": "sum by (worker) (rate(qx_pipeline_failures_total[5m]))", "legendFormat": "{{worker}}" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Pipeline 摄入",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        { "expr": "sum(rate(qx_pipeline_ingest_attempts_total[5m]))", "legendFormat": "摄入尝试" },
+        { "expr": "sum(rate(qx_pipeline_ingested_events_total[5m]))", "legendFormat": "已摄入事件" },
+        { "expr": "sum(rate(qx_pipeline_deduplicated_events_total[5m]))", "legendFormat": "去重" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Pipeline 重试 / 刷新",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "targets": [
+        { "expr": "sum(rate(qx_pipeline_transient_retries_total[5m]))", "legendFormat": "瞬时重试" },
+        { "expr": "sum(rate(qx_pipeline_refreshes_total[5m]))", "legendFormat": "刷新" }
+      ]
+    }
+  ]
+}

@@ -44,7 +44,7 @@ fn sample_summary() -> serde_json::Value {
         "matching_kernel": "qx-xingban::BacktestEngine(bar)",
         "risk_rules": { "rule_set_version": "v1", "source": "runtime-config" },
         "execution_costs": { "source": "runtime-config-default" },
-        "replay": { "log_digest": "feedface", "events": 7, "ledger_entries": 4 },
+        "replay": { "log_digest": "feedface", "events": 7, "ledger_entries": 4, "run_ledger_entries": 4 },
         "run_manifest": "/tmp/x.run.json"
     })
 }
@@ -297,6 +297,45 @@ fn report_escapes_untrusted_summary_text_and_accepts_custom_html_path() {
         "自定义输出必须保留 HTML 扩展名"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn credibility_panel_surfaces_trust_signals_and_flags_uncomputed_fields() {
+    // 形状完整的 v4 摘要：六格都应判「可信」，且不该出现「待核」。
+    let complete = render_report_html(&sample_summary(), &sample_equity(), &sample_fills());
+    assert!(
+        complete.contains("结果可信度"),
+        "报告首页必须含结果可信度面板"
+    );
+    assert!(complete.contains("输入身份") && complete.contains("重放校验"));
+    assert!(complete.contains("撮合档位") && complete.contains("成本模型"));
+    assert!(complete.contains("风控规则") && complete.contains("数据质量"));
+    assert!(complete.contains("未计算字段"));
+    assert!(complete.contains("可信"), "完整摘要六格都应判可信");
+    assert!(
+        !complete.contains(">待核<"),
+        "所有指标都已计算时不得出现待核：{}",
+        complete
+    );
+    assert!(
+        complete.contains("strategy-bars:BTCUSDT.BINANCE"),
+        "数据质量格应印出登记的数据集身份"
+    );
+
+    // 缺 metrics 块的旧摘要：未计算字段必须标「待核」并点名缺席指标，而不是假装算过。
+    let mut missing = sample_summary();
+    missing.as_object_mut().unwrap().remove("metrics");
+    let degraded = render_report_html(&missing, &sample_equity(), &sample_fills());
+    assert!(degraded.contains(">待核<"), "缺指标时必须出现待核状态");
+    for name in [
+        "return_bps",
+        "max_drawdown_bps",
+        "fees_raw",
+        "turnover_raw",
+        "final_equity_raw",
+    ] {
+        assert!(degraded.contains(name), "未计算字段必须逐一点名：{name}");
+    }
 }
 
 #[test]

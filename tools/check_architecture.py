@@ -1068,6 +1068,7 @@ CLI_BACKTESTS_MODULES = (
     "leg_funding",
     "multi_builtin",
     "risk_binding",
+    "risk_ratios",
     "signal_binding",
     "single_strategy",
     "strategy_backtest",
