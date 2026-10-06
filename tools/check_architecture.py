@@ -539,7 +539,7 @@ WORKSPACE_TEST_FLOOR = 1083  # 1082 -> 1083：V13 R12/R13 补一条 PostgreSQL �
 # 存档落空条数天花板 9 只降不升。
 # 601 → 602：V13 R1-H 重落 V11 R6-1——删掉零构造者的 `CommandStatus::Rejected`，
 # 终态词表收回到 `is_final` 体内一处（控制面 + CLI 幂等入口两个平面各一颗判据）。
-GATE_CHECK_FLOOR = 633  # 629 -> 633：V13 R16 补四颗，守契约与存储读回侧的防御口径一致性。第一颗守 Python `StrategyInput.from_dict` 必须像同文件的 `StrategyIntent` / `StrategyOutput` 一样调 `_reject_unknown_keys`：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，策略可能以为账户是空的而误触发。第二颗守 `FactorReport::validate` 必须像 `FactorConfig::validate` 一样校验 `missing_policy` 的 reject/skip/zero 词表：报告能被 `from_json` 反序列化，只有空串校验时手改一份 JSON 能放行到下游 `resolve_missing` 才报错，落点离改错的地方很远。第三颗守 `outbox.attempts` 读回必须走 `parse_sqlite_u32` / `parse_u32` 而不是 `as u32` 截断：attempts 以 TEXT 落盘，u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成小值、绕开死信判定。第四颗守 `FactorConfig` 的源头词表本身没被改弱——两处词表不一致时改哪一侧都会让另一侧的校验变成摆设。627 -> 629：V13 R14 补两颗，守两个平台的托管启动器都有 supervise 之前的 runtime-check 前置闸门，且 bash 侧的闸门失败不得用 $? 当退出码。`supervise` 只走 plan_workers 的拓扑校验，不检查配置引用的文件是否存在（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）——修前 start-qianxing.ps1 有这道闸门、start-qianxing.sh 没有，Linux/macOS 上的坏配置会拉起 7 个子进程再 fail-fast 全杀，而不是在任何子进程起来之前就拒绝。第二颗守 `if ! cmd; then echo ...; exit "$?"; fi` 里的 $? 拿的是上一条 echo 的状态（0），调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
+GATE_CHECK_FLOOR = 638  # 633 -> 638：V13 R8 补五颗静默抑制判据（丢结构体字段值必须当场写理由、`#[allow(dead_code)]` 必须当场写理由、`unreachable!` 必须带非空消息、不得留 `todo!`/`unimplemented!` 桩、生产源码的 TODO/FIXME 与登记表逐项相等）。这五种形状的共同点是「改错了也不红」：字段没人读就加一行 `let _ = x.y;` 按住、能力没接上就挂 allow、分支真到不了就写裸 unreachable!()、需求没做完就留桩，全是孤儿逻辑与静默降级的温床。上一轮基线 633 是 V13 R16 补四颗，守契约与存储读回侧的防御口径一致性。第一颗守 Python `StrategyInput.from_dict` 必须像同文件的 `StrategyIntent` / `StrategyOutput` 一样调 `_reject_unknown_keys`：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，策略可能以为账户是空的而误触发。第二颗守 `FactorReport::validate` 必须像 `FactorConfig::validate` 一样校验 `missing_policy` 的 reject/skip/zero 词表：报告能被 `from_json` 反序列化，只有空串校验时手改一份 JSON 能放行到下游 `resolve_missing` 才报错，落点离改错的地方很远。第三颗守 `outbox.attempts` 读回必须走 `parse_sqlite_u32` / `parse_u32` 而不是 `as u32` 截断：attempts 以 TEXT 落盘，u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成小值、绕开死信判定。第四颗守 `FactorConfig` 的源头词表本身没被改弱——两处词表不一致时改哪一侧都会让另一侧的校验变成摆设。627 -> 629：V13 R14 补两颗，守两个平台的托管启动器都有 supervise 之前的 runtime-check 前置闸门，且 bash 侧的闸门失败不得用 $? 当退出码。`supervise` 只走 plan_workers 的拓扑校验，不检查配置引用的文件是否存在（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）——修前 start-qianxing.ps1 有这道闸门、start-qianxing.sh 没有，Linux/macOS 上的坏配置会拉起 7 个子进程再 fail-fast 全杀，而不是在任何子进程起来之前就拒绝。第二颗守 `if ! cmd; then echo ...; exit "$?"; fi` 里的 $? 拿的是上一条 echo 的状态（0），调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
 # V12 §21 / #138：合流类判据的三个参数（455 → 457 就是本轮新增的两条，仍按"当轮实测总条数"取值）。窗口取 10 行是实测拐点 —— W=8 在 `tools` 之外命中 1,180
 # 处、到 W=10 仍有 781 处合法的并列实现（三条 venue 提交链、几家存储后端），所以逐字重复零容忍
 # 只对 `tools/*.py` 生效（本轮实测该目录 5 份脚本 0 命中），Rust 那一侧交给编译器与整树用例。
@@ -11124,6 +11124,100 @@ def report_readability_check() -> None:
     )
 
 
+# V13 R8：四种「看着像代码、其实什么都没说」的静默抑制形状。它们共同的特点是
+# **改错了也不会红**：字段没人读就加一行 `let _ = x.y;` 把它按住、能力没接上就挂
+# `#[allow(dead_code)]`、分支真到不了就写 `unreachable!()`、需求没做完就留 `TODO`。
+# 门禁不管「理由是否成立」（那要靠人读），只管「理由必须当场写出来、且不许悄悄多出来」：
+# 每一条都得在同一行或紧邻上一行留下出处，数量与登记表逐项相等，多一个就红。
+SILENT_FIELD_DISCARD = re.compile(r"^\s*let\s+_\s*=\s*[A-Za-z_]\w*\.[A-Za-z_]\w*\s*;")
+ALLOW_DEAD_CODE_LINE = re.compile(r"^\s*#\[allow\(dead_code\)\]")
+# 生产源码里登记在册的 TODO/FIXME 标记：键为相对路径，值为登记次数（与允许清单同口径，
+# 长出新的或删掉旧的都要同步改这里，否则两个方向都红）。
+TODO_MARKER_ALLOWLIST: dict[str, int] = {"crates/qx-risk/src/rules.rs": 2}
+STUB_MARKERS = ("todo!(", "unimplemented!(")
+
+
+def _production_lines_keeping_comments() -> dict[str, list[str]]:
+    """生产文本，但**保留注释行**：本轮四颗判据要看的是「代码旁边有没有写出理由」。
+
+    与 `_production_sources()` 的唯一差别就是不丢注释 —— 那个函数丢注释是为了不让散文
+    冒充证据，这里正好相反：注释本身就是本轮要核对的证据。
+    """
+    return {
+        path.relative_to(ROOT).as_posix(): _strip_cfg_test_items(
+            path.read_text(encoding="utf-8")
+        )
+        for path in sorted(CRATES.glob("*/src/**/*.rs"))
+        if not TEST_PATH.search(path.relative_to(ROOT).as_posix())
+    }
+
+
+def silent_suppression_check() -> None:
+    """V13 R8：静默抑制（丢字段、裸 allow、无消息 unreachable、无排期 TODO）全部上闸。"""
+    sources = _production_lines_keeping_comments()
+
+    discards = [
+        f"{location}:{number}"
+        for location, lines in sources.items()
+        for number, line in enumerate(lines, 1)
+        if SILENT_FIELD_DISCARD.match(line) and "//" not in line
+    ]
+    check(
+        not discards,
+        "生产源码里丢弃结构体字段值必须当场写明理由（`let _ = x.y;` 同行要带注释）",
+        f"无理由丢弃 {discards or '无'}",
+    )
+
+    bare_allows = [
+        f"{location}:{number}"
+        for location, lines in sources.items()
+        for number, line in enumerate(lines, 1)
+        if ALLOW_DEAD_CODE_LINE.match(line)
+        and "//" not in line
+        and not (number > 1 and lines[number - 2].lstrip().startswith("//"))
+    ]
+    check(
+        not bare_allows,
+        "生产源码的 `#[allow(dead_code)]` 必须当场写明理由（同行或紧邻上一行的注释）",
+        f"无理由 allow {bare_allows or '无'}",
+    )
+
+    message_less = [
+        location
+        for location, lines in sources.items()
+        if sum(line.count("unreachable!(") for line in lines)
+        != sum(line.count('unreachable!("') for line in lines)
+    ]
+    check(
+        not message_less,
+        "生产源码的 `unreachable!` 必须带非空消息（裸 `unreachable!()` 到不了现场就没人知道为什么）",
+        f"无消息 {message_less or '无'}",
+    )
+
+    stubs = [
+        f"{location}:{number}"
+        for location, lines in sources.items()
+        for number, line in enumerate(lines, 1)
+        if any(marker in line for marker in STUB_MARKERS)
+    ]
+    check(
+        not stubs,
+        "生产源码不得留 `todo!`/`unimplemented!` 桩（要么实现，要么登记进 capabilities.yaml）",
+        f"桩 {stubs or '无'}",
+    )
+
+    markers = {
+        location: sum(line.count("TODO") + line.count("FIXME") for line in lines)
+        for location, lines in sources.items()
+    }
+    markers = {location: count for location, count in markers.items() if count}
+    check(
+        markers == TODO_MARKER_ALLOWLIST,
+        "生产源码的 TODO/FIXME 标记与登记表逐项相等（多一个或删一个都要同步登记表）",
+        f"实得 {markers}，登记 {TODO_MARKER_ALLOWLIST}",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -11241,6 +11335,7 @@ def main() -> int:
     layer_dependency_check()
     schema_registry_check()
     report_readability_check()
+    silent_suppression_check()
     # 含本条自身：+1 才是本轮真正会打印的总条数，所以地板常量按"含这一条"取值。
     check(
         checks + 1 >= GATE_CHECK_FLOOR,

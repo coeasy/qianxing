@@ -1156,7 +1156,7 @@ impl BinanceSpotVenue {
                         client_order_id
                     )));
                 }
-                let _ = wire.symbol;
+                let _ = wire.symbol; // 归属只认 clientOrderId（`qx-<u64>` 全局唯一）；symbol 是交易所回显，显式丢弃以保持该字段被读
                 Ok(VenueOrderSnapshot {
                     client_order_id,
                     status: map_status(&wire.status)?,

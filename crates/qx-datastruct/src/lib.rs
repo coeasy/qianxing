@@ -61,7 +61,7 @@ enum OwnedArrowStorage {
     Decimal128(Vec<i128>),
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // 只做所有权保活：字段撑住 Arrow 缓冲区直到 C 数据接口释放，不参与计算
 struct OwnedArrowState {
     releases_remaining: AtomicU8,
     storage: OwnedArrowStorage,
