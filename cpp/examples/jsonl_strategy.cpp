@@ -19,6 +19,15 @@
 #include <string>
 #include <thread>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <cerrno>
+#include <csignal>
+#include <sys/types.h>
+#include <unistd.h>
+#endif
+
 #include "qianxing_ring.hpp"
 
 using json = nlohmann::json;
@@ -29,6 +38,29 @@ constexpr std::uint32_t kMaxFrameBytes = 16u * 1024u * 1024u;
 constexpr std::uint16_t kVersion = 1;
 constexpr std::uint8_t kRequest = 1;
 constexpr std::uint8_t kResponse = 2;
+// 与 Python worker 的 PARENT_LIVENESS_PROBE_SECONDS 同一口径：一秒一探。
+constexpr int kParentLivenessProbeMs = 1000;
+
+// 共享 ring 没有 stdin 可关：驱动它的 Rust 进程被强杀时轮不到 Drop 收尾，`--parent-pid`
+// 是这条传输上唯一能让 worker 自己收摊的信号（V13 R17-d）。问不出结论时一律回答"还在"，
+// 误杀一个健康 worker 比让它多活一会儿更糟。
+bool parent_alive(unsigned long pid) {
+#ifdef _WIN32
+    HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (handle == nullptr) {
+        // 句柄打不开：被安全策略拒绝时进程仍在，其余（含 pid 已不存在）按没了处理。
+        return GetLastError() == ERROR_ACCESS_DENIED;
+    }
+    DWORD exit_code = 0;
+    bool alive = true;
+    if (GetExitCodeProcess(handle, &exit_code) != 0) alive = exit_code == STILL_ACTIVE;
+    CloseHandle(handle);
+    return alive;
+#else
+    if (kill(static_cast<pid_t>(pid), 0) == 0) return true;
+    return errno != ESRCH;
+#endif
+}
 
 std::uint32_t crc32(const std::string& payload) {
     std::uint32_t crc = 0xffffffffu;
@@ -284,6 +316,7 @@ int main(int argc, char** argv) {
     std::string output_ring;
     std::uint32_t ring_capacity = 1024;
     std::uint32_t ring_slot_bytes = 64u * 1024u;
+    unsigned long parent_pid = 0;
     for (int index = 1; index + 1 < argc; index += 2) {
         const std::string key = argv[index];
         const std::string value = argv[index + 1];
@@ -292,6 +325,7 @@ int main(int argc, char** argv) {
         else if (key == "--output-ring") output_ring = value;
         else if (key == "--ring-capacity") ring_capacity = static_cast<std::uint32_t>(std::stoul(value));
         else if (key == "--ring-slot-bytes") ring_slot_bytes = static_cast<std::uint32_t>(std::stoul(value));
+        else if (key == "--parent-pid") parent_pid = std::stoul(value);
     }
 
     const bool framed = protocol == "framed_json";
@@ -319,9 +353,19 @@ int main(int argc, char** argv) {
         try {
             qianxing::QxrbRing input(input_ring, ring_capacity, ring_slot_bytes);
             qianxing::QxrbRing output(output_ring, ring_capacity, ring_slot_bytes);
+            auto next_parent_check =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(kParentLivenessProbeMs);
             for (;;) {
                 std::string encoded;
                 if (!input.try_pop(encoded)) {
+                    // 空闲臂是唯一能问父进程还在不在的位置：忙的时候驱动方一定活着。
+                    if (parent_pid != 0) {
+                        const auto now = std::chrono::steady_clock::now();
+                        if (now >= next_parent_check) {
+                            next_parent_check = now + std::chrono::milliseconds(kParentLivenessProbeMs);
+                            if (!parent_alive(parent_pid)) return 0;
+                        }
+                    }
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                     continue;
                 }

@@ -190,7 +190,7 @@ pub struct BacktestReport {
     pub issuer_capital_snapshots: Vec<AshareIssuerCapitalSnapshot>,
     pub fees_raw: i128,
     pub turnover_raw: i128,
-    pub max_drawdown_raw: i128,
+    pub max_drawdown_raw: i128, // max_drawdown_bps 的定点原值伴生格；仓库内零生产读者，见 capabilities.yaml local_backtest limitation
     pub return_bps: i32,
     pub max_drawdown_bps: u32,
     pub assumptions: Vec<String>,

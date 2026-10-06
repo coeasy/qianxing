@@ -1,0 +1,232 @@
+# 牵星 Qianxing · 发布供应链（M0 冻结 → P2-4 落地）
+#
+# 口径：一个 tag 必须产出可复现的 binary / wheel / C++ SDK，并携带身份字段与 SHA256 清单，
+# 附 SBOM（依赖清单）与构建来源证明（build provenance），最后挂到 GitHub Release。
+# 身份字段清单与 maturity/baseline.yaml 的 artifact_identity 一致，由
+# tools/check_architecture.py 的 release_supply_chain_check 常驻核对（缺一项即红）。
+#
+# 触发：推送 `v*` tag（如 v0.1.0）。tag 必须与 Cargo.toml / python/pyproject.toml /
+# maturity/baseline.yaml 三处版本一致，否则 version-consistency 先失败。
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version-consistency:
+    name: 版本三处一致
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches the frozen release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          cargo_v="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          py_v="$(sed -n 's/^version = "\(.*\)"/\1/p' python/pyproject.toml | head -n1)"
+          base_v="$(sed -n 's/^release_version: "\(.*\)"/\1/p' maturity/baseline.yaml)"
+          echo "tag=${tag} cargo=${cargo_v} pyproject=${py_v} baseline=${base_v}"
+          if [[ "${tag}" != "${cargo_v}" || "${tag}" != "${py_v}" || "${tag}" != "${base_v}" ]]; then
+            echo "tag 与冻结版本不一致：先同步三处再打 tag" >&2
+            exit 1
+          fi
+
+  binary:
+    name: binary (${{ matrix.os }})
+    needs: version-consistency
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build qx-cli (release, locked)
+        run: cargo build --release --locked -p qx-cli
+      - name: Prove build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/release/qx-cli"
+          if [[ -f "${bin}.exe" ]]; then bin="${bin}.exe"; fi
+          "${bin}" version
+      - name: Package and hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/release/qx-cli"
+          if [[ -f "${bin}.exe" ]]; then bin="${bin}.exe"; fi
+          ext=""
+          if [[ "${bin}" == *.exe ]]; then ext=".exe"; fi
+          out="qx-cli-${GITHUB_REF_NAME}-${{ runner.os }}-${{ runner.arch }}${ext}"
+          mkdir -p dist
+          cp "${bin}" "dist/${out}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "${out}" > "${out}.sha256")
+          else
+            (cd dist && shasum -a 256 "${out}" > "${out}.sha256")
+          fi
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ runner.os }}-${{ runner.arch }}
+          path: dist/*
+
+  wheel:
+    name: python wheel
+    needs: version-consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build wheel (native extension included)
+        run: PYTHON=python bash tools/build_python_wheel.sh
+      - name: Hash wheel payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          if [[ ${#wheels[@]} -eq 0 ]]; then
+            echo "dist/ 下没有产出 wheel" >&2
+            exit 1
+          fi
+          sha256sum "${wheels[@]}" > dist/wheel.sha256 2>/dev/null \
+            || shasum -a 256 "${wheels[@]}" > dist/wheel.sha256
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.whl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: |
+            dist/*.whl
+            dist/wheel.sha256
+
+  cpp-sdk:
+    name: C++ SDK
+    needs: version-consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install C++ JSON dependency
+        run: sudo apt-get update && sudo apt-get install -y nlohmann-json3-dev
+      - name: Configure and build
+        run: |
+          cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release -DQX_BUILD_JSONL_EXAMPLE=ON
+          cmake --build build/cpp --config Release --parallel
+      - name: Package SDK headers and artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sdk
+          cp -r cpp/include dist/sdk/include
+          cp -r build/cpp dist/sdk/build
+          tar -czf "dist/qianxing-cpp-sdk-${GITHUB_REF_NAME}.tar.gz" -C dist sdk
+          (cd dist && sha256sum qianxing-cpp-sdk-*.tar.gz > cpp-sdk.sha256 2>/dev/null \
+            || shasum -a 256 qianxing-cpp-sdk-*.tar.gz > cpp-sdk.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpp-sdk
+          path: |
+            dist/qianxing-cpp-sdk-*.tar.gz
+            dist/cpp-sdk.sha256
+
+  sbom:
+    name: SBOM (dependency inventory)
+    needs: version-consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Emit dependency inventory from Cargo metadata
+        run: |
+          set -euo pipefail
+          cargo metadata --format-version 1 --locked > sbom-cargo.json
+          python3 - <<'PY'
+          import json
+          meta = json.load(open("sbom-cargo.json", encoding="utf-8"))
+          components = [
+              {
+                  "name": pkg["name"],
+                  "version": pkg["version"],
+                  "source": (pkg.get("source") or "workspace"),
+                  "license": pkg.get("license"),
+              }
+              for pkg in sorted(meta["packages"], key=lambda p: (p["name"], p["version"]))
+          ]
+          doc = {
+              "bomFormat": "QianxingDependencyInventory",
+              "specVersion": "1",
+              "components": components,
+          }
+          json.dump(doc, open("sbom.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2, sort_keys=True)
+          print(f"components={len(components)}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+
+  release:
+    name: GitHub Release
+    needs: [binary, wheel, cpp-sdk, sbom]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Assemble hash manifest and identity file
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          find . -type f ! -name 'SHA256SUMS' ! -name 'release-identity.json' -printf '%P\0' \
+            | sort -z | xargs -0 sha256sum > SHA256SUMS
+          python3 - <<'PY'
+          import json, os
+          identity = {
+              "version": os.environ["GITHUB_REF_NAME"].lstrip("v"),
+              "git_commit": os.environ["GITHUB_SHA"],
+              "target_triple": "multi",
+              "profile": "release",
+              "schema_registry_version": "1",
+              "sha256": "see SHA256SUMS",
+              "sbom": "sbom.json",
+          }
+          json.dump(identity, open("release-identity.json", "w", encoding="utf-8"), indent=2, sort_keys=True)
+          print(json.dumps(identity, ensure_ascii=False))
+          PY
+          cat SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "牵星 ${GITHUB_REF_NAME}" \
+            --notes "可复现发布件：binary / wheel / C++ SDK + SHA256SUMS + sbom.json + release-identity.json（build provenance 见 Release 附件证明）。" \
+            dist/*

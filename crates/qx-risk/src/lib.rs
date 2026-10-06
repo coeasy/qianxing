@@ -11,6 +11,13 @@ pub use rules::{
     CONSERVATIVE_DEFAULT_RULE_SET_VERSION, CONSERVATIVE_MAX_QTY_RAW,
 };
 
+/// 组合级风控快照。
+///
+/// `RiskEngine::evaluate` 只读 `portfolio_id` / `gross_exposure` / `drawdown_bps` /
+/// `factor_exposure` 四格；`timestamp` / `net_exposure` / `volatility_bps` 三格在仓库内
+/// **没有任何生产读者**（`volatility_bps` 在唯一的仓库内构造点恒为 0）。
+/// 按 #118/#171 先例保留不删，并登记在 `maturity/capabilities.yaml` 的
+/// `canonical_order_risk_decision` → `risk_snapshot_carries_fields_no_decision_reads`。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RiskSnapshot {
     pub portfolio_id: String,

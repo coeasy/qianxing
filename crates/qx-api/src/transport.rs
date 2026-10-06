@@ -9,7 +9,7 @@ use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub(crate) fn configure_connection(stream: &TcpStream) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_millis(100)))?;
@@ -47,10 +47,33 @@ pub(crate) fn write_ws_text<S: Write>(stream: &mut S, text: &str) -> std::io::Re
     stream.write_all(&frame)
 }
 
+/// 一条 HTTP 请求（头部 + 正文）的**整体**截止。
+///
+/// `configure_connection` 装的 100 毫秒单次读超时只挡得住「不再发字节」的对端：
+/// 每 99 毫秒滴一字的客户端每次都读得到数据，循环会一路磨到 1 MiB 总量闸才结束
+/// （1 MiB × 99ms ≈ 26 小时），而这段时间里它一直占着一条连接线程与一份
+/// `ConnectionBudget` 额度——预算格占满后整站对外 503（V13 R17-a）。
+pub(crate) const HTTP_REQUEST_DEADLINE: Duration = Duration::from_secs(5);
+
 pub(crate) fn read_request<S: Read>(stream: &mut S) -> std::io::Result<Vec<u8>> {
+    read_request_until(stream, Instant::now() + HTTP_REQUEST_DEADLINE)
+}
+
+/// 截止作为参数进来，是为了让「滴字节必须被整体截止切断」这条判据在同一毫秒尺度上
+/// 被验证，而不是靠一条 5 秒的墙钟用例。
+pub(crate) fn read_request_until<S: Read>(
+    stream: &mut S,
+    deadline: Instant,
+) -> std::io::Result<Vec<u8>> {
     let mut request = Vec::new();
     let mut buffer = [0_u8; 4096];
     loop {
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "http request deadline exceeded",
+            ));
+        }
         let count = stream.read(&mut buffer)?;
         if count == 0 {
             break;
@@ -157,6 +180,11 @@ pub(crate) fn write_http_response<S: Write>(
     stream.write_all(response.body.as_bytes())
 }
 
+/// 一次拒绝的排空预算：诚实客户端的字节早已在接收缓冲里，一轮 `read` 就排完；这把墙钟
+/// 只用来切断不停滴字节的对端，不是给正常请求设的门槛（V13 R17-b：64 KiB 是**字节**上界不是
+/// 时间上界，而 100ms 单次读超时永远追不上每 99ms 滴一字的对端，这条循环又跑在唯一的 accept 线程上）。
+pub(crate) const HTTP_REFUSE_DRAIN_DEADLINE: Duration = Duration::from_millis(200);
+
 /// 把一条**还没读过任何字节**的连接体面地拒掉：写出拒绝响应，半关写方向，再把对端
 /// 已经发来的请求字节读掉丢弃。
 ///
@@ -165,8 +193,8 @@ pub(crate) fn write_http_response<S: Write>(
 /// （`browser_admission.rs` 的预算用例立案时实测到的正是 10054）。
 ///
 /// 排空必须在半关**之后**：先关写方向，客户端才读得到 FIN 并结束它自己的读，随后关闭；
-/// 反过来先排空就会两边互相等。读侧沿用 `configure_connection` 装好的 100ms 超时，所以
-/// 一个只连不发的对端最多把 accept 循环按住一轮，不会变成新的无出口循环。
+/// 反过来先排空就会两边互相等。排空这段总长受 `HTTP_REFUSE_DRAIN_DEADLINE` 约束，
+/// 超预算就停止——宁可让这一根滴字节的 socket 以 RST 收场，也不让整站不再 accept 新连接。
 pub(crate) fn refuse_connection(stream: &TcpStream, response: &ApiResponse) {
     let mut writer = stream;
     if let Err(error) = write_http_response(&mut writer, response, &[]) {
@@ -176,11 +204,16 @@ pub(crate) fn refuse_connection(stream: &TcpStream, response: &ApiResponse) {
     if let Err(error) = stream.shutdown(std::net::Shutdown::Write) {
         eprintln!("[qx-api] 半关拒绝连接失败: {error}");
     }
+    // 截止从开始排空那一刻起算：写出响应与半关不占用这份预算。
+    let deadline = Instant::now() + HTTP_REFUSE_DRAIN_DEADLINE;
     let mut discard = [0_u8; 4096];
     let mut drained = 0_usize;
     // 上界与 `read_request` 的请求体上界同量级：排空是为了让 RST 变成 FIN，
     // 不是为了替对端把一份超大请求收完。
     while drained < 64 * 1024 {
+        if Instant::now() >= deadline {
+            break;
+        }
         match writer.read(&mut discard) {
             Ok(0) => break,
             Ok(size) => drained += size,
@@ -279,4 +312,119 @@ pub(crate) fn base64_encode(bytes: &[u8]) -> String {
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    /// 每 `read` 只给一个字节、每次给之前睡 1 毫秒的对端——就是 `HTTP_REQUEST_DEADLINE`
+    /// 存在的理由：单次读超时的臂永远等不到「一次读满 100 毫秒」，只有整体截止能切断它。
+    struct Dribble {
+        payload: Vec<u8>,
+        position: usize,
+        reads: usize,
+    }
+
+    impl Read for Dribble {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.position >= self.payload.len() {
+                return Ok(0);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+            buffer[0] = self.payload[self.position];
+            self.position += 1;
+            self.reads += 1;
+            Ok(1)
+        }
+    }
+
+    fn header_with_body(length: usize) -> Vec<u8> {
+        format!("GET /metrics HTTP/1.1\r\nHost: x\r\nContent-Length: {length}\r\n\r\n").into_bytes()
+    }
+
+    #[test]
+    fn dribbling_client_is_cut_by_the_overall_request_deadline_not_by_the_per_read_timeout() {
+        let mut payload = header_with_body(8);
+        payload.extend_from_slice(b"12345678");
+        let mut dribble = Dribble {
+            payload: payload.clone(),
+            position: 0,
+            reads: 0,
+        };
+        // 20 毫秒的整体截止、每字节 1 毫秒：单靠 100 毫秒那次读超时永远追不上。
+        let outcome = read_request_until(&mut dribble, Instant::now() + Duration::from_millis(20));
+        let error = outcome.expect_err("滴字节的对端必须被整体截止切断，而不是读完");
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::TimedOut,
+            "切断必须报成有名字的超时，而不是让调用方猜一个 IO 故障"
+        );
+        assert!(
+            dribble.reads >= 2,
+            "截止检查要在循环里，而不是只在入口判一次：实读 {} 次",
+            dribble.reads
+        );
+        assert!(
+            dribble.position < payload.len(),
+            "被切断时不应已经读完整份请求：读到 {} / {} 字节",
+            dribble.position,
+            payload.len()
+        );
+    }
+
+    #[test]
+    fn a_request_inside_the_deadline_still_reads_through_in_one_piece() {
+        // 正向对照：截止不能把好客户端也一起切断——包括正文已经在同一份缓冲里到位的形状。
+        let mut payload = header_with_body(4);
+        payload.extend_from_slice(b"body");
+        let mut cursor = std::io::Cursor::new(payload.clone());
+        let read = read_request_until(&mut cursor, Instant::now() + Duration::from_secs(5))
+            .expect("整份请求都在场上时必须读回来");
+        assert_eq!(read, payload, "读取必须原样交出整份请求字节");
+    }
+
+    /// 排空跑在唯一的 accept 线程上：对端每 150 毫秒滴一个字节时，`configure_connection`
+    /// 的 100 毫秒单次读超时永远追不上，64 KiB 的字节界要 65,536 轮才走满。这一颗问的是
+    /// `HTTP_REFUSE_DRAIN_DEADLINE` 那把墙钟在不在场（V13 R17-b）。
+    #[test]
+    fn a_dribbling_refused_peer_cannot_hold_the_accept_thread_past_the_drain_budget() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("loopback listener");
+        let address = listener.local_addr().expect("listener addr");
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let dribbler_stop = std::sync::Arc::clone(&stop);
+        let dribbler = std::thread::spawn(move || {
+            let Ok(mut stream) = TcpStream::connect(address) else {
+                return;
+            };
+            for _ in 0..12 {
+                if dribbler_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                if stream.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(150));
+            }
+        });
+        let (stream, _) = listener.accept().expect("accept the dribbling peer");
+        configure_connection(&stream).expect("configure per-read timeout");
+        let started = Instant::now();
+        refuse_connection(
+            &stream,
+            &ApiResponse {
+                status: 503,
+                content_type: "application/json".into(),
+                body: "{\"error\":\"busy\"}".into(),
+            },
+        );
+        let elapsed = started.elapsed();
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        dribbler.join().expect("dribbler stops");
+        assert!(
+            elapsed < Duration::from_millis(900),
+            "拒绝一条滴字节的连接用了 {elapsed:?}：只剩字节界的排空会一路磨到对端自己停手"
+        );
+    }
 }

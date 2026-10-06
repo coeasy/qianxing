@@ -52,19 +52,19 @@
 
 | 模块 | 职责 |
 |---|---|
-| `qx-core` **牵星** | 确定性内核：时钟、因果事件队列、事件溯源、重放校验，以及 `VenueId` / `InstrumentId` / `MarketId` / `CanonicalProduct` 身份契约；内含 **分野** `fenye` 模块（合约规格与市场状态分离、符号映射只增不覆盖） |
+| `qx-core` **牵星** | 确定性内核：时钟、因果事件队列、事件溯源、重放校验，以及 `VenueId` / `InstrumentId` / `MarketId` / `CanonicalProduct` 身份契约（`identity.rs`）；合约规格与市场状态分离落在 `trading.rs`（**无独立 `fenye` 模块** —— 该模块已删且不复活，此处按代码事实改口，见 docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md WP-15） |
 | `qx-guanxing` **观星** | 数据平面：`DataSourceId`、质量门、标准化、`as_of()` point-in-time 可见性 |
 | `qx-data` | 多资产数据基础设施：统一市场数据契约、目录、摄取与增量管道（提供方不进内核） |
 | `qx-xingban` **星板** | Bar/L1 Tick/L2 订单簿撮合与仿真：成本、延迟、保证金、因果回测 |
 | `qx-zhenlu` **针路** | 执行与路由：风控门禁、OMS、路由决策 |
 | `qx-risk` | 风控规则集：`RiskRule`（禁空 / 最大数量 / 最大名义）与保守默认规则集版本 |
-| `qx-genglu` **更路** | 审计与对账：绩效指标、归因、订单对账 |
+| `qx-genglu` **更路** | 订单维度对账裁决（**绩效指标见 `qx-xingban`、成交归因见 `qx-cli`、现金对账见 `qx-runtime`**，本 crate 刻意不重复实现） |
 | `qx-plugin` **卯眼/榫头** | 能力清单注册表：manifest schema/哈希校验与 Ed25519 签名、扩展点贡献声明、独占冲突检测、依赖求解、Profile/Bundle/Patch 静态装配计划（不含运行时动态加载） |
 | `qx-factor` | 因子与特征：版本、PIT 工件、分析报告、候选策略绑定 |
 | `qx-protocol` | 账户协议：Canonical Snapshot、Diff、QIFI 兼容边界 |
 | `qx-provider` | 数据提供方：能力矩阵、稳定选择、主备故障切换 |
 | `qx-scheduler` | 调度契约：JobSpec、依赖、交易日历、幂等与重试 |
-| `qx-control` | 控制面：权限、审计命令、事件订阅游标 |
+| `qx-control` | 控制面：权限、审计命令、终态退场（**事件订阅游标在 `qx-api`**，本 crate 不含） |
 | `qx-api` | 框架无关的本地查询、控制命令、事件流与 WebSocket 边界；写操作只经 `ControlPlane` |
 | `qx-datastruct` | 列式 BarFrame、PIT 视图、JSON/Arrow C Data Interface |
 | `qx-adapter` | REST/TLS/WebSocket 传输与 Venue/Provider 适配边界；含 Binance Spot REST/L1 行情基线 |

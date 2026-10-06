@@ -117,6 +117,11 @@ fn load_still_accepts_the_cron_any_shape_the_tick_dispatches() {
         load_scheduler_state(&config, &root, &config_path).expect("受支持的形状应能装载");
     assert_eq!(scheduler.len(), 1);
     assert_eq!(store.load_scheduler_at(&state_path).unwrap().len(), 1);
+    // 重启是常态，不是异常路径：声明一个字没改时第二次装载必须照旧放行，否则下面那条
+    // 分叉判据会把正常重启一起拦掉（V13 R17-e）。
+    let (_, restarted, _) = load_scheduler_state(&config, &root, &config_path)
+        .expect("声明未变的第二次启动不该被分叉判据拒绝");
+    assert_eq!(restarted.len(), 1, "第二次启动读到的作业集合变了");
 }
 
 /// 派发写进 JobRun 的血缘锚点来自 manifest.digest()：manifest 自身非法时摘要指向一条
@@ -165,4 +170,82 @@ fn seeded_scheduler_for(root: &Path, jobs: &[JobSpec]) -> PathBuf {
         .save_scheduler_at(&state_path, &scheduler)
         .expect("写入 Scheduler 状态失败");
     state_path
+}
+
+/// 声明与状态分叉的四个方向都必须当场拒，而不是让状态里的旧作业集合继续跑（V13 R17-e）。
+///
+/// 作业只在状态文件缺失时从 `jobs_path` 重建，所以第二次启动起，删掉的作业照旧按 cron
+/// 触发、新增的永远不跑、改过的用旧 cron —— 三种都只有启动报错能看见。重名声明单列一颗：
+/// 它让「状态比声明多」这一判据的分母失真（两份同名声明只算一个作业），不守住它，删掉的
+/// 作业就能借重名藏进分母里。
+#[test]
+fn a_second_boot_that_disagrees_with_the_declaration_refuses_to_run() {
+    let accepted = job_with(Trigger::Cron("* * * * *".into()), JobWindow::Any);
+    for (slug, label, declaration, needles) in [
+        (
+            "added",
+            "新增声明",
+            vec![
+                accepted.clone(),
+                JobSpec {
+                    job_id: "shape-added".into(),
+                    ..accepted.clone()
+                },
+            ],
+            ["新增的声明从未进入调度状态", "shape-added"],
+        ),
+        (
+            "changed",
+            "改动声明",
+            vec![JobSpec {
+                trigger: Trigger::Cron("30 1 * * *".into()),
+                ..accepted.clone()
+            }],
+            ["改动过的声明从未生效", "shape-any"],
+        ),
+        (
+            "removed",
+            "删掉声明",
+            Vec::new(),
+            ["不在声明文件里", "仍会按 cron 触发"],
+        ),
+        (
+            "duplicated",
+            "重名声明",
+            vec![accepted.clone(), accepted.clone()],
+            ["重名 job_id", "后者永远不会生效"],
+        ),
+    ] {
+        let root = temp_cli_case_dir(&format!("declaration-drift-{slug}"));
+        let (config, config_path) = runtime_for_jobs(&root, &[accepted.clone()]);
+        load_scheduler_state(&config, &root, &config_path).expect("首次启动应建立状态");
+        let (drifted, _) = runtime_for_jobs(&root, &declaration);
+        let error = match load_scheduler_state(&drifted, &root, &config_path) {
+            Ok(_) => panic!("{label} 与状态分叉后仍被放行，旧作业集合照旧开跑"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("Scheduler 声明与状态已分叉"),
+            "{label}：{error}"
+        );
+        for needle in needles {
+            assert!(
+                error.contains(needle),
+                "{label} 报错缺这一格「{needle}」：{error}"
+            );
+        }
+        // 拒绝必须发生在写状态之前：分叉时不许把声明写进去，否则下一次启动读的就是半截声明。
+        let state = JsonStateStore::new(root.clone())
+            .load_scheduler_at(Path::new("scheduler-state.json"))
+            .expect("拒绝路径不该动过状态文件");
+        assert_eq!(state.len(), 1, "{label}：拒绝之前就已经改过状态");
+        assert_eq!(
+            state
+                .job(&accepted.job_id)
+                .expect("原作业应仍在状态里")
+                .trigger,
+            accepted.trigger,
+            "{label}：状态里的作业形状被动过"
+        );
+    }
 }

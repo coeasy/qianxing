@@ -159,3 +159,69 @@ fn pipeline_metrics_publication_and_docs_move_together() {
          它必须与读者清单一致：现在读者={readers:?}"
     );
 }
+
+/// 判据（发布审计 第2轮）：字段级零读者必须与 capabilities limitation 同进同退。
+///
+/// #174 缺口的已知形状：静态门禁的 `dead_type_surface_check` 只扫类型与 `pub fn` / `pub const`，
+/// 结构体字段既不是类型也不是函数，于是「这一格每笔都写、全仓没人读」在门禁侧恒绿。
+/// 按 #118/#171 先例：保留不删（删面等于把缺口藏起来），但要在能力矩阵里逐条登记，
+/// 并在这里双向钉住——接上真读者后必须摘掉登记，偷偷删登记也判红。
+///
+/// 读者的口径刻意收紧到「字段访问/解构」：`field:` 形态是字段声明或结构体字面量构造
+/// （`qx-cli` 装配 `JobSpec` 正是这种形态），它把值写进去而不读出来，所以不算读者；
+/// 纯注释行也不算。
+#[test]
+fn zero_reader_struct_fields_stay_registered_in_capabilities() {
+    // (字段名, 归属 crate, 能力键, limitation 键)
+    const CASES: [(&str, &str, &str, &str); 4] = [
+        (
+            "volatility_bps",
+            "qx-risk",
+            "canonical_order_risk_decision",
+            "risk_snapshot_carries_fields_no_decision_reads",
+        ),
+        (
+            "net_exposure",
+            "qx-risk",
+            "canonical_order_risk_decision",
+            "risk_snapshot_carries_fields_no_decision_reads",
+        ),
+        (
+            "max_drawdown_raw",
+            "qx-xingban",
+            "local_backtest",
+            "backtest_report_max_drawdown_raw_has_no_reader",
+        ),
+        (
+            "permission_scope",
+            "qx-scheduler",
+            "paper_execution",
+            "job_spec_declaration_fields_have_no_production_reader",
+        ),
+    ];
+    let capabilities = workspace_source("maturity/capabilities.yaml");
+    for (field, owner, capability, limitation) in CASES {
+        let declaration = format!("{field}:");
+        let readers = all_crate_production_sources()
+            .into_iter()
+            .filter(|path| !path_under_crate(path, owner))
+            .filter(|path| {
+                let source = std::fs::read_to_string(path).unwrap();
+                source.lines().any(|line| {
+                    let trimmed = line.trim_start();
+                    !trimmed.starts_with("//")
+                        && line.contains(field)
+                        && !line.contains(&declaration)
+                })
+            })
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>();
+        let registered = limitation_registered(&capabilities, capability, limitation);
+        assert_eq!(
+            registered,
+            readers.is_empty(),
+            "字段 `{field}`（{owner}）的生产读者清单与 capabilities limitation `{limitation}` \
+             必须同进同退：现在读者={readers:?}，登记={registered}"
+        );
+    }
+}

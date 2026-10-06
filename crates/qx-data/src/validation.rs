@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ValidationReport {
+    /// 被校验的行数。信息性格：`PipelineOutcome` 的消费方只读 `valid()` 与 `errors`，
+    /// 仓库内**没有任何生产读者**读它（按 #118 先例保留，不登记为独立 limitation）。
     pub checked: usize,
     pub errors: Vec<String>,
 }

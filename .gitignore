@@ -25,4 +25,10 @@ python/**/*.egg-info/
 /baseline_*
 # 变异取证时临时放的门禁副本（跑完即删；崩溃留不下清理时也不该进版本库）
 /.gate_mut/
+# 沙箱 Windows 上绕过 GNU `link` 抢占 MSVC 的独立 target 目录（见 rust-msvc-build-windows 技能）
+/.cargo-target*/
+# 性能基线的本机读数：随机器变化，按轮记进 docs，不进版本库
+/benchmarks/results/
+# 助手工作区状态（记忆日志等）：属工具状态而非仓库资产，与 .idea/ / .vscode/ 同口径
+/.workbuddy-ai/
 

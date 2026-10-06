@@ -5,7 +5,7 @@
 1. `include/qianxing_strategy.h` 是稳定的 C ABI，适用于宿主进程内嵌或动态库插件。策略只产生 `OrderIntent`，不接触凭证、账户账本和交易所连接。
 2. `examples/jsonl_strategy.cpp` 是独立进程示例，使用与 Python 相同的版本化 JSONL 协议。编译后在运行时配置 `external_executable`、`external_args` 和可选的 `external_env`，即可复用 Strategy Worker 的超时、崩溃隔离、RiskGate、OMS、审计和重试边界。
 
-独立进程要求：JSONL 模式每行读一个 `StrategyContractInput`，每行输出 `{"ok":true,"output":...}`；传入 `--protocol framed_json` 时使用 QXSF 版本化二进制分帧（24 字节头、长度上限、序号、CRC32）；传入 `--protocol shared_memory_json` 时通过 `--input-ring`/`--output-ring` 使用 Rust 创建的 QXRB 双向 SPSC mmap ring。标准输出只能写协议，日志写标准错误。`nlohmann/json` 仅用于示例，不是框架运行时依赖。
+独立进程要求：JSONL 模式每行读一个 `StrategyContractInput`，每行输出 `{"ok":true,"output":...}`；传入 `--protocol framed_json` 时使用 QXSF 版本化二进制分帧（24 字节头、长度上限、序号、CRC32）；传入 `--protocol shared_memory_json` 时通过 `--input-ring`/`--output-ring` 使用 Rust 创建的 QXRB 双向 SPSC mmap ring；这条传输没有 stdin 可关，必须同时传 `--parent-pid <驱动进程 pid>`，worker 每秒探一次该进程是否还在，父进程消失就以退出码 0 收摊（不传则不检查，与 Python worker 同口径）。标准输出只能写协议，日志写标准错误。`nlohmann/json` 仅用于示例，不是框架运行时依赖。
 
 `include/qianxing_ring.hpp` 提供 C++17 的跨平台文件映射和 QXRB 读写实现；Ring 仍要求严格单生产者/单消费者，策略进程只处理 QXSF 帧，不得直接访问凭证、Venue 或 Ledger。
 

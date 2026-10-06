@@ -1,11 +1,9 @@
 //! 外部适配器：把 REST/HTTP 事实转换为 Provider/Venue 统一契约。
 //!
-//! 本模块只提供**共享的传输层**（HTTP/TLS/WebSocket 客户端、对账工具）与对外
-//! 契约 `pub use`；供应商协议实现各自住在 `binance`/`ccxt` 子模块里。适配器不能
-//! 直接改 Ledger。网络错误按“结果未知”处理；成功响应才生成 Accepted，成交只能
-//! 由对应供应商的用户流回报进入事实事件（V12 §16：原先这里还有一套没有任何
-//! 装配读者的通用 `RestVenue`/`RestProvider`/`RequestSigner` 脚手架，已随其
-//! 平行去重、平行限流与平行 reconcile 纪律一并删除，避免第二条入账入口）。
+//! 本模块只提供**共享的传输层**（HTTP/TLS/WebSocket 客户端、对账工具）与对外契约 `pub use`，
+//! 供应商协议各自住在 `binance`/`ccxt` 子模块里。适配器不能直接改 Ledger：网络错误按“结果未知”
+//! 处理，成功响应才生成 Accepted，成交只能由供应商用户流回报进入事实事件（V12 §16 删掉了无装配
+//! 读者的通用 `RestVenue` 脚手架，避免第二条入账入口）。
 
 use qx_core::{Order, OrderStatus};
 use qx_zhenlu::VenueOrderSnapshot;
@@ -16,7 +14,7 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod binance;
 mod ccxt;
@@ -170,7 +168,7 @@ impl TlsWebSocketUserStream {
             .stream
             .write_all(request.as_bytes())
             .map_err(|error| error.to_string())?;
-        let response = read_header_block(&mut session.stream)?;
+        let response = read_header_block(&mut session.stream, timeout)?;
         validate_websocket_handshake(&response, &key)?;
         Ok(session)
     }
@@ -217,10 +215,8 @@ impl TcpHttpTransport {
     }
 }
 
-/// 基于 rustls 的 TLS HTTP/1.1 传输。
-///
-/// 默认使用编译时 Mozilla 根证书和主机名校验；不提供跳过证书校验的开关，
-/// 测试或私有 CA 应通过 `with_config` 显式提供验证配置。
+/// 基于 rustls 的 TLS HTTP/1.1 传输：默认用编译时 Mozilla 根证书并校验主机名，
+/// 不提供跳过证书校验的开关；测试或私有 CA 走 `with_config` 显式提供验证配置。
 #[derive(Clone)]
 pub struct TlsHttpTransport {
     timeout: Duration,
@@ -274,7 +270,7 @@ impl HttpTransport for TlsHttpTransport {
         stream
             .write_all(request_text.as_bytes())
             .map_err(|error| error.to_string())?;
-        let bytes = read_capped_response(&mut stream, MAX_HTTP_RESPONSE_BYTES)?;
+        let bytes = read_capped_response(&mut stream, MAX_HTTP_RESPONSE_BYTES, self.timeout)?;
         parse_http_response(&String::from_utf8_lossy(&bytes))
     }
 }
@@ -304,10 +300,14 @@ fn format_http_request(request: &HttpRequest) -> String {
     )
 }
 
-fn read_header_block<R: Read>(reader: &mut R) -> Result<String, String> {
+fn read_header_block<R: Read>(reader: &mut R, budget: Duration) -> Result<String, String> {
     let mut bytes = Vec::new();
+    let mut byte = [0_u8; 1];
+    let started = Instant::now();
     loop {
-        let mut byte = [0_u8; 1];
+        if started.elapsed() >= budget {
+            return Err("WebSocket 握手响应整体超时".into());
+        }
         reader
             .read_exact(&mut byte)
             .map_err(|error| error.to_string())?;
@@ -402,18 +402,15 @@ enum FramePoll {
     Idle,
 }
 
-/// 单条服务端帧的长度上限。
+/// 单条服务端帧的长度上限，与一条拼好消息的总长上限：帧长各自有闸门，但分片可以一直续，
+/// 只卡帧长的话一条永不置 `fin` 的分片序列就能把拼帧缓冲吃到耗尽。
 const MAX_WEBSOCKET_FRAME_BYTES: u64 = 16 * 1024 * 1024;
-/// 一条拼好的消息的长度上限：帧长各自有闸门，但分片可以一直续，只卡帧长的话
-/// 一条永不置 `fin` 的分片序列就能把拼帧缓冲吃到耗尽。
 const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
-/// 一次 `poll_websocket_message` 里最多消费多少条帧。调用方的停机令牌只在 poll
-/// 返回之后才读得到（`binance.rs` 的 `while !should_stop()`），对端持续塞 ping 或
-/// 续帧时这条上限是这条循环唯一的出口。
+/// 一次 `poll_websocket_message` 里最多消费多少条帧：调用方的停机令牌只在 poll 返回之后
+/// 才读得到（`binance.rs` 的 `while !should_stop()`），对端持续塞 ping 或续帧时这条是唯一的出口。
 const MAX_WEBSOCKET_FRAMES_PER_POLL: usize = 64;
 
-/// 套接字读超时不是断链：`set_read_timeout` 之后 `read_exact` 会以 `WouldBlock`/`TimedOut`
-/// 返回，把它当成会话故障会让"连着但没数据"的账户在几个窗口内被判死。
+/// 套接字读超时不是断链：`set_read_timeout` 之后 `read_exact` 以 `WouldBlock`/`TimedOut` 返回，把它当成会话故障会让"连着但没数据"的账户在几个窗口内被判死。
 fn is_read_window_expired(error: &std::io::Error) -> bool {
     matches!(
         error.kind(),
@@ -421,12 +418,9 @@ fn is_read_window_expired(error: &std::io::Error) -> bool {
     )
 }
 
-/// 从字节流里拼出一条完整消息，并把"读窗到期"的两种位置分开：还没有半截消息时是
-/// 空闲（链路仍在），已经开始收消息时是故障（跨帧串流会把下一条帧读成这条的尾部）。
-/// 独立成泛型函数是因为 `TlsWebSocketUserStream` 的流字段是具体 TLS 类型，挂在方法上
-/// 的这条分支构造不出来 —— 变异把中途超时降级成空闲时全树仍绿。
-/// 循环的两个上限（消息总长、单次 poll 的帧数）是这条路径唯一的退出保证：见
-/// `MAX_WEBSOCKET_MESSAGE_BYTES` 与 `MAX_WEBSOCKET_FRAMES_PER_POLL`（V13 R2 第十四遍 #213）。
+/// 从字节流里拼出一条完整消息，并把"读窗到期"的两种位置分开：还没有半截消息时是空闲（链路仍在），已经开始
+/// 收消息时是故障（跨帧串流会把下一条帧读成这条的尾部）。独立成泛型函数是因为 `TlsWebSocketUserStream` 的流字段
+/// 是具体 TLS 类型，挂在方法上的这条分支构造不出来——变异把中途超时降级成空闲时全树仍绿。两个上限是唯一退出保证（V13 R2 #213）。
 fn poll_websocket_message<R: Read + Write>(reader: &mut R) -> Result<WebSocketPoll, String> {
     let mut message = None;
     let mut consumed_frames = 0_usize;
@@ -629,43 +623,49 @@ impl HttpTransport for TcpHttpTransport {
         stream
             .write_all(request_text.as_bytes())
             .map_err(|error| error.to_string())?;
-        let bytes = read_capped_response(&mut stream, MAX_HTTP_RESPONSE_BYTES)?;
+        let bytes = read_capped_response(&mut stream, MAX_HTTP_RESPONSE_BYTES, self.timeout)?;
         parse_http_response(&String::from_utf8_lossy(&bytes))
     }
 }
 
-/// 一次 HTTP 响应的字节上限。`set_read_timeout` 只卡**单个读窗口**、每读到一块就复位，
-/// 所以一条慢速滴水的上游能借这个复位把连接无限期续下去、把响应缓冲一路吃到内存耗尽；
-/// 这条总量界是 `TlsHttpTransport`/`TcpHttpTransport` 两条读链唯一的出口，与
-/// `MAX_WEBSOCKET_MESSAGE_BYTES` 同族（V13 R4）。
+/// 一次 HTTP 响应的两道闸：`MAX_HTTP_RESPONSE_BYTES` 挡内存、`budget` 挡时间。`set_read_timeout`
+/// 每读到一块就复位，滴水的上游能借它把连接无限续期，字节界单独存在时这条读链没有出口（V13 R17-c）。
 const MAX_HTTP_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
-/// 读到 EOF，但把总量卡在 `limit`：`take` 多放行一字节，读到第 `limit + 1` 就是越界——
-/// 宁可提前中止也不无界增长。生产调用点传 `MAX_HTTP_RESPONSE_BYTES`；把上限做成参数只为
-/// 让越界那一臂能在内存 `Cursor` 上用几字节测到，而不是为一颗判据去分配 16 MiB。
-fn read_capped_response<R: Read>(reader: &mut R, limit: usize) -> Result<Vec<u8>, String> {
+/// 两臂都提前中止：越界与超时都不等于无界增长。上限与截止做成参数，只为让判据能在内存 `Cursor` 上测到。
+fn read_capped_response<R: Read>(
+    reader: &mut R,
+    limit: usize,
+    budget: Duration,
+) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
-    reader
-        .by_ref()
-        .take(limit as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
-    if bytes.len() > limit {
-        return Err(format!("HTTP 响应超过 {limit} 字节上限，连接已中止"));
+    let mut buffer = [0_u8; 8192];
+    let started = Instant::now();
+    loop {
+        if started.elapsed() >= budget {
+            return Err("HTTP 响应整体截止已到，连接已中止".into());
+        }
+        let size = reader
+            .read(&mut buffer)
+            .map_err(|error| error.to_string())?;
+        if size == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..size]);
+        if bytes.len() > limit {
+            return Err(format!("HTTP 响应超过 {limit} 字节上限，连接已中止"));
+        }
     }
     Ok(bytes)
 }
 
-/// CCXT worker 单行的字节上限。泵线程每次只从子进程 stdout 取**一行**，而 `read_line` 会一直
-/// 往同一个 `String` 里长：子进程少写一个换行符就能把本进程吃到内存耗尽，上面那条响应总量界
-/// 管不到它（那条管一次 HTTP 响应的总量，这条管一根常驻管道的单条应答）。取与响应界同一格数量级，
-/// 因为一行本就是一条 JSON 应答（V13 R5）。
+/// CCXT worker 单行的字节上限：泵线程每次只从子进程 stdout 取**一行**，而 `read_line` 会一直往
+/// 同一个 `String` 里长，子进程少写一个换行符就能把本进程吃到内存耗尽。取与响应界同一格数量级（V13 R5）。
 const MAX_WORKER_LINE_BYTES: usize = MAX_HTTP_RESPONSE_BYTES;
 
 /// 读到换行为止，但把这一行卡在 `limit`：`take` 多放行一字节，读到第 `limit + 1` 字节即越界。
-/// `Ok(None)` 是管道 EOF（子进程已经退出），`Err` 是这一行长到必须中止整条泵——两者都必须让
-/// 调用侧看见，静默丢掉一行就等于把"应答没读到"说成"worker 什么都没发生"。
-/// 上限做成参数只为让越界那一臂能在内存 `Cursor` 上用几字节测到（同 `read_capped_response`）。
+/// `Ok(None)` 是管道 EOF（子进程已退出），`Err` 是这一行长到必须中止整条泵——两者都得让调用侧
+/// 看见，静默丢一行等于把"应答没读到"说成"worker 什么都没发生"。上限做成参数只为能在 `Cursor` 上测。
 fn read_capped_line<R: Read>(
     reader: &mut BufReader<R>,
     limit: usize,

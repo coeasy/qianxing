@@ -1,6 +1,26 @@
 # Changelog
 
 
+### 发布审计第二轮（2026-10-06）· 换角度 A/B/C · API 前后端 / 配置键 / 错误路径与状态机
+
+**口径**：同第一轮（主体流程全联通、无断链、无孤儿逻辑、无死循环、前后端贯通），但换三个**不同**的扫描角度，避免与第一轮重复。详见 docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md 第 14 节。
+
+- **第 A 轮 · API 前后端 + trait 方法零读者（1 条新登记）**：17 条路由与 deploy/README.md 端点表 17 个 token 逐一相等（门禁 `api_endpoint_table_routes` 双侧钉住）。全量扫 98 个 trait 方法，7 个无生产调用点——5 个 `JobQueueBackend` 方法已登记；新登记 `outbox_and_consumer_projection_contract_methods_have_no_production_caller`：`OutboxStore::append_outbox`（生产走各后端固有 `append`）与 `TransactionalConsumerStateStore::load_projection`（唯一消费者是契约用例），与已登记的 job_queue 那条同形。静态门禁的 `zero_reference_public_surface_check` 只扫 `pub fn`/`pub const`，trait 方法对它不可见（已登记盲区）。
+- **第 B 轮 · 配置键接线（零发现）**：`runtime_config/schema.rs` 的 63 个字段全部有生产引用；deploy 下 18 份 runtime 模板的全部键都能对应到生产结构体字段（`ops` 是 map 键、`_comment` 由 `strip_config_comments` 剥离）；`deploy_template_coverage` 动态枚举 18==18，无漏检模板。
+- **第 C 轮 · 错误路径 / fail-closed / 状态机（1 条新登记）**：`OrderStatus` 11 变体全部从 `PendingSubmit` 可达、7 个非终态全部有出边、无死锁状态；两处 `unreachable!`（`qx-runtime/src/lib.rs` 的 MarketQuote 臂、`qx-cli/src/strategy_host.rs` 的共享内存臂）经核实确实不可达；160 处 `let _ = ` 全为尽力而为语义；`StrategyContract{Input,Intent,Output}` 与 Python 侧逐字段相等。新登记 `legacy_no_spec_notional_fallback_synthesizes_a_spot_spec_instead_of_failing_closed`：`MaxNotionalRule::check` 缺 `instrument_spec` 时合成「现货 1:1」规格而非 fail-closed（源码两处 TODO 同源）。
+- **本轮实测**：`python tools/check_architecture.py` **662 项全绿**（改动仍全部加性）。
+
+
+### 发布审计三轮（2026-10-06）· 连通性 / 孤儿逻辑 / 终止性
+
+**口径**：主体流程全部联通、核心链路无断链、无孤儿逻辑、无死循环、前后端贯通；每轮把当轮发现全部处理完（修掉，或按仓库先例登记为 capabilities.yaml limitation）才进下一轮。详见 docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md 第 13 节。
+
+- **第 1 轮 · 连通性 / 断链（2 处已修）**：核心事件链（EventLog → pipeline → Ledger/Oms）完全连通，无断链。命中 2 处 README 过度声明并按代码事实改口：`qx-genglu` 行去掉「绩效指标、归因」（分别在 qx-xingban / qx-cli / qx-runtime），`qx-control` 行去掉「事件订阅游标」（在 qx-api）。`EventKind::Settle` 写侧「孤儿」经核实**不是断链**：它是派发循环写的结算标记事件，运行期 pipeline 刻意按 no-op 匹配，状态变更由同段落账簿分录单独承载。
+- **第 2 轮 · 孤儿逻辑（3 条新登记 + 1 颗新判据）**：字段级零读者是仓库已登记的已知缺口（#174，静态门禁只扫类型与 pub fn/pub const，看不见结构体字段）。按 #118/#170/#171 先例「保留不删 + 登记 limitation + 双向钉住」，新登记 `risk_snapshot_carries_fields_no_decision_reads`（canonical_order_risk_decision）、`backtest_report_max_drawdown_raw_has_no_reader`（local_backtest）、`job_spec_declaration_fields_have_no_production_reader`（paper_execution）三条 limitation；新增双向判据 `zero_reader_struct_fields_stay_registered_in_capabilities`（crates/qx-cli/src/tests/zero_reader_fields.rs）；在 qx-risk / qx-xingban / qx-scheduler / qx-data 的相应字段留下「零生产读者」路标（受行数预算只降不升约束，qx-scheduler/qx-xingban 用行尾注释、净增 0 行）。
+- **第 3 轮 · 终止性 / 死循环 / 无界增长（2 条新登记）**：全部循环与阻塞调用有界，未发现死循环。已登记：EventLog 无保留策略、审计链无轮转、进程日志无轮转、内存投影共享 EventLog 保留缺口、成交去重台账刻意无界（由 bounded_growth_and_reap_check 守「只增」）。新登记 `scheduler_run_history_grows_without_retention`（paper_execution）：Scheduler.{runs, completed} 只增不减、落盘重启不缩小、dispatch 每 tick 遍历 runs() 判超时；`consumer_state_processed_ids_and_dead_letters_grow_without_retention`（storage_consistency_contract）：文件消费者 processed_event_ids / dead_letters 只增不减，SQLite/Postgres 同形状。
+- **本轮实测**：`python tools/check_architecture.py` **662 项全绿**（三轮改动全部加性、未增删判据数量）；`cargo fmt` 改动过的 5 个 crate `--check` 无差异；新判据 `zero_reader_fields` 模块 **4/4 通过**；工作区用例与首轮同基线（少数失败为沙箱 os error 231 子进程环境噪声，非代码面）。
+
+
 ### V13 R14 + R15 + R16 收口（2026-10-04）· 第 17-19 轮三扫 · 数值精度 / 时间与时钟 / 序列化与 schema 演进
 
 **三扫新角度（不重复 R8-R13 已查的面）**：R14 数值与精度面（u64 溢出回绕、除零、f64 舍入方向、跨语言同一数值的表示一致性）、R15 时间与时钟面（墙钟/单调时钟混用、ms/s 单位混淆、跨进程时间戳比较、审计链 ts 单调性、NTP 回拨行为）、R16 序列化与 schema 演进面（JSON 数值精度、字段名漂移与别名、缺失字段的默认值语义与 fail-closed 一致性、可选字段与空值的区分）。

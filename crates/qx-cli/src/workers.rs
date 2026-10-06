@@ -32,8 +32,7 @@ pub(crate) fn run_scheduler_worker(path: &Path, worker_id: &str, once: bool) -> 
             Some(runtime_timestamp_ms()),
         )?;
         loop {
-            // 生产循环里唯二不读停机令牌的两次（V11 S2）：其余十处 worker 循环都以
-            // `context.should_stop()` 收口，`once` 之外的唯一出口是 `?` 抛错。
+            // 停机令牌是这条循环唯一"非错误"的出口：S2 之前它只能靠 `?` 抛错或 `once` 结束。
             if context.should_stop() {
                 break;
             }
@@ -72,7 +71,7 @@ pub(crate) fn run_scheduler_worker(path: &Path, worker_id: &str, once: bool) -> 
                 );
                 break;
             }
-            thread::sleep(Duration::from_millis(interval_ms.min(1_000)));
+            context.sleep_ms(interval_ms);
         }
         Ok(())
     })?;

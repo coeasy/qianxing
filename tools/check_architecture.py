@@ -1678,6 +1678,22 @@ def _code_body(path: str, signature: str) -> str:
     return _fn_body(production_text((ROOT / path).read_text(encoding="utf-8")), signature)
 
 
+def _ordered(text: str, *needles: str) -> bool:
+    """若干锚点必须按给定顺序先后出现；任一格缺失就是「这一条不成立」，不是异常。
+
+    直接拿 `text.index(...)` 比大小的臂，锚点被改掉时抛的是 ValueError，整份门禁一起崩掉，
+    读数从"红"变成"没结论"。本轮枪击实测到的正是这一格：撤掉排空循环的字节上界，崩的是
+    门禁本身而不是那一项判据。
+    """
+    position = -1
+    for needle in needles:
+        found = text.find(needle, position + 1)
+        if found < 0:
+            return False
+        position = found
+    return True
+
+
 def control_audit_chain_check() -> None:
     """控制面事务必须把审计尾部追加进哈希链（V12 §16 断链：链曾经无人写）。"""
     blind = [
@@ -1754,6 +1770,177 @@ def api_accept_loop_exit_check() -> None:
         "accept 停机用例在位：明文先服务后停机、明文零连接可停、mTLS 可停",
         f"缺用例 {[name for name in API_ACCEPT_LOOP_CASES if f'fn {name}(' not in cases]}",
     )
+
+
+ADAPTER_HTTP_FILE = "crates/qx-adapter/src/lib.rs"
+ADAPTER_HTTP_TEST_FILE = "crates/qx-adapter/src/tests.rs"
+SUPERVISOR_CONTEXT_FILE = "crates/qx-runtime/src/supervision/supervisor.rs"
+TOPOLOGY_VALIDATION_FILE = "crates/qx-runtime/src/runtime_config/topology_validation.rs"
+HTTP_DEADLINE_CASES = (
+    "dribbling_client_is_cut_by_the_overall_request_deadline_not_by_the_per_read_timeout",
+    "a_request_inside_the_deadline_still_reads_through_in_one_piece",
+    "a_dribbling_refused_peer_cannot_hold_the_accept_thread_past_the_drain_budget",
+)
+ADAPTER_WALL_CLOCK_CASES = (
+    "dripping_upstream_is_cut_by_the_wall_clock_not_by_the_byte_cap",
+)
+
+
+def transport_read_deadline_check() -> None:
+    """三条上游读链必须有**整体**时间截止，且截止在循环里逐轮生效（V13 R17-a/b/c）。
+
+    单次读超时（qx-api 的 100 毫秒 `configure_connection`、qx-adapter 的 `set_read_timeout`）
+    **每读到一块就复位**：一个每 99 毫秒滴一字的对端永远追不上它。三处症状不同——请求读链把
+    一条连接线程加一份 `ConnectionBudget` 额度磨到 1 MiB 总量闸（约 26 小时）才放、拒绝排空链
+    跑在唯一的 accept 线程上可以被一路滴、适配器两条上游读链把响应一路吃下去——缺口是同一句
+    话：**只有单次读超时，没有整体截止**。所以每格判据钉的都是顺序（截止判定排在读取之前），
+    而不是「这条读链上有 timeout」，后者注释里就写着。
+    """
+    transport = production_code_text(ROOT / API_TRANSPORT_FILE)
+    check(
+        "pub(crate) const HTTP_REQUEST_DEADLINE: Duration = Duration::from_secs(5);" in transport
+        and "pub(crate) const HTTP_REFUSE_DRAIN_DEADLINE: Duration = Duration::from_millis(200);"
+        in transport,
+        "两条 HTTP 侧截止各自有名有常量（5 秒请求界 / 200 毫秒拒绝排空界）",
+        "64 KiB 是字节上界不是时间上界：排空段没有总预算时，一条 socket 就能占死 accept 线程",
+    )
+    delegating = _code_body(API_TRANSPORT_FILE, "fn read_request<S")
+    read_body = _code_body(API_TRANSPORT_FILE, "fn read_request_until")
+    check(
+        "read_request_until(stream, Instant::now() + HTTP_REQUEST_DEADLINE)" in delegating
+        and "stream.read(&mut buffer)" not in delegating,
+        "read_request 只负责给 read_request_until 递上截止（读取形状只有一处，界不会在两处分叉）",
+        "两处各读一遍就有一处忘判截止——本轮之前正是这个形状：读链只有单次超时",
+    )
+    check(
+        _ordered(
+            read_body,
+            "loop {",
+            "if Instant::now() >= deadline",
+            "let count = stream.read(&mut buffer)?;",
+        ),
+        "read_request_until 每轮先判整体截止再做本轮读（截止在循环之内，不是入口判一次）",
+        "1 MiB 按 99 毫秒一字滴完约 26 小时，期间占着一条连接线程与一份连接预算，预算格占满后整站对外 503",
+    )
+    refused = _code_body(API_TRANSPORT_FILE, "fn refuse_connection")
+    check(
+        refused.count("write_http_response(&mut writer, response, &[])") == 1
+        and "stream.shutdown(std::net::Shutdown::Write)" in refused
+        and "Instant::now() + HTTP_REFUSE_DRAIN_DEADLINE" in refused
+        and "while drained < 64 * 1024 {" in refused,
+        "拒绝连接：写响应 -> 半关写方向 -> 带预算与字节上界地排空",
+        "带未读缓冲直接 close 会以 RST 收场，客户端读到的是「连接被重置」而不是那条有名字的 503",
+    )
+    check(
+        _ordered(
+            refused,
+            "stream.shutdown(std::net::Shutdown::Write)",
+            "Instant::now() + HTTP_REFUSE_DRAIN_DEADLINE",
+            "while drained < 64 * 1024 {",
+        ),
+        "排空必须在半关之后、且 200 毫秒预算从开始排空那刻起算",
+        "反过来先排空就两边互等；预算若含写出与半关，正常拒绝也会把排空窗口提前吃光",
+    )
+    check(
+        refused.count("if Instant::now() >= deadline") == 1
+        and _ordered(
+            refused,
+            "while drained < 64 * 1024 {",
+            "if Instant::now() >= deadline",
+            "match writer.read(&mut discard)",
+        ),
+        "排空循环每轮自判截止（refuse 走的线程从没装过 read_timeout，滴字节时读不出错）",
+        "只在入口判一次的话，每 99 毫秒滴一字的对端能让这条循环永远追不上截止",
+    )
+    adapter = production_code_text(ROOT / ADAPTER_HTTP_FILE)
+    handshake = _code_body(ADAPTER_HTTP_FILE, "fn read_header_block")
+    response = _code_body(ADAPTER_HTTP_FILE, "fn read_capped_response")
+    check(
+        "fn read_header_block<R: Read>(reader: &mut R, budget: Duration)" in adapter
+        and "read_header_block(&mut session.stream, timeout)?" in adapter,
+        "WSS 握手块的预算做成参数、调用点把 timeout 交进去",
+        "只剩 `bytes.len() > 64 * 1024` 一臂时，滴满 64 KiB 之前这条链没有出口，而字节界只挡内存不挡时间",
+    )
+    for label, body, reader_call in (
+        ("握手块", handshake, "read_exact(&mut byte)"),
+        ("响应体", response, ".read(&mut buffer)"),
+    ):
+        check(
+            _ordered(
+                body,
+                "let started = Instant::now();",
+                "loop {",
+                "if started.elapsed() >= budget",
+                reader_call,
+            ),
+            f"适配器上游{label}读链：整体预算逐轮判且排在读取之前",
+            "set_read_timeout 每读到一块就复位，滴水的上游能借它把连接无限续期，所以时间界要在循环之内",
+        )
+    check(
+        adapter.count("read_capped_response(&mut stream, MAX_HTTP_RESPONSE_BYTES, self.timeout)")
+        == 2,
+        "两条 HTTP 读链（TLS 与明文）都把 self.timeout 交给整体预算，不是一处补一处漏",
+        "两条 send 共用同一个读函数：只补一条，另一条照旧无界读下去，而走哪条由运行时的 scheme 决定",
+    )
+    api_cases = (ROOT / API_TRANSPORT_FILE).read_text(encoding="utf-8")
+    missing_api = [name for name in HTTP_DEADLINE_CASES if f"fn {name}(" not in api_cases]
+    check(
+        not missing_api,
+        "HTTP 截止用例在位：滴字节的请求被整体截止切断、界内请求照旧读通、滴字节的被拒对端拖不住 accept 线程",
+        f"缺用例 {missing_api}（逐颗点名，缺哪臂就红哪臂）",
+    )
+    adapter_cases = (ROOT / ADAPTER_HTTP_TEST_FILE).read_text(encoding="utf-8")
+    missing_adapter = [
+        name for name in ADAPTER_WALL_CLOCK_CASES if f"fn {name}(" not in adapter_cases
+    ]
+    check(
+        not missing_adapter,
+        "适配器上游时间臂用例在位（握手块与响应体两条臂，外加界内正向对照）",
+        f"缺用例 {missing_adapter}（少了正向对照就分不出「补上截止」与「把所有上游一律切断」）",
+    )
+
+
+def stop_aware_worker_tick_sleep_check() -> None:
+    """worker 的节拍等待要切片并片间问停机令牌，上界仍由配置校验域给（V13 R17-f）。
+
+    `context.sleep_ms(interval_ms)` 原先整段睡满：一次 SIGTERM 要等满这一拍才被读到，而
+    `qx-runtime` 那边已经把停机令牌接进了循环，看上去「能停」，实际多久才停由 `tick_interval_ms`
+    决定（校验域上限 300 秒）。同一轮拆掉的是 `interval_ms.min(1_000)`：那格钳位让配置里写的
+    节拍在执行面上什么都不约束（L4 同族），现在等待照抄配置、总长上界由校验域给。
+    """
+    context_body = _code_body(SUPERVISOR_CONTEXT_FILE, "pub fn sleep_ms")
+    check(
+        _ordered(
+            context_body,
+            "while slept_ms < total_ms && !self.should_stop()",
+            "(total_ms - slept_ms).min(200)",
+            "std::thread::sleep",
+        ),
+        "WorkerContext::sleep_ms 按 200 毫秒切片、每片之前问停机令牌",
+        "判定排在睡之后，最坏一次 SIGTERM 要多等一整片；整段睡满则最坏等满 300 秒才应停",
+    )
+    check(
+        "std::thread::sleep(std::time::Duration::from_millis(total_ms))" not in context_body
+        and "while slept_ms < total_ms {" not in context_body,
+        "sleep_ms 没退化成整段睡满，也没退化成不读令牌的循环（两条旧形状各钉一次）",
+        "这两条臂读的的位置不同：切片与终止条件是同一个 while，睡多久与问不问令牌是两处，并一条就会漏掉第二种改法",
+    )
+    tick_body = _code_body(SCHEDULER_WORKER_FILE, "fn run_scheduler_worker")
+    check(
+        "let interval_ms = config.scheduler.tick_interval_ms;" in tick_body
+        and "context.sleep_ms(interval_ms);" in tick_body
+        and "interval_ms.min(" not in tick_body,
+        "调度 worker 照抄 tick_interval_ms 等待，不再就地钳成 1 秒",
+        "钳位让那格配置在执行面上什么都不约束：运维按配置算的节拍与实际节拍是两回事（L4 同族）",
+    )
+    check(
+        "if self.scheduler.tick_interval_ms == 0 || self.scheduler.tick_interval_ms > 300_000"
+        in production_code_text(ROOT / TOPOLOGY_VALIDATION_FILE),
+        "tick_interval_ms 的 1..=300000 校验域仍在位（切片等待的总长上界以此为据）",
+        "去掉校验域，切片只保证「每 200 毫秒问一次」，而这个数最终要睡多久就没有上界了",
+    )
+
+
 
 
 def health_snapshot_knob_check() -> None:
@@ -3796,15 +3983,36 @@ def scheduler_dispatch_honesty_check() -> None:
 
     loader = _fn_body(tight(SCHEDULER_DISPATCH_FILE), "pub(crate)fnload_scheduler_state")
     shape = _fn_body(tight(SCHEDULER_DISPATCH_FILE), "pub(crate)fnunsupported_dispatch_shape")
+    declared = _fn_body(tight(SCHEDULER_DISPATCH_FILE), "fndeclared_jobs")
     check(
         "matches!(&job.trigger,Trigger::Cron(_))" in shape
         and "job.window!=JobWindow::Any" in shape
         and "只跑Cron触发且window=Any" in shape
-        and "unsupported_dispatch_shape" in loader
-        and "returnErr(refused.join" in loader
-        and loader.index("returnErr(refused.join") < loader.index(".register(job)"),
+        and "filter_map(unsupported_dispatch_shape)" in declared
+        and "returnErr(refused.join" in declared
+        and "declared_jobs(&jobs_path)?" in loader
+        and loader.index("declared_jobs(&jobs_path)?") < loader.index(".register(job)"),
         "装载闸门按运行时的真实能力拒形状，且拒绝发生在写入 Scheduler 状态之前",
         f"装载入口或形状判定被改动：{loader[:120]}",
+    )
+    # 形状闸门搬到声明读取口之后，第二次启动也必须经过它；分叉判据管住另外三个方向
+    # （V13 R17-e：作业集合只在状态缺失时重建，声明改动不会自动生效）。
+    drift = _fn_body(tight(SCHEDULER_DISPATCH_FILE), "fnreject_job_set_drift")
+    check(
+        "reject_job_set_drift(&scheduler,&declared,&jobs_path)?" in loader
+        and all(
+            needle in drift
+            for needle in (
+                "新增的声明从未进入调度状态",
+                "改动过的声明从未生效",
+                "不在声明文件里",
+                "重名job_id",
+                "scheduler.len()>declared_ids.len()",
+            )
+        )
+        and drift.index("declared_ids.len()!=declared.len()") < drift.index("forjobindeclared"),
+        "第二次启动会把「声明与状态分叉」判成新增/改动/删掉/重名四个方向并当场拒，而不是让状态里的旧作业集合照旧开跑",
+        f"分叉判据缺向或被改动：{drift[:160]}",
     )
     dispatch = _fn_body(tight(SCHEDULER_DISPATCH_FILE), "pub(crate)fndispatch_scheduled_jobs")
     check(
@@ -3830,14 +4038,20 @@ def scheduler_dispatch_honesty_check() -> None:
     )
     test_text = (ROOT / SCHEDULER_DISPATCH_TEST_FILE).read_text(encoding="utf-8")
     check(
-        len(re.findall(r"#\[test\]", test_text)) >= 3
+        len(re.findall(r"#\[test\]", test_text)) == 4
         and "Trigger::TradingCalendar" in test_text
         and "Trigger::Event(" in test_text
         and "JobWindow::Session" in test_text
         and "只跑 Cron 触发且 window=Any" in test_text
-        and "manifest.run_id.clear()" in test_text,
-        "四种被拒形状、被支持形状与非法 manifest 三类各有经过真实入口的用例",
-        f"用例数 {len(re.findall(r'#\[test\]', test_text))}；缺少的形状见判据文本",
+        and "manifest.run_id.clear()" in test_text
+        and "a_second_boot_that_disagrees_with_the_declaration_refuses_to_run" in test_text
+        and "新增的声明从未进入调度状态" in test_text
+        and "改动过的声明从未生效" in test_text
+        and "不在声明文件里" in test_text
+        and "重名 job_id" in test_text
+        and "声明未变的第二次启动不该被分叉判据拒绝" in test_text,
+        "四种被拒形状、被支持形状（含声明未变的第二次启动）、声明分叉四向与非法 manifest 各有经过真实入口的用例",
+        f"用例数 {len(re.findall(r'#\[test\]', test_text))}；缺少的形状或分叉判据见判据文本",
     )
     capabilities = (ROOT / "maturity" / "capabilities.yaml").read_text(encoding="utf-8")
     check(
@@ -10028,6 +10242,173 @@ def schema_defense_consistency_check() -> None:
     )
 
 
+BASELINE_FILE = ROOT / "maturity" / "baseline.yaml"
+BASELINE_MIN_FROZEN = 12
+BASELINE_IDENTITY_FIELDS = (
+    "version",
+    "git_commit",
+    "target_triple",
+    "profile",
+    "schema_registry_version",
+    "sha256",
+    "sbom",
+)
+
+
+def baseline_freeze_check() -> None:
+    """M0 基线冻结（docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md §7 M0）。
+
+    版本常量散在十几个 crate 里，改一处不影响另一处；把期望值收进 maturity/baseline.yaml 之后，
+    源码与台账任一侧漂移都会在这里变红。同一条判据顺带守住「发布版本三处一致」与「产物身份字段齐全」，
+    把 P2-4 发布供应链的前置条件从文档承诺变成会红的判据。
+    """
+    if not BASELINE_FILE.is_file():
+        check(
+            False,
+            "M0 基线冻结清单存在",
+            f"缺失 {BASELINE_FILE.relative_to(ROOT).as_posix()}",
+        )
+        return
+    text = BASELINE_FILE.read_text(encoding="utf-8")
+    entries = re.findall(
+        r'^\s{2}([a-z0-9_]+):\s*"([^"]+?)::([A-Z][A-Z0-9_]*)=([^"]+)"\s*$',
+        text,
+        re.MULTILINE,
+    )
+    check(
+        len(entries) >= BASELINE_MIN_FROZEN,
+        f"基线清单登记的冻结版本不少于 {BASELINE_MIN_FROZEN} 条",
+        f"只解析到 {len(entries)} 条（少登记一条就少一道牙齿）",
+    )
+    mismatches: list[str] = []
+    for ident, rel, const, expected in entries:
+        source = ROOT / rel
+        if not source.is_file():
+            mismatches.append(f"{ident}: 源文件不在盘上 {rel}")
+            continue
+        found = re.search(
+            rf"\bconst\s+{const}\s*:\s*[^=]+?=\s*([^;]+);",
+            source.read_text(encoding="utf-8"),
+        )
+        if found is None:
+            mismatches.append(f"{ident}: 源码里找不到常量 {const}")
+            continue
+        actual = found.group(1).strip().strip('"')
+        if actual != expected:
+            mismatches.append(f"{ident}: {const} 源码={actual} 基线={expected}")
+    check(
+        not mismatches,
+        "冻结版本与源码常量逐条一致（任一侧漂移即红）",
+        "；".join(mismatches),
+    )
+    cargo = re.search(
+        r"\[workspace\.package\][\s\S]*?\nversion\s*=\s*\"([^\"]+)\"",
+        (ROOT / "Cargo.toml").read_text(encoding="utf-8"),
+    )
+    pyproject = re.search(
+        r'^version\s*=\s*"([^"]+)"',
+        (ROOT / "python" / "pyproject.toml").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    baseline = re.search(r'^release_version:\s*"([^"]+)"', text, re.MULTILINE)
+    versions = {
+        "baseline": baseline.group(1) if baseline else None,
+        "cargo": cargo.group(1) if cargo else None,
+        "pyproject": pyproject.group(1) if pyproject else None,
+    }
+    check(
+        None not in versions.values() and len(set(versions.values())) == 1,
+        "发布版本三处一致（baseline / Cargo.toml / pyproject.toml）",
+        f"现读 {versions}",
+    )
+    missing_fields = [
+        field
+        for field in BASELINE_IDENTITY_FIELDS
+        if not re.search(rf"^\s*-\s*{field}\s*$", text, re.MULTILINE)
+    ]
+    check(
+        not missing_fields,
+        "发布产物身份字段齐全（version/commit/triple/profile/schema/sha256/sbom）",
+        f"缺 {missing_fields}",
+    )
+
+
+RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+
+
+def release_supply_chain_check() -> None:
+    """P2-4 发布供应链：一个 tag 必须产出可复现的 binary / wheel / C++ SDK + SHA256 + SBOM +
+    provenance，并挂到 Release。身份字段与 maturity/baseline.yaml 的 artifact_identity 同口径，
+    否则「可复现发布件」只是文档里的一个词。"""
+    if not RELEASE_WORKFLOW.is_file():
+        check(
+            False,
+            "发布工作流存在",
+            f"缺失 {RELEASE_WORKFLOW.relative_to(ROOT).as_posix()}",
+        )
+        return
+    text = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+    check(
+        re.search(r"^\s*tags:\s*$", text, re.MULTILINE) is not None and "v*" in text,
+        "发布工作流按 tag 触发（v*）",
+        "缺 tag 触发口径：没有它就只能手动发布，可复现性无从谈起",
+    )
+    required = {
+        "binary 构建": "cargo build --release --locked -p qx-cli",
+        "wheel 构建": "build_python_wheel.sh",
+        "C++ SDK 构建": "cmake --build",
+        "SHA256 清单": "sha256sum",
+        "SBOM": "sbom.json",
+        "构建来源证明": "attest-build-provenance",
+        "Release 发布": "gh release create",
+    }
+    missing = [name for name, token in required.items() if token not in text]
+    check(
+        not missing,
+        "发布工作流覆盖 binary/wheel/SDK/SHA256/SBOM/provenance/Release 七件",
+        f"缺 {missing}",
+    )
+    identity_fields = (
+        "version",
+        "git_commit",
+        "target_triple",
+        "profile",
+        "schema_registry_version",
+        "sha256",
+        "sbom",
+    )
+    missing_identity = [
+        field for field in identity_fields if f'"{field}"' not in text
+    ]
+    check(
+        not missing_identity,
+        "发布身份文件登记了 baseline.artifact_identity 的全部字段",
+        f"缺 {missing_identity}",
+    )
+
+
+BENCHMARK_DRIVER = ROOT / "benchmarks" / "run_baseline.py"
+
+
+def performance_baseline_check() -> None:
+    """M0 性能基线：驱动器必须存在，且 benchmarks/README.md 指向它。
+
+    基线最容易退化成「曾经写过一份文档」——驱动器被删、README 还留着那张表格。
+    两侧一起核对，删任一侧即红。
+    """
+    check(
+        BENCHMARK_DRIVER.is_file(),
+        "性能基线驱动器存在（benchmarks/run_baseline.py）",
+        "缺失即基线无从复现",
+    )
+    readme = ROOT / "benchmarks" / "README.md"
+    check(
+        readme.is_file() and "run_baseline.py" in readme.read_text(encoding="utf-8"),
+        "benchmarks/README.md 指向性能基线驱动器",
+        "README 与驱动器必须互相点名，否则基线退化成一句话",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -10057,6 +10438,8 @@ def main() -> int:
     launcher_pregate_check()
     schema_defense_consistency_check()
     api_accept_loop_exit_check()
+    transport_read_deadline_check()
+    stop_aware_worker_tick_sleep_check()
     health_snapshot_knob_check()
     strategy_intent_three_language_check()
     strategy_output_arm_diagnostics_check()
@@ -10129,6 +10512,9 @@ def main() -> int:
     report_readout_honesty_check()
     browser_admission_check()
     capabilities_check()
+    baseline_freeze_check()
+    release_supply_chain_check()
+    performance_baseline_check()
     line_budget_check()
     doc_citation_reachability_check()
     command_status_vocabulary_single_source_check()

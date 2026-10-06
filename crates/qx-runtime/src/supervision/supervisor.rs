@@ -37,6 +37,17 @@ impl WorkerContext {
         self.shutdown.is_requested()
     }
 
+    /// 带停机感知的等待：整段睡满会让一次 SIGTERM 等满这段时间才生效，所以按 200 毫秒
+    /// 切片、片间问令牌。上界来自 `scheduler.tick_interval_ms` 的校验域（1..=300000）。
+    pub fn sleep_ms(&self, total_ms: u64) {
+        let mut slept_ms = 0_u64;
+        while slept_ms < total_ms && !self.should_stop() {
+            let slice_ms = (total_ms - slept_ms).min(200);
+            std::thread::sleep(std::time::Duration::from_millis(slice_ms));
+            slept_ms += slice_ms;
+        }
+    }
+
     pub fn heartbeat(&self, now_ms: u64) -> Result<(), String> {
         self.health
             .lock()

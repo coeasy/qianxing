@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import struct
 import sys
@@ -36,20 +37,21 @@ def main() -> int:
         with SharedMemoryRing.create(input_path, capacity, slot_bytes) as input_ring, SharedMemoryRing.create(
             output_path, capacity, slot_bytes
         ) as output_ring:
+            ring_arguments = [
+                str(executable),
+                "--protocol",
+                protocol,
+                "--input-ring",
+                str(input_path),
+                "--output-ring",
+                str(output_path),
+                "--ring-capacity",
+                str(capacity),
+                "--ring-slot-bytes",
+                str(slot_bytes),
+            ]
             process = subprocess.Popen(
-                [
-                    str(executable),
-                    "--protocol",
-                    protocol,
-                    "--input-ring",
-                    str(input_path),
-                    "--output-ring",
-                    str(output_path),
-                    "--ring-capacity",
-                    str(capacity),
-                    "--ring-slot-bytes",
-                    str(slot_bytes),
-                ],
+                ring_arguments + ["--parent-pid", str(os.getpid())],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -115,6 +117,31 @@ def main() -> int:
                 value = json.loads(payload)
                 if value.get("ok") is not True:
                     raise RuntimeError(f"C++ strategy rejected request: {value}")
+                # 上一条应答出自"父进程还活着"的 worker，它不退就是对照；这里换一个已经
+                # 回收掉的 pid，worker 必须自己收摊并以 0 退出。非 0 说明它不是走父进程判定
+                # 死的，而是 ring 打不开之类的另一条出口（V13 R17-d）。
+                reaped = subprocess.Popen([sys.executable, "-c", "import os; os._exit(0)"], text=True)
+                reaped.wait(timeout=5)
+                orphan = subprocess.Popen(
+                    ring_arguments + ["--parent-pid", str(reaped.pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                try:
+                    orphan_code = orphan.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    orphan.kill()
+                    orphan.wait(timeout=2)
+                    captured = orphan.stderr.read() if orphan.stderr else ""
+                    raise RuntimeError(
+                        f"C++ shared ring worker outlived its declared parent: {captured}"
+                    )
+                captured = orphan.stderr.read() if orphan.stderr else ""
+                if orphan_code != 0:
+                    raise RuntimeError(
+                        f"C++ worker exited {orphan_code} instead of 0 on parent loss: {captured}"
+                    )
             finally:
                 process.terminate()
                 try:

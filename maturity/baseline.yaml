@@ -1,0 +1,52 @@
+# 牵星 Qianxing · M0 基线冻结清单（2026-10-06）
+#
+# 口径：schema / 规则集版本一旦写进本文件即视为「冻结」。此后任何改动必须同时改这里与源码，
+# 否则 tools/check_architecture.py 的 baseline_freeze_check 会当场变红。
+# 本文件是「设计意图 · 未排期」清单（docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md）
+# 中 M0「基线冻结」的第一份落地产物：把散落在各 crate 的版本常量收成一份机器可读、可门禁核对的台账。
+#
+# 冻结格式：<id>: "<源文件>::<Rust 常量>=<期望值>"
+#   - 值一律加引号，便于门禁按行解析（不引入 yaml 依赖）。
+#   - 只登记字面量常量；别名常量（如 BAR_FRAME_SCHEMA_VERSION = DATA_SCHEMA_VERSION）不单独登记，
+#     避免把「表达式」误当成「版本号」冻结。
+
+schema_version: 1
+updated_at: "2026-10-06"
+release_version: "0.1.0"
+
+# ---- 冻结的 schema 版本（u32 / u16 字面量） ----
+frozen_versions:
+  event_metadata: "crates/qx-core/src/event.rs::EVENT_METADATA_SCHEMA_VERSION=2"
+  data_schema: "crates/qx-data/src/schema.rs::DATA_SCHEMA_VERSION=1"
+  bar_frame_json: "crates/qx-datastruct/src/lib.rs::BAR_FRAME_JSON_SCHEMA_VERSION=1"
+  factor_execution_plan: "crates/qx-factor/src/execution_plan.rs::FACTOR_EXECUTION_PLAN_SCHEMA_VERSION=1"
+  account_snapshot: "crates/qx-protocol/src/lib.rs::ACCOUNT_SNAPSHOT_SCHEMA_VERSION=1"
+  projection_envelope: "crates/qx-protocol/src/lib.rs::PROJECTION_ENVELOPE_SCHEMA_VERSION=1"
+  runtime_config: "crates/qx-runtime/src/runtime_config/schema.rs::RUNTIME_SCHEMA_VERSION=1"
+  strategy_api: "crates/qx-strategy/src/lib.rs::STRATEGY_API_VERSION=1"
+  strategy_frame: "crates/qx-strategy/src/frame.rs::STRATEGY_FRAME_VERSION=1"
+  c_abi_strategy: "crates/qx-strategy/src/c_api.rs::QX_C_STRATEGY_API_VERSION=1"
+  ashare: "crates/qx-xingban/src/ashare.rs::ASHARE_SCHEMA_VERSION=1"
+  storage_schema: "crates/qx-storage/src/lib.rs::LATEST_SCHEMA_VERSION=1"
+
+# ---- 冻结的规则集 / 契约版本（字符串字面量） ----
+frozen_string_versions:
+  order_risk_rule_set: "crates/qx-risk/src/lib.rs::ORDER_RISK_RULE_SET_VERSION=qx-order-risk-v1"
+  conservative_default_rule_set: "crates/qx-risk/src/rules.rs::CONSERVATIVE_DEFAULT_RULE_SET_VERSION=conservative-default-v1"
+
+# ---- 发布产物必须携带的身份字段（P2-4 发布供应链消费；缺一即不算可复现发布件） ----
+artifact_identity:
+  - version
+  - git_commit
+  - target_triple
+  - profile
+  - schema_registry_version
+  - sha256
+  - sbom
+
+# ---- 当前已翻真的证据档位（M0 冻结读数；与 maturity/capabilities.yaml 的四档口径一致） ----
+evidence_levels:
+  implementation: true
+  code_tested: true
+  sandbox_tested: false
+  production_approved: false

@@ -25,6 +25,13 @@ from . import (
 )
 
 
+# 子进程内重连退避的封顶，与 Rust 侧 CcxtReconnectBudget::MAX_DELAY（8 秒）同一口径。
+# 只写 ws_retry_backoff_ms * 2**attempts 时，基准配到上限 60000 毫秒、次数配到上限 10
+# 就是 8.5 小时一觉，而驱动方的读窗最长 300 秒——睡满之前子进程早已被杀掉重开，
+# 退避形同没有，还把重连节律变成随机数（V13 R17 C5）。
+WS_RETRY_MAX_DELAY_MS = 8_000
+
+
 class CcxtJsonWorker:
     def __init__(self, client: CcxtExchangeClient, *, pro_exchange: Any | None = None):
         self.client = client
@@ -161,20 +168,33 @@ class CcxtJsonWorker:
             return self.handle(request)
         stream = operation.removeprefix("watch_")
         wait_ms = request.get("wait_ms")
+        # 调用方给了等待上限：这一窗没有事件就答一次"空闲"，而不是让调用方的读窗口
+        # 到期把好端端的子进程判成链路故障（旧口径每 30 秒白杀白起一个进程，还把
+        # 空闲计进重连预算，于是一个没有成交的纸面账户五分钟后被具名放弃）。
+        bounded_by_caller = wait_ms is not None
+        deadline_ms = (
+            int(wait_ms)
+            if bounded_by_caller
+            # 没给窗口时退到读窗的 4/5，与 Rust 侧 ccxt_idle_window_ms 同一比值：子进程
+            # 必须抢在父进程的读窗到期前答话，否则这条 await 没有任何出口，只能等
+            # 父进程把它杀掉（V13 R17 C5）。
+            else self.client.config.timeout_ms * 4 // 5
+        )
         idle = False
-        if wait_ms is None:
-            payload = await self._watch_with_reconnect(request, stream)
-        else:
-            # 调用方给了等待上限：这一窗没有事件就答一次"空闲"，而不是让调用方的读窗口
-            # 到期把好端端的子进程判成链路故障（旧口径每 30 秒白杀白起一个进程，还把
-            # 空闲计进重连预算，于是一个没有成交的纸面账户五分钟后被具名放弃）。
-            try:
-                payload = await asyncio.wait_for(
-                    self._watch_with_reconnect(request, stream),
-                    timeout=max(0.001, int(wait_ms) / 1000),
-                )
-            except asyncio.TimeoutError:
-                payload, idle = [], True
+        try:
+            payload = await asyncio.wait_for(
+                self._watch_with_reconnect(request, stream),
+                timeout=max(0.001, deadline_ms / 1000),
+            )
+        except asyncio.TimeoutError:
+            if not bounded_by_caller:
+                # 无名窗口到期不代表"这一窗空闲"，而是链路确实没答话：报具名可重试错误，
+                # 让父进程的重连预算记这一笔，而不是等一个永远不会来的事件。
+                raise CcxtConnectorError(
+                    CcxtErrorClass.RETRYABLE,
+                    f"CCXT {operation} 在 {deadline_ms} 毫秒内既无事件也无应答",
+                ) from None
+            payload, idle = [], True
         event = normalize_stream_event(
             stream,
             payload,
@@ -207,7 +227,10 @@ class CcxtJsonWorker:
                 if not retryable or attempts >= self.client.config.ws_max_retries:
                     raise
                 await self._close_pro_async()
-                delay_ms = self.client.config.ws_retry_backoff_ms * (2**attempts)
+                delay_ms = min(
+                    self.client.config.ws_retry_backoff_ms * (2**attempts),
+                    WS_RETRY_MAX_DELAY_MS,
+                )
                 if delay_ms:
                     await asyncio.sleep(delay_ms / 1_000)
                 attempts += 1

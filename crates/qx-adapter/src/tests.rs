@@ -30,8 +30,8 @@ fn http_transport_preserves_vendor_form_content_type() {
 }
 
 /// 两条 HTTP 读链（`TlsHttpTransport`/`TcpHttpTransport` 的 `send`）共用 `read_capped_response`。
-/// `set_read_timeout` 每读到一块就复位、挡不住慢速滴水的上游把响应吃到内存耗尽，所以总量界是
-/// 这条链唯一的出口；这一族判据的先在形状是 `MAX_WEBSOCKET_MESSAGE_BYTES`（V13 R2 第十四遍 #213）。
+/// `set_read_timeout` 每读到一块就复位，挡不住慢速滴水的上游把响应一路吃下去，所以这条链要有
+/// 两道界：字节界挡内存，整体预算挡时间（V13 R4 立字节界，V13 R17-c 补时间界）。
 /// 同一族的"一行"版是 `read_capped_line`（CCXT 泵的常驻管道）：那条界管一次响应的总量，
 /// 这条管一根不断开的管道里的一条应答，所以四臂的形状与上面逐一对齐（界内 / 恰好等界 / 越界 / EOF）。
 #[test]
@@ -39,15 +39,20 @@ fn http_response_read_aborts_over_the_byte_cap() {
     // 上限之内逐字原样读出：改动不得影响 ≤ 上限 的响应（happy path 与旧行为等价）。
     let mut within = Cursor::new(b"0123456789".to_vec());
     assert_eq!(
-        read_capped_response(&mut within, 16).unwrap(),
+        read_capped_response(&mut within, 16, Duration::from_secs(5)).unwrap(),
         b"0123456789".to_vec()
     );
-    // 恰好等于上限不误伤：`take` 放行 `limit + 1`，只有真读到第 `limit + 1` 字节才判越界。
+    // 恰好等于上限不误伤：越界判的是**真读到**第 `limit + 1` 字节。
     let mut exact = Cursor::new(vec![b'y'; 8]);
-    assert_eq!(read_capped_response(&mut exact, 8).unwrap().len(), 8);
+    assert_eq!(
+        read_capped_response(&mut exact, 8, Duration::from_secs(5))
+            .unwrap()
+            .len(),
+        8
+    );
     // 越界那一臂提前中止，而不是把缓冲一路攒下去。
     let mut over = Cursor::new(vec![b'x'; 20]);
-    let error = read_capped_response(&mut over, 8).unwrap_err();
+    let error = read_capped_response(&mut over, 8, Duration::from_secs(5)).unwrap_err();
     assert!(error.contains("字节上限"), "{error}");
     // 行长版的四臂：换行内的行按原样交出（保留行尾 `\n` 与旧 `read_line` 等价），
     // 尾行没有换行也要交出，管道 EOF 说成"没有行"而不是错误，只有越界那臂中止整条泵。
@@ -275,4 +280,59 @@ fn tcp_transport_executes_a_real_http_request() {
     worker.join().unwrap();
     assert_eq!(response.status, 200);
     assert_eq!(response.body, "ok");
+}
+
+/// 每 `read` 只吐一个字节、每次吐之前睡 2 毫秒的对端，且字节是**有限**的：去掉整体预算时
+/// 这两臂会走到 EOF/读完那条出口而判红，不会把用例挂住——挂住的用例没有判决。
+struct Dribble {
+    payload: Vec<u8>,
+    position: usize,
+}
+
+impl Read for Dribble {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if self.position >= self.payload.len() {
+            return Ok(0);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+        buffer[0] = self.payload[self.position];
+        self.position += 1;
+        Ok(1)
+    }
+}
+
+/// 两条上游读链的时间臂（V13 R17-c）：`set_read_timeout` 每读到一块就复位，滴字节的对端
+/// 永远不触发它，字节界又只看总量——握手响应与 HTTP 响应都靠整体预算才有出口。
+#[test]
+fn dripping_upstream_is_cut_by_the_wall_clock_not_by_the_byte_cap() {
+    // 握手块：400 字节里一个 `\r\n\r\n` 都没有，字节界（64 KiB）远未触及，只有时间能收场。
+    let mut handshake = Dribble {
+        payload: vec![b'x'; 400],
+        position: 0,
+    };
+    let error = read_header_block(&mut handshake, Duration::from_millis(20))
+        .expect_err("滴字节的握手响应必须被整体预算切断，而不是读完或挂住");
+    assert!(error.contains("整体超时"), "{error}");
+    assert!(
+        handshake.position < 400 && handshake.position >= 2,
+        "截止要在循环里逐轮生效，而不是入口判一次或永不判：实读 {} 字节",
+        handshake.position
+    );
+    // 响应体：400 字节 < 1 KiB 字节界，同一形状在时间臂上收场。
+    let mut body = Dribble {
+        payload: vec![b'y'; 400],
+        position: 0,
+    };
+    let error = read_capped_response(&mut body, 1024, Duration::from_millis(20))
+        .expect_err("滴字节的响应必须被整体预算切断，而不是读完");
+    assert!(error.contains("整体截止"), "{error}");
+    // 正向对照：预算内到位的握手块照旧读回来，时间臂不能把好上游一起切断。
+    let mut fine = Cursor::new(
+        b"HTTP/1.1 101 Switching Protocols\r\nSec-WebSocket-Accept: x\r\n\r\nrest".to_vec(),
+    );
+    assert_eq!(
+        read_header_block(&mut fine, Duration::from_secs(5)).unwrap(),
+        "HTTP/1.1 101 Switching Protocols\r\nSec-WebSocket-Accept: x\r\n\r\n",
+        "读到空行分隔就该收口，尾部多余的字节不属于握手块"
+    );
 }

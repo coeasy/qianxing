@@ -153,13 +153,13 @@ pub struct JobSpec {
     pub trigger: Trigger,
     pub window: JobWindow,
     pub depends_on: Vec<String>,
-    pub input_refs: Vec<String>,
-    pub output_refs: Vec<String>,
+    pub input_refs: Vec<String>, // 声明式输入引用；仓库内零生产读者，见 capabilities.yaml job_spec_declaration_fields_have_no_production_reader
+    pub output_refs: Vec<String>, // 声明式输出引用，同 input_refs：仓库内零生产读者
     pub timeout_seconds: u64,
     pub retry_policy: RetryPolicy,
     pub concurrency_key: String,
     pub idempotency_key: String,
-    pub permission_scope: String,
+    pub permission_scope: String, // 安全形状的声明格；今天零生产读者（没有一处按它做准入判定）
     #[serde(default = "default_audit_reason")]
     pub audit_reason: String,
     pub dry_run: bool,

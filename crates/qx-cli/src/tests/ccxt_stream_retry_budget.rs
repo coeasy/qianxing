@@ -61,6 +61,13 @@ fn ccxt_watch_reply_only_treats_explicit_idle_flag_as_idle() {
 
 /// #166 跨语言判据：Rust 发的 `wait_ms` 与 Python 答的 `idle` 必须两侧都还在写。
 /// 单独看任一侧都能自洽，键名漂移只会表现为"空闲账户永远不出事件回话"。
+///
+/// V13 R17 C5 把同一条边界上的另外三张面孔并进来：子进程缺省等待窗口取读窗的 4/5（与
+/// Rust 的 `ccxt_idle_window_ms` 同比值，否则子进程和父进程的读窗同时到期，"空闲回话赶在
+/// 读窗之前"这条设计就只剩文字）、退避封顶与 `CcxtReconnectBudget::MAX_DELAY` 同值（否则
+/// 基准 60000 毫秒 × 2**attempts 就是小时级一觉，进程在睡满之前早被杀掉重开），以及
+/// "没有缺省窗口就一直 await"那条臂不得回来。三处都只在父进程被强杀或柜台静默时才发作，
+/// 别处没有用例先喊。
 #[test]
 fn ccxt_idle_heartbeat_literals_exist_on_both_sides_of_the_boundary() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
@@ -82,6 +89,38 @@ fn ccxt_idle_heartbeat_literals_exist_on_both_sides_of_the_boundary() {
     assert!(
         python.contains("request.get(\"wait_ms\")") && python.contains("event[\"idle\"] = True"),
         "Python Worker 侧不再收 wait_ms 或不再回 idle，空闲会被读窗判成断链"
+    );
+    let adapter = std::fs::read_to_string(
+        root.join("crates")
+            .join("qx-adapter")
+            .join("src")
+            .join("ccxt.rs"),
+    )
+    .unwrap();
+    assert!(
+        adapter.contains("timeout_ms.saturating_mul(4) / 5")
+            && python.contains("else self.client.config.timeout_ms * 4 // 5")
+            && !python.contains("if wait_ms is None:"),
+        "缺省等待窗口不再与驱动方读窗同比值，或者\"没交 wait_ms 就 await 到永远\"那条臂回来了"
+    );
+    let budget = std::fs::read_to_string(
+        root.join("crates")
+            .join("qx-cli")
+            .join("src")
+            .join("venue_runtime")
+            .join("ccxt_stream_retry.rs"),
+    )
+    .unwrap();
+    assert!(
+        budget.contains("MAX_DELAY: Duration = Duration::from_secs(8)")
+            && python.contains("WS_RETRY_MAX_DELAY_MS = 8_000")
+            && python.matches("WS_RETRY_MAX_DELAY_MS").count() == 2,
+        "退避封顶两侧不再同为 8 秒，或者 Python 侧的常量只剩定义、没人用"
+    );
+    assert_eq!(
+        python.matches("CcxtErrorClass.RETRYABLE,").count(),
+        2,
+        "无名窗口到期不再报具名可重试故障，父进程的重连预算就记不到这一笔"
     );
 }
 

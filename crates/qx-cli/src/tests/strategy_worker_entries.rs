@@ -228,6 +228,8 @@ fn shared_ring_launch_arguments_hand_the_worker_its_parent_identity() {
 /// #215 跨语言判据：Rust 传出的旗标名与 Python 注册的旗标名必须两侧都还在写，而且 spawn
 /// 点交出去的必须是"本进程 pid"。单看任一侧都能自洽，名字漂移或传错 pid 只会表现为
 /// "父进程被强杀后 worker 不退出"——那正是本轮要修的故障，不会有别的用例先喊。
+/// R17-d 把 C++ 样例 worker 这条第三侧接进同一条用例：名字对得上、值用得上、退出码是 0，
+/// 三侧缺任何一侧都在这里红，不用等 CI 的 C++ 冒烟那条独立腿。
 #[test]
 fn strategy_parent_pid_flag_is_wired_on_both_sides_of_the_language_boundary() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
@@ -268,5 +270,33 @@ fn strategy_parent_pid_flag_is_wired_on_both_sides_of_the_language_boundary() {
         python.contains("parent_pid > 0")
             && python.contains("if not _parent_process_alive(parent_pid):"),
         "Python 侧的父进程存活确认不再决定退出，空闲循环会退回无出口空转"
+    );
+    // 第三侧：C++ 样例 worker 是 Python 之外唯一接得住这份旗标的实现。它自己解析、自己判
+    // 存活、自己以 0 退出，三条里断任何一条都退化成同一个故障——父进程被强杀后 ring 常驻，
+    // 而这条链路上没有别的用例先喊（V13 R17-d）。
+    let cpp = std::fs::read_to_string(root.join("cpp").join("examples").join("jsonl_strategy.cpp"))
+        .unwrap();
+    assert!(
+        cpp.contains("key == \"--parent-pid\"") && cpp.contains("parent_pid = std::stoul(value);"),
+        "C++ worker 不再注册或不再消费 --parent-pid，Rust 传了也没人接"
+    );
+    let cpp_idle_arm = cpp
+        .split_once("if (!input.try_pop(encoded)) {")
+        .unwrap_or_else(|| {
+            panic!("C++ worker 不再有 idle 分支，父进程判定没有了能问这个问题的位置")
+        })
+        .1
+        .split_once("continue;")
+        .unwrap()
+        .0;
+    assert!(
+        cpp_idle_arm.contains("if (parent_pid != 0)")
+            && cpp_idle_arm.contains("if (!parent_alive(parent_pid)) return 0;"),
+        "C++ 的父进程判定不在 idle 臂里、不再把\"没交旗标\"当作不检查，或者不再以 0 退出：{cpp_idle_arm}"
+    );
+    assert!(
+        python.contains("PARENT_LIVENESS_PROBE_SECONDS = 1.0")
+            && cpp.contains("kParentLivenessProbeMs = 1000"),
+        "两侧探测间隔不再同为 1 秒：Python 改了节流而 C++ 沿用旧值，长空闲下的父进程发现会退化"
     );
 }

@@ -141,6 +141,93 @@ class CcxtWorkerTest(unittest.TestCase):
         self.assertEqual(event["events"][0]["order_id"], "remote-1")
         self.assertNotIn("idle", event, "答得出来的事件不能被记成空闲窗")
 
+    def test_watch_without_a_window_still_bounds_its_own_waits(self):
+        # Rust 驱动方永远会带 wait_ms，这条不带的形状只有直接喂 JSONL 的调用方走得到。
+        # 缺省成"永远等"就再没有东西能叫醒子进程：父进程读窗到期只会把它杀掉重开，
+        # 而日志里留下的长相是子进程无故消失（V13 R17 C5）。
+        class SilentPro(FakeProExchange):
+            def __init__(self):
+                self.asks = 0
+
+            async def watch_orders(self, symbol, since, limit, params):
+                self.asks += 1
+                await asyncio.sleep(30)
+                return []
+
+        silent = SilentPro()
+        worker = CcxtJsonWorker(
+            CcxtExchangeClient(
+                CcxtConfig(exchange_id="binance", timeout_ms=1_000), exchange=FakeExchange()
+            ),
+            pro_exchange=silent,
+        )
+        row = json.loads(
+            worker.handle_line(
+                json.dumps({"op": "watch_orders", "instrument": "BTCUSDT.BINANCE"})
+            )
+        )
+        self.assertFalse(row["ok"], row)
+        self.assertEqual(row["error"]["class"], "retryable")
+        self.assertIn(
+            "800",
+            row["error"]["message"],
+            "缺省窗口不再等于读窗的 4/5，子进程就会和父进程的读窗同时到期",
+        )
+        self.assertEqual(silent.asks, 1, "无名窗口到期是可重试故障，重连由驱动方记账")
+
+        # 子进程内重连退避的封顶走同一条口径：基准 60000 毫秒 × 2**attempts 不设上限时
+        # 三次就是 60+120+240 秒，父进程最长读窗才 300 秒——睡满之前进程早被杀掉重开。
+        # sleep 换成记账，只问交出去的时长，用例因此不真等。
+        class NeverRecovers:
+            async def watch_orders(self, symbol, since, limit, params):
+                raise CcxtConnectorError(CcxtErrorClass.RETRYABLE, "socket closed")
+
+            async def close(self):
+                return None
+
+        sleeps: list[float] = []
+
+        async def record(delay_seconds: float) -> None:
+            sleeps.append(delay_seconds)
+
+        capped = CcxtJsonWorker(
+            CcxtExchangeClient(
+                CcxtConfig(
+                    exchange_id="binance",
+                    timeout_ms=1_000,
+                    ws_max_retries=3,
+                    ws_retry_backoff_ms=60_000,
+                ),
+                exchange=FakeExchange(),
+            ),
+            pro_exchange=NeverRecovers(),
+        )
+        with (
+            patch("asyncio.sleep", new=record),
+            patch(
+                "qianxing_ccxt.worker.create_ccxt_pro_exchange",
+                return_value=NeverRecovers(),
+            ),
+        ):
+            row = json.loads(
+                capped.handle_line(
+                    json.dumps(
+                        {
+                            "op": "watch_orders",
+                            "instrument": "BTCUSDT.BINANCE",
+                            "wait_ms": 60_000,
+                        }
+                    )
+                )
+            )
+        self.assertFalse(row["ok"], row)
+        self.assertEqual(row["error"]["class"], "retryable")
+        self.assertEqual(
+            sleeps,
+            [8.0, 8.0, 8.0],
+            "退避没有封顶或封顶口径漂移：Rust 侧 MAX_DELAY 是 8 秒，这里必须同值",
+        )
+
     def test_jsonl_worker_recreates_ccxt_pro_after_retryable_disconnect(self):
         class FlakyPro(FakeProExchange):
             def __init__(self):

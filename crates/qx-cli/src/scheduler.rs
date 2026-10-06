@@ -143,6 +143,68 @@ pub(crate) fn unsupported_dispatch_shape(job: &JobSpec) -> Option<String> {
     None
 }
 
+/// 读取并核验声明文件里的 JobSpec。形状闸门对每一次启动都成立，不只是第一次。
+fn declared_jobs(jobs_path: &Path) -> Result<Vec<JobSpec>, String> {
+    let jobs: Vec<JobSpec> = serde_json::from_str(
+        &std::fs::read_to_string(jobs_path)
+            .map_err(|error| format!("读取 Scheduler JobSpec 失败: {error}"))?,
+    )
+    .map_err(|error| format!("Scheduler JobSpec JSON 无效: {error}"))?;
+    let refused = jobs
+        .iter()
+        .filter_map(unsupported_dispatch_shape)
+        .collect::<Vec<_>>();
+    if !refused.is_empty() {
+        return Err(refused.join("；"));
+    }
+    Ok(jobs)
+}
+
+/// 作业集合只在状态文件缺失时从 `jobs_path` 重建，所以第二次启动起，声明改动都不会自动
+/// 生效 —— 旧实现连这个分叉都不报：删掉的作业继续按 cron 触发，新增的永远不跑，改过的
+/// 用的还是状态里的旧形状（V13 R17-e）。三个方向都能在启动当场判出来，因此 fail closed。
+fn reject_job_set_drift(
+    scheduler: &Scheduler,
+    declared: &[JobSpec],
+    jobs_path: &Path,
+) -> Result<(), String> {
+    let declared_ids = declared
+        .iter()
+        .map(|job| job.job_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut drift = Vec::new();
+    if declared_ids.len() != declared.len() {
+        drift.push("声明文件里有重名 job_id，同名声明的后者永远不会生效".to_string());
+    }
+    for job in declared {
+        match scheduler.job(&job.job_id) {
+            None => drift.push(format!(
+                "作业 {} 只在声明文件里 —— 新增的声明从未进入调度状态",
+                job.job_id
+            )),
+            Some(state_job) if state_job != job => drift.push(format!(
+                "作业 {} 的声明与调度状态里的形状不同 —— 改动过的声明从未生效",
+                job.job_id
+            )),
+            Some(_) => {}
+        }
+    }
+    if scheduler.len() > declared_ids.len() {
+        drift.push(format!(
+            "调度状态里有 {} 个作业不在声明文件里 —— 删掉的声明不会让它们停手，它们仍会按 cron 触发",
+            scheduler.len() - declared_ids.len()
+        ));
+    }
+    if drift.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "Scheduler 声明与状态已分叉: {}；作业集合只在 {} 缺失时重建，要让改动生效必须先把状态文件移走",
+        drift.join("；"),
+        jobs_path.display()
+    ))
+}
+
 pub(crate) fn load_scheduler_state(
     config: &RuntimeConfig,
     root: &Path,
@@ -151,31 +213,24 @@ pub(crate) fn load_scheduler_state(
     let store = JsonStateStore::new(root.to_path_buf());
     let state_reference = Path::new(&config.scheduler.state_path).to_path_buf();
     let state_path = runtime_path(root, &config.scheduler.state_path);
+    let jobs_path = scheduler_jobs_path(runtime_config_path, &config.scheduler.jobs_path);
+    let declared = if jobs_path.exists() {
+        declared_jobs(&jobs_path)?
+    } else {
+        Vec::new()
+    };
     let scheduler = if state_path.exists() {
-        store
+        let scheduler = store
             .load_scheduler_at(&state_reference)
-            .map_err(|error| format!("加载 Scheduler 状态失败: {error:?}"))?
+            .map_err(|error| format!("加载 Scheduler 状态失败: {error:?}"))?;
+        reject_job_set_drift(&scheduler, &declared, &jobs_path)?;
+        scheduler
     } else {
         let mut scheduler = Scheduler::default();
-        let jobs_path = scheduler_jobs_path(runtime_config_path, &config.scheduler.jobs_path);
-        if jobs_path.exists() {
-            let jobs: Vec<JobSpec> = serde_json::from_str(
-                &std::fs::read_to_string(&jobs_path)
-                    .map_err(|error| format!("读取 Scheduler JobSpec 失败: {error}"))?,
-            )
-            .map_err(|error| format!("Scheduler JobSpec JSON 无效: {error}"))?;
-            let refused = jobs
-                .iter()
-                .filter_map(unsupported_dispatch_shape)
-                .collect::<Vec<_>>();
-            if !refused.is_empty() {
-                return Err(refused.join("；"));
-            }
-            for job in jobs {
-                scheduler
-                    .register(job)
-                    .map_err(|error| format!("注册 Scheduler JobSpec 失败: {error:?}"))?;
-            }
+        for job in declared {
+            scheduler
+                .register(job)
+                .map_err(|error| format!("注册 Scheduler JobSpec 失败: {error:?}"))?;
         }
         store
             .save_scheduler_at(&state_reference, &scheduler)
