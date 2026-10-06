@@ -54,6 +54,66 @@ fn run_entry_arguments_accept_only_the_shapes_they_can_honor() {
 /// 表现完全不同：给在后面时它还能靠"已经有一个路径"报出来，给在最前面时它会把
 /// `--verbose` 当成配置文件路径默默接着跑。
 #[test]
+fn run_report_entry_arguments_accept_html_output_and_reject_ignored_paths() {
+    let parsed = run_report_entry_arguments(
+        &arguments(&[
+            "report",
+            "--html",
+            "--output",
+            "custom/report.html",
+            "--json",
+            "summary.json",
+        ]),
+        default_path,
+    )
+    .unwrap();
+    assert_eq!(parsed.0, PathBuf::from("summary.json"));
+    assert!(parsed.1 && parsed.2);
+    assert_eq!(parsed.3, Some(PathBuf::from("custom/report.html")));
+    let equals_form = run_report_entry_arguments(
+        &arguments(&["report", "--html", "--output=chosen.html"]),
+        default_path,
+    )
+    .unwrap();
+    assert_eq!(equals_form.3, Some(PathBuf::from("chosen.html")));
+
+    for given in [
+        vec!["report", "--output", "report.html"],
+        vec!["report", "--html", "--output"],
+        vec!["report", "--html", "--output", "--json"],
+        vec!["report", "--html", "--json", "--json"],
+        vec!["report", "--html", "--html"],
+        vec!["report", "--html", "summary.json", "extra.json"],
+    ] {
+        let error = run_report_entry_arguments(&arguments(&given), default_path).unwrap_err();
+        assert!(error.contains("run "), "拒绝形状必须给出入口用法: {error}");
+    }
+}
+
+#[test]
+fn unified_run_report_writes_html_and_standalone_svg_at_the_requested_stem() {
+    let root = temp_cli_case_dir("run-report-output");
+    let summary = root.join("sample.summary.json");
+    let output = root.join("reports").join("chosen.html");
+    std::fs::write(&summary, "{\"schema_version\":1}").unwrap();
+    let argv = vec![
+        "report".to_string(),
+        summary.to_string_lossy().into_owned(),
+        "--json".to_string(),
+        "--html".to_string(),
+        "--output".to_string(),
+        output.to_string_lossy().into_owned(),
+    ];
+    run_unified_command(&argv).expect("run report --html 应走同一个摘要复核与导出路径");
+    assert!(output.is_file());
+    for suffix in ["equity.svg", "fills.svg", "monthly.svg"] {
+        let path = root.join("reports").join(format!("chosen.{suffix}"));
+        assert!(path.is_file(), "缺少统一入口输出 {}", path.display());
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn run_entry_arguments_name_every_argument_they_reject() {
     for (entry, json_output, given, rejected) in [
         (
@@ -111,8 +171,13 @@ fn every_single_path_run_entry_shares_the_argument_reader() {
     .unwrap();
     assert_eq!(
         source.matches("run_entry_arguments(").count(),
-        5,
-        "五条单配置文件入口不是都共用同一份参数读法"
+        4,
+        "四条通用单配置入口不是都共用同一份参数读法"
+    );
+    assert_eq!(
+        source.matches("run_report_entry_arguments(").count(),
+        1,
+        "report 必须通过专用 reader 同时处理 --html 与 --output"
     );
     assert!(
         !source.contains(".find(|value| !value.starts_with('-'))"),

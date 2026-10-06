@@ -122,6 +122,8 @@ qx-cli help                                         # 全部入口清单
 qx-cli version                                      # 一行构建身份：版本 / git 提交 / 目标三元组 / 构建档
 ```
 
+需要可视化结果时，在回测后加 `--html`：`qx-cli report qianxing.runtime.json --html` 会写一份可离线打开的 HTML 和三张独立 SVG；用 `-o reports/latest.html` 可改 HTML 与 SVG 的输出前缀。
+
 实测（2026-09-26 那一轮，`logs/s47_*.txt` 与 `logs/s48_*.txt`）：`cargo install` 用时 2m14s、
 `INSTALL_EXIT=0`；在仓库外的临时目录里 `help` / `init` / `doctor` / `backtest` / `report` /
 `status` 六条全部退出码 0，回测写出 summary / equity.csv / fills.csv 与 RunManifest，

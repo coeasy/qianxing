@@ -1,5 +1,4 @@
 //! clap 参数框架（V10 P2b）：命令表由本文件的 `Command` 枚举派生。
-//!
 //! `cli.rs` 只保留对 [`Command`] 的一次显式 `match`；`tools/check_architecture.py` 以「clap 派生的
 //! 命令表 ≡ `cli.rs` 派发分支 ≡ `cli_help.rs` 印出的入口」三方集合相等做门禁（V10 §4.4 的
 //! "文案宣称支持某入口而派发没有该分支"因此不可表达）。`help`/`--help`/`-h` 是进 clap 前的同一条
@@ -102,9 +101,10 @@ pub(crate) enum Command {
         path: Option<PathBuf>,
         #[arg(long)]
         json: bool,
-        /// 易用性 P3：把同一份摘要渲染成自包含 HTML（`<stem>.report.html`）并印出路径。
         #[arg(long)]
         html: bool,
+        #[arg(short = 'o', long = "output", value_name = "PATH")]
+        out: Option<PathBuf>,
     },
     #[command(name = "live-check")]
     LiveCheck {

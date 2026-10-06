@@ -1,17 +1,13 @@
 //! CLI 入口分派：clap 派生的 [`Command`] 变体 → 具体处理器。
 //!
-//! 参数语法与命令表都在 `cli_args.rs`（V10 P2b：clap `Subcommand` 迁移，旧手写
-//! 字符串解析已整体删除、不留双轨）；本模块只保留一次对 `Command` 的显式 `match`、
-//! 横幅行的机读输出判定与错误出口（退出码、`--json` 语义）。命令名与旗标语义与
-//! 迁移前逐条一致，`tools/check_architecture.py` 校验「clap 命令表 ≡ 这里的分支集合
-//! ≡ help 印出的入口」。所有业务实现仍直接复用 crate 根的同一批函数。
+//! 参数语法与命令表见 `cli_args.rs`（V10 P2b 已移除旧手写解析）；本模块只留一次 `Command` match、
+//! 横幅机读判定与错误出口。门禁校验命令表、派发分支与 help 三方集合相等；业务实现复用 crate 根函数。
 
 use super::cli_args::{BacktestCommand, Cli, Command, ConfigCommand, RunCommand, StrategyCommand};
 use super::*;
 use clap::Parser;
 
-/// 用法错误（未知命令/未知参数）走分级回显（U2）：旧形状实测 162 行 / 12 KB 入口摘要，
-/// 新手要在一面墙里找自己那半行错。`DisplayHelp*` 仍由 clap 打印单条用法并退 0。
+/// 用法错误走分级回显（U2，旧摘要实测 162 行 / 12 KB）；`DisplayHelp*` 仍由 clap 打印用法并退 0。
 fn fail_usage(error: clap::Error) -> ! {
     if matches!(
         error.kind(),
@@ -260,9 +256,14 @@ pub(crate) fn run() {
                 std::process::exit(2);
             }
         }
-        Command::Report { path, json, html } => {
+        Command::Report {
+            path,
+            json,
+            html,
+            out,
+        } => {
             let path = path.unwrap_or_else(default_runtime_path);
-            if let Err(error) = run_report(&path, json, html) {
+            if let Err(error) = run_report_with_output(&path, json, html, out.as_deref()) {
                 eprintln!("报告查看失败: {error}");
                 std::process::exit(2);
             }
@@ -653,8 +654,7 @@ pub(crate) fn run() {
                     std::process::exit(2);
                 }
             } else {
-                // V10 §4.3：无参时曾用两份手写向量打印"差异"，看起来像真对账能力。
-                // 对账必须同时点名本地与远端来源，缺任一即是用法错误。
+                // V10 §4.3：无参曾打印手写假差异；真实对账必须同时点名本地与远端来源。
                 eprintln!(
                     "reconcile 需要本地与远端两个来源：reconcile <runtime.json> [worker-id]\n  \
                      本地来源 = 运行时配置指向的 EventLog 账本\n  \

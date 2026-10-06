@@ -3255,7 +3255,7 @@ def replay_kernel_check() -> None:
 # V11 Q66 / Q1b 第一批：产物声明的输入身份必须能被重算，且只有一处读、一处写。
 INPUT_PROV_ARTIFACT_FILE = "crates/qx-cli/src/backtests/artifacts.rs"
 INPUT_PROV_SINGLE_FILE = "crates/qx-cli/src/backtests/single_strategy.rs"
-INPUT_PROV_REPORT_FILE = "crates/qx-cli/src/config_commands.rs"
+INPUT_PROV_REPORT_FILE = "crates/qx-cli/src/report_command.rs"
 INPUT_PROV_TEST_FILE = "crates/qx-cli/src/tests/backtest_input_provenance.rs"
 # 这三条链各自解一遍帧就等于"声明的输入"与"重算的输入"各有自己的答案。
 INPUT_PROV_CHAIN_FILES = (
@@ -6431,7 +6431,10 @@ def account_principal_single_source_check() -> None:
 
 # === V12 R1：读模型对"摘要里到底有没有这一格"的单一读法 ===
 REPORT_READOUT_MODULE = "crates/qx-cli/src/report_readout.rs"
-REPORT_READOUT_COMMANDS = "crates/qx-cli/src/config_commands.rs"
+REPORT_READOUT_COMMANDS = (
+    "crates/qx-cli/src/config_commands.rs",
+    "crates/qx-cli/src/report_command.rs",
+)
 REPORT_READOUT_UNIT_CASES = "crates/qx-cli/src/tests/report_readout.rs"
 REPORT_READOUT_CLI_CASES = "crates/qx-cli/tests/report_readout_honesty.rs"
 # 两个命令各自要的正文函数：一处定义、一处调用，正文只许有一份。
@@ -6462,7 +6465,9 @@ def report_readout_honesty_check() -> None:
     两个命令共用同一份正文、读侧认得的世代号与写侧落盘的同号。
     """
     readout = (ROOT / REPORT_READOUT_MODULE).read_text(encoding="utf-8")
-    commands = (ROOT / REPORT_READOUT_COMMANDS).read_text(encoding="utf-8")
+    commands = "\n".join(
+        (ROOT / path).read_text(encoding="utf-8") for path in REPORT_READOUT_COMMANDS
+    )
     unit_cases = (ROOT / REPORT_READOUT_UNIT_CASES).read_text(encoding="utf-8")
     cli_cases = (ROOT / REPORT_READOUT_CLI_CASES).read_text(encoding="utf-8")
     summary_writer = (ROOT / SUMMARY_MODULE).read_text(encoding="utf-8")
@@ -10961,6 +10966,7 @@ def schema_registry_check() -> None:
 REPORT_READABILITY_MODULES = (
     "crates/qx-cli/src/report_html.rs",
     "crates/qx-cli/src/report_svg.rs",
+    "crates/qx-cli/src/report_command.rs",
 )
 # 报告模板里不得出现的 token（注释行不计）：内联 SVG 不带命名空间、无外链脚本/图片/样式。
 REPORT_EXTERNAL_TOKENS = ("xmlns", "http", "<script", "<img", "<link ", "<iframe")
@@ -11021,7 +11027,7 @@ def report_readability_check() -> None:
         and "write_report_html(" in path.read_text(encoding="utf-8")
     ]
     check(
-        callers == ["crates/qx-cli/src/config_commands.rs"],
+        callers == ["crates/qx-cli/src/report_command.rs"],
         "报告落盘的调用点唯一（report 出口）",
         f"调用于 {callers}",
     )

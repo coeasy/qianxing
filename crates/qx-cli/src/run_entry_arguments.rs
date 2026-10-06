@@ -40,3 +40,70 @@ pub(crate) fn run_entry_arguments(
     }
     Ok((path.map(PathBuf::from).unwrap_or_else(default), json))
 }
+
+/// 读 `run report` 的专属旗标；此入口额外支持 `--html --output <path>`。
+pub(crate) fn run_report_entry_arguments(
+    arguments: &[String],
+    default: impl FnOnce() -> PathBuf,
+) -> Result<(PathBuf, bool, bool, Option<PathBuf>), String> {
+    let mut path: Option<&str> = None;
+    let mut output = None;
+    let mut json = false;
+    let mut html = false;
+    let mut values = arguments.iter().skip(1);
+    while let Some(value) = values.next() {
+        match value.as_str() {
+            "--json" if json => return Err(run_usage("report 的 --json 只能指定一次")),
+            "--json" => json = true,
+            "--html" if html => return Err(run_usage("report 的 --html 只能指定一次")),
+            "--html" => html = true,
+            "--output" | "-o" => {
+                if output.is_some() {
+                    return Err(run_usage("report 的 --output 只能指定一次"));
+                }
+                let Some(value) = values.next().filter(|value| !value.starts_with('-')) else {
+                    return Err(run_usage("report --output 需要一个路径值"));
+                };
+                output = Some(PathBuf::from(value));
+            }
+            value if value.starts_with("--output=") => {
+                if output.is_some() {
+                    return Err(run_usage("report 的 --output 只能指定一次"));
+                }
+                let path = value.trim_start_matches("--output=");
+                if path.is_empty() {
+                    return Err(run_usage("report --output 需要一个路径值"));
+                }
+                output = Some(PathBuf::from(path));
+            }
+            value if value.starts_with("-o=") => {
+                if output.is_some() {
+                    return Err(run_usage("report 的 --output 只能指定一次"));
+                }
+                let path = value.trim_start_matches("-o=");
+                if path.is_empty() {
+                    return Err(run_usage("report --output 需要一个路径值"));
+                }
+                output = Some(PathBuf::from(path));
+            }
+            value if value.starts_with('-') => {
+                return Err(run_usage(&format!("report 不接受旗标 {value}")));
+            }
+            value if path.is_none() => path = Some(value),
+            value => {
+                return Err(run_usage(&format!(
+                    "report 只接受一个可选路径，不接受 {value}"
+                )))
+            }
+        }
+    }
+    if output.is_some() && !html {
+        return Err(run_usage("report --output 必须与 --html 一起使用"));
+    }
+    Ok((
+        path.map(PathBuf::from).unwrap_or_else(default),
+        json,
+        html,
+        output,
+    ))
+}

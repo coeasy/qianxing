@@ -1,6 +1,15 @@
 # Changelog
 
 
+### 报告导出安全与落点增强（2026-10-06）· 易用性 P3 收口
+
+- **HTML 文本转义**：报告会显示摘要中的策略名、标的名、输入路径等用户数据；这些文本现统一转义 `& < > \" '`，避免被当作 HTML 标签或资源属性解析。新增恶意标签与带 URL 文本夹具，断言产物只呈现文本，不产生活标签。
+- **完整图表导出**：除自包含 HTML 外，默认并列写 `<stem>.equity.svg` / `<stem>.fills.svg` / `<stem>.monthly.svg`；自选 HTML 落点 `--output <path>` / `-o <path>` 会为 HTML 与三张 SVG 共用输出前缀，并自动创建父目录。输出仅接受 `.html`/`.htm`；不带 `--html` 的 `--output` 会 fail-closed。`run report` 统一入口同样支持这些参数。
+- **模块边界**：把摘要校验后的报告命令处理抽到 `report_command.rs`，让 `config_commands.rs` 回到预算内；报告落盘仍只有一个生产调用点，门禁同步跟踪该唯一出口。
+- **机读输出纪律**：`--json --html` 不再把 `[Report]` 人类提示混进 stdout；JSON 的 `generated_artifacts` 列出 HTML 与 SVG 的实际路径，stdout 可直接解析。
+- **本轮验证**：架构门禁 682 项全绿；`cargo fmt -p qx-cli --check` 与 `cargo clippy -p qx-cli --all-targets --offline -- -D warnings` 均通过；报告用例 10 条通过（含 JSON stdout 解析、直接 CLI 参数解析、自定义输出与 HTML 转义）；统一 `run report` 导出路径用例通过。全量 qx-cli 为 323 passed / 4 failed，4 条均是已知 Windows 沙箱 `os error 231` 子进程管道限制；无其他失败。
+
+
 ### 结果可读性层落地（2026-10-06）· 竞品对比 §6 P3「看不见」补上
 
 **口径**：`docs/竞品对比与易用性改进优化计划-V1.md` §1 把最大的产品差距概括为三个词，第一个就是**「看不见」**——竞品默认交付一张标注买卖点的图或一份交互式 HTML，而我们只落 `*.equity.csv` / `*.fills.csv` / `summary.json`，把「读结果」整段留给了用户（`plot_/chart/.html` 在 `crates` 下 0 命中）。这一轮把那一格补上：`qx-cli report --html` 产出一份自包含 HTML 报告。全部加性：门禁 **676 → 682 全绿**，未删任何既有判据。

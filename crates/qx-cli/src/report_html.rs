@@ -23,11 +23,20 @@ pub(crate) struct FillPoint {
     pub(crate) price_raw: i128,
 }
 
-/// 生成并落盘 `<stem>.report.html`（与摘要同目录、同前缀）。返回写出的路径。
+#[derive(Debug)]
+pub(crate) struct ReportArtifacts {
+    pub(crate) html: PathBuf,
+    pub(crate) equity_svg: PathBuf,
+    pub(crate) fills_svg: PathBuf,
+    pub(crate) monthly_svg: PathBuf,
+}
+
+/// 写自包含 HTML 与三张独立 SVG；默认均与摘要同目录、同前缀。
 pub(crate) fn write_report_html(
     summary_path: &Path,
     summary: &serde_json::Value,
-) -> Result<PathBuf, String> {
+    output: Option<&Path>,
+) -> Result<ReportArtifacts, String> {
     let stem = summary_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -51,11 +60,57 @@ pub(crate) fn write_report_html(
     } else {
         Vec::new()
     };
+    let out = output.map_or_else(|| sibling("report.html"), Path::to_path_buf);
+    if !out
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"))
+    {
+        return Err(format!(
+            "HTML 报告输出路径必须以 .html 或 .htm 结尾: {}",
+            out.display()
+        ));
+    }
+    let asset_stem = if output.is_some() {
+        out.file_stem()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "HTML 输出文件名无效".to_string())?
+    } else {
+        stem
+    };
+    let parent = out
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("创建报告目录失败 {}: {error}", parent.display()))?;
+    let equity_values: Vec<i128> = equity.iter().map(|(_, value)| *value).collect();
+    let fill_values: Vec<(u64, i128, i128)> = fills
+        .iter()
+        .map(|fill| (fill.ts, fill.qty_raw, fill.price_raw))
+        .collect();
+    let monthly = monthly_returns(
+        &equity,
+        summary_number(summary, "/account/initial_cash_raw"),
+    );
+    let artifacts = ReportArtifacts {
+        html: out.clone(),
+        equity_svg: parent.join(format!("{asset_stem}.equity.svg")),
+        fills_svg: parent.join(format!("{asset_stem}.fills.svg")),
+        monthly_svg: parent.join(format!("{asset_stem}.monthly.svg")),
+    };
+    for (path, content) in [
+        (&artifacts.equity_svg, equity_svg(&equity_values)),
+        (&artifacts.fills_svg, fills_svg(&fill_values)),
+        (&artifacts.monthly_svg, monthly_svg(&monthly)),
+    ] {
+        std::fs::write(path, content)
+            .map_err(|error| format!("写入 SVG 报告失败 {}: {error}", path.display()))?;
+    }
     let html = render_report_html(summary, &equity, &fills);
-    let out = sibling("report.html");
-    std::fs::write(&out, html)
-        .map_err(|error| format!("写入 HTML 报告失败 {}: {error}", out.display()))?;
-    Ok(out)
+    std::fs::write(&artifacts.html, html)
+        .map_err(|error| format!("写入 HTML 报告失败 {}: {error}", artifacts.html.display()))?;
+    Ok(artifacts)
 }
 
 /// 从三份产物渲染 HTML（纯函数，供用例直接调，不经文件系统）。
@@ -65,7 +120,7 @@ pub(crate) fn render_report_html(
     fills: &[FillPoint],
 ) -> String {
     let text = |pointer: &str| {
-        summary_text(summary, pointer).unwrap_or_else(|| READOUT_ABSENT.to_string())
+        escape_html(&summary_text(summary, pointer).unwrap_or_else(|| READOUT_ABSENT.to_string()))
     };
     let number = |pointer: &str| summary_number(summary, pointer);
     let pct = |raw: Option<i128>| {
@@ -187,6 +242,16 @@ pub(crate) fn render_report_html(
     );
     html.push_str("</main>\n</body>\n</html>\n");
     html
+}
+
+/// 转义摘要中的文本字段，避免用户控制的标的名/路径被解释成 HTML 或外部资源。
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 /// 指标卡的色调：涨红、跌绿、中性墨色。

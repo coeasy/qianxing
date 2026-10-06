@@ -157,12 +157,9 @@ pub(crate) fn run_unified_command(arguments: &[String]) -> Result<(), String> {
             run_runtime_check(&path, json)
         }
         "report" => {
-            // `--html` 是 report 自己的旗标：先摘出来再走通用参数读法，免得统一入口比直接入口少支持一个旗标。
-            let html = arguments.iter().any(|value| value == "--html");
-            let mut kept = arguments.to_vec();
-            kept.retain(|value| value != "--html");
-            let (path, json) = run_entry_arguments(&kept, action, true, default_runtime_path)?;
-            run_report(&path, json, html)
+            let (path, json, html, output) =
+                run_report_entry_arguments(arguments, default_runtime_path)?;
+            run_report_with_output(&path, json, html, output.as_deref())
         }
         _ => Err(run_usage(&format!("不支持 {action}"))),
     }
@@ -218,66 +215,6 @@ pub(crate) fn resolve_backtest_summary_path(path: &Path) -> Result<PathBuf, Stri
         .last()
         .cloned()
         .ok_or_else(|| format!("未找到回测摘要: {}", data_dir.join("runs").display()))
-}
-
-pub(crate) fn run_report(path: &Path, as_json: bool, html: bool) -> Result<(), String> {
-    let summary_path = resolve_backtest_summary_path(path)?;
-    let payload = std::fs::read_to_string(&summary_path)
-        .map_err(|error| format!("读取回测摘要失败 {}: {error}", summary_path.display()))?;
-    let summary: serde_json::Value = serde_json::from_str(&payload)
-        .map_err(|error| format!("回测摘要 JSON 无效 {}: {error}", summary_path.display()))?;
-    // 报告不是只把摘要念一遍：摘要声明"跑的是哪一份输入"，这里就按它写的路径重读、重算，
-    // 对不上直接拒绝出报告。旧 schema 没有 `input` 块，那是"这份产物没作过声明"，
-    // 必须显式说出来而不是印一个 `-` 让人以为核对过了（V11 Q66 / Q1b）。
-    let declared_input = recompute_declared_backtest_input(&summary)?;
-    // 易用性 P3：`--html` 渲染自包含 HTML（与 `--json` 正交）；读同一份已复核摘要，无第二个读点。
-    if html {
-        let out = write_report_html(&summary_path, &summary)?;
-        println!("[Report] html={}", out.display());
-    }
-    if as_json {
-        let report = serde_json::json!({
-            "schema_version": 1,
-            "runtime_version": build_identity::RUNTIME_VERSION,
-            "summary_path": summary_path.display().to_string(),
-            "input_check": match &declared_input {
-                Some(input) => serde_json::json!({
-                    "verdict": "verified",
-                    "declared_and_recomputed_match": true,
-                    "kind": input.kind,
-                    "path": input.path,
-                    "dataset_id": input.dataset_id,
-                    "dataset_version": input.dataset_version,
-                    "fingerprint": input.fingerprint,
-                }),
-                None => serde_json::json!({
-                    "verdict": "not_declared",
-                    "declared_and_recomputed_match": false,
-                }),
-            },
-            "summary": summary
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report)
-                .map_err(|error| format!("编码回测报告 JSON 失败: {error}"))?
-        );
-        return Ok(());
-    }
-
-    println!("[Report] summary={}", summary_path.display());
-    // 正文的排印与缺席口径统一在 `report_readout.rs`：这里只交摘要与"输入是否复核过"。
-    let input_verified = match &declared_input {
-        Some(input) => format!(
-            "{} input_kind={} input_id={} input_fingerprint={}",
-            input.path, input.kind, input.dataset_id, input.fingerprint
-        ),
-        None => "not_declared（该摘要没有 input 块，输入身份未经核对）".to_string(),
-    };
-    for line in report_readout_lines(&summary, &input_verified) {
-        println!("{line}");
-    }
-    Ok(())
 }
 
 pub(crate) fn run_status(path: &Path, as_json: bool) -> Result<(), String> {

@@ -66,6 +66,75 @@ fn sample_fills() -> Vec<FillPoint> {
 }
 
 #[test]
+fn report_output_flag_is_part_of_direct_cli_surface() {
+    use clap::Parser;
+    let parsed = cli_args::Cli::try_parse_from([
+        "qx-cli",
+        "report",
+        "summary.json",
+        "--html",
+        "-o",
+        "custom.html",
+    ])
+    .unwrap();
+    match parsed.command.unwrap() {
+        cli_args::Command::Report {
+            path, html, out, ..
+        } => {
+            assert_eq!(path, Some(PathBuf::from("summary.json")));
+            assert!(html);
+            assert_eq!(out, Some(PathBuf::from("custom.html")));
+        }
+        _ => panic!("report 参数必须落在 Report 命令变体"),
+    }
+}
+
+#[test]
+fn json_mode_with_html_keeps_stdout_parseable_and_lists_all_outputs() {
+    let dir = temp_dir("json-output");
+    let summary = dir.join("run.summary.json");
+    let html = dir.join("reports").join("chosen.html");
+    std::fs::write(&summary, "{\"schema_version\":1}").unwrap();
+    let json_only = std::process::Command::new(qx_cli_binary())
+        .arg("report")
+        .arg(&summary)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(json_only.status.success());
+    let plain_report: serde_json::Value = serde_json::from_slice(&json_only.stdout).unwrap();
+    assert!(plain_report.get("generated_artifacts").is_none());
+    let output = std::process::Command::new(qx_cli_binary())
+        .arg("report")
+        .arg(&summary)
+        .arg("--json")
+        .arg("--html")
+        .arg("-o")
+        .arg(&html)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "report --json --html 应成功: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["generated_artifacts"]["html"],
+        html.display().to_string()
+    );
+    for key in ["equity_svg", "fills_svg", "monthly_svg"] {
+        let path = PathBuf::from(report["generated_artifacts"][key].as_str().unwrap());
+        assert!(
+            path.is_file(),
+            "JSON 声明的图表必须真实落盘: {}",
+            path.display()
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn report_is_byte_equal_across_runs() {
     let summary = sample_summary();
     let first = render_report_html(&summary, &sample_equity(), &sample_fills());
@@ -147,13 +216,42 @@ fn write_report_html_lands_next_to_summary_and_rejects_bad_csv() {
         "order_id,ts,qty_raw,price_raw\n1,1500,1000000000,86500000000\n",
     )
     .unwrap();
-    let out = write_report_html(&summary_path, &sample_summary()).unwrap();
+    let out = write_report_html(&summary_path, &sample_summary(), None).unwrap();
     assert_eq!(
-        out.file_name().unwrap().to_str().unwrap(),
+        out.html.file_name().unwrap().to_str().unwrap(),
         "run.report.html"
     );
-    let html = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(out.equity_svg.file_name().unwrap(), "run.equity.svg");
+    assert_eq!(out.fills_svg.file_name().unwrap(), "run.fills.svg");
+    assert_eq!(out.monthly_svg.file_name().unwrap(), "run.monthly.svg");
+    assert!(out.equity_svg.is_file() && out.fills_svg.is_file() && out.monthly_svg.is_file());
+    for svg in [&out.equity_svg, &out.fills_svg, &out.monthly_svg] {
+        let payload = std::fs::read_to_string(svg).unwrap();
+        assert!(
+            payload.starts_with("<svg") && !payload.contains("http") && !payload.contains("xmlns")
+        );
+    }
+    let html = std::fs::read_to_string(&out.html).unwrap();
     assert_eq!(html.matches("<polygon").count(), 1);
+    let first_artifacts = [&out.html, &out.equity_svg, &out.fills_svg, &out.monthly_svg]
+        .map(|path| std::fs::read(path).unwrap());
+    let second = write_report_html(&summary_path, &sample_summary(), None).unwrap();
+    for (path, expected) in [
+        &second.html,
+        &second.equity_svg,
+        &second.fills_svg,
+        &second.monthly_svg,
+    ]
+    .into_iter()
+    .zip(first_artifacts)
+    {
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            expected,
+            "{} 必须确定性",
+            path.display()
+        );
+    }
 
     // 曲线文件坏掉必须当场报错，而不是静默产出一份与摘要对不上的图。
     std::fs::write(
@@ -161,10 +259,42 @@ fn write_report_html_lands_next_to_summary_and_rejects_bad_csv() {
         "index,ts,equity_raw,position_raw\n0,1000,not-a-number,0\n",
     )
     .unwrap();
-    let error = write_report_html(&summary_path, &sample_summary()).unwrap_err();
+    let error = write_report_html(&summary_path, &sample_summary(), None).unwrap_err();
     assert!(
         error.contains("equity_raw"),
         "错误要点名坏掉的那一格: {error}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn report_escapes_untrusted_summary_text_and_accepts_custom_html_path() {
+    let mut summary = sample_summary();
+    summary["strategy_id"] = serde_json::json!("<script>alert(1)</script>");
+    summary["input"]["path"] = serde_json::json!("bars <img src=\"http://invalid\"> & more");
+    let html = render_report_html(&summary, &sample_equity(), &sample_fills());
+    assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    assert!(html.contains("&lt;img src=&quot;http://invalid&quot;&gt; &amp; more"));
+    assert!(!html.contains("<script"));
+    assert!(!html.contains("<img"));
+
+    let dir = temp_dir("custom-output");
+    let summary_path = dir.join("run.summary.json");
+    std::fs::write(&summary_path, "{}").unwrap();
+    let custom = dir.join("reports").join("chosen.HTML");
+    let out = write_report_html(&summary_path, &sample_summary(), Some(&custom)).unwrap();
+    assert_eq!(out.html, custom);
+    assert!(out.html.is_file(), "自定义输出的父目录应自动创建");
+    assert_eq!(out.equity_svg.file_name().unwrap(), "chosen.equity.svg");
+    assert!(out.equity_svg.is_file() && out.fills_svg.is_file() && out.monthly_svg.is_file());
+    assert!(
+        write_report_html(
+            &summary_path,
+            &sample_summary(),
+            Some(&dir.join("bad.json"))
+        )
+        .is_err(),
+        "自定义输出必须保留 HTML 扩展名"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

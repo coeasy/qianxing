@@ -782,11 +782,12 @@ capabilities:
     production_approved: false
     evidence:
       - crates/qx-cli/src/report_svg.rs 无依赖 SVG 生成器：净值曲线 + 最大回撤区间、成交点（▲买红/▼卖绿）、月度收益热力表；纯函数、确定性、内联 SVG 不带命名空间、不出现任何外链 token
-      - crates/qx-cli/src/report_html.rs 自包含 HTML 报告：指标卡 + 三张内嵌 SVG + 产物身份表 + 「未连接真实交易所」声明；所有数值只从 summary.json 已有格子读，不新增第二个指标算式来源
-      - crates/qx-cli/src/cli_args.rs report 命令新增 --html 旗标（与 --json 正交，两者可同时给）
-      - crates/qx-cli/src/config_commands.rs run_report 在复核摘要之后调用 write_report_html，落 <stem>.report.html；统一入口 run report --html 与直接入口同形状
-      - crates/qx-cli/src/cli_help.rs 帮助文本印出 report --html 的形状与产物说明
-      - crates/qx-cli/src/tests/report_html.rs 七条用例：同输入两次逐字节相等、无外链 token、0 成交不画买卖点、每笔成交一个标记、卡片数值等于 summary 字段、坏 CSV 当场拒绝、epoch 毫秒到自然月映射
+      - crates/qx-cli/src/report_html.rs 自包含 HTML 报告 + 独立 equity/fills/monthly SVG：指标卡 + 图表 + 产物身份表 + 「未连接真实交易所」声明；数值只从 summary.json 已有格子读，不新增第二个指标算式来源
+      - crates/qx-cli/src/cli_args.rs report 命令支持 --html 与 -o/--output PATH（与 --json 正交），可自选 HTML 落点
+      - crates/qx-cli/src/report_command.rs 在复核摘要之后调用 write_report_html，默认落 <stem>.report.html；统一入口与直接入口同形状
+      - crates/qx-cli/src/report_html.rs 对摘要里的策略名、标的与来源路径进行 HTML 转义，避免输入文本变成标签或外部资源
+      - crates/qx-cli/src/cli_help.rs 帮助文本印出 report --html / -o 的形状与产物说明
+      - crates/qx-cli/src/tests/report_html.rs 十条用例覆盖确定性、无外链、空成交、指标字段对齐、坏 CSV 拒绝、自然月映射、转义、自定义落点与 JSON 输出一致性
       - tools/check_architecture.py report_readability_check 五颗：模块在盘且在门槛内、crate 根成对挂载、模板无外链 token、保留「未连接真实交易所」声明、落盘调用点唯一
     limitations:
       - report_html_only_renders_what_the_summary_already_declares：指标卡只印 summary.json 已有的格子（收益率/最大回撤/期末权益/期初本金/手续费/换手/成交笔数/拒单数）；Sharpe/Sortino/Calmar/胜率/盈亏比这些竞品常带的比率尚未进摘要，因此报告里也没有——按仓库纪律不新增第二个指标算式来源，补它们要先在内核里定唯一算式并写进摘要
