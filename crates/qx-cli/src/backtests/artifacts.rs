@@ -152,6 +152,7 @@ pub(crate) fn recompute_declared_backtest_input(
     summary: &serde_json::Value,
 ) -> Result<Option<BacktestInputProvenance>, String> {
     let Some(declared) = summary.get("input") else {
+        verify_declared_run_record(summary)?;
         return Ok(None);
     };
     let field = |name: &str| -> Result<String, String> {
@@ -202,9 +203,10 @@ pub(crate) fn recompute_declared_backtest_input(
             ));
         }
     }
-    // 输入身份对上之后，再跟同一轮的运行清单对账：两件事共用这一个复核入口，报告出口不需要
-    // 知道清单的存在，也不会出现"只核了输入、没核清单"的半套结论。
+    // 输入身份对上之后，依次核对同轮 RunManifest 与 RunRecord（v5）：报告出口不需要另立读法，
+    // 输入、配置身份、已完成状态与全部产物摘要都在这一条复核路径上收口。
     verify_declared_run_manifest(summary)?;
+    verify_declared_run_record(summary)?;
     Ok(Some(recomputed))
 }
 
@@ -336,15 +338,16 @@ pub(crate) fn persist_backtest_artifacts(
             input.result_hash, replay.log_digest
         ));
     }
+    // v5 增加风险比率与 RunRecord 指针；报告只读 summary，复核时会核对 RunRecord 全部产物摘要。
     // P2/P5 风险调整比率：唯一写点在这一处（与上面五格同源），报告与未来的 compare 只念这组
     // 数，不各自重算。算不出来（样本不足 / 分母为 0）写 `null`，读侧照 "absent" 处理。
-    let ratios = compute_risk_ratios(input.equity, input.max_drawdown_bps);
+    let ratios = compute_risk_ratios(input.equity, input.return_bps, input.max_drawdown_bps);
     let mut summary = serde_json::json!({
-        // v4：摘要开始交代"这一轮压在多少钱上"（`account` 块）。v3 有 `input` 却没有期初本金，
-        // 于是 `metrics.return_bps` 的分母与 `final_equity_raw` 的对照物都不在产物里（V11 Q72）。
+        // v5：增加报告度量比率与可校验 RunRecord 指针。v4 开始交代"这一轮压在多少钱上"（`account` 块）；
+        // v3 有 `input` 却没有期初本金，于是 `metrics.return_bps` 的分母与期末权益对照物不在产物里（V11 Q72）。
         // v3：摘要开始交代"跑的是哪一份输入"（`input` 块）。v2 只有 `input_data_hash`，那是
         // 引擎对自己手里那段切片的自哈希，回答不了这个问题（V11 Q66）。
-        "schema_version": 4,
+        "schema_version": 5,
         "strategy_id": input.strategy_id,
         "instrument": input.instrument.to_string(),
         "input": input_provenance_json(&input.input),
@@ -396,6 +399,7 @@ pub(crate) fn persist_backtest_artifacts(
         },
         "execution_costs": { "source": input.cost_source },
         "run_manifest": manifest_path.to_string_lossy(),
+        "run_record": summary_path.with_file_name(format!("{stem}.record.json")).to_string_lossy(),
     });
     if let Some((name, source)) = input.fill_model {
         // 只在真的有 `FillModel` 的链上写这个键：深度链的撮合口径在 `model_descriptors`
@@ -458,5 +462,6 @@ pub(crate) fn persist_backtest_artifacts(
         ));
     }
     write_backtest_artifact(&fills_path, &fills_payload, "成交明细")?;
+    persist_verified_run_record(manifest_path, &summary_path, &equity_path, &fills_path)?;
     Ok((summary_path, equity_path, fills_path))
 }

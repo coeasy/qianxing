@@ -11,9 +11,9 @@ use std::collections::{BTreeMap, VecDeque};
 pub mod builtin;
 pub mod builtin_signal;
 pub mod c_api;
+pub mod file_digest;
 pub mod frame;
 pub mod ring;
-
 pub use builtin::{BuiltinStrategy, BuiltinStrategyConfig, BuiltinStrategyKind};
 pub use c_api::{
     sha256_hex, verify_file_sha256, CAbiStrategy, DynamicCAbiLoadPolicy, DynamicCAbiStrategy,

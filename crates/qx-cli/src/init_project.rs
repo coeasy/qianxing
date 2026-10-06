@@ -209,6 +209,17 @@ pub(crate) fn run_init_with_profile(
             output.display()
         ));
     }
+    let manifest_root = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let project_manifest_path = manifest_root.join("qianxing.project.json");
+    if project_manifest_path.exists() && !force {
+        return Err(format!(
+            "项目清单已存在: {}；如确认覆盖，请显式添加 --force",
+            project_manifest_path.display()
+        ));
+    }
     if let Some(parent) = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -276,6 +287,8 @@ pub(crate) fn run_init_with_profile(
         .map_err(|error| format!("创建项目数据目录失败: {error}"))?;
     let readme_path = project_root.join("README.qianxing.md");
     let config = read_runtime_config(output)?;
+    let project_manifest =
+        write_init_project_manifest(output, project_root, profile_name, &config, force)?;
     let backtest_step = init_guidance::init_backtest_step(project_root, output, &config);
     let flow_tail = init_guidance::init_flow_tail(output, profile_name, &config);
     if force || !readme_path.exists() {
@@ -300,6 +313,12 @@ pub(crate) fn run_init_with_profile(
         init_assets.len(),
         strategy_name.unwrap_or("none")
     );
+    if let Some((path, fingerprint)) = project_manifest {
+        println!(
+            "[ProjectManifest] path={} fingerprint={fingerprint}",
+            path.display()
+        );
+    }
     let program = cli_args::PROGRAM_NAME;
     println!(
         "下一步：{program} doctor {}{}",
@@ -392,6 +411,13 @@ pub(crate) fn run_strategy_init(
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
+    let project_manifest_path = project_root.join("qianxing.project.json");
+    if project_manifest_path.exists() && !force {
+        return Err(format!(
+            "项目清单已存在: {}；如确认覆盖，请显式添加 --force",
+            project_manifest_path.display()
+        ));
+    }
     anchor_init_data_dir(&mut document, project_root);
     let bars = document
         .pointer("/strategy/bars_snapshot_path")
@@ -400,7 +426,7 @@ pub(crate) fn run_strategy_init(
         .to_string();
     let result = serde_json::to_string_pretty(&document)
         .map_err(|error| format!("编码内置策略配置失败: {error}"))?;
-    RuntimeConfig::from_json(&result)?;
+    let config = RuntimeConfig::from_json(&result)?;
     if let Some(parent) = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -412,6 +438,14 @@ pub(crate) fn run_strategy_init(
         .map_err(|error| format!("写入策略配置失败 {}: {error}", output.display()))?;
     for asset in &copied_assets {
         copy_init_asset(project_root, asset, force)?;
+    }
+    if let Some((path, fingerprint)) =
+        write_init_project_manifest(output, project_root, "builtin", &config, force)?
+    {
+        println!(
+            "[ProjectManifest] path={} fingerprint={fingerprint}",
+            path.display()
+        );
     }
     println!(
         "[Strategy · Init] strategy={} output={} bars={} assets={}",

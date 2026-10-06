@@ -1069,6 +1069,7 @@ CLI_BACKTESTS_MODULES = (
     "multi_builtin",
     "risk_binding",
     "risk_ratios",
+    "run_record",
     "signal_binding",
     "single_strategy",
     "strategy_backtest",
@@ -3214,7 +3215,7 @@ def replay_kernel_check() -> None:
         f"verify@{gate_at} 首次写文件@{write_at}",
     )
     check(
-        '"schema_version": 4' in artifact
+        '"schema_version": 5' in artifact
         and '"log_digest"' in artifact
         and '"ledger_entries"' in artifact
         and '"run_ledger_entries"' in artifact,
@@ -3287,7 +3288,7 @@ def input_provenance_check() -> None:
         return artifact[start:] if end < 0 else artifact[start:end]
 
     check(
-        artifact.count('"schema_version": 4') == 1
+        artifact.count('"schema_version": 5') == 1
         and artifact.count('"input": input_provenance_json(&input.input)') == 1
         and artifact.count("fn input_provenance_json(") == 1,
         "摘要以当前 schema 版本落一个 `input` 块，且这份形状只由 input_provenance_json 写一次",
@@ -6288,8 +6289,8 @@ def backtest_account_base_check() -> None:
     check(
         summary.count(SUMMARY_ACCOUNT_BLOCK) == 1
         and summary.count("input.account_base.cash.raw()") == 1
-        and '"schema_version": 4' in summary,
-        "摘要以 v4 落 account 块，期初本金与来源两格都取自真正记账的那一份（V11 Q72）",
+        and '"schema_version": 5' in summary,
+        "摘要以 v5 保留 account 块并扩展风险比率/RunRecord，期初本金仍取自真正记账的那一份（V11 Q72）",
         f"来源格 {summary.count(SUMMARY_ACCOUNT_BLOCK)} / 本金格 {summary.count('input.account_base.cash.raw()')}",
     )
     # 4. 配置面：省略时序列化字节不变，已 bless 的 config_fingerprint 才不会集体失真。
@@ -10518,6 +10519,30 @@ def foundation_specs_check() -> None:
         len(arms) == len(FOUNDATION_OBJECT_TYPES) and len(set(arms)) == len(arms),
         "describe 的派发臂覆盖全部七类地基对象且不重不漏",
         f"派发臂 {arms}（期望 {len(FOUNDATION_OBJECT_TYPES)} 条）",
+    )
+
+    project = (ROOT / "crates/qx-cli/src/project_manifest.rs").read_text(encoding="utf-8")
+    initializer = (ROOT / "crates/qx-cli/src/init_project.rs").read_text(encoding="utf-8")
+    project_cases = (ROOT / "crates/qx-cli/src/tests/project_manifest_init.rs").read_text(encoding="utf-8")
+    check(
+        "write_init_project_manifest(" in initializer
+        and 'qx_spec::describe("project", &payload)' in project
+        and "project-manifest-init" in project_cases
+        and "project-manifest-strategy-init" in project_cases,
+        "ProjectManifest 由 init 与 strategy init 写出，并经统一规格漏斗与两条首跑用例验证",
+        "项目清单定义、生产接线或正向用例断链",
+    )
+
+    record = (ROOT / "crates/qx-cli/src/backtests/run_record.rs").read_text(encoding="utf-8")
+    artifacts = (ROOT / "crates/qx-cli/src/backtests/artifacts.rs").read_text(encoding="utf-8")
+    provenance_cases = (ROOT / "crates/qx-cli/src/tests/backtest_input_provenance.rs").read_text(encoding="utf-8")
+    check(
+        "persist_verified_run_record(manifest_path, &summary_path, &equity_path, &fills_path)?" in artifacts
+        and "verify_declared_run_record(summary)?;" in artifacts
+        and "qx_strategy::file_digest::sha256_file_hex(path)" in record
+        and "report_refuses_when_a_run_record_artifact_digest_no_longer_matches" in provenance_cases,
+        "v5 摘要在重放验证后写 RunRecord，report 重算产物摘要且篡改用例会拒绝",
+        "RunRecord 的写侧/读侧/反向验证链有断点",
     )
 
     capability = (ROOT / "crates/qx-spec/src/capability.rs").read_text(encoding="utf-8")

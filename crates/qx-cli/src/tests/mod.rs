@@ -418,6 +418,7 @@ mod paper_settlement_currency;
 mod paper_submit_terminal_state;
 mod pipeline_metrics_open_sites;
 mod pipeline_metrics_surface;
+mod project_manifest_init;
 mod quickstart_file_budget;
 mod reconcile_worker_identity;
 mod reexport_zero_reader_surface;

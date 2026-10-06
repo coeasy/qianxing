@@ -32,7 +32,11 @@ pub(crate) fn ratio_to_json(value: Option<f64>) -> serde_json::Value {
 /// - 收益因子：正收益之和 / 负收益绝对值之和（无亏损周期时数学上无定义，写 `null`）。
 ///
 /// 任何一格分母为 0 或样本不足（< 2 个有效周期收益率）都返回 `None`。
-pub(crate) fn compute_risk_ratios(equity: &[i128], max_drawdown_bps: u32) -> RiskRatios {
+pub(crate) fn compute_risk_ratios(
+    equity: &[i128],
+    return_bps: i32,
+    max_drawdown_bps: u32,
+) -> RiskRatios {
     // 逐周期收益率（fraction），跳过分母为 0 的点：分母为 0 的曲线没有可对照的基准。
     let returns: Vec<f64> = equity
         .windows(2)
@@ -64,15 +68,9 @@ pub(crate) fn compute_risk_ratios(equity: &[i128], max_drawdown_bps: u32) -> Ris
     } else {
         None
     };
-    let first = equity.first().copied().unwrap_or(0) as f64;
-    let last = equity.last().copied().unwrap_or(0) as f64;
-    let total_return_bps = if first != 0.0 {
-        (last - first) / first * 10_000.0
-    } else {
-        0.0
-    };
+    // 总收益沿用回测摘要唯一字段，不再从权益首尾重算一份收益率。
     let calmar = if max_drawdown_bps > 0 {
-        Some(total_return_bps / max_drawdown_bps as f64)
+        Some(f64::from(return_bps) / max_drawdown_bps as f64)
     } else {
         None
     };
@@ -126,7 +124,7 @@ mod tests {
     fn flat_equity_has_no_ratios() {
         // 一条水平线：周期收益全为 0，波动为 0，夏普/索提诺无定义；回撤为 0，卡玛无定义。
         let equity = [100_000i128, 100_000, 100_000, 100_000];
-        let ratios = compute_risk_ratios(&equity, 0);
+        let ratios = compute_risk_ratios(&equity, 0, 0);
         assert_eq!(ratios.sharpe, None);
         assert_eq!(ratios.sortino, None);
         assert_eq!(ratios.calmar, None);
@@ -140,7 +138,7 @@ mod tests {
         // 单调上行：正收益、零回撤 → 夏普为正、卡玛无定义（回撤为 0）。
         // 索提诺分母为下行波动，纯上行序列没有下行波动，数学上无定义，写 `None`（不假装成无穷大）。
         let equity = [100_000i128, 101_000, 102_000, 103_000];
-        let ratios = compute_risk_ratios(&equity, 0);
+        let ratios = compute_risk_ratios(&equity, 0, 0);
         assert!(ratios.sharpe.is_some_and(|value| value > 0.0));
         assert_eq!(ratios.sortino, None);
         assert_eq!(ratios.calmar, None);
@@ -152,7 +150,7 @@ mod tests {
     fn drawdown_enables_calmar() {
         let equity = [100_000i128, 110_000, 99_000, 105_000];
         // 最大回撤约 10%（从 110k 到 99k），总收益 5% → 卡玛约 0.5。
-        let ratios = compute_risk_ratios(&equity, 1_000);
+        let ratios = compute_risk_ratios(&equity, 500, 1_000);
         assert!(ratios
             .calmar
             .is_some_and(|value| (value - 0.5).abs() < 0.05));
@@ -166,6 +164,9 @@ mod tests {
     #[test]
     fn too_few_samples_is_absent() {
         let equity = [100_000i128, 100_000];
-        assert_eq!(compute_risk_ratios(&equity, 500), RiskRatios::default());
+        assert_eq!(
+            compute_risk_ratios(&equity, 100, 500),
+            RiskRatios::default()
+        );
     }
 }

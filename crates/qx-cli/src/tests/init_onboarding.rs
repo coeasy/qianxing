@@ -340,13 +340,10 @@ fn count_files(dir: &Path) -> usize {
     files
 }
 
-/// #163 文档口径判据：`init --strategy macd` 自己只落 **9** 份，剩下 **5** 份
-/// （`data/qianxing/datasets.manifest.json` + 4 份同前缀 runs 产物）是首屏那条
-/// `backtest` 写出来的。
+/// #163 文档口径判据：`init --strategy macd` 落 10 份（含项目清单），首屏 `backtest`
+/// 再写 6 份（数据集清单 + RunManifest/RunRecord/summary/equity/fills）。
 ///
-/// 此前 CHANGELOG 与 V13 §9.9 把 14 份整个归给 `init`，而 V13 那行的逐项列举只加到 13
-/// —— 因为它把 runs 产物数了 4 份却漏了数据集清单。两处口径都没有可执行来源，所以这里
-/// 把两个数字钉住：以后改 `init_project.rs` 的模板清单，文档里那份数就得跟着一起改。
+/// 此处把初始化文件数与回测产物数分开钉住：以后扩展项目清单或 RunRecord，口径要一并更新。
 #[test]
 fn init_lands_nine_files_and_the_advertised_backtest_adds_five() {
     let root = temp_cli_case_dir("r2-init-file-count");
@@ -362,27 +359,30 @@ fn init_lands_nine_files_and_the_advertised_backtest_adds_five() {
     assert_eq!(code, Some(0), "init 失败:\n{stdout}");
     assert_eq!(
         count_files(&root),
-        9,
-        "init 落盘份数变了：文档里的 9 份口径要一起改"
+        10,
+        "init 落盘份数变了：runtime/项目清单/模板资产/README 的口径要一起改"
     );
     let command = advertised_backtest(&stdout).expect("builtin profile 应当印出回测命令");
     let (code, output) = run_as_printed(&command);
     assert_eq!(code, Some(0), "{command} 失败:\n{output}");
     let after = count_files(&root);
     assert_eq!(
-        after, 14,
-        "跑完首屏回测后的总份数变了：文档里的 9+5=14 分解要一起改"
+        after, 16,
+        "跑完首屏回测后的总份数变了：项目清单 + 数据集清单 + 5 项运行产物要一起改"
     );
     assert!(
         root.join("data")
             .join("qianxing")
             .join("datasets.manifest.json")
             .is_file(),
-        "多出来的 5 份里必须含数据集清单，否则 14 的分解口径不成立"
+        "新增文件里必须含数据集注册表清单"
     );
     let runs = std::fs::read_dir(root.join("data").join("qianxing").join("runs"))
         .expect("runs 目录应当存在")
         .count();
-    assert_eq!(runs, 4, "一次回测应当只写同前缀的四份产物");
+    assert_eq!(
+        runs, 5,
+        "一次回测应当写 RunManifest/RunRecord/summary/equity/fills 五份产物"
+    );
     let _ = std::fs::remove_dir_all(root);
 }

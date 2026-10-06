@@ -145,6 +145,8 @@ worker 才需要 Python（见 C）。
 （debug `61edf8801c0df856`、release `bad55f99ef068572`）——`digest` 覆盖构建身份，`result_hash` 只覆盖回测结果，
 「同样输入必得同样结果」这条口径说的是后者。
 
+**当前版本的产物身份扩展（2026-10-06）**：带可读本地数据集的 `init` 还会生成经 `project-manifest-v1` 校验的 `qianxing.project.json`；每次通过重放的回测除 RunManifest、summary、equity、fills 外，还会生成 `*.record.json`（RunRecord），对四类文件逐个写入 SHA-256。`report` 会按摘要指针读取 RunRecord、核对同轮 RunManifest 并重算每个产物摘要，缺失或被篡改即拒绝展示报告。所以上面 2026-10-01 的 9+5=14 是当时的历史实测口径；当前同一 quickstart 项目为 init 10 份 + 回测增加 6 份，共 16 份。
+
 装好的是哪个构建不必靠文件哈希自证：`qx-cli version` 那一行与 `doctor` 的第一格 `build_identity`、`status --json` 与 `report --json` 里的 `runtime_version` 同出一处（`crates/qx-cli/src/build_identity.rs`），值由构建期注入的包版本、git 提交、目标三元组与构建档拼成，源码里没有硬编码的版本号；`--version` 与 `-V` 是同一条入口的两个别名，三条写法逐字相同且都退 0。
 
 装好的 exe 不用把仓库带着走。示例配置只经**一条**查找链解析（`crates/qx-cli/src/deploy_lookup.rs`，V13 第三十一遍 ①/#266，另有常驻门禁判据钉住这条链的入口只有一处定义、示例读取的报错只由一处拼装）：`QX_DEPLOY_DIR` → 可执行文件同级 `deploy/` → 再往外一层 → 构建期源码树的 `deploy/` → 当前目录的 `deploy/` → **二进制里的内置模板清单**。最后一层由 `crates/qx-cli/build.rs` 在构建期把本目录顶层那 52 份 JSON 原样快照进 exe，需要时把**整份清单**落进当前用户的临时目录（不是只落被点名的那一份——`fast-backtest` 的 manifest 里作业按同级文件名引用 runtime/bars/spec，只落一份会让这条链在下一格读取上断掉），并按清单内容签名分桶；只读入口那 7 处以 deploy 目录示例文件名为默认值的路径参数全部挂着 `parse_deploy_path`，这条挂载面本身也是常驻判据（少挂一处就报，判据没有对象时同样报，不会静默给绿），所以同名目录里的陈旧副本不可能被新二进制读到；清单为空时构建直接失败，模板缺失这件事不该跟发布物一起出门。

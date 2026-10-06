@@ -52,6 +52,28 @@ fn account_fixture() -> crate::backtests::BacktestAccountBase {
     crate::backtests::backtest_initial_cash(None).unwrap()
 }
 
+fn write_run_manifest(path: &Path, log: &qx_core::EventLog, result_hash: u64) {
+    let manifest = qx_core::RunManifest {
+        run_id: "q62-replay-gate".into(),
+        code_commit: "test-commit".into(),
+        config_hash: "test-config".into(),
+        data_fingerprint: "test-data".into(),
+        input_components: BTreeMap::new(),
+        clock_start: 1,
+        clock_end: 2,
+        global_seed: 0,
+        determinism_mode: true,
+        result_hash: format!("{result_hash:016x}"),
+        strategy_version: "test-strategy".into(),
+        instrument_spec_version: "test-instrument".into(),
+        model_fingerprint: "test-model".into(),
+        input_event_hash: "test-input".into(),
+        output_event_hash: format!("{:016x}", log.digest()),
+        runtime_version: "test-runtime".into(),
+    };
+    std::fs::write(path, manifest.to_json().unwrap()).unwrap();
+}
+
 /// 用给定事实源拼一份产物输入；除事实源外全是占位口径。
 fn artifact_input<'a>(
     instrument: &'a InstrumentId,
@@ -102,6 +124,8 @@ fn summary_publishes_the_replay_facts_it_actually_checked() {
     let (log, ledger) = healthy_fact_source();
     let instrument = InstrumentId::parse("BTC/USDT.BINANCE").unwrap();
     let root = temp_cli_case_dir("q62-healthy");
+    let manifest_path = root.join("backtest.run.json");
+    write_run_manifest(&manifest_path, &log, log.digest());
     let (summary_path, _, _) = crate::backtests::persist_backtest_artifacts(
         &root.join("backtest.run.json"),
         &artifact_input(&instrument, &log, &ledger, log.digest()),
@@ -109,7 +133,7 @@ fn summary_publishes_the_replay_facts_it_actually_checked() {
     .unwrap();
     let summary: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&summary_path).unwrap()).unwrap();
-    assert_eq!(summary["schema_version"], serde_json::json!(4));
+    assert_eq!(summary["schema_version"], serde_json::json!(5));
     // 摘要必须把期初本金与它的来源一起落盘：只有期末权益的产物算不出收益率的分母。
     assert_eq!(
         summary["account"],

@@ -39,7 +39,12 @@ fn sample_summary() -> serde_json::Value {
             "max_drawdown_bps": 40,
             "fees_raw": 43250000,
             "turnover_raw": 86_500_000_000_i64,
-            "final_equity_raw": 100125000000000_i64
+            "final_equity_raw": 100125000000000_i64,
+            "sharpe": 1.25,
+            "sortino": 1.75,
+            "calmar": 3.125,
+            "win_rate": 0.67,
+            "profit_factor": 1.9
         },
         "matching_kernel": "qx-xingban::BacktestEngine(bar)",
         "risk_rules": { "rule_set_version": "v1", "source": "runtime-config" },
@@ -199,6 +204,12 @@ fn cards_read_from_summary_fields_only() {
         "期初本金应等于 account.initial_cash_raw"
     );
     assert!(html.contains("¥0.04"), "手续费应等于 metrics.fees_raw");
+    for displayed in [">1.25<", ">1.75<", ">3.12<", ">0.67<", ">1.90<"] {
+        assert!(
+            html.contains(displayed),
+            "风险比率卡必须读取 summary.metrics: {displayed}"
+        );
+    }
 }
 
 #[test]
@@ -311,10 +322,10 @@ fn credibility_panel_surfaces_trust_signals_and_flags_uncomputed_fields() {
     assert!(complete.contains("撮合档位") && complete.contains("成本模型"));
     assert!(complete.contains("风控规则") && complete.contains("数据质量"));
     assert!(complete.contains("未计算字段"));
-    assert!(complete.contains("可信"), "完整摘要六格都应判可信");
+    assert!(complete.contains("可信"), "身份与重放等可核对项应判可信");
     assert!(
-        !complete.contains(">待核<"),
-        "所有指标都已计算时不得出现待核：{}",
+        complete.contains(">待核<") && complete.contains("未嵌入连续性/缺失值质量报告"),
+        "只有数据集身份而没有质量报告时必须明示待核：{}",
         complete
     );
     assert!(
@@ -333,6 +344,11 @@ fn credibility_panel_surfaces_trust_signals_and_flags_uncomputed_fields() {
         "fees_raw",
         "turnover_raw",
         "final_equity_raw",
+        "sharpe",
+        "sortino",
+        "calmar",
+        "win_rate",
+        "profit_factor",
     ] {
         assert!(degraded.contains(name), "未计算字段必须逐一点名：{name}");
     }

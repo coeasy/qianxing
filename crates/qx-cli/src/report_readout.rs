@@ -66,7 +66,12 @@ pub(crate) fn summary_generation_note(summary: &Value) -> String {
         None => READOUT_ABSENT.to_string(),
     };
     let mut blocks = Vec::new();
-    for (key, since) in [("input", 3), ("account", 4), ("replay", 2)] {
+    for (key, since) in [
+        ("input", 3),
+        ("account", 4),
+        ("replay", 2),
+        ("run_record", 5),
+    ] {
         let declared = summary_block(summary, key).is_some();
         let expected = match summary_schema_version(summary) {
             Some(version) => version >= since,

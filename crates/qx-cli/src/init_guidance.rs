@@ -111,7 +111,7 @@ pub(crate) fn init_readme(
         flow.push(step.to_string());
     }
     format!(
-        "# Qianxing 本地项目\n\n运行时配置：`{runtime}`。profile=`{profile}`。{strategy_line}\n\n## 推荐流程\n\n```text\n{}\n```\n\n初始化生成的样例文件只用于本地回测和 Paper 验收，不包含交易密钥，也不会自动发送真实订单。CCXT/多交易所 profile 只生成公共配置和凭据引用，必须自行配置环境变量后再做 sandbox 验收。\n",
+        "# Qianxing 本地项目\n\n运行时配置：`{runtime}`。profile=`{profile}`。{strategy_line}\n\n## 推荐流程\n\n```text\n{}\n```\n\n带有可读本地数据集的项目会额外生成 `qianxing.project.json`，其中引用运行时、数据集版本和可识别的策略，结构遵循仓库的 `project-manifest-v1` schema。回测产物在 `data/qianxing/runs/`，包含摘要、权益曲线、成交明细、RunManifest 和带文件摘要的 RunRecord。\n\n初始化生成的样例文件只用于本地回测和 Paper 验收，不包含交易密钥，也不会自动发送真实订单。CCXT/多交易所 profile 只生成公共配置和凭据引用，必须自行配置环境变量后再做 sandbox 验收。\n",
         flow.join("\n")
     )
 }

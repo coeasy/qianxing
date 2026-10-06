@@ -58,6 +58,6 @@ fn production_budget_never_truncates_a_real_project() {
     let (files, truncated) =
         quickstart::project_file_count(&root, quickstart::PROJECT_FILE_COUNT_BUDGET);
     assert!(!truncated, "真实项目被生产预算截断了：份数 {files}");
-    assert_eq!(files, 9, "与 init_onboarding.rs 的 9 份口径不一致");
+    assert_eq!(files, 10, "与 init_onboarding.rs 的 10 份口径不一致");
     let _ = std::fs::remove_dir_all(root);
 }

@@ -300,7 +300,7 @@ fn card(label: &str, value: &str, tone: &str) -> String {
 
 /// 产物身份表：读者要能一眼看出「这份结果跑的是哪份输入、用哪套口径」。
 fn provenance_table(text: &dyn Fn(&str) -> String) -> String {
-    let rows: [(&str, String); 14] = [
+    let rows: [(&str, String); 15] = [
         ("输入种类", text("/input/kind")),
         ("输入路径", text("/input/path")),
         (
@@ -329,6 +329,7 @@ fn provenance_table(text: &dyn Fn(&str) -> String) -> String {
         ("输入事件哈希", text("/input_data_hash")),
         ("摘要版本", text("/schema_version")),
         ("运行清单", text("/run_manifest")),
+        ("运行记录", text("/run_record")),
     ];
     let mut table = String::from("<table><tbody>");
     for (key, value) in rows {

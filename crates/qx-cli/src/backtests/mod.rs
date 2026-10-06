@@ -171,6 +171,9 @@ pub(crate) use risk_binding::*;
 mod risk_ratios;
 pub(crate) use risk_ratios::*;
 
+mod run_record;
+pub(crate) use run_record::*;
+
 mod signal_binding;
 pub(crate) use signal_binding::*;
 

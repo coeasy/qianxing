@@ -76,7 +76,7 @@ fn string_typed_and_negative_money_fields_still_read_as_numbers() {
 
 #[test]
 fn generation_note_tells_apart_older_schema_from_missing_block() {
-    // v1：三个块都还没被引入，缺席是"那一代没声明过"。
+    // v1：这些块都还没被引入，缺席是"那一代没声明过"。
     let v1 = serde_json::json!({"schema_version": 1, "strategy_id": "s"});
     let note = summary_generation_note(&v1);
     assert!(
@@ -90,8 +90,9 @@ fn generation_note_tells_apart_older_schema_from_missing_block() {
     let note = summary_generation_note(&v4_without_account);
     assert!(
         note.contains("account=MISSING_IN_THIS_GENERATION")
-            && note.contains("input=MISSING_IN_THIS_GENERATION"),
-        "本世代缺块没被点名: {note}"
+            && note.contains("input=MISSING_IN_THIS_GENERATION")
+            && note.contains("run_record=not_declared_before_v5"),
+        "本世代缺块与未来世代字段没被区分: {note}"
     );
     // 连世代都没写的产物：报 absent，而不是默认自己就是最新世代。
     let note = summary_generation_note(&serde_json::json!({"strategy_id": "s"}));

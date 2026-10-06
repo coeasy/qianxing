@@ -149,7 +149,7 @@ pub(crate) fn run(project: Option<PathBuf>, force: bool) {
     };
     println!("你刚做完了 5 步：建项目 → 静态检查 → 回测 → 读回摘要 → 安全状态，{counted}。");
     println!(
-        "回测产物在 {} 下（summary / equity.csv / fills.csv / run.json 与数据集清单）。",
+        "回测产物在 {} 下（summary / equity.csv / fills.csv / run.json / record.json 与数据集清单）。",
         absolute.join("data").display()
     );
     println!("下一步三条命令：");

@@ -1,6 +1,6 @@
 //! 结果可信度面板（易用性 P1 §7 P1.4）：把"这份结果能不能信"拆成六格。
 //!
-//! 这一层刻意只做**读**：六格每一个都来自摘要已有的字段（input / replay / matching_kernel /
+//! 这一层刻意只做**读**：每格都来自摘要已有的字段（input / replay / matching_kernel /
 //! execution_costs / risk_rules / metrics），不引入第二个指标算式来源——与报告卡只印
 //! `summary.json` 已有格子的纪律一致。颜色走独立的「可信 / 待核 / 缺席」三色（蓝 / 琥珀 / 灰），
 //! 不碰收益的涨红跌绿语义，避免把"已验证"误读成"涨"。
@@ -37,10 +37,19 @@ pub(crate) fn credibility_panel(summary: &serde_json::Value) -> String {
         ("fees_raw", "/metrics/fees_raw"),
         ("turnover_raw", "/metrics/turnover_raw"),
         ("final_equity_raw", "/metrics/final_equity_raw"),
+        ("sharpe", "/metrics/sharpe"),
+        ("sortino", "/metrics/sortino"),
+        ("calmar", "/metrics/calmar"),
+        ("win_rate", "/metrics/win_rate"),
+        ("profit_factor", "/metrics/profit_factor"),
     ];
     let uncomputed: Vec<&str> = metric_fields
         .iter()
-        .filter(|(_, pointer)| summary_number(summary, pointer).is_none())
+        .filter(|(_, pointer)| {
+            summary
+                .pointer(pointer)
+                .is_none_or(serde_json::Value::is_null)
+        })
         .map(|(name, _)| *name)
         .collect();
 
@@ -96,13 +105,13 @@ pub(crate) fn credibility_panel(summary: &serde_json::Value) -> String {
         (
             "数据质量",
             if dataset.is_some() && fingerprint.is_some() {
-                "ok"
+                "warn"
             } else {
                 "absent"
             },
             if dataset.is_some() && fingerprint.is_some() {
                 format!(
-                    "数据集 {} 已登记，输入指纹落盘（档位门禁已在回测前拦截）",
+                    "数据集 {} 已登记，但摘要未嵌入连续性/缺失值质量报告",
                     dataset.as_deref().unwrap()
                 )
             } else {
