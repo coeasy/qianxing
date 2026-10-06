@@ -1,0 +1,104 @@
+{
+  "scenario": "cn-futures",
+  "description": "国内期货：夜盘交易日历、合约乘数、保证金、手续费、交割换月",
+  "instrument_spec": {
+    "instrument": {
+      "symbol": "rb2510",
+      "venue": "SHFE"
+    },
+    "product": "future",
+    "base_currency": "RB",
+    "quote_currency": "CNY",
+    "settlement_currency": "CNY",
+    "contract_size": 10000000000,
+    "linear": true,
+    "inverse": false,
+    "price_tick": 1000000000,
+    "qty_step": 1000000000,
+    "min_qty": 1000000000,
+    "max_leverage": 10,
+    "maintenance_margin_bps": 800,
+    "valid_from": 1704067200000,
+    "valid_to": null
+  },
+  "dataset": {
+    "manifest_version": 1,
+    "dataset": {
+      "dataset_id": "cnfut.rb2510.1m",
+      "version": "2024.1",
+      "source": "synthetic",
+      "fingerprint": "fnv1a:cnfut.rb2510.1m",
+      "schema_version": 1,
+      "start_timestamp": 1704067200000,
+      "end_timestamp": 1735689600000
+    },
+    "instrument": "rb2510.SHFE",
+    "timezone": "Asia/Shanghai",
+    "tier": "l1",
+    "provider_version": "synthetic-1.0",
+    "content_hash": "fnv1a:content:cnfut.rb2510.1m",
+    "quality_report": {
+      "row_count": 52560,
+      "duplicate_rows": 0,
+      "out_of_order_rows": 0,
+      "missing_intervals": 0,
+      "timezone": "Asia/Shanghai",
+      "corporate_action_coverage": false,
+      "usable_tiers": [
+        "l1"
+      ]
+    },
+    "source_lineage": {
+      "primary_source": "synthetic",
+      "backup_sources": []
+    }
+  },
+  "experiment": {
+    "schema_version": 1,
+    "experiment_id": "cn-futures-breakout",
+    "strategy_ref": "breakout",
+    "dataset_id": "cnfut.rb2510.1m@2024.1",
+    "seed": 1,
+    "initial_capital_raw": 1000000000000000,
+    "parameter_space": [
+      {
+        "name": "fast",
+        "values": [
+          "5",
+          "10"
+        ]
+      }
+    ],
+    "split_plan": {
+      "train_bars": 40000,
+      "test_bars": 12560,
+      "walk_forward": false,
+      "step_bars": 0
+    },
+    "baselines": [
+      "buy-and-hold"
+    ],
+    "cost_model_ref": "cnfutures-default",
+    "risk_rule_set": "qx-order-risk-v1",
+    "model_version": "none"
+  },
+  "run": {
+    "schema_version": 1,
+    "run_id": "run-cn-futures",
+    "status": "completed",
+    "input_digest": "fnv1a:input:run-cn-futures",
+    "code_identity": "0000000",
+    "config_fingerprint": "fnv1a:config:run-cn-futures",
+    "started_at_ms": 1704067200000,
+    "finished_at_ms": 1704067260000,
+    "artifact_refs": [
+      {
+        "name": "summary",
+        "path": "summary.json",
+        "digest": "fnv1a:summary:run-cn-futures"
+      }
+    ],
+    "replay_verdict": "verified",
+    "capability_level": "L1"
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "scenario": "global-equity",
+  "description": "国际股票/ETF：时区与交易日历、多币种 FX 估值、公司行动",
+  "instrument_spec": {
+    "instrument": {
+      "symbol": "AAPL",
+      "venue": "NASDAQ"
+    },
+    "product": "spot",
+    "base_currency": "AAPL",
+    "quote_currency": "USD",
+    "settlement_currency": "USD",
+    "contract_size": 1000000000,
+    "linear": false,
+    "inverse": false,
+    "price_tick": 10000000,
+    "qty_step": 1000000000,
+    "min_qty": 1000000000,
+    "max_leverage": 1,
+    "maintenance_margin_bps": 0,
+    "valid_from": 1704067200000,
+    "valid_to": null
+  },
+  "dataset": {
+    "manifest_version": 1,
+    "dataset": {
+      "dataset_id": "global.aapl.daily",
+      "version": "2024.1",
+      "source": "synthetic",
+      "fingerprint": "fnv1a:global.aapl.daily",
+      "schema_version": 1,
+      "start_timestamp": 1704067200000,
+      "end_timestamp": 1735689600000
+    },
+    "instrument": "AAPL.NASDAQ",
+    "timezone": "America/New_York",
+    "tier": "bar",
+    "provider_version": "synthetic-1.0",
+    "content_hash": "fnv1a:content:global.aapl.daily",
+    "quality_report": {
+      "row_count": 252,
+      "duplicate_rows": 0,
+      "out_of_order_rows": 0,
+      "missing_intervals": 0,
+      "timezone": "America/New_York",
+      "corporate_action_coverage": true,
+      "usable_tiers": [
+        "bar"
+      ]
+    },
+    "source_lineage": {
+      "primary_source": "synthetic",
+      "backup_sources": []
+    }
+  },
+  "experiment": {
+    "schema_version": 1,
+    "experiment_id": "global-equity-momentum",
+    "strategy_ref": "momentum",
+    "dataset_id": "global.aapl.daily@2024.1",
+    "seed": 1,
+    "initial_capital_raw": 1000000000000000,
+    "parameter_space": [
+      {
+        "name": "fast",
+        "values": [
+          "5",
+          "10"
+        ]
+      }
+    ],
+    "split_plan": {
+      "train_bars": 210,
+      "test_bars": 42,
+      "walk_forward": false,
+      "step_bars": 0
+    },
+    "baselines": [
+      "buy-and-hold"
+    ],
+    "cost_model_ref": "global-equity-default",
+    "risk_rule_set": "qx-order-risk-v1",
+    "model_version": "none"
+  },
+  "run": {
+    "schema_version": 1,
+    "run_id": "run-global-equity",
+    "status": "completed",
+    "input_digest": "fnv1a:input:run-global-equity",
+    "code_identity": "0000000",
+    "config_fingerprint": "fnv1a:config:run-global-equity",
+    "started_at_ms": 1704067200000,
+    "finished_at_ms": 1704067260000,
+    "artifact_refs": [
+      {
+        "name": "summary",
+        "path": "summary.json",
+        "digest": "fnv1a:summary:run-global-equity"
+      }
+    ],
+    "replay_verdict": "verified",
+    "capability_level": "L1"
+  }
+}

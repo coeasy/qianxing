@@ -1,0 +1,104 @@
+{
+  "scenario": "cn-options",
+  "description": "国内期权：合约链、到期、行权指派、组合腿与卖方保证金",
+  "instrument_spec": {
+    "instrument": {
+      "symbol": "10007891",
+      "venue": "SSE"
+    },
+    "product": "option",
+    "base_currency": "510050",
+    "quote_currency": "CNY",
+    "settlement_currency": "CNY",
+    "contract_size": 10000000000000,
+    "linear": false,
+    "inverse": false,
+    "price_tick": 100000,
+    "qty_step": 1000000000,
+    "min_qty": 1000000000,
+    "max_leverage": 1,
+    "maintenance_margin_bps": 0,
+    "valid_from": 1704067200000,
+    "valid_to": null
+  },
+  "dataset": {
+    "manifest_version": 1,
+    "dataset": {
+      "dataset_id": "cnopt.510050.chain",
+      "version": "2024.1",
+      "source": "synthetic",
+      "fingerprint": "fnv1a:cnopt.510050.chain",
+      "schema_version": 1,
+      "start_timestamp": 1704067200000,
+      "end_timestamp": 1735689600000
+    },
+    "instrument": "10007891.SSE",
+    "timezone": "Asia/Shanghai",
+    "tier": "l1",
+    "provider_version": "synthetic-1.0",
+    "content_hash": "fnv1a:content:cnopt.510050.chain",
+    "quality_report": {
+      "row_count": 12000,
+      "duplicate_rows": 0,
+      "out_of_order_rows": 0,
+      "missing_intervals": 0,
+      "timezone": "Asia/Shanghai",
+      "corporate_action_coverage": false,
+      "usable_tiers": [
+        "l1"
+      ]
+    },
+    "source_lineage": {
+      "primary_source": "synthetic",
+      "backup_sources": []
+    }
+  },
+  "experiment": {
+    "schema_version": 1,
+    "experiment_id": "cn-options-chain",
+    "strategy_ref": "covered-call",
+    "dataset_id": "cnopt.510050.chain@2024.1",
+    "seed": 1,
+    "initial_capital_raw": 1000000000000000,
+    "parameter_space": [
+      {
+        "name": "fast",
+        "values": [
+          "5",
+          "10"
+        ]
+      }
+    ],
+    "split_plan": {
+      "train_bars": 9000,
+      "test_bars": 3000,
+      "walk_forward": false,
+      "step_bars": 0
+    },
+    "baselines": [
+      "buy-and-hold"
+    ],
+    "cost_model_ref": "cnoptions-default",
+    "risk_rule_set": "qx-order-risk-v1",
+    "model_version": "none"
+  },
+  "run": {
+    "schema_version": 1,
+    "run_id": "run-cn-options",
+    "status": "completed",
+    "input_digest": "fnv1a:input:run-cn-options",
+    "code_identity": "0000000",
+    "config_fingerprint": "fnv1a:config:run-cn-options",
+    "started_at_ms": 1704067200000,
+    "finished_at_ms": 1704067260000,
+    "artifact_refs": [
+      {
+        "name": "summary",
+        "path": "summary.json",
+        "digest": "fnv1a:summary:run-cn-options"
+      }
+    ],
+    "replay_verdict": "verified",
+    "capability_level": "L1"
+  }
+}

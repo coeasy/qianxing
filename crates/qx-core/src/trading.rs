@@ -14,6 +14,13 @@ pub enum TradingProduct {
     Margin,
     Perpetual,
     Future,
+    /// 期权（规划 §15.1 的产品类型表把 `option` 单列一格）。
+    ///
+    /// 刻意**不**计入 [`TradingProduct::is_derivative`]：衍生品那条分支要求 `linear`/`inverse`
+    /// 恰好指定一个，而期权两者都为 false 才是对的（权利金对标的线性程度不是合约的
+    /// 线性/反向属性）。期权合约身份里真正缺的那几格（行权价、到期日、认购/认沽、行权方式）
+    /// 尚未建模，见 `maturity/capabilities.yaml` 的 `option_contract_identity_is_not_modelled`。
+    Option,
 }
 
 impl TradingProduct {

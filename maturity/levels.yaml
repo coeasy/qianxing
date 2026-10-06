@@ -1,0 +1,118 @@
+# 牵星 Qianxing · 能力等级登记册（2026-10-06）
+#
+# 口径（docs/qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md §13.2）：
+# 「支持」不是一个模糊的 supported 标记，而是可以理解、可以验收的五级。任何市场、Venue、
+# 订单类型或策略语言都必须**单独**登记等级：L1 通过不代表 L3，L3 通过也不自动代表 L4。
+#
+# 硬约束（由 tools/check_architecture.py 的 capability_levels_check 逐条核对）：
+#   1. level_definitions 必须覆盖 L0..L4，每级都有 name 与 requires；
+#   2. subjects 四类（markets / venues / order_types / strategy_languages）都必须非空，
+#      且每个受登记主体都有 level 与 evidence 两个键；
+#   3. level 必须落在 L0..L4 内；
+#   4. 等级 ≥ L3 的主体，evidence 必须是一个真实存在的路径（沙盒/测试网证据）；
+#      等级 ≥ L4 的主体，还必须被 maturity/capabilities.yaml 标为 production_approved；
+#   5. **诚实牙齿**：当 capabilities.yaml 里 sandbox_tested: true 的条数为 0 时，
+#      本文件任何主体都不许声明 L3 或 L4 —— 没有外部证据就不许把「规划支持」写成「已验证支持」。
+#      这条判据让「先把等级调高」这种改字行为当场变红。
+#
+# 当前读数：sandbox_tested = 0、production_approved = 0，所以本文件最高只到 L2。
+
+schema_version: 1
+updated_at: "2026-10-06"
+
+# ---- 五级定义（§13.2 原文口径） ----
+level_definitions:
+  L0:
+    name: "Schema/Research"
+    requires: "schema、样例、数据质量报告"
+  L1:
+    name: "Deterministic Backtest"
+    requires: "输入 fingerprint、撮合/成本模型、ReplayVerifier"
+  L2:
+    name: "Paper/Simulated"
+    requires: "Paper 规则、订单事实、恢复和指标"
+  L3:
+    name: "Sandbox/Testnet"
+    requires: "脱敏 EvidenceBundle、故障演练、sandbox 账户记录"
+  L4:
+    name: "Controlled Production"
+    requires: "production approval、发布锁、值班/告警、回滚演练"
+
+subjects:
+  # ---- 市场/产品（§13.3 场景覆盖矩阵） ----
+  markets:
+    ashare-equity:
+      level: L2
+      evidence: unavailable
+    convertible-bond:
+      level: L1
+      evidence: unavailable
+    cn-futures:
+      level: L1
+      evidence: unavailable
+    cn-options:
+      level: L1
+      evidence: unavailable
+    global-equity:
+      level: L1
+      evidence: unavailable
+    fx-cfd:
+      level: L1
+      evidence: unavailable
+    crypto-spot:
+      level: L2
+      evidence: unavailable
+    crypto-perpetual:
+      level: L2
+      evidence: unavailable
+    multi-account-portfolio:
+      level: L1
+      evidence: unavailable
+    cross-venue-arb:
+      level: L1
+      evidence: unavailable
+    research-ml:
+      level: L0
+      evidence: unavailable
+
+  # ---- Venue / 适配器 ----
+  venues:
+    paper:
+      level: L2
+      evidence: unavailable
+    binance-spot:
+      level: L2
+      evidence: unavailable
+    binance-futures:
+      level: L2
+      evidence: unavailable
+    ccxt-public:
+      level: L2
+      evidence: unavailable
+
+  # ---- 订单类型 ----
+  order_types:
+    market:
+      level: L2
+      evidence: unavailable
+    limit:
+      level: L2
+      evidence: unavailable
+    post-only:
+      level: L2
+      evidence: unavailable
+    reduce-only:
+      level: L2
+      evidence: unavailable
+
+  # ---- 策略语言 ----
+  strategy_languages:
+    rust:
+      level: L1
+      evidence: unavailable
+    python:
+      level: L1
+      evidence: unavailable
+    cpp:
+      level: L1
+      evidence: unavailable

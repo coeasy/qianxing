@@ -1,0 +1,104 @@
+{
+  "scenario": "crypto-perpetual",
+  "description": "加密永续/交割：funding、reduce-only、post-only、杠杆与强平",
+  "instrument_spec": {
+    "instrument": {
+      "symbol": "BTCUSDT-PERP",
+      "venue": "BINANCE"
+    },
+    "product": "perpetual",
+    "base_currency": "BTC",
+    "quote_currency": "USDT",
+    "settlement_currency": "USDT",
+    "contract_size": 1000000000,
+    "linear": true,
+    "inverse": false,
+    "price_tick": 10000000,
+    "qty_step": 1000000,
+    "min_qty": 1000000,
+    "max_leverage": 125,
+    "maintenance_margin_bps": 50,
+    "valid_from": 1704067200000,
+    "valid_to": null
+  },
+  "dataset": {
+    "manifest_version": 1,
+    "dataset": {
+      "dataset_id": "crypto.btcusdt.perp.1m",
+      "version": "2024.1",
+      "source": "synthetic",
+      "fingerprint": "fnv1a:crypto.btcusdt.perp.1m",
+      "schema_version": 1,
+      "start_timestamp": 1704067200000,
+      "end_timestamp": 1735689600000
+    },
+    "instrument": "BTCUSDT-PERP.BINANCE",
+    "timezone": "UTC",
+    "tier": "l2",
+    "provider_version": "synthetic-1.0",
+    "content_hash": "fnv1a:content:crypto.btcusdt.perp.1m",
+    "quality_report": {
+      "row_count": 525600,
+      "duplicate_rows": 0,
+      "out_of_order_rows": 0,
+      "missing_intervals": 0,
+      "timezone": "UTC",
+      "corporate_action_coverage": false,
+      "usable_tiers": [
+        "l2"
+      ]
+    },
+    "source_lineage": {
+      "primary_source": "synthetic",
+      "backup_sources": []
+    }
+  },
+  "experiment": {
+    "schema_version": 1,
+    "experiment_id": "crypto-perp-funding",
+    "strategy_ref": "funding-carry",
+    "dataset_id": "crypto.btcusdt.perp.1m@2024.1",
+    "seed": 1,
+    "initial_capital_raw": 1000000000000,
+    "parameter_space": [
+      {
+        "name": "fast",
+        "values": [
+          "5",
+          "10"
+        ]
+      }
+    ],
+    "split_plan": {
+      "train_bars": 400000,
+      "test_bars": 125600,
+      "walk_forward": false,
+      "step_bars": 0
+    },
+    "baselines": [
+      "buy-and-hold"
+    ],
+    "cost_model_ref": "binance-futures-default",
+    "risk_rule_set": "qx-order-risk-v1",
+    "model_version": "none"
+  },
+  "run": {
+    "schema_version": 1,
+    "run_id": "run-crypto-perpetual",
+    "status": "completed",
+    "input_digest": "fnv1a:input:run-crypto-perpetual",
+    "code_identity": "0000000",
+    "config_fingerprint": "fnv1a:config:run-crypto-perpetual",
+    "started_at_ms": 1704067200000,
+    "finished_at_ms": 1704067260000,
+    "artifact_refs": [
+      {
+        "name": "summary",
+        "path": "summary.json",
+        "digest": "fnv1a:summary:run-crypto-perpetual"
+      }
+    ],
+    "replay_verdict": "verified",
+    "capability_level": "L2"
+  }
+}

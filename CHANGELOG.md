@@ -1,6 +1,23 @@
 # Changelog
 
 
+### 契约层与登记层全量落地（2026-10-06）· 规划 §13.2 / §14.3 / §17 / §18 M0 / §6.2
+
+**口径**：上一轮（`f424b6e`）落地了 §6.2 的七类地基对象；这一轮把它们**钉住**——用真实契约、真实场景、真实依赖规则和真实目标台账。范围是规划里**不需要外部凭据**的全部可本地落地项（M0 剩余 + 各阶段依赖的登记层）。全部加性：门禁 **667 → 676 全绿**，未删任何既有判据。
+
+- **策略契约补齐输入方向（§18 M0 / §4.2 第 8 条）**：新增 `schemas/strategy-api-input-v1.json`，与既有 output schema 合成双向机器可读定义，消除「Rust 有结构、输入方向靠文档」这个点名缺口。`crates/qx-runtime/tests/strategy_contract_input_schema.rs` 五条用例把它与 `StrategyContractInput`/`StrategyContractBars` 逐键对齐：键全集、required（**删键看 serde 认不认**）、`additionalProperties`、定点值只走 JSON 整数、版本常量同源。
+  - **用例当场抓出一处真实漂移**：我最初把 `available_margin_raw` 写进 `required`，但它是 `Option<i128>`——serde 对 `Option` 字段的缺省语义就是 `None`，删掉这个键 serde 照样认。schema 已按实测口径改回，描述里写明「这一条不是照抄字段表，而是被删键实验钉住的」。
+- **七场景最小 fixture（§18 M0）**：`maturity/fixtures/scenarios/` 下 A 股 / 国内期货 / 国内期权 / 国际股票 / FX / 加密现货 / 加密永续 各一份，每份四块身份（`instrument_spec` / `dataset` / `experiment` / `run`）。`crates/qx-spec/tests/scenario_fixtures.rs` 七条用例把四块分别读进 `TradingInstrumentSpec` / `DatasetManifestV2` / `ExperimentSpec` / `RunRecord` 并逐块校验，另钉住五种产品类型都有样板。
+- **补 `TradingProduct::Option`（§15.1）**：规划的产品类型表把 `option` 单列一格，而枚举里没有。已补上（刻意不计入 `is_derivative()`：衍生品那条分支要求 `linear`/`inverse` 恰好指定一个，而期权两者都为 false 才对），市场规格解析器同步接受 `option`/`options`。合约身份真正缺的几格（行权价/到期日/认购认沽/行权方式/组合保证金）已登记为 limitation。
+- **`maturity/targets.yaml`（§17）**：工业级非功能目标台账，九个场景 profile × 十个维度，以 profile / 场景 / 硬件 / 版本 / 证据路径为键。牙齿是**诚实规则**：`measurement_status: measured` 必须有真实存在的证据路径，`unmeasured` 必须恰为 `unavailable`——「目标值不等于当前实现现状」从一句话变成会红的判据。
+- **`maturity/levels.yaml`（§13.2）**：能力等级登记册，markets / venues / order_types / strategy_languages 四类主体各自登记 L0–L4。牙齿：`capabilities.yaml` 里 `sandbox_tested: true` 的条数为 0 时，**任何主体都不许声明 L3+**——「先把等级调高」这种改字行为当场变红。当前最高只到 L2。
+- **`maturity/schema-registry.json`（§6.2 / M6）**：模式登记册实例，覆盖 `schemas/` 下全部 10 份契约，每份写清 id / 版本 / 生产方 / 消费方 / 兼容级别 / golden fixture；判据核对「无重复登记、无漏登记、指针全部落地」。
+- **`layer_dependency_check`（§14.3）**：把文档里的**十条领域依赖规则**变成会红的判据——逐 crate 解析 `Cargo.toml` 内部依赖，六条禁止边 + 三条反向规则（`qx-adapter` 只能被 `qx-execution`/`qx-cli` 依赖 = 唯一转换层；`qx-api` 只能被 `qx-cli` 依赖 = 投影面；`qx-cli` 不得被任何 crate 反向依赖 = 叶子）。规则以**当前真实依赖图为基线**，不是「希望如此」。
+  - **反向变异已实测**：临时给 `qx-data` 加一条 `qx-api` 依赖，判据当场变红并**同时点名 §14.3-2 与 §14.3-7**，随后已还原（`git diff` 为空）。
+- **本轮实测**：`python tools/check_architecture.py` **676 项全绿 / 0 红**；`cargo fmt --check` rc 0；`clippy -p qx-core -p qx-cli -p qx-runtime -p qx-spec -p qx-data --all-targets -- -D warnings` **rc 0**；`qx-spec` **10+7 passed**、`qx-runtime` 输入 schema **5 passed**、`qx-core` **70 passed**、`qx-data` **30 passed**、`qx-cli --bin qx-cli` **311 passed / 4 failed**（4 条全是既有沙箱 `os error 231` 管道噪声，非代码面）。
+- **未落地（诚实边界）**：规划的 P0（真实 testnet evidence）、P4（adapter conformance / SDK 兼容矩阵）、P5（application service 抽取 / EventLog 增量 replay / 基准套件）与 M2–M6 的功能面仍需外部凭据与多周工作量，本轮不碰；`qx plan` 用户级读入命令仍受 `cli.rs`/`cli_args.rs` 行数棘轮限制（上一轮已登记）。
+
+
 ### 地基规格对象落地（2026-10-06）· 规划 §6.2 七类「统一身份」声明式文档
 
 **口径**：按 `docs/qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md` §6.2 / §7 落地七类地基对象，本轮只做**声明式文档 + 门禁牙齿**，不接实盘功能（功能面留后续轮次）。全部改动加性：门禁 **662 → 667 全绿**，未删任何既有判据。

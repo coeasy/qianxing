@@ -752,3 +752,25 @@ capabilities:
     limitations:
       - foundation_objects_have_no_cli_readout_command：七类对象今天只在 qx-cli ecosystem/all 自检与单元用例里被读入，还没有 plan <kind> <file> 这样的用户级读入命令；原因是 crates/qx-cli/src/cli.rs 与 cli_args.rs 已到行数棘轮预算顶（只降不升），新命令会当场把门禁变红。接入命令与棘轮预算腾挪在下一轮处理
       - run_record_and_capability_not_yet_wired_to_backtest_artifacts：RunRecord 与 CapabilityManifest 目前是独立对象，尚未由回测产物写出、也未由 venue 配置驱动生成；把它们接上回测产物写出与 adapter capability 生成器属后续工作
+
+  contract_registry_layer:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - schemas/strategy-api-input-v1.json 策略契约输入方向的正式 JSON Schema：此前只有 output 方向有 schema，输入方向「Rust 有结构、靠文档」（规划 §4.2 第 8 条）
+      - crates/qx-runtime/tests/strategy_contract_input_schema.rs 五条用例把 schema 与 StrategyContractInput/StrategyContractBars 逐键对齐：键全集、required（删键看 serde 认不认）、additionalProperties、定点值只走 JSON 整数、版本常量同源
+      - maturity/targets.yaml 工业级非功能目标台账（规划 §17）：九个场景 profile × 十个维度，以 profile/场景/硬件/版本/证据路径为键
+      - maturity/levels.yaml 能力等级登记册（规划 §13.2）：markets/venues/order_types/strategy_languages 四类主体各自登记 L0–L4
+      - maturity/fixtures/scenarios/ashare-equity.json 七场景最小 fixture 之一（A 股；另有国内期货/国内期权/国际股票/FX/加密现货/加密永续）
+      - crates/qx-spec/tests/scenario_fixtures.rs 七条用例把每份 fixture 的四块分别读进 TradingInstrumentSpec/DatasetManifestV2/ExperimentSpec/RunRecord 并逐块校验，且钉住五种产品类型都有样板
+      - crates/qx-core/src/trading.rs TradingProduct::Option 补齐规划 §15.1 的产品类型表，市场规格解析器同步接受 option/options
+      - maturity/schema-registry.json 模式登记册实例：schemas/ 下每份契约的 id/版本/生产方/消费方/兼容级别/golden fixture
+      - tools/check_architecture.py strategy_input_schema_check 与 schema_registry_check 钉住输入 Schema 的存在与版本同源、以及登记册覆盖 schemas/ 全部契约且指针落地
+      - tools/check_architecture.py nonfunctional_targets_check 与 capability_levels_check 钉住「目标不等于现状」与「等级不得越过现有证据」
+      - tools/check_architecture.py scenario_fixtures_check 钉住七份 fixture 齐全且四块身份完整
+      - tools/check_architecture.py layer_dependency_check 把规划 §14.3 的十条依赖规则变成会红的禁止边与唯一转换层判据；落地时以反向变异实测（给 qx-data 加一条 qx-api 依赖会让判据当场变红并同时点名 §14.3-2 与 §14.3-7）
+    limitations:
+      - option_contract_identity_is_not_modelled：TradingProduct 已补 Option 变体，但期权合约身份真正缺的几格（行权价、到期日、认购/认沽、行权方式、组合保证金、行权/指派事件）尚未建模；cn-options fixture 目前只能表达「产品类型是期权 + 标的与精度」，不能表达合约链与行权语义
+      - targets_and_levels_are_declared_not_measured：maturity/targets.yaml 与 maturity/levels.yaml 当前全部 measurement_status=unmeasured / evidence=unavailable，登记册最高等级只到 L2；这是诚实读数而非缺口，翻转它们必须先把真实沙盒证据落盘

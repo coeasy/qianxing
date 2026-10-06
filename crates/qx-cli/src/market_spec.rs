@@ -83,6 +83,8 @@ fn ccxt_market_to_spec(
         "margin" => TradingProduct::Margin,
         "swap" | "perpetual" => TradingProduct::Perpetual,
         "future" | "futures" => TradingProduct::Future,
+        // 规划 §15.1 的产品类型表含 `option`；CCXT 的 market_type 也用它。
+        "option" | "options" => TradingProduct::Option,
         other => return Err(format!("CCXT market type 不支持: {other}")),
     };
     let base_currency = market

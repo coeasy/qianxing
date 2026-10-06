@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-api-input-v1.json",
+  "title": "Qianxing Strategy API v1 — Input",
+  "description": "运行时交给策略进程的只读 input 载荷（`StrategyContractInput` / `StrategyContractBars`）。与 `strategy_api_v1.schema.json` 合起来构成策略契约的双向机器可读定义：规划（docs/qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md §4.2 第 8 条 / §18 M0）此前只有 output 方向有 schema，输入方向「Rust 有结构、靠文档」——本文件补上另一半。required 逐项等于 Rust 侧**实际必填**的字段：`bars` 带 `#[serde(default)]`，`available_margin_raw` 是 `Option<i128>`（serde 对 `Option` 字段的缺省语义就是 `None`），所以这两格都不得出现在 required 里——这一条不是照抄结构体字段表，而是由 `strategy_contract_input_schema.rs` 的「删键看 serde 认不认」实测钉住的。顶层 `additionalProperties: false` 等于 `StrategyContractInput` 的 `#[serde(deny_unknown_fields)]`。定点金额/数量按 Rust i128 交换，只允许 JSON 整数：Rust 读写都是整数（含 i64 范围外），Python SDK 写的也是整数；十进制字符串会被运行时判 invalid number，所以这里不放行字符串形态（见 $defs 的 raw_signed）。`bars` 上的 `additionalProperties: false` 比 Rust 严：`StrategyContractBars` 本身没有 `deny_unknown_fields`，schema 更严不会放行坏载荷，只会拦住作者侧多写的键——这是有意的。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "request_id",
+    "strategy_id",
+    "strategy_version",
+    "data_fingerprint",
+    "as_of",
+    "instrument",
+    "positions",
+    "cash",
+    "risk_state",
+    "research_targets"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string", "minLength": 1},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "data_fingerprint": {"type": "string", "minLength": 1},
+    "as_of": {"type": "integer", "minimum": 1},
+    "instrument": {"type": "string", "minLength": 1},
+    "positions": {"$ref": "#/$defs/raw_ledger"},
+    "cash": {"$ref": "#/$defs/raw_ledger"},
+    "available_margin_raw": {"$ref": "#/$defs/optional_raw_non_negative"},
+    "risk_state": {"type": "string", "minLength": 1},
+    "research_targets": {"$ref": "#/$defs/raw_ledger"},
+    "bars": {
+      "oneOf": [{"type": "null"}, {"$ref": "#/$defs/bars"}]
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "raw_signed": {
+      "description": "核心定点 raw 值（Rust i128，可负）：只允许 JSON 整数。持仓可为空头、现金在保证金账户可为负，所以这里不能收窄成非负。",
+      "type": "integer"
+    },
+    "raw_non_negative": {
+      "description": "必须非负的定点 raw 值（Rust 侧 `available_margin_raw` 的 validate 同样拒绝负数）。",
+      "type": "integer",
+      "minimum": 0
+    },
+    "optional_raw_non_negative": {
+      "description": "可缺省的可用保证金：null 表示运行时未计算这一格，而不是算出来是零（与产物里 Option<i128> 的诚实语义一致）。",
+      "oneOf": [{"type": "null"}, {"$ref": "#/$defs/raw_non_negative"}]
+    },
+    "raw_ledger": {
+      "description": "以 instrument 字符串为键、定点 raw 值为值的账（持仓 / 现金 / 研究目标）。键不在 schema 里做 InstrumentId 词法约束：那是运行时 validate 的职责，schema 只钉形态。",
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/raw_signed"}
+    },
+    "bars": {
+      "type": "object",
+      "required": [
+        "source",
+        "ts",
+        "open_raw",
+        "high_raw",
+        "low_raw",
+        "close_raw",
+        "volume_raw"
+      ],
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "ts": {
+          "description": "严格递增的毫秒时间戳（Rust 侧 `StrategyContractBars::validate` 同样拒绝重复与倒序）。",
+          "type": "array",
+          "items": {"type": "integer", "minimum": 0}
+        },
+        "open_raw": {"$ref": "#/$defs/raw_series"},
+        "high_raw": {"$ref": "#/$defs/raw_series"},
+        "low_raw": {"$ref": "#/$defs/raw_series"},
+        "close_raw": {"$ref": "#/$defs/raw_series"},
+        "volume_raw": {"$ref": "#/$defs/raw_series"}
+      },
+      "additionalProperties": false
+    },
+    "raw_series": {
+      "description": "一列定点 raw 值；Rust 侧只校验五列等长，不校验正负，故这里保持 raw_signed。",
+      "type": "array",
+      "items": {"$ref": "#/$defs/raw_signed"}
+    }
+  }
+}

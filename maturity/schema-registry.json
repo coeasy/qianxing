@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "registry_version": 1,
+  "entries": [
+    {
+      "schema_id": "account-snapshot-v1",
+      "version": 1,
+      "path": "schemas/account-snapshot-v1.json",
+      "producer": "qx-protocol",
+      "consumers": ["qx-python", "qx-cli", "qx-api"],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-protocol/tests/snapshot_schema_contract.rs",
+        "crates/qx-protocol/tests/snapshot_single_source/optional_money.rs"
+      ]
+    },
+    {
+      "schema_id": "strategy-api-v1",
+      "version": 1,
+      "path": "schemas/strategy_api_v1.schema.json",
+      "producer": "qx-runtime",
+      "consumers": ["python/qianxing_strategy", "cpp", "qx-cli"],
+      "compatibility": "backward",
+      "golden_fixtures": ["crates/qx-runtime/tests/strategy_contract_schema.rs"]
+    },
+    {
+      "schema_id": "strategy-api-input-v1",
+      "version": 1,
+      "path": "schemas/strategy-api-input-v1.json",
+      "producer": "qx-runtime",
+      "consumers": ["python/qianxing_strategy", "cpp", "qx-cli"],
+      "compatibility": "backward",
+      "golden_fixtures": ["crates/qx-runtime/tests/strategy_contract_input_schema.rs"]
+    },
+    {
+      "schema_id": "project-manifest-v1",
+      "version": 1,
+      "path": "schemas/project-manifest-v1.json",
+      "producer": "qx-spec",
+      "consumers": ["qx-cli"],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-spec/src/tests.rs",
+        "crates/qx-cli/src/plan_commands.rs"
+      ]
+    },
+    {
+      "schema_id": "dataset-manifest-v2",
+      "version": 1,
+      "path": "schemas/dataset-manifest-v2.json",
+      "producer": "qx-data",
+      "consumers": ["qx-cli", "qx-spec"],
+      "compatibility": "backward",
+      "golden_fixtures": ["crates/qx-data/src/catalog_v2.rs"]
+    },
+    {
+      "schema_id": "experiment-spec-v1",
+      "version": 1,
+      "path": "schemas/experiment-spec-v1.json",
+      "producer": "qx-spec",
+      "consumers": ["qx-cli"],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-spec/src/tests.rs",
+        "crates/qx-cli/src/plan_commands.rs"
+      ]
+    },
+    {
+      "schema_id": "run-record-v1",
+      "version": 1,
+      "path": "schemas/run-record-v1.json",
+      "producer": "qx-spec",
+      "consumers": ["qx-cli"],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-spec/src/tests.rs",
+        "crates/qx-cli/src/plan_commands.rs"
+      ]
+    },
+    {
+      "schema_id": "capability-manifest-v1",
+      "version": 1,
+      "path": "schemas/capability-manifest-v1.json",
+      "producer": "qx-spec",
+      "consumers": ["qx-cli"],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-spec/src/tests.rs",
+        "crates/qx-cli/src/plan_commands.rs"
+      ]
+    },
+    {
+      "schema_id": "evidence-bundle-v1",
+      "version": 1,
+      "path": "schemas/evidence-bundle-v1.json",
+      "producer": "qx-spec",
+      "consumers": ["qx-cli"],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-spec/src/tests.rs",
+        "crates/qx-cli/src/plan_commands.rs"
+      ]
+    },
+    {
+      "schema_id": "schema-registry-v1",
+      "version": 1,
+      "path": "schemas/schema-registry-v1.json",
+      "producer": "qx-spec",
+      "consumers": ["qx-cli"],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-spec/src/tests.rs",
+        "crates/qx-cli/src/plan_commands.rs"
+      ]
+    }
+  ]
+}

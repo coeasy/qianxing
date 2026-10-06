@@ -1,0 +1,142 @@
+# 牵星 Qianxing · 工业级非功能目标台账（2026-10-06）
+#
+# 口径（docs/qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md §17）：
+# 本文件登记的是**目标值**，不是当前实现现状。目标值必须以 profile、场景、硬件、版本和证据路径为键，
+# 不允许把「所有场景一个数字」当成工业级性能结论。
+#
+# 硬约束（由 tools/check_architecture.py 的 nonfunctional_targets_check 逐条核对）：
+#   1. crates/qx-spec/src/project.rs 的 PROJECT_PROFILES 与本文件的 profile_targets 必须一一对应
+#      （§16.2 的九个场景 profile）；
+#   2. 每个 profile 必须写明 scenario / topology / hardware / version / measurement_status / evidence；
+#   3. hardware 必须能在本文件 hardware_profiles 里找到；
+#   4. dimensions 必须覆盖 §17 的十个维度，每个维度三段齐全（research / production / acceptance）；
+#   5. measurement_status: measured 的条目，其 evidence 必须是一个真实存在的路径；
+#      unmeasured 的条目，evidence 必须恰为 unavailable —— 这就是「目标不等于现状」的牙齿：
+#      没拿到证据时，任何人都不许把目标写成已达成。
+#   6. version 必须等于 maturity/baseline.yaml 的 release_version。
+#
+# 本文件只写目标与证据指针，不复制收益算法、不写实测数字；实测数字只以 evidence 指向的产物为准。
+
+schema_version: 1
+updated_at: "2026-10-06"
+release_version: "0.1.0"
+
+# ---- 硬件画像：目标数字只在同画像内可比 ----
+hardware_profiles:
+  sandbox-windows-x64:
+    os: windows
+    cpu: x86_64
+    cores: 4
+    ram_gb: 16
+    notes: "沙箱 Windows 构建机；性能目标只在此画像内对比，跨机数字不合并"
+
+# ---- §17 的十个维度：research = 单机/研究目标，production = 分布式/生产目标 ----
+dimensions:
+  correctness:
+    research: "同输入、同版本、同 seed 结果 hash 相同"
+    production: "事实重放与投影一致，未知态不自动补单"
+    acceptance: "golden replay、故障注入、变异测试"
+  data:
+    research: "关键字段质量问题 100% 在回测前暴露"
+    production: "主备切换有 lineage，不静默改变 fingerprint"
+    acceptance: "dataset quality suite"
+  availability:
+    research: "项目目录可独立运行和恢复"
+    production: "API/worker 可独立重启，单 worker 失败不丢事实"
+    acceptance: "restart/kill/partition 演练"
+  durability:
+    research: "本地崩溃后不产生半条事实"
+    production: "PostgreSQL 事务 + outbox，RPO=0（已提交事实）"
+    acceptance: "fsync/DB failure tests"
+  recovery:
+    research: "RTO 目标 < 5 分钟"
+    production: "RTO 目标 < 1 分钟，订单未知优先对账"
+    acceptance: "timed recovery evidence"
+  latency:
+    research: "研究吞吐按 bars/s、events/s 报告"
+    production: "标准实时链路 p99 目标 < 100ms；低延迟另立项"
+    acceptance: "benchmark + live timestamp"
+  security:
+    research: "默认无凭据、无下单"
+    production: "mTLS/OIDC、最小权限、密钥不进日志、发布锁"
+    acceptance: "secret scan、ACL、security CI"
+  observability:
+    research: "每次运行有 run_id、hash、报告和诊断"
+    production: "logs/metrics/traces/audit 四类关联同一 correlation_id"
+    acceptance: "Prometheus/OpenTelemetry/审计查询"
+  compatibility:
+    research: "旧产物可明确升级或拒绝"
+    production: "schema/ABI/API 有兼容矩阵和迁移脚本"
+    acceptance: "golden fixtures + upgrade tests"
+  performance:
+    research: "EventLog 增量 replay 不随全量日志线性恶化"
+    production: "热路径无整管线 clone，存储/投影异步但事实提交有边界"
+    acceptance: "criterion/负载/内存基准"
+
+# ---- 逐 profile：以 profile / 场景 / 硬件 / 版本 / 证据路径为键 ----
+# evidence 一律 unavailable：本仓库当前 sandbox_tested / production_approved 均为 0，
+# 目标尚未被任何外部证据翻转。任何一格改成真实路径，必须先真的把证据落到盘上。
+profile_targets:
+  ashare-research:
+    scenario: "A 股股票/ETF 日线与分钟 Bar、T+1、整手、涨跌停、停牌、复权与 PIT"
+    topology: single_node
+    hardware: sandbox-windows-x64
+    version: "0.1.0"
+    measurement_status: unmeasured
+    evidence: unavailable
+  ashare-paper:
+    scenario: "A 股 Paper：不连接券商，用回放/实时行情做虚拟成交"
+    topology: single_node
+    hardware: sandbox-windows-x64
+    version: "0.1.0"
+    measurement_status: unmeasured
+    evidence: unavailable
+  cn-futures-research:
+    scenario: "国内期货：夜盘交易日历、合约乘数、保证金、手续费、交割换月"
+    topology: single_node
+    hardware: sandbox-windows-x64
+    version: "0.1.0"
+    measurement_status: unmeasured
+    evidence: unavailable
+  cn-options-research:
+    scenario: "国内期权：合约链、到期、行权指派、组合腿与卖方保证金"
+    topology: single_node
+    hardware: sandbox-windows-x64
+    version: "0.1.0"
+    measurement_status: unmeasured
+    evidence: unavailable
+  global-equity-paper:
+    scenario: "国际股票/ETF：时区与交易日历、多币种 FX 估值、公司行动"
+    topology: single_node
+    hardware: sandbox-windows-x64
+    version: "0.1.0"
+    measurement_status: unmeasured
+    evidence: unavailable
+  fx-paper:
+    scenario: "FX/CFD：pip/tick、合约乘数、隔夜利息、保证金与对冲模式"
+    topology: single_node
+    hardware: sandbox-windows-x64
+    version: "0.1.0"
+    measurement_status: unmeasured
+    evidence: unavailable
+  crypto-paper:
+    scenario: "加密现货/永续 Paper：maker/taker、精度、限频、部分成交、funding"
+    topology: single_node
+    hardware: sandbox-windows-x64
+    version: "0.1.0"
+    measurement_status: unmeasured
+    evidence: unavailable
+  crypto-testnet:
+    scenario: "加密测试网：真实测试环境验证提交/回报/对账，必须额外提供凭据与 evidence"
+    topology: single_node
+    hardware: sandbox-windows-x64
+    version: "0.1.0"
+    measurement_status: unmeasured
+    evidence: unavailable
+  multi-venue-arb:
+    scenario: "多 Venue 多腿套利：组级状态机、部分成交补偿与跨 Venue 对账，默认只跑 Paper"
+    topology: single_node
+    hardware: sandbox-windows-x64
+    version: "0.1.0"
+    measurement_status: unmeasured
+    evidence: unavailable

@@ -10523,6 +10523,440 @@ def foundation_specs_check() -> None:
     )
 
 
+# —— 契约层与登记层（规划 §6.2 / §13.2 / §14.3 / §17 / §18 M0）——
+# 地基对象（上一轮的七类）只解决了「对象存在」；这一层解决「对象被真实契约、真实场景、
+# 真实依赖规则和真实目标台账钉住」。本仓库不引 yaml 依赖，所以这里的 YAML 一律按行手写解析：
+# 格式必须保持「顶层键: / 两空格子键: / 四空格字段: 值」的规整形状，改坏缩进会当场变红。
+
+STRATEGY_INPUT_SCHEMA = ROOT / "schemas" / "strategy-api-input-v1.json"
+STRATEGY_INPUT_TEST = ROOT / "crates" / "qx-runtime" / "tests" / "strategy_contract_input_schema.rs"
+TARGETS_FILE = ROOT / "maturity" / "targets.yaml"
+LEVELS_FILE = ROOT / "maturity" / "levels.yaml"
+SCHEMA_REGISTRY_FILE = ROOT / "maturity" / "schema-registry.json"
+SCENARIO_FIXTURES_DIR = ROOT / "maturity" / "fixtures" / "scenarios"
+SCENARIO_FIXTURES_TEST = ROOT / "crates" / "qx-spec" / "tests" / "scenario_fixtures.rs"
+SCENARIO_REQUIRED = (
+    "ashare-equity",
+    "cn-futures",
+    "cn-options",
+    "global-equity",
+    "fx-cfd",
+    "crypto-spot",
+    "crypto-perpetual",
+)
+TARGETS_DIMENSIONS = (
+    "correctness",
+    "data",
+    "availability",
+    "durability",
+    "recovery",
+    "latency",
+    "security",
+    "observability",
+    "compatibility",
+    "performance",
+)
+TARGETS_TOPOLOGIES = ("single_node", "distributed")
+LEVEL_IDS = ("L0", "L1", "L2", "L3", "L4")
+LEVEL_SUBJECT_GROUPS = ("markets", "venues", "order_types", "strategy_languages")
+
+# 数据/策略/控制层共同禁止依赖的「下游应用面」：下单、执行、适配器、API、存储、运行时。
+# 抽成常量而不是逐条抄写——逐条抄写会在这里造出 10 行以上的逐字重复窗口，被本文件自己的
+# merge_duplicate_block_check 抓住（本轮实测踩到过）。
+LAYER_APP_SIDE_CRATES = (
+    "qx-adapter",
+    "qx-api",
+    "qx-cli",
+    "qx-execution",
+    "qx-risk",
+    "qx-runtime",
+    "qx-storage",
+    "qx-xingban",
+    "qx-zhenlu",
+)
+
+# §14.3 的依赖规则：以**当前真实依赖图**为基线。规则不是「希望如此」，而是
+# 「今天就是这样，谁改谁红」——新增一条违规边，门禁当场失败。
+LAYER_FORBIDDEN_DEPS = (
+    ("qx-data", LAYER_APP_SIDE_CRATES, "§14.3-2 qx-data 只管数据身份与质量，不下单、不记账"),
+    ("qx-strategy", LAYER_APP_SIDE_CRATES, "§14.3-3 qx-strategy 只产生 decision/intent，不产生 Accepted/Fill"),
+    ("qx-risk", ("qx-adapter", "qx-api", "qx-cli", "qx-execution", "qx-runtime", "qx-storage", "qx-xingban"), "§14.3-4 qx-risk 只裁决风险（可依赖 qx-zhenlu 的订单类型，但不得依赖适配器/执行/存储/API）"),
+    ("qx-xingban", ("qx-adapter", "qx-api", "qx-cli", "qx-execution", "qx-storage"), "§14.3-5 qx-xingban 只做研究/回测撮合与成本模型"),
+    ("qx-control", LAYER_APP_SIDE_CRATES, "§14.3-8 qx-control 只收命令，执行者由应用层提供"),
+    ("qx-storage", ("qx-adapter", "qx-cli", "qx-execution", "qx-risk", "qx-runtime", "qx-strategy", "qx-xingban"), "§14.3-9 qx-storage 只提供持久化端口与事务边界"),
+)
+# §14.3-6/7/10 是「谁可以依赖谁」的反向规则：某个 crate 的**被依赖集合**必须被钉死。
+LAYER_SOLE_DEPENDENTS = (
+    (
+        "qx-adapter",
+        ("qx-execution", "qx-cli"),
+        "§14.3-6 qx-execution 是外部回报到执行事实的唯一转换层（qx-adapter 只能被它与 CLI 依赖）",
+    ),
+    (
+        "qx-api",
+        ("qx-cli",),
+        "§14.3-7 API/报告/快照/指标都是投影（qx-api 只能被 CLI 依赖，领域层不得反向依赖）",
+    ),
+    ("qx-cli", (), "§14.3-10 qx-cli 是叶子（不得被任何 crate 反向依赖）"),
+)
+
+
+def _block_lines(text: str, header: str) -> list[str]:
+    """取顶层 `header:` 映射块里缩进 >= 2 的行（到下一个顶格非空行为止）。"""
+    out: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if re.match(rf"^{re.escape(header)}:\s*$", line):
+            inside = True
+            continue
+        if inside:
+            if line.strip() and not line.startswith(" "):
+                break
+            out.append(line)
+    return out
+
+
+def _yaml_groups(block: list[str], indent: int = 2) -> dict[str, dict[str, str]]:
+    """把 `  name:` + `    key: value` 的块解析成 {name: {key: value}}。"""
+    groups: dict[str, dict[str, str]] = {}
+    current: str | None = None
+    for line in block:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        lead = len(line) - len(line.lstrip())
+        if lead == indent:
+            matched = re.match(rf"^\s{{{indent}}}([A-Za-z0-9_.\-]+):\s*(.*)$", line)
+            if matched:
+                current = matched.group(1)
+                groups.setdefault(current, {})
+                if matched.group(2).strip():
+                    groups[current]["__value__"] = matched.group(2).strip().strip('"')
+                continue
+        if lead > indent and current is not None:
+            matched = re.match(r"^\s*([A-Za-z0-9_.\-]+):\s*(.*)$", line)
+            if matched:
+                groups[current][matched.group(1)] = matched.group(2).strip().strip('"')
+    return groups
+
+
+def _levels_subjects(text: str) -> dict[str, dict[str, dict[str, str]]]:
+    """解析 `subjects:` → 类别 → 主体 → {level, evidence}。"""
+    result: dict[str, dict[str, dict[str, str]]] = {}
+    category: str | None = None
+    subject: str | None = None
+    for line in _block_lines(text, "subjects"):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        lead = len(line) - len(line.lstrip())
+        if lead == 2:
+            matched = re.match(r"^  ([A-Za-z0-9_\-]+):\s*$", line)
+            if matched:
+                category = matched.group(1)
+                result.setdefault(category, {})
+                subject = None
+        elif lead == 4 and category is not None:
+            matched = re.match(r"^    ([A-Za-z0-9_.\-]+):\s*$", line)
+            if matched:
+                subject = matched.group(1)
+                result[category].setdefault(subject, {})
+        elif lead == 6 and category is not None and subject is not None:
+            matched = re.match(r"^      ([A-Za-z0-9_\-]+):\s*(.*)$", line)
+            if matched:
+                result[category][subject][matched.group(1)] = matched.group(2).strip().strip('"')
+    return result
+
+
+def _release_version() -> str | None:
+    text = (ROOT / "maturity" / "baseline.yaml").read_text(encoding="utf-8")
+    found = re.search(r'^release_version:\s*"([^"]+)"', text, re.MULTILINE)
+    return found.group(1) if found else None
+
+
+def _crate_internal_deps() -> dict[str, set[str]]:
+    """逐 crate 解析内部依赖（内联表与 `[dependencies.qx-*]` 表头两种写法都认）。"""
+    graph: dict[str, set[str]] = {}
+    for manifest in sorted(CRATES.glob("*/Cargo.toml")):
+        text = manifest.read_text(encoding="utf-8")
+        deps = set(re.findall(r"^(qx-[a-z0-9-]+)\s*=\s*\{", text, re.MULTILINE))
+        deps |= set(re.findall(r"^\[(?:dependencies|dev-dependencies|build-dependencies)\.(qx-[a-z0-9-]+)\]", text, re.MULTILINE))
+        graph[manifest.parent.name] = deps
+    return graph
+
+
+def strategy_input_schema_check() -> None:
+    """策略契约**输入方向**的正式 JSON Schema（规划 §4.2 第 8 条 / §18 M0）。
+
+    在此之前只有 output 方向有 schema，输入方向「Rust 有结构、靠文档」。这里钉住文件在盘上、
+    是严格 schema、声明的版本与 `qx_strategy::STRATEGY_API_VERSION` 同源，以及钉住它的用例存在
+    （schema 与结构体的逐字段一致性由那条用例负责，静态门禁不重复实现 serde 语义）。
+    """
+    if not STRATEGY_INPUT_SCHEMA.is_file():
+        check(
+            False,
+            "策略输入方向的 JSON Schema 存在",
+            f"缺失 {STRATEGY_INPUT_SCHEMA.relative_to(ROOT).as_posix()}",
+        )
+        return
+    try:
+        schema = json.loads(STRATEGY_INPUT_SCHEMA.read_text(encoding="utf-8"))
+    except ValueError as error:
+        check(False, "策略输入 Schema 是合法 JSON", str(error))
+        return
+    issues: list[str] = []
+    if "$id" not in schema:
+        issues.append("缺 $id")
+    if schema.get("additionalProperties") is not False:
+        issues.append("未关闭 additionalProperties（未知字段必须当场拒绝）")
+    properties = schema.get("properties", {})
+    required = schema.get("required", [])
+    if not required or not set(required) <= set(properties):
+        issues.append(f"required 越界 {sorted(set(required) - set(properties))}")
+    declared = properties.get("schema_version", {}).get("const")
+    strategy_api = re.search(
+        r"pub const STRATEGY_API_VERSION: u32 = (\d+);",
+        (ROOT / "crates/qx-strategy/src/lib.rs").read_text(encoding="utf-8"),
+    )
+    if strategy_api is None:
+        issues.append("qx-strategy 找不到 STRATEGY_API_VERSION")
+    elif declared != int(strategy_api.group(1)):
+        issues.append(f"schema_version.const={declared} 与 STRATEGY_API_VERSION={strategy_api.group(1)} 不一致")
+    contract = (ROOT / "crates/qx-runtime/src/strategy_contract/contract.rs").read_text(encoding="utf-8")
+    if "STRATEGY_CONTRACT_SCHEMA_VERSION: u32 = qx_strategy::STRATEGY_API_VERSION" not in contract:
+        issues.append("contract.rs 的版本常量不再以 STRATEGY_API_VERSION 为单一来源")
+    check(not issues, "策略输入方向有严格 Schema，且版本与策略 API 单一来源一致", "；".join(issues))
+    check(
+        STRATEGY_INPUT_TEST.is_file(),
+        "策略输入 Schema 有钉住它的用例（逐字段对齐 Rust 结构体）",
+        f"缺失 {STRATEGY_INPUT_TEST.relative_to(ROOT).as_posix()}",
+    )
+
+
+def nonfunctional_targets_check() -> None:
+    """工业级非功能目标台账（规划 §17）。
+
+    §17 要求目标值以 profile / 场景 / 硬件 / 版本 / 证据路径为键，且不许把目标值当成当前实现现状。
+    这里钉住九个场景 profile 一个不少、六个键齐全、硬件能在本文件里解析、十个维度三段齐全，
+    以及最关键的诚实牙齿：`measured` 必须有真实证据路径，`unmeasured` 必须写 `unavailable`。
+    """
+    if not TARGETS_FILE.is_file():
+        check(False, "非功能目标台账存在", f"缺失 {TARGETS_FILE.relative_to(ROOT).as_posix()}")
+        return
+    text = TARGETS_FILE.read_text(encoding="utf-8")
+    declared = re.search(
+        r"pub const PROJECT_PROFILES: \[&str; \d+\] = \[([\s\S]*?)\];",
+        (ROOT / "crates/qx-spec/src/project.rs").read_text(encoding="utf-8"),
+    )
+    expected = set(re.findall(r'"([^"]+)"', declared.group(1))) if declared else set()
+    hardware = _yaml_groups(_block_lines(text, "hardware_profiles"))
+    dimensions = _yaml_groups(_block_lines(text, "dimensions"))
+    targets = _yaml_groups(_block_lines(text, "profile_targets"))
+    release = _release_version()
+
+    issues: list[str] = []
+    if not expected:
+        issues.append("解析不到 PROJECT_PROFILES（空集会让这颗判据静默全绿）")
+    missing = sorted(expected - set(targets))
+    if missing:
+        issues.append(f"缺 profile {missing}")
+    extra = sorted(set(targets) - expected)
+    if extra:
+        issues.append(f"多出未登记 profile {extra}")
+    for name, fields in sorted(targets.items()):
+        for key in ("scenario", "topology", "hardware", "version", "measurement_status", "evidence"):
+            if not fields.get(key):
+                issues.append(f"{name} 缺 {key}")
+        if fields.get("topology") not in TARGETS_TOPOLOGIES:
+            issues.append(f"{name} topology={fields.get('topology')} 非法")
+        if fields.get("hardware") and fields["hardware"] not in hardware:
+            issues.append(f"{name} 的 hardware={fields['hardware']} 不在 hardware_profiles 内")
+        if release and fields.get("version") != release:
+            issues.append(f"{name} version={fields.get('version')} 与 release_version={release} 不一致")
+        status = fields.get("measurement_status")
+        evidence = fields.get("evidence", "")
+        if status == "unmeasured":
+            if evidence != "unavailable":
+                issues.append(f"{name} 标未测量却写了证据 {evidence}（目标不得冒充现状）")
+        elif status == "measured":
+            if evidence == "unavailable" or not (ROOT / evidence).exists():
+                issues.append(f"{name} 标已测量但证据路径落空 {evidence}")
+        else:
+            issues.append(f"{name} measurement_status={status} 非法")
+    missing_dims = sorted(set(TARGETS_DIMENSIONS) - set(dimensions))
+    if missing_dims:
+        issues.append(f"dimensions 缺 {missing_dims}")
+    for dim, fields in sorted(dimensions.items()):
+        for key in ("research", "production", "acceptance"):
+            if not fields.get(key):
+                issues.append(f"维度 {dim} 缺 {key}")
+    check(
+        not issues,
+        "非功能目标按 profile/场景/硬件/版本/证据登记，且目标不被写成现状",
+        "；".join(issues),
+    )
+
+
+def capability_levels_check() -> None:
+    """能力等级登记册（规划 §13.2）。
+
+    §13.2 要求任何市场/Venue/订单类型/策略语言单独登记 L0–L4，且 L1 不代表 L3、L3 不自动代表 L4。
+    这里钉住结构完整性，并用一条诚实牙齿把「先把等级调高」这种改字行为挡回去：
+    `capabilities.yaml` 里 `sandbox_tested: true` 的条数为 0 时，本文件任何主体都不许声明 L3+。
+    """
+    if not LEVELS_FILE.is_file():
+        check(False, "能力等级登记册存在", f"缺失 {LEVELS_FILE.relative_to(ROOT).as_posix()}")
+        return
+    text = LEVELS_FILE.read_text(encoding="utf-8")
+    definitions = _yaml_groups(_block_lines(text, "level_definitions"))
+    subjects = _levels_subjects(text)
+    issues: list[str] = []
+    if sorted(definitions) != sorted(LEVEL_IDS):
+        issues.append(f"level_definitions={sorted(definitions)} 未覆盖 {list(LEVEL_IDS)}")
+    for level, fields in sorted(definitions.items()):
+        for key in ("name", "requires"):
+            if not fields.get(key):
+                issues.append(f"{level} 缺 {key}")
+    for group in LEVEL_SUBJECT_GROUPS:
+        if not subjects.get(group):
+            issues.append(f"subjects.{group} 为空")
+    capabilities = (ROOT / "maturity" / "capabilities.yaml").read_text(encoding="utf-8")
+    sandbox_approved = len(re.findall(r"^\s+sandbox_tested:\s*true\s*$", capabilities, re.MULTILINE))
+    highest = 0
+    for group, entries in sorted(subjects.items()):
+        for name, fields in sorted(entries.items()):
+            level = fields.get("level", "")
+            if level not in LEVEL_IDS:
+                issues.append(f"{group}.{name} level={level} 非法")
+                continue
+            rank = int(level[1])
+            highest = max(highest, rank)
+            evidence = fields.get("evidence", "")
+            if rank >= 3 and (evidence == "unavailable" or not (ROOT / evidence).exists()):
+                issues.append(f"{group}.{name} 声明 {level} 却没有真实证据路径（{evidence}）")
+    if sandbox_approved == 0 and highest >= 3:
+        issues.append(
+            f"capabilities.yaml 的 sandbox_tested 全为 false，却已有主体声明 L3+（最高 L{highest}）"
+        )
+    check(not issues, "能力等级逐主体登记，且等级不得越过现有证据", "；".join(issues))
+
+
+def scenario_fixtures_check() -> None:
+    """七场景最小 fixture（规划 §18 M0）。
+
+    M0 要求「为 A 股、国内期货、国内期权、国际股票、FX、加密现货/永续各提供最小 fixture」。
+    这里钉住七份都在、都是合法 JSON、四块身份齐全；逐字段能否读进真实类型由 qx-spec 的
+    `scenario_fixtures` 用例负责（静态门禁不重复实现 serde 语义）。
+    """
+    if not SCENARIO_FIXTURES_DIR.is_dir():
+        check(
+            False,
+            "七场景 fixture 目录存在",
+            f"缺失 {SCENARIO_FIXTURES_DIR.relative_to(ROOT).as_posix()}",
+        )
+        return
+    issues: list[str] = []
+    seen: set[str] = set()
+    for path in sorted(SCENARIO_FIXTURES_DIR.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as error:
+            issues.append(f"{path.name} 不是合法 JSON: {error}")
+            continue
+        name = payload.get("scenario")
+        if not name:
+            issues.append(f"{path.name} 缺 scenario 字段")
+            continue
+        seen.add(name)
+        for block in ("instrument_spec", "dataset", "experiment", "run"):
+            if not isinstance(payload.get(block), dict):
+                issues.append(f"{name} 缺 {block} 块")
+    missing = sorted(set(SCENARIO_REQUIRED) - seen)
+    if missing:
+        issues.append(f"缺场景 {missing}")
+    check(not issues, "七场景最小 fixture 齐全且四块身份完整", "；".join(issues))
+    check(
+        SCENARIO_FIXTURES_TEST.is_file(),
+        "七场景 fixture 有钉住它们的用例（逐块读进真实类型并校验）",
+        f"缺失 {SCENARIO_FIXTURES_TEST.relative_to(ROOT).as_posix()}",
+    )
+
+
+def layer_dependency_check() -> None:
+    """§14.3 的十条领域依赖规则。
+
+    这些规则过去只写在文档里。这里把它们变成会红的判据：逐 crate 解析 Cargo.toml 的内部依赖，
+    禁止边出现即红；三条反向规则（唯一转换层 / 投影只能被 CLI 依赖 / CLI 是叶子）钉住
+    「谁可以依赖谁」。规则以当前真实依赖图为基线，落地时已用反向变异实测（临时加一条违规边
+    会让本判据当场变红）。
+    """
+    graph = _crate_internal_deps()
+    issues: list[str] = []
+    core_deps = sorted(dep for dep in graph.get("qx-core", set()) if dep.startswith("qx-"))
+    if core_deps:
+        issues.append(f"§14.3-1 qx-core 不依赖任何内部 crate，实际依赖 {core_deps}")
+    for crate, forbidden, rule in LAYER_FORBIDDEN_DEPS:
+        hit = sorted(set(forbidden) & graph.get(crate, set()))
+        if hit:
+            issues.append(f"{rule}：{crate} → {hit}")
+    dependents: dict[str, set[str]] = {}
+    for crate, deps in graph.items():
+        for dep in deps:
+            dependents.setdefault(dep, set()).add(crate)
+    for target, allowed, rule in LAYER_SOLE_DEPENDENTS:
+        extra = sorted(dependents.get(target, set()) - set(allowed))
+        if extra:
+            issues.append(f"{rule}：{target} 被 {extra} 依赖")
+    check(not issues, "§14.3 的十条领域依赖规则成立（禁止边与唯一转换层）", "；".join(issues))
+    check(
+        len(graph) >= 24,
+        "依赖门禁解析到了全部 crate（解析集为空会让这颗判据静默全绿）",
+        f"只解析到 {len(graph)} 个 crate",
+    )
+
+
+def schema_registry_check() -> None:
+    """模式登记册实例（规划 §6.2 / M6）。
+
+    §6.2 要求 SchemaRegistry 统一管理 JSON / C ABI / Arrow / wire event 与兼容策略。这里钉住
+    登记册覆盖 `schemas/` 下的每一份契约、每份都写清生产方/消费方/golden fixture，且所有指针
+    都落得回盘上——「哪份契约在哪、谁产谁消、跨版本怎么兼容」不能只存在于人脑里。
+    """
+    if not SCHEMA_REGISTRY_FILE.is_file():
+        check(False, "模式登记册实例存在", f"缺失 {SCHEMA_REGISTRY_FILE.relative_to(ROOT).as_posix()}")
+        return
+    try:
+        registry = json.loads(SCHEMA_REGISTRY_FILE.read_text(encoding="utf-8"))
+    except ValueError as error:
+        check(False, "模式登记册是合法 JSON", str(error))
+        return
+    entries = registry.get("entries", [])
+    issues: list[str] = []
+    registered = [entry.get("path", "") for entry in entries]
+    duplicated = sorted({path for path in registered if registered.count(path) > 1})
+    if duplicated:
+        issues.append(f"重复登记 {duplicated}")
+    on_disk = {path.relative_to(ROOT).as_posix() for path in sorted((ROOT / "schemas").glob("*.json"))}
+    missing = sorted(on_disk - set(registered))
+    if missing:
+        issues.append(f"schemas/ 下未登记 {missing}")
+    dangling = sorted(path for path in registered if not (ROOT / path).is_file())
+    if dangling:
+        issues.append(f"登记路径落空 {dangling}")
+    ids = [entry.get("schema_id", "") for entry in entries]
+    if len(set(ids)) != len(ids):
+        issues.append("schema_id 有重复")
+    for entry in entries:
+        schema_id = entry.get("schema_id", "?")
+        if not entry.get("producer") or not entry.get("consumers"):
+            issues.append(f"{schema_id} 缺 producer 或 consumers")
+        fixtures = entry.get("golden_fixtures") or []
+        if not fixtures:
+            issues.append(f"{schema_id} 缺 golden fixture")
+        for fixture in fixtures:
+            if not (ROOT / fixture).is_file():
+                issues.append(f"{schema_id} 的 fixture 落空 {fixture}")
+    check(not issues, "模式登记册覆盖 schemas/ 全部契约且指针全部落地", "；".join(issues))
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -10633,6 +11067,12 @@ def main() -> int:
     doc_citation_reachability_check()
     command_status_vocabulary_single_source_check()
     foundation_specs_check()
+    strategy_input_schema_check()
+    nonfunctional_targets_check()
+    capability_levels_check()
+    scenario_fixtures_check()
+    layer_dependency_check()
+    schema_registry_check()
     # 含本条自身：+1 才是本轮真正会打印的总条数，所以地板常量按"含这一条"取值。
     check(
         checks + 1 >= GATE_CHECK_FLOOR,
