@@ -17,3 +17,13 @@ pub(crate) fn report(error: &clap::Error) -> ! {
     eprintln!("自证构建: `qx-cli version`（等价 `--version` 与 `-V`）");
     std::process::exit(2);
 }
+
+/// 业务处理器失败的统一出口：一行原因 + 退出码 2。与各派发臂此前的
+/// `if let Err(error) = … { eprintln!("{原因}: {error}"); exit(2) }` 逐字等价，
+/// 只是把这段形状收成一处，免得每个数据入口各抄一遍。
+pub(crate) fn exit_on_failure(result: Result<(), String>, what: &str) {
+    if let Err(error) = result {
+        eprintln!("{what}: {error}");
+        std::process::exit(2);
+    }
+}

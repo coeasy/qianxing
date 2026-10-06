@@ -107,6 +107,8 @@ mod cli_args;
 mod cli_help;
 mod config_commands;
 mod configured_backends;
+mod data_validate;
+mod data_validate_args;
 mod dataset_commands;
 mod deploy_lookup;
 mod ecosystem_smoke;
@@ -184,6 +186,7 @@ pub(crate) use venue_runtime::*;
 pub(crate) use worker_entry::*;
 pub(crate) use worker_shutdown::*;
 
+use data_validate::validate_dataset;
 use dataset_commands::{
     run_dataset_bundle, run_dataset_ingest, verify_dataset_bundle_binding,
     verify_dataset_bundle_component_bindings,

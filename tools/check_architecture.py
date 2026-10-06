@@ -10553,6 +10553,22 @@ def foundation_specs_check() -> None:
         "capability.rs 的 evidence 闸门被删弱（声明已通过却没有证据）",
     )
 
+    # DatasetManifestV2 的第二个生产写侧（`data-validate`）必须是「只读诊断」而不是又一条严格读链：
+    # 复用 `BarFrame::from_json`/`JsonBarFrameProvider` 会让脏数据只剩一句拒绝，质量报告反而写不出来。
+    # 四件事一起钉：容忍性（不借严格读侧）、缺口算式、清单过规格校验、入口写进 help。
+    validator = (ROOT / "crates/qx-cli/src/data_validate.rs").read_text(encoding="utf-8")
+    help_text = (ROOT / "crates/qx-cli/src/cli_help.rs").read_text(encoding="utf-8")
+    check(
+        "fn assess_frame(" in validator
+        and "div_ceil(interval_ms)" in validator
+        and "BarFrame::from_json" not in validator
+        and "JsonBarFrameProvider" not in validator
+        and "manifest.validate()?;" in validator
+        and "data-validate <bar-frame.json>" in help_text,
+        "DatasetManifestV2 的只读诊断入口容忍脏时间轴、不借严格读侧、清单过规格校验且写进 help",
+        "data-validate 链的容忍性、规格校验或入口文案有断点",
+    )
+
 
 # —— 契约层与登记层（规划 §6.2 / §13.2 / §14.3 / §17 / §18 M0）——
 # 地基对象（上一轮的七类）只解决了「对象存在」；这一层解决「对象被真实契约、真实场景、

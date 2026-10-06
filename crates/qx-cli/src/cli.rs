@@ -114,7 +114,7 @@ fn dispatch_consumer_dlq_replay(_runtime: PathBuf, _group_id: String, _event_id:
 
 pub(crate) fn run() {
     let argv: Vec<String> = std::env::args().collect();
-    // `help` 与 `--help`/`-h` 是同一条预检分支（迁移前后一致：打印入口摘要横幅帮助）。
+    // help 别名在 clap 前统一处理。
     if matches!(
         argv.get(1).map(String::as_str),
         Some("help") | Some("--help") | Some("-h")
@@ -438,21 +438,20 @@ pub(crate) fn run() {
             dataset_id,
             version,
             data_dir,
-        } => {
-            if let Err(error) = run_dataset_ingest(&frame, &dataset_id, &version, &data_dir) {
-                eprintln!("数据集摄取失败: {error}");
-                std::process::exit(2);
-            }
-        }
+        } => usage_errors::exit_on_failure(
+            run_dataset_ingest(&frame, &dataset_id, &version, &data_dir),
+            "数据集摄取失败",
+        ),
         Command::DatasetBundle {
             bundle,
             data_dir,
             bars,
-        } => {
-            if let Err(error) = run_dataset_bundle(&bundle, &data_dir, bars.as_deref()) {
-                eprintln!("数据集 Bundle 保存失败: {error}");
-                std::process::exit(2);
-            }
+        } => usage_errors::exit_on_failure(
+            run_dataset_bundle(&bundle, &data_dir, bars.as_deref()),
+            "数据集 Bundle 保存失败",
+        ),
+        Command::DataValidate(args) => {
+            usage_errors::exit_on_failure(validate_dataset(&args), "数据集校验失败");
         }
         Command::CcxtMarketSpec {
             config,

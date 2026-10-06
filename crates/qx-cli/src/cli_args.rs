@@ -4,15 +4,13 @@
 //! "文案宣称支持某入口而派发没有该分支"因此不可表达）。`help`/`--help`/`-h` 是进 clap 前的同一条
 //! 预检分支，门禁按规范名 `help` 计一条；命令名与旗标语义与迁移前逐条一致，旧手写解析不留双轨。
 //!
-//! 一处有意的偏离：`<worker>` 与 `<submit-order.json>` 这类必填入参前不再接受省略 runtime 路径——
-//! 带 `default_value` 的位置参数在 clap 眼里是"可选"，而 clap 要求必填位置参数之前不得出现可选
-//! 位置参数，于是 `paper-worker [PATH] <WORKER_ID>` 只在 release 侥幸可跑、debug 直接 panic。
-//! 这些入口的 runtime 路径一律显式给出（deploy 脚本、`qx-orchestrator` 与文档本就是显式的）。
+//! `<worker>` 与 `<submit-order.json>` 等必填入参前必须显式给 runtime 路径；带 `default_value` 的位置参数会被 Clap 判为可选，debug 下可能 panic。
+//! deploy 脚本、`qx-orchestrator` 与文档入口均显式传入配置。
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use super::parse_deploy_path;
+use super::{data_validate_args::DatasetValidateArgs, parse_deploy_path};
 
 /// 使用者要敲的程序名：`#[command(name = …)]` 与所有引导文案共用这一份。
 /// 不在别处再抄：`init` 的「下一步」曾印成 `qianxing …`，而装好的机器上根本没有
@@ -156,6 +154,8 @@ pub(crate) enum Command {
         data_dir: PathBuf,
         bars: Option<PathBuf>,
     },
+    #[command(name = "data-validate")]
+    DataValidate(DatasetValidateArgs),
     #[command(name = "ccxt-market-spec")]
     CcxtMarketSpec {
         config: PathBuf,
