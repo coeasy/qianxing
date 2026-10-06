@@ -10569,6 +10569,17 @@ def foundation_specs_check() -> None:
         "data-validate 链的容忍性、规格校验或入口文案有断点",
     )
 
+    # 七类「统一身份」对象必须有一个**使用者可达**的读入入口：`describe` 是唯一漏斗，但若没有
+    # CLI 入口，使用者就只能间接经过 init / 回测链看到其中两类，另外几类无处读入自己的清单。
+    plan_commands = (ROOT / "crates/qx-cli/src/plan_commands.rs").read_text(encoding="utf-8")
+    check(
+        "pub(crate) fn plan_readout(" in plan_commands
+        and "describe(&args.kind, &payload)" in plan_commands
+        and "plan <kind> <file>" in help_text,
+        "七类地基对象有使用者可达的读入入口（plan <kind> <file> 复用同一份 describe 漏斗）",
+        "地基对象只有进程内读入者、缺使用者可达的 CLI 入口",
+    )
+
 
 # —— 契约层与登记层（规划 §6.2 / §13.2 / §14.3 / §17 / §18 M0）——
 # 地基对象（上一轮的七类）只解决了「对象存在」；这一层解决「对象被真实契约、真实场景、

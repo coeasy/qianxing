@@ -158,6 +158,10 @@ pub(crate) fn print_cli_help() {
       只读诊断一份 BarFrame 的连续性（乱序/重复/缺口）并落一份 DatasetManifestV2，不改动源文件。
       output 已存在时改为复核：逐字段一致即通过，数据变了或不是清单文件当场拒绝（同一身份不容两种内容）。
       --timezone 缺省 UTC；--json 把清单正文一并打到标准输出。
+  plan <kind> <file> [--json]
+      按类型名读入并校验一份地基规格对象，印出身份、规格版本与稳定指纹；
+      kind 取 project / dataset / experiment / run-record / capability / evidence / schema-registry。
+      --json 改印规范化正文；缺版本号或字段越界当场拒绝并以 2 退出，告警走 stderr。
   ccxt-market-spec <ccxt-config.json> <instrument> <output.json>
       拉取并冻结一份 CCXT 市场规格，供回测与实盘共用（需要 CCXT worker 依赖）。
 

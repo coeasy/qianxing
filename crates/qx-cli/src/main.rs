@@ -121,6 +121,7 @@ mod market_spec;
 mod multi_leg;
 mod path_resolution;
 mod pipeline_metrics_report;
+mod plan_args;
 mod plan_commands;
 mod project_manifest;
 mod quickstart;

@@ -1,24 +1,19 @@
 //! `data-validate`：把一份 BarFrame JSON 诊断成 `DatasetManifestV2`，且**不改动源文件**。
 //!
-//! 两个落点各管一段：`frame` 只读，`output` 不存在就写出清单、已存在就改走读侧复核
-//! （同一身份不容两种内容），因此本入口既能"先注册再核对"，也不会静默覆盖别的链在用的清单。
+//! `frame` 只读；`output` 不存在就写出清单、已存在就改走读侧复核（同一身份不容两种内容），
+//! 所以它既能"先注册再核对"，也不会静默覆盖别的链在用的清单。
 //!
-//! 与 `dataset-ingest`（先入库再登记）不同，本入口只读源文件、只写清单，所以它必须能
-//! 容忍脏数据——乱序、重复、缺口恰恰是要被报告出来的东西。严格读侧（`qx-datastruct` 的
-//! 列式校验与 `qx_data` 的 Provider）都把"时间轴必须严格递增"当成启动前的硬拒；若这里
-//! 复用那条严格线，数据一有问题就只会得到一句拒绝，质量报告反而无从生成。因此本入口走
-//! 自己的宽松列式解析，把 `DatasetQualityReport` 的四个计数如实填出来，交给使用者决定
-//! 补洞还是点名拒绝（规划 §7 P3 / §6.2）。
-//!
-//! 解析刻意不引入 `serde` 派生：qx-cli 只依赖 `serde_json`，这里用 `Value` 手工取列，
-//! 既不为一个诊断入口新增依赖边，也把"哪些格子是必填、哪些要容忍"写在明面上。
+//! 它必须容忍脏数据——乱序、重复、缺口恰恰是要报告的东西，而严格读侧把"时间轴严格递增"当
+//! 启动硬拒，复用它只会得到一句拒绝、`DatasetQualityReport` 无从生成；故走自己的宽松解析。
+//! 指纹只有一条口径：能算出**规范指纹**（`qx_data::fingerprint_bars`，与 dataset-ingest 和回测链
+//! 同一个函数）就用它；脏到算不出时退化为文件内容 sha256 并当场告警（规划 §7 P3 / §6.2）。
 
 use super::read_example_json;
 use crate::data_validate_args::DatasetValidateArgs;
 use crate::BARFRAME_DATASET_VERSION;
 use qx_data::{
-    DatasetManifest, DatasetManifestV2, DatasetQualityReport, DatasetSourceLineage, DatasetTier,
-    BAR_FRAME_SCHEMA_VERSION, DATASET_MANIFEST_V2_SCHEMA_VERSION,
+    Bar, DatasetManifest, DatasetManifestV2, DatasetQualityReport, DatasetSourceLineage,
+    DatasetTier, BAR_FRAME_SCHEMA_VERSION, DATASET_MANIFEST_V2_SCHEMA_VERSION,
 };
 use std::fmt::Write as _;
 use std::path::Path;
@@ -29,10 +24,15 @@ struct RawColumns {
     instrument: String,
     source: String,
     ts: Vec<u64>,
+    open_raw: Vec<i128>,
+    high_raw: Vec<i128>,
+    low_raw: Vec<i128>,
+    close_raw: Vec<i128>,
+    volume_raw: Vec<i128>,
 }
 
 /// 一份 BarFrame 的连续性问题计数，与 `DatasetQualityReport` 的数值字段一一对应。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 struct FrameQuality {
     row_count: u64,
     duplicate_rows: u64,
@@ -61,60 +61,79 @@ fn u64_column(value: &serde_json::Value, key: &str) -> Result<Vec<u64>, String> 
         .collect()
 }
 
-/// 取一列整数（定点价格/量）；这里只核对形状与长度，数值由诊断链之外的严格读侧负责。
-fn integer_column_len(value: &serde_json::Value, key: &str) -> Result<usize, String> {
-    let items = column(value, key)?;
-    if items
+/// 取一列定点整数（价格/量）；非整数元素当场拒绝，不做浮点降级。
+fn i128_column(value: &serde_json::Value, key: &str) -> Result<Vec<i128>, String> {
+    column(value, key)?
         .iter()
-        .any(|item| item.as_i64().is_none() && item.as_u64().is_none())
-    {
-        return Err(format!("数据集 BarFrame 列 {key} 含非整数元素"));
-    }
-    Ok(items.len())
+        .map(|item| {
+            item.as_i64()
+                .map(i128::from)
+                .or_else(|| item.as_u64().map(i128::from))
+                .ok_or_else(|| format!("数据集 BarFrame 列 {key} 含非整数元素"))
+        })
+        .collect()
 }
 
 fn parse_columns(payload: &str) -> Result<RawColumns, String> {
     let value: serde_json::Value = serde_json::from_str(payload)
         .map_err(|error| format!("数据集 BarFrame JSON 无效: {error}"))?;
-    let schema_version = value
-        .get("schema_version")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0);
-    let instrument = value
-        .get("instrument")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let source = value
-        .get("source")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_string();
+    let text = |key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
     let ts = u64_column(&value, "ts")?;
-    let columns = [
-        ts.len(),
-        integer_column_len(&value, "open_raw")?,
-        integer_column_len(&value, "high_raw")?,
-        integer_column_len(&value, "low_raw")?,
-        integer_column_len(&value, "close_raw")?,
-        integer_column_len(&value, "volume_raw")?,
-    ];
-    if columns.iter().any(|length| *length != columns[0]) || columns[0] == 0 {
-        return Err(format!("数据集 BarFrame 各列长度不一致或为空: {columns:?}"));
+    let open_raw = i128_column(&value, "open_raw")?;
+    let high_raw = i128_column(&value, "high_raw")?;
+    let low_raw = i128_column(&value, "low_raw")?;
+    let close_raw = i128_column(&value, "close_raw")?;
+    let volume_raw = i128_column(&value, "volume_raw")?;
+    let ragged = [&open_raw, &high_raw, &low_raw, &close_raw, &volume_raw]
+        .iter()
+        .any(|column| column.len() != ts.len());
+    if ts.is_empty() || ragged {
+        let rows = ts.len();
+        return Err(format!("数据集 BarFrame 各列长度不一致或为空: ts={rows}"));
     }
+    let instrument = text("instrument");
     if instrument.trim().is_empty() {
         return Err("数据集 BarFrame instrument 不能为空".into());
     }
     Ok(RawColumns {
-        schema_version,
+        schema_version: value
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
         instrument,
-        source,
+        source: text("source"),
         ts,
+        open_raw,
+        high_raw,
+        low_raw,
+        close_raw,
+        volume_raw,
     })
 }
 
-/// 只按时间列诊断连续性：乱序、重复各计一行；相邻两行的间隔超过 `interval_ms` 时，
-/// 中间缺席的槽位数计入 `missing_intervals`（向上取整，缺一格与缺半格都不算"连续"）。
+/// 把宽松列还原成数据集侧的逐条记录，好交给仓库唯一的规范指纹函数。
+fn data_bars(raw: &RawColumns) -> Vec<Bar> {
+    let instrument = raw.instrument.clone();
+    (0..raw.ts.len())
+        .map(|i| Bar {
+            instrument: instrument.clone(),
+            timestamp: raw.ts[i],
+            open_raw: raw.open_raw[i],
+            high_raw: raw.high_raw[i],
+            low_raw: raw.low_raw[i],
+            close_raw: raw.close_raw[i],
+            volume_raw: raw.volume_raw[i],
+        })
+        .collect()
+}
+
+/// 只按时间列诊断连续性：乱序/重复各计一行；间隔超过 `interval_ms` 时中间缺席的槽位（向上取整）计入 `missing_intervals`。
 fn assess_frame(ts: &[u64], interval_ms: u64) -> Result<FrameQuality, String> {
     if ts.is_empty() {
         return Err("数据集 BarFrame 时间列为空".into());
@@ -132,8 +151,7 @@ fn assess_frame(ts: &[u64], interval_ms: u64) -> Result<FrameQuality, String> {
         } else if current == previous {
             duplicate_rows += 1;
         } else {
-            let expected = (current - previous).div_ceil(interval_ms);
-            missing_intervals += expected - 1;
+            missing_intervals += (current - previous).div_ceil(interval_ms) - 1;
         }
     }
     Ok(FrameQuality {
@@ -144,18 +162,8 @@ fn assess_frame(ts: &[u64], interval_ms: u64) -> Result<FrameQuality, String> {
     })
 }
 
-/// 校验一个数据集区间端点：清单要求 `1 <= start <= end`，而脏数据可能让首尾乱序。
-fn ordered_range(ts: &[u64]) -> (u64, u64) {
-    let min = ts.iter().copied().min().unwrap_or(1).max(1);
-    let max = ts.iter().copied().max().unwrap_or(min).max(min);
-    (min, max)
-}
-
-/// `output` 已存在时的读侧：同一身份不容两种内容。
-///
-/// 与 `dataset-ingest` 的注册表同一条纪律——重跑同一份数据必须幂等（逐字段相等即通过），
-/// 但数据变了、身份没变时必须当场拒绝，而不是静默覆盖一份已被别的链引用的清单。位置上的
-/// 文件若根本不是 `DatasetManifestV2`，同样拒绝：那个路径被声明为清单落点，不是随便一个文件。
+/// `output` 已存在时的读侧：同一身份不容两种内容。逐字段相等即幂等通过；数据变了而身份没变、
+/// 或位置上的文件不是 `DatasetManifestV2`，都当场拒绝——那个路径被声明为清单落点。
 fn verify_existing_manifest(path: &Path, expected: &DatasetManifestV2) -> Result<(), String> {
     let payload = std::fs::read_to_string(path)
         .map_err(|error| format!("读取已有数据集清单失败 {}: {error}", path.display()))?;
@@ -176,52 +184,49 @@ fn verify_existing_manifest(path: &Path, expected: &DatasetManifestV2) -> Result
             expected.identity()
         ));
     }
-    let pairs = [
+    for (label, left, right) in [
         (
-            "content_hash",
-            existing.content_hash.clone(),
-            expected.content_hash.clone(),
+            "dataset.fingerprint",
+            &existing.dataset.fingerprint,
+            &expected.dataset.fingerprint,
         ),
-        (
-            "row_count",
-            existing.quality_report.row_count.to_string(),
-            expected.quality_report.row_count.to_string(),
-        ),
-        (
-            "duplicate_rows",
-            existing.quality_report.duplicate_rows.to_string(),
-            expected.quality_report.duplicate_rows.to_string(),
-        ),
-        (
-            "out_of_order_rows",
-            existing.quality_report.out_of_order_rows.to_string(),
-            expected.quality_report.out_of_order_rows.to_string(),
-        ),
-        (
-            "missing_intervals",
-            existing.quality_report.missing_intervals.to_string(),
-            expected.quality_report.missing_intervals.to_string(),
-        ),
-        (
-            "timezone",
-            existing.timezone.clone(),
-            expected.timezone.clone(),
-        ),
-    ];
-    for (label, left, right) in pairs {
+        ("timezone", &existing.timezone, &expected.timezone),
+    ] {
         if left != right {
             drift.push(format!("{label} {left} → {right}"));
         }
     }
+    let (left, right) = (
+        existing.quality_report.missing_intervals,
+        expected.quality_report.missing_intervals,
+    );
+    if left != right {
+        drift.push(format!("missing_intervals {left} → {right}"));
+    }
+    let detail = if drift.is_empty() {
+        "差异不在被点名的字段内（清单其余字段发生了变化）".to_string()
+    } else {
+        drift.join("；")
+    };
     Err(format!(
-        "数据集清单已存在且与本次诊断不一致，拒绝覆盖 {}: {}；如需重写请先删除该文件",
-        path.display(),
-        if drift.is_empty() {
-            "差异不在被点名的字段内（清单其余字段发生了变化）".to_string()
-        } else {
-            drift.join("；")
-        }
+        "数据集清单已存在且与本次诊断不一致，拒绝覆盖 {}: {detail}；如需重写请先删除该文件",
+        path.display()
     ))
+}
+
+/// 规范指纹优先、退化指纹兜底：返回 (指纹, 退化原因)。退化必须说清原因，否则同一个
+/// `dataset_id@version` 会在两个命令里给出两个对不上的指纹。
+fn dataset_fingerprint(raw: &RawColumns, content_hash: &str) -> (String, Option<String>) {
+    match qx_data::fingerprint_bars(&data_bars(raw)) {
+        Ok(fingerprint) => (fingerprint, None),
+        Err(reason) => (
+            content_hash.to_string(),
+            Some(format!(
+                "数据无法生成规范指纹（{reason}），dataset.fingerprint 退化为文件内容 sha256；\
+                 该指纹与 dataset-ingest / 回测链不可比，先修数据再重新诊断"
+            )),
+        ),
+    }
 }
 
 fn run_data_validate(args: &DatasetValidateArgs) -> Result<(), String> {
@@ -234,22 +239,23 @@ fn run_data_validate(args: &DatasetValidateArgs) -> Result<(), String> {
         ));
     }
     let quality = assess_frame(&raw.ts, args.interval_ms)?;
-    // 内容身份两处都来自同一份字节：`content_hash` 是文件级 sha256，`fingerprint` 复用它，
-    // 因为本入口不重排数据——重排会掩盖乱序/重复，正是这份诊断要暴露的东西。
     let content_hash = qx_strategy::sha256_hex(payload.as_bytes());
+    let (fingerprint, degraded) = dataset_fingerprint(&raw, &content_hash);
     let source = if raw.source.trim().is_empty() {
         "barframe-json".to_string()
     } else {
         raw.source.clone()
     };
-    let (start, end) = ordered_range(&raw.ts);
+    // 清单要求 `1 <= start <= end`，而脏数据可能让首尾乱序，所以取最小/最大而不是首/尾。
+    let start = raw.ts.iter().copied().min().unwrap_or(1).max(1);
+    let end = raw.ts.iter().copied().max().unwrap_or(start).max(start);
     let manifest = DatasetManifestV2 {
         manifest_version: DATASET_MANIFEST_V2_SCHEMA_VERSION,
         dataset: DatasetManifest {
             dataset_id: args.dataset_id.clone(),
             version: args.version.clone(),
             source: source.clone(),
-            fingerprint: content_hash.clone(),
+            fingerprint,
             schema_version: raw.schema_version.max(1) as u32,
             start_timestamp: start,
             end_timestamp: end,
@@ -277,8 +283,8 @@ fn run_data_validate(args: &DatasetValidateArgs) -> Result<(), String> {
     };
     manifest.validate()?;
     let json = manifest.to_json()?;
-    // 落点已存在就走读侧（校验），不存在才写：既不静默覆盖一份可能被别的链引用的清单，
-    // 也让本入口写出的清单在同一入口里有真实读者，而不是一个只写不读的死端。
+    // 落点已存在就走读侧（校验），不存在才写：既不静默覆盖可能被别的链引用的清单，也让
+    // 本入口写出的清单在同一入口里有真实读者，而不是一个只写不读的死端。
     let verified = args.output.exists();
     if verified {
         verify_existing_manifest(&args.output, &manifest)?;
@@ -292,7 +298,7 @@ fn run_data_validate(args: &DatasetValidateArgs) -> Result<(), String> {
         let mut line = String::new();
         let _ = write!(
             line,
-            "[Data · Validate] dataset={} instrument={} rows={} duplicate={} out_of_order={} missing={} verdict={} fingerprint={} output={}",
+            "[Data · Validate] dataset={} instrument={} rows={} duplicate={} out_of_order={} missing={} verdict={} dataset_fingerprint={} output={}",
             manifest.identity(),
             raw.instrument,
             quality.row_count,
@@ -300,10 +306,14 @@ fn run_data_validate(args: &DatasetValidateArgs) -> Result<(), String> {
             quality.out_of_order_rows,
             quality.missing_intervals,
             if verified { "已复核一致" } else { "已写出" },
-            manifest.fingerprint()?,
+            // 印数据集指纹（与 dataset-ingest / 回测链可比的那一个），不是清单自摘要。
+            manifest.dataset.fingerprint,
             args.output.display()
         );
         println!("{line}");
+    }
+    if let Some(reason) = &degraded {
+        eprintln!("[Data · Validate · 警告] {reason}");
     }
     for warning in manifest.warnings() {
         eprintln!("[Data · Validate · 警告] {warning}");
@@ -319,6 +329,14 @@ pub(crate) fn validate_dataset(args: &DatasetValidateArgs) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const CLEAN: &str = r#"{"instrument":"000001.SZSE","source":"akshare","ts":[1000,2000,3000],"open_raw":[10,20,30],"high_raw":[11,21,31],"low_raw":[9,19,29],"close_raw":[10,20,30],"volume_raw":[1,2,3]}"#;
+    /// 脏序列：2000 重复一行，2000 与 4000 之间缺 1 格。
+    const DIRTY: &str = r#"{"schema_version":1,"instrument":"000001.SZSE","source":"akshare","ts":[1000,2000,2000,4000],"open_raw":[10,20,20,40],"high_raw":[11,21,21,41],"low_raw":[9,19,19,39],"close_raw":[10,20,20,40],"volume_raw":[1,2,2,4]}"#;
+    /// 重复时间戳：规范指纹过不了严格递增校验，只能走退化分支。
+    const DUPLICATED_TS: &str = r#"{"instrument":"000001.SZSE","ts":[1000,1000],"open_raw":[10,10],"high_raw":[11,11],"low_raw":[9,9],"close_raw":[10,10],"volume_raw":[1,1]}"#;
+    /// 参差列：open_raw 少一格。
+    const RAGGED: &str = r#"{"instrument":"000001.SZSE","ts":[1000,2000],"open_raw":[10],"high_raw":[11,21],"low_raw":[9,19],"close_raw":[10,20],"volume_raw":[1,2]}"#;
 
     fn frame_path(name: &str, body: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -350,23 +368,16 @@ mod tests {
     #[test]
     fn clean_series_has_no_findings() {
         let quality = assess_frame(&[1000, 2000, 3000, 4000], 1000).unwrap();
-        assert_eq!(
-            quality,
-            FrameQuality {
-                row_count: 4,
-                duplicate_rows: 0,
-                out_of_order_rows: 0,
-                missing_intervals: 0,
-            }
-        );
+        assert_eq!((quality.row_count, quality.duplicate_rows), (4, 0));
+        assert_eq!(quality.out_of_order_rows, 0);
+        assert_eq!(quality.missing_intervals, 0);
     }
 
     #[test]
     fn out_of_order_duplicate_and_gaps_are_counted_separately() {
         // 2000→2000 重复一行；3000→2500 乱序一行；2500→5500 缺 2 格（间隔 3000 = 3×1000）。
         let quality = assess_frame(&[1000, 2000, 2000, 3000, 2500, 5500], 1000).unwrap();
-        assert_eq!(quality.row_count, 6);
-        assert_eq!(quality.duplicate_rows, 1);
+        assert_eq!((quality.row_count, quality.duplicate_rows), (6, 1));
         assert_eq!(quality.out_of_order_rows, 1);
         assert_eq!(quality.missing_intervals, 2);
     }
@@ -386,20 +397,15 @@ mod tests {
 
     #[test]
     fn parse_columns_tolerates_dirty_series_and_legacy_documents() {
-        let raw = parse_columns(
-            r#"{"instrument":"000001.SZSE","ts":[1000,2000,2000,4000],"open_raw":[10,20,20,40],"high_raw":[11,21,21,41],"low_raw":[9,19,19,39],"close_raw":[10,20,20,40],"volume_raw":[1,2,2,4]}"#,
-        )
-        .unwrap();
-        assert_eq!(raw.schema_version, 0);
+        let raw = parse_columns(DIRTY).unwrap();
+        assert_eq!(raw.schema_version, 1);
         assert_eq!(raw.ts, vec![1000, 2000, 2000, 4000]);
+        assert_eq!(raw.volume_raw, vec![1, 2, 2, 4]);
     }
 
     #[test]
     fn parse_columns_rejects_ragged_and_non_integer_columns() {
-        assert!(parse_columns(
-            r#"{"instrument":"x","ts":[1000,2000],"open_raw":[10],"high_raw":[11,21],"low_raw":[9,19],"close_raw":[10,20],"volume_raw":[1,2]}"#
-        )
-        .is_err());
+        assert!(parse_columns(RAGGED).is_err());
         assert!(parse_columns(
             r#"{"instrument":"x","ts":[1000,2000],"open_raw":[10,20],"high_raw":[11,21],"low_raw":[9,19],"close_raw":[10,20],"volume_raw":[1,"2"]}"#
         )
@@ -407,60 +413,59 @@ mod tests {
         assert!(parse_columns(r#"{"instrument":"x","ts":[1000],"open_raw":[10]}"#).is_err());
     }
 
+    /// 干净数据必须与 dataset-ingest / 回测链算出**同一个**规范指纹；算不出时必须退化并说明原因。
+    #[test]
+    fn fingerprint_prefers_the_canonical_one_and_degrades_with_a_reason() {
+        let clean = parse_columns(CLEAN).unwrap();
+        let (fingerprint, degraded) = dataset_fingerprint(&clean, "content-hash");
+        assert_eq!(degraded, None, "干净数据不应退化");
+        assert_eq!(
+            fingerprint,
+            qx_data::fingerprint_bars(&data_bars(&clean)).unwrap()
+        );
+        let dirty = parse_columns(DUPLICATED_TS).unwrap();
+        assert!(qx_data::fingerprint_bars(&data_bars(&dirty)).is_err());
+        let (fingerprint, degraded) = dataset_fingerprint(&dirty, "content-hash");
+        assert_eq!(fingerprint, "content-hash");
+        assert!(degraded.unwrap().contains("退化为文件内容 sha256"));
+    }
+
     #[test]
     fn validate_writes_manifest_and_tolerates_dirty_series() {
-        let path = frame_path(
-            "dirty",
-            r#"{"schema_version":1,"instrument":"000001.SZSE","source":"akshare","ts":[1000,2000,2000,4000],"open_raw":[10,20,20,40],"high_raw":[11,21,21,41],"low_raw":[9,19,19,39],"close_raw":[10,20,20,40],"volume_raw":[1,2,2,4]}"#,
-        );
+        let path = frame_path("dirty", DIRTY);
         let output = path.with_file_name("manifest.json");
-        let args = args_for(&path, output.clone());
-        validate_dataset(&args).unwrap();
+        validate_dataset(&args_for(&path, output.clone())).unwrap();
         let manifest = DatasetManifestV2::from_json(&std::fs::read_to_string(&output).unwrap())
             .expect("落盘的清单必须能被同一套规格读回");
         assert_eq!(manifest.identity(), "ashare.000001@snapshot-1");
         assert_eq!(manifest.quality_report.row_count, 4);
         assert_eq!(manifest.quality_report.duplicate_rows, 1);
         assert_eq!(manifest.quality_report.missing_intervals, 1);
-        assert_eq!(manifest.instrument, "000001.SZSE");
+        assert!(!manifest.quality_report.corporate_action_coverage);
         assert_eq!(manifest.dataset.start_timestamp, 1000);
         assert_eq!(manifest.dataset.end_timestamp, 4000);
-        assert!(!manifest.quality_report.corporate_action_coverage);
         // 源文件必须原样不动：本入口只诊断，不改写输入。
-        let source_after = std::fs::read_to_string(&path).unwrap();
-        assert!(source_after.contains("\"ts\":[1000,2000,2000,4000]"));
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("\"ts\":[1000,2000,2000,4000]"));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]
     fn validate_rejects_column_mismatch() {
-        let path = frame_path(
-            "ragged",
-            r#"{"instrument":"000001.SZSE","ts":[1000,2000],"open_raw":[10],"high_raw":[11,21],"low_raw":[9,19],"close_raw":[10,20],"volume_raw":[1,2]}"#,
-        );
+        let path = frame_path("ragged", RAGGED);
         let output = path.with_file_name("manifest.json");
         assert!(validate_dataset(&args_for(&path, output)).is_err());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]
-    fn ordered_range_normalizes_dirty_endpoints() {
-        assert_eq!(ordered_range(&[5000, 1000, 3000]), (1000, 5000));
-        assert_eq!(ordered_range(&[0, 0]), (1, 1));
-    }
-
-    #[test]
     fn validate_is_idempotent_then_refuses_drift_on_the_same_identity() {
-        let path = frame_path(
-            "idempotent",
-            r#"{"instrument":"000001.SZSE","source":"akshare","ts":[1000,2000,3000],"open_raw":[10,20,30],"high_raw":[11,21,31],"low_raw":[9,19,29],"close_raw":[10,20,30],"volume_raw":[1,2,3]}"#,
-        );
+        let path = frame_path("idempotent", CLEAN);
         let output = path.with_file_name("manifest.json");
         let args = args_for(&path, output.clone());
-        // 首次写出。
         validate_dataset(&args).unwrap();
         let first = std::fs::read_to_string(&output).unwrap();
-        // 重跑同一份数据：逐字段相等，走复核而不是覆盖，内容不变。
+        // 重跑同一份数据：逐字段相等，走复核而非覆盖，内容不变。
         validate_dataset(&args).unwrap();
         assert_eq!(std::fs::read_to_string(&output).unwrap(), first);
         // 数据变了、身份没变：拒绝，且已存在的清单不被改写。
@@ -481,10 +486,7 @@ mod tests {
 
     #[test]
     fn validate_refuses_to_clobber_a_non_manifest_output() {
-        let path = frame_path(
-            "clobber",
-            r#"{"instrument":"000001.SZSE","ts":[1000,2000],"open_raw":[10,20],"high_raw":[11,21],"low_raw":[9,19],"close_raw":[10,20],"volume_raw":[1,2]}"#,
-        );
+        let path = frame_path("clobber", CLEAN);
         let output = path.with_file_name("manifest.json");
         std::fs::write(&output, "{\"not\":\"a manifest\"}").unwrap();
         let error = validate_dataset(&args_for(&path, output.clone())).unwrap_err();

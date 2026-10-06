@@ -4,17 +4,15 @@
 //! "文案宣称支持某入口而派发没有该分支"因此不可表达）。`help`/`--help`/`-h` 是进 clap 前的同一条
 //! 预检分支，门禁按规范名 `help` 计一条；命令名与旗标语义与迁移前逐条一致，旧手写解析不留双轨。
 //!
-//! `<worker>` 与 `<submit-order.json>` 等必填入参前必须显式给 runtime 路径；带 `default_value` 的位置参数会被 Clap 判为可选，debug 下可能 panic。
-//! deploy 脚本、`qx-orchestrator` 与文档入口均显式传入配置。
+//! `<worker>` 与 `<submit-order.json>` 等必填入参前必须显式给 runtime 路径；带 `default_value` 的位置参数会被 Clap 判为可选，debug 下可能 panic；deploy 脚本、`qx-orchestrator` 与文档入口均显式传入配置。
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use super::{data_validate_args::DatasetValidateArgs, parse_deploy_path};
+use super::{data_validate_args::DatasetValidateArgs, parse_deploy_path, plan_args::PlanArgs};
 
-/// 使用者要敲的程序名：`#[command(name = …)]` 与所有引导文案共用这一份。
-/// 不在别处再抄：`init` 的「下一步」曾印成 `qianxing …`，而装好的机器上根本没有
-/// 那个名字，首跑第二句就是 command not found（V13 R2 #260）。
+/// 使用者要敲的程序名：`#[command(name = …)]` 与所有引导文案共用这一份。不在别处再抄：
+/// `init` 的「下一步」曾印成 `qianxing …`，而装好的机器上没有那个名字，首跑第二句就是 command not found（V13 R2 #260）。
 pub(crate) const PROGRAM_NAME: &str = "qx-cli";
 
 #[derive(Parser)]
@@ -156,6 +154,8 @@ pub(crate) enum Command {
     },
     #[command(name = "data-validate")]
     DataValidate(DatasetValidateArgs),
+    #[command(name = "plan")]
+    Plan(PlanArgs),
     #[command(name = "ccxt-market-spec")]
     CcxtMarketSpec {
         config: PathBuf,

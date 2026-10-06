@@ -453,6 +453,7 @@ pub(crate) fn run() {
         Command::DataValidate(args) => {
             usage_errors::exit_on_failure(validate_dataset(&args), "数据集校验失败");
         }
+        Command::Plan(args) => usage_errors::exit_on_failure(plan_readout(&args), "规格读入失败"),
         Command::CcxtMarketSpec {
             config,
             instrument,

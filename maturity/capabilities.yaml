@@ -751,11 +751,12 @@ capabilities:
       - schemas/evidence-bundle-v1.json
       - schemas/schema-registry-v1.json
       - crates/qx-cli/src/plan_commands.rs verify_foundation_specs 在 ecosystem/all 自检里跑「合法夹具通过 + 坏夹具被拒」
+      - crates/qx-cli/src/plan_commands.rs 的 plan_readout 与 crates/qx-cli/src/plan_args.rs 的 PlanArgs：plan <kind> <file> [--json] 是七类对象的用户级只读入口，复用同一份 describe 漏斗，坏载荷/缺版本号当场退 2（help / clap 表 / 派发三方一致，门禁 cli_help_surface_check 钉住）
       - crates/qx-spec/src/tests.rs 十条用例：七类读入、指纹稳定、未知类型拒绝、逐类硬约束与未知字段拒绝
-      - tools/check_architecture.py foundation_specs_check 五颗：Schema 与常量同源 / 对象各一处定义 / qx-spec 是成员且被 qx-cli 依赖 / describe 派发臂齐全 / 能力清单证据闸门
+      - tools/check_architecture.py foundation_specs_check 九颗：Schema 与常量同源 / 对象各一处定义 / qx-spec 是成员且被 qx-cli 依赖 / describe 派发臂齐全 / ProjectManifest init 接线 / RunRecord 写读与篡改拒绝 / 能力清单证据闸门 / DatasetManifestV2 只读诊断入口 / 七类对象有使用者可达的读入入口
       - maturity/baseline.yaml 冻结七类对象的 schema 版本常量
     limitations:
-      - foundation_objects_have_no_cli_readout_command：七类对象今天只在 qx-cli ecosystem/all 自检与单元用例里被读入，还没有 plan <kind> <file> 这样的用户级读入命令；原因是 crates/qx-cli/src/cli.rs 与 cli_args.rs 已到行数棘轮预算顶（只降不升），新命令会当场把门禁变红。接入命令与棘轮预算腾挪在下一轮处理
+      - foundation_objects_have_no_cli_authoring_path：plan 已补上七类对象的用户级只读入口（读入 + 严格校验 + 稳定指纹），但除 init 生成 ProjectManifest、data-validate 生成 DatasetManifestV2 之外，ExperimentSpec / CapabilityManifest / EvidenceBundle / SchemaRegistry 仍只能由使用者手工撰写 JSON，没有 CLI 生成入口
       - capability_manifest_not_yet_generated_from_venue_adapters：回测产物现已写入并复核 qx-spec RunRecord（v5 summary 指针 + 每个文件 SHA-256）；CapabilityManifest 仍未由 venue/adapter 配置自动生成，adapter capability registry 与 conformance evidence 属后续工作
 
   contract_registry_layer:
