@@ -23,6 +23,7 @@ members = [
     "crates/qx-execution",
     "crates/qx-python",
     "crates/qx-strategy",
+    "crates/qx-spec",
     "crates/qx-cli",
 ]
 

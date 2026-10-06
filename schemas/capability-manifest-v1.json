@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/capability-manifest-v1.json",
+  "title": "Qianxing Capability Manifest v1",
+  "description": "Venue/Provider 的能力与版本声明。schema_version 与 crates/qx-spec/src/capability.rs 的 CAPABILITY_MANIFEST_SCHEMA_VERSION 同源。level=L3 起必须 sandbox_tested=true；L4 必须 production_approved=true；sandbox_tested/production_approved 为 true 时 evidence 不得为空——未拿到外部记录不得声明已通过。",
+  "type": "object",
+  "required": ["schema_version", "venue_id", "provider_id", "level", "supported_products", "order_types", "data_tiers", "reconcile", "code_tested", "paper_tested", "sandbox_tested", "production_approved", "strategy_api_version", "account_snapshot_version"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "venue_id": {"type": "string", "minLength": 1},
+    "provider_id": {"type": "string", "minLength": 1},
+    "level": {"enum": ["L0", "L1", "L2", "L3", "L4"]},
+    "supported_products": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "order_types": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "data_tiers": {"type": "array", "items": {"enum": ["bar", "l1", "l2", "l3"]}},
+    "reconcile": {"type": "boolean"},
+    "code_tested": {"type": "boolean"},
+    "paper_tested": {"type": "boolean"},
+    "sandbox_tested": {"type": "boolean"},
+    "production_approved": {"type": "boolean"},
+    "evidence": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "strategy_api_version": {"type": "integer", "minimum": 1},
+    "account_snapshot_version": {"type": "integer", "minimum": 1}
+  },
+  "additionalProperties": false
+}

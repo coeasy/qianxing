@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/schema-registry-v1.json",
+  "title": "Qianxing Schema Registry v1",
+  "description": "统一管理 JSON、C ABI、Arrow、wire event 与兼容策略的台账。schema_version 与 crates/qx-spec/src/schema_registry.rs 的 SCHEMA_REGISTRY_SCHEMA_VERSION 同源。每条契约要有 id、版本、路径、生产/消费方、兼容级别与 golden fixtures；声明不兼容（compatibility=none）时至少两份 fixture 证明跨版本差异。",
+  "type": "object",
+  "required": ["schema_version", "registry_version", "entries"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "registry_version": {"type": "integer", "minimum": 1},
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["schema_id", "version", "path", "producer", "consumers", "compatibility", "golden_fixtures"],
+        "properties": {
+          "schema_id": {"type": "string", "minLength": 1},
+          "version": {"type": "integer", "minimum": 1},
+          "path": {"type": "string", "minLength": 1},
+          "producer": {"type": "string", "minLength": 1},
+          "consumers": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "compatibility": {"enum": ["backward", "forward", "full", "none"]},
+          "golden_fixtures": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

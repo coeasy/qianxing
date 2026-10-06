@@ -723,3 +723,32 @@ capabilities:
     production_approved: false
     limitations:
       - broker_protocol_and_simulated_account_required
+
+  foundation_spec_objects:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-spec/src/lib.rs qx_spec::describe 是七类声明式文档的唯一读入漏斗：严格解析 → 自洽校验 → 稳定指纹
+      - crates/qx-spec/src/project.rs ProjectManifest 与 PROJECT_PROFILES/PROJECT_STRATEGY_LANGUAGES 词表
+      - crates/qx-data/src/catalog_v2.rs DatasetManifestV2 与 DatasetTier/DatasetQualityReport/DatasetSourceLineage
+      - crates/qx-spec/src/experiment.rs ExperimentSpec 与 EXPERIMENT_BASELINES 词表
+      - crates/qx-spec/src/run_record.rs RunRecord：status=completed 必须 finished_at_ms 存在、replay_verdict=verified 且至少引用一份产物
+      - crates/qx-spec/src/capability.rs CapabilityManifest：sandbox_tested/production_approved 为 true 时 evidence 不得为空
+      - crates/qx-spec/src/evidence.rs EvidenceBundle：L4 证据必须来自 mainnet、L3 证据不得来自 mainnet
+      - crates/qx-spec/src/schema_registry.rs SchemaRegistry：schema_id 唯一、每项都要有 golden fixture
+      - schemas/project-manifest-v1.json
+      - schemas/dataset-manifest-v2.json
+      - schemas/experiment-spec-v1.json
+      - schemas/run-record-v1.json
+      - schemas/capability-manifest-v1.json
+      - schemas/evidence-bundle-v1.json
+      - schemas/schema-registry-v1.json
+      - crates/qx-cli/src/plan_commands.rs verify_foundation_specs 在 ecosystem/all 自检里跑「合法夹具通过 + 坏夹具被拒」
+      - crates/qx-spec/src/tests.rs 十条用例：七类读入、指纹稳定、未知类型拒绝、逐类硬约束与未知字段拒绝
+      - tools/check_architecture.py foundation_specs_check 五颗：Schema 与常量同源 / 对象各一处定义 / qx-spec 是成员且被 qx-cli 依赖 / describe 派发臂齐全 / 能力清单证据闸门
+      - maturity/baseline.yaml 冻结七类对象的 schema 版本常量
+    limitations:
+      - foundation_objects_have_no_cli_readout_command：七类对象今天只在 qx-cli ecosystem/all 自检与单元用例里被读入，还没有 plan <kind> <file> 这样的用户级读入命令；原因是 crates/qx-cli/src/cli.rs 与 cli_args.rs 已到行数棘轮预算顶（只降不升），新命令会当场把门禁变红。接入命令与棘轮预算腾挪在下一轮处理
+      - run_record_and_capability_not_yet_wired_to_backtest_artifacts：RunRecord 与 CapabilityManifest 目前是独立对象，尚未由回测产物写出、也未由 venue 配置驱动生成；把它们接上回测产物写出与 adapter capability 生成器属后续工作

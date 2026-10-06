@@ -5,6 +5,7 @@
 
 pub mod batch;
 pub mod catalog;
+pub mod catalog_v2;
 pub mod corporate_action;
 pub mod fingerprint;
 pub mod incremental;
@@ -21,6 +22,10 @@ pub use batch::{load_bar_batch, BarBatchItem, BarRequest};
 pub use catalog::{
     ArrowDatasetManifest, ArrowFieldManifest, DatasetBundleManifest, DatasetComponentFormat,
     DatasetComponentManifest, DatasetManifest, JsonDatasetBundleStore,
+};
+pub use catalog_v2::{
+    DatasetManifestV2, DatasetQualityReport, DatasetSourceLineage, DatasetTier,
+    DATASET_MANIFEST_V2_SCHEMA_VERSION,
 };
 pub use corporate_action::{CorporateAction, CorporateActionType};
 pub use fingerprint::fingerprint_bars;

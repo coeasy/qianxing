@@ -28,6 +28,14 @@ frozen_versions:
   c_abi_strategy: "crates/qx-strategy/src/c_api.rs::QX_C_STRATEGY_API_VERSION=1"
   ashare: "crates/qx-xingban/src/ashare.rs::ASHARE_SCHEMA_VERSION=1"
   storage_schema: "crates/qx-storage/src/lib.rs::LATEST_SCHEMA_VERSION=1"
+  # 地基规格对象（规划 §6.2）：七类声明式文档各一个版本常量，与 schemas/ 下同名 Schema 同源。
+  project_manifest: "crates/qx-spec/src/project.rs::PROJECT_MANIFEST_SCHEMA_VERSION=1"
+  dataset_manifest_v2: "crates/qx-data/src/catalog_v2.rs::DATASET_MANIFEST_V2_SCHEMA_VERSION=1"
+  experiment_spec: "crates/qx-spec/src/experiment.rs::EXPERIMENT_SPEC_SCHEMA_VERSION=1"
+  run_record: "crates/qx-spec/src/run_record.rs::RUN_RECORD_SCHEMA_VERSION=1"
+  capability_manifest: "crates/qx-spec/src/capability.rs::CAPABILITY_MANIFEST_SCHEMA_VERSION=1"
+  evidence_bundle: "crates/qx-spec/src/evidence.rs::EVIDENCE_BUNDLE_SCHEMA_VERSION=1"
+  schema_registry: "crates/qx-spec/src/schema_registry.rs::SCHEMA_REGISTRY_SCHEMA_VERSION=1"
 
 # ---- 冻结的规则集 / 契约版本（字符串字面量） ----
 frozen_string_versions:

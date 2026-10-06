@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/experiment-spec-v1.json",
+  "title": "Qianxing Experiment Spec v1",
+  "description": "一次可复跑实验的全部输入身份：参数空间、数据切分、种子、成本/风控规则集与模型版本。schema_version 与 crates/qx-spec/src/experiment.rs 的 EXPERIMENT_SPEC_SCHEMA_VERSION 同源；baselines 取值域与 EXPERIMENT_BASELINES 同源。",
+  "type": "object",
+  "required": ["schema_version", "experiment_id", "strategy_ref", "dataset_id", "seed", "initial_capital_raw", "parameter_space", "split_plan", "baselines", "cost_model_ref", "risk_rule_set", "model_version"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "experiment_id": {"type": "string", "minLength": 1},
+    "strategy_ref": {"type": "string", "minLength": 1},
+    "dataset_id": {"type": "string", "minLength": 1},
+    "seed": {"type": "integer", "minimum": 0},
+    "initial_capital_raw": {"type": "integer", "minimum": 1},
+    "parameter_space": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "values"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "values": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "split_plan": {
+      "type": "object",
+      "required": ["train_bars", "test_bars", "walk_forward", "step_bars"],
+      "properties": {
+        "train_bars": {"type": "integer", "minimum": 1},
+        "test_bars": {"type": "integer", "minimum": 1},
+        "walk_forward": {"type": "boolean"},
+        "step_bars": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "baselines": {"type": "array", "minItems": 1, "items": {"enum": ["buy-and-hold", "zero-signal", "none"]}},
+    "cost_model_ref": {"type": "string", "minLength": 1},
+    "risk_rule_set": {"type": "string", "minLength": 1},
+    "model_version": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

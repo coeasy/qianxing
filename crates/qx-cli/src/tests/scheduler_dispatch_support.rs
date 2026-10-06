@@ -217,7 +217,7 @@ fn a_second_boot_that_disagrees_with_the_declaration_refuses_to_run() {
         ),
     ] {
         let root = temp_cli_case_dir(&format!("declaration-drift-{slug}"));
-        let (config, config_path) = runtime_for_jobs(&root, &[accepted.clone()]);
+        let (config, config_path) = runtime_for_jobs(&root, std::slice::from_ref(&accepted));
         load_scheduler_state(&config, &root, &config_path).expect("首次启动应建立状态");
         let (drifted, _) = runtime_for_jobs(&root, &declaration);
         let error = match load_scheduler_state(&drifted, &root, &config_path) {

@@ -1,6 +1,20 @@
 # Changelog
 
 
+### 地基规格对象落地（2026-10-06）· 规划 §6.2 七类「统一身份」声明式文档
+
+**口径**：按 `docs/qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md` §6.2 / §7 落地七类地基对象，本轮只做**声明式文档 + 门禁牙齿**，不接实盘功能（功能面留后续轮次）。全部改动加性：门禁 **662 → 667 全绿**，未删任何既有判据。
+
+- **新增第 24 个 crate `qx-spec`**：`ProjectManifest` / `ExperimentSpec` / `RunRecord` / `CapabilityManifest` / `EvidenceBundle` / `SchemaRegistry` 六类 + `qx-data::catalog_v2::DatasetManifestV2`（第七类，与既有 `DatasetManifest` 同 crate 以便复用 v1 解析）。统一走 `qx_spec::describe(kind, payload)` 这**唯一读入漏斗**，`FoundationKind` 七变体 `ALL` 数组驱动，`from_json` 一律 `deny_unknown_fields` 严格解析。
+- **对象层硬约束（不只是字段校验）**：`RunRecord` 的 `status=completed` 必须同时带 `finished_at_ms` + `replay_verdict=verified` + 非空 `artifact_refs`（复现不了就不许标完成）；`CapabilityManifest` 声明 `sandbox_tested` 就必须有 `evidence`、`production_approved` 必须先 `sandbox_tested`、`level>=L3` 必须有沙盒证据、`level>=L4` 必须已生产批准；`EvidenceBundle` 的 `L4` 声明网络必须是 `mainnet`、`L3` 不得是 `mainnet`。这四条把「没拿到外部证据不得声明已通过」写成了**类型层拒绝**，而不是文档里的口头约定。
+- **7 份严格 JSON Schema**（`schemas/*-v1.json`）：每份 `additionalProperties:false` + 版本键 `{"const": 1}`，与 Rust 侧 `*_SCHEMA_VERSION` 常量同源。
+- **门禁牙齿 `foundation_specs_check()`（5 颗）**：① 七份 Schema 与 Rust 版本常量逐条一致；② 七类对象各只有一处 `pub struct` 定义（同名概念不得出现第二份）；③ `qx-spec` 是 workspace 成员且被 `qx-cli` 依赖（地基对象必须有生产读入者）；④ `describe` 派发臂覆盖七类且不重不漏；⑤ `capability.rs` 的四处证据闸门字面量必须仍在（防止有人把硬约束改软）。`GATE_CHECK_FLOOR` 仍为 633（667 实测已覆盖）。
+- **生产读入者**：`qx-cli` 新增 `plan_commands.rs::verify_foundation_specs()`，由既有 `ecosystem` 自检驱动——七类各给一份最小合法夹具必须读入、再删掉版本号必须被拒。实测 `qx-cli ecosystem` 输出 `[规格 · qx-spec] 7 类规格读入/拒绝通过 ✓`，rc 0。
+- **登记 limitation（诚实边界）**：① `foundation_objects_have_no_cli_readout_command`——规划里的 `qx plan` 只读命令**本轮未做**：`cli.rs`(679>673) 与 `cli_args.rs`(523>513) 已顶到 `maturity/line_budgets.yaml` 的**只降不升**棘轮，加一条新命令就会红。已改为走 `ecosystem` 自检接入，命令面留后续轮次（需先给这两个文件减行）。② `run_record_and_capability_not_yet_wired_to_backtest_artifacts`——两类对象目前只有声明与校验，回测产物尚未真正写入 `RunRecord`。
+- **顺带修一处既有 clippy 红**：`crates/qx-cli/src/tests/scheduler_dispatch_support.rs:220` 的 `&[accepted.clone()]` 触发 `clippy::cloned_ref_to_slice_refs`（`clippy --all-targets -- -D warnings` 下即 error，CI 会红）。改为 `std::slice::from_ref(&accepted)`，**净增 0 行**、行为不变。该告警在 `9d46305` 基线提交上就存在（rustc 1.98.1 的 lint 版本漂移），非本轮引入。
+- **本轮实测**：`python tools/check_architecture.py` **667 项全绿 / 0 红**；`cargo clippy -p qx-spec -p qx-cli -p qx-data --all-targets -- -D warnings` **rc 0**；按「告警行号 ∩ 本次新增行区间」求交集，新增 **1,673 行里 0 条 clippy 告警**（唯一告警是上面那条既有项）；`cargo test -p qx-spec` **10 passed**；`cargo test -p qx-cli --bin qx-cli` **311 passed / 4 failed**，4 条全是既有沙箱 `os error 231`（`ERROR_PIPE_BUSY`，子进程管道环境噪声，与本轮改动无关，历史轮次同基线）；`qx-cli ecosystem` rc 0。
+
+
 ### 发布审计第二轮（2026-10-06）· 换角度 A/B/C · API 前后端 / 配置键 / 错误路径与状态机
 
 **口径**：同第一轮（主体流程全联通、无断链、无孤儿逻辑、无死循环、前后端贯通），但换三个**不同**的扫描角度，避免与第一轮重复。详见 docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md 第 14 节。

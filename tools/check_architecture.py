@@ -10409,6 +10409,120 @@ def performance_baseline_check() -> None:
     )
 
 
+# 地基规格对象（规划 §6.2 / §7）：七类声明式文档各自只有一份 JSON Schema、一个版本常量、
+# 一处 `pub struct` 定义，且 `qx_spec::describe` 是它们唯一的生产读入漏斗（CLI `plan` 命令）。
+FOUNDATION_SPECS = (
+    ("schemas/project-manifest-v1.json", "crates/qx-spec/src/project.rs", "PROJECT_MANIFEST_SCHEMA_VERSION", "schema_version"),
+    ("schemas/dataset-manifest-v2.json", "crates/qx-data/src/catalog_v2.rs", "DATASET_MANIFEST_V2_SCHEMA_VERSION", "manifest_version"),
+    ("schemas/experiment-spec-v1.json", "crates/qx-spec/src/experiment.rs", "EXPERIMENT_SPEC_SCHEMA_VERSION", "schema_version"),
+    ("schemas/run-record-v1.json", "crates/qx-spec/src/run_record.rs", "RUN_RECORD_SCHEMA_VERSION", "schema_version"),
+    ("schemas/capability-manifest-v1.json", "crates/qx-spec/src/capability.rs", "CAPABILITY_MANIFEST_SCHEMA_VERSION", "schema_version"),
+    ("schemas/evidence-bundle-v1.json", "crates/qx-spec/src/evidence.rs", "EVIDENCE_BUNDLE_SCHEMA_VERSION", "schema_version"),
+    ("schemas/schema-registry-v1.json", "crates/qx-spec/src/schema_registry.rs", "SCHEMA_REGISTRY_SCHEMA_VERSION", "schema_version"),
+)
+FOUNDATION_OBJECT_TYPES = (
+    "ProjectManifest",
+    "DatasetManifestV2",
+    "ExperimentSpec",
+    "RunRecord",
+    "CapabilityManifest",
+    "EvidenceBundle",
+    "SchemaRegistry",
+)
+FOUNDATION_SPEC_CRATE = "qx-spec"
+FOUNDATION_DISPATCH_FILE = "crates/qx-spec/src/lib.rs"
+
+
+def foundation_specs_check() -> None:
+    """地基规格对象：Schema 与 Rust 常量同源、每个对象只有一处定义、CLI 是唯一读入漏斗。
+
+    规划（docs/qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md §6.2）要求这些对象
+    成为「统一身份」，因此它们的失败方式就是漂移：Schema 与常量各写一份、同名概念出现第二份
+    定义、或对象建好却没有任何生产读入者。三件事分别在这里变红。
+    """
+    schema_issues: list[str] = []
+    for rel, rust_rel, const, version_key in FOUNDATION_SPECS:
+        path = ROOT / rel
+        if not path.is_file():
+            schema_issues.append(f"{rel} 不在盘上")
+            continue
+        try:
+            schema = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as error:
+            schema_issues.append(f"{rel} 不是合法 JSON: {error}")
+            continue
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        if "$id" not in schema:
+            schema_issues.append(f"{rel} 缺 $id")
+        if not required or not set(required) <= set(properties):
+            schema_issues.append(
+                f"{rel} 的 required 越界 {sorted(set(required) - set(properties))}"
+            )
+        if schema.get("additionalProperties") is not False:
+            schema_issues.append(f"{rel} 未关闭 additionalProperties（未知字段必须当场拒绝）")
+        declared = properties.get(version_key, {}).get("const")
+        found = re.search(
+            rf"pub const {const}: u32 = (\d+);",
+            (ROOT / rust_rel).read_text(encoding="utf-8"),
+        )
+        if found is None:
+            schema_issues.append(f"{rust_rel} 找不到常量 {const}")
+        elif declared != int(found.group(1)):
+            schema_issues.append(
+                f"{rel} {version_key}.const={declared} 与 {const}={found.group(1)} 不一致"
+            )
+    check(
+        not schema_issues,
+        "七类地基规格各有一份严格 Schema，版本常量与 Rust 侧逐条一致",
+        "；".join(schema_issues),
+    )
+
+    duplicates: dict[str, list[str]] = {}
+    for name in FOUNDATION_OBJECT_TYPES:
+        pattern = re.compile(rf"^\s*pub struct {name} \{{", re.MULTILINE)
+        duplicates[name] = [
+            path.relative_to(ROOT).as_posix()
+            for path in sorted(CRATES.glob("*/src/**/*.rs"))
+            if pattern.search(path.read_text(encoding="utf-8"))
+        ]
+    bad = {name: sites for name, sites in duplicates.items() if len(sites) != 1}
+    check(
+        not bad,
+        "七类地基对象的 `pub struct` 各只有一处定义（同名概念不得出现第二份）",
+        f"定义数不为 1 的对象 {bad}",
+    )
+
+    workspace = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+    cli_manifest = (ROOT / "crates" / "qx-cli" / "Cargo.toml").read_text(encoding="utf-8")
+    check(
+        f'"crates/{FOUNDATION_SPEC_CRATE}"' in workspace
+        and f'qx-spec = {{ path = "../{FOUNDATION_SPEC_CRATE}" }}' in cli_manifest,
+        "qx-spec 是 workspace 成员且被 qx-cli 依赖（地基对象必须有生产读入者）",
+        f"workspace 成员={'是' if f'crates/{FOUNDATION_SPEC_CRATE}' in workspace else '否'}；"
+        f"qx-cli 依赖={'是' if 'qx-spec' in cli_manifest else '否'}",
+    )
+
+    body = _fn_body(
+        (ROOT / FOUNDATION_DISPATCH_FILE).read_text(encoding="utf-8"),
+        "pub fn describe(",
+    )
+    arms = re.findall(r"FoundationKind::(\w+) =>", body)
+    check(
+        len(arms) == len(FOUNDATION_OBJECT_TYPES) and len(set(arms)) == len(arms),
+        "describe 的派发臂覆盖全部七类地基对象且不重不漏",
+        f"派发臂 {arms}（期望 {len(FOUNDATION_OBJECT_TYPES)} 条）",
+    )
+
+    capability = (ROOT / "crates/qx-spec/src/capability.rs").read_text(encoding="utf-8")
+    check(
+        "self.sandbox_tested && self.evidence.is_empty()" in capability
+        and "self.production_approved && !self.sandbox_tested" in capability,
+        "能力清单把「未拿到沙盒/生产证据不得声明已通过」写成对象层硬约束",
+        "capability.rs 的 evidence 闸门被删弱（声明已通过却没有证据）",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -10518,6 +10632,7 @@ def main() -> int:
     line_budget_check()
     doc_citation_reachability_check()
     command_status_vocabulary_single_source_check()
+    foundation_specs_check()
     # 含本条自身：+1 才是本轮真正会打印的总条数，所以地板常量按"含这一条"取值。
     check(
         checks + 1 >= GATE_CHECK_FLOOR,

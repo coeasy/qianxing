@@ -35,6 +35,7 @@ qx-data = { path = "../qx-data" }
 qx-execution = { path = "../qx-execution" }
 qx-runtime = { path = "../qx-runtime" }
 qx-strategy = { path = "../qx-strategy" }
+qx-spec = { path = "../qx-spec" }
 qx-orchestrator = { path = "../qx-orchestrator" }
 qx-storage = { path = "../qx-storage" }
 serde_json = { workspace = true }

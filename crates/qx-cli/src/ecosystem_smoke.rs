@@ -308,6 +308,10 @@ pub(crate) fn run_ecosystem_smoke() {
         200
     );
     println!("[控制 · Query/WebSocket API] health/schema routes ✓");
+
+    // 地基规格对象（qx-spec）：七类声明式文档在本构建里必须既能读入、又能拒绝坏载荷。
+    let foundation = verify_foundation_specs().expect("地基规格对象冒烟必须通过");
+    println!("[规格 · qx-spec] {foundation} ✓");
 }
 
 pub(crate) fn mk_order(id: u64, instr: &InstrumentId, side: Side, qty: i64) -> Order {

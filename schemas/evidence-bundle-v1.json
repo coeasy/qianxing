@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/evidence-bundle-v1.json",
+  "title": "Qianxing Evidence Bundle v1",
+  "description": "把测试网、故障演练与性能结果变成可复核证据。schema_version 与 crates/qx-spec/src/evidence.rs 的 EVIDENCE_BUNDLE_SCHEMA_VERSION 同源。只保存脱敏摘要、计数与指针，不保存密钥或订单敏感原文；L4 证据必须来自 mainnet 窗口，L3 证据不得来自 mainnet。",
+  "type": "object",
+  "required": ["schema_version", "claim", "venue_id", "window", "environment", "redacted_config_digest", "logs", "fact_count", "result_digest", "operator"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "claim": {
+      "type": "object",
+      "required": ["summary", "capability_level"],
+      "properties": {
+        "summary": {"type": "string", "minLength": 1},
+        "capability_level": {"enum": ["L0", "L1", "L2", "L3", "L4"]}
+      },
+      "additionalProperties": false
+    },
+    "venue_id": {"type": "string", "minLength": 1},
+    "window": {
+      "type": "object",
+      "required": ["start_ms", "end_ms"],
+      "properties": {
+        "start_ms": {"type": "integer", "minimum": 1},
+        "end_ms": {"type": "integer", "minimum": 2}
+      },
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "required": ["host", "runtime_version", "network"],
+      "properties": {
+        "host": {"type": "string", "minLength": 1},
+        "runtime_version": {"type": "string", "minLength": 1},
+        "network": {"enum": ["testnet", "sandbox", "mainnet"]}
+      },
+      "additionalProperties": false
+    },
+    "redacted_config_digest": {"type": "string", "minLength": 1},
+    "logs": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "fact_count": {"type": "integer", "minimum": 1},
+    "result_digest": {"type": "string", "minLength": 1},
+    "operator": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

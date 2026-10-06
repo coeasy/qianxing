@@ -1,0 +1,12 @@
+[package]
+name = "qx-spec"
+description = "牵星声明式规格对象：项目/实验/运行/能力/证据/模式登记册的地基契约"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qx-core = { path = "../qx-core" }
+qx-data = { path = "../qx-data" }
+serde = { workspace = true }
+serde_json = { workspace = true }

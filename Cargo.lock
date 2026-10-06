@@ -1298,6 +1298,7 @@ dependencies = [
  "qx-risk",
  "qx-runtime",
  "qx-scheduler",
+ "qx-spec",
  "qx-storage",
  "qx-strategy",
  "qx-xingban",
@@ -1458,6 +1459,16 @@ name = "qx-scheduler"
 version = "0.1.0"
 dependencies = [
  "qx-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "qx-spec"
+version = "0.1.0"
+dependencies = [
+ "qx-core",
+ "qx-data",
  "serde",
  "serde_json",
 ]
