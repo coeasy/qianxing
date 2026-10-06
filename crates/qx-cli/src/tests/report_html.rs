@@ -16,6 +16,12 @@ fn temp_dir(tag: &str) -> PathBuf {
     dir
 }
 
+/// 渲染入口的用例侧薄封装：月度收益走生产同一条算式入口 [`monthly_series`]，
+/// 不让用例自带第二份月度收益算法（否则用例与产品各算一套，漂移时两边都「自洽」）。
+fn render(summary: &serde_json::Value, equity: &[(i64, i128)], fills: &[FillPoint]) -> String {
+    render_report_html(summary, equity, fills, &monthly_series(summary, equity))
+}
+
 /// 一份形状完整的 v4 摘要：只有下面这些格子，够渲染全部卡片与身份行。
 fn sample_summary() -> serde_json::Value {
     serde_json::json!({
@@ -142,8 +148,8 @@ fn json_mode_with_html_keeps_stdout_parseable_and_lists_all_outputs() {
 #[test]
 fn report_is_byte_equal_across_runs() {
     let summary = sample_summary();
-    let first = render_report_html(&summary, &sample_equity(), &sample_fills());
-    let second = render_report_html(&summary, &sample_equity(), &sample_fills());
+    let first = render(&summary, &sample_equity(), &sample_fills());
+    let second = render(&summary, &sample_equity(), &sample_fills());
     assert_eq!(first, second, "同输入两次渲染必须逐字节相等");
     assert!(first.starts_with("<!DOCTYPE html>"));
     assert!(first.contains("牵星回测报告"));
@@ -151,7 +157,7 @@ fn report_is_byte_equal_across_runs() {
 
 #[test]
 fn report_has_no_external_resource_reference() {
-    let html = render_report_html(&sample_summary(), &sample_equity(), &sample_fills());
+    let html = render(&sample_summary(), &sample_equity(), &sample_fills());
     // 内联 SVG 不带 `xmlns`、样式全内联：整篇不出现 http/https，就没有意外外链。
     assert!(!html.contains("http"), "报告不得出现任何 http 引用");
     assert!(!html.contains("src="), "报告不得引入外部脚本/图片");
@@ -161,7 +167,7 @@ fn report_has_no_external_resource_reference() {
 #[test]
 fn zero_fills_draw_no_marker_and_each_fill_adds_one() {
     let summary = sample_summary();
-    let none = render_report_html(&summary, &sample_equity(), &[]);
+    let none = render(&summary, &sample_equity(), &[]);
     assert_eq!(none.matches("<polygon").count(), 0, "0 成交不得画买卖点");
     assert!(
         none.contains("无成交数据"),
@@ -180,7 +186,7 @@ fn zero_fills_draw_no_marker_and_each_fill_adds_one() {
             price_raw: 87_000_000_000,
         },
     ];
-    let both = render_report_html(&summary, &sample_equity(), &two);
+    let both = render(&summary, &sample_equity(), &two);
     assert_eq!(both.matches("<polygon").count(), 2, "每笔成交一个标记");
     // 买红卖绿（中国市场口径）。
     assert!(both.contains("#c0392b") && both.contains("#1e8449"));
@@ -188,7 +194,7 @@ fn zero_fills_draw_no_marker_and_each_fill_adds_one() {
 
 #[test]
 fn cards_read_from_summary_fields_only() {
-    let html = render_report_html(&sample_summary(), &sample_equity(), &sample_fills());
+    let html = render(&sample_summary(), &sample_equity(), &sample_fills());
     // 收益率 125 bps → +1.25%；回撤 40 bps → 0.40%；期末权益与手续费按 1e9 刻度折算。
     assert!(html.contains("+1.25%"), "收益率卡应等于 metrics.return_bps");
     assert!(
@@ -283,7 +289,7 @@ fn report_escapes_untrusted_summary_text_and_accepts_custom_html_path() {
     let mut summary = sample_summary();
     summary["strategy_id"] = serde_json::json!("<script>alert(1)</script>");
     summary["input"]["path"] = serde_json::json!("bars <img src=\"http://invalid\"> & more");
-    let html = render_report_html(&summary, &sample_equity(), &sample_fills());
+    let html = render(&summary, &sample_equity(), &sample_fills());
     assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
     assert!(html.contains("&lt;img src=&quot;http://invalid&quot;&gt; &amp; more"));
     assert!(!html.contains("<script"));
@@ -313,7 +319,7 @@ fn report_escapes_untrusted_summary_text_and_accepts_custom_html_path() {
 #[test]
 fn credibility_panel_surfaces_trust_signals_and_flags_uncomputed_fields() {
     // 形状完整的 v4 摘要：六格都应判「可信」，且不该出现「待核」。
-    let complete = render_report_html(&sample_summary(), &sample_equity(), &sample_fills());
+    let complete = render(&sample_summary(), &sample_equity(), &sample_fills());
     assert!(
         complete.contains("结果可信度"),
         "报告首页必须含结果可信度面板"
@@ -336,7 +342,7 @@ fn credibility_panel_surfaces_trust_signals_and_flags_uncomputed_fields() {
     // 缺 metrics 块的旧摘要：未计算字段必须标「待核」并点名缺席指标，而不是假装算过。
     let mut missing = sample_summary();
     missing.as_object_mut().unwrap().remove("metrics");
-    let degraded = render_report_html(&missing, &sample_equity(), &sample_fills());
+    let degraded = render(&missing, &sample_equity(), &sample_fills());
     assert!(degraded.contains(">待核<"), "缺指标时必须出现待核状态");
     for name in [
         "return_bps",
@@ -364,7 +370,7 @@ fn year_month_maps_epoch_ms_to_calendar_month() {
 
 #[test]
 fn monthly_heatmap_labels_every_declared_month() {
-    let html = render_report_html(&sample_summary(), &sample_equity(), &sample_fills());
+    let html = render(&sample_summary(), &sample_equity(), &sample_fills());
     // 三个样本跨 2023-11 与 2023-12 两个月：热力表应出现这两格。
     assert!(html.contains("2023"), "热力表应印出年份");
     assert!(

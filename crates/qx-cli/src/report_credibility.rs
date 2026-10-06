@@ -111,7 +111,8 @@ pub(crate) fn credibility_panel(summary: &serde_json::Value) -> String {
             },
             if dataset.is_some() && fingerprint.is_some() {
                 format!(
-                    "数据集 {} 已登记，但摘要未嵌入连续性/缺失值质量报告",
+                    "数据集 {} 已登记，但摘要未嵌入连续性/缺失值质量报告；\
+                     要补这一格先跑 `qx-cli data-validate` 落一份带 quality_report 的 DatasetManifestV2",
                     dataset.as_deref().unwrap()
                 )
             } else {

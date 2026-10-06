@@ -89,10 +89,7 @@ pub(crate) fn write_report_html(
         .iter()
         .map(|fill| (fill.ts, fill.qty_raw, fill.price_raw))
         .collect();
-    let monthly = monthly_returns(
-        &equity,
-        summary_number(summary, "/account/initial_cash_raw"),
-    );
+    let monthly = monthly_series(summary, &equity);
     let artifacts = ReportArtifacts {
         html: out.clone(),
         equity_svg: parent.join(format!("{asset_stem}.equity.svg")),
@@ -107,17 +104,22 @@ pub(crate) fn write_report_html(
         std::fs::write(path, content)
             .map_err(|error| format!("写入 SVG 报告失败 {}: {error}", path.display()))?;
     }
-    let html = render_report_html(summary, &equity, &fills);
+    let html = render_report_html(summary, &equity, &fills, &monthly);
     std::fs::write(&artifacts.html, html)
         .map_err(|error| format!("写入 HTML 报告失败 {}: {error}", artifacts.html.display()))?;
     Ok(artifacts)
 }
 
-/// 从三份产物渲染 HTML（纯函数，供用例直接调，不经文件系统）。
+/// 从三份产物渲染 HTML（纯函数，不经文件系统）。
+///
+/// 月度收益由调用方传入：落盘路径（[`write_report_html`]）既要用它画 SVG、又要用它排版
+/// HTML 表格，算一次再传进来，两个消费点就共用同一份切片，不会各自漂移。`monthly` 的唯一
+/// 算式入口是 [`monthly_series`]。
 pub(crate) fn render_report_html(
     summary: &serde_json::Value,
     equity: &[(i64, i128)],
     fills: &[FillPoint],
+    monthly: &[(i32, u32, i64)],
 ) -> String {
     let text = |pointer: &str| {
         escape_html(&summary_text(summary, pointer).unwrap_or_else(|| READOUT_ABSENT.to_string()))
@@ -208,7 +210,6 @@ pub(crate) fn render_report_html(
     risk_cards.push_str(&ratio_card("收益因子", "profit_factor"));
 
     let equity_series: Vec<i128> = equity.iter().map(|(_, value)| *value).collect();
-    let monthly = monthly_returns(equity, number("/account/initial_cash_raw"));
     let fills_points: Vec<(u64, i128, i128)> = fills
         .iter()
         .map(|fill| (fill.ts, fill.qty_raw, fill.price_raw))
@@ -259,7 +260,7 @@ pub(crate) fn render_report_html(
     let _ = writeln!(
         html,
         "<figure><figcaption>月度收益（%）</figcaption>{}</figure>",
-        monthly_svg(&monthly)
+        monthly_svg(monthly)
     );
     html.push_str("</section>\n");
     let _ = writeln!(
@@ -344,6 +345,14 @@ fn provenance_table(text: &dyn Fn(&str) -> String) -> String {
 
 /// 净值序列按自然月归并成 `(年, 月, 收益 bps)`：每月取该月最后一个样本的权益，与上月
 /// 末值相比；首月以 `initial_raw`（摘要的期初本金）为基。基为 0 时不给假数，落 0。
+/// 月度收益的唯一算式入口：`monthly_returns` 只由这里调用，SVG 与 HTML 表格都吃它的产物。
+pub(crate) fn monthly_series(
+    summary: &serde_json::Value,
+    equity: &[(i64, i128)],
+) -> Vec<(i32, u32, i64)> {
+    monthly_returns(equity, summary_number(summary, "/account/initial_cash_raw"))
+}
+
 fn monthly_returns(equity: &[(i64, i128)], initial_raw: Option<i128>) -> Vec<(i32, u32, i64)> {
     let mut months: Vec<((i32, u32), i128)> = Vec::new();
     for (ts, value) in equity {

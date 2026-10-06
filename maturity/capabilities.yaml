@@ -553,6 +553,11 @@ capabilities:
       - tools/check_architecture.py calendar_fingerprint_caliper_check holds 4 items over the shared fixture pair, the single copy of the digest, the cross-language ASHARE_CALENDAR_FIELDS / ASHARE_SCHEMA_VERSION equality, and the five named permanent counterexamples (V11 T2)
       - python/qianxing_ashare/__init__.py
       - python/qianxing_ashare/__main__.py
+      - crates/qx-cli/src/data_validate.rs 只读诊断入口 data-validate：读一份 BarFrame 诊断连续性（乱序/重复/缺口）并落一份 DatasetManifestV2，**不改动源文件**。它有意不复用严格读侧（严格链把「时间轴必须严格递增」当启动硬拒），否则脏数据只剩一句拒绝、quality_report 反而写不出来；缺口按 div_ceil(interval_ms) 向上取整计数
+      - crates/qx-cli/src/data_validate_args.rs data-validate 的参数契约（与 cli_args.rs 分开以遵守行数棘轮），--timezone 缺省 UTC、--json 把清单正文打到标准输出
+      - crates/qx-cli/src/data_validate.rs 的 verify_existing_manifest：output 已存在时改走读侧复核——逐字段相等即幂等通过，内容漂移或位置上的文件不是可读 DatasetManifestV2 就当场拒绝并逐字段点名，与 dataset-ingest 注册表的「同一身份不容两种内容」同一条纪律
+      - crates/qx-cli/src/tests 里 data_validate 的十一条用例覆盖干净序列、乱序/重复/缺口分计、半格向上取整、空序列与零间隔拒绝、宽松解析容忍脏数据与旧格式、参差与非整数列拒绝、落盘清单可被同一套规格读回、幂等→漂移拒绝且原文件不被改写、非清单文件不得被覆盖
+      - schemas/dataset-manifest-v2.json 是 DatasetManifestV2 的唯一严格 Schema，manifest_version 与 crates/qx-data/src/catalog_v2.rs 的 DATASET_MANIFEST_V2_SCHEMA_VERSION 同源
     limitations:
       - arrow_ipc_reader_remains_provider_boundary
       - runtime_component_paths_are_json_manifest_boundary
@@ -788,8 +793,12 @@ capabilities:
       - crates/qx-cli/src/report_html.rs 对摘要里的策略名、标的与来源路径进行 HTML 转义，避免输入文本变成标签或外部资源
       - crates/qx-cli/src/cli_help.rs 帮助文本印出 report --html / -o 的形状与产物说明
       - crates/qx-cli/src/tests/report_html.rs 十条用例覆盖确定性、无外链、空成交、指标字段对齐、坏 CSV 拒绝、自然月映射、转义、自定义落点与 JSON 输出一致性
+      - crates/qx-cli/src/report_credibility.rs 结果可信度面板（P1.4）：把「这份结果能不能信」拆成输入身份/重放校验/撮合档位/成本模型/风控规则/数据质量/未计算字段七格，颜色走独立的「可信/待核/缺席」三色（不碰涨红跌绿），全部只读摘要已有格子
+      - crates/qx-cli/src/backtests/risk_ratios.rs 风险调整收益比率单源：Sharpe/Sortino/Calmar/胜率/收益因子只由 compute_risk_ratios 算一次并写进摘要 metrics，报告只读不算（Calmar 复用已算出的 return_bps，不从权益曲线再算一套总收益）
+      - crates/qx-cli/src/tests/grafana_dashboard_metrics.rs 校验 deploy/grafana/qianxing-overview.json 是合法 JSON 且 expr 里出现的 qx_ 前缀指标全部来自已知前缀集，防止面板引用不存在的指标名
       - tools/check_architecture.py report_readability_check 五颗：模块在盘且在门槛内、crate 根成对挂载、模板无外链 token、保留「未连接真实交易所」声明、落盘调用点唯一
     limitations:
-      - report_html_only_renders_what_the_summary_already_declares：指标卡只印 summary.json 已有的格子（收益率/最大回撤/期末权益/期初本金/手续费/换手/成交笔数/拒单数）；Sharpe/Sortino/Calmar/胜率/盈亏比这些竞品常带的比率尚未进摘要，因此报告里也没有——按仓库纪律不新增第二个指标算式来源，补它们要先在内核里定唯一算式并写进摘要
-      - report_html_is_opt_in_and_not_wired_into_quickstart：--html 是显式旗标，quickstart 与逐条首跑链默认不产出报告，产物份数仍是「init 9 + 回测 5」；把它并进首跑会改变既有的份数不变量与用例，属后续工作
-      - no_grafana_dashboard_yet：竞品对比 §6 P3 还要求一份 Grafana dashboard JSON；本轮未做（deploy 目录的顶层 JSON 有「登记表逐名相等」判据，新增模板要同步登记），登记为后续
+      - report_html_only_renders_what_the_summary_already_declares：报告与可信度面板都只印 summary.json 已有的格子（收益率/最大回撤/期末权益/期初本金/手续费/换手/成交笔数/拒单数 + 五项风险调整比率），不新增第二个指标算式来源。五项比率已随 bbfb401 进摘要与报告；仍在缺的是**数据集质量块**——摘要的 input 只带 dataset_id/version/fingerprint，不带连续性/缺失值计数，所以可信度面板的「数据质量」一行只能报待核，并在文案里点名 `qx-cli data-validate` 是这一格的产出者
+      - backtest_summary_does_not_embed_the_dataset_quality_report：回测摘要在 input 块里只声明数据集身份（id/version/fingerprint），不嵌入 DatasetQualityReport；要把它接进摘要需要给回测入口加一个数据集清单路径参数并在写摘要时校验指纹，属后续工作。今天质量报告由 `crates/qx-cli/src/data_validate.rs` 的 data-validate 独立产出成 DatasetManifestV2（含 quality_report），两份产物各自成立但尚未串成一条链
+      - report_html_is_opt_in_and_not_wired_into_quickstart：--html 是显式旗标，quickstart 与逐条首跑链默认不产出报告，产物份数仍是「init 10 + 回测 6」；把它并进首跑会改变既有的份数不变量与用例，属后续工作
+      - grafana_dashboard_is_a_deploy_file_not_an_embedded_template：deploy/grafana/qianxing-overview.json 已落盘且有指标名用例，但它不在 qx-cli 内嵌的 DEPLOY_TEMPLATES 登记表里，所以 `qx-cli init` 不会把它拷进项目目录，要用手动或部署脚本单独铺
