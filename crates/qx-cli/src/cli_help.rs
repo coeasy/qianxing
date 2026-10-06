@@ -156,7 +156,8 @@ pub(crate) fn print_cli_help() {
       校验并持久化 DatasetBundleManifest；提供 BarFrame 时同时校验 bars fingerprint。
   data-validate <bar-frame.json> <dataset-id> <version> <interval-ms> <output.json> [--timezone <tz>] [--json]
       只读诊断一份 BarFrame 的连续性（乱序/重复/缺口）并落一份 DatasetManifestV2，不改动源文件。
-      --timezone 缺省 UTC；--json 把清单正文一并打到标准输出（文件始终写出）。
+      output 已存在时改为复核：逐字段一致即通过，数据变了或不是清单文件当场拒绝（同一身份不容两种内容）。
+      --timezone 缺省 UTC；--json 把清单正文一并打到标准输出。
   ccxt-market-spec <ccxt-config.json> <instrument> <output.json>
       拉取并冻结一份 CCXT 市场规格，供回测与实盘共用（需要 CCXT worker 依赖）。
 

@@ -1,5 +1,8 @@
 //! `data-validate`：把一份 BarFrame JSON 诊断成 `DatasetManifestV2`，且**不改动源文件**。
 //!
+//! 两个落点各管一段：`frame` 只读，`output` 不存在就写出清单、已存在就改走读侧复核
+//! （同一身份不容两种内容），因此本入口既能"先注册再核对"，也不会静默覆盖别的链在用的清单。
+//!
 //! 与 `dataset-ingest`（先入库再登记）不同，本入口只读源文件、只写清单，所以它必须能
 //! 容忍脏数据——乱序、重复、缺口恰恰是要被报告出来的东西。严格读侧（`qx-datastruct` 的
 //! 列式校验与 `qx_data` 的 Provider）都把"时间轴必须严格递增"当成启动前的硬拒；若这里
@@ -18,6 +21,7 @@ use qx_data::{
     BAR_FRAME_SCHEMA_VERSION, DATASET_MANIFEST_V2_SCHEMA_VERSION,
 };
 use std::fmt::Write as _;
+use std::path::Path;
 
 /// 宽松线格式：只要求六列存在且等长，不要求时间轴递增（与严格读侧有意分叉）。
 struct RawColumns {
@@ -147,6 +151,79 @@ fn ordered_range(ts: &[u64]) -> (u64, u64) {
     (min, max)
 }
 
+/// `output` 已存在时的读侧：同一身份不容两种内容。
+///
+/// 与 `dataset-ingest` 的注册表同一条纪律——重跑同一份数据必须幂等（逐字段相等即通过），
+/// 但数据变了、身份没变时必须当场拒绝，而不是静默覆盖一份已被别的链引用的清单。位置上的
+/// 文件若根本不是 `DatasetManifestV2`，同样拒绝：那个路径被声明为清单落点，不是随便一个文件。
+fn verify_existing_manifest(path: &Path, expected: &DatasetManifestV2) -> Result<(), String> {
+    let payload = std::fs::read_to_string(path)
+        .map_err(|error| format!("读取已有数据集清单失败 {}: {error}", path.display()))?;
+    let existing = DatasetManifestV2::from_json(&payload).map_err(|error| {
+        format!(
+            "输出位置已有文件但不是可读的 DatasetManifestV2（{}），拒绝覆盖: {error}",
+            path.display()
+        )
+    })?;
+    if existing == *expected {
+        return Ok(());
+    }
+    let mut drift = Vec::new();
+    if existing.identity() != expected.identity() {
+        drift.push(format!(
+            "identity {} → {}",
+            existing.identity(),
+            expected.identity()
+        ));
+    }
+    let pairs = [
+        (
+            "content_hash",
+            existing.content_hash.clone(),
+            expected.content_hash.clone(),
+        ),
+        (
+            "row_count",
+            existing.quality_report.row_count.to_string(),
+            expected.quality_report.row_count.to_string(),
+        ),
+        (
+            "duplicate_rows",
+            existing.quality_report.duplicate_rows.to_string(),
+            expected.quality_report.duplicate_rows.to_string(),
+        ),
+        (
+            "out_of_order_rows",
+            existing.quality_report.out_of_order_rows.to_string(),
+            expected.quality_report.out_of_order_rows.to_string(),
+        ),
+        (
+            "missing_intervals",
+            existing.quality_report.missing_intervals.to_string(),
+            expected.quality_report.missing_intervals.to_string(),
+        ),
+        (
+            "timezone",
+            existing.timezone.clone(),
+            expected.timezone.clone(),
+        ),
+    ];
+    for (label, left, right) in pairs {
+        if left != right {
+            drift.push(format!("{label} {left} → {right}"));
+        }
+    }
+    Err(format!(
+        "数据集清单已存在且与本次诊断不一致，拒绝覆盖 {}: {}；如需重写请先删除该文件",
+        path.display(),
+        if drift.is_empty() {
+            "差异不在被点名的字段内（清单其余字段发生了变化）".to_string()
+        } else {
+            drift.join("；")
+        }
+    ))
+}
+
 fn run_data_validate(args: &DatasetValidateArgs) -> Result<(), String> {
     let payload = read_example_json(&args.frame, "数据集 BarFrame ")?;
     let raw = parse_columns(&payload)?;
@@ -200,21 +277,29 @@ fn run_data_validate(args: &DatasetValidateArgs) -> Result<(), String> {
     };
     manifest.validate()?;
     let json = manifest.to_json()?;
-    std::fs::write(&args.output, &json)
-        .map_err(|error| format!("写入数据集清单失败 {}: {error}", args.output.display()))?;
+    // 落点已存在就走读侧（校验），不存在才写：既不静默覆盖一份可能被别的链引用的清单，
+    // 也让本入口写出的清单在同一入口里有真实读者，而不是一个只写不读的死端。
+    let verified = args.output.exists();
+    if verified {
+        verify_existing_manifest(&args.output, &manifest)?;
+    } else {
+        std::fs::write(&args.output, &json)
+            .map_err(|error| format!("写入数据集清单失败 {}: {error}", args.output.display()))?;
+    }
     if args.json {
         println!("{json}");
     } else {
         let mut line = String::new();
         let _ = write!(
             line,
-            "[Data · Validate] dataset={} instrument={} rows={} duplicate={} out_of_order={} missing={} fingerprint={} output={}",
+            "[Data · Validate] dataset={} instrument={} rows={} duplicate={} out_of_order={} missing={} verdict={} fingerprint={} output={}",
             manifest.identity(),
             raw.instrument,
             quality.row_count,
             quality.duplicate_rows,
             quality.out_of_order_rows,
             quality.missing_intervals,
+            if verified { "已复核一致" } else { "已写出" },
             manifest.fingerprint()?,
             args.output.display()
         );
@@ -362,5 +447,52 @@ mod tests {
     fn ordered_range_normalizes_dirty_endpoints() {
         assert_eq!(ordered_range(&[5000, 1000, 3000]), (1000, 5000));
         assert_eq!(ordered_range(&[0, 0]), (1, 1));
+    }
+
+    #[test]
+    fn validate_is_idempotent_then_refuses_drift_on_the_same_identity() {
+        let path = frame_path(
+            "idempotent",
+            r#"{"instrument":"000001.SZSE","source":"akshare","ts":[1000,2000,3000],"open_raw":[10,20,30],"high_raw":[11,21,31],"low_raw":[9,19,29],"close_raw":[10,20,30],"volume_raw":[1,2,3]}"#,
+        );
+        let output = path.with_file_name("manifest.json");
+        let args = args_for(&path, output.clone());
+        // 首次写出。
+        validate_dataset(&args).unwrap();
+        let first = std::fs::read_to_string(&output).unwrap();
+        // 重跑同一份数据：逐字段相等，走复核而不是覆盖，内容不变。
+        validate_dataset(&args).unwrap();
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), first);
+        // 数据变了、身份没变：拒绝，且已存在的清单不被改写。
+        std::fs::write(
+            &path,
+            r#"{"instrument":"000001.SZSE","source":"akshare","ts":[1000,2000,4000],"open_raw":[10,20,40],"high_raw":[11,21,41],"low_raw":[9,19,39],"close_raw":[10,20,40],"volume_raw":[1,2,4]}"#,
+        )
+        .unwrap();
+        let error = validate_dataset(&args).unwrap_err();
+        assert!(error.contains("拒绝覆盖"), "错误应点名拒绝覆盖: {error}");
+        assert!(
+            error.contains("missing_intervals"),
+            "错误应点名漂移字段: {error}"
+        );
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), first);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn validate_refuses_to_clobber_a_non_manifest_output() {
+        let path = frame_path(
+            "clobber",
+            r#"{"instrument":"000001.SZSE","ts":[1000,2000],"open_raw":[10,20],"high_raw":[11,21],"low_raw":[9,19],"close_raw":[10,20],"volume_raw":[1,2]}"#,
+        );
+        let output = path.with_file_name("manifest.json");
+        std::fs::write(&output, "{\"not\":\"a manifest\"}").unwrap();
+        let error = validate_dataset(&args_for(&path, output.clone())).unwrap_err();
+        assert!(error.contains("拒绝覆盖"), "非清单文件不得被覆盖: {error}");
+        assert_eq!(
+            std::fs::read_to_string(&output).unwrap(),
+            "{\"not\":\"a manifest\"}"
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }
