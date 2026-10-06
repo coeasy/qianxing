@@ -1,7 +1,7 @@
 //! `qx-cli quickstart` 的首跑契约（易用性 P2 第一格 / #260 #261）。
 //!
 //! 三条判据都来自本轮实测，不是设计愿望：
-//! - 一条命令等于 README 那五条入口逐条敲：退出码 0、五句 `[完成]` 按顺序出现、项目里 14 份
+//! - 一条命令等于 README 那五条入口逐条敲：退出码 0、五句 `[完成]` 按顺序出现、项目里 16 份
 //!   文件，且 `result_hash` 与同一输入的直跑链**逐字相等**。quickstart 直调同一批函数，所以这条
 //!   相等性是结构性的——一旦有人把它改成"另起一套实现"，先在这里判红。
 //! - #260 屏幕上印出的程序名必须就是这台机器上敲得动的那个：判据取测试二进制自身的文件名，
@@ -16,10 +16,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// `init` 落 9 份 + 首轮回测落 5 份（数据集清单与 runs 四份产物）；这份分解由
+/// `init` 落 10 份 + 首轮回测落 6 份（项目清单与数据集清单、runs 四份产物）；这份分解由
 /// `src/tests/init_onboarding.rs` 的 `init_lands_nine_files_and_the_advertised_backtest_adds_five`
 /// 逐文件钉住，两处口径必须一起改。
-const EXPECTED_PROJECT_FILES: usize = 14;
+const EXPECTED_PROJECT_FILES: usize = 16;
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

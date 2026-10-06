@@ -232,8 +232,8 @@ fn summary_chains_land_the_account_base_they_actually_used() {
     );
     assert_eq!(
         summary["schema_version"],
-        serde_json::json!(4),
-        "多了一个每期本金键，摘要世代必须随之上行"
+        serde_json::json!(5),
+        "摘要世代随结构变化上行：v4 加每期本金键、v5 加 RunRecord 指针"
     );
 
     let book_root = temp_dir("summaries-book");

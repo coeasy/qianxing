@@ -156,10 +156,14 @@ pub(crate) fn run(project: Option<PathBuf>, force: bool) {
     for step in [
         command_line(&["report", &runtime_text, "--json"]),
         command_line(&["strategy", "list"]),
+        // #261：这里不印注定报错的命令。`init --profile ashare` 会落一份 `qianxing.project.json`，
+        // 在刚建好的项目目录里再跑会撞「项目清单已存在」；改到独立子目录另起一个 ashare 项目，
+        // 既不覆盖刚建好的项目清单，也让这一条照抄就能跑通。
         command_line(&[
             "init",
             absolute
-                .join("qianxing.runtime.ashare.json")
+                .join("ashare")
+                .join("qianxing.runtime.json")
                 .to_string_lossy()
                 .as_ref(),
             "--profile",
