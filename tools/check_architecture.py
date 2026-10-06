@@ -10799,6 +10799,32 @@ def strategy_input_schema_check() -> None:
         "策略输入 Schema 有钉住它的用例（逐字段对齐 Rust 结构体）",
         f"缺失 {STRATEGY_INPUT_TEST.relative_to(ROOT).as_posix()}",
     )
+    # 输入方向此前只钉了 Rust ↔ schema（那条用例），Python SDK 不在这条链上——而两侧都按
+    # `deny_unknown_fields` / `_reject_unknown_keys` fail-closed，Rust 加一格输入字段而 Python
+    # 不跟，跨语言往返会当场 ValueError。意图方向早有 `strategy_intent_three_language_check` 三侧
+    # 比对，输入方向照同一把尺子补齐：两侧都从「字段声明」这一事实取集合，不写第二份手工清单。
+    rust_text = production_text((ROOT / STRATEGY_INTENT_RUST_FILE).read_text(encoding="utf-8"))
+    rust_input = set(
+        re.findall(
+            r"^\s*pub ([a-z_0-9]+):",
+            _fn_body(rust_text, "pub struct StrategyContractInput {"),
+            re.MULTILINE,
+        )
+    )
+    python_text = (ROOT / STRATEGY_INTENT_BRIDGE_FILE).read_text(encoding="utf-8")
+    python_input = set(
+        re.findall(
+            r"^    ([a-z_0-9]+): \S[^\n]*$",
+            python_text.split("class StrategyInput:", 1)[-1].split("\nclass ", 1)[0],
+            re.MULTILINE,
+        )
+    )
+    for name, group in (("JSON schema", set(properties)), ("Python SDK", python_input)):
+        check(
+            group == rust_input,
+            f"策略输入字段集 {name} 与 Rust StrategyContractInput 逐项相等",
+            f"多 {sorted(group - rust_input) or '无'}、少 {sorted(rust_input - group) or '无'}",
+        )
 
 
 def nonfunctional_targets_check() -> None:

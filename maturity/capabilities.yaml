@@ -775,7 +775,7 @@ capabilities:
       - crates/qx-spec/tests/scenario_fixtures.rs 七条用例把每份 fixture 的四块分别读进 TradingInstrumentSpec/DatasetManifestV2/ExperimentSpec/RunRecord 并逐块校验，且钉住五种产品类型都有样板
       - crates/qx-core/src/trading.rs TradingProduct::Option 补齐规划 §15.1 的产品类型表，市场规格解析器同步接受 option/options
       - maturity/schema-registry.json 模式登记册实例：schemas/ 下每份契约的 id/版本/生产方/消费方/兼容级别/golden fixture
-      - tools/check_architecture.py strategy_input_schema_check 与 schema_registry_check 钉住输入 Schema 的存在与版本同源、以及登记册覆盖 schemas/ 全部契约且指针落地
+      - tools/check_architecture.py strategy_input_schema_check 与 schema_registry_check 钉住输入 Schema 的存在与版本同源、以及登记册覆盖 schemas/ 全部契约且指针落地；输入字段集另在 Rust `StrategyContractInput` / schemas/strategy-api-input-v1.json / Python `qianxing_bridge.strategy.StrategyInput` 三侧逐项相等（两侧都按 `deny_unknown_fields` / `_reject_unknown_keys` fail-closed，少一侧就会跨语言往返失败；与意图方向的 strategy_intent_three_language_check 同一把尺，发布审计 第7轮）
       - tools/check_architecture.py nonfunctional_targets_check 与 capability_levels_check 钉住「目标不等于现状」与「等级不得越过现有证据」
       - tools/check_architecture.py scenario_fixtures_check 钉住七份 fixture 齐全且四块身份完整
       - tools/check_architecture.py layer_dependency_check 把规划 §14.3 的十条依赖规则变成会红的禁止边与唯一转换层判据；落地时以反向变异实测（给 qx-data 加一条 qx-api 依赖会让判据当场变红并同时点名 §14.3-2 与 §14.3-7）
