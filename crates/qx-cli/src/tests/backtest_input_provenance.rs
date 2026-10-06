@@ -116,7 +116,7 @@ fn bar_chain_declares_the_identity_the_registry_already_verified() {
         "RunManifest 不得再拿引擎自哈希当输入身份"
     );
     // 报告这一面：绿灯路径也要真跑一次，否则"会拒绝"可能只是"从没检查"。
-    run_report(&runtime, false).expect("未篡改时报告应通过");
+    run_report(&runtime, false, false).expect("未篡改时报告应通过");
     for path in [root, strategy_root] {
         let _ = std::fs::remove_dir_all(path);
     }
@@ -139,7 +139,7 @@ fn report_refuses_when_the_declared_input_changed_after_the_run() {
     let (strategy_root, runtime) = isolated_backtest_runtime(&deploy, &config, "q66-bar-tampered");
     runtime_without_bundle(&runtime);
     let (summary, _) = run_bar_chain_and_read(&runtime, &frame, &strategy_root);
-    run_report(&runtime, false).expect("篡改前报告应通过");
+    run_report(&runtime, false, false).expect("篡改前报告应通过");
 
     tamper_bar_frame(&frame);
     let error = recompute_declared_backtest_input(&summary).unwrap_err();
@@ -147,7 +147,7 @@ fn report_refuses_when_the_declared_input_changed_after_the_run() {
         error.contains("回测产物声明的输入与实况不符") && error.contains("fingerprint"),
         "篡改后的错误要指明是哪一格不符: {error}"
     );
-    let report_error = run_report(&runtime, false).unwrap_err();
+    let report_error = run_report(&runtime, false, false).unwrap_err();
     assert!(
         report_error.contains("与实况不符"),
         "qx report 必须把这条拒绝原样抛给使用者: {report_error}"
@@ -175,7 +175,7 @@ fn report_refuses_when_the_declared_input_file_is_gone() {
         error.contains("读取策略回测 BarFrame 失败"),
         "缺文件要走同一个读点的错误: {error}"
     );
-    assert!(run_report(&runtime, false)
+    assert!(run_report(&runtime, false, false)
         .unwrap_err()
         .contains("读取策略回测 BarFrame 失败"));
     for path in [root, strategy_root] {
@@ -323,7 +323,7 @@ fn clean_up(dirs: Vec<PathBuf>) {
 #[test]
 fn report_refuses_when_the_sibling_run_manifest_no_longer_matches() {
     let (summary, runtime, dirs) = bar_chain_products("r4i-manifest-drift");
-    run_report(&runtime, false).expect("未拆开的产物报告应通过");
+    run_report(&runtime, false, false).expect("未拆开的产物报告应通过");
     let result_hash = summary["result_hash"].as_str().unwrap().to_string();
     // 两格各钉一次：只比对其中一格的实现在这里就会红。
     for (field, manifest_key, tampered) in [
@@ -340,7 +340,7 @@ fn report_refuses_when_the_sibling_run_manifest_no_longer_matches() {
             "对账要指名是 {field} 与清单不符: {error}"
         );
     }
-    let report_error = run_report(&runtime, false).unwrap_err();
+    let report_error = run_report(&runtime, false, false).unwrap_err();
     assert!(
         report_error.contains("RunManifest 不一致"),
         "qx report 必须把清单对账失败原样抛给使用者: {report_error}"
@@ -360,7 +360,7 @@ fn report_refuses_when_the_declared_run_manifest_is_gone_or_unreadable() {
         "缺清单要报同一个路径: {error}"
     );
     assert!(
-        run_report(&runtime, false)
+        run_report(&runtime, false, false)
             .unwrap_err()
             .contains("读取回测 RunManifest 失败"),
         "报告侧必须同样拒绝"
@@ -389,6 +389,6 @@ fn summary_that_omits_the_run_manifest_pointer_fails_instead_of_skipping_the_che
         "指针缺失本身要失败，而不是跳过对账: {error}"
     );
     // 报告读的是落盘那份完整摘要：它仍然通过，说明失败来自指针缺失而不是产物坏了。
-    run_report(&runtime, false).expect("落盘摘要必须照常通过");
+    run_report(&runtime, false, false).expect("落盘摘要必须照常通过");
     clean_up(dirs);
 }

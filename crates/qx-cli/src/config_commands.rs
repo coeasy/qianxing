@@ -1,9 +1,5 @@
-//! 配置与运维查询命令面：`config` / `status` / `doctor` / `report` / `live-check`，以及 `run` 的统一派发。
-//!
-//! 本模块只做配置读取、引用校验与人读/机读输出，不改变运行时语义；
-//! 真实执行链路仍复用 crate 根上的同一批 Runtime/Storage 辅助函数。
-//! 帮助文本本身不在这里，见 `cli_help.rs`（它与派发分支由架构门禁做集合相等校验）。
-//! 项目初始化一族见 `init_project.rs`。
+//! 配置与运维查询命令面：`config`/`status`/`doctor`/`report`/`live-check` 与 `run` 统一派发。
+//! 只做配置读取、引用校验与人读/机读输出；帮助文本见 `cli_help.rs`，初始化一族见 `init_project.rs`。
 
 use super::*;
 
@@ -19,11 +15,7 @@ pub(crate) fn run_config_explain(path: &Path, as_json: bool) -> Result<(), Strin
         println!("{}", config.to_json()?);
         return Ok(());
     }
-    let strategy_count = if config.strategies.is_empty() {
-        1
-    } else {
-        config.strategies.len()
-    };
+    let strategy_count = config.strategies.len().max(1);
     println!("[配置 · 有效] path={}", path.display());
     println!(
         "  schema={} environment={} profile={:?}",
@@ -32,8 +24,7 @@ pub(crate) fn run_config_explain(path: &Path, as_json: bool) -> Result<(), Strin
     println!(
         "  storage={:?} data_dir={} api={} transport={:?}",
         config.storage.backend,
-        // 与 doctor 同口径：相对 data_dir 有两个落点（可写运行态按进程当前目录，
-        // 回测产物按 runtime.json 同级），报告真正在被使用的那个。
+        // 与 doctor 同口径：data_dir 有两个落点（运行态按当前目录、产物按 runtime.json 同级）。
         effective_storage_root(path, &config.storage.data_dir).display(),
         config.api.bind,
         config.api.transport
@@ -105,9 +96,8 @@ pub(crate) fn run_config_lock(input: &Path, output: &Path, force: bool) -> Resul
     Ok(())
 }
 
-/// `run` 的可用入口清单：help 文案、缺参提示与"不支持"提示共用同一份。
-/// 三处各写一遍正是 V10 §4.3 第 4 项"文案自称支持 backtest 而 match 没有该分支"的来源；
-/// `tools/check_architecture.py` 会把本清单与 help 入口行、下面的 match 分支做集合相等校验。
+/// `run` 的可用入口清单：help 文案、缺参提示与"不支持"提示共用同一份；门禁校验它与 help 入口行、
+/// match 分支集合相等（三处各写一遍正是 V10 §4.3 第 4 项"文案自称支持 backtest 而 match 无分支"）。
 pub(crate) const RUN_ENTRY_POINTS: [&str; 7] = [
     "backtest",
     "paper",
@@ -167,8 +157,12 @@ pub(crate) fn run_unified_command(arguments: &[String]) -> Result<(), String> {
             run_runtime_check(&path, json)
         }
         "report" => {
-            let (path, json) = run_entry_arguments(arguments, action, true, default_runtime_path)?;
-            run_report(&path, json)
+            // `--html` 是 report 自己的旗标：先摘出来再走通用参数读法，免得统一入口比直接入口少支持一个旗标。
+            let html = arguments.iter().any(|value| value == "--html");
+            let mut kept = arguments.to_vec();
+            kept.retain(|value| value != "--html");
+            let (path, json) = run_entry_arguments(&kept, action, true, default_runtime_path)?;
+            run_report(&path, json, html)
         }
         _ => Err(run_usage(&format!("不支持 {action}"))),
     }
@@ -226,7 +220,7 @@ pub(crate) fn resolve_backtest_summary_path(path: &Path) -> Result<PathBuf, Stri
         .ok_or_else(|| format!("未找到回测摘要: {}", data_dir.join("runs").display()))
 }
 
-pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
+pub(crate) fn run_report(path: &Path, as_json: bool, html: bool) -> Result<(), String> {
     let summary_path = resolve_backtest_summary_path(path)?;
     let payload = std::fs::read_to_string(&summary_path)
         .map_err(|error| format!("读取回测摘要失败 {}: {error}", summary_path.display()))?;
@@ -236,6 +230,11 @@ pub(crate) fn run_report(path: &Path, as_json: bool) -> Result<(), String> {
     // 对不上直接拒绝出报告。旧 schema 没有 `input` 块，那是"这份产物没作过声明"，
     // 必须显式说出来而不是印一个 `-` 让人以为核对过了（V11 Q66 / Q1b）。
     let declared_input = recompute_declared_backtest_input(&summary)?;
+    // 易用性 P3：`--html` 渲染自包含 HTML（与 `--json` 正交）；读同一份已复核摘要，无第二个读点。
+    if html {
+        let out = write_report_html(&summary_path, &summary)?;
+        println!("[Report] html={}", out.display());
+    }
     if as_json {
         let report = serde_json::json!({
             "schema_version": 1,

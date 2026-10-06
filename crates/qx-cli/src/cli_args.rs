@@ -1,17 +1,14 @@
 //! clap 参数框架（V10 P2b）：命令表由本文件的 `Command` 枚举派生。
 //!
-//! `cli.rs` 只保留对 [`Command`] 的一次显式 `match`；`tools/check_architecture.py`
-//! 以「clap 派生的命令表 ≡ `cli.rs` 显式派发分支 ≡ `cli_help.rs` 印出的入口」三方
-//! 集合相等做门禁（V10 §4.4 的"文案宣称支持某入口而派发没有该分支"因此不可表达）。
-//! `help` / `--help` / `-h` 是进入 clap 之前的同一条预检分支，门禁按规范名 `help` 计一条。
-//! 命令名与旗标语义与迁移前逐条一致（§8.1 裁定）；旧手写字符串解析不保留双轨。
+//! `cli.rs` 只保留对 [`Command`] 的一次显式 `match`；`tools/check_architecture.py` 以「clap 派生的
+//! 命令表 ≡ `cli.rs` 派发分支 ≡ `cli_help.rs` 印出的入口」三方集合相等做门禁（V10 §4.4 的
+//! "文案宣称支持某入口而派发没有该分支"因此不可表达）。`help`/`--help`/`-h` 是进 clap 前的同一条
+//! 预检分支，门禁按规范名 `help` 计一条；命令名与旗标语义与迁移前逐条一致，旧手写解析不留双轨。
 //!
-//! 一处有意的偏离：`<worker>` 与 `<submit-order.json>` 这类必填入参前面不再接受
-//! 省略 runtime 路径。带 `default_value` 的位置参数在 clap 眼里是"可选"，而 clap
-//! 要求必填位置参数之前不得出现可选位置参数——于是 `paper-worker [PATH] <WORKER_ID>`
-//! 这种签名只在 release 构建里侥幸可跑，debug 构建直接 panic 在 clap 的自检里。
-//! 这些入口的 runtime 路径一律显式给出（`deploy/start-qianxing.ps1`、
-//! `qx-orchestrator` 与全部文档本来就是显式的），示例配置不再充当隐式兜底。
+//! 一处有意的偏离：`<worker>` 与 `<submit-order.json>` 这类必填入参前不再接受省略 runtime 路径——
+//! 带 `default_value` 的位置参数在 clap 眼里是"可选"，而 clap 要求必填位置参数之前不得出现可选
+//! 位置参数，于是 `paper-worker [PATH] <WORKER_ID>` 只在 release 侥幸可跑、debug 直接 panic。
+//! 这些入口的 runtime 路径一律显式给出（deploy 脚本、`qx-orchestrator` 与文档本就是显式的）。
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -105,6 +102,9 @@ pub(crate) enum Command {
         path: Option<PathBuf>,
         #[arg(long)]
         json: bool,
+        /// 易用性 P3：把同一份摘要渲染成自包含 HTML（`<stem>.report.html`）并印出路径。
+        #[arg(long)]
+        html: bool,
     },
     #[command(name = "live-check")]
     LiveCheck {

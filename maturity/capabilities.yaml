@@ -774,3 +774,21 @@ capabilities:
     limitations:
       - option_contract_identity_is_not_modelled：TradingProduct 已补 Option 变体，但期权合约身份真正缺的几格（行权价、到期日、认购/认沽、行权方式、组合保证金、行权/指派事件）尚未建模；cn-options fixture 目前只能表达「产品类型是期权 + 标的与精度」，不能表达合约链与行权语义
       - targets_and_levels_are_declared_not_measured：maturity/targets.yaml 与 maturity/levels.yaml 当前全部 measurement_status=unmeasured / evidence=unavailable，登记册最高等级只到 L2；这是诚实读数而非缺口，翻转它们必须先把真实沙盒证据落盘
+
+  result_readability:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-cli/src/report_svg.rs 无依赖 SVG 生成器：净值曲线 + 最大回撤区间、成交点（▲买红/▼卖绿）、月度收益热力表；纯函数、确定性、内联 SVG 不带命名空间、不出现任何外链 token
+      - crates/qx-cli/src/report_html.rs 自包含 HTML 报告：指标卡 + 三张内嵌 SVG + 产物身份表 + 「未连接真实交易所」声明；所有数值只从 summary.json 已有格子读，不新增第二个指标算式来源
+      - crates/qx-cli/src/cli_args.rs report 命令新增 --html 旗标（与 --json 正交，两者可同时给）
+      - crates/qx-cli/src/config_commands.rs run_report 在复核摘要之后调用 write_report_html，落 <stem>.report.html；统一入口 run report --html 与直接入口同形状
+      - crates/qx-cli/src/cli_help.rs 帮助文本印出 report --html 的形状与产物说明
+      - crates/qx-cli/src/tests/report_html.rs 七条用例：同输入两次逐字节相等、无外链 token、0 成交不画买卖点、每笔成交一个标记、卡片数值等于 summary 字段、坏 CSV 当场拒绝、epoch 毫秒到自然月映射
+      - tools/check_architecture.py report_readability_check 五颗：模块在盘且在门槛内、crate 根成对挂载、模板无外链 token、保留「未连接真实交易所」声明、落盘调用点唯一
+    limitations:
+      - report_html_only_renders_what_the_summary_already_declares：指标卡只印 summary.json 已有的格子（收益率/最大回撤/期末权益/期初本金/手续费/换手/成交笔数/拒单数）；Sharpe/Sortino/Calmar/胜率/盈亏比这些竞品常带的比率尚未进摘要，因此报告里也没有——按仓库纪律不新增第二个指标算式来源，补它们要先在内核里定唯一算式并写进摘要
+      - report_html_is_opt_in_and_not_wired_into_quickstart：--html 是显式旗标，quickstart 与逐条首跑链默认不产出报告，产物份数仍是「init 9 + 回测 5」；把它并进首跑会改变既有的份数不变量与用例，属后续工作
+      - no_grafana_dashboard_yet：竞品对比 §6 P3 还要求一份 Grafana dashboard JSON；本轮未做（deploy 目录的顶层 JSON 有「登记表逐名相等」判据，新增模板要同步登记），登记为后续

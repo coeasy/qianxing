@@ -420,6 +420,7 @@ mod pipeline_metrics_surface;
 mod quickstart_file_budget;
 mod reconcile_worker_identity;
 mod reexport_zero_reader_surface;
+mod report_html;
 mod report_readout;
 mod risk_port_channel;
 mod run_entry_argument_honesty;

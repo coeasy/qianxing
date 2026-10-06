@@ -1,6 +1,21 @@
 # Changelog
 
 
+### 结果可读性层落地（2026-10-06）· 竞品对比 §6 P3「看不见」补上
+
+**口径**：`docs/竞品对比与易用性改进优化计划-V1.md` §1 把最大的产品差距概括为三个词，第一个就是**「看不见」**——竞品默认交付一张标注买卖点的图或一份交互式 HTML，而我们只落 `*.equity.csv` / `*.fills.csv` / `summary.json`，把「读结果」整段留给了用户（`plot_/chart/.html` 在 `crates` 下 0 命中）。这一轮把那一格补上：`qx-cli report --html` 产出一份自包含 HTML 报告。全部加性：门禁 **676 → 682 全绿**，未删任何既有判据。
+
+- **无依赖 SVG 生成器 `crates/qx-cli/src/report_svg.rs`**：三张图——净值曲线 + 最大回撤区间、成交点（▲ 买红 / ▼ 卖绿，中国市场口径）、月度收益热力表。为保住「单 exe + 运行期零依赖」这条相对 Python 栈的真实优势（竞品对比 §4.3 第 4 条），**不引任何绘图 crate**：只做「定点数 → 坐标 → 拼字符串」。内联 SVG **不带 `xmlns`**——HTML5 内联不需要它，带它就等于往产物里塞一个外链前缀字样。空序列画「无数据」占位而不是空白；0 成交**不画任何三角**（假买卖点比没有图更糟）。
+- **自包含 HTML 报告 `crates/qx-cli/src/report_html.rs`**：指标卡 + 三张内嵌 SVG + 产物身份表 + 「未连接真实交易所」声明。两条纪律：① **不新增第二个指标算式来源**——卡片每个数都从 `summary.json` 已有格子读，曲线/成交点只从两份 csv 派生，月度收益由净值序列按自然月归并；② **确定性**——不用墙钟、不用随机、不遍历 HashMap，同输入两次生成**逐字节相等**（用例钉住）。产物无任何外链（无脚本/图片/外链样式），可离线双击打开。
+- **命令面 `report --html`**：`cli_args.rs` 的 `report` 新增 `--html` 旗标（与 `--json` 正交，两者可同时给）；`config_commands.rs` 的 `run_report` 在**复核摘要之后**调用渲染，落 `<stem>.report.html`；统一入口 `run report --html` 与直接入口**同形状**（先摘出旗标再走通用参数读法）。`cli_help.rs` 同步印出形状。
+  - **行数棘轮**：`cli.rs`(673)、`cli_args.rs`(513)、`config_commands.rs`(539) 都在预算顶。三个文件都做了**净零/净负**的行数腾挪（压缩既有注释、一处 `if empty {1} else {len}` → `len().max(1)`），没有动 `line_budgets.yaml` 的任何一个数。
+- **门禁牙齿 `report_readability_check()`（5 颗）**：① 两个模块在盘；② 在单文件行数门槛内；③ 在 crate 根 `mod` + `pub(crate) use` 成对挂载；④ 模板（去注释行后）**无外部资源 token**（命名空间声明 / 外链前缀 / `<script` / `<img` / `<link ` / `<iframe` 出现即红）；⑤ 保留「未连接真实交易所」声明 + 落盘调用点唯一。**反向变异已实测**：注释掉 `mod report_svg;` 判据当场变红并点名 `缺配对 ['report_svg']`，随后还原复绿 682。
+- **用例 `crates/qx-cli/src/tests/report_html.rs`（7 条）**：同输入两次逐字节相等 / 无外链 token / 0 成交不画买卖点且每笔成交一个标记 / 卡片数值等于 summary 字段 / 坏 CSV 当场拒绝（走 `write_report_html` 真实落盘路径）/ epoch 毫秒到自然月映射。
+- **顺带修一处显示口径**：回撤是「幅度」不是「方向」，卡片不带正号、为 0 时不染绿（否则「没回撤」看着像跌）。
+- **本轮实测**：门禁 **682 项全绿 / 0 红**；`cargo fmt -p qx-cli --check` rc 0；`cargo clippy -p qx-cli --all-targets -- -D warnings` rc 0；`crates/qx-cli/src/tests/report_html.rs` **7 passed**；真机跑通 `qx-cli report <summary> --html`（v1 与 v4 摘要各跑一次，生成 ~8 KB HTML，`http` 出现 0 次）。`deploy/data/qianxing-ashare/runs/` 下的示例产物集同步补一份 `.report.html`，与同一次运行的 `.summary.json`/`.equity.csv`/`.fills.csv` 并列。
+- **未落地（诚实边界，已进 capabilities limitations）**：Sharpe/Sortino/Calmar/胜率/盈亏比尚未进摘要，故报告里也没有（不新增第二个算式来源，补它们要先在内核定唯一算式）；`--html` 是显式旗标，`quickstart` 首跑链默认不产报告（并入会改动既有产物份数不变量）；Grafana dashboard JSON 本轮未做（deploy 顶层 JSON 有登记表判据，新增模板要同步登记）。
+
+
 ### 契约层与登记层全量落地（2026-10-06）· 规划 §13.2 / §14.3 / §17 / §18 M0 / §6.2
 
 **口径**：上一轮（`f424b6e`）落地了 §6.2 的七类地基对象；这一轮把它们**钉住**——用真实契约、真实场景、真实依赖规则和真实目标台账。范围是规划里**不需要外部凭据**的全部可本地落地项（M0 剩余 + 各阶段依赖的登记层）。全部加性：门禁 **667 → 676 全绿**，未删任何既有判据。

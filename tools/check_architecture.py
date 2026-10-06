@@ -10957,6 +10957,76 @@ def schema_registry_check() -> None:
     check(not issues, "模式登记册覆盖 schemas/ 全部契约且指针全部落地", "；".join(issues))
 
 
+# 结果可读性层（易用性 P3）：HTML/SVG 报告的形状门禁。
+REPORT_READABILITY_MODULES = (
+    "crates/qx-cli/src/report_html.rs",
+    "crates/qx-cli/src/report_svg.rs",
+)
+# 报告模板里不得出现的 token（注释行不计）：内联 SVG 不带命名空间、无外链脚本/图片/样式。
+REPORT_EXTERNAL_TOKENS = ("xmlns", "http", "<script", "<img", "<link ", "<iframe")
+# 这份产物能被当研究件、不被当投资建议的底线声明。
+REPORT_DISCLAIMER = "未连接真实交易所"
+
+
+def _code_lines(relative: str) -> str:
+    """取一份源码去掉注释行后的正文：模板泄漏检查只看代码与字符串字面量，不看注释里的说明。"""
+    text = (ROOT / relative).read_text(encoding="utf-8")
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("//")
+    )
+
+
+def report_readability_check() -> None:
+    """结果可读性层（易用性 P3 / 竞品对比 §6 P3）：`report --html` 产物的形状门禁。
+
+    竞品默认交付一张标买卖点的图或一份交互式 HTML，我们此前只落 csv/summary，把「读结果」
+    整段留给了用户（竞品对比 §1「看不见」）。这一层把那一格补上，判据守三条最容易悄悄退化的
+    性质：模块在盘且在门槛内（不许长回单文件）、模板**无外部资源引用**（内联 SVG 不带命名空间、
+    无外链脚本/图片/样式，出现即红——既防意外外链，也保证产物离线可双击打开）、以及
+    「未连接真实交易所」声明必须还在（这是这份产物不被当成投资建议的底线）。
+    """
+    root = (CRATES / "qx-cli/src/main.rs").read_text(encoding="utf-8")
+    missing = [rel for rel in REPORT_READABILITY_MODULES if not (ROOT / rel).is_file()]
+    check(not missing, "结果可读性模块在盘", f"缺失 {missing or '无'}")
+    oversized = [
+        rel
+        for rel in REPORT_READABILITY_MODULES
+        if len((ROOT / rel).read_text(encoding="utf-8").splitlines()) >= OVERSIZED
+    ]
+    check(not oversized, "结果可读性模块在单文件行数门槛内", f"越界 {oversized or '无'}")
+    unmounted = [
+        Path(rel).stem
+        for rel in REPORT_READABILITY_MODULES
+        if not mount_pair_present(root, Path(rel).stem)
+    ]
+    check(not unmounted, "结果可读性模块在 crate 根成对挂载", f"缺配对 {unmounted or '无'}")
+    leaks = [
+        f"{rel}:{token}"
+        for rel in REPORT_READABILITY_MODULES
+        for token in REPORT_EXTERNAL_TOKENS
+        if token in _code_lines(rel)
+    ]
+    check(not leaks, "报告模板无外部资源引用（出现外链 token 即红）", "；".join(leaks) or "无")
+    html = (ROOT / REPORT_READABILITY_MODULES[0]).read_text(encoding="utf-8")
+    check(
+        REPORT_DISCLAIMER in html,
+        "HTML 报告保留「未连接真实交易所」声明",
+        f"缺少「{REPORT_DISCLAIMER}」",
+    )
+    callers = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted((CRATES / "qx-cli/src").rglob("*.rs"))
+        if "/tests/" not in path.as_posix()
+        and "fn write_report_html(" not in path.read_text(encoding="utf-8")
+        and "write_report_html(" in path.read_text(encoding="utf-8")
+    ]
+    check(
+        callers == ["crates/qx-cli/src/config_commands.rs"],
+        "报告落盘的调用点唯一（report 出口）",
+        f"调用于 {callers}",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -11073,6 +11143,7 @@ def main() -> int:
     scenario_fixtures_check()
     layer_dependency_check()
     schema_registry_check()
+    report_readability_check()
     # 含本条自身：+1 才是本轮真正会打印的总条数，所以地板常量按"含这一条"取值。
     check(
         checks + 1 >= GATE_CHECK_FLOOR,

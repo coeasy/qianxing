@@ -260,9 +260,9 @@ pub(crate) fn run() {
                 std::process::exit(2);
             }
         }
-        Command::Report { path, json } => {
+        Command::Report { path, json, html } => {
             let path = path.unwrap_or_else(default_runtime_path);
-            if let Err(error) = run_report(&path, json) {
+            if let Err(error) = run_report(&path, json, html) {
                 eprintln!("报告查看失败: {error}");
                 std::process::exit(2);
             }

@@ -96,8 +96,10 @@ pub(crate) fn print_cli_help() {
       统一执行常用安全入口；paper 只运行本地 Paper 验收，不发送真实订单。
   status [runtime.json] [--json]
       查看本地运行配置、Worker、回测结果和安全状态；不连接交易所。
-  report [runtime.json|summary.json] [--json]
+  report [runtime.json|summary.json] [--json] [--html]
       查看最新或指定回测报告；--json 输出可供脚本消费的完整摘要。
+      --html 在摘要同目录写出 <stem>.report.html：一份自包含 HTML（指标卡 + 净值/成交/月度
+      三张内嵌 SVG + 产物身份表），无外链、可离线双击打开，本结果未连接真实交易所。
   live-check [production.runtime.json] [--json]
       执行实盘启动前静态门禁，不连接交易所、不发送订单。
   runtime-check [runtime.json] [--json]

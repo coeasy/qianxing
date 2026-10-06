@@ -130,7 +130,7 @@ pub(crate) fn run(project: Option<PathBuf>, force: bool) {
         "读回摘要",
         &command_line(&["report", &runtime_text]),
         &retry,
-        run_report(&runtime, false),
+        run_report(&runtime, false, false),
     );
     require(
         "看安全状态",
