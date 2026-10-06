@@ -330,7 +330,8 @@ pub(crate) fn dispatch_scheduled_jobs(
 /// 运行却已经是终态，再执行一次就是二次提交，所以 worker 领取租约后先问这一句（V13 R2 第十二遍 #190）。
 ///
 /// 读不到运行记录按「未终态」处理：实时策略作业的运行从来不入 Scheduler 状态（只在 JobQueue 里），
-/// 把它当成终态会让这类作业永远跑不了。`Paused` 也不是终态 —— 恢复后仍要能执行。
+/// 把它当成终态会让这类作业永远跑不了。终态只有这三种（`JobStatus` 已退役 `Pending`/`Paused`
+/// 两颗零构造档位），所以「不是终态」等价于「还在 `Running`」。
 pub(crate) fn strategy_run_is_final(
     state_store: &JsonStateStore,
     state_path: &Path,

@@ -264,3 +264,48 @@ fn unknown_and_live_strategy_runs_stay_out_of_the_final_gate() {
     assert!(error.contains("UnknownRun"), "{error}");
     let _ = std::fs::remove_dir_all(&case.dir);
 }
+
+/// 退役的两颗零构造档位不许从线格式悄悄复活（`EventKind::Timer` 先例）。
+///
+/// `start_run` 直接建 `Running`（没有「已登记未开始」的构造点），暂停走的是 `StrategyState`
+/// 而不是作业档位，所以 `JobStatus::Pending`/`Paused` 全仓零生产者、零入边，只给每个 `match`
+/// 留一条永不为真的臂。删掉它们之后，一份写着旧档位的持久化状态必须**当场被拒**，而不是被
+/// serde 默默读成一个别的档位 —— 后者会让「这条运行到底是什么状态」变成一个谁都没判过的值。
+/// 源码侧由 `tools/check_architecture.py` 的 `scheduler_retry_honesty_check` 钉住不许回来。
+#[test]
+fn retired_job_status_variants_do_not_come_back_through_the_wire() {
+    use qx_scheduler::Scheduler;
+    // 现役词表就是这四颗；序列化名即变体名（`JobStatus` 没有 rename_all）。
+    for (status, wire) in [
+        (JobStatus::Running, "\"Running\""),
+        (JobStatus::Succeeded, "\"Succeeded\""),
+        (JobStatus::Failed, "\"Failed\""),
+        (JobStatus::NeedsIntervention, "\"NeedsIntervention\""),
+    ] {
+        assert_eq!(
+            serde_json::to_string(&status).unwrap(),
+            wire,
+            "现役档位的线格式名变了：读写两侧会各认一套"
+        );
+    }
+    let case = strategy_job_case("v13audit6-retired-status", true);
+    seed_run_and_enqueue(&case).unwrap();
+    let encoded = case
+        .store
+        .load_scheduler_at(&case.state_path)
+        .unwrap()
+        .to_json()
+        .unwrap();
+    assert!(
+        encoded.contains("\"Running\""),
+        "夹具没有造出一条 Running 运行，本用例会对着空状态自证"
+    );
+    for retired in ["Pending", "Paused"] {
+        let tampered = encoded.replace("\"Running\"", &format!("\"{retired}\""));
+        assert!(
+            Scheduler::from_json(&tampered).is_err(),
+            "旧档位 {retired} 仍能从线格式读进 JobStatus"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&case.dir);
+}

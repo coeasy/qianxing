@@ -207,13 +207,15 @@ impl JobSpec {
     }
 }
 
+/// 作业运行的生命周期档位。曾经带 `Pending` 与 `Paused` 两颗零构造者的档位，本轮按
+/// `CommandStatus::Rejected` 先例退役（同族：`EventKind` 里被删掉的那两颗零构造种类）：
+/// `start_run` 直接建 `Running`（没有「已登记未开始」的构造点），暂停走 `StrategyState` 而非
+/// 作业档位，两颗变体于是零生产者、零入边，只留一条永不为真的 match 臂；门禁钉住不许回来。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum JobStatus {
-    Pending,
     Running,
     Succeeded,
     Failed,
-    Paused,
     NeedsIntervention,
 }
 
@@ -918,10 +920,7 @@ impl Scheduler {
                 JobStatus::Succeeded => {
                     expected_completed.insert(run.job_id.clone());
                 }
-                JobStatus::Failed
-                | JobStatus::Pending
-                | JobStatus::Paused
-                | JobStatus::NeedsIntervention => {}
+                JobStatus::Failed | JobStatus::NeedsIntervention => {}
             }
             if run.status != JobStatus::Failed && run.next_retry_ts.is_some() {
                 return Err(SchedulerError::Invalid(

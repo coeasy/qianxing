@@ -4295,6 +4295,18 @@ def scheduler_retry_honesty_check() -> None:
         "Strategy worker 的成功收口只交终态，不再把结果码当作 error_code 传给 JobRun",
         f"生产收口形状改变：去空白文本里应有恰好 1 处 {SCHEDULER_FINISH_CALL}",
     )
+    # 零构造者的档位：`Pending` 与 `Paused` 全仓没有任何构造点与入边（`start_run` 直接建
+    # `Running`，暂停走的是 `StrategyState`），只给每个 `match` 留一条永不为真的臂。
+    # 按 `EventKind::Timer`/`MarketBar` 与 `CommandStatus::Rejected` 先例退役，并在这里钉住
+    # 不许回来——门禁的 `enum_variant_producer_check` 把「模式臂里出现一次」也数成生产者，
+    # 所以它看不见这种变体（实测：两颗变体各自只有 `validate_state` 那一条臂，判据照绿）。
+    scheduler_text = production_text(SCHEDULER_LIB_PATH.read_text(encoding="utf-8"))
+    check(
+        "Pending" not in scheduler_text and "Paused" not in scheduler_text,
+        "JobStatus 不留零构造者的档位（Pending/Paused 无生产者、无入边，已按 EventKind 先例退役）",
+        f"qx-scheduler 生产代码里 Pending {scheduler_text.count('Pending')} 处 / "
+        f"Paused {scheduler_text.count('Paused')} 处（期望 0/0：回来就得给出构造点与入边）",
+    )
 
 
 def snapshot_money_honesty_check() -> None:

@@ -21,8 +21,9 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// 本轮实测的取数地板：低于这些数字说明扫描退化（口径漂了、语料少了），判据本身先红。三个数字取自本用例
-/// 打印行「枚举=77 变体全量=389 门禁盲点=142」；变体地板 390→389 是 R1-H 删 `CommandStatus::Rejected` 所致。
-const VARIANT_SURFACE_FLOOR: usize = 389;
+/// 打印行「枚举=77 变体全量=389 门禁盲点=142」；变体地板 390→389 是 R1-H 删 `CommandStatus::Rejected` 所致，
+/// 389→387 是删 `JobStatus::Pending`/`Paused` 两颗零构造档位所致（同族先例：`EventKind::Timer`/`MarketBar`）。
+const VARIANT_SURFACE_FLOOR: usize = 387;
 const ENUM_SURFACE_FLOOR: usize = 77;
 const BLIND_VARIANT_FLOOR: usize = 142;
 /// 门禁的单行扫描**整本看不见**的四本枚举：它们贡献的盲变体数必须 >0，
