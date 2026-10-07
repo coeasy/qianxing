@@ -4,12 +4,19 @@ use super::*;
 
 pub const RUNTIME_SCHEMA_VERSION: u32 = 1;
 
+/// production 这一档的规范写法。
+///
+/// 单独成一格，是为了让「production 到底怎么写」在仓库里只出现一次：词表从它取、判定也从它取。
+/// 改口径（例如改成 `prod`）时不可能只改到一半。
+pub const PRODUCTION_ENVIRONMENT: &str = "production";
+
 /// `environment` 的闭合写法名单（大小写不敏感、不含首尾空白）。
 ///
 /// 这个字符串同时决定两件事：14 处 `production` 专属闸门里有 9 处就在运行时配置校验内
 /// （另外 5 处在 CLI 侧的体检与就绪判定），以及实时策略作业的 `dry_run` 走模拟还是真实
-/// 提交（只有 `paper` 模拟）。名单本身在这里单源，校验闸门与用例都读同一份。
-pub const ENVIRONMENT_VOCAB: [&str; 4] = ["paper", "sandbox", "testnet", "production"];
+/// 提交（只有 `paper` 模拟）。名单本身在这里单源，校验闸门与用例都读同一份；
+/// 「是不是 production」的判定同样只有一个出口 —— [`RuntimeConfig::is_production`]。
+pub const ENVIRONMENT_VOCAB: [&str; 4] = ["paper", "sandbox", "testnet", PRODUCTION_ENVIRONMENT];
 
 /// 运行时部署 profile。
 ///
@@ -345,4 +352,19 @@ pub struct RuntimeConfig {
     /// 多策略配置。为空时继续使用兼容字段 `strategy`。
     #[serde(default)]
     pub strategies: Vec<StrategyRuntimeConfig>,
+}
+
+impl RuntimeConfig {
+    /// 「这份运行时配置是不是 production 档」的**唯一出口**。
+    ///
+    /// 词表由 [`ENVIRONMENT_VOCAB`] 单源、写法由 [`PRODUCTION_ENVIRONMENT`] 单源，判定由本方法
+    /// 单源：14 处 production 专属加固闸门（运行时配置校验 9 处 + CLI 体检/就绪 5 处）必须全部
+    /// 经由它。此前这 14 处各写一份 `environment.eq_ignore_ascii_case("production")`，危害不是
+    /// 「现在算错」，而是改口径时只改到其中几份——漏掉的那一处加固会**静默失效**，而它守的
+    /// 恰恰是「production 禁止明文 API / 必须配 Ed25519 公钥 / 必须配名义额上限」这类闸门。
+    /// 同 `VenueId::is_binance` 先例（V13 §5 A3 / fam06）。
+    pub fn is_production(&self) -> bool {
+        self.environment
+            .eq_ignore_ascii_case(PRODUCTION_ENVIRONMENT)
+    }
 }

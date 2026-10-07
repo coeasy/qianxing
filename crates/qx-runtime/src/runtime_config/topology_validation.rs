@@ -42,9 +42,7 @@ impl RuntimeConfig {
         if self.api.transport == ApiTransport::Mtls && self.api.operators.is_empty() {
             return Err("mTLS API 必须至少配置一个 Operator 证书映射".into());
         }
-        if self.api.transport == ApiTransport::Plaintext
-            && self.environment.eq_ignore_ascii_case("production")
-        {
+        if self.api.transport == ApiTransport::Plaintext && self.is_production() {
             return Err("production 环境禁止使用明文 API".into());
         }
         // 「非 production」不等于「可以暴露到可路由地址」：名单里的 paper/sandbox/testnet
@@ -103,9 +101,7 @@ impl RuntimeConfig {
                 );
             }
         }
-        if self.environment.eq_ignore_ascii_case("production")
-            && self.storage.backend != StorageBackend::Postgres
-        {
+        if self.is_production() && self.storage.backend != StorageBackend::Postgres {
             return Err(
                 "production 环境 EventLog/Outbox 必须使用 PostgreSQL transactional backend".into(),
             );
@@ -396,7 +392,7 @@ impl RuntimeConfig {
                 worker.role,
                 WorkerRole::Execution | WorkerRole::SpreadRecovery
             ) && worker.instrument_spec_path.is_none()
-                && (self.environment.eq_ignore_ascii_case("production")
+                && (self.is_production()
                     || VenueFamily::parse_option(worker.venue_id.as_deref())
                         != Some(VenueFamily::Paper))
             {
@@ -408,7 +404,7 @@ impl RuntimeConfig {
             if matches!(
                 worker.role,
                 WorkerRole::Execution | WorkerRole::SpreadRecovery
-            ) && self.environment.eq_ignore_ascii_case("production")
+            ) && self.is_production()
             {
                 if worker.max_order_notional_raw.is_none() {
                     return Err(format!(

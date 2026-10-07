@@ -269,7 +269,7 @@ pub(crate) fn build_strategy_contract_input(
             risk_state,
         };
         context
-            .validate(now, config.environment.eq_ignore_ascii_case("production"))
+            .validate(now, config.is_production())
             .map_err(|error| format!("Python StrategyContext 校验失败: {error}"))?;
         let bars = load_strategy_contract_bars(root, config, instrument, research_as_of)?
             .map(|(bars, _, _)| bars);

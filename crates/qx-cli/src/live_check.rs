@@ -22,7 +22,7 @@ pub(crate) fn collect_live_check_report(path: &Path) -> Result<serde_json::Value
     let mut warnings: Vec<String> = Vec::new();
     let mut checks = Vec::new();
 
-    if !config.environment.eq_ignore_ascii_case("production") {
+    if !config.is_production() {
         let message = format!(
             "environment 必须为 production，当前为 {}",
             config.environment

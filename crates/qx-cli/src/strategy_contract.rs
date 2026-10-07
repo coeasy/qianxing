@@ -260,7 +260,7 @@ pub(crate) fn strategy_target_qty(
             risk_state,
         };
         context
-            .validate(now, config.environment.eq_ignore_ascii_case("production"))
+            .validate(now, config.is_production())
             .map_err(|error| format!("StrategyContext 校验失败: {error}"))?;
         return context.target_for(instrument).ok_or_else(|| {
             format!(
