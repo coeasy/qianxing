@@ -16,6 +16,7 @@ pub mod clock;
 pub mod error;
 pub mod event;
 pub mod fee;
+pub mod file_lock;
 pub mod fill_apply;
 pub mod identity;
 pub mod ledger;
@@ -36,6 +37,10 @@ pub use self::event::{
 pub use self::fee::{
     bp_amount, notional, AShareFeeModel, FeeModel, MakerTakerFeeModel, ZeroFeeModel,
     DEFAULT_MAKER_BP, DEFAULT_TAKER_BP,
+};
+pub use self::file_lock::{
+    decide_lock, lock_age, lock_contention_message, FileLock, LockDecision, LockError, LockPolicy,
+    DEFAULT_LOCK_STALE_AFTER,
 };
 pub use self::fill_apply::{apply_fill_to_books, apply_ledger_fill, FillTerms, OrderFillBook};
 pub use self::identity::{

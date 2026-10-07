@@ -16,16 +16,6 @@ pub struct FileJobQueue {
     root: PathBuf,
 }
 
-struct ClaimLock {
-    path: PathBuf,
-}
-
-impl Drop for ClaimLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
 impl JsonRecordStore for FileJobQueue {
     fn records_dir(&self) -> PathBuf {
         self.root.join("queue")
@@ -256,22 +246,15 @@ impl FileJobQueue {
         self.root.join("leases").join(format!("{run_id}.json"))
     }
 
-    fn acquire_claim_lock(&self, run_id: u64) -> Result<ClaimLock, StorageError> {
+    /// 抢锁委托 qx-core::file_lock（V11 §40 D1）：旧实现把一切 `AlreadyExists` 都报成
+    /// `LeaseHeld`，于是进程被杀留下的孤儿锁会让这个 run 的作业此后永远"被别人持有"，
+    /// 而那个持有者并不存在。年龄判据接管孤儿锁之后，仍报 `LeaseHeld` 就只有真并发这一种含义。
+    fn acquire_claim_lock(&self, run_id: u64) -> Result<FileLock, StorageError> {
         let path = self.root.join("locks").join(format!("{run_id}.lock"));
-        let result = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path);
-        match result {
-            Ok(_) => Ok(ClaimLock { path }),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                Err(StorageError::LeaseHeld {
-                    run_id,
-                    owner: "concurrent-lease-operation".into(),
-                })
-            }
-            Err(error) => Err(StorageError::Io(error.to_string())),
-        }
+        FileLock::acquire(path).map_err(|error| match error {
+            LockError::Contended(owner) => StorageError::LeaseHeld { run_id, owner },
+            LockError::Io(message) => StorageError::Io(message),
+        })
     }
 
     fn done_path(&self, run_id: u64) -> PathBuf {

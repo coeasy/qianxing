@@ -5,6 +5,7 @@
 //! 直接修改 OMS、Ledger 或 Kernel。
 
 use super::{HttpRequest, HttpResponse, HttpTransport, TlsWebSocketUserStream, WebSocketPoll};
+use super::venue_cache::evict_stale_terminal_orders;
 use qx_core::{
     retry, Fill, InstrumentId, Money, Order, OrderStatus, Price, Quantity, QxError, QxResult, Side,
 };
@@ -59,12 +60,9 @@ impl BinanceSpotCredentials {
         Self::new(api_key, secret)
     }
 
-    /// 从部署系统投影的两个凭据文件读取 API key 和 secret。
-    ///
-    /// 文件内容只允许是一行凭据（首尾空白会被去除），读取结果不会进入
-    /// Debug、事件日志或运行时健康详情。Secret Manager/CSI/容器 secrets
-    /// 可以通过原子替换文件来提供轮换；调用方应在建立新连接或新请求前重新
-    /// 调用本方法，旧连接继续使用已经建立的认证上下文。
+    /// 从部署系统投影的凭据文件读取 API key/secret（只允许一行，首尾空白去除）；
+    /// 读取结果不进 Debug/事件日志/健康详情，部署系统可原子替换文件做轮换，
+    /// 调用方应在建立新连接或新请求前重新调用，旧连接沿用已建立的认证上下文。
     pub fn from_files(
         api_key_path: impl AsRef<std::path::Path>,
         secret_path: impl AsRef<std::path::Path>,
@@ -201,10 +199,8 @@ impl BinanceSpotAuth {
         }
     }
 
-    /// 生成 Binance Spot WebSocket API 的签名用户流订阅请求。
-    ///
-    /// 该方法只生成协议 payload，不建立网络连接，便于在沙盒前先做 golden
-    /// 校验，也避免密钥进入日志或事件事实。
+    /// 生成 Binance Spot WebSocket API 的签名用户流订阅请求；只产出协议 payload，
+    /// 不建立网络连接，便于先做 golden 校验，也避免密钥进入日志或事件事实。
     pub fn user_stream_subscribe_payload(&self, request_id: impl Into<String>) -> String {
         let mut parameters = BTreeMap::new();
         parameters.insert("apiKey".into(), self.api_key.clone());
@@ -452,11 +448,8 @@ where
     Ok(report)
 }
 
-/// 使用凭据加载器维护用户流；每次建立新 WebSocket 会话前重新读取凭据。
-///
-/// 这允许部署系统原子替换 Secret Manager 投影的 key/secret 文件：已有会话
-/// 不被中途打断，下一次连接/重连使用新凭据。加载失败会进入既有重连退避，
-/// 不会把半成品认证上下文交给连接器。
+/// 使用凭据加载器维护用户流：每次新建 WebSocket 会话前重新读凭据，允许部署系统原子
+/// 替换投影的 key/secret 文件（已有会话不被打断）；加载失败进入既有重连退避。
 pub fn run_binance_user_stream_with_config_loader<Stop, Sleep, Event, Load>(
     mut load_auth: Load,
     config: BinanceUserStreamRunConfig,
@@ -794,12 +787,9 @@ pub struct BinanceSpotVenue {
     port: u16,
     connected: bool,
     state: ConnectorState,
-    /// 本地订单状态、远端订单号映射与下面这一格**只增不减的成交幂等台账**共用同一个上界：
-    /// 进程一生提交过的订单数。三者都**不能**按数量或时间淘汰——user stream 会把同一笔
-    /// 成交重投，去掉任何一条已见键就等于允许同一笔 fill 被 `trace_fill` 两次（重复记账），
-    /// 而这正是本仓库唯一不接受的失败方式。要封顶就得先落成交对账的持久幂等键
-    /// （P0-2 那层事务语义），在那之前刻意保持只增不减；判据只守「不得出现淘汰调用」，
-    /// 谁加一个 `retain`/`remove` 就把重复记账的口子开回来了（V13 R5）。
+    /// 本地订单状态、远端订单号映射与成交去重键共用同一封顶策略：终态订单在超过
+    /// `MAX_CACHED_ORDERS + ORDER_EVICT_HYSTERESIS` 后按 client_id 升序退场，派生索引同步级联。
+    /// 退场即升级对账：被退订单再收到回报会落到「成交对应订单不存在」→ ReconcileRequired。
     orders: BTreeMap<u64, Order>,
     venue_order_ids: BTreeMap<u64, String>,
     seen_fill_keys: BTreeSet<(u64, u64, i128, i128, i128)>,
@@ -860,12 +850,9 @@ impl BinanceSpotVenue {
         }
     }
 
-    /// 设置重连对账需要覆盖的 Spot symbol 集合。
-    ///
-    /// Binance `openOrders` 只返回当前未完成订单，不能恢复进程中断期间已经
-    /// 成交、撤销或过期的本地订单。对账 worker 应提供自己的交易标的，连接器
-    /// 会改用 `allOrders` 拉取完整订单历史；未配置时退化为本地 EventLog 中的
-    /// symbol，完全没有本地订单时才使用无 symbol 的 `openOrders`。
+    /// 设置重连对账要覆盖的 Spot symbol 集合。Binance `openOrders` 只返回当前未完成订单，
+    /// 恢复不了中断期间已成交/撤销/过期的本地订单；对账 worker 提供自己的标的，连接器改用
+    /// `allOrders` 拉全量历史，未配置时退化为 EventLog 的 symbol，无本地订单才用 `openOrders`。
     pub fn set_reconcile_symbols<I, S>(&mut self, symbols: I) -> QxResult<()>
     where
         I: IntoIterator<Item = S>,
@@ -907,6 +894,8 @@ impl BinanceSpotVenue {
             }
             self.orders.insert(order.client_id, order);
         }
+        let evicted = evict_stale_terminal_orders(&mut self.orders);
+        self.forget_orders(&evicted);
         Ok(())
     }
 
@@ -923,6 +912,8 @@ impl BinanceSpotVenue {
             order.validate().map_err(QxError::BusinessViolation)?;
             self.orders.insert(order.client_id, order);
         }
+        let evicted = evict_stale_terminal_orders(&mut self.orders);
+        self.forget_orders(&evicted);
         Ok(())
     }
 
@@ -1216,6 +1207,16 @@ impl BinanceSpotVenue {
         self.reconcile_remote(&remote)
     }
 
+    /// 封顶退场后级联清派生索引：远端订单号与成交去重键必须跟着退场订单一起消失。
+    fn forget_orders(&mut self, evicted: &BTreeSet<u64>) {
+        if evicted.is_empty() {
+            return;
+        }
+        self.venue_order_ids
+            .retain(|client_id, _| !evicted.contains(client_id));
+        self.seen_fill_keys.retain(|key| !evicted.contains(&key.0));
+    }
+
     fn bind_remote_order(&mut self, client_order_id: u64, venue_order_id: String) -> QxResult<()> {
         if !self.orders.contains_key(&client_order_id) {
             return Err(QxError::ReconcileRequired(format!(
@@ -1297,11 +1298,8 @@ impl BinanceSpotVenue {
         Ok(Some(VenueEvent::Fill(fill)))
     }
 
-    /// 应用远端撤单回报，返回本地状态是否真的推进到 `Cancelled`。
-    ///
-    /// 重复的撤单回报返回 `false`（幂等，不产生第二条事实）；订单在本地已因成交或拒绝
-    /// 进入终态时返回错误——那是本地与远端的真实分歧，只能交给对账，绝不能把终态改写
-    /// 成 Cancelled。
+    /// 应用远端撤单回报，返回本地是否真的推进到 `Cancelled`：重复回报返回 `false`（幂等）；
+    /// 本地已因成交/拒绝进终态时返回错误（真实分歧，只能交对账，绝不能把终态改写）。
     fn mark_cancelled(&mut self, client_order_id: u64) -> QxResult<bool> {
         let order = self
             .orders
@@ -1490,6 +1488,8 @@ impl Venue for BinanceSpotVenue {
         self.orders.insert(local_id, accepted_order);
         let id = wire.order_id.to_string();
         self.venue_order_ids.insert(local_id, id.clone());
+        let evicted = evict_stale_terminal_orders(&mut self.orders);
+        self.forget_orders(&evicted);
         let mut events = vec![VenueEvent::Accepted {
             client_order_id: local_id,
             venue_order_id: id.clone(),

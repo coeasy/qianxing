@@ -539,7 +539,7 @@ WORKSPACE_TEST_FLOOR = 1083  # 1082 -> 1083：V13 R12/R13 补一条 PostgreSQL �
 # 存档落空条数天花板 9 只降不升。
 # 601 → 602：V13 R1-H 重落 V11 R6-1——删掉零构造者的 `CommandStatus::Rejected`，
 # 终态词表收回到 `is_final` 体内一处（控制面 + CLI 幂等入口两个平面各一颗判据）。
-GATE_CHECK_FLOOR = 663  # 660 -> 663：V13 R15 补三颗 fam12「CLI 表面：命令表逐颗用例 + config 子命令集与 help 同口径」判据。`cli_help_surface_check` 只核「help ≡ clap 表 ≡ cli.rs 派发」三侧集合相等，看不见「某入口其实一敲就崩 / 它自己的用法渲染不出来」；`cli_dispatch_check` 只核分派点唯一。三颗分别钉：crates/qx-cli/tests/command_surface.rs 的 CLI_COMMANDS 清单与 clap 表逐一相等（新增命令没进清单、或清单留了已删命令都红）、清单真的被逐条喂给被测 binary 跑 --help（只列不跑 = 清单退化成装饰）、config 的 clap 子命令集与 help 印出的 config <sub> 行逐一相等（第二层入口与顶层同一类断链）。上一轮基线 660 是 V13 R14 补两颗 fam11「分层处置」闭环判据。零读者那一族（zero_reference_public_surface_check / zero_reference_pub_crate_surface_check）只遍历在盘的定义，所以「函数被删掉、PUBLIC_SURFACE_ALLOWLIST 条目还在」这件事它永远看不见——条目会一直躺着，下一次有人把同名函数加回来时它就变成一张现成的免检通行证。两颗分别钉：允许清单里每个条目都对应一处真实定义（pub fn/pub const 或 pub(crate) fn）、每条理由都不是占位符（至少 6 个字符，当前最短的 7 个字符是 `任务 #119`）。上一轮基线 658 是 V13 R13 补三颗 fam02「停机令牌 + 连接上界」判据：V13 R2 #218 实测，监听循环按 stopped() 收摊后已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。V13 R2 #218 实测：监听循环按 stopped() 收摊后，已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开（不发 FIN、也不再写字节）时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起（有生产者、初始化关闭）、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。fam02 另外两格（快照历史有界、事件按账户键）已由 bounded_growth_and_reap_check 与 browser_admission_check 看守。上一轮基线 655 是 V13 R12 补四颗 fam10「运维读面：exposition 真换行 + 告警名册每个指标都有生产端」判据。V13 R2 第七遍实测到的缺陷形态是 /metrics 正文只有一行、行与行之间是字面的 `\n` 两个字符：抓取端把整份正文读成一行、一条样本都解析不出来，而告警侧是「永不触发」而不是「报错」——服务端与告警侧都不会自己出声。四颗分别钉：exposition 构造函数用真换行（体里出现 `\n` 转义、不出现字面的双反斜杠 n）、那条逐行解析用例在盘且解析器显式拒绝字面换行、告警名册里每个 qx_ 指标都能在生产源码里找到写出点（否则该告警永不触发）、名册每条规则都有 expr/severity/summary。取名册文本时同样先剥整行 `#` 注释：名册里那段解释 `qx_outbox_relay_parked` 的散文不剥掉，会替真规则满足「有生产者」那颗判据。上一轮基线 651 是 V13 R11 补七颗 fam13「CI 特性矩阵点亮每颗特性闸门 + NATS 用例有真执行的腿」判据。§12.2 把这一族登记为回退面时明写「新补的那条 NATS 腿只由 ci.yml 的文本存在性保证，门禁里没有判据核它——把它删掉或加上 --no-run 不会红」，本轮把那颗缺失的判据补上：① feature-matrix job 在盘且三步（clippy/check/test）都按 --no-default-features 逐组合跑（只在某些 feature 分支里才存在的代码不会被默认特性的 lint 看到，矩阵漏一颗特性那颗特性的代码就从「有 lint」退成「无 lint」）；② qx-cli 声明的每颗特性都出现在某个矩阵组合里，且矩阵里不出现不存在的特性名（拼错即红）；③ NATS 真执行腿按指纹整段钉住（显式点名两个 NATS 测试目标，因此与 `-- --ignored` 那条腿不可能混淆）；④ NATS 非 ignore 用例数不低于现场实测值 8。上一轮基线 644 是 V13 R10 补五颗 fam06「environment 词表单点与 production 判定唯一出口」判据。此前「这份运行时配置是不是 production」被手抄 14 处（运行时配置校验 9 处 + CLI 体检/就绪 5 处），各写一份 `environment.eq_ignore_ascii_case("production")`，全仓没有单源出口——危害不是现在算错，而是改口径（如 `production`→`prod`）时漏改的那一处加固静默失效，而它守的正是「production 禁止明文 API / C ABI 必须配 Ed25519 公钥 / Execution worker 必须配名义额上限」。五颗分别钉：写法常量 `PRODUCTION_ENVIRONMENT` 与判定 `RuntimeConfig::is_production` 各只有一处定义、词表从常量取 production 这一档、判定体引用常量不得内联字面量、手抄式 `eq_ignore_ascii_case("production")` 不得在生产代码复活、调用判定的生产文件与登记表逐一相等（新增闸门必须登记）。同 `VenueId::is_binance`（V13 §5 A3）一族。上一轮基线 639 是 V13 R9 补一颗「金额/价格/数量字段的缺键不许静默变成 0」。裸 `#[serde(default)]` 落在非 `Option` 的 Money/Price/Quantity 上，等于给「这份回报没带该字段」和「交易所明确报了 0」发同一张身份证；本仓两条正确形状分别是 `Option<Money>`（AccountPositionSnapshot 三格）与 `#[serde(default = "named_fn")]`（A 股规则配置）。剩下的三处全在 qx-core/src/event.rs 且危险方向都是 fail-closed，按名字登记在 BARE_MONEY_DEFAULT_ALLOWLIST。上一轮基线 638 是 V13 R8 补五颗静默抑制判据（丢结构体字段值必须当场写理由、`#[allow(dead_code)]` 必须当场写理由、`unreachable!` 必须带非空消息、不得留 `todo!`/`unimplemented!` 桩、生产源码的 TODO/FIXME 与登记表逐项相等）。这五种形状的共同点是「改错了也不红」：字段没人读就加一行 `let _ = x.y;` 按住、能力没接上就挂 allow、分支真到不了就写裸 unreachable!()、需求没做完就留桩，全是孤儿逻辑与静默降级的温床。上一轮基线 633 是 V13 R16 补四颗，守契约与存储读回侧的防御口径一致性。第一颗守 Python `StrategyInput.from_dict` 必须像同文件的 `StrategyIntent` / `StrategyOutput` 一样调 `_reject_unknown_keys`：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，策略可能以为账户是空的而误触发。第二颗守 `FactorReport::validate` 必须像 `FactorConfig::validate` 一样校验 `missing_policy` 的 reject/skip/zero 词表：报告能被 `from_json` 反序列化，只有空串校验时手改一份 JSON 能放行到下游 `resolve_missing` 才报错，落点离改错的地方很远。第三颗守 `outbox.attempts` 读回必须走 `parse_sqlite_u32` / `parse_u32` 而不是 `as u32` 截断：attempts 以 TEXT 落盘，u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成小值、绕开死信判定。第四颗守 `FactorConfig` 的源头词表本身没被改弱——两处词表不一致时改哪一侧都会让另一侧的校验变成摆设。627 -> 629：V13 R14 补两颗，守两个平台的托管启动器都有 supervise 之前的 runtime-check 前置闸门，且 bash 侧的闸门失败不得用 $? 当退出码。`supervise` 只走 plan_workers 的拓扑校验，不检查配置引用的文件是否存在（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）——修前 start-qianxing.ps1 有这道闸门、start-qianxing.sh 没有，Linux/macOS 上的坏配置会拉起 7 个子进程再 fail-fast 全杀，而不是在任何子进程起来之前就拒绝。第二颗守 `if ! cmd; then echo ...; exit "$?"; fi` 里的 $? 拿的是上一条 echo 的状态（0），调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
+GATE_CHECK_FLOOR = 678  # 671 -> 678：V13 R17 补七颗 fam04「适配层 IO 预算与 venue 缓存」判据（io_budget_and_venue_cache_check 七颗）。恢复 crates/qx-adapter/src/io_budget.rs 与 crates/qx-adapter/src/venue_cache.rs，把 write_all_within 接进三处子进程 stdin 写入（CCXT worker / 策略 worker / 事件 consumer handler），把 evict_stale_terminal_orders 接进两个常驻 venue 的订单写入点（binance 3 / ccxt 2）并级联退派生索引。七颗分别钉：三处 stdin 写入都走 write_all_within 且无一处退回裸 write_all、io_budget 只按截止时间收写线程且只有超时那格把打断管道的责任交回调用方、WebSocket 单帧/整条消息/单次轮询三层长度预算各一个具名常量、venue 缓存封顶只退终态订单且越限才扫表、两个 venue 的每处订单写入都过封顶并级联清派生索引、binance 未知订单仍升级对账、针路 OMS 刻意不共用封顶。上一轮基线 671 是 V13 R16 补八颗 fam01「文件锁统一」判据（file_lock_single_source_check 七颗 + backtest_clock_honesty_check 的墙钟豁免在场一颗）。恢复 crates/qx-core/src/file_lock.rs（V11 §40 D1 的崩溃可恢复写锁：纯判据 decide_lock + 有界等待 + 按年龄接管孤儿锁 + Drop 只删自己那把），并把四处就地 create_new 锁（数据集注册表 qx-data/registry.rs、多腿状态 qx-zhenlu/lib.rs、存储信封 qx-storage/state_envelope.rs、作业 claim qx-storage/file/jobs.rs）全部改走 qx_core::FileLock。七颗分别钉：FileLock 只有一个定义点、全仓再无第二处 remove_file(*lock*) 的就地锁生命周期、四个消费文件都引用 FileLock::acquire 且不回归就地锁算式、以及「同一场竞争只接管一次」住在 decide_lock 里且循环把计数喂回判据、只按判据交出的年龄说话。file_lock 读墙钟（锁年龄与令牌 nonce）是唯一一格豁免，按路径点名并由「豁免文件仍在场」一颗核对。上一轮基线 663 是 V13 R15 补三颗 fam12「CLI 表面」判据。`cli_help_surface_check` 只核「help ≡ clap 表 ≡ cli.rs 派发」三侧集合相等，看不见「某入口其实一敲就崩 / 它自己的用法渲染不出来」；`cli_dispatch_check` 只核分派点唯一。三颗分别钉：crates/qx-cli/tests/command_surface.rs 的 CLI_COMMANDS 清单与 clap 表逐一相等（新增命令没进清单、或清单留了已删命令都红）、清单真的被逐条喂给被测 binary 跑 --help（只列不跑 = 清单退化成装饰）、config 的 clap 子命令集与 help 印出的 config <sub> 行逐一相等（第二层入口与顶层同一类断链）。上一轮基线 660 是 V13 R14 补两颗 fam11「分层处置」闭环判据。零读者那一族（zero_reference_public_surface_check / zero_reference_pub_crate_surface_check）只遍历在盘的定义，所以「函数被删掉、PUBLIC_SURFACE_ALLOWLIST 条目还在」这件事它永远看不见——条目会一直躺着，下一次有人把同名函数加回来时它就变成一张现成的免检通行证。两颗分别钉：允许清单里每个条目都对应一处真实定义（pub fn/pub const 或 pub(crate) fn）、每条理由都不是占位符（至少 6 个字符，当前最短的 7 个字符是 `任务 #119`）。上一轮基线 658 是 V13 R13 补三颗 fam02「停机令牌 + 连接上界」判据：V13 R2 #218 实测，监听循环按 stopped() 收摊后已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。V13 R2 #218 实测：监听循环按 stopped() 收摊后，已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开（不发 FIN、也不再写字节）时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起（有生产者、初始化关闭）、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。fam02 另外两格（快照历史有界、事件按账户键）已由 bounded_growth_and_reap_check 与 browser_admission_check 看守。上一轮基线 655 是 V13 R12 补四颗 fam10「运维读面：exposition 真换行 + 告警名册每个指标都有生产端」判据。V13 R2 第七遍实测到的缺陷形态是 /metrics 正文只有一行、行与行之间是字面的 `\n` 两个字符：抓取端把整份正文读成一行、一条样本都解析不出来，而告警侧是「永不触发」而不是「报错」——服务端与告警侧都不会自己出声。四颗分别钉：exposition 构造函数用真换行（体里出现 `\n` 转义、不出现字面的双反斜杠 n）、那条逐行解析用例在盘且解析器显式拒绝字面换行、告警名册里每个 qx_ 指标都能在生产源码里找到写出点（否则该告警永不触发）、名册每条规则都有 expr/severity/summary。取名册文本时同样先剥整行 `#` 注释：名册里那段解释 `qx_outbox_relay_parked` 的散文不剥掉，会替真规则满足「有生产者」那颗判据。上一轮基线 651 是 V13 R11 补七颗 fam13「CI 特性矩阵点亮每颗特性闸门 + NATS 用例有真执行的腿」判据。§12.2 把这一族登记为回退面时明写「新补的那条 NATS 腿只由 ci.yml 的文本存在性保证，门禁里没有判据核它——把它删掉或加上 --no-run 不会红」，本轮把那颗缺失的判据补上：① feature-matrix job 在盘且三步（clippy/check/test）都按 --no-default-features 逐组合跑（只在某些 feature 分支里才存在的代码不会被默认特性的 lint 看到，矩阵漏一颗特性那颗特性的代码就从「有 lint」退成「无 lint」）；② qx-cli 声明的每颗特性都出现在某个矩阵组合里，且矩阵里不出现不存在的特性名（拼错即红）；③ NATS 真执行腿按指纹整段钉住（显式点名两个 NATS 测试目标，因此与 `-- --ignored` 那条腿不可能混淆）；④ NATS 非 ignore 用例数不低于现场实测值 8。上一轮基线 644 是 V13 R10 补五颗 fam06「environment 词表单点与 production 判定唯一出口」判据。此前「这份运行时配置是不是 production」被手抄 14 处（运行时配置校验 9 处 + CLI 体检/就绪 5 处），各写一份 `environment.eq_ignore_ascii_case("production")`，全仓没有单源出口——危害不是现在算错，而是改口径（如 `production`→`prod`）时漏改的那一处加固静默失效，而它守的正是「production 禁止明文 API / C ABI 必须配 Ed25519 公钥 / Execution worker 必须配名义额上限」。五颗分别钉：写法常量 `PRODUCTION_ENVIRONMENT` 与判定 `RuntimeConfig::is_production` 各只有一处定义、词表从常量取 production 这一档、判定体引用常量不得内联字面量、手抄式 `eq_ignore_ascii_case("production")` 不得在生产代码复活、调用判定的生产文件与登记表逐一相等（新增闸门必须登记）。同 `VenueId::is_binance`（V13 §5 A3）一族。上一轮基线 639 是 V13 R9 补一颗「金额/价格/数量字段的缺键不许静默变成 0」。裸 `#[serde(default)]` 落在非 `Option` 的 Money/Price/Quantity 上，等于给「这份回报没带该字段」和「交易所明确报了 0」发同一张身份证；本仓两条正确形状分别是 `Option<Money>`（AccountPositionSnapshot 三格）与 `#[serde(default = "named_fn")]`（A 股规则配置）。剩下的三处全在 qx-core/src/event.rs 且危险方向都是 fail-closed，按名字登记在 BARE_MONEY_DEFAULT_ALLOWLIST。上一轮基线 638 是 V13 R8 补五颗静默抑制判据（丢结构体字段值必须当场写理由、`#[allow(dead_code)]` 必须当场写理由、`unreachable!` 必须带非空消息、不得留 `todo!`/`unimplemented!` 桩、生产源码的 TODO/FIXME 与登记表逐项相等）。这五种形状的共同点是「改错了也不红」：字段没人读就加一行 `let _ = x.y;` 按住、能力没接上就挂 allow、分支真到不了就写裸 unreachable!()、需求没做完就留桩，全是孤儿逻辑与静默降级的温床。上一轮基线 633 是 V13 R16 补四颗，守契约与存储读回侧的防御口径一致性。第一颗守 Python `StrategyInput.from_dict` 必须像同文件的 `StrategyIntent` / `StrategyOutput` 一样调 `_reject_unknown_keys`：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，策略可能以为账户是空的而误触发。第二颗守 `FactorReport::validate` 必须像 `FactorConfig::validate` 一样校验 `missing_policy` 的 reject/skip/zero 词表：报告能被 `from_json` 反序列化，只有空串校验时手改一份 JSON 能放行到下游 `resolve_missing` 才报错，落点离改错的地方很远。第三颗守 `outbox.attempts` 读回必须走 `parse_sqlite_u32` / `parse_u32` 而不是 `as u32` 截断：attempts 以 TEXT 落盘，u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成小值、绕开死信判定。第四颗守 `FactorConfig` 的源头词表本身没被改弱——两处词表不一致时改哪一侧都会让另一侧的校验变成摆设。627 -> 629：V13 R14 补两颗，守两个平台的托管启动器都有 supervise 之前的 runtime-check 前置闸门，且 bash 侧的闸门失败不得用 $? 当退出码。`supervise` 只走 plan_workers 的拓扑校验，不检查配置引用的文件是否存在（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）——修前 start-qianxing.ps1 有这道闸门、start-qianxing.sh 没有，Linux/macOS 上的坏配置会拉起 7 个子进程再 fail-fast 全杀，而不是在任何子进程起来之前就拒绝。第二颗守 `if ! cmd; then echo ...; exit "$?"; fi` 里的 $? 拿的是上一条 echo 的状态（0），调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
 # V12 §21 / #138：合流类判据的三个参数（455 → 457 就是本轮新增的两条，仍按"当轮实测总条数"取值）。窗口取 10 行是实测拐点 —— W=8 在 `tools` 之外命中 1,180
 # 处、到 W=10 仍有 781 处合法的并列实现（三条 venue 提交链、几家存储后端），所以逐字重复零容忍
 # 只对 `tools/*.py` 生效（本轮实测该目录 5 份脚本 0 命中），Rust 那一侧交给编译器与整树用例。
@@ -3884,6 +3884,11 @@ def enum_variant_producer_check() -> None:
 # 回测与重放路径的 crate：这三处的生产文本读一次系统墙钟，就意味着同一份输入跑两次结果不同。
 CLOCK_FREE_BACKTEST_CRATES = ("qx-core", "qx-xingban", "qx-strategy")
 WALL_CLOCK_TOKENS = ("SystemTime", "Instant::now", "Utc::now", "chrono::Local")
+# 唯一一格豁免：锁文件的年龄与令牌 nonce 读的是墙钟，它判的是"另一个进程还活着吗"，
+# 不进回测/重放的任何一条数值链（D1 的崩溃残留接管、K3 的接管竞据、R7-9 的年龄交出都靠它）。
+# 反向说：这条链一旦把锁年龄当成模拟时间轴的一部分，豁免就成了假口供——所以豁免按路径点名，
+# 并由下面那颗"豁免文件仍在场"的判据核对，不让它悄悄落到空处。
+CLOCK_FREE_EXEMPT_FILES = ("crates/qx-core/src/file_lock.rs",)
 
 
 def backtest_clock_honesty_check() -> None:
@@ -3927,6 +3932,8 @@ def backtest_clock_honesty_check() -> None:
     for crate in CLOCK_FREE_BACKTEST_CRATES:
         hits: list[str] = []
         for path in sorted((CRATES / crate / "src").rglob("*.rs")):
+            if any(path == ROOT / rel for rel in CLOCK_FREE_EXEMPT_FILES):
+                continue
             body = production_text(text_of(path))
             hits += [token for token in WALL_CLOCK_TOKENS if token in body]
         if hits:
@@ -3934,7 +3941,15 @@ def backtest_clock_honesty_check() -> None:
     check(
         not readers,
         "回测与重放路径的 crate 在生产文本里一次系统时间都不读（读一次就等于放弃可重放）",
-        f"读到墙钟的 crate {readers}",
+        f"读到墙钟的 crate {readers}（豁免只看点名的 {list(CLOCK_FREE_EXEMPT_FILES)}）："
+        "回测结果的每一个数都来自 bar 序列与撮合规则，掺进一次墙钟就读不出一份可复现的结论；"
+        "把豁免写进这句话，是因为豁免缺席时这里会红得不解释自己",
+    )
+    check(
+        all((ROOT / rel).exists() for rel in CLOCK_FREE_EXEMPT_FILES),
+        "墙钟豁免的每一份文件都还在场（否则豁免就是一张没人核对的空头支票）",
+        f"缺席 {[rel for rel in CLOCK_FREE_EXEMPT_FILES if not (ROOT / rel).exists()]}：豁免是按路径生效的，"
+        "文件改名或删掉后这条 `continue` 就落在空处，判据看起来仍在扫三条 crate 实际却少了一格",
     )
     # 判据 4：真实闸门三处部件各在其位。
     validation = text_of(ROOT / "crates/qx-data/src/validation.rs")
@@ -4659,123 +4674,130 @@ def without_line_comments(text: str) -> str:
 
 
 def strategy_pipe_write_budget_check() -> None:
-    """Python 策略管道传输的 stdin 写入必须与读取同受 timeout_ms 约束（V13 R2 第三十四遍 #281）。
+    """Python 策略管道传输的 stdin 写入必须与读取同受 timeout_ms 约束（V13 R2 #281 / R17 fam04）。
 
     `Jsonl`/`FramedJson` 是默认发布路径（strategy_schema.rs 默认 Jsonl）。修复前 write_all 直接
     跑在主线程，只有后面的 recv_timeout 收口——一旦子进程"活着但不再读 stdin"，超出 OS 匿名
-    管道缓冲（~64KB）的那段 write_all 会永久阻塞，timeout_ms 管不到，本进程就此卡死。修复把写入
-    交给 spawned 线程，主路径按 write_done.recv_timeout 等它的结果，超时即杀 worker 并留可读诊断。
+    管道缓冲（~64KB）的那段 write_all 会永久阻塞，timeout_ms 管不到，本进程就此卡死。R17 把三处
+    同类缺陷（策略 worker / event consumer handler / CCXT worker）收进唯一一条带预算的写入通道
+    `qx_adapter::write_all_within`（crates/qx-adapter/src/io_budget.rs），判据改钉"这一处走的是统一
+    通道、预算取自 self.timeout_ms、失败把打断管道的责任交回调用方并留可读诊断"。
     """
     host = (CRATES / "qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
     start = host.index("StrategyTransport::Jsonl | StrategyTransport::FramedJson => {")
     end = host.index("let line = match response", start)
     region = host[start:end]
     check(
-        region.count("stdin.write_all(") == 1
-        and "thread::spawn(move ||" in region
-        and region.index("thread::spawn(move ||") < region.index("stdin.write_all(")
-        and "write_done.recv_timeout(" in region
-        and region.index("stdin.write_all(") < region.index("write_done.recv_timeout(")
-        and "self.stdin.as_mut()" not in region,
-        "策略管道写入被交给 spawned 线程并按 write_done.recv_timeout 有界等待，请求路径不再直接写 stdin",
-        f"write_all {region.count('stdin.write_all(')}（期望 1）、"
-        f"有界等待={'write_done.recv_timeout(' in region}、"
+        region.count("qx_adapter::write_all_within(") == 1
+        and region.count(".write_all(") == 0
+        and "self.stdin.as_mut()" not in region
+        and region.index("write_all_within(") < region.index("recv_timeout("),
+        "策略管道写入走统一带预算通道 write_all_within，请求路径不再直接写 stdin",
+        f"write_all_within {region.count('qx_adapter::write_all_within(')}（期望 1）、"
+        f"裸 write_all {region.count('.write_all(')}（期望 0）、"
         f"残留 as_mut 直接写={'self.stdin.as_mut()' in region}",
     )
-    # 预算必须真的取自 timeout_ms，而不是拍一个大常数把无限阻塞换成"很久后才失败"。
+    # 预算必须真的取自 timeout_ms，而不是拍一个大常数把无限阻塞换成"很久后才失败"。断言限定在
+    # `write_all_within` 的调用窗口内：读侧那条 recv_timeout 也引用同一个字段，只查"区域里出现过"
+    # 会把写侧被换成常数这件事放过去。
+    wcall = ""
+    if "write_all_within(" in region:
+        wstart = region.index("write_all_within(")
+        wcall = region[wstart : wstart + 240]
     check(
-        "write_done.recv_timeout(Duration::from_millis(self.timeout_ms))" in region,
+        "Duration::from_millis(self.timeout_ms)" in wcall,
         "写侧等待预算与读侧同源，取自 self.timeout_ms",
-        "写侧 recv_timeout 没有引用 self.timeout_ms",
+        "write_all_within 调用窗口内没有引用 self.timeout_ms",
     )
-    # 超时是可观测事实：点名 worker 存活但不接收输入，且两个成功分支各回收一次句柄。
+    # 失败是可观测事实：写侧失败带 death_note，且成功分支回收一次句柄（超时那支刻意不回置）。
     check(
-        "worker 存活但不接收输入" in region
-        and region.count("self.stdin = Some(stdin)") == 2,
-        "写侧超时留下可读诊断并在成功分支回收 stdin 句柄（不吞成断链/超时噪声）",
-        f"超时诊断在位={'worker 存活但不接收输入' in region}、"
-        f"句柄回收点 {region.count('self.stdin = Some(stdin)')}（期望 2）",
+        region.count("self.stdin = Some(stdin)") == 1 and region.count("death_note()") >= 1,
+        "写侧失败留下可读诊断并在成功分支回收 stdin 句柄（不吞成断链/超时噪声）",
+        f"句柄回收点 {region.count('self.stdin = Some(stdin)')}（期望 1）、"
+        f"death_note 调用 {region.count('death_note()')}（期望 >=1）",
     )
 
 def event_consumer_pipe_write_budget_check() -> None:
     """事件 consumer handler 的 stdin 写入必须与退出轮询同受 handler.timeout_ms 约束
-    （V13 R2 第三十五遍 #282）。
+    （V13 R2 第三十五遍 #282 / R17 fam04）。
 
     `invoke_event_consumer_handler`（event_pipeline.rs，`#[cfg(feature = "nats")]` 下）修复前把
     write_all 直接跑在主线程，只有后面的 try_wait 轮询守 timeout_ms——一旦用户配置的外部 handler
     "存活却不从 stdin 取字节"，超出 OS 匿名管道缓冲（~64KB）的那段 write_all 会永久阻塞，timeout_ms
     管不到，本进程就此卡死。跨进程 Outbox 事件里 AccountPositionSnapshot/AccountBalanceSnapshot 把
-    整段 Vec 内联进单条 payload，足以越过 64KB，故不是假设场景。修复把写入交给 spawned 线程，主路径按
-    write_done.recv_timeout(handler.timeout_ms) 等它的结果，超时即杀 handler 并留可读诊断。
-    与 #281 不同：这条在 opt-in 的 nats 特性下、不在默认 exe，但仍是同一族不可恢复的阻塞点。
+    整段 Vec 内联进单条 payload，足以越过 64KB，故不是假设场景。R17 与另外两处（策略 worker、CCXT
+    worker）共用同一条带预算的写入通道 `qx_adapter::write_all_within`，判据改钉"这一处走的是统一
+    通道、预算取自 handler.timeout_ms、失败留可读诊断"。
     """
     pipeline = (CRATES / "qx-cli/src/event_pipeline.rs").read_text(encoding="utf-8")
-    start = pipeline.index("let (write_sender, write_done) = std::sync::mpsc::channel();")
+    start = pipeline.index('启动事件 consumer handler 失败')
     end = pipeline.index("let started = Instant::now();", start)
     region = pipeline[start:end]
     check(
-        region.count(".write_all(") == 2
-        and "thread::spawn(move ||" in region
-        and region.index("thread::spawn(move ||") < region.index(".write_all(")
-        and "write_done.recv_timeout(" in region
-        and region.index(".write_all(") < region.index("write_done.recv_timeout("),
-        "事件 consumer 写入被交给 spawned 线程并按 write_done.recv_timeout 有界等待，主路径不再直接阻塞在 stdin",
-        f".write_all( {region.count('.write_all(')}（期望 2）、"
-        f"线程内先写={'thread::spawn(move ||' in region and region.index('thread::spawn(move ||') < region.index('.write_all(')}、"
-        f"有界等待在位={'write_done.recv_timeout(' in region}",
+        region.count("qx_adapter::write_all_within(") == 1
+        and region.count(".write_all(") == 0
+        and "child.stdin.take()" in region
+        and region.index("child.stdin.take()") < region.index("write_all_within("),
+        "事件 consumer 写入走统一带预算通道 write_all_within，主路径不再直接阻塞在 stdin",
+        f"write_all_within {region.count('qx_adapter::write_all_within(')}（期望 1）、"
+        f"裸 write_all {region.count('.write_all(')}（期望 0）",
     )
     # 预算必须真的取自 handler.timeout_ms，而不是拍一个大常数把无限阻塞换成"很久后才失败"。
+    wcall = ""
+    if "write_all_within(" in region:
+        wstart = region.index("write_all_within(")
+        wcall = region[wstart : wstart + 240]
     check(
-        "write_done.recv_timeout(Duration::from_millis(handler.timeout_ms))" in region,
+        "Duration::from_millis(handler.timeout_ms)" in wcall,
         "写侧等待预算与退出轮询同源，取自 handler.timeout_ms",
-        "写侧 recv_timeout 没有引用 handler.timeout_ms",
+        "write_all_within 调用窗口内没有引用 handler.timeout_ms",
     )
-    # 超时是可观测事实：点名 handler 存活但不接收输入。
+    # 失败是可观测事实：点名是写 stdin 失败，不吞成"handler 什么都没发生"。
     check(
-        "handler 存活但不接收输入" in region,
-        "写侧超时留下可读诊断（不吞成断链/超时噪声）",
-        f"超时诊断在位={'handler 存活但不接收输入' in region}",
+        "写入事件 consumer handler stdin 失败" in region,
+        "写侧失败留下可读诊断（不吞成断链/超时噪声）",
+        "写侧失败诊断不在位",
     )
 
 
 def ccxt_pipe_write_budget_check() -> None:
-    """公共 CCXT 进程桥的 stdin 写入必须与读取同受 timeout_ms 约束（V13 R4-A）。
+    """公共 CCXT 进程桥的 stdin 写入必须与读取同受 timeout_ms 约束（V13 R4-A / R17 fam04）。
 
     `CcxtProcessClient::call`（qx-adapter/src/ccxt.rs）修复前把 write_all 直接跑在主线程，
     只有后面的 recv_timeout 收口——一旦 Python CCXT worker "活着但不再读 stdin"（例如卡在一次
     长网络调用里），超出 OS 匿名管道缓冲（~64KB）的那段 write_all 会永久阻塞，timeout_ms 管不到，
     本进程就此卡死。这与策略宿主（V13 R2 #281）和 event consumer handler（#282）是同一个缺陷的
-    第三处，修法相同：写入交给 spawned 线程，主路径按 write_done.recv_timeout 等结果，超时即杀
-    worker 并留可读诊断。
+    第三处。R17 把三处收进唯一一条带预算的写入通道 `qx_adapter::write_all_within`，判据改钉
+    "这一处走的是统一通道、预算取自 self.timeout_ms、成功分支回收句柄"。
     """
     source = (CRATES / "qx-adapter/src/ccxt.rs").read_text(encoding="utf-8")
     start = source.index('fn call(&mut self, request: Value) -> Result<Value, String> {')
     end = source.index("let response: Value = serde_json::from_str(&line)", start)
     region = source[start:end]
     check(
-        region.count(".write_all(") == 1
-        and "thread::spawn(move ||" in region
-        and region.index("thread::spawn(move ||") < region.index(".write_all(")
-        and "write_done.recv_timeout(" in region
-        and region.index(".write_all(") < region.index("write_done.recv_timeout("),
-        "CCXT 进程桥写入被交给 spawned 线程并按 write_done.recv_timeout 有界等待，主路径不再直接阻塞在 stdin",
-        f".write_all( {region.count('.write_all(')}（期望 1）、"
-        f"线程内先写={'thread::spawn(move ||' in region and region.index('thread::spawn(move ||') < region.index('.write_all(')}、"
-        f"有界等待在位={'write_done.recv_timeout(' in region}",
+        region.count("write_all_within(") == 1
+        and region.count(".write_all(") == 0
+        and region.index("let stdin = self") < region.index("write_all_within("),
+        "CCXT 进程桥写入走统一带预算通道 write_all_within，主路径不再直接阻塞在 stdin",
+        f"write_all_within {region.count('write_all_within(')}（期望 1）、"
+        f"裸 write_all {region.count('.write_all(')}（期望 0）",
     )
     # 预算必须真的取自 timeout_ms，而不是拍一个大常数把无限阻塞换成"很久后才失败"。
+    wcall = ""
+    if "write_all_within(" in region:
+        wstart = region.index("write_all_within(")
+        wcall = region[wstart : wstart + 240]
     check(
-        "write_done.recv_timeout(Duration::from_millis(self.timeout_ms))" in region,
+        "Duration::from_millis(self.timeout_ms)" in wcall,
         "CCXT 写侧等待预算与读侧同源，取自 self.timeout_ms",
-        "写侧 recv_timeout 没有引用 self.timeout_ms",
+        "write_all_within 调用窗口内没有引用 self.timeout_ms",
     )
-    # 超时是可观测事实：点名 worker 存活但不接收输入，且两个成功分支各回收一次句柄。
+    # 超时是可观测事实：成功分支回收一次句柄，失败按"提交结果未知"报出去。
     check(
-        "worker 存活但不接收输入" in region
-        and region.count("self.stdin = Some(handle)") == 2,
-        "CCXT 写侧超时留下可读诊断并在成功分支回收 stdin 句柄（不吞成断链/超时噪声）",
-        f"超时诊断在位={'worker 存活但不接收输入' in region}、"
-        f"句柄回收点 {region.count('self.stdin = Some(handle)')}（期望 2）",
+        region.count("self.stdin = Some(") == 1 and "提交结果未知" in region,
+        "CCXT 写侧在成功分支回收 stdin 句柄，失败按提交结果未知报出",
+        f"句柄回收点 {region.count('self.stdin = Some(')}（期望 1）、"
+        f"未知口径在位={'提交结果未知' in region}",
     )
 
 
@@ -8263,19 +8285,19 @@ def bounded_growth_and_reap_check() -> None:
         (CRATES / "qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
     )
     check(
-        pump.count("mpsc::sync_channel(1)") == 2
+        pump.count("mpsc::sync_channel(1)") == 1
         and pump.count("mpsc::channel()") == 0
         and host_pump.count("let (sender, responses) = mpsc::sync_channel(1);") == 1
         and pump.count("read_capped_line(&mut reader, crate::MAX_WORKER_LINE_BYTES)") == 1
         and host_pump.count("read_capped_worker_line(&mut reader, DEFAULT_MAX_FRAME_BYTES)") == 2
         and pump.count(".read_line(") == 0,
         "CCXT 与策略 worker 子进程 stdout 的泵通道队列有界、每行读取带字节上限（V13 R1-D / R2 / R5 / R4-A）",
-        f"CCXT 有界通道 {pump.count('mpsc::sync_channel(1)')} 处（期望 2：stdout 泵与写侧回话各一条）、无界写法 "
+        f"CCXT 有界通道 {pump.count('mpsc::sync_channel(1)')} 处（期望 1：stdout 泵；写侧回话通道 R17 已并入 "
+        "io_budget 的 write_all_within，不再各留一条）、无界写法 "
         f"{pump.count('mpsc::channel()')} 处（期望 0）；策略 worker 那条 "
         f"{host_pump.count('let (sender, responses) = mpsc::sync_channel(1);')} 处（期望 1）。"
         "两处泵线程每读一行/一帧就往通道里塞，而调用侧每次只取一条：无界意味着 Worker 的杂印与"
-        "上一轮迟到的应答会一路攒下去，内存随运行时长增长；写侧回话通道同样无界时，超时后遗留的"
-        "写线程会持有已失效的 stdin 句柄。"
+        "上一轮迟到的应答会一路攒下去，内存随运行时长增长。"
         f"行长闸：CCXT {pump.count('read_capped_line(&mut reader, crate::MAX_WORKER_LINE_BYTES)')} 处"
         f"（期望 1）、旧 read_line {pump.count('.read_line(')} 处（期望 0）、"
         f"策略 worker {host_pump.count('read_capped_worker_line(&mut reader, DEFAULT_MAX_FRAME_BYTES)')} 处"
@@ -8283,46 +8305,57 @@ def bounded_growth_and_reap_check() -> None:
         "本进程吃到内存耗尽，因为 lines()/read_line 只在 EOF 或 io 错误处停",
     )
 
-    # V13 R5 / R6-A：三处**只增不减的成交幂等台账**（Binance `seen_fill_keys`、CCXT
-    # `seen_trade_ids`、运行期 `LiveEventPipeline.seen_fills`）。user stream / `trades` 查询 /
-    # reconcile / Outbox 补投影都会把同一笔成交重投，淘汰任何一条已见键就等于允许同一笔
-    # fill 被 trace 两次——重复记账，本仓库唯一不接受的失败方式。它们的上界等于进程一生
-    # 提交或 ingest 过的成交数，刻意不设水位；要封顶就得先落成交对账的持久幂等键（P0-2）。
-    # 所以这颗判据守的不是"有界"而是"只增"：谁加一个 retain/remove 就把重复记账的口子开
-    # 回来了，而那时快照水位那几颗判据依然全绿。R5 只数了两处适配器，第三本在运行期
-    # pipeline 里，靠的是同一颗 `fill_key`；R6-A 把它纳入同一族。
+    # V13 R5 / R6-A → R17 fam04：成交幂等台账的退场只允许经由 venue 缓存的**终态封顶**。
+    # user stream / `trades` 查询 / reconcile 都会把同一笔成交重投，淘汰一条已见键就等于允许
+    # 同一笔 fill 被 trace 两次——重复记账，本仓库唯一不接受的失败方式。R17 按「最新版规划」
+    # 恢复 fam04 的 venue 缓存封顶（crates/qx-adapter/src/venue_cache.rs）之后，两个适配器的
+    # 去重台账与订单表一起按 client_id 升序退场（只退终态订单），安全性由"订单一并退场 ⇒ 重投
+    # 的成交落到『本地订单不存在』分支"兜底（两个适配器各有一条具名出口，逐字钉住）；运行期
+    # `LiveEventPipeline.seen_fills` 没有共用这把封顶，仍只增不减。判据因此从"一律不许淘汰"
+    # 改成"退场只许走终态封顶这一条唯一通道，且两个适配器都必须留着『订单已退场』的出口"。
     binance_raw = (ROOT / BINANCE_VENUE_FILE).read_text(encoding="utf-8")
     ccxt_raw = (ROOT / CCXT_PUMP_FILE).read_text(encoding="utf-8")
     pipeline_raw = (ROOT / PIPELINE_LEDGER_FILE).read_text(encoding="utf-8")
     pipeline_code = production_text(pipeline_raw)
     binance = production_text(binance_raw)
+    ccxt = production_text(ccxt_raw)
     DEDUP_EVICTION = re.compile(
-        r"seen_(?:fill_keys|trade_ids|fills)\.(?:remove|retain|drain|pop|clear|truncate)\b"
+        r"seen_(?:fill_keys|trade_ids|fills)\s*\.\s*(?:remove|retain|drain|pop|clear|truncate)\b"
     )
     DEDUP_NOTE = "只增不减的成交幂等台账"
     check(
         binance.count("seen_fill_keys.insert") == 1
-        and pump.count("seen_trade_ids.entry") == 1
+        and ccxt.count("seen_trade_ids.entry") == 1
         and pipeline_code.count("seen_fills.insert") == 3
-        and not DEDUP_EVICTION.search(binance)
-        and not DEDUP_EVICTION.search(pump)
+        # 两个适配器的去重台账各只有一处退场，且都由 `forget_orders` 承载。
+        and len(DEDUP_EVICTION.findall(binance)) == 1
+        and len(DEDUP_EVICTION.findall(ccxt)) == 1
+        and "fn forget_orders(&mut self, evicted: &BTreeSet<u64>)" in binance
+        and "fn forget_orders(&mut self, evicted: &BTreeSet<u64>)" in ccxt
+        # 退场只能由封顶驱动：每处订单写入点都紧跟着一次封顶 + 一次级联。
+        and binance.count("let evicted = evict_stale_terminal_orders(&mut self.orders);") == 3
+        and binance.count("self.forget_orders(&evicted);") == 3
+        and ccxt.count("let evicted = evict_stale_terminal_orders(&mut self.orders);") == 2
+        and ccxt.count("self.forget_orders(&evicted);") == 2
+        # 两个适配器都留着「订单已退场」的出口，退场不会把回报静默吞掉。
+        and 'QxError::ReconcileRequired("Binance 成交对应订单不存在".into())' in binance
+        and "CCXT 本地订单不存在" in ccxt
+        # 运行期台账没有共用这把封顶，仍只增不减。
         and not DEDUP_EVICTION.search(pipeline_code)
-        and binance_raw.count(DEDUP_NOTE) == 1
-        and ccxt_raw.count(DEDUP_NOTE) == 1
         and pipeline_raw.count(DEDUP_NOTE) == 1,
-        "成交幂等台账只增不减：重投的成交靠已见键去重，淘汰已见键就是重复记账（V13 R5 / R6-A）",
+        "成交幂等台账的退场只经由 venue 缓存的终态封顶，且两个适配器都留着『订单已退场』的出口（V13 R5 / R6-A / R17）",
         f"Binance 入账点 {binance.count('seen_fill_keys.insert')}（期望 1）、"
-        f"CCXT 入账点 {pump.count('seen_trade_ids.entry')}（期望 1）、"
+        f"CCXT 入账点 {ccxt.count('seen_trade_ids.entry')}（期望 1）、"
         f"运行期台账入账点 {pipeline_code.count('seen_fills.insert')}（期望 3：两条 ingest 路径各一处、"
         "重启时把整本 EventLog 的 Filled 全插回来一处）；"
-        f"淘汰调用 Binance={bool(DEDUP_EVICTION.search(binance))} "
-        f"CCXT={bool(DEDUP_EVICTION.search(pump))} "
-        f"pipeline={bool(DEDUP_EVICTION.search(pipeline_code))}"
-        "（各期望 False）；三处字段注释都写明「只增不减」的理由 "
-        f"{binance_raw.count(DEDUP_NOTE)}/{ccxt_raw.count(DEDUP_NOTE)}/{pipeline_raw.count(DEDUP_NOTE)}"
-        "（各期望 1，注释是给读代码的人看的，读的是原始文本而不是剥过注释的生产文本）"
-        "——台账无上界是已接受的取舍，写在字段注释里并登记进 capabilities.yaml，"
-        "不许悄悄退化成有界水位或反过来悄悄加淘汰",
+        f"去重台账退场调用 Binance={len(DEDUP_EVICTION.findall(binance))} "
+        f"CCXT={len(DEDUP_EVICTION.findall(ccxt))}（各期望 1，且只在 forget_orders 里）；"
+        f"封顶调用 Binance={binance.count('let evicted = evict_stale_terminal_orders(&mut self.orders);')}"
+        f" CCXT={ccxt.count('let evicted = evict_stale_terminal_orders(&mut self.orders);')}；"
+        f"运行期台账退场={bool(DEDUP_EVICTION.search(pipeline_code))}（期望 False，仍只增不减）"
+        "——退场资格由 venue_cache 的终态筛选把住（只退终态订单），被退订单再收到回报会落到"
+        "各适配器既有的『本地订单不存在』出口，不会重复记账；谁把退场挪出 forget_orders 或"
+        "摘掉那两个出口，重复记账的口子就开回来了",
     )
 
     # V13 R6-A：API 投影桥的两条投影失败都是内容漂移或序号缺口这类**不会自愈**的冲突。
@@ -11680,6 +11713,235 @@ def cli_surface_coverage_check() -> None:
     )
 
 
+# V11 §40 D1：文件写锁的判据只有一个定义点。这里的危害方式与信封/退避同族——
+# "抢锁靠 create_new、释放靠删文件"一旦被就地重写第二份，丢掉的就是孤儿锁接管那条出路，
+# 而那条出路只有在进程被杀之后才看得见，用例最容易漏。
+FILE_LOCK_KERNEL = "crates/qx-core/src/file_lock.rs"
+FILE_LOCK_CONSUMERS = (
+    "crates/qx-data/src/registry.rs",
+    "crates/qx-zhenlu/src/lib.rs",
+    "crates/qx-storage/src/state_envelope.rs",
+    "crates/qx-storage/src/file/jobs.rs",
+)
+
+
+# fam04（V13 §9.48 回退面逐族重落）：适配层 IO 预算与 venue 缓存。子进程 stdin 的三处写入点
+# 与两条长度预算的落点。写阻塞没有用例能在"不挂死"的前提下断言（变异实测：摘掉预算退回调用
+# 线程上的裸 `write_all`，用例是挂住而不是变红），所以只能由门禁守住"三处都不许退回裸写"。
+STDIN_BUDGET_SITES = (
+    ("crates/qx-adapter/src/ccxt.rs", "CCXT Worker stdin 不可用"),
+    ("crates/qx-cli/src/strategy_host.rs", "worker stdin 不可用"),
+    ("crates/qx-cli/src/event_pipeline.rs", "事件 consumer handler stdin"),
+)
+IO_BUDGET_FILE = "crates/qx-adapter/src/io_budget.rs"
+VENUE_CACHE_FILE = "crates/qx-adapter/src/venue_cache.rs"
+ADAPTER_ROOT_FILE = "crates/qx-adapter/src/lib.rs"
+# 每个 venue 的订单缓存 growth 点数量，以及退场时必须一起级联掉的派生索引（按空白压平后比对）。
+VENUE_CACHE_SITES = (
+    (
+        "crates/qx-adapter/src/binance.rs",
+        3,
+        (
+            "self.venue_order_ids.retain(|client_id,_|!evicted.contains(client_id))",
+            "self.seen_fill_keys.retain(|key|!evicted.contains(&key.0))",
+        ),
+    ),
+    (
+        "crates/qx-adapter/src/ccxt.rs",
+        2,
+        (
+            "self.remote_ids.retain(|client_id,_|!evicted.contains(client_id))",
+            "self.seen_trade_ids.retain(|client_id,_|!evicted.contains(client_id))",
+            "self.cumulative_costs.retain(|client_id,_|!evicted.contains(client_id))",
+        ),
+    ),
+)
+BINANCE_FILE = "crates/qx-adapter/src/binance.rs"
+# V11 R4-8：针路 OMS 的订单表刻意不共用上面那把封顶——登记的是"刻意的不同"，不是漏网。
+OMS_FILE = "crates/qx-zhenlu/src/oms.rs"
+
+
+def io_budget_and_venue_cache_check() -> None:
+    """fam04：三处子进程 stdin 写入都进预算、venue 订单缓存封顶且级联退派生索引。
+
+    两条链路各自有一处"没有用例能在不挂死/不丢事实的前提下断言"的形状，所以判据只能钉
+    静态形状：写入点不许退回裸 `write_all`；封顶只退终态订单、越限才扫表、退场连派生索引
+    一起退，且 OMS 那张表刻意不共用它。
+    """
+    stdin_regressions = []
+    for rel, marker in STDIN_BUDGET_SITES:
+        body = production_text((ROOT / rel).read_text(encoding="utf-8"))
+        if ".write_all(" in body:
+            stdin_regressions.append(f"{rel} 又直接在调用线程上 write_all 子进程 stdin")
+        elif "write_all_within(" not in body or marker not in body:
+            stdin_regressions.append(f"{rel} 不再经带预算的写入通道")
+    check(
+        not stdin_regressions,
+        "三处子进程 stdin 写入都走 write_all_within，没有一处退回裸 write_all（V11 N8）",
+        "；".join(stdin_regressions)
+        + "（配置里的 timeout_ms 于是只保护读、不保护写：对端不读时管道写满，"
+        "调用线程永远停在写那行）",
+    )
+    io_budget = production_text((ROOT / IO_BUDGET_FILE).read_text(encoding="utf-8"))
+    check(
+        io_budget.count("recv_timeout(timeout)") == 1
+        and io_budget.count(".recv()") == 0
+        and io_budget.count("on_timeout();") == 1
+        and io_budget.count('=> Err(format!("写入失败: {error}")),') == 1,
+        "预算只按截止时间收写线程，且只有超时那一格负责把打断管道的责任交给调用方（V11 N8）",
+        "无截止的 `.recv()` 让超时分支永不成立；普通写错误若也走 on_timeout，正常退出"
+        "的子进程会被顺手杀掉，两条分支在产物里就分不出是谁杀的",
+    )
+    # V11 N11：WebSocket 的长度预算必须同时管住单帧、整条消息与单次轮询的帧数，且各只有一个
+    # 具名常量。只卡单帧时，对端把一条超大消息切成一串各自合法的片段就能把读侧缓冲无限堆大。
+    adapter = production_text((ROOT / ADAPTER_ROOT_FILE).read_text(encoding="utf-8"))
+    check(
+        adapter.count("const MAX_WEBSOCKET_FRAME_BYTES: u64 = 16 * 1024 * 1024;") == 1
+        and adapter.count("const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 16 * 1024 * 1024;") == 1
+        and adapter.count("const MAX_WEBSOCKET_FRAMES_PER_POLL: usize = 64;") == 1
+        and adapter.count("if length > MAX_WEBSOCKET_FRAME_BYTES {") == 1
+        and adapter.count(
+            "current.payload.len().saturating_add(payload.len()) > MAX_WEBSOCKET_MESSAGE_BYTES"
+        )
+        == 1
+        and adapter.count("if consumed_frames > MAX_WEBSOCKET_FRAMES_PER_POLL {") == 1,
+        "WebSocket 长度预算按单帧 / 整条消息 / 单次轮询三层各用一个具名常量（V11 N11）",
+        "只卡单帧时，对端把一条超大消息切成一串各自合法的片段就能把行情读侧的缓冲无限堆大"
+        "——那条链路是每条订阅共用的一颗进程；两处用不同的数则会出现『单帧放行、整条拒收』"
+        "这种没人能解释的口径",
+    )
+    # V11 N9：柜台适配器的订单缓存是启动期灌进来的历史副本，必须有封顶。封顶本身可以断言
+    # （越限退场后条数、未终态订单还在场、派生索引跟着退），但"退错东西"的代价是丢事实，
+    # 所以退场资格与失败收口两头都要钉住。
+    cache = production_text((ROOT / VENUE_CACHE_FILE).read_text(encoding="utf-8"))
+    check(
+        cache.count("pub(crate) const MAX_CACHED_ORDERS: usize = 8_192;") == 1
+        and cache.count("const ORDER_EVICT_HYSTERESIS: usize = 1_024;") == 1
+        and cache.count("if orders.len() <= MAX_CACHED_ORDERS {") == 1
+        and cache.count(".filter(|(_, order)| order.status.is_terminal())") == 1
+        and cache.count(".take(overflow)") == 1
+        and cache.count(".retain(|client_id, _| !evicted.contains(client_id))") == 1,
+        "venue 订单缓存封顶只挑终态订单，且越限才扫表、一次退到迟滞线（V11 N9）",
+        "去掉 is_terminal 那层筛选就是拿丢活跃订单换内存——被退场的单还在接成交回报，"
+        "下一笔成交会按『未知本地订单』炸开；去掉越限判断则启动期每条历史订单都扫一遍全表",
+    )
+    cache_growths = []
+    for rel, sites, derived in VENUE_CACHE_SITES:
+        body = production_text((ROOT / rel).read_text(encoding="utf-8"))
+        if body.count("let evicted = evict_stale_terminal_orders(&mut self.orders);") != sites:
+            cache_growths.append(f"{rel} 的封顶调用点不是 {sites} 处")
+        if "fn forget_orders(&mut self, evicted: &BTreeSet<u64>)" not in body:
+            cache_growths.append(f"{rel} 缺少派生索引级联")
+        flat = "".join(body.split())
+        for statement in derived:
+            if statement not in flat:
+                cache_growths.append(f"{rel} 的 {statement.split('.')[1]} 没跟着订单退场")
+    check(
+        not cache_growths,
+        "两个常驻 venue 的每处订单写入都过封顶，退场时级联清掉全部派生索引（V11 N9）",
+        "；".join(cache_growths)
+        + "（只退 Order 不退远端订单号与成交去重键，缓存里照样留着账户全部历史，"
+        "封顶就成了摆设；漏掉一个 growth 点，那个点灌进来的历史就绕过封顶常驻）",
+    )
+    binance_body = production_text((ROOT / BINANCE_FILE).read_text(encoding="utf-8"))
+    check(
+        binance_body.count("Binance 用户回报对应未知本地订单") == 1
+        and binance_body.count("if !self.orders.contains_key(&client_order_id) {") == 1,
+        "已退场订单的回报仍按分歧升级对账，不被缓存策略静默收下（V11 N9）",
+        "封顶一旦同时删掉 bind_remote_order 的未知订单闸门，退场就从一个内存问题变成"
+        "『柜台回报认不到本地订单时没人报警』——那条回报会被当成可忽略的账户事件丢掉",
+    )
+    # V11 R4-8：上面那把封顶只管柜台适配器自己那份缓存，针路 OMS 的订单表刻意没有共用它。
+    # 这不是漏网，是一处不对称：实盘 ingest 认不到本地订单会升级对账，回填却把同一种
+    # "订单不存在"直接问号上抛——照抄封顶的净效果是账户历史长过迟滞线之后 EventLog 再也打不开。
+    oms_prod = production_text((ROOT / OMS_FILE).read_text(encoding="utf-8"))
+    check(
+        "evict_stale_terminal_orders" not in oms_prod
+        and "MAX_CACHED_ORDERS" not in oms_prod
+        and "const MAX_" not in oms_prod
+        and ".retain(" not in oms_prod,
+        "针路 OMS 的订单表没有偷偷共用 venue 那把封顶（V11 R4-8：登记的是刻意的不同）",
+        "封顶一旦抄进 oms.rs，被退场的订单在实盘侧走 ReconcileRequired（那是既有的一等回答），"
+        "在回填侧却走 `apply_fill(fill)?` 上抛——回填是按事件顺序重放整条日志的，退掉一笔早期"
+        "终态订单就等于把它后面每一笔成交都变成『订单不存在』，open() 当场失败",
+    )
+
+
+def file_lock_single_source_check() -> None:
+    """文件写锁只有一个内核定义点，四处消费全部委托它（V11 §40 D1）。
+
+    旧形状是四处各自 `OpenOptions::create_new` 抢锁、释放时删文件；释放依赖进程活着走到
+    那一步，Ctrl-C / OOM / 断电留下的锁文件会让对应链路此后每一次运行都失败，且报错既不
+    点名锁在哪、也不给任何出路。收口后判据守三件：定义点唯一、没有任何一处再就地删锁文件、
+    四个消费文件都引用内核。另加一颗守「同一场竞争只接管一次」住在纯判据函数里（而不是
+    退回循环里的一句 `if` 守卫），并由抢锁循环把自家计数喂回去。
+    """
+    crate_sources = {
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8")
+        for path in sorted(CRATES.glob("*/src/*.rs")) + sorted(CRATES.glob("*/src/**/*.rs"))
+        if "_test" not in path.name
+    }
+    lock_defs = sorted(
+        rel
+        for rel, source in crate_sources.items()
+        if re.search(r"^pub struct FileLock\b", source, re.MULTILINE)
+    )
+    check(
+        lock_defs == [FILE_LOCK_KERNEL],
+        "文件写锁 FileLock 只有一个定义点（qx-core::file_lock）",
+        f"定义于 {lock_defs}，期望 {[FILE_LOCK_KERNEL]}",
+    )
+    hand_rolled = sorted(
+        rel
+        for rel, source in crate_sources.items()
+        if rel != FILE_LOCK_KERNEL
+        and re.search(r"remove_file\([^;]*lock", source, re.IGNORECASE)
+    )
+    check(
+        not hand_rolled,
+        "锁文件的抢占与释放不再各写一份（只有内核删自己的锁）",
+        f"就地实现锁生命周期于 {hand_rolled}",
+    )
+    for rel in FILE_LOCK_CONSUMERS:
+        source = crate_sources.get(rel, "")
+        delegates = "FileLock::acquire" in source
+        regressed = re.search(r"remove_file\([^;]*lock", source, re.IGNORECASE)
+        check(
+            delegates and not regressed,
+            f"{Path(rel).name} 的写锁委托 qx-core::file_lock",
+            f"引用统一锁={'是' if delegates else '否'}；就地锁算式={'有' if regressed else '无'}",
+        )
+    # "同一场竞争只接管一次"这条判据必须住在纯判据函数里，并由抢锁循环把自家计数喂回去。规则若
+    # 退回循环里的一句 `if` 守卫，纯函数就答不出"第二次见到孤儿锁"——那一支在单进程用例里永远走不到
+    # （删掉孤儿锁之后下一轮 create_new 必然成功），于是连"只接管一次"这个命名都在空转。判据在函数里、
+    # 循环却不传计数，同样等于没有这条判据（V11 D1 变异 L3 的两半）。
+    kernel_source = crate_sources.get(FILE_LOCK_KERNEL, "")
+    rule_in_kernel = "age >= stale_after && !takeover_used" in kernel_source
+    loop_feeds_the_flag = (
+        re.search(
+            r"decide_lock\(\s*[^,]+,\s*policy\.stale_after,\s*takeover_used\s*\)", kernel_source
+        )
+        is not None
+    )
+    # 年龄只由判据交出的那一格带回报出的口径（V11 R7-9）：循环自己再 `age_of` 一次并把
+    # `Takeover { .. }` 丢掉，同一份观察就有了两种写法——判据看到的年龄与说出去的年龄可以分叉。
+    verdict_carries_the_age = (
+        "LockDecision::Takeover { age } => {" in kernel_source
+        and "LockDecision::Wait { age } => {" in kernel_source
+        and "last_age = age_of(&path)" not in kernel_source
+    )
+    check(
+        rule_in_kernel
+        and loop_feeds_the_flag
+        and verdict_carries_the_age
+        and kernel_source.count("takeover_used = true;") == 1,
+        "锁的『同一场竞争只接管一次』住在 decide_lock 里，且抢锁循环把计数喂回判据、只按判据交出的年龄说话",
+        f"判据在纯函数={'是' if rule_in_kernel else '否'}；循环回传计数={'是' if loop_feeds_the_flag else '否'}"
+        f"；年龄由判据带回={'是' if verdict_carries_the_age else '否'}"
+        f"；计数写入 {kernel_source.count('takeover_used = true;')} 次",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -11805,6 +12067,8 @@ def main() -> int:
     api_read_model_liveness_check()
     surface_allowlist_hygiene_check()
     cli_surface_coverage_check()
+    file_lock_single_source_check()
+    io_budget_and_venue_cache_check()
     # 含本条自身：+1 才是本轮真正会打印的总条数，所以地板常量按"含这一条"取值。
     check(
         checks + 1 >= GATE_CHECK_FLOOR,

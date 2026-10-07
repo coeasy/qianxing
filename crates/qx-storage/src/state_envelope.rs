@@ -2,8 +2,9 @@
 //!
 //! 审计口径修正：四个文件状态存储（`JsonStateStore`、`FileConsumerStateStore`、
 //! `FileOutboxStore`、`FileJobQueue`）在迁移前**已经**共享同一套原子替换
-//! [`write_atomic_path`] 与跨进程锁 [`acquire_storage_lock`]（含 Phase 4t 修掉的
-//! Windows `create_new` 遇 `PermissionDenied` 的有界重试，逻辑逐字保留）；
+//! [`write_atomic_path`] 与跨进程锁 [`acquire_storage_lock`]；该锁的判据自 V11 §40 D1
+//! 起住在 qx-core::file_lock（Windows `create_new` 遇 `PermissionDenied` 的有界重试逐字
+//! 保留，另加孤儿锁年龄接管），本模块只保留调用点；
 //! 真正写重复的是它们各自的“序列化 + 信封校验 + 读改写事务”层。本模块把该层收敛
 //! 为唯一实现：
 //!
@@ -17,6 +18,7 @@
 //! `None`，未来如需引入版本 key 必须另做迁移而不是就地改写。
 
 use crate::{StorageError, TEMP_FILE_SEQUENCE};
+use qx_core::{FileLock, LockError};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::io::ErrorKind;
@@ -191,69 +193,16 @@ pub(crate) fn write_state_text(
     write_atomic_path(path, root, content)
 }
 
-#[derive(Debug)]
-pub(crate) struct StorageLock {
-    path: PathBuf,
-}
-
-impl Drop for StorageLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-/// 跨进程锁的等待预算：墙钟时间，不是尝试次数。
+/// 存储侧写锁：抢锁与释放全部委托 qx-core::file_lock（V11 §40 D1）。
 ///
-/// 按次数计预算时，"能等多久"取决于一次 `create_new` 失败要付出多久：整树并发下
-/// 释放窗口（Windows 上删除待处理 + 杀软重扫同名文件）可远超原先 100 次 × 1 毫秒的
-/// 预算，于是审计追加会返回 `Conflict`（实测：`audit_file_store_serializes_concurrent_appends_without_losing_tail`
-/// 在负载下把这条链跑红）。墙钟预算让"能熬过多忙的机器"变成显式承诺。
-const STORAGE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(4_000);
-/// 轮询退避上限：小步快速让路给释放方，稳态下不把文件系统调用排队拉长。
-const STORAGE_LOCK_BACKOFF_STEP: std::time::Duration = std::time::Duration::from_millis(2);
-const STORAGE_LOCK_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_millis(16);
-
-pub(crate) fn acquire_storage_lock(path: PathBuf) -> Result<StorageLock, StorageError> {
-    acquire_storage_lock_within(path, STORAGE_LOCK_WAIT)
-}
-
-/// 有界等待的锁获取：只在预算耗尽时返回 `Conflict`，因此不存在自旋不退出的路径。
-/// 预算作为参数留给用例在同一毫秒尺度上验证两端（等到 → 成功、超预算 → `Conflict`）。
-fn acquire_storage_lock_within(
-    path: PathBuf,
-    wait: std::time::Duration,
-) -> Result<StorageLock, StorageError> {
-    // `AlreadyExists` 与 Windows 删除窗口内 `create_new` 抛出的 `PermissionDenied`
-    // （os error 5）都算锁正在占用或正在释放。
-    let deadline = std::time::Instant::now() + wait;
-    let mut backoff = STORAGE_LOCK_BACKOFF_STEP;
-    let mut attempts = 0_u32;
-    loop {
-        attempts += 1;
-        let error = match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(_) => return Ok(StorageLock { path }),
-            Err(error) => error,
-        };
-        if !matches!(
-            error.kind(),
-            ErrorKind::AlreadyExists | ErrorKind::PermissionDenied
-        ) {
-            return Err(StorageError::Io(error.to_string()));
-        }
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(StorageError::Conflict(format!(
-                "存储追加锁被占用（{attempts} 次尝试、{} 毫秒内未取得），调用方应在恢复后重试",
-                wait.as_millis()
-            )));
-        }
-        std::thread::sleep(backoff.min(remaining));
-        backoff = (backoff * 2).min(STORAGE_LOCK_BACKOFF_MAX);
-    }
+/// 旧实现只有"100 次 × 1ms"这一层有界重试；锁文件由被杀掉的进程留下时，每一次后续调用都会
+/// 撞上同一把死锁并永久失败。文件锁的年龄判据补回这条出路，同时保留调用方依赖的两种错误形状：
+/// 竞争=`Conflict`，其它=`Io`。
+pub(crate) fn acquire_storage_lock(path: PathBuf) -> Result<FileLock, StorageError> {
+    FileLock::acquire(path).map_err(|error| match error {
+        LockError::Contended(message) => StorageError::Conflict(message),
+        LockError::Io(message) => StorageError::Io(message),
+    })
 }
 
 pub(crate) fn sync_file(path: &Path) -> Result<(), StorageError> {
@@ -340,60 +289,29 @@ mod tests {
         assert!(matches!(validated, Err(StorageError::Conflict(_))));
     }
 
-    fn lock_fixture(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "qianxing-lock-{}-{}-{}.lock",
-            name,
+    /// 锁引擎的两种失败形状在存储侧必须分开：把"锁目录建不出来"报成"有人在写"，会让人
+    /// 去排查一个不存在的并发写者（V11 §40 D1）。等待预算与接管判据由 qx-core::file_lock
+    /// 的用例钉住，这里只钉住映射。
+    #[test]
+    fn an_unusable_lock_path_is_reported_as_io_not_as_contention() {
+        let dir = std::env::temp_dir().join(format!(
+            "qianxing-storage-lock-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ))
-    }
-
-    #[test]
-    fn storage_lock_waits_out_a_brief_holder_instead_of_failing_the_write() {
-        let path = lock_fixture("wait");
-        std::fs::write(&path, "held").unwrap();
-        let releaser = {
-            let path = path.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-                let _ = std::fs::remove_file(path);
-            })
-        };
-        // 预算取生产承诺 `STORAGE_LOCK_WAIT` 而不是随手一个小数值：整树并发构建下，一次
-        // `create_new` 失败要付的墙钟可远超轮询退避（实测 500 毫秒预算内只试着重试 3 次就把
-        // 这条用例打红 —— 见 logs/s136 的 `Conflict("存储追加锁被占用（3 次尝试、500 毫秒内未取得）…")`）。
-        // 要验的判据是"占用方在**产品**预算内释放时写不能失败"，所以两侧都必须用同一个常数；
-        // 预算太紧的下界由隔壁的 30 毫秒超预算用例守住。
-        let lock = acquire_storage_lock_within(path.clone(), STORAGE_LOCK_WAIT);
-        releaser.join().unwrap();
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 父目录位置放一个普通文件：create_dir_all 必然失败，而且失败在抢锁之前。
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, "held").unwrap();
+        let error = acquire_storage_lock(blocker.join("nested.write.lock"))
+            .expect_err("锁目录不可用时不能报成拿到锁");
         assert!(
-            lock.is_ok(),
-            "占用方在预算内释放时，等待必须拿到锁而不是把写失败上抛: {lock:?}"
+            matches!(error, StorageError::Io(_)),
+            "目录不可用的口径必须是 Io，实际 {error:?}"
         );
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn storage_lock_gives_up_at_its_deadline_rather_than_spinning_forever() {
-        let path = lock_fixture("deadline");
-        std::fs::write(&path, "held").unwrap();
-        let started = std::time::Instant::now();
-        let result =
-            acquire_storage_lock_within(path.clone(), std::time::Duration::from_millis(30));
-        let elapsed = started.elapsed();
-        let _ = std::fs::remove_file(path);
-        let detail = match result {
-            Err(StorageError::Conflict(detail)) => detail,
-            other => panic!("超预算的错误形态必须是 Conflict，实际为 {other:?}"),
-        };
-        assert!(
-            elapsed >= std::time::Duration::from_millis(30)
-                && elapsed < std::time::Duration::from_secs(2),
-            "等待必须落在墙钟预算内结束，实际 {elapsed:?}: {detail}"
-        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

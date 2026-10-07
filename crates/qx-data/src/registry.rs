@@ -1,4 +1,5 @@
 use crate::catalog::DatasetManifest;
+use qx_core::FileLock;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -114,22 +115,16 @@ impl JsonDatasetRegistry {
 
     pub fn register(&mut self, manifest: DatasetManifest) -> Result<(), String> {
         manifest.validate()?;
-        let lock_path = self.lock_path();
-        let lock = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-            .map_err(|error| format!("acquire dataset registry lock failed: {error}"))?;
-        let result = (|| {
-            // 锁内重读，避免两个 CLI 进程都基于同一旧内存快照写入而互相覆盖。
-            let mut current = Self::load_inner(&self.path)?;
-            current.register(manifest)?;
-            self.inner = current;
-            self.persist_unlocked()
-        })();
-        drop(lock);
-        let _ = std::fs::remove_file(&lock_path);
-        result
+        // 抢锁交给 qx-core::file_lock：旧实现只认"文件不存在才建得来"，一次 Ctrl-C 或 OOM
+        // 留下的锁文件会让这条链此后每一次运行都失败在 `文件存在。 (os error 80)`，
+        // 既不点名锁在哪、也不给出路（V11 §40 D1）。
+        let _lock = FileLock::acquire(self.lock_path())
+            .map_err(|error| format!("获取数据集注册表写锁失败: {error}"))?;
+        // 锁内重读，避免两个 CLI 进程都基于同一旧内存快照写入而互相覆盖。
+        let mut current = Self::load_inner(&self.path)?;
+        current.register(manifest)?;
+        self.inner = current;
+        self.persist_unlocked()
     }
 
     pub fn resolve(&self, dataset_id: &str, version: &str) -> Option<&DatasetManifest> {

@@ -4,6 +4,8 @@
 //! JSONL 协议接入既有 `Venue` 事实边界。提交结果未知时返回 ReconcileRequired，
 //! 不自动重试或补单；订单回报通过 `sync_order` 显式进入统一 VenueEvent。
 
+use crate::io_budget::write_all_within;
+use crate::venue_cache::evict_stale_terminal_orders;
 use qx_core::{
     Fill, MarginMode, Money, Order, OrderStatus, PositionMode, PositionSide, Price, Quantity,
     QxError, QxResult, SCALE,
@@ -13,7 +15,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::{BufReader, Write};
+use std::io::BufReader;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -190,39 +192,18 @@ impl CcxtRpc for CcxtProcessClient {
             .map_err(|error| format!("编码 CCXT Worker 请求失败: {error}"))?;
         // 写入必须与读取同受 timeout_ms 约束：子进程一旦"活着但不再读 stdin"，超出 OS 匿名管道
         // 缓冲（~64KB）的那段 write_all 会永久阻塞，而 timeout_ms 只守着读侧 recv——本进程就此
-        // 卡死，连关停令牌都读不到。与策略宿主（V13 R2 #281）、event consumer handler（#282）
-        // 是同一个缺陷的第三处，故同样把写入交给独立线程，主路径按预算收口（R4-A）。
-        let bytes = format!("{payload}\n").into_bytes();
-        let mut stdin = self
+        // 卡死，连关停令牌都读不到。三处同类缺陷共用同一条带预算的写入通道（qx-adapter::io_budget）。
+        let mut bytes = payload.into_bytes();
+        bytes.push(b'\n');
+        let stdin = self
             .stdin
             .take()
             .ok_or_else(|| "CCXT Worker stdin 不可用".to_string())?;
-        let (write_sender, write_done) = mpsc::sync_channel(1);
-        thread::spawn(move || {
-            let failure = stdin
-                .write_all(&bytes)
-                .and_then(|()| stdin.flush())
-                .err()
-                .map(|error| format!("写入 CCXT Worker 输入失败: {error}"));
-            let _ = write_sender.send((failure, stdin));
+        let written = write_all_within(stdin, bytes, Duration::from_millis(self.timeout_ms), || {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
         });
-        match write_done.recv_timeout(Duration::from_millis(self.timeout_ms)) {
-            Ok((Some(failure), handle)) => {
-                self.stdin = Some(handle);
-                return Err(failure);
-            }
-            Ok((None, handle)) => {
-                self.stdin = Some(handle);
-            }
-            Err(_) => {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
-                return Err(format!(
-                    "写入 CCXT Worker 输入超时 timeout_ms={}（worker 存活但不接收输入）",
-                    self.timeout_ms
-                ));
-            }
-        }
+        self.stdin = Some(written.map_err(|error| format!("写入 CCXT Worker 失败: {error}"))?);
         let line = match self
             .responses
             .recv_timeout(Duration::from_millis(self.timeout_ms))
@@ -272,12 +253,9 @@ pub struct CcxtProcessVenue {
     id: String,
     rpc: Box<dyn CcxtRpc>,
     connected: bool,
-    /// 本地订单状态、远端订单号映射与下面这一格**只增不减的成交幂等台账**共用同一个上界：
-    /// 进程一生提交过的订单数。三者都**不能**按数量或时间淘汰——`trades` 查询会把同一笔
-    /// trade 重投，去掉任何一条已见 `trade_id` 就等于允许同一笔费用被累计两次（重复记账），
-    /// 而这是本仓库唯一不接受的失败方式。要封顶就得先落成交对账的持久幂等键
-    /// （P0-2 那层事务语义），在那之前刻意保持只增不减；判据只守「不得出现淘汰调用」，
-    /// 谁加一个 `retain`/`remove` 就把重复记账的口子开回来了（V13 R5）。
+    /// 本地订单状态、远端订单号映射与成交去重键共用同一封顶策略：终态订单在超过
+    /// `MAX_CACHED_ORDERS + ORDER_EVICT_HYSTERESIS` 后按 client_id 升序退场，派生索引同步级联。
+    /// 退场即升级对账：被退订单再收到回报会落到「CCXT 本地订单不存在」出口，不会被静默收下。
     orders: BTreeMap<u64, Order>,
     remote_ids: BTreeMap<u64, String>,
     seen_trade_ids: BTreeMap<u64, BTreeSet<String>>,
@@ -297,6 +275,20 @@ impl CcxtProcessVenue {
         }
     }
 
+    /// 订单缓存封顶后级联清掉派生索引：远端订单号、成交去重键、累计成本都必须跟着
+    /// 被退场的订单一起消失，否则缓存里照样留着账户全部历史，封顶就成了摆设。
+    fn forget_orders(&mut self, evicted: &BTreeSet<u64>) {
+        if evicted.is_empty() {
+            return;
+        }
+        self.remote_ids
+            .retain(|client_id, _| !evicted.contains(client_id));
+        self.seen_trade_ids
+            .retain(|client_id, _| !evicted.contains(client_id));
+        self.cumulative_costs
+            .retain(|client_id, _| !evicted.contains(client_id));
+    }
+
     pub fn restore_order(&mut self, order: Order, remote_id: impl Into<String>) -> QxResult<()> {
         order.validate().map_err(QxError::BusinessViolation)?;
         let remote_id = remote_id.into();
@@ -314,6 +306,8 @@ impl CcxtProcessVenue {
             self.cumulative_costs.remove(&order.client_id);
         }
         self.orders.insert(order.client_id, order);
+        let evicted = evict_stale_terminal_orders(&mut self.orders);
+        self.forget_orders(&evicted);
         Ok(())
     }
 
@@ -676,6 +670,8 @@ impl Venue for CcxtProcessVenue {
         self.remote_ids.insert(order.client_id, remote_id.clone());
         self.cumulative_costs.remove(&order.client_id);
         self.orders.insert(order.client_id, order.clone());
+        let evicted = evict_stale_terminal_orders(&mut self.orders);
+        self.forget_orders(&evicted);
         Ok(vec![VenueEvent::Accepted {
             client_order_id: order.client_id,
             venue_order_id: remote_id,

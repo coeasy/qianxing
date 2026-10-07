@@ -19,6 +19,7 @@ crates/qx-cli/src/worker_entry.rs: 579
 crates/qx-cli/src/workers.rs: 527
 crates/qx-control/src/lib.rs: 699
 crates/qx-core/src/event.rs: 721
+crates/qx-core/src/file_lock.rs: 516
 crates/qx-core/src/sourcing.rs: 567
 crates/qx-datastruct/src/lib.rs: 702
 crates/qx-execution/src/lib.rs: 1562

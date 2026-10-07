@@ -429,41 +429,30 @@ pub(crate) fn invoke_event_consumer_handler(
     let mut child = command
         .spawn()
         .map_err(|error| format!("启动事件 consumer handler 失败: {error}"))?;
-    let Some(mut stdin) = child.stdin.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err("事件 consumer handler stdin 不可用".into());
-    };
-    // 写入必须与下面的退出轮询同受 handler.timeout_ms 约束：consumer handler 是用户配置的任意外部
-    // 程序，一旦存活却不从 stdin 取字节（或自身卡在网络/磁盘），超出 OS 匿名管道缓冲（~64KB）的那段
-    // write_all 会永久阻塞，而原 timeout_ms 只守着下面的 try_wait 轮询——本进程就此卡死。跨进程 Outbox
-    // 事件里 AccountPositionSnapshot/AccountBalanceSnapshot 把整段 Vec 内联进单条 payload，足以越过
-    // 64KB，所以这不是假设场景。故把 write_all 交给独立线程，先落 EOF 再回报，主路径按预算 recv_timeout
-    // 收口，超时即杀 handler（同时关闭管道读端、放行阻塞的写线程）（V13 R2 第三十五遍 #282）。
-    let (write_sender, write_done) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let failure = stdin
-            .write_all(&payload)
-            .and_then(|_| stdin.write_all(b"\n"))
-            .err();
-        drop(stdin);
-        let _ = write_sender.send(failure);
-    });
-    match write_done.recv_timeout(Duration::from_millis(handler.timeout_ms)) {
-        Ok(Some(error)) => {
+    if let Some(stdin) = child.stdin.take() {
+        // 写也要进预算（V11 N8）：handler 若不读 stdin，管道写满后 `write_all` 再也不返回，
+        // 而下面那圈 timeout_ms 判定排在它后面，压根没机会开始。跨进程 Outbox 事件里
+        // AccountPositionSnapshot/AccountBalanceSnapshot 把整段 Vec 内联进单条 payload，
+        // 足以越过 OS 匿名管道缓冲（~64KB），所以这不是假设场景。
+        let mut envelope = payload;
+        envelope.push(b'\n');
+        let written = qx_adapter::write_all_within(
+            stdin,
+            envelope,
+            Duration::from_millis(handler.timeout_ms),
+            || {
+                let _ = child.kill();
+            },
+        );
+        if let Err(error) = written {
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!("写入事件 consumer handler stdin 失败: {error}"));
         }
-        Ok(None) => {}
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!(
-                "写入事件 consumer handler stdin 超时 timeout_ms={}（handler 存活但不接收输入）",
-                handler.timeout_ms
-            ));
-        }
+    } else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("事件 consumer handler stdin 不可用".into());
     }
     let started = Instant::now();
     loop {

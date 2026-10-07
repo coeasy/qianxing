@@ -1,9 +1,6 @@
-//! 外部适配器：把 REST/HTTP 事实转换为 Provider/Venue 统一契约。
-//!
-//! 本模块只提供**共享的传输层**（HTTP/TLS/WebSocket 客户端、对账工具）与对外契约 `pub use`，
-//! 供应商协议各自住在 `binance`/`ccxt` 子模块里。适配器不能直接改 Ledger：网络错误按“结果未知”
-//! 处理，成功响应才生成 Accepted，成交只能由供应商用户流回报进入事实事件（V12 §16 删掉了无装配
-//! 读者的通用 `RestVenue` 脚手架，避免第二条入账入口）。
+//! 外部适配器：把 REST/HTTP 事实转换为 Provider/Venue 统一契约。本模块只提供**共享传输层**
+//! （HTTP/TLS/WebSocket 客户端、对账工具）与对外契约 `pub use`，供应商协议各自住在 `binance`/
+//! `ccxt` 子模块。适配器不能直接改 Ledger：网络错误按“结果未知”处理，成交只能由用户流回报进入事实事件。
 
 use qx_core::{Order, OrderStatus};
 use qx_zhenlu::VenueOrderSnapshot;
@@ -18,7 +15,10 @@ use std::time::{Duration, Instant};
 
 mod binance;
 mod ccxt;
+mod io_budget;
 mod reconcile;
+mod venue_cache;
+pub use io_budget::write_all_within;
 pub use binance::{
     run_binance_user_stream, run_binance_user_stream_with_config_loader, BinanceQuotePoll,
     BinanceSpotAuth, BinanceSpotCredentials, BinanceSpotMarketData, BinanceSpotMarketStream,

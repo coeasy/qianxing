@@ -5,7 +5,7 @@
 
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
 use qx_core::retry;
-use qx_core::{Event, EventLog, Fnv1a, QxError, QxResult};
+use qx_core::{Event, EventLog, FileLock, Fnv1a, LockError, QxError, QxResult};
 use qx_scheduler::{JobRun, JobSpec, JobStatus, Scheduler};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,7 @@ pub(crate) use state_envelope::JsonStateEnvelope;
 use state_envelope::{
     acquire_storage_lock, encode_state_json, read_json_file, read_state_json,
     read_state_json_or_default, read_state_text, read_state_text_required, transact_state_json,
-    write_atomic_path, write_json_file, write_state_json, write_state_text, Commit, StorageLock,
+    write_atomic_path, write_json_file, write_state_json, write_state_text, Commit,
 };
 
 // 四个文件后端存储的唯一定义点在 `file` 目录模块；crate 根只负责再导出，
@@ -1359,7 +1359,7 @@ impl ControlCommandQueue {
             .join(format!("{command_id}.lease.json")))
     }
 
-    fn acquire_claim_lock(&self, command_id: u64) -> Result<StorageLock, StorageError> {
+    fn acquire_claim_lock(&self, command_id: u64) -> Result<FileLock, StorageError> {
         std::fs::create_dir_all(self.root.join("commands"))
             .map_err(|error| StorageError::Io(error.to_string()))?;
         acquire_storage_lock(

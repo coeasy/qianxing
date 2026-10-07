@@ -477,36 +477,30 @@ impl PythonStrategyClient {
                         .encode(DEFAULT_MAX_FRAME_BYTES)
                         .map_err(|error| format!("编码 {} 分帧输入失败: {error}", self.label))?
                 };
-                let mut stdin = self
+                let stdin = self
                     .stdin
                     .take()
                     .ok_or_else(|| format!("{} worker stdin 不可用", self.label))?;
-                let label = self.label.clone();
-                let (write_sender, write_done) = mpsc::channel();
-                thread::spawn(move || {
-                    let write_result = stdin.write_all(&bytes);
-                    let failure = write_result
-                        .and_then(|()| stdin.flush())
-                        .err()
-                        .map(|error| format!("写入 {label} 输入失败: {error}"));
-                    let _ = write_sender.send((failure, stdin));
-                });
-                // 断管道（os error 232/32）与"worker 一个字都没输出就退出"是同一次死亡的两面，
-                // 故写侧失败连同回传的 stdin 一起并回 death_note。
-                match write_done.recv_timeout(Duration::from_millis(self.timeout_ms)) {
-                    Ok((Some(failure), stdin)) => {
-                        self.stdin = Some(stdin);
-                        return Err(format!("{failure}{}", self.death_note()));
-                    }
-                    Ok((None, stdin)) => {
-                        self.stdin = Some(stdin);
-                    }
-                    Err(_) => {
-                        let note = self.death_note();
+                // 写也要进预算（V11 N8）：worker 卡在别处不读 stdin 时，管道写满后这条
+                // `write_all` 再也不返回，而下面那圈"响应超时"排在它后面，压根没机会开始。
+                // 超时即按"这条管道已不归我们掌控"处理：杀掉子进程，句柄不回置。
+                let written = qx_adapter::write_all_within(
+                    stdin,
+                    bytes,
+                    Duration::from_millis(self.timeout_ms),
+                    || {
                         let _ = self.child.kill();
+                    },
+                );
+                match written {
+                    Ok(stdin) => self.stdin = Some(stdin),
+                    // 断管道（os error 232/32）与"worker 一个字都没输出就退出"是同一次死亡的两面，
+                    // 故写侧失败连同 death_note 一起报出去。
+                    Err(error) => {
+                        let note = self.death_note();
                         return Err(format!(
-                            "写入 {} 输入超时 timeout_ms={}{}（worker 存活但不接收输入）",
-                            self.label, self.timeout_ms, note
+                            "写入 {} 输入失败: {error}{}",
+                            self.label, note
                         ));
                     }
                 }
