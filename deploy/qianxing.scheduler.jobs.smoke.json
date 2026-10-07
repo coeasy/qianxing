@@ -2,7 +2,7 @@
   {
     "job_id": "strategy-smoke",
     "job_version": "v1",
-    "owner": "strategy-smoke",
+    "owner": "*",
     "enabled": true,
     "trigger": {
       "Cron": "* * * * *"

@@ -428,6 +428,7 @@ mod risk_port_channel;
 mod run_entry_argument_honesty;
 mod runtime_api_worker_identity;
 mod scheduler_dispatch_support;
+mod scheduler_owner_routing;
 mod settlement_currency_caliper;
 mod settlement_currency_single_source;
 mod spread_recovery_cadence;

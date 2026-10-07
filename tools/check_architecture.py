@@ -539,7 +539,7 @@ WORKSPACE_TEST_FLOOR = 1083  # 1082 -> 1083：V13 R12/R13 补一条 PostgreSQL �
 # 存档落空条数天花板 9 只降不升。
 # 601 → 602：V13 R1-H 重落 V11 R6-1——删掉零构造者的 `CommandStatus::Rejected`，
 # 终态词表收回到 `is_final` 体内一处（控制面 + CLI 幂等入口两个平面各一颗判据）。
-GATE_CHECK_FLOOR = 678  # 671 -> 678：V13 R17 补七颗 fam04「适配层 IO 预算与 venue 缓存」判据（io_budget_and_venue_cache_check 七颗）。恢复 crates/qx-adapter/src/io_budget.rs 与 crates/qx-adapter/src/venue_cache.rs，把 write_all_within 接进三处子进程 stdin 写入（CCXT worker / 策略 worker / 事件 consumer handler），把 evict_stale_terminal_orders 接进两个常驻 venue 的订单写入点（binance 3 / ccxt 2）并级联退派生索引。七颗分别钉：三处 stdin 写入都走 write_all_within 且无一处退回裸 write_all、io_budget 只按截止时间收写线程且只有超时那格把打断管道的责任交回调用方、WebSocket 单帧/整条消息/单次轮询三层长度预算各一个具名常量、venue 缓存封顶只退终态订单且越限才扫表、两个 venue 的每处订单写入都过封顶并级联清派生索引、binance 未知订单仍升级对账、针路 OMS 刻意不共用封顶。上一轮基线 671 是 V13 R16 补八颗 fam01「文件锁统一」判据（file_lock_single_source_check 七颗 + backtest_clock_honesty_check 的墙钟豁免在场一颗）。恢复 crates/qx-core/src/file_lock.rs（V11 §40 D1 的崩溃可恢复写锁：纯判据 decide_lock + 有界等待 + 按年龄接管孤儿锁 + Drop 只删自己那把），并把四处就地 create_new 锁（数据集注册表 qx-data/registry.rs、多腿状态 qx-zhenlu/lib.rs、存储信封 qx-storage/state_envelope.rs、作业 claim qx-storage/file/jobs.rs）全部改走 qx_core::FileLock。七颗分别钉：FileLock 只有一个定义点、全仓再无第二处 remove_file(*lock*) 的就地锁生命周期、四个消费文件都引用 FileLock::acquire 且不回归就地锁算式、以及「同一场竞争只接管一次」住在 decide_lock 里且循环把计数喂回判据、只按判据交出的年龄说话。file_lock 读墙钟（锁年龄与令牌 nonce）是唯一一格豁免，按路径点名并由「豁免文件仍在场」一颗核对。上一轮基线 663 是 V13 R15 补三颗 fam12「CLI 表面」判据。`cli_help_surface_check` 只核「help ≡ clap 表 ≡ cli.rs 派发」三侧集合相等，看不见「某入口其实一敲就崩 / 它自己的用法渲染不出来」；`cli_dispatch_check` 只核分派点唯一。三颗分别钉：crates/qx-cli/tests/command_surface.rs 的 CLI_COMMANDS 清单与 clap 表逐一相等（新增命令没进清单、或清单留了已删命令都红）、清单真的被逐条喂给被测 binary 跑 --help（只列不跑 = 清单退化成装饰）、config 的 clap 子命令集与 help 印出的 config <sub> 行逐一相等（第二层入口与顶层同一类断链）。上一轮基线 660 是 V13 R14 补两颗 fam11「分层处置」闭环判据。零读者那一族（zero_reference_public_surface_check / zero_reference_pub_crate_surface_check）只遍历在盘的定义，所以「函数被删掉、PUBLIC_SURFACE_ALLOWLIST 条目还在」这件事它永远看不见——条目会一直躺着，下一次有人把同名函数加回来时它就变成一张现成的免检通行证。两颗分别钉：允许清单里每个条目都对应一处真实定义（pub fn/pub const 或 pub(crate) fn）、每条理由都不是占位符（至少 6 个字符，当前最短的 7 个字符是 `任务 #119`）。上一轮基线 658 是 V13 R13 补三颗 fam02「停机令牌 + 连接上界」判据：V13 R2 #218 实测，监听循环按 stopped() 收摊后已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。V13 R2 #218 实测：监听循环按 stopped() 收摊后，已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开（不发 FIN、也不再写字节）时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起（有生产者、初始化关闭）、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。fam02 另外两格（快照历史有界、事件按账户键）已由 bounded_growth_and_reap_check 与 browser_admission_check 看守。上一轮基线 655 是 V13 R12 补四颗 fam10「运维读面：exposition 真换行 + 告警名册每个指标都有生产端」判据。V13 R2 第七遍实测到的缺陷形态是 /metrics 正文只有一行、行与行之间是字面的 `\n` 两个字符：抓取端把整份正文读成一行、一条样本都解析不出来，而告警侧是「永不触发」而不是「报错」——服务端与告警侧都不会自己出声。四颗分别钉：exposition 构造函数用真换行（体里出现 `\n` 转义、不出现字面的双反斜杠 n）、那条逐行解析用例在盘且解析器显式拒绝字面换行、告警名册里每个 qx_ 指标都能在生产源码里找到写出点（否则该告警永不触发）、名册每条规则都有 expr/severity/summary。取名册文本时同样先剥整行 `#` 注释：名册里那段解释 `qx_outbox_relay_parked` 的散文不剥掉，会替真规则满足「有生产者」那颗判据。上一轮基线 651 是 V13 R11 补七颗 fam13「CI 特性矩阵点亮每颗特性闸门 + NATS 用例有真执行的腿」判据。§12.2 把这一族登记为回退面时明写「新补的那条 NATS 腿只由 ci.yml 的文本存在性保证，门禁里没有判据核它——把它删掉或加上 --no-run 不会红」，本轮把那颗缺失的判据补上：① feature-matrix job 在盘且三步（clippy/check/test）都按 --no-default-features 逐组合跑（只在某些 feature 分支里才存在的代码不会被默认特性的 lint 看到，矩阵漏一颗特性那颗特性的代码就从「有 lint」退成「无 lint」）；② qx-cli 声明的每颗特性都出现在某个矩阵组合里，且矩阵里不出现不存在的特性名（拼错即红）；③ NATS 真执行腿按指纹整段钉住（显式点名两个 NATS 测试目标，因此与 `-- --ignored` 那条腿不可能混淆）；④ NATS 非 ignore 用例数不低于现场实测值 8。上一轮基线 644 是 V13 R10 补五颗 fam06「environment 词表单点与 production 判定唯一出口」判据。此前「这份运行时配置是不是 production」被手抄 14 处（运行时配置校验 9 处 + CLI 体检/就绪 5 处），各写一份 `environment.eq_ignore_ascii_case("production")`，全仓没有单源出口——危害不是现在算错，而是改口径（如 `production`→`prod`）时漏改的那一处加固静默失效，而它守的正是「production 禁止明文 API / C ABI 必须配 Ed25519 公钥 / Execution worker 必须配名义额上限」。五颗分别钉：写法常量 `PRODUCTION_ENVIRONMENT` 与判定 `RuntimeConfig::is_production` 各只有一处定义、词表从常量取 production 这一档、判定体引用常量不得内联字面量、手抄式 `eq_ignore_ascii_case("production")` 不得在生产代码复活、调用判定的生产文件与登记表逐一相等（新增闸门必须登记）。同 `VenueId::is_binance`（V13 §5 A3）一族。上一轮基线 639 是 V13 R9 补一颗「金额/价格/数量字段的缺键不许静默变成 0」。裸 `#[serde(default)]` 落在非 `Option` 的 Money/Price/Quantity 上，等于给「这份回报没带该字段」和「交易所明确报了 0」发同一张身份证；本仓两条正确形状分别是 `Option<Money>`（AccountPositionSnapshot 三格）与 `#[serde(default = "named_fn")]`（A 股规则配置）。剩下的三处全在 qx-core/src/event.rs 且危险方向都是 fail-closed，按名字登记在 BARE_MONEY_DEFAULT_ALLOWLIST。上一轮基线 638 是 V13 R8 补五颗静默抑制判据（丢结构体字段值必须当场写理由、`#[allow(dead_code)]` 必须当场写理由、`unreachable!` 必须带非空消息、不得留 `todo!`/`unimplemented!` 桩、生产源码的 TODO/FIXME 与登记表逐项相等）。这五种形状的共同点是「改错了也不红」：字段没人读就加一行 `let _ = x.y;` 按住、能力没接上就挂 allow、分支真到不了就写裸 unreachable!()、需求没做完就留桩，全是孤儿逻辑与静默降级的温床。上一轮基线 633 是 V13 R16 补四颗，守契约与存储读回侧的防御口径一致性。第一颗守 Python `StrategyInput.from_dict` 必须像同文件的 `StrategyIntent` / `StrategyOutput` 一样调 `_reject_unknown_keys`：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，策略可能以为账户是空的而误触发。第二颗守 `FactorReport::validate` 必须像 `FactorConfig::validate` 一样校验 `missing_policy` 的 reject/skip/zero 词表：报告能被 `from_json` 反序列化，只有空串校验时手改一份 JSON 能放行到下游 `resolve_missing` 才报错，落点离改错的地方很远。第三颗守 `outbox.attempts` 读回必须走 `parse_sqlite_u32` / `parse_u32` 而不是 `as u32` 截断：attempts 以 TEXT 落盘，u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成小值、绕开死信判定。第四颗守 `FactorConfig` 的源头词表本身没被改弱——两处词表不一致时改哪一侧都会让另一侧的校验变成摆设。627 -> 629：V13 R14 补两颗，守两个平台的托管启动器都有 supervise 之前的 runtime-check 前置闸门，且 bash 侧的闸门失败不得用 $? 当退出码。`supervise` 只走 plan_workers 的拓扑校验，不检查配置引用的文件是否存在（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）——修前 start-qianxing.ps1 有这道闸门、start-qianxing.sh 没有，Linux/macOS 上的坏配置会拉起 7 个子进程再 fail-fast 全杀，而不是在任何子进程起来之前就拒绝。第二颗守 `if ! cmd; then echo ...; exit "$?"; fi` 里的 $? 拿的是上一条 echo 的状态（0），调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
+GATE_CHECK_FLOOR = 684  # 678 -> 684：V13 R18 补六颗 fam05「调度 owner 路由 fail closed + JobSpec 读侧」判据（scheduler_owner_routing_check 六颗）。恢复 crates/qx-scheduler/src/job_spec.rs（Trigger/JobWindow/JobSpec 与 owner 路由判据的落点）并把 owner 路由判据单源化：JOB_OWNER_ANY 一个常量、claimable_by 一处定义，领取端（workers.rs）与装配端（load_scheduler_state 的 validate_job_owners，新建与载入两条路径）共用它。六颗分别钉：通配 owner 只有一个常量且领取端不再就地比较 "*"、装配处 fail closed 且两条路径都要问、deploy 示例声明的作业清单都找得到、deploy 示例里每个启用作业都有可领取的启用 Strategy worker、JobSpec 三格零读者字段按 2026-10-06 方案 §13.2 保留不删 + 登记 limitation + 双向钉住、作业清单示例每一格顶层键都在 JobSpec 名单里。上一轮基线 678 是 V13 R17 补七颗 fam04「适配层 IO 预算与 venue 缓存」判据（io_budget_and_venue_cache_check 七颗）。恢复 crates/qx-adapter/src/io_budget.rs 与 crates/qx-adapter/src/venue_cache.rs，把 write_all_within 接进三处子进程 stdin 写入（CCXT worker / 策略 worker / 事件 consumer handler），把 evict_stale_terminal_orders 接进两个常驻 venue 的订单写入点（binance 3 / ccxt 2）并级联退派生索引。七颗分别钉：三处 stdin 写入都走 write_all_within 且无一处退回裸 write_all、io_budget 只按截止时间收写线程且只有超时那格把打断管道的责任交回调用方、WebSocket 单帧/整条消息/单次轮询三层长度预算各一个具名常量、venue 缓存封顶只退终态订单且越限才扫表、两个 venue 的每处订单写入都过封顶并级联清派生索引、binance 未知订单仍升级对账、针路 OMS 刻意不共用封顶。上一轮基线 671 是 V13 R16 补八颗 fam01「文件锁统一」判据（file_lock_single_source_check 七颗 + backtest_clock_honesty_check 的墙钟豁免在场一颗）。恢复 crates/qx-core/src/file_lock.rs（V11 §40 D1 的崩溃可恢复写锁：纯判据 decide_lock + 有界等待 + 按年龄接管孤儿锁 + Drop 只删自己那把），并把四处就地 create_new 锁（数据集注册表 qx-data/registry.rs、多腿状态 qx-zhenlu/lib.rs、存储信封 qx-storage/state_envelope.rs、作业 claim qx-storage/file/jobs.rs）全部改走 qx_core::FileLock。七颗分别钉：FileLock 只有一个定义点、全仓再无第二处 remove_file(*lock*) 的就地锁生命周期、四个消费文件都引用 FileLock::acquire 且不回归就地锁算式、以及「同一场竞争只接管一次」住在 decide_lock 里且循环把计数喂回判据、只按判据交出的年龄说话。file_lock 读墙钟（锁年龄与令牌 nonce）是唯一一格豁免，按路径点名并由「豁免文件仍在场」一颗核对。上一轮基线 663 是 V13 R15 补三颗 fam12「CLI 表面」判据。`cli_help_surface_check` 只核「help ≡ clap 表 ≡ cli.rs 派发」三侧集合相等，看不见「某入口其实一敲就崩 / 它自己的用法渲染不出来」；`cli_dispatch_check` 只核分派点唯一。三颗分别钉：crates/qx-cli/tests/command_surface.rs 的 CLI_COMMANDS 清单与 clap 表逐一相等（新增命令没进清单、或清单留了已删命令都红）、清单真的被逐条喂给被测 binary 跑 --help（只列不跑 = 清单退化成装饰）、config 的 clap 子命令集与 help 印出的 config <sub> 行逐一相等（第二层入口与顶层同一类断链）。上一轮基线 660 是 V13 R14 补两颗 fam11「分层处置」闭环判据。零读者那一族（zero_reference_public_surface_check / zero_reference_pub_crate_surface_check）只遍历在盘的定义，所以「函数被删掉、PUBLIC_SURFACE_ALLOWLIST 条目还在」这件事它永远看不见——条目会一直躺着，下一次有人把同名函数加回来时它就变成一张现成的免检通行证。两颗分别钉：允许清单里每个条目都对应一处真实定义（pub fn/pub const 或 pub(crate) fn）、每条理由都不是占位符（至少 6 个字符，当前最短的 7 个字符是 `任务 #119`）。上一轮基线 658 是 V13 R13 补三颗 fam02「停机令牌 + 连接上界」判据：V13 R2 #218 实测，监听循环按 stopped() 收摊后已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。V13 R2 #218 实测：监听循环按 stopped() 收摊后，已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开（不发 FIN、也不再写字节）时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起（有生产者、初始化关闭）、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。fam02 另外两格（快照历史有界、事件按账户键）已由 bounded_growth_and_reap_check 与 browser_admission_check 看守。上一轮基线 655 是 V13 R12 补四颗 fam10「运维读面：exposition 真换行 + 告警名册每个指标都有生产端」判据。V13 R2 第七遍实测到的缺陷形态是 /metrics 正文只有一行、行与行之间是字面的 `\n` 两个字符：抓取端把整份正文读成一行、一条样本都解析不出来，而告警侧是「永不触发」而不是「报错」——服务端与告警侧都不会自己出声。四颗分别钉：exposition 构造函数用真换行（体里出现 `\n` 转义、不出现字面的双反斜杠 n）、那条逐行解析用例在盘且解析器显式拒绝字面换行、告警名册里每个 qx_ 指标都能在生产源码里找到写出点（否则该告警永不触发）、名册每条规则都有 expr/severity/summary。取名册文本时同样先剥整行 `#` 注释：名册里那段解释 `qx_outbox_relay_parked` 的散文不剥掉，会替真规则满足「有生产者」那颗判据。上一轮基线 651 是 V13 R11 补七颗 fam13「CI 特性矩阵点亮每颗特性闸门 + NATS 用例有真执行的腿」判据。§12.2 把这一族登记为回退面时明写「新补的那条 NATS 腿只由 ci.yml 的文本存在性保证，门禁里没有判据核它——把它删掉或加上 --no-run 不会红」，本轮把那颗缺失的判据补上：① feature-matrix job 在盘且三步（clippy/check/test）都按 --no-default-features 逐组合跑（只在某些 feature 分支里才存在的代码不会被默认特性的 lint 看到，矩阵漏一颗特性那颗特性的代码就从「有 lint」退成「无 lint」）；② qx-cli 声明的每颗特性都出现在某个矩阵组合里，且矩阵里不出现不存在的特性名（拼错即红）；③ NATS 真执行腿按指纹整段钉住（显式点名两个 NATS 测试目标，因此与 `-- --ignored` 那条腿不可能混淆）；④ NATS 非 ignore 用例数不低于现场实测值 8。上一轮基线 644 是 V13 R10 补五颗 fam06「environment 词表单点与 production 判定唯一出口」判据。此前「这份运行时配置是不是 production」被手抄 14 处（运行时配置校验 9 处 + CLI 体检/就绪 5 处），各写一份 `environment.eq_ignore_ascii_case("production")`，全仓没有单源出口——危害不是现在算错，而是改口径（如 `production`→`prod`）时漏改的那一处加固静默失效，而它守的正是「production 禁止明文 API / C ABI 必须配 Ed25519 公钥 / Execution worker 必须配名义额上限」。五颗分别钉：写法常量 `PRODUCTION_ENVIRONMENT` 与判定 `RuntimeConfig::is_production` 各只有一处定义、词表从常量取 production 这一档、判定体引用常量不得内联字面量、手抄式 `eq_ignore_ascii_case("production")` 不得在生产代码复活、调用判定的生产文件与登记表逐一相等（新增闸门必须登记）。同 `VenueId::is_binance`（V13 §5 A3）一族。上一轮基线 639 是 V13 R9 补一颗「金额/价格/数量字段的缺键不许静默变成 0」。裸 `#[serde(default)]` 落在非 `Option` 的 Money/Price/Quantity 上，等于给「这份回报没带该字段」和「交易所明确报了 0」发同一张身份证；本仓两条正确形状分别是 `Option<Money>`（AccountPositionSnapshot 三格）与 `#[serde(default = "named_fn")]`（A 股规则配置）。剩下的三处全在 qx-core/src/event.rs 且危险方向都是 fail-closed，按名字登记在 BARE_MONEY_DEFAULT_ALLOWLIST。上一轮基线 638 是 V13 R8 补五颗静默抑制判据（丢结构体字段值必须当场写理由、`#[allow(dead_code)]` 必须当场写理由、`unreachable!` 必须带非空消息、不得留 `todo!`/`unimplemented!` 桩、生产源码的 TODO/FIXME 与登记表逐项相等）。这五种形状的共同点是「改错了也不红」：字段没人读就加一行 `let _ = x.y;` 按住、能力没接上就挂 allow、分支真到不了就写裸 unreachable!()、需求没做完就留桩，全是孤儿逻辑与静默降级的温床。上一轮基线 633 是 V13 R16 补四颗，守契约与存储读回侧的防御口径一致性。第一颗守 Python `StrategyInput.from_dict` 必须像同文件的 `StrategyIntent` / `StrategyOutput` 一样调 `_reject_unknown_keys`：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，策略可能以为账户是空的而误触发。第二颗守 `FactorReport::validate` 必须像 `FactorConfig::validate` 一样校验 `missing_policy` 的 reject/skip/zero 词表：报告能被 `from_json` 反序列化，只有空串校验时手改一份 JSON 能放行到下游 `resolve_missing` 才报错，落点离改错的地方很远。第三颗守 `outbox.attempts` 读回必须走 `parse_sqlite_u32` / `parse_u32` 而不是 `as u32` 截断：attempts 以 TEXT 落盘，u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成小值、绕开死信判定。第四颗守 `FactorConfig` 的源头词表本身没被改弱——两处词表不一致时改哪一侧都会让另一侧的校验变成摆设。627 -> 629：V13 R14 补两颗，守两个平台的托管启动器都有 supervise 之前的 runtime-check 前置闸门，且 bash 侧的闸门失败不得用 $? 当退出码。`supervise` 只走 plan_workers 的拓扑校验，不检查配置引用的文件是否存在（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）——修前 start-qianxing.ps1 有这道闸门、start-qianxing.sh 没有，Linux/macOS 上的坏配置会拉起 7 个子进程再 fail-fast 全杀，而不是在任何子进程起来之前就拒绝。第二颗守 `if ! cmd; then echo ...; exit "$?"; fi` 里的 $? 拿的是上一条 echo 的状态（0），调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
 # V12 §21 / #138：合流类判据的三个参数（455 → 457 就是本轮新增的两条，仍按"当轮实测总条数"取值）。窗口取 10 行是实测拐点 —— W=8 在 `tools` 之外命中 1,180
 # 处、到 W=10 仍有 781 处合法的并列实现（三条 venue 提交链、几家存储后端），所以逐字重复零容忍
 # 只对 `tools/*.py` 生效（本轮实测该目录 5 份脚本 0 命中），Rust 那一侧交给编译器与整树用例。
@@ -4078,6 +4078,133 @@ def scheduler_dispatch_honesty_check() -> None:
         is not None,
         "对外能力矩阵把这条派发边界写成了 limitation，不是留在代码注释里",
         "capabilities.yaml 没有以 scheduler_dispatch_is_cron_and_any_window_only 立项的 limitation",
+    )
+
+
+# —— 调度 owner 路由 fail closed（V11 §41 E7 / 2026-10-06 方案 §8 WP-5）——
+
+SCHEDULER_SRC_ROOTS = ("crates/qx-scheduler/src",)
+JOB_SPEC_FILE = "crates/qx-scheduler/src/job_spec.rs"
+SCHEDULER_CLAIM_FILE = "crates/qx-cli/src/workers.rs"
+# 领取端旧写法：就地比较通配字面量。判据守的是它不许回来。
+INLINE_WILDCARD_OWNER = 'queued.job.owner != "*"'
+# 作业声明里只有写侧、没有读侧的三格。按仓库先例（#118/#170/#171）与 2026-10-06 方案
+# §13.2 的裁定「保留不删 + 登记 limitation + 双向钉住」，而不是删面。
+JOB_SPEC_ZERO_READER_FIELDS = ("input_refs", "output_refs", "permission_scope")
+JOB_SPEC_ZERO_READER_LIMITATION = "job_spec_declaration_fields_have_no_production_reader"
+JOB_SPEC_ZERO_READER_PIN_FILE = "crates/qx-cli/src/tests/zero_reader_fields.rs"
+JOB_SPEC_ZERO_READER_PIN_CASE = "zero_reader_struct_fields_stay_registered_in_capabilities"
+
+
+def scheduler_owner_routing_check() -> None:
+    """调度链的最后一公里：作业 owner 必须真有人领取（V11 §41 E7）。
+
+    Scheduler 只负责把到期作业入队，领取判据在 Strategy worker 那一侧。owner 拼错、
+    指向未启用的 worker 时，`JobSpec::validate` 那一条"非空"判据挡不住任何东西：作业永远
+    留在队列里，而 `start_run_at` 已经把 JobRun 标成 Running，命令面照样打印
+    `READY processed=0` —— 整段调度事实就这样丢了。仓库自带的示例里 5 套拓扑正是这种
+    形状（含 production 的对冲腿）。
+
+    第二半是 JobSpec 的字段读侧：`input_refs`/`output_refs`/`permission_scope` 三格只有
+    写侧。按 §13.2 的裁定，它们**保留不删**（删面等于把缺口藏起来），改为逐条登记
+    limitation 并由用例双向钉住——所以这里钉的是"三条都在盘"，不是"三格被删掉"。
+    """
+    scheduler_src = surface_text(SCHEDULER_SRC_ROOTS)
+    spec = (ROOT / JOB_SPEC_FILE).read_text(encoding="utf-8")
+    assembly = (ROOT / "crates" / "qx-cli" / "src" / "scheduler.rs").read_text(encoding="utf-8")
+    claim = (ROOT / SCHEDULER_CLAIM_FILE).read_text(encoding="utf-8")
+    check(
+        len(re.findall(r"pub const JOB_OWNER_ANY\b", scheduler_src)) == 1
+        and scheduler_src.count("pub fn claimable_by(") == 1
+        and INLINE_WILDCARD_OWNER not in claim
+        and "claimable_by(&queued.job.owner, context.id())" in claim,
+        "通配 owner 只有一个常量，领取判据不再就地比较 \"*\"，且与装配端共用同一处判据",
+        f"JOB_OWNER_ANY {len(re.findall(r'pub const JOB_OWNER_ANY\\b', scheduler_src))} 处 / "
+        f"claimable_by {scheduler_src.count('pub fn claimable_by(')} 处 / "
+        f"workers.rs 就地字面量 {claim.count(INLINE_WILDCARD_OWNER)} 处",
+    )
+    check(
+        scheduler_src.count("pub fn jobs(&self)") == 1
+        and assembly.count("validate_job_owners(config, &scheduler)?;") >= 2
+        and "fn validate_job_owners(" in assembly
+        and "claimable_by(&job.owner, claimant)" in assembly,
+        "作业 owner 在装配处 fail closed，且新建与载入两条路径都要问",
+        f"只读视图 {scheduler_src.count('pub fn jobs(&self)')} 处 / "
+        f"判定调用 {assembly.count('validate_job_owners(config, &scheduler)?;')} 处",
+    )
+    # 跨文件连通性：示例配置里的每个启用作业，都得有该拓扑内启用的 Strategy worker 领取。
+    unroutable = []
+    missing_jobs = []
+    for path in sorted((ROOT / "deploy").glob("qianxing.runtime*.json")):
+        runtime = json.loads(path.read_text(encoding="utf-8"))
+        claimants = {
+            worker["id"]
+            for worker in runtime.get("workers", [])
+            if worker.get("enabled") and worker.get("role") == "strategy"
+        }
+        configured = runtime.get("scheduler", {}).get("jobs_path")
+        if not configured:
+            continue
+        jobs_path = Path(configured)
+        if not jobs_path.is_absolute():
+            parts = jobs_path.parts
+            # 镜像 `resolve_runtime_relative_path`：相对配置文件目录，首段与目录同名时剥离。
+            if parts and parts[0] == path.parent.name:
+                jobs_path = path.parent.joinpath(*parts[1:]) if len(parts) > 1 else path.parent
+            else:
+                jobs_path = path.parent / jobs_path
+        if not jobs_path.exists():
+            missing_jobs.append(f"{path.name} -> {configured}")
+            continue
+        for job in json.loads(jobs_path.read_text(encoding="utf-8")):
+            if not job.get("enabled"):
+                continue
+            if job["owner"] != "*" and job["owner"] not in claimants:
+                unroutable.append(f"{path.name}:{job['job_id']} -> {job['owner']}")
+    check(
+        not missing_jobs,
+        "deploy 示例声明的作业清单文件都在其相对布局下找得到",
+        f"清单缺失 {missing_jobs}",
+    )
+    check(
+        not unroutable,
+        "deploy 示例里每个启用作业都有可领取的启用 Strategy worker（owner 路由连通）",
+        f"无人领取 {unroutable}",
+    )
+    # §13.2：三格零读者字段的处置是「保留不删 + 登记 limitation + 双向钉住」。三条缺一
+    # 不可——字段被删掉是"把缺口藏起来"，登记被偷偷删掉则让"接上读者就摘登记"的反向
+    # 判据失去锚点。这里同时要求钉住用例在盘且仍点名这三格里的 `permission_scope`。
+    capabilities = (ROOT / "maturity" / "capabilities.yaml").read_text(encoding="utf-8")
+    pinned = (ROOT / JOB_SPEC_ZERO_READER_PIN_FILE).read_text(encoding="utf-8")
+    spec_body = re.search(r"pub struct JobSpec \{([^}]*)\}", spec, re.S)
+    roster = set(re.findall(r"pub ([a-z_]+):", spec_body.group(1))) if spec_body else set()
+    # 登记键按 `- <key>(?=[：\s])` 认：`..._reader_RENAMED` 这种改名不会被子串匹配放过。
+    registered = (
+        re.search(rf"- {JOB_SPEC_ZERO_READER_LIMITATION}(?=[：\s])", capabilities) is not None
+    )
+    check(
+        bool(spec_body)
+        and all(field in roster for field in JOB_SPEC_ZERO_READER_FIELDS)
+        and registered
+        and JOB_SPEC_ZERO_READER_PIN_CASE in pinned
+        and JOB_SPEC_ZERO_READER_FIELDS[2] in pinned,
+        "JobSpec 三格零读者字段按先例「保留不删 + 登记 limitation + 双向钉住」，而不是删面",
+        f"字段 {sorted(roster)} / 登记 {'有' if registered else '缺'} / "
+        f"钉住用例 {'有' if JOB_SPEC_ZERO_READER_PIN_CASE in pinned else '缺'}",
+    )
+    # 声明名单不写死在门禁里：它从 `JobSpec` 的字段声明取出，示例的每一格顶层键必须是它的
+    # 成员——多出一格没人读的空头声明会立刻被同一判据抓住。
+    manifests = sorted((ROOT / "deploy").glob("qianxing.scheduler.*.json"))
+    unread = {}
+    for path in manifests:
+        for job in json.loads(path.read_text(encoding="utf-8")):
+            extra = sorted(set(job) - roster)
+            if extra:
+                unread.setdefault(path.name, []).extend(extra)
+    check(
+        bool(manifests) and not unread,
+        f"deploy 里 {len(manifests)} 份作业清单示例的每一格顶层键都在 JobSpec 名单里",
+        f"没人读的键 { {name: sorted(set(keys)) for name, keys in unread.items()} or '无'}",
     )
 
 
@@ -12037,6 +12164,7 @@ def main() -> int:
     event_backtest_evidence_check()
     backtest_clock_honesty_check()
     scheduler_dispatch_honesty_check()
+    scheduler_owner_routing_check()
     corporate_action_read_side_check()
     factor_research_honesty_check()
     scheduler_retry_honesty_check()

@@ -199,10 +199,11 @@ impl CcxtRpc for CcxtProcessClient {
             .stdin
             .take()
             .ok_or_else(|| "CCXT Worker stdin 不可用".to_string())?;
-        let written = write_all_within(stdin, bytes, Duration::from_millis(self.timeout_ms), || {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        });
+        let written =
+            write_all_within(stdin, bytes, Duration::from_millis(self.timeout_ms), || {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+            });
         self.stdin = Some(written.map_err(|error| format!("写入 CCXT Worker 失败: {error}"))?);
         let line = match self
             .responses

@@ -3,20 +3,14 @@
 //! Scheduler 只决定“何时、以什么幂等键触发哪个 Job”，不持有交易所客户端，
 //! 也不能绕过 Risk/OMS/Ledger。真实执行器可以在控制面或外部 Worker 中实现。
 
-use qx_core::{Fnv1a, RunManifest};
+use qx_core::RunManifest;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod job_spec;
 mod retry_policy;
+pub use job_spec::{claimable_by, JobSpec, JobWindow, Trigger, JOB_OWNER_ANY};
 pub use retry_policy::RetryPolicy;
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub enum Trigger {
-    Manual,
-    Cron(String),
-    TradingCalendar { session: String },
-    Event(String),
-}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ScheduleTick {
@@ -110,101 +104,6 @@ fn parse_cron_field(field: &str, min: u8, max: u8) -> Result<BTreeSet<u8>, Sched
         return Err(SchedulerError::Invalid("Cron 字段不能为空".into()));
     }
     Ok(values)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub enum JobWindow {
-    Any,
-    PreOpen,
-    Session,
-    PostClose,
-}
-
-impl JobWindow {
-    fn allows(self, calendar: &TradingCalendar, trading_day: &str, ts: u64) -> bool {
-        match self {
-            Self::Any => true,
-            Self::PreOpen => calendar
-                .session(trading_day)
-                .is_some_and(|session| ts < session.open),
-            Self::Session => calendar.is_open(trading_day, ts),
-            Self::PostClose => calendar
-                .session(trading_day)
-                .is_some_and(|session| ts >= session.close),
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Any => "any",
-            Self::PreOpen => "pre_open",
-            Self::Session => "session",
-            Self::PostClose => "post_close",
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct JobSpec {
-    pub job_id: String,
-    pub job_version: String,
-    pub owner: String,
-    pub enabled: bool,
-    pub trigger: Trigger,
-    pub window: JobWindow,
-    pub depends_on: Vec<String>,
-    pub input_refs: Vec<String>, // 声明式输入引用；仓库内零生产读者，见 capabilities.yaml job_spec_declaration_fields_have_no_production_reader
-    pub output_refs: Vec<String>, // 声明式输出引用，同 input_refs：仓库内零生产读者
-    pub timeout_seconds: u64,
-    pub retry_policy: RetryPolicy,
-    pub concurrency_key: String,
-    pub idempotency_key: String,
-    pub permission_scope: String, // 安全形状的声明格；今天零生产读者（没有一处按它做准入判定）
-    #[serde(default = "default_audit_reason")]
-    pub audit_reason: String,
-    pub dry_run: bool,
-}
-
-fn default_audit_reason() -> String {
-    "legacy-job".into()
-}
-
-impl JobSpec {
-    pub fn validate(&self) -> Result<(), SchedulerError> {
-        if self.job_id.trim().is_empty()
-            || self.job_version.trim().is_empty()
-            || self.owner.trim().is_empty()
-            || self.timeout_seconds == 0
-            || self.concurrency_key.trim().is_empty()
-            || self.idempotency_key.trim().is_empty()
-            || self.audit_reason.trim().is_empty()
-        {
-            return Err(SchedulerError::Invalid("JobSpec 必填字段非法".into()));
-        }
-        if self.retry_policy.max_attempts == 0 {
-            return Err(SchedulerError::Invalid("max_attempts 不能为 0".into()));
-        }
-        if let Trigger::Cron(expression) = &self.trigger {
-            CronSpec::parse(expression)?;
-        }
-        if self
-            .depends_on
-            .iter()
-            .any(|dependency| dependency == &self.job_id)
-        {
-            return Err(SchedulerError::Cycle(self.job_id.clone()));
-        }
-        Ok(())
-    }
-
-    pub fn stable_key(&self, trading_day: &str) -> u64 {
-        let mut h = Fnv1a::new();
-        h.write_text(&self.job_id);
-        h.write_text(&self.job_version);
-        h.write_text(&self.idempotency_key);
-        h.write_text(trading_day);
-        h.finish()
-    }
 }
 
 /// 作业运行的生命周期档位。曾经带 `Pending` 与 `Paused` 两颗零构造者的档位，本轮按
@@ -667,6 +566,12 @@ impl Scheduler {
 
     pub fn job(&self, id: &str) -> Option<&JobSpec> {
         self.jobs.get(id)
+    }
+
+    /// 只读遍历已登记的作业。装配处的 owner 路由判定要按整份名单过一遍（还要认 `enabled`），
+    /// 逐个 id 去问既拿不到"有哪些作业"，也看不见被禁用的那些。
+    pub fn jobs(&self) -> impl Iterator<Item = &JobSpec> {
+        self.jobs.values()
     }
 
     pub fn len(&self) -> usize {

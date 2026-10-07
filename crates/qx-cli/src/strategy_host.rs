@@ -498,10 +498,7 @@ impl PythonStrategyClient {
                     // 故写侧失败连同 death_note 一起报出去。
                     Err(error) => {
                         let note = self.death_note();
-                        return Err(format!(
-                            "写入 {} 输入失败: {error}{}",
-                            self.label, note
-                        ));
+                        return Err(format!("写入 {} 输入失败: {error}{}", self.label, note));
                     }
                 }
                 let received = self

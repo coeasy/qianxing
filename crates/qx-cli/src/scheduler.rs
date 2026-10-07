@@ -140,10 +140,23 @@ pub(crate) fn unsupported_dispatch_shape(job: &JobSpec) -> Option<String> {
             job.job_id, job.trigger, job.window
         ));
     }
+    // 重试没有派发者：作业队列按 `run_id` 落盘、信封不携带 `attempt`，重投会撞已结算信封
+    // 而不是重来一次；`retry_run_at` 在 qx-scheduler 之外零生产调用者（capabilities.yaml
+    // `scheduler_run_retry_has_no_production_path`）。所以 `max_attempts > 1` 是一句
+    // 没人执行的承诺，同样必须在装载当场拒（V11 N4）。
+    if job.retry_policy.max_attempts > 1 {
+        return Some(format!(
+            "作业 {} 声明了运行时不会派发的形状：retry_policy.max_attempts={}；重试没有派发者（作业队列按 run_id 落盘、信封不携带 attempt，重投会撞已结算信封），请改成 1",
+            job.job_id, job.retry_policy.max_attempts
+        ));
+    }
     None
 }
 
 /// 读取并核验声明文件里的 JobSpec。形状闸门对每一次启动都成立，不只是第一次。
+///
+/// 未启用的作业不参与形状判定：它不会被入队，也就没有任何东西会因为它的声明形状而失效
+/// （把退役作业留在清单里是常态，让它替整个拓扑负责等于逼运维删掉历史记录）。
 fn declared_jobs(jobs_path: &Path) -> Result<Vec<JobSpec>, String> {
     let jobs: Vec<JobSpec> = serde_json::from_str(
         &std::fs::read_to_string(jobs_path)
@@ -152,6 +165,7 @@ fn declared_jobs(jobs_path: &Path) -> Result<Vec<JobSpec>, String> {
     .map_err(|error| format!("Scheduler JobSpec JSON 无效: {error}"))?;
     let refused = jobs
         .iter()
+        .filter(|job| job.enabled)
         .filter_map(unsupported_dispatch_shape)
         .collect::<Vec<_>>();
     if !refused.is_empty() {
@@ -205,6 +219,41 @@ fn reject_job_set_drift(
     ))
 }
 
+/// 作业 owner 必须真有人领取（V11 §41 E7）。Scheduler 只负责把到期作业入队，领取判据在
+/// `workers.rs` 的 `claimable_by(&queued.job.owner, context.id())`；owner 拼错、指向未启用的
+/// worker 时，作业永远留在队列里，而 `start_run_at` 已经把 JobRun 标成 Running，命令面照样
+/// 打印 `READY processed=0`——整段调度事实就这样丢了。判据与领取端共用
+/// `qx_scheduler::claimable_by`，两处各抄一份时装配放行而领取不认（或反过来）都不会被发现。
+fn validate_job_owners(config: &RuntimeConfig, scheduler: &Scheduler) -> Result<(), String> {
+    let claimants = config
+        .workers
+        .iter()
+        .filter(|worker| worker.enabled && worker.role == WorkerRole::Strategy)
+        .map(|worker| worker.id.as_str())
+        .collect::<Vec<_>>();
+    let claimants_note = if claimants.is_empty() {
+        "该拓扑没有启用的 Strategy worker".to_string()
+    } else {
+        format!("启用的 Strategy worker: {}", claimants.join(", "))
+    };
+    for job in scheduler.jobs() {
+        if !job.enabled {
+            continue;
+        }
+        let routable = claimants
+            .iter()
+            .any(|claimant| claimable_by(&job.owner, claimant));
+        if !routable {
+            return Err(format!(
+                "Scheduler 作业 {} 的 owner {:?} 无人领取（{claimants_note}）；\
+                 请把 owner 改成启用的 Strategy worker id，或使用 {:?} 交给任意 worker",
+                job.job_id, job.owner, JOB_OWNER_ANY
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn load_scheduler_state(
     config: &RuntimeConfig,
     root: &Path,
@@ -224,6 +273,8 @@ pub(crate) fn load_scheduler_state(
             .load_scheduler_at(&state_reference)
             .map_err(|error| format!("加载 Scheduler 状态失败: {error:?}"))?;
         reject_job_set_drift(&scheduler, &declared, &jobs_path)?;
+        // 载入的既有状态同样要问：状态文件可能是另一套拓扑、或改坏的 owner 留下的。
+        validate_job_owners(config, &scheduler)?;
         scheduler
     } else {
         let mut scheduler = Scheduler::default();
@@ -232,6 +283,8 @@ pub(crate) fn load_scheduler_state(
                 .register(job)
                 .map_err(|error| format!("注册 Scheduler JobSpec 失败: {error:?}"))?;
         }
+        // 先判再落盘：被拒绝的拓扑不该留下一份调度状态文件让下一次运行继续读它。
+        validate_job_owners(config, &scheduler)?;
         store
             .save_scheduler_at(&state_reference, &scheduler)
             .map_err(|error| format!("初始化 Scheduler 状态失败: {error:?}"))?;

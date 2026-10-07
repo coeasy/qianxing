@@ -274,7 +274,8 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                 Vec::new()
             };
             for queued in pending {
-                if queued.job.owner != context.id() && queued.job.owner != "*" {
+                // 领取判据与装配端 `validate_job_owners` 共用 `qx_scheduler::claimable_by`（V11 §41 E7）。
+                if !claimable_by(&queued.job.owner, context.id()) {
                     continue;
                 }
                 let lease = match queue.claim(queued.run.run_id, context.id(), lease_now, 30) {

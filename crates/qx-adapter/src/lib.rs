@@ -18,7 +18,6 @@ mod ccxt;
 mod io_budget;
 mod reconcile;
 mod venue_cache;
-pub use io_budget::write_all_within;
 pub use binance::{
     run_binance_user_stream, run_binance_user_stream_with_config_loader, BinanceQuotePoll,
     BinanceSpotAuth, BinanceSpotCredentials, BinanceSpotMarketData, BinanceSpotMarketStream,
@@ -26,6 +25,7 @@ pub use binance::{
     BinanceStreamRunReport, BinanceUserStreamRunConfig, BinanceUserStreamSession,
 };
 pub use ccxt::{ccxt_idle_window_ms, CcxtProcessClient, CcxtProcessVenue, CcxtRpc};
+pub use io_budget::write_all_within;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct HttpRequest {

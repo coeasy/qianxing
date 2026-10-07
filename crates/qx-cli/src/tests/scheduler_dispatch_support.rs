@@ -12,7 +12,10 @@ fn job_with(trigger: Trigger, window: JobWindow) -> JobSpec {
     JobSpec {
         job_id: format!("shape-{}", window_name(&window)),
         job_version: "1".into(),
-        owner: "scheduler-1".into(),
+        // 模板是 `qianxing.runtime.paper-strategy.example.json`，它启用的 Strategy worker
+        // 是 `strategy-paper`。装配处现在会 fail closed 地核对 owner 有没有人领取
+        // （V11 §41 E7），所以夹具的 owner 必须是这个拓扑里真接得住的 id。
+        owner: "strategy-paper".into(),
         enabled: true,
         trigger,
         window,
