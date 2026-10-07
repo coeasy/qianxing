@@ -5,10 +5,13 @@
 
 mod admission;
 mod connections;
+mod control_reads;
 mod event_cursor;
 mod snapshot_history;
 mod transport;
 mod ws;
+
+pub use control_reads::*;
 
 pub use admission::validate_admission_config;
 use admission::{
@@ -898,7 +901,7 @@ impl ApiPolicy {
 
 #[derive(Clone)]
 pub struct ApiService {
-    state: Arc<Mutex<ApiState>>,
+    pub(crate) state: Arc<Mutex<ApiState>>,
     /// 监听循环收摊时置位，让已在飞行中的 WebSocket 会话也有出口（V13 R2 #218）。
     session_shutdown: Arc<AtomicBool>,
     /// None 表示仅供已受信的进程内调用；网络/生产入口应使用 `with_policy`。
@@ -910,6 +913,7 @@ pub struct ApiService {
     worker_metrics_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     readiness_provider: Option<ReadinessProvider>,
     query_models_provider: Option<QueryModelsProvider>,
+    pub(crate) control_plane_provider: Option<ControlPlaneProvider>,
     /// 跨源准入策略。`None` 表示这份部署不开浏览器准入：`OPTIONS` 照常走分派落 404 兜底，
     /// 响应里也不带任何 `Access-Control-*`。见 `admission` 模块头那段理由。
     cors: Option<Arc<CorsPolicy>>,
@@ -1044,10 +1048,7 @@ impl ReconcileReportSnapshot {
 ///
 /// 三条读法各有归属（V13 R4-D：这份注释原先谎称"网络协议只依赖这些只读方法"，
 /// 而 `/account/orders|positions|balances` 三个端点其实从不走下面的无身份变体）：
-/// - `/control/audit` 走 `control_audit()`——读的是 `ApiState.control` 这份进程内副本：装配期
-///   从持久化控制面载入，仅本进程 `submit_command` 走 `store.transact` 成功时刷新。worker
-///   进程 `transact(execute)` 落盘的命令终态与随之发生的退场不回流，所以这条链给的是滞后
-///   上界而非实时值（V13 R8）；
+/// - `/control/audit` 与 `/metrics` 的退场计数共用 `control_plane_live()` 现读 store，不回落启动期副本；
 /// - `/account/snapshot|orders|positions|balances` 先由 `snapshot_for_query` 做身份解析
 ///   （按 `account_id`/`venue_id` 落到该账户自己的投影，缺省才回落到那格全局兼容快照），
 ///   再在解析出的快照上取分表；
@@ -1060,7 +1061,8 @@ pub trait QueryPort {
     fn account_orders(&self) -> Vec<qx_protocol::OrderSnapshot>;
     fn account_positions(&self) -> Vec<qx_protocol::PositionSnapshot>;
     fn account_cash(&self) -> BTreeMap<String, i128>;
-    fn control_audit(&self) -> Vec<AuditRecord>;
+    fn control_audit(&self) -> Result<Vec<AuditRecord>, String>;
+    fn control_retirement(&self) -> Result<qx_control::RetirementSummary, String>;
     fn job_runs(&self) -> Vec<JobRun>;
     fn ledger_entries(&self) -> Vec<LedgerEntry>;
     fn reconcile_reports(&self) -> Vec<ReconcileReportSnapshot>;
@@ -1110,6 +1112,7 @@ impl ApiService {
             worker_metrics_provider: None,
             readiness_provider: None,
             query_models_provider: None,
+            control_plane_provider: None,
             cors: None,
             connection_budget: default_connection_budget(),
         }
@@ -1132,6 +1135,7 @@ impl ApiService {
             worker_metrics_provider: None,
             readiness_provider: None,
             query_models_provider: None,
+            control_plane_provider: None,
             cors: None,
             connection_budget: default_connection_budget(),
         }
@@ -1544,20 +1548,11 @@ impl ApiService {
             }
             ("GET", "/metrics") => {
                 let mut body = self.metrics().to_prometheus();
-                // 控制面终态退场（`qx-control` 的 `FINALIZED_COMMAND_RETENTION`）唯一的运维读面。
-                // 退场是"内存工作集有界"这条判据的执行者，而"有界"要能被看见才算成立。
-                // 口径必须写清（V13 R8）：这里读的是 `ApiState.control` 这份进程内副本——
-                // 装配期从持久化控制面载入，之后只有本进程 `submit_command` 走
-                // `store.transact` 成功时才回写。worker 进程经 `control_store.transact(execute)`
-                // 落盘的命令终态与随之发生的退场**不会**回流到本进程，所以在下一次
-                // `submit_command` 之前这两条计数是滞后的上界，不是实时值；`/control/audit`
-                // 同口径。要实时得让两处都从 store 现读，那是 P0 的 QueryService 拆分那一层。
-                let retirement = self
-                    .state
-                    .lock()
-                    .expect("api state mutex poisoned")
-                    .control
-                    .retirement();
+                // 退场摘要与 /control/audit 共用 store 现读：读失败 scrape 明确 503，不退回启动期副本。
+                let retirement = match self.control_plane_live() {
+                    Ok(plane) => plane.retirement(),
+                    Err(error) => return ApiResponse::json(503, error_json(&error)),
+                };
                 body.push_str(&format!(
                     "# HELP qx_control_retired_commands_total Finalized control commands retired by the retention bound.\n\
 # TYPE qx_control_retired_commands_total counter\n\
@@ -1630,10 +1625,13 @@ qx_control_retired_audit_records_total {}\n",
                 });
                 ApiResponse::json(200, body.to_string())
             }
-            ("GET", "/control/audit") => ApiResponse::json(
-                200,
-                serde_json::to_string(&self.control_audit()).expect("audit is serializable"),
-            ),
+            ("GET", "/control/audit") => match self.control_plane_live() {
+                Ok(plane) => ApiResponse::json(
+                    200,
+                    serde_json::to_string(&plane.audit()).expect("audit is serializable"),
+                ),
+                Err(error) => ApiResponse::json(503, error_json(&error)),
+            },
             ("GET", "/scheduler/runs") => match self.query_models() {
                 Ok(models) => ApiResponse::json(
                     200,
@@ -2153,13 +2151,13 @@ impl QueryPort for ApiService {
             .unwrap_or_default()
     }
 
-    fn control_audit(&self) -> Vec<AuditRecord> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .control
-            .audit()
-            .to_vec()
+    fn control_audit(&self) -> Result<Vec<AuditRecord>, String> {
+        self.control_plane_live()
+            .map(|plane| plane.audit().to_vec())
+    }
+
+    fn control_retirement(&self) -> Result<qx_control::RetirementSummary, String> {
+        self.control_plane_live().map(|plane| plane.retirement())
     }
 
     fn job_runs(&self) -> Vec<JobRun> {
@@ -2436,6 +2434,8 @@ mod tests {
         assert_eq!(service.query_port().job_runs().len(), 1);
         assert_eq!(service.query_port().ledger_entries().len(), 1);
         assert_eq!(service.query_port().reconcile_reports().len(), 1);
+        assert!(service.query_port().control_audit().is_ok());
+        assert!(service.query_port().control_retirement().is_ok());
     }
 
     #[test]

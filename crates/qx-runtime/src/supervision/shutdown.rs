@@ -8,8 +8,11 @@ use super::*;
 
 static SHUTDOWN_SIGNALLED: AtomicBool = AtomicBool::new(false);
 static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
+static STDIN_LISTENER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 const POLL_INTERVAL_MS: u64 = 50;
+pub const WORKER_STOP_CHANNEL_ENV: &str = "QX_WORKER_STOP_CHANNEL";
+pub const WORKER_STOP_CHANNEL_STDIN_EOF: &str = "stdin-eof-v1";
 
 extern "C" fn record_shutdown(_signal: libc::c_int) {
     SHUTDOWN_SIGNALLED.store(true, Ordering::Release);
@@ -32,6 +35,38 @@ pub fn install_shutdown_signals() -> bool {
 /// 进程是否收到过终止请求。
 pub fn shutdown_signalled() -> bool {
     SHUTDOWN_SIGNALLED.load(Ordering::Acquire)
+}
+
+/// 把监督器的跨平台 stop channel 收尾请求接到与操作系统信号相同的令牌。
+///
+/// `stdin-eof-v1` 由父监督器通过关闭每个 worker 的 piped stdin 发出；只有明确设置该协议环境
+/// 时才安装读线程，避免普通 CLI 子命令占用交互式 stdin。父进程异常退出也会令 pipe EOF，
+/// worker 因而能在父进程不再存在时自行收摊。
+pub fn install_stdin_shutdown_listener() -> bool {
+    if !std::env::var(WORKER_STOP_CHANNEL_ENV)
+        .is_ok_and(|value| value == WORKER_STOP_CHANNEL_STDIN_EOF)
+        || STDIN_LISTENER_INSTALLED.swap(true, Ordering::AcqRel)
+    {
+        return false;
+    }
+    std::thread::spawn(|| {
+        use std::io::Read;
+        let mut stdin = std::io::stdin();
+        let mut buffer = [0_u8; 256];
+        loop {
+            match stdin.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+        request_shutdown();
+    });
+    true
+}
+
+/// 显式请求当前进程停机；与 SIGINT/SIGTERM 落入同一原子令牌。
+pub fn request_shutdown() {
+    SHUTDOWN_SIGNALLED.store(true, Ordering::Release);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

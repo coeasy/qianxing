@@ -1,12 +1,13 @@
 //! 托管子进程的收尾回收：先 kill，再在预算内轮询；到期仍在世的要点名报出去。
 
-use std::process::Child;
+use std::process::{Child, ChildStdin};
 use std::thread;
 use std::time::{Duration, Instant};
 
 pub(crate) struct ManagedChild {
     pub(crate) id: String,
     pub(crate) child: Child,
+    pub(crate) stop_channel: Option<ChildStdin>,
 }
 
 /// 一轮回收的判定结果。
@@ -199,6 +200,7 @@ mod tests {
         ManagedChild {
             id: tag.into(),
             child,
+            stop_channel: None,
         }
     }
 }

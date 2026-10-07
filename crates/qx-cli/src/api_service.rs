@@ -91,6 +91,10 @@ pub(crate) fn build_configured_api_service(
         )
     })
     .with_query_models_provider(move || load_api_query_models(&query_models_config))
+    .with_control_plane_provider({
+        let store = control_store.clone();
+        move || store.load()
+    })
     .with_control_submitter({
         let store = control_store.clone();
         move |command, granted, ts| {

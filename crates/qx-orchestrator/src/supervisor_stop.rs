@@ -21,6 +21,11 @@ pub(crate) trait ManagedProcess {
 
     /// 轮询一次退出状态；已退出时返回原始码与文字描述。
     fn poll_exit(&mut self) -> Result<Option<ProcessExit>, String>;
+
+    /// 转发父进程停机请求。测试替身默认无副作用；真实子进程通过关闭 stdin pipe 收到 EOF。
+    fn request_stop(&mut self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub(crate) enum SupervisorStop {
@@ -64,14 +69,13 @@ pub(crate) fn wait_for_children<P: ManagedProcess>(
             }
         }
         if signalled() {
-            let at = match requested_at {
-                Some(at) => at,
-                None => {
-                    let at = now_ms();
-                    requested_at = Some(at);
-                    at
+            if requested_at.is_none() {
+                requested_at = Some(now_ms());
+                for child in children.iter_mut() {
+                    child.request_stop()?;
                 }
-            };
+            }
+            let at = requested_at.expect("shutdown request timestamp was just set");
             let waited_ms = now_ms().saturating_sub(at);
             if running == 0 {
                 return Ok(SupervisorStop::StoppedWithinBudget { waited_ms });
@@ -93,11 +97,14 @@ pub(crate) fn wait_for_children<P: ManagedProcess>(
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
+    use std::thread;
+    use std::time::Duration;
 
     struct FakeChild {
         id: &'static str,
         exit_after_polls: usize,
         polls: Cell<usize>,
+        stop_requests: Cell<usize>,
     }
 
     impl FakeChild {
@@ -106,6 +113,7 @@ mod tests {
                 id,
                 exit_after_polls,
                 polls: Cell::new(0),
+                stop_requests: Cell::new(0),
             }
         }
     }
@@ -125,6 +133,11 @@ mod tests {
             } else {
                 Ok(None)
             }
+        }
+
+        fn request_stop(&mut self) -> Result<(), String> {
+            self.stop_requests.set(self.stop_requests.get() + 1);
+            Ok(())
         }
     }
 
@@ -239,6 +252,16 @@ mod tests {
         ];
         let stop = outcomes(&mut children, &harness, 10_000).unwrap();
         assert_eq!(kind(&stop), "stopped-within-budget");
+        assert_eq!(
+            children[0].stop_requests.get(),
+            1,
+            "第一个 worker 没收到停机转发"
+        );
+        assert_eq!(
+            children[1].stop_requests.get(),
+            1,
+            "第二个 worker 没收到停机转发"
+        );
         match stop {
             // 两个子进程恰好在"第一次观察到终止请求"那一轮就都退了：收到请求后的等待是 0ms。
             // 按进门计时这里会是 250（把请求之前的那一轮 sleep 也算进宽限）。
@@ -285,6 +308,74 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn child_runtime_stop_channel_exits_after_parent_closes_stdin() {
+        if std::env::var_os("QX_TEST_STOP_CHANNEL_CHILD").is_none() {
+            return;
+        }
+        assert!(qx_runtime::install_stdin_shutdown_listener());
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !qx_runtime::shutdown_signalled() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            qx_runtime::shutdown_signalled(),
+            "stdin EOF 未到达运行时停机令牌"
+        );
+    }
+
+    #[test]
+    fn supervisor_forwards_stop_to_a_real_child_through_stdin_eof() {
+        use std::process::{Command, Stdio};
+
+        let executable = std::env::current_exe().expect("当前测试可执行文件");
+        let mut child = match Command::new(executable)
+            .arg("child_runtime_stop_channel_exits_after_parent_closes_stdin")
+            .env("QX_TEST_STOP_CHANNEL_CHILD", "1")
+            .env(
+                qx_runtime::WORKER_STOP_CHANNEL_ENV,
+                qx_runtime::WORKER_STOP_CHANNEL_STDIN_EOF,
+            )
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => child,
+            // 本用例的全部价值都在那条 pipe 上，pipe 起不来就是整条没法跑：
+            // Windows 受限沙箱会拒绝建 pipe（os error 231），而 Stdio::null() 照常可用。
+            // 整条跳过而不是降级成假断言，子进程那一半由上一条用例单独钉住。
+            Err(error) => {
+                eprintln!("跳过停机 pipe 转发用例（父侧建 pipe 失败）：{error}");
+                return;
+            }
+        };
+        let stop_channel = child.stdin.take().expect("子进程 stdin pipe");
+        let mut children = [super::super::reap::ManagedChild {
+            id: "stop-channel-child".into(),
+            child,
+            stop_channel: Some(stop_channel),
+        }];
+        let started = std::time::Instant::now();
+        let stop = wait_for_children(
+            &mut children,
+            || true,
+            || u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            |millis| thread::sleep(Duration::from_millis(millis.min(10))),
+            2_000,
+        )
+        .expect("停机转发应成功");
+        assert_eq!(kind(&stop), "stopped-within-budget");
+        assert!(
+            children[0]
+                .child
+                .try_wait()
+                .expect("读取 worker 退出状态")
+                .is_some(),
+            "SupervisorStop::StoppedWithinBudget 不得在子进程仍活着时返回"
+        );
     }
 
     #[test]

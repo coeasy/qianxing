@@ -196,7 +196,7 @@ use dataset_commands::{
     verify_dataset_bundle_component_bindings,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::{BufReader, Write};
+use std::io::BufReader;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -319,6 +319,7 @@ pub(crate) fn python_interpreter_origin() -> (String, &'static str) {
 }
 
 fn main() {
+    qx_runtime::install_stdin_shutdown_listener();
     cli::run();
 }
 

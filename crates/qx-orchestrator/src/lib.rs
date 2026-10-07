@@ -201,6 +201,12 @@ impl ManagedProcess for ManagedChild {
         &self.id
     }
 
+    fn request_stop(&mut self) -> Result<(), String> {
+        // EOF 跨平台，且监督器异常消失时 OS 也会关闭这条 pipe。
+        self.stop_channel.take();
+        Ok(())
+    }
+
     fn poll_exit(&mut self) -> Result<Option<ProcessExit>, String> {
         let status = self
             .child
@@ -258,9 +264,9 @@ impl From<String> for SuperviseFailure {
 
 /// 启动并监督一组 worker 子进程。任一 worker 异常退出时停止其余 worker。
 ///
-/// 收尾的上界是配置里的 `shutdown_timeout_ms`：托管对象是独立 OS 进程、父子间没有
-/// 信号通道（引依赖不在本轮范围），所以停机令牌与 fail-fast 共用同一条 kill + 限时
-/// 回收。超预算没收回来的 worker 会被点名报出去，父进程不会带着孤儿静静退出。
+/// 收尾的上界是配置里的 `shutdown_timeout_ms`：停机请求经 worker stdin pipe 的 EOF 跨平台转发，
+/// worker 在预算内走自己的停机令牌；fail-fast 或超预算才进入 kill + 限时回收。父进程异常退出
+/// 同样会令 pipe EOF，worker 自行收摊。超预算仍未收回的 worker 会被点名，父进程不会带着孤儿退出。
 pub fn supervise_workers(
     config: &RuntimeConfig,
     config_path: &Path,
@@ -293,14 +299,22 @@ pub fn supervise_workers(
             let stderr = std::fs::File::create(&stderr_path).map_err(|error| {
                 format!("创建 worker {} stderr 日志失败: {error}", launch.worker_id)
             })?;
-            let child = Command::new(executable)
+            let mut child = Command::new(executable)
                 .args(launch.args)
                 .current_dir(work_dir)
-                .stdin(Stdio::null())
+                .env(
+                    qx_runtime::WORKER_STOP_CHANNEL_ENV,
+                    qx_runtime::WORKER_STOP_CHANNEL_STDIN_EOF,
+                )
+                .stdin(Stdio::piped())
                 .stdout(Stdio::from(stdout))
                 .stderr(Stdio::from(stderr))
                 .spawn()
                 .map_err(|error| format!("启动 worker {} 失败: {error}", launch.worker_id))?;
+            let stop_channel = child
+                .stdin
+                .take()
+                .ok_or_else(|| format!("启动 worker {} 后拿不到 stop channel", launch.worker_id))?;
             println!(
                 "[监督器] started worker={} pid={}",
                 launch.worker_id,
@@ -309,6 +323,7 @@ pub fn supervise_workers(
             children.push(ManagedChild {
                 id: launch.worker_id,
                 child,
+                stop_channel: Some(stop_channel),
             });
         }
         let started = std::time::Instant::now();
