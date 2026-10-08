@@ -1,6 +1,18 @@
 # Changelog
 
 
+### M4'/M5' 续（2026-10-08）· Web 控制台 local-only 边界硬化 + 发布身份状态字段
+
+**口径**：继续把「静态 Web 控制台发布包」的边界说清，并把能本地验证的部分钉进门禁；仍不冒充完整 M4'/M5'。本轮不新增同源 BFF、CSRF、权限会话、桌面 Host，也不触发 GitHub Release。
+
+- **浏览器侧 local-only 入口**：`web/console/app.js` 的连接入口只允许 `http://127.0.0.1` / `http://localhost`；提交 `POST /control/commands` 前再次检查。非本机地址会在健康面板显示「已拒绝」并说明原因：没有同源 BFF、CSRF token 或服务端会话时，静态包不能作为远端控制面。`web/console/index.html` 同步写明这只是本机控制台边界，不是认证授权。
+- **发布身份机器可读化**：`tools/package_web_console.py` 的 `release-identity.json` 现在明确登记 `distribution_boundary=local-only`、`requires_same_origin_bff=true`、`csrf_supported=false`、`session_permissions_supported=false`、`desktop_host_supported=false`、`sandbox_accepted=false`、`production_accepted=false`，避免把静态包误读成生产控制台。
+- **门禁牙齿**：`release_supply_chain_check` 扩展发布包身份字段判据；`web_console_check` 新增两颗 local-only 判据（连接入口只允许回环、提交前再次检查并给出拒绝路径说明）。`GATE_CHECK_FLOOR` **767 → 772**，实际门禁 **822 → 824 项全绿**。
+- **验证**：`python tools/check_architecture.py` 全绿（824 项）；`python -m unittest discover -s python/tests -p test_web_console_package.py -v` 3 条通过；`node --check web/console/app.js` 通过；`git diff --check` 通过。
+- **反向变异已实测**：移除 `localhost` 回环白名单会红「连接入口只允许本机回环」；移除提交前二次检查会红「命令提交前再次检查本机回环边界」。还原后复绿。
+- **仍未落地（诚实边界）**：同源 BFF、CSRF、权限会话、桌面 Host、Paper/sandbox/production 外部验收仍未完成；本轮没有创建 tag，也没有触发 GitHub Release。
+
+
 ### V13 R23 续（2026-10-08）· 阶段二 P0/P1 逐项落地（native 信任门 / dev 环迁出 / EventLog 单事务批量追加 / 游标增量 refresh / 估值单点 / 错误码五元契约）
 
 **口径**：按「先牙齿后功能」把 `docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md` 阶段二里**可当场关闭**的六项逐条落地，每项都带自己的门禁牙齿 + 反向变异实测。全部加性：门禁 **759 → 793 全绿**，`GATE_CHECK_FLOOR` **703 → 737**，未删任何既有判据。方案文档 §17.2 表格中已关闭的行标 ✅，新增 §17.4 逐项明细。

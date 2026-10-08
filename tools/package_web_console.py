@@ -18,6 +18,7 @@ DEFAULT_SOURCE = ROOT / "web" / "console"
 SCHEMA_REGISTRY_FILE = ROOT / "maturity" / "schema-registry.json"
 ASSET_FILES = ("index.html", "app.js", "styles.css")
 VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
+IDENTITY_NAME = "release-identity.json"
 
 
 class _AssetReferences(html.parser.HTMLParser):
@@ -74,8 +75,25 @@ def _schema_registry_version() -> int:
     return version
 
 
+def _build_archive(entries: dict[str, bytes]) -> bytes:
+    payload = io.BytesIO()
+    with gzip.GzipFile(filename="", mode="wb", fileobj=payload, compresslevel=9, mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w", format=tarfile.GNU_FORMAT) as archive:
+            for name, data in sorted(entries.items()):
+                info = tarfile.TarInfo(f"qianxing-web-console/{name}")
+                info.size = len(data)
+                info.mode = 0o644
+                info.mtime = 0
+                info.uid = 0
+                info.gid = 0
+                info.uname = ""
+                info.gname = ""
+                archive.addfile(info, io.BytesIO(data))
+    return payload.getvalue()
+
+
 def package_console(source_dir: Path, output: Path, version: str, commit: str) -> dict[str, object]:
-    """Package the three static assets and a content manifest reproducibly."""
+    """Package the static assets and a self-identifying content manifest reproducibly."""
     _validate_identity(version, commit)
     assets = _asset_bytes(source_dir)
     identity: dict[str, object] = {
@@ -85,29 +103,24 @@ def package_console(source_dir: Path, output: Path, version: str, commit: str) -
         "target_triple": "web-static",
         "profile": "release",
         "schema_registry_version": _schema_registry_version(),
+        "distribution_boundary": "local-only",
+        "requires_same_origin_bff": True,
+        "csrf_supported": False,
+        "session_permissions_supported": False,
+        "desktop_host_supported": False,
+        "sandbox_accepted": False,
+        "production_accepted": False,
         "assets": [
             {"path": name, "sha256": hashlib.sha256(data).hexdigest()}
             for name, data in sorted(assets.items())
         ],
     }
     entries = dict(assets)
-    entries["release-identity.json"] = (
+    entries[IDENTITY_NAME] = (
         json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode("utf-8")
     output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("wb") as raw:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=9, mtime=0) as compressed:
-            with tarfile.open(fileobj=compressed, mode="w", format=tarfile.GNU_FORMAT) as archive:
-                for name, data in sorted(entries.items()):
-                    info = tarfile.TarInfo(f"qianxing-web-console/{name}")
-                    info.size = len(data)
-                    info.mode = 0o644
-                    info.mtime = 0
-                    info.uid = 0
-                    info.gid = 0
-                    info.uname = ""
-                    info.gname = ""
-                    archive.addfile(info, io.BytesIO(data))
+    output.write_bytes(_build_archive(entries))
     return identity
 
 

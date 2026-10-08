@@ -22,6 +22,8 @@
   </header>
 
   <p class="notice" role="note">
+    <strong>只适合本机控制台</strong>：静态包没有同源 BFF、CSRF token、服务端会话或权限代理，
+    因此连接入口只允许 <code>127.0.0.1</code> / <code>localhost</code>，不能连接远端 API。
     <strong>写面只有一条</strong>：本页的读面板全部只做查询，唯一的写操作是
     <code>POST /control/commands</code>（控制面受理入口）。它<strong>不直接下单</strong>——
     下单要走这条命令，由控制面受理 → 判定执行者 → 走到终态退场。

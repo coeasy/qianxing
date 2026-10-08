@@ -41,6 +41,12 @@ class WebConsolePackageTest(unittest.TestCase):
         self.assertEqual(first.read_bytes(), second.read_bytes())
         self.assertEqual(identity["git_commit"], self.commit)
         self.assertEqual(identity["schema_registry_version"], MODULE._schema_registry_version())
+        self.assertEqual(identity["distribution_boundary"], "local-only")
+        self.assertFalse(identity["csrf_supported"])
+        self.assertFalse(identity["session_permissions_supported"])
+        self.assertFalse(identity["desktop_host_supported"])
+        self.assertFalse(identity["sandbox_accepted"])
+        self.assertFalse(identity["production_accepted"])
         with tarfile.open(first, "r:gz") as archive:
             names = sorted(archive.getnames())
             self.assertEqual(

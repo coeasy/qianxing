@@ -87,6 +87,23 @@ function wsUrl(base) {
   return base.replace(/^http/, "ws") + WS_PATH;
 }
 
+// 静态控制台没有同源 BFF、CSRF token 或服务端会话；能守住的实际边界是“只允许本机回环入口”。
+// 这不等于生产化完成：生产/共享环境必须先做同源代理与认证授权，再暴露给非本机客户端。
+function isLoopbackControlTarget(base) {
+  let parsed;
+  try {
+    parsed = new URL(base);
+  } catch (_) {
+    return false;
+  }
+  return parsed.protocol === "http:" && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost");
+}
+
+function renderLocalOnlyRejected() {
+  setConnState("已拒绝", "pill-bad");
+  rows($("health-rows"), [["安全边界", "静态控制台仅允许 127.0.0.1 / localhost；没有同源 BFF、CSRF 或会话授权，不能连接远端 API"]]);
+}
+
 async function getJson(path) {
   const response = await fetch(state.base + path, { headers: { Accept: "application/json" } });
   let body = null;
@@ -241,7 +258,7 @@ function controlCommandFromForm() {
 
 async function submitCommand(event) {
   if (event) event.preventDefault();
-  if (!state.base) return;
+  if (!state.base || !isLoopbackControlTarget(state.base)) return;
   const command = controlCommandFromForm();
   const result = await postJson(API_PATHS.controlCommands, command);
   // 阶段①受理：202 是"收下并落了审计"，不是"已经执行"。4xx/5xx 各有自己的语义，
@@ -433,6 +450,10 @@ function closeSocket() {
 function connect() {
   const base = normalizeBase($("api-base").value);
   if (!base) return;
+  if (!isLoopbackControlTarget(base)) {
+    renderLocalOnlyRejected();
+    return;
+  }
   state.base = base;
   state.connected = true;
   localStorage.setItem("qx.console.base", base);

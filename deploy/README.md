@@ -573,7 +573,8 @@ mTLS 证书、从不来自请求头，所以这个固定值不会挡住任何已
 
 它是一份静态页面，不占服务端路由：后端仍用 `qx-cli serve <runtime.json>` 起，控制台另用
 任意静态服务器（例如仓库根目录下 `python -m http.server 5173 --directory web/console`）
-或直接打开文件。
+或直接打开文件。连接入口已做本机回环限制：只允许 `127.0.0.1` / `localhost`，
+命令提交前会再次检查；这不是认证授权，只是避免把没有同源 BFF 的静态控制台误当成可远端使用的控制面。
 
 因为控制台与 API 不同源，浏览器会先做 CORS：**必须把控制台的源逐字符写进
 `api.cors_allowed_origins`**（形如 `["http://127.0.0.1:5173"]`，见上节"浏览器准入"），
@@ -587,7 +588,9 @@ mTLS 证书、从不来自请求头，所以这个固定值不会挡住任何已
 
 **版本化发布包（M4'/M5' 的可验收子项）**：推送与 Cargo / Python / baseline 三处版本一致的 `v*`
 tag 时，发布流水线会额外生成 `qianxing-web-console-v<tag>.tar.gz`，内含 `index.html`、`app.js`、
-`styles.css` 与 `release-identity.json`（版本、完整 commit、Schema Registry 版本、逐文件 SHA256）。
+`styles.css` 与 `release-identity.json`（版本、完整 commit、Schema Registry 版本、逐文件 SHA256、
+`distribution_boundary=local-only`，以及 BFF/CSRF/会话权限/桌面 Host/Paper/sandbox/production 验收
+仍为未完成的状态字段）。
 归档本身进入 Release 的统一 `SHA256SUMS`，并附 build provenance；本地可用
 `python tools/package_web_console.py --version 0.1.0 --commit <40位提交哈希> --output <输出路径>`
 重建，并以压缩包内身份文件核对资产摘要。
