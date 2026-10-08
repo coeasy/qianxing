@@ -399,6 +399,7 @@ mod deploy_template_coverage;
 mod e2e_and_python_contract;
 mod enum_variant_surface;
 mod environment_submit_arm_table;
+mod error_code_contract;
 mod event_backtest_evidence;
 #[cfg(feature = "nats")]
 mod event_consumer_write_budget;

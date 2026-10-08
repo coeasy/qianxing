@@ -9,8 +9,6 @@ license.workspace = true
 qx-core = { path = "../qx-core" }
 serde = { workspace = true }
 
-[dev-dependencies]
-# 三路径一致性测试（tests/risk_parity.rs）需要 qx-zhenlu 的风控门面。
-# 这是仅存在于 dev 边上的依赖环：Cargo 允许 dev-dependency 环路，
-# qx-zhenlu 的正常构建不会反向拉入本 crate 的测试。
-qx-zhenlu = { path = "../qx-zhenlu" }
+# 三路径一致性测试（`risk_parity.rs`）曾以 `[dev-dependencies] qx-zhenlu` 挂在这里，正好把
+# 「qx-zhenlu --normal--> qx-risk」反向压成一条 dev 环（方案 §5.4 P1-12）。那份用例已迁
+# `crates/contract-tests/`，本 crate 的 dev 边清空，环消失。

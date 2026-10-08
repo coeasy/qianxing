@@ -23,7 +23,8 @@ use qx_core::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, EventKind,
     FundingRateSnapshot, InstrumentId, Ledger, MarginMode, Money, Order, OrderPolicy, OrderStatus,
     PositionMode, PositionSide, Price, Quantity, ReplayVerifier, RunManifest, Side,
-    TradingInstrumentSpec, TradingProduct, VenueFamily, DEFAULT_SETTLEMENT_CURRENCY, SCALE,
+    TradingInstrumentSpec, TradingProduct, ValuationContext, VenueFamily,
+    DEFAULT_SETTLEMENT_CURRENCY, SCALE,
 };
 use qx_data::{JsonBarFrameProvider, JsonDatasetRegistry};
 use qx_datastruct::BarFrame;
@@ -110,6 +111,7 @@ mod cli_args;
 mod cli_help;
 mod config_commands;
 mod configured_backends;
+mod contract_adapters;
 mod data_validate;
 mod data_validate_args;
 mod dataset_commands;
@@ -122,6 +124,7 @@ mod live_check;
 mod market_bridges;
 mod market_spec;
 mod multi_leg;
+mod native_trust;
 mod path_resolution;
 mod pipeline_metrics_report;
 mod plan_args;

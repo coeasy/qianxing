@@ -663,6 +663,8 @@ pub(crate) fn invoke_python_strategy_with_client(
 pub(crate) fn load_c_abi_strategy(
     strategy: &StrategyRuntimeConfig,
 ) -> Result<DynamicCAbiStrategy, String> {
+    // P0-3 / DD-4：`dlopen` 之前先过信任门（trusted_native + 签名信任根 + 架构/平台匹配）。
+    native_trust::admit_in_process_c_abi(strategy)?;
     let library = strategy
         .c_abi_library
         .as_deref()

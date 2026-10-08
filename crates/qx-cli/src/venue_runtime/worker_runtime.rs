@@ -187,12 +187,14 @@ pub(crate) fn paper_available_margin(
     let cash_only = ledger.cash_for(account_id, settlement);
     if !spec.product.is_derivative() {
         return Ok(ledger
-            .equity_for(account_id, marks, settlement)
+            .valuate(&ValuationContext::spot(account_id, marks, settlement))
+            .map(|result| result.equity.raw())
             .unwrap_or(cash_only));
     }
     if marks.contains_key(&spec.instrument) {
         ledger
-            .equity_for_with_spec(account_id, marks, settlement, spec)
+            .valuate(&ValuationContext::spot(account_id, marks, settlement).with_spec(Some(spec)))
+            .map(|result| result.equity.raw())
             .map_err(|error| format!("Paper 衍生品可用保证金计算失败: {error:?}"))
     } else {
         Ok(cash_only)

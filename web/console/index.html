@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>牵星 Qianxing · 控制台</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark">牵星</span>
+      <span class="sub">Qianxing · 控制台（只读 + 控制面）</span>
+    </div>
+    <div class="conn">
+      <input id="api-base" type="text" spellcheck="false"
+             placeholder="http://127.0.0.1:8080" aria-label="API 基地址" />
+      <button id="connect" type="button">连接</button>
+      <button id="disconnect" type="button" class="ghost" disabled>断开</button>
+      <span id="conn-state" class="pill pill-idle">未连接</span>
+    </div>
+  </header>
+
+  <p class="notice" role="note">
+    <strong>写面只有一条</strong>：本页的读面板全部只做查询，唯一的写操作是
+    <code>POST /control/commands</code>（控制面受理入口）。它<strong>不直接下单</strong>——
+    下单要走这条命令，由控制面受理 → 判定执行者 → 走到终态退场。
+    身份边界：<code>operator_id</code> 是审计字段，启用访问策略的部署里由 mTLS 认证边界覆盖，
+    页面<strong>不能自声明</strong>身份（那时会回 <code>403 authenticated_operator_required</code>）。
+    跨源读取必须在部署配置的 <code>api.cors_allowed_origins</code> 里逐字符登记本源
+    （如 <code>http://127.0.0.1:8080</code>），否则浏览器会在 CORS 处拦下——
+    这不是服务端故障。API 服务用 <code>qx-cli serve &lt;runtime.json&gt;</code> 启动。
+  </p>
+
+  <main class="grid">
+    <section class="card" id="card-health">
+      <h2>健康 <span class="hint">/health · /ready</span></h2>
+      <div class="rows" id="health-rows"><span class="muted">未连接</span></div>
+    </section>
+
+    <section class="card" id="card-snapshot">
+      <h2>账户快照 <span class="hint">/account/snapshot</span></h2>
+      <div class="rows" id="snapshot-rows"><span class="muted">未连接</span></div>
+    </section>
+
+    <section class="card" id="card-balances">
+      <h2>余额 <span class="hint">/account/balances</span></h2>
+      <div class="rows" id="balances-rows"><span class="muted">未连接</span></div>
+      <p class="foot">未算出的钱显示为 <code>—</code>（<code>null</code>），不折成 0。</p>
+    </section>
+
+    <section class="card" id="card-orders">
+      <h2>订单 <span class="hint">/account/orders</span></h2>
+      <div class="tablewrap"><table id="orders-table"><thead>
+        <tr><th>标的</th><th>方向</th><th>状态</th><th>数量</th><th>成交</th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="card" id="card-positions">
+      <h2>持仓 <span class="hint">/account/positions</span></h2>
+      <div class="tablewrap"><table id="positions-table"><thead>
+        <tr><th>标的</th><th>方向</th><th>数量</th><th>成本</th><th>市值</th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="card" id="card-readmodels">
+      <h2>读模型计数 <span class="hint">/account/ledger · /reconcile/reports · /scheduler/runs · /control/audit</span></h2>
+      <div class="rows" id="readmodels-rows"><span class="muted">未连接</span></div>
+    </section>
+
+    <section class="card wide" id="card-control">
+      <h2>控制命令
+        <span class="hint">POST /control/commands · 受理 → 执行者判定 → 终态退场</span>
+      </h2>
+      <form id="control-form" class="form" autocomplete="off">
+        <label>kind
+          <select id="cmd-kind">
+            <option value="SubmitOrder">SubmitOrder</option>
+            <option value="PauseStrategy">PauseStrategy</option>
+            <option value="ResumeStrategy">ResumeStrategy</option>
+            <option value="ChangeRiskLimit">ChangeRiskLimit</option>
+            <option value="CancelOrder">CancelOrder</option>
+            <option value="ReconcileAccount">ReconcileAccount</option>
+            <option value="RetryJob">RetryJob</option>
+            <option value="SwitchVenue">SwitchVenue</option>
+          </select>
+        </label>
+        <label>permission
+          <select id="cmd-permission">
+            <option value="ReadOnly">ReadOnly</option>
+            <option value="Research">Research</option>
+            <option value="Trading" selected>Trading</option>
+            <option value="Admin">Admin</option>
+          </select>
+        </label>
+        <label>target <input id="cmd-target" type="text" placeholder="BTCUSDT-PERP.BINANCE" /></label>
+        <label>operator_id（审计字段）
+          <input id="cmd-operator" type="text" placeholder="ops" />
+        </label>
+        <label>reason（必填） <input id="cmd-reason" type="text" placeholder="为什么下这条命令" /></label>
+        <label>request_id <input id="cmd-request" type="text" placeholder="留空则自动生成" /></label>
+        <label class="check"><input id="cmd-dry-run" type="checkbox" /> dry_run（只受理不执行）</label>
+        <button id="cmd-submit" type="submit">提交控制命令</button>
+      </form>
+      <div class="rows" id="control-rows"><span class="muted">未提交</span></div>
+      <p class="foot">
+        受理回 <code>202</code> 表示"收下并落了审计"，<strong>不是</strong>"已经执行"；
+        执行者判定与终态退场从 <code>/control/audit</code> 回读。
+        本构建里只有 <code>SubmitOrder</code> / <code>PauseStrategy</code> / <code>ResumeStrategy</code>
+        有派发者，其余类型只会停在 <code>Accepted</code>。
+      </p>
+    </section>
+
+    <section class="card wide" id="card-events">
+      <h2>事件流
+        <span class="hint">/events?after=&lt;seq&gt; · WebSocket 增量</span>
+        <span class="hint" id="ws-state">WS 未连接</span>
+      </h2>
+      <div class="rows" id="events-meta"><span class="muted">未连接</span></div>
+      <div class="tablewrap tall"><table id="events-table"><thead>
+        <tr><th>seq</th><th>kind</th><th>ts</th><th>correlation</th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+  </main>
+
+  <footer class="pagefoot">
+    <span>牵星 Qianxing · 控制台（M1' 快照 + M2' 实时事件 + M3' 控制面）</span>
+    <span id="last-refresh" class="muted">—</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

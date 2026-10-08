@@ -1,10 +1,15 @@
 //! 账簿只读投影：余额、持仓与权益（含合约乘数与跨币种 FX）。
+//!
+//! 本文件的 `equity*` 是**算术原语**：现货按乘数、衍生按合约规格、跨币种再叠一层 FX。
+//! 「该用哪把尺子」的派发单源是 [`Ledger::valuate`]（P1-6 估值单点），它在下面按
+//! 规格/汇率选一把原语并叠上保证金占用——调用方不要再自己判断该调哪个 `equity_*`。
 
 use super::{Ledger, LedgerEntry, PositionState};
 use crate::error::{QxError, QxResult};
 use crate::identity::InstrumentId;
 use crate::numeric::{Money, Price, Quantity, SCALE};
 use crate::trading::{PositionSide, TradingInstrumentSpec};
+use crate::valuation::{ValuationContext, ValuationResult};
 use std::collections::BTreeMap;
 
 impl Ledger {
@@ -337,5 +342,43 @@ impl Ledger {
                 .ok_or_else(|| QxError::Invariant("跨币种未实现权益溢出".into()))?;
         }
         Ok(value)
+    }
+
+    /// 估值单点（P1-6）：按上下文派发到正确的权益原语，再叠上保证金占用。
+    ///
+    /// 派发规则（**全仓唯一一份**）：
+    /// * 有杠杆合约规格 + 有汇率 → 跨币种衍生权益（[`Self::equity_for_with_spec_and_fx`]）；
+    /// * 有杠杆合约规格 → 衍生权益（[`Self::equity_for_with_spec`]）；
+    /// * 其余（现货/非杠杆）→ 按乘数折算（[`Self::equity_for_with_multiplier`]）。
+    ///
+    /// 回测里的 `equity_for` 与 paper 账户的可用保证金派发此前各抄了一份，现在都走这里。
+    /// 实现在本文件而不是 `crate::valuation`：本仓不允许在 `ledger/` 目录外另起 `impl Ledger`。
+    pub fn valuate(&self, ctx: &ValuationContext<'_>) -> QxResult<ValuationResult> {
+        let equity_raw = match ctx.spec.filter(|spec| spec.product.supports_leverage()) {
+            Some(spec) if !ctx.fx_rates.is_empty() => self.equity_for_with_spec_and_fx(
+                ctx.account_id,
+                ctx.marks,
+                ctx.reporting_currency,
+                spec,
+                ctx.fx_rates,
+            )?,
+            Some(spec) => {
+                self.equity_for_with_spec(ctx.account_id, ctx.marks, ctx.reporting_currency, spec)?
+            }
+            None => self
+                .equity_for_with_multiplier(
+                    ctx.account_id,
+                    ctx.marks,
+                    ctx.reporting_currency,
+                    ctx.multiplier,
+                )
+                .ok_or_else(|| QxError::Invariant("无法计算账户权益".into()))?,
+        };
+        ValuationResult::new(
+            Money::from_raw(equity_raw),
+            ctx.margin_required,
+            ctx.maintenance_required,
+            ctx.reporting_currency,
+        )
     }
 }

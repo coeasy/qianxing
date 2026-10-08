@@ -90,29 +90,52 @@ impl EventLog {
 
     /// 追加并校验事件序号，供生产归约器使用。
     pub fn append_checked(&mut self, e: Event) -> QxResult<()> {
-        e.metadata
-            .validate()
-            .map_err(crate::error::QxError::Invariant)?;
-        if self.seqs.contains(&e.seq) {
-            return Err(crate::error::QxError::Invariant("事件 seq 重复".into()));
+        self.append_batch(std::slice::from_ref(&e)).map(|_| ())
+    }
+
+    /// 单事务语义的批量追加（方案 §5.2 DD-2 / §5.4 P1-1）：**要么整批落地、要么一条不落**。
+    ///
+    /// 逐条 `append_checked` 的写法在中途失败时会把前半批留在日志里——调用方以为整批被拒、
+    /// 实际已经写进一半，恢复重放于是看到一段本不该存在的历史。这里先在**影子状态**上把整批
+    /// 校验完（元数据、批内与既有 seq 冲突、整段因果序、next_seq 溢出），全部通过才提交；
+    /// 失败时 `self` 一字不改。代价是 O(批大小)，不随历史长度增长。
+    ///
+    /// 返回真正追加的条数（成功时等于 `batch.len()`）。
+    pub fn append_batch(&mut self, batch: &[Event]) -> QxResult<usize> {
+        if batch.is_empty() {
+            return Ok(0);
         }
-        if let Some(previous) = self.events.last() {
-            let previous_key = (previous.ts, previous.prio, previous.seq);
-            let current_key = (e.ts, e.prio, e.seq);
-            if current_key <= previous_key {
+        let mut staged_seqs: BTreeSet<u64> = BTreeSet::new();
+        let mut previous = self.events.last().map(|e| (e.ts, e.prio, e.seq));
+        let mut next_seq = self.next_seq;
+        for event in batch {
+            event
+                .metadata
+                .validate()
+                .map_err(crate::error::QxError::Invariant)?;
+            if self.seqs.contains(&event.seq) || !staged_seqs.insert(event.seq) {
+                return Err(crate::error::QxError::Invariant("事件 seq 重复".into()));
+            }
+            let key = (event.ts, event.prio, event.seq);
+            if previous.is_some_and(|p| key <= p) {
                 return Err(crate::error::QxError::Invariant(
                     "事件追加违反时间/优先级/序号顺序".into(),
                 ));
             }
+            previous = Some(key);
+            next_seq = event
+                .seq
+                .checked_add(1)
+                .ok_or_else(|| crate::error::QxError::Invariant("事件序号溢出".into()))?
+                .max(next_seq);
         }
-        self.next_seq = e
-            .seq
-            .checked_add(1)
-            .ok_or_else(|| crate::error::QxError::Invariant("事件序号溢出".into()))?
-            .max(self.next_seq);
-        self.seqs.insert(e.seq);
-        self.events.push(e);
-        Ok(())
+        // 整批校验通过，才动 `self`；上面的任何一步失败都已经原样返回、日志保持提交前状态。
+        self.next_seq = next_seq;
+        for event in batch {
+            self.seqs.insert(event.seq);
+            self.events.push(event.clone());
+        }
+        Ok(batch.len())
     }
 
     /// 校验已加载日志的序号和因果排序。
@@ -185,12 +208,26 @@ impl EventLog {
 
     /// 全量摘要：事件序列完全一致则哈希一致。
     pub fn digest(&self) -> u64 {
+        self.digest_of_prefix(self.events.len())
+            .expect("前缀长度等于日志长度时必然可算")
+    }
+
+    /// 前 `len` 条事件的摘要，与 [`Self::digest`] 同构：长度前缀取 `len`，再逐条喂事件。
+    ///
+    /// 存储层的增量追加（`SqliteEventLogStore::append_batch`，方案 §5.4 P1-1）用它核对
+    /// "已落库前缀没被改写"：manifest 里存的摘要正是当日志只有 `len` 条时算出来的那一个，
+    /// 所以两边相等 ⇔ 前缀逐条相同。这一步是**纯内存**计算，不碰 I/O——增量路径要省掉的
+    /// 正是"把 N 条历史读回来反序列化"。`len` 超过日志长度返回 `None`。
+    pub fn digest_of_prefix(&self, len: usize) -> Option<u64> {
+        if len > self.events.len() {
+            return None;
+        }
         let mut h = Fnv1a::new();
-        h.write_u64(self.events.len() as u64);
-        for e in &self.events {
+        h.write_u64(len as u64);
+        for e in &self.events[..len] {
             e.digest(&mut h);
         }
-        h.finish()
+        Some(h.finish())
     }
 }
 

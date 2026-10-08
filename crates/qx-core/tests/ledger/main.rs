@@ -20,4 +20,5 @@ fn order(side: Side) -> Order {
 
 mod core_facts;
 mod corporate_actions;
+mod fee_settlement;
 mod rights_entitlements;

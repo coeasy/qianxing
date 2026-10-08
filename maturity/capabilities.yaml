@@ -1,13 +1,30 @@
 schema_version: 1
-updated_at: "2026-10-04"
-default_profile: single_node
+updated_at: "2026-10-08"
+default_profile: backtest_only
 
 # 证据等级：
 # implementation     代码/配置已存在
 # code_tested        本地测试、契约测试或 Paper E2E 已通过
 # sandbox_tested     真实供应商沙盒/模拟账户已通过
 # production_approved 真实生产凭据、故障演练和运维审批已通过
+#
+# 重要口径（P0-1）：`sandbox_tested` / `production_approved` 两档**只对需要外部 venue 的能力
+# 有意义**。本仓的主用法是回测与 Paper 闭环，它一条交易所凭据都不用——那条轨的验收边界是
+# `maturity/backtest_acceptance.yaml`（由 `tools/backtest_acceptance.py` 生成）。所以那两档对
+# `backtest_only` 档是**不适用**，不是「待补」；把两条轨混在一张表里会让「实盘待外部证据」
+# 被读成「整体未落地」。实盘轨的两档照旧只能由 `maturity/evidence/` 下 `outcome=passed` 的
+# 记录翻真（沙盒档在 testnet 子目录、生产档在 production 子目录），且 `capabilities_check`
+# 常驻核对「未拿到记录前全为 false」。
 profiles:
+  backtest_only:
+    storage: sqlite_or_files
+    messaging: disabled
+    external_venues: none
+    credentials_required: false
+    intended_use: backtest_and_paper_only
+    approval_scope: 本档的验收边界是回测与 Paper 闭环，不需要任何交易所凭据；sandbox_tested / production_approved 对本档不适用
+    acceptance_record: maturity/backtest_acceptance.yaml
+    acceptance_generator: tools/backtest_acceptance.py
   single_node:
     storage: sqlite_or_files
     messaging: disabled
@@ -132,7 +149,7 @@ capabilities:
       - order_risk_projection_fields_have_no_production_reader：`OrderRiskDecision` 的三格投影
         （`projected_position_raw` / `projected_margin_raw` / `reference_price_raw`）每笔订单都算，
         但生产消费者只有 `qx-execution` 的两个 `RiskPort` 实现，它们只读 `allowed` / `violations` /
-        `rule_set_version`；三格目前只有 `crates/qx-risk/tests/risk_parity.rs` 与 qx-risk 用例读者，
+        `rule_set_version`；三格目前只有 `crates/contract-tests/tests/risk_parity.rs` 与 qx-risk 用例读者，
         充当「三条入口判定一致」的对照面，不进任何回测产物、运行清单或 API 读模型，
         所以「这一单成交后仓位与保证金会变成多少」今天读不到产物（V13 §9.12 #171）
       - signal_confidence_is_computed_forwarded_then_dropped_at_merge：策略侧真在算这一格——`crates/qx-strategy/src/builtin.rs` 按成交量累加、`crates/qx-strategy/src/lib.rs` 按均线差绝对值、`crates/qx-strategy/src/c_api.rs` 把 FFI 决策里的原值带出，`crates/qx-runtime/src/strategy_contract/contract.rs` 写进契约输出，`crates/qx-cli/src/strategy_contract.rs` 再读进 `Signal.confidence`；可是 `SignalMerger::merge`（`crates/qx-zhenlu/src/lib.rs`）产出的 `TargetPosition` 没有这一格，合并即丢，全仓也没有任何阈值、缩放或排序读它（排序只读 `priority`）。标度还是三套口径：契约用例写 500/800/1_000 当千分制，`crates/qx-runtime/tests/strategy_contract_schema.rs` 的样例写定点原始量纲，内置策略写裸成交量。而 `schemas/strategy_api_v1.schema.json` 把 confidence 列进 required，外部读者必须给值、给了又什么都不影响——这是「必填但无读者」的形状，比纯粹的冗余更容易骗过对接方。要接上它得先定标度与阈值归谁，再决定它进 `TargetPosition`（进而在仓位与产物里可见）还是就地删掉声明 (V13 R7 扫描B)
@@ -274,12 +291,12 @@ capabilities:
     evidence:
       - crates/qx-execution/src/lib.rs
       - crates/qx-execution/src/tests/gateway_port.rs
-      - crates/qx-execution/tests/paper_accounting.rs
+      - crates/contract-tests/tests/paper_accounting.rs
       - crates/qx-execution/src/application.rs
       - crates/qx-cli/src/venue_runtime/paper_worker.rs
       - crates/qx-cli/src/venue_runtime/paper_submit.rs
       - paper-e2e
-      - crates/qx-execution/tests/venue_report_contract/venues.rs late/out-of-order + imprecise report contract
+      - crates/contract-tests/tests/venue_report_contract/venues.rs late/out-of-order + imprecise report contract
       - qx-application execution submit/cancel fact contract tests
       - qx-execution Paper/CCXT/Binance shared PortExecutionService contract test
       - qx-execution paper gateway idempotency test
@@ -420,7 +437,7 @@ capabilities:
       - crates/qx-cli/src/ccxt_facts.rs position facts refuse a missing or connector-placeholder side instead of defaulting it to long, and read the three money keys as "unreported" rather than zero (V11 Q68)
       - crates/qx-cli/src/venue_runtime/ccxt_reconcile_worker.rs emits coverage flags per fetch：只有真正取过 cashflow/position/funding 的那一轮才向报告写计数，否则写 null (V11 Q69)
       - deploy/qianxing.runtime.ccxt.example.json
-      - crates/qx-execution/tests/venue_report_contract/venues.rs CCXT fixture：终态后迟到成交与 off-tick/off-step 回报只转待对账
+      - crates/contract-tests/tests/venue_report_contract/venues.rs CCXT fixture：终态后迟到成交与 off-tick/off-step 回报只转待对账
       - .github/workflows/ci.yml C++ JSONL strategy contract smoke
       - qx-application execution fact contract shared by PortExecutionService adapters
       - crates/qx-cli/src/venue_runtime/ccxt_stream_retry.rs CcxtReconnectBudget gives every watch_orders session a real budget (500ms first backoff, 8s cap, named give-up after 10 consecutive failures) instead of a fixed delay retried forever (V12 R4-c)
@@ -451,7 +468,7 @@ capabilities:
     evidence:
       - crates/qx-adapter/src/lib.rs
       - crates/qx-cli/src/venue_runtime/binance_submit.rs
-      - crates/qx-execution/tests/venue_report_contract/venues.rs Binance 用户流 fixture：迟到成交/撤单与越界回报分类
+      - crates/contract-tests/tests/venue_report_contract/venues.rs Binance 用户流 fixture：迟到成交/撤单与越界回报分类
       - deploy/qianxing.runtime.binance-testnet.example.json
       - tools/binance_testnet_acceptance.py fail-closed driver
       - .github/workflows/ci.yml venue-acceptance job
@@ -792,6 +809,21 @@ capabilities:
     limitations:
       - option_contract_identity_is_not_modelled：TradingProduct 已补 Option 变体，但期权合约身份真正缺的几格（行权价、到期日、认购/认沽、行权方式、组合保证金、行权/指派事件）尚未建模；cn-options fixture 目前只能表达「产品类型是期权 + 标的与精度」，不能表达合约链与行权语义
       - targets_and_levels_are_declared_not_measured：maturity/targets.yaml 与 maturity/levels.yaml 当前全部 measurement_status=unmeasured / evidence=unavailable，登记册最高等级只到 L2；这是诚实读数而非缺口，翻转它们必须先把真实沙盒证据落盘
+
+  qx_api_self_built_http_ws:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-api/src/transport.rs 手写 HTTP/1.1 读写 + SHA-1 + base64 + WebSocket 帧封装（std::net::TcpStream + rustls），无 tokio
+      - crates/qx-api/src/ws.rs WebSocket 握手 / 关闭帧扫描 / 文本帧写出，掩码位按 RFC 6455 跳过
+      - crates/qx-api/src/admission.rs 请求行解析 / CORS 预检 / 头名大小写不敏感 / 连接额度
+      - maturity/http_surface.yaml 自研 HTTP/WS 面覆盖表（21 格，逐格点名 anchor 符号与 case 用例）
+      - tools/check_architecture.py http_surface_check 七颗：self_built_file 在盘、anchor 符号真声明、case 用例真在盘、verdict.decision=keep_self_built、accepted_gaps 恰好等于非 covered 行、migration_trigger 在场
+    limitations:
+      - keep_self_built_http_by_decision：按 §6.4 / §9 排期原则 3「零新依赖」，当前缺口不足以支撑一次迁库。覆盖表 verdict.decision=keep_self_built；重新评估迁库的触发条件见 maturity/http_surface.yaml 的 migration_trigger（三种：需要本仓读面真正要用的 HTTP 特性 / 需要把 API 暴露给不受控客户端 / WS 需要双向载荷）
+      - accepted_gaps_land_on_features_this_service_does_not_use：三格 gap（transfer_encoding_chunked / duplicate_content_length / ws_ping_pong）全部落在「本仓不用的 HTTP 特性」上且 fail closed；四格 partial（query_percent_decoding / header_lookup_case_insensitive / ws_frame_write_lengths / ws_client_frame_masking）靠间接用例覆盖，欠账已在表内逐格登记，不构成读面缺陷
 
   result_readability:
     implementation: true

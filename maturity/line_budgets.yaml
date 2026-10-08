@@ -20,7 +20,7 @@ crates/qx-cli/src/workers.rs: 527
 crates/qx-control/src/lib.rs: 699
 crates/qx-core/src/event.rs: 721
 crates/qx-core/src/file_lock.rs: 516
-crates/qx-core/src/sourcing.rs: 567
+crates/qx-core/src/sourcing.rs: 604
 crates/qx-datastruct/src/lib.rs: 702
 crates/qx-execution/src/lib.rs: 1562
 crates/qx-factor/src/execution_plan.rs: 517
@@ -28,11 +28,11 @@ crates/qx-factor/src/lib.rs: 1837
 crates/qx-guanxing/src/lib.rs: 577
 crates/qx-protocol/src/lib.rs: 785
 crates/qx-provider/src/lib.rs: 743
-crates/qx-runtime/src/pipeline.rs: 2328
+crates/qx-runtime/src/pipeline.rs: 2480
 crates/qx-scheduler/src/lib.rs: 1560
 crates/qx-storage/src/lib.rs: 2472
 crates/qx-storage/src/postgres.rs: 2074
-crates/qx-storage/src/sqlite.rs: 2552
+crates/qx-storage/src/sqlite.rs: 2689
 crates/qx-storage/tests/outbox_backend_semantics.rs: 717
 crates/qx-strategy/src/builtin.rs: 991
 crates/qx-strategy/src/c_api.rs: 1166

@@ -474,7 +474,13 @@ CLI_TEST_FIXTURES = (
 EXECUTION_TESTS_DIR = "crates/qx-execution/src/tests"
 # V11 Q57 把该目录连同集成测试的用例总数（25）写回下限。注释此前声称"删一条就红"，
 # 但 14 这个数早已落后实际条目数，下限只是"粗粒度地板"：抬到实测总数才真能挡住静默删除。
-EXECUTION_TEST_FLOOR = 25
+# 25 -> 15：V13 R23 · P1-12 把 `crates/qx-execution/tests/` 的四份**跨 crate 契约**用例
+# （paper_accounting / reconcile_port_contract / recovery_and_replay / venue_report_contract，
+# 共 10 条）迁到 `crates/contract-tests/tests/`，以拆掉「qx-execution --dev--> qx-runtime」
+# 这条压在正常边上的 dev 环。用例一条没删——它们仍在全仓地板里（`workspace_test_floor_check`
+# 把新 crate 一并计入，总数不变），并由 `dev_dependency_cycle_check` 第 2 颗逐名钉在新位置。
+# 本地板因此只覆盖 `src/tests` 的 15 条（与磁盘一致），不再是"目录 + 集成"两处之和。
+EXECUTION_TEST_FLOOR = 15
 EXECUTION_TEST_FIXTURES = (
     "PortState",
     "PortVenue",
@@ -539,7 +545,7 @@ WORKSPACE_TEST_FLOOR = 1083  # 1082 -> 1083：V13 R12/R13 补一条 PostgreSQL �
 # 存档落空条数天花板 9 只降不升。
 # 601 → 602：V13 R1-H 重落 V11 R6-1——删掉零构造者的 `CommandStatus::Rejected`，
 # 终态词表收回到 `is_final` 体内一处（控制面 + CLI 幂等入口两个平面各一颗判据）。
-GATE_CHECK_FLOOR = 684  # 678 -> 684：V13 R18 补六颗 fam05「调度 owner 路由 fail closed + JobSpec 读侧」判据（scheduler_owner_routing_check 六颗）。恢复 crates/qx-scheduler/src/job_spec.rs（Trigger/JobWindow/JobSpec 与 owner 路由判据的落点）并把 owner 路由判据单源化：JOB_OWNER_ANY 一个常量、claimable_by 一处定义，领取端（workers.rs）与装配端（load_scheduler_state 的 validate_job_owners，新建与载入两条路径）共用它。六颗分别钉：通配 owner 只有一个常量且领取端不再就地比较 "*"、装配处 fail closed 且两条路径都要问、deploy 示例声明的作业清单都找得到、deploy 示例里每个启用作业都有可领取的启用 Strategy worker、JobSpec 三格零读者字段按 2026-10-06 方案 §13.2 保留不删 + 登记 limitation + 双向钉住、作业清单示例每一格顶层键都在 JobSpec 名单里。上一轮基线 678 是 V13 R17 补七颗 fam04「适配层 IO 预算与 venue 缓存」判据（io_budget_and_venue_cache_check 七颗）。恢复 crates/qx-adapter/src/io_budget.rs 与 crates/qx-adapter/src/venue_cache.rs，把 write_all_within 接进三处子进程 stdin 写入（CCXT worker / 策略 worker / 事件 consumer handler），把 evict_stale_terminal_orders 接进两个常驻 venue 的订单写入点（binance 3 / ccxt 2）并级联退派生索引。七颗分别钉：三处 stdin 写入都走 write_all_within 且无一处退回裸 write_all、io_budget 只按截止时间收写线程且只有超时那格把打断管道的责任交回调用方、WebSocket 单帧/整条消息/单次轮询三层长度预算各一个具名常量、venue 缓存封顶只退终态订单且越限才扫表、两个 venue 的每处订单写入都过封顶并级联清派生索引、binance 未知订单仍升级对账、针路 OMS 刻意不共用封顶。上一轮基线 671 是 V13 R16 补八颗 fam01「文件锁统一」判据（file_lock_single_source_check 七颗 + backtest_clock_honesty_check 的墙钟豁免在场一颗）。恢复 crates/qx-core/src/file_lock.rs（V11 §40 D1 的崩溃可恢复写锁：纯判据 decide_lock + 有界等待 + 按年龄接管孤儿锁 + Drop 只删自己那把），并把四处就地 create_new 锁（数据集注册表 qx-data/registry.rs、多腿状态 qx-zhenlu/lib.rs、存储信封 qx-storage/state_envelope.rs、作业 claim qx-storage/file/jobs.rs）全部改走 qx_core::FileLock。七颗分别钉：FileLock 只有一个定义点、全仓再无第二处 remove_file(*lock*) 的就地锁生命周期、四个消费文件都引用 FileLock::acquire 且不回归就地锁算式、以及「同一场竞争只接管一次」住在 decide_lock 里且循环把计数喂回判据、只按判据交出的年龄说话。file_lock 读墙钟（锁年龄与令牌 nonce）是唯一一格豁免，按路径点名并由「豁免文件仍在场」一颗核对。上一轮基线 663 是 V13 R15 补三颗 fam12「CLI 表面」判据。`cli_help_surface_check` 只核「help ≡ clap 表 ≡ cli.rs 派发」三侧集合相等，看不见「某入口其实一敲就崩 / 它自己的用法渲染不出来」；`cli_dispatch_check` 只核分派点唯一。三颗分别钉：crates/qx-cli/tests/command_surface.rs 的 CLI_COMMANDS 清单与 clap 表逐一相等（新增命令没进清单、或清单留了已删命令都红）、清单真的被逐条喂给被测 binary 跑 --help（只列不跑 = 清单退化成装饰）、config 的 clap 子命令集与 help 印出的 config <sub> 行逐一相等（第二层入口与顶层同一类断链）。上一轮基线 660 是 V13 R14 补两颗 fam11「分层处置」闭环判据。零读者那一族（zero_reference_public_surface_check / zero_reference_pub_crate_surface_check）只遍历在盘的定义，所以「函数被删掉、PUBLIC_SURFACE_ALLOWLIST 条目还在」这件事它永远看不见——条目会一直躺着，下一次有人把同名函数加回来时它就变成一张现成的免检通行证。两颗分别钉：允许清单里每个条目都对应一处真实定义（pub fn/pub const 或 pub(crate) fn）、每条理由都不是占位符（至少 6 个字符，当前最短的 7 个字符是 `任务 #119`）。上一轮基线 658 是 V13 R13 补三颗 fam02「停机令牌 + 连接上界」判据：V13 R2 #218 实测，监听循环按 stopped() 收摊后已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。V13 R2 #218 实测：监听循环按 stopped() 收摊后，已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开（不发 FIN、也不再写字节）时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起（有生产者、初始化关闭）、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。fam02 另外两格（快照历史有界、事件按账户键）已由 bounded_growth_and_reap_check 与 browser_admission_check 看守。上一轮基线 655 是 V13 R12 补四颗 fam10「运维读面：exposition 真换行 + 告警名册每个指标都有生产端」判据。V13 R2 第七遍实测到的缺陷形态是 /metrics 正文只有一行、行与行之间是字面的 `\n` 两个字符：抓取端把整份正文读成一行、一条样本都解析不出来，而告警侧是「永不触发」而不是「报错」——服务端与告警侧都不会自己出声。四颗分别钉：exposition 构造函数用真换行（体里出现 `\n` 转义、不出现字面的双反斜杠 n）、那条逐行解析用例在盘且解析器显式拒绝字面换行、告警名册里每个 qx_ 指标都能在生产源码里找到写出点（否则该告警永不触发）、名册每条规则都有 expr/severity/summary。取名册文本时同样先剥整行 `#` 注释：名册里那段解释 `qx_outbox_relay_parked` 的散文不剥掉，会替真规则满足「有生产者」那颗判据。上一轮基线 651 是 V13 R11 补七颗 fam13「CI 特性矩阵点亮每颗特性闸门 + NATS 用例有真执行的腿」判据。§12.2 把这一族登记为回退面时明写「新补的那条 NATS 腿只由 ci.yml 的文本存在性保证，门禁里没有判据核它——把它删掉或加上 --no-run 不会红」，本轮把那颗缺失的判据补上：① feature-matrix job 在盘且三步（clippy/check/test）都按 --no-default-features 逐组合跑（只在某些 feature 分支里才存在的代码不会被默认特性的 lint 看到，矩阵漏一颗特性那颗特性的代码就从「有 lint」退成「无 lint」）；② qx-cli 声明的每颗特性都出现在某个矩阵组合里，且矩阵里不出现不存在的特性名（拼错即红）；③ NATS 真执行腿按指纹整段钉住（显式点名两个 NATS 测试目标，因此与 `-- --ignored` 那条腿不可能混淆）；④ NATS 非 ignore 用例数不低于现场实测值 8。上一轮基线 644 是 V13 R10 补五颗 fam06「environment 词表单点与 production 判定唯一出口」判据。此前「这份运行时配置是不是 production」被手抄 14 处（运行时配置校验 9 处 + CLI 体检/就绪 5 处），各写一份 `environment.eq_ignore_ascii_case("production")`，全仓没有单源出口——危害不是现在算错，而是改口径（如 `production`→`prod`）时漏改的那一处加固静默失效，而它守的正是「production 禁止明文 API / C ABI 必须配 Ed25519 公钥 / Execution worker 必须配名义额上限」。五颗分别钉：写法常量 `PRODUCTION_ENVIRONMENT` 与判定 `RuntimeConfig::is_production` 各只有一处定义、词表从常量取 production 这一档、判定体引用常量不得内联字面量、手抄式 `eq_ignore_ascii_case("production")` 不得在生产代码复活、调用判定的生产文件与登记表逐一相等（新增闸门必须登记）。同 `VenueId::is_binance`（V13 §5 A3）一族。上一轮基线 639 是 V13 R9 补一颗「金额/价格/数量字段的缺键不许静默变成 0」。裸 `#[serde(default)]` 落在非 `Option` 的 Money/Price/Quantity 上，等于给「这份回报没带该字段」和「交易所明确报了 0」发同一张身份证；本仓两条正确形状分别是 `Option<Money>`（AccountPositionSnapshot 三格）与 `#[serde(default = "named_fn")]`（A 股规则配置）。剩下的三处全在 qx-core/src/event.rs 且危险方向都是 fail-closed，按名字登记在 BARE_MONEY_DEFAULT_ALLOWLIST。上一轮基线 638 是 V13 R8 补五颗静默抑制判据（丢结构体字段值必须当场写理由、`#[allow(dead_code)]` 必须当场写理由、`unreachable!` 必须带非空消息、不得留 `todo!`/`unimplemented!` 桩、生产源码的 TODO/FIXME 与登记表逐项相等）。这五种形状的共同点是「改错了也不红」：字段没人读就加一行 `let _ = x.y;` 按住、能力没接上就挂 allow、分支真到不了就写裸 unreachable!()、需求没做完就留桩，全是孤儿逻辑与静默降级的温床。上一轮基线 633 是 V13 R16 补四颗，守契约与存储读回侧的防御口径一致性。第一颗守 Python `StrategyInput.from_dict` 必须像同文件的 `StrategyIntent` / `StrategyOutput` 一样调 `_reject_unknown_keys`：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，策略可能以为账户是空的而误触发。第二颗守 `FactorReport::validate` 必须像 `FactorConfig::validate` 一样校验 `missing_policy` 的 reject/skip/zero 词表：报告能被 `from_json` 反序列化，只有空串校验时手改一份 JSON 能放行到下游 `resolve_missing` 才报错，落点离改错的地方很远。第三颗守 `outbox.attempts` 读回必须走 `parse_sqlite_u32` / `parse_u32` 而不是 `as u32` 截断：attempts 以 TEXT 落盘，u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成小值、绕开死信判定。第四颗守 `FactorConfig` 的源头词表本身没被改弱——两处词表不一致时改哪一侧都会让另一侧的校验变成摆设。627 -> 629：V13 R14 补两颗，守两个平台的托管启动器都有 supervise 之前的 runtime-check 前置闸门，且 bash 侧的闸门失败不得用 $? 当退出码。`supervise` 只走 plan_workers 的拓扑校验，不检查配置引用的文件是否存在（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）——修前 start-qianxing.ps1 有这道闸门、start-qianxing.sh 没有，Linux/macOS 上的坏配置会拉起 7 个子进程再 fail-fast 全杀，而不是在任何子进程起来之前就拒绝。第二颗守 `if ! cmd; then echo ...; exit "$?"; fi` 里的 $? 拿的是上一条 echo 的状态（0），调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
+GATE_CHECK_FLOOR = 767  # 764 -> 767：V13 R23 续 · M4'/M5' Web 静态控制台发布包：新增 `package_web_console.py` 确定性归档（版本/commit/Schema Registry 身份 + 三份资源 SHA256、gzip/tar 元数据归零），tag 发布流水线产出 `web-console` artifact、附 build provenance、汇入 Release 的 SHA256SUMS；`release_supply_chain_check` 加三颗判据（打包器+三条测试、job 打包/attestation/upload、Release 汇集与哈希清单）。764 -> 767：V13 R23 续 · §6.4 P2-2 落 http_surface_check（七颗）：自研 HTTP/WS 面覆盖表（maturity/http_surface.yaml）逐格与真实代码对账——self_built_file 全在盘、每行 anchor 符号真声明、每行 case 用例真在盘、verdict.decision=keep_self_built、accepted_gaps 恰好等于「非 covered 行」、migration_trigger 在场。755 -> 757：阶段四 M3' 把控制台从「只读」推进到「控制面」（受理 → 执行者判定 → 终态退场）。`web_console_check` 五颗 -> 七颗：原来那颗「不许出现 POST 或 /control/commands」换成**写面唯一**（`method: "POST"` 全文件只许出现一处，且必须是 `postJson(API_PATHS.controlCommands`；另加禁用名单 `/order/submit` / `binance-submit-order` / `paper-submit-order` / `/control/commands/execute`——下单只能走控制面受理，页面不得直连下单端点），并新增两颗：三阶段文案与状态词表（Accepted/Executed/Failed）在盘、页面如实交代 `403 authenticated_operator_required` 的身份边界（operator 来自 mTLS，页面不能自声明）。上一轮 755 是 743 -> 755：V13 R23 续 · §7 M1 落 `qx-core::contract` 稳定契约单点 + 命名转换矩阵（12 颗判据 contract_matrix_check）：把 P1-5 点名的三对同名兄弟（Bar / StrategyContext / DataProvider）从"隐式重复"（两处各写一份字段映射、谁也不知道还有第三处）变成"显式登记 + 与真实代码逐条对账"——规范单点在仓内唯一、同名兄弟真在盘、adapter 真有生产读者、没有未登记的第三份声明、且「同名但刻意不同层」的行必须写明理由；配套新增读面 `GET /schema/contract-matrix`（`qx_core::contract::CONTRACT_MATRIX` 的 JSON 形态，矩阵因此有真生产读者而不是躺在允许清单里）。上一轮 743 是 737 -> 743：V13 R23 续 · P0-1 把「回测轨」做成**不需要交易所凭据**就能完整验收的一条轨。卡点原本是 maturity/evidence/testnet/ 那份 Binance 验收 outcome=skipped（缺 QX_BINANCE_TESTNET_API_KEY/_SECRET），于是 sandbox_tested / production_approved 只能全 false，P0-1 一直挂在"未落地"；但这两档**只对需要外部 venue 的能力有意义**，而本仓主用法是回测与 Paper 闭环，一条凭据都不用。新增 tools/backtest_acceptance.py（两个独立目录各跑 quickstart + 同目录两轮 backtest；同目录重跑要求逐格相等含产物文件名与 config_fingerprint，跨目录只要求 result_hash / data_fingerprint / 归一化后的产物内容相等，equity/fills 逐字节相等；归一化只抹「绝对路径 + 内容寻址的 config_hash + 由它派生的文件名后缀」三样）+ maturity/backtest_acceptance.yaml（**仓库资产**，与未跟踪的 evidence/ 不同）+ crates/qx-cli/tests/backtest_acceptance_determinism.rs（两条行为用例）。补六颗判据（backtest_track_check 六颗）：① 默认档 backtest_only 且声明不需凭据/无外部 venue/那两档不适用；② 记录在盘且六格自述齐全；③ 记录由在盘脚本生成且脚本真有 compare_reruns/compare_independent/one_leg；④ result_hash 是 16 位十六进制且四类产物摘要齐全；⑤ 记录正文不出现任何 venue 名称（先剥 `#` 注释再判，免得"证据在哪"那句话被当越界声明）、实盘两档仍全 false；⑥ 行为用例在盘。刻意不做「记录是否过时」判据——generated_at_unix 每跑一次都变，拿它当判据只会逼人写死时间戳。上一轮 737 是 729 -> 737：V13 R23 · P1-11/DD-5 把错误码从字符串抽成**五元契约**（`crates/qx-core/src/error.rs`：`ErrorCode` 闭集 + `Retryability` 四档 + `ErrorContract` 五格 + `QxError::contract()` 唯一映射表，`code()` 从它派生），并把消费侧接上（`qx-cli/src/usage_errors.rs` 的 `qx_context` 显式消费契约、`runtime_wiring/pipeline_storage.rs` 四处 `QxError`→字符串边界不再摊成 `{error:?}`、`qx-runtime/src/pipeline.rs` 两处重试循环改按 `retryability` 分支），补八颗判据（error_code_contract_check 八颗）：① 三型落在 qx-core 的 error 模块且 lib.rs 重导出；② `ErrorContract` 五格字段齐；③ `ErrorCode::ALL` 是闭集（声明长度 == 列出的码 == `QxError` 变体数）；④ `contract()` 是唯一映射表且 `code()` 从它派生、自身不再 `match self`；⑤ CLI 展示层按 `reconcile_required`/`retryability.allows_retry()` 分级；⑥ 四处 QxError→字符串边界全走 `qx_context` 且文件里不再有 `{error:?}`；⑦ 热路径重试循环按 `retryability` 分支（两处）；⑧ 行为用例在盘（qx-core 侧自洽 + qx-cli 侧逐变体五格 / 展示层分级 / 真实打开边界带码三条）。刻意不纳入 HTTP/工作流状态串（qx-api 的 status、qx-control 的 CommandStatus）——它们是各自的读面，塞进 `ErrorCode` 会把闭集撑成开放集、③当场数不准。上一轮 729 是 723 -> 729：V13 R23 · P1-6/WP-19 把三把权益/保证金尺子收敛成单一 `ValuationContext`/`ValuationResult`（`qx-core/src/valuation.rs`：`Ledger::valuate` 单点派发 + `MarginState::valuate` 共用结果形状；回测两处手工派发与 CLI paper 保证金派发全部改走它），补六颗判据（valuation_single_source_check 六颗）：① 类型落在 qx-core 的 valuation 模块且 lib.rs 挂载+重导出；② `Ledger::valuate` 在盘且三把参数化尺子的派发只在它里面；③ `MarginState::valuate` 在盘且两个入口共用 `ValuationResult::new`（available 关系单源）；④ 生产源码全文扫描——三把参数化尺子只能出现在定义点（`ledger/query.rs`）与估值单点（`valuation.rs`），取 `production_text` 剥掉注释与测试项以免「文档提一句 / 用例直接调原语」数不准；⑤ `MarginState::equity`/`available` 委托 `valuate`；⑥ 派发等价性四条行为用例在盘（valuate 与原始尺子逐值相等、有/无汇率两把尺子给出不同的数）。刻意不纳入 `Ledger::equity_for`（乘数固定 1 的无参现货尺子，没有"选哪把"的歧义）。上一轮 723 是 717 -> 723：V13 R23 · P1-2/§7 M2 落 LiveEventPipeline 游标增量 refresh（`SqliteEventLogStore::read_since` 行级尾部读 + `refresh_latest` 三支：空尾部 no-op / 前缀一致只接尾部 / 前缀不符整份重建），补六颗判据（pipeline_cursor_refresh_check 六颗）：① SQLite 读侧 read_since 按 seq 只取尾部且不调 load_event_log（否则 O(N) 读放大原样回来）；② RuntimeEventStore::read_since 委派 SQLite、其余后端显式回落 Ok(None)（不是静默降级）；③ refresh_latest 三支齐备；④ apply_tail 用 P1-1 的 append_batch 接日志且不做整份重建索引；⑤ 增量与整份重建共用同一个 apply_index_event（归约单源，两条路径不能各写一份）；⑥ 读侧前缀校验与归约侧增量路径各有一条行为用例在盘（增量与整份重建的终态完全一致，纯行为断言抓不到退化，故同时把 tail_appends/rebuilds 两个内部计数器当回归证明面）。上一轮 717 是 711 -> 717：V13 R23 · P1-1/DD-2/§7 M2 落 EventLog 写侧单事务批量追加（`EventLog::append_batch` + `SqliteEventLogStore::append_batch` + 生产写面接线），补六颗判据（event_log_append_batch_check 六颗）：Kernel 的 append_batch 在盘且 append_checked 委托给它（逐条校验规则单源）、digest() 与前缀摘要 digest_of_prefix() 同源、SQLite 增量追加函数不调 load_event_log（否则 O(N) 读放大原样回来）、append_batch 在单事务里走增量路径、pipeline.rs 的 SQLite 分支真的调它、原子性与增量性各有一条行为用例在盘。上一轮 711 是 708 -> 711：V13 R23 · P1-12/§8 WP-22 建 `crates/contract-tests`（纯测试宿主），把两条压在正常边上的 dev 环（`qx-execution --dev--> qx-runtime`、`qx-risk --dev--> qx-zhenlu`）连同它们的 5 份跨 crate 契约用例（10 条）搬出生产 crate，补三颗判据（dev_dependency_cycle_check 三颗）：① 两条已知环不许回来；② 全仓不得存在「A --dev/build--> B 且 B --normal--> A」这种二点环（`cargo tree` 默认视图看不见 dev 边，反向正常边却真实存在——新写的 dev 边踩到任一正常边当场红）；③ 搬家不是丢用例——迁走的五份契约用例仍在 `crates/contract-tests/tests/` 且该 crate 在 workspace members 里（否则它们再不会被 `cargo test` 跑到）。`EXECUTION_TEST_FLOOR` 25 -> 15 是这次搬家的补偿口径：本地板只覆盖 `src/tests` 的 15 条，全仓地板把新 crate 一并计入、总数不变。上一轮 708 是 703 -> 708：V13 R23 · P0-3/DD-4 落 in-process 原生策略信任门（`crates/qx-cli/src/native_trust.rs`：`admit_in_process_c_abi` + `target_triple_matches`），补五颗判据（native_trust_check 五颗）：信任门模块在盘且两个判定都非测试专用、`load_c_abi_strategy` 在 `dlopen` 之前先过信任门、配置面暴露 `c_abi_trusted_native`/`c_abi_target_triple`、且信任门开关缺省为 false（默认拒绝）。上一轮基线 703 是 698 -> 703：V13 R23 · 阶段四 M1'/M2' 建只读 Web 控制台（web/console/{index.html,app.js,styles.css}），补五颗「前端 ⇔ 后端接线」判据（web_console_check 五颗）：控制台三件在盘、app.js 点名的每个 API 路径都在 qx-api 路由表里（前端引用一个后端不存在的端点当场红）、index.html 写明 cors_allowed_origins 跨源要求、写明 `qx-cli serve` 启动入口、且控制台不得长出写操作（出现 POST 或 /control/commands 即红——它就不再是只读控制台）。上一轮基线 698 是 697 -> 698：V13 R22 #222 修 `TEST_PATH` 盲区（它只认目录式 `src/tests/`、不认单文件式 `src/tests.rs`，于是「唯一读者写在 `src/tests.rs` 里」的 `pub` 项被当成有生产读者）并补一颗「测试模块两种形态」判据（`zero_reference_public_surface_check` 新增一颗）。口径定成一格：`(?:^|/)tests\.rs$` 补齐单文件形态；放宽后由单文件盲区放出来的 8 条零读者（`qx-datastruct::{close_at, from_view, resample_with_manifest, select_time_with_manifest}`、`qx-protocol::{from_wire_json, to_wire_json}`、`qx-xingban::{corporate_action_supported_by_ledger, corporate_actions_from_data}`）逐条进允许清单并写明理由（生产链路走 `BarFrame::from_json` / `apply_corporate_actions_json`，这些类型化程序化入口只有库内用例读者）。上一轮基线 697 是 695 -> 697：V13 R21 补两颗 fam12「二级入口逐颗用例」判据（cli_surface_coverage_check 新增两颗）。顶层命令表此前只覆盖父命令，`backtest ccxt-builtin` / `strategy list` 这类二级入口一颗用例都没点过名——`crates/qx-cli/tests/command_surface.rs` 新增 `NESTED_COMMANDS` 常量与 `every_nested_command_renders_its_own_help` 用例逐条实跑 `--help`，两颗判据分别钉：清单与四个父命令（config/run/strategy/backtest）的 clap 子命令表逐一相等、且清单真的被逐条喂给被测 binary（只列不跑 = 红）。上一轮基线 695 是 689 -> 695：V13 R20 补六颗 fam15「内核时间轴口径」判据（kernel_timeline_check 六颗）。README 与 crates/qx-core/Cargo.toml 把内核描述成"有确定性时钟与因果事件队列"，而 crates/qx-core/src/clock.rs 自己写着"这里不提供虚拟时钟"、lib.rs 写着"内核不提供虚拟时钟对象"——文档替一段不存在的代码作保（§13.1 修 README 过度声明的同族）。六颗分别钉：三件死实现（引擎/因果队列/时钟）不得以原名回到 crates/、clock.rs 只剩 pub type Ts = u64; 且唯一、三份口径来源不再写旧承诺、README 改口到真实推进路径（含优先级序）、因果优先级数值 Rust↔Python 单源、pipeline.rs 的 (ts, prio) 单调落盘判据唯一且在正文。上一轮基线 689 是 V13 R20 补五颗「手续费币种折算」判据（fee_settlement_currency_check 五颗）。回退面重放时发现 `crates/qx-core/src/ledger/fill.rs` 在祖先 `7e8f3db` 上是 334 行、带 fee_in_settlement_raw/base_asset_of，合流后只剩 261 行、把异币种手续费按面值记进结算币种——`Fill.fee_currency` 由两个适配器填充且已进事件指纹，归约侧整份不读它，是 D2 的原始缺陷（不在 §9.48 的 15 族名册里，是重放模块级判据时才暴露的第 16 族）。五颗分别钉：折算函数唯一且两条记账入口都过它、费用腿记折完的数不记回报原数、基准资产费用按成交自身价格定点折算、折算只对乘数为 1 的现货开放（衍生严格认结算币种）、七条用例逐形状在位。上一轮基线 684 是 V13 R18 补六颗 fam05「调度 owner 路由 fail closed + JobSpec 读侧」判据（scheduler_owner_routing_check 六颗）。恢复 crates/qx-scheduler/src/job_spec.rs（Trigger/JobWindow/JobSpec 与 owner 路由判据的落点）并把 owner 路由判据单源化：JOB_OWNER_ANY 一个常量、claimable_by 一处定义，领取端（workers.rs）与装配端（load_scheduler_state 的 validate_job_owners，新建与载入两条路径）共用它。六颗分别钉：通配 owner 只有一个常量且领取端不再就地比较 "*"、装配处 fail closed 且两条路径都要问、deploy 示例声明的作业清单都找得到、deploy 示例里每个启用作业都有可领取的启用 Strategy worker、JobSpec 三格零读者字段按 2026-10-06 方案 §13.2 保留不删 + 登记 limitation + 双向钉住、作业清单示例每一格顶层键都在 JobSpec 名单里。上一轮基线 678 是 V13 R17 补七颗 fam04「适配层 IO 预算与 venue 缓存」判据（io_budget_and_venue_cache_check 七颗）。恢复 crates/qx-adapter/src/io_budget.rs 与 crates/qx-adapter/src/venue_cache.rs，把 write_all_within 接进三处子进程 stdin 写入（CCXT worker / 策略 worker / 事件 consumer handler），把 evict_stale_terminal_orders 接进两个常驻 venue 的订单写入点（binance 3 / ccxt 2）并级联退派生索引。七颗分别钉：三处 stdin 写入都走 write_all_within 且无一处退回裸 write_all、io_budget 只按截止时间收写线程且只有超时那格把打断管道的责任交回调用方、WebSocket 单帧/整条消息/单次轮询三层长度预算各一个具名常量、venue 缓存封顶只退终态订单且越限才扫表、两个 venue 的每处订单写入都过封顶并级联清派生索引、binance 未知订单仍升级对账、针路 OMS 刻意不共用封顶。上一轮基线 671 是 V13 R16 补八颗 fam01「文件锁统一」判据（file_lock_single_source_check 七颗 + backtest_clock_honesty_check 的墙钟豁免在场一颗）。恢复 crates/qx-core/src/file_lock.rs（V11 §40 D1 的崩溃可恢复写锁：纯判据 decide_lock + 有界等待 + 按年龄接管孤儿锁 + Drop 只删自己那把），并把四处就地 create_new 锁（数据集注册表 qx-data/registry.rs、多腿状态 qx-zhenlu/lib.rs、存储信封 qx-storage/state_envelope.rs、作业 claim qx-storage/file/jobs.rs）全部改走 qx_core::FileLock。七颗分别钉：FileLock 只有一个定义点、全仓再无第二处 remove_file(*lock*) 的就地锁生命周期、四个消费文件都引用 FileLock::acquire 且不回归就地锁算式、以及「同一场竞争只接管一次」住在 decide_lock 里且循环把计数喂回判据、只按判据交出的年龄说话。file_lock 读墙钟（锁年龄与令牌 nonce）是唯一一格豁免，按路径点名并由「豁免文件仍在场」一颗核对。上一轮基线 663 是 V13 R15 补三颗 fam12「CLI 表面」判据。`cli_help_surface_check` 只核「help ≡ clap 表 ≡ cli.rs 派发」三侧集合相等，看不见「某入口其实一敲就崩 / 它自己的用法渲染不出来」；`cli_dispatch_check` 只核分派点唯一。三颗分别钉：crates/qx-cli/tests/command_surface.rs 的 CLI_COMMANDS 清单与 clap 表逐一相等（新增命令没进清单、或清单留了已删命令都红）、清单真的被逐条喂给被测 binary 跑 --help（只列不跑 = 清单退化成装饰）、config 的 clap 子命令集与 help 印出的 config <sub> 行逐一相等（第二层入口与顶层同一类断链）。上一轮基线 660 是 V13 R14 补两颗 fam11「分层处置」闭环判据。零读者那一族（zero_reference_public_surface_check / zero_reference_pub_crate_surface_check）只遍历在盘的定义，所以「函数被删掉、PUBLIC_SURFACE_ALLOWLIST 条目还在」这件事它永远看不见——条目会一直躺着，下一次有人把同名函数加回来时它就变成一张现成的免检通行证。两颗分别钉：允许清单里每个条目都对应一处真实定义（pub fn/pub const 或 pub(crate) fn）、每条理由都不是占位符（至少 6 个字符，当前最短的 7 个字符是 `任务 #119`）。上一轮基线 658 是 V13 R13 补三颗 fam02「停机令牌 + 连接上界」判据：V13 R2 #218 实测，监听循环按 stopped() 收摊后已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。V13 R2 #218 实测：监听循环按 stopped() 收摊后，已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开（不发 FIN、也不再写字节）时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起（有生产者、初始化关闭）、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。fam02 另外两格（快照历史有界、事件按账户键）已由 bounded_growth_and_reap_check 与 browser_admission_check 看守。上一轮基线 655 是 V13 R12 补四颗 fam10「运维读面：exposition 真换行 + 告警名册每个指标都有生产端」判据。V13 R2 第七遍实测到的缺陷形态是 /metrics 正文只有一行、行与行之间是字面的 `\n` 两个字符：抓取端把整份正文读成一行、一条样本都解析不出来，而告警侧是「永不触发」而不是「报错」——服务端与告警侧都不会自己出声。四颗分别钉：exposition 构造函数用真换行（体里出现 `\n` 转义、不出现字面的双反斜杠 n）、那条逐行解析用例在盘且解析器显式拒绝字面换行、告警名册里每个 qx_ 指标都能在生产源码里找到写出点（否则该告警永不触发）、名册每条规则都有 expr/severity/summary。取名册文本时同样先剥整行 `#` 注释：名册里那段解释 `qx_outbox_relay_parked` 的散文不剥掉，会替真规则满足「有生产者」那颗判据。上一轮基线 651 是 V13 R11 补七颗 fam13「CI 特性矩阵点亮每颗特性闸门 + NATS 用例有真执行的腿」判据。§12.2 把这一族登记为回退面时明写「新补的那条 NATS 腿只由 ci.yml 的文本存在性保证，门禁里没有判据核它——把它删掉或加上 --no-run 不会红」，本轮把那颗缺失的判据补上：① feature-matrix job 在盘且三步（clippy/check/test）都按 --no-default-features 逐组合跑（只在某些 feature 分支里才存在的代码不会被默认特性的 lint 看到，矩阵漏一颗特性那颗特性的代码就从「有 lint」退成「无 lint」）；② qx-cli 声明的每颗特性都出现在某个矩阵组合里，且矩阵里不出现不存在的特性名（拼错即红）；③ NATS 真执行腿按指纹整段钉住（显式点名两个 NATS 测试目标，因此与 `-- --ignored` 那条腿不可能混淆）；④ NATS 非 ignore 用例数不低于现场实测值 8。上一轮基线 644 是 V13 R10 补五颗 fam06「environment 词表单点与 production 判定唯一出口」判据。此前「这份运行时配置是不是 production」被手抄 14 处（运行时配置校验 9 处 + CLI 体检/就绪 5 处），各写一份 `environment.eq_ignore_ascii_case("production")`，全仓没有单源出口——危害不是现在算错，而是改口径（如 `production`→`prod`）时漏改的那一处加固静默失效，而它守的正是「production 禁止明文 API / C ABI 必须配 Ed25519 公钥 / Execution worker 必须配名义额上限」。五颗分别钉：写法常量 `PRODUCTION_ENVIRONMENT` 与判定 `RuntimeConfig::is_production` 各只有一处定义、词表从常量取 production 这一档、判定体引用常量不得内联字面量、手抄式 `eq_ignore_ascii_case("production")` 不得在生产代码复活、调用判定的生产文件与登记表逐一相等（新增闸门必须登记）。同 `VenueId::is_binance`（V13 §5 A3）一族。上一轮基线 639 是 V13 R9 补一颗「金额/价格/数量字段的缺键不许静默变成 0」。裸 `#[serde(default)]` 落在非 `Option` 的 Money/Price/Quantity 上，等于给「这份回报没带该字段」和「交易所明确报了 0」发同一张身份证；本仓两条正确形状分别是 `Option<Money>`（AccountPositionSnapshot 三格）与 `#[serde(default = "named_fn")]`（A 股规则配置）。剩下的三处全在 qx-core/src/event.rs 且危险方向都是 fail-closed，按名字登记在 BARE_MONEY_DEFAULT_ALLOWLIST。上一轮基线 638 是 V13 R8 补五颗静默抑制判据（丢结构体字段值必须当场写理由、`#[allow(dead_code)]` 必须当场写理由、`unreachable!` 必须带非空消息、不得留 `todo!`/`unimplemented!` 桩、生产源码的 TODO/FIXME 与登记表逐项相等）。这五种形状的共同点是「改错了也不红」：字段没人读就加一行 `let _ = x.y;` 按住、能力没接上就挂 allow、分支真到不了就写裸 unreachable!()、需求没做完就留桩，全是孤儿逻辑与静默降级的温床。上一轮基线 633 是 V13 R16 补四颗，守契约与存储读回侧的防御口径一致性。第一颗守 Python `StrategyInput.from_dict` 必须像同文件的 `StrategyIntent` / `StrategyOutput` 一样调 `_reject_unknown_keys`：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，策略可能以为账户是空的而误触发。第二颗守 `FactorReport::validate` 必须像 `FactorConfig::validate` 一样校验 `missing_policy` 的 reject/skip/zero 词表：报告能被 `from_json` 反序列化，只有空串校验时手改一份 JSON 能放行到下游 `resolve_missing` 才报错，落点离改错的地方很远。第三颗守 `outbox.attempts` 读回必须走 `parse_sqlite_u32` / `parse_u32` 而不是 `as u32` 截断：attempts 以 TEXT 落盘，u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成小值、绕开死信判定。第四颗守 `FactorConfig` 的源头词表本身没被改弱——两处词表不一致时改哪一侧都会让另一侧的校验变成摆设。627 -> 629：V13 R14 补两颗，守两个平台的托管启动器都有 supervise 之前的 runtime-check 前置闸门，且 bash 侧的闸门失败不得用 $? 当退出码。`supervise` 只走 plan_workers 的拓扑校验，不检查配置引用的文件是否存在（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）——修前 start-qianxing.ps1 有这道闸门、start-qianxing.sh 没有，Linux/macOS 上的坏配置会拉起 7 个子进程再 fail-fast 全杀，而不是在任何子进程起来之前就拒绝。第二颗守 `if ! cmd; then echo ...; exit "$?"; fi` 里的 $? 拿的是上一条 echo 的状态（0），调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
 # V12 §21 / #138：合流类判据的三个参数（455 → 457 就是本轮新增的两条，仍按"当轮实测总条数"取值）。窗口取 10 行是实测拐点 —— W=8 在 `tools` 之外命中 1,180
 # 处、到 W=10 仍有 781 处合法的并列实现（三条 venue 提交链、几家存储后端），所以逐字重复零容忍
 # 只对 `tools/*.py` 生效（本轮实测该目录 5 份脚本 0 命中），Rust 那一侧交给编译器与整树用例。
@@ -1431,7 +1437,15 @@ PUBLIC_ENTRY_FAMILIES: tuple[tuple[str, re.Pattern[str]], ...] = (
 # 测试现场不算消费者：D6 删掉的 `submit_order_via_gateway` 恰恰只被
 # `crates/qx-execution/src/tests/spread_group_barrier.rs` 调用，按"任何引用"计数
 # 会把它判成活的，本门禁就退化成摆设。
-TEST_PATH = re.compile(r"(?:^|/)tests/|(?:^|/)test_|_tests\.rs$")
+#
+# V13 R22 #222：测试模块在 Rust 里有两种形态——目录式 `src/tests/`（含 `tests/mod.rs`）
+# 与单文件式 `src/tests.rs`（V12 R2 为绕开行数棘轮，把八个 crate 的库内用例搬成了后者，
+# `#[cfg(test)] mod tests;` 挂进来）。旧写法只认前一种，于是「唯一读者写在 `src/tests.rs`
+# 里」的 `pub` 项被当成有生产读者——零读者判据在它们面前是瞎的；同一个过滤器还罩着
+# `PUBLIC_ENTRY_FAMILIES`（能力族入口清点）与枚举变体生产者判据，所以这是一条会同时
+# 松开三处前提的盲区。两种形态定成一个口径：`(?:^|/)tests\.rs$` 补齐单文件形态，
+# 并由 `zero_reference_public_surface_check` 的一颗牙齿钉住（改回旧写法即红）。
+TEST_PATH = re.compile(r"(?:^|/)tests/|(?:^|/)test_|_tests\.rs$|(?:^|/)tests\.rs$")
 
 
 def _production_references(text: str, name: str) -> int:
@@ -1548,7 +1562,7 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
         "删掉等于把缺口藏起来"
     ),
     "qx-core::default_maker_taker": (
-        "只剩测试读者（V13 R4-C 由 `pub const fn` 正则盲区放出来）：qx-execution/tests/"
+        "只剩测试读者（V13 R4-C 由 `pub const fn` 正则盲区放出来）：contract-tests/tests/"
         "paper_accounting.rs:22 与 qx-zhenlu/src/lib.rs:1635（#[cfg(test)]）用它把 maker/taker "
         "模型装进 FeeModel 端口；生产两条执行平面直接读 DEFAULT_MAKER_BP / DEFAULT_TAKER_BP "
         "常量装配。删面等于删掉「内核默认费率只有一处定义」在用例里的可断言入口"
@@ -1562,7 +1576,7 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-storage::for_checkpoint": "跨后端投影原子性用例的唯一构造端",
     # 风控同源契约用例 (a)(b) 两条腿：删掉就等于放弃"三条入口必须一致"的证明面。
     "qx-risk::evaluate_order_with_rules": (
-        "qx-risk/tests/risk_parity.rs 的规范腿；生产分派是 RiskGate→evaluate_rules_only"
+        "contract-tests/tests/risk_parity.rs 的规范腿；生产分派是 RiskGate→evaluate_rules_only"
         "（回测/意图闸门）与 account_limits_only（提交端口），注释已按实说明"
     ),
     "qx-zhenlu::evaluate_order_with_rules": "同上：门面腿，证明 RiskContext 与规范实现逐字段一致",
@@ -1580,6 +1594,41 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-cli::for_test": (
         "qx-cli/src/event_pipeline.rs 的 `#[cfg(all(test, feature = \"nats\"))]` 门控测试构造器；"
         "复合 cfg 条件剥离不掉，唯一读者在 tests/ 下的 crate 内公共面"
+    ),
+    # V13 R22 #222：`TEST_PATH` 补齐单文件 `src/tests.rs` 形态后放出来的零读者（8 条）。
+    # 共同形状：生产链路走 JSON/字符串入口（`BarFrame::from_json` / `apply_corporate_actions_json`），
+    # 这些类型化的程序化入口只有库内用例读者；删面等于把「程序化装配能力」这个缺口藏起来。
+    "qx-protocol::to_wire_json": (
+        "跨语言契约：文档写明「供 Rust/Python/其他 serde 实现使用的无损 JSON 往返格式」，"
+        "Python 侧按同一 serde 形状独立实现，Rust 侧只有用例读者"
+    ),
+    "qx-protocol::from_wire_json": (
+        "跨语言契约同上：wire 入口与稳定 JSON 入口共用同一道版本闸门，读侧只有用例读者"
+    ),
+    "qx-datastruct::from_view": (
+        "程序化装配入口（DataView→BarFrame）；生产 CLI 走 `BarFrame::from_json`（qx-cli/src/backtests/、"
+        "dataset_commands.rs、strategy_contract.rs 等处），本入口只有 src/tests.rs 与 tests/frame_contract.rs 读者"
+    ),
+    "qx-datastruct::close_at": (
+        "只剩 src/tests.rs 读者：`close_raw.get(i).copied()` 的具名访问器，用例用它断言帧内容；"
+        "删面等于删掉「按索引读收盘价」的可断言入口"
+    ),
+    "qx-datastruct::select_time_with_manifest": (
+        "变换清单链的 Rust 侧入口；Python 桥（python/qianxing_bridge）按同算法镜像实现、"
+        "两侧对照是变换清单跨语言一致性的证据面，Rust 侧只有用例读者"
+    ),
+    "qx-datastruct::resample_with_manifest": (
+        "同上：resample 的清单化入口，Python 桥镜像实现，Rust 侧只有用例读者"
+    ),
+    "qx-xingban::corporate_actions_from_data": (
+        "程序化转换入口（数据层公司行为→A 股规则事件）；生产装载走 `apply_corporate_actions_json`"
+        "（qx-cli/src/backtests/ashare_binding.rs、runtime_check.rs），本入口只有 src/tests.rs 读者，"
+        "见 capabilities.yaml ashare_corporate_action_ledger"
+    ),
+    "qx-xingban::corporate_action_supported_by_ledger": (
+        "账本支持度查询（对 Suspension/CapitalChange 回 false，与其文档一致）；生产读侧未接线，"
+        "只有 src/tests.rs 读者。已知边界：`Unknown` 也在匹配集里、返回 true（任务 #118 收口，"
+        "见 capabilities.yaml corporate_action_read_side_has_no_production_reader）"
     ),
 }
 
@@ -2172,6 +2221,22 @@ def zero_reference_public_surface_check() -> None:
         f"`pub const NAME` 捕获={PUB_SURFACE_DEF.match('    pub const BAR_COUNT: usize = 4;').group(1)!r}、"
         f"重导出行被识别={RE_EXPORT_LINE.match('pub use batch::{{load_bar_batch}};') is not None}、"
         f"普通语句被误排除={RE_EXPORT_LINE.match('    let load_bar_batch = 1;') is not None}",
+    )
+    # V13 R22 #222：测试模块的两种形态必须都认得。只认目录式 `src/tests/` 时，
+    # 「唯一读者写在单文件 `src/tests.rs` 里」的 `pub` 项被当成有生产读者——判据当场变瞎，
+    # 同一个过滤器罩着的 `PUBLIC_ENTRY_FAMILIES` 与枚举变体生产者两条判据也一并松开前提。
+    check(
+        TEST_PATH.search("crates/qx-protocol/src/tests.rs") is not None
+        and TEST_PATH.search("crates/qx-protocol/src/tests/mod.rs") is not None
+        and TEST_PATH.search("crates/qx-protocol/src/tests/frame.rs") is not None
+        and TEST_PATH.search("crates/qx-protocol/src/lib.rs") is None
+        and TEST_PATH.search("crates/qx-protocol/src/contest.rs") is None
+        and TEST_PATH.search("crates/qx-protocol/src/attestation.rs") is None,
+        "TEST_PATH 认得测试模块的两种形态：目录式 `src/tests/` 与单文件式 `src/tests.rs`（V13 R22 #222）",
+        f"单文件式被识别={TEST_PATH.search('crates/qx-protocol/src/tests.rs') is not None}、"
+        f"目录式被识别={TEST_PATH.search('crates/qx-protocol/src/tests/mod.rs') is not None}、"
+        f"生产文件被误判={TEST_PATH.search('crates/qx-protocol/src/lib.rs') is not None}、"
+        f"含 test 词干的生产文件被误判={TEST_PATH.search('crates/qx-protocol/src/contest.rs') is not None}",
     )
 
 
@@ -5991,7 +6056,9 @@ def account_snapshot_schema_check() -> None:
         r"ACCOUNT_SNAPSHOT_JSON_SCHEMA\s*\)",
         endpoint,
     )
-    whitelist = re.search(r"!matches!\(route,([^)]*)\)", endpoint)
+    # 鉴权白名单按 `!matches!(route, …)` 取数。这里必须容忍换行/缩进：名单每加一条，
+    # rustfmt 就会把这行折成多行，而"折行"与"名单被删空"是两件事——判据只该对后者出声。
+    whitelist = re.search(r"!matches!\(\s*route\s*,([^)]*)\)", endpoint)
     listed = whitelist.group(1).strip() if whitelist else ""
     check(
         served is not None and SNAPSHOT_SCHEMA_ROUTE in listed,
@@ -6961,7 +7028,465 @@ def capabilities_check() -> None:
     )
 
 
-VENUE_REPORT_TEST = "crates/qx-execution/tests/venue_report_contract"
+def backtest_track_check() -> None:
+    """P0-1：把「回测轨」做成**不需要交易所凭据**就能完整验收的一条轨。
+
+    卡点原本是这样的：`maturity/evidence/testnet/` 那份 Binance 验收是 `outcome=skipped`
+    （缺 `QX_BINANCE_TESTNET_API_KEY` / `_SECRET`），于是 `sandbox_tested` / `production_approved`
+    只能全 false，`P0-1` 就一直挂在"未落地"。但这两档**只对需要外部 venue 的能力有意义**——
+    本仓的主用法是回测与 Paper 闭环，它一条凭据都不用。把两条轨混在一张表里，会让
+    「实盘待外部证据」被读成「整体未落地」。六颗分别钉：
+
+    ① 默认档是 `backtest_only`，且它自己声明 `credentials_required: false` /
+       `external_venues: none` / 写明那两档**不适用**（不是"待补"）；
+    ② 验收记录 `maturity/backtest_acceptance.yaml` 在盘，且六格自述齐全（passed / 不需凭据 /
+       无外部 venue / 未访问网络 / 未发订单 / 回放 verified）；
+    ③ 记录由脚本生成，且脚本**真的**做了两件事——同目录重跑与两个独立目录比对。只写一份
+       "看起来通过"的记录不算：`compare_reruns` / `compare_independent` / `one_leg` 三个函数
+       都得在盘（少一个，"确定性"这句话就没人验）；
+    ④ 记录里的 `result_hash` 是 16 位十六进制，四类产物摘要齐全；
+    ⑤ **回测轨不得越界替实盘作保**：记录里不出现任何 venue 名称（binance/okx/ccxt/testnet），
+       且 `capabilities.yaml` 里那两档仍全为 false——回测轨的存在没有把实盘轨的禁令松开；
+    ⑥ 行为用例在盘（`crates/qx-cli/tests/backtest_acceptance_determinism.rs` 的两条）。
+
+    刻意**不**把「记录是否过时」做成判据：记录是产物，`generated_at_unix` 每跑一次都变，
+    拿它当判据只会逼人把时间戳写死。过时与否由重跑 `tools/backtest_acceptance.py` 回答。
+    """
+    profiles_text = case_source(CAPABILITIES_FILE)
+    check(
+        re.search(r"^default_profile:\s*backtest_only\s*$", profiles_text, re.M) is not None
+        and re.search(
+            r"^  backtest_only:\s*$(?:\n    .*)*?\n    credentials_required:\s*false\s*$",
+            profiles_text,
+            re.M,
+        )
+        is not None
+        and re.search(r"^    external_venues:\s*none\s*$", profiles_text, re.M) is not None
+        and "approval_scope:" in profiles_text
+        and "不适用" in profiles_text,
+        "默认档是 backtest_only，且该档声明「不需要凭据 / 无外部 venue / 那两档不适用」",
+        "capabilities.yaml 的默认档不是 backtest_only，或该档没有写清凭据与档位适用范围",
+    )
+    record_path = ROOT / BACKTEST_ACCEPTANCE_RECORD
+    record = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
+    check(
+        record_path.is_file()
+        and all(fact in record for fact in BACKTEST_RECORD_FACTS),
+        "回测轨验收记录在盘，且六格自述齐全（passed / 不需凭据 / 无外部 venue / 无网络 / 无订单 / 回放 verified）",
+        f"缺 {BACKTEST_ACCEPTANCE_RECORD}，或缺事实："
+        f"{[fact for fact in BACKTEST_RECORD_FACTS if fact not in record]}",
+    )
+    script = case_source(BACKTEST_ACCEPTANCE_SCRIPT)
+    check(
+        all(marker in script for marker in BACKTEST_SCRIPT_MARKERS)
+        and re.search(r"^generated_by:\s*" + re.escape(BACKTEST_ACCEPTANCE_SCRIPT) + r"\s*$", record, re.M)
+        is not None,
+        "记录由在盘脚本生成，且脚本真的做了「同目录重跑 + 两个独立目录比对」两件事",
+        f"缺 {BACKTEST_ACCEPTANCE_SCRIPT} 或它的 compare_reruns/compare_independent/one_leg，"
+        "或记录的 generated_by 没指向它",
+    )
+    result_hash = re.search(r"^result_hash:\s*(\S+)\s*$", record, re.M)
+    artifact_kinds = re.findall(r"^  (equity|fills|run_manifest|summary):\s*([0-9a-f]{64})\s*$", record, re.M)
+    check(
+        result_hash is not None
+        and re.fullmatch(r"[0-9a-f]{16}", result_hash.group(1)) is not None
+        and sorted(kind for kind, _ in artifact_kinds) == ["equity", "fills", "run_manifest", "summary"],
+        "回测轨记录里的 result_hash 是 16 位十六进制，且四类产物摘要齐全",
+        f"result_hash={result_hash.group(1) if result_hash else None}，产物 {sorted(k for k, _ in artifact_kinds)}",
+    )
+    # 先剥掉整行 `#` 注释再找 venue 名：记录头部的说明文字本来就要提"实盘轨的证据在哪"，
+    # 把那句话当越界声明是误判（与门禁别处"取 production_text 剥注释"同口径）。
+    record_body = "\n".join(
+        line for line in record.splitlines() if not line.lstrip().startswith("#")
+    )
+    venue_names = ("binance", "okx", "ccxt", "testnet")
+    leaked = [name for name in venue_names if name in record_body.lower()]
+    check(
+        not leaked
+        and "sandbox_tested: true" not in profiles_text
+        and "production_approved: true" not in profiles_text,
+        "回测轨不越界替实盘作保：记录正文不出现任何 venue 名称，实盘两档仍全 false",
+        f"记录正文里出现 {leaked}，或有能力被翻真",
+    )
+    check(
+        (ROOT / BACKTEST_ACCEPTANCE_TEST).is_file()
+        and all(
+            case in case_source(BACKTEST_ACCEPTANCE_TEST)
+            for case in BACKTEST_ACCEPTANCE_CASES
+        ),
+        "回测轨的行为面在盘（同目录重跑逐字节相等 + 两个独立目录 result_hash 相等且无凭据）",
+        f"缺 {BACKTEST_ACCEPTANCE_TEST} 或它的两条用例",
+    )
+
+
+# —— P0-1：回测轨验收（不需要交易所凭据的那条轨）——
+CAPABILITIES_FILE = "maturity/capabilities.yaml"
+BACKTEST_ACCEPTANCE_RECORD = "maturity/backtest_acceptance.yaml"
+BACKTEST_ACCEPTANCE_SCRIPT = "tools/backtest_acceptance.py"
+BACKTEST_ACCEPTANCE_TEST = "crates/qx-cli/tests/backtest_acceptance_determinism.rs"
+BACKTEST_ACCEPTANCE_CASES = (
+    "same_directory_reruns_are_byte_identical",
+    "independent_projects_agree_on_result_hash_without_credentials",
+)
+# 记录里必须出现的「这条轨不需要凭据」的六格自述。
+BACKTEST_RECORD_FACTS = (
+    "outcome: passed",
+    "credentials_required: false",
+    "external_venues: none",
+    "network_accessed: false",
+    "orders_sent: false",
+    "replay_verdict: verified",
+)
+# 脚本里必须存在的两件事：同目录重跑、两个独立目录比对。
+BACKTEST_SCRIPT_MARKERS = (
+    "def compare_reruns(",
+    "def compare_independent(",
+    "def one_leg(",
+)
+
+# —— §7 M1：稳定契约单点 + 命名转换矩阵 ——
+CONTRACT_MODULE_FILE = "crates/qx-core/src/contract.rs"
+CONTRACT_CORE_LIB = "crates/qx-core/src/lib.rs"
+CONTRACT_API_FILE = "crates/qx-api/src/lib.rs"
+CONTRACT_API_ROUTE = '("GET", "/schema/contract-matrix")'
+CONTRACT_TEST_FILE = "crates/qx-core/tests/contract_matrix.rs"
+CONTRACT_TEST_CASES = (
+    "every_row_speaks_for_itself",
+    "matrix_view_and_json_are_the_same_table",
+    "the_three_same_name_siblings_are_registered",
+)
+# 矩阵一行的形状：`ContractConcept { concept: "…", … }` 一行写完。
+CONTRACT_ROW = re.compile(r"ContractConcept\s*\{([^}]*)\}")
+CONTRACT_STRING_FIELD = re.compile(r'(\w+):\s*"([^"]*)"')
+CONTRACT_LIST_FIELD = re.compile(r"duplicates:\s*&\[([^\]]*)\]")
+CONTRACT_FIELDS = (
+    "concept",
+    "canonical_types",
+    "canonical_source",
+    "duplicates",
+    "adapter",
+    "note",
+)
+# 矩阵登记的同名兄弟，必须真的存在同名声明；这三个概念是 P1-5 点名的那三对。
+CONTRACT_SIBLING_TYPES = ("Bar", "StrategyContext", "DataProvider")
+
+
+def _declares_pub_type(text: str, name: str) -> bool:
+    """文件里有没有 `pub struct/enum/trait <name>`（按词边界，免得 `Bar` 命中 `BarFrame`）。"""
+    return re.search(rf"pub\s+(?:struct|enum|trait)\s+{re.escape(name)}\b", text) is not None
+
+
+def _parse_contract_rows(module: str) -> list[tuple[dict[str, str], list[str]]]:
+    """把矩阵常量按行解析成 `(字段字典, 同名兄弟列表)`。一行一条，折行即解析不到。"""
+    rows: list[tuple[dict[str, str], list[str]]] = []
+    for line in module.splitlines():
+        match = CONTRACT_ROW.search(line)
+        if match is None:
+            continue
+        body = match.group(1)
+        fields = dict(CONTRACT_STRING_FIELD.findall(body))
+        listed = CONTRACT_LIST_FIELD.search(body)
+        duplicates = re.findall(r'"([^"]+)"', listed.group(1)) if listed else []
+        rows.append((fields, duplicates))
+    return rows
+
+
+def contract_matrix_check() -> None:
+    """§7 M1：稳定契约单点（`qx_core::contract`）+ 命名转换矩阵与真实代码逐条对账。
+
+    矩阵是**声明**，它自己不会保证任何事——所以这里把它对到代码上：规范单点在仓内唯一、
+    同名兄弟真在盘、adapter 真有生产读者、没有未登记的第三个同名声明。缺了这几条，
+    矩阵就会退化成一张"写了等于没写"的装饰表（`capabilities.yaml` 的教训同族）。
+    """
+    module_path = ROOT / CONTRACT_MODULE_FILE
+    check(
+        module_path.is_file(),
+        "契约单点模块在盘（crates/qx-core/src/contract.rs）",
+        f"缺 {CONTRACT_MODULE_FILE}",
+    )
+    if not module_path.is_file():
+        return
+    module = module_path.read_text(encoding="utf-8")
+    lib = (ROOT / CONTRACT_CORE_LIB).read_text(encoding="utf-8")
+    check(
+        "pub mod contract;" in lib
+        and re.search(r"pub use self::contract::\{[^}]*ContractConcept", lib) is not None
+        and re.search(r"pub use self::contract::\{[^}]*CONTRACT_MATRIX", lib) is not None,
+        "契约模块已挂载，并从 qx-core 根重导出 ContractConcept 与 CONTRACT_MATRIX",
+        "lib.rs 缺 `pub mod contract;` 或重导出行",
+    )
+    check(
+        re.search(
+            r"pub struct ContractConcept\s*\{[^}]*\}",
+            module,
+            re.S,
+        )
+        is not None
+        and all(
+            re.search(rf"pub\s+{field}\s*:", module) is not None
+            for field in CONTRACT_FIELDS
+        ),
+        "ContractConcept 六格字段齐（concept/canonical_types/canonical_source/duplicates/adapter/note）",
+        "缺字段或结构体被改形",
+    )
+    check(
+        "pub const CONTRACT_MATRIX: &[ContractConcept]" in module
+        and "pub fn contract_matrix() -> &'static [ContractConcept]" in module
+        and "CONTRACT_MATRIX\n}" in module.replace("    ", "")
+        and re.search(
+            r"pub fn contract_matrix_json\(\) -> String\s*\{[^}]*contract_matrix\(\)",
+            module,
+            re.S,
+        )
+        is not None,
+        "矩阵单源：contract_matrix() 返回 CONTRACT_MATRIX，contract_matrix_json() 只序列化它",
+        "视图函数没读常量，或 JSON 形态自己另写了一份表",
+    )
+    rows = _parse_contract_rows(module)
+    check(
+        len(rows) >= 8
+        and all(fields.get("concept") and fields.get("canonical_source") for fields, _ in rows)
+        and all(fields.get("canonical_source", "").startswith("crates/") for fields, _ in rows)
+        and all(fields.get("note") for fields, _ in rows),
+        "矩阵按行可解析且每行自述齐全（concept / canonical_source 是仓内相对路径 / note 非空）",
+        f"解析到 {len(rows)} 行；缺字段的行 {[f.get('concept') for f, _ in rows if not f.get('note')]}",
+    )
+    canonical_missing = []
+    for fields, _ in rows:
+        source = ROOT / fields["canonical_source"]
+        names = [name.strip() for name in fields["canonical_types"].split(",") if name.strip()]
+        if not source.is_file() or not all(
+            _declares_pub_type(source.read_text(encoding="utf-8"), name) for name in names
+        ):
+            canonical_missing.append(fields["concept"])
+    check(
+        not canonical_missing,
+        "每行的规范单点真的声明了它点名的那些类型（`pub struct/enum/trait`）",
+        f"规范单点对不上：{canonical_missing or '无'}",
+    )
+    sibling_missing = []
+    for _, duplicates in rows:
+        for entry in duplicates:
+            type_name, _, rel = entry.partition("@")
+            target = ROOT / rel
+            if not rel or not target.is_file() or not _declares_pub_type(
+                target.read_text(encoding="utf-8"), type_name
+            ):
+                sibling_missing.append(entry)
+    check(
+        not sibling_missing,
+        "每个同名兄弟都在它登记的路径上真有一份同名声明（`类型名@路径` 两半都要对得上）",
+        f"对不上的同名兄弟：{sibling_missing or '无'}",
+    )
+    # 没有未登记的第三个同名声明：登记了几个，仓内生产代码里就该有几个。
+    production = _production_sources()
+    declaration_counts: dict[str, int] = {}
+    for name in CONTRACT_SIBLING_TYPES:
+        declaration_counts[name] = sum(
+            len(re.findall(rf"pub\s+(?:struct|enum|trait)\s+{re.escape(name)}\b", "\n".join(lines)))
+            for lines in production.values()
+        )
+    registered: dict[str, int] = {name: 0 for name in CONTRACT_SIBLING_TYPES}
+    for _, duplicates in rows:
+        for entry in duplicates:
+            type_name = entry.partition("@")[0]
+            if type_name in registered:
+                registered[type_name] += 1
+    # 规范单点自己那一份也算：登记 n 个同名兄弟 = 仓内应当有 n+1 份声明。
+    drifted = {
+        name: (declaration_counts[name], registered[name] + 1)
+        for name in CONTRACT_SIBLING_TYPES
+        if declaration_counts[name] != registered[name] + 1
+    }
+    check(
+        not drifted,
+        "同名兄弟没有未登记的第三份：仓内声明数 == 规范单点 1 + 登记的同名兄弟数",
+        f"实际/应有 {drifted or '无'}",
+    )
+    adapter_missing = []
+    for fields, _ in rows:
+        adapter = fields.get("adapter", "")
+        if not adapter:
+            continue
+        function = adapter.rsplit("::", 1)[-1]
+        if not any(
+            re.search(rf"\bfn\s+{re.escape(function)}\b", "\n".join(lines))
+            for lines in production.values()
+        ):
+            adapter_missing.append(adapter)
+    check(
+        not adapter_missing,
+        "矩阵点名的 adapter 都真有生产定义（登记完就躺着不算数）",
+        f"找不到 {adapter_missing or '无'}",
+    )
+    check(
+        any(
+            not fields.get("adapter") and "刻意" in fields.get("note", "")
+            for fields, duplicates in rows
+            if duplicates
+        ),
+        "同名兄弟要么有 adapter，要么在 note 里交代「刻意不同层」——两者都没有的形态不合法",
+        "没有任何一行以「刻意不同层」的口径登记同名兄弟（三对里至少有一对是这样）",
+    )
+    api = production_text((ROOT / CONTRACT_API_FILE).read_text(encoding="utf-8"))
+    check(
+        CONTRACT_API_ROUTE in api and "contract_matrix_json()" in api,
+        "矩阵有一条真读面：qx-api 的 GET /schema/contract-matrix 直接序列化 contract_matrix_json()",
+        f"路由表里没有 {CONTRACT_API_ROUTE}，或它没调 contract_matrix_json()",
+    )
+    check(
+        (ROOT / CONTRACT_TEST_FILE).is_file()
+        and all(
+            case in case_source(CONTRACT_TEST_FILE) for case in CONTRACT_TEST_CASES
+        ),
+        "契约矩阵的行为面在盘（每行自述 / 视图与 JSON 同表 / 三对同名兄弟在册）",
+        f"缺 {CONTRACT_TEST_FILE} 或它的三条用例",
+    )
+
+
+# —— §6.4 P2-2：自研 HTTP/WS 面覆盖表与真实代码逐格对账 ——
+HTTP_SURFACE_FILE = "maturity/http_surface.yaml"
+HTTP_SURFACE_SELF_BUILT = (
+    "crates/qx-api/src/transport.rs",
+    "crates/qx-api/src/ws.rs",
+    "crates/qx-api/src/admission.rs",
+    "crates/qx-api/src/lib.rs",
+)
+HTTP_SURFACE_DECISION = "keep_self_built"
+# 非 covered 行（gap / partial）才进 accepted_gaps；by_design 是刻意不做的选择，不计入缺口。
+HTTP_SURFACE_NON_COVERED = ("gap", "partial")
+HTTP_SURFACE_FIELDS = ("area", "status", "anchor", "case", "note")
+
+
+def _parse_http_surface(text: str) -> tuple[list[dict[str, str]], dict[str, str], list[str]]:
+    """解析 http_surface.yaml：返回 `(areas 列表, verdict 字段, self_built_file 列表)`。
+
+    不引入 yaml 依赖，按本仓 capabilities/backtest 表既有的逐行解析口径。每张表一行、
+    area 项跨多行（`  - area:` 起头，其下 `status/anchor/case/note` 四格在四空格缩进）。
+    """
+    lines = text.splitlines()
+    self_built: list[str] = []
+    areas: list[dict[str, str]] = []
+    verdict: dict[str, str] = {}
+    in_areas = in_verdict = False
+    current: dict[str, str] | None = None
+    for line in lines:
+        if re.match(r"^self_built_file:\s*\S", line):
+            self_built.append(line.split(":", 1)[1].strip())
+            continue
+        if re.match(r"^areas:\s*$", line):
+            in_areas, in_verdict, current = True, False, None
+            continue
+        if re.match(r"^verdict:\s*$", line):
+            in_areas, in_verdict, current = False, True, None
+            continue
+        if re.match(r"^\S", line):  # 顶层键结束当前段
+            in_areas = in_verdict = False
+            current = None
+        if in_areas:
+            if m := re.match(r"^  - area:\s*(.+?)\s*$", line):
+                current = {"area": m.group(1)}
+                areas.append(current)
+            elif current is not None:
+                if m := re.match(r"^    (status|anchor|case|note):\s*(.*?)\s*$", line):
+                    current[m.group(1)] = m.group(2)
+        elif in_verdict:
+            if m := re.match(
+                r"^  (decision|reason|accepted_gaps|migration_trigger):\s*(.*?)\s*$", line
+            ):
+                verdict[m.group(1)] = m.group(2)
+    return areas, verdict, self_built
+
+
+def http_surface_check() -> None:
+    """§6.4 P2-2：自研 HTTP/WS 面覆盖表与真实代码逐格对账。
+
+    「要不要把 API 迁到成熟 HTTP 库」不能靠感觉答。这张表把自研面逐格登记
+    （每格写清「由哪个符号负责、哪条用例守着、覆盖到什么程度」），缺口是数出来的，
+    不是估出来的。这里把它对到代码上：
+
+    ① self_built_file 全部在盘；
+    ② 每行可解析、四格（area/status/anchor/case）+ note 自述齐全；
+    ③ 每行 anchor 的 `<文件> <符号>` 里，符号真在文件里声明（fn/const/struct/…）；
+    ④ 每行 case 的 `<文件> <用例>` 里，用例真在测试文件里（`fn <用例>` 在盘）；
+    ⑤ verdict.decision 落 keep_self_built，且 reason / migration_trigger 都非空；
+    ⑥ accepted_gaps 恰好等于「非 covered 行」（gap/partial），by_design 不入列。
+
+    任何一格与代码对不上，表就退化成一张"写了等于没写"的装饰表——这正是
+    capabilities.yaml 早年的教训（登记了却从不核对）。
+    """
+    path = ROOT / HTTP_SURFACE_FILE
+    if not path.is_file():
+        check(False, "自研 HTTP 面覆盖表在盘（maturity/http_surface.yaml）", f"缺 {HTTP_SURFACE_FILE}")
+        return
+    areas, verdict, self_built = _parse_http_surface(path.read_text(encoding="utf-8"))
+    check(
+        self_built and all((ROOT / f).is_file() for f in self_built),
+        "自研 HTTP 面覆盖表点名的 self_built_file 全部在盘",
+        f"失效/缺失：{[f for f in self_built if not (ROOT / f).is_file()]}",
+    )
+    check(
+        len(areas) >= 20
+        and all(
+            all(field in row and row[field] for field in HTTP_SURFACE_FIELDS)
+            for row in areas
+        ),
+        "覆盖表按行可解析，且每行自述齐全（area/status/anchor/case/note 四格 + note）",
+        f"解析到 {len(areas)} 行；"
+        f"缺字段 {[r.get('area') for r in areas if not all(f in r and r[f] for f in HTTP_SURFACE_FIELDS)]}",
+    )
+    # 每行 anchor：`<文件> <符号>`，符号必须在文件里真有声明（fn/const/struct/enum/static/type/trait）。
+    anchor_missing = []
+    for row in areas:
+        rel, _, symbol = row["anchor"].partition(" ")
+        target = ROOT / rel
+        if not rel or not symbol or not target.is_file():
+            anchor_missing.append(row["area"])
+            continue
+        if re.search(
+            rf"\b(?:fn|const|struct|enum|static|type|trait)\s+{re.escape(symbol)}\b",
+            target.read_text(encoding="utf-8"),
+        ) is None:
+            anchor_missing.append(f"{row['area']}（{symbol}）")
+    check(
+        not anchor_missing,
+        "每行点名的 anchor 符号真的在它登记的文件中声明（fn/const/struct/enum/static/type/trait）",
+        f"对不上的 anchor：{anchor_missing or '无'}",
+    )
+    # 每行 case：`<文件> <用例>`，用例必须在测试文件里真有 `fn <用例>`。
+    case_missing = []
+    for row in areas:
+        rel, _, test_fn = row["case"].partition(" ")
+        target = ROOT / rel
+        if not rel or not test_fn or not target.is_file():
+            case_missing.append(row["area"])
+            continue
+        if re.search(rf"\bfn\s+{re.escape(test_fn)}\b", case_source(rel)) is None:
+            case_missing.append(f"{row['area']}（{test_fn}）")
+    check(
+        not case_missing,
+        "每行点名的 case 用例真的在它登记的测试文件里（fn <用例> 在盘）",
+        f"找不到的用例：{case_missing or '无'}",
+    )
+    check(
+        verdict.get("decision") == HTTP_SURFACE_DECISION
+        and bool(verdict.get("reason"))
+        and bool(verdict.get("migration_trigger")),
+        "verdict 落 keep_self_built，且 reason 与 migration_trigger 都非空（迁库触发条件在场）",
+        f"decision={verdict.get('decision')!r}，reason 空={not verdict.get('reason')}，"
+        f"trigger 空={not verdict.get('migration_trigger')}",
+    )
+    # accepted_gaps 必须恰好等于「非 covered 行」（gap/partial），不多不少、不漏 by_design。
+    non_covered = {row["area"] for row in areas if row["status"] in HTTP_SURFACE_NON_COVERED}
+    listed = {g.strip() for g in verdict.get("accepted_gaps", "").split(",") if g.strip()}
+    check(
+        non_covered == listed,
+        "accepted_gaps 恰好等于非 covered 行（gap/partial），by_design 不入列",
+        f"应有 {sorted(non_covered)}；登记 {sorted(listed)}",
+    )
+
+
+VENUE_REPORT_TEST = "crates/contract-tests/tests/venue_report_contract"
 SUBMIT_GATE_TEST = "crates/qx-execution/src/tests/venue_submit_contract.rs"
 REPORT_FUNNEL_FILE = "crates/qx-execution/src/lib.rs"
 SPEC_FUNNEL_DEFINITION = "crates/qx-core/src/trading.rs"
@@ -7390,6 +7915,7 @@ SETTLEMENT_CURRENCY_CONSUMERS = (
     "crates/qx-cli/src/ecosystem_smoke.rs",
     "crates/qx-cli/src/main.rs",
     "crates/qx-cli/src/venue_runtime/worker_runtime.rs",
+    "crates/qx-core/src/contract.rs",
     "crates/qx-core/src/lib.rs",
 )
 SETTLEMENT_CURRENCY_CASE_FILE = "crates/qx-cli/src/tests/settlement_currency_single_source.rs"
@@ -8569,7 +9095,7 @@ EXECUTION_FEE_MODEL_FILE = "crates/qx-cli/src/runtime_wiring.rs"
 FEE_KERNEL_FILE = "crates/qx-core/src/fee.rs"
 COST_RULES_FILE = "crates/qx-xingban/src/cost_rules.rs"
 COST_RULES_TEMPLATE = "deploy/qianxing.costs.example.json"
-PAPER_FEE_TEST_FILE = "crates/qx-execution/tests/paper_accounting.rs"
+PAPER_FEE_TEST_FILE = "crates/contract-tests/tests/paper_accounting.rs"
 COST_PROVENANCE_TEST_FILE = "crates/qx-cli/src/tests/backtest_cost_provenance.rs"
 STRATEGY_SCHEMA_FILE = "crates/qx-runtime/src/runtime_config/strategy_schema.rs"
 BAR_ASSEMBLY_FILE = "crates/qx-cli/src/backtests/mod.rs"
@@ -10547,6 +11073,50 @@ def release_supply_chain_check() -> None:
         "发布工作流覆盖 binary/wheel/SDK/SHA256/SBOM/provenance/Release 七件",
         f"缺 {missing}",
     )
+    web_package = ROOT / "tools/package_web_console.py"
+    web_package_test = ROOT / "python/tests/test_web_console_package.py"
+    package_text = web_package.read_text(encoding="utf-8") if web_package.is_file() else ""
+    package_tests = web_package_test.read_text(encoding="utf-8") if web_package_test.is_file() else ""
+    package_cases = (
+        "test_archive_is_reproducible_and_contains_verified_identity",
+        "test_unavailable_or_external_resources_are_rejected",
+        "test_release_identity_rejects_invalid_version_and_short_commit",
+    )
+    check(
+        web_package.is_file()
+        and all(token in package_text for token in ("ASSET_FILES", "release-identity.json", "hashlib.sha256", "mtime = 0", "SCHEMA_REGISTRY_FILE", "registry.get("))
+        and web_package_test.is_file()
+        and all(case in package_tests for case in package_cases),
+        "Web 控制台发布包由确定性打包器生成，版本身份/资源摘要与三条行为契约用例在盘",
+        f"打包脚本存在={web_package.is_file()}，测试存在={web_package_test.is_file()}，"
+        f"缺用例={[case for case in package_cases if case not in package_tests]}",
+    )
+    web_job_start = re.search(r"(?m)^  web-console:\s*$", text)
+    web_job = ""
+    if web_job_start is not None:
+        web_job_tail = text[web_job_start.start() :]
+        next_job = re.search(r"(?m)^  [a-z][a-z0-9_-]*:\s*$", web_job_tail[1:])
+        web_job = web_job_tail[: next_job.start() + 1] if next_job is not None else web_job_tail
+    check(
+        bool(web_job)
+        and "tools/package_web_console.py" in web_job
+        and "attest-build-provenance@v2" in web_job
+        and "name: web-console" in web_job
+        and "path: dist/*.tar.gz" in web_job,
+        "tag 发布工作流打包 Web 控制台、为归档生成 provenance 并上传 web-console artifact",
+        f"web-console job 片段不完整：{web_job[:240]!r}",
+    )
+    release_start = re.search(r"(?m)^  release:\s*$", text)
+    release_job = text[release_start.start() :] if release_start is not None else ""
+    release_needs = re.search(r"(?m)^\s+needs:\s*\[([^\]]+)\]", release_job)
+    check(
+        release_needs is not None
+        and "web-console" in release_needs.group(1)
+        and "actions/download-artifact@v4" in release_job
+        and "dist/*" in release_job,
+        "GitHub Release 汇集 Web 控制台 artifact，并纳入统一发布附件与 SHA256 清单",
+        f"release needs={release_needs.group(1) if release_needs else None!r}",
+    )
     identity_fields = (
         "version",
         "git_commit",
@@ -10819,8 +11389,9 @@ LAYER_FORBIDDEN_DEPS = (
 LAYER_SOLE_DEPENDENTS = (
     (
         "qx-adapter",
-        ("qx-execution", "qx-cli"),
-        "§14.3-6 qx-execution 是外部回报到执行事实的唯一转换层（qx-adapter 只能被它与 CLI 依赖）",
+        ("qx-execution", "qx-cli", "contract-tests"),
+        "§14.3-6 qx-execution 是外部回报到执行事实的唯一转换层（qx-adapter 只能被它与 CLI 依赖；"
+        "`contract-tests` 是 P1-12 建的纯测试宿主，只在 dev 边上读它做三家 venue 回报契约，无生产依赖）",
     ),
     (
         "qx-api",
@@ -11166,6 +11737,490 @@ def layer_dependency_check() -> None:
         len(graph) >= 24,
         "依赖门禁解析到了全部 crate（解析集为空会让这颗判据静默全绿）",
         f"只解析到 {len(graph)} 个 crate",
+    )
+
+
+# —— P1-12：dev/build 依赖边不得反向压在正常边上（二点环）——
+# 方案 §5.4 P1-12 的两条环：`qx-execution --dev--> qx-runtime`（反向 qx-runtime --normal--> qx-execution）
+# 与 `qx-risk --dev--> qx-zhenlu`（反向 qx-zhenlu --normal--> qx-risk）。两条都已迁 `contract-tests`。
+DEV_CYCLE_TEST_HOST = "contract-tests"
+DEV_CYCLE_FORBIDDEN_EDGES = (
+    ("qx-execution", "qx-runtime", "qx-runtime --normal--> qx-execution"),
+    ("qx-risk", "qx-zhenlu", "qx-zhenlu --normal--> qx-risk"),
+)
+# 迁走的五份契约用例：搬家不是丢用例，逐名钉在新位置（`EXECUTION_TEST_FLOOR` 由 25 降 15 的补偿）。
+DEV_CYCLE_MOVED_CASES = (
+    "tests/paper_accounting.rs",
+    "tests/reconcile_port_contract.rs",
+    "tests/recovery_and_replay.rs",
+    "tests/venue_report_contract/main.rs",
+    "tests/risk_parity.rs",
+)
+
+
+def _toml_section_entries(text: str, section: str) -> list[str]:
+    """取 `[section]` 段里的条目行（到下一个 `[...]` 表头为止，含注释行）。"""
+    out: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            inside = stripped == f"[{section}]"
+            continue
+        if inside:
+            out.append(line)
+    return out
+
+
+def _crate_edges(sections: tuple[str, ...]) -> dict[str, set[str]]:
+    """逐 crate 解析指定 TOML 段里的内部依赖（`qx-x = { ... }` 与 `[dependencies.qx-x]` 两种写法都认）。"""
+    edges: dict[str, set[str]] = {}
+    for manifest in sorted(CRATES.glob("*/Cargo.toml")):
+        text = manifest.read_text(encoding="utf-8")
+        deps: set[str] = set()
+        for section in sections:
+            body = "\n".join(_toml_section_entries(text, section))
+            deps |= set(re.findall(r"^(qx-[a-z0-9-]+)\s*=\s*\{", body, re.MULTILINE))
+            deps |= set(
+                re.findall(rf"^\[{re.escape(section)}\.(qx-[a-z0-9-]+)\]", text, re.MULTILINE)
+            )
+        if deps:
+            edges[manifest.parent.name] = deps
+    return edges
+
+
+def dev_dependency_cycle_check() -> None:
+    """方案 §5.4 P1-12 / §8 WP-22：dev/build 边不得反向压在正常边上（两条环迁 `contract-tests`）。
+
+    为什么这不是"洁癖"：`cargo tree` 的**默认**视图不展开 dev/build 边，于是
+    「qx-execution --dev--> qx-runtime」在默认视图里完全隐形，而反向的正常边
+    「qx-runtime --normal--> qx-execution」又真实存在——依赖图"看起来"是树，实际有环。
+    读图的人（包括本门禁自己）会据此得出错的结论。Cargo 允许这种环，所以只有判据能拦住它。
+
+    三颗分别钉：① 两条已知环不许回来；② 更一般地，全仓不得存在「A --dev/build--> B 且
+    B --normal--> A」这种二点环（新写的 dev 边踩到任一正常边当场红）；③ 搬家不是丢用例——
+    迁走的五份契约用例必须仍在 `crates/contract-tests/tests/` 里，且该 crate 在盘。
+    """
+    dev = _crate_edges(("dev-dependencies", "build-dependencies"))
+    normal = _crate_edges(("dependencies",))
+    issues = [
+        f"{crate} --dev--> {dep} 又回来了（{why}）"
+        for crate, dep, why in DEV_CYCLE_FORBIDDEN_EDGES
+        if dep in dev.get(crate, set())
+    ]
+    reversals = sorted(
+        f"{crate} --dev--> {dep}（反向 {dep} --normal--> {crate}）"
+        for crate, deps in dev.items()
+        for dep in sorted(deps)
+        if crate in normal.get(dep, set())
+    )
+    check(
+        not issues and not reversals,
+        "dev/build 依赖边不得反向压在正常边上（二点环：默认视图看不见，反向边却真实存在）",
+        "；".join(issues + reversals),
+    )
+    host = CRATES / DEV_CYCLE_TEST_HOST
+    missing = sorted(rel for rel in DEV_CYCLE_MOVED_CASES if not (host / rel).is_file())
+    check(
+        not missing and host.is_dir(),
+        f"跨 crate 契约用例仍在 {DEV_CYCLE_TEST_HOST} 里（搬家不得变成丢用例）",
+        f"缺 {missing}" if missing else "宿主目录不在盘",
+    )
+    member = f'"{CRATES.relative_to(ROOT).as_posix()}/{DEV_CYCLE_TEST_HOST}"'
+    check(
+        member in (ROOT / "Cargo.toml").read_text(encoding="utf-8"),
+        f"{DEV_CYCLE_TEST_HOST} 是 workspace 成员（否则搬过去的用例再不会被 cargo test 跑到）",
+        f"Cargo.toml 的 members 里找不到 {member}",
+    )
+
+
+# —— P1-1 / DD-2：EventLog 写侧单事务批量追加（`append_batch`）——
+EVENT_LOG_SOURCING = "crates/qx-core/src/sourcing.rs"
+SQLITE_BACKEND_FILE = "crates/qx-storage/src/sqlite.rs"
+PIPELINE_FILE = "crates/qx-runtime/src/pipeline.rs"
+EVENT_LOG_BATCH_TEST = "crates/qx-core/tests/event_log_append_batch.rs"
+SQLITE_EVENT_LOG_TEST = "crates/qx-storage/tests/sqlite_event_log.rs"
+SQLITE_APPEND_BATCH_CASE = "sqlite_event_log_append_batch_is_incremental_and_atomic_with_outbox"
+INCREMENTAL_APPEND_FN = "append_event_log_in_transaction"
+# P1-2：共享 EventLog 的游标增量刷新（读侧 `read_since` + 归约侧 `refresh_latest`）。
+SQLITE_READ_SINCE_CASE = "sqlite_event_log_read_since_returns_only_the_verified_tail"
+PIPELINE_CURSOR_CASE = "sqlite_pipeline_refresh_takes_the_cursor_incremental_path"
+# P1-6：估值单点（`ValuationContext` / `ValuationResult`）。
+VALUATION_MODULE = "crates/qx-core/src/valuation.rs"
+EQUITY_RULER_DEFS = "crates/qx-core/src/ledger/query.rs"
+VALUATION_CASE_FILE = "crates/qx-core/tests/valuation.rs"
+PARAMETERIZED_EQUITY_RULERS = (
+    "equity_for_with_spec_and_fx",
+    "equity_for_with_spec",
+    "equity_for_with_multiplier",
+)
+VALUATION_DISPATCH_CASES = (
+    "ledger_valuate_equals_the_multiplier_ruler_for_spot",
+    "ledger_valuate_uses_the_contract_spec_ruler_without_fx",
+    "ledger_valuate_switches_to_the_fx_ruler_only_when_rates_are_given",
+    "margin_state_valuate_shares_the_result_shape",
+)
+# P1-11 / DD-5：错误码五元契约（`ErrorCode` / `Retryability` / `ErrorContract`）。
+ERROR_CONTRACT_FILE = "crates/qx-core/src/error.rs"
+QX_CORE_LIB_FILE = "crates/qx-core/src/lib.rs"
+USAGE_ERRORS_FILE = "crates/qx-cli/src/usage_errors.rs"
+PIPELINE_STORAGE_FILE = "crates/qx-cli/src/runtime_wiring/pipeline_storage.rs"
+ERROR_CONTRACT_TEST = "crates/qx-cli/src/tests/error_code_contract.rs"
+ERROR_CONTRACT_FIELDS = (
+    "code: ErrorCode",
+    "retryability: Retryability",
+    "reconcile_required: bool",
+    "safe_to_retry: bool",
+    "user_message: &'a str",
+)
+ERROR_RETRYABILITY_CLASSES = ("Never", "Allowed", "AfterReconcile", "AfterBackoff")
+ERROR_CONTRACT_CASES = (
+    "every_variant_exposes_the_five_tuple_contract",
+    "cli_diagnostics_carry_the_code_and_the_next_step",
+    "event_log_boundary_diagnostics_carry_the_machine_readable_code",
+)
+
+
+def _rust_fn_body(text: str, name: str) -> str | None:
+    """取 `fn <name>(...)` 的函数体（按花括号配对），找不到返回 `None`。"""
+    match = re.search(rf"\bfn {re.escape(name)}\s*[(<]", text)
+    if match is None:
+        return None
+    start = text.find("{", match.end())
+    if start < 0:
+        return None
+    depth = 0
+    for index in range(start, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def event_log_append_batch_check() -> None:
+    """P1-1 / DD-2 / §7 M2：EventLog 写侧单事务批量追加（`append_batch`）。
+
+    此前写侧只有整份 `save`：SQLite 参考后端每次追加都要把已落库的 N 条事件读回来逐行比对
+    （`load_event_log`），写放大随 N 线性增长（G4）；而 Kernel 侧逐条 `append_checked` 在中途
+    失败时会把前半批留在日志里——调用方以为整批被拒、实际写进一半（半个事务）。六颗分别钉：
+    ① Kernel 有 `append_batch` 且 `append_checked` 委托给它（校验规则单源，不留第二份逐条实现）；
+    ② `digest()` 走 `digest_of_prefix()`（前缀摘要与全量摘要同源，增量核对才成立）；
+    ③ SQLite 的增量追加函数在盘且**不调用** `load_event_log`（否则 O(N) 读放大原样回来）；
+    ④ `SqliteEventLogStore::append_batch` 在单事务里走增量路径；⑤ 生产写面的 SQLite 分支真的
+    调 `append_batch`（不是加了个没人调的方法）；⑥ 原子性与增量性各有一条行为用例在盘。
+    """
+    sourcing = case_source(EVENT_LOG_SOURCING)
+    sqlite = case_source(SQLITE_BACKEND_FILE)
+    pipeline = case_source(PIPELINE_FILE)
+    check(
+        re.search(
+            r"pub fn append_batch\(&mut self, batch: &\[Event\]\) -> QxResult<usize>", sourcing
+        )
+        is not None
+        and re.search(
+            r"fn append_checked\(&mut self, e: Event\) -> QxResult<\(\)> \{\s*self\.append_batch\(",
+            sourcing,
+        )
+        is not None,
+        "Kernel 的 append_batch 在盘，且 append_checked 委托给它（逐条校验规则单源）",
+        "找不到 append_batch，或 append_checked 没有委托（出现第二份逐条实现）",
+    )
+    check(
+        "pub fn digest_of_prefix(&self, len: usize) -> Option<u64>" in sourcing
+        and re.search(r"pub fn digest\(&self\) -> u64 \{\s*self\.digest_of_prefix\(", sourcing)
+        is not None,
+        "全量摘要 digest() 与前缀摘要 digest_of_prefix() 同源（增量核对才有意义）",
+        "digest_of_prefix 不在盘，或 digest() 没走它",
+    )
+    incremental = _rust_fn_body(sqlite, INCREMENTAL_APPEND_FN)
+    check(
+        incremental is not None and "load_event_log(" not in incremental,
+        f"SQLite 增量追加 {INCREMENTAL_APPEND_FN} 不重读整条历史（不调 load_event_log）",
+        "函数不在盘" if incremental is None else "函数体里出现 load_event_log(",
+    )
+    method = _rust_fn_body(sqlite, "append_batch")
+    check(
+        method is not None
+        and INCREMENTAL_APPEND_FN + "(" in method
+        and "transaction_with_behavior" in method,
+        "SqliteEventLogStore::append_batch 在单事务里走增量追加",
+        "方法不在盘，或没走增量路径 / 没开事务",
+    )
+    check(
+        re.search(r"Self::Sqlite\(store\) => store\.append_batch\(", pipeline) is not None,
+        "生产写面的 SQLite 分支真的走 append_batch（不是加了个没人调的方法）",
+        "pipeline.rs 的 SQLite 分支没有走 append_batch",
+    )
+    check(
+        (ROOT / EVENT_LOG_BATCH_TEST).is_file()
+        and SQLITE_APPEND_BATCH_CASE in case_source(SQLITE_EVENT_LOG_TEST),
+        "append_batch 的原子性（Kernel）与增量性（SQLite）各有一条行为用例在盘",
+        f"缺 {EVENT_LOG_BATCH_TEST} 或 {SQLITE_EVENT_LOG_TEST}::{SQLITE_APPEND_BATCH_CASE}",
+    )
+
+
+def pipeline_cursor_refresh_check() -> None:
+    """P1-2 / §7 M2：`LiveEventPipeline` 改游标增量 refresh（G5 收敛）。
+
+    此前每次 `refresh()` 都把整条共享日志读回来 + 整份重放重建（`rebuild_ledger` +
+    `rebuild_runtime_indexes` + 整份替换），而它在**每条外部事实之前**都会被调一次——没有别的
+    写者时这些工作全是白做，代价随日志长度线性增长。现在分三支：无新事实直接返回；本地仍是
+    store 的前缀时只接尾部；前缀对不上或后端没有行级尾部读时退回整份重建。六颗分别钉：
+
+    ① SQLite 读侧 `read_since` 在盘、按 `seq > ?` 只取尾部、且不重读整条历史（不调 `load_event_log`）；
+    ② `RuntimeEventStore::read_since` 把 SQLite 委派下去，其余后端**显式**回落 `Ok(None)`；
+    ③ `refresh_latest` 三支齐备（空尾部 no-op / 有尾部走 `apply_tail` / `None` 走 `rebuild_from_store`）；
+    ④ `apply_tail` 用 P1-1 的 `append_batch` 接日志，且**不**整份重建索引；
+    ⑤ 增量与整份重建共用同一个 `apply_index_event`（两份归约路径不能各写一份）；
+    ⑥ 读侧前缀校验与归约侧增量路径各有一条行为用例在盘。
+    """
+    sqlite = case_source(SQLITE_BACKEND_FILE)
+    pipeline = case_source(PIPELINE_FILE)
+    read_since = _rust_fn_body(sqlite, "read_since")
+    check(
+        re.search(
+            r"pub fn read_since\(\s*&self,\s*name: &str,\s*after_seq: Option<u64>,"
+            r"\s*expected_prefix: Option<\(&Event, usize\)>,",
+            sqlite,
+        )
+        is not None
+        and read_since is not None
+        and re.search(r"WHERE name = \?1 AND seq > \?2 ORDER BY position ASC", read_since)
+        is not None
+        and "load_event_log(" not in read_since,
+        "SQLite 读侧 read_since 按 seq 只取尾部，且不重读整条历史",
+        "read_since 不在盘" if read_since is None else "签名不符 / 没按 seq 过滤 / 仍调 load_event_log",
+    )
+    check(
+        re.search(
+            r"Self::Sqlite\(store\) => store\s*\.read_since\(name, after_seq, expected_prefix\)",
+            pipeline,
+        )
+        is not None
+        and re.search(r"_ => Ok\(None\)", pipeline) is not None,
+        "RuntimeEventStore::read_since 委派 SQLite，其余后端显式回落 Ok(None)",
+        "pipeline.rs 没把 read_since 委派给 SQLite，或缺少非 SQLite 后端的显式回落",
+    )
+    refresh = _rust_fn_body(pipeline, "refresh_latest")
+    check(
+        refresh is not None
+        and "read_since(&self.log_name, after_seq, prefix)" in refresh
+        and re.search(r"Some\(tail\) if tail\.is_empty\(\) => Ok\(\(\)\)", refresh) is not None
+        and "self.apply_tail(&tail)" in refresh
+        and "self.rebuild_from_store()" in refresh,
+        "refresh_latest 三支齐备：空尾部 no-op / 有尾部增量 / 前缀不符整份重建",
+        "refresh_latest 不在盘或分支不全",
+    )
+    apply_tail = _rust_fn_body(pipeline, "apply_tail")
+    check(
+        apply_tail is not None
+        and "self.log.append_batch(tail)?" in apply_tail
+        and "apply_index_event(event)?" in apply_tail
+        and "rebuild_runtime_indexes(" not in apply_tail,
+        "apply_tail 用 append_batch 接日志 + 逐条增量应用索引，不做整份重建",
+        "apply_tail 不在盘，或没走 append_batch / 仍在整份重建索引",
+    )
+    rebuild_indexes = _rust_fn_body(pipeline, "rebuild_runtime_indexes")
+    check(
+        rebuild_indexes is not None
+        and "apply_index_event(" in rebuild_indexes
+        and apply_tail is not None
+        and "apply_index_event(" in apply_tail,
+        "增量与整份重建共用同一个 apply_index_event（归约单源）",
+        "rebuild_runtime_indexes 与 apply_tail 没有共用 apply_index_event",
+    )
+    check(
+        SQLITE_READ_SINCE_CASE in case_source(SQLITE_EVENT_LOG_TEST)
+        and PIPELINE_CURSOR_CASE in pipeline,
+        "游标增量：读侧前缀校验与归约侧增量路径各有一条行为用例在盘",
+        f"缺 {SQLITE_EVENT_LOG_TEST}::{SQLITE_READ_SINCE_CASE} 或 {PIPELINE_FILE}::{PIPELINE_CURSOR_CASE}",
+    )
+
+
+def valuation_single_source_check() -> None:
+    """P1-6 / WP-19：三把权益/保证金尺子收敛成单一 `ValuationContext`/`ValuationResult`。
+
+    收敛前同一个问题（「这账户值多少、还能用多少保证金」）有三处各自成立的算法：
+    ① `Ledger` 的 `equity*` 家族（现货按乘数 / 衍生按合约规格 / 跨币种再叠 FX）——算术的正确
+    落点，但**选了哪一把由调用方自己判断**；② `MarginState::equity`/`available` 的保证金口径；
+    ③ 回测里按「有杠杆规格吗 / 有汇率吗」手工二选一的 `equity_for` 派发——同一段派发在
+    `qx-xingban` 里**抄了两份**。六颗分别钉：
+
+    ① `ValuationContext` / `ValuationResult` 在 `qx-core` 的 `valuation` 模块里，且 lib.rs
+       既挂了模块又做了重导出（不然别的 crate 用不上）；
+    ② `Ledger::valuate` 在盘，且**它自己**包含三把参数化尺子的名字（派发只此一处）；
+    ③ `MarginState::valuate` 在盘，且两个入口都经 `ValuationResult::new`（`available` 关系单源）；
+    ④ 生产源码全文扫描：三把**参数化**尺子只能出现在 `ledger/query.rs`（定义点 + `Ledger::valuate`
+       的派发）——回测/CLI 里那几处手工派发必须消失。取 `production_text` 是为了剥掉注释与测试项：
+       否则文档里提一句尺子名，或 `#[cfg(test)]` 用例里直接调原语，都会让「还有谁在直接派发」数不准；
+    ⑤ `MarginState::equity` / `available` 委托 `valuate`（保证金算式不许在 `trading.rs` 里再写一份）；
+    ⑥ 派发等价性有四条行为用例在盘（`valuate` 必须与它派发到的原始尺子**逐值相等**，且
+       有/无汇率两把尺子给出不同的数——不然等式验不出派发）。
+
+    刻意**不**纳入本颗的：`Ledger::equity_for`（乘数固定 1 的无参现货尺子）。它没有"选哪把"
+    的歧义，`qx-cli` 的账户快照与策略上下文直接调它不构成第二处派发。
+    """
+    valuation = case_source(VALUATION_MODULE)
+    check(
+        (ROOT / VALUATION_MODULE).is_file()
+        and "pub mod valuation;" in case_source("crates/qx-core/src/lib.rs")
+        and "pub use self::valuation::{ValuationContext, ValuationResult};"
+        in case_source("crates/qx-core/src/lib.rs"),
+        "ValuationContext / ValuationResult 落在 qx-core 的 valuation 模块，且 lib.rs 挂载并重导出",
+        f"缺 {VALUATION_MODULE}，或 lib.rs 没挂模块 / 没重导出",
+    )
+    ledger_valuate = _rust_fn_body(case_source(EQUITY_RULER_DEFS), "valuate")
+    check(
+        ledger_valuate is not None
+        and all(ruler in ledger_valuate for ruler in PARAMETERIZED_EQUITY_RULERS),
+        "Ledger::valuate 在盘，且三把参数化尺子的派发只在它里面",
+        "Ledger::valuate 不在盘，或它没有覆盖全部三把尺子",
+    )
+    check(
+        re.search(
+            r"pub fn valuate\(self, currency: impl Into<String>\) -> Option<ValuationResult>",
+            valuation,
+        )
+        is not None
+        and (valuation + case_source(EQUITY_RULER_DEFS)).count("ValuationResult::new(") >= 2,
+        "MarginState::valuate 在盘，且两个入口共用 ValuationResult::new（available 关系单源）",
+        "MarginState::valuate 不在盘，或两个入口没有共用 ValuationResult::new",
+    )
+    offenders: list[str] = []
+    for path in rust_sources():
+        rel = path.relative_to(ROOT).as_posix()
+        if rel == EQUITY_RULER_DEFS:
+            continue
+        text = production_text(path.read_text(encoding="utf-8"))
+        if any(ruler in text for ruler in PARAMETERIZED_EQUITY_RULERS):
+            offenders.append(rel)
+    check(
+        not offenders,
+        "参数化权益尺子在生产源码里只出现在定义点与估值单点（其余一律走 Ledger::valuate）",
+        f"这些文件仍在直接派发参数化尺子：{sorted(offenders)}",
+    )
+    trading = case_source("crates/qx-core/src/trading.rs")
+    margin_equity = _rust_fn_body(trading, "equity")
+    margin_available = _rust_fn_body(trading, "available")
+    check(
+        margin_equity is not None
+        and "self.valuate(" in margin_equity
+        and margin_available is not None
+        and "self.valuate(" in margin_available,
+        "MarginState::equity / available 委托 valuate（保证金算式不在 trading.rs 里再写一份）",
+        "MarginState 的 equity/available 没有委托 valuate",
+    )
+    check(
+        (ROOT / VALUATION_CASE_FILE).is_file()
+        and all(case in case_source(VALUATION_CASE_FILE) for case in VALUATION_DISPATCH_CASES),
+        "估值派发有四条行为用例在盘（valuate 与原始尺子逐值相等、有/无汇率给出不同的数）",
+        f"缺 {VALUATION_CASE_FILE}，或派发等价性用例不全",
+    )
+
+
+def error_code_contract_check() -> None:
+    """P1-11 / DD-5：错误码从字符串抽成**五元契约**（`ErrorCode` / `Retryability` / `ErrorContract`）。
+
+    「错误跨 crate 主要靠字符串」的原始症状有两半：一半在产出侧——`QxError::code()` 只是把变体名
+    翻成字符串，而「能不能重试、要不要先对账」散在各调用方就地 `match` 变体各写一份；另一半在
+    消费侧——CLI 把 `QxError` 摊成 `format!("…: {error:?}")`，落进日志的只有一句中文加 Rust 的
+    Debug 形状。于是同一个问题（这条错误能不能重发）在 8 个变体 × N 个调用点上各有各的答案，
+    而改口径时漏改的那一处**静默失效**。八颗分别钉：
+
+    ① `ErrorCode` / `Retryability` / `ErrorContract` 三型落在 `qx-core` 的 `error` 模块，且 lib.rs
+       重导出（不重导出等于别的 crate 用不上，契约退化成本 crate 私有）；
+    ② `ErrorContract` 五格字段齐——DD-5 的五元就是这五格，少一格就退回"只有码没有处置"；
+    ③ `ErrorCode::ALL` 是**闭集**：声明长度、列出的码、`QxError` 的变体数三者相等。遍历 `ALL`
+       才可能保证"新增变体时映射表不会漏一格"，靠人记的清单迟早漂移；
+    ④ `QxError::contract()` 是全仓**唯一**映射表（8 个码 + 4 类重试资格都在体里），且 `code()`
+       从它派生（`self.contract().code`）而**自身不再 `match self`**——两份映射表就是两条口径；
+    ⑤ CLI 展示层 `qx_context` 显式消费契约（取 `error.contract()` 并按 `reconcile_required` /
+       `retryability.allows_retry()` 分级提示），而不是只把消息抄一遍；
+    ⑥ 打开 EventLog 的四处 `QxError`→字符串边界全部走 `qx_context`，且该文件里**不再**出现把
+       `QxError` 摊成 `{error:?}` 的转换（那就是原始症状本身）；
+    ⑦ 热路径重试循环按 `retryability` 分支（`pipeline.rs` 里两处 `allows_retry()`），不再靠错误
+       文本或就地 `matches!` 判断"这条能不能重发"；
+    ⑧ 行为用例在盘：`qx-core` 侧契约自洽 + `qx-cli` 侧消费面三条（逐变体五格、展示层分级、
+       真实打开边界带码）。③④只证明表是全的，证明不了"消费侧真的按它分支"。
+
+    刻意**不**纳入本颗的：HTTP/工作流层面的状态串（`qx-api` 的 status、`qx-control` 的
+    `CommandStatus`）。它们是各自的读面，不是"错误分类"——塞进 `ErrorCode` 只会把闭集撑成
+    开放集，闭集一旦开放，③那条判据就再也数不准。
+    """
+    error_rs = case_source(ERROR_CONTRACT_FILE)
+    lib_rs = case_source(QX_CORE_LIB_FILE)
+    check(
+        "pub enum ErrorCode" in error_rs
+        and "pub enum Retryability" in error_rs
+        and "pub struct ErrorContract<'a>" in error_rs
+        and "pub use self::error::{ErrorCode, ErrorContract, QxError, QxResult, Retryability};"
+        in lib_rs,
+        "错误码三型（ErrorCode / Retryability / ErrorContract）落在 qx-core 的 error 模块，且 lib.rs 重导出",
+        f"缺 {ERROR_CONTRACT_FILE} 里的类型，或 lib.rs 没重导出（跨 crate 用不上）",
+    )
+    missing_fields = [field for field in ERROR_CONTRACT_FIELDS if field not in error_rs]
+    check(
+        not missing_fields,
+        "ErrorContract 五格字段齐（DD-5 五元：码 / 重试资格 / 对账 / 安全重试 / 展示消息）",
+        f"缺字段：{missing_fields}",
+    )
+    all_decl = re.search(r"pub const ALL: \[ErrorCode; (\d+)\] = \[(.*?)\];", error_rs, re.S)
+    declared = int(all_decl.group(1)) if all_decl is not None else 0
+    listed = re.findall(r"ErrorCode::(\w+),", all_decl.group(2)) if all_decl is not None else []
+    variants = sorted(set(re.findall(r"QxError::(\w+)\(_\)", error_rs)))
+    check(
+        all_decl is not None
+        and declared == len(listed) == len(variants) == 8
+        and sorted(listed) == variants,
+        "ErrorCode::ALL 是闭集：声明长度、列出的码、QxError 的变体数三者相等（一型一码）",
+        f"声明 {declared} / 列出 {len(listed)} / QxError 变体 {len(variants)}，或清单与变体对不上",
+    )
+    contract_body = _rust_fn_body(error_rs, "contract")
+    code_body = _rust_fn_body(error_rs, "code")
+    check(
+        contract_body is not None
+        and all(f"ErrorCode::{name}" in contract_body for name in listed)
+        and all(
+            f"Retryability::{name}" in contract_body
+            for name in ERROR_RETRYABILITY_CLASSES
+        )
+        and code_body is not None
+        and "self.contract().code" in code_body
+        and "match self" not in code_body,
+        "QxError::contract 是全仓唯一映射表（8 码 + 4 类重试资格），code() 从它派生且自身不再 match",
+        "contract 不在盘 / 覆盖不全，或 code() 又写了一份自己的 match（两份口径）",
+    )
+    qx_context = _rust_fn_body(case_source(USAGE_ERRORS_FILE), "qx_context")
+    check(
+        qx_context is not None
+        and "error.contract()" in qx_context
+        and "retryability.allows_retry()" in qx_context
+        and "reconcile_required" in qx_context,
+        "CLI 展示层 qx_context 显式消费五元契约（码 + 对账 / 可重试两格分级）",
+        "usage_errors.rs 没有 qx_context，或它没有消费契约（退回只有消息）",
+    )
+    storage = case_source(PIPELINE_STORAGE_FILE)
+    routed = storage.count("usage_errors::qx_context(")
+    check(
+        routed >= 4 and "{error:?}" not in storage,
+        "打开 EventLog 的四处 QxError→字符串边界都走 qx_context，且不再把 QxError 摊成 {error:?}",
+        f"只有 {routed} 处走 qx_context，或仍有 {{error:?}} 把 QxError 摊成自由文本",
+    )
+    check(
+        case_source(PIPELINE_FILE).count("error.contract().retryability.allows_retry()") >= 2,
+        "热路径重试循环按 retryability 分支（不再靠错误文本判断能不能重发）",
+        "pipeline.rs 的重试循环没有消费契约",
+    )
+    check(
+        (ROOT / ERROR_CONTRACT_TEST).is_file()
+        and all(case in case_source(ERROR_CONTRACT_TEST) for case in ERROR_CONTRACT_CASES)
+        and "contract_separates_retryable_from_safe_to_retry" in error_rs,
+        "五元契约：qx-core 侧自洽用例 + qx-cli 侧消费面三条用例在盘",
+        f"缺 {ERROR_CONTRACT_TEST}，或消费面用例不全 / qx-core 侧自洽用例被删",
     )
 
 
@@ -11790,16 +12845,60 @@ CLI_SURFACE_TEST_FILE = "crates/qx-cli/tests/command_surface.rs"
 CLI_COMMANDS_CONST = re.compile(r"const CLI_COMMANDS: \[&str; (\d+)\] = \[(.*?)\];", re.S)
 # `config` 子命令在 help 里是 `  config <sub> …` 形状（两空格缩进，与顶层入口同一缩进级）。
 HELP_CONFIG_LINE = re.compile(r"^  config ([a-z][a-z0-9-]*)", re.MULTILINE)
+# 二级入口清单：`"config explain"` 这类「父 子」两段式字符串。
+CLI_NESTED_COMMANDS_CONST = re.compile(r"const NESTED_COMMANDS: \[&str; (\d+)\] = \[(.*?)\];", re.S)
+
+
+def clap_subcommand_parents(args_text: str) -> dict[str, str]:
+    """顶层里带 `#[command(subcommand)]` 的父命令：`命令名 -> 子命令枚举类型`。
+
+    子命令枚举名从字段类型取事实（`action: Option<ConfigCommand>`），不按 `+Command` 后缀猜——
+    变体名是 `Config`、枚举名是 `ConfigCommand`，两者并无机械对应，猜就会把判据钉在错的锚上。
+    """
+    start = args_text.find("pub(crate) enum Command {")
+    if start < 0:
+        return {}
+    body = args_text[start:]
+    end = body.find("\n}\n")
+    block = body if end < 0 else body[:end]
+    parents: dict[str, str] = {}
+    for chunk in block.split('#[command(name = "')[1:]:
+        name = chunk.split('"', 1)[0]
+        matched = re.search(
+            r'#\[command\(subcommand\)\]\s*\n\s*\w+:\s*Option<([A-Za-z]\w*)>', chunk
+        )
+        if matched:
+            parents[name] = matched.group(1)
+    return parents
+
+
+def clap_nested_command_table(args_text: str, variant: str) -> set[str]:
+    """某个子命令枚举的子命令集：`pub(crate) enum <variant> { … }` 块里的 `#[command(name=…)]`。"""
+    start = args_text.find(f"pub(crate) enum {variant} {{")
+    if start < 0:
+        return set()
+    body = args_text[start:]
+    end = body.find("\n}\n")
+    return set(
+        re.findall(
+            r'#\[command\(name = "([a-z][a-z0-9-]*)"\)\]',
+            body if end < 0 else body[:end],
+        )
+    )
 
 
 def cli_surface_coverage_check() -> None:
-    """fam12 的两颗牙齿：命令表逐颗用例、config 子命令集与 help 同口径。
+    """fam12 的牙齿：命令表逐颗用例、config 子命令集与 help 同口径、二级入口逐条用例。
 
     「命令表逐颗用例」不是把名字抄进一张常量就完事——那样清单会退化成装饰。判据同时核两件：
     清单与 clap 表逐一相等（新增命令没进清单 = 红；清单留了已删命令 = 红），且清单真的被逐条
     喂给被测 binary 跑 `--help`（只列不跑 = 红）。`config` 子命令集同理：clap 的 `ConfigCommand`
     变体名必须与 help 印出的 `config <sub>` 行逐一相等，否则「help 里有、敲下去没有」或反之——
     与顶层入口同一类断链，只是发生在第二层。
+    **二级入口**（`config <sub>` / `run <sub>` / `strategy <sub>` / `backtest <sub>`）此前只靠顶层
+    那张表覆盖父命令，`backtest ccxt-builtin`、`strategy list` 这类叶子一颗用例都没点过名：它一敲
+    就崩、或自己的用法渲染不出来时没人红。判据对 `NESTED_COMMANDS` 常量核同样的两件——与四个父
+    命令的 clap 子命令表逐一相等，且真的被逐条喂给被测 binary 跑 `--help`。
     """
     args_text = (ROOT / CLI_ARGS_FILE).read_text(encoding="utf-8")
     table = clap_command_table(args_text)
@@ -11837,6 +12936,34 @@ def cli_surface_coverage_check() -> None:
         bool(config_subs) and config_subs == documented,
         "config 子命令集与 help 印出的 `config <sub>` 行逐一相等",
         f"clap 子命令 {sorted(config_subs)}；help 印出 {sorted(documented)}",
+    )
+    # 二级入口逐条用例：`NESTED_COMMANDS` 必须与四个父命令的 clap 子命令表逐一相等，
+    # 且真的被逐条喂给被测 binary 跑 `--help`（与顶层那张表同一口径）。
+    expected_nested = {
+        f"{parent} {sub}"
+        for parent, enum_name in clap_subcommand_parents(args_text).items()
+        for sub in clap_nested_command_table(args_text, enum_name)
+    }
+    nested_matched = CLI_NESTED_COMMANDS_CONST.search(test_text)
+    nested_listed = (
+        set(re.findall(r'"([a-z][a-z0-9-]* [a-z][a-z0-9-]*)"', nested_matched.group(2)))
+        if nested_matched
+        else set()
+    )
+    nested_declared = int(nested_matched.group(1)) if nested_matched else -1
+    check(
+        nested_matched is not None
+        and nested_declared == len(nested_listed)
+        and nested_listed == expected_nested,
+        "二级入口逐颗用例：NESTED_COMMANDS 清单与 clap 子命令表逐一相等",
+        f"清单 {len(nested_listed)} 项（声明 {nested_declared}）；clap 表 {len(expected_nested)} 项；"
+        f"清单有而 clap 无 {sorted(nested_listed - expected_nested) or '无'}；"
+        f"clap 有而清单无 {sorted(expected_nested - nested_listed) or '无'}",
+    )
+    check(
+        "for spec in NESTED_COMMANDS" in test_text,
+        "二级入口清单真的被逐条喂给被测 binary 跑 `--help`（而不是只把名字列在常量里）",
+        "NESTED_COMMANDS 没被逐条消费：清单会退化成一张没人用的装饰表",
     )
 
 
@@ -12069,6 +13196,317 @@ def file_lock_single_source_check() -> None:
     )
 
 
+def fee_settlement_currency_check() -> None:
+    """成交手续费只能记在它自己的币种上（V11 D2）。
+
+    `Fill.fee_currency` 由 Binance 的 `commissionAsset` 与 CCXT 的 `fee_currency` 填充、
+    并已进入事件指纹，归约侧却可以整份不读它——异币种抵扣的手续费会被按面值记进结算币种，
+    账本凭空多（或少）一笔钱且没有任何信号（0.001 BNB 记成 0.001 USDT 低估两个数量级）。
+    正确形状只有三档：同币种/未报币种按面值；基准资产费用用**这笔成交自己的价格**折算
+    （不需要外部汇率，挡下它等于挡掉主力连接器上每天正常发生的全部成交）；其余币种拒记并
+    转待对账。衍生条款不折算——那一层要过 `contract_size` 与 inverse 口径，算错的代价比拒记更高。
+    """
+    fill_source = production_text(
+        (ROOT / "crates/qx-core/src/ledger/fill.rs").read_text(encoding="utf-8")
+    )
+    resolvers = len(re.findall(r"fee_in_settlement_raw\(", fill_source))
+    check(
+        resolvers >= 3 and "fill.fee_currency" in fill_source and "ReconcileRequired" in fill_source,
+        "手续费币种判定住在唯一的折算函数里，现货与衍生两条记账入口都过它（V11 D2）",
+        f"fee_in_settlement_raw 出现 {resolvers} 次（定义 + 两处调用），"
+        f"读取 fee_currency={'fill.fee_currency' in fill_source}",
+    )
+    check(
+        fill_source.count("Money::from_raw(-fill.fee.raw())") == 0
+        and fill_source.count("Money::from_raw(-fee_raw)") == 2,
+        "费用腿一律记折算后的数，不记回报里的原数（按面值入账正是 D2 的原始缺陷）",
+        f"-fill.fee.raw() 残留 {fill_source.count('Money::from_raw(-fill.fee.raw())')} 处、"
+        f"-fee_raw {fill_source.count('Money::from_raw(-fee_raw)')} 处",
+    )
+    check(
+        "fn base_asset_of(" in fill_source
+        and "checked_mul(fee_raw)" in fill_source
+        and "checked_div(SCALE)" in fill_source,
+        "基准资产费用用成交自身价格折算（定点乘除，不引入外部汇率）",
+        "base_asset_of 或折算的 checked 乘除被删掉",
+    )
+    check(
+        "multiplier == 1" in fill_source
+        and fill_source.count("fee_in_settlement_raw(fill, currency, None)") == 1,
+        "折算只对乘数为 1 的现货口径开放，衍生条款严格认结算币种",
+        "乘数闸门或衍生侧的严格口径不见了",
+    )
+    ledger_cases = case_source("crates/qx-core/tests/ledger")
+    missing = [
+        name
+        for name in (
+            "spot_base_asset_fee_converts_at_the_fill_price",
+            "base_asset_fee_is_refused_when_the_symbol_does_not_name_it",
+            "multiplier_path_does_not_convert_base_asset_fees",
+            "base_asset_fee_that_converts_to_zero_leaves_no_fee_leg",
+            "fill_with_foreign_fee_currency_is_not_booked_at_face_value",
+            "derivative_fill_with_foreign_fee_currency_is_rejected",
+            "fee_currency_gate_only_bites_on_reported_foreign_currency",
+        )
+        if f"fn {name}(" not in ledger_cases
+    ]
+    check(
+        not missing,
+        "七条用例分别钉住「基准资产费用按成交价折算、符号没点名则拒、乘数路径不折算、"
+        "折到 0 不留腿、第三币种拒记、衍生同拒、闸门只管异币种」",
+        f"crates/qx-core/tests/ledger 少了 {missing}",
+    )
+
+
+KERNEL_DEAD_FILE_NAMES = ("engine.rs", "queue.rs")
+KERNEL_DEAD_SYMBOLS = ("TestClock", "ClockError", "CausalQueue", "EngineCtx", "EngineRunReport")
+KERNEL_PROMISE_PHRASES = ("确定性时钟", "因果事件队列")
+KERNEL_PROMISE_FILES = ("README.md", "crates/qx-core/src/lib.rs", "crates/qx-core/Cargo.toml")
+KERNEL_README_ANCHORS = ("内核里没有时钟对象", "append_at_engine", "qx-xingban", "EventLog")
+KERNEL_PRIORITY_CONSTANTS = ("TIMER", "FEEDBACK", "MARKET", "COMMAND", "MATCH", "APPLY", "POST")
+KERNEL_APPEND_RULE = "if(effective_ts,priority)<=(previous.ts,previous.prio)"
+
+
+def kernel_timeline_check() -> None:
+    """qx-core 的时间轴只剩单位口径，因果序由写入处的单调判据负责（V11 P2）。
+
+    README 与 Cargo.toml 曾把内核描述成"有确定性时钟与因果事件队列"，而 `clock.rs` 自己写着
+    "这里**不提供虚拟时钟**"、`lib.rs` 写着"内核不提供虚拟时钟对象"。文档承诺一件代码里从未
+    发生的事，正是本仓反复要堵的那半颗缺陷（§13.1 修 README 过度声明的同族）。判据守三件：
+    那三件死实现（引擎 / 因果队列 / 时钟）不得以原名回到 `crates/`；三份口径来源不再写旧承诺、
+    且 README 改口到真实推进路径；因果优先级数值只有一处真相、Python 参考形状逐项跟着它走。
+    """
+
+    def posix(p: Path) -> str:
+        return str(p.relative_to(ROOT)).replace("\\", "/")
+
+    def flat_text(path: Path) -> str:
+        # 压掉空白再比：rustfmt 会按行宽折声明，字面拆行不该让门禁假红。
+        return "".join(path.read_text(encoding="utf-8").split())
+
+    sources = sorted(CRATES.rglob("*.rs"))
+    revived = [posix(p) for p in sources if p.name in KERNEL_DEAD_FILE_NAMES]
+    source_texts = [p.read_text(encoding="utf-8") for p in sources]
+    redefinitions = [
+        name
+        for name in KERNEL_DEAD_SYMBOLS
+        if any(
+            re.search(rf"\b(struct|enum|trait|impl)\s+{name}\b", text) for text in source_texts
+        )
+    ]
+    check(
+        not revived and not redefinitions,
+        "被删掉的引擎、因果队列与时钟没有以原名回到 crates/（V11 P2）",
+        f"复现的文件 {revived or '无'}、重新定义过的符号 {redefinitions or '无'}：这三件曾是零调用的实现，"
+        "抄回来就等于重新制造「文档承诺、代码没接」那半颗缺陷",
+    )
+    core_lib = "".join((ROOT / "crates/qx-core/src/lib.rs").read_text(encoding="utf-8").split())
+    ts_defs = [posix(p) for p in sources if "pubtypeTs=u64;" in flat_text(p)]
+    check(
+        ts_defs == ["crates/qx-core/src/clock.rs"]
+        and "pubmodclock;" in core_lib
+        and "pubmodengine;" not in core_lib
+        and "pubmodqueue;" not in core_lib
+        and "pubuseself::clock::Ts;" in core_lib
+        and all(name not in core_lib for name in KERNEL_DEAD_SYMBOLS),
+        "`clock.rs` 只剩一格单位口径 `pub type Ts = u64;`，且它是内核里唯一一份（V11 P2）",
+        f"`Ts` 的定义落在 {ts_defs or '没有一处'}（期望恰好 crates/qx-core/src/clock.rs）："
+        "这条别名是 event/order/sourcing 共用的时间戳口径，删不掉也不该有第二份写法；"
+        "引擎与队列的模块声明一旦回来，lib.rs 的公开面就重新长出零调用的入口",
+    )
+    lingering = [
+        f"{rel} 仍写着「{phrase}」"
+        for rel in KERNEL_PROMISE_FILES
+        for phrase in KERNEL_PROMISE_PHRASES
+        if phrase in (ROOT / rel).read_text(encoding="utf-8")
+    ]
+    check(
+        not lingering,
+        "三份口径来源都不再承诺那三件死实现（V11 P2）",
+        f"残留 {lingering or '无'}：这三处是读者真正会读的句子，留着旧承诺就等于让文档替一段"
+        "不存在的代码作保",
+    )
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    missing = [needle for needle in KERNEL_README_ANCHORS if needle not in readme]
+    check(
+        not missing
+        and "TIMER < FEEDBACK < MARKET < COMMAND < MATCH < APPLY < POST" in readme
+        and "qx-xingban" in core_lib
+        and "pipeline.rs" in core_lib,
+        "设计底线改口到真实推进路径：回测按 bar 序列、实盘按到达顺序推进 `EventLog`（V11 P2）",
+        f"README 缺 {missing or '无'}：这几格是「时间轴由推进方决定」的可读证据，"
+        "少了任何一格，改口就退化成另一句「不用系统时间」式的空话",
+    )
+    rust_prio = {
+        name: int(value)
+        for name, value in re.findall(
+            r"pub const ([A-Z_]+): u8 = (\d+);",
+            (ROOT / "crates/qx-core/src/event.rs").read_text(encoding="utf-8"),
+        )
+    }
+    py_text = (ROOT / "tools/validate_core.py").read_text(encoding="utf-8")
+    py_match = re.search(
+        r"(PRIO_[A-Z_]+(?:\s*,\s*PRIO_[A-Z_]+)*)\s*=\s*\(([^)]*)\)", py_text
+    )
+    python_prio: dict[str, int] = {}
+    if py_match is not None:
+        names = re.findall(r"PRIO_([A-Z_]+)", py_match.group(1))
+        values = [int(v) for v in re.findall(r"\d+", py_match.group(2))]
+        python_prio = dict(zip(names, values))
+    check(
+        set(rust_prio) == set(KERNEL_PRIORITY_CONSTANTS)
+        and all(rust_prio[k] < rust_prio["POST"] for k in rust_prio if k != "POST")
+        and python_prio == rust_prio,
+        "因果优先级的数值只有一处真相，Python 参考形状逐项跟着它走（V11 P2）",
+        f"Rust {sorted(rust_prio.items())} vs Python {sorted(python_prio.items())}：队列删掉之后，"
+        "这条序的全部实现就是「数值 + 写入处单调」，数值分叉会让两边对同一条 (ts, prio) 判出不同结果",
+    )
+    pipeline = "".join(
+        production_text(
+            (ROOT / "crates/qx-runtime/src/pipeline.rs").read_text(encoding="utf-8")
+        ).split()
+    )
+    check(
+        pipeline.count(KERNEL_APPEND_RULE) == 1 and "fnappend_at_engine(" in pipeline,
+        "(ts, prio) 单调落盘的判据只有写入处那一份，且在正文不在用例里（V11 P2）",
+        f"命中 {pipeline.count(KERNEL_APPEND_RULE)} 次（期望 1）：这条判据是删掉调度队列之后因果序的"
+        "全部实现，出现第二份写法就意味着两条写路径可以对同一个时点排出不同的顺序",
+    )
+
+
+# 阶段四 M1'/M2'/M3'：Web 控制台（只读读面 + 控制面写面）。路线图 §18 明写「不应把 HTTP/WS API
+# 自动称为前后端完整贯通」——贯通要有一条**可核对的接线表**，而不是"页面能打开"。前端调用一个
+# 后端不存在的端点、或它绕过控制面直连下单端点，都必须在这里当场变红。
+WEB_CONSOLE_DIR = "web/console"
+WEB_CONSOLE_FILES = ("index.html", "app.js", "styles.css")
+# 控制台**唯一**允许的写面：控制面受理入口。它不直接下单——下单要走这条命令，由控制面
+# 受理后交给执行者，所以"页面直连某个下单端点"这类形状必须被禁掉（下面那份名单）。
+WEB_CONSOLE_WRITE_PATH = "/control/commands"
+WEB_CONSOLE_WRITE_CALL = "postJson(API_PATHS.controlCommands"
+WEB_CONSOLE_FORBIDDEN_WRITE_TOKENS = (
+    "/order/submit",
+    "binance-submit-order",
+    "paper-submit-order",
+    "/control/commands/execute",
+)
+# M3' 的三阶段与状态词表：页面复述的是控制面的语义（受理 202 / 执行者判定 / 终态退场），
+# 状态词表直接取 `qx-control::CommandStatus` 的变体名。
+WEB_CONSOLE_PHASES = ("受理", "执行者判定", "终态退场")
+WEB_CONSOLE_STATUS_VOCAB = ("Accepted", "Executed", "Failed")
+
+
+def web_console_check() -> None:
+    """控制台与 qx-api 路由表逐一接线，写面只有控制面受理这一条（V13 R23 · M1'/M2'/M3'）。
+
+    M1'/M2' 时这条判据守的是"它不许长出写操作"；M3' 把它推进到控制面之后，守的东西变成
+    **写面唯一**：读面板照旧只读，唯一的写操作是 `POST /control/commands`，而它不直接下单。
+    另外钉住三阶段在盘与身份边界如实交代——页面不能自声明 operator，那是 mTLS 边界的事。
+    """
+    console = ROOT / WEB_CONSOLE_DIR
+    missing = [name for name in WEB_CONSOLE_FILES if not (console / name).is_file()]
+    check(
+        not missing,
+        "Web 控制台的三件在盘（index.html / app.js / styles.css）",
+        f"缺失 {missing}",
+    )
+    if missing:
+        return
+    app = (console / "app.js").read_text(encoding="utf-8")
+    html = (console / "index.html").read_text(encoding="utf-8")
+    # 只看代码，不看注释：控制台的注释里会解释"受理 202 不是已经执行"，那是说明而不是逻辑。
+    # 与门禁别处「先剥整行注释再判」同口径。
+    code = re.sub(r"//[^\n]*", "", app)
+    code = re.sub(r"/\*.*?\*/", "", code, flags=re.S)
+    # 控制台在 app.js 里逐条点名它要调的路径；逐条与 qx-api 的路由表核对。
+    declared = set(re.findall(r'"(/[a-z][a-z0-9/_-]*)"', code))
+    api = production_text((ROOT / "crates/qx-api/src/lib.rs").read_text(encoding="utf-8"))
+    routes = {
+        path for _method, path in re.findall(r'\("(GET|POST|PUT|DELETE)", "(/[^"]*)"\)', api)
+    }
+    unknown = sorted(path for path in declared if path not in routes)
+    check(
+        bool(declared) and not unknown,
+        "控制台引用的每个 API 路径都在 qx-api 路由表里（前端 ⇔ 后端接线表逐一相等）",
+        f"控制台引用了后端不存在的路径 {unknown}；路由表 {sorted(routes)}",
+    )
+    check(
+        "cors_allowed_origins" in html,
+        "控制台写明跨源读取必须在部署配置登记 cors_allowed_origins（否则是浏览器 CORS 拦截，不是服务端故障）",
+        "index.html 丢了那条 CORS 说明，用户会把跨源拦截误读成后端坏了",
+    )
+    check(
+        "qx-cli serve" in html,
+        "控制台写明后端服务入口是 `qx-cli serve <runtime.json>`",
+        "没有启动入口说明的控制台等于一个打不开的页面",
+    )
+    posts = code.count('method: "POST"')
+    intruders = [token for token in WEB_CONSOLE_FORBIDDEN_WRITE_TOKENS if token in code]
+    check(
+        posts == 1
+        and WEB_CONSOLE_WRITE_CALL in code
+        and f'"{WEB_CONSOLE_WRITE_PATH}"' in code
+        and not intruders,
+        "控制台的写面只有一条：POST /control/commands（下单只能走这条命令，页面不得直连任何下单端点）",
+        f"POST 调用 {posts} 处 / 受理入口 {WEB_CONSOLE_WRITE_CALL in code} / 越界写面 {intruders}",
+    )
+    check(
+        all(phase in app + html for phase in WEB_CONSOLE_PHASES)
+        and all(status in code for status in WEB_CONSOLE_STATUS_VOCAB),
+        "控制面三阶段在盘：受理 → 执行者判定 → 终态退场（状态词表 Accepted/Executed/Failed 与 qx-control 同源）",
+        f"缺阶段 {[p for p in WEB_CONSOLE_PHASES if p not in app + html]} / "
+        f"缺状态词 {[s for s in WEB_CONSOLE_STATUS_VOCAB if s not in code]}",
+    )
+    check(
+        "authenticated_operator_required" in code,
+        "控制台如实交代身份边界：operator 来自 mTLS 认证边界，页面不能自声明（403 authenticated_operator_required）",
+        "页面没处理 403，用户会把'身份来自认证边界'误读成'这个页面坏了'",
+    )
+
+
+# P0-3 / DD-4：in-process 原生策略的信任门。原生库 `dlopen` 进宿主后拥有整个地址空间，
+# 所以「默认只允许独立进程、in-process 要显式信任门 + 签名信任根 + 架构匹配」这条裁定
+# 必须有会红的判据守着——否则下一次有人把 `admit_in_process_c_abi` 那一行删掉，门禁不会响。
+NATIVE_TRUST_FILE = "crates/qx-cli/src/native_trust.rs"
+NATIVE_TRUST_GATE = "admit_in_process_c_abi"
+
+
+def native_trust_check() -> None:
+    """in-process C ABI 的信任门在位、且真的挡在 `dlopen` 之前（V13 R23 · P0-3 / DD-4）。"""
+    path = ROOT / NATIVE_TRUST_FILE
+    check(
+        path.is_file(),
+        "in-process 原生策略的信任门模块在盘（qx-cli/src/native_trust.rs）",
+        f"缺失 {NATIVE_TRUST_FILE}",
+    )
+    if not path.is_file():
+        return
+    trust = production_text(path.read_text(encoding="utf-8"))
+    host = (ROOT / "crates/qx-cli/src/strategy_host.rs").read_text(encoding="utf-8")
+    check(
+        f"fn {NATIVE_TRUST_GATE}(" in trust and "fn target_triple_matches(" in trust,
+        "信任门提供「是否放行」与「三元组匹配」两个判定，且都不是测试专用",
+        "信任门被掏空成空实现或只留测试读者",
+    )
+    check(
+        f"native_trust::{NATIVE_TRUST_GATE}(strategy)?" in host,
+        "`load_c_abi_strategy` 在 `dlopen` 之前先过信任门（挡在加载之前，而不是加载之后）",
+        "加载点不再调用信任门——in-process 原生库又可以不签名进宿主了",
+    )
+    schema = (ROOT / "crates/qx-runtime/src/runtime_config/strategy_schema.rs").read_text(
+        encoding="utf-8"
+    )
+    check(
+        "c_abi_trusted_native: bool" in schema and "c_abi_target_triple: Option<String>" in schema,
+        "配置面暴露 `c_abi_trusted_native`（缺省 false）与 `c_abi_target_triple` 两格",
+        "信任门开关或目标三元组字段被删",
+    )
+    check(
+        "#[serde(default)]\n    pub c_abi_trusted_native: bool" in schema,
+        "信任门开关缺省为 false（默认拒绝，不是默认放行）",
+        "把 default 改成 true 等于默认放行未签名原生库",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         return write_line_budgets()
@@ -12121,6 +13559,8 @@ def main() -> int:
     concept_registry_check()
     venue_identity_check()
     settlement_currency_check()
+    fee_settlement_currency_check()
+    kernel_timeline_check()
     storage_retry_check()
     outbox_page_and_parked_check()
     external_acceptance_check()
@@ -12153,6 +13593,8 @@ def main() -> int:
     control_plane_honesty_check()
     lease_clock_domain_check()
     api_surface_doc_check()
+    web_console_check()
+    native_trust_check()
     account_snapshot_schema_check()
     calendar_fingerprint_caliper_check()
     c_abi_header_check()
@@ -12173,6 +13615,9 @@ def main() -> int:
     report_readout_honesty_check()
     browser_admission_check()
     capabilities_check()
+    backtest_track_check()
+    contract_matrix_check()
+    http_surface_check()
     baseline_freeze_check()
     release_supply_chain_check()
     performance_baseline_check()
@@ -12185,6 +13630,11 @@ def main() -> int:
     capability_levels_check()
     scenario_fixtures_check()
     layer_dependency_check()
+    dev_dependency_cycle_check()
+    event_log_append_batch_check()
+    pipeline_cursor_refresh_check()
+    valuation_single_source_check()
+    error_code_contract_check()
     schema_registry_check()
     report_readability_check()
     silent_suppression_check()

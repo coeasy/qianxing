@@ -80,3 +80,54 @@ fn every_command_renders_its_own_help() {
         );
     }
 }
+
+/// 二级入口表：`config <sub>` / `run <sub>` / `strategy <sub>` / `backtest <sub>`。
+///
+/// 顶层表只保证每条入口能渲染自己的用法；`backtest ccxt-builtin`、`strategy list` 这类
+/// **二级入口**此前一颗用例都没点过名（旧判据 `cli_command_test_evidence_check` 报出的正是
+/// 这两条）——它一敲就崩、或自己的用法渲染不出来时没人红。这里把 18 条二级入口逐条实跑
+/// `--help`，与顶层那条同一口径（退 0 + 用法里带叶子名）。
+const NESTED_COMMANDS: [&str; 18] = [
+    "config explain",
+    "config validate",
+    "config fingerprint",
+    "config lock",
+    "run backtest",
+    "run paper",
+    "run paper-check",
+    "run doctor",
+    "run live-check",
+    "run runtime-check",
+    "run report",
+    "strategy list",
+    "strategy init",
+    "strategy backtest",
+    "backtest builtin",
+    "backtest multi-builtin",
+    "backtest ccxt-builtin",
+    "backtest book",
+];
+
+/// 逐条二级入口实跑 `--help`：clap 必须认它（退 0），且用法里带子命令名。
+#[test]
+fn every_nested_command_renders_its_own_help() {
+    for spec in NESTED_COMMANDS {
+        let args = spec.split(' ').chain(["--help"]).collect::<Vec<_>>();
+        let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+            .args(&args)
+            .output()
+            .expect("启动 qx-cli 失败");
+        let code = output.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            code, 0,
+            "`qx-cli {spec} --help` 必须退 0（clap 认不出这条二级入口？），stderr: {stderr}"
+        );
+        let leaf = spec.split(' ').next_back().unwrap();
+        assert!(
+            stdout.contains(leaf),
+            "`qx-cli {spec} --help` 的用法必须点名 `{leaf}`:\n{stdout}"
+        );
+    }
+}

@@ -20,7 +20,7 @@ use admission::{
 };
 use event_cursor::{events_after_cursor, parse_after_cursor};
 use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
-use qx_core::{Event, EventKind, EventLog, Fnv1a, LedgerEntry};
+use qx_core::{contract::contract_matrix_json, Event, EventKind, EventLog, Fnv1a, LedgerEntry};
 use qx_protocol::{
     AccountSnapshot, ProjectionEnvelope, ProjectionLineage, ACCOUNT_SNAPSHOT_JSON_SCHEMA,
     PROJECTION_ENVELOPE_SCHEMA_VERSION,
@@ -633,8 +633,7 @@ impl ApiRateLimiter {
     }
 }
 
-/// 请求毫秒戳 → 限流桶的 epoch 秒：跨进桶域只在这一处换算（V13 R2 第十六遍，与 `qx-cli` 的
-/// `lease_clock` 同族）。直接按毫秒喂会让每格补充放大 1000 倍，声明的"每秒"就不是它真的政策。
+/// 请求毫秒戳 → 限流桶的 epoch 秒：跨进桶域只在这一处换算（V13 R2 第十六遍，与 `qx-cli` 的 `lease_clock` 同族）。直接按毫秒喂会让每格补充放大 1000 倍，声明的"每秒"就不是它真的政策。
 fn rate_limit_bucket_seconds(timestamp_ms: u64) -> u64 {
     timestamp_ms / 1_000
 }
@@ -823,8 +822,7 @@ impl ApiState {
     }
 }
 
-/// 投影日志的 seq 严格递增（`EventLog::append_checked` 拒收重复与倒退），因此按序号二分。
-/// 线性 `find` 会让每轮刷新为已投影前缀付一遍与长度成正比的扫描，叠加轮询后是 O(n²)（V13 R2 第十七遍 #169c）。
+/// 投影日志的 seq 严格递增（`EventLog::append_checked` 拒收重复与倒退），因此按序号二分；线性 `find` 会让每轮刷新为已投影前缀付一遍与长度成正比的扫描，叠加轮询后是 O(n²)（V13 R2 第十七遍 #169c）。
 fn projected_event(events: &[Event], seq: u64) -> Option<&Event> {
     let index = events.partition_point(|current| current.seq < seq);
     events.get(index).filter(|current| current.seq == seq)
@@ -980,8 +978,7 @@ type ControlSubmitter = Arc<
 type CommandEnqueuer = Arc<dyn Fn(ControlCommand, u64) -> Result<(), String> + Send + Sync>;
 type ReadinessProvider = Arc<dyn Fn() -> ApiReadiness + Send + Sync>;
 
-/// `/scheduler/runs`、`/account/ledger`、`/reconcile/reports` 三个只读端点共用的一份现读结果。
-/// 对账报告在这里是**列表**：`ApiState` 里那张按 worker_id 键控的表只是它的查询副本。
+/// `/scheduler/runs`、`/account/ledger`、`/reconcile/reports` 三个只读端点共用的一份现读结果。对账报告在这里是**列表**：`ApiState` 里那张按 worker_id 键控的表只是它的查询副本。
 #[derive(Default, Clone)]
 pub struct ApiQueryModels {
     pub job_runs: Vec<JobRun>,
@@ -1043,8 +1040,7 @@ impl ReconcileReportSnapshot {
     }
 }
 
-/// API 查询端口：只读方法集合，不持有 Ledger、Venue 或可变控制面引用；未来替换为
-/// 独立 QueryService 时保持同一契约。
+/// API 查询端口：只读方法集合，不持有 Ledger、Venue 或可变控制面引用；未来替换为独立 QueryService 时保持同一契约。
 ///
 /// 三条读法各有归属（V13 R4-D：这份注释原先谎称"网络协议只依赖这些只读方法"，
 /// 而 `/account/orders|positions|balances` 三个端点其实从不走下面的无身份变体）：
@@ -1499,7 +1495,10 @@ impl ApiService {
         }
         let (route, query) = path.split_once('?').unwrap_or((path, ""));
         if self.policy.is_some()
-            && !matches!(route, "/health" | "/ready" | "/schema/account-snapshot-v1")
+            && !matches!(
+                route,
+                "/health" | "/ready" | "/schema/account-snapshot-v1" | "/schema/contract-matrix"
+            )
         {
             let authorized = authenticated_operator
                 .and_then(|operator| self.policy.as_ref()?.permission(operator))
@@ -1570,6 +1569,7 @@ qx_control_retired_audit_records_total {}\n",
             ("GET", "/schema/account-snapshot-v1") => {
                 ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA)
             }
+            ("GET", "/schema/contract-matrix") => ApiResponse::json(200, contract_matrix_json()),
             ("GET", "/account/snapshot/envelope") => {
                 match self.snapshot_envelope_for_query(query) {
                     Err(error) => ApiResponse::json(400, error_json(&error)),

@@ -25,6 +25,10 @@ python/**/*.egg-info/
 /baseline_*
 # 变异取证时临时放的门禁副本（跑完即删；崩溃留不下清理时也不该进版本库）
 /.gate_mut/
+# 发布审计的取证目录（回退面重放探针、变异脚本、原始测试日志；跑完即删，同 /.gate_mut/ 口径）
+/.audit/
+# 本沙箱的 %TEMP% 对被测子进程不可写，测试期把 TEMP/TMP 指到这里（见 MEMORY.md 构建/测试环境）
+/.tmp-audit/
 # 沙箱 Windows 上绕过 GNU `link` 抢占 MSVC 的独立 target 目录（见 rust-msvc-build-windows 技能）
 /.cargo-target*/
 # 性能基线的本机读数：随机器变化，按轮记进 docs，不进版本库

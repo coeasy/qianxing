@@ -1,0 +1,132 @@
+# 自研 HTTP/WS 面覆盖表（P2-2 的前置，§9 排期原则 3 / §6.4）
+#
+# 「要不要把 API 迁到成熟 HTTP 库」不能靠感觉答。这张表把自研面**逐格登记**：
+# 每一格写清「这件事由哪个符号负责、哪条用例守着、覆盖到什么程度」。缺口是数出来的，
+# 不是估出来的——`verdict.accepted_gaps` 必须逐条点名本表里所有非 covered 的行，
+# 由 `tools/check_architecture.py` 的 `http_surface_check` 与真实代码逐格对账。
+#
+# status 四档：
+#   covered   有实现、有用例
+#   partial   有实现，但用例没盖到（登记为已知欠账）
+#   gap       没有实现（登记为已知缺口）
+#   by_design 刻意不做，并写明为什么（不是漏掉）
+schema_version: 1
+kind: http-surface-coverage
+updated_at: "2026-10-08"
+self_built_file: crates/qx-api/src/transport.rs
+self_built_file: crates/qx-api/src/ws.rs
+self_built_file: crates/qx-api/src/admission.rs
+self_built_file: crates/qx-api/src/lib.rs
+
+areas:
+  - area: request_line_and_target
+    status: covered
+    anchor: crates/qx-api/src/admission.rs parse_request_line
+    case: crates/qx-api/tests/browser_admission.rs every_exit_of_a_cors_deployment_carries_the_same_allow_origin
+    note: 请求行按空白切出 method/target；target 再按 `?` 切 route/query（split_target）。协议版本号刻意不解析——本服务只回 HTTP/1.1，不按版本分支。
+  - area: request_body_framing_content_length
+    status: covered
+    anchor: crates/qx-api/src/transport.rs read_request_until
+    case: crates/qx-api/src/transport.rs a_request_inside_the_deadline_still_reads_through_in_one_piece
+    note: 只认 Content-Length 定长正文；头尾 `\r\n\r\n` 之后按它等正文。请求总量硬上界 1 MiB。
+  - area: transfer_encoding_chunked
+    status: gap
+    anchor: crates/qx-api/src/transport.rs read_request_until
+    case: crates/qx-api/src/transport.rs a_request_inside_the_deadline_still_reads_through_in_one_piece
+    note: 不实现 chunked。带 `Transfer-Encoding: chunked` 的请求会被读成"无正文"，正文解析随即失败——**fail closed 但报错位置在 400 而不是 411**，且客户端拿不到"我不支持这种 framing"的明确信号。
+  - area: duplicate_content_length
+    status: gap
+    anchor: crates/qx-api/src/transport.rs read_request_until
+    case: crates/qx-api/src/transport.rs a_request_inside_the_deadline_still_reads_through_in_one_piece
+    note: 头扫描取**第一条** Content-Length 就 break，第二条被忽略。因为响应恒为 `Connection: close`、且正文有 1 MiB 上界，构不成请求走私的经典前提；但"同一头出现两次该拒"这条规矩本仓没有。
+  - area: request_overall_deadline
+    status: covered
+    anchor: crates/qx-api/src/transport.rs HTTP_REQUEST_DEADLINE
+    case: crates/qx-api/src/transport.rs dribbling_client_is_cut_by_the_overall_request_deadline_not_by_the_per_read_timeout
+    note: 100ms 单次读超时挡不住"每 99ms 滴一字"的对端；整条请求另有一把 5 秒墙钟，到期即断，免得一条连接线程与一份连接额度被磨几十小时。
+  - area: response_status_line
+    status: covered
+    anchor: crates/qx-api/src/transport.rs write_http_response
+    case: crates/qx-api/tests/status_line_and_limiter_exit.rs the_rate_limit_exit_says_the_same_thing_in_the_status_line_and_the_body
+    note: 状态行短语覆盖本构建写出的每一个状态码；落进兜底那格给 Unknown 而不是复用 500 的短语——新增没登记的状态码不该被一个听起来对的词盖住。
+  - area: response_204_without_content_length
+    status: covered
+    anchor: crates/qx-api/src/transport.rs write_http_response
+    case: crates/qx-api/tests/browser_admission.rs preflight_from_a_listed_origin_is_204_and_never_echoes_the_requested_headers
+    note: 204 不写 Content-Length（RFC 9110 §15.3.5）。预检那条正是 204，写上去会被严格实现读成协议错误。
+  - area: cors_preflight
+    status: covered
+    anchor: crates/qx-api/src/admission.rs preflight
+    case: crates/qx-api/tests/browser_admission.rs preflight_from_an_unlisted_origin_says_403_with_its_own_code_name
+    note: 预检按 `api.cors_allowed_origins` 逐字符比对；不在册的源回 403 并带自己的码名；没有名单时预检落到 404 且不出任何 CORS 头（不假装允许）。
+  - area: query_percent_decoding
+    status: partial
+    anchor: crates/qx-api/src/admission.rs percent_decode
+    case: crates/qx-api/tests/browser_admission.rs without_an_allowlist_the_preflight_falls_through_to_the_404_and_no_cors_headers_appear
+    note: 实现按 %XX 解码并在坏转义时回 `query string percent-encoding is malformed`；但**没有一条直接点名 percent_decode 的用例**——它现在只被"路由带键"那批用例间接走到。欠账记在这里。
+  - area: header_lookup_case_insensitive
+    status: partial
+    anchor: crates/qx-api/src/admission.rs header_value
+    case: crates/qx-api/tests/browser_admission.rs a_request_body_cannot_hijack_the_websocket_handshake
+    note: 头名按 ASCII 大小写不敏感比对（`eq_ignore_ascii_case`）。大小写混排的直接用例没有，靠握手那条间接覆盖。
+  - area: connection_budget
+    status: covered
+    anchor: crates/qx-api/src/admission.rs DEFAULT_MAX_CONCURRENT_CONNECTIONS
+    case: crates/qx-api/tests/browser_admission.rs every_exit_of_a_cors_deployment_carries_the_same_allow_origin
+    note: 在册连接额度 256；占满即拒，不排队等——一条连接线程被磨住不能变成整站 503。
+  - area: refuse_drain_budget
+    status: covered
+    anchor: crates/qx-api/src/transport.rs refuse_connection
+    case: crates/qx-api/src/transport.rs a_dribbling_refused_peer_cannot_hold_the_accept_thread_past_the_drain_budget
+    note: 拒绝一条还没读过字节的连接时，排空对端已发字节有 200ms 墙钟上界；这条循环跑在唯一的 accept 线程上。
+  - area: keep_alive
+    status: by_design
+    anchor: crates/qx-api/src/transport.rs write_http_response
+    case: crates/qx-api/tests/accept_loop_shutdown.rs plaintext_accept_loop_serves_then_returns_on_the_stop
+    note: 每条响应恒带 `Connection: close`，刻意不做 keep-alive/流水线。运维读面是"轮询 + WS 增量"的形态，短连接够用；不做长连接就不必处理流水线乱序与半关连接的两套边界。
+  - area: tls_and_mtls
+    status: covered
+    anchor: crates/qx-api/src/transport.rs tls_stream
+    case: crates/qx-api/tests/accept_loop_shutdown.rs mtls_accept_loop_returns_on_the_stop
+    note: TLS 走 rustls（不做自研密码学）；mTLS 客户端证书到操作员身份的映射在 lib.rs 的 TlsConfigStore 上，可热替换。
+  - area: ws_handshake_accept
+    status: covered
+    anchor: crates/qx-api/src/transport.rs websocket_accept
+    case: crates/qx-api/tests/browser_admission.rs a_request_body_cannot_hijack_the_websocket_handshake
+    note: Sec-WebSocket-Accept = base64(SHA-1(key + GUID))，SHA-1 与 base64 都是本仓自带的定点实现（websocket_accept / sha1 / base64_encode）。
+  - area: ws_close_frame_detection
+    status: covered
+    anchor: crates/qx-api/src/ws.rs WsCloseScanner
+    case: crates/qx-api/src/ws.rs a_complete_close_frame_is_detected
+    note: Close 帧 opcode 0x8 只认帧起点的帧头；按整块缓冲逐字节扫会把 16 个字节值都命中，正常载荷被误判成断连（V13 R11 修）。
+  - area: ws_frame_write_lengths
+    status: partial
+    anchor: crates/qx-api/src/transport.rs write_ws_text
+    case: crates/qx-api/src/ws.rs payload_bytes_matching_close_are_not_a_close_frame
+    note: 服务端只写文本帧，7/16/64 位长度三档都有分支；但没有一条直接对 `write_ws_text` 三个长度档逐档断言的用例——目前靠端到端 WS 用例间接覆盖。欠账记在这里。
+  - area: ws_ping_pong
+    status: gap
+    anchor: crates/qx-api/src/ws.rs WS_MAX_IDLE_ROUNDS
+    case: crates/qx-api/src/ws.rs a_close_frame_split_across_reads_is_still_detected
+    note: 服务端不主动 ping、也不回 pong；空闲靠 WS_MAX_IDLE_ROUNDS 的轮次上界收摊。对端若只靠 ping 保活会被本服务按空闲断开。
+  - area: ws_client_frame_masking
+    status: partial
+    anchor: crates/qx-api/src/ws.rs WsCloseScanner
+    case: crates/qx-api/src/ws.rs an_unfinished_frame_cannot_grow_the_buffer_past_the_cap
+    note: 扫描器按掩码位跳过 4 字节掩码键以定位帧边界；本通道只推送事件、不消费客户端载荷，所以不校验客户端必须掩码（RFC 6455 要求客户端掩码，服务端收到未掩码帧本可断连）。
+  - area: accept_loop_lifecycle
+    status: covered
+    anchor: crates/qx-api/src/lib.rs serve
+    case: crates/qx-api/tests/accept_loop_shutdown.rs plaintext_accept_loop_returns_without_any_connection
+    note: 停机令牌在阻塞等待之前先读；已握手会话读到令牌即回 server_shutdown，join 回得来（V13 R13）。
+  - area: route_fallback_404
+    status: covered
+    anchor: crates/qx-api/src/lib.rs serve_tls_mtls_with_stores
+    case: crates/qx-api/tests/status_line_and_limiter_exit.rs a_broken_rate_limit_backend_says_service_unavailable_not_internal_error
+    note: 未列出的路径一律 404，不静默 200；这条口径与 deploy/README 的端点表由 api_surface_doc_check 双向钉住。
+
+verdict:
+  decision: keep_self_built
+  reason: 上表 21 格里 13 格 covered、4 格 partial、3 格 gap、1 格 by_design。缺口全部落在**本仓不用的 HTTP 特性**上（chunked 请求体、重复 Content-Length、ping/pong 保活），没有一格落在本仓真正提供的读面上；而迁库要动的是 route/service 契约、mTLS 操作员映射、连接额度与停机令牌四处已由判据钉住的边界。按 §9 排期原则 3「零新依赖」，先登记、后评估：当前缺口不足以支撑一次迁库。
+  accepted_gaps: transfer_encoding_chunked,duplicate_content_length,query_percent_decoding,header_lookup_case_insensitive,ws_frame_write_lengths,ws_ping_pong,ws_client_frame_masking
+  migration_trigger: 出现下列任一条即重新评估迁库：① 需要一个本仓读面真正要用的 HTTP 特性（keep-alive/流水线、chunked 请求体、HTTP/2、代理转发头语义）；② 需要把 API 暴露给不受控客户端，届时"重复 Content-Length 该拒""未掩码客户端帧该断"这类规矩从"本仓不用"变成"必须防"；③ WS 需要双向载荷（本通道现在是单向推送）。

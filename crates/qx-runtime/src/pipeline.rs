@@ -191,6 +191,13 @@ struct PipelineMetrics {
     transient_retries: AtomicU64,
     refreshes: AtomicU64,
     failures: AtomicU64,
+    // 下面两格是 P1-2 游标增量的**回归证明面**：`tail_appends` 记「本地是 store 前缀、只把尾部
+    // 接进来」的次数，`rebuilds` 记「退回整份重放重建」的次数。两者都不进
+    // [`PipelineMetricsSnapshot`]（那是给运维看的），只由本 crate 的用例读——与
+    // `RuntimeIngestReceipt::derived_seqs`/`engine_ts` 同一口径：没有生产读者但被回归用例钉住，
+    // 按仓库约定保留。没有它们就无法区分「增量生效」与「每次都在重建」，而两条路径终态一样。
+    tail_appends: AtomicU64,
+    rebuilds: AtomicU64,
 }
 
 impl PipelineMetrics {
@@ -288,9 +295,30 @@ impl RuntimeEventStore {
                 Ok(path)
             }
             #[cfg(feature = "sqlite")]
-            Self::Sqlite(store) => store.write_with_outbox(name, log, &outbox_events),
+            Self::Sqlite(store) => store.append_batch(name, log, &outbox_events),
             #[cfg(feature = "postgres")]
             Self::Postgres(store) => store.write_with_outbox(name, log, &outbox_events),
+        }
+    }
+
+    /// 游标增量读（P1-2）：只取 `after_seq` 之后追加的事实。
+    ///
+    /// `Ok(None)` 有两种含义，调用方都按同一件事处理（退回整份重建）：本后端没提供行级尾部读
+    /// （文件后端按 DD-3 定位降级、PostgreSQL 行式读排在 §7 M2 的下一步），或本地这份已经不是
+    /// store 的前缀（被改写/分叉）。这是**显式**回落，不是静默降级——调用方拿到 `None` 就会去
+    /// 走那条会把不一致暴露出来的整份重建。
+    fn read_since(
+        &self,
+        name: &str,
+        after_seq: Option<u64>,
+        expected_prefix: Option<(&Event, usize)>,
+    ) -> Result<Option<Vec<Event>>, StorageError> {
+        match self {
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite(store) => store
+                .read_since(name, after_seq, expected_prefix)
+                .map_err(|error| StorageError::Io(format!("SQLite EventLog: {error:?}"))),
+            _ => Ok(None),
         }
     }
 }
@@ -728,7 +756,8 @@ impl LiveEventPipeline {
             self.refresh_latest()?;
             match self.register_order_with_correlation_once(order.clone(), ts, correlation.clone())
             {
-                Err(QxError::Transient(_)) => continue,
+                // 重试资格取错误码五元契约（P1-11）：能立即重试的只有 `Retryability::Allowed`。
+                Err(error) if error.contract().retryability.allows_retry() => continue,
                 result => return result,
             }
         }
@@ -803,7 +832,8 @@ impl LiveEventPipeline {
                 return Err(error);
             }
             match self.ingest_once(envelope.clone()) {
-                Err(QxError::Transient(_)) => {
+                // 同 `register_order_with_correlation`：重试资格取五元契约（P1-11）。
+                Err(error) if error.contract().retryability.allows_retry() => {
                     self.metrics
                         .transient_retries
                         .fetch_add(1, Ordering::Relaxed);
@@ -1176,77 +1206,85 @@ impl LiveEventPipeline {
 
     fn rebuild_runtime_indexes(&mut self) -> QxResult<()> {
         let events = self.log.events().to_vec();
-        for event in events {
-            match &event.kind {
-                EventKind::OrderSubmitted { order } => {
-                    self.oms.insert_replayed(order.clone()).map_err(|error| {
-                        QxError::Invariant(format!(
-                            "EventLog OrderSubmitted 无法进入 OMS: {error:?}"
-                        ))
-                    })?;
-                }
-                EventKind::Accepted {
-                    client_order_id, ..
-                } => {
-                    self.apply_accepted(*client_order_id)?;
-                }
-                EventKind::Filled { fill } => {
-                    self.seen_fills.insert(fill_key(fill));
-                    // 索引重建只回放订单状态；现金与持仓由 Ledger 自身的回放恢复，
-                    // 在这里再记一次会重复入账。
-                    self.oms.apply_fill(fill)?;
-                }
-                EventKind::Cancelled { client_order_id } => {
-                    self.apply_cancelled(*client_order_id)?;
-                }
-                EventKind::ReconcileRequired { client_order_id } => {
-                    self.apply_reconcile_required(*client_order_id)?;
-                }
-                EventKind::MarketQuote {
-                    instrument, ask, ..
-                } => {
-                    self.marks.insert(instrument.clone(), *ask);
-                }
-                EventKind::AccountBalanceSnapshot {
-                    account_id,
-                    venue_id,
-                    balances,
-                } => {
-                    self.account_balances.insert(
-                        (account_id.clone(), venue_id.clone()),
-                        normalize_balances(balances.clone())?,
-                    );
-                }
-                EventKind::AccountPositionSnapshot {
-                    account_id,
-                    venue_id,
-                    positions,
-                } => {
-                    self.account_positions.insert(
-                        (account_id.clone(), venue_id.clone()),
-                        normalize_positions(positions.clone())?,
-                    );
-                }
-                EventKind::FundingRateSnapshot {
-                    instrument,
-                    funding_rate_bps,
-                    next_funding_timestamp_ms,
-                } => {
-                    self.funding_rates.insert(
-                        instrument.clone(),
-                        FundingRateSnapshot {
-                            instrument: instrument.clone(),
-                            funding_rate_bps: *funding_rate_bps,
-                            next_funding_timestamp_ms: *next_funding_timestamp_ms,
-                        },
-                    );
-                }
-                EventKind::AccountCashflow { .. }
-                | EventKind::LedgerApplied { .. }
-                | EventKind::Submit { .. }
-                | EventKind::Rejected { .. }
-                | EventKind::Settle => {}
+        for event in &events {
+            self.apply_index_event(event)?;
+        }
+        Ok(())
+    }
+
+    /// 单条事实对索引（OMS / marks / 账户快照 / 资金费率）的作用。
+    ///
+    /// 整份重建与游标增量（[`Self::apply_tail`]）共用它：重建逐条喂整条日志，增量只喂新追加
+    /// 的尾部——两条路径必须落在同一份归约上，否则"重启后状态"与"跑着的时候状态"会分叉。
+    /// 账簿不在这里动：现金与持仓由 `LedgerApplied` 事实单独驱动（见调用点）。
+    fn apply_index_event(&mut self, event: &Event) -> QxResult<()> {
+        match &event.kind {
+            EventKind::OrderSubmitted { order } => {
+                self.oms.insert_replayed(order.clone()).map_err(|error| {
+                    QxError::Invariant(format!("EventLog OrderSubmitted 无法进入 OMS: {error:?}"))
+                })?;
             }
+            EventKind::Accepted {
+                client_order_id, ..
+            } => {
+                self.apply_accepted(*client_order_id)?;
+            }
+            EventKind::Filled { fill } => {
+                self.seen_fills.insert(fill_key(fill));
+                // 索引重建只回放订单状态；现金与持仓由 Ledger 自身的回放恢复，
+                // 在这里再记一次会重复入账。
+                self.oms.apply_fill(fill)?;
+            }
+            EventKind::Cancelled { client_order_id } => {
+                self.apply_cancelled(*client_order_id)?;
+            }
+            EventKind::ReconcileRequired { client_order_id } => {
+                self.apply_reconcile_required(*client_order_id)?;
+            }
+            EventKind::MarketQuote {
+                instrument, ask, ..
+            } => {
+                self.marks.insert(instrument.clone(), *ask);
+            }
+            EventKind::AccountBalanceSnapshot {
+                account_id,
+                venue_id,
+                balances,
+            } => {
+                self.account_balances.insert(
+                    (account_id.clone(), venue_id.clone()),
+                    normalize_balances(balances.clone())?,
+                );
+            }
+            EventKind::AccountPositionSnapshot {
+                account_id,
+                venue_id,
+                positions,
+            } => {
+                self.account_positions.insert(
+                    (account_id.clone(), venue_id.clone()),
+                    normalize_positions(positions.clone())?,
+                );
+            }
+            EventKind::FundingRateSnapshot {
+                instrument,
+                funding_rate_bps,
+                next_funding_timestamp_ms,
+            } => {
+                self.funding_rates.insert(
+                    instrument.clone(),
+                    FundingRateSnapshot {
+                        instrument: instrument.clone(),
+                        funding_rate_bps: *funding_rate_bps,
+                        next_funding_timestamp_ms: *next_funding_timestamp_ms,
+                    },
+                );
+            }
+            EventKind::AccountCashflow { .. }
+            | EventKind::LedgerApplied { .. }
+            | EventKind::Submit { .. }
+            | EventKind::Rejected { .. }
+            | EventKind::Settle => {}
         }
         Ok(())
     }
@@ -1467,7 +1505,41 @@ impl LiveEventPipeline {
         }
     }
 
+    /// 把共享 EventLog 的新事实接进本地状态（P1-2 游标增量）。
+    ///
+    /// 旧实现每次都把整条日志读回来 + 整份重放重建（`rebuild_ledger` +
+    /// `rebuild_runtime_indexes` + 整份替换），而本方法在每条外部事实之前都会被调一次——
+    /// 没有别的写者时这些工作全是白做。现在分三支：没有新事实直接返回；有新增且本地这份仍是
+    /// store 的前缀时只把尾部接上去；前缀对不上或后端没有行级尾部读时退回整份重建。
     fn refresh_latest(&mut self) -> QxResult<()> {
+        let after_seq = self.log.events().last().map(|event| event.seq);
+        let prefix = self
+            .log
+            .events()
+            .last()
+            .map(|event| (event, self.log.len()));
+        match self
+            .store
+            .read_since(&self.log_name, after_seq, prefix)
+            .map_err(storage_error)?
+        {
+            Some(tail) if tail.is_empty() => Ok(()),
+            Some(tail) => {
+                self.metrics.tail_appends.fetch_add(1, Ordering::Relaxed);
+                self.apply_tail(&tail)
+            }
+            None => {
+                self.metrics.rebuilds.fetch_add(1, Ordering::Relaxed);
+                self.rebuild_from_store()
+            }
+        }
+    }
+
+    /// 整份重建：读回整条日志并按事实重放全部索引。
+    ///
+    /// 只在两种情况下走：本地这份不是 store 的前缀（被改写/分叉），或后端没有行级尾部读；它是
+    /// 增量路径的兜底，也是"日志在运行期间消失"这类异常的报错点。
+    fn rebuild_from_store(&mut self) -> QxResult<()> {
         let latest = self
             .store
             .read_if_exists(&self.log_name)
@@ -1502,6 +1574,20 @@ impl LiveEventPipeline {
         };
         refreshed.rebuild_runtime_indexes()?;
         *self = refreshed;
+        Ok(())
+    }
+
+    /// 把 store 里新追加的尾部接进本地状态：日志按单事务批量追加（P1-1 的 `append_batch`），索引
+    /// 与账簿逐条增量应用。索引那一步与整份重建共用 [`Self::apply_index_event`]，归约单源。
+    fn apply_tail(&mut self, tail: &[Event]) -> QxResult<()> {
+        self.log.append_batch(tail)?;
+        for event in tail {
+            self.apply_index_event(event)?;
+            if let EventKind::LedgerApplied { entry } = &event.kind {
+                self.ledger.apply_entry(entry.clone())?;
+            }
+        }
+        self.last_engine_ts = self.log.events().last().map(|event| event.ts).unwrap_or(0);
         Ok(())
     }
 }
@@ -1871,6 +1957,72 @@ mod tests {
             ))
             .unwrap();
         assert!(replayed_duplicate.deduplicated);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// P1-2：第二个写者往共享 SQLite EventLog 追加的事实，必须被 `refresh()` 以**游标增量**
+    /// 接进来（只读尾部 + 只追加尾部），而不是每次把整条日志读回来整份重放重建。
+    ///
+    /// 用两个 `LiveEventPipeline` 实例模拟两个进程共享一份日志。关键是：增量路径与整份重建路径的
+    /// **终态完全一致**，纯行为断言抓不到退化；退化信号落在 `tail_appends`/`rebuilds` 两个计数器上。
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn sqlite_pipeline_refresh_takes_the_cursor_incremental_path() {
+        let root = temp_root("sqlite-cursor");
+        std::fs::create_dir_all(&root).unwrap();
+        let db = root.join("qx-runtime.sqlite");
+        let mut writer = LiveEventPipeline::open_sqlite(&db, "binance-main", "USDT").unwrap();
+        writer.register_order(order(), 100).unwrap();
+        // 读者在写者已落一条事实之后才打开：open 走的是整份载入（不经过 refresh_latest），
+        // 所以两个计数器都从 0 起。
+        let mut reader = LiveEventPipeline::open_sqlite(&db, "binance-main", "USDT").unwrap();
+        assert_eq!(reader.orders().len(), 1);
+        assert_eq!(reader.metrics.tail_appends.load(Ordering::Relaxed), 0);
+        assert_eq!(reader.metrics.rebuilds.load(Ordering::Relaxed), 0);
+
+        // 写者再追加接受与成交两条事实；读者 refresh 必须只接尾部。
+        let fill = Fill {
+            order_id: 7,
+            qty: Quantity::from_i64(2),
+            price: Price::from_i64(100),
+            fee: Money::from_i64(1),
+            ts: 115,
+            account_id: "main".into(),
+            venue_id: Some("BINANCE".into()),
+            venue_order_id: Some("9001".into()),
+            ..Fill::default()
+        };
+        writer
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: 7,
+                    venue_order_id: None,
+                },
+                110,
+                111,
+                1,
+                "cursor-ack-7",
+            ))
+            .unwrap();
+        writer
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Fill { fill },
+                115,
+                121,
+                2,
+                "cursor-fill-1",
+            ))
+            .unwrap();
+
+        reader.refresh().unwrap();
+        assert_eq!(reader.orders()[0].status, OrderStatus::Filled);
+        assert_eq!(reader.metrics.tail_appends.load(Ordering::Relaxed), 1);
+        assert_eq!(reader.metrics.rebuilds.load(Ordering::Relaxed), 0);
+
+        // 没有新事实时 refresh 是 no-op：既不重建也不追加。
+        reader.refresh().unwrap();
+        assert_eq!(reader.metrics.tail_appends.load(Ordering::Relaxed), 1);
+        assert_eq!(reader.metrics.rebuilds.load(Ordering::Relaxed), 0);
         let _ = std::fs::remove_dir_all(root);
     }
 

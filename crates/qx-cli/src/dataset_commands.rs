@@ -4,6 +4,7 @@
 //! 持久化仍由 qx-data 提供，回测编排不再直接承担组件指纹细节。
 
 use super::read_example_json;
+use crate::contract_adapters;
 use qx_data::{JsonBarFrameProvider, JsonDatasetRegistry};
 use qx_datastruct::BarFrame;
 use qx_guanxing::Bar;
@@ -83,12 +84,23 @@ pub(crate) fn run_dataset_bundle(
             component.dataset.version.clone(),
             frame_path,
         );
-        let (_, manifest) = provider.load_bars_with_manifest(
+        let (provider_bars, manifest) = provider.load_bars_with_manifest(
             &component.dataset.dataset_id,
             &frame.instrument.to_string(),
             bars.first().map(|bar| bar.ts).unwrap_or(1),
             bars.last().map(|bar| bar.ts).unwrap_or(1),
         )?;
+        // 列级核对：此前只比 `bars.len()`，于是摄取层的 OHLCV 与 BarFrame 漂开一格也不会有人出声。
+        // 与 `backtests/artifacts.rs` 共用同一个 adapter（`qx_core::contract::CONTRACT_MATRIX` 的
+        // `market_data_bar` 行点名这一对），两处各写一份字段映射的形态在这里结束。
+        if provider_bars.len() != bars.len()
+            || !provider_bars
+                .iter()
+                .zip(&bars)
+                .all(|(ingest, market)| contract_adapters::ingest_bar_matches_market_bar(ingest, market))
+        {
+            return Err("DatasetBundle 的 bars 与 BarFrame 列式输入不一致，拒绝登记".into());
+        }
         verify_dataset_bundle_manifest(&bundle, &manifest, bars.len())?;
     }
     let store = qx_data::JsonDatasetBundleStore::new(data_root.join("bundles"))?;

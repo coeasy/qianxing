@@ -60,7 +60,7 @@ impl PipelineStorage {
             // 旧历史没有读者，而数据库里的空表被当作首次启动，账户快照当场归零。
             // 文件后端之间的同一件事由 `open*` 自己拦（#225），这里补上数据库一侧。
             LiveEventPipeline::assert_no_abandoned_file_log(self.root.clone(), log_name.clone())
-                .map_err(|error| format!("EventLog 后端切换被拒绝: {error:?}"))?;
+                .map_err(|error| usage_errors::qx_context("EventLog 后端切换被拒绝", &error))?;
         }
         if let Some(dsn) = self.postgres_dsn.as_deref() {
             #[cfg(not(feature = "postgres"))]
@@ -88,7 +88,9 @@ impl PipelineStorage {
                         currency,
                     ),
                 };
-                return opened.map_err(|error| format!("打开 PostgreSQL EventLog 失败: {error:?}"));
+                return opened.map_err(|error| {
+                    usage_errors::qx_context("打开 PostgreSQL EventLog 失败", &error)
+                });
             }
         }
         if let Some(db) = self.sqlite_db.as_deref() {
@@ -107,7 +109,9 @@ impl PipelineStorage {
                         LiveEventPipeline::open_sqlite_read_only(db, log_name, currency)
                     }
                 };
-                return opened.map_err(|error| format!("打开 SQLite EventLog 失败: {error:?}"));
+                return opened.map_err(|error| {
+                    usage_errors::qx_context("打开 SQLite EventLog 失败", &error)
+                });
             }
         }
         let opened = match recovery {
@@ -124,6 +128,6 @@ impl PipelineStorage {
                 self.segment_events,
             ),
         };
-        opened.map_err(|error| format!("打开运行时 EventLog 失败: {error:?}"))
+        opened.map_err(|error| usage_errors::qx_context("打开运行时 EventLog 失败", &error))
     }
 }

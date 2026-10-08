@@ -5,7 +5,7 @@
 
 use qx_core::{
     Event, EventKind, EventLog, Fill, Fnv1a, Ledger, Order, OrderStatus, Price, Priority,
-    ReplayVerifier, RunManifest, TradingInstrumentSpec,
+    ReplayVerifier, RunManifest, TradingInstrumentSpec, ValuationContext,
 };
 use qx_risk::OrderRiskPosition;
 use qx_zhenlu::{Oms, RiskGate};
@@ -526,9 +526,10 @@ impl OrderBookBacktestEngine {
                         // 现金被静默透支成负数。衍生品按权益 + 初始保证金判定。
                         let leveraged = spec.product.supports_leverage();
                         let available_funding = if leveraged {
-                            let marks =
-                                std::collections::BTreeMap::from([(instrument.clone(), price)]);
-                            ledger.equity_for_with_spec(&account_id, &marks, &currency, spec)?
+                            let marks = BTreeMap::from([(instrument.clone(), price)]);
+                            let context = ValuationContext::spot(&account_id, &marks, &currency)
+                                .with_spec(Some(spec));
+                            ledger.valuate(&context)?.equity.raw()
                         } else {
                             ledger.cash_for(&account_id, &currency)
                         };
@@ -670,18 +671,12 @@ impl OrderBookBacktestEngine {
             let marked_equity = match reference_price {
                 Some(price) => {
                     let marks = BTreeMap::from([(instrument.clone(), price)]);
-                    if let Some(spec) = instrument_spec
+                    let spec = instrument_spec
                         .as_ref()
-                        .filter(|spec| spec.product.supports_leverage())
-                    {
-                        ledger.equity_for_with_spec(&account_id, &marks, &currency, spec)?
-                    } else {
-                        ledger
-                            .equity_for_with_multiplier(&account_id, &marks, &currency, 1)
-                            .ok_or_else(|| {
-                                qx_core::QxError::Invariant("订单簿回测无法计算账户权益".into())
-                            })?
-                    }
+                        .filter(|spec| spec.product.supports_leverage());
+                    let context =
+                        ValuationContext::spot(&account_id, &marks, &currency).with_spec(spec);
+                    ledger.valuate(&context)?.equity.raw()
                 }
                 None => ledger.cash_for(&account_id, &currency),
             };

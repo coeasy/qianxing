@@ -6,6 +6,8 @@
 //! （`doctor --config x` → `qx-cli.exe doctor [OPTIONS] [PATH]`）。所以本轮不是"再写一份
 //! 建议算法"，而是停止追加摘要：完整入口只从 `help`/`--help`/`-h` 三条显式出口走。
 
+use qx_core::QxError;
+
 /// 这一行前缀同时含「未知命令」与「未知参数」：`tests/cli_dispatch.rs` 与
 /// `tests/multi_leg_attribution/entries.rs` 分别点名其中一种，缺一即用例红。
 const ERROR_PREFIX: &str = "未知命令或未知参数";
@@ -26,4 +28,31 @@ pub(crate) fn exit_on_failure(result: Result<(), String>, what: &str) {
         eprintln!("{what}: {error}");
         std::process::exit(2);
     }
+}
+
+/// `QxError` 到 CLI 诊断文本的统一出口（DD-5 / P1-11）。
+///
+/// 此前这些地方写的是 `format!("{上下文}: {error}")`——`Display` 恰好带 `[CODE]`，但
+/// "要不要先对账、能不能重试"这两格随错误一起丢掉了，机器读到的只有一句中文。这里改成
+/// **显式消费错误码五元契约**：码一定在，且按契约补一句下一步。调用方不要再手写
+/// `format!("…: {error}")`——那样又会退回"只有消息、没有口径"。
+///
+/// 三档提示按契约的 `retryability` 分：结果未知要先对账（`Ambiguous`/`ReconcileRequired`）；
+/// 允许立即重试（`Transient`）；只能在退避后重试（`VenueState`/`ResourceExhausted`）。
+/// 业务拒绝与内部不变量**不给提示**——给了就是在暗示调用方重发。
+pub(crate) fn qx_context(context: &str, error: &QxError) -> String {
+    let contract = error.contract();
+    let hint = if contract.reconcile_required {
+        "（结果未知，需先对账）"
+    } else if contract.retryability.allows_retry() {
+        "（可重试）"
+    } else if contract.retryability.may_retry_eventually() {
+        "（需退避后重试）"
+    } else {
+        ""
+    };
+    format!(
+        "[{}] {context}: {}{hint}",
+        contract.code, contract.user_message
+    )
 }

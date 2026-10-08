@@ -326,3 +326,131 @@ fn sqlite_event_log_and_outbox_commit_atomically() {
     assert_eq!(outbox.available(0, usize::MAX).unwrap().len(), 5);
     let _ = std::fs::remove_file(path);
 }
+
+/// P1-1 / DD-2 / §7 M2：增量批量追加——单事务、只写尾部、Outbox 同事务。
+///
+/// 与 `write_with_outbox` 是同一语义（append-only / 单事务 / Outbox 同事务），差别只在代价：
+/// 它不把已落库的整条历史读回来比对，前缀核对改在内存里按 manifest 摘要做。所以这里除了断言
+/// 结果一致，还专门钉住"前缀被改写 / 日志被截短必须当场拒绝"——那是增量路径唯一被削弱的
+/// 检查点，不能被静默放行成"写进库、读的时候才发现"。
+#[test]
+fn sqlite_event_log_append_batch_is_incremental_and_atomic_with_outbox() {
+    let path = temp_db("sqlite-append-batch");
+    let store = SqliteEventLogStore::new(&path).unwrap();
+    let outbox = SqliteOutboxStore::new(&path).unwrap();
+
+    // 第一批：空日志上增量追加，manifest 与可读回的日志都对得上。
+    let log = sample_log(2);
+    store
+        .append_batch(
+            "run",
+            &log,
+            &project_event_log_to_outbox("run", &log, 0).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(store.event_count("run").unwrap(), 2);
+    assert_eq!(store.digest("run").unwrap(), Some(log.digest()));
+    assert_eq!(store.read("run").unwrap().digest(), log.digest());
+
+    // 第二批：只写尾部两条，计数与摘要随之前进。
+    let extended = sample_log(5);
+    store
+        .append_batch(
+            "run",
+            &extended,
+            &project_event_log_to_outbox("run", &extended, 2).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(store.event_count("run").unwrap(), 5);
+    assert_eq!(store.digest("run").unwrap(), Some(extended.digest()));
+    assert_eq!(store.read("run").unwrap().digest(), extended.digest());
+
+    // 同一批事实重试是幂等 no-op：既不重复插行，也不重复产出出站事件。
+    store
+        .append_batch(
+            "run",
+            &extended,
+            &project_event_log_to_outbox("run", &extended, 0).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(store.event_count("run").unwrap(), 5);
+
+    // 前缀被改写（同长度、中段换成不同事实）：增量路径必须当场拒绝，而不是把库写成读不回来。
+    assert!(matches!(
+        store.append_batch("run", &conflicting_log(5), &[]),
+        Err(StorageError::NonAppendOnly(_))
+    ));
+    assert_eq!(store.read("run").unwrap().digest(), extended.digest());
+
+    // 日志被截短（少于已落库条数）同样拒绝。
+    assert!(matches!(
+        store.append_batch("run", &sample_log(3), &[]),
+        Err(StorageError::NonAppendOnly(_))
+    ));
+    assert_eq!(store.event_count("run").unwrap(), 5);
+
+    // Outbox 冲突必须回滚同事务内的事实追加：同一条已落库事实换个 payload 再投，必须冲突。
+    let more = sample_log(7);
+    let mut events = project_event_log_to_outbox("run", &more, 0).unwrap();
+    events[0].payload = "{\"tampered\":true}".into();
+    assert!(matches!(
+        store.append_batch("run", &more, &events),
+        Err(StorageError::Conflict(_))
+    ));
+    assert_eq!(store.event_count("run").unwrap(), 5);
+    assert_eq!(store.read("run").unwrap().digest(), extended.digest());
+    assert_eq!(outbox.available(0, usize::MAX).unwrap().len(), 5);
+    let _ = std::fs::remove_file(path);
+}
+
+/// `read_since` 是 P1-2 的读侧：只取 `after_seq` 之后的事实，并且只在**前缀对得上**时才认账。
+/// 前缀长度不符、前缀内容被改写、日志不存在三种情况都必须返回 `None`——调用方据此退回整份
+/// 重建，而不是把一份不一致的尾部当成合法增量接进状态。
+#[test]
+fn sqlite_event_log_read_since_returns_only_the_verified_tail() {
+    let path = temp_db("sqlite-read-since");
+    let store = SqliteEventLogStore::new(&path).unwrap();
+    let log = sample_log(3);
+    store
+        .append_batch(
+            "run",
+            &log,
+            &project_event_log_to_outbox("run", &log, 0).unwrap(),
+        )
+        .unwrap();
+    let events = log.events();
+
+    // 前缀一致（末条 = 第 0 条、长度 = 1）：返回第 1、2 条。
+    let tail = store
+        .read_since("run", Some(0), Some((&events[0], 1)))
+        .unwrap()
+        .expect("前缀一致时必须返回尾部");
+    assert_eq!(
+        tail.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+
+    // 已经追平：返回**空**尾部（而不是 `None`），调用方据此走 no-op。
+    let empty = store
+        .read_since("run", Some(2), Some((&events[2], 3)))
+        .unwrap()
+        .expect("追平前缀必须返回空尾部");
+    assert!(empty.is_empty());
+
+    // 前缀长度对不上（本地认为有 5 条、库里只有 3 条）：必须 `None`。
+    assert!(store
+        .read_since("run", Some(2), Some((&events[2], 5)))
+        .unwrap()
+        .is_none());
+
+    // 前缀内容被改写：同长度、末条换成不同事实：必须 `None`。
+    let conflicting = conflicting_log(3);
+    assert!(store
+        .read_since("run", Some(2), Some((&conflicting.events()[2], 3)))
+        .unwrap()
+        .is_none());
+
+    // 库里根本没有这条日志：必须 `None`。
+    assert!(store.read_since("missing", None, None).unwrap().is_none());
+    let _ = std::fs::remove_file(path);
+}

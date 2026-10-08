@@ -295,20 +295,17 @@ pub struct MarginState {
 }
 
 impl MarginState {
+    /// 权益 = 抵押 + 未实现 − 资金费 − 利息。
+    ///
+    /// 算式单源在 [`MarginState::valuate`]（P1-6 估值单点），这里只取结果的 `equity` 字段。
+    /// `MarginState` 本身不带币种，故传空串。
     pub fn equity(self) -> Option<Money> {
-        self.collateral
-            .raw()
-            .checked_add(self.unrealized_pnl.raw())
-            .and_then(|v| v.checked_sub(self.funding.raw()))
-            .and_then(|v| v.checked_sub(self.interest.raw()))
-            .map(Money::from_raw)
+        self.valuate(String::new()).map(|result| result.equity)
     }
 
+    /// 可用保证金 = 权益 − 初始保证金（同样走 [`MarginState::valuate`] 的 `available` 字段）。
     pub fn available(self) -> Option<Money> {
-        self.equity()?
-            .raw()
-            .checked_sub(self.initial_margin.raw())
-            .map(Money::from_raw)
+        self.valuate(String::new()).map(|result| result.available)
     }
 }
 

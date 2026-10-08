@@ -47,14 +47,10 @@ pub(crate) fn barframe_dataset_identity(
         bars.last().map(|bar| bar.ts).unwrap_or(1),
     )?;
     if provider_bars.len() != bars.len()
-        || provider_bars.iter().zip(&bars).any(|(left, right)| {
-            left.timestamp != right.ts
-                || left.open_raw != right.open
-                || left.high_raw != right.high
-                || left.low_raw != right.low
-                || left.close_raw != right.close
-                || left.volume_raw != right.volume
-        })
+        || !provider_bars
+            .iter()
+            .zip(&bars)
+            .all(|(ingest, market)| contract_adapters::ingest_bar_matches_market_bar(ingest, market))
     {
         return Err("qx-data Provider 与 BarFrame 列式输入不一致，拒绝开始回测".into());
     }

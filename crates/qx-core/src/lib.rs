@@ -1,6 +1,6 @@
 //! # qx-core — 牵星内核
 //!
-//! 确定性内核：时钟、身份、定点数值、订单状态机、事件溯源与重放校验。
+//! 确定性内核：时间戳口径（无虚拟时钟对象）、身份、定点数值、订单状态机、事件溯源与重放校验。
 //!
 //! 设计底线（改动前请先读）：
 //! 1. **热路径不用浮点**：所有金额/价格/数量走 128-bit 定点 [`Fixed`]。
@@ -9,10 +9,11 @@
 //! 3. **不用无序容器做顺序敏感迭代**：`HashMap` 只用于查找，遍历一律排序。
 //! 4. **事件即事实**：状态由事件日志重建，任何旁路写入都是 bug。
 //!    因果序（`(ts, prio, seq)` 全序）由 [`EventLog::validate`] 单点裁决；
-//!    内核不提供第二套事件循环——回测/paper/live 的循环各在自己的 crate 里，
-//!    但都只能通过 EventLog 落地事实。
+//!    内核不提供第二套事件循环——回测（`qx-xingban`）与 paper/live（`qx-runtime` 的
+//!    `pipeline.rs`）的循环各在自己的 crate 里，但都只能通过 `EventLog` 落地事实。
 
 pub mod clock;
+pub mod contract;
 pub mod error;
 pub mod event;
 pub mod fee;
@@ -26,10 +27,12 @@ pub mod retry;
 pub mod sourcing;
 pub mod target;
 pub mod trading;
+pub mod valuation;
 pub mod venue;
 
 pub use self::clock::Ts;
-pub use self::error::{QxError, QxResult};
+pub use self::contract::{ContractConcept, CONTRACT_MATRIX};
+pub use self::error::{ErrorCode, ErrorContract, QxError, QxResult, Retryability};
 pub use self::event::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
     EventKind, EventMetadata, FundingRateSnapshot, Priority, EVENT_METADATA_SCHEMA_VERSION,
@@ -59,4 +62,5 @@ pub use self::trading::{
     MarginMode, MarginState, OrderPolicy, PositionMode, PositionSide, TradingInstrumentSpec,
     TradingProduct,
 };
+pub use self::valuation::{ValuationContext, ValuationResult};
 pub use self::venue::VenueFamily;

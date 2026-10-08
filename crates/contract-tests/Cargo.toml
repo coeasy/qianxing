@@ -1,0 +1,22 @@
+[package]
+name = "contract-tests"
+description = "跨 crate 契约用例宿主：把只活在 dev 边上的依赖环搬出生产 crate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# 纯测试宿主，不进发布物。
+publish = false
+
+# 全部依赖都只是**测试**依赖：本 crate 没有生产代码（`src/lib.rs` 只有文档）。
+# 放在 `[dev-dependencies]` 而不是 `[dependencies]`，是为了让「谁在生产图上依赖谁」的读法
+# 不受影响——本 crate 是叶子，没有任何 crate 依赖它，所以这些边不会构成环。
+[dev-dependencies]
+qx-adapter = { path = "../qx-adapter" }
+qx-control = { path = "../qx-control" }
+qx-core = { path = "../qx-core" }
+qx-execution = { path = "../qx-execution" }
+qx-guanxing = { path = "../qx-guanxing" }
+qx-risk = { path = "../qx-risk" }
+qx-runtime = { path = "../qx-runtime" }
+qx-zhenlu = { path = "../qx-zhenlu" }
+serde_json = { workspace = true }

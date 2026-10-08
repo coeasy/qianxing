@@ -13,6 +13,9 @@ qx-risk = { path = "../qx-risk" }
 qx-zhenlu = { path = "../qx-zhenlu" }
 
 [dev-dependencies]
-qx-runtime = { path = "../qx-runtime" }
+# `qx-runtime` 曾在这里：它把「qx-runtime --normal--> qx-execution」反向压成一条 dev 环
+# （方案 §5.4 P1-12）。用到它的四份跨 crate 契约用例已迁 `crates/contract-tests/`。
+# `qx-adapter` 留在本地：`src/tests/venue_submit_contract.rs` 需要它的传输端口形状，
+# 而它不构成环（qx-adapter 的正常依赖里没有回到 qx-execution 的路径）。
 qx-adapter = { path = "../qx-adapter" }
 serde_json = { workspace = true }

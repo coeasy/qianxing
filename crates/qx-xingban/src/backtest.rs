@@ -6,7 +6,7 @@
 use qx_core::{
     Event, EventKind, EventLog, FeeModel, Fill, Fnv1a, InstrumentId, Ledger, Money, Order,
     OrderStatus, Price, Priority, Quantity, ReplayVerifier, RunManifest, Side,
-    TradingInstrumentSpec, SCALE,
+    TradingInstrumentSpec, ValuationContext, SCALE,
 };
 use qx_guanxing::{Bar, DataSourceId, DataView, QualityGate, Verdict};
 use qx_risk::OrderRiskPosition;
@@ -1078,17 +1078,13 @@ fn equity_for(
     spec: Option<&TradingInstrumentSpec>,
     fx_rates: &BTreeMap<String, Price>,
 ) -> Result<i128, qx_core::QxError> {
-    if let Some(spec) = spec.filter(|spec| spec.product.supports_leverage()) {
-        if fx_rates.is_empty() {
-            ledger.equity_for_with_spec(account_id, marks, currency, spec)
-        } else {
-            ledger.equity_for_with_spec_and_fx(account_id, marks, currency, spec, fx_rates)
-        }
-    } else {
-        ledger
-            .equity_for_with_multiplier(account_id, marks, currency, multiplier)
-            .ok_or_else(|| qx_core::QxError::Invariant("无法计算回测账户权益".into()))
-    }
+    // 「该用哪把尺子」的派发单源在 `Ledger::valuate`（P1-6 估值单点）：这里只把回测输入收进
+    // 上下文，再取权益一个字段。此前这段派发在本文件与 orderbook_backtest 各抄一份。
+    let context = ValuationContext::spot(account_id, marks, currency)
+        .with_spec(spec)
+        .with_multiplier(multiplier)
+        .with_fx(fx_rates);
+    Ok(ledger.valuate(&context)?.equity.raw())
 }
 
 fn validate_virtual_events(config: &VirtualTradingConfig) -> Result<(), qx_core::QxError> {

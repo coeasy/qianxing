@@ -277,6 +277,26 @@ impl RuntimeConfig {
         {
             return Err(format!("{label} C ABI Ed25519 公钥和签名必须成对配置"));
         }
+        // P0-3 / DD-4：in-process C ABI 是一道显式信任门。开了 `c_abi_trusted_native`
+        // 就必须同时具备三样——动态库、Ed25519 信任根、目标三元组；缺一样当场拒，
+        // 而不是留到 `dlopen` 时才在宿主进程里出事。不开这一格（缺省）时行为与从前完全一致。
+        if strategy.c_abi_trusted_native {
+            if strategy.c_abi_library.is_none() {
+                return Err(format!(
+                    "{label} c_abi_trusted_native 只能在配置 c_abi_library 时开启"
+                ));
+            }
+            if strategy.c_abi_ed25519_public_key.is_none() {
+                return Err(format!(
+                    "{label} c_abi_trusted_native 必须配置 Ed25519 公钥与签名（签名信任根）"
+                ));
+            }
+            if strategy.c_abi_target_triple.is_none() {
+                return Err(format!(
+                    "{label} c_abi_trusted_native 必须配置 c_abi_target_triple（架构/平台匹配）"
+                ));
+            }
+        }
         if self.is_production()
             && strategy.c_abi_library.is_some()
             && strategy.c_abi_ed25519_public_key.is_none()

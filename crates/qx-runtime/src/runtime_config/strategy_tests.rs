@@ -82,6 +82,25 @@ fn c_abi_strategy_requires_digest_and_exclusive_source() {
 }
 
 #[test]
+fn trusted_native_requires_signature_and_target_triple() {
+    // P0-3 / DD-4：开启 in-process 信任门后，动态库、Ed25519 信任根、目标三元组三样缺一即拒。
+    let mut config = config();
+    config.strategy.c_abi_library = Some("strategy.dll".into());
+    config.strategy.c_abi_sha256 = Some("ab".repeat(32));
+    config.strategy.c_abi_trusted_native = true;
+    assert!(config.validate().is_err());
+    config.strategy.c_abi_ed25519_public_key = Some("00".repeat(32));
+    config.strategy.c_abi_ed25519_signature = Some("00".repeat(64));
+    assert!(config.validate().is_err());
+    config.strategy.c_abi_target_triple = Some("x86_64-pc-windows-msvc".into());
+    assert!(config.validate().is_ok());
+    // 开了信任门却没有动态库同样拒（这一格只在配置 c_abi_library 时才有意义）。
+    config.strategy.c_abi_library = None;
+    config.strategy.c_abi_sha256 = None;
+    assert!(config.validate().is_err());
+}
+
+#[test]
 fn builtin_strategy_requires_valid_name_snapshot_and_exclusive_source() {
     let mut config = config();
     config.strategy.builtin_strategy = Some("macd".into());
@@ -307,6 +326,8 @@ fn multi_strategy_instances_are_bound_to_workers_and_jobs_can_select_them() {
         c_abi_max_library_bytes: default_strategy_c_abi_max_library_bytes(),
         c_abi_ed25519_public_key: None,
         c_abi_ed25519_signature: None,
+        c_abi_trusted_native: false,
+        c_abi_target_triple: None,
     });
     config.validate().unwrap();
     assert_eq!(

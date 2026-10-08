@@ -263,6 +263,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `GET /ready` | `{"ready":<bool>,"detail":<string>}` | 就绪检查 + 投影健康；未就绪时状态码 `503` |
 | `GET /metrics` | Prometheus 文本 | 见下「指标出口」：API 自身四条指标逐行印出，并追加 `worker-metrics/<worker_id>.prom` 聚合 |
 | `GET /schema/account-snapshot-v1` | JSON Schema | 公布的就是仓库里的 `schemas/account-snapshot-v1.json`（编译期 `include_str!` 取用，不存在第二份），供读者自证 |
+| `GET /schema/contract-matrix` | JSON 数组 | 稳定契约的**命名转换矩阵**（`qx_core::contract::CONTRACT_MATRIX`）：每行 `{concept, canonical_types, canonical_source, duplicates, adapter, note}`，登记同名概念谁是规范单点、哪些是同名兄弟、由哪个显式 adapter 桥接；与真实代码逐条对账由门禁 `contract_matrix_check` 看守 |
 | `GET /account/snapshot` | 快照 JSON / `404 snapshot_not_found` / `404 account_projection_not_found` | 单账户投影快照；八个汇总钱字段里未算的那几格是 `null` 而不是 0，名单见下 |
 | `GET /account/snapshot/envelope` | 投影信封 / `404` | `data` 满足上面那份 schema（V12 R4-h） |
 | `GET /account/snapshot/diff?base_hash=<u64>` | `{schema_version, base_state_hash, target_state_hash, target_header, cash, positions, orders, fills, transfers, replacement}` | `base_hash` 缺失或非无符号整数 → `400`；基准不存在 → `409 snapshot_base_not_found`；`cash`/`positions`/`orders`/`fills`/`transfers` 五条是 `Change` 数组（`{"Upsert":{"key":…,"value":…}}` 或 `{"Remove":{"key":…}}`），八个汇总钱标量不走差分数组，只由 `replacement` 整格搬运，见下 |
@@ -337,6 +338,7 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `GET /ready` | 依赖就绪：控制面存储、已声明研究快照、生产凭据/冻结规格、worker 指标 down/stale、投影缺口 | 503 未就绪（第二格那些条件）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /metrics` | Prometheus 文本，按 LF 逐行（见下「指标出口是逐行的」），追加 worker 指标 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /schema/account-snapshot-v1` | 账户快照 v1 JSON Schema，就是 `schemas/account-snapshot-v1.json` 那一份（编译期内嵌，不是第二份手抄） | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /schema/contract-matrix` | 稳定契约的命名转换矩阵，公布的就是 `qx_core::contract::CONTRACT_MATRIX` 那一份（编译期取用，不是第二份手抄）；与真实代码逐条对账由门禁 `contract_matrix_check` 看守 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /account/snapshot[?account_id=&venue_id=]` | 账户快照 JSON；不带键时读默认账户=配置里第一个真有日志的账户 worker | 400 参数非法（键形状不合法，或点了这条入口不认的查询键——正文点名那把键，下同）；404 `snapshot_not_found`；404 `account_projection_not_found`（带键但这份部署没有该投影）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /account/snapshot/envelope[?…]` | 投影信封（快照 hash 与 lineage） | 400 键形状非法或名单外的查询键；404 `snapshot_not_found`；404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /account/snapshot/diff?base_hash=[&…]` | 与历史基线快照的差异 | 400 参数非法（base_hash 缺失或非无符号整数，收窄键只给一半，或点了这三把之外的查询键）；409 `snapshot_base_not_found`（基准缺失与那条投影不存在是同一条码）；无 404 分支，判据与口径的来由见上段正文（V13 R2 第十三遍）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
@@ -551,6 +553,49 @@ mTLS 证书、从不来自请求头，所以这个固定值不会挡住任何已
 「query string percent-encoding is malformed」这句话而不是一个码名。此前 `?account_id=main%zz`
 会把半个转义原样当成账户号去查投影，读到的是 404「没有这个账户」，而真正坏掉的是请求本身——
 一个 400 与一个 404 说的是两件事，合成后者就读不回来了。
+
+### Web 控制台（`web/console/`，只读 + 控制面）
+
+仓库自带一个控制台，落在 `web/console/{index.html,app.js,styles.css}`。它的**读面板**只调用
+上表的 `GET` 读面端点（`/health`、`/ready`、`/account/snapshot`、`/account/balances`、
+`/account/orders`、`/account/positions`、`/account/ledger`、`/reconcile/reports`、
+`/scheduler/runs`、`/control/audit`、`/events`、`/events/live`）并接 WebSocket 增量。
+
+它的**写面只有一条**（阶段四 M3' 控制面）：`POST /control/commands`。它**不直接下单**——
+下单要走这条命令，由控制面**受理 → 判定执行者 → 走到终态退场**，页面把三个阶段都印出来。
+受理回 `202` 只表示"收下并落了审计"，**不是**"已经执行"；②③两阶段从 `/control/audit`
+回读（`CommandStatus` 走到 `Executed` / `Failed` 即终态退场）。本构建里只有
+`SubmitOrder` / `PauseStrategy` / `ResumeStrategy` 有派发者，其余类型只会停在 `Accepted`。
+
+**身份边界**：命令体里的 `operator_id` 是**审计字段，不是认证**。启用访问策略的部署里，
+服务端会用 mTLS 认证边界上的身份覆盖它，且**认证边界拿不到身份时直接回
+`403 authenticated_operator_required`**——页面不能自声明身份。控制台把这条如实印在界面上。
+
+它是一份静态页面，不占服务端路由：后端仍用 `qx-cli serve <runtime.json>` 起，控制台另用
+任意静态服务器（例如仓库根目录下 `python -m http.server 5173 --directory web/console`）
+或直接打开文件。
+
+因为控制台与 API 不同源，浏览器会先做 CORS：**必须把控制台的源逐字符写进
+`api.cors_allowed_origins`**（形如 `["http://127.0.0.1:5173"]`，见上节"浏览器准入"），
+否则页面上的每个请求都会被浏览器拦下，而后端日志里什么都看不到——那不是服务端故障。
+控制台顶部的说明条把这条要求直接印在页面上。
+
+`web_console_check`（门禁）把这份接线表钉住：`app.js` 点名的每个 API 路径都必须真的出现在
+`qx-api` 路由表里；页面必须说明 `cors_allowed_origins` 与 `qx-cli serve`；唯一写请求必须是
+`POST /control/commands`，不得直连下单端点。也就是说，"页面能打开"不算贯通，读面与唯一控制面
+都必须接到真实后端契约上。
+
+**版本化发布包（M4'/M5' 的可验收子项）**：推送与 Cargo / Python / baseline 三处版本一致的 `v*`
+tag 时，发布流水线会额外生成 `qianxing-web-console-v<tag>.tar.gz`，内含 `index.html`、`app.js`、
+`styles.css` 与 `release-identity.json`（版本、完整 commit、Schema Registry 版本、逐文件 SHA256）。
+归档本身进入 Release 的统一 `SHA256SUMS`，并附 build provenance；本地可用
+`python tools/package_web_console.py --version 0.1.0 --commit <40位提交哈希> --output <输出路径>`
+重建，并以压缩包内身份文件核对资产摘要。
+
+**安全边界仍未达到 M4 完整验收**：该发布包只是静态 UI，不是同源 BFF；它没有浏览器会话、CSRF token
+或 Web 权限代理层。不要将它单独暴露到公网或当作生产交易控制台。当前只用于本机/受控网络；需要浏览器控制
+时仍须服务端认证边界（mTLS operator 身份）及显式 CORS allowlist。M4 的同源 BFF/CSRF 与 M5 的 Paper/
+sandbox/production 外部验收均未因此关闭。
 
 ## Binance worker
 

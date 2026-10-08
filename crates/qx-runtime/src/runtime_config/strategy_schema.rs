@@ -300,6 +300,17 @@ pub struct StrategyRuntimeConfig {
     pub c_abi_ed25519_public_key: Option<String>,
     #[serde(default)]
     pub c_abi_ed25519_signature: Option<String>,
+    /// in-process C ABI 加载的**显式信任开关**（方案 DD-4 / P0-3 的 `trusted_native`）。
+    ///
+    /// 缺省 `false`：native 扩展只允许走**独立进程**（C++ worker 的共享内存 / JSONL 协议）。
+    /// 只有把它置 `true`、并同时给出 Ed25519 公钥与签名（信任根）与匹配的目标三元组，
+    /// 才允许在宿主进程内 `dlopen`——未签名的原生库进宿主进程正是 P0-3 要关的那个口子。
+    #[serde(default)]
+    pub c_abi_trusted_native: bool,
+    /// 期望的原生库目标三元组（如 `x86_64-pc-windows-msvc`）。in-process 加载时
+    /// 必须与宿主一致，否则拒载：架构/平台不匹配的原生库进宿主是未定义行为的温床。
+    #[serde(default)]
+    pub c_abi_target_triple: Option<String>,
 }
 
 impl Default for StrategyRuntimeConfig {
@@ -361,6 +372,8 @@ impl Default for StrategyRuntimeConfig {
             c_abi_max_library_bytes: default_strategy_c_abi_max_library_bytes(),
             c_abi_ed25519_public_key: None,
             c_abi_ed25519_signature: None,
+            c_abi_trusted_native: false,
+            c_abi_target_triple: None,
         }
     }
 }

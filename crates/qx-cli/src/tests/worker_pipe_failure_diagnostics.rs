@@ -209,6 +209,11 @@ fn dead_worker_write_failure_names_program_origin_and_exit_state() {
 /// 写侧只能拿到断管道并快速失败；这一条造的是"worker 存活却不接收输入"，超管道缓冲的
 /// write_all 会永久阻塞——修复前 `timeout_ms` 只守读侧 recv，本调用永不返回。ping 继承 stdin
 /// 读端却一字节都不取，且是被直接跟踪的子进程，`kill()` 即关闭读端、放行写线程。
+///
+/// 文案取自 `qx-adapter::io_budget::write_all_within`：三处子进程 stdin 写入统一走它之后，
+/// 写侧超时只报「未在 N ms 预算内写完」，由调用方（本 crate 的 worker 客户端）再补上
+/// 「程序=…/进程状态」两格。断言按**这个**口径写——钉的是"走预算通道 + 交代进程状态"，
+/// 不是某一句具体措辞。
 #[test]
 fn live_but_non_draining_worker_write_is_bounded_not_hanging() {
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
@@ -230,12 +235,16 @@ fn live_but_non_draining_worker_write_is_bounded_not_hanging() {
         .expect_err("worker 存活但不接收输入：写入必须在预算内失败，而不是永久阻塞");
     let elapsed = started.elapsed();
     assert!(
-        error.contains("输入超时") && error.contains("worker 存活但不接收输入"),
-        "写侧失败没走到超时通道（说明仍在无限阻塞或误落断管道通道）: {error}",
+        error.contains("输入失败") && error.contains("预算内写完"),
+        "写侧失败没走到预算通道（说明仍在无限阻塞或误落断管道通道）: {error}",
+    );
+    assert!(
+        error.contains("程序=") && error.contains("来自 QX_PYTHON"),
+        "预算通道也要说明是哪个解释器: {error}",
     );
     assert!(
         error.contains("退出码") || error.contains("进程未退出"),
-        "超时通道也要交代子进程状态: {error}",
+        "预算通道也要交代子进程状态: {error}",
     );
     assert!(
         elapsed < std::time::Duration::from_millis(PYTHON_STRATEGY_TIMEOUT_MS * 5),

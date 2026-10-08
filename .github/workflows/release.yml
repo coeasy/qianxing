@@ -152,6 +152,30 @@ jobs:
             dist/qianxing-cpp-sdk-*.tar.gz
             dist/cpp-sdk.sha256
 
+  web-console:
+    name: Static Web console bundle
+    needs: version-consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package the versioned Web console
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python3 tools/package_web_console.py \
+            --version "${GITHUB_REF_NAME#v}" \
+            --commit "${GITHUB_SHA}" \
+            --output "dist/qianxing-web-console-${GITHUB_REF_NAME}.tar.gz"
+      - name: Attest Web console build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-console
+          path: dist/*.tar.gz
+
   sbom:
     name: SBOM (dependency inventory)
     needs: version-consistency
@@ -190,7 +214,7 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: [binary, wheel, cpp-sdk, sbom]
+    needs: [binary, wheel, cpp-sdk, web-console, sbom]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -228,5 +252,5 @@ jobs:
           set -euo pipefail
           gh release create "${GITHUB_REF_NAME}" \
             --title "牵星 ${GITHUB_REF_NAME}" \
-            --notes "可复现发布件：binary / wheel / C++ SDK + SHA256SUMS + sbom.json + release-identity.json（build provenance 见 Release 附件证明）。" \
+            --notes "可复现发布件：binary / wheel / C++ SDK / Web 控制台 + SHA256SUMS + sbom.json + release-identity.json（build provenance 见 Release 附件证明）。" \
             dist/*

@@ -2162,14 +2162,49 @@ fn write_event_log_in_transaction(
     write_event_log_state(connection, name, log)
 }
 
-/// 在调用方事务内逐条幂等追加事件，并同步刷新 manifest。
+/// 增量追加：只写 `log` 相对已落库状态**多出来的尾部**，不重读整条历史（方案 §5.4 P1-1 / G4）。
+///
+/// [`write_event_log_in_transaction`] 每次都要 `load_event_log` 把已落库的 N 条事件读回来
+/// 逐行比对，N 条历史下每追加一批就重读并反序列化 N 条 JSON，写放大随 N 线性增长。这里改成：
+/// 只读 manifest（O(1) I/O），用 [`EventLog::digest_of_prefix`] 在**内存里**核对已落库前缀
+/// 逐条未变（manifest 的摘要正是"只有 start 条时"算出来的那一个），再只插尾部的新行。
+/// append-only 的强度与逐行比对等价（同 `load_event_log` 的摘要口径），省掉的是 I/O 与反序列化。
+fn append_event_log_in_transaction(
+    connection: &Connection,
+    name: &str,
+    log: &EventLog,
+) -> Result<(), StorageError> {
+    let (start, prefix_intact) = match read_event_log_state(connection, name)? {
+        Some((count, _, digest)) => {
+            let start = usize::try_from(count)
+                .map_err(|_| StorageError::Conflict("事件日志计数超出范围".into()))?;
+            // `digest_of_prefix` 在 `start > log.len()` 时给 `None`，于是"日志被截短"也走这一支。
+            (start, log.digest_of_prefix(start) == Some(digest))
+        }
+        None => (0, true),
+    };
+    if !prefix_intact {
+        return Err(StorageError::NonAppendOnly(name.into()));
+    }
+    for (offset, event) in log.events()[start..].iter().enumerate() {
+        insert_event_row(connection, name, event_row_index(start + offset)?, event)?;
+    }
+    write_event_log_state(connection, name, log)
+}
+
+/// 在调用方事务内幂等追加事件，并同步刷新 manifest。
+///
+/// 幂等/冲突判定与日志变更**分两段**：先把整批的"要不要写"判完（只读查询），一条不过就整批
+/// 拒绝、`log` 与库都一字不改；判完再用 [`EventLog::append_batch`] 一次性把整批提交进内存日志。
+/// 旧写法边判边 `append_checked` + 边插行，中途失败时事务会回滚库、但调用方手上的 `log` 已经
+/// 吃进了半批事件——恢复重放会看到一段库里根本没有的历史（P1-1 / DD-2）。
 fn append_events_in_transaction(
     connection: &Connection,
     name: &str,
     events: &[Event],
     log: &mut EventLog,
 ) -> Result<usize, StorageError> {
-    let mut appended = 0;
+    let mut fresh: Vec<Event> = Vec::new();
     for event in events {
         let dedup_key = event.metadata.dedup_key.as_str();
         if let Some(stored) = stored_event_by_dedup_key(connection, name, dedup_key)? {
@@ -2186,16 +2221,19 @@ fn append_events_in_transaction(
             }
             return Err(StorageError::NonAppendOnly(name.into()));
         }
-        log.append_checked(event.clone())
-            .map_err(StorageError::Core)?;
-        let position = event_row_index(log.len() - 1)?;
-        insert_event_row(connection, name, position, event)?;
-        appended += 1;
+        fresh.push(event.clone());
     }
-    if appended > 0 {
-        write_event_log_state(connection, name, log)?;
+    if fresh.is_empty() {
+        return Ok(0);
     }
-    Ok(appended)
+    // 单事务批量提交：整批要么同时进内存日志与库，要么一条不落。
+    log.append_batch(&fresh).map_err(StorageError::Core)?;
+    let first = log.len() - fresh.len();
+    for (offset, event) in fresh.iter().enumerate() {
+        insert_event_row(connection, name, event_row_index(first + offset)?, event)?;
+    }
+    write_event_log_state(connection, name, log)?;
+    Ok(fresh.len())
 }
 
 impl SqliteEventLogStore {
@@ -2244,6 +2282,105 @@ impl SqliteEventLogStore {
         }
         transaction.commit().map_err(map_sqlite)?;
         Ok(self.path.clone())
+    }
+
+    /// 增量批量追加（方案 §5.2 DD-2 / §5.4 P1-1 / §7 M2）：单事务写入 `log` 相对已落库状态
+    /// **多出来的尾部**，并把 `outbox_events` 放进**同一个事务**（G2：禁止"先写事实、后丢出站事件"）。
+    ///
+    /// 与 [`Self::write_with_outbox`] 的差别只在**代价**：后者走
+    /// [`write_event_log_in_transaction`]，每次都把已落库的整条日志读回来逐行比对；这里走
+    /// [`append_event_log_in_transaction`]，写侧只读常量级的 manifest，前缀核对改在内存里做
+    /// （[`EventLog::digest_of_prefix`]）。语义（append-only / 单事务 / Outbox 同事务）完全一致，
+    /// 所以它是同一件事的增量实现，不是另一套语义。剩下的 O(N) 只有纯内存的摘要与校验
+    /// （不碰 I/O、不反序列化历史）。
+    pub fn append_batch(
+        &self,
+        name: &str,
+        log: &EventLog,
+        outbox_events: &[OutboxEvent],
+    ) -> Result<PathBuf, StorageError> {
+        validate_event_log_name(name)?;
+        log.validate().map_err(StorageError::Core)?;
+        validate_event_log_dedup_keys(log.events())?;
+        for event in outbox_events {
+            event.validate()?;
+        }
+        let mut connection = open(&self.path)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite)?;
+        append_event_log_in_transaction(&transaction, name, log)?;
+        for event in outbox_events {
+            append_outbox_event(&transaction, event)?;
+        }
+        transaction.commit().map_err(map_sqlite)?;
+        Ok(self.path.clone())
+    }
+
+    /// 只读 `after_seq` 之后追加的事实（方案 §5.4 P1-2：`LiveEventPipeline` 的游标增量 refresh）。
+    ///
+    /// 与 [`Self::read`] / [`Self::read_if_exists`] 的差别：不整份读回、不重算摘要、不做日志级
+    /// 校验——只按 position 升序取尾部若干行。因此**完整性判定留在调用方**：`expected_prefix`
+    /// 给出"本地日志的最后一条 + 本地条数"时，这里先读回同一 position 上已落库的那一行逐字
+    /// 比对，对不上就返回 `Ok(None)`（本地这份不是 store 的前缀），调用方应退回整份重建。
+    /// manifest 不存在（日志被删/从未写过）同样返回 `Ok(None)`，由重建路径给出正确错误。
+    pub fn read_since(
+        &self,
+        name: &str,
+        after_seq: Option<u64>,
+        expected_prefix: Option<(&Event, usize)>,
+    ) -> Result<Option<Vec<Event>>, StorageError> {
+        validate_event_log_name(name)?;
+        let connection = open(&self.path)?;
+        let Some((count, _, _)) = read_event_log_state(&connection, name)? else {
+            return Ok(None);
+        };
+        if let Some((expected_tail, expected_len)) = expected_prefix {
+            let Some(position) = expected_len.checked_sub(1) else {
+                return Ok(None);
+            };
+            if count < expected_len as u64 {
+                return Ok(None);
+            }
+            let stored: Option<String> = connection
+                .query_row(
+                    "SELECT event_json FROM qx_event_log_entries
+                     WHERE name = ?1 AND position = ?2",
+                    params![name, event_row_index(position)?],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(map_sqlite)?;
+            let expected = encode_event_json(expected_tail)?;
+            if stored.as_deref() != Some(expected.as_str()) {
+                return Ok(None);
+            }
+        }
+        let sql = match after_seq {
+            Some(_) => {
+                "SELECT event_json FROM qx_event_log_entries
+                 WHERE name = ?1 AND seq > ?2 ORDER BY position ASC"
+            }
+            None => {
+                "SELECT event_json FROM qx_event_log_entries
+                 WHERE name = ?1 ORDER BY position ASC"
+            }
+        };
+        let decode = |row: &rusqlite::Row<'_>| row.get::<_, String>(0);
+        let mut statement = connection.prepare(sql).map_err(map_sqlite)?;
+        let rows = match after_seq {
+            Some(seq) => statement
+                .query_map(params![name, event_seq_column(seq)?], decode)
+                .map_err(map_sqlite)?,
+            None => statement
+                .query_map(params![name], decode)
+                .map_err(map_sqlite)?,
+        };
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(decode_event_json(&row.map_err(map_sqlite)?)?);
+        }
+        Ok(Some(events))
     }
 
     pub fn read(&self, name: &str) -> Result<EventLog, StorageError> {
