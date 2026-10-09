@@ -245,13 +245,13 @@ API 的认证边界只由 `transport` 与 `api.operators` 决定，不由 `envir
 `crates/qx-cli/src/tests/environment_submit_arm_table.rs` 的
 `every_admitted_environment_spelling_declares_its_submit_arm` 要求那张"四种写法各自走模拟还是真实提交"的表与
 `ENVIRONMENT_VOCAB` **集合相等**，再逐写法驱动真实的策略作业装配核对 `dry_run`，并钉住混排写法（`"Paper"`）不得换臂。
-名单每加一个写法而不同轮为它声明提交臂，判据先红。仓库里 18 份带 `environment` 的 runtime 模板实测分布为 paper 14 份、
+名单每加一个写法而不同轮为它声明提交臂，判据先红。仓库里 19 份带 `environment` 的 runtime 模板实测分布为 paper 15 份、
 sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config validate` 的同一读法装载。
 
 ### HTTP 读面与控制面路由
 
-下表是 `qx-api` 当前实现的全部入口（17 条 HTTP 路由 + 1 条 WebSocket 升级），逐条来自
-`crates/qx-api/src/lib.rs` 的 `handle_inner`。除 `/health`、`/ready`、`/schema/account-snapshot-v1`
+下表是 `qx-api` 当前实现的全部入口（18 条 HTTP 路由——17 条 `GET` 读面 + 1 条 `POST` 写面——再加 1 条 WebSocket 升级），逐条来自
+`crates/qx-api/src/lib.rs` 的 `handle_inner`。除 `/health`、`/ready`、`/schema/account-snapshot-v1`、`/schema/contract-matrix`
 之外，只要运行时配置里装了操作员权限策略（`transport: "mtls"` 必然装），未通过证书识别的
 请求一律 `403 {"error":"authenticated_operator_required"}`。「返回」那一格里写成 `{…}` 的键集不是示意：`crates/qx-cli/src/tests/api_response_field_doc.rs` 会在同一进程里驱动 `ApiService`，把每条入口真的序列化出来的键集与这一格逐条比相等（V13 R2 第六遍）。
 路由名这一层的相等由 `crates/qx-cli/src/tests/api_endpoint_table_routes.rs` **逐张表**核对，
@@ -330,7 +330,7 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 先接上层代理。
 
 `serve` 暴露的端点就是下表这些，未列出的路径一律 404。表里第一列的 `METHOD 路径` 必须与
-`crates/qx-api/src/lib.rs` 的路由集合逐一相等（门禁与逐张表的用例各守一侧，见下「端点表按张核对」），而第一列方括号里的查询串是名单不是提示：那几条带键入口只认列出的键名，名单外的键一律 `400`（V13 R6）；表里那四条**全局出口**（`/health`、`/ready`、`/metrics`、`/schema/account-snapshot-v1`）不在任何名册里，走的是 `crates/qx-api/src/admission.rs:404` 那句 `else { return None }`——它们**不判查询串**，给它们带 `?account_id=` 既不会换来 400，也不会换来任何按账户收窄的数据（这四条本来就不读收窄键，判它们没有意义）。所以「名单外一律 400」这条口径的覆盖面是 12 条读面入口 + WS 那一支，剩下 4 条是这里明写的边界，不是漏网：
+`crates/qx-api/src/lib.rs` 的路由集合逐一相等（门禁与逐张表的用例各守一侧，见下「端点表按张核对」），而第一列方括号里的查询串是名单不是提示：那几条带键入口只认列出的键名，名单外的键一律 `400`（V13 R6）；表里那五条**全局出口**（`/health`、`/ready`、`/metrics`、`/schema/account-snapshot-v1`、`/schema/contract-matrix`）不在任何名册里，走的是 `crates/qx-api/src/admission.rs:413` 那句 `else { return None }`——它们**不判查询串**，给它们带 `?account_id=` 既不会换来 400，也不会换来任何按账户收窄的数据（这五条本来就不读收窄键，判它们没有意义）。所以「名单外一律 400」这条口径的覆盖面是 12 条读面入口 + WS 那一支，剩下 5 条是这里明写的边界，不是漏网：
 
 | 端点 | 语义 | 非 200 口径 |
 | --- | --- | --- |
@@ -347,7 +347,7 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `GET /account/ledger` `GET /scheduler/runs` `GET /reconcile/reports` | 每次请求现读账户日志/调度记录/对账报告，启动之后落盘的读得到；读的都是默认账户那一份整体现读模型 | 400 带任何查询串——`?account_id=` 在这里不会换成那个账户的数据，正文点名被拒的那把键（详见上段正文，V13 R2 第十三遍 / R6）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /events[?after=&account_id=&venue_id=]` | 投影事件全量，或 `after` 游标之后的增量 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /events/live[?after=&…]` | 事件总线现读增量，游标口径与上一行同一条实现 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`（游标过旧/超前，含空日志）；404 `account_projection_not_found`；500；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /control/audit` | 控制面审计流水 | 400 带任何查询串——它与上面那四条同属没有收窄键的整体现读面，正文点名被拒的那把键（V13 R2 第十三遍 / R6）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /control/audit` | 控制面审计流水 | 400 带任何查询串——它与上面那三条同属没有收窄键的整体现读面，正文点名被拒的那把键（V13 R2 第十三遍 / R6）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /control/commands` | 提交控制命令；启用访问策略时 operator 身份必须来自认证边界 | 400 请求体不合法（缺审计字段，或该命令类型在当前构建里没有派发者）；403 未认证 `authenticated_operator_required`／已认证但策略给不出权限 `forbidden`；409 命令被控制面拒绝（`ControlError` 的 Debug 形态，四个变体名见下段）；503 队列不可用 `control_state_unavailable`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 
 `POST /control/commands` 那一格的 409 是控制面按 `ControlError` 的 Debug 形态回报，四个会变 409 的
@@ -363,7 +363,7 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了"听成同一句 500 的话；源码侧由
 `status_line_reason_names_cover_every_code_the_read_face_emits` 核对覆盖与两两不同，线上侧由
 `crates/qx-api/tests/status_line_and_limiter_exit.rs` 用真 socket 逐个出口核对。启用访问策略时，除
-`/health`、`/ready`、`/schema/account-snapshot-v1` 外都要求已认证 operator，否则 403
+`/health`、`/ready`、`/schema/account-snapshot-v1`、`/schema/contract-matrix` 外都要求已认证 operator，否则 403
 `authenticated_operator_required`。
 
 控制命令的受理面按 `kind` 分档（V13 R2 #188），本构建里两档的名单是：

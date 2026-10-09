@@ -1,5 +1,57 @@
 # Changelog
 
+### V13 R26（2026-10-09）· 文档面产品化：README 重订、使用文档口径重钉、七份规划稿归档
+
+**口径**：承接用户「更新 readme 说明文档，向产品说明文档一样，同时更新项目的使用文档，删掉旧版本无效的历史
+文档信息，全部更新之后，提交最新变化」。这一遍**不动运行面代码**，改的是「文档说的数」与「代码里的数」之间
+的那点差——而那点差是可数的。
+
+- **README 产品化**：根 `README.md` 684 → **551 行**。新增「交付面一览」（八格，每格点名「谁在核对这个数」：
+  CLI 入口名 46 / 内置策略 17 / HTTP 路由 18 / WebSocket 事件流 1 / `deploy/` 顶层模板 53 / workspace 成员 25 /
+  架构判据与用例地板）与「看结果：离线报告、静态页面与同源 BFF 控制台」；把只在本机可复现的逐轮读数
+  （`all` 链现场、产物身份那段完整措辞、第二棵源码树实测）摘进 `docs/archive/README-历史实测快照-2026-10-09.md`，
+  正文只留**行为**与它的核对者。`demo` 段按 2026-10-09 本机重抓：退出码 0、`digest=915bfad3b6872a36`。
+- **使用文档口径重钉**（`deploy/README.md` 八处，全部单行改，行数一根手指都没动）：HTTP 入口从「17 条」改成
+  **18 条（17 条 `GET` 读面 + 1 条 `POST` 写面）**——`/schema/contract-matrix` 上线后两张端点表各含 18 条路由，
+  文档、门禁与用例却还停在 17；认证豁免名册补 `/schema/contract-matrix`（判定体 `crates/qx-api/src/lib.rs:1498`
+  的 `matches!` 里就是这四条）；「不判查询串的全局出口」四条 → **五条**，覆盖面算术随之改成 12 条读面入口 +
+  5 条明写边界 = 17 条 GET；那处指向 `else { return None }` 的引用从 `crates/qx-api/src/admission.rs:404`
+  改成 **:413**（404 是函数签名行，那句 `else {` 起于 413、`return None` 落在 414——行号能落地但落点说错了话，这类指针门禁抓不到，
+  靠人核）；`GET /control/audit` 那格的「上面那四条」改成**三条**（它上面那行只摊了三条 keyless 入口）；
+  带 `environment` 的 runtime 模板 18 → **19 份**（paper 15 / sandbox 2 / testnet 1 / production 1）。
+- **文档契约用例跟着改口**（两份文件 8 处单行）：`api_endpoint_table_routes.rs` 四道地板 17 → **18**（分派集合、
+  两张表各自的路由解析、语义表行数）加两道失败详情里的「17 条 / 17 行」；`api_response_field_doc.rs` 的
+  `rows.len() >= 14` → **`>= 18`** 与详情里的「17 条路由」。收紧是加性的：原口径下只有整行被删才红，
+  现在表被读窄也红。定向复跑 `cargo test -p qx-cli --bin qx-cli -- api_` → **42 passed / 0 failed**。
+- **登记面**：`maturity/capabilities.yaml` 三处活口径（两条证据里的 `deploy/` 顶层 52 → **53** 份、
+  `api_surface_doc_check` 那条的 17 条路由 → **18** 条）。**带日期的当轮读数一律不改**——CHANGELOG、
+  `docs/archive/**`、门禁注释里的历史条目、V13 §1 与 2026-10-06 架构稿 §14 那批写着「本轮实测」的基线，
+  它们记录的是当时成立的事实，追改等于销毁证据。
+- **七份规划稿归档**：四份 2026-10-03 规划（架构审计 / 量化回测 Web 平台 / 桌面与 Web 客户端接入 / 与 tauron
+  一体化桌面）、一份 2026-10-04 合订本、一份 2026-10-08 综合路线图、一份 2026-10-08 发布审计（V13 R22）
+  `git mv` 进 `docs/archive/`。每份只在**文末**追加 14 行「归档状态」节——追加在标题下会让活文档里那些按行号
+  取证的 `path:NN` 整体下移。路径提及同步 11 处：活文档 6 处（`CHANGELOG.md` 1 / V13 3 / 2026-10-06 架构稿 2）
+  与同批互指 5 处。归档理由逐份写在自己的节里，其中 tauron 那一份靠**全仓扫描**立据：`crates/`、`web/`、
+  `python/`、`deploy/`、`tools/`、`schemas/`、`.github/` 七处目录里 `tauron` 与 `tauri` 两个关键字各 **0 命中**。
+  `docs/archive/README.md` 索引 33 → **48 行 / 8,519 字节**，十条在册，读法纪律里那处「README 的『当前状态』」
+  指针同步改成「交付面一览」与「版本与现状」。
+- **引用可达性重钉**：`LIVE_DOC_CITATION_FLOOR` **195 → 272**（终字节实测 272 条 `path:NN`，落在 30 份活 .md 上，
+  落空 **0** 条；上一档 195 是 R1-G 在那七份还住在 `docs/` 时量的，中途 270 是这条 CHANGELOG 入库前测的那一档）。存档侧落空 9 条 = 天花板 9，**未升**，
+  `ARCHIVE_DEAD_CITATION_CEILING` 不动；`GATE_CHECK_FLOOR` 与 `WORKSPACE_TEST_FLOOR` 也不动（本轮没加判据）。
+- **环境腿的一次假红**：`cargo test --workspace --no-fail-fast` 首跑在默认 `%TEMP%` 上 **22 颗用例红（121 段 / 1196 passed / 22 failed）**，
+  正文只有两种、同一族：**13 颗是「SQLite 打不开库文件」、9 颗是 `Os { code: 5, kind: PermissionDenied }`**——前者全在 `qx-storage`（按源文件落点：**`sqlite_event_log.rs` 7 颗 + `sqlite.rs` 5 颗 + `snapshot_rows_persist.rs` 1 颗**），
+  文案是 `Io("SQLite: unable to open database file: …\\Temp\\qianxing-*.sqlite")`；后者散在
+  **`qx-strategy` 6 颗、`qx-adapter` 2 颗、`qx-cli` 1 颗**，文案统一含 `code: 5, kind: PermissionDenied`（`Io(Os {...})` 与裸 `Os {...}` 两种写法都
+  指向同一件事：`%TEMP%` 拒绝写入）。把 `TMP`/`TEMP` 指到仓内可写目录后整树复跑 → **121 段 / 1218 passed / 0 failed / 1 ignored，`TEST_RC=0`**；
+  这一族用例都在 `%TEMP%` 下建文件，与被改的文档面无关。
+- **验证**（全部本轮现跑）：`python -X utf8 tools/check_architecture.py` → **895 项 `[PASS]` / 0 项 `[FAIL]` / rc 0**；
+  `cargo test --workspace --no-fail-fast` → **121 段 `test result:` / 1218 passed / 0 failed / 1 ignored**；`cargo clippy --workspace --all-targets -- -D warnings` →
+  **rc 0，诊断行 0 条**；`cargo fmt --all --check` rc 0；`python -X utf8 -m unittest discover -s python/tests` →
+  `Ran 68 tests / OK`；`git diff --check` 无空白错误。
+- **本轮没做**：`docs/牵星qianxing_架构梳理与缺点分析.md`（2026-10-09 由仓库外的动作新建，391 行，
+  0 处 `path:NN` 引用）留在未跟踪状态，不代它决定是否入库；§17.11 那两条 `--no-default-features` 的 clippy 腿
+  仍在 CI 之外（既有登记，未动 `.github/workflows/ci.yml`）。
+
 
 ### V13 R25（2026-10-09）· 两轮复扫：字段级接线、游标口径与登记面自身的可机读性
 
@@ -234,7 +286,7 @@
 
 ### V13 R22 收口（2026-10-08）· 第 22 轮三扫 · 门禁 `TEST_PATH` 的单文件测试盲区（#222）+ 发布条件复核
 
-**口径**：本轮按 `docs/qianxing_综合优化改进系统方案_竞品架构实现路线图_2026-10-08.md` 的 §43（孤儿）/ §44（死配置键）/ §45（配置不生效）/ §46（确定性）/ §47（重放）/ §67（验收）逐条过一遍。三扫结论：**A 连通性与前后端贯通 0 颗、C 终止性与无界 0 颗**；B 孤儿面命中一条**门禁自身的盲区**（`#222`，V13 R2 第十六遍立案、本遍落地）。全部加性：门禁 **753 → 754 全绿**，未删任何既有判据。
+**口径**：本轮按 `docs/archive/qianxing_综合优化改进系统方案_竞品架构实现路线图_2026-10-08.md` 的 §43（孤儿）/ §44（死配置键）/ §45（配置不生效）/ §46（确定性）/ §47（重放）/ §67（验收）逐条过一遍。三扫结论：**A 连通性与前后端贯通 0 颗、C 终止性与无界 0 颗**；B 孤儿面命中一条**门禁自身的盲区**（`#222`，V13 R2 第十六遍立案、本遍落地）。全部加性：门禁 **753 → 754 全绿**，未删任何既有判据。
 
 - **`#222` 落地：`TEST_PATH` 认不出单文件形态的 `src/tests.rs`**。`tools/check_architecture.py` 的 `TEST_PATH` 只认目录式 `src/tests/`（含 `tests/mod.rs`）与 `_tests.rs`，不认单文件式 `src/tests.rs`——而 V12 R2 为绕开行数棘轮，把八个 crate 的库内用例搬成了后者（`#[cfg(test)] mod tests;` 挂进来）。于是「唯一读者写在 `src/tests.rs` 里」的 `pub` 项被当成有生产读者，**零读者判据在它们面前是瞎的**；同一个过滤器还罩着 `PUBLIC_ENTRY_FAMILIES`（能力族入口清点）与枚举变体生产者两条判据，所以这是一条会同时松开三处前提的盲区。
   - **修法（两种形态定成一个口径）**：`TEST_PATH` 补 `(?:^|/)tests\.rs$`，目录式 `src/tests/` 与单文件式 `src/tests.rs` 都认得。

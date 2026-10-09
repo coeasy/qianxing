@@ -48,8 +48,8 @@ fn endpoint_return_cells() -> Vec<(String, String)> {
         );
     }
     assert!(
-        rows.len() >= 14,
-        "端点表只解析出 {} 行，明显不是那张 17 条路由的表——解析口径需要先修",
+        rows.len() >= 18,
+        "端点表只解析出 {} 行，明显不是那张 18 条路由的表——解析口径需要先修",
         rows.len()
     );
     rows
