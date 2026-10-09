@@ -289,12 +289,13 @@ snapshot_not_found`）：一个账户刚挂上投影、还没算出第一份快�
 `base_hash`，基准不存在已经由 `409 snapshot_base_not_found` 说话；它同样认 `account_id`/`venue_id` 这一对（只给一半是 400，那一格写在第二张表里）。这条路由**不产出 `404`**：`publish_snapshot` 把基准历史与当前快照同批写入，基准查得到就一定有当前快照，所以实现里那条 `404 snapshot_not_found` 是到不了的分支，已随 #205 删掉——两张表也就不用再去解释一个永不返回的码。反过来，`/account/ledger`、`/scheduler/runs`、`/reconcile/reports`、`/control/audit` 四条整体现读端点没有任何收窄键，带查询串一律 `400`：第一张表原先在 `/account/ledger` 那一格写着 `[?…]`，而那条臂从头到尾没读过 `query`，递来 `?account_id=shadow` 只会把默认账户的流水念成 shadow 的流水。
 
 账户快照的八个汇总钱字段（`raw` 是整数量纲）在本构建分两类：有算点的是 `equity_raw`、`available_raw`、
-`fees_raw`；**账户级无生产者字段**：`margin_raw`、`frozen_raw`、`realized_pnl_raw`、`unrealized_pnl_raw`、
-`funding_raw`。后五格在 `/account/snapshot` 与其 envelope 里恒为 `null`（`/account/balances` 只公布其中
+`fees_raw`、`realized_pnl_raw`、`unrealized_pnl_raw`；**账户级无生产者字段**：`margin_raw`、`frozen_raw`、
+`funding_raw`。后三格在 `/account/snapshot` 与其 envelope 里恒为 `null`（`/account/balances` 只公布其中
 `margin_raw` 一格，同样是 `null`）：`null` 的含义是"这一层没有算它"，不是 0，也不能读成"这个账户没有
-保证金占用 / 没交过资金费 / 没有浮亏"。这份名单不靠手抄维持——门禁 `account_money_field_registry_check`
+保证金占用 / 没交过资金费"。这份名单不靠手抄维持——门禁 `account_money_field_registry_check`
 把它与协议里的 `Option<i128>` 声明、`schemas/account-snapshot-v1.json` 的逐字段 description、
-`maturity/capabilities.yaml` 的逐字段 limitation 与读侧 null 用例的点名集合逐条对齐，任一侧改口即红（V13 R1-A5）。
+`maturity/capabilities.yaml` 的逐字段 limitation 与读侧 null 用例的点名集合逐条对齐，任一侧改口即红（V13 R1-A5；
+V13 R26 把 `realized_pnl_raw`/`unrealized_pnl_raw` 接上生产者，名单从五格收到三格）。
 `/account/snapshot/diff` 的八个汇总钱标量不在那五条差分数组里：`diff` 只按键集合化现金账簿与四张表，账户级标量整格走 `replacement`——两侧 `scalar_hash` 相同它就是 `null`。把这一格读丢的客户端会拿着基线的权益、费用与对账结论去核对目标状态哈希，`apply` 末尾那道 `target_state_hash` 比对正是为这种情况准备的；`qx-cli ecosystem` 的协议段就是按"改一格权益"跑这条回路。注意 `replacement` 是 `SnapshotDiff` 上的**私有字段**：线格式里有它，crate 外的 Rust 代码却点名不了它，所以跨语言读者只认这份文档（V13 R2 第六遍）。
 
 WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分派前转交

@@ -60,7 +60,7 @@
 | WebSocket 事件流 | 1（任意路径 + `Upgrade: websocket`） | `admit_websocket` 的准入判定，口径见 `deploy/README.md` 的 WS 段 |
 | `deploy/` 顶层示例配置模板 | 53 | `crates/qx-cli/src/tests/deploy_template_coverage.rs`：登记表与磁盘清单逐名相等，新增不登记即红 |
 | Cargo workspace 成员 | 25（24 个 `qx-*` crate + `contract-tests`） | 根 `Cargo.toml`；`cargo test --workspace` 按成员出段落 |
-| 静态架构不变量 | 895 条 `[PASS]` / 0 条 `[FAIL]` | `tools/check_architecture.py` 自数地板 `GATE_CHECK_FLOOR = 843`（条数只降不升） |
+| 静态架构不变量 | 见 `maturity/gate_snapshot.json`（`checks` / `gate_check_floor` / `labels_sha256`） | `tools/check_architecture.py`：`--snapshot` 写入该机读快照，收尾处拿本轮实测与它逐值比对（条数只降不升由地板常量守） |
 | Rust 用例 | 全仓地板 `WORKSPACE_TEST_FLOOR = 1233`；本轮整树 121 段 / 1218 passed | 同一门禁 + `cargo test --workspace --no-fail-fast`，读数见「版本与现状」 |
 
 数字之外那半句更重要：`maturity/capabilities.yaml` 的四档证据里 `sandbox_tested` 与
@@ -475,25 +475,29 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 
 本轮整跑（同一台机器、同一棵终树，2026-10-09）：
 
-- `python tools/check_architecture.py`：**895 项 `[PASS]` / 0 项 `[FAIL]`**，`exit=0`；自数地板
-  `GATE_CHECK_FLOOR = 843`（门禁条数只降不升的那一半由它守）。
+- `python tools/check_architecture.py`：0 项 `[FAIL]`，`exit=0`；本轮条数与地板不手抄，读
+  `maturity/gate_snapshot.json`（`--snapshot` 生成；收尾有一条判据核「本轮实测 == 快照」）。
 - `cargo fmt --all --check` rc 0；`cargo clippy --workspace --all-targets -- -D warnings` rc 0、
-  诊断 0 行；`-p qx-runtime`、`-p qx-storage` 各按 `--no-default-features --all-targets` 再跑一遍，
-  同样 rc 0、诊断 0 行。**这两条 feature-off 腿今天不在 CI**（`.github/workflows/ci.yml` 只 lint
-  开特性的组合），登记在 `docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md` §17.11。
-- `cargo test --workspace --no-fail-fast`：**121 个 `test result:` 段 / 1218 passed / 0 failed / 1 ignored**；
+  诊断 0 行；`-p qx-runtime`、`-p qx-storage`、`-p qx-api`、`-p qx-cli` 各按
+  `--no-default-features --all-targets` 再跑一遍，同样 rc 0、诊断 0 行。**这条 feature-off 腿已在 CI**
+  （`.github/workflows/ci.yml` 的 `feature-off` job，与 `feature-matrix` 互补——矩阵逐组合点亮「特性开着」
+  的分支，它补上「特性全关」的另一半，因为 `qx-cli` 的 `default = ["sqlite"]` 经转发把
+  `qx-runtime/sqlite` 一并打开，`#[cfg(not(feature = "sqlite"))]` 那半边在 workspace 构建里从不被 lint；
+  V13 R28 收口了此前登记在 `docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md` §17.11 的这条缺口）。
+- `cargo test --workspace --offline`：**122 个 `test result:` 段 / 1227 passed / 0 failed / 1 ignored**；
   磁盘在册 `#[test]` 的全仓地板是 `WORKSPACE_TEST_FLOOR = 1233`。
-- `cargo test -p qx-cli --no-default-features --features sqlite`：**19 段 / 448 passed / 0 failed**；
-  `cargo test -p qx-cli --bin qx-cli`（文档契约那一批）368 passed / 0 failed。
+- `cargo test -p qx-cli --no-default-features --features sqlite`：**19 段 / 453 passed / 0 failed**；
+  `cargo test -p qx-cli --bin qx-cli`（文档契约那一批）373 passed / 0 failed。
 - `python -X utf8 -m unittest discover -s python/tests`：**Ran 68 tests / OK**。
-- 反向变异：本轮新增判据共放 35 枪，**各自打红自己点名的那颗判据**（KILLED 35 / COLLATERAL 0 /
-  EQUIVALENT 0 / BAD 0），十六份被改文件跑完逐份按 sha256 回原字节；口径与空枪披露见 V13 §17.11。
+- 反向变异：V13 R27 新增判据放 **35 枪**、V13 R28 放 **17 枪**，**各自打红自己点名的那颗判据**
+  （COLLATERAL 0 / EQUIVALENT 0 / BAD 0），被改文件跑完逐份按 sha256 回原字节；
+  口径与空枪披露见 V13 §17.11（R27）与 `docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md` §18（R28）。
 
 能力矩阵把每条能力钉在四档证据上（机器可读的那份是 `maturity/capabilities.yaml`，2026-10-09 现读）：
 顶层能力条目 **25** 个，**25** 个都带 `implementation` 键，其中 `true` 的 **21** 个
 （`postgres` / `nats` / `broker_gateway` 三格写的是可选与"没有厂商协议就没有实现"，
 `merge_c07ad22_rollback_register` 按裁定写 `false`）；`code_tested` 为真的 **21** 个；
-**`sandbox_tested` 与 `production_approved` 无一为真**；limitations 合计 **161** 条，
+**`sandbox_tested` 与 `production_approved` 无一为真**；limitations 合计 **162** 条，
 以仓库内路径开头的证据行 **387** 条（逐行经门禁核对存在性）。因此可宣称的交付边界是：
 **本机可重放的确定性回测、Paper 闭环、以及 CCXT/Binance 的代码级契约** —— 不是"已对接真实账户"。
 

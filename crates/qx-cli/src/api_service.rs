@@ -402,6 +402,13 @@ pub(crate) fn load_api_account_snapshot_for_worker(
         })?;
     }
     snapshot.fees_raw = Some(fees_raw);
+    // 已实现盈亏：Ledger 逐条持仓累计，账户级就是它们的和；平仓到零不清零，所以它含已平掉的腿。
+    snapshot.realized_pnl_raw = pipeline.ledger().realized_pnl_for(account_id);
+    // 未实现盈亏：与上面的 equity_raw 同一条现货乘数尺子，缺标记价时同样报缺席而不是 0（V13 R26）。
+    snapshot.unrealized_pnl_raw =
+        pipeline
+            .ledger()
+            .unrealized_pnl_for(account_id, pipeline.marks(), 1);
     snapshot.orders = runtime_snapshot
         .orders
         .iter()

@@ -67,6 +67,61 @@ impl Ledger {
             .unwrap_or(&0)
     }
 
+    /// 账户级已实现盈亏：把该账户每条持仓（含单向与对冲腿）的 `realized_pnl` 相加（V13 R26）。
+    ///
+    /// `PositionState::realized_pnl` 由 `apply_position_state_delta` 在每次平仓时按
+    /// "价差 × 平仓数量 × multiplier" 累加，**平仓到零也不清零**，所以这里逐条相加得到的
+    /// 就是账户累计已实现盈亏。溢出返回 `None`：读模型宁可报缺席，也不发布回绕过的数。
+    pub fn realized_pnl_for(&self, account_id: &str) -> Option<i128> {
+        let mut total = 0_i128;
+        for ((account, _), state) in &self.positions {
+            if account == account_id {
+                total = total.checked_add(state.realized_pnl.raw())?;
+            }
+        }
+        for ((account, _, _), state) in &self.hedge_positions {
+            if account == account_id {
+                total = total.checked_add(state.realized_pnl.raw())?;
+            }
+        }
+        Some(total)
+    }
+
+    /// 账户级未实现盈亏（现货乘数口径）：`Σ (mark − average_entry) × quantity × multiplier`。
+    ///
+    /// 与 `apply_position_state_delta` 的已实现公式同一套定点算子，也与
+    /// [`Self::equity_for_with_multiplier`] 同一条契约：**任何一条非零持仓拿不到标记价，
+    /// 这个数就算不出来**（返回 `None`），读侧不会把"算不出"印成 0。
+    ///
+    /// 这是账户读模型（现货、`multiplier = 1`）用的那把尺子，与 `equity_raw` 同源；
+    /// 衍生品账户需要 `TradingInstrumentSpec` 才能算准，那不在本层。
+    pub fn unrealized_pnl_for(
+        &self,
+        account_id: &str,
+        marks: &BTreeMap<InstrumentId, Price>,
+        multiplier: i128,
+    ) -> Option<i128> {
+        if multiplier <= 0 {
+            return None;
+        }
+        let mut total = 0_i128;
+        for ((account, instrument), position) in &self.positions {
+            if account != account_id || position.quantity.is_zero() {
+                continue;
+            }
+            let mark = marks.get(instrument)?;
+            total = total.checked_add(position_pnl(position, mark, multiplier)?)?;
+        }
+        for ((account, instrument, _), position) in &self.hedge_positions {
+            if account != account_id || position.quantity.is_zero() {
+                continue;
+            }
+            let mark = marks.get(instrument)?;
+            total = total.checked_add(position_pnl(position, mark, multiplier)?)?;
+        }
+        Some(total)
+    }
+
     /// 返回账户所有币种的现金余额，按币种排序，供跨币种抵押品估值使用。
     pub fn cash_balances_for(&self, account_id: &str) -> BTreeMap<String, i128> {
         self.cash
@@ -381,4 +436,15 @@ impl Ledger {
             ctx.reporting_currency,
         )
     }
+}
+
+/// 单条持仓的未实现盈亏（现货乘数口径）：`(mark − average_entry) × quantity × multiplier`。
+///
+/// 与 `apply_position_state_delta` 的已实现公式同一套定点算子；溢出返回 `None`。
+fn position_pnl(position: &PositionState, mark: &Price, multiplier: i128) -> Option<i128> {
+    mark.raw()
+        .checked_sub(position.average_entry.raw())?
+        .checked_mul(position.quantity.raw())?
+        .checked_div(SCALE)?
+        .checked_mul(multiplier)
 }

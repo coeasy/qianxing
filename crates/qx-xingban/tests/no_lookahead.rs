@@ -1,4 +1,7 @@
-use qx_core::{InstrumentId, MakerTakerFeeModel, Money, Order, OrderStatus, Quantity, Side};
+use qx_core::{
+    InstrumentId, MakerTakerFeeModel, Money, Order, OrderStatus, Quantity, Side,
+    TradingInstrumentSpec, TradingProduct, SCALE,
+};
 use qx_guanxing::Bar;
 use qx_risk::MaxNotionalRule;
 use qx_xingban::{
@@ -43,9 +46,28 @@ fn pre_trade_risk_uses_last_visible_close_not_current_bar_close() {
     let instrument = InstrumentId::parse("T.SIM").unwrap();
     let mut risk = RiskGate::from_rule_set(qx_risk::RuleSet::account_limits_only());
     risk.add(Box::new(MaxNotionalRule { max_notional: 150 }));
+    // V13 R26：名义额规则缺规格即 fail-closed（不再合成临时现货规格），
+    // 所以这条回测必须给出真实产品规格。现货 1:1，`contract_size = SCALE`。
+    let spec = TradingInstrumentSpec {
+        instrument: instrument.clone(),
+        product: TradingProduct::Spot,
+        base_currency: "SIM".into(),
+        quote_currency: "USD".into(),
+        settlement_currency: "USD".into(),
+        contract_size: SCALE,
+        linear: false,
+        inverse: false,
+        price_tick: 1,
+        qty_step: 1,
+        min_qty: 1,
+        max_leverage: 1,
+        maintenance_margin_bps: 0,
+        valid_from: 1,
+        valid_to: None,
+    };
     let config = BacktestConfig {
         instrument,
-        instrument_spec: None,
+        instrument_spec: Some(spec),
         account_id: "main".into(),
         currency: "USD".into(),
         initial_cash: Money::from_i64(1_000),

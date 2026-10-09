@@ -8,11 +8,14 @@ mod console;
 mod control_reads;
 mod event_cursor;
 mod snapshot_history;
+mod state_lock;
 mod transport;
 mod ws;
 
 pub use console::*;
 pub use control_reads::*;
+// 锁中毒的收口（§6.D3）：`pub(crate)` 让 `control_reads` / `ws` 的 `use crate::*` 也拿到它。
+pub(crate) use state_lock::{lock_state, read_error_response};
 
 pub use admission::validate_admission_config;
 use admission::{
@@ -1052,20 +1055,23 @@ impl ReconcileReportSnapshot {
 ///   只有用例读者（`query_port_exposes_account_orders_positions_balances_and_audit`）。
 ///   它们读不到 `account_id` 之外的账户，多账户部署下接到带身份的端点会静默串账——
 ///   生产要接上去，得先长出身份感知变体（P0 的 QueryService 拆分那一层）。
+///
+/// 九个读法一律回 `Result`（§6.D3）：`ApiState` 的锁中毒是"读不出来"，不是"没有数据"，
+/// 退回空集合等于把一次故障念成"这个账户什么都没发生"。调用方按自己那条面给码。
 pub trait QueryPort {
-    fn account_snapshot(&self) -> Option<AccountSnapshot>;
-    fn account_orders(&self) -> Vec<qx_protocol::OrderSnapshot>;
-    fn account_positions(&self) -> Vec<qx_protocol::PositionSnapshot>;
-    fn account_cash(&self) -> BTreeMap<String, i128>;
+    fn account_snapshot(&self) -> Result<Option<AccountSnapshot>, String>;
+    fn account_orders(&self) -> Result<Vec<qx_protocol::OrderSnapshot>, String>;
+    fn account_positions(&self) -> Result<Vec<qx_protocol::PositionSnapshot>, String>;
+    fn account_cash(&self) -> Result<BTreeMap<String, i128>, String>;
     fn control_audit(&self) -> Result<Vec<AuditRecord>, String>;
     fn control_retirement(&self) -> Result<qx_control::RetirementSummary, String>;
-    fn job_runs(&self) -> Vec<JobRun>;
-    fn ledger_entries(&self) -> Vec<LedgerEntry>;
-    fn reconcile_reports(&self) -> Vec<ReconcileReportSnapshot>;
+    fn job_runs(&self) -> Result<Vec<JobRun>, String>;
+    fn ledger_entries(&self) -> Result<Vec<LedgerEntry>, String>;
+    fn reconcile_reports(&self) -> Result<Vec<ReconcileReportSnapshot>, String>;
 }
 
 impl ApiResponse {
-    fn json(status: u16, body: impl Into<String>) -> Self {
+    pub(crate) fn json(status: u16, body: impl Into<String>) -> Self {
         Self {
             status,
             content_type: "application/json; charset=utf-8".into(),
@@ -1229,7 +1235,7 @@ impl ApiService {
     /// 说同一份数据，而不是各念一份（V11 S3）。
     fn query_models(&self) -> Result<ApiQueryModels, String> {
         let Some(provider) = &self.query_models_provider else {
-            let state = self.state.lock().expect("api state mutex poisoned");
+            let state = lock_state(&self.state)?;
             return Ok(ApiQueryModels {
                 job_runs: state.job_runs.clone(),
                 ledger_entries: state.ledger_entries.clone(),
@@ -1238,7 +1244,7 @@ impl ApiService {
         };
         let models = provider()?;
         {
-            let mut state = self.state.lock().expect("api state mutex poisoned");
+            let mut state = lock_state(&self.state)?;
             state.job_runs = models.job_runs.clone();
             state.ledger_entries = models.ledger_entries.clone();
             state.reconcile_reports = models
@@ -1282,19 +1288,13 @@ impl ApiService {
     }
 
     pub fn publish_event(&self, event: Event) -> Result<(), String> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .publish_event(event)
+        lock_state(&self.state)?.publish_event(event)
     }
 
     /// 将外部 Runtime EventLog 投影到 API 读模型。该方法不会改变 Runtime
     /// 的事实日志，只更新 API 查询和订阅所需的副本。
     pub fn project_event_log(&self, source: &EventLog) -> Result<usize, String> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .project_event_log(source)
+        lock_state(&self.state)?.project_event_log(source)
     }
 
     pub fn project_account_event_log(
@@ -1303,25 +1303,25 @@ impl ApiService {
         venue_id: impl Into<String>,
         source: &EventLog,
     ) -> Result<usize, String> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .project_account_event_log(account_id, venue_id, source)
+        lock_state(&self.state)?.project_account_event_log(account_id, venue_id, source)
     }
 
+    /// 按账户/venue 取投影快照。锁中毒是"读不出来"，不是"没有这份投影"，故回 `Err`
+    /// 让调用点决定状态码（HTTP 面回 503），不退回 `None`（§6.D3）。
     pub fn account_snapshot_for(
         &self,
         account_id: &str,
         venue_id: &str,
-    ) -> Option<AccountSnapshot> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .account_snapshot_for(account_id, venue_id)
+    ) -> Result<Option<AccountSnapshot>, String> {
+        Ok(lock_state(&self.state)?.account_snapshot_for(account_id, venue_id))
     }
 
     fn projection_readiness(&self) -> Option<String> {
-        let state = self.state.lock().expect("api state mutex poisoned");
+        // 中毒时把原因原样报给 `/ready`：探针因此回 503，而不是"看起来就绪"。
+        let state = match lock_state(&self.state) {
+            Ok(state) => state,
+            Err(error) => return Some(error),
+        };
         state
             .projections
             .iter()
@@ -1347,28 +1347,28 @@ impl ApiService {
             Err(error) => return Some(ApiResponse::json(400, error_json(&error))),
         };
         let key = key?;
-        let known = self
-            .state
-            .lock()
-            .expect("api state mutex poisoned")
-            .projections
-            .contains_key(&key);
-        (!known).then(|| ApiResponse::json(404, error_json("account_projection_not_found")))
+        // 锁中毒是"读不出来"（503），不是"没有这份投影"（404）：两者不能共用一个码。
+        let state = match lock_state(&self.state) {
+            Ok(state) => state,
+            Err(error) => return Some(ApiResponse::json(503, error_json(&error))),
+        };
+        (!state.projections.contains_key(&key))
+            .then(|| ApiResponse::json(404, error_json("account_projection_not_found")))
     }
 
     fn snapshot_for_query(&self, query: &str) -> Result<Option<AccountSnapshot>, String> {
         // 带 account_id/venue_id 的查询走与公共键读法同一处查找，避免路由与嵌入方
         // 各自实现一遍"键怎么映射到投影"。
         if let Some(key) = projection_key_from_query(query)? {
-            return Ok(self.account_snapshot_for(&key.account_id, &key.venue_id));
+            return self.account_snapshot_for(&key.account_id, &key.venue_id);
         }
-        let state = self.state.lock().expect("api state mutex poisoned");
+        let state = lock_state(&self.state)?;
         Ok(state.snapshot.clone())
     }
 
     fn projection_events_for_query(&self, query: &str) -> Result<Vec<Event>, String> {
         let key = projection_key_from_query(query)?;
-        let state = self.state.lock().expect("api state mutex poisoned");
+        let state = lock_state(&self.state)?;
         Ok(match key {
             Some(key) => state
                 .projections
@@ -1385,7 +1385,7 @@ impl ApiService {
         query: &str,
     ) -> Result<Option<ProjectionEnvelope<serde_json::Value>>, String> {
         let key = projection_key_from_query(query)?;
-        let state = self.state.lock().expect("api state mutex poisoned");
+        let state = lock_state(&self.state)?;
         let (snapshot, source_digest) = match key {
             Some(key) => {
                 let Some(projection) = state.projections.get(&key) else {
@@ -1572,7 +1572,7 @@ qx_control_retired_audit_records_total {}\n",
             ("GET", "/schema/contract-matrix") => ApiResponse::json(200, contract_matrix_json()),
             ("GET", "/account/snapshot/envelope") => {
                 match self.snapshot_envelope_for_query(query) {
-                    Err(error) => ApiResponse::json(400, error_json(&error)),
+                    Err(error) => read_error_response(&error),
                     Ok(Some(envelope)) => ApiResponse::json(
                         200,
                         serde_json::to_string(&envelope)
@@ -1582,14 +1582,14 @@ qx_control_retired_audit_records_total {}\n",
                 }
             }
             ("GET", "/account/snapshot") => match self.snapshot_for_query(query) {
-                Err(error) => ApiResponse::json(400, error_json(&error)),
+                Err(error) => read_error_response(&error),
                 Ok(Some(snapshot)) => ApiResponse::json(200, snapshot.to_json()),
                 Ok(None) => ApiResponse::json(404, "{\"error\":\"snapshot_not_found\"}"),
             },
             ("GET", "/account/orders") => {
                 let snapshot = match self.snapshot_for_query(query) {
                     Ok(snapshot) => snapshot,
-                    Err(error) => return ApiResponse::json(400, error_json(&error)),
+                    Err(error) => return read_error_response(&error),
                 };
                 let orders = snapshot
                     .map(|snapshot| snapshot.orders.into_values().collect::<Vec<_>>())
@@ -1602,7 +1602,7 @@ qx_control_retired_audit_records_total {}\n",
             ("GET", "/account/positions") => {
                 let snapshot = match self.snapshot_for_query(query) {
                     Ok(snapshot) => snapshot,
-                    Err(error) => return ApiResponse::json(400, error_json(&error)),
+                    Err(error) => return read_error_response(&error),
                 };
                 let positions = snapshot
                     .map(|snapshot| snapshot.positions.into_values().collect::<Vec<_>>())
@@ -1615,7 +1615,7 @@ qx_control_retired_audit_records_total {}\n",
             ("GET", "/account/balances") => {
                 let snapshot = match self.snapshot_for_query(query) {
                     Ok(snapshot) => snapshot,
-                    Err(error) => return ApiResponse::json(400, error_json(&error)),
+                    Err(error) => return read_error_response(&error),
                 };
                 let body = serde_json::json!({
                     "cash_raw": snapshot.as_ref().map(|snapshot| &snapshot.cash_raw).cloned().unwrap_or_default(),
@@ -1659,7 +1659,7 @@ qx_control_retired_audit_records_total {}\n",
             ("GET", "/events") => {
                 let all_events = match self.projection_events_for_query(query) {
                     Ok(events) => events,
-                    Err(error) => return ApiResponse::json(400, error_json(&error)),
+                    Err(error) => return read_error_response(&error),
                 };
                 let after = match parse_after_cursor(query) {
                     Ok(after) => after,
@@ -1697,7 +1697,10 @@ qx_control_retired_audit_records_total {}\n",
             Err(error) => return ApiResponse::json(400, error_json(&error)),
         };
         let event_bus = {
-            let state = self.state.lock().expect("api state mutex poisoned");
+            let state = match lock_state(&self.state) {
+                Ok(state) => state,
+                Err(error) => return ApiResponse::json(503, error_json(&error)),
+            };
             match key {
                 Some(key) => state
                     .projections
@@ -1739,7 +1742,10 @@ qx_control_retired_audit_records_total {}\n",
             Ok(key) => key,
             Err(error) => return ApiResponse::json(400, error_json(&error)),
         };
-        let state = self.state.lock().expect("api state mutex poisoned");
+        let state = match lock_state(&self.state) {
+            Ok(state) => state,
+            Err(error) => return ApiResponse::json(503, error_json(&error)),
+        };
         let (history, target) = match key {
             Some(key) => {
                 let Some(projection) = state.projections.get(&key) else {
@@ -1809,7 +1815,10 @@ qx_control_retired_audit_records_total {}\n",
                     return ApiResponse::json(status, error_json(&format!("{error:?}")));
                 }
             };
-            self.state.lock().expect("api state mutex poisoned").control = plane;
+            match lock_state(&self.state) {
+                Ok(mut state) => state.control = plane,
+                Err(error) => return ApiResponse::json(503, error_json(&error)),
+            }
             if let Some(enqueuer) = &self.command_enqueuer {
                 // 入队失败不推翻已经成立的受理：命令已写进控制面，worker 每轮按
                 // `pending()` 补入同一条命令。但"补入了"是假设，不是事实——失败必须
@@ -1826,7 +1835,10 @@ qx_control_retired_audit_records_total {}\n",
                 serde_json::to_string(&audit).expect("audit is serializable"),
             );
         }
-        let mut state = self.state.lock().expect("api state mutex poisoned");
+        let mut state = match lock_state(&self.state) {
+            Ok(state) => state,
+            Err(error) => return ApiResponse::json(503, error_json(&error)),
+        };
         let result = state.control.submit_as(command, granted, ts);
         match result {
             Ok(audit) => ApiResponse::json(
@@ -2125,30 +2137,26 @@ fn event_venue_id(event: &Event) -> String {
 }
 
 impl QueryPort for ApiService {
-    fn account_snapshot(&self) -> Option<AccountSnapshot> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .snapshot
-            .clone()
+    fn account_snapshot(&self) -> Result<Option<AccountSnapshot>, String> {
+        Ok(lock_state(&self.state)?.snapshot.clone())
     }
 
-    fn account_orders(&self) -> Vec<qx_protocol::OrderSnapshot> {
-        self.account_snapshot()
-            .map(|snapshot| snapshot.orders.into_values().collect())
-            .unwrap_or_default()
+    fn account_orders(&self) -> Result<Vec<qx_protocol::OrderSnapshot>, String> {
+        Ok(self
+            .account_snapshot()?
+            .map_or_else(Vec::new, |snapshot| snapshot.orders.into_values().collect()))
     }
 
-    fn account_positions(&self) -> Vec<qx_protocol::PositionSnapshot> {
-        self.account_snapshot()
-            .map(|snapshot| snapshot.positions.into_values().collect())
-            .unwrap_or_default()
+    fn account_positions(&self) -> Result<Vec<qx_protocol::PositionSnapshot>, String> {
+        Ok(self.account_snapshot()?.map_or_else(Vec::new, |snapshot| {
+            snapshot.positions.into_values().collect()
+        }))
     }
 
-    fn account_cash(&self) -> BTreeMap<String, i128> {
-        self.account_snapshot()
-            .map(|snapshot| snapshot.cash_raw)
-            .unwrap_or_default()
+    fn account_cash(&self) -> Result<BTreeMap<String, i128>, String> {
+        Ok(self
+            .account_snapshot()?
+            .map_or_else(BTreeMap::new, |snapshot| snapshot.cash_raw))
     }
 
     fn control_audit(&self) -> Result<Vec<AuditRecord>, String> {
@@ -2160,34 +2168,24 @@ impl QueryPort for ApiService {
         self.control_plane_live().map(|plane| plane.retirement())
     }
 
-    fn job_runs(&self) -> Vec<JobRun> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .job_runs
-            .clone()
+    fn job_runs(&self) -> Result<Vec<JobRun>, String> {
+        Ok(lock_state(&self.state)?.job_runs.clone())
     }
 
-    fn ledger_entries(&self) -> Vec<LedgerEntry> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
-            .ledger_entries
-            .clone()
+    fn ledger_entries(&self) -> Result<Vec<LedgerEntry>, String> {
+        Ok(lock_state(&self.state)?.ledger_entries.clone())
     }
 
-    fn reconcile_reports(&self) -> Vec<ReconcileReportSnapshot> {
-        self.state
-            .lock()
-            .expect("api state mutex poisoned")
+    fn reconcile_reports(&self) -> Result<Vec<ReconcileReportSnapshot>, String> {
+        Ok(lock_state(&self.state)?
             .reconcile_reports
             .values()
             .cloned()
-            .collect()
+            .collect())
     }
 }
 
-fn error_json(message: &str) -> String {
+pub(crate) fn error_json(message: &str) -> String {
     format!("{{\"error\":{}}}", json_string(message))
 }
 
@@ -2428,12 +2426,12 @@ mod tests {
             service.handle("GET", "/reconcile/reports", "", 7).status,
             200
         );
-        assert_eq!(service.query_port().account_cash()["USDT"], 123);
-        assert_eq!(service.query_port().account_orders().len(), 1);
-        assert_eq!(service.query_port().account_positions().len(), 1);
-        assert_eq!(service.query_port().job_runs().len(), 1);
-        assert_eq!(service.query_port().ledger_entries().len(), 1);
-        assert_eq!(service.query_port().reconcile_reports().len(), 1);
+        assert_eq!(service.query_port().account_cash().unwrap()["USDT"], 123);
+        assert_eq!(service.query_port().account_orders().unwrap().len(), 1);
+        assert_eq!(service.query_port().account_positions().unwrap().len(), 1);
+        assert_eq!(service.query_port().job_runs().unwrap().len(), 1);
+        assert_eq!(service.query_port().ledger_entries().unwrap().len(), 1);
+        assert_eq!(service.query_port().reconcile_reports().unwrap().len(), 1);
         assert!(service.query_port().control_audit().is_ok());
         assert!(service.query_port().control_retirement().is_ok());
     }

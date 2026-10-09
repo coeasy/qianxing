@@ -1,5 +1,128 @@
 # Changelog
 
+### V13 R29（2026-10-09 续）· 诊断债偿还（棘轮下探 100 → 55）
+
+承接 R28 把诊断公共组件面钉成的「写下来的决定 + 有上界的欠账」，本轮开始偿还这笔债，并证明棘轮确实只降不升（不是躺着不动的允许清单）。
+
+- **`cli.rs` 整段错误/诊断输出收到 `[qx-cli · CLI]` 标签下（45 处）**：outbox/event-consumer/DLQ 中继失败、init/doctor/config 入口失败、回测各子命令失败、supervise/scheduler/各 worker 启动失败、binance/probe/submit 失败等内部错误报告统一带组件前缀，运维可按组件过滤。这些站点的 CLI 用例只断言退出码与 stderr 关键词、不逐字断言文案，加前缀零风险。
+- **门禁 `UNLABELED_DIAGNOSTIC_CEILING` 从 100 下探到 55**（`process_diagnostics_check` 三颗仍全绿：`qx-cli` 实测 55 ≯ 55）。`_diagnostic_site_census()` 实测：`qx-cli` 未带标签站点 **100 → 55**。
+- **故意留在债里的（逐字被测试断言，迁了会红）**：`main.rs` 的 `rejected`/`acked`（`process_recovery.rs` 的 `assert_eq!(stale, "rejected")` / `assert_eq!(acked, "acked")` 逐字匹配）、若干 JSON 直出站点（`config.to_json()` / `plan canonical_json` / `data_validate` / `report` 的 `println!("{}", …)`）。
+- **验证**：`cargo test -p qx-cli --offline` **453 passed / 0 failed**（cli.rs 改动零回归）；反向变异——把上界临时改 55 → 54，门禁在 `只降不升` 那颗当场打红（越界 `{'qx-cli': 55}` / 登记 `{'qx-cli': 54}`），还原后复绿。
+- 计划文档 `docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md` 新增 **§18.6** 记录本轮；§18.4 的欠账读数同步更新为 55。`maturity/capabilities.yaml` 的 `process_diagnostics_have_no_framework_single_source` 限制项同口径更新。门禁仍 **935 全绿**，`GATE_CHECK_FLOOR` 882。
+
+### V13 R28（2026-10-09）· 全量验收与深度改进（多账户并行隔离、CI 特性全关腿、诊断面棘轮）
+
+**口径**：承接用户对 `docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md` 的八问——「是否已按方案全部修复 / 全部优化改进 /
+主体链路是否全部贯通 / 多种运行方式是否全部可行 / 多账户·多资产·多策略·多运行模式同时并行是否可行 / 易用性与快速执行是否到位 /
+日志与报错等公共组件是否统一封装 / 继续深度改进」。逐问的答复与实测证据写进该文档新增的 **§18**；本条目只记**改了什么**。
+每一处都按仓库纪律配齐**门禁牙齿 + 反向变异验证 + 行为用例**，`tools/check_architecture.py` 从 **922 → 935** 条判据
+（`GATE_CHECK_FLOOR` 869 → **882**），全绿。
+
+- **① 多账户 / 多 Venue 并行运行的隔离，从「名字拼得对」变成「事实不串账」**：此前这条不变量只有命名层用例
+  （`account_event_log_name` 拼得对）与读侧去重用例（同一账户不分裂），**没有一条用例真把两个账户的 worker 各跑一遍再翻开
+  两本账看有没有串账**——命名对不等于事实不串。新增 `crates/qx-cli/src/tests/parallel_run_isolation.rs` 四条行为用例：
+  (a) 两个账户在同一 venue 上各跑一次**真实** `run_paper_execution_worker`，两本账互查「对方账户现金为 0」且不落
+  `paper-events.json`；(b) 一条 `SubmitOrder` 命令只按 `order.account_id == worker.account_id` 分派——先跑第二账户的 worker
+  拿到空订单簿，再跑主账户才成交；(c) 每个配置的账户各拿到自己那份投影源；(d) **真并发**：`Barrier::new(2)` 卡住两条线程，
+  同时跑两个账户的真实执行 worker，两本账仍各自独立。新判据 `parallel_run_isolation_check` **七颗**（用例在册 / 第二账户日志名
+  从唯一构造点 `account_event_log_name` 派生且用例里无字面量日志名 / 写侧两账户各跑一次真实入口 / 写侧跨账户零现金互查 /
+  并发用例真开两条线程 + `Barrier::new(2)` / `paper_submit_matches_worker` 拿订单账户比对 worker 声明账户 /
+  `seed_paper_initial_cash` 按 worker 声明的账户入账而非硬编码 `main`）；8 处变异全红，逐处字节还原。
+- **② CI 补上「特性全关」的另一半腿**（收口 §17.11 登记的覆盖面缺口）：`feature-matrix` 只 lint「特性开着」的组合，
+  `#[cfg(not(feature = "sqlite"))]` 那半边在 workspace 构建里从不被 clippy 看到（`qx-cli` 的 `default = ["sqlite"]` 经转发
+  把 `qx-runtime/sqlite` 一并打开）。`.github/workflows/ci.yml` 新增 `feature-off` job，按
+  `--no-default-features --all-targets` 对四个声明了非默认特性的 crate 跑 clippy（带 `-D warnings`）与 check。
+  `ci_feature_matrix_check` 从 4 颗扩到 **6 颗**：`feature-off` 腿在盘且 clippy 步骤**单独**带齐三个旗标（变异 ② 实测踩到——
+  原先在整段 job 文本里搜旗标，旁边 `cargo check` 步骤的同名旗标会替它满足）、有 `cfg(not(feature = …))` 分支的 crate
+  都在腿上、腿点名的 `-p` 集合恰好等于声明了非默认特性的每个 workspace crate；5 处变异全红。**这条腿当场见效**：
+  它抓出了本轮新写的 `parallel_run_isolation.rs` 里一处 `needless_borrows_for_generic_args`。
+- **③ 公共组件面：报错已统一封装，诊断这一格落成「写下来的决定 + 有上界的欠账」**：`qx-core::error` 的 `ErrorCode` 闭集 /
+  `Retryability` / `ErrorContract` / `QxError::contract()` 唯一映射表已由 `error_code_contract_check` 八颗钉住，不需要动。
+  缺的是**日志**：全仓 `crates/*/Cargo.toml` 没有任何 `tracing` / `log` / `env_logger` / `slog` / `fern` / `log4rs` 依赖，
+  245 处诊断（`_production_sources()` 口径）直接走 `println!` / `eprintln!`，靠一条**非正式**的 `[组件 · 子域]` 前缀约定；
+  `qx-api`（8 处）与 `qx-orchestrator`（2 处）已全量带标签，`qx-cli` 还有 **100** 处未带。本轮**刻意不**一次迁移完 100 处
+  （那是一次横跨 45 个 CLI 入口的纯文案改动，收益只有过滤一致性，代价是 100 处 diff 与随之而来的用例文案漂移），
+  改为新增 `process_diagnostics_check` **三颗**把它钉成不可回退的欠账：① 一旦引入诊断框架，未带标签站点必须为 0
+  （半迁移会在既有约定之外多出**第三种**约定）；② 未带标签站点数只降不升（`UNLABELED_DIAGNOSTIC_CEILING` 棘轮，
+  表外 crate 一律要求 0）；③ 棘轮表是**活名册**（归零的 crate 必须从表里删掉、新增未标签站点的 crate 必须登记）。
+  4 处变异全红。同轮把这条决定登记进 `maturity/capabilities.yaml`（`storage_consistency_contract` 下的
+  `process_diagnostics_have_no_framework_single_source`，与该块既有的进程日志保留策略、写侧超时文案两条 limitation 同族）。
+- **文档面**：方案文档新增 §18（八问逐条回答 + 三件落地 + 主链/运行方式实测证据表 + 仍未关闭清单 + 本轮读数），
+  附录 B/C 与收尾注记按 2026-10-09 现状回写；同时**修正本文件与方案文档里能力块计数的一处口误**——
+  此前写作「27 条能力块」，实测是 **25 条**（`maturity/capabilities.yaml` 的 `capabilities:` 段下 25 个两格条目，
+  与附录 C 表格行数、§3.13 的「3 个 profile + 25 条能力」逐一对上）。
+
+**本轮实测读数**：`tools/check_architecture.py` **935 项 PASS / 0 FAIL / 150 个 `*_check()`**；
+`cargo test --workspace --offline` **exit 0 / 1227 passed / 0 failed / 1 ignored（122 个 target）**；`cargo test -p qx-cli --offline` **453 passed / 0 failed**；
+`cargo clippy --workspace --all-targets -- -D warnings` **0 告警**；`--no-default-features --all-targets` 四条腿全绿；
+反向变异 **17 枪全红**（并行隔离 8 + CI 腿 5 + 诊断面 4），逐枪字节还原。三条主链与运行方式现跑证据见方案文档 §18.3。
+
+### V13 R27（2026-10-09）· 架构梳理稿的 P0–P2 改进项全量落地（写面稳态成本、保留策略、锁中毒、机读快照）
+
+**口径**：承接用户「`docs/牵星qianxing_架构梳理与缺点分析.md` 文档梳理出来的改进项，全面优化改进存在的问题」，
+按该文档 §7 的 P0–P2 优先级表逐条落地。每一处都按仓库纪律配齐**门禁牙齿 + 反向变异验证 + 行为用例**，
+`tools/check_architecture.py` 从 **895 → 922** 条判据（`GATE_CHECK_FLOOR` 843 → **869**），全绿。
+
+- **P0-1 账户级金额字段接真实生产者**（此前 `unrealized_pnl_raw` / `realized_pnl_raw` 恒发布 `null`）：
+  `Ledger::realized_pnl_for` / `Ledger::unrealized_pnl_for`（`crates/qx-core/src/ledger/query.rs`）成为两个算点，
+  `qx-cli` 的账户快照投影接上它们。缺标记价即 `None`（不是 0）、累计全走 `checked_add`——`margin_raw` /
+  `frozen_raw` / `funding_raw` 三格**没有生产者**（保证金要保证金模型、资金费要资金费台账），按零读者纪律
+  如实保留在 `SNAPSHOT_UNCOMPUTED_FIELDS` 并由 `snapshot_money_honesty_check` 钉住。四处口径同步改口：
+  `schemas/account-snapshot-v1.json` 的 description、`maturity/capabilities.yaml` 的两条 limitation 删除、
+  `deploy/README.md` 的「有算点」分组、`api_snapshot_money_fields.rs` 的逐字段点名。新判据
+  `account_pnl_producer_check` 三颗；5 处变异全红。
+- **P0-2(a) 写面稳态追加不再整份拷贝状态**：`LiveEventPipeline::ingest_once` /
+  `register_order_with_correlation_once` 原先每次追加都先 `self.clone()` 整份状态（O(日志长度)）。
+  现在拆成「薄包装（失败即回滚）+ `*_commit`（就地提交）」，回滚走 `rebuild_from_store(true)`——
+  store 只在 `persist` 成功时才写，所以失败时它仍是旧账本，重放即回滚。`force` 形参是必须的：
+  `append_at_engine` 会在 `append_checked` 之前就 `alloc_seq` 推过 `next_seq`，而 `events` 一条没变，
+  常规重建的"日志逐条相等就跳过"短路会让这一格漏回滚（这条正是变异 ③ 抓出来的）。四个方法从顶格文件
+  `pipeline.rs` 切进新子模块 `crates/qx-runtime/src/pipeline/commit.rs`（同 crate inherent impl，子模块可见
+  父模块私有项），`pipeline.rs` **2480 → 2160 行**，顺带把文档 §7 的 P3「大文件拆分顺路做」也做掉。
+  新判据 `pipeline_commit_rollback_check` 四颗；新行为用例
+  `failed_ingest_rolls_back_the_appended_fact_and_the_seq_cursor`（未知订单的 `Accepted` 在**追加之后**才失败，
+  断事件数与 `next_seq` 都收回、且回滚后仍可继续）；8 处变异全红。`seen_fills` 台账 census 跟着写面搬家。
+- **P0-2(b) EventLog 的保留/归档策略从「没有策略」改成「写下来的决定」**：这本日志是账簿与全部内存索引的
+  **重放源**，所以策略是①**册内保留被禁止**（`EventLog` 公开面不提供也不得新增任何截断/淘汰/压缩入口——
+  活日志变短会让账簿重放与 `refresh_latest` 的前缀校验同时失去参照物）；②**轮转是运维杠杆**（换一本账靠换
+  `log_name`，旧日志原样留着）；③**归档粒度是封段**（分段后端只有尾段可增长、满段永远不可变，段清单带摘要
+  校验）。正文写在写面模块文档（`pipeline.rs`），`EventLog` 的类型文档留一行指针（`sourcing.rs` 顶格在行数
+  棘轮上，加行会红）。新判据 `event_log_retention_policy_check` 三颗；登记面两条 limitation 的旧读数
+  （"`ingest_once` 每次追加仍先 `self.clone()`"）按"部分收敛"改口；8 处变异全红。
+- **P1-5 名义额规则缺规格 fail-closed**：`legacy_spot_spec` 删净，`MaxNotionalRule` 体点名缺规格消息且不再
+  合成临时规格，`RiskGate::check_with_spec` 在盘且两条回测路径都传规格。新判据 `risk_spec_fail_closed_check`
+  六颗；8 处变异全红。**收口时才发现 parity 面被这次改动打红**（`cargo test --workspace` 里
+  `contract-tests/tests/risk_parity.rs` 5 条挂 4 条）：三入口一致性用例的 (c) 腿原先走**无规格**的
+  `check_with_price`，fail-closed 之后它把"缺规格"当成一条业务拒绝，于是 (c) 与 (a)/(b) 的 violations
+  集合再也对不上。修法不是放宽判据而是**把 (c) 腿换成带规格的 `check_with_spec`**——这正是两条回测生产
+  路径今天调用的形状，用例因此比改前更贴近生产。另加一颗判据（第 ⑥ 颗）钉住 `assert_gate_matches_canonical`
+  的**函数体**必须出现 `check_with_spec(` 与规格实参，3 处变异全红（含"只在注释里写锚点"那一处，证明
+  判据读代码不读散文）。reduce-only 用例同时补一条反向断言：**无规格入口只能多报"缺规格"，绝不能少报
+  reduce-only 那条**——fail-closed 不得波及与规格无关的不变式。
+- **P2-6 门禁读数改由机读快照承载**：`--snapshot` 现在写两份——`maturity/line_budgets.yaml`（行数棘轮）与
+  `maturity/gate_snapshot.json`（条数 / 地板 / label 名册摘要），收尾一条判据核「本轮实测 == 快照」。
+  README 两处写死的条数与地板改成引用文件名。**落地时踩到两个自己造的坑**：① `gate_snapshot_check` 在
+  "快照缺失"与"快照在盘"两条路径上各发**不同条数**的判据，于是生成轮记下 N、复核轮算成 N+1，那条相等判据
+  永远不可能成立（修法：恒发三条）；② 改了地板常量之后旧快照必然与常量不等，而那颗判据跑在写快照之前——
+  生成本身被自己挡住（修法：生成轮把盘上那份当"不在盘"处理）。新判据 `gate_snapshot_check` 三颗 + 收尾一颗；
+  4 处变异全红（其中一处走完整门禁）。
+- **P2-7 发布版本单源 + CI 显式钉解释器**：wheel 版本 == workspace 版本；`rust-core` 作业设 `QX_PYTHON`。
+  新判据 `release_version_single_source_check` 两颗。
+- **P2-8 `qx-api` HTTP 路径上的 `.expect(` 改成显式 503**：19 处 `api state mutex poisoned` 全部走新的
+  `crates/qx-api/src/state_lock.rs`（取锁收成可失败入口 `lock_state`，读面错误收口 `read_error_response`
+  把中毒判成 **503**、其余 400），`QueryPort` 九个读法一并改回 `Result`。新判据 `api_lock_fail_closed_check`
+  五颗；新用例 `crates/qx-api/tests/api_lock_fail_closed.rs`（真中毒 + 13 条读面断言 503 + 对照组）；
+  5 处变异全红。
+- **P1-3 / P1-4 复核结论：已在册，不重复实现**。权益 8 入口收敛成 `ValuationContext`/`ValuationResult`
+  与 `qx-execution::RiskVerdict` 改名都是 V13 R23 已落地的（分别由 `valuation_single_source_check` 与
+  源码注释点名 `qx_risk::RiskDecision` 守着）；`python/qianxing_ashare` 与 Rust 规则的跨语言对照已由
+  `ashare_cross_language_contract_check`（14 颗）与三份夹具承载。按「不要图省事重做」处理，只做复核。
+- **行数棘轮**：`--snapshot` 重生成 `maturity/line_budgets.yaml`，除本轮真实下降的
+  `pipeline.rs`（2480 → 2160）外，还同步了几处**非本轮**的既有下降（`qx-scheduler/src/lib.rs` 1560 → 1464、
+  `ccxt.rs` 1163 → 1160、`qx-api/src/lib.rs` 2969 → 2967、`event_pipeline.rs` 798 → 787、
+  `strategy_host.rs` 915 → 908、`api_snapshot_money_fields.rs` 518 → 517），并移除了已不再超 500 行的
+  `crates/qx-cli/src/config_commands.rs: 539`。棘轮只降不升，记录实际值是正确的收紧方向。
+
 ### V13 R26（2026-10-09）· 文档面产品化：README 重订、使用文档口径重钉、七份规划稿归档
 
 **口径**：承接用户「更新 readme 说明文档，向产品说明文档一样，同时更新项目的使用文档，删掉旧版本无效的历史

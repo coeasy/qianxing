@@ -86,10 +86,8 @@ impl RiskContext {
     }
 }
 
-/// 旧 `RiskGate` 调用形状到规范风控上下文的转换。
-///
-/// 兼容入口只携带持仓快照和参考价，因此构造出的上下文没有产品规格与账户限额；
-/// reduce-only 不变式与静态规则链在这种上下文下的语义与迁移前一致。
+/// 旧 `RiskGate` 调用形状到规范风控上下文的转换：只带持仓快照与参考价，
+/// 因此上下文没有产品规格与账户限额；reduce-only 不变式与静态规则链语义与迁移前一致。
 // deprecated compat: 新代码请构造 `qx_risk::OrderRiskContext` 并调用 `RuleSet::evaluate`。
 fn legacy_gate_context(
     position: &OrderRiskPosition,
@@ -104,12 +102,9 @@ fn legacy_gate_context(
 
 /// 风控门禁。**不短路**：收集全部拒绝原因，策略需要知道所有问题。
 //
-// deprecated compat: 规则实现已上收到 `qx-risk::RuleSet`。本类型仅保留旧
-// `(Order, OrderRiskPosition)` 调用形状。构造必须显式命名规则集
-// （[`RiskGate::from_rule_set`] 或 [`RiskGate::conservative_default`]），
-// 不再提供零规则即放行的 `new()`/`Default`（V10 §4.5：静默的宽松门禁就是双轨）。
-// 生产路径请改为构造 `qx_risk::OrderRiskContext` 并调用
-// `qx_risk::RiskEngine::evaluate_order_with_rules` 传入配置化 `RuleSet`。
+// deprecated compat: 规则实现已上收到 `qx-risk::RuleSet`，本类型只保留旧
+// `(Order, OrderRiskPosition)` 调用形状；构造必须显式命名规则集（[`RiskGate::from_rule_set`] /
+// [`RiskGate::conservative_default`]），不再提供零规则即放行的 `new()`/`Default`（V10 §4.5）。
 pub struct RiskGate {
     rule_set: RuleSet,
 }
@@ -147,9 +142,21 @@ impl RiskGate {
         pos: &OrderRiskPosition,
         reference_price: Option<Price>,
     ) -> QxResult<()> {
-        let decision = self
-            .rule_set
-            .evaluate_rules_only(&legacy_gate_context(pos, reference_price), o);
+        self.check_with_spec(o, pos, reference_price, None)
+    }
+
+    /// 带产品规格的判定入口（V13 R26）：`MaxNotionalRule` 缺规格即 fail-closed，
+    /// 配置了名义额上限的调用方必须走这里传真实规格；`check_with_price` 传 `None`。
+    pub fn check_with_spec(
+        &self,
+        o: &Order,
+        pos: &OrderRiskPosition,
+        reference_price: Option<Price>,
+        instrument_spec: Option<&TradingInstrumentSpec>,
+    ) -> QxResult<()> {
+        let mut context = legacy_gate_context(pos, reference_price);
+        context.instrument_spec = instrument_spec.cloned();
+        let decision = self.rule_set.evaluate_rules_only(&context, o);
         if decision.allowed {
             Ok(())
         } else {

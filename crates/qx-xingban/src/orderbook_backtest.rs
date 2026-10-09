@@ -630,9 +630,12 @@ impl OrderBookBacktestEngine {
                 } else {
                     OrderRiskPosition::new(one_way_qty, 0).with_hedge_legs(long_qty, short_qty)
                 };
-                if let Err(error) =
-                    risk.check_with_price(&order, &position_snapshot, reference_price)
-                {
+                if let Err(error) = risk.check_with_spec(
+                    &order,
+                    &position_snapshot,
+                    reference_price,
+                    instrument_spec.as_ref(),
+                ) {
                     append_event(
                         &mut log,
                         snapshot.ts,

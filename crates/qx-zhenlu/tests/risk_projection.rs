@@ -163,6 +163,9 @@ fn max_notional_rule_uses_projected_exposure() {
     };
     let context = OrderRiskContext {
         reference_price: Some(Price::from_raw(100 * SCALE)),
+        // V13 R26：名义额规则缺规格即 fail-closed，不再合成临时现货规格，
+        // 因此这里必须给出真实产品规格（不再依赖 `..default()` 的空规格）。
+        instrument_spec: Some(perpetual_spec()),
         position: OrderRiskPosition {
             net_qty: 2 * SCALE,
             gross_notional: 200 * SCALE,
@@ -188,17 +191,21 @@ fn risk_gate_wrapper_delegates_to_rule_set() {
         max_notional: 150 * SCALE,
     }));
     let position = OrderRiskPosition::new(2 * SCALE, 200 * SCALE);
-    gate.check_with_price(
+    let spec = perpetual_spec();
+    // V13 R26：配置了名义额上限就必须走带规格的入口，缺规格会被 fail-closed 拒绝。
+    gate.check_with_spec(
         &order(Side::Sell, SCALE, false),
         &position,
         Some(Price::from_raw(100 * SCALE)),
+        Some(&spec),
     )
     .expect("RiskGate wrapper must agree with RuleSet");
     assert!(gate
-        .check_with_price(
+        .check_with_spec(
             &order(Side::Buy, 2 * SCALE, false),
             &position,
             Some(Price::from_raw(100 * SCALE)),
+            Some(&spec),
         )
         .is_err());
 }

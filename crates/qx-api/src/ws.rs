@@ -152,7 +152,10 @@ impl ApiService {
                 error_json(&format!("{path} 不接受查询参数 {name}")),
             ));
         }
-        let state = self.state.lock().expect("api state mutex poisoned");
+        let state = match lock_state(&self.state) {
+            Ok(state) => state,
+            Err(error) => return Err(ApiResponse::json(503, error_json(&error))),
+        };
         if let Some(key) = &key {
             // 与七条 HTTP 读面同一口径：键指向的投影不在这份部署里就是 404，
             // 不能用"空事件流"冒充"这个账户什么都没发生"（V13 R2 #191）。

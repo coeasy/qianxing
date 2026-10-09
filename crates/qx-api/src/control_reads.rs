@@ -23,14 +23,9 @@ impl ApiService {
     pub(crate) fn control_plane_live(&self) -> Result<ControlPlane, String> {
         let plane = match &self.control_plane_provider {
             Some(provider) => provider()?,
-            None => self
-                .state
-                .lock()
-                .expect("api state mutex poisoned")
-                .control
-                .clone(),
+            None => lock_state(&self.state)?.control.clone(),
         };
-        self.state.lock().expect("api state mutex poisoned").control = plane.clone();
+        lock_state(&self.state)?.control = plane.clone();
         Ok(plane)
     }
 }

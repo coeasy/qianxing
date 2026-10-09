@@ -7,7 +7,7 @@ schema_version: 1
 kind: backtest-acceptance
 outcome: passed
 generated_by: tools/backtest_acceptance.py
-generated_at_unix: 1791446825
+generated_at_unix: 1791555027
 binary: qx-cli.exe
 credentials_required: false
 external_venues: none
@@ -18,10 +18,10 @@ independent_dirs: result_hash_and_artifact_contents_equal
 independent_runs: 2
 result_hash: 26fdd6b52d020700
 data_fingerprint: dataset-bundle:8bf50b57f8204ab9
-config_fingerprint: c2fbf5ee6385aeff38ccf95b1c912bb590d549bd54ce604e85dcd4c38b0306cc
+config_fingerprint: 974fb334c64d59f7f829e5b8256ae7096981d6f58d9cc03f3727a7bcd194c7f0
 replay_verdict: verified
 artifact_contents:
   equity: 6856055f14a87f482c4d9f8dc3507a4fd6732d08243b77910df6c384028eedde
   fills: 9f8f78cdb8c5fda870b65f4700c98ca68cc59b6953a306e72c97fe2852a0afa1
-  run_manifest: 0b2804995571b6ed22b58d18da2d57f7285d68006accfd520e01d191a7bfc727
-  summary: d8acefdc898ecc1f421f6eb10d4f0976884ca631b1c42424e7d9fb8fb2495513
+  run_manifest: 2e788faf9810b0fa586ad2d26ca00c0331edb9302bebd89c33acc8b862ccc30c
+  summary: 2e857b8dbba091aed19f2a5eb7ff354069666e886a85176604ec557c2ffb5f46

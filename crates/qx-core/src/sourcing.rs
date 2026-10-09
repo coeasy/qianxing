@@ -58,7 +58,7 @@ impl Fnv1a {
     }
 }
 
-/// 事件日志：append-only，不可变。
+/// 事件日志：append-only，不可变。保留/归档策略见 `qx-runtime` 的 `pipeline` 模块文档（只增长 + 按段归档）。
 #[derive(Clone, Default)]
 pub struct EventLog {
     events: Vec<Event>,

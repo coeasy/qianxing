@@ -7,9 +7,25 @@
 //!
 //! 两个子模块按职责切出去，本文件只留归约本身：
 //! [`backend_switch`] 是打开时的 EventLog 后端切换闸门，[`fact_context`] 是
-//! 事实进入日志前的元数据与归因上下文补全。
+//! 事实进入日志前的元数据与归因上下文补全，[`commit`] 是事实提交与失败回滚。
+//!
+//! # EventLog 的保留 / 归档策略（P0-2）
+//!
+//! 这本日志是账簿与全部内存索引的**重放源**，所以保留策略定成"只增长 + 按段归档"：
+//! 1. **册内保留被禁止**：`EventLog` 不提供、也不得新增任何截断 / 淘汰 / 压缩入口——把一条活
+//!    日志变短，会让账簿重放与 `refresh_latest` 的"本地这份是不是 store 的前缀"校验同时失去
+//!    参照物。日志只增长。
+//! 2. **轮转是运维杠杆**：换一本账靠换 `log_name`（新运行写新名，旧日志原样留着供审计与重放），
+//!    而不是靠删旧事实。
+//! 3. **归档粒度是封段**：分段后端把日志切成 `storage.event_log_segment_events` 大小的段，
+//!    **只有尾段可增长、满段永远不可变**（`crates/qx-storage/src/lib.rs` 的
+//!    `active_segment_can_extend` 判据），段清单带摘要校验，所以封段就是可离线归档、可事后校验
+//!    的单元。
+//!
+//! 内存投影（`Ledger.entries` / `Oms.orders` / `ApiState.events`）的上界跟着这本日志，同一策略。
 
 mod backend_switch;
+mod commit;
 mod fact_context;
 
 use fact_context::{enrich_runtime_event_context, runtime_event_metadata};
@@ -766,60 +782,6 @@ impl LiveEventPipeline {
         ))
     }
 
-    fn register_order_with_correlation_once(
-        &mut self,
-        mut order: Order,
-        ts: u64,
-        correlation: Option<String>,
-    ) -> QxResult<u64> {
-        order.validate().map_err(QxError::BusinessViolation)?;
-        if self.oms.get(order.client_id).is_some() {
-            return Err(QxError::Invariant(format!(
-                "重复的 live client_order_id: {}",
-                order.client_id
-            )));
-        }
-        if order.status == OrderStatus::PendingSubmit {
-            order
-                .status
-                .transition(OrderStatus::Submitted)
-                .map_err(QxError::Invariant)?;
-        }
-        if order.status != OrderStatus::Submitted {
-            return Err(QxError::BusinessViolation(
-                "register_order 只接受 PendingSubmit 或 Submitted 订单".into(),
-            ));
-        }
-        let mut staged = self.clone();
-        let context = order_event_context(&order);
-        context
-            .validate_for_trading()
-            .map_err(QxError::BusinessViolation)?;
-        let event = staged.append_fact(
-            ts,
-            ts,
-            Priority::COMMAND,
-            order.client_id,
-            correlation.unwrap_or_else(|| format!("{}:order:{}", staged.log_name, order.client_id)),
-            EventFact {
-                metadata: EventMetadata {
-                    source_id: "control".into(),
-                    source_kind: "control".into(),
-                    dedup_key: format!("control:order:{}", order.client_id),
-                    context,
-                    ..EventMetadata::default()
-                },
-                kind: EventKind::OrderSubmitted {
-                    order: order.clone(),
-                },
-            },
-        )?;
-        staged.oms.insert_replayed(order)?;
-        staged.persist()?;
-        *self = staged;
-        Ok(event.seq)
-    }
-
     /// 归约一条外部事实。所有内存变更和事件日志持久化成功后才提交给调用方。
     /// 多个账户 worker 共享同一 EventLog 时，写冲突会重新载入最新事实并重放
     /// 当前输入；同一 correlation/source 只会落一次，避免重复成交或重复余额快照。
@@ -859,349 +821,6 @@ impl LiveEventPipeline {
         Err(QxError::Transient(
             "共享 EventLog 并发写入超过重试上限".into(),
         ))
-    }
-
-    fn ingest_once(&mut self, envelope: RuntimeEventEnvelope) -> QxResult<RuntimeIngestReceipt> {
-        let mut staged = self.clone();
-        let RuntimeEventEnvelope {
-            event,
-            event_ts,
-            receive_ts,
-            source_seq,
-            correlation_id,
-            mut metadata,
-        } = envelope;
-        let correlation_id = if correlation_id.trim().is_empty() {
-            format!("{}:source:{}", staged.log_name, source_seq)
-        } else {
-            correlation_id
-        };
-        if metadata.source_id.trim().is_empty() {
-            metadata.source_id =
-                runtime_event_metadata(&correlation_id, source_seq, "internal").source_id;
-        }
-        if metadata.dedup_key.trim().is_empty() {
-            metadata.dedup_key =
-                runtime_event_metadata(&correlation_id, source_seq, "internal").dedup_key;
-        }
-        if metadata.source_kind.trim().is_empty() {
-            metadata.source_kind =
-                runtime_event_metadata(&correlation_id, source_seq, "internal").source_kind;
-        }
-        if metadata.rule_version.trim().is_empty() {
-            metadata.rule_version = "runtime-v1".into();
-        }
-        enrich_runtime_event_context(&mut metadata, &event);
-        metadata.validate().map_err(QxError::BusinessViolation)?;
-
-        let semantic_replay = matches!(
-            &event,
-            RuntimeExternalEvent::Accepted { .. }
-                | RuntimeExternalEvent::Cancelled { .. }
-                | RuntimeExternalEvent::ReconcileRequired { .. }
-                | RuntimeExternalEvent::AccountCashflow { .. }
-                | RuntimeExternalEvent::FillWithSpec { .. }
-        );
-        if let Some(existing) = staged.log.events().iter().find(|event| {
-            (!metadata.dedup_key.is_empty() && event.metadata.dedup_key == metadata.dedup_key)
-                || (event.correlation_id == correlation_id
-                    && (event.source_seq == source_seq || semantic_replay))
-        }) {
-            return Ok(RuntimeIngestReceipt {
-                derived_seqs: Vec::new(),
-                engine_ts: existing.ts,
-                deduplicated: true,
-            });
-        }
-
-        let fill_for_dedup = match &event {
-            RuntimeExternalEvent::Fill { fill } => Some(fill),
-            RuntimeExternalEvent::FillWithSpec { fill, .. } => Some(fill.as_ref()),
-            _ => None,
-        };
-        if let Some(fill) = fill_for_dedup {
-            let key = fill_key(fill);
-            if staged.seen_fills.contains(&key) {
-                return Ok(RuntimeIngestReceipt {
-                    derived_seqs: Vec::new(),
-                    engine_ts: staged.last_engine_ts,
-                    deduplicated: true,
-                });
-            }
-        }
-
-        let (kind, priority) = match &event {
-            RuntimeExternalEvent::MarketQuote {
-                instrument,
-                bid,
-                ask,
-                bid_qty,
-                ask_qty,
-            } => {
-                if bid.raw() <= 0
-                    || ask.raw() <= 0
-                    || bid.raw() > ask.raw()
-                    || bid_qty.raw() <= 0
-                    || ask_qty.raw() <= 0
-                {
-                    return Err(QxError::BusinessViolation(
-                        "L1 行情 bid/ask/数量非法或买卖盘交叉".into(),
-                    ));
-                }
-                (
-                    EventKind::MarketQuote {
-                        instrument: instrument.clone(),
-                        bid: *bid,
-                        ask: *ask,
-                        bid_qty: *bid_qty,
-                        ask_qty: *ask_qty,
-                    },
-                    Priority::MARKET,
-                )
-            }
-            RuntimeExternalEvent::AccountBalanceSnapshot {
-                account_id,
-                venue_id,
-                balances,
-            } => {
-                if account_id.trim().is_empty() || venue_id.trim().is_empty() {
-                    return Err(QxError::ReconcileRequired(
-                        "账户余额快照缺少 account_id 或 venue_id".into(),
-                    ));
-                }
-                let balances = normalize_balances(balances.clone())?;
-                (
-                    EventKind::AccountBalanceSnapshot {
-                        account_id: account_id.clone(),
-                        venue_id: venue_id.clone(),
-                        balances,
-                    },
-                    Priority::FEEDBACK,
-                )
-            }
-            RuntimeExternalEvent::AccountPositionSnapshot {
-                account_id,
-                venue_id,
-                positions,
-            } => {
-                if account_id.trim().is_empty() || venue_id.trim().is_empty() {
-                    return Err(QxError::ReconcileRequired(
-                        "账户持仓快照缺少 account_id 或 venue_id".into(),
-                    ));
-                }
-                let positions = normalize_positions(positions.clone())?;
-                (
-                    EventKind::AccountPositionSnapshot {
-                        account_id: account_id.clone(),
-                        venue_id: venue_id.clone(),
-                        positions,
-                    },
-                    Priority::FEEDBACK,
-                )
-            }
-            RuntimeExternalEvent::FundingRateSnapshot { snapshot } => {
-                if snapshot.instrument.to_string().trim().is_empty()
-                    || snapshot.next_funding_timestamp_ms == Some(0)
-                {
-                    return Err(QxError::ReconcileRequired(
-                        "资金费率快照 instrument 或下一结算时间非法".into(),
-                    ));
-                }
-                (
-                    EventKind::FundingRateSnapshot {
-                        instrument: snapshot.instrument.clone(),
-                        funding_rate_bps: snapshot.funding_rate_bps,
-                        next_funding_timestamp_ms: snapshot.next_funding_timestamp_ms,
-                    },
-                    Priority::FEEDBACK,
-                )
-            }
-            RuntimeExternalEvent::AccountCashflow { cashflow } => {
-                validate_cashflow(cashflow)?;
-                (
-                    EventKind::AccountCashflow {
-                        cashflow: cashflow.clone(),
-                    },
-                    Priority::FEEDBACK,
-                )
-            }
-            RuntimeExternalEvent::Accepted {
-                client_order_id,
-                venue_order_id,
-            } => (
-                EventKind::Accepted {
-                    client_order_id: *client_order_id,
-                    venue_order_id: venue_order_id.clone(),
-                },
-                Priority::FEEDBACK,
-            ),
-            RuntimeExternalEvent::Fill { fill } => {
-                let mut fill = fill.clone();
-                staged.normalize_fill_account(&mut fill)?;
-                (EventKind::Filled { fill }, Priority::APPLY)
-            }
-            RuntimeExternalEvent::FillWithSpec { fill, .. } => {
-                let mut fill = (**fill).clone();
-                staged.normalize_fill_account(&mut fill)?;
-                (EventKind::Filled { fill }, Priority::APPLY)
-            }
-            RuntimeExternalEvent::Cancelled { client_order_id } => (
-                EventKind::Cancelled {
-                    client_order_id: *client_order_id,
-                },
-                Priority::FEEDBACK,
-            ),
-            RuntimeExternalEvent::ReconcileRequired { client_order_id } => (
-                EventKind::ReconcileRequired {
-                    client_order_id: *client_order_id,
-                },
-                Priority::FEEDBACK,
-            ),
-        };
-        let primary = staged.append_fact(
-            event_ts,
-            receive_ts,
-            priority,
-            source_seq,
-            correlation_id.clone(),
-            EventFact {
-                metadata: metadata.clone(),
-                kind,
-            },
-        )?;
-        let engine_ts = primary.ts;
-        let mut derived_seqs = Vec::new();
-
-        match event {
-            RuntimeExternalEvent::MarketQuote {
-                instrument,
-                bid: _bid,
-                ask,
-                bid_qty: _bid_qty,
-                ask_qty: _ask_qty,
-            } => {
-                staged.marks.insert(instrument, ask);
-            }
-            RuntimeExternalEvent::AccountBalanceSnapshot {
-                account_id,
-                venue_id,
-                balances,
-            } => {
-                staged
-                    .account_balances
-                    .insert((account_id, venue_id), normalize_balances(balances)?);
-            }
-            RuntimeExternalEvent::AccountPositionSnapshot {
-                account_id,
-                venue_id,
-                positions,
-            } => {
-                staged
-                    .account_positions
-                    .insert((account_id, venue_id), normalize_positions(positions)?);
-            }
-            RuntimeExternalEvent::FundingRateSnapshot { snapshot } => {
-                staged
-                    .funding_rates
-                    .insert(snapshot.instrument.clone(), snapshot);
-            }
-            RuntimeExternalEvent::AccountCashflow { cashflow } => {
-                let entry_id = staged.apply_cashflow(&cashflow, engine_ts)?;
-                let entry = staged
-                    .ledger
-                    .entries()
-                    .iter()
-                    .find(|entry| entry.id == entry_id)
-                    .cloned()
-                    .ok_or_else(|| QxError::Invariant("Cashflow Ledger entry 丢失".into()))?;
-                let derived = staged.append_at_engine(
-                    engine_ts,
-                    receive_ts,
-                    Priority::APPLY,
-                    source_seq,
-                    correlation_id.clone(),
-                    EventFact {
-                        metadata: metadata.derived(format!("ledger:{entry_id}")),
-                        kind: EventKind::LedgerApplied { entry },
-                    },
-                )?;
-                derived_seqs.push(derived.seq);
-            }
-            RuntimeExternalEvent::Accepted {
-                client_order_id, ..
-            } => {
-                staged.apply_accepted(client_order_id)?;
-            }
-            RuntimeExternalEvent::Fill { fill } => {
-                let mut fill = fill;
-                staged.normalize_fill_account(&mut fill)?;
-                staged.seen_fills.insert(fill_key(&fill));
-                let ids = staged.apply_fill(&fill)?;
-                for id in ids {
-                    let entry = staged
-                        .ledger
-                        .entries()
-                        .iter()
-                        .find(|entry| entry.id == id)
-                        .cloned()
-                        .ok_or_else(|| QxError::Invariant("Ledger entry 丢失".into()))?;
-                    let derived = staged.append_at_engine(
-                        engine_ts,
-                        receive_ts,
-                        Priority::APPLY,
-                        source_seq,
-                        correlation_id.clone(),
-                        EventFact {
-                            metadata: metadata.derived(format!("ledger:{id}")),
-                            kind: EventKind::LedgerApplied { entry },
-                        },
-                    )?;
-                    derived_seqs.push(derived.seq);
-                }
-            }
-            RuntimeExternalEvent::FillWithSpec { fill, spec } => {
-                let mut fill = *fill;
-                let spec = *spec;
-                staged.normalize_fill_account(&mut fill)?;
-                staged.seen_fills.insert(fill_key(&fill));
-                let ids = staged.apply_fill_with_spec(&fill, &spec)?;
-                for id in ids {
-                    let entry = staged
-                        .ledger
-                        .entries()
-                        .iter()
-                        .find(|entry| entry.id == id)
-                        .cloned()
-                        .ok_or_else(|| QxError::Invariant("Ledger entry 丢失".into()))?;
-                    let derived = staged.append_at_engine(
-                        engine_ts,
-                        receive_ts,
-                        Priority::APPLY,
-                        source_seq,
-                        correlation_id.clone(),
-                        EventFact {
-                            metadata: metadata.derived(format!("ledger:{id}")),
-                            kind: EventKind::LedgerApplied { entry },
-                        },
-                    )?;
-                    derived_seqs.push(derived.seq);
-                }
-            }
-            RuntimeExternalEvent::Cancelled { client_order_id } => {
-                staged.apply_cancelled(client_order_id)?;
-            }
-            RuntimeExternalEvent::ReconcileRequired { client_order_id } => {
-                staged.apply_reconcile_required(client_order_id)?;
-            }
-        }
-        staged.persist()?;
-        let receipt = RuntimeIngestReceipt {
-            derived_seqs,
-            engine_ts,
-            deduplicated: false,
-        };
-        *self = staged;
-        Ok(receipt)
     }
 
     fn rebuild_runtime_indexes(&mut self) -> QxResult<()> {
@@ -1530,16 +1149,18 @@ impl LiveEventPipeline {
             }
             None => {
                 self.metrics.rebuilds.fetch_add(1, Ordering::Relaxed);
-                self.rebuild_from_store()
+                self.rebuild_from_store(false)
             }
         }
     }
 
     /// 整份重建：读回整条日志并按事实重放全部索引。
     ///
-    /// 只在两种情况下走：本地这份不是 store 的前缀（被改写/分叉），或后端没有行级尾部读；它是
-    /// 增量路径的兜底，也是"日志在运行期间消失"这类异常的报错点。
-    fn rebuild_from_store(&mut self) -> QxResult<()> {
+    /// 三个调用场景：① 本地这份不是 store 的前缀（被改写/分叉）；② 后端没有行级尾部读——
+    /// 这两条都是增量路径的兜底（`force=false`，日志逐条相等可短路）；③ 提交失败回滚
+    /// （`force=true`，见 `pipeline::commit` 的薄包装，必须强制重放才能把 `next_seq` 一起收回）。
+    /// 它也是"日志在运行期间消失"这类异常的报错点。
+    fn rebuild_from_store(&mut self, force: bool) -> QxResult<()> {
         let latest = self
             .store
             .read_if_exists(&self.log_name)
@@ -1552,7 +1173,11 @@ impl LiveEventPipeline {
             }
             return Ok(());
         };
-        if log.events() == self.log.events() {
+        // `force=false`（常规刷新）：日志逐条相等说明本地这份就是 store 的最新前缀，无需重放。
+        // `force=true`（失败回滚）：**不许短路**——失败路径上 `append_at_engine` 可能在
+        // `append_checked` 之前就 `alloc_seq` 推过 `next_seq`，而 `events` 一条没变，
+        // 短路会让这一格漏回滚。重放会把 `next_seq` 按 max(seq)+1 重算，因此只有强制重放才精确。
+        if !force && log.events() == self.log.events() {
             return Ok(());
         }
         let ledger = ReplayVerifier::rebuild_ledger(log.events())?;
@@ -1757,6 +1382,61 @@ mod tests {
             }),
             policy: None,
         }
+    }
+
+    /// P0-2(a)：失败的 ingest 不留半截事实，也不漏掉一格 seq。
+    ///
+    /// `ingest_commit` 就地改 `self`（旧实现改的是 `self.clone()` 的副本，代价是每次追加
+    /// O(日志长度)），失败由 `pipeline::commit` 的薄包装强制重放回滚。这条用例钉住回滚真的发生：
+    /// 未知订单的 `Accepted` 在**追加事实之后**才失败（`apply_accepted` 找不到订单），若回滚没做，
+    /// EventLog 里会留下一条 Accepted 而 OMS 里没有对应订单——下次恢复重放就会撞上这条不一致。
+    #[test]
+    fn failed_ingest_rolls_back_the_appended_fact_and_the_seq_cursor() {
+        let root = temp_root("rollback");
+        let mut pipeline = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        pipeline.register_order(order(), 100).unwrap();
+        let events_before = pipeline.log().events().len();
+        let next_seq_before = pipeline.log().next_seq();
+
+        let failed = pipeline.ingest(RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::Accepted {
+                client_order_id: 999, // 本地没有这张订单
+                venue_order_id: None,
+            },
+            110,
+            110,
+            1,
+            "ack-unknown",
+        ));
+        assert!(failed.is_err(), "未知订单的 Accepted 必须被拒");
+
+        assert_eq!(
+            pipeline.log().events().len(),
+            events_before,
+            "失败的 ingest 不得在 EventLog 里留下半截事实"
+        );
+        assert_eq!(
+            pipeline.log().next_seq(),
+            next_seq_before,
+            "失败前 append_at_engine 已 alloc_seq 推过游标，回滚必须把它一起收回"
+        );
+
+        // 回滚之后系统仍可继续用：下一条事实照常落地，且重开能重放出一致的日志。
+        let receipt = pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: 7,
+                    venue_order_id: None,
+                },
+                120,
+                120,
+                2,
+                "ack-7",
+            ))
+            .unwrap();
+        assert_eq!(receipt.engine_ts, 120);
+        let reopened = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
+        assert_eq!(reopened.log().events().len(), pipeline.log().events().len());
     }
 
     #[test]

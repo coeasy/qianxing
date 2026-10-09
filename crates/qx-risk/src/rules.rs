@@ -6,11 +6,10 @@
 //! `TradingInstrumentSpec::notional` 折算，禁止在任何上层复制 `/1e9` 手算公式。
 
 use crate::{
-    OrderRiskContext, OrderRiskDecision, MAX_POSITION_NOTIONAL_MESSAGE, ORDER_RISK_RULE_SET_VERSION,
+    OrderRiskContext, OrderRiskDecision, MAX_POSITION_NOTIONAL_MESSAGE,
+    MAX_POSITION_NOTIONAL_MISSING_SPEC_MESSAGE, ORDER_RISK_RULE_SET_VERSION,
 };
-use qx_core::{
-    InstrumentId, Order, QxError, QxResult, Side, TradingInstrumentSpec, TradingProduct, SCALE,
-};
+use qx_core::{Order, QxError, QxResult, Side, SCALE};
 
 /// 单条静态风控规则。
 ///
@@ -59,20 +58,13 @@ impl RiskRule for MaxNotionalRule {
             .limit
             .or(context.reference_price)
             .ok_or_else(|| QxError::BusinessViolation("市价单缺少名义额风控参考价".into()))?;
-        let fallback_spec = if context.instrument_spec.is_some() {
-            None
-        } else {
-            // 兼容旧 `RiskGate` 无规格回测路径；仍然只走 `notional` 一份公式。
-            Some(legacy_spot_spec(
-                &order.instrument,
-                context.position.multiplier,
-            ))
-        };
-        let spec = context
-            .instrument_spec
-            .as_ref()
-            .or(fallback_spec.as_ref())
-            .ok_or_else(|| QxError::Invariant("名义额规则缺少产品规格".into()))?;
+        // fail-closed：缺产品规格时拒绝，**不再合成一份临时现货规格**（V13 R26）。
+        // 合成规格等于替交易所声明"这是 1:1 现货"，而真实乘数/合约面值可能完全不同，
+        // 名义额会静默算错；这与 `OrderRiskContext::validate_order` 在缺规格时的既有
+        // 口径（账户限额在场即拒绝）本来就不一致——现在两侧同一条纪律：缺数据即拒绝。
+        let spec = context.instrument_spec.as_ref().ok_or_else(|| {
+            QxError::BusinessViolation(MAX_POSITION_NOTIONAL_MISSING_SPEC_MESSAGE.into())
+        })?;
         let (_, projected_gross_notional) = context.project_exposure(spec, order, price)?;
         if projected_gross_notional > self.max_notional {
             return Err(QxError::BusinessViolation(
@@ -95,33 +87,6 @@ impl RiskRule for NoShortRule {
             return Err(QxError::BusinessViolation("禁止卖空".into()));
         }
         Ok(())
-    }
-}
-
-/// 旧 `RiskGate` 无规格回测路径的名义额折算：以现货 1:1（乘数写进
-/// `contract_size`）构造临时规格，仍然只走 `TradingInstrumentSpec::notional`，
-/// 不引入第二套公式。
-///
-/// TODO: 回测与 CLI 全部显式接入真实 `TradingInstrumentSpec` 后删除该兼容分支，
-/// 缺少规格时应直接按 fail-closed 拒绝。
-fn legacy_spot_spec(instrument: &InstrumentId, multiplier: i128) -> TradingInstrumentSpec {
-    let currency = instrument.symbol.clone();
-    TradingInstrumentSpec {
-        instrument: instrument.clone(),
-        product: TradingProduct::Spot,
-        base_currency: currency.clone(),
-        quote_currency: currency.clone(),
-        settlement_currency: currency,
-        contract_size: multiplier.max(1).saturating_mul(SCALE),
-        linear: false,
-        inverse: false,
-        price_tick: 1,
-        qty_step: 1,
-        min_qty: 1,
-        max_leverage: 1,
-        maintenance_margin_bps: 0,
-        valid_from: 1,
-        valid_to: None,
     }
 }
 

@@ -179,6 +179,14 @@ pub const ORDER_RISK_RULE_SET_VERSION: &str = "qx-order-risk-v1";
 /// 保证回测、Paper 和实盘三条路径的 violations 集合可直接逐条比对。
 pub const MAX_POSITION_NOTIONAL_MESSAGE: &str = "投影持仓名义额超过账户限额";
 
+/// 名义额规则缺少产品规格时的拒绝消息（fail-closed，V13 R26）。
+///
+/// `MaxNotionalRule` 此前在无 `instrument_spec` 时合成一份临时现货规格，与
+/// `OrderRiskContext::validate_order`「账户限额在场即拒绝」的口径自相矛盾。
+/// 现在两侧同一条纪律：缺规格即拒绝，绝不替交易所猜乘数/合约面值。
+pub const MAX_POSITION_NOTIONAL_MISSING_SPEC_MESSAGE: &str =
+    "名义额规则缺少 TradingInstrumentSpec，拒绝按未知规格折算";
+
 impl RiskEngine {
     /// 统一订单级入口。底层校验仍只有 `OrderRiskContext::validate_order` 一份，
     /// 本方法只负责把结果投影为跨应用层可审计的决定，避免不同执行器复制
@@ -412,5 +420,60 @@ mod tests {
         assert!(!rejected.allowed);
         assert_eq!(rejected.violations.len(), 1);
         assert!(rejected.violations[0].contains("TradingInstrumentSpec"));
+    }
+
+    /// V13 R26：名义额规则缺规格即 fail-closed，不再合成临时现货规格。
+    #[test]
+    fn max_notional_rule_fails_closed_without_a_product_spec() {
+        use super::{MaxNotionalRule, RiskRule};
+        use qx_core::{TradingInstrumentSpec, TradingProduct, SCALE};
+        let rule = MaxNotionalRule {
+            max_notional: 150 * SCALE,
+        };
+        let order = Order {
+            client_id: 1,
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(1),
+            limit: Some(Price::from_raw(100 * SCALE)),
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+        };
+        // 缺规格：拒绝，且理由点名缺的是 TradingInstrumentSpec。
+        let bare = OrderRiskContext {
+            reference_price: order.limit,
+            ..OrderRiskContext::default()
+        };
+        let error = rule.check(&bare, &order).unwrap_err();
+        assert!(
+            error.to_string().contains("TradingInstrumentSpec"),
+            "缺规格时必须 fail-closed 且点名缺什么：{error}"
+        );
+        // 给规格：走真实折算（qty * contract_size / SCALE * price / SCALE = 100 * SCALE）。
+        let with_spec = OrderRiskContext {
+            reference_price: order.limit,
+            instrument_spec: Some(TradingInstrumentSpec {
+                instrument: order.instrument.clone(),
+                product: TradingProduct::Spot,
+                base_currency: "BTC".into(),
+                quote_currency: "USDT".into(),
+                settlement_currency: "USDT".into(),
+                contract_size: SCALE,
+                linear: false,
+                inverse: false,
+                price_tick: 1,
+                qty_step: 1,
+                min_qty: 1,
+                max_leverage: 1,
+                maintenance_margin_bps: 0,
+                valid_from: 1,
+                valid_to: None,
+            }),
+            ..OrderRiskContext::default()
+        };
+        assert!(rule.check(&with_spec, &order).is_ok());
     }
 }

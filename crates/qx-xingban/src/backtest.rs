@@ -755,17 +755,16 @@ impl BacktestEngine {
                                 one_way_qty,
                                 gross_notional,
                                 // `OrderRiskPosition::multiplier` 沿用 `BacktestConfig::multiplier`
-                                // 的**普通整数**口径；SCALE 折算只发生在唯一入口
-                                // `qx_risk::legacy_spot_spec`，这里再乘一次 SCALE 会把名义额
-                                // 放大 1e9 倍（上游 `PositionSnapshot` 的定点口径不适用于
-                                // 我方 `OrderRiskPosition`）。
+                                // 的**普通整数**口径（上游 `PositionSnapshot` 的定点口径不适用），
+                                // 名义额折算只走 `TradingInstrumentSpec::notional` 一份公式。
                                 multiplier,
                             )
                             .with_hedge_legs(long_qty, short_qty);
-                            let risk_result = risk.check_with_price(
+                            let risk_result = risk.check_with_spec(
                                 &order,
                                 &risk_position,
                                 Some(Price::from_raw(reference_price)),
+                                instrument_spec.as_ref(),
                             );
                             if let Err(error) = risk_result {
                                 append_rejection(

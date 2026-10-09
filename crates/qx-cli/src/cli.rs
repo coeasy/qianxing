@@ -25,7 +25,7 @@ fn run_arguments(entry: &str, mut arguments: Vec<String>) -> Vec<String> {
 #[cfg(feature = "nats")]
 fn dispatch_outbox_relay(root: PathBuf, url: String, subject_prefix: String, limit: Option<usize>) {
     if let Err(error) = run_file_outbox_relay(&root, &url, &subject_prefix, limit.unwrap_or(100)) {
-        eprintln!("Outbox relay 失败: {error}");
+        eprintln!("[qx-cli · CLI] Outbox relay 失败: {error}");
         std::process::exit(2);
     }
 }
@@ -37,7 +37,7 @@ fn dispatch_outbox_relay(
     _subject_prefix: String,
     _limit: Option<usize>,
 ) {
-    eprintln!("outbox-relay 需要使用 --features nats 构建 qx-cli");
+    eprintln!("[qx-cli · CLI] outbox-relay 需要使用 --features nats 构建 qx-cli");
     std::process::exit(2);
 }
 
@@ -51,7 +51,7 @@ fn dispatch_outbox_relay_postgres(
     if let Err(error) =
         run_postgres_outbox_relay(&runtime, &url, &subject_prefix, limit.unwrap_or(100))
     {
-        eprintln!("PostgreSQL Outbox relay 失败: {error}");
+        eprintln!("[qx-cli · CLI] PostgreSQL Outbox relay 失败: {error}");
         std::process::exit(2);
     }
 }
@@ -63,49 +63,49 @@ fn dispatch_outbox_relay_postgres(
     _subject_prefix: String,
     _limit: Option<usize>,
 ) {
-    eprintln!("outbox-relay-postgres 需要使用 --features 'nats postgres' 构建 qx-cli");
+    eprintln!("[qx-cli · CLI] outbox-relay-postgres 需要使用 --features 'nats postgres' 构建 qx-cli");
     std::process::exit(2);
 }
 
 #[cfg(feature = "nats")]
 fn dispatch_outbox_relay_worker(path: PathBuf, worker_id: String, once: bool) {
     if let Err(error) = run_outbox_relay_worker(&path, &worker_id, once) {
-        eprintln!("Outbox relay worker 失败: {error}");
+        eprintln!("[qx-cli · CLI] Outbox relay worker 失败: {error}");
         std::process::exit(2);
     }
 }
 
 #[cfg(not(feature = "nats"))]
 fn dispatch_outbox_relay_worker(_path: PathBuf, _worker_id: String, _once: bool) {
-    eprintln!("outbox-relay-worker 需要使用 --features nats 构建 qx-cli");
+    eprintln!("[qx-cli · CLI] outbox-relay-worker 需要使用 --features nats 构建 qx-cli");
     std::process::exit(2);
 }
 
 #[cfg(feature = "nats")]
 fn dispatch_event_consumer_worker(path: PathBuf, worker_id: String, once: bool) {
     if let Err(error) = run_event_consumer_worker(&path, &worker_id, once) {
-        eprintln!("Event consumer worker 失败: {error}");
+        eprintln!("[qx-cli · CLI] Event consumer worker 失败: {error}");
         std::process::exit(2);
     }
 }
 
 #[cfg(not(feature = "nats"))]
 fn dispatch_event_consumer_worker(_path: PathBuf, _worker_id: String, _once: bool) {
-    eprintln!("event-consumer-worker 需要使用 --features nats 构建 qx-cli");
+    eprintln!("[qx-cli · CLI] event-consumer-worker 需要使用 --features nats 构建 qx-cli");
     std::process::exit(2);
 }
 
 #[cfg(feature = "nats")]
 fn dispatch_consumer_dlq_replay(runtime: PathBuf, group_id: String, event_id: String) {
     if let Err(error) = run_dead_letter_replay(&runtime, &group_id, &event_id) {
-        eprintln!("DLQ 重放失败: {error}");
+        eprintln!("[qx-cli · CLI] DLQ 重放失败: {error}");
         std::process::exit(2);
     }
 }
 
 #[cfg(not(feature = "nats"))]
 fn dispatch_consumer_dlq_replay(_runtime: PathBuf, _group_id: String, _event_id: String) {
-    eprintln!("consumer-dlq-replay 需要使用 --features nats 构建 qx-cli");
+    eprintln!("[qx-cli · CLI] consumer-dlq-replay 需要使用 --features nats 构建 qx-cli");
     std::process::exit(2);
 }
 
@@ -148,18 +148,18 @@ pub(crate) fn run() {
             profile,
         } => {
             if strategy.as_deref() == Some("") {
-                eprintln!("init --strategy= 缺少策略名称");
+                eprintln!("[qx-cli · CLI] init --strategy= 缺少策略名称");
                 std::process::exit(2);
             }
             if profile.as_deref() == Some("") {
-                eprintln!("init --profile= 缺少场景名称");
+                eprintln!("[qx-cli · CLI] init --profile= 缺少场景名称");
                 std::process::exit(2);
             }
             let output = output.unwrap_or_else(|| PathBuf::from("qianxing.runtime.json"));
             if let Err(error) =
                 run_init_with_profile(&output, force, strategy.as_deref(), profile.as_deref())
             {
-                eprintln!("初始化失败: {error}");
+                eprintln!("[qx-cli · CLI] 初始化失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -168,7 +168,7 @@ pub(crate) fn run() {
         Command::Doctor { path, json } => {
             let path = path.unwrap_or_else(default_runtime_path);
             if let Err(error) = run_doctor(&path, json) {
-                eprintln!("Doctor 失败: {error}");
+                eprintln!("[qx-cli · CLI] Doctor 失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -222,7 +222,7 @@ pub(crate) fn run() {
                 }
             };
             if let Err(error) = result {
-                eprintln!("配置命令失败: {error}");
+                eprintln!("[qx-cli · CLI] 配置命令失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -242,14 +242,14 @@ pub(crate) fn run() {
                 None => Vec::new(),
             };
             if let Err(error) = run_unified_command(&arguments) {
-                eprintln!("统一运行入口失败: {error}");
+                eprintln!("[qx-cli · CLI] 统一运行入口失败: {error}");
                 std::process::exit(2);
             }
         }
         Command::Status { path, json } => {
             let path = path.unwrap_or_else(default_runtime_path);
             if let Err(error) = run_status(&path, json) {
-                eprintln!("状态查看失败: {error}");
+                eprintln!("[qx-cli · CLI] 状态查看失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -261,19 +261,19 @@ pub(crate) fn run() {
         } => {
             let path = path.unwrap_or_else(default_runtime_path);
             if let Err(error) = run_report_with_output(&path, json, html, out.as_deref()) {
-                eprintln!("报告查看失败: {error}");
+                eprintln!("[qx-cli · CLI] 报告查看失败: {error}");
                 std::process::exit(2);
             }
         }
         Command::LiveCheck { path, json } => {
             if let Err(error) = run_live_check(&path, json) {
-                eprintln!("实盘前置检查失败: {error}");
+                eprintln!("[qx-cli · CLI] 实盘前置检查失败: {error}");
                 std::process::exit(2);
             }
         }
         Command::RuntimeCheck { path, json } => {
             if let Err(error) = run_runtime_check(&path, json) {
-                eprintln!("运行时配置校验失败: {error}");
+                eprintln!("[qx-cli · CLI] 运行时配置校验失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -288,7 +288,7 @@ pub(crate) fn run() {
                 let output = output
                     .unwrap_or_else(|| PathBuf::from(format!("qianxing.strategy.{name}.json")));
                 if let Err(error) = run_strategy_init(&name, &output, bars.as_deref(), force) {
-                    eprintln!("策略初始化失败: {error}");
+                    eprintln!("[qx-cli · CLI] 策略初始化失败: {error}");
                     std::process::exit(2);
                 }
             }
@@ -298,7 +298,7 @@ pub(crate) fn run() {
                 spec,
             }) => {
                 if let Err(error) = run_strategy_backtest(&runtime, &bars, spec.as_deref()) {
-                    eprintln!("策略回测失败: {error}");
+                    eprintln!("[qx-cli · CLI] 策略回测失败: {error}");
                     std::process::exit(2);
                 }
             }
@@ -313,7 +313,7 @@ pub(crate) fn run() {
                 if let Err(error) =
                     run_unified_backtest(runtime.as_deref(), frame.as_deref(), spec.as_deref())
                 {
-                    eprintln!("统一策略回测失败: {error}");
+                    eprintln!("[qx-cli · CLI] 统一策略回测失败: {error}");
                     std::process::exit(2);
                 }
             }
@@ -332,7 +332,7 @@ pub(crate) fn run() {
                     quantity.unwrap_or(1),
                     config.as_deref(),
                 ) {
-                    eprintln!("内置策略回测失败: {error}");
+                    eprintln!("[qx-cli · CLI] 内置策略回测失败: {error}");
                     std::process::exit(2);
                 }
             }
@@ -360,7 +360,7 @@ pub(crate) fn run() {
                     root.as_deref(),
                     config.as_deref(),
                 ) {
-                    eprintln!("多腿内置策略回测失败: {error}");
+                    eprintln!("[qx-cli · CLI] 多腿内置策略回测失败: {error}");
                     std::process::exit(2);
                 }
             }
@@ -386,7 +386,7 @@ pub(crate) fn run() {
                     quantity.unwrap_or(1),
                     config.as_deref(),
                 ) {
-                    eprintln!("CCXT 内置策略回测失败: {error}");
+                    eprintln!("[qx-cli · CLI] CCXT 内置策略回测失败: {error}");
                     std::process::exit(2);
                 }
             }
@@ -418,7 +418,7 @@ pub(crate) fn run() {
                     &root,
                     config.as_deref(),
                 ) {
-                    eprintln!("深度档位回测失败: {error}");
+                    eprintln!("[qx-cli · CLI] 深度档位回测失败: {error}");
                     std::process::exit(2);
                 }
             }
@@ -426,7 +426,7 @@ pub(crate) fn run() {
         Command::BuiltinStrategies => print_builtin_strategies(),
         Command::FastBacktest { manifest } => {
             if let Err(error) = run_fast_backtest_manifest(&manifest) {
-                eprintln!("快速批量回测失败: {error}");
+                eprintln!("[qx-cli · CLI] 快速批量回测失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -457,13 +457,13 @@ pub(crate) fn run() {
             output,
         } => {
             if let Err(error) = run_ccxt_market_spec(&config, &instrument, &output) {
-                eprintln!("CCXT market spec 下载失败: {error}");
+                eprintln!("[qx-cli · CLI] CCXT market spec 下载失败: {error}");
                 std::process::exit(2);
             }
         }
         Command::Serve { path } => {
             if let Err(error) = run_runtime_api(&path) {
-                eprintln!("运行时 API 启动失败: {error}");
+                eprintln!("[qx-cli · CLI] 运行时 API 启动失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -475,7 +475,7 @@ pub(crate) fn run() {
             allow_unmanaged_roles,
         } => {
             if let Err(failure) = run_process_supervisor(&path, allow_unmanaged_roles) {
-                eprintln!("进程监督器停止: {failure}");
+                eprintln!("[qx-cli · CLI] 进程监督器停止: {failure}");
                 match failure {
                     qx_orchestrator::SuperviseFailure::Usage(_) => std::process::exit(2),
                     // 把子进程的原始退出码原样上报：panic 的 101、OOM 的 137、干净退出的 0
@@ -496,7 +496,7 @@ pub(crate) fn run() {
             once,
         } => {
             if let Err(error) = run_scheduler_worker(&path, &worker_id, once) {
-                eprintln!("scheduler-worker 启动/运行失败: {error}");
+                eprintln!("[qx-cli · CLI] scheduler-worker 启动/运行失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -506,7 +506,7 @@ pub(crate) fn run() {
             once,
         } => {
             if let Err(error) = run_strategy_worker(&path, &worker_id, once) {
-                eprintln!("strategy-worker 启动/运行失败: {error}");
+                eprintln!("[qx-cli · CLI] strategy-worker 启动/运行失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -516,7 +516,7 @@ pub(crate) fn run() {
             once,
         } => {
             if let Err(error) = run_paper_execution_worker(&path, &worker_id, once) {
-                eprintln!("Paper Execution worker 启动/运行失败: {error}");
+                eprintln!("[qx-cli · CLI] Paper Execution worker 启动/运行失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -526,7 +526,7 @@ pub(crate) fn run() {
             once,
         } => {
             if let Err(error) = run_binance_worker(&path, &worker_id, once) {
-                eprintln!("Binance worker 启动/运行失败: {error}");
+                eprintln!("[qx-cli · CLI] Binance worker 启动/运行失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -537,7 +537,7 @@ pub(crate) fn run() {
             once,
         } => {
             if let Err(error) = run_ccxt_worker(&path, &worker_id, &ccxt_config, once) {
-                eprintln!("CCXT worker 启动/运行失败: {error}");
+                eprintln!("[qx-cli · CLI] CCXT worker 启动/运行失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -557,7 +557,7 @@ pub(crate) fn run() {
                 end_ms,
                 &output,
             ) {
-                eprintln!("CCXT OHLCV 下载失败: {error}");
+                eprintln!("[qx-cli · CLI] CCXT OHLCV 下载失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -597,7 +597,7 @@ pub(crate) fn run() {
             let mut argv = vec![String::new(), "recovery-child".to_string()];
             argv.extend(arguments);
             if let Err(error) = run_recovery_child(&argv) {
-                eprintln!("跨进程恢复子进程失败: {error}");
+                eprintln!("[qx-cli · CLI] 跨进程恢复子进程失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -609,18 +609,18 @@ pub(crate) fn run() {
                 "testnet" => true,
                 "mainnet" => false,
                 _ => {
-                    eprintln!("binance-public-probe network 必须是 testnet 或 mainnet");
+                    eprintln!("[qx-cli · CLI] binance-public-probe network 必须是 testnet 或 mainnet");
                     std::process::exit(2);
                 }
             };
             if let Err(error) = run_binance_public_probe(testnet, &instrument) {
-                eprintln!("Binance public probe 失败: {error}");
+                eprintln!("[qx-cli · CLI] Binance public probe 失败: {error}");
                 std::process::exit(2);
             }
         }
         Command::BinancePrivateProbe { path, worker_id } => {
             if let Err(error) = run_binance_private_probe(&path, &worker_id) {
-                eprintln!("Binance private probe 失败: {error}");
+                eprintln!("[qx-cli · CLI] Binance private probe 失败: {error}");
                 std::process::exit(2);
             }
         }
@@ -630,27 +630,27 @@ pub(crate) fn run() {
             command_path,
         } => {
             if let Err(error) = run_binance_submit_order(&path, &worker_id, &command_path) {
-                eprintln!("Binance SubmitOrder 执行失败: {error}");
+                eprintln!("[qx-cli · CLI] Binance SubmitOrder 执行失败: {error}");
                 std::process::exit(2);
             }
         }
         Command::PaperSubmitOrder { path, command_path } => {
             if let Err(error) = run_paper_submit_order(&path, &command_path) {
-                eprintln!("Paper SubmitOrder 执行失败: {error}");
+                eprintln!("[qx-cli · CLI] Paper SubmitOrder 执行失败: {error}");
                 std::process::exit(2);
             }
         }
         // 两条入口同源：都只跑一次本地 Paper 主链路验收，差别只在 clap 给的默认路径。
         Command::PaperE2e { path } | Command::PaperCheck { path } => {
             if let Err(error) = run_paper_pipeline_once(&path) {
-                eprintln!("Paper 主链路验收失败: {error}");
+                eprintln!("[qx-cli · CLI] Paper 主链路验收失败: {error}");
                 std::process::exit(2);
             }
         }
         Command::Reconcile { path, worker_id } => {
             if let Some(path) = path {
                 if let Err(error) = run_binance_reconcile_once(&path, worker_id.as_deref()) {
-                    eprintln!("Binance 对账失败: {error}");
+                    eprintln!("[qx-cli · CLI] Binance 对账失败: {error}");
                     std::process::exit(2);
                 }
             } else {

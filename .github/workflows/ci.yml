@@ -26,7 +26,12 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # 显式钉住解释器：`e2e_and_python_contract` 的两条 worker 契约用例在缺 QX_PYTHON 时
+      # 回落 PATH 上的 `python`，于是「Python 链在 CI 绿」可能只是碰巧有个能跑的解释器，
+      # 而不是真的跑在 CI 声明的那一版上（V13 R26）。
       - name: Workspace tests
+        env:
+          QX_PYTHON: python3
         run: cargo test --workspace
       - name: Independent deterministic semantics
         run: python3 tools/validate_core.py
@@ -131,6 +136,31 @@ jobs:
         run: cargo check -p qx-cli --no-default-features --features "${{ matrix.features }}"
       - name: Test feature build
         run: cargo test -p qx-cli --no-default-features --features "${{ matrix.features }}"
+
+  feature-off:
+    name: Feature-off lint (no backend features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: feature-off
+      # 与上面那条矩阵互补：矩阵逐组合点亮「特性打开」的分支，这里补上「特性全关」的另一半。
+      # `#[cfg(not(feature = "sqlite"))]` 那半边的代码在 workspace 构建里从不被 clippy 看到
+      # （`qx-cli` 的 `default = ["sqlite"]` 经转发把 `qx-runtime/sqlite` 一并打开），
+      # 于是那几行改坏只会在运行期才炸。§17.11 把这缺口登记为「未擅自改流水线」，
+      # V13 R28 按登记补上：本机四条腿现跑各 rc 0 / 诊断 0 行。
+      - name: Clippy with no backend features
+        run: >-
+          cargo clippy -p qx-runtime -p qx-storage -p qx-api -p qx-cli
+          --no-default-features --all-targets -- -D warnings
+      - name: Check with no backend features
+        run: >-
+          cargo check -p qx-runtime -p qx-storage -p qx-api -p qx-cli
+          --no-default-features --all-targets
 
   service-backends:
     name: Backend service contracts

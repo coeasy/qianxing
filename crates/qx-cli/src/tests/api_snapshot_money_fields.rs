@@ -7,6 +7,10 @@
 //!
 //! V11 Q68 把同一条纪律推到持仓行：读模型用 Ledger 自己拼出来的那一行同样没有
 //! 未实现盈亏与保证金来源，交易所报了零的那一行则必须把零留在原地。
+//!
+//! V13 R26 把账户级已实现/未实现盈亏接上生产者（前者取 Ledger 逐条持仓累计的已实现盈亏之和、
+//! 后者取与 `equity_raw` 同源的现货乘数尺子），于是"这一层算不出哪几格"从五格收到三格
+//! （保证金/冻结/资金费仍无来源）。正向那条事实由 `api_snapshot_pnl_fields.rs` 单独钉住。
 
 use super::*;
 
@@ -75,8 +79,11 @@ fn published_fees_are_the_sum_of_the_fills_on_the_same_snapshot() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// 这一层没有保证金簿、没有已实现盈亏口径，也没有资金费流水来源：这些字段必须**缺席**。
+/// 这一层没有保证金簿、也没有资金费流水来源：这些字段必须**缺席**。
 /// 把它们填成 0 会让读侧把"没算"当成"这个账户没有保证金、没交过费"。
+///
+/// 已实现/未实现盈亏自 V13 R26 起另有生产者，故不在本名单里——那条正向事实由
+/// `api_snapshot_pnl_fields.rs` 的用例单独钉住（门禁按本条用例体派生名单，两件事必须分居两处）。
 #[test]
 fn uncomputed_money_is_absent_rather_than_zero() {
     let root = temp_cli_case_dir("api-money-fields-absent");
@@ -89,21 +96,13 @@ fn uncomputed_money_is_absent_rather_than_zero() {
     for (name, value) in [
         ("margin_raw", snapshot.margin_raw),
         ("frozen_raw", snapshot.frozen_raw),
-        ("realized_pnl_raw", snapshot.realized_pnl_raw),
-        ("unrealized_pnl_raw", snapshot.unrealized_pnl_raw),
         ("funding_raw", snapshot.funding_raw),
     ] {
         assert_eq!(value, None, "{name} 在本层没有来源，必须报未算而不是 0");
     }
     // 线格式侧：缺席要印成 null，不能印成一个合法的整数 0。
     let wire = snapshot.to_wire_json().unwrap();
-    for name in [
-        "margin_raw",
-        "frozen_raw",
-        "realized_pnl_raw",
-        "unrealized_pnl_raw",
-        "funding_raw",
-    ] {
+    for name in ["margin_raw", "frozen_raw", "funding_raw"] {
         assert!(
             wire.contains(&format!("\"{name}\":null")),
             "{name} 未算过时线格式必须印 null: {wire}"
