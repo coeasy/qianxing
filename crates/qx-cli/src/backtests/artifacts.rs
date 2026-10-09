@@ -47,10 +47,9 @@ pub(crate) fn barframe_dataset_identity(
         bars.last().map(|bar| bar.ts).unwrap_or(1),
     )?;
     if provider_bars.len() != bars.len()
-        || !provider_bars
-            .iter()
-            .zip(&bars)
-            .all(|(ingest, market)| contract_adapters::ingest_bar_matches_market_bar(ingest, market))
+        || !provider_bars.iter().zip(&bars).all(|(ingest, market)| {
+            contract_adapters::ingest_bar_matches_market_bar(ingest, market)
+        })
     {
         return Err("qx-data Provider 与 BarFrame 列式输入不一致，拒绝开始回测".into());
     }

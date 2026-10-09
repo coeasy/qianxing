@@ -32,7 +32,9 @@ fn run(cwd: &Path, args: &[&str]) -> (i32, String) {
     let mut command = Command::new(binary());
     command.current_dir(cwd).args(args);
     for (name, _) in std::env::vars() {
-        if name.starts_with("QX_BINANCE_") || name.starts_with("QX_CCXT_") || name.starts_with("QX_OKX_")
+        if name.starts_with("QX_BINANCE_")
+            || name.starts_with("QX_CCXT_")
+            || name.starts_with("QX_OKX_")
         {
             command.env_remove(&name);
         }
@@ -65,8 +67,12 @@ fn backtest(project: &Path, root: &Path) -> Vec<PathBuf> {
         &[
             "backtest",
             &project.join("qianxing.runtime.json").to_string_lossy(),
-            &project.join("qianxing.bar-frame.example.json").to_string_lossy(),
-            &project.join("qianxing.binance.spot.spec.json").to_string_lossy(),
+            &project
+                .join("qianxing.bar-frame.example.json")
+                .to_string_lossy(),
+            &project
+                .join("qianxing.binance.spot.spec.json")
+                .to_string_lossy(),
         ],
     );
     assert_eq!(code, 0, "backtest 失败：\n{output}");

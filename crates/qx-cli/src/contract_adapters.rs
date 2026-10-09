@@ -49,18 +49,30 @@ mod tests {
     /// 正例：同一根 K 线在两个形态下逐格相等。
     #[test]
     fn same_bar_matches_across_the_two_shapes() {
-        assert!(ingest_bar_matches_market_bar(&ingest(1_000), &market(1_000)));
+        assert!(ingest_bar_matches_market_bar(
+            &ingest(1_000),
+            &market(1_000)
+        ));
     }
 
     /// 反例逐列：任何一列（含时间戳）不同都要判不等——这正是手抄映射容易漏掉的那一格。
     #[test]
     fn any_single_column_difference_is_rejected() {
-        assert!(!ingest_bar_matches_market_bar(&ingest(2_000), &market(1_000)));
+        assert!(!ingest_bar_matches_market_bar(
+            &ingest(2_000),
+            &market(1_000)
+        ));
         let mut close_drifted = ingest(1_000);
         close_drifted.close_raw = 11;
-        assert!(!ingest_bar_matches_market_bar(&close_drifted, &market(1_000)));
+        assert!(!ingest_bar_matches_market_bar(
+            &close_drifted,
+            &market(1_000)
+        ));
         let mut volume_drifted = ingest(1_000);
         volume_drifted.volume_raw = 4;
-        assert!(!ingest_bar_matches_market_bar(&volume_drifted, &market(1_000)));
+        assert!(!ingest_bar_matches_market_bar(
+            &volume_drifted,
+            &market(1_000)
+        ));
     }
 }

@@ -46,7 +46,7 @@
 - **多账户是结算边界，不是资金字段** —— 账户 ID 贯穿全链，双树风控
 - **多策略是治理，不是多线程** —— 隔离 + 净额求解 + 显式优先级 + 归因
 - **"没算过"必须和"是零"长得不一样** —— 钱字段用 `null` 表达未算、`0` 只表达算过且为零；读侧印 `absent` 而不是替交易所报一个 0
-- **示例配置不是免责声明** —— `deploy/` 顶层 52 份模板逐份被生产读法真读一遍（`crates/qx-cli/src/tests/deploy_template_coverage.rs`），照抄即坏的那三份已在 V13 R1-A6 修掉
+- **示例配置不是免责声明** —— `deploy/` 顶层 53 份模板逐份被生产读法真读一遍（`crates/qx-cli/src/tests/deploy_template_coverage.rs`），照抄即坏的那三份已在 V13 R1-A6 修掉
 
 ## 模块
 
@@ -150,7 +150,7 @@ worker 才需要 Python（见 C）。
 
 装好的是哪个构建不必靠文件哈希自证：`qx-cli version` 那一行与 `doctor` 的第一格 `build_identity`、`status --json` 与 `report --json` 里的 `runtime_version` 同出一处（`crates/qx-cli/src/build_identity.rs`），值由构建期注入的包版本、git 提交、目标三元组与构建档拼成，源码里没有硬编码的版本号；`--version` 与 `-V` 是同一条入口的两个别名，三条写法逐字相同且都退 0。
 
-装好的 exe 不用把仓库带着走。示例配置只经**一条**查找链解析（`crates/qx-cli/src/deploy_lookup.rs`，V13 第三十一遍 ①/#266，另有常驻门禁判据钉住这条链的入口只有一处定义、示例读取的报错只由一处拼装）：`QX_DEPLOY_DIR` → 可执行文件同级 `deploy/` → 再往外一层 → 构建期源码树的 `deploy/` → 当前目录的 `deploy/` → **二进制里的内置模板清单**。最后一层由 `crates/qx-cli/build.rs` 在构建期把本目录顶层那 52 份 JSON 原样快照进 exe，需要时把**整份清单**落进当前用户的临时目录（不是只落被点名的那一份——`fast-backtest` 的 manifest 里作业按同级文件名引用 runtime/bars/spec，只落一份会让这条链在下一格读取上断掉），并按清单内容签名分桶；只读入口那 7 处以 deploy 目录示例文件名为默认值的路径参数全部挂着 `parse_deploy_path`，这条挂载面本身也是常驻判据（少挂一处就报，判据没有对象时同样报，不会静默给绿），所以同名目录里的陈旧副本不可能被新二进制读到；清单为空时构建直接失败，模板缺失这件事不该跟发布物一起出门。
+装好的 exe 不用把仓库带着走。示例配置只经**一条**查找链解析（`crates/qx-cli/src/deploy_lookup.rs`，V13 第三十一遍 ①/#266，另有常驻门禁判据钉住这条链的入口只有一处定义、示例读取的报错只由一处拼装）：`QX_DEPLOY_DIR` → 可执行文件同级 `deploy/` → 再往外一层 → 构建期源码树的 `deploy/` → 当前目录的 `deploy/` → **二进制里的内置模板清单**。最后一层由 `crates/qx-cli/build.rs` 在构建期把本目录顶层那 53 份 JSON 原样快照进 exe，需要时把**整份清单**落进当前用户的临时目录（不是只落被点名的那一份——`fast-backtest` 的 manifest 里作业按同级文件名引用 runtime/bars/spec，只落一份会让这条链在下一格读取上断掉），并按清单内容签名分桶；只读入口那 7 处以 deploy 目录示例文件名为默认值的路径参数全部挂着 `parse_deploy_path`，这条挂载面本身也是常驻判据（少挂一处就报，判据没有对象时同样报，不会静默给绿），所以同名目录里的陈旧副本不可能被新二进制读到；清单为空时构建直接失败，模板缺失这件事不该跟发布物一起出门。
 
 这一格在 2026-10-02 用**第二棵源码树**实测过（`logs/s744_pass31_standalone_exe_probe.txt`、`logs/s752_pass31_standalone_fast_backtest.txt`）：把整棵工作树复制到仓库外另起一份，`cargo build` 出第二颗 exe（那棵副本里没有 `.git`，`qx-cli version` 回 `build unknown` 就是它与仓库那棵无关的自证），然后把那份副本的 `deploy/` 整目录删掉。四格候选根逐条打印为"不存在"之后，`init`（项目内 9 份）、`doctor`、`status`、裸 `backtest`，以及两条排队入口 `fast-backtest deploy/qianxing.fast-backtest.ashare.example.json` 与 `fast-backtest deploy/qianxing.fast-backtest.example.json` 全部退出码 0：A 股那条 `jobs=1 completed=1`、`result_hash=6be034a4cb0760fa`，BTC 那条 `jobs=2 completed=2`、两枚 `result_hash` 分别是 `1189853a7c12447d` 与 `bd323a37d6186dcc`；三枚哈希与同一批输入在仓库树里跑出的逐字符相同（`logs/s665_pass27_ashare_fast_after.txt`、`logs/s666_pass27_btc_fast_after.txt`、`logs/s724_pass30_release_criteria.txt`）。那一轮内置层落的是整份 52 份清单，不是被点名的那一份。两条口径要分开：**接了查找面的入口**（只读入口的默认值，加上 `fast-backtest` 的 manifest——它在读取点自己走这条链）里，只要那是"示例配置形状"的路径且当前目录没有这一份，就按上面的顺序搬走，并在 stderr 说一句 `[查找 · Lookup]`，不做静默替换；**没接这条链的入口**（`scheduler-worker` 一类精确路径）按当前目录原样解析，读不到时错误正文点名"这一份示例在别处存在: <路径>"。屏幕上那行 `config_fingerprint=` 描述的是哪一份文件，两种情形下都始终可查。
 
@@ -286,7 +286,7 @@ md5 不相等，`a77530e1…` → `1711ce0a…`），所以"wheel 内 `.pyd` ≡
 下面这段是可复制的常用链路示例，写法是在**源码仓库里**直接用 cargo 跑；已经按上面「安装 A」装好的人会
 得到同名 binary，把 `cargo run -p qx-cli -- ` 换成 `qx-cli ` 即可，参数与行为完全一致（同一份 clap 命令表）。
 参数与入口的权威来源是 `cargo run -p qx-cli -- help`——入口清单每加一条就变一次，所以这里不抄份数；
-`deploy/` 下 52 份示例配置有登记表逐名核对（`crates/qx-cli/src/tests/deploy_template_coverage.rs`），完整使用口径见
+`deploy/` 下 53 份示例配置有登记表逐名核对（`crates/qx-cli/src/tests/deploy_template_coverage.rs`），完整使用口径见
 [工业化易用性收口指南](docs/工业化易用性收口指南-V1.md)。
 
 ```bash
@@ -555,7 +555,7 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
   venue 家族判定收拢以 §9.6 为准，A 股线格式两侧对照以 §9.4 为准，除权除息锚收口以 §9.1 为准，
   三遍连通性清点与两遍构建/安装面收口以 V12 §19—§23 为准。
 
-不是从旧文档抄来的：
+下面这组读数是 **2026-10-04** 那轮在本机整跑现读的快照（不是从旧文档抄来的），不是今天的读数——今天 workspace 是 25 个成员、门禁 895 项：
 23 个 crate、`help` 印出 52 行用法、
 其中 41 个入口名（clap 命令表 40 项 + `help` 本身，门禁按集合断言三者相等）、`strategy list` 列 17 个内置策略
 （13 个单标的 + 4 个只被 `backtest multi-builtin` 接受的套利 kind）、`git ls-files deploy` 里 44 份

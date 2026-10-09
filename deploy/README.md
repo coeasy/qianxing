@@ -126,7 +126,7 @@ DatasetBundle 的非行情组件默认使用 JSON；Arrow 组件需要在 Bundle
 
 ## 模板契约面：本目录每份模板都有人真读
 
-本目录顶层的 **52 份** JSON 模板不是"给人看的示例"，而是契约的另一半：每份都在
+本目录顶层的 **53 份** JSON 模板不是"给人看的示例"，而是契约的另一半：每份都在
 `crates/qx-cli/src/tests/deploy_template_coverage.rs` 的登记表里点名了**一类生产读法**，
 用例真的调用那个读点，并把读出来的身份印进日志。跑这一族用例：
 
@@ -171,7 +171,7 @@ python tools/check_architecture.py
 `paper-check` 只把 `"deploy/…"` 拼在当前目录上 —— 同一棵树、同一个无关启动目录，前一组退 0、后一组退 2 并回
 一行 `系统找不到指定的路径`（改前实测 `logs/s734_pass31_default_path_probe.txt`）。现在只有一条链
 （`crates/qx-cli/src/deploy_lookup.rs`）：`QX_DEPLOY_DIR` → exe 同级 `deploy/` → 再往外一层 → 构建期源码树 →
-当前目录 → 二进制内置清单（本目录顶层那 52 份 JSON 由 `crates/qx-cli/build.rs` 在构建期快照进 exe，需要时把
+当前目录 → 二进制内置清单（本目录顶层那 53 份 JSON 由 `crates/qx-cli/build.rs` 在构建期快照进 exe，需要时把
 **整份清单**落进当前用户的临时目录，目录按清单内容签名分桶）。落整份而不是只落被点名的那一份：
 `fast-backtest` 的 manifest 里作业按**同级文件名**引用 runtime/bars/spec，只落一份会让这条链在下一格读取上断掉。
 

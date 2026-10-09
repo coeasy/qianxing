@@ -33,12 +33,12 @@ areas:
     status: gap
     anchor: crates/qx-api/src/transport.rs read_request_until
     case: crates/qx-api/src/transport.rs a_request_inside_the_deadline_still_reads_through_in_one_piece
-    note: 不实现 chunked。带 `Transfer-Encoding: chunked` 的请求会被读成"无正文"，正文解析随即失败——**fail closed 但报错位置在 400 而不是 411**，且客户端拿不到"我不支持这种 framing"的明确信号。
+    note: '不实现 chunked。带 `Transfer-Encoding: chunked` 的请求会被读成"无正文"，正文解析随即失败——**fail closed 但报错位置在 400 而不是 411**，且客户端拿不到"我不支持这种 framing"的明确信号。'
   - area: duplicate_content_length
     status: gap
     anchor: crates/qx-api/src/transport.rs read_request_until
     case: crates/qx-api/src/transport.rs a_request_inside_the_deadline_still_reads_through_in_one_piece
-    note: 头扫描取**第一条** Content-Length 就 break，第二条被忽略。因为响应恒为 `Connection: close`、且正文有 1 MiB 上界，构不成请求走私的经典前提；但"同一头出现两次该拒"这条规矩本仓没有。
+    note: '头扫描取**第一条** Content-Length 就 break，第二条被忽略。因为响应恒为 `Connection: close`、且正文有 1 MiB 上界，构不成请求走私的经典前提；但"同一头出现两次该拒"这条规矩本仓没有。'
   - area: request_overall_deadline
     status: covered
     anchor: crates/qx-api/src/transport.rs HTTP_REQUEST_DEADLINE
@@ -83,7 +83,7 @@ areas:
     status: by_design
     anchor: crates/qx-api/src/transport.rs write_http_response
     case: crates/qx-api/tests/accept_loop_shutdown.rs plaintext_accept_loop_serves_then_returns_on_the_stop
-    note: 每条响应恒带 `Connection: close`，刻意不做 keep-alive/流水线。运维读面是"轮询 + WS 增量"的形态，短连接够用；不做长连接就不必处理流水线乱序与半关连接的两套边界。
+    note: '每条响应恒带 `Connection: close`，刻意不做 keep-alive/流水线。运维读面是"轮询 + WS 增量"的形态，短连接够用；不做长连接就不必处理流水线乱序与半关连接的两套边界。'
   - area: tls_and_mtls
     status: covered
     anchor: crates/qx-api/src/transport.rs tls_stream

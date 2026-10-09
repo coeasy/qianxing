@@ -311,10 +311,23 @@ pub fn supervise_workers(
                 .stderr(Stdio::from(stderr))
                 .spawn()
                 .map_err(|error| format!("启动 worker {} 失败: {error}", launch.worker_id))?;
-            let stop_channel = child
-                .stdin
-                .take()
-                .ok_or_else(|| format!("启动 worker {} 后拿不到 stop channel", launch.worker_id))?;
+            // `take()` 失败要先把子进程挂进台账再返回：`Stdio::piped()` 之后这个 `Some` 是
+            // 不变式，此路径今天走不到；但上游一旦改成无管道模式，裸 `?` 就留下一个没人回收的
+            // worker 进程——`children` 还没拿到它，收尾那一处收不到。这里不就地 kill+wait：回收
+            // 只有 `stop_managed_children` 那一处实现，而它按预算轮询 `try_wait`，不是一次可以
+            // 停到天荒地老的无条件 `wait()`（V13 R25，与 V13 R1-D 那条纪律同口径）。
+            let stop_channel = match child.stdin.take() {
+                Some(stop_channel) => stop_channel,
+                None => {
+                    children.push(ManagedChild {
+                        id: launch.worker_id.clone(),
+                        child,
+                        stop_channel: None,
+                    });
+                    let detail = format!("启动 worker {} 后拿不到 stop channel", launch.worker_id);
+                    return Err(detail.into());
+                }
+            };
             println!(
                 "[监督器] started worker={} pid={}",
                 launch.worker_id,

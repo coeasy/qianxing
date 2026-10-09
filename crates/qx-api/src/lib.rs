@@ -1775,20 +1775,20 @@ qx_control_retired_audit_records_total {}\n",
             Ok(command) => command,
             Err(error) => return ApiResponse::json(400, error_json(&error.to_string())),
         };
-        let granted = match &self.policy {
-            Some(policy) => {
-                let Some(operator_id) =
-                    authenticated_operator.filter(|operator_id| !operator_id.trim().is_empty())
-                else {
-                    return ApiResponse::json(403, error_json("authenticated_operator_required"));
-                };
-                command.operator_id = operator_id.to_string();
-                match policy.permission(operator_id) {
-                    Some(permission) => permission,
-                    None => return ApiResponse::json(403, error_json("forbidden")),
-                }
+        // 身份以认证边界为准，不以「有没有配 operator 名册」为前提（缺陷形态与反例见 tests/console_operator_identity.rs）。
+        let authenticated = authenticated_operator.filter(|id| !id.trim().is_empty());
+        if let Some(operator_id) = authenticated {
+            command.operator_id = operator_id.to_string();
+        }
+        let granted = match (&self.policy, authenticated) {
+            (Some(policy), Some(operator_id)) => match policy.permission(operator_id) {
+                Some(permission) => permission,
+                None => return ApiResponse::json(403, error_json("forbidden")),
+            },
+            (Some(_), None) => {
+                return ApiResponse::json(403, error_json("authenticated_operator_required"))
             }
-            None => command.permission,
+            (None, _) => command.permission,
         };
         if let Some(submitter) = &self.control_submitter {
             let queued_command = command.clone();

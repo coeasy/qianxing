@@ -1,6 +1,75 @@
 # Changelog
 
 
+### V13 R25（2026-10-09）· 两轮复扫：字段级接线、游标口径与登记面自身的可机读性
+
+**口径**：承接用户「继续检查还有哪些逻辑存在潜在问题，主体流程全部联通，核心链路不存在断链，逻辑连贯
+不存在孤儿逻辑，不存在死循环，前后端全部贯通。至少检查 2 轮，每遍修复全部问题之后再执行下一轮」。
+本轮把**前端 ⇔ 后端**这条链从"路径级全绿"下压到**字段级**，并把二轮复扫抓到的游标口径、登记面机读性、
+死信台账增长三件事一并收口。全部加性：门禁 **853 → 895 全绿**（`[PASS]` 895 行 / `[FAIL]` 0 行 / rc 0），
+`GATE_CHECK_FLOOR` **801 → 843**，`WORKSPACE_TEST_FLOOR` **1083 → 1233**，未删任何既有判据。
+
+- **第一轮（前端字段级断链，全部修复）**：`web/console/app.js` 七格取数名册按后端线格式逐字段重订
+  （快照身份回到 `header` 而不是顶层、`PositionSnapshot` 那三列名册外的幻影键删掉、`event_seq` 回到
+  envelope）、定点金额走唯一标度出口（`RAW_DECIMALS = 9` ⇔ `qx-protocol` 的 `SCALE = 1_000_000_000`）、
+  四个时间列走唯一毫秒出口、WS 帧按 `qx-api/src/ws.rs` 那份词表分派、写面补齐 `X-QX-CSRF` 双提交并把
+  BFF 的三种拒绝如实转述、非 200 不再静默。`index.html` 三张表的列定义与 `<th>` 数逐格对齐。
+- **第一轮的两条后端真缺陷**：① `crates/qx-api/src/lib.rs` 的审计身份覆盖原先住在 `match &self.policy`
+  的 `Some(policy)` 臂里，`api.operators: {}`（出厂模板与 `--init` 的默认形状）这条路上**永远走不到**，
+  页面表单里自称的 `operator_id` 原样进审计——现以认证边界为准，并新建
+  `crates/qx-api/tests/console_operator_identity.rs` 走公开面 `ConsoleFront::handle` 做常驻反例（刻意用
+  **没有**名册的 `ApiService::new`，`src/console.rs` 里既有的用例全都配了名册，恰好是缺陷藏得最深的那一侧）；
+  ② `qx-orchestrator` 在 `spawn` 成功而 `stdin.take()` 落空时把子进程丢掉，现先挂进 `children` 台账，
+  由唯一那处 `stop_managed_children` 按预算轮询 `try_wait` 收摊。另修 `qx-core/src/clock.rs` 的 `Ts`
+  文档口径（**epoch 毫秒**，不是纳秒——当成纳秒的下游会把 2026 年渲染成 1970 年），以及
+  `qx-runtime/src/pipeline.rs` 在非 `sqlite` 特性下的 `unused_variables`（关掉默认特性的那条构建腿会在
+  依赖 crate 里冒出诊断，`-D warnings` 当场红）。
+- **第二轮（复扫新抓到的四类）**：① 页面与 `qx-api` **并存两套游标约定**——后端 `after` 是"最后看到的
+  seq"、回 `seq > after`，页面原先每追平一次就写 `seq + 1`，下一轮必然吃一发 409 `cursor_ahead`；现收成
+  一个 `noteCursor(seq)` 出口，"没有基线"用 `null` 且**不带** `after`，WS 重定基走同一个出口；② 名册里
+  留着一条**没有任何读者**的路径，而 WebSocket 通道名是第二份字面量；③ `maturity/` 的 8 份登记文件里
+  **曾有 2 份**（`capabilities.yaml`、`http_surface.yaml`）对标准 YAML 解析器是 `ScannerError`——机读面
+  只对门禁可读，对编辑器 / CI lint / 下一个工具是坏的，38 + 3 行标量加引号后**内容一字不改**（与
+  `.tmp-audit/backup_*.yaml` 逐行对照）；④ 死信台账与已处理幂等台账在三条后端上只追加、无保留期。
+- **牙齿**（全部加性）：`web_console_field_wiring_check` 新建 **三十一颗** → 二轮 **三十四颗**；
+  `capabilities_check` 三颗 → **四颗**（自带四条自证：坏形态放得进、引号/块标量/`- key: value` 豁免得了）；
+  `bounded_growth_and_reap_check` 九颗 → **十颗**；`console_front_check` 十七颗 → **十九颗**；
+  `web_console_check` 九颗 → **十一颗**；`resource_lifecycle_and_lock_reentrancy_check` **+两颗**。
+  `WORKSPACE_TEST_FLOOR` 1083 → **1233**：地板自 R12/R13 起一直停在 1083，而磁盘在册实测已到 1233——
+  12.2% 的余量可以让一整族用例消失而门禁照印全绿，正是这颗地板立起来要抓的那种失效。
+- **反向变异 35 枪全红**（KILLED 35 / COLLATERAL 0 / EQUIVALENT 0 / BAD 0，十六份被改文件逐份 sha256
+  比对回原字节）：二轮 14 枪覆盖五颗新牙齿，一轮 16 枪里有 **三支是空枪**（F01/F14/R02 的锚点住在修复前
+  的写法上，轮末字节上 `ANCHOR_BAD hits=0`——空枪不等于牙齿抓不到），重订锚点复打成 E01–E04 全红；
+  F05 那一枪其实早已打红，只是点名子串写的是常量名而判据文案是中文，订正后复打。cargo 侧 I01：摘掉服务端
+  身份覆盖 → 常驻反例红（`failed=1`），还原后同一条用例在还原字节上绿（`passed=1`）。脚本在
+  `.tmp-audit/battery_r25*.py`、`.tmp-audit/refire_r25c.py`、`.tmp-audit/mutate_identity.py`。
+- **本轮实测（收尾验证，读数全部由日志派生）**：`cargo fmt --all --check` rc 0；`cargo clippy --workspace
+  --all-targets -- -D warnings` rc 0 / **诊断 0 行**，另加两条**关掉默认特性**的腿
+  （`-p qx-runtime` / `-p qx-storage --no-default-features --all-targets`）各 rc 0 / 诊断 0 行；
+  `cargo test --workspace --no-fail-fast` **121 段 `test result:` 行、1218 passed / 0 failed / 1 ignored**；
+  `cargo test -p qx-cli --no-default-features --features sqlite` 19 段 **448 passed / 0 failed**；
+  `python -m unittest discover -s python/tests` **`Ran 68 tests / OK`**；`python tools/check_architecture.py`
+  **895 项全绿**；`git diff --check` rc 0。
+- **文档回写**（同一轮内、按现读实测）：两份主文档与 README 的门禁条数、`GATE_CHECK_FLOOR`、
+  `WORKSPACE_TEST_FLOOR`、门禁脚本规模（14,729 行 / **141** 个 `*_check()` / **814** 处 `check(...)`）、
+  能力矩阵（**3 个 profile + 25 条能力**，`implementation` / `code_tested` 各 **21**）、CI job 数（**14**）、
+  行数棘轮（**46** 份）、`deploy/` 顶层模板份数（**52 → 53**，逐处区分"今天的读数"与"那一轮的读数"）、
+  workspace 成员数（23 → **25**：24 个 `crates/qx-*` + `crates/contract-tests`，架构图与分层表同步）
+  一并回写；`crates/qx-cli/build.rs` 那句注释不再硬编份数（改由 glob 决定）。新增主文档 §17.11 记录这两轮。
+- **按实测留在册、本轮不修的三条**（写进 `maturity/capabilities.yaml` 的 limitations，不是"发现而未处置"）：
+  `idle_reply_windows_have_no_local_pacer__the_cadence_is_the_childs_cooperation`、
+  `venue_adapter_capability_and_health_surface_has_no_production_reader`、
+  `consumer_state_processed_ids_and_dead_letters_grow_without_retention`。另登记控制台**多账户作用域**
+  【设计意图，未排期】：页面四条读面都不带 `account_id`/`venue_id`，走无键分支读全局投影，按账户投影部署时
+  页面读不到那些账户，且无法区分"这个账户没账"与"没有全局投影"——现状是单 operator 单账户。
+- **诚实登记的一处环境读数**：本机 `%TEMP%` 在这一轮里对 Rust 进程不可写（`std::fs::write` 回
+  `Os { code: 5, PermissionDenied }`，同一目录 Python 写得进），三颗要写临时文件的用例因此红过；把
+  `TEMP`/`TMP` 指到仓内可写目录后同一条链 0 failed。这是**机器状态不是代码**，Linux CI 不受影响，登记在此
+  是为了下一轮不再去追这条。
+- **仍未关闭**：`qx-cli serve` 自动挂载 console；桌面 Host、多机反代 / 第三方对外暴露（M4'）；
+  Paper/sandbox/production 外部验收（M5'）。本轮不创建 tag、不触发 Release。
+
+
 ### V13 R24（2026-10-09）· 控制台易用性三件：令牌缺失自动生成 + `--init` 脚手架 + `--generate-token`
 
 **口径**：承接用户「是否可以在本地启动 web 服务？易用性是否可以继续提升？」与「没有配置

@@ -57,7 +57,10 @@ fn the_three_same_name_siblings_are_registered() {
         );
     }
     // 同名兄弟必须有桥接或写明"刻意不同层"，两者不能都没有。
-    for row in CONTRACT_MATRIX.iter().filter(|row| !row.duplicates.is_empty()) {
+    for row in CONTRACT_MATRIX
+        .iter()
+        .filter(|row| !row.duplicates.is_empty())
+    {
         assert!(
             !row.adapter.is_empty() || row.note.contains("刻意"),
             "{} 既没 adapter 也没交代刻意不同层",

@@ -94,10 +94,9 @@ pub(crate) fn run_dataset_bundle(
         // 与 `backtests/artifacts.rs` 共用同一个 adapter（`qx_core::contract::CONTRACT_MATRIX` 的
         // `market_data_bar` 行点名这一对），两处各写一份字段映射的形态在这里结束。
         if provider_bars.len() != bars.len()
-            || !provider_bars
-                .iter()
-                .zip(&bars)
-                .all(|(ingest, market)| contract_adapters::ingest_bar_matches_market_bar(ingest, market))
+            || !provider_bars.iter().zip(&bars).all(|(ingest, market)| {
+                contract_adapters::ingest_bar_matches_market_bar(ingest, market)
+            })
         {
             return Err("DatasetBundle 的 bars 与 BarFrame 列式输入不一致，拒绝登记".into());
         }

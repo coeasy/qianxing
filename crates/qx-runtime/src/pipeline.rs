@@ -301,18 +301,18 @@ impl RuntimeEventStore {
         }
     }
 
-    /// 游标增量读（P1-2）：只取 `after_seq` 之后追加的事实。
-    ///
-    /// `Ok(None)` 有两种含义，调用方都按同一件事处理（退回整份重建）：本后端没提供行级尾部读
-    /// （文件后端按 DD-3 定位降级、PostgreSQL 行式读排在 §7 M2 的下一步），或本地这份已经不是
-    /// store 的前缀（被改写/分叉）。这是**显式**回落，不是静默降级——调用方拿到 `None` 就会去
-    /// 走那条会把不一致暴露出来的整份重建。
+    /// 游标增量读（P1-2）：只取 `after_seq` 之后追加的事实。`Ok(None)` 有两种含义，调用方都按
+    /// 同一件事处理（退回整份重建）：本后端没提供行级尾部读（文件后端按 DD-3 定位降级、
+    /// PostgreSQL 行式读排在 §7 M2 的下一步），或本地这份已经不是 store 的前缀（被改写/分叉）。
+    /// 这是**显式**回落不是静默降级；默认特征（`default = []`）下三个入参都不被读，`let _` 压住它。
     fn read_since(
         &self,
         name: &str,
         after_seq: Option<u64>,
         expected_prefix: Option<(&Event, usize)>,
     ) -> Result<Option<Vec<Event>>, StorageError> {
+        #[cfg(not(feature = "sqlite"))]
+        let _ = (&name, &after_seq, &expected_prefix);
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store

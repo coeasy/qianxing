@@ -35,6 +35,11 @@
     跨源读取必须在部署配置的 <code>api.cors_allowed_origins</code> 里逐字符登记本源
     （如 <code>http://127.0.0.1:8080</code>），否则浏览器会在 CORS 处拦下——
     这不是服务端故障。API 服务用 <code>qx-cli serve &lt;runtime.json&gt;</code> 启动。
+    <strong>同源 BFF 形态（<code>qx-cli console</code>）另有两条差异</strong>：写面要按双提交带
+    <code>X-QX-CSRF</code>（那一枚 cookie 刻意不是 HttpOnly，页面读它就是为了回填请求头），
+    且 <code>Origin</code> 必须等于 <code>Host</code>；BFF 只代理 HTTP 请求，
+    <strong>不转发 WebSocket 升级</strong>，因此该形态下实时面退化为 5 秒轮询，页面会如实标成
+    「不适用」而不是「已连接」。
   </p>
 
   <main class="grid">
@@ -64,7 +69,7 @@
     <section class="card" id="card-positions">
       <h2>持仓 <span class="hint">/account/positions</span></h2>
       <div class="tablewrap"><table id="positions-table"><thead>
-        <tr><th>标的</th><th>方向</th><th>数量</th><th>成本</th><th>市值</th></tr>
+        <tr><th>标的</th><th>数量</th><th>当日量</th><th>均价</th><th>标记价</th><th>未实现盈亏</th><th>保证金</th></tr>
       </thead><tbody></tbody></table></div>
     </section>
 
@@ -112,7 +117,8 @@
         受理回 <code>202</code> 表示"收下并落了审计"，<strong>不是</strong>"已经执行"；
         执行者判定与终态退场从 <code>/control/audit</code> 回读。
         本构建里只有 <code>SubmitOrder</code> / <code>PauseStrategy</code> / <code>ResumeStrategy</code>
-        有派发者，其余类型只会停在 <code>Accepted</code>。
+        有派发者，其余类型的命令在<strong>受理那一步就被拒</strong>（<code>400</code>，理由点名"没有派发者"），
+        不会被记成 <code>Accepted</code>。
       </p>
     </section>
 
