@@ -1,6 +1,35 @@
 # Changelog
 
 
+### V13 R24（2026-10-09）· 控制台易用性三件：令牌缺失自动生成 + `--init` 脚手架 + `--generate-token`
+
+**口径**：承接用户「是否可以在本地启动 web 服务？易用性是否可以继续提升？」与「没有配置
+`QX_CONSOLE_BOOTSTRAP_TOKEN` 时自动生成并提示、已配置则按配置启动」。本轮把这条链做成一等能力，并
+**不改**安全口径：令牌仍优先来自环境变量、仍不进命令行/配置文件/日志；自动生成的只是**一次性兜底**。
+全部加性：门禁 **848 → 853 全绿**，`GATE_CHECK_FLOOR` **796 → 801**，未删任何既有判据。
+
+- **令牌兜底（`console_serve.rs`）**：`std::env::var(&console.bootstrap_token_env)` 仍是首选来源；
+  缺失或为空时 `generate_bootstrap_token()` 临时生成一枚（96 个十六进制字符），并当场打印
+  「已临时生成一次性引导令牌（进程退出即失效，重启换新）」。熵来自标准库 `RandomState`（进程内首次
+  使用时由 OS 熵源随机化）——**不引入 RNG 依赖**，与 `console.rs` 用引导令牌经 SHA-1 派生会话 id 同一取舍。
+  这枚令牌随进程生灭、不落盘，只服务本机回环控制台的首次引导，不替代运维显式配置的长期秘密。
+- **`qx-cli console --generate-token`**：只打印一枚令牌与可直接粘贴的 `export` 行后退出（不启动服务）。
+  刻意不写成裸输出：启动横幅走 stdout，`$(…)` 会把横幅一起吞进去。
+- **`qx-cli console --init <path>`**：写出一份与部署模板**同形**的就绪配置（绑回环、令牌只给环境变量名、
+  正文无令牌字面量字段），**拒绝覆盖**已有文件（静默改写等于替别人签字），并打印下一步。
+- **门禁牙齿（新建 `console_usability_check`，五颗）**：令牌兜底在盘且环境变量仍是首选；生成令牌有行为
+  用例在盘（长度下限 + 十六进制 + 两次不同）；`--generate-token` 声明且被读到；`--init` 声明且被读到、
+  且对已存在文件拒绝覆盖；`--init` 模板与部署模板同形（当 JSON 解析后逐格核对）。`GATE_CHECK_FLOOR` **796 → 801**。
+- **反向变异已实测（五处，各自单独红）**：改名生成函数 / 改测试名 / 改旗标声明 / 抹掉覆盖拒绝 / 模板绑
+  `0.0.0.0`。脚本 `.audit/console_usability_mutation.py` 跑完逐字节还原，**5/5 全部打红**。
+- **文档**：`deploy/README.md` 补 bash + PowerShell 双语起步、令牌兜底说明、两条旗标，以及
+  「作为独立服务运行」小节（systemd unit + NSSM/Windows 服务），并诚实说清"独立服务 ≠ 对第三方开放"：
+  跨主机仍需 TLS/mTLS + 独立反代 + operator 身份 + 显式 CORS（**M4' 未关闭**）。
+- **仍未关闭（诚实登记）**：`serve` 自动挂载 console（受 `strategy_contract.rs` 行数棘轮与 supervisor
+  生命周期复杂度约束，本轮未做）；桌面 Host；多机反代 / 第三方对外暴露（M4'）；Paper/sandbox/production
+  外部验收（M5'）。本轮不创建 tag、不触发 Release。
+
+
 ### M4'/M5' 续（2026-10-09）· 同源 BFF 控制台（`qx-cli console`）+ Paper 轨验收
 
 **口径**：用户确认「两条并行全量推进」。本轮一次做完两件事——**同源 BFF / CSRF / 权限·会话模型**

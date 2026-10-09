@@ -625,26 +625,97 @@ Paper/sandbox/production 外部验收也仍未关闭。
 }
 ```
 
-启动（引导令牌**只**从环境变量读，不进命令行、不进配置文件、不进日志）：
+启动（引导令牌**优先**从环境变量读，不进命令行、不进配置文件、不进日志）：
 
 ```bash
-export QX_CONSOLE_BOOTSTRAP_TOKEN=<至少 16 字符的引导令牌>
+# 1) 准备引导令牌（≥16 字符）。想省事就照抄下面这条命令打印的那一行 export：
+qx-cli console --generate-token
+export QX_CONSOLE_BOOTSTRAP_TOKEN="<把上一步打印的令牌粘到这里>"
+# 2) 启动（默认吃 deploy/qianxing.runtime.console.example.json）
 qx-cli console deploy/qianxing.runtime.console.example.json
 ```
+
+Windows PowerShell 等价写法：
+
+```powershell
+$env:QX_CONSOLE_BOOTSTRAP_TOKEN = "<至少16字符的引导令牌>"
+.\target\debug\qx-cli.exe console deploy\qianxing.runtime.console.example.json
+```
+
+**忘了 export 也能起来（V13 R24）**：环境变量缺失或为空时，`qx-cli console` 会**临时生成**一枚一次性
+令牌（96 个十六进制字符），在终端明确打印"已临时生成一次性引导令牌（进程退出即失效，重启换新）"，再把
+入口 URL 印出来。这枚令牌随进程生灭、不落盘，只服务本机回环控制台的首次引导；它**不替代**运维显式配置
+的长期秘密——要长期用就把令牌放进环境变量（或由 Secret Manager 投影到该变量）。
+
+**两条不启动服务的易用性入口（V13 R24）**：
+
+```bash
+qx-cli console --generate-token        # 只打印一枚令牌 + 可直接粘贴的 export 行，随后退出
+qx-cli console --init my.runtime.json  # 写出一份就绪的运行时模板（拒绝覆盖已有文件），并打印下一步
+```
+
+`--init` 写出的模板与 `deploy/qianxing.runtime.console.example.json` **同形**（绑回环、令牌只给环境
+变量名、正文无令牌字面量字段），因此可以立刻 `qx-cli console my.runtime.json` 起一条同源 BFF。
 
 进程印出一次入口 URL（`http://127.0.0.1:18091/?token=…`）。运维点开一次，服务端校验令牌后签发两枚
 cookie：会话 cookie（`HttpOnly` + `SameSite=Strict`，页面脚本读不到）与一枚**非 HttpOnly** 的 CSRF
 cookie（页面读出来放进 `X-QX-CSRF` 头——双提交模式）。此后地址栏里不再有凭据。
 
-边界（逐条都有门禁牙齿 `console_front_check` 守着）：
+边界（逐条都有门禁牙齿 `console_front_check` / `console_usability_check` 守着）：
 
 - **只绑回环**：`api.console.bind` 必须是 `127.0.0.1` / `::1`，拓扑校验在启动前就拒绝可路由地址。
   这一层没有 TLS、没有 mTLS、没有运维审批，绑到外部接口等于把控制面交给任何能连上的人。
 - **非 GET 必须带 CSRF 头**且与会话记住的那一枚逐字符相等，还要过同源校验（带 `Origin` 的请求必须与
   `Host` 同源）——两道独立的锁，任一道都不许放宽成"有头就过"。
 - **身份由服务端注入**：`handle_inner` 收到的是会话里那份 operator；命令体里的 `operator_id` 不被采信。
-- **令牌来源单一**：配置里只有变量名，没有令牌字面量字段——命令行会进 shell 历史、配置文件会进版本库。
+- **令牌来源**：优先从 `bootstrap_token_env` 点名的环境变量读；配置里只有变量名、没有令牌字面量字段。
+  缺失时临时生成一枚（随进程生灭、不落盘），但长期使用仍应显式配置——命令行会进 shell 历史、配置文件会进版本库。
 - **刻意不做**：独立反向代理、客户端证书持有、多机部署形态（那属于部署件，不是代码）。
+
+#### 作为独立服务运行（systemd / Windows 服务）
+
+控制台是**一个长驻进程**，可以直接交给系统服务管理器托管（进程生命周期、开机自启、崩溃重启、日志归集
+交给 systemd / SCM，而不是 `nohup`）。**独立服务**指的是"把这条进程交给服务管理器"，**不是**"开放到网络"：
+下面两段的 `bind` 仍是回环，服务管理器只负责把进程拉起来、把它读的环境变量喂给它。
+
+Linux（systemd，`/etc/systemd/system/qianxing-console.service`）：
+
+```ini
+[Unit]
+Description=Qianxing same-origin BFF console (loopback)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/qianxing
+# 令牌走 EnvironmentFile（或 LoadCredential=），不写进 unit 文件——unit 会进版本库、也会被 systemctl cat 出来
+EnvironmentFile=/etc/qianxing/console.env      # 内容：QX_CONSOLE_BOOTSTRAP_TOKEN=<≥16 字符>
+ExecStart=/opt/qianxing/qx-cli console /opt/qianxing/deploy/qianxing.runtime.console.example.json
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Windows（用 NSSM 把 `qx-cli console` 注册成服务；NSSM 负责"服务"与"前台进程"的桥接）：
+
+```powershell
+nssm install QianxingConsole "D:\qianxing\qx-cli.exe" "console D:\qianxing\deploy\qianxing.runtime.console.example.json"
+nssm set QianxingConsole AppDirectory "D:\qianxing"
+nssm set QianxingConsole AppEnvironmentExtra "QX_CONSOLE_BOOTSTRAP_TOKEN=<至少16字符的令牌>"
+nssm start QianxingConsole
+```
+
+**要"给第三方使用"还差什么（诚实说清）**：把回环控制台交给服务管理器**不等于**可以对第三方开放。
+第三方访问要的是**跨主机的生产控制面**，那需要这一层目前**没有**的东西：
+
+- **TLS / mTLS 与独立反向代理**：`qx-cli console` 是单进程、无 TLS 的形态，且 `console_bind_is_loopback`
+  在启动前就拒绝可路由地址。跨主机必须由独立反代终止 TLS、持有 operator 客户端证书、把身份注入进来。
+- **operator 身份与显式 CORS allowlist**：跨主机时身份来自 mTLS（`403 authenticated_operator_required`
+  那条边界），不是回环网络位置；浏览器跨源还要逐字符登记 `api.cors_allowed_origins`。
+- **多机部署形态与运维审批**：这是 **M4' 未关闭的部分**（桌面 Host + 多机反代），属部署件而非本仓代码。
+
+因此本仓能给出的"独立服务"是**本机 / 内网可信边界内的常驻进程**；对外暴露仍需运维侧补齐上面三样。
 
 ## Binance worker
 
