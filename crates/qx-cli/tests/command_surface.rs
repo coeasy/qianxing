@@ -12,7 +12,7 @@
 use std::process::Command;
 
 /// 顶层命令表（与 `cli_args.rs` 的 clap 派生逐一相等，由门禁核对）。
-const CLI_COMMANDS: [&str; 44] = [
+const CLI_COMMANDS: [&str; 45] = [
     "all",
     "backtest",
     "binance-private-probe",
@@ -24,6 +24,7 @@ const CLI_COMMANDS: [&str; 44] = [
     "ccxt-market-spec",
     "ccxt-worker",
     "config",
+    "console",
     "consumer-dlq-replay",
     "data-validate",
     "dataset-bundle",

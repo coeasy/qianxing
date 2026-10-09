@@ -1,7 +1,4 @@
-//! CLI 入口分派：clap 派生的 [`Command`] 变体 → 具体处理器。
-//!
-//! 参数语法与命令表见 `cli_args.rs`（V10 P2b 已移除旧手写解析）；本模块只留一次 `Command` match、
-//! 横幅机读判定与错误出口。门禁校验命令表、派发分支与 help 三方集合相等；业务实现复用 crate 根函数。
+//! CLI 入口分派：clap 派生的 [`Command`] 变体 → 具体处理器。参数语法与命令表见 `cli_args.rs`（V10 P2b 已移除旧手写解析）；本模块只留一次 `Command` match、横幅机读判定与错误出口。门禁校验命令表、派发分支与 help 三方集合相等；业务实现复用 crate 根函数。
 
 use super::cli_args::{BacktestCommand, Cli, Command, ConfigCommand, RunCommand, StrategyCommand};
 use super::*;
@@ -469,6 +466,9 @@ pub(crate) fn run() {
                 eprintln!("运行时 API 启动失败: {error}");
                 std::process::exit(2);
             }
+        }
+        Command::Console(args) => {
+            usage_errors::exit_on_failure(serve_console(&args), "控制台启动失败")
         }
         Command::Supervise {
             path,

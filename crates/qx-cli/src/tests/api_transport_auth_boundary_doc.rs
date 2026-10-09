@@ -3,7 +3,7 @@
 //!
 //! 立案时的实测（`C:/temp/qx_pass23/s555_before_validate.txt`）：把仓库那份明文模板的
 //! `api.bind` 换成 `10.20.30.40:8443` 后 `config validate` 仍回 `[PASS]` —— 旧的判定式只把
-//! `environment` 与字面量 `production` 相比，而仓库 17 份明文模板用的是 paper/sandbox/testnet。
+//! `environment` 与字面量 `production` 相比，而仓库 18 份明文模板用的是 paper/sandbox/testnet。
 //! 同一时刻明文面**不装**访问策略（`api.operators` 为空 ⇒ `ApiService::new` ⇒ `policy: None`），
 //! `POST /control/commands` 的档位直接取请求体里的 `permission`。两条合起来是一个无鉴权的
 //! 下单入口挂在可路由地址上，而文档当时只承诺「除三个只读端点外都要求已认证 operator」。
@@ -149,8 +149,8 @@ fn every_plaintext_runtime_template_in_the_repo_binds_loopback() {
     }
     assert_eq!(
         plaintext.len(),
-        17,
-        "明文 runtime 模板的份数与接口文档写的 17 份不等: {plaintext:?}"
+        18,
+        "明文 runtime 模板的份数与接口文档写的 18 份不等: {plaintext:?}"
     );
     assert_eq!(
         mtls,

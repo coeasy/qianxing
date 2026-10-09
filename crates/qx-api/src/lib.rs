@@ -1,16 +1,17 @@
 //! 不依赖特定 Web 框架的本地 API 边界。
 //!
-//! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须
-//! 进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
+//! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
 
 mod admission;
 mod connections;
+mod console;
 mod control_reads;
 mod event_cursor;
 mod snapshot_history;
 mod transport;
 mod ws;
 
+pub use console::*;
 pub use control_reads::*;
 
 pub use admission::validate_admission_config;
@@ -912,8 +913,7 @@ pub struct ApiService {
     readiness_provider: Option<ReadinessProvider>,
     query_models_provider: Option<QueryModelsProvider>,
     pub(crate) control_plane_provider: Option<ControlPlaneProvider>,
-    /// 跨源准入策略。`None` 表示这份部署不开浏览器准入：`OPTIONS` 照常走分派落 404 兜底，
-    /// 响应里也不带任何 `Access-Control-*`。见 `admission` 模块头那段理由。
+    /// 跨源准入策略。`None` 表示这份部署不开浏览器准入：`OPTIONS` 照常走分派落 404 兜底，响应里也不带任何 `Access-Control-*`。见 `admission` 模块头那段理由。
     cors: Option<Arc<CorsPolicy>>,
     /// 并发连接预算。一份连接一个线程，所以上限同时是线程数上限；超限当场 503。
     connection_budget: Arc<ConnectionBudget>,
@@ -1469,7 +1469,7 @@ impl ApiService {
         self.handle_inner(method, path, body, ts, Some(operator_id))
     }
 
-    fn handle_inner(
+    pub(crate) fn handle_inner(
         &self,
         method: &str,
         path: &str,

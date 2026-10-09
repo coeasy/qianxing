@@ -75,6 +75,9 @@ impl RuntimeConfig {
                 return Err("TLS 证书链、私钥和客户端 CA 路径不能为空".into());
             }
         }
+        if let Some(console) = &self.api.console {
+            console_boundary(console, &self.api.operators)?;
+        }
         if self.storage.data_dir.trim().is_empty() {
             return Err("storage.data_dir 不能为空".into());
         }

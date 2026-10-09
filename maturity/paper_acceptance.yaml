@@ -1,0 +1,26 @@
+# Paper 轨验收记录（M5' 的本地可验收子项）——由 tools/paper_acceptance.py 生成，请勿手改。
+#
+# 这条轨**不需要任何交易所凭据**：它跑的是仓库自己的 Paper venue（进程内撮合）。
+# `sandbox_tested` / `production_approved` 两档对这条轨**不适用**（不是「待补」）——
+# 那两档只对需要外部 venue 的能力有意义，证据在 maturity/evidence/testnet|production/。
+schema_version: 1
+kind: paper-acceptance
+outcome: passed
+generated_by: tools/paper_acceptance.py
+generated_at_unix: 1791508450
+binary: qx-cli.exe
+credentials_required: false
+external_venues: none
+network_accessed: false
+orders_sent: false
+venue: paper
+main_chain: scheduler -> strategy -> paper-execution -> ledger
+independent_runs: 2
+orders_submitted: 1
+fills: 1
+ledger_entries: 4
+audit_chain_verified: true
+audit_reaches_executed: true
+pending_commands_after: 0
+rerun_does_not_duplicate_orders: true
+independent_dirs: fact_surface_equal

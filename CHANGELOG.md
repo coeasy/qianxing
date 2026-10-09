@@ -1,6 +1,81 @@
 # Changelog
 
 
+### M4'/M5' 续（2026-10-09）· 同源 BFF 控制台（`qx-cli console`）+ Paper 轨验收
+
+**口径**：用户确认「两条并行全量推进」。本轮一次做完两件事——**同源 BFF / CSRF / 权限·会话模型**
+（三件事是**同一条链**，BFF 是后两者的载体），以及 **Paper 轨**（M5' 里不需要任何交易所凭据就能完整
+验收的那条子项，与上一轮的回测轨同源）。**桌面 Host** 与 **sandbox/production 外部验收**仍未做，
+本轮不创建 tag、不触发 GitHub Release。全部加性：门禁 **824 → 848 全绿**，
+`GATE_CHECK_FLOOR` **772 → 796**，未删任何既有判据。
+
+- **同源 BFF 本体**（`crates/qx-api/src/console.rs`）：`ConsoleFront` 把静态三件与 API 放在**同一个源**上，
+  浏览器不再需要 CORS allowlist（同源请求根本不发 `Origin` 预检），会话与 CSRF 留在服务端。
+  - **引导**：运维带 `?token=<bootstrap>` 打开一次页面，服务端校验后签发两枚 cookie——会话 cookie
+    （`HttpOnly` + `SameSite=Strict`，页面脚本读不到）与一枚**非 HttpOnly** 的 CSRF cookie（页面读出来
+    放进 `X-QX-CSRF` 头，这就是双提交模式）。此后地址栏里不再有凭据。
+  - **会话表**：上限 64 条，超出按**签发顺序**退最老的一条（不是按字典序挑一个）；到期即失效。
+    会话 id 与 CSRF 由引导令牌经 SHA-1 派生的伪随机函数给出——秘密只有一个来源，轮换因此可解释，
+    也不必为这一层引入 RNG 依赖。
+  - **两道独立的锁**：非 GET 必须带 `X-QX-CSRF` 且与会话记住的那一枚**逐字符相等**（空头与不等都 403），
+    并且过 `origin_matches_host`（带 `Origin` 的请求必须与 `Host` 同源）。任一道都不许放宽成"有头就过"。
+  - **身份注入**：`handle_inner` 收到的是**会话里那份 operator**；命令体里的 `operator_id` 不被采信
+    （它是审计字段，不是认证）。
+  - **回环边界**：`console_bind_is_loopback` 是唯一判据，只允许 `127.0.0.1` / `::1`。这一层没有 TLS、
+    没有 mTLS、没有运维审批，绑到外部接口等于把控制面交给任何能连上的人。
+  - **连接预算复用** API 那一枚（`DEFAULT_MAX_CONCURRENT_CONNECTIONS`），额度随会话线程一起归还。
+- **`qx-cli console [runtime.json]`**（`console_serve.rs` + `console_args.rs`）：读配置 → 过回环判据 →
+  从 `api.console.bootstrap_token_env` 点名的环境变量取令牌（**不走命令行、不写进 JSON、不回显进日志**：
+  命令行会进 shell 历史、配置文件会进版本库）→ 绑监听 → 印**一次**入口 URL。静态目录按
+  「配置所在目录 → 可执行文件同级/上一级 → 构建期源码树」三格找，一格都不中就报错点名找过哪里——
+  静默回落一个空目录会让控制台在浏览器里 404，而服务端看起来一切正常。
+- **配置面**：`api.console` 段（`bind` / `static_dir` / `operator` / `bootstrap_token_env` /
+  `session_ttl_seconds`），边界校验独立成 `crates/qx-runtime/src/runtime_config/console_validation.rs`
+  的 `console_boundary`，由 `topology_validation.rs` **fail-closed** 调用：回环、三格非空、TTL 非 0、
+  以及 operator 必须在 `api.operators` 里。新模板 `deploy/qianxing.runtime.console.example.json`
+  （明文 + 回环）进 `deploy_template_coverage` 的 COVERAGE 表。
+- **门禁牙齿（新建 `console_front_check`，十七颗）**：模块在盘与挂载、六个公开常量、`ConsoleConfig::new`
+  是唯一构造入口且四类误配当场拒绝、会话 cookie `HttpOnly`+`SameSite=Strict`、CSRF cookie 刻意非
+  `HttpOnly`、非 GET 的 CSRF 与同源两道锁、身份由服务端注入、回环单源、令牌只从环境变量、
+  `api.console` 段 fail-closed、CLI 派发接线、模板形状、行为用例在盘、**发布身份的产品能力声明由在盘
+  代码背书**。`GATE_CHECK_FLOOR` **772 → 789**。
+- **Paper 轨（M5' 的本地可验收子项，`tools/paper_acceptance.py` + `maturity/paper_acceptance.yaml`）**：
+  跑仓库自己的 Paper venue（进程内撮合），主链 `scheduler -> strategy -> paper-execution -> ledger`
+  在两个独立目录各跑一遍 + 同腿重跑，要求主链四段事实面相等、重跑不重复下单、无遗留待执行命令、
+  审计链校验通过且走到 `Executed`；子进程环境**主动摘掉** `QX_BINANCE_*` / `QX_CCXT_*` / `QX_OKX_*` /
+  `QX_CONSOLE_*`，所以「不需要凭据」是构造出来的，不是碰巧没配。实测
+  `OrderSubmitted=1 / Filled=1 / LedgerApplied=4`，`independent_dirs: fact_surface_equal`。
+  新建 `paper_track_check` **七颗**：记录六格自述齐全、脚本真有四件比对、主链四段且计数全为正
+  （0 笔成交的"通过"是空跑）、记录正文不出现任何 venue 名称且实盘两档仍全 false、终态退场与幂等、
+  默认跑仓库那份 paper 模板并摘凭据环境变量。`GATE_CHECK_FLOOR` **789 → 796**。
+- **门禁合计**：**824 → 848 项全绿**，`GATE_CHECK_FLOOR` **772 → 796**。
+- **反向变异已实测（二十四处，各自单独红）**：console 十七处（`console.rs` 改名 / 摘 `mod` 挂载 /
+  资源表降成私有 / 抹掉一条拒绝文案 / 摘会话 cookie 的 `HttpOnly` / 给 CSRF cookie 加上 `HttpOnly` /
+  CSRF 校验放宽成"有头就过" / 摘同源校验 / 身份注入改成 `None` / 装配处不过回环判据 /
+  配置里出现令牌字面量字段 / 拓扑校验不再调边界校验 / 摘 CLI 派发臂 / 模板改名 / 模板绑 `0.0.0.0` /
+  抹掉真套接字端到端用例 / 身份把 `product_csrf` 说成 `False`）+ Paper 七处（结论改 `skipped` /
+  抹掉主链比对函数 / 成交数改 0 / 正文写进 venue 名 / 遗留一条待执行命令 / 悄悄换掉默认配置 / 能力档把 Paper 轨指错）。
+  脚本 `.audit/console_mutation.py` 与 `.audit/paper_mutation.py` 跑完逐字节还原，24/24 全部打红。
+- **顺带修正一处身份含糊**：`release-identity.json` 原用 `csrf_supported=false` /
+  `session_permissions_supported=false` / `desktop_host_supported=false` 三个字段，容易被读成
+  「**产品**没有 BFF」。现拆成 `package_scope=static-assets-only`（归档自己是什么）与 `product_*` 四格
+  （产品现在有什么，`product_same_origin_bff`/`product_csrf`/`product_server_side_session` 为 `true`，
+  `product_desktop_host` 仍为 `false`）。**归档仍不是 BFF**；变的是身份不再少报产品能力。
+- **阈值漂移同步**（改数量类判据的既定纪律）：新模板使「仓库明文 runtime 模板」由 **17 → 18** 份，
+  `api_transport_auth_boundary_doc.rs` 的阈值与模块文档、`deploy/README.md` 的份数说明一并改口；
+  `docs/自研量化框架重构方案-V13.md` 那段是 #244 立案时的读数，按仓库惯例**保留不改**并加回写批注。
+- **收尾验证**：`cargo check -p qx-cli --all-targets` 零错零警；
+  `cargo clippy -p qx-api -p qx-runtime -p qx-cli --all-targets` **零告警**；
+  `cargo test -p qx-api` 全绿（lib 48 条，含 console 13 条）；`cargo test -p qx-runtime` 默认特性 57 条 /
+  `--features sqlite` 59 条全绿；**`cargo test --workspace --no-fail-fast` 120 个测试目标 / 1214 passed /
+  0 failed / 1 ignored**（`WORKSPACE_TEST_FLOOR = 1083`）；`python -m unittest discover -s python/tests`
+  用仓库 venv 跑 **68 条 OK**（托管 python 缺 `tzdata`，那 6 条 `test_ashare` 报错是环境噪声）；
+  触碰过的 16 个 Rust 文件逐个 `rustfmt --check --config skip_children=true` 干净；
+  `python tools/check_architecture.py` **848 项全绿**；`git diff --check` 干净。
+- **仍未落地（诚实边界）**：**M4' 未关闭的部分**是桌面 Host 与多机反代形态（那属于部署件，不是代码）；
+  **M5' 的 Paper/sandbox/production 外部验收**仍未进行；本轮没有创建 tag，也没有触发 GitHub Release。
+
+
 ### M4'/M5' 续（2026-10-08）· Web 控制台 local-only 边界硬化 + 发布身份状态字段
 
 **口径**：继续把「静态 Web 控制台发布包」的边界说清，并把能本地验证的部分钉进门禁；仍不冒充完整 M4'/M5'。本轮不新增同源 BFF、CSRF、权限会话、桌面 Host，也不触发 GitHub Release。

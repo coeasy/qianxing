@@ -15,6 +15,7 @@ pub(crate) fn config() -> RuntimeConfig {
             operators: BTreeMap::new(),
             cors_allowed_origins: Vec::new(),
             max_concurrent_connections: None,
+            console: None,
         },
         storage: StorageRuntimeConfig {
             backend: StorageBackend::Files,

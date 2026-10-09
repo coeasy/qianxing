@@ -53,6 +53,31 @@ pub struct OperatorConfig {
     pub certificate: String,
 }
 
+/// 本机回环上的同源 BFF 控制台（`qx-cli console`）的部署参数。
+///
+/// 与 `api.bind` / `transport` 那套 mTLS 边界刻意分成两格：控制台面**不做** mTLS，它的信任
+/// 边界是四道——只绑回环、启动令牌换会话、非 GET 必须带 CSRF、Origin 与 Host 必须同源。
+/// 四道都失效才退回"和 `serve` 一样"的暴露面，所以它不是第二个鉴权层，而是浏览器侧的封装。
+/// `operator` 是这层代理替浏览器声称的身份，页面不能自声明：`api.operators` 非空时它必须是
+/// 其中一员（否则每个受保护端点都会 403，而配置侧看不出为什么）。
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsoleRuntimeConfig {
+    /// 控制台面的监听地址；只接受回环地址。
+    pub bind: String,
+    /// 静态控制台资源目录（`web/console`），按文件名精确匹配，不做路径拼接。
+    pub static_dir: String,
+    /// 代理请求时声称的 operator 身份。
+    pub operator: String,
+    /// 承载启动令牌的环境变量名。令牌本身**不写进**运行时 JSON。
+    pub bootstrap_token_env: String,
+    /// 会话有效期（秒）。`None` 表示用 `qx-api` 自己那个默认值
+    /// （`DEFAULT_CONSOLE_SESSION_TTL_SECONDS`）：与 `max_concurrent_connections` 同一条纪律，
+    /// 数字只有一个定义点，配置侧不抄第二份。
+    #[serde(default)]
+    pub session_ttl_seconds: Option<u64>,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApiRuntimeConfig {
@@ -76,6 +101,9 @@ pub struct ApiRuntimeConfig {
     /// 两侧就各讲一个上限。
     #[serde(default)]
     pub max_concurrent_connections: Option<usize>,
+    /// 本机回环上的同源 BFF 控制台；`None` 表示这份部署不开控制台面（`qx-cli console` 拒绝启动）。
+    #[serde(default)]
+    pub console: Option<ConsoleRuntimeConfig>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]

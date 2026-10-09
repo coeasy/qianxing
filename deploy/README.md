@@ -218,7 +218,7 @@ API 的认证边界只由 `transport` 与 `api.operators` 决定，不由 `envir
 
 - `transport: "mtls"`：必须同时给出服务端证书三件套（`api.tls`）与至少一条 `api.operators` 证书映射，`serve` 据此装上操作员权限策略，operator 身份来自握手证书；这种部署可以绑可路由地址（仓库里唯一那份生产模板就绑 `0.0.0.0:8443`）。
 - `transport: "plaintext"`：拿不到对端身份，`api.operators` 必须为空，于是**不装**权限策略 —— `POST /control/commands` 的档位直接取请求体里的 `permission` 字段，等于调用方自报。明文面因此只能绑回环地址：`config validate`、`doctor`、`serve` 共用同一个 `RuntimeConfig::validate()`，`api.bind` 的 IP 不是 loopback 即以「明文 API 只能绑定回环地址」拒绝（`production` 环境本来就禁止明文 API）。
-- 「内网可信」不是这条闸门的例外：要跨主机调用就换成 `transport: "mtls"` 并登记 Operator 证书。仓库里 17 份明文 runtime 模板全部绑 `127.0.0.1`，与这条闸门天然兼容 —— 这个份数与"每份明文模板的 bind 都是回环"两件事都由用例钉住，不靠人工点数。
+- 「内网可信」不是这条闸门的例外：要跨主机调用就换成 `transport: "mtls"` 并登记 Operator 证书。仓库里 18 份明文 runtime 模板全部绑 `127.0.0.1`，与这条闸门天然兼容 —— 这个份数与"每份明文模板的 bind 都是回环"两件事都由用例钉住，不靠人工点数。
 
 这三条不是散文承诺：`crates/qx-cli/src/tests/api_transport_auth_boundary_doc.rs` 按 `config validate` 的同一读法装载 `deploy/qianxing.runtime.example.json`，只把 `api.bind` 换成可路由地址后要求 `validate()` 报出上面那句原文，并在同一进程里对比"装了策略"与"没装策略"两种 `ApiService` 对同一条自报 `permission` 的下单请求各自的出口（没装策略那条拿到的是 202，装了策略而无证书身份的那条拿到 403）。源码侧的判定式住在 `crates/qx-runtime/src/runtime_config/topology_validation.rs`。
 
@@ -574,7 +574,8 @@ mTLS 证书、从不来自请求头，所以这个固定值不会挡住任何已
 它是一份静态页面，不占服务端路由：后端仍用 `qx-cli serve <runtime.json>` 起，控制台另用
 任意静态服务器（例如仓库根目录下 `python -m http.server 5173 --directory web/console`）
 或直接打开文件。连接入口已做本机回环限制：只允许 `127.0.0.1` / `localhost`，
-命令提交前会再次检查；这不是认证授权，只是避免把没有同源 BFF 的静态控制台误当成可远端使用的控制面。
+命令提交前会再次检查；这不是认证授权，只是避免把**没有会话/CSRF 的静态页**误当成可远端使用的控制面。
+需要真正的同源形态（服务端会话 + CSRF + 身份注入）就用下一节的 `qx-cli console`。
 
 因为控制台与 API 不同源，浏览器会先做 CORS：**必须把控制台的源逐字符写进
 `api.cors_allowed_origins`**（形如 `["http://127.0.0.1:5173"]`，见上节"浏览器准入"），
@@ -589,16 +590,61 @@ mTLS 证书、从不来自请求头，所以这个固定值不会挡住任何已
 **版本化发布包（M4'/M5' 的可验收子项）**：推送与 Cargo / Python / baseline 三处版本一致的 `v*`
 tag 时，发布流水线会额外生成 `qianxing-web-console-v<tag>.tar.gz`，内含 `index.html`、`app.js`、
 `styles.css` 与 `release-identity.json`（版本、完整 commit、Schema Registry 版本、逐文件 SHA256、
-`distribution_boundary=local-only`，以及 BFF/CSRF/会话权限/桌面 Host/Paper/sandbox/production 验收
-仍为未完成的状态字段）。
+`package_scope=static-assets-only`、`distribution_boundary=local-only`，以及**两组**能力字段：
+`product_same_origin_bff` / `product_csrf` / `product_server_side_session` / `product_desktop_host`
+说的是产品侧现状（前三者为 `true`，由下面那节 `qx-cli console` 提供；桌面 Host 仍为 `false`），
+`sandbox_accepted` / `production_accepted` 两档外部验收仍为 `false`）。
 归档本身进入 Release 的统一 `SHA256SUMS`，并附 build provenance；本地可用
 `python tools/package_web_console.py --version 0.1.0 --commit <40位提交哈希> --output <输出路径>`
 重建，并以压缩包内身份文件核对资产摘要。
 
-**安全边界仍未达到 M4 完整验收**：该发布包只是静态 UI，不是同源 BFF；它没有浏览器会话、CSRF token
-或 Web 权限代理层。不要将它单独暴露到公网或当作生产交易控制台。当前只用于本机/受控网络；需要浏览器控制
-时仍须服务端认证边界（mTLS operator 身份）及显式 CORS allowlist。M4 的同源 BFF/CSRF 与 M5 的 Paper/
-sandbox/production 外部验收均未因此关闭。
+**安全边界（逐条说清）**：**这个发布包**只是静态 UI，它自己没有浏览器会话、CSRF token 或权限代理层，
+不要单独暴露到公网或当作生产交易控制台。**产品侧**的同源 BFF / CSRF / 服务端会话已经落地，落在
+`qx-cli console`（见下一节）——它把这三件事放在服务端，浏览器只跟一个源说话；但它**只绑回环地址**、
+是**单进程形态**，没有独立反向代理与 TLS/mTLS，因此不能替代跨主机的生产控制面。跨主机时仍须 mTLS
+operator 身份与显式 CORS allowlist。**M4' 未关闭的部分**是桌面 Host 与多机反代形态；**M5'** 的
+Paper/sandbox/production 外部验收也仍未关闭。
+
+### 同源 BFF 控制台（`qx-cli console`）
+
+上面那份静态页面单独部署时与 API 不同源。要把它变成"浏览器只跟一个源说话"，用 `qx-cli console`
+起一条**同源 BFF**：同一个监听口既发静态三件，又把 API 代理在同一源上。会话、CSRF 与身份注入都留在
+服务端，页面拿不到也不需要拿任何凭据。配置加一段 `api.console`（完整样例见
+`deploy/qianxing.runtime.console.example.json`）：
+
+```json
+"api": {
+  "bind": "127.0.0.1:18090",
+  "console": {
+    "bind": "127.0.0.1:18091",
+    "static_dir": "web/console",
+    "operator": "console-operator",
+    "bootstrap_token_env": "QX_CONSOLE_BOOTSTRAP_TOKEN",
+    "session_ttl_seconds": 3600
+  }
+}
+```
+
+启动（引导令牌**只**从环境变量读，不进命令行、不进配置文件、不进日志）：
+
+```bash
+export QX_CONSOLE_BOOTSTRAP_TOKEN=<至少 16 字符的引导令牌>
+qx-cli console deploy/qianxing.runtime.console.example.json
+```
+
+进程印出一次入口 URL（`http://127.0.0.1:18091/?token=…`）。运维点开一次，服务端校验令牌后签发两枚
+cookie：会话 cookie（`HttpOnly` + `SameSite=Strict`，页面脚本读不到）与一枚**非 HttpOnly** 的 CSRF
+cookie（页面读出来放进 `X-QX-CSRF` 头——双提交模式）。此后地址栏里不再有凭据。
+
+边界（逐条都有门禁牙齿 `console_front_check` 守着）：
+
+- **只绑回环**：`api.console.bind` 必须是 `127.0.0.1` / `::1`，拓扑校验在启动前就拒绝可路由地址。
+  这一层没有 TLS、没有 mTLS、没有运维审批，绑到外部接口等于把控制面交给任何能连上的人。
+- **非 GET 必须带 CSRF 头**且与会话记住的那一枚逐字符相等，还要过同源校验（带 `Origin` 的请求必须与
+  `Host` 同源）——两道独立的锁，任一道都不许放宽成"有头就过"。
+- **身份由服务端注入**：`handle_inner` 收到的是会话里那份 operator；命令体里的 `operator_id` 不被采信。
+- **令牌来源单一**：配置里只有变量名，没有令牌字面量字段——命令行会进 shell 历史、配置文件会进版本库。
+- **刻意不做**：独立反向代理、客户端证书持有、多机部署形态（那属于部署件，不是代码）。
 
 ## Binance worker
 

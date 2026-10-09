@@ -42,9 +42,14 @@ class WebConsolePackageTest(unittest.TestCase):
         self.assertEqual(identity["git_commit"], self.commit)
         self.assertEqual(identity["schema_registry_version"], MODULE._schema_registry_version())
         self.assertEqual(identity["distribution_boundary"], "local-only")
-        self.assertFalse(identity["csrf_supported"])
-        self.assertFalse(identity["session_permissions_supported"])
-        self.assertFalse(identity["desktop_host_supported"])
+        self.assertEqual(identity["package_scope"], "static-assets-only")
+        # 归档自己只有静态三件，但它**不得**把产品侧的能力说成没有：
+        # 同源 BFF / CSRF / 服务端会话由 `qx-cli console` 提供，归档身份必须如实登记。
+        self.assertTrue(identity["requires_same_origin_bff"])
+        self.assertTrue(identity["product_same_origin_bff"])
+        self.assertTrue(identity["product_csrf"])
+        self.assertTrue(identity["product_server_side_session"])
+        self.assertFalse(identity["product_desktop_host"])
         self.assertFalse(identity["sandbox_accepted"])
         self.assertFalse(identity["production_accepted"])
         with tarfile.open(first, "r:gz") as archive:

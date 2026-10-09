@@ -103,11 +103,16 @@ def package_console(source_dir: Path, output: Path, version: str, commit: str) -
         "target_triple": "web-static",
         "profile": "release",
         "schema_registry_version": _schema_registry_version(),
+        # 两组字段刻意分开：`package_*` 说的是**这个归档自己**是什么（只有静态三件），
+        # `product_*` 说的是**产品现在有什么**（同源 BFF / CSRF / 服务端会话由 `qx-cli console`
+        # 提供，不在这个归档里）。混成一组会把「归档是 local-only 静态件」读成「产品没有 BFF」。
+        "package_scope": "static-assets-only",
         "distribution_boundary": "local-only",
         "requires_same_origin_bff": True,
-        "csrf_supported": False,
-        "session_permissions_supported": False,
-        "desktop_host_supported": False,
+        "product_same_origin_bff": True,
+        "product_csrf": True,
+        "product_server_side_session": True,
+        "product_desktop_host": False,
         "sandbox_accepted": False,
         "production_accepted": False,
         "assets": [

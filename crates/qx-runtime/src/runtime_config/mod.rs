@@ -66,6 +66,7 @@ fn default_risk_rules_version() -> String {
     "risk-rules-cfg-v1".into()
 }
 
+mod console_validation;
 mod schema;
 #[cfg(test)]
 mod schema_tests;
@@ -80,6 +81,7 @@ mod topology_tests;
 mod topology_validation;
 mod validate;
 
+pub(crate) use console_validation::*;
 pub use schema::*;
 pub use strategy_schema::*;
 #[cfg(test)]

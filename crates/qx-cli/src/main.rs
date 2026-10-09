@@ -111,6 +111,8 @@ mod cli_args;
 mod cli_help;
 mod config_commands;
 mod configured_backends;
+mod console_args;
+mod console_serve;
 mod contract_adapters;
 mod data_validate;
 mod data_validate_args;
@@ -160,6 +162,8 @@ pub(crate) use ccxt_facts::*;
 pub(crate) use cli_help::*;
 pub(crate) use config_commands::*;
 pub(crate) use configured_backends::*;
+pub(crate) use console_args::*;
+pub(crate) use console_serve::*;
 pub(crate) use deploy_lookup::*;
 pub(crate) use ecosystem_smoke::*;
 #[allow(unused_imports)] // 默认特性下本模块条目全部为 nats/postgres 门控

@@ -254,3 +254,70 @@ fn environment_outside_the_closed_vocab_is_rejected_not_silently_branched() {
         );
     }
 }
+
+/// 控制台面（`api.console`）的边界：不做 mTLS，所以地址、身份、令牌来源三格都必须先站住。
+///
+/// 三格各挡一种"配了但等于没配"：可路由地址 = 一个无认证的代理入口；空身份 / 空令牌环境
+/// 变量名 = 会话层既没有可声称的身份、也没有换会话的凭据；有策略时身份不在册 = 每个受保护
+/// 端点都 403，而配置本身看起来完全正常。
+#[test]
+fn console_surface_refuses_routable_binds_and_unknown_operators() {
+    let mut console = config();
+    console.api.console = Some(ConsoleRuntimeConfig {
+        bind: "127.0.0.1:18099".into(),
+        static_dir: "web/console".into(),
+        operator: "ops".into(),
+        bootstrap_token_env: "QX_CONSOLE_BOOTSTRAP_TOKEN".into(),
+        session_ttl_seconds: None,
+    });
+    assert!(
+        console.validate().is_ok(),
+        "回环 + 无策略时控制台配置应当可启动"
+    );
+
+    let mut routable = console.clone();
+    routable.api.console.as_mut().unwrap().bind = "0.0.0.0:18099".into();
+    let error = routable.validate().unwrap_err();
+    assert!(error.contains("控制台只能绑回环地址"), "实际报错: {error}");
+
+    let mut empty_env = console.clone();
+    empty_env.api.console.as_mut().unwrap().bootstrap_token_env = "  ".into();
+    assert!(
+        empty_env.validate().is_err(),
+        "空令牌环境变量名等于没有换会话的凭据"
+    );
+
+    let mut zero_ttl = console.clone();
+    zero_ttl.api.console.as_mut().unwrap().session_ttl_seconds = Some(0);
+    assert!(
+        zero_ttl.validate().is_err(),
+        "零 TTL 的会话等于一签发就过期"
+    );
+
+    // 有策略时控制台身份必须在册：不在册等于整站 403，而配置本身看不出问题。
+    let mut mtls = console.clone();
+    mtls.api.transport = ApiTransport::Mtls;
+    mtls.api.bind = "0.0.0.0:8443".into();
+    mtls.api.tls = Some(TlsPaths {
+        certificate_chain: "server.pem".into(),
+        private_key: "server.key".into(),
+        client_ca: "clients.pem".into(),
+    });
+    mtls.api.operators = BTreeMap::from([(
+        "reviewer".into(),
+        OperatorConfig {
+            permission: Permission::ReadOnly,
+            certificate: "reviewer.pem".into(),
+        },
+    )]);
+    let error = mtls.validate().unwrap_err();
+    assert!(error.contains("不在 api.operators"), "实际报错: {error}");
+    mtls.api.operators.insert(
+        "ops".into(),
+        OperatorConfig {
+            permission: Permission::Admin,
+            certificate: "ops.pem".into(),
+        },
+    );
+    assert!(mtls.validate().is_ok(), "身份在册后同一条配置必须过");
+}

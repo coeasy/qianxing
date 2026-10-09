@@ -1,5 +1,5 @@
 schema_version: 1
-updated_at: "2026-10-08"
+updated_at: "2026-10-09"
 default_profile: backtest_only
 
 # 证据等级：
@@ -9,8 +9,9 @@ default_profile: backtest_only
 # production_approved 真实生产凭据、故障演练和运维审批已通过
 #
 # 重要口径（P0-1）：`sandbox_tested` / `production_approved` 两档**只对需要外部 venue 的能力
-# 有意义**。本仓的主用法是回测与 Paper 闭环，它一条交易所凭据都不用——那条轨的验收边界是
-# `maturity/backtest_acceptance.yaml`（由 `tools/backtest_acceptance.py` 生成）。所以那两档对
+# 有意义**。本仓的主用法是回测与 Paper 闭环，它一条交易所凭据都不用——那两条轨各有自己的验收边界：
+# 回测轨是 `maturity/backtest_acceptance.yaml`（由 `tools/backtest_acceptance.py` 生成），
+# Paper 轨是 `maturity/paper_acceptance.yaml`（由 `tools/paper_acceptance.py` 生成）。所以那两档对
 # `backtest_only` 档是**不适用**，不是「待补」；把两条轨混在一张表里会让「实盘待外部证据」
 # 被读成「整体未落地」。实盘轨的两档照旧只能由 `maturity/evidence/` 下 `outcome=passed` 的
 # 记录翻真（沙盒档在 testnet 子目录、生产档在 production 子目录），且 `capabilities_check`
@@ -25,6 +26,8 @@ profiles:
     approval_scope: 本档的验收边界是回测与 Paper 闭环，不需要任何交易所凭据；sandbox_tested / production_approved 对本档不适用
     acceptance_record: maturity/backtest_acceptance.yaml
     acceptance_generator: tools/backtest_acceptance.py
+    paper_acceptance_record: maturity/paper_acceptance.yaml
+    paper_acceptance_generator: tools/paper_acceptance.py
   single_node:
     storage: sqlite_or_files
     messaging: disabled

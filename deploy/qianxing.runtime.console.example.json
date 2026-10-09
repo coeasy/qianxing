@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "environment": "paper",
+  "api": {
+    "bind": "127.0.0.1:18090",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {},
+    "console": {
+      "bind": "127.0.0.1:18091",
+      "static_dir": "web/console",
+      "operator": "console-operator",
+      "bootstrap_token_env": "QX_CONSOLE_BOOTSTRAP_TOKEN",
+      "session_ttl_seconds": 3600
+    }
+  },
+  "storage": {
+    "backend": "files",
+    "data_dir": "data/qianxing-console",
+    "sqlite_path": null
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    }
+  ],
+  "shutdown_timeout_ms": 30000
+}

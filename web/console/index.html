@@ -22,8 +22,11 @@
   </header>
 
   <p class="notice" role="note">
-    <strong>只适合本机控制台</strong>：静态包没有同源 BFF、CSRF token、服务端会话或权限代理，
-    因此连接入口只允许 <code>127.0.0.1</code> / <code>localhost</code>，不能连接远端 API。
+    <strong>这一页是静态件，本身不带凭据</strong>：它没有自己的 CSRF token、服务端会话或权限代理，
+    因此单独打开时连接入口只允许 <code>127.0.0.1</code> / <code>localhost</code>，不能连接远端 API。
+    要同源形态（服务端会话 + CSRF 双提交 + 身份注入，浏览器只跟一个源说话）就用
+    <code>qx-cli console &lt;runtime.json&gt;</code>——它在回环地址上同时发这一页并代理 API，
+    凭据全留在服务端。
     <strong>写面只有一条</strong>：本页的读面板全部只做查询，唯一的写操作是
     <code>POST /control/commands</code>（控制面受理入口）。它<strong>不直接下单</strong>——
     下单要走这条命令，由控制面受理 → 判定执行者 → 走到终态退场。

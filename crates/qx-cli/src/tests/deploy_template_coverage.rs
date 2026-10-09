@@ -1,32 +1,27 @@
 //! `deploy/` 顶层模板的读取覆盖（V13 R1-A6）。
 //!
-//! 审计起点是一份实测点名：52 份模板里 12 份在代码与 CI 里零引用（`logs/s28_template_refs_a6.txt`），
-//! 于是"模板写坏了会怎样"没有人回答过。零引用不等于该删 —— 例如
-//! `qianxing.scheduler.jobs.smoke.json` 被两份 runtime 模板挂着的 jobs_path 就是它。
-//! 真正缺的是**读取**：CI 只用 `config validate` 读 1 份 runtime 模板，其余 51 份从未被任何
-//! 进程按自己的格式解析过。
+//! 审计起点是一份实测点名：52 份模板里 12 份在代码与 CI 里零引用（`logs/s28_template_refs_a6.txt`），于是"模板写坏了会怎样"
+//! 没有人回答过。零引用不等于该删 —— 例如 `qianxing.scheduler.jobs.smoke.json` 被两份 runtime 模板挂着的 jobs_path 就是它。
+//! 真正缺的是**读取**：CI 只用 `config validate` 读 1 份 runtime 模板，其余 51 份从未被任何进程按自己的格式解析过。
 //!
-//! 本文件把口径换成"每份模板都必须被它在生产里对应的那个读法解析一次"：登记表点名一份文件
-//! 配一个读取器（`Reader`），读取器一律调用生产函数本身，而不是在这里另写一份字段校验。
-//! 三条用例各管一件事：登记表与磁盘清单相等（新增模板不登记就红）、每份模板按登记的读取器
-//! 读出预期结果、每个读取器对坏内容真的会拒（否则"读过了"只是把 JSON 换成 `Value` 走过场）。
+//! 本文件把口径换成"每份模板都必须被它在生产里对应的那个读法解析一次"：登记表点名一份文件配一个读取器（`Reader`），
+//! 读取器一律调用生产函数本身，而不是在这里另写一份字段校验。三条用例各管一件事：登记表与磁盘清单相等（新增模板不登记
+//! 就红）、每份模板按登记的读取器读出预期结果、每个读取器对坏内容真的会拒（否则"读过了"只是把 JSON 换成 `Value` 走过场）。
 
 use super::*;
 
-/// 预期结果：`Ok` 要求读取器成功；`Refuses(关键字组)` 要求读取器失败，且报错里
-/// **每一条关键字都出现** —— 也就是"只剩这几条已点名的缺口，多一条少一条都算红"。
+/// 预期结果：`Ok` 要求读取器成功；`Refuses(关键字组)` 要求读取器失败，且报错里**每一条关键字都出现**
+/// —— 也就是"只剩这几条已点名的缺口，多一条少一条都算红"。
 ///
-/// 后者存在的理由不是反例夹具，而是 `qianxing.runtime.production.example.json`：它引用的是
-/// 部署机上的 `/var/lib/qianxing/research/…`，仓库里没有、也不该有。把这一点钉成期望而不
-/// 是"读到文件不存在就算过"，是为了让**新增**的引用缺口照样把用例打红。
+/// 后者存在的理由不是反例夹具，而是 `qianxing.runtime.production.example.json`：它引用的是部署机上的
+/// `/var/lib/qianxing/research/…`，仓库里没有、也不该有。把这一点钉成期望而不是"读到文件不存在就算过"，是为了让**新增**的引用缺口照样把用例打红。
 #[derive(Clone, Copy, Debug)]
 enum Expected {
     Ok,
     Refuses(&'static [&'static str]),
 }
-/// 一份模板在生产里的读法。变体上的额外参数都是**配对来源**：规格要标的、CCXT 配置要挂的
-/// worker、A 股规则要连带的公司行为与日历 —— 全部取自仓库里已存在的另一份模板，
-/// 不在这里抄第二份字面量。
+/// 一份模板在生产里的读法。变体上的额外参数都是**配对来源**：规格要标的、CCXT 配置要挂的 worker、
+/// A 股规则要连带的公司行为与日历 —— 全部取自仓库里已存在的另一份模板，不在这里抄第二份字面量。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Reader {
     /// `read_runtime_config` + `config validate` 用的同一份引用体检。
@@ -68,7 +63,7 @@ enum Reader {
 /// 新增模板必须在这里登记，否则 `every_deploy_template_is_registered_with_a_reader` 变红；
 /// `tools/check_architecture.py` 的模板覆盖判据用同一份清单和磁盘核对，双向都不许漏。
 const COVERAGE: &[(&str, Reader, Expected)] = &[
-    // —— 运行时配置（18）：`config validate` 的完整引用体检 ——
+    // —— 运行时配置（19）：`config validate` 的完整引用体检 ——
     (
         "qianxing.runtime.example.json",
         Reader::Runtime,
@@ -84,6 +79,11 @@ const COVERAGE: &[(&str, Reader, Expected)] = &[
             "research_snapshot_path",
             "dataset_bundle_path",
         ]),
+    ),
+    (
+        "qianxing.runtime.console.example.json",
+        Reader::Runtime,
+        Expected::Ok,
     ),
     (
         "qianxing.runtime.sqlite.example.json",

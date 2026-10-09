@@ -1,14 +1,12 @@
-//! clap 参数框架（V10 P2b）：命令表由本文件的 `Command` 枚举派生。
-//! `cli.rs` 只保留对 [`Command`] 的一次显式 `match`；`tools/check_architecture.py` 以「clap 派生的
-//! 命令表 ≡ `cli.rs` 派发分支 ≡ `cli_help.rs` 印出的入口」三方集合相等做门禁（V10 §4.4 的
-//! "文案宣称支持某入口而派发没有该分支"因此不可表达）。`help`/`--help`/`-h` 是进 clap 前的同一条
-//! 预检分支，门禁按规范名 `help` 计一条；命令名与旗标语义与迁移前逐条一致，旧手写解析不留双轨。
-//!
-//! `<worker>` 与 `<submit-order.json>` 等必填入参前必须显式给 runtime 路径；带 `default_value` 的位置参数会被 Clap 判为可选，debug 下可能 panic；deploy 脚本、`qx-orchestrator` 与文档入口均显式传入配置。
+//! clap 参数框架（V10 P2b）：命令表由本文件的 `Command` 枚举派生，`cli.rs` 只保留对 [`Command`] 的一次显式 `match`。
+//! `tools/check_architecture.py` 以「clap 命令表 ≡ `cli.rs` 派发分支 ≡ `cli_help.rs` 印出的入口」三方集合相等做门禁，
+//! 于是"文案宣称支持某入口而派发没有该分支"不可表达；`help`/`--help`/`-h` 是进 clap 前的同一条预检分支，按规范名 `help` 计一条。
+//! 命令名与旗标语义与迁移前逐条一致；`<worker>` 等必填位置参数前必须显式给 runtime 路径（带 `default_value` 的会被 Clap 判为可选）。
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use super::console_args::ConsoleArgs;
 use super::{data_validate_args::DatasetValidateArgs, parse_deploy_path, plan_args::PlanArgs};
 
 /// 使用者要敲的程序名：`#[command(name = …)]` 与所有引导文案共用这一份。不在别处再抄：
@@ -167,6 +165,8 @@ pub(crate) enum Command {
         #[arg(default_value = "deploy/qianxing.runtime.example.json", value_parser = parse_deploy_path)]
         path: PathBuf,
     },
+    #[command(name = "console")]
+    Console(ConsoleArgs),
     #[command(name = "supervise")]
     Supervise {
         #[arg(default_value = "deploy/qianxing.runtime.example.json", value_parser = parse_deploy_path)]
