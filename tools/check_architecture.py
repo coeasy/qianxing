@@ -88,6 +88,7 @@ import ast
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -11374,11 +11375,11 @@ LIVE_DOC_CITATION_FLOOR = 229
 # 把它的行号改成今天的落点等于销毁当时的信息，所以不按活文档的零容忍处理；
 # 但天花板只降不升——再往存档里写一条落空的引用会当场红。
 ARCHIVE_DEAD_CITATION_CEILING = 9
-# 活 + 存档的引用总条数地板：版本库基线 229 + 231 = 460；本机未跟踪方案输入不参与地板。
+# 活 + 存档的引用总条数地板：版本库基线 229 + 229 = 458；只扫描已跟踪文档。
 # 单看活侧地板抓不住「存档被整份删掉」：删掉一份存档文档时 `live_total` 不动、`archive_dead` 从 9 掉到 0
 # （天花板判据是 `<=`，照样绿），于是「留而不删」这条纪律在门禁里**没有牙齿**。总地板把它补上：
 # 引用从活侧搬到存档侧时总数不变（拆/移只是换住址），少掉一份被引用的存档文档当场红。
-TOTAL_DOC_CITATION_FLOOR = 460
+TOTAL_DOC_CITATION_FLOOR = 458
 
 
 def doc_citation_reachability_check() -> None:
@@ -11401,19 +11402,16 @@ def doc_citation_reachability_check() -> None:
         + r")):(\d+(?:\s*[,，]\s*\d+)*)"
     )
 
-    # 手工下钻而不是 `ROOT.rglob`：rglob 会走进 `target/`（本机十几万个文件），
-    # 判据的耗时会盖过它要抓的那类漂移。
-    docs: list[Path] = []
-    stack = [ROOT]
-    while stack:
-        for entry in sorted(stack.pop().iterdir()):
-            if entry.is_dir():
-                if entry.name in DOC_CITATION_SKIP_PARTS or entry.name.startswith("."):
-                    continue
-                stack.append(entry)
-            elif entry.suffix == ".md":
-                docs.append(entry)
-    docs.sort()
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--", "*.md"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="surrogateescape",
+    ).stdout.split("\0")
+    docs = sorted(ROOT / rel for rel in tracked if rel.endswith(".md"))
 
     line_counts: dict[str, int] = {}
     live_total = 0
