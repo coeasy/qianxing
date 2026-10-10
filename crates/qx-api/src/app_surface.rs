@@ -32,7 +32,7 @@ use qx_app::{
     CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestSpec,
     RunContext, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
 };
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub(crate) struct AppPaths {

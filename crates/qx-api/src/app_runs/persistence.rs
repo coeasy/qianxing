@@ -95,6 +95,7 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 run_id,
                 run: None,
                 cancel_requested: false,
+                watcher_slot_reserved: false,
                 result: snapshot.result,
                 error: snapshot.error,
                 restored_status: Some(snapshot.status),
@@ -136,6 +137,27 @@ pub(super) fn remove(root: &Path, run_id: &str) -> Result<(), AppError> {
             &format!("清理已过期运行记录 {run_id}"),
             &error,
         )),
+    }
+}
+
+pub(super) fn reserve_limited_slot(
+    counter: &std::sync::atomic::AtomicUsize,
+    capacity: usize,
+) -> bool {
+    counter
+        .fetch_update(
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+            |count| (count < capacity).then_some(count + 1),
+        )
+        .is_ok()
+}
+
+pub(super) struct WatcherSlot;
+
+impl Drop for WatcherSlot {
+    fn drop(&mut self) {
+        super::APP_RUN_WATCHERS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
@@ -235,6 +257,15 @@ mod tests {
     use super::*;
     use crate::app_surface::AppRunRegistry;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn durable_runs_cannot_overbook_terminal_persistence_watchers() {
+        let slots = std::sync::atomic::AtomicUsize::new(0);
+        assert!(reserve_limited_slot(&slots, 2));
+        assert!(reserve_limited_slot(&slots, 2));
+        assert!(!reserve_limited_slot(&slots, 2));
+        assert_eq!(slots.load(std::sync::atomic::Ordering::Acquire), 2);
+    }
 
     fn root(label: &str) -> PathBuf {
         let nonce = SystemTime::now()

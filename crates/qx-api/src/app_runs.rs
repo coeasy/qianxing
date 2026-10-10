@@ -14,10 +14,13 @@ use std::time::Duration;
 
 #[path = "app_runs/depth_experiment.rs"]
 mod depth_experiment;
+#[path = "app_runs/path_resolution.rs"]
+mod path_resolution;
 #[path = "app_runs/persistence.rs"]
 mod persistence;
 #[path = "app_runs/starts.rs"]
 mod starts;
+pub(super) use path_resolution::resolve_input_path;
 
 const APP_RUN_CAPACITY: usize = 1024;
 const APP_RUN_WATCHER_CAPACITY: usize = 64;
@@ -80,6 +83,7 @@ struct AppRunEntry {
     run_id: String,
     run: Option<AppRun>,
     cancel_requested: bool,
+    watcher_slot_reserved: bool,
     result: Option<String>,
     error: Option<String>,
     restored_status: Option<String>,
@@ -117,25 +121,44 @@ impl AppRunRegistry {
                 format!("run_id 已在本进程运行或保留: {run_id}"),
             ));
         }
-        if entries.len() >= APP_RUN_CAPACITY {
-            let completed = entries.iter_mut().find_map(|(run_id, entry)| {
+        let completed_to_evict = if entries.len() >= APP_RUN_CAPACITY {
+            entries.iter_mut().find_map(|(run_id, entry)| {
                 let terminal = match entry.restored_status.as_deref() {
                     Some(status) => matches!(status, "succeeded" | "cancelled" | "failed"),
                     None => entry.run.is_some() && is_terminal(entry.status()),
                 };
                 terminal.then(|| run_id.clone())
-            });
-            if let Some(oldest) = completed {
-                entries.remove(&oldest);
-                if let Some(root) = &self.persistence_root {
-                    persistence::remove(root, &oldest)?;
+            })
+        } else {
+            None
+        };
+        if entries.len() >= APP_RUN_CAPACITY && completed_to_evict.is_none() {
+            return Err(AppError::new(
+                AppErrorCategory::Timeout,
+                "应用运行注册表已满，所有保留任务仍在运行",
+            ));
+        }
+        let watcher_slot_reserved = if self.persistence_root.is_some() {
+            persistence::reserve_limited_slot(&APP_RUN_WATCHERS, APP_RUN_WATCHER_CAPACITY)
+        } else {
+            false
+        };
+        if self.persistence_root.is_some() && !watcher_slot_reserved {
+            return Err(AppError::new(
+                AppErrorCategory::Timeout,
+                "异步运行持久化观察器已满；任务未启动，请稍后重试",
+            ));
+        }
+        if let Some(oldest) = completed_to_evict {
+            if let Some(root) = &self.persistence_root {
+                if let Err(error) = persistence::remove(root, &oldest) {
+                    if watcher_slot_reserved {
+                        APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
+                    }
+                    return Err(error);
                 }
-            } else {
-                return Err(AppError::new(
-                    AppErrorCategory::Timeout,
-                    "应用运行注册表已满，所有保留任务仍在运行",
-                ));
             }
+            entries.remove(&oldest);
         }
         entries.insert(
             run_id.clone(),
@@ -143,6 +166,7 @@ impl AppRunRegistry {
                 run_id: run_id.clone(),
                 run: None,
                 cancel_requested: false,
+                watcher_slot_reserved,
                 result: None,
                 error: None,
                 restored_status: None,
@@ -151,6 +175,9 @@ impl AppRunRegistry {
         if let Some(root) = &self.persistence_root {
             if let Err(error) = persistence::reserve(root, entries.get_mut(&run_id).unwrap()) {
                 entries.remove(&run_id);
+                if watcher_slot_reserved {
+                    APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
+                }
                 return Err(error);
             }
         }
@@ -158,29 +185,35 @@ impl AppRunRegistry {
     }
 
     fn attach(&self, run_id: &str, run: AppRun) -> Result<(), AppError> {
-        self.with_entry(run_id, |entry| {
+        let watcher_slot_reserved = match self.with_entry(run_id, |entry| {
             entry.run = Some(run);
             if entry.cancel_requested {
                 entry.cancel();
             }
-        })?;
+            entry.watcher_slot_reserved
+        }) {
+            Ok(reserved) => reserved,
+            Err(error) => {
+                if self.persistence_root.is_some() {
+                    APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
+                }
+                return Err(error);
+            }
+        };
         if let Some(root) = self.persistence_root.clone() {
-            let watcher_reserved = APP_RUN_WATCHERS
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                    (count < APP_RUN_WATCHER_CAPACITY).then_some(count + 1)
-                })
-                .is_ok();
-            if watcher_reserved {
+            if watcher_slot_reserved {
                 let entries = Arc::clone(&self.entries);
                 let run_id = run_id.to_string();
+                let watcher_run_id = run_id.clone();
                 let spawn = std::thread::Builder::new()
                     .name(format!("qx-run-persist-{}", run_id))
                     .spawn(move || {
+                        let _watcher_slot = persistence::WatcherSlot;
                         let mut failed_terminal_writes = 0_u8;
                         let mut last_snapshot = None;
                         loop {
                             let state = match entries.lock() {
-                                Ok(mut entries) => match entries.get_mut(&run_id) {
+                                Ok(mut entries) => match entries.get_mut(&watcher_run_id) {
                                     Some(entry) => {
                                         entry.collect_result();
                                         let terminal = match entry.restored_status.as_deref() {
@@ -217,11 +250,23 @@ impl AppRunRegistry {
                             }
                             std::thread::sleep(Duration::from_millis(50));
                         }
-                        APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
                     });
-                if spawn.is_err() {
+                if let Err(error) = spawn {
                     APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
+                    let _ = self.with_entry(&run_id, |entry| {
+                        entry.watcher_slot_reserved = false;
+                        entry.cancel();
+                    });
+                    return Err(AppError::from_io(
+                        "启动异步运行结果持久化观察器；任务已请求取消",
+                        &error,
+                    ));
                 }
+            } else {
+                return Err(AppError::new(
+                    AppErrorCategory::InternalInvariant,
+                    "持久化运行缺少已预留的观察器名额",
+                ));
             }
         }
         Ok(())
@@ -389,70 +434,4 @@ fn valid_run_route_id(run_id: &str) -> bool {
         && run_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-}
-
-/// 将 HTTP 输入文件限制在服务配置的数据根目录内；绝对路径只在根目录之下接受，
-/// `..`、盘符跳转和指向根外的符号链接一律拒绝。
-pub(super) fn resolve_input_path(path: &mut String, data_root: &Path) -> Result<(), AppError> {
-    use std::path::Component;
-
-    std::fs::create_dir_all(data_root).map_err(|error| {
-        AppError::from_io(
-            &format!("创建 API 数据根目录 {}", data_root.display()),
-            &error,
-        )
-    })?;
-    let root = std::fs::canonicalize(data_root).map_err(|error| {
-        AppError::from_io(
-            &format!("解析 API 数据根目录 {}", data_root.display()),
-            &error,
-        )
-    })?;
-    let input = Path::new(path);
-    let lexical_root = if data_root.is_absolute() {
-        data_root.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map_err(|error| AppError::from_io("解析 API 工作目录", &error))?
-            .join(data_root)
-    };
-    let relative = if input.is_absolute() {
-        input.strip_prefix(&lexical_root).map_err(|_| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                "HTTP 文件路径必须位于服务配置的根目录内",
-            )
-        })?
-    } else {
-        input
-    };
-    if relative.as_os_str().is_empty()
-        || relative
-            .components()
-            .any(|part| !matches!(part, Component::Normal(_)))
-    {
-        return Err(AppError::new(
-            AppErrorCategory::InvalidInput,
-            "HTTP 文件路径必须是配置根目录下的相对路径",
-        ));
-    }
-    let candidate = root.join(relative);
-    if candidate.exists() {
-        let resolved = std::fs::canonicalize(&candidate).map_err(|error| {
-            AppError::from_io(
-                &format!("解析 API 数据文件 {}", candidate.display()),
-                &error,
-            )
-        })?;
-        if !resolved.starts_with(&root) {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "HTTP 文件不能通过符号链接越出服务配置的根目录",
-            ));
-        }
-        *path = resolved.to_string_lossy().into_owned();
-    } else {
-        *path = candidate.to_string_lossy().into_owned();
-    }
-    Ok(())
 }
