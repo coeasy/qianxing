@@ -1453,6 +1453,7 @@ name = "qx-python"
 version = "0.1.0"
 dependencies = [
  "pyo3",
+ "pyo3-build-config",
  "qx-app",
  "qx-datastruct",
 ]

@@ -36,7 +36,9 @@ jobs:
           py_v="$(sed -n 's/^version = "\(.*\)"/\1/p' python/pyproject.toml | head -n1)"
           base_v="$(sed -n 's/^release_version: "\(.*\)"/\1/p' maturity/baseline.yaml)"
           echo "tag=${tag} cargo=${cargo_v} pyproject=${py_v} baseline=${base_v}"
-          if [[ "${tag}" != "${cargo_v}" || "${tag}" != "${py_v}" || "${tag}" != "${base_v}" ]]; then
+          if [[ "${tag}" == "${cargo_v}" && "${tag}" == "${py_v}" && "${tag}" == "${base_v}" ]]; then
+            echo "tag 与冻结版本一致"
+          else
             echo "tag 与冻结版本不一致：先同步三处再打 tag" >&2
             exit 1
           fi
@@ -221,8 +223,11 @@ jobs:
             -DCMAKE_PREFIX_PATH="$PWD/dist/sdk"
           cmake --build build/cpp-consumer --config Release --parallel
           tar -czf "dist/qianxing-cpp-sdk-${GITHUB_REF_NAME}.tar.gz" -C dist sdk
-          (cd dist && sha256sum qianxing-cpp-sdk-*.tar.gz > cpp-sdk.sha256 2>/dev/null \
-            || shasum -a 256 qianxing-cpp-sdk-*.tar.gz > cpp-sdk.sha256)
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum qianxing-cpp-sdk-*.tar.gz > cpp-sdk.sha256)
+          else
+            (cd dist && shasum -a 256 qianxing-cpp-sdk-*.tar.gz > cpp-sdk.sha256)
+          fi
       - name: Attest C++ SDK build provenance
         uses: actions/attest-build-provenance@v2
         with:
