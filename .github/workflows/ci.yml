@@ -93,6 +93,8 @@ jobs:
             bash tools/build_python_wheel.sh
           fi
           python -m pip install --quiet dist/*.whl
+      - name: Check stable-ABI wheel tag and native payload
+        run: python tools/check_python_wheel.py dist
       - name: Import the installed wheel outside the source tree
         shell: bash
         run: |

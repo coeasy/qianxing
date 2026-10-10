@@ -2,6 +2,8 @@
 
 `qianxing` is the Python entry point for the Qianxing quantitative research and trading platform. The wheel bundles a Rust native extension; using the installed SDK does not require a Rust toolchain.
 
+The extension uses PyO3's Python 3.10 stable ABI. Release builds publish one `cp310-abi3` wheel per supported OS and CPU architecture, usable on CPython 3.10 and newer; native platform binaries still require separate Windows, macOS, and Linux wheels.
+
 ## Current SDK surface
 
 The public `qianxing` namespace currently exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, and artifact verification. Backtest facts, fixed-point arithmetic, matching, risk, and metrics remain implemented by the Rust engine.

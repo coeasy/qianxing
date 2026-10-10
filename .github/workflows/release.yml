@@ -119,7 +119,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        # PyO3 is built for the Python 3.10 stable ABI, so one wheel per OS/arch
+        # serves every supported CPython version from 3.10 onward.
+        python: ["3.10"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -135,6 +137,8 @@ jobs:
             export PYTHON=python3
             bash tools/build_python_wheel.sh
           fi
+      - name: Check stable-ABI wheel tag and native payload
+        run: python tools/check_python_wheel.py dist
       - name: Confirm this matrix leg produced a wheel
         shell: bash
         run: test -n "$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
@@ -172,7 +176,7 @@ jobs:
           subject-path: dist/*.whl
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ runner.os }}-py${{ matrix.python }}
+          name: wheel-${{ runner.os }}-${{ runner.arch }}
           path: dist/*.whl
           if-no-files-found: error
 

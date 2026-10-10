@@ -1,13 +1,14 @@
-from setuptools import setup
-from wheel.bdist_wheel import bdist_wheel
+from setuptools import Distribution, setup
 
 
-class BinaryWheel(bdist_wheel):
-    """Mark wheels containing the PyO3 extension as platform-specific."""
+class NativeDistribution(Distribution):
+    """Mark the bundled PyO3 extension as a platform-specific binary wheel."""
 
-    def finalize_options(self):
-        super().finalize_options()
-        self.root_is_pure = False
+    def has_ext_modules(self) -> bool:
+        return True
 
 
-setup(cmdclass={"bdist_wheel": BinaryWheel})
+setup(
+    distclass=NativeDistribution,
+    options={"bdist_wheel": {"py_limited_api": "cp310"}},
+)

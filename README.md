@@ -204,14 +204,14 @@ PYTHON=python/.venv/bin/python bash tools/build_python_wheel.sh
 ```bash
 uv venv .venv-qx --python 3.12
 # #276：基础安装零强制第三方依赖，离线也能装成，不再需要 --no-deps
-uv pip install --offline dist/qianxing-0.1.0-cp312-cp312-win_amd64.whl
+uv pip install --offline dist/qianxing-0.1.0-cp310-abi3-win_amd64.whl
 python -c "import qianxing as qx; print(qx.doctor())"
 # 按能力选装 extras（不装也 import 得动，用到才在调用点给可执行提示）
 uv pip install --offline "qianxing[ccxt]"     # CCXT 行情/交易 worker
 uv pip install --offline "qianxing[a-share]"  # A 股数据源（Windows 连 tzdata 一起带）
 ```
 
-Release 工作流可在配置 `PYPI_PUBLISH_ENABLED=true` 和 PyPI Trusted Publisher 后自动发布兼容 Python 3.10–3.13、Windows/macOS/Linux 的 wheel；未配置该仓库变量时只构建并附加发布件，不向 PyPI 上传。
+PyO3 已启用 `abi3-py310`，wheel 以 `cp310-abi3` 标签构建。发布工作流每个平台/架构只需构建一份 wheel，可供 CPython 3.10 及更新版本安装；Windows、macOS、Linux 仍各自需要匹配的原生平台 wheel。CI 在 Python 3.10–3.13 上验证安装和回测。配置 `PYPI_PUBLISH_ENABLED=true` 与 PyPI Trusted Publisher 后会自动发布；未配置时只构建并附加到 GitHub Release，不上传 PyPI。
 
 #276 之后 wheel 的强制依赖清单是空的：`ccxt` 与 Windows 的 `tzdata` 都改成可选 extras（`[ccxt]` / `[ccxt-pro]` / `[tz]` / `[a-share*]`），`pip install <wheel>` 在任何索引状态下都能装成，`--no-deps` 不再是必需项。`ccxt` 只在真的跑 CCXT worker 时才 import，`Asia/Shanghai` 只在真的取 A 股时区时才解析（#253 把顶层求值挪到用时），缺谁都在调用点抛带 extras 名字的可执行提示。
 
