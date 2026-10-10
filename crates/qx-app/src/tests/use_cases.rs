@@ -228,6 +228,84 @@ fn a_tampered_summary_makes_verification_fail_without_erroring() {
 }
 
 #[test]
+fn verification_rejects_tampered_outcome_metrics_and_identity() {
+    let root = scratch("bt-outcome-tamper");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
+    let spec = backtest_spec("run-outcome-tamper", &bars, &root.join("out"));
+    let outcome = run_backtest(&spec, &research("run-outcome-tamper")).expect("回测跑通");
+
+    let mut tampered = outcome.clone();
+    tampered.instrument = "ETHUSDT.BINANCE".into();
+    let verification = verify_run(&tampered, &research("verify-instrument")).unwrap();
+    assert!(!verification.verified);
+    assert!(verification
+        .mismatches
+        .iter()
+        .any(|item| item.contains("instrument")));
+
+    let mut tampered = outcome.clone();
+    tampered.equity_points += 1;
+    let verification = verify_run(&tampered, &research("verify-equity-points")).unwrap();
+    assert!(!verification.verified);
+    assert!(verification
+        .mismatches
+        .iter()
+        .any(|item| item.contains("equity_points")));
+
+    let mut tampered = outcome.clone();
+    tampered.return_bps = tampered.return_bps.saturating_add(1);
+    let verification = verify_run(&tampered, &research("verify-return")).unwrap();
+    assert!(!verification.verified);
+    assert!(verification
+        .mismatches
+        .iter()
+        .any(|item| item.contains("return_bps")));
+
+    let mut tampered = outcome;
+    tampered.max_drawdown_bps = tampered.max_drawdown_bps.saturating_add(1);
+    let verification = verify_run(&tampered, &research("verify-drawdown")).unwrap();
+    assert!(!verification.verified);
+    assert!(verification
+        .mismatches
+        .iter()
+        .any(|item| item.contains("max_drawdown_bps")));
+}
+
+#[test]
+fn verification_rejects_manifest_metadata_drift_and_nondeterministic_runs() {
+    for (label, mutate) in [
+        (
+            "strategy-version",
+            Box::new(|manifest: &mut serde_json::Value| {
+                manifest["strategy_version"] = serde_json::json!("tampered");
+            }) as Box<dyn Fn(&mut serde_json::Value)>,
+        ),
+        (
+            "determinism-mode",
+            Box::new(|manifest: &mut serde_json::Value| {
+                manifest["determinism_mode"] = serde_json::json!(false);
+            }),
+        ),
+    ] {
+        let root = scratch(&format!("bt-manifest-{label}"));
+        let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
+        let spec = backtest_spec(&format!("run-manifest-{label}"), &bars, &root.join("out"));
+        let outcome =
+            run_backtest(&spec, &research(&format!("run-manifest-{label}"))).expect("回测跑通");
+        let manifest_path = PathBuf::from(&outcome.artifacts.run_manifest);
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("读 manifest"))
+                .expect("解析 manifest");
+        mutate(&mut manifest);
+        std::fs::write(&manifest_path, manifest.to_string()).expect("改写 manifest");
+
+        let verification = verify_run(&outcome, &research(&format!("verify-{label}")))
+            .expect("复核结论不应转成调用错误");
+        assert!(!verification.verified, "{label} 篡改必须拒绝");
+    }
+}
+
+#[test]
 fn a_missing_artifact_is_a_verification_conclusion_not_an_error() {
     let root = scratch("bt-missing-artifact");
     let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);

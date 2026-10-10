@@ -42,10 +42,12 @@ const FINAL_STATUSES = ["Executed", "Failed"];
 const WS_PATH = API_PATHS.eventsLive;
 
 const POLL_MS = 5000;
+const FETCH_TIMEOUT_MS = 15000;
 
 const state = {
   base: "",
   timer: null,
+  refreshInFlight: false,
   ws: null,
   wsAlive: false,
   // 连接拓扑：同源 BFF（页面就是这一层发的）与跨源直连 qx-api 是两条不同的路。
@@ -340,8 +342,18 @@ async function readJson(response) {
   return body;
 }
 
+async function fetchWithTimeout(url, init) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function getJson(path) {
-  const response = await fetch(state.base + path, { headers: { Accept: "application/json" } });
+  const response = await fetchWithTimeout(state.base + path, { headers: { Accept: "application/json" } });
   const body = await readJson(response);
   if (!response.ok) state.cycleNon200 += 1;
   return { status: response.status, ok: response.ok, body };
@@ -505,7 +517,7 @@ async function postJsonText(path, body) {
   const headers = { "Content-Type": "application/json", Accept: "application/json" };
   const csrf = csrfToken();
   if (csrf) headers[CSRF_HEADER_NAME] = csrf;
-  const response = await fetch(state.base + path, {
+  const response = await fetchWithTimeout(state.base + path, {
     method: "POST",
     headers,
     body,
@@ -744,7 +756,8 @@ function renderEvents(note) {
 }
 
 async function refreshAll() {
-  if (!state.base) return;
+  if (!state.base || state.refreshInFlight) return;
+  state.refreshInFlight = true;
   state.cycleNon200 = 0;
   $("last-refresh").textContent = `刷新于 ${new Date().toLocaleTimeString("zh-CN")}`;
   try {
@@ -760,6 +773,8 @@ async function refreshAll() {
   } catch (error) {
     setConnState("读取失败", "pill-bad");
     rows($("health-rows"), [["错误", String(error && error.message ? error.message : error)]]);
+  } finally {
+    state.refreshInFlight = false;
   }
 }
 

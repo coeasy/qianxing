@@ -3,14 +3,16 @@
 //! 它把四份产物**重新读回来**，逐条核对它们互相说的是不是同一件事。这是"可复现"升级成
 //! "可核验"的那一步：产物在盘不等于产物自洽，而读者（报告、对比、台账）只念产物。
 //!
-//! ## 复核的五条口径
+//! ## 复核口径
 //!
 //! 1. `result_hash` 三处一致：`run.json` == `summary.json` == 调用方手上的 `BacktestOutcome`。
 //! 2. `data_fingerprint` 三处一致（同上）。
 //! 3. `run_id` 三处一致。
 //! 4. `equity.csv` 行数 == `summary.equity_points`，且**末行** == `summary.final_equity_raw`。
 //! 5. `fills.csv` 行数 == `summary.fills`。
-//! 6. `summary.replay_ledger_entries` == `summary.ledger_entries`（重放自检的读回面）。
+//! 6. 调用方 outcome 与 summary 的标的、成交数、权益点数、收益和回撤逐项一致。
+//! 7. manifest 与 summary 的策略版本、时钟区间和随机种子一致，且 manifest 声明确定性运行。
+//! 8. `summary.replay_ledger_entries` == `summary.ledger_entries`（重放自检的读回面）。
 //!
 //! ## 为什么产物缺失不是 `Err`
 //!
@@ -160,14 +162,75 @@ fn verify_run_inner(outcome: &BacktestOutcome) -> VerificationResult {
         &manifest.config_hash,
         &summary.config_hash,
     );
+    compare(
+        &mut checks,
+        &mut mismatches,
+        "strategy_version（manifest ↔ summary）",
+        &manifest.strategy_version,
+        &summary.strategy_version,
+    );
+    compare(
+        &mut checks,
+        &mut mismatches,
+        "clock_start（manifest ↔ summary）",
+        &manifest.clock_start.to_string(),
+        &summary.clock_start.to_string(),
+    );
+    compare(
+        &mut checks,
+        &mut mismatches,
+        "clock_end（manifest ↔ summary）",
+        &manifest.clock_end.to_string(),
+        &summary.clock_end.to_string(),
+    );
+    compare(
+        &mut checks,
+        &mut mismatches,
+        "seed（manifest ↔ summary）",
+        &manifest.global_seed.to_string(),
+        &summary.seed.to_string(),
+    );
+    if manifest.determinism_mode {
+        checks.push("manifest.determinism_mode == true".to_string());
+    } else {
+        mismatches.push("manifest.determinism_mode 为 false".to_string());
+    }
+    compare(
+        &mut checks,
+        &mut mismatches,
+        "instrument（summary ↔ outcome）",
+        &summary.instrument,
+        &outcome.instrument,
+    );
+    compare(
+        &mut checks,
+        &mut mismatches,
+        "equity_points（summary ↔ outcome）",
+        &summary.equity_points.to_string(),
+        &outcome.equity_points.to_string(),
+    );
+    compare(
+        &mut checks,
+        &mut mismatches,
+        "return_bps（summary ↔ outcome）",
+        &summary.return_bps.to_string(),
+        &outcome.return_bps.to_string(),
+    );
+    compare(
+        &mut checks,
+        &mut mismatches,
+        "max_drawdown_bps（summary ↔ outcome）",
+        &summary.max_drawdown_bps.to_string(),
+        &outcome.max_drawdown_bps.to_string(),
+    );
 
     let equity_rows = csv_rows(&equity_body).len() as u64;
-    if equity_rows == summary.equity_points {
+    if equity_rows == summary.equity_points && equity_rows == outcome.equity_points {
         checks.push(format!("equity.csv 行数 == equity_points == {equity_rows}"));
     } else {
         mismatches.push(format!(
-            "equity.csv 行数 {equity_rows} != summary.equity_points {}",
-            summary.equity_points
+            "equity.csv 行数 {equity_rows} != summary.equity_points {} / outcome.equity_points {}",
+            summary.equity_points, outcome.equity_points
         ));
     }
     match last_equity_raw(&equity_body) {
@@ -182,11 +245,11 @@ fn verify_run_inner(outcome: &BacktestOutcome) -> VerificationResult {
     }
 
     let fill_rows = csv_rows(&fills_body).len() as u64;
-    if fill_rows == summary.fills && fill_rows == outcome.fills {
+    if summary.fills == outcome.fills && fill_rows == summary.fills {
         checks.push(format!("fills.csv 行数 == fills == {fill_rows}"));
     } else {
         mismatches.push(format!(
-            "fills.csv 行数 {fill_rows} != summary.fills {} / outcome.fills {}",
+            "fills.csv 行数 {fill_rows}、summary.fills {}、outcome.fills {} 不一致",
             summary.fills, outcome.fills
         ));
     }
