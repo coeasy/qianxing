@@ -676,7 +676,7 @@ capabilities:
       - python/qianxing_bridge/__init__.py load_account_snapshot 的必填集合与 schemas/account-snapshot-v1.json 的 required 同源（补上写侧恒印的 equity_raw），python/tests/test_bridge.py 把「少任一必填」与「schema_version 是 0 或 2」两个方向各断言一遍，与 Rust from_json 同一判据 (V11 S10 → T3)
       - python/tests/test_ashare.py 两条日历用例：共用夹具的摘要与 .fingerprint 全等、夹具是 to_json 的定点，且摘要只随 calendar_id/trading_days/sessions 动而 source 改了不动 (V11 T2)
       - tools/build_python_wheel.sh and tools/build_python_wheel.ps1
-      - .github/workflows/ci.yml python-wheel job (Python 3.10/3.12/3.13 on Linux and Windows)
+      - .github/workflows/release.yml Python 3.10-3.13 wheel builds and clean-install backtest checks on Linux, macOS, and Windows
       - schemas/strategy_api_v1.schema.json now states the same field list the Rust contract writes and requires, refuses decimal-string money, and carries margin_mode/position_mode/leverage; tools/check_architecture.py does not own that alignment, crates/qx-runtime/tests/strategy_contract_schema.rs does (V12 R4-k)
       - 'crates/qx-runtime/tests/strategy_contract_schema.rs four cases: the schema declares exactly the fields Rust writes and requires, unknown keys are rejected rather than dropped, fixed-point fields travel as JSON integers only, and the const schema version is the version the runtime accepts (V12 R4-k)'
       - python/tests/test_strategy_contract.py test_output_rejects_unknown_keys_rather_than_dropping_them keeps the Python bridge on the same deny-unknown-keys footing as Rust for both the output and each intent (V12 R4-k)
@@ -693,7 +693,6 @@ capabilities:
       - 未过时的独立 exe 就地跑通核心链路（判据 `find crates -name '*.rs' -newer target/release/qx-cli.exe` 得 0、`deploy/` 下最新 JSON 早于它，本轮只动 Python/门禁/文档），产物只落临时目录：`qx-cli quickstart` 五步全过、BTC `backtest` fills=1；A 股 `qx-cli backtest deploy/qianxing.runtime.ashare.example.json deploy/qianxing.ashare.bar-frame.example.json deploy/qianxing.ashare.spot.spec.json` fills=1；重打后 wheel 内 _qianxing_native.pyd 的 md5 仍 ≡ target/release 那份（#194）（V13 R2 第三十二遍 ③ #279）
       - crates/qx-runtime/src/strategy_contract/contract.rs 与 python/qianxing_bridge/strategy.py 的输出侧校验从两句折叠诊断（Rust「StrategyContractOutput 与输入身份、标的或有效期不一致」、Python「strategy output identity or expiry does not match input」）拆成一臂一句：schema_version / request_id / strategy_id / signal_id / instrument 与输入不一致 / instrument 非法（Python 侧另有点名空串）/ expires_at 地板 各说各话，OrderIntent 侧仍是一条但点名到「非法或重复」，两侧各 8 句且去重后仍 8 句；最需要点名的「worker 已放行、宿主才挡下」那条跨语言分叉——策略返回 dict 时漏写 schema_version——此前恰好被念成「身份不一致」，作者按那句话去查 request_id 永远查不出问题；版本号一律由宿主解码入口裁决：Rust from_json_for、Python from_dict 读回后都调 validate_for，且 Python 缺键记 0 而不采纳自家 SCHEMA_VERSION 默认；过期地板两侧同一个式子（非 0 才生效、不早于输入 as_of）；判据 tools/check_architecture.py strategy_output_arm_diagnostics_check 八个读数（每臂一句 × 两侧、首臂点名 schema_version × 两侧、折叠句不许回来、两侧地板同式、解码入口裁决版本、跨语言用例在位），回归用例在 crates/qx-runtime/src/strategy_contract/tests.rs （六臂各说各话 + 解码入口拒别家版本号）与 python/tests/test_strategy_contract.py （同六臂 + 空 instrument + 漏写版本号，折进既有方法、用例总数不变）（V13 R7 收口 · 台账 #284 · R7-a）
     limitations:
-      - wheel_matrix_has_not_produced_a_ci_record_yet
       - uppercase_enum_names_pass_the_runtime_but_not_the_schema：Rust accepts both spellings so the difference is stated in the schema description instead of being closed by a second validator; only the C++ worker still does not cover every schema field (Python SDK carries margin_mode/position_mode/leverage, validated and serialized)（V12 R4-k, schemas/strategy_api_v1.md Language coverage）
       - strategy_pipe_write_bounded_by_killing_worker：写侧超时只能靠杀掉子进程来关闭管道读端、放行阻塞的写线程，故 worker 一旦 wedge 需重启而非复用；单请求最坏墙钟约为 2×timeout_ms（写侧预算与读侧预算各等一次），且本机无 Python worker 沙盒，该有界性只由编译、回归用例与门禁自证（V13 R2 第三十四遍 #281）
       - event_consumer_pipe_write_bounded_by_killing_handler：事件 consumer handler 的写侧超时只能靠杀掉子进程来关闭管道读端、放行阻塞的写线程，故 handler 一旦 wedge 需重启而非复用；单事件最坏墙钟约为 2×timeout_ms（写侧预算与退出轮询各等一次）；这条整段在 #[cfg(feature = "nats")] 下、不在默认特性（DEFAULT=["sqlite"]），既不进默认发布 exe 也不进 wheel，且本机无 NATS/handler 沙盒，有界性只由 nats 编译+回归用例+门禁自证（V13 R2 第三十五遍 #282）
@@ -717,14 +716,13 @@ capabilities:
 
   cpp_strategy_package:
     implementation: true
-    code_tested: false
+    code_tested: true
     sandbox_tested: false
     production_approved: false
     evidence:
       - cpp/CMakeLists.txt exports Qianxing::StrategySDK and installable headers/config metadata
+      - .github/workflows/ci.yml installs the CMake package and builds a downstream find_package consumer on Linux, Windows, and macOS
       - .github/workflows/release.yml packages the installed CMake SDK archive
-    limitations:
-      - installed_sdk_consumer_not_yet_verified：CMake package install and downstream find_package consumption have not been built in this change
 
   cpp_strategy_sdk:
     implementation: true
@@ -737,10 +735,8 @@ capabilities:
       - tools/check_architecture.py c_abi_header_check holds 4 items over that mirror：两侧类型集合对称差、每个结构的字段名与顺序逐位、每字段类型按映射表、枚举判别值序列与 ABI 版本常量两侧相等 (V11 S13)
       - cpp/examples/jsonl_strategy.cpp JSON and columnar request decoding
       - tools/verify_cpp_worker.py drives both shared_memory_json and shared_memory_columnar
-      - .github/workflows/ci.yml cpp-sdk job on ubuntu, windows and macos
+      - .github/workflows/ci.yml cpp-sdk job on ubuntu, windows and macos, including a C++ shared-library load through the Rust C ABI host
     limitations:
-      - three_os_cpp_matrix_has_not_produced_a_ci_record_yet
-      - ci_never_loads_a_cpp_plugin_into_the_rust_host：SHARED 的 qianxing_strategy_example 确实被 build 出来，但没有一步用 DynamicCAbiStrategy 加载它，跨工具链的布局一致性目前只有静态门禁这一层保护 (V11 S13)
 
   merge_c07ad22_rollback_register:
     implementation: false

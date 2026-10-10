@@ -13,6 +13,14 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#if defined(_WIN32)
+#define QX_STRATEGY_EXPORT __declspec(dllexport)
+#elif defined(__GNUC__) || defined(__clang__)
+#define QX_STRATEGY_EXPORT __attribute__((visibility("default")))
+#else
+#define QX_STRATEGY_EXPORT
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -140,7 +148,7 @@ typedef struct qx_strategy_vtable {
 } qx_strategy_vtable;
 
 /* Plugin entry point exported by a C++ strategy shared library. */
-const qx_strategy_vtable* qx_strategy_get_vtable(void);
+QX_STRATEGY_EXPORT const qx_strategy_vtable* qx_strategy_get_vtable(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

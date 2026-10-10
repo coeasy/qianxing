@@ -6311,7 +6311,8 @@ def c_abi_header_check() -> None:
 
     `cpp/include/qianxing_strategy.h` 与 `crates/qx-strategy/src/c_api.rs` 描述同一份插件 ABI，
     两侧之间没有任何编译期或链接期耦合：少一个字段、换一个顺序，宿主读到的就是错位内存而不是
-    报错。CI 的 `cpp-sdk` 作业只编译 C++ 例子、不把它交给 Rust 宿主加载，所以对齐只能靠这份比对。
+    报错。CI 还会把 C++ 示例动态库交给 Rust `DynamicCAbiStrategy` 加载并执行一个事件，
+    覆盖头文件布局、导出符号与实际回调的跨语言链路。
     """
     header = (ROOT / "cpp/include/qianxing_strategy.h").read_text(encoding="utf-8")
     rust = (ROOT / "crates/qx-strategy/src/c_api.rs").read_text(encoding="utf-8")
@@ -6424,6 +6425,12 @@ def c_abi_header_check() -> None:
         "枚举判别值序列与 ABI 版本常量两侧相等",
         f"枚举 头 {c_enums} / Rust {rust_enums}；版本 头 {header_version and header_version.group(1)}"
         f" / Rust {rust_version and rust_version.group(1)}",
+    )
+    check(
+        "#define QX_STRATEGY_EXPORT __declspec(dllexport)" in header
+        and "QX_STRATEGY_EXPORT const qx_strategy_vtable* qx_strategy_get_vtable(void);" in header,
+        "Windows C++ 策略插件显式导出 Rust 动态宿主查找的 ABI 入口",
+        "qx_strategy_get_vtable 缺少 Windows dllexport 声明",
     )
 
 

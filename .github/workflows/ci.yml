@@ -23,6 +23,8 @@ jobs:
           go-version: "1.24.x"
       - name: Validate workflow syntax and expressions
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/*.yml
+      - name: Check tracked Markdown links and path casing
+        run: python tools/check_markdown_links.py
 
   rust-core:
     name: Rust core
@@ -340,13 +342,28 @@ jobs:
             fi
             printf '%s\n' "${found}"
           }
+          find_plugin() {
+            local found
+            found="$(find build/cpp -type f \( -name 'libqianxing_strategy_example.so' -o -name 'libqianxing_strategy_example.dylib' -o -name 'qianxing_strategy_example.dll' \) -print -quit)"
+            if [[ -z "${found}" ]]; then
+              echo "expected C ABI strategy plugin was not produced" >&2
+              exit 1
+            fi
+            printf '%s\n' "${found}"
+          }
           echo "smoke=$(find_binary qianxing_ring_smoke)" >> "${GITHUB_OUTPUT}"
           echo "strategy=$(find_binary qianxing_strategy_jsonl)" >> "${GITHUB_OUTPUT}"
+          echo "plugin=$(find_plugin)" >> "${GITHUB_OUTPUT}"
       - name: Run C++ ring smoke
         shell: bash
         env:
           SMOKE: ${{ steps.binaries.outputs.smoke }}
         run: '"${SMOKE}"'
+      - name: Load C++ strategy in the Rust C ABI host
+        shell: bash
+        env:
+          QX_CPP_STRATEGY_LIBRARY: ${{ steps.binaries.outputs.plugin }}
+        run: cargo test -p qx-strategy --test cpp_plugin_host -- --exact loads_and_runs_cpp_strategy_through_the_rust_c_abi_host --nocapture
       - name: Run C++ JSONL strategy contract smoke
         shell: bash
         env:
