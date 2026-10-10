@@ -766,8 +766,8 @@ impl PostgresOutboxStore {
                         e.trace_id, e.payload, e.created_ts, e.attempts
                  FROM qx_outbox_events e
                  LEFT JOIN qx_outbox_leases l ON l.event_id = e.event_id
-                 WHERE l.event_id IS NULL OR l.expires_ts::numeric <= $1::numeric
-                 ORDER BY e.attempts::numeric >= $2::numeric,
+                 WHERE l.event_id IS NULL OR l.expires_ts::numeric <= $1::text::numeric
+                 ORDER BY e.attempts::numeric >= $2::text::numeric,
                           e.created_ts::numeric, e.sequence::numeric, e.event_id
                  LIMIT $3",
                 &[
@@ -803,7 +803,7 @@ impl PostgresOutboxStore {
         let mut client = self.storage.lock_client()?;
         let row = client
             .query_one(
-                "SELECT COUNT(*) FROM qx_outbox_events WHERE attempts::numeric >= $1::numeric",
+                "SELECT COUNT(*) FROM qx_outbox_events WHERE attempts::numeric >= $1::text::numeric",
                 &[&u64_text(crate::OUTBOX_MAX_ATTEMPTS as u64)],
             )
             .map_err(pg_error)?;
@@ -2024,7 +2024,7 @@ impl PostgresJobQueue {
         let rows = client
             .query(
                 "SELECT run_id FROM qx_job_leases
-                 WHERE expires_ts::numeric <= $1::numeric ORDER BY run_id::numeric",
+                 WHERE expires_ts::numeric <= $1::text::numeric ORDER BY run_id::numeric",
                 &[&now],
             )
             .map_err(pg_error)?;
