@@ -8,8 +8,11 @@ fn fixture_paths() -> (app_surface::AppPaths, String) {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root =
-        std::env::temp_dir().join(format!("qx-api-multi-leg-{}-{unique}", std::process::id()));
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join(format!("qx-api-multi-leg-{}-{unique}", std::process::id()));
     let data_root = root.join("data");
     std::fs::create_dir_all(&data_root).unwrap();
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -65,6 +68,36 @@ fn multi_leg_http_facade_uses_service_paths_and_the_same_outcome_contract() {
     assert!(PathBuf::from(&outcome.attribution_artifact)
         .starts_with(paths.artifact_root.join(&outcome.run_id)));
     assert!(Path::new(&outcome.attribution_artifact).is_file());
+}
+
+#[test]
+fn multi_leg_http_facades_reject_dot_segment_run_ids_before_registry_or_path_setup() {
+    let (paths, body) = fixture_paths();
+    let unsafe_body = body.replace("\"run_id\":\"api-multi-leg\"", "\"run_id\":\"..\"");
+    let sync = app_surface::multi_leg_backtest(&unsafe_body, &paths);
+    assert_eq!(sync.status, 400, "{}", sync.body);
+    assert!(sync.body.contains("run_id"), "{}", sync.body);
+    assert!(
+        !paths.artifact_root.exists(),
+        "invalid identity must be rejected before the output tree is created"
+    );
+
+    let registry = app_surface::AppRunRegistry::default();
+    let asynchronous = app_surface::app_run_route(
+        "POST",
+        "/app/multi-leg-backtest/start",
+        &unsafe_body,
+        &paths,
+        &registry,
+    )
+    .unwrap();
+    assert_eq!(asynchronous.status, 400, "{}", asynchronous.body);
+    let missing = registry.status("..");
+    assert_eq!(missing.status, 404, "{}", missing.body);
+    assert!(
+        !paths.artifact_root.exists(),
+        "invalid identity must not reserve a run or create output paths"
+    );
 }
 
 #[test]

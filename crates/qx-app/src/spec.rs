@@ -38,6 +38,7 @@ pub const MIN_BACKTEST_BARS: usize = 2;
 /// 而它随时可能因为多一个入口的路径约定而调整。
 fn is_identity_token(value: &str) -> bool {
     !value.is_empty()
+        && !matches!(value, "." | "..")
         && value.len() <= 128
         && value
             .chars()

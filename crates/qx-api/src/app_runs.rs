@@ -404,6 +404,9 @@ pub(crate) fn start_multi_leg_backtest(
         Ok(spec) => spec,
         Err(error) => return respond(Err(error)),
     };
+    if let Err(error) = spec.validate() {
+        return respond(Err(error));
+    }
     for input in [&mut spec.primary_bars_path, &mut spec.reference_bars_path] {
         if let Err(error) = resolve_input_path(input, &paths.data_root) {
             return respond(Err(error));

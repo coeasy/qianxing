@@ -154,7 +154,7 @@ fn identity_fields_that_could_escape_the_output_directory_are_rejected() {
         );
     }
     let root = scratch("spec-identity");
-    for bad in ["../escape", "a/b", ""] {
+    for bad in ["../escape", "..", ".", "a/b", ""] {
         let mut spec = backtest_spec("run-ok", "bars.json", &root);
         spec.run_id = bad.to_string();
         assert_eq!(
