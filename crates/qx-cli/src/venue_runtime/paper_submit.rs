@@ -64,13 +64,16 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
     let now = runtime_timestamp_ms();
     // 命令队列租约/入队时间在秒域，控制面审计戳保持毫秒（见 `lease_clock`）。
     let lease_now = lease_clock(now);
+    // 一次性入口没有 worker_id 参数：按命令自己的账户/交易所挑那台 Paper Execution worker，
+    // 而不是无差别取第一台 —— 多账户共享一份控制面时，取第一台会把订单写进另一台 worker 的
+    // EventLog（与常驻循环用 `paper_submit_matches_worker` 分派命令是同一道口径）。
     let paper_worker = config
         .workers
         .iter()
         .find(|worker| {
             worker.enabled
                 && worker.role == WorkerRole::Execution
-                && VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper)
+                && paper_submit_matches_worker(&command, worker)
         })
         .cloned();
     if let Some(worker) = paper_worker.as_ref() {
@@ -102,9 +105,16 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
         .filter(|worker| worker.instrument_spec_path.is_some())
     {
         paper_submit_action(&config, path, &command, worker, &root, now)
-    } else {
+    } else if paper_worker.is_some() {
         Err(
             "FAIL_CLOSED: Paper worker 缺少风控配置（instrument_spec_path），拒绝提交订单"
+                .to_string(),
+        )
+    } else {
+        // 挑不出任何一台与订单账户/交易所一致的启用 Paper worker：fail-closed，
+        // 而不是退回「取第一台」把订单写进别的账户账本。
+        Err(
+            "FAIL_CLOSED: 找不到与订单账户一致的启用 Paper Execution worker，拒绝提交订单"
                 .to_string(),
         )
     };

@@ -317,6 +317,8 @@ cargo run -p qx-cli --release -- supervise deploy/qianxing.runtime.example.json
 cargo run -p qx-cli --release -- binance-worker deploy/qianxing.runtime.example.json <worker-id> --once
 # 通过审计后的 SubmitOrder 命令执行（示例默认为 dry_run）
 cargo run -p qx-cli --release -- binance-submit-order deploy/qianxing.runtime.production.example.json binance-user-main deploy/qianxing.submit-order.example.json
+# CCXT 一次性提交（OKX 等第二交易所经 CCXT 沙盒）：显式点名 worker + CCXT 配置 + 命令
+cargo run -p qx-cli --release -- ccxt-submit-order deploy/qianxing.runtime.ccxt.example.json ccxt-execution-main deploy/qianxing.ccxt.exchange.example.json deploy/qianxing.submit-order.ccxt-derivatives.example.json
 # 本地 Paper 控制面→队列→成交→Ledger 闭环（不连接网络）
 cargo run -p qx-cli --release -- paper-submit-order deploy/qianxing.runtime.paper-strategy.example.json deploy/qianxing.paper-submit-order.example.json
 ```

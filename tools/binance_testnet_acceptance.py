@@ -5,15 +5,19 @@
 重复下单拒绝 → 断线重启恢复 → 对账 → 终态快照。
 
 设计约束：
-* 缺少 `QX_BINANCE_TESTNET_API_KEY` / `QX_BINANCE_TESTNET_API_SECRET` 时，只运行
-  不需要凭据的离线前两段，然后以退出码 3 结束（skip 而不是假通过）。
+* 缺少凭据时，只运行不需要凭据的离线前两段，然后以退出码 3 结束（skip 而不是假通过）。
   `--allow-skip` 才会把该情形折叠为退出码 0，供 CI 的“未验收”分支使用。
-* 只有显式 `--send-orders` 才会把命令的 `dry_run` 置为 false；默认全程不向
-  交易所发送真实订单。
+* 只有显式 `--send-orders` 才会把命令的 `dry_run` 置为 false；默认全程不向交易所发送真实订单。
 * 每次运行都会在 `--evidence-root`（默认 `maturity/evidence/testnet`）下留下一个
-  UTC 时间戳目录与 `result.json`（阶段退出码、耗时、outcome、是否允许翻转
-  `sandbox_tested`）。目录不自动删除：`maturity/capabilities.yaml` 的
-  `sandbox_tested` 只能凭一份 `outcome=pass` 的结果包翻转。
+  UTC 时间戳目录与 `result.json`（阶段退出码、耗时、outcome、是否允许翻转 `sandbox_tested`）。
+  目录不自动删除：`maturity/capabilities.yaml` 的 `sandbox_tested` 只能凭一份 `outcome=pass`
+  的结果包翻转。
+
+第二交易所（OKX 经 CCXT 沙盒）同形复跑：用 `--venue okx` 切换，而不是复制一份脚本
+（外部链路验收方案 V1 §5）。Binance 仍是默认路径，保证门禁里那条
+“BASE_CONFIG 指向 binance 验收配置、KEY_ENV/SECRET_ENV 与配置引用同名”的判据不变；
+OKX 走同一条 fail-closed 骨架，只是把探测/下单/worker 换成 `ccxt-*` 链路，且复用同一个
+控制面幂等口径（重复 `request_id` 同样被拒）。
 """
 
 from __future__ import annotations
@@ -34,6 +38,17 @@ EXECUTION_WORKER = "binance-execution-main"
 RECONCILE_WORKER = "reconciler-main"
 KEY_ENV = "QX_BINANCE_TESTNET_API_KEY"
 SECRET_ENV = "QX_BINANCE_TESTNET_API_SECRET"
+# V10 §6 / 外部链路验收 V1 §5：第二交易所（OKX 经 CCXT 沙盒）同形复跑。
+# 用 --venue 切换而非复制脚本；Binance 仍是默认路径，门禁里那条
+# "BASE_CONFIG 指向 binance 验收配置、KEY_ENV/SECRET_ENV 与配置引用同名" 的判据不变。
+# 这些常量名不属于门禁白名单（白名单只认上面五个），所以额外新增不会让那条判据变红。
+OKX_BASE_CONFIG = WORKSPACE / "deploy" / "qianxing.runtime.ccxt.example.json"
+OKX_CCXT_CONFIG = WORKSPACE / "deploy" / "qianxing.ccxt.exchange.example.json"
+OKX_EXECUTION_WORKER = "ccxt-execution-main"
+OKX_RECONCILE_WORKER = "ccxt-reconciler-main"
+OKX_KEY_ENV = "QX_CCXT_OKX_API_KEY"
+OKX_SECRET_ENV = "QX_CCXT_OKX_SECRET"
+OKX_PASS_ENV = "QX_CCXT_OKX_PASSWORD"
 
 EXIT_FAILURE = 2
 EXIT_SKIPPED = 3
@@ -63,11 +78,14 @@ def write_result_package(
     outcome: str,
     started_at: float,
     detail: str = "",
+    kind: str = "binance-testnet-acceptance",
+    venue: str = "binance",
 ) -> Path:
     """落一份机器可读的结果包；它是 `capabilities.yaml` 翻 `sandbox_tested` 的唯一依据。"""
     package = {
         "schema_version": 1,
-        "kind": "binance-testnet-acceptance",
+        "kind": kind,
+        "venue": venue,
         "outcome": outcome,
         "started_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at)),
         "finished_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -87,6 +105,7 @@ def write_result_package(
     path = workdir / "result.json"
     path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
+
 
 # Windows 控制台默认 GBK，中文日志需要显式切到 UTF-8。
 for stream in (sys.stdout, sys.stderr):
@@ -156,10 +175,10 @@ def from_workspace(value: str) -> str:
     return str(path if path.is_absolute() else (WORKSPACE / path).resolve())
 
 
-def build_acceptance_config(workdir: Path) -> Path:
+def build_acceptance_config(workdir: Path, base_config: Path) -> Path:
     """复制验收配置到工作目录，只改写状态路径以把运行事实隔离在验收目录内。"""
     payload: dict[str, Any] = copy.deepcopy(
-        json.loads(BASE_CONFIG.read_text(encoding="utf-8"))
+        json.loads(base_config.read_text(encoding="utf-8"))
     )
     payload["storage"]["data_dir"] = str((workdir / "acceptance-data").resolve())
     scheduler = payload.get("scheduler") or {}
@@ -175,7 +194,7 @@ def build_acceptance_config(workdir: Path) -> Path:
     strategy = payload.get("strategy") or {}
     if strategy.get("target_snapshot_path"):
         strategy["target_snapshot_path"] = str(workdir / strategy["target_snapshot_path"])
-    path = workdir / "qianxing.runtime.binance-testnet.acceptance.json"
+    path = workdir / "qianxing.runtime.acceptance.json"
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
 
@@ -198,6 +217,41 @@ def build_command(client_id: int, dry_run: bool, instrument: str) -> dict[str, A
         "request_id": f"testnet-acceptance-{client_id}-{int(time.time())}",
         "operator_id": "binance-testnet-acceptance",
         "reason": "Binance testnet acceptance drill",
+        "kind": "SubmitOrder",
+        "target": str(client_id),
+        "payload": {"order_json": json.dumps(order, separators=(",", ":"))},
+        "permission": "Trading",
+        "dry_run": dry_run,
+    }
+
+
+def build_ccxt_command(client_id: int, dry_run: bool, instrument: str) -> dict[str, Any]:
+    """OKX 经 CCXT 沙盒的同形 SubmitOrder（与 `qianxing.submit-order.ccxt-derivatives.example.json` 同口径）。"""
+    symbol, venue = instrument.split(".", 1)
+    order = {
+        "client_id": client_id,
+        "instrument": {"symbol": symbol, "venue": venue},
+        "side": "Buy",
+        "qty": 1_000_000_000,
+        "limit": None,
+        "status": "PendingSubmit",
+        "filled": 0,
+        "account_id": "main",
+        "trace": None,
+        "policy": {
+            "reduce_only": False,
+            "position_side": "net",
+            "margin_mode": "cross",
+            "position_mode": "one_way",
+            "leverage": 3,
+            "post_only": False,
+        },
+    }
+    return {
+        "command_id": client_id,
+        "request_id": f"ccxt-okx-{client_id}-{int(time.time())}",
+        "operator_id": "ccxt-sandbox-acceptance",
+        "reason": "CCXT sandbox acceptance drill",
         "kind": "SubmitOrder",
         "target": str(client_id),
         "payload": {"order_json": json.dumps(order, separators=(",", ":"))},
@@ -253,7 +307,17 @@ def main() -> int:
         default=DEFAULT_EVIDENCE_ROOT,
         help="结果包根目录，默认 maturity/evidence/testnet",
     )
-    parser.add_argument("--instrument", default="BTCUSDT.BINANCE")
+    parser.add_argument(
+        "--venue",
+        default="binance",
+        choices=["binance", "okx"],
+        help="被测外部 venue：binance（默认，Binance testnet）或 okx（经 CCXT 沙盒）",
+    )
+    parser.add_argument(
+        "--instrument",
+        default=None,
+        help="标的；默认随 --venue（binance=BTCUSDT.BINANCE / okx=BTC/USDT:USDT.OKX）",
+    )
     parser.add_argument("--allow-skip", action="store_true", help="缺少凭据时以退出码 0 结束")
     parser.add_argument("--send-orders", action="store_true", help="允许向测试网络发送真实订单")
     args = parser.parse_args()
@@ -281,14 +345,39 @@ def main() -> int:
             )
     binary = Path(binary).resolve()
 
+    # venue 选择：Binance 仍是默认，保证门禁里那条 BASE_CONFIG/KEY_ENV/SECRET_ENV 判据不变；
+    # OKX 经 CCXT 沙盒走同一条 fail-closed 骨架，只是把探测/下单/worker 换成 ccxt-* 链路。
+    if args.venue == "okx":
+        spec = {
+            "kind": "ccxt",
+            "base_config": OKX_BASE_CONFIG,
+            "ccxt_config": OKX_CCXT_CONFIG,
+            "execution_worker": OKX_EXECUTION_WORKER,
+            "reconcile_worker": OKX_RECONCILE_WORKER,
+            "cred_envs": [OKX_KEY_ENV, OKX_SECRET_ENV, OKX_PASS_ENV],
+            "instrument_default": "BTC/USDT:USDT.OKX",
+            "kind_label": "okx-ccxt-sandbox-acceptance",
+        }
+    else:
+        spec = {
+            "kind": "binance",
+            "base_config": BASE_CONFIG,
+            "execution_worker": EXECUTION_WORKER,
+            "reconcile_worker": RECONCILE_WORKER,
+            "cred_envs": [KEY_ENV, SECRET_ENV],
+            "instrument_default": "BTCUSDT.BINANCE",
+            "kind_label": "binance-testnet-acceptance",
+        }
+    instrument = args.instrument or spec["instrument_default"]
+
     # 验收目录不再跑完即删：结果包必须留在仓库内，人工与 CI 都能事后核对。
     workdir = args.workdir
     if workdir is None:
         scope = "orders" if args.send_orders else "dryrun"
-        workdir = args.evidence_root / f"{utc_stamp()}-{scope}"
+        workdir = args.evidence_root / f"{utc_stamp()}-{args.venue}-{scope}"
     workdir.mkdir(parents=True, exist_ok=True)
-    config = build_acceptance_config(workdir)
-    missing = [name for name in (KEY_ENV, SECRET_ENV) if not os.environ.get(name)]
+    config = build_acceptance_config(workdir, spec["base_config"])
+    missing = [name for name in spec["cred_envs"] if not os.environ.get(name)]
     outcome, detail = "fail", "未到达终态"
     try:
         assert_fail_closed(binary, config)
@@ -302,25 +391,66 @@ def main() -> int:
         dry_run = not args.send_orders
         client_id = int(time.time())
         command_path = workdir / "submit-order.json"
+        command_obj = (
+            build_ccxt_command(client_id, dry_run, instrument)
+            if spec["kind"] == "ccxt"
+            else build_command(client_id, dry_run, instrument)
+        )
         command_path.write_text(
-            json.dumps(build_command(client_id, dry_run, args.instrument), indent=2) + "\n",
+            json.dumps(command_obj, indent=2) + "\n",
             encoding="utf-8",
         )
 
-        probe = run(binary, ["binance-public-probe", "testnet", args.instrument])
-        if probe.returncode != 0:
-            fail("binance-public-probe", probe)
-        private = run(binary, ["binance-private-probe", str(config), EXECUTION_WORKER])
-        if private.returncode != 0:
-            fail("binance-private-probe", private)
+        if spec["kind"] == "ccxt":
+            probe = run(
+                binary,
+                ["ccxt-market-spec", str(spec["ccxt_config"]), instrument,
+                 str(workdir / "market-spec.json")],
+            )
+            if probe.returncode != 0:
+                fail("ccxt-market-spec", probe)
+            end_ms = int(time.time() * 1000)
+            start_ms = end_ms - 3_600_000
+            ohlcv = run(
+                binary,
+                ["ccxt-fetch-ohlcv", str(spec["ccxt_config"]), instrument,
+                 str(start_ms), str(end_ms), str(workdir / "ohlcv.json"), "1m"],
+            )
+            if ohlcv.returncode != 0:
+                fail("ccxt-fetch-ohlcv", ohlcv)
+        else:
+            probe = run(binary, ["binance-public-probe", "testnet", instrument])
+            if probe.returncode != 0:
+                fail("binance-public-probe", probe)
+            private = run(binary, ["binance-private-probe", str(config), EXECUTION_WORKER])
+            if private.returncode != 0:
+                fail("binance-private-probe", private)
 
-        submit = run(binary, ["binance-submit-order", str(config), EXECUTION_WORKER, str(command_path)])
+        if spec["kind"] == "ccxt":
+            submit = run(
+                binary,
+                ["ccxt-submit-order", str(config), spec["execution_worker"],
+                 str(spec["ccxt_config"]), str(command_path)],
+            )
+        else:
+            submit = run(
+                binary, ["binance-submit-order", str(config), EXECUTION_WORKER, str(command_path)]
+            )
         if submit.returncode != 0:
-            fail("binance-submit-order", submit)
+            fail(f"{spec['kind']}-submit-order", submit)
         log(f"下单步骤完成（dry_run={dry_run}）：{submit.stdout.strip().splitlines()[-1:]}")
 
-        duplicate = run(
-            binary, ["binance-submit-order", str(config), EXECUTION_WORKER, str(command_path)]
+        duplicate = (
+            run(
+                binary,
+                ["ccxt-submit-order", str(config), spec["execution_worker"],
+                 str(spec["ccxt_config"]), str(command_path)],
+            )
+            if spec["kind"] == "ccxt"
+            else run(
+                binary,
+                ["binance-submit-order", str(config), EXECUTION_WORKER, str(command_path)],
+            )
         )
         combined = duplicate.stdout + duplicate.stderr
         if duplicate.returncode == 0 or "幂等" not in combined:
@@ -330,10 +460,17 @@ def main() -> int:
             )
         log("重复 request_id 被控制面拒绝：未知结果不会自动重发")
 
-        restart = run(binary, ["binance-worker", str(config), EXECUTION_WORKER, "--once"])
+        if spec["kind"] == "ccxt":
+            restart = run(
+                binary,
+                ["ccxt-worker", str(config), spec["execution_worker"],
+                 str(spec["ccxt_config"]), "--once"],
+            )
+        else:
+            restart = run(binary, ["binance-worker", str(config), EXECUTION_WORKER, "--once"])
         if restart.returncode != 0:
-            fail("binance-worker 恢复", restart)
-        reconcile = run(binary, ["reconcile", str(config), RECONCILE_WORKER])
+            fail(f"{spec['kind']}-worker 恢复", restart)
+        reconcile = run(binary, ["reconcile", str(config), spec["reconcile_worker"]])
         if reconcile.returncode != 0:
             fail("reconcile 对账", reconcile)
         status = json_step(binary, "status", ["status", str(config), "--json"])
@@ -356,12 +493,14 @@ def main() -> int:
         package = write_result_package(
             workdir=workdir,
             binary=binary,
-            instrument=args.instrument,
+            instrument=instrument,
             send_orders=args.send_orders,
             credentials_present=not missing,
             outcome=outcome,
             started_at=started_at,
             detail=detail,
+            kind=spec["kind_label"],
+            venue=args.venue,
         )
         log(f"结果包（outcome={outcome}）：{package}")
 

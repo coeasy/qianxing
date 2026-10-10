@@ -1,7 +1,4 @@
-//! clap 参数框架（V10 P2b）：命令表由本文件的 `Command` 枚举派生，`cli.rs` 只保留对 [`Command`] 的一次显式 `match`。
-//! `tools/check_architecture.py` 以「clap 命令表 ≡ `cli.rs` 派发分支 ≡ `cli_help.rs` 印出的入口」三方集合相等做门禁，
-//! 于是"文案宣称支持某入口而派发没有该分支"不可表达；`help`/`--help`/`-h` 是进 clap 前的同一条预检分支，按规范名 `help` 计一条。
-//! 命令名与旗标语义与迁移前逐条一致；`<worker>` 等必填位置参数前必须显式给 runtime 路径（带 `default_value` 的会被 Clap 判为可选）。
+//! clap 参数框架（V10 P2b）：命令表由本文件 `Command` 枚举派生，`cli.rs` 只保留对 `Command` 的一次显式 `match`；门禁以「clap 命令表 ≡ `cli.rs` 派发 ≡ `cli_help.rs` 印出」三方集合相等，使"文案宣称支持某入口而派发没有分支"不可表达。`help`/`--help`/`-h` 进 clap 前同一条预检分支（按规范名 `help` 计一条）；`<worker>` 等必填位置参数前必须显式给 runtime 路径（带 `default_value` 的会被 Clap 判为可选）。
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -289,6 +286,8 @@ pub(crate) enum Command {
         #[arg(value_parser = parse_deploy_path)]
         command_path: PathBuf,
     },
+    #[command(name = "ccxt-submit-order")]
+    CcxtSubmitOrder(crate::ccxt_submit_args::CcxtSubmitArgs),
     #[command(name = "paper-e2e")]
     PaperE2e {
         #[arg(default_value = "deploy/qianxing.runtime.paper-strategy.example.json", value_parser = parse_deploy_path)]

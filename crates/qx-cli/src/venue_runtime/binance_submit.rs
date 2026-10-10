@@ -48,12 +48,13 @@ pub(crate) fn execute_binance_submit_effect(
     runtime_config_path: Option<&Path>,
     spread_store: Option<&dyn SpreadOrderGroupStore>,
 ) -> Result<String, String> {
-    let requested_order = order_from_submit_command(command)
+    order_from_submit_command(command)
         .map_err(|error| format!("SubmitOrder 订单载荷非法: {error:?}"))?;
-    let expected_account = validate_binance_submit_worker(worker)?;
-    if requested_order.account_id != expected_account
-        || !requested_order.instrument.venue.is_binance()
-    {
+    validate_binance_submit_worker(worker)?;
+    // 账户/交易所一致性只有一份判据：常驻循环用它分派命令，一次性提交也用它兜底。
+    // 这里原先就地再写一遍 `account_id != expected_account || !is_binance()`，是同一规则的
+    // 第二份实现——改口径时漏改一侧就会一边拦、一边放行。
+    if !binance_submit_matches_worker(command, worker) {
         return Err("订单 account_id 或 instrument venue 与 worker 拓扑不一致".into());
     }
 
@@ -107,6 +108,11 @@ pub(crate) fn run_binance_submit_order(
 
     let action = if command.dry_run {
         Ok("DRY_RUN_VALIDATED".into())
+    } else if !binance_submit_matches_worker(&command, &worker) {
+        // 拓扑一致性排在风控规格之前：这道判据不读盘、不碰凭据，错了就该最先露出来。
+        // 命令已经写了 Accepted，所以这里不能 `?` 提前退出，必须让上面那条终态回写
+        // 把拒绝落成 Failed（同 `request_id` 重投才会撞幂等闸门而不是永久停在 Accepted）。
+        Err("订单 account_id 或 instrument venue 与 worker 拓扑不一致".into())
     } else if let Err(reason) = require_worker_risk_spec(&worker, &command, Some(path)) {
         Err(reason)
     } else {

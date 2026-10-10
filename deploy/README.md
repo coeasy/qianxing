@@ -1166,9 +1166,17 @@ cargo run --release -p qx-cli -- binance-submit-order `
   deploy/qianxing.runtime.production.example.json `
   binance-user-main `
   deploy/qianxing.submit-order.example.json
+
+cargo run --release -p qx-cli -- ccxt-submit-order `
+  deploy/qianxing.runtime.ccxt.example.json `
+  ccxt-execution-main `
+  deploy/qianxing.ccxt.exchange.example.json `
+  deploy/qianxing.submit-order.ccxt-derivatives.example.json
 ```
 
-确认沙盒/模拟账户、余额和回滚流程后，才可以把命令中的 `dry_run` 改为 `false`。执行器会先追加 `OrderSubmitted`，再调用 Binance REST submit；成功回报继续写入 Accepted/Fill/LedgerApplied，HTTP 5xx 或连接中断只保留待对账状态，不自动重试。
+确认沙盒/模拟账户、余额和回滚流程后，才可以把命令中的 `dry_run` 改为 `false`。执行器会先追加 `OrderSubmitted`，再调用 Binance REST submit；成功回报继续写入 Accepted/Fill/LedgerApplied，HTTP 5xx 或连接中断只保留待对账状态，不自动重试。CCXT 那条走 `ccxt-submit-order`：显式点名执行 worker、经 CCXT 沙盒发单，参数顺序是 `runtime.json <worker-id> <ccxt-config.json> <command.json>`，其中 `ccxt-config.json` 的 `exchange_id` 必须与 worker 的 `venue_id` 一致，凭据只按环境变量名引用、不进命令行也不进配置。
+
+两条一次性入口与各自的常驻 worker 共用同一份账户/交易所拓扑判据：点名的 worker 与订单的 `account_id`/`instrument` venue 对不上时按「拓扑不一致」落成终态 `Failed`，而不是把订单写进另一台 worker 的 EventLog；命令刻意缺行情、缺风控规格同样走这条终态路径，不留在 `Accepted` 等人去清队列（V13 R28）。
 
 Execution、SpreadRecovery 与 HedgeRecovery worker 必须配置冻结的 `instrument_spec_path`
 （可直接使用 `ccxt-market-spec` 生成的市场快照），并可配置 `max_order_notional_raw`、

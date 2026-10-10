@@ -106,6 +106,7 @@ mod api_service;
 mod backtests;
 mod build_identity;
 mod ccxt_facts;
+mod ccxt_submit_args;
 mod cli;
 mod cli_args;
 mod cli_help;

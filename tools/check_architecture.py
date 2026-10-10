@@ -8048,6 +8048,7 @@ VENUE_FAMILY_CONSUMERS = (
     "crates/qx-cli/src/market_bridges.rs",
     "crates/qx-cli/src/venue_runtime/binance_submit.rs",
     "crates/qx-cli/src/venue_runtime/binance_venue.rs",
+    "crates/qx-cli/src/venue_runtime/ccxt_submit.rs",
     "crates/qx-cli/src/venue_runtime/paper_submit.rs",
     "crates/qx-cli/src/venue_runtime/paper_worker.rs",
     "crates/qx-cli/src/venue_runtime/worker_runtime.rs",
@@ -8993,6 +8994,14 @@ ACCEPTANCE_INVOKE = re.compile(
 ACCEPTANCE_CONSTANT = re.compile(
     r'^(KEY_ENV|SECRET_ENV|EXECUTION_WORKER|RECONCILE_WORKER|BASE_CONFIG) = .*"([^"]*)"$', re.M
 )
+# 第二交易所（OKX 经 CCXT 沙盒）走同一份脚本的 `--venue okx`，不复制脚本。这一组常量原先
+# 不在上面那条判据的名单里，于是 `--venue okx` 的链路可以整条断掉而门禁不响——「第二个交易所
+# 已通」这句话就没有可核对的支点。
+ACCEPTANCE_CONSTANT_OKX = re.compile(
+    r'^(OKX_BASE_CONFIG|OKX_CCXT_CONFIG|OKX_EXECUTION_WORKER|OKX_RECONCILE_WORKER|OKX_KEY_ENV'
+    r"|OKX_SECRET_ENV|OKX_PASS_ENV) = .*\"([^\"]*)\"$",
+    re.M,
+)
 # 子进程调用体：注释行里写的反例（"`subprocess.run(capture_output=True)` 没有截止"）不是调用点，
 # 先按行剥掉 `#` 开头的行再取，否则调用计数会被自己的说明文字加一个。
 ACCEPTANCE_RUN_CALL = re.compile(r"subprocess\.run\((.*?)\)", re.S)
@@ -9098,6 +9107,69 @@ def external_acceptance_check() -> None:
         f"只在配置 {sorted(declared_env - checked_env) or '无'} / 只在脚本 "
         f"{sorted(checked_env - declared_env) or '无'}（多出来的引用会让脚本以为凭据齐了）",
     )
+
+    # `--venue okx`：choices 里少了 okx，或 CCXT 这一组常量/配置文件/worker 缺一个，
+    # 「第二交易所沙盒已通」就变成没有支点的表述。这里按与 Binance 同一口径逐格核对。
+    okx_constants = dict(ACCEPTANCE_CONSTANT_OKX.findall(script))
+    okx_expected = {
+        "OKX_BASE_CONFIG",
+        "OKX_CCXT_CONFIG",
+        "OKX_EXECUTION_WORKER",
+        "OKX_RECONCILE_WORKER",
+        "OKX_KEY_ENV",
+        "OKX_SECRET_ENV",
+        "OKX_PASS_ENV",
+    }
+    okx_choices = re.search(r'choices=\[([^\]]*)\]', script)
+    okx_choices_ok = okx_choices is not None and '"okx"' in okx_choices.group(1)
+    check(
+        set(okx_constants) == okx_expected and okx_choices_ok,
+        "第二交易所 `--venue okx` 的常数组齐备且 choices 里真有 okx（不复制脚本而是参数化）",
+        f"缺常量 {sorted(okx_expected - set(okx_constants)) or '无'} / 多出 "
+        f"{sorted(set(okx_constants) - okx_expected) or '无'} / choices 含 okx="
+        f"{okx_choices_ok}",
+    )
+    okx_file_gaps = [
+        name
+        for name in ("OKX_BASE_CONFIG", "OKX_CCXT_CONFIG")
+        if not (ROOT / "deploy" / okx_constants.get(name, "")).is_file()
+    ]
+    check(
+        not okx_file_gaps,
+        "okx 验收的配置与 CCXT 配置文件都指向仓库里的真文件",
+        f"缺 {[okx_constants.get(name, '') for name in okx_file_gaps]}",
+    )
+    okx_base = ROOT / "deploy" / okx_constants.get("OKX_BASE_CONFIG", "")
+    okx_ccxt = ROOT / "deploy" / okx_constants.get("OKX_CCXT_CONFIG", "")
+    if okx_ccxt.is_file():
+        ccxt_text = okx_ccxt.read_text(encoding="utf-8")
+        ccxt_declared = set(re.findall(r'"(QX_[A-Z0-9_]+)"', ccxt_text))
+        ccxt_checked = {
+            okx_constants.get("OKX_KEY_ENV", ""),
+            okx_constants.get("OKX_SECRET_ENV", ""),
+            okx_constants.get("OKX_PASS_ENV", ""),
+        }
+        check(
+            bool(ccxt_declared) and ccxt_declared == ccxt_checked,
+            "CCXT 配置的凭据引用与脚本检查的环境变量是同一组名字（同 Binance 那一组口径）",
+            f"只在配置 {sorted(ccxt_declared - ccxt_checked) or '无'} / 只在脚本 "
+            f"{sorted(ccxt_checked - ccxt_declared) or '无'}",
+        )
+    if okx_base.is_file():
+        okx_workers = {
+            str(worker.get("id")): worker for worker in json.loads(okx_base.read_text(encoding="utf-8")).get("workers", [])
+        }
+        okx_orphan = [
+            name
+            for key in ("OKX_EXECUTION_WORKER", "OKX_RECONCILE_WORKER")
+            for name in [okx_constants.get(key, "")]
+            if not okx_workers.get(name, {}).get("enabled")
+        ]
+        check(
+            not okx_orphan,
+            "okx 验收脚本点名的 worker 在 okx 验收配置里存在且已启用",
+            f"禁用或缺失 {okx_orphan}",
+        )
 
 
 # V13 R1-D：三处"只进不出"的常驻内存与两处生命周期无界，收口后的形状。
@@ -10497,6 +10569,22 @@ TERMINAL_STATE_CASE_FNS = (
 SUBMIT_ENTRY_FILES = {
     "Paper": "crates/qx-cli/src/venue_runtime/paper_submit.rs",
     "Binance": "crates/qx-cli/src/venue_runtime/binance_submit.rs",
+    "Ccxt": "crates/qx-cli/src/venue_runtime/ccxt_submit.rs",
+}
+# 一次性提交入口的拓扑一致性判据：账户 / 交易所对不上就要落成终态 Failed，不得把订单写进
+# 另一台 worker 的 EventLog（V13 R28）。三条入口显式点名或按账户挑 worker，所以这道闸门
+# 必须在动作函数之前；挪到动作里、或退回「取第一台 / 就地再写一遍」都会让多账户隔离断掉。
+SUBMIT_TOPOLOGY_GUARDS = {
+    "Paper": ("paper_submit_matches_worker", "run_paper_submit_order("),
+    "Binance": ("binance_submit_matches_worker", "run_binance_submit_order("),
+    "Ccxt": ("ccxt_submit_matches_worker", "run_ccxt_submit_order("),
+}
+SUBMIT_TOPOLOGY_ORDER = {
+    # 拓扑判据要排在风控闸门与动作函数之前：先判「这台 worker 能不能收这笔订单」，
+    # 再判「这台 worker 有没有风控规格」。顺序反了会先报缺配置，把真原因盖住。
+    "Paper": ("require_worker_risk_spec", "paper_submit_action"),
+    "Binance": ("require_worker_risk_spec", "binance_submit_action"),
+    "Ccxt": ("require_worker_risk_spec", "ccxt_submit_action"),
 }
 STRING_LITERAL_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
 PUNCT_SPACING_RE = re.compile(r"\s*([(),;])\s*")
@@ -10644,7 +10732,7 @@ def submit_terminal_state_check() -> None:
     )
     check(
         set(routed) == set(SUBMIT_ENTRY_FILES.values()),
-        "Paper 与 Binance 两条一次性提交链路都经这族指路口径",
+        "Paper、Binance 与 CCXT 三条一次性提交链路都经这族指路口径",
         f"实际经它的文件: {routed}",
     )
     check(
@@ -10666,6 +10754,38 @@ def submit_terminal_state_check() -> None:
         f"挂载={('mod paper_submit_terminal_state;' in mounted)}，缺的用例: {missing}",
     )
 
+
+def submit_topology_guard_check() -> None:
+    """一次性提交入口的拓扑一致性判据必须落在动作函数之前（V13 R28）。
+
+    三条入口都要把「这笔订单归谁」判清楚才动手：Binance / CCXT 显式点名 worker，Paper 按
+    账户/交易所挑 worker。判据挪进动作函数、或 Paper 退回「取第一台」，都会把订单写进另一台
+    worker 的 EventLog —— 多账户共享一份控制面时隔离当场失效。判据认的是动作函数被调用之前
+    有没有那次拓扑比对，所以把比对删掉、或换成任何别的表达式都会红。
+    """
+    gaps = []
+    for label, (guard, signature) in sorted(SUBMIT_TOPOLOGY_GUARDS.items()):
+        path = SUBMIT_ENTRY_FILES[label]
+        flat = _collapsed_code(_code_body(path, signature), strip_strings=True)
+        if not flat:
+            gaps.append(f"{label} {signature} 的函数体取不到（改名、搬家或半挂载）")
+            continue
+        guard_at = flat.find(_squeezed(guard))
+        action_at = flat.find(_squeezed(SUBMIT_TOPOLOGY_ORDER[label][1]))
+        if guard_at < 0:
+            gaps.append(f"{label} 入口没有调用 {guard}")
+        elif action_at < 0:
+            gaps.append(f"{label} 入口找不到动作函数 {SUBMIT_TOPOLOGY_ORDER[label][1]}")
+        elif not guard_at < action_at:
+            gaps.append(
+                f"{label} 的拓扑判据排在动作函数之后或之后缺失"
+                f"(guard@{guard_at} action@{action_at})"
+            )
+    check(
+        not gaps,
+        "三条一次性提交入口都在动作函数之前完成账户/交易所拓扑比对",
+        "; ".join(gaps),
+    )
 
 PAPER_PIPELINE_FILE = "crates/qx-cli/src/venue_runtime/paper_worker.rs"
 # 这四格缺任意一格，就说明末行又退回读累计量、或零新增/真验收两条通道塌回一条。
@@ -15368,6 +15488,7 @@ def main() -> int:
     example_read_funnel_check()
     deploy_template_coverage_check()
     submit_terminal_state_check()
+    submit_topology_guard_check()
     paper_check_delta_honesty_check()
     wheel_optional_dependency_check()
     snapshot_money_honesty_check()

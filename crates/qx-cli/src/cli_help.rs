@@ -220,6 +220,9 @@ pub(crate) fn print_cli_help() {
   paper-submit-order <runtime.json> <command.json>
       在 Paper venue 上提交一条 SubmitOrder，不访问交易所。
       配了 strategy.ashare_rules_path 即在任何副作用之前拒绝（V11 Q65）。
+  ccxt-submit-order <runtime.json> <worker-id> <ccxt-config.json> <command.json>
+      经公共 CCXT Worker 提交一条 SubmitOrder（Binance/OKX/Bybit 等由 exchange_id 决定），真实下单。
+      CCXT 凭据只经环境变量名引用（写在 ccxt-config.json 的 credential_env），不进命令行/运行时配置。
   paper-e2e [runtime.json]
       跑一次 Paper 主链路验收（注入合成行情，不接真实 feed）。
   paper-check [runtime.json]

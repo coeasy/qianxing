@@ -63,7 +63,9 @@ fn dispatch_outbox_relay_postgres(
     _subject_prefix: String,
     _limit: Option<usize>,
 ) {
-    eprintln!("[qx-cli · CLI] outbox-relay-postgres 需要使用 --features 'nats postgres' 构建 qx-cli");
+    eprintln!(
+        "[qx-cli · CLI] outbox-relay-postgres 需要使用 --features 'nats postgres' 构建 qx-cli"
+    );
     std::process::exit(2);
 }
 
@@ -111,7 +113,6 @@ fn dispatch_consumer_dlq_replay(_runtime: PathBuf, _group_id: String, _event_id:
 
 pub(crate) fn run() {
     let argv: Vec<String> = std::env::args().collect();
-    // help 别名在 clap 前统一处理。
     if matches!(
         argv.get(1).map(String::as_str),
         Some("help") | Some("--help") | Some("-h")
@@ -163,7 +164,6 @@ pub(crate) fn run() {
                 std::process::exit(2);
             }
         }
-        // 首跑一条命令：内部直调 README 那五条入口所用的同一批函数（易用性 P2）。
         Command::Quickstart { project, force } => quickstart::run(project, force),
         Command::Doctor { path, json } => {
             let path = path.unwrap_or_else(default_runtime_path);
@@ -324,7 +324,6 @@ pub(crate) fn run() {
                 quantity,
                 config,
             }) => {
-                // 命令行型回测入口的 `--config` 与 strategy 回测吃同一份 `strategy.risk_rules`。
                 if let Err(error) = run_builtin_backtest(
                     &strategy,
                     &frame,
@@ -478,9 +477,7 @@ pub(crate) fn run() {
                 eprintln!("[qx-cli · CLI] 进程监督器停止: {failure}");
                 match failure {
                     qx_orchestrator::SuperviseFailure::Usage(_) => std::process::exit(2),
-                    // 把子进程的原始退出码原样上报：panic 的 101、OOM 的 137、干净退出的 0
-                    // 各是一格，监控才能按数值分支。被信号杀死（`None`）走 128，
-                    // 与 POSIX 的信号退出约定一致。
+                    // 子进程退出码原样上报：panic 101 / OOM 137 / 干净 0 各一格；被信号杀死（None）走 128，与 POSIX 信号退出约定一致。
                     qx_orchestrator::SuperviseFailure::WorkerExit { raw_code, .. } => {
                         std::process::exit(match raw_code {
                             Some(code) if code != 0 => code,
@@ -593,7 +590,6 @@ pub(crate) fn run() {
             event_id,
         } => dispatch_consumer_dlq_replay(runtime, group_id, event_id),
         Command::RecoveryChild { arguments } => {
-            // 位置参数按迁移前的 argv 下标约定透传：index 0/1 是占位（可执行文件与模式名）。
             let mut argv = vec![String::new(), "recovery-child".to_string()];
             argv.extend(arguments);
             if let Err(error) = run_recovery_child(&argv) {
@@ -609,7 +605,9 @@ pub(crate) fn run() {
                 "testnet" => true,
                 "mainnet" => false,
                 _ => {
-                    eprintln!("[qx-cli · CLI] binance-public-probe network 必须是 testnet 或 mainnet");
+                    eprintln!(
+                        "[qx-cli · CLI] binance-public-probe network 必须是 testnet 或 mainnet"
+                    );
                     std::process::exit(2);
                 }
             };
@@ -640,7 +638,10 @@ pub(crate) fn run() {
                 std::process::exit(2);
             }
         }
-        // 两条入口同源：都只跑一次本地 Paper 主链路验收，差别只在 clap 给的默认路径。
+        Command::CcxtSubmitOrder(args) => usage_errors::exit_on_failure(
+            run_ccxt_submit_order(&args),
+            "[qx-cli · CLI] CCXT SubmitOrder 执行失败",
+        ),
         Command::PaperE2e { path } | Command::PaperCheck { path } => {
             if let Err(error) = run_paper_pipeline_once(&path) {
                 eprintln!("[qx-cli · CLI] Paper 主链路验收失败: {error}");
@@ -667,7 +668,6 @@ pub(crate) fn run() {
         Command::Paper => run_paper_smoke(),
         Command::All => selfcheck::run(selfcheck::Scope::Full),
         Command::Verify => selfcheck::run(selfcheck::Scope::KernelOnly),
-        // 只有一行，不带横幅：与 `--version`/`-V` 逐字相同，脚本可 `qx-cli version` 直接取。
         Command::Version => build_identity::print_identity(),
     }
 }

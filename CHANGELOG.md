@@ -1,5 +1,50 @@
 # Changelog
 
+### V13 R30（2026-10-10）· 一次性提交入口的多账户拓扑判据收口 + 第二交易所验收链的门禁牙齿
+
+R29 之后做三轮发布前审计（主体链路连通性 / 孤儿逻辑 / 死循环 / 前后端贯通），两轮都按「先修干净全部问题、再进下一轮」推进。
+
+- **三条一次性提交入口共用同一份账户/交易所拓扑判据（V13 R28 的隔离口径在一次性入口不能断）**：
+  常驻 worker 循环一直有 `*_submit_matches_worker` 守「命令归谁」，但**一次性提交入口**这半边有三格缺口——
+  ① CCXT 一次性入口（`run_ccxt_submit_order`，R28 新增的那条）显式点名 worker 却从不做拓扑比对，
+  订单的 `account_id` 或 `instrument` venue 与点名的 worker 对不上时会把订单事实写进另一台 worker 的
+  EventLog；② Paper 一次性入口没有 `worker_id` 参数、按「第一台启用的 Paper Execution worker」挑选，
+  多账户共享一份控制面时这条退化成「取第一台」，订单会落进别的账户账本；③ Binance 一次性入口把同一条
+  规则**就地再写了一遍**（`account_id != expected_account || !is_binance()`），是同一规则的第二份实现，
+  改口径时漏改一侧就会一边拦、一边放行。三处现在都改走同一条判据：Paper 按 `paper_submit_matches_worker`
+  挑出与订单账户一致的 worker、挑不出就 fail-closed（不退回取第一台），Binance/CCXT 在动作函数之前比对
+  并落成终态 `Failed`。Binance 那份就地实现随之删除，规则只剩一份。
+- **新增门禁 `submit_topology_guard_check`**（`SUBMIT_TOPOLOGY_GUARDS` / `SUBMIT_TOPOLOGY_ORDER` 两张表）：
+  三条入口的拓扑判据必须落在动作函数被调用**之前**——把比对删掉、挪进动作函数、或 Paper 退回取第一台
+  都会红。三处反向变异（删 CCXT 判据 / 删 Binance 判据 / Paper 换成无差别匹配）逐处打红后字节还原。
+- **补 `ccxt-submit-order` 的行为用例**：`binance_submit_rejects_order_from_another_account_as_terminal_failure`
+  与 `ccxt_submit_rejects_order_from_another_account_as_terminal_failure` 各断四格——错误文案点名「拓扑不一致」、
+  审计留下 Accepted + 终态 `Failed` 两条、终态原因码带出拓扑不一致、EventLog 无订单事实且账簿为空；
+  `paper_submit_rejects_order_without_a_matching_worker_as_terminal_failure` 断 Paper 挑不出匹配 worker 时
+  既不给订单入账、也不写初始资金。
+- **门禁为 `--venue okx` 这条链补两组牙齿**（`external_acceptance_check` 内）：此前 `ACCEPTANCE_CONSTANT`
+  只钉 Binance 那五格常量，OKX 的八格常量（`OKX_BASE_CONFIG` / `OKX_CCXT_CONFIG` /
+  `OKX_EXECUTION_WORKER` / `OKX_RECONCILE_WORKER` / `OKX_KEY_ENV` / `OKX_SECRET_ENV` / `OKX_PASS_ENV`）
+  不在名单里——`--venue okx` 整条链路可以断掉而门禁不响，「第二交易所已通」就没有支点。新增四颗判据：
+  常数组齐备且 `choices` 里真有 `okx`（不复制脚本而是参数化）、两份 okx 配置文件都指向仓库真文件、
+  okx 验收脚本点名的 worker 在 okx 验收配置里存在且已启用、CCXT 配置的凭据引用与脚本检查的环境变量
+  同名（同 Binance 那组口径，否则脚本会以为凭据齐了）。两处反向变异（删掉 `OKX_PASS_ENV` / 从 choices
+  里摘掉 `okx`）都当场打红。
+- **接口文档同步**：`README.md` 命令清单与 `deploy/README.md` 的「订单提交」一节补上 `ccxt-submit-order`
+  的完整参数顺序（`runtime.json <worker-id> <ccxt-config.json> <command.json>`，比 binance 多一个 CCXT
+  配置路径）与它和三条入口共用的拓扑口径；`docs/外部链路验收执行方案-V1.md` 修掉那条过期的三参数签名
+  并按仓库惯例加「回写批注」而不是删历史；`docs/外部链路验收-凭据与测试信息清单.md` 的收尾清单按实测结果更新。
+- **CLI 表面四面对齐已核**：`ccxt-submit-order` 在 clap 命令枚举、`cli.rs` 派发臂、`cli_help.rs` 帮助文本、
+  `tests/command_surface.rs` 的 `CLI_COMMANDS`（46 条）四处一致，且 `--help` 实跑通过。
+- **验证**：`tools/check_architecture.py` **940 项全绿**（935 → 940，`GATE_CHECK_FLOOR` 882 不动）；
+  `cargo test -p qx-cli --offline` **457 passed / 0 failed**（R29 的 453 → 457，新增 4 条拓扑用例）；
+  `cargo test --workspace --offline` **1231 passed / 0 failed**；`cargo clippy -p qx-cli --all-targets` 零告警；
+  本轮改动的 9 个 Rust 文件逐个 `rustfmt --check --config skip_children=true` 全干净。
+- **仍挂账的两笔（如实登记，不假装完成）**：① 诊断债 `UNLABELED_DIAGNOSTIC_CEILING` 仍在 55——剩余站点里
+  有若干（`main.rs` 的 `rejected`/`acked`、JSON 直出站点）被测试逐字断言，加标签会当场红，要连带改测试才能收口；
+  ② 控制台多账户作用域（四条读面加 `account_id`/`venue_id` 选择）需后端 `qx-api` 读面先支持按账户过滤，
+  另立任务。
+
 ### V13 R29（2026-10-09 续）· 诊断债偿还（棘轮下探 100 → 55）
 
 承接 R28 把诊断公共组件面钉成的「写下来的决定 + 有上界的欠账」，本轮开始偿还这笔债，并证明棘轮确实只降不升（不是躺着不动的允许清单）。
