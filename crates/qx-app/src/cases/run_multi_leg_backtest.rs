@@ -196,37 +196,37 @@ pub(super) fn run_inner(
         }
     }
 
-    let primary_report = run_leg(
-        &primary.instrument,
-        &primary_bars,
-        primary_targets.clone(),
-        "primary",
-        spec.primary_initial_cash_raw,
-        spec.seed,
-        &spec.settlement_currency,
-        primary_spec.cloned(),
-        spec.primary_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
-        spec.primary_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
-        spec.fill_model,
+    let primary_report = run_leg(LegRunSpec {
+        instrument: &primary.instrument,
+        bars: &primary_bars,
+        targets: primary_targets.clone(),
+        label: "primary",
+        initial_cash_raw: spec.primary_initial_cash_raw,
+        seed: spec.seed,
+        currency: &spec.settlement_currency,
+        instrument_spec: primary_spec.cloned(),
+        maker_fee_bps: spec.primary_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
+        taker_fee_bps: spec.primary_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
+        fill_model: spec.fill_model,
         cancellation,
-    )?;
+    })?;
     let Some(primary_report) = primary_report else {
         return Ok(None);
     };
-    let reference_report = run_leg(
-        &reference.instrument,
-        &reference_bars,
-        reference_targets.clone(),
-        "reference",
-        spec.reference_initial_cash_raw,
-        spec.seed,
-        &spec.settlement_currency,
-        reference_spec.cloned(),
-        spec.reference_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
-        spec.reference_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
-        spec.fill_model,
+    let reference_report = run_leg(LegRunSpec {
+        instrument: &reference.instrument,
+        bars: &reference_bars,
+        targets: reference_targets.clone(),
+        label: "reference",
+        initial_cash_raw: spec.reference_initial_cash_raw,
+        seed: spec.seed,
+        currency: &spec.settlement_currency,
+        instrument_spec: reference_spec.cloned(),
+        maker_fee_bps: spec.reference_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
+        taker_fee_bps: spec.reference_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
+        fill_model: spec.fill_model,
         cancellation,
-    )?;
+    })?;
     let Some(reference_report) = reference_report else {
         return Ok(None);
     };
@@ -402,52 +402,52 @@ fn read_frame(path: &str, label: &str) -> Result<BarFrame, AppError> {
     BarFrame::from_json(&payload)
         .map_err(|error| invalid(format!("{label} BarFrame 无效: {error:?}")))
 }
-
-fn run_leg(
-    instrument: &InstrumentId,
-    bars: &[Bar],
+struct LegRunSpec<'a> {
+    instrument: &'a InstrumentId,
+    bars: &'a [Bar],
     targets: BTreeMap<u64, i128>,
-    label: &str,
+    label: &'a str,
     initial_cash_raw: i128,
     seed: u64,
-    currency: &str,
+    currency: &'a str,
     instrument_spec: Option<TradingInstrumentSpec>,
     maker_fee_bps: i64,
     taker_fee_bps: i64,
     fill_model: MultiLegFillModel,
-    cancellation: Option<&CancellationToken>,
-) -> Result<Option<qx_xingban::BacktestReport>, AppError> {
+    cancellation: Option<&'a CancellationToken>,
+}
+fn run_leg(input: LegRunSpec<'_>) -> Result<Option<qx_xingban::BacktestReport>, AppError> {
     let mut strategy = ScheduledTargets {
-        instrument: instrument.clone(),
-        targets,
-        account_id: format!("multi-{label}"),
+        instrument: input.instrument.clone(),
+        targets: input.targets,
+        account_id: format!("multi-{}", input.label),
     };
     let config = BacktestConfig {
-        instrument: instrument.clone(),
-        instrument_spec: instrument_spec.clone(),
+        instrument: input.instrument.clone(),
+        instrument_spec: input.instrument_spec.clone(),
         account_id: strategy.account_id.clone(),
-        currency: currency.into(),
-        initial_cash: Money::from_raw(initial_cash_raw),
+        currency: input.currency.into(),
+        initial_cash: Money::from_raw(input.initial_cash_raw),
         multiplier: 1,
-        fill: fill_model_for(fill_model, instrument_spec.as_ref())?,
+        fill: fill_model_for(input.fill_model, input.instrument_spec.as_ref())?,
         fee: Box::new(MakerTakerFeeModel {
-            maker_bp: maker_fee_bps,
-            taker_bp: taker_fee_bps,
+            maker_bp: input.maker_fee_bps,
+            taker_bp: input.taker_fee_bps,
         }),
         data_tier: DataTier::Bar,
         latency: Box::new(ZeroLatency),
         margin: Box::new(NoMargin),
-        seed,
+        seed: input.seed,
         risk: RiskGate::conservative_default(),
         virtual_trading: VirtualTradingConfig::default(),
     };
     let engine = BacktestEngine::new(config);
-    match cancellation {
+    match input.cancellation {
         Some(token) => engine
-            .run_with_cancel(bars, &mut strategy, || token.is_cancelled())
+            .run_with_cancel(input.bars, &mut strategy, || token.is_cancelled())
             .map_err(|error| AppError::from_qx_error(&error)),
         None => engine
-            .run(bars, &mut strategy)
+            .run(input.bars, &mut strategy)
             .map(Some)
             .map_err(|error| AppError::from_qx_error(&error)),
     }

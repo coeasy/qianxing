@@ -165,8 +165,10 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
         ("RUN_STATUS_ROUTE_TEMPLATE", "GET"),
         ("RUN_CANCEL_ROUTE_TEMPLATE", "POST"),
         ("RUN_START_DEPTH_ROUTE", "POST"),
+        ("RUN_START_DEPTH_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_ROUTE", "POST"),
+        ("RUN_START_MULTI_LEG_EXPERIMENT_ROUTE", "POST"),
     ] {
         let marker = format!("const {constant}: &str = \"");
         let template = app_surface
@@ -177,8 +179,8 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
         pairs.insert((method.to_string(), template.to_string()));
     }
     assert!(
-        pairs.len() >= 23,
-        "分派区间里只数出 {} 条 (方法, 路由)，比端点表声称的 23 条还少——取数区间被改窄了",
+        pairs.len() >= 25,
+        "分派区间里只数出 {} 条 (方法, 路由)，比端点表声称的 25 条还少——取数区间被改窄了",
         pairs.len()
     );
     for (method, _) in &pairs {
@@ -190,9 +192,8 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
     pairs
 }
 
-/// `handle_inner` 的分派区间里写出的路由集合（按源码文本逐条数）。
-///
-/// 取"从 `fn handle_inner(` 到那条 `_ => ApiResponse::text(404, ...)` 兜底"而不是整份文件：
+/// 按源码文本逐条数出 `handle_inner` 分派区间里的路由集合：取 `fn handle_inner(`
+/// 到 `_ => ApiResponse::text(404, ...)` 兜底，而非整份文件：
 /// 用例里也有 `handle("GET", "/…")` 这样的调用，把它们当路由会让文档被迫去解释一条不存在的入口；
 /// 而按第一次 `#[cfg(test)]` 截断是本项目明确禁掉的取数口径（V12 §16 的元判据）。
 pub(crate) fn dispatch_routes() -> BTreeSet<String> {
@@ -202,7 +203,6 @@ pub(crate) fn dispatch_routes() -> BTreeSet<String> {
         .collect()
 }
 
-/// [`dispatch_routes`] 与 [`dispatch_method_routes`] 共用的取数区间。
 fn dispatch_region() -> String {
     let api = workspace_source("crates/qx-api/src/lib.rs");
     let start = api
@@ -229,10 +229,10 @@ const CHECK_SECTION_HEADING: &str = "### 端点表按张核对";
 fn each_endpoint_table_lists_exactly_the_dispatch_routes() {
     let routes = dispatch_routes();
     for (header, documented) in [
-        (RETURN_TABLE_HEADER, table_routes(RETURN_TABLE_HEADER, 21)),
+        (RETURN_TABLE_HEADER, table_routes(RETURN_TABLE_HEADER, 23)),
         (
             SEMANTICS_TABLE_HEADER,
-            table_routes(SEMANTICS_TABLE_HEADER, 21),
+            table_routes(SEMANTICS_TABLE_HEADER, 23),
         ),
     ] {
         let documented = documented.into_iter().collect::<BTreeSet<String>>();
@@ -275,8 +275,8 @@ pub(crate) fn semantics_cells() -> Vec<(String, String)> {
         }
     }
     assert!(
-        rows.len() >= 21,
-        "「非 200 口径」表只解析出 {} 行，少于这张表应有的 18 行——解析口径需要先修",
+        rows.len() >= 23,
+        "「非 200 口径」表只解析出 {} 行，少于这张表应有的 23 行——解析口径需要先修",
         rows.len()
     );
     rows

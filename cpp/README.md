@@ -7,7 +7,7 @@
 
 `include/qianxing_app.hpp` 提供共享应用 API 的轻量 C++17 客户端，可调用数据校验、Bar/多腿 Bar/Tick/OrderBook 回测、产物复核、运行对比、Bar 与多腿参数实验，以及 Paper/Live 控制命令。Tick/OrderBook 与多腿 JSON 可携带标准化产品规格和适用的订单策略；客户端把版本化请求交给相同的 `/app/*` Rust 路由，不在 C++ 重做撮合、风险或账簿。HTTP transport 由集成方实现，并负责 TLS、鉴权、超时和连接复用；Live 控制要求服务启用 Operator 授权。
 
-长任务可调用 `start_backtest`、`start_depth_backtest`、`start_multi_leg_backtest`、`start_experiment` 或 `start_multi_leg_experiment`，再以 `run_status(run_id)` 轮询结果，并用 `cancel_run(run_id)` 请求协作取消。它们复用 Rust Bar/Tick/OrderBook 内核；运行句柄驻留服务进程内，最多保留 1024 项，服务重启会清空。run_id 只接受字母、数字、`-`、`_`、`.`。
+长任务可调用 `start_backtest`、`start_depth_backtest`、`start_depth_experiment`、`start_multi_leg_backtest`、`start_experiment` 或 `start_multi_leg_experiment`，再以 `run_status(run_id)` 轮询结果，并用 `cancel_run(run_id)` 请求协作取消。它们复用 Rust Bar/Tick/OrderBook 内核；终态结果由服务持久化并跨重启保留，重启时仍未完成的任务标记为失败；注册表最多保留 1024 项，同时最多运行 64 个有持久化观察器的任务，满额时服务会在启动前拒绝新任务。run_id 只接受字母、数字、`-`、`_`、`.`。
 
 独立进程要求：JSONL 模式每行读一个 `StrategyContractInput`，每行输出 `{"ok":true,"output":...}`；传入 `--protocol framed_json` 时使用 QXSF 版本化二进制分帧（24 字节头、长度上限、序号、CRC32）；传入 `--protocol shared_memory_json` 时通过 `--input-ring`/`--output-ring` 使用 Rust 创建的 QXRB 双向 SPSC mmap ring；这条传输没有 stdin 可关，必须同时传 `--parent-pid <驱动进程 pid>`，worker 每秒探一次该进程是否还在，父进程消失就以退出码 0 收摊（不传则不检查，与 Python worker 同口径）。标准输出只能写协议，日志写标准错误。`nlohmann/json` 仅用于示例，不是框架运行时依赖。
 
