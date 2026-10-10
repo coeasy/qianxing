@@ -46,6 +46,10 @@ public:
         return post("/app/compare-runs", spec_json);
     }
 
+    AppResponse run_experiment(std::string_view spec_json) const {
+        return post("/app/run-experiment", spec_json);
+    }
+
 private:
     AppResponse post(std::string_view path, std::string_view body) const {
         if (!transport_) {

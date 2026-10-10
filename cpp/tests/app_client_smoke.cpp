@@ -14,13 +14,14 @@ int main() {
         return qianxing::AppResponse{200, R"({"runs":[]})"};
     });
 
-    const std::string spec = R"({"schema_version":1,"runs":[]})";
-    const auto response = client.compare_runs(spec);
+    const std::string spec = R"({"schema_version":1,"experiment_id":"smoke"})";
+    const auto response = client.run_experiment(spec);
     assert(response.ok());
     assert(response.body == R"({"runs":[]})");
-    assert(observed_path == "/app/compare-runs");
+    assert(observed_path == "/app/run-experiment");
     assert(observed_body == spec);
 
     qianxing::AppClient unavailable({});
+    assert(unavailable.run_experiment("{}").status == 0);
     assert(unavailable.verify_run("{}").status == 0);
 }

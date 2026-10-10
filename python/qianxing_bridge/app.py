@@ -57,6 +57,11 @@ def compare_runs(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_compare_runs(_payload(spec)))
 
 
+def run_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """用 Rust 回测用例执行有界参数网格，并复用 Rust 结果比较用例。"""
+    return json.loads(native.app_run_experiment(_payload(spec)))
+
+
 def app_error_payload(error: BaseException) -> "dict[str, Any] | None":
     """把 ``QxAppError`` 的异常文本解析回 ``AppError`` 文档；不是它则返回 ``None``。
 

@@ -13,28 +13,34 @@
 //! 路线图 §2 要求每个用例定义九项。它们逐条落在下面，`maturity/app_use_cases.yaml` 是同一份
 //! 内容的机读登记面，由 `qx_app_check` 与本模块的文档逐条对账——**改了这里不改登记面会红**。
 //!
-//! | 项 | `validate_dataset` | `run_backtest` | `verify_run` | `compare_runs` |
-//! |---|---|---|---|---|
-//! | 输入 schema | `DatasetSpec` v1 | `BacktestSpec` v1（内置策略 fast/slow/period/threshold 参数；单腿 Bar 路径） | `BacktestOutcome` | `CompareRunsSpec` v1 |
-//! | 输出 schema | `DatasetVerdict` | `BacktestOutcome` | `VerificationResult` | `CompareRunsResult` v1 |
-//! | 运行权限 | `RESEARCH` | `RESEARCH` | 无（纯读产物） | 无（纯计算） |
-//! | 幂等键 | `dataset_id` + 内容指纹 | `run_id` + `config_hash` + `data_fingerprint` | `run_id` | 有序输入结果文档（纯计算） |
-//! | 取消行为 | 无取消点（同步纯读） | 无取消点（同步，T2-5 才引入长任务） | 无取消点 | 无取消点（有界输入） |
-//! | 事件/进度 | 无 | 无 | 无 | 无 |
-//! | 产物清单 | 无 | run.json / summary.json / equity.csv / fills.csv | 无（只读） | 无（内存结果） |
-//! | 错误类别 | 八类见 `AppErrorCategory` | 同左 | 同左 | 同左 |
-//! | 能力等级 | R | R | R | R |
+//! | 项 | `validate_dataset` | `run_backtest` | `verify_run` | `compare_runs` | `run_experiment` |
+//! |---|---|---|---|---|---|
+//! | 输入 schema | `DatasetSpec` v1 | `BacktestSpec` v1（内置策略参数；单腿 Bar） | `BacktestOutcome` | `CompareRunsSpec` v1 | `RunExperimentSpec` v1（基础 Bar spec + 参数网格） |
+//! | 输出 schema | `DatasetVerdict` | `BacktestOutcome` | `VerificationResult` | `CompareRunsResult` v1 | `RunExperimentResult` v1 |
+//! | 运行权限 | `RESEARCH` | `RESEARCH` | 无（纯读产物） | 无（纯计算） | `RESEARCH` |
+//! | 幂等键 | `dataset_id` + 内容指纹 | `run_id` + `config_hash` + `data_fingerprint` | `run_id` | 完整输入文档（纯计算） | `experiment_id` + 规格指纹；冲突在子运行前拒绝 |
+//! | 取消行为 | 无取消点（同步纯读） | 无取消点（同步） | 无取消点 | 无取消点（有界输入） | 无取消点；候选上限 256 |
+//! | 事件/进度 | 无 | 无 | 无 | 无 | 结果逐候选记录成功或稳定错误 |
+//! | 产物清单 | 无 | run.json / summary.json / equity.csv / fills.csv | 无（只读） | 无（内存结果） | 每候选四份回测产物 + 实验 JSON 摘要 |
+//! | 错误类别 | 八类见 `AppErrorCategory` | 同左 | 同左 | 同左 | 同左（候选错误隔离记录） |
+//! | 能力等级 | R | R | R | R | R |
 
 pub(crate) mod artifacts;
 mod compare_runs;
 pub(crate) mod guard;
 mod run_backtest;
+mod run_experiment;
 mod validate_dataset;
 mod verify_run;
 
 pub use compare_runs::compare_runs;
 pub use compare_runs::{CompareRunsResult, CompareRunsSpec, ComparedRun, ComparedRunResult};
 pub use run_backtest::run_backtest;
+pub use run_experiment::run_experiment;
+pub use run_experiment::{
+    ExperimentCandidateResult, ExperimentParameterSpace, RunExperimentResult, RunExperimentSpec,
+    MAX_EXPERIMENT_CANDIDATES, RUN_EXPERIMENT_SCHEMA_VERSION,
+};
 pub use validate_dataset::validate_dataset;
 pub use verify_run::verify_run;
 

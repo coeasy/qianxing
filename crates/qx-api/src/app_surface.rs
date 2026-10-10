@@ -26,8 +26,9 @@
 
 use crate::ApiResponse;
 use qx_app::{
-    compare_runs, run_backtest, validate_dataset, verify_run, AppError, AppErrorCategory,
-    BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, RunContext,
+    compare_runs, run_backtest, run_experiment, validate_dataset, verify_run, AppError,
+    AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec,
+    DatasetSpec, RunContext, RunExperimentSpec,
 };
 use std::path::{Path, PathBuf};
 
@@ -82,12 +83,12 @@ fn context(correlation_id: &str) -> RunContext {
     RunContext::new(CallerCapability::Research, correlation_id)
 }
 
-pub(crate) fn post_validate_dataset(body: &str, data_root: &Path) -> ApiResponse {
+pub(crate) fn dataset(body: &str, paths: &AppPaths) -> ApiResponse {
     let mut spec = match DatasetSpec::from_json(body) {
         Ok(spec) => spec,
         Err(error) => return respond(Err(error)),
     };
-    if let Err(error) = resolve_input_path(&mut spec.bars_path, data_root) {
+    if let Err(error) = resolve_input_path(&mut spec.bars_path, &paths.data_root) {
         return respond(Err(error));
     }
     respond(
@@ -95,7 +96,7 @@ pub(crate) fn post_validate_dataset(body: &str, data_root: &Path) -> ApiResponse
     )
 }
 
-pub(crate) fn post_run_backtest(body: &str, data_root: &Path, artifact_root: &Path) -> ApiResponse {
+pub(crate) fn post_run_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
     let mut spec = match BacktestSpec::from_json(body) {
         Ok(spec) => spec,
         Err(error) => return respond(Err(error)),
@@ -103,12 +104,13 @@ pub(crate) fn post_run_backtest(body: &str, data_root: &Path, artifact_root: &Pa
     if let Err(error) = spec.validate() {
         return respond(Err(error));
     }
-    if let Err(error) = resolve_input_path(&mut spec.bars_path, data_root) {
+    if let Err(error) = resolve_input_path(&mut spec.bars_path, &paths.data_root) {
         return respond(Err(error));
     }
     // HTTP 调用方不能指定服务端任意写入路径。run_id 已由 spec.validate() 限定为安全文件名，
     // 产物根目录由服务部署者配置，HTTP 请求里的 output_dir 只用于兼容共享 schema。
-    spec.output_dir = artifact_root
+    spec.output_dir = paths
+        .artifact_root
         .join(&spec.run_id)
         .to_string_lossy()
         .into_owned();
@@ -195,4 +197,21 @@ pub(crate) fn post_compare_runs(body: &str) -> ApiResponse {
         Err(error) => return respond(Err(error)),
     };
     respond(compare_runs(&spec, &context("compare-runs")).and_then(|result| result.to_json()))
+}
+
+pub(crate) fn experiment(body: &str, paths: &AppPaths) -> ApiResponse {
+    let mut spec = match RunExperimentSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    if let Err(error) = spec.validate() {
+        return respond(Err(error));
+    }
+    if let Err(error) = resolve_input_path(&mut spec.base.bars_path, &paths.data_root) {
+        return respond(Err(error));
+    }
+    spec.base.output_dir = paths.artifact_root.to_string_lossy().into_owned();
+    respond(
+        run_experiment(&spec, &context(&spec.experiment_id)).and_then(|result| result.to_json()),
+    )
 }

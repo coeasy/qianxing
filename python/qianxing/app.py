@@ -1,8 +1,8 @@
 """Typed Python facade for the versioned qx-app use cases.
 
-Only schemas currently implemented by qx-app are exposed here. These are
-synchronous Bar research use cases; this module does not imply Tick/Book,
-Paper, or Live application coverage.
+Typed facade for schemas currently implemented by qx-app. Every candidate
+backtest and comparison is executed by the shared Rust application layer.
+This module does not imply Tick/Book, Paper, or Live application coverage.
 """
 
 from __future__ import annotations
@@ -241,6 +241,81 @@ class CompareRunsResult:
         )
 
 
+@dataclass(frozen=True)
+class ExperimentParameterSpace:
+    name: Literal["fast_window", "slow_window", "period", "threshold_bps", "quantity_raw"]
+    values: tuple[int, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "values": list(self.values)}
+
+
+@dataclass(frozen=True)
+class RunExperimentSpec:
+    experiment_id: str
+    base: BacktestSpec
+    parameter_space: tuple[ExperimentParameterSpace, ...]
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "experiment_id": self.experiment_id,
+            "base": self.base.to_dict(),
+            "parameter_space": [dimension.to_dict() for dimension in self.parameter_space],
+        }
+
+
+@dataclass(frozen=True)
+class ExperimentCandidateResult:
+    ordinal: int
+    parameters: dict[str, int]
+    outcome: BacktestOutcome | None
+    error: str | None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentCandidateResult":
+        raw_outcome = value.get("outcome")
+        return cls(
+            ordinal=value["ordinal"],
+            parameters=value["parameters"],
+            outcome=BacktestOutcome.from_dict(raw_outcome) if raw_outcome is not None else None,
+            error=value.get("error"),
+        )
+
+
+@dataclass(frozen=True)
+class RunExperimentResult:
+    schema_version: int
+    experiment_id: str
+    total_candidates: int
+    completed_candidates: int
+    succeeded_candidates: int
+    failed_candidates: int
+    spec_fingerprint: str
+    candidates: tuple[ExperimentCandidateResult, ...]
+    comparison: CompareRunsResult | None
+    artifact_path: str
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "RunExperimentResult":
+        comparison = value.get("comparison")
+        return cls(
+            schema_version=value["schema_version"],
+            experiment_id=value["experiment_id"],
+            total_candidates=value["total_candidates"],
+            completed_candidates=value["completed_candidates"],
+            succeeded_candidates=value["succeeded_candidates"],
+            failed_candidates=value["failed_candidates"],
+            spec_fingerprint=value["spec_fingerprint"],
+            candidates=tuple(
+                ExperimentCandidateResult.from_dict(item) for item in value["candidates"]
+            ),
+            comparison=CompareRunsResult.from_dict(comparison) if comparison is not None else None,
+            artifact_path=value["artifact_path"],
+        )
+
+
 def validate_dataset(spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
     """Validate a local Bar dataset using the shared Rust application use case."""
     return DatasetVerdict.from_dict(_invoke(native.app_validate_dataset, spec))
@@ -262,6 +337,11 @@ def compare_runs(spec: CompareRunsSpec | dict[str, Any]) -> CompareRunsResult:
     return CompareRunsResult.from_dict(_invoke(native.app_compare_runs, spec))
 
 
+def run_experiment(spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentResult:
+    """Run a bounded Cartesian grid through Rust backtests and return their Rust comparison."""
+    return RunExperimentResult.from_dict(_invoke(native.app_run_experiment, spec))
+
+
 def doctor() -> dict[str, Any]:
     """Report which native application entry points are available in this install."""
     extension_available = native.available()
@@ -276,11 +356,17 @@ def doctor() -> dict[str, Any]:
         "native_extension_available": extension_available,
         "application_use_cases_available": app_available,
         "implemented_use_cases": (
-            ["dataset.validate.bar.v1", "backtest.bar.v1", "run.verify.v1", "backtest.compare.v1"]
+            [
+                "dataset.validate.bar.v1",
+                "backtest.bar.v1",
+                "run.verify.v1",
+                "backtest.compare.v1",
+                "experiment.grid.bar.v1",
+            ]
             if app_available
             else []
         ),
         "limitations": [
-            "Tick/OrderBook, multi-leg backtests, Paper, and Live are not exposed by this SDK facade."
+            "Tick/OrderBook, multi-leg backtests, RunHandle lifecycle, Paper, and Live are not yet exposed by this SDK facade."
         ],
     }

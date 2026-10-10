@@ -30,7 +30,7 @@ pub(crate) struct AppArgs {
     pub(crate) action: Option<AppCommand>,
 }
 
-/// `app` 的子命令表：与 `qx_app::cases` 的三个用例一一对应。
+/// `app` 的子命令表：与 `qx_app::cases` 的应用研究用例一一对应。
 #[derive(Subcommand)]
 pub(crate) enum AppCommand {
     /// 数据集校验（`qx_app::validate_dataset`）。
@@ -55,6 +55,12 @@ pub(crate) enum AppCommand {
     #[command(name = "compare-runs")]
     CompareRuns {
         /// `CompareRunsSpec` JSON 的路径。
+        spec: PathBuf,
+    },
+    /// 运行有界笛卡尔参数实验并生成 Rust 比较报告。
+    #[command(name = "run-experiment")]
+    RunExperiment {
+        /// `RunExperimentSpec` JSON 的路径。
         spec: PathBuf,
     },
 }

@@ -16,6 +16,7 @@ from .app import (
     compare_runs,
     doctor,
     run_backtest,
+    run_experiment,
     validate_dataset,
     verify_run,
 )
@@ -52,6 +53,7 @@ def _parser() -> argparse.ArgumentParser:
         ("backtest", "run a versioned Bar BacktestSpec JSON file"),
         ("verify", "verify artifacts described by a BacktestOutcome JSON file"),
         ("compare-runs", "rank completed runs from identical market data"),
+        ("run-experiment", "run and compare a bounded Rust parameter grid"),
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("input", help="path to the versioned JSON document")
@@ -71,6 +73,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = run_backtest(payload)
             elif args.command == "compare-runs":
                 result = compare_runs(payload)
+            elif args.command == "run-experiment":
+                result = run_experiment(payload)
             else:
                 result = verify_run(payload)
         print(json.dumps(_document(result), ensure_ascii=False, indent=2, sort_keys=True))

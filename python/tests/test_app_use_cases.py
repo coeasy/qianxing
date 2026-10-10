@@ -49,6 +49,7 @@ def _load_native():
                         "app_run_backtest",
                         "app_verify_run",
                         "app_compare_runs",
+                        "app_run_experiment",
                     )
                 ):
                     return _qianxing_native
@@ -88,6 +89,9 @@ class AppUseCaseTests(unittest.TestCase):
         args = _parser().parse_args(["compare-runs", "comparison.json"])
         self.assertEqual(args.command, "compare-runs")
         self.assertEqual(args.input, "comparison.json")
+        experiment = _parser().parse_args(["run-experiment", "experiment.json"])
+        self.assertEqual(experiment.command, "run-experiment")
+        self.assertEqual(experiment.input, "experiment.json")
 
     def _spec(self, run_id: str, output_dir: Path, bars: str | None = None) -> dict:
         return {
@@ -165,6 +169,56 @@ class AppUseCaseTests(unittest.TestCase):
             )
         )
         self.assertEqual([item.rank for item in typed.runs], [1, 2])
+
+    def test_parameter_grid_runs_and_compares_candidates_through_rust(self):
+        self._require()
+        spec = {
+            "schema_version": 1,
+            "experiment_id": "py-grid",
+            "base": self._spec("unused", self.output_dir),
+            "parameter_space": [{"name": "fast_window", "values": [1, 2]}],
+        }
+        result = self.bridge.run_experiment(spec)
+        self.assertEqual(result["total_candidates"], 2)
+        self.assertEqual(result["completed_candidates"], 2)
+        self.assertEqual(result["succeeded_candidates"], 2)
+        self.assertEqual(result["failed_candidates"], 0)
+        self.assertEqual(len(result["comparison"]["runs"]), 2)
+        self.assertTrue(Path(result["artifact_path"]).is_file())
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import (
+            BacktestSpec,
+            BuiltinStrategySpec,
+            ExperimentParameterSpace,
+            RunExperimentSpec,
+            run_experiment,
+        )
+
+        typed = run_experiment(
+            RunExperimentSpec(
+                experiment_id="py-typed-grid",
+                base=BacktestSpec(
+                    run_id="unused",
+                    instrument="BTCUSDT.BINANCE",
+                    bars_path=str(self.root / "deploy" / "qianxing.bar-frame.example.json"),
+                    settlement_currency="USDT",
+                    initial_cash_raw=100_000_000_000_000,
+                    output_dir=str(self.output_dir / "typed"),
+                    strategy=BuiltinStrategySpec(
+                        kind="sma_cross",
+                        strategy_id="py-typed-sma",
+                        fast_window=2,
+                        slow_window=4,
+                    ),
+                ),
+                parameter_space=(ExperimentParameterSpace("fast_window", (2, 3)),),
+            )
+        )
+        self.assertEqual(typed.completed_candidates, 2)
+        self.assertEqual(typed.succeeded_candidates, 2)
+        self.assertEqual(typed.failed_candidates, 0)
+        self.assertEqual(len(typed.comparison.runs), 2)
 
     def test_a_failure_raises_the_same_document_the_other_entrypoints_print(self):
         self._require()

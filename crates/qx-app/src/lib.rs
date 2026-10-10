@@ -47,8 +47,10 @@ pub mod spec;
 mod tests;
 
 pub use cases::{
-    compare_runs, run_backtest, validate_dataset, verify_run, CompareRunsResult, CompareRunsSpec,
-    ComparedRun, ComparedRunResult,
+    compare_runs, run_backtest, run_experiment, validate_dataset, verify_run, CompareRunsResult,
+    CompareRunsSpec, ComparedRun, ComparedRunResult, ExperimentCandidateResult,
+    ExperimentParameterSpace, RunExperimentResult, RunExperimentSpec, MAX_EXPERIMENT_CANDIDATES,
+    RUN_EXPERIMENT_SCHEMA_VERSION,
 };
 pub use context::{CallerCapability, RunContext};
 pub use error::{AppAction, AppError, AppErrorCategory, AppRetry};

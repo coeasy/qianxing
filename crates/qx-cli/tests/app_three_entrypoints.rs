@@ -373,3 +373,61 @@ fn compare_runs_agrees_across_cli_http_and_python_with_stable_ranking() {
         Some(Err(payload)) => panic!("Python compare 本该成功：{payload}"),
     }
 }
+
+#[test]
+fn parameter_experiment_uses_the_same_rust_use_case_from_cli_http_and_python() {
+    let root = scratch("g1-experiment");
+    let bars = sample_bars();
+    let base: Value =
+        serde_json::from_str(&backtest_spec_json("unused-base", &bars, &root.join("out"))).unwrap();
+    let spec = json!({
+        "schema_version": 1,
+        "experiment_id": "g1-parameter-grid",
+        "base": base,
+        "parameter_space": [{"name": "fast_window", "values": [1, 2]}]
+    });
+    let spec_path = root.join("experiment.json");
+    std::fs::write(&spec_path, spec.to_string()).unwrap();
+    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "run-experiment"])
+        .arg(&spec_path)
+        .output()
+        .expect("启动 qx-cli run-experiment 失败");
+    assert_eq!(
+        cli_output.status.code(),
+        Some(0),
+        "CLI experiment 失败: {}",
+        String::from_utf8_lossy(&cli_output.stderr)
+    );
+    let cli: Value = serde_json::from_slice(&cli_output.stdout).unwrap();
+    let (status, http) = via_http("/app/run-experiment", &spec.to_string());
+    assert_eq!(status, 200, "HTTP experiment 失败: {http}");
+    let same_results = |value: &Value| {
+        json!({
+            "schema_version": value["schema_version"],
+            "experiment_id": value["experiment_id"],
+            "total_candidates": value["total_candidates"],
+            "completed_candidates": value["completed_candidates"],
+            "succeeded_candidates": value["succeeded_candidates"],
+            "failed_candidates": value["failed_candidates"],
+            "comparison": value["comparison"],
+            "candidates": value["candidates"].as_array().unwrap().iter().map(|candidate| {
+                json!({
+                    "ordinal": candidate["ordinal"],
+                    "parameters": candidate["parameters"],
+                    "run_id": candidate["outcome"]["run_id"],
+                    "result_hash": candidate["outcome"]["result_hash"],
+                })
+            }).collect::<Vec<_>>(),
+        })
+    };
+    assert_eq!(same_results(&cli), same_results(&http));
+    assert_eq!(cli["completed_candidates"], 2);
+    assert_eq!(cli["succeeded_candidates"], 2);
+    assert_eq!(cli["failed_candidates"], 0);
+    match via_python("run_experiment", &spec.to_string()) {
+        None => eprintln!("[跳过] Python 腿：PyO3 扩展未构建。"),
+        Some(Ok(python)) => assert_eq!(same_results(&python), same_results(&cli)),
+        Some(Err(payload)) => panic!("Python experiment 本该成功：{payload}"),
+    }
+}

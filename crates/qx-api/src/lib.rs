@@ -3,6 +3,7 @@
 //! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
 mod admission;
 mod app_surface;
+use app_surface as app;
 mod connections;
 mod console;
 mod control_reads;
@@ -996,20 +997,17 @@ pub struct ApiQueryModels {
 }
 
 type QueryModelsProvider = Arc<dyn Fn() -> Result<ApiQueryModels, String> + Send + Sync>;
-
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct ApiResponse {
     pub status: u16,
     pub content_type: String,
     pub body: String,
 }
-
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct ApiReadiness {
     pub ready: bool,
     pub detail: String,
 }
-
 /// 对账读模型。订单差异和余额差异保留为 JSON 事实，避免 API 层依赖某个
 /// Venue 适配器的枚举；写入前由 Reconcile worker 生成并校验 schema_version。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -1482,7 +1480,7 @@ impl ApiService {
                 return ApiResponse::json(
                     503,
                     error_json(&format!("api_rate_limit_backend_unavailable: {error}")),
-                )
+                );
             }
         }
         let (route, query) = path.split_once('?').unwrap_or((path, ""));
@@ -1685,7 +1683,10 @@ qx_control_retired_audit_records_total {}\n",
                 let events = match events_after_cursor(all_events.iter(), next_seq, after) {
                     Ok(events) => events,
                     Err(EventBusError::CursorTooOld { .. } | EventBusError::CursorAhead { .. }) => {
-                        return ApiResponse::json(409, error_json("event_cursor_requires_snapshot"))
+                        return ApiResponse::json(
+                            409,
+                            error_json("event_cursor_requires_snapshot"),
+                        );
                     }
                     Err(error) => return ApiResponse::json(500, error_json(&format!("{error:?}"))),
                 };
@@ -1696,16 +1697,11 @@ qx_control_retired_audit_records_total {}\n",
             }
             ("GET", "/events/live") => self.live_events(query),
             ("POST", "/control/commands") => self.submit_command(body, ts, authenticated_operator),
-            ("POST", "/app/validate-dataset") => {
-                app_surface::post_validate_dataset(body, &self.app_paths.data_root)
-            } // T2-2/G1 应用层用例
-            ("POST", "/app/backtest") => app_surface::post_run_backtest(
-                body,
-                &self.app_paths.data_root,
-                &self.app_paths.artifact_root,
-            ),
+            ("POST", "/app/validate-dataset") => app::dataset(body, &self.app_paths),
+            ("POST", "/app/backtest") => app_surface::post_run_backtest(body, &self.app_paths),
             ("POST", "/app/verify") => app_surface::post_verify_run(body),
             ("POST", "/app/compare-runs") => app_surface::post_compare_runs(body),
+            ("POST", "/app/run-experiment") => app::experiment(body, &self.app_paths),
             _ => ApiResponse::text(404, "not found"),
         }
     }
@@ -1814,7 +1810,7 @@ qx_control_retired_audit_records_total {}\n",
                 None => return ApiResponse::json(403, error_json("forbidden")),
             },
             (Some(_), None) => {
-                return ApiResponse::json(403, error_json("authenticated_operator_required"))
+                return ApiResponse::json(403, error_json("authenticated_operator_required"));
             }
             (None, _) => command.permission,
         };
@@ -1826,7 +1822,7 @@ qx_control_retired_audit_records_total {}\n",
                     return ApiResponse::json(
                         503,
                         error_json(&format!("control_state_unavailable: {error}")),
-                    )
+                    );
                 }
                 Err(ControlSubmitError::Rejected(error)) => {
                     let status = match error {
@@ -1958,7 +1954,7 @@ qx_control_retired_audit_records_total {}\n",
                             error_json(&format!("api_rate_limit_backend_unavailable: {error}")),
                         ),
                         &cors,
-                    )
+                    );
                 }
             }
             // 握手之前的每一支都还能说 HTTP，所以准入判定一律放在 `serve_websocket` 外面：
@@ -1971,14 +1967,14 @@ qx_control_retired_audit_records_total {}\n",
             match preflight(self.cors.as_deref(), request) {
                 Preflight::NotConfigured => {}
                 Preflight::Allowed { headers } => {
-                    return write_http_response(stream, &ApiResponse::text(204, ""), &headers)
+                    return write_http_response(stream, &ApiResponse::text(204, ""), &headers);
                 }
                 Preflight::Rejected => {
                     return write_http_response(
                         stream,
                         &ApiResponse::json(403, error_json("cors_origin_not_allowed")),
                         &cors,
-                    )
+                    );
                 }
             }
             let response = match parse_http_request(request) {

@@ -6,7 +6,8 @@
 //! 它刻意不碰 `qx-cli`、不碰 `qx-api`、不碰 `qx-python`——那三个门面各有自己的等价性用例。
 //! 这里只回答一件事：**用例本身站不站得住**。
 
-use crate::cases::{run_backtest, validate_dataset, verify_run};
+use crate::cases::{run_backtest, run_experiment, validate_dataset, verify_run};
+use crate::cases::{ExperimentParameterSpace, RunExperimentSpec};
 use crate::context::{CallerCapability, RunContext};
 use crate::error::AppErrorCategory;
 use crate::spec::{BacktestArtifacts, BacktestOutcome};
@@ -303,6 +304,132 @@ fn verification_rejects_manifest_metadata_drift_and_nondeterministic_runs() {
             .expect("复核结论不应转成调用错误");
         assert!(!verification.verified, "{label} 篡改必须拒绝");
     }
+}
+
+#[test]
+fn parameter_experiment_reuses_backtest_and_comparison_use_cases() {
+    let root = scratch("experiment-grid");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
+    let spec = RunExperimentSpec {
+        schema_version: 1,
+        experiment_id: "sma-grid".into(),
+        base: backtest_spec("unused-base-run", &bars, &root.join("out")),
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "fast_window".into(),
+            values: vec![1, 2],
+        }],
+    };
+    let result = run_experiment(&spec, &research("sma-grid")).expect("参数实验");
+    assert_eq!(result.total_candidates, 2);
+    assert_eq!(result.completed_candidates, 2, "{:?}", result.candidates);
+    assert_eq!(result.candidates.len(), 2);
+    assert!(result.candidates.iter().all(|run| run.error.is_none()));
+    assert_eq!(
+        result
+            .candidates
+            .iter()
+            .map(|run| run.outcome.as_ref().unwrap().run_id.as_str())
+            .collect::<Vec<_>>(),
+        ["sma-grid-0001", "sma-grid-0002"]
+    );
+    assert_eq!(result.comparison.as_ref().unwrap().runs.len(), 2);
+    assert!(PathBuf::from(&result.artifact_path).is_file());
+
+    let repeated = run_experiment(&spec, &research("sma-grid")).expect("幂等重跑");
+    assert_eq!(repeated, result);
+    let changed = RunExperimentSpec {
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "fast_window".into(),
+            values: vec![1, 3],
+        }],
+        ..spec
+    };
+    assert_eq!(
+        run_experiment(&changed, &research("sma-grid"))
+            .unwrap_err()
+            .category(),
+        AppErrorCategory::Conflict,
+        "同一实验身份不能悄悄绑定另一份参数规格"
+    );
+}
+
+#[test]
+fn parameter_experiment_isolates_invalid_candidates_and_bounds_the_grid() {
+    let root = scratch("experiment-failure-isolation");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
+    let spec = RunExperimentSpec {
+        schema_version: 1,
+        experiment_id: "fast-grid".into(),
+        base: backtest_spec("unused-base-run", &bars, &root.join("out")),
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "fast_window".into(),
+            values: vec![0, 2],
+        }],
+    };
+    let result = run_experiment(&spec, &research("fast-grid")).expect("单候选失败不阻断整组");
+    assert_eq!(result.completed_candidates, 2);
+    assert_eq!(result.succeeded_candidates, 1);
+    assert_eq!(result.failed_candidates, 1);
+    assert!(result.candidates[0].error.is_some());
+    assert!(result.candidates[1].outcome.is_some());
+    assert!(result.comparison.is_none());
+
+    let oversized = RunExperimentSpec {
+        experiment_id: "oversized-grid".into(),
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "quantity_raw".into(),
+            values: (1..=257).collect(),
+        }],
+        ..spec
+    };
+    assert_eq!(
+        run_experiment(&oversized, &research("oversized-grid"))
+            .unwrap_err()
+            .category(),
+        AppErrorCategory::InvalidInput
+    );
+
+    let mut ignored_knob = RunExperimentSpec {
+        experiment_id: "macd-ignored-knob".into(),
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "fast_window".into(),
+            values: vec![2, 3],
+        }],
+        ..oversized
+    };
+    ignored_knob.base.strategy.kind = qx_strategy::BuiltinStrategyKind::Macd;
+    assert_eq!(
+        run_experiment(&ignored_knob, &research("macd-ignored-knob"))
+            .unwrap_err()
+            .category(),
+        AppErrorCategory::InvalidInput,
+        "网格不能接受策略内核不读取的旋钮"
+    );
+
+    let traversal = RunExperimentSpec {
+        experiment_id: "..".into(),
+        ..ignored_knob.clone()
+    };
+    assert_eq!(
+        traversal.validate().unwrap_err().category(),
+        AppErrorCategory::InvalidInput,
+        "实验 ID 不能作为路径段逃出服务端产物目录"
+    );
+
+    let overflow = RunExperimentSpec {
+        schema_version: 1,
+        experiment_id: "overflow-grid".into(),
+        base: backtest_spec("unused-overflow", &bars, &root.join("overflow")),
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "fast_window".into(),
+            values: vec![1, i128::MAX],
+        }],
+    };
+    let overflow_result =
+        run_experiment(&overflow, &research("overflow-grid")).expect("单候选溢出应被隔离");
+    assert_eq!(overflow_result.completed_candidates, 2);
+    assert_eq!(overflow_result.succeeded_candidates, 1);
+    assert_eq!(overflow_result.failed_candidates, 1);
 }
 
 #[test]

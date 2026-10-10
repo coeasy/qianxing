@@ -74,3 +74,13 @@ use_cases:
     artifacts: "无（返回确定性排序结果）"
     error_categories: "AppErrorCategory 八类；数据指纹或标的不一致为 Conflict"
     capability_level: "R"
+  - name: run_experiment
+    input_schema: "RunExperimentSpec v1（Bar BacktestSpec + fast_window/slow_window/period/threshold_bps/quantity_raw 参数笛卡尔网格；最多 256 候选）"
+    output_schema: "RunExperimentResult v1（逐候选结果/错误 + CompareRunsResult + 实验摘要产物）"
+    capability: "RESEARCH"
+    idempotency_key: "experiment_id + 规格指纹；不匹配的既有实验在启动候选前拒绝"
+    cancellation: "无取消点（同步；单个实验候选最多 256）"
+    progress: "最终报告逐候选记载成功与稳定 AppError JSON；无实时进度事件"
+    artifacts: "各成功候选的四份标准回测产物 + <experiment_id>.experiment.json"
+    error_categories: "AppErrorCategory 八类；候选失败隔离，整体规格/存储错误由用例返回"
+    capability_level: "R"

@@ -6,11 +6,11 @@ The extension uses PyO3's Python 3.10 stable ABI. Release builds publish one `cp
 
 ## Current SDK surface
 
-The public `qianxing` namespace currently exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, artifact verification, and deterministic comparison of completed runs. Comparisons require the same instrument and data fingerprint, then rank by return, drawdown, and run ID. Backtest facts, fixed-point arithmetic, matching, risk, and metrics remain implemented by the Rust engine.
+The public `qianxing` namespace currently exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, artifact verification, deterministic comparison of completed runs, and bounded parameter-grid experiments. A grid expands supported strategy knobs in Rust and calls the same backtest and comparison use cases; it does not implement matching, risk, or metrics in Python.
 
 The wheel also exposes the existing versioned strategy contract as `qianxing.strategy`, plus the optional adapters as `qianxing.ccxt` and `qianxing.ashare`. Those connector modules preserve their own documented boundaries and are not a substitute for the not-yet-complete shared Paper/Live application workflows.
 
-Tick and OrderBook application workflows, long-running Run handles, Paper orchestration, and Live controls are not yet exposed through this SDK facade. The repository has additional lower-level CLI, worker, connector, and strategy capabilities; their presence does not mean they are already part of the high-level Python API or approved for production trading.
+Tick and OrderBook application workflows, multi-leg backtests, long-running Run handles, Paper orchestration, and Live controls are not yet exposed through this SDK facade. The repository has additional lower-level CLI, worker, connector, and strategy capabilities; their presence does not mean they are already part of the high-level Python API or approved for production trading.
 
 ## Example
 
