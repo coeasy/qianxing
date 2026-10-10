@@ -6,7 +6,7 @@ The extension uses PyO3's Python 3.10 stable ABI. Release builds publish one `cp
 
 ## Current SDK surface
 
-The public `qianxing` namespace currently exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, and artifact verification. Backtest facts, fixed-point arithmetic, matching, risk, and metrics remain implemented by the Rust engine.
+The public `qianxing` namespace currently exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, artifact verification, and deterministic comparison of completed runs. Comparisons require the same instrument and data fingerprint, then rank by return, drawdown, and run ID. Backtest facts, fixed-point arithmetic, matching, risk, and metrics remain implemented by the Rust engine.
 
 The wheel also exposes the existing versioned strategy contract as `qianxing.strategy`, plus the optional adapters as `qianxing.ccxt` and `qianxing.ashare`. Those connector modules preserve their own documented boundaries and are not a substitute for the not-yet-complete shared Paper/Live application workflows.
 
@@ -24,13 +24,15 @@ spec = BacktestSpec(
     settlement_currency="USDT",
     initial_cash_raw=100_000_000_000_000,
     output_dir="runs",
-    strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="sma-5-20"),
+    strategy=BuiltinStrategySpec(
+        kind="sma_cross", strategy_id="sma-5-20", fast_window=5, slow_window=20
+    ),
 )
 outcome = run_backtest(spec)
 assert verify_run(outcome).verified
 ```
 
-The installed `qianxing` command exposes `doctor`, `validate-dataset`, `backtest`, and `verify` for the same SDK use cases. Research commands accept the versioned JSON document produced by the application contract.
+The installed `qianxing` command exposes `doctor`, `validate-dataset`, `backtest`, `verify`, and `compare-runs` for the same SDK use cases. Research commands accept the versioned JSON document produced by the application contract.
 
 Amounts and quantities use the engine's fixed-point `*_raw` units. Install optional integrations only when needed, for example `pip install 'qianxing[ccxt]'` or `pip install 'qianxing[a-share]'`.
 

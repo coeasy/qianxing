@@ -16826,12 +16826,12 @@ def qx_app_check() -> None:
         re.MULTILINE,
     )
     check(
-        len(registry) == 3
+        len(registry) == len(registered) == 4
         and len(registered) == len(set(registered))
         and not incomplete
         and declared_kind is not None
         and declared_kind.group(1) == APP_REGISTRY_KIND,
-        "九项用例登记面在盘、自述 kind 正确、三个用例的九项逐格非空",
+        "九项用例登记面在盘、自述 kind 正确、每个用例的九项逐格非空",
         f"用例 {registered}；缺格 {incomplete or '无'}；kind {declared_kind.group(1) if declared_kind else '缺'}",
     )
     key_order = {
@@ -16868,7 +16868,7 @@ def qx_app_check() -> None:
     check(
         doc_names == registered
         and doc_items == [label for label, _ in APP_USE_CASE_ITEMS],
-        "`cases/mod.rs` 的九项文档表与登记面逐条相等（表头三个用例名 + 第一列九项）",
+        "`cases/mod.rs` 的九项文档表与登记面逐条相等（每个用例名 + 第一列九项）",
         f"文档表用例 {doc_names}（应 {registered}）；文档表九项 {doc_items}",
     )
 

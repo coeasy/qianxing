@@ -27,15 +27,15 @@
 //!
 //! ## 公共面
 //!
-//! - 用例：[`validate_dataset`]、[`run_backtest`]、[`verify_run`]
+//! - 用例：[`validate_dataset`]、[`run_backtest`]、[`verify_run`]、[`compare_runs`]
 //! - 输入/输出：[`DatasetSpec`]、[`DatasetVerdict`]、[`BacktestSpec`]、[`BacktestOutcome`]、
-//!   [`VerificationResult`]
+//!   [`VerificationResult`]、[`CompareRunsSpec`]、[`CompareRunsResult`]
 //! - 调用上下文与能力档：[`RunContext`]、[`CallerCapability`]
 //! - 错误：[`AppError`]、[`AppErrorCategory`]、[`AppAction`]、[`AppRetry`]
 //!
 //! 现在**没有**的东西（刻意留着，别按名字猜它存在）：`RunHandle` 与异步/可取消的长任务
 //! （方案 §2.2 的 `-> RunHandle` 形态属 T2-5/T3-3）、Tick/L2 档（T2-3）、
-//! `ReadRunArtifacts`/`BuildReport`/`CompareRuns`（T2-4）。本 crate 今天只交付
+//! `ReadRunArtifacts`/`BuildReport`（T2-4）。本 crate 今天只交付
 //! 「数据验证 → Bar 回测 → 产物 → 复核」这条垂直切片，且它是**同步**的。
 
 pub mod cases;
@@ -46,7 +46,10 @@ pub mod spec;
 #[cfg(test)]
 mod tests;
 
-pub use cases::{run_backtest, validate_dataset, verify_run};
+pub use cases::{
+    compare_runs, run_backtest, validate_dataset, verify_run, CompareRunsResult, CompareRunsSpec,
+    ComparedRun, ComparedRunResult,
+};
 pub use context::{CallerCapability, RunContext};
 pub use error::{AppAction, AppError, AppErrorCategory, AppRetry};
 pub use spec::{

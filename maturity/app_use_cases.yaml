@@ -45,7 +45,7 @@ use_cases:
     error_categories: "AppErrorCategory 八类；领域码→类别走 category_of_domain_code"
     capability_level: "R"
   - name: run_backtest
-    input_schema: "BacktestSpec v1（crates/qx-app/src/spec.rs）"
+    input_schema: "BacktestSpec v1（四类信号旋钮 fast_window/slow_window/period/threshold_bps；省略 period/threshold 时取兼容默认值 14/100）"
     output_schema: "BacktestOutcome（crates/qx-app/src/spec.rs）"
     capability: "RESEARCH"
     idempotency_key: "run_id + config_hash + data_fingerprint（三者全同才允许重写；任一不同即 Conflict）"
@@ -63,4 +63,14 @@ use_cases:
     progress: "无"
     artifacts: "无（只读上面四份）"
     error_categories: "AppErrorCategory 八类；产物缺失/不一致是 Ok(verified=false) 不是 Err"
+    capability_level: "R"
+  - name: compare_runs
+    input_schema: "CompareRunsSpec v1（crates/qx-app/src/cases/compare_runs.rs）"
+    output_schema: "CompareRunsResult v1（稳定排序：收益降序、回撤升序、run_id 升序）"
+    capability: "none"
+    idempotency_key: "完整输入文档（纯计算，无副作用）"
+    cancellation: "无取消点；输入最多 10000 份已完成运行的有限摘要"
+    progress: "无"
+    artifacts: "无（返回确定性排序结果）"
+    error_categories: "AppErrorCategory 八类；数据指纹或标的不一致为 Conflict"
     capability_level: "R"

@@ -101,7 +101,7 @@ fn via_http(route: &str, body: &str) -> (u16, Value) {
         std::env::set_var("QX_API_DATA_ROOT", repo_root());
         std::env::set_var(
             "QX_API_ARTIFACT_ROOT",
-            std::env::temp_dir().join("qx-app-g1-api"),
+            std::env::temp_dir().join(format!("qx-app-g1-api-{}", std::process::id())),
         );
     });
     let service = qx_api::ApiService::new(qx_api::ApiState::default());
@@ -200,8 +200,9 @@ fn the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python() 
     assert_eq!(cli["data_fingerprint"], http["data_fingerprint"]);
     assert_eq!(cli["fills"], http["fills"]);
     assert!(
-        Path::new(http["artifacts"]["run_manifest"].as_str().unwrap())
-            .starts_with(std::env::temp_dir().join("qx-app-g1-api")),
+        Path::new(http["artifacts"]["run_manifest"].as_str().unwrap()).starts_with(
+            std::env::temp_dir().join(format!("qx-app-g1-api-{}", std::process::id())),
+        ),
         "HTTP request must not control the server-side artifact path"
     );
 
@@ -319,5 +320,56 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
             assert_eq!(python["result_hash"], outcome["result_hash"]);
         }
         Some(Err(payload)) => panic!("Python verify 本该成功：{payload}"),
+    }
+}
+
+#[test]
+fn compare_runs_agrees_across_cli_http_and_python_with_stable_ranking() {
+    let root = scratch("compare-runs");
+    let bars = sample_bars();
+    let first = via_cli(
+        &backtest_spec_json("g1-compare-a", &bars, &root.join("a")),
+        &root,
+    );
+    let mut second_spec: Value =
+        serde_json::from_str(&backtest_spec_json("g1-compare-b", &bars, &root.join("b"))).unwrap();
+    second_spec["strategy"]["strategy_id"] = json!("g1-sma-b");
+    second_spec["strategy"]["fast_window"] = json!(3);
+    second_spec["strategy"]["slow_window"] = json!(4);
+    let second = via_cli(&second_spec.to_string(), &root);
+    let run_summary = |outcome: &Value| {
+        json!({
+            "run_id": outcome["run_id"],
+            "instrument": outcome["instrument"],
+            "data_fingerprint": outcome["data_fingerprint"],
+            "result_hash": outcome["result_hash"],
+            "return_bps": outcome["return_bps"],
+            "max_drawdown_bps": outcome["max_drawdown_bps"],
+        })
+    };
+    let spec = json!({"schema_version": 1, "runs": [run_summary(&first), run_summary(&second)]});
+    let spec_path = root.join("compare.json");
+    std::fs::write(&spec_path, spec.to_string()).unwrap();
+    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "compare-runs"])
+        .arg(&spec_path)
+        .output()
+        .expect("启动 qx-cli compare-runs 失败");
+    assert_eq!(
+        cli_output.status.code(),
+        Some(0),
+        "CLI compare 失败: {}",
+        String::from_utf8_lossy(&cli_output.stderr)
+    );
+    let cli: Value = serde_json::from_slice(&cli_output.stdout).unwrap();
+    let (status, http) = via_http("/app/compare-runs", &spec.to_string());
+    assert_eq!(status, 200, "HTTP compare 失败: {http}");
+    assert_eq!(cli, http, "CLI/HTTP 应返回逐字节同形的确定性对比结果");
+    assert_eq!(http["runs"].as_array().unwrap().len(), 2);
+    assert_eq!(http["runs"][0]["rank"], 1);
+    match via_python("compare_runs", &spec.to_string()) {
+        None => eprintln!("[跳过] Python 腿：PyO3 扩展未构建。"),
+        Some(Ok(python)) => assert_eq!(python, cli, "Python compare 应与 CLI/HTTP 返回同一结果"),
+        Some(Err(payload)) => panic!("Python compare 本该成功：{payload}"),
     }
 }

@@ -51,4 +51,10 @@ pub(crate) enum AppCommand {
         /// `BacktestOutcome` JSON 的路径（取 `app backtest` 的 stdout）。
         outcome: PathBuf,
     },
+    /// 确定性比较同一标的与同一数据指纹下的多组已完成回测。
+    #[command(name = "compare-runs")]
+    CompareRuns {
+        /// `CompareRunsSpec` JSON 的路径。
+        spec: PathBuf,
+    },
 }

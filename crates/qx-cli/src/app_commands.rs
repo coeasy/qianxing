@@ -19,18 +19,19 @@
 use crate::app_args::AppCommand;
 use crate::build_identity::BUILD_REVISION;
 use qx_app::{
-    run_backtest, validate_dataset, verify_run, AppError, BacktestOutcome, BacktestSpec,
-    CallerCapability, DatasetSpec, RunContext,
+    compare_runs, run_backtest, validate_dataset, verify_run, AppError, BacktestOutcome,
+    BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, RunContext,
 };
 use std::path::Path;
 
 pub(crate) fn dispatch(action: Option<AppCommand>) {
     let Some(action) = action else {
         eprintln!(
-            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|backtest|verify> <spec.json>\n  \
+            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|backtest|verify|compare-runs> <spec.json>\n  \
              validate-dataset <DatasetSpec.json>  校验一份数据集能否支撑 Bar 回测\n  \
              backtest <BacktestSpec.json>         跑一次 Bar 回测并落四份产物\n  \
-             verify <BacktestOutcome.json>        复核一轮产物（输入取 `app backtest` 的 stdout）"
+             verify <BacktestOutcome.json>        复核一轮产物（输入取 `app backtest` 的 stdout）\n  \
+             compare-runs <CompareRunsSpec.json>  确定性比较多组回测结果"
         );
         std::process::exit(2);
     };
@@ -38,6 +39,7 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
         AppCommand::ValidateDataset { spec } => validate(spec),
         AppCommand::Backtest { spec } => backtest(spec),
         AppCommand::Verify { outcome } => verify(outcome),
+        AppCommand::CompareRuns { spec } => compare(spec),
     };
     match result {
         Ok(payload) => println!("{payload}"),
@@ -48,6 +50,11 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
             std::process::exit(2);
         }
     }
+}
+
+fn compare(spec_path: &Path) -> Result<String, AppError> {
+    let spec = CompareRunsSpec::from_json(&read_document(spec_path)?)?;
+    compare_runs(&spec, &context("compare-runs"))?.to_json()
 }
 
 /// 读一份 JSON 文档。文件不在是 `DataUnavailable`（去把数据准备好），不是"输入写错了"。

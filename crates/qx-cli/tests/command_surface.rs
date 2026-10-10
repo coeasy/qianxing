@@ -90,7 +90,7 @@ fn every_command_renders_its_own_help() {
 /// **二级入口**此前一颗用例都没点过名（旧判据 `cli_command_test_evidence_check` 报出的正是
 /// 这两条）——它一敲就崩、或自己的用法渲染不出来时没人红。这里把 21 条二级入口逐条实跑
 /// `--help`，与顶层那条同一口径（退 0 + 用法里带叶子名）。
-const NESTED_COMMANDS: [&str; 21] = [
+const NESTED_COMMANDS: [&str; 22] = [
     "config explain",
     "config validate",
     "config fingerprint",
@@ -112,6 +112,7 @@ const NESTED_COMMANDS: [&str; 21] = [
     "app validate-dataset",
     "app backtest",
     "app verify",
+    "app compare-runs",
 ];
 
 /// 逐条二级入口实跑 `--help`：clap 必须认它（退 0），且用法里带子命令名。

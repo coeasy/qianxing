@@ -6,7 +6,7 @@
 //!
 //! ## `app_*`：应用层用例的 Python 门面（T2-2 / 退出门 G1）
 //!
-//! 三个 `app_*` 函数与 `qx-cli app` 子命令、`POST /app/*` 三条路由调的是**同一组 `qx-app`
+//! `app_*` 函数与 `qx-cli app` 子命令、`POST /app/*` 路由调的是**同一组 `qx-app`
 //! 用例**。它们的进出都是字符串：传一份 spec/outcome JSON，换回一份结果 JSON；失败时抛
 //! [`QxAppError`]，**异常文本就是 `AppError::to_json()` 的原文**——于是「同一 use case 三入口
 //! 结果哈希相同、错误 code 与 correlation id 相同」在 Python 这一侧也是构造性的。
@@ -18,8 +18,8 @@ use pyo3::exceptions::{PyException, PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyCapsule, PyModule, PyTuple};
 use qx_app::{
-    run_backtest, validate_dataset, verify_run, AppError, BacktestOutcome, BacktestSpec,
-    CallerCapability, DatasetSpec, RunContext,
+    compare_runs, run_backtest, validate_dataset, verify_run, AppError, BacktestOutcome,
+    BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, RunContext,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
@@ -68,6 +68,14 @@ fn app_run_backtest(spec_json: &str) -> PyResult<String> {
 fn app_verify_run(outcome_json: &str) -> PyResult<String> {
     let outcome = BacktestOutcome::from_json(outcome_json).map_err(app_error)?;
     verify_run(&outcome, &research_context(&outcome.run_id))
+        .and_then(|result| result.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_compare_runs(spec_json: &str) -> PyResult<String> {
+    let spec = CompareRunsSpec::from_json(spec_json).map_err(app_error)?;
+    compare_runs(&spec, &research_context("compare-runs"))
         .and_then(|result| result.to_json())
         .map_err(app_error)
 }
@@ -218,10 +226,11 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(owned_arrow_capsules, module)?)?;
     module.add_class::<OwnedArrowArray>()?;
     module.add_function(wrap_pyfunction!(owned_arrow_array, module)?)?;
-    // T2-2/G1：应用层用例三条入口 + 它们专用的异常类型。
+    // 应用层用例入口 + 它们专用的异常类型。
     module.add_function(wrap_pyfunction!(app_validate_dataset, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_verify_run, module)?)?;
+    module.add_function(wrap_pyfunction!(app_compare_runs, module)?)?;
     module.add("QxAppError", module.py().get_type::<QxAppError>())?;
     Ok(())
 }

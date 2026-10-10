@@ -136,6 +136,8 @@ fn run_backtest_inner(
     .map_err(invalid_strategy)?;
     strategy_config.fast_window = spec.strategy.fast_window;
     strategy_config.slow_window = spec.strategy.slow_window;
+    strategy_config.period = spec.strategy.period;
+    strategy_config.threshold_bps = spec.strategy.threshold_bps;
     strategy_config.validate().map_err(invalid_strategy)?;
     let strategy_id = strategy_config.strategy_id.clone();
     let strategy_version = strategy_config.strategy_version.clone();

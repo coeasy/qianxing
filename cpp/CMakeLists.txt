@@ -12,6 +12,10 @@ add_executable(qianxing_ring_smoke tests/ring_smoke.cpp)
 target_include_directories(qianxing_ring_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(qianxing_ring_smoke PRIVATE cxx_std_17)
 
+add_executable(qianxing_app_client_smoke tests/app_client_smoke.cpp)
+target_include_directories(qianxing_app_client_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(qianxing_app_client_smoke PRIVATE cxx_std_17)
+
 add_library(qianxing_strategy_example SHARED examples/momentum_strategy.cpp)
 target_include_directories(qianxing_strategy_example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(qianxing_strategy_example PRIVATE cxx_std_17)

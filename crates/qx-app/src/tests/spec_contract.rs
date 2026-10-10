@@ -89,9 +89,20 @@ fn the_backtest_spec_json_keys_are_pinned() {
             "quantity_raw",
             "fast_window",
             "slow_window",
+            "period",
+            "threshold_bps",
         ]),
-        "内置策略声明只暴露确定会改结果的那几格"
+        "内置策略声明覆盖四类公开信号旋钮"
     );
+}
+
+#[test]
+fn old_strategy_documents_get_the_historical_signal_defaults() {
+    let payload = r#"{"kind":"sma_cross","strategy_id":"compat","quantity_raw":1000000000,"fast_window":5,"slow_window":20}"#;
+    let strategy: BuiltinStrategySpec =
+        serde_json::from_str(payload).expect("旧 schema 文档仍可读");
+    assert_eq!(strategy.period, 14);
+    assert_eq!(strategy.threshold_bps, 100);
 }
 
 #[test]

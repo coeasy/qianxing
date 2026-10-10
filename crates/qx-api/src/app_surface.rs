@@ -1,16 +1,16 @@
-//! `POST /app/*`：应用层用例的 HTTP 门面（T2-2；退出门 G1 的 HTTP 那一条腿）。
+//! `POST /app/*`：应用层用例的 HTTP 门面。
 //!
-//! 三条入口与 CLI 的 `app` 子命令、Python SDK 的三个函数**调的是同一组 `qx-app` 用例**，
+//! HTTP、CLI 的 `app` 子命令和 Python SDK **调的是同一组 `qx-app` 用例**，
 //! 请求体与响应体就是用例的 spec / 结果 JSON。所以「同一 use case 从三个入口调，结果哈希相同、
 //! 错误 code 与 correlation id 相同」是构造性的：这里没有第二份装配、没有第二份错误映射。
 //!
 //! ## 为什么是 `POST` 而不是 `GET`
 //!
-//! 三条入口的输入是一份**文档**（`DatasetSpec` / `BacktestSpec` / `BacktestOutcome`），不是
+//! 每个入口的输入是一份**文档**（如 `DatasetSpec` / `BacktestSpec` / `BacktestOutcome` / `CompareRunsSpec`），不是
 //! 几个标量键。把它摊成查询串会逼出一个"HTTP 侧独有的输入形状"，那正是 §15.2 要消灭的分叉。
 //! 所以走请求体。`validate-dataset` 与 `verify` 本身是纯读；`backtest` 会在**服务进程的**
 //! 文件系统上落四份产物——这是 R 档（研究，无外部账户副作用），但对服务面而言是**重**入口，
-//! 它的定位是本地/受信运维，不是公网批量调用面。三条入口都不在策略白名单的免鉴权名单里，
+//! 它的定位是本地/受信运维，不是公网批量调用面。这些入口都不在策略白名单的免鉴权名单里，
 //! 所以配了 `policy` 的部署里它们与 `/control/commands` 同一把锁。
 //!
 //! ## 状态码只从类别派生
@@ -26,8 +26,8 @@
 
 use crate::ApiResponse;
 use qx_app::{
-    run_backtest, validate_dataset, verify_run, AppError, AppErrorCategory, BacktestOutcome,
-    BacktestSpec, CallerCapability, DatasetSpec, RunContext,
+    compare_runs, run_backtest, validate_dataset, verify_run, AppError, AppErrorCategory,
+    BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, RunContext,
 };
 use std::path::{Path, PathBuf};
 
@@ -187,4 +187,12 @@ pub(crate) fn post_verify_run(body: &str) -> ApiResponse {
         Err(error) => return respond(Err(error)),
     };
     respond(verify_run(&outcome, &context(&outcome.run_id)).and_then(|result| result.to_json()))
+}
+
+pub(crate) fn post_compare_runs(body: &str) -> ApiResponse {
+    let spec = match CompareRunsSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    respond(compare_runs(&spec, &context("compare-runs")).and_then(|result| result.to_json()))
 }

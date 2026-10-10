@@ -13,6 +13,7 @@ from .app import (
     DataUnavailableError,
     InvalidInputError,
     QianxingError,
+    compare_runs,
     doctor,
     run_backtest,
     validate_dataset,
@@ -50,6 +51,7 @@ def _parser() -> argparse.ArgumentParser:
         ("validate-dataset", "validate a versioned DatasetSpec JSON file"),
         ("backtest", "run a versioned Bar BacktestSpec JSON file"),
         ("verify", "verify artifacts described by a BacktestOutcome JSON file"),
+        ("compare-runs", "rank completed runs from identical market data"),
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("input", help="path to the versioned JSON document")
@@ -67,6 +69,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = validate_dataset(payload)
             elif args.command == "backtest":
                 result = run_backtest(payload)
+            elif args.command == "compare-runs":
+                result = compare_runs(payload)
             else:
                 result = verify_run(payload)
         print(json.dumps(_document(result), ensure_ascii=False, indent=2, sort_keys=True))

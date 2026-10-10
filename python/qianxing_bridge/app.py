@@ -1,6 +1,6 @@
 """应用层用例的 Python 门面（T2-2 / 退出门 G1）。
 
-三条函数与 ``qx-cli app`` 子命令、``POST /app/*`` 三条路由调的是**同一组 ``qx-app`` 用例**：
+四条函数与 ``qx-cli app`` 子命令、``POST /app/*`` 路由调的是**同一组 ``qx-app`` 用例**：
 进出都是 JSON 文档，所以「同一 use case 三入口结果哈希相同、错误 code 与 correlation id 相同」
 在这条链上是构造性的，不是靠约定维持的。
 
@@ -46,10 +46,15 @@ def run_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
 def verify_run(outcome: "str | dict[str, Any]") -> dict[str, Any]:
     """复核一轮产物，返回 ``VerificationResult``。
 
-    ``outcome`` 直接取 :func:`run_backtest` 的返回值——三个入口的交接面是同一份文档。
+    ``outcome`` 直接取 :func:`run_backtest` 的返回值——各入口的交接面是同一份文档。
     产物缺失/不一致是**成功返回**（``verified=false`` + ``mismatches``），不是异常。
     """
     return json.loads(native.app_verify_run(_payload(outcome)))
+
+
+def compare_runs(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """按固定收益/回撤/run_id 顺序比较相同标的和数据指纹的已完成运行。"""
+    return json.loads(native.app_compare_runs(_payload(spec)))
 
 
 def app_error_payload(error: BaseException) -> "dict[str, Any] | None":

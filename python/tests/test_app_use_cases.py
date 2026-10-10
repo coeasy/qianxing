@@ -3,7 +3,7 @@
 与 `python/tests/test_native_extension.py` 同一约定：扩展是构建产物，没构建就 skip
 （`cargo build -p qx-python` 或 `tools/build_python_wheel.*`），而不是把"没构建"当成失败。
 
-这里守的是 Python 这一侧**自己**的契约：三条入口存在、进出一份 JSON 文档、失败时抛的异常
+这里守的是 Python 这一侧**自己**的契约：四条入口存在、进出一份 JSON 文档、失败时抛的异常
 文本就是 `AppError` 文档（而不是某个 Python 侧自造的形状）。三入口之间的**逐字节等价**
 由 `crates/qx-cli/tests/app_three_entrypoints.rs` 那一条守——两边分工，不重复。
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -47,6 +48,7 @@ def _load_native():
                         "app_validate_dataset",
                         "app_run_backtest",
                         "app_verify_run",
+                        "app_compare_runs",
                     )
                 ):
                     return _qianxing_native
@@ -56,6 +58,7 @@ def _load_native():
 class AppUseCaseTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.root = Path(__file__).resolve().parents[2]
         cls.native = _load_native()
         if cls.native is None:
             cls.bridge = None
@@ -64,11 +67,27 @@ class AppUseCaseTests(unittest.TestCase):
         from qianxing_bridge import app
 
         cls.bridge = app
-        cls.root = Path(__file__).resolve().parents[2]
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory(
+            prefix="qx-app-use-cases-", dir=self.root / "target"
+        )
+        self.output_dir = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
 
     def _require(self):
         if self.bridge is None:
             self.skipTest("build qx-python to run the app use-case test")
+
+    def test_python_cli_routes_compare_runs_into_the_sdk(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing.cli import _parser
+
+        args = _parser().parse_args(["compare-runs", "comparison.json"])
+        self.assertEqual(args.command, "compare-runs")
+        self.assertEqual(args.input, "comparison.json")
 
     def _spec(self, run_id: str, output_dir: Path, bars: str | None = None) -> dict:
         return {
@@ -89,9 +108,9 @@ class AppUseCaseTests(unittest.TestCase):
             },
         }
 
-    def test_the_three_use_cases_run_end_to_end_from_python(self):
+    def test_the_shared_use_cases_run_end_to_end_from_python(self):
         self._require()
-        out = self.root / "target" / "py-app-test"
+        out = self.output_dir
         verdict = self.bridge.validate_dataset(
             {
                 "schema_version": 1,
@@ -113,9 +132,43 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertTrue(verification["verified"], verification["mismatches"])
         self.assertEqual(verification["result_hash"], outcome["result_hash"])
 
+        second_spec = self._spec("py-run-alt", out / "alt")
+        second_spec["strategy"]["strategy_id"] = "py-sma-alt"
+        second_spec["strategy"]["fast_window"] = 3
+        second_spec["strategy"]["slow_window"] = 4
+        second = self.bridge.run_backtest(second_spec)
+        comparison = self.bridge.compare_runs({
+            "schema_version": 1,
+            "runs": [
+                {key: outcome[key] for key in ("run_id", "instrument", "data_fingerprint", "result_hash", "return_bps", "max_drawdown_bps")},
+                {key: second[key] for key in ("run_id", "instrument", "data_fingerprint", "result_hash", "return_bps", "max_drawdown_bps")},
+            ],
+        })
+        self.assertEqual([item["rank"] for item in comparison["runs"]], [1, 2])
+        self.assertEqual(comparison["data_fingerprint"], outcome["data_fingerprint"])
+
+        from qianxing import CompareRunsSpec, ComparedRun, compare_runs
+
+        typed = compare_runs(
+            CompareRunsSpec(
+                runs=tuple(
+                    ComparedRun(
+                        run_id=item["run_id"],
+                        instrument=item["instrument"],
+                        data_fingerprint=item["data_fingerprint"],
+                        result_hash=item["result_hash"],
+                        return_bps=item["return_bps"],
+                        max_drawdown_bps=item["max_drawdown_bps"],
+                    )
+                    for item in (outcome, second)
+                )
+            )
+        )
+        self.assertEqual([item.rank for item in typed.runs], [1, 2])
+
     def test_a_failure_raises_the_same_document_the_other_entrypoints_print(self):
         self._require()
-        spec = self._spec("py-missing", self.root / "target" / "py-app-test", "nope.json")
+        spec = self._spec("py-missing", self.output_dir, "nope.json")
         with self.assertRaises(Exception) as caught:
             self.bridge.run_backtest(spec)
         payload = self.bridge.app_error_payload(caught.exception)

@@ -32,9 +32,14 @@ def available() -> bool:
     return True
 
 
-#: 应用层用例三条入口（T2-2）。扩展是构建产物，旧世代没有它们——所以"扩展能 import"
+#: 应用层用例入口。扩展是构建产物，旧世代没有它们——所以"扩展能 import"
 #: 与"这个世代有应用层入口"是两件事，探针必须按名字问，不能按 import 成功推断。
-APP_ENTRYPOINTS = ("app_validate_dataset", "app_run_backtest", "app_verify_run")
+APP_ENTRYPOINTS = (
+    "app_validate_dataset",
+    "app_run_backtest",
+    "app_verify_run",
+    "app_compare_runs",
+)
 
 
 def app_available() -> bool:
@@ -80,9 +85,14 @@ def app_run_backtest(spec_json: str) -> str:
 def app_verify_run(outcome_json: str) -> str:
     """应用层用例 ``VerifyRun``：传 ``BacktestOutcome`` JSON，换回 ``VerificationResult`` JSON。
 
-    ``outcome_json`` 直接取 ``app_run_backtest`` 的返回值——三个入口的交接面是同一份文档。
+    ``outcome_json`` 直接取 ``app_run_backtest`` 的返回值——各入口的交接面是同一份文档。
     """
     return str(_extension().app_verify_run(outcome_json))
+
+
+def app_compare_runs(spec_json: str) -> str:
+    """Deterministically compare completed runs via the shared Rust application use case."""
+    return str(_extension().app_compare_runs(spec_json))
 
 
 def to_pyarrow_columns(payload: str) -> tuple[Any, ...]:

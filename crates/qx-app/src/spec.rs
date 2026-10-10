@@ -116,6 +116,20 @@ pub struct BuiltinStrategySpec {
     pub quantity_raw: i128,
     pub fast_window: usize,
     pub slow_window: usize,
+    /// Indicator period used by RSI/channel/volatility strategies.
+    #[serde(default = "default_strategy_period")]
+    pub period: usize,
+    /// Signal threshold in basis points, where used by the selected strategy.
+    #[serde(default = "default_strategy_threshold_bps")]
+    pub threshold_bps: i128,
+}
+
+fn default_strategy_period() -> usize {
+    14
+}
+
+fn default_strategy_threshold_bps() -> i128 {
+    100
 }
 
 impl BuiltinStrategySpec {
@@ -126,10 +140,12 @@ impl BuiltinStrategySpec {
             quantity_raw: qx_core::SCALE,
             fast_window: 5,
             slow_window: 20,
+            period: default_strategy_period(),
+            threshold_bps: default_strategy_threshold_bps(),
         }
     }
 
-    /// 形状自检：身份非空、数量为正、窗口不退化。
+    /// 形状自检与领域策略旋钮清单保持一致；不生效的旋钮不阻断本次运行。
     pub fn validate(&self) -> Result<(), AppError> {
         if self.strategy_id.trim().is_empty() {
             return Err(AppError::new(
@@ -143,10 +159,30 @@ impl BuiltinStrategySpec {
                 "BuiltinStrategySpec.quantity_raw 必须为正",
             ));
         }
-        if self.fast_window == 0 || self.slow_window == 0 {
+        use qx_strategy::builtin_signal::BuiltinSignalKnob::{
+            FastWindow, Period, SlowWindow, ThresholdBps,
+        };
+        let uses = |knob| self.kind.uses_signal_knob(knob);
+        if (uses(FastWindow) || uses(SlowWindow))
+            && (self.fast_window == 0
+                || self.slow_window == 0
+                || self.fast_window >= self.slow_window)
+        {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
-                "BuiltinStrategySpec 窗口不能为 0",
+                "BuiltinStrategySpec 快慢窗口必须为正且快线短于慢线",
+            ));
+        }
+        if uses(Period) && self.period < 2 {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "BuiltinStrategySpec.period 至少为 2",
+            ));
+        }
+        if uses(ThresholdBps) && self.threshold_bps < 0 {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "BuiltinStrategySpec.threshold_bps 不得为负",
             ));
         }
         Ok(())

@@ -13,24 +13,27 @@
 //! 路线图 §2 要求每个用例定义九项。它们逐条落在下面，`maturity/app_use_cases.yaml` 是同一份
 //! 内容的机读登记面，由 `qx_app_check` 与本模块的文档逐条对账——**改了这里不改登记面会红**。
 //!
-//! | 项 | `validate_dataset` | `run_backtest` | `verify_run` |
-//! |---|---|---|---|
-//! | 输入 schema | `DatasetSpec` v1 | `BacktestSpec` v1 | `BacktestOutcome` |
-//! | 输出 schema | `DatasetVerdict` | `BacktestOutcome` | `VerificationResult` |
-//! | 运行权限 | `RESEARCH` | `RESEARCH` | 无（纯读产物） |
-//! | 幂等键 | `dataset_id` + 内容指纹 | `run_id` + `config_hash` + `data_fingerprint` | `run_id` |
-//! | 取消行为 | 无取消点（同步纯读） | 无取消点（同步，T2-5 才引入长任务） | 无取消点 |
-//! | 事件/进度 | 无 | 无 | 无 |
-//! | 产物清单 | 无 | run.json / summary.json / equity.csv / fills.csv | 无（只读） |
-//! | 错误类别 | 八类见 `AppErrorCategory` | 同左 | 同左 |
-//! | 能力等级 | R | R | R |
+//! | 项 | `validate_dataset` | `run_backtest` | `verify_run` | `compare_runs` |
+//! |---|---|---|---|---|
+//! | 输入 schema | `DatasetSpec` v1 | `BacktestSpec` v1（内置策略 fast/slow/period/threshold 参数；单腿 Bar 路径） | `BacktestOutcome` | `CompareRunsSpec` v1 |
+//! | 输出 schema | `DatasetVerdict` | `BacktestOutcome` | `VerificationResult` | `CompareRunsResult` v1 |
+//! | 运行权限 | `RESEARCH` | `RESEARCH` | 无（纯读产物） | 无（纯计算） |
+//! | 幂等键 | `dataset_id` + 内容指纹 | `run_id` + `config_hash` + `data_fingerprint` | `run_id` | 有序输入结果文档（纯计算） |
+//! | 取消行为 | 无取消点（同步纯读） | 无取消点（同步，T2-5 才引入长任务） | 无取消点 | 无取消点（有界输入） |
+//! | 事件/进度 | 无 | 无 | 无 | 无 |
+//! | 产物清单 | 无 | run.json / summary.json / equity.csv / fills.csv | 无（只读） | 无（内存结果） |
+//! | 错误类别 | 八类见 `AppErrorCategory` | 同左 | 同左 | 同左 |
+//! | 能力等级 | R | R | R | R |
 
 pub(crate) mod artifacts;
+mod compare_runs;
 pub(crate) mod guard;
 mod run_backtest;
 mod validate_dataset;
 mod verify_run;
 
+pub use compare_runs::compare_runs;
+pub use compare_runs::{CompareRunsResult, CompareRunsSpec, ComparedRun, ComparedRunResult};
 pub use run_backtest::run_backtest;
 pub use validate_dataset::validate_dataset;
 pub use verify_run::verify_run;

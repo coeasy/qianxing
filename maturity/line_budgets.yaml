@@ -36,7 +36,7 @@ crates/qx-storage/src/postgres.rs: 2074
 crates/qx-storage/src/sqlite.rs: 2689
 crates/qx-storage/tests/outbox_backend_semantics.rs: 717
 crates/qx-strategy/src/builtin.rs: 991
-crates/qx-strategy/src/c_api.rs: 1166
+crates/qx-strategy/src/c_api.rs: 1165
 crates/qx-strategy/src/lib.rs: 548
 crates/qx-xingban/src/ashare.rs: 1201
 crates/qx-xingban/src/ashare/tests.rs: 764
