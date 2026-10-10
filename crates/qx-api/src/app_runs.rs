@@ -1,7 +1,9 @@
 //! Asynchronous lifecycle routes for the shared application use cases.
 
 use super::*;
-use qx_app::{RunExperimentResult, RunHandle, RunStatus};
+use qx_app::{
+    MultiLegBacktestOutcome, MultiLegBacktestSpec, RunExperimentResult, RunHandle, RunStatus,
+};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -11,6 +13,7 @@ pub(crate) const RUN_STATUS_ROUTE_TEMPLATE: &str = "/app/runs/{run_id}";
 pub(crate) const RUN_CANCEL_ROUTE_TEMPLATE: &str = "/app/runs/{run_id}/cancel";
 pub(crate) const RUN_START_DEPTH_ROUTE: &str = "/app/depth-backtest/start";
 pub(crate) const RUN_START_EXPERIMENT_ROUTE: &str = "/app/run-experiment/start";
+pub(crate) const RUN_START_MULTI_LEG_ROUTE: &str = "/app/multi-leg-backtest/start";
 
 pub(crate) fn app_run_route(
     method: &str,
@@ -23,6 +26,7 @@ pub(crate) fn app_run_route(
         ("POST", RUN_START_BACKTEST_ROUTE) => start_run_backtest(body, paths, registry),
         ("POST", RUN_START_DEPTH_ROUTE) => start_depth_backtest(body, paths, registry),
         ("POST", RUN_START_EXPERIMENT_ROUTE) => start_experiment(body, paths, registry),
+        ("POST", RUN_START_MULTI_LEG_ROUTE) => start_multi_leg_backtest(body, paths, registry),
         ("GET", route) => status_route_id(route).map(|run_id| registry.status(run_id))?,
         ("POST", route) => cancel_route_id(route).map(|run_id| registry.cancel(run_id))?,
         _ => return None,
@@ -41,6 +45,7 @@ enum AppRun {
     Bar(RunHandle<BacktestOutcome>),
     Depth(RunHandle<DepthBacktestOutcome>),
     Experiment(RunHandle<RunExperimentResult>),
+    MultiLeg(RunHandle<MultiLegBacktestOutcome>),
 }
 
 struct AppRunEntry {
@@ -139,6 +144,7 @@ impl AppRunEntry {
             Some(AppRun::Bar(handle)) => handle.status(),
             Some(AppRun::Depth(handle)) => handle.status(),
             Some(AppRun::Experiment(handle)) => handle.status(),
+            Some(AppRun::MultiLeg(handle)) => handle.status(),
         }
     }
 
@@ -148,6 +154,7 @@ impl AppRunEntry {
             Some(AppRun::Bar(handle)) => handle.cancel(),
             Some(AppRun::Depth(handle)) => handle.cancel(),
             Some(AppRun::Experiment(handle)) => handle.cancel(),
+            Some(AppRun::MultiLeg(handle)) => handle.cancel(),
             None => {}
         }
     }
@@ -166,6 +173,9 @@ impl AppRunEntry {
                 .try_take_result()
                 .map(|result| result.and_then(|value| value.to_json())),
             Some(AppRun::Experiment(handle)) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|value| value.to_json())),
+            Some(AppRun::MultiLeg(handle)) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|value| value.to_json())),
         };
@@ -380,6 +390,36 @@ pub(crate) fn start_experiment(
     }
     let handle = spec.start(context(&run_id));
     match registry.attach(&run_id, AppRun::Experiment(handle)) {
+        Ok(()) => registry.status(&run_id),
+        Err(error) => respond(Err(error)),
+    }
+}
+
+pub(crate) fn start_multi_leg_backtest(
+    body: &str,
+    paths: &AppPaths,
+    registry: &AppRunRegistry,
+) -> ApiResponse {
+    let mut spec = match MultiLegBacktestSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    for input in [&mut spec.primary_bars_path, &mut spec.reference_bars_path] {
+        if let Err(error) = resolve_input_path(input, &paths.data_root) {
+            return respond(Err(error));
+        }
+    }
+    let run_id = spec.run_id.clone();
+    spec.output_dir = paths
+        .artifact_root
+        .join(&run_id)
+        .to_string_lossy()
+        .into_owned();
+    if let Err(error) = registry.reserve(run_id.clone()) {
+        return respond(Err(error));
+    }
+    let handle = spec.start(context(&run_id));
+    match registry.attach(&run_id, AppRun::MultiLeg(handle)) {
         Ok(()) => registry.status(&run_id),
         Err(error) => respond(Err(error)),
     }

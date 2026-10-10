@@ -55,6 +55,8 @@ def _load_native():
                         "app_start_experiment",
                         "app_run_depth_backtest",
                         "app_start_depth_backtest",
+                        "app_run_multi_leg_backtest",
+                        "app_start_multi_leg_backtest",
                         "app_verify_depth_run",
                     )
                 ):
@@ -410,6 +412,44 @@ class AppUseCaseTests(unittest.TestCase):
         with redirect_stdout(stdout):
             self.assertEqual(python_cli(["verify-depth", str(outcome_file)]), 0)
         self.assertTrue(json.loads(stdout.getvalue())["verified"])
+
+    def test_multi_leg_backtest_uses_the_shared_rust_application_flow_and_handle(self):
+        self._require()
+        fixture_root = self.root / "deploy"
+        payload = {
+            "schema_version": 1,
+            "run_id": "python-multi-leg",
+            "primary_bars_path": str(fixture_root / "qianxing.bar-frame.pairs-primary.example.json"),
+            "reference_bars_path": str(fixture_root / "qianxing.bar-frame.pairs-reference.example.json"),
+            "settlement_currency": "USDT",
+            "primary_initial_cash_raw": 1_000_000_000_000_000,
+            "reference_initial_cash_raw": 1_000_000_000_000_000,
+            "seed": 7,
+            "output_dir": str(self.output_dir / "multi-leg"),
+            "strategy": {
+                "kind": "pairs_arbitrage",
+                "strategy_id": "py-pairs",
+                "quantity_raw": 1_000_000_000,
+                "fast_window": 5,
+                "slow_window": 20,
+                "period": 14,
+                "threshold_bps": 100,
+            },
+        }
+        first = self.bridge.run_multi_leg_backtest(payload)
+        second = self.bridge.run_multi_leg_backtest(payload)
+        self.assertEqual(first, second)
+        self.assertGreater(first["primary_fills"], 0)
+        self.assertGreater(first["reference_fills"], 0)
+        self.assertTrue(Path(first["attribution_artifact"]).is_file())
+
+        handle_payload = {**payload, "run_id": "python-multi-leg-handle"}
+        handle_payload["output_dir"] = str(self.output_dir / "multi-leg-handle")
+        handle = self.bridge.app_start_multi_leg_backtest(json.dumps(handle_payload))
+        self.assertEqual(handle.run_id, "python-multi-leg-handle")
+        self.assertEqual(handle.wait(10_000), "succeeded")
+        self.assertIsNotNone(handle.result_json())
+        self.assertIsNone(handle.result_json(), "multi-leg result is delivered once")
 
     def test_a_failure_raises_the_same_document_the_other_entrypoints_print(self):
         self._require()

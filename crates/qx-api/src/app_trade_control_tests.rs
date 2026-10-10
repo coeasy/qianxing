@@ -2,6 +2,9 @@ use crate::*;
 use qx_control::CommandKind;
 use std::collections::BTreeMap;
 
+#[path = "app_multi_leg_tests.rs"]
+mod app_multi_leg_tests;
+
 #[test]
 fn paper_and_live_app_routes_validate_then_enqueue_through_the_existing_control_plane() {
     let service = ApiService::with_policy(

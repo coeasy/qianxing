@@ -81,7 +81,6 @@ pub(crate) fn read_face_source() -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
-
 /// 入口那一格里反引号包住的路径。
 ///
 /// `GET`/`POST` 前缀是可选的（同一格并列第二条路径时不带，例如
@@ -167,6 +166,7 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
         ("RUN_CANCEL_ROUTE_TEMPLATE", "POST"),
         ("RUN_START_DEPTH_ROUTE", "POST"),
         ("RUN_START_EXPERIMENT_ROUTE", "POST"),
+        ("RUN_START_MULTI_LEG_ROUTE", "POST"),
     ] {
         let marker = format!("const {constant}: &str = \"");
         let template = app_surface
@@ -177,8 +177,8 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
         pairs.insert((method.to_string(), template.to_string()));
     }
     assert!(
-        pairs.len() >= 21,
-        "分派区间里只数出 {} 条 (方法, 路由)，比端点表声称的 21 条还少——取数区间被改窄了",
+        pairs.len() >= 23,
+        "分派区间里只数出 {} 条 (方法, 路由)，比端点表声称的 23 条还少——取数区间被改窄了",
         pairs.len()
     );
     for (method, _) in &pairs {

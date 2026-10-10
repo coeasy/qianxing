@@ -67,6 +67,16 @@ def run_depth_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_run_depth_backtest(_payload(spec)))
 
 
+def run_multi_leg_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """Run a Rust application-layer multi-leg Bar backtest."""
+    return json.loads(native.app_run_multi_leg_backtest(_payload(spec)))
+
+
+def start_multi_leg_backtest(spec: "str | dict[str, Any]") -> Any:
+    """Start a cancellable Rust multi-leg run and return its shared RunHandle."""
+    return native.app_start_multi_leg_backtest(_payload(spec))
+
+
 def verify_depth_run(outcome: "str | dict[str, Any]") -> dict[str, Any]:
     """Verify the manifest, summary, equity, and fills of a depth run."""
     return json.loads(native.app_verify_depth_run(_payload(outcome)))

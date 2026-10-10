@@ -1,25 +1,8 @@
-//! 退出门 G1：**同一 use case 从 CLI / Python / HTTP 三个入口调同一个 `qx-app` service**，
-//! 结果哈希相同、错误 code 与 correlation id 相同。
-//!
-//! 三个入口在这里被当成三件**不同的东西**对待，而不是三次函数调用：
-//!
-//! - CLI 腿真的 spawn 一个 `qx-cli` 进程，读它的 stdout；
-//! - HTTP 腿真的走 `qx_api::ApiService::handle("POST", "/app/backtest", …)`（与 `qx-cli serve`
-//!   后面那台服务是同一个分派入口），读响应体；
-//! - Python 腿真的起一个解释器，import `qianxing_bridge.app`，读它打印的那一行。
-//!
-//! 三腿交出**同一份 spec 字节**（同一 `run_id`、同一 `output_dir`），所以三份产物会落到同一个
-//! 目录：第二次与第三次运行命中幂等分支（同一 `config_hash` + 同一 `data_fingerprint`），
-//! `result_hash` 必须逐位相等。这条断言比"三个进程各跑各的、比一比哈希"强——它同时证明了
-//! 幂等分支在三入口下是同一个分支。
-//!
-//! ## Python 腿的两态
-//!
-//! PyO3 扩展是**构建产物**（`cargo build -p qx-python` 或 `tools/build_python_wheel.*`），
-//! 干净检出里没有它。所以：扩展在盘 → 逐字节断言；扩展不在盘 → 这一条腿**跳过并打印原因**
-//! （与 `python/tests/test_native_extension.py` 同一约定）。「Python 入口存在」这件事不由这条
-//! 用例守，而由门禁 `qx_app_check` 结构性地钉住（源码面在盘）——两件事分开守，
-//! 不让一个 `skip` 把另一个也一起放掉。
+//! 退出门 G1：CLI、HTTP 与 Python 必须调用同一 `qx-app` 用例并返回一致结果。
+//! CLI 启动真实二进制，HTTP 走 `ApiService::handle`，Python 启动解释器导入
+//! `qianxing_bridge.app`。三者使用同一份 spec 和产物目录以覆盖幂等路径。
+//! PyO3 扩展属于构建产物；未构建时只跳过 Python 行为腿并说明原因。源码入口仍由
+//! 架构门禁检查，防止构建条件掩盖 Python 门面缺失。
 
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -71,6 +54,31 @@ fn backtest_spec_json(run_id: &str, bars_path: &str, output_dir: &Path) -> Strin
             "quantity_raw": 1_000_000_000_i128,
             "fast_window": 2,
             "slow_window": 3,
+        },
+    })
+    .to_string()
+}
+
+fn multi_leg_spec_json(run_id: &str, output_dir: &Path) -> String {
+    let deploy = repo_root().join("deploy");
+    json!({
+        "schema_version": 1,
+        "run_id": run_id,
+        "primary_bars_path": deploy.join("qianxing.bar-frame.pairs-primary.example.json").to_string_lossy(),
+        "reference_bars_path": deploy.join("qianxing.bar-frame.pairs-reference.example.json").to_string_lossy(),
+        "settlement_currency": "USDT",
+        "primary_initial_cash_raw": 1_000_000_000_000_000_i128,
+        "reference_initial_cash_raw": 1_000_000_000_000_000_i128,
+        "seed": 7,
+        "output_dir": output_dir.to_string_lossy(),
+        "strategy": {
+            "kind": "pairs_arbitrage",
+            "strategy_id": "g1-pairs",
+            "quantity_raw": 1_000_000_000_i128,
+            "fast_window": 5,
+            "slow_window": 20,
+            "period": 14,
+            "threshold_bps": 100,
         },
     })
     .to_string()
@@ -219,6 +227,65 @@ fn the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python() 
             assert_eq!(python["fills"], cli["fills"]);
         }
         Some(Err(payload)) => panic!("Python 腿本该成功，却报了错：{payload}"),
+    }
+}
+
+#[test]
+fn the_same_multi_leg_spec_runs_through_cli_http_and_python_shared_rust_use_cases() {
+    let root = scratch("multi-leg");
+    let spec = multi_leg_spec_json("g1-multi-leg", &root.join("out"));
+    let spec_path = root.join("multi-leg.json");
+    std::fs::write(&spec_path, &spec).expect("write MultiLegBacktestSpec");
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "multi-leg-backtest"])
+        .arg(&spec_path)
+        .output()
+        .expect("start multi-leg CLI");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "CLI error: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let cli: Value = serde_json::from_slice(&output.stdout).expect("CLI outcome JSON");
+
+    let (status, http) = via_http("/app/multi-leg-backtest", &spec);
+    assert_eq!(status, 200, "HTTP outcome: {http}");
+    for (name, outcome) in [("CLI", &cli), ("HTTP", &http)] {
+        assert_eq!(outcome["run_id"], "g1-multi-leg", "{name} run id");
+        assert!(
+            outcome["primary_fills"].as_u64().unwrap_or(0) > 0,
+            "{name} primary fills"
+        );
+        assert!(
+            outcome["reference_fills"].as_u64().unwrap_or(0) > 0,
+            "{name} reference fills"
+        );
+    }
+    for key in [
+        "primary_result_hash",
+        "reference_result_hash",
+        "combined_return_bps",
+        "primary_fills",
+        "reference_fills",
+    ] {
+        assert_eq!(cli[key], http[key], "CLI and HTTP differ at {key}");
+    }
+
+    match via_python("run_multi_leg_backtest", &spec) {
+        None => eprintln!("[skip] Python leg: PyO3 extension not built"),
+        Some(Ok(python)) => {
+            for key in [
+                "primary_result_hash",
+                "reference_result_hash",
+                "combined_return_bps",
+                "primary_fills",
+                "reference_fills",
+            ] {
+                assert_eq!(cli[key], python[key], "CLI and Python differ at {key}");
+            }
+        }
+        Some(Err(payload)) => panic!("Python multi-leg use case failed: {payload}"),
     }
 }
 

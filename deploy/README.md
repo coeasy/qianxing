@@ -290,7 +290,9 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/compare-runs` | 应用层用例 `qx_app::compare_runs` 的确定性排序结果（请求体为 `CompareRunsSpec` JSON） | 只比较相同标的、相同数据指纹的已完成运行；收益降序、回撤升序、run_id 升序 |
 | `POST /app/run-experiment` | 应用层用例 `qx_app::run_experiment` 的有界参数实验结果（请求体为 `RunExperimentSpec` JSON） | 最多 256 个 Bar 候选；候选复用 Rust `run_backtest`，成功结果复用 `compare_runs`，每候选错误隔离记录；HTTP 将输入限制在数据根目录，产物写入服务端 artifact 根目录 |
 | `POST /app/depth-backtest` | 应用层用例 `qx_app::run_depth_backtest` 的 L1 Tick 或 L2/L3 OrderBook 回测结果（请求体为 `DepthBacktestSpec` JSON） | L1 必须恰有买卖一档并复用 Rust Tick 内核，L2 使用 Rust 逐档订单簿内核；回放校验通过后才发布 manifest 与摘要、权益、成交四份产物；HTTP 输入限制在数据根目录，产物写到服务端 artifact 根目录 |
+| `POST /app/multi-leg-backtest` | 应用层用例 `qx_app::run_multi_leg_backtest` 的双腿 Bar 回测结果（请求体为 `MultiLegBacktestSpec` JSON） | 两份输入必须在数据根目录下且时间戳严格对齐；策略、撮合与事件回放复用 Rust；写出双腿成交归因与裸腿待对账事实；当前共享用例显式采用现货、默认费用与 NextBarOpen 假设 |
 | `POST /app/depth-backtest/start` | `DepthBacktestSpec::start` 的 Tick/OrderBook 运行句柄（请求体仍为 `DepthBacktestSpec` JSON） | 立即返回 `run_id/status`，复用 Rust Tick 或订单簿协作取消循环；状态、结果和取消走 `/app/runs/{run_id}` 路由 |
+| `POST /app/multi-leg-backtest/start` | `MultiLegBacktestSpec::start` 的双腿运行句柄 | 立即返回 `run_id/status`；两条 Rust 撮合循环协作取消；结果/状态/取消复用 `/app/runs/{run_id}` |
 | `POST /app/run-experiment/start` | `RunExperimentSpec::start` 的后台参数实验句柄 | 立即返回 `run_id/status`，候选和 Bar 循环复用 Rust 协作取消；状态与取消走 `/app/runs/{run_id}` 路由 |
 | `POST /app/verify-depth` | 用例 `qx_app::verify_depth_run` 复核 L1/L2 产物（请求体取 depth-backtest 响应） | 重新读取并核对 manifest、summary、权益/成交计数与重放账簿条数；不一致为 200 + verified=false |
 | 任意路径 + `Upgrade: websocket` | `101` 帧流 | 见下 |
@@ -380,7 +382,9 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `GET /app/runs/{run_id}` | 读取本进程任务状态与终态结果 | 404 未知任务；返回结果保留在有界内存注册表，服务重启或容量淘汰后不可读取；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/runs/{run_id}/cancel` | 请求协作取消 Bar/Tick/OrderBook 任务 | 202 表示取消请求已受理（可能已完成）；取消不产生部分报告；404 未知任务；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/depth-backtest` | 应用层用例 RunDepthBacktest：通过 Rust Tick/L2 OrderBook 内核回测并落四份产物（请求体是 DepthBacktestSpec JSON） | 输入帧限制在服务端数据根目录；服务端指定产物根目录；L1/L2 档位不匹配返回 422、已有产物异身份返回 409；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/multi-leg-backtest` | 应用层用例 RunMultiLegBacktest：两腿信号、Rust Bar 撮合、独立重放校验与成交归因 | 两份输入限制在服务端数据根目录；结果产物由服务端指定路径；不对齐返回 400、样本不足返回 422、同 run_id 异内容返回 409；当前用例将现货/默认费率/NextBarOpen 写入产物假设；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/depth-backtest/start` | 创建 Rust Tick/OrderBook 后台回测任务 | 400/404/409/422/500/503 复用应用层错误类别映射；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/multi-leg-backtest/start` | 创建双腿 Rust Bar 回测后台任务 | 运行状态通过 GET 读取，取消通过 POST 请求并协作进入策略与撮合循环；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/run-experiment/start` | 创建 Rust 参数实验后台任务 | 候选和 Bar 循环复用协作取消；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/verify` | 应用层用例 VerifyRun：四份产物是否互相印证（请求体取上一行的响应体） | 与上一行同一份类别映射；产物缺失或互相矛盾是 200 加一个为假的裁决（不是非 200——「复核不通过」与「复核跑不起来」是两件事）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/verify-depth` | 复核 Tick/OrderBook 回测的 manifest、summary、权益、成交和重放账簿证据 | 输入产物必须位于服务端 artifact 根目录；不一致为 200 + `verified=false`；缺失或不可读复用应用错误映射；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |

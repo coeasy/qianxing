@@ -1,5 +1,4 @@
 //! 不依赖特定 Web 框架的本地 API 边界。
-//!
 //! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
 mod admission;
 mod app_surface;
@@ -1729,6 +1728,7 @@ qx_control_retired_audit_records_total {}\n",
             ("POST", "/app/compare-runs") => app_surface::post_compare_runs(body),
             ("POST", "/app/run-experiment") => app::experiment(body, &self.app_paths),
             ("POST", "/app/depth-backtest") => app_surface::depth_backtest(body, &self.app_paths),
+            ("POST", "/app/multi-leg-backtest") => app::multi_leg_backtest(body, &self.app_paths),
             _ => ApiResponse::text(404, "not found"),
         }
     }

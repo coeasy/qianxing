@@ -75,4 +75,10 @@ pub(crate) enum AppCommand {
         /// `DepthBacktestOutcome` JSON 的路径（取 `app depth-backtest` 的 stdout）。
         outcome: PathBuf,
     },
+    /// 双腿 Bar 套利回测（复用 qx-app 与 Rust 撮合引擎）。
+    #[command(name = "multi-leg-backtest")]
+    MultiLegBacktest {
+        /// `MultiLegBacktestSpec` JSON 的路径。
+        spec: PathBuf,
+    },
 }

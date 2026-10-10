@@ -600,6 +600,14 @@ capabilities:
       - crates/qx-cli/src/multi_leg.rs
       - crates/qx-app/src/multi_leg.rs
       - crates/qx-app/src/trade_facts.rs
+      - crates/qx-app/src/spec/multi_leg.rs
+      - crates/qx-app/src/cases/run_multi_leg_backtest.rs
+      - crates/qx-app/src/tests/multi_leg_backtest.rs
+      - crates/qx-api/src/app_surface.rs
+      - crates/qx-api/src/app_runs.rs
+      - crates/qx-python/src/lib.rs
+      - python/qianxing/app.py
+      - cpp/include/qianxing_app.hpp
       - crates/qx-cli/src/workers.rs
       - crates/qx-cli/src/spread.rs
       - crates/qx-cli/src/tests/execution_and_multi_leg.rs

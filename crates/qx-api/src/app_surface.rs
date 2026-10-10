@@ -26,10 +26,10 @@
 
 use crate::ApiResponse;
 use qx_app::{
-    compare_runs, run_backtest, run_depth_backtest, run_experiment, validate_dataset,
-    verify_depth_run, verify_run, AppError, AppErrorCategory, BacktestOutcome, BacktestSpec,
-    CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec,
-    RunContext, RunExperimentSpec,
+    compare_runs, run_backtest, run_depth_backtest, run_experiment, run_multi_leg_backtest,
+    validate_dataset, verify_depth_run, verify_run, AppError, AppErrorCategory, BacktestOutcome,
+    BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome,
+    DepthBacktestSpec, MultiLegBacktestSpec, RunContext, RunExperimentSpec,
 };
 use std::path::{Path, PathBuf};
 
@@ -188,6 +188,25 @@ pub(crate) fn depth_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
         .to_string_lossy()
         .into_owned();
     respond(run_depth_backtest(&spec, &context(&spec.run_id)).and_then(|outcome| outcome.to_json()))
+}
+
+pub(crate) fn multi_leg_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
+    let mut spec = match MultiLegBacktestSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    for input in [&mut spec.primary_bars_path, &mut spec.reference_bars_path] {
+        if let Err(error) = resolve_input_path(input, &paths.data_root) {
+            return respond(Err(error));
+        }
+    }
+    let run_id = spec.run_id.clone();
+    spec.output_dir = paths
+        .artifact_root
+        .join(&run_id)
+        .to_string_lossy()
+        .into_owned();
+    respond(run_multi_leg_backtest(&spec, &context(&run_id)).and_then(|outcome| outcome.to_json()))
 }
 
 #[path = "app_runs.rs"]

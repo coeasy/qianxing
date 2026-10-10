@@ -2,7 +2,7 @@
 
 Typed facade for schemas currently implemented by qx-app. Every candidate
 backtest and comparison is executed by the shared Rust application layer.
-Tick, OrderBook, and parameter experiments run through the shared Rust engines and application use cases. Paper and Live command clients submit to the Rust API and reuse its configured workers; multi-leg backtests are not exposed by this facade.
+Tick, OrderBook, two-leg Bar backtests, parameter experiments, and run lifecycles use shared Rust application use cases. Paper and Live command clients submit to the Rust API and reuse its configured workers.
 """
 
 from __future__ import annotations
@@ -370,6 +370,40 @@ class DepthBacktestOutcome:
 
 
 @dataclass(frozen=True)
+class MultiLegBacktestSpec:
+    run_id: str
+    primary_bars_path: str
+    reference_bars_path: str
+    settlement_currency: str
+    primary_initial_cash_raw: int
+    reference_initial_cash_raw: int
+    output_dir: str
+    strategy: BuiltinStrategySpec
+    seed: int = 0
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**asdict(self), "strategy": self.strategy.to_dict()}
+
+
+@dataclass(frozen=True)
+class MultiLegBacktestOutcome:
+    run_id: str
+    primary_instrument: str
+    reference_instrument: str
+    primary_result_hash: str
+    reference_result_hash: str
+    combined_return_bps: int
+    primary_fills: int
+    reference_fills: int
+    attribution_artifact: str
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiLegBacktestOutcome":
+        return cls(**value)
+
+
+@dataclass(frozen=True)
 class TradeCommand:
     """Existing Rust control-plane command contract; no Python execution logic is added."""
 
@@ -462,7 +496,7 @@ class LiveClient(TradeWorkflowClient):
 
 
 class RunHandle(Generic[_ResultT]):
-    """Cooperative Rust worker handle for Bar, depth, and parameter experiment runs."""
+    """Cooperative Rust worker handle for Bar, multi-leg, depth, and experiment runs."""
 
     def __init__(self, native_handle: Any, result_type: type[_ResultT]):
         self._native = native_handle
@@ -544,6 +578,22 @@ def start_depth_backtest(spec: DepthBacktestSpec | dict[str, Any]) -> RunHandle[
     except Exception as exc:
         raise _translate_native_error(exc) from exc
     return RunHandle(native_handle, DepthBacktestOutcome)
+
+
+def run_multi_leg_backtest(spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
+    """Run a two-leg Bar backtest via the shared Rust strategy and matching engines."""
+    return MultiLegBacktestOutcome.from_dict(_invoke(native.app_run_multi_leg_backtest, spec))
+
+
+def start_multi_leg_backtest(
+    spec: MultiLegBacktestSpec | dict[str, Any],
+) -> RunHandle[MultiLegBacktestOutcome]:
+    """Start a cancellable two-leg Rust backtest."""
+    try:
+        native_handle = native.app_start_multi_leg_backtest(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, MultiLegBacktestOutcome)
 
 
 def verify_depth_run(outcome: DepthBacktestOutcome | dict[str, Any]) -> VerificationResult:
