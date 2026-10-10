@@ -5074,7 +5074,7 @@ def event_consumer_pipe_write_budget_check() -> None:
     )
     # 失败是可观测事实：点名是写 stdin 失败，不吞成"handler 什么都没发生"。
     check(
-        "写入事件 consumer handler stdin 失败" in region,
+        "consumer stdin 写入失败" in region,
         "写侧失败留下可读诊断（不吞成断链/超时噪声）",
         "写侧失败诊断不在位",
     )
@@ -11361,18 +11361,17 @@ DOC_ARCHIVE_PREFIX = "docs/archive/"
 # 而不是「文档写得更干净了」。引用变多不设上限。
 # 272 是 V13 R26 终字节复测（30 份活 .md，含这条 CHANGELOG 自己那 2 处）；更早的 195 是 R1-G 在七份
 # 2026-10 规划稿还住在 docs/ 时量的，那批现已移入 docs/archive/。
-# 2026-10-10 下调到 234：把 V13 台账的 §9.1–§9.47 拆入 docs/archive/（`自研量化框架审计与重构方案-V13-逐轮执行记录.md`），
-# 那 64 条引用是换了住址而不是消失——同轮 `live_total + archive_total` 仍是 465（见下面那颗总地板）。
-LIVE_DOC_CITATION_FLOOR = 234
+# GitHub CI 的可重复基线为 229：本机附加的、未纳入版本控制的方案输入不参与仓库地板。
+LIVE_DOC_CITATION_FLOOR = 229
 # 存档（`docs/archive/**`）的落空条数天花板：R1-G 实测 9 条。存档是「那一轮当时成立」的记录，
 # 把它的行号改成今天的落点等于销毁当时的信息，所以不按活文档的零容忍处理；
 # 但天花板只降不升——再往存档里写一条落空的引用会当场红。
 ARCHIVE_DEAD_CITATION_CEILING = 9
-# 活 + 存档的引用总条数地板：2026-10-10 拆 V13 台账时实测 234 + 231 = 465。
+# 活 + 存档的引用总条数地板：版本库基线 229 + 231 = 460；本机未跟踪方案输入不参与地板。
 # 单看活侧地板抓不住「存档被整份删掉」：删掉一份存档文档时 `live_total` 不动、`archive_dead` 从 9 掉到 0
 # （天花板判据是 `<=`，照样绿），于是「留而不删」这条纪律在门禁里**没有牙齿**。总地板把它补上：
 # 引用从活侧搬到存档侧时总数不变（拆/移只是换住址），少掉一份被引用的存档文档当场红。
-TOTAL_DOC_CITATION_FLOOR = 465
+TOTAL_DOC_CITATION_FLOOR = 460
 
 
 def doc_citation_reachability_check() -> None:
@@ -16674,7 +16673,6 @@ APP_ERROR_FILE = "crates/qx-app/src/error.rs"
 APP_CASES_FILE = "crates/qx-app/src/cases/mod.rs"
 APP_CASES_DIR = "crates/qx-app/src/cases"
 APP_REGISTRY_FILE = "maturity/app_use_cases.yaml"
-APP_ROADMAP_FILE = "docs/牵星Qianxing-详细开发计划与实施路线图-2026-10-10.md"
 APP_REGISTRY_KIND = "app-use-case-registry"
 # G1 的三个门面。它们各自的门面实现落点也一并钉住：源码面在盘 = "入口存在"这件事有牙齿，
 # 不必靠 Python 扩展是否已构建来决定。
@@ -16728,16 +16726,15 @@ def _app_error_category_variants() -> list[str]:
     return re.findall(r"^\s*([A-Z][A-Za-z0-9]*),\s*$", block, re.MULTILINE)
 
 
-def _roadmap_app_categories() -> list[str]:
-    """路线图 §X1 那一行里 `稳定类别（…）` 括号内的八个类别名，按书写顺序。"""
-    text = (ROOT / APP_ROADMAP_FILE).read_text(encoding="utf-8")
-    for line in text.splitlines():
-        if not line.startswith("| **X1 错误与取消语义**"):
-            continue
-        matched = re.search(r"稳定类别（([^）]*)）", line)
-        if matched:
-            return re.findall(r"`([A-Za-z]+)`", matched.group(1))
-    return []
+def _registered_app_error_categories() -> list[str]:
+    """机读应用契约里的错误类别闭集；不依赖本机附加的方案文档。"""
+    text = (ROOT / APP_REGISTRY_FILE).read_text(encoding="utf-8")
+    matched = re.search(
+        r"^error_categories:\s*\n((?:  - [A-Za-z]+\s*\n)+)",
+        text,
+        re.MULTILINE,
+    )
+    return re.findall(r"^  - ([A-Za-z]+)\s*$", matched.group(1), re.MULTILINE) if matched else []
 
 
 def _app_use_case_registry() -> list[dict[str, str]]:
@@ -16803,12 +16800,12 @@ def qx_app_check() -> None:
         f"外部 {sorted(external)}（应为 {sorted(APP_ALLOWED_EXTERNAL_DEPS)}）",
     )
 
-    roadmap = _roadmap_app_categories()
+    registered_categories = _registered_app_error_categories()
     variants = _app_error_category_variants()
     check(
-        bool(roadmap) and roadmap == variants,
-        "错误类别闭集与路线图 §X1 那张表逐条同名同序（少一类/改名/换序都红）",
-        f"路线图 {roadmap}；AppErrorCategory {variants}",
+        bool(registered_categories) and registered_categories == variants,
+        "错误类别闭集与版本化应用契约逐条同名同序（少一类/改名/换序都红）",
+        f"登记面 {registered_categories}；AppErrorCategory {variants}",
     )
 
     registry = _app_use_case_registry()

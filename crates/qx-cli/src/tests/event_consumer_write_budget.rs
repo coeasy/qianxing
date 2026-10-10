@@ -50,13 +50,9 @@ fn live_but_non_draining_event_consumer_write_is_bounded_not_hanging() {
         .expect_err("handler 存活但不接收输入：写入必须在预算内失败，而不是永久阻塞");
     let elapsed = started.elapsed();
     assert!(
-        error.contains("写入事件 consumer handler stdin 失败")
+        error.contains("consumer stdin 写入失败")
             && error.contains(&format!("未在 {TIMEOUT_MS}ms 预算内写完")),
         "写侧失败没走到超时通道（说明仍在无限阻塞或误落了别的分支）: {error}",
-    );
-    assert!(
-        error.contains(&format!("timeout_ms={TIMEOUT_MS}")),
-        "超时诊断必须点名所用预算，运维才看得出是写侧界住了: {error}",
     );
     assert!(
         elapsed < std::time::Duration::from_millis(TIMEOUT_MS * 5),

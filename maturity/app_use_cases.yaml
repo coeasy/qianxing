@@ -23,6 +23,16 @@ schema_version: 1
 kind: app-use-case-registry
 updated_at: "2026-10-10"
 
+error_categories:
+  - InvalidInput
+  - DataUnavailable
+  - FidelityInsufficient
+  - PermissionDenied
+  - Conflict
+  - Timeout
+  - StorageFailure
+  - InternalInvariant
+
 use_cases:
   - name: validate_dataset
     input_schema: "DatasetSpec v1（crates/qx-app/src/spec.rs）"

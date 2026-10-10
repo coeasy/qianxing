@@ -27,11 +27,10 @@ use qx_core::{ErrorCode, QxError};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// 应用层错误类别：调用方**该做什么**。八类，与路线图 §X1 的清单逐条同名同序。
+/// 应用层错误类别：调用方**该做什么**。八类，与 `maturity/app_use_cases.yaml` 逐条同名同序。
 ///
-/// 闭集：新增一类必须同时补 `tools/check_architecture.py` 的 `qx_app_check`
-/// 与 `docs/牵星Qianxing-详细开发计划与实施路线图-2026-10-10.md` §X1 那一行，
-/// 否则门禁当场红（它逐名核对本枚举与路线图那张表）。
+/// 闭集：新增一类必须同时更新版本化登记面与 `tools/check_architecture.py` 的 `qx_app_check`，
+/// 否则门禁当场红（它逐名核对登记面与本枚举）。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AppErrorCategory {
