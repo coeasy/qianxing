@@ -351,9 +351,11 @@ jobs:
             fi
             printf '%s\n' "${found}"
           }
-          echo "smoke=$(find_binary qianxing_ring_smoke)" >> "${GITHUB_OUTPUT}"
-          echo "strategy=$(find_binary qianxing_strategy_jsonl)" >> "${GITHUB_OUTPUT}"
-          echo "plugin=$(find_plugin)" >> "${GITHUB_OUTPUT}"
+          {
+            echo "smoke=$(find_binary qianxing_ring_smoke)"
+            echo "strategy=$(find_binary qianxing_strategy_jsonl)"
+            echo "plugin=$(find_plugin)"
+          } >> "${GITHUB_OUTPUT}"
       - name: Run C++ ring smoke
         shell: bash
         env:
