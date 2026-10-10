@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[test]
+#[ignore = "requires a C++ shared-library fixture; exercised by the C++ SDK CI matrix"]
 fn loads_and_runs_cpp_strategy_through_the_rust_c_abi_host() {
     let library = PathBuf::from(
         std::env::var_os("QX_CPP_STRATEGY_LIBRARY")

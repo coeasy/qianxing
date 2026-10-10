@@ -340,7 +340,7 @@ jobs:
               echo "expected binary $1 was not produced" >&2
               exit 1
             fi
-            printf '%s\n' "${found}"
+            printf '%s\n' "${GITHUB_WORKSPACE}/${found}"
           }
           find_plugin() {
             local found
@@ -349,7 +349,7 @@ jobs:
               echo "expected C ABI strategy plugin was not produced" >&2
               exit 1
             fi
-            printf '%s\n' "${found}"
+            printf '%s\n' "${GITHUB_WORKSPACE}/${found}"
           }
           {
             echo "smoke=$(find_binary qianxing_ring_smoke)"
@@ -365,7 +365,7 @@ jobs:
         shell: bash
         env:
           QX_CPP_STRATEGY_LIBRARY: ${{ steps.binaries.outputs.plugin }}
-        run: cargo test -p qx-strategy --test cpp_plugin_host -- --exact loads_and_runs_cpp_strategy_through_the_rust_c_abi_host --nocapture
+        run: cargo test -p qx-strategy --test cpp_plugin_host -- --ignored --exact loads_and_runs_cpp_strategy_through_the_rust_c_abi_host --nocapture
       - name: Run C++ JSONL strategy contract smoke
         shell: bash
         env:
