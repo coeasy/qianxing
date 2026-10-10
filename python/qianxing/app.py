@@ -8,8 +8,10 @@ Tick, OrderBook, two-leg Bar backtests, parameter experiments, and run lifecycle
 from __future__ import annotations
 
 import json
+import math
+import time
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from importlib.metadata import PackageNotFoundError, version
 from ssl import SSLContext
 from typing import Any, Generic, Literal, TypeVar
@@ -96,7 +98,13 @@ def _translate_native_error(exc: BaseException) -> QianxingError:
 
 
 def _encode_payload(value: Any) -> str:
-    payload = value.to_dict() if hasattr(value, "to_dict") else value
+    payload = (
+        value.to_dict()
+        if hasattr(value, "to_dict")
+        else asdict(value)
+        if is_dataclass(value)
+        else value
+    )
     return payload if isinstance(payload, str) else json.dumps(
         payload, ensure_ascii=False, separators=(",", ":")
     )
@@ -641,13 +649,12 @@ class TradeCommand:
         return asdict(self)
 
 
-class TradeWorkflowClient:
-    """Thin HTTP client for the Rust API's authenticated Paper/Live control workflows."""
+class _HttpJsonClient:
+    """Shared HTTP transport for the Rust API facades; contains no domain logic."""
 
     def __init__(
         self,
         base_url: str,
-        workflow: Literal["paper", "live"],
         *,
         headers: Mapping[str, str] | None = None,
         ssl_context: SSLContext | None = None,
@@ -656,12 +663,8 @@ class TradeWorkflowClient:
         parsed = urlsplit(base_url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.query or parsed.fragment:
             raise ValueError("base_url must be an http(s) origin/path without query or fragment")
-        if workflow not in ("paper", "live"):
-            raise ValueError("workflow must be 'paper' or 'live'")
-        if workflow == "live" and parsed.scheme != "https":
-            raise ValueError("LiveClient requires HTTPS for every command request")
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be finite and positive")
         request_headers = dict(headers or {})
         for name, value in request_headers.items():
             if (
@@ -675,47 +678,83 @@ class TradeWorkflowClient:
             ):
                 raise ValueError("headers must contain valid string names and values")
             if name.casefold() == "content-type":
-                raise ValueError("Content-Type is managed by TradeWorkflowClient")
+                raise ValueError("Content-Type is managed by the Qianxing API client")
         self.base_url = base_url.rstrip("/")
-        self.workflow = workflow
         self.headers = request_headers
         self.ssl_context = ssl_context
         self.timeout = timeout
 
-    def submit(self, command: TradeCommand | dict[str, Any]) -> dict[str, Any]:
-        """Submit through qx-api; Rust authenticates, validates, persists, and enqueues it."""
-        command_document = command.to_dict() if isinstance(command, TradeCommand) else command
-        payload = json.dumps(
-            {"schema_version": 1, "workflow": self.workflow, "command": command_document},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
+    def _request_json(
+        self,
+        path: str,
+        *,
+        method: str,
+        payload: Any = None,
+    ) -> dict[str, Any]:
+        data = None if payload is None else _encode_payload(payload).encode("utf-8")
         request = Request(
-            f"{self.base_url}/app/{self.workflow}/commands",
-            data=payload,
-            headers={**self.headers, "Content-Type": "application/json"},
-            method="POST",
+            f"{self.base_url}{path}",
+            data=data,
+            headers=(
+                {**self.headers, "Content-Type": "application/json"}
+                if data is not None
+                else self.headers
+            ),
+            method=method,
         )
         try:
             with urlopen(request, timeout=self.timeout, context=self.ssl_context) as response:
-                return json.loads(response.read().decode("utf-8"))
+                body = response.read().decode("utf-8")
+                value = json.loads(body) if body else {}
+                if not isinstance(value, dict):
+                    raise QianxingError("Rust API returned a non-object JSON document")
+                return value
         except HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
             try:
                 document = json.loads(raw)
             except ValueError:
                 document = {"message": raw, "status": exc.code}
-            category = document.get("category") if isinstance(document, dict) else None
-            if category in _APP_ERRORS:
-                raise _APP_ERRORS[category](document.get("message", raw), payload=document) from exc
-            raise QianxingError(
-                document.get("message", document.get("error", raw))
-                if isinstance(document, dict)
-                else raw,
-                payload=document if isinstance(document, dict) else {"status": exc.code},
-            ) from exc
+            if isinstance(document, dict):
+                category = document.get("category")
+                if category in _APP_ERRORS:
+                    raise _APP_ERRORS[category](document.get("message", raw), payload=document) from exc
+                message = document.get("message", document.get("error", raw))
+                raise QianxingError(str(message), payload=document) from exc
+            raise QianxingError(raw, payload={"status": exc.code}) from exc
         except (URLError, TimeoutError, OSError) as exc:
-            raise QianxingError(f"Rust API {self.workflow} command request failed: {exc}") from exc
+            raise QianxingError(f"Rust API request failed: {exc}") from exc
+
+
+class TradeWorkflowClient(_HttpJsonClient):
+    """Thin HTTP client for the Rust API's authenticated Paper/Live control workflows."""
+
+    def __init__(
+        self,
+        base_url: str,
+        workflow: Literal["paper", "live"],
+        *,
+        headers: Mapping[str, str] | None = None,
+        ssl_context: SSLContext | None = None,
+        timeout: float = 30.0,
+    ):
+        if workflow not in ("paper", "live"):
+            raise ValueError("workflow must be 'paper' or 'live'")
+        if workflow == "live" and urlsplit(base_url).scheme != "https":
+            raise ValueError("LiveClient requires HTTPS for every command request")
+        super().__init__(
+            base_url, headers=headers, ssl_context=ssl_context, timeout=timeout
+        )
+        self.workflow = workflow
+
+    def submit(self, command: TradeCommand | dict[str, Any]) -> dict[str, Any]:
+        """Submit through qx-api; Rust authenticates, validates, persists, and enqueues it."""
+        command_document = command.to_dict() if isinstance(command, TradeCommand) else command
+        return self._request_json(
+            f"/app/{self.workflow}/commands",
+            method="POST",
+            payload={"schema_version": 1, "workflow": self.workflow, "command": command_document},
+        )
 
 
 class PaperClient(TradeWorkflowClient):
@@ -780,6 +819,138 @@ class RunHandle(Generic[_ResultT]):
         if encoded is None:
             return None
         return self._result_type.from_dict(json.loads(encoded))
+
+
+class RemoteRunHandle(Generic[_ResultT]):
+    """Bounded HTTP lifecycle handle backed by the Rust API run registry."""
+
+    def __init__(
+        self,
+        client: "AppClient",
+        run_id: str,
+        result_type: type[_ResultT] | None = None,
+    ):
+        if not run_id or any(not (char.isascii() and (char.isalnum() or char in "-_.")) for char in run_id):
+            raise ValueError("run_id must contain only ASCII letters, digits, '.', '_' or '-'")
+        self._client = client
+        self.run_id = run_id
+        self._result_type = result_type
+
+    def document(self) -> dict[str, Any]:
+        return self._client._request_json(f"/app/runs/{self.run_id}", method="GET")
+
+    @property
+    def status(self) -> str:
+        return str(self.document().get("status", "unknown"))
+
+    def cancel(self) -> dict[str, Any]:
+        return self._client._request_json(
+            f"/app/runs/{self.run_id}/cancel", method="POST", payload={}
+        )
+
+    def wait(self, timeout: float = 30.0, poll_interval: float = 0.25) -> str:
+        if (
+            not math.isfinite(timeout)
+            or not math.isfinite(poll_interval)
+            or timeout <= 0
+            or poll_interval <= 0
+        ):
+            raise ValueError("timeout and poll_interval must be finite and positive")
+        deadline = time.monotonic() + timeout
+        while True:
+            status = self.status
+            if status in {"succeeded", "cancelled", "failed"}:
+                return status
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return status
+            time.sleep(min(poll_interval, remaining))
+
+    def result(self) -> _ResultT | dict[str, Any] | None:
+        document = self.document()
+        status = document.get("status")
+        if status == "failed":
+            error = document["error"]
+            if not isinstance(error, dict):
+                raise InternalInvariantError(
+                    "Rust API reported a failed run without an error document",
+                    payload={"run_id": self.run_id, "status": status},
+                )
+            error_type = _APP_ERRORS.get(error.get("category"), AppError)
+            raise error_type(error.get("message", "Rust run failed"), payload=error)
+        if status != "succeeded":
+            return None
+        result = document.get("result")
+        if not isinstance(result, dict):
+            raise InternalInvariantError(
+                "Rust API reported a successful run without a result document",
+                payload={"run_id": self.run_id, "status": status},
+            )
+        if self._result_type is not None:
+            return self._result_type.from_dict(result)
+        return result
+
+
+class AppClient(_HttpJsonClient):
+    """HTTP facade over the same Rust API use cases exposed by the native SDK."""
+
+    def _post(self, route: str, spec: Any) -> dict[str, Any]:
+        return self._request_json(route, method="POST", payload=spec)
+
+    def _start(self, route: str, spec: Any, result_type: type[_ResultT]) -> RemoteRunHandle[_ResultT]:
+        document = self._post(route, spec)
+        run_id = document.get("run_id")
+        if not isinstance(run_id, str):
+            raise QianxingError("Rust API start response omitted run_id", payload=document)
+        return RemoteRunHandle(self, run_id, result_type)
+
+    def validate_dataset(self, spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
+        return DatasetVerdict.from_dict(self._post("/app/validate-dataset", spec))
+
+    def run_backtest(self, spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
+        return BacktestOutcome.from_dict(self._post("/app/backtest", spec))
+
+    def start_backtest(self, spec: BacktestSpec | dict[str, Any]) -> RemoteRunHandle[BacktestOutcome]:
+        return self._start("/app/backtest/start", spec, BacktestOutcome)
+
+    def verify_run(self, outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
+        return VerificationResult.from_dict(self._post("/app/verify", outcome))
+
+    def compare_runs(self, spec: CompareRunsSpec | dict[str, Any]) -> CompareRunsResult:
+        return CompareRunsResult.from_dict(self._post("/app/compare-runs", spec))
+
+    def run_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentResult:
+        return RunExperimentResult.from_dict(self._post("/app/run-experiment", spec))
+
+    def start_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunExperimentResult]:
+        return self._start("/app/run-experiment/start", spec, RunExperimentResult)
+
+    def run_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> DepthBacktestOutcome:
+        return DepthBacktestOutcome.from_dict(self._post("/app/depth-backtest", spec))
+
+    def start_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> RemoteRunHandle[DepthBacktestOutcome]:
+        return self._start("/app/depth-backtest/start", spec, DepthBacktestOutcome)
+
+    def verify_depth_run(self, outcome: DepthBacktestOutcome | dict[str, Any]) -> VerificationResult:
+        return VerificationResult.from_dict(self._post("/app/verify-depth", outcome))
+
+    def run_depth_experiment(self, spec: RunDepthExperimentSpec | dict[str, Any]) -> RunDepthExperimentResult:
+        return RunDepthExperimentResult.from_dict(self._post("/app/run-depth-experiment", spec))
+
+    def start_depth_experiment(self, spec: RunDepthExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunDepthExperimentResult]:
+        return self._start("/app/run-depth-experiment/start", spec, RunDepthExperimentResult)
+
+    def run_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
+        return MultiLegBacktestOutcome.from_dict(self._post("/app/multi-leg-backtest", spec))
+
+    def start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> RemoteRunHandle[MultiLegBacktestOutcome]:
+        return self._start("/app/multi-leg-backtest/start", spec, MultiLegBacktestOutcome)
+
+    def run_multi_leg_experiment(self, spec: RunMultiLegExperimentSpec | dict[str, Any]) -> RunMultiLegExperimentResult:
+        return RunMultiLegExperimentResult.from_dict(self._post("/app/run-multi-leg-experiment", spec))
+
+    def start_multi_leg_experiment(self, spec: RunMultiLegExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunMultiLegExperimentResult]:
+        return self._start("/app/run-multi-leg-experiment/start", spec, RunMultiLegExperimentResult)
 
 
 def validate_dataset(spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:

@@ -184,6 +184,281 @@ class AppUseCaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "valid string"):
             PaperClient("http://localhost:8443", headers={"X-Auth": "bad\r\nvalue"})
 
+    def test_python_http_app_client_runs_and_polls_rust_remote_run_handle(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import AppClient, RemoteRunHandle
+
+        class Response:
+            def __init__(self, body):
+                self.body = json.dumps(body).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return self.body
+
+        replies = [
+            Response({"run_id": "remote-1", "status": "running"}),
+            Response({"run_id": "remote-1", "status": "running"}),
+            Response(
+                {
+                    "run_id": "remote-1",
+                    "status": "succeeded",
+                    "result": {
+                        "run_id": "remote-1",
+                        "instrument": "BTCUSDT.BINANCE",
+                        "tier": "l1",
+                        "result_hash": "result",
+                        "data_fingerprint": "data",
+                        "fills": 0,
+                        "equity_points": 2,
+                        "return_bps": 12,
+                        "max_drawdown_bps": 0,
+                        "artifacts": {},
+                    },
+                    "error": None,
+                }
+            ),
+            Response(
+                {
+                    "run_id": "remote-1",
+                    "status": "succeeded",
+                    "result": {
+                        "run_id": "remote-1",
+                        "instrument": "BTCUSDT.BINANCE",
+                        "tier": "l1",
+                        "result_hash": "result",
+                        "data_fingerprint": "data",
+                        "fills": 0,
+                        "equity_points": 2,
+                        "return_bps": 12,
+                        "max_drawdown_bps": 0,
+                        "artifacts": {},
+                    },
+                    "error": None,
+                }
+            ),
+            Response({"run_id": "remote-1", "status": "cancelling"}),
+        ]
+        with patch("qianxing.app.urlopen", side_effect=replies) as open_url:
+            client = AppClient("https://localhost:8443/api", headers={"Authorization": "Bearer sdk"})
+            handle = client.start_depth_backtest({"schema_version": 1, "run_id": "remote-1"})
+            self.assertIsInstance(handle, RemoteRunHandle)
+            self.assertEqual(handle.run_id, "remote-1")
+            self.assertEqual(handle.wait(timeout=1.0, poll_interval=0.001), "succeeded")
+            self.assertEqual(handle.result().return_bps, 12)
+            cancelled = handle.cancel()
+
+        self.assertEqual(cancelled["status"], "cancelling")
+        requests = [call.args[0] for call in open_url.call_args_list]
+        self.assertEqual(requests[0].method, "POST")
+        self.assertEqual(requests[0].full_url, "https://localhost:8443/api/app/depth-backtest/start")
+        self.assertEqual(json.loads(requests[0].data)["run_id"], "remote-1")
+        self.assertEqual(requests[1].method, "GET")
+        self.assertEqual(requests[1].full_url, "https://localhost:8443/api/app/runs/remote-1")
+        self.assertEqual(requests[-1].full_url, "https://localhost:8443/api/app/runs/remote-1/cancel")
+
+    def test_remote_run_handle_rejects_unsafe_ids_and_surfaces_rust_app_errors(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import AppClient, DataUnavailableError, RemoteRunHandle
+
+        with self.assertRaisesRegex(ValueError, "run_id"):
+            RemoteRunHandle(AppClient("https://localhost"), "../escape")
+        bounded = RemoteRunHandle(AppClient("https://localhost"), "safe-run")
+        with self.assertRaisesRegex(ValueError, "finite and positive"):
+            bounded.wait(timeout=float("inf"))
+        with self.assertRaisesRegex(ValueError, "finite and positive"):
+            bounded.wait(timeout=1.0, poll_interval=float("nan"))
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "run_id": "remote-failed",
+                        "status": "failed",
+                        "result": None,
+                        "error": {
+                            "category": "DATA_UNAVAILABLE",
+                            "message": "dataset missing",
+                            "correlation_id": "remote-failed",
+                        },
+                    }
+                ).encode("utf-8")
+
+        with patch("qianxing.app.urlopen", return_value=Response()):
+            handle = RemoteRunHandle(AppClient("https://localhost"), "remote-failed")
+            with self.assertRaises(DataUnavailableError) as caught:
+                handle.result()
+        self.assertEqual(caught.exception.correlation_id, "remote-failed")
+
+    def test_python_http_app_client_covers_every_registered_rust_use_case_route(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import AppClient, RemoteRunHandle
+
+        class Response:
+            def __init__(self, body):
+                self.body = json.dumps(body).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return self.body
+
+        cases = [
+            ("validate_dataset", "/app/validate-dataset", False),
+            ("run_backtest", "/app/backtest", False),
+            ("start_backtest", "/app/backtest/start", True),
+            ("verify_run", "/app/verify", False),
+            ("compare_runs", "/app/compare-runs", False),
+            ("run_experiment", "/app/run-experiment", False),
+            ("start_experiment", "/app/run-experiment/start", True),
+            ("run_depth_backtest", "/app/depth-backtest", False),
+            ("start_depth_backtest", "/app/depth-backtest/start", True),
+            ("verify_depth_run", "/app/verify-depth", False),
+            ("run_depth_experiment", "/app/run-depth-experiment", False),
+            ("start_depth_experiment", "/app/run-depth-experiment/start", True),
+            ("run_multi_leg_backtest", "/app/multi-leg-backtest", False),
+            ("start_multi_leg_backtest", "/app/multi-leg-backtest/start", True),
+            ("run_multi_leg_experiment", "/app/run-multi-leg-experiment", False),
+            ("start_multi_leg_experiment", "/app/run-multi-leg-experiment/start", True),
+        ]
+        results = {
+            "validate_dataset": {
+                "dataset_id": "dataset",
+                "instrument": "BTCUSDT.BINANCE",
+                "rows": 2,
+                "content_fingerprint": "fingerprint",
+                "usable": True,
+                "gaps": [],
+            },
+            "run_backtest": {
+                "run_id": "run",
+                "instrument": "BTCUSDT.BINANCE",
+                "result_hash": "result",
+                "data_fingerprint": "data",
+                "fills": 0,
+                "equity_points": 2,
+                "return_bps": 0,
+                "max_drawdown_bps": 0,
+                "artifacts": {},
+            },
+            "verify_run": {
+                "run_id": "run",
+                "result_hash": "result",
+                "data_fingerprint": "data",
+                "verified": True,
+                "checks": [],
+                "mismatches": [],
+            },
+            "compare_runs": {
+                "schema_version": 1,
+                "instrument": "BTCUSDT.BINANCE",
+                "data_fingerprint": "data",
+                "runs": [],
+            },
+            "run_experiment": {
+                "schema_version": 1,
+                "experiment_id": "experiment",
+                "total_candidates": 0,
+                "completed_candidates": 0,
+                "succeeded_candidates": 0,
+                "failed_candidates": 0,
+                "spec_fingerprint": "fingerprint",
+                "candidates": [],
+                "comparison": None,
+                "artifact_path": "report.json",
+            },
+            "run_depth_backtest": {
+                "run_id": "depth",
+                "instrument": "BTCUSDT.BINANCE",
+                "tier": "l1",
+                "result_hash": "result",
+                "data_fingerprint": "data",
+                "fills": 0,
+                "equity_points": 2,
+                "return_bps": 0,
+                "max_drawdown_bps": 0,
+                "artifacts": {},
+            },
+            "verify_depth_run": {
+                "run_id": "depth",
+                "result_hash": "result",
+                "data_fingerprint": "data",
+                "verified": True,
+                "checks": [],
+                "mismatches": [],
+            },
+            "run_depth_experiment": {
+                "schema_version": 1,
+                "experiment_id": "experiment",
+                "spec_fingerprint": "fingerprint",
+                "total_candidates": 0,
+                "completed_candidates": 0,
+                "succeeded_candidates": 0,
+                "failed_candidates": 0,
+                "candidates": [],
+                "ranking": [],
+                "artifact_path": "report.json",
+            },
+            "run_multi_leg_backtest": {
+                "run_id": "pair",
+                "primary_instrument": "BTCUSDT.BINANCE",
+                "reference_instrument": "ETHUSDT.BINANCE",
+                "primary_result_hash": "primary",
+                "reference_result_hash": "reference",
+                "combined_return_bps": 0,
+                "primary_fills": 0,
+                "reference_fills": 0,
+                "attribution_artifact": "pair.json",
+            },
+            "run_multi_leg_experiment": {
+                "schema_version": 1,
+                "experiment_id": "experiment",
+                "spec_fingerprint": "fingerprint",
+                "total_candidates": 0,
+                "completed_candidates": 0,
+                "succeeded_candidates": 0,
+                "failed_candidates": 0,
+                "candidates": [],
+                "ranking": [],
+                "artifact_path": "report.json",
+            },
+        }
+        replies = [
+            Response({"run_id": "contract-run"})
+            if is_start
+            else Response(results[method])
+            for method, _route, is_start in cases
+        ]
+        with patch(
+            "qianxing.app.urlopen",
+            side_effect=replies,
+        ) as open_url:
+            client = AppClient("https://localhost")
+            for method, _route, is_start in cases:
+                result = getattr(client, method)({"schema_version": 1})
+                self.assertEqual(isinstance(result, RemoteRunHandle), is_start)
+
+        requests = [call.args[0] for call in open_url.call_args_list]
+        self.assertEqual(len(requests), len(cases))
+        for request, (_method, route, _is_start) in zip(requests, cases):
+            self.assertEqual(request.method, "POST")
+            self.assertEqual(request.full_url, f"https://localhost{route}")
+
     def _spec(self, run_id: str, output_dir: Path, bars: str | None = None) -> dict:
         return {
             "schema_version": 1,

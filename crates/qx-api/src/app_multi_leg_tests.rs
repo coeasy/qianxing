@@ -103,7 +103,7 @@ fn multi_leg_http_facades_reject_dot_segment_run_ids_before_registry_or_path_set
 #[test]
 fn multi_leg_async_route_runs_to_a_terminal_result_through_the_shared_registry() {
     let (paths, body) = fixture_paths();
-    let registry = app_surface::AppRunRegistry::default();
+    let registry = app_surface::AppRunRegistry::open(paths.artifact_root.join(".app-runs"));
     let started = app_surface::app_run_route(
         "POST",
         "/app/multi-leg-backtest/start",
@@ -116,20 +116,26 @@ fn multi_leg_async_route_runs_to_a_terminal_result_through_the_shared_registry()
     let started_json: serde_json::Value = serde_json::from_str(&started.body).unwrap();
     assert_eq!(started_json["run_id"], "api-multi-leg");
     let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let status =
-            app_surface::app_run_route("GET", "/app/runs/api-multi-leg", "", &paths, &registry)
-                .unwrap();
-        let document: serde_json::Value = serde_json::from_str(&status.body).unwrap();
-        if document["status"] == "succeeded" {
-            assert_eq!(document["result"]["run_id"], "api-multi-leg");
-            break;
+    let record = paths.artifact_root.join(".app-runs/api-multi-leg.json");
+    let completed = loop {
+        if let Ok(body) = std::fs::read_to_string(&record) {
+            let document: serde_json::Value = serde_json::from_str(&body).unwrap();
+            if document["status"] == "succeeded" {
+                break document;
+            }
         }
         assert!(
             Instant::now() < deadline,
-            "multi-leg handle did not finish: {}",
-            status.body
+            "multi-leg handle did not persist a terminal state"
         );
         std::thread::sleep(Duration::from_millis(2));
-    }
+    };
+    drop(registry);
+
+    let reopened = app_surface::AppRunRegistry::open(paths.artifact_root.join(".app-runs"));
+    let restored = reopened.status("api-multi-leg");
+    let restored_json: serde_json::Value = serde_json::from_str(&restored.body).unwrap();
+    assert_eq!(restored.status, 200);
+    assert_eq!(restored_json["status"], completed["status"]);
+    assert_eq!(restored_json["result"]["run_id"], "api-multi-leg");
 }

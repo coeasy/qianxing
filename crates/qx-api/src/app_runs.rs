@@ -7,12 +7,21 @@ use qx_app::{
     RunMultiLegExperimentSpec, RunStatus,
 };
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[path = "app_runs/depth_experiment.rs"]
 mod depth_experiment;
+#[path = "app_runs/persistence.rs"]
+mod persistence;
+#[path = "app_runs/starts.rs"]
+mod starts;
 
 const APP_RUN_CAPACITY: usize = 1024;
+const APP_RUN_WATCHER_CAPACITY: usize = 64;
+static APP_RUN_WATCHERS: AtomicUsize = AtomicUsize::new(0);
 pub(crate) const RUN_START_BACKTEST_ROUTE: &str = "/app/backtest/start";
 pub(crate) const RUN_STATUS_ROUTE_TEMPLATE: &str = "/app/runs/{run_id}";
 pub(crate) const RUN_CANCEL_ROUTE_TEMPLATE: &str = "/app/runs/{run_id}/cancel";
@@ -30,15 +39,17 @@ pub(crate) fn app_run_route(
     registry: &AppRunRegistry,
 ) -> Option<ApiResponse> {
     let response = match (method, route) {
-        ("POST", RUN_START_BACKTEST_ROUTE) => start_run_backtest(body, paths, registry),
-        ("POST", RUN_START_DEPTH_ROUTE) => start_depth_backtest(body, paths, registry),
+        ("POST", RUN_START_BACKTEST_ROUTE) => starts::start_run_backtest(body, paths, registry),
+        ("POST", RUN_START_DEPTH_ROUTE) => starts::start_depth_backtest(body, paths, registry),
         ("POST", RUN_START_DEPTH_EXPERIMENT_ROUTE) => {
             depth_experiment::start(body, paths, registry)
         }
-        ("POST", RUN_START_EXPERIMENT_ROUTE) => start_experiment(body, paths, registry),
-        ("POST", RUN_START_MULTI_LEG_ROUTE) => start_multi_leg_backtest(body, paths, registry),
+        ("POST", RUN_START_EXPERIMENT_ROUTE) => starts::start_experiment(body, paths, registry),
+        ("POST", RUN_START_MULTI_LEG_ROUTE) => {
+            starts::start_multi_leg_backtest(body, paths, registry)
+        }
         ("POST", RUN_START_MULTI_LEG_EXPERIMENT_ROUTE) => {
-            start_multi_leg_experiment(body, paths, registry)
+            starts::start_multi_leg_experiment(body, paths, registry)
         }
         ("GET", route) => status_route_id(route).map(|run_id| registry.status(run_id))?,
         ("POST", route) => cancel_route_id(route).map(|run_id| registry.cancel(run_id))?,
@@ -47,11 +58,13 @@ pub(crate) fn app_run_route(
     Some(response)
 }
 
-/// In-memory registry for async app runs exposed over HTTP. Terminal results are
-/// retained for polling until capacity pressure evicts completed entries.
+/// Async application runs exposed over HTTP. Durable snapshots retain terminal
+/// results across service restarts; recovered active work is marked interrupted.
 #[derive(Clone, Default)]
 pub(crate) struct AppRunRegistry {
     entries: Arc<Mutex<BTreeMap<String, AppRunEntry>>>,
+    persistence_root: Option<Arc<PathBuf>>,
+    initialization_error: Option<AppError>,
 }
 
 enum AppRun {
@@ -69,10 +82,32 @@ struct AppRunEntry {
     cancel_requested: bool,
     result: Option<String>,
     error: Option<String>,
+    restored_status: Option<String>,
 }
 
 impl AppRunRegistry {
+    pub(crate) fn from_environment() -> Self {
+        let paths = AppPaths::from_environment();
+        Self::open(paths.artifact_root.join(".app-runs"))
+    }
+
+    pub(crate) fn open(root: PathBuf) -> Self {
+        match persistence::load(&root) {
+            Ok(entries) => Self {
+                entries: Arc::new(Mutex::new(entries)),
+                persistence_root: Some(Arc::new(root)),
+                initialization_error: None,
+            },
+            Err(error) => Self {
+                entries: Arc::new(Mutex::new(BTreeMap::new())),
+                persistence_root: Some(Arc::new(root)),
+                initialization_error: Some(error),
+            },
+        }
+    }
+
     fn reserve(&self, run_id: String) -> Result<(), AppError> {
+        self.ensure_storage_ready()?;
         let mut entries = self.entries.lock().map_err(|_| {
             AppError::new(AppErrorCategory::InternalInvariant, "应用运行注册表锁中毒")
         })?;
@@ -84,10 +119,17 @@ impl AppRunRegistry {
         }
         if entries.len() >= APP_RUN_CAPACITY {
             let completed = entries.iter_mut().find_map(|(run_id, entry)| {
-                (entry.run.is_some() && is_terminal(entry.status())).then(|| run_id.clone())
+                let terminal = match entry.restored_status.as_deref() {
+                    Some(status) => matches!(status, "succeeded" | "cancelled" | "failed"),
+                    None => entry.run.is_some() && is_terminal(entry.status()),
+                };
+                terminal.then(|| run_id.clone())
             });
             if let Some(oldest) = completed {
                 entries.remove(&oldest);
+                if let Some(root) = &self.persistence_root {
+                    persistence::remove(root, &oldest)?;
+                }
             } else {
                 return Err(AppError::new(
                     AppErrorCategory::Timeout,
@@ -98,13 +140,20 @@ impl AppRunRegistry {
         entries.insert(
             run_id.clone(),
             AppRunEntry {
-                run_id,
+                run_id: run_id.clone(),
                 run: None,
                 cancel_requested: false,
                 result: None,
                 error: None,
+                restored_status: None,
             },
         );
+        if let Some(root) = &self.persistence_root {
+            if let Err(error) = persistence::reserve(root, entries.get_mut(&run_id).unwrap()) {
+                entries.remove(&run_id);
+                return Err(error);
+            }
+        }
         Ok(())
     }
 
@@ -114,7 +163,68 @@ impl AppRunRegistry {
             if entry.cancel_requested {
                 entry.cancel();
             }
-        })
+        })?;
+        if let Some(root) = self.persistence_root.clone() {
+            let watcher_reserved = APP_RUN_WATCHERS
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                    (count < APP_RUN_WATCHER_CAPACITY).then_some(count + 1)
+                })
+                .is_ok();
+            if watcher_reserved {
+                let entries = Arc::clone(&self.entries);
+                let run_id = run_id.to_string();
+                let spawn = std::thread::Builder::new()
+                    .name(format!("qx-run-persist-{}", run_id))
+                    .spawn(move || {
+                        let mut failed_terminal_writes = 0_u8;
+                        let mut last_snapshot = None;
+                        loop {
+                            let state = match entries.lock() {
+                                Ok(mut entries) => match entries.get_mut(&run_id) {
+                                    Some(entry) => {
+                                        entry.collect_result();
+                                        let terminal = match entry.restored_status.as_deref() {
+                                            Some(status) => {
+                                                matches!(
+                                                    status,
+                                                    "succeeded" | "cancelled" | "failed"
+                                                )
+                                            }
+                                            None => is_terminal(entry.status()),
+                                        };
+                                        let persisted = persistence::save_if_changed(
+                                            &root,
+                                            entry,
+                                            &mut last_snapshot,
+                                        )
+                                        .is_ok();
+                                        Some((terminal, persisted))
+                                    }
+                                    None => None,
+                                },
+                                Err(_) => None,
+                            };
+                            match state {
+                                None | Some((true, true)) => break,
+                                Some((true, false)) => {
+                                    failed_terminal_writes =
+                                        failed_terminal_writes.saturating_add(1);
+                                    if failed_terminal_writes >= 100 {
+                                        break;
+                                    }
+                                }
+                                Some((false, _)) => failed_terminal_writes = 0,
+                            }
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
+                    });
+                if spawn.is_err() {
+                    APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn with_entry<T>(
@@ -122,6 +232,7 @@ impl AppRunRegistry {
         run_id: &str,
         action: impl FnOnce(&mut AppRunEntry) -> T,
     ) -> Result<T, AppError> {
+        self.ensure_storage_ready()?;
         let mut entries = self.entries.lock().map_err(|_| {
             AppError::new(AppErrorCategory::InternalInvariant, "应用运行注册表锁中毒")
         })?;
@@ -131,7 +242,15 @@ impl AppRunRegistry {
                 format!("未知 run_id: {run_id}"),
             )
         })?;
-        Ok(action(entry))
+        let value = action(entry);
+        if let Some(root) = &self.persistence_root {
+            persistence::save(root, entry)?;
+        }
+        Ok(value)
+    }
+
+    fn ensure_storage_ready(&self) -> Result<(), AppError> {
+        self.initialization_error.clone().map_or(Ok(()), Err)
     }
 
     pub(crate) fn status(&self, run_id: &str) -> ApiResponse {
@@ -166,6 +285,9 @@ impl AppRunEntry {
     }
 
     fn cancel(&mut self) {
+        if self.restored_status.is_some() {
+            return;
+        }
         self.cancel_requested = true;
         match &mut self.run {
             Some(AppRun::Bar(handle)) => handle.cancel(),
@@ -213,6 +335,14 @@ impl AppRunEntry {
     }
 
     fn document(&mut self) -> String {
+        if let Some(status) = &self.restored_status {
+            return serde_json::json!({
+                "run_id": self.run_id,
+                "status": status,
+                "result": self.result.as_ref().and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok()),
+                "error": self.error.as_ref().and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok()),
+            }).to_string();
+        }
         self.collect_result();
         let status = match self.status() {
             RunStatus::Running => "running",
@@ -259,37 +389,6 @@ fn valid_run_route_id(run_id: &str) -> bool {
         && run_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-}
-
-pub(crate) fn start_run_backtest(
-    body: &str,
-    paths: &AppPaths,
-    registry: &AppRunRegistry,
-) -> ApiResponse {
-    let mut spec = match BacktestSpec::from_json(body) {
-        Ok(spec) => spec,
-        Err(error) => return respond(Err(error)),
-    };
-    if let Err(error) = spec.validate() {
-        return respond(Err(error));
-    }
-    if let Err(error) = resolve_input_path(&mut spec.bars_path, &paths.data_root) {
-        return respond(Err(error));
-    }
-    let run_id = spec.run_id.clone();
-    spec.output_dir = paths
-        .artifact_root
-        .join(&run_id)
-        .to_string_lossy()
-        .into_owned();
-    if let Err(error) = registry.reserve(run_id.clone()) {
-        return respond(Err(error));
-    }
-    let handle = spec.start(context(&run_id));
-    match registry.attach(&run_id, AppRun::Bar(handle)) {
-        Ok(()) => registry.status(&run_id),
-        Err(error) => respond(Err(error)),
-    }
 }
 
 /// 将 HTTP 输入文件限制在服务配置的数据根目录内；绝对路径只在根目录之下接受，
@@ -356,132 +455,4 @@ pub(super) fn resolve_input_path(path: &mut String, data_root: &Path) -> Result<
         *path = candidate.to_string_lossy().into_owned();
     }
     Ok(())
-}
-
-pub(crate) fn start_depth_backtest(
-    body: &str,
-    paths: &AppPaths,
-    registry: &AppRunRegistry,
-) -> ApiResponse {
-    let mut spec = match DepthBacktestSpec::from_json(body) {
-        Ok(spec) => spec,
-        Err(error) => return respond(Err(error)),
-    };
-    if let Err(error) = spec.validate() {
-        return respond(Err(error));
-    }
-    if let Err(error) = resolve_input_path(&mut spec.depth_path, &paths.data_root) {
-        return respond(Err(error));
-    }
-    let run_id = spec.run_id.clone();
-    spec.output_dir = paths
-        .artifact_root
-        .join(&run_id)
-        .to_string_lossy()
-        .into_owned();
-    if let Err(error) = registry.reserve(run_id.clone()) {
-        return respond(Err(error));
-    }
-    let handle = spec.start(context(&run_id));
-    match registry.attach(&run_id, AppRun::Depth(handle)) {
-        Ok(()) => registry.status(&run_id),
-        Err(error) => respond(Err(error)),
-    }
-}
-
-pub(crate) fn start_experiment(
-    body: &str,
-    paths: &AppPaths,
-    registry: &AppRunRegistry,
-) -> ApiResponse {
-    let mut spec = match RunExperimentSpec::from_json(body) {
-        Ok(spec) => spec,
-        Err(error) => return respond(Err(error)),
-    };
-    if let Err(error) = spec.validate() {
-        return respond(Err(error));
-    }
-    if let Err(error) = resolve_input_path(&mut spec.base.bars_path, &paths.data_root) {
-        return respond(Err(error));
-    }
-    let run_id = spec.experiment_id.clone();
-    spec.base.output_dir = paths
-        .artifact_root
-        .join(&run_id)
-        .to_string_lossy()
-        .into_owned();
-    if let Err(error) = registry.reserve(run_id.clone()) {
-        return respond(Err(error));
-    }
-    let handle = spec.start(context(&run_id));
-    match registry.attach(&run_id, AppRun::Experiment(handle)) {
-        Ok(()) => registry.status(&run_id),
-        Err(error) => respond(Err(error)),
-    }
-}
-
-pub(crate) fn start_multi_leg_backtest(
-    body: &str,
-    paths: &AppPaths,
-    registry: &AppRunRegistry,
-) -> ApiResponse {
-    let mut spec = match MultiLegBacktestSpec::from_json(body) {
-        Ok(spec) => spec,
-        Err(error) => return respond(Err(error)),
-    };
-    if let Err(error) = spec.validate() {
-        return respond(Err(error));
-    }
-    for input in [&mut spec.primary_bars_path, &mut spec.reference_bars_path] {
-        if let Err(error) = resolve_input_path(input, &paths.data_root) {
-            return respond(Err(error));
-        }
-    }
-    let run_id = spec.run_id.clone();
-    spec.output_dir = paths
-        .artifact_root
-        .join(&run_id)
-        .to_string_lossy()
-        .into_owned();
-    if let Err(error) = registry.reserve(run_id.clone()) {
-        return respond(Err(error));
-    }
-    let handle = spec.start(context(&run_id));
-    match registry.attach(&run_id, AppRun::MultiLeg(handle)) {
-        Ok(()) => registry.status(&run_id),
-        Err(error) => respond(Err(error)),
-    }
-}
-
-pub(crate) fn start_multi_leg_experiment(
-    body: &str,
-    paths: &AppPaths,
-    registry: &AppRunRegistry,
-) -> ApiResponse {
-    let mut spec = match RunMultiLegExperimentSpec::from_json(body) {
-        Ok(spec) => spec,
-        Err(error) => return respond(Err(error)),
-    };
-    for input in [
-        &mut spec.base.primary_bars_path,
-        &mut spec.base.reference_bars_path,
-    ] {
-        if let Err(error) = resolve_input_path(input, &paths.data_root) {
-            return respond(Err(error));
-        }
-    }
-    let run_id = spec.experiment_id.clone();
-    spec.base.output_dir = paths
-        .artifact_root
-        .join(&run_id)
-        .to_string_lossy()
-        .into_owned();
-    if let Err(error) = registry.reserve(run_id.clone()) {
-        return respond(Err(error));
-    }
-    let handle = spec.start(context(&run_id));
-    match registry.attach(&run_id, AppRun::MultiLegExperiment(handle)) {
-        Ok(()) => registry.status(&run_id),
-        Err(error) => respond(Err(error)),
-    }
 }

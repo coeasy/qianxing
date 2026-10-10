@@ -8,6 +8,8 @@ The extension uses PyO3's Python 3.10 stable ABI. Release builds publish one `cp
 
 The public `qianxing` namespace exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, L1 Tick and L2 OrderBook backtests, two-leg Bar backtests, artifact verification, deterministic comparison of completed runs, bounded Bar and multi-leg parameter-grid experiments, and cooperative `RunHandle` lifecycle for Bar/Tick/OrderBook/multi-leg/experiment runs. Multi-leg requests can declare both normalized market specs, shared default maker/taker fees with per-leg overrides, funding basis points, and the shared fill model. Matching, risk, accounting, replay verification, cancellation boundaries, and experiment execution stay in Rust; Python only provides typed request/result objects.
 
+`AppClient` exposes the same use cases over a running qx-api service, including remote start/status/cancel/wait/result for every supported run kind. Its `RemoteRunHandle.wait()` uses a finite timeout by default. The service stores run snapshots below its configured artifact root: completed results survive API restarts, while jobs interrupted by a process exit recover as failed with an explicit error because worker threads cannot resume across processes.
+
 `PaperClient` and `LiveClient` submit the versioned Rust `TradeControlSpec` to a running qx-api service. Rust authenticates the operator, validates the command in qx-app, persists and enqueues it through the existing ControlPlane, then the configured Paper or venue worker executes it. Live requires an authenticated API policy; the Python SDK does not execute trades itself. A client TLS context can be supplied for mTLS deployments.
 
 The application SDK accepts normalized `TradingInstrumentSpec` documents for multi-leg Bar and Tick/OrderBook runs; depth runs check the contract identity and validity interval against the input and require an explicit `OrderPolicy` for derivatives. It does not currently import CCXT market snapshots or model per-venue fee schedules. `one_tick_slippage` requires a real `price_tick` in both multi-leg market specs. Depth accepts Rust built-in strategies; non-zero queue-position, reduce-only, and post-only assumptions are rejected because those strategies issue opening market orders.
@@ -30,6 +32,18 @@ spec = BacktestSpec(
 )
 outcome = run_backtest(spec)
 assert verify_run(outcome).verified
+```
+
+For server-managed runs, use the same typed spec with `AppClient`; the API executes the exact same Rust use case and the returned remote handle polls the durable run registry:
+
+```python
+from qianxing import AppClient
+
+client = AppClient("https://localhost:8443", headers={"Authorization": "Bearer …"})
+remote = client.start_backtest(spec)
+state = remote.wait(timeout=300)
+if state == "succeeded":
+    outcome = remote.result()
 ```
 
 Longer runs can use the same Rust engine with a cooperative handle:

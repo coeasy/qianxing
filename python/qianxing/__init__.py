@@ -10,6 +10,7 @@ from importlib.metadata import PackageNotFoundError, version
 from .app import (
     AppError,
     AppTimeoutError,
+    AppClient,
     BacktestOutcome,
     BacktestSpec,
     BuiltinStrategySpec,
@@ -46,6 +47,7 @@ from .app import (
     RunMultiLegExperimentResult,
     RunMultiLegExperimentSpec,
     RunHandle,
+    RemoteRunHandle,
     TradeCommand,
     TradeWorkflowClient,
     PaperClient,
@@ -74,6 +76,7 @@ from .app import (
 __all__ = [
     "AppError",
     "AppTimeoutError",
+    "AppClient",
     "BacktestOutcome",
     "BacktestSpec",
     "BuiltinStrategySpec",
@@ -110,6 +113,7 @@ __all__ = [
     "RunMultiLegExperimentResult",
     "RunMultiLegExperimentSpec",
     "RunHandle",
+    "RemoteRunHandle",
     "TradeCommand",
     "TradeWorkflowClient",
     "PaperClient",

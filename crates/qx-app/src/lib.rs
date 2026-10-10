@@ -35,7 +35,7 @@
 //!
 //! Paper/Live 使用 `validate_trade_control` 校验授权能力、工作流和订单命令；API facade 随后将
 //! 同一 `ControlCommand` 交给现有 ControlPlane 与 worker，不在 SDK 或应用层另建执行路径。
-//! 本 crate 尚未提供 `ReadRunArtifacts`/`BuildReport`（T2-4）与可恢复的持久化远程 Run 注册表。
+//! 本 crate 尚未提供 `ReadRunArtifacts`/`BuildReport`（T2-4）。`qx-api` 将远程 Run 状态与终态结果持久化；服务重启后可查询已完成结果，崩溃前仍运行的任务会明确恢复为失败态（worker 本身不跨进程续跑）。
 //! Bar、Tick/OrderBook、多腿回测以及 Bar/深度/多腿参数实验的 `start` 入口返回可协作取消的
 //! [`RunHandle`]；候选运行复用对应的 Rust 回测用例与内核。
 

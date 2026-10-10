@@ -170,7 +170,9 @@ fn l1_tick_run_has_the_same_hash_through_cli_http_and_python() {
         "artifact paths must stay in the server artifact root"
     );
 
-    if let Some(python) = python_depth(&spec) {
+    let mut python_spec: Value = serde_json::from_str(&spec).expect("decode depth spec");
+    python_spec["output_dir"] = json!(root.join("python-artifacts").to_string_lossy());
+    if let Some(python) = python_depth(&python_spec.to_string()) {
         assert_eq!(cli["result_hash"], python["result_hash"]);
         assert_eq!(cli["data_fingerprint"], python["data_fingerprint"]);
         assert_eq!(cli["fills"], python["fills"]);
@@ -182,15 +184,32 @@ fn l1_tick_run_has_the_same_hash_through_cli_http_and_python() {
 }
 
 fn python_verify_depth(outcome: &[u8]) -> Value {
-    let script = r#"
+    let root = repo_root();
+    let python = std::env::var("QX_PYTHON").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            root.join("python/.venv/Scripts/python.exe")
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            root.join("python/.venv/bin/python")
+                .to_string_lossy()
+                .into_owned()
+        }
+    });
+    let script = format!(
+        r#"
 import json, sys
-sys.path.insert(0, 'python')
+sys.path.insert(0, {python_dir:?})
 from qianxing import DepthBacktestOutcome, verify_depth_run
 outcome = DepthBacktestOutcome.from_dict(json.loads(sys.stdin.read()))
 print(json.dumps(verify_depth_run(outcome).__dict__))
-"#;
-    let mut child = Command::new("python")
-        .args(["-c", script])
+"#,
+        python_dir = root.join("python").to_string_lossy(),
+    );
+    let mut child = Command::new(python)
+        .arg("-c")
+        .arg(script)
+        .current_dir(root.join("python"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

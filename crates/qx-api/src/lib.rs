@@ -1134,7 +1134,7 @@ impl ApiService {
             cors: None,
             connection_budget: default_connection_budget(),
             app_paths: app_surface::AppPaths::from_environment(),
-            app_runs: app_surface::AppRunRegistry::default(),
+            app_runs: app_surface::AppRunRegistry::from_environment(),
         }
     }
 
