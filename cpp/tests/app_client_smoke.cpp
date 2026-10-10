@@ -19,6 +19,15 @@ int main() {
     assert(response.ok());
     assert(response.body == R"({"runs":[]})");
     assert(observed_path == "/app/run-experiment");
+
+    const auto depth = client.run_depth_backtest(spec);
+    assert(depth.ok());
+    assert(observed_path == "/app/depth-backtest");
+    assert(observed_body == spec);
+
+    const auto depth_verification = client.verify_depth_run(spec);
+    assert(depth_verification.ok());
+    assert(observed_path == "/app/verify-depth");
     assert(observed_body == spec);
 
     qianxing::AppClient unavailable({});

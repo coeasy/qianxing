@@ -50,6 +50,7 @@ def _load_native():
                         "app_verify_run",
                         "app_compare_runs",
                         "app_run_experiment",
+                        "app_run_depth_backtest",
                     )
                 ):
                     return _qianxing_native
@@ -92,6 +93,9 @@ class AppUseCaseTests(unittest.TestCase):
         experiment = _parser().parse_args(["run-experiment", "experiment.json"])
         self.assertEqual(experiment.command, "run-experiment")
         self.assertEqual(experiment.input, "experiment.json")
+        depth = _parser().parse_args(["depth-backtest", "depth.json"])
+        self.assertEqual(depth.command, "depth-backtest")
+        self.assertEqual(depth.input, "depth.json")
 
     def _spec(self, run_id: str, output_dir: Path, bars: str | None = None) -> dict:
         return {
@@ -219,6 +223,93 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(typed.succeeded_candidates, 2)
         self.assertEqual(typed.failed_candidates, 0)
         self.assertEqual(len(typed.comparison.runs), 2)
+
+    def test_l1_tick_and_typed_sdk_use_the_shared_rust_application_kernel(self):
+        self._require()
+        snapshots = []
+        for index in range(48):
+            phase = index % 20
+            mid = 100 + (phase * 2 if phase < 10 else (20 - phase) * 2)
+            snapshots.append(
+                {
+                    "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+                    "ts": 1000 + index * 1000,
+                    "sequence": index + 1,
+                    "bids": [{"price": (mid - 1) * 1_000_000_000, "qty": 100_000_000_000}],
+                    "asks": [{"price": (mid + 1) * 1_000_000_000, "qty": 100_000_000_000}],
+                }
+            )
+        depth_path = self.output_dir / "ticks.json"
+        depth_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "source": "python-sdk-contract",
+                    "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+                    "snapshots": snapshots,
+                }
+            ),
+            encoding="utf-8",
+        )
+        payload = {
+            "schema_version": 1,
+            "run_id": "python-tick-run",
+            "depth_path": str(depth_path),
+            "tier": "l1",
+            "settlement_currency": "USDT",
+            "initial_cash_raw": 1_000_000_000_000_000,
+            "fee_bps": 0,
+            "latency_snapshots": 0,
+            "queue_position_bps": 0,
+            "market_impact_bps": 0,
+            "output_dir": str(self.output_dir / "depth-runs"),
+            "strategy": {
+                "kind": "sma_cross",
+                "strategy_id": "py-tick-sma",
+                "quantity_raw": 1_000_000_000,
+                "fast_window": 2,
+                "slow_window": 3,
+            },
+        }
+        outcome = self.bridge.run_depth_backtest(payload)
+        self.assertEqual(outcome["tier"], "l1")
+        self.assertEqual(outcome["equity_points"], 48)
+        self.assertGreater(outcome["fills"], 0)
+        self.assertTrue(Path(outcome["artifacts"]["run_manifest"]).is_file())
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import BuiltinStrategySpec, DepthBacktestSpec, run_depth_backtest, verify_depth_run
+
+        typed = run_depth_backtest(
+            DepthBacktestSpec(
+                run_id="python-typed-tick-run",
+                depth_path=str(depth_path),
+                tier="l1",
+                settlement_currency="USDT",
+                initial_cash_raw=1_000_000_000_000_000,
+                output_dir=str(self.output_dir / "typed-depth-runs"),
+                strategy=BuiltinStrategySpec(
+                    kind="sma_cross",
+                    strategy_id="py-typed-tick-sma",
+                    fast_window=2,
+                    slow_window=3,
+                ),
+            )
+        )
+        self.assertEqual(typed.tier, "l1")
+        self.assertEqual(typed.equity_points, 48)
+        self.assertTrue(verify_depth_run(typed).verified)
+        from qianxing.cli import main as python_cli
+
+        outcome_file = self.output_dir / "depth-outcome.json"
+        outcome_file.write_text(json.dumps(typed.__dict__), encoding="utf-8")
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            self.assertEqual(python_cli(["verify-depth", str(outcome_file)]), 0)
+        self.assertTrue(json.loads(stdout.getvalue())["verified"])
 
     def test_a_failure_raises_the_same_document_the_other_entrypoints_print(self):
         self._require()

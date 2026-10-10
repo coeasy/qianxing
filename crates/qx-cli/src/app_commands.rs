@@ -18,8 +18,9 @@
 use crate::app_args::AppCommand;
 use crate::build_identity::BUILD_REVISION;
 use qx_app::{
-    compare_runs, run_backtest, run_experiment, validate_dataset, verify_run, AppError,
-    BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, RunContext,
+    compare_runs, run_backtest, run_depth_backtest, run_experiment, validate_dataset,
+    verify_depth_run, verify_run, AppError, BacktestOutcome, BacktestSpec, CallerCapability,
+    CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec, RunContext,
     RunExperimentSpec,
 };
 use std::path::Path;
@@ -27,12 +28,14 @@ use std::path::Path;
 pub(crate) fn dispatch(action: Option<AppCommand>) {
     let Some(action) = action else {
         eprintln!(
-            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|backtest|verify|compare-runs|run-experiment> <spec.json>\n  \
+            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|backtest|verify|compare-runs|run-experiment|depth-backtest|verify-depth> <spec.json>\n  \
              validate-dataset <DatasetSpec.json>  校验一份数据集能否支撑 Bar 回测\n  \
              backtest <BacktestSpec.json>         跑一次 Bar 回测并落四份产物\n  \
              verify <BacktestOutcome.json>        复核一轮产物（输入取 `app backtest` 的 stdout）\n  \
              compare-runs <CompareRunsSpec.json>  确定性比较多组回测结果\n  \
-             run-experiment <RunExperimentSpec.json>  执行参数网格并比较候选"
+             run-experiment <RunExperimentSpec.json>  执行参数网格并比较候选\n  \
+             depth-backtest <DepthBacktestSpec.json>  执行 L1 Tick 或 L2 订单簿回测\n  \
+             verify-depth <DepthBacktestOutcome.json> 复核 L1/L2 产物"
         );
         std::process::exit(2);
     };
@@ -42,6 +45,8 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
         AppCommand::Verify { outcome } => verify(outcome),
         AppCommand::CompareRuns { spec } => compare(spec),
         AppCommand::RunExperiment { spec } => experiment(spec),
+        AppCommand::DepthBacktest { spec } => depth_backtest(spec),
+        AppCommand::VerifyDepth { outcome } => verify_depth(outcome),
     };
     match result {
         Ok(payload) => println!("{payload}"),
@@ -62,6 +67,16 @@ fn compare(spec_path: &Path) -> Result<String, AppError> {
 fn experiment(spec_path: &Path) -> Result<String, AppError> {
     let spec = RunExperimentSpec::from_json(&read_document(spec_path)?)?;
     run_experiment(&spec, &context(&spec.experiment_id))?.to_json()
+}
+
+fn depth_backtest(spec_path: &Path) -> Result<String, AppError> {
+    let spec = DepthBacktestSpec::from_json(&read_document(spec_path)?)?;
+    run_depth_backtest(&spec, &context(&spec.run_id))?.to_json()
+}
+
+fn verify_depth(outcome_path: &Path) -> Result<String, AppError> {
+    let outcome = DepthBacktestOutcome::from_json(&read_document(outcome_path)?)?;
+    verify_depth_run(&outcome, &context(&outcome.run_id))?.to_json()
 }
 
 /// 读一份 JSON 文档。文件不在是 `DataUnavailable`（去把数据准备好），不是"输入写错了"。

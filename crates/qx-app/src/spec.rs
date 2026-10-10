@@ -305,6 +305,9 @@ impl BacktestSpec {
     }
 }
 
+mod depth;
+pub use depth::{DepthBacktestOutcome, DepthBacktestSpec, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION};
+
 /// `ValidateDataset` 的输出：一份**可复核**的裁决。
 ///
 /// `gaps` 是"不适用/未计算"的理由清单——与路线图 §X2 同口径：指标在数据不足时

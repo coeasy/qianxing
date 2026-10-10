@@ -18,9 +18,9 @@ use pyo3::exceptions::{PyException, PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyCapsule, PyModule, PyTuple};
 use qx_app::{
-    compare_runs, run_backtest, run_experiment, validate_dataset, verify_run, AppError,
-    BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, RunContext,
-    RunExperimentSpec,
+    compare_runs, run_backtest, run_depth_backtest, run_experiment, validate_dataset,
+    verify_depth_run, verify_run, AppError, BacktestOutcome, BacktestSpec, CallerCapability,
+    CompareRunsSpec, DatasetSpec, DepthBacktestSpec, RunContext, RunExperimentSpec,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
@@ -85,6 +85,22 @@ fn app_compare_runs(spec_json: &str) -> PyResult<String> {
 fn app_run_experiment(spec_json: &str) -> PyResult<String> {
     let spec = RunExperimentSpec::from_json(spec_json).map_err(app_error)?;
     run_experiment(&spec, &research_context(&spec.experiment_id))
+        .and_then(|result| result.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_run_depth_backtest(spec_json: &str) -> PyResult<String> {
+    let spec = DepthBacktestSpec::from_json(spec_json).map_err(app_error)?;
+    run_depth_backtest(&spec, &research_context(&spec.run_id))
+        .and_then(|outcome| outcome.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_verify_depth_run(outcome_json: &str) -> PyResult<String> {
+    let outcome = qx_app::DepthBacktestOutcome::from_json(outcome_json).map_err(app_error)?;
+    verify_depth_run(&outcome, &research_context(&outcome.run_id))
         .and_then(|result| result.to_json())
         .map_err(app_error)
 }
@@ -241,6 +257,8 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_verify_run, module)?)?;
     module.add_function(wrap_pyfunction!(app_compare_runs, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_experiment, module)?)?;
+    module.add_function(wrap_pyfunction!(app_run_depth_backtest, module)?)?;
+    module.add_function(wrap_pyfunction!(app_verify_depth_run, module)?)?;
     module.add("QxAppError", module.py().get_type::<QxAppError>())?;
     Ok(())
 }

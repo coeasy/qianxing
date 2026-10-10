@@ -26,9 +26,10 @@
 
 use crate::ApiResponse;
 use qx_app::{
-    compare_runs, run_backtest, run_experiment, validate_dataset, verify_run, AppError,
-    AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec,
-    DatasetSpec, RunContext, RunExperimentSpec,
+    compare_runs, run_backtest, run_depth_backtest, run_experiment, validate_dataset,
+    verify_depth_run, verify_run, AppError, AppErrorCategory, BacktestOutcome, BacktestSpec,
+    CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec,
+    RunContext, RunExperimentSpec,
 };
 use std::path::{Path, PathBuf};
 
@@ -146,7 +147,7 @@ fn resolve_input_path(path: &mut String, data_root: &Path) -> Result<(), AppErro
         input.strip_prefix(&lexical_root).map_err(|_| {
             AppError::new(
                 AppErrorCategory::InvalidInput,
-                "HTTP 数据路径必须位于服务配置的数据根目录内",
+                "HTTP 文件路径必须位于服务配置的根目录内",
             )
         })?
     } else {
@@ -159,7 +160,7 @@ fn resolve_input_path(path: &mut String, data_root: &Path) -> Result<(), AppErro
     {
         return Err(AppError::new(
             AppErrorCategory::InvalidInput,
-            "HTTP 数据路径必须是数据根目录下的相对文件路径",
+            "HTTP 文件路径必须是配置根目录下的相对路径",
         ));
     }
     let candidate = root.join(relative);
@@ -173,7 +174,7 @@ fn resolve_input_path(path: &mut String, data_root: &Path) -> Result<(), AppErro
         if !resolved.starts_with(&root) {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
-                "HTTP 数据文件不能通过符号链接越出服务配置的数据根目录",
+                "HTTP 文件不能通过符号链接越出服务配置的根目录",
             ));
         }
         *path = resolved.to_string_lossy().into_owned();
@@ -189,6 +190,26 @@ pub(crate) fn post_verify_run(body: &str) -> ApiResponse {
         Err(error) => return respond(Err(error)),
     };
     respond(verify_run(&outcome, &context(&outcome.run_id)).and_then(|result| result.to_json()))
+}
+
+pub(crate) fn post_verify_depth_run(body: &str, paths: &AppPaths) -> ApiResponse {
+    let mut outcome = match DepthBacktestOutcome::from_json(body) {
+        Ok(outcome) => outcome,
+        Err(error) => return respond(Err(error)),
+    };
+    for artifact in [
+        &mut outcome.artifacts.run_manifest,
+        &mut outcome.artifacts.summary,
+        &mut outcome.artifacts.equity,
+        &mut outcome.artifacts.fills,
+    ] {
+        if let Err(error) = resolve_input_path(artifact, &paths.artifact_root) {
+            return respond(Err(error));
+        }
+    }
+    respond(
+        verify_depth_run(&outcome, &context(&outcome.run_id)).and_then(|result| result.to_json()),
+    )
 }
 
 pub(crate) fn post_compare_runs(body: &str) -> ApiResponse {
@@ -214,4 +235,23 @@ pub(crate) fn experiment(body: &str, paths: &AppPaths) -> ApiResponse {
     respond(
         run_experiment(&spec, &context(&spec.experiment_id)).and_then(|result| result.to_json()),
     )
+}
+
+pub(crate) fn depth_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
+    let mut spec = match DepthBacktestSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    if let Err(error) = spec.validate() {
+        return respond(Err(error));
+    }
+    if let Err(error) = resolve_input_path(&mut spec.depth_path, &paths.data_root) {
+        return respond(Err(error));
+    }
+    spec.output_dir = paths
+        .artifact_root
+        .join(&spec.run_id)
+        .to_string_lossy()
+        .into_owned();
+    respond(run_depth_backtest(&spec, &context(&spec.run_id)).and_then(|outcome| outcome.to_json()))
 }

@@ -1700,8 +1700,12 @@ qx_control_retired_audit_records_total {}\n",
             ("POST", "/app/validate-dataset") => app::dataset(body, &self.app_paths),
             ("POST", "/app/backtest") => app_surface::post_run_backtest(body, &self.app_paths),
             ("POST", "/app/verify") => app_surface::post_verify_run(body),
+            ("POST", "/app/verify-depth") => {
+                app_surface::post_verify_depth_run(body, &self.app_paths)
+            }
             ("POST", "/app/compare-runs") => app_surface::post_compare_runs(body),
             ("POST", "/app/run-experiment") => app::experiment(body, &self.app_paths),
+            ("POST", "/app/depth-backtest") => app_surface::depth_backtest(body, &self.app_paths),
             _ => ApiResponse::text(404, "not found"),
         }
     }

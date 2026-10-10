@@ -40,7 +40,7 @@ commands:
     credentials: none
     external_side_effect: none
     default_enabled: true
-    note: 父命令；三条子入口（validate-dataset/backtest/verify）是 qx-app 应用层用例的门面，等级随子命令取 R。它是唯一一条把业务交给应用层的 CLI 入口，也是 G1「同一 use case 三入口」的 CLI 那一条
+    note: 父命令；validate-dataset/backtest/verify/compare-runs/run-experiment/depth-backtest/verify-depth 子入口复用 qx-app 用例，等级随子命令取 R；三入口契约由 CLI/HTTP/Python 共用
   - name: backtest
     level: R
     parent: true

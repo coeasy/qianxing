@@ -1,6 +1,6 @@
 """应用层用例的 Python 门面（T2-2 / 退出门 G1）。
 
-四条函数与 ``qx-cli app`` 子命令、``POST /app/*`` 路由调的是**同一组 ``qx-app`` 用例**：
+应用函数与 ``qx-cli app`` 子命令、``POST /app/*`` 路由调的是**同一组 ``qx-app`` 用例**：
 进出都是 JSON 文档，所以「同一 use case 三入口结果哈希相同、错误 code 与 correlation id 相同」
 在这条链上是构造性的，不是靠约定维持的。
 
@@ -60,6 +60,16 @@ def compare_runs(spec: "str | dict[str, Any]") -> dict[str, Any]:
 def run_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """用 Rust 回测用例执行有界参数网格，并复用 Rust 结果比较用例。"""
     return json.loads(native.app_run_experiment(_payload(spec)))
+
+
+def run_depth_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """Run an L1 Tick or L2 order-book backtest through the Rust application layer."""
+    return json.loads(native.app_run_depth_backtest(_payload(spec)))
+
+
+def verify_depth_run(outcome: "str | dict[str, Any]") -> dict[str, Any]:
+    """Verify the manifest, summary, equity, and fills of a depth run."""
+    return json.loads(native.app_verify_depth_run(_payload(outcome)))
 
 
 def app_error_payload(error: BaseException) -> "dict[str, Any] | None":

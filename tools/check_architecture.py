@@ -16826,7 +16826,7 @@ def qx_app_check() -> None:
         re.MULTILINE,
     )
     check(
-        len(registry) == len(registered) == 5
+        len(registry) == len(registered) == 7
         and len(registered) == len(set(registered))
         and not incomplete
         and declared_kind is not None

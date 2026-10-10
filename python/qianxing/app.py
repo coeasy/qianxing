@@ -2,7 +2,7 @@
 
 Typed facade for schemas currently implemented by qx-app. Every candidate
 backtest and comparison is executed by the shared Rust application layer.
-This module does not imply Tick/Book, Paper, or Live application coverage.
+Tick and OrderBook matching are performed by the shared Rust engines. This module does not imply multi-leg, Paper, or Live application coverage.
 """
 
 from __future__ import annotations
@@ -316,13 +316,50 @@ class RunExperimentResult:
         )
 
 
+@dataclass(frozen=True)
+class DepthBacktestSpec:
+    run_id: str
+    depth_path: str
+    tier: Literal["l1", "l2"]
+    settlement_currency: str
+    initial_cash_raw: int
+    output_dir: str
+    strategy: BuiltinStrategySpec
+    fee_bps: int = 0
+    latency_snapshots: int = 0
+    queue_position_bps: int = 0
+    market_impact_bps: int = 0
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**asdict(self), "strategy": self.strategy.to_dict()}
+
+
+@dataclass(frozen=True)
+class DepthBacktestOutcome:
+    run_id: str
+    instrument: str
+    tier: str
+    result_hash: str
+    data_fingerprint: str
+    fills: int
+    equity_points: int
+    return_bps: int
+    max_drawdown_bps: int
+    artifacts: dict[str, str]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "DepthBacktestOutcome":
+        return cls(**value)
+
+
 def validate_dataset(spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
     """Validate a local Bar dataset using the shared Rust application use case."""
     return DatasetVerdict.from_dict(_invoke(native.app_validate_dataset, spec))
 
 
 def run_backtest(spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
-    """Run the currently supported deterministic single-instrument Bar backtest."""
+    """Run the deterministic single-instrument Bar backtest."""
     return BacktestOutcome.from_dict(_invoke(native.app_run_backtest, spec))
 
 
@@ -340,6 +377,17 @@ def compare_runs(spec: CompareRunsSpec | dict[str, Any]) -> CompareRunsResult:
 def run_experiment(spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentResult:
     """Run a bounded Cartesian grid through Rust backtests and return their Rust comparison."""
     return RunExperimentResult.from_dict(_invoke(native.app_run_experiment, spec))
+
+
+def run_depth_backtest(spec: DepthBacktestSpec | dict[str, Any]) -> DepthBacktestOutcome:
+    """Run deterministic L1 Tick or L2 order-book matching in the shared Rust kernel."""
+    return DepthBacktestOutcome.from_dict(_invoke(native.app_run_depth_backtest, spec))
+
+
+def verify_depth_run(outcome: DepthBacktestOutcome | dict[str, Any]) -> VerificationResult:
+    """Verify the persisted artifacts of an L1/L2 depth run through Rust."""
+    value = asdict(outcome) if isinstance(outcome, DepthBacktestOutcome) else outcome
+    return VerificationResult.from_dict(_invoke(native.app_verify_depth_run, value))
 
 
 def doctor() -> dict[str, Any]:
@@ -362,11 +410,14 @@ def doctor() -> dict[str, Any]:
                 "run.verify.v1",
                 "backtest.compare.v1",
                 "experiment.grid.bar.v1",
+                "backtest.depth.l1.v1",
+                "backtest.depth.l2.v1",
+                "run.verify.depth.v1",
             ]
             if app_available
             else []
         ),
         "limitations": [
-            "Tick/OrderBook, multi-leg backtests, RunHandle lifecycle, Paper, and Live are not yet exposed by this SDK facade."
+            "Multi-leg backtests, RunHandle lifecycle, Paper, and Live are not yet exposed by this SDK facade."
         ],
     }

@@ -1,4 +1,4 @@
-"""Console entry point for the Python SDK's currently supported R workflows."""
+"""Console entry point for the Python SDK's shared Rust application workflows."""
 
 from __future__ import annotations
 
@@ -16,9 +16,11 @@ from .app import (
     compare_runs,
     doctor,
     run_backtest,
+    run_depth_backtest,
     run_experiment,
     validate_dataset,
     verify_run,
+    verify_depth_run,
 )
 
 
@@ -44,7 +46,7 @@ def _read_json(path: str) -> object:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qianxing",
-        description="牵星 Python SDK command line (currently Bar research workflows).",
+        description="牵星 Python SDK command line (shared Rust research workflows).",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor", help="show installed SDK and native use-case availability")
@@ -54,6 +56,8 @@ def _parser() -> argparse.ArgumentParser:
         ("verify", "verify artifacts described by a BacktestOutcome JSON file"),
         ("compare-runs", "rank completed runs from identical market data"),
         ("run-experiment", "run and compare a bounded Rust parameter grid"),
+        ("depth-backtest", "run an L1 Tick or L2 order-book backtest"),
+        ("verify-depth", "verify artifacts from an L1 Tick or L2 order-book run"),
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("input", help="path to the versioned JSON document")
@@ -75,6 +79,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = compare_runs(payload)
             elif args.command == "run-experiment":
                 result = run_experiment(payload)
+            elif args.command == "depth-backtest":
+                result = run_depth_backtest(payload)
+            elif args.command == "verify-depth":
+                result = verify_depth_run(payload)
             else:
                 result = verify_run(payload)
         print(json.dumps(_document(result), ensure_ascii=False, indent=2, sort_keys=True))

@@ -40,6 +40,8 @@ APP_ENTRYPOINTS = (
     "app_verify_run",
     "app_compare_runs",
     "app_run_experiment",
+    "app_run_depth_backtest",
+    "app_verify_depth_run",
 )
 
 
@@ -99,6 +101,16 @@ def app_compare_runs(spec_json: str) -> str:
 def app_run_experiment(spec_json: str) -> str:
     """Expand and execute a bounded Rust backtest parameter experiment."""
     return str(_extension().app_run_experiment(spec_json))
+
+
+def app_run_depth_backtest(spec_json: str) -> str:
+    """Execute the shared Rust L1 Tick or L2 order-book backtest use case."""
+    return str(_extension().app_run_depth_backtest(spec_json))
+
+
+def app_verify_depth_run(outcome_json: str) -> str:
+    """Verify depth artifacts via the shared Rust application use case."""
+    return str(_extension().app_verify_depth_run(outcome_json))
 
 
 def to_pyarrow_columns(payload: str) -> tuple[Any, ...]:

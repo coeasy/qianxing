@@ -50,6 +50,14 @@ public:
         return post("/app/run-experiment", spec_json);
     }
 
+    AppResponse run_depth_backtest(std::string_view spec_json) const {
+        return post("/app/depth-backtest", spec_json);
+    }
+
+    AppResponse verify_depth_run(std::string_view outcome_json) const {
+        return post("/app/verify-depth", outcome_json);
+    }
+
 private:
     AppResponse post(std::string_view path, std::string_view body) const {
         if (!transport_) {

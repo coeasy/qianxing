@@ -5,6 +5,7 @@
 //! 排除干净——于是"只有用例读过的 `pub fn`"照样被数成零读者。这正是我们想要的：
 //! 公共面必须有**生产**读者，用例不算。放在单文件 `src/tests.rs` 里会把这个前提悄悄松开。
 
+mod depth_backtest;
 mod error_contract;
 mod fixtures;
 mod spec_contract;

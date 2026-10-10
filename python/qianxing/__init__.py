@@ -19,6 +19,8 @@ from .app import (
     ComparedRunResult,
     DatasetSpec,
     DatasetVerdict,
+    DepthBacktestOutcome,
+    DepthBacktestSpec,
     ExperimentCandidateResult,
     ExperimentParameterSpace,
     ConflictError,
@@ -36,8 +38,10 @@ from .app import (
     compare_runs,
     run_experiment,
     run_backtest,
+    run_depth_backtest,
     validate_dataset,
     verify_run,
+    verify_depth_run,
 )
 
 __all__ = [
@@ -52,6 +56,8 @@ __all__ = [
     "ComparedRunResult",
     "DatasetSpec",
     "DatasetVerdict",
+    "DepthBacktestOutcome",
+    "DepthBacktestSpec",
     "ExperimentCandidateResult",
     "ExperimentParameterSpace",
     "ConflictError",
@@ -69,8 +75,10 @@ __all__ = [
     "compare_runs",
     "run_experiment",
     "run_backtest",
+    "run_depth_backtest",
     "validate_dataset",
     "verify_run",
+    "verify_depth_run",
 ]
 
 try:

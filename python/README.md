@@ -6,11 +6,11 @@ The extension uses PyO3's Python 3.10 stable ABI. Release builds publish one `cp
 
 ## Current SDK surface
 
-The public `qianxing` namespace currently exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, artifact verification, deterministic comparison of completed runs, and bounded parameter-grid experiments. A grid expands supported strategy knobs in Rust and calls the same backtest and comparison use cases; it does not implement matching, risk, or metrics in Python.
+The public `qianxing` namespace exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, L1 Tick and L2 OrderBook backtests, artifact verification, deterministic comparison of completed runs, and bounded Bar parameter-grid experiments. Tick and book matching, risk, accounting, replay verification, and experiment execution stay in Rust; Python only provides typed request/result objects.
 
 The wheel also exposes the existing versioned strategy contract as `qianxing.strategy`, plus the optional adapters as `qianxing.ccxt` and `qianxing.ashare`. Those connector modules preserve their own documented boundaries and are not a substitute for the not-yet-complete shared Paper/Live application workflows.
 
-Tick and OrderBook application workflows, multi-leg backtests, long-running Run handles, Paper orchestration, and Live controls are not yet exposed through this SDK facade. The repository has additional lower-level CLI, worker, connector, and strategy capabilities; their presence does not mean they are already part of the high-level Python API or approved for production trading.
+Multi-leg backtests, long-running Run handles, Paper orchestration, and Live controls are not yet exposed through this SDK facade. The repository has additional lower-level CLI, worker, connector, and strategy capabilities; their presence does not mean they are already part of the high-level Python API or approved for production trading. The current depth application contract accepts Rust built-in strategies; non-zero queue-position assumptions are rejected because those strategies issue market orders.
 
 ## Example
 
@@ -32,7 +32,7 @@ outcome = run_backtest(spec)
 assert verify_run(outcome).verified
 ```
 
-The installed `qianxing` command exposes `doctor`, `validate-dataset`, `backtest`, `verify`, and `compare-runs` for the same SDK use cases. Research commands accept the versioned JSON document produced by the application contract.
+The installed `qianxing` command exposes `doctor`, `validate-dataset`, `backtest`, `depth-backtest`, `verify`, `compare-runs`, and `run-experiment` for the same SDK use cases. Research commands accept the versioned JSON document produced by the application contract.
 
 Amounts and quantities use the engine's fixed-point `*_raw` units. Install optional integrations only when needed, for example `pip install 'qianxing[ccxt]'` or `pip install 'qianxing[a-share]'`.
 
