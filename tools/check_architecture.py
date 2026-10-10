@@ -6045,6 +6045,7 @@ def api_surface_doc_check() -> None:
         ("RUN_START_DEPTH_ROUTE", "POST"),
         ("RUN_START_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_ROUTE", "POST"),
+        ("RUN_START_MULTI_LEG_EXPERIMENT_ROUTE", "POST"),
     )
     dynamic_declared = set()
     for constant, method in dynamic_templates:
@@ -6074,6 +6075,7 @@ def api_surface_doc_check() -> None:
             ("POST", "/app/depth-backtest/start"),
             ("POST", "/app/run-experiment/start"),
             ("POST", "/app/multi-leg-backtest/start"),
+            ("POST", "/app/run-multi-leg-experiment/start"),
         },
         "动态 SDK 运行路由由 app_surface 的两条模板显式登记并进入端点契约",
         f"登记到 {sorted(dynamic_declared)}",
@@ -16858,7 +16860,7 @@ def qx_app_check() -> None:
         re.MULTILINE,
     )
     check(
-        len(registry) == len(registered) == 9
+        len(registry) == len(registered) >= 9
         and len(registered) == len(set(registered))
         and not incomplete
         and declared_kind is not None

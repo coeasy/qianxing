@@ -56,7 +56,7 @@ impl MultiLegBacktestSpec {
     }
 }
 
-fn run_inner(
+pub(super) fn run_inner(
     spec: &MultiLegBacktestSpec,
     _context: &RunContext,
     cancellation: Option<&CancellationToken>,

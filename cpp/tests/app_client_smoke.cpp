@@ -37,6 +37,15 @@ int main() {
     assert(started_multi_leg.ok());
     assert(observed_path == "/app/multi-leg-backtest/start");
 
+    const auto multi_leg_experiment = client.run_multi_leg_experiment(spec);
+    assert(multi_leg_experiment.ok());
+    assert(observed_path == "/app/run-multi-leg-experiment");
+    assert(observed_body == spec);
+
+    const auto started_multi_leg_experiment = client.start_multi_leg_experiment(spec);
+    assert(started_multi_leg_experiment.ok());
+    assert(observed_path == "/app/run-multi-leg-experiment/start");
+
     const auto started = client.start_backtest(spec);
     assert(started.ok());
     assert(observed_method == "POST");

@@ -47,6 +47,8 @@ APP_ENTRYPOINTS = (
     "app_verify_depth_run",
     "app_run_multi_leg_backtest",
     "app_start_multi_leg_backtest",
+    "app_run_multi_leg_experiment",
+    "app_start_multi_leg_experiment",
 )
 
 
@@ -141,6 +143,16 @@ def app_run_multi_leg_backtest(spec_json: str) -> str:
 def app_start_multi_leg_backtest(spec_json: str) -> Any:
     """Start a cancellable Rust two-leg Bar run."""
     return _extension().app_start_multi_leg_backtest(spec_json)
+
+
+def app_run_multi_leg_experiment(spec_json: str) -> str:
+    """Run a bounded parameter grid through the shared Rust multi-leg use case."""
+    return str(_extension().app_run_multi_leg_experiment(spec_json))
+
+
+def app_start_multi_leg_experiment(spec_json: str) -> Any:
+    """Start a cancellable multi-leg parameter grid in Rust."""
+    return _extension().app_start_multi_leg_experiment(spec_json)
 
 
 def to_pyarrow_columns(payload: str) -> tuple[Any, ...]:

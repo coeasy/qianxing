@@ -57,6 +57,8 @@ def _load_native():
                         "app_start_depth_backtest",
                         "app_run_multi_leg_backtest",
                         "app_start_multi_leg_backtest",
+                        "app_run_multi_leg_experiment",
+                        "app_start_multi_leg_experiment",
                         "app_verify_depth_run",
                     )
                 ):
@@ -100,6 +102,11 @@ class AppUseCaseTests(unittest.TestCase):
         experiment = _parser().parse_args(["run-experiment", "experiment.json"])
         self.assertEqual(experiment.command, "run-experiment")
         self.assertEqual(experiment.input, "experiment.json")
+        multi_leg_experiment = _parser().parse_args(
+            ["run-multi-leg-experiment", "multi-leg-experiment.json"]
+        )
+        self.assertEqual(multi_leg_experiment.command, "run-multi-leg-experiment")
+        self.assertEqual(multi_leg_experiment.input, "multi-leg-experiment.json")
         depth = _parser().parse_args(["depth-backtest", "depth.json"])
         self.assertEqual(depth.command, "depth-backtest")
         self.assertEqual(depth.input, "depth.json")
@@ -116,6 +123,10 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertIn("backtest.multi-leg.bar.v1", report["implemented_use_cases"])
         self.assertIn(
             "backtest.multi-leg.bar.run-handle.v1", report["implemented_use_cases"]
+        )
+        self.assertIn("experiment.grid.multi-leg.bar.v1", report["implemented_use_cases"])
+        self.assertIn(
+            "experiment.grid.multi-leg.bar.run-handle.v1", report["implemented_use_cases"]
         )
         self.assertFalse(any("multi-leg" in item for item in report["limitations"]))
 
@@ -606,6 +617,62 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(typed_handle.wait(10_000), "succeeded")
         self.assertIsNotNone(typed_handle.result())
         self.assertIsNone(typed_handle.result(), "typed multi-leg result is delivered once")
+
+        experiment_payload = {
+            "schema_version": 1,
+            "experiment_id": "python-multi-leg-grid",
+            "base": {**payload, "run_id": "unused-multi-leg-grid"},
+            "parameter_space": [{"name": "quantity_raw", "values": [0, 1_000_000_000]}],
+        }
+        experiment = self.bridge.run_multi_leg_experiment(experiment_payload)
+        self.assertEqual(experiment["completed_candidates"], 2)
+        self.assertEqual(experiment["failed_candidates"], 1)
+        self.assertEqual(experiment["succeeded_candidates"], 1)
+        self.assertTrue(Path(experiment["artifact_path"]).is_file())
+        experiment_handle = self.bridge.start_multi_leg_experiment(
+            {
+                **experiment_payload,
+                "experiment_id": "python-multi-leg-grid-handle",
+                "base": {
+                    **experiment_payload["base"],
+                    "output_dir": str(self.output_dir / "multi-leg-grid-handle"),
+                },
+            }
+        )
+        self.assertEqual(experiment_handle.wait(10_000), "succeeded")
+        self.assertIsNotNone(experiment_handle.result_json())
+        self.assertIsNone(experiment_handle.result_json())
+
+        from qianxing import (
+            ExperimentParameterSpace,
+            RunMultiLegExperimentSpec,
+            run_multi_leg_experiment,
+            start_multi_leg_experiment,
+        )
+
+        typed_experiment_spec = RunMultiLegExperimentSpec(
+            experiment_id="python-typed-multi-leg-grid",
+            base=typed_spec,
+            parameter_space=(ExperimentParameterSpace("quantity_raw", (1_000_000_000,)),),
+        )
+        typed_experiment = run_multi_leg_experiment(typed_experiment_spec)
+        self.assertEqual(typed_experiment.succeeded_candidates, 1)
+        typed_experiment_handle = start_multi_leg_experiment(
+            RunMultiLegExperimentSpec(
+                experiment_id="python-typed-multi-leg-grid-handle",
+                base=MultiLegBacktestSpec(
+                    **{
+                        **typed_spec.__dict__,
+                        "run_id": "unused-typed-multi-leg-grid-handle",
+                        "output_dir": str(self.output_dir / "typed-multi-leg-grid-handle"),
+                    }
+                ),
+                parameter_space=typed_experiment_spec.parameter_space,
+            )
+        )
+        self.assertEqual(typed_experiment_handle.wait(10_000), "succeeded")
+        self.assertIsNotNone(typed_experiment_handle.result())
+        self.assertIsNone(typed_experiment_handle.result())
 
     def test_a_failure_raises_the_same_document_the_other_entrypoints_print(self):
         self._require()

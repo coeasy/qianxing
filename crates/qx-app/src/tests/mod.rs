@@ -9,6 +9,7 @@ mod depth_backtest;
 mod error_contract;
 mod fixtures;
 mod multi_leg_backtest;
+mod multi_leg_experiment;
 mod run_handles;
 mod spec_contract;
 mod use_cases;

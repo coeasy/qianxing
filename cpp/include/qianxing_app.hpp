@@ -70,6 +70,14 @@ public:
         return post("/app/multi-leg-backtest/start", spec_json);
     }
 
+    AppResponse run_multi_leg_experiment(std::string_view spec_json) const {
+        return post("/app/run-multi-leg-experiment", spec_json);
+    }
+
+    AppResponse start_multi_leg_experiment(std::string_view spec_json) const {
+        return post("/app/run-multi-leg-experiment/start", spec_json);
+    }
+
     AppResponse start_experiment(std::string_view spec_json) const {
         return post("/app/run-experiment/start", spec_json);
     }

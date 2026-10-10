@@ -62,6 +62,16 @@ def run_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_run_experiment(_payload(spec)))
 
 
+def run_multi_leg_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """用多腿 Rust 回测用例执行有界参数网格。"""
+    return json.loads(native.app_run_multi_leg_experiment(_payload(spec)))
+
+
+def start_multi_leg_experiment(spec: "str | dict[str, Any]") -> Any:
+    """启动可取消的 Rust 多腿参数实验并返回共享 RunHandle。"""
+    return native.app_start_multi_leg_experiment(_payload(spec))
+
+
 def run_depth_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """Run an L1 Tick or L2 order-book backtest through the Rust application layer."""
     return json.loads(native.app_run_depth_backtest(_payload(spec)))

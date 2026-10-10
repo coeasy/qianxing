@@ -284,6 +284,22 @@ class RunExperimentSpec:
 
 
 @dataclass(frozen=True)
+class RunMultiLegExperimentSpec:
+    experiment_id: str
+    base: MultiLegBacktestSpec
+    parameter_space: tuple[ExperimentParameterSpace, ...]
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "experiment_id": self.experiment_id,
+            "base": self.base.to_dict(),
+            "parameter_space": [dimension.to_dict() for dimension in self.parameter_space],
+        }
+
+
+@dataclass(frozen=True)
 class ExperimentCandidateResult:
     ordinal: int
     parameters: dict[str, int]
@@ -469,6 +485,66 @@ class MultiLegBacktestOutcome:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MultiLegBacktestOutcome":
         return cls(**value)
+
+
+@dataclass(frozen=True)
+class MultiLegExperimentCandidateResult:
+    ordinal: int
+    parameters: dict[str, int]
+    outcome: MultiLegBacktestOutcome | None
+    error: str | None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiLegExperimentCandidateResult":
+        raw_outcome = value.get("outcome")
+        return cls(
+            ordinal=value["ordinal"],
+            parameters=value["parameters"],
+            outcome=MultiLegBacktestOutcome.from_dict(raw_outcome) if raw_outcome else None,
+            error=value.get("error"),
+        )
+
+
+@dataclass(frozen=True)
+class MultiLegExperimentRankedCandidate:
+    rank: int
+    ordinal: int
+    run_id: str
+    combined_return_bps: int
+    primary_result_hash: str
+    reference_result_hash: str
+
+
+@dataclass(frozen=True)
+class RunMultiLegExperimentResult:
+    schema_version: int
+    experiment_id: str
+    spec_fingerprint: str
+    total_candidates: int
+    completed_candidates: int
+    succeeded_candidates: int
+    failed_candidates: int
+    candidates: tuple[MultiLegExperimentCandidateResult, ...]
+    ranking: tuple[MultiLegExperimentRankedCandidate, ...]
+    artifact_path: str
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "RunMultiLegExperimentResult":
+        return cls(
+            schema_version=value["schema_version"],
+            experiment_id=value["experiment_id"],
+            spec_fingerprint=value["spec_fingerprint"],
+            total_candidates=value["total_candidates"],
+            completed_candidates=value["completed_candidates"],
+            succeeded_candidates=value["succeeded_candidates"],
+            failed_candidates=value["failed_candidates"],
+            candidates=tuple(
+                MultiLegExperimentCandidateResult.from_dict(item)
+                for item in value["candidates"]
+            ),
+            ranking=tuple(MultiLegExperimentRankedCandidate(**item) for item in value["ranking"]),
+            artifact_path=value["artifact_path"],
+        )
 
 
 @dataclass(frozen=True)
@@ -668,6 +744,15 @@ def run_experiment(spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentRes
     return RunExperimentResult.from_dict(_invoke(native.app_run_experiment, spec))
 
 
+def run_multi_leg_experiment(
+    spec: RunMultiLegExperimentSpec | dict[str, Any],
+) -> RunMultiLegExperimentResult:
+    """Run a bounded grid through the shared Rust multi-leg backtest use case."""
+    return RunMultiLegExperimentResult.from_dict(
+        _invoke(native.app_run_multi_leg_experiment, spec)
+    )
+
+
 def run_depth_backtest(spec: DepthBacktestSpec | dict[str, Any]) -> DepthBacktestOutcome:
     """Run deterministic L1 Tick or L2 order-book matching in the shared Rust kernel."""
     return DepthBacktestOutcome.from_dict(_invoke(native.app_run_depth_backtest, spec))
@@ -713,6 +798,17 @@ def start_experiment(spec: RunExperimentSpec | dict[str, Any]) -> RunHandle[RunE
     return RunHandle(native_handle, RunExperimentResult)
 
 
+def start_multi_leg_experiment(
+    spec: RunMultiLegExperimentSpec | dict[str, Any],
+) -> RunHandle[RunMultiLegExperimentResult]:
+    """Start a cancellable Rust multi-leg parameter experiment."""
+    try:
+        native_handle = native.app_start_multi_leg_experiment(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, RunMultiLegExperimentResult)
+
+
 def doctor() -> dict[str, Any]:
     """Report which native application entry points are available in this install."""
     extension_available = native.available()
@@ -735,6 +831,8 @@ def doctor() -> dict[str, Any]:
                 "backtest.compare.v1",
                 "experiment.grid.bar.v1",
                 "experiment.grid.bar.run-handle.v1",
+                "experiment.grid.multi-leg.bar.v1",
+                "experiment.grid.multi-leg.bar.run-handle.v1",
                 "backtest.depth.l1.v1",
                 "backtest.depth.l2.v1",
                 "backtest.depth.run-handle.v1",

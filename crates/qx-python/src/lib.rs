@@ -19,10 +19,11 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyCapsule, PyModule, PyTuple};
 use qx_app::{
     compare_runs, run_backtest, run_depth_backtest, run_experiment, run_multi_leg_backtest,
-    validate_dataset, verify_depth_run, verify_run, AppError, BacktestOutcome, BacktestSpec,
-    CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec,
-    MultiLegBacktestOutcome, MultiLegBacktestSpec, RunContext, RunExperimentResult,
-    RunExperimentSpec, RunHandle, RunStatus,
+    run_multi_leg_experiment, validate_dataset, verify_depth_run, verify_run, AppError,
+    BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec,
+    RunContext, RunExperimentResult, RunExperimentSpec, RunHandle, RunMultiLegExperimentResult,
+    RunMultiLegExperimentSpec, RunStatus,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
@@ -144,11 +145,29 @@ fn app_start_multi_leg_backtest(spec_json: &str) -> PyResult<PyRunHandle> {
     })
 }
 
+#[pyfunction]
+fn app_run_multi_leg_experiment(spec_json: &str) -> PyResult<String> {
+    let spec = RunMultiLegExperimentSpec::from_json(spec_json).map_err(app_error)?;
+    run_multi_leg_experiment(&spec, &research_context(&spec.experiment_id))
+        .and_then(|result| result.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_start_multi_leg_experiment(spec_json: &str) -> PyResult<PyRunHandle> {
+    let spec = RunMultiLegExperimentSpec::from_json(spec_json).map_err(app_error)?;
+    let context = research_context(&spec.experiment_id);
+    Ok(PyRunHandle {
+        inner: NativeRun::MultiLegExperiment(spec.start(context)),
+    })
+}
+
 enum NativeRun {
     Bar(RunHandle<BacktestOutcome>),
     Depth(RunHandle<DepthBacktestOutcome>),
     Experiment(RunHandle<RunExperimentResult>),
     MultiLeg(RunHandle<MultiLegBacktestOutcome>),
+    MultiLegExperiment(RunHandle<RunMultiLegExperimentResult>),
 }
 
 #[pyclass(name = "RunHandle")]
@@ -165,6 +184,7 @@ impl PyRunHandle {
             NativeRun::Depth(handle) => handle.run_id(),
             NativeRun::Experiment(handle) => handle.run_id(),
             NativeRun::MultiLeg(handle) => handle.run_id(),
+            NativeRun::MultiLegExperiment(handle) => handle.run_id(),
         }
     }
 
@@ -175,6 +195,7 @@ impl PyRunHandle {
             NativeRun::Depth(handle) => handle.status(),
             NativeRun::Experiment(handle) => handle.status(),
             NativeRun::MultiLeg(handle) => handle.status(),
+            NativeRun::MultiLegExperiment(handle) => handle.status(),
         })
     }
 
@@ -184,6 +205,7 @@ impl PyRunHandle {
             NativeRun::Depth(handle) => handle.cancel(),
             NativeRun::Experiment(handle) => handle.cancel(),
             NativeRun::MultiLeg(handle) => handle.cancel(),
+            NativeRun::MultiLegExperiment(handle) => handle.cancel(),
         }
     }
 
@@ -198,6 +220,7 @@ impl PyRunHandle {
                 NativeRun::Depth(handle) => handle.status(),
                 NativeRun::Experiment(handle) => handle.status(),
                 NativeRun::MultiLeg(handle) => handle.status(),
+                NativeRun::MultiLegExperiment(handle) => handle.status(),
             };
             if matches!(
                 status,
@@ -250,6 +273,11 @@ impl PyRunHandle {
                 .transpose()
                 .map_err(app_error),
             NativeRun::MultiLeg(handle) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|outcome| outcome.to_json()))
+                .transpose()
+                .map_err(app_error),
+            NativeRun::MultiLegExperiment(handle) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|outcome| outcome.to_json()))
                 .transpose()
@@ -434,6 +462,8 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_start_depth_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_multi_leg_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_start_multi_leg_backtest, module)?)?;
+    module.add_function(wrap_pyfunction!(app_run_multi_leg_experiment, module)?)?;
+    module.add_function(wrap_pyfunction!(app_start_multi_leg_experiment, module)?)?;
     module.add_class::<PyRunHandle>()?;
     module.add_function(wrap_pyfunction!(app_verify_depth_run, module)?)?;
     module.add("QxAppError", module.py().get_type::<QxAppError>())?;

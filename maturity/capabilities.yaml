@@ -715,11 +715,12 @@ capabilities:
     production_approved: false
     evidence:
       - python/qianxing/__init__.py typed public namespace
-      - python/qianxing/app.py typed qx-app backed Bar, Tick/OrderBook and multi-leg workflows, experiments, run handles, and authenticated Paper/Live clients
-      - crates/qx-python/src/lib.rs app_* exports call the same qx-app use cases for dataset, Bar, Tick/OrderBook, multi-leg, experiment, verification, and run lifecycle
-      - python/tests/test_app_use_cases.py exercises native Tick product specifications, multi-leg market-aware runs, experiments, handles, and Paper/Live client requests
+      - python/qianxing/app.py typed qx-app backed Bar, Tick/OrderBook and multi-leg workflows, Bar and multi-leg experiments, run handles, and authenticated Paper/Live clients
+      - crates/qx-python/src/lib.rs app_* exports call the same qx-app use cases for dataset, Bar, Tick/OrderBook, multi-leg, both experiment workflows, verification, and run lifecycle
+      - python/tests/test_app_use_cases.py exercises native Tick product specifications, multi-leg market-aware runs and experiments, handles, and Paper/Live client requests
       - crates/qx-cli/tests/app_three_entrypoints.rs compares CLI/HTTP/Python outcomes and result hashes for shared Bar, multi-leg, parameter experiment, comparison, verification, and error contracts
       - crates/qx-cli/tests/app_depth_entrypoints.rs compares market-aware L1 Tick product/order-policy outcomes across CLI, HTTP, and the built Python SDK
+      - crates/qx-cli/tests/app_three_entrypoints.rs compares multi-leg parameter experiment outcomes across CLI, HTTP, and the built Python SDK
       - python/qianxing/cli.py packaged qianxing research command
       - python/qianxing/strategy.py, python/qianxing/ccxt.py, and python/qianxing/ashare.py stable namespace exports for the existing language strategy and optional data/exchange adapters
       - python/pyproject.toml formal qianxing distribution, optional integration extras, and console entry point
@@ -727,7 +728,7 @@ capabilities:
       - locally built release wheel installed outside the source tree and validated with native doctor plus validate/backtest/verify smoke
     limitations:
       - depth_app_builtin_strategy_surface: DepthBacktestSpec currently accepts Rust built-in strategies; custom TickStrategy/OrderBookStrategy registration is not part of the shared app contract
-      - experiment_grid_is_bar_only: RunExperimentSpec expands the shared Bar BacktestSpec and does not yet sweep Tick/OrderBook or multi-leg parameters
+      - experiment_grid_does_not_cover_depth: Bar and multi-leg parameter grids are available; Tick/OrderBook parameter sweeps are not yet part of the shared experiment contract
       - paper_live_clients_require_running_api_and_deployment_auth: Paper/Live SDK clients submit to qx-api; they do not embed workers or execution credentials, and Live requires TLS plus authenticated Operator authorization
 
   cpp_strategy_package:

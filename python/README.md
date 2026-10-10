@@ -6,7 +6,7 @@ The extension uses PyO3's Python 3.10 stable ABI. Release builds publish one `cp
 
 ## Current SDK surface
 
-The public `qianxing` namespace exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, L1 Tick and L2 OrderBook backtests, two-leg Bar backtests, artifact verification, deterministic comparison of completed runs, bounded Bar parameter-grid experiments, and cooperative `RunHandle` lifecycle for Bar/Tick/OrderBook/multi-leg/parameter runs. Multi-leg requests can declare both normalized market specs, shared default maker/taker fees with per-leg overrides, funding basis points, and the shared fill model. Matching, risk, accounting, replay verification, cancellation boundaries, and experiment execution stay in Rust; Python only provides typed request/result objects.
+The public `qianxing` namespace exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, L1 Tick and L2 OrderBook backtests, two-leg Bar backtests, artifact verification, deterministic comparison of completed runs, bounded Bar and multi-leg parameter-grid experiments, and cooperative `RunHandle` lifecycle for Bar/Tick/OrderBook/multi-leg/experiment runs. Multi-leg requests can declare both normalized market specs, shared default maker/taker fees with per-leg overrides, funding basis points, and the shared fill model. Matching, risk, accounting, replay verification, cancellation boundaries, and experiment execution stay in Rust; Python only provides typed request/result objects.
 
 `PaperClient` and `LiveClient` submit the versioned Rust `TradeControlSpec` to a running qx-api service. Rust authenticates the operator, validates the command in qx-app, persists and enqueues it through the existing ControlPlane, then the configured Paper or venue worker executes it. Live requires an authenticated API policy; the Python SDK does not execute trades itself. A client TLS context can be supplied for mTLS deployments.
 
@@ -70,7 +70,7 @@ receipt = client.submit(TradeCommand(
 
 `ssl_context` supplies the client certificate for the built-in mTLS identity mapping. `headers` are available for deployments with an HTTP authentication adapter. The `operator_id` in the command is intent metadata and never grants authority by itself.
 
-The installed `qianxing` command exposes `doctor`, `validate-dataset`, `backtest`, `depth-backtest`, `verify`, `compare-runs`, and `run-experiment` for the same SDK use cases. Research commands accept the versioned JSON document produced by the application contract.
+The installed `qianxing` command exposes `doctor`, `validate-dataset`, `backtest`, `depth-backtest`, `verify`, `compare-runs`, `run-experiment`, and `run-multi-leg-experiment` for the same Rust-backed SDK use cases. Research commands accept the versioned JSON document produced by the application contract.
 
 Amounts and quantities use the engine's fixed-point `*_raw` units. Install optional integrations only when needed, for example `pip install 'qianxing[ccxt]'` or `pip install 'qianxing[a-share]'`.
 

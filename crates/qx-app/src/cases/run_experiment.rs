@@ -6,6 +6,9 @@
 //! risk, ledger, or metrics implementation.
 
 use super::compare_runs::COMPARE_RUNS_SCHEMA_VERSION;
+use super::experiment_grid::{
+    apply_parameters, expand_grid, normalized_strategy, validate_experiment_id, validate_grid,
+};
 use super::guard::guard_panics;
 use super::run_backtest::run_backtest_inner;
 use super::{attach, compare_runs};
@@ -15,9 +18,8 @@ use crate::{
     CompareRunsSpec, ComparedRun, RunContext, RunHandle,
 };
 use qx_core::Fnv1a;
-use qx_strategy::builtin_signal::BuiltinSignalKnob;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const RUN_EXPERIMENT_SCHEMA_VERSION: u32 = 1;
@@ -69,122 +71,12 @@ impl RunExperimentSpec {
                 ),
             ));
         }
-        if self.experiment_id.is_empty()
-            || self.experiment_id.len() > 96
-            || matches!(self.experiment_id.as_str(), "." | "..")
-            || !self
-                .experiment_id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-        {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "experiment_id 必须是最多 96 字符的 [A-Za-z0-9._-] 标识",
-            ));
-        }
-        // Validate the stable base fields without rejecting candidate-specific bad values.
-        // Those are intentionally isolated into each candidate result below. The fast/slow
-        // pair is normalized together because changing either knob can make the pair invalid.
+        validate_experiment_id(&self.experiment_id)?;
+        // Validate stable base fields without rejecting candidate-specific values.
         let mut base = self.base.clone();
-        for dimension in &self.parameter_space {
-            match dimension.name.as_str() {
-                "fast_window" | "slow_window" => {
-                    base.strategy.fast_window = 1;
-                    base.strategy.slow_window = 2;
-                }
-                "period" => base.strategy.period = 2,
-                "threshold_bps" => base.strategy.threshold_bps = 0,
-                "quantity_raw" => base.strategy.quantity_raw = 1,
-                _ => {}
-            }
-        }
+        base.strategy = normalized_strategy(&base.strategy, &self.parameter_space);
         base.validate()?;
-        if self.parameter_space.is_empty() {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "参数实验至少需要一个参数维度",
-            ));
-        }
-        let supported = [
-            "fast_window",
-            "slow_window",
-            "period",
-            "threshold_bps",
-            "quantity_raw",
-        ];
-        let mut names = BTreeSet::new();
-        let mut total = 1_usize;
-        for dimension in &self.parameter_space {
-            if !supported.contains(&dimension.name.as_str()) {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    format!("不支持的策略参数维度: {}", dimension.name),
-                ));
-            }
-            if !names.insert(dimension.name.as_str()) {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    format!("实验参数维度重复: {}", dimension.name),
-                ));
-            }
-            let applies = match dimension.name.as_str() {
-                "fast_window" => self
-                    .base
-                    .strategy
-                    .kind
-                    .uses_signal_knob(BuiltinSignalKnob::FastWindow),
-                "slow_window" => self
-                    .base
-                    .strategy
-                    .kind
-                    .uses_signal_knob(BuiltinSignalKnob::SlowWindow),
-                "period" => self
-                    .base
-                    .strategy
-                    .kind
-                    .uses_signal_knob(BuiltinSignalKnob::Period),
-                "threshold_bps" => self
-                    .base
-                    .strategy
-                    .kind
-                    .uses_signal_knob(BuiltinSignalKnob::ThresholdBps),
-                "quantity_raw" => true,
-                _ => false,
-            };
-            if !applies {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    format!(
-                        "参数维度 {} 不适用于策略 {}",
-                        dimension.name,
-                        self.base.strategy.kind.name()
-                    ),
-                ));
-            }
-            if dimension.values.is_empty() {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    format!("参数维度 {} 没有候选值", dimension.name),
-                ));
-            }
-            let unique: BTreeSet<_> = dimension.values.iter().collect();
-            if unique.len() != dimension.values.len() {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    format!("参数维度 {} 含重复候选值", dimension.name),
-                ));
-            }
-            total = total
-                .checked_mul(dimension.values.len())
-                .ok_or_else(|| AppError::new(AppErrorCategory::InvalidInput, "实验候选数溢出"))?;
-            if total > MAX_EXPERIMENT_CANDIDATES {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    format!("实验最多接受 {MAX_EXPERIMENT_CANDIDATES} 个候选组合"),
-                ));
-            }
-        }
-        Ok(total)
+        validate_grid(&self.base.strategy, &self.parameter_space)
     }
 }
 
@@ -292,20 +184,7 @@ fn run_experiment_inner(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(AppError::from_io("读取既有实验报告", &error)),
     }
-    let mut dimensions = spec.parameter_space.clone();
-    dimensions.sort_by(|a, b| a.name.cmp(&b.name));
-    let mut combinations = vec![BTreeMap::new()];
-    for dimension in &dimensions {
-        let mut expanded = Vec::with_capacity(combinations.len() * dimension.values.len());
-        for combination in &combinations {
-            for value in &dimension.values {
-                let mut next = combination.clone();
-                next.insert(dimension.name.clone(), *value);
-                expanded.push(next);
-            }
-        }
-        combinations = expanded;
-    }
+    let combinations = expand_grid(&spec.parameter_space);
     debug_assert_eq!(combinations.len(), total);
 
     let mut candidates = Vec::with_capacity(total);
@@ -320,7 +199,7 @@ fn run_experiment_inner(
             .join(format!("run-{ordinal:04}"))
             .to_string_lossy()
             .into();
-        let outcome = match apply_parameters(&mut candidate, &parameters) {
+        let outcome = match apply_parameters(&mut candidate.strategy, &parameters) {
             Ok(()) => match run_backtest_inner(&candidate, context, cancellation) {
                 Ok(Some(outcome)) => Ok(outcome),
                 Ok(None) => return Ok(None),
@@ -400,32 +279,6 @@ fn run_experiment_inner(
     Ok(Some(result))
 }
 
-fn apply_parameters(
-    candidate: &mut BacktestSpec,
-    parameters: &BTreeMap<String, i128>,
-) -> Result<(), AppError> {
-    for (name, value) in parameters {
-        match name.as_str() {
-            "fast_window" => {
-                candidate.strategy.fast_window =
-                    usize::try_from(*value).map_err(|_| invalid_parameter(name, *value))?
-            }
-            "slow_window" => {
-                candidate.strategy.slow_window =
-                    usize::try_from(*value).map_err(|_| invalid_parameter(name, *value))?
-            }
-            "period" => {
-                candidate.strategy.period =
-                    usize::try_from(*value).map_err(|_| invalid_parameter(name, *value))?
-            }
-            "threshold_bps" => candidate.strategy.threshold_bps = *value,
-            "quantity_raw" => candidate.strategy.quantity_raw = *value,
-            _ => unreachable!("validate() closes parameter names"),
-        }
-    }
-    Ok(())
-}
-
 fn existing_result(
     payload: &str,
     expected_fingerprint: &str,
@@ -440,11 +293,4 @@ fn existing_result(
         ));
     }
     Ok(previous)
-}
-
-fn invalid_parameter(name: &str, value: i128) -> AppError {
-    AppError::new(
-        AppErrorCategory::InvalidInput,
-        format!("实验参数 {name}={value} 超出可表示范围"),
-    )
 }

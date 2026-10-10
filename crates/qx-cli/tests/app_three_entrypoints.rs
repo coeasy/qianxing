@@ -10,6 +10,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
+#[path = "app_three_entrypoints/multi_leg_experiment.rs"]
+mod multi_leg_experiment_entrypoints;
+
 /// 仓库根：本文件在 `crates/qx-cli/tests/` 下。
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -118,6 +121,22 @@ fn multi_leg_spec_json(run_id: &str, output_dir: &Path) -> String {
             "period": 14,
             "threshold_bps": 100,
         },
+    })
+    .to_string()
+}
+
+fn multi_leg_experiment_spec_json(experiment_id: &str, output_dir: &Path) -> String {
+    let mut base: Value = serde_json::from_str(&multi_leg_spec_json(
+        "unused-multi-leg-experiment-base",
+        output_dir,
+    ))
+    .expect("multi-leg base spec");
+    base["output_dir"] = json!(output_dir);
+    json!({
+        "schema_version": 1,
+        "experiment_id": experiment_id,
+        "base": base,
+        "parameter_space": [{"name": "quantity_raw", "values": [0, 1_000_000_000]}],
     })
     .to_string()
 }
@@ -265,65 +284,6 @@ fn the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python() 
             assert_eq!(python["fills"], cli["fills"]);
         }
         Some(Err(payload)) => panic!("Python 腿本该成功，却报了错：{payload}"),
-    }
-}
-
-#[test]
-fn the_same_multi_leg_spec_runs_through_cli_http_and_python_shared_rust_use_cases() {
-    let root = scratch("multi-leg");
-    let spec = multi_leg_spec_json("g1-multi-leg", &root.join("out"));
-    let spec_path = root.join("multi-leg.json");
-    std::fs::write(&spec_path, &spec).expect("write MultiLegBacktestSpec");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
-        .args(["app", "multi-leg-backtest"])
-        .arg(&spec_path)
-        .output()
-        .expect("start multi-leg CLI");
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "CLI error: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let cli: Value = serde_json::from_slice(&output.stdout).expect("CLI outcome JSON");
-
-    let (status, http) = via_http("/app/multi-leg-backtest", &spec);
-    assert_eq!(status, 200, "HTTP outcome: {http}");
-    for (name, outcome) in [("CLI", &cli), ("HTTP", &http)] {
-        assert_eq!(outcome["run_id"], "g1-multi-leg", "{name} run id");
-        assert!(
-            outcome["primary_fills"].as_u64().unwrap_or(0) > 0,
-            "{name} primary fills"
-        );
-        assert!(
-            outcome["reference_fills"].as_u64().unwrap_or(0) > 0,
-            "{name} reference fills"
-        );
-    }
-    for key in [
-        "primary_result_hash",
-        "reference_result_hash",
-        "combined_return_bps",
-        "primary_fills",
-        "reference_fills",
-    ] {
-        assert_eq!(cli[key], http[key], "CLI and HTTP differ at {key}");
-    }
-
-    match via_python("run_multi_leg_backtest", &spec) {
-        None => eprintln!("[skip] Python leg: PyO3 extension not built"),
-        Some(Ok(python)) => {
-            for key in [
-                "primary_result_hash",
-                "reference_result_hash",
-                "combined_return_bps",
-                "primary_fills",
-                "reference_fills",
-            ] {
-                assert_eq!(cli[key], python[key], "CLI and Python differ at {key}");
-            }
-        }
-        Some(Err(payload)) => panic!("Python multi-leg use case failed: {payload}"),
     }
 }
 

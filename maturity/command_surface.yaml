@@ -40,7 +40,7 @@ commands:
     credentials: none
     external_side_effect: none
     default_enabled: true
-    note: 父命令；validate-dataset/backtest/verify/compare-runs/run-experiment/depth-backtest/verify-depth 子入口复用 qx-app 用例，等级随子命令取 R；三入口契约由 CLI/HTTP/Python 共用
+    note: 父命令；validate-dataset/backtest/verify/compare-runs/run-experiment/run-multi-leg-experiment/depth-backtest/verify-depth/multi-leg-backtest 子入口复用 qx-app 用例，等级随子命令取 R；SDK 与 HTTP 共用 Rust 用例
   - name: backtest
     level: R
     parent: true
