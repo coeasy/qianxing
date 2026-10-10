@@ -216,7 +216,7 @@ cargo run --release -p qx-cli -- serve deploy/qianxing.runtime.example.json
 
 ### Shared research API
 
-`POST /app/validate-dataset`、`POST /app/backtest`、`POST /app/depth-backtest`、`POST /app/verify`、`POST /app/verify-depth` 和 `POST /app/compare-runs` 使用与 CLI/Python 相同的版本化 `qx-app` contract。研究入口目前覆盖同步 Bar 与 L1/L2 Tick/OrderBook 工作流。输入文件必须位于 `QX_API_DATA_ROOT`（默认 `.qianxing/api-data`）内；输出只写入 `QX_API_ARTIFACT_ROOT`（默认系统临时目录下的 `qianxing-api-runs/<run_id>`）。请求中的路径不能越出输入根目录，也不能覆盖服务端产物根目录。服务启动前把数据放入输入目录，并用 mTLS Operator 身份保护远程 API。
+`POST /app/*` 研究入口使用与 CLI/Python 相同的版本化 `qx-app` contract，覆盖同步与异步 Bar、L1 Tick、L2/L3 OrderBook 工作流。异步任务可查询状态并协作取消。输入文件必须位于 `QX_API_DATA_ROOT`（默认 `.qianxing/api-data`）内；输出只写入 `QX_API_ARTIFACT_ROOT`（默认系统临时目录下的 `qianxing-api-runs/<run_id>`）。请求中的路径不能越出输入根目录，也不能覆盖服务端产物根目录。服务启动前把数据放入输入目录，并用 mTLS Operator 身份保护远程 API。
 
 API 的认证边界只由 `transport` 与 `api.operators` 决定，不由 `environment` 的措辞决定（V13 R2 第二十三遍 #244）：
 
@@ -254,8 +254,8 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 
 ### HTTP 读面与控制面路由
 
-下表是 `qx-api` 当前实现的全部入口（18 条 HTTP 路由——17 条 `GET` 读面 + 1 条 `POST` 写面——再加 1 条 WebSocket 升级），逐条来自
-`crates/qx-api/src/lib.rs` 的 `handle_inner`。除 `/health`、`/ready`、`/schema/account-snapshot-v1`、`/schema/contract-matrix`
+下表是 `qx-api` 当前实现的全部 HTTP 与 WebSocket 入口。静态路由来自
+`crates/qx-api/src/lib.rs` 的 `handle_inner`，带 `{run_id}` 的动态路由由 `app_surface.rs` 的路由模板登记。除 `/health`、`/ready`、`/schema/account-snapshot-v1`、`/schema/contract-matrix`
 之外，只要运行时配置里装了操作员权限策略（`transport: "mtls"` 必然装），未通过证书识别的
 请求一律 `403 {"error":"authenticated_operator_required"}`。「返回」那一格里写成 `{…}` 的键集不是示意：`crates/qx-cli/src/tests/api_response_field_doc.rs` 会在同一进程里驱动 `ApiService`，把每条入口真的序列化出来的键集与这一格逐条比相等（V13 R2 第六遍）。
 路由名这一层的相等由 `crates/qx-cli/src/tests/api_endpoint_table_routes.rs` **逐张表**核对，
@@ -281,10 +281,15 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /control/commands` | 受理结果 | 载荷非法 → `400`；未识别操作员 → `403`；先持久化再入队，入队失败不回滚受理、计入 `qx_api_command_enqueue_failures_total`（见下「指标出口」） |
 | `POST /app/validate-dataset` | 应用层用例 `qx_app::validate_dataset` 的裁决文档（请求体是 `DatasetSpec` JSON） | 数据集**不足**是成功返回（裁决里 `usable` 为假且 `gaps` 非空，仍 200），不是非 200；只有"在盘但读不出来"才失败（T2-2） |
 | `POST /app/backtest` | 应用层用例 `qx_app::run_backtest` 的结果文档（请求体是 `BacktestSpec` JSON） | 四份产物落在 spec 的 `output_dir` 下；与 `qx-cli app backtest`、Python 的 `app.run_backtest` 是**同一份结果文档**（同一 use case、同一 `result_hash`，退出门 G1） |
+| `POST /app/backtest/start` | 应用层 `BacktestSpec::start` 的运行句柄（请求体仍为 `BacktestSpec` JSON） | 立即返回 `run_id/status`，结果通过 `GET /app/runs/{run_id}` 读取；取消通过对应 cancel 路由协作传入 Rust Bar 撮合循环 |
+| `GET /app/runs/{run_id}` | 运行状态以及完成后的原始 outcome/error 文档 | 运行注册表只在服务进程内，最多保留 1024 项；容量压力下仅淘汰终态项，服务重启后句柄失效；未知 ID 为 404 |
+| `POST /app/runs/{run_id}/cancel` | 请求协作取消并返回当前状态 | 取消在 Rust 撮合边界生效，不返回部分报告；取消可能与成功完成竞态，客户端以随后状态查询为准；未知 ID 为 404 |
 | `POST /app/verify` | 应用层用例 `qx_app::verify_run` 的复核文档（请求体取上一行的响应体） | 产物缺失/互不一致是成功返回（`verified` 为假 + `mismatches` 非空，仍 200）；只有"这份 outcome 自己没带 run_id"才失败（T2-2） |
 | `POST /app/compare-runs` | 应用层用例 `qx_app::compare_runs` 的确定性排序结果（请求体为 `CompareRunsSpec` JSON） | 只比较相同标的、相同数据指纹的已完成运行；收益降序、回撤升序、run_id 升序 |
 | `POST /app/run-experiment` | 应用层用例 `qx_app::run_experiment` 的有界参数实验结果（请求体为 `RunExperimentSpec` JSON） | 最多 256 个 Bar 候选；候选复用 Rust `run_backtest`，成功结果复用 `compare_runs`，每候选错误隔离记录；HTTP 将输入限制在数据根目录，产物写入服务端 artifact 根目录 |
 | `POST /app/depth-backtest` | 应用层用例 `qx_app::run_depth_backtest` 的 L1 Tick 或 L2/L3 OrderBook 回测结果（请求体为 `DepthBacktestSpec` JSON） | L1 必须恰有买卖一档并复用 Rust Tick 内核，L2 使用 Rust 逐档订单簿内核；回放校验通过后才发布 manifest 与摘要、权益、成交四份产物；HTTP 输入限制在数据根目录，产物写到服务端 artifact 根目录 |
+| `POST /app/depth-backtest/start` | `DepthBacktestSpec::start` 的 Tick/OrderBook 运行句柄（请求体仍为 `DepthBacktestSpec` JSON） | 立即返回 `run_id/status`，复用 Rust Tick 或订单簿协作取消循环；状态、结果和取消走 `/app/runs/{run_id}` 路由 |
+| `POST /app/run-experiment/start` | `RunExperimentSpec::start` 的后台参数实验句柄 | 立即返回 `run_id/status`，候选和 Bar 循环复用 Rust 协作取消；状态与取消走 `/app/runs/{run_id}` 路由 |
 | `POST /app/verify-depth` | 用例 `qx_app::verify_depth_run` 复核 L1/L2 产物（请求体取 depth-backtest 响应） | 重新读取并核对 manifest、summary、权益/成交计数与重放账簿条数；不一致为 200 + verified=false |
 | 任意路径 + `Upgrade: websocket` | `101` 帧流 | 见下 |
 
@@ -365,10 +370,18 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `GET /events/live[?after=&…]` | 事件总线现读增量，游标口径与上一行同一条实现 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`（游标过旧/超前，含空日志）；404 `account_projection_not_found`；500；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /control/audit` | 控制面审计流水 | 400 带任何查询串——这条入口同样没有收窄键（`AuditRecord` 没有账户列），与上一行同属整体现读面，正文点名被拒的那把键（V13 R2 第十三遍 / R6）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /control/commands` | 提交控制命令；启用访问策略时 operator 身份必须来自认证边界 | 400 请求体不合法（缺审计字段，或该命令类型在当前构建里没有派发者）；403 未认证 `authenticated_operator_required`／已认证但策略给不出权限 `forbidden`；409 命令被控制面拒绝（`ControlError` 的 Debug 形态，四个变体名见下段）；503 队列不可用 `control_state_unavailable`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `POST /app/validate-dataset` | 应用层用例 ValidateDataset：这份数据能否支撑一次 Bar 回测（请求体是 DatasetSpec JSON） | 非 200 状态码由响应体里的类别字段派生（crates/qx-api/src/app_surface.rs 的类别映射是唯一一份）：400 输入不合法；404 数据取不到；422 档位不足；403 权限不足；409 冲突；503 超时或存储故障；500 内部不一致。错误体是与 CLI/Python 逐字节相同的应用层错误文档，不是读面那套错误码形态；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/validate-dataset` | 应用层用例 ValidateDataset：这份数据能否支撑一次 Bar 回测（请求体是 DatasetSpec JSON） | 非 200 状态码由响应体里的类别字段派生（crates/qx-api/src/app_surface.rs 的类别映射是唯一一份）：400 输入不合法；404 数据取不到；422 档位不足；403 权限不足；409 冲突；503 超时或存储故障；500 内部不一致。所有 `/app/*` 路由都拒绝查询串（400 `application_routes_do_not_accept_query_parameters`）；错误体是与 CLI/Python 逐字节相同的应用层错误文档，不是读面那套错误码形态；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/backtest` | 应用层用例 RunBacktest：跑一次 Bar 回测并落四份产物（请求体是 BacktestSpec JSON） | 与上一行同一份类别映射；同一运行身份已存在且身份不同是 409（不覆盖历史）；产物写在请求体点名的产物目录下，是**服务进程**的文件系统——所以这条入口与 /control/commands 同一把锁（配了访问策略的部署里都要 operator 身份）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/backtest/start` | 创建 Rust Bar 回测后台任务 | 400/404/409/422/500/503 复用应用层错误类别映射；运行状态通过 GET 查询，取消通过 POST 请求；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /app/runs/{run_id}` | 读取本进程任务状态与终态结果 | 404 未知任务；返回结果保留在有界内存注册表，服务重启或容量淘汰后不可读取；429/503 同全局限流出口 |
+| `POST /app/runs/{run_id}/cancel` | 请求协作取消 Bar/Tick/OrderBook 任务 | 202 表示取消请求已受理（可能已完成）；取消不产生部分报告；404 未知任务；429/503 同全局限流出口 |
 | `POST /app/depth-backtest` | 应用层用例 RunDepthBacktest：通过 Rust Tick/L2 OrderBook 内核回测并落四份产物（请求体是 DepthBacktestSpec JSON） | 输入帧限制在服务端数据根目录；服务端指定产物根目录；L1/L2 档位不匹配返回 422、已有产物异身份返回 409；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/depth-backtest/start` | 创建 Rust Tick/OrderBook 后台回测任务 | 400/404/409/422/500/503 复用应用层错误类别映射；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口 |
+| `POST /app/run-experiment/start` | 创建 Rust 参数实验后台任务 | 候选和 Bar 循环复用协作取消；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口 |
 | `POST /app/verify` | 应用层用例 VerifyRun：四份产物是否互相印证（请求体取上一行的响应体） | 与上一行同一份类别映射；产物缺失或互相矛盾是 200 加一个为假的裁决（不是非 200——「复核不通过」与「复核跑不起来」是两件事）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/verify-depth` | 复核 Tick/OrderBook 回测的 manifest、summary、权益、成交和重放账簿证据 | 输入产物必须位于服务端 artifact 根目录；不一致为 200 + `verified=false`；缺失或不可读复用应用错误映射；429/503 同全局限流出口 |
+| `POST /app/compare-runs` | 对同一标的与数据指纹的已完成 Bar 运行作确定性排序 | 400 输入不合法、422 比较集合不满足约束；不访问服务端文件；429/503 同全局限流出口 |
+| `POST /app/run-experiment` | 复用共享 Bar 回测与 compare-runs 执行有界参数网格 | 输入帧限于数据根目录，工件写到服务端 artifact 根目录；候选错误隔离记录；429/503 同全局限流出口 |
 
 `POST /control/commands` 那一格的 409 是控制面按 `ControlError` 的 Debug 形态回报，四个会变 409 的
 变体名是 `DuplicateRequest`、`DuplicateCommand`、`UnknownCommand`、`AlreadyFinal`；

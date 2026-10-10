@@ -2,7 +2,7 @@
 
 Typed facade for schemas currently implemented by qx-app. Every candidate
 backtest and comparison is executed by the shared Rust application layer.
-Tick and OrderBook matching are performed by the shared Rust engines. This module does not imply multi-leg, Paper, or Live application coverage.
+Tick, OrderBook, and parameter experiments run through the shared Rust engines and application use cases. Multi-leg, Paper, and Live workflows are not exposed by this facade.
 """
 
 from __future__ import annotations
@@ -366,7 +366,7 @@ class DepthBacktestOutcome:
 
 
 class RunHandle(Generic[_ResultT]):
-    """Cooperative Rust worker handle shared by Bar, Tick, and OrderBook runs."""
+    """Cooperative Rust worker handle for Bar, depth, and parameter experiment runs."""
 
     def __init__(self, native_handle: Any, result_type: type[_ResultT]):
         self._native = native_handle
@@ -456,6 +456,15 @@ def verify_depth_run(outcome: DepthBacktestOutcome | dict[str, Any]) -> Verifica
     return VerificationResult.from_dict(_invoke(native.app_verify_depth_run, value))
 
 
+def start_experiment(spec: RunExperimentSpec | dict[str, Any]) -> RunHandle[RunExperimentResult]:
+    """Start a Rust parameter experiment with candidate and Bar-loop cancellation."""
+    try:
+        native_handle = native.app_start_experiment(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, RunExperimentResult)
+
+
 def doctor() -> dict[str, Any]:
     """Report which native application entry points are available in this install."""
     extension_available = native.available()
@@ -477,6 +486,7 @@ def doctor() -> dict[str, Any]:
                 "run.verify.v1",
                 "backtest.compare.v1",
                 "experiment.grid.bar.v1",
+                "experiment.grid.bar.run-handle.v1",
                 "backtest.depth.l1.v1",
                 "backtest.depth.l2.v1",
                 "backtest.depth.run-handle.v1",

@@ -6,7 +6,7 @@ The extension uses PyO3's Python 3.10 stable ABI. Release builds publish one `cp
 
 ## Current SDK surface
 
-The public `qianxing` namespace exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, L1 Tick and L2 OrderBook backtests, artifact verification, deterministic comparison of completed runs, bounded Bar parameter-grid experiments, and cooperative `RunHandle` lifecycle for Bar/Tick/OrderBook runs. Matching, risk, accounting, replay verification, cancellation boundaries, and experiment execution stay in Rust; Python only provides typed request/result objects.
+The public `qianxing` namespace exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, L1 Tick and L2 OrderBook backtests, artifact verification, deterministic comparison of completed runs, bounded Bar parameter-grid experiments, and cooperative `RunHandle` lifecycle for Bar/Tick/OrderBook/parameter experiments. Matching, risk, accounting, replay verification, cancellation boundaries, and experiment execution stay in Rust; Python only provides typed request/result objects.
 
 The wheel also exposes the existing versioned strategy contract as `qianxing.strategy`, plus the optional adapters as `qianxing.ccxt` and `qianxing.ashare`. Those connector modules preserve their own documented boundaries and are not a substitute for the not-yet-complete shared Paper/Live application workflows.
 

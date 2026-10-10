@@ -51,6 +51,7 @@ def _load_native():
                         "app_verify_run",
                         "app_compare_runs",
                         "app_run_experiment",
+                        "app_start_experiment",
                         "app_run_depth_backtest",
                         "app_start_depth_backtest",
                         "app_verify_depth_run",
@@ -213,6 +214,7 @@ class AppUseCaseTests(unittest.TestCase):
             ExperimentParameterSpace,
             RunExperimentSpec,
             run_experiment,
+            start_experiment,
         )
 
         typed = run_experiment(
@@ -239,6 +241,32 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(typed.succeeded_candidates, 2)
         self.assertEqual(typed.failed_candidates, 0)
         self.assertEqual(len(typed.comparison.runs), 2)
+
+        handle = start_experiment(
+            RunExperimentSpec(
+                experiment_id="py-typed-grid-handle",
+                base=BacktestSpec(
+                    run_id="unused-handle",
+                    instrument="BTCUSDT.BINANCE",
+                    bars_path=str(self.root / "deploy" / "qianxing.bar-frame.example.json"),
+                    settlement_currency="USDT",
+                    initial_cash_raw=100_000_000_000_000,
+                    output_dir=str(self.output_dir / "typed-handle"),
+                    strategy=BuiltinStrategySpec(
+                        kind="sma_cross",
+                        strategy_id="py-typed-sma-handle",
+                        fast_window=2,
+                        slow_window=4,
+                    ),
+                ),
+                parameter_space=(ExperimentParameterSpace("fast_window", (2, 3)),),
+            )
+        )
+        self.assertEqual(handle.wait(timeout_ms=10_000), "succeeded")
+        async_result = handle.result()
+        self.assertIsNotNone(async_result)
+        self.assertEqual(async_result.completed_candidates, 2)
+        self.assertIsNone(handle.result())
 
     def test_l1_tick_and_typed_sdk_use_the_shared_rust_application_kernel(self):
         self._require()

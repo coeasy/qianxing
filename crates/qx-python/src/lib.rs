@@ -21,7 +21,7 @@ use qx_app::{
     compare_runs, run_backtest, run_depth_backtest, run_experiment, validate_dataset,
     verify_depth_run, verify_run, AppError, BacktestOutcome, BacktestSpec, CallerCapability,
     CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec, RunContext,
-    RunExperimentSpec, RunHandle, RunStatus,
+    RunExperimentResult, RunExperimentSpec, RunHandle, RunStatus,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
@@ -101,6 +101,15 @@ fn app_run_experiment(spec_json: &str) -> PyResult<String> {
 }
 
 #[pyfunction]
+fn app_start_experiment(spec_json: &str) -> PyResult<PyRunHandle> {
+    let spec = RunExperimentSpec::from_json(spec_json).map_err(app_error)?;
+    let context = research_context(&spec.experiment_id);
+    Ok(PyRunHandle {
+        inner: NativeRun::Experiment(spec.start(context)),
+    })
+}
+
+#[pyfunction]
 fn app_run_depth_backtest(spec_json: &str) -> PyResult<String> {
     let spec = DepthBacktestSpec::from_json(spec_json).map_err(app_error)?;
     run_depth_backtest(&spec, &research_context(&spec.run_id))
@@ -120,6 +129,7 @@ fn app_start_depth_backtest(spec_json: &str) -> PyResult<PyRunHandle> {
 enum NativeRun {
     Bar(RunHandle<BacktestOutcome>),
     Depth(RunHandle<DepthBacktestOutcome>),
+    Experiment(RunHandle<RunExperimentResult>),
 }
 
 #[pyclass(name = "RunHandle")]
@@ -134,6 +144,7 @@ impl PyRunHandle {
         match &self.inner {
             NativeRun::Bar(handle) => handle.run_id(),
             NativeRun::Depth(handle) => handle.run_id(),
+            NativeRun::Experiment(handle) => handle.run_id(),
         }
     }
 
@@ -142,6 +153,7 @@ impl PyRunHandle {
         status_name(match &mut self.inner {
             NativeRun::Bar(handle) => handle.status(),
             NativeRun::Depth(handle) => handle.status(),
+            NativeRun::Experiment(handle) => handle.status(),
         })
     }
 
@@ -149,6 +161,7 @@ impl PyRunHandle {
         match &self.inner {
             NativeRun::Bar(handle) => handle.cancel(),
             NativeRun::Depth(handle) => handle.cancel(),
+            NativeRun::Experiment(handle) => handle.cancel(),
         }
     }
 
@@ -161,6 +174,7 @@ impl PyRunHandle {
             let status = match &mut self.inner {
                 NativeRun::Bar(handle) => handle.status(),
                 NativeRun::Depth(handle) => handle.status(),
+                NativeRun::Experiment(handle) => handle.status(),
             };
             if matches!(
                 status,
@@ -205,6 +219,11 @@ impl PyRunHandle {
                         })
                     })
                 })
+                .transpose()
+                .map_err(app_error),
+            NativeRun::Experiment(handle) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|outcome| outcome.to_json()))
                 .transpose()
                 .map_err(app_error),
         }
@@ -382,6 +401,7 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_verify_run, module)?)?;
     module.add_function(wrap_pyfunction!(app_compare_runs, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_experiment, module)?)?;
+    module.add_function(wrap_pyfunction!(app_start_experiment, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_depth_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_start_depth_backtest, module)?)?;
     module.add_class::<PyRunHandle>()?;

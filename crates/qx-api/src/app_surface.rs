@@ -118,72 +118,6 @@ pub(crate) fn post_run_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
     respond(run_backtest(&spec, &context(&spec.run_id)).and_then(|outcome| outcome.to_json()))
 }
 
-/// 将 HTTP 输入文件限制在服务配置的数据根目录内；绝对路径只在根目录之下接受，
-/// `..`、盘符跳转和指向根外的符号链接一律拒绝。
-fn resolve_input_path(path: &mut String, data_root: &Path) -> Result<(), AppError> {
-    use std::path::Component;
-
-    std::fs::create_dir_all(data_root).map_err(|error| {
-        AppError::from_io(
-            &format!("创建 API 数据根目录 {}", data_root.display()),
-            &error,
-        )
-    })?;
-    let root = std::fs::canonicalize(data_root).map_err(|error| {
-        AppError::from_io(
-            &format!("解析 API 数据根目录 {}", data_root.display()),
-            &error,
-        )
-    })?;
-    let input = Path::new(path);
-    let lexical_root = if data_root.is_absolute() {
-        data_root.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map_err(|error| AppError::from_io("解析 API 工作目录", &error))?
-            .join(data_root)
-    };
-    let relative = if input.is_absolute() {
-        input.strip_prefix(&lexical_root).map_err(|_| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                "HTTP 文件路径必须位于服务配置的根目录内",
-            )
-        })?
-    } else {
-        input
-    };
-    if relative.as_os_str().is_empty()
-        || relative
-            .components()
-            .any(|part| !matches!(part, Component::Normal(_)))
-    {
-        return Err(AppError::new(
-            AppErrorCategory::InvalidInput,
-            "HTTP 文件路径必须是配置根目录下的相对路径",
-        ));
-    }
-    let candidate = root.join(relative);
-    if candidate.exists() {
-        let resolved = std::fs::canonicalize(&candidate).map_err(|error| {
-            AppError::from_io(
-                &format!("解析 API 数据文件 {}", candidate.display()),
-                &error,
-            )
-        })?;
-        if !resolved.starts_with(&root) {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "HTTP 文件不能通过符号链接越出服务配置的根目录",
-            ));
-        }
-        *path = resolved.to_string_lossy().into_owned();
-    } else {
-        *path = candidate.to_string_lossy().into_owned();
-    }
-    Ok(())
-}
-
 pub(crate) fn post_verify_run(body: &str) -> ApiResponse {
     let outcome = match BacktestOutcome::from_json(body) {
         Ok(outcome) => outcome,
@@ -255,3 +189,8 @@ pub(crate) fn depth_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
         .into_owned();
     respond(run_depth_backtest(&spec, &context(&spec.run_id)).and_then(|outcome| outcome.to_json()))
 }
+
+#[path = "app_runs.rs"]
+mod app_runs;
+use app_runs::resolve_input_path;
+pub(crate) use app_runs::{app_run_route, AppRunRegistry};

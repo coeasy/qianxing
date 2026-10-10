@@ -160,6 +160,22 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
             cursor = end;
         }
     }
+    let app_surface = workspace_source("crates/qx-api/src/app_runs.rs");
+    for (constant, method) in [
+        ("RUN_START_BACKTEST_ROUTE", "POST"),
+        ("RUN_STATUS_ROUTE_TEMPLATE", "GET"),
+        ("RUN_CANCEL_ROUTE_TEMPLATE", "POST"),
+        ("RUN_START_DEPTH_ROUTE", "POST"),
+        ("RUN_START_EXPERIMENT_ROUTE", "POST"),
+    ] {
+        let marker = format!("const {constant}: &str = \"");
+        let template = app_surface
+            .split_once(&marker)
+            .and_then(|(_, rest)| rest.split_once('\"'))
+            .map(|(template, _)| template)
+            .unwrap_or_else(|| panic!("app_surface 缺少动态端点模板 {constant}"));
+        pairs.insert((method.to_string(), template.to_string()));
+    }
     assert!(
         pairs.len() >= 21,
         "分派区间里只数出 {} 条 (方法, 路由)，比端点表声称的 21 条还少——取数区间被改窄了",

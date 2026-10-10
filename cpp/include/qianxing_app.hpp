@@ -38,6 +38,10 @@ public:
         return post("/app/backtest", spec_json);
     }
 
+    AppResponse start_backtest(std::string_view spec_json) const {
+        return post("/app/backtest/start", spec_json);
+    }
+
     AppResponse verify_run(std::string_view outcome_json) const {
         return post("/app/verify", outcome_json);
     }
@@ -54,11 +58,38 @@ public:
         return post("/app/depth-backtest", spec_json);
     }
 
+    AppResponse start_depth_backtest(std::string_view spec_json) const {
+        return post("/app/depth-backtest/start", spec_json);
+    }
+
+    AppResponse start_experiment(std::string_view spec_json) const {
+        return post("/app/run-experiment/start", spec_json);
+    }
+
+    AppResponse run_status(std::string_view run_id) const {
+        return get(run_path(run_id));
+    }
+
+    AppResponse cancel_run(std::string_view run_id) const {
+        return post(run_path(run_id) + "/cancel", "{}");
+    }
+
     AppResponse verify_depth_run(std::string_view outcome_json) const {
         return post("/app/verify-depth", outcome_json);
     }
 
 private:
+    static std::string run_path(std::string_view run_id) {
+        return "/app/runs/" + std::string(run_id);
+    }
+
+    AppResponse get(std::string_view path) const {
+        if (!transport_) {
+            return {0, "Qianxing AppClient transport is not configured"};
+        }
+        return transport_("GET", path, {});
+    }
+
     AppResponse post(std::string_view path, std::string_view body) const {
         if (!transport_) {
             return {0, "Qianxing AppClient transport is not configured"};

@@ -41,6 +41,7 @@ APP_ENTRYPOINTS = (
     "app_verify_run",
     "app_compare_runs",
     "app_run_experiment",
+    "app_start_experiment",
     "app_run_depth_backtest",
     "app_start_depth_backtest",
     "app_verify_depth_run",
@@ -108,6 +109,11 @@ def app_compare_runs(spec_json: str) -> str:
 def app_run_experiment(spec_json: str) -> str:
     """Expand and execute a bounded Rust backtest parameter experiment."""
     return str(_extension().app_run_experiment(spec_json))
+
+
+def app_start_experiment(spec_json: str) -> Any:
+    """Start a bounded parameter grid in the Rust application worker."""
+    return _extension().app_start_experiment(spec_json)
 
 
 def app_run_depth_backtest(spec_json: str) -> str:

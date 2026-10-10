@@ -927,6 +927,7 @@ pub struct ApiService {
     /// 并发连接预算。一份连接一个线程，所以上限同时是线程数上限；超限当场 503。
     connection_budget: Arc<ConnectionBudget>,
     app_paths: app_surface::AppPaths,
+    app_runs: app_surface::AppRunRegistry,
 }
 
 #[derive(Default)]
@@ -1130,6 +1131,7 @@ impl ApiService {
             cors: None,
             connection_budget: default_connection_budget(),
             app_paths: app_surface::AppPaths::from_environment(),
+            app_runs: app_surface::AppRunRegistry::default(),
         }
     }
 
@@ -1500,6 +1502,12 @@ impl ApiService {
                 return ApiResponse::json(403, error_json("authenticated_operator_required"));
             }
         }
+        if route.starts_with("/app/") && !query.is_empty() {
+            return ApiResponse::json(
+                400,
+                error_json("application_routes_do_not_accept_query_parameters"),
+            );
+        }
         // 读面的查询参数按入口点名：#205 那支只盖住无键整体现读端点，带键那七条与按账户过滤那两条各自照收自己名单里的键、
         // 名单外的键当场点名，于是 `?acount_id=` 拼错不会落到"没有收窄键"那一支，把默认账户念成调用方点名的账户（V13 R6 / R31）。
         if let Some(name) = admission::refused_query_param(route, query) {
@@ -1511,6 +1519,11 @@ impl ApiService {
             if let Some(response) = self.missing_projection_response(query) {
                 return response;
             }
+        }
+        if let Some(response) =
+            app_surface::app_run_route(method, route, body, &self.app_paths, &self.app_runs)
+        {
+            return response;
         }
         match (method, route) {
             ("GET", "/health") => ApiResponse::json(200, "{\"status\":\"ok\"}"),

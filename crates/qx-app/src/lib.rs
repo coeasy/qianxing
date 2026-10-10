@@ -36,7 +36,7 @@
 //! 现在**没有**的东西（刻意留着，别按名字猜它存在）：多腿回测、Paper/Live 用例、
 //! `ReadRunArtifacts`/`BuildReport`（T2-4）。本 crate 今天只交付
 //! 「数据验证 → Bar/Tick/OrderBook 回测 → 产物 → 复核」这条研究垂直切片；
-//! `BacktestSpec::start` 与 `DepthBacktestSpec::start` 返回可协作取消的 [`RunHandle`]。
+//! Bar、Tick/OrderBook 与参数实验的 `start` 入口返回可协作取消的 [`RunHandle`]。
 
 pub mod cases;
 pub mod context;

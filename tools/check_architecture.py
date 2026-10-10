@@ -6035,6 +6035,24 @@ def api_surface_doc_check() -> None:
     """
     api = production_text((ROOT / "crates/qx-api/src/lib.rs").read_text(encoding="utf-8"))
     declared = set(re.findall(r'\("(GET|POST|PUT|DELETE)", "(/[^"]*)"\)', api))
+    app_surface = production_text(
+        (ROOT / "crates/qx-api/src/app_runs.rs").read_text(encoding="utf-8")
+    )
+    dynamic_templates = (
+        ("RUN_START_BACKTEST_ROUTE", "POST"),
+        ("RUN_STATUS_ROUTE_TEMPLATE", "GET"),
+        ("RUN_CANCEL_ROUTE_TEMPLATE", "POST"),
+        ("RUN_START_DEPTH_ROUTE", "POST"),
+        ("RUN_START_EXPERIMENT_ROUTE", "POST"),
+    )
+    dynamic_declared = set()
+    for constant, method in dynamic_templates:
+        match = re.search(
+            rf'pub\(crate\) const {constant}: &str = "(/[^\"]+)";', app_surface
+        )
+        if match:
+            dynamic_declared.add((method, match.group(1)))
+    declared.update(dynamic_declared)
     readme = (ROOT / "deploy/README.md").read_text(encoding="utf-8")
     documented = set()
     for line in readme.splitlines():
@@ -6046,6 +6064,17 @@ def api_surface_doc_check() -> None:
         bool(declared) and documented == declared,
         "deploy/README.md 的端点表与 qx-api 路由集合完全一致",
         f"只在代码 {sorted(declared - documented)} / 只在文档 {sorted(documented - declared)}",
+    )
+    check(
+        dynamic_declared == {
+            ("POST", "/app/backtest/start"),
+            ("GET", "/app/runs/{run_id}"),
+            ("POST", "/app/runs/{run_id}/cancel"),
+            ("POST", "/app/depth-backtest/start"),
+            ("POST", "/app/run-experiment/start"),
+        },
+        "动态 SDK 运行路由由 app_surface 的两条模板显式登记并进入端点契约",
+        f"登记到 {sorted(dynamic_declared)}",
     )
     check(
         "未列出的路径一律 404" in readme

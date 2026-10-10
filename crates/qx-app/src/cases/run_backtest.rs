@@ -88,7 +88,7 @@ impl BacktestSpec {
     }
 }
 
-fn run_backtest_inner(
+pub(super) fn run_backtest_inner(
     spec: &BacktestSpec,
     context: &RunContext,
     cancellation: Option<&CancellationToken>,

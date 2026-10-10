@@ -6,11 +6,13 @@
 //! risk, ledger, or metrics implementation.
 
 use super::compare_runs::COMPARE_RUNS_SCHEMA_VERSION;
-use super::{attach, compare_runs, run_backtest};
-use crate::cases::guard::guard_panics;
+use super::guard::guard_panics;
+use super::run_backtest::run_backtest_inner;
+use super::{attach, compare_runs};
+use crate::run_handle::CancellationToken;
 use crate::{
     AppError, AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsResult,
-    CompareRunsSpec, ComparedRun, RunContext,
+    CompareRunsSpec, ComparedRun, RunContext, RunHandle,
 };
 use qx_core::Fnv1a;
 use qx_strategy::builtin_signal::BuiltinSignalKnob;
@@ -80,7 +82,23 @@ impl RunExperimentSpec {
                 "experiment_id 必须是最多 96 字符的 [A-Za-z0-9._-] 标识",
             ));
         }
-        self.base.validate()?;
+        // Validate the stable base fields without rejecting candidate-specific bad values.
+        // Those are intentionally isolated into each candidate result below. The fast/slow
+        // pair is normalized together because changing either knob can make the pair invalid.
+        let mut base = self.base.clone();
+        for dimension in &self.parameter_space {
+            match dimension.name.as_str() {
+                "fast_window" | "slow_window" => {
+                    base.strategy.fast_window = 1;
+                    base.strategy.slow_window = 2;
+                }
+                "period" => base.strategy.period = 2,
+                "threshold_bps" => base.strategy.threshold_bps = 0,
+                "quantity_raw" => base.strategy.quantity_raw = 1,
+                _ => {}
+            }
+        }
+        base.validate()?;
         if self.parameter_space.is_empty() {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
@@ -219,16 +237,44 @@ pub fn run_experiment(
     spec: &RunExperimentSpec,
     context: &RunContext,
 ) -> Result<RunExperimentResult, AppError> {
-    context.require(CallerCapability::Research, "参数回测实验")?;
     let correlation_id = context.correlation_id().to_string();
-    let result = guard_panics(&correlation_id, || run_experiment_inner(spec, context));
-    result.map_err(|error| attach(error, &correlation_id))
+    context.require(CallerCapability::Research, "参数回测实验")?;
+    guard_panics(&correlation_id, || {
+        run_experiment_inner(spec, context, None)
+    })
+    .map_err(|error| attach(error, &correlation_id))?
+    .ok_or_else(|| {
+        attach(
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                "同步参数实验未产生报告",
+            ),
+            &correlation_id,
+        )
+    })
+}
+
+impl RunExperimentSpec {
+    /// Start an experiment with cancellation checks between candidates and
+    /// inside each candidate's shared Rust Bar engine loop.
+    pub fn start(self, context: RunContext) -> RunHandle<RunExperimentResult> {
+        let run_id = context.correlation_id().to_string();
+        RunHandle::spawn(run_id, move |cancellation| {
+            context.require(CallerCapability::Research, "参数回测实验")?;
+            let correlation_id = context.correlation_id().to_string();
+            guard_panics(&correlation_id, || {
+                run_experiment_inner(&self, &context, Some(&cancellation))
+            })
+            .map_err(|error| attach(error, &correlation_id))
+        })
+    }
 }
 
 fn run_experiment_inner(
     spec: &RunExperimentSpec,
     context: &RunContext,
-) -> Result<RunExperimentResult, AppError> {
+    cancellation: Option<&CancellationToken>,
+) -> Result<Option<RunExperimentResult>, AppError> {
     let total = spec.validate()?;
     let spec_json = spec.to_json()?;
     let mut fingerprint = Fnv1a::new();
@@ -240,7 +286,9 @@ fn run_experiment_inner(
         .to_string_lossy()
         .into_owned();
     match std::fs::read_to_string(&artifact_path) {
-        Ok(existing) => return existing_result(&existing, &spec_fingerprint, &spec.experiment_id),
+        Ok(existing) => {
+            return existing_result(&existing, &spec_fingerprint, &spec.experiment_id).map(Some)
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(AppError::from_io("读取既有实验报告", &error)),
     }
@@ -262,6 +310,9 @@ fn run_experiment_inner(
 
     let mut candidates = Vec::with_capacity(total);
     for (index, parameters) in combinations.into_iter().enumerate() {
+        if cancellation.is_some_and(CancellationToken::is_cancelled) {
+            return Ok(None);
+        }
         let ordinal = index + 1;
         let mut candidate = spec.base.clone();
         candidate.run_id = format!("{}-{ordinal:04}", spec.experiment_id);
@@ -270,7 +321,11 @@ fn run_experiment_inner(
             .to_string_lossy()
             .into();
         let outcome = match apply_parameters(&mut candidate, &parameters) {
-            Ok(()) => run_backtest(&candidate, context),
+            Ok(()) => match run_backtest_inner(&candidate, context, cancellation) {
+                Ok(Some(outcome)) => Ok(outcome),
+                Ok(None) => return Ok(None),
+                Err(error) => Err(error),
+            },
             Err(error) => Err(error),
         };
         candidates.push(match outcome {
@@ -327,6 +382,9 @@ fn run_experiment_inner(
         comparison,
         artifact_path: artifact_path.clone(),
     };
+    if cancellation.is_some_and(CancellationToken::is_cancelled) {
+        return Ok(None);
+    }
     let report_json = result.to_json()?;
     std::fs::create_dir_all(&root)
         .map_err(|error| AppError::from_io("创建实验产物目录", &error))?;
@@ -334,11 +392,12 @@ fn run_experiment_inner(
         // Concurrent identical requests can finish their candidates together. The first report
         // wins; accept it only after reading and validating the exact experiment identity.
         if let Ok(existing) = std::fs::read_to_string(&artifact_path) {
-            return existing_result(&existing, &result.spec_fingerprint, &result.experiment_id);
+            return existing_result(&existing, &result.spec_fingerprint, &result.experiment_id)
+                .map(Some);
         }
         return Err(write_error);
     }
-    Ok(result)
+    Ok(Some(result))
 }
 
 fn apply_parameters(
