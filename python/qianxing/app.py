@@ -370,6 +370,42 @@ class DepthBacktestOutcome:
 
 
 @dataclass(frozen=True)
+class InstrumentId:
+    symbol: str
+    venue: str
+
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class TradingInstrumentSpec:
+    """The normalized Rust product contract consumed by market-aware app runs."""
+
+    instrument: InstrumentId | dict[str, str]
+    product: Literal["spot", "margin", "perpetual", "future", "option"]
+    base_currency: str
+    quote_currency: str
+    settlement_currency: str
+    contract_size: int
+    linear: bool
+    inverse: bool
+    price_tick: int
+    qty_step: int
+    min_qty: int
+    max_leverage: int
+    maintenance_margin_bps: int
+    valid_from: int
+    valid_to: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        if isinstance(self.instrument, InstrumentId):
+            value["instrument"] = self.instrument.to_dict()
+        return value
+
+
+@dataclass(frozen=True)
 class MultiLegBacktestSpec:
     run_id: str
     primary_bars_path: str
@@ -380,6 +416,16 @@ class MultiLegBacktestSpec:
     output_dir: str
     strategy: BuiltinStrategySpec
     seed: int = 0
+    primary_market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
+    reference_market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
+    maker_fee_bps: int = 2
+    taker_fee_bps: int = 5
+    primary_maker_fee_bps: int | None = None
+    primary_taker_fee_bps: int | None = None
+    reference_maker_fee_bps: int | None = None
+    reference_taker_fee_bps: int | None = None
+    funding_bps: int = 0
+    fill_model: Literal["next_bar_open", "best_price", "one_tick_slippage"] = "next_bar_open"
     schema_version: int = 1
 
     def to_dict(self) -> dict[str, Any]:
@@ -637,13 +683,14 @@ def doctor() -> dict[str, Any]:
                 "backtest.depth.l2.v1",
                 "backtest.depth.run-handle.v1",
                 "run.verify.depth.v1",
+                "backtest.multi-leg.bar.v1",
+                "backtest.multi-leg.bar.run-handle.v1",
             ]
             if app_available
             else []
         ),
         "remote_workflows": ["control.paper.v1", "control.live.v1"],
         "limitations": [
-            "Multi-leg backtests are not yet exposed by this SDK facade.",
             "Paper/Live submission requires a running qx-api service with matching workers; Live additionally requires authenticated operator policy.",
         ],
     }

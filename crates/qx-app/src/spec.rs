@@ -309,7 +309,8 @@ mod depth;
 pub use depth::{DepthBacktestOutcome, DepthBacktestSpec, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION};
 mod multi_leg;
 pub use multi_leg::{
-    MultiLegBacktestOutcome, MultiLegBacktestSpec, MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
+    MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegFillModel,
+    MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
 };
 
 /// `ValidateDataset` 的输出：一份**可复核**的裁决。

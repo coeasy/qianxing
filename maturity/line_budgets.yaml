@@ -5,6 +5,7 @@ crates/qx-adapter/src/ccxt.rs: 1160
 crates/qx-adapter/src/lib.rs: 728
 crates/qx-api/src/console.rs: 727
 crates/qx-api/src/lib.rs: 2917
+crates/qx-app/src/cases/run_multi_leg_backtest.rs: 557
 crates/qx-cli/src/cli.rs: 670
 crates/qx-cli/src/cli_args.rs: 511
 crates/qx-cli/src/event_pipeline.rs: 787
@@ -18,6 +19,7 @@ crates/qx-cli/src/tests/deploy_template_coverage.rs: 779
 crates/qx-cli/src/tests/e2e_and_python_contract.rs: 513
 crates/qx-cli/src/worker_entry.rs: 579
 crates/qx-cli/src/workers.rs: 527
+crates/qx-cli/tests/app_three_entrypoints.rs: 538
 crates/qx-control/src/lib.rs: 699
 crates/qx-core/src/event.rs: 721
 crates/qx-core/src/file_lock.rs: 516

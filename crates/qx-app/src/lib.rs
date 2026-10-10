@@ -33,7 +33,7 @@
 //! - 调用上下文与能力档：[`RunContext`]、[`CallerCapability`]
 //! - 错误：[`AppError`]、[`AppErrorCategory`]、[`AppAction`]、[`AppRetry`]
 //!
-//! 现在**没有**的东西（刻意留着，别按名字猜它存在）：多腿 market-spec / derivative-margin 扩展、Paper/Live 运行编排、
+//! 现在**没有**的东西（刻意留着，别按名字猜它存在）：Paper/Live 运行编排、
 //! `ReadRunArtifacts`/`BuildReport`（T2-4）。本 crate 今天只交付
 //! 「数据验证 → Bar/Tick/OrderBook 回测 → 产物 → 复核」这条研究垂直切片；
 //! Bar、Tick/OrderBook 与参数实验的 `start` 入口返回可协作取消的 [`RunHandle`]。
@@ -71,7 +71,7 @@ pub use run_handle::{RunHandle, RunStatus};
 pub use spec::{
     BacktestArtifacts, BacktestOutcome, BacktestSpec, BuiltinStrategySpec, DatasetSpec,
     DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestOutcome,
-    MultiLegBacktestSpec, VerificationResult, BACKTEST_SPEC_SCHEMA_VERSION,
+    MultiLegBacktestSpec, MultiLegFillModel, VerificationResult, BACKTEST_SPEC_SCHEMA_VERSION,
     DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION, MIN_BACKTEST_BARS,
     MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
 };

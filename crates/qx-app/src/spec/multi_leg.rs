@@ -2,9 +2,19 @@
 
 use super::{is_identity_token, BuiltinStrategySpec};
 use crate::error::{AppError, AppErrorCategory};
+use qx_core::TradingInstrumentSpec;
 use serde::{Deserialize, Serialize};
 
 pub const MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MultiLegFillModel {
+    #[default]
+    NextBarOpen,
+    BestPrice,
+    OneTickSlippage,
+}
 
 /// Both input BarFrames must have identical timestamps and distinct instruments.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,6 +30,34 @@ pub struct MultiLegBacktestSpec {
     pub seed: u64,
     pub output_dir: String,
     pub strategy: BuiltinStrategySpec,
+    #[serde(default)]
+    pub primary_market_spec: Option<TradingInstrumentSpec>,
+    #[serde(default)]
+    pub reference_market_spec: Option<TradingInstrumentSpec>,
+    #[serde(default = "default_maker_fee_bps")]
+    pub maker_fee_bps: i64,
+    #[serde(default = "default_taker_fee_bps")]
+    pub taker_fee_bps: i64,
+    #[serde(default)]
+    pub primary_maker_fee_bps: Option<i64>,
+    #[serde(default)]
+    pub primary_taker_fee_bps: Option<i64>,
+    #[serde(default)]
+    pub reference_maker_fee_bps: Option<i64>,
+    #[serde(default)]
+    pub reference_taker_fee_bps: Option<i64>,
+    #[serde(default)]
+    pub funding_bps: i64,
+    #[serde(default)]
+    pub fill_model: MultiLegFillModel,
+}
+
+fn default_maker_fee_bps() -> i64 {
+    qx_core::fee::DEFAULT_MAKER_BP
+}
+
+fn default_taker_fee_bps() -> i64 {
+    qx_core::fee::DEFAULT_TAKER_BP
 }
 
 impl MultiLegBacktestSpec {
@@ -46,6 +84,16 @@ impl MultiLegBacktestSpec {
             seed,
             output_dir: output_dir.into(),
             strategy,
+            primary_market_spec: None,
+            reference_market_spec: None,
+            maker_fee_bps: default_maker_fee_bps(),
+            taker_fee_bps: default_taker_fee_bps(),
+            primary_maker_fee_bps: None,
+            primary_taker_fee_bps: None,
+            reference_maker_fee_bps: None,
+            reference_taker_fee_bps: None,
+            funding_bps: 0,
+            fill_model: MultiLegFillModel::default(),
         }
     }
 
@@ -89,6 +137,39 @@ impl MultiLegBacktestSpec {
                 AppErrorCategory::InvalidInput,
                 "多腿两侧 initial_cash_raw 都必须为正数",
             ));
+        }
+        let fee_rates = [
+            self.maker_fee_bps,
+            self.taker_fee_bps,
+            self.primary_maker_fee_bps.unwrap_or(self.maker_fee_bps),
+            self.primary_taker_fee_bps.unwrap_or(self.taker_fee_bps),
+            self.reference_maker_fee_bps.unwrap_or(self.maker_fee_bps),
+            self.reference_taker_fee_bps.unwrap_or(self.taker_fee_bps),
+        ];
+        if fee_rates.iter().any(|rate| !(0..=10_000).contains(rate)) {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "多腿共享费率与腿级 maker/taker 费率必须在 0..=10000",
+            ));
+        }
+        if !(0..=10_000).contains(&self.funding_bps) {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "多腿 funding_bps 必须在 0..=10000",
+            ));
+        }
+        for (label, spec) in [
+            ("primary_market_spec", &self.primary_market_spec),
+            ("reference_market_spec", &self.reference_market_spec),
+        ] {
+            if let Some(spec) = spec {
+                spec.validate().map_err(|error| {
+                    AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        format!("MultiLegBacktestSpec.{label} 非法: {error:?}"),
+                    )
+                })?;
+            }
         }
         if !self.strategy.kind.needs_reference_leg() {
             return Err(AppError::new(

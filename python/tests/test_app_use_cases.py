@@ -104,6 +104,21 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(depth.command, "depth-backtest")
         self.assertEqual(depth.input, "depth.json")
 
+    def test_doctor_reports_all_native_multi_leg_entrypoints(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import doctor
+        from qianxing_bridge import native
+
+        with patch.object(native, "available", return_value=True), patch.object(
+            native, "app_available", return_value=True
+        ):
+            report = doctor()
+        self.assertIn("backtest.multi-leg.bar.v1", report["implemented_use_cases"])
+        self.assertIn(
+            "backtest.multi-leg.bar.run-handle.v1", report["implemented_use_cases"]
+        )
+        self.assertFalse(any("multi-leg" in item for item in report["limitations"]))
+
     def test_paper_and_live_clients_submit_the_shared_rust_control_contract(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import LiveClient, PaperClient, TradeCommand
@@ -415,6 +430,9 @@ class AppUseCaseTests(unittest.TestCase):
 
     def test_multi_leg_backtest_uses_the_shared_rust_application_flow_and_handle(self):
         self._require()
+        from qianxing_bridge.native import app_available
+
+        self.assertTrue(app_available(), "multi-leg functions must pass the generation probe")
         fixture_root = self.root / "deploy"
         payload = {
             "schema_version": 1,
@@ -445,11 +463,88 @@ class AppUseCaseTests(unittest.TestCase):
 
         handle_payload = {**payload, "run_id": "python-multi-leg-handle"}
         handle_payload["output_dir"] = str(self.output_dir / "multi-leg-handle")
-        handle = self.bridge.app_start_multi_leg_backtest(json.dumps(handle_payload))
+        handle = self.bridge.start_multi_leg_backtest(handle_payload)
         self.assertEqual(handle.run_id, "python-multi-leg-handle")
         self.assertEqual(handle.wait(10_000), "succeeded")
         self.assertIsNotNone(handle.result_json())
         self.assertIsNone(handle.result_json(), "multi-leg result is delivered once")
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import (
+            BuiltinStrategySpec,
+            InstrumentId,
+            MultiLegBacktestSpec,
+            TradingInstrumentSpec,
+            run_multi_leg_backtest,
+            start_multi_leg_backtest,
+        )
+
+        typed_spec = MultiLegBacktestSpec(
+            run_id="python-typed-multi-leg",
+            primary_bars_path=payload["primary_bars_path"],
+            reference_bars_path=payload["reference_bars_path"],
+            settlement_currency="USDT",
+            primary_initial_cash_raw=1_000_000_000_000_000,
+            reference_initial_cash_raw=1_000_000_000_000_000,
+            output_dir=str(self.output_dir / "typed-multi-leg"),
+            seed=7,
+            strategy=BuiltinStrategySpec(
+                kind="pairs_arbitrage",
+                strategy_id="py-typed-pairs",
+                quantity_raw=1_000_000_000,
+                fast_window=5,
+                slow_window=20,
+                period=14,
+                threshold_bps=100,
+            ),
+            primary_market_spec=TradingInstrumentSpec(
+                instrument=InstrumentId(symbol="BTCUSDT", venue="BINANCE"),
+                product="spot",
+                base_currency="BTC",
+                quote_currency="USDT",
+                settlement_currency="USDT",
+                contract_size=1_000_000_000,
+                linear=True,
+                inverse=False,
+                price_tick=1_000,
+                qty_step=1,
+                min_qty=1,
+                max_leverage=1,
+                maintenance_margin_bps=0,
+                valid_from=0,
+            ),
+            reference_market_spec=TradingInstrumentSpec(
+                instrument=InstrumentId(symbol="ETHUSDT", venue="BINANCE"),
+                product="spot",
+                base_currency="ETH",
+                quote_currency="USDT",
+                settlement_currency="USDT",
+                contract_size=1_000_000_000,
+                linear=True,
+                inverse=False,
+                price_tick=1_000,
+                qty_step=1,
+                min_qty=1,
+                max_leverage=1,
+                maintenance_margin_bps=0,
+                valid_from=0,
+            ),
+            fill_model="one_tick_slippage",
+        )
+        typed_outcome = run_multi_leg_backtest(typed_spec)
+        self.assertGreater(typed_outcome.primary_fills, 0)
+        typed_handle = start_multi_leg_backtest(
+            MultiLegBacktestSpec(
+                **{
+                    **typed_spec.__dict__,
+                    "run_id": "python-typed-multi-leg-handle",
+                    "output_dir": str(self.output_dir / "typed-multi-leg-handle"),
+                }
+            )
+        )
+        self.assertEqual(typed_handle.wait(10_000), "succeeded")
+        self.assertIsNotNone(typed_handle.result())
+        self.assertIsNone(typed_handle.result(), "typed multi-leg result is delivered once")
 
     def test_a_failure_raises_the_same_document_the_other_entrypoints_print(self):
         self._require()

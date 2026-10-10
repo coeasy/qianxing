@@ -6,11 +6,11 @@ The extension uses PyO3's Python 3.10 stable ABI. Release builds publish one `cp
 
 ## Current SDK surface
 
-The public `qianxing` namespace exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, L1 Tick and L2 OrderBook backtests, artifact verification, deterministic comparison of completed runs, bounded Bar parameter-grid experiments, and cooperative `RunHandle` lifecycle for Bar/Tick/OrderBook/parameter experiments. Matching, risk, accounting, replay verification, cancellation boundaries, and experiment execution stay in Rust; Python only provides typed request/result objects.
+The public `qianxing` namespace exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, L1 Tick and L2 OrderBook backtests, two-leg Bar backtests, artifact verification, deterministic comparison of completed runs, bounded Bar parameter-grid experiments, and cooperative `RunHandle` lifecycle for Bar/Tick/OrderBook/multi-leg/parameter runs. Multi-leg requests can declare both normalized market specs, shared default maker/taker fees with per-leg overrides, funding basis points, and the shared fill model. Matching, risk, accounting, replay verification, cancellation boundaries, and experiment execution stay in Rust; Python only provides typed request/result objects.
 
 `PaperClient` and `LiveClient` submit the versioned Rust `TradeControlSpec` to a running qx-api service. Rust authenticates the operator, validates the command in qx-app, persists and enqueues it through the existing ControlPlane, then the configured Paper or venue worker executes it. Live requires an authenticated API policy; the Python SDK does not execute trades itself. A client TLS context can be supplied for mTLS deployments.
 
-Multi-leg backtests are not yet exposed through this SDK facade. The repository has additional lower-level CLI, worker, connector, and strategy capabilities; their presence does not mean they are already part of the high-level Python API. The current depth application contract accepts Rust built-in strategies; non-zero queue-position assumptions are rejected because those strategies issue market orders.
+The application SDK accepts normalized `TradingInstrumentSpec` documents; it does not currently import CCXT market snapshots or model per-venue maker/taker fee schedules. `one_tick_slippage` requires a real `price_tick` in both market specs. The depth application contract accepts Rust built-in strategies; non-zero queue-position assumptions are rejected because those strategies issue market orders.
 
 ## Example
 

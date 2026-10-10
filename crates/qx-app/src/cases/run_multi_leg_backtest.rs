@@ -4,18 +4,18 @@ use super::{artifacts::write_text, attach, guard::guard_panics};
 use crate::run_handle::CancellationToken;
 use crate::{
     AppError, AppErrorCategory, CallerCapability, MultiLegBacktestOutcome, MultiLegBacktestSpec,
-    RunContext,
+    MultiLegFillModel, RunContext,
 };
 use qx_core::{
     Fnv1a, InstrumentId, MakerTakerFeeModel, Money, Order, OrderStatus, Quantity, ReplayVerifier,
-    Side,
+    Side, TradingInstrumentSpec,
 };
 use qx_datastruct::BarFrame;
 use qx_guanxing::Bar;
 use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, MarketEvent, Strategy, StrategyContext};
 use qx_xingban::{
-    BacktestConfig, BacktestEngine, BarStrategy, DataTier, NextBarOpenFillModel, NoMargin,
-    VirtualTradingConfig, ZeroLatency,
+    BacktestConfig, BacktestEngine, BarStrategy, BestPriceFillModel, DataTier, FillModel,
+    NextBarOpenFillModel, NoMargin, OneTickSlippageFillModel, VirtualTradingConfig, ZeroLatency,
 };
 use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
@@ -77,6 +77,34 @@ fn run_inner(
             AppErrorCategory::FidelityInsufficient,
             format!("多腿回测至少需要 {MIN_BARS} 根对齐 Bar"),
         ));
+    }
+    let primary_spec = validate_leg_spec(
+        "主腿",
+        spec.primary_market_spec.as_ref(),
+        &primary.instrument,
+        &spec.settlement_currency,
+    )?;
+    let reference_spec = validate_leg_spec(
+        "对冲腿",
+        spec.reference_market_spec.as_ref(),
+        &reference.instrument,
+        &spec.settlement_currency,
+    )?;
+    if spec.funding_bps != 0 {
+        if primary_spec.is_none() || reference_spec.is_none() {
+            return Err(invalid(
+                "资金费非零时两条腿都必须提供 market spec，以确定产品类型和名义额",
+            ));
+        }
+        if [primary_spec, reference_spec]
+            .into_iter()
+            .flatten()
+            .all(|market| !market.product.is_derivative())
+        {
+            return Err(invalid(
+                "资金费非零但两条腿都不是衍生品；资金费不能记到现货腿",
+            ));
+        }
     }
     let data_fingerprint = format!(
         "multi-bar:{:016x}:{:016x}",
@@ -176,6 +204,10 @@ fn run_inner(
         spec.primary_initial_cash_raw,
         spec.seed,
         &spec.settlement_currency,
+        primary_spec.cloned(),
+        spec.primary_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
+        spec.primary_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
+        spec.fill_model,
         cancellation,
     )?;
     let Some(primary_report) = primary_report else {
@@ -189,6 +221,10 @@ fn run_inner(
         spec.reference_initial_cash_raw,
         spec.seed,
         &spec.settlement_currency,
+        reference_spec.cloned(),
+        spec.reference_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
+        spec.reference_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
+        spec.fill_model,
         cancellation,
     )?;
     let Some(reference_report) = reference_report else {
@@ -212,7 +248,7 @@ fn run_inner(
         instrument: &primary.instrument,
         targets: &primary_targets,
         bars: &primary_bars,
-        spec: None,
+        spec: primary_spec,
         report: &primary_report,
     };
     let reference_leg = crate::MultiLegLegFacts {
@@ -220,11 +256,13 @@ fn run_inner(
         instrument: &reference.instrument,
         targets: &reference_targets,
         bars: &reference_bars,
-        spec: None,
+        spec: reference_spec,
         report: &reference_report,
     };
-    let primary_buckets = crate::multi_leg_leg_buckets(&primary_leg, 0).map_err(invalid)?;
-    let reference_buckets = crate::multi_leg_leg_buckets(&reference_leg, 0).map_err(invalid)?;
+    let primary_buckets =
+        crate::multi_leg_leg_buckets(&primary_leg, spec.funding_bps).map_err(invalid)?;
+    let reference_buckets =
+        crate::multi_leg_leg_buckets(&reference_leg, spec.funding_bps).map_err(invalid)?;
     let attribution = crate::multi_leg_group_attributions(
         &strategy_id,
         &primary_leg,
@@ -245,6 +283,7 @@ fn run_inner(
     let pending_reconcile_json =
         crate::multi_leg_pending_reconcile_json(&attribution.pending_reconcile);
 
+    let funding_raw = totals.2;
     let pnl = primary_report
         .final_equity()
         .checked_sub(spec.primary_initial_cash_raw)
@@ -255,7 +294,8 @@ fn run_inner(
                     .checked_sub(spec.reference_initial_cash_raw)?,
             )
         })
-        .ok_or_else(|| invalid("多腿组合盈亏溢出"))?;
+        .and_then(|x| x.checked_sub(funding_raw))
+        .ok_or_else(|| invalid("多腿组合净盈亏（含资金费）溢出"))?;
     let funded = spec
         .primary_initial_cash_raw
         .checked_add(spec.reference_initial_cash_raw)
@@ -274,6 +314,27 @@ fn run_inner(
         "strategy_version": strategy_version,
         "primary_instrument": primary.instrument.to_string(),
         "reference_instrument": reference.instrument.to_string(),
+        "market_specs": {
+            "primary": primary_spec,
+            "reference": reference_spec,
+        },
+        "fee_model": {
+            "name": "MakerTaker",
+            "shared_default": {
+                "maker_fee_bps": spec.maker_fee_bps,
+                "taker_fee_bps": spec.taker_fee_bps,
+            },
+            "primary": {
+                "maker_fee_bps": spec.primary_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
+                "taker_fee_bps": spec.primary_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
+            },
+            "reference": {
+                "maker_fee_bps": spec.reference_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
+                "taker_fee_bps": spec.reference_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
+            },
+        },
+        "fill_model": fill_model_name(spec.fill_model),
+        "funding_bps": spec.funding_bps,
         "data_fingerprint": data_fingerprint,
         "config_hash": config_hash,
         "primary_result_hash": format!("{:016x}", primary_report.result_hash()),
@@ -289,7 +350,10 @@ fn run_inner(
             "funding_raw": totals.2.to_string(),
             "filled_qty_raw": totals.3.to_string(),
             "margin_peak_raw": totals.4.to_string(),
-            "cost_bps": crate::multi_leg_cost_bps(totals.0 + totals.2, totals.1).map_err(invalid)?,
+            "cost_bps": crate::multi_leg_cost_bps(
+                totals.0.checked_add(totals.2).ok_or_else(|| invalid("多腿净成本溢出"))?,
+                totals.1,
+            ).map_err(invalid)?,
             "residual_fees_raw": attribution.residual_fees_raw.to_string(),
             "residual_filled_qty_raw": attribution.residual_filled_qty_raw.to_string(),
         },
@@ -299,7 +363,7 @@ fn run_inner(
         "replay_events": primary_replay.events + reference_replay.events,
         "replay_ledger_entries": primary_replay.ledger_entries + reference_replay.ledger_entries,
         "matching": "qx-xingban::BacktestEngine/NextBarOpenFillModel",
-        "assumptions": ["each leg uses its own initial cash", "both legs are independently replay-verified", "default maker/taker fees", "no market specification or derivative margin/funding"],
+        "assumptions": ["each leg uses its own initial cash", "both legs are independently replay-verified", "each venue can declare its own maker/taker rates with shared rates as fallback", "funding is attributed only to derivative legs and is included in combined net return", "market specifications, when provided, are validated against each input and set contract size/margin semantics"],
     });
     let payload = serde_json::to_string(&payload)
         .map_err(|error| invariant(format!("多腿产物序列化失败: {error}")))?;
@@ -347,6 +411,10 @@ fn run_leg(
     initial_cash_raw: i128,
     seed: u64,
     currency: &str,
+    instrument_spec: Option<TradingInstrumentSpec>,
+    maker_fee_bps: i64,
+    taker_fee_bps: i64,
+    fill_model: MultiLegFillModel,
     cancellation: Option<&CancellationToken>,
 ) -> Result<Option<qx_xingban::BacktestReport>, AppError> {
     let mut strategy = ScheduledTargets {
@@ -356,13 +424,16 @@ fn run_leg(
     };
     let config = BacktestConfig {
         instrument: instrument.clone(),
-        instrument_spec: None,
+        instrument_spec: instrument_spec.clone(),
         account_id: strategy.account_id.clone(),
         currency: currency.into(),
         initial_cash: Money::from_raw(initial_cash_raw),
         multiplier: 1,
-        fill: Box::new(NextBarOpenFillModel),
-        fee: Box::new(MakerTakerFeeModel::default_maker_taker()),
+        fill: fill_model_for(fill_model, instrument_spec.as_ref())?,
+        fee: Box::new(MakerTakerFeeModel {
+            maker_bp: maker_fee_bps,
+            taker_bp: taker_fee_bps,
+        }),
         data_tier: DataTier::Bar,
         latency: Box::new(ZeroLatency),
         margin: Box::new(NoMargin),
@@ -430,6 +501,57 @@ fn invalid(message: impl std::fmt::Display) -> AppError {
         format!("多腿回测输入或策略非法: {message}"),
     )
 }
+
+fn validate_leg_spec<'a>(
+    label: &str,
+    market_spec: Option<&'a TradingInstrumentSpec>,
+    instrument: &InstrumentId,
+    settlement_currency: &str,
+) -> Result<Option<&'a TradingInstrumentSpec>, AppError> {
+    let Some(market) = market_spec else {
+        return Ok(None);
+    };
+    if market.instrument != *instrument {
+        return Err(invalid(format!(
+            "{label} market spec instrument {} 与 BarFrame 标的 {instrument} 不一致",
+            market.instrument
+        )));
+    }
+    if market.settlement_currency != settlement_currency {
+        return Err(invalid(format!(
+            "{label} market spec 结算币 {} 与 spec settlement_currency {settlement_currency} 不一致",
+            market.settlement_currency
+        )));
+    }
+    Ok(Some(market))
+}
+
+fn fill_model_for(
+    kind: MultiLegFillModel,
+    market_spec: Option<&TradingInstrumentSpec>,
+) -> Result<Box<dyn FillModel>, AppError> {
+    Ok(match kind {
+        MultiLegFillModel::NextBarOpen => Box::new(NextBarOpenFillModel),
+        MultiLegFillModel::BestPrice => Box::new(BestPriceFillModel),
+        MultiLegFillModel::OneTickSlippage => {
+            let spec = market_spec.ok_or_else(|| {
+                invalid("one_tick_slippage 要求两条腿都提供含真实 price_tick 的 market spec")
+            })?;
+            Box::new(OneTickSlippageFillModel {
+                tick: spec.price_tick,
+            })
+        }
+    })
+}
+
+fn fill_model_name(kind: MultiLegFillModel) -> &'static str {
+    match kind {
+        MultiLegFillModel::NextBarOpen => "next_bar_open",
+        MultiLegFillModel::BestPrice => "best_price",
+        MultiLegFillModel::OneTickSlippage => "one_tick_slippage",
+    }
+}
+
 fn invariant(message: impl Into<String>) -> AppError {
     AppError::new(AppErrorCategory::InternalInvariant, message)
 }

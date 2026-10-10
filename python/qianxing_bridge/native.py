@@ -45,6 +45,8 @@ APP_ENTRYPOINTS = (
     "app_run_depth_backtest",
     "app_start_depth_backtest",
     "app_verify_depth_run",
+    "app_run_multi_leg_backtest",
+    "app_start_multi_leg_backtest",
 )
 
 
@@ -129,6 +131,16 @@ def app_start_depth_backtest(spec_json: str) -> Any:
 def app_verify_depth_run(outcome_json: str) -> str:
     """Verify depth artifacts via the shared Rust application use case."""
     return str(_extension().app_verify_depth_run(outcome_json))
+
+
+def app_run_multi_leg_backtest(spec_json: str) -> str:
+    """Execute the shared Rust two-leg Bar backtest use case."""
+    return str(_extension().app_run_multi_leg_backtest(spec_json))
+
+
+def app_start_multi_leg_backtest(spec_json: str) -> Any:
+    """Start a cancellable Rust two-leg Bar run."""
+    return _extension().app_start_multi_leg_backtest(spec_json)
 
 
 def to_pyarrow_columns(payload: str) -> tuple[Any, ...]:
