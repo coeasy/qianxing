@@ -144,13 +144,18 @@ pub(super) fn reserve_limited_slot(
     counter: &std::sync::atomic::AtomicUsize,
     capacity: usize,
 ) -> bool {
-    counter
-        .fetch_update(
-            std::sync::atomic::Ordering::AcqRel,
-            std::sync::atomic::Ordering::Acquire,
-            |count| (count < capacity).then_some(count + 1),
-        )
-        .is_ok()
+    use std::sync::atomic::Ordering::{AcqRel, Acquire};
+
+    let mut count = counter.load(Acquire);
+    loop {
+        if count >= capacity {
+            return false;
+        }
+        match counter.compare_exchange_weak(count, count + 1, AcqRel, Acquire) {
+            Ok(_) => return true,
+            Err(current) => count = current,
+        }
+    }
 }
 
 pub(super) struct WatcherSlot;
