@@ -398,6 +398,33 @@ class AppUseCaseTests(unittest.TestCase):
             verify_depth_run,
         )
 
+        legacy_depth_spec = DepthBacktestSpec(
+            run_id="python-legacy-depth-shape",
+            depth_path=str(depth_path),
+            tier="l1",
+            settlement_currency="USDT",
+            initial_cash_raw=1_000_000_000_000_000,
+            output_dir=str(self.output_dir / "legacy-depth-shape"),
+            strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="legacy-depth"),
+        ).to_dict()
+        self.assertNotIn("market_spec", legacy_depth_spec)
+        self.assertNotIn("order_policy", legacy_depth_spec)
+        legacy_positional_spec = DepthBacktestSpec(
+            "python-legacy-positional-depth",
+            str(depth_path),
+            "l1",
+            "USDT",
+            1_000_000_000_000_000,
+            str(self.output_dir / "legacy-positional-depth"),
+            BuiltinStrategySpec(kind="sma_cross", strategy_id="legacy-positional-depth"),
+            0,
+            0,
+            0,
+            0,
+            1,
+        )
+        self.assertEqual(legacy_positional_spec.schema_version, 1)
+
         typed = run_depth_backtest(
             DepthBacktestSpec(
                 run_id="python-typed-tick-run",

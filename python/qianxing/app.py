@@ -359,12 +359,18 @@ class DepthBacktestSpec:
     latency_snapshots: int = 0
     queue_position_bps: int = 0
     market_impact_bps: int = 0
+    schema_version: int = 1
     market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
     order_policy: OrderPolicy | dict[str, Any] | None = None
-    schema_version: int = 1
 
     def to_dict(self) -> dict[str, Any]:
-        return {**asdict(self), "strategy": self.strategy.to_dict()}
+        payload = {**asdict(self), "strategy": self.strategy.to_dict()}
+        # Mirror Rust's skip_serializing_if on these optional v1 extensions so
+        # legacy requests keep their historical JSON shape across SDKs.
+        for optional_field in ("market_spec", "order_policy"):
+            if payload[optional_field] is None:
+                del payload[optional_field]
+        return payload
 
 
 @dataclass(frozen=True)
