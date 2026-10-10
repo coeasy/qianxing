@@ -96,9 +96,12 @@ pub(crate) fn print_cli_help() {
       统一执行常用安全入口；paper 只运行本地 Paper 验收，不发送真实订单。
   status [runtime.json] [--json]
       查看本地运行配置、Worker、回测结果和安全状态；不连接交易所。
-  report [runtime.json|summary.json] [--json] [--html] [-o|--output PATH]
+  report [runtime.json|summary.json] [--json] [--html] [--evidence] [-o|--output PATH]
       查看最新或指定回测报告；--json 输出可供脚本消费的完整摘要。
       --html 写出 <stem>.report.html 与三张 SVG；-o/--output 可改输出前缀，需与 --html 同用。
+      --evidence 在复核链通过后再聚一份 <stem>.evidence.json（RunEvidenceBundle）：把 RunManifest
+      身份、四份产物指针、数据身份、配置与策略身份、模型假设、构建身份、验证级别、未验证清单与
+      离线复算指引收进同一份文档，供「同一运行由 RunManifest 离线复算」用；只聚合不重算指标。
       报告含指标卡、内嵌图与产物身份表，无外链、可离线打开；未连接真实交易所。
   live-check [production.runtime.json] [--json]
       执行实盘启动前静态门禁，不连接交易所、不发送订单。
@@ -158,9 +161,17 @@ pub(crate) fn print_cli_help() {
       只读诊断一份 BarFrame 的连续性（乱序/重复/缺口）并落一份 DatasetManifestV2，不改动源文件。
       output 已存在时改为复核：逐字段一致即通过，数据变了或不是清单文件当场拒绝（同一身份不容两种内容）。
       --timezone 缺省 UTC；--json 把清单正文一并打到标准输出。
+  app <validate-dataset|backtest|verify> <spec.json>
+      应用层用例入口（T2-2）：三条入口分别调 qx-app 的 validate_dataset / run_backtest / verify_run。
+      validate-dataset <DatasetSpec.json>  校验一份数据集能否支撑 Bar 回测；数据不足是裁决不是错误。
+      backtest <BacktestSpec.json>         跑一次 Bar 回测，落 <run_id>.run.json / .summary.json 与 .equity.csv / .fills.csv。
+      verify <BacktestOutcome.json>        复核那四份产物，输入取 `app backtest` 的 stdout。
+      成功时 stdout 只有一份 JSON；失败时 stderr 给出同一份 AppError JSON，与 Python/HTTP 两个入口
+      逐字节可比（同一 use case、同一错误 code 与 correlation id）。这条链是同步 Bar 切片，不含
+      market spec、A 股制度与跨语言策略——那些能力在 backtest builtin 上，两者互不替代。
   plan <kind> <file> [--json]
       按类型名读入并校验一份地基规格对象，印出身份、规格版本与稳定指纹；
-      kind 取 project / dataset / experiment / run-record / capability / evidence / schema-registry。
+      kind 取 project / dataset / experiment / run-record / run-evidence / capability / evidence / schema-registry。
       --json 改印规范化正文；缺版本号或字段越界当场拒绝并以 2 退出，告警走 stderr。
   ccxt-market-spec <ccxt-config.json> <instrument> <output.json>
       拉取并冻结一份 CCXT 市场规格，供回测与实盘共用（需要 CCXT worker 依赖）。

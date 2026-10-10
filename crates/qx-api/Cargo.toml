@@ -15,6 +15,8 @@ qx-core = { path = "../qx-core" }
 qx-protocol = { path = "../qx-protocol" }
 qx-storage = { path = "../qx-storage" }
 qx-scheduler = { path = "../qx-scheduler" }
+# T2-2/G1：`POST /app/*` 三条入口调的是 `qx-app` 的应用层用例，不另装一套。
+qx-app = { path = "../qx-app" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }

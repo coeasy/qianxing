@@ -429,6 +429,7 @@ mod report_html;
 mod report_readout;
 mod risk_port_channel;
 mod run_entry_argument_honesty;
+mod run_evidence;
 mod runtime_api_worker_identity;
 mod scheduler_dispatch_support;
 mod scheduler_owner_routing;

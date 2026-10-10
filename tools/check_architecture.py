@@ -517,7 +517,7 @@ EXECUTION_TEST_FIXTURES = (
 # `#[tokio::test]` 同配方实测 0 条，故这个计数器没有整族漏计。
 # 1065 -> 1069：V13 R1-H 控制面终态退场那轮的四条用例（qx-control 5 -> 9），其余 crate 逐名同数。
 # 1069 -> 1070：V13 R4-C1 给两条 HTTP 读链补总量字节界那颗用例（qx-adapter 48 -> 49），其余 crate 逐名同数。
-WORKSPACE_TEST_FLOOR = 1233  # 1083 -> 1233：V13 R25 按磁盘重测（本文件同一配方 `^[ \t]*#\[test\]$` + read_text 归一 CRLF，`crates/*/src` 与 `crates/*/tests` 递归）。地板自 R12/R13 后一直停在 1083，实测已到 1233 —— 余量 150 条＝12.2% 可以整族消失而门禁照印全绿，正是这颗地板立起来要抓的那种失效（§16 那一轮就是 39 条用例随死码删除一起消失）。分 crate 实测：qx-cli=449 qx-core=101 qx-xingban=94 qx-runtime=92 qx-api=81（含本轮新增的 `tests/console_operator_identity.rs`）qx-storage=79 qx-adapter=58 qx-zhenlu=38 qx-data=30 qx-protocol=28 qx-orchestrator=25 qx-strategy=24 qx-factor=20 qx-scheduler=18 qx-execution=17 qx-spec=17 contract-tests=15 qx-control=9 qx-guanxing=8 qx-provider=8 qx-genglu=7 qx-plugin=7 qx-datastruct=5 qx-risk=3。1082 -> 1083：V13 R12/R13 补一条 PostgreSQL 池容量为 1 的控制面事务回归用例（挂 #[ignore]，靠 CI 的 --ignored 或手工挂 QX_TEST_POSTGRES_DSN 来跑：不先 drop(client) 就是当场自死锁，事务已提交却永远回不了调用方）。1081 -> 1082：V13 R11 收口时补一条（WebSocket Close 扫描器的累积缓冲越界 fail-closed：跨读累积是新引入的内存面，客户端故意不完成帧头就能把缓冲无限拖大）。1073 -> 1081：V13 R11 补七条（C ABI 非法 side 拒绝 1 条、WebSocket Close 帧扫描器 5 条、托管子进程退出码携带原始码 1 条）。1071 -> 1073：V13 R10 补两条（Binance 缺 trade_id 转对账、恢复 worker 缺 venue_id 拒启动）。1070 -> 1071：V13 R7-a #284 把「版本号由宿主解码入口裁决」这颗判定钉进解码入口自己的用例（qx-runtime 83 -> 84），其余 crate 逐名同数。
+WORKSPACE_TEST_FLOOR = 1304  # 1233 -> 1304：2026-10-10 QX-DEV-PLAN-2026-10-10 阶段 2（T2-0 panic 边界与错误类别 / T2-1 `qx-app` 骨架 / T2-2 三个用例）按磁盘重测（同一配方：`^[ \t]*#\[test\]$` + read_text 归一 CRLF，`crates/*/src` 与 `crates/*/tests` 递归）。新 crate `qx-app` 带来 32 条（`src/tests/` 目录式 30 条：错误契约 11 / 规格契约 8 / 用例契约 11；`tests/independent_consumer.rs` 2 条 = 退出门 G2 的「独立 consumer 不启 qx-cli 也能跑完一次回测并复核」），`qx-cli` 449 -> 467（其中 3 条是 G1 的三入口等价性：CLI 真 spawn 二进制 / HTTP 走 `qx_api::ApiService::handle` / Python 真起解释器）。地板自 V13 R25 后一直停在 1233，实测已到 1304——余量 71 条（5.4%）可以整族消失而门禁照印全绿，正是这颗地板立起来要抓的那种失效。分 crate 实测：qx-cli=467 qx-core=101 qx-runtime=94 qx-xingban=94 qx-api=83 qx-storage=79 qx-adapter=58 qx-zhenlu=38 qx-app=32 qx-spec=32 qx-data=31 qx-protocol=28 qx-orchestrator=25 qx-strategy=24 qx-factor=20 qx-scheduler=18 qx-execution=17 contract-tests=15 qx-control=9 qx-guanxing=8 qx-provider=8 qx-genglu=7 qx-plugin=7 qx-datastruct=5 qx-risk=4。上一轮 1233 是 1083 -> 1233：V13 R25 按磁盘重测（本文件同一配方 `^[ \t]*#\[test\]$` + read_text 归一 CRLF，`crates/*/src` 与 `crates/*/tests` 递归）。地板自 R12/R13 后一直停在 1083，实测已到 1233 —— 余量 150 条＝12.2% 可以整族消失而门禁照印全绿，正是这颗地板立起来要抓的那种失效（§16 那一轮就是 39 条用例随死码删除一起消失）。分 crate 实测：qx-cli=449 qx-core=101 qx-xingban=94 qx-runtime=92 qx-api=81（含本轮新增的 `tests/console_operator_identity.rs`）qx-storage=79 qx-adapter=58 qx-zhenlu=38 qx-data=30 qx-protocol=28 qx-orchestrator=25 qx-strategy=24 qx-factor=20 qx-scheduler=18 qx-execution=17 qx-spec=17 contract-tests=15 qx-control=9 qx-guanxing=8 qx-provider=8 qx-genglu=7 qx-plugin=7 qx-datastruct=5 qx-risk=3。1082 -> 1083：V13 R12/R13 补一条 PostgreSQL 池容量为 1 的控制面事务回归用例（挂 #[ignore]，靠 CI 的 --ignored 或手工挂 QX_TEST_POSTGRES_DSN 来跑：不先 drop(client) 就是当场自死锁，事务已提交却永远回不了调用方）。1081 -> 1082：V13 R11 收口时补一条（WebSocket Close 扫描器的累积缓冲越界 fail-closed：跨读累积是新引入的内存面，客户端故意不完成帧头就能把缓冲无限拖大）。1073 -> 1081：V13 R11 补七条（C ABI 非法 side 拒绝 1 条、WebSocket Close 帧扫描器 5 条、托管子进程退出码携带原始码 1 条）。1071 -> 1073：V13 R10 补两条（Binance 缺 trade_id 转对账、恢复 worker 缺 venue_id 拒启动）。1070 -> 1071：V13 R7-a #284 把「版本号由宿主解码入口裁决」这颗判定钉进解码入口自己的用例（qx-runtime 83 -> 84），其余 crate 逐名同数。
 # 门禁自身的判据数地板（V12 §17），取本回合实测的总条数。为什么要给量具本身再设一把尺：
 # 本回合编辑 `TEST_MODULES` 时误删了 qx-cli 那一项元组，门禁当场少跑 4 条判据，却依旧打印
 # "架构不变量自检全部通过 ✓" —— 判据可以整段消失而没人变红。这与 §16 抓到的"用例静默删除"
@@ -549,7 +549,7 @@ WORKSPACE_TEST_FLOOR = 1233  # 1083 -> 1233：V13 R25 按磁盘重测（本文�
 # 存档落空条数天花板 9 只降不升。
 # 601 → 602：V13 R1-H 重落 V11 R6-1——删掉零构造者的 `CommandStatus::Rejected`，
 # 终态词表收回到 `is_final` 体内一处（控制面 + CLI 幂等入口两个平面各一颗判据）。
-GATE_CHECK_FLOOR = 892  # 882 -> 892：V13 R31 控制台多账户作用域的读面前置——`/account/ledger` 与 `/reconcile/reports` 从「四条整体现读端点一律不收窄」里拆出来立一条按账户过滤的通道（`read_face_scope_check` 十颗：模块在盘且低于门槛+挂载、三张路由名单条目数自洽且两两不相交且每条都有活分派臂、查询键名单只有 read_scope 一份而 admission 不再自持 `*_PARAMS`、`accepted_query_params` 是唯一取名册出口且五张名单都在它体内、收窄键名单与底层类型的归属列一致（`LedgerEntry` 只有 `account_id`、`ReconcileReportSnapshot` 两列都有——账簿那一格只认一把键是数据结构决定的）、两条过滤臂真在结果集上过滤且不借用投影那族的 `missing_projection_response`、空结果回 200 而不是 `404 account_projection_not_found`、400/503 分工不合并、端点表只在真读收窄键的入口承诺查询串、九条行为用例在册）。此前 `api_surface_doc_check` 只比路由集合、`api_endpoint_table_routes.rs` 只比表与分派是否平，没有任何一颗判据看「这条臂有没有真读 `query`」——于是 `/account/ledger` 可以既在表里写 `[?account_id=]` 又一行过滤都没有，读者拿到的是默认账户那份流水而被当成了自己点名的账户；反过来把空结果改成 404 也不会红，而「这一轮没有事实」与「这个账户不在这份部署里」是两件事。上一轮 882 是 881 -> 882：V13 R28 多账户并行隔离补第七颗——并发用例真开两条线程跑两个账户的真实 `run_paper_execution_worker` 并用 `Barrier::new(2)` 强制重叠（顺序调用不算并发；`supervise` 里多个 worker 是同时活的，隔离必须在真并发下也成立）。881 -> 881 保持：V13 R28 公共组件面——诊断（进程日志）是唯一一处**没有**框架级单源的面（全仓无 `tracing`/`log`/`env_logger` 依赖，245 处诊断直接走 `println!`/`eprintln!`，靠非正式 `[组件 · 子域]` 前缀约定；`qx-api` 与 `qx-orchestrator` 已全量带标签），新增 `process_diagnostics_check` 三颗把它钉下来：① 引入诊断框架就必须一次迁移完（有框架依赖时未带标签站点必须为 0——半迁移是在既有约定之外多出**第三种**约定）；② 未带标签站点数只降不升（棘轮，表外 crate 要求 0）；③ 棘轮表是活名册（归零的 crate 必须从表里删掉、新增未标签站点的 crate 必须登记）。875 -> 878：V13 R28 收口 §17.11 登记的 CI 覆盖面缺口——`ci_feature_matrix_check` 新增三颗（`feature-off` 腿在盘且按 `--no-default-features --all-targets` 跑 clippy 带 `-D warnings` / 有 `cfg(not(feature = …))` 分支的 crate 都在腿上 / 腿点名的 crate 恰好等于声明了非默认特性的每个 workspace crate）。此前 `feature-matrix` 只 lint「特性开着」的组合，`#[cfg(not(feature = "sqlite"))]` 那半边在 workspace 构建里从不被 clippy 看到（`qx-cli` 的 `default = ["sqlite"]` 经转发把 `qx-runtime/sqlite` 一并打开）——本机四条腿现跑各 rc 0 / 诊断 0 行；同轮这条腿当场抓出新写的 `parallel_run_isolation.rs` 里一处 `needless_borrows_for_generic_args`。869 -> 875：V13 R28 多账户 / 多 Venue 并行运行的隔离不变量（`parallel_run_isolation_check` 六颗：三条用例在册（两账户各跑真实执行 worker / 命令按账户分派 / 每账户一份投影）/ 第二账户日志名从唯一构造点 `account_event_log_name` 派生且用例里无字面量日志名 / 写侧两账户各跑一次真实 `run_paper_execution_worker` / 写侧两本账互查「对方账户现金为 0」/ `paper_submit_matches_worker` 拿订单账户比对 worker 声明账户 / `seed_paper_initial_cash` 按 worker 声明的账户入账而非硬编码 `main`）。此前这条不变量只有命名层用例（名字拼得对）与读侧去重用例（同一账户不分裂），**没有一条用例真的把两个账户的 worker 各跑一遍再翻开两本账看有没有串账**——命名对不等于事实不串。868 -> 869：V13 R27 三入口一致性用例（`contract-tests/tests/risk_parity.rs`）的 (c) 腿改为带规格取证（`risk_spec_fail_closed_check` 第 ⑥ 颗）——P1-5 fail-closed 的 parity 面收口：无规格入口会把"缺规格"当成一条业务拒绝，与 (a)/(b) 的规则链结果不可比。861 -> 868：V13 R26 P0-2 写面稳态追加不再整份拷贝状态 + EventLog 保留/归档策略落成"写下来的决定"（`pipeline_commit_rollback_check` 四颗：`self.clone()`+`*self = staged` 的旧写法不复活 / 两条写面（订单提交与事实归约）都有薄包装且都走强制重放回滚 / 重建短路被 `force` 门控住（否则 `next_seq` 漏回滚）/ 失败回滚行为用例在盘；`event_log_retention_policy_check` 三颗：EventLog 公开面无截断淘汰压缩入口 / 分段后端只有尾段可增长而满段不可变 / 策略三杠杆写在写面模块文档且与能力登记面互指；同轮 `seen_fills` 台账 census 跟着写面搬家到 `pipeline/commit.rs`）。上一轮 858 -> 861：V13 R26 门禁读数改由 `--snapshot` 写入机读快照（`gate_snapshot_check` 两颗 + 收尾一条「本轮实测 == 快照」漂移判据：快照在地板与条数上自洽、文档引用文件名而不是手抄条数）。上一轮 853 -> 858：V13 R26 qx-api 状态锁中毒不再 panic（`api_lock_fail_closed_check` 五颗：取锁收成可失败入口、读面错误收口把中毒判成 503/其余 400 且模块挂进 lib.rs、生产代码里不再有就地 `.expect("api state mutex poisoned")`、六条带键读面走收口且 /ready 报未就绪、中毒与对照组行为用例在盘；同轮 `QueryPort` 九个读法改回 `Result`）。上一轮 850 -> 853：V13 R26 账户级已实现/未实现盈亏接上生产者（`account_pnl_producer_check` 三颗：两个算点各唯一且都调 Ledger 派生方法、派生方法缺标记价即 None 且累计走 checked_add、读侧行为用例在盘；同轮 `account_money_field_registry_check` 的派生名单从五格收到三格）。上一轮 848 -> 850：V13 R26 发布版本单源 + CI 显式钉解释器（`release_version_single_source_check` 两颗：wheel 版本 == workspace 版本、rust-core 作业设 QX_PYTHON）。上一轮 843 -> 848：V13 R26 名义额规则缺规格 fail-closed（`risk_spec_fail_closed_check` 五颗：删净 `legacy_spot_spec`、`MaxNotionalRule` 体点名缺规格消息且不再合成临时规格、消息常量单点+有读者、`RiskGate::check_with_spec` 在盘且两条回测路径都传规格、一条行为用例在盘）。上一轮 838 -> 843：V13 R25 二轮 · 游标口径与登记面自身的可机读性（`web_console_field_wiring_check` 三十一颗 -> **三十四颗**：游标推进只认白名单里的写法且没有基线时不带 `after`、后端「回 seq > after、缺省从头给」与「事件序号从 0 起」这两个前提本身、API_PATHS 每一格都有取数读者；`capabilities_check` 三颗 -> **四颗**：maturity/ 的 8 份登记文件里没有会把 YAML 读成映射的裸标量（实测 8 份里曾有 2 份对标准解析器是 ScannerError）；`bounded_growth_and_reap_check` 九颗 -> **十颗**：死信台账在三条后端上都只有入账与读出，重投键带 attempts 且归零重投。立案的是「只有门禁读得懂的机读面」与「两套游标约定并存」那两类——前者对编辑器/CI lint/下一个工具是坏的，后者让页面每追平一次日志就必然吃一发 409。上一轮 801 -> 838：V13 R25 · 控制台 ⇔ 后端线格式的**字段级**接线（新增 `web_console_field_wiring_check` 三十一颗：读面七格名册与四份 Rust 事实源双向逐等、快照两层对手写 format! 字面量、balances 对 `json!`、顶层键再对 `schemas/account-snapshot-v1.json`、列 ⇔ 名册 ⇔ `<th>` 数、每格名册有运行时读者、`*_raw` 反向 census、定点标度单源单出口、时间轴标度两头钉在一起（`Ts` 的文档必须点名运行时唯一墙钟且那墙钟真是 epoch 毫秒）＋ 页面按毫秒渲染不再除 1e6、WS 帧词表双向 + 每帧有分派支、CSRF 两个字面量取自 console.rs 常量、BFF 不代理升级、**写面**请求体键清单对 `ControlCommand` 且两份 `<select>` 词表对 `CommandKind`/`Permission`）＋ 身份注入真的被用上（`console_front_check` 十七颗 -> **十九颗**：写面的身份覆盖唯一且排在权限裁决之前，加上无名册那一侧的常驻反例在盘）＋ 连接入口的两处如实（`web_console_check` 九颗 -> **十一颗**：带 ?token= 的入口预填本源、空基地址必须有可见反馈而不能静默无反应）＋ 监督器取用失败路径的收尸（`resource_lifecycle_and_lock_reentrancy_check` 两颗）。立案的是「路径级接线全绿而字段级全断」那一类：`web_console_check` 只比路由集合，一个字段都不看，于是页面可以按顶层读快照身份（真在 `header` 里）、给 `PositionSnapshot` 从来没有的 `side`/`cost_raw`/`market_value_raw` 开三列、金额不按 1e9 还原、WebSocket 每帧都不匹配却印「WS 已连接」，而门禁照印 853 全绿——与 `api_surface_doc_check` 在文档那一侧栽过的盲区同源。二十六颗分别钉：① 七格名册条目集合在册（少一格就少一份核对）；② 三张表都有列定义且表头 `<th>` 数与列数逐个相等；③ `positionRow`/`orderRow`/`eventRow`/`envelope` 与 `wire.rs::PositionSnapshot`、`wire.rs::OrderSnapshot`、`event.rs::Event`、`ProjectionEnvelope` 的 serde 字段名**双向**逐等（结构体里出现 `rename` 就当场炸——那意味着这份取数不再等于线格式）；④ `snapshotTop`/`snapshotHeader` 与 `AccountSnapshot::to_json` 那条手写 format! 字面量的两层键清单双向逐等（按 Rust 的 `{{`/`{}` 规则展开再按花括号深度取键，嵌套的 `reconcile` 三子键不会被算成顶层）；⑤ 写侧顶层键再与 `schemas/account-snapshot-v1.json` 的 properties 逐等（三份说法只有一份漂移也红）；⑥ `balances` 与 `/account/balances` 的 `json!` 响应体逐等；⑦ 每格名册都得有运行时读者（`fillTable`/`renderEvents` 的列核对或 `missingFields` 点名）——没人读的名册就是一张装饰性清单；⑧ 反向 census：app.js 里出现的每个 `*_raw` 键名都必须落在名册里（凭空开一列那一类故障反向也堵）；⑨ 定点标度只许一处定义且位数等于 `numeric.rs` 的 `SCALE` 次幂，除数由它推出（别处再除一次就是 1e9 与 1e8 并存）；⑩ `WS_FRAME_KINDS` 与 `ws.rs` 真发射的那七种帧名集合逐等，且每个帧名在 `handleFrame` 都有分派支（落空一种就是"帧被记成未知而实时面照印已连接"）；⑪ CSRF 的 cookie/头两个字面量取自 `console.rs` 的 `CONSOLE_CSRF_COOKIE`/`CONSOLE_CSRF_HEADER`，且写面真的把 token 取出来放回请求头；⑫ 同源 BFF 里不许出现升级转发（这条一变红，页面与文档那句「不适用」就成了谎话）、BFF 形态的降级在页面与说明文字里都在册。两颗收尸钉 `supervise_workers` 那一处 `child.stdin.take()`：失败分支必须先把 worker 挂进台账（`children.push(ManagedChild {` 两处），且不得在取用处就地 kill+wait——回收只有 `stop_managed_children` 那一处、按预算轮询 `try_wait`（与同函数里那颗「`child.wait()` 残留期望 0」是同一把尺）。上一轮 801 是 796 -> 801：V13 R24 · 控制台易用性三件（令牌缺失时临时生成兜底 + `--init` 脚手架 + `--generate-token`）：`qx-cli console` 在环境变量 `bootstrap_token_env` 缺失/为空时**临时生成**一枚一次性令牌并当场打印入口 URL（环境变量仍是首选来源，令牌仍不进命令行/配置文件、不落盘），`--init <path>` 写出与部署模板同形的就绪配置且**拒绝覆盖**已有文件，`--generate-token` 只打印一枚令牌与可粘贴的 `export` 行。新增 console_usability_check 五颗：① 令牌兜底在盘且环境变量仍是首选（`generate_bootstrap_token` + `std::env::var(&console.bootstrap_token_env)` + 临时令牌告示）；② 生成令牌有行为用例在盘（长度下限 + 十六进制 + 两次不同）；③ `--generate-token` 旗标声明且被 `serve_console` 读到；④ `--init` 旗标声明且被读到、且对已存在文件拒绝覆盖；⑤ `--init` 写出的模板与部署模板同形（绑回环、令牌只给环境变量名、无令牌字面量字段、写明 static_dir 与 operator）。上一轮 796 是 789 -> 796：M5' 的本地可验收子项落 **Paper 轨**（`tools/paper_acceptance.py` 跑仓库自己的 Paper venue：主链 `scheduler -> strategy -> paper-execution -> ledger` 两轮独立目录 + 同腿重跑，产出仓库资产 `maturity/paper_acceptance.yaml`），新增 paper_track_check 七颗：① 记录在盘且六格自述齐全（passed / 不需凭据 / 无外部 venue / 无网络 / 无订单 / 主链到 Executed）；② 记录由在盘脚本生成，且脚本真有四件比对（`compare_main_chain` / `compare_rerun` / `compare_independent` / `compare_no_credentials`）——只写一份"看起来通过"的记录不算；③ 主链四段写全且四个计数都是正数（跑出 0 笔成交的"通过"是空跑）；④ 记录正文不出现任何 venue 名称（先剥 `#` 注释再判，免得"外部证据在哪"那句散文被当越界声明）、实盘两档仍全 false（Paper 轨不替外部验收作保）；⑤ 终态退场与幂等（`pending_commands_after: 0` / 审计链校验通过 / 重跑不重复下单 / 两个独立目录事实面相等）——"跑通"与"跑完"不是一回事；⑥ 脚本默认跑仓库那份 paper 模板且在盘，并**主动摘掉**凭据环境变量（`CREDENTIAL_ENV_PREFIXES`）——"不需要凭据"是构造出来的，不是碰巧没配；⑦ `capabilities.yaml` 的 `backtest_only` 档登记了 Paper 轨自己的 `paper_acceptance_record` / `paper_acceptance_generator`（两条轨各有一份仓库资产，读者找得到证据在哪）。与回测轨同源，刻意同样**不**做「记录是否过时」判据（`generated_at_unix` 每跑一次都变，拿它当判据只会逼人写死时间戳）。上一轮 789 是 772 -> 789：M4'/M5' 落**同源 BFF 控制台**（`qx-api/src/console.rs` 会话/CSRF/身份注入/回环边界 + `qx-cli console` 子命令 + `api.console` 配置段与拓扑校验 + `deploy/qianxing.runtime.console.example.json` 模板），新增 console_front_check 十七颗：① BFF 模块在盘且 `mod console;`+`pub use console::*;` 挂进 lib.rs（否则门禁与调用方都看不见它）；② 六个公开常量（会话/CSRF cookie 名、CSRF 头名、令牌查询参数、缺省 TTL、静态资源表）齐备且资源表只认三份（路径穿越因此不可表达）；③ `ConsoleConfig::new` 是唯一构造入口且四类误配当场拒绝（空身份 / 令牌短于 16 / TTL 为 0 / static_dir 非目录）——这一层最贵的错是"配错了也起得来"；④ 会话 cookie 必须 `HttpOnly`+`SameSite=Strict`；⑤ CSRF cookie **刻意不带** `HttpOnly`（页面要读出来放进 `X-QX-CSRF` 头，双提交模式）但仍 `SameSite=Strict`；⑥ 非 GET 必须带 `X-QX-CSRF` 且与会话记住的那一枚逐字符相等（空头与不等都 403，不许放宽成"有头就过"）；⑦ 非 GET 还要过 `origin_matches_host`（带 `Origin` 的请求必须与 `Host` 同源——与 CSRF 头是两道独立的锁）；⑧ 身份由服务端按会话注入 `handle_inner(..., Some(&session.operator))`，且这一层不读命令体里可随便填的 `operator_id`（那是审计字段，不是认证）；⑨ 回环边界单源——判据只在 `console.rs` 定义、`qx-cli console` 绑监听之前先过它；⑩ 引导令牌只从 `bootstrap_token_env` 点名的环境变量读（配置里只有变量名，schema 不得出现令牌字面量字段）——命令行会进 shell 历史、配置文件会进版本库；⑪ `api.console` 段被 schema 声明、边界校验独立成 `console_validation.rs`、且在 `topology_validation.rs` 里 fail-closed 被调用；⑫ `Command::Console` 派发臂指向 `serve_console`（命令表里的入口不是装饰）；⑬ 部署模板在盘；⑭ 模板绑回环、令牌只给大写+下划线的环境变量名、正文无 `"bootstrap_token"` 字面量字段、写明 static_dir 与 operator；⑮ 行为用例在盘（真套接字端到端一条 + 回环/身份边界逐格一条）；⑯ 发布身份（`package_web_console.py`）里的「产品现在有什么」由在盘代码背书——`product_same_origin_bff`/`product_csrf`/`product_server_side_session` 声称 True 就必须真有 `console.rs`，`product_desktop_host` 与约定落点 `crates/qx-cli/src/desktop_host.rs` 的在场与否逐格相等（两边都不能各说各话）；同轮把该身份里 `csrf_supported`/`session_permissions_supported`/`desktop_host_supported` 三个**含糊字段**换成 `package_scope` + `product_*` 两组，免得「归档是 local-only 静态件」被读成「产品没有 BFF」。刻意不把 console 的 8 个错误码塞进 `deploy/README.md` 那张读面表：`console.rs` 用的是自己的 `json_response`（不落 `ApiResponse::json(`/`error_json(` 扫描口径），它不在 `read_face_source()` 的扫描集里，登记进去反而会让"读面 ⇔ 文档"那张表数不准；它的 401 只借了 `transport.rs` 的 reason 短语，那条已由 `api_shared_exits_and_status_lines.rs` 的 `arms.len() >= 9` 守着。上一轮 772 是 767 -> 772：M4'/M5' 续 · Web 控制台 local-only 边界硬化：静态包没有同源 BFF / CSRF / 服务端会话，连接入口与命令提交前都只允许 127.0.0.1 / localhost；发布身份显式登记 distribution_boundary 与 BFF/CSRF/会话/桌面 Host/Paper/sandbox/production 未完成状态。`release_supply_chain_check` 扩展发布包身份字段，`web_console_check` 新增两颗 local-only 判据。上一轮 767 是 764 -> 767：V13 R23 续 · M4'/M5' Web 静态控制台发布包：新增 `package_web_console.py` 确定性归档（版本/commit/Schema Registry 身份 + 三份资源 SHA256、gzip/tar 元数据归零），tag 发布流水线产出 `web-console` artifact、附 build provenance、汇入 Release 的 SHA256SUMS；`release_supply_chain_check` 加三颗判据（打包器+三条测试、job 打包/attestation/upload、Release 汇集与哈希清单）。764 -> 767：V13 R23 续 · §6.4 P2-2 落 http_surface_check（七颗）：自研 HTTP/WS 面覆盖表（maturity/http_surface.yaml）逐格与真实代码对账——self_built_file 全在盘、每行 anchor 符号真声明、每行 case 用例真在盘、verdict.decision=keep_self_built、accepted_gaps 恰好等于「非 covered 行」、migration_trigger 在场。755 -> 757：阶段四 M3' 把控制台从「只读」推进到「控制面」（受理 → 执行者判定 → 终态退场）。`web_console_check` 五颗 -> 七颗：原来那颗「不许出现 POST 或 /control/commands」换成**写面唯一**（`method: "POST"` 全文件只许出现一处，且必须是 `postJson(API_PATHS.controlCommands`；另加禁用名单 `/order/submit` / `binance-submit-order` / `paper-submit-order` / `/control/commands/execute`——下单只能走控制面受理，页面不得直连下单端点），并新增两颗：三阶段文案与状态词表（Accepted/Executed/Failed）在盘、页面如实交代 `403 authenticated_operator_required` 的身份边界（operator 来自 mTLS，页面不能自声明）。上一轮 755 是 743 -> 755：V13 R23 续 · §7 M1 落 `qx-core::contract` 稳定契约单点 + 命名转换矩阵（12 颗判据 contract_matrix_check）：把 P1-5 点名的三对同名兄弟（Bar / StrategyContext / DataProvider）从"隐式重复"（两处各写一份字段映射、谁也不知道还有第三处）变成"显式登记 + 与真实代码逐条对账"——规范单点在仓内唯一、同名兄弟真在盘、adapter 真有生产读者、没有未登记的第三份声明、且「同名但刻意不同层」的行必须写明理由；配套新增读面 `GET /schema/contract-matrix`（`qx_core::contract::CONTRACT_MATRIX` 的 JSON 形态，矩阵因此有真生产读者而不是躺在允许清单里）。上一轮 743 是 737 -> 743：V13 R23 续 · P0-1 把「回测轨」做成**不需要交易所凭据**就能完整验收的一条轨。卡点原本是 maturity/evidence/testnet/ 那份 Binance 验收 outcome=skipped（缺 QX_BINANCE_TESTNET_API_KEY/_SECRET），于是 sandbox_tested / production_approved 只能全 false，P0-1 一直挂在"未落地"；但这两档**只对需要外部 venue 的能力有意义**，而本仓主用法是回测与 Paper 闭环，一条凭据都不用。新增 tools/backtest_acceptance.py（两个独立目录各跑 quickstart + 同目录两轮 backtest；同目录重跑要求逐格相等含产物文件名与 config_fingerprint，跨目录只要求 result_hash / data_fingerprint / 归一化后的产物内容相等，equity/fills 逐字节相等；归一化只抹「绝对路径 + 内容寻址的 config_hash + 由它派生的文件名后缀」三样）+ maturity/backtest_acceptance.yaml（**仓库资产**，与未跟踪的 evidence/ 不同）+ crates/qx-cli/tests/backtest_acceptance_determinism.rs（两条行为用例）。补六颗判据（backtest_track_check 六颗）：① 默认档 backtest_only 且声明不需凭据/无外部 venue/那两档不适用；② 记录在盘且六格自述齐全；③ 记录由在盘脚本生成且脚本真有 compare_reruns/compare_independent/one_leg；④ result_hash 是 16 位十六进制且四类产物摘要齐全；⑤ 记录正文不出现任何 venue 名称（先剥 `#` 注释再判，免得"证据在哪"那句话被当越界声明）、实盘两档仍全 false；⑥ 行为用例在盘。刻意不做「记录是否过时」判据——generated_at_unix 每跑一次都变，拿它当判据只会逼人写死时间戳。上一轮 737 是 729 -> 737：V13 R23 · P1-11/DD-5 把错误码从字符串抽成**五元契约**（`crates/qx-core/src/error.rs`：`ErrorCode` 闭集 + `Retryability` 四档 + `ErrorContract` 五格 + `QxError::contract()` 唯一映射表，`code()` 从它派生），并把消费侧接上（`qx-cli/src/usage_errors.rs` 的 `qx_context` 显式消费契约、`runtime_wiring/pipeline_storage.rs` 四处 `QxError`→字符串边界不再摊成 `{error:?}`、`qx-runtime/src/pipeline.rs` 两处重试循环改按 `retryability` 分支），补八颗判据（error_code_contract_check 八颗）：① 三型落在 qx-core 的 error 模块且 lib.rs 重导出；② `ErrorContract` 五格字段齐；③ `ErrorCode::ALL` 是闭集（声明长度 == 列出的码 == `QxError` 变体数）；④ `contract()` 是唯一映射表且 `code()` 从它派生、自身不再 `match self`；⑤ CLI 展示层按 `reconcile_required`/`retryability.allows_retry()` 分级；⑥ 四处 QxError→字符串边界全走 `qx_context` 且文件里不再有 `{error:?}`；⑦ 热路径重试循环按 `retryability` 分支（两处）；⑧ 行为用例在盘（qx-core 侧自洽 + qx-cli 侧逐变体五格 / 展示层分级 / 真实打开边界带码三条）。刻意不纳入 HTTP/工作流状态串（qx-api 的 status、qx-control 的 CommandStatus）——它们是各自的读面，塞进 `ErrorCode` 会把闭集撑成开放集、③当场数不准。上一轮 729 是 723 -> 729：V13 R23 · P1-6/WP-19 把三把权益/保证金尺子收敛成单一 `ValuationContext`/`ValuationResult`（`qx-core/src/valuation.rs`：`Ledger::valuate` 单点派发 + `MarginState::valuate` 共用结果形状；回测两处手工派发与 CLI paper 保证金派发全部改走它），补六颗判据（valuation_single_source_check 六颗）：① 类型落在 qx-core 的 valuation 模块且 lib.rs 挂载+重导出；② `Ledger::valuate` 在盘且三把参数化尺子的派发只在它里面；③ `MarginState::valuate` 在盘且两个入口共用 `ValuationResult::new`（available 关系单源）；④ 生产源码全文扫描——三把参数化尺子只能出现在定义点（`ledger/query.rs`）与估值单点（`valuation.rs`），取 `production_text` 剥掉注释与测试项以免「文档提一句 / 用例直接调原语」数不准；⑤ `MarginState::equity`/`available` 委托 `valuate`；⑥ 派发等价性四条行为用例在盘（valuate 与原始尺子逐值相等、有/无汇率两把尺子给出不同的数）。刻意不纳入 `Ledger::equity_for`（乘数固定 1 的无参现货尺子，没有"选哪把"的歧义）。上一轮 723 是 717 -> 723：V13 R23 · P1-2/§7 M2 落 LiveEventPipeline 游标增量 refresh（`SqliteEventLogStore::read_since` 行级尾部读 + `refresh_latest` 三支：空尾部 no-op / 前缀一致只接尾部 / 前缀不符整份重建），补六颗判据（pipeline_cursor_refresh_check 六颗）：① SQLite 读侧 read_since 按 seq 只取尾部且不调 load_event_log（否则 O(N) 读放大原样回来）；② RuntimeEventStore::read_since 委派 SQLite、其余后端显式回落 Ok(None)（不是静默降级）；③ refresh_latest 三支齐备；④ apply_tail 用 P1-1 的 append_batch 接日志且不做整份重建索引；⑤ 增量与整份重建共用同一个 apply_index_event（归约单源，两条路径不能各写一份）；⑥ 读侧前缀校验与归约侧增量路径各有一条行为用例在盘（增量与整份重建的终态完全一致，纯行为断言抓不到退化，故同时把 tail_appends/rebuilds 两个内部计数器当回归证明面）。上一轮 717 是 711 -> 717：V13 R23 · P1-1/DD-2/§7 M2 落 EventLog 写侧单事务批量追加（`EventLog::append_batch` + `SqliteEventLogStore::append_batch` + 生产写面接线），补六颗判据（event_log_append_batch_check 六颗）：Kernel 的 append_batch 在盘且 append_checked 委托给它（逐条校验规则单源）、digest() 与前缀摘要 digest_of_prefix() 同源、SQLite 增量追加函数不调 load_event_log（否则 O(N) 读放大原样回来）、append_batch 在单事务里走增量路径、pipeline.rs 的 SQLite 分支真的调它、原子性与增量性各有一条行为用例在盘。上一轮 711 是 708 -> 711：V13 R23 · P1-12/§8 WP-22 建 `crates/contract-tests`（纯测试宿主），把两条压在正常边上的 dev 环（`qx-execution --dev--> qx-runtime`、`qx-risk --dev--> qx-zhenlu`）连同它们的 5 份跨 crate 契约用例（10 条）搬出生产 crate，补三颗判据（dev_dependency_cycle_check 三颗）：① 两条已知环不许回来；② 全仓不得存在「A --dev/build--> B 且 B --normal--> A」这种二点环（`cargo tree` 默认视图看不见 dev 边，反向正常边却真实存在——新写的 dev 边踩到任一正常边当场红）；③ 搬家不是丢用例——迁走的五份契约用例仍在 `crates/contract-tests/tests/` 且该 crate 在 workspace members 里（否则它们再不会被 `cargo test` 跑到）。`EXECUTION_TEST_FLOOR` 25 -> 15 是这次搬家的补偿口径：本地板只覆盖 `src/tests` 的 15 条，全仓地板把新 crate 一并计入、总数不变。上一轮 708 是 703 -> 708：V13 R23 · P0-3/DD-4 落 in-process 原生策略信任门（`crates/qx-cli/src/native_trust.rs`：`admit_in_process_c_abi` + `target_triple_matches`），补五颗判据（native_trust_check 五颗）：信任门模块在盘且两个判定都非测试专用、`load_c_abi_strategy` 在 `dlopen` 之前先过信任门、配置面暴露 `c_abi_trusted_native`/`c_abi_target_triple`、且信任门开关缺省为 false（默认拒绝）。上一轮基线 703 是 698 -> 703：V13 R23 · 阶段四 M1'/M2' 建只读 Web 控制台（web/console/{index.html,app.js,styles.css}），补五颗「前端 ⇔ 后端接线」判据（web_console_check 五颗）：控制台三件在盘、app.js 点名的每个 API 路径都在 qx-api 路由表里（前端引用一个后端不存在的端点当场红）、index.html 写明 cors_allowed_origins 跨源要求、写明 `qx-cli serve` 启动入口、且控制台不得长出写操作（出现 POST 或 /control/commands 即红——它就不再是只读控制台）。上一轮基线 698 是 697 -> 698：V13 R22 #222 修 `TEST_PATH` 盲区（它只认目录式 `src/tests/`、不认单文件式 `src/tests.rs`，于是「唯一读者写在 `src/tests.rs` 里」的 `pub` 项被当成有生产读者）并补一颗「测试模块两种形态」判据（`zero_reference_public_surface_check` 新增一颗）。口径定成一格：`(?:^|/)tests\.rs$` 补齐单文件形态；放宽后由单文件盲区放出来的 8 条零读者（`qx-datastruct::{close_at, from_view, resample_with_manifest, select_time_with_manifest}`、`qx-protocol::{from_wire_json, to_wire_json}`、`qx-xingban::{corporate_action_supported_by_ledger, corporate_actions_from_data}`）逐条进允许清单并写明理由（生产链路走 `BarFrame::from_json` / `apply_corporate_actions_json`，这些类型化程序化入口只有库内用例读者）。上一轮基线 697 是 695 -> 697：V13 R21 补两颗 fam12「二级入口逐颗用例」判据（cli_surface_coverage_check 新增两颗）。顶层命令表此前只覆盖父命令，`backtest ccxt-builtin` / `strategy list` 这类二级入口一颗用例都没点过名——`crates/qx-cli/tests/command_surface.rs` 新增 `NESTED_COMMANDS` 常量与 `every_nested_command_renders_its_own_help` 用例逐条实跑 `--help`，两颗判据分别钉：清单与四个父命令（config/run/strategy/backtest）的 clap 子命令表逐一相等、且清单真的被逐条喂给被测 binary（只列不跑 = 红）。上一轮基线 695 是 689 -> 695：V13 R20 补六颗 fam15「内核时间轴口径」判据（kernel_timeline_check 六颗）。README 与 crates/qx-core/Cargo.toml 把内核描述成"有确定性时钟与因果事件队列"，而 crates/qx-core/src/clock.rs 自己写着"这里不提供虚拟时钟"、lib.rs 写着"内核不提供虚拟时钟对象"——文档替一段不存在的代码作保（§13.1 修 README 过度声明的同族）。六颗分别钉：三件死实现（引擎/因果队列/时钟）不得以原名回到 crates/、clock.rs 只剩 pub type Ts = u64; 且唯一、三份口径来源不再写旧承诺、README 改口到真实推进路径（含优先级序）、因果优先级数值 Rust↔Python 单源、pipeline.rs 的 (ts, prio) 单调落盘判据唯一且在正文。上一轮基线 689 是 V13 R20 补五颗「手续费币种折算」判据（fee_settlement_currency_check 五颗）。回退面重放时发现 `crates/qx-core/src/ledger/fill.rs` 在祖先 `7e8f3db` 上是 334 行、带 fee_in_settlement_raw/base_asset_of，合流后只剩 261 行、把异币种手续费按面值记进结算币种——`Fill.fee_currency` 由两个适配器填充且已进事件指纹，归约侧整份不读它，是 D2 的原始缺陷（不在 §9.48 的 15 族名册里，是重放模块级判据时才暴露的第 16 族）。五颗分别钉：折算函数唯一且两条记账入口都过它、费用腿记折完的数不记回报原数、基准资产费用按成交自身价格定点折算、折算只对乘数为 1 的现货开放（衍生严格认结算币种）、七条用例逐形状在位。上一轮基线 684 是 V13 R18 补六颗 fam05「调度 owner 路由 fail closed + JobSpec 读侧」判据（scheduler_owner_routing_check 六颗）。恢复 crates/qx-scheduler/src/job_spec.rs（Trigger/JobWindow/JobSpec 与 owner 路由判据的落点）并把 owner 路由判据单源化：JOB_OWNER_ANY 一个常量、claimable_by 一处定义，领取端（workers.rs）与装配端（load_scheduler_state 的 validate_job_owners，新建与载入两条路径）共用它。六颗分别钉：通配 owner 只有一个常量且领取端不再就地比较 "*"、装配处 fail closed 且两条路径都要问、deploy 示例声明的作业清单都找得到、deploy 示例里每个启用作业都有可领取的启用 Strategy worker、JobSpec 三格零读者字段按 2026-10-06 方案 §13.2 保留不删 + 登记 limitation + 双向钉住、作业清单示例每一格顶层键都在 JobSpec 名单里。上一轮基线 678 是 V13 R17 补七颗 fam04「适配层 IO 预算与 venue 缓存」判据（io_budget_and_venue_cache_check 七颗）。恢复 crates/qx-adapter/src/io_budget.rs 与 crates/qx-adapter/src/venue_cache.rs，把 write_all_within 接进三处子进程 stdin 写入（CCXT worker / 策略 worker / 事件 consumer handler），把 evict_stale_terminal_orders 接进两个常驻 venue 的订单写入点（binance 3 / ccxt 2）并级联退派生索引。七颗分别钉：三处 stdin 写入都走 write_all_within 且无一处退回裸 write_all、io_budget 只按截止时间收写线程且只有超时那格把打断管道的责任交回调用方、WebSocket 单帧/整条消息/单次轮询三层长度预算各一个具名常量、venue 缓存封顶只退终态订单且越限才扫表、两个 venue 的每处订单写入都过封顶并级联清派生索引、binance 未知订单仍升级对账、针路 OMS 刻意不共用封顶。上一轮基线 671 是 V13 R16 补八颗 fam01「文件锁统一」判据（file_lock_single_source_check 七颗 + backtest_clock_honesty_check 的墙钟豁免在场一颗）。恢复 crates/qx-core/src/file_lock.rs（V11 §40 D1 的崩溃可恢复写锁：纯判据 decide_lock + 有界等待 + 按年龄接管孤儿锁 + Drop 只删自己那把），并把四处就地 create_new 锁（数据集注册表 qx-data/registry.rs、多腿状态 qx-zhenlu/lib.rs、存储信封 qx-storage/state_envelope.rs、作业 claim qx-storage/file/jobs.rs）全部改走 qx_core::FileLock。七颗分别钉：FileLock 只有一个定义点、全仓再无第二处 remove_file(*lock*) 的就地锁生命周期、四个消费文件都引用 FileLock::acquire 且不回归就地锁算式、以及「同一场竞争只接管一次」住在 decide_lock 里且循环把计数喂回判据、只按判据交出的年龄说话。file_lock 读墙钟（锁年龄与令牌 nonce）是唯一一格豁免，按路径点名并由「豁免文件仍在场」一颗核对。上一轮基线 663 是 V13 R15 补三颗 fam12「CLI 表面」判据。`cli_help_surface_check` 只核「help ≡ clap 表 ≡ cli.rs 派发」三侧集合相等，看不见「某入口其实一敲就崩 / 它自己的用法渲染不出来」；`cli_dispatch_check` 只核分派点唯一。三颗分别钉：crates/qx-cli/tests/command_surface.rs 的 CLI_COMMANDS 清单与 clap 表逐一相等（新增命令没进清单、或清单留了已删命令都红）、清单真的被逐条喂给被测 binary 跑 --help（只列不跑 = 清单退化成装饰）、config 的 clap 子命令集与 help 印出的 config <sub> 行逐一相等（第二层入口与顶层同一类断链）。上一轮基线 660 是 V13 R14 补两颗 fam11「分层处置」闭环判据。零读者那一族（zero_reference_public_surface_check / zero_reference_pub_crate_surface_check）只遍历在盘的定义，所以「函数被删掉、PUBLIC_SURFACE_ALLOWLIST 条目还在」这件事它永远看不见——条目会一直躺着，下一次有人把同名函数加回来时它就变成一张现成的免检通行证。两颗分别钉：允许清单里每个条目都对应一处真实定义（pub fn/pub const 或 pub(crate) fn）、每条理由都不是占位符（至少 6 个字符，当前最短的 7 个字符是 `任务 #119`）。上一轮基线 658 是 V13 R13 补三颗 fam02「停机令牌 + 连接上界」判据：V13 R2 #218 实测，监听循环按 stopped() 收摊后已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。V13 R2 #218 实测：监听循环按 stopped() 收摊后，已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开（不发 FIN、也不再写字节）时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起（有生产者、初始化关闭）、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。fam02 另外两格（快照历史有界、事件按账户键）已由 bounded_growth_and_reap_check 与 browser_admission_check 看守。上一轮基线 655 是 V13 R12 补四颗 fam10「运维读面：exposition 真换行 + 告警名册每个指标都有生产端」判据。V13 R2 第七遍实测到的缺陷形态是 /metrics 正文只有一行、行与行之间是字面的 `\n` 两个字符：抓取端把整份正文读成一行、一条样本都解析不出来，而告警侧是「永不触发」而不是「报错」——服务端与告警侧都不会自己出声。四颗分别钉：exposition 构造函数用真换行（体里出现 `\n` 转义、不出现字面的双反斜杠 n）、那条逐行解析用例在盘且解析器显式拒绝字面换行、告警名册里每个 qx_ 指标都能在生产源码里找到写出点（否则该告警永不触发）、名册每条规则都有 expr/severity/summary。取名册文本时同样先剥整行 `#` 注释：名册里那段解释 `qx_outbox_relay_parked` 的散文不剥掉，会替真规则满足「有生产者」那颗判据。上一轮基线 651 是 V13 R11 补七颗 fam13「CI 特性矩阵点亮每颗特性闸门 + NATS 用例有真执行的腿」判据。§12.2 把这一族登记为回退面时明写「新补的那条 NATS 腿只由 ci.yml 的文本存在性保证，门禁里没有判据核它——把它删掉或加上 --no-run 不会红」，本轮把那颗缺失的判据补上：① feature-matrix job 在盘且三步（clippy/check/test）都按 --no-default-features 逐组合跑（只在某些 feature 分支里才存在的代码不会被默认特性的 lint 看到，矩阵漏一颗特性那颗特性的代码就从「有 lint」退成「无 lint」）；② qx-cli 声明的每颗特性都出现在某个矩阵组合里，且矩阵里不出现不存在的特性名（拼错即红）；③ NATS 真执行腿按指纹整段钉住（显式点名两个 NATS 测试目标，因此与 `-- --ignored` 那条腿不可能混淆）；④ NATS 非 ignore 用例数不低于现场实测值 8。上一轮基线 644 是 V13 R10 补五颗 fam06「environment 词表单点与 production 判定唯一出口」判据。此前「这份运行时配置是不是 production」被手抄 14 处（运行时配置校验 9 处 + CLI 体检/就绪 5 处），各写一份 `environment.eq_ignore_ascii_case("production")`，全仓没有单源出口——危害不是现在算错，而是改口径（如 `production`→`prod`）时漏改的那一处加固静默失效，而它守的正是「production 禁止明文 API / C ABI 必须配 Ed25519 公钥 / Execution worker 必须配名义额上限」。五颗分别钉：写法常量 `PRODUCTION_ENVIRONMENT` 与判定 `RuntimeConfig::is_production` 各只有一处定义、词表从常量取 production 这一档、判定体引用常量不得内联字面量、手抄式 `eq_ignore_ascii_case("production")` 不得在生产代码复活、调用判定的生产文件与登记表逐一相等（新增闸门必须登记）。同 `VenueId::is_binance`（V13 §5 A3）一族。上一轮基线 639 是 V13 R9 补一颗「金额/价格/数量字段的缺键不许静默变成 0」。裸 `#[serde(default)]` 落在非 `Option` 的 Money/Price/Quantity 上，等于给「这份回报没带该字段」和「交易所明确报了 0」发同一张身份证；本仓两条正确形状分别是 `Option<Money>`（AccountPositionSnapshot 三格）与 `#[serde(default = "named_fn")]`（A 股规则配置）。剩下的三处全在 qx-core/src/event.rs 且危险方向都是 fail-closed，按名字登记在 BARE_MONEY_DEFAULT_ALLOWLIST。上一轮基线 638 是 V13 R8 补五颗静默抑制判据（丢结构体字段值必须当场写理由、`#[allow(dead_code)]` 必须当场写理由、`unreachable!` 必须带非空消息、不得留 `todo!`/`unimplemented!` 桩、生产源码的 TODO/FIXME 与登记表逐项相等）。这五种形状的共同点是「改错了也不红」：字段没人读就加一行 `let _ = x.y;` 按住、能力没接上就挂 allow、分支真到不了就写裸 unreachable!()、需求没做完就留桩，全是孤儿逻辑与静默降级的温床。上一轮基线 633 是 V13 R16 补四颗，守契约与存储读回侧的防御口径一致性。第一颗守 Python `StrategyInput.from_dict` 必须像同文件的 `StrategyIntent` / `StrategyOutput` 一样调 `_reject_unknown_keys`：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，策略可能以为账户是空的而误触发。第二颗守 `FactorReport::validate` 必须像 `FactorConfig::validate` 一样校验 `missing_policy` 的 reject/skip/zero 词表：报告能被 `from_json` 反序列化，只有空串校验时手改一份 JSON 能放行到下游 `resolve_missing` 才报错，落点离改错的地方很远。第三颗守 `outbox.attempts` 读回必须走 `parse_sqlite_u32` / `parse_u32` 而不是 `as u32` 截断：attempts 以 TEXT 落盘，u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成小值、绕开死信判定。第四颗守 `FactorConfig` 的源头词表本身没被改弱——两处词表不一致时改哪一侧都会让另一侧的校验变成摆设。627 -> 629：V13 R14 补两颗，守两个平台的托管启动器都有 supervise 之前的 runtime-check 前置闸门，且 bash 侧的闸门失败不得用 $? 当退出码。`supervise` 只走 plan_workers 的拓扑校验，不检查配置引用的文件是否存在（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）——修前 start-qianxing.ps1 有这道闸门、start-qianxing.sh 没有，Linux/macOS 上的坏配置会拉起 7 个子进程再 fail-fast 全杀，而不是在任何子进程起来之前就拒绝。第二颗守 `if ! cmd; then echo ...; exit "$?"; fi` 里的 $? 拿的是上一条 echo 的状态（0），调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
+GATE_CHECK_FLOOR = 936  # 928 -> 936：2026-10-10 QX-DEV-PLAN-2026-10-10 阶段 2 的关键路径 T2-0 → T2-1 → T2-2（退出门 G1 三入口 + G2 独立 consumer）。新建 `crates/qx-app`（应用层：`error.rs` 稳定错误类别 + `guard.rs` panic 边界 + `context.rs` 能力档 + `spec.rs` 版本化严格 JSON + `cases/{validate_dataset,run_backtest,verify_run}` 三个用例），`qx_app_check` 八颗：① 依赖集**精确**（5 个领域件 + serde/serde_json 共 7 名，`Cargo.toml` 是"应用层没有偷偷把 CLI/API/执行/存储拉进来"这条纪律的载体）；② `AppErrorCategory` 八类与路线图 §X1 那张表**逐条同名同序**（类别少一个或改名，调用方会把它送错下一步，而"能编译"对类别语义是盲的）；③ `maturity/app_use_cases.yaml` 九项登记面在盘、自述 kind 正确、三个用例九项逐格非空；④ 每个用例的键集恰好是那九项；⑤ 登记面用例集合 == `cases/mod.rs` 的 `pub use`，且每个用例都有自己的 `pub fn` 落点；⑥ `cases/mod.rs` 的九项文档表与登记面逐条相等（表头三列 + 第一列九行）；⑦ 登记面的 `capability` 与用例代码里的能力闸一致（说不管就必须真不管——"文档说不需要权限"与"代码里加了权限"两边都能编译）；⑧ qx-app 是 workspace 成员且三个门面都依赖它并有门面实现落点。同轮 `layer_dependency_check` 扩三格：`LAYER_FACADE_CRATES`（应用层不得反向依赖门面/适配/执行/存储）、`LAYER_FORBIDDEN_DEPS` 加 `qx-app`、`LAYER_SOLE_DEPENDENTS` 加 `qx-app → {qx-cli,qx-api,qx-python,contract-tests}`，并把"解析到全部 crate"的地板 24 → 26。**门禁自己的一处盲区也在这一轮暴露并修掉**：`clap_subcommand_parents` 过去只在 `cli_args.rs` 里找 `#[command(subcommand)]`，`App(AppArgs)` 这种"参数结构单独成文件"的父命令会被当成没有子命令，三条叶子从此没人跑过 `--help`（`data_validate_args.rs` / `plan_args.rs` / `console_args.rs` 早就把那种写法做成常规，只是它们都不带子命令）——现在两个取名册的助手都按「全 CLI 参数源」取事实。`UNLABELED_DIAGNOSTIC_CEILING` 的 `qx-cli` 55 → 53：`selfcheck.rs` 三处本来就带标签、只是把换行写进了字面量开头（`println!("\n[更路 · 重放校验]")`）被误记成未标签，按约定拆成 `println!()` + `println!("[组件 · 子域]")`（输出逐字节不变）；同轮 `qx-cli app` 新增一处机器结果直出（与 `--json` 那几条同一形状），净额 55 - 3 + 1 = 53——**新加机器输出就要在同一轮把债还掉**，不是把上界抬上去。上一轮 928 是 927 -> 928：2026-10-10 归档 V13 台账的历史部分——把 `docs/自研量化框架审计与重构方案-V13.md` 的 §9.1–§9.47（R1-A1 … R2 第三十五遍，原第 388–3371 行 / 2,984 行 / 活台账 3,820 行的 78%）拆入 `docs/archive/自研量化框架审计与重构方案-V13-逐轮执行记录.md`，活面只留 §1–§8 与 §9.48 起的逐轮记录（3,820 -> 841 行）；**原 §号一字未改**，所以旧指针（`…V13.md` §9.N，N ≤ 47）按号即得，同步改指的只有路径 token：`CHANGELOG.md` 21 处、`docs/archive/竞品对比与易用性改进优化计划-v1.md` 3 处、活面 §1–§8 内部 16 处。同轮给这份**新存档文档**补一颗牙齿（`doc_citation_reachability_check` 新增一颗 `TOTAL_DOC_CITATION_FLOOR`，活 234 + 存档 231 = 465）：单看活侧地板抓不住「存档被整份删掉」——删掉一份存档文档时 `live_total` 不动、`archive_dead` 从 9 掉到 0，而天花板判据是 `<=`，照样绿，于是「留而不删」这条纪律在门禁里没有牙齿；总地板让「拆/移只是换住址、删掉被引用的存档当场红」第一次可核。`LIVE_DOC_CITATION_FLOOR` 272 -> 234 是同一批 64 条引用换了住址（活 298 -> 234、存档 167 -> 231、活侧落空仍 0、存档落空仍 9），不是扫描集失效。上一轮 927 是 919 -> 927：QX-DEV-PLAN-2026-10-10 T1-1（阶段 1 最大一件 / 退出门 G1 第一条「同一运行可由 RunManifest 离线复算」）落运行证据包 RunEvidenceBundle（`crates/qx-spec/src/run_evidence.rs` + `schemas/run-evidence-v1.json` + `crates/qx-cli/src/run_evidence.rs` 构建器 + `report --evidence` 入口），`run_evidence_check` 八颗：① 对象 `pub` 字段集合与 schema 顶层 `required` **逐一相等**——`foundation_specs_check` 只核「版本常量 == const」，字段级是盲的，对象加一格而 schema 没加会让写出去的产物当场被自己的 schema 拒而门禁照印全绿；② 三条对象层纪律落在**代码**上（剥掉整行 `//` 注释）：空 `unverified` 拒 / `artifact_digests_verified=false` 拒 / `capability_level > L2` 拒——「写了纪律」与「纪律会拒」是两件事；③ `check_cross_references` 里那组元组与判据自己的期望表**逐条相等**（标签集合、被比字段、run 侧来源三处都对，且条数不为零——一张空表也能「不报错」）；④ 内容指纹与合成指纹**是两格**且交叉比对只拿 `composed_fingerprint` 去比 `run.data_fingerprint`——写这一格之前先看过真产物：RunManifest 的 `data_fingerprint` 是**合成**身份（`barframe:<内容哈希>` / `dataset-bundle:<指纹>`），而摘要 `input.fingerprint` 是纯内容哈希，第一版判据硬写这两者相等会让**每一份真产物都被拒**；⑤ 质量报告允许**缺席**（`Option`）不许**空**（`usable_tiers.is_empty()` 拒绝臂在盘）——`null` 是「这一档输入没有这份报告」，空 tiers 是「核过了，没有任何一档可用」，后者是一句该被拒的断言；⑥ 构建器是**生产**代码（不在 `tests/` 下）且被非测试文件真的调用——T1-1 交付的是「构建器 + schema」，只有 schema 等于半件事；⑦ `--evidence` 使用者可达（`cli_args.rs` 能力位 + help 写明）且 `write_run_evidence` 的调用点**排在** `recompute_declared_backtest_input` 之后——顺序反了会在拒绝路径上先落一份没核过的 `artifact_digests_verified=true`；⑧ 正向与反向（复核拒绝时不留证据包）两条常驻用例在盘。同轮把 `foundation_specs_check` 的登记面从七类扩到八类（`FOUNDATION_SPECS` / `FOUNDATION_OBJECT_TYPES` 与 `FoundationKind::ALL` 同步到 8），`maturity/schema-registry.json` 与 `maturity/artifact_migration.yaml` 各补一行 `run-evidence-v1`（`ARTIFACT_MIGRATION_MIN_ROWS` 10 -> 11 是「在册契约只增不减」的棘轮），并把 `qx-spec` 那条手抄用例表 `describe_reads_every_foundation_kind` 改成与 `FoundationKind::ALL` **逐条同名同序**断言——它叫「every foundation kind」却是一张手抄表，下次加一类会静默漏掉。上一轮 912 是 905 -> 912：QX-DEV-PLAN-2026-10-10 T0-3 把实盘轨的**边界**从三处散文（方案 §2 的五段表、`maturity/evidence/README.md` 的四档说明、验收脚本写进 `result.json` 的那句规则）收成一张机读登记面（`maturity/external_chain.yaml` + `external_chain_check` 七颗：登记面在盘且 kind/顶层键/四档/五段齐全、五段与方案 §2 那张表逐行同名同序且每段带失败即口径、翻转规则三处同源（登记面/方案/脚本文字，剥反引号后逐字相等）、脚本的**代码**真实现那条规则（live-check 豁免 + 只有 pass 才 allowed）、证据根现状与盘上逐份 `result.json` 一致且 `flip_allowed` 恰等于「存在 outcome=pass」、两档计数与 `capabilities.yaml` 逐值相等且**没有 pass 记录时两档必须全为 false**、第二交易所的 `--venue` 值在脚本 choices 里且该入口在命令面上是 L 档且默认关闭）。此前 `capabilities_check` 只核「未拿到沙盒记录前 `sandbox_tested` 全为 false」这一条，`external_acceptance_check` 只核脚本点名的入口/常量/配置/worker 与命令面对齐——**没有任何一处**登记过「实盘轨分几段、翻档的唯一依据是什么、今天有没有这份依据」，于是同一件事的三种说法可以各说各的：方案 §4 写「除 live-check 之外全部阶段退出码为 0」，而脚本写进结果包的是「全部阶段退出码为 0」，方案自己声称「脚本与文档同口径」而门禁里一条判据都没核过它（本轮实测并已按方案口径改正脚本那句文字）；反过来，「把 `implementation: true` 读成生产已批准」也没有任何判据拦——登记面今天才把这条界线写成可核对的一格。上一轮 905 是 898 -> 905：QX-DEV-PLAN-2026-10-10 T0-4 把「规范回测」的**夹具身份、产物摘要、耗时与内存**冻结成一份在册基线（`maturity/backtest_baseline.yaml` + `tools/backtest_baseline.py` + `backtest_baseline_check` 七颗：记录与脚本都在盘上且脚本真被 `main()` 调用过、顶层十块齐全且 schema/kind 自述正确、夹具身份逐项非空且 `data_fingerprint` 与 `maturity/backtest_acceptance.yaml` 同一份数据集、`result_hash` 与验收记录逐字相等、产物四类齐全且 `equity`/`fills` 摘要与验收记录逐字相等（这两份是纯数据、不含绝对路径，跨机可比；`summary`/`run_manifest` 内嵌产物路径故只比在册与摘要非空）、耗时与内存只核形状与非零（机器相关，不进判据数值）、脚本真用 `perf_counter`/`Popen`/OS 峰值 RSS 三处测量原语且记录不含绝对路径）。此前 `performance_baseline_check` 只核 `benchmarks/run_baseline.py` 在盘且 README 指向它——那份量的是性能轨的**脚本存在性**，没有任何一处把「这一轮的规范回测跑出来的是哪份夹具、哈希是多少、花了多少秒、峰值内存多少」钉成可比对的数；夹具被换掉、结果哈希漂移、`--release` 换成 debug，三者都不会红。上一轮 898 是 892 -> 898：QX-DEV-PLAN-2026-10-10 T0-2 把「46 条 CLI 入口」从名字清单升级为能力声明表（`maturity/command_surface.yaml` + `command_surface_classification_check` 六颗：表与 clap 命令表逐一相等、八格自述齐全、R/P/O/L 四档都有且父命令集合与 clap 的 subcommand 父命令表相等、L 档默认关闭且需私有凭据、P 档不需凭据、R 档无外部副作用）。此前 `cli_surface_coverage_check` 只核「每条入口能渲染自己的 --help」，没有任何一处声明某条入口属于 R/P/O/L 哪一档、默认面与权限是什么——新增入口不登记、把 L 档改成默认开启、给 P 档写上私有凭据，三者都不会红。上一轮 892 是 882 -> 892：V13 R31 控制台多账户作用域的读面前置——`/account/ledger` 与 `/reconcile/reports` 从「四条整体现读端点一律不收窄」里拆出来立一条按账户过滤的通道（`read_face_scope_check` 十颗：模块在盘且低于门槛+挂载、三张路由名单条目数自洽且两两不相交且每条都有活分派臂、查询键名单只有 read_scope 一份而 admission 不再自持 `*_PARAMS`、`accepted_query_params` 是唯一取名册出口且五张名单都在它体内、收窄键名单与底层类型的归属列一致（`LedgerEntry` 只有 `account_id`、`ReconcileReportSnapshot` 两列都有——账簿那一格只认一把键是数据结构决定的）、两条过滤臂真在结果集上过滤且不借用投影那族的 `missing_projection_response`、空结果回 200 而不是 `404 account_projection_not_found`、400/503 分工不合并、端点表只在真读收窄键的入口承诺查询串、九条行为用例在册）。此前 `api_surface_doc_check` 只比路由集合、`api_endpoint_table_routes.rs` 只比表与分派是否平，没有任何一颗判据看「这条臂有没有真读 `query`」——于是 `/account/ledger` 可以既在表里写 `[?account_id=]` 又一行过滤都没有，读者拿到的是默认账户那份流水而被当成了自己点名的账户；反过来把空结果改成 404 也不会红，而「这一轮没有事实」与「这个账户不在这份部署里」是两件事。上一轮 882 是 881 -> 882：V13 R28 多账户并行隔离补第七颗——并发用例真开两条线程跑两个账户的真实 `run_paper_execution_worker` 并用 `Barrier::new(2)` 强制重叠（顺序调用不算并发；`supervise` 里多个 worker 是同时活的，隔离必须在真并发下也成立）。881 -> 881 保持：V13 R28 公共组件面——诊断（进程日志）是唯一一处**没有**框架级单源的面（全仓无 `tracing`/`log`/`env_logger` 依赖，245 处诊断直接走 `println!`/`eprintln!`，靠非正式 `[组件 · 子域]` 前缀约定；`qx-api` 与 `qx-orchestrator` 已全量带标签），新增 `process_diagnostics_check` 三颗把它钉下来：① 引入诊断框架就必须一次迁移完（有框架依赖时未带标签站点必须为 0——半迁移是在既有约定之外多出**第三种**约定）；② 未带标签站点数只降不升（棘轮，表外 crate 要求 0）；③ 棘轮表是活名册（归零的 crate 必须从表里删掉、新增未标签站点的 crate 必须登记）。875 -> 878：V13 R28 收口 §17.11 登记的 CI 覆盖面缺口——`ci_feature_matrix_check` 新增三颗（`feature-off` 腿在盘且按 `--no-default-features --all-targets` 跑 clippy 带 `-D warnings` / 有 `cfg(not(feature = …))` 分支的 crate 都在腿上 / 腿点名的 crate 恰好等于声明了非默认特性的每个 workspace crate）。此前 `feature-matrix` 只 lint「特性开」那一侧：一颗只在 `#[cfg(feature = "sqlite")]` 里存在的模块，在默认特性下被 lint 到、在关掉特性时**整段不参与编译**——于是「关掉特性能不能编过」这件事只有 CI 的构建腿知道，lint 腿是瞎的。同轮把 `qx-cli` 的 `console` 与 `sqlite` 两条腿的 clippy 也接上。——把 `docs/自研量化框架审计与重构方案-V13.md` 的 §9.1–§9.47（R1-A1 … R2 第三十五遍，原第 388–3371 行 / 2,984 行 / 活台账 3,820 行的 78%）拆入 `docs/archive/自研量化框架审计与重构方案-V13-逐轮执行记录.md`，活面只留 §1–§8 与 §9.48 起的逐轮记录（3,820 -> 841 行）；**原 §号一字未改**，所以旧指针（`…V13.md` §9.N，N ≤ 47）按号即得，同步改指的只有路径 token：`CHANGELOG.md` 21 处、`docs/archive/竞品对比与易用性改进优化计划-v1.md` 3 处、活面 §1–§8 内部 16 处。同轮给这份**新存档文档**补一颗牙齿（`doc_citation_reachability_check` 新增一颗 `TOTAL_DOC_CITATION_FLOOR`，活 234 + 存档 231 = 465）：单看活侧地板抓不住「存档被整份删掉」——删掉一份存档文档时 `live_total` 不动、`archive_dead` 从 9 掉到 0，而天花板判据是 `<=`，照样绿，于是「留而不删」这条纪律在门禁里没有牙齿；总地板让「拆/移只是换住址、删掉被引用的存档当场红」第一次可核。`LIVE_DOC_CITATION_FLOOR` 272 -> 234 是同一批 64 条引用换了住址（活 298 -> 234、存档 167 -> 231、活侧落空仍 0、存档落空仍 9），不是扫描集失效。上一轮 927 是 919 -> 927：QX-DEV-PLAN-2026-10-10 T1-1（阶段 1 最大一件 / 退出门 G1 第一条「同一运行可由 RunManifest 离线复算」）落运行证据包 RunEvidenceBundle（`crates/qx-spec/src/run_evidence.rs` + `schemas/run-evidence-v1.json` + `crates/qx-cli/src/run_evidence.rs` 构建器 + `report --evidence` 入口），`run_evidence_check` 八颗：① 对象 `pub` 字段集合与 schema 顶层 `required` **逐一相等**——`foundation_specs_check` 只核「版本常量 == const」，字段级是盲的，对象加一格而 schema 没加会让写出去的产物当场被自己的 schema 拒而门禁照印全绿；② 三条对象层纪律落在**代码**上（剥掉整行 `//` 注释）：空 `unverified` 拒 / `artifact_digests_verified=false` 拒 / `capability_level > L2` 拒——「写了纪律」与「纪律会拒」是两件事；③ `check_cross_references` 里那组元组与判据自己的期望表**逐条相等**（标签集合、被比字段、run 侧来源三处都对，且条数不为零——一张空表也能「不报错」）；④ 内容指纹与合成指纹**是两格**且交叉比对只拿 `composed_fingerprint` 去比 `run.data_fingerprint`——写这一格之前先看过真产物：RunManifest 的 `data_fingerprint` 是**合成**身份（`barframe:<内容哈希>` / `dataset-bundle:<指纹>`），而摘要 `input.fingerprint` 是纯内容哈希，第一版判据硬写这两者相等会让**每一份真产物都被拒**；⑤ 质量报告允许**缺席**（`Option`）不许**空**（`usable_tiers.is_empty()` 拒绝臂在盘）——`null` 是「这一档输入没有这份报告」，空 tiers 是「核过了，没有任何一档可用」，后者是一句该被拒的断言；⑥ 构建器是**生产**代码（不在 `tests/` 下）且被非测试文件真的调用——T1-1 交付的是「构建器 + schema」，只有 schema 等于半件事；⑦ `--evidence` 使用者可达（`cli_args.rs` 能力位 + help 写明）且 `write_run_evidence` 的调用点**排在** `recompute_declared_backtest_input` 之后——顺序反了会在拒绝路径上先落一份没核过的 `artifact_digests_verified=true`；⑧ 正向与反向（复核拒绝时不留证据包）两条常驻用例在盘。同轮把 `foundation_specs_check` 的登记面从七类扩到八类（`FOUNDATION_SPECS` / `FOUNDATION_OBJECT_TYPES` 与 `FoundationKind::ALL` 同步到 8），`maturity/schema-registry.json` 与 `maturity/artifact_migration.yaml` 各补一行 `run-evidence-v1`（`ARTIFACT_MIGRATION_MIN_ROWS` 10 -> 11 是「在册契约只增不减」的棘轮），并把 `qx-spec` 那条手抄用例表 `describe_reads_every_foundation_kind` 改成与 `FoundationKind::ALL` **逐条同名同序**断言——它叫「every foundation kind」却是一张手抄表，下次加一类会静默漏掉。上一轮 912 是 905 -> 912：QX-DEV-PLAN-2026-10-10 T0-3 把实盘轨的**边界**从三处散文（方案 §2 的五段表、`maturity/evidence/README.md` 的四档说明、验收脚本写进 `result.json` 的那句规则）收成一张机读登记面（`maturity/external_chain.yaml` + `external_chain_check` 七颗：登记面在盘且 kind/顶层键/四档/五段齐全、五段与方案 §2 那张表逐行同名同序且每段带失败即口径、翻转规则三处同源（登记面/方案/脚本文字，剥反引号后逐字相等）、脚本的**代码**真实现那条规则（live-check 豁免 + 只有 pass 才 allowed）、证据根现状与盘上逐份 `result.json` 一致且 `flip_allowed` 恰等于「存在 outcome=pass」、两档计数与 `capabilities.yaml` 逐值相等且**没有 pass 记录时两档必须全为 false**、第二交易所的 `--venue` 值在脚本 choices 里且该入口在命令面上是 L 档且默认关闭）。此前 `capabilities_check` 只核「未拿到沙盒记录前 `sandbox_tested` 全为 false」这一条，`external_acceptance_check` 只核脚本点名的入口/常量/配置/worker 与命令面对齐——**没有任何一处**登记过「实盘轨分几段、翻档的唯一依据是什么、今天有没有这份依据」，于是同一件事的三种说法可以各说各的：方案 §4 写「除 live-check 之外全部阶段退出码为 0」，而脚本写进结果包的是「全部阶段退出码为 0」，方案自己声称「脚本与文档同口径」而门禁里一条判据都没核过它（本轮实测并已按方案口径改正脚本那句文字）；反过来，「把 `implementation: true` 读成生产已批准」也没有任何判据拦——登记面今天才把这条界线写成可核对的一格。上一轮 905 是 898 -> 905：QX-DEV-PLAN-2026-10-10 T0-4 把「规范回测」的**夹具身份、产物摘要、耗时与内存**冻结成一份在册基线（`maturity/backtest_baseline.yaml` + `tools/backtest_baseline.py` + `backtest_baseline_check` 七颗：记录与脚本都在盘上且脚本真被 `main()` 调用过、顶层十块齐全且 schema/kind 自述正确、夹具身份逐项非空且 `data_fingerprint` 与 `maturity/backtest_acceptance.yaml` 同一份数据集、`result_hash` 与验收记录逐字相等、产物四类齐全且 `equity`/`fills` 摘要与验收记录逐字相等（这两份是纯数据、不含绝对路径，跨机可比；`summary`/`run_manifest` 内嵌产物路径故只比在册与摘要非空）、耗时与内存只核形状与非零（机器相关，不进判据数值）、脚本真用 `perf_counter`/`Popen`/OS 峰值 RSS 三处测量原语且记录不含绝对路径）。此前 `performance_baseline_check` 只核 `benchmarks/run_baseline.py` 在盘且 README 指向它——那份量的是性能轨的**脚本存在性**，没有任何一处把「这一轮的规范回测跑出来的是哪份夹具、哈希是多少、花了多少秒、峰值内存多少」钉成可比对的数；夹具被换掉、结果哈希漂移、`--release` 换成 debug，三者都不会红。上一轮 898 是 892 -> 898：QX-DEV-PLAN-2026-10-10 T0-2 把「46 条 CLI 入口」从名字清单升级为能力声明表（`maturity/command_surface.yaml` + `command_surface_classification_check` 六颗：表与 clap 命令表逐一相等、八格自述齐全、R/P/O/L 四档都有且父命令集合与 clap 的 subcommand 父命令表相等、L 档默认关闭且需私有凭据、P 档不需凭据、R 档无外部副作用）。此前 `cli_surface_coverage_check` 只核「每条入口能渲染自己的 --help」，没有任何一处声明某条入口属于 R/P/O/L 哪一档、默认面与权限是什么——新增入口不登记、把 L 档改成默认开启、给 P 档写上私有凭据，三者都不会红。上一轮 892 是 882 -> 892：V13 R31 控制台多账户作用域的读面前置——`/account/ledger` 与 `/reconcile/reports` 从「四条整体现读端点一律不收窄」里拆出来立一条按账户过滤的通道（`read_face_scope_check` 十颗：模块在盘且低于门槛+挂载、三张路由名单条目数自洽且两两不相交且每条都有活分派臂、查询键名单只有 read_scope 一份而 admission 不再自持 `*_PARAMS`、`accepted_query_params` 是唯一取名册出口且五张名单都在它体内、收窄键名单与底层类型的归属列一致（`LedgerEntry` 只有 `account_id`、`ReconcileReportSnapshot` 两列都有——账簿那一格只认一把键是数据结构决定的）、两条过滤臂真在结果集上过滤且不借用投影那族的 `missing_projection_response`、空结果回 200 而不是 `404 account_projection_not_found`、400/503 分工不合并、端点表只在真读收窄键的入口承诺查询串、九条行为用例在册）。此前 `api_surface_doc_check` 只比路由集合、`api_endpoint_table_routes.rs` 只比表与分派是否平，没有任何一颗判据看「这条臂有没有真读 `query`」——于是 `/account/ledger` 可以既在表里写 `[?account_id=]` 又一行过滤都没有，读者拿到的是默认账户那份流水而被当成了自己点名的账户；反过来把空结果改成 404 也不会红，而「这一轮没有事实」与「这个账户不在这份部署里」是两件事。上一轮 882 是 881 -> 882：V13 R28 多账户并行隔离补第七颗——并发用例真开两条线程跑两个账户的真实 `run_paper_execution_worker` 并用 `Barrier::new(2)` 强制重叠（顺序调用不算并发；`supervise` 里多个 worker 是同时活的，隔离必须在真并发下也成立）。881 -> 881 保持：V13 R28 公共组件面——诊断（进程日志）是唯一一处**没有**框架级单源的面（全仓无 `tracing`/`log`/`env_logger` 依赖，245 处诊断直接走 `println!`/`eprintln!`，靠非正式 `[组件 · 子域]` 前缀约定；`qx-api` 与 `qx-orchestrator` 已全量带标签），新增 `process_diagnostics_check` 三颗把它钉下来：① 引入诊断框架就必须一次迁移完（有框架依赖时未带标签站点必须为 0——半迁移是在既有约定之外多出**第三种**约定）；② 未带标签站点数只降不升（棘轮，表外 crate 要求 0）；③ 棘轮表是活名册（归零的 crate 必须从表里删掉、新增未标签站点的 crate 必须登记）。875 -> 878：V13 R28 收口 §17.11 登记的 CI 覆盖面缺口——`ci_feature_matrix_check` 新增三颗（`feature-off` 腿在盘且按 `--no-default-features --all-targets` 跑 clippy 带 `-D warnings` / 有 `cfg(not(feature = …))` 分支的 crate 都在腿上 / 腿点名的 crate 恰好等于声明了非默认特性的每个 workspace crate）。此前 `feature-matrix` 只 lint「特性开着」的组合，`#[cfg(not(feature = "sqlite"))]` 那半边在 workspace 构建里从不被 clippy 看到（`qx-cli` 的 `default = ["sqlite"]` 经转发把 `qx-runtime/sqlite` 一并打开）——本机四条腿现跑各 rc 0 / 诊断 0 行；同轮这条腿当场抓出新写的 `parallel_run_isolation.rs` 里一处 `needless_borrows_for_generic_args`。869 -> 875：V13 R28 多账户 / 多 Venue 并行运行的隔离不变量（`parallel_run_isolation_check` 六颗：三条用例在册（两账户各跑真实执行 worker / 命令按账户分派 / 每账户一份投影）/ 第二账户日志名从唯一构造点 `account_event_log_name` 派生且用例里无字面量日志名 / 写侧两账户各跑一次真实 `run_paper_execution_worker` / 写侧两本账互查「对方账户现金为 0」/ `paper_submit_matches_worker` 拿订单账户比对 worker 声明账户 / `seed_paper_initial_cash` 按 worker 声明的账户入账而非硬编码 `main`）。此前这条不变量只有命名层用例（名字拼得对）与读侧去重用例（同一账户不分裂），**没有一条用例真的把两个账户的 worker 各跑一遍再翻开两本账看有没有串账**——命名对不等于事实不串。868 -> 869：V13 R27 三入口一致性用例（`contract-tests/tests/risk_parity.rs`）的 (c) 腿改为带规格取证（`risk_spec_fail_closed_check` 第 ⑥ 颗）——P1-5 fail-closed 的 parity 面收口：无规格入口会把"缺规格"当成一条业务拒绝，与 (a)/(b) 的规则链结果不可比。861 -> 868：V13 R26 P0-2 写面稳态追加不再整份拷贝状态 + EventLog 保留/归档策略落成"写下来的决定"（`pipeline_commit_rollback_check` 四颗：`self.clone()`+`*self = staged` 的旧写法不复活 / 两条写面（订单提交与事实归约）都有薄包装且都走强制重放回滚 / 重建短路被 `force` 门控住（否则 `next_seq` 漏回滚）/ 失败回滚行为用例在盘；`event_log_retention_policy_check` 三颗：EventLog 公开面无截断淘汰压缩入口 / 分段后端只有尾段可增长而满段不可变 / 策略三杠杆写在写面模块文档且与能力登记面互指；同轮 `seen_fills` 台账 census 跟着写面搬家到 `pipeline/commit.rs`）。上一轮 858 -> 861：V13 R26 门禁读数改由 `--snapshot` 写入机读快照（`gate_snapshot_check` 两颗 + 收尾一条「本轮实测 == 快照」漂移判据：快照在地板与条数上自洽、文档引用文件名而不是手抄条数）。上一轮 853 -> 858：V13 R26 qx-api 状态锁中毒不再 panic（`api_lock_fail_closed_check` 五颗：取锁收成可失败入口、读面错误收口把中毒判成 503/其余 400 且模块挂进 lib.rs、生产代码里不再有就地 `.expect("api state mutex poisoned")`、六条带键读面走收口且 /ready 报未就绪、中毒与对照组行为用例在盘；同轮 `QueryPort` 九个读法改回 `Result`）。上一轮 850 -> 853：V13 R26 账户级已实现/未实现盈亏接上生产者（`account_pnl_producer_check` 三颗：两个算点各唯一且都调 Ledger 派生方法、派生方法缺标记价即 None 且累计走 checked_add、读侧行为用例在盘；同轮 `account_money_field_registry_check` 的派生名单从五格收到三格）。上一轮 848 -> 850：V13 R26 发布版本单源 + CI 显式钉解释器（`release_version_single_source_check` 两颗：wheel 版本 == workspace 版本、rust-core 作业设 QX_PYTHON）。上一轮 843 -> 848：V13 R26 名义额规则缺规格 fail-closed（`risk_spec_fail_closed_check` 五颗：删净 `legacy_spot_spec`、`MaxNotionalRule` 体点名缺规格消息且不再合成临时规格、消息常量单点+有读者、`RiskGate::check_with_spec` 在盘且两条回测路径都传规格、一条行为用例在盘）。上一轮 838 -> 843：V13 R25 二轮 · 游标口径与登记面自身的可机读性（`web_console_field_wiring_check` 三十一颗 -> **三十四颗**：游标推进只认白名单里的写法且没有基线时不带 `after`、后端「回 seq > after、缺省从头给」与「事件序号从 0 起」这两个前提本身、API_PATHS 每一格都有取数读者；`capabilities_check` 三颗 -> **四颗**：maturity/ 的 8 份登记文件里没有会把 YAML 读成映射的裸标量（实测 8 份里曾有 2 份对标准解析器是 ScannerError）；`bounded_growth_and_reap_check` 九颗 -> **十颗**：死信台账在三条后端上都只有入账与读出，重投键带 attempts 且归零重投。立案的是「只有门禁读得懂的机读面」与「两套游标约定并存」那两类——前者对编辑器/CI lint/下一个工具是坏的，后者让页面每追平一次日志就必然吃一发 409。上一轮 801 -> 838：V13 R25 · 控制台 ⇔ 后端线格式的**字段级**接线（新增 `web_console_field_wiring_check` 三十一颗：读面七格名册与四份 Rust 事实源双向逐等、快照两层对手写 format! 字面量、balances 对 `json!`、顶层键再对 `schemas/account-snapshot-v1.json`、列 ⇔ 名册 ⇔ `<th>` 数、每格名册有运行时读者、`*_raw` 反向 census、定点标度单源单出口、时间轴标度两头钉在一起（`Ts` 的文档必须点名运行时唯一墙钟且那墙钟真是 epoch 毫秒）＋ 页面按毫秒渲染不再除 1e6、WS 帧词表双向 + 每帧有分派支、CSRF 两个字面量取自 console.rs 常量、BFF 不代理升级、**写面**请求体键清单对 `ControlCommand` 且两份 `<select>` 词表对 `CommandKind`/`Permission`）＋ 身份注入真的被用上（`console_front_check` 十七颗 -> **十九颗**：写面的身份覆盖唯一且排在权限裁决之前，加上无名册那一侧的常驻反例在盘）＋ 连接入口的两处如实（`web_console_check` 九颗 -> **十一颗**：带 ?token= 的入口预填本源、空基地址必须有可见反馈而不能静默无反应）＋ 监督器取用失败路径的收尸（`resource_lifecycle_and_lock_reentrancy_check` 两颗）。立案的是「路径级接线全绿而字段级全断」那一类：`web_console_check` 只比路由集合，一个字段都不看，于是页面可以按顶层读快照身份（真在 `header` 里）、给 `PositionSnapshot` 从来没有的 `side`/`cost_raw`/`market_value_raw` 开三列、金额不按 1e9 还原、WebSocket 每帧都不匹配却印「WS 已连接」，而门禁照印 853 全绿——与 `api_surface_doc_check` 在文档那一侧栽过的盲区同源。二十六颗分别钉：① 七格名册条目集合在册（少一格就少一份核对）；② 三张表都有列定义且表头 `<th>` 数与列数逐个相等；③ `positionRow`/`orderRow`/`eventRow`/`envelope` 与 `wire.rs::PositionSnapshot`、`wire.rs::OrderSnapshot`、`event.rs::Event`、`ProjectionEnvelope` 的 serde 字段名**双向**逐等（结构体里出现 `rename` 就当场炸——那意味着这份取数不再等于线格式）；④ `snapshotTop`/`snapshotHeader` 与 `AccountSnapshot::to_json` 那条手写 format! 字面量的两层键清单双向逐等（按 Rust 的 `{{`/`{}` 规则展开再按花括号深度取键，嵌套的 `reconcile` 三子键不会被算成顶层）；⑤ 写侧顶层键再与 `schemas/account-snapshot-v1.json` 的 properties 逐等（三份说法只有一份漂移也红）；⑥ `balances` 与 `/account/balances` 的 `json!` 响应体逐等；⑦ 每格名册都得有运行时读者（`fillTable`/`renderEvents` 的列核对或 `missingFields` 点名）——没人读的名册就是一张装饰性清单；⑧ 反向 census：app.js 里出现的每个 `*_raw` 键名都必须落在名册里（凭空开一列那一类故障反向也堵）；⑨ 定点标度只许一处定义且位数等于 `numeric.rs` 的 `SCALE` 次幂，除数由它推出（别处再除一次就是 1e9 与 1e8 并存）；⑩ `WS_FRAME_KINDS` 与 `ws.rs` 真发射的那七种帧名集合逐等，且每个帧名在 `handleFrame` 都有分派支（落空一种就是"帧被记成未知而实时面照印已连接"）；⑪ CSRF 的 cookie/头两个字面量取自 `console.rs` 的 `CONSOLE_CSRF_COOKIE`/`CONSOLE_CSRF_HEADER`，且写面真的把 token 取出来放回请求头；⑫ 同源 BFF 里不许出现升级转发（这条一变红，页面与文档那句「不适用」就成了谎话）、BFF 形态的降级在页面与说明文字里都在册。两颗收尸钉 `supervise_workers` 那一处 `child.stdin.take()`：失败分支必须先把 worker 挂进台账（`children.push(ManagedChild {` 两处），且不得在取用处就地 kill+wait——回收只有 `stop_managed_children` 那一处、按预算轮询 `try_wait`（与同函数里那颗「`child.wait()` 残留期望 0」是同一把尺）。上一轮 801 是 796 -> 801：V13 R24 · 控制台易用性三件（令牌缺失时临时生成兜底 + `--init` 脚手架 + `--generate-token`）：`qx-cli console` 在环境变量 `bootstrap_token_env` 缺失/为空时**临时生成**一枚一次性令牌并当场打印入口 URL（环境变量仍是首选来源，令牌仍不进命令行/配置文件、不落盘），`--init <path>` 写出与部署模板同形的就绪配置且**拒绝覆盖**已有文件，`--generate-token` 只打印一枚令牌与可粘贴的 `export` 行。新增 console_usability_check 五颗：① 令牌兜底在盘且环境变量仍是首选（`generate_bootstrap_token` + `std::env::var(&console.bootstrap_token_env)` + 临时令牌告示）；② 生成令牌有行为用例在盘（长度下限 + 十六进制 + 两次不同）；③ `--generate-token` 旗标声明且被 `serve_console` 读到；④ `--init` 旗标声明且被读到、且对已存在文件拒绝覆盖；⑤ `--init` 写出的模板与部署模板同形（绑回环、令牌只给环境变量名、无令牌字面量字段、写明 static_dir 与 operator）。上一轮 796 是 789 -> 796：M5' 的本地可验收子项落 **Paper 轨**（`tools/paper_acceptance.py` 跑仓库自己的 Paper venue：主链 `scheduler -> strategy -> paper-execution -> ledger` 两轮独立目录 + 同腿重跑，产出仓库资产 `maturity/paper_acceptance.yaml`），新增 paper_track_check 七颗：① 记录在盘且六格自述齐全（passed / 不需凭据 / 无外部 venue / 无网络 / 无订单 / 主链到 Executed）；② 记录由在盘脚本生成，且脚本真有四件比对（`compare_main_chain` / `compare_rerun` / `compare_independent` / `compare_no_credentials`）——只写一份"看起来通过"的记录不算；③ 主链四段写全且四个计数都是正数（跑出 0 笔成交的"通过"是空跑）；④ 记录正文不出现任何 venue 名称（先剥 `#` 注释再判，免得"外部证据在哪"那句散文被当越界声明）、实盘两档仍全 false（Paper 轨不替外部验收作保）；⑤ 终态退场与幂等（`pending_commands_after: 0` / 审计链校验通过 / 重跑不重复下单 / 两个独立目录事实面相等）——"跑通"与"跑完"不是一回事；⑥ 脚本默认跑仓库那份 paper 模板且在盘，并**主动摘掉**凭据环境变量（`CREDENTIAL_ENV_PREFIXES`）——"不需要凭据"是构造出来的，不是碰巧没配；⑦ `capabilities.yaml` 的 `backtest_only` 档登记了 Paper 轨自己的 `paper_acceptance_record` / `paper_acceptance_generator`（两条轨各有一份仓库资产，读者找得到证据在哪）。与回测轨同源，刻意同样**不**做「记录是否过时」判据（`generated_at_unix` 每跑一次都变，拿它当判据只会逼人写死时间戳）。上一轮 789 是 772 -> 789：M4'/M5' 落**同源 BFF 控制台**（`qx-api/src/console.rs` 会话/CSRF/身份注入/回环边界 + `qx-cli console` 子命令 + `api.console` 配置段与拓扑校验 + `deploy/qianxing.runtime.console.example.json` 模板），新增 console_front_check 十七颗：① BFF 模块在盘且 `mod console;`+`pub use console::*;` 挂进 lib.rs（否则门禁与调用方都看不见它）；② 六个公开常量（会话/CSRF cookie 名、CSRF 头名、令牌查询参数、缺省 TTL、静态资源表）齐备且资源表只认三份（路径穿越因此不可表达）；③ `ConsoleConfig::new` 是唯一构造入口且四类误配当场拒绝（空身份 / 令牌短于 16 / TTL 为 0 / static_dir 非目录）——这一层最贵的错是"配错了也起得来"；④ 会话 cookie 必须 `HttpOnly`+`SameSite=Strict`；⑤ CSRF cookie **刻意不带** `HttpOnly`（页面要读出来放进 `X-QX-CSRF` 头，双提交模式）但仍 `SameSite=Strict`；⑥ 非 GET 必须带 `X-QX-CSRF` 且与会话记住的那一枚逐字符相等（空头与不等都 403，不许放宽成"有头就过"）；⑦ 非 GET 还要过 `origin_matches_host`（带 `Origin` 的请求必须与 `Host` 同源——与 CSRF 头是两道独立的锁）；⑧ 身份由服务端按会话注入 `handle_inner(..., Some(&session.operator))`，且这一层不读命令体里可随便填的 `operator_id`（那是审计字段，不是认证）；⑨ 回环边界单源——判据只在 `console.rs` 定义、`qx-cli console` 绑监听之前先过它；⑩ 引导令牌只从 `bootstrap_token_env` 点名的环境变量读（配置里只有变量名，schema 不得出现令牌字面量字段）——命令行会进 shell 历史、配置文件会进版本库；⑪ `api.console` 段被 schema 声明、边界校验独立成 `console_validation.rs`、且在 `topology_validation.rs` 里 fail-closed 被调用；⑫ `Command::Console` 派发臂指向 `serve_console`（命令表里的入口不是装饰）；⑬ 部署模板在盘；⑭ 模板绑回环、令牌只给大写+下划线的环境变量名、正文无 `"bootstrap_token"` 字面量字段、写明 static_dir 与 operator；⑮ 行为用例在盘（真套接字端到端一条 + 回环/身份边界逐格一条）；⑯ 发布身份（`package_web_console.py`）里的「产品现在有什么」由在盘代码背书——`product_same_origin_bff`/`product_csrf`/`product_server_side_session` 声称 True 就必须真有 `console.rs`，`product_desktop_host` 与约定落点 `crates/qx-cli/src/desktop_host.rs` 的在场与否逐格相等（两边都不能各说各话）；同轮把该身份里 `csrf_supported`/`session_permissions_supported`/`desktop_host_supported` 三个**含糊字段**换成 `package_scope` + `product_*` 两组，免得「归档是 local-only 静态件」被读成「产品没有 BFF」。刻意不把 console 的 8 个错误码塞进 `deploy/README.md` 那张读面表：`console.rs` 用的是自己的 `json_response`（不落 `ApiResponse::json(`/`error_json(` 扫描口径），它不在 `read_face_source()` 的扫描集里，登记进去反而会让"读面 ⇔ 文档"那张表数不准；它的 401 只借了 `transport.rs` 的 reason 短语，那条已由 `api_shared_exits_and_status_lines.rs` 的 `arms.len() >= 9` 守着。上一轮 772 是 767 -> 772：M4'/M5' 续 · Web 控制台 local-only 边界硬化：静态包没有同源 BFF / CSRF / 服务端会话，连接入口与命令提交前都只允许 127.0.0.1 / localhost；发布身份显式登记 distribution_boundary 与 BFF/CSRF/会话/桌面 Host/Paper/sandbox/production 未完成状态。`release_supply_chain_check` 扩展发布包身份字段，`web_console_check` 新增两颗 local-only 判据。上一轮 767 是 764 -> 767：V13 R23 续 · M4'/M5' Web 静态控制台发布包：新增 `package_web_console.py` 确定性归档（版本/commit/Schema Registry 身份 + 三份资源 SHA256、gzip/tar 元数据归零），tag 发布流水线产出 `web-console` artifact、附 build provenance、汇入 Release 的 SHA256SUMS；`release_supply_chain_check` 加三颗判据（打包器+三条测试、job 打包/attestation/upload、Release 汇集与哈希清单）。764 -> 767：V13 R23 续 · §6.4 P2-2 落 http_surface_check（七颗）：自研 HTTP/WS 面覆盖表（maturity/http_surface.yaml）逐格与真实代码对账——self_built_file 全在盘、每行 anchor 符号真声明、每行 case 用例真在盘、verdict.decision=keep_self_built、accepted_gaps 恰好等于「非 covered 行」、migration_trigger 在场。755 -> 757：阶段四 M3' 把控制台从「只读」推进到「控制面」（受理 → 执行者判定 → 终态退场）。`web_console_check` 五颗 -> 七颗：原来那颗「不许出现 POST 或 /control/commands」换成**写面唯一**（`method: "POST"` 全文件只许出现一处，且必须是 `postJson(API_PATHS.controlCommands`；另加禁用名单 `/order/submit` / `binance-submit-order` / `paper-submit-order` / `/control/commands/execute`——下单只能走控制面受理，页面不得直连下单端点），并新增两颗：三阶段文案与状态词表（Accepted/Executed/Failed）在盘、页面如实交代 `403 authenticated_operator_required` 的身份边界（operator 来自 mTLS，页面不能自声明）。上一轮 755 是 743 -> 755：V13 R23 续 · §7 M1 落 `qx-core::contract` 稳定契约单点 + 命名转换矩阵（12 颗判据 contract_matrix_check）：把 P1-5 点名的三对同名兄弟（Bar / StrategyContext / DataProvider）从"隐式重复"（两处各写一份字段映射、谁也不知道还有第三处）变成"显式登记 + 与真实代码逐条对账"——规范单点在仓内唯一、同名兄弟真在盘、adapter 真有生产读者、没有未登记的第三份声明、且「同名但刻意不同层」的行必须写明理由；配套新增读面 `GET /schema/contract-matrix`（`qx_core::contract::CONTRACT_MATRIX` 的 JSON 形态，矩阵因此有真生产读者而不是躺在允许清单里）。上一轮 743 是 737 -> 743：V13 R23 续 · P0-1 把「回测轨」做成**不需要交易所凭据**就能完整验收的一条轨。卡点原本是 maturity/evidence/testnet/ 那份 Binance 验收 outcome=skipped（缺 QX_BINANCE_TESTNET_API_KEY/_SECRET），于是 sandbox_tested / production_approved 只能全 false，P0-1 一直挂在"未落地"；但这两档**只对需要外部 venue 的能力有意义**，而本仓主用法是回测与 Paper 闭环，一条凭据都不用。新增 tools/backtest_acceptance.py（两个独立目录各跑 quickstart + 同目录两轮 backtest；同目录重跑要求逐格相等含产物文件名与 config_fingerprint，跨目录只要求 result_hash / data_fingerprint / 归一化后的产物内容相等，equity/fills 逐字节相等；归一化只抹「绝对路径 + 内容寻址的 config_hash + 由它派生的文件名后缀」三样）+ maturity/backtest_acceptance.yaml（**仓库资产**，与未跟踪的 evidence/ 不同）+ crates/qx-cli/tests/backtest_acceptance_determinism.rs（两条行为用例）。补六颗判据（backtest_track_check 六颗）：① 默认档 backtest_only 且声明不需凭据/无外部 venue/那两档不适用；② 记录在盘且六格自述齐全；③ 记录由在盘脚本生成且脚本真有 compare_reruns/compare_independent/one_leg；④ result_hash 是 16 位十六进制且四类产物摘要齐全；⑤ 记录正文不出现任何 venue 名称（先剥 `#` 注释再判，免得"证据在哪"那句话被当越界声明）、实盘两档仍全 false；⑥ 行为用例在盘。刻意不做「记录是否过时」判据——generated_at_unix 每跑一次都变，拿它当判据只会逼人写死时间戳。上一轮 737 是 729 -> 737：V13 R23 · P1-11/DD-5 把错误码从字符串抽成**五元契约**（`crates/qx-core/src/error.rs`：`ErrorCode` 闭集 + `Retryability` 四档 + `ErrorContract` 五格 + `QxError::contract()` 唯一映射表，`code()` 从它派生），并把消费侧接上（`qx-cli/src/usage_errors.rs` 的 `qx_context` 显式消费契约、`runtime_wiring/pipeline_storage.rs` 四处 `QxError`→字符串边界不再摊成 `{error:?}`、`qx-runtime/src/pipeline.rs` 两处重试循环改按 `retryability` 分支），补八颗判据（error_code_contract_check 八颗）：① 三型落在 qx-core 的 error 模块且 lib.rs 重导出；② `ErrorContract` 五格字段齐；③ `ErrorCode::ALL` 是闭集（声明长度 == 列出的码 == `QxError` 变体数）；④ `contract()` 是唯一映射表且 `code()` 从它派生、自身不再 `match self`；⑤ CLI 展示层按 `reconcile_required`/`retryability.allows_retry()` 分级；⑥ 四处 QxError→字符串边界全走 `qx_context` 且文件里不再有 `{error:?}`；⑦ 热路径重试循环按 `retryability` 分支（两处）；⑧ 行为用例在盘（qx-core 侧自洽 + qx-cli 侧逐变体五格 / 展示层分级 / 真实打开边界带码三条）。刻意不纳入 HTTP/工作流状态串（qx-api 的 status、qx-control 的 CommandStatus）——它们是各自的读面，塞进 `ErrorCode` 会把闭集撑成开放集、③当场数不准。上一轮 729 是 723 -> 729：V13 R23 · P1-6/WP-19 把三把权益/保证金尺子收敛成单一 `ValuationContext`/`ValuationResult`（`qx-core/src/valuation.rs`：`Ledger::valuate` 单点派发 + `MarginState::valuate` 共用结果形状；回测两处手工派发与 CLI paper 保证金派发全部改走它），补六颗判据（valuation_single_source_check 六颗）：① 类型落在 qx-core 的 valuation 模块且 lib.rs 挂载+重导出；② `Ledger::valuate` 在盘且三把参数化尺子的派发只在它里面；③ `MarginState::valuate` 在盘且两个入口共用 `ValuationResult::new`（available 关系单源）；④ 生产源码全文扫描——三把参数化尺子只能出现在定义点（`ledger/query.rs`）与估值单点（`valuation.rs`），取 `production_text` 剥掉注释与测试项以免「文档提一句 / 用例直接调原语」数不准；⑤ `MarginState::equity`/`available` 委托 `valuate`；⑥ 派发等价性四条行为用例在盘（valuate 与原始尺子逐值相等、有/无汇率两把尺子给出不同的数）。刻意不纳入 `Ledger::equity_for`（乘数固定 1 的无参现货尺子，没有"选哪把"的歧义）。上一轮 723 是 717 -> 723：V13 R23 · P1-2/§7 M2 落 LiveEventPipeline 游标增量 refresh（`SqliteEventLogStore::read_since` 行级尾部读 + `refresh_latest` 三支：空尾部 no-op / 前缀一致只接尾部 / 前缀不符整份重建），补六颗判据（pipeline_cursor_refresh_check 六颗）：① SQLite 读侧 read_since 按 seq 只取尾部且不调 load_event_log（否则 O(N) 读放大原样回来）；② RuntimeEventStore::read_since 委派 SQLite、其余后端显式回落 Ok(None)（不是静默降级）；③ refresh_latest 三支齐备；④ apply_tail 用 P1-1 的 append_batch 接日志且不做整份重建索引；⑤ 增量与整份重建共用同一个 apply_index_event（归约单源，两条路径不能各写一份）；⑥ 读侧前缀校验与归约侧增量路径各有一条行为用例在盘（增量与整份重建的终态完全一致，纯行为断言抓不到退化，故同时把 tail_appends/rebuilds 两个内部计数器当回归证明面）。上一轮 717 是 711 -> 717：V13 R23 · P1-1/DD-2/§7 M2 落 EventLog 写侧单事务批量追加（`EventLog::append_batch` + `SqliteEventLogStore::append_batch` + 生产写面接线），补六颗判据（event_log_append_batch_check 六颗）：Kernel 的 append_batch 在盘且 append_checked 委托给它（逐条校验规则单源）、digest() 与前缀摘要 digest_of_prefix() 同源、SQLite 增量追加函数不调 load_event_log（否则 O(N) 读放大原样回来）、append_batch 在单事务里走增量路径、pipeline.rs 的 SQLite 分支真的调它、原子性与增量性各有一条行为用例在盘。上一轮 711 是 708 -> 711：V13 R23 · P1-12/§8 WP-22 建 `crates/contract-tests`（纯测试宿主），把两条压在正常边上的 dev 环（`qx-execution --dev--> qx-runtime`、`qx-risk --dev--> qx-zhenlu`）连同它们的 5 份跨 crate 契约用例（10 条）搬出生产 crate，补三颗判据（dev_dependency_cycle_check 三颗）：① 两条已知环不许回来；② 全仓不得存在「A --dev/build--> B 且 B --normal--> A」这种二点环（`cargo tree` 默认视图看不见 dev 边，反向正常边却真实存在——新写的 dev 边踩到任一正常边当场红）；③ 搬家不是丢用例——迁走的五份契约用例仍在 `crates/contract-tests/tests/` 且该 crate 在 workspace members 里（否则它们再不会被 `cargo test` 跑到）。`EXECUTION_TEST_FLOOR` 25 -> 15 是这次搬家的补偿口径：本地板只覆盖 `src/tests` 的 15 条，全仓地板把新 crate 一并计入、总数不变。上一轮 708 是 703 -> 708：V13 R23 · P0-3/DD-4 落 in-process 原生策略信任门（`crates/qx-cli/src/native_trust.rs`：`admit_in_process_c_abi` + `target_triple_matches`），补五颗判据（native_trust_check 五颗）：信任门模块在盘且两个判定都非测试专用、`load_c_abi_strategy` 在 `dlopen` 之前先过信任门、配置面暴露 `c_abi_trusted_native`/`c_abi_target_triple`、且信任门开关缺省为 false（默认拒绝）。上一轮基线 703 是 698 -> 703：V13 R23 · 阶段四 M1'/M2' 建只读 Web 控制台（web/console/{index.html,app.js,styles.css}），补五颗「前端 ⇔ 后端接线」判据（web_console_check 五颗）：控制台三件在盘、app.js 点名的每个 API 路径都在 qx-api 路由表里（前端引用一个后端不存在的端点当场红）、index.html 写明 cors_allowed_origins 跨源要求、写明 `qx-cli serve` 启动入口、且控制台不得长出写操作（出现 POST 或 /control/commands 即红——它就不再是只读控制台）。上一轮基线 698 是 697 -> 698：V13 R22 #222 修 `TEST_PATH` 盲区（它只认目录式 `src/tests/`、不认单文件式 `src/tests.rs`，于是「唯一读者写在 `src/tests.rs` 里」的 `pub` 项被当成有生产读者）并补一颗「测试模块两种形态」判据（`zero_reference_public_surface_check` 新增一颗）。口径定成一格：`(?:^|/)tests\.rs$` 补齐单文件形态；放宽后由单文件盲区放出来的 8 条零读者（`qx-datastruct::{close_at, from_view, resample_with_manifest, select_time_with_manifest}`、`qx-protocol::{from_wire_json, to_wire_json}`、`qx-xingban::{corporate_action_supported_by_ledger, corporate_actions_from_data}`）逐条进允许清单并写明理由（生产链路走 `BarFrame::from_json` / `apply_corporate_actions_json`，这些类型化程序化入口只有库内用例读者）。上一轮基线 697 是 695 -> 697：V13 R21 补两颗 fam12「二级入口逐颗用例」判据（cli_surface_coverage_check 新增两颗）。顶层命令表此前只覆盖父命令，`backtest ccxt-builtin` / `strategy list` 这类二级入口一颗用例都没点过名——`crates/qx-cli/tests/command_surface.rs` 新增 `NESTED_COMMANDS` 常量与 `every_nested_command_renders_its_own_help` 用例逐条实跑 `--help`，两颗判据分别钉：清单与四个父命令（config/run/strategy/backtest）的 clap 子命令表逐一相等、且清单真的被逐条喂给被测 binary（只列不跑 = 红）。上一轮基线 695 是 689 -> 695：V13 R20 补六颗 fam15「内核时间轴口径」判据（kernel_timeline_check 六颗）。README 与 crates/qx-core/Cargo.toml 把内核描述成"有确定性时钟与因果事件队列"，而 crates/qx-core/src/clock.rs 自己写着"这里不提供虚拟时钟"、lib.rs 写着"内核不提供虚拟时钟对象"——文档替一段不存在的代码作保（§13.1 修 README 过度声明的同族）。六颗分别钉：三件死实现（引擎/因果队列/时钟）不得以原名回到 crates/、clock.rs 只剩 pub type Ts = u64; 且唯一、三份口径来源不再写旧承诺、README 改口到真实推进路径（含优先级序）、因果优先级数值 Rust↔Python 单源、pipeline.rs 的 (ts, prio) 单调落盘判据唯一且在正文。上一轮基线 689 是 V13 R20 补五颗「手续费币种折算」判据（fee_settlement_currency_check 五颗）。回退面重放时发现 `crates/qx-core/src/ledger/fill.rs` 在祖先 `7e8f3db` 上是 334 行、带 fee_in_settlement_raw/base_asset_of，合流后只剩 261 行、把异币种手续费按面值记进结算币种——`Fill.fee_currency` 由两个适配器填充且已进事件指纹，归约侧整份不读它，是 D2 的原始缺陷（不在 §9.48 的 15 族名册里，是重放模块级判据时才暴露的第 16 族）。五颗分别钉：折算函数唯一且两条记账入口都过它、费用腿记折完的数不记回报原数、基准资产费用按成交自身价格定点折算、折算只对乘数为 1 的现货开放（衍生严格认结算币种）、七条用例逐形状在位。上一轮基线 684 是 V13 R18 补六颗 fam05「调度 owner 路由 fail closed + JobSpec 读侧」判据（scheduler_owner_routing_check 六颗）。恢复 crates/qx-scheduler/src/job_spec.rs（Trigger/JobWindow/JobSpec 与 owner 路由判据的落点）并把 owner 路由判据单源化：JOB_OWNER_ANY 一个常量、claimable_by 一处定义，领取端（workers.rs）与装配端（load_scheduler_state 的 validate_job_owners，新建与载入两条路径）共用它。六颗分别钉：通配 owner 只有一个常量且领取端不再就地比较 "*"、装配处 fail closed 且两条路径都要问、deploy 示例声明的作业清单都找得到、deploy 示例里每个启用作业都有可领取的启用 Strategy worker、JobSpec 三格零读者字段按 2026-10-06 方案 §13.2 保留不删 + 登记 limitation + 双向钉住、作业清单示例每一格顶层键都在 JobSpec 名单里。上一轮基线 678 是 V13 R17 补七颗 fam04「适配层 IO 预算与 venue 缓存」判据（io_budget_and_venue_cache_check 七颗）。恢复 crates/qx-adapter/src/io_budget.rs 与 crates/qx-adapter/src/venue_cache.rs，把 write_all_within 接进三处子进程 stdin 写入（CCXT worker / 策略 worker / 事件 consumer handler），把 evict_stale_terminal_orders 接进两个常驻 venue 的订单写入点（binance 3 / ccxt 2）并级联退派生索引。七颗分别钉：三处 stdin 写入都走 write_all_within 且无一处退回裸 write_all、io_budget 只按截止时间收写线程且只有超时那格把打断管道的责任交回调用方、WebSocket 单帧/整条消息/单次轮询三层长度预算各一个具名常量、venue 缓存封顶只退终态订单且越限才扫表、两个 venue 的每处订单写入都过封顶并级联清派生索引、binance 未知订单仍升级对账、针路 OMS 刻意不共用封顶。上一轮基线 671 是 V13 R16 补八颗 fam01「文件锁统一」判据（file_lock_single_source_check 七颗 + backtest_clock_honesty_check 的墙钟豁免在场一颗）。恢复 crates/qx-core/src/file_lock.rs（V11 §40 D1 的崩溃可恢复写锁：纯判据 decide_lock + 有界等待 + 按年龄接管孤儿锁 + Drop 只删自己那把），并把四处就地 create_new 锁（数据集注册表 qx-data/registry.rs、多腿状态 qx-zhenlu/lib.rs、存储信封 qx-storage/state_envelope.rs、作业 claim qx-storage/file/jobs.rs）全部改走 qx_core::FileLock。七颗分别钉：FileLock 只有一个定义点、全仓再无第二处 remove_file(*lock*) 的就地锁生命周期、四个消费文件都引用 FileLock::acquire 且不回归就地锁算式、以及「同一场竞争只接管一次」住在 decide_lock 里且循环把计数喂回判据、只按判据交出的年龄说话。file_lock 读墙钟（锁年龄与令牌 nonce）是唯一一格豁免，按路径点名并由「豁免文件仍在场」一颗核对。上一轮基线 663 是 V13 R15 补三颗 fam12「CLI 表面」判据。`cli_help_surface_check` 只核「help ≡ clap 表 ≡ cli.rs 派发」三侧集合相等，看不见「某入口其实一敲就崩 / 它自己的用法渲染不出来」；`cli_dispatch_check` 只核分派点唯一。三颗分别钉：crates/qx-cli/tests/command_surface.rs 的 CLI_COMMANDS 清单与 clap 表逐一相等（新增命令没进清单、或清单留了已删命令都红）、清单真的被逐条喂给被测 binary 跑 --help（只列不跑 = 清单退化成装饰）、config 的 clap 子命令集与 help 印出的 config <sub> 行逐一相等（第二层入口与顶层同一类断链）。上一轮基线 660 是 V13 R14 补两颗 fam11「分层处置」闭环判据。零读者那一族（zero_reference_public_surface_check / zero_reference_pub_crate_surface_check）只遍历在盘的定义，所以「函数被删掉、PUBLIC_SURFACE_ALLOWLIST 条目还在」这件事它永远看不见——条目会一直躺着，下一次有人把同名函数加回来时它就变成一张现成的免检通行证。两颗分别钉：允许清单里每个条目都对应一处真实定义（pub fn/pub const 或 pub(crate) fn）、每条理由都不是占位符（至少 6 个字符，当前最短的 7 个字符是 `任务 #119`）。上一轮基线 658 是 V13 R13 补三颗 fam02「停机令牌 + 连接上界」判据：V13 R2 #218 实测，监听循环按 stopped() 收摊后已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。V13 R2 #218 实测：监听循环按 stopped() 收摊后，已握手的会话若不读停机令牌，线程就永远等在 wait_after 的 100ms 轮询里、join() 回不来，停机只能靠强杀；另一半是对端半开（不发 FIN、也不再写字节）时读永远 TimedOut、写永远成功，那条线程与它占的连接预算永久留在账上。三颗分别钉：停机令牌字段只有一处且真被 store(true, Release) 置起（有生产者、初始化关闭）、会话帧循环在阻塞等待之前先读令牌（load 早于第一个 wait_after）且读到即回 server_shutdown、空闲轮次上界常量只有一处且真被用来收摊。fam02 另外两格（快照历史有界、事件按账户键）已由 bounded_growth_and_reap_check 与 browser_admission_check 看守。上一轮基线 655 是 V13 R12 补四颗 fam10「运维读面：exposition 真换行 + 告警名册每个指标都有生产端」判据。V13 R2 第七遍实测到的缺陷形态是 /metrics 正文只有一行、行与行之间是字面的 `\n` 两个字符：抓取端把整份正文读成一行、一条样本都解析不出来，而告警侧是「永不触发」而不是「报错」——服务端与告警侧都不会自己出声。四颗分别钉：exposition 构造函数用真换行（体里出现 `\n` 转义、不出现字面的双反斜杠 n）、那条逐行解析用例在盘且解析器显式拒绝字面换行、告警名册里每个 qx_ 指标都能在生产源码里找到写出点（否则该告警永不触发）、名册每条规则都有 expr/severity/summary。取名册文本时同样先剥整行 `#` 注释：名册里那段解释 `qx_outbox_relay_parked` 的散文不剥掉，会替真规则满足「有生产者」那颗判据。上一轮基线 651 是 V13 R11 补七颗 fam13「CI 特性矩阵点亮每颗特性闸门 + NATS 用例有真执行的腿」判据。§12.2 把这一族登记为回退面时明写「新补的那条 NATS 腿只由 ci.yml 的文本存在性保证，门禁里没有判据核它——把它删掉或加上 --no-run 不会红」，本轮把那颗缺失的判据补上：① feature-matrix job 在盘且三步（clippy/check/test）都按 --no-default-features 逐组合跑（只在某些 feature 分支里才存在的代码不会被默认特性的 lint 看到，矩阵漏一颗特性那颗特性的代码就从「有 lint」退成「无 lint」）；② qx-cli 声明的每颗特性都出现在某个矩阵组合里，且矩阵里不出现不存在的特性名（拼错即红）；③ NATS 真执行腿按指纹整段钉住（显式点名两个 NATS 测试目标，因此与 `-- --ignored` 那条腿不可能混淆）；④ NATS 非 ignore 用例数不低于现场实测值 8。上一轮基线 644 是 V13 R10 补五颗 fam06「environment 词表单点与 production 判定唯一出口」判据。此前「这份运行时配置是不是 production」被手抄 14 处（运行时配置校验 9 处 + CLI 体检/就绪 5 处），各写一份 `environment.eq_ignore_ascii_case("production")`，全仓没有单源出口——危害不是现在算错，而是改口径（如 `production`→`prod`）时漏改的那一处加固静默失效，而它守的正是「production 禁止明文 API / C ABI 必须配 Ed25519 公钥 / Execution worker 必须配名义额上限」。五颗分别钉：写法常量 `PRODUCTION_ENVIRONMENT` 与判定 `RuntimeConfig::is_production` 各只有一处定义、词表从常量取 production 这一档、判定体引用常量不得内联字面量、手抄式 `eq_ignore_ascii_case("production")` 不得在生产代码复活、调用判定的生产文件与登记表逐一相等（新增闸门必须登记）。同 `VenueId::is_binance`（V13 §5 A3）一族。上一轮基线 639 是 V13 R9 补一颗「金额/价格/数量字段的缺键不许静默变成 0」。裸 `#[serde(default)]` 落在非 `Option` 的 Money/Price/Quantity 上，等于给「这份回报没带该字段」和「交易所明确报了 0」发同一张身份证；本仓两条正确形状分别是 `Option<Money>`（AccountPositionSnapshot 三格）与 `#[serde(default = "named_fn")]`（A 股规则配置）。剩下的三处全在 qx-core/src/event.rs 且危险方向都是 fail-closed，按名字登记在 BARE_MONEY_DEFAULT_ALLOWLIST。上一轮基线 638 是 V13 R8 补五颗静默抑制判据（丢结构体字段值必须当场写理由、`#[allow(dead_code)]` 必须当场写理由、`unreachable!` 必须带非空消息、不得留 `todo!`/`unimplemented!` 桩、生产源码的 TODO/FIXME 与登记表逐项相等）。这五种形状的共同点是「改错了也不红」：字段没人读就加一行 `let _ = x.y;` 按住、能力没接上就挂 allow、分支真到不了就写裸 unreachable!()、需求没做完就留桩，全是孤儿逻辑与静默降级的温床。上一轮基线 633 是 V13 R16 补四颗，守契约与存储读回侧的防御口径一致性。第一颗守 Python `StrategyInput.from_dict` 必须像同文件的 `StrategyIntent` / `StrategyOutput` 一样调 `_reject_unknown_keys`：策略作者把 `positions` 拼成 `positionz` 时，输入侧静默拿到空 dict，策略可能以为账户是空的而误触发。第二颗守 `FactorReport::validate` 必须像 `FactorConfig::validate` 一样校验 `missing_policy` 的 reject/skip/zero 词表：报告能被 `from_json` 反序列化，只有空串校验时手改一份 JSON 能放行到下游 `resolve_missing` 才报错，落点离改错的地方很远。第三颗守 `outbox.attempts` 读回必须走 `parse_sqlite_u32` / `parse_u32` 而不是 `as u32` 截断：attempts 以 TEXT 落盘，u64→u32 是真截断，手工改库写成超过 u32::MAX 会回绕成小值、绕开死信判定。第四颗守 `FactorConfig` 的源头词表本身没被改弱——两处词表不一致时改哪一侧都会让另一侧的校验变成摆设。627 -> 629：V13 R14 补两颗，守两个平台的托管启动器都有 supervise 之前的 runtime-check 前置闸门，且 bash 侧的闸门失败不得用 $? 当退出码。`supervise` 只走 plan_workers 的拓扑校验，不检查配置引用的文件是否存在（数据集 bundle、研究快照、秘密文件的存在性只在 runtime-check / live-check 里查）——修前 start-qianxing.ps1 有这道闸门、start-qianxing.sh 没有，Linux/macOS 上的坏配置会拉起 7 个子进程再 fail-fast 全杀，而不是在任何子进程起来之前就拒绝。第二颗守 `if ! cmd; then echo ...; exit "$?"; fi` 里的 $? 拿的是上一条 echo 的状态（0），调用方会以为闸门通过了：部署平台按 0 退出继续走下一步，而实际上一个子进程都没起来。624 -> 627：V13 R11 补三颗，守不可信输入的三处边界。第一颗守 WebSocket 的 Close 帧检测必须按帧头判 opcode 而不是按整块读缓冲逐字节扫：Close 的 opcode 0x8 只出现在帧起点，逐字节扫 `& 0x0f == 0x8` 会让 256 个字节值里的 16 个（0x08/0x18/…/0xF8）都命中，二进制行情载荷里这类字节很常见，客户端发一个正常的 text/binary 帧就会把服务端静默断连。第二颗守托管子进程的退出码必须以 Option<i32> 携带而不是先转字符串：转成字符串之后 panic 的 101、OOM 的 137 和干净退出的 0 在监控里长得一样，父进程只能一律按 2 退出。第三颗守 C ABI 的 side 必须是定宽整数加显式拒绝而不是 #[repr(C)] 枚举：插件把 side 写进宿主内存，而 Rust 读取一个不在已声明判别值里的 #[repr(C)] 枚举值本身就是未定义行为，match 里没有任何可达的拒绝臂——布局改成 u32 后两侧字节完全不变，既有插件无需重编译。621 -> 624：V13 R10 V13 R10 补三颗，守实盘与恢复路径的三处静默降级。第一颗守 Binance 成交回报缺 trade_id(t) 时转对账而不是归零：trade_id 是 seen_fill_keys 去重键的一部分，归零会让两笔都没有 t 的成交互相误去重、漏计一笔且无人告警（CCXT 侧对同一情形本来就 fail-closed，两边口径不该不一致）。第二颗守两个多腿恢复 worker 都必须显式配置 venue_id：恢复扫描按 venue 过滤敞口腿，空值在过滤函数里是有意的通配符，而默认值产出的是非空字符串，等于把通配符路径变成不可达——配置遗漏时 worker 会静默只扫一个 venue、漏掉其余 venue 的裸腿。第三颗守 worker 线程 panic 的报错保留 JoinError 的 Debug 输出（含 panic 消息与线程名），不丢成一句 "panic"。619 -> 621：V13 R9 补两颗。第一颗守 `sync_control` 三后端共用一枚公共前缀判据：旧写法 `existing.len() > records.len() || zip 不等` 把"链比本地快照长但前缀一致"也报成 Conflict，而 sqlite/postgres 的 sync_control 跑在控制面事务 commit 之后，两进程并发时后提交那份 plane 会包含先提交者的变更、链天然比另一方长——那一支本该幂等收口，却被报成 Conflict，等于"控制面状态已提交成功、transact_control 却返回 Err"；真分叉是前缀内容对不上，那一支三后端照旧都拦（`a_chain_ahead_of_the_snapshot_fails_the_transaction_inst_of_rewriting_history` 仍绿，它守的正是内容分叉而不是长度）。第二颗守 WS 的查询键拒绝点名请求实际打到的 target：WS 通道不占路由表，硬写 `/events/live` 会让连到别的路径的客户端收到谎报的路由名。616 -> 619：V13 R8 补上「`pub(crate) fn` 零读者」一颗（含元判据，共 3 项）——R7 之前删掉的四个 AuditStore 镜像方法（`AuditFileStore::root`/`after`、`SqliteAuditStore::path`、`PostgresAuditStore::after`）正是从这里数出来的：`pub fn` 那层按全仓裸词匹配，`after` 这个普通英文单词在 `qx-api` 的事件游标参数里出现 26 次，于是"零读者"永远数不出来。`pub(crate)` 天生只在本 crate 可见，按本 crate 计数是构造性正确的，不需要为跨 crate 假活口付代价；唯一的新孤儿是 `qx-cli::for_test`（复合 cfg 条件剥离不掉，唯一读者在 tests/ 下），已入允许清单。R7 的 615 -> 616 是「API 投影桥的投影失败永久退场不重试」：R6-A 第一次落地时只做了 `pipelines.remove`，而外层 `while` 下一轮会按 Vacant 重开同一本账本、再投一遍、再刷同一行错误日志（每 250 ms 一次），语义与它自己的注释不符；同一颗还守提交顺序（按账户投影先于全局投影）。614 -> 615 是 R5 的「成交幂等台账只增不减」：Binance `seen_fill_keys` 与 CCXT `seen_trade_ids` 是只增不减的去重台账，淘汰已见键就等于允许同一笔成交被 trace 两次（重复记账），而它们刻意不设水位，所以判据守的是「不得出现淘汰调用」而不是「有界」。R4-A/B/C 的三处已计入 614。判据与常量块一并追加在 `def main()` 之前，因为 15 处文档指针引用了本文件的行号、而历史引用最大行是 9363。
 # V12 §21 / #138：合流类判据的三个参数（455 → 457 就是本轮新增的两条，仍按"当轮实测总条数"取值）。窗口取 10 行是实测拐点 —— W=8 在 `tools` 之外命中 1,180
 # 处、到 W=10 仍有 781 处合法的并列实现（三条 venue 提交链、几家存储后端），所以逐字重复零容忍
 # 只对 `tools/*.py` 生效（本轮实测该目录 5 份脚本 0 命中），Rust 那一侧交给编译器与整树用例。
@@ -1565,12 +1565,9 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
         "（qx-cli/src/dataset_commands.rs:36 在调）；本入口只有 batch.rs 的 #[cfg(test)] 读者，"
         "删掉等于把缺口藏起来"
     ),
-    "qx-core::default_maker_taker": (
-        "只剩测试读者（V13 R4-C 由 `pub const fn` 正则盲区放出来）：contract-tests/tests/"
-        "paper_accounting.rs:22 与 qx-zhenlu/src/lib.rs:1635（#[cfg(test)]）用它把 maker/taker "
-        "模型装进 FeeModel 端口；生产两条执行平面直接读 DEFAULT_MAKER_BP / DEFAULT_TAKER_BP "
-        "常量装配。删面等于删掉「内核默认费率只有一处定义」在用例里的可断言入口"
-    ),
+    # 2026-10-10 T2-2：`qx-core::default_maker_taker` 的允许清单条目已删除——`qx-app` 的
+    # Bar 回测装配（`crates/qx-app/src/cases/run_backtest.rs`）真的调它，它重新有了生产读者，
+    # 而「允许清单里的条目仍然没有生产读者」那颗判据要求条目随读者出现而退场。
     # 只剩测试读者的库内 API：用例本身就是回归证明，删面等于删证据。
     "qx-core::cash_dividend_entitlement_for": "任务 #118 收口：登记/结算走 append 的账簿分录，这条只读汇总查询只有用例读者，同上 limitation",
     "qx-core::convertible_bond_interest_entitlement_for": "任务 #118 收口：同 limitation",
@@ -7314,6 +7311,193 @@ BACKTEST_SCRIPT_MARKERS = (
 )
 
 
+# —— T0-4：回测基线（夹具身份 + 产物摘要 + 耗时 + 内存；数值跨机不可比，门禁不比对数值）——
+BACKTEST_BASELINE_RECORD = "maturity/backtest_baseline.yaml"
+BACKTEST_BASELINE_SCRIPT = "tools/backtest_baseline.py"
+# 记录必须自述齐全的十格：身份 / 环境 / 夹具 / 结果 / 产物 / 耗时 / 内存。
+BACKTEST_BASELINE_TOP = (
+    "schema_version",
+    "kind",
+    "generated_by",
+    "generated_at_unix",
+    "environment",
+    "fixture",
+    "result_hash",
+    "artifacts",
+    "timing",
+    "memory",
+)
+# 脚本里必须存在的测量原语：真计时、真起子进程、两个平台的**真峰值 RSS 读数**
+# （Windows `GetProcessMemoryInfo` 的 PeakWorkingSetSize / Linux `/proc` 的 VmHWM）。
+# 少一个，这份基线就有可能是手写的——「看起来有数字」不等于「真量过」。
+BACKTEST_BASELINE_MARKERS = (
+    "time.perf_counter()",
+    "subprocess.Popen(",
+    "PeakWorkingSetSize",
+    "VmHWM",
+)
+# 与路径无关的纯数据产物：`equity.csv` / `fills.csv` 的内容不含绝对路径，跨目录必须逐字节相等
+# （验收脚本自己就断言了这一点）。`summary` / `run_manifest` 内嵌本轮绝对路径，刻意**不**比对。
+BACKTEST_BASELINE_PORTABLE_KINDS = ("equity", "fills")
+BACKTEST_BASELINE_ARTIFACT_KINDS = ("equity", "fills", "run_manifest", "summary")
+BACKTEST_BASELINE_INPUTS = (
+    "qianxing.runtime.json",
+    "qianxing.bar-frame.example.json",
+    "qianxing.binance.spot.spec.json",
+    "qianxing.dataset-bundle.bar-frame.example.json",
+)
+
+
+def _parse_baseline(record: str) -> dict:
+    """把基线记录解析成嵌套 dict（两级映射 + 标量），不引 yaml 依赖。
+
+    只认 `key:`（空值 → 开一个子块）与 `key: value`；`#` 整行注释跳过；块标量 `>-` 之后
+    的缩进散文不匹配键形态，自然被略过。
+    """
+    root: dict = {}
+    stack: list[tuple[int, dict]] = [(-1, root)]
+    for raw in record.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        match = re.match(r"^([\w.-]+):\s*(.*?)\s*$", raw.strip())
+        if match is None:
+            continue
+        key, value = match.group(1), match.group(2)
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        if value == "":
+            child: dict = {}
+            stack[-1][1][key] = child
+            stack.append((indent, child))
+        else:
+            stack[-1][1][key] = value
+    return root
+
+
+def backtest_baseline_check() -> None:
+    """T0-4：把「规范回测」的夹具身份、产物摘要、耗时与内存冻结成一份机读基线。
+
+    `tools/backtest_acceptance.py` 证明的是「同一输入两次跑结果相等」，它**不记录**在这台机器上
+    跑一轮要多久、占多少内存。缺了这份读数，「性能优化」与「性能回归」都无从比较，而计划 §6 的
+    验收矩阵明确**不接受**「未测的高性能」。七颗分别钉：
+
+    ① 基线在盘、`kind: backtest-baseline`、十格自述齐全（身份 / 环境 / 夹具 / 结果 / 产物 /
+       耗时 / 内存）；
+    ② 基线由在盘脚本生成，且脚本**真有测量原语**——真计时 + 真起子进程 + 两个平台的真峰值
+       RSS 读数。只写一份"看起来有数字"的记录不算；
+    ③ 夹具身份与回测轨验收记录**交叉一致**（`result_hash` + `data_fingerprint`）：同一夹具必须
+       同一结果，不等就说明夹具漂移了、两份记录要一起改；
+    ④ 与路径无关的纯数据产物（`equity` / `fills`）与验收记录**逐字节相等**——夹具或撮合引擎
+       一漂移就红（`summary` / `run_manifest` 内嵌绝对路径，刻意不比对）；
+    ⑤ 产物四类与夹具输入四份齐全，且每份摘要都是 64 位十六进制；
+    ⑥ 耗时与内存是正数（平台不支持时如实记 `null` + 方法名）——**门禁不比对数值**：耗时与内存
+       与机器有关，拿数值当判据只会逼人写死一台机器；
+    ⑦ 基线正文不出现绝对路径 / 盘符 / 家目录——一台机器的细节不是可移植基线。
+
+    与 `backtest_track_check` 同一口径，刻意**不**做「记录是否过时」判据：`generated_at_unix`
+    每跑一次都变。过时与否由重跑 `tools/backtest_baseline.py` 回答。
+    """
+    record_path = ROOT / BACKTEST_BASELINE_RECORD
+    record = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
+    parsed = _parse_baseline(record)
+    check(
+        record_path.is_file()
+        and parsed.get("kind") == "backtest-baseline"
+        and all(key in parsed for key in BACKTEST_BASELINE_TOP)
+        and all(
+            isinstance(parsed.get(block), dict)
+            for block in ("environment", "fixture", "artifacts", "timing", "memory")
+        ),
+        "回测基线在盘，且十格自述齐全（身份 / 环境 / 夹具 / 结果 / 产物 / 耗时 / 内存）",
+        f"缺 {BACKTEST_BASELINE_RECORD}，或缺格 "
+        f"{[key for key in BACKTEST_BASELINE_TOP if key not in parsed]}",
+    )
+    script = case_source(BACKTEST_BASELINE_SCRIPT)
+    check(
+        (ROOT / BACKTEST_BASELINE_SCRIPT).is_file()
+        and parsed.get("generated_by") == BACKTEST_BASELINE_SCRIPT
+        and all(marker in script for marker in BACKTEST_BASELINE_MARKERS),
+        "基线由在盘脚本生成，且脚本真有测量原语（真计时 + 真起子进程 + 两平台真峰值 RSS 读数）",
+        f"缺 {BACKTEST_BASELINE_SCRIPT} 或它的测量原语 "
+        f"{[marker for marker in BACKTEST_BASELINE_MARKERS if marker not in script]}，"
+        "或记录的 generated_by 没指向它",
+    )
+    acceptance = (
+        (ROOT / BACKTEST_ACCEPTANCE_RECORD).read_text(encoding="utf-8")
+        if (ROOT / BACKTEST_ACCEPTANCE_RECORD).is_file()
+        else ""
+    )
+    accepted = _parse_baseline(acceptance)
+    fixture = parsed.get("fixture") if isinstance(parsed.get("fixture"), dict) else {}
+    check(
+        accepted.get("result_hash") is not None
+        and parsed.get("result_hash") == accepted.get("result_hash")
+        and accepted.get("data_fingerprint") is not None
+        and fixture.get("data_fingerprint") == accepted.get("data_fingerprint"),
+        "夹具身份与回测轨验收记录交叉一致（同一夹具必须同一 result_hash / data_fingerprint）",
+        f"基线 result_hash={parsed.get('result_hash')} vs 验收 {accepted.get('result_hash')}；"
+        f"data_fingerprint={fixture.get('data_fingerprint')} vs {accepted.get('data_fingerprint')}",
+    )
+    artifacts = parsed.get("artifacts") if isinstance(parsed.get("artifacts"), dict) else {}
+    accepted_contents = (
+        accepted.get("artifact_contents")
+        if isinstance(accepted.get("artifact_contents"), dict)
+        else {}
+    )
+    check(
+        all(
+            re.fullmatch(r"[0-9a-f]{64}", str(artifacts.get(kind, ""))) is not None
+            and artifacts.get(kind) == accepted_contents.get(kind)
+            for kind in BACKTEST_BASELINE_PORTABLE_KINDS
+        ),
+        "与路径无关的纯数据产物（equity / fills）与验收记录逐字节相等（夹具或撮合一漂移就红）",
+        f"基线 {[artifacts.get(kind) for kind in BACKTEST_BASELINE_PORTABLE_KINDS]} vs "
+        f"验收 {[accepted_contents.get(kind) for kind in BACKTEST_BASELINE_PORTABLE_KINDS]}",
+    )
+    inputs = fixture.get("inputs") if isinstance(fixture.get("inputs"), dict) else {}
+    check(
+        sorted(artifacts) == sorted(BACKTEST_BASELINE_ARTIFACT_KINDS)
+        and all(
+            re.fullmatch(r"[0-9a-f]{64}", str(value)) is not None for value in artifacts.values()
+        )
+        and sorted(inputs) == sorted(BACKTEST_BASELINE_INPUTS)
+        and all(re.fullmatch(r"[0-9a-f]{64}", str(value)) is not None for value in inputs.values()),
+        "产物四类与夹具输入四份齐全，且每份摘要都是 64 位十六进制",
+        f"产物 {sorted(artifacts)} / 输入 {sorted(inputs)}",
+    )
+
+    def positive(value: object) -> bool:
+        try:
+            return float(value) > 0  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+
+    timing = parsed.get("timing") if isinstance(parsed.get("timing"), dict) else {}
+    memory = parsed.get("memory") if isinstance(parsed.get("memory"), dict) else {}
+    rss = memory.get("peak_rss_bytes")
+    check(
+        positive(timing.get("quickstart_seconds"))
+        and positive(timing.get("backtest_seconds"))
+        and positive(memory.get("sampling_interval_ms"))
+        and (
+            (rss not in (None, "null") and positive(rss))
+            or (rss in (None, "null") and memory.get("method") == "unsupported_platform")
+        ),
+        "耗时与内存是正数（或平台不支持时如实记 null + 方法名）——门禁不比对数值，数值跨机不可比",
+        f"timing={timing} memory={memory}",
+    )
+    body = "\n".join(
+        line for line in record.splitlines() if not line.lstrip().startswith("#")
+    )
+    leaked = [needle for needle in ("C:\\", "/home/", "Users\\", "/tmp/") if needle in body]
+    check(
+        not leaked,
+        "基线正文不出现绝对路径 / 盘符 / 家目录（一台机器的细节不是可移植基线）",
+        f"正文里出现 {leaked}",
+    )
+
+
 # —— M5' 的本地可验收子项：Paper 轨验收（与回测轨同源，同样不需要交易所凭据）——
 PAPER_ACCEPTANCE_RECORD = "maturity/paper_acceptance.yaml"
 PAPER_ACCEPTANCE_SCRIPT = "tools/paper_acceptance.py"
@@ -9172,6 +9356,239 @@ def external_acceptance_check() -> None:
         )
 
 
+# —— T0-3：外部链路（实盘轨）的边界登记 ——
+# 实盘轨「能翻到哪一档、凭什么翻、今天翻没翻」此前散在三处散文里：方案 §2 的五段表、
+# `maturity/evidence/README.md` 的四档说明、以及验收脚本写进 `result.json` 的那句规则。
+# 散在散文里的口径没人对账，于是同一件事的三种说法可以各说各的——实测就有一处：方案 §4 写
+# 「除 live-check 之外全部阶段退出码为 0」，而脚本写进结果包的是「全部阶段退出码为 0」，
+# 方案自己声称「脚本与文档同口径」而门禁里一条判据都没核过它。本族把这张边界登记成机读表
+# 并逐格对账，同时守住那条最贵的界线：**代码在盘（implementation）不是生产已批准**。
+EXTERNAL_CHAIN_FILE = "maturity/external_chain.yaml"
+EXTERNAL_CHAIN_KIND = "external-chain-boundary"
+EXTERNAL_CHAIN_TOP = (
+    "schema_version",
+    "kind",
+    "updated_at",
+    "evidence_root",
+    "sandbox_evidence_dir",
+    "production_evidence_dir",
+    "acceptance_script",
+    "acceptance_plan",
+    "capabilities_registry",
+    "flip_rule",
+    "second_venue",
+)
+EXTERNAL_CHAIN_TIERS = (
+    "implementation",
+    "code_tested",
+    "sandbox_tested",
+    "production_approved",
+)
+# 由源码 / 本地测试翻真的两档：它们的翻真依据里出现证据记录，就等于把"代码在盘"读成了"已批准"。
+EXTERNAL_CHAIN_CODE_TIERS = ("implementation", "code_tested")
+# 翻转规则的唯一措辞（方案里给关键词加了反引号，比对前先剥掉）。
+EXTERNAL_CHAIN_FLIP_RULE = "outcome=pass 且除 live-check 之外全部阶段退出码为 0"
+# 脚本里那两处**代码**：live-check 豁免 + 只有 pass 才 allowed。只改文字不改代码要能红，
+# 否则"同口径"就只是两句碰巧一样的话，而不是同一条规则。
+EXTERNAL_CHAIN_FLIP_GUARD = 'record["stage"] != "live-check" and record["exit_code"] != 0'
+EXTERNAL_CHAIN_FLIP_ALLOWED = '"allowed": outcome == "pass",'
+EXTERNAL_CHAIN_SECOND_ENTRY = "ccxt-submit-order"
+
+
+def _unquote(value: str) -> str:
+    """剥掉 YAML 里成对的引号（登记面给带 `: ` 的标量加了引号，比对前要还原）。"""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
+def _parse_external_chain(
+    text: str,
+) -> tuple[dict[str, str], dict[str, dict[str, str]], list[dict[str, str]]]:
+    """逐行解析 external_chain.yaml：顶层标量 + `tiers` 映射 + `segments` 列表。
+
+    顶层标量写进 `scalars`（`current_status` 段带前缀），块标量 `>-` 的缩进正文自然被略过。
+    """
+    scalars: dict[str, str] = {}
+    tiers: dict[str, dict[str, str]] = {}
+    segments: list[dict[str, str]] = []
+    section: str | None = None
+    current: dict[str, str] | None = None
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if m := re.match(r"^(tiers|segments|current_status):\s*$", raw):
+            section, current = m.group(1), None
+            continue
+        if re.match(r"^\S", raw):  # 顶层标量（含块标量头）
+            section, current = None, None
+            if m := re.match(r"^([\w.-]+):\s*(.+?)\s*$", raw):
+                scalars[m.group(1)] = _unquote(m.group(2))
+            continue
+        if section in ("tiers", "segments"):
+            if m := re.match(r"^  - name:\s*(.+?)\s*$", raw):
+                current = {"name": m.group(1)}
+                if section == "tiers":
+                    tiers[m.group(1)] = current
+                else:
+                    segments.append(current)
+            elif current is not None and (m := re.match(r"^    ([\w-]+):\s*(.*?)\s*$", raw)):
+                current[m.group(1)] = m.group(2)
+        elif section == "current_status":
+            if m := re.match(r"^  ([\w-]+):\s*(.+?)\s*$", raw):
+                scalars[f"current_status.{m.group(1)}"] = m.group(2)
+    return scalars, tiers, segments
+
+
+def _evidence_outcome_tally(root: str) -> dict[str, int]:
+    """按盘上逐份 `result.json` 数 outcome。读不动的记成 `unreadable`，不静默跳过。"""
+    tally: dict[str, int] = {}
+    base = ROOT / root
+    if not base.is_dir():
+        return tally
+    for path in sorted(base.rglob("result.json")):
+        try:
+            outcome = json.loads(path.read_text(encoding="utf-8")).get("outcome")
+        except (json.JSONDecodeError, OSError):
+            outcome = "unreadable"
+        key = str(outcome)
+        tally[key] = tally.get(key, 0) + 1
+    return tally
+
+
+def _plan_segment_names(plan: str) -> list[str]:
+    """取方案 §2 那张表的第一列（段名），按行序；分隔行与表头不算。"""
+    names: list[str] = []
+    inside = False
+    for line in plan.splitlines():
+        if line.startswith("| 段 | 命令 | 产出 | 失败即 |"):
+            inside = True
+            continue
+        if inside:
+            if not line.startswith("|"):
+                break
+            if set(line) <= set("|-: "):
+                continue
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) == 4:
+                names.append(cells[0])
+    return names
+
+
+def _capability_tier_true_count(field: str) -> int:
+    """数 `maturity/capabilities.yaml` 里某一档为 true 的条目数（profiles 段没有这些键）。"""
+    text = (ROOT / "maturity/capabilities.yaml").read_text(encoding="utf-8")
+    return len(re.findall(rf"^    {field}: true\s*$", text, re.M))
+
+
+def external_chain_check() -> None:
+    """T0-3：把实盘轨的边界（五段 / 翻转规则 / 证据根 / 现状）登记成一张机读表并逐格对账。
+
+    七颗分别钉：
+    ① 登记面在盘、可解析、`kind` 自述正确、顶层键齐、四档与五段都在；
+    ② 五段与方案 §2 那张表**逐行同名同序**，且每段都写了「失败即」口径；
+    ③ 翻转规则三处同源：本文件 / 方案 §4 / 验收脚本写进 `result.json` 的那句；
+    ④ 脚本的**代码**真实现了那条规则（live-check 豁免 + 只有 pass 才 allowed）；
+    ⑤ 证据根现状与盘上逐份 `result.json` 一致，且 `flip_allowed` 恰等于「存在 outcome=pass」；
+    ⑥ 两档计数与 `capabilities.yaml` 逐值相等；**没有 pass 记录时两档必须全为 false**；
+       且前两档的翻真依据里不出现证据记录——"代码在盘"永远翻不成"生产已批准"；
+    ⑦ 第二交易所的 `--venue` 值在脚本 choices 里，且该下单入口在命令面上是 L 档且默认关闭。
+    """
+    path = ROOT / EXTERNAL_CHAIN_FILE
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    scalars, tiers, segments = _parse_external_chain(text)
+    missing = [key for key in EXTERNAL_CHAIN_TOP if key not in scalars]
+    check(
+        path.is_file()
+        and scalars.get("kind") == EXTERNAL_CHAIN_KIND
+        and not missing
+        and scalars.get("acceptance_plan") == ACCEPTANCE_DOC
+        and scalars.get("acceptance_script") == ACCEPTANCE_SCRIPT
+        and sorted(tiers) == sorted(EXTERNAL_CHAIN_TIERS)
+        and len(segments) == 5
+        and all(seg.get("fail_closed") for seg in segments),
+        "外链边界登记在盘、kind 自述正确、顶层键齐、四档与五段都在（每段带失败即口径）",
+        f"缺 {EXTERNAL_CHAIN_FILE} / 缺格 {missing} / 档 {sorted(tiers)} / 段 {len(segments)} / "
+        f"方案指向 {scalars.get('acceptance_plan')} / 脚本指向 {scalars.get('acceptance_script')}",
+    )
+    plan = (ROOT / ACCEPTANCE_DOC).read_text(encoding="utf-8")
+    planned = _plan_segment_names(plan)
+    declared = [seg.get("name", "") for seg in segments]
+    check(
+        bool(planned) and declared == planned,
+        f"五段与方案 §2 的表逐行同名同序（方案 {len(planned)} 段，登记 {len(declared)} 段）",
+        f"方案 {planned} vs 登记 {declared}",
+    )
+    script = (ROOT / ACCEPTANCE_SCRIPT).read_text(encoding="utf-8")
+    in_plan = EXTERNAL_CHAIN_FLIP_RULE in plan.replace("`", "")
+    in_script = EXTERNAL_CHAIN_FLIP_RULE in script
+    check(
+        scalars.get("flip_rule") == EXTERNAL_CHAIN_FLIP_RULE and in_plan and in_script,
+        "翻转规则三处同源：登记面 / 方案 §4 / 验收脚本写进结果包的那句（剥反引号后逐字相等）",
+        f"登记面 {'同' if scalars.get('flip_rule') == EXTERNAL_CHAIN_FLIP_RULE else '不同'} / "
+        f"方案 {'在' if in_plan else '不在'} / 脚本 {'在' if in_script else '不在'}",
+    )
+    check(
+        EXTERNAL_CHAIN_FLIP_GUARD in script and EXTERNAL_CHAIN_FLIP_ALLOWED in script,
+        "验收脚本的代码真实现了这条规则（live-check 豁免 + 只有 pass 才 allowed），不只是文字",
+        f"豁免臂 {'在' if EXTERNAL_CHAIN_FLIP_GUARD in script else '不在'} / "
+        f"allowed {'在' if EXTERNAL_CHAIN_FLIP_ALLOWED in script else '不在'}",
+    )
+    root = scalars.get("evidence_root", "")
+    tally = _evidence_outcome_tally(root)
+    recorded = ",".join(f"{name}:{count}" for name, count in sorted(tally.items()))
+    total = sum(tally.values())
+    allowed = tally.get("pass", 0) > 0
+    check(
+        bool(root)
+        and (ROOT / root).is_dir()
+        and scalars.get("current_status.evidence_records") == str(total)
+        and scalars.get("current_status.outcomes") == recorded
+        and scalars.get("current_status.sandbox_tested_flip_allowed") == str(allowed).lower(),
+        "证据根现状与盘上逐份 result.json 一致，且 flip_allowed 恰等于「存在 outcome=pass」",
+        f"盘上 {total} 份 / {recorded}（flip_allowed={allowed}）vs 登记 "
+        f"{scalars.get('current_status.evidence_records')} 份 / "
+        f"{scalars.get('current_status.outcomes')} / "
+        f"{scalars.get('current_status.sandbox_tested_flip_allowed')}",
+    )
+    sandbox_true = _capability_tier_true_count("sandbox_tested")
+    production_true = _capability_tier_true_count("production_approved")
+    code_clean = all(
+        "outcome" not in tiers.get(name, {}).get("flipped_by", "")
+        and "evidence" not in tiers.get(name, {}).get("flipped_by", "")
+        for name in EXTERNAL_CHAIN_CODE_TIERS
+    )
+    check(
+        scalars.get("current_status.sandbox_tested_true_count") == str(sandbox_true)
+        and scalars.get("current_status.production_approved_true_count") == str(production_true)
+        and (sandbox_true + production_true == 0 or allowed)
+        and code_clean,
+        "两档计数与 capabilities.yaml 逐值相等；没有 pass 记录时两档必须全为 false；"
+        "前两档的翻真依据里不出现证据记录（代码在盘 ≠ 生产已批准）",
+        f"盘上 sandbox={sandbox_true} / production={production_true}；存在 pass 记录={allowed}；"
+        f"前两档 flipped_by 干净={code_clean}",
+    )
+    venue = scalars.get("second_venue", "")
+    choices = re.search(r"choices=\[([^\]]*)\]", script)
+    venue_ok = bool(venue) and choices is not None and f'"{venue}"' in choices.group(1)
+    surface = _parse_command_surface(
+        (ROOT / COMMAND_SURFACE_FILE).read_text(encoding="utf-8")
+    )
+    entry = next(
+        (row for row in surface if row.get("name") == EXTERNAL_CHAIN_SECOND_ENTRY), None
+    )
+    check(
+        venue_ok
+        and entry is not None
+        and entry.get("level") == "L"
+        and entry.get("default_enabled") == "false",
+        "第二交易所的 --venue 值在脚本 choices 里，且该下单入口在命令面上是 L 档且默认关闭",
+        f"venue={venue or '没登记'} choices 含它={venue_ok} / {EXTERNAL_CHAIN_SECOND_ENTRY} "
+        f"档位={entry.get('level') if entry else '不在册'} "
+        f"默认开启={entry.get('default_enabled') if entry else '-'}",
+    )
+
+
 # V13 R1-D：三处"只进不出"的常驻内存与两处生命周期无界，收口后的形状。
 # 这四颗在真进程上都不是确定性的（跑几十天的 API 进程、不肯退出的子进程、只追加不退场
 # 的审计段、一问一答却攒着迟到应答的泵），所以判据钉的是形状：上界定义在哪、谁负责
@@ -10860,7 +11277,7 @@ def wheel_optional_dependency_check() -> None:
     `qianxing_ccxt` 在调用点 `importlib.import_module("ccxt")` 惰性加载、缺时抛点名
     `[ccxt]` 的可执行错误。项目自己的安装文档因此一直挂 `--offline --no-deps`。
     三查：顶层 dependencies 不含 ccxt/tzdata；能力 extras 全套定义；适配器报错点名的
-    `qianxing-bridge[extra]` 每一个都在 pyproject 真有其名（#157 一族：报错指的东西不许不存在）。
+    `qianxing[extra]` 每一个都在 pyproject 真有其名（#157 一族：报错指的东西不许不存在）。
     """
     import tomllib
 
@@ -10880,34 +11297,34 @@ def wheel_optional_dependency_check() -> None:
         f"缺这些 extras: {missing_extras}",
     )
     adapter = (ROOT / CCXT_ADAPTER_FILE).read_text(encoding="utf-8")
-    referenced = set(re.findall(r"qianxing-bridge\[([a-z0-9][a-z0-9-]*)\]", adapter))
+    referenced = set(re.findall(r"qianxing\[([a-z0-9][a-z0-9-]*)\]", adapter))
     check(
         bool(referenced) and referenced <= set(extras),
-        "适配器报错点名的 qianxing-bridge[extra] 全部有定义（不许指一个不存在的 extra）",
+        "适配器报错点名的 qianxing[extra] 全部有定义（不许指一个不存在的 extra）",
         f"报错引用 {sorted(referenced)}；未定义 {sorted(referenced - set(extras))}",
     )
     # #278：A 股数据源缺件时的可执行提示过去写成 `pip install -e '.[a-share-*]'`，那只在源码
     # checkout 里成立——按 #276 装了 wheel 的用户手里没有本地工程可 `-e`，这条指路把最容易撞上的
-    # 缺件提示指回一条走不通的命令。收成与 ccxt 同族的 `qianxing-bridge[a-share-*]`，两类受众都能执行。
+    # 缺件提示指回一条走不通的命令。使用正式发行名 `qianxing[a-share-*]`，两类受众都能执行。
     provider = (ROOT / ASHARE_PROVIDER_FILE).read_text(encoding="utf-8")
     check(
         "pip install -e '.[" not in provider,
         "A 股缺件提示不再用源码专用 `pip install -e '.[...]'`（wheel 用户执行不了，#278）",
         "qianxing_ashare 里仍能找到 `-e '.[` 形式的安装提示",
     )
-    ashare_referenced = set(re.findall(r"qianxing-bridge\[([a-z0-9][a-z0-9-]*)\]", provider))
+    ashare_referenced = set(re.findall(r"qianxing\[([a-z0-9][a-z0-9-]*)\]", provider))
     a_share_refs = {name for name in ashare_referenced if name.startswith("a-share")}
     check(
         bool(a_share_refs) and a_share_refs <= set(extras),
-        "A 股缺件提示点名的 qianxing-bridge[a-share-*] 全部有定义（#278）",
+        "A 股缺件提示点名的 qianxing[a-share-*] 全部有定义（#278）",
         f"引用 {sorted(a_share_refs)}；未定义 {sorted(a_share_refs - set(extras))}",
     )
     # #278 补：上面几条把这两个文件当文本 grep（安装提示 / 指针判据），从不确认它们仍是合法
     # Python。#278 一度把缺件消息改成 "..." 里套 "..."，grep 全绿而模块 import 当场 SyntaxError——
-    # 正是三查要防的断链。这里用内置 compile() 逐个语法核对四个发布包的每个 .py（只检语法、
+    # 正是三查要防的断链。这里用内置 compile() 逐个语法核对五个发布包的每个 .py（只检语法、
     # 不落 .pyc、无副作用），让「改一句面向用户的提示把整个包改崩」这类回归在门禁就被点名。
     broken_modules = []
-    for _pkg in ("qianxing_bridge", "qianxing_strategy", "qianxing_ashare", "qianxing_ccxt"):
+    for _pkg in ("qianxing", "qianxing_bridge", "qianxing_strategy", "qianxing_ashare", "qianxing_ccxt"):
         for _src in sorted((ROOT / "python" / _pkg).rglob("*.py")):
             try:
                 compile(_src.read_text(encoding="utf-8"), str(_src), "exec")
@@ -10915,7 +11332,7 @@ def wheel_optional_dependency_check() -> None:
                 broken_modules.append(f"{_src.relative_to(ROOT)}:{_exc.lineno}: {_exc.msg}")
     check(
         not broken_modules,
-        "四个发布包的每个 .py 都是合法 Python（门禁不止 grep 文本，#278 补）",
+        "五个发布包的每个 .py 都是合法 Python（门禁不止 grep 文本，#278 补）",
         f"这些模块语法错误、import 即崩: {broken_modules}",
     )
 
@@ -10940,14 +11357,22 @@ DOC_CITATION_EXTS = (
     "txt", "log", "csv", "html", "js", "ts",
 )
 DOC_ARCHIVE_PREFIX = "docs/archive/"
-# 活文档引用条数地板：V13 R26 终字节复测 272 条（30 份活 .md，含这条 CHANGELOG 自己那 2 处）。跌破说明扫描集本身失效——
-# rglob 没走到、前缀集被改空、或文档被整段删掉——而不是「文档写得更干净了」。引用变多不设上限；
-# 上一档 195 是 R1-G 在七份 2026-10 规划稿还住在 docs/ 时量的，那批现已移入 docs/archive/。
-LIVE_DOC_CITATION_FLOOR = 272
-# 存档（`docs/archive/**`，V11/V12 那两轮）的落空条数天花板：R1-G 实测 9 条。存档是「那一轮
-# 当时成立」的记录，把它的行号改成今天的落点等于销毁当时的信息，所以不按活文档的零容忍处理；
+# 活文档引用条数地板：跌破说明扫描集本身失效——rglob 没走到、前缀集被改空、或文档被整段删掉——
+# 而不是「文档写得更干净了」。引用变多不设上限。
+# 272 是 V13 R26 终字节复测（30 份活 .md，含这条 CHANGELOG 自己那 2 处）；更早的 195 是 R1-G 在七份
+# 2026-10 规划稿还住在 docs/ 时量的，那批现已移入 docs/archive/。
+# 2026-10-10 下调到 234：把 V13 台账的 §9.1–§9.47 拆入 docs/archive/（`自研量化框架审计与重构方案-V13-逐轮执行记录.md`），
+# 那 64 条引用是换了住址而不是消失——同轮 `live_total + archive_total` 仍是 465（见下面那颗总地板）。
+LIVE_DOC_CITATION_FLOOR = 234
+# 存档（`docs/archive/**`）的落空条数天花板：R1-G 实测 9 条。存档是「那一轮当时成立」的记录，
+# 把它的行号改成今天的落点等于销毁当时的信息，所以不按活文档的零容忍处理；
 # 但天花板只降不升——再往存档里写一条落空的引用会当场红。
 ARCHIVE_DEAD_CITATION_CEILING = 9
+# 活 + 存档的引用总条数地板：2026-10-10 拆 V13 台账时实测 234 + 231 = 465。
+# 单看活侧地板抓不住「存档被整份删掉」：删掉一份存档文档时 `live_total` 不动、`archive_dead` 从 9 掉到 0
+# （天花板判据是 `<=`，照样绿），于是「留而不删」这条纪律在门禁里**没有牙齿**。总地板把它补上：
+# 引用从活侧搬到存档侧时总数不变（拆/移只是换住址），少掉一份被引用的存档文档当场红。
+TOTAL_DOC_CITATION_FLOOR = 465
 
 
 def doc_citation_reachability_check() -> None:
@@ -11040,6 +11465,12 @@ def doc_citation_reachability_check() -> None:
         "存档文档的落空引用只降不升：存档保留当轮事实，但不许再往里写新的死指针",
         f"本轮 {len(archive_dead)} 条 / 天花板 {ARCHIVE_DEAD_CITATION_CEILING}，"
         f"存档共 {archive_total} 条引用，前 12 条 {archive_dead[:12]}",
+    )
+    check(
+        live_total + archive_total >= TOTAL_DOC_CITATION_FLOOR,
+        "活 + 存档的 `path:NN` 引用总条数不少于实测地板：拆/移只换住址，删掉被引用的存档当场红",
+        f"本轮活 {live_total} + 存档 {archive_total} = {live_total + archive_total}，"
+        f"地板 {TOTAL_DOC_CITATION_FLOOR}",
     )
 
 
@@ -11651,13 +12082,14 @@ def performance_baseline_check() -> None:
     )
 
 
-# 地基规格对象（规划 §6.2 / §7）：七类声明式文档各自只有一份 JSON Schema、一个版本常量、
+# 地基规格对象（规划 §6.2 / §7）：八类声明式文档各自只有一份 JSON Schema、一个版本常量、
 # 一处 `pub struct` 定义，且 `qx_spec::describe` 是它们唯一的生产读入漏斗（CLI `plan` 命令）。
 FOUNDATION_SPECS = (
     ("schemas/project-manifest-v1.json", "crates/qx-spec/src/project.rs", "PROJECT_MANIFEST_SCHEMA_VERSION", "schema_version"),
     ("schemas/dataset-manifest-v2.json", "crates/qx-data/src/catalog_v2.rs", "DATASET_MANIFEST_V2_SCHEMA_VERSION", "manifest_version"),
     ("schemas/experiment-spec-v1.json", "crates/qx-spec/src/experiment.rs", "EXPERIMENT_SPEC_SCHEMA_VERSION", "schema_version"),
     ("schemas/run-record-v1.json", "crates/qx-spec/src/run_record.rs", "RUN_RECORD_SCHEMA_VERSION", "schema_version"),
+    ("schemas/run-evidence-v1.json", "crates/qx-spec/src/run_evidence.rs", "RUN_EVIDENCE_SCHEMA_VERSION", "schema_version"),
     ("schemas/capability-manifest-v1.json", "crates/qx-spec/src/capability.rs", "CAPABILITY_MANIFEST_SCHEMA_VERSION", "schema_version"),
     ("schemas/evidence-bundle-v1.json", "crates/qx-spec/src/evidence.rs", "EVIDENCE_BUNDLE_SCHEMA_VERSION", "schema_version"),
     ("schemas/schema-registry-v1.json", "crates/qx-spec/src/schema_registry.rs", "SCHEMA_REGISTRY_SCHEMA_VERSION", "schema_version"),
@@ -11667,6 +12099,7 @@ FOUNDATION_OBJECT_TYPES = (
     "DatasetManifestV2",
     "ExperimentSpec",
     "RunRecord",
+    "RunEvidenceBundle",
     "CapabilityManifest",
     "EvidenceBundle",
     "SchemaRegistry",
@@ -11716,7 +12149,7 @@ def foundation_specs_check() -> None:
             )
     check(
         not schema_issues,
-        "七类地基规格各有一份严格 Schema，版本常量与 Rust 侧逐条一致",
+        "八类地基规格各有一份严格 Schema，版本常量与 Rust 侧逐条一致",
         "；".join(schema_issues),
     )
 
@@ -11731,7 +12164,7 @@ def foundation_specs_check() -> None:
     bad = {name: sites for name, sites in duplicates.items() if len(sites) != 1}
     check(
         not bad,
-        "七类地基对象的 `pub struct` 各只有一处定义（同名概念不得出现第二份）",
+        "八类地基对象的 `pub struct` 各只有一处定义（同名概念不得出现第二份）",
         f"定义数不为 1 的对象 {bad}",
     )
 
@@ -11752,7 +12185,7 @@ def foundation_specs_check() -> None:
     arms = re.findall(r"FoundationKind::(\w+) =>", body)
     check(
         len(arms) == len(FOUNDATION_OBJECT_TYPES) and len(set(arms)) == len(arms),
-        "describe 的派发臂覆盖全部七类地基对象且不重不漏",
+        "describe 的派发臂覆盖全部八类地基对象且不重不漏",
         f"派发臂 {arms}（期望 {len(FOUNDATION_OBJECT_TYPES)} 条）",
     )
 
@@ -11804,14 +12237,14 @@ def foundation_specs_check() -> None:
         "data-validate 链的容忍性、规格校验或入口文案有断点",
     )
 
-    # 七类「统一身份」对象必须有一个**使用者可达**的读入入口：`describe` 是唯一漏斗，但若没有
-    # CLI 入口，使用者就只能间接经过 init / 回测链看到其中两类，另外几类无处读入自己的清单。
+    # 八类「统一身份」对象必须有一个**使用者可达**的读入入口：`describe` 是唯一漏斗，但若没有
+    # CLI 入口，使用者就只能间接经过 init / 回测链看到其中几类，另外几类无处读入自己的清单。
     plan_commands = (ROOT / "crates/qx-cli/src/plan_commands.rs").read_text(encoding="utf-8")
     check(
         "pub(crate) fn plan_readout(" in plan_commands
         and "describe(&args.kind, &payload)" in plan_commands
         and "plan <kind> <file>" in help_text,
-        "七类地基对象有使用者可达的读入入口（plan <kind> <file> 复用同一份 describe 漏斗）",
+        "八类地基对象有使用者可达的读入入口（plan <kind> <file> 复用同一份 describe 漏斗）",
         "地基对象只有进程内读入者、缺使用者可达的 CLI 入口",
     )
 
@@ -11868,6 +12301,19 @@ LAYER_APP_SIDE_CRATES = (
     "qx-zhenlu",
 )
 
+# §15.2 的门面集合：应用层**不得**反向依赖它们。单独一份而不是复用 LAYER_APP_SIDE_CRATES——
+# 应用层正当地依赖 qx-xingban / qx-zhenlu / qx-risk 这些领域件（它要装配它们），
+# 所以"下游应用面"那份名单对 qx-app 太宽，直接复用会把合法依赖判成违规。
+LAYER_FACADE_CRATES = (
+    "qx-adapter",
+    "qx-api",
+    "qx-cli",
+    "qx-execution",
+    "qx-python",
+    "qx-runtime",
+    "qx-storage",
+)
+
 # §14.3 的依赖规则：以**当前真实依赖图**为基线。规则不是「希望如此」，而是
 # 「今天就是这样，谁改谁红」——新增一条违规边，门禁当场失败。
 LAYER_FORBIDDEN_DEPS = (
@@ -11877,6 +12323,7 @@ LAYER_FORBIDDEN_DEPS = (
     ("qx-xingban", ("qx-adapter", "qx-api", "qx-cli", "qx-execution", "qx-storage"), "§14.3-5 qx-xingban 只做研究/回测撮合与成本模型"),
     ("qx-control", LAYER_APP_SIDE_CRATES, "§14.3-8 qx-control 只收命令，执行者由应用层提供"),
     ("qx-storage", ("qx-adapter", "qx-cli", "qx-execution", "qx-risk", "qx-runtime", "qx-strategy", "qx-xingban"), "§14.3-9 qx-storage 只提供持久化端口与事务边界"),
+    ("qx-app", LAYER_FACADE_CRATES, "§15.2 门面依赖应用层（facade → application → domain/ports），应用层不得反向依赖任何门面/适配/执行/存储"),
 )
 # §14.3-6/7/10 是「谁可以依赖谁」的反向规则：某个 crate 的**被依赖集合**必须被钉死。
 LAYER_SOLE_DEPENDENTS = (
@@ -11892,6 +12339,11 @@ LAYER_SOLE_DEPENDENTS = (
         "§14.3-7 API/报告/快照/指标都是投影（qx-api 只能被 CLI 依赖，领域层不得反向依赖）",
     ),
     ("qx-cli", (), "§14.3-10 qx-cli 是叶子（不得被任何 crate 反向依赖）"),
+    (
+        "qx-app",
+        ("qx-cli", "qx-api", "qx-python", "contract-tests"),
+        "§15.2 应用层只被门面依赖（CLI / HTTP API / Python SDK）；领域层与其它 crate 不得反向依赖它",
+    ),
 )
 
 
@@ -12227,7 +12679,7 @@ def layer_dependency_check() -> None:
             issues.append(f"{rule}：{target} 被 {extra} 依赖")
     check(not issues, "§14.3 的十条领域依赖规则成立（禁止边与唯一转换层）", "；".join(issues))
     check(
-        len(graph) >= 24,
+        len(graph) >= 26,
         "依赖门禁解析到了全部 crate（解析集为空会让这颗判据静默全绿）",
         f"只解析到 {len(graph)} 个 crate",
     )
@@ -12884,6 +13336,426 @@ def schema_registry_check() -> None:
     check(not issues, "模式登记册覆盖 schemas/ 全部契约且指针全部落地", "；".join(issues))
 
 
+# === T1-2（QX-DEV-PLAN-2026-10-10 阶段 1 / 关键路径节点）：产物 schema/version 关系图与迁移表 ===
+# `schema_registry_check` 核的是「哪份契约在哪、谁产谁消、golden fixture 落不落得回盘」——它
+# **不问**「旧产物读进来时会怎样」。于是「同一份产物跨版本」这件事全仓没有一处登记：版本常量
+# 被删、读侧不再比对常量、拒绝文案退化成一句泛泛的解析失败、常驻用例从「具名拒绝」退回裸
+# `is_err()`，四者都不会红。校准 C3 要的是「旧产物读取必须走显式迁移或给出具名拒绝原因」，
+# 这一族把它收成一张可核对的登记面（`maturity/artifact_migration.yaml`）并与真实代码逐格对账。
+ARTIFACT_MIGRATION_FILE = ROOT / "maturity" / "artifact_migration.yaml"
+ARTIFACT_MIGRATION_KIND = "artifact-migration"
+ARTIFACT_MIGRATION_TOP = ("schema_version", "kind", "updated_at", "registry")
+ARTIFACT_MIGRATION_FIELDS = (
+    "schema_id",
+    "reader",
+    "version_field",
+    "version_const",
+    "on_unknown_version",
+    "refusal_reason",
+    "refusal_case",
+)
+# 允许的处置集。**当前只有 `refuse` 一态**：本仓 10 份在册契约都有独立版本号，读侧都在解析
+# 之前显式比对常量。判据核「允许集 == 实用集」，所以将来引入第二种处置（例如没有版本号、
+# 只靠字段集合拒绝未知键的契约）必须**同时**改这里与登记面 —— 只往表里加一行新态，判据当场红。
+ARTIFACT_MIGRATION_DISPOSITIONS = ("refuse",)
+# 地板：`maturity/schema-registry.json` 里每份在册契约都要有一行（今天 10 份）。
+# 只降不升的棘轮：本仓在册契约只增不减（2026-10-10 起 11 份）。新增契约若忘了在本表登记
+# 「读侧版本处置」，② 的集合相等先红；有人删契约、连带从表里删行时，这道地板是第二把锁。
+ARTIFACT_MIGRATION_MIN_ROWS = 11
+# 版本常量声明的形状：`pub const X: u32 = …`。右值刻意不核（可以是字面量也可以是表达式，
+# `STRATEGY_CONTRACT_SCHEMA_VERSION` 就是 `qx_strategy::STRATEGY_API_VERSION`）。
+ARTIFACT_MIGRATION_CONST = "pub const {gate}: u32"
+
+
+def _parse_artifact_migration(
+    text: str,
+) -> tuple[dict[str, str], list[dict[str, str]], list[dict[str, str]]]:
+    """逐行解析 T1-2 登记面（门禁不引 PyYAML）：返回 (顶层标量, artifacts 行, migrations 行)。"""
+    scalars: dict[str, str] = {}
+    artifacts: list[dict[str, str]] = []
+    migrations: list[dict[str, str]] = []
+    section = ""
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        stripped = line.strip()
+        if indent == 0:
+            key, _, value = stripped.partition(":")
+            key, value = key.strip(), value.strip()
+            section = key if key in ("artifacts", "migrations") and value != "[]" else ""
+            if key not in ("artifacts", "migrations"):
+                scalars[key] = value
+            continue
+        target = artifacts if section == "artifacts" else migrations if section == "migrations" else None
+        if target is None:
+            continue
+        if stripped.startswith("- "):
+            target.append({})
+            stripped = stripped[2:].strip()
+        if target:
+            key, _, value = stripped.partition(":")
+            target[-1][key.strip()] = _strip_yaml_quotes(value.strip())
+    return scalars, artifacts, migrations
+
+
+def _strip_yaml_quotes(value: str) -> str:
+    """剥掉成对引号：登记面给带 `: ` 或 `{` 的标量加了引号，比对前要还原。"""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
+def _artifact_code_only(path: Path) -> str:
+    """去掉整行注释后的正文：版本判定与拒绝文案必须落在**代码**上，注释里提一句不算。
+
+    不剥的话，「把真调用退回旧写法、只在注释里留锚点」这种变异照样绿 —— 判据读的是散文
+    而不是代码，等于给退化留了一条侧门。
+    """
+    return "\n".join(
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("//")
+    )
+
+
+def _refusal_case_verdict(crate: str, name: str, version_field: str) -> str:
+    """在 `crates/<crate>` 全树里找名为 `name` 的 `#[test]`，返回空串表示通过。
+
+    只核「用例在盘」不够 —— T1-2 要的是**具名**拒绝，所以用例体必须真的对拒绝文案说话：
+    出现 `contains(`（对文案断言）或 `<version_field>=`（把被拒的版本当参数点名）。一个裸
+    `assert!(…is_err())` 两样都没有，那正是这一轮要堵的形态（只核「失败」不核「具名原因」）。
+    """
+    for path in sorted((CRATES / crate).rglob("*.rs")):
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"#\[test\][\s\S]{0,800}?fn\s+" + re.escape(name) + r"\s*\(", text) is None:
+            continue
+        body = text[text.index(f"fn {name}") :][:2000]
+        if "contains(" in body or f"{version_field}=" in body:
+            return ""
+        return f"{name} 体里既无 contains( 也无 {version_field}=（只核失败、不核具名原因）"
+    return f"crates/{crate} 全树找不到 #[test] fn {name}("
+
+
+def artifact_migration_check() -> None:
+    """T1-2：产物 schema/version 关系图与迁移表（校准 C3）。
+
+    `schema_registry_check` 只核「谁产谁消 + fixture 落地」——没有任何一处核「旧产物读进来时是
+    走迁移还是具名拒绝」。七颗分别钉：
+
+    ① 登记面在盘、顶层四格自述齐全（schema_version / kind / updated_at / registry），且
+       `registry` 指向的模式登记册实例真的在盘（关系图不许指一份不存在的台账）；
+    ② `artifacts` 的 `schema_id` 集合与 `maturity/schema-registry.json` 的 `entries` **逐一相等**，
+       且行数不低于地板——关系图漏一份在册契约（新契约不登记版本处置）或多一份不存在的产物都红；
+    ③ 每行七格齐全，`on_unknown_version` 落在允许集里，且**允许集与实用集相等**——往表里加
+       一种新处置而不扩判据的允许集，等于给自己发一张免检通行证，当场红；
+    ④ `refuse` 行：读侧文件在盘，且**真的**声明 `pub const <version_const>: u32` 并**真的**在
+       正文里出现 `!= <version_const>`——「读侧会比对版本」这句话必须落在代码上，不是只写在表里；
+    ⑤ `refuse` 行：`refusal_reason` 逐字出现在读侧文件里（表里的文案是代码里那一句，不是转述），
+       且 `version_field` 也在文件里（版本字段名不许是表里自造的）；④⑤ 都只读**代码**（剥掉整行
+       `//` 注释）——把真调用退回旧写法、只在注释里留锚点，照样红；
+    ⑥ `refuse` 行：`refusal_case` 是读侧所属 crate 全树里的 `#[test]`，且用例体真的对拒绝文案
+       说话（`contains(` 或点名被拒版本）——裸 `assert!(…is_err())` 不算；
+    ⑦ `migrations` 每行四格齐全（from_version / to_version / migration_fn / reader）且
+       `migration_fn` 在盘；今天为空表，空表是被判据承认的状态（本仓没有就地升级的读侧），
+       但一旦登记就必须有在盘的迁移函数——「登记了迁移」不许是空头支票。
+    """
+    if not ARTIFACT_MIGRATION_FILE.is_file():
+        check(
+            False,
+            "T1-2 版本关系图登记面在盘",
+            f"缺失 {ARTIFACT_MIGRATION_FILE.relative_to(ROOT).as_posix()}",
+        )
+        return
+    scalars, artifacts, migrations = _parse_artifact_migration(
+        ARTIFACT_MIGRATION_FILE.read_text(encoding="utf-8")
+    )
+    registry_rel = scalars.get("registry", "")
+    check(
+        all(scalars.get(key) for key in ARTIFACT_MIGRATION_TOP)
+        and scalars.get("kind") == ARTIFACT_MIGRATION_KIND
+        and scalars.get("schema_version") == "1"
+        and bool(registry_rel)
+        and (ROOT / registry_rel).is_file(),
+        "T1-2 登记面自述齐全且指向在盘的模式登记册实例",
+        f"顶层 {sorted(scalars)} / registry={registry_rel!r} 不在盘",
+    )
+    try:
+        registry = json.loads((ROOT / registry_rel).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        check(False, "T1-2 登记面所指的模式登记册实例可解析", str(error))
+        return
+    registered = {entry.get("schema_id", "") for entry in registry.get("entries", [])}
+    listed = {row.get("schema_id", "") for row in artifacts}
+    check(
+        len(artifacts) >= ARTIFACT_MIGRATION_MIN_ROWS
+        and len(listed) == len(artifacts)
+        and listed == registered,
+        "T1-2 版本关系图与模式登记册按 schema_id 逐一相等（不多不少）",
+        f"漏登记 {sorted(registered - listed)} / 多登记 {sorted(listed - registered)}"
+        f" / 重复 {len(artifacts) - len(listed)}",
+    )
+    dispositions = {row.get("on_unknown_version", "") for row in artifacts}
+    incomplete = [
+        row.get("schema_id", "?")
+        for row in artifacts
+        if any(not row.get(field) for field in ARTIFACT_MIGRATION_FIELDS)
+    ]
+    check(
+        not incomplete
+        and dispositions == set(ARTIFACT_MIGRATION_DISPOSITIONS),
+        "T1-2 每行七格齐全，且处置的允许集与实用集相等（新态必须同时扩判据）",
+        f"缺格 {incomplete or '无'} / 实用 {sorted(dispositions)} vs 允许 "
+        f"{sorted(ARTIFACT_MIGRATION_DISPOSITIONS)}",
+    )
+    gate_issues: list[str] = []
+    reason_issues: list[str] = []
+    case_issues: list[str] = []
+    for row in artifacts:
+        if row.get("on_unknown_version") != "refuse":
+            continue
+        schema_id = row.get("schema_id", "?")
+        reader = ROOT / row.get("reader", "")
+        if not reader.is_file():
+            gate_issues.append(f"{schema_id} 读侧落空 {row.get('reader')}")
+            reason_issues.append(f"{schema_id} 读侧落空")
+            case_issues.append(f"{schema_id} 读侧落空")
+            continue
+        text = _artifact_code_only(reader)
+        gate = row.get("version_const", "")
+        if ARTIFACT_MIGRATION_CONST.format(gate=gate) not in text or f"!= {gate}" not in text:
+            gate_issues.append(f"{schema_id} 缺 `pub const {gate}: u32` 或 `!= {gate}`")
+        if row.get("refusal_reason", "") not in text or row.get("version_field", "") not in text:
+            reason_issues.append(f"{schema_id} 拒绝文案或版本字段名不在读侧")
+        crate = Path(row.get("reader", "")).parts[1:2]
+        if not crate:
+            case_issues.append(f"{schema_id} reader 路径取不出 crate")
+            continue
+        verdict = _refusal_case_verdict(
+            crate[0], row.get("refusal_case", ""), row.get("version_field", "")
+        )
+        if verdict:
+            case_issues.append(f"{schema_id} {verdict}")
+    check(
+        not gate_issues,
+        "T1-2 读侧真的声明版本常量且真的在正文比对它",
+        "；".join(gate_issues) or "无",
+    )
+    check(
+        not reason_issues,
+        "T1-2 登记面的拒绝文案与版本字段名逐字来自读侧代码",
+        "；".join(reason_issues) or "无",
+    )
+    check(
+        not case_issues,
+        "T1-2 每条处置都有常驻用例，且用例对具名拒绝说话（不是裸 is_err）",
+        "；".join(case_issues) or "无",
+    )
+    migration_issues: list[str] = []
+    for row in migrations:
+        label = f"{row.get('from_version', '?')}->{row.get('to_version', '?')}"
+        if any(
+            not row.get(field)
+            for field in ("from_version", "to_version", "migration_fn", "reader")
+        ):
+            migration_issues.append(f"{label} 缺格")
+            continue
+        reader = ROOT / row["reader"]
+        if not reader.is_file():
+            migration_issues.append(f"{label} 读侧落空 {row['reader']}")
+            continue
+        if f"fn {row['migration_fn']}(" not in reader.read_text(encoding="utf-8"):
+            migration_issues.append(f"{label} 迁移函数 {row['migration_fn']} 不在 {row['reader']}")
+    check(
+        not migration_issues,
+        "T1-2 显式迁移表每行四格齐全且迁移函数在盘（空表合法）",
+        f"不成立 {migration_issues or '无'}",
+    )
+
+
+# === T1-1（QX-DEV-PLAN-2026-10-10 阶段 1 / 退出门 G1 第一条）：运行证据包 ===
+# 契约住在 qx-spec（对象 + schema），构建器住在 qx-cli（qx-app 尚未落地，见 T2-1 的纠偏声明）。
+RUN_EVIDENCE_MODULE = ROOT / "crates" / "qx-spec" / "src" / "run_evidence.rs"
+RUN_EVIDENCE_SCHEMA = ROOT / "schemas" / "run-evidence-v1.json"
+RUN_EVIDENCE_BUILDER = ROOT / "crates" / "qx-cli" / "src" / "run_evidence.rs"
+RUN_EVIDENCE_REPORT = ROOT / "crates" / "qx-cli" / "src" / "report_command.rs"
+RUN_EVIDENCE_CLI_ARGS = ROOT / "crates" / "qx-cli" / "src" / "cli_args.rs"
+RUN_EVIDENCE_HELP = ROOT / "crates" / "qx-cli" / "src" / "cli_help.rs"
+RUN_EVIDENCE_CASES_DIR = ROOT / "crates" / "qx-cli" / "src" / "tests"
+RUN_EVIDENCE_CASES = (
+    "report_evidence_aggregates_a_recomputable_run_evidence_bundle",
+    "report_evidence_is_not_written_when_the_verification_chain_refuses",
+)
+# 对象里声称「与 run 块逐字相等」的每一格 → run 块里被读的那一格。这张表是**判据的期望值**，
+# 与 `check_cross_references` 里那组元组逐条对账：改一处而忘另一处当场红。
+RUN_EVIDENCE_CROSS_PAIRS = (
+    ("dataset.composed_fingerprint", "data_fingerprint"),
+    ("identity.config_digest", "config_hash"),
+    ("identity.strategy_version", "strategy_version"),
+    ("build.code_commit", "code_commit"),
+    ("build.runtime_version", "runtime_version"),
+)
+
+
+def _rust_struct_fields(text: str, name: str) -> list[str]:
+    """取 `pub struct <name> { … }` 体里的 `pub <字段>:` 名单（按出现顺序）。"""
+    match = re.search(rf"pub struct {re.escape(name)} \{{(.*?)\n\}}", text, re.DOTALL)
+    if match is None:
+        return []
+    return re.findall(r"^\s*pub ([a-z_][a-z0-9_]*):", match.group(1), re.MULTILINE)
+
+
+def run_evidence_check() -> None:
+    """T1-1：运行证据包（退出门 G1 第一条「同一运行可由 RunManifest 离线复算」）。
+
+    `foundation_specs_check` 只核「schema 与版本常量同源」——**字段级**是盲的：对象加一格而
+    schema 没加（或反之），写出去的产物当场被自己的 schema 拒，而门禁照印全绿。八颗分别钉：
+
+    ① `RunEvidenceBundle` 的 `pub` 字段集合与 schema 的顶层 `required` **逐一相等**（两边只写一份）；
+    ② 三条对象层纪律落在**代码**上（剥掉整行 `//` 注释）：空 `unverified` 拒、未核摘要拒、
+       档位越界拒——「写了纪律」与「纪律会拒」是两件事；
+    ③ `check_cross_references` 里那组元组与判据自己的期望表**逐条相等**（标签集合、run 侧字段集合、
+       以及每一格实际读的是哪一处 `self.<块>.<字段>`），且元组条数不为零——一张空表也能"不报错"；
+    ④ 内容指纹与合成指纹**是两格**：`RunEvidenceDataset` 同时声明 `content_fingerprint` 与
+       `composed_fingerprint`，且交叉比对只拿 `composed_fingerprint` 去比 `run.data_fingerprint`
+       （真产物里是 `barframe:<内容哈希>` vs `<内容哈希>`，拿内容去比会拒掉每一份真产物）；
+    ⑤ 质量报告允许**缺席**、不许**空**：Rust 侧是 `Option<RunEvidenceQualityReport>`，且
+       `check_dataset` 里有 `usable_tiers.is_empty()` 的拒绝分支（`null` 是「没有这份报告」，
+       空 tiers 是「核过了，没有任何一档可用」——后者是一句该被拒的断言）；
+    ⑥ 构建器在盘且是**生产**代码（不在 `tests/` 下），并被非测试文件真的调用——T1-1 交付的是
+       「构建器 + schema」，只有 schema 等于半件事；契约有了没人产，是这一族最典型的断链；
+    ⑦ 入口使用者可达且**顺序**正确：`cli_args.rs` 声明 `--evidence` 能力位、help 写明它、
+       且 `write_run_evidence` 的调用点排在 `recompute_declared_backtest_input` **之后**——
+       顺序反了会在拒绝路径上先落一份没核过的 `artifact_digests_verified=true`；
+    ⑧ 常驻用例在盘：正向一条 + 反向（复核拒绝时不留证据包）一条。
+    """
+    missing = [
+        path.relative_to(ROOT).as_posix()
+        for path in (
+            RUN_EVIDENCE_MODULE,
+            RUN_EVIDENCE_SCHEMA,
+            RUN_EVIDENCE_BUILDER,
+            RUN_EVIDENCE_REPORT,
+            RUN_EVIDENCE_CLI_ARGS,
+            RUN_EVIDENCE_HELP,
+        )
+        if not path.is_file()
+    ]
+    if missing:
+        check(False, "T1-1 运行证据包契约与构建器都在盘", f"缺失 {missing}")
+        return
+    contract = RUN_EVIDENCE_MODULE.read_text(encoding="utf-8")
+    builder = RUN_EVIDENCE_BUILDER.read_text(encoding="utf-8")
+    report = RUN_EVIDENCE_REPORT.read_text(encoding="utf-8")
+    cli_args = RUN_EVIDENCE_CLI_ARGS.read_text(encoding="utf-8")
+    help_text = RUN_EVIDENCE_HELP.read_text(encoding="utf-8")
+    code_only = _artifact_code_only(RUN_EVIDENCE_MODULE)
+
+    # ① 字段集合两侧逐一相等。
+    schema = json.loads(RUN_EVIDENCE_SCHEMA.read_text(encoding="utf-8"))
+    declared = list(schema.get("required", []))
+    rust_fields = _rust_struct_fields(contract, "RunEvidenceBundle")
+    check(
+        bool(rust_fields) and set(rust_fields) == set(declared) and len(rust_fields) == len(declared),
+        "T1-1 运行证据包对象字段与 schema 顶层 required 逐一相等",
+        f"Rust {sorted(rust_fields)} vs schema {sorted(declared)}",
+    )
+
+    # ② 三条纪律落在代码上。
+    disciplines = {
+        "空 unverified 拒": "if self.unverified.is_empty()",
+        "未核摘要拒": "if !self.verification.artifact_digests_verified",
+        "档位越界拒": "if self.verification.capability_level > Self::MAX_LOCAL_LEVEL",
+    }
+    absent = [label for label, anchor in disciplines.items() if anchor not in code_only]
+    check(
+        not absent,
+        "T1-1 三条证据纪律落在代码上（空未验证清单 / 未核摘要 / 档位越界各有一条拒绝臂）",
+        f"缺 {absent or '无'}",
+    )
+
+    # ③ 交叉一致性表与判据期望逐条相等。
+    cross_body = _fn_body(contract, "fn check_cross_references(")
+    # 元组有单行与多行两种写法（rustfmt 按行长决定），所以尾逗号是可选的。
+    tuples = re.findall(
+        r'\(\s*"([^"]+)",\s*&self\.([a-z_]+)\.([a-z_]+),\s*&self\.run\.([a-z_]+),?\s*\)',
+        cross_body,
+    )
+    actual_pairs = {label: (block, field, run_field) for label, block, field, run_field in tuples}
+    expected_pairs = {
+        label: (label.split(".")[0], label.split(".")[1], run_field)
+        for label, run_field in RUN_EVIDENCE_CROSS_PAIRS
+    }
+    check(
+        len(tuples) == len(RUN_EVIDENCE_CROSS_PAIRS) and actual_pairs == expected_pairs,
+        "T1-1 交叉一致性表与判据期望逐条相等（标签、被比字段、run 侧来源三处都对）",
+        f"实测 {sorted(actual_pairs.items())}（期望 {sorted(expected_pairs.items())}）",
+    )
+
+    # ④ 内容指纹与合成指纹是两格，且比对用的是后者。
+    dataset_fields = _rust_struct_fields(contract, "RunEvidenceDataset")
+    dataset_schema = schema.get("properties", {}).get("dataset", {})
+    dataset_required = set(dataset_schema.get("required", []))
+    compared_run_fields = {run_field for _, _, _, run_field in tuples}
+    check(
+        {"content_fingerprint", "composed_fingerprint"} <= set(dataset_fields)
+        and {"content_fingerprint", "composed_fingerprint"} <= dataset_required
+        and "data_fingerprint" in compared_run_fields
+        and not any(field == "content_fingerprint" for _, _, field, _ in tuples),
+        "T1-1 内容指纹与合成指纹分成两格，交叉比对只拿合成指纹对 run.data_fingerprint",
+        f"Rust 字段 {dataset_fields}；被比对 {sorted(compared_run_fields)}",
+    )
+
+    # ⑤ 质量报告允许缺席、不许空。
+    check(
+        "pub quality_report: Option<RunEvidenceQualityReport>" in contract
+        and "usable_tiers.is_empty()" in code_only,
+        "T1-1 质量报告可为 null（这一档输入没有报告）但不许是一份空报告",
+        "quality_report 的类型或空报告拒绝臂被删弱",
+    )
+
+    # ⑥ 构建器是生产代码且被真的调用。
+    builder_is_test = "tests" in RUN_EVIDENCE_BUILDER.relative_to(ROOT).as_posix().split("/")
+    callers = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted((CRATES / "qx-cli" / "src").rglob("*.rs"))
+        if "tests" not in path.relative_to(ROOT).as_posix().split("/")
+        and "write_run_evidence(" in path.read_text(encoding="utf-8")
+        and path != RUN_EVIDENCE_BUILDER
+    ]
+    check(
+        "pub(crate) fn write_run_evidence(" in builder
+        and not builder_is_test
+        and bool(callers),
+        "T1-1 运行证据包构建器是生产代码且有非测试调用者",
+        f"构建器={'在盘' if builder else '缺'}；生产调用者 {callers or '无'}",
+    )
+
+    # ⑦ 入口可达且顺序正确。
+    verify_at = report.find("recompute_declared_backtest_input(&summary)?")
+    evidence_at = report.find("write_run_evidence(")
+    check(
+        "evidence: bool" in cli_args
+        and "--evidence" in help_text
+        and 0 <= verify_at < evidence_at,
+        "T1-1 --evidence 使用者可达，且证据包写在复核链之后（拒绝路径不留半份证据包）",
+        f"cli_args={'有' if 'evidence: bool' in cli_args else '缺'}；help={'有' if '--evidence' in help_text else '缺'}；"
+        f"复核链@{verify_at} 证据包@{evidence_at}",
+    )
+
+    # ⑧ 常驻用例在盘。
+    cases_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(RUN_EVIDENCE_CASES_DIR.rglob("*.rs"))
+    )
+    missing_cases = [name for name in RUN_EVIDENCE_CASES if f"fn {name}(" not in cases_text]
+    check(
+        not missing_cases,
+        "T1-1 运行证据包正向与反向常驻用例都在盘",
+        f"缺失 {missing_cases or '无'}",
+    )
+
+
 # 结果可读性层（易用性 P3）：HTML/SVG 报告的形状门禁。
 REPORT_READABILITY_MODULES = (
     "crates/qx-cli/src/report_html.rs",
@@ -13106,7 +13978,12 @@ DIAGNOSTIC_FRAMEWORK_NAMES = ("tracing", "env_logger", "slog", "fern", "log4rs")
 # 未带组件标签的诊断站点数上界（只降不升棘轮）。不在表里的 crate 一律要求 0。
 # V13 R29：`qx-cli` 从 100 降到 55（本轮把 `cli.rs` 整段错误/诊断输出收到 `[qx-cli · CLI]` 标签下；
 # `main.rs` 的 `rejected`/`acked` 与若干 JSON 直出站点被测试**逐字**断言，故意留在债里不迁）。
-UNLABELED_DIAGNOSTIC_CEILING = {"qx-cli": 55}
+# 2026-10-10 T2-2：55 -> 53。`selfcheck.rs` 三处**本来就带标签**、只是把换行写进了字面量开头
+# （`println!("\n[更路 · 重放校验]")`），于是被本判据误记成未标签站点——按约定拆成
+# `println!()` + `println!("[组件 · 子域]")`（输出逐字节不变），三处归位；同轮 `qx-cli app` 新增
+# 一处机器结果直出（`app_commands.rs` 的 payload 行，与 data_validate/plan/report 的 `--json`
+# 同一形状），净额 55 - 3 + 1 = 53。**新加机器输出就要在同一轮把债还掉**，不是把上界抬上去。
+UNLABELED_DIAGNOSTIC_CEILING = {"qx-cli": 53}
 
 
 def _diagnostic_site_census() -> tuple[dict[str, int], int, int]:
@@ -13624,11 +14501,54 @@ HELP_CONFIG_LINE = re.compile(r"^  config ([a-z][a-z0-9-]*)", re.MULTILINE)
 CLI_NESTED_COMMANDS_CONST = re.compile(r"const NESTED_COMMANDS: \[&str; (\d+)\] = \[(.*?)\];", re.S)
 
 
-def clap_subcommand_parents(args_text: str) -> dict[str, str]:
+# CLI 参数源的合并文本：命令表与子命令表不再只住在 cli_args.rs——`data_validate_args.rs` /
+# `plan_args.rs` / `console_args.rs` 早就把「参数结构体单独成文件」做成常规（cli_args.rs 顶格在
+# 行数棘轮上），T2-2 的 `app_args.rs` 是第一个**自带子命令**的那种。子命令表若只扫 cli_args.rs，
+# 那种父命令会被当成「没有子命令」，它的叶子从此没人跑过 `--help`——所以两个取名册的助手都按
+# 「全 CLI 参数源」取事实。
+CLI_ARGS_AUX_GLOB = "*_args.rs"
+
+
+def cli_args_sources() -> str:
+    """`cli_args.rs` 与所有外部参数结构文件的合并文本（见 [`CLI_ARGS_AUX_GLOB`]）。"""
+    root = ROOT / CLI_ARGS_FILE
+    paths = [root] + sorted(root.parent.glob(CLI_ARGS_AUX_GLOB))
+    return "\n".join(path.read_text(encoding="utf-8") for path in paths)
+
+
+def _block_body(text: str, header: str) -> str:
+    """从 `header` 起取到下一个顶格的 `}` 为止（`enum`/`struct` 的花括号体）。"""
+    start = text.find(header)
+    if start < 0:
+        return ""
+    body = text[start:]
+    end = body.find("\n}")
+    return body if end < 0 else body[:end]
+
+
+def _subcommand_variant(body: str) -> str | None:
+    """取一段变体/结构体定义里 `#[command(subcommand)]` 字段的类型名。
+
+    可见性前缀可有可无：`cli_args.rs` 的内联变体写的是私有字段（`action: Option<ConfigCommand>`），
+    而单独成文件的参数结构写的是 `pub(crate) action: Option<AppCommand>`。
+    """
+    matched = re.search(
+        r'#\[command\(subcommand\)\]\s*\n\s*(?:pub(?:\([^)]*\))?\s+)?\w+\s*:\s*Option<([A-Za-z]\w*)>',
+        body,
+    )
+    return matched.group(1) if matched else None
+
+
+def clap_subcommand_parents(args_text: str, sources: str) -> dict[str, str]:
     """顶层里带 `#[command(subcommand)]` 的父命令：`命令名 -> 子命令枚举类型`。
 
     子命令枚举名从字段类型取事实（`action: Option<ConfigCommand>`），不按 `+Command` 后缀猜——
     变体名是 `Config`、枚举名是 `ConfigCommand`，两者并无机械对应，猜就会把判据钉在错的锚上。
+
+    两种写法都认：内联结构体变体（`Config { #[command(subcommand)] action: Option<ConfigCommand> }`），
+    以及把参数结构单独成文件的那种（`App(AppArgs)`，子命令字段在 `app_args.rs` 里）——后者要按
+    **全 CLI 参数源**（`sources`）再找一次。少认这一种，父命令会被当成"没有子命令"，
+    它的叶子就再没人实跑 `--help`（这是 T2-2 引入第一个外部子命令父命令时暴露出来的盲区）。
     """
     start = args_text.find("pub(crate) enum Command {")
     if start < 0:
@@ -13639,27 +14559,28 @@ def clap_subcommand_parents(args_text: str) -> dict[str, str]:
     parents: dict[str, str] = {}
     for chunk in block.split('#[command(name = "')[1:]:
         name = chunk.split('"', 1)[0]
-        matched = re.search(
-            r'#\[command\(subcommand\)\]\s*\n\s*\w+:\s*Option<([A-Za-z]\w*)>', chunk
-        )
-        if matched:
-            parents[name] = matched.group(1)
+        variant = _subcommand_variant(chunk)
+        if variant is None:
+            tuple_matched = re.search(
+                rf'{re.escape(name)}"\)\]\s*\n\s*[A-Za-z]\w*\(([A-Za-z]\w*)\)', chunk
+            )
+            if tuple_matched is not None:
+                variant = _subcommand_variant(
+                    _block_body(sources, f"struct {tuple_matched.group(1)} {{")
+                )
+        if variant is not None:
+            parents[name] = variant
     return parents
 
 
-def clap_nested_command_table(args_text: str, variant: str) -> set[str]:
-    """某个子命令枚举的子命令集：`pub(crate) enum <variant> { … }` 块里的 `#[command(name=…)]`。"""
-    start = args_text.find(f"pub(crate) enum {variant} {{")
-    if start < 0:
-        return set()
-    body = args_text[start:]
-    end = body.find("\n}\n")
-    return set(
-        re.findall(
-            r'#\[command\(name = "([a-z][a-z0-9-]*)"\)\]',
-            body if end < 0 else body[:end],
-        )
-    )
+def clap_nested_command_table(sources: str, variant: str) -> set[str]:
+    """某个子命令枚举的子命令集：`pub(crate) enum <variant> { … }` 块里的 `#[command(name=…)]`。
+
+    `sources` 是**全 CLI 参数源**的合并文本（见 [`cli_args_sources`]）：子命令枚举可以和顶层
+    命令表不在同一个文件里（`AppCommand` 在 `app_args.rs`）。
+    """
+    block = _block_body(sources, f"pub(crate) enum {variant} {{")
+    return set(re.findall(r'#\[command\(name = "([a-z][a-z0-9-]*)"\)\]', block))
 
 
 def cli_surface_coverage_check() -> None:
@@ -13716,8 +14637,8 @@ def cli_surface_coverage_check() -> None:
     # 且真的被逐条喂给被测 binary 跑 `--help`（与顶层那张表同一口径）。
     expected_nested = {
         f"{parent} {sub}"
-        for parent, enum_name in clap_subcommand_parents(args_text).items()
-        for sub in clap_nested_command_table(args_text, enum_name)
+        for parent, enum_name in clap_subcommand_parents(args_text, cli_args_sources()).items()
+        for sub in clap_nested_command_table(cli_args_sources(), enum_name)
     }
     nested_matched = CLI_NESTED_COMMANDS_CONST.search(test_text)
     nested_listed = (
@@ -15607,6 +16528,387 @@ def read_face_scope_check() -> None:
     )
 
 
+# ---- QX-DEV-PLAN-2026-10-10 T0-2：顶层 CLI 命令面的 R/P/O/L 能力分类 ----
+# 「46 条 CLI 入口」此前只是一张名字清单（`crates/qx-cli/tests/command_surface.rs` 的 CLI_COMMANDS
+# 逐条跑 `--help`），没有任何一处声明某条入口属于 R/P/O/L 哪一档、默认面是什么、要不要私有凭据、
+# 会不会产生外部副作用。缺了这张声明，SDK/API 侧无从判断一条入口能不能被第三方门面复用，门禁上也
+# 钉不住「L 档默认关闭」。本判据把 maturity/command_surface.yaml 与 clap 命令表逐一对账。
+COMMAND_SURFACE_FILE = "maturity/command_surface.yaml"
+COMMAND_SURFACE_LEVELS = ("R", "P", "O", "L")
+COMMAND_SURFACE_FIELDS = (
+    "name",
+    "level",
+    "parent",
+    "surface",
+    "credentials",
+    "external_side_effect",
+    "default_enabled",
+    "note",
+)
+
+
+def _parse_command_surface(text: str) -> list[dict[str, str]]:
+    """解析 command_surface.yaml：返回 `commands` 段的条目列表（不引 yaml 依赖，逐行解析）。"""
+    entries: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    in_commands = False
+    for line in text.splitlines():
+        if re.match(r"^commands:\s*$", line):
+            in_commands, current = True, None
+            continue
+        if re.match(r"^\S", line):  # 顶层键结束当前段
+            in_commands, current = False, None
+            continue
+        if not in_commands:
+            continue
+        if m := re.match(r"^  - name:\s*(.+?)\s*$", line):
+            current = {"name": m.group(1)}
+            entries.append(current)
+        elif current is not None and (
+            m := re.match(
+                r"^    (level|parent|surface|credentials|external_side_effect|"
+                r"default_enabled|note):\s*(.*?)\s*$",
+                line,
+            )
+        ):
+            current[m.group(1)] = m.group(2)
+    return entries
+
+
+def command_surface_classification_check() -> None:
+    """T0-2：把 46 条 CLI 入口从「名字清单」升级为「能力声明表」。
+
+    每条入口声明它属于哪一档（R 研究 / P Paper / O 运维 / L 实盘）、默认面、是否需要私有凭据、
+    是否产生外部副作用、是否默认可用。判据捕获的故障样本：① 新增 CLI 入口却没登记能力档——该入口
+    属于哪一档、默认面与权限无人声明（G0 要抓的「入口无声明」）；② 把某条 L 档入口改成
+    `default_enabled: true`——实盘能力被「全能力包」自动开启（主计划 §5 明令禁止）；③ 给 P 档入口
+    写上 `credentials: private`——Paper 轨本应一条凭据都不用。
+
+    父命令（clap 里带 `#[command(subcommand)]` 的 `config`/`run`/`strategy`/`backtest`）是命名空间，
+    等级取子命令里的最高权限档、本身不直接产生副作用，故三条不变量只对叶子入口生效；父命令另由
+    「逐条标 parent: true 且集合与 clap 的父命令表相等」一颗钉住。
+    """
+    path = ROOT / COMMAND_SURFACE_FILE
+    if not path.is_file():
+        check(
+            False,
+            "CLI 命令面能力分类表在盘（maturity/command_surface.yaml）",
+            f"缺 {COMMAND_SURFACE_FILE}",
+        )
+        return
+    entries = _parse_command_surface(path.read_text(encoding="utf-8"))
+    args_text = (ROOT / CLI_ARGS_FILE).read_text(encoding="utf-8")
+    table = set(clap_command_table(args_text))
+    parents = set(clap_subcommand_parents(args_text, cli_args_sources()))
+    names = [entry.get("name", "") for entry in entries]
+    incomplete = [
+        entry.get("name") for entry in entries
+        if not all(entry.get(field) for field in COMMAND_SURFACE_FIELDS)
+    ]
+    check(
+        len(entries) == len(table)
+        and not incomplete
+        and all(entry.get("parent") in ("true", "false") for entry in entries),
+        "命令面分类表按行可解析，且每行八格自述齐全"
+        "（name/level/parent/surface/credentials/external_side_effect/default_enabled/note）",
+        f"解析到 {len(entries)} 行（clap 表 {len(table)}）；缺格 {incomplete or '无'}",
+    )
+    check(
+        len(names) == len(set(names)) and set(names) == table,
+        "分类表覆盖的入口与 clap 命令表逐一相等（新增入口没登记 = 红；登记了已删入口 = 红）",
+        f"表有而 clap 无 {sorted(set(names) - table) or '无'}；"
+        f"clap 有而表无 {sorted(table - set(names)) or '无'}",
+    )
+    levels = {entry.get("level") for entry in entries}
+    parent_rows = {entry["name"] for entry in entries if entry.get("parent") == "true"}
+    check(
+        levels <= set(COMMAND_SURFACE_LEVELS)
+        and levels == set(COMMAND_SURFACE_LEVELS)
+        and parent_rows == parents,
+        "等级只取 R/P/O/L 四档且四档都有，父命令（clap 里带 subcommand 的）逐条标 parent: true",
+        f"出现的档 {sorted(levels)}；父命令 表={sorted(parent_rows)} clap={sorted(parents)}",
+    )
+    leaves = [entry for entry in entries if entry.get("parent") != "true"]
+    live_bad = [
+        entry["name"]
+        for entry in leaves
+        if entry.get("level") == "L"
+        and (entry.get("default_enabled") != "false" or entry.get("credentials") != "private")
+    ]
+    check(
+        not live_bad,
+        "L 档入口一律 default_enabled: false 且 credentials: private（实盘不能被全能力包自动开启）",
+        f"越界 {live_bad or '无'}",
+    )
+    paper_bad = [
+        entry["name"]
+        for entry in leaves
+        if entry.get("level") == "P" and entry.get("credentials") != "none"
+    ]
+    check(
+        not paper_bad,
+        "P 档入口一律 credentials: none（Paper 轨一条凭据都不用）",
+        f"越界 {paper_bad or '无'}",
+    )
+    research_bad = [
+        entry["name"]
+        for entry in leaves
+        if entry.get("level") == "R" and entry.get("external_side_effect") != "none"
+    ]
+    check(
+        not research_bad,
+        "R 档入口一律 external_side_effect: none（研究面不产生外部账户副作用）",
+        f"越界 {research_bad or '无'}",
+    )
+
+
+# —— 阶段 2 / 退出门 G1·G2：应用层用例（`qx-app`）——
+# 依赖方向由 `layer_dependency_check` 的禁止边守着；这里守的是**另外四件事**：
+# ① 依赖集是精确的（依赖清单本身是"没有偷偷把门面拉进来"这条纪律的载体）；
+# ② 错误类别闭集与路线图 §X1 那张表逐条同名同序（类别少一个，调用方就会把它送错下一步）；
+# ③ 九项用例登记面与 `cases/mod.rs` 的文档表、`pub use`、`pub fn` 三处对账（改了这里不改登记面会红）；
+# ④ 三个门面真的都依赖应用层（G1 的"三入口同一 use case"在依赖图上就成立，不靠约定）。
+APP_CRATE = "crates/qx-app"
+APP_CRATE_NAME = "qx-app"
+APP_ERROR_FILE = "crates/qx-app/src/error.rs"
+APP_CASES_FILE = "crates/qx-app/src/cases/mod.rs"
+APP_CASES_DIR = "crates/qx-app/src/cases"
+APP_REGISTRY_FILE = "maturity/app_use_cases.yaml"
+APP_ROADMAP_FILE = "docs/牵星Qianxing-详细开发计划与实施路线图-2026-10-10.md"
+APP_REGISTRY_KIND = "app-use-case-registry"
+# G1 的三个门面。它们各自的门面实现落点也一并钉住：源码面在盘 = "入口存在"这件事有牙齿，
+# 不必靠 Python 扩展是否已构建来决定。
+APP_FACADES = (
+    ("qx-cli", "crates/qx-cli/src/app_commands.rs"),
+    ("qx-api", "crates/qx-api/src/app_surface.rs"),
+    ("qx-python", "crates/qx-python/src/lib.rs"),
+)
+# 路线图 §2 的九项，顺序即登记面与文档表的顺序。`(文档表第一列, 登记面键名)`。
+APP_USE_CASE_ITEMS = (
+    ("输入 schema", "input_schema"),
+    ("输出 schema", "output_schema"),
+    ("运行权限", "capability"),
+    ("幂等键", "idempotency_key"),
+    ("取消行为", "cancellation"),
+    ("事件/进度", "progress"),
+    ("产物清单", "artifacts"),
+    ("错误类别", "error_categories"),
+    ("能力等级", "capability_level"),
+)
+APP_ALLOWED_INTERNAL_DEPS = frozenset(
+    {"qx-core", "qx-datastruct", "qx-strategy", "qx-xingban", "qx-zhenlu"}
+)
+APP_ALLOWED_EXTERNAL_DEPS = frozenset({"serde", "serde_json"})
+# 登记面写的是能力档的稳定串（路线图 §5 的 R/P/O/L），代码里写的是枚举变体名——两处口径不同形，
+# 所以映射表在这里写一次，而不是让判据去猜（"RESEARCH" 与 "Research" 差一个大小写，猜就会假绿）。
+APP_CAPABILITY_VARIANTS = {
+    "RESEARCH": "Research",
+    "PAPER": "Paper",
+    "OPERATOR": "Operator",
+    "LIVE": "Live",
+}
+
+
+def _app_dependency_names() -> tuple[set[str], set[str]]:
+    """`crates/qx-app/Cargo.toml` 的 `[dependencies]` 段里声明的依赖名（内部 / 外部）。"""
+    text = (ROOT / APP_CRATE / "Cargo.toml").read_text(encoding="utf-8")
+    names = set()
+    for line in _toml_section_entries(text, "dependencies"):
+        matched = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*=", line)
+        if matched:
+            names.add(matched.group(1))
+    internal = {name for name in names if name.startswith("qx-")}
+    return internal, names - internal
+
+
+def _app_error_category_variants() -> list[str]:
+    """`AppErrorCategory` 的变体名，按声明顺序。"""
+    text = (ROOT / APP_ERROR_FILE).read_text(encoding="utf-8")
+    block = _block_body(text, "pub enum AppErrorCategory {")
+    return re.findall(r"^\s*([A-Z][A-Za-z0-9]*),\s*$", block, re.MULTILINE)
+
+
+def _roadmap_app_categories() -> list[str]:
+    """路线图 §X1 那一行里 `稳定类别（…）` 括号内的八个类别名，按书写顺序。"""
+    text = (ROOT / APP_ROADMAP_FILE).read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if not line.startswith("| **X1 错误与取消语义**"):
+            continue
+        matched = re.search(r"稳定类别（([^）]*)）", line)
+        if matched:
+            return re.findall(r"`([A-Za-z]+)`", matched.group(1))
+    return []
+
+
+def _app_use_case_registry() -> list[dict[str, str]]:
+    """解析 `maturity/app_use_cases.yaml` 的 `use_cases` 段（逐行，不引 yaml 依赖）。"""
+    entries: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    in_use_cases = False
+    for line in (ROOT / APP_REGISTRY_FILE).read_text(encoding="utf-8").splitlines():
+        if re.match(r"^use_cases:\s*$", line):
+            in_use_cases, current = True, None
+            continue
+        if re.match(r"^\S", line):
+            in_use_cases, current = False, None
+            continue
+        if not in_use_cases:
+            continue
+        if matched := re.match(r"^  - name:\s*(.+?)\s*$", line):
+            current = {"name": matched.group(1).strip('"')}
+            entries.append(current)
+        elif current is not None and (matched := re.match(r"^    ([a-z_]+):\s*(.*?)\s*$", line)):
+            current[matched.group(1)] = matched.group(2).strip('"')
+    return entries
+
+
+def _app_doc_table() -> tuple[list[str], list[str]]:
+    """`cases/mod.rs` 模块文档里那张九项表的 (表头用例名, 第一列项名)。"""
+    text = (ROOT / APP_CASES_FILE).read_text(encoding="utf-8")
+    rows: list[list[str]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("//! |"):
+            continue
+        cells = [cell.strip() for cell in stripped[len("//! |") :].rstrip("|").split("|")]
+        if len(cells) < 2 or all(set(cell) <= {"-", ":"} for cell in cells):
+            continue
+        rows.append(cells)
+    if not rows:
+        return [], []
+    header = re.findall(r"`([a-z_]+)`", " ".join(rows[0][1:]))
+    return header, [row[0] for row in rows[1:]]
+
+
+def qx_app_check() -> None:
+    """阶段 2 / 退出门 G1·G2：`qx-app` 的依赖集、错误类别闭集、九项登记面与三入口。
+
+    依赖方向（应用层不得反向依赖门面）由 `layer_dependency_check` 的禁止边守着，这里不重复；
+    本判据守的是四件它看不见的事，逐条都对应一类"改错了也不红"的故障：
+
+    ① 依赖集**精确**——`Cargo.toml` 是"应用层没有偷偷把 CLI/API/执行/存储拉进来"这条纪律的
+       载体，一张含糊的清单守不住它（多一项少一项都要有人回答）；
+    ② 错误类别闭集与路线图 §X1 那张表**逐条同名同序**——类别少一个或改一个名字，调用方就会把
+       它送错下一步，而"能编译"这件事对类别语义是盲的；
+    ③ 九项用例登记面三处对账（登记面 ⇔ 文档表 ⇔ `pub use`/`pub fn`）——路线图 §2 的九项是契约，
+       最容易漏的"取消行为"与"幂等键"不写下来时，读者的默认假设是"应该会取消/应该幂等"；
+    ④ 三个门面都依赖应用层、且各自的门面实现源码在盘——G1 的"三入口同一 use case"在依赖图上
+       与源码面上都成立，不靠"Python 扩展构建过没有"来决定。
+    """
+    internal, external = _app_dependency_names()
+    check(
+        internal == set(APP_ALLOWED_INTERNAL_DEPS) and external == set(APP_ALLOWED_EXTERNAL_DEPS),
+        "qx-app 的依赖集是精确的（5 个领域件 + serde/serde_json，共 7 名，无门面/适配/执行/存储）",
+        f"内部 {sorted(internal)}（应为 {sorted(APP_ALLOWED_INTERNAL_DEPS)}）；"
+        f"外部 {sorted(external)}（应为 {sorted(APP_ALLOWED_EXTERNAL_DEPS)}）",
+    )
+
+    roadmap = _roadmap_app_categories()
+    variants = _app_error_category_variants()
+    check(
+        bool(roadmap) and roadmap == variants,
+        "错误类别闭集与路线图 §X1 那张表逐条同名同序（少一类/改名/换序都红）",
+        f"路线图 {roadmap}；AppErrorCategory {variants}",
+    )
+
+    registry = _app_use_case_registry()
+    registered = [entry.get("name", "") for entry in registry]
+    incomplete = [
+        entry.get("name")
+        for entry in registry
+        if not all(entry.get(key) for _, key in APP_USE_CASE_ITEMS)
+    ]
+    declared_kind = re.search(
+        r"^kind:\s*(\S+)\s*$",
+        (ROOT / APP_REGISTRY_FILE).read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    check(
+        len(registry) == 3
+        and len(registered) == len(set(registered))
+        and not incomplete
+        and declared_kind is not None
+        and declared_kind.group(1) == APP_REGISTRY_KIND,
+        "九项用例登记面在盘、自述 kind 正确、三个用例的九项逐格非空",
+        f"用例 {registered}；缺格 {incomplete or '无'}；kind {declared_kind.group(1) if declared_kind else '缺'}",
+    )
+    key_order = {
+        entry.get("name"): [key for key, _ in sorted(
+            ((key, None) for key in entry if key != "name"),
+            key=lambda pair: pair[0],
+        )]
+        for entry in registry
+    }
+    check(
+        all(
+            key_order.get(entry.get("name")) == sorted(key for _, key in APP_USE_CASE_ITEMS)
+            for entry in registry
+        ),
+        "登记面每个用例的键集恰好是那九项（多一格少一格都红）",
+        f"实得 {key_order}",
+    )
+
+    cases_text = (ROOT / APP_CASES_FILE).read_text(encoding="utf-8")
+    reexported = set(re.findall(r"^pub use [a-z_]+::([a-z_]+);$", cases_text, re.MULTILINE))
+    doc_names, doc_items = _app_doc_table()
+    missing_fns = sorted(
+        name
+        for name in registered
+        if not (ROOT / APP_CASES_DIR / f"{name}.rs").is_file()
+        or f"pub fn {name}("
+        not in (ROOT / APP_CASES_DIR / f"{name}.rs").read_text(encoding="utf-8")
+    )
+    check(
+        set(registered) == reexported and not missing_fns,
+        "登记面的用例集合 == `cases/mod.rs` 的 `pub use`，且每个用例都有自己的 `pub fn` 落点",
+        f"登记 {sorted(registered)}；重导出 {sorted(reexported)}；缺 `pub fn` {missing_fns or '无'}",
+    )
+    check(
+        doc_names == registered
+        and doc_items == [label for label, _ in APP_USE_CASE_ITEMS],
+        "`cases/mod.rs` 的九项文档表与登记面逐条相等（表头三个用例名 + 第一列九项）",
+        f"文档表用例 {doc_names}（应 {registered}）；文档表九项 {doc_items}",
+    )
+
+    # 能力闸口径：登记面说 `RESEARCH` 的用例必须在代码里真的设闸；说 `none` 的必须真的没设。
+    # 这条有牙齿——"文档说不需要权限"与"代码里加了权限"是两件互相矛盾的事，而两边都能编译。
+    gate_mismatch: list[str] = []
+    for entry in registry:
+        name = entry.get("name", "")
+        body = (ROOT / APP_CASES_DIR / f"{name}.rs").read_text(encoding="utf-8")
+        declared = entry.get("capability")
+        has_gate = "context.require(" in body
+        if declared == "none":
+            if has_gate:
+                gate_mismatch.append(f"{name} 登记为不设闸，代码里却有 require")
+            continue
+        variant = APP_CAPABILITY_VARIANTS.get(declared or "")
+        if variant is None:
+            gate_mismatch.append(f"{name} 的 capability={declared!r} 不是 R/P/O/L 的稳定串")
+        elif not has_gate or f"CallerCapability::{variant}" not in body:
+            gate_mismatch.append(
+                f"{name} 登记为 {declared}，代码里没有 `CallerCapability::{variant}` 的 require"
+            )
+    check(
+        not gate_mismatch,
+        "登记面的 capability 与用例代码里的能力闸一致（说不管就必须真不管）",
+        "；".join(gate_mismatch),
+    )
+
+    graph = _crate_internal_deps()
+    missing_facades = [
+        crate
+        for crate, source in APP_FACADES
+        if not (ROOT / source).is_file() or APP_CRATE_NAME not in graph.get(crate, set())
+    ]
+    check(
+        f'"{APP_CRATE}"' in (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+        and not missing_facades,
+        "qx-app 是 workspace 成员，且三个门面（CLI / HTTP / Python）都依赖它并有门面实现落点",
+        f"缺门面 {missing_facades or '无'}",
+    )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         # `--snapshot` 刷新两份机读快照：先写行数棘轮，再跑一遍完整门禁、收尾写门禁读数快照。
@@ -15665,6 +16967,7 @@ def main() -> int:
     storage_retry_check()
     outbox_page_and_parked_check()
     external_acceptance_check()
+    external_chain_check()
     bounded_growth_and_reap_check()
     module_mount_check()
     runtime_config_fail_closed_check()
@@ -15724,6 +17027,7 @@ def main() -> int:
     browser_admission_check()
     capabilities_check()
     backtest_track_check()
+    backtest_baseline_check()
     contract_matrix_check()
     http_surface_check()
     baseline_freeze_check()
@@ -15746,6 +17050,8 @@ def main() -> int:
     release_version_single_source_check()
     error_code_contract_check()
     schema_registry_check()
+    artifact_migration_check()
+    run_evidence_check()
     report_readability_check()
     silent_suppression_check()
     process_diagnostics_check()
@@ -15763,6 +17069,8 @@ def main() -> int:
     pipeline_commit_rollback_check()
     parallel_run_isolation_check()
     read_face_scope_check()
+    command_surface_classification_check()
+    qx_app_check()
     # 含本条自身：+1 才是本轮真正会打印的总条数，所以地板常量按"含这一条"取值。
     check(
         checks + 1 >= GATE_CHECK_FLOOR,

@@ -1281,6 +1281,7 @@ dependencies = [
 name = "qx-api"
 version = "0.1.0"
 dependencies = [
+ "qx-app",
  "qx-control",
  "qx-core",
  "qx-protocol",
@@ -1292,12 +1293,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "qx-app"
+version = "0.1.0"
+dependencies = [
+ "qx-core",
+ "qx-datastruct",
+ "qx-strategy",
+ "qx-xingban",
+ "qx-zhenlu",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "qx-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
  "qx-adapter",
  "qx-api",
+ "qx-app",
  "qx-control",
  "qx-core",
  "qx-data",
@@ -1438,6 +1453,7 @@ name = "qx-python"
 version = "0.1.0"
 dependencies = [
  "pyo3",
+ "qx-app",
  "qx-datastruct",
 ]
 

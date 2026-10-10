@@ -14,6 +14,7 @@ pub mod capability;
 pub mod evidence;
 pub mod experiment;
 pub mod project;
+pub mod run_evidence;
 pub mod run_record;
 pub mod schema_registry;
 
@@ -24,6 +25,11 @@ pub use evidence::{
 };
 pub use experiment::{ExperimentSpec, ParameterSpace, SplitPlan, EXPERIMENT_SPEC_SCHEMA_VERSION};
 pub use project::{DatasetRef, ProjectManifest, StrategyRef, PROJECT_MANIFEST_SCHEMA_VERSION};
+pub use run_evidence::{
+    RunEvidenceAssumption, RunEvidenceBuild, RunEvidenceBundle, RunEvidenceDataset,
+    RunEvidenceIdentity, RunEvidenceRecompute, RunEvidenceRun, RunEvidenceVerification,
+    RUN_EVIDENCE_REQUIRED_ARTIFACTS, RUN_EVIDENCE_SCHEMA_VERSION,
+};
 pub use run_record::{ArtifactRef, ReplayVerdict, RunRecord, RunStatus, RUN_RECORD_SCHEMA_VERSION};
 pub use schema_registry::{
     SchemaCompatibility, SchemaEntry, SchemaRegistry, SCHEMA_REGISTRY_SCHEMA_VERSION,
@@ -31,7 +37,7 @@ pub use schema_registry::{
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-/// 地基规格对象的七种类型；`as_str` 的取值即 CLI `plan <kind>` 接受的写法。
+/// 地基规格对象的八种类型；`as_str` 的取值即 CLI `plan <kind>` 接受的写法。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FoundationKind {
@@ -39,6 +45,7 @@ pub enum FoundationKind {
     Dataset,
     Experiment,
     RunRecord,
+    RunEvidence,
     Capability,
     Evidence,
     SchemaRegistry,
@@ -46,11 +53,12 @@ pub enum FoundationKind {
 
 impl FoundationKind {
     /// 帮助文本与错误文案共用的完整取值清单（顺序即打印顺序）。
-    pub const ALL: [FoundationKind; 7] = [
+    pub const ALL: [FoundationKind; 8] = [
         FoundationKind::Project,
         FoundationKind::Dataset,
         FoundationKind::Experiment,
         FoundationKind::RunRecord,
+        FoundationKind::RunEvidence,
         FoundationKind::Capability,
         FoundationKind::Evidence,
         FoundationKind::SchemaRegistry,
@@ -62,6 +70,7 @@ impl FoundationKind {
             FoundationKind::Dataset => "dataset",
             FoundationKind::Experiment => "experiment",
             FoundationKind::RunRecord => "run-record",
+            FoundationKind::RunEvidence => "run-evidence",
             FoundationKind::Capability => "capability",
             FoundationKind::Evidence => "evidence",
             FoundationKind::SchemaRegistry => "schema-registry",
@@ -73,9 +82,9 @@ impl FoundationKind {
     }
 }
 
-/// 六种「住在 qx-spec 里」的规格对象共用的读写契约。
+/// 七种「住在 qx-spec 里」的规格对象共用的读写契约。
 ///
-/// `DatasetManifestV2` 是第七种，但它属于数据平面（`qx-data`），本 crate 只依赖它、
+/// `DatasetManifestV2` 是第八种，但它属于数据平面（`qx-data`），本 crate 只依赖它、
 /// 不给它加反向依赖，因此它按固有方法在 `describe` 里单独接进来，不实现本 trait。
 pub trait FoundationDocument: Serialize + DeserializeOwned + Sized {
     const KIND: FoundationKind;
@@ -119,6 +128,7 @@ pub fn describe(kind: &str, payload: &str) -> Result<DocumentReadout, String> {
         FoundationKind::Dataset => dataset_readout(payload),
         FoundationKind::Experiment => readout::<ExperimentSpec>(kind, payload),
         FoundationKind::RunRecord => readout::<RunRecord>(kind, payload),
+        FoundationKind::RunEvidence => readout::<RunEvidenceBundle>(kind, payload),
         FoundationKind::Capability => readout::<CapabilityManifest>(kind, payload),
         FoundationKind::Evidence => readout::<EvidenceBundle>(kind, payload),
         FoundationKind::SchemaRegistry => readout::<SchemaRegistry>(kind, payload),

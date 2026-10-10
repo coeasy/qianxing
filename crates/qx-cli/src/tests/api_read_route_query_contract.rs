@@ -1,21 +1,4 @@
-//! 读面的查询串契约：文档写的收窄键必须与实现真读的键一一对应（V13 R2 #205 / R31）。
-//!
-//! 立案时两侧各有一处空头承诺：
-//!
-//! 1. `deploy/README.md` 第二张端点表把 `/account/ledger` 写成 `GET /account/ledger[?…]`，
-//!    而 `handle_inner` 那条臂从头到尾没碰过 `query`。调用方递来 `?account_id=shadow`
-//!    拿到的仍是"默认账户"那份流水——它不是报错、不是空数组，而是**另一个账户的真实数据**，
-//!    读侧看不出任何痕迹。同一张表里 `/scheduler/runs`、`/reconcile/reports`、`/control/audit`
-//!    是同一条形状，只是没写 `[?…]`。
-//! 2. `/account/snapshot/diff` 里有一条 `404 snapshot_not_found` 分支，两张端点表都没写它——
-//!    不是因为漏写：`publish_snapshot`（全局与按账户两处）都把 `snapshot_history` 与 `snapshot`
-//!    同批写入，基准查得到就一定有当前快照，那个 404 取不到。留着它等于让文档去解释一条
-//!    永不返回的分支，也让"这张表列全了非 200 口径"这句话打折。
-//!
-//! R31 补的是这条契约的第三张名单：`/account/ledger` 与 `/reconcile/reports` 不再是无键整体现
-//! 读面，`?account_id=`（对账报告还认 `?venue_id=`）在结果集上真过滤。空结果回 `200 []` 而不是
-//! 404——账簿与对账报告是整本台账加一轮对账结果，不是按 `(account_id, venue_id)` 键控的投影
-//! 副本，过滤不出条目只说明这一轮没有事实，不等于"这个账户不在这份部署里"。
+//! API 只读路由的查询键契约与账户隔离回归用例（V13 R2 #205 / R31）。
 
 use super::api_endpoint_table_routes::backticked_routes;
 use super::*;
@@ -94,16 +77,25 @@ fn scoped_service() -> ApiService {
         entry(2, "main", "ETHUSDT.OKX"),
         entry(3, "shadow", "BTCUSDT.BINANCE"),
     ];
-    state.reconcile_reports.insert("w1".into(), report("w1", "main", "okx"));
-    state.reconcile_reports.insert("w2".into(), report("w2", "main", "binance"));
-    state.reconcile_reports.insert("w3".into(), report("w3", "shadow", "okx"));
+    state
+        .reconcile_reports
+        .insert("w1".into(), report("w1", "main", "okx"));
+    state
+        .reconcile_reports
+        .insert("w2".into(), report("w2", "main", "binance"));
+    state
+        .reconcile_reports
+        .insert("w3".into(), report("w3", "shadow", "okx"));
     ApiService::new(state)
 }
 
 fn array_body(response: &qx_api::ApiResponse) -> Vec<serde_json::Value> {
     let value: serde_json::Value =
         serde_json::from_str(&response.body).expect("收窄读面的响应体必须是 JSON 数组");
-    value.as_array().expect("收窄读面的响应体必须是数组").clone()
+    value
+        .as_array()
+        .expect("收窄读面的响应体必须是数组")
+        .clone()
 }
 
 /// #205 行为判据：无键整体现读端点带查询串必须 400 并点名是哪条入口，不带才 200。
@@ -154,14 +146,22 @@ fn model_filter_routes_honor_the_account_scope() {
         );
     }
     let shadow = array_body(&service.handle("GET", "/account/ledger?account_id=shadow", "", 3));
-    assert_eq!(shadow.len(), 1, "另一个账户要按自己的身份读得到: {shadow:?}");
+    assert_eq!(
+        shadow.len(),
+        1,
+        "另一个账户要按自己的身份读得到: {shadow:?}"
+    );
     assert_eq!(shadow[0]["account_id"].as_str(), Some("shadow"));
 
     let all_reports = array_body(&service.handle("GET", "/reconcile/reports", "", 4));
     assert_eq!(all_reports.len(), 3, "不带键的对账读面照旧读整份现读模型");
     let main_reports =
         array_body(&service.handle("GET", "/reconcile/reports?account_id=main", "", 5));
-    assert_eq!(main_reports.len(), 2, "对账报告也要按账户收窄: {main_reports:?}");
+    assert_eq!(
+        main_reports.len(),
+        2,
+        "对账报告也要按账户收窄: {main_reports:?}"
+    );
     let shadow_reports =
         array_body(&service.handle("GET", "/reconcile/reports?account_id=shadow", "", 6));
     assert_eq!(shadow_reports.len(), 1);
@@ -180,23 +180,19 @@ fn reconcile_reports_narrow_by_venue_alone() {
     for report in &by_venue {
         assert_eq!(report["venue_id"].as_str(), Some("okx"));
     }
-    let single =
-        array_body(&service.handle("GET", "/reconcile/reports?venue_id=binance", "", 2));
+    let single = array_body(&service.handle("GET", "/reconcile/reports?venue_id=binance", "", 2));
     assert_eq!(single.len(), 1);
-    let both = array_body(
-        &service
-            .handle("GET", "/reconcile/reports?account_id=main&venue_id=okx", "", 3),
-    );
+    let both = array_body(&service.handle(
+        "GET",
+        "/reconcile/reports?account_id=main&venue_id=okx",
+        "",
+        3,
+    ));
     assert_eq!(both.len(), 1, "两把键同给是叠加收窄，不是替代: {both:?}");
     assert_eq!(both[0]["worker_id"].as_str(), Some("w1"));
 }
 
-/// 收窄读面借用不了投影那族的 404：键形状合法但没有匹配条目时是 200 空数组。
-///
-/// 两族读的不是一份东西——投影是 `(account_id, venue_id)` 键控的独立副本，账簿与对账报告
-/// 是整本台账加一轮结果。把 404 借过来等于宣布"这份部署里没有这个账户"，而调用方只是这一
-/// 轮没有事实。反过来把账簿也接到 `missing_projection_response` 会静默把它换成另一条账户的
-/// 数据，正是 #205 那一格。
+/// 收窄读面没有匹配条目时返回 `200 []`，不能借用投影缺失的 404。
 #[test]
 fn model_filter_routes_return_an_empty_array_not_a_missing_projection() {
     let service = scoped_service();
@@ -207,8 +203,7 @@ fn model_filter_routes_return_an_empty_array_not_a_missing_projection() {
     ] {
         let response = service.handle("GET", &format!("{route}{query}"), "", 1);
         assert_eq!(
-            response.status,
-            200,
+            response.status, 200,
             "{route}{query} 没有匹配条目要回 200 空数组，不是投影缺失: {}",
             response.body
         );
@@ -217,7 +212,10 @@ fn model_filter_routes_return_an_empty_array_not_a_missing_projection() {
             "{route}{query} 借用了投影那族的 404 码名: {}",
             response.body
         );
-        assert!(array_body(&response).is_empty(), "{route}{query} 正文必须是空数组");
+        assert!(
+            array_body(&response).is_empty(),
+            "{route}{query} 正文必须是空数组"
+        );
     }
 }
 
@@ -233,8 +231,7 @@ fn model_filter_routes_refuse_the_keys_their_data_cannot_honor() {
     ] {
         let response = service.handle("GET", &format!("{route}{query}"), "", 1);
         assert_eq!(
-            response.status,
-            400,
+            response.status, 400,
             "{route}{query} 里的 {refused} 不在这条入口的名单里: {}",
             response.body
         );
@@ -245,11 +242,14 @@ fn model_filter_routes_refuse_the_keys_their_data_cannot_honor() {
         );
     }
     // 空串与带空白的键不是"没有点名"，是形状非法——否则会被当成一个真实账户去查。
-    for query in ["?account_id=", "?account_id=%20", "?account_id=%20&venue_id=okx"] {
+    for query in [
+        "?account_id=",
+        "?account_id=%20",
+        "?account_id=%20&venue_id=okx",
+    ] {
         let response = service.handle("GET", &format!("/reconcile/reports{query}"), "", 2);
         assert_eq!(
-            response.status,
-            400,
+            response.status, 400,
             "/reconcile/reports{query} 的收窄键是空串，要回 400: {}",
             response.body
         );
@@ -367,8 +367,7 @@ fn snapshot_diff_returns_only_the_documented_non_200_codes() {
     let service = ApiService::new(ApiState::default());
     let missing_base = service.handle("GET", "/account/snapshot/diff?base_hash=7", "", 6);
     assert_eq!(
-        missing_base.status,
-        409,
+        missing_base.status, 409,
         "基准不在历史里要说 409，不能漂成文档里没有的码"
     );
     assert!(
@@ -429,7 +428,7 @@ fn endpoint_table_only_promise_query_keys_where_the_route_reads_them() {
         let row = semantics_row(route);
         for param in params {
             assert!(
-                row.contains(&format!("[?")) && row.contains(&format!("{param}=")),
+                row.contains("[?") && row.contains(&format!("{param}=")),
                 "{route} 现在真按 `?{param}=` 收窄，「入口」那一格必须写出这把键: {row}"
             );
         }

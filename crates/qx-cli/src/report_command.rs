@@ -1,15 +1,16 @@
-//! 回测报告命令：摘要复核、人读/机读投影与可选 HTML 导出。
+//! 回测报告命令：摘要复核、人读/机读投影、可选 HTML 导出与可选运行证据包。
 
 use crate::*;
 
 pub(crate) fn run_report(path: &Path, as_json: bool, html: bool) -> Result<(), String> {
-    run_report_with_output(path, as_json, html, None)
+    run_report_with_output(path, as_json, html, false, None)
 }
 
 pub(crate) fn run_report_with_output(
     path: &Path,
     as_json: bool,
     html: bool,
+    evidence: bool,
     output: Option<&Path>,
 ) -> Result<(), String> {
     if output.is_some() && !html {
@@ -24,6 +25,13 @@ pub(crate) fn run_report_with_output(
     let declared_input = recompute_declared_backtest_input(&summary)?;
     let artifacts = if html {
         Some(write_report_html(&summary_path, &summary, output)?)
+    } else {
+        None
+    };
+    // 运行证据包排在复核链**之后**：上面那一步已经把每份产物的 SHA-256 重算过一遍，所以证据包里
+    // `artifact_digests_verified=true` 是核对的结果，而不是一句声明（T1-1 / 退出门 G1 第一条）。
+    let evidence_path = if evidence {
+        Some(run_evidence::write_run_evidence(&summary_path, &summary)?)
     } else {
         None
     };
@@ -57,6 +65,12 @@ pub(crate) fn run_report_with_output(
                 "monthly_svg": files.monthly_svg.display().to_string(),
             });
         }
+        if let Some(path) = &evidence_path {
+            report["run_evidence"] = serde_json::json!({
+                "path": path.display().to_string(),
+                "schema_version": qx_spec::RUN_EVIDENCE_SCHEMA_VERSION,
+            });
+        }
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
@@ -69,6 +83,9 @@ pub(crate) fn run_report_with_output(
         println!("[Report] equity_svg={}", files.equity_svg.display());
         println!("[Report] fills_svg={}", files.fills_svg.display());
         println!("[Report] monthly_svg={}", files.monthly_svg.display());
+    }
+    if let Some(path) = &evidence_path {
+        println!("[Report] evidence={}", path.display());
     }
     println!("[Report] summary={}", summary_path.display());
     let input_verified = match &declared_input {

@@ -202,3 +202,19 @@ tbody tr:last-child td { border-bottom: none; }
 }
 
 .form button[type="submit"] { align-self: end; justify-self: start; }
+
+#research-spec,
+#research-output {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: 12px/1.55 var(--mono);
+}
+
+#research-spec { resize: vertical; }
+#research-output { min-height: 54px; max-height: 340px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.actions { display: flex; gap: 10px; margin: 10px 0; }

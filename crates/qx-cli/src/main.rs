@@ -103,6 +103,8 @@ use qx_zhenlu::{
     VenueEvent,
 };
 mod api_service;
+mod app_args;
+mod app_commands;
 mod backtests;
 mod build_identity;
 mod ccxt_facts;
@@ -141,6 +143,7 @@ mod report_html;
 mod report_readout;
 mod report_svg;
 mod run_entry_arguments;
+mod run_evidence;
 mod runtime_check;
 mod runtime_wiring;
 mod scheduler;

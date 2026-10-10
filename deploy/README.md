@@ -214,6 +214,10 @@ cargo run --release -p qx-cli -- serve deploy/qianxing.runtime.example.json
 
 `serve` 启动时会恢复控制面状态；`storage.backend: "files"` 使用 `control-plane.json` 与 `control-queue/`，`storage.backend: "sqlite"` 使用 `sqlite_path` 中的事务表，`storage.backend: "postgres"` 使用 `postgres_dsn_env` 指向的 DSN 并自动执行幂等迁移。PostgreSQL 后端的控制面、控制命令队列和 JobQueue 使用事务、advisory lock、租约与 fencing token；带密码的 DSN 不得写入 JSON。控制命令先原子持久化再入队，队列写入失败不会丢失 Accepted 命令；Execution worker 启动后会扫描 pending 命令补队列。
 
+### Shared research API
+
+`POST /app/validate-dataset`、`POST /app/backtest` 和 `POST /app/verify` 使用与 CLI/Python 相同的版本化 `qx-app` contract。它们目前覆盖同步 Bar 研究流程。输入文件必须位于 `QX_API_DATA_ROOT`（默认 `.qianxing/api-data`）内；输出只写入 `QX_API_ARTIFACT_ROOT`（默认系统临时目录下的 `qianxing-api-runs/<run_id>`）。请求中的路径不能越出输入根目录，也不能覆盖服务端产物根目录。服务启动前把数据放入输入目录，并用 mTLS Operator 身份保护远程 API。
+
 API 的认证边界只由 `transport` 与 `api.operators` 决定，不由 `environment` 的措辞决定（V13 R2 第二十三遍 #244）：
 
 - `transport: "mtls"`：必须同时给出服务端证书三件套（`api.tls`）与至少一条 `api.operators` 证书映射，`serve` 据此装上操作员权限策略，operator 身份来自握手证书；这种部署可以绑可路由地址（仓库里唯一那份生产模板就绑 `0.0.0.0:8443`）。
@@ -275,6 +279,9 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `GET /events?after=<seq>` | `Event` 数组，每格 `{seq, ts, prio, kind, receive_time, engine_time, source_seq, correlation_id, metadata}` | 快照式读取；游标越界 → `409 event_cursor_requires_snapshot` |
 | `GET /events/live?after=<seq>` | `ProjectionEnvelope` 数组，每格 `{schema_version, kind, tenant_id, run_id, account_id, portfolio_id, venue_id, as_of, event_seq, cursor, state_hash, source, lineage, data}` | 一次性 read-after，不是长连接；每条事件外面套一层投影信封、事件本体在 `data` 里，与 `/events` 的裸 `Event` **不同形**；游标语义与 `/events` 同口径（V12 R4-g） |
 | `POST /control/commands` | 受理结果 | 载荷非法 → `400`；未识别操作员 → `403`；先持久化再入队，入队失败不回滚受理、计入 `qx_api_command_enqueue_failures_total`（见下「指标出口」） |
+| `POST /app/validate-dataset` | 应用层用例 `qx_app::validate_dataset` 的裁决文档（请求体是 `DatasetSpec` JSON） | 数据集**不足**是成功返回（裁决里 `usable` 为假且 `gaps` 非空，仍 200），不是非 200；只有"在盘但读不出来"才失败（T2-2） |
+| `POST /app/backtest` | 应用层用例 `qx_app::run_backtest` 的结果文档（请求体是 `BacktestSpec` JSON） | 四份产物落在 spec 的 `output_dir` 下；与 `qx-cli app backtest`、Python 的 `app.run_backtest` 是**同一份结果文档**（同一 use case、同一 `result_hash`，退出门 G1） |
+| `POST /app/verify` | 应用层用例 `qx_app::verify_run` 的复核文档（请求体取上一行的响应体） | 产物缺失/互不一致是成功返回（`verified` 为假 + `mismatches` 非空，仍 200）；只有"这份 outcome 自己没带 run_id"才失败（T2-2） |
 | 任意路径 + `Upgrade: websocket` | `101` 帧流 | 见下 |
 
 七条读投影的入口（`/account/snapshot`、`/account/snapshot/envelope`、`/account/orders`、
@@ -347,13 +354,16 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `GET /account/snapshot/diff?base_hash=[&…]` | 与历史基线快照的差异 | 400 参数非法（base_hash 缺失或非无符号整数，收窄键只给一半，或点了这三把之外的查询键）；409 `snapshot_base_not_found`（基准缺失与那条投影不存在是同一条码）；无 404 分支，判据与口径的来由见上段正文（V13 R2 第十三遍）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /account/orders[?…]` `GET /account/positions[?…]` | 快照里的订单表/持仓表摊成数组 | 400 键形状非法或名单外的查询键；无快照时 200 空数组；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /account/balances[?…]` | 四个钱字段原样，未计算的是 `null` 而不是 0 | 400 键形状非法或名单外的查询键；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /account/ledger[?account_id=]` | 每次请求现读账户日志，启动之后落盘的读得到；`?account_id=` 在结果集上按账户过滤 | 400 带了这条入口不认的查询键（`LedgerEntry` 没有 `venue_id` 字段，`?venue_id=` 就落在这支，正文点名被拒的那把键）或空串键；过滤不出条目时是 200 空数组，不是 404（V13 R31）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /account/ledger[?account_id=]` | 每次请求现读账户日志，启动之后落盘的读得到；`?account_id=` 在结果集上按账户过滤 | 400 带了这条入口不认的查询键（`LedgerEntry` 没有 venue_id 字段，`?venue_id=` 就落在这支，正文点名被拒的那把键）或空串键；过滤不出条目时是 200 空数组，不是 404（V13 R31）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /reconcile/reports[?account_id=&venue_id=]` | 每次请求现读对账报告，启动之后落盘的读得到；两把收窄键都认时是 AND | 400 带了这条入口不认的查询键或空串键；过滤不出条目时是 200 空数组，不是 404（V13 R31）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /scheduler/runs` | 每次请求现读调度记录，启动之后落盘的读得到；整份现读模型 | 400 带任何查询串——这条入口没有收窄键（`JobRun` 没有账户列），正文点名被拒的那把键（V13 R2 第十三遍 / R6）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /events[?after=&account_id=&venue_id=]` | 投影事件全量，或 `after` 游标之后的增量 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /events/live[?after=&…]` | 事件总线现读增量，游标口径与上一行同一条实现 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`（游标过旧/超前，含空日志）；404 `account_projection_not_found`；500；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /control/audit` | 控制面审计流水 | 400 带任何查询串——这条入口同样没有收窄键（`AuditRecord` 没有账户列），与上一行同属整体现读面，正文点名被拒的那把键（V13 R2 第十三遍 / R6）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /control/commands` | 提交控制命令；启用访问策略时 operator 身份必须来自认证边界 | 400 请求体不合法（缺审计字段，或该命令类型在当前构建里没有派发者）；403 未认证 `authenticated_operator_required`／已认证但策略给不出权限 `forbidden`；409 命令被控制面拒绝（`ControlError` 的 Debug 形态，四个变体名见下段）；503 队列不可用 `control_state_unavailable`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/validate-dataset` | 应用层用例 ValidateDataset：这份数据能否支撑一次 Bar 回测（请求体是 DatasetSpec JSON） | 非 200 状态码由响应体里的类别字段派生（crates/qx-api/src/app_surface.rs 的类别映射是唯一一份）：400 输入不合法；404 数据取不到；422 档位不足；403 权限不足；409 冲突；503 超时或存储故障；500 内部不一致。错误体是与 CLI/Python 逐字节相同的应用层错误文档，不是读面那套错误码形态；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/backtest` | 应用层用例 RunBacktest：跑一次 Bar 回测并落四份产物（请求体是 BacktestSpec JSON） | 与上一行同一份类别映射；同一运行身份已存在且身份不同是 409（不覆盖历史）；产物写在请求体点名的产物目录下，是**服务进程**的文件系统——所以这条入口与 /control/commands 同一把锁（配了访问策略的部署里都要 operator 身份）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/verify` | 应用层用例 VerifyRun：四份产物是否互相印证（请求体取上一行的响应体） | 与上一行同一份类别映射；产物缺失或互相矛盾是 200 加一个为假的裁决（不是非 200——「复核不通过」与「复核跑不起来」是两件事）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 
 `POST /control/commands` 那一格的 409 是控制面按 `ControlError` 的 Debug 形态回报，四个会变 409 的
 变体名是 `DuplicateRequest`、`DuplicateCommand`、`UnknownCommand`、`AlreadyFinal`；

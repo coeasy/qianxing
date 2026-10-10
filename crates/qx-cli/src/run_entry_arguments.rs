@@ -41,15 +41,16 @@ pub(crate) fn run_entry_arguments(
     Ok((path.map(PathBuf::from).unwrap_or_else(default), json))
 }
 
-/// 读 `run report` 的专属旗标；此入口额外支持 `--html --output <path>`。
+/// 读 `run report` 的专属旗标；此入口额外支持 `--html --output <path>` 与 `--evidence`。
 pub(crate) fn run_report_entry_arguments(
     arguments: &[String],
     default: impl FnOnce() -> PathBuf,
-) -> Result<(PathBuf, bool, bool, Option<PathBuf>), String> {
+) -> Result<(PathBuf, bool, bool, bool, Option<PathBuf>), String> {
     let mut path: Option<&str> = None;
     let mut output = None;
     let mut json = false;
     let mut html = false;
+    let mut evidence = false;
     let mut values = arguments.iter().skip(1);
     while let Some(value) = values.next() {
         match value.as_str() {
@@ -57,6 +58,8 @@ pub(crate) fn run_report_entry_arguments(
             "--json" => json = true,
             "--html" if html => return Err(run_usage("report 的 --html 只能指定一次")),
             "--html" => html = true,
+            "--evidence" if evidence => return Err(run_usage("report 的 --evidence 只能指定一次")),
+            "--evidence" => evidence = true,
             "--output" | "-o" => {
                 if output.is_some() {
                     return Err(run_usage("report 的 --output 只能指定一次"));
@@ -104,6 +107,15 @@ pub(crate) fn run_report_entry_arguments(
         path.map(PathBuf::from).unwrap_or_else(default),
         json,
         html,
+        evidence,
         output,
     ))
+}
+
+/// 把入口名放回参数向量头部：`run <入口> …` 的**子入口**在 clap 层已被摘掉，
+/// 而下游统一处理器（`config_commands.rs` 的 `run_unified_command`）按「第一条即入口名」
+/// 读它，所以这里补回去——读法与写方同住一层，别处再抄一份就会漂。
+pub(crate) fn run_arguments(entry: &str, mut arguments: Vec<String>) -> Vec<String> {
+    arguments.insert(0, entry.to_string());
+    arguments
 }

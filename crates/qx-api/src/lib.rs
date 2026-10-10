@@ -3,6 +3,7 @@
 //! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
 
 mod admission;
+mod app_surface;
 mod connections;
 mod console;
 mod control_reads;
@@ -24,10 +25,6 @@ use admission::{
     DEFAULT_MAX_CONCURRENT_CONNECTIONS,
 };
 use event_cursor::{events_after_cursor, parse_after_cursor};
-use read_scope::{
-    projection_key_from_query, scope_keeps_account, scope_keeps_venue, ScopeFilter,
-    PROJECTION_SCOPED_ROUTES,
-};
 use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
 use qx_core::{contract::contract_matrix_json, Event, EventKind, EventLog, Fnv1a, LedgerEntry};
 use qx_protocol::{
@@ -38,6 +35,10 @@ use qx_scheduler::JobRun;
 use qx_storage::FileTokenBucket;
 #[cfg(feature = "sqlite")]
 use qx_storage::SqliteTokenBucket;
+use read_scope::{
+    projection_key_from_query, scope_keeps_account, scope_keeps_venue, ScopeFilter,
+    PROJECTION_SCOPED_ROUTES,
+};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
@@ -925,6 +926,7 @@ pub struct ApiService {
     cors: Option<Arc<CorsPolicy>>,
     /// 并发连接预算。一份连接一个线程，所以上限同时是线程数上限；超限当场 503。
     connection_budget: Arc<ConnectionBudget>,
+    app_paths: app_surface::AppPaths,
 }
 
 #[derive(Default)]
@@ -1103,33 +1105,18 @@ impl ApiResponse {
 
 impl ApiService {
     pub fn new(state: ApiState) -> Self {
-        Self {
-            state: Arc::new(Mutex::new(state)),
-            session_shutdown: Arc::new(AtomicBool::new(false)),
-            policy: None,
-            rate_limiter: Arc::new(LocalRateLimitBackend {
-                limiter: Mutex::new(ApiRateLimiter::new(
-                    DEFAULT_RATE_LIMIT_CAPACITY,
-                    DEFAULT_RATE_LIMIT_REFILL_PER_SECOND,
-                )),
-            }),
-            control_submitter: None,
-            command_enqueuer: None,
-            metrics: Arc::new(ApiMetrics::default()),
-            worker_metrics_provider: None,
-            readiness_provider: None,
-            query_models_provider: None,
-            control_plane_provider: None,
-            cors: None,
-            connection_budget: default_connection_budget(),
-        }
+        Self::build(state, None)
     }
 
     pub fn with_policy(state: ApiState, policy: ApiPolicy) -> Self {
+        Self::build(state, Some(policy))
+    }
+
+    fn build(state: ApiState, policy: Option<ApiPolicy>) -> Self {
         Self {
             state: Arc::new(Mutex::new(state)),
             session_shutdown: Arc::new(AtomicBool::new(false)),
-            policy: Some(policy),
+            policy,
             rate_limiter: Arc::new(LocalRateLimitBackend {
                 limiter: Mutex::new(ApiRateLimiter::new(
                     DEFAULT_RATE_LIMIT_CAPACITY,
@@ -1145,6 +1132,7 @@ impl ApiService {
             control_plane_provider: None,
             cors: None,
             connection_budget: default_connection_budget(),
+            app_paths: app_surface::AppPaths::from_environment(),
         }
     }
 
@@ -1515,15 +1503,13 @@ impl ApiService {
                 return ApiResponse::json(403, error_json("authenticated_operator_required"));
             }
         }
-        // 读面的查询参数按入口点名：#205 那支只盖住无键整体现读端点，带键那七条与按账户过滤那两条
-        // 各自照收自己名单里的键、名单外的键当场点名，于是 `?acount_id=` 拼错不会落到"没有收窄键"
-        // 那一支，把默认账户念成调用方点名的账户（V13 R6 / R31）。
+        // 读面的查询参数按入口点名：#205 那支只盖住无键整体现读端点，带键那七条与按账户过滤那两条各自照收自己名单里的键、
+        // 名单外的键当场点名，于是 `?acount_id=` 拼错不会落到"没有收窄键"那一支，把默认账户念成调用方点名的账户（V13 R6 / R31）。
         if let Some(name) = admission::refused_query_param(route, query) {
             return ApiResponse::json(400, error_json(&format!("{route} 不接受查询参数 {name}")));
         }
-        // 带键读面的共同前置：`account_id`/`venue_id` 形状合法但仓内没有这份投影时，
-        // 下面那些"摊成数组/原样搬运"的读面会回一份空的 200，而 `/account/snapshot` 同一条件下回 404
-        // ——判定放在分派之前做一次，七个读面共用（V13 R2 #191）。
+        // 带键读面的共同前置：`account_id`/`venue_id` 形状合法但仓内没有这份投影时，下面那些"摊成数组/原样搬运"的读面
+        // 会回一份空的 200，而 `/account/snapshot` 同一条件下回 404——判定放在分派之前做一次，七个读面共用（V13 R2 #191）。
         if PROJECTION_SCOPED_ROUTES.contains(&route) {
             if let Some(response) = self.missing_projection_response(query) {
                 return response;
@@ -1652,9 +1638,7 @@ qx_control_retired_audit_records_total {}\n",
                         let entries: Vec<_> = models
                             .ledger_entries
                             .into_iter()
-                            .filter(|entry| {
-                                scope_keeps_account(scope.as_ref(), &entry.account_id)
-                            })
+                            .filter(|entry| scope_keeps_account(scope.as_ref(), &entry.account_id))
                             .collect();
                         ApiResponse::json(
                             200,
@@ -1696,9 +1680,8 @@ qx_control_retired_audit_records_total {}\n",
                     Ok(after) => after,
                     Err(error) => return ApiResponse::json(400, error_json(error)),
                 };
-                // V12 R4-g：`after` 与 `/events/live` 同一个口径——事件序号，不是这条投影
-                // 日志的下标。投影日志的 `next_seq` 恒等于末条 seq+1（`validate` 保证），
-                // 因此这里按末条推导。
+                // V12 R4-g：`after` 与 `/events/live` 同一个口径——事件序号，不是这条投影日志的下标。
+                // 投影日志的 `next_seq` 恒等于末条 seq+1（`validate` 保证），因此这里按末条推导。
                 let next_seq = all_events.last().map_or(0, |event| event.seq + 1);
                 let events = match events_after_cursor(all_events.iter(), next_seq, after) {
                     Ok(events) => events,
@@ -1714,6 +1697,15 @@ qx_control_retired_audit_records_total {}\n",
             }
             ("GET", "/events/live") => self.live_events(query),
             ("POST", "/control/commands") => self.submit_command(body, ts, authenticated_operator),
+            ("POST", "/app/validate-dataset") => {
+                app_surface::post_validate_dataset(body, &self.app_paths.data_root)
+            } // T2-2/G1 应用层用例
+            ("POST", "/app/backtest") => app_surface::post_run_backtest(
+                body,
+                &self.app_paths.data_root,
+                &self.app_paths.artifact_root,
+            ),
+            ("POST", "/app/verify") => app_surface::post_verify_run(body),
             _ => ApiResponse::text(404, "not found"),
         }
     }
@@ -1788,8 +1780,7 @@ qx_control_retired_audit_records_total {}\n",
         };
         // 基准查得到就一定有当前快照：`publish_snapshot`（全局与按账户那两处）都把
         // `snapshot_history` 与 `snapshot` 同批写入，没有任何入口能把前者写上不写后者。
-        // 所以这里不再单独声明一个两张端点表都没有的 `404 snapshot_not_found`（V13 R2 #205）——
-        // 那个码在这条路上取不到，留着它等于让文档去解释一条永不返回的分支。
+        // 所以这里不再单独声明一个两张端点表都没有的 `404 snapshot_not_found`（V13 R2 #205）——那个码在这条路上取不到，留着它等于让文档去解释一条永不返回的分支。
         let (Some(base), Some(target)) = (history.get(&base_hash), target) else {
             return ApiResponse::json(409, error_json("snapshot_base_not_found"));
         };

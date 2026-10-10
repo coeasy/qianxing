@@ -1,5 +1,5 @@
 schema_version: 1
-updated_at: "2026-10-09"
+updated_at: "2026-10-10"
 default_profile: backtest_only
 
 # 证据等级：
@@ -699,6 +699,33 @@ capabilities:
       - event_consumer_pipe_write_bounded_by_killing_handler：事件 consumer handler 的写侧超时只能靠杀掉子进程来关闭管道读端、放行阻塞的写线程，故 handler 一旦 wedge 需重启而非复用；单事件最坏墙钟约为 2×timeout_ms（写侧预算与退出轮询各等一次）；这条整段在 #[cfg(feature = "nats")] 下、不在默认特性（DEFAULT=["sqlite"]），既不进默认发布 exe 也不进 wheel，且本机无 NATS/handler 沙盒，有界性只由 nats 编译+回归用例+门禁自证（V13 R2 第三十五遍 #282）
       - shared_memory_input_ring_timeout_reported_as_ring_failure_until_v13_r8：SharedMemoryJson/SharedMemoryColumnar 两条传输的输入写入循环是三臂——`Ok` break、`Err(Full) if Instant::now() < deadline` 睡 1ms、catch-all 报「写入共享 ring 失败」。循环本身会终止，但到点仍是 `Full` 时落进 catch-all，运维读到的是「ring 满/写入失败」，方向被引向共享内存实现本身；实际是 worker 停止消费输入，与紧接着的输出侧 `Err(Empty)`（报「worker 响应超时」并 `child.kill()` + `death_note`）是同一种死法。V13 R8-C 已改报「worker 输入写入超时 timeout_ms=…：共享输入 ring 满，worker 已停止消费」，并照输出侧补上 `child.kill()` 与 `death_note`，避免留下不再消费输入的 worker 让下一次请求再卡满整个预算（最坏墙钟同为 2×timeout_ms）。诊断口径已修正，但「worker wedge 只能靠杀进程」这一半与上两条同族、未变（V13 R8-C）
 
+  python_sdk_facade:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - python/qianxing/__init__.py typed public namespace
+      - python/qianxing/app.py qx-app backed dataset validation, Bar backtest, and artifact verification
+      - python/qianxing/cli.py packaged qianxing research command
+      - python/qianxing/strategy.py, python/qianxing/ccxt.py, and python/qianxing/ashare.py stable namespace exports for the existing language strategy and optional data/exchange adapters
+      - python/pyproject.toml formal qianxing distribution, optional integration extras, and console entry point
+      - .github/workflows/release.yml Python wheel matrix and opt-in PyPI Trusted Publishing job
+      - locally built release wheel installed outside the source tree and validated with native doctor plus validate/backtest/verify smoke
+    limitations:
+      - sdk_surface_is_currently_sync_bar_research_only：Tick/OrderBook, Paper/Live, long-running Run handles, report builders, and experiment workflows are not exposed here
+
+  cpp_strategy_package:
+    implementation: true
+    code_tested: false
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - cpp/CMakeLists.txt exports Qianxing::StrategySDK and installable headers/config metadata
+      - .github/workflows/release.yml packages the installed CMake SDK archive
+    limitations:
+      - installed_sdk_consumer_not_yet_verified：CMake package install and downstream find_package consumption have not been built in this change
+
   cpp_strategy_sdk:
     implementation: true
     code_tested: true
@@ -850,3 +877,38 @@ capabilities:
       - backtest_summary_does_not_embed_the_dataset_quality_report：回测摘要在 input 块里只声明数据集身份（id/version/fingerprint），不嵌入 DatasetQualityReport；要把它接进摘要需要给回测入口加一个数据集清单路径参数并在写摘要时校验指纹，属后续工作。今天质量报告由 `crates/qx-cli/src/data_validate.rs` 的 data-validate 独立产出成 DatasetManifestV2（含 quality_report），两份产物各自成立但尚未串成一条链
       - report_html_is_opt_in_and_not_wired_into_quickstart：--html 是显式旗标，quickstart 与逐条首跑链默认不产出报告，产物份数仍是「init 10 + 回测 6」；把它并进首跑会改变既有的份数不变量与用例，属后续工作
       - grafana_dashboard_is_a_deploy_file_not_an_embedded_template：deploy/grafana/qianxing-overview.json 已落盘且有指标名用例，但它不在 qx-cli 内嵌的 DEPLOY_TEMPLATES 登记表里，所以 `qx-cli init` 不会把它拷进项目目录，要用手动或部署脚本单独铺
+
+  artifact_schema_versioning:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - maturity/artifact_migration.yaml 一份在册契约一行的版本关系图 + 迁移表：读侧文件、版本字段名、只认的版本常量、读到未知版本时的处置、逐字取自读侧的拒绝文案、钉住该拒绝的常驻用例（T1-2）
+      - tools/check_architecture.py artifact_migration_check 七颗：登记面在盘且自述齐全并指向在盘的模式登记册实例；artifacts 的 schema_id 集合与 maturity/schema-registry.json 的 entries 逐一相等且行数不低于地板；每行七格齐全且处置的允许集与实用集相等（新态必须同时扩判据）；refuse 行读侧真声明版本常量且真在正文比对它（只读代码、剥掉整行注释）；拒绝文案与版本字段名逐字来自读侧代码；每条处置都有常驻用例且用例对具名拒绝说话（不是裸 is_err）；显式迁移表每行四格齐全且迁移函数在盘，空表合法（T1-2）
+      - crates/qx-spec/src/tests.rs 六条具名拒绝用例：项目清单/实验规格/运行记录/能力清单/证据包/模式登记册各自拒绝未来的 schema_version，且文案同时点名读到的版本与本构建只认的版本（T1-2）
+      - crates/qx-data/src/catalog_v2.rs 数据集清单的同一形状：manifest_version=7 被拒且文案同时点名两个版本（T1-2）
+      - crates/qx-protocol/src/tests.rs 一份自洽的 schema_version=7（本构建连反序列化都读不出来）仍被叫成版本问题而不是字段缺失（T1-2）
+      - crates/qx-runtime/src/strategy_contract/contract.rs StrategyContractInput::validate 把版本判定从「身份、时间、标的或风险字段非法」那句通用文案里拆出来具名（策略输入契约 schema_version={} 不受支持（本构建只认 {}）），与 Python 侧 StrategyInput.validate 早已具名的 unsupported strategy schema_version 同口径（T1-2）
+      - crates/qx-runtime/src/strategy_contract/tests.rs strategy_input_contract_refuses_an_unsupported_schema_version 与 strategy_output_decode_entry_rejects_foreign_schema_version 两条用例分别钉住输入/输出两个方向的版本拒绝（T1-2）
+    limitations:
+      - artifacts_without_a_version_field_have_no_registered_disposition：本表当前只有 refuse 一态，因为 10 份在册契约都有独立版本号。若将来出现只靠字段集合（deny_unknown_fields 或 additionalProperties=false）拒绝未知键的契约，需要同时给 maturity/artifact_migration.yaml 加新态并扩 artifact_migration_check 的允许集——判据核「允许集 == 实用集」，只改表会当场红
+      - migration_table_is_empty_by_construction：本仓没有「同一份产物跨版本就地升级」的读侧，旧产物一律具名拒绝而不是就地迁移，所以 migrations 是空表。这一格由判据承认（空表合法），但登记一条迁移就必须有在盘的迁移函数
+      - evidence_bundle_has_no_producer_yet：evidence-bundle-v1（实盘轨的 EvidenceBundle，L3/L4）的读侧版本处置已在册并有具名拒绝用例，但它在仓内仍没有生产者（只有 crates/qx-cli/src/plan_commands.rs 的夹具）。T1-1 的「最小版」**没有**给它加生产者，而是另立了 run-evidence-v1 / RunEvidenceBundle（回测/Paper 轨的本地证据包，上限 L2，见下面 run_evidence_bundle 那一格）——两者不是同一个对象，本格说的是「实盘证据包读侧怎么拒旧版本」，不是「回测证据包有没有人产」
+  run_evidence_bundle:
+    implementation: true
+    code_tested: true
+    sandbox_tested: false
+    production_approved: false
+    evidence:
+      - crates/qx-spec/src/run_evidence.rs RunEvidenceBundle 契约：只聚合与校验、不重算指标；三条对象层纪律落在代码里（空 unverified 拒 / artifact_digests_verified=false 拒 / capability_level 高于 L2 拒）；交叉比对表把 dataset.composed_fingerprint 与 run.data_fingerprint 逐字对上（T1-1）
+      - schemas/run-evidence-v1.json 严格 schema：顶层 required 与对象 pub 字段逐一相等、additionalProperties=false、capability_level 只认 L0/L1/L2、quality_report 允许 null 但不许是一份空报告（T1-1）
+      - crates/qx-cli/src/run_evidence.rs 构建器 write_run_evidence：从 run.json + summary.json 聚合出 <stem>.evidence.json，写盘前后各按对象自己的 validate 复核一遍（T1-1）
+      - crates/qx-cli/src/report_command.rs 复核链通过之后才写证据包；顺序反了会在拒绝路径上先落一份没核过的 artifact_digests_verified=true（T1-1）
+      - crates/qx-cli/src/tests/run_evidence.rs 正向（聚合出可离线复算的证据包并与同一轮 RunManifest 逐字对身份）与反向（复核拒绝时不留证据包）两条常驻用例（T1-1）
+      - tools/check_architecture.py run_evidence_check 八颗：对象字段与 schema 顶层 required 逐一相等；三条纪律落在代码上（剥掉整行注释）；交叉表与判据期望逐条相等且条数不为零；内容指纹与合成指纹分两格且只拿合成指纹去比 run.data_fingerprint；质量报告允许缺席不许空；构建器是生产代码且有非测试调用者；--evidence 使用者可达且写在复核链之后；正反两条常驻用例在盘（T1-1）
+    limitations:
+      - evidence_bundle_is_opt_in_and_not_wired_into_quickstart：--evidence 是 opt-in，默认面产物集合不变（tools/backtest_acceptance.py 按种类比对那四份产物，默认面是它的基线），所以默认回测路径不产证据包；把它接进 quickstart 需要同时改验收脚本认的产物集合与 maturity/backtest_acceptance.yaml
+      - quality_report_is_not_produced_by_the_backtest_chain_yet：dataset.quality_report 今天恒为 null——回测链还没有产出数据集质量报告的读侧（质量报告 v2 是 T1-6）。空 tiers 被显式拒绝，所以这一格不会把「没核过」写成「核过了」
+      - capability_level_is_capped_at_l2：本地运行证据只到 L2；L3/L4（沙盒/生产）必须由带真实 venue 窗口的 evidence-bundle-v1 支撑，构建器今天只声明 L1
+      - assumptions_are_aggregated_not_yet_tiered：assumptions 今天按摘要里已有的口径聚合（撮合内核、费用来源、本金口径、风险规则集），三档撮合各自的具名假设与逐单记录是 T1-3，尚未落地

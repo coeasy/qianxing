@@ -322,7 +322,11 @@ fn rewrite_run_manifest(summary: &serde_json::Value, edit: impl FnOnce(&mut serd
 }
 
 /// 跑一遍策略链并读回摘要。返回（摘要，runtime 路径，需要回收的用例目录）。
-fn bar_chain_products(label: &str) -> (serde_json::Value, PathBuf, Vec<PathBuf>) {
+/// 跑一遍策略链并交出 `(摘要, 运行时配置, 待清理目录)`。
+///
+/// `pub(crate)` 是为了让 `tests::run_evidence`（T1-1 的运行证据包用例）复用同一条夹具链——
+/// 证据包要的是**真跑出来的产物**，另写一份夹具会让「同一运行」这句话失去对照物。
+pub(crate) fn bar_chain_products(label: &str) -> (serde_json::Value, PathBuf, Vec<PathBuf>) {
     let (deploy, _, template) = builtin_backtest_example_paths();
     let root = temp_cli_case_dir(label);
     let frame = bar_frame_copy(&root, label);
@@ -333,7 +337,7 @@ fn bar_chain_products(label: &str) -> (serde_json::Value, PathBuf, Vec<PathBuf>)
     (summary, runtime, vec![root, strategy_root])
 }
 
-fn clean_up(dirs: Vec<PathBuf>) {
+pub(crate) fn clean_up(dirs: Vec<PathBuf>) {
     for path in dirs {
         let _ = std::fs::remove_dir_all(path);
     }

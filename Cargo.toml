@@ -24,6 +24,10 @@ members = [
     "crates/qx-python",
     "crates/qx-strategy",
     "crates/qx-spec",
+    # 应用层（QX-DEV-PLAN-2026-10-10 T2-1 / 方案 §2.1、§15.2）：用例、稳定输入/输出类型与错误边界。
+    # 依赖方向 = facade → application → domain/ports，所以它是**被** CLI/Python/HTTP 依赖的那一层，
+    # 自己绝不依赖 qx-cli / qx-api / qx-python（`layer_dependency_check` 里有一条禁止边专门守它）。
+    "crates/qx-app",
     "crates/qx-cli",
     # 跨 crate 契约用例宿主（方案 §5.4 P1-12）：纯测试 crate，无生产代码，无人依赖它。
     # 放进 workspace 是为了它仍被 `cargo test --workspace` 跑到、并计入全仓用例地板。

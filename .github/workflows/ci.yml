@@ -39,6 +39,11 @@ jobs:
         run: python3 tools/check_architecture.py
       - name: Python adapters and strategy contracts
         run: python3 -m unittest discover -s python/tests -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Web console syntax contract
+        run: node --check web/console/app.js
 
   python-wheel:
     name: Python wheel (${{ matrix.os }}, Python ${{ matrix.python }})
@@ -80,11 +85,13 @@ jobs:
           python - <<'PY'
           import qianxing_bridge
           from qianxing_bridge import native
+          import qianxing
 
           assert qianxing_bridge.__file__.startswith("site-packages") or "site-packages" in qianxing_bridge.__file__, (
               f"wheel import resolved outside site-packages: {qianxing_bridge.__file__}"
           )
           assert native.available(), "native extension missing from the installed wheel"
+          assert "backtest.bar.v1" in qianxing.doctor()["implemented_use_cases"]
           payload = (
               '{"instrument":"BTCUSDT.BINANCE","source":"native","ts":[1,2],'
               '"open_raw":[100,101],"high_raw":[102,103],"low_raw":[99,100],'
@@ -280,6 +287,14 @@ jobs:
         run: cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release -DQX_BUILD_JSONL_EXAMPLE=ON
       - name: Build C++ SDK smoke
         run: cmake --build build/cpp --config Release --parallel
+      - name: Install and consume the exported CMake package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --install build/cpp --prefix "$PWD/build/cpp-sdk-install"
+          cmake -S cpp/tests/consumer -B build/cpp-consumer \
+            -DCMAKE_PREFIX_PATH="$PWD/build/cpp-sdk-install"
+          cmake --build build/cpp-consumer --config Release --parallel
       - name: Locate built binaries
         id: binaries
         shell: bash

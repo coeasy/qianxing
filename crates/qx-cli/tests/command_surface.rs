@@ -12,8 +12,9 @@
 use std::process::Command;
 
 /// 顶层命令表（与 `cli_args.rs` 的 clap 派生逐一相等，由门禁核对）。
-const CLI_COMMANDS: [&str; 46] = [
+const CLI_COMMANDS: [&str; 47] = [
     "all",
+    "app",
     "backtest",
     "binance-private-probe",
     "binance-public-probe",
@@ -83,13 +84,13 @@ fn every_command_renders_its_own_help() {
     }
 }
 
-/// 二级入口表：`config <sub>` / `run <sub>` / `strategy <sub>` / `backtest <sub>`。
+/// 二级入口表：`config <sub>` / `run <sub>` / `strategy <sub>` / `backtest <sub>` / `app <sub>`。
 ///
 /// 顶层表只保证每条入口能渲染自己的用法；`backtest ccxt-builtin`、`strategy list` 这类
 /// **二级入口**此前一颗用例都没点过名（旧判据 `cli_command_test_evidence_check` 报出的正是
-/// 这两条）——它一敲就崩、或自己的用法渲染不出来时没人红。这里把 18 条二级入口逐条实跑
+/// 这两条）——它一敲就崩、或自己的用法渲染不出来时没人红。这里把 21 条二级入口逐条实跑
 /// `--help`，与顶层那条同一口径（退 0 + 用法里带叶子名）。
-const NESTED_COMMANDS: [&str; 18] = [
+const NESTED_COMMANDS: [&str; 21] = [
     "config explain",
     "config validate",
     "config fingerprint",
@@ -108,6 +109,9 @@ const NESTED_COMMANDS: [&str; 18] = [
     "backtest multi-builtin",
     "backtest ccxt-builtin",
     "backtest book",
+    "app validate-dataset",
+    "app backtest",
+    "app verify",
 ];
 
 /// 逐条二级入口实跑 `--help`：clap 必须认它（退 0），且用法里带子命令名。

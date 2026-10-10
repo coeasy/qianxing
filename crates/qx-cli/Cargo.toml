@@ -36,6 +36,9 @@ qx-execution = { path = "../qx-execution" }
 qx-runtime = { path = "../qx-runtime" }
 qx-strategy = { path = "../qx-strategy" }
 qx-spec = { path = "../qx-spec" }
+# T2-2/G1：`qx-cli app` 是本仓**第一个**把核心研究用例交给应用层的门面入口。
+# 方向是 §15.2 的 facade → application，反向那条由 `layer_dependency_check` 的禁止边守着。
+qx-app = { path = "../qx-app" }
 qx-orchestrator = { path = "../qx-orchestrator" }
 qx-storage = { path = "../qx-storage" }
 serde_json = { workspace = true }

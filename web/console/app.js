@@ -21,6 +21,9 @@ const API_PATHS = {
   schedulerRuns: "/scheduler/runs",
   controlAudit: "/control/audit",
   controlCommands: "/control/commands",
+  appValidateDataset: "/app/validate-dataset",
+  appBacktest: "/app/backtest",
+  appVerify: "/app/verify",
   events: "/events",
   eventsLive: "/events/live",
 };
@@ -495,13 +498,17 @@ async function refreshReadModels() {
 // mTLS 认证边界上的身份覆盖它（`ApiService::submit_command`），并可能直接回
 // `403 authenticated_operator_required`——那时页面不能自声明身份，只能如实转述。
 async function postJson(path, payload) {
+  return postJsonText(path, JSON.stringify(payload));
+}
+
+async function postJsonText(path, body) {
   const headers = { "Content-Type": "application/json", Accept: "application/json" };
   const csrf = csrfToken();
   if (csrf) headers[CSRF_HEADER_NAME] = csrf;
   const response = await fetch(state.base + path, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body,
   });
   return { status: response.status, ok: response.ok, body: await readJson(response) };
 }
@@ -534,6 +541,49 @@ async function submitCommand(event) {
   renderControl();
   // 受理之后立刻回读审计，把②③两阶段推进一格。
   await refreshReadModels();
+}
+
+// ---- 研究面板：校验 → 回测 → 复核 ----
+async function runResearch(validateOnly) {
+  const output = $("research-output");
+  const buttons = [$("research-validate"), $("research-run")];
+  if (!state.base) return;
+  for (const button of buttons) button.disabled = true;
+  output.textContent = "正在校验数据集…";
+  try {
+    const specText = $("research-spec").value.trim();
+    const spec = JSON.parse(specText);
+    const dataset = {
+      schema_version: 1,
+      dataset_id: spec.run_id || "console-dataset",
+      bars_path: spec.bars_path,
+    };
+    const validation = await postJson(API_PATHS.appValidateDataset, dataset);
+    if (!validation.ok || !validation.body?.usable) {
+      output.textContent = JSON.stringify({ validation }, null, 2);
+      return;
+    }
+    if (validateOnly) {
+      output.textContent = JSON.stringify({ validation }, null, 2);
+      return;
+    }
+    output.textContent = "数据可用，正在回测…";
+    // 保留 i128 *_raw 字面量原文；JSON.parse/ stringify 会把大整数舍入到 IEEE-754 精度。
+    const backtest = await postJsonText(API_PATHS.appBacktest, specText);
+    if (!backtest.ok) {
+      output.textContent = JSON.stringify({ validation, backtest }, null, 2);
+      return;
+    }
+    output.textContent = "回测完成，正在复核四份产物…";
+    const verification = await postJson(API_PATHS.appVerify, backtest.body);
+    output.textContent = JSON.stringify({ validation, backtest, verification }, null, 2);
+  } catch (error) {
+    output.textContent = error instanceof SyntaxError
+      ? `回测规格 JSON 无效：${error.message}`
+      : `研究请求失败：${error}`;
+  } finally {
+    for (const button of buttons) button.disabled = false;
+  }
 }
 
 function describeAccepted(result) {
@@ -931,6 +981,8 @@ window.addEventListener("DOMContentLoaded", () => {
   $("connect").addEventListener("click", connect);
   $("disconnect").addEventListener("click", disconnect);
   $("control-form").addEventListener("submit", submitCommand);
+  $("research-validate").addEventListener("click", () => runResearch(true));
+  $("research-run").addEventListener("click", () => runResearch(false));
   $("api-base").addEventListener("keydown", (event) => {
     if (event.key === "Enter") connect();
   });

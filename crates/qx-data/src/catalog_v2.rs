@@ -233,4 +233,18 @@ mod tests {
         manifest.quality_report.missing_intervals = 3;
         assert_eq!(manifest.warnings().len(), 1);
     }
+
+    /// T1-2：版本不匹配必须给出**具名**拒绝——文案里同时点名「读到的版本」与「本构建只认的版本」。
+    /// 只断言 `is_err()` 不够：换成一句泛泛的「解析失败」也照样绿，而读者拿到的是没有定位信息的
+    /// 错误（这份清单是旧版本，还是文件本身坏了？）。
+    #[test]
+    fn dataset_manifest_v2_refuses_an_unsupported_manifest_version() {
+        let mut manifest = sample();
+        manifest.manifest_version = 7;
+        let error = manifest.validate().expect_err("未来版本必须被拒");
+        assert!(
+            error.contains("manifest_version=7") && error.contains("只认 1"),
+            "版本拒绝文案必须同时点名读到的版本与只认的版本；实际 {error}"
+        );
+    }
 }

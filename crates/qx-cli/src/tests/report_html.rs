@@ -84,16 +84,22 @@ fn report_output_flag_is_part_of_direct_cli_surface() {
         "report",
         "summary.json",
         "--html",
+        "--evidence",
         "-o",
         "custom.html",
     ])
     .unwrap();
     match parsed.command.unwrap() {
         cli_args::Command::Report {
-            path, html, out, ..
+            path,
+            html,
+            evidence,
+            out,
+            ..
         } => {
             assert_eq!(path, Some(PathBuf::from("summary.json")));
             assert!(html);
+            assert!(evidence, "T1-1 的 --evidence 必须落在 Report 命令变体上");
             assert_eq!(out, Some(PathBuf::from("custom.html")));
         }
         _ => panic!("report 参数必须落在 Report 命令变体"),

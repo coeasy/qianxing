@@ -17,11 +17,6 @@ fn fail_usage(error: clap::Error) -> ! {
     usage_errors::report(&error)
 }
 
-fn run_arguments(entry: &str, mut arguments: Vec<String>) -> Vec<String> {
-    arguments.insert(0, entry.to_string());
-    arguments
-}
-
 #[cfg(feature = "nats")]
 fn dispatch_outbox_relay(root: PathBuf, url: String, subject_prefix: String, limit: Option<usize>) {
     if let Err(error) = run_file_outbox_relay(&root, &url, &subject_prefix, limit.unwrap_or(100)) {
@@ -132,8 +127,7 @@ pub(crate) fn run() {
         Err(error) => fail_usage(error),
     };
     let Some(command) = cli.command else {
-        // 空 argv 与显式 `all` 同义（迁移前的默认 mode）。
-        print_banner();
+        print_banner(); // 空 argv 与显式 `all` 同义（迁移前的默认 mode）
         selfcheck::run(selfcheck::Scope::Full);
         return;
     };
@@ -257,10 +251,12 @@ pub(crate) fn run() {
             path,
             json,
             html,
+            evidence,
             out,
         } => {
             let path = path.unwrap_or_else(default_runtime_path);
-            if let Err(error) = run_report_with_output(&path, json, html, out.as_deref()) {
+            if let Err(error) = run_report_with_output(&path, json, html, evidence, out.as_deref())
+            {
                 eprintln!("[qx-cli · CLI] 报告查看失败: {error}");
                 std::process::exit(2);
             }
@@ -666,6 +662,7 @@ pub(crate) fn run() {
         }
         Command::Ecosystem => run_ecosystem_smoke(),
         Command::Paper => run_paper_smoke(),
+        Command::App(args) => app_commands::dispatch(args.action), // T2-2/G1：业务交给应用层
         Command::All => selfcheck::run(selfcheck::Scope::Full),
         Command::Verify => selfcheck::run(selfcheck::Scope::KernelOnly),
         Command::Version => build_identity::print_identity(),

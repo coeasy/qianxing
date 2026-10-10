@@ -1,0 +1,22 @@
+[package]
+name = "qx-app"
+description = "牵星应用层：用例、稳定输入/输出类型、授权与错误边界（facade → application → domain）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# 领域/端口侧：应用层可以依赖它们（方案 §15.2 的 `facade → application → domain/ports`）。
+# 这份清单是**精确**的：`qx_app_check` 逐项核对它，多一项少一项都会红——依赖集是应用层
+# "没有偷偷把门面拉进来"这条纪律的载体，含糊的清单守不住它。
+qx-core = { path = "../qx-core" }
+qx-datastruct = { path = "../qx-datastruct" }
+qx-strategy = { path = "../qx-strategy" }
+qx-xingban = { path = "../qx-xingban" }
+qx-zhenlu = { path = "../qx-zhenlu" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# 门面侧一律**不**依赖：qx-cli / qx-api / qx-python / qx-adapter / qx-execution / qx-runtime /
+# qx-storage。这不是注释，是 `tools/check_architecture.py::layer_dependency_check` 里的禁止边——
+# 加回任何一条当场红。反向则成立且必要：三个门面都依赖本 crate（G1 的三入口同用例）。

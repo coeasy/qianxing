@@ -90,6 +90,18 @@
       ]
     },
     {
+      "schema_id": "run-evidence-v1",
+      "version": 1,
+      "path": "schemas/run-evidence-v1.json",
+      "producer": "qx-spec",
+      "consumers": ["qx-cli"],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-spec/src/tests.rs",
+        "crates/qx-cli/src/plan_commands.rs"
+      ]
+    },
+    {
       "schema_id": "evidence-bundle-v1",
       "version": 1,
       "path": "schemas/evidence-bundle-v1.json",

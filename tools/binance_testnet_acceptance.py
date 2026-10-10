@@ -98,8 +98,9 @@ def write_result_package(
         "detail": detail,
         "sandbox_tested_flip": {
             "allowed": outcome == "pass",
-            "rule": "只有 outcome=pass 且全部阶段退出码为 0 才允许把 capabilities.yaml 的"
-            " sandbox_tested 置 true；skipped/fail 一律保持 false，且必须连同本包一起归档",
+            "rule": "只有 outcome=pass 且除 live-check 之外全部阶段退出码为 0 才允许把"
+            " capabilities.yaml 的 sandbox_tested 置 true；skipped/fail 一律保持 false，"
+            "且必须连同本包一起归档",
         },
     }
     path = workdir / "result.json"

@@ -157,9 +157,9 @@ pub(crate) fn run_unified_command(arguments: &[String]) -> Result<(), String> {
             run_runtime_check(&path, json)
         }
         "report" => {
-            let (path, json, html, output) =
+            let (path, json, html, evidence, output) =
                 run_report_entry_arguments(arguments, default_runtime_path)?;
-            run_report_with_output(&path, json, html, output.as_deref())
+            run_report_with_output(&path, json, html, evidence, output.as_deref())
         }
         _ => Err(run_usage(&format!("不支持 {action}"))),
     }

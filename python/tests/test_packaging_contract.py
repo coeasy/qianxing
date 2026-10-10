@@ -58,7 +58,7 @@ class PackagingContractTest(unittest.TestCase):
 
         message = str(ctx.exception)
         self.assertEqual(ctx.exception.error_class, CcxtErrorClass.UNSUPPORTED)
-        self.assertIn("qianxing-bridge[ccxt]", message)
+        self.assertIn("qianxing[ccxt]", message)
         # 报错点名的 extra 必须真的在 pyproject 里定义（不许指一个不存在的 extra）
         self.assertIn("ccxt", self.extras)
 

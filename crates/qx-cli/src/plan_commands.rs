@@ -1,10 +1,10 @@
-//! 地基规格对象（qx-spec）的进程内冒烟：七类声明式文档在本构建里必须既能读入、又能拒绝坏载荷。
+//! 地基规格对象（qx-spec）的进程内冒烟：八类声明式文档在本构建里必须既能读入、又能拒绝坏载荷。
 //!
 //! 规划（docs/qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md §6.2 / §7）把
-//! ProjectManifest / DatasetManifest v2 / ExperimentSpec / RunRecord / CapabilityManifest /
-//! EvidenceBundle / SchemaRegistry 定为「统一身份」地基。这里用一份最小合法夹具与一份坏夹具，
-//! 证明 `qx_spec::describe` 这个唯一读入漏斗在**随包发布的二进制里**真的接上了：合法夹具必须过，
-//! 坏夹具必须被拒——否则地基对象只是躺在源码里的类型。由 `ecosystem` / `all` 自检驱动。
+//! ProjectManifest / DatasetManifest v2 / ExperimentSpec / RunRecord / RunEvidenceBundle /
+//! CapabilityManifest / EvidenceBundle / SchemaRegistry 定为「统一身份」地基。这里用一份最小合法夹具与
+//! 一份坏夹具，证明 `qx_spec::describe` 这个唯一读入漏斗在**随包发布的二进制里**真的接上了：合法夹具
+//! 必须过，坏夹具必须被拒——否则地基对象只是躺在源码里的类型。由 `ecosystem` / `all` 自检驱动。
 
 use crate::plan_args::PlanArgs;
 use qx_spec::{describe, FoundationKind};
@@ -34,7 +34,7 @@ pub(crate) fn verify_foundation_specs() -> Result<String, String> {
 
 /// `plan` 命令的唯一实现：读一份地基规格对象，按严格 schema 解析、自洽校验、算出稳定指纹。
 ///
-/// 这是七类「统一身份」文档对使用者开放的唯一读入口——`qx_spec::describe` 是同一份漏斗，
+/// 这是八类「统一身份」文档对使用者开放的唯一读入口——`qx_spec::describe` 是同一份漏斗，
 /// 这里只负责取文件、印摘要（`--json` 时改印规范化正文）。告警一律走 stderr，不污染 stdout。
 pub(crate) fn plan_readout(args: &PlanArgs) -> Result<(), String> {
     let payload = std::fs::read_to_string(&args.file)
@@ -70,7 +70,7 @@ fn corrupt(kind: FoundationKind, payload: &str) -> String {
     value.to_string()
 }
 
-/// 七类对象各一份最小合法夹具。
+/// 八类对象各一份最小合法夹具。
 fn fixture(kind: FoundationKind) -> Option<String> {
     let value = match kind {
         FoundationKind::Project => serde_json::json!({
@@ -135,6 +135,71 @@ fn fixture(kind: FoundationKind) -> Option<String> {
             "artifact_refs": [{"name": "summary", "path": "summary.json", "digest": "d"}],
             "replay_verdict": "verified",
             "capability_level": "L1"
+        }),
+        FoundationKind::RunEvidence => serde_json::json!({
+            "schema_version": 1,
+            "run": {
+                "run_id": "smoke-run",
+                "code_commit": "0000000",
+                "runtime_version": "0.1.0",
+                "config_hash": "cfg",
+                "data_fingerprint": "fp",
+                "input_components": {"bars": "bars-fp"},
+                "clock_start": 1,
+                "clock_end": 2,
+                "global_seed": 1,
+                "determinism_mode": true,
+                "result_hash": "res",
+                "strategy_version": "macd@1",
+                "instrument_spec_version": "spot@1",
+                "model_fingerprint": "model",
+                "input_event_hash": "in",
+                "output_event_hash": "out"
+            },
+            "artifacts": [
+                {"name": "run_manifest", "path": "smoke.run.json", "digest": "d1"},
+                {"name": "summary", "path": "smoke.summary.json", "digest": "d2"},
+                {"name": "equity", "path": "smoke.equity.csv", "digest": "d3"},
+                {"name": "fills", "path": "smoke.fills.csv", "digest": "d4"}
+            ],
+            "dataset": {
+                "kind": "barframe",
+                "dataset_id": "demo.bars",
+                "version": "v1",
+                "content_fingerprint": "fp",
+                "composed_fingerprint": "fp",
+                "row_count": 3,
+                "path": "demo.bar-frame.json",
+                "quality_report": null
+            },
+            "identity": {
+                "strategy_id": "macd",
+                "strategy_version": "macd@1",
+                "instrument": "DEMO.SIM",
+                "config_digest": "cfg"
+            },
+            "assumptions": [
+                {"name": "fill_model", "value": "risk-averse-fifo", "source": "backtest spec"}
+            ],
+            "build": {
+                "runtime_version": "0.1.0",
+                "code_commit": "0000000",
+                "profile": "release",
+                "target_triple": "x86_64-pc-windows-msvc"
+            },
+            "verification": {
+                "capability_level": "L1",
+                "replay_verdict": "verified",
+                "artifact_digests_verified": true,
+                "verified_artifact_count": 4
+            },
+            "unverified": ["实盘 venue 未参与本次运行"],
+            "recompute": {
+                "steps": ["按 run.data_fingerprint 取回同一份数据集", "重跑同 config_hash 的回测"],
+                "inputs": ["smoke.run.json", "smoke.summary.json"],
+                "expected_result_hash": "res"
+            },
+            "operator": "smoke"
         }),
         FoundationKind::Capability => serde_json::json!({
             "schema_version": 1,
@@ -209,7 +274,7 @@ mod tests {
         }
     }
 
-    /// 七类地基对象都必须能被 `plan` 读入：这是「统一身份」对使用者开放的唯一入口。
+    /// 八类地基对象都必须能被 `plan` 读入：这是「统一身份」对使用者开放的唯一入口。
     #[test]
     fn plan_reads_every_foundation_kind() {
         for kind in FoundationKind::ALL {

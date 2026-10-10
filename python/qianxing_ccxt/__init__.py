@@ -352,7 +352,7 @@ def create_ccxt_pro_exchange(config: CcxtConfig, *, ccxt_pro_module: Any | None 
             except ImportError as error:
                 raise CcxtConnectorError(
                     CcxtErrorClass.UNSUPPORTED,
-                    "未安装公共 CCXT Pro；请安装 qianxing-bridge[ccxt-pro] 或 ccxtpro 包",
+                    "未安装公共 CCXT Pro；请安装 qianxing[ccxt-pro] 或 ccxtpro 包",
                     cause=error,
                 ) from error
     exchange_type = getattr(module, config.exchange_id, None)
@@ -484,7 +484,7 @@ class CcxtExchangeClient:
         except ImportError as error:
             raise CcxtConnectorError(
                 CcxtErrorClass.UNSUPPORTED,
-                "未安装公共 ccxt；请安装 qianxing-bridge[ccxt] 或 ccxt 包",
+                    "未安装公共 ccxt；请安装 qianxing[ccxt] 或 ccxt 包",
                 cause=error,
             ) from error
 

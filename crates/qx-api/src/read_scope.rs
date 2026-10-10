@@ -101,10 +101,8 @@ impl ScopeFilter {
     /// 空串与带空白的键不是"没有点名"，是形状非法：回 400，而不是被当成一个真实账户去查。
     /// `trim` 与 `ApiProjectionKey::new` 同一口径，查询侧与投影侧因此不会分叉。
     pub fn from_query(query: &str) -> Result<Option<ScopeFilter>, String> {
-        let account_id = query_param(query, "account_id")?
-            .map(|value| value.trim().to_owned());
-        let venue_id = query_param(query, "venue_id")?
-            .map(|value| value.trim().to_owned());
+        let account_id = query_param(query, "account_id")?.map(|value| value.trim().to_owned());
+        let venue_id = query_param(query, "venue_id")?.map(|value| value.trim().to_owned());
         if account_id.as_deref().is_some_and(str::is_empty)
             || venue_id.as_deref().is_some_and(str::is_empty)
         {
@@ -112,7 +110,10 @@ impl ScopeFilter {
         }
         Ok(match (account_id, venue_id) {
             (None, None) => None,
-            (account_id, venue_id) => Some(Self { account_id, venue_id }),
+            (account_id, venue_id) => Some(Self {
+                account_id,
+                venue_id,
+            }),
         })
     }
 }
@@ -125,12 +126,12 @@ impl ScopeFilter {
 pub(crate) fn scope_keeps_account(scope: Option<&ScopeFilter>, account_id: &str) -> bool {
     scope
         .and_then(|filter| filter.account_id.as_deref())
-        .map_or(true, |wanted| wanted == account_id.trim())
+        .is_none_or(|wanted| wanted == account_id.trim())
 }
 
 /// 把收窄套在 `venue_id` 那一列上：没点名就全收。比较口径同 `scope_keeps_account`。
 pub(crate) fn scope_keeps_venue(scope: Option<&ScopeFilter>, venue_id: &str) -> bool {
     scope
         .and_then(|filter| filter.venue_id.as_deref())
-        .map_or(true, |wanted| wanted == venue_id.trim())
+        .is_none_or(|wanted| wanted == venue_id.trim())
 }

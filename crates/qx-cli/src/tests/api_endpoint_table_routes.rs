@@ -161,8 +161,8 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
         }
     }
     assert!(
-        pairs.len() >= 18,
-        "分派区间里只数出 {} 条 (方法, 路由)，比端点表声称的 18 条还少——取数区间被改窄了",
+        pairs.len() >= 21,
+        "分派区间里只数出 {} 条 (方法, 路由)，比端点表声称的 21 条还少——取数区间被改窄了",
         pairs.len()
     );
     for (method, _) in &pairs {
@@ -213,10 +213,10 @@ const CHECK_SECTION_HEADING: &str = "### 端点表按张核对";
 fn each_endpoint_table_lists_exactly_the_dispatch_routes() {
     let routes = dispatch_routes();
     for (header, documented) in [
-        (RETURN_TABLE_HEADER, table_routes(RETURN_TABLE_HEADER, 18)),
+        (RETURN_TABLE_HEADER, table_routes(RETURN_TABLE_HEADER, 21)),
         (
             SEMANTICS_TABLE_HEADER,
-            table_routes(SEMANTICS_TABLE_HEADER, 18),
+            table_routes(SEMANTICS_TABLE_HEADER, 21),
         ),
     ] {
         let documented = documented.into_iter().collect::<BTreeSet<String>>();
@@ -259,7 +259,7 @@ pub(crate) fn semantics_cells() -> Vec<(String, String)> {
         }
     }
     assert!(
-        rows.len() >= 18,
+        rows.len() >= 21,
         "「非 200 口径」表只解析出 {} 行，少于这张表应有的 18 行——解析口径需要先修",
         rows.len()
     );

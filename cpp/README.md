@@ -11,6 +11,18 @@
 
 本地构建示例：`cmake -S cpp -B build/cpp -DQX_BUILD_JSONL_EXAMPLE=ON && cmake --build build/cpp --config Release`。CI 会在 Ubuntu 安装 `nlohmann-json3-dev` 后编译 C ABI 动态库和独立 Worker；Windows/macOS 的编译器矩阵仍需接入发布环境后验收。
 
+作为 C++ SDK 消费时，可安装头文件与 CMake 导出目标：
+
+```bash
+cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release
+cmake --build build/cpp --config Release
+cmake --install build/cpp --prefix ./stage/qianxing
+```
+
+下游项目可用 `find_package(QianxingStrategySDK CONFIG REQUIRED)` 和
+`target_link_libraries(app PRIVATE Qianxing::StrategySDK)`。发布压缩包包含相同的头文件与
+CMake package 元数据；它是策略接入 SDK，不包含牵星运行时或实盘权限。
+
 `qianxing_ring_smoke` 不依赖 nlohmann/json，专门验证 QXRB 文件头、容量背压、顺序和跨映射读写。
 
 Rust 宿主绑定位于 `crates/qx-strategy/src/c_api.rs`，会校验 ABI 版本、复制插件返回的 intent，并在交给 Risk/OMS 前执行 schema、身份、数量和价格校验。`DynamicCAbiStrategy::load_verified(path, config_json, &DynamicCAbiLoadPolicy)` 会在动态链接前校验普通文件、大小上限和受信任 SHA-256 白名单；也可配置对完整动态库字节的 detached Ed25519 签名校验。加载后仍保证先销毁策略句柄、再卸载动态库。摘要/签名校验不等同于沙箱，信任根、轮换和不受信任代码隔离仍必须由部署系统负责。

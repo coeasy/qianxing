@@ -3,16 +3,73 @@
 //! Python 只获得不可变 JSON 结果或 Arrow C Data Interface capsule；Rust
 //! `BarFrame` 的所有权和校验仍留在 `qx-datastruct`，不会把可变 Python 对象
 //! 引入 Kernel 热路径。
+//!
+//! ## `app_*`：应用层用例的 Python 门面（T2-2 / 退出门 G1）
+//!
+//! 三个 `app_*` 函数与 `qx-cli app` 子命令、`POST /app/*` 三条路由调的是**同一组 `qx-app`
+//! 用例**。它们的进出都是字符串：传一份 spec/outcome JSON，换回一份结果 JSON；失败时抛
+//! [`QxAppError`]，**异常文本就是 `AppError::to_json()` 的原文**——于是「同一 use case 三入口
+//! 结果哈希相同、错误 code 与 correlation id 相同」在 Python 这一侧也是构造性的。
+//!
+//! 用专门的异常类型而不是 `ValueError`：调用方要能只捕获应用层用例的失败，并按文档里的
+//! `category` 分支（`InvalidInput` 改输入、`DataUnavailable` 去取数据……），而不是去猜字符串。
 
-use pyo3::exceptions::{PyIndexError, PyValueError};
+use pyo3::exceptions::{PyException, PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyCapsule, PyModule, PyTuple};
+use qx_app::{
+    run_backtest, validate_dataset, verify_run, AppError, BacktestOutcome, BacktestSpec,
+    CallerCapability, DatasetSpec, RunContext,
+};
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
 fn frame_error(error: FrameError) -> PyErr {
     PyValueError::new_err(format!("BarFrame error: {error:?}"))
+}
+
+pyo3::create_exception!(
+    _qianxing_native,
+    QxAppError,
+    PyException,
+    "应用层用例失败。异常文本就是 AppError 的 JSON 文档（category/action/retry/safe_to_retry/correlation_id/source_code/message），与 `qx-cli app` 的 stderr 那行、`POST /app/*` 的响应体逐字节相同。"
+);
+
+fn app_error(error: AppError) -> PyErr {
+    QxAppError::new_err(error.to_json())
+}
+
+/// 调用上下文：与 CLI/HTTP 两侧同形（R 档 + 身份串当 correlation id）。
+///
+/// 刻意**不**带 `with_code_commit`：Python 侧拿不到 CLI 的 `QX_GIT_COMMIT`，写一个看起来像
+/// 提交号的字符串只会让产物里那一格撒谎（落点仍是 `qx-app` 的包版本）。
+fn research_context(correlation_id: &str) -> RunContext {
+    RunContext::new(CallerCapability::Research, correlation_id)
+}
+
+#[pyfunction]
+fn app_validate_dataset(spec_json: &str) -> PyResult<String> {
+    let spec = DatasetSpec::from_json(spec_json).map_err(app_error)?;
+    validate_dataset(&spec, &research_context(&spec.dataset_id))
+        .and_then(|verdict| verdict.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_run_backtest(spec_json: &str) -> PyResult<String> {
+    let spec = BacktestSpec::from_json(spec_json).map_err(app_error)?;
+    run_backtest(&spec, &research_context(&spec.run_id))
+        .and_then(|outcome| outcome.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_verify_run(outcome_json: &str) -> PyResult<String> {
+    let outcome = BacktestOutcome::from_json(outcome_json).map_err(app_error)?;
+    verify_run(&outcome, &research_context(&outcome.run_id))
+        .and_then(|result| result.to_json())
+        .map_err(app_error)
 }
 
 #[pyfunction]
@@ -161,5 +218,10 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(owned_arrow_capsules, module)?)?;
     module.add_class::<OwnedArrowArray>()?;
     module.add_function(wrap_pyfunction!(owned_arrow_array, module)?)?;
+    // T2-2/G1：应用层用例三条入口 + 它们专用的异常类型。
+    module.add_function(wrap_pyfunction!(app_validate_dataset, module)?)?;
+    module.add_function(wrap_pyfunction!(app_run_backtest, module)?)?;
+    module.add_function(wrap_pyfunction!(app_verify_run, module)?)?;
+    module.add("QxAppError", module.py().get_type::<QxAppError>())?;
     Ok(())
 }

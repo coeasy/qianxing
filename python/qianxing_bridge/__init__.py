@@ -10,6 +10,11 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+# 子模块入口（T2-2）：`app` 是应用层用例的 Python 门面，`native` 是 PyO3 扩展桥。
+# 这里只 import 模块、不触发扩展加载——`native._extension()` 是按需加载的，
+# 扩展没构建时 `import qianxing_bridge` 仍然可用（纯 Python 的那半照样能跑）。
+from . import app, native  # noqa: F401
+
 
 _FNV_OFFSET = 0xCBF29CE484222325
 _FNV_PRIME = 0x100000001B3

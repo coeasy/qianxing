@@ -275,3 +275,38 @@ fn strategy_output_decode_entry_rejects_foreign_schema_version() {
     // 要的是"版本这一臂"的话，不是解码失败：两种错法在文本上分得开。
     assert!(error.contains("schema_version"), "{error}");
 }
+
+/// T1-2：策略输入契约读到未来版本必须给出**具名**拒绝——文案里同时点名「读到的版本」与
+/// 「本构建只认的版本」。
+///
+/// 这一格此前被折进 `StrategyContractInput 身份、时间、标的或风险字段非法` 那句通用文案里：
+/// 只核「失败」不核「原因」时，「版本不受支持」与「某格字段非法」在诊断上分不开，而 Python 侧
+/// `StrategyInput.validate` 早就具名（`unsupported strategy schema_version: N`）——两边在同一份
+/// 产物上一严一宽。T1-2 的口径是「旧产物读取必须走显式迁移或给出具名拒绝原因」。
+#[test]
+fn strategy_input_contract_refuses_an_unsupported_schema_version() {
+    let input = StrategyContractInput {
+        schema_version: STRATEGY_CONTRACT_SCHEMA_VERSION,
+        request_id: "request-version".into(),
+        strategy_id: "strategy-1".into(),
+        strategy_version: "v1".into(),
+        data_fingerprint: "bars-1".into(),
+        as_of: 10,
+        instrument: "BTCUSDT.BINANCE".into(),
+        positions: BTreeMap::new(),
+        cash: BTreeMap::new(),
+        available_margin_raw: Some(90),
+        risk_state: "verified".into(),
+        research_targets: BTreeMap::new(),
+        bars: None,
+    };
+    let encoded = input.to_json().unwrap();
+    // `schema_version` 是 `u32`，serde 对任何版本号都解得开，所以拒绝只能来自 validate 那一臂。
+    let foreign = encoded.replace("\"schema_version\":1", "\"schema_version\":7");
+    assert_ne!(foreign, encoded, "版本号那一格没被改到，这条是一发空枪");
+    let error = StrategyContractInput::from_json(&foreign).unwrap_err();
+    assert!(
+        error.contains("schema_version=7") && error.contains("只认 1"),
+        "版本拒绝文案必须同时点名读到的版本（schema_version=7）与只认的版本（只认 1）；实际 {error}"
+    );
+}

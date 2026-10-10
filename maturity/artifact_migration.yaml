@@ -1,0 +1,101 @@
+# T1-2（QX-DEV-PLAN-2026-10-10 阶段 1 / 关键路径节点）：产物 schema/version 关系图与迁移表。
+#
+# 口径（校准 C3）：一份旧产物读进来时**必须**走「显式迁移」或「具名拒绝」二选一 —— 不许静默
+# 按新版本解析，也不许把「读到的版本」吞掉只报一句泛泛的解析失败。本表把每份在册契约的这一格
+# 收成一行可核对的事实：读侧是谁、版本字段叫什么、只认哪个常量、读到未知版本怎么办、拒绝文案
+# 长什么样、哪条常驻用例钉住它。
+#
+# 本表只补「读侧版本处置」这一格，不复制 `maturity/schema-registry.json` 的内容 —— 那份仍是
+# 「谁产谁消 + golden fixture」的唯一来源，两边按 `schema_id` 逐一对齐（少登记一份在册契约、
+# 或多登记一份不存在的产物，都红）。
+schema_version: 1
+kind: artifact-migration
+updated_at: "2026-10-10"
+registry: maturity/schema-registry.json
+# 关系图的边：一行 = 一份产物 → 一个读侧文件 → 一个版本常量 → 一条版本处置 → 一条常驻用例。
+# `on_unknown_version` 当前只有 `refuse` 一态：本仓 11 份在册契约都有独立版本号，读侧都在解析
+# 之前显式比对常量。将来若出现没有版本号的契约（只靠字段集合拒绝未知键），要**同时**扩这里与
+# `artifact_migration_check` 的允许集 —— 两处一起改，不许只改表（只改表会让那一态没有任何牙齿）。
+artifacts:
+  - schema_id: account-snapshot-v1
+    reader: crates/qx-protocol/src/lib.rs
+    version_field: schema_version
+    version_const: ACCOUNT_SNAPSHOT_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "账户快照 schema_version={} 不受支持（本构建只认 {}）"
+    refusal_case: future_version_that_cannot_be_deserialized_is_still_refused_as_a_version_problem
+  - schema_id: strategy-api-v1
+    reader: crates/qx-runtime/src/strategy_contract/contract.rs
+    version_field: schema_version
+    version_const: STRATEGY_CONTRACT_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "StrategyContractOutput schema_version 不匹配，期望 {STRATEGY_CONTRACT_SCHEMA_VERSION} 实得 {}"
+    refusal_case: strategy_output_decode_entry_rejects_foreign_schema_version
+  - schema_id: strategy-api-input-v1
+    reader: crates/qx-runtime/src/strategy_contract/contract.rs
+    version_field: schema_version
+    version_const: STRATEGY_CONTRACT_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "策略输入契约 schema_version={} 不受支持（本构建只认 {}）"
+    refusal_case: strategy_input_contract_refuses_an_unsupported_schema_version
+  - schema_id: project-manifest-v1
+    reader: crates/qx-spec/src/project.rs
+    version_field: schema_version
+    version_const: PROJECT_MANIFEST_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "项目清单 schema_version={} 不受支持（本构建只认 {}）"
+    refusal_case: project_manifest_refuses_an_unsupported_schema_version
+  - schema_id: dataset-manifest-v2
+    reader: crates/qx-data/src/catalog_v2.rs
+    version_field: manifest_version
+    version_const: DATASET_MANIFEST_V2_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "数据集清单 manifest_version={} 不受支持（本构建只认 {}）"
+    refusal_case: dataset_manifest_v2_refuses_an_unsupported_manifest_version
+  - schema_id: experiment-spec-v1
+    reader: crates/qx-spec/src/experiment.rs
+    version_field: schema_version
+    version_const: EXPERIMENT_SPEC_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "实验规格 schema_version={} 不受支持（本构建只认 {}）"
+    refusal_case: experiment_spec_refuses_an_unsupported_schema_version
+  - schema_id: run-record-v1
+    reader: crates/qx-spec/src/run_record.rs
+    version_field: schema_version
+    version_const: RUN_RECORD_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "运行记录 schema_version={} 不受支持（本构建只认 {}）"
+    refusal_case: run_record_refuses_an_unsupported_schema_version
+  - schema_id: capability-manifest-v1
+    reader: crates/qx-spec/src/capability.rs
+    version_field: schema_version
+    version_const: CAPABILITY_MANIFEST_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "能力清单 schema_version={} 不受支持（本构建只认 {}）"
+    refusal_case: capability_manifest_refuses_an_unsupported_schema_version
+  - schema_id: run-evidence-v1
+    reader: crates/qx-spec/src/run_evidence.rs
+    version_field: schema_version
+    version_const: RUN_EVIDENCE_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "运行证据包 schema_version={} 不受支持（本构建只认 {}）"
+    refusal_case: run_evidence_bundle_refuses_an_unsupported_schema_version
+  - schema_id: evidence-bundle-v1
+    reader: crates/qx-spec/src/evidence.rs
+    version_field: schema_version
+    version_const: EVIDENCE_BUNDLE_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "证据包 schema_version={} 不受支持（本构建只认 {}）"
+    refusal_case: evidence_bundle_refuses_an_unsupported_schema_version
+  - schema_id: schema-registry-v1
+    reader: crates/qx-spec/src/schema_registry.rs
+    version_field: schema_version
+    version_const: SCHEMA_REGISTRY_SCHEMA_VERSION
+    on_unknown_version: refuse
+    refusal_reason: "模式登记册 schema_version={} 不受支持（本构建只认 {}）"
+    refusal_case: schema_registry_refuses_an_unsupported_schema_version
+# 显式迁移表。今天为空：本仓没有「同一份产物跨版本就地升级」的读侧 —— 每一份都在读入口先比
+# 版本常量，未知版本一律具名拒绝（这正是校准 C3 要的 fail-closed）。留这一格是让将来新增的真
+# 迁移有地方登记，且 `artifact_migration_check` 会核「登记了迁移就必须有在盘的迁移函数」——
+# 空表是被判据承认的状态，不是没人管。
+migrations: []

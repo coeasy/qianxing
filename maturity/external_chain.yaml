@@ -1,0 +1,80 @@
+# 外部链路（实盘轨）边界登记（T0-3）——机读口径，供门禁逐格对账。
+#
+# 这张表只回答三个问题：实盘轨分几段、翻 sandbox_tested 的唯一依据是什么、今天有没有这份依据。
+# 它**不是**验收结果，也**不**替任何能力作保：`maturity/capabilities.yaml` 里
+# `implementation: true` / `code_tested: true` 说的是"代码在盘、本地测试与 Paper E2E 通过"，
+# 与"生产已批准"是两件事——四档各自的翻真依据逐格写在本文件 tiers 段，判据会核对
+# 「前两档的 flipped_by 里不许出现证据记录」。
+schema_version: 1
+kind: external-chain-boundary
+updated_at: "2026-10-10"
+
+evidence_root: maturity/evidence
+sandbox_evidence_dir: maturity/evidence/testnet
+production_evidence_dir: maturity/evidence/production
+acceptance_script: tools/binance_testnet_acceptance.py
+acceptance_plan: docs/外部链路验收执行方案-V1.md
+capabilities_registry: maturity/capabilities.yaml
+
+# 翻转规则的**唯一措辞**：三处必须同源——本文件、方案 §4、以及验收脚本写进 `result.json` 的那句。
+# 判据按"剥掉 Markdown 反引号后的子串"核对，所以方案里可以继续给关键词加反引号；
+# 同时判据会去核脚本的**代码**真实现了这条（含 live-check 豁免），光改文字不算。
+# 路线图 §4 把同一条转述成「除 `live-check` 外全部阶段退出码为 0」（少一个"之"字）——那是**转述**
+# 而不是第三份口径，判据只钉方案 §4 与脚本这两处（方案自称"脚本与文档同口径"的那两处）。
+flip_rule: "outcome=pass 且除 live-check 之外全部阶段退出码为 0"
+flip_rule_rest: "skipped/fail 一律保持 false，且必须连同结果包一起归档"
+
+# 四档证据的翻真依据。前两档由源码与本地测试翻真——它们不是任何形式的生产批准。
+tiers:
+  - name: implementation
+    means: 代码或配置已存在
+    flipped_by: 源码在盘
+    is_production_approval: false
+  - name: code_tested
+    means: 本地测试、契约测试或 Paper E2E 已通过
+    flipped_by: 门禁与 cargo test
+    is_production_approval: false
+  - name: sandbox_tested
+    means: 真实供应商沙盒或模拟账户已通过
+    flipped_by: 证据根下 outcome=pass 的结果包
+    is_production_approval: false
+  - name: production_approved
+    means: 真实生产凭据、故障演练与运维审批已通过
+    flipped_by: 证据根下 outcome=pass 的结果包加运维审批记录
+    is_production_approval: true
+
+# 实盘轨五段，逐段带"失败即"口径（与方案 §2 的表逐行同名、同序）。
+segments:
+  - name: 离线安全门禁
+    command: runtime-check 与 live-check
+    fail_closed: 中止，不进入任何触网步骤
+  - name: 只读探测
+    command: binance-public-probe 与 binance-private-probe
+    fail_closed: 中止（退出码 2）
+  - name: 单次受控下单
+    command: binance-submit-order，同一 request_id 再提交必须被拒
+    fail_closed: 中止；未知结果不得自动重发
+  - name: 断线恢复
+    command: binance-worker --once，必须给 ReconcileRequired 而不是自动补单
+    fail_closed: 中止
+  - name: 对账与终态
+    command: reconcile 与 status --json
+    fail_closed: 中止
+
+# 第二交易所（OKX 经 CCXT 沙盒）走同一份脚本的 --venue okx，不复制脚本；入口已在命令面上。
+second_venue: okx
+
+# 现状由 maturity/evidence/ 下的 result.json 与 capabilities.yaml 派生；
+# 判据会逐份重算并与这三格比对——写在这里的数是"声称"，盘上的数才是"事实"。
+current_status:
+  evidence_records: 1
+  outcomes: skipped:1
+  sandbox_tested_flip_allowed: false
+  sandbox_tested_true_count: 0
+  production_approved_true_count: 0
+
+# 一句话结论，供人读；机读结论看 current_status。
+not_a_production_approval: >-
+  maturity/capabilities.yaml 里 implementation 与 code_tested 为 true 的条目只说明代码在盘、
+  本地测试与 Paper E2E 通过；sandbox_tested 与 production_approved 今天仍全为 false，
+  且只有 maturity/evidence/ 下 outcome=pass 的结果包才能把它们翻真。

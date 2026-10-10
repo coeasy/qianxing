@@ -181,8 +181,18 @@ impl StrategyContractBars {
 
 impl StrategyContractInput {
     pub fn validate(&self) -> Result<(), String> {
-        if self.schema_version != STRATEGY_CONTRACT_SCHEMA_VERSION
-            || self.request_id.trim().is_empty()
+        // 版本单独立一臂：折叠进下面那句通用文案时，读到 `schema_version=7` 的调用方只看到
+        // 「身份、时间、标的或风险字段非法」——最需要读出的那一格（版本不受支持）反而读不出来。
+        // Python 侧 `StrategyInput.validate` 早就具名（`unsupported strategy schema_version: N`），
+        // 两边在同一份产物上一严一宽。T1-2 要求「旧产物读取必须走显式迁移或给出具名拒绝原因」，
+        // 故这一格与其他七份契约的 `schema_version={} 不受支持（本构建只认 {}）` 同口径。
+        if self.schema_version != STRATEGY_CONTRACT_SCHEMA_VERSION {
+            return Err(format!(
+                "策略输入契约 schema_version={} 不受支持（本构建只认 {}）",
+                self.schema_version, STRATEGY_CONTRACT_SCHEMA_VERSION
+            ));
+        }
+        if self.request_id.trim().is_empty()
             || self.strategy_id.trim().is_empty()
             || self.strategy_version.trim().is_empty()
             || self.data_fingerprint.trim().is_empty()

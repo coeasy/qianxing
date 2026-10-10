@@ -32,8 +32,9 @@ pub(crate) fn run(scope: Scope) {
     let b = run_backtest(&bars, 42, 5, 20); // 完全相同参数
     let c = run_backtest(&bars, 42, 6, 20); // 改一个参数
 
+    println!();
     println!(
-        "\n[星板 · 回测 A · DEMO 合成输入] 内核={} 成交={} 手续费={:.4} 总收益={:.2}% 最大回撤={:.2}% 终值={:.2}",
+        "[星板 · 回测 A · DEMO 合成输入] 内核={} 成交={} 手续费={:.4} 总收益={:.2}% 最大回撤={:.2}% 终值={:.2}",
         BAR_MATCHING_KERNEL,
         a.n_fills,
         f(a.total_fee),
@@ -68,7 +69,8 @@ pub(crate) fn run(scope: Scope) {
     // 3. 三重重放校验（此处验证前两条）
     let same = ReplayVerifier::identical(a.hash, b.hash);
     let changed = ReplayVerifier::changed(a.hash, c.hash);
-    println!("\n[更路 · 重放校验]");
+    println!();
+    println!("[更路 · 重放校验]");
     println!("  ① 同输入两次运行哈希一致 : {}", same);
     println!("  ② 改参数后哈希发生变化   : {}", changed);
     assert!(same, "相同输入必须产生相同结果");
@@ -79,7 +81,8 @@ pub(crate) fn run(scope: Scope) {
     }
 
     // 4. 插件装配
-    println!("\n[卯眼 · 插件装配]");
+    println!();
+    println!("[卯眼 · 插件装配]");
     let mut reg = Registry::new();
     reg.register(
         Manifest {

@@ -6,7 +6,7 @@
 # tools/check_architecture.py 的 release_supply_chain_check 常驻核对（缺一项即红）。
 #
 # 触发：推送 `v*` tag（如 v0.1.0）。tag 必须与 Cargo.toml / python/pyproject.toml /
-# maturity/baseline.yaml 三处版本一致，否则 version-consistency 先失败。
+# maturity/baseline.yaml 三处版本及 C++ SDK CMake project version 一致。
 
 name: release
 
@@ -16,9 +16,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -43,10 +41,29 @@ jobs:
             exit 1
           fi
 
+      - name: Verify C++ SDK version matches the release tag
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          line = next(line for line in Path("cpp/CMakeLists.txt").read_text().splitlines()
+                      if line.startswith("project(qianxing_strategy_sdk VERSION "))
+          cpp_version = line.split("VERSION ", 1)[1].split()[0]
+          tag_version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          if cpp_version != tag_version:
+              raise SystemExit(f"C++ SDK version {cpp_version} does not match tag {tag_version}")
+          PY
+
   binary:
     name: binary (${{ matrix.os }})
     needs: version-consistency
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -89,44 +106,104 @@ jobs:
           path: dist/*
 
   wheel:
-    name: python wheel
+    name: python wheel (${{ matrix.os }}, Python ${{ matrix.python }})
     needs: version-consistency
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Build wheel (native extension included)
-        run: PYTHON=python bash tools/build_python_wheel.sh
-      - name: Hash wheel payload
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            pwsh -NoProfile -ExecutionPolicy Bypass -File tools/build_python_wheel.ps1 -Python python
+          } else {
+            export PYTHON=python3
+            bash tools/build_python_wheel.sh
+          fi
+      - name: Confirm this matrix leg produced a wheel
+        shell: bash
+        run: test -n "$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+      - name: Clean-install and exercise the published Python surface
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          wheels=(dist/*.whl)
-          if [[ ${#wheels[@]} -eq 0 ]]; then
-            echo "dist/ 下没有产出 wheel" >&2
-            exit 1
-          fi
-          sha256sum "${wheels[@]}" > dist/wheel.sha256 2>/dev/null \
-            || shasum -a 256 "${wheels[@]}" > dist/wheel.sha256
+          python -m pip install --no-deps dist/*.whl
+          cd "${RUNNER_TEMP}"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import qianxing
+
+          bars = Path(os.environ["GITHUB_WORKSPACE"]) / "deploy" / "qianxing.bar-frame.example.json"
+          assert "backtest.bar.v1" in qianxing.doctor()["implemented_use_cases"]
+          verdict = qianxing.validate_dataset(qianxing.DatasetSpec("release-smoke-data", str(bars)))
+          assert verdict.usable and verdict.rows == 70
+          outcome = qianxing.run_backtest(qianxing.BacktestSpec(
+              run_id="release-smoke-run",
+              instrument="BTCUSDT.BINANCE",
+              bars_path=str(bars),
+              settlement_currency="USDT",
+              initial_cash_raw=100_000_000_000_000,
+              output_dir=str(Path.cwd() / "runs"),
+              strategy=qianxing.BuiltinStrategySpec(kind="sma_cross", strategy_id="release-smoke-sma", fast_window=2, slow_window=3),
+          ))
+          verification = qianxing.verify_run(outcome)
+          assert verification.verified, verification.mismatches
+          print(f"wheel e2e rows={verdict.rows} fills={outcome.fills} verified={verification.verified}")
+          PY
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/*.whl
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel
-          path: |
-            dist/*.whl
-            dist/wheel.sha256
+          name: wheel-${{ runner.os }}-py${{ matrix.python }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  publish-python:
+    name: Publish Python wheels to PyPI
+    if: ${{ vars.PYPI_PUBLISH_ENABLED == 'true' }}
+    needs: [version-consistency, wheel]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      id-token: write
+    environment:
+      name: pypi
+      url: https://pypi.org/project/qianxing/
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - name: Publish with PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
 
   cpp-sdk:
     name: C++ SDK
     needs: version-consistency
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - name: Install C++ JSON dependency
@@ -135,16 +212,21 @@ jobs:
         run: |
           cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release -DQX_BUILD_JSONL_EXAMPLE=ON
           cmake --build build/cpp --config Release --parallel
-      - name: Package SDK headers and artifacts
+      - name: Install SDK CMake package and archive it
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist/sdk
-          cp -r cpp/include dist/sdk/include
-          cp -r build/cpp dist/sdk/build
+          cmake --install build/cpp --prefix "$PWD/dist/sdk"
+          cmake -S cpp/tests/consumer -B build/cpp-consumer \
+            -DCMAKE_PREFIX_PATH="$PWD/dist/sdk"
+          cmake --build build/cpp-consumer --config Release --parallel
           tar -czf "dist/qianxing-cpp-sdk-${GITHUB_REF_NAME}.tar.gz" -C dist sdk
           (cd dist && sha256sum qianxing-cpp-sdk-*.tar.gz > cpp-sdk.sha256 2>/dev/null \
             || shasum -a 256 qianxing-cpp-sdk-*.tar.gz > cpp-sdk.sha256)
+      - name: Attest C++ SDK build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/qianxing-cpp-sdk-*.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: cpp-sdk
@@ -156,6 +238,10 @@ jobs:
     name: Static Web console bundle
     needs: version-consistency
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - name: Package the versioned Web console
@@ -216,6 +302,9 @@ jobs:
     name: GitHub Release
     needs: [binary, wheel, cpp-sdk, web-console, sbom]
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

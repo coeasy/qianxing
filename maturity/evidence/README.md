@@ -65,7 +65,14 @@ maturity/evidence/
 `outcome` 只认 `passed` / `failed` / `skipped` 三值；只有 `passed` 才允许把对应能力的
 `sandbox_tested` 翻真，且必须由**当轮**证据支持（证据带时间戳，不随能力矩阵长期有效）。
 
-## 现状（2026-10-08）
+## 现状（2026-10-10）
+
+> **机读边界登记（T0-3）**：实盘轨的五段、翻转规则的唯一措辞、证据根与当轮现状登记在
+> `maturity/external_chain.yaml`，由 `tools/check_architecture.py` 的 `external_chain_check`
+> 七颗逐格对账（五段与验收方案 §2 那张表逐行同名同序 / 规则在登记面、方案 §4 与脚本三处同源 /
+> 脚本的**代码**真实现了那条规则 / 现状与盘上逐份 `result.json` 一致 / 没有 `outcome=pass` 记录时
+> 两档必须全为 false / 前两档的翻真依据里不出现证据记录）。本节是**人读**版，数字以那份登记面与
+> `maturity/gate_snapshot.json` 为准。
 
 - **实盘轨**：`maturity/evidence/testnet/20260920T005856Z-dryrun/result.json` 的 `outcome` 是 `"skipped"`。
   因此能力矩阵里 `sandbox_tested: true` **0 条**、`production_approved: true` **0 条**。
@@ -78,3 +85,8 @@ maturity/evidence/
 - 本目录 `maturity/evidence/README.md` 与 `testnet/20260920T005856Z-dryrun/` 下那两份记录
   **是仓库资产（已跟踪）**——`git ls-files maturity/` 列得到它们。写在这里以免下一位读者
   按「证据目录不进版本控制」的老口径去找 `.gitignore`。
+- **本轮（T0-3）改正了一处口径漂移**：验收脚本写进 `result.json` 的规则原文是
+  「全部阶段退出码为 0」，而方案 §4 与脚本的**代码**（`tools/binance_testnet_acceptance.py`
+  在 `outcome` 判定前先断言「非 `live-check` 阶段一律为 0」）都是
+  「除 `live-check` 之外全部阶段退出码为 0」。已把脚本那句**文字**改成与代码、方案一致；
+  `testnet/20260920T005856Z-dryrun/result.json` 是**历史产物**，保留原文字不改。

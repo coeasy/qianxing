@@ -78,6 +78,34 @@
       <div class="rows" id="readmodels-rows"><span class="muted">未连接</span></div>
     </section>
 
+    <section class="card wide" id="card-research">
+      <h2>Bar 研究工作流 <span class="hint">数据校验 → 回测 → 产物复核</span></h2>
+      <p class="foot">数据路径相对服务端 <code>QX_API_DATA_ROOT</code>；回测产物写入服务端配置目录。该面板只运行研究级 Bar 回测。</p>
+      <label for="research-spec">BacktestSpec v1（JSON）</label>
+      <textarea id="research-spec" rows="14" spellcheck="false">{
+  "schema_version": 1,
+  "run_id": "console-bar-run",
+  "instrument": "BTCUSDT.BINANCE",
+  "bars_path": "sample.json",
+  "settlement_currency": "USDT",
+  "initial_cash_raw": 100000000000000,
+  "seed": 20261010,
+  "output_dir": "server-managed",
+  "strategy": {
+    "kind": "sma_cross",
+    "strategy_id": "console-sma",
+    "quantity_raw": 1000000000,
+    "fast_window": 2,
+    "slow_window": 3
+  }
+}</textarea>
+      <div class="actions">
+        <button id="research-validate" type="button">只校验数据</button>
+        <button id="research-run" type="button">回测并复核</button>
+      </div>
+      <pre id="research-output" class="result" aria-live="polite">未运行</pre>
+    </section>
+
     <section class="card wide" id="card-control">
       <h2>控制命令
         <span class="hint">POST /control/commands · 受理 → 执行者判定 → 终态退场</span>

@@ -1104,7 +1104,7 @@ class AkShareProvider:
         try:
             self._module = importlib.import_module("akshare")
         except ImportError as exc:
-            raise AshareProviderError("AkShare 未安装，请执行 pip install 'qianxing-bridge[a-share-akshare]'") from exc
+            raise AshareProviderError("AkShare 未安装，请执行 pip install 'qianxing[a-share-akshare]'") from exc
         return self._module
 
     def fetch(self, query: AshareQuery) -> tuple[BarFrame, AshareManifest]:
@@ -1176,7 +1176,7 @@ class BaoStockProvider:
         try:
             self._module = importlib.import_module("baostock")
         except ImportError as exc:
-            raise AshareProviderError("Baostock 未安装，请执行 pip install 'qianxing-bridge[a-share-baostock]'") from exc
+            raise AshareProviderError("Baostock 未安装，请执行 pip install 'qianxing[a-share-baostock]'") from exc
         return self._module
 
     def fetch(self, query: AshareQuery) -> tuple[BarFrame, AshareManifest]:
@@ -1276,7 +1276,7 @@ class EasyTdxProvider:
         try:
             self._module = importlib.import_module("easy_tdx")
         except ImportError as exc:
-            raise AshareProviderError("easy_tdx 未安装，请执行 pip install 'qianxing-bridge[a-share-easy-tdx]'") from exc
+            raise AshareProviderError("easy_tdx 未安装，请执行 pip install 'qianxing[a-share-easy-tdx]'") from exc
         return self._module
 
     def fetch(self, query: AshareQuery) -> tuple[BarFrame, AshareManifest]:

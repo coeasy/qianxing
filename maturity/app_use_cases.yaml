@@ -1,0 +1,56 @@
+# 应用层用例登记面（QX-DEV-PLAN-2026-10-10 阶段 2 / 路线图 §2「每个用例必须定义九项」）
+#
+# 目的：把「qx-app 有哪些用例、每个用例的九项是什么」从 `crates/qx-app/src/cases/mod.rs` 的
+# 一张文档表，升级为**机读**登记面。门禁 `qx_app_check` 把本表与三处事实逐条对账：
+#   ① 用例集合 == `cases/mod.rs` 的 `pub use` 三条；
+#   ② 每个用例在 `crates/qx-app/src/cases/` 下都有 `pub fn <name>(`；
+#   ③ 九项键名与顺序 == `cases/mod.rs` 模块文档那张表的九行（同一份口径的两种写法）。
+#
+# 为什么九项要**逐项**登记而不是写一句"见文档"：路线图 §2 点名这九项是每个用例的**契约**，
+# 而契约里最容易漏的是"取消行为"与"幂等键"——它们不写下来时，读者的默认假设是"应该会取消"
+# 与"应该幂等"，两者都可能错。写成一格就必须有人回答它。
+#
+# 取值口径：
+#   input_schema / output_schema  —— 类型名 + 版本；`qx-app` 的 spec 都带 schema_version。
+#   capability                    —— 调用方能力档（路线图 §5 R/P/O/L）；`none` 表示不设闸。
+#   idempotency_key               —— 同一把钥匙重跑必须逐字节同结果；不幂等就写 `无`。
+#   cancellation                  —— 今天是否有取消点；同步用例写清"没有取消点"。
+#   progress                      —— 事件/进度面；同步用例写 `无`。
+#   artifacts                     —— 落盘产物清单；不落盘写 `无`。
+#   error_categories              —— 失败面的类别来源（唯一映射表在哪）。
+#   capability_level              —— 该用例自身的能力等级（R/P/O/L）。
+schema_version: 1
+kind: app-use-case-registry
+updated_at: "2026-10-10"
+
+use_cases:
+  - name: validate_dataset
+    input_schema: "DatasetSpec v1（crates/qx-app/src/spec.rs）"
+    output_schema: "DatasetVerdict（crates/qx-app/src/spec.rs）"
+    capability: "RESEARCH"
+    idempotency_key: "dataset_id + 内容指纹（纯读，无副作用）"
+    cancellation: "无取消点（同步纯读，不阻塞等待）"
+    progress: "无"
+    artifacts: "无"
+    error_categories: "AppErrorCategory 八类；领域码→类别走 category_of_domain_code"
+    capability_level: "R"
+  - name: run_backtest
+    input_schema: "BacktestSpec v1（crates/qx-app/src/spec.rs）"
+    output_schema: "BacktestOutcome（crates/qx-app/src/spec.rs）"
+    capability: "RESEARCH"
+    idempotency_key: "run_id + config_hash + data_fingerprint（三者全同才允许重写；任一不同即 Conflict）"
+    cancellation: "无取消点（同步；长任务与 RunHandle 属 T2-5）"
+    progress: "无"
+    artifacts: "<run_id>.run.json / <run_id>.summary.json / <run_id>.equity.csv / <run_id>.fills.csv"
+    error_categories: "AppErrorCategory 八类；领域码→类别走 category_of_domain_code"
+    capability_level: "R"
+  - name: verify_run
+    input_schema: "BacktestOutcome（crates/qx-app/src/spec.rs）"
+    output_schema: "VerificationResult（crates/qx-app/src/spec.rs）"
+    capability: "none"
+    idempotency_key: "run_id（纯读产物，无副作用）"
+    cancellation: "无取消点（同步纯读）"
+    progress: "无"
+    artifacts: "无（只读上面四份）"
+    error_categories: "AppErrorCategory 八类；产物缺失/不一致是 Ok(verified=false) 不是 Err"
+    capability_level: "R"

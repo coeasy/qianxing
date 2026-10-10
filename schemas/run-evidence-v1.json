@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/run-evidence-v1.json",
+  "title": "Qianxing Run Evidence Bundle v1",
+  "description": "一次回测/Paper 运行的全部可复核事实聚合：RunManifest 身份、产物指针、数据身份与（可能缺席的）质量报告、配置与策略身份、模型假设、软件构建身份、验证级别、未验证清单与离线复算指引。schema_version 与 crates/qx-spec/src/run_evidence.rs 的 RUN_EVIDENCE_SCHEMA_VERSION 同源。只聚合与校验，不重算指标。对象层硬约束（不是文档承诺）：artifacts 必须含 run_manifest/summary/equity/fills 四件套；dataset.composed_fingerprint / identity.config_digest / identity.strategy_version / build.code_commit / build.runtime_version 必须与 run 块逐字相等；unverified 必须非空（空清单等于盖单一 verified 标签）；capability_level 不得高于 L2（L3/L4 由带真实 venue 窗口的 EvidenceBundle 承担）。两处刻意分开：dataset.content_fingerprint 是输入文件的内容哈希，dataset.composed_fingerprint 是这次运行认的合成数据身份（= run.data_fingerprint）；dataset.quality_report 允许为 null（这一档输入没有质量报告），但不许是一份空报告。",
+  "type": "object",
+  "required": ["schema_version", "run", "artifacts", "dataset", "identity", "assumptions", "build", "verification", "unverified", "recompute", "operator"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run": {
+      "type": "object",
+      "required": ["run_id", "code_commit", "runtime_version", "config_hash", "data_fingerprint", "input_components", "clock_start", "clock_end", "global_seed", "determinism_mode", "result_hash", "strategy_version", "instrument_spec_version", "model_fingerprint", "input_event_hash", "output_event_hash"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "code_commit": {"type": "string", "minLength": 1},
+        "runtime_version": {"type": "string", "minLength": 1},
+        "config_hash": {"type": "string", "minLength": 1},
+        "data_fingerprint": {"type": "string", "minLength": 1},
+        "input_components": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+        "clock_start": {"type": "integer", "minimum": 0},
+        "clock_end": {"type": "integer", "minimum": 0},
+        "global_seed": {"type": "integer", "minimum": 0},
+        "determinism_mode": {"type": "boolean"},
+        "result_hash": {"type": "string", "minLength": 1},
+        "strategy_version": {"type": "string", "minLength": 1},
+        "instrument_spec_version": {"type": "string", "minLength": 1},
+        "model_fingerprint": {"type": "string", "minLength": 1},
+        "input_event_hash": {"type": "string", "minLength": 1},
+        "output_event_hash": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "path", "digest"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "digest": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "required": ["kind", "dataset_id", "version", "content_fingerprint", "composed_fingerprint", "row_count", "path", "quality_report"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "dataset_id": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "content_fingerprint": {"type": "string", "minLength": 1},
+        "composed_fingerprint": {"type": "string", "minLength": 1},
+        "row_count": {"type": "integer", "minimum": 0},
+        "path": {"type": "string", "minLength": 1},
+        "quality_report": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["duplicate_rows", "out_of_order_rows", "missing_intervals", "timezone", "corporate_action_coverage", "usable_tiers"],
+              "properties": {
+                "duplicate_rows": {"type": "integer", "minimum": 0},
+                "out_of_order_rows": {"type": "integer", "minimum": 0},
+                "missing_intervals": {"type": "integer", "minimum": 0},
+                "timezone": {"type": "string", "minLength": 1},
+                "corporate_action_coverage": {"type": "boolean"},
+                "usable_tiers": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["strategy_id", "strategy_version", "instrument", "config_digest"],
+      "properties": {
+        "strategy_id": {"type": "string", "minLength": 1},
+        "strategy_version": {"type": "string", "minLength": 1},
+        "instrument": {"type": "string", "minLength": 1},
+        "config_digest": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "assumptions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "value", "source"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "value": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "build": {
+      "type": "object",
+      "required": ["runtime_version", "code_commit", "profile", "target_triple"],
+      "properties": {
+        "runtime_version": {"type": "string", "minLength": 1},
+        "code_commit": {"type": "string", "minLength": 1},
+        "profile": {"type": "string", "minLength": 1},
+        "target_triple": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "verification": {
+      "type": "object",
+      "required": ["capability_level", "replay_verdict", "artifact_digests_verified", "verified_artifact_count"],
+      "properties": {
+        "capability_level": {"enum": ["L0", "L1", "L2"]},
+        "replay_verdict": {"enum": ["verified", "mismatch", "not_run"]},
+        "artifact_digests_verified": {"const": true},
+        "verified_artifact_count": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "unverified": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "recompute": {
+      "type": "object",
+      "required": ["steps", "inputs", "expected_result_hash"],
+      "properties": {
+        "steps": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "inputs": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "expected_result_hash": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "operator": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

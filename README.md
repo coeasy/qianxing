@@ -204,20 +204,42 @@ PYTHON=python/.venv/bin/python bash tools/build_python_wheel.sh
 ```bash
 uv venv .venv-qx --python 3.12
 # #276：基础安装零强制第三方依赖，离线也能装成，不再需要 --no-deps
-uv pip install --offline dist/qianxing_bridge-0.1.0-cp312-cp312-win_amd64.whl
-python -c "import qianxing_bridge.native as n; print(n.available())"
+uv pip install --offline dist/qianxing-0.1.0-cp312-cp312-win_amd64.whl
+python -c "import qianxing as qx; print(qx.doctor())"
 # 按能力选装 extras（不装也 import 得动，用到才在调用点给可执行提示）
-uv pip install --offline "qianxing-bridge[ccxt]"     # CCXT 行情/交易 worker
-uv pip install --offline "qianxing-bridge[a-share]"  # A 股数据源（Windows 连 tzdata 一起带）
+uv pip install --offline "qianxing[ccxt]"     # CCXT 行情/交易 worker
+uv pip install --offline "qianxing[a-share]"  # A 股数据源（Windows 连 tzdata 一起带）
 ```
 
+Release 工作流可在配置 `PYPI_PUBLISH_ENABLED=true` 和 PyPI Trusted Publisher 后自动发布兼容 Python 3.10–3.13、Windows/macOS/Linux 的 wheel；未配置该仓库变量时只构建并附加发布件，不向 PyPI 上传。
+
 #276 之后 wheel 的强制依赖清单是空的：`ccxt` 与 Windows 的 `tzdata` 都改成可选 extras（`[ccxt]` / `[ccxt-pro]` / `[tz]` / `[a-share*]`），`pip install <wheel>` 在任何索引状态下都能装成，`--no-deps` 不再是必需项。`ccxt` 只在真的跑 CCXT worker 时才 import，`Asia/Shanghai` 只在真的取 A 股时区时才解析（#253 把顶层求值挪到用时），缺谁都在调用点抛带 extras 名字的可执行提示。
+
+正式 SDK 的入口为 `import qianxing`。目前 `qx-app` 已向 SDK 开放同步 Bar 数据集校验、内置策略回测和产物复核；金额与数量使用 `*_raw` 定点整数，报告和指标由 Rust 内核生成。Tick/OrderBook、Paper、Live 与长任务控制尚未接入这层 SDK，不会因安装 wheel 而被宣称可用。
+
+安装 wheel 后也可用 `qianxing doctor`、`qianxing validate-dataset <spec.json>`、`qianxing backtest <spec.json>` 和 `qianxing verify <outcome.json>` 调用同一组研究用例。
+
+```python
+from qianxing import BacktestSpec, BuiltinStrategySpec, run_backtest, verify_run
+
+spec = BacktestSpec(
+    run_id="sample-001",
+    instrument="BTCUSDT.BINANCE",
+    bars_path="data/btc-usdt.bars.json",
+    settlement_currency="USDT",
+    initial_cash_raw=100_000_000_000_000,
+    output_dir="runs",
+    strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="sma-5-20"),
+)
+outcome = run_backtest(spec)
+assert verify_run(outcome).verified
+```
 
 **产物身份按载荷报，不按整档摘要报（口径由用例常驻核对）**：装完包要核对的是尺寸 / 条目数 / 条目 CRC / 内嵌 `_qianxing_native.pyd` 的 md5 等于当轮 `target/release/_qianxing_native.dll` / 发布产物里那颗几百万字节的 `target/release/qx-cli.exe` 中的播报字面量计数。为什么这里不报整档 sha256：同一份载荷重打包出来的整档 sha 就会变（zip 时间戳参与打包），把它写进交付文档等于给读者一把量不出东西的尺子——所以产物身份只按载荷报，这条口径由 `crates/qx-cli/src/tests/artifact_identity_doc.rs` 核对：它不许交付文档里出现 64 位十六进制的整档摘要，并要求上面这套骨架与判据文件互相点名（#159 收口）。
 
 **exe 字面量计数是单向证据（#179）**：数到 **N>0** 次能证明这条播报进了装机产物；数到 **0** 次证明不了"这个构建没有这个能力"——链接器会把重复常量池化、会把没用到的分支整个丢掉，一次改名或一次字符串拼接就能让计数归零而行为照旧。所以计数只用作"当轮改动真的落进了发布物"的正向核对，反向结论（某能力在发布物里缺席）一律回源码、用例与 `--features` 组合去判，不从二进制计数推。
 
-**安装包必须排在本轮最后一次构建之后**（#194）：打包脚本自己在 stage 之前重链一次原生扩展，所以"wheel 内 `.pyd` ≡ 九步构建那份 dll"这类**跨构建**核对只在重打包之前量得到，打完之后量到的是"同一次调用里 stage 的那一份"（#181 那条顺序判据管的就是它）。本轮**没有**重打包安装包，理由要说清：本轮改动落在 Rust 侧契约与文档面，`python/` 一字未动，wheel 载荷没有变化；最近一次按当轮代码重打包并在干净 venv 里复装的现场读数（尺寸 / 条目 / md5 / 四包导入结果）在归档里。**这份"没重打"的判断本身是有代价的**——只要后续某轮真改了 `python/`，就必须重打包，否则读者按归档那份数字核对会拿到旧载荷。
+**安装包必须排在本轮最后一次构建之后**（#194）：打包脚本在 stage 之前重链原生扩展，所以 wheel 必须通过 `tools/build_python_wheel.*` 构建，不能把旧的扩展文件直接打包。本轮已修改 Python facade 与发行元数据，归档里的历史载荷尺寸、扩展摘要和包导入记录不能作为当前发布件证据；发布前要用当前源码重建 wheel，并在干净环境从安装后的 `qianxing` 命名空间检查能力。
 
 ### 装不上时的四个坑（都是本机踩过的）
 
@@ -239,6 +261,9 @@ uv pip install --offline "qianxing-bridge[a-share]"  # A 股数据源（Windows 
 ```bash
 # 构建
 cargo build --release
+
+# Rust CLI 安装方式：从源码仓库固定 tag 编译安装；也可直接下载 GitHub Release 的平台二进制
+cargo install --git https://github.com/coeasy/qianxing --tag v0.1.0 qx-cli
 
 # 运行端到端演示（含确定性自校验）
 cargo run -p qx-cli --release
@@ -419,10 +444,10 @@ Barter 对齐稿、可视化终态稿、产品化路线图、差距清单、rele
 | 架构事实、工业级差距的工作包与逐轮登记（WP-* 与 §17 执行记录） | [架构设计与工业级优化改进方案](docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md) |
 | 项目结构、模块划分与同类开源项目的对照 | [项目结构与 GitHub 竞品对比](docs/qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md) |
 | 逐轮变更、验收数字与"本轮没修什么" | [CHANGELOG.md](CHANGELOG.md) |
-| CCXT worker 契约、凭据隔离、失败即闭的归约规则 | [CCXT 多交易所接入与策略运行方案](docs/CCXT多交易所接入与策略运行方案-V1.md) |
-| A 股提供方、代码归一化、公司行为与八条交易制度 | [A 股数据源接入与快速选股回测方案](docs/A股数据源接入与快速选股回测方案-V1.md) |
-| Rust/C++/Python 策略契约与共享内存传输的边界 | [工业级多语言策略与高性能交易方案](docs/工业级多语言策略与高性能交易方案-V1.md) |
-| 现货/杠杆/永续/交割的撮合与记账统一口径 | [虚拟交易与衍生品统一模型](docs/虚拟交易与衍生品统一模型-V1.md) |
+| CCXT worker 契约、凭据隔离、失败即闭的归约规则 | [CCXT 多交易所接入与策略运行方案](docs/archive/CCXT多交易所接入与策略运行方案-V1.md)（已归档） |
+| A 股提供方、代码归一化、公司行为与八条交易制度 | [A 股数据源接入与快速选股回测方案](docs/archive/A股数据源接入与快速选股回测方案-V1.md)（已归档） |
+| Rust/C++/Python 策略契约与共享内存传输的边界 | [工业级多语言策略与高性能交易方案](docs/archive/工业级多语言策略与高性能交易方案-V1.md)（已归档） |
+| 现货/杠杆/永续/交割的撮合与记账统一口径 | [虚拟交易与衍生品统一模型](docs/archive/虚拟交易与衍生品统一模型-V1.md)（已归档） |
 | 有凭据时怎么按五段阶梯验收，`sandbox_tested` 何时才允许翻转 | [外部链路验收执行方案](docs/外部链路验收执行方案-V1.md) |
 | 跑性能基线、看回测轨的耗时口径 | [benchmarks/README.md](benchmarks/README.md) |
 | 想知道某一轮**当时**修了什么、怎么证的 | [docs/archive/](docs/archive/README.md)（V11 / V12 / 2026-10 那批规划与发布审计稿，数字为当轮快照） |

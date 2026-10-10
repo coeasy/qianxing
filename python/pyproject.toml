@@ -3,16 +3,36 @@ requires = ["setuptools>=68", "wheel>=0.42"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "qianxing-bridge"
+name = "qianxing"
 version = "0.1.0"
-description = "Qianxing JSON/DataStruct bridge"
+description = "Qianxing quantitative research and trading platform SDK"
+readme = "README.md"
 requires-python = ">=3.10"
-# 核心桥接层（qianxing_bridge / qianxing_strategy / qianxing_ashare 标准化 / qianxing_ccxt 连接层）
+license = { text = "Apache-2.0" }
+keywords = ["quantitative-finance", "backtesting", "trading", "rust"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+# 核心产品入口与兼容桥接层（qianxing / qianxing_bridge / qianxing_strategy / qianxing_ashare / qianxing_ccxt）
 # 在 import 与离线使用时不需要任何第三方运行时包：ccxt 由 qianxing_ccxt 在调用点惰性加载并抛
 # 点名 extras 的可执行错误；缺 tzdata 时 qianxing_ashare 抛点名 pip install tzdata 的错误。把 ccxt
 # 与 tzdata 放进 optional extras 而非顶层 dependencies，`pip install <wheel>` 才能离线一次装成（V13 #276，
 # 收口此前只能用 --offline --no-deps 绕开强制 ccxt 的脚枪）。
 dependencies = []
+
+[project.scripts]
+qianxing = "qianxing.cli:main"
 
 [project.optional-dependencies]
 # 交易所适配：公共 ccxt（REST/交易）；实时 watch_* 另需 ccxt Pro。
@@ -51,6 +71,7 @@ where = ["."]
 # 只打包发布的命名空间：`pip wheel` 会在 `python/build/lib` 里留下上一次构建的副本，
 # 不加 include 时它们会被再次发现成 `build.lib.qianxing_bridge` 并递归进wheel。
 include = [
+    "qianxing*",
     "qianxing_bridge*",
     "qianxing_ccxt*",
     "qianxing_ashare*",
@@ -58,6 +79,7 @@ include = [
 ]
 
 [tool.setuptools.package-data]
+qianxing = ["py.typed"]
 qianxing_bridge = [
     "_qianxing_native*.pyd",
     "_qianxing_native*.so",

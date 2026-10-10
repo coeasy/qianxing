@@ -1,0 +1,406 @@
+# 顶层 CLI 命令面的 R/P/O/L 能力分类（QX-DEV-PLAN-2026-10-10 T0-2 / 主计划 §5）
+#
+# 目的：把「46 条 CLI 入口」从一张名字清单，变成一张**能力声明表**——每条入口写明它属于哪一档、
+# 默认面是什么、是否需要私有凭据、是否产生外部副作用、是否默认可用，以及它当前为什么只在 CLI 上。
+#
+# 等级口径（与主计划 §5「能力分级矩阵」同一份）：
+#   R Research  数据集检查、配置校验、回测、实验比较、报告与产物复核；无外部账户副作用
+#   P Paper     模拟运行、Paper 订单、暂停/恢复、事件查看；显式本地配置，不需要凭据
+#   O Operator  worker、调度、恢复、存储与运行状态管理，以及无凭据的 venue 只读探测
+#   L Live      真实账户连接、提交订单、对账；默认关闭，不能由「全能力包」自动开启
+#
+# `surface` 记的是**目标默认面**而不是现状：当前 46 条全部只有 CLI 面。R 档计划经 Python SDK 与
+# 桌面复用；P 档走显式本地配置；O 档走 CLI/管理 API；L 档单独启用。父命令（config/run/strategy/
+# backtest）是命名空间，其等级取子命令里的最高权限档，本身不直接产生副作用——门禁对父命令只要求
+# 写明理由，不套「L 默认关闭 / P 不需凭据 / R 无副作用」三条不变量。
+#
+# 门禁 `command_surface_classification_check` 把本表与 clap 命令表逐一对账。它捕获的故障样本是：
+# ① 新增一条 CLI 入口却没登记能力档——该入口属于 R/P/O/L 哪一档、默认面与权限无人声明，SDK/API
+#    侧无从判断它能不能被第三方门面调用（G0 要抓的「入口无声明」）；
+# ② 把某条 L 档入口的 default_enabled 改成 true——实盘能力被「全能力包」自动开启（§5 明令禁止）；
+# ③ 给 P 档入口写上 credentials: private——Paper 轨本应一条凭据都不用（Paper 验收记录同口径）。
+schema_version: 1
+kind: command-surface-classification
+updated_at: "2026-10-10"
+
+commands:
+  # ---- R 研究面：无外部账户副作用 ----
+  - name: all
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 仓库自检（空 argv 与显式 all 同义，跑全套门禁）；不触碰任何账户或 venue
+  - name: app
+    level: R
+    parent: true
+    surface: cli,python,http
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 父命令；三条子入口（validate-dataset/backtest/verify）是 qx-app 应用层用例的门面，等级随子命令取 R。它是唯一一条把业务交给应用层的 CLI 入口，也是 G1「同一 use case 三入口」的 CLI 那一条
+  - name: backtest
+    level: R
+    parent: true
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 父命令；四个子入口（builtin/multi-builtin/ccxt-builtin/book）全是 Bar/Tick/Book 回测，等级随子命令取 R
+  - name: builtin-strategies
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 打印内置策略名册；纯读，无 IO
+  - name: ccxt-fetch-ohlcv
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 从公共 CCXT 端点下载 OHLCV 落盘，作为研究输入；只读公共行情，不触账户
+  - name: ccxt-market-spec
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 下载合约规格（精度/最小下单量等公共元数据）；只读公共面，不触账户
+  - name: config
+    level: R
+    parent: true
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 父命令；explain/validate/fingerprint/lock 全是本地配置读写，等级随子命令取 R
+  - name: data-validate
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 数据集质量与档位校验；纯本地读，产出 ValidationIssue 报告
+  - name: dataset-bundle
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 把 BarFrame 落成 DatasetBundle；只写本地数据目录
+  - name: dataset-ingest
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 数据集摄取与登记；只写本地数据目录
+  - name: doctor
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 运行环境体检；静态检查配置与引用，不连接交易所、不发订单
+  - name: ecosystem
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 生态自检（插件/适配器面）；不触账户
+  - name: fast-backtest
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: manifest 驱动的离线批量回测；同 Bar 内核，无外部副作用
+  - name: init
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 项目脚手架；写样例配置与数据，--force 才覆盖已有文件
+  - name: plan
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 读入并校验地基规格对象（project/dataset/experiment/run-record/capability/evidence/schema-registry）
+  - name: quickstart
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 一条命令版首跑路径（init→doctor→backtest→report→status）；直调同批函数，不另起实现
+  - name: report
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 读取回测产物并出 summary/equity/fills 与自包含 HTML；只读产物
+  - name: strategy
+    level: R
+    parent: true
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 父命令；list/init/backtest 全是本地策略管理，等级随子命令取 R
+  - name: verify
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 内核自检（KernelOnly 范围）；不触账户
+  - name: version
+    level: R
+    parent: false
+    surface: cli,python,desktop
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 打印一行构建身份；--version/-V 是同一条入口的别名
+  # ---- P Paper 面：显式本地配置，不需要凭据 ----
+  - name: run
+    level: P
+    parent: true
+    surface: cli,local-config
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 父命令（命名空间）；子命令跨 R（backtest/doctor/report）与 P（paper/paper-check），本身不直接产生副作用，等级按子命令里最高权限档记 P
+  - name: paper
+    level: P
+    parent: false
+    surface: cli,local-config
+    credentials: none
+    external_side_effect: paper_order
+    default_enabled: true
+    note: Paper 主链路冒烟；虚拟 venue，产出 Paper 订单事实，零外部副作用
+  - name: paper-check
+    level: P
+    parent: false
+    surface: cli,local-config
+    credentials: none
+    external_side_effect: paper_order
+    default_enabled: true
+    note: Paper 主链路验收；只对带启用 Scheduler worker 的 paper 运行时成立
+  - name: paper-e2e
+    level: P
+    parent: false
+    surface: cli,local-config
+    credentials: none
+    external_side_effect: paper_order
+    default_enabled: true
+    note: 与 paper-check 同一条 run_paper_pipeline_once 入口的别名
+  - name: paper-submit-order
+    level: P
+    parent: false
+    surface: cli,local-config
+    credentials: none
+    external_side_effect: paper_order
+    default_enabled: true
+    note: 一次性 Paper SubmitOrder；受理后由 paper worker 执行，仍不触真实账户
+  - name: paper-worker
+    level: P
+    parent: false
+    surface: cli,local-config
+    credentials: none
+    external_side_effect: paper_order
+    default_enabled: true
+    note: Paper 执行 worker；虚拟 venue 常驻，长运行需 operator 关注但不需凭据
+  # ---- O 运维面：进程/调度/存储/运行状态，以及无凭据的 venue 只读探测 ----
+  - name: binance-public-probe
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: venue_read
+    default_enabled: true
+    note: 无凭据的 venue 连通性探测（公共行情），属诊断而非研究输入，故记 O 不记 R
+  - name: console
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 本地同源 BFF 控制台（会话/CSRF/回环边界）；写面身份由服务端会话注入
+  - name: consumer-dlq-replay
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 死信重放；需 --features nats，操作留审计
+  - name: event-consumer-worker
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 事件消费 worker；需 --features nats
+  - name: live-check
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 生产发布前静态门禁；不连接交易所、不发订单，故记 O（不触账户）而非 L
+  - name: outbox-relay
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 文件 Outbox 中继到 NATS；需 --features nats
+  - name: outbox-relay-postgres
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: PostgreSQL Outbox 中继；需 --features 'nats postgres'
+  - name: outbox-relay-worker
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 常驻 Outbox 中继 worker；需 --features nats
+  - name: recovery-child
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 跨进程恢复子进程；由父进程按原样透传参数拉起
+  - name: runtime-check
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 运行时配置校验；输出健康快照与安全边界，不连接交易所
+  - name: scheduler-worker
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 调度 worker；领取作业并触发下游，作业 owner 路由 fail closed
+  - name: serve
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 启动运行时 HTTP/WS API（读面 + 控制面）；写面按 operator scope 裁决
+  - name: status
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 运行状态查看；含配置指纹与投影健康
+  - name: strategy-worker
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 策略宿主 worker；paper/live 由运行时配置的 worker 声明决定，故按 worker 管理记 O
+  - name: supervise
+    level: O
+    parent: false
+    surface: cli,admin-api
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 进程监督器；按拓扑拉起并回收 worker，子进程退出码原样上报
+  # ---- L 实盘面：默认关闭，需私有凭据 ----
+  - name: binance-private-probe
+    level: L
+    parent: false
+    surface: cli,opt-in
+    credentials: private
+    external_side_effect: venue_read
+    default_enabled: false
+    note: Binance 私有账户只读探测；需私有凭据，默认关闭
+  - name: binance-submit-order
+    level: L
+    parent: false
+    surface: cli,opt-in
+    credentials: private
+    external_side_effect: live_order
+    default_enabled: false
+    note: 真实下单；幂等 client order id，超时先查后决策，默认关闭
+  - name: binance-worker
+    level: L
+    parent: false
+    surface: cli,opt-in
+    credentials: private
+    external_side_effect: live_order
+    default_enabled: false
+    note: Binance 实盘执行 worker；未知结果升级对账而非自动补单，默认关闭
+  - name: ccxt-submit-order
+    level: L
+    parent: false
+    surface: cli,opt-in
+    credentials: private
+    external_side_effect: live_order
+    default_enabled: false
+    note: CCXT 真实下单（与 binance 同形，多一个 CCXT 配置路径参数），默认关闭
+  - name: ccxt-worker
+    level: L
+    parent: false
+    surface: cli,opt-in
+    credentials: private
+    external_side_effect: live_order
+    default_enabled: false
+    note: CCXT 实盘执行 worker；按 venue 分项验收，默认关闭
+  - name: reconcile
+    level: L
+    parent: false
+    surface: cli,opt-in
+    credentials: private
+    external_side_effect: venue_read
+    default_enabled: false
+    note: 本地账本与交易所账户对账；需私有凭据，默认关闭

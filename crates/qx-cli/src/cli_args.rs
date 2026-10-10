@@ -4,10 +4,12 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use super::console_args::ConsoleArgs;
-use super::{data_validate_args::DatasetValidateArgs, parse_deploy_path, plan_args::PlanArgs};
+use super::{
+    app_args::AppArgs, data_validate_args::DatasetValidateArgs, parse_deploy_path,
+    plan_args::PlanArgs,
+};
 
-/// 使用者要敲的程序名：`#[command(name = …)]` 与所有引导文案共用这一份。不在别处再抄：
-/// `init` 的「下一步」曾印成 `qianxing …`，而装好的机器上没有那个名字，首跑第二句就是 command not found（V13 R2 #260）。
+/// 使用者要敲的程序名：`#[command(name = …)]` 与所有引导文案共用这一份。不在别处再抄：`init` 的「下一步」曾印成 `qianxing …`，而装好的机器上没有那个名字，首跑第二句就是 command not found（V13 R2 #260）。
 pub(crate) const PROGRAM_NAME: &str = "qx-cli";
 
 #[derive(Parser)]
@@ -23,8 +25,7 @@ fn parse_quantity(value: &str) -> Result<i64, String> {
         .map_err(|error| format!("quantity 非法: {value}（{error}）"))
 }
 
-/// 基点类旗标（`--funding-bps` / `--queue-position-bps` / `--market-impact-bps`）共用
-/// 同一个取值域：撮合与资金费口径都以万分比计，越界不该等到内核才报错，先在 clap 层挡住。
+/// 基点类旗标共用 `0..=10000` 取值域，越界在 clap 层挡住。
 fn parse_bps(value: &str) -> Result<i64, String> {
     match value.parse::<i64>() {
         Ok(parsed) if (0..=10_000).contains(&parsed) => Ok(parsed),
@@ -32,10 +33,7 @@ fn parse_bps(value: &str) -> Result<i64, String> {
     }
 }
 
-/// `outbox-relay` / `outbox-relay-postgres` 的位置参 `limit` 与配置孪生
-/// `relay_batch_size`（runtime_config 校验 `1..=10000`）同域。此前这里没有校验：
-/// `qx outbox-relay … 0` 会走 `limit==0` 早退、一条都不中继却退 0 报健康——一个"报告成功
-/// 的死胡同"。把域挡在 clap 层，越界当场退 2（V13 R4）。
+/// relay 的位置参 `limit` 与 `relay_batch_size` 同域；拒绝零值，避免空转却报成功（V13 R4）。
 fn parse_relay_limit(value: &str) -> Result<usize, String> {
     match value.parse::<usize>() {
         Ok(parsed) if (1..=10_000).contains(&parsed) => Ok(parsed),
@@ -45,8 +43,7 @@ fn parse_relay_limit(value: &str) -> Result<usize, String> {
 
 /// 顶层命令表：每个变体一个 `#[command(name = "…")]`，与 `cli_help.rs` 的入口一一对应。
 #[derive(Subcommand)]
-// clap 要求每个子命令把旗标平铺在自己的变体里，最大的 `Backtest` 变体 392 字节。
-// 装箱能让 clippy 闭嘴，但会让 `cli.rs` 每条派发分支多一次解构，而这张表整个进程只构造一次。
+// clap 要求每个子命令把旗标平铺在自己的变体里，最大的 `Backtest` 变体 392 字节；装箱能让 clippy 闭嘴，但会让 `cli.rs` 每条派发分支多一次解构，而这张表整个进程只构造一次。
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Command {
     #[command(name = "init")]
@@ -94,6 +91,9 @@ pub(crate) enum Command {
         json: bool,
         #[arg(long)]
         html: bool,
+        /// T1-1：复核通过后再聚一份 `<stem>.evidence.json`（opt-in，默认面产物集合不变）。
+        #[arg(long)]
+        evidence: bool,
         #[arg(short = 'o', long = "output", value_name = "PATH")]
         out: Option<PathBuf>,
     },
@@ -116,9 +116,7 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<StrategyCommand>,
     },
-    // V12 R4-e：外层 `[runtime] [frame] [spec]` 与子命令自带的输入是两条链，混写时子命令
-    // 那条链不读外层值。clap 4.6 的 `args_conflicts_with_subcommands` 会把子命令名当第三个
-    // 位置参数吃掉，所以互斥改在派发处拒绝（`reject_shadowed_backtest_inputs`）。
+    // V12 R4-e：外层 `[runtime] [frame] [spec]` 与子命令自带的输入是两条链，混写时子命令那条链不读外层值；clap 4.6 的 `args_conflicts_with_subcommands` 会把子命令名当第三个位置参数吃掉，所以互斥改在派发处拒绝（`reject_shadowed_backtest_inputs`）。
     #[command(name = "backtest")]
     Backtest {
         #[arg(value_parser = parse_deploy_path)]
@@ -130,6 +128,9 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<BacktestCommand>,
     },
+    // T2-2/G1：应用层用例入口；参数结构在 `app_args.rs`（cli_args.rs 顶格在行数棘轮上，而它是本仓第一个自带子命令的外部参数结构）。
+    #[command(name = "app")]
+    App(AppArgs),
     #[command(name = "builtin-strategies")]
     BuiltinStrategies,
     #[command(name = "fast-backtest")]
@@ -327,8 +328,9 @@ impl Command {
             | Self::RuntimeCheck { json, .. } => *json,
             Self::Config { action } => action.as_ref().is_some_and(ConfigCommand::machine_output),
             Self::Run { action } => action.as_ref().is_some_and(RunCommand::machine_output),
-            // version 只打一行构建身份，与 --json 同口径抑制横幅，便于脚本直接取值（U1）。
-            Self::Version => true,
+            // version 只打一行构建身份，与 --json 同口径抑制横幅，便于脚本直接取值（U1）；
+            // `app` 的 stdout 本来就只有一份 JSON，没有可切换的人读正文，所以同样一律抑制。
+            Self::Version | Self::App(_) => true,
             _ => false,
         }
     }
@@ -366,8 +368,7 @@ impl ConfigCommand {
     }
 }
 
-/// `run` 的子命令表与 `RUN_ENTRY_POINTS`（错误文案的来源）由门禁做集合相等校验；
-/// 参数向量按迁移前的宽容语义原样交给 `run_unified_command`（它是处理器，不是分派器）。
+/// `run` 的子命令表与 `RUN_ENTRY_POINTS`（错误文案的来源）由门禁做集合相等校验；参数向量按迁移前的宽容语义原样交给 `run_unified_command`（它是处理器，不是分派器）。
 #[derive(Subcommand)]
 pub(crate) enum RunCommand {
     #[command(name = "backtest")]
@@ -498,10 +499,8 @@ pub(crate) enum BacktestCommand {
         quantity: Option<i64>,
         #[arg(long = "fee-bps")]
         fee_bps: Option<i64>,
-        // 撮合模型参数只放"内置策略这条路真能生效"的两项。内核的
-        // `queue_position_bps` 只作用于限价单所在档位，而 17 个内置策略发的全部是市价单
-        // （`builtin.rs` 构造 intent 时 `limit: None`），配上也不改变任何一笔成交——
-        // 声明一个换不动结果的旗标就是 Q0b 判掉的"假风控"形状。
+        // 只放"内置策略这条路真能生效"的撮合参数：内核的 `queue_position_bps` 只作用于限价单所在
+        // 档位，而 17 个内置策略发的全是市价单，配上也不改结果——声明换不动结果的旗标就是 Q0b 的"假风控"。
         #[arg(long = "market-impact-bps", value_parser = parse_bps)]
         market_impact_bps: Option<i64>,
         #[arg(long = "latency-snapshots")]

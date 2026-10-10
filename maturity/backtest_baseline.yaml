@@ -1,0 +1,41 @@
+# 回测基线（T0-4）——由 tools/backtest_baseline.py 生成，请勿手改。
+#
+# 这份记录的是「某一台机器某一轮」的读数，**与机器有关，不是质量指标**：
+# 耗时与内存只供同机前后对比，跨机不可比。门禁不比对数值，只核形状、
+# 「脚本真在测量」与「夹具身份与 maturity/backtest_acceptance.yaml 一致」。
+schema_version: 1
+kind: backtest-baseline
+generated_by: tools/backtest_baseline.py
+generated_at_unix: 1791606474
+environment:
+  os: Windows
+  arch: AMD64
+  python: 3.13.14
+  binary: qx-cli.exe
+  profile: debug
+fixture:
+  name: quickstart-bar-frame-btcusdt
+  data_fingerprint: dataset-bundle:8bf50b57f8204ab9
+  config_fingerprint: be3aca2d6056abaa8d003be2230fee5b001dad9ab33e4f996729588eb0276551
+  inputs:
+    qianxing.bar-frame.example.json: 6be98878c53b2b65e1cfd58314d271848e9746de370a35164b0f155c573cbf12
+    qianxing.binance.spot.spec.json: 6f10597c3e4ae9546ec928a4e7be9d0ce1c7762553486111e6fc55f63edbf9d1
+    qianxing.dataset-bundle.bar-frame.example.json: 3ca6c875ff39ed8d04e8206e701ffccc2fbfc2f1a4e5ccf7e841ca376cdcf3d4
+    qianxing.runtime.json: bd6535263eea6782afdfed1d80364585a58b2d1a936b7f620b7c6c6a7a355de4
+result_hash: 26fdd6b52d020700
+artifacts:
+  equity: 6856055f14a87f482c4d9f8dc3507a4fd6732d08243b77910df6c384028eedde
+  fills: 9f8f78cdb8c5fda870b65f4700c98ca68cc59b6953a306e72c97fe2852a0afa1
+  run_manifest: aedfd24426ce713883485e6e9ed8914a3330cf54b148031dfd1d936d3f31126d
+  summary: 98a1805d150299af3c5e53fac9768846c59a03e2d25a6a57c3389f8679e4ff95
+timing:
+  quickstart_seconds: 0.364
+  backtest_seconds: 0.324
+memory:
+  peak_rss_bytes: 13041664
+  method: win32_GetProcessMemoryInfo_PeakWorkingSetSize
+  sampling_interval_ms: 20
+notes: >-
+  夹具按身份冻结（逐输入文件 sha256 + data_fingerprint），不把生成物复制进仓库——
+  那会造出第二份真值源与模板静默漂移。耗时与内存与机器有关，跨机不可比，
+  门禁不比对数值；它只保证「夹具没漂、脚本真在测量、产物摘要在盘」。
