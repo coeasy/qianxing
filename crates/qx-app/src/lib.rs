@@ -33,7 +33,7 @@
 //! - 调用上下文与能力档：[`RunContext`]、[`CallerCapability`]
 //! - 错误：[`AppError`]、[`AppErrorCategory`]、[`AppAction`]、[`AppRetry`]
 //!
-//! 现在**没有**的东西（刻意留着，别按名字猜它存在）：多腿回测、Paper/Live 用例、
+//! 现在**没有**的东西（刻意留着，别按名字猜它存在）：多腿回测、Paper/Live 运行编排、
 //! `ReadRunArtifacts`/`BuildReport`（T2-4）。本 crate 今天只交付
 //! 「数据验证 → Bar/Tick/OrderBook 回测 → 产物 → 复核」这条研究垂直切片；
 //! Bar、Tick/OrderBook 与参数实验的 `start` 入口返回可协作取消的 [`RunHandle`]。
@@ -49,9 +49,10 @@ mod tests;
 
 pub use cases::{
     compare_runs, run_backtest, run_depth_backtest, run_experiment, validate_dataset,
-    verify_depth_run, verify_run, CompareRunsResult, CompareRunsSpec, ComparedRun,
-    ComparedRunResult, ExperimentCandidateResult, ExperimentParameterSpace, RunExperimentResult,
-    RunExperimentSpec, MAX_EXPERIMENT_CANDIDATES, RUN_EXPERIMENT_SCHEMA_VERSION,
+    validate_trade_control, verify_depth_run, verify_run, CompareRunsResult, CompareRunsSpec,
+    ComparedRun, ComparedRunResult, ExperimentCandidateResult, ExperimentParameterSpace,
+    RunExperimentResult, RunExperimentSpec, TradeControlSpec, TradeWorkflow,
+    MAX_EXPERIMENT_CANDIDATES, RUN_EXPERIMENT_SCHEMA_VERSION, TRADE_CONTROL_SCHEMA_VERSION,
 };
 pub use context::{CallerCapability, RunContext};
 pub use error::{AppAction, AppError, AppErrorCategory, AppRetry};

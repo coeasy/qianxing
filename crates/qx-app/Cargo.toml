@@ -10,6 +10,7 @@ license.workspace = true
 # 这份清单是**精确**的：`qx_app_check` 逐项核对它，多一项少一项都会红——依赖集是应用层
 # "没有偷偷把门面拉进来"这条纪律的载体，含糊的清单守不住它。
 qx-core = { path = "../qx-core" }
+qx-control = { path = "../qx-control" }
 qx-datastruct = { path = "../qx-datastruct" }
 qx-strategy = { path = "../qx-strategy" }
 qx-xingban = { path = "../qx-xingban" }

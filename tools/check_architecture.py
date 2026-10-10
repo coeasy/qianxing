@@ -16728,7 +16728,7 @@ APP_USE_CASE_ITEMS = (
     ("能力等级", "capability_level"),
 )
 APP_ALLOWED_INTERNAL_DEPS = frozenset(
-    {"qx-core", "qx-datastruct", "qx-strategy", "qx-xingban", "qx-zhenlu"}
+    {"qx-control", "qx-core", "qx-datastruct", "qx-strategy", "qx-xingban", "qx-zhenlu"}
 )
 APP_ALLOWED_EXTERNAL_DEPS = frozenset({"serde", "serde_json"})
 # 登记面写的是能力档的稳定串（路线图 §5 的 R/P/O/L），代码里写的是枚举变体名——两处口径不同形，
@@ -16739,6 +16739,7 @@ APP_CAPABILITY_VARIANTS = {
     "OPERATOR": "Operator",
     "LIVE": "Live",
 }
+APP_COMPOSITE_CAPABILITY_VARIANTS = {"PAPER_OR_LIVE": ("Paper", "Live")}
 
 
 def _app_dependency_names() -> tuple[set[str], set[str]]:
@@ -16829,7 +16830,7 @@ def qx_app_check() -> None:
     internal, external = _app_dependency_names()
     check(
         internal == set(APP_ALLOWED_INTERNAL_DEPS) and external == set(APP_ALLOWED_EXTERNAL_DEPS),
-        "qx-app 的依赖集是精确的（5 个领域件 + serde/serde_json，共 7 名，无门面/适配/执行/存储）",
+        "qx-app 的依赖集是精确的（6 个领域件 + serde/serde_json，共 8 名，无门面/适配/执行/存储）",
         f"内部 {sorted(internal)}（应为 {sorted(APP_ALLOWED_INTERNAL_DEPS)}）；"
         f"外部 {sorted(external)}（应为 {sorted(APP_ALLOWED_EXTERNAL_DEPS)}）",
     )
@@ -16855,7 +16856,7 @@ def qx_app_check() -> None:
         re.MULTILINE,
     )
     check(
-        len(registry) == len(registered) == 7
+        len(registry) == len(registered) == 8
         and len(registered) == len(set(registered))
         and not incomplete
         and declared_kind is not None
@@ -16913,12 +16914,15 @@ def qx_app_check() -> None:
             if has_gate:
                 gate_mismatch.append(f"{name} 登记为不设闸，代码里却有 require")
             continue
-        variant = APP_CAPABILITY_VARIANTS.get(declared or "")
-        if variant is None:
+        if declared in APP_CAPABILITY_VARIANTS:
+            variants = (APP_CAPABILITY_VARIANTS[declared],)
+        else:
+            variants = APP_COMPOSITE_CAPABILITY_VARIANTS.get(declared or "")
+        if variants is None:
             gate_mismatch.append(f"{name} 的 capability={declared!r} 不是 R/P/O/L 的稳定串")
-        elif not has_gate or f"CallerCapability::{variant}" not in body:
+        elif not has_gate or any(f"CallerCapability::{variant}" not in body for variant in variants):
             gate_mismatch.append(
-                f"{name} 登记为 {declared}，代码里没有 `CallerCapability::{variant}` 的 require"
+                f"{name} 登记为 {declared}，代码里没有全部 CallerCapability 变体的 require: {variants}"
             )
     check(
         not gate_mismatch,

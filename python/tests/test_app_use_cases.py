@@ -15,6 +15,7 @@ import os
 import tempfile
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -100,6 +101,43 @@ class AppUseCaseTests(unittest.TestCase):
         depth = _parser().parse_args(["depth-backtest", "depth.json"])
         self.assertEqual(depth.command, "depth-backtest")
         self.assertEqual(depth.input, "depth.json")
+
+    def test_paper_and_live_clients_submit_the_shared_rust_control_contract(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import LiveClient, PaperClient, TradeCommand
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"status":"Accepted","command_id":41}'
+
+        command = TradeCommand(
+            command_id=41,
+            request_id="sdk-41",
+            operator_id="untrusted-body-identity",
+            reason="SDK contract test",
+            kind="PauseStrategy",
+            target="strategy-1",
+            payload={},
+        )
+        with patch("qianxing.app.urlopen", return_value=Response()) as open_url:
+            paper_receipt = PaperClient("https://localhost:8443").submit(command)
+            live_receipt = LiveClient("https://localhost:8443").submit(command)
+
+        self.assertEqual(paper_receipt["status"], "Accepted")
+        self.assertEqual(live_receipt["command_id"], 41)
+        requests = [call.args[0] for call in open_url.call_args_list]
+        self.assertEqual(requests[0].full_url, "https://localhost:8443/app/paper/commands")
+        self.assertEqual(requests[1].full_url, "https://localhost:8443/app/live/commands")
+        self.assertEqual(json.loads(requests[0].data)["workflow"], "paper")
+        self.assertEqual(json.loads(requests[1].data)["command"]["request_id"], "sdk-41")
+        with self.assertRaisesRegex(ValueError, "requires HTTPS"):
+            LiveClient("http://localhost:8443")
 
     def _spec(self, run_id: str, output_dir: Path, bars: str | None = None) -> dict:
         return {

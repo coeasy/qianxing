@@ -2,7 +2,7 @@
 
 Typed facade for schemas currently implemented by qx-app. Every candidate
 backtest and comparison is executed by the shared Rust application layer.
-Tick, OrderBook, and parameter experiments run through the shared Rust engines and application use cases. Multi-leg, Paper, and Live workflows are not exposed by this facade.
+Tick, OrderBook, and parameter experiments run through the shared Rust engines and application use cases. Paper and Live command clients submit to the Rust API and reuse its configured workers; multi-leg backtests are not exposed by this facade.
 """
 
 from __future__ import annotations
@@ -10,7 +10,11 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from importlib.metadata import PackageNotFoundError, version
+from ssl import SSLContext
 from typing import Any, Generic, Literal, TypeVar
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 from qianxing_bridge import native
 
@@ -365,6 +369,98 @@ class DepthBacktestOutcome:
         return cls(**value)
 
 
+@dataclass(frozen=True)
+class TradeCommand:
+    """Existing Rust control-plane command contract; no Python execution logic is added."""
+
+    command_id: int
+    request_id: str
+    operator_id: str
+    reason: str
+    kind: Literal[
+        "SubmitOrder", "PauseStrategy", "ResumeStrategy", "ChangeRiskLimit",
+        "CancelOrder", "ReconcileAccount", "RetryJob", "SwitchVenue",
+    ]
+    target: str
+    payload: dict[str, str]
+    permission: Literal["ReadOnly", "Research", "Trading", "Admin"] = "Trading"
+    dry_run: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+class TradeWorkflowClient:
+    """Thin HTTP client for the Rust API's authenticated Paper/Live control workflows."""
+
+    def __init__(
+        self,
+        base_url: str,
+        workflow: Literal["paper", "live"],
+        *,
+        ssl_context: SSLContext | None = None,
+        timeout: float = 30.0,
+    ):
+        parsed = urlsplit(base_url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.query or parsed.fragment:
+            raise ValueError("base_url must be an http(s) origin/path without query or fragment")
+        if workflow not in ("paper", "live"):
+            raise ValueError("workflow must be 'paper' or 'live'")
+        if workflow == "live" and parsed.scheme != "https":
+            raise ValueError("LiveClient requires HTTPS for every command request")
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        self.base_url = base_url.rstrip("/")
+        self.workflow = workflow
+        self.ssl_context = ssl_context
+        self.timeout = timeout
+
+    def submit(self, command: TradeCommand | dict[str, Any]) -> dict[str, Any]:
+        """Submit through qx-api; Rust authenticates, validates, persists, and enqueues it."""
+        command_document = command.to_dict() if isinstance(command, TradeCommand) else command
+        payload = json.dumps(
+            {"schema_version": 1, "workflow": self.workflow, "command": command_document},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        request = Request(
+            f"{self.base_url}/app/{self.workflow}/commands",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout, context=self.ssl_context) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            try:
+                document = json.loads(raw)
+            except ValueError:
+                document = {"message": raw, "status": exc.code}
+            category = document.get("category") if isinstance(document, dict) else None
+            if category in _APP_ERRORS:
+                raise _APP_ERRORS[category](document.get("message", raw), payload=document) from exc
+            raise QianxingError(
+                document.get("message", document.get("error", raw))
+                if isinstance(document, dict)
+                else raw,
+                payload=document if isinstance(document, dict) else {"status": exc.code},
+            ) from exc
+        except (URLError, TimeoutError, OSError) as exc:
+            raise QianxingError(f"Rust API {self.workflow} command request failed: {exc}") from exc
+
+
+class PaperClient(TradeWorkflowClient):
+    def __init__(self, base_url: str, *, ssl_context: SSLContext | None = None, timeout: float = 30.0):
+        super().__init__(base_url, "paper", ssl_context=ssl_context, timeout=timeout)
+
+
+class LiveClient(TradeWorkflowClient):
+    def __init__(self, base_url: str, *, ssl_context: SSLContext | None = None, timeout: float = 30.0):
+        super().__init__(base_url, "live", ssl_context=ssl_context, timeout=timeout)
+
+
 class RunHandle(Generic[_ResultT]):
     """Cooperative Rust worker handle for Bar, depth, and parameter experiment runs."""
 
@@ -495,7 +591,9 @@ def doctor() -> dict[str, Any]:
             if app_available
             else []
         ),
+        "remote_workflows": ["control.paper.v1", "control.live.v1"],
         "limitations": [
-            "Multi-leg backtests, Paper orchestration, and Live controls are not yet exposed by this SDK facade."
+            "Multi-leg backtests are not yet exposed by this SDK facade.",
+            "Paper/Live submission requires a running qx-api service with matching workers; Live additionally requires authenticated operator policy.",
         ],
     }

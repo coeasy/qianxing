@@ -78,6 +78,16 @@ public:
         return post("/app/verify-depth", outcome_json);
     }
 
+    // The body is a versioned TradeControlSpec. The Rust API authenticates the
+    // operator, validates the command in qx-app, then uses its configured workers.
+    AppResponse submit_paper_command(std::string_view spec_json) const {
+        return post("/app/paper/commands", spec_json);
+    }
+
+    AppResponse submit_live_command(std::string_view spec_json) const {
+        return post("/app/live/commands", spec_json);
+    }
+
 private:
     static std::string run_path(std::string_view run_id) {
         return "/app/runs/" + std::string(run_id);

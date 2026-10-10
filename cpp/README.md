@@ -5,7 +5,7 @@
 1. `include/qianxing_strategy.h` 是稳定的 C ABI，适用于宿主进程内嵌或动态库插件。策略只产生 `OrderIntent`，不接触凭证、账户账本和交易所连接。
 2. `examples/jsonl_strategy.cpp` 是独立进程示例，使用与 Python 相同的版本化 JSONL 协议。编译后在运行时配置 `external_executable`、`external_args` 和可选的 `external_env`，即可复用 Strategy Worker 的超时、崩溃隔离、RiskGate、OMS、审计和重试边界。
 
-`include/qianxing_app.hpp` 提供共享应用 API 的轻量 C++17 客户端，可调用数据校验、Bar 与 Tick/OrderBook 回测、产物复核、运行对比和参数实验。客户端接收调用方提供的 HTTP transport，直接提交版本化 JSON 到相同的 `/app/*` 路由；撮合、风险、账本和回测逻辑仍由 Rust 服务执行。transport 由集成方实现，并负责 TLS、鉴权、超时和连接复用。
+`include/qianxing_app.hpp` 提供共享应用 API 的轻量 C++17 客户端，可调用数据校验、Bar 与 Tick/OrderBook 回测、产物复核、运行对比、参数实验，以及 Paper/Live 控制命令。客户端接收调用方提供的 HTTP transport，直接提交版本化 JSON 到相同的 `/app/*` 路由；撮合、风险、账本和控制命令执行仍由 Rust 服务与已配置 worker 负责。transport 由集成方实现，并负责 TLS、鉴权、超时和连接复用；Live 控制要求服务启用 Operator 授权。
 
 长任务可调用 `start_backtest` 或 `start_depth_backtest`，再以 `run_status(run_id)` 轮询结果，并用 `cancel_run(run_id)` 请求协作取消。它们复用 Rust Bar/Tick/OrderBook 内核；运行句柄驻留服务进程内，最多保留 1024 项，服务重启会清空。run_id 只接受字母、数字、`-`、`_`、`.`。
 

@@ -2,7 +2,7 @@
 #
 # 目的：把「qx-app 有哪些用例、每个用例的九项是什么」从 `crates/qx-app/src/cases/mod.rs` 的
 # 一张文档表，升级为**机读**登记面。门禁 `qx_app_check` 把本表与三处事实逐条对账：
-#   ① 用例集合 == `cases/mod.rs` 的 `pub use` 三条；
+#   ① 用例集合 == `cases/mod.rs` 的 `pub use`；
 #   ② 每个用例在 `crates/qx-app/src/cases/` 下都有 `pub fn <name>(`；
 #   ③ 九项键名与顺序 == `cases/mod.rs` 模块文档那张表的九行（同一份口径的两种写法）。
 #
@@ -104,3 +104,13 @@ use_cases:
     artifacts: "无（只读 run.json / summary.json / equity.csv / fills.csv）"
     error_categories: "AppErrorCategory 八类；产物缺失/不一致为 verified=false"
     capability_level: "R"
+  - name: validate_trade_control
+    input_schema: "TradeControlSpec v1（Paper/Live + 现有 ControlCommand）"
+    output_schema: "经认证授权和现有执行者清单校验的 ControlCommand"
+    capability: "PAPER_OR_LIVE"
+    idempotency_key: "command_id + request_id；实际去重由 Rust ControlPlane 完成"
+    cancellation: "无取消点；用例只在原有队列持久化之前验证"
+    progress: "API 返回 Accepted 审计回执；worker 终态继续走现有审计读面"
+    artifacts: "Rust ControlPlane 审计链、原有 EventLog 与 Ledger"
+    error_categories: "AppErrorCategory 八类；无执行者、权限不足、订单载荷非法均在入队前拒绝"
+    capability_level: "P/L"

@@ -1296,6 +1296,7 @@ dependencies = [
 name = "qx-app"
 version = "0.1.0"
 dependencies = [
+ "qx-control",
  "qx-core",
  "qx-datastruct",
  "qx-strategy",

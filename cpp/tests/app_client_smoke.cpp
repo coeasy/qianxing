@@ -56,6 +56,16 @@ int main() {
     assert(observed_path == "/app/verify-depth");
     assert(observed_body == spec);
 
+    const auto paper = client.submit_paper_command(spec);
+    assert(paper.ok());
+    assert(observed_path == "/app/paper/commands");
+    assert(observed_body == spec);
+
+    const auto live = client.submit_live_command(spec);
+    assert(live.ok());
+    assert(observed_path == "/app/live/commands");
+    assert(observed_body == spec);
+
     qianxing::AppClient unavailable({});
     assert(unavailable.run_experiment("{}").status == 0);
     assert(unavailable.verify_run("{}").status == 0);

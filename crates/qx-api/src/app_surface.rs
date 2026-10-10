@@ -57,7 +57,7 @@ impl AppPaths {
 ///
 /// 错误文档就是 [`AppError::to_json`] 的原文——与 CLI 的 stderr 那行、Python 的异常载荷逐字节相同。
 /// 状态码表见模块文档（为什么必须写成字面量）。
-fn respond(result: Result<String, AppError>) -> ApiResponse {
+pub(crate) fn respond(result: Result<String, AppError>) -> ApiResponse {
     match result {
         Ok(payload) => ApiResponse::json(200, payload),
         Err(error) => {

@@ -8,9 +8,9 @@ The extension uses PyO3's Python 3.10 stable ABI. Release builds publish one `cp
 
 The public `qianxing` namespace exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, L1 Tick and L2 OrderBook backtests, artifact verification, deterministic comparison of completed runs, bounded Bar parameter-grid experiments, and cooperative `RunHandle` lifecycle for Bar/Tick/OrderBook/parameter experiments. Matching, risk, accounting, replay verification, cancellation boundaries, and experiment execution stay in Rust; Python only provides typed request/result objects.
 
-The wheel also exposes the existing versioned strategy contract as `qianxing.strategy`, plus the optional adapters as `qianxing.ccxt` and `qianxing.ashare`. Those connector modules preserve their own documented boundaries and are not a substitute for the not-yet-complete shared Paper/Live application workflows.
+`PaperClient` and `LiveClient` submit the versioned Rust `TradeControlSpec` to a running qx-api service. Rust authenticates the operator, validates the command in qx-app, persists and enqueues it through the existing ControlPlane, then the configured Paper or venue worker executes it. Live requires an authenticated API policy; the Python SDK does not execute trades itself. A client TLS context can be supplied for mTLS deployments.
 
-Multi-leg backtests, Paper orchestration, and Live controls are not yet exposed through this SDK facade. The repository has additional lower-level CLI, worker, connector, and strategy capabilities; their presence does not mean they are already part of the high-level Python API or approved for production trading. The current depth application contract accepts Rust built-in strategies; non-zero queue-position assumptions are rejected because those strategies issue market orders.
+Multi-leg backtests are not yet exposed through this SDK facade. The repository has additional lower-level CLI, worker, connector, and strategy capabilities; their presence does not mean they are already part of the high-level Python API. The current depth application contract accepts Rust built-in strategies; non-zero queue-position assumptions are rejected because those strategies issue market orders.
 
 ## Example
 
@@ -43,6 +43,23 @@ if handle.wait(timeout_ms=30_000) == "running":
 state = handle.wait()
 if state == "succeeded":
     outcome = handle.result()
+```
+
+Paper and Live command submission use the Rust server's existing execution path:
+
+```python
+from qianxing import LiveClient, TradeCommand
+
+client = LiveClient("https://127.0.0.1:8443")
+receipt = client.submit(TradeCommand(
+    command_id=1001,
+    request_id="strategy-pause-1001",
+    operator_id="ignored-when-mTLS-is-enabled",
+    reason="operator maintenance",
+    kind="PauseStrategy",
+    target="strategy-1",
+    payload={},
+))
 ```
 
 The installed `qianxing` command exposes `doctor`, `validate-dataset`, `backtest`, `depth-backtest`, `verify`, `compare-runs`, and `run-experiment` for the same SDK use cases. Research commands accept the versioned JSON document produced by the application contract.

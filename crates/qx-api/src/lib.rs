@@ -3,6 +3,9 @@
 //! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
 mod admission;
 mod app_surface;
+mod app_trade_control;
+#[cfg(test)]
+mod app_trade_control_tests;
 use app_surface as app;
 mod connections;
 mod console;
@@ -25,6 +28,7 @@ use admission::{
     DEFAULT_MAX_CONCURRENT_CONNECTIONS,
 };
 use event_cursor::{events_after_cursor, parse_after_cursor};
+use qx_app::TradeWorkflow;
 use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
 use qx_core::{contract::contract_matrix_json, Event, EventKind, EventLog, Fnv1a, LedgerEntry};
 use qx_protocol::{
@@ -1710,6 +1714,12 @@ qx_control_retired_audit_records_total {}\n",
             }
             ("GET", "/events/live") => self.live_events(query),
             ("POST", "/control/commands") => self.submit_command(body, ts, authenticated_operator),
+            ("POST", "/app/paper/commands") => {
+                self.submit_workflow_command(body, ts, authenticated_operator, TradeWorkflow::Paper)
+            }
+            ("POST", "/app/live/commands") => {
+                self.submit_workflow_command(body, ts, authenticated_operator, TradeWorkflow::Live)
+            }
             ("POST", "/app/validate-dataset") => app::dataset(body, &self.app_paths),
             ("POST", "/app/backtest") => app_surface::post_run_backtest(body, &self.app_paths),
             ("POST", "/app/verify") => app_surface::post_verify_run(body),
@@ -1806,91 +1816,6 @@ qx_control_retired_audit_records_total {}\n",
         }
     }
 
-    fn submit_command(
-        &self,
-        body: &str,
-        ts: u64,
-        authenticated_operator: Option<&str>,
-    ) -> ApiResponse {
-        let mut command: ControlCommand = match serde_json::from_str(body) {
-            Ok(command) => command,
-            Err(error) => return ApiResponse::json(400, error_json(&error.to_string())),
-        };
-        // 身份以认证边界为准，不以「有没有配 operator 名册」为前提（缺陷形态与反例见 tests/console_operator_identity.rs）。
-        let authenticated = authenticated_operator.filter(|id| !id.trim().is_empty());
-        if let Some(operator_id) = authenticated {
-            command.operator_id = operator_id.to_string();
-        }
-        let granted = match (&self.policy, authenticated) {
-            (Some(policy), Some(operator_id)) => match policy.permission(operator_id) {
-                Some(permission) => permission,
-                None => return ApiResponse::json(403, error_json("forbidden")),
-            },
-            (Some(_), None) => {
-                return ApiResponse::json(403, error_json("authenticated_operator_required"));
-            }
-            (None, _) => command.permission,
-        };
-        if let Some(submitter) = &self.control_submitter {
-            let queued_command = command.clone();
-            let (plane, audit) = match submitter(command, granted, ts) {
-                Ok(result) => result,
-                Err(ControlSubmitError::Unavailable(error)) => {
-                    return ApiResponse::json(
-                        503,
-                        error_json(&format!("control_state_unavailable: {error}")),
-                    );
-                }
-                Err(ControlSubmitError::Rejected(error)) => {
-                    let status = match error {
-                        ControlError::Forbidden => 403,
-                        ControlError::Invalid(_) => 400,
-                        _ => 409,
-                    };
-                    return ApiResponse::json(status, error_json(&format!("{error:?}")));
-                }
-            };
-            match lock_state(&self.state) {
-                Ok(mut state) => state.control = plane,
-                Err(error) => return ApiResponse::json(503, error_json(&error)),
-            }
-            if let Some(enqueuer) = &self.command_enqueuer {
-                // 入队失败不推翻已经成立的受理：命令已写进控制面，worker 每轮按
-                // `pending()` 补入同一条命令。但"补入了"是假设，不是事实——失败必须
-                // 有一条能被看见的通道，所以计数 + 落日志，而不是 `let _ =` 吞掉（#189）。
-                if let Err(error) = enqueuer(queued_command, ts) {
-                    self.metrics
-                        .command_enqueue_failures_total
-                        .fetch_add(1, Ordering::Relaxed);
-                    eprintln!("[qx-api] 控制命令入队失败，等 worker 补入: {error}");
-                }
-            }
-            return ApiResponse::json(
-                202,
-                serde_json::to_string(&audit).expect("audit is serializable"),
-            );
-        }
-        let mut state = match lock_state(&self.state) {
-            Ok(state) => state,
-            Err(error) => return ApiResponse::json(503, error_json(&error)),
-        };
-        let result = state.control.submit_as(command, granted, ts);
-        match result {
-            Ok(audit) => ApiResponse::json(
-                202,
-                serde_json::to_string(&audit).expect("audit is serializable"),
-            ),
-            Err(error) => {
-                let status = match error {
-                    ControlError::Forbidden => 403,
-                    ControlError::Invalid(_) => 400,
-                    _ => 409,
-                };
-                ApiResponse::json(status, error_json(&format!("{error:?}")))
-            }
-        }
-    }
-
     /// 处理一条 HTTP/1.1 连接（仅 crate 内可见）：与 `serve` 的区别只在它同步处理
     /// 单条连接、不起线程，供本 crate 的集成用例钉住确定性的请求/响应顺序（V12 §16）。
     #[cfg(test)]
@@ -1929,6 +1854,33 @@ qx_control_retired_audit_records_total {}\n",
         let request = read_request(&mut stream)?;
         let request = String::from_utf8_lossy(&request);
         self.dispatch_request(&mut stream, &request, ts, authenticated_operator)
+    }
+
+    pub(crate) fn submit_command(
+        &self,
+        body: &str,
+        ts: u64,
+        authenticated_operator: Option<&str>,
+    ) -> ApiResponse {
+        let mut command: ControlCommand = match serde_json::from_str(body) {
+            Ok(command) => command,
+            Err(error) => return ApiResponse::json(400, error_json(&error.to_string())),
+        };
+        let authenticated = authenticated_operator.filter(|id| !id.trim().is_empty());
+        if let Some(operator_id) = authenticated {
+            command.operator_id = operator_id.to_string();
+        }
+        let granted = match (&self.policy, authenticated) {
+            (Some(policy), Some(operator_id)) => match policy.permission(operator_id) {
+                Some(permission) => permission,
+                None => return ApiResponse::json(403, error_json("forbidden")),
+            },
+            (Some(_), None) => {
+                return ApiResponse::json(403, error_json("authenticated_operator_required"));
+            }
+            (None, _) => command.permission,
+        };
+        self.persist_submitted_command(command, granted, ts)
     }
 
     fn dispatch_request<S: Read + Write>(
