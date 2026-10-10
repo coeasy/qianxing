@@ -109,10 +109,13 @@ where
         .enable_all()
         .build()
         .expect("NATS provisioning runtime");
-    let client = runtime
-        .block_on(async_nats::connect(url))
-        .map_err(|error| format!("连接 NATS 失败: {error}"))?;
-    runtime.block_on(work(async_nats::jetstream::new(client)))
+    runtime.block_on(async {
+        let client = async_nats::connect(url)
+            .await
+            .map_err(|error| format!("连接 NATS 失败: {error}"))?;
+        let context = async_nats::jetstream::new(client);
+        work(context).await
+    })
 }
 
 fn event(event_id: String, sequence: u64, trace_id: &str) -> OutboxEvent {
