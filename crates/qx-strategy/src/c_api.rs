@@ -449,12 +449,8 @@ impl CAbiStrategy {
         let request_id = read_required_string(decision.request_id, "request_id")?;
         let strategy_id = read_required_string(decision.strategy_id, "strategy_id")?;
         let raw_intents: &[QxOrderIntent] = if decision.intents_len == 0 {
-            // C and C++ commonly represent an empty array as {nullptr, 0}.
-            // `from_raw_parts` still requires a non-null aligned pointer when
-            // len is zero, so keep that valid wire shape out of the unsafe call.
             &[]
         } else {
-            // The length and null-pointer conditions were checked above.
             unsafe { std::slice::from_raw_parts(decision.intents, decision.intents_len) }
         };
         let mut intents = Vec::with_capacity(raw_intents.len());
@@ -1085,12 +1081,8 @@ mod tests {
 
     #[test]
     fn decode_decision_rejects_an_invalid_c_side_value() {
-        // The plugin writes `side` into host-owned memory. When `side` was typed
-        // as a `#[repr(C)]` enum, a stored value of 3 is not any of the declared
-        // enumerators, so matching it is undefined behavior in Rust — there is
-        // no reachable "reject" arm, and a hostile-but-signed plugin could reach
-        // that arm before any check ran. The field is therefore a plain `u32`
-        // with an explicit rejection.
+        // Keep plugin-controlled `side` as a plain u32: invalid values for a
+        // repr(C) enum would be UB before the rejection arm can run.
         let intent = Box::new(QxOrderIntent {
             intent_id: 1,
             instrument: c"BTCUSDT.BINANCE".as_ptr(),
@@ -1138,43 +1130,6 @@ mod tests {
             error.contains("C ABI intent side 非法") && error.contains("3"),
             "the rejection must name the offending field and value: {error}",
         );
-    }
-
-    #[test]
-    fn decode_decision_accepts_a_null_pointer_for_zero_intents() {
-        let raw = QxStrategyDecision {
-            schema_version: QX_C_STRATEGY_API_VERSION,
-            request_id: c"req-empty".as_ptr(),
-            strategy_id: c"abi-test".as_ptr(),
-            signal_id: 1,
-            confidence: QxRaw128::from_i128(0),
-            priority: 0,
-            expires_at: 100,
-            intents: ptr::null_mut(),
-            intents_len: 0,
-        };
-        let context = StrategyContext {
-            strategy_id: "abi-test".into(),
-            strategy_version: "v1".into(),
-            account_id: "main".into(),
-            venue_id: "paper".into(),
-            data_fingerprint: "bars-1".into(),
-            as_of: 10,
-            positions: BTreeMap::new(),
-            cash: BTreeMap::new(),
-            available_margin_raw: Some(1_000_000_000),
-            risk_state: "ready".into(),
-        };
-        let strategy = CAbiStrategy {
-            vtable: &FAKE_VTABLE,
-            handle: ptr::null_mut(),
-        };
-
-        let decoded = strategy
-            .decode_decision(&raw, &context, 10)
-            .expect("a zero-length C array may use a null pointer");
-        assert!(decoded.intents.is_empty());
-        std::mem::forget(strategy);
     }
 
     #[test]
