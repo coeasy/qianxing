@@ -1,6 +1,6 @@
 use crate::{
     run_depth_backtest, verify_depth_run, AppErrorCategory, BuiltinStrategySpec, CallerCapability,
-    DepthBacktestSpec, RunContext, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+    DepthBacktestSpec, RunContext, RunStatus, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use qx_strategy::BuiltinStrategyKind;
 use std::path::Path;
@@ -128,6 +128,25 @@ fn l2_order_book_use_case_uses_depth_matching_and_replay_verification() {
     )
     .expect("verify L2 artifacts");
     assert!(verification.verified, "{:?}", verification.mismatches);
+}
+
+#[test]
+fn depth_run_handle_uses_the_same_tick_application_workflow() {
+    let root = super::fixtures::scratch("app-depth-run-handle");
+    let mut depth_spec = spec("depth-run-handle", &root, "l1", 1);
+    depth_spec.initial_cash_raw = 1_000_000 * SCALE;
+    let mut handle = depth_spec.start(RunContext::new(
+        CallerCapability::Research,
+        "depth-run-handle",
+    ));
+    assert_eq!(handle.run_id(), "depth-run-handle");
+    assert_eq!(handle.wait(), RunStatus::Succeeded);
+    let outcome = handle
+        .try_take_result()
+        .expect("completed Tick run must have a result")
+        .expect("shared Tick use case");
+    assert_eq!(outcome.tier, "l1");
+    assert!(outcome.fills > 0);
 }
 
 #[test]

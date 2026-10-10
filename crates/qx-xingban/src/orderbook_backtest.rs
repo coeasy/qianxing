@@ -268,6 +268,22 @@ impl OrderBookBacktestEngine {
         snapshots: &[OrderBookSnapshot],
         strategy: &mut dyn OrderBookStrategy,
     ) -> Result<OrderBookBacktestReport, qx_core::QxError> {
+        self.run_with_cancel(snapshots, strategy, || false)?
+            .ok_or_else(|| qx_core::QxError::Invariant("未请求取消但订单簿回测未产生报告".into()))
+    }
+
+    /// Run the same deterministic engine with cooperative cancellation checks
+    /// during input validation and at every snapshot boundary. `None` is a
+    /// cancellation result; partial books are never returned as a valid report.
+    pub fn run_with_cancel<F>(
+        self,
+        snapshots: &[OrderBookSnapshot],
+        strategy: &mut dyn OrderBookStrategy,
+        mut is_cancelled: F,
+    ) -> Result<Option<OrderBookBacktestReport>, qx_core::QxError>
+    where
+        F: FnMut() -> bool,
+    {
         let OrderBookBacktestEngine {
             config,
             execution_model,
@@ -302,6 +318,9 @@ impl OrderBookBacktestEngine {
             }
         }
         for snapshot in snapshots {
+            if is_cancelled() {
+                return Ok(None);
+            }
             snapshot.validate().map_err(qx_core::QxError::Permanent)?;
             if snapshot.instrument != instrument {
                 return Err(qx_core::QxError::BusinessViolation(
@@ -403,6 +422,9 @@ impl OrderBookBacktestEngine {
         );
 
         for snapshot in snapshots {
+            if is_cancelled() {
+                return Ok(None);
+            }
             for mut fill in matcher
                 .on_snapshot(snapshot)
                 .map_err(qx_core::QxError::Permanent)?
@@ -738,7 +760,7 @@ impl OrderBookBacktestEngine {
         };
         // 与 Bar 链同一条纪律：事实源必须能重新驱动账户，否则报告出不去（V11 Q62）。
         ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;
-        Ok(report)
+        Ok(Some(report))
     }
 }
 

@@ -37,10 +37,12 @@ def available() -> bool:
 APP_ENTRYPOINTS = (
     "app_validate_dataset",
     "app_run_backtest",
+    "app_start_backtest",
     "app_verify_run",
     "app_compare_runs",
     "app_run_experiment",
     "app_run_depth_backtest",
+    "app_start_depth_backtest",
     "app_verify_depth_run",
 )
 
@@ -85,6 +87,11 @@ def app_run_backtest(spec_json: str) -> str:
     return str(_extension().app_run_backtest(spec_json))
 
 
+def app_start_backtest(spec_json: str) -> Any:
+    """Start a Bar backtest in the Rust engine and return its lifecycle handle."""
+    return _extension().app_start_backtest(spec_json)
+
+
 def app_verify_run(outcome_json: str) -> str:
     """应用层用例 ``VerifyRun``：传 ``BacktestOutcome`` JSON，换回 ``VerificationResult`` JSON。
 
@@ -106,6 +113,11 @@ def app_run_experiment(spec_json: str) -> str:
 def app_run_depth_backtest(spec_json: str) -> str:
     """Execute the shared Rust L1 Tick or L2 order-book backtest use case."""
     return str(_extension().app_run_depth_backtest(spec_json))
+
+
+def app_start_depth_backtest(spec_json: str) -> Any:
+    """Start an L1 Tick or L2 order-book run in the Rust engine."""
+    return _extension().app_start_depth_backtest(spec_json)
 
 
 def app_verify_depth_run(outcome_json: str) -> str:

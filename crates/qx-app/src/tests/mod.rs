@@ -8,5 +8,6 @@
 mod depth_backtest;
 mod error_contract;
 mod fixtures;
+mod run_handles;
 mod spec_contract;
 mod use_cases;

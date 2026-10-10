@@ -47,10 +47,13 @@ def _load_native():
                     for name in (
                         "app_validate_dataset",
                         "app_run_backtest",
+                        "app_start_backtest",
                         "app_verify_run",
                         "app_compare_runs",
                         "app_run_experiment",
                         "app_run_depth_backtest",
+                        "app_start_depth_backtest",
+                        "app_verify_depth_run",
                     )
                 ):
                     return _qianxing_native
@@ -174,6 +177,19 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertEqual([item.rank for item in typed.runs], [1, 2])
 
+    def test_run_handle_starts_waits_and_takes_result_from_rust(self):
+        self._require()
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import start_backtest
+
+        handle = start_backtest(self._spec("py-run-handle", self.output_dir))
+        self.assertEqual(handle.run_id, "py-run-handle")
+        self.assertEqual(handle.wait(timeout_ms=10_000), "succeeded")
+        outcome = handle.result()
+        self.assertIsNotNone(outcome)
+        self.assertGreater(outcome.fills, 0)
+        self.assertIsNone(handle.result(), "outcome is delivered only once")
+
     def test_parameter_grid_runs_and_compares_candidates_through_rust(self):
         self._require()
         spec = {
@@ -278,7 +294,13 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertTrue(Path(outcome["artifacts"]["run_manifest"]).is_file())
 
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-        from qianxing import BuiltinStrategySpec, DepthBacktestSpec, run_depth_backtest, verify_depth_run
+        from qianxing import (
+            BuiltinStrategySpec,
+            DepthBacktestSpec,
+            run_depth_backtest,
+            start_depth_backtest,
+            verify_depth_run,
+        )
 
         typed = run_depth_backtest(
             DepthBacktestSpec(
@@ -299,6 +321,18 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(typed.tier, "l1")
         self.assertEqual(typed.equity_points, 48)
         self.assertTrue(verify_depth_run(typed).verified)
+
+        depth_handle_payload = {**payload, "run_id": "python-tick-handle-run"}
+        depth_handle_payload["output_dir"] = str(self.output_dir / "depth-handle-runs")
+        handle = start_depth_backtest(depth_handle_payload)
+        self.assertEqual(handle.run_id, "python-tick-handle-run")
+        self.assertEqual(handle.wait(timeout_ms=10_000), "succeeded")
+        depth_result = handle.result()
+        self.assertIsNotNone(depth_result)
+        self.assertEqual(depth_result.tier, "l1")
+        self.assertEqual(depth_result.equity_points, 48)
+        self.assertIsNone(handle.result(), "depth outcome is delivered only once")
+
         from qianxing.cli import main as python_cli
 
         outcome_file = self.output_dir / "depth-outcome.json"

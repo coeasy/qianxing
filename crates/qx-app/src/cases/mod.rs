@@ -19,8 +19,8 @@
 //! | 输出 schema | `DatasetVerdict` | `BacktestOutcome` | `VerificationResult` | `CompareRunsResult` v1 | `RunExperimentResult` v1 | `DepthBacktestOutcome` v1 | `VerificationResult` |
 //! | 运行权限 | `RESEARCH` | `RESEARCH` | 无（纯读产物） | 无（纯计算） | `RESEARCH` | `RESEARCH` | 无（纯读产物） |
 //! | 幂等键 | `dataset_id` + 内容指纹 | `run_id` + `config_hash` + `data_fingerprint` | `run_id` | 完整输入文档（纯计算） | `experiment_id` + 规格指纹；冲突在子运行前拒绝 | `run_id` + 规格/盘口指纹；产物冲突即拒绝 | `run_id` |
-//! | 取消行为 | 无取消点（同步纯读） | 无取消点（同步） | 无取消点 | 无取消点（有界输入） | 无取消点；候选上限 256 | 无取消点（同步；RunHandle 生命周期待接入） | 无取消点（同步纯读） |
-//! | 事件/进度 | 无 | 无 | 无 | 无 | 结果逐候选记录成功或稳定错误 | 最终结果含撮合/重放证据；无实时进度 | 无 |
+//! | 取消行为 | 无取消点（同步纯读） | 同步 run_backtest 不取消；BacktestSpec::start 通过 Rust 引擎逐 Bar 协作取消，取消不返回部分报告或产物 | 无取消点 | 无取消点（有界输入） | 无取消点；候选上限 256 | 同步 run_depth_backtest 不取消；DepthBacktestSpec::start 通过 Rust 引擎逐 Tick/快照协作取消，取消不返回部分报告或产物 | 无取消点（同步纯读） |
+//! | 事件/进度 | 无 | RunHandle 提供 run_id、状态、取消、等待和一次性结果读取；无百分比进度 | 无 | 无 | 结果逐候选记录成功或稳定错误 | RunHandle 提供 run_id、状态、取消、等待和一次性结果读取；无百分比进度；结果绑定 Rust 撮合报告和 ReplayVerifier 重放证据 | 无 |
 //! | 产物清单 | 无 | run.json / summary.json / equity.csv / fills.csv | 无（只读） | 无（内存结果） | 每候选四份回测产物 + 实验 JSON 摘要 | run.json / summary.json / equity.csv / fills.csv | 无（只读） |
 //! | 错误类别 | 八类见 `AppErrorCategory` | 同左 | 同左 | 同左 | 同左（候选错误隔离记录） | 同左 | 同左 |
 //! | 能力等级 | R | R | R | R | R | R | R |

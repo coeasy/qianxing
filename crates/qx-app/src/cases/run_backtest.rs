@@ -27,6 +27,7 @@ use crate::cases::attach;
 use crate::cases::guard::guard_panics;
 use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
+use crate::run_handle::CancellationToken;
 use crate::spec::{BacktestOutcome, BacktestSpec, MIN_BACKTEST_BARS};
 use qx_core::{Fnv1a, InstrumentId, Money, Quantity, ReplayVerifier, RunManifest};
 use qx_datastruct::BarFrame;
@@ -59,14 +60,39 @@ pub fn run_backtest(
 ) -> Result<BacktestOutcome, AppError> {
     context.require(CallerCapability::Research, "Bar 回测")?;
     let correlation_id = context.correlation_id().to_string();
-    let outcome = guard_panics(&correlation_id, || run_backtest_inner(spec, context));
-    outcome.map_err(|error| attach(error, &correlation_id))
+    let outcome = guard_panics(&correlation_id, || run_backtest_inner(spec, context, None))
+        .map_err(|error| attach(error, &correlation_id))?;
+    outcome.ok_or_else(|| {
+        attach(
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                "同步 Bar 回测未产生报告",
+            ),
+            &correlation_id,
+        )
+    })
+}
+
+impl BacktestSpec {
+    /// Start a cooperative worker for this Bar backtest specification.
+    pub fn start(self, context: RunContext) -> crate::RunHandle<BacktestOutcome> {
+        let run_id = context.correlation_id().to_string();
+        crate::RunHandle::spawn(run_id, move |cancellation| {
+            context.require(CallerCapability::Research, "Bar 回测")?;
+            let correlation_id = context.correlation_id().to_string();
+            guard_panics(&correlation_id, || {
+                run_backtest_inner(&self, &context, Some(&cancellation))
+            })
+            .map_err(|error| attach(error, &correlation_id))
+        })
+    }
 }
 
 fn run_backtest_inner(
     spec: &BacktestSpec,
     context: &RunContext,
-) -> Result<BacktestOutcome, AppError> {
+    cancellation: Option<&CancellationToken>,
+) -> Result<Option<BacktestOutcome>, AppError> {
     spec.validate()?;
     let instrument = InstrumentId::parse(&spec.instrument).ok_or_else(|| {
         AppError::new(
@@ -162,9 +188,19 @@ fn run_backtest_inner(
     strategy
         .initialize()
         .map_err(|error| AppError::from_qx_error(&error))?;
-    let report = BacktestEngine::new(config)
-        .run(&bars, &mut strategy)
-        .map_err(|error| AppError::from_qx_error(&error))?;
+    let report = match cancellation {
+        Some(cancellation) => BacktestEngine::new(config)
+            .run_with_cancel(&bars, &mut strategy, || cancellation.is_cancelled())
+            .map_err(|error| AppError::from_qx_error(&error))?,
+        None => Some(
+            BacktestEngine::new(config)
+                .run(&bars, &mut strategy)
+                .map_err(|error| AppError::from_qx_error(&error))?,
+        ),
+    };
+    let Some(report) = report else {
+        return Ok(None);
+    };
 
     // 重放自检：与 CLI 回测同一道闸——跑不过重放的那一轮没有资格往产物里写一个"看起来校验过"的哈希。
     let replay =
@@ -268,7 +304,7 @@ fn run_backtest_inner(
         })?,
     )?;
 
-    Ok(BacktestOutcome {
+    Ok(Some(BacktestOutcome {
         run_id: spec.run_id.clone(),
         instrument: spec.instrument.clone(),
         result_hash: format!("{:016x}", report.result_hash()),
@@ -278,7 +314,7 @@ fn run_backtest_inner(
         return_bps: report.return_bps,
         max_drawdown_bps: report.max_drawdown_bps,
         artifacts,
-    })
+    }))
 }
 
 /// 规格摘要：`BacktestSpec` 的规范化 JSON 过一遍 FNV-1a。

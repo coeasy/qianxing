@@ -177,6 +177,21 @@ impl TickBacktestEngine {
         ticks: &[QuoteTick],
         strategy: &mut dyn TickStrategy,
     ) -> Result<TickBacktestReport, qx_core::QxError> {
+        self.run_with_cancel(ticks, strategy, || false)?
+            .ok_or_else(|| qx_core::QxError::Invariant("未请求取消但 Tick 回测未产生报告".into()))
+    }
+
+    /// Run the same deterministic L1 engine with cooperative cancellation
+    /// during tick validation/conversion and at every matching snapshot.
+    pub fn run_with_cancel<F>(
+        self,
+        ticks: &[QuoteTick],
+        strategy: &mut dyn TickStrategy,
+        mut is_cancelled: F,
+    ) -> Result<Option<TickBacktestReport>, qx_core::QxError>
+    where
+        F: FnMut() -> bool,
+    {
         if ticks.windows(2).any(|window| {
             window[0].ts >= window[1].ts || window[0].source_seq >= window[1].source_seq
         }) {
@@ -184,10 +199,13 @@ impl TickBacktestEngine {
                 "Tick 回测 ts/source_seq 必须严格递增".into(),
             ));
         }
-        let snapshots = ticks
-            .iter()
-            .map(|tick| self.snapshot(tick))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut snapshots = Vec::with_capacity(ticks.len());
+        for tick in ticks {
+            if is_cancelled() {
+                return Ok(None);
+            }
+            snapshots.push(self.snapshot(tick)?);
+        }
         let config = OrderBookBacktestConfig {
             instrument: self.config.instrument.clone(),
             account_id: self.config.account_id,
@@ -207,7 +225,7 @@ impl TickBacktestEngine {
             Some(model) => engine.with_execution_model(model),
             None => engine,
         };
-        engine.run(&snapshots, &mut adapter)
+        engine.run_with_cancel(&snapshots, &mut adapter, is_cancelled)
     }
 
     fn snapshot(&self, tick: &QuoteTick) -> Result<OrderBookSnapshot, qx_core::QxError> {

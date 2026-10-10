@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
 from qianxing_bridge import native
 
@@ -76,20 +76,32 @@ _APP_ERRORS: dict[str, type[AppError]] = {
 }
 
 
-def _invoke(call: Any, value: Any) -> dict[str, Any]:
+_ResultT = TypeVar("_ResultT")
+
+
+def _translate_native_error(exc: BaseException) -> QianxingError:
+    try:
+        error = json.loads(str(exc))
+    except (TypeError, ValueError):
+        return QianxingError(str(exc))
+    if not isinstance(error, dict):
+        return QianxingError(str(exc))
+    error_type = _APP_ERRORS.get(error.get("category"), AppError)
+    return error_type(error.get("message", str(exc)), payload=error)
+
+
+def _encode_payload(value: Any) -> str:
     payload = value.to_dict() if hasattr(value, "to_dict") else value
-    encoded = payload if isinstance(payload, str) else json.dumps(
+    return payload if isinstance(payload, str) else json.dumps(
         payload, ensure_ascii=False, separators=(",", ":")
     )
+
+
+def _invoke(call: Any, value: Any) -> dict[str, Any]:
     try:
-        return json.loads(call(encoded))
+        return json.loads(call(_encode_payload(value)))
     except Exception as exc:
-        try:
-            error = json.loads(str(exc))
-        except (TypeError, ValueError):
-            raise QianxingError(str(exc)) from exc
-        error_type = _APP_ERRORS.get(error.get("category"), AppError)
-        raise error_type(error.get("message", str(exc)), payload=error) from exc
+        raise _translate_native_error(exc) from exc
 
 
 @dataclass(frozen=True)
@@ -353,6 +365,42 @@ class DepthBacktestOutcome:
         return cls(**value)
 
 
+class RunHandle(Generic[_ResultT]):
+    """Cooperative Rust worker handle shared by Bar, Tick, and OrderBook runs."""
+
+    def __init__(self, native_handle: Any, result_type: type[_ResultT]):
+        self._native = native_handle
+        self._result_type = result_type
+
+    @property
+    def run_id(self) -> str:
+        return str(self._native.run_id)
+
+    @property
+    def status(self) -> str:
+        return str(self._native.status)
+
+    def cancel(self) -> None:
+        """Request cooperative cancellation at the next Rust engine boundary."""
+        self._native.cancel()
+
+    def wait(self, timeout_ms: int | None = None) -> str:
+        """Wait for a terminal state or timeout; timeout does not cancel the run."""
+        if timeout_ms is not None and timeout_ms < 0:
+            raise ValueError("timeout_ms must be non-negative")
+        return str(self._native.wait(timeout_ms))
+
+    def result(self) -> _ResultT | None:
+        """Take the outcome once. Return None while running or after cancellation."""
+        try:
+            encoded = self._native.result_json()
+        except Exception as exc:
+            raise _translate_native_error(exc) from exc
+        if encoded is None:
+            return None
+        return self._result_type.from_dict(json.loads(encoded))
+
+
 def validate_dataset(spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
     """Validate a local Bar dataset using the shared Rust application use case."""
     return DatasetVerdict.from_dict(_invoke(native.app_validate_dataset, spec))
@@ -361,6 +409,15 @@ def validate_dataset(spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
 def run_backtest(spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
     """Run the deterministic single-instrument Bar backtest."""
     return BacktestOutcome.from_dict(_invoke(native.app_run_backtest, spec))
+
+
+def start_backtest(spec: BacktestSpec | dict[str, Any]) -> RunHandle[BacktestOutcome]:
+    """Start a Bar backtest; matching and cancellation remain in the Rust engine."""
+    try:
+        native_handle = native.app_start_backtest(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, BacktestOutcome)
 
 
 def verify_run(outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
@@ -382,6 +439,15 @@ def run_experiment(spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentRes
 def run_depth_backtest(spec: DepthBacktestSpec | dict[str, Any]) -> DepthBacktestOutcome:
     """Run deterministic L1 Tick or L2 order-book matching in the shared Rust kernel."""
     return DepthBacktestOutcome.from_dict(_invoke(native.app_run_depth_backtest, spec))
+
+
+def start_depth_backtest(spec: DepthBacktestSpec | dict[str, Any]) -> RunHandle[DepthBacktestOutcome]:
+    """Start an L1 Tick or L2 OrderBook run with the shared Rust lifecycle."""
+    try:
+        native_handle = native.app_start_depth_backtest(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, DepthBacktestOutcome)
 
 
 def verify_depth_run(outcome: DepthBacktestOutcome | dict[str, Any]) -> VerificationResult:
@@ -407,17 +473,19 @@ def doctor() -> dict[str, Any]:
             [
                 "dataset.validate.bar.v1",
                 "backtest.bar.v1",
+                "backtest.bar.run-handle.v1",
                 "run.verify.v1",
                 "backtest.compare.v1",
                 "experiment.grid.bar.v1",
                 "backtest.depth.l1.v1",
                 "backtest.depth.l2.v1",
+                "backtest.depth.run-handle.v1",
                 "run.verify.depth.v1",
             ]
             if app_available
             else []
         ),
         "limitations": [
-            "Multi-leg backtests, RunHandle lifecycle, Paper, and Live are not yet exposed by this SDK facade."
+            "Multi-leg backtests, Paper orchestration, and Live controls are not yet exposed by this SDK facade."
         ],
     }

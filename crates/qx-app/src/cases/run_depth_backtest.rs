@@ -6,6 +6,7 @@
 
 use super::artifacts::{equity_csv, existing_manifest, fills_csv, read_text, write_text};
 use super::{attach, guard::guard_panics};
+use crate::run_handle::CancellationToken;
 use crate::{
     AppError, AppErrorCategory, CallerCapability, DepthBacktestOutcome, DepthBacktestSpec,
     RunContext,
@@ -31,14 +32,39 @@ pub fn run_depth_backtest(
 ) -> Result<DepthBacktestOutcome, AppError> {
     context.require(CallerCapability::Research, "Tick/OrderBook 回测")?;
     let correlation_id = context.correlation_id().to_string();
-    guard_panics(&correlation_id, || run_inner(spec, context))
-        .map_err(|error| attach(error, &correlation_id))
+    guard_panics(&correlation_id, || run_inner(spec, context, None))
+        .map_err(|error| attach(error, &correlation_id))?
+        .ok_or_else(|| {
+            attach(
+                AppError::new(
+                    AppErrorCategory::InternalInvariant,
+                    "同步 Tick/OrderBook 回测未产生报告",
+                ),
+                &correlation_id,
+            )
+        })
+}
+
+impl DepthBacktestSpec {
+    /// Start a cooperative worker for this Tick/OrderBook specification.
+    pub fn start(self, context: RunContext) -> crate::RunHandle<DepthBacktestOutcome> {
+        let run_id = context.correlation_id().to_string();
+        crate::RunHandle::spawn(run_id, move |cancellation| {
+            context.require(CallerCapability::Research, "Tick/OrderBook 回测")?;
+            let correlation_id = context.correlation_id().to_string();
+            guard_panics(&correlation_id, || {
+                run_inner(&self, &context, Some(&cancellation))
+            })
+            .map_err(|error| attach(error, &correlation_id))
+        })
+    }
 }
 
 fn run_inner(
     spec: &DepthBacktestSpec,
     context: &RunContext,
-) -> Result<DepthBacktestOutcome, AppError> {
+    cancellation: Option<&CancellationToken>,
+) -> Result<Option<DepthBacktestOutcome>, AppError> {
     spec.validate()?;
     let payload = read_text(&spec.depth_path)?;
     let frame = DepthFrame::from_json(&payload).map_err(|error| {
@@ -126,7 +152,7 @@ fn run_inner(
     let report = match spec.tier.as_str() {
         "l1" => {
             let ticks = depth_frame_to_ticks(&frame).map_err(invalid_input)?;
-            TickBacktestEngine::new(TickBacktestConfig {
+            let engine = TickBacktestEngine::new(TickBacktestConfig {
                 instrument: instrument.clone(),
                 account_id: ACCOUNT_ID.into(),
                 currency: spec.settlement_currency.clone(),
@@ -135,24 +161,47 @@ fn run_inner(
                 instrument_spec: None,
                 risk,
             })
-            .with_execution_model(model)
-            .run(&ticks, &mut strategy)
-            .map_err(|error| AppError::from_qx_error(&error))?
+            .with_execution_model(model);
+            match cancellation {
+                Some(cancellation) => engine
+                    .run_with_cancel(&ticks, &mut strategy, || cancellation.is_cancelled())
+                    .map_err(|error| AppError::from_qx_error(&error))?,
+                None => Some(
+                    engine
+                        .run(&ticks, &mut strategy)
+                        .map_err(|error| AppError::from_qx_error(&error))?,
+                ),
+            }
         }
-        "l2" => OrderBookBacktestEngine::new(OrderBookBacktestConfig {
-            instrument: instrument.clone(),
-            account_id: ACCOUNT_ID.into(),
-            currency: spec.settlement_currency.clone(),
-            initial_cash: Money::from_raw(spec.initial_cash_raw),
-            fee_bps: spec.fee_bps,
-            instrument_spec: None,
-            risk,
-            data_tier: DataTier::L2L3,
-        })
-        .with_execution_model(model)
-        .run(&frame.snapshots, &mut strategy)
-        .map_err(|error| AppError::from_qx_error(&error))?,
+        "l2" => {
+            let engine = OrderBookBacktestEngine::new(OrderBookBacktestConfig {
+                instrument: instrument.clone(),
+                account_id: ACCOUNT_ID.into(),
+                currency: spec.settlement_currency.clone(),
+                initial_cash: Money::from_raw(spec.initial_cash_raw),
+                fee_bps: spec.fee_bps,
+                instrument_spec: None,
+                risk,
+                data_tier: DataTier::L2L3,
+            })
+            .with_execution_model(model);
+            match cancellation {
+                Some(cancellation) => engine
+                    .run_with_cancel(&frame.snapshots, &mut strategy, || {
+                        cancellation.is_cancelled()
+                    })
+                    .map_err(|error| AppError::from_qx_error(&error))?,
+                None => Some(
+                    engine
+                        .run(&frame.snapshots, &mut strategy)
+                        .map_err(|error| AppError::from_qx_error(&error))?,
+                ),
+            }
+        }
         _ => unreachable!("DepthBacktestSpec::validate constrains tier"),
+    };
+    let Some(report) = report else {
+        return Ok(None);
     };
 
     let replay =
@@ -256,7 +305,7 @@ fn run_inner(
     })?;
     publish(&artifacts.run_manifest, &manifest_json)?;
 
-    Ok(DepthBacktestOutcome {
+    Ok(Some(DepthBacktestOutcome {
         run_id: spec.run_id.clone(),
         instrument: instrument.to_string(),
         tier: spec.tier.clone(),
@@ -267,7 +316,7 @@ fn run_inner(
         return_bps: report.return_bps,
         max_drawdown_bps: report.max_drawdown_bps,
         artifacts,
-    })
+    }))
 }
 
 fn artifact_paths(spec: &DepthBacktestSpec) -> crate::BacktestArtifacts {

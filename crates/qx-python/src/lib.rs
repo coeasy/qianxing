@@ -20,11 +20,13 @@ use pyo3::types::{PyAny, PyCapsule, PyModule, PyTuple};
 use qx_app::{
     compare_runs, run_backtest, run_depth_backtest, run_experiment, validate_dataset,
     verify_depth_run, verify_run, AppError, BacktestOutcome, BacktestSpec, CallerCapability,
-    CompareRunsSpec, DatasetSpec, DepthBacktestSpec, RunContext, RunExperimentSpec,
+    CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec, RunContext,
+    RunExperimentSpec, RunHandle, RunStatus,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::time::{Duration, Instant};
 
 fn frame_error(error: FrameError) -> PyErr {
     PyValueError::new_err(format!("BarFrame error: {error:?}"))
@@ -66,6 +68,15 @@ fn app_run_backtest(spec_json: &str) -> PyResult<String> {
 }
 
 #[pyfunction]
+fn app_start_backtest(spec_json: &str) -> PyResult<PyRunHandle> {
+    let spec = BacktestSpec::from_json(spec_json).map_err(app_error)?;
+    let context = research_context(&spec.run_id);
+    Ok(PyRunHandle {
+        inner: NativeRun::Bar(spec.start(context)),
+    })
+}
+
+#[pyfunction]
 fn app_verify_run(outcome_json: &str) -> PyResult<String> {
     let outcome = BacktestOutcome::from_json(outcome_json).map_err(app_error)?;
     verify_run(&outcome, &research_context(&outcome.run_id))
@@ -95,6 +106,119 @@ fn app_run_depth_backtest(spec_json: &str) -> PyResult<String> {
     run_depth_backtest(&spec, &research_context(&spec.run_id))
         .and_then(|outcome| outcome.to_json())
         .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_start_depth_backtest(spec_json: &str) -> PyResult<PyRunHandle> {
+    let spec = DepthBacktestSpec::from_json(spec_json).map_err(app_error)?;
+    let context = research_context(&spec.run_id);
+    Ok(PyRunHandle {
+        inner: NativeRun::Depth(spec.start(context)),
+    })
+}
+
+enum NativeRun {
+    Bar(RunHandle<BacktestOutcome>),
+    Depth(RunHandle<DepthBacktestOutcome>),
+}
+
+#[pyclass(name = "RunHandle")]
+struct PyRunHandle {
+    inner: NativeRun,
+}
+
+#[pymethods]
+impl PyRunHandle {
+    #[getter]
+    fn run_id(&self) -> &str {
+        match &self.inner {
+            NativeRun::Bar(handle) => handle.run_id(),
+            NativeRun::Depth(handle) => handle.run_id(),
+        }
+    }
+
+    #[getter]
+    fn status(&mut self) -> &'static str {
+        status_name(match &mut self.inner {
+            NativeRun::Bar(handle) => handle.status(),
+            NativeRun::Depth(handle) => handle.status(),
+        })
+    }
+
+    fn cancel(&self) {
+        match &self.inner {
+            NativeRun::Bar(handle) => handle.cancel(),
+            NativeRun::Depth(handle) => handle.cancel(),
+        }
+    }
+
+    /// Wait for completion while releasing the Python GIL. A timeout returns
+    /// the current status; it does not cancel the worker.
+    #[pyo3(signature = (timeout_ms=None))]
+    fn wait(&mut self, py: Python<'_>, timeout_ms: Option<u64>) -> &'static str {
+        let deadline = timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms));
+        loop {
+            let status = match &mut self.inner {
+                NativeRun::Bar(handle) => handle.status(),
+                NativeRun::Depth(handle) => handle.status(),
+            };
+            if matches!(
+                status,
+                RunStatus::Succeeded | RunStatus::Cancelled | RunStatus::Failed
+            ) {
+                return status_name(status);
+            }
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return status_name(status);
+            }
+            py.detach(|| std::thread::sleep(Duration::from_millis(5)));
+        }
+    }
+
+    /// Return the completed outcome JSON exactly once. `None` means the run
+    /// has not finished or was cancelled; inspect `status` to distinguish.
+    fn result_json(&mut self) -> PyResult<Option<String>> {
+        match &mut self.inner {
+            NativeRun::Bar(handle) => handle
+                .try_take_result()
+                .map(|result| {
+                    result.and_then(|outcome| {
+                        outcome.to_json().map_err(|e| {
+                            AppError::new(
+                                qx_app::AppErrorCategory::InternalInvariant,
+                                e.to_string(),
+                            )
+                        })
+                    })
+                })
+                .transpose()
+                .map_err(app_error),
+            NativeRun::Depth(handle) => handle
+                .try_take_result()
+                .map(|result| {
+                    result.and_then(|outcome| {
+                        outcome.to_json().map_err(|e| {
+                            AppError::new(
+                                qx_app::AppErrorCategory::InternalInvariant,
+                                e.to_string(),
+                            )
+                        })
+                    })
+                })
+                .transpose()
+                .map_err(app_error),
+        }
+    }
+}
+
+fn status_name(status: RunStatus) -> &'static str {
+    match status {
+        RunStatus::Running => "running",
+        RunStatus::Cancelling => "cancelling",
+        RunStatus::Succeeded => "succeeded",
+        RunStatus::Cancelled => "cancelled",
+        RunStatus::Failed => "failed",
+    }
 }
 
 #[pyfunction]
@@ -254,10 +378,13 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     // 应用层用例入口 + 它们专用的异常类型。
     module.add_function(wrap_pyfunction!(app_validate_dataset, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_backtest, module)?)?;
+    module.add_function(wrap_pyfunction!(app_start_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_verify_run, module)?)?;
     module.add_function(wrap_pyfunction!(app_compare_runs, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_experiment, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_depth_backtest, module)?)?;
+    module.add_function(wrap_pyfunction!(app_start_depth_backtest, module)?)?;
+    module.add_class::<PyRunHandle>()?;
     module.add_function(wrap_pyfunction!(app_verify_depth_run, module)?)?;
     module.add("QxAppError", module.py().get_type::<QxAppError>())?;
     Ok(())

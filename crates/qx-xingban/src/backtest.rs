@@ -315,6 +315,22 @@ impl BacktestEngine {
         bars: &[Bar],
         strategy: &mut dyn BarStrategy,
     ) -> Result<BacktestReport, qx_core::QxError> {
+        self.run_with_cancel(bars, strategy, || false)?
+            .ok_or_else(|| qx_core::QxError::Invariant("未请求取消但回测未产生报告".into()))
+    }
+
+    /// Run the same deterministic engine with a cooperative cancellation check at
+    /// every bar boundary. `None` means the caller requested cancellation; no
+    /// partial report or artifacts are returned.
+    pub fn run_with_cancel<F>(
+        self,
+        bars: &[Bar],
+        strategy: &mut dyn BarStrategy,
+        mut is_cancelled: F,
+    ) -> Result<Option<BacktestReport>, qx_core::QxError>
+    where
+        F: FnMut() -> bool,
+    {
         let quality = QualityGate::check(bars);
         if matches!(quality.verdict(), Verdict::Fail | Verdict::Quarantine) {
             return Err(qx_core::QxError::Permanent(format!(
@@ -476,6 +492,9 @@ impl BacktestEngine {
         }
 
         for (i, bar) in bars.iter().enumerate() {
+            if is_cancelled() {
+                return Ok(None);
+            }
             if let Some(rules) = ashare_rules {
                 ashare_state.prepare(bar.ts);
                 let previous_close = rules.previous_close(bars, i);
@@ -1025,7 +1044,7 @@ impl BacktestEngine {
         };
         // 事实必须能重新驱动账户：就地改了账簿而没有对应事实事件，报告在这里就出不去（V11 Q62）。
         ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;
-        Ok(report)
+        Ok(Some(report))
     }
 }
 
