@@ -16,15 +16,17 @@ int main() {
     });
 
     const std::string spec = R"({"schema_version":1,"experiment_id":"smoke"})";
+    const std::string depth_spec =
+        R"({"schema_version":1,"tier":"l1","market_spec":{"product":"perpetual"},"order_policy":{"margin_mode":"cross","leverage":2}})";
     const auto response = client.run_experiment(spec);
     assert(response.ok());
     assert(response.body == R"({"runs":[]})");
     assert(observed_path == "/app/run-experiment");
 
-    const auto depth = client.run_depth_backtest(spec);
+    const auto depth = client.run_depth_backtest(depth_spec);
     assert(depth.ok());
     assert(observed_path == "/app/depth-backtest");
-    assert(observed_body == spec);
+    assert(observed_body == depth_spec);
 
     const auto multi_leg = client.run_multi_leg_backtest(spec);
     assert(multi_leg.ok());

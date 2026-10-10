@@ -105,6 +105,25 @@ fn run_inner(
     }
 
     let instrument = frame.instrument.clone();
+    if let Some(market_spec) = spec.market_spec.as_ref() {
+        if market_spec.instrument != instrument {
+            return Err(invalid_input(
+                "market_spec.instrument 与 Tick/OrderBook 输入标的不一致",
+            ));
+        }
+        let first_ts = frame.snapshots.first().expect("at least two snapshots").ts;
+        let last_ts = frame.snapshots.last().expect("at least two snapshots").ts;
+        if first_ts < market_spec.valid_from
+            || market_spec
+                .valid_to
+                .is_some_and(|valid_to| last_ts >= valid_to)
+        {
+            return Err(invalid_input(format!(
+                "market_spec 有效区间 [{}, {:?}) 未覆盖输入时间 [{first_ts}, {last_ts}]",
+                market_spec.valid_from, market_spec.valid_to
+            )));
+        }
+    }
     let data_fingerprint = format!("depth:{}:{:016x}", frame.source, frame.input_hash());
     let config_hash = {
         let mut hash = Fnv1a::new();
@@ -132,6 +151,7 @@ fn run_inner(
     strategy_config.slow_window = spec.strategy.slow_window;
     strategy_config.period = spec.strategy.period;
     strategy_config.threshold_bps = spec.strategy.threshold_bps;
+    strategy_config.primary_policy = spec.order_policy;
     strategy_config.validate().map_err(invalid_input)?;
     let strategy = BuiltinStrategy::new(strategy_config).map_err(invalid_input)?;
     let strategy_context = StrategyContext {
@@ -158,7 +178,7 @@ fn run_inner(
                 currency: spec.settlement_currency.clone(),
                 initial_cash: Money::from_raw(spec.initial_cash_raw),
                 fee_bps: spec.fee_bps,
-                instrument_spec: None,
+                instrument_spec: spec.market_spec.clone(),
                 risk,
             })
             .with_execution_model(model);
@@ -180,7 +200,7 @@ fn run_inner(
                 currency: spec.settlement_currency.clone(),
                 initial_cash: Money::from_raw(spec.initial_cash_raw),
                 fee_bps: spec.fee_bps,
-                instrument_spec: None,
+                instrument_spec: spec.market_spec.clone(),
                 risk,
                 data_tier: DataTier::L2L3,
             })
@@ -246,7 +266,11 @@ fn run_inner(
                 code_commit: context.code_commit(),
                 config_hash: &config_hash,
                 strategy_version: &strategy_version,
-                instrument_spec_version: "instrument-spec:none",
+                instrument_spec_version: if spec.market_spec.is_some() {
+                    "trading-instrument-spec-v1"
+                } else {
+                    "instrument-spec:none"
+                },
                 runtime_version: &format!("qx-app-{}", env!("CARGO_PKG_VERSION")),
             },
             &data_fingerprint,
@@ -265,6 +289,8 @@ fn run_inner(
         "run_id": spec.run_id,
         "instrument": instrument.to_string(),
         "tier": spec.tier,
+        "market_spec": spec.market_spec,
+        "order_policy": spec.order_policy,
         "strategy_id": strategy_id,
         "strategy_version": strategy_version,
         "snapshots": report.snapshot_ts.len(),

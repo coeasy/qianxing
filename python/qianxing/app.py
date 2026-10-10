@@ -334,6 +334,19 @@ class RunExperimentResult:
 
 
 @dataclass(frozen=True)
+class OrderPolicy:
+    reduce_only: bool = False
+    position_side: Literal["net", "long", "short"] = "net"
+    margin_mode: Literal["cash", "cross", "isolated"] = "cash"
+    position_mode: Literal["one_way", "hedge"] = "one_way"
+    leverage: int = 1
+    post_only: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class DepthBacktestSpec:
     run_id: str
     depth_path: str
@@ -346,6 +359,8 @@ class DepthBacktestSpec:
     latency_snapshots: int = 0
     queue_position_bps: int = 0
     market_impact_bps: int = 0
+    market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
+    order_policy: OrderPolicy | dict[str, Any] | None = None
     schema_version: int = 1
 
     def to_dict(self) -> dict[str, Any]:

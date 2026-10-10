@@ -85,7 +85,7 @@ use_cases:
     error_categories: "AppErrorCategory 八类；候选失败隔离，整体规格/存储错误由用例返回"
     capability_level: "R"
   - name: run_depth_backtest
-    input_schema: "DepthBacktestSpec v1（L1 Tick 或 L2/L3 OrderBook + Rust 内置策略）"
+    input_schema: "DepthBacktestSpec v1（L1 Tick 或 L2/L3 OrderBook + Rust 内置策略 + 可选 TradingInstrumentSpec；衍生品要求 OrderPolicy）"
     output_schema: "DepthBacktestOutcome v1（统一回测哈希、权益/成交摘要与四份产物路径）"
     capability: "RESEARCH"
     idempotency_key: "run_id + 规格指纹 + 盘口内容指纹；异身份或不一致产物拒绝覆盖"

@@ -10,7 +10,7 @@ The public `qianxing` namespace exposes the shared Rust application use cases fo
 
 `PaperClient` and `LiveClient` submit the versioned Rust `TradeControlSpec` to a running qx-api service. Rust authenticates the operator, validates the command in qx-app, persists and enqueues it through the existing ControlPlane, then the configured Paper or venue worker executes it. Live requires an authenticated API policy; the Python SDK does not execute trades itself. A client TLS context can be supplied for mTLS deployments.
 
-The application SDK accepts normalized `TradingInstrumentSpec` documents; it does not currently import CCXT market snapshots or model per-venue maker/taker fee schedules. `one_tick_slippage` requires a real `price_tick` in both market specs. The depth application contract accepts Rust built-in strategies; non-zero queue-position assumptions are rejected because those strategies issue market orders.
+The application SDK accepts normalized `TradingInstrumentSpec` documents for multi-leg Bar and Tick/OrderBook runs; depth runs check the contract identity and validity interval against the input and require an explicit `OrderPolicy` for derivatives. It does not currently import CCXT market snapshots or model per-venue fee schedules. `one_tick_slippage` requires a real `price_tick` in both multi-leg market specs. Depth accepts Rust built-in strategies; non-zero queue-position, reduce-only, and post-only assumptions are rejected because those strategies issue opening market orders.
 
 ## Example
 

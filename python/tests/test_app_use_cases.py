@@ -390,6 +390,9 @@ class AppUseCaseTests(unittest.TestCase):
         from qianxing import (
             BuiltinStrategySpec,
             DepthBacktestSpec,
+            InstrumentId,
+            OrderPolicy,
+            TradingInstrumentSpec,
             run_depth_backtest,
             start_depth_backtest,
             verify_depth_run,
@@ -409,10 +412,31 @@ class AppUseCaseTests(unittest.TestCase):
                     fast_window=2,
                     slow_window=3,
                 ),
+                market_spec=TradingInstrumentSpec(
+                    instrument=InstrumentId(symbol="BTCUSDT", venue="BINANCE"),
+                    product="perpetual",
+                    base_currency="BTC",
+                    quote_currency="USDT",
+                    settlement_currency="USDT",
+                    contract_size=1_000_000_000,
+                    linear=True,
+                    inverse=False,
+                    price_tick=1,
+                    qty_step=1,
+                    min_qty=1,
+                    max_leverage=100,
+                    maintenance_margin_bps=500,
+                    valid_from=1000,
+                    valid_to=49000,
+                ),
+                order_policy=OrderPolicy(margin_mode="cross", leverage=2),
             )
         )
         self.assertEqual(typed.tier, "l1")
         self.assertEqual(typed.equity_points, 48)
+        typed_summary = json.loads(Path(typed.artifacts["summary"]).read_text(encoding="utf-8"))
+        self.assertEqual(typed_summary["market_spec"]["product"], "perpetual")
+        self.assertEqual(typed_summary["order_policy"]["leverage"], 2)
         self.assertTrue(verify_depth_run(typed).verified)
 
         depth_handle_payload = {**payload, "run_id": "python-tick-handle-run"}

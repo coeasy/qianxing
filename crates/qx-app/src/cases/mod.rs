@@ -15,7 +15,7 @@
 //!
 //! | 项 | `validate_dataset` | `run_backtest` | `verify_run` | `compare_runs` | `run_experiment` | `run_depth_backtest` | `verify_depth_run` | `validate_trade_control` | `run_multi_leg_backtest` |
 //! |---|---|---|---|---|---|---|---|---|---|
-//! | 输入 schema | `DatasetSpec` v1 | `BacktestSpec` v1（单腿 Bar） | `BacktestOutcome` | `CompareRunsSpec` v1 | `RunExperimentSpec` v1（Bar 参数网格） | `DepthBacktestSpec` v1（内置策略 + L1/L2） | `DepthBacktestOutcome` | `TradeControlSpec` v1（交易控制 + ControlCommand） | `MultiLegBacktestSpec` v1（两份对齐 BarFrame + 双腿策略、market spec、共享/腿级费率、资金费与撮合模型） |
+//! | 输入 schema | `DatasetSpec` v1 | `BacktestSpec` v1（单腿 Bar） | `BacktestOutcome` | `CompareRunsSpec` v1 | `RunExperimentSpec` v1（Bar 参数网格） | `DepthBacktestSpec v1（L1 Tick 或 L2/L3 OrderBook + Rust 内置策略 + 可选 TradingInstrumentSpec；衍生品要求 OrderPolicy）` | `DepthBacktestOutcome` | `TradeControlSpec` v1（交易控制 + ControlCommand） | `MultiLegBacktestSpec` v1（两份对齐 BarFrame + 双腿策略、market spec、共享/腿级费率、资金费与撮合模型） |
 //! | 输出 schema | `DatasetVerdict` | `BacktestOutcome` | `VerificationResult` | `CompareRunsResult` v1 | `RunExperimentResult` v1 | `DepthBacktestOutcome` v1 | `VerificationResult` | 经验证的 `ControlCommand`，交给现有 Rust control submitter | `MultiLegBacktestOutcome` v1（双腿哈希、组合收益、归因产物路径） |
 //! | 运行权限 | `RESEARCH` | `RESEARCH` | 无（纯读产物） | 无（纯计算） | `RESEARCH` | `RESEARCH` | 无（纯读产物） | 必须满足认证授予的 Trading 权限 | `RESEARCH` |
 //! | 幂等键 | `dataset_id` + 内容指纹 | `run_id` + `config_hash` + `data_fingerprint` | `run_id` | 完整输入文档（纯计算） | `experiment_id` + 规格指纹；冲突在子运行前拒绝 | `run_id` + 规格/盘口指纹；产物冲突即拒绝 | `run_id` | `command_id` + `request_id`，由 ControlPlane 拒绝重复项 | `run_id` + 规格与双 BarFrame 指纹；异内容拒绝覆盖 |

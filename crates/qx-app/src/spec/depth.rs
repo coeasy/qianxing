@@ -2,6 +2,7 @@
 
 use super::{is_identity_token, BacktestArtifacts, BuiltinStrategySpec};
 use crate::error::{AppError, AppErrorCategory};
+use qx_core::{OrderPolicy, TradingInstrumentSpec};
 use serde::{Deserialize, Serialize};
 
 /// Schema for deterministic L1/L2 market-data backtests.
@@ -24,6 +25,12 @@ pub struct DepthBacktestSpec {
     pub market_impact_bps: i128,
     pub output_dir: String,
     pub strategy: BuiltinStrategySpec,
+    /// Optional normalized market contract. Missing preserves legacy spot semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_spec: Option<TradingInstrumentSpec>,
+    /// Required for derivative products so the Rust engine can apply margin/position rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_policy: Option<OrderPolicy>,
 }
 
 impl DepthBacktestSpec {
@@ -86,6 +93,49 @@ impl DepthBacktestSpec {
                 AppErrorCategory::InvalidInput,
                 "queue_position_bps 仅影响限价单；当前内置策略只提交市价单，必须为 0",
             ));
+        }
+        match (&self.market_spec, self.order_policy) {
+            (Some(market), policy) => {
+                market.validate().map_err(|error| {
+                    AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        format!("DepthBacktestSpec.market_spec 非法: {error:?}"),
+                    )
+                })?;
+                if market.settlement_currency != self.settlement_currency {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "DepthBacktestSpec.market_spec settlement_currency 与请求不一致",
+                    ));
+                }
+                if market.product.supports_leverage() && policy.is_none() {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "Tick/OrderBook 衍生品回测必须显式提供 OrderPolicy",
+                    ));
+                }
+                if let Some(policy) = policy {
+                    if policy.reduce_only || policy.post_only {
+                        return Err(AppError::new(
+                            AppErrorCategory::InvalidInput,
+                            "DepthBacktestSpec 的内置策略只提交开仓市价意图；OrderPolicy.reduce_only/post_only 必须为 false",
+                        ));
+                    }
+                    policy.validate_for(market).map_err(|error| {
+                        AppError::new(
+                            AppErrorCategory::InvalidInput,
+                            format!("DepthBacktestSpec.order_policy 非法: {error:?}"),
+                        )
+                    })?;
+                }
+            }
+            (None, Some(_)) => {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "DepthBacktestSpec.order_policy 需要对应的 market_spec",
+                ));
+            }
+            (None, None) => {}
         }
         self.strategy.validate()
     }
