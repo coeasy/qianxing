@@ -129,7 +129,7 @@ jobs:
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             pwsh -NoProfile -ExecutionPolicy Bypass -File tools/build_python_wheel.ps1 -Python python
-          } else {
+          else
             export PYTHON=python3
             bash tools/build_python_wheel.sh
           fi
