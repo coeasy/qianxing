@@ -1,5 +1,44 @@
 # Changelog
 
+### V13 R31（2026-10-10）· qx-api 读面支持按账户过滤——控制台多账户作用域的后端前置
+
+R30 的审计把控制台的多账户作用域判成「后端读面缺前置」而暂缓（另立任务）。本轮只做那一半：
+`qx-api` 的读面先能按账户过滤，前端的账户选择器仍作为独立任务跟进（#26），本轮不碰 `web/console/`。
+
+- **`/account/ledger` 与 `/reconcile/reports` 从「四条整体现读端点一律不收窄」里拆出来，立成一条按账户过滤的通道**：
+  读的还是整份现读模型，但底层类型本来就带账户归属列——`LedgerEntry` 有 `account_id` 一列、
+  `ReconcileReportSnapshot` 两列都有（`account_id` + `venue_id`）——所以 `?account_id=` 真的能过滤。
+  账簿那一格只认一把键不是取巧：`LedgerEntry` 没有 `venue_id` 字段，给它配第二把收窄键只会让调用方
+  以为按 venue 读过一遍。反过来 `/scheduler/runs` 与 `/control/audit` 的 `JobRun` / `AuditRecord`
+  没有账户归属列，只能继续回 `400` 而不是照常 `200`。
+- **过滤读面不回 `404 account_projection_not_found`**：键形状合法但过滤不出条目时回 `200 []`。
+  两族口径的差别是刻意的——投影是 `(account_id, venue_id)` 键控的一份独立副本，没有那份副本就是
+  「这个账户不在这份部署里」；账簿与对账报告是整本台账加一轮对账结果，过滤不出条目只说明这一轮没有事实。
+  把「这一轮没有事实」读成「这个账户不存在」，正是 #191 那类读侧误读。
+- **收紧错误出口而不是合并**：两条过滤臂都保住 `400`（键形状错）/ `503`（现读模型取不到）的分工——
+  键拼错不会被读成后端故障，后端故障也不会被读成「你没说清」。
+- **读面分类收成一个单点 `crates/qx-api/src/read_scope.rs`**：三张路由名单
+  （`PROJECTION_SCOPED_ROUTES` 七条 / `MODEL_FILTER_ROUTES` 两条 / `KEYLESS_READ_ROUTES` 两条）
+  与五张查询键名单都住在这里。`admission::refused_query_param` 只借名单、不再自持一份 `*_PARAMS` 常量
+  ——此前名单散在 `admission.rs` 与 `lib.rs` 两侧，挪走一半就会让准入侧与分派侧各说各话。
+- **新增门禁 `read_face_scope_check`（十颗）**：模块在盘且低于行数门槛并挂载 / 三张名单条目数自洽、
+  两两不相交、每条都有活的分派臂 / 查询键名单只有 `read_scope` 一份而 `admission` 不再自持 /
+  `accepted_query_params` 是唯一取名册出口 / **收窄键名单与底层类型的归属列逐格一致** /
+  两条过滤臂真在结果集上过滤且不借用投影那族的 `missing_projection_response` /
+  空结果回 `200` 而非 `404 account_projection_not_found` / `400`/`503` 分工不合并 /
+  端点表只在真读收窄键的入口承诺查询串 / 九条行为用例在册。
+  立项动机：`api_surface_doc_check` 只比路由集合、`api_endpoint_table_routes.rs` 只比表与分派是否平，
+  **没有任何一颗判据看「这条臂有没有真读 `query`」**——于是 `/account/ledger` 可以既在表里写 `[?account_id=]`
+  又一行过滤都没有，读者拿到的是默认账户那份流水而被当成了自己点名的账户。
+- **九条行为用例**（`crates/qx-cli/src/tests/api_read_route_query_contract.rs`）：两条过滤臂按账户过滤且
+  venue 单独成键 / 空结果口径是 `200 []` 而不是 `404 account_projection_not_found` / 名单外的键、
+  空串键、纯空白键一律 `400` 并点名被拒那把 / 两条无键端点继续 `400` / 七条带键读面自己的键契约没被
+  这次改动带歪 / `snapshot/diff` 只返回文档承诺的那几个非 200 码 / 三张名单两两不相交且每条都有活分派臂 /
+  端点表不再为这两条端点承诺 404。
+- **接口文档同步**：`deploy/README.md` 两张端点表按新口径重写（过滤端点写出各自的收窄键、无键端点
+  不再写 `[?… ]`），并修掉一处**行号死引用**——原文写「`admission.rs:413` 那句 `else { return None }`」，
+  该句在上一轮重构后已不存在、行号也对不上，改指 `accepted_query_params(route)?` 这个稳定锚点。
+
 ### V13 R30（2026-10-10）· 一次性提交入口的多账户拓扑判据收口 + 第二交易所验收链的门禁牙齿
 
 R29 之后做三轮发布前审计（主体链路连通性 / 孤儿逻辑 / 死循环 / 前后端贯通），两轮都按「先修干净全部问题、再进下一轮」推进。

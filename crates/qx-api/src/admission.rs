@@ -389,36 +389,19 @@ pub(crate) fn query_param(query: &str, key: &str) -> Result<Option<String>, &'st
     Ok(None)
 }
 
-/// 带键读面认的两把收窄键。
-const ACCOUNT_SCOPED_PARAMS: [&str; 2] = ["account_id", "venue_id"];
-/// `/events` 与 `/events/live` 在收窄键之外还认游标。
-const EVENT_SCOPED_PARAMS: [&str; 3] = ["account_id", "venue_id", "after"];
-/// `/account/snapshot/diff` 的定位符是基线哈希，不是收窄键。
-const SNAPSHOT_DIFF_PARAMS: [&str; 3] = ["base_hash", "account_id", "venue_id"];
-
 /// 这条入口不认的那把查询键，按路由取名单；不在任何名册里的路径（`/health` 那一类）不判。
 ///
-/// #205 只盖住了四条整体现读端点，带键那七条照收任何查询串：`?acount_id=` 拼错时它落到"没有
-/// 收窄键"那一支，于是默认账户那份被念成调用方点名的那个账户（V13 R6）。名单外的键当场 400 并
-/// 点名那把键，就是把这条读面的口径从"查不到就算了"改成"你没说清就别读"。
+/// 名单本身住在 `read_scope`（读面分类的单点），这里只负责"名单外的键当场点名"：`?acount_id=`
+/// 拼错时它会落到"没有收窄键"那一支，默认账户那份被念成调用方点名的账户（V13 R6 / R31）。
+/// 名单外的键当场 400 并点名那把键，就是把这条读面的口径从"查不到就算了"改成"你没说清就别读"。
 pub(crate) fn refused_query_param(route: &str, query: &str) -> Option<String> {
-    let accepted: &[&str] = if crate::KEYLESS_READ_ROUTES.contains(&route) {
-        &[]
-    } else if route == "/events" || route == "/events/live" {
-        &EVENT_SCOPED_PARAMS
-    } else if route == "/account/snapshot/diff" {
-        &SNAPSHOT_DIFF_PARAMS
-    } else if crate::PROJECTION_SCOPED_ROUTES.contains(&route) {
-        &ACCOUNT_SCOPED_PARAMS
-    } else {
-        return None;
-    };
+    let accepted = crate::read_scope::accepted_query_params(route)?;
     refused_param(query, accepted)
 }
 
 /// WS 那一支不按路径查表：`Upgrade: websocket` 可以从任何路径进来，认的键与 `/events` 同宽。
 pub(crate) fn refused_event_query_param(query: &str) -> Option<String> {
-    refused_param(query, &EVENT_SCOPED_PARAMS)
+    refused_param(query, crate::read_scope::event_scoped_params())
 }
 
 fn refused_param(query: &str, accepted: &[&str]) -> Option<String> {

@@ -7,6 +7,7 @@ mod connections;
 mod console;
 mod control_reads;
 mod event_cursor;
+mod read_scope;
 mod snapshot_history;
 mod state_lock;
 mod transport;
@@ -23,6 +24,10 @@ use admission::{
     DEFAULT_MAX_CONCURRENT_CONNECTIONS,
 };
 use event_cursor::{events_after_cursor, parse_after_cursor};
+use read_scope::{
+    projection_key_from_query, scope_keeps_account, scope_keeps_venue, ScopeFilter,
+    PROJECTION_SCOPED_ROUTES,
+};
 use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
 use qx_core::{contract::contract_matrix_json, Event, EventKind, EventLog, Fnv1a, LedgerEntry};
 use qx_protocol::{
@@ -1510,8 +1515,9 @@ impl ApiService {
                 return ApiResponse::json(403, error_json("authenticated_operator_required"));
             }
         }
-        // 读面的查询参数按入口点名：#205 那支只盖住四条整体现读端点，带键那七条照收任何查询串，
-        // 于是 `?acount_id=` 拼错会落到"没有收窄键"那一支，把默认账户念成调用方点名的账户（V13 R6）。
+        // 读面的查询参数按入口点名：#205 那支只盖住无键整体现读端点，带键那七条与按账户过滤那两条
+        // 各自照收自己名单里的键、名单外的键当场点名，于是 `?acount_id=` 拼错不会落到"没有收窄键"
+        // 那一支，把默认账户念成调用方点名的账户（V13 R6 / R31）。
         if let Some(name) = admission::refused_query_param(route, query) {
             return ApiResponse::json(400, error_json(&format!("{route} 不接受查询参数 {name}")));
         }
@@ -1639,21 +1645,46 @@ qx_control_retired_audit_records_total {}\n",
                 ),
                 Err(error) => ApiResponse::json(503, error_json(&error)),
             },
-            ("GET", "/account/ledger") => match self.query_models() {
-                Ok(models) => ApiResponse::json(
-                    200,
-                    serde_json::to_string(&models.ledger_entries)
-                        .expect("ledger entries are serializable"),
-                ),
-                Err(error) => ApiResponse::json(503, error_json(&error)),
+            ("GET", "/account/ledger") => match ScopeFilter::from_query(query) {
+                Err(error) => read_error_response(&error),
+                Ok(scope) => match self.query_models() {
+                    Ok(models) => {
+                        let entries: Vec<_> = models
+                            .ledger_entries
+                            .into_iter()
+                            .filter(|entry| {
+                                scope_keeps_account(scope.as_ref(), &entry.account_id)
+                            })
+                            .collect();
+                        ApiResponse::json(
+                            200,
+                            serde_json::to_string(&entries)
+                                .expect("ledger entries are serializable"),
+                        )
+                    }
+                    Err(error) => ApiResponse::json(503, error_json(&error)),
+                },
             },
-            ("GET", "/reconcile/reports") => match self.query_models() {
-                Ok(models) => ApiResponse::json(
-                    200,
-                    serde_json::to_string(&models.reconcile_reports)
-                        .expect("reconcile reports are serializable"),
-                ),
-                Err(error) => ApiResponse::json(503, error_json(&error)),
+            ("GET", "/reconcile/reports") => match ScopeFilter::from_query(query) {
+                Err(error) => read_error_response(&error),
+                Ok(scope) => match self.query_models() {
+                    Ok(models) => {
+                        let reports: Vec<_> = models
+                            .reconcile_reports
+                            .into_iter()
+                            .filter(|report| {
+                                scope_keeps_account(scope.as_ref(), &report.account_id)
+                                    && scope_keeps_venue(scope.as_ref(), &report.venue_id)
+                            })
+                            .collect();
+                        ApiResponse::json(
+                            200,
+                            serde_json::to_string(&reports)
+                                .expect("reconcile reports are serializable"),
+                        )
+                    }
+                    Err(error) => ApiResponse::json(503, error_json(&error)),
+                },
             },
             ("GET", "/account/snapshot/diff") => self.snapshot_diff(query),
             ("GET", "/events") => {
@@ -2188,43 +2219,6 @@ impl QueryPort for ApiService {
 pub(crate) fn error_json(message: &str) -> String {
     format!("{{\"error\":{}}}", json_string(message))
 }
-
-fn projection_key_from_query(query: &str) -> Result<Option<ApiProjectionKey>, String> {
-    let account_id = query_param(query, "account_id")?;
-    let venue_id = query_param(query, "venue_id")?;
-    match (account_id, venue_id) {
-        (None, None) => Ok(None),
-        (Some(account_id), Some(venue_id)) => {
-            let key = ApiProjectionKey::new(account_id, venue_id);
-            key.validate()?;
-            Ok(Some(key))
-        }
-        _ => Err("account_id 和 venue_id 必须同时提供".into()),
-    }
-}
-
-/// 接受 `?account_id=&venue_id=` 的读面，即"键指向某一份账户投影"的那些入口。
-/// 它们在分派前共用 `ApiService::missing_projection_response` 那道 404（V13 R2 #191）；
-/// `/account/snapshot/diff` 不在列——它的定位符是 `base_hash`，投影缺失时
-/// `409 snapshot_base_not_found` 说的就是"这份基线不在这条链上"，不是账户不存在。
-const PROJECTION_SCOPED_ROUTES: [&str; 7] = [
-    "/account/snapshot",
-    "/account/snapshot/envelope",
-    "/account/orders",
-    "/account/positions",
-    "/account/balances",
-    "/events",
-    "/events/live",
-];
-
-/// 反过来：这四条读的是整份现读模型（账簿流水、作业运行、对账报告、控制面审计），没有任何
-/// 收窄键。带查询串进来必须回 400 而不是照常 200——按账户读请走 `/account/snapshot` 一族（V13 R2 #205）。
-const KEYLESS_READ_ROUTES: [&str; 4] = [
-    "/scheduler/runs",
-    "/account/ledger",
-    "/reconcile/reports",
-    "/control/audit",
-];
 
 fn json_string(value: &str) -> String {
     serde_json::to_string(value).expect("string serialization cannot fail")
