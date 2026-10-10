@@ -87,6 +87,26 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.output_dir = Path(self.temp_dir.name)
 
+    def test_bridge_exposes_a_shared_run_handle_for_every_async_use_case(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing_bridge import app, native
+
+        spec = {"schema_version": 1, "run_id": "python-run-handle"}
+        handle = object()
+        for wrapper, entrypoint in (
+            ("start_backtest", "app_start_backtest"),
+            ("start_experiment", "app_start_experiment"),
+            ("start_depth_backtest", "app_start_depth_backtest"),
+            ("start_depth_experiment", "app_start_depth_experiment"),
+            ("start_multi_leg_backtest", "app_start_multi_leg_backtest"),
+            ("start_multi_leg_experiment", "app_start_multi_leg_experiment"),
+        ):
+            with self.subTest(wrapper=wrapper), patch.object(
+                native, entrypoint, return_value=handle
+            ) as invoke:
+                self.assertIs(getattr(app, wrapper)(spec), handle)
+                invoke.assert_called_once_with(json.dumps(spec, ensure_ascii=False))
+
     def tearDown(self):
         self.temp_dir.cleanup()
 

@@ -43,6 +43,11 @@ def run_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_run_backtest(_payload(spec)))
 
 
+def start_backtest(spec: "str | dict[str, Any]") -> Any:
+    """Start a cancellable Rust Bar backtest and return its shared run handle."""
+    return native.app_start_backtest(_payload(spec))
+
+
 def verify_run(outcome: "str | dict[str, Any]") -> dict[str, Any]:
     """复核一轮产物，返回 ``VerificationResult``。
 
@@ -62,6 +67,11 @@ def run_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_run_experiment(_payload(spec)))
 
 
+def start_experiment(spec: "str | dict[str, Any]") -> Any:
+    """Start a cancellable Rust parameter experiment and return its run handle."""
+    return native.app_start_experiment(_payload(spec))
+
+
 def run_multi_leg_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """用多腿 Rust 回测用例执行有界参数网格。"""
     return json.loads(native.app_run_multi_leg_experiment(_payload(spec)))
@@ -75,6 +85,11 @@ def start_multi_leg_experiment(spec: "str | dict[str, Any]") -> Any:
 def run_depth_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """Run an L1 Tick or L2 order-book backtest through the Rust application layer."""
     return json.loads(native.app_run_depth_backtest(_payload(spec)))
+
+
+def start_depth_backtest(spec: "str | dict[str, Any]") -> Any:
+    """Start a cancellable Rust L1 Tick or L2 order-book backtest."""
+    return native.app_start_depth_backtest(_payload(spec))
 
 
 def run_depth_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:
