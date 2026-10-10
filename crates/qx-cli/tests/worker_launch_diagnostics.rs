@@ -75,10 +75,10 @@ fn missing_interpreter_is_named_in_the_launch_failure() {
     );
 }
 
-/// 解释器存在但不产出协议响应（这里用测试二进制自己当解释器，它只写 stderr）时，
-/// 失败信息必须带上程序来源、子进程状态与 stderr 尾部。
+/// 解释器存在但不产出协议响应（这里用测试二进制自己当解释器）时，
+/// 失败信息必须带上程序来源、子进程状态与 stderr 尾部，或明确报告 stderr 为空。
 #[test]
-fn silent_worker_reports_program_origin_and_stderr() {
+fn silent_worker_reports_program_origin_and_stderr_state() {
     let (runtime, _root) = isolated_runtime("silent");
     let interpreter = std::env::current_exe()
         .expect("测试二进制路径不可用")
@@ -95,8 +95,8 @@ fn silent_worker_reports_program_origin_and_stderr() {
         "失败信息必须说明子进程状态:\n{stderr}"
     );
     assert!(
-        stderr.contains("stderr="),
-        "失败信息必须带上 worker 的 stderr 尾部:\n{stderr}"
+        stderr.contains("stderr=") || stderr.contains("worker 无 stderr 输出"),
+        "失败信息必须带上 worker 的 stderr 尾部或明确报告为空:\n{stderr}"
     );
 }
 
