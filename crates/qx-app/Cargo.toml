@@ -12,6 +12,7 @@ license.workspace = true
 qx-core = { path = "../qx-core" }
 qx-control = { path = "../qx-control" }
 qx-datastruct = { path = "../qx-datastruct" }
+qx-guanxing = { path = "../qx-guanxing" }
 qx-strategy = { path = "../qx-strategy" }
 qx-xingban = { path = "../qx-xingban" }
 qx-zhenlu = { path = "../qx-zhenlu" }

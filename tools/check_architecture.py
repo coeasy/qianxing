@@ -6909,15 +6909,15 @@ def report_readout_honesty_check() -> None:
         f"写侧 {writer_versions or '未声明'} / 读侧 {readout_generations or '无表'}",
     )
     # 5. 多腿的单位成本：分母为零是"算不出"，越界是失败，两处都不许悄悄落回一个合法数。
-    multi_leg = (CRATES / "qx-cli/src/multi_leg.rs").read_text(encoding="utf-8")
+    multi_leg = (CRATES / "qx-app/src/multi_leg.rs").read_text(encoding="utf-8")
     multi_chain = (ROOT / MULTI_LEG_CHAIN_FILE).read_text(encoding="utf-8")
     check(
-        multi_leg.count("pub(crate) fn multi_leg_cost_bps(") == 1
+        multi_leg.count("pub fn multi_leg_cost_bps(") == 1
         and multi_chain.count("multi_leg_cost_bps(") == 1
         and "unwrap_or(i64::MAX)" not in multi_chain
         and "cost_bps=net_cost*10000/turnover, null when turnover_raw=0" in multi_chain,
         "多腿 cost_bps 的口径定义一处、调用一处，产物假设行同时说明零换手是 null",
-        f"定义 {multi_leg.count('pub(crate) fn multi_leg_cost_bps(')} 处"
+        f"定义 {multi_leg.count('pub fn multi_leg_cost_bps(')} 处"
         f" / 调用 {multi_chain.count('multi_leg_cost_bps(')} 处",
     )
     # 6. 用例面：缺席与"声明过的 0"必须成对出现，且端到端跑过真实子进程。
@@ -10258,16 +10258,16 @@ def multi_leg_honesty_check() -> None:
         end = text.find("\n}" + "\n", start)
         return text[start:] if end < 0 else text[start:end]
 
-    pairing_path = CRATES / "qx-cli/src/multi_leg.rs"
+    pairing_path = CRATES / "qx-app/src/multi_leg.rs"
     pairing = pairing_path.read_text(encoding="utf-8")
-    body = top_level_fn(pairing, "pub(crate) fn multi_leg_group_attributions(")
+    body = top_level_fn(pairing, "pub fn multi_leg_group_attributions(")
     check(
         "planned_qty_raw" not in body and "filled_qty_raw" in body,
         "多腿成组配对只看实际成交（不得用信号计划量配对）",
         f"{pairing_path.relative_to(ROOT).as_posix()} 的配对逻辑重新引用了计划量",
     )
     check(
-        "pub(crate) struct MultiLegPendingReconcile" in pairing
+        "pub struct MultiLegPendingReconcile" in pairing
         and "pending_reconcile.push(" in body,
         "一腿成交、对手腿落空时必须登记裸腿待对账事实",
         "multi_leg.rs 不再定义或写入 MultiLegPendingReconcile",
@@ -10336,8 +10336,8 @@ def multi_leg_honesty_check() -> None:
         "规格闸门必须先于任何腿级撮合，而不是跑完再补声明",
         "multi_builtin.rs 的规格闸门落到了撮合之后",
     )
-    funding_body = top_level_fn(pairing, "pub(crate) fn multi_leg_leg_buckets(")
-    margin_body = top_level_fn(pairing, "pub(crate) fn multi_leg_leg_margin(")
+    funding_body = top_level_fn(pairing, "pub fn multi_leg_leg_buckets(")
+    margin_body = top_level_fn(pairing, "pub fn multi_leg_leg_margin(")
     check(
         "spec.product.is_derivative()" in funding_body
         and "spec.product.is_derivative()" in margin_body
@@ -10403,13 +10403,13 @@ def multi_leg_honesty_check() -> None:
     check(
         "multi_leg_group_totals(&groups)" in report
         and "total_fees_raw" not in report
-        and top_level_fn(pairing, "pub(crate) fn multi_leg_group_totals(").count(
+        and top_level_fn(pairing, "pub fn multi_leg_group_totals(").count(
             "total_fees_raw"
         )
         == 1,
         "组级合计只在 multi_leg_group_totals 一处折叠，编排入口不得再各自 loop 一遍",
         f"入口重inline={report.count('total_fees_raw')} 处、"
-        f"内核合计={top_level_fn(pairing, 'pub(crate) fn multi_leg_group_totals(').count('total_fees_raw')} 处",
+        f"内核合计={top_level_fn(pairing, 'pub fn multi_leg_group_totals(').count('total_fees_raw')} 处",
     )
 
 
@@ -16728,7 +16728,7 @@ APP_USE_CASE_ITEMS = (
     ("能力等级", "capability_level"),
 )
 APP_ALLOWED_INTERNAL_DEPS = frozenset(
-    {"qx-control", "qx-core", "qx-datastruct", "qx-strategy", "qx-xingban", "qx-zhenlu"}
+    {"qx-control", "qx-core", "qx-datastruct", "qx-guanxing", "qx-strategy", "qx-xingban", "qx-zhenlu"}
 )
 APP_ALLOWED_EXTERNAL_DEPS = frozenset({"serde", "serde_json"})
 # 登记面写的是能力档的稳定串（路线图 §5 的 R/P/O/L），代码里写的是枚举变体名——两处口径不同形，
@@ -16830,7 +16830,7 @@ def qx_app_check() -> None:
     internal, external = _app_dependency_names()
     check(
         internal == set(APP_ALLOWED_INTERNAL_DEPS) and external == set(APP_ALLOWED_EXTERNAL_DEPS),
-        "qx-app 的依赖集是精确的（6 个领域件 + serde/serde_json，共 8 名，无门面/适配/执行/存储）",
+        "qx-app 的依赖集是精确的（7 个领域件 + serde/serde_json，共 9 名，无门面/适配/执行/存储）",
         f"内部 {sorted(internal)}（应为 {sorted(APP_ALLOWED_INTERNAL_DEPS)}）；"
         f"外部 {sorted(external)}（应为 {sorted(APP_ALLOWED_EXTERNAL_DEPS)}）",
     )

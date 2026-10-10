@@ -1299,6 +1299,7 @@ dependencies = [
  "qx-control",
  "qx-core",
  "qx-datastruct",
+ "qx-guanxing",
  "qx-strategy",
  "qx-xingban",
  "qx-zhenlu",

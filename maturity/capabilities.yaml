@@ -598,6 +598,8 @@ capabilities:
       - crates/qx-execution/src/application.rs
       - crates/qx-cli/src/backtests/multi_builtin.rs
       - crates/qx-cli/src/multi_leg.rs
+      - crates/qx-app/src/multi_leg.rs
+      - crates/qx-app/src/trade_facts.rs
       - crates/qx-cli/src/workers.rs
       - crates/qx-cli/src/spread.rs
       - crates/qx-cli/src/tests/execution_and_multi_leg.rs

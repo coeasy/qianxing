@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! qx-cli ─┐
-//! qx-api ─┼─→ qx-app ─→ qx-core / qx-data / qx-datastruct / qx-spec / qx-strategy / qx-xingban / qx-zhenlu
+//! qx-api ─┼─→ qx-app ─→ qx-core / qx-guanxing / qx-datastruct / qx-spec / qx-strategy / qx-xingban / qx-zhenlu
 //! qx-python ┘
 //! ```
 //!
@@ -33,7 +33,7 @@
 //! - 调用上下文与能力档：[`RunContext`]、[`CallerCapability`]
 //! - 错误：[`AppError`]、[`AppErrorCategory`]、[`AppAction`]、[`AppRetry`]
 //!
-//! 现在**没有**的东西（刻意留着，别按名字猜它存在）：多腿回测、Paper/Live 运行编排、
+//! 现在**没有**的东西（刻意留着，别按名字猜它存在）：完整多腿回测用例（纯 Rust 归因组件已共享）、Paper/Live 运行编排、
 //! `ReadRunArtifacts`/`BuildReport`（T2-4）。本 crate 今天只交付
 //! 「数据验证 → Bar/Tick/OrderBook 回测 → 产物 → 复核」这条研究垂直切片；
 //! Bar、Tick/OrderBook 与参数实验的 `start` 入口返回可协作取消的 [`RunHandle`]。
@@ -41,8 +41,10 @@
 pub mod cases;
 pub mod context;
 pub mod error;
+pub mod multi_leg;
 mod run_handle;
 pub mod spec;
+pub mod trade_facts;
 
 #[cfg(test)]
 mod tests;
@@ -56,6 +58,14 @@ pub use cases::{
 };
 pub use context::{CallerCapability, RunContext};
 pub use error::{AppAction, AppError, AppErrorCategory, AppRetry};
+pub use multi_leg::{
+    multi_leg_bar_close_raw, multi_leg_cost_bps, multi_leg_group_attributions,
+    multi_leg_group_totals, multi_leg_integrity_json, multi_leg_integrity_summary,
+    multi_leg_leg_buckets, multi_leg_leg_integrity, multi_leg_leg_margin,
+    multi_leg_pending_reconcile_json, multi_leg_realized_standing_at, MultiLegAttribution,
+    MultiLegLegFacts, MultiLegLegIntegrity, MultiLegPendingReconcile, MultiLegSignalBucket,
+    MULTI_LEG_FUNDING_INTERVAL_MS,
+};
 pub use run_handle::{RunHandle, RunStatus};
 pub use spec::{
     BacktestArtifacts, BacktestOutcome, BacktestSpec, BuiltinStrategySpec, DatasetSpec,
@@ -63,3 +73,4 @@ pub use spec::{
     BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
     MIN_BACKTEST_BARS,
 };
+pub use trade_facts::{rejection_count, rejection_facts, rejection_facts_line, spread_group_id};

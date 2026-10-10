@@ -270,44 +270,6 @@ pub(crate) struct BacktestArtifacts<'a> {
     pub(crate) signal: Option<BacktestSignalParams>,
 }
 
-/// 从引擎事件日志归并拒单原因与次数；三条回测链共用这一份口径。
-pub(crate) fn rejection_facts(event_log: &qx_core::EventLog) -> Vec<(String, usize)> {
-    let reasons: Vec<String> = event_log
-        .events()
-        .iter()
-        .filter_map(|event| match &event.kind {
-            qx_core::EventKind::Rejected { reason, .. } => Some(reason.clone()),
-            _ => None,
-        })
-        .collect();
-    let mut grouped: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for reason in reasons {
-        *grouped.entry(reason).or_default() += 1;
-    }
-    let mut pairs: Vec<(String, usize)> = grouped.into_iter().collect();
-    pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    pairs
-}
-
-/// 拒单原因的单行写法：`次数x原因`（原因里的空格换成 `_`），无拒单时固定为 `none`。
-/// 三条回测链的 CLI 输出与解析共用这一份语法。
-pub(crate) fn rejection_facts_line(rejections: &[(String, usize)]) -> String {
-    let reasons = rejections
-        .iter()
-        .map(|(reason, count)| format!("{count}x{}", reason.replace(' ', "_")))
-        .collect::<Vec<_>>()
-        .join(";");
-    if reasons.is_empty() {
-        return "none".to_string();
-    }
-    reasons
-}
-
-/// 归并后的拒单总数，与 `rejection_facts_line` 共用同一份事实。
-pub(crate) fn rejection_count(rejections: &[(String, usize)]) -> usize {
-    rejections.iter().map(|(_, count)| count).sum()
-}
-
 pub(crate) fn persist_backtest_artifacts(
     manifest_path: &Path,
     input: &BacktestArtifacts<'_>,

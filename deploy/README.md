@@ -216,7 +216,7 @@ cargo run --release -p qx-cli -- serve deploy/qianxing.runtime.example.json
 
 ### Shared research API
 
-`POST /app/*` 研究入口使用与 CLI/Python 相同的版本化 `qx-app` contract，覆盖同步与异步 Bar、L1 Tick、L2/L3 OrderBook 工作流。异步任务可查询状态并协作取消。输入文件必须位于 `QX_API_DATA_ROOT`（默认 `.qianxing/api-data`）内；输出只写入 `QX_API_ARTIFACT_ROOT`（默认系统临时目录下的 `qianxing-api-runs/<run_id>`）。请求中的路径不能越出输入根目录，也不能覆盖服务端产物根目录。服务启动前把数据放入输入目录，并用 mTLS Operator 身份保护远程 API。
+研究与交易 API 入口使用与 CLI/Python 相同的版本化 `qx-app` contract，覆盖同步与异步 Bar、L1 Tick、L2/L3 OrderBook 工作流，以及经现有控制面提交的 Paper/Live 命令。异步任务可查询状态并协作取消。输入文件必须位于 `QX_API_DATA_ROOT`（默认 `.qianxing/api-data`）内；输出只写入 `QX_API_ARTIFACT_ROOT`（默认系统临时目录下的 `qianxing-api-runs/<run_id>`）。请求中的路径不能越出输入根目录，也不能覆盖服务端产物根目录。服务启动前把数据放入输入目录，并用 mTLS Operator 身份保护远程 API。
 
 API 的认证边界只由 `transport` 与 `api.operators` 决定，不由 `environment` 的措辞决定（V13 R2 第二十三遍 #244）：
 
@@ -372,20 +372,20 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `GET /events/live[?after=&…]` | 事件总线现读增量，游标口径与上一行同一条实现 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`（游标过旧/超前，含空日志）；404 `account_projection_not_found`；500；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /control/audit` | 控制面审计流水 | 400 带任何查询串——这条入口同样没有收窄键（`AuditRecord` 没有账户列），与上一行同属整体现读面，正文点名被拒的那把键（V13 R2 第十三遍 / R6）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /control/commands` | 提交控制命令；启用访问策略时 operator 身份必须来自认证边界 | 400 请求体不合法（缺审计字段，或该命令类型在当前构建里没有派发者）；403 未认证 `authenticated_operator_required`／已认证但策略给不出权限 `forbidden`；409 命令被控制面拒绝（`ControlError` 的 Debug 形态，四个变体名见下段）；503 队列不可用 `control_state_unavailable`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `POST /app/paper/commands` | 受 Rust Paper 能力档保护的命令校验、持久化和入队 | 请求体为 `TradeControlSpec`；无执行者、权限不足或订单载荷非法会在入队前拒绝；成功返回 202 Accepted；终态由原有 worker 与审计读面提供 |
-| `POST /app/live/commands` | 受 Rust Live 能力档保护的实盘控制命令校验、持久化和入队 | 必须启用认证策略并授予 Trading；Live 拒绝 `dry_run`；不接受命令体自声明权限替代服务端 Operator 授权；成功返回 202 Accepted |
+| `POST /app/paper/commands` | 受 Rust Paper 能力档保护的命令校验、持久化和入队 | 请求体为 `TradeControlSpec`；400 输入或不可执行命令、403 权限不足、409 控制面拒绝、503 控制面不可用；成功返回 202 Accepted；终态由原有 worker 与审计读面提供；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/live/commands` | 受 Rust Live 能力档保护的实盘控制命令校验、持久化和入队 | 必须启用认证策略并授予 Trading；400 输入或试运行命令、403 权限不足、409 控制面拒绝、503 控制面不可用；不接受命令体自声明权限替代服务端 Operator 授权；成功返回 202 Accepted；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/validate-dataset` | 应用层用例 ValidateDataset：这份数据能否支撑一次 Bar 回测（请求体是 DatasetSpec JSON） | 非 200 状态码由响应体里的类别字段派生（crates/qx-api/src/app_surface.rs 的类别映射是唯一一份）：400 输入不合法；404 数据取不到；422 档位不足；403 权限不足；409 冲突；503 超时或存储故障；500 内部不一致。所有 `/app/*` 路由都拒绝查询串（400 `application_routes_do_not_accept_query_parameters`）；错误体是与 CLI/Python 逐字节相同的应用层错误文档，不是读面那套错误码形态；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/backtest` | 应用层用例 RunBacktest：跑一次 Bar 回测并落四份产物（请求体是 BacktestSpec JSON） | 与上一行同一份类别映射；同一运行身份已存在且身份不同是 409（不覆盖历史）；产物写在请求体点名的产物目录下，是**服务进程**的文件系统——所以这条入口与 /control/commands 同一把锁（配了访问策略的部署里都要 operator 身份）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/backtest/start` | 创建 Rust Bar 回测后台任务 | 400/404/409/422/500/503 复用应用层错误类别映射；运行状态通过 GET 查询，取消通过 POST 请求；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /app/runs/{run_id}` | 读取本进程任务状态与终态结果 | 404 未知任务；返回结果保留在有界内存注册表，服务重启或容量淘汰后不可读取；429/503 同全局限流出口 |
-| `POST /app/runs/{run_id}/cancel` | 请求协作取消 Bar/Tick/OrderBook 任务 | 202 表示取消请求已受理（可能已完成）；取消不产生部分报告；404 未知任务；429/503 同全局限流出口 |
+| `GET /app/runs/{run_id}` | 读取本进程任务状态与终态结果 | 404 未知任务；返回结果保留在有界内存注册表，服务重启或容量淘汰后不可读取；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/runs/{run_id}/cancel` | 请求协作取消 Bar/Tick/OrderBook 任务 | 202 表示取消请求已受理（可能已完成）；取消不产生部分报告；404 未知任务；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/depth-backtest` | 应用层用例 RunDepthBacktest：通过 Rust Tick/L2 OrderBook 内核回测并落四份产物（请求体是 DepthBacktestSpec JSON） | 输入帧限制在服务端数据根目录；服务端指定产物根目录；L1/L2 档位不匹配返回 422、已有产物异身份返回 409；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `POST /app/depth-backtest/start` | 创建 Rust Tick/OrderBook 后台回测任务 | 400/404/409/422/500/503 复用应用层错误类别映射；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口 |
-| `POST /app/run-experiment/start` | 创建 Rust 参数实验后台任务 | 候选和 Bar 循环复用协作取消；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口 |
+| `POST /app/depth-backtest/start` | 创建 Rust Tick/OrderBook 后台回测任务 | 400/404/409/422/500/503 复用应用层错误类别映射；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/run-experiment/start` | 创建 Rust 参数实验后台任务 | 候选和 Bar 循环复用协作取消；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/verify` | 应用层用例 VerifyRun：四份产物是否互相印证（请求体取上一行的响应体） | 与上一行同一份类别映射；产物缺失或互相矛盾是 200 加一个为假的裁决（不是非 200——「复核不通过」与「复核跑不起来」是两件事）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `POST /app/verify-depth` | 复核 Tick/OrderBook 回测的 manifest、summary、权益、成交和重放账簿证据 | 输入产物必须位于服务端 artifact 根目录；不一致为 200 + `verified=false`；缺失或不可读复用应用错误映射；429/503 同全局限流出口 |
-| `POST /app/compare-runs` | 对同一标的与数据指纹的已完成 Bar 运行作确定性排序 | 400 输入不合法、422 比较集合不满足约束；不访问服务端文件；429/503 同全局限流出口 |
-| `POST /app/run-experiment` | 复用共享 Bar 回测与 compare-runs 执行有界参数网格 | 输入帧限于数据根目录，工件写到服务端 artifact 根目录；候选错误隔离记录；429/503 同全局限流出口 |
+| `POST /app/verify-depth` | 复核 Tick/OrderBook 回测的 manifest、summary、权益、成交和重放账簿证据 | 输入产物必须位于服务端 artifact 根目录；不一致为 200 + `verified=false`；缺失或不可读复用应用错误映射；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/compare-runs` | 对同一标的与数据指纹的已完成 Bar 运行作确定性排序 | 400 输入不合法、422 比较集合不满足约束；不访问服务端文件；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/run-experiment` | 复用共享 Bar 回测与 compare-runs 执行有界参数网格 | 输入帧限于数据根目录，工件写到服务端 artifact 根目录；候选错误隔离记录；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 
 `POST /control/commands` 那一格的 409 是控制面按 `ControlError` 的 Debug 形态回报，四个会变 409 的
 变体名是 `DuplicateRequest`、`DuplicateCommand`、`UnknownCommand`、`AlreadyFinal`；

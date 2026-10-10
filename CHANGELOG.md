@@ -4850,7 +4850,7 @@ CI 从没把 C++ 插件交给 Rust 宿主加载过（`qianxing_strategy_example`
   印 0 会把"这个组合根本没法度量"伪装成"这单套利不赚不赔"，与 `multi_leg_leg_cash` 撤掉静默截断同一条纪律。
 - **一次被行数逼出来的搬家**：`multi_builtin.rs` 加完新代码会越过 Phase 4s 的
   `cli_backtest_module_check()`（`tools/check_architecture.py:1104`，`>= OVERSIZED(500)` 即红，登记进预算表
-  也救不了）。把入口那 11 行组级合计折叠搬进归因内核 `crates/qx-cli/src/multi_leg.rs:452-470`
+  也救不了）。把入口那 11 行组级合计折叠搬进归因内核 `crates/qx-app/src/multi_leg.rs:461`
   （新增 `multi_leg_group_totals`，保证金仍取各组峰值而非求和），入口只留 1 行调用；
   `maturity/line_budgets.yaml` 本轮**一个字节都没动**。
 
@@ -6029,7 +6029,7 @@ Bar 链的 `--fill-model` / `--virtual-trading` 未做（前置条件见同文�
 
 ### Changed（`multi-builtin` 的归因与产物不再乐观记账）
 
-- `crates/qx-cli/src/multi_leg.rs`：套利组**只由实际成交配对**（`:381-387`）。改之前只要某条腿
+- `crates/qx-app/src/multi_leg.rs`：套利组**只由实际成交配对**（`:341-347`）。改之前只要某条腿
   在信号计划里出现过量，即使它一笔都没成交（现金不足、名义额上限、reduce-only 被挡），组里照样
   挂上它的计划数量，净敞口 / 保证金峰值 / 归因费用可以描述一个现实中拿不到的组合；改后
   `filled_qty_raw` 为零即不成组，该腿成本与成交量原样进 `residual_*`，一腿成交而对手腿落空时

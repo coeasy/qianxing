@@ -3,10 +3,6 @@
 //! 订单组状态机本身来自 qx-zhenlu，这里只负责 CLI 侧的存储根解析与恢复编排。
 
 use super::*;
-pub(crate) fn spread_group_id(strategy_id: &str, run_id: u64, signal_id: u64) -> String {
-    format!("spread-{strategy_id}-{run_id}-{signal_id}")
-}
-
 /// 在多腿命令进入队列前持久化完整订单组。组快照不是成交事实，事实仍由
 /// 各 Venue EventLog 写入；它只提供跨 worker 的腿身份、路由和重启恢复索引。
 pub(crate) fn persist_strategy_spread_group(

@@ -8,7 +8,7 @@ crates/qx-api/src/lib.rs: 2917
 crates/qx-cli/src/cli.rs: 670
 crates/qx-cli/src/cli_args.rs: 511
 crates/qx-cli/src/event_pipeline.rs: 787
-crates/qx-cli/src/spread.rs: 506
+crates/qx-cli/src/spread.rs: 502
 crates/qx-cli/src/strategy_contract.rs: 860
 crates/qx-cli/src/strategy_host.rs: 908
 crates/qx-cli/src/tests/api_endpoint_table_routes.rs: 554
