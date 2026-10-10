@@ -50,17 +50,22 @@ Paper and Live command submission use the Rust server's existing execution path:
 ```python
 from qianxing import LiveClient, TradeCommand
 
-client = LiveClient("https://127.0.0.1:8443")
+client = LiveClient(
+    "https://127.0.0.1:8443",
+    headers={"Authorization": "Bearer <deployment-issued-token>"},
+)
 receipt = client.submit(TradeCommand(
     command_id=1001,
     request_id="strategy-pause-1001",
-    operator_id="ignored-when-mTLS-is-enabled",
+    operator_id="operator-1",
     reason="operator maintenance",
     kind="PauseStrategy",
     target="strategy-1",
     payload={},
 ))
 ```
+
+`headers` are forwarded to the deployment's HTTP authentication adapter, which must resolve them to an authenticated operator. The `operator_id` in the command is intent metadata and never grants authority by itself. Use `ssl_context` when the deployment requires mutual TLS.
 
 The installed `qianxing` command exposes `doctor`, `validate-dataset`, `backtest`, `depth-backtest`, `verify`, `compare-runs`, and `run-experiment` for the same SDK use cases. Research commands accept the versioned JSON document produced by the application contract.
 

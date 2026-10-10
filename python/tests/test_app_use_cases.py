@@ -143,8 +143,12 @@ class AppUseCaseTests(unittest.TestCase):
             payload={},
         )
         with patch("qianxing.app.urlopen", return_value=Response()) as open_url:
-            paper_receipt = PaperClient("https://localhost:8443").submit(command)
-            live_receipt = LiveClient("https://localhost:8443").submit(command)
+            paper_receipt = PaperClient(
+                "https://localhost:8443", headers={"Authorization": "Bearer paper-token"}
+            ).submit(command)
+            live_receipt = LiveClient(
+                "https://localhost:8443", headers={"X-Authenticated-Session": "session-7"}
+            ).submit(command)
 
         self.assertEqual(paper_receipt["status"], "Accepted")
         self.assertEqual(live_receipt["command_id"], 41)
@@ -153,8 +157,14 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(requests[1].full_url, "https://localhost:8443/app/live/commands")
         self.assertEqual(json.loads(requests[0].data)["workflow"], "paper")
         self.assertEqual(json.loads(requests[1].data)["command"]["request_id"], "sdk-41")
+        self.assertEqual(requests[0].get_header("Authorization"), "Bearer paper-token")
+        self.assertEqual(requests[1].get_header("X-authenticated-session"), "session-7")
         with self.assertRaisesRegex(ValueError, "requires HTTPS"):
             LiveClient("http://localhost:8443")
+        with self.assertRaisesRegex(ValueError, "Content-Type"):
+            PaperClient("http://localhost:8443", headers={"Content-Type": "text/plain"})
+        with self.assertRaisesRegex(ValueError, "valid string"):
+            PaperClient("http://localhost:8443", headers={"X-Auth": "bad\r\nvalue"})
 
     def _spec(self, run_id: str, output_dir: Path, bars: str | None = None) -> dict:
         return {

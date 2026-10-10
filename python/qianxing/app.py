@@ -8,6 +8,7 @@ Tick, OrderBook, two-leg Bar backtests, parameter experiments, and run lifecycle
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from ssl import SSLContext
@@ -478,6 +479,7 @@ class TradeWorkflowClient:
         base_url: str,
         workflow: Literal["paper", "live"],
         *,
+        headers: Mapping[str, str] | None = None,
         ssl_context: SSLContext | None = None,
         timeout: float = 30.0,
     ):
@@ -490,8 +492,23 @@ class TradeWorkflowClient:
             raise ValueError("LiveClient requires HTTPS for every command request")
         if timeout <= 0:
             raise ValueError("timeout must be positive")
+        request_headers = dict(headers or {})
+        for name, value in request_headers.items():
+            if (
+                not isinstance(name, str)
+                or not name.strip()
+                or not isinstance(value, str)
+                or "\r" in name
+                or "\n" in name
+                or "\r" in value
+                or "\n" in value
+            ):
+                raise ValueError("headers must contain valid string names and values")
+            if name.casefold() == "content-type":
+                raise ValueError("Content-Type is managed by TradeWorkflowClient")
         self.base_url = base_url.rstrip("/")
         self.workflow = workflow
+        self.headers = request_headers
         self.ssl_context = ssl_context
         self.timeout = timeout
 
@@ -506,7 +523,7 @@ class TradeWorkflowClient:
         request = Request(
             f"{self.base_url}/app/{self.workflow}/commands",
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers={**self.headers, "Content-Type": "application/json"},
             method="POST",
         )
         try:
@@ -532,13 +549,31 @@ class TradeWorkflowClient:
 
 
 class PaperClient(TradeWorkflowClient):
-    def __init__(self, base_url: str, *, ssl_context: SSLContext | None = None, timeout: float = 30.0):
-        super().__init__(base_url, "paper", ssl_context=ssl_context, timeout=timeout)
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        ssl_context: SSLContext | None = None,
+        timeout: float = 30.0,
+    ):
+        super().__init__(
+            base_url, "paper", headers=headers, ssl_context=ssl_context, timeout=timeout
+        )
 
 
 class LiveClient(TradeWorkflowClient):
-    def __init__(self, base_url: str, *, ssl_context: SSLContext | None = None, timeout: float = 30.0):
-        super().__init__(base_url, "live", ssl_context=ssl_context, timeout=timeout)
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        ssl_context: SSLContext | None = None,
+        timeout: float = 30.0,
+    ):
+        super().__init__(
+            base_url, "live", headers=headers, ssl_context=ssl_context, timeout=timeout
+        )
 
 
 class RunHandle(Generic[_ResultT]):
