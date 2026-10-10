@@ -55,6 +55,8 @@ def _load_native():
                         "app_start_experiment",
                         "app_run_depth_backtest",
                         "app_start_depth_backtest",
+                        "app_run_depth_experiment",
+                        "app_start_depth_experiment",
                         "app_run_multi_leg_backtest",
                         "app_start_multi_leg_backtest",
                         "app_run_multi_leg_experiment",
@@ -107,6 +109,11 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertEqual(multi_leg_experiment.command, "run-multi-leg-experiment")
         self.assertEqual(multi_leg_experiment.input, "multi-leg-experiment.json")
+        depth_experiment = _parser().parse_args(
+            ["run-depth-experiment", "depth-experiment.json"]
+        )
+        self.assertEqual(depth_experiment.command, "run-depth-experiment")
+        self.assertEqual(depth_experiment.input, "depth-experiment.json")
         depth = _parser().parse_args(["depth-backtest", "depth.json"])
         self.assertEqual(depth.command, "depth-backtest")
         self.assertEqual(depth.input, "depth.json")
@@ -487,6 +494,72 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(depth_result.tier, "l1")
         self.assertEqual(depth_result.equity_points, 48)
         self.assertIsNone(handle.result(), "depth outcome is delivered only once")
+
+        depth_experiment_payload = {
+            "schema_version": 1,
+            "experiment_id": "python-tick-grid",
+            "base": {**payload, "run_id": "unused-python-tick-grid"},
+            "parameter_space": [{"name": "quantity_raw", "values": [0, 1_000_000_000]}],
+        }
+        depth_experiment = self.bridge.run_depth_experiment(depth_experiment_payload)
+        self.assertEqual(depth_experiment["completed_candidates"], 2)
+        self.assertEqual(depth_experiment["failed_candidates"], 1)
+        self.assertEqual(depth_experiment["succeeded_candidates"], 1)
+        self.assertTrue(Path(depth_experiment["artifact_path"]).is_file())
+        depth_experiment_handle = self.bridge.start_depth_experiment(
+            {
+                **depth_experiment_payload,
+                "experiment_id": "python-tick-grid-handle",
+                "base": {
+                    **depth_experiment_payload["base"],
+                    "output_dir": str(self.output_dir / "tick-grid-handle"),
+                },
+            }
+        )
+        self.assertEqual(depth_experiment_handle.wait(10_000), "succeeded")
+        self.assertIsNotNone(depth_experiment_handle.result_json())
+        self.assertIsNone(depth_experiment_handle.result_json())
+
+        from qianxing import (
+            ExperimentParameterSpace,
+            RunDepthExperimentSpec,
+            run_depth_experiment,
+            start_depth_experiment,
+        )
+
+        typed_depth_experiment = RunDepthExperimentSpec(
+            experiment_id="python-typed-tick-grid",
+            base=DepthBacktestSpec(
+                run_id="unused-python-typed-tick-grid",
+                depth_path=str(depth_path),
+                tier="l1",
+                settlement_currency="USDT",
+                initial_cash_raw=1_000_000_000_000_000,
+                output_dir=str(self.output_dir / "typed-tick-grid"),
+                strategy=BuiltinStrategySpec(
+                    kind="sma_cross", strategy_id="py-typed-tick-grid", fast_window=2, slow_window=3
+                ),
+            ),
+            parameter_space=(ExperimentParameterSpace("quantity_raw", (1_000_000_000,)),),
+        )
+        typed_result = run_depth_experiment(typed_depth_experiment)
+        self.assertEqual(typed_result.succeeded_candidates, 1)
+        typed_handle = start_depth_experiment(
+            RunDepthExperimentSpec(
+                experiment_id="python-typed-tick-grid-handle",
+                base=DepthBacktestSpec(
+                    **{
+                        **typed_depth_experiment.base.__dict__,
+                        "run_id": "unused-python-typed-tick-grid-handle",
+                        "output_dir": str(self.output_dir / "typed-tick-grid-handle"),
+                    }
+                ),
+                parameter_space=typed_depth_experiment.parameter_space,
+            )
+        )
+        self.assertEqual(typed_handle.wait(10_000), "succeeded")
+        self.assertIsNotNone(typed_handle.result())
+        self.assertIsNone(typed_handle.result())
 
         from qianxing.cli import main as python_cli
 

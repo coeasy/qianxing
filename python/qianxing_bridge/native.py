@@ -44,6 +44,8 @@ APP_ENTRYPOINTS = (
     "app_start_experiment",
     "app_run_depth_backtest",
     "app_start_depth_backtest",
+    "app_run_depth_experiment",
+    "app_start_depth_experiment",
     "app_verify_depth_run",
     "app_run_multi_leg_backtest",
     "app_start_multi_leg_backtest",
@@ -128,6 +130,16 @@ def app_run_depth_backtest(spec_json: str) -> str:
 def app_start_depth_backtest(spec_json: str) -> Any:
     """Start an L1 Tick or L2 order-book run in the Rust engine."""
     return _extension().app_start_depth_backtest(spec_json)
+
+
+def app_run_depth_experiment(spec_json: str) -> str:
+    """Run a bounded parameter grid through the shared Rust depth use case."""
+    return str(_extension().app_run_depth_experiment(spec_json))
+
+
+def app_start_depth_experiment(spec_json: str) -> Any:
+    """Start a cancellable Rust Tick/OrderBook parameter experiment."""
+    return _extension().app_start_depth_experiment(spec_json)
 
 
 def app_verify_depth_run(outcome_json: str) -> str:

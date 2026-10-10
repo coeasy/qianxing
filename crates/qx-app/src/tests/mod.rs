@@ -6,6 +6,7 @@
 //! 公共面必须有**生产**读者，用例不算。放在单文件 `src/tests.rs` 里会把这个前提悄悄松开。
 
 mod depth_backtest;
+mod depth_experiment;
 mod error_contract;
 mod fixtures;
 mod multi_leg_backtest;

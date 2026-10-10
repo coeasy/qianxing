@@ -1726,10 +1726,9 @@ qx_control_retired_audit_records_total {}\n",
             ("POST", "/app/compare-runs") => app_surface::post_compare_runs(body),
             ("POST", "/app/run-experiment") => app::experiment(body, &self.app_paths),
             ("POST", "/app/depth-backtest") => app_surface::depth_backtest(body, &self.app_paths),
+            ("POST", "/app/run-depth-experiment") => app::depth_experiment(body, &self.app_paths),
             ("POST", "/app/multi-leg-backtest") => app::multi_leg_backtest(body, &self.app_paths),
-            ("POST", "/app/run-multi-leg-experiment") => {
-                app::multi_leg_experiment(body, &self.app_paths)
-            }
+            ("POST", "/app/run-multi-leg-experiment") => app::multi_leg_grid(body, &self.app_paths),
             _ => ApiResponse::text(404, "not found"),
         }
     }

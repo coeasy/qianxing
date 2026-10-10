@@ -60,7 +60,7 @@ fn write_depth_frame(root: &Path, name: &str, levels: usize) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn spec(run_id: &str, root: &Path, tier: &str, levels: usize) -> DepthBacktestSpec {
+pub(super) fn spec(run_id: &str, root: &Path, tier: &str, levels: usize) -> DepthBacktestSpec {
     let mut strategy = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "depth-sma");
     strategy.quantity_raw = SCALE;
     strategy.fast_window = 2;

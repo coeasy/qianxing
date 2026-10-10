@@ -17,6 +17,7 @@ from .app import (
     doctor,
     run_backtest,
     run_depth_backtest,
+    run_depth_experiment,
     run_experiment,
     run_multi_leg_experiment,
     validate_dataset,
@@ -57,6 +58,7 @@ def _parser() -> argparse.ArgumentParser:
         ("verify", "verify artifacts described by a BacktestOutcome JSON file"),
         ("compare-runs", "rank completed runs from identical market data"),
         ("run-experiment", "run and compare a bounded Rust parameter grid"),
+        ("run-depth-experiment", "run a bounded Rust Tick/OrderBook parameter grid"),
         ("run-multi-leg-experiment", "run a bounded Rust multi-leg parameter grid"),
         ("depth-backtest", "run an L1 Tick or L2 order-book backtest"),
         ("verify-depth", "verify artifacts from an L1 Tick or L2 order-book run"),
@@ -81,6 +83,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = compare_runs(payload)
             elif args.command == "run-experiment":
                 result = run_experiment(payload)
+            elif args.command == "run-depth-experiment":
+                result = run_depth_experiment(payload)
             elif args.command == "run-multi-leg-experiment":
                 result = run_multi_leg_experiment(payload)
             elif args.command == "depth-backtest":

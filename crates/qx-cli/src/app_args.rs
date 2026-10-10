@@ -63,6 +63,12 @@ pub(crate) enum AppCommand {
         /// `RunExperimentSpec` JSON 的路径。
         spec: PathBuf,
     },
+    /// 通过共享 Rust Tick/OrderBook 回测用例执行有界参数网格。
+    #[command(name = "run-depth-experiment")]
+    RunDepthExperiment {
+        /// `RunDepthExperimentSpec` JSON 的路径。
+        spec: PathBuf,
+    },
     /// 通过共享 Rust 多腿回测用例执行有界参数网格。
     #[command(name = "run-multi-leg-experiment")]
     RunMultiLegExperiment {

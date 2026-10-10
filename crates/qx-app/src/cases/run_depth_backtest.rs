@@ -60,7 +60,7 @@ impl DepthBacktestSpec {
     }
 }
 
-fn run_inner(
+pub(super) fn run_inner(
     spec: &DepthBacktestSpec,
     context: &RunContext,
     cancellation: Option<&CancellationToken>,

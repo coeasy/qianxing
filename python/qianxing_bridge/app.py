@@ -77,6 +77,16 @@ def run_depth_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_run_depth_backtest(_payload(spec)))
 
 
+def run_depth_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """Run Tick/OrderBook parameter candidates through the Rust backtest use case."""
+    return json.loads(native.app_run_depth_experiment(_payload(spec)))
+
+
+def start_depth_experiment(spec: "str | dict[str, Any]") -> Any:
+    """Start a cancellable Rust Tick/OrderBook parameter grid."""
+    return native.app_start_depth_experiment(_payload(spec))
+
+
 def run_multi_leg_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """Run a Rust application-layer multi-leg Bar backtest."""
     return json.loads(native.app_run_multi_leg_backtest(_payload(spec)))

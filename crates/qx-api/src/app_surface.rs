@@ -26,14 +26,13 @@
 
 use crate::ApiResponse;
 use qx_app::{
-    compare_runs, run_backtest, run_depth_backtest, run_experiment, run_multi_leg_backtest,
-    run_multi_leg_experiment, validate_dataset, verify_depth_run, verify_run, AppError,
-    AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec,
-    DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestSpec, RunContext,
-    RunExperimentSpec, RunMultiLegExperimentSpec,
+    compare_runs, run_backtest, run_depth_backtest, run_depth_experiment, run_experiment,
+    run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset, verify_depth_run,
+    verify_run, AppError, AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability,
+    CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestSpec,
+    RunContext, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
 };
 use std::path::{Path, PathBuf};
-
 
 #[derive(Clone, Debug)]
 pub(crate) struct AppPaths {
@@ -192,6 +191,25 @@ pub(crate) fn depth_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
     respond(run_depth_backtest(&spec, &context(&spec.run_id)).and_then(|outcome| outcome.to_json()))
 }
 
+pub(crate) fn depth_experiment(body: &str, paths: &AppPaths) -> ApiResponse {
+    let mut spec = match RunDepthExperimentSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    if let Err(error) = resolve_input_path(&mut spec.base.depth_path, &paths.data_root) {
+        return respond(Err(error));
+    }
+    let experiment_id = spec.experiment_id.clone();
+    spec.base.output_dir = paths
+        .artifact_root
+        .join(&experiment_id)
+        .to_string_lossy()
+        .into_owned();
+    respond(
+        run_depth_experiment(&spec, &context(&experiment_id)).and_then(|result| result.to_json()),
+    )
+}
+
 pub(crate) fn multi_leg_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
     let mut spec = match MultiLegBacktestSpec::from_json(body) {
         Ok(spec) => spec,
@@ -214,7 +232,7 @@ pub(crate) fn multi_leg_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
     respond(run_multi_leg_backtest(&spec, &context(&run_id)).and_then(|outcome| outcome.to_json()))
 }
 
-pub(crate) fn multi_leg_experiment(body: &str, paths: &AppPaths) -> ApiResponse {
+pub(crate) fn multi_leg_grid(body: &str, paths: &AppPaths) -> ApiResponse {
     let mut spec = match RunMultiLegExperimentSpec::from_json(body) {
         Ok(spec) => spec,
         Err(error) => return respond(Err(error)),

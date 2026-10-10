@@ -2,17 +2,22 @@
 
 use super::*;
 use qx_app::{
-    MultiLegBacktestOutcome, MultiLegBacktestSpec, RunExperimentResult, RunHandle,
-    RunMultiLegExperimentResult, RunMultiLegExperimentSpec, RunStatus,
+    MultiLegBacktestOutcome, MultiLegBacktestSpec, RunDepthExperimentResult,
+    RunDepthExperimentSpec, RunExperimentResult, RunHandle, RunMultiLegExperimentResult,
+    RunMultiLegExperimentSpec, RunStatus,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+
+#[path = "app_runs/depth_experiment.rs"]
+mod depth_experiment;
 
 const APP_RUN_CAPACITY: usize = 1024;
 pub(crate) const RUN_START_BACKTEST_ROUTE: &str = "/app/backtest/start";
 pub(crate) const RUN_STATUS_ROUTE_TEMPLATE: &str = "/app/runs/{run_id}";
 pub(crate) const RUN_CANCEL_ROUTE_TEMPLATE: &str = "/app/runs/{run_id}/cancel";
 pub(crate) const RUN_START_DEPTH_ROUTE: &str = "/app/depth-backtest/start";
+pub(crate) const RUN_START_DEPTH_EXPERIMENT_ROUTE: &str = "/app/run-depth-experiment/start";
 pub(crate) const RUN_START_EXPERIMENT_ROUTE: &str = "/app/run-experiment/start";
 pub(crate) const RUN_START_MULTI_LEG_ROUTE: &str = "/app/multi-leg-backtest/start";
 pub(crate) const RUN_START_MULTI_LEG_EXPERIMENT_ROUTE: &str = "/app/run-multi-leg-experiment/start";
@@ -27,6 +32,9 @@ pub(crate) fn app_run_route(
     let response = match (method, route) {
         ("POST", RUN_START_BACKTEST_ROUTE) => start_run_backtest(body, paths, registry),
         ("POST", RUN_START_DEPTH_ROUTE) => start_depth_backtest(body, paths, registry),
+        ("POST", RUN_START_DEPTH_EXPERIMENT_ROUTE) => {
+            depth_experiment::start(body, paths, registry)
+        }
         ("POST", RUN_START_EXPERIMENT_ROUTE) => start_experiment(body, paths, registry),
         ("POST", RUN_START_MULTI_LEG_ROUTE) => start_multi_leg_backtest(body, paths, registry),
         ("POST", RUN_START_MULTI_LEG_EXPERIMENT_ROUTE) => {
@@ -49,6 +57,7 @@ pub(crate) struct AppRunRegistry {
 enum AppRun {
     Bar(RunHandle<BacktestOutcome>),
     Depth(RunHandle<DepthBacktestOutcome>),
+    DepthExperiment(RunHandle<RunDepthExperimentResult>),
     Experiment(RunHandle<RunExperimentResult>),
     MultiLeg(RunHandle<MultiLegBacktestOutcome>),
     MultiLegExperiment(RunHandle<RunMultiLegExperimentResult>),
@@ -149,6 +158,7 @@ impl AppRunEntry {
             None => RunStatus::Running,
             Some(AppRun::Bar(handle)) => handle.status(),
             Some(AppRun::Depth(handle)) => handle.status(),
+            Some(AppRun::DepthExperiment(handle)) => handle.status(),
             Some(AppRun::Experiment(handle)) => handle.status(),
             Some(AppRun::MultiLeg(handle)) => handle.status(),
             Some(AppRun::MultiLegExperiment(handle)) => handle.status(),
@@ -160,6 +170,7 @@ impl AppRunEntry {
         match &mut self.run {
             Some(AppRun::Bar(handle)) => handle.cancel(),
             Some(AppRun::Depth(handle)) => handle.cancel(),
+            Some(AppRun::DepthExperiment(handle)) => handle.cancel(),
             Some(AppRun::Experiment(handle)) => handle.cancel(),
             Some(AppRun::MultiLeg(handle)) => handle.cancel(),
             Some(AppRun::MultiLegExperiment(handle)) => handle.cancel(),
@@ -178,6 +189,9 @@ impl AppRunEntry {
                 .try_take_result()
                 .map(|result| result.and_then(|value| value.to_json())),
             Some(AppRun::Depth(handle)) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|value| value.to_json())),
+            Some(AppRun::DepthExperiment(handle)) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|value| value.to_json())),
             Some(AppRun::Experiment(handle)) => handle

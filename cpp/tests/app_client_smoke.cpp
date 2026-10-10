@@ -28,6 +28,11 @@ int main() {
     assert(observed_path == "/app/depth-backtest");
     assert(observed_body == depth_spec);
 
+    const auto depth_experiment = client.run_depth_experiment(spec);
+    assert(depth_experiment.ok());
+    assert(observed_path == "/app/run-depth-experiment");
+    assert(observed_body == spec);
+
     const auto multi_leg = client.run_multi_leg_backtest(spec);
     assert(multi_leg.ok());
     assert(observed_path == "/app/multi-leg-backtest");
@@ -55,6 +60,10 @@ int main() {
     const auto started_depth = client.start_depth_backtest(spec);
     assert(started_depth.ok());
     assert(observed_path == "/app/depth-backtest/start");
+
+    const auto started_depth_experiment = client.start_depth_experiment(spec);
+    assert(started_depth_experiment.ok());
+    assert(observed_path == "/app/run-depth-experiment/start");
 
     const auto started_experiment = client.start_experiment(spec);
     assert(started_experiment.ok());

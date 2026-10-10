@@ -70,7 +70,7 @@ receipt = client.submit(TradeCommand(
 
 `ssl_context` supplies the client certificate for the built-in mTLS identity mapping. `headers` are available for deployments with an HTTP authentication adapter. The `operator_id` in the command is intent metadata and never grants authority by itself.
 
-The installed `qianxing` command exposes `doctor`, `validate-dataset`, `backtest`, `depth-backtest`, `verify`, `compare-runs`, `run-experiment`, and `run-multi-leg-experiment` for the same Rust-backed SDK use cases. Research commands accept the versioned JSON document produced by the application contract.
+The installed `qianxing` command exposes `doctor`, `validate-dataset`, `backtest`, `depth-backtest`, `verify`, `compare-runs`, `run-experiment`, `run-depth-experiment`, and `run-multi-leg-experiment` for the same Rust-backed SDK use cases. Research commands accept the versioned JSON document produced by the application contract.
 
 Amounts and quantities use the engine's fixed-point `*_raw` units. Install optional integrations only when needed, for example `pip install 'qianxing[ccxt]'` or `pip install 'qianxing[a-share]'`.
 

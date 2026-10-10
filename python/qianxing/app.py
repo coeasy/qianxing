@@ -300,6 +300,22 @@ class RunMultiLegExperimentSpec:
 
 
 @dataclass(frozen=True)
+class RunDepthExperimentSpec:
+    experiment_id: str
+    base: DepthBacktestSpec
+    parameter_space: tuple[ExperimentParameterSpace, ...]
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "experiment_id": self.experiment_id,
+            "base": self.base.to_dict(),
+            "parameter_space": [dimension.to_dict() for dimension in self.parameter_space],
+        }
+
+
+@dataclass(frozen=True)
 class ExperimentCandidateResult:
     ordinal: int
     parameters: dict[str, int]
@@ -405,6 +421,63 @@ class DepthBacktestOutcome:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "DepthBacktestOutcome":
         return cls(**value)
+
+
+@dataclass(frozen=True)
+class DepthExperimentCandidateResult:
+    ordinal: int
+    parameters: dict[str, int]
+    outcome: DepthBacktestOutcome | None
+    error: str | None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "DepthExperimentCandidateResult":
+        raw_outcome = value.get("outcome")
+        return cls(
+            ordinal=value["ordinal"],
+            parameters=value["parameters"],
+            outcome=DepthBacktestOutcome.from_dict(raw_outcome) if raw_outcome else None,
+            error=value.get("error"),
+        )
+
+
+@dataclass(frozen=True)
+class DepthExperimentRankedCandidate:
+    rank: int
+    ordinal: int
+    run_id: str
+    return_bps: int
+    max_drawdown_bps: int
+    result_hash: str
+
+
+@dataclass(frozen=True)
+class RunDepthExperimentResult:
+    schema_version: int
+    experiment_id: str
+    spec_fingerprint: str
+    total_candidates: int
+    completed_candidates: int
+    succeeded_candidates: int
+    failed_candidates: int
+    candidates: tuple[DepthExperimentCandidateResult, ...]
+    ranking: tuple[DepthExperimentRankedCandidate, ...]
+    artifact_path: str
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "RunDepthExperimentResult":
+        return cls(
+            schema_version=value["schema_version"],
+            experiment_id=value["experiment_id"],
+            spec_fingerprint=value["spec_fingerprint"],
+            total_candidates=value["total_candidates"],
+            completed_candidates=value["completed_candidates"],
+            succeeded_candidates=value["succeeded_candidates"],
+            failed_candidates=value["failed_candidates"],
+            candidates=tuple(DepthExperimentCandidateResult.from_dict(item) for item in value["candidates"]),
+            ranking=tuple(DepthExperimentRankedCandidate(**item) for item in value["ranking"]),
+            artifact_path=value["artifact_path"],
+        )
 
 
 @dataclass(frozen=True)
@@ -753,6 +826,24 @@ def run_multi_leg_experiment(
     )
 
 
+def run_depth_experiment(
+    spec: RunDepthExperimentSpec | dict[str, Any],
+) -> RunDepthExperimentResult:
+    """Run Tick/OrderBook candidates through the same Rust depth engine."""
+    return RunDepthExperimentResult.from_dict(_invoke(native.app_run_depth_experiment, spec))
+
+
+def start_depth_experiment(
+    spec: RunDepthExperimentSpec | dict[str, Any],
+) -> RunHandle[RunDepthExperimentResult]:
+    """Start a cancellable Tick/OrderBook experiment in the Rust run lifecycle."""
+    try:
+        native_handle = native.app_start_depth_experiment(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, RunDepthExperimentResult)
+
+
 def run_depth_backtest(spec: DepthBacktestSpec | dict[str, Any]) -> DepthBacktestOutcome:
     """Run deterministic L1 Tick or L2 order-book matching in the shared Rust kernel."""
     return DepthBacktestOutcome.from_dict(_invoke(native.app_run_depth_backtest, spec))
@@ -833,6 +924,8 @@ def doctor() -> dict[str, Any]:
                 "experiment.grid.bar.run-handle.v1",
                 "experiment.grid.multi-leg.bar.v1",
                 "experiment.grid.multi-leg.bar.run-handle.v1",
+                "experiment.grid.depth.tick-orderbook.v1",
+                "experiment.grid.depth.tick-orderbook.run-handle.v1",
                 "backtest.depth.l1.v1",
                 "backtest.depth.l2.v1",
                 "backtest.depth.run-handle.v1",

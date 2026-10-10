@@ -91,7 +91,7 @@ fn sample_depth() -> String {
     .to_string()
 }
 
-fn python_run(root: &Path, payload: &str) -> Option<Value> {
+fn python_run(root: &Path, payload: &str, function: &str) -> Option<Value> {
     let python = std::env::var("QX_PYTHON").unwrap_or_else(|_| {
         if cfg!(windows) {
             root.join("python/.venv/Scripts/python.exe")
@@ -107,8 +107,9 @@ fn python_run(root: &Path, payload: &str) -> Option<Value> {
         return None;
     }
     let script = format!(
-        "import json, sys\nsys.path.insert(0, {python_dir:?})\nfrom qianxing_bridge import app, native\nif not native.app_available(): sys.exit(3)\ntry:\n result=app.run_depth_backtest(json.loads({payload:?}))\nexcept Exception as error:\n print(json.dumps({{'error': app.app_error_payload(error) or str(error)}})); sys.exit(4)\nprint(json.dumps(result))\n",
+        "import json, sys\nsys.path.insert(0, {python_dir:?})\nfrom qianxing_bridge import app, native\nif not native.app_available(): sys.exit(3)\ntry:\n result=app.{function}(json.loads({payload:?}))\nexcept Exception as error:\n print(json.dumps({{'error': app.app_error_payload(error) or str(error)}})); sys.exit(4)\nprint(json.dumps(result))\n",
         python_dir = root.join("python").to_string_lossy(),
+        function = function,
     );
     let output = Command::new(python)
         .arg("-c")
@@ -184,9 +185,121 @@ fn market_aware_tick_spec_has_the_same_rust_result_through_cli_http_and_python()
     // so sharing the CLI directory would correctly reject the same run id as a conflict.
     let mut python_spec: Value = serde_json::from_str(&spec).expect("DepthBacktestSpec JSON");
     python_spec["output_dir"] = json!(run_dir.join("python-artifacts"));
-    if let Some(python) = python_run(&root, &python_spec.to_string()) {
+    if let Some(python) = python_run(&root, &python_spec.to_string(), "run_depth_backtest") {
         assert_eq!(identities(&python), identities(&cli));
     } else {
         eprintln!("[skip] Python app extension is not built in this test environment");
+    }
+}
+
+#[test]
+fn tick_parameter_experiment_is_shared_by_cli_http_python_and_run_lifecycle() {
+    let root = repo_root();
+    let run_dir = root
+        .join("target")
+        .join(format!("qx-app-depth-grid-{}", std::process::id()));
+    std::fs::create_dir_all(&run_dir).expect("create test output root");
+    let depth_path = run_dir.join("grid-ticks.json");
+    std::fs::write(&depth_path, sample_depth()).expect("write Tick frame");
+    let mut base: Value = serde_json::from_str(&depth_spec(
+        "unused-depth-grid-base",
+        &depth_path,
+        &run_dir.join("base-artifacts"),
+    ))
+    .expect("DepthBacktestSpec JSON");
+    base["market_spec"] = Value::Null;
+    base.as_object_mut().unwrap().remove("market_spec");
+    base["order_policy"] = Value::Null;
+    base.as_object_mut().unwrap().remove("order_policy");
+    let make_spec = |experiment_id: &str, output_dir: &Path| {
+        let mut base = base.clone();
+        base["output_dir"] = json!(output_dir);
+        json!({
+            "schema_version": 1,
+            "experiment_id": experiment_id,
+            "base": base,
+            "parameter_space": [{"name": "quantity_raw", "values": [0, 1_000_000_000]}],
+        })
+        .to_string()
+    };
+    let spec = make_spec("tick-grid-parity", &run_dir.join("cli-artifacts"));
+    let spec_path = run_dir.join("grid-spec.json");
+    std::fs::write(&spec_path, &spec).expect("write experiment spec");
+    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "run-depth-experiment"])
+        .arg(&spec_path)
+        .output()
+        .expect("start qx-cli depth experiment");
+    assert_eq!(
+        cli_output.status.code(),
+        Some(0),
+        "CLI depth experiment failed: {}",
+        String::from_utf8_lossy(&cli_output.stderr)
+    );
+    let cli: Value = serde_json::from_slice(&cli_output.stdout).expect("CLI grid JSON");
+
+    std::env::set_var("QX_API_DATA_ROOT", &root);
+    std::env::set_var("QX_API_ARTIFACT_ROOT", run_dir.join("http-artifacts"));
+    let service = qx_api::ApiService::new(qx_api::ApiState::default());
+    let response = service.handle("POST", "/app/run-depth-experiment", &spec, 0);
+    let http: Value = serde_json::from_str(&response.body).expect("HTTP grid JSON");
+    assert_eq!(response.status, 200, "HTTP experiment failed: {http}");
+    let identities = |value: &Value| {
+        json!({
+            "experiment_id": value["experiment_id"],
+            "total_candidates": value["total_candidates"],
+            "completed_candidates": value["completed_candidates"],
+            "succeeded_candidates": value["succeeded_candidates"],
+            "failed_candidates": value["failed_candidates"],
+            "ranking": value["ranking"],
+            "candidates": value["candidates"].as_array().unwrap().iter().map(|candidate| json!({
+                "ordinal": candidate["ordinal"],
+                "parameters": candidate["parameters"],
+                "run_id": candidate["outcome"]["run_id"],
+                "result_hash": candidate["outcome"]["result_hash"],
+                "return_bps": candidate["outcome"]["return_bps"],
+                "error": candidate["error"],
+            })).collect::<Vec<_>>(),
+        })
+    };
+    assert_eq!(identities(&cli), identities(&http));
+    assert_eq!(cli["failed_candidates"], 1);
+    assert_eq!(cli["succeeded_candidates"], 1);
+    if let Some(python) = python_run(
+        &root,
+        &make_spec("tick-grid-parity", &run_dir.join("python-artifacts")),
+        "run_depth_experiment",
+    ) {
+        assert_eq!(identities(&python), identities(&cli));
+    } else {
+        eprintln!("[skip] Python app extension is not built in this test environment");
+    }
+
+    let handle_spec = make_spec("tick-grid-handle", &run_dir.join("handle-artifacts"));
+    let started = service.handle("POST", "/app/run-depth-experiment/start", &handle_spec, 0);
+    assert_eq!(
+        started.status, 200,
+        "depth grid start failed: {}",
+        started.body
+    );
+    let started: Value = serde_json::from_str(&started.body).expect("start status JSON");
+    assert_eq!(started["run_id"], "tick-grid-handle");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let status = service.handle("GET", "/app/runs/tick-grid-handle", "", 0);
+        let status: Value = serde_json::from_str(&status.body).expect("terminal status JSON");
+        if matches!(
+            status["status"].as_str(),
+            Some("succeeded" | "failed" | "cancelled")
+        ) {
+            assert_eq!(status["status"], "succeeded");
+            assert_eq!(status["result"]["completed_candidates"], 2);
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "depth experiment lifecycle stalled"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
 }

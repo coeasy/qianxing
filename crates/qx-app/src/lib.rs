@@ -36,7 +36,7 @@
 //! Paper/Live 使用 `validate_trade_control` 校验授权能力、工作流和订单命令；API facade 随后将
 //! 同一 `ControlCommand` 交给现有 ControlPlane 与 worker，不在 SDK 或应用层另建执行路径。
 //! 本 crate 尚未提供 `ReadRunArtifacts`/`BuildReport`（T2-4）与可恢复的持久化远程 Run 注册表。
-//! Bar、Tick/OrderBook、多腿回测以及 Bar/多腿参数实验的 `start` 入口返回可协作取消的
+//! Bar、Tick/OrderBook、多腿回测以及 Bar/深度/多腿参数实验的 `start` 入口返回可协作取消的
 //! [`RunHandle`]；候选运行复用对应的 Rust 回测用例与内核。
 
 pub mod cases;
@@ -51,13 +51,15 @@ pub mod trade_facts;
 mod tests;
 
 pub use cases::{
-    compare_runs, run_backtest, run_depth_backtest, run_experiment, run_multi_leg_backtest,
-    run_multi_leg_experiment, validate_dataset, validate_trade_control, verify_depth_run,
-    verify_run, CompareRunsResult, CompareRunsSpec, ComparedRun, ComparedRunResult,
+    compare_runs, run_backtest, run_depth_backtest, run_depth_experiment, run_experiment,
+    run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset, validate_trade_control,
+    verify_depth_run, verify_run, CompareRunsResult, CompareRunsSpec, ComparedRun,
+    ComparedRunResult, DepthExperimentCandidate, DepthExperimentRankedCandidate,
     ExperimentCandidateResult, ExperimentParameterSpace, MultiLegExperimentCandidate,
-    MultiLegExperimentRankedCandidate, RunExperimentResult, RunExperimentSpec,
-    RunMultiLegExperimentResult, RunMultiLegExperimentSpec, TradeControlSpec, TradeWorkflow,
-    MAX_EXPERIMENT_CANDIDATES, RUN_EXPERIMENT_SCHEMA_VERSION,
+    MultiLegExperimentRankedCandidate, RunDepthExperimentResult, RunDepthExperimentSpec,
+    RunExperimentResult, RunExperimentSpec, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
+    TradeControlSpec, TradeWorkflow, MAX_EXPERIMENT_CANDIDATES,
+    RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION, RUN_EXPERIMENT_SCHEMA_VERSION,
     RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION, TRADE_CONTROL_SCHEMA_VERSION,
 };
 pub use context::{CallerCapability, RunContext};
