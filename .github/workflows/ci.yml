@@ -13,6 +13,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  workflow-lint:
+    name: GitHub Actions workflow validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Validate workflow syntax and expressions
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/*.yml
+
   rust-core:
     name: Rust core
     runs-on: ubuntu-latest
@@ -186,22 +197,37 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
-      nats:
-        image: nats:2.10-alpine
-        args: -js -sd /tmp/jetstream
-        ports:
-          - 4222:4222
-        options: >-
-          --health-cmd "nc -z 127.0.0.1 4222"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
     env:
       QX_TEST_POSTGRES_DSN: postgres://postgres:qianxing@127.0.0.1:5432/qianxing_contract
       QX_TEST_NATS_URL: nats://127.0.0.1:4222
       QX_TEST_NATS_SUBJECT_PREFIX: qianxing.acceptance
     steps:
       - uses: actions/checkout@v4
+      - name: Start JetStream NATS service
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --detach --rm --name qx-nats -p 4222:4222 nats:2.10-alpine -js -sd /tmp/jetstream
+          python3 - <<'PY'
+          import json
+          import socket
+          import time
+
+          for attempt in range(30):
+              try:
+                  with socket.create_connection(("127.0.0.1", 4222), timeout=1) as connection:
+                      connection.settimeout(1)
+                      greeting = connection.makefile("rb").readline()
+                  if not greeting.startswith(b"INFO "):
+                      raise OSError("NATS did not return its protocol greeting")
+                  if json.loads(greeting[5:]).get("jetstream") is True:
+                      break
+                  raise OSError("NATS is ready without JetStream")
+              except (OSError, json.JSONDecodeError):
+                  if attempt == 29:
+                      raise SystemExit("JetStream NATS did not become ready within 30 attempts")
+                  time.sleep(1)
+          PY
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
