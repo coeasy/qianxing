@@ -216,11 +216,19 @@ fn dead_worker_write_failure_names_program_origin_and_exit_state() {
 /// 不是某一句具体措辞。
 #[test]
 fn live_but_non_draining_worker_write_is_bounded_not_hanging() {
-    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
-    let ping = format!("{system_root}\\System32\\PING.EXE");
+    #[cfg(windows)]
+    let (program, args) = {
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+        (
+            format!("{system_root}\\System32\\PING.EXE"),
+            vec!["-n".into(), "300".into(), "127.0.0.1".into()],
+        )
+    };
+    #[cfg(unix)]
+    let (program, args) = ("/bin/sleep".to_string(), vec!["300".into()]);
     let mut client = PythonStrategyClient::start_process_with_transport_config(
-        &ping,
-        &["-n".into(), "300".into(), "127.0.0.1".into()],
+        &program,
+        &args,
         &BTreeMap::new(),
         PYTHON_STRATEGY_TIMEOUT_MS,
         "Python Strategy",

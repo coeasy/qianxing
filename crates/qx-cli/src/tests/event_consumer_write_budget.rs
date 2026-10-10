@@ -34,20 +34,24 @@ fn oversized_outbox_event() -> OutboxEvent {
 #[test]
 fn live_but_non_draining_event_consumer_write_is_bounded_not_hanging() {
     const TIMEOUT_MS: u64 = 2_000;
-    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
-    let ping = format!("{system_root}\\System32\\PING.EXE");
-    let handler = EventConsumerHandler::for_test(
-        ping,
-        vec!["-n".into(), "300".into(), "127.0.0.1".into()],
-        TIMEOUT_MS,
-    );
+    #[cfg(windows)]
+    let (program, args) = {
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+        (
+            format!("{system_root}\\System32\\PING.EXE"),
+            vec!["-n".into(), "300".into(), "127.0.0.1".into()],
+        )
+    };
+    #[cfg(unix)]
+    let (program, args) = ("/bin/sleep".to_string(), vec!["300".into()]);
+    let handler = EventConsumerHandler::for_test(program, args, TIMEOUT_MS);
     let started = std::time::Instant::now();
     let error = invoke_event_consumer_handler(&handler, &oversized_outbox_event())
         .expect_err("handler 存活但不接收输入：写入必须在预算内失败，而不是永久阻塞");
     let elapsed = started.elapsed();
     assert!(
-        error.contains("写入事件 consumer handler stdin 超时")
-            && error.contains("handler 存活但不接收输入"),
+        error.contains("写入事件 consumer handler stdin 失败")
+            && error.contains(&format!("未在 {TIMEOUT_MS}ms 预算内写完")),
         "写侧失败没走到超时通道（说明仍在无限阻塞或误落了别的分支）: {error}",
     );
     assert!(

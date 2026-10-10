@@ -75,6 +75,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - name: Install TOML parser for Python 3.10 tests
+        if: matrix.python == '3.10'
+        run: python -m pip install tomli
       - name: Build native extension and wheel
         shell: bash
         env:
@@ -125,7 +128,9 @@ jobs:
           PY
       - name: Python suite against the built extension
         shell: bash
-        run: python -m unittest discover -s python/tests -q
+        run: |
+          python -m pip install --quiet tomli tzdata
+          python -m unittest discover -s python/tests -q
 
   feature-matrix:
     name: qx-cli features (${{ matrix.features }})
@@ -145,7 +150,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.features }}
+          key: feature-${{ runner.os }}-${{ strategy.job-index }}
       # 只在某些 feature 分支里才存在的代码不会被默认特性的 Clippy 看到，
       # 因此每个特性组合都要单独跑一次 lint，而不是只做 check/test。
       - name: Lint feature build

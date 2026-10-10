@@ -447,7 +447,10 @@ pub(crate) fn invoke_event_consumer_handler(
         if let Err(error) = written {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!("写入事件 consumer handler stdin 失败: {error}"));
+            return Err(format!(
+                "写入事件 consumer handler stdin 失败（timeout_ms={}）: {error}",
+                handler.timeout_ms
+            ));
         }
     } else {
         let _ = child.kill();

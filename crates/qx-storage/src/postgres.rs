@@ -251,7 +251,7 @@ fn migrate_client(client: &mut Client) -> Result<(), StorageError> {
                  group_id TEXT NOT NULL,
                  topic TEXT NOT NULL,
                  partition_key TEXT NOT NULL,
-                 offset TEXT NOT NULL,
+                 \"offset\" TEXT NOT NULL,
                  event_id TEXT NOT NULL,
                  updated_ts TEXT NOT NULL,
                  PRIMARY KEY(group_id, topic, partition_key)
@@ -273,7 +273,7 @@ fn migrate_client(client: &mut Client) -> Result<(), StorageError> {
                  projection_key TEXT NOT NULL,
                  topic TEXT NOT NULL,
                  partition_key TEXT NOT NULL,
-                 offset TEXT NOT NULL,
+                 \"offset\" TEXT NOT NULL,
                  event_id TEXT NOT NULL,
                  payload TEXT NOT NULL,
                  updated_ts TEXT NOT NULL,
@@ -323,7 +323,7 @@ impl ConsumerStateStore for PostgresConsumerStateStore {
         let mut client = self.storage.lock_client()?;
         client
             .query_opt(
-                "SELECT offset, event_id, updated_ts FROM qx_consumer_checkpoints
+                "SELECT \"offset\", event_id, updated_ts FROM qx_consumer_checkpoints
                  WHERE group_id = $1 AND topic = $2 AND partition_key = $3",
                 &[&group_id, &topic, &partition_key],
             )
@@ -370,7 +370,7 @@ impl ConsumerStateStore for PostgresConsumerStateStore {
         }
         let previous = transaction
             .query_opt(
-                "SELECT offset, event_id FROM qx_consumer_checkpoints
+                "SELECT \"offset\", event_id FROM qx_consumer_checkpoints
                  WHERE group_id = $1 AND topic = $2 AND partition_key = $3",
                 &[
                     &checkpoint.group_id,
@@ -394,10 +394,10 @@ impl ConsumerStateStore for PostgresConsumerStateStore {
         transaction
             .execute(
                 "INSERT INTO qx_consumer_checkpoints
-                 (group_id, topic, partition_key, offset, event_id, updated_ts)
+                 (group_id, topic, partition_key, \"offset\", event_id, updated_ts)
                  VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT(group_id, topic, partition_key) DO UPDATE SET
-                   offset = EXCLUDED.offset, event_id = EXCLUDED.event_id,
+                   \"offset\" = EXCLUDED.\"offset\", event_id = EXCLUDED.event_id,
                    updated_ts = EXCLUDED.updated_ts",
                 &[
                     &checkpoint.group_id,
@@ -480,7 +480,7 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         }
         let previous = transaction
             .query_opt(
-                "SELECT offset, event_id FROM qx_consumer_checkpoints
+                "SELECT \"offset\", event_id FROM qx_consumer_checkpoints
                  WHERE group_id = $1 AND topic = $2 AND partition_key = $3",
                 &[
                     &checkpoint.group_id,
@@ -503,7 +503,7 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         }
         let previous_projection = transaction
             .query_opt(
-                "SELECT offset, event_id FROM qx_consumer_projections
+                "SELECT \"offset\", event_id FROM qx_consumer_projections
                  WHERE group_id = $1 AND projection_key = $2",
                 &[&projection.group_id, &projection.projection_key],
             )
@@ -526,11 +526,11 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         transaction
             .execute(
                 "INSERT INTO qx_consumer_projections
-                 (group_id, projection_key, topic, partition_key, offset, event_id, payload, updated_ts)
+                 (group_id, projection_key, topic, partition_key, \"offset\", event_id, payload, updated_ts)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                  ON CONFLICT(group_id, projection_key) DO UPDATE SET
                    topic = EXCLUDED.topic, partition_key = EXCLUDED.partition_key,
-                   offset = EXCLUDED.offset, event_id = EXCLUDED.event_id,
+                   \"offset\" = EXCLUDED.\"offset\", event_id = EXCLUDED.event_id,
                    payload = EXCLUDED.payload, updated_ts = EXCLUDED.updated_ts",
                 &[
                     &projection.group_id,
@@ -547,10 +547,10 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         transaction
             .execute(
                 "INSERT INTO qx_consumer_checkpoints
-                 (group_id, topic, partition_key, offset, event_id, updated_ts)
+                 (group_id, topic, partition_key, \"offset\", event_id, updated_ts)
                  VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT(group_id, topic, partition_key) DO UPDATE SET
-                   offset = EXCLUDED.offset, event_id = EXCLUDED.event_id,
+                   \"offset\" = EXCLUDED.\"offset\", event_id = EXCLUDED.event_id,
                    updated_ts = EXCLUDED.updated_ts",
                 &[
                     &checkpoint.group_id,
@@ -589,7 +589,7 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         }
         let previous = transaction
             .query_opt(
-                "SELECT offset, event_id FROM qx_consumer_checkpoints
+                "SELECT \"offset\", event_id FROM qx_consumer_checkpoints
                  WHERE group_id = $1 AND topic = $2 AND partition_key = $3",
                 &[
                     &checkpoint.group_id,
@@ -627,10 +627,10 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         transaction
             .execute(
                 "INSERT INTO qx_consumer_checkpoints
-                 (group_id, topic, partition_key, offset, event_id, updated_ts)
+                 (group_id, topic, partition_key, \"offset\", event_id, updated_ts)
                  VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT(group_id, topic, partition_key) DO UPDATE SET
-                   offset = EXCLUDED.offset, event_id = EXCLUDED.event_id,
+                   \"offset\" = EXCLUDED.\"offset\", event_id = EXCLUDED.event_id,
                    updated_ts = EXCLUDED.updated_ts",
                 &[
                     &checkpoint.group_id,
@@ -653,7 +653,7 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         let mut client = self.storage.lock_client()?;
         client
             .query_opt(
-                "SELECT topic, partition_key, offset, event_id, payload, updated_ts
+                "SELECT topic, partition_key, \"offset\", event_id, payload, updated_ts
                  FROM qx_consumer_projections
                  WHERE group_id = $1 AND projection_key = $2",
                 &[&group_id, &projection_key],
