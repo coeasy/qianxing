@@ -3,6 +3,29 @@
 The SDK is a typed facade over the Rust application layer. It deliberately
 does not implement matching, risk, portfolio accounting, or performance
 metrics in Python. Install the ``qianxing`` wheel to use this namespace.
+
+分层（方案 §6.2「接口分层」）——每一层只回答一个问题：
+
+===================  ==============================================  ==================
+子层                 放什么                                           要不要服务
+===================  ==============================================  ==================
+``qianxing.core``    本地用例：校验、Bar/Tick/多腿回测、协作式句柄      不要
+``qianxing.client``  远端 API：提交/状态/取消/等待/取结果                要一台 qx-api
+``qianxing.data``    数据集与合约身份（provider-neutral）                不要
+``qianxing.strategy``策略 contract 与 worker 的输入输出类型              不要
+``qianxing.paper``   Paper 轨：服务端执行、仓库自带撮合、不需凭据        要一台 qx-api
+``qianxing.live``    实盘轨：服务端执行、需要已认证 API policy           要一台 qx-api
+``qianxing.experiments`` 参数网格与候选排名                              不要
+``qianxing.reports`` 产物复核与跨 Run 对比                              不要
+===================  ==============================================  ==================
+
+这一层（顶层命名空间）稳定导出常用接口，与 ``qianxing.app`` 的公开面**逐一相等**——
+不多导出、也不少导出。子层是它的**分层视图**：每一层的名字都取自这份名单，
+子层不另造私有名字。
+
+``qianxing.ccxt`` / ``qianxing.ashare`` 是可选适配器的入口，装对应的 extra 才可用；
+``import qianxing`` 与 ``import qianxing.core`` 在任何 extras 都没装的环境里都成立
+（方案 §6.2：「optional dependencies 不改变核心语义」）。
 """
 
 from importlib.metadata import PackageNotFoundError, version

@@ -1,0 +1,52 @@
+"""实验层：参数网格与候选对比（方案 §6.2 接口分层）。
+
+这一层是 `qianxing.core` 的上层用法：把一份**参数空间**交给内核，跑出一批候选再按
+指标排名。三类实验各自成对——Bar 网格、Tick/OrderBook 网格、多腿网格——同步入口与
+协作式句柄入口都在这里。
+
+排名与指标由 Rust 计算（`qx-xingban` / `qx-app` 的实验用例），Python 侧不做统计。
+候选**能不能信**是另一回事：每个候选都带自己的数据指纹与产物，要不要复核由
+`qianxing.reports` 那一层回答。
+"""
+
+from qianxing.app import (
+    DepthExperimentCandidateResult,
+    DepthExperimentRankedCandidate,
+    ExperimentCandidateResult,
+    ExperimentParameterSpace,
+    MultiLegExperimentCandidateResult,
+    MultiLegExperimentRankedCandidate,
+    RunDepthExperimentResult,
+    RunDepthExperimentSpec,
+    RunExperimentResult,
+    RunExperimentSpec,
+    RunMultiLegExperimentResult,
+    RunMultiLegExperimentSpec,
+    run_depth_experiment,
+    run_experiment,
+    run_multi_leg_experiment,
+    start_depth_experiment,
+    start_experiment,
+    start_multi_leg_experiment,
+)
+
+__all__ = [
+    "DepthExperimentCandidateResult",
+    "DepthExperimentRankedCandidate",
+    "ExperimentCandidateResult",
+    "ExperimentParameterSpace",
+    "MultiLegExperimentCandidateResult",
+    "MultiLegExperimentRankedCandidate",
+    "RunDepthExperimentResult",
+    "RunDepthExperimentSpec",
+    "RunExperimentResult",
+    "RunExperimentSpec",
+    "RunMultiLegExperimentResult",
+    "RunMultiLegExperimentSpec",
+    "run_depth_experiment",
+    "run_experiment",
+    "run_multi_leg_experiment",
+    "start_depth_experiment",
+    "start_experiment",
+    "start_multi_leg_experiment",
+]

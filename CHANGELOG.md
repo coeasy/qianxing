@@ -1,5 +1,52 @@
 # Changelog
 
+### Python SDK 接口分层：把 §6.2 的八个子层从方案变成真包（2026-10-11 第 10 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§6.2
+
+方案 §6.2 明写「接口分层：`qianxing.core` 本地 Rust 用例；`qianxing.client` 远端 API；
+`qianxing.data` provider/dataset；`qianxing.strategy` 策略 contract/worker；`qianxing.paper` 与
+`qianxing.live` 明确依赖服务端执行；`qianxing.experiments` 参数对比；`qianxing.reports` 报告与
+Evidence。顶层命名空间稳定导出常用接口，optional dependencies 不改变核心语义」。
+
+- **立案（真实缺口）**：此前这一条**只写在方案里**。`qianxing` 是一个平铺的包
+  （`app.py` / `cli.py` / `strategy.py` / `ashare.py` / `ccxt.py`），八个子层一个都不存在。
+  集成方拿到的是 63 个名字的一整面墙——"我到底需不需要一台服务"这个问题在 import 那一行
+  没有答案；而 `AppClient`（要服务）与 `run_backtest`（不要服务）就并排躺在同一个名单里。
+- **新增七个子层包**（`qianxing.core` / `.client` / `.data` / `.paper` / `.live` /
+  `.experiments` / `.reports`）；`qianxing.strategy` 本来就在盘（它是 `qianxing_strategy`
+  这个独立发行包的视图），本轮把它并入同一套口径核。
+- **每一层只回答一个问题**——"要不要一台服务"：`core` / `data` / `strategy` / `experiments` /
+  `reports` 在进程内，`client` / `paper` / `live` 要一台 `qx-api`。分层不是装饰：
+  `core` **刻意不导出** `AppClient` / `RemoteRunHandle` / `PaperClient` / `LiveClient`，
+  `client` **刻意不导出**本地自由函数——想在进程内跑用例的人不该被要求先起一个服务。
+- **新增 `python_sdk_layering_check` 十颗**：① 八个子层都有落点（包或单文件模块）且每层
+  `__all__` 非空；② 每层导出的名字都在该层自己的 import 语句里有来源；③ 每层导出的名字都
+  取自顶层稳定名单（或在按层点名的子命名空间名册里）；④ 名册不烂——名册里的名字真在那一层里；
+  ⑤ 顶层 `qianxing.__all__` 与 `qianxing/app.py` 的公开类/函数集合**双向相等**；
+  ⑥ `core` 里没有远端面、`client` 里没有本地自由函数且摆出 `AppClient`/`RemoteRunHandle`；
+  ⑦ `paper` 只摆 `PaperClient`、`live` 只摆 `LiveClient`，两者都摆共用的 `TradeWorkflowClient`；
+  ⑧ 核心层的 import 语句不点名可选适配器；⑨ 分层用例在盘；⑩ 六条具名证据一条不少。
+  这一族**恒发十条、不早退**。
+- **⑤ 是这一族里最硬的一颗**：顶层稳定名单与 `app.py` 的公开面**双向**相等（实测 63 == 63）——
+  多导出 = 顶层比实现宽（承诺了不存在的东西），少导出 = 实现里有公开面没人认领（孤儿）。
+  两个方向都是本仓反复栽过的那两类。
+- **⑧ 只读 import 语句、不读散文**：`qianxing/data/__init__.py` 的文档里点名
+  "适配器在 `qianxing.ccxt`" 是**说明**，不是依赖。按散文判会把说明读成依赖。
+- **缺口如实登记**：§6.2 还有三件没落——同步 API 与 `asyncio` API 共享同一 contract、
+  `RunHandle.events`、CPython 3.10+ × OS/arch 支持矩阵与不带 Rust 工具链的干净环境安装冒烟。
+  它们写进 `maturity/capability-matrix.yaml` 的 `python_sdk` 行 limitations，不假装已经有了。
+  其中 `RunHandle.events` 与 Rust 门面那一格同源：`qx-app` 没有事件日志，远程事件游标住在
+  `qx-api` 的 HTTP 面——门面不凭空长出一个没有生产端的事件流。
+- **同轮自己踩到一次**：② 的第一版解析器只按行切 import，括号式跨行 import
+  （`from qianxing.app import (\n … \n)`）只切到第一行的 `(`，于是把 `core` / `experiments` /
+  `reports` 三层的整份 `__all__` 都误报成"没有来源"（44 条假红）。改成**括号式整块先取走**再按
+  逗号切，两侧都对上了。
+- **门禁 1061 → 1071**（`GATE_CHECK_FLOOR` 1001 → 1011），`--snapshot` 已刷新；
+  **10 枪变异全部 KILL、零附带红**（`.task-tmp/mutate_py_layering.py`，逐枪按文件换行符拼锚点、
+  逐字节还原）。其中 ③④ 两枪改的是门禁自己的名册常量（名册只有门禁读得到），
+  ⑨ 一枪必然连带 ⑩（文件不在盘时那六条确实也不在），已注明是同一次变异的两条真话。
+  另新增 `python/tests/test_sdk_layering.py` 十一条行为用例（含一条**子进程**用例：
+  核心层 import 不得顺带拉起 `ccxt` / `qianxing_ccxt` / `qianxing_ashare`）。
+
 ### 第三方 Rust 门面 `qx-sdk`：把 §6.1 的「稳定边界」从零建出来（2026-10-11 第 9 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§6.1 / §7 阶段 0 / §7 阶段 4
 
 方案 §6.1 要的是一个**给仓库外调用方**的稳定边界：`Client/Engine`、capabilities、spec 构造校验、

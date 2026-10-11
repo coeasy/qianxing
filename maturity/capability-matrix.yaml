@@ -65,9 +65,9 @@ domains:
 
   - name: python_sdk
     level: implemented-unverified
-    evidence: [python/qianxing/app.py, python/tests, maturity/language_api_contract.yaml]
-    limitations: ["应用回测入口仍有单账户与策略类型边界；统一 Provider 导入、账户组合、多交易所费率与撮合、用户策略选择与完整 Paper/Live 执行验收未闭环", "CPython 版本乘操作系统与架构的支持矩阵、以及不带 Rust 工具链的干净环境安装冒烟未建立"]
-    next_gate: "落方案 §6.2 的分层（core/client/data/strategy/paper/live/experiments/reports）与 async 同契约，并补干净环境安装冒烟"
+    evidence: [python/qianxing, python/tests/test_sdk_layering.py, maturity/language_api_contract.yaml]
+    limitations: ["应用回测入口仍有单账户与策略类型边界；统一 Provider 导入、账户组合、多交易所费率与撮合、用户策略选择与完整 Paper/Live 执行验收未闭环", "接口分层已落（方案 §6.2：core/client/data/strategy/paper/live/experiments/reports 八个子层；顶层稳定名单与 qianxing.app 的公开面逐一双向相等，实测 63 == 63）；仍未落的三件：同步 API 与 asyncio API 共享同一 contract、RunHandle.events（qx-app 没有事件日志，远程事件游标住在 qx-api 的 HTTP 面）、以及 CPython 3.10+ 乘操作系统与架构的支持矩阵", "不带 Rust 工具链的干净环境安装冒烟未建立：发布验收目前只在带仓库源码的环境里跑过"]
+    next_gate: "补 asyncio 同契约与 RunHandle.events 的如实口径；建立 CPython 3.10+ 乘操作系统与架构的支持矩阵，并在不带 Rust 工具链的干净环境完成安装冒烟"
 
   - name: cpp_sdk
     level: partial
