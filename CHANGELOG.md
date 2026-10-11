@@ -1,5 +1,52 @@
 # Changelog
 
+### 远端客户端「声明表不是装饰」+ C++ 最小消费者工程补牙齿（2026-10-11 第 4 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§6.3 / §11
+
+上一轮把 C++/Python 两条客户端腿的路由**声明面**接到 qx-api 分派表上（`client_route_wiring_check`
+七颗）。本轮接着问那七颗没问的问题：**声明表里的东西是不是真的在驱动请求**。
+
+- **立案（真实缺陷，不是理论风险）**：`cpp/include/qianxing_app.hpp` 里 `routes::kRunStatusTemplate`
+  （`/app/runs/{run_id}`）与 `routes::kRunCancelTemplate`（`/app/runs/{run_id}/cancel`）被列进了
+  `kDeclaredRoutes`、也被门禁逐条核对过，但**没有任何代码用它们**：真路径由另一对
+  `kRunsPrefix`（`/app/runs/`）与 `kRunCancelSuffix`（`/cancel`）拼出来。于是门禁比的是模板（对的）、
+  请求发的是前缀——把 `kRunsPrefix` 改成 `/app/run/`，门禁照印全绿，`run_status` / `cancel_run`
+  却会 404。「声明表不是装饰」这句承诺恰好在两个 run 生命周期入口上落空。
+- **修复**：新增 `routes::fill_run_id(template, run_id)`，`run_path` / `run_cancel_path` 改成消费
+  **声明的模板**（Python 侧本来就是 `.format(run_id=...)`，两条腿从此同一构造方式），删掉那对
+  前缀/后缀常量。`cl -std:c++17 -W4` 编译零告警，`app_client_smoke` 运行退出码 0——它断言的是
+  具体路径 `/app/runs/run-1` 与 `/app/runs/run-1/cancel`，所以这条修复有端到端证据而不是只靠读代码。
+- **`client_route_wiring_check` 七颗 -> 九颗**：
+  - ⑧ 声明面里每条路由都被客户端代码**真的取用**——C++ 的 `kX` 名字必须出现在 `kDeclaredRoutes`
+    数组与它自己的 `inline constexpr` 定义**之外**，Python 的键必须被 `APP_ROUTE_TEMPLATES["key"]`
+    字面量取用。匹配前先剥注释，否则「退回旧写法 + 注释里留一句锚点」照样绿。
+  - ⑨ 反向普查：客户端源码里不得出现声明面**之外**的 `/app/...` 路径字面量。刻意只做「多出」这一向——
+    声明面的字面量按构造就在源码里，「声明的字面量找不到」那一向永远不可能为真，写上去只是凑一个
+    不可达分支（本仓口径：判据的每一向都要能真的红）。
+- **Python 侧同族修复**：`TradeWorkflowClient.submit` 原来用
+  `APP_ROUTE_TEMPLATES[f"{self.workflow}_commands"]` 动态拼键——「工作流名」与「路由键名」被一条
+  没写在任何地方的命名约定绑在一起，两个键在源码里没有字面量读者（门禁核不出它们到底有没有被用上），
+  键改名只会拿到运行时 `KeyError`。改成两个字面量分支。
+- **新增 `cpp_consumer_example_check`（三颗）**：`cpp/tests/consumer/` 是方案 §6.3 点名的**下游独立工程**
+  （`find_package(QianxingStrategySDK)` 消费 `cmake --install` 出来的导出 target），此前全仓
+  `grep tests/consumer tools/check_architecture.py` **零命中**——工程被删、CMake 退化成相对路径 include、
+  示例里另抄一份路径，门禁一条都不红。三颗分别钉：① 工程两件在盘；② CMakeLists 真走
+  `find_package` + `add_executable` + `target_link_libraries`（剥 `#` 注释后判；相对 include 蹭进仓库
+  测不出「workspace 外消费」这条退出门）；③ 示例源码取用 `qianxing::routes::k*` 且不另抄 `/app/...` 字面量。
+- **同轮修掉示例里的坏示范**：`cpp/tests/consumer/main.cpp` 硬写 `"/app/compare-runs"`，改成
+  `qianxing::routes::kCompareRuns`。示例是使用者照抄的模板，硬写一份等于把「第二份声明面」教给下游，
+  而 header 里那份常量就摆在那儿。
+- **这一族恒发三条**：`cpp_consumer_example_check` 刻意**不早退**——第一版在「文件缺失」时 `return`，
+  变异实测发现「把 `main.cpp` 挪走」会同时把总条数从 1014 打到 1012，快照漂移判据跟着红，
+  红出来的第二条会盖住真正的那条。缺文件时后两条按空文本判，自然落空，条数不随盘上状态变。
+- **变异取证（七枪全杀，还原后按字节断言与 pristine 一致）**：C++ 声明面摘掉一条的消费（`run_path`
+  不再用模板）/ 只在注释里留锚点 / Python 键不再被取用 / 方法体另抄一份 `/app/backtst` /
+  消费者 `main.cpp` 挪走 / CMakeLists 摘掉 `find_package`（真摘 + 只注释掉各一枪）/ 示例改回硬写字面量。
+  脚本：`.task-tmp/mutate_client_declaration.py`、`.task-tmp/mutate_consumer_example.py`。
+- **端到端验证**：`cl -std:c++17 -W4` 编译 C++ 冒烟零告警、运行退出码 0；`cmake --install` 出包后
+  下游消费者 `find_package` 配置 → 编译 → 运行退出码 0；Python 10 份测试全过；
+  `cargo test --workspace --offline` **1340 passed / 0 failed**（`os error 231` 噪声 0 条）。
+- `GATE_CHECK_FLOOR` 949 -> 951 -> 954；门禁实测 **1009 -> 1011 -> 1014**。
+
 ### 多语言 SDK 契约映射（2026-10-11）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§2「语言/API 契约映射表」
 
 本轮是「前后端贯通」审计的第一条：把远端客户端的**路由接线**从「各自写各的路径字面量」收成

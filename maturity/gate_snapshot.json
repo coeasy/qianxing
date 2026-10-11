@@ -1,6 +1,6 @@
 {
   "gate": "tools/check_architecture.py",
-  "checks": 1009,
-  "gate_check_floor": 949,
-  "labels_sha256": "a281e50ccad7817803fbf1103d2bbd2f26e9720083b83df32f11eaee3b598a24"
+  "checks": 1014,
+  "gate_check_floor": 954,
+  "labels_sha256": "4ce7790d407a3e91d3836e4d909012d92fe3a0c1b978302e455b86420205a345"
 }

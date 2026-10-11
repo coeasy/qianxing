@@ -57,11 +57,10 @@ inline constexpr std::string_view kPaperCommands = "/app/paper/commands";
 inline constexpr std::string_view kLiveCommands = "/app/live/commands";
 inline constexpr std::string_view kRunStatusTemplate = "/app/runs/{run_id}";
 inline constexpr std::string_view kRunCancelTemplate = "/app/runs/{run_id}/cancel";
-inline constexpr std::string_view kRunsPrefix = "/app/runs/";
-inline constexpr std::string_view kRunCancelSuffix = "/cancel";
 
-// The gate's read surface: every route template the client claims to call
-// (without the prefix/suffix fragments used for concatenation).
+// The gate's read surface: every route template the client claims to call.
+// Every name below must also be consumed by a method on AppClient -- a route
+// that is only listed here is decoration, and the gate rejects it.
 inline constexpr std::array<std::string_view, 20> kDeclaredRoutes = {
     kValidateDataset,       kBacktest,
     kBacktestStart,         kVerify,
@@ -74,6 +73,21 @@ inline constexpr std::array<std::string_view, 20> kDeclaredRoutes = {
     kPaperCommands,         kLiveCommands,
     kRunStatusTemplate,     kRunCancelTemplate,
 };
+
+// Fill the `{run_id}` placeholder of a declared template. The path the client
+// actually requests and the template the gate compares against the qx-api
+// dispatch table are therefore the same string, so they cannot drift apart.
+inline std::string fill_run_id(std::string_view route_template, std::string_view run_id) {
+    constexpr std::string_view placeholder = "{run_id}";
+    const auto at = route_template.find(placeholder);
+    if (at == std::string_view::npos) {
+        return std::string(route_template);
+    }
+    std::string path(route_template.substr(0, at));
+    path.append(run_id);
+    path.append(route_template.substr(at + placeholder.size()));
+    return path;
+}
 
 }  // namespace routes
 
@@ -165,12 +179,11 @@ public:
 
 private:
     static std::string run_path(std::string_view run_id) {
-        return std::string(routes::kRunsPrefix) + std::string(run_id);
+        return routes::fill_run_id(routes::kRunStatusTemplate, run_id);
     }
 
     static std::string run_cancel_path(std::string_view run_id) {
-        return std::string(routes::kRunsPrefix) + std::string(run_id) +
-               std::string(routes::kRunCancelSuffix);
+        return routes::fill_run_id(routes::kRunCancelTemplate, run_id);
     }
 
     AppResponse get(std::string_view path) const {

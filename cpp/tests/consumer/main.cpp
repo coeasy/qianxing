@@ -7,7 +7,9 @@
 int main() {
     qianxing::AppClient app([](std::string_view method, std::string_view path,
                               std::string_view body) {
-        if (method != "POST" || path != "/app/compare-runs" || body.empty()) {
+        // The route comes from the header's declaration surface, never from a
+        // copy of the literal: this file is the template downstream users copy.
+        if (method != "POST" || path != qianxing::routes::kCompareRuns || body.empty()) {
             return qianxing::AppResponse{400, "bad request"};
         }
         return qianxing::AppResponse{200, "{}"};

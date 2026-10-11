@@ -777,8 +777,16 @@ class TradeWorkflowClient(_HttpJsonClient):
     def submit(self, command: TradeCommand | dict[str, Any]) -> dict[str, Any]:
         """Submit through qx-api; Rust authenticates, validates, persists, and enqueues it."""
         command_document = command.to_dict() if isinstance(command, TradeCommand) else command
+        # 工作流 → 路由键写成两个字面量分支。原写法 `APP_ROUTE_TEMPLATES[f"{self.workflow}_commands"]`
+        # 把「工作流名」与「路由键名」用一条没写在任何地方的命名约定绑在一起：两个键在源码里
+        # 没有字面量读者（门禁核不出它们到底有没有被用上），键改名时也只会拿到运行时 KeyError。
+        route = (
+            APP_ROUTE_TEMPLATES["paper_commands"]
+            if self.workflow == "paper"
+            else APP_ROUTE_TEMPLATES["live_commands"]
+        )
         return self._request_json(
-            APP_ROUTE_TEMPLATES[f"{self.workflow}_commands"],
+            route,
             method="POST",
             payload={"schema_version": 1, "workflow": self.workflow, "command": command_document},
         )
