@@ -1,0 +1,103 @@
+# 语言/API 契约映射表（方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§2 基线复核产物）
+#
+# 目的：把「一个应用用例在每种语言面里叫什么、走哪条 HTTP 路由」写成机读的一行，由
+# `language_api_contract_check` 与四处事实逐格对账。
+#
+# 为什么需要它：`maturity/app_use_cases.yaml` 已经把用例与 Rust 的 `cases/` 目录、`pub use`、
+# 九项文档表三处对上了，但**一个字都没提另外三种语言面**。于是新增一个用例时，Rust 侧三处齐全、
+# 门禁全绿，而 Python 远端门面与 C++ 头文件可以静默地少一个入口——集成方要到运行时才知道
+# 「这个方法不存在」。方案 §8 要求「跨语言同一 Run」，前提是四种语言面**逐一对应**：
+# 用例存在却没有一条语言腿能走到它，与「语言腿多出一个没人认领的入口」是同一类孤儿的两面。
+#
+# 取值口径（每格里的名字都必须在盘；门禁逐格核，且反向也核）：
+#   rust          —— `crates/qx-app/src/cases/<use_case>.rs` 里的 `pub fn` 名。
+#   python_native —— `python/qianxing/app.py` 的模块级函数（进程内 Rust 扩展）。
+#   python_remote —— `AppClient` / `TradeWorkflowClient` 的公开方法（HTTP 门面）。
+#   cpp_remote    —— `cpp/include/qianxing_app.hpp` 里 `AppClient` 的公开方法（HTTP 门面）。
+#   http          —— 该用例在 qx-api 上占用的路由；异步用例同时列同步与 `/start` 两条。
+#   `[]` 表示该用例不在这条腿（交易控制只在远端门面上，进程内扩展不暴露它）。
+schema_version: 1
+kind: language-api-contract
+updated_at: "2026-10-11"
+
+# 进程内扩展的模块级公开函数里不属于任何「用例入口」的那些。
+# 写成显式名册而不是「排除 doctor 之外」这类规则：规则会把将来新加的同形状函数一起放行，
+# 名册则要求有人为每一条回答一次「它为什么不是用例入口」。
+python_native_helpers:
+  - name: doctor
+    note: "能力探测：报告本次安装里哪些 Rust 应用入口可用；不是用例，是安装自检"
+
+# 客户端公开面里属于 run 生命周期、不属于任何用例的方法。
+cpp_lifecycle_methods:
+  - name: run_status
+    note: "运行状态读取（GET /app/runs/{run_id}）；不是用例，是 run 生命周期的读面"
+  - name: cancel_run
+    note: "运行取消（POST /app/runs/{run_id}/cancel）；不是用例，是 run 生命周期的写面"
+
+contracts:
+  - use_case: validate_dataset
+    rust: ["validate_dataset"]
+    python_native: ["validate_dataset"]
+    python_remote: ["validate_dataset"]
+    cpp_remote: ["validate_dataset"]
+    http: ["/app/validate-dataset"]
+  - use_case: run_backtest
+    rust: ["run_backtest"]
+    python_native: ["run_backtest", "start_backtest"]
+    python_remote: ["run_backtest", "start_backtest"]
+    cpp_remote: ["run_backtest", "start_backtest"]
+    http: ["/app/backtest", "/app/backtest/start"]
+  - use_case: verify_run
+    rust: ["verify_run"]
+    python_native: ["verify_run"]
+    python_remote: ["verify_run"]
+    cpp_remote: ["verify_run"]
+    http: ["/app/verify"]
+  - use_case: compare_runs
+    rust: ["compare_runs"]
+    python_native: ["compare_runs"]
+    python_remote: ["compare_runs"]
+    cpp_remote: ["compare_runs"]
+    http: ["/app/compare-runs"]
+  - use_case: run_experiment
+    rust: ["run_experiment"]
+    python_native: ["run_experiment", "start_experiment"]
+    python_remote: ["run_experiment", "start_experiment"]
+    cpp_remote: ["run_experiment", "start_experiment"]
+    http: ["/app/run-experiment", "/app/run-experiment/start"]
+  - use_case: run_depth_experiment
+    rust: ["run_depth_experiment"]
+    python_native: ["run_depth_experiment", "start_depth_experiment"]
+    python_remote: ["run_depth_experiment", "start_depth_experiment"]
+    cpp_remote: ["run_depth_experiment", "start_depth_experiment"]
+    http: ["/app/run-depth-experiment", "/app/run-depth-experiment/start"]
+  - use_case: run_multi_leg_experiment
+    rust: ["run_multi_leg_experiment"]
+    python_native: ["run_multi_leg_experiment", "start_multi_leg_experiment"]
+    python_remote: ["run_multi_leg_experiment", "start_multi_leg_experiment"]
+    cpp_remote: ["run_multi_leg_experiment", "start_multi_leg_experiment"]
+    http: ["/app/run-multi-leg-experiment", "/app/run-multi-leg-experiment/start"]
+  - use_case: run_depth_backtest
+    rust: ["run_depth_backtest"]
+    python_native: ["run_depth_backtest", "start_depth_backtest"]
+    python_remote: ["run_depth_backtest", "start_depth_backtest"]
+    cpp_remote: ["run_depth_backtest", "start_depth_backtest"]
+    http: ["/app/depth-backtest", "/app/depth-backtest/start"]
+  - use_case: verify_depth_run
+    rust: ["verify_depth_run"]
+    python_native: ["verify_depth_run"]
+    python_remote: ["verify_depth_run"]
+    cpp_remote: ["verify_depth_run"]
+    http: ["/app/verify-depth"]
+  - use_case: validate_trade_control
+    rust: ["validate_trade_control"]
+    python_native: []
+    python_remote: ["submit"]
+    cpp_remote: ["submit_paper_command", "submit_live_command"]
+    http: ["/app/paper/commands", "/app/live/commands"]
+  - use_case: run_multi_leg_backtest
+    rust: ["run_multi_leg_backtest"]
+    python_native: ["run_multi_leg_backtest", "start_multi_leg_backtest"]
+    python_remote: ["run_multi_leg_backtest", "start_multi_leg_backtest"]
+    cpp_remote: ["run_multi_leg_backtest", "start_multi_leg_backtest"]
+    http: ["/app/multi-leg-backtest", "/app/multi-leg-backtest/start"]

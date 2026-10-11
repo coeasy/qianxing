@@ -1,5 +1,36 @@
 # Changelog
 
+### 语言/API 契约映射表：11 个用例在五种语言面里逐一对应（2026-10-11 第 5 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§2 / §8
+
+方案 §2 把「语言/API 契约映射表」列为基线复核产物之一，§8 又要求「跨语言同一 Run」。本轮把这张表
+做出来并给它装上牙齿——它此前**根本不存在**，而缺的正是最容易被读成"已经齐了"的那一格。
+
+- **立案（真实缺口，不是理论风险）**：`maturity/app_use_cases.yaml` 已经把 11 个用例与 Rust 的
+  `cases/` 目录、`pub use`、`cases/mod.rs` 的九项文档表三处对上了，但**一个字都没提另外三种语言面**。
+  也就是说：新增（或删掉）一个用例时，Rust 侧三处齐全、门禁全绿，而 Python 进程内扩展、Python 远端
+  HTTP 门面、C++ 远端 HTTP 门面可以静默地少一个入口或多一个孤儿入口——集成方要到运行时才知道
+  「这个方法不存在」。这与上一轮立案的「声明表不是装饰」是同一族：**登记面只覆盖了一条腿**。
+- **新登记面 `maturity/language_api_contract.yaml`**：11 行，每行五格——`rust` / `python_native` /
+  `python_remote` / `cpp_remote` / `http`。两个显式名册回答"这些公开方法为什么不是用例入口"：
+  `python_native_helpers: [doctor]`（安装自检）与 `cpp_lifecycle_methods: [run_status, cancel_run]`
+  （run 生命周期的读/写面）。写成名册而不是「排除 `run_` 开头的」这类规则，是因为规则会把将来新加的
+  同形状方法一起放行，名册则要求有人为每一条回答一次。
+- **新判据族 `language_api_contract_check`（九颗）**：① 映射表在盘、自述 kind 正确、每行五格齐且用例名
+  不重复；② 映射表用例集合 == `app_use_cases.yaml` 的用例集合（两张登记面不得各说各话）；③ 每格点名的
+  Rust 入口都是 `cases/<use_case>.rs` 里的 `pub fn`；④ 每格点名的 Python 入口在盘（`python_native` 看
+  模块级 `def`，`python_remote` 看 `AppClient` / `TradeWorkflowClient` 的公开方法）；⑤ 每格点名的 C++
+  入口都是 `AppClient` 的公开方法；⑥ 每格点名的 `http` 路由都在两张客户端路由声明面里（用例 → 路由 →
+  声明面，三段接得上）；⑦⑧⑨ **反向普查**三条腿——客户端公开面里没有未被任何用例认领的入口。反向那三颗
+  是本族最贵的一格：正向只核「声明的东西在盘」，一个多出来的 `AppResponse frobnicate(...)` 照样绿。
+  这一族**恒发九条、不早退**（缺文件时后八条按空文本判，自然落空）——早退会让一次缺文件把总条数打下来，
+  快照漂移判据跟着红，第二条红盖住第一条。
+- **门禁 1014 → 1023 条，地板 954 → 963**；`--snapshot` 已刷新。
+- **变异取证 5 发全 KILL**（`.task-tmp/mutate_language_contract.py`，全部按字节还原）：
+  `contract-row-removed` 4 红（用例集合不齐 + 三条腿各自出现未认领入口）/ `cpp-extra-method` 1 红
+  （只有反向普查那一颗）/ `http-route-wrong` 1 红（路由对不上声明面）/ `python-remote-bogus-entry` 1 红
+  （点名的入口不在盘）/ `contract-file-missing` 6 红（含 `labels_sha256` 那颗——去掉一份 `maturity/*.yaml`
+  会改登记面份数，而份数写在另一颗判据的 label 里，那条红是同一次变异的真话）。
+
 ### 远端客户端「声明表不是装饰」+ C++ 最小消费者工程补牙齿（2026-10-11 第 4 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§6.3 / §11
 
 上一轮把 C++/Python 两条客户端腿的路由**声明面**接到 qx-api 分派表上（`client_route_wiring_check`
