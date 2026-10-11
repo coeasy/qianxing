@@ -49,6 +49,12 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
 }
 
 
+# 方案 §9：「`wait()` 默认有限时；无限等待仅由调用方显式请求并可取消」。原生句柄原来的缺省是
+# `None`——调用方一个参数都不写就拿到了无限等待，而远端句柄的缺省是 30 s：同一个 SDK 的两条腿
+# 对"等多久"给了两个相反的答案。这里把缺省统一成有限的 30 s，`None` 保留为**显式**的无限等待。
+DEFAULT_RUN_WAIT_MS = 30_000
+
+
 class QianxingError(RuntimeError):
     """Base class for stable application-layer errors."""
 
@@ -839,8 +845,14 @@ class RunHandle(Generic[_ResultT]):
         """Request cooperative cancellation at the next Rust engine boundary."""
         self._native.cancel()
 
-    def wait(self, timeout_ms: int | None = None) -> str:
-        """Wait for a terminal state or timeout; timeout does not cancel the run."""
+    def wait(self, timeout_ms: int | None = DEFAULT_RUN_WAIT_MS) -> str:
+        """Wait for a terminal state or timeout; a timeout does not cancel the run.
+
+        The default is finite (``DEFAULT_RUN_WAIT_MS``): plan §9 wants ``wait()``
+        bounded unless the caller *explicitly* asks to wait forever, which is
+        spelled ``timeout_ms=None``. Cancellation stays cooperative either way —
+        ``cancel()`` from another thread ends the wait.
+        """
         if timeout_ms is not None and timeout_ms < 0:
             raise ValueError("timeout_ms must be non-negative")
         return str(self._native.wait(timeout_ms))

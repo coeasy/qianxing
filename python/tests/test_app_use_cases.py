@@ -282,6 +282,24 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(requests[1].full_url, "https://localhost:8443/api/app/runs/remote-1")
         self.assertEqual(requests[-1].full_url, "https://localhost:8443/api/app/runs/remote-1/cancel")
 
+    def test_both_run_handles_default_to_a_finite_wait(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import inspect
+
+        from qianxing import RemoteRunHandle, RunHandle
+        from qianxing.app import DEFAULT_RUN_WAIT_MS
+
+        # 方案 §9：`wait()` 默认有限。原生句柄原来的缺省是 None（= 一直等），而远端句柄是 30 s——
+        # 同一个 SDK 的两条腿对"等多久"给了两个相反的答案。这里把缺省钉住：谁把原生缺省改回
+        # None，这条用例就红；`None` 仍然可用，但它从此必须是调用方**写出来**的请求。
+        self.assertGreater(DEFAULT_RUN_WAIT_MS, 0)
+        native_default = inspect.signature(RunHandle.wait).parameters["timeout_ms"].default
+        self.assertIsNotNone(native_default)
+        self.assertEqual(native_default, DEFAULT_RUN_WAIT_MS)
+        remote_default = inspect.signature(RemoteRunHandle.wait).parameters["timeout"].default
+        self.assertIsNotNone(remote_default)
+        self.assertGreater(remote_default, 0)
+
     def test_remote_run_handle_rejects_unsafe_ids_and_surfaces_rust_app_errors(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import AppClient, DataUnavailableError, RemoteRunHandle

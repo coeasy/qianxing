@@ -2,15 +2,25 @@
 
 use crate::{AppError, AppErrorCategory};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 const RUNNING: u8 = 0;
 const CANCELLING: u8 = 1;
 const SUCCEEDED: u8 = 2;
 const CANCELLED: u8 = 3;
 const FAILED: u8 = 4;
+
+/// Finite default for [`RunHandle::wait`].
+///
+/// Plan §9: "`wait()` defaults to a finite wait; an unbounded wait has to be
+/// explicitly requested by the caller and must be cancellable." A handle whose
+/// default is "block forever" gives every caller an unbounded wait they never
+/// asked for, so the default lives here and an unbounded wait has to be written
+/// out as a `status()` loop. Same 30 s as the Python remote handle.
+pub const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Stable state view for SDKs polling a long-running application operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,13 +131,27 @@ impl<T: Send + 'static> RunHandle<T> {
         }
     }
 
-    /// Block until the operation reaches a terminal state, then return that
-    /// state. Cancellation remains cooperative inside the Rust engine.
+    /// Block until the operation reaches a terminal state, or until
+    /// [`DEFAULT_WAIT_TIMEOUT`] elapses. Hitting the deadline returns the
+    /// **current** state and does not cancel the run; a caller who genuinely
+    /// wants to wait without a bound writes that loop itself on `status()`.
+    /// Cancellation stays cooperative inside the Rust engine, so another thread
+    /// calling `cancel()` ends the wait.
     pub fn wait(&mut self) -> RunStatus {
+        self.wait_within(DEFAULT_WAIT_TIMEOUT)
+    }
+
+    /// The bounded body of `wait`. Private on purpose: the public surface offers
+    /// exactly two intents — the finite default above, and an explicitly
+    /// unbounded `status()` loop the caller spells out.
+    fn wait_within(&mut self, timeout: Duration) -> RunStatus {
         if self.result.is_none()
             && matches!(self.state.load(Ordering::Acquire), RUNNING | CANCELLING)
         {
-            let received = self.receiver.lock().map(|receiver| receiver.recv());
+            let received = self
+                .receiver
+                .lock()
+                .map(|receiver| receiver.recv_timeout(timeout));
             match received {
                 Ok(Ok(Ok(Some(value)))) => {
                     self.state.store(SUCCEEDED, Ordering::Release);
@@ -138,7 +162,12 @@ impl<T: Send + 'static> RunHandle<T> {
                     self.state.store(FAILED, Ordering::Release);
                     self.result = Some(Err(error));
                 }
-                Ok(Err(_)) | Err(_) => self.state.store(FAILED, Ordering::Release),
+                // 到点没结果 = "还没好"，不是"坏了"：这一支必须与断连分开，否则一次
+                // 正常的超时返回会把一个还在跑的运行记成 FAILED。
+                Ok(Err(RecvTimeoutError::Timeout)) => {}
+                Ok(Err(RecvTimeoutError::Disconnected)) | Err(_) => {
+                    self.state.store(FAILED, Ordering::Release)
+                }
             }
         }
         self.status()
@@ -193,5 +222,34 @@ mod tests {
         assert_eq!(handle.wait(), RunStatus::Failed);
         let error = handle.try_take_result().unwrap().unwrap_err();
         assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    }
+
+    #[test]
+    fn a_deadline_return_reports_the_current_state_instead_of_failing_the_run() {
+        let mut handle = RunHandle::<u32>::spawn("run-bounded", |token| {
+            while !token.is_cancelled() {
+                thread::yield_now();
+            }
+            Ok(None)
+        });
+        // 到点 = 还没好，所以是 Running —— 把超时并进断连那一支会把它记成 Failed。
+        assert_eq!(
+            handle.wait_within(Duration::from_millis(20)),
+            RunStatus::Running
+        );
+        // 缺省有限不代表不可取消：显式取消仍然收得回来。
+        handle.cancel();
+        assert_eq!(
+            handle.wait_within(Duration::from_secs(5)),
+            RunStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn the_public_default_wait_is_finite() {
+        // 方案 §9「`wait()` 默认有限时」：缺省常量必须是有限且小的，不能悄悄变成"一直等"。
+        assert!(DEFAULT_WAIT_TIMEOUT <= Duration::from_secs(60));
+        let mut handle = RunHandle::<u32>::spawn("run-default", |_| Ok(Some(1_u32)));
+        assert_eq!(handle.wait(), RunStatus::Succeeded);
     }
 }

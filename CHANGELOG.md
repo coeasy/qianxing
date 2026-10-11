@@ -1,5 +1,35 @@
 # Changelog
 
+### 等待默认有限：两条腿的 `wait()` 不再一个无界一个 30 s（2026-10-11 第 6 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§9
+
+方案 §9 的原话是「`wait()` 默认有限时；无限等待仅由调用方显式请求并可取消」。这条纪律此前一条判据
+都没有，而同一个 SDK 的两条腿对「等多久」给了两个相反的答案。
+
+- **立案（真实缺陷，不是理论风险）**：
+  - Python 原生句柄 `RunHandle.wait(timeout_ms=None)` 的缺省是 `None`，一路透到 `qx-python` 的
+    `loop { … }` 上就是**一直等**——调用方一个参数都不写就拿到了无限等待，而远端句柄
+    `RemoteRunHandle.wait(timeout=30.0)` 的缺省是 30 s。
+  - Rust 核心 `qx_app::RunHandle::wait()` **连超时参数都没有**，直接 `receiver.recv()` 堵到底。
+    调用方不仅默认拿到无限等待，而且**拿不到「最多等多久」这个选项**。
+- **修复**：
+  - `crates/qx-app/src/run_handle.rs`：新增 `pub const DEFAULT_WAIT_TIMEOUT: Duration = 30 s`
+    （与远端句柄同值），`wait()` 改走新的私有 `wait_within(timeout)`；有界等待用 `recv_timeout`，
+    并且**超时单独一支且不置 FAILED**——到点没结果是「还没好」，不是「坏了」；把超时并进断连那一支
+    会让一次正常的到点返回把还在跑的运行记成失败。想真正无界等待的调用方自己写 `status()` 循环
+    （缺省不是无界，不等于不可取消：`cancel()` 仍然收得回来）。
+  - `python/qianxing/app.py`：新增 `DEFAULT_RUN_WAIT_MS = 30_000`，`RunHandle.wait` 的缺省从
+    `None` 改成它；`None` 保留为**显式**的无限等待。
+- **新判据族 `bounded_wait_default_check`（五颗）**：① 两条腿的有限缺省常量都在盘且是有限正值，
+  且 Rust 那个不超过 60 s（「有限」不能靠把常量写成十年）；② Python 两条腿的 `wait` 缺省都不是
+  `None`；③ Rust `wait()` 走有限缺省常量而不是裸 `receiver.recv()`；④ 有界等待用 `recv_timeout`
+  且超时单独一支不置 FAILED；⑤ 有界等待有行为用例在盘。
+- **门禁 1023 → 1028 条，地板 963 → 968**；`--snapshot` 已刷新。
+- **变异取证 5 发全 KILL**（`.task-tmp/mutate_bounded_wait.py`，按字节还原）。**这一轮变异抓出了
+  我自己写的一条假判据**：② 第一版比的是 `matched.group(1)`（参数名）而不是 `group(2)`（缺省值），
+  于是把缺省改回 `None` 时它照印全绿——`python-default-back-to-none` 那一发当场打出
+  `rc=0 caught=0/1`。修掉之后五发全杀。另一发 `rust-wait-bypasses-constant` 除目标红之外还
+  连带打红「零读者」那颗：绕过常量会让它没人取用——那条红是同一次变异的真话，已列进期望集。
+
 ### 语言/API 契约映射表：11 个用例在五种语言面里逐一对应（2026-10-11 第 5 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§2 / §8
 
 方案 §2 把「语言/API 契约映射表」列为基线复核产物之一，§8 又要求「跨语言同一 Run」。本轮把这张表
