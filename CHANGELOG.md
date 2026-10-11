@@ -31,11 +31,13 @@
   ② 每一格零读者声明格都容忍缺键（`#[serde(default...)]` 或 `Option<...>`）；③ 读失败是具名拒绝。
   **恒发三颗、不早退**。
 - **新增 `tools/capability_execution_probe.py` + 仓库资产 `maturity/capability_execution.yaml`**
-  （真执行，不是手写）：七条不需要凭据、不访问网络的路径被**真的跑过**并记下带数字的观测——
+  （真执行，不是手写）：八条不需要凭据、不访问网络的路径被**真的跑过**并记下带数字的观测——
   单腿回测（`fills=1` + 稳定 `result_hash`）、多市场双腿（`groups=3` + turnover/fees）、
   订单簿深度撮合（L2 内核 + RunManifest）、**跨语言多策略**（Rust 撮合内核 + 两个 Python 策略
   worker 各跑各的，实测 `strategy-momentum` 与 `strategy-mean-reversion` 各 `fills=3`）、
-  内置策略目录（17 条）、事件与控制面（`ecosystem`）、多策略运行拓扑（`strategies=2 workers=3`）。
+  **多数据源批量对比**（`fast-backtest`：`jobs=2 completed=2`，BINANCE 与 OKX 两套数据/两个市场
+  各跑一次并各落四件产物）、内置策略目录（17 条）、事件与控制面（`ecosystem`）、
+  多策略运行拓扑（`strategies=2 workers=3`）。
   `delegated` 段指向 `maturity/paper_acceptance.yaml` 与 `maturity/backtest_acceptance.yaml`
   ——**同一件事不许有两份说法**。`blocked` 段如实登记两条**跑不了**的：多交易所实盘（`ccxt` 未装入
   `python/.venv`、无凭据、testnet 记录 `outcome=skipped`）与一等多账户（账户只在策略级建模，

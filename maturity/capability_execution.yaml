@@ -7,7 +7,7 @@
 schema_version: 1
 kind: capability-execution
 generated_by: "tools/capability_execution_probe.py"
-generated_at_unix: 1791736434
+generated_at_unix: 1791737663
 cli_binary: ".cargo-target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -45,6 +45,13 @@ capabilities:
     exit_code: 0
     observed: "strategy=strategy-momentum instrument=BTCUSDT.BINANCE bars=60 fills=3 return_bps=270 max_drawdown_bps=25 result_hash=1bb7554f1e066fde; 2 条"
     evidence: ["crates/qx-runtime"]
+  - name: multi_data_source_batch_comparison
+    verdict: executed
+    anchor: "deploy/qianxing.fast-backtest.example.json"
+    command: "qx-cli fast-backtest deploy/qianxing.fast-backtest.example.json"
+    exit_code: 0
+    observed: "manifest=deploy\\qianxing.fast-backtest.example.json jobs=2 completed=2"
+    evidence: ["deploy/qianxing.fast-backtest.example.json"]
   - name: builtin_strategy_catalog
     verdict: executed
     anchor: "crates/qx-strategy"

@@ -39,6 +39,7 @@ BAR_PRIMARY = "deploy/qianxing.bar-frame.pairs-primary.example.json"
 BAR_REFERENCE = "deploy/qianxing.bar-frame.pairs-reference.example.json"
 DEPTH_FRAME = "deploy/qianxing.depth-frame.example.json"
 RUNTIME_MULTI = "deploy/qianxing.runtime.strategy-multi-backtest.example.json"
+FAST_MANIFEST = "deploy/qianxing.fast-backtest.example.json"
 
 # 需要跑跨语言策略 worker 的那条链要显式钉解释器：`QX_PYTHON` 未设时回落 PATH 的 python，
 # 在沙箱里会被拒（os error 5）——那是环境问题，不是能力问题，探针必须把环境备齐。
@@ -89,6 +90,13 @@ PROBES = [
             r"return_bps=-?\d+ max_drawdown_bps=\d+ result_hash=\w+)"
         ),
         "count": r"\[Strategy · Backtest\] strategy=",
+    },
+    {
+        "name": "multi_data_source_batch_comparison",
+        "anchor": FAST_MANIFEST,
+        "argv": ["fast-backtest", FAST_MANIFEST],
+        "expect": ["[Fast Backtest]"],
+        "observe": r"\[Fast Backtest\] (manifest=\S+ jobs=\d+ completed=\d+)",
     },
     {
         "name": "builtin_strategy_catalog",
