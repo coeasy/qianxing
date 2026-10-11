@@ -73,6 +73,25 @@ pub fn claimable_by(owner: &str, worker_id: &str) -> bool {
 /// `crates/qx-cli/src/tests/zero_reader_fields.rs` 的
 /// `zero_reader_struct_fields_stay_registered_in_capabilities` 双向钉住：
 /// 接上真读者就必须摘掉登记，偷偷删登记同样判红。
+///
+/// ## 为什么这三格必须容忍缺键（V13 R27）
+///
+/// `JobSpec` 是**持久化**类型，不是一次性的请求体：它既从 `deploy/qianxing.scheduler.*.json`
+/// 读入，又被 `JsonStateStore` 写进调度状态文件（`scheduler.json`）并在下一次启动时读回。
+/// 这三格当初按必填加进来，于是**任何**在本构建之前写下的状态文件或作业清单都读不回来：
+/// 实测 `qx-cli paper-e2e` 在仓库根跑第二次就死在第 427 列——
+/// `加载 Scheduler 状态失败: Io("missing field `input_refs`")`，而报错完全没提"这份状态是旧
+/// 版本写的"。更糟的是这三格**零生产读者**（见上面的登记），也就是说"必填"这个选择唯一
+/// 能产生的可观测效果就是让旧文件读不回来。
+///
+/// 处置与同一个结构体里的 `audit_reason` 完全一致（那里已经有先例与注释）：给缺键一个
+/// **具名**缺省，让旧文件按"它当年确实没声明"读进来，而不是按"字段不存在"整份拒绝。
+/// `Vec` 那两格的缺省是空表（"没声明引用"本来就是合法语义）；`permission_scope` 那格用
+/// 具名缺省而不是空串，免得把"旧文件没这一格"与"文件显式声明了空权限"读成同一件事——
+/// 这与 V13 R9「金额字段的缺键不许静默变成 0」是同一条纪律：**缺键要有自己的名字**。
+///
+/// 序列化侧**不受影响**：`#[serde(default)]` 只改反序列化，新写的状态文件逐字节不变，
+/// 所以已 bless 的 `config_fingerprint` 与 RunManifest 哈希不会因为这次修复集体失真。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct JobSpec {
     pub job_id: String,
@@ -82,12 +101,15 @@ pub struct JobSpec {
     pub trigger: Trigger,
     pub window: JobWindow,
     pub depends_on: Vec<String>,
+    #[serde(default)]
     pub input_refs: Vec<String>, // 声明式输入引用；仓库内零生产读者，见 capabilities.yaml job_spec_declaration_fields_have_no_production_reader
+    #[serde(default)]
     pub output_refs: Vec<String>, // 声明式输出引用，同 input_refs：仓库内零生产读者
     pub timeout_seconds: u64,
     pub retry_policy: RetryPolicy,
     pub concurrency_key: String,
     pub idempotency_key: String,
+    #[serde(default = "default_permission_scope")]
     pub permission_scope: String, // 安全形状的声明格；今天零生产读者（没有一处按它做准入判定）
     #[serde(default = "default_audit_reason")]
     pub audit_reason: String,
@@ -96,6 +118,15 @@ pub struct JobSpec {
 
 fn default_audit_reason() -> String {
     "legacy-job".into()
+}
+
+/// 旧文件里没有 `permission_scope` 那一格时的具名缺省。
+///
+/// 刻意**不**用空串：空串把"这份文件写于本字段存在之前"和"这份文件显式声明了空权限"读成
+/// 同一件事，而这两件事在审计里是两回事。取值与 `default_audit_reason` 的 `"legacy-job"`
+/// 同一风格——自描述，且在日志里一眼看得出是迁移路径而不是业务值。
+fn default_permission_scope() -> String {
+    "legacy-undeclared".into()
 }
 
 impl JobSpec {

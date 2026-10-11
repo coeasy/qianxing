@@ -1,0 +1,90 @@
+# 能力执行记录 —— 由 tools/capability_execution_probe.py 生成，请勿手改。
+#
+# 这一份回答的是「把命令敲下去，它到底跑不跑得起来、跑出来的数是什么」。
+# `executed` 是真的执行过并且观测到数字；`delegated` 指向另一份更专门的记录；
+# `blocked` 是**不许**记成 executed 的那些（缺凭据 / 缺依赖 / 未一等建模），
+# 每条都必须写明卡在哪一条前置上——没有证据不得翻真。
+schema_version: 1
+kind: capability-execution
+generated_by: "tools/capability_execution_probe.py"
+generated_at_unix: 1791736434
+cli_binary: ".cargo-target/debug/qx-cli.exe"
+credentials_required: false
+network_accessed: false
+orders_sent: false
+verdicts:
+  - executed
+  - delegated
+  - blocked
+capabilities:
+  - name: deterministic_backtest_single_leg
+    verdict: executed
+    anchor: "crates/qx-xingban"
+    command: "qx-cli backtest builtin sma_cross deploy/qianxing.bar-frame.pairs-primary.example.json"
+    exit_code: 0
+    observed: "strategy=sma_cross instrument=BTCUSDT.BINANCE bars=60 fills=1 return_bps=-23 max_drawdown_bps=311 result_hash=8504f82023fc32b4"
+    evidence: ["crates/qx-xingban"]
+  - name: multi_market_two_leg
+    verdict: executed
+    anchor: "crates/qx-zhenlu"
+    command: "qx-cli backtest multi-builtin pairs_arbitrage deploy/qianxing.bar-frame.pairs-primary.example.json deploy/qianxing.bar-frame.pairs-reference.example.json --root .task-tmp/exec-probe/multi"
+    exit_code: 0
+    observed: "strategy=builtin-pairs_arbitrage-multi groups=3 turnover_raw=192600000000000 fees_raw=96300000000"
+    evidence: ["crates/qx-zhenlu"]
+  - name: order_book_depth_matching
+    verdict: executed
+    anchor: "crates/qx-xingban"
+    command: "qx-cli backtest book --fill-tier l2 --root .task-tmp/exec-probe/book sma_cross deploy/qianxing.depth-frame.example.json"
+    exit_code: 0
+    observed: "run_id=depth-backtest:l2:sma_cross:BTCUSDT.BINANCE data_fingerprint=depth:example-depth-l2-v1:509c1b9eff771fb8 result_hash=e896fa89e839a855"
+    evidence: ["crates/qx-xingban"]
+  - name: cross_language_multi_strategy_backtest
+    verdict: executed
+    anchor: "crates/qx-runtime"
+    command: "qx-cli backtest deploy/qianxing.runtime.strategy-multi-backtest.example.json deploy/qianxing.bar-frame.pairs-primary.example.json"
+    exit_code: 0
+    observed: "strategy=strategy-momentum instrument=BTCUSDT.BINANCE bars=60 fills=3 return_bps=270 max_drawdown_bps=25 result_hash=1bb7554f1e066fde; 2 条"
+    evidence: ["crates/qx-runtime"]
+  - name: builtin_strategy_catalog
+    verdict: executed
+    anchor: "crates/qx-strategy"
+    command: "qx-cli builtin-strategies"
+    exit_code: 0
+    observed: "17 条"
+    evidence: ["crates/qx-strategy"]
+  - name: event_and_control_pipeline
+    verdict: executed
+    anchor: "crates/qx-control"
+    command: "qx-cli ecosystem"
+    exit_code: 0
+    observed: "status=Accepted digest=f9c5193e30739f8f"
+    evidence: ["crates/qx-control"]
+  - name: runtime_config_multi_strategy
+    verdict: executed
+    anchor: "deploy/qianxing.runtime.strategy-multi-backtest.example.json"
+    command: "qx-cli config validate deploy/qianxing.runtime.strategy-multi-backtest.example.json"
+    exit_code: 0
+    observed: "deploy/qianxing.runtime.strategy-multi-backtest.example.json; strategies=2; workers=3"
+    evidence: ["deploy/qianxing.runtime.strategy-multi-backtest.example.json"]
+  - name: paper_live_order_loop_local
+    verdict: delegated
+    anchor: "crates/qx-zhenlu"
+    delegated_to: "maturity/paper_acceptance.yaml"
+    note: "Paper 主链（scheduler → strategy → paper-execution → ledger）由 tools/paper_acceptance.py 独立生成记录；本探针不重跑，免得同一件事有两份说法。本轮修的 JobSpec 升级路径缺陷正是靠这条链复现并验证的。"
+    evidence: ["maturity/paper_acceptance.yaml", "tools/paper_acceptance.py"]
+  - name: backtest_determinism_and_replay
+    verdict: delegated
+    anchor: "crates/qx-cli"
+    delegated_to: "maturity/backtest_acceptance.yaml"
+    note: "同一目录两轮逐格相等、两个独立目录归一化后内容相等，由 tools/backtest_acceptance.py 独立生成记录；本探针只证明各条链能跑起来，不重复证明它们确定性。"
+    evidence: ["maturity/backtest_acceptance.yaml", "tools/backtest_acceptance.py"]
+  - name: multi_exchange_live
+    verdict: blocked
+    anchor: "crates/qx-adapter"
+    blocked_by: "CCXT 适配器进程依赖的 `ccxt` 未装入 python/.venv；且无交易所凭据（maturity/evidence/testnet/ 那份 Binance 验收 outcome=skipped）。外部 venue 一档因此仍是 implemented-unverified——Paper venue 那一条腿已执行（见 delegated 段）。"
+    evidence: ["crates/qx-adapter/src/ccxt.rs", "maturity/evidence/testnet"]
+  - name: multi_account_first_class
+    verdict: blocked
+    anchor: "crates/qx-runtime"
+    blocked_by: "多账户只在**策略级**建模：`StrategyRuntimeConfig.account_id` 与绑定 worker 的 account_id 在 topology_validation 里交叉核对（fail-closed），但 `RuntimeConfig` 没有一等 `accounts` 段，账户级资金归属、风险聚合与退出语义也未端到端验证。两个账户各跑各的回测已可执行（见 cross_language_multi_strategy_backtest）。"
+    evidence: ["crates/qx-runtime/src/runtime_config/strategy_schema.rs", "deploy/qianxing.runtime.strategy-multi-backtest.example.json"]

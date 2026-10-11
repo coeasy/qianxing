@@ -269,9 +269,17 @@ pub(crate) fn load_scheduler_state(
         Vec::new()
     };
     let scheduler = if state_path.exists() {
-        let scheduler = store
-            .load_scheduler_at(&state_reference)
-            .map_err(|error| format!("加载 Scheduler 状态失败: {error:?}"))?;
+        let scheduler = store.load_scheduler_at(&state_reference).map_err(|error| {
+            // 具名拒绝：只说 `Io(missing field ...)` 会让运维以为状态文件坏了，而真实原因
+            // 往往是"它由更早的构建写出"。点名文件路径，并给出唯一正确的处置（重建，
+            // 而不是就地改写）——`maturity/artifact_migration.yaml` 的口径就是
+            // 「显式迁移或具名拒绝二选一，不许只报一句泛泛的解析失败」。
+            format!(
+                "加载 Scheduler 状态失败: {error:?}（状态文件 {}；若该文件由更早的构建写出，\
+                 按迁移口径删除后重建，不要就地改写）",
+                state_path.display()
+            )
+        })?;
         reject_job_set_drift(&scheduler, &declared, &jobs_path)?;
         // 载入的既有状态同样要问：状态文件可能是另一套拓扑、或改坏的 owner 留下的。
         validate_job_owners(config, &scheduler)?;

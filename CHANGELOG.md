@@ -1,5 +1,58 @@
 # Changelog
 
+### 能力可执行性深检：修一条真缺陷 + 落一份真执行的观测记录（2026-10-11 第 11 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§2/§4.2/§9
+
+这一轮不再看"声明"，而是**把命令敲下去**：逐条执行多语言 SDK 点名的核心能力，看哪些真跑得起来、
+哪些跑不了、跑不了的卡在哪。执行过程中撞到一条真缺陷并修掉。
+
+- **立案（真缺陷）**：`qx-cli paper-e2e` 在仓库根第二次跑就死——
+  `Paper 主链路验收失败: 加载 Scheduler 状态失败: Io("missing field `input_refs`" at line 1 column 427")`。
+  根因不是状态文件坏了，而是 **`JobSpec` 是持久化类型**（`JsonStateStore::save_scheduler_at`
+  写进 `scheduler.json`、`load_scheduler_at` 下一次启动读回），而 `input_refs` / `output_refs` /
+  `permission_scope` 三格被按**必填**加进来——于是任何在本构建之前写下的状态文件都读不回来。
+  更刺眼的是这三格**零生产读者**（`JobSpec::validate` 一格都不看）：`必填` 这个选择唯一能产生的
+  可观测效果就是让旧文件读不回来。**升级路径从来没有被跑过**——所有 `deploy/qianxing.scheduler.*.json`
+  模板在加字段时同步改过，只有仓库里那份陈旧的 `data/qianxing-paper/scheduler.json` 会暴露它。
+- **修法（具名缺省，而不是拒绝）**：按 `maturity/artifact_migration.yaml` 的口径——"显式迁移或
+  具名拒绝"——这里走第三条同样成立的路径：**旧文件本来就合法**，那就不该拒绝。给缺键一个具名缺省：
+  `Vec` 两格空表；`permission_scope` 用 `"legacy-undeclared"` 而**不是空串**（空串会把"写于本字段
+  存在之前"与"显式声明了空权限"读成同一件事），与 V13 R9「金额字段缺键不许静默变 0」同一条纪律。
+  `#[serde(default)]` 只改反序列化，**新写的状态文件逐字节不变**，已 bless 的 `config_fingerprint`
+  与 RunManifest 哈希不会因为这次修复集体失真。
+- **读失败改成具名拒绝**：`load_scheduler_state` 的 `map_err` 现在点名状态文件路径并给出唯一处置
+  （"若该文件由更早的构建写出，按迁移口径删除后重建，不要就地改写"），不再只报一句 `Io(missing field ...)`。
+  实测：把状态文件里 `timeout_seconds` 改成一个字符串，现在报的是
+  `...（状态文件 data/qianxing-paper\scheduler.json；若该文件由更早的构建写出，按迁移口径删除后重建，不要就地改写）` 并以 2 退出。
+- **三条行为用例**（`crates/qx-scheduler/tests/persisted_state_upgrade.rs`）：把三格从序列化结果里删掉
+  再反序列化必须成功且落到具名缺省；删 `job_id` / `idempotency_key` / `timeout_seconds` 这些**真必填**格
+  仍要拒绝（否则"容忍缺键"会退化成"什么都能读"）；`Scheduler::from_json` 读一份缺那三格的**整份状态**
+  必须成功——最后这条最贴近事故现场。
+- **新增 `persisted_state_upgrade_path_check` 三颗**：① 这型真是持久化的（写侧与读侧都在盘）；
+  ② 每一格零读者声明格都容忍缺键（`#[serde(default...)]` 或 `Option<...>`）；③ 读失败是具名拒绝。
+  **恒发三颗、不早退**。
+- **新增 `tools/capability_execution_probe.py` + 仓库资产 `maturity/capability_execution.yaml`**
+  （真执行，不是手写）：七条不需要凭据、不访问网络的路径被**真的跑过**并记下带数字的观测——
+  单腿回测（`fills=1` + 稳定 `result_hash`）、多市场双腿（`groups=3` + turnover/fees）、
+  订单簿深度撮合（L2 内核 + RunManifest）、**跨语言多策略**（Rust 撮合内核 + 两个 Python 策略
+  worker 各跑各的，实测 `strategy-momentum` 与 `strategy-mean-reversion` 各 `fills=3`）、
+  内置策略目录（17 条）、事件与控制面（`ecosystem`）、多策略运行拓扑（`strategies=2 workers=3`）。
+  `delegated` 段指向 `maturity/paper_acceptance.yaml` 与 `maturity/backtest_acceptance.yaml`
+  ——**同一件事不许有两份说法**。`blocked` 段如实登记两条**跑不了**的：多交易所实盘（`ccxt` 未装入
+  `python/.venv`、无凭据、testnet 记录 `outcome=skipped`）与一等多账户（账户只在策略级建模，
+  `RuntimeConfig` 没有 `accounts` 段）——每条都写明卡在哪条前置上。
+- **新增 `capability_execution_check` 六颗**守这份记录：记录自述齐全；每条 `executed` 的**子命令词**
+  真在生成器里（记录是跑出来的，不是手写的）；每条 `anchor` 在盘；判定落在闭集里、`blocked` 写明前置、
+  `delegated` 指向在盘记录；每条 `executed` 都记了**带数字**的观测值（跑出 0 笔成交的"通过"是空跑）；
+  能力名唯一且 evidence 在盘。**恒发六颗、不早退**。
+- **⑤ 当场抓到我自己记录里的一处弱点**：`config validate` 只说"通过"、不带任何数，于是那条 `executed`
+  的观测值是空的——判据立刻把它判红，探针改为直接数模板里真声明了几个策略/worker，观测值才变成
+  `strategies=2 workers=3`。判据先咬了自己一口，这是它有用的证明。
+- **同轮把三条行为用例从 `qx-scheduler/src/lib.rs` 搬到 `crates/qx-scheduler/tests/`**：搬进去会让
+  `lib.rs` 从 1464 行涨到 1527 行，越过 `maturity/line_budgets.yaml` 的登记值——而那份预算**只降不升**。
+  搬到集成测试目录后 `lib.rs` 回到 1464 行（= 预算），用例照跑。
+- **读数**：门禁 **1080 条 / 地板 1020 / 0 FAIL**；`qx-scheduler` 21 条用例全绿；
+  `persisted_state_upgrade_path_check` 变异 **3/3 KILL**（零附带、逐字节还原）。
+
 ### Python SDK 接口分层：把 §6.2 的八个子层从方案变成真包（2026-10-11 第 10 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§6.2
 
 方案 §6.2 明写「接口分层：`qianxing.core` 本地 Rust 用例；`qianxing.client` 远端 API；
