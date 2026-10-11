@@ -95,6 +95,27 @@ int main() {
     assert(observed_path == "/app/live/commands");
     assert(observed_body == spec);
 
+    const auto dataset = client.validate_dataset(spec);
+    assert(dataset.ok());
+    assert(observed_method == "POST");
+    assert(observed_path == "/app/validate-dataset");
+    assert(observed_body == spec);
+
+    const auto backtest = client.run_backtest(spec);
+    assert(backtest.ok());
+    assert(observed_path == "/app/backtest");
+    assert(observed_body == spec);
+
+    const auto verified = client.verify_run(spec);
+    assert(verified.ok());
+    assert(observed_path == "/app/verify");
+    assert(observed_body == spec);
+
+    const auto compared = client.compare_runs(spec);
+    assert(compared.ok());
+    assert(observed_path == "/app/compare-runs");
+    assert(observed_body == spec);
+
     qianxing::AppClient unavailable({});
     assert(unavailable.run_experiment("{}").status == 0);
     assert(unavailable.verify_run("{}").status == 0);

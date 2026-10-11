@@ -1,5 +1,41 @@
 # Changelog
 
+### 多语言 SDK 契约映射（2026-10-11）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§2「语言/API 契约映射表」
+
+本轮是「前后端贯通」审计的第一条：把远端客户端的**路由接线**从「各自写各的路径字面量」收成
+「单一声明面 + 门禁逐条对账」。
+
+- **立案**：`web_console_check` 只核控制台（`web/console/app.js`）点名的路径都在 qx-api 路由表里。
+  远端客户端的另外两条腿——C++ 头文件 `cpp/include/qianxing_app.hpp` 与 Python
+  `python/qianxing/app.py`——**此前没有任何判据核过**：客户端把 `/app/backtst` 拼错、或后端把某个
+  路由改名，两边都不红，集成方要到运行时才拿到 404。这正是方案 §11 点名的「多语言契约漂移」风险，
+  而门禁里没有一颗牙齿。
+- **两条腿各自收成单一声明面**：C++ 新增 `namespace routes`（20 个 `inline constexpr std::string_view`
+  + `kDeclaredRoutes` 数组），Python 新增 `APP_ROUTE_TEMPLATES` 字典；方法体不再各抄一份字面量，
+  一律走声明面（`run_path`/`run_cancel_path` 拼接 `{run_id}` 模板）。
+- **新增门禁 `client_route_wiring_check`（七颗）**：① 两份声明面在盘；② 两份声明面非空；③ 客户端声称的
+  每个路由都能在 qx-api 分派表里找到（正向断链）；④ C++ 与 Python 两条腿逐条相等（跨语言契约漂移）；
+  ⑤ qx-api 的每个 `/app/*` 入口都被客户端声明（反向：没有客户端能调的端点就是孤儿）；⑥ 每个路由字面量
+  在客户端源码里只有一处定义（声明表不是装饰）；⑦ 每个路由都出现在对应语言的冒烟用例里（声明了却
+  没人跑过的路由是孤儿）。`GATE_CHECK_FLOOR` 936 → 943，门禁实测 **996 → 1003**。
+- **同轮修掉一处真实覆盖缺口**：`cpp/tests/app_client_smoke.cpp` 此前只跑 16/20 条路由，
+  `validate_dataset` / `run_backtest` / `verify_run` / `compare_runs` 四个方法从没被运行过——补齐四条断言。
+- **变异取证（四枪全杀，还原后按字节断言与 pristine 一致）**：Python 路由表拼错路径 / C++ 声明表摘掉一条 /
+  方法体另抄一份字面量 / C++ 冒烟用例删掉一条路由断言 —— 各只红对应那一颗。
+- **两条口径的落地校验**：C++ 头文件在 MSVC 默认代码页（936）下必须 **ASCII-only**（新增 CJK 注释会让
+  MSVC 把多字节序列读成标识符、整份头文件编译失败），故本轮新增注释一律英文；`cl -std:c++17 -W4` 编译
+  并运行 `app_client_smoke` 退出码 0；Python `python/tests/test_app_use_cases.py` 14 条全过。
+
+同轮第二件（跨语言二进制契约）：新增门禁 `ring_layout_cross_language_check`（六颗），把 **QXRB 共享内存
+环布局**在 Rust / Python / C++ 三处手写镜像之间逐格对照——此前全仓 `grep QXRB tools/check_architecture.py`
+零命中，三处没有编译期耦合、也没有任何静态判据：任一处偏移或魔数漂移，读出来的就是错位内存或
+header mismatch，而门禁照绿。六颗分别钉：三处实现在盘 / 九格常量都取得到 / Rust 与 Python 逐格相等
+（MAGIC、VERSION、HEADER_BYTES、SLOT_HEADER_BYTES、WRITE_SEQ_OFFSET、READ_SEQ_OFFSET、
+SLOT_COMMIT_OFFSET、SLOT_LEN_OFFSET、SLOT_CRC_OFFSET）/ C++ 的 `kHeaderBytes`/`kSlotHeaderBytes`
+等于 Rust 的对应常量 / C++ 头文件的魔数与 header·seq·slot 偏移逐条对齐 Rust（子串指纹）/ 环布局有跨
+语言运行时用例在盘。三发变异全杀（Python `HEADER_BYTES` 漂移 / C++ `kSlotHeaderBytes` 漂移 /
+C++ header 校验偏移换错）。`GATE_CHECK_FLOOR` 943 → 949，门禁实测 **1003 → 1009**。
+
 ### V13 R31（2026-10-10）· qx-api 读面支持按账户过滤——控制台多账户作用域的后端前置
 
 R30 的审计把控制台的多账户作用域判成「后端读面缺前置」而暂缓（另立任务）。本轮只做那一半：

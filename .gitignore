@@ -28,6 +28,8 @@ python/**/*.egg-info/
 /.gate_mut/
 # 发布审计的取证目录（回退面重放探针、变异脚本、原始测试日志；跑完即删，同 /.gate_mut/ 口径）
 /.audit/
+# 单轮任务的临时取证目录（变异脚本、门禁/测试原始日志、构建中间目录；跑完即删，同 /.audit/ 口径）
+/.task-tmp/
 # 本沙箱的 %TEMP% 对被测子进程不可写，测试期把 TEMP/TMP 指到这里（见 MEMORY.md 构建/测试环境）
 /.tmp-audit/
 # 沙箱 Windows 上绕过 GNU `link` 抢占 MSVC 的独立 target 目录（见 rust-msvc-build-windows 技能）

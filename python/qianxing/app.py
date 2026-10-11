@@ -21,6 +21,33 @@ from urllib.request import Request, urlopen
 
 from qianxing_bridge import native
 
+# 远端客户端的路由表：Python 侧对 qx-api 路由表的**唯一**声明面。
+# 门禁 `client_route_wiring_check` 逐条与 qx-api 的分派表核对——这里写了一个后端不存在的
+# 路径，会在门禁当场变红，而不是等用户跑到那一步才拿到 404。`{run_id}` 是路径模板占位符，
+# 调用侧用 `.format(run_id=...)` 填。
+APP_ROUTE_TEMPLATES: dict[str, str] = {
+    "validate_dataset": "/app/validate-dataset",
+    "backtest": "/app/backtest",
+    "backtest_start": "/app/backtest/start",
+    "verify": "/app/verify",
+    "verify_depth": "/app/verify-depth",
+    "compare_runs": "/app/compare-runs",
+    "run_experiment": "/app/run-experiment",
+    "run_experiment_start": "/app/run-experiment/start",
+    "depth_backtest": "/app/depth-backtest",
+    "depth_backtest_start": "/app/depth-backtest/start",
+    "depth_experiment": "/app/run-depth-experiment",
+    "depth_experiment_start": "/app/run-depth-experiment/start",
+    "multi_leg_backtest": "/app/multi-leg-backtest",
+    "multi_leg_backtest_start": "/app/multi-leg-backtest/start",
+    "multi_leg_experiment": "/app/run-multi-leg-experiment",
+    "multi_leg_experiment_start": "/app/run-multi-leg-experiment/start",
+    "paper_commands": "/app/paper/commands",
+    "live_commands": "/app/live/commands",
+    "run_status": "/app/runs/{run_id}",
+    "run_cancel": "/app/runs/{run_id}/cancel",
+}
+
 
 class QianxingError(RuntimeError):
     """Base class for stable application-layer errors."""
@@ -751,7 +778,7 @@ class TradeWorkflowClient(_HttpJsonClient):
         """Submit through qx-api; Rust authenticates, validates, persists, and enqueues it."""
         command_document = command.to_dict() if isinstance(command, TradeCommand) else command
         return self._request_json(
-            f"/app/{self.workflow}/commands",
+            APP_ROUTE_TEMPLATES[f"{self.workflow}_commands"],
             method="POST",
             payload={"schema_version": 1, "workflow": self.workflow, "command": command_document},
         )
@@ -837,7 +864,9 @@ class RemoteRunHandle(Generic[_ResultT]):
         self._result_type = result_type
 
     def document(self) -> dict[str, Any]:
-        return self._client._request_json(f"/app/runs/{self.run_id}", method="GET")
+        return self._client._request_json(
+            APP_ROUTE_TEMPLATES["run_status"].format(run_id=self.run_id), method="GET"
+        )
 
     @property
     def status(self) -> str:
@@ -845,7 +874,9 @@ class RemoteRunHandle(Generic[_ResultT]):
 
     def cancel(self) -> dict[str, Any]:
         return self._client._request_json(
-            f"/app/runs/{self.run_id}/cancel", method="POST", payload={}
+            APP_ROUTE_TEMPLATES["run_cancel"].format(run_id=self.run_id),
+            method="POST",
+            payload={},
         )
 
     def wait(self, timeout: float = 30.0, poll_interval: float = 0.25) -> str:
@@ -905,52 +936,72 @@ class AppClient(_HttpJsonClient):
         return RemoteRunHandle(self, run_id, result_type)
 
     def validate_dataset(self, spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
-        return DatasetVerdict.from_dict(self._post("/app/validate-dataset", spec))
+        return DatasetVerdict.from_dict(self._post(APP_ROUTE_TEMPLATES["validate_dataset"], spec))
 
     def run_backtest(self, spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
-        return BacktestOutcome.from_dict(self._post("/app/backtest", spec))
+        return BacktestOutcome.from_dict(self._post(APP_ROUTE_TEMPLATES["backtest"], spec))
 
     def start_backtest(self, spec: BacktestSpec | dict[str, Any]) -> RemoteRunHandle[BacktestOutcome]:
-        return self._start("/app/backtest/start", spec, BacktestOutcome)
+        return self._start(APP_ROUTE_TEMPLATES["backtest_start"], spec, BacktestOutcome)
 
     def verify_run(self, outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
-        return VerificationResult.from_dict(self._post("/app/verify", outcome))
+        return VerificationResult.from_dict(self._post(APP_ROUTE_TEMPLATES["verify"], outcome))
 
     def compare_runs(self, spec: CompareRunsSpec | dict[str, Any]) -> CompareRunsResult:
-        return CompareRunsResult.from_dict(self._post("/app/compare-runs", spec))
+        return CompareRunsResult.from_dict(self._post(APP_ROUTE_TEMPLATES["compare_runs"], spec))
 
     def run_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentResult:
-        return RunExperimentResult.from_dict(self._post("/app/run-experiment", spec))
+        return RunExperimentResult.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["run_experiment"], spec)
+        )
 
     def start_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunExperimentResult]:
-        return self._start("/app/run-experiment/start", spec, RunExperimentResult)
+        return self._start(APP_ROUTE_TEMPLATES["run_experiment_start"], spec, RunExperimentResult)
 
     def run_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> DepthBacktestOutcome:
-        return DepthBacktestOutcome.from_dict(self._post("/app/depth-backtest", spec))
+        return DepthBacktestOutcome.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["depth_backtest"], spec)
+        )
 
     def start_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> RemoteRunHandle[DepthBacktestOutcome]:
-        return self._start("/app/depth-backtest/start", spec, DepthBacktestOutcome)
+        return self._start(APP_ROUTE_TEMPLATES["depth_backtest_start"], spec, DepthBacktestOutcome)
 
     def verify_depth_run(self, outcome: DepthBacktestOutcome | dict[str, Any]) -> VerificationResult:
-        return VerificationResult.from_dict(self._post("/app/verify-depth", outcome))
+        return VerificationResult.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["verify_depth"], outcome)
+        )
 
     def run_depth_experiment(self, spec: RunDepthExperimentSpec | dict[str, Any]) -> RunDepthExperimentResult:
-        return RunDepthExperimentResult.from_dict(self._post("/app/run-depth-experiment", spec))
+        return RunDepthExperimentResult.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["depth_experiment"], spec)
+        )
 
     def start_depth_experiment(self, spec: RunDepthExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunDepthExperimentResult]:
-        return self._start("/app/run-depth-experiment/start", spec, RunDepthExperimentResult)
+        return self._start(
+            APP_ROUTE_TEMPLATES["depth_experiment_start"], spec, RunDepthExperimentResult
+        )
 
     def run_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
-        return MultiLegBacktestOutcome.from_dict(self._post("/app/multi-leg-backtest", spec))
+        return MultiLegBacktestOutcome.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["multi_leg_backtest"], spec)
+        )
 
     def start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> RemoteRunHandle[MultiLegBacktestOutcome]:
-        return self._start("/app/multi-leg-backtest/start", spec, MultiLegBacktestOutcome)
+        return self._start(
+            APP_ROUTE_TEMPLATES["multi_leg_backtest_start"], spec, MultiLegBacktestOutcome
+        )
 
     def run_multi_leg_experiment(self, spec: RunMultiLegExperimentSpec | dict[str, Any]) -> RunMultiLegExperimentResult:
-        return RunMultiLegExperimentResult.from_dict(self._post("/app/run-multi-leg-experiment", spec))
+        return RunMultiLegExperimentResult.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["multi_leg_experiment"], spec)
+        )
 
     def start_multi_leg_experiment(self, spec: RunMultiLegExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunMultiLegExperimentResult]:
-        return self._start("/app/run-multi-leg-experiment/start", spec, RunMultiLegExperimentResult)
+        return self._start(
+            APP_ROUTE_TEMPLATES["multi_leg_experiment_start"],
+            spec,
+            RunMultiLegExperimentResult,
+        )
 
 
 def validate_dataset(spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
