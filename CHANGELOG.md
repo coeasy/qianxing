@@ -1,5 +1,44 @@
 # Changelog
 
+### 主链路调用图 + 孤儿/重复逻辑清单：把 §5.1/§5.2/§5.4 的三段箭头钉在真实符号上（2026-10-11 第 8 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§5.1 / §5.2 / §5.4 / §7 阶段 0 / §13.2
+
+方案 §7 阶段 0 的交付清单里，「三条主链路调用图」与「能力矩阵」并列；§13.2 又明写「完成阶段 0，
+并将能力矩阵和**接口调用图**纳入仓库版本控制」。能力矩阵在第 7 轮落地，本轮补调用图这一半。
+
+- **立案（真实缺口）**：方案 §5.1 / §5.2 / §5.4 用箭头写了三条主链（数据→研究/回测、
+  Paper/Live 订单闭环、多语言策略），但那三段文字**没有任何东西把每一段钉在真实符号上**。
+  符号改名、文件搬家、用例删掉，三段箭头照旧读起来很完整——「文档替不存在的代码作保」
+  正是本仓反复栽过的那一类。
+- **新增 `maturity/chain-map.yaml`**：三条链 × 19 个 step，每步点名两件事——`anchor`
+  = `<文件> <符号>`（符号必须真在该文件里声明：Rust 认 fn/const/struct/enum/static/type/trait，
+  `.py` 认 class/def）与 `case` = `<文件> <用例>`（用例必须真在该文件里，**读原文**）；
+  每条链另有 `entry`/`terminal`/`evidence`/`note`。`orphans` 段收**已确认**的孤儿。
+- **新增 `chain_map_check` 十一颗**：① 调用图在盘、自述 kind 与 schema_version 正确、三段非空；
+  ② `chains` 名册 == 方案点名的三条主链；③ 每条 step 的 `chain` 都是声明过的链；
+  ④ 每条链内 step 的 `order` 恰好是 1..N；⑤ anchor 文件在盘且符号真在其中声明；
+  ⑥ `case` 用例真在那个文件里；⑦ 每条链的 `entry`/`terminal` 都是链内真实存在的 step 名；
+  ⑧ 每条链的 `evidence` 逐条在盘；⑨ **声明不是装饰**——anchor 符号必须在**它自己文件之外**
+  的生产文本里出现过；⑩ 每条 orphan 的 anchor 能解析、`kind` 与 `disposition` 落在闭集里；
+  ⑪ **孤儿记录必须是真的**——`no_production_consumer` 在外面真找不到读者，且没有链上 step
+  被同时记成孤儿。这一族**恒发十一条、不早退**。
+- **⑨ 与 ⑪ 两个方向刻意相反**：只做 ⑨ 会放过「把不存在的调用画进图里」，只做 ⑪ 会放过
+  「把活着的东西记成孤儿」。两向都核才闭合。
+- **本轮 ⑨ 当场抓到一条真缺陷**：`data_fetch` 原先锚的 `InMemoryProvider` 在它自己文件之外
+  **零读者**——`InMemoryProvider::new` 的两个调用点都在 `crates/qx-provider/src/lib.rs` 的
+  `#[cfg(test)]` 里。它之所以一直没被零读者判据抓出来，是因为裸词计数把
+  `pub struct InMemoryProvider` 与 `impl … for InMemoryProvider` 这两行**声明本身**当成了读者。
+  改锚到真有下游的 `JsonBarFrameProvider`（消费方在 `qx-cli` 与 `qx-data::ingestion`），
+  并把 `InMemoryProvider` 如实登记进 `orphans` 段（`kind: no_production_consumer` /
+  `disposition: retained_public_api`）。同轮 `python_worker` 一步从只在自身文件内被调的
+  `serve_framed` 改锚到 `python/qianxing_bridge/strategy.py StrategyInput`。
+- **同轮自作自受一次**：第一版把「`段:` 下若干 `- name: X` 记录」的解析在 `_matrix_sections`
+  与 `_chain_sections` 里各写了一份，`merge_duplicate_block_check` 当场打出 9 行逐字重复窗口
+  （`17737==18069`）。收成**单一份** `_parse_named_records(path, wanted)`，两张登记面共用。
+- **门禁 1040 → 1051**（`GATE_CHECK_FLOOR` 980 → 991），`--snapshot` 已刷新；
+  **11 枪变异全部 KILL**（`.task-tmp/mutate_chain_map.py`，逐枪按文件换行符拼锚点、逐字节还原）。
+  其中 ② `chain-renamed` 一枪刻意记下 ②③⑦ 三条同红——只改一行 `name:` 时它们是同一次变异的
+  三条真话，不是噪声。
+
 ### 能力矩阵：方案 §2 的基线复核产物落地，五态缺口替代布尔位（2026-10-11 第 7 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§2 / §4.2 / §13.2
 
 方案 §2 明写「基线复核产物必须是 `capability-matrix.yaml`、语言/API 契约映射表、依赖图和问题清单。

@@ -1,0 +1,175 @@
+# 主链路调用图（方案 §5.1 / §5.2 / §5.4；§7 阶段 0 交付物；§13.2「纳入仓库版本控制」）
+#
+# 方案 §7 阶段 0 的交付物清单里，「三条主链路调用图」与「能力矩阵」并列；§13.2 又明写
+# 「完成阶段 0，并将能力矩阵和**接口调用图**纳入仓库版本控制」。能力矩阵在第 7 轮落地，
+# 本文件补调用图这一半。
+#
+# 它要解决的问题很具体：方案 §5.1/§5.2/§5.4 用箭头写了三条主链（数据→研究/回测、
+# Paper/Live 订单闭环、多语言策略），但那三段文字**没有任何东西把每一段钉在真实符号上**。
+# 符号改名、文件搬家、用例删掉，三段箭头照旧读起来很完整——「文档替不存在的代码作保」
+# 正是本仓反复栽过的那一类。所以这里把每一段拆成一步，每步点名两件事：
+#   * `anchor` = `<文件> <符号>`，符号必须真在该文件里声明（Rust 认 fn/const/struct/enum/
+#     static/type/trait；`.py` 文件认 class/def）；
+#   * `case`   = `<文件> <用例>`，用例必须真在该文件里（`fn <用例>` 或 `def <用例>`）。
+# 再加一条「声明不是装饰」：anchor 符号必须在**它自己那个文件之外**的生产文本里出现过——
+# 一个只在定义处出现的符号，说明这一步在链路上没有真实的下游。
+#
+# 三条链与方案 §5.1/§5.2/§5.4 一一对应；`entry`/`terminal` 是链内步骤名，不是新符号。
+schema_version: 1
+kind: chain-map
+updated_at: "2026-10-11"
+plan_doc: "docs/牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11.md"
+plan_sections: "方案 §5.1 / §5.2 / §5.4 / §7 阶段 0 / §13.2"
+
+chains:
+  - name: data_to_research_backtest
+    plan_section: "§5.1 数据到研究/回测"
+    entry: capability_discovery
+    terminal: evidence_verify
+    evidence: [maturity/backtest_acceptance.yaml, maturity/capability-matrix.yaml]
+    note: "从能力探测一路到可复核产物。这条链是本仓主用法，一条交易所凭据都不用——它的验收边界是回测轨而不是实盘轨。"
+  - name: paper_live_order_loop
+    plan_section: "§5.2 Paper/Live 订单闭环"
+    entry: command_intake
+    terminal: reconcile
+    evidence: [maturity/paper_acceptance.yaml, maturity/external_chain.yaml]
+    note: "Paper 与 Live 共用命令、意图与 OMS 状态契约，但模拟器与实盘 venue 不是同一个执行模型：Paper 的成交由本地撮合产生，实盘那条腿的终态由 maturity/external_chain.yaml 的五段守。"
+  - name: multi_language_strategy
+    plan_section: "§5.4 多语言策略"
+    entry: frame_protocol
+    terminal: python_worker
+    evidence: [maturity/language_api_contract.yaml, cpp/tests/consumer]
+    note: "三条语言腿（Rust 内置 / C ABI 动态库 / Python worker）共用同一份帧协议与环布局；协议与布局的跨语言一致性另由 ring_layout_cross_language_check 与 language_api_contract_check 守。"
+
+steps:
+  - name: capability_discovery
+    chain: data_to_research_backtest
+    order: 1
+    anchor: crates/qx-provider/src/lib.rs ProviderCapability
+    case: crates/qx-provider/src/lib.rs registry_rejects_incomplete_capability_declarations
+    note: "能力探测是链路的第零步：Provider 先声明自己支持哪些数据种类、资产类别、频率与时间范围，缺格的能力声明会被注册表当场拒绝。"
+  - name: provider_selection
+    chain: data_to_research_backtest
+    order: 2
+    anchor: crates/qx-provider/src/lib.rs fetch_with_failover
+    case: crates/qx-provider/src/lib.rs failover_keeps_retry_chain
+    note: "多源 failover 只认三档错误分类；换源必须留 retry_chain 痕迹，不许无记录地混拼数据源。"
+  - name: data_fetch
+    chain: data_to_research_backtest
+    order: 3
+    anchor: crates/qx-data/src/provider.rs JsonBarFrameProvider
+    case: crates/qx-provider/src/lib.rs in_memory_provider_applies_as_of_cutoff
+    note: "取数走 DataProvider 端口：帧读侧按事件时间切片、保留原始血缘，乱序时间戳直接报错而不是就地排序。这里刻意不锚 `InMemoryProvider`——那个类型只有自己的用例在调（见下面 orphans 段）。"
+  - name: dataset_validation
+    chain: data_to_research_backtest
+    order: 4
+    anchor: crates/qx-app/src/cases/validate_dataset.rs validate_dataset
+    case: crates/qx-app/src/tests/use_cases.rs a_healthy_dataset_is_usable_and_carries_a_content_fingerprint
+    note: "数据可用性是**裁定**不是错误：太短的样本回 verdict，不在盘才回 DataUnavailable。"
+  - name: deterministic_backtest
+    chain: data_to_research_backtest
+    order: 5
+    anchor: crates/qx-app/src/cases/run_backtest.rs run_backtest
+    case: crates/qx-app/src/tests/use_cases.rs a_backtest_run_writes_four_artifacts_and_verifies
+    note: "唯一的事件引擎入口：同一身份重跑必须逐字节同结果，写满四份产物。"
+  - name: artifact_manifest
+    chain: data_to_research_backtest
+    order: 6
+    anchor: crates/qx-app/src/cases/artifacts.rs RunSummary
+    case: crates/qx-app/src/tests/use_cases.rs a_repeated_run_with_the_same_identity_is_idempotent
+    note: "身份（RunManifest）与读数（RunSummary）是两张脸：身份不得随读数漂移，否则离线复算没有锚点。"
+  - name: evidence_verify
+    chain: data_to_research_backtest
+    order: 7
+    anchor: crates/qx-app/src/cases/verify_run.rs verify_run
+    case: crates/qx-app/src/tests/use_cases.rs a_tampered_summary_makes_verification_fail_without_erroring
+    note: "读回侧独立复核：被篡改的读数必须判失败而不是报错——失败是结论，报错是没得出结论。"
+
+  - name: command_intake
+    chain: paper_live_order_loop
+    order: 1
+    anchor: crates/qx-control/src/lib.rs CommandKind
+    case: crates/qx-control/src/lib.rs control_command_is_audited_and_idempotent
+    note: "控制面受理：命令先过权限裁决再入队，受理即审计，同键重投幂等。"
+  - name: idempotent_completion
+    chain: paper_live_order_loop
+    order: 2
+    anchor: crates/qx-control/src/lib.rs ControlCommand
+    case: crates/qx-control/src/lib.rs execution_is_audited_and_idempotent_after_completion
+    note: "执行完成同样要审计与幂等：重复执行一条已完成命令不得产生第二笔副作用。"
+  - name: oms_transition
+    chain: paper_live_order_loop
+    order: 3
+    anchor: crates/qx-zhenlu/src/oms.rs Oms
+    case: crates/qx-zhenlu/src/lib.rs paper_venue_accepts_and_fills_from_l1
+    note: "OMS 持有合法状态转移；适配器只返回事实事件，不直接改 OMS 或账簿。"
+  - name: venue_port_submit
+    chain: paper_live_order_loop
+    order: 4
+    anchor: crates/qx-execution/src/application.rs VenuePort
+    case: crates/qx-execution/src/tests/gateway_port.rs port_execution_service_registers_and_appends_standard_facts
+    note: "执行服务只经端口说话：空回报与非法事实都必须 fail closed，且在产生 venue 侧副作用之前就拒。"
+  - name: simulated_fill
+    chain: paper_live_order_loop
+    order: 5
+    anchor: crates/qx-zhenlu/src/lib.rs PaperVenue
+    case: crates/qx-zhenlu/src/lib.rs paper_venue_charges_fills_with_the_shared_fee_model
+    note: "Paper 腿走本地撮合与共享费率模型；它没有实时行情源与订单簿深度，这两格在能力矩阵里如实记 unsupported。"
+  - name: external_venue
+    chain: paper_live_order_loop
+    order: 6
+    anchor: crates/qx-adapter/src/binance.rs BinanceSpotVenue
+    case: crates/qx-adapter/tests/user_stream_retry.rs connect_failures_still_escalate_backoff_and_stop_at_the_budget
+    note: "实盘腿：用户流断线按退避重连并有重连预算上限；网络错误按结果未知处理，成交只能由用户流回报进入事实事件。"
+  - name: reconcile
+    chain: paper_live_order_loop
+    order: 7
+    anchor: crates/qx-adapter/src/lib.rs AdapterReconcileIssue
+    case: crates/qx-execution/src/tests/gateway_port.rs port_execution_service_fails_closed_on_empty_venue_response
+    note: "结果未知一律进对账，绝不盲重试：对账裁定只有一处真判定，适配器侧只做机械翻译。"
+
+  - name: frame_protocol
+    chain: multi_language_strategy
+    order: 1
+    anchor: crates/qx-strategy/src/frame.rs STRATEGY_FRAME_MAGIC
+    case: crates/qx-strategy/src/frame.rs frame_round_trip_preserves_sequence_and_payload
+    note: "策略 worker 的帧协议带魔数、版本、长度与 CRC：坏帧与未知版本必须拒，不能猜。"
+  - name: c_abi_contract
+    chain: multi_language_strategy
+    order: 2
+    anchor: crates/qx-strategy/src/c_api.rs QxStrategyVTable
+    case: crates/qx-strategy/tests/cpp_plugin_host.rs loads_and_runs_cpp_strategy_through_the_rust_c_abi_host
+    note: "C ABI 用定宽整数加显式拒绝，不用 #[repr(C)] 枚举：插件把值写进宿主内存，非法判别值是未定义行为。"
+  - name: ring_transport
+    chain: multi_language_strategy
+    order: 3
+    anchor: crates/qx-strategy/src/ring.rs SharedRingWriter
+    case: crates/qx-strategy/src/ring.rs spsc_ring_preserves_order_and_applies_capacity_backpressure
+    note: "QXRB 共享内存环是三条语言腿的同一份二进制布局，容量满了要背压而不是丢帧。"
+  - name: worker_launch
+    chain: multi_language_strategy
+    order: 4
+    anchor: crates/qx-cli/src/workers.rs run_strategy_worker
+    case: crates/qx-cli/src/tests/strategy_worker_entries.rs builtin_strategy_worker_path_reads_bar_snapshot
+    note: "托管启动器：默认非可信策略走独立进程，崩溃要被隔离并产生可查 Run 错误。"
+  - name: python_worker
+    chain: multi_language_strategy
+    order: 5
+    anchor: python/qianxing_bridge/strategy.py StrategyInput
+    case: python/tests/test_strategy_contract.py test_round_trip_and_identity_binding
+    note: "Python 策略腿共用同一份输入输出契约：未知键必须拒而不是静默丢掉，否则策略会以为账户是空的。"
+
+# 孤儿 / 重复逻辑清单（方案 §7 阶段 0 交付物；§9「通过调用图、符号引用…共同找孤儿」）。
+#
+# 这一段的判据方向与上面的 steps **相反**，这正是它有用的地方：
+#   * steps 里每一条的 anchor 都必须在**它自己文件之外**出现过——否则那一步在链路上没有下游；
+#   * orphans 里每一条都必须在**它自己文件之外**找不到消费者——否则这条"孤儿"记录是假的。
+# 两向都核，才能既挡住"把不存在的调用画进图里"，也挡住"把活着的东西记成孤儿"。
+#
+# 这里只收**已经确认过**的条目，不预登记猜测。`kind` 与 `disposition` 都是闭集。
+orphans:
+  - name: InMemoryProvider
+    anchor: crates/qx-provider/src/lib.rs InMemoryProvider
+    kind: no_production_consumer
+    disposition: retained_public_api
+    note: "`pub struct` + 完整 `DataProvider` 实现，但 `InMemoryProvider::new` 的两个调用点都在同文件的 `#[cfg(test)]` 里——全仓生产代码一处都不调它。之所以没被零读者判据抓出来，是因为裸词计数把 `pub struct InMemoryProvider` 与 `impl … for InMemoryProvider` 这两行**声明本身**当成了读者。保留为公开嵌入 API，但如实登记在这里。"
