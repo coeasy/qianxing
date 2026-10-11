@@ -1,0 +1,24 @@
+[package]
+name = "qx-sdk"
+description = "牵星面向第三方的稳定 Rust 门面（方案 §6.1）：单一 qx-app 内核之上的 semver 边界"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# 门面的依赖集是**精确**的：它只依赖 qx-app 的公开类型（方案 §6.1「依赖 `qx-app` 的公开类型
+# 而非拼接所有领域 crate」），加上 §6.1 点名的两个扩展端口所在 crate。
+#
+# 为什么 qx-strategy 也在这里：`qx-app::BuiltinStrategySpec::new` 的**参数类型**就是
+# `qx_strategy::BuiltinStrategyKind`，而 qx-app 没有把它重导出。第三方要构造一份回测规格，
+# 就必须拿得到这个枚举——否则门面等于少了一块，集成方只能自己再加一个 `qx-strategy` 依赖，
+# 那正是门面要消灭的状态。这不是"拼接领域 crate"，是**补全 qx-app 自己的输入类型**。
+qx-app = { path = "../qx-app" }
+qx-execution = { path = "../qx-execution" }
+qx-provider = { path = "../qx-provider" }
+qx-strategy = { path = "../qx-strategy" }
+
+[dev-dependencies]
+# 独立消费者解析错误文档（`AppError::to_json()` 的产物）用得到。
+# 只在 `tests/` 里出现，所以是 dev 边——不进门面的生产依赖集。
+serde_json = { workspace = true }

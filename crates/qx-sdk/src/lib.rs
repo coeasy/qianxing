@@ -1,0 +1,120 @@
+//! qx-sdk：牵星面向第三方的稳定 Rust 门面（方案 §6.1）。
+//!
+//! ## 它解决什么问题
+//!
+//! `qx-app` 是应用层，它的公开面按**用例**组织、为**三个门面**（CLI / HTTP / Python）服务。
+//! 第三方嵌入方要的却是另一件事：一个**稳定、有 semver 承诺、不需要理解内部 crate 布局**的
+//! 入口。此前这条边界不存在——集成方只能自己挑 `qx-app` 加若干领域 crate 拼，拼错了没人拦。
+//!
+//! 本 crate 就是那条边界。它**不重写任何业务逻辑**：`qx-app` 的用例、规格、错误、运行句柄
+//! 在这里被原样重导出，另加一个 [`Client`] 把调用方身份收成一个值。
+//!
+//! ```text
+//! 第三方 ─→ qx-sdk ─→ qx-app ─→ 领域/端口
+//! ```
+//!
+//! ## 与 `qx-app` 的关系（如实说清）
+//!
+//! - 门面是 `qx-app` 公开面的**超集**：`qx-app` 重导出的每一项在这里都够得着，
+//!   所以集成方**不需要**再单独依赖 `qx-app`。
+//! - 门面**唯一**多出来的是 [`Client`]（以及把 `qx_strategy::BuiltinStrategyKind` 摆出来，
+//!   因为它是 `qx-app::BuiltinStrategySpec::new` 的参数类型而 `qx-app` 没有重导出它）。
+//! - `qx-app` 的 API 变动会**同时**是门面的变动——门面刻意不做版本隔离层，那会变成第二份
+//!   语义。门面的 semver 承诺就是"跟着 `qx-app` 一起动，但**变动必须是有意的**"。
+//!
+//! ## §6.1 能力清单：哪些有、哪些没有
+//!
+//! 方案 §6.1 点名了十一项。**八项在这里有实物**：`Client/Engine`（[`Client`]）、
+//! capabilities（[`ProviderCapability`]）、spec 构造校验（各 `*Spec`）、sync run（`run_*`）、
+//! async run（各 `*Spec::start` 返回 [`RunHandle`]）、`RunHandle`（[`RunHandle`] /
+//! [`RunStatus`]）、cancel/wait/result（[`RunHandle::cancel`] / [`RunHandle::wait`] /
+//! [`RunHandle::try_take_result`]）、report/verify（[`verify_run`] / [`verify_depth_run`] /
+//! [`compare_runs`]）、Provider/Venue 扩展端口（[`DataProvider`] / [`VenuePort`]）、
+//! 统一错误（[`AppError`] 一族）。
+//!
+//! **一项没有**：**events/cursors**。`qx-app` 里没有事件日志，运行进度只能靠
+//! [`RunHandle::status`] 轮询；远程 Run 的事件游标住在 `qx-api`（HTTP 面），不在 SDK 里。
+//! 这一格**不在本 crate 里造**——门面里凭空长出一个没有生产端的事件流，正是本仓
+//! 反复栽过的"声明替不存在的代码作保"。缺口如实登记在 `maturity/capability-matrix.yaml`
+//! 的 `rust_sdk` 行，由 `qx_sdk_facade_check` 逐条核对。
+//!
+//! 另外两点如实记下，免得被读成"已经有了"：
+//! - **"异步"是句柄式不是 `Future` 式**：`qx-app` 的引擎是线程 + 通道，没有 executor。
+//! - **发布验收未做**：`cargo package` 与临时 registry 消费、路径依赖转版本依赖都还没跑。
+//!
+//! ## 上手与迁移
+//!
+//! 最小上手见 `examples/quickstart.rs`（它由 `cargo test --workspace` 真编译，
+//! 不是文档里的假想代码）；从"直接用 `qx-app`"迁到本门面见 `docs/qx-sdk-migration.md`。
+
+pub mod client;
+
+pub use client::Client;
+
+// —— §6.1「统一错误」——
+pub use qx_app::{AppAction, AppError, AppErrorCategory, AppRetry};
+
+// —— §6.1「capabilities」——
+pub use qx_provider::ProviderCapability;
+
+// —— §6.1「spec 构造校验」——
+// `BuiltinStrategyKind` 来自 qx-strategy：它是 `BuiltinStrategySpec::new` 的参数类型，
+// 而 qx-app 没有重导出它（见 Cargo.toml 里的说明）。
+pub use qx_app::{
+    BacktestSpec, BuiltinStrategySpec, CompareRunsSpec, DatasetSpec, DepthBacktestSpec,
+    MultiLegBacktestSpec, MultiLegFillModel, RunDepthExperimentSpec, RunExperimentSpec,
+    RunMultiLegExperimentSpec, TradeControlSpec, TradeWorkflow,
+};
+pub use qx_strategy::BuiltinStrategyKind;
+
+// —— §6.1「sync run」——
+pub use qx_app::{
+    compare_runs, run_backtest, run_depth_backtest, run_depth_experiment, run_experiment,
+    run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset, validate_trade_control,
+};
+
+// —— §6.1「report/verify」——
+pub use qx_app::{verify_depth_run, verify_run};
+
+// —— §6.1「RunHandle / cancel / wait / result」——
+// `DEFAULT_WAIT_TIMEOUT` 是 `wait()` 的有限缺省（方案 §9）：门面把它摆出来，
+// 调用方才能判断"等多久算正常"。
+pub use qx_app::{RunHandle, RunStatus, DEFAULT_WAIT_TIMEOUT};
+
+// —— 调用上下文与能力档 ——
+pub use qx_app::{CallerCapability, RunContext};
+
+// —— 结果与产物类型 ——
+pub use qx_app::{
+    BacktestArtifacts, BacktestOutcome, CompareRunsResult, ComparedRun, ComparedRunResult,
+    DatasetVerdict, DepthBacktestOutcome, DepthExperimentCandidate, DepthExperimentRankedCandidate,
+    ExperimentCandidateResult, ExperimentParameterSpace, MultiLegBacktestOutcome,
+    MultiLegExperimentCandidate, MultiLegExperimentRankedCandidate, RunDepthExperimentResult,
+    RunExperimentResult, RunMultiLegExperimentResult, VerificationResult,
+};
+
+// —— 多腿归因/完整性读数（qx-app 的公开读面）——
+pub use qx_app::{
+    multi_leg_bar_close_raw, multi_leg_cost_bps, multi_leg_group_attributions,
+    multi_leg_group_totals, multi_leg_integrity_json, multi_leg_integrity_summary,
+    multi_leg_leg_buckets, multi_leg_leg_integrity, multi_leg_leg_margin,
+    multi_leg_pending_reconcile_json, multi_leg_realized_standing_at, MultiLegAttribution,
+    MultiLegLegFacts, MultiLegLegIntegrity, MultiLegPendingReconcile, MultiLegSignalBucket,
+};
+
+// —— 拒绝事实读面（风控拒绝的可观测面）——
+pub use qx_app::{rejection_count, rejection_facts, rejection_facts_line, spread_group_id};
+
+// —— 契约版本与硬上限（调用方要按它们做兼容判断）——
+pub use qx_app::{
+    BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+    MAX_EXPERIMENT_CANDIDATES, MIN_BACKTEST_BARS, MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
+    MULTI_LEG_FUNDING_INTERVAL_MS, RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION,
+    RUN_EXPERIMENT_SCHEMA_VERSION, RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION,
+    TRADE_CONTROL_SCHEMA_VERSION,
+};
+
+// —— §6.1「Provider/Venue extension ports」——
+// 第三方要接自己的数据源或交易所，就实现这两个 trait；实现之后经 `qx-app` 的用例注入。
+pub use qx_execution::VenuePort;
+pub use qx_provider::DataProvider;

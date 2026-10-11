@@ -72,7 +72,7 @@ pub use multi_leg::{
     MultiLegLegFacts, MultiLegLegIntegrity, MultiLegPendingReconcile, MultiLegSignalBucket,
     MULTI_LEG_FUNDING_INTERVAL_MS,
 };
-pub use run_handle::{RunHandle, RunStatus};
+pub use run_handle::{RunHandle, RunStatus, DEFAULT_WAIT_TIMEOUT};
 pub use spec::{
     BacktestArtifacts, BacktestOutcome, BacktestSpec, BuiltinStrategySpec, DatasetSpec,
     DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestOutcome,

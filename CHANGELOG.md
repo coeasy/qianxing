@@ -1,5 +1,51 @@
 # Changelog
 
+### 第三方 Rust 门面 `qx-sdk`：把 §6.1 的「稳定边界」从零建出来（2026-10-11 第 9 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§6.1 / §7 阶段 0 / §7 阶段 4
+
+方案 §6.1 要的是一个**给仓库外调用方**的稳定边界：`Client/Engine`、capabilities、spec 构造校验、
+sync/async run、`RunHandle`、events/cursors、cancel/wait/result、report/verify、Provider/Venue 扩展端口、
+统一错误，外加 semver、迁移指南、examples 与独立消费者构建。此前这一格**完全不存在**——
+`maturity/capability-matrix.yaml` 的 `rust_sdk` 行自己写着「当前交付是 qx-cli 运行程序」。
+
+- **立案（真实缺口）**：`qx-app` 是按用例组织、为 CLI / HTTP / Python 三个**仓内**门面服务的应用层，
+  不是给仓库外调用方用的边界。集成方只能自己挑 `qx-app` 加若干领域 crate 拼，拼错了没人拦；
+  §6.1 要的 semver 承诺、迁移指南、examples、独立消费者构建一样都没有。
+- **新增 `crates/qx-sdk`**（`Cargo.toml` + `src/lib.rs` + `src/client.rs` + `tests/independent_consumer.rs`
+  + `examples/quickstart.rs`），并登记进 workspace members。门面**只**依赖 `qx-app` 加 §6.1 点名的
+  两个端口 crate（`qx-provider` / `qx-execution`），外加 `qx-strategy`（`BuiltinStrategyKind` 是
+  `BuiltinStrategySpec::new` 的**参数类型**，而 `qx-app` 没有重导出它——这不是"拼接领域 crate"，
+  是补全 `qx-app` 自己的输入类型；`qx_sdk_facade_check` ③ 把这个集合钉成**恰好**相等）。
+- **门面里没有任何业务逻辑**：每个 `pub fn` 的函数体不超过 4 行（非空非注释行），
+  只做重导出与转发；用例逻辑全部仍住在 `qx-app`。第 ② 颗判据守着这条。
+- **新增 `docs/qx-sdk-migration.md`**：从"直接用 `qx-app`"迁到门面的迁移指南，含 §6.1 逐项覆盖表
+  与一节**已知缺口**（events/cursors、发布验收、能力预检、Live）。
+- **新增 `qx_sdk_facade_check` 十颗**：① 门面 crate 在盘、进 workspace members、包名 `qx-sdk`、
+  版本取自 workspace；② 门面里没有业务逻辑（函数体 ≤ 4 行）；③ 内部依赖**恰好**是那四个，
+  且 `qx-app` 的被依赖集合点名了它（与 `LAYER_SOLE_DEPENDENTS` 同一把尺）；④ §6.1 每项能力
+  要么有名册实物、要么在缺口表里写明理由；⑤ 名册里的**门面符号**真出现在门面源码里；
+  ⑥ 名册里的**源符号**真在源 crate 的公开面里（凭空写一个名字 = 断链）；⑦ §6.1「async run」
+  在 `qx-app` 里有六条 `*Spec::start` 实物；⑧ 独立消费者在盘、只说 `qx_sdk::` 一种前缀；
+  ⑨ examples 与迁移指南在盘且都被门面 crate 文档点名；⑩ 每条能力缺口都在能力矩阵的
+  `rust_sdk` 行如实登记。这一族**恒发十条、不早退**。
+- **⑤ 与 ⑥ 两个方向刻意都核**：只做 ⑤ 会放过「文档说有、代码没有」，只做 ⑥ 会放过
+  「凭空声明一个源符号」。⑥ 的源 crate 公开面用**构造性取法**（`pub use` 按 `{...}` 展开 +
+  `pub fn/const/struct/enum/trait/type/static` 声明名，先剥 `#[cfg(test)]` 与注释）。
+- **缺口如实登记，不造一个假的**：§6.1 点名的 events/cursors 在 `qx-app` 里**没有**对应物
+  （远程 Run 的事件游标住在 `qx-api` 的 HTTP 面）。门面**不**凭空长出一个没有生产端的事件流——
+  那正是本仓反复栽过的"声明替不存在的代码作保"；改成空名册 + 缺口表，并由 ⑩ 要求同一个令牌
+  出现在能力矩阵的 `rust_sdk` limitations 里（两张登记面不许各说各话）。
+- **同轮顺手补一条真缺陷**：`qx-app` 的 `DEFAULT_WAIT_TIMEOUT`（`wait()` 的有限缺省，方案 §9）
+  是私有 `mod run_handle` 里的 `pub const`、**从未重导出**，所以仓库外根本够不着它。
+  加进 `pub use run_handle::{...}` 之后门面才能把它摆到公开面上——`qx-app/src/lib.rs` 一行改动，
+  但那是「门面暴露了 qx-app 自己的洞」而不是门面自己造的东西。
+- **doctest 在沙箱起不来**（`rustdoc --test` → `os error 231 ERROR_PIPE_BUSY`，且全仓此前
+  没有任何一份可运行的文档示例）。示例因此放进 `examples/quickstart.rs`——`cargo test --workspace`
+  会**编译**它，证据强度比 doctest 高而不是低；`client.rs` 里那个块标成 ```text``` 并写明原因。
+- **门禁 1051 → 1061**（`GATE_CHECK_FLOOR` 991 → 1001），`--snapshot` 已刷新；
+  **10 枪变异全部 KILL、零附带红**（`.task-tmp/mutate_sdk_facade.py`，逐枪按文件换行符拼锚点、
+  逐字节还原）。其中 ④⑤⑥ 三枪刻意改的是 `tools/check_architecture.py` **自己的常量**——
+  这三颗完全由那份常量算出，改数据文件够不着它们；三枪都逐字节还原。
+
 ### 主链路调用图 + 孤儿/重复逻辑清单：把 §5.1/§5.2/§5.4 的三段箭头钉在真实符号上（2026-10-11 第 8 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§5.1 / §5.2 / §5.4 / §7 阶段 0 / §13.2
 
 方案 §7 阶段 0 的交付清单里，「三条主链路调用图」与「能力矩阵」并列；§13.2 又明写「完成阶段 0，

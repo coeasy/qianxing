@@ -28,6 +28,10 @@ members = [
     # 依赖方向 = facade → application → domain/ports，所以它是**被** CLI/Python/HTTP 依赖的那一层，
     # 自己绝不依赖 qx-cli / qx-api / qx-python（`layer_dependency_check` 里有一条禁止边专门守它）。
     "crates/qx-app",
+    # 面向第三方的稳定门面（方案 §6.1）：只依赖 qx-app 的公开类型加两个扩展端口 crate，
+    # 不重写任何业务逻辑。它**是** qx-app 的门面，所以 `layer_dependency_check` 的
+    # `LAYER_SOLE_DEPENDENTS` 里 qx-app 的被依赖集合必须点名它。
+    "crates/qx-sdk",
     "crates/qx-cli",
     # 跨 crate 契约用例宿主（方案 §5.4 P1-12）：纯测试 crate，无生产代码，无人依赖它。
     # 放进 workspace 是为了它仍被 `cargo test --workspace` 跑到、并计入全仓用例地板。

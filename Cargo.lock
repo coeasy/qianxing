@@ -1496,6 +1496,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "qx-sdk"
+version = "0.1.0"
+dependencies = [
+ "qx-app",
+ "qx-execution",
+ "qx-provider",
+ "qx-strategy",
+ "serde_json",
+]
+
+[[package]]
 name = "qx-spec"
 version = "0.1.0"
 dependencies = [

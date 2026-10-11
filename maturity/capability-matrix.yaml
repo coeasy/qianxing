@@ -76,10 +76,10 @@ domains:
     next_gate: "落方案 §6.3 的默认 HTTP transport 与异步生命周期，并补安装后全链路测试与 ABI 版本检查"
 
   - name: rust_sdk
-    level: partial
-    evidence: [crates/qx-app, crates/qx-cli, maturity/app_use_cases.yaml]
-    limitations: ["没有清晰、稳定、面向第三方的 Rust SDK crate 门面：当前交付是 qx-cli 运行程序，第三方仍可能直接拼内部 crate 绕过应用校验", "semver 承诺与迁移指南、独立 consumer 构建、cargo package 与临时 registry 消费检查未建立"]
-    next_gate: "落方案 §6.1 的 qx-sdk 门面 crate（能力探测、规格构造、同步与异步 Run、事件游标、取消等待、报告校验）并补独立消费检查"
+    level: implemented-unverified
+    evidence: [crates/qx-sdk, crates/qx-sdk/tests/independent_consumer.rs, docs/qx-sdk-migration.md]
+    limitations: ["门面 crate qx-sdk 已落（方案 §6.1）：Client/Engine、capabilities、spec 构造校验、同步与句柄式异步 Run、RunHandle、取消等待取结果、report/verify、Provider/Venue 扩展端口与统一错误都在公开面上；但 events/cursors 未提供——qx-app 没有事件日志，运行进度只能靠 RunHandle::status() 轮询，远程事件游标住在 qx-api 的 HTTP 面", "门面的『异步』是句柄式不是 Future 式：qx-app 的引擎是线程加通道，没有 executor，硬套 Future 只会让 poll 里出现阻塞等待", "发布验收未做：cargo package 与临时本地 registry 消费、路径依赖转版本依赖都还没跑，门面目前只在 workspace 内被消费", "能力预检未落地（方案 §4.2）：缺少费用表、tick/lot、时间范围、身份、风险规则或订阅权限时 fail closed 尚未实现"]
+    next_gate: "补 cargo package 与临时 registry 消费检查；落方案 §4.2 的启动前能力预检 fail-closed；Live 仍需 testnet conformance 才能谈 GA"
 
   - name: data_and_venues
     level: implemented-unverified
