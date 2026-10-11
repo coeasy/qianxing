@@ -1,5 +1,56 @@
 # Changelog
 
+### 能力矩阵：方案 §2 的基线复核产物落地，五态缺口替代布尔位（2026-10-11 第 7 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§2 / §4.2 / §13.2
+
+方案 §2 明写「基线复核产物必须是 `capability-matrix.yaml`、语言/API 契约映射表、依赖图和问题清单。
+每个缺口标记为 `implemented-and-verified`、`implemented-unverified`、`partial`、`unsupported` 或
+`blocked`，**不得用布尔值 `supported=true` 掩盖限制**」；§13.2 又要求「完成阶段 0，并将能力矩阵和
+接口调用图纳入仓库版本控制」。语言/API 契约映射表在第 5 轮已落地，本轮补上缺的那一半。
+
+- **立案（真实缺口）**：`maturity/capabilities.yaml` 是**另一条轴**——它记的是内部子系统的四档
+  布尔阶梯（implementation / code_tested / sandbox_tested / production_approved），回答"这套代码本身
+  走到哪一档了"。方案 §2 要的是那张基线表里每个领域/Provider/Venue 的**缺口状态**。此前：
+  - 方案 §2 的八个领域（Rust 内核 / Python / C++ / Rust SDK / 多数据源与交易所 / 多账户多策略 /
+    Web-API / 发布）**没有一个被逐条评过档**；
+  - 三个真实存在的 `impl Venue for`（`PaperVenue` / `BinanceSpotVenue` / `CcxtProcessVenue`）
+    没有任何地方记着它们的限制落在哪一格；
+  - 而布尔位恰恰是最容易把「未验证」读成「已支持」的写法——`sandbox: true` 分不出
+    "沙盒验过""没验过""只验了一半"。
+- **新增 `maturity/capability-matrix.yaml`**：
+  - `levels` = 五态闭集（顺序即从强到弱）；`capability_fields` = 方案 §4.2 的十四格 venue 字段名册
+    （market/history/realtime/frequency/depth/order_type/account_model/fee/cancel/query/idempotency/
+    rate_limit/sandbox/precision）；`provider_fields` = 数据面六格（订单类字段对 Provider 不成立，
+    硬套会逼出一堆无意义的档位）。
+  - `domains`：方案 §2 那张表的八个领域，每条带 `level` + `limitations` + `evidence`（真实在盘路径）
+    + `next_gate`。
+  - `venues`：三个真实 venue 逐格评档，`impl` 指向含该 `impl Venue for` 的文件，`kind` 区分
+    `internal_simulation` 与 `external_venue`。PaperVenue 的 realtime/depth/rate_limit/sandbox 四格
+    老实写 `unsupported`（它没有实时行情源、没有订单簿深度、没有外部限流）；两个外部 venue 全部
+    `partial` / `implemented-unverified`，`sandbox` 一律 `unsupported`——因为 testnet 记录
+    `outcome` 是 `skipped`（缺凭据），没有一格够格进 `verified`。
+  - `providers`：三个真实 `impl DataProvider for`（InMemoryProvider / JsonBarFrameProvider /
+    DemoProvider），`DemoProvider` 如实标成"生态冒烟用的演示 Provider，不是生产数据源"。
+- **新判据族 `capability_matrix_check`（十二颗）**：① 矩阵在盘、kind 与 schema_version 正确、三段非空；
+  ② `levels` 恰是五态且顺序一致；③ 全表没有把能力写成布尔值的地方（**判据自带反例自证**：喂它
+  `supported: true` 必须报，喂它 `market: partial` 必须不报——一条从不发声的空判据靠不住）；
+  ④ `domains` 名册 == 方案 §2 的八个领域；⑤ 每个领域档位落在闭集里；⑥ 每个领域都写了至少一条限制
+  （「不得掩盖限制」的可核验形态）；⑦ 每个领域证据里至少一条仓库路径且每条都在盘；⑧ 每个领域都写了
+  下一个闸门；⑨ **venue 名册 == 生产代码里真实的 `impl Venue for X`**，且 `impl` 就是含该实现的文件
+  （多一个 = 凭空声明一个不存在的 venue；少一个 = 有 venue 活着却没人给它评档）；⑩ 每个 venue 逐格
+  给齐十四格且档位合法、`verified_version` 非空；⑪ provider 名册 == 真实的 `impl DataProvider for X`
+  且逐格给齐数据面六格；⑫ 外部 venue 声称 `sandbox`/`order_type` 已验时必须有 outcome=pass 的
+  testnet 记录（**与 `capabilities_check` 同一把尺：没有证据不得翻真**）。这一族**恒发十二条、不早退**。
+- **门禁 1028 → 1040 条，地板 968 → 980**；`--snapshot` 已刷新（`maturity/gate_snapshot.json`）。
+- **变异取证 13 发全 KILL**（`.task-tmp/mutate_capability_matrix.py`，按字节还原，每发都断言
+  锚点唯一）。覆盖十二颗判据里的每一颗：整份登记面消失 / 五态重排 / 能力写成 `supported: true` /
+  领域改名 / 档位写成闭集外的词 / 限制清空 / 证据指向不存在的文件 / `next_gate` 清空 /
+  venue 名册凭空多一个 / venue 的 `impl` 指错文件 / venue 少给一格 / provider 档位非法 /
+  外部 venue 无凭据却把 `sandbox` 翻成已验。
+  - **首轮 `matrix-file-missing` 是 MISS，抓到的是我自己期望集写漏了**：登记面整份消失时，
+    `levels` 名册也读成空表，② 跟着红。那条红是同一次变异的**真话**（不是假阳），已列进期望集，
+    复跑 6/6 KILL。与第 5 轮 `contract-file-missing` 连带打红快照那颗同型——**「别的判据跟着红」
+    要逐条判它是真话还是噪声，不能一律当噪声抹掉。**
+
 ### 等待默认有限：两条腿的 `wait()` 不再一个无界一个 30 s（2026-10-11 第 6 轮）· 方案《牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11》§9
 
 方案 §9 的原话是「`wait()` 默认有限时；无限等待仅由调用方显式请求并可取消」。这条纪律此前一条判据

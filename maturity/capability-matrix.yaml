@@ -1,0 +1,207 @@
+# 能力矩阵（方案 §2「基线复核产物」/ §4.2「能力发现与限制表达」）
+#
+# 为什么要有这一份，而不是复用 `maturity/capabilities.yaml`：两者是**两条不同的轴**。
+#   * `capabilities.yaml` 记的是**内部子系统的成熟度阶梯**（implementation / code_tested /
+#     sandbox_tested / production_approved），回答"这套代码本身走到哪一档了"。
+#   * 本表记的是**方案 §2 那张基线表的缺口评估**，回答"方案点名的每一个领域/Provider/Venue
+#     现在是什么状态、限制是什么、下一个闸门在哪"。方案 §2 的原话是「每个缺口标记为
+#     implemented-and-verified、implemented-unverified、partial、unsupported 或 blocked，
+#     **不得用布尔值 supported=true 掩盖限制**」——一个布尔位分不出"做完了且验过""做完了没验过"
+#     "只做了一半""根本不做""被外部条件卡住"这五种，而它们对应的下一步动作完全不同。
+#
+# 机读口径（由 `tools/check_architecture.py` 的 `capability_matrix_check` 逐格对账）：
+#   * `levels` 是闭集，顺序即从强到弱；任何记录的档位取值必须落在这一集里。
+#   * `domains` 的名册必须与方案 §2 那张表的八个领域逐一对应（少一个就是有人把缺口藏起来了）。
+#   * `venues` / `providers` 的名册必须与**生产代码里真实存在的 `impl Venue for X` /
+#     `impl DataProvider for X`** 逐一相等，且每条记录的 `impl` 指向真正含该实现的那个文件。
+#     多一个 = 凭空声明一个不存在的 venue；少一个 = 有 venue 在代码里活着却没人给它评档。
+#   * 每格必须给档位而不是布尔值；每条必须写限制；每个 `evidence` 里的仓库路径必须在盘。
+schema_version: 1
+kind: capability-matrix
+updated_at: "2026-10-11"
+plan_doc: "docs/牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11.md"
+plan_sections: "方案 §2 基线复核 / §4.2 能力发现与限制表达"
+
+levels:
+  - implemented-and-verified
+  - implemented-unverified
+  - partial
+  - unsupported
+  - blocked
+
+# 方案 §4.2 的字段名册（"细到市场和操作"）。venue 记录逐格给档位。
+capability_fields:
+  - market
+  - history
+  - realtime
+  - frequency
+  - depth
+  - order_type
+  - account_model
+  - fee
+  - cancel
+  - query
+  - idempotency
+  - rate_limit
+  - sandbox
+  - precision
+
+# 数据面的字段名册：订单类字段（order_type / cancel / idempotency …）对 Provider 不成立，
+# 硬套会逼出一堆无意义的档位；Provider 只回答"数据能不能拿到、多密、多深、多准"。
+provider_fields:
+  - market
+  - history
+  - realtime
+  - frequency
+  - depth
+  - precision
+
+domains:
+  - name: rust_kernel
+    level: implemented-and-verified
+    evidence: [crates/qx-core, maturity/capabilities.yaml, maturity/backtest_acceptance.yaml]
+    limitations: ["实盘轨的两档只对需要外部 venue 的能力有意义，对回测/Paper 主用法是不适用而不是待补（见 maturity/evidence/README.md）"]
+    next_gate: "保持 tools/check_architecture.py 与 cargo test --workspace 全绿；内核不得长出对 UI/HTTP/CLI/Python/C++ 的依赖"
+
+  - name: python_sdk
+    level: implemented-unverified
+    evidence: [python/qianxing/app.py, python/tests, maturity/language_api_contract.yaml]
+    limitations: ["应用回测入口仍有单账户与策略类型边界；统一 Provider 导入、账户组合、多交易所费率与撮合、用户策略选择与完整 Paper/Live 执行验收未闭环", "CPython 版本乘操作系统与架构的支持矩阵、以及不带 Rust 工具链的干净环境安装冒烟未建立"]
+    next_gate: "落方案 §6.2 的分层（core/client/data/strategy/paper/live/experiments/reports）与 async 同契约，并补干净环境安装冒烟"
+
+  - name: cpp_sdk
+    level: partial
+    evidence: [cpp/include/qianxing_app.hpp, cpp/tests/consumer, maturity/language_api_contract.yaml]
+    limitations: ["C++ 客户端依赖集成方自带 HTTP transport：默认传输（TLS 认证、keep-alive、截止时间、重试、SSE/WS、取消）未落地", "尚不是独立交易运行时——header-only client 不得被描述成本地交易引擎", "CMake 包、工具链矩阵与 ABI 版本检查未建立"]
+    next_gate: "落方案 §6.3 的默认 HTTP transport 与异步生命周期，并补安装后全链路测试与 ABI 版本检查"
+
+  - name: rust_sdk
+    level: partial
+    evidence: [crates/qx-app, crates/qx-cli, maturity/app_use_cases.yaml]
+    limitations: ["没有清晰、稳定、面向第三方的 Rust SDK crate 门面：当前交付是 qx-cli 运行程序，第三方仍可能直接拼内部 crate 绕过应用校验", "semver 承诺与迁移指南、独立 consumer 构建、cargo package 与临时 registry 消费检查未建立"]
+    next_gate: "落方案 §6.1 的 qx-sdk 门面 crate（能力探测、规格构造、同步与异步 Run、事件游标、取消等待、报告校验）并补独立消费检查"
+
+  - name: data_and_venues
+    level: implemented-unverified
+    evidence: [crates/qx-provider, crates/qx-adapter, maturity/capabilities.yaml]
+    limitations: ["统一接入流程（能力探测、下载或订阅、质量校验、数据冻结、下单、回报、账簿、复核）未端到端证明", "数据源与 venue 是两种能力，不得互相顶替；无 testnet 记录的 venue 一律 unsupported 或 implemented-unverified"]
+    next_gate: "落方案 §4.2 的能力预检 fail-closed 与 §5.x 的 Provider/Venue 一致性套件"
+
+  - name: accounts_and_strategies
+    level: partial
+    evidence: [crates/qx-app, crates/qx-zhenlu, maturity/app_use_cases.yaml]
+    limitations: ["qx-app 高层回测的固定账户限制需改为显式账户与组合规格", "多账户隔离、资金归属、策略竞争、风险聚合与退出语义未端到端验证"]
+    next_gate: "落方案 §5.3 的账户、组合、策略、Run 所有权关系与组合级限额聚合"
+
+  - name: web_api
+    level: implemented-unverified
+    evidence: [crates/qx-api, web/console, deploy/README.md]
+    limitations: ["路由存在不等于 UI 链路可用：研究工作流与 Paper/Live 操作页需逐屏逐操作验收同一资源契约"]
+    next_gate: "落方案 §5.x 的逐操作可追溯验收与 Web/桌面 E2E"
+
+  - name: release
+    level: partial
+    evidence: [.github/workflows, maturity/gate_snapshot.json]
+    limitations: ["当前 Windows 本地包不能代表全平台：跨平台消费者安装验证、实盘认证矩阵与产品能力清单需要补足", "SBOM、构建来源证明与三操作系统支持矩阵未建立"]
+    next_gate: "落方案 §7 的发布工程（SBOM、来源证明、支持矩阵、三操作系统）"
+
+venues:
+  - name: PaperVenue
+    impl: crates/qx-zhenlu/src/lib.rs
+    kind: internal_simulation
+    verified_version: "0.1.0"
+    market: implemented-and-verified
+    history: implemented-and-verified
+    realtime: unsupported
+    frequency: implemented-and-verified
+    depth: unsupported
+    order_type: implemented-and-verified
+    account_model: implemented-and-verified
+    fee: implemented-and-verified
+    cancel: implemented-and-verified
+    query: implemented-and-verified
+    idempotency: implemented-and-verified
+    rate_limit: unsupported
+    sandbox: unsupported
+    precision: implemented-and-verified
+    evidence: [maturity/paper_acceptance.yaml, maturity/backtest_acceptance.yaml]
+    limitations: ["模拟 venue 与实盘 venue 不可伪装成同一执行模型：Paper 的成交由本地撮合产生，没有交易所侧的 ack/fill/partial/cancel 竞态", "没有实时行情源与订单簿深度，故 realtime 与 depth 两格 unsupported"]
+
+  - name: BinanceSpotVenue
+    impl: crates/qx-adapter/src/binance.rs
+    kind: external_venue
+    verified_version: "0.1.0"
+    market: partial
+    history: implemented-unverified
+    realtime: implemented-unverified
+    frequency: partial
+    depth: partial
+    order_type: partial
+    account_model: implemented-unverified
+    fee: partial
+    cancel: implemented-unverified
+    query: implemented-unverified
+    idempotency: implemented-unverified
+    rate_limit: implemented-unverified
+    sandbox: unsupported
+    precision: implemented-unverified
+    evidence: [maturity/evidence/testnet/20260920T005856Z-dryrun, maturity/capabilities.yaml]
+    limitations: ["testnet 验收记录 outcome 是 skipped（缺 QX_BINANCE_TESTNET_API_KEY 与 _SECRET），因此没有一格能进 verified", "只覆盖现货；衍生品与多市场未声明"]
+
+  - name: CcxtProcessVenue
+    impl: crates/qx-adapter/src/ccxt.rs
+    kind: external_venue
+    verified_version: "0.1.0"
+    market: partial
+    history: implemented-unverified
+    realtime: implemented-unverified
+    frequency: partial
+    depth: partial
+    order_type: partial
+    account_model: implemented-unverified
+    fee: partial
+    cancel: implemented-unverified
+    query: implemented-unverified
+    idempotency: implemented-unverified
+    rate_limit: implemented-unverified
+    sandbox: unsupported
+    precision: implemented-unverified
+    evidence: [crates/qx-adapter/src/ccxt.rs, maturity/capabilities.yaml]
+    limitations: ["进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保", "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"]
+
+providers:
+  - name: InMemoryProvider
+    impl: crates/qx-provider/src/lib.rs
+    verified_version: "0.1.0"
+    market: implemented-and-verified
+    history: implemented-and-verified
+    realtime: unsupported
+    frequency: implemented-and-verified
+    depth: unsupported
+    precision: implemented-and-verified
+    evidence: [crates/qx-provider/src/lib.rs]
+    limitations: ["确定性本地 Provider：按事件时间切片并保留原始血缘，不做实时订阅", "返回值仍是 RawRecord，必须过质量门与版本化标准化后才能进入研究或交易视图"]
+
+  - name: JsonBarFrameProvider
+    impl: crates/qx-data/src/provider.rs
+    verified_version: "0.1.0"
+    market: implemented-and-verified
+    history: implemented-and-verified
+    realtime: unsupported
+    frequency: implemented-and-verified
+    depth: unsupported
+    precision: implemented-and-verified
+    evidence: [crates/qx-data/src/provider.rs]
+    limitations: ["文件与 JSON 载入式数据面，不含实时订阅与订单簿深度"]
+
+  - name: DemoProvider
+    impl: crates/qx-cli/src/ecosystem_smoke.rs
+    verified_version: "0.1.0"
+    market: implemented-unverified
+    history: partial
+    realtime: unsupported
+    frequency: partial
+    depth: unsupported
+    precision: partial
+    evidence: [crates/qx-cli/src/ecosystem_smoke.rs]
+    limitations: ["生态冒烟用的演示 Provider，只为把链路跑通；不是生产数据源，不得据它声明任何数据能力"]
