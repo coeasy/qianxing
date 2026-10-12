@@ -8190,8 +8190,8 @@ def venue_report_contract_check() -> None:
     （`PortExecutionService::submit`）与对冲补偿提交（`HedgeRecoveryWorker`）。
     V11 Q57 就是因为第三入口曾经独走一条路：同一笔越界成交走用户流被拦下、走补偿回包
     却直接入账，而且补偿腿只追加裸 `Fill`，账簿退回乘数 1。
-    这里钉住"谓词唯一 + 两个提交入口共用同一道闸门 + 补偿路径带规格落库 + 生产路径都带
-    规格 + 三家 fixture 共用断言"，而不是回测侧的 Ledger（放进 Ledger 会让实盘与回测分叉）。
+    这里钉住"谓词唯一 + 实盘回报与确定性模拟成交共用 + 两个提交入口共用同一道闸门 +
+    补偿路径带规格落库 + 生产路径都带规格 + 三家 fixture 共用断言"；Ledger 不复制这条规则。
     """
     funnel = (ROOT / REPORT_FUNNEL_FILE).read_text(encoding="utf-8")
     start = funnel.find("fn ingest_venue_events_with_pipeline")
@@ -8258,10 +8258,11 @@ def venue_report_contract_check() -> None:
         if path.relative_to(ROOT).as_posix() not in (REPORT_FUNNEL_FILE, SPEC_FUNNEL_DEFINITION)
         and "validate_fill(" in path.read_text(encoding="utf-8")
     }
+    expected_shared_consumers = {"crates/qx-xingban/src/backtest.rs": 1}
     check(
-        predicates == 1 and not copies,
-        "回报精度判定只有一个谓词（不在 Ledger/回测侧重复判定，调用点只允许归约入口与提交闸门）",
-        f"定义 {predicates} 处；额外调用点 {copies or '无'}",
+        predicates == 1 and copies == expected_shared_consumers,
+        "成交 tick/step 只有一个共享谓词；实盘回报与模拟撮合共用，不在 Ledger 复制规则",
+        f"定义 {predicates} 处；额外调用点 {copies or '无'}（期望 {expected_shared_consumers}）",
     )
     submit_test = (ROOT / SUBMIT_GATE_TEST).read_text(encoding="utf-8")
     check(

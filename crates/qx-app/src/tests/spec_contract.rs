@@ -97,6 +97,42 @@ fn the_backtest_spec_json_keys_are_pinned() {
 }
 
 #[test]
+fn bar_market_spec_must_match_the_run_instrument_and_settlement_currency() {
+    let mut spec = backtest_spec(
+        "run-market-contract",
+        "bars.json",
+        &scratch("market-contract"),
+    );
+    let market = |instrument: &str, settlement: &str| qx_core::TradingInstrumentSpec {
+        instrument: qx_core::InstrumentId::parse(instrument).unwrap(),
+        product: qx_core::TradingProduct::Spot,
+        base_currency: "BTC".into(),
+        quote_currency: "USDT".into(),
+        settlement_currency: settlement.into(),
+        contract_size: qx_core::SCALE,
+        linear: true,
+        inverse: false,
+        price_tick: 1,
+        qty_step: 1,
+        min_qty: 1,
+        max_leverage: 1,
+        maintenance_margin_bps: 0,
+        valid_from: 0,
+        valid_to: None,
+    };
+
+    spec.market_spec = Some(market("ETHUSDT.BINANCE", "USDT"));
+    let error = spec.validate().expect_err("市场规格标的不一致必须前置拒绝");
+    assert!(error.message().contains("instrument 必须"));
+
+    spec.market_spec = Some(market("BTCUSDT.BINANCE", "USD"));
+    let error = spec
+        .validate()
+        .expect_err("市场规格结算币种不一致必须前置拒绝");
+    assert!(error.message().contains("settlement_currency 必须"));
+}
+
+#[test]
 fn explicit_account_id_is_optional_backward_compatible_and_validated() {
     let root = scratch("spec-account");
     let mut spec = backtest_spec("run-account", "bars.json", &root);

@@ -291,8 +291,7 @@ impl BacktestEngine {
             }
             spec.validate()?;
         }
-        // 规格给出时每手规模由 `contract_size` 决定；再叠历史乘数会让同一成交在
-        // 回测与实盘记出不同现金（实盘路径没有 multiplier），因此显式拒绝。
+        // 已指定规格时只认其中的 `contract_size`，拒绝叠加历史乘数以保持回测与实盘现金一致。
         if instrument_spec.is_some() && multiplier != 1 {
             return Err(qx_core::QxError::BusinessViolation(
                 "已提供产品规格时回测乘数必须为 1，每手规模由 contract_size 决定".into(),
@@ -326,8 +325,7 @@ impl BacktestEngine {
                 qx_core::QxError::Permanent(format!("回测视图未通过质量门: {:?}", report.issues))
             })?;
         let input_data_hash = view.metadata().data_hash;
-        // 费用基准需要 SCALE 标度乘数：contract_size 本身就是定点值，而兼容路径的
-        // multiplier 是普通整数，必须折算，否则小额手续费会被整数除法截断为 0。
+        // 将兼容路径的整数 multiplier 转为 SCALE 标度，避免小额手续费被截断为 0。
         let fee_price_multiplier = derivative_spec
             .map(|spec| spec.contract_size)
             .unwrap_or_else(|| multiplier.saturating_mul(SCALE));
@@ -338,8 +336,7 @@ impl BacktestEngine {
             seed,
             fee_price_multiplier,
         );
-        // 反向（币本位）合约的费用基准与线性合约不同，必须跟随产品规格切换，
-        // 否则撮合计出的手续费会与账本按 `spec.notional` 记的名义额脱钩。
+        // 反向合约的费用基准须匹配按 `spec.notional` 记账的名义额。
         matcher.set_inverse_fee_basis(derivative_spec.is_some_and(|spec| spec.inverse));
         let mut ledger = Ledger::new();
         let deposit_id = ledger.deposit(
@@ -854,6 +851,9 @@ impl BacktestEngine {
                     .get(fill.order_id)
                     .cloned()
                     .ok_or_else(|| qx_core::QxError::ReconcileRequired("成交找不到订单".into()))?;
+                if let Some(spec) = instrument_spec.as_ref() {
+                    spec.validate_fill(fill.qty.raw(), fill.price.raw())?;
+                }
                 order.trace_fill(&mut fill, None, None);
                 if let Some((reason, trigger_ts)) =
                     protective_order_meta.get(&fill.order_id).copied()

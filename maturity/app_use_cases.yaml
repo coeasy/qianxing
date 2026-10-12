@@ -45,7 +45,7 @@ use_cases:
     error_categories: "AppErrorCategory 八类；领域码→类别走 category_of_domain_code"
     capability_level: "R"
   - name: run_backtest
-    input_schema: "BacktestSpec v1（四类信号旋钮 fast_window/slow_window/period/threshold_bps；省略 period/threshold 时取兼容默认值 14/100）"
+    input_schema: "BacktestSpec v1（可选冻结 TradingInstrumentSpec；四类信号旋钮 fast_window/slow_window/period/threshold_bps；省略 period/threshold 时取兼容默认值 14/100）"
     output_schema: "BacktestOutcome（crates/qx-app/src/spec.rs）"
     capability: "RESEARCH"
     idempotency_key: "run_id + config_hash + data_fingerprint（三者全同才允许重写；任一不同即 Conflict）"

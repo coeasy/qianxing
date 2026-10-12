@@ -14,6 +14,8 @@ use std::sync::OnceLock;
 mod algo_execution_entrypoints;
 #[path = "app_three_entrypoints/classic_strategies.rs"]
 mod classic_strategy_entrypoints;
+#[path = "app_three_entrypoints/market_spec.rs"]
+mod market_spec_entrypoints;
 #[path = "app_three_entrypoints/multi_leg_experiment.rs"]
 mod multi_leg_experiment_entrypoints;
 #[path = "app_three_entrypoints/protective_exit.rs"]

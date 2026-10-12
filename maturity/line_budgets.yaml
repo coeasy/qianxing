@@ -5,7 +5,6 @@ crates/qx-adapter/src/ccxt.rs: 1160
 crates/qx-adapter/src/lib.rs: 728
 crates/qx-api/src/console.rs: 727
 crates/qx-api/src/lib.rs: 2918
-crates/qx-app/src/cases/run_multi_leg_backtest.rs: 520
 crates/qx-cli/src/cli.rs: 670
 crates/qx-cli/src/cli_args.rs: 511
 crates/qx-cli/src/event_pipeline.rs: 787
@@ -48,5 +47,5 @@ crates/qx-xingban/src/orderbook.rs: 671
 crates/qx-xingban/src/orderbook_backtest.rs: 1199
 crates/qx-xingban/src/tick_backtest.rs: 521
 crates/qx-xingban/src/venue.rs: 573
-crates/qx-zhenlu/src/lib.rs: 2211
+crates/qx-zhenlu/src/lib.rs: 2170
 crates/qx-zhenlu/src/portfolio/risk_parity.rs: 543

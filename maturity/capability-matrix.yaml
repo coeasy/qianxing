@@ -84,7 +84,7 @@ domains:
   - name: data_and_venues
     level: implemented-unverified
     evidence: [crates/qx-provider, crates/qx-adapter, maturity/capabilities.yaml]
-    limitations: ["统一接入流程（能力探测、下载或订阅、质量校验、数据冻结、下单、回报、账簿、复核）未端到端证明", "数据源与 venue 是两种能力，不得互相顶替；无 testnet 记录的 venue 一律 unsupported 或 implemented-unverified"]
+    limitations: ["Rust/Python 高层 Bar BacktestSpec 现可传入冻结 TradingInstrumentSpec，校验标的/结算币种/有效期，并在模拟成交时强制 tick/lot step；费用表仍使用默认 maker/taker，不能据此认定市场费用配置已贯通", "统一接入流程（能力探测、下载或订阅、质量校验、数据冻结、下单、回报、账簿、复核）未端到端证明", "数据源与 venue 是两种能力，不得互相顶替；无 testnet 记录的 venue 一律 unsupported 或 implemented-unverified"]
     next_gate: "落方案 §4.2 的能力预检 fail-closed 与 §5.x 的 Provider/Venue 一致性套件"
 
   - name: accounts_and_strategies

@@ -227,6 +227,7 @@ class BacktestSpec:
     schema_version: int = 1
     protective_exit: ProtectiveExitSpec | dict[str, Any] | None = None
     account_id: str | None = None
+    market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -239,6 +240,10 @@ class BacktestSpec:
             value.pop("protective_exit")
         elif isinstance(self.protective_exit, ProtectiveExitSpec):
             value["protective_exit"] = self.protective_exit.to_dict()
+        if self.market_spec is None:
+            value.pop("market_spec")
+        elif isinstance(self.market_spec, TradingInstrumentSpec):
+            value["market_spec"] = self.market_spec.to_dict()
         return value
 
 

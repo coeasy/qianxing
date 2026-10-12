@@ -33,9 +33,9 @@ use qx_core::{Fnv1a, InstrumentId, Money, Quantity, ReplayVerifier, RunManifest}
 use qx_datastruct::BarFrame;
 use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, StrategyContext};
 use qx_xingban::{
-    BacktestConfig, BacktestEngine, DataTier, FeeModel, FillModel, MakerTakerFeeModel,
-    NativeBarStrategy, NextBarOpenFillModel, NoMargin, ProtectiveExitPolicy, ProtectiveExitReason,
-    RunManifestIdentity, VirtualTradingConfig, ZeroLatency,
+    BacktestConfig, BacktestEngine, DataTier, FeeModel, FillModel, LeverageMargin,
+    MakerTakerFeeModel, NativeBarStrategy, NextBarOpenFillModel, NoMargin, ProtectiveExitPolicy,
+    ProtectiveExitReason, RunManifestIdentity, VirtualTradingConfig, ZeroLatency,
 };
 use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
@@ -118,6 +118,16 @@ pub(super) fn run_backtest_inner(
     }
     // `Bar` 的类型不在这里点名：转换目标就是引擎要吃的那个类型，写死等于给两处留一个漂移点。
     let bars: Vec<_> = (&frame).into();
+    if spec.market_spec.as_ref().is_some_and(|market| {
+        bars.iter().any(|bar| {
+            bar.ts < market.valid_from || market.valid_to.is_some_and(|until| bar.ts >= until)
+        })
+    }) {
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            "Bar 数据时间超出 BacktestSpec.market_spec 的有效期",
+        ));
+    }
     if bars.len() < MIN_BACKTEST_BARS {
         return Err(AppError::new(
             AppErrorCategory::FidelityInsufficient,
@@ -136,6 +146,14 @@ pub(super) fn run_backtest_inner(
     let fee = MakerTakerFeeModel::default_maker_taker();
     let fee_model = fee.name().to_string();
     let fill_model = NextBarOpenFillModel.name().to_string();
+    let margin: Box<dyn qx_xingban::MarginRule> = match &spec.market_spec {
+        Some(market) if market.product.supports_leverage() => Box::new(LeverageMargin {
+            leverage: 1,
+            maintenance_bp: i64::from(market.maintenance_margin_bps),
+        }),
+        _ => Box::new(NoMargin),
+    };
+    let instrument_spec_version = market_spec_version(spec.market_spec.as_ref())?;
     let account_id = spec
         .account_id
         .as_deref()
@@ -143,7 +161,7 @@ pub(super) fn run_backtest_inner(
         .to_string();
     let config = BacktestConfig {
         instrument: instrument.clone(),
-        instrument_spec: None,
+        instrument_spec: spec.market_spec.clone(),
         account_id: account_id.clone(),
         currency: spec.settlement_currency.clone(),
         initial_cash: Money::from_raw(spec.initial_cash_raw),
@@ -152,7 +170,7 @@ pub(super) fn run_backtest_inner(
         fee: Box::new(fee),
         data_tier: DataTier::Bar,
         latency: Box::new(ZeroLatency),
-        margin: Box::new(NoMargin),
+        margin,
         seed: spec.seed,
         risk,
         virtual_trading: VirtualTradingConfig::default(),
@@ -279,7 +297,7 @@ pub(super) fn run_backtest_inner(
                 code_commit: context.code_commit(),
                 config_hash: &config_hash,
                 strategy_version: &strategy_version,
-                instrument_spec_version: NO_INSTRUMENT_SPEC,
+                instrument_spec_version: &instrument_spec_version,
                 runtime_version: &format!("qx-app-{}", env!("CARGO_PKG_VERSION")),
             },
             &data_fingerprint,
@@ -377,6 +395,23 @@ fn spec_config_hash(spec: &BacktestSpec) -> Result<String, AppError> {
     let mut hash = Fnv1a::new();
     hash.write_text(&payload);
     Ok(format!("{:016x}", hash.finish()))
+}
+
+fn market_spec_version(
+    market: Option<&qx_core::TradingInstrumentSpec>,
+) -> Result<String, AppError> {
+    let Some(market) = market else {
+        return Ok(NO_INSTRUMENT_SPEC.to_string());
+    };
+    let payload = serde_json::to_string(market).map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("市场规格摘要序列化失败: {error}"),
+        )
+    })?;
+    let mut hash = Fnv1a::new();
+    hash.write_text(&payload);
+    Ok(format!("inline-market-spec:{:016x}", hash.finish()))
 }
 
 /// 同一 `run_id` 已有产物时，只有**身份完全相同**才允许重写。

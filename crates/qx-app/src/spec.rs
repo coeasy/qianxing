@@ -17,6 +17,7 @@
 //! 而**拒绝**会让调用方当场知道自己的身份串不合法。
 
 use crate::error::{AppError, AppErrorCategory};
+use qx_core::TradingInstrumentSpec;
 use qx_strategy::BuiltinStrategyKind;
 use serde::{Deserialize, Serialize};
 
@@ -305,6 +306,10 @@ pub struct BacktestSpec {
     /// Ledger/account ownership for this run. Omitted legacy specs use `app`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
+    /// Frozen venue market contract used by the shared Bar matching, risk, margin and ledger path.
+    /// Omitted legacy specs keep their historical compatibility semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_spec: Option<TradingInstrumentSpec>,
     pub strategy: BuiltinStrategySpec,
     /// Optional position-level protective exits, evaluated on completed bars
     /// and routed through the same OMS/risk/matching path as strategy orders.
@@ -335,6 +340,7 @@ impl BacktestSpec {
             seed,
             output_dir: output_dir.into(),
             account_id: None,
+            market_spec: None,
             strategy,
             protective_exit: None,
         }
@@ -394,6 +400,29 @@ impl BacktestSpec {
                 AppErrorCategory::InvalidInput,
                 "BacktestSpec.initial_cash_raw 必须为正",
             ));
+        }
+        if let Some(market) = &self.market_spec {
+            market
+                .validate()
+                .map_err(|error| AppError::from_qx_error(&error))?;
+            if market.product == qx_core::TradingProduct::Option {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "Bar 回测暂不接收期权规格：行权价、到期日与认购/认沽身份尚未建模",
+                ));
+            }
+            if qx_core::InstrumentId::parse(&self.instrument).as_ref() != Some(&market.instrument) {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "BacktestSpec.market_spec.instrument 必须与 BacktestSpec.instrument 一致",
+                ));
+            }
+            if market.settlement_currency != self.settlement_currency {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "BacktestSpec.market_spec.settlement_currency 必须与 settlement_currency 一致",
+                ));
+            }
         }
         if let Some(policy) = self.protective_exit {
             policy.validate()?;

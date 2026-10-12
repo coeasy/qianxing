@@ -163,8 +163,10 @@ class TopLevelStabilityTest(unittest.TestCase):
             ExperimentOutOfSampleReport,
             ExperimentParameterSpace,
             ExperimentSplitPlan,
+            InstrumentId,
             RunExperimentResult,
             RunExperimentSpec,
+            TradingInstrumentSpec,
         )
 
         base = BacktestSpec(
@@ -180,6 +182,28 @@ class TopLevelStabilityTest(unittest.TestCase):
             ),
         )
         self.assertEqual(base.to_dict()["strategy"]["target_notional_raw"], 25_000_000_000)
+        market_spec = TradingInstrumentSpec(
+            instrument=InstrumentId("BTCUSDT", "BINANCE"),
+            product="spot",
+            base_currency="BTC",
+            quote_currency="USDT",
+            settlement_currency="USDT",
+            contract_size=1_000_000_000,
+            linear=True,
+            inverse=False,
+            price_tick=1_000,
+            qty_step=1,
+            min_qty=1,
+            max_leverage=1,
+            maintenance_margin_bps=0,
+            valid_from=0,
+        )
+        market_aware = BacktestSpec(**{**base.__dict__, "market_spec": market_spec})
+        self.assertEqual(
+            market_aware.to_dict()["market_spec"]["instrument"],
+            {"symbol": "BTCUSDT", "venue": "BINANCE"},
+        )
+        self.assertNotIn("market_spec", base.to_dict())
         margin_sized = BuiltinStrategySpec(
             kind="sma_cross", strategy_id="margin-sma", target_available_margin_bps=2_500
         )
