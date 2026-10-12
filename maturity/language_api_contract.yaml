@@ -26,6 +26,8 @@ updated_at: "2026-10-12"
 python_native_helpers:
   - name: doctor
     note: "能力探测：报告本次安装里哪些 Rust 应用入口可用；不是用例，是安装自检"
+  - name: list_builtin_strategies
+    note: "策略发现：从共享 qx-strategy 返回名称、说明、信号旋钮和多腿限制；不执行回测用例"
 
 # 客户端公开面里属于 run 生命周期、不属于任何用例的方法。
 cpp_lifecycle_methods:

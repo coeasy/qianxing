@@ -170,6 +170,16 @@ class DatasetSpec:
 
 
 @dataclass(frozen=True)
+class BuiltinStrategyInfo:
+    """Discoverable built-in strategy metadata projected from the Rust strategy crate."""
+
+    name: str
+    description: str
+    signal_knobs: tuple[str, ...]
+    requires_reference_leg: bool
+
+
+@dataclass(frozen=True)
 class BuiltinStrategySpec:
     kind: Literal[
         "sma_cross", "ema_cross", "macd", "rsi", "bollinger",
@@ -203,6 +213,25 @@ class BuiltinStrategySpec:
         if self.kelly_lookback_bars is None:
             value.pop("kelly_lookback_bars")
         return value
+
+
+def list_builtin_strategies() -> tuple[BuiltinStrategyInfo, ...]:
+    """List the authoritative Rust built-in strategies and their signal inputs."""
+    try:
+        value = json.loads(native.app_list_builtin_strategies())
+        if not isinstance(value, list):
+            raise ValueError("Rust strategy catalog must be a JSON array")
+        return tuple(
+            BuiltinStrategyInfo(
+                name=str(entry["name"]),
+                description=str(entry["description"]),
+                signal_knobs=tuple(str(item) for item in entry["signal_knobs"]),
+                requires_reference_leg=bool(entry["requires_reference_leg"]),
+            )
+            for entry in value
+        )
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
 
 
 @dataclass(frozen=True)

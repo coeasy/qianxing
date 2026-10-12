@@ -1462,6 +1462,7 @@ dependencies = [
  "qx-app",
  "qx-datastruct",
  "qx-provider",
+ "qx-strategy",
  "serde",
  "serde_json",
 ]

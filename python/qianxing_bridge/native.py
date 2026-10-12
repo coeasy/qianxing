@@ -83,6 +83,11 @@ def provider_registry() -> Any:
     return _extension().ProviderRegistry()
 
 
+def app_list_builtin_strategies() -> str:
+    """Return the built-in strategy catalog from the shared Rust strategy crate."""
+    return str(_extension().app_list_builtin_strategies())
+
+
 def provider_result_json(
     provider_id: str,
     provider_version: str,

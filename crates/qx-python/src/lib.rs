@@ -10,6 +10,7 @@
 //!
 //! 用专门的异常类型而不是 `ValueError`：调用方要能只捕获应用层用例的失败，并按文档里的
 //! `category` 分支（`InvalidInput` 改输入、`DataUnavailable` 去取数据……），而不是去猜字符串。
+//!
 
 use pyo3::exceptions::{PyException, PyIndexError, PyValueError};
 use pyo3::prelude::*;
@@ -30,6 +31,7 @@ use std::time::{Duration, Instant};
 
 mod provider_bridge;
 mod run_handle_helpers;
+mod strategy_catalog;
 
 fn frame_error(error: FrameError) -> PyErr {
     PyValueError::new_err(format!("BarFrame error: {error:?}"))
@@ -509,6 +511,7 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyRunHandle>()?;
     module.add_function(wrap_pyfunction!(app_verify_depth_run, module)?)?;
     provider_bridge::register(module)?;
+    strategy_catalog::register(module)?;
     module.add("QxAppError", module.py().get_type::<QxAppError>())?;
     Ok(())
 }

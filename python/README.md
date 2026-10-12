@@ -73,6 +73,19 @@ outcome = run_depth_backtest(spec)
 
 ## Example
 
+Query the built-in catalog from Rust, then select a single-instrument strategy without maintaining a second Python list. The catalog marks strategies that require a reference leg so callers can route those to a multi-leg workflow instead of a single-Bar run:
+
+```python
+from qianxing.core import list_builtin_strategies
+
+for strategy in list_builtin_strategies():
+    print(strategy.name, strategy.description, strategy.signal_knobs)
+
+selected = next(item for item in list_builtin_strategies() if item.name == "ema_cross")
+if selected.requires_reference_leg:
+    raise ValueError("this strategy requires the multi-leg backtest workflow")
+```
+
 ```python
 from qianxing import BacktestSpec, BuiltinStrategySpec, run_backtest, verify_run
 
