@@ -671,7 +671,9 @@ def main() -> int:
         "tools/check_rust_sdk_git_consumer.py",
         ["tools/check_rust_sdk_git_consumer.py"],
         r"(rust_sdk_git_consumer=passed fills=\d+ remote_paper_lifecycle=4 event_cursor_reads=1 result_hash=\w+)",
-        env_extra={"QX_CARGO_OFFLINE": "1"},
+        # Cargo's embedded Git fetch can fail to create pack temp files on Windows;
+        # the CLI Git backend uses the same pinned revision without that cache issue.
+        env_extra={"CARGO_NET_GIT_FETCH_WITH_CLI": "true"},
         evidence=["crates/qx-sdk/Cargo.toml", "docs/qx-sdk-migration.md", "tools/check_rust_sdk_git_consumer.py"],
         command_prefix="python",
     )

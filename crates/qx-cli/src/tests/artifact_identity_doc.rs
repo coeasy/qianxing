@@ -84,43 +84,33 @@ fn delivery_docs_identify_release_artifacts_by_payload_not_archive_sha() {
     );
 }
 
-/// 打包 wheel 的两个入口脚本里，把当轮原生扩展 stage 进包目录必须排在 `pip wheel` 之前（#181）。
-///
-/// 立案缘由是第八遍收口那次实测：为了重打 wheel，我按 `cargo build --release -p qx-python` + `pip wheel
-/// ./python` 自己拼了两步 —— 打包器一声不响地把 `python/qianxing_bridge/` 里**上一轮**那份 `.pyd` 装进了
-/// 新 wheel。现场：那样打出的 wheel 217,414 字节、内嵌 `.pyd` md5 `dfef616ed9537aae…`，对不上当轮
-/// `target/release/_qianxing_native.dll` 的 `f0437740060ac42e…`；改走 `tools/build_python_wheel.ps1`
-/// 重打是 217,415 字节、两者相等。`.pyd` 在 `.gitignore` 里，所以仓库不会腐坏，腐坏的是发布物。
-///
-/// 这条判据按**先后顺序**核对四个锚点：删掉 copy、或把 `pip wheel` 提到 copy 之前，都会红。
-const PACKAGING_STEPS: [(&str, &str, [&str; 4]); 2] = [
+/// Both public wheel builders delegate extension compilation and ABI tagging to PEP 517 maturin.
+const PACKAGING_STEPS: [(&str, &str, [&str; 3]); 2] = [
     (
         "tools/build_python_wheel.ps1",
         "powershell",
         [
-            "cargo @cargoArgs",
-            "[System.IO.File]::Delete($_.FullName)",
-            "Copy-Item -LiteralPath $native.FullName -Destination $destination",
-            "-m pip wheel --no-deps",
+            "-m pip --version",
+            "-m maturin --version",
+            "-m pip wheel --no-deps --no-build-isolation",
         ],
     ),
     (
         "tools/build_python_wheel.sh",
         "bash",
         [
-            "cargo \"${cargo_args[@]}\"",
-            "rm -f \"${existing}\"",
-            "cp -f \"${native}\" \"${package_directory}/${import_name}\"",
-            "-m pip wheel --no-deps",
+            "-m pip --version",
+            "-m maturin --version",
+            "-m pip wheel --no-deps --no-build-isolation",
         ],
     ),
 ];
 
 /// README 里那句"打包入口只有这两个脚本"的说明，与本判据互相点名。
-const STAGING_PROMISE: &str = "打的是包目录里已经就位的那一份";
+const STAGING_PROMISE: &str = "maturin 从当前源码和 qx-python Cargo manifest 构建原生扩展";
 
 #[test]
-fn wheel_packaging_entry_stages_the_fresh_native_extension() {
+fn wheel_packaging_entry_uses_the_maturin_backend() {
     for (script, interpreter, steps) in PACKAGING_STEPS {
         let text = workspace_source(script);
         let mut previous = usize::MAX;
@@ -135,8 +125,7 @@ fn wheel_packaging_entry_stages_the_fresh_native_extension() {
             if previous != usize::MAX {
                 assert!(
                     at > previous,
-                    "{script} 的 {step:?} 不再排在上一锚点之后：wheel 打包的四步（{interpreter} 入口 → 构建 → \
-                     删旧扩展 → stage 当轮扩展 → `pip wheel`）顺序就是这条链的全部，`pip wheel` 提前就是打旧载荷"
+                    "{script} 的 {step:?} 不再排在上一锚点之后：{interpreter} 必须先确认 pip 可用，再进入 PEP 517 wheel 构建"
                 );
             }
             previous = at;
@@ -146,9 +135,21 @@ fn wheel_packaging_entry_stages_the_fresh_native_extension() {
     let readme = workspace_source("README.md");
     assert!(
         readme.contains(STAGING_PROMISE),
-        "README 不再写明「{STAGING_PROMISE}」：#181 那条坑（自己拼 `cargo` + `pip wheel` 会静默 ship 上一轮\
-         的原生扩展）只剩脚本里的一段代码撑着，读者看不出为什么不许绕开脚本"
+        "README 不再说明「{STAGING_PROMISE}」：稳定 ABI wheel 的扩展来源和构建器边界没有被说清楚"
     );
+
+    let project = workspace_source("python/pyproject.toml");
+    for contract in [
+        "build-backend = \"maturin\"",
+        "manifest-path = \"../crates/qx-python/Cargo.toml\"",
+        "python-source = \".\"",
+        "module-name = \"qianxing_bridge._qianxing_native\"",
+    ] {
+        assert!(
+            project.contains(contract),
+            "Python wheel contract lacks {contract:?}"
+        );
+    }
 
     // 双向点名：判据也要真的写进被核对的两份脚本与那份文档，换一份没人核对的文件就等于删判据。
     let judge = workspace_source("crates/qx-cli/src/tests/artifact_identity_doc.rs");

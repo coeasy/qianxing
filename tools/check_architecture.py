@@ -779,11 +779,12 @@ def wheel_builder_check() -> None:
     for path in (ps1, sh):
         text = path.read_bytes().decode("utf-8")
         probe = text.find("-m pip --version")
+        maturin = text.find("-m maturin --version")
         build = text.find("-m pip wheel")
         check(
-            0 <= probe < build,
-            f"{path.name} 在跑 pip wheel 之前先探测 pip",
-            f"探测位置 {probe}、pip wheel 位置 {build}：缺探测时构建跑完才在最后一步失败",
+            0 <= probe < maturin < build,
+            f"{path.name} 在 PEP 517 wheel 构建前先检查 pip 和 maturin",
+            f"pip/maturin/wheel 位置 {probe}/{maturin}/{build}：缺任一构建器会晚到 wheel 阶段才失败",
         )
     raw = ps1.read_bytes()
     tail_rows = [i for i, line in enumerate(raw.splitlines(), 1) if line and line[-1] >= 0x80]

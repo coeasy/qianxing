@@ -28,8 +28,7 @@ crates/qx-factor/src/execution_plan.rs: 517
 crates/qx-factor/src/lib.rs: 1837
 crates/qx-guanxing/src/lib.rs: 577
 crates/qx-protocol/src/lib.rs: 785
-crates/qx-provider/src/lib.rs: 743
-crates/qx-python/src/lib.rs: 514
+crates/qx-python/src/lib.rs: 509
 crates/qx-runtime/src/pipeline.rs: 2160
 crates/qx-scheduler/src/lib.rs: 1464
 crates/qx-storage/src/lib.rs: 2472

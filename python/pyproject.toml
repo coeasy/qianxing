@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel>=0.42"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "qianxing"
@@ -66,26 +66,12 @@ a-share = [
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-# 只打包发布的命名空间：`pip wheel` 会在 `python/build/lib` 里留下上一次构建的副本，
-# 不加 include 时它们会被再次发现成 `build.lib.qianxing_bridge` 并递归进wheel。
-include = [
-    "qianxing*",
-    "qianxing_bridge*",
-    "qianxing_ccxt*",
-    "qianxing_ashare*",
-    "qianxing_strategy*",
-]
-
-[tool.setuptools.package-data]
-qianxing = ["py.typed"]
-qianxing_bridge = [
-    "_qianxing_native*.pyd",
-    "_qianxing_native*.so",
-    "_qianxing_native*.dll",
-    "_qianxing_native*.dylib",
-]
+[tool.maturin]
+manifest-path = "../crates/qx-python/Cargo.toml"
+python-source = "."
+module-name = "qianxing_bridge._qianxing_native"
+python-packages = ["qianxing", "qianxing_ashare", "qianxing_ccxt", "qianxing_strategy"]
+exclude = ["**/__pycache__/**", "**/*.pyc"]
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"
