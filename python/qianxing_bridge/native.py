@@ -88,6 +88,22 @@ def app_list_builtin_strategies() -> str:
     return str(_extension().app_list_builtin_strategies())
 
 
+def provider_bar_dataset_json(
+    registry: Any,
+    query_json: str,
+    dataset_id: str,
+    dataset_version: str,
+    interval_ms: int,
+    timezone: str,
+) -> str:
+    """Return the canonical BarFrame and validated DatasetManifestV2 from Rust."""
+    return str(
+        registry.fetch_bar_dataset_json(
+            query_json, dataset_id, dataset_version, interval_ms, timezone
+        )
+    )
+
+
 def provider_result_json(
     provider_id: str,
     provider_version: str,

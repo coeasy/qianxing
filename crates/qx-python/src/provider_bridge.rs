@@ -4,12 +4,14 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 use qx_provider::{
-    DataProvider, DataQuery, ProviderCapability, ProviderError, ProviderErrorClass,
+    DataKind, DataProvider, DataQuery, ProviderCapability, ProviderError, ProviderErrorClass,
     ProviderPayload, ProviderRegistry, ProviderResult,
 };
 use qx_xingban::{DepthFrame, OrderBookSnapshot};
 use serde::Deserialize;
 use std::sync::Mutex;
+
+mod dataset_manifest;
 
 /// Python adapters provide bytes only; ordering, failover, provenance checks and
 /// Bar quality validation stay inside the shared Rust provider boundary.
@@ -117,6 +119,40 @@ impl PyProviderRegistry {
             .to_bar_frame(&query)
             .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
         Ok(frame.to_json())
+    }
+
+    fn fetch_bar_dataset_json(
+        &self,
+        query_json: &str,
+        dataset_id: &str,
+        dataset_version: &str,
+        interval_ms: u64,
+        timezone: &str,
+    ) -> PyResult<String> {
+        let query = DataQuery::from_json(query_json)
+            .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
+        if query.kind != DataKind::Bar || query.instrument_set.len() != 1 {
+            return Err(PyValueError::new_err(
+                "dataset manifest requires Bar data and exactly one instrument",
+            ));
+        }
+        if interval_ms == 0 || timezone.trim().is_empty() {
+            return Err(PyValueError::new_err(
+                "dataset manifest requires a positive interval_ms and non-empty timezone",
+            ));
+        }
+        let result = self
+            .inner
+            .fetch_with_failover(&query)
+            .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
+        dataset_manifest::bar_frame_manifest_json(
+            result,
+            &query,
+            dataset_id,
+            dataset_version,
+            interval_ms,
+            timezone,
+        )
     }
 
     fn fetch_depth_frame_json(&self, query_json: &str, tier: &str) -> PyResult<String> {

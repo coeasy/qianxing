@@ -19056,6 +19056,7 @@ PY_LAYER_SUB_NAMESPACE_ONLY = {
         "ProviderAdapter",
         "ProviderAdapterError",
         "ProviderCapability",
+        "ProviderDatasetBacktestOutcome",
         "ProviderManualInterventionError",
         "ProviderPayloadRow",
         "ProviderPermanentError",

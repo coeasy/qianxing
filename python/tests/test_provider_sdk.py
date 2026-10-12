@@ -7,7 +7,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from qianxing.app import BacktestSpec, BuiltinStrategySpec, DepthBacktestSpec, verify_depth_run
+from qianxing.app import (
+    BacktestSpec,
+    BuiltinStrategySpec,
+    DepthBacktestSpec,
+    verify_depth_run,
+    verify_run,
+)
 from qianxing.data import (
     BAR_JSON_CONTENT_TYPE,
     ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE,
@@ -184,6 +190,45 @@ class ProviderSdkTest(unittest.TestCase):
                         instrument_set=("BTCUSDT.BINANCE",),
                     ),
                 )
+
+    def test_provider_builds_and_validates_dataset_manifest_before_rust_backtest(self) -> None:
+        capability = _capability("manifest-provider", 0)
+        registry = ProviderRegistry()
+        registry.register(capability, _Bars(capability, _rows()))
+        query = self._query()
+        frame, manifest = registry.fetch_bar_dataset(
+            query,
+            dataset_id="provider-bars",
+            dataset_version="source-v1",
+            interval_ms=1,
+            timezone="UTC",
+        )
+        self.assertEqual(manifest["manifest_version"], 1)
+        self.assertRegex(manifest["dataset"]["fingerprint"], r"^[0-9a-f]{16}$")
+        self.assertEqual(frame["instrument"], "BTCUSDT.BINANCE")
+        self.assertEqual(manifest["quality_report"]["row_count"], len(_rows()))
+        self.assertEqual(manifest["quality_report"]["missing_intervals"], 0)
+        self.assertEqual(manifest["source_lineage"]["primary_source"], "manifest-provider")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = BacktestSpec(
+                run_id="provider-manifest-run",
+                instrument="BTCUSDT.BINANCE",
+                bars_path=str(root / "bars.json"),
+                settlement_currency="USDT",
+                initial_cash_raw=100_000_000_000_000,
+                output_dir=str(root / "run"),
+                strategy=BuiltinStrategySpec(
+                    kind="sma_cross", strategy_id="manifest-sdk", fast_window=2, slow_window=3
+                ),
+            )
+            result = registry.run_backtest_with_manifest(
+                spec, query, "provider-bars", "source-v1", interval_ms=1
+            )
+            self.assertEqual(result.dataset_verdict.dataset_id, "provider-bars")
+            self.assertEqual(result.manifest["dataset"]["fingerprint"], manifest["dataset"]["fingerprint"])
+            self.assertTrue(Path(result.manifest_path).is_file())
+            self.assertTrue(verify_run(result.outcome).verified)
 
     def test_quote_provider_to_depth_frame_and_shared_rust_tick_backtest(self) -> None:
         fixture = json.loads(

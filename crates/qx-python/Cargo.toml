@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 qx-datastruct = { path = "../qx-datastruct" }
 # T2-2/G1：`app_*` 三条入口调的是 `qx-app` 的应用层用例（Python 侧不另写一份业务）。
 qx-app = { path = "../qx-app" }
+qx-data = { path = "../qx-data" }
 qx-provider = { path = "../qx-provider" }
 qx-strategy = { path = "../qx-strategy" }
 qx-xingban = { path = "../qx-xingban" }

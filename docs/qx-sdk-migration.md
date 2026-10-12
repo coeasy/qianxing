@@ -122,7 +122,7 @@ Bar 查询可调用 `ProviderResult::to_bar_frame`：仅接收单标的、strict
 
 Rust 与 Python SDK 均已有 Provider 到共享回测内核的路径。Python adapter 只提供原始行，Rust 注册器负责选择、failover、来源/载荷摘要和 Bar 质量门；`ProviderRegistry.run_backtest` 将经过验证的 BarFrame 冻结至 `BacktestSpec.bars_path` 并调用同一 `qx-app` 用例。Python 端到端用例见 `python/tests/test_provider_sdk.py`。
 
-自动生成 `DatasetManifest`/`DatasetSpec` 的 App 工作流、C++ Provider 载荷绑定、Tick/OrderBook 的 Provider 标准化，以及各真实数据源的分页/实时订阅 conformance 尚未闭环，不能把它们写成已完成。
+Python Bar Provider 现在可由 Rust 生成并冻结 `DatasetManifestV2`，经 Rust `DatasetSpec` 校验后运行共享回测；Quote Provider 也可归一为 Rust `DepthFrame` 并运行 Tick/OrderBook 回测。Rust SDK 尚未提供同一自动 manifest 工作流，C++ Provider 载荷绑定未实现；分页/实时订阅、盘口增量合并与各真实数据源 conformance 仍未闭环，不能把它们写成已完成。
 
 ## 已知缺口（不要在发布文案里说成"已有"）
 

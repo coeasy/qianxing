@@ -117,6 +117,16 @@ class ProviderResponse:
         )
 
 
+@dataclass(frozen=True)
+class ProviderDatasetBacktestOutcome:
+    """Result of freezing provider data, validating its manifest, and running Rust backtest."""
+
+    outcome: Any
+    manifest: Mapping[str, Any]
+    dataset_verdict: Any
+    manifest_path: str
+
+
 class ProviderRegistry:
     """Python adapter registry backed by Rust's deterministic selection/failover engine."""
 
@@ -136,6 +146,40 @@ class ProviderRegistry:
         """Fetch one Bar instrument and return the Rust-validated canonical BarFrame."""
         return json.loads(self._native.fetch_bar_frame_json(query.to_json()))
 
+    def fetch_bar_dataset(
+        self,
+        query: ProviderQuery,
+        dataset_id: str,
+        dataset_version: str,
+        interval_ms: int,
+        timezone: str = "UTC",
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Return a Rust-validated BarFrame and its DatasetManifestV2 with quality metadata."""
+        frame_json, manifest_json = self._fetch_bar_dataset_json(
+            query, dataset_id, dataset_version, interval_ms, timezone
+        )
+        return json.loads(frame_json), json.loads(manifest_json)
+
+    def _fetch_bar_dataset_json(
+        self,
+        query: ProviderQuery,
+        dataset_id: str,
+        dataset_version: str,
+        interval_ms: int,
+        timezone: str,
+    ) -> tuple[str, str]:
+        payload = json.loads(
+            native.provider_bar_dataset_json(
+                self._native,
+                query.to_json(),
+                dataset_id,
+                dataset_version,
+                interval_ms,
+                timezone,
+            )
+        )
+        return str(payload["frame_json"]), str(payload["manifest_json"])
+
     def fetch_depth_frame(self, query: ProviderQuery, tier: str) -> dict[str, Any]:
         """Fetch Quote snapshots and normalize them to the Rust DepthFrame contract."""
         return json.loads(self._native.fetch_depth_frame_json(query.to_json(), tier))
@@ -148,6 +192,41 @@ class ProviderRegistry:
         values = spec.to_dict() if isinstance(spec, BacktestSpec) else dict(spec)
         _freeze_frame(values["bars_path"], frame_json)
         return run_backtest(values)
+
+    def run_backtest_with_manifest(
+        self,
+        spec: Any,
+        query: ProviderQuery,
+        dataset_id: str,
+        dataset_version: str,
+        interval_ms: int,
+        timezone: str = "UTC",
+        manifest_path: str | None = None,
+    ) -> ProviderDatasetBacktestOutcome:
+        """Freeze and validate a DatasetManifestV2 before invoking the Rust Bar backtest."""
+        from pathlib import Path
+
+        from qianxing.app import BacktestSpec, DatasetSpec, run_backtest, validate_dataset
+
+        frame_json, manifest_json = self._fetch_bar_dataset_json(
+            query, dataset_id, dataset_version, interval_ms, timezone
+        )
+        manifest = json.loads(manifest_json)
+        values = spec.to_dict() if isinstance(spec, BacktestSpec) else dict(spec)
+        _freeze_frame(values["bars_path"], frame_json)
+        manifest_file = manifest_path or f"{values['bars_path']}.manifest.json"
+        _freeze_frame(
+            manifest_file,
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")),
+        )
+        verdict = validate_dataset(DatasetSpec(dataset_id=dataset_id, bars_path=values["bars_path"]))
+        outcome = run_backtest(values)
+        return ProviderDatasetBacktestOutcome(
+            outcome=outcome,
+            manifest=manifest,
+            dataset_verdict=verdict,
+            manifest_path=str(Path(manifest_file)),
+        )
 
     def run_depth_backtest(self, spec: Any, query: ProviderQuery, tier: str) -> Any:
         """Freeze Rust-normalized Quote snapshots and run the shared Rust depth workflow."""
@@ -188,6 +267,7 @@ __all__ = [
     "ProviderAdapter",
     "ProviderAdapterError",
     "ProviderCapability",
+    "ProviderDatasetBacktestOutcome",
     "ProviderManualInterventionError",
     "ProviderPayloadRow",
     "ProviderPermanentError",
