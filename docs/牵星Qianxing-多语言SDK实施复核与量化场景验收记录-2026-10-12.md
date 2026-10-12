@@ -107,3 +107,10 @@ Python 十策略证据：
 - 使用 Maturin 重新构建 `cp310-abi3-win_amd64` wheel，稳定 ABI/扩展检查通过，并在隔离虚拟环境离线安装、导入 Python SDK 与 Rust 原生扩展成功；当前构建 SHA-256：`7aeb0e011c0d811df45945aa41d95483452b4bbf552027f6d80d21a812ac21ea`。该 wheel 仅证明当前 Windows x64 包；没有据此推断其他平台或 C++ 包已验证。
 - `reserved_capital_raw` 已升级为实际策略额度：按策略已成交持仓和未成交挂单的确定性顺序计算峰值单向暴露，现货以可见价格名义额、衍生品以产品初始保证金核算；单笔意图超额会拒绝，跳空后成交价使额度超限则在账簿入账前失败关闭。策略组合拒绝 Hedge 持仓模式；手续费与总账户现金仍由共享账户资金闸门约束。
 - 新增固定数量订单超预算拒绝、未成交限价单持续占用预算、成交跳空超预算失败关闭用例。每笔待成交订单独立保存参考价和杠杆，预算校验按确定性接受顺序逐笔计算，避免用后一笔低限价低估前面高限价挂单的需求。现有 Tick/OrderBook、多腿/多市场、多账户组合账簿与策略级 PnL/费用/回撤归因、Paper/Live 多策略流程和 Web/桌面组合配置仍未闭环。Live 仍缺外部 testnet 认证，C++ 本机缺编译工具链。本轮不满足整体发布门槛。
+
+## 10. 2026-10-13 推送与发布包复核
+
+- 策略额度保护及 Windows 场景探针环境变量修复已随提交 `8fe49f1` 推送到 `main`。
+- 验证：`cargo test --offline -p qx-xingban --lib -- --test-threads=1`（98 passed）；`python tools/check_architecture.py`（1096 项通过）；`python tools/quant_scenario_probe.py`（31 executed、0 missing、0 declared_not_executed，1 个 Live 场景因缺少真实交易所凭据/testnet 被 blocked）；`git diff --check` 通过。
+- 推送后重建 Windows `qianxing-0.1.0-cp310-abi3-win_amd64.whl`，wheel 检查通过，在隔离 Python 3.13 环境离线安装并成功导入 `qianxing`、`qianxing_bridge` 和 Rust 原生扩展。SHA-256：`785be855c1a6b9a779fae15d2e89a0dab50e43085215523849e256ac685ca1c7`。
+- 本轮不证明全能力发布就绪：多账户资金隔离/组合风险与策略归因、Tick/OrderBook/多腿/多市场组合调度接入统一应用 SDK、Paper/Live 组合流程、Web/桌面组合操作、C++ 独立安装消费者、Linux/macOS wheel 矩阵和 Live testnet conformance 仍未完成。
