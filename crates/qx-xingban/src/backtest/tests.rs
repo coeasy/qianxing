@@ -2,13 +2,13 @@ use super::*;
 #[cfg(test)]
 mod test_cases {
     use super::*;
-    #[path = "../tests/config.rs"]
+    #[path = "config.rs"]
     mod config;
-    #[path = "../tests/fill_callback.rs"]
+    #[path = "fill_callback.rs"]
     mod fill_callback;
-    #[path = "../tests/portfolio_budget.rs"]
+    #[path = "portfolio_budget.rs"]
     mod portfolio_budget;
-    #[path = "../tests/portfolio_strategy.rs"]
+    #[path = "portfolio_strategy.rs"]
     mod portfolio_strategy;
     use crate::ashare::AshareCorporateActionEvent;
     use crate::{

@@ -100,7 +100,7 @@ impl AlgoExecutionCheckpointStore {
             let file_type = entry
                 .file_type()
                 .map_err(|error| format!("读取算法 checkpoint 文件类型失败: {error}"))?;
-            if !file_type.is_file() || path.extension().map_or(true, |ext| ext != "json") {
+            if !file_type.is_file() || path.extension().is_none_or(|ext| ext != "json") {
                 continue;
             }
             if paths.len() == Self::MAX_DISCOVERY_ENTRIES {
@@ -116,7 +116,7 @@ impl AlgoExecutionCheckpointStore {
         for path in paths {
             let state = read_checkpoint(&path)?;
             if !is_terminal(state.status)
-                && after_parent_id.map_or(true, |cursor| state.parent_id.as_str() > cursor)
+                && after_parent_id.is_none_or(|cursor| state.parent_id.as_str() > cursor)
             {
                 active.push(state);
             }

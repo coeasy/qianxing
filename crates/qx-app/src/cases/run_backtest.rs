@@ -40,7 +40,7 @@ use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
 
 mod strategy_slot;
-use strategy_slot::{build_strategy_slot, strategy_version};
+use strategy_slot::{build_strategy_slot, strategy_version, StrategySlotContext};
 
 /// Historical default retained for callers whose spec predates explicit account ownership.
 const DEFAULT_ACCOUNT_ID: &str = "app";
@@ -193,25 +193,29 @@ pub(super) fn run_backtest_inner(
         .unwrap_or(0);
     strategy_slots.push(build_strategy_slot(
         &spec.strategy,
-        primary_priority,
-        primary_allocation,
-        &instrument,
-        &account_id,
-        &config.currency,
-        &data_fingerprint,
-        as_of,
+        StrategySlotContext {
+            priority: primary_priority,
+            reserved_capital_raw: primary_allocation,
+            instrument: &instrument,
+            account_id: &account_id,
+            currency: &config.currency,
+            data_fingerprint: &data_fingerprint,
+            as_of,
+        },
     )?);
     if let Some(portfolio) = &spec.portfolio {
         for member in &portfolio.additional_strategies {
             strategy_slots.push(build_strategy_slot(
                 &member.strategy,
-                member.priority,
-                member.reserved_capital_raw,
-                &instrument,
-                &account_id,
-                &config.currency,
-                &data_fingerprint,
-                as_of,
+                StrategySlotContext {
+                    priority: member.priority,
+                    reserved_capital_raw: member.reserved_capital_raw,
+                    instrument: &instrument,
+                    account_id: &account_id,
+                    currency: &config.currency,
+                    data_fingerprint: &data_fingerprint,
+                    as_of,
+                },
             )?);
         }
     }

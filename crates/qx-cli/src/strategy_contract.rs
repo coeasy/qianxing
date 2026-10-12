@@ -418,11 +418,11 @@ fn strategy_order_identity(round_scope: &str, intent_id: u64) -> u64 {
 
 /// 将跨语言 Strategy API v1 的单笔 intent 转为统一核心订单。
 /// 该转换只负责语义翻译，订单仍必须经过 RiskExecutionContext、OMS 和 Venue。
-///
 /// `round_scope` 是这一轮的标识：worker 链与回测链都传 `output.request_id`（即调度器的
 /// run id，实时作业按 BarFrame 指纹幂等）。非空不用在这里再查一遍——
 /// `StrategyContractOutput::validate_for` 要求 output 原样回显 input 的 request_id，而
 /// `StrategyContractInput::validate` 已经拒绝空值。
+#[allow(clippy::too_many_arguments)] // Keep each versioned intent field and execution context explicit at the kernel boundary.
 pub(crate) fn build_strategy_order_from_contract_intent(
     config: &RuntimeConfig,
     strategy_id: &str,
@@ -541,6 +541,7 @@ pub(crate) fn build_strategy_order_from_contract_intent(
     Ok(order)
 }
 
+#[allow(clippy::too_many_arguments)] // Signal identity, target, and frozen market context remain individually auditable.
 pub(crate) fn build_strategy_order_with_signal(
     config: &RuntimeConfig,
     strategy_id: &str,
@@ -634,7 +635,6 @@ pub(crate) fn build_strategy_order_with_signal(
     let margin_mode = config_margin_mode(config);
     let allow_short = strategy_allows_short(config, margin_mode);
     let leverage = config.strategy.leverage.unwrap_or(1);
-    let mut order = order;
     if product != TradingProduct::Spot
         || config.strategy.product.is_some()
         || config.strategy.margin_mode.is_some()

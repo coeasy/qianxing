@@ -7,6 +7,7 @@ const ALGO_PAGE_SIZE: usize = 32;
 /// The market cursor is committed before matching so a worker crash cannot replay
 /// one quote into a partially filled order; a quote may be skipped on that crash,
 /// which is acceptable for Paper simulation and never used to certify Live fills.
+#[allow(clippy::too_many_arguments)] // Worker, durable cursor, event pipeline, and run clock are separate lifecycle inputs.
 pub(crate) fn run_paper_algo_execution_cycle(
     config: &RuntimeConfig,
     config_path: &Path,

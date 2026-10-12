@@ -9083,6 +9083,22 @@ def module_mount_check() -> None:
             mounted = set(declared[directory])
             if sidecar.is_file():
                 mounted |= module_declarations(sidecar)
+            else:
+                # An inline module may own a physical side-directory through #[path].
+                # Rust resolves those paths relative to the inline module's synthetic
+                # directory (for example backtest/test_cases/../tests), so recognize
+                # its explicitly declared children even when there is no test_cases.rs.
+                inline_owner = re.compile(rf"\bmod\s+{re.escape(directory.name)}\s*\{{")
+                for parent_source in directory.parent.glob("*.rs"):
+                    source = parent_source.read_text(encoding="utf-8")
+                    if inline_owner.search(source):
+                        mounted.update(
+                            re.findall(
+                                r"#\[path\s*=\s*\"[^\"]+\"\]\s*mod\s+(\w+)\s*;",
+                                source,
+                                re.MULTILINE,
+                            )
+                        )
             for path in files:
                 if path.stem in ("lib", "main", "build", "mod"):
                     continue

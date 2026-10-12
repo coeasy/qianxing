@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 
 /// 定点换算：基点 = 万分之一。
 const BPS_SCALE: i128 = 10_000;
+type RankedTrainingCandidate = (usize, Option<String>, BTreeMap<String, i128>, i32);
 /// 防止极小步长和巨大数据集制造无界报告、耗尽内存或把取消延迟到分折结束。
 pub const MAX_EXPERIMENT_FOLDS: usize = 10_000;
 
@@ -246,7 +247,7 @@ pub(super) fn evaluate_out_of_sample(
         }
         // 选参只看训练窗。并列时取序号最小的候选——排序必须确定，否则同一份 spec
         // 在两次运行里会选出不同的参数，OOS 分数也就不可复算。
-        let mut best: Option<(usize, Option<String>, BTreeMap<String, i128>, i32)> = None;
+        let mut best: Option<RankedTrainingCandidate> = None;
         for candidate in candidates {
             let Some((_, values)) = series
                 .iter()

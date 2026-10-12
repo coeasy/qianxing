@@ -53,7 +53,10 @@ fn protective_exit_backtest_is_identical_across_cli_http_and_python_native() {
     )
     .expect("summary JSON");
     assert!(summary["protective_exit_fills"].as_array().is_some());
-    assert!(summary["protective_exit_fills"].as_array().unwrap().len() > 0);
+    assert!(!summary["protective_exit_fills"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     for fill in summary["protective_exit_fills"].as_array().unwrap() {
         assert_eq!(fill["reason"], "stop_loss");
         assert!(fill["fill_ts"].as_u64().unwrap() > fill["trigger_ts"].as_u64().unwrap());

@@ -8,20 +8,24 @@ use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, StrategyContext};
 use qx_xingban::{NativeBarStrategy, PortfolioStrategySlot};
 use std::collections::BTreeMap;
 
+pub(super) struct StrategySlotContext<'a> {
+    pub priority: i32,
+    pub reserved_capital_raw: i128,
+    pub instrument: &'a InstrumentId,
+    pub account_id: &'a str,
+    pub currency: &'a str,
+    pub data_fingerprint: &'a str,
+    pub as_of: u64,
+}
+
 pub(super) fn build_strategy_slot(
     spec: &BuiltinStrategySpec,
-    priority: i32,
-    reserved_capital_raw: i128,
-    instrument: &InstrumentId,
-    account_id: &str,
-    currency: &str,
-    data_fingerprint: &str,
-    as_of: u64,
+    context: StrategySlotContext<'_>,
 ) -> Result<PortfolioStrategySlot, AppError> {
     let strategy_config = BuiltinStrategyConfig::new(
         spec.kind,
         spec.strategy_id.clone(),
-        instrument.clone(),
+        context.instrument.clone(),
         Quantity::from_raw(spec.quantity_raw),
     )
     .map_err(invalid_strategy)?;
@@ -42,13 +46,13 @@ pub(super) fn build_strategy_slot(
     let strategy_context = StrategyContext {
         strategy_id: strategy_config.strategy_id.clone(),
         strategy_version: strategy_config.strategy_version.clone(),
-        account_id: account_id.to_string(),
-        venue_id: instrument.venue.to_string(),
-        data_fingerprint: data_fingerprint.to_string(),
-        as_of,
+        account_id: context.account_id.to_string(),
+        venue_id: context.instrument.venue.to_string(),
+        data_fingerprint: context.data_fingerprint.to_string(),
+        as_of: context.as_of,
         positions: BTreeMap::new(),
-        cash: BTreeMap::from([(currency.to_string(), reserved_capital_raw)]),
-        available_margin_raw: Some(reserved_capital_raw),
+        cash: BTreeMap::from([(context.currency.to_string(), context.reserved_capital_raw)]),
+        available_margin_raw: Some(context.reserved_capital_raw),
         risk_state: "backtest".into(),
     };
     let strategy_id = strategy_config.strategy_id.clone();
@@ -60,9 +64,9 @@ pub(super) fn build_strategy_slot(
         .initialize()
         .map_err(|error| AppError::from_qx_error(&error))?;
     Ok(PortfolioStrategySlot::native(
-        priority,
+        context.priority,
         strategy_id,
-        reserved_capital_raw,
+        context.reserved_capital_raw,
         native,
     ))
 }

@@ -1,5 +1,6 @@
 use super::super::*;
 
+#[allow(clippy::too_many_arguments)] // These are the explicit data-root, runtime, identity, and intent inputs of one order build.
 pub(crate) fn build_strategy_contract_intent_order(
     root: &Path,
     config: &RuntimeConfig,
@@ -27,6 +28,7 @@ pub(crate) fn build_strategy_contract_intent_order(
     )
 }
 
+#[allow(clippy::too_many_arguments)] // Keep target, account context, and runtime identity visible at the worker boundary.
 pub(crate) fn build_strategy_target_order(
     config: &RuntimeConfig,
     runtime_config_path: &Path,
