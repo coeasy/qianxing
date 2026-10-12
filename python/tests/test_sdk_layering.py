@@ -263,6 +263,7 @@ class TopLevelStabilityTest(unittest.TestCase):
         )
         self.assertNotIn("split_plan", legacy.to_dict())
         self.assertNotIn("baselines", legacy.to_dict())
+        self.assertNotIn("strategy_kinds", legacy.to_dict())
 
         spec = RunExperimentSpec(
             experiment_id="walk-forward-grid",
@@ -274,6 +275,16 @@ class TopLevelStabilityTest(unittest.TestCase):
         self.assertEqual(spec.to_dict()["split_plan"]["step_bars"], 10)
         self.assertEqual(spec.to_dict()["baselines"], ["buy-and-hold", "zero-signal"])
 
+        strategy_selection = RunExperimentSpec(
+            experiment_id="classic-selection",
+            base=base,
+            parameter_space=(),
+            strategy_kinds=("ema_cross", "sma_cross"),
+        )
+        self.assertEqual(
+            strategy_selection.to_dict()["strategy_kinds"], ["ema_cross", "sma_cross"]
+        )
+
         result = RunExperimentResult.from_dict(
             {
                 "schema_version": 1,
@@ -283,7 +294,15 @@ class TopLevelStabilityTest(unittest.TestCase):
                 "succeeded_candidates": 1,
                 "failed_candidates": 0,
                 "spec_fingerprint": "abc",
-                "candidates": [],
+                "candidates": [
+                    {
+                        "ordinal": 1,
+                        "strategy_kind": "ema_cross",
+                        "parameters": {},
+                        "outcome": None,
+                        "error": "candidate unavailable",
+                    }
+                ],
                 "comparison": None,
                 "artifact_path": "experiment.json",
                 "out_of_sample": {
@@ -308,6 +327,7 @@ class TopLevelStabilityTest(unittest.TestCase):
             }
         )
         self.assertIsInstance(result.out_of_sample, ExperimentOutOfSampleReport)
+        self.assertEqual(result.candidates[0].strategy_kind, "ema_cross")
         self.assertEqual(result.out_of_sample.folds[0].test_range, (20, 30))
         self.assertIsInstance(result.baselines[0], ExperimentBaselineReport)
         self.assertEqual(result.baselines[0].return_bps, 100)

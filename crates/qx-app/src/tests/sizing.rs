@@ -56,6 +56,7 @@ fn parameter_experiment_sweeps_kelly_fraction_with_versioned_sizing_identity() {
             name: "target_kelly_fraction_bps".into(),
             values: vec![2_500, 5_000],
         }],
+        strategy_kinds: Vec::new(),
         split_plan: None,
         baselines: Vec::new(),
     };

@@ -17,4 +17,5 @@ mod multi_leg_experiment;
 mod run_handles;
 mod sizing;
 mod spec_contract;
+mod strategy_selection;
 mod use_cases;

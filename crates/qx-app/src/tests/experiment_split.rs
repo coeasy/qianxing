@@ -57,6 +57,7 @@ fn spec_with(
             name: "fast_window".into(),
             values: vec![1, 2],
         }],
+        strategy_kinds: Vec::new(),
         split_plan,
         baselines,
     }

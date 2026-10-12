@@ -655,13 +655,13 @@ def main() -> int:
 
     executed(
         "python_builtin_strategy_catalog",
-        "Python SDK 十大经典策略（共享 Rust 回测内核）",
+        "Python SDK 十种经典策略快速选择与批量对比（共享 Rust 回测内核）",
         "python/tests/test_app_use_cases.py",
         ["-m", "unittest", "python.tests.test_app_use_cases.AppUseCaseTests.test_ten_classic_builtin_strategies_run_through_python_rust_kernel"],
         r"(Ran 1 test)",
         env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
-        extra="strategies=10 fills>0 result_hash=16-hex for each strategy",
-        evidence=["python/tests/test_app_use_cases.py", "crates/qx-strategy/src/builtin.rs", "crates/qx-python/src/lib.rs"],
+        extra="single_leg_strategy_kinds=10 candidates=10 stable_order=true shared_comparison=true",
+        evidence=["python/tests/test_app_use_cases.py", "crates/qx-app/src/tests/strategy_selection.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "crates/qx-api/src/app_strategy_selection_tests.rs", "cpp/tests/app_client_smoke.cpp", "crates/qx-strategy/src/builtin.rs", "crates/qx-python/src/lib.rs"],
         command_prefix="python",
     )
 

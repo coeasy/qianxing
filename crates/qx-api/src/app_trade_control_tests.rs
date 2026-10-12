@@ -5,6 +5,9 @@ use std::collections::BTreeMap;
 #[path = "app_multi_leg_tests.rs"]
 mod app_multi_leg_tests;
 
+#[path = "app_strategy_selection_tests.rs"]
+mod app_strategy_selection_tests;
+
 #[test]
 fn paper_and_live_app_routes_validate_then_enqueue_through_the_existing_control_plane() {
     let service = ApiService::with_policy(

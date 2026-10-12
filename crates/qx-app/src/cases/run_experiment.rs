@@ -30,6 +30,7 @@ use crate::{
 };
 use qx_core::Fnv1a;
 use qx_datastruct::BarFrame;
+use qx_strategy::BuiltinStrategyKind;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -57,6 +58,10 @@ pub struct RunExperimentSpec {
     pub experiment_id: String,
     pub base: BacktestSpec,
     pub parameter_space: Vec<ExperimentParameterSpace>,
+    /// Optional strategy-selection dimension for a same-dataset comparison. When empty, the
+    /// legacy single-strategy experiment shape and fingerprint remain unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strategy_kinds: Vec<BuiltinStrategyKind>,
     /// 可选的数据切分计划。`None` = 不切分。
     ///
     /// `skip_serializing_if` 是**刻意的**：`spec_fingerprint` 是 `to_json()` 的哈希，
@@ -81,7 +86,9 @@ impl RunExperimentSpec {
     }
 
     pub fn to_json(&self) -> Result<String, AppError> {
-        serde_json::to_string(self).map_err(|error| {
+        let mut canonical = self.clone();
+        canonical.strategy_kinds.sort_by_key(|kind| kind.name());
+        serde_json::to_string(&canonical).map_err(|error| {
             AppError::new(
                 AppErrorCategory::InternalInvariant,
                 format!("RunExperimentSpec 序列化失败: {error}"),
@@ -100,11 +107,62 @@ impl RunExperimentSpec {
             ));
         }
         validate_experiment_id(&self.experiment_id)?;
+        // Validate all candidate kinds against the shared parameter dimensions before any run
+        // starts. Two-leg kinds belong to RunMultiLegExperimentSpec and must not be silently
+        // routed through the single-frame Bar engine.
+        let strategy_selection = !self.strategy_kinds.is_empty();
+        if strategy_selection && self.split_plan.is_some() {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "strategy_kinds 与 split_plan 暂不组合使用；需逐策略做独立样本外实验",
+            ));
+        }
+        let mut kinds = if strategy_selection {
+            self.strategy_kinds.clone()
+        } else {
+            vec![self.base.strategy.kind]
+        };
+        kinds.sort_by_key(|kind| kind.name());
+        let mut seen_kinds = BTreeSet::new();
+        if kinds.iter().any(|kind| !seen_kinds.insert(kind.name())) {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "strategy_kinds 不得重复",
+            ));
+        }
+        if kinds.iter().any(|kind| kind.needs_reference_leg()) {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "双腿策略必须使用 RunMultiLegExperimentSpec 和双数据集",
+            ));
+        }
+        // The strategy-only quick-selection path is useful without numeric knobs. Preserve the
+        // old requirement that a legacy parameter experiment declares at least one dimension.
+        let per_kind = if self.parameter_space.is_empty() && strategy_selection {
+            1
+        } else {
+            let mut maximum = 0;
+            for kind in &kinds {
+                let mut strategy = self.base.strategy.clone();
+                strategy.kind = *kind;
+                maximum = validate_grid(&strategy, &self.parameter_space)?;
+            }
+            maximum
+        };
+        let total = per_kind
+            .checked_mul(kinds.len())
+            .ok_or_else(|| AppError::new(AppErrorCategory::InvalidInput, "实验候选数溢出"))?;
+        if total > MAX_EXPERIMENT_CANDIDATES {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("实验最多接受 {MAX_EXPERIMENT_CANDIDATES} 个候选组合"),
+            ));
+        }
         // Validate stable base fields without rejecting candidate-specific values.
         let mut base = self.base.clone();
+        base.strategy.kind = kinds[0];
         base.strategy = normalized_strategy(&base.strategy, &self.parameter_space);
         base.validate()?;
-        let total = validate_grid(&self.base.strategy, &self.parameter_space)?;
         if let Some(plan) = &self.split_plan {
             plan.validate()?;
         }
@@ -133,6 +191,8 @@ impl RunExperimentSpec {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExperimentCandidateResult {
     pub ordinal: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_kind: Option<String>,
     pub parameters: BTreeMap<String, i128>,
     pub outcome: Option<BacktestOutcome>,
     /// Stable AppError JSON for a failed candidate; a failure does not hide other candidates.
@@ -258,16 +318,36 @@ fn run_experiment_inner(
     } else {
         None
     };
-    let combinations = expand_grid(&spec.parameter_space);
-    debug_assert_eq!(combinations.len(), total);
+    let mut kinds = if spec.strategy_kinds.is_empty() {
+        vec![spec.base.strategy.kind]
+    } else {
+        spec.strategy_kinds.clone()
+    };
+    kinds.sort_by_key(|kind| kind.name());
+    let combinations = if spec.parameter_space.is_empty() {
+        vec![BTreeMap::new()]
+    } else {
+        expand_grid(&spec.parameter_space)
+    };
+    debug_assert_eq!(combinations.len() * kinds.len(), total);
 
     let mut candidates = Vec::with_capacity(total);
-    for (index, parameters) in combinations.into_iter().enumerate() {
+    for (index, (kind, parameters)) in kinds
+        .into_iter()
+        .flat_map(|kind| {
+            combinations
+                .iter()
+                .cloned()
+                .map(move |parameters| (kind, parameters))
+        })
+        .enumerate()
+    {
         if cancellation.is_some_and(CancellationToken::is_cancelled) {
             return Ok(None);
         }
         let ordinal = index + 1;
         let mut candidate = spec.base.clone();
+        candidate.strategy.kind = kind;
         candidate.run_id = format!("{}-{ordinal:04}", spec.experiment_id);
         candidate.output_dir = root
             .join(format!("run-{ordinal:04}"))
@@ -284,12 +364,14 @@ fn run_experiment_inner(
         candidates.push(match outcome {
             Ok(outcome) => ExperimentCandidateResult {
                 ordinal,
+                strategy_kind: (!spec.strategy_kinds.is_empty()).then_some(kind.name().to_string()),
                 parameters,
                 outcome: Some(outcome),
                 error: None,
             },
             Err(error) => ExperimentCandidateResult {
                 ordinal,
+                strategy_kind: (!spec.strategy_kinds.is_empty()).then_some(kind.name().to_string()),
                 parameters,
                 outcome: None,
                 error: Some(error.to_json()),

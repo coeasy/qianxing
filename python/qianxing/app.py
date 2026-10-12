@@ -430,6 +430,7 @@ class RunExperimentSpec:
     schema_version: int = 1
     split_plan: ExperimentSplitPlan | None = None
     baselines: tuple[Literal["buy-and-hold", "zero-signal", "none"], ...] = ()
+    strategy_kinds: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -444,6 +445,8 @@ class RunExperimentSpec:
             value["split_plan"] = self.split_plan.to_dict()
         if self.baselines:
             value["baselines"] = list(self.baselines)
+        if self.strategy_kinds:
+            value["strategy_kinds"] = sorted(self.strategy_kinds)
         return value
 
 
@@ -529,6 +532,7 @@ class ExperimentCandidateResult:
     parameters: dict[str, int]
     outcome: BacktestOutcome | None
     error: str | None
+    strategy_kind: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExperimentCandidateResult":
@@ -538,6 +542,7 @@ class ExperimentCandidateResult:
             parameters=value["parameters"],
             outcome=BacktestOutcome.from_dict(raw_outcome) if raw_outcome is not None else None,
             error=value.get("error"),
+            strategy_kind=value.get("strategy_kind"),
         )
 
 

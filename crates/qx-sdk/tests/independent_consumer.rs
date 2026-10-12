@@ -21,6 +21,9 @@ use qx_sdk::{
 };
 use std::path::{Path, PathBuf};
 
+#[path = "consumer/strategy_selection.rs"]
+mod strategy_selection_consumer;
+
 /// 仓库根：`crates/qx-sdk/tests/<file>` 往上三层。
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -465,6 +468,7 @@ fn the_rust_sdk_facade_executes_walk_forward_and_baseline_comparison() {
             name: "fast_window".into(),
             values: vec![2, 3],
         }],
+        strategy_kinds: Vec::new(),
         split_plan: Some(ExperimentSplitPlan {
             train_bars: 30,
             test_bars: 10,

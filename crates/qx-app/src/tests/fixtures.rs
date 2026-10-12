@@ -108,6 +108,7 @@ pub(super) fn experiment_spec(
             name: "fast_window".into(),
             values: fast_windows,
         }],
+        strategy_kinds: Vec::new(),
         split_plan: None,
         baselines: Vec::new(),
     }

@@ -75,8 +75,8 @@ use_cases:
     error_categories: "AppErrorCategory 八类；数据指纹或标的不一致为 Conflict"
     capability_level: "R"
   - name: run_experiment
-    input_schema: "RunExperimentSpec v1（Bar BacktestSpec + fast_window/slow_window/period/threshold_bps/quantity_raw 参数笛卡尔网格；最多 256 候选）"
-    output_schema: "RunExperimentResult v1（逐候选结果/错误 + CompareRunsResult + 实验摘要产物）"
+    input_schema: "RunExperimentSpec v1（Bar BacktestSpec + fast_window/slow_window/period/threshold_bps/quantity_raw 参数笛卡尔网格；可选 strategy_kinds 快速选择单腿内置策略；与 split_plan 互斥；最多 256 候选）"
+    output_schema: "RunExperimentResult v1（逐候选结果/错误/策略 kind + CompareRunsResult + 实验摘要产物）"
     capability: "RESEARCH"
     idempotency_key: "experiment_id + 规格指纹；不匹配的既有实验在启动候选前拒绝"
     cancellation: "同步用例无取消点；RunExperimentSpec::start 在候选之间与候选 Bar 撮合循环协作取消，不发布部分实验报告"

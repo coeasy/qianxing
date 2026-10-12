@@ -15,7 +15,8 @@ int main() {
         return qianxing::AppResponse{200, R"({"runs":[]})"};
     });
 
-    const std::string spec = R"({"schema_version":1,"experiment_id":"smoke"})";
+    const std::string spec =
+        R"({"schema_version":1,"experiment_id":"smoke","strategy_kinds":["ema_cross","sma_cross"]})";
     const std::string sized_backtest_spec =
         R"({"schema_version":1,"run_id":"sized","instrument":"BTCUSDT.BINANCE","bars_path":"bars.json","settlement_currency":"USDT","initial_cash_raw":1000000000000,"seed":1,"output_dir":"runs","account_id":"acct.cpp-sdk","strategy":{"kind":"sma_cross","strategy_id":"sized-sma","quantity_raw":1000000000,"target_volatility_bps":250,"fast_window":2,"slow_window":4}})";
     const std::string depth_spec =
@@ -24,6 +25,7 @@ int main() {
     assert(response.ok());
     assert(response.body == R"({"runs":[]})");
     assert(observed_path == "/app/run-experiment");
+    assert(observed_body == spec);
 
     const auto depth = client.run_depth_backtest(depth_spec);
     assert(depth.ok());

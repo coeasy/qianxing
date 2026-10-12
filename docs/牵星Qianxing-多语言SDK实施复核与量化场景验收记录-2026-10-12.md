@@ -67,6 +67,14 @@ Python 十策略证据：
 
 因此本轮完成了共享 Paper 算法单链路、Python 十策略验证和场景证据修复，但目前证据不足以将整套多语言 SDK 或 Live 交易宣布为发布就绪。应继续保留上述阻塞项及 capability matrix 的限制状态。
 
+## 6. 2026-10-13 继续实现：SDK 多策略研究候选选择
+
+- `RunExperimentSpec.strategy_kinds` 已进入共享 Rust `qx-app` 应用用例，可在同一份数据和基础策略参数上选择多种单腿内置策略，并由原有 Rust 回测内核执行、汇总和比较；每个候选返回策略 kind，排序和实验指纹按规范化 kind 顺序保持确定性。
+- 选择器支持不带数值参数维度的策略快速比较，并与现有参数维度组合；候选总数受 256 上限约束。重复 kind、双腿策略和当前尚无明确 OOS 语义的 `strategy_kinds + split_plan` 输入会显式拒绝，不会悄悄退化到单策略回测。
+- Rust SDK 独立消费者与 API `/app/run-experiment` 路由有覆盖；Python 类型化 SDK、原生 Rust 扩展、远端 AppClient 都序列化相同字段；C++ HTTP 客户端以既有通用 JSON 载荷转发同一契约。Python 全量单元测试 124 项通过（1 项因环境跳过）；专项验证十种经典策略均返回成功候选并进入统一比较。
+- `cargo fmt --all -- --check`、`git diff --check` 通过；本地 Cargo Rust 包/SDK/API 测试在本轮代码改动后未重跑之前已覆盖的测试仍以此前记录为准，本轮新增测试需在提交后执行场景探针。完整场景探针中其余本地场景通过；Rust 仓外 Git 消费者需要从 GitHub 获取固定提交，系统 Cargo 缓存拒绝写入，仓库内隔离缓存的联网尝试未能完成，因此当前将该项保留为未执行，不计作通过。
+- 该选择器解决的是同一数据集上的独立研究候选批量运行，不代表多策略共享资金下的组合调度，也不构成 Python/Rust/C++ 同时具备本地原生 API 的证明。多账户统一资金竞争、组合风险/账簿、组合回测与 Paper/Live 工作流、真实交易所认证仍未整体贯通；本机没有 C++ 编译器，C++ 尚无编译验收证据。
+
 ## 5. 2026-10-13 继续复核：门禁与核心 SDK 用例
 
 - 重新运行 `python tools/quant_scenario_probe.py`：31 项本地场景全部执行通过，0 项缺失；1 项多交易所 Live 场景因 `ccxt` 运行依赖与 testnet 凭据缺失保持 blocked。结果更新到 `maturity/quant_scenarios.yaml`。场景包括十种经典策略、多语言策略、Bar/深度/双腿回测、参数对比、Paper 算法执行、风险平价与资金规划等。

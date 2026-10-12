@@ -104,6 +104,29 @@ outcome = run_backtest(spec)
 assert verify_run(outcome).verified
 ```
 
+Run a quick, bounded comparison across the classic single-instrument strategies with the same
+frozen BarFrame. Strategy candidates are canonically ordered by kind and ranking execute in Rust;
+`strategy_kinds` is optional and keeps old experiment JSON unchanged when omitted. Two-leg arbitrage kinds must use the multi-leg
+experiment contract. Strategy-kind selection and walk-forward `split_plan` are currently separate
+experiment modes, so the SDK rejects a request that combines them.
+
+```python
+from qianxing import ExperimentParameterSpace, RunExperimentSpec, list_builtin_strategies, run_experiment
+
+single_leg_kinds = tuple(
+    item.name for item in list_builtin_strategies() if not item.requires_reference_leg
+)
+selection = RunExperimentSpec(
+    experiment_id="classic-strategy-scan-001",
+    base=spec,
+    parameter_space=(),
+    strategy_kinds=single_leg_kinds,
+)
+result = run_experiment(selection)
+for candidate in result.candidates:
+    print(candidate.strategy_kind, candidate.outcome.return_bps if candidate.outcome else candidate.error)
+```
+
 For server-managed runs, use the same typed spec with `AppClient`; the API executes the exact same Rust use case and the returned remote handle polls the durable run registry:
 
 ```python

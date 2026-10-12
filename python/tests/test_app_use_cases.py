@@ -602,7 +602,15 @@ class AppUseCaseTests(unittest.TestCase):
         ) as open_url:
             client = AppClient("https://localhost")
             for method, _route, is_start in cases:
-                result = getattr(client, method)({"schema_version": 1})
+                payload = {"schema_version": 1}
+                if method in {"run_experiment", "start_experiment"}:
+                    payload.update({
+                        "experiment_id": "remote-classic-selection",
+                        "base": self._spec("unused-remote-selection", self.output_dir),
+                        "parameter_space": [],
+                        "strategy_kinds": ["ema_cross", "sma_cross"],
+                    })
+                result = getattr(client, method)(payload)
                 self.assertEqual(isinstance(result, RemoteRunHandle), is_start)
 
         requests = [call.args[0] for call in open_url.call_args_list]
@@ -610,6 +618,9 @@ class AppUseCaseTests(unittest.TestCase):
         for request, (_method, route, _is_start) in zip(requests, cases):
             self.assertEqual(request.method, "POST")
             self.assertEqual(request.full_url, f"https://localhost{route}")
+        for index in (8, 9):
+            payload = json.loads(open_url.call_args_list[index].args[0].data)
+            self.assertEqual(payload["strategy_kinds"], ["ema_cross", "sma_cross"])
 
     def _spec(self, run_id: str, output_dir: Path, bars: str | None = None) -> dict:
         return {
@@ -689,6 +700,46 @@ class AppUseCaseTests(unittest.TestCase):
                 self.assertEqual(outcome["run_id"], f"py-{kind}")
                 self.assertGreater(outcome["fills"], 0, kind)
                 self.assertEqual(len(outcome["result_hash"]), 16)
+
+        # The same selector also runs the whole classic set as one Rust-owned parameter
+        # experiment and returns the shared comparison; it does not loop in Python to rank runs.
+        from qianxing import (
+            BacktestSpec,
+            BuiltinStrategySpec,
+            RunExperimentSpec,
+            run_experiment,
+        )
+
+        selected = run_experiment(
+            RunExperimentSpec(
+                experiment_id="py-classic-strategy-selection",
+                base=BacktestSpec(
+                    run_id="unused-classic-selection",
+                    instrument="BTCUSDT.BINANCE",
+                    bars_path=str(bars_path),
+                    settlement_currency="USDT",
+                    initial_cash_raw=100_000_000_000_000,
+                    output_dir=str(self.output_dir / "classic-selection"),
+                    strategy=BuiltinStrategySpec(
+                        kind="sma_cross",
+                        strategy_id="py-classic-selection",
+                        fast_window=5,
+                        slow_window=20,
+                        period=14,
+                        threshold_bps=100,
+                    ),
+                ),
+                parameter_space=(),
+                strategy_kinds=builtin_names,
+            )
+        )
+        self.assertEqual(selected.total_candidates, len(builtin_names))
+        self.assertEqual(selected.succeeded_candidates, len(builtin_names))
+        self.assertEqual(
+            [candidate.strategy_kind for candidate in selected.candidates],
+            sorted(builtin_names),
+        )
+        self.assertEqual(len(selected.comparison.runs), len(builtin_names))
 
     def test_the_shared_use_cases_run_end_to_end_from_python(self):
         self._require()
@@ -982,6 +1033,49 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertIsNotNone(async_result)
         self.assertEqual(async_result.completed_candidates, 2)
         self.assertIsNone(handle.result())
+
+    def test_typed_python_sdk_quick_selects_classic_strategies_through_rust_experiment(self):
+        self._require()
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import (
+            BacktestSpec,
+            BuiltinStrategySpec,
+            RunExperimentSpec,
+            run_experiment,
+        )
+
+        kinds = (
+            "sma_cross", "ema_cross", "macd", "rsi", "bollinger",
+            "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend",
+        )
+        result = run_experiment(
+            RunExperimentSpec(
+                experiment_id="py-classic-strategy-quick-select",
+                base=BacktestSpec(
+                    run_id="unused-classic-selection",
+                    instrument="BTCUSDT.BINANCE",
+                    bars_path=str(self.root / "deploy" / "qianxing.bar-frame.example.json"),
+                    settlement_currency="USDT",
+                    initial_cash_raw=100_000_000_000_000,
+                    output_dir=str(self.output_dir / "classic-selection"),
+                    strategy=BuiltinStrategySpec(
+                        kind="sma_cross",
+                        strategy_id="py-classic-selection",
+                        fast_window=2,
+                        slow_window=4,
+                    ),
+                ),
+                parameter_space=(),
+                strategy_kinds=kinds,
+            )
+        )
+        self.assertEqual(result.total_candidates, len(kinds))
+        self.assertEqual(result.succeeded_candidates, len(kinds))
+        self.assertEqual(
+            [candidate.strategy_kind for candidate in result.candidates], sorted(kinds)
+        )
+        self.assertTrue(all(candidate.outcome is not None for candidate in result.candidates))
+        self.assertEqual(len(result.comparison.runs), len(kinds))
 
     def test_l1_tick_and_typed_sdk_use_the_shared_rust_application_kernel(self):
         self._require()
