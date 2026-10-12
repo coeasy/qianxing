@@ -2,10 +2,12 @@
 
 use qx_sdk::{
     BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability, Client, DataKind,
-    DataProvider, DataQuery, DataSourceId, ProviderCapability, ProviderError, ProviderErrorClass,
-    ProviderPayload, ProviderRegistry, ProviderResult, RawRecord,
+    DataProvider, DataQuery, DataRequest, DataRequirements, DataSourceId, ProviderCapability,
+    ProviderError, ProviderErrorClass, ProviderPayload, ProviderRegistry, ProviderResult,
+    RawRecord,
 };
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 fn capability(provider_id: &str, priority: u32) -> ProviderCapability {
     ProviderCapability {
@@ -28,6 +30,26 @@ fn capability(provider_id: &str, priority: u32) -> ProviderCapability {
 
 mod tests {
     use super::*;
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new(label: &str) -> Self {
+            let path = std::env::current_dir()
+                .unwrap()
+                .join("target")
+                .join(format!("{label}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
     struct FixtureProvider {
         capability: ProviderCapability,
@@ -125,8 +147,19 @@ mod tests {
             as_of: Some(12),
         };
 
-        assert_eq!(registry.candidates(&query).unwrap(), ["primary", "backup"]);
-        let result = registry.fetch_with_failover(&query).unwrap();
+        let request = DataRequest::new(
+            query.clone(),
+            DataRequirements {
+                required_auth_scope: Some("public".into()),
+                require_realtime: false,
+                max_staleness_ms: None,
+            },
+        );
+        assert_eq!(
+            registry.candidates_for_request(&request).unwrap(),
+            ["primary", "backup"]
+        );
+        let result = registry.fetch_request(&request).unwrap();
         assert_eq!(result.provider_id, "backup");
         assert_eq!(result.retry_chain, ["primary", "backup"]);
         assert_eq!(result.records[0].source, DataSourceId::new("backup"));
@@ -180,16 +213,14 @@ mod tests {
         };
         let result = registry.fetch_with_failover(&query).unwrap();
         let frame = result.to_bar_frame(&query).unwrap();
-        let root =
-            std::env::temp_dir().join(format!("qx-sdk-provider-backtest-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let bars_path = root.join("provider-bars.json");
+        let root = TestDirectory::new("qx-sdk-provider-backtest");
+        let bars_path = root.0.join("provider-bars.json");
         std::fs::write(&bars_path, frame.to_json()).unwrap();
 
         let mut strategy = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "provider-sma");
         strategy.fast_window = 2;
         strategy.slow_window = 3;
-        let output_dir = root.join("run");
+        let output_dir = root.0.join("run");
         let spec = BacktestSpec::new(
             "provider-bars-run",
             "BTCUSDT.BINANCE",

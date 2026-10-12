@@ -509,7 +509,7 @@ capabilities:
       - crates/qx-provider/src/lib.rs
       - crates/qx-cli/src/ecosystem_smoke.rs
     limitations:
-      - provider_rate_limit_is_enforced_but_capability_selection_is_not_end_to_end：`rate_limit_per_second` 已由 `crates/qx-provider/src/registry.rs` 的逐 Provider 请求闸门执行，并由 `cargo test -p qx-provider --offline` 覆盖并发槽位与纳秒取整；但 `auth_scope` 没有对应的查询授权上下文，`freshness_seconds` 与 `realtime` 也没有定义一致的查询/数据时钟语义，当前不能安全地拿它们过滤候选或拒绝历史行情。Python SDK 的 `ProviderRegistry` 已贯通 Bar/Quote 数据标准化并进入 Bar/Depth 回测入口；不过该接入没有覆盖所有 CLI/服务端回测入口，实时行情到 Paper/Live 的生产链也未接入同一份能力表，因此多源数据能力还不能认定为端到端完成（V13 R7 扫描B，2026-10-13 复核）
+      - provider_selection_is_operational_but_not_end_to_end：`rate_limit_per_second` 由 `crates/qx-provider/src/registry.rs` 的逐 Provider 并发请求闸门执行；新增的 `DataRequest`/`DataRequirements` 将 `auth_scope` 精确匹配、实时源筛选与 `as_of` 毫秒新鲜度校验接入同一选择/结果校验链。Python SDK 已把这些要求透传到 Rust 注册表，并贯通 Bar/Quote 数据标准化与 Bar/Depth 回测入口；不过该接入没有覆盖所有 CLI/服务端回测入口，实时行情到 Paper/Live 的生产链也未接入同一份能力表，因此多源数据能力还不能认定为端到端完成（V13 R7 扫描B，2026-10-13 复核）
 
   ashare_corporate_action_ledger:
     implementation: true

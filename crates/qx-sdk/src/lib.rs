@@ -69,9 +69,9 @@ pub use qx_app::{AppAction, AppError, AppErrorCategory, AppRetry};
 // DataProvider 的公开签名直接使用 RawRecord，因此同时重导出来源身份和记录类型；
 // 独立消费者只依赖 qx-sdk 即可注册数据源、做确定性主备选择并保留血缘。
 pub use qx_provider::{
-    DataKind, DataProvider, DataQuery, DataSourceId, ProviderCapability, ProviderError,
-    ProviderErrorClass, ProviderPayload, ProviderRegistry, ProviderResult, RawRecord,
-    RegistryError, PROVIDER_RESULT_SCHEMA_VERSION,
+    DataKind, DataProvider, DataQuery, DataRequest, DataRequirements, DataSourceId,
+    ProviderCapability, ProviderError, ProviderErrorClass, ProviderPayload, ProviderRegistry,
+    ProviderResult, RawRecord, RegistryError, PROVIDER_RESULT_SCHEMA_VERSION,
 };
 
 // —— §6.1「spec 构造校验」——

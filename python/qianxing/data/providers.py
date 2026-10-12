@@ -44,6 +44,9 @@ class ProviderQuery:
     adjustment: str = "none"
     quality_policy: str = "strict"
     as_of: int | None = None
+    required_auth_scope: str | None = None
+    require_realtime: bool = False
+    max_staleness_ms: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)

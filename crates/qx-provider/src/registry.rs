@@ -1,4 +1,7 @@
-use super::{DataProvider, DataQuery, ProviderError, ProviderErrorClass, ProviderResult};
+use super::{
+    DataProvider, DataQuery, DataRequest, DataRequirements, ProviderError, ProviderErrorClass,
+    ProviderResult,
+};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -105,10 +108,25 @@ impl ProviderRegistry {
 
     pub fn candidates(&self, query: &DataQuery) -> Result<Vec<String>, RegistryError> {
         query.validate().map_err(RegistryError::Provider)?;
+        self.candidates_for_request(&DataRequest::new(
+            query.clone(),
+            DataRequirements::default(),
+        ))
+    }
+
+    pub fn candidates_for_request(
+        &self,
+        request: &DataRequest,
+    ) -> Result<Vec<String>, RegistryError> {
+        request
+            .query
+            .validate()
+            .and_then(|()| request.requirements.validate_for(&request.query))
+            .map_err(RegistryError::Provider)?;
         let mut candidates: Vec<_> = self
             .providers
             .values()
-            .filter(|registered| registered.provider.capability().matches(query))
+            .filter(|registered| registered.provider.capability().matches_request(request))
             .map(|registered| registered.provider.capability().clone())
             .collect();
         candidates.sort_by(|a, b| {
@@ -122,7 +140,14 @@ impl ProviderRegistry {
     }
 
     pub fn fetch_with_failover(&self, query: &DataQuery) -> Result<ProviderResult, RegistryError> {
-        let candidates = self.candidates(query)?;
+        self.fetch_request(&DataRequest::new(
+            query.clone(),
+            DataRequirements::default(),
+        ))
+    }
+
+    pub fn fetch_request(&self, request: &DataRequest) -> Result<ProviderResult, RegistryError> {
+        let candidates = self.candidates_for_request(request)?;
         if candidates.is_empty() {
             return Err(RegistryError::NoProvider);
         }
@@ -135,7 +160,7 @@ impl ProviderRegistry {
                 last_error = Some(error);
                 continue;
             }
-            match registered.provider.fetch(query) {
+            match registered.provider.fetch_request(request) {
                 Ok(mut result) => {
                     let capability = registered.provider.capability();
                     if result.provider_id != capability.provider_id
@@ -155,7 +180,7 @@ impl ProviderRegistry {
                         ));
                         continue;
                     }
-                    match result.validate_for(query) {
+                    match result.validate_for_request(request, capability) {
                         Ok(()) => {
                             // Validate the provider's own digest first, then recompute the
                             // result fingerprint with the registry's deterministic retry chain.

@@ -18014,8 +18014,10 @@ def _production_trait_impls() -> dict[str, dict[str, str]]:
     wanted = ("Venue", "DataProvider")
     found: dict[str, dict[str, str]] = {trait: {} for trait in wanted}
     for path in sorted((ROOT / "crates").rglob("*.rs")):
-        text = production_text(path.read_text(encoding="utf-8"))
         relative = path.relative_to(ROOT).as_posix()
+        if TEST_PATH.search(relative):
+            continue
+        text = production_text(path.read_text(encoding="utf-8"))
         for trait in wanted:
             for matched in re.finditer(rf"^impl {trait} for (\w+)", text, re.MULTILINE):
                 found[trait][matched.group(1)] = relative
@@ -18725,7 +18727,11 @@ def _chain_production_texts() -> dict[str, str]:
         for pattern in ("crates/**/*.rs", "python/**/*.py"):
             for path in sorted(ROOT.glob(pattern)):
                 relative = path.relative_to(ROOT).as_posix()
-                if "/build/" in relative or "__pycache__" in relative:
+                if (
+                    TEST_PATH.search(relative)
+                    or "/build/" in relative
+                    or "__pycache__" in relative
+                ):
                     continue
                 body = path.read_text(encoding="utf-8")
                 cache[relative] = production_text(body) if path.suffix == ".rs" else body
@@ -18998,7 +19004,11 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("verify_depth_run", "qx-app::verify_depth_run"),
         ("compare_runs", "qx-app::compare_runs"),
     ),
-    "provider_port": (("DataProvider", "qx-provider::DataProvider"),),
+    "provider_port": (
+        ("DataProvider", "qx-provider::DataProvider"),
+        ("DataRequest", "qx-provider::DataRequest"),
+        ("DataRequirements", "qx-provider::DataRequirements"),
+    ),
     "venue_port": (("VenuePort", "qx-execution::VenuePort"),),
     "algorithmic_execution": (
         ("AlgoExecutionState", "qx-execution::AlgoExecutionState"),

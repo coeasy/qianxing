@@ -4,8 +4,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 use qx_provider::{
-    DataKind, DataProvider, DataQuery, ProviderCapability, ProviderError, ProviderErrorClass,
-    ProviderPayload, ProviderRegistry, ProviderResult,
+    DataKind, DataProvider, DataQuery, DataRequest, ProviderCapability, ProviderError,
+    ProviderErrorClass, ProviderPayload, ProviderRegistry, ProviderResult,
 };
 use qx_xingban::{DepthFrame, OrderBookSnapshot};
 use serde::Deserialize;
@@ -27,6 +27,16 @@ impl DataProvider for PythonDataProvider {
 
     fn fetch(&self, query: &DataQuery) -> Result<ProviderResult, ProviderError> {
         let query_json = query.to_json()?;
+        self.fetch_json(&query_json)
+    }
+
+    fn fetch_request(&self, request: &DataRequest) -> Result<ProviderResult, ProviderError> {
+        self.fetch_json(&request.to_json()?)
+    }
+}
+
+impl PythonDataProvider {
+    fn fetch_json(&self, query_json: &str) -> Result<ProviderResult, ProviderError> {
         let payload = Python::attach(|py| -> Result<String, ProviderError> {
             let adapter = self.adapter.lock().map_err(|_| {
                 ProviderError::new(
@@ -88,18 +98,18 @@ impl PyProviderRegistry {
     }
 
     fn candidates(&self, query_json: &str) -> PyResult<Vec<String>> {
-        let query = DataQuery::from_json(query_json)
+        let request = DataRequest::from_json(query_json)
             .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
         self.inner
-            .candidates(&query)
+            .candidates_for_request(&request)
             .map_err(|error| PyValueError::new_err(format!("Provider selection failed: {error:?}")))
     }
 
     fn fetch_json(&self, query_json: &str) -> PyResult<String> {
-        let query = DataQuery::from_json(query_json)
+        let request = DataRequest::from_json(query_json)
             .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
         self.inner
-            .fetch_with_failover(&query)
+            .fetch_request(&request)
             .and_then(|result| {
                 result
                     .to_json()
@@ -109,11 +119,12 @@ impl PyProviderRegistry {
     }
 
     fn fetch_bar_frame_json(&self, query_json: &str) -> PyResult<String> {
-        let query = DataQuery::from_json(query_json)
+        let request = DataRequest::from_json(query_json)
             .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
+        let query = &request.query;
         let result = self
             .inner
-            .fetch_with_failover(&query)
+            .fetch_request(&request)
             .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
         let frame = result
             .to_bar_frame(&query)
@@ -129,8 +140,9 @@ impl PyProviderRegistry {
         interval_ms: u64,
         timezone: &str,
     ) -> PyResult<String> {
-        let query = DataQuery::from_json(query_json)
+        let request = DataRequest::from_json(query_json)
             .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
+        let query = &request.query;
         if query.kind != DataKind::Bar || query.instrument_set.len() != 1 {
             return Err(PyValueError::new_err(
                 "dataset manifest requires Bar data and exactly one instrument",
@@ -143,7 +155,7 @@ impl PyProviderRegistry {
         }
         let result = self
             .inner
-            .fetch_with_failover(&query)
+            .fetch_request(&request)
             .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
         dataset_manifest::bar_frame_manifest_json(
             result,
@@ -159,8 +171,9 @@ impl PyProviderRegistry {
         if !matches!(tier, "l1" | "l2") {
             return Err(PyValueError::new_err("depth tier must be l1 or l2"));
         }
-        let query = DataQuery::from_json(query_json)
+        let request = DataRequest::from_json(query_json)
             .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
+        let query = &request.query;
         if query.kind != qx_provider::DataKind::Quote || query.instrument_set.len() != 1 {
             return Err(PyValueError::new_err(
                 "depth provider query requires Quote data and exactly one instrument",
@@ -168,7 +181,7 @@ impl PyProviderRegistry {
         }
         let result = self
             .inner
-            .fetch_with_failover(&query)
+            .fetch_request(&request)
             .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
         let instrument = query.instrument_set.iter().next().expect("one instrument");
         let mut snapshots = result

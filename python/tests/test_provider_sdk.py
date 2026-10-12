@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from qianxing.app import (
@@ -142,6 +143,42 @@ class ProviderSdkTest(unittest.TestCase):
         registry.register(secondary, MustNotRun())
         with self.assertRaisesRegex(ValueError, "ManualIntervention"):
             registry.fetch(self._query())
+
+    def test_auth_scope_realtime_and_freshness_flow_through_rust_selection(self) -> None:
+        registry = ProviderRegistry()
+        public = _capability("public", 0)
+        private_history = replace(
+            _capability("private-history", 1), auth_scope="account:read"
+        )
+        primary = replace(
+            _capability("private-primary", 2),
+            auth_scope="account:read",
+            realtime=True,
+        )
+        backup = replace(
+            _capability("private-backup", 3),
+            auth_scope="account:read",
+            realtime=True,
+        )
+
+        stale_rows = tuple(row for row in _rows() if row.event_time in (1, 6))
+        fresh_rows = tuple(row for row in _rows() if row.event_time in (5, 6))
+        registry.register(public, _Bars(public, _rows()))
+        registry.register(private_history, _Bars(private_history, _rows()))
+        registry.register(primary, _Bars(primary, stale_rows))
+        registry.register(backup, _Bars(backup, fresh_rows))
+        query = replace(
+            self._query(),
+            as_of=6,
+            required_auth_scope="account:read",
+            require_realtime=True,
+            max_staleness_ms=2,
+        )
+
+        self.assertEqual(registry.candidates(query), ("private-primary", "private-backup"))
+        result = registry.fetch(query)
+        self.assertEqual(result["provider_id"], "private-backup")
+        self.assertEqual(result["retry_chain"], ["private-primary", "private-backup"])
 
     def test_invalid_ohlc_is_rejected_by_rust_quality_gate(self) -> None:
         capability = _capability("bad-bars", 0)

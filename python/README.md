@@ -47,6 +47,18 @@ registry.register(ProviderCapability(
 ), LocalBars())
 ```
 
+`ProviderQuery` 也可声明来源授权范围与实时数据要求。`as_of`、Provider 行情时间戳和 `max_staleness_ms` 使用同一毫秒时钟；Rust 注册表会按 `auth_scope` 过滤候选、拒绝不支持实时流的来源，并将请求新鲜度上限与 Provider 的 `freshness_seconds` 取更严格值。旧查询默认保持历史数据语义：
+
+```python
+live_query = ProviderQuery(
+    kind="Quote", asset_class="crypto", frequency="tick",
+    start=1_000, end=1_000, as_of=1_000,
+    instrument_set=("BTCUSDT.BINANCE",),
+    required_auth_scope="account:read", require_realtime=True,
+    max_staleness_ms=250,
+)
+```
+
 For deterministic L2 market-making research, add a `MarketMakingSpec` to `DepthBacktestSpec`; all parameters are fixed-point raw values and are included in the run configuration hash:
 
 ```python

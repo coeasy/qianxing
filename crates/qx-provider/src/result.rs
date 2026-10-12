@@ -1,5 +1,6 @@
 use super::{
-    DataKind, DataQuery, ProviderCapability, ProviderError, ProviderErrorClass, RawRecord,
+    DataKind, DataQuery, DataRequest, ProviderCapability, ProviderError, ProviderErrorClass,
+    RawRecord,
 };
 use qx_core::Fnv1a;
 use qx_guanxing::DataSourceId;
@@ -60,6 +61,16 @@ impl ProviderCapability {
             && self.frequencies.contains(&query.frequency)
             && query.start >= self.historical_start
             && query.end <= self.historical_end
+    }
+
+    pub fn matches_request(&self, request: &DataRequest) -> bool {
+        self.matches(&request.query)
+            && request
+                .requirements
+                .required_auth_scope
+                .as_ref()
+                .is_none_or(|scope| self.auth_scope == *scope)
+            && (!request.requirements.require_realtime || self.realtime)
     }
 
     pub fn to_json(&self) -> Result<String, ProviderError> {
@@ -273,6 +284,40 @@ impl ProviderResult {
         Ok(())
     }
 
+    pub fn validate_for_request(
+        &self,
+        request: &DataRequest,
+        capability: &ProviderCapability,
+    ) -> Result<(), ProviderError> {
+        self.validate_for(&request.query)?;
+        request.requirements.validate_for(&request.query)?;
+        if request.requirements.require_realtime {
+            let as_of = request.query.as_of.ok_or_else(|| {
+                ProviderError::new(
+                    ProviderErrorClass::Permanent,
+                    "实时数据查询必须提供 as_of 时间戳",
+                )
+            })?;
+            let provider_limit_ms = capability.freshness_seconds.saturating_mul(1_000);
+            let allowed_age_ms = request
+                .requirements
+                .max_staleness_ms
+                .map_or(provider_limit_ms, |requested| {
+                    requested.min(provider_limit_ms)
+                });
+            if self.records.iter().any(|record| {
+                record.event_time > as_of
+                    || as_of.saturating_sub(record.event_time) > allowed_age_ms
+            }) {
+                return Err(ProviderError::new(
+                    ProviderErrorClass::Permanent,
+                    "ProviderResult 包含超过实时新鲜度上限的数据",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn compute_source_hash(&self) -> u64 {
         let mut hash = qx_core::Fnv1a::new();
         hash.write_text(&self.provider_id);
@@ -404,4 +449,8 @@ pub const PROVIDER_RESULT_SCHEMA_VERSION: u32 = 1;
 pub trait DataProvider: Send + Sync {
     fn capability(&self) -> &ProviderCapability;
     fn fetch(&self, query: &DataQuery) -> Result<ProviderResult, ProviderError>;
+
+    fn fetch_request(&self, request: &DataRequest) -> Result<ProviderResult, ProviderError> {
+        self.fetch(&request.query)
+    }
 }

@@ -46,13 +46,13 @@ steps:
     chain: data_to_research_backtest
     order: 1
     anchor: crates/qx-provider/src/lib.rs ProviderCapability
-    case: crates/qx-provider/src/lib.rs registry_rejects_incomplete_capability_declarations
+    case: crates/qx-provider/src/tests.rs registry_rejects_incomplete_capability_declarations
     note: "能力探测是链路的第零步：Provider 先声明自己支持哪些数据种类、资产类别、频率与时间范围，缺格的能力声明会被注册表当场拒绝。"
   - name: provider_selection
     chain: data_to_research_backtest
     order: 2
     anchor: crates/qx-provider/src/registry.rs fetch_with_failover
-    case: crates/qx-provider/src/lib.rs failover_keeps_retry_chain
+    case: crates/qx-provider/src/tests.rs failover_keeps_retry_chain
     note: "多源 failover 只认三档错误分类；换源必须留 retry_chain 痕迹，不许无记录地混拼数据源。"
   - name: sdk_provider_registry
     chain: data_to_research_backtest
@@ -70,7 +70,7 @@ steps:
     chain: data_to_research_backtest
     order: 5
     anchor: crates/qx-data/src/provider.rs JsonBarFrameProvider
-    case: crates/qx-provider/src/lib.rs in_memory_provider_applies_as_of_cutoff
+    case: crates/qx-provider/src/tests.rs in_memory_provider_applies_as_of_cutoff
     note: "BarFrame JSON 读取按事件时间切片、保留原始来源与契约版本；Rust SDK 的 Provider v1 载荷已能经过 strict Bar 质量门转为同一 BarFrame 并喂给共享回测，但自动冻结 DatasetManifest/DatasetSpec 仍是下一段。"
   - name: dataset_validation
     chain: data_to_research_backtest
@@ -184,4 +184,4 @@ orphans:
     anchor: crates/qx-provider/src/lib.rs InMemoryProvider
     kind: no_production_consumer
     disposition: retained_public_api
-    note: "`pub struct` + 完整 `DataProvider` 实现，但 `InMemoryProvider::new` 的调用只在同文件 `#[cfg(test)]` 用例里——SDK facade 不把它伪装成生产数据源；作为公开嵌入 API 暂留并在此登记。"
+    note: "`pub struct` + 完整 `DataProvider` 实现，但 `InMemoryProvider::new` 的调用只在 `src/tests.rs` 用例里——SDK facade 不把它伪装成生产数据源；作为公开嵌入 API 暂留并在此登记。"

@@ -114,6 +114,79 @@ impl DataQuery {
     }
 }
 
+/// Optional caller requirements layered over the stable historical `DataQuery` contract.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub struct DataRequirements {
+    /// Require a provider that declares this exact credential scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_auth_scope: Option<String>,
+    /// Require a source capable of serving a live feed.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub require_realtime: bool,
+    /// Maximum event-time age relative to query `as_of`, in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_staleness_ms: Option<u64>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+impl DataRequirements {
+    pub fn validate_for(&self, query: &DataQuery) -> Result<(), ProviderError> {
+        if self
+            .required_auth_scope
+            .as_ref()
+            .is_some_and(|scope| scope.trim().is_empty())
+            || (self.require_realtime && query.as_of.is_none())
+            || (self.max_staleness_ms.is_some() && !self.require_realtime)
+        {
+            return Err(ProviderError::new(
+                ProviderErrorClass::Permanent,
+                "数据查询能力要求非法：实时请求需有 as_of，且新鲜度限制只能用于实时请求",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Backward-compatible request envelope. Existing `DataQuery` consumers need no source changes.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct DataRequest {
+    #[serde(flatten)]
+    pub query: DataQuery,
+    #[serde(flatten, default)]
+    pub requirements: DataRequirements,
+}
+
+impl DataRequest {
+    pub fn new(query: DataQuery, requirements: DataRequirements) -> Self {
+        Self {
+            query,
+            requirements,
+        }
+    }
+
+    pub fn to_json(&self) -> Result<String, ProviderError> {
+        self.query.validate()?;
+        self.requirements.validate_for(&self.query)?;
+        serde_json::to_string(self)
+            .map_err(|error| ProviderError::new(ProviderErrorClass::Permanent, error.to_string()))
+    }
+
+    pub fn from_json(input: &str) -> Result<Self, ProviderError> {
+        let request: Self = serde_json::from_str(input).map_err(|error| {
+            ProviderError::new(
+                ProviderErrorClass::Permanent,
+                format!("DataRequest JSON 无法解析: {error}"),
+            )
+        })?;
+        request.query.validate()?;
+        request.requirements.validate_for(&request.query)?;
+        Ok(request)
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct ProviderCapability {
     pub provider_id: String,
@@ -217,256 +290,4 @@ impl ProviderError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use qx_guanxing::DataSourceId;
-
-    struct MockProvider {
-        capability: ProviderCapability,
-        fail: Option<ProviderErrorClass>,
-    }
-
-    impl DataProvider for MockProvider {
-        fn capability(&self) -> &ProviderCapability {
-            &self.capability
-        }
-
-        fn fetch(&self, _query: &DataQuery) -> Result<ProviderResult, ProviderError> {
-            if let Some(class) = self.fail {
-                return Err(ProviderError::new(class, "mock failure"));
-            }
-            let (record, payload) = row(&self.capability.provider_id, 1, 2, 10);
-            let mut result = ProviderResult {
-                schema_version: PROVIDER_RESULT_SCHEMA_VERSION,
-                records: vec![record],
-                payloads: vec![payload],
-                provider_id: self.capability.provider_id.clone(),
-                provider_version: self.capability.version.clone(),
-                request_id: "req-1".into(),
-                retry_chain: Vec::new(),
-                received_at: 2,
-                source_hash: 0,
-            };
-            result.source_hash = result.compute_source_hash();
-            Ok(result)
-        }
-    }
-
-    fn capability(id: &str, priority: u32, quality_score: u32) -> ProviderCapability {
-        ProviderCapability {
-            provider_id: id.into(),
-            version: "v1".into(),
-            data_kinds: [DataKind::Bar].into_iter().collect(),
-            asset_classes: ["crypto".into()].into_iter().collect(),
-            frequencies: ["1d".into()].into_iter().collect(),
-            auth_scope: "public".into(),
-            rate_limit_per_second: 10,
-            freshness_seconds: 60,
-            historical_start: 0,
-            historical_end: 100,
-            realtime: false,
-            priority,
-            quality_score,
-            cost_score: 1,
-        }
-    }
-
-    fn query() -> DataQuery {
-        DataQuery {
-            kind: DataKind::Bar,
-            asset_class: "crypto".into(),
-            instrument_set: BTreeSet::new(),
-            field_set: BTreeSet::new(),
-            frequency: "1d".into(),
-            adjustment: "none".into(),
-            quality_policy: "strict".into(),
-            start: 1,
-            end: 10,
-            as_of: None,
-        }
-    }
-
-    fn row(
-        source: &str,
-        event_time: u64,
-        receive_time: u64,
-        close: i128,
-    ) -> (RawRecord, ProviderPayload) {
-        let payload = ProviderPayload::new_json(
-            "BTCUSDT.BINANCE",
-            "application/vnd.qianxing.bar+json;v=1",
-            serde_json::to_string(&qx_guanxing::Bar::new(
-                event_time,
-                close - 1,
-                close + 2,
-                close - 2,
-                close,
-                100,
-            ))
-            .unwrap(),
-        );
-        let record = RawRecord {
-            source: DataSourceId::new(source),
-            event_time,
-            receive_time,
-            payload_hash: payload.digest(),
-            schema_version: 1,
-        };
-        (record, payload)
-    }
-
-    #[test]
-    fn selection_is_stable_and_explainable() {
-        let mut registry = ProviderRegistry::new();
-        registry
-            .register(Box::new(MockProvider {
-                capability: capability("backup", 2, 100),
-                fail: None,
-            }))
-            .unwrap();
-        registry
-            .register(Box::new(MockProvider {
-                capability: capability("primary", 1, 80),
-                fail: None,
-            }))
-            .unwrap();
-        assert_eq!(
-            registry.candidates(&query()).unwrap(),
-            ["primary", "backup"]
-        );
-    }
-
-    #[test]
-    fn registry_rejects_incomplete_capability_declarations() {
-        let mut invalid = capability("invalid", 1, 100);
-        invalid.version.clear();
-        let mut registry = ProviderRegistry::new();
-        assert!(matches!(
-            registry.register(Box::new(MockProvider {
-                capability: invalid,
-                fail: None,
-            })),
-            Err(RegistryError::Provider(_))
-        ));
-    }
-
-    #[test]
-    fn failover_keeps_retry_chain() {
-        let mut registry = ProviderRegistry::new();
-        registry
-            .register(Box::new(MockProvider {
-                capability: capability("primary", 1, 100),
-                fail: Some(ProviderErrorClass::SwitchProvider),
-            }))
-            .unwrap();
-        registry
-            .register(Box::new(MockProvider {
-                capability: capability("backup", 2, 90),
-                fail: None,
-            }))
-            .unwrap();
-        let result = registry.fetch_with_failover(&query()).unwrap();
-        assert_eq!(result.provider_id, "backup");
-        assert_eq!(result.retry_chain, ["primary", "backup"]);
-    }
-
-    #[test]
-    fn manual_intervention_stops_automatic_failover() {
-        let mut registry = ProviderRegistry::new();
-        registry
-            .register(Box::new(MockProvider {
-                capability: capability("primary", 1, 100),
-                fail: Some(ProviderErrorClass::ManualIntervention),
-            }))
-            .unwrap();
-        registry
-            .register(Box::new(MockProvider {
-                capability: capability("backup", 2, 90),
-                fail: None,
-            }))
-            .unwrap();
-        assert!(matches!(
-            registry.fetch_with_failover(&query()),
-            Err(RegistryError::Provider(ProviderError {
-                class: ProviderErrorClass::ManualIntervention,
-                ..
-            }))
-        ));
-    }
-
-    #[test]
-    fn in_memory_provider_applies_as_of_cutoff() {
-        let records = vec![row("local", 1, 10, 10), row("local", 2, 20, 11)];
-        let provider = InMemoryProvider::new(capability("local", 1, 100), records);
-        let mut query = query();
-        query.end = 2;
-        query.as_of = Some(10);
-        let result = provider.fetch(&query).unwrap();
-        assert_eq!(result.records.len(), 1);
-        assert_eq!(result.records.len(), 1);
-        assert_eq!(result.payloads.len(), 1);
-        assert_eq!(result.records[0].payload_hash, result.payloads[0].digest());
-    }
-
-    #[test]
-    fn provider_result_rejects_wrong_source_or_unsorted_records() {
-        let (record_late, payload_late) = row("local", 2, 2, 11);
-        let (record_early, payload_early) = row("local", 1, 1, 10);
-        let mut result = ProviderResult {
-            schema_version: PROVIDER_RESULT_SCHEMA_VERSION,
-            records: vec![record_late, record_early],
-            payloads: vec![payload_late, payload_early],
-            provider_id: "local".into(),
-            provider_version: "v1".into(),
-            request_id: "r1".into(),
-            retry_chain: vec!["local".into()],
-            received_at: 2,
-            source_hash: 0,
-        };
-        assert!(result.validate_for(&query()).is_err());
-        result.records.swap(0, 1);
-        result.records[0].source = DataSourceId::new("other");
-        assert!(result.validate_for(&query()).is_err());
-    }
-
-    #[test]
-    fn source_hash_is_verified_before_accepting_provider_result() {
-        let (record, payload) = row("local", 1, 2, 10);
-        let mut result = ProviderResult {
-            schema_version: PROVIDER_RESULT_SCHEMA_VERSION,
-            records: vec![record],
-            payloads: vec![payload],
-            provider_id: "local".into(),
-            provider_version: "v1".into(),
-            request_id: "req".into(),
-            retry_chain: Vec::new(),
-            received_at: 2,
-            source_hash: 0,
-        };
-        result.source_hash = result.compute_source_hash();
-        assert!(result.validate_for(&query()).is_ok());
-        result.payloads[0].json.push(' ');
-        assert!(result.validate_for(&query()).is_err());
-    }
-
-    #[test]
-    fn provider_query_and_result_json_round_trip_preserve_provenance() {
-        let query = query();
-        let query_json = query.to_json().unwrap();
-        assert_eq!(DataQuery::from_json(&query_json).unwrap(), query);
-
-        let provider =
-            InMemoryProvider::new(capability("local", 1, 100), vec![row("local", 1, 2, 10)]);
-        let result = provider.fetch(&query).unwrap();
-        let result_json = result.to_json().unwrap();
-        assert_eq!(ProviderResult::from_json(&result_json).unwrap(), result);
-        let mut wire: serde_json::Value = serde_json::from_str(&result_json).unwrap();
-        wire["source_hash"] = serde_json::Value::from(0_u64);
-        assert!(ProviderResult::from_json(&wire.to_string()).is_err());
-        let capability = capability("local", 1, 100);
-        assert_eq!(
-            ProviderCapability::from_json(&capability.to_json().unwrap()).unwrap(),
-            capability
-        );
-    }
-}
+mod tests;
