@@ -23,6 +23,8 @@ int main() {
         R"({"schema_version":1,"tier":"l1","market_spec":{"product":"perpetual"},"order_policy":{"margin_mode":"cross","leverage":2}})";
     const std::string depth_experiment_spec =
         R"({"schema_version":1,"experiment_id":"depth-classic","base":{"schema_version":1,"run_id":"unused-depth","depth_path":"ticks.json","tier":"l2","settlement_currency":"USDT","initial_cash_raw":1000000000000,"fee_bps":0,"latency_snapshots":0,"queue_position_bps":0,"market_impact_bps":0,"output_dir":"runs","strategy":{"kind":"sma_cross","strategy_id":"depth-sma","quantity_raw":1000000000,"fast_window":2,"slow_window":3}},"parameter_space":[],"strategy_kinds":["ema_cross","sma_cross"]})";
+    const std::string multi_leg_experiment_spec =
+        R"({"schema_version":1,"experiment_id":"multi-leg-classics","base":{"schema_version":1,"run_id":"unused-pairs","primary_bars_path":"primary.json","reference_bars_path":"reference.json","settlement_currency":"USDT","primary_initial_cash_raw":1000000000000,"reference_initial_cash_raw":1000000000000,"seed":7,"output_dir":"runs","strategy":{"kind":"pairs_arbitrage","strategy_id":"pairs","quantity_raw":1000000000}},"parameter_space":[],"strategy_kinds":["pairs_arbitrage","basis_arbitrage","cross_venue_arbitrage","spot_futures_arbitrage"]})";
     const auto response = client.run_experiment(spec);
     assert(response.ok());
     assert(response.body == R"({"runs":[]})");
@@ -81,12 +83,12 @@ int main() {
     assert(started_multi_leg.ok());
     assert(observed_path == "/app/multi-leg-backtest/start");
 
-    const auto multi_leg_experiment = client.run_multi_leg_experiment(spec);
+    const auto multi_leg_experiment = client.run_multi_leg_experiment(multi_leg_experiment_spec);
     assert(multi_leg_experiment.ok());
     assert(observed_path == "/app/run-multi-leg-experiment");
-    assert(observed_body == spec);
+    assert(observed_body == multi_leg_experiment_spec);
 
-    const auto started_multi_leg_experiment = client.start_multi_leg_experiment(spec);
+    const auto started_multi_leg_experiment = client.start_multi_leg_experiment(multi_leg_experiment_spec);
     assert(started_multi_leg_experiment.ok());
     assert(observed_path == "/app/run-multi-leg-experiment/start");
 

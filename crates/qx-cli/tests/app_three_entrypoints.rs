@@ -157,6 +157,25 @@ fn multi_leg_experiment_spec_json(experiment_id: &str, output_dir: &Path) -> Str
     .to_string()
 }
 
+fn multi_leg_strategy_selection_spec_json(experiment_id: &str, output_dir: &Path) -> String {
+    let mut base: Value = serde_json::from_str(&multi_leg_spec_json(
+        "unused-multi-leg-strategy-selection",
+        output_dir,
+    ))
+    .expect("multi-leg base spec");
+    base["output_dir"] = json!(output_dir);
+    json!({
+        "schema_version": 1,
+        "experiment_id": experiment_id,
+        "base": base,
+        "parameter_space": [],
+        "strategy_kinds": [
+            "pairs_arbitrage", "basis_arbitrage", "cross_venue_arbitrage", "spot_futures_arbitrage"
+        ],
+    })
+    .to_string()
+}
+
 /// CLI 腿：真 spawn 二进制，读 stdout。
 fn via_cli(spec_json: &str, root: &Path) -> Value {
     let spec_path = root.join("spec.json");

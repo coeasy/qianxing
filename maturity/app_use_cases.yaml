@@ -95,8 +95,8 @@ use_cases:
     error_categories: "AppErrorCategory 八类；候选错误隔离，整体规格/存储错误由用例返回"
     capability_level: "R"
   - name: run_multi_leg_experiment
-    input_schema: "RunMultiLegExperimentSpec v1（MultiLegBacktestSpec + fast_window/slow_window/period/threshold_bps/quantity_raw 参数笛卡尔网格；最多 256 候选）"
-    output_schema: "RunMultiLegExperimentResult v1（逐候选结果/错误 + 按组合收益确定性排名 + 实验摘要产物）"
+    input_schema: "RunMultiLegExperimentSpec v1（MultiLegBacktestSpec + 双腿策略 kind 选择及 fast_window/slow_window/period/threshold_bps/quantity_raw 参数网格笛卡尔组合；strategy_kinds 仅接纳需 reference leg 的内置策略；最多 256 候选）"
+    output_schema: "RunMultiLegExperimentResult v1（逐候选策略 kind/参数/结果/错误 + 按组合收益确定性排名 + 实验摘要产物）"
     capability: "RESEARCH"
     idempotency_key: "experiment_id + 完整规格指纹；不同规格在启动候选前拒绝"
     cancellation: "RunMultiLegExperimentSpec::start 在候选之间和候选双腿撮合循环协作取消，不发布部分实验报告"

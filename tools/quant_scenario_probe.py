@@ -585,6 +585,80 @@ def main() -> int:
             builtin_kind=kind,
         )
 
+    multi_leg_selection_id = f"probe-multi-leg-selection-{time.time_ns()}"
+    multi_leg_selection_spec = {
+        "schema_version": 1,
+        "experiment_id": multi_leg_selection_id,
+        "base": {
+            "schema_version": 1,
+            "run_id": "unused-multi-leg-selection",
+            "primary_bars_path": BAR_PRIMARY,
+            "reference_bars_path": BAR_REFERENCE,
+            "settlement_currency": "USDT",
+            "primary_initial_cash_raw": 100_000_000_000_000,
+            "reference_initial_cash_raw": 100_000_000_000_000,
+            "seed": 7,
+            "output_dir": f".task-tmp/quant-probe/{multi_leg_selection_id}",
+            "strategy": {
+                "kind": "pairs_arbitrage", "strategy_id": "probe-multi-leg-selection",
+                "quantity_raw": 1_000_000_000, "fast_window": 5, "slow_window": 20,
+                "period": 14, "threshold_bps": 100,
+            },
+        },
+        "parameter_space": [],
+        "strategy_kinds": [
+            "pairs_arbitrage", "basis_arbitrage", "cross_venue_arbitrage", "spot_futures_arbitrage",
+        ],
+    }
+    multi_leg_selection_path = PROBE_ROOT / "multi-leg-selection-spec.json"
+    multi_leg_selection_path.write_text(json.dumps(multi_leg_selection_spec), encoding="utf-8")
+
+    def multi_leg_selection_observation(output: str) -> str:
+        result = next(
+            (json.loads(line) for line in output.splitlines() if line.lstrip().startswith("{")),
+            None,
+        )
+        if result is None:
+            raise ValueError("multi-leg strategy selection did not return a JSON report")
+        candidates = result["candidates"]
+        names = [candidate["strategy_kind"] for candidate in candidates]
+        fills = sum(
+            candidate["outcome"]["primary_fills"] + candidate["outcome"]["reference_fills"]
+            for candidate in candidates if candidate["outcome"]
+        )
+        expected = sorted(multi_leg_selection_spec["strategy_kinds"])
+        if names != expected or result["succeeded_candidates"] != len(expected) or fills == 0:
+            raise ValueError(
+                f"multi-leg selection incomplete: names={names} "
+                f"succeeded={result['succeeded_candidates']} fills={fills}"
+            )
+        return (
+            f"strategies={len(names)} candidates={len(candidates)} "
+            f"succeeded={result['succeeded_candidates']} fills={fills} "
+            f"stable_order=true result_hashes=" + ",".join(
+                f"{candidate['outcome']['primary_result_hash']}/"
+                f"{candidate['outcome']['reference_result_hash']}"
+                for candidate in candidates
+            )
+        )
+
+    executed(
+        "multi_leg_strategy_selection",
+        "四类双腿套利策略选择与确定性批量比较",
+        "crates/qx-app/src/cases/run_multi_leg_experiment.rs",
+        ["app", "run-multi-leg-experiment", str(multi_leg_selection_path.relative_to(ROOT)).replace("\\", "/")],
+        r'("total_candidates":\s*4)',
+        extra_from_output=multi_leg_selection_observation,
+        evidence=[
+            "crates/qx-app/src/cases/run_multi_leg_experiment.rs",
+            "crates/qx-app/src/tests/multi_leg_experiment.rs",
+            "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs",
+            "crates/qx-sdk/tests/consumer/strategy_selection.rs",
+            "python/qianxing/app.py",
+            "python/tests/test_app_use_cases.py",
+        ],
+    )
+
     executed(
         "order_book_execution",
         "盘口撮合 / 日内高频",

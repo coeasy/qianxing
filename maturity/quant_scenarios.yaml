@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791837173
+generated_at_unix: 1791837657
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -142,6 +142,14 @@ scenarios:
     exit_code: 0
     observed: "strategy=builtin-cross_venue_arbitrage-multi groups=3 turnover_raw=192600000000000 fees_raw=96300000000"
     evidence: ["crates/qx-zhenlu/src/lib.rs"]
+  - name: multi_leg_strategy_selection
+    label: "四类双腿套利策略选择与确定性批量比较"
+    status: executed
+    anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
+    command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
+    exit_code: 0
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=78bfad849fcba997/2f5b39b334b31172,8d951af2395361f7/0eefc9bc165c888b,8d951af2395361f7/0eefc9bc165c888b,78bfad849fcba997/2f5b39b334b31172"
+    evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: order_book_execution
     label: "盘口撮合 / 日内高频"
     status: executed
@@ -156,7 +164,7 @@ scenarios:
     anchor: "crates/qx-xingban/src/market_making.rs"
     command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
     exit_code: 0
-    observed: "42; result_hash=cb0a726cf61ba476"
+    observed: "42; result_hash=7be40db4c5c40f4e"
     evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
   - name: depth_strategy_portfolio
     label: "L2 多策略共享 OMS/撮合/账簿与策略额度归因"

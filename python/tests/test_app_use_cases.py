@@ -1602,6 +1602,29 @@ class AppUseCaseTests(unittest.TestCase):
         )
         typed_experiment = run_multi_leg_experiment(typed_experiment_spec)
         self.assertEqual(typed_experiment.succeeded_candidates, 1)
+        multi_leg_kinds = (
+            "pairs_arbitrage", "basis_arbitrage", "cross_venue_arbitrage", "spot_futures_arbitrage",
+        )
+        typed_selection_spec = RunMultiLegExperimentSpec(
+            experiment_id="python-typed-multi-leg-selection",
+            base=MultiLegBacktestSpec(
+                **{
+                    **typed_spec.__dict__,
+                    "run_id": "unused-typed-multi-leg-selection",
+                    "output_dir": str(self.output_dir / "typed-multi-leg-selection"),
+                }
+            ),
+            parameter_space=(),
+            strategy_kinds=multi_leg_kinds,
+        )
+        self.assertEqual(typed_selection_spec.to_dict()["strategy_kinds"], sorted(multi_leg_kinds))
+        typed_selection = run_multi_leg_experiment(typed_selection_spec)
+        self.assertEqual(typed_selection.total_candidates, 4)
+        self.assertEqual(typed_selection.succeeded_candidates, 4)
+        self.assertEqual(
+            [candidate.strategy_kind for candidate in typed_selection.candidates],
+            sorted(multi_leg_kinds),
+        )
         typed_experiment_handle = start_multi_leg_experiment(
             RunMultiLegExperimentSpec(
                 experiment_id="python-typed-multi-leg-grid-handle",

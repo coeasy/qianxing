@@ -53,6 +53,72 @@ fn multi_leg_parameter_experiment_is_shared_by_cli_http_and_python() {
 }
 
 #[test]
+fn multi_leg_strategy_selection_is_shared_by_cli_http_and_python() {
+    let root = scratch("multi-leg-strategy-selection");
+    let spec = multi_leg_strategy_selection_spec_json(
+        "g1-multi-leg-strategy-selection",
+        &root.join("out"),
+    );
+    let spec_path = root.join("multi-leg-strategy-selection.json");
+    std::fs::write(&spec_path, &spec).expect("write multi-leg strategy selection spec");
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "run-multi-leg-experiment"])
+        .arg(&spec_path)
+        .output()
+        .expect("run multi-leg strategy selection CLI");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "CLI error: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let cli: Value = serde_json::from_slice(&output.stdout).expect("CLI selection JSON");
+    let (status, http) = via_http("/app/run-multi-leg-experiment", &spec);
+    assert_eq!(status, 200, "HTTP experiment failed: {http}");
+    let identities = |value: &Value| {
+        json!({
+            "experiment_id": value["experiment_id"],
+            "total_candidates": value["total_candidates"],
+            "completed_candidates": value["completed_candidates"],
+            "succeeded_candidates": value["succeeded_candidates"],
+            "failed_candidates": value["failed_candidates"],
+            "ranking": value["ranking"],
+            "candidates": value["candidates"].as_array().unwrap().iter().map(|candidate| json!({
+                "ordinal": candidate["ordinal"],
+                "strategy_kind": candidate["strategy_kind"],
+                "run_id": candidate["outcome"]["run_id"],
+                "combined_return_bps": candidate["outcome"]["combined_return_bps"],
+                "primary_result_hash": candidate["outcome"]["primary_result_hash"],
+                "reference_result_hash": candidate["outcome"]["reference_result_hash"],
+                "error": candidate["error"],
+            })).collect::<Vec<_>>(),
+        })
+    };
+    assert_eq!(identities(&cli), identities(&http));
+    assert_eq!(cli["total_candidates"], 4);
+    assert_eq!(cli["succeeded_candidates"], 4, "{cli}");
+    assert_eq!(
+        cli["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|candidate| candidate["strategy_kind"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "basis_arbitrage",
+            "cross_venue_arbitrage",
+            "pairs_arbitrage",
+            "spot_futures_arbitrage",
+        ]
+    );
+    match python_native::via_python(&repo_root(), "run_multi_leg_experiment", &spec) {
+        None => eprintln!("[skip] Python leg: PyO3 extension not built"),
+        Some(Ok(python)) => assert_eq!(identities(&python), identities(&cli)),
+        Some(Err(payload)) => panic!("Python multi-leg strategy selection failed: {payload}"),
+    }
+}
+
+#[test]
 fn multi_leg_experiment_run_handle_delivers_the_terminal_report_over_http() {
     let root = scratch("multi-leg-experiment-handle");
     let spec = multi_leg_experiment_spec_json("g1-multi-leg-grid-handle", &root.join("out"));

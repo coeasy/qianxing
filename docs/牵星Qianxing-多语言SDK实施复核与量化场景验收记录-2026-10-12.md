@@ -132,3 +132,11 @@ Python 十策略证据：
 - 场景探针新增 `depth_strategy_selection` 并由真实 CLI 执行生成场景登记：L2 十种策略得到 10/10 成功候选、合计 40 笔成交、稳定顺序及逐候选结果哈希。当前场景登记为 33 项 executed、0 missing、0 declared_not_executed、1 项 Live 因 CCXT/testnet 凭据 blocked。
 - 最终验证：`cargo test --offline --workspace -- --test-threads=1` 全工作区通过；`cargo test --offline -p qx-cli --test app_depth_entrypoints -- --test-threads=1`（4 项通过）；Rust SDK 独立消费者（12 项通过）；Python 全套测试（125 项通过）；架构不变量门禁（1096 项通过）；格式检查与 `git diff --check` 通过。推送 `8e8d7d9` 后重建 Windows x64 `cp310-abi3` wheel，稳定 ABI 检查通过，并在隔离虚拟环境无依赖离线重装、导入原生扩展并确认深度实验入口存在。SHA-256：`B2A2A3F36F7E5130AFDCBFB75CD249D49DC54817304708AB1BFE3790496962CB`。
 - Windows 本机未提供 C++ 编译器，因此 C++ 消费者只完成请求契约更新，未声称编译通过。其他平台 wheel、真实交易所 testnet、跨账户组合账簿/风险归因、多腿/多市场组合调度、Paper/Live 组合工作流及 Web/桌面组合端到端流程仍未通过验收；本轮没有把局部策略候选接通夸大成整体方案达到发布门槛。
+
+## 13. 2026-10-13 继续实现：多腿套利策略选择
+
+- 扩展 `RunMultiLegExperimentSpec`：可将四种需要 reference leg 的内置套利策略与公共数值参数网格按确定顺序组合，最多 256 个候选。非双腿策略与重复 kind 在启动前拒绝；候选报告记录策略 kind；不指定策略维度时保留既有规格 JSON 和指纹形状。全部候选继续逐个进入已有双腿回测用例，没有新增执行或收益计算内核。
+- 接入 Python typed SDK 规格及候选结果解码、Rust SDK 本地 façade，并验证 CLI/HTTP/Python 对同一双数据集候选给出一致顺序、组合收益和双腿哈希。C++ HTTP 消费者测试也携带多腿策略候选规格并断言原样透传；当前机器没有 C++ 编译器，不能以源码断言替代编译证明。
+- 新增全部四类套利策略选择、排序规范化、重复/单腿 kind 拒绝、旧规格编码兼容及策略×参数笛卡尔积测试。量化场景探针新加 `multi_leg_strategy_selection`：4/4 候选成功，双腿合计 16 笔成交，并记录每个候选的主腿/参考腿结果哈希。量化场景登记现为 34 executed、0 missing、0 declared_not_executed、1 blocked（真实交易所 Live 缺依赖与 testnet 凭据）。
+- 最终回归：`cargo test --offline --workspace -- --test-threads=1` 通过；Rust qx-app 多腿实验 4 项、CLI/HTTP/Python 多腿策略选择对照 1 项、Rust SDK 独立消费者 1 项通过；Python 全量 125 项通过；架构门禁 1096 项通过；Rust 格式、场景脚本语法与 diff whitespace 检查通过。
+- 本轮接通的是逐个多腿研究候选选择，不是并行多腿组合资金池。多标的/多市场同一组合调度、跨账户共享资金与净额、策略级 PnL/费用/回撤及组合风险限额、Paper/Live 多策略执行、Web/桌面工作流仍未实现或未验收；整体多语言全能力方案因此仍未达到全量发布门槛。

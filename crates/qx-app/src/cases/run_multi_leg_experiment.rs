@@ -13,8 +13,9 @@ use crate::{
     RunContext, RunHandle,
 };
 use qx_core::Fnv1a;
+use qx_strategy::BuiltinStrategyKind;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub const RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION: u32 = 1;
@@ -26,6 +27,9 @@ pub struct RunMultiLegExperimentSpec {
     pub experiment_id: String,
     pub base: MultiLegBacktestSpec,
     pub parameter_space: Vec<ExperimentParameterSpace>,
+    /// Optional multi-leg built-in strategy dimension; omitted to preserve old fingerprints.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strategy_kinds: Vec<BuiltinStrategyKind>,
 }
 
 impl RunMultiLegExperimentSpec {
@@ -37,7 +41,9 @@ impl RunMultiLegExperimentSpec {
     }
 
     pub fn to_json(&self) -> Result<String, AppError> {
-        serde_json::to_string(self)
+        let mut canonical = self.clone();
+        canonical.strategy_kinds.sort_by_key(|kind| kind.name());
+        serde_json::to_string(&canonical)
             .map_err(|error| invariant(format!("RunMultiLegExperimentSpec 序列化失败: {error}")))
     }
 
@@ -49,10 +55,45 @@ impl RunMultiLegExperimentSpec {
             )));
         }
         validate_experiment_id(&self.experiment_id)?;
-        let mut base = self.base.clone();
-        base.strategy = normalized_strategy(&base.strategy, &self.parameter_space);
-        base.validate()?;
-        validate_grid(&self.base.strategy, &self.parameter_space)
+        let mut kinds = if self.strategy_kinds.is_empty() {
+            vec![self.base.strategy.kind]
+        } else {
+            self.strategy_kinds.clone()
+        };
+        kinds.sort_by_key(|kind| kind.name());
+        let mut seen = BTreeSet::new();
+        if kinds.iter().any(|kind| !seen.insert(kind.name())) {
+            return Err(invalid("strategy_kinds 不得重复"));
+        }
+        if kinds.iter().any(|kind| !kind.needs_reference_leg()) {
+            return Err(invalid(
+                "多腿实验的 strategy_kinds 只能包含需要 reference leg 的策略",
+            ));
+        }
+        let strategy_selection = !self.strategy_kinds.is_empty();
+        let mut per_kind = None;
+        for kind in &kinds {
+            let mut candidate = self.base.clone();
+            candidate.strategy.kind = *kind;
+            candidate.strategy = normalized_strategy(&candidate.strategy, &self.parameter_space);
+            candidate.validate()?;
+            let count = if strategy_selection && self.parameter_space.is_empty() {
+                1
+            } else {
+                validate_grid(&candidate.strategy, &self.parameter_space)?
+            };
+            if per_kind
+                .replace(count)
+                .is_some_and(|previous| previous != count)
+            {
+                return Err(invalid("不同策略 kind 的参数网格候选数必须一致"));
+            }
+        }
+        per_kind
+            .unwrap_or_default()
+            .checked_mul(kinds.len())
+            .filter(|total| *total <= super::run_experiment::MAX_EXPERIMENT_CANDIDATES)
+            .ok_or_else(|| invalid("实验最多接受 256 个候选组合"))
     }
 
     /// Run the bounded grid on cancellable Rust multi-leg backtests.
@@ -72,6 +113,8 @@ impl RunMultiLegExperimentSpec {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MultiLegExperimentCandidate {
     pub ordinal: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_kind: Option<String>,
     pub parameters: BTreeMap<String, i128>,
     pub outcome: Option<MultiLegBacktestOutcome>,
     /// Stable AppError JSON; a failed candidate does not stop the other runs.
@@ -152,15 +195,35 @@ fn run_inner_experiment(
         Err(error) => return Err(AppError::from_io("读取既有多腿实验报告", &error)),
     }
 
-    let combinations = expand_grid(&spec.parameter_space);
-    debug_assert_eq!(combinations.len(), total);
+    let mut kinds = if spec.strategy_kinds.is_empty() {
+        vec![spec.base.strategy.kind]
+    } else {
+        spec.strategy_kinds.clone()
+    };
+    kinds.sort_by_key(|kind| kind.name());
+    let combinations = if spec.parameter_space.is_empty() {
+        vec![BTreeMap::new()]
+    } else {
+        expand_grid(&spec.parameter_space)
+    };
+    debug_assert_eq!(combinations.len() * kinds.len(), total);
     let mut candidates = Vec::with_capacity(total);
-    for (index, parameters) in combinations.into_iter().enumerate() {
+    for (index, (kind, parameters)) in kinds
+        .into_iter()
+        .flat_map(|kind| {
+            combinations
+                .iter()
+                .cloned()
+                .map(move |parameters| (kind, parameters))
+        })
+        .enumerate()
+    {
         if cancellation.is_some_and(CancellationToken::is_cancelled) {
             return Ok(None);
         }
         let ordinal = index + 1;
         let mut candidate = spec.base.clone();
+        candidate.strategy.kind = kind;
         candidate.run_id = format!("{}-{ordinal:04}", spec.experiment_id);
         candidate.output_dir = root
             .join(format!("run-{ordinal:04}"))
@@ -177,12 +240,14 @@ fn run_inner_experiment(
         candidates.push(match outcome {
             Ok(outcome) => MultiLegExperimentCandidate {
                 ordinal,
+                strategy_kind: (!spec.strategy_kinds.is_empty()).then(|| kind.name().to_string()),
                 parameters,
                 outcome: Some(outcome),
                 error: None,
             },
             Err(error) => MultiLegExperimentCandidate {
                 ordinal,
+                strategy_kind: (!spec.strategy_kinds.is_empty()).then(|| kind.name().to_string()),
                 parameters,
                 outcome: None,
                 error: Some(error.to_json()),
