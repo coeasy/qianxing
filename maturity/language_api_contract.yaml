@@ -113,6 +113,12 @@ contracts:
     python_remote: ["plan_algo_execution"]
     cpp_remote: ["plan_algo_execution"]
     http: ["/app/plan-algo-execution"]
+  - use_case: plan_capital_allocation
+    rust: ["plan_capital_allocation"]
+    python_native: ["plan_capital_allocation"]
+    python_remote: []
+    cpp_remote: []
+    http: []
   - use_case: run_experiment
     rust: ["run_experiment"]
     python_native: ["run_experiment", "start_experiment"]

@@ -164,3 +164,13 @@ use_cases:
     artifacts: "无；仅返回计划，不提交订单"
     error_categories: "AppErrorCategory 八类；非法范围、profile 或算术溢出为 InvalidInput"
     capability_level: "R"
+  - name: plan_capital_allocation
+    input_schema: "CapitalAllocationSpec v1（组合预算、账户现金上限、策略资金申请与显式优先级）"
+    output_schema: "CapitalAllocationResult v1（按优先级与 strategy_id 确定性排序的资金分配）"
+    capability: "RESEARCH"
+    idempotency_key: "portfolio_id + 完整规格；纯计算，同一输入返回同一分配"
+    cancellation: "无取消点（线性遍历账户和策略请求）"
+    progress: "无"
+    artifacts: "无；仅返回计划，不提交订单或执行回测"
+    error_categories: "AppErrorCategory 八类；非法身份、重复策略/账户、未知账户、负预算或算术异常为 InvalidInput"
+    capability_level: "R"

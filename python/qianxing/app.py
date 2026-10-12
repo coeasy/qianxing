@@ -1610,6 +1610,15 @@ def plan_risk_parity(spec: RiskParitySpec | dict[str, Any]) -> RiskParityResult:
     return RiskParityResult.from_dict(_invoke(native.app_plan_risk_parity, spec))
 
 
+def plan_capital_allocation(spec: dict[str, Any]) -> dict[str, Any]:
+    """Allocate a portfolio cash budget deterministically in the shared Rust core.
+
+    Lower numeric priority is served first; strategy id breaks ties. This planner
+    does not submit orders or claim to execute a shared portfolio backtest.
+    """
+    return _invoke(native.app_plan_capital_allocation, spec)
+
+
 def plan_algo_execution(spec: dict[str, Any]) -> dict[str, Any]:
     """Plan TWAP/VWAP child orders through the shared Rust application use case."""
     return _invoke(native.app_plan_algo_execution, spec)

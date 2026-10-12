@@ -41,6 +41,7 @@ APP_ENTRYPOINTS = (
     "app_verify_run",
     "app_compare_runs",
     "app_plan_risk_parity",
+    "app_plan_capital_allocation",
     "app_plan_algo_execution",
     "app_run_experiment",
     "app_start_experiment",
@@ -158,6 +159,11 @@ def app_compare_runs(spec_json: str) -> str:
 def app_plan_risk_parity(spec_json: str) -> str:
     """Create a deterministic long-only risk-parity plan in the Rust core."""
     return str(_extension().app_plan_risk_parity(spec_json))
+
+
+def app_plan_capital_allocation(spec_json: str) -> str:
+    """Allocate portfolio cash using deterministic Rust-owned priority rules."""
+    return str(_extension().app_plan_capital_allocation(spec_json))
 
 
 def app_plan_algo_execution(spec_json: str) -> str:

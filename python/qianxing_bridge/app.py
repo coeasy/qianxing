@@ -67,6 +67,11 @@ def plan_risk_parity(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_plan_risk_parity(_payload(spec)))
 
 
+def plan_capital_allocation(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """Allocate portfolio cash deterministically in the shared Rust domain."""
+    return json.loads(native.app_plan_capital_allocation(_payload(spec)))
+
+
 def plan_algo_execution(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """Create a Rust-owned deterministic TWAP/VWAP child-order schedule."""
     return json.loads(native.app_plan_algo_execution(_payload(spec)))

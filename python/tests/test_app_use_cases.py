@@ -62,6 +62,7 @@ def _load_native():
                 "app_verify_run",
                 "app_compare_runs",
                 "app_plan_risk_parity",
+                "app_plan_capital_allocation",
                 "app_plan_algo_execution",
                 "app_run_experiment",
                 "app_start_experiment",
@@ -125,6 +126,28 @@ class AppUseCaseTests(unittest.TestCase):
     def _require(self):
         if self.bridge is None:
             self.skipTest("build qx-python to run the app use-case test")
+
+    def test_capital_allocation_uses_deterministic_rust_portfolio_use_case(self):
+        self._require()
+        spec = {
+            "schema_version": 1,
+            "portfolio_id": "portfolio-python",
+            "portfolio_budget_raw": 120,
+            "accounts": [
+                {"account_id": "account-a", "available_cash_raw": 100},
+                {"account_id": "account-b", "available_cash_raw": 100},
+            ],
+            "requests": [
+                {"strategy_id": "strategy-z", "account_id": "account-b", "requested_cash_raw": 80, "priority": 0},
+                {"strategy_id": "strategy-a", "account_id": "account-a", "requested_cash_raw": 80, "priority": 0},
+            ],
+        }
+        result = self.bridge.plan_capital_allocation(spec)
+        self.assertEqual(result["portfolio_id"], "portfolio-python")
+        self.assertEqual(
+            [(item["strategy_id"], item["allocated_cash_raw"]) for item in result["allocations"]],
+            [("strategy-a", 80), ("strategy-z", 40)],
+        )
 
     def test_python_cli_routes_compare_runs_into_the_sdk(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
