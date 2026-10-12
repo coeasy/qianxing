@@ -1290,9 +1290,12 @@ class AppClient(_HttpJsonClient):
 
     def get_live_events(self, after_seq: int | None = None) -> list[dict[str, Any]]:
         if after_seq is not None and (
-            isinstance(after_seq, bool) or not isinstance(after_seq, int) or after_seq < 0
+            isinstance(after_seq, bool)
+            or not isinstance(after_seq, int)
+            or after_seq < 0
+            or after_seq > (1 << 64) - 1
         ):
-            raise ValueError("after_seq must be a non-negative integer or None")
+            raise ValueError("after_seq must be a u64 sequence or None")
         route = APP_ROUTE_TEMPLATES["live_events"]
         if after_seq is not None:
             route = f"{route}?after={after_seq}"

@@ -327,6 +327,8 @@ class AppUseCaseTests(unittest.TestCase):
             client.get_live_events(True)
         with self.assertRaises(ValueError):
             client.get_live_events(-1)
+        with self.assertRaises(ValueError):
+            client.get_live_events(1 << 64)
 
     def test_both_run_handles_default_to_a_finite_wait(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

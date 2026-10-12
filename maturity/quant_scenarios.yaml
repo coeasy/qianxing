@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791801018
+generated_at_unix: 1791801824
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -156,7 +156,7 @@ scenarios:
     anchor: "crates/qx-xingban/src/market_making.rs"
     command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
     exit_code: 0
-    observed: "42; result_hash=3a353792ba5ab63f"
+    observed: "42; result_hash=84d254157a358f0b"
     evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
   - name: algo_execution
     label: "算法执行（API 受理 / TWAP 拆单 / Paper 恢复 / EventLog 聚合）"
@@ -180,7 +180,7 @@ scenarios:
     anchor: "tools/check_rust_sdk_git_consumer.py"
     command: "python tools/check_rust_sdk_git_consumer.py"
     exit_code: 0
-    observed: "rust_sdk_git_consumer=passed fills=1 remote_paper_lifecycle=4 result_hash=c5927beae40d1768"
+    observed: "rust_sdk_git_consumer=passed fills=1 remote_paper_lifecycle=4 event_cursor_reads=1 result_hash=c5927beae40d1768"
     evidence: ["crates/qx-sdk/Cargo.toml", "docs/qx-sdk-migration.md", "tools/check_rust_sdk_git_consumer.py"]
   - name: multi_language_strategy
     label: "多语言策略（Rust 内核 + Python worker）"

@@ -30,7 +30,7 @@
 
 ```toml
 [dependencies]
-qx-sdk = { git = "https://github.com/coeasy/qianxing.git", rev = "ffbc8bace1260367179040a671b05a5a3a399632", package = "qx-sdk" }
+qx-sdk = { git = "https://github.com/coeasy/qianxing.git", rev = "e9fa6ab23aa3f7a7dafbe50265674b8ffd24954d", package = "qx-sdk" }
 ```
 
 该 Git 来源示例固定到包含 Paper 算法生命周期和 SDK facade 的提交。新版本发布时应替换为对应的完整提交哈希，并提交 `Cargo.lock`。验证独立消费者可运行：
