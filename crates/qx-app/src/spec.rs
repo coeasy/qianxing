@@ -302,6 +302,9 @@ pub struct BacktestSpec {
     /// 产物目录。四份产物（`*.run.json` / `*.summary.json` / `*.equity.csv` / `*.fills.csv`）
     /// 都落在它下面。
     pub output_dir: String,
+    /// Ledger/account ownership for this run. Omitted legacy specs use `app`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     pub strategy: BuiltinStrategySpec,
     /// Optional position-level protective exits, evaluated on completed bars
     /// and routed through the same OMS/risk/matching path as strategy orders.
@@ -331,6 +334,7 @@ impl BacktestSpec {
             initial_cash_raw,
             seed,
             output_dir: output_dir.into(),
+            account_id: None,
             strategy,
             protective_exit: None,
         }
@@ -367,6 +371,16 @@ impl BacktestSpec {
                     "BacktestSpec.run_id 必须是 [A-Za-z0-9._-] 且不超过 128 字符（它会变成产物文件名），实际 {:?}",
                     self.run_id
                 ),
+            ));
+        }
+        if self
+            .account_id
+            .as_deref()
+            .is_some_and(|account_id| !is_identity_token(account_id))
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "BacktestSpec.account_id 必须是 [A-Za-z0-9._-] 且不超过 128 字符",
             ));
         }
         if qx_core::InstrumentId::parse(&self.instrument).is_none() {

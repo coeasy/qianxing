@@ -97,6 +97,30 @@ fn the_backtest_spec_json_keys_are_pinned() {
 }
 
 #[test]
+fn explicit_account_id_is_optional_backward_compatible_and_validated() {
+    let root = scratch("spec-account");
+    let mut spec = backtest_spec("run-account", "bars.json", &root);
+    assert!(!spec.to_json().expect("legacy JSON").contains("account_id"));
+
+    spec.account_id = Some("portfolio.main-1".into());
+    spec.validate().expect("valid account token");
+    let payload = spec.to_json().expect("explicit account JSON");
+    assert_eq!(
+        serde_json::from_str::<Value>(&payload).expect("JSON")["account_id"],
+        "portfolio.main-1"
+    );
+    assert_eq!(BacktestSpec::from_json(&payload).expect("round trip"), spec);
+
+    for bad in ["", "../escape", "account/1", "账户"] {
+        spec.account_id = Some(bad.into());
+        assert_eq!(
+            rejected(spec.validate(), &format!("account_id={bad:?}")),
+            AppErrorCategory::InvalidInput
+        );
+    }
+}
+
+#[test]
 fn old_strategy_documents_get_the_historical_signal_defaults() {
     let payload = r#"{"kind":"sma_cross","strategy_id":"compat","quantity_raw":1000000000,"fast_window":5,"slow_window":20}"#;
     let strategy: BuiltinStrategySpec =
@@ -375,6 +399,7 @@ fn the_output_types_round_trip_and_keep_their_key_sets() {
         return_bps: -12,
         max_drawdown_bps: 34,
         artifacts: artifacts.clone(),
+        account_id: None,
     };
     let payload = outcome.to_json().expect("序列化");
     assert_eq!(

@@ -65,7 +65,8 @@ fn spec(run_id: &str, output_dir: &Path) -> BacktestSpec {
 #[test]
 fn an_independent_consumer_runs_and_verifies_a_backtest_through_the_facade_only() {
     let output_dir = scratch("sync");
-    let backtest = spec("sdk-run", &output_dir);
+    let mut backtest = spec("sdk-run", &output_dir);
+    backtest.account_id = Some("acct.rust-sdk".into());
     assert_eq!(backtest.schema_version, BACKTEST_SPEC_SCHEMA_VERSION);
 
     let client = Client::new(CallerCapability::Research, "sdk-run");
@@ -78,6 +79,7 @@ fn an_independent_consumer_runs_and_verifies_a_backtest_through_the_facade_only(
 
     // ② 同步回测，四份产物落盘。
     let outcome = client.run_backtest(&backtest).expect("回测跑通");
+    assert_eq!(outcome.account_id.as_deref(), Some("acct.rust-sdk"));
     assert_eq!(outcome.equity_points, 70);
     assert!(outcome.fills > 0, "样例数据必须真跑出成交");
     for path in [

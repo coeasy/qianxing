@@ -17,7 +17,7 @@ int main() {
 
     const std::string spec = R"({"schema_version":1,"experiment_id":"smoke"})";
     const std::string sized_backtest_spec =
-        R"({"schema_version":1,"run_id":"sized","instrument":"BTCUSDT.BINANCE","bars_path":"bars.json","settlement_currency":"USDT","initial_cash_raw":1000000000000,"seed":1,"output_dir":"runs","strategy":{"kind":"sma_cross","strategy_id":"sized-sma","quantity_raw":1000000000,"target_volatility_bps":250,"fast_window":2,"slow_window":4}})";
+        R"({"schema_version":1,"run_id":"sized","instrument":"BTCUSDT.BINANCE","bars_path":"bars.json","settlement_currency":"USDT","initial_cash_raw":1000000000000,"seed":1,"output_dir":"runs","account_id":"acct.cpp-sdk","strategy":{"kind":"sma_cross","strategy_id":"sized-sma","quantity_raw":1000000000,"target_volatility_bps":250,"fast_window":2,"slow_window":4}})";
     const std::string depth_spec =
         R"({"schema_version":1,"tier":"l1","market_spec":{"product":"perpetual"},"order_policy":{"margin_mode":"cross","leverage":2}})";
     const auto response = client.run_experiment(spec);
@@ -136,6 +136,7 @@ int main() {
     assert(observed_path == "/app/backtest");
     assert(observed_body == sized_backtest_spec);
     assert(observed_body.find("\"target_volatility_bps\":250") != std::string::npos);
+    assert(observed_body.find("\"account_id\":\"acct.cpp-sdk\"") != std::string::npos);
 
     const auto verified = client.verify_run(spec);
     assert(verified.ok());

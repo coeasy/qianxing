@@ -66,7 +66,7 @@ domains:
   - name: python_sdk
     level: implemented-unverified
     evidence: [python/qianxing, python/tests/test_sdk_layering.py, maturity/language_api_contract.yaml, maturity/quant_scenarios.yaml, crates/qx-cli/src/tests/strategy_order_identity_round_scope.rs]
-    limitations: ["应用回测入口仍有单账户与策略类型边界；统一 Provider 导入、账户组合、多交易所费率与撮合、用户策略选择与完整 Paper/Live 执行验收未闭环", "Kelly fraction 已在 Rust Bar 单腿回测和 Paper worker→Risk→OMS→Paper Venue→Ledger 路径验证；Tick/OrderBook、多腿 sizing 未接入，Live sizing 未经 testnet 验收", "Rust 风险平价用例已提供确定性研究规划，并经 Python native/remote、C++ remote 和 Rust SDK 接入；它要求调用方提供冻结对齐收益与标记价，不自动读取 Provider 数据，也不提交 Paper/Live 订单", "接口分层已落（方案 §6.2：core/client/data/strategy/paper/live/experiments/reports 八个子层；顶层稳定名单与 qianxing.app 的公开面逐一双向相等；本地 AsyncCoreClient/AsyncRunHandle 与远端 AppClient/RemoteRunHandle 均以同步实现为唯一契约源，Paper/Live 提交亦有 asyncio 委托）；AppClient.get_live_events 已接入全局 /events/live 游标；本地与远端 RunHandle.events（按单次 run 订阅）仍缺同源事件生产者", "CPython 3.10+ 乘操作系统与架构的支持矩阵未建立", "不带 Rust 工具链的干净环境安装冒烟未建立：发布验收目前只在带仓库源码的环境里跑过"]
+    limitations: ["Bar 回测现支持显式账户归属，但仍是逐 run 独立账簿；组合级资金竞争/风险聚合与多策略调度未闭环。统一 Provider 导入、多交易所费率与撮合、用户策略选择与完整 Paper/Live 执行验收也未闭环", "Kelly fraction 已在 Rust Bar 单腿回测和 Paper worker→Risk→OMS→Paper Venue→Ledger 路径验证；Tick/OrderBook、多腿 sizing 未接入，Live sizing 未经 testnet 验收", "Rust 风险平价用例已提供确定性研究规划，并经 Python native/remote、C++ remote 和 Rust SDK 接入；它要求调用方提供冻结对齐收益与标记价，不自动读取 Provider 数据，也不提交 Paper/Live 订单", "接口分层已落（方案 §6.2：core/client/data/strategy/paper/live/experiments/reports 八个子层；顶层稳定名单与 qianxing.app 的公开面逐一双向相等；本地 AsyncCoreClient/AsyncRunHandle 与远端 AppClient/RemoteRunHandle 均以同步实现为唯一契约源，Paper/Live 提交亦有 asyncio 委托）；AppClient.get_live_events 已接入全局 /events/live 游标；本地与远端 RunHandle.events（按单次 run 订阅）仍缺同源事件生产者", "CPython 3.10+ 乘操作系统与架构的支持矩阵未建立", "不带 Rust 工具链的干净环境安装冒烟未建立：发布验收目前只在带仓库源码的环境里跑过"]
     next_gate: "补共享 RunEvent/cursor 契约与本地、远端 RunHandle.events；建立 CPython 3.10+ 乘操作系统与架构的支持矩阵，并在不带 Rust 工具链的干净环境完成安装冒烟"
 
   - name: cpp_sdk
@@ -90,8 +90,8 @@ domains:
   - name: accounts_and_strategies
     level: partial
     evidence: [crates/qx-app, crates/qx-zhenlu, maturity/app_use_cases.yaml]
-    limitations: ["qx-app 高层回测的固定账户限制需改为显式账户与组合规格", "多账户隔离、资金归属、策略竞争、风险聚合与退出语义未端到端验证"]
-    next_gate: "落方案 §5.3 的账户、组合、策略、Run 所有权关系与组合级限额聚合"
+    limitations: ["Bar 回测已可显式指定账户，账户身份进入策略上下文、summary、结果对象和复核；但目前按 run 建立独立账簿，未有组合规格", "多账户资金竞争、组合限额聚合、多策略调度和退出语义未端到端验证"]
+    next_gate: "落方案 §5.3 的组合/策略/Run 所有权、跨账户限额聚合与确定性资金分配"
 
   - name: web_api
     level: implemented-unverified

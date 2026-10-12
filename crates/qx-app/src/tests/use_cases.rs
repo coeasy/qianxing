@@ -469,6 +469,7 @@ fn every_use_case_failure_carries_the_callers_correlation_id() {
             equity: "equity.csv".into(),
             fills: "fills.csv".into(),
         },
+        account_id: None,
     };
     let error = verify_run(&headless, &research("verify-cid")).expect_err("没有 run_id 就没有对象");
     assert_eq!(error.category(), AppErrorCategory::InvalidInput);

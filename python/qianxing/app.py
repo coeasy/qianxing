@@ -226,12 +226,15 @@ class BacktestSpec:
     seed: int = 0
     schema_version: int = 1
     protective_exit: ProtectiveExitSpec | dict[str, Any] | None = None
+    account_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = {
             **asdict(self),
             "strategy": self.strategy.to_dict(),
         }
+        if self.account_id is None:
+            value.pop("account_id")
         if self.protective_exit is None:
             value.pop("protective_exit")
         elif isinstance(self.protective_exit, ProtectiveExitSpec):
@@ -264,6 +267,7 @@ class BacktestOutcome:
     return_bps: int
     max_drawdown_bps: int
     artifacts: dict[str, str]
+    account_id: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "BacktestOutcome":

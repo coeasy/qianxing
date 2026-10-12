@@ -680,10 +680,15 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertTrue(verdict["usable"], verdict["gaps"])
         self.assertEqual(verdict["rows"], 70)
 
-        outcome = self.bridge.run_backtest(self._spec("py-run", out))
+        spec = self._spec("py-run", out)
+        spec["account_id"] = "acct.python-test"
+        outcome = self.bridge.run_backtest(spec)
         self.assertGreater(outcome["fills"], 0)
         self.assertEqual(outcome["equity_points"], 70)
         self.assertEqual(len(outcome["result_hash"]), 16)
+        self.assertEqual(outcome["account_id"], "acct.python-test")
+        summary = json.loads(Path(outcome["artifacts"]["summary"]).read_text(encoding="utf-8"))
+        self.assertEqual(summary["account_id"], "acct.python-test")
 
         verification = self.bridge.verify_run(outcome)
         self.assertTrue(verification["verified"], verification["mismatches"])

@@ -40,9 +40,8 @@ use qx_xingban::{
 use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
 
-/// 回测账簿的账户名。应用层只有一本账，所以它是一个常量而不是 spec 的一格——
-/// 多账户是另一件事（V13 R28），不该靠这一格顺手塞进来。
-const ACCOUNT_ID: &str = "app";
+/// Historical default retained for callers whose spec predates explicit account ownership.
+const DEFAULT_ACCOUNT_ID: &str = "app";
 
 /// 本用例**不读** market spec（T2-3 才接入规格与保证金），所以这一格写的是"没有规格"
 /// 这件事本身。写一个像规格名的字符串（`"v1"`）会让读者以为查过规格了。
@@ -137,10 +136,15 @@ pub(super) fn run_backtest_inner(
     let fee = MakerTakerFeeModel::default_maker_taker();
     let fee_model = fee.name().to_string();
     let fill_model = NextBarOpenFillModel.name().to_string();
+    let account_id = spec
+        .account_id
+        .as_deref()
+        .unwrap_or(DEFAULT_ACCOUNT_ID)
+        .to_string();
     let config = BacktestConfig {
         instrument: instrument.clone(),
         instrument_spec: None,
-        account_id: ACCOUNT_ID.to_string(),
+        account_id: account_id.clone(),
         currency: spec.settlement_currency.clone(),
         initial_cash: Money::from_raw(spec.initial_cash_raw),
         multiplier: 1,
@@ -191,7 +195,7 @@ pub(super) fn run_backtest_inner(
     let strategy_context = StrategyContext {
         strategy_id: strategy_id.clone(),
         strategy_version: strategy_version.clone(),
-        account_id: config.account_id.clone(),
+        account_id: account_id.clone(),
         venue_id: instrument.venue.to_string(),
         data_fingerprint: data_fingerprint.clone(),
         as_of,
@@ -292,7 +296,7 @@ pub(super) fn run_backtest_inner(
         schema_version: SUMMARY_SCHEMA_VERSION,
         run_id: spec.run_id.clone(),
         instrument: spec.instrument.clone(),
-        account_id: ACCOUNT_ID.to_string(),
+        account_id: account_id.clone(),
         currency: spec.settlement_currency.clone(),
         strategy_id: strategy_id.clone(),
         strategy_version: strategy_version.clone(),
@@ -360,6 +364,7 @@ pub(super) fn run_backtest_inner(
         return_bps: report.return_bps,
         max_drawdown_bps: report.max_drawdown_bps,
         artifacts,
+        account_id: spec.account_id.clone(),
     }))
 }
 

@@ -49,6 +49,9 @@ pub struct BacktestOutcome {
     pub max_drawdown_bps: u32,
     /// 四份产物的路径：run manifest / summary / equity / fills。
     pub artifacts: BacktestArtifacts,
+    /// Account ownership, omitted by outcomes created before account-aware specs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
 }
 
 /// 一次运行落盘的四份产物路径。

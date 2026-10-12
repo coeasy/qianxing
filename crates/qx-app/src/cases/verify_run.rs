@@ -202,6 +202,15 @@ fn verify_run_inner(outcome: &BacktestOutcome) -> VerificationResult {
         &summary.instrument,
         &outcome.instrument,
     );
+    if let Some(account_id) = &outcome.account_id {
+        compare(
+            &mut checks,
+            &mut mismatches,
+            "account_id（summary ↔ outcome）",
+            &summary.account_id,
+            account_id,
+        );
+    }
     compare(
         &mut checks,
         &mut mismatches,

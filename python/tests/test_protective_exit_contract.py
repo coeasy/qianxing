@@ -19,9 +19,13 @@ class ProtectiveExitContractTests(unittest.TestCase):
         )
         legacy = BacktestSpec(**common)
         self.assertNotIn("protective_exit", legacy.to_dict())
+        self.assertNotIn("account_id", legacy.to_dict())
         positional = BacktestSpec("positional", "BTCUSDT.BINANCE", "bars.json", "USDT", 1_000_000, "out", strategy, 7, 1)
         self.assertEqual(positional.seed, 7)
         self.assertEqual(positional.schema_version, 1)
+
+        account_owned = BacktestSpec(**common, account_id="acct.paper-01")
+        self.assertEqual(account_owned.to_dict()["account_id"], "acct.paper-01")
 
         typed = BacktestSpec(
             **common,
