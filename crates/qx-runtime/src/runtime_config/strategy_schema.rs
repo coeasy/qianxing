@@ -227,6 +227,19 @@ pub struct StrategyRuntimeConfig {
     /// 截断成零，回测看起来"成交了但一分钱费用都没付"。
     #[serde(default)]
     pub builtin_quantity: Option<i64>,
+    /// Rust 内置策略共享的固定名义金额（settlement raw）。可用资金比例、波动率预算和
+    /// Kelly 参数见下列字段；这些字段只影响 Rust 内核 sizing，并通过同一策略宿主用于
+    /// Paper/Live。省略时保持旧配置序列化指纹不变。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin_target_notional_raw: Option<i128>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin_target_available_margin_bps: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin_target_volatility_bps: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin_target_kelly_fraction_bps: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin_kelly_lookback_bars: Option<usize>,
     #[serde(default)]
     pub builtin_fast_window: Option<usize>,
     #[serde(default)]
@@ -345,6 +358,11 @@ impl Default for StrategyRuntimeConfig {
             live_max_staleness_ms: None,
             builtin_strategy: None,
             builtin_quantity: None,
+            builtin_target_notional_raw: None,
+            builtin_target_available_margin_bps: None,
+            builtin_target_volatility_bps: None,
+            builtin_target_kelly_fraction_bps: None,
+            builtin_kelly_lookback_bars: None,
             builtin_fast_window: None,
             builtin_slow_window: None,
             builtin_period: None,

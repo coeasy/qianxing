@@ -183,6 +183,107 @@ fn l1_tick_run_has_the_same_hash_through_cli_http_and_python() {
     }
 }
 
+#[test]
+fn l2_market_making_spec_has_one_hash_through_cli_http_and_python() {
+    let root = scratch("l2-market-making");
+    let repository = repo_root();
+    let data_dir = repository
+        .join("target")
+        .join(format!("qx-app-depth-mm-contract-{}", std::process::id()));
+    std::fs::create_dir_all(&data_dir).expect("create API-contained data directory");
+    let snapshots = (0..48)
+        .map(|index| {
+            let phase = index % 20;
+            let mid = if phase < 10 {
+                100 + phase * 2
+            } else {
+                100 + (20 - phase) * 2
+            };
+            json!({
+                "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+                "ts": 1000 + index as u64 * 1000,
+                "sequence": index as u64 + 1,
+                "bids": [
+                    {"price": (mid - 1) as i128 * 1_000_000_000_i128, "qty": 100_000_000_000_i128},
+                    {"price": (mid - 2) as i128 * 1_000_000_000_i128, "qty": 100_000_000_000_i128}
+                ],
+                "asks": [
+                    {"price": (mid + 1) as i128 * 1_000_000_000_i128, "qty": 100_000_000_000_i128},
+                    {"price": (mid + 2) as i128 * 1_000_000_000_i128, "qty": 100_000_000_000_i128}
+                ]
+            })
+        })
+        .collect::<Vec<_>>();
+    let data_path = data_dir.join("market-making-depth.json");
+    std::fs::write(
+        &data_path,
+        json!({
+            "schema_version": 1,
+            "source": "depth-market-making-entrypoint-contract",
+            "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+            "snapshots": snapshots
+        })
+        .to_string(),
+    )
+    .expect("write L2 frame");
+    std::env::set_var("QX_API_DATA_ROOT", &repository);
+    std::env::set_var("QX_API_ARTIFACT_ROOT", root.join("http-artifacts"));
+    let spec = json!({
+        "schema_version": 1,
+        "run_id": "depth-market-making-cross-entrypoint",
+        "depth_path": data_path.to_string_lossy(),
+        "tier": "l2",
+        "settlement_currency": "USDT",
+        "initial_cash_raw": 1_000_000_000_000_000_i128,
+        "fee_bps": 10,
+        "latency_snapshots": 0,
+        "queue_position_bps": 0,
+        "market_impact_bps": 0,
+        "output_dir": root.join("cli-artifacts").to_string_lossy(),
+        "strategy": {
+            "kind": "sma_cross", "strategy_id": "depth-market-making-cross",
+            "quantity_raw": 1_000_000_000_i128, "fast_window": 2, "slow_window": 3
+        },
+        "market_making": {
+            "spread_bps": 100, "quote_qty_raw": 1_000_000_000_i128,
+            "max_inventory_raw": 5_000_000_000_i128,
+            "tick_size_raw": 10_000_000_i128, "inventory_skew_bps": 50
+        }
+    })
+    .to_string();
+    let spec_path = root.join("market-making-spec.json");
+    std::fs::write(&spec_path, &spec).expect("write market-making spec");
+    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "depth-backtest"])
+        .arg(&spec_path)
+        .output()
+        .expect("start CLI market-making workflow");
+    assert_eq!(
+        cli_output.status.code(),
+        Some(0),
+        "CLI failed: {}",
+        String::from_utf8_lossy(&cli_output.stderr)
+    );
+    let cli: Value = serde_json::from_slice(&cli_output.stdout).expect("CLI JSON");
+    assert!(cli["fills"].as_u64().unwrap_or_default() > 0);
+
+    let api = qx_api::ApiService::new(qx_api::ApiState::default());
+    let response = api.handle("POST", "/app/depth-backtest", &spec, 0);
+    let http: Value = serde_json::from_str(&response.body).expect("HTTP JSON");
+    assert_eq!(response.status, 200, "HTTP failed: {http}");
+    assert_eq!(cli["result_hash"], http["result_hash"]);
+    assert_eq!(cli["fills"], http["fills"]);
+
+    let mut python_spec: Value = serde_json::from_str(&spec).unwrap();
+    python_spec["output_dir"] = json!(root.join("python-artifacts").to_string_lossy());
+    if let Some(python) = python_depth(&python_spec.to_string()) {
+        assert_eq!(cli["result_hash"], python["result_hash"]);
+        assert_eq!(cli["fills"], python["fills"]);
+    } else {
+        eprintln!("skip Python leg: qx-python extension is not built or is stale");
+    }
+}
+
 fn python_verify_depth(outcome: &[u8]) -> Value {
     let root = repo_root();
     let python = std::env::var("QX_PYTHON").unwrap_or_else(|_| {

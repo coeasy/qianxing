@@ -113,6 +113,171 @@ fn builtin_worker_reads_the_declared_signal_parameters() {
 }
 
 #[test]
+fn builtin_worker_receives_shared_rust_sizing_parameters() {
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy")
+        .join("qianxing.runtime.builtin-strategy.example.json");
+    let mut config = read_runtime_config(&runtime).unwrap();
+    config.strategy.builtin_target_notional_raw = Some(123_000);
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let assembled =
+        crate::strategy_host::builtin_strategy_config_from_runtime(&config.strategy, &instrument)
+            .unwrap();
+    assert_eq!(assembled.target_notional_raw, Some(123_000));
+
+    config.strategy.builtin_target_notional_raw = None;
+    config.strategy.builtin_target_available_margin_bps = Some(2_500);
+    let assembled =
+        crate::strategy_host::builtin_strategy_config_from_runtime(&config.strategy, &instrument)
+            .unwrap();
+    assert_eq!(assembled.target_available_margin_bps, Some(2_500));
+
+    config.strategy.builtin_target_available_margin_bps = None;
+    config.strategy.builtin_target_volatility_bps = Some(750);
+    let assembled =
+        crate::strategy_host::builtin_strategy_config_from_runtime(&config.strategy, &instrument)
+            .unwrap();
+    assert_eq!(assembled.target_volatility_bps, Some(750));
+
+    config.strategy.builtin_target_volatility_bps = None;
+    config.strategy.builtin_target_kelly_fraction_bps = Some(5_000);
+    config.strategy.builtin_kelly_lookback_bars = Some(60);
+    let assembled =
+        crate::strategy_host::builtin_strategy_config_from_runtime(&config.strategy, &instrument)
+            .unwrap();
+    assert_eq!(assembled.target_kelly_fraction_bps, Some(5_000));
+    assert_eq!(assembled.kelly_lookback_bars, Some(60));
+}
+
+#[test]
+fn paper_builtin_kelly_sizing_reads_replayed_buying_power_and_bars() {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let root = workspace_root.join(".task-tmp").join(format!(
+        "paper-kelly-worker-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let template = workspace_root
+        .join("deploy")
+        .join("qianxing.runtime.paper-strategy.example.json");
+    let mut config = read_runtime_config(&template).unwrap();
+    config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    config.strategy.id = Some("strategy-kelly-paper".into());
+    config.strategy.version = "paper-kelly-e2e-v1".into();
+    config.strategy.instrument = Some("BTCUSDT.BINANCE".into());
+    config.strategy.builtin_strategy = Some("momentum".into());
+    config.strategy.builtin_quantity = Some(1_000_000_000);
+    config.strategy.builtin_target_kelly_fraction_bps = Some(5_000);
+    config.strategy.builtin_kelly_lookback_bars = Some(30);
+    let bars_path = root.join("rising-bars.json");
+    let closes = (0..70_i128)
+        .map(|index| (100 + index - if index % 5 == 0 { 2 } else { 0 }) * SCALE)
+        .collect::<Vec<_>>();
+    let bars = serde_json::json!({
+        "instrument": "BTCUSDT.BINANCE",
+        "source": "paper-kelly-test-v1",
+        "ts": (1..=70_u64).collect::<Vec<_>>(),
+        "open_raw": closes,
+        "high_raw": closes.iter().map(|close| close + SCALE).collect::<Vec<_>>(),
+        "low_raw": closes.iter().map(|close| close - SCALE).collect::<Vec<_>>(),
+        "close_raw": closes,
+        "volume_raw": vec![10 * SCALE; 70],
+    });
+    std::fs::write(&bars_path, serde_json::to_vec(&bars).unwrap()).unwrap();
+    config.strategy.bars_snapshot_path = Some(bars_path.to_string_lossy().into_owned());
+    let spec_path = workspace_root
+        .join("deploy")
+        .join("qianxing.binance.spot.spec.json");
+    config
+        .workers
+        .iter_mut()
+        .find(|worker| worker.id == "paper-execution")
+        .expect("paper sample missing execution worker")
+        .instrument_spec_path = Some(spec_path.to_string_lossy().into_owned());
+    let runtime_path = root.join("runtime.json");
+    std::fs::write(&runtime_path, config.to_json().unwrap()).unwrap();
+
+    // The strategy must size from replayed Paper cash and the execution worker's matching spec.
+    let mut pipeline = LiveEventPipeline::open(&data_dir, paper_account_log(), "USDT").unwrap();
+    pipeline
+        .ingest(RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::AccountCashflow {
+                cashflow: AccountCashflow {
+                    account_id: "main".into(),
+                    venue_id: "paper".into(),
+                    currency: "USDT".into(),
+                    kind: CashflowKind::Transfer,
+                    amount: Money::from_i64(10_000),
+                    external_id: "kelly-paper:initial-cash".into(),
+                },
+            },
+            1,
+            1,
+            1,
+            "kelly-paper:initial-cash",
+        ))
+        .unwrap();
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let input = build_strategy_contract_input(
+        &data_dir,
+        &config,
+        &instrument,
+        "kelly-paper-context",
+        u64::MAX,
+    )
+    .unwrap();
+    assert!(
+        input.risk_state.contains("paper-market-spec-buying-power"),
+        "Kelly sizing must report its Paper buying-power source: {}",
+        input.risk_state
+    );
+    assert!(input.available_margin_raw.unwrap_or_default() > 0);
+    let output = invoke_builtin_strategy(
+        &data_dir,
+        &config,
+        &instrument,
+        "kelly-paper-worker",
+        u64::MAX,
+    )
+    .unwrap();
+    assert!(
+        output.intents.iter().any(|intent| intent.qty_raw > 0),
+        "positive momentum and positive replayed buying power should produce a sized intent: {output:?}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn strategy_runtime_resolves_execution_market_specs_from_config_directory() {
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy")
+        .join("qianxing.runtime.paper-strategy.example.json");
+    let mut config = read_runtime_config(&runtime).unwrap();
+    let worker = config
+        .workers
+        .iter_mut()
+        .find(|worker| worker.instrument_spec_path.is_some())
+        .unwrap();
+    let expected =
+        resolve_runtime_relative_path(&runtime, worker.instrument_spec_path.as_deref().unwrap());
+    resolve_worker_runtime_paths(worker, &runtime);
+    assert_eq!(
+        PathBuf::from(worker.instrument_spec_path.as_deref().unwrap()),
+        expected
+    );
+}
+
+#[test]
 fn dedicated_paper_spread_recovery_worker_runs_one_scan_without_orders() {
     let root = std::env::temp_dir().join(format!(
         "qianxing-cli-paper-recovery-worker-{}-{}",
@@ -240,6 +405,14 @@ fn strategy_parent_pid_flag_is_wired_on_both_sides_of_the_language_boundary() {
             .join("strategy_host.rs"),
     )
     .unwrap();
+    let ring_arguments = std::fs::read_to_string(
+        root.join("crates")
+            .join("qx-cli")
+            .join("src")
+            .join("strategy_host")
+            .join("ring_arguments.rs"),
+    )
+    .unwrap();
     let spawn_window = rust
         .split_once("actual_args.extend(shared_ring_arguments(")
         .unwrap_or_else(|| panic!("spawn 点不再经由 shared_ring_arguments 构造共享 ring 实参"))
@@ -252,7 +425,7 @@ fn strategy_parent_pid_flag_is_wired_on_both_sides_of_the_language_boundary() {
         "交给 worker 的不再是本进程 pid：{spawn_window}"
     );
     assert_eq!(
-        rust.matches("\"--parent-pid\".into()").count(),
+        ring_arguments.matches("\"--parent-pid\".into()").count(),
         1,
         "旗标字面量要么被复制成了两份（漂移时只改一处），要么整个消失"
     );

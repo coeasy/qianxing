@@ -3,6 +3,10 @@
 //! 执行与路由：风控门禁 → OMS → 路由 → 适配器。
 //!
 //! 原则：**RiskGate 可以拒绝，但不得静默改写业务含义。**
+pub mod algo;
+pub use algo::{
+    plan_twap, plan_vwap, AlgoChildSlice, AlgoExecutionError, VwapVolumeBucket, MAX_ALGO_CHILDREN,
+};
 pub mod oms;
 pub mod portfolio;
 pub use oms::Oms;

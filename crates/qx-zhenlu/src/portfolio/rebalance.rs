@@ -72,10 +72,18 @@ pub fn rebalance(
     for instrument in instruments {
         let current_qty = current.position(&instrument);
         let target_qty = targets.get(&instrument).copied().unwrap_or_default();
-        current_quantity = current_quantity.saturating_add(current_qty.unsigned_abs());
-        target_quantity = target_quantity.saturating_add(target_qty.unsigned_abs());
-        let delta = target_qty.saturating_sub(current_qty);
-        turnover_quantity = turnover_quantity.saturating_add(delta.unsigned_abs());
+        current_quantity = current_quantity
+            .checked_add(current_qty.unsigned_abs())
+            .ok_or("current portfolio quantity aggregate overflows")?;
+        target_quantity = target_quantity
+            .checked_add(target_qty.unsigned_abs())
+            .ok_or("target portfolio quantity aggregate overflows")?;
+        let delta = target_qty
+            .checked_sub(current_qty)
+            .ok_or_else(|| format!("rebalance quantity delta overflows: {instrument}"))?;
+        turnover_quantity = turnover_quantity
+            .checked_add(delta.unsigned_abs())
+            .ok_or("rebalance turnover quantity aggregate overflows")?;
         if delta.unsigned_abs() >= constraints.min_trade_size as u128 {
             let instrument = InstrumentId::parse(&instrument)
                 .ok_or_else(|| format!("invalid target instrument id: {instrument}"))?;
@@ -87,8 +95,10 @@ pub fn rebalance(
     // quantity, any non-zero delta is treated as 100% turnover.
     let denominator = current_quantity.max(target_quantity).max(1);
     let turnover_bps = turnover_quantity
-        .saturating_mul(10_000)
-        .saturating_div(denominator)
+        .checked_mul(10_000)
+        .ok_or("rebalance turnover basis-point calculation overflows")?
+        .checked_div(denominator)
+        .ok_or("rebalance turnover denominator is zero")?
         .min(u32::MAX as u128) as u32;
     if turnover_bps > constraints.max_turnover_bps {
         return Err("rebalance turnover exceeds limit".into());
@@ -161,5 +171,34 @@ mod tests {
         assert_eq!(plan.positions[0].instrument, btc());
         assert_eq!(plan.positions[0].target_qty, -2);
         assert_eq!(plan.turnover_bps, 10_000);
+    }
+
+    #[test]
+    fn quantity_delta_overflow_is_rejected_instead_of_saturating() {
+        let current = PortfolioState {
+            portfolio_id: "portfolio-1".into(),
+            timestamp: 1,
+            cash: 1_000,
+            positions: BTreeMap::from([(String::from("BTC.SIM"), i128::MIN)]),
+        };
+        let error = rebalance(
+            &current,
+            &[TargetPosition::single(btc(), i128::MAX)],
+            &PortfolioConstraint::default(),
+        )
+        .unwrap_err();
+        assert!(error.contains("quantity delta overflows"));
+    }
+
+    #[test]
+    fn turnover_arithmetic_overflow_is_rejected_instead_of_underreported() {
+        let current = PortfolioState {
+            portfolio_id: "portfolio-1".into(),
+            timestamp: 1,
+            cash: 1_000,
+            positions: BTreeMap::from([(String::from("BTC.SIM"), i128::MAX / 2)]),
+        };
+        let error = rebalance(&current, &[], &PortfolioConstraint::default()).unwrap_err();
+        assert!(error.contains("basis-point calculation overflows"));
     }
 }

@@ -59,6 +59,18 @@ contracts:
     python_remote: ["compare_runs"]
     cpp_remote: ["compare_runs"]
     http: ["/app/compare-runs"]
+  - use_case: plan_risk_parity
+    rust: ["plan_risk_parity"]
+    python_native: ["plan_risk_parity"]
+    python_remote: ["plan_risk_parity"]
+    cpp_remote: ["plan_risk_parity"]
+    http: ["/app/plan-risk-parity"]
+  - use_case: plan_algo_execution
+    rust: ["plan_algo_execution"]
+    python_native: ["plan_algo_execution"]
+    python_remote: ["plan_algo_execution"]
+    cpp_remote: ["plan_algo_execution"]
+    http: ["/app/plan-algo-execution"]
   - use_case: run_experiment
     rust: ["run_experiment"]
     python_native: ["run_experiment", "start_experiment"]

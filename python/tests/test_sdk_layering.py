@@ -49,6 +49,7 @@ LAYERS = (
 #: 不是 `qx-app` 用例面的一部分；放进顶层会把稳定面撑大一圈。
 SUB_NAMESPACE_ONLY = {
     "strategy": ("SCHEMA_VERSION", "StrategyBars", "StrategyInput", "StrategyIntent", "StrategyOutput"),
+    "core": ("AsyncCoreClient", "AsyncRunHandle"),
 }
 
 #: 远端面：只有 `qianxing.client` 与服务端执行层能出现。
@@ -153,6 +154,109 @@ class TopLevelStabilityTest(unittest.TestCase):
     def test_top_level_names_are_all_reachable(self):
         unresolved = [item for item in qianxing.__all__ if not hasattr(qianxing, item)]
         self.assertEqual(unresolved, [])
+
+    def test_walk_forward_and_baseline_contracts_round_trip_through_typed_sdk(self):
+        from qianxing import (
+            BacktestSpec,
+            BuiltinStrategySpec,
+            ExperimentBaselineReport,
+            ExperimentOutOfSampleReport,
+            ExperimentParameterSpace,
+            ExperimentSplitPlan,
+            RunExperimentResult,
+            RunExperimentSpec,
+        )
+
+        base = BacktestSpec(
+            run_id="typed-experiment-base",
+            instrument="BTCUSDT.BINANCE",
+            bars_path="bars.json",
+            settlement_currency="USDT",
+            initial_cash_raw=100_000_000_000,
+            output_dir="runs",
+            strategy=BuiltinStrategySpec(
+                kind="sma_cross", strategy_id="typed-sma", fast_window=2, slow_window=4,
+                target_notional_raw=25_000_000_000,
+            ),
+        )
+        self.assertEqual(base.to_dict()["strategy"]["target_notional_raw"], 25_000_000_000)
+        margin_sized = BuiltinStrategySpec(
+            kind="sma_cross", strategy_id="margin-sma", target_available_margin_bps=2_500
+        )
+        self.assertEqual(margin_sized.to_dict()["target_available_margin_bps"], 2_500)
+        volatility_sized = BuiltinStrategySpec(
+            kind="sma_cross", strategy_id="volatility-sma", target_volatility_bps=25
+        )
+        self.assertEqual(volatility_sized.to_dict()["target_volatility_bps"], 25)
+        kelly_sized = BuiltinStrategySpec(
+            kind="sma_cross",
+            strategy_id="kelly-sma",
+            target_kelly_fraction_bps=5_000,
+            kelly_lookback_bars=60,
+        )
+        self.assertEqual(kelly_sized.to_dict()["target_kelly_fraction_bps"], 5_000)
+        self.assertEqual(kelly_sized.to_dict()["kelly_lookback_bars"], 60)
+        legacy_strategy = BuiltinStrategySpec(kind="sma_cross", strategy_id="legacy-sma")
+        self.assertNotIn("target_notional_raw", legacy_strategy.to_dict())
+        self.assertNotIn("target_available_margin_bps", legacy_strategy.to_dict())
+        self.assertNotIn("target_volatility_bps", legacy_strategy.to_dict())
+        self.assertNotIn("target_kelly_fraction_bps", legacy_strategy.to_dict())
+        self.assertNotIn("kelly_lookback_bars", legacy_strategy.to_dict())
+        legacy = RunExperimentSpec(
+            experiment_id="legacy-grid",
+            base=base,
+            parameter_space=(ExperimentParameterSpace("fast_window", (2, 3)),),
+        )
+        self.assertNotIn("split_plan", legacy.to_dict())
+        self.assertNotIn("baselines", legacy.to_dict())
+
+        spec = RunExperimentSpec(
+            experiment_id="walk-forward-grid",
+            base=base,
+            parameter_space=(ExperimentParameterSpace("fast_window", (2, 3)),),
+            split_plan=ExperimentSplitPlan(20, 10, walk_forward=True, step_bars=10),
+            baselines=("buy-and-hold", "zero-signal"),
+        )
+        self.assertEqual(spec.to_dict()["split_plan"]["step_bars"], 10)
+        self.assertEqual(spec.to_dict()["baselines"], ["buy-and-hold", "zero-signal"])
+
+        result = RunExperimentResult.from_dict(
+            {
+                "schema_version": 1,
+                "experiment_id": "walk-forward-grid",
+                "total_candidates": 1,
+                "completed_candidates": 1,
+                "succeeded_candidates": 1,
+                "failed_candidates": 0,
+                "spec_fingerprint": "abc",
+                "candidates": [],
+                "comparison": None,
+                "artifact_path": "experiment.json",
+                "out_of_sample": {
+                    "folds": [
+                        {
+                            "fold": 1,
+                            "train_range": [0, 20],
+                            "test_range": [20, 30],
+                            "selected_ordinal": 0,
+                            "selected_parameters": {"fast_window": 2},
+                            "in_sample_return_bps": 15,
+                            "out_of_sample_return_bps": 7,
+                        }
+                    ],
+                    "in_sample_return_bps": 15,
+                    "out_of_sample_return_bps": 7,
+                    "degradation_bps": 8,
+                },
+                "baselines": [
+                    {"name": "buy-and-hold", "return_bps": 100, "max_drawdown_bps": 20}
+                ],
+            }
+        )
+        self.assertIsInstance(result.out_of_sample, ExperimentOutOfSampleReport)
+        self.assertEqual(result.out_of_sample.folds[0].test_range, (20, 30))
+        self.assertIsInstance(result.baselines[0], ExperimentBaselineReport)
+        self.assertEqual(result.baselines[0].return_bps, 100)
 
 
 class OptionalDependencyTest(unittest.TestCase):

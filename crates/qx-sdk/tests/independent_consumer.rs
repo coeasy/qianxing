@@ -11,8 +11,10 @@
 //! 而不是在测试里现造：独立消费者的第一件事本来就是"拿到一份别人的数据"。
 
 use qx_sdk::{
-    BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability, Client, DatasetSpec,
-    RunStatus, BACKTEST_SPEC_SCHEMA_VERSION,
+    AlgoExecutionMethod, AlgoExecutionSpec, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec,
+    CallerCapability, Client, DatasetSpec, ExperimentParameterSpace, ExperimentSplitPlan,
+    RiskParityAssetSpec, RiskParitySpec, RunExperimentSpec, RunStatus, VwapVolumeBucket,
+    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
 
@@ -117,6 +119,161 @@ fn an_independent_consumer_drives_the_async_handle_and_sees_the_same_hash() {
 }
 
 #[test]
+fn an_independent_consumer_uses_shared_fixed_notional_sizing() {
+    let output_dir = scratch("notional-sizing");
+    let mut backtest = spec("sdk-notional", &output_dir);
+    backtest.strategy.target_notional_raw = Some(1_000 * 1_000_000_000);
+    let client = Client::new(CallerCapability::Research, "sdk-notional");
+    let outcome = client
+        .run_backtest(&backtest)
+        .expect("notional sizing backtest");
+    assert!(outcome.fills > 0);
+    let fills = std::fs::read_to_string(&outcome.artifacts.fills).expect("fill facts");
+    let quantities = fills
+        .lines()
+        .skip(1)
+        .filter_map(|row| row.split(',').nth(2)?.parse::<i128>().ok())
+        .collect::<Vec<_>>();
+    assert!(!quantities.is_empty());
+    assert!(quantities
+        .iter()
+        .all(|quantity| *quantity > 0 && *quantity != 1_000_000_000));
+    assert!(client.verify_run(&outcome).unwrap().verified);
+}
+
+#[test]
+fn an_independent_consumer_builds_a_shared_risk_parity_plan() {
+    let client = Client::new(CallerCapability::Research, "sdk-risk-parity");
+    let spec = RiskParitySpec {
+        schema_version: 1,
+        portfolio_id: "sdk-risk-parity".into(),
+        available_cash_raw: 1_000_000_000_000,
+        target_gross_notional_raw: 600_000_000_000,
+        current_positions: Default::default(),
+        assets: vec![
+            RiskParityAssetSpec {
+                instrument: "BTCUSDT.BINANCE".into(),
+                mark_price_raw: 20_000_000_000,
+                returns_bps: vec![-200, 100, -100, 200, -100, 100],
+            },
+            RiskParityAssetSpec {
+                instrument: "ETHUSDT.BINANCE".into(),
+                mark_price_raw: 1_000_000_000,
+                returns_bps: vec![-100, 50, -50, 100, -50, 50],
+            },
+        ],
+        max_turnover_bps: 10_000,
+        min_trade_notional_raw: 0,
+    };
+    let result = client
+        .plan_risk_parity(&spec)
+        .expect("shared risk parity plan");
+    assert_eq!(result.plan.allocations.len(), 2);
+    assert_eq!(
+        result
+            .plan
+            .allocations
+            .iter()
+            .map(|row| row.weight_bps)
+            .sum::<u32>(),
+        10_000
+    );
+    assert_eq!(result.plan.observations, 6);
+    assert_eq!(result.plan_hash.len(), 16);
+}
+
+#[test]
+fn an_independent_consumer_plans_twap_and_vwap_through_the_stable_facade() {
+    let client = Client::new(CallerCapability::Research, "algo-plan");
+    let twap = client
+        .plan_algo_execution(&AlgoExecutionSpec {
+            schema_version: ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+            parent_id: "parent-1".into(),
+            total_quantity_raw: 11,
+            start_ts: 10,
+            end_ts: 40,
+            method: AlgoExecutionMethod::Twap,
+            child_count: Some(4),
+            volume_profile: vec![],
+        })
+        .unwrap();
+    assert_eq!(
+        twap.children
+            .iter()
+            .map(|child| child.quantity_raw)
+            .sum::<i128>(),
+        11
+    );
+    assert!(twap
+        .children
+        .iter()
+        .all(|child| child.parent_id == "parent-1"));
+
+    let vwap = client
+        .plan_algo_execution(&AlgoExecutionSpec {
+            schema_version: ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+            parent_id: "parent-2".into(),
+            total_quantity_raw: 10,
+            start_ts: 100,
+            end_ts: 300,
+            method: AlgoExecutionMethod::Vwap,
+            child_count: None,
+            volume_profile: vec![
+                VwapVolumeBucket {
+                    ts: 100,
+                    market_volume_raw: 1,
+                },
+                VwapVolumeBucket {
+                    ts: 200,
+                    market_volume_raw: 2,
+                },
+                VwapVolumeBucket {
+                    ts: 300,
+                    market_volume_raw: 3,
+                },
+            ],
+        })
+        .unwrap();
+    assert_eq!(
+        vwap.children
+            .iter()
+            .map(|child| child.quantity_raw)
+            .sum::<i128>(),
+        10
+    );
+    assert_eq!(
+        vwap.children
+            .iter()
+            .map(|child| child.quantity_raw)
+            .collect::<Vec<_>>(),
+        [1, 3, 6]
+    );
+}
+
+#[test]
+fn an_independent_consumer_uses_live_available_margin_sizing() {
+    let output_dir = scratch("available-margin-sizing");
+    let mut backtest = spec("sdk-margin-budget", &output_dir);
+    backtest.strategy.target_available_margin_bps = Some(1_000);
+    let client = Client::new(CallerCapability::Research, "sdk-margin-budget");
+    let outcome = client
+        .run_backtest(&backtest)
+        .expect("available-margin sizing backtest");
+    assert!(outcome.fills > 0);
+    let fills = std::fs::read_to_string(&outcome.artifacts.fills).expect("fill facts");
+    let quantities = fills
+        .lines()
+        .skip(1)
+        .filter_map(|row| row.split(',').nth(2)?.parse::<i128>().ok())
+        .collect::<Vec<_>>();
+    assert!(!quantities.is_empty());
+    assert!(quantities
+        .iter()
+        .all(|quantity| *quantity > 0 && *quantity != 1_000_000_000));
+    assert!(client.verify_run(&outcome).unwrap().verified);
+}
+
+#[test]
 fn an_independent_consumer_sees_the_same_error_document_the_facades_do() {
     let output_dir = scratch("error");
     let mut broken = spec("sdk-broken", &output_dir);
@@ -135,4 +292,33 @@ fn an_independent_consumer_sees_the_same_error_document_the_facades_do() {
     let payload: serde_json::Value = serde_json::from_str(&error.to_json()).expect("错误可解析");
     assert_eq!(payload["action"], "PROVIDE_DATA");
     assert_eq!(payload["retry"], "NEVER");
+}
+
+#[test]
+fn the_rust_sdk_facade_executes_walk_forward_and_baseline_comparison() {
+    let output_dir = scratch("experiment");
+    let client = Client::new(CallerCapability::Research, "sdk-experiment");
+    let spec = RunExperimentSpec {
+        schema_version: 1,
+        experiment_id: "sdk-walk-forward".into(),
+        base: spec("unused-experiment-base", &output_dir),
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "fast_window".into(),
+            values: vec![2, 3],
+        }],
+        split_plan: Some(ExperimentSplitPlan {
+            train_bars: 30,
+            test_bars: 10,
+            walk_forward: true,
+            step_bars: 10,
+        }),
+        baselines: vec!["buy-and-hold".into(), "zero-signal".into()],
+    };
+    let result = client.run_experiment(&spec).expect("Rust SDK experiment");
+    let oos = result
+        .out_of_sample
+        .expect("OOS report comes through facade");
+    assert_eq!(oos.folds.len(), 4);
+    assert_eq!(result.baselines.len(), 2);
+    assert_eq!(result.baselines[1].return_bps, 0);
 }

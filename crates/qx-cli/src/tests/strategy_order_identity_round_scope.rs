@@ -42,6 +42,7 @@ fn order_for(config: &RuntimeConfig, round_scope: &str, intent_id: u64) -> Order
         &contract_intent(intent_id),
         10,
         0,
+        None,
     )
     .unwrap()
 }
@@ -96,4 +97,213 @@ fn consecutive_rounds_are_accepted_by_the_control_plane() {
     accepted.sort();
     accepted.dedup();
     assert_eq!(accepted.len(), 3, "三轮必须留下三个不同的订单身份");
+}
+
+#[test]
+fn strategy_contract_orders_are_rounded_to_the_execution_market_lot() {
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy")
+        .join("qianxing.runtime.paper-strategy.example.json");
+    let config = read_runtime_config(&runtime).unwrap();
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let spec = strategy_execution_market_spec(&config, &instrument, Some(&runtime))
+        .unwrap()
+        .expect("paper execution worker must bind a market spec");
+    let mut intent = contract_intent(1);
+    intent.qty_raw = spec.qty_step + 1;
+    let order = build_strategy_order_from_contract_intent(
+        &config,
+        "strategy-round",
+        7001,
+        "lot-step-round",
+        &intent,
+        10,
+        0,
+        Some(&spec),
+    )
+    .unwrap();
+    assert_eq!(order.qty.raw(), spec.qty_step);
+    assert_eq!(order.qty.raw() % spec.qty_step, 0);
+
+    let target_order = build_strategy_order_with_signal(
+        &config,
+        "strategy-round",
+        7002,
+        10,
+        0,
+        spec.qty_step + 1,
+        None,
+        Some(&spec),
+    )
+    .unwrap()
+    .expect("target_qty should produce an order");
+    assert_eq!(target_order.qty.raw(), spec.qty_step);
+
+    intent.qty_raw = spec.min_qty - 1;
+    let error = build_strategy_order_from_contract_intent(
+        &config,
+        "strategy-round",
+        7001,
+        "below-minimum-round",
+        &intent,
+        10,
+        0,
+        Some(&spec),
+    )
+    .unwrap_err();
+    assert!(error.contains("小于最小数量"), "{error}");
+
+    let target_error = build_strategy_order_with_signal(
+        &config,
+        "strategy-round",
+        7003,
+        10,
+        0,
+        spec.min_qty - 1,
+        None,
+        Some(&spec),
+    )
+    .unwrap_err();
+    assert!(target_error.contains("小于最小数量"), "{target_error}");
+}
+
+#[test]
+fn paper_kelly_strategy_reaches_the_market_spec_risk_and_ledger_path() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let root = workspace.join(".task-tmp").join(format!(
+        "kelly-paper-submit-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let template = workspace
+        .join("deploy")
+        .join("qianxing.runtime.paper-strategy.example.json");
+    let mut config = read_runtime_config(&template).unwrap();
+    config.storage.data_dir = data_dir.to_string_lossy().into_owned();
+    config.strategy.id = Some("strategy-kelly-paper".into());
+    config.strategy.version = "paper-kelly-e2e-v1".into();
+    config.strategy.instrument = Some("BTCUSDT.BINANCE".into());
+    config.strategy.builtin_strategy = Some("momentum".into());
+    config.strategy.builtin_target_kelly_fraction_bps = Some(5_000);
+    config.strategy.builtin_kelly_lookback_bars = Some(30);
+    let closes = (0..70_i128)
+        .map(|index| (100 + index - if index % 5 == 0 { 2 } else { 0 }) * SCALE)
+        .collect::<Vec<_>>();
+    let bars_path = root.join("bars.json");
+    let bars = serde_json::json!({
+        "instrument": "BTCUSDT.BINANCE",
+        "source": "kelly-paper-submit-v1",
+        "ts": (1..=70_u64).collect::<Vec<_>>(),
+        "open_raw": closes,
+        "high_raw": closes.iter().map(|close| close + SCALE).collect::<Vec<_>>(),
+        "low_raw": closes.iter().map(|close| close - SCALE).collect::<Vec<_>>(),
+        "close_raw": closes,
+        "volume_raw": vec![10 * SCALE; 70],
+    });
+    std::fs::write(&bars_path, serde_json::to_vec(&bars).unwrap()).unwrap();
+    config.strategy.bars_snapshot_path = Some(bars_path.to_string_lossy().into_owned());
+    let market_spec_path = workspace
+        .join("deploy")
+        .join("qianxing.binance.spot.spec.json")
+        .to_string_lossy()
+        .into_owned();
+    let execution_worker = config
+        .workers
+        .iter_mut()
+        .find(|worker| worker.id == "paper-execution")
+        .unwrap();
+    execution_worker.instrument_spec_path = Some(market_spec_path);
+    let runtime_path = root.join("runtime.json");
+    std::fs::write(&runtime_path, config.to_json().unwrap()).unwrap();
+
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let log_name = paper_account_log();
+    let mut pipeline = LiveEventPipeline::open(&data_dir, log_name, "USDT").unwrap();
+    pipeline
+        .ingest(RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::AccountCashflow {
+                cashflow: AccountCashflow {
+                    account_id: "main".into(),
+                    venue_id: "paper".into(),
+                    currency: "USDT".into(),
+                    kind: CashflowKind::Transfer,
+                    amount: Money::from_i64(10_000),
+                    external_id: "kelly-e2e:initial-cash".into(),
+                },
+            },
+            1,
+            1,
+            1,
+            "kelly-e2e:initial-cash",
+        ))
+        .unwrap();
+    pipeline
+        .ingest(RuntimeEventEnvelope::market_quote(
+            instrument.clone(),
+            QuoteTick::new(
+                71,
+                Price::from_raw(167 * SCALE),
+                Quantity::from_i64(100),
+                Price::from_raw(167 * SCALE),
+                Quantity::from_i64(100),
+                70,
+            ),
+            71,
+            71,
+            "kelly-e2e:quote",
+        ))
+        .unwrap();
+
+    let output = invoke_builtin_strategy(
+        &data_dir,
+        &config,
+        &instrument,
+        "kelly-paper-submit",
+        u64::MAX,
+    )
+    .unwrap();
+    let intent = output.intents.first().expect("Kelly 应生成目标意图");
+    let market_spec = strategy_execution_market_spec(&config, &instrument, Some(&runtime_path))
+        .unwrap()
+        .expect("Paper execution 必须绑定 market spec");
+    let order = build_strategy_order_from_contract_intent(
+        &config,
+        &output.strategy_id,
+        output.signal_id,
+        &output.request_id,
+        intent,
+        72,
+        0,
+        Some(&market_spec),
+    )
+    .unwrap();
+    assert_eq!(order.qty.raw() % market_spec.qty_step, 0);
+    let command = strategy_submit_command(&output.strategy_id, &order, false, None).unwrap();
+    let worker = config
+        .workers
+        .iter()
+        .find(|worker| worker.id == "paper-execution")
+        .unwrap();
+    let spread_store = FileSpreadOrderGroupStore::new(data_dir.join("spread-groups")).unwrap();
+    let result = paper_submit_match_attempt(
+        &config,
+        &runtime_path,
+        &command,
+        worker,
+        &mut pipeline,
+        &spread_store,
+        72,
+    )
+    .unwrap();
+    assert!(result.starts_with("PAPER_EXECUTED fills=1"), "{result}");
+    assert_eq!(pipeline.orders().len(), 1);
+    assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
+    assert!(!pipeline.ledger().entries().is_empty());
 }

@@ -45,6 +45,14 @@ fn is_identity_token(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
 }
 
+/// Fixed quote-notional sizing currently assumes one linear base unit per quantity unit.
+/// Derivative contracts need product-specific notional math and must not fall through to it.
+pub(super) fn supports_fixed_notional_sizing(spec: &qx_core::TradingInstrumentSpec) -> bool {
+    spec.product == qx_core::TradingProduct::Spot
+        && spec.contract_size == qx_core::SCALE
+        && !spec.inverse
+}
+
 /// `ValidateDataset` 的输入。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -115,6 +123,21 @@ pub struct BuiltinStrategySpec {
     pub strategy_id: String,
     /// 每笔下单数量（定点原值）。
     pub quantity_raw: i128,
+    /// 可选固定名义金额 sizing（结算币/报价币 raw 单位）；为 None 时使用 quantity_raw。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_notional_raw: Option<i128>,
+    /// 可选的当前可用资金比例（基点）；内核按决策时可见的 available margin 计算数量。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_available_margin_bps: Option<u32>,
+    /// Optional ATR-normalized risk budget (basis points of current available margin).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_volatility_bps: Option<u32>,
+    /// Fractional Kelly multiplier in basis points, applied to the prior-return estimate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_kelly_fraction_bps: Option<u32>,
+    /// Number of prior close-to-close returns used by Kelly sizing (30..=1000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kelly_lookback_bars: Option<usize>,
     pub fast_window: usize,
     pub slow_window: usize,
     /// Indicator period used by RSI/channel/volatility strategies.
@@ -139,6 +162,11 @@ impl BuiltinStrategySpec {
             kind,
             strategy_id: strategy_id.into(),
             quantity_raw: qx_core::SCALE,
+            target_notional_raw: None,
+            target_available_margin_bps: None,
+            target_volatility_bps: None,
+            target_kelly_fraction_bps: None,
+            kelly_lookback_bars: None,
             fast_window: 5,
             slow_window: 20,
             period: default_strategy_period(),
@@ -158,6 +186,72 @@ impl BuiltinStrategySpec {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
                 "BuiltinStrategySpec.quantity_raw 必须为正",
+            ));
+        }
+        if self.target_notional_raw.is_some_and(|value| value <= 0) {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "BuiltinStrategySpec.target_notional_raw 必须为正",
+            ));
+        }
+        if self
+            .target_available_margin_bps
+            .is_some_and(|bps| bps == 0 || bps > 10_000)
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "BuiltinStrategySpec.target_available_margin_bps 必须在 1..=10000",
+            ));
+        }
+        if self
+            .target_volatility_bps
+            .is_some_and(|bps| bps == 0 || bps > 10_000)
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "BuiltinStrategySpec.target_volatility_bps 必须在 1..=10000",
+            ));
+        }
+        if self
+            .target_kelly_fraction_bps
+            .is_some_and(|bps| bps == 0 || bps > 10_000)
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "BuiltinStrategySpec.target_kelly_fraction_bps 必须在 1..=10000",
+            ));
+        }
+        match (self.target_kelly_fraction_bps, self.kelly_lookback_bars) {
+            (Some(_), Some(lookback)) if (30..=1_000).contains(&lookback) => {}
+            (Some(_), None) => {}
+            (Some(_), Some(_)) => {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "Kelly sizing 必须配置 30..=1000 根 kelly_lookback_bars",
+                ))
+            }
+            (None, Some(_)) => {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "kelly_lookback_bars 只能与 Kelly sizing 一起配置",
+                ))
+            }
+            (None, None) => {}
+        }
+        if [
+            self.target_notional_raw.is_some(),
+            self.target_available_margin_bps.is_some(),
+            self.target_volatility_bps.is_some(),
+            self.target_kelly_fraction_bps.is_some(),
+        ]
+        .into_iter()
+        .filter(|enabled| *enabled)
+        .count()
+            > 1
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "固定名义金额、可用资金比例、波动率预算与 Kelly sizing 互斥",
             ));
         }
         use qx_strategy::builtin_signal::BuiltinSignalKnob::{
@@ -209,6 +303,10 @@ pub struct BacktestSpec {
     /// 都落在它下面。
     pub output_dir: String,
     pub strategy: BuiltinStrategySpec,
+    /// Optional position-level protective exits, evaluated on completed bars
+    /// and routed through the same OMS/risk/matching path as strategy orders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protective_exit: Option<ProtectiveExitSpec>,
 }
 
 impl BacktestSpec {
@@ -234,6 +332,7 @@ impl BacktestSpec {
             seed,
             output_dir: output_dir.into(),
             strategy,
+            protective_exit: None,
         }
     }
 
@@ -282,6 +381,9 @@ impl BacktestSpec {
                 "BacktestSpec.initial_cash_raw 必须为正",
             ));
         }
+        if let Some(policy) = self.protective_exit {
+            policy.validate()?;
+        }
         self.strategy.validate()
     }
 
@@ -314,116 +416,16 @@ pub use multi_leg::{
     MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
 };
 
-/// `ValidateDataset` 的输出：一份**可复核**的裁决。
-///
-/// `gaps` 是"不适用/未计算"的理由清单——与路线图 §X2 同口径：指标在数据不足时
-/// 给理由，**不填零**。空 `gaps` 才表示"这一档输入没有已知缺口"。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DatasetVerdict {
-    pub dataset_id: String,
-    pub instrument: String,
-    /// 实际读到的 Bar 根数。
-    pub rows: u64,
-    /// 内容指纹（`barframe:<16 位十六进制>`）——与 RunManifest 的合成身份同前缀。
-    pub content_fingerprint: String,
-    /// 这一档输入能否支撑一个 Bar 回测。`false` 时 `gaps` 必非空。
-    pub usable: bool,
-    /// 不适用/未计算的理由（**空**才表示没有已知缺口）。
-    pub gaps: Vec<String>,
-}
-
-impl DatasetVerdict {
-    /// 稳定 JSON 形态。
-    pub fn to_json(&self) -> Result<String, AppError> {
-        serde_json::to_string(self).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                format!("DatasetVerdict 序列化失败: {error}"),
-            )
-        })
-    }
-}
-
-/// `RunBacktest` 的输出：一次运行的身份与产物落点。
-///
-/// 它刻意**只带指针不带内容**：产物正文在盘上，`result_hash` 与 `data_fingerprint`
-/// 是复核用的两把钥匙。三个入口拿到的 `result_hash` 必须逐位相等（G1）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BacktestOutcome {
-    pub run_id: String,
-    pub instrument: String,
-    /// 引擎给的稳定结果哈希（与 `RunManifest.result_hash` 同源，16 位十六进制）。
-    pub result_hash: String,
-    /// 合成数据身份：`barframe:<内容哈希>`。
-    pub data_fingerprint: String,
-    pub fills: u64,
-    pub equity_points: u64,
-    pub return_bps: i32,
-    pub max_drawdown_bps: u32,
-    /// 四份产物的路径：run manifest / summary / equity / fills。
-    pub artifacts: BacktestArtifacts,
-}
-
-/// 一次运行落盘的四份产物路径。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BacktestArtifacts {
-    pub run_manifest: String,
-    pub summary: String,
-    pub equity: String,
-    pub fills: String,
-}
-
-impl BacktestOutcome {
-    /// 稳定 JSON 形态（三个入口逐字节可比）。
-    pub fn to_json(&self) -> Result<String, AppError> {
-        serde_json::to_string(self).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                format!("BacktestOutcome 序列化失败: {error}"),
-            )
-        })
-    }
-
-    /// 从 JSON 读入（[`BacktestOutcome::to_json`] 的逆）。
-    ///
-    /// 它是 [`crate::cases::verify_run`] 的**输入面**：`app backtest` 的 stdout 直接喂给
-    /// `app verify`，Python 与 HTTP 两个入口也一样。读不回来是调用方交错了文档——
-    /// [`AppErrorCategory::InvalidInput`]，不是存储故障。
-    pub fn from_json(payload: &str) -> Result<Self, AppError> {
-        serde_json::from_str(payload).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("BacktestOutcome JSON 无效: {error}"),
-            )
-        })
-    }
-}
-
-/// `VerifyRun` 的输出：产物**在盘且互相自洽**的裁决。
-///
-/// `checks` 是逐条核过的口径（一句话一条），`mismatches` 是不一致的点。
-/// `verified == mismatches.is_empty()`——**不**给一个"部分通过"的中间态：
-/// 产物复核要么四份互相印证，要么有一处对不上。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VerificationResult {
-    pub run_id: String,
-    /// 从产物里读回来的结果哈希（复核的对象）。
-    pub result_hash: String,
-    /// 从产物里读回来的数据身份。
-    pub data_fingerprint: String,
-    pub verified: bool,
-    pub checks: Vec<String>,
-    pub mismatches: Vec<String>,
-}
-
-impl VerificationResult {
-    /// 稳定 JSON 形态。
-    pub fn to_json(&self) -> Result<String, AppError> {
-        serde_json::to_string(self).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InternalInvariant,
-                format!("VerificationResult 序列化失败: {error}"),
-            )
-        })
-    }
-}
+mod results;
+pub use results::{BacktestArtifacts, BacktestOutcome, DatasetVerdict, VerificationResult};
+mod risk_parity;
+pub use risk_parity::{
+    RiskParityAssetSpec, RiskParityResult, RiskParitySpec, RISK_PARITY_RESULT_SCHEMA_VERSION,
+    RISK_PARITY_SPEC_SCHEMA_VERSION,
+};
+mod algo_execution;
+pub use algo_execution::{
+    AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+};
+mod protective_exit;
+pub use protective_exit::ProtectiveExitSpec;

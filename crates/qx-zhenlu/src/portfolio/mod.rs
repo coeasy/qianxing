@@ -3,7 +3,12 @@
 
 pub mod constraint;
 pub mod rebalance;
+pub mod risk_parity;
 
 pub use constraint::PortfolioConstraint;
 pub use qx_core::TargetPosition;
 pub use rebalance::{rebalance, PortfolioState, RebalancePlan};
+pub use risk_parity::{
+    plan_risk_parity, RiskParityAllocation, RiskParityAsset, RiskParityError, RiskParityInput,
+    RiskParityOrderDelta, RiskParityPlan,
+};

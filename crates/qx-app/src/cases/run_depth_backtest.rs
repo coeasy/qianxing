@@ -14,9 +14,9 @@ use crate::{
 use qx_core::{Fnv1a, Money, Quantity, ReplayVerifier, RunManifest};
 use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, StrategyContext};
 use qx_xingban::{
-    depth_frame_to_ticks, DataTier, DepthBarStrategy, DepthFrame, OrderBookBacktestConfig,
-    OrderBookBacktestEngine, OrderBookExecutionModel, RunManifestIdentity, TickBacktestConfig,
-    TickBacktestEngine,
+    depth_frame_to_ticks, DataTier, DepthBarStrategy, DepthFrame, MarketMakingStrategy,
+    OrderBookBacktestConfig, OrderBookBacktestEngine, OrderBookExecutionModel, RunManifestIdentity,
+    TickBacktestConfig, TickBacktestEngine,
 };
 use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
@@ -151,6 +151,9 @@ pub(super) fn run_inner(
     strategy_config.slow_window = spec.strategy.slow_window;
     strategy_config.period = spec.strategy.period;
     strategy_config.threshold_bps = spec.strategy.threshold_bps;
+    strategy_config.target_notional_raw = spec.strategy.target_notional_raw;
+    strategy_config.target_available_margin_bps = spec.strategy.target_available_margin_bps;
+    strategy_config.target_volatility_bps = spec.strategy.target_volatility_bps;
     strategy_config.primary_policy = spec.order_policy;
     strategy_config.validate().map_err(invalid_input)?;
     let strategy = BuiltinStrategy::new(strategy_config).map_err(invalid_input)?;
@@ -166,8 +169,8 @@ pub(super) fn run_inner(
         available_margin_raw: Some(spec.initial_cash_raw),
         risk_state: "backtest".into(),
     };
-    let mut strategy = DepthBarStrategy::new(strategy, strategy_context, instrument.clone());
-    strategy.initialize().map_err(invalid_input)?;
+    let mut depth_strategy = DepthBarStrategy::new(strategy, strategy_context, instrument.clone());
+    depth_strategy.initialize().map_err(invalid_input)?;
 
     let report = match spec.tier.as_str() {
         "l1" => {
@@ -184,11 +187,11 @@ pub(super) fn run_inner(
             .with_execution_model(model);
             match cancellation {
                 Some(cancellation) => engine
-                    .run_with_cancel(&ticks, &mut strategy, || cancellation.is_cancelled())
+                    .run_with_cancel(&ticks, &mut depth_strategy, || cancellation.is_cancelled())
                     .map_err(|error| AppError::from_qx_error(&error))?,
                 None => Some(
                     engine
-                        .run(&ticks, &mut strategy)
+                        .run(&ticks, &mut depth_strategy)
                         .map_err(|error| AppError::from_qx_error(&error))?,
                 ),
             }
@@ -205,17 +208,40 @@ pub(super) fn run_inner(
                 data_tier: DataTier::L2L3,
             })
             .with_execution_model(model);
-            match cancellation {
-                Some(cancellation) => engine
-                    .run_with_cancel(&frame.snapshots, &mut strategy, || {
-                        cancellation.is_cancelled()
-                    })
-                    .map_err(|error| AppError::from_qx_error(&error))?,
-                None => Some(
-                    engine
-                        .run(&frame.snapshots, &mut strategy)
+            if let Some(config) = spec.market_making {
+                let mut maker = MarketMakingStrategy::new(
+                    config,
+                    instrument.clone(),
+                    ACCOUNT_ID,
+                    strategy_id.clone(),
+                    spec.order_policy,
+                )
+                .map_err(invalid_input)?;
+                match cancellation {
+                    Some(cancellation) => engine
+                        .run_with_cancel(&frame.snapshots, &mut maker, || {
+                            cancellation.is_cancelled()
+                        })
                         .map_err(|error| AppError::from_qx_error(&error))?,
-                ),
+                    None => Some(
+                        engine
+                            .run(&frame.snapshots, &mut maker)
+                            .map_err(|error| AppError::from_qx_error(&error))?,
+                    ),
+                }
+            } else {
+                match cancellation {
+                    Some(cancellation) => engine
+                        .run_with_cancel(&frame.snapshots, &mut depth_strategy, || {
+                            cancellation.is_cancelled()
+                        })
+                        .map_err(|error| AppError::from_qx_error(&error))?,
+                    None => Some(
+                        engine
+                            .run(&frame.snapshots, &mut depth_strategy)
+                            .map_err(|error| AppError::from_qx_error(&error))?,
+                    ),
+                }
             }
         }
         _ => unreachable!("DepthBacktestSpec::validate constrains tier"),
@@ -291,6 +317,7 @@ pub(super) fn run_inner(
         "tier": spec.tier,
         "market_spec": spec.market_spec,
         "order_policy": spec.order_policy,
+        "market_making": spec.market_making,
         "strategy_id": strategy_id,
         "strategy_version": strategy_version,
         "snapshots": report.snapshot_ts.len(),

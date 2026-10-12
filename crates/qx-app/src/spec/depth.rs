@@ -1,8 +1,11 @@
 //! Strict versioned contract for deterministic Tick and OrderBook backtests.
 
-use super::{is_identity_token, BacktestArtifacts, BuiltinStrategySpec};
+use super::{
+    is_identity_token, supports_fixed_notional_sizing, BacktestArtifacts, BuiltinStrategySpec,
+};
 use crate::error::{AppError, AppErrorCategory};
 use qx_core::{OrderPolicy, TradingInstrumentSpec};
+use qx_xingban::MarketMakingConfig;
 use serde::{Deserialize, Serialize};
 
 /// Schema for deterministic L1/L2 market-data backtests.
@@ -31,6 +34,9 @@ pub struct DepthBacktestSpec {
     /// Required for derivative products so the Rust engine can apply margin/position rules.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_policy: Option<OrderPolicy>,
+    /// Optional L2 two-sided quote strategy executed by the shared Rust book engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_making: Option<MarketMakingConfig>,
 }
 
 impl DepthBacktestSpec {
@@ -68,6 +74,33 @@ impl DepthBacktestSpec {
                 "DepthBacktestSpec.tier 仅支持 l1 或 l2",
             ));
         }
+        if let Some(market_making) = self.market_making {
+            if self.tier != "l2" {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "market_making 仅支持 L2 订单簿回测",
+                ));
+            }
+            market_making
+                .validate()
+                .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error))?;
+            if self
+                .market_spec
+                .as_ref()
+                .is_some_and(|market| market.price_tick != market_making.tick_size_raw)
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "market_making.tick_size_raw 必须与 market_spec.price_tick 一致",
+                ));
+            }
+            if self.strategy.target_notional_raw.is_some() {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "market_making 使用 quote_qty_raw 控制报价数量，不接受 BuiltinStrategySpec.target_notional_raw",
+                ));
+            }
+        }
         if self.initial_cash_raw <= 0 {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
@@ -94,6 +127,15 @@ impl DepthBacktestSpec {
                 "queue_position_bps 仅影响限价单；当前内置策略只提交市价单，必须为 0",
             ));
         }
+        if self.strategy.target_available_margin_bps.is_some()
+            || self.strategy.target_volatility_bps.is_some()
+            || self.strategy.target_kelly_fraction_bps.is_some()
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "DepthBacktestSpec 尚未接入逐时点波动率预算所需的账户快照",
+            ));
+        }
         match (&self.market_spec, self.order_policy) {
             (Some(market), policy) => {
                 market.validate().map_err(|error| {
@@ -106,6 +148,14 @@ impl DepthBacktestSpec {
                     return Err(AppError::new(
                         AppErrorCategory::InvalidInput,
                         "DepthBacktestSpec.market_spec settlement_currency 与请求不一致",
+                    ));
+                }
+                if self.strategy.target_notional_raw.is_some()
+                    && !supports_fixed_notional_sizing(market)
+                {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "target_notional_raw 当前只支持现货的一单位线性名义金额；衍生品需先配置合约专用 sizing",
                     ));
                 }
                 if market.product.supports_leverage() && policy.is_none() {

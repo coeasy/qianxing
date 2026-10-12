@@ -1,7 +1,5 @@
 //! 多内置策略（双腿套利）回测链：`run_multi_builtin_backtest`。
-//!
-//! CCXT 形状的内置回测入口不在这里：它取完 OHLCV 后交给 `single_strategy.rs` 的
-//! `run_builtin_backtest`，与单标的链共用同一份装配，所以定义点也放在一起。
+//! CCXT OHLCV 入口交给 `single_strategy.rs::run_builtin_backtest`，与单标的链共用装配。
 
 use super::*;
 
@@ -55,6 +53,11 @@ pub(crate) fn run_multi_builtin_backtest(
         strategy_version: format!("builtin-{}-v1", kind.name()),
         instrument: primary_frame.instrument.clone(),
         quantity: Quantity::from_i64(quantity),
+        target_notional_raw: None,
+        target_available_margin_bps: None,
+        target_volatility_bps: None,
+        target_kelly_fraction_bps: None,
+        kelly_lookback_bars: None,
         fast_window: 5,
         slow_window: 20,
         period: 14,

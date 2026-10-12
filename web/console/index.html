@@ -81,6 +81,19 @@
     <section class="card wide" id="card-research">
       <h2>Bar 研究工作流 <span class="hint">数据校验 → 回测 → 产物复核</span></h2>
       <p class="foot">数据路径相对服务端 <code>QX_API_DATA_ROOT</code>；回测产物写入服务端配置目录。该面板只运行研究级 Bar 回测。</p>
+      <label for="research-strategy">快速选择经典策略</label>
+      <select id="research-strategy">
+        <option value="sma_cross">SMA 均线交叉</option>
+        <option value="ema_cross">EMA 均线交叉</option>
+        <option value="macd">MACD 趋势动量</option>
+        <option value="rsi">RSI 超买超卖</option>
+        <option value="bollinger">布林带回归</option>
+        <option value="donchian_breakout">Donchian 通道突破</option>
+        <option value="momentum">区间动量</option>
+        <option value="mean_reversion">均值回归</option>
+        <option value="grid">网格信号</option>
+        <option value="atr_trend">ATR 趋势突破</option>
+      </select>
       <label for="research-spec">BacktestSpec v1（JSON）</label>
       <textarea id="research-spec" rows="14" spellcheck="false">{
   "schema_version": 1,
@@ -104,6 +117,31 @@
         <button id="research-run" type="button">回测并复核</button>
       </div>
       <pre id="research-output" class="result" aria-live="polite">未运行</pre>
+    </section>
+
+    <section class="card wide" id="card-extended-research">
+      <h2>扩展研究工作流 <span class="hint">参数实验 · Tick/OrderBook · 多腿 · 结果比较</span></h2>
+      <p class="foot">选择 qx-app 已实现的研究用例并提交对应版本化 JSON。标的与数据路径按服务端配置解析；指标、撮合、归因和排名均由共享 Rust 内核完成。Paper/Live 不属于此研究入口。</p>
+      <label for="extended-research-route">研究用例</label>
+      <select id="extended-research-route">
+        <option value="appRunExperiment">Bar 多参数实验 · /app/run-experiment</option>
+        <option value="appDepthBacktest">Tick/OrderBook 回测 · /app/depth-backtest</option>
+        <option value="appDepthExperiment">深度参数实验 · /app/run-depth-experiment</option>
+        <option value="appVerifyDepth">深度产物复核 · /app/verify-depth</option>
+        <option value="appMultiLegBacktest">多腿回测 · /app/multi-leg-backtest</option>
+        <option value="appMultiLegExperiment">多腿参数实验 · /app/run-multi-leg-experiment</option>
+        <option value="appCompareRuns">运行结果比较 · /app/compare-runs</option>
+      </select>
+      <label for="extended-research-spec">请求 JSON</label>
+      <textarea id="extended-research-spec" rows="12" spellcheck="false">{
+  "schema_version": 1
+}</textarea>
+      <div class="actions">
+        <button id="extended-research-run" type="button">提交研究用例</button>
+        <button id="extended-research-query" type="button" disabled>继续查询</button>
+        <button id="extended-research-cancel" type="button" class="ghost" disabled>取消运行</button>
+      </div>
+      <pre id="extended-research-output" class="result" aria-live="polite">未运行</pre>
     </section>
 
     <section class="card wide" id="card-control">

@@ -4,9 +4,11 @@
 //! 使回测、Paper 与 Live worker 共享同一套指纹与超时约束。
 
 use super::*;
-// 生产路径的 Python 超时一律走 `strategy.python_timeout_ms` 配置（已在
-// qx-runtime 侧按 1..=60000 校验，默认 2000）。这份常量只剩测试在用，作为
-// "冷启动 helper 拿到的是同一个默认值"的具名断言点，不进生产二进制。
+mod ring_arguments;
+pub(crate) use ring_arguments::shared_ring_arguments;
+mod strategy_client;
+pub(crate) use strategy_client::ContractStrategyClient;
+// Production reads strategy.python_timeout_ms; this constant only pins the test default.
 #[cfg(test)]
 pub(crate) const PYTHON_STRATEGY_TIMEOUT_MS: u64 = 2_000;
 
@@ -62,39 +64,6 @@ impl Drop for RingFileGuard {
             let _ = std::fs::remove_file(path);
         }
     }
-}
-
-/// 共享内存传输交给 worker 的启动实参：协议名、两条 ring 的路径与容量，以及父进程身份。
-///
-/// 拆成纯函数是为了让"worker 是否拿得到父进程 pid"有一条能咬的用例。这条传输没有 stdin
-/// 可关，父进程被强杀时 Rust 侧的 `Drop` 不会跑，`--parent-pid` 一断，子进程的空闲循环
-/// 就只剩 1 kHz 空转这一种结局（V13 R2 第十四遍 #215）。
-pub(crate) fn shared_ring_arguments(
-    transport: StrategyTransport,
-    input_path: &Path,
-    output_path: &Path,
-    ring_config: SharedRingConfig,
-    parent_pid: u32,
-) -> Vec<String> {
-    let protocol = if transport == StrategyTransport::SharedMemoryColumnar {
-        "shared_memory_columnar"
-    } else {
-        "shared_memory_json"
-    };
-    vec![
-        "--protocol".into(),
-        protocol.into(),
-        "--input-ring".into(),
-        input_path.to_string_lossy().into_owned(),
-        "--output-ring".into(),
-        output_path.to_string_lossy().into_owned(),
-        "--ring-capacity".into(),
-        ring_config.capacity.to_string(),
-        "--ring-slot-bytes".into(),
-        ring_config.slot_bytes.to_string(),
-        "--parent-pid".into(),
-        parent_pid.to_string(),
-    ]
 }
 
 impl PythonStrategyClient {
@@ -776,6 +745,11 @@ pub(crate) fn builtin_strategy_config_from_runtime(
         strategy_version: strategy.version.clone(),
         instrument: instrument.clone(),
         quantity: Quantity::from_raw(quantity_raw),
+        target_notional_raw: strategy.builtin_target_notional_raw,
+        target_available_margin_bps: strategy.builtin_target_available_margin_bps,
+        target_volatility_bps: strategy.builtin_target_volatility_bps,
+        target_kelly_fraction_bps: strategy.builtin_target_kelly_fraction_bps,
+        kelly_lookback_bars: strategy.builtin_kelly_lookback_bars,
         fast_window: 5,
         slow_window: 20,
         period: 14,
@@ -900,9 +874,4 @@ pub(crate) fn invoke_builtin_strategy(
     }
     let decision = decision.ok_or_else(|| "builtin_strategy 可见 K 线为空".to_string())?;
     strategy_contract_output_from_native_decision(&decision, &input)
-}
-
-pub(crate) enum ContractStrategyClient {
-    Process(Box<PythonStrategyClient>),
-    Native(Box<DynamicCAbiStrategy>),
 }

@@ -62,6 +62,16 @@ def compare_runs(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_compare_runs(_payload(spec)))
 
 
+def plan_risk_parity(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """Create a Rust-owned deterministic long-only risk parity rebalance plan."""
+    return json.loads(native.app_plan_risk_parity(_payload(spec)))
+
+
+def plan_algo_execution(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """Create a Rust-owned deterministic TWAP/VWAP child-order schedule."""
+    return json.loads(native.app_plan_algo_execution(_payload(spec)))
+
+
 def run_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """用 Rust 回测用例执行有界参数网格，并复用 Rust 结果比较用例。"""
     return json.loads(native.app_run_experiment(_payload(spec)))

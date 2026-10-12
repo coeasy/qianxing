@@ -82,7 +82,7 @@ pub(crate) fn run_single_strategy_backtest(
         &costs,
         fill,
     );
-    assembly.instrument_spec = instrument_spec;
+    assembly.instrument_spec = instrument_spec.clone();
     assembly.margin = margin;
     assembly.risk = risk_gate;
     assembly.virtual_trading = virtual_trading;
@@ -155,6 +155,7 @@ pub(crate) fn run_single_strategy_backtest(
             dataset_binding
                 .as_ref()
                 .map(|binding| binding.bundle_fingerprint),
+            instrument_spec,
         )?;
         BacktestEngine::new(backtest_config)
             .run(bars, &mut strategy)

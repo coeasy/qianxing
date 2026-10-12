@@ -4,12 +4,13 @@
 //! 因此策略不会用当前快照直接成交，避免回测中的同一快照作弊。
 
 use qx_core::{
-    Event, EventKind, EventLog, Fill, Fnv1a, Ledger, Order, OrderStatus, Price, Priority,
-    ReplayVerifier, RunManifest, TradingInstrumentSpec, ValuationContext,
+    Event, EventKind, EventLog, Fill, Fnv1a, Ledger, OrderStatus, Price, Priority, ReplayVerifier,
+    RunManifest, TradingInstrumentSpec, ValuationContext,
 };
 use qx_risk::OrderRiskPosition;
 use qx_zhenlu::{Oms, RiskGate};
 
+use crate::orderbook_strategies::OrderBookStrategy;
 use crate::{
     DataTier, OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot,
     RunManifestIdentity,
@@ -19,137 +20,6 @@ use std::collections::BTreeMap;
 fn append_event(log: &mut EventLog, ts: u64, priority: u8, kind: EventKind) {
     let seq = log.alloc_seq();
     log.append(Event::new(seq, ts, priority, kind));
-}
-
-pub trait OrderBookStrategy {
-    fn on_order_book(
-        &mut self,
-        snapshot: &OrderBookSnapshot,
-        position: i128,
-    ) -> Result<Vec<Order>, String>;
-}
-
-/// 把统一 Rust 策略协议适配到订单簿回测。策略仍然只返回决定，订单转换和
-/// 风控/OMS 处理继续由回测引擎负责。
-pub struct NativeOrderBookStrategy<S: qx_strategy::Strategy> {
-    pub strategy: S,
-    pub context: qx_strategy::StrategyContext,
-}
-
-impl<S: qx_strategy::Strategy> NativeOrderBookStrategy<S> {
-    pub fn new(strategy: S, context: qx_strategy::StrategyContext) -> Self {
-        Self { strategy, context }
-    }
-}
-
-impl<S: qx_strategy::Strategy> OrderBookStrategy for NativeOrderBookStrategy<S> {
-    fn on_order_book(
-        &mut self,
-        snapshot: &OrderBookSnapshot,
-        position: i128,
-    ) -> Result<Vec<Order>, String> {
-        self.context.as_of = snapshot.ts;
-        self.context
-            .positions
-            .insert(snapshot.instrument.to_string(), position);
-        let event = qx_strategy::MarketEvent::OrderBook {
-            instrument: snapshot.instrument.clone(),
-            ts: snapshot.ts,
-            sequence: snapshot.sequence,
-            bids: snapshot
-                .bids
-                .iter()
-                .map(|level| qx_strategy::OrderBookLevel {
-                    price_raw: level.price.raw(),
-                    qty_raw: level.qty.raw(),
-                })
-                .collect(),
-            asks: snapshot
-                .asks
-                .iter()
-                .map(|level| qx_strategy::OrderBookLevel {
-                    price_raw: level.price.raw(),
-                    qty_raw: level.qty.raw(),
-                })
-                .collect(),
-        };
-        let decision = self.strategy.on_event(&self.context, &event)?;
-        decision.to_orders(&self.context)
-    }
-}
-
-/// 只接受 Bar 事件的策略在 L1/L2 深度流上的视图。
-///
-/// 每份盘口快照按中间价折叠成一根 Bar（open=high=low=close），可见流动性
-/// 汇总为成交量；这样只认 Bar 的内置策略无需第二套实现就能复用逐档撮合内核。
-pub struct DepthBarStrategy<S: qx_strategy::Strategy> {
-    pub strategy: S,
-    pub context: qx_strategy::StrategyContext,
-    /// Tick 事件不携带标的，因此策略视图必须显式绑定标的。
-    pub instrument: qx_core::InstrumentId,
-}
-
-impl<S: qx_strategy::Strategy> DepthBarStrategy<S> {
-    pub fn new(
-        strategy: S,
-        context: qx_strategy::StrategyContext,
-        instrument: qx_core::InstrumentId,
-    ) -> Self {
-        Self {
-            strategy,
-            context,
-            instrument,
-        }
-    }
-
-    pub fn initialize(&mut self) -> Result<(), String> {
-        self.strategy.on_init(&self.context)
-    }
-
-    pub(crate) fn on_mid(
-        &mut self,
-        instrument: &qx_core::InstrumentId,
-        ts: u64,
-        position: i128,
-        mid: qx_core::Price,
-        volume_raw: i128,
-    ) -> Result<Vec<Order>, String> {
-        self.context.as_of = ts;
-        self.context
-            .positions
-            .insert(instrument.to_string(), position);
-        let mid_raw = mid.raw();
-        let event = qx_strategy::MarketEvent::Bar {
-            instrument: instrument.clone(),
-            ts,
-            open_raw: mid_raw,
-            high_raw: mid_raw,
-            low_raw: mid_raw,
-            close_raw: mid_raw,
-            volume_raw,
-        };
-        let decision = self.strategy.on_event(&self.context, &event)?;
-        decision.to_orders(&self.context)
-    }
-}
-
-impl<S: qx_strategy::Strategy> OrderBookStrategy for DepthBarStrategy<S> {
-    fn on_order_book(
-        &mut self,
-        snapshot: &OrderBookSnapshot,
-        position: i128,
-    ) -> Result<Vec<Order>, String> {
-        let (Some(bid), Some(ask)) = (snapshot.bids.first(), snapshot.asks.first()) else {
-            return Ok(Vec::new());
-        };
-        let mid = Price::from_raw(bid.price.raw().saturating_add(ask.price.raw()) / 2);
-        let volume_raw = snapshot
-            .bids
-            .iter()
-            .chain(snapshot.asks.iter())
-            .fold(0_i128, |total, level| total.saturating_add(level.qty.raw()));
-        self.on_mid(&snapshot.instrument, snapshot.ts, position, mid, volume_raw)
-    }
 }
 
 pub struct OrderBookBacktestConfig {
@@ -317,6 +187,7 @@ impl OrderBookBacktestEngine {
                 ));
             }
         }
+        let mut cancellations_for_next_snapshot = Vec::new();
         for snapshot in snapshots {
             if is_cancelled() {
                 return Ok(None);
@@ -425,6 +296,17 @@ impl OrderBookBacktestEngine {
             if is_cancelled() {
                 return Ok(None);
             }
+            let mut cancelled_this_snapshot = Vec::new();
+            for client_order_id in &cancellations_for_next_snapshot {
+                if !matcher.cancel(*client_order_id) {
+                    return Err(qx_core::QxError::Invariant(format!(
+                        "做市策略待撤订单 {client_order_id} 不在撮合器中"
+                    )));
+                }
+                oms.cancel(*client_order_id)?;
+                cancelled_this_snapshot.push(*client_order_id);
+            }
+            cancellations_for_next_snapshot.clear();
             for mut fill in matcher
                 .on_snapshot(snapshot)
                 .map_err(qx_core::QxError::Permanent)?
@@ -475,6 +357,16 @@ impl OrderBookBacktestEngine {
                 }
                 fills.push(fill);
             }
+            // The venue-side cancel is applied before matching, while its acknowledgement is
+            // recorded after any other prior-order feedback so event priority remains canonical.
+            for client_order_id in cancelled_this_snapshot {
+                append_event(
+                    &mut log,
+                    snapshot.ts,
+                    Priority::MARKET,
+                    EventKind::Cancelled { client_order_id },
+                );
+            }
 
             let position = ledger.position_for(&account_id, &instrument).quantity.raw();
             let reference_price = match (
@@ -488,10 +380,27 @@ impl OrderBookBacktestEngine {
                 (None, Some(ask)) => Some(ask),
                 (None, None) => None,
             };
-            for mut order in strategy
-                .on_order_book(snapshot, position)
-                .map_err(qx_core::QxError::BusinessViolation)?
-            {
+            let open_order_ids = oms.active_order_ids();
+            let open_order_set = open_order_ids
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>();
+            let actions = strategy
+                .on_order_book_actions(snapshot, position, &open_order_ids)
+                .map_err(qx_core::QxError::BusinessViolation)?;
+            let mut unique_cancellations = std::collections::BTreeSet::new();
+            for client_order_id in actions.cancel_client_ids {
+                if !unique_cancellations.insert(client_order_id)
+                    || !open_order_set.contains(&client_order_id)
+                {
+                    return Err(qx_core::QxError::BusinessViolation(format!(
+                        "订单簿策略撤单目标重复或非活动订单: {client_order_id}"
+                    )));
+                }
+                cancellations_for_next_snapshot.push(client_order_id);
+            }
+            let mut accepted_client_ids = Vec::new();
+            for mut order in actions.orders {
                 if order.client_id == 0 {
                     return Err(qx_core::QxError::BusinessViolation(
                         "订单簿策略返回的 client_order_id 必须为正".into(),
@@ -686,9 +595,22 @@ impl OrderBookBacktestEngine {
                 append_event(
                     &mut log,
                     snapshot.ts,
+                    Priority::COMMAND,
+                    EventKind::OrderSubmitted {
+                        order: order.clone(),
+                    },
+                );
+                accepted_client_ids.push(order.client_id);
+            }
+            // Preserve canonical event priority when a strategy submits both sides:
+            // every command is recorded before any acceptance fact at this timestamp.
+            for client_order_id in accepted_client_ids {
+                append_event(
+                    &mut log,
+                    snapshot.ts,
                     Priority::MATCH,
                     EventKind::Accepted {
-                        client_order_id: order.client_id,
+                        client_order_id,
                         venue_order_id: None,
                     },
                 );
@@ -767,6 +689,7 @@ impl OrderBookBacktestEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DepthBarStrategy, NativeOrderBookStrategy};
     use qx_core::{
         InstrumentId, MarginMode, Money, Order, OrderPolicy, OrderStatus, PositionMode,
         PositionSide, Quantity, Side, TradingInstrumentSpec, TradingProduct, SCALE,

@@ -16,9 +16,15 @@
     outcome = run_backtest(spec)
 
 各子层的分工见 `qianxing` 包文档。
+
+异步本地调用使用 [`AsyncCoreClient`][qianxing.core.AsyncCoreClient]，返回的
+[`AsyncRunHandle`][qianxing.core.AsyncRunHandle] 仍管理同一个 Rust Run；asyncio 取消
+会请求 Rust 协作取消，不会在 Python 层另建撮合或回测实现。
 """
 
 from qianxing.app import (
+    AsyncCoreClient,
+    AsyncRunHandle,
     BacktestOutcome,
     BacktestSpec,
     BuiltinStrategySpec,
@@ -26,9 +32,12 @@ from qianxing.app import (
     DatasetVerdict,
     DepthBacktestOutcome,
     DepthBacktestSpec,
+    MarketMakingSpec,
     MultiLegBacktestOutcome,
     MultiLegBacktestSpec,
     OrderPolicy,
+    ProtectiveExitSpec,
+    plan_algo_execution,
     RunHandle,
     run_backtest,
     run_depth_backtest,
@@ -40,6 +49,8 @@ from qianxing.app import (
 )
 
 __all__ = [
+    "AsyncCoreClient",
+    "AsyncRunHandle",
     "BacktestOutcome",
     "BacktestSpec",
     "BuiltinStrategySpec",
@@ -47,9 +58,12 @@ __all__ = [
     "DatasetVerdict",
     "DepthBacktestOutcome",
     "DepthBacktestSpec",
+    "MarketMakingSpec",
     "MultiLegBacktestOutcome",
     "MultiLegBacktestSpec",
     "OrderPolicy",
+    "ProtectiveExitSpec",
+    "plan_algo_execution",
     "RunHandle",
     "run_backtest",
     "run_depth_backtest",

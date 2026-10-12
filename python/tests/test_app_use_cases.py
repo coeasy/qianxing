@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import sys
 import unittest
@@ -34,37 +35,48 @@ def _load_native():
             if base:
                 directories.append(Path(base) / profile)
     directories.append(root / "python" / "qianxing_bridge")
+    candidates = []
     for directory in directories:
-        for pattern in ("_qianxing_native*.pyd", "_qianxing_native*.so"):
-            for path in sorted(directory.glob(pattern)):
-                sys.path.insert(0, str(path.parent))
-                sys.modules.pop("_qianxing_native", None)
-                try:
-                    import _qianxing_native
-                except ImportError:
-                    continue
-                if all(
-                    hasattr(_qianxing_native, name)
-                    for name in (
-                        "app_validate_dataset",
-                        "app_run_backtest",
-                        "app_start_backtest",
-                        "app_verify_run",
-                        "app_compare_runs",
-                        "app_run_experiment",
-                        "app_start_experiment",
-                        "app_run_depth_backtest",
-                        "app_start_depth_backtest",
-                        "app_run_depth_experiment",
-                        "app_start_depth_experiment",
-                        "app_run_multi_leg_backtest",
-                        "app_start_multi_leg_backtest",
-                        "app_run_multi_leg_experiment",
-                        "app_start_multi_leg_experiment",
-                        "app_verify_depth_run",
-                    )
-                ):
-                    return _qianxing_native
+        for pattern in ("_qianxing_native*.pyd", "_qianxing_native*.so", "_qianxing_native*.dll"):
+            candidates.extend(directory.glob(pattern))
+    # A locally built cdylib is named .dll on Windows, while wheel tooling renames it to .pyd.
+    # Prefer the newest binary across profiles so an old release .pyd cannot mask a fresh debug DLL.
+    for path in sorted(candidates, key=lambda item: item.stat().st_mtime_ns, reverse=True):
+        import_dir = path.parent
+        if path.suffix.lower() == ".dll":
+            import_dir = root / "target" / "python-test-native"
+            import_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, import_dir / "_qianxing_native.pyd")
+        sys.path.insert(0, str(import_dir))
+        sys.modules.pop("_qianxing_native", None)
+        try:
+            import _qianxing_native
+        except ImportError:
+            continue
+        if all(
+            hasattr(_qianxing_native, name)
+            for name in (
+                "app_validate_dataset",
+                "app_run_backtest",
+                "app_start_backtest",
+                "app_verify_run",
+                "app_compare_runs",
+                "app_plan_risk_parity",
+                "app_plan_algo_execution",
+                "app_run_experiment",
+                "app_start_experiment",
+                "app_run_depth_backtest",
+                "app_start_depth_backtest",
+                "app_run_depth_experiment",
+                "app_start_depth_experiment",
+                "app_run_multi_leg_backtest",
+                "app_start_multi_leg_backtest",
+                "app_run_multi_leg_experiment",
+                "app_start_multi_leg_experiment",
+                "app_verify_depth_run",
+            )
+        ):
+            return _qianxing_native
     return None
 
 
@@ -362,6 +374,8 @@ class AppUseCaseTests(unittest.TestCase):
             ("start_backtest", "/app/backtest/start", True),
             ("verify_run", "/app/verify", False),
             ("compare_runs", "/app/compare-runs", False),
+            ("plan_risk_parity", "/app/plan-risk-parity", False),
+            ("plan_algo_execution", "/app/plan-algo-execution", False),
             ("run_experiment", "/app/run-experiment", False),
             ("start_experiment", "/app/run-experiment/start", True),
             ("run_depth_backtest", "/app/depth-backtest", False),
@@ -394,6 +408,13 @@ class AppUseCaseTests(unittest.TestCase):
                 "max_drawdown_bps": 0,
                 "artifacts": {},
             },
+            "plan_risk_parity": {
+                "schema_version": 1,
+                "portfolio_id": "portfolio",
+                "plan_hash": "0123456789abcdef",
+                "plan": {"allocations": [], "orders": []},
+            },
+            "plan_algo_execution": {"schema_version": 1, "method": "twap", "parent_id": "p", "children": []},
             "verify_run": {
                 "run_id": "run",
                 "result_hash": "result",
@@ -574,6 +595,126 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertEqual([item.rank for item in typed.runs], [1, 2])
 
+    def test_fixed_notional_sizing_runs_inside_the_shared_rust_kernel(self):
+        self._require()
+        spec = self._spec("py-notional-sizing", self.output_dir / "notional")
+        spec["strategy"]["target_notional_raw"] = 1_000_000_000_000
+        outcome = self.bridge.run_backtest(spec)
+        self.assertGreater(outcome["fills"], 0)
+        fills_path = Path(outcome["artifacts"]["fills"])
+        quantities = [
+            int(row.split(",")[2])
+            for row in fills_path.read_text(encoding="utf-8").splitlines()[1:]
+            if row.strip()
+        ]
+        self.assertTrue(quantities)
+        self.assertTrue(
+            all(quantity > 0 and quantity != 1_000_000_000 for quantity in quantities),
+            f"名义金额应按价格换算数量，而非使用固定 quantity_raw: {quantities}",
+        )
+
+    def test_available_margin_sizing_uses_the_live_spot_cash_snapshot(self):
+        self._require()
+        spec = self._spec("py-margin-sizing", self.output_dir / "margin")
+        spec["strategy"]["target_available_margin_bps"] = 1_000
+        outcome = self.bridge.run_backtest(spec)
+        self.assertGreater(outcome["fills"], 0)
+        fills_path = Path(outcome["artifacts"]["fills"])
+        quantities = [
+            int(row.split(",")[2])
+            for row in fills_path.read_text(encoding="utf-8").splitlines()[1:]
+            if row.strip()
+        ]
+        self.assertTrue(quantities)
+        self.assertTrue(
+            all(quantity > 0 and quantity != 1_000_000_000 for quantity in quantities),
+            f"资金比例 sizing 应由当前可用现金和可见价格换算数量: {quantities}",
+        )
+
+    def test_volatility_budget_sizing_runs_inside_the_shared_rust_kernel(self):
+        self._require()
+        spec = self._spec("py-volatility-sizing", self.output_dir / "volatility")
+        spec["strategy"]["target_volatility_bps"] = 25
+        outcome = self.bridge.run_backtest(spec)
+        self.assertGreater(outcome["fills"], 0)
+        fills_path = Path(outcome["artifacts"]["fills"])
+        quantities = [
+            int(row.split(",")[2])
+            for row in fills_path.read_text(encoding="utf-8").splitlines()[1:]
+            if row.strip()
+        ]
+        self.assertTrue(quantities)
+        self.assertTrue(
+            all(quantity > 0 and quantity != 1_000_000_000 for quantity in quantities),
+            f"波动率预算 sizing 应由可用资金与可见 ATR 换算数量: {quantities}",
+        )
+
+    def test_typed_python_sdk_runs_kelly_backtest_and_sweeps_the_fraction(self):
+        self._require()
+        from qianxing import (
+            BacktestSpec,
+            BuiltinStrategySpec,
+            ExperimentParameterSpace,
+            RunExperimentSpec,
+            run_experiment,
+            run_backtest,
+        )
+
+        bars_path = self.output_dir / "kelly-bars.json"
+        close = 100_000_000_000
+        closes = []
+        for index in range(70):
+            if index:
+                close = close - close // 1_000 if index % 10 == 0 else close + close // 100
+            closes.append(close)
+        frame = {
+            "schema_version": 1,
+            "instrument": "BTCUSDT.BINANCE",
+            "source": "python-kelly-sdk-v1",
+            "ts": [1_000 + index * 1_000 for index in range(70)],
+            "open_raw": closes,
+            "high_raw": closes,
+            "low_raw": closes,
+            "close_raw": closes,
+            "volume_raw": [1_000_000_000] * 70,
+        }
+        bars_path.write_text(json.dumps(frame), encoding="utf-8")
+        strategy = BuiltinStrategySpec(
+            kind="momentum",
+            strategy_id="py-kelly-sdk",
+            period=2,
+            threshold_bps=0,
+            target_kelly_fraction_bps=5_000,
+            kelly_lookback_bars=30,
+        )
+        base = BacktestSpec(
+            run_id="py-kelly-sdk",
+            instrument="BTCUSDT.BINANCE",
+            bars_path=str(bars_path),
+            settlement_currency="USDT",
+            initial_cash_raw=100_000_000_000_000,
+            output_dir=str(self.output_dir / "kelly"),
+            seed=17,
+            strategy=strategy,
+        )
+        outcome = run_backtest(base)
+        self.assertGreater(outcome.fills, 0)
+        summary = json.loads(Path(outcome.artifacts["summary"]).read_text(encoding="utf-8"))
+        self.assertEqual(summary["strategy_version"], "builtin-momentum-kelly-v1")
+
+        experiment = RunExperimentSpec(
+            experiment_id="py-kelly-grid",
+            base=base,
+            parameter_space=(
+                ExperimentParameterSpace(
+                    name="target_kelly_fraction_bps", values=(2_500, 5_000)
+                ),
+            ),
+        )
+        result = run_experiment(experiment)
+        self.assertEqual(result.succeeded_candidates, 2)
+        self.assertEqual(len({candidate.outcome.result_hash for candidate in result.candidates}), 2)
+
     def test_run_handle_starts_waits_and_takes_result_from_rust(self):
         self._require()
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -607,6 +748,7 @@ class AppUseCaseTests(unittest.TestCase):
         from qianxing import (
             BacktestSpec,
             BuiltinStrategySpec,
+            ExperimentSplitPlan,
             ExperimentParameterSpace,
             RunExperimentSpec,
             run_experiment,
@@ -631,12 +773,24 @@ class AppUseCaseTests(unittest.TestCase):
                     ),
                 ),
                 parameter_space=(ExperimentParameterSpace("fast_window", (2, 3)),),
+                split_plan=ExperimentSplitPlan(
+                    train_bars=20,
+                    test_bars=10,
+                    walk_forward=True,
+                    step_bars=10,
+                ),
+                baselines=("buy-and-hold", "zero-signal"),
             )
         )
         self.assertEqual(typed.completed_candidates, 2)
         self.assertEqual(typed.succeeded_candidates, 2)
         self.assertEqual(typed.failed_candidates, 0)
         self.assertEqual(len(typed.comparison.runs), 2)
+        self.assertIsNotNone(typed.out_of_sample)
+        self.assertGreaterEqual(len(typed.out_of_sample.folds), 1)
+        self.assertEqual(
+            [row.name for row in typed.baselines], ["buy-and-hold", "zero-signal"]
+        )
 
         handle = start_experiment(
             RunExperimentSpec(
@@ -722,6 +876,7 @@ class AppUseCaseTests(unittest.TestCase):
             BuiltinStrategySpec,
             DepthBacktestSpec,
             InstrumentId,
+            MarketMakingSpec,
             OrderPolicy,
             TradingInstrumentSpec,
             run_depth_backtest,
@@ -740,6 +895,15 @@ class AppUseCaseTests(unittest.TestCase):
         ).to_dict()
         self.assertNotIn("market_spec", legacy_depth_spec)
         self.assertNotIn("order_policy", legacy_depth_spec)
+        self.assertNotIn("market_making", legacy_depth_spec)
+        market_making_payload = MarketMakingSpec(
+            spread_bps=50,
+            quote_qty_raw=1_000_000_000,
+            max_inventory_raw=5_000_000_000,
+            tick_size_raw=10_000_000,
+            inventory_skew_bps=25,
+        ).to_dict()
+        self.assertEqual(market_making_payload["inventory_skew_bps"], 25)
         legacy_positional_spec = DepthBacktestSpec(
             "python-legacy-positional-depth",
             str(depth_path),
@@ -796,6 +960,30 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(typed_summary["market_spec"]["product"], "perpetual")
         self.assertEqual(typed_summary["order_policy"]["leverage"], 2)
         self.assertTrue(verify_depth_run(typed).verified)
+
+        market_maker = run_depth_backtest(
+            DepthBacktestSpec(
+                run_id="python-typed-market-making",
+                depth_path=str(depth_path),
+                tier="l2",
+                settlement_currency="USDT",
+                initial_cash_raw=1_000_000_000_000_000,
+                output_dir=str(self.output_dir / "typed-market-making"),
+                strategy=BuiltinStrategySpec(
+                    kind="sma_cross", strategy_id="py-market-making", fast_window=2, slow_window=3
+                ),
+                fee_bps=10,
+                market_making=MarketMakingSpec(
+                    spread_bps=100,
+                    quote_qty_raw=1_000_000_000,
+                    max_inventory_raw=5_000_000_000,
+                    tick_size_raw=10_000_000,
+                    inventory_skew_bps=50,
+                ),
+            )
+        )
+        self.assertGreater(market_maker.fills, 0)
+        self.assertTrue(verify_depth_run(market_maker).verified)
 
         depth_handle_payload = {**payload, "run_id": "python-tick-handle-run"}
         depth_handle_payload["output_dir"] = str(self.output_dir / "depth-handle-runs")

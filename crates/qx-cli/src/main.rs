@@ -228,7 +228,12 @@ fn run_unified_backtest(
     // 默认这份从「跨语言策略模板」换成「内置策略模板」（V13 R31 ① F6）：README 安装路径 A 是
     // 只装 CLI、不装 Python，而旧默认那份策略由 Python worker 承担，`qx-cli backtest` 一敲就
     // 撞解释器（`logs/s736_…`：无 QX_PYTHON 退 2；`logs/s737_…`：内置与 A 股模板都退 0）。
-    let default_runtime = repository_deploy_path("qianxing.runtime.builtin-strategy.example.json");
+    //
+    // V13 R28 起这一份**不再就地拼路径**：`run` 统一入口的写侧（本函数）与读侧（`run doctor` /
+    // `run runtime-check` / `run report`）必须解析到同一份，否则 `run backtest` 刚写出的摘要
+    // 读侧一个都找不到。单一出口是 `unified_default_runtime_path`，`run_umbrella_default_check`
+    // 逐处核对它。
+    let default_runtime = unified_default_runtime_path();
     // 用默认那一份配置时，先把「用的哪一份、产物会落在哪」印出来：改前裸 `backtest` 在任意目录
     // 都会静默建出一棵 data/ 产物树，屏幕上没有一句它读的是哪个配置（V13 R31 ① F5）。
     if runtime.is_none() {

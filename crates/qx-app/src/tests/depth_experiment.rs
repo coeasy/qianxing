@@ -65,3 +65,52 @@ fn order_book_parameter_experiment_returns_a_cancellable_run_handle() {
     assert_eq!(result.candidates[0].outcome.as_ref().unwrap().tier, "l2");
     assert!(handle.try_take_result().is_none());
 }
+
+#[test]
+fn market_making_parameter_grid_changes_the_shared_strategy_configuration() {
+    let root = super::fixtures::scratch("market-making-experiment");
+    let mut base = super::depth_backtest::spec("unused-maker-grid", &root, "l2", 2);
+    base.market_making = Some(qx_xingban::MarketMakingConfig {
+        spread_bps: 100,
+        quote_qty_raw: SCALE,
+        max_inventory_raw: 5 * SCALE,
+        tick_size_raw: SCALE / 100,
+        inventory_skew_bps: 50,
+    });
+    let spec = RunDepthExperimentSpec {
+        schema_version: 1,
+        experiment_id: "maker-spread-grid".into(),
+        base,
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "market_making_spread_bps".into(),
+            values: vec![50, 500],
+        }],
+    };
+    let result = run_depth_experiment(
+        &spec,
+        &RunContext::new(CallerCapability::Research, "maker-spread-grid"),
+    )
+    .expect("market-making parameter grid");
+    assert_eq!(result.succeeded_candidates, 2);
+    let summaries = result
+        .candidates
+        .iter()
+        .map(|candidate| {
+            let path = &candidate.outcome.as_ref().unwrap().artifacts.summary;
+            let value: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            value["market_making"]["spread_bps"].as_u64().unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(summaries, vec![50, 500]);
+
+    let mut mixed = spec;
+    mixed.parameter_space.push(ExperimentParameterSpace {
+        name: "fast_window".into(),
+        values: vec![2],
+    });
+    assert_eq!(
+        mixed.validate().unwrap_err().category(),
+        AppErrorCategory::InvalidInput
+    );
+}

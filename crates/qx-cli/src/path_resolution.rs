@@ -2,6 +2,12 @@
 
 use super::*;
 
+pub(crate) fn resolve_all_worker_runtime_paths(config: &mut RuntimeConfig, runtime_path: &Path) {
+    for worker in &mut config.workers {
+        resolve_worker_runtime_paths(worker, runtime_path);
+    }
+}
+
 pub(crate) fn resolve_ccxt_config_path(runtime_path: &Path, configured: &str) -> String {
     resolve_runtime_relative_path(runtime_path, configured)
         .to_string_lossy()

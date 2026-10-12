@@ -13,6 +13,19 @@ fn struct_block(source: &str, name: &str) -> String {
     rest[..end + 2].to_string()
 }
 
+/// Match a Rust identifier rather than a substring of another field name. For example,
+/// `target_volatility_bps` is unrelated to qx-risk's `volatility_bps` snapshot field.
+fn contains_identifier(line: &str, identifier: &str) -> bool {
+    line.match_indices(identifier).any(|(start, matched)| {
+        let end = start + matched.len();
+        let is_ident = |byte: Option<u8>| {
+            byte.is_some_and(|value| value.is_ascii_alphanumeric() || value == b'_')
+        };
+        !is_ident(line.as_bytes().get(start.wrapping_sub(1)).copied())
+            && !is_ident(line.as_bytes().get(end).copied())
+    })
+}
+
 /// #170 判据：`ingest` 的回执只留有人读的那三格，且不再整档算摘要。
 ///
 /// 改前：`RuntimeIngestReceipt` 有五格，其中 `primary_seq` 与 `log_digest` 由三个构造点
@@ -210,7 +223,7 @@ fn zero_reader_struct_fields_stay_registered_in_capabilities() {
                 source.lines().any(|line| {
                     let trimmed = line.trim_start();
                     !trimmed.starts_with("//")
-                        && line.contains(field)
+                        && contains_identifier(line, field)
                         && !line.contains(&declaration)
                 })
             })

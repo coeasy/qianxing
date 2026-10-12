@@ -2,7 +2,8 @@
 
 use super::artifacts::write_text;
 use super::experiment_grid::{
-    apply_parameters, expand_grid, normalized_strategy, validate_experiment_id, validate_grid,
+    apply_depth_parameters, expand_grid, normalized_strategy, validate_depth_grid,
+    validate_experiment_id,
 };
 use super::guard::guard_panics;
 use super::run_depth_backtest::run_inner;
@@ -52,7 +53,11 @@ impl RunDepthExperimentSpec {
         let mut base = self.base.clone();
         base.strategy = normalized_strategy(&base.strategy, &self.parameter_space);
         base.validate()?;
-        validate_grid(&self.base.strategy, &self.parameter_space)
+        validate_depth_grid(
+            &self.base.strategy,
+            self.base.market_making,
+            &self.parameter_space,
+        )
     }
 
     /// Run the grid through the cancellable Rust Tick/OrderBook backtest path.
@@ -173,7 +178,11 @@ fn run_depth_experiment_inner(
             .join(format!("run-{ordinal:04}"))
             .to_string_lossy()
             .into_owned();
-        let outcome = match apply_parameters(&mut candidate.strategy, &parameters) {
+        let outcome = match apply_depth_parameters(
+            &mut candidate.strategy,
+            &mut candidate.market_making,
+            &parameters,
+        ) {
             Ok(()) => match run_inner(&candidate, context, cancellation) {
                 Ok(Some(outcome)) => Ok(outcome),
                 Ok(None) => return Ok(None),

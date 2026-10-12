@@ -165,7 +165,10 @@ fn strategy_account_context_reads_the_worker_settlement_currency() {
 
     let (_, cash, available_margin, provenance) =
         strategy_account_context(&data_dir, &config, &instrument).unwrap();
-    assert_eq!(provenance, "ledger-replayed-account-state");
+    assert_eq!(
+        provenance,
+        "ledger-replayed-account-state+paper-market-spec-buying-power"
+    );
     assert_eq!(cash.get("USDC").copied(), Some(1_000 * SCALE));
     assert_eq!(
         available_margin,

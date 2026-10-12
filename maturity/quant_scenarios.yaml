@@ -1,0 +1,270 @@
+# 量化常见场景登记面 —— 由 tools/quant_scenario_probe.py 生成，请勿手改。
+#
+# 这一份回答的是「使用者嘴里的量化场景，本仓哪几个真能跑、跑出来什么数、还有哪几个没落地」。
+# `executed` 真跑过且观测到数字；`declared_not_executed` 是 schema 写了但**没有执行者**；
+# `missing` 是仓内没有对应物；`blocked` 是缺外部前置。非 executed 三档必须写 next_gate。
+schema_version: 1
+kind: quant-scenarios
+generated_by: "tools/quant_scenario_probe.py"
+generated_at_unix: 1791790576
+cli_binary: "target/debug/qx-cli.exe"
+credentials_required: false
+network_accessed: false
+orders_sent: false
+statuses:
+  - executed
+  - declared_not_executed
+  - missing
+  - blocked
+scenarios:
+  - name: trend_following
+    label: "趋势跟踪"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    builtin_kind: "sma_cross"
+    command: "qx-cli backtest builtin sma_cross .task-tmp/quant-probe/builtin-strategies.json"
+    exit_code: 0
+    observed: "strategy=sma_cross instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=0 max_drawdown_bps=3 result_hash=c7980a3ec8dd6f4b"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: momentum
+    label: "动量"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    builtin_kind: "momentum"
+    command: "qx-cli backtest builtin momentum .task-tmp/quant-probe/builtin-strategies.json"
+    exit_code: 0
+    observed: "strategy=momentum instrument=BTCUSDT.BINANCE bars=90 fills=3 return_bps=2 max_drawdown_bps=3 result_hash=369540718a4490f9"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: mean_reversion
+    label: "均值回归"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    builtin_kind: "mean_reversion"
+    command: "qx-cli backtest builtin mean_reversion .task-tmp/quant-probe/builtin-strategies.json"
+    exit_code: 0
+    observed: "strategy=mean_reversion instrument=BTCUSDT.BINANCE bars=90 fills=10 return_bps=1 max_drawdown_bps=2 result_hash=4c7eeb938802a501"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: breakout
+    label: "通道突破"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    builtin_kind: "donchian_breakout"
+    command: "qx-cli backtest builtin donchian_breakout .task-tmp/quant-probe/builtin-strategies.json"
+    exit_code: 0
+    observed: "strategy=donchian_breakout instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=1 max_drawdown_bps=3 result_hash=3640fe335066b298"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: grid_trading
+    label: "网格"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    builtin_kind: "grid"
+    command: "qx-cli backtest builtin grid .task-tmp/quant-probe/builtin-strategies.json"
+    exit_code: 0
+    observed: "strategy=grid instrument=BTCUSDT.BINANCE bars=90 fills=3 return_bps=1 max_drawdown_bps=2 result_hash=90c8a3fea6f54a90"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: oscillator_reversion
+    label: "超买超卖反转"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    builtin_kind: "rsi"
+    command: "qx-cli backtest builtin rsi .task-tmp/quant-probe/builtin-strategies.json"
+    exit_code: 0
+    observed: "strategy=rsi instrument=BTCUSDT.BINANCE bars=90 fills=4 return_bps=0 max_drawdown_bps=2 result_hash=1d1e354cfb58a90b"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: ema_trend
+    label: "指数均线趋势"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    builtin_kind: "ema_cross"
+    command: "qx-cli backtest builtin ema_cross .task-tmp/quant-probe/builtin-strategies.json"
+    exit_code: 0
+    observed: "strategy=ema_cross instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=0 max_drawdown_bps=3 result_hash=22ac69aa7c5b201f"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: macd_trend
+    label: "MACD 趋势动量"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    builtin_kind: "macd"
+    command: "qx-cli backtest builtin macd .task-tmp/quant-probe/builtin-strategies.json"
+    exit_code: 0
+    observed: "strategy=macd instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=1 max_drawdown_bps=2 result_hash=1de73a59fed3b050"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: bollinger_reversion
+    label: "布林带均值回归"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    builtin_kind: "bollinger"
+    command: "qx-cli backtest builtin bollinger .task-tmp/quant-probe/bollinger-long-only.json"
+    exit_code: 0
+    observed: "strategy=bollinger instrument=BTCUSDT.BINANCE bars=90 fills=2 return_bps=0 max_drawdown_bps=0 result_hash=030bcaf677cbd954"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: atr_trend
+    label: "ATR 波动突破"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    builtin_kind: "atr_trend"
+    command: "qx-cli backtest builtin atr_trend .task-tmp/quant-probe/builtin-strategies.json"
+    exit_code: 0
+    observed: "strategy=atr_trend instrument=BTCUSDT.BINANCE bars=90 fills=1 return_bps=1 max_drawdown_bps=2 result_hash=0551d1d818aaecc0"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: kelly_paper_sizing
+    label: "Kelly sizing 的 Paper 实盘模拟执行"
+    status: executed
+    anchor: "crates/qx-cli/src/tests/strategy_order_identity_round_scope.rs"
+    command: "cargo test -p qx-cli paper_kelly_strategy_reaches_the_market_spec_risk_and_ledger_path -- --test-threads=1"
+    exit_code: 0
+    observed: "paper_e2e_test=passed fills=1 order_filled=1 ledger_entries_positive=1"
+    evidence: ["crates/qx-cli/src/tests/strategy_order_identity_round_scope.rs", "crates/qx-cli/src/strategy_contract.rs", "crates/qx-cli/src/workers.rs"]
+  - name: pairs_arbitrage
+    label: "配对统计套利"
+    status: executed
+    anchor: "crates/qx-zhenlu/src/lib.rs"
+    builtin_kind: "pairs_arbitrage"
+    command: "qx-cli backtest multi-builtin pairs_arbitrage deploy/qianxing.bar-frame.pairs-primary.example.json deploy/qianxing.bar-frame.pairs-reference.example.json --root .task-tmp/quant-probe/pairs_arbitrage"
+    exit_code: 0
+    observed: "strategy=builtin-pairs_arbitrage-multi groups=3 turnover_raw=192600000000000 fees_raw=96300000000"
+    evidence: ["crates/qx-zhenlu/src/lib.rs"]
+  - name: basis_arbitrage
+    label: "基差套利"
+    status: executed
+    anchor: "crates/qx-zhenlu/src/lib.rs"
+    builtin_kind: "basis_arbitrage"
+    command: "qx-cli backtest multi-builtin basis_arbitrage deploy/qianxing.bar-frame.pairs-primary.example.json deploy/qianxing.bar-frame.pairs-reference.example.json --root .task-tmp/quant-probe/basis_arbitrage"
+    exit_code: 0
+    observed: "strategy=builtin-basis_arbitrage-multi groups=1 turnover_raw=63000000000000 fees_raw=31500000000"
+    evidence: ["crates/qx-zhenlu/src/lib.rs"]
+  - name: cross_market_arbitrage
+    label: "跨市场价差套利"
+    status: executed
+    anchor: "crates/qx-zhenlu/src/lib.rs"
+    builtin_kind: "cross_venue_arbitrage"
+    command: "qx-cli backtest multi-builtin cross_venue_arbitrage deploy/qianxing.bar-frame.pairs-primary.example.json deploy/qianxing.bar-frame.pairs-reference.example.json --root .task-tmp/quant-probe/cross_market_arbitrage"
+    exit_code: 0
+    observed: "strategy=builtin-cross_venue_arbitrage-multi groups=3 turnover_raw=192600000000000 fees_raw=96300000000"
+    evidence: ["crates/qx-zhenlu/src/lib.rs"]
+  - name: order_book_execution
+    label: "盘口撮合 / 日内高频"
+    status: executed
+    anchor: "crates/qx-xingban"
+    command: "qx-cli backtest book --fill-tier l2 --root .task-tmp/quant-probe/book sma_cross deploy/qianxing.depth-frame.example.json"
+    exit_code: 0
+    observed: "run_id=depth-backtest:l2:sma_cross:BTCUSDT.BINANCE data_fingerprint=depth:example-depth-l2-v1:509c1b9eff771fb8 result_hash=59a57f097dfd3d45"
+    evidence: ["crates/qx-xingban"]
+  - name: market_making
+    label: "做市（双边限价报价、库存偏移与撤单）"
+    status: executed
+    anchor: "crates/qx-xingban/src/market_making.rs"
+    command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
+    exit_code: 0
+    observed: "42; result_hash=8f0f693f15863f8f"
+    evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
+  - name: multi_language_strategy
+    label: "多语言策略（Rust 内核 + Python worker）"
+    status: executed
+    anchor: "crates/qx-runtime"
+    command: "qx-cli backtest deploy/qianxing.runtime.strategy-multi-backtest.example.json deploy/qianxing.bar-frame.pairs-primary.example.json"
+    exit_code: 0
+    observed: "strategy=strategy-momentum instrument=BTCUSDT.BINANCE bars=60 fills=3 return_bps=270 max_drawdown_bps=25 result_hash=1bb7554f1e066fde"
+    evidence: ["crates/qx-runtime"]
+  - name: parameter_sweep_comparison
+    label: "多参数回测效果对比"
+    status: executed
+    anchor: "crates/qx-app/src/cases/run_experiment.rs"
+    command: "qx-cli app run-experiment .task-tmp/quant-probe/parameter-sweep.json"
+    exit_code: 0
+    observed: "\"total_candidates\":4,\"completed_candidates\":4,\"succeeded_candidates\":4,\"failed_candidates\":0"
+    evidence: ["crates/qx-app/src/cases/run_experiment.rs"]
+  - name: position_sizing
+    label: "按固定名义金额换算仓位"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    command: "qx-cli app backtest .task-tmp/quant-probe/position-sizing.json"
+    exit_code: 0
+    observed: "\"fills\":1,\"equity_points\":70; fills=1 target_notional_raw=1000000000000 quantity_raw_min=11299435028 quantity_raw_max=11299435028"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: cash_fraction_sizing
+    label: "按决策时可用资金比例 sizing"
+    status: executed
+    anchor: "crates/qx-xingban/src/backtest.rs"
+    command: "qx-cli app backtest .task-tmp/quant-probe/margin-sizing.json"
+    exit_code: 0
+    observed: "\"fills\":1,\"equity_points\":70; fills=1 target_available_margin_bps=1000 quantity_raw_min=112994350282 quantity_raw_max=112994350282"
+    evidence: ["crates/qx-xingban/src/backtest.rs"]
+  - name: volatility_budget_sizing
+    label: "按滚动 ATR 风险预算 sizing"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    command: "qx-cli app backtest .task-tmp/quant-probe/volatility-sizing.json"
+    exit_code: 0
+    observed: "\"fills\":1,\"equity_points\":70; fills=1 target_volatility_bps=25 quantity_raw_min=156069544589 quantity_raw_max=156069544589"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: risk_budget_sizing
+    label: "Kelly fraction 风险预算 sizing（Rust Bar 回测）"
+    status: executed
+    anchor: "crates/qx-strategy/src/builtin.rs"
+    command: "qx-cli app backtest .task-tmp/quant-probe/kelly-sizing.json"
+    exit_code: 0
+    observed: "\"fills\":39,\"equity_points\":70; fills=39 target_kelly_fraction_bps=5000 quantity_raw_min=796431324 quantity_raw_max=341565620723"
+    evidence: ["crates/qx-strategy/src/builtin.rs"]
+  - name: stop_loss_take_profit
+    label: "止损 / 止盈 / 跟踪止损（确定性 Bar 回测）"
+    status: executed
+    anchor: "crates/qx-xingban/src/backtest.rs"
+    command: "qx-cli app backtest .task-tmp/quant-probe/protective-exit.json"
+    exit_code: 0
+    observed: "\"fills\":2,\"equity_points\":8; fills=2 protective_stop_fills=1 first_trigger_ts=7000 first_fill_ts=8000"
+    evidence: ["crates/qx-xingban/src/backtest.rs"]
+  - name: multi_data_source_batch
+    label: "多数据源 / 多市场批量对比"
+    status: executed
+    anchor: "deploy/qianxing.fast-backtest.example.json"
+    command: "qx-cli fast-backtest deploy/qianxing.fast-backtest.example.json"
+    exit_code: 0
+    observed: "manifest=deploy\\qianxing.fast-backtest.example.json jobs=2 completed=2"
+    evidence: ["deploy/qianxing.fast-backtest.example.json"]
+  - name: oos_walk_forward
+    label: "样本外 / 走查（OOS / WFA）"
+    status: executed
+    anchor: "crates/qx-app/src/cases/experiment_split.rs"
+    command: "qx-cli app run-experiment .task-tmp/quant-probe/walk-forward.json"
+    exit_code: 0
+    observed: "\"in_sample_return_bps\":27,\"out_of_sample_return_bps\":-20,\"degradation_bps\":47; folds=4"
+    evidence: ["crates/qx-app/src/cases/experiment_split.rs"]
+  - name: benchmark_comparison
+    label: "基准对照（buy-and-hold / 零信号）"
+    status: executed
+    anchor: "crates/qx-app/src/cases/experiment_split.rs"
+    command: "qx-cli app run-experiment .task-tmp/quant-probe/walk-forward.json"
+    exit_code: 0
+    observed: "\"baselines\":[{\"name\":\"buy-and-hold\",\"return_bps\":1800,\"max_drawdown_bps\":1666},{\"name\":\"zero-signal\",\"return_bps\":0,\"max_drawdown_bps\":0}]"
+    evidence: ["crates/qx-app/src/cases/experiment_split.rs"]
+  - name: event_driven_pipeline
+    label: "事件驱动 / 控制面"
+    status: executed
+    anchor: "crates/qx-control"
+    command: "qx-cli ecosystem"
+    exit_code: 0
+    observed: "status=Accepted digest=f9c5193e30739f8f"
+    evidence: ["crates/qx-control"]
+  - name: portfolio_rebalance
+    label: "组合再平衡 / 风险平价"
+    status: executed
+    anchor: "crates/qx-zhenlu/src/portfolio/risk_parity.rs"
+    command: "qx-cli app plan-risk-parity .task-tmp/quant-probe/risk-parity.json"
+    exit_code: 0
+    observed: "8b1ca1782ec646d9; assets=2 weight_bps=10000 turnover_bps=9999"
+    evidence: ["crates/qx-zhenlu/src/portfolio/risk_parity.rs"]
+  - name: algo_execution
+    label: "算法执行（TWAP / VWAP 拆单）"
+    status: missing
+    anchor: "crates/qx-execution/src/algo_execution.rs"
+    why_missing: "Rust 已有可序列化、有界、可恢复的 AlgoExecutionState 执行器，并将每个子单经 Risk/OMS/ExecutionGateway提交，按固定 client ID 对账且对未知结果 fail-closed；但没有生产调度器/worker 持久化并驱动 step，API 与 Python/C++ SDK 也没有父单执行生命周期和聚合读面，所以端到端 TWAP/VWAP 仍未闭环。"
+    next_gate: "由 Paper/Live runtime worker 持久化 AlgoExecutionState 并按冻结时钟调度；提供跨语言 start/poll/cancel/恢复 API，父单归集成交与撤单竞态均需跨入口一致性用例。"
+    evidence: ["crates/qx-execution/src/algo_execution.rs", "crates/qx-execution/src/algo_execution/validation.rs", "crates/qx-execution/src/algo_execution/tests.rs", "crates/qx-zhenlu/src/algo.rs", "crates/qx-app/src/cases/plan_algo_execution.rs", "crates/qx-api/src/app_surface.rs", "crates/qx-cli/src/app_commands.rs"]
+  - name: live_exchange_trading
+    label: "实盘交易所交易"
+    status: blocked
+    anchor: "crates/qx-adapter/src/ccxt.rs"
+    blocked_by: "CCXT 适配器进程依赖的 `ccxt` 未装入 python/.venv，且无交易所凭据（`maturity/evidence/testnet/` 那份 Binance 验收 outcome=skipped）。适配器代码在盘（`BinanceSpotVenue` / `CcxtProcessVenue` 都是真 `impl Venue for`），但本环境执行不了。"
+    next_gate: "在装有 ccxt 与 testnet 凭据的环境跑一次完整订单生命周期（提交/查询/撤单/对账），产出 conformance 记录。"
+    evidence: ["crates/qx-adapter/src/ccxt.rs", "maturity/evidence/testnet"]

@@ -40,6 +40,8 @@ APP_ENTRYPOINTS = (
     "app_start_backtest",
     "app_verify_run",
     "app_compare_runs",
+    "app_plan_risk_parity",
+    "app_plan_algo_execution",
     "app_run_experiment",
     "app_start_experiment",
     "app_run_depth_backtest",
@@ -110,6 +112,16 @@ def app_verify_run(outcome_json: str) -> str:
 def app_compare_runs(spec_json: str) -> str:
     """Deterministically compare completed runs via the shared Rust application use case."""
     return str(_extension().app_compare_runs(spec_json))
+
+
+def app_plan_risk_parity(spec_json: str) -> str:
+    """Create a deterministic long-only risk-parity plan in the Rust core."""
+    return str(_extension().app_plan_risk_parity(spec_json))
+
+
+def app_plan_algo_execution(spec_json: str) -> str:
+    """Plan TWAP/VWAP child orders in the Rust application use case."""
+    return str(_extension().app_plan_algo_execution(spec_json))
 
 
 def app_run_experiment(spec_json: str) -> str:

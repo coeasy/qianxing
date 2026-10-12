@@ -215,7 +215,7 @@ PyO3 已启用 `abi3-py310`，wheel 以 `cp310-abi3` 标签构建。发布工作
 
 #276 之后 wheel 的强制依赖清单是空的：`ccxt` 与 Windows 的 `tzdata` 都改成可选 extras（`[ccxt]` / `[ccxt-pro]` / `[tz]` / `[a-share*]`），`pip install <wheel>` 在任何索引状态下都能装成，`--no-deps` 不再是必需项。`ccxt` 只在真的跑 CCXT worker 时才 import，`Asia/Shanghai` 只在真的取 A 股时区时才解析（#253 把顶层求值挪到用时），缺谁都在调用点抛带 extras 名字的可执行提示。
 
-正式 SDK 的入口为 `import qianxing`。目前 `qx-app` 已向 SDK 开放同步 Bar 数据集校验、内置策略回测和产物复核；金额与数量使用 `*_raw` 定点整数，报告和指标由 Rust 内核生成。Tick/OrderBook、Paper、Live 与长任务控制尚未接入这层 SDK，不会因安装 wheel 而被宣称可用。
+正式 Python SDK 的入口为 `import qianxing`。SDK 已开放 Bar、L1 Tick、L2 OrderBook（含双边做市回测）、多腿回测、参数实验、产物复核、可取消 RunHandle，以及经服务端授权的 Paper/Live 命令工作流；匹配、风控、OMS、账簿、事件与回放由共享 Rust 用例执行。实盘交易所认证、TWAP/VWAP 父单运行生命周期和各市场/venue 能力仍按 maturity 登记面验收，不因 SDK 路由存在而视为通过。
 
 安装 wheel 后也可用 `qianxing doctor`、`qianxing validate-dataset <spec.json>`、`qianxing backtest <spec.json>` 和 `qianxing verify <outcome.json>` 调用同一组研究用例。
 

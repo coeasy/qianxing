@@ -27,7 +27,7 @@
 //!
 //! ## 公共面
 //!
-//! - 用例：[`validate_dataset`]、[`run_backtest`]、[`run_depth_backtest`]、[`run_multi_leg_backtest`]、[`run_experiment`]、[`run_multi_leg_experiment`]、[`verify_run`]、[`verify_depth_run`]、[`compare_runs`]、[`validate_trade_control`]
+//! - 用例：[`validate_dataset`]、[`run_backtest`]、[`run_depth_backtest`]、[`run_multi_leg_backtest`]、[`run_experiment`]、[`run_multi_leg_experiment`]、[`plan_risk_parity`]、[`verify_run`]、[`verify_depth_run`]、[`compare_runs`]、[`validate_trade_control`]
 //! - 输入/输出：[`DatasetSpec`]、[`DatasetVerdict`]、[`BacktestSpec`]、[`BacktestOutcome`]、
 //!   [`VerificationResult`]、[`CompareRunsSpec`]、[`CompareRunsResult`]
 //! - 调用上下文与能力档：[`RunContext`]、[`CallerCapability`]
@@ -51,16 +51,20 @@ pub mod trade_facts;
 mod tests;
 
 pub use cases::{
-    compare_runs, run_backtest, run_depth_backtest, run_depth_experiment, run_experiment,
-    run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset, validate_trade_control,
-    verify_depth_run, verify_run, CompareRunsResult, CompareRunsSpec, ComparedRun,
-    ComparedRunResult, DepthExperimentCandidate, DepthExperimentRankedCandidate,
-    ExperimentCandidateResult, ExperimentParameterSpace, MultiLegExperimentCandidate,
-    MultiLegExperimentRankedCandidate, RunDepthExperimentResult, RunDepthExperimentSpec,
-    RunExperimentResult, RunExperimentSpec, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
-    TradeControlSpec, TradeWorkflow, MAX_EXPERIMENT_CANDIDATES,
-    RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION, RUN_EXPERIMENT_SCHEMA_VERSION,
+    compare_runs, plan_algo_execution, plan_risk_parity, run_backtest, run_depth_backtest,
+    run_depth_experiment, run_experiment, run_multi_leg_backtest, run_multi_leg_experiment,
+    validate_dataset, validate_trade_control, verify_depth_run, verify_run, CompareRunsResult,
+    CompareRunsSpec, ComparedRun, ComparedRunResult, DepthExperimentCandidate,
+    DepthExperimentRankedCandidate, ExperimentCandidateResult, ExperimentParameterSpace,
+    MultiLegExperimentCandidate, MultiLegExperimentRankedCandidate, RunDepthExperimentResult,
+    RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec, RunMultiLegExperimentResult,
+    RunMultiLegExperimentSpec, TradeControlSpec, TradeWorkflow, EXPERIMENT_BASELINE_NAMES,
+    MAX_EXPERIMENT_CANDIDATES, RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION, RUN_EXPERIMENT_SCHEMA_VERSION,
     RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION, TRADE_CONTROL_SCHEMA_VERSION,
+};
+pub use cases::{
+    ExperimentBaselineReport, ExperimentFoldReport, ExperimentOutOfSampleReport,
+    ExperimentSplitPlan,
 };
 pub use context::{CallerCapability, RunContext};
 pub use error::{AppAction, AppError, AppErrorCategory, AppRetry};
@@ -74,10 +78,12 @@ pub use multi_leg::{
 };
 pub use run_handle::{RunHandle, RunStatus, DEFAULT_WAIT_TIMEOUT};
 pub use spec::{
-    BacktestArtifacts, BacktestOutcome, BacktestSpec, BuiltinStrategySpec, DatasetSpec,
-    DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestOutcome,
-    MultiLegBacktestSpec, MultiLegFillModel, VerificationResult, BACKTEST_SPEC_SCHEMA_VERSION,
-    DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION, MIN_BACKTEST_BARS,
-    MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
+    AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, BacktestArtifacts, BacktestOutcome,
+    BacktestSpec, BuiltinStrategySpec, DatasetSpec, DatasetVerdict, DepthBacktestOutcome,
+    DepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegFillModel,
+    ProtectiveExitSpec, RiskParityAssetSpec, RiskParityResult, RiskParitySpec, VerificationResult,
+    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION,
+    DEPTH_BACKTEST_SPEC_SCHEMA_VERSION, MIN_BACKTEST_BARS, MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
+    RISK_PARITY_RESULT_SCHEMA_VERSION, RISK_PARITY_SPEC_SCHEMA_VERSION,
 };
 pub use trade_facts::{rejection_count, rejection_facts, rejection_facts_line, spread_group_id};

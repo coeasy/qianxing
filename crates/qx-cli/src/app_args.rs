@@ -57,6 +57,18 @@ pub(crate) enum AppCommand {
         /// `CompareRunsSpec` JSON 的路径。
         spec: PathBuf,
     },
+    /// 风险平价组合再平衡规划（共享 Rust 计算核，不直接提交订单）。
+    #[command(name = "plan-risk-parity")]
+    PlanRiskParity {
+        /// `RiskParitySpec` JSON 的路径。
+        spec: PathBuf,
+    },
+    /// TWAP/VWAP 拆单计划（不直接提交订单）。
+    #[command(name = "plan-algo-execution")]
+    PlanAlgoExecution {
+        /// `AlgoExecutionSpec` JSON 的路径。
+        spec: PathBuf,
+    },
     /// 运行有界笛卡尔参数实验并生成 Rust 比较报告。
     #[command(name = "run-experiment")]
     RunExperiment {

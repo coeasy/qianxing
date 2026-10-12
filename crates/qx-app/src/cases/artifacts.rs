@@ -82,6 +82,19 @@ pub(super) struct RunSummary {
     pub fee_model: String,
     pub fill_model: String,
     pub data_tier: String,
+    /// Absent for runs without protective exits (preserves the v1 wire shape).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub protective_exit_fills: Vec<ProtectiveExitSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ProtectiveExitSummary {
+    pub reason: String,
+    pub trigger_ts: u64,
+    pub fill_ts: u64,
+    pub order_id: u64,
+    pub qty_raw: i128,
+    pub price_raw: i128,
 }
 
 /// 四份产物的落点。相对 `output_dir` 按进程当前目录解析（与仓内其余入口同口径）。
@@ -188,6 +201,17 @@ pub(super) fn csv_rows(body: &str) -> Vec<&str> {
 pub(super) fn last_equity_raw(body: &str) -> Option<i128> {
     let last = csv_rows(body).pop()?;
     last.split(',').nth(1)?.trim().parse::<i128>().ok()
+}
+
+/// `equity.csv` 第二列的**整列**（按行序）。任意一行读不出来就是 `None`。
+///
+/// 与 [`last_equity_raw`] 同一把尺：**不**跳过坏行凑一个"看起来完整"的序列——切分评估
+/// 按 Bar 序号对齐，中间少一格会让训练窗与测试窗错位，而错位不会自己出声。
+pub(super) fn equity_series(body: &str) -> Option<Vec<i128>> {
+    csv_rows(body)
+        .into_iter()
+        .map(|row| row.split(',').nth(1)?.trim().parse::<i128>().ok())
+        .collect()
 }
 
 /// 复核失败的裁决：产物缺一份，就没法"四份互相印证"。

@@ -3493,7 +3493,7 @@ O(N²) 而不是 O(N log N)；这正是 #169（长跑无压缩/保留）账上�
 
 | 落点 | 动作 | 改前会怎样 |
 | --- | --- | --- |
-| #164 `serve` 停机 | `run_runtime_api` 明文与 mTLS 两条出口从裸 `worker.join()` 换成 `join_worker_handle(&supervisor, …)`（`crates/qx-cli/src/strategy_contract.rs:752,824`） | 屏幕上「按 Ctrl+C 停止」没有生产者，只能靠默认信号强杀；V12 R4-a 接好的停机阶梯在 API 入口上没人调用 |
+| #164 `serve` 停机 | `run_runtime_api` 明文与 mTLS 两条出口从裸 `worker.join()` 换成 `join_worker_handle(&supervisor, …)`（`crates/qx-cli/src/strategy_contract.rs:727,799`） | 屏幕上「按 Ctrl+C 停止」没有生产者，只能靠默认信号强杀；V12 R4-a 接好的停机阶梯在 API 入口上没人调用 |
 | #165/#168a Binance 两条流 | `recv_user_event`/`recv_quote` 返回从 `Option` 换成 `BinanceStreamPoll::{Event,Idle,Closed}` / `BinanceQuotePoll::{Quote,Idle,Closed}`；`Idle` 只允许出现在**帧边界**（`qx-adapter/src/lib.rs`，半条消息中间超时仍是故障，否则两帧会被拼成一帧）；`binance_stream_worker.rs:39` 把 `Idle` 记成 `Degraded` 健康并累加 `idle_windows`，只有 `Closed` 收摊 | 原口径 `recv_quote(...)?` 把"十分钟没跳动"上抛，supervisor 记 `WorkerExited` 并**停掉其它 worker** —— 薄成交对的 symbol 会拖垮整个 runtime |
 | #166 CCXT Pro 空闲心跳 | Rust 发 `wait_ms`（自己读窗的 4/5），Python Worker 无事件时回 `event["idle"] = True`；读侧 `ccxt_watch_reply_is_idle` **只认显式 `idle: true`**（缺键 / `false` / 字符串 `"true"` / 任何真事件都不算空闲，否则一笔成交会被静默丢掉而不进 EventLog） | 空闲窗按失败计，约 5 分钟放弃一个没有成交的账户 |
 | #167 一条预算、两类通道 | `CcxtStreamReconnectBudget` → `CcxtReconnectBudget`（带 `subject`，`new()`=用户流 / `market_rpc()`=行情子进程，阶梯同源：500ms 起、8s 封顶、连续 10 次具名放弃）；`ccxt_market_worker.rs` 四处出口全过预算，删掉固定 500ms sleep | 柜台彻底不可用时"重生子进程 + sleep 500ms + continue"无限循环，且 `cycle_failures` 每轮清零（那是配置规模不是尝试次数） |
@@ -6316,7 +6316,7 @@ Bar 链的 `--fill-model` / `--virtual-trading` 未做（前置条件见同文�
 
 ### Fixed（信号层：内置策略此前"永远不交叉"与"永远不信号"）
 
-- `crates/qx-strategy/src/builtin.rs:777`：`ema()` 的旧值权重从 `window` 改成 `window-1`。
+- `crates/qx-strategy/src/builtin/indicator.rs:20`：`ema()` 的旧值权重从 `window` 改成 `window-1`。
   α = 2/(window+1) 时旧值权重必须是 1−α，写成 `window` 让两权重之和成为 `(window+2)/(window+1)`，
   直流增益不为 1、常数价格列收敛到 2× 该常数，快慢线相对位置随窗口大小漂移。`ema_cross` /
   `macd` / `keltner_trend` 共用该函数，交叉判定此前无从谈起。

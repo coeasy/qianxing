@@ -1,6 +1,11 @@
 use crate::*;
 
 pub(crate) fn resolve_worker_runtime_paths(worker: &mut WorkerConfig, runtime_path: &Path) {
+    if let Some(spec_path) = worker.instrument_spec_path.as_mut() {
+        *spec_path = resolve_runtime_relative_path(runtime_path, spec_path)
+            .to_string_lossy()
+            .into_owned();
+    }
     if let Some(files) = worker.credential_files.as_mut() {
         files.api_key = resolve_runtime_relative_path(runtime_path, &files.api_key)
             .to_string_lossy()
@@ -310,6 +315,14 @@ pub(crate) fn load_worker_instrument_spec(
     order: &Order,
     runtime_config_path: Option<&Path>,
 ) -> Result<Option<TradingInstrumentSpec>, String> {
+    load_worker_market_spec_for_instrument(worker, &order.instrument, runtime_config_path)
+}
+
+pub(crate) fn load_worker_market_spec_for_instrument(
+    worker: &WorkerConfig,
+    instrument: &InstrumentId,
+    runtime_config_path: Option<&Path>,
+) -> Result<Option<TradingInstrumentSpec>, String> {
     let Some(spec_path) = worker.instrument_spec_path.as_deref() else {
         return Ok(None);
     };
@@ -330,7 +343,7 @@ pub(crate) fn load_worker_instrument_spec(
     })?;
     // 形状判定、instrument 一致性与字段校验都在 [`market_spec_from_value`] 里，与三条
     // Bar 回测链吃同一份口径；这里只负责把报错落到哪个文件说清楚。
-    let spec = market_spec_from_value(&order.instrument, &market).map_err(|error| {
+    let spec = market_spec_from_value(instrument, &market).map_err(|error| {
         format!(
             "读取 worker market spec 失败 {}: {error}",
             resolved_spec_path.display()

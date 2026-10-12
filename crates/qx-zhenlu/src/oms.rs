@@ -61,6 +61,28 @@ impl Oms {
         Ok(())
     }
 
+    /// Confirm a local simulated cancel through the same order state machine used by venues.
+    pub fn cancel(&mut self, client_order_id: u64) -> QxResult<()> {
+        let order = self
+            .orders
+            .get_mut(&client_order_id)
+            .ok_or_else(|| QxError::Permanent("订单不存在".into()))?;
+        if order.status.is_terminal() {
+            return Err(QxError::BusinessViolation("终态订单不能撤销".into()));
+        }
+        if order.status != OrderStatus::CancelPending {
+            order
+                .status
+                .transition(OrderStatus::CancelPending)
+                .map_err(QxError::Invariant)?;
+        }
+        order
+            .status
+            .transition(OrderStatus::Cancelled)
+            .map_err(QxError::Invariant)?;
+        Ok(())
+    }
+
     /// 只接受带账户身份的成交，成交数量必须落在订单剩余数量内。
     pub fn apply_fill(&mut self, fill: &Fill) -> QxResult<()> {
         let next = self.reduce_fill(fill)?;
@@ -118,6 +140,14 @@ impl Oms {
 
     pub fn all_orders(&self) -> Vec<Order> {
         self.orders.values().cloned().collect()
+    }
+
+    pub fn active_order_ids(&self) -> Vec<u64> {
+        self.orders
+            .iter()
+            .filter(|(_, order)| !order.status.is_terminal())
+            .map(|(client_order_id, _)| *client_order_id)
+            .collect()
     }
 
     pub fn len(&self) -> usize {

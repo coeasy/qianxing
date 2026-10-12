@@ -5,16 +5,32 @@
 //! Binance 以及未来连接器都必须复用这里的事实转换，不能在 CLI 中各写一套。
 //! 本 crate 不依赖任何具体运行时或存储后端。
 
+pub mod algo_execution;
 pub mod application;
+mod spread_group_barrier;
+pub use algo_execution::{
+    AlgoExecutionState, AlgoExecutionStatus, AlgoExecutionStep, AlgoParentOrder,
+    ALGO_EXECUTION_STATE_SCHEMA_VERSION,
+};
 pub use application::*;
 use qx_control::{order_from_submit_command, ControlCommand};
 use qx_core::{FeeModel, Order, OrderStatus, OrderTrace, Price, Quantity, TradingInstrumentSpec};
 use qx_guanxing::QuoteTick;
 use qx_risk::OrderRiskPosition;
+pub use qx_zhenlu::algo::{
+    plan_twap, plan_vwap, AlgoChildSlice, AlgoExecutionError, VwapVolumeBucket, MAX_ALGO_CHILDREN,
+};
 use qx_zhenlu::{
     PaperVenue, RiskContext, SpreadOrderGroup, SpreadOrderGroupStatus, SpreadOrderGroupStore,
     Venue, VenueEvent,
 };
+
+pub fn spread_group_barrier(
+    store: Option<&dyn SpreadOrderGroupStore>,
+    command: &ControlCommand,
+) -> Result<(), String> {
+    spread_group_barrier::check_spread_group_barrier(store, command)
+}
 
 pub struct RiskExecutionContext<'a> {
     pub risk: &'a RiskContext,
@@ -300,57 +316,6 @@ pub struct PortExecutionService<'a, V: VenuePort, P: ExecutionEventPort> {
     spread_store: Option<&'a dyn SpreadOrderGroupStore>,
 }
 
-/// 多腿订单组提交屏障的**唯一实现**，由执行网关在写入任何事实之前调用。
-///
-/// 组一旦进入 `ReconcileRequired`（已有腿结果未知）或 `HedgeRequired`（已有确认敞口
-/// 等待补偿），同组其余腿必须停止自动提交：未知敞口不能靠再加一条腿掩盖，必须先由
-/// 对账/补偿链路给出确定事实。判定口径由 `SpreadOrderGroup::blocks_new_leg_submission`
-/// 唯一持有。
-///
-/// 三条 fail-closed 纪律（V10 §4.10 把屏障从 CLI 下沉到这里的原因）：
-/// 1. 命令声明了 `spread_group_id` 而提交路径没注入组存储 —— 无法证明组是干净的，拒绝；
-/// 2. 注入了组存储但快照读不到 —— 拒绝；
-/// 3. 快照处于待对账/待补偿态 —— 拒绝并列出未知腿。
-///
-/// 不带 `spread_group_id` 的单腿命令不受影响。
-pub fn spread_group_barrier(
-    store: Option<&dyn SpreadOrderGroupStore>,
-    command: &ControlCommand,
-) -> Result<(), String> {
-    let Some(group_id) = command.payload.get("spread_group_id") else {
-        return Ok(());
-    };
-    let Some(store) = store else {
-        return Err(format!(
-            "FAIL_CLOSED: 命令 {} 声明属于多腿订单组 {group_id}，但提交路径未注入组快照存储，禁止提交该腿",
-            command.command_id
-        ));
-    };
-    let Some(group) = store.load(group_id).map_err(|error| {
-        format!("FAIL_CLOSED: 读取多腿订单组 {group_id} 快照失败，禁止提交腿: {error}",)
-    })?
-    else {
-        return Err(format!(
-            "FAIL_CLOSED: 命令 {} 属于多腿订单组 {group_id}，但快照不存在，禁止提交该腿",
-            command.command_id
-        ));
-    };
-    if group.blocks_new_leg_submission() {
-        let unknown_legs = group
-            .legs
-            .iter()
-            .filter(|leg| leg.order.status == OrderStatus::Unknown)
-            .map(|leg| leg.leg_id.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
-        return Err(format!(
-            "FAIL_CLOSED: 多腿订单组 {group_id} 状态为 {:?}，禁止提交剩余腿（未知腿: {unknown_legs}），须先完成对账/补偿",
-            group.status
-        ));
-    }
-    Ok(())
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PortExecutionResult {
     pub message: String,
@@ -426,9 +391,7 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
     }
 
     pub fn submit(&mut self, order: qx_core::Order) -> Result<PortExecutionResult, String> {
-        order
-            .validate()
-            .map_err(|error| format!("订单校验失败: {error}"))?;
+        self.validate_order(&order)?;
         if let Some(existing) = self
             .events
             .orders()
@@ -550,9 +513,7 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         order: qx_core::Order,
         risk: &R,
     ) -> Result<PortExecutionResult, String> {
-        order
-            .validate()
-            .map_err(|error| format!("订单校验失败: {error}"))?;
+        self.validate_order(&order)?;
         match risk
             .evaluate_order(&order)
             .map_err(|error| format!("账户级 RiskPort 执行失败: {error}"))?
@@ -563,6 +524,48 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
             }
         }
         self.submit(order)
+    }
+
+    /// Fail closed on frozen market-spec identity, lot size, minimum quantity,
+    /// and price tick before risk registration or any venue side effect.
+    pub fn validate_order(&self, order: &qx_core::Order) -> Result<(), String> {
+        order
+            .validate()
+            .map_err(|error| format!("订单校验失败: {error}"))?;
+        if let Some(spec) = &self.instrument_spec {
+            if order.instrument != spec.instrument {
+                return Err(format!(
+                    "订单 market spec 标的与订单不匹配: order={} spec={}",
+                    order.instrument, spec.instrument
+                ));
+            }
+            spec.validate_order(order.qty.raw(), order.limit.map(|price| price.raw()))
+                .map_err(|error| format!("订单不满足 market spec: {error}"))?;
+        }
+        Ok(())
+    }
+
+    /// Submit with a stable caller correlation id. Algorithm children use
+    /// `parent_id/child_index` so an event-log replay can identify the same
+    /// child after restart without inventing a second execution path.
+    pub fn submit_with_risk_and_correlation<R: RiskPort>(
+        &mut self,
+        order: qx_core::Order,
+        risk: &R,
+        correlation_id: impl Into<String>,
+    ) -> Result<PortExecutionResult, String> {
+        self.registration_correlation = Some(correlation_id.into());
+        let result = self.submit_with_risk(order, risk);
+        self.registration_correlation = None;
+        result
+    }
+
+    /// Read the authoritative OMS snapshot for a client order id.
+    pub fn order(&self, client_order_id: u64) -> Option<qx_core::Order> {
+        self.events
+            .orders()
+            .into_iter()
+            .find(|order| order.client_id == client_order_id)
     }
 
     pub fn cancel(&mut self, client_order_id: u64) -> Result<PortExecutionResult, String> {

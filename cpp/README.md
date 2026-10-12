@@ -9,6 +9,8 @@
 
 长任务可调用 `start_backtest`、`start_depth_backtest`、`start_depth_experiment`、`start_multi_leg_backtest`、`start_experiment` 或 `start_multi_leg_experiment`，再以 `run_status(run_id)` 轮询结果，并用 `cancel_run(run_id)` 请求协作取消。它们复用 Rust Bar/Tick/OrderBook 内核；终态结果由服务持久化并跨重启保留，重启时仍未完成的任务标记为失败；注册表最多保留 1024 项，同时最多运行 64 个有持久化观察器的任务，满额时服务会在启动前拒绝新任务。run_id 只接受字母、数字、`-`、`_`、`.`。
 
+`run_depth_backtest` / `start_depth_backtest` 接收同一版本化 JSON；L2 请求可包含 `market_making`（`spread_bps`、`quote_qty_raw`、`max_inventory_raw`、`tick_size_raw`、`inventory_skew_bps`），由 Rust 撮合器执行双边报价与撤单。C++ client 只传输该规格，不在本地实现交易规则。
+
 独立进程要求：JSONL 模式每行读一个 `StrategyContractInput`，每行输出 `{"ok":true,"output":...}`；传入 `--protocol framed_json` 时使用 QXSF 版本化二进制分帧（24 字节头、长度上限、序号、CRC32）；传入 `--protocol shared_memory_json` 时通过 `--input-ring`/`--output-ring` 使用 Rust 创建的 QXRB 双向 SPSC mmap ring；这条传输没有 stdin 可关，必须同时传 `--parent-pid <驱动进程 pid>`，worker 每秒探一次该进程是否还在，父进程消失就以退出码 0 收摊（不传则不检查，与 Python worker 同口径）。标准输出只能写协议，日志写标准错误。`nlohmann/json` 仅用于示例，不是框架运行时依赖。
 
 `include/qianxing_ring.hpp` 提供 C++17 的跨平台文件映射和 QXRB 读写实现；Ring 仍要求严格单生产者/单消费者，策略进程只处理 QXSF 帧，不得直接访问凭证、Venue 或 Ledger。

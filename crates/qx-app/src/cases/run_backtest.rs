@@ -21,7 +21,7 @@
 
 use crate::cases::artifacts::{
     artifact_paths, ensure_output_dir, equity_csv, existing_manifest, fills_csv, read_text,
-    summary_json, write_text, RunSummary, DATA_TIER, SUMMARY_SCHEMA_VERSION,
+    summary_json, write_text, ProtectiveExitSummary, RunSummary, DATA_TIER, SUMMARY_SCHEMA_VERSION,
 };
 use crate::cases::attach;
 use crate::cases::guard::guard_panics;
@@ -34,8 +34,8 @@ use qx_datastruct::BarFrame;
 use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, StrategyContext};
 use qx_xingban::{
     BacktestConfig, BacktestEngine, DataTier, FeeModel, FillModel, MakerTakerFeeModel,
-    NativeBarStrategy, NextBarOpenFillModel, NoMargin, RunManifestIdentity, VirtualTradingConfig,
-    ZeroLatency,
+    NativeBarStrategy, NextBarOpenFillModel, NoMargin, ProtectiveExitPolicy, ProtectiveExitReason,
+    RunManifestIdentity, VirtualTradingConfig, ZeroLatency,
 };
 use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
@@ -164,6 +164,25 @@ pub(super) fn run_backtest_inner(
     strategy_config.slow_window = spec.strategy.slow_window;
     strategy_config.period = spec.strategy.period;
     strategy_config.threshold_bps = spec.strategy.threshold_bps;
+    strategy_config.target_notional_raw = spec.strategy.target_notional_raw;
+    strategy_config.target_available_margin_bps = spec.strategy.target_available_margin_bps;
+    strategy_config.target_volatility_bps = spec.strategy.target_volatility_bps;
+    strategy_config.target_kelly_fraction_bps = spec.strategy.target_kelly_fraction_bps;
+    strategy_config.kelly_lookback_bars = spec.strategy.kelly_lookback_bars;
+    // A sizing estimator is part of the reproducible strategy model. Encode its
+    // algorithm version in the run manifest; legacy runs without sizing retain
+    // their original `builtin-<kind>-v1` identity and fingerprints.
+    strategy_config.strategy_version = if spec.strategy.target_kelly_fraction_bps.is_some() {
+        format!("builtin-{}-kelly-v1", spec.strategy.kind.name())
+    } else if spec.strategy.target_volatility_bps.is_some() {
+        format!("builtin-{}-atr-budget-v1", spec.strategy.kind.name())
+    } else if spec.strategy.target_available_margin_bps.is_some() {
+        format!("builtin-{}-cash-fraction-v1", spec.strategy.kind.name())
+    } else if spec.strategy.target_notional_raw.is_some() {
+        format!("builtin-{}-notional-v1", spec.strategy.kind.name())
+    } else {
+        strategy_config.strategy_version.clone()
+    };
     strategy_config.validate().map_err(invalid_strategy)?;
     let strategy_id = strategy_config.strategy_id.clone();
     let strategy_version = strategy_config.strategy_version.clone();
@@ -188,12 +207,22 @@ pub(super) fn run_backtest_inner(
     strategy
         .initialize()
         .map_err(|error| AppError::from_qx_error(&error))?;
+    let engine = match spec.protective_exit {
+        Some(policy) => BacktestEngine::new(config)
+            .with_protective_exits(ProtectiveExitPolicy {
+                stop_loss_bps: policy.stop_loss_bps,
+                take_profit_bps: policy.take_profit_bps,
+                trailing_stop_bps: policy.trailing_stop_bps,
+            })
+            .map_err(|error| AppError::from_qx_error(&error))?,
+        None => BacktestEngine::new(config),
+    };
     let report = match cancellation {
-        Some(cancellation) => BacktestEngine::new(config)
+        Some(cancellation) => engine
             .run_with_cancel(&bars, &mut strategy, || cancellation.is_cancelled())
             .map_err(|error| AppError::from_qx_error(&error))?,
         None => Some(
-            BacktestEngine::new(config)
+            engine
                 .run(&bars, &mut strategy)
                 .map_err(|error| AppError::from_qx_error(&error))?,
         ),
@@ -288,6 +317,23 @@ pub(super) fn run_backtest_inner(
         fee_model,
         fill_model,
         data_tier: DATA_TIER.to_string(),
+        protective_exit_fills: report
+            .protective_exit_fills
+            .iter()
+            .map(|fill| ProtectiveExitSummary {
+                reason: match fill.reason {
+                    ProtectiveExitReason::StopLoss => "stop_loss",
+                    ProtectiveExitReason::TrailingStop => "trailing_stop",
+                    ProtectiveExitReason::TakeProfit => "take_profit",
+                }
+                .into(),
+                trigger_ts: fill.trigger_ts,
+                fill_ts: fill.fill_ts,
+                order_id: fill.order_id,
+                qty_raw: fill.qty_raw,
+                price_raw: fill.price_raw,
+            })
+            .collect(),
     };
     write_text(&artifacts.summary, &summary_json(&summary)?)?;
     write_text(&artifacts.equity, &equity_csv(&timestamps, &report.equity))?;

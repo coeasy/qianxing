@@ -1,5 +1,3 @@
-//! Deterministic two-leg application workflow; strategy and fills use the Rust domain engines.
-
 use super::{artifacts::write_text, attach, guard::guard_panics};
 use crate::run_handle::CancellationToken;
 use crate::{
@@ -20,6 +18,9 @@ use qx_xingban::{
 use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+
+mod targets;
+use targets::ScheduledTargets;
 
 const MIN_BARS: usize = 3;
 
@@ -123,6 +124,11 @@ pub(super) fn run_inner(
         strategy_version: format!("builtin-{}-v1", spec.strategy.kind.name()),
         instrument: primary.instrument.clone(),
         quantity: Quantity::from_raw(spec.strategy.quantity_raw),
+        target_notional_raw: spec.strategy.target_notional_raw,
+        target_available_margin_bps: spec.strategy.target_available_margin_bps,
+        target_volatility_bps: spec.strategy.target_volatility_bps,
+        target_kelly_fraction_bps: spec.strategy.target_kelly_fraction_bps,
+        kelly_lookback_bars: spec.strategy.kelly_lookback_bars,
         fast_window: spec.strategy.fast_window,
         slow_window: spec.strategy.slow_window,
         period: spec.strategy.period,
@@ -195,7 +201,6 @@ pub(super) fn run_inner(
             }
         }
     }
-
     let primary_report = run_leg(LegRunSpec {
         instrument: &primary.instrument,
         bars: &primary_bars,
@@ -450,48 +455,6 @@ fn run_leg(input: LegRunSpec<'_>) -> Result<Option<qx_xingban::BacktestReport>, 
             .run(input.bars, &mut strategy)
             .map(Some)
             .map_err(|error| AppError::from_qx_error(&error)),
-    }
-}
-
-struct ScheduledTargets {
-    instrument: InstrumentId,
-    targets: BTreeMap<u64, i128>,
-    account_id: String,
-}
-impl BarStrategy for ScheduledTargets {
-    fn on_bar(
-        &mut self,
-        history: &[Bar],
-        instrument: &InstrumentId,
-        _ts: u64,
-        position: i128,
-    ) -> Option<Order> {
-        if instrument != &self.instrument {
-            return None;
-        }
-        let visible_ts = history.last()?.ts;
-        let target = self
-            .targets
-            .range(..=visible_ts)
-            .next_back()
-            .map(|(_, target)| *target)
-            .unwrap_or(0);
-        let delta = target.checked_sub(position)?;
-        if delta == 0 {
-            return None;
-        }
-        Some(Order {
-            client_id: 0,
-            instrument: self.instrument.clone(),
-            side: if delta > 0 { Side::Buy } else { Side::Sell },
-            qty: Quantity::from_raw(delta.checked_abs()?),
-            limit: None,
-            status: OrderStatus::Submitted,
-            filled: Quantity::ZERO,
-            account_id: self.account_id.clone(),
-            trace: None,
-            policy: None,
-        })
     }
 }
 

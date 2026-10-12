@@ -88,3 +88,27 @@ pub(super) fn backtest_spec(run_id: &str, bars_path: &str, output_dir: &Path) ->
 pub(super) fn dataset_spec(dataset_id: &str, bars_path: &str) -> DatasetSpec {
     DatasetSpec::new(dataset_id, bars_path)
 }
+
+/// 一份参数网格实验规格，只扫 `fast_window`。
+///
+/// 两个新旋钮（`split_plan` / `baselines`）在这里取**缺省**：绝大多数用例关心的是"网格怎么
+/// 展开、候选怎么隔离"，不是切分。要切分的用例自己覆写那两格——这样"不写这两格"这条路径
+/// 在用例里也始终被走到，而不是被夹具悄悄填满。
+pub(super) fn experiment_spec(
+    experiment_id: &str,
+    bars_path: &str,
+    output_dir: &Path,
+    fast_windows: Vec<i128>,
+) -> crate::cases::RunExperimentSpec {
+    crate::cases::RunExperimentSpec {
+        schema_version: 1,
+        experiment_id: experiment_id.to_string(),
+        base: backtest_spec("unused-base-run", bars_path, output_dir),
+        parameter_space: vec![crate::cases::ExperimentParameterSpace {
+            name: "fast_window".into(),
+            values: fast_windows,
+        }],
+        split_plan: None,
+        baselines: Vec::new(),
+    }
+}

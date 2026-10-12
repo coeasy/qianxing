@@ -120,6 +120,29 @@ fn builtin_strategy_requires_valid_name_snapshot_and_exclusive_source() {
 }
 
 #[test]
+fn builtin_sizing_runtime_config_is_bounded_and_single_mode() {
+    let mut config = config();
+    config.strategy.builtin_strategy = Some("macd".into());
+    config.strategy.bars_snapshot_path = Some("bars.json".into());
+    config.strategy.builtin_target_available_margin_bps = Some(2_500);
+    assert!(config.validate().is_ok());
+
+    config.strategy.builtin_target_volatility_bps = Some(500);
+    assert!(config.validate().unwrap_err().contains("只能选择一种"));
+
+    config.strategy.builtin_target_available_margin_bps = None;
+    config.strategy.builtin_target_volatility_bps = None;
+    config.strategy.builtin_target_kelly_fraction_bps = Some(5_000);
+    assert!(config.validate().is_err());
+    config.strategy.builtin_kelly_lookback_bars = Some(60);
+    let result = config.validate();
+    assert!(result.is_ok(), "{result:?}");
+
+    config.strategy.builtin_kelly_lookback_bars = Some(1_001);
+    assert!(config.validate().unwrap_err().contains("30..=1000"));
+}
+
+#[test]
 fn live_builtin_and_pair_arbitrage_require_stream_inputs() {
     let mut config = config();
     config.strategy.live_enabled = true;
@@ -299,6 +322,11 @@ fn multi_strategy_instances_are_bound_to_workers_and_jobs_can_select_them() {
         live_max_staleness_ms: None,
         builtin_strategy: None,
         builtin_quantity: None,
+        builtin_target_notional_raw: None,
+        builtin_target_available_margin_bps: None,
+        builtin_target_volatility_bps: None,
+        builtin_target_kelly_fraction_bps: None,
+        builtin_kelly_lookback_bars: None,
         builtin_fast_window: None,
         builtin_slow_window: None,
         builtin_period: None,

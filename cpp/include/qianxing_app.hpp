@@ -42,6 +42,8 @@ inline constexpr std::string_view kBacktestStart = "/app/backtest/start";
 inline constexpr std::string_view kVerify = "/app/verify";
 inline constexpr std::string_view kVerifyDepth = "/app/verify-depth";
 inline constexpr std::string_view kCompareRuns = "/app/compare-runs";
+inline constexpr std::string_view kPlanRiskParity = "/app/plan-risk-parity";
+inline constexpr std::string_view kPlanAlgoExecution = "/app/plan-algo-execution";
 inline constexpr std::string_view kRunExperiment = "/app/run-experiment";
 inline constexpr std::string_view kRunExperimentStart = "/app/run-experiment/start";
 inline constexpr std::string_view kDepthBacktest = "/app/depth-backtest";
@@ -61,10 +63,12 @@ inline constexpr std::string_view kRunCancelTemplate = "/app/runs/{run_id}/cance
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 20> kDeclaredRoutes = {
+inline constexpr std::array<std::string_view, 21> kDeclaredRoutes = {
     kValidateDataset,       kBacktest,
     kBacktestStart,         kVerify,
     kVerifyDepth,           kCompareRuns,
+    kPlanRiskParity,
+    kPlanAlgoExecution,
     kRunExperiment,         kRunExperimentStart,
     kDepthBacktest,         kDepthBacktestStart,
     kDepthExperiment,       kDepthExperimentStart,
@@ -113,6 +117,14 @@ public:
 
     AppResponse compare_runs(std::string_view spec_json) const {
         return post(routes::kCompareRuns, spec_json);
+    }
+
+    AppResponse plan_risk_parity(std::string_view spec_json) const {
+        return post(routes::kPlanRiskParity, spec_json);
+    }
+
+    AppResponse plan_algo_execution(std::string_view spec_json) const {
+        return post(routes::kPlanAlgoExecution, spec_json);
     }
 
     AppResponse run_experiment(std::string_view spec_json) const {

@@ -1384,6 +1384,7 @@ dependencies = [
  "qx-guanxing",
  "qx-risk",
  "qx-zhenlu",
+ "serde",
  "serde_json",
 ]
 

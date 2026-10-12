@@ -288,6 +288,8 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/runs/{run_id}/cancel` | 请求协作取消并返回当前状态 | 取消在 Rust 撮合边界生效，不返回部分报告；取消可能与成功完成竞态，客户端以随后状态查询为准；未知 ID 为 404 |
 | `POST /app/verify` | 应用层用例 `qx_app::verify_run` 的复核文档（请求体取上一行的响应体） | 产物缺失/互不一致是成功返回（`verified` 为假 + `mismatches` 非空，仍 200）；只有"这份 outcome 自己没带 run_id"才失败（T2-2） |
 | `POST /app/compare-runs` | 应用层用例 `qx_app::compare_runs` 的确定性排序结果（请求体为 `CompareRunsSpec` JSON） | 只比较相同标的、相同数据指纹的已完成运行；收益降序、回撤升序、run_id 升序 |
+| `POST /app/plan-risk-parity` | 应用层用例 `qx_app::plan_risk_parity` 的确定性组合调仓计划（请求体为 `RiskParitySpec` JSON） | 使用冻结的对齐收益序列求 long-only 等风险贡献权重；校验资金与换手预算，只返回计划，不提交订单 |
+| `POST /app/plan-algo-execution` | 应用层用例 `qx_app::plan_algo_execution` 的确定性 TWAP/VWAP 子单计划（请求体为 `AlgoExecutionSpec` JSON） | TWAP 均分数量；VWAP 使用冻结成交量 profile；返回 parent-linked 子单计划，不提交订单 |
 | `POST /app/run-experiment` | 应用层用例 `qx_app::run_experiment` 的有界参数实验结果（请求体为 `RunExperimentSpec` JSON） | 最多 256 个 Bar 候选；候选复用 Rust `run_backtest`，成功结果复用 `compare_runs`，每候选错误隔离记录；HTTP 将输入限制在数据根目录，产物写入服务端 artifact 根目录 |
 | `POST /app/run-depth-experiment` | 应用层用例 `qx_app::run_depth_experiment` 的有界 Tick/OrderBook 参数实验结果（请求体为 `RunDepthExperimentSpec` JSON） | 最多 256 个候选；每个候选复用 Rust Tick 或 OrderBook 回测内核，错误隔离；收益降序、回撤升序稳定排名；输入限制在数据根目录，产物写入服务端 artifact 根目录 |
 | `POST /app/depth-backtest` | 应用层用例 `qx_app::run_depth_backtest` 的 L1 Tick 或 L2/L3 OrderBook 回测结果（请求体为 `DepthBacktestSpec` JSON） | L1 必须恰有买卖一档并复用 Rust Tick 内核，L2 使用 Rust 逐档订单簿内核；回放校验通过后才发布 manifest 与摘要、权益、成交四份产物；HTTP 输入限制在数据根目录，产物写到服务端 artifact 根目录 |
@@ -397,6 +399,8 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `POST /app/verify` | 应用层用例 VerifyRun：四份产物是否互相印证（请求体取上一行的响应体） | 与上一行同一份类别映射；产物缺失或互相矛盾是 200 加一个为假的裁决（不是非 200——「复核不通过」与「复核跑不起来」是两件事）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/verify-depth` | 复核 Tick/OrderBook 回测的 manifest、summary、权益、成交和重放账簿证据 | 输入产物必须位于服务端 artifact 根目录；不一致为 200 + `verified=false`；缺失或不可读复用应用错误映射；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/compare-runs` | 对同一标的与数据指纹的已完成 Bar 运行作确定性排序 | 400 输入不合法、422 比较集合不满足约束；不访问服务端文件；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/plan-risk-parity` | 依据冻结的对齐收益率与标记价生成确定性 long-only 风险平价计划 | 400 非法输入、422 缺历史或求解未收敛；纯研究规划，不提交订单；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/plan-algo-execution` | 依据 parent 数量与 TWAP/VWAP profile 生成确定性拆单计划 | 400 非法 schema/范围/profile；纯研究规划，不提交订单；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/run-experiment` | 复用共享 Bar 回测与 compare-runs 执行有界参数网格 | 输入帧限于数据根目录，工件写到服务端 artifact 根目录；候选错误隔离记录；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 
 `POST /control/commands` 那一格的 409 是控制面按 `ControlError` 的 Debug 形态回报，四个会变 409 的
@@ -913,6 +917,8 @@ cargo run --release -p qx-cli -- backtest deploy/qianxing.runtime.builtin-strate
 内置策略包括 SMA/EMA 交叉、MACD、RSI、布林带、Donchian 突破、动量、均值回归、网格、ATR/Keltner 趋势、VWAP 回归、波动率突破，以及配对、跨交易所、基差、现货/期货四类双腿套利。套利策略额外配置 `builtin_reference_instrument` 和 `builtin_reference_bars_snapshot_path`；跨交易所时主腿/对冲腿可以分别由不同 CCXT REST MarketData worker 维护，现货腿可设置 `builtin_reference_margin_mode: "cash"` 与 `builtin_reference_leverage: 1`，避免把期货杠杆参数发送给现货交易所。
 
 示例夹具的三条硬约束由 `crates/qx-cli/tests/fast_backtest_manifest.rs::shipped_examples_fill_positions_and_pay_nonzero_fees` 钉住，改帧前先跑它：
+
+运行时配置还可为 Rust 内置策略选择一种共享 sizing：`builtin_target_notional_raw` 固定名义金额、`builtin_target_available_margin_bps` 可用资金比例、`builtin_target_volatility_bps` ATR 风险预算，或 `builtin_target_kelly_fraction_bps` + `builtin_kelly_lookback_bars` 分数 Kelly。金额为结算币种 raw 单位，比例为 1..=10000 基点；配置必须绑定 `builtin_strategy`，多个 sizing 模式互斥。Paper 从账户账簿和匹配的 market spec 估算可用保证金，Live 使用交易所 free balance 快照；缺少 Live 余额快照时策略 sizing fail closed。未配置 sizing 时仍使用 `builtin_quantity`。
 
 - **帧长要够上窗口**。`qianxing.bar-frame.example.json` / `.okx.example.json` 各 70 根（1000…70000，步长 1000），因为 MACD 的门槛是 35 根可见 Bar（26 根慢 EMA + 9 个 MACD 值 + 上一根交叉判定），默认的 `fast 5 / slow 20` 只需要 21 根。
 - **数量有两个口径，相差 1e9 倍**。运行时配置的 `builtin_quantity` 是定点裸值（`Quantity::from_raw`，1 个单位 = 1e9），命令行位置参数 `[QUANTITY]` 是整数单位（`Quantity::from_i64`）。裸值写 `1` 等于 1e-9 个单位，成交额小到让手续费按整数截断为零——摘要会显示"成交了但没付费"。示例配置一律用 `1000000000`（1 个单位），A 股示例用 `100000000000`（100 股，一手的整数量）。

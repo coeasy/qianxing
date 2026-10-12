@@ -12,8 +12,10 @@ pub mod backtest;
 pub mod cost;
 pub mod cost_rules;
 pub mod fill;
+pub mod market_making;
 pub mod orderbook;
 pub mod orderbook_backtest;
+mod orderbook_strategies;
 pub mod rng;
 pub mod tick_backtest;
 pub mod venue;
@@ -25,7 +27,8 @@ pub use self::ashare::{
 };
 pub use self::backtest::{
     BacktestConfig, BacktestEngine, BacktestReport, BarStrategy, DeliveryEvent, FundingEvent,
-    InterestEvent, NativeBarStrategy, RunManifestIdentity, VirtualTradingConfig,
+    InterestEvent, NativeBarStrategy, ProtectiveExitFill, ProtectiveExitPolicy,
+    ProtectiveExitReason, ProtectiveExitSignal, RunManifestIdentity, VirtualTradingConfig,
 };
 pub use self::cost::{
     FixedRateMargin, LatencyModel, LeverageMargin, MarginRule, MarginTier, NoMargin, StaticLatency,
@@ -36,12 +39,15 @@ pub use self::fill::{
     BestPriceFillModel, DataTier, FillContext, FillModel, NextBarOpenFillModel,
     OneTickSlippageFillModel, ProbabilisticFillModel, VolumeSensitiveFillModel,
 };
+pub use self::market_making::{MarketMakingConfig, MarketMakingStrategy};
 pub use self::orderbook::{
     BookLevel, DepthFrame, OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot,
 };
 pub use self::orderbook_backtest::{
-    DepthBarStrategy, NativeOrderBookStrategy, OrderBookBacktestConfig, OrderBookBacktestEngine,
-    OrderBookBacktestReport, OrderBookStrategy,
+    OrderBookBacktestConfig, OrderBookBacktestEngine, OrderBookBacktestReport,
+};
+pub use self::orderbook_strategies::{
+    DepthBarStrategy, NativeOrderBookStrategy, OrderBookActions, OrderBookStrategy,
 };
 pub use self::rng::DeterministicRng;
 pub use self::tick_backtest::{

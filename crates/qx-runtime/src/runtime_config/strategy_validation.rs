@@ -1,6 +1,7 @@
 //! 策略实例配置的 fail-closed 校验。
 
 use super::*;
+mod sizing;
 
 impl RuntimeConfig {
     pub(super) fn validate_strategy_config(
@@ -131,6 +132,7 @@ impl RuntimeConfig {
         {
             return Err(format!("{label} builtin_quantity 必须为正整数"));
         }
+        sizing::validate_builtin_sizing(strategy, label)?;
         // 四个信号旋钮按 kind 清单体检（V12 #102）：一份运行时配置会喂给多种 kind
         // （`backtest builtin <kind>` 的 kind 来自命令行），而清单外的一项进不了那一轮的结果，
         // 就不该有拒那一轮的权力。清单与内核读法同源，见 `qx_strategy::BuiltinStrategyKind`。

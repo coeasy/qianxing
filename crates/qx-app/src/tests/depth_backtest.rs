@@ -80,6 +80,7 @@ pub(super) fn spec(run_id: &str, root: &Path, tier: &str, levels: usize) -> Dept
         strategy,
         market_spec: None,
         order_policy: None,
+        market_making: None,
     }
 }
 
@@ -157,6 +158,38 @@ fn l2_order_book_use_case_uses_depth_matching_and_replay_verification() {
 }
 
 #[test]
+fn l2_market_making_replaces_quotes_through_shared_matching_risk_oms_and_replay() {
+    let root = super::fixtures::scratch("app-l2-market-making");
+    let mut request = spec("l2-market-making", &root, "l2", 2);
+    request.fee_bps = 10;
+    request.market_making = Some(qx_xingban::MarketMakingConfig {
+        spread_bps: 100,
+        quote_qty_raw: SCALE,
+        max_inventory_raw: 5 * SCALE,
+        tick_size_raw: SCALE / 100,
+        inventory_skew_bps: 50,
+    });
+    let outcome = run_depth_backtest(
+        &request,
+        &RunContext::new(CallerCapability::Research, "l2-market-making"),
+    )
+    .expect("market making uses the shared Rust L2 use case");
+    assert!(outcome.fills > 0, "quotes must reach the existing matcher");
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&outcome.artifacts.summary).expect("summary"),
+    )
+    .expect("summary JSON");
+    assert_eq!(summary["market_making"]["spread_bps"], 100);
+    assert!(summary["fees_raw"].as_i64().unwrap_or_default() > 0);
+    let verification = verify_depth_run(
+        &outcome,
+        &RunContext::new(CallerCapability::Research, "l2-market-making-verify"),
+    )
+    .expect("market-making artifacts replay");
+    assert!(verification.verified, "{:?}", verification.mismatches);
+}
+
+#[test]
 fn depth_use_case_uses_market_product_and_explicit_derivative_order_policy() {
     let root = super::fixtures::scratch("app-depth-product-spec");
     let mut request = spec("depth-perpetual", &root, "l1", 1);
@@ -205,6 +238,15 @@ fn depth_market_spec_and_order_policy_fail_closed_on_missing_or_out_of_range_con
     let root = super::fixtures::scratch("app-depth-product-guards");
     let mut request = spec("depth-perpetual-guards", &root, "l1", 1);
     request.market_spec = Some(perpetual_market_spec());
+    request.strategy.target_notional_raw = Some(100 * SCALE);
+    assert_eq!(
+        request
+            .validate()
+            .expect_err("spot notional sizing must not be applied to derivative contracts")
+            .category(),
+        AppErrorCategory::InvalidInput
+    );
+    request.strategy.target_notional_raw = None;
     assert_eq!(
         request
             .validate()
@@ -295,6 +337,40 @@ fn depth_spec_refuses_tier_mismatch_and_research_run_requires_the_shared_use_cas
 }
 
 #[test]
+fn market_making_contract_requires_l2_and_market_tick_alignment() {
+    let root = super::fixtures::scratch("app-market-making-contract");
+    let maker = qx_xingban::MarketMakingConfig {
+        spread_bps: 50,
+        quote_qty_raw: SCALE,
+        max_inventory_raw: 5 * SCALE,
+        tick_size_raw: 10,
+        inventory_skew_bps: 25,
+    };
+    let mut l1 = spec("market-making-l1", &root, "l1", 1);
+    l1.market_making = Some(maker);
+    assert_eq!(
+        l1.validate().unwrap_err().category(),
+        AppErrorCategory::InvalidInput
+    );
+
+    let mut mismatched = spec("market-making-tick", &root, "l2", 2);
+    mismatched.market_making = Some(maker);
+    mismatched.market_spec = Some(perpetual_market_spec());
+    mismatched.order_policy = Some(OrderPolicy {
+        reduce_only: false,
+        position_side: PositionSide::Net,
+        margin_mode: MarginMode::Cross,
+        position_mode: PositionMode::OneWay,
+        leverage: 2,
+        post_only: false,
+    });
+    assert_eq!(
+        mismatched.validate().unwrap_err().category(),
+        AppErrorCategory::InvalidInput
+    );
+}
+
+#[test]
 fn depth_spec_keeps_legacy_json_shape_when_product_fields_are_absent() {
     let root = super::fixtures::scratch("app-depth-legacy-schema");
     let request = spec("depth-legacy-shape", &root, "l1", 1);
@@ -302,6 +378,7 @@ fn depth_spec_keeps_legacy_json_shape_when_product_fields_are_absent() {
     let fields = legacy.as_object_mut().expect("spec JSON object");
     fields.remove("market_spec");
     fields.remove("order_policy");
+    fields.remove("market_making");
 
     let parsed = DepthBacktestSpec::from_json(&legacy.to_string())
         .expect("existing v1 payloads remain readable");
@@ -310,4 +387,8 @@ fn depth_spec_keeps_legacy_json_shape_when_product_fields_are_absent() {
             .expect("round-trip JSON");
     assert!(!round_trip.as_object().unwrap().contains_key("market_spec"));
     assert!(!round_trip.as_object().unwrap().contains_key("order_policy"));
+    assert!(!round_trip
+        .as_object()
+        .unwrap()
+        .contains_key("market_making"));
 }

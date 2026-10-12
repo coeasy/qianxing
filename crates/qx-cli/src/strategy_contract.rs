@@ -4,6 +4,13 @@
 //! 走同一条 target→intent→order 路径。
 
 use super::*;
+mod account_context;
+mod execution_spec;
+pub(crate) use account_context::strategy_account_context;
+pub(crate) use execution_spec::{
+    normalize_strategy_order_quantity, strategy_execution_market_spec,
+};
+
 /// 把持久化 Python/C++ JSONL 策略和受信任 C ABI 策略接入与 Rust
 /// 原生策略相同的 Bar 回测循环。
 /// 回测引擎传入的 history 已经按 `as_of` 截止，因此跨语言策略不会看到当前
@@ -14,6 +21,7 @@ pub(crate) struct ContractBarStrategy {
     instrument: InstrumentId,
     initial_cash: Money,
     currency: String,
+    instrument_spec: Option<TradingInstrumentSpec>,
     data_fingerprint: String,
     native_initialized: bool,
 }
@@ -25,6 +33,7 @@ impl ContractBarStrategy {
         initial_cash: Money,
         currency: impl Into<String>,
         dataset_bundle_fingerprint: Option<&str>,
+        instrument_spec: Option<TradingInstrumentSpec>,
     ) -> Result<Self, String> {
         let instrument = config
             .strategy
@@ -83,6 +92,7 @@ impl ContractBarStrategy {
             instrument,
             initial_cash,
             currency: currency.into(),
+            instrument_spec,
             data_fingerprint: dataset_bundle_fingerprint
                 .map(|fingerprint| format!("dataset-bundle:{fingerprint}"))
                 .unwrap_or_else(|| format!("{:016x}", frame.digest())),
@@ -181,6 +191,7 @@ impl BarStrategy for ContractBarStrategy {
                 position,
                 output.target_qty,
                 Some(&output),
+                self.instrument_spec.as_ref(),
             )
             .map_err(qx_core::QxError::BusinessViolation)?
             {
@@ -197,6 +208,7 @@ impl BarStrategy for ContractBarStrategy {
                         intent,
                         visible.ts,
                         position,
+                        self.instrument_spec.as_ref(),
                     )
                     .map_err(qx_core::QxError::BusinessViolation)?,
                 );
@@ -370,52 +382,6 @@ pub(crate) fn load_strategy_contract_bars(
     )))
 }
 
-pub(crate) fn strategy_account_context(
-    root: &Path,
-    config: &RuntimeConfig,
-    instrument: &InstrumentId,
-) -> Result<StrategyAccountContext, String> {
-    let account_id = config
-        .strategy
-        .account_id
-        .as_deref()
-        .ok_or_else(|| "StrategyContext 缺少 account_id".to_string())?;
-    let venue_id = config
-        .strategy
-        .venue_id
-        .as_deref()
-        .ok_or_else(|| "StrategyContext 缺少 venue_id".to_string())?;
-    let Some(log_name) = account_event_log_name(account_id, venue_id) else {
-        return Err(format!(
-            "StrategyContext 当前不支持 venue_id={} 的账户事实归约",
-            venue_id
-        ));
-    };
-    if !event_log_exists(config, root, &log_name)? {
-        return Ok((
-            BTreeMap::new(),
-            BTreeMap::new(),
-            None,
-            "account-snapshot-not-seen".into(),
-        ));
-    }
-    let pipeline = open_account_pipeline(config, root, &log_name, OutboxRecovery::ReadOnly)
-        .map_err(|error| format!("恢复 StrategyContext 账户 EventLog 失败: {error}"))?;
-    let state = pipeline.ledger().position_for(account_id, instrument);
-    let positions = BTreeMap::from([(instrument.to_string(), state.quantity.raw())]);
-    let cash = pipeline.ledger().cash_balances_for(account_id);
-    let available_margin_raw =
-        pipeline
-            .ledger()
-            .equity_for(account_id, pipeline.marks(), pipeline.settlement_currency());
-    Ok((
-        positions,
-        cash,
-        available_margin_raw,
-        "ledger-replayed-account-state".into(),
-    ))
-}
-
 #[cfg(test)]
 pub(crate) fn build_strategy_order(
     config: &RuntimeConfig,
@@ -432,6 +398,7 @@ pub(crate) fn build_strategy_order(
         now,
         current_qty,
         target_qty,
+        None,
         None,
     )
 }
@@ -463,6 +430,7 @@ pub(crate) fn build_strategy_order_from_contract_intent(
     intent: &StrategyContractIntent,
     now: u64,
     current_qty: i128,
+    market_spec: Option<&TradingInstrumentSpec>,
 ) -> Result<Order, String> {
     let account_id = config
         .strategy
@@ -531,11 +499,12 @@ pub(crate) fn build_strategy_order_from_contract_intent(
         leverage,
         post_only: intent.post_only,
     };
+    let qty_raw = normalize_strategy_order_quantity(intent.qty_raw, market_spec)?;
     let mut order = Order {
         client_id: strategy_order_identity(round_scope, intent.intent_id),
         instrument,
         side,
-        qty: qx_core::Quantity::from_raw(intent.qty_raw),
+        qty: qx_core::Quantity::from_raw(qty_raw),
         limit: intent.limit_price_raw.map(Price::from_raw),
         status: OrderStatus::PendingSubmit,
         filled: qx_core::Quantity::ZERO,
@@ -580,6 +549,7 @@ pub(crate) fn build_strategy_order_with_signal(
     current_qty: i128,
     target_qty: i128,
     contract_output: Option<&StrategyContractOutput>,
+    market_spec: Option<&TradingInstrumentSpec>,
 ) -> Result<Option<Order>, String> {
     let instrument_text = config
         .strategy
@@ -651,7 +621,11 @@ pub(crate) fn build_strategy_order_with_signal(
     ) else {
         return Ok(None);
     };
-    let order = intent.into_order();
+    let mut order = intent.into_order();
+    order.qty = qx_core::Quantity::from_raw(normalize_strategy_order_quantity(
+        order.qty.raw(),
+        market_spec,
+    )?);
     let product = config.strategy.product.unwrap_or(TradingProduct::Spot);
     let position_mode = config
         .strategy

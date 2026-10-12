@@ -12,12 +12,12 @@ use super::*;
 /// 所以这里按文件逐处数分派。
 #[test]
 fn event_log_read_and_write_faces_are_declared_at_every_open_site() {
-    // 读面：三处账户级读模型 + 一处策略绑定 + 一处策略契约，全部显式 ReadOnly，
+    // 读面：三处账户级读模型 + 一处策略绑定 + 一处 StrategyContext，全部显式 ReadOnly，
     // 且一处都不许出现写面分支。
     for (path, want) in [
         ("crates/qx-cli/src/api_service.rs", 3_usize),
         ("crates/qx-cli/src/strategy_binding.rs", 1),
-        ("crates/qx-cli/src/strategy_contract.rs", 1),
+        ("crates/qx-cli/src/strategy_contract/account_context.rs", 1),
     ] {
         let source = workspace_source(path);
         assert_eq!(

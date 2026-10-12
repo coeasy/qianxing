@@ -1,6 +1,6 @@
 //! Versioned contract for a deterministic two-leg Bar backtest.
 
-use super::{is_identity_token, BuiltinStrategySpec};
+use super::{is_identity_token, supports_fixed_notional_sizing, BuiltinStrategySpec};
 use crate::error::{AppError, AppErrorCategory};
 use qx_core::TradingInstrumentSpec;
 use serde::{Deserialize, Serialize};
@@ -158,6 +158,15 @@ impl MultiLegBacktestSpec {
                 "多腿 funding_bps 必须在 0..=10000",
             ));
         }
+        if self.strategy.target_available_margin_bps.is_some()
+            || self.strategy.target_volatility_bps.is_some()
+            || self.strategy.target_kelly_fraction_bps.is_some()
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "多腿策略须为每条腿分别提供可用资金与波动率快照，暂不支持共享账户 sizing",
+            ));
+        }
         for (label, spec) in [
             ("primary_market_spec", &self.primary_market_spec),
             ("reference_market_spec", &self.reference_market_spec),
@@ -169,6 +178,16 @@ impl MultiLegBacktestSpec {
                         format!("MultiLegBacktestSpec.{label} 非法: {error:?}"),
                     )
                 })?;
+                if self.strategy.target_notional_raw.is_some()
+                    && !supports_fixed_notional_sizing(spec)
+                {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        format!(
+                            "target_notional_raw 当前只支持现货的一单位线性名义金额；{label} 需先配置合约专用 sizing"
+                        ),
+                    ));
+                }
             }
         }
         if !self.strategy.kind.needs_reference_leg() {

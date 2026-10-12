@@ -8,8 +8,14 @@
 //! 就进了 semver 承诺。一个持有 `RunContext` 的普通结构体把承诺面压到最小。
 
 use qx_app::{
-    run_backtest, validate_dataset, verify_run, AppError, BacktestOutcome, BacktestSpec,
-    CallerCapability, DatasetSpec, DatasetVerdict, RunContext, RunHandle, VerificationResult,
+    compare_runs, plan_algo_execution, run_backtest, run_depth_backtest, run_depth_experiment,
+    run_experiment, run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset,
+    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
+    CallerCapability, CompareRunsResult, CompareRunsSpec, DatasetSpec, DatasetVerdict,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec,
+    RiskParityResult, RiskParitySpec, RunContext, RunDepthExperimentResult, RunDepthExperimentSpec,
+    RunExperimentResult, RunExperimentSpec, RunHandle, RunMultiLegExperimentResult,
+    RunMultiLegExperimentSpec, VerificationResult,
 };
 
 /// 一次 SDK 会话的调用身份。
@@ -48,6 +54,15 @@ impl Client {
         &self.context
     }
 
+    /// Plan deterministic TWAP/VWAP child orders through the shared app use case.
+    /// The returned plan does not submit orders or bypass Risk/OMS.
+    pub fn plan_algo_execution(
+        &self,
+        spec: &AlgoExecutionSpec,
+    ) -> Result<qx_app::AlgoExecutionPlan, AppError> {
+        plan_algo_execution(spec, &self.context)
+    }
+
     /// 让门面把自己的构建身份带进来（默认是包版本）。
     pub fn with_code_commit(mut self, code_commit: impl Into<String>) -> Self {
         self.context = self.context.with_code_commit(code_commit);
@@ -73,8 +88,92 @@ impl Client {
         spec.start(self.context.clone())
     }
 
+    /// Tick/OrderBook 回测，复用 Rust 深度撮合与产物复核链。
+    pub fn run_depth_backtest(
+        &self,
+        spec: &DepthBacktestSpec,
+    ) -> Result<DepthBacktestOutcome, AppError> {
+        run_depth_backtest(spec, &self.context)
+    }
+
+    pub fn start_depth_backtest(&self, spec: DepthBacktestSpec) -> RunHandle<DepthBacktestOutcome> {
+        spec.start(self.context.clone())
+    }
+
+    /// 双腿多市场 Bar 回测，费用、撮合和风险仍由共享 Rust 用例执行。
+    pub fn run_multi_leg_backtest(
+        &self,
+        spec: &MultiLegBacktestSpec,
+    ) -> Result<MultiLegBacktestOutcome, AppError> {
+        run_multi_leg_backtest(spec, &self.context)
+    }
+
+    pub fn start_multi_leg_backtest(
+        &self,
+        spec: MultiLegBacktestSpec,
+    ) -> RunHandle<MultiLegBacktestOutcome> {
+        spec.start(self.context.clone())
+    }
+
+    /// 单腿参数实验，可配置样本外/走查与基准对照。
+    pub fn run_experiment(
+        &self,
+        spec: &RunExperimentSpec,
+    ) -> Result<RunExperimentResult, AppError> {
+        run_experiment(spec, &self.context)
+    }
+
+    pub fn start_experiment(&self, spec: RunExperimentSpec) -> RunHandle<RunExperimentResult> {
+        spec.start(self.context.clone())
+    }
+
+    pub fn run_depth_experiment(
+        &self,
+        spec: &RunDepthExperimentSpec,
+    ) -> Result<RunDepthExperimentResult, AppError> {
+        run_depth_experiment(spec, &self.context)
+    }
+
+    pub fn start_depth_experiment(
+        &self,
+        spec: RunDepthExperimentSpec,
+    ) -> RunHandle<RunDepthExperimentResult> {
+        spec.start(self.context.clone())
+    }
+
+    pub fn run_multi_leg_experiment(
+        &self,
+        spec: &RunMultiLegExperimentSpec,
+    ) -> Result<RunMultiLegExperimentResult, AppError> {
+        run_multi_leg_experiment(spec, &self.context)
+    }
+
+    /// Deterministic long-only risk-parity rebalance planning on frozen aligned returns.
+    pub fn plan_risk_parity(&self, spec: &RiskParitySpec) -> Result<RiskParityResult, AppError> {
+        qx_app::plan_risk_parity(spec, &self.context)
+    }
+
+    pub fn start_multi_leg_experiment(
+        &self,
+        spec: RunMultiLegExperimentSpec,
+    ) -> RunHandle<RunMultiLegExperimentResult> {
+        spec.start(self.context.clone())
+    }
+
+    /// 对已完成产物做跨运行可比性检查和稳定排名。
+    pub fn compare_runs(&self, spec: &CompareRunsSpec) -> Result<CompareRunsResult, AppError> {
+        compare_runs(spec, &self.context)
+    }
+
     /// 独立复核一次回测的四份产物。被篡改的读数判**失败**而不是报错。
     pub fn verify_run(&self, outcome: &BacktestOutcome) -> Result<VerificationResult, AppError> {
         verify_run(outcome, &self.context)
+    }
+
+    pub fn verify_depth_run(
+        &self,
+        outcome: &DepthBacktestOutcome,
+    ) -> Result<VerificationResult, AppError> {
+        verify_depth_run(outcome, &self.context)
     }
 }

@@ -16,6 +16,8 @@ int main() {
     });
 
     const std::string spec = R"({"schema_version":1,"experiment_id":"smoke"})";
+    const std::string sized_backtest_spec =
+        R"({"schema_version":1,"run_id":"sized","instrument":"BTCUSDT.BINANCE","bars_path":"bars.json","settlement_currency":"USDT","initial_cash_raw":1000000000000,"seed":1,"output_dir":"runs","strategy":{"kind":"sma_cross","strategy_id":"sized-sma","quantity_raw":1000000000,"target_volatility_bps":250,"fast_window":2,"slow_window":4}})";
     const std::string depth_spec =
         R"({"schema_version":1,"tier":"l1","market_spec":{"product":"perpetual"},"order_policy":{"margin_mode":"cross","leverage":2}})";
     const auto response = client.run_experiment(spec);
@@ -31,6 +33,11 @@ int main() {
     const auto depth_experiment = client.run_depth_experiment(spec);
     assert(depth_experiment.ok());
     assert(observed_path == "/app/run-depth-experiment");
+    assert(observed_body == spec);
+
+    const auto risk_parity = client.plan_risk_parity(spec);
+    assert(risk_parity.ok());
+    assert(observed_path == "/app/plan-risk-parity");
     assert(observed_body == spec);
 
     const auto multi_leg = client.run_multi_leg_backtest(spec);
@@ -101,10 +108,11 @@ int main() {
     assert(observed_path == "/app/validate-dataset");
     assert(observed_body == spec);
 
-    const auto backtest = client.run_backtest(spec);
+    const auto backtest = client.run_backtest(sized_backtest_spec);
     assert(backtest.ok());
     assert(observed_path == "/app/backtest");
-    assert(observed_body == spec);
+    assert(observed_body == sized_backtest_spec);
+    assert(observed_body.find("\"target_volatility_bps\":250") != std::string::npos);
 
     const auto verified = client.verify_run(spec);
     assert(verified.ok());
@@ -114,6 +122,12 @@ int main() {
     const auto compared = client.compare_runs(spec);
     assert(compared.ok());
     assert(observed_path == "/app/compare-runs");
+    assert(observed_body == spec);
+
+    const auto algo_plan = client.plan_algo_execution(spec);
+    assert(algo_plan.ok());
+    assert(observed_method == "POST");
+    assert(observed_path == "/app/plan-algo-execution");
     assert(observed_body == spec);
 
     qianxing::AppClient unavailable({});

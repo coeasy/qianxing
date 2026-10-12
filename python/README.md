@@ -6,13 +6,37 @@ The extension uses PyO3's Python 3.10 stable ABI. Release builds publish one `cp
 
 ## Current SDK surface
 
-The public `qianxing` namespace exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, L1 Tick and L2 OrderBook backtests, two-leg Bar backtests, artifact verification, deterministic comparison of completed runs, bounded Bar and multi-leg parameter-grid experiments, and cooperative `RunHandle` lifecycle for Bar/Tick/OrderBook/multi-leg/experiment runs. Multi-leg requests can declare both normalized market specs, shared default maker/taker fees with per-leg overrides, funding basis points, and the shared fill model. Matching, risk, accounting, replay verification, cancellation boundaries, and experiment execution stay in Rust; Python only provides typed request/result objects.
+The public `qianxing` namespace exposes the shared Rust application use cases for local Bar dataset validation, deterministic Bar backtests, L1 Tick and L2 OrderBook backtests, two-leg Bar backtests, artifact verification, deterministic comparison of completed runs, bounded Bar and multi-leg parameter-grid experiments, and cooperative `RunHandle` lifecycle for Bar/Tick/OrderBook/multi-leg/experiment runs. L2 requests can select the built-in double-sided market-making path with tick-aligned quotes, inventory skew, bounded quote size, and cancel/replace routed through the same matcher, risk checks, OMS, ledger, and replay verifier. Multi-leg requests can declare both normalized market specs, shared default maker/taker fees with per-leg overrides, funding basis points, and the shared fill model. Matching, risk, accounting, replay verification, cancellation boundaries, and experiment execution stay in Rust; Python only provides typed request/result objects.
 
 `AppClient` exposes the same use cases over a running qx-api service, including remote start/status/cancel/wait/result for every supported run kind. Its `RemoteRunHandle.wait()` uses a finite timeout by default. The service stores run snapshots below its configured artifact root: completed results survive API restarts, while jobs interrupted by a process exit recover as failed with an explicit error because worker threads cannot resume across processes.
 
 `PaperClient` and `LiveClient` submit the versioned Rust `TradeControlSpec` to a running qx-api service. Rust authenticates the operator, validates the command in qx-app, persists and enqueues it through the existing ControlPlane, then the configured Paper or venue worker executes it. Live requires an authenticated API policy; the Python SDK does not execute trades itself. A client TLS context can be supplied for mTLS deployments.
 
-The application SDK accepts normalized `TradingInstrumentSpec` documents for multi-leg Bar and Tick/OrderBook runs; depth runs check the contract identity and validity interval against the input and require an explicit `OrderPolicy` for derivatives. It does not currently import CCXT market snapshots or model per-venue fee schedules. `one_tick_slippage` requires a real `price_tick` in both multi-leg market specs. Depth accepts Rust built-in strategies; non-zero queue-position, reduce-only, and post-only assumptions are rejected because those strategies issue opening market orders.
+The application SDK accepts normalized `TradingInstrumentSpec` documents for multi-leg Bar and Tick/OrderBook runs; depth runs check the contract identity and validity interval against the input and require an explicit `OrderPolicy` for derivatives. It does not currently import CCXT market snapshots or model per-venue fee schedules. `one_tick_slippage` requires a real `price_tick` in both multi-leg market specs. The L2 market-making strategy checks its configured tick size against the market spec when present. Queue-position simulation is rejected by the current built-in strategy facade, as are reduce-only and post-only policies; post-only fill behavior is not yet modeled by the shared order-book matcher.
+
+For deterministic L2 market-making research, add a `MarketMakingSpec` to `DepthBacktestSpec`; all parameters are fixed-point raw values and are included in the run configuration hash:
+
+```python
+from qianxing import BuiltinStrategySpec, DepthBacktestSpec, MarketMakingSpec, run_depth_backtest
+
+spec = DepthBacktestSpec(
+    run_id="maker-l2-001",
+    depth_path="books.json",
+    tier="l2",
+    settlement_currency="USDT",
+    initial_cash_raw=100_000_000_000_000,
+    output_dir="runs/maker-l2-001",
+    strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="maker-l2"),
+    market_making=MarketMakingSpec(
+        spread_bps=50,
+        quote_qty_raw=1_000_000_000,
+        max_inventory_raw=5_000_000_000,
+        tick_size_raw=10_000_000,
+        inventory_skew_bps=25,
+    ),
+)
+outcome = run_depth_backtest(spec)
+```
 
 ## Example
 

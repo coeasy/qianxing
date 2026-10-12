@@ -17,13 +17,13 @@ use pyo3::exceptions::{PyException, PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyCapsule, PyModule, PyTuple};
 use qx_app::{
-    compare_runs, run_backtest, run_depth_backtest, run_depth_experiment, run_experiment,
-    run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset, verify_depth_run,
-    verify_run, AppError, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec,
-    DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestOutcome,
-    MultiLegBacktestSpec, RunContext, RunDepthExperimentResult, RunDepthExperimentSpec,
-    RunExperimentResult, RunExperimentSpec, RunHandle, RunMultiLegExperimentResult,
-    RunMultiLegExperimentSpec, RunStatus,
+    compare_runs, plan_algo_execution, plan_risk_parity, run_backtest, run_depth_backtest,
+    run_depth_experiment, run_experiment, run_multi_leg_backtest, run_multi_leg_experiment,
+    validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome,
+    BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome,
+    DepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec, RiskParitySpec, RunContext,
+    RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec,
+    RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec, RunStatus,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
@@ -90,6 +90,22 @@ fn app_verify_run(outcome_json: &str) -> PyResult<String> {
 fn app_compare_runs(spec_json: &str) -> PyResult<String> {
     let spec = CompareRunsSpec::from_json(spec_json).map_err(app_error)?;
     compare_runs(&spec, &research_context("compare-runs"))
+        .and_then(|result| result.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_plan_risk_parity(spec_json: &str) -> PyResult<String> {
+    let spec = RiskParitySpec::from_json(spec_json).map_err(app_error)?;
+    plan_risk_parity(&spec, &research_context(&spec.portfolio_id))
+        .and_then(|result| result.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_plan_algo_execution(spec_json: &str) -> PyResult<String> {
+    let spec = AlgoExecutionSpec::from_json(spec_json).map_err(app_error)?;
+    plan_algo_execution(&spec, &research_context(&spec.parent_id))
         .and_then(|result| result.to_json())
         .map_err(app_error)
 }
@@ -483,6 +499,8 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_start_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_verify_run, module)?)?;
     module.add_function(wrap_pyfunction!(app_compare_runs, module)?)?;
+    module.add_function(wrap_pyfunction!(app_plan_risk_parity, module)?)?;
+    module.add_function(wrap_pyfunction!(app_plan_algo_execution, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_experiment, module)?)?;
     module.add_function(wrap_pyfunction!(app_start_experiment, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_depth_backtest, module)?)?;

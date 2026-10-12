@@ -45,7 +45,7 @@ fn multi_leg_parameter_experiment_is_shared_by_cli_http_and_python() {
     assert_eq!(cli["completed_candidates"], 2);
     assert_eq!(cli["failed_candidates"], 1);
     assert_eq!(cli["succeeded_candidates"], 1);
-    match via_python("run_multi_leg_experiment", &spec) {
+    match python_native::via_python(&repo_root(), "run_multi_leg_experiment", &spec) {
         None => eprintln!("[skip] Python leg: PyO3 extension not built"),
         Some(Ok(python)) => assert_eq!(same_results(&python), same_results(&cli)),
         Some(Err(payload)) => panic!("Python multi-leg experiment failed: {payload}"),
@@ -140,7 +140,7 @@ fn the_same_multi_leg_spec_runs_through_cli_http_and_python_shared_rust_use_case
         assert_eq!(cli[key], http[key], "CLI and HTTP differ at {key}");
     }
 
-    match via_python("run_multi_leg_backtest", &spec) {
+    match python_native::via_python(&repo_root(), "run_multi_leg_backtest", &spec) {
         None => eprintln!("[skip] Python leg: PyO3 extension not built"),
         Some(Ok(python)) => {
             for key in [

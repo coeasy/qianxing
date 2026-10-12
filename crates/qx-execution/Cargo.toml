@@ -11,6 +11,8 @@ qx-control = { path = "../qx-control" }
 qx-guanxing = { path = "../qx-guanxing" }
 qx-risk = { path = "../qx-risk" }
 qx-zhenlu = { path = "../qx-zhenlu" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 # `qx-runtime` 曾在这里：它把「qx-runtime --normal--> qx-execution」反向压成一条 dev 环
@@ -18,4 +20,3 @@ qx-zhenlu = { path = "../qx-zhenlu" }
 # `qx-adapter` 留在本地：`src/tests/venue_submit_contract.rs` 需要它的传输端口形状，
 # 而它不构成环（qx-adapter 的正常依赖里没有回到 qx-execution 的路径）。
 qx-adapter = { path = "../qx-adapter" }
-serde_json = { workspace = true }

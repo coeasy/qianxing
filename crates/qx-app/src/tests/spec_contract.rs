@@ -231,6 +231,90 @@ fn every_shape_rule_of_the_two_specs_reports_invalid_input() {
         AppErrorCategory::InvalidInput
     );
 
+    let mut zero_notional = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "s");
+    zero_notional.target_notional_raw = Some(0);
+    assert_eq!(
+        zero_notional
+            .validate()
+            .expect_err("名义金额必须为正")
+            .category(),
+        AppErrorCategory::InvalidInput
+    );
+
+    let mut invalid_margin_bps = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "s");
+    invalid_margin_bps.target_available_margin_bps = Some(10_001);
+    assert_eq!(
+        invalid_margin_bps
+            .validate()
+            .expect_err("available margin bps 必须在范围内")
+            .category(),
+        AppErrorCategory::InvalidInput
+    );
+
+    let mut invalid_volatility_bps = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "s");
+    invalid_volatility_bps.target_volatility_bps = Some(0);
+    assert_eq!(
+        invalid_volatility_bps
+            .validate()
+            .expect_err("波动率预算必须在范围内")
+            .category(),
+        AppErrorCategory::InvalidInput
+    );
+
+    let mut conflicting_sizing = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "s");
+    conflicting_sizing.target_notional_raw = Some(100);
+    conflicting_sizing.target_available_margin_bps = Some(1_000);
+    assert_eq!(
+        conflicting_sizing
+            .validate()
+            .expect_err("sizing 模式互斥")
+            .category(),
+        AppErrorCategory::InvalidInput
+    );
+
+    let mut conflicting_volatility = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "s");
+    conflicting_volatility.target_available_margin_bps = Some(1_000);
+    conflicting_volatility.target_volatility_bps = Some(100);
+    assert_eq!(
+        conflicting_volatility
+            .validate()
+            .expect_err("可用资金比例与波动率 sizing 互斥")
+            .category(),
+        AppErrorCategory::InvalidInput
+    );
+
+    let mut invalid_kelly_fraction = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "s");
+    invalid_kelly_fraction.target_kelly_fraction_bps = Some(10_001);
+    assert_eq!(
+        invalid_kelly_fraction
+            .validate()
+            .expect_err("Kelly fraction 超范围")
+            .category(),
+        AppErrorCategory::InvalidInput
+    );
+
+    let mut invalid_kelly_lookback = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "s");
+    invalid_kelly_lookback.target_kelly_fraction_bps = Some(5_000);
+    invalid_kelly_lookback.kelly_lookback_bars = Some(29);
+    assert_eq!(
+        invalid_kelly_lookback
+            .validate()
+            .expect_err("Kelly lookback 至少 30 根")
+            .category(),
+        AppErrorCategory::InvalidInput
+    );
+
+    let mut conflicting_kelly = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "s");
+    conflicting_kelly.target_available_margin_bps = Some(1_000);
+    conflicting_kelly.target_kelly_fraction_bps = Some(5_000);
+    assert_eq!(
+        conflicting_kelly
+            .validate()
+            .expect_err("Kelly 与其他 sizing 互斥")
+            .category(),
+        AppErrorCategory::InvalidInput
+    );
+
     let mut zero_window = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "s");
     zero_window.slow_window = 0;
     assert_eq!(

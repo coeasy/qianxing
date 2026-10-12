@@ -24,8 +24,12 @@ impl LiveEventPipeline {
             Ok(seq) => Ok(seq),
             Err(error) => {
                 // 回滚本身失败说明 store 已经不可信：让它的错误浮上来（fail-closed），
-                // 而不是把一个"看起来可重试"的原始错误交回给调用方去撞坏状态。
-                self.rebuild_from_store(true)?;
+                // 同时保留触发回滚的原始错误，否则根因会被回滚错误覆盖。
+                if let Err(rollback_error) = self.rebuild_from_store(true) {
+                    return Err(QxError::ReconcileRequired(format!(
+                        "提交失败: {error}; 从持久化日志回滚失败: {rollback_error}"
+                    )));
+                }
                 Err(error)
             }
         }
@@ -92,7 +96,11 @@ impl LiveEventPipeline {
         match self.ingest_commit(envelope) {
             Ok(receipt) => Ok(receipt),
             Err(error) => {
-                self.rebuild_from_store(true)?;
+                if let Err(rollback_error) = self.rebuild_from_store(true) {
+                    return Err(QxError::ReconcileRequired(format!(
+                        "归约失败: {error}; 从持久化日志回滚失败: {rollback_error}"
+                    )));
+                }
                 Err(error)
             }
         }

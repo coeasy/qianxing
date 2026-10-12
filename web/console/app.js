@@ -24,9 +24,30 @@ const API_PATHS = {
   appValidateDataset: "/app/validate-dataset",
   appBacktest: "/app/backtest",
   appVerify: "/app/verify",
+  appCompareRuns: "/app/compare-runs",
+  appRunExperiment: "/app/run-experiment/start",
+  appDepthBacktest: "/app/depth-backtest/start",
+  appDepthExperiment: "/app/run-depth-experiment/start",
+  appVerifyDepth: "/app/verify-depth",
+  appMultiLegBacktest: "/app/multi-leg-backtest/start",
+  appMultiLegExperiment: "/app/run-multi-leg-experiment/start",
+  appRunStatus: "/app/runs/{run_id}",
+  appRunCancel: "/app/runs/{run_id}/cancel",
   events: "/events",
   eventsLive: "/events/live",
 };
+
+const EXTENDED_RESEARCH_ROUTES = {
+  appCompareRuns: API_PATHS.appCompareRuns,
+  appRunExperiment: API_PATHS.appRunExperiment,
+  appDepthBacktest: API_PATHS.appDepthBacktest,
+  appDepthExperiment: API_PATHS.appDepthExperiment,
+  appVerifyDepth: API_PATHS.appVerifyDepth,
+  appMultiLegBacktest: API_PATHS.appMultiLegBacktest,
+  appMultiLegExperiment: API_PATHS.appMultiLegExperiment,
+};
+const EXTENDED_RESEARCH_MAX_WAIT_MS = 30 * 60 * 1000;
+const EXTENDED_RESEARCH_POLL_MS = 500;
 
 // M3' 的三阶段。它们是**页面对控制面语义的复述**，不是服务端新增的状态：
 // 受理 = 控制面收下并落审计（202 + AuditRecord）；执行者判定 = 这条命令在本构建里
@@ -67,6 +88,7 @@ const state = {
   connected: false,
   commandSeq: 1,
   lastCommand: null,
+  activeResearchRunId: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -598,6 +620,122 @@ async function runResearch(validateOnly) {
   }
 }
 
+// 更新策略 kind 时保留原始 JSON 数字字面量：JSON.parse/stringify 会将 i128 *_raw
+// 四舍五入到 IEEE-754 精度，快速选择不能悄悄改写资金、数量或 seed。
+function selectResearchStrategy(kind) {
+  const editor = $("research-spec");
+  const source = editor.value;
+  const spec = JSON.parse(source);
+  if (!spec || typeof spec.strategy !== "object" || Array.isArray(spec.strategy)) {
+    throw new Error("BacktestSpec 缺少 strategy 对象");
+  }
+  const strategyOffset = source.indexOf('"strategy"');
+  const kindMatch = /"kind"\s*:\s*"[^"]+"/.exec(source.slice(strategyOffset));
+  if (strategyOffset < 0 || !kindMatch) throw new Error("strategy.kind 字段缺失");
+  const start = strategyOffset + kindMatch.index;
+  editor.value = source.slice(0, start)
+    + kindMatch[0].replace(/"[^"]+"$/, JSON.stringify(kind))
+    + source.slice(start + kindMatch[0].length);
+}
+
+function syncResearchStrategySelector() {
+  try {
+    const kind = JSON.parse($("research-spec").value)?.strategy?.kind;
+    const selector = $("research-strategy");
+    if ([...selector.options].some((option) => option.value === kind)) selector.value = kind;
+  } catch {
+    // The editor reports malformed JSON when the user validates or runs it.
+  }
+}
+
+// 其余研究工作流通过版本化 JSON 直接调用 qx-app 既有用例；浏览器不重算指标、撮合或排名。
+async function runExtendedResearch() {
+  const output = $("extended-research-output");
+  const button = $("extended-research-run");
+  if (!state.base || state.activeResearchRunId) return;
+  button.disabled = true;
+  output.textContent = "正在提交共享 Rust 研究用例…";
+  try {
+    const specText = $("extended-research-spec").value.trim();
+    JSON.parse(specText);
+    const routeKey = $("extended-research-route").value;
+    const route = EXTENDED_RESEARCH_ROUTES[routeKey];
+    if (!route) throw new Error("未登记的研究用例路由");
+    const result = await postJsonText(route, specText);
+    if (!result.ok) {
+      output.textContent = JSON.stringify({ route, ...result }, null, 2);
+      return;
+    }
+    const runId = result.body?.run_id;
+    if (typeof runId !== "string" || !runId) {
+      output.textContent = JSON.stringify({ route, ...result }, null, 2);
+      return;
+    }
+    state.activeResearchRunId = runId;
+    $("extended-research-query").disabled = false;
+    $("extended-research-cancel").disabled = false;
+    await pollExtendedResearchRun(runId, output);
+  } catch (error) {
+    output.textContent = error instanceof SyntaxError
+      ? `请求规格 JSON 无效：${error.message}`
+      : `研究请求失败：${error}`;
+  } finally {
+    button.disabled = Boolean(state.activeResearchRunId);
+  }
+}
+
+async function pollExtendedResearchRun(runId, output) {
+  const deadline = Date.now() + EXTENDED_RESEARCH_MAX_WAIT_MS;
+  const statusPath = API_PATHS.appRunStatus.replace("{run_id}", encodeURIComponent(runId));
+  while (state.activeResearchRunId === runId && Date.now() < deadline) {
+    const response = await getJson(statusPath);
+    if (!response.ok) {
+      output.textContent = JSON.stringify({ run_id: runId, status_response: response }, null, 2);
+      return;
+    }
+    const document = response.body || {};
+    output.textContent = JSON.stringify({ run_id: runId, ...document }, null, 2);
+    if (["succeeded", "failed", "cancelled"].includes(document.status)) {
+      state.activeResearchRunId = null;
+      $("extended-research-run").disabled = false;
+      $("extended-research-query").disabled = true;
+      $("extended-research-cancel").disabled = true;
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, EXTENDED_RESEARCH_POLL_MS));
+  }
+  if (state.activeResearchRunId === runId) {
+    output.textContent = `任务 ${runId} 仍在运行；轮询已到 30 分钟上限，可继续查询或取消。`;
+  }
+}
+
+async function queryExtendedResearchRun() {
+  const runId = state.activeResearchRunId;
+  if (!runId) return;
+  $("extended-research-query").disabled = true;
+  try {
+    await pollExtendedResearchRun(runId, $("extended-research-output"));
+  } catch (error) {
+    $("extended-research-output").textContent = `查询任务失败：${error}`;
+  } finally {
+    $("extended-research-query").disabled = !state.activeResearchRunId;
+  }
+}
+
+async function cancelExtendedResearchRun() {
+  const runId = state.activeResearchRunId;
+  if (!runId) return;
+  $("extended-research-cancel").disabled = true;
+  try {
+    const route = API_PATHS.appRunCancel.replace("{run_id}", encodeURIComponent(runId));
+    const response = await postJson(route, {});
+    $("extended-research-output").textContent = JSON.stringify({ run_id: runId, cancel: response }, null, 2);
+  } catch (error) {
+    $("extended-research-output").textContent = `取消请求失败：${error}`;
+    $("extended-research-cancel").disabled = false;
+  }
+}
+
 function describeAccepted(result) {
   const refusal = errorOf(result.body);
   if (result.status === 202) return { phase: PHASES[0], state: "accepted", detail: `202 ${result.body && result.body.status ? result.body.status : "Accepted"}` };
@@ -998,6 +1136,18 @@ window.addEventListener("DOMContentLoaded", () => {
   $("control-form").addEventListener("submit", submitCommand);
   $("research-validate").addEventListener("click", () => runResearch(true));
   $("research-run").addEventListener("click", () => runResearch(false));
+  $("research-strategy").addEventListener("change", (event) => {
+    try {
+      selectResearchStrategy(event.target.value);
+    } catch (error) {
+      $("research-output").textContent = `无法选择策略：${error.message}`;
+    }
+  });
+  $("research-spec").addEventListener("input", syncResearchStrategySelector);
+  syncResearchStrategySelector();
+  $("extended-research-run").addEventListener("click", runExtendedResearch);
+  $("extended-research-query").addEventListener("click", queryExtendedResearchRun);
+  $("extended-research-cancel").addEventListener("click", cancelExtendedResearchRun);
   $("api-base").addEventListener("keydown", (event) => {
     if (event.key === "Enter") connect();
   });

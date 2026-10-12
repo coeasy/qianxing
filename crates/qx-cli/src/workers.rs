@@ -5,6 +5,10 @@
 //! 公共契约，不在模块内创建第二套队列或订单状态。
 
 use super::*;
+mod strategy_orders;
+pub(crate) use strategy_orders::{
+    build_strategy_contract_intent_order, build_strategy_target_order,
+};
 
 pub(crate) fn run_scheduler_worker(path: &Path, worker_id: &str, once: bool) -> Result<(), String> {
     let config = read_runtime_config(path)?;
@@ -89,8 +93,7 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
     if !worker.enabled || worker.role != WorkerRole::Strategy {
         return Err(format!("worker {worker_id} 不是启用的 Strategy worker"));
     }
-    // 本 worker 自己不碰 Venue，但它把生成的每一笔 SubmitOrder 投进队列：A 股段配在这里
-    // 却不改变它生成的订单（T+1 可售量、整手都在生成时成立），等于让配置说假话。
+    // 本 worker 自己不碰 Venue，却会把 SubmitOrder 投进队列；A 股规则配在这里却不改变订单，等于让配置说假话。
     // 因此按提交入口同一道闸门当场拒（V12 R1 §4.20）。
     reject_ashare_rules_on_submit_path(path, None, "strategy-worker")?;
     let root = Path::new(&config.storage.data_dir).to_path_buf();
@@ -102,12 +105,14 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
     resolve_strategy_runtime_paths(&mut strategy_config, path);
     verify_strategy_artifact(&strategy_config)?;
     let mut strategy_runtime_config = config.clone();
+    resolve_all_worker_runtime_paths(&mut strategy_runtime_config, path);
     // 将选中的实例投影到兼容的单策略执行路径，保留所有既有订单、目标仓位和审计逻辑。
     strategy_runtime_config.strategy = strategy_config.clone();
     let live_digest_path = live_strategy_digest_state_path(&root, worker_id);
     let persisted_live_digest = load_live_strategy_digest(&live_digest_path)?;
     let supervisor = RuntimeSupervisor::new(config)?;
     let registered_id = worker.id.clone();
+    let runtime_config_path = path.to_path_buf();
     let handle = supervisor.spawn_worker(&registered_id, move |context| {
         let mut strategy = StrategyRuntime::new(
             context.id(),
@@ -349,8 +354,9 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                                 &strategy_runtime_config,
                                 &instrument,
                             )?;
-                            build_strategy_order_with_signal(
+                            build_strategy_target_order(
                                 &strategy_runtime_config,
+                                &runtime_config_path,
                                 context.id(),
                                 queued.run.run_id,
                                 now,
@@ -365,26 +371,15 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                                 .intents
                                 .iter()
                                 .map(|intent| {
-                                    let current_qty = strategy_current_qty_for(
+                                    build_strategy_contract_intent_order(
                                         &root,
                                         &strategy_runtime_config,
-                                        &InstrumentId::parse(&intent.instrument).ok_or_else(
-                                            || {
-                                                format!(
-                                                    "Strategy intent instrument 非法: {}",
-                                                    intent.instrument
-                                                )
-                                            },
-                                        )?,
-                                    )?;
-                                    build_strategy_order_from_contract_intent(
-                                        &strategy_runtime_config,
+                                        &runtime_config_path,
                                         context.id(),
                                         output.signal_id,
                                         &output.request_id,
                                         intent,
                                         now,
-                                        current_qty,
                                     )
                                 })
                                 .collect::<Result<Vec<_>, String>>()?
@@ -392,8 +387,9 @@ pub(crate) fn run_strategy_worker(path: &Path, worker_id: &str, once: bool) -> R
                     } else {
                         let current_qty =
                             strategy_current_qty_for(&root, &strategy_runtime_config, &instrument)?;
-                        build_strategy_order_with_signal(
+                        build_strategy_target_order(
                             &strategy_runtime_config,
+                            &runtime_config_path,
                             context.id(),
                             queued.run.run_id,
                             now,

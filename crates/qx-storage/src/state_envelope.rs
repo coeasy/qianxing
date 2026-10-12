@@ -232,7 +232,9 @@ pub(crate) fn write_atomic_path(
     if !parent.starts_with(root) {
         return Err(StorageError::InvalidName("存储路径越出根目录".into()));
     }
-    std::fs::create_dir_all(parent).map_err(|error| StorageError::Io(error.to_string()))?;
+    std::fs::create_dir_all(parent).map_err(|error| {
+        StorageError::Io(format!("创建存储目录 {} 失败: {error}", parent.display()))
+    })?;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -241,10 +243,58 @@ pub(crate) fn write_atomic_path(
         ".{name}.tmp.{}",
         TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&temp, content).map_err(|error| StorageError::Io(error.to_string()))?;
+    std::fs::write(&temp, content).map_err(|error| {
+        StorageError::Io(format!("写入临时存储文件 {} 失败: {error}", temp.display()))
+    })?;
     sync_file(&temp)?;
-    std::fs::rename(&temp, path).map_err(|error| StorageError::Io(error.to_string()))?;
+    atomic_replace(&temp, path).map_err(|error| {
+        StorageError::Io(format!(
+            "替换存储文件 {} -> {} 失败: {error}",
+            temp.display(),
+            path.display()
+        ))
+    })?;
     Ok(())
+}
+
+#[cfg(not(windows))]
+fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    #[link(name = "Kernel32")]
+    extern "system" {
+        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+    }
+
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // Windows `std::fs::rename` refuses to replace an existing destination;
+    // EventLog commits repeatedly replace the same file, so use the native
+    // replace-existing atomic move primitive on this platform.
+    let succeeded = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if succeeded == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -287,6 +337,20 @@ mod tests {
         assert!(corrupt.is_err());
         let validated = decode_state_json::<Probe>(r#"{"schema_version":1,"note":""}"#);
         assert!(matches!(validated, Err(StorageError::Conflict(_))));
+    }
+
+    #[test]
+    fn atomic_file_write_replaces_existing_destination() {
+        let root = std::env::temp_dir().join(format!(
+            "qx-atomic-replace-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let path = root.join("state.json");
+        write_atomic_path(&path, &root, "first").unwrap();
+        write_atomic_path(&path, &root, "second").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// 锁引擎的两种失败形状在存储侧必须分开：把"锁目录建不出来"报成"有人在写"，会让人

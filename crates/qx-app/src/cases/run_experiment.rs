@@ -4,10 +4,21 @@
 //! [`crate::cases::run_backtest::run_backtest`], and successful candidates are ranked by the
 //! shared [`crate::cases::compare_runs::compare_runs`] use case; it contains no matcher,
 //! risk, ledger, or metrics implementation.
+//!
+//! 两个**可选**旋钮把方案 §8「参数实验」点名的两件事真正做出来（V13 R28）：
+//! `split_plan` 走训练/测试切分与滚动走查、`baselines` 出 buy-and-hold / zero-signal 对照列。
+//! 两者都不写时这条路径与加它们之前**逐字节相同**（`skip_serializing_if`），所以旧
+//! `.experiment.json` 的规格指纹不会漂移。切分与基准的算法在 [`super::experiment_split`]，
+//! 本模块只负责在读侧把它们接进来。
 
+use super::artifacts::read_text;
 use super::compare_runs::COMPARE_RUNS_SCHEMA_VERSION;
 use super::experiment_grid::{
     apply_parameters, expand_grid, normalized_strategy, validate_experiment_id, validate_grid,
+};
+use super::experiment_split::{
+    evaluate_baselines, evaluate_out_of_sample, ExperimentBaselineReport,
+    ExperimentOutOfSampleReport, ExperimentSplitPlan,
 };
 use super::guard::guard_panics;
 use super::run_backtest::run_backtest_inner;
@@ -18,17 +29,23 @@ use crate::{
     CompareRunsSpec, ComparedRun, RunContext, RunHandle,
 };
 use qx_core::Fnv1a;
+use qx_datastruct::BarFrame;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub const RUN_EXPERIMENT_SCHEMA_VERSION: u32 = 1;
 pub const MAX_EXPERIMENT_CANDIDATES: usize = 256;
 
+/// 基准对照的取值域。与 `qx_spec::EXPERIMENT_BASELINES` **逐值相等**——两份声明并存是
+/// 因为 `qx-app` 的依赖表是精确且被门禁逐项核过的，为三个字符串把 spec crate 拉进来会让
+/// 依赖面变宽。相等这件事由 `experiment_split_plan_check` 钉住，不靠人记得同步。
+pub const EXPERIMENT_BASELINE_NAMES: [&str; 3] = ["buy-and-hold", "zero-signal", "none"];
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExperimentParameterSpace {
-    /// One of `fast_window`, `slow_window`, `period`, `threshold_bps`, or `quantity_raw`.
+    /// One of `fast_window`, `slow_window`, `period`, `threshold_bps`, `quantity_raw`, or `target_kelly_fraction_bps`.
     pub name: String,
     pub values: Vec<i128>,
 }
@@ -40,6 +57,17 @@ pub struct RunExperimentSpec {
     pub experiment_id: String,
     pub base: BacktestSpec,
     pub parameter_space: Vec<ExperimentParameterSpace>,
+    /// 可选的数据切分计划。`None` = 不切分。
+    ///
+    /// `skip_serializing_if` 是**刻意的**：`spec_fingerprint` 是 `to_json()` 的哈希，
+    /// 而 `existing_result` 用它判定"这份产物是不是同一份实验"。新加两格若照常序列化，
+    /// 任何在本构建之前写下的 `.experiment.json` 都会因为指纹变了而报 `Conflict`——
+    /// 那是把一次**纯加法**升级变成了旧产物的拒绝服务（V13 R27 `JobSpec` 同一类教训）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_plan: Option<ExperimentSplitPlan>,
+    /// 基准对照清单，取值域 [`EXPERIMENT_BASELINE_NAMES`]。空表 = 不算基准。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub baselines: Vec<String>,
 }
 
 impl RunExperimentSpec {
@@ -76,7 +104,29 @@ impl RunExperimentSpec {
         let mut base = self.base.clone();
         base.strategy = normalized_strategy(&base.strategy, &self.parameter_space);
         base.validate()?;
-        validate_grid(&self.base.strategy, &self.parameter_space)
+        let total = validate_grid(&self.base.strategy, &self.parameter_space)?;
+        if let Some(plan) = &self.split_plan {
+            plan.validate()?;
+        }
+        let mut seen_baselines = BTreeSet::new();
+        for baseline in &self.baselines {
+            if !EXPERIMENT_BASELINE_NAMES.contains(&baseline.as_str()) {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!(
+                        "实验基准 {baseline} 不在 {} 内",
+                        EXPERIMENT_BASELINE_NAMES.join(" / ")
+                    ),
+                ));
+            }
+            if !seen_baselines.insert(baseline) {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!("实验基准 {baseline} 重复声明"),
+                ));
+            }
+        }
+        Ok(total)
     }
 }
 
@@ -100,6 +150,12 @@ pub struct RunExperimentResult {
     pub failed_candidates: usize,
     pub candidates: Vec<ExperimentCandidateResult>,
     pub comparison: Option<CompareRunsResult>,
+    /// 样本外评估。spec 没写切分计划时为 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out_of_sample: Option<ExperimentOutOfSampleReport>,
+    /// 基准对照列。spec 没请求基准时为空表。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub baselines: Vec<ExperimentBaselineReport>,
     pub artifact_path: String,
 }
 
@@ -184,6 +240,24 @@ fn run_experiment_inner(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(AppError::from_io("读取既有实验报告", &error)),
     }
+    // Split bounds and resource limits are preflighted before any candidate is run. Keep the
+    // validated BarFrame for the report instead of reading it a second time after the grid.
+    let evaluation_bars = if spec.split_plan.is_some() || !spec.baselines.is_empty() {
+        let payload = read_text(&spec.base.bars_path)?;
+        let frame = BarFrame::from_json(&payload).map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("BarFrame 校验失败 {}: {error:?}", spec.base.bars_path),
+            )
+        })?;
+        let bars: Vec<_> = (&frame).into();
+        if let Some(plan) = &spec.split_plan {
+            plan.folds(bars.len())?;
+        }
+        Some(bars)
+    } else {
+        None
+    };
     let combinations = expand_grid(&spec.parameter_space);
     debug_assert_eq!(combinations.len(), total);
 
@@ -249,6 +323,26 @@ fn run_experiment_inner(
     } else {
         None
     };
+    // 切分与基准都要 Bar 序列本身（基准用收盘价、切分用样本根数），所以只在**真被请求**时
+    // 才多读一次数据文件——没写这两格的 spec 走的还是原来那条路，一次多余 IO 都没有。
+    let (out_of_sample, baselines) = if let Some(bars) = evaluation_bars.as_deref() {
+        let baselines = evaluate_baselines(bars, &spec.baselines);
+        let out_of_sample = match &spec.split_plan {
+            Some(plan) => {
+                let report = evaluate_out_of_sample(plan, bars.len(), &candidates, || {
+                    cancellation.is_some_and(CancellationToken::is_cancelled)
+                })?;
+                let Some(report) = report else {
+                    return Ok(None);
+                };
+                Some(report)
+            }
+            None => None,
+        };
+        (out_of_sample, baselines)
+    } else {
+        (None, Vec::new())
+    };
     let result = RunExperimentResult {
         schema_version: RUN_EXPERIMENT_SCHEMA_VERSION,
         experiment_id: spec.experiment_id.clone(),
@@ -259,6 +353,8 @@ fn run_experiment_inner(
         failed_candidates: total - successful.len(),
         candidates,
         comparison,
+        out_of_sample,
+        baselines,
         artifact_path: artifact_path.clone(),
     };
     if cancellation.is_some_and(CancellationToken::is_cancelled) {

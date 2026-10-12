@@ -10,8 +10,18 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
+#[path = "app_three_entrypoints/algo_execution.rs"]
+mod algo_execution_entrypoints;
 #[path = "app_three_entrypoints/multi_leg_experiment.rs"]
 mod multi_leg_experiment_entrypoints;
+#[path = "app_three_entrypoints/protective_exit.rs"]
+mod protective_exit_entrypoints;
+#[path = "app_three_entrypoints/python_native.rs"]
+mod python_native;
+#[path = "app_three_entrypoints/risk_parity.rs"]
+mod risk_parity_entrypoints;
+#[path = "app_three_entrypoints/sizing.rs"]
+mod sizing_entrypoints;
 
 /// 仓库根：本文件在 `crates/qx-cli/tests/` 下。
 fn repo_root() -> PathBuf {
@@ -176,75 +186,15 @@ fn via_http(route: &str, body: &str) -> (u16, Value) {
     (response.status, payload)
 }
 
-/// Python 腿：起一个解释器 import `qianxing_bridge.app`。`None` 表示扩展没构建。
-fn via_python(function: &str, argument: &str) -> Option<Result<Value, String>> {
-    let python = std::env::var("QX_PYTHON").unwrap_or_else(|_| {
-        if cfg!(windows) {
-            repo_root()
-                .join("python/.venv/Scripts/python.exe")
-                .to_string_lossy()
-                .into_owned()
-        } else {
-            repo_root()
-                .join("python/.venv/bin/python")
-                .to_string_lossy()
-                .into_owned()
-        }
-    });
-    if !Path::new(&python).is_file() {
-        return None;
-    }
-    let root = repo_root();
-    let script = format!(
-        "import json, sys\n\
-         sys.path.insert(0, {python_dir:?})\n\
-         try:\n\
-         \x20   from qianxing_bridge import app, native\n\
-         except Exception as error:\n\
-         \x20   print('QX_APP_PYTHON_UNAVAILABLE: ' + str(error), file=sys.stderr)\n\
-         \x20   sys.exit(3)\n\
-         if not native.app_available():\n\
-         \x20   print('QX_APP_PYTHON_UNAVAILABLE: 扩展没构建，或是没有应用层入口的旧世代', file=sys.stderr)\n\
-         \x20   sys.exit(3)\n\
-         try:\n\
-         \x20   result = app.{function}({argument:?})\n\
-         except Exception as error:\n\
-         \x20   payload = app.app_error_payload(error)\n\
-         \x20   print(json.dumps({{'qx_app_error': payload if payload is not None else str(error)}}))\n\
-         \x20   sys.exit(4)\n\
-         print(json.dumps(result))\n",
-        python_dir = root.join("python").to_string_lossy(),
-    );
-    let output = Command::new(&python)
-        .arg("-c")
-        .arg(script)
-        .current_dir(root.join("python"))
-        .output()
-        .expect("启动解释器失败");
-    if output.status.code() == Some(3) {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    match output.status.code() {
-        Some(0) => Some(Ok(
-            serde_json::from_str(stdout.trim()).expect("Python 腿的 stdout 是 JSON")
-        )),
-        Some(4) => {
-            let value: Value = serde_json::from_str(stdout.trim()).expect("Python 腿的错误是 JSON");
-            Some(Err(value["qx_app_error"].to_string()))
-        }
-        other => panic!(
-            "Python 腿异常退出 {other:?}：stderr={}",
-            String::from_utf8_lossy(&output.stderr)
-        ),
-    }
-}
-
 #[test]
 fn the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python() {
     let root = scratch("backtest");
     let output_dir = root.join("out");
-    let spec = backtest_spec_json("g1-run", &sample_bars(), &output_dir);
+    let mut request: Value =
+        serde_json::from_str(&backtest_spec_json("g1-run", &sample_bars(), &output_dir))
+            .expect("backtest spec json");
+    request["strategy"]["target_volatility_bps"] = json!(25);
+    let spec = request.to_string();
 
     let cli = via_cli(&spec, &root);
     let (status, http) = via_http("/app/backtest", &spec);
@@ -254,7 +204,7 @@ fn the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python() 
         assert_eq!(value["run_id"], "g1-run", "{name} 腿的 run_id");
         assert!(
             value["fills"].as_u64().unwrap_or(0) > 0,
-            "{name} 腿必须真跑出成交"
+            "{name} 腿必须真跑出成交：{value}"
         );
         assert_eq!(value["equity_points"], 70, "{name} 腿的权益点数");
     }
@@ -271,7 +221,7 @@ fn the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python() 
         "HTTP request must not control the server-side artifact path"
     );
 
-    match via_python("run_backtest", &spec) {
+    match python_native::via_python(&repo_root(), "run_backtest", &spec) {
         None => eprintln!(
             "[跳过] Python 腿：PyO3 扩展未构建。跑 `cargo build -p qx-python` 后这条腿会逐字节断言。"
         ),
@@ -327,7 +277,7 @@ fn the_same_failure_gives_the_same_error_document_from_cli_http_and_python() {
     assert_eq!(cli["category"], http["category"]);
     assert_eq!(cli["correlation_id"], http["correlation_id"]);
 
-    match via_python("run_backtest", &spec) {
+    match python_native::via_python(&repo_root(), "run_backtest", &spec) {
         None => eprintln!("[跳过] Python 腿：PyO3 扩展未构建。"),
         Some(Err(payload)) => {
             let python: Value = serde_json::from_str(&payload).expect("Python 的错误文档可解析");
@@ -378,7 +328,7 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
         "HTTP data path traversal must be refused: {error}"
     );
 
-    match via_python("verify_run", &outcome_document) {
+    match python_native::via_python(&repo_root(), "verify_run", &outcome_document) {
         None => eprintln!("[跳过] Python 腿：PyO3 扩展未构建。"),
         Some(Ok(python)) => {
             assert_eq!(python["verified"], true);
@@ -432,7 +382,7 @@ fn compare_runs_agrees_across_cli_http_and_python_with_stable_ranking() {
     assert_eq!(cli, http, "CLI/HTTP 应返回逐字节同形的确定性对比结果");
     assert_eq!(http["runs"].as_array().unwrap().len(), 2);
     assert_eq!(http["runs"][0]["rank"], 1);
-    match via_python("compare_runs", &spec.to_string()) {
+    match python_native::via_python(&repo_root(), "compare_runs", &spec.to_string()) {
         None => eprintln!("[跳过] Python 腿：PyO3 扩展未构建。"),
         Some(Ok(python)) => assert_eq!(python, cli, "Python compare 应与 CLI/HTTP 返回同一结果"),
         Some(Err(payload)) => panic!("Python compare 本该成功：{payload}"),
@@ -490,7 +440,7 @@ fn parameter_experiment_uses_the_same_rust_use_case_from_cli_http_and_python() {
     assert_eq!(cli["completed_candidates"], 2);
     assert_eq!(cli["succeeded_candidates"], 2);
     assert_eq!(cli["failed_candidates"], 0);
-    match via_python("run_experiment", &spec.to_string()) {
+    match python_native::via_python(&repo_root(), "run_experiment", &spec.to_string()) {
         None => eprintln!("[跳过] Python 腿：PyO3 扩展未构建。"),
         Some(Ok(python)) => assert_eq!(same_results(&python), same_results(&cli)),
         Some(Err(payload)) => panic!("Python experiment 本该成功：{payload}"),

@@ -11,7 +11,9 @@ use crate::cases::{ExperimentParameterSpace, RunExperimentSpec};
 use crate::context::{CallerCapability, RunContext};
 use crate::error::AppErrorCategory;
 use crate::spec::{BacktestArtifacts, BacktestOutcome};
-use crate::tests::fixtures::{backtest_spec, dataset_spec, frame_json, scratch, write_frame};
+use crate::tests::fixtures::{
+    backtest_spec, dataset_spec, experiment_spec, frame_json, scratch, write_frame,
+};
 use std::path::PathBuf;
 
 /// 三个用例都用 R 档（研究）：本切片没有外部副作用。
@@ -310,15 +312,7 @@ fn verification_rejects_manifest_metadata_drift_and_nondeterministic_runs() {
 fn parameter_experiment_reuses_backtest_and_comparison_use_cases() {
     let root = scratch("experiment-grid");
     let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
-    let spec = RunExperimentSpec {
-        schema_version: 1,
-        experiment_id: "sma-grid".into(),
-        base: backtest_spec("unused-base-run", &bars, &root.join("out")),
-        parameter_space: vec![ExperimentParameterSpace {
-            name: "fast_window".into(),
-            values: vec![1, 2],
-        }],
-    };
+    let spec = experiment_spec("sma-grid", &bars, &root.join("out"), vec![1, 2]);
     let result = run_experiment(&spec, &research("sma-grid")).expect("参数实验");
     assert_eq!(result.total_candidates, 2);
     assert_eq!(result.completed_candidates, 2, "{:?}", result.candidates);
@@ -357,15 +351,7 @@ fn parameter_experiment_reuses_backtest_and_comparison_use_cases() {
 fn parameter_experiment_isolates_invalid_candidates_and_bounds_the_grid() {
     let root = scratch("experiment-failure-isolation");
     let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
-    let spec = RunExperimentSpec {
-        schema_version: 1,
-        experiment_id: "fast-grid".into(),
-        base: backtest_spec("unused-base-run", &bars, &root.join("out")),
-        parameter_space: vec![ExperimentParameterSpace {
-            name: "fast_window".into(),
-            values: vec![0, 2],
-        }],
-    };
+    let spec = experiment_spec("fast-grid", &bars, &root.join("out"), vec![0, 2]);
     let result = run_experiment(&spec, &research("fast-grid")).expect("单候选失败不阻断整组");
     assert_eq!(result.completed_candidates, 2);
     assert_eq!(result.succeeded_candidates, 1);
@@ -416,15 +402,12 @@ fn parameter_experiment_isolates_invalid_candidates_and_bounds_the_grid() {
         "实验 ID 不能作为路径段逃出服务端产物目录"
     );
 
-    let overflow = RunExperimentSpec {
-        schema_version: 1,
-        experiment_id: "overflow-grid".into(),
-        base: backtest_spec("unused-overflow", &bars, &root.join("overflow")),
-        parameter_space: vec![ExperimentParameterSpace {
-            name: "fast_window".into(),
-            values: vec![1, i128::MAX],
-        }],
-    };
+    let overflow = experiment_spec(
+        "overflow-grid",
+        &bars,
+        &root.join("overflow"),
+        vec![1, i128::MAX],
+    );
     let overflow_result =
         run_experiment(&overflow, &research("overflow-grid")).expect("单候选溢出应被隔离");
     assert_eq!(overflow_result.completed_candidates, 2);
