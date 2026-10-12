@@ -690,6 +690,77 @@ def main() -> int:
         ],
     )
 
+    depth_selection_id = f"probe-depth-strategy-selection-{time.time_ns()}"
+    depth_selection_spec = {
+        "schema_version": 1,
+        "experiment_id": depth_selection_id,
+        "base": {
+            "schema_version": 1,
+            "run_id": "unused-depth-strategy-selection",
+            "depth_path": ".task-tmp/quant-probe/depth-strategy-selection.json",
+            "tier": "l2",
+            "settlement_currency": "USDT",
+            "initial_cash_raw": 1_000_000_000_000_000,
+            "fee_bps": 0,
+            "latency_snapshots": 0,
+            "queue_position_bps": 0,
+            "market_impact_bps": 0,
+            "output_dir": f".task-tmp/quant-probe/{depth_selection_id}",
+            "strategy": {
+                "kind": "sma_cross", "strategy_id": "probe-depth-strategy-selection",
+                "quantity_raw": 1_000_000_000, "fast_window": 2, "slow_window": 3,
+            },
+        },
+        "parameter_space": [],
+        "strategy_kinds": [
+            "sma_cross", "ema_cross", "macd", "rsi", "bollinger",
+            "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend",
+        ],
+    }
+    write_probe_depth_frame(PROBE_ROOT / "depth-strategy-selection.json")
+    depth_selection_path = PROBE_ROOT / "depth-strategy-selection-spec.json"
+    depth_selection_path.write_text(json.dumps(depth_selection_spec), encoding="utf-8")
+
+    def depth_selection_observation(output: str) -> str:
+        result = next(
+            (json.loads(line) for line in output.splitlines() if line.lstrip().startswith("{")),
+            None,
+        )
+        if result is None:
+            raise ValueError("depth strategy selection did not return a JSON report")
+        candidates = result["candidates"]
+        names = [candidate["strategy_kind"] for candidate in candidates]
+        fills = sum(candidate["outcome"]["fills"] for candidate in candidates if candidate["outcome"])
+        expected = sorted(depth_selection_spec["strategy_kinds"])
+        if names != expected or result["succeeded_candidates"] != len(expected) or fills == 0:
+            raise ValueError(
+                f"depth strategy selection incomplete: names={names} "
+                f"succeeded={result['succeeded_candidates']} fills={fills}"
+            )
+        hashes = [candidate["outcome"]["result_hash"] for candidate in candidates]
+        return (
+            f"strategies={len(names)} candidates={len(candidates)} "
+            f"succeeded={result['succeeded_candidates']} fills={fills} "
+            f"stable_order=true result_hashes={','.join(hashes)}"
+        )
+
+    executed(
+        "depth_strategy_selection",
+        "L2 十种经典策略快速选择与确定性批量比较（共享 Rust 订单簿内核）",
+        "crates/qx-app/src/cases/run_depth_experiment.rs",
+        ["app", "run-depth-experiment", str(depth_selection_path.relative_to(ROOT)).replace("\\", "/")],
+        r'("total_candidates":\s*10)',
+        extra_from_output=depth_selection_observation,
+        evidence=[
+            "crates/qx-app/src/cases/run_depth_experiment.rs",
+            "crates/qx-app/src/tests/depth_experiment.rs",
+            "crates/qx-cli/tests/app_depth_entrypoints.rs",
+            "crates/qx-sdk/tests/consumer/strategy_selection.rs",
+            "python/qianxing/app.py",
+            "python/tests/test_app_use_cases.py",
+        ],
+    )
+
     # Verify algorithm-order admission through the real service handler, then let the
     # persistent Paper worker execute across restarts and aggregate results from EventLog.
     algo_test_argv = [

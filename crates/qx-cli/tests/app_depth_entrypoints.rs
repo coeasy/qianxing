@@ -391,3 +391,81 @@ fn tick_parameter_experiment_is_shared_by_cli_http_python_and_run_lifecycle() {
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
 }
+
+#[test]
+fn depth_strategy_selection_is_shared_by_cli_http_and_python() {
+    let root = repo_root();
+    let run_dir = root
+        .join("target")
+        .join(format!("qx-app-depth-selection-{}", std::process::id()));
+    std::fs::create_dir_all(&run_dir).expect("create test output root");
+    let depth_path = run_dir.join("selection-ticks.json");
+    std::fs::write(&depth_path, sample_depth()).expect("write Tick frame");
+    let make_spec = |experiment_id: &str, output_dir: &Path| {
+        let mut base: Value = serde_json::from_str(&depth_spec(
+            "unused-depth-selection-base",
+            &depth_path,
+            output_dir,
+        ))
+        .expect("DepthBacktestSpec JSON");
+        base["market_spec"] = Value::Null;
+        base.as_object_mut().unwrap().remove("market_spec");
+        base["order_policy"] = Value::Null;
+        base.as_object_mut().unwrap().remove("order_policy");
+        json!({
+            "schema_version": 1,
+            "experiment_id": experiment_id,
+            "base": base,
+            "parameter_space": [],
+            "strategy_kinds": ["sma_cross", "ema_cross", "rsi"],
+        })
+        .to_string()
+    };
+    let spec_path = run_dir.join("selection-spec.json");
+    let cli_spec = make_spec("depth-selection-parity", &run_dir.join("cli-artifacts"));
+    std::fs::write(&spec_path, &cli_spec).expect("write strategy selection spec");
+    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "run-depth-experiment"])
+        .arg(&spec_path)
+        .output()
+        .expect("run CLI strategy selection");
+    assert_eq!(
+        cli_output.status.code(),
+        Some(0),
+        "CLI depth selection failed: {}",
+        String::from_utf8_lossy(&cli_output.stderr)
+    );
+    let cli: Value = serde_json::from_slice(&cli_output.stdout).expect("CLI selection JSON");
+
+    std::env::set_var("QX_API_DATA_ROOT", &root);
+    std::env::set_var("QX_API_ARTIFACT_ROOT", run_dir.join("http-artifacts"));
+    let service = qx_api::ApiService::new(qx_api::ApiState::default());
+    let http_spec = make_spec("depth-selection-parity", &run_dir.join("http-artifacts"));
+    let response = service.handle("POST", "/app/run-depth-experiment", &http_spec, 0);
+    let http: Value = serde_json::from_str(&response.body).expect("HTTP selection JSON");
+    assert_eq!(response.status, 200, "HTTP selection failed: {http}");
+    let identities = |value: &Value| {
+        json!({
+            "experiment_id": value["experiment_id"],
+            "total_candidates": value["total_candidates"],
+            "succeeded_candidates": value["succeeded_candidates"],
+            "failed_candidates": value["failed_candidates"],
+            "ranking": value["ranking"],
+            "candidates": value["candidates"].as_array().unwrap().iter().map(|candidate| json!({
+                "ordinal": candidate["ordinal"],
+                "strategy_kind": candidate["strategy_kind"],
+                "run_id": candidate["outcome"]["run_id"],
+                "result_hash": candidate["outcome"]["result_hash"],
+                "error": candidate["error"],
+            })).collect::<Vec<_>>(),
+        })
+    };
+    assert_eq!(identities(&cli), identities(&http));
+    assert_eq!(cli["succeeded_candidates"], 3);
+    let python_spec = make_spec("depth-selection-parity", &run_dir.join("python-artifacts"));
+    if let Some(python) = python_run(&root, &python_spec, "run_depth_experiment") {
+        assert_eq!(identities(&python), identities(&cli));
+    } else {
+        eprintln!("[skip] Python app extension is not built in this test environment");
+    }
+}

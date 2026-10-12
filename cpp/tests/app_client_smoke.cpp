@@ -21,6 +21,8 @@ int main() {
         R"({"schema_version":1,"run_id":"sized","instrument":"BTCUSDT.BINANCE","bars_path":"bars.json","settlement_currency":"USDT","initial_cash_raw":1000000000000,"seed":1,"output_dir":"runs","account_id":"acct.cpp-sdk","strategy":{"kind":"sma_cross","strategy_id":"sized-sma","quantity_raw":1000000000,"target_volatility_bps":250,"fast_window":2,"slow_window":4}})";
     const std::string depth_spec =
         R"({"schema_version":1,"tier":"l1","market_spec":{"product":"perpetual"},"order_policy":{"margin_mode":"cross","leverage":2}})";
+    const std::string depth_experiment_spec =
+        R"({"schema_version":1,"experiment_id":"depth-classic","base":{"schema_version":1,"run_id":"unused-depth","depth_path":"ticks.json","tier":"l2","settlement_currency":"USDT","initial_cash_raw":1000000000000,"fee_bps":0,"latency_snapshots":0,"queue_position_bps":0,"market_impact_bps":0,"output_dir":"runs","strategy":{"kind":"sma_cross","strategy_id":"depth-sma","quantity_raw":1000000000,"fast_window":2,"slow_window":3}},"parameter_space":[],"strategy_kinds":["ema_cross","sma_cross"]})";
     const auto response = client.run_experiment(spec);
     assert(response.ok());
     assert(response.body == R"({"runs":[]})");
@@ -32,10 +34,10 @@ int main() {
     assert(observed_path == "/app/depth-backtest");
     assert(observed_body == depth_spec);
 
-    const auto depth_experiment = client.run_depth_experiment(spec);
+    const auto depth_experiment = client.run_depth_experiment(depth_experiment_spec);
     assert(depth_experiment.ok());
     assert(observed_path == "/app/run-depth-experiment");
-    assert(observed_body == spec);
+    assert(observed_body == depth_experiment_spec);
 
     const auto algo_start = client.start_paper_algo_execution(spec);
     assert(algo_start.ok());

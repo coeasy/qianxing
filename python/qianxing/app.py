@@ -555,14 +555,18 @@ class RunDepthExperimentSpec:
     base: DepthBacktestSpec
     parameter_space: tuple[ExperimentParameterSpace, ...]
     schema_version: int = 1
+    strategy_kinds: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        value = {
             "schema_version": self.schema_version,
             "experiment_id": self.experiment_id,
             "base": self.base.to_dict(),
             "parameter_space": [dimension.to_dict() for dimension in self.parameter_space],
         }
+        if self.strategy_kinds:
+            value["strategy_kinds"] = sorted(self.strategy_kinds)
+        return value
 
 
 @dataclass(frozen=True)
@@ -774,6 +778,7 @@ class DepthExperimentCandidateResult:
     parameters: dict[str, int]
     outcome: DepthBacktestOutcome | None
     error: str | None
+    strategy_kind: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "DepthExperimentCandidateResult":
@@ -783,6 +788,7 @@ class DepthExperimentCandidateResult:
             parameters=value["parameters"],
             outcome=DepthBacktestOutcome.from_dict(raw_outcome) if raw_outcome else None,
             error=value.get("error"),
+            strategy_kind=value.get("strategy_kind"),
         )
 
 

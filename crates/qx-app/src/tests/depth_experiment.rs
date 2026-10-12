@@ -16,6 +16,7 @@ fn tick_parameter_experiment_is_deterministic_and_isolates_bad_candidates() {
             name: "quantity_raw".into(),
             values: vec![0, SCALE],
         }],
+        strategy_kinds: Vec::new(),
     };
     let context = RunContext::new(CallerCapability::Research, "tick-grid");
     let result = run_depth_experiment(&spec, &context).expect("Tick parameter grid");
@@ -49,6 +50,7 @@ fn order_book_parameter_experiment_returns_a_cancellable_run_handle() {
             name: "quantity_raw".into(),
             values: vec![SCALE],
         }],
+        strategy_kinds: Vec::new(),
     };
     spec.base.run_id = "unused-book-grid".into();
     let mut handle = spec.start(RunContext::new(
@@ -85,6 +87,7 @@ fn market_making_parameter_grid_changes_the_shared_strategy_configuration() {
             name: "market_making_spread_bps".into(),
             values: vec![50, 500],
         }],
+        strategy_kinds: Vec::new(),
     };
     let result = run_depth_experiment(
         &spec,
@@ -112,5 +115,128 @@ fn market_making_parameter_grid_changes_the_shared_strategy_configuration() {
     assert_eq!(
         mixed.validate().unwrap_err().category(),
         AppErrorCategory::InvalidInput
+    );
+}
+
+#[test]
+fn order_book_strategy_selection_runs_classic_strategies_deterministically() {
+    let root = super::fixtures::scratch("depth-classic-strategy-selection");
+    let kinds = [
+        qx_strategy::BuiltinStrategyKind::SmaCross,
+        qx_strategy::BuiltinStrategyKind::EmaCross,
+        qx_strategy::BuiltinStrategyKind::Macd,
+        qx_strategy::BuiltinStrategyKind::Rsi,
+        qx_strategy::BuiltinStrategyKind::Bollinger,
+        qx_strategy::BuiltinStrategyKind::DonchianBreakout,
+        qx_strategy::BuiltinStrategyKind::Momentum,
+        qx_strategy::BuiltinStrategyKind::MeanReversion,
+        qx_strategy::BuiltinStrategyKind::Grid,
+        qx_strategy::BuiltinStrategyKind::AtrTrend,
+    ];
+    let mut base = super::depth_backtest::spec("unused-depth-classics", &root, "l2", 2);
+    base.strategy.fast_window = 2;
+    base.strategy.slow_window = 3;
+    let spec = RunDepthExperimentSpec {
+        schema_version: 1,
+        experiment_id: "depth-classic-strategy-selection".into(),
+        base,
+        parameter_space: Vec::new(),
+        strategy_kinds: kinds.to_vec(),
+    };
+    let context = RunContext::new(
+        CallerCapability::Research,
+        "depth-classic-strategy-selection",
+    );
+    let result = run_depth_experiment(&spec, &context).expect("十种策略应走共享 OrderBook 内核");
+    assert_eq!(result.total_candidates, kinds.len());
+    assert_eq!(
+        result.succeeded_candidates,
+        kinds.len(),
+        "{:?}",
+        result.candidates
+    );
+    assert_eq!(
+        result
+            .candidates
+            .iter()
+            .filter_map(|candidate| candidate.strategy_kind.as_deref())
+            .collect::<Vec<_>>(),
+        [
+            "atr_trend",
+            "bollinger",
+            "donchian_breakout",
+            "ema_cross",
+            "grid",
+            "macd",
+            "mean_reversion",
+            "momentum",
+            "rsi",
+            "sma_cross"
+        ]
+    );
+    assert_eq!(run_depth_experiment(&spec, &context).unwrap(), result);
+
+    let mut reordered = spec.clone();
+    reordered.strategy_kinds.reverse();
+    assert_eq!(run_depth_experiment(&reordered, &context).unwrap(), result);
+    let mut duplicate = spec.clone();
+    duplicate.strategy_kinds.push(kinds[0]);
+    assert_eq!(
+        duplicate.validate().unwrap_err().category(),
+        AppErrorCategory::InvalidInput
+    );
+    let mut multi_leg = spec;
+    multi_leg.strategy_kinds = vec![qx_strategy::BuiltinStrategyKind::PairsArbitrage];
+    assert_eq!(
+        multi_leg.validate().unwrap_err().category(),
+        AppErrorCategory::InvalidInput
+    );
+}
+
+#[test]
+fn depth_strategy_selection_forms_a_bounded_strategy_parameter_product() {
+    let root = super::fixtures::scratch("depth-strategy-parameter-product");
+    let mut base = super::depth_backtest::spec("unused-depth-product", &root, "l1", 1);
+    base.strategy.fast_window = 2;
+    base.strategy.slow_window = 3;
+    let spec = RunDepthExperimentSpec {
+        schema_version: 1,
+        experiment_id: "depth-strategy-parameter-product".into(),
+        base,
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "quantity_raw".into(),
+            values: vec![SCALE, SCALE * 2],
+        }],
+        strategy_kinds: vec![
+            qx_strategy::BuiltinStrategyKind::Momentum,
+            qx_strategy::BuiltinStrategyKind::SmaCross,
+        ],
+    };
+    assert_eq!(spec.validate().unwrap(), 4);
+    let result = run_depth_experiment(
+        &spec,
+        &RunContext::new(
+            CallerCapability::Research,
+            "depth-strategy-parameter-product",
+        ),
+    )
+    .expect("strategy and parameter dimensions should form one bounded product");
+    assert_eq!(result.completed_candidates, 4);
+    assert_eq!(result.succeeded_candidates, 4);
+    assert_eq!(
+        result
+            .candidates
+            .iter()
+            .map(|candidate| (
+                candidate.strategy_kind.as_deref().unwrap(),
+                candidate.parameters["quantity_raw"],
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("momentum", SCALE),
+            ("momentum", SCALE * 2),
+            ("sma_cross", SCALE),
+            ("sma_cross", SCALE * 2),
+        ]
     );
 }

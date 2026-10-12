@@ -123,3 +123,12 @@ Python 十策略证据：
 - 验证：`cargo test --offline --workspace -- --test-threads=1` 全部通过（含跨入口、CLI、HTTP、Rust SDK 与 PyO3 native 契约）；`cargo test --offline -p qx-xingban --lib -- --test-threads=1`（100 passed）、`cargo test --offline -p qx-app --lib -- --test-threads=1`（89 passed）、深度 SDK 跨入口契约（3 passed，新增组合规格 CLI/HTTP/Python 同哈希与逐策略成交归因）；Python 全量 125 项通过、1 项环境跳过；策略 crate 27 项通过；`cargo fmt --all --check`、`git diff --check` 通过。架构不变量门禁 1096 项通过。首次 Python 全量测试遇到一次 Windows 临时文件句柄清理竞态，专项重跑与全量重跑均通过。严格 Clippy 尚未全仓通过：存在已有的 `qx-xingban::market_making` 测试模块位置、`qx-runtime::algo_checkpoint` `map_or`、`qx-app::experiment_split` 类型复杂度及组合构建器参数数目告警；本轮没有放宽这些告警门禁。
 - 量化场景探针 32 项已执行、0 missing、0 declared_not_executed；新增 `depth_strategy_portfolio` 场景有 2 个策略分别产生 4 笔归属成交。唯一 blocked 场景仍为 CCXT/Live：环境缺少 CCXT 运行依赖与交易所 testnet 凭据。
 - 本轮支持边界是单账户、单市场、单标的、内置单腿策略的 Bar/L1/L2 组合回测；仍未实现多腿/多市场组合调度、跨账户组合账簿/净额、策略级权益/费用/回撤及聚合组合风控、Paper/Live 多策略工作流、Web/桌面组合配置。真实交易所认证、C++ 构建与 Linux/macOS 消费者安装也未由本轮验证，因此整体方案仍未达到全能力发布门槛。
+
+## 12. 2026-10-13 继续实现：深度数据策略选择与参数比较
+
+- 将 Bar 实验已有的 `strategy_kinds` 维度接入共享 Rust Tick/OrderBook 实验用例。候选按规范化的策略名和参数网格顺序稳定展开，策略和参数总候选数统一受 256 上限约束；双腿策略被明确导向双数据集多腿用例，做市网格不与内置信号策略选择混用。候选报告新增可选 `strategy_kind`，不带该维度的旧规格序列化与指纹保持不变。
+- Python typed SDK 增加策略 kind 输入和结果解码。CLI、HTTP API、Rust 本地 SDK、Python 原生扩展/高层 SDK 均调用同一 `qx-app` 用例；C++ HTTP 门面测试用真实规格验证请求原样传递。没有新增撮合、风险或账簿算法。
+- 新增十种经典策略 L2 行为用例、策略×参数笛卡尔积用例、重复/双腿选择拒绝与确定性重跑；CLI/HTTP/Python 同规格跨入口对照结果哈希、排名和候选标识；Rust 独立 SDK 消费者直接执行十种策略。Python 类型用例也覆盖十策略快速选择。
+- 场景探针新增 `depth_strategy_selection` 并由真实 CLI 执行生成场景登记：L2 十种策略得到 10/10 成功候选、合计 40 笔成交、稳定顺序及逐候选结果哈希。当前场景登记为 33 项 executed、0 missing、0 declared_not_executed、1 项 Live 因 CCXT/testnet 凭据 blocked。
+- 最终验证：`cargo test --offline --workspace -- --test-threads=1` 全工作区通过；`cargo test --offline -p qx-cli --test app_depth_entrypoints -- --test-threads=1`（4 项通过）；Rust SDK 独立消费者（12 项通过）；Python 全套测试（125 项通过）；架构不变量门禁（1096 项通过）；格式检查与 `git diff --check` 通过。Windows x64 `cp310-abi3` wheel 通过稳定 ABI 检查，并在新建隔离虚拟环境无依赖离线安装、导入原生扩展并确认深度实验入口存在。SHA-256：`F68B28DB153A39908F3CBC1C91C8D588D46F95B9B8769C990F4FECA123F4B940`。
+- Windows 本机未提供 C++ 编译器，因此 C++ 消费者只完成请求契约更新，未声称编译通过。其他平台 wheel、真实交易所 testnet、跨账户组合账簿/风险归因、多腿/多市场组合调度、Paper/Live 组合工作流及 Web/桌面组合端到端流程仍未通过验收；本轮没有把局部策略候选接通夸大成整体方案达到发布门槛。

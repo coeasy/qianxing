@@ -14,8 +14,9 @@ use crate::{
     RunContext, RunHandle,
 };
 use qx_core::Fnv1a;
+use qx_strategy::BuiltinStrategyKind;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub const RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION: u32 = 1;
@@ -27,6 +28,9 @@ pub struct RunDepthExperimentSpec {
     pub experiment_id: String,
     pub base: DepthBacktestSpec,
     pub parameter_space: Vec<ExperimentParameterSpace>,
+    /// Optional strategy-selection dimension. Empty preserves the legacy spec fingerprint.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strategy_kinds: Vec<BuiltinStrategyKind>,
 }
 
 impl RunDepthExperimentSpec {
@@ -38,7 +42,9 @@ impl RunDepthExperimentSpec {
     }
 
     pub fn to_json(&self) -> Result<String, AppError> {
-        serde_json::to_string(self)
+        let mut canonical = self.clone();
+        canonical.strategy_kinds.sort_by_key(|kind| kind.name());
+        serde_json::to_string(&canonical)
             .map_err(|error| invariant(format!("RunDepthExperimentSpec 序列化失败: {error}")))
     }
 
@@ -50,14 +56,54 @@ impl RunDepthExperimentSpec {
             )));
         }
         validate_experiment_id(&self.experiment_id)?;
-        let mut base = self.base.clone();
-        base.strategy = normalized_strategy(&base.strategy, &self.parameter_space);
-        base.validate()?;
-        validate_depth_grid(
-            &self.base.strategy,
-            self.base.market_making,
-            &self.parameter_space,
-        )
+        let mut kinds = if self.strategy_kinds.is_empty() {
+            vec![self.base.strategy.kind]
+        } else {
+            self.strategy_kinds.clone()
+        };
+        kinds.sort_by_key(|kind| kind.name());
+        let mut seen = BTreeSet::new();
+        if kinds.iter().any(|kind| !seen.insert(kind.name())) {
+            return Err(invalid("strategy_kinds 不得重复"));
+        }
+        if kinds.iter().any(|kind| kind.needs_reference_leg()) {
+            return Err(invalid(
+                "双腿策略必须使用 RunMultiLegExperimentSpec 和双数据集",
+            ));
+        }
+        if !self.strategy_kinds.is_empty() && self.base.market_making.is_some() {
+            return Err(invalid(
+                "market_making 参数实验不能与 strategy_kinds 内置策略选择混用",
+            ));
+        }
+        let strategy_selection = !self.strategy_kinds.is_empty();
+        let mut per_kind = None;
+        for kind in &kinds {
+            let mut candidate = self.base.clone();
+            candidate.strategy.kind = *kind;
+            candidate.strategy = normalized_strategy(&candidate.strategy, &self.parameter_space);
+            candidate.validate()?;
+            let count = if strategy_selection && self.parameter_space.is_empty() {
+                1
+            } else {
+                validate_depth_grid(
+                    &candidate.strategy,
+                    candidate.market_making,
+                    &self.parameter_space,
+                )?
+            };
+            if per_kind
+                .replace(count)
+                .is_some_and(|previous| previous != count)
+            {
+                return Err(invalid("不同策略 kind 的参数网格候选数必须一致"));
+            }
+        }
+        per_kind
+            .unwrap_or_default()
+            .checked_mul(kinds.len())
+            .filter(|total| *total <= super::run_experiment::MAX_EXPERIMENT_CANDIDATES)
+            .ok_or_else(|| invalid("实验最多接受 256 个候选组合"))
     }
 
     /// Run the grid through the cancellable Rust Tick/OrderBook backtest path.
@@ -77,6 +123,8 @@ impl RunDepthExperimentSpec {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DepthExperimentCandidate {
     pub ordinal: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_kind: Option<String>,
     pub parameters: BTreeMap<String, i128>,
     pub outcome: Option<DepthBacktestOutcome>,
     /// Stable AppError JSON; candidate errors do not hide successful runs.
@@ -164,15 +212,35 @@ fn run_depth_experiment_inner(
         Err(error) => return Err(AppError::from_io("读取既有深度参数实验报告", &error)),
     }
 
-    let combinations = expand_grid(&spec.parameter_space);
-    debug_assert_eq!(combinations.len(), total);
+    let mut kinds = if spec.strategy_kinds.is_empty() {
+        vec![spec.base.strategy.kind]
+    } else {
+        spec.strategy_kinds.clone()
+    };
+    kinds.sort_by_key(|kind| kind.name());
+    let combinations = if spec.parameter_space.is_empty() {
+        vec![BTreeMap::new()]
+    } else {
+        expand_grid(&spec.parameter_space)
+    };
+    debug_assert_eq!(combinations.len() * kinds.len(), total);
     let mut candidates = Vec::with_capacity(total);
-    for (index, parameters) in combinations.into_iter().enumerate() {
+    for (index, (kind, parameters)) in kinds
+        .into_iter()
+        .flat_map(|kind| {
+            combinations
+                .iter()
+                .cloned()
+                .map(move |parameters| (kind, parameters))
+        })
+        .enumerate()
+    {
         if cancellation.is_some_and(CancellationToken::is_cancelled) {
             return Ok(None);
         }
         let ordinal = index + 1;
         let mut candidate = spec.base.clone();
+        candidate.strategy.kind = kind;
         candidate.run_id = format!("{}-{ordinal:04}", spec.experiment_id);
         candidate.output_dir = root
             .join(format!("run-{ordinal:04}"))
@@ -193,12 +261,14 @@ fn run_depth_experiment_inner(
         candidates.push(match outcome {
             Ok(outcome) => DepthExperimentCandidate {
                 ordinal,
+                strategy_kind: (!spec.strategy_kinds.is_empty()).then(|| kind.name().to_string()),
                 parameters,
                 outcome: Some(outcome),
                 error: None,
             },
             Err(error) => DepthExperimentCandidate {
                 ordinal,
+                strategy_kind: (!spec.strategy_kinds.is_empty()).then(|| kind.name().to_string()),
                 parameters,
                 outcome: None,
                 error: Some(error.to_json()),

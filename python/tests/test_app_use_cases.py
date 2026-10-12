@@ -1386,6 +1386,32 @@ class AppUseCaseTests(unittest.TestCase):
         )
         typed_result = run_depth_experiment(typed_depth_experiment)
         self.assertEqual(typed_result.succeeded_candidates, 1)
+        selected_depth_strategies = (
+            "sma_cross", "ema_cross", "macd", "rsi", "bollinger",
+            "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend",
+        )
+        typed_selection = RunDepthExperimentSpec(
+            experiment_id="python-typed-depth-strategy-selection",
+            base=DepthBacktestSpec(
+                **{
+                    **typed_depth_experiment.base.__dict__,
+                    "run_id": "unused-python-typed-depth-selection",
+                    "output_dir": str(self.output_dir / "typed-depth-selection"),
+                }
+            ),
+            parameter_space=(),
+            strategy_kinds=selected_depth_strategies,
+        )
+        self.assertEqual(
+            typed_selection.to_dict()["strategy_kinds"], sorted(selected_depth_strategies)
+        )
+        selection_result = run_depth_experiment(typed_selection)
+        self.assertEqual(selection_result.total_candidates, 10)
+        self.assertEqual(selection_result.succeeded_candidates, 10)
+        self.assertEqual(
+            [candidate.strategy_kind for candidate in selection_result.candidates],
+            sorted(selected_depth_strategies),
+        )
         typed_handle = start_depth_experiment(
             RunDepthExperimentSpec(
                 experiment_id="python-typed-tick-grid-handle",

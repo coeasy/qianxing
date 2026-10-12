@@ -13,11 +13,12 @@
 use qx_sdk::{
     AlgoExecutionMethod, AlgoExecutionSpec, AlgoExecutionState, AlgoExecutionStatus,
     AlgoParentOrder, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability,
-    Client, DatasetSpec, EventAppender, ExecutionEvent, ExecutionEventEnvelope, ExecutionGateway,
-    ExperimentParameterSpace, ExperimentSplitPlan, InstrumentId, MakerTakerFeeSchedule, Order,
-    OrderStatus, OrderStore, Price, Quantity, RiskParityAssetSpec, RiskParitySpec, RiskPort,
-    RiskVerdict, RunEventKind, RunExperimentSpec, RunStatus, Side, VenuePort, VwapVolumeBucket,
-    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
+    Client, DatasetSpec, DepthBacktestSpec, EventAppender, ExecutionEvent, ExecutionEventEnvelope,
+    ExecutionGateway, ExperimentParameterSpace, ExperimentSplitPlan, InstrumentId,
+    MakerTakerFeeSchedule, Order, OrderStatus, OrderStore, Price, Quantity, RiskParityAssetSpec,
+    RiskParitySpec, RiskPort, RiskVerdict, RunDepthExperimentSpec, RunEventKind, RunExperimentSpec,
+    RunStatus, Side, VenuePort, VwapVolumeBucket, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+    BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
 
