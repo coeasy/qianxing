@@ -121,15 +121,11 @@ impl PyProviderRegistry {
     fn fetch_bar_frame_json(&self, query_json: &str) -> PyResult<String> {
         let request = DataRequest::from_json(query_json)
             .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
-        let query = &request.query;
-        let result = self
+        let fetched = self
             .inner
-            .fetch_request(&request)
+            .fetch_bar_frame(&request)
             .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
-        let frame = result
-            .to_bar_frame(query)
-            .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
-        Ok(frame.to_json())
+        Ok(fetched.frame.to_json())
     }
 
     fn fetch_bar_dataset_json(
@@ -153,12 +149,13 @@ impl PyProviderRegistry {
                 "dataset manifest requires a positive interval_ms and non-empty timezone",
             ));
         }
-        let result = self
+        let fetched = self
             .inner
-            .fetch_request(&request)
+            .fetch_bar_frame(&request)
             .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
         dataset_manifest::bar_frame_manifest_json(
-            result,
+            fetched.result,
+            fetched.frame,
             query,
             dataset_id,
             dataset_version,

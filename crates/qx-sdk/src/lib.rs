@@ -70,8 +70,8 @@ pub use qx_app::{AppAction, AppError, AppErrorCategory, AppRetry};
 // 独立消费者只依赖 qx-sdk 即可注册数据源、做确定性主备选择并保留血缘。
 pub use qx_provider::{
     DataKind, DataProvider, DataQuery, DataRequest, DataRequirements, DataSourceId,
-    ProviderCapability, ProviderError, ProviderErrorClass, ProviderPayload, ProviderRegistry,
-    ProviderResult, RawRecord, RegistryError, PROVIDER_RESULT_SCHEMA_VERSION,
+    ProviderBarFrame, ProviderCapability, ProviderError, ProviderErrorClass, ProviderPayload,
+    ProviderRegistry, ProviderResult, RawRecord, RegistryError, PROVIDER_RESULT_SCHEMA_VERSION,
 };
 
 // —— §6.1「spec 构造校验」——

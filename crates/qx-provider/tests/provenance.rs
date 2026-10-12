@@ -129,4 +129,40 @@ mod tests {
         assert_eq!(result.retry_chain, ["primary", "backup"]);
         assert!(result.payloads[0].json.contains("\"close\":10"));
     }
+
+    #[test]
+    fn registry_bar_frame_keeps_validated_result_and_selected_provider_lineage_together() {
+        let query = DataQuery {
+            kind: DataKind::Bar,
+            asset_class: "crypto".into(),
+            instrument_set: ["BTCUSDT.BINANCE".into()].into_iter().collect(),
+            field_set: BTreeSet::new(),
+            frequency: "1d".into(),
+            adjustment: "none".into(),
+            quality_policy: "strict".into(),
+            start: 1,
+            end: 1,
+            as_of: None,
+        };
+        let mut registry = ProviderRegistry::new();
+        registry
+            .register(Box::new(HonestProvider {
+                capability: capability("primary", 1),
+            }))
+            .unwrap();
+
+        let fetched = registry
+            .fetch_bar_frame(&qx_provider::DataRequest::new(
+                query,
+                qx_provider::DataRequirements::default(),
+            ))
+            .unwrap();
+
+        assert_eq!(fetched.result.provider_id, "primary");
+        assert_eq!(fetched.result.retry_chain, ["primary"]);
+        assert_eq!(fetched.frame.ts, [1]);
+        assert_eq!(fetched.frame.close_raw, [10]);
+        assert!(fetched.frame.source.0.contains("primary@v1"));
+        assert!(fetched.frame.source.0.contains("#source="));
+    }
 }

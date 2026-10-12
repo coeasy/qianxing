@@ -57,9 +57,9 @@ steps:
   - name: sdk_provider_registry
     chain: data_to_research_backtest
     order: 3
-    anchor: crates/qx-provider/src/registry.rs ProviderRegistry
+    anchor: crates/qx-provider/src/registry.rs fetch_bar_frame
     case: crates/qx-sdk/tests/provider_consumer.rs third_party_provider_payload_reaches_the_shared_bar_backtest_and_verifier
-    note: "ProviderResult v1 将 RawRecord 与 JSON 载荷一一配对并校验 payload/source 摘要；Rust SDK 消费者已验证确定性 failover→strict Bar 质量门→标准 BarFrame→共享 qx-app 回测→产物重放复核。"
+    note: "fetch_bar_frame 将确定性选择/failover、ProviderResult 血缘校验和 strict Bar 质量门收成一个 Rust 注册表入口，同时返回结果血缘与标准 BarFrame；Rust SDK 消费者以该入口验证共享 qx-app 回测与产物重放复核。"
   - name: python_provider_adapter
     chain: data_to_research_backtest
     order: 4

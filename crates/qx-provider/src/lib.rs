@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 mod registry;
 mod result;
-pub use registry::{ProviderRegistry, RegistryError};
+pub use registry::{ProviderBarFrame, ProviderRegistry, RegistryError};
 pub use result::{DataProvider, ProviderPayload, ProviderResult, PROVIDER_RESULT_SCHEMA_VERSION};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]

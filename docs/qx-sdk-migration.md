@@ -115,7 +115,9 @@ let outcome = handle.try_take_result().unwrap()?;
 `payload_hash` 必须匹配载荷摘要，结果摘要覆盖请求、接收时间、每行血缘、实际载荷和确定性 failover 链。
 Registry 还会把结果自述的 Provider ID/版本与实际被调用的 Provider capability 比对，不一致就拒绝并继续按序尝试。
 
-Bar 查询可调用 `ProviderResult::to_bar_frame`：仅接收单标的、strict 质量策略与
+Bar 查询应优先调用 `ProviderRegistry::fetch_bar_frame`：它在同一入口内执行确定性 Provider 选择/failover、
+结果身份与血缘验证及单标的 strict 质量门，并同时返回 `ProviderResult` 和标准 `BarFrame`；
+需要直接校验已有结果时，`ProviderResult::to_bar_frame` 仍可用。标准化仅接收
 `application/vnd.qianxing.bar+json;v=1` 行载荷；校验时间戳、OHLCV 和载荷标的，再生成标准 BarFrame，
 其来源标识绑定查询摘要与 Provider 结果摘要。仓外消费者验收覆盖 Provider→BarFrame→共享 Rust 回测→产物复核，
 见 `crates/qx-sdk/tests/provider_consumer.rs`。

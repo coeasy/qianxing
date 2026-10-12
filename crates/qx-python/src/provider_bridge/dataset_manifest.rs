@@ -6,10 +6,12 @@ use qx_data::{
     DatasetManifest, DatasetManifestV2, DatasetQualityReport, DatasetSourceLineage, DatasetTier,
     BAR_FRAME_SCHEMA_VERSION, DATASET_MANIFEST_V2_SCHEMA_VERSION,
 };
+use qx_datastruct::BarFrame;
 use qx_provider::{DataKind, DataQuery, ProviderResult};
 
 pub(super) fn bar_frame_manifest_json(
     result: ProviderResult,
+    frame: BarFrame,
     query: &DataQuery,
     dataset_id: &str,
     dataset_version: &str,
@@ -30,9 +32,6 @@ pub(super) fn bar_frame_manifest_json(
             "dataset identity, positive interval_ms, and timezone are required",
         ));
     }
-    let frame = result
-        .to_bar_frame(query)
-        .map_err(|error| PyValueError::new_err(format!("BarFrame validation failed: {error:?}")))?;
     let frame_json = frame.to_json();
     let bars = (0..frame.ts.len())
         .map(|index| qx_data::Bar {

@@ -159,12 +159,13 @@ mod tests {
             registry.candidates_for_request(&request).unwrap(),
             ["primary", "backup"]
         );
-        let result = registry.fetch_request(&request).unwrap();
+        let fetched = registry.fetch_bar_frame(&request).unwrap();
+        let result = fetched.result;
         assert_eq!(result.provider_id, "backup");
         assert_eq!(result.retry_chain, ["primary", "backup"]);
         assert_eq!(result.records[0].source, DataSourceId::new("backup"));
         result.validate_for(&query).unwrap();
-        let frame = result.to_bar_frame(&query).unwrap();
+        let frame = fetched.frame;
         assert_eq!(frame.instrument.to_string(), "BTCUSDT.BINANCE");
         assert_eq!(
             frame.source.0,
@@ -211,8 +212,14 @@ mod tests {
             end: 90,
             as_of: Some(100),
         };
-        let result = registry.fetch_with_failover(&query).unwrap();
-        let frame = result.to_bar_frame(&query).unwrap();
+        let fetched = registry
+            .fetch_bar_frame(&DataRequest::new(
+                query.clone(),
+                DataRequirements::default(),
+            ))
+            .unwrap();
+        let result = fetched.result;
+        let frame = fetched.frame;
         let root = TestDirectory::new("qx-sdk-provider-backtest");
         let bars_path = root.0.join("provider-bars.json");
         std::fs::write(&bars_path, frame.to_json()).unwrap();

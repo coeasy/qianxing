@@ -19006,6 +19006,7 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
     ),
     "provider_port": (
         ("DataProvider", "qx-provider::DataProvider"),
+        ("ProviderBarFrame", "qx-provider::ProviderBarFrame"),
         ("DataRequest", "qx-provider::DataRequest"),
         ("DataRequirements", "qx-provider::DataRequirements"),
     ),

@@ -22,6 +22,14 @@ struct RegisteredProvider {
     rate_gate: RateGate,
 }
 
+/// A provider result together with its validated canonical BarFrame projection.
+/// Keeping both values prevents callers from rebuilding the lineage or parsing
+/// the same provider payload a second time before freezing the dataset.
+pub struct ProviderBarFrame {
+    pub result: ProviderResult,
+    pub frame: qx_datastruct::BarFrame,
+}
+
 /// Spaces calls to one provider port according to its advertised requests-per-second limit.
 /// This gate lives at the external-I/O boundary; it does not affect event ordering or replay.
 struct RateGate {
@@ -209,6 +217,19 @@ impl ProviderRegistry {
         Err(last_error
             .map(RegistryError::Provider)
             .unwrap_or(RegistryError::NoProvider))
+    }
+
+    /// Fetch and validate a single-instrument Bar request through this registry,
+    /// preserving the selected provider result alongside the canonical frame.
+    pub fn fetch_bar_frame(
+        &self,
+        request: &DataRequest,
+    ) -> Result<ProviderBarFrame, RegistryError> {
+        let result = self.fetch_request(request)?;
+        let frame = result
+            .to_bar_frame(&request.query)
+            .map_err(RegistryError::Provider)?;
+        Ok(ProviderBarFrame { result, frame })
     }
 }
 
