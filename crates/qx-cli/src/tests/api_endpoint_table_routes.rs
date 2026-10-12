@@ -167,6 +167,7 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
         ("RUN_START_DEPTH_ROUTE", "POST"),
         ("RUN_START_DEPTH_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_EXPERIMENT_ROUTE", "POST"),
+        ("RUN_START_MULTI_ACCOUNT_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_EXPERIMENT_ROUTE", "POST"),
     ] {
