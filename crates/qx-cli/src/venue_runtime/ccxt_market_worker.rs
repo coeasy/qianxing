@@ -52,7 +52,7 @@ pub(crate) fn run_ccxt_market_worker(
             worker_settlement_currency(&worker),
         )
         .map_err(|error| format!("创建 CCXT 行情事件管线失败: {error}"))?;
-    let mut paper_bridges = open_paper_market_bridges(&pipeline_storage, &runtime_config.workers)?;
+    let mut paper_bridges = open_paper_market_bridges(&pipeline_storage, &runtime_config)?;
     let instruments = worker
         .symbols
         .iter()

@@ -110,12 +110,16 @@ fn absolutize_paths(value: &mut serde_json::Value, root: &Path) {
 }
 
 fn builtin_args(config: Option<&Path>, quantity: &str) -> Vec<String> {
+    builtin_args_with_spec(config, quantity, &deploy(SPEC))
+}
+
+fn builtin_args_with_spec(config: Option<&Path>, quantity: &str, spec: &Path) -> Vec<String> {
     let mut args = vec![
         "backtest".into(),
         "builtin".into(),
         "grid".into(),
         deploy(FRAME).to_string_lossy().into_owned(),
-        deploy(SPEC).to_string_lossy().into_owned(),
+        spec.to_string_lossy().into_owned(),
         quantity.into(),
     ];
     if let Some(config) = config {
@@ -129,8 +133,16 @@ fn builtin_args(config: Option<&Path>, quantity: &str) -> Vec<String> {
 fn builtin_entry_binds_the_declared_ashare_rules() {
     let root = temp_dir("bind");
     let config = config_with(&root, |_| {});
+    // 这条用例只比较 A 股交易规则快照是否接入。为使 150 股成为合法的基线订单，
+    // 使用一股步长的市场规格；绑定配置后的整手拒单来自 A 股规则快照。
+    let generic_spec = root.join("generic-qty-step.spec.json");
+    let mut spec: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(deploy(SPEC)).unwrap()).unwrap();
+    spec["qty_step_raw"] = serde_json::Value::from(1_000_000_000_i64);
+    spec["min_qty_raw"] = serde_json::Value::from(1_000_000_000_i64);
+    std::fs::write(&generic_spec, serde_json::to_vec(&spec).unwrap()).unwrap();
 
-    let (plain_code, plain, plain_err) = run(&builtin_args(None, "150"));
+    let (plain_code, plain, plain_err) = run(&builtin_args_with_spec(None, "150", &generic_spec));
     assert_eq!(plain_code, 0, "不读配置的基线必须跑通: {plain_err}");
     assert_eq!(field(&plain, "[Builtin · Backtest]", "fills"), "2");
     assert_eq!(
@@ -139,7 +151,8 @@ fn builtin_entry_binds_the_declared_ashare_rules() {
     );
     assert_eq!(line_with(&plain, "[Builtin · A 股规则]"), "");
 
-    let (code, bound, bound_err) = run(&builtin_args(Some(&config), "150"));
+    let (code, bound, bound_err) =
+        run(&builtin_args_with_spec(Some(&config), "150", &generic_spec));
     assert_eq!(code, 0, "同一份配置在内置链必须跑通: {bound_err}");
     assert_eq!(
         field(&bound, "[Builtin · Integrity]", "rejected_orders"),

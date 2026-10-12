@@ -312,8 +312,9 @@ fn paper_initial_cash_is_idempotent_and_replayed_into_ledger() {
         max_order_notional_raw: None,
         max_position_notional_raw: None,
     };
-    seed_paper_initial_cash(&mut pipeline, &worker, 10).unwrap();
-    seed_paper_initial_cash(&mut pipeline, &worker, 11).unwrap();
+    let config = paper_runtime_config(&root);
+    seed_paper_initial_cash_from_config(&mut pipeline, &config, &worker, 10).unwrap();
+    seed_paper_initial_cash_from_config(&mut pipeline, &config, &worker, 11).unwrap();
     assert_eq!(pipeline.ledger().cash_for("main", "USDT"), 1_000);
     assert_eq!(pipeline.log().events().len(), 2);
     let _ = std::fs::remove_dir_all(root);

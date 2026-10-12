@@ -227,7 +227,7 @@ pub(crate) fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Re
     let pipeline_root = Path::new(&config.storage.data_dir).to_path_buf();
     let pipeline_storage = PipelineStorage::from_config(&config)?;
     // Paper 行情桥要按账户身份判定记账币种，所以这里带全量 worker；桥自身再按角色过滤。
-    let all_workers = config.workers.clone();
+    let bridge_config = config.clone();
     let runtime_config_path = path.to_path_buf();
     let control_store = configured_control_store(&config)?;
     let command_queue = configured_command_queue(&config, &pipeline_root)?;
@@ -241,7 +241,7 @@ pub(crate) fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Re
             context,
             worker_for_run.clone(),
             pipeline_storage.clone(),
-            all_workers,
+            bridge_config,
         ),
         WorkerRole::UserStream => run_binance_user_worker(
             context,

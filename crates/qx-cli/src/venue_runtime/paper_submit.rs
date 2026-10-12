@@ -2,12 +2,29 @@ use crate::*;
 
 /// 为 Paper 账户写入一次可恢复、可幂等的初始资金事实。
 /// 资金只通过 AccountCashflow 进入 Ledger，不直接修改内存余额。
-pub(crate) fn seed_paper_initial_cash(
+pub(crate) fn seed_paper_initial_cash_from_config(
     pipeline: &mut LiveEventPipeline,
+    config: &RuntimeConfig,
     worker: &WorkerConfig,
     now: u64,
 ) -> Result<(), String> {
-    let Some(amount_raw) = worker.paper_initial_cash_raw else {
+    let account_cash = worker
+        .account_id
+        .as_deref()
+        .and_then(|account_id| config.account(account_id))
+        .and_then(|account| account.initial_cash_raw);
+    let amount_raw = account_cash.or(worker.paper_initial_cash_raw);
+    seed_paper_initial_cash_amount(pipeline, worker, amount_raw, account_cash.is_some(), now)
+}
+
+fn seed_paper_initial_cash_amount(
+    pipeline: &mut LiveEventPipeline,
+    worker: &WorkerConfig,
+    amount_raw: Option<i128>,
+    account_registry_source: bool,
+    now: u64,
+) -> Result<(), String> {
+    let Some(amount_raw) = amount_raw else {
         return Ok(());
     };
     let account_id = worker
@@ -15,10 +32,16 @@ pub(crate) fn seed_paper_initial_cash(
         .as_deref()
         .ok_or_else(|| format!("Paper worker {} 缺少 account_id", worker.id))?;
     let currency = pipeline.settlement_currency().to_string();
-    let external_id = format!(
-        "paper-initial-cash:{}:{}:{}",
-        worker.id, account_id, currency
-    );
+    // 保持旧 worker 级身份键，升级后重启旧配置不会重复注入既有本金；注册表资金则用
+    // 账户级键，多个执行 worker 对同一本账户账簿只会入账一次。
+    let external_id = if account_registry_source {
+        format!("paper-initial-cash:account:{account_id}:{currency}")
+    } else {
+        format!(
+            "paper-initial-cash:{}:{}:{}",
+            worker.id, account_id, currency
+        )
+    };
     pipeline
         .ingest(RuntimeEventEnvelope::venue(
             RuntimeExternalEvent::AccountCashflow {
@@ -84,7 +107,7 @@ pub(crate) fn run_paper_submit_order(path: &Path, command_path: &Path) -> Result
             OutboxRecovery::ReprojectOnOpen,
         )
         .map_err(|error| format!("打开 Paper 初始资金 EventLog 失败: {error}"))?;
-        seed_paper_initial_cash(&mut pipeline, worker, now)?;
+        seed_paper_initial_cash_from_config(&mut pipeline, &config, worker, now)?;
     }
     let (_, accepted_result) = store
         .transact(|plane| plane.submit_as(command.clone(), Permission::Trading, now))

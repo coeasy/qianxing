@@ -292,8 +292,9 @@ pub(crate) fn paper_market_worker_matches_instrument(
 /// 过滤，而记账币种要按账户身份找出这本账的所有写入方，传过滤后的子集会漏掉冲突方。
 pub(crate) fn open_paper_market_bridges(
     storage: &PipelineStorage,
-    workers: &[WorkerConfig],
+    config: &RuntimeConfig,
 ) -> Result<Vec<PaperMarketBridge>, String> {
+    let workers = &config.workers;
     let mut bridges: Vec<PaperMarketBridge> = Vec::new();
     for worker in workers.iter().filter(|worker| {
         worker.enabled
@@ -312,7 +313,7 @@ pub(crate) fn open_paper_market_bridges(
         }
         let pipeline = storage.open(
             log_name.clone(),
-            account_worker_currency_among_workers(workers, worker)?,
+            account_worker_settlement_currency(config, worker)?,
         )?;
         bridges.push(PaperMarketBridge {
             workers: vec![worker.clone()],

@@ -72,5 +72,17 @@
       "python_module": "examples.backtest_momentum",
       "python_timeout_ms": 2000
     }
+  ],
+  "accounts": [
+    {
+      "id": "momentum",
+      "settlement_currency": "USDT",
+      "initial_cash_raw": 100000000000000
+    },
+    {
+      "id": "mean-reversion",
+      "settlement_currency": "USDT",
+      "initial_cash_raw": 100000000000000
+    }
   ]
 }

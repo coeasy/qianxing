@@ -4,7 +4,7 @@ pub(crate) fn run_binance_market_worker(
     context: qx_runtime::WorkerContext,
     worker: WorkerConfig,
     pipeline_storage: PipelineStorage,
-    all_workers: Vec<WorkerConfig>,
+    config: RuntimeConfig,
 ) -> Result<(), String> {
     if worker.symbols.len() != 1 {
         return Err(format!(
@@ -21,7 +21,7 @@ pub(crate) fn run_binance_market_worker(
             worker_settlement_currency(&worker),
         )
         .map_err(|error| format!("创建行情事件管线失败: {error}"))?;
-    let mut paper_bridges = open_paper_market_bridges(&pipeline_storage, &all_workers)?;
+    let mut paper_bridges = open_paper_market_bridges(&pipeline_storage, &config)?;
     let mut stream = BinanceSpotMarketStream::connect_with_endpoint(
         instrument.clone(),
         host,

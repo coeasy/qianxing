@@ -164,13 +164,16 @@ BLOCKED = [
         "name": "multi_account_first_class",
         "anchor": "crates/qx-runtime",
         "blocked_by": (
-            "多账户只在**策略级**建模：`StrategyRuntimeConfig.account_id` 与绑定 worker 的 "
-            "account_id 在 topology_validation 里交叉核对（fail-closed），但 `RuntimeConfig` 没有"
-            "一等 `accounts` 段，账户级资金归属、风险聚合与退出语义也未端到端验证。"
-            "两个账户各跑各的回测已可执行（见 cross_language_multi_strategy_backtest）。"
+            "`RuntimeConfig.accounts` 已接通账户身份、结算币种、单策略本金选择与 Paper 幂等初始入账；"
+            "但仍无组合级资金竞争、跨账户风险聚合、多策略确定性调度和统一退出语义的端到端内核，"
+            "所以多账户组合交易仍未达到完整能力门槛。账户本金绑定多个交易所时会 fail closed，"
+            "须按 venue 拆分账户，避免向独立账簿重复注资。"
         ),
         "evidence": [
-            "crates/qx-runtime/src/runtime_config/strategy_schema.rs",
+            "crates/qx-runtime/src/runtime_config/schema.rs",
+            "crates/qx-runtime/src/runtime_config/account_validation.rs",
+            "crates/qx-cli/src/backtests/account_base.rs",
+            "crates/qx-cli/src/venue_runtime/paper_submit.rs",
             RUNTIME_MULTI,
         ],
     },

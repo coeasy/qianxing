@@ -268,6 +268,7 @@ impl RuntimeConfig {
         if self.scheduler.tick_interval_ms == 0 || self.scheduler.tick_interval_ms > 300_000 {
             return Err("Scheduler tick_interval_ms 必须在 1..=300000 内".into());
         }
+        self.validate_accounts()?;
         self.validate_strategy_config(&self.strategy, "Strategy", false)?;
         let mut strategy_ids = std::collections::BTreeSet::new();
         for strategy in &self.strategies {

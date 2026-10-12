@@ -6906,7 +6906,10 @@ PAPER_PRINCIPAL_ENTRIES = (
     "crates/qx-cli/src/venue_runtime/paper_submit.rs",
     "crates/qx-cli/src/venue_runtime/paper_worker.rs",
 )
-PAPER_SEED_CALL = "seed_paper_initial_cash(&mut pipeline"
+PAPER_SEED_CALLS = {
+    "crates/qx-cli/src/venue_runtime/paper_submit.rs": "seed_paper_initial_cash_from_config(&mut pipeline",
+    "crates/qx-cli/src/venue_runtime/paper_worker.rs": "seed_paper_initial_cash_from_config(\n            &mut pipeline",
+}
 ACCOUNT_PRINCIPAL_UNIT_CASES = "crates/qx-cli/src/tests/account_principal_source.rs"
 ACCOUNT_PRINCIPAL_UNIT_TESTS = (
     "the_same_principal_declared_twice_is_reported_as_one_agreeing_number",
@@ -6975,11 +6978,11 @@ def account_principal_single_source_check() -> None:
         check(
             text.count(gate) == 1
             and text.count("account_principal_note(&config)") == 1
-            and text.count(PAPER_SEED_CALL) == 1
-            and text.index(gate) < text.index(PAPER_SEED_CALL),
-            f"{entry} 在按 worker 那一格入账之前先拒两份本金、再把一致说出来（V12 R3）",
+            and text.count(PAPER_SEED_CALLS[entry]) == 1
+            and text.index(gate) < text.index(PAPER_SEED_CALLS[entry]),
+            f"{entry} 在按兼容字段或账户注册表入账之前先校验本金一致性（V12 R3）",
             f"闸门 {text.count(gate)} 处 / 说明行 {text.count('account_principal_note(&config)')} 处"
-            f" / 入账 {text.count(PAPER_SEED_CALL)} 处",
+            f" / 入账 {text.count(PAPER_SEED_CALLS[entry])} 处",
         )
     # 5. 冲突报错要并列点出两处名字与各自的数，否则使用者不知道该删哪一格。
     check(
@@ -8783,6 +8786,7 @@ CONFIG_STRUCTS = (
     "ConsoleRuntimeConfig",
     "StorageRuntimeConfig",
     "MessagingRuntimeConfig",
+    "AccountRuntimeConfig",
     "WorkerConfig",
     "CredentialEnv",
     "CredentialFiles",
@@ -16503,7 +16507,7 @@ PARALLEL_CROSS_ACCOUNT_READS = (
 PAPER_SUBMIT_SOURCE = "crates/qx-cli/src/venue_runtime/paper_submit.rs"
 PAPER_SUBMIT_MATCH_SIG = "fn paper_submit_matches_worker("
 PAPER_SUBMIT_ACCOUNT_FILTER = "order.account_id==expected_account"
-SEED_CASH_SIG = "fn seed_paper_initial_cash("
+SEED_CASH_SIG = "fn seed_paper_initial_cash_amount("
 SEED_CASH_ACCOUNT_FROM_WORKER = "account_id:account_id.into(),"
 
 

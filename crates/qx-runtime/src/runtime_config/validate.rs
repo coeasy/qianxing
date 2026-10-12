@@ -3,6 +3,14 @@
 use super::*;
 
 impl RuntimeConfig {
+    /// Lookup a declared account by stable ID. `None` is returned for legacy configs
+    /// without an explicit account registry.
+    pub fn account(&self, account_id: &str) -> Option<&AccountRuntimeConfig> {
+        self.accounts
+            .iter()
+            .find(|account| account.id == account_id)
+    }
+
     pub fn from_json(payload: &str) -> Result<Self, String> {
         let payload = strip_config_comments(payload)?;
         let config: Self = serde_json::from_str(&payload)

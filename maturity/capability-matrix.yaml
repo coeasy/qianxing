@@ -89,8 +89,8 @@ domains:
 
   - name: accounts_and_strategies
     level: partial
-    evidence: [crates/qx-app, crates/qx-zhenlu, maturity/app_use_cases.yaml]
-    limitations: ["Bar、Tick/OrderBook 和多腿回测已可显式指定账户，账户身份进入策略上下文、summary/归因事实、结果对象和复核；多腿两侧仍分别开账，目前未有组合规格", "多账户资金竞争、组合限额聚合、多策略调度和退出语义未端到端验证"]
+    evidence: [crates/qx-runtime/src/runtime_config/schema.rs, crates/qx-runtime/src/runtime_config/topology_validation.rs, crates/qx-cli/src/backtests/account_base.rs, crates/qx-cli/src/venue_runtime/paper_submit.rs, crates/qx-app, crates/qx-zhenlu, maturity/app_use_cases.yaml]
+    limitations: ["RuntimeConfig.accounts 已统一账户身份、结算币种与初始本金来源；多策略 Bar 回测和 Paper 账户入账可按 account_id 选择独立本金，旧配置无 accounts 时仍保持兼容", "Bar、Tick/OrderBook 和多腿回测均可显式指定账户，账户身份进入策略上下文、summary/归因事实和复核；多腿两侧仍分别开账，目前未有组合规格", "多账户资金竞争、组合限额聚合、多策略调度和退出语义未端到端验证"]
     next_gate: "落方案 §5.3 的组合/策略/Run 所有权、跨账户限额聚合与确定性资金分配"
 
   - name: web_api

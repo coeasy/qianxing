@@ -118,9 +118,11 @@ fn fill_model_error(configured: &str, spec: Option<&TradingInstrumentSpec>) -> S
 }
 
 /// 回测入口的 market spec 故意取的档位：它既不等于仓库里那份已验收现货规格的
-/// `1_000_000`，也不是任何一处可能兜出来的整数。摘要里出现这个数，才证明成交一档真的取自
-/// 使用者给的那份文件——loader 现在对缺字段直接拒绝，所以"能跑起来"本身就说明这一档有出处。
-const SPEC_PRICE_TICK_RAW: i128 = 3_000_000;
+/// `1_000_000`，也不是任何一处可能兜出来的整数。夹具里的 Bar 价格都以 `500_000_000` raw
+/// 为步进；使用这个非默认但有效的真实 tick，摘要里的值才能证明成交一档来自指定文件，且成交
+/// 仍符合交易所的价格精度约束。
+// 任意成交价必须仍落在该 tick 上，否则 market spec 的一致性校验会正确拒绝回测。
+const SPEC_PRICE_TICK_RAW: i128 = 500_000_000;
 
 /// 落一份 CCXT 形状的现货市场快照到 `dir` 并返回路径。它与 worker 侧
 /// `instrument_spec_path` 吃的那份 `TradingInstrumentSpec` 是两种形状，但自 V11 Q54 起

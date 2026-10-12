@@ -14,6 +14,7 @@ pub(crate) const DEFAULT_BACKTEST_INITIAL_CASH: i64 = 100_000;
 /// `execution_costs.source`、`fill_model.source` 是同一条理由。
 pub(crate) const BACKTEST_ACCOUNT_BASE_DEFAULT_SOURCE: &str = "builtin-default";
 pub(crate) const BACKTEST_ACCOUNT_BASE_CONFIG_SOURCE: &str = "strategy-initial-cash";
+pub(crate) const BACKTEST_ACCOUNT_BASE_REGISTRY_SOURCE: &str = "account-registry";
 /// 多腿链不用这一格：两条腿的本金各按本腿行情由 `multi_leg_leg_cash` 定资。
 pub(crate) const BACKTEST_ACCOUNT_BASE_FUNDING_RULE_SOURCE: &str = "multi-leg-funding-rule";
 /// 第四格：回测侧那格声明同时被 paper 侧的 `worker.paper_initial_cash_raw` 确认过（V12 R3）。
@@ -94,6 +95,19 @@ fn paper_declares_same_principal(config: &RuntimeConfig) -> bool {
 /// 回测侧说了 N，就没有别的格子能说 M≠N；两个 paper 账户各写各的数不在此列（那本来就是
 /// 按账户定资，没有任何格子声称它是全局口径）。
 pub(crate) fn reject_split_account_principal(config: &RuntimeConfig) -> Result<(), String> {
+    // 多账户配置以账户注册表为唯一口径；其与兼容字段的冲突在 RuntimeConfig::validate 中
+    // 按 account_id 校验，不能再把不同账户的本金错误地当成全局冲突。
+    if !config.accounts.is_empty()
+        && (!config.strategies.is_empty()
+            || config
+                .strategy
+                .account_id
+                .as_deref()
+                .and_then(|account_id| config.account(account_id))
+                .is_some())
+    {
+        return Ok(());
+    }
     let Some(shared) = config.strategy.initial_cash_raw else {
         return Ok(());
     };
@@ -118,7 +132,19 @@ pub(crate) fn account_base_from_config(
     config: &RuntimeConfig,
 ) -> Result<BacktestAccountBase, String> {
     reject_split_account_principal(config)?;
-    let mut base = backtest_initial_cash(config.strategy.initial_cash_raw)?;
+    let account_base = config
+        .strategy
+        .account_id
+        .as_deref()
+        .and_then(|account_id| config.account(account_id))
+        .and_then(|account| account.initial_cash_raw);
+    let mut base = if let Some(raw) = account_base {
+        let mut base = backtest_initial_cash(Some(raw))?;
+        base.source = BACKTEST_ACCOUNT_BASE_REGISTRY_SOURCE;
+        base
+    } else {
+        backtest_initial_cash(config.strategy.initial_cash_raw)?
+    };
     if base.source == BACKTEST_ACCOUNT_BASE_CONFIG_SOURCE && paper_declares_same_principal(config) {
         base.source = BACKTEST_ACCOUNT_BASE_BOTH_DECLARED_SOURCE;
     }

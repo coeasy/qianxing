@@ -293,6 +293,7 @@ pub(crate) fn seed_paper_fill_with_fee(data_dir: &Path, config: &RuntimeConfig) 
 
 mod account_event_log_identity;
 mod account_principal_source;
+mod account_registry_paper;
 mod api_default_account_reads;
 mod api_doc_cross_references;
 mod api_doc_prose_routes;

@@ -4,7 +4,7 @@ crates/qx-adapter/src/binance.rs: 2126
 crates/qx-adapter/src/ccxt.rs: 1160
 crates/qx-adapter/src/lib.rs: 728
 crates/qx-api/src/console.rs: 727
-crates/qx-api/src/lib.rs: 2918
+crates/qx-api/src/lib.rs: 2912
 crates/qx-cli/src/cli.rs: 670
 crates/qx-cli/src/cli_args.rs: 511
 crates/qx-cli/src/event_pipeline.rs: 787
@@ -29,7 +29,7 @@ crates/qx-factor/src/lib.rs: 1837
 crates/qx-guanxing/src/lib.rs: 577
 crates/qx-protocol/src/lib.rs: 785
 crates/qx-provider/src/lib.rs: 743
-crates/qx-python/src/lib.rs: 518
+crates/qx-python/src/lib.rs: 514
 crates/qx-runtime/src/pipeline.rs: 2160
 crates/qx-scheduler/src/lib.rs: 1464
 crates/qx-storage/src/lib.rs: 2472

@@ -292,7 +292,7 @@ fn conflicting_settlement_declarations_block_the_writers_that_book_the_log() {
     add_second_account_log_writer(&mut config, "USDT");
 
     let storage = PipelineStorage::from_config(&config).unwrap();
-    match open_paper_market_bridges(&storage, &config.workers) {
+    match open_paper_market_bridges(&storage, &config) {
         Ok(bridges) => panic!(
             "Paper 行情桥按第一个声明者的口径开了 {} 本册，冲突配置必须拒绝",
             bridges.len()

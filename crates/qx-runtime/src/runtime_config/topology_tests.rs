@@ -321,3 +321,54 @@ fn console_surface_refuses_routable_binds_and_unknown_operators() {
     );
     assert!(mtls.validate().is_ok(), "身份在册后同一条配置必须过");
 }
+
+#[test]
+fn explicit_account_registry_is_validated_and_omitted_for_legacy_configs() {
+    let legacy = config();
+    let json = legacy.to_json().unwrap();
+    assert!(!json.contains("\"accounts\""));
+    let restored = RuntimeConfig::from_json(&json).unwrap();
+    assert!(restored.accounts.is_empty());
+
+    let mut invalid = config();
+    invalid.accounts.push(AccountRuntimeConfig {
+        id: "main".into(),
+        settlement_currency: Some("USD".into()),
+        initial_cash_raw: Some(0),
+    });
+    assert!(invalid
+        .validate()
+        .unwrap_err()
+        .contains("initial_cash_raw 必须为正数"));
+
+    let mut unknown_binding = config();
+    unknown_binding.accounts.push(AccountRuntimeConfig {
+        id: "main".into(),
+        settlement_currency: Some("USD".into()),
+        initial_cash_raw: Some(100_000),
+    });
+    unknown_binding.workers[0].account_id = Some("missing".into());
+    assert!(unknown_binding
+        .validate()
+        .unwrap_err()
+        .contains("未声明的账户 missing"));
+
+    let mut duplicated_funding = config();
+    duplicated_funding.accounts.push(AccountRuntimeConfig {
+        id: "main".into(),
+        settlement_currency: Some("USDT".into()),
+        initial_cash_raw: Some(100_000),
+    });
+    duplicated_funding.workers[0].account_id = Some("main".into());
+    for (id, venue) in [("paper-exec", "paper"), ("binance-exec", "binance")] {
+        let mut worker = duplicated_funding.workers[0].clone();
+        worker.id = id.into();
+        worker.role = WorkerRole::Execution;
+        worker.venue_id = Some(venue.into());
+        duplicated_funding.workers.push(worker);
+    }
+    assert!(duplicated_funding
+        .validate()
+        .unwrap_err()
+        .contains("绑定多个交易所账簿"));
+}

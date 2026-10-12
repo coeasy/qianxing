@@ -61,6 +61,21 @@ fn set_worker_cash(config: &mut RuntimeConfig, id: &str, raw: i128) {
     worker.paper_initial_cash_raw = Some(raw);
 }
 
+#[test]
+fn account_registry_is_the_per_strategy_backtest_principal_source() {
+    let (root, _, mut config) = principal_runtime("account-registry-backtest-base", |_| {});
+    config.strategy.account_id = Some("research-a".into());
+    config.accounts.push(qx_runtime::AccountRuntimeConfig {
+        id: "research-a".into(),
+        settlement_currency: Some("USDT".into()),
+        initial_cash_raw: Some(PRINCIPAL_RAW),
+    });
+    let base = account_base_from_config(&config).unwrap();
+    assert_eq!(base.cash.raw(), PRINCIPAL_RAW);
+    assert_eq!(base.source, BACKTEST_ACCOUNT_BASE_REGISTRY_SOURCE);
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// 两处声明同一个数：回测侧的来源要说出"这一格被 paper 侧确认过"，Paper 侧要把它印出来。
 /// 等值不等于无话可说 —— 读者若看不出两处共用一个本金，就会在改其中一处时以为只改了一件事。
 #[test]

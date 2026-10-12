@@ -66,6 +66,7 @@ fn default_risk_rules_version() -> String {
     "risk-rules-cfg-v1".into()
 }
 
+mod account_validation;
 mod console_validation;
 mod schema;
 #[cfg(test)]

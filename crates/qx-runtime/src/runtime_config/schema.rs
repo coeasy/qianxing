@@ -356,6 +356,18 @@ pub struct CredentialFiles {
     pub secret: String,
 }
 
+/// 账户级配置：账户身份、结算币种与初始本金由共享运行时统一读取。
+/// 空值表示沿用旧版 worker/strategy 声明；显式账户表中每个 `id` 必须唯一。
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountRuntimeConfig {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settlement_currency: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_cash_raw: Option<i128>,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
@@ -380,6 +392,9 @@ pub struct RuntimeConfig {
     /// 多策略配置。为空时继续使用兼容字段 `strategy`。
     #[serde(default)]
     pub strategies: Vec<StrategyRuntimeConfig>,
+    /// 可选的显式多账户注册表。省略/空数组保持旧配置指纹和旧行为。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<AccountRuntimeConfig>,
 }
 
 impl RuntimeConfig {

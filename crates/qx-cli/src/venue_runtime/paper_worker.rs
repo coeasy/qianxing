@@ -141,7 +141,12 @@ pub(crate) fn run_paper_execution_worker(
             OutboxRecovery::ReprojectOnOpen,
         )
         .map_err(|error| format!("打开 Paper 初始资金 EventLog 失败: {error}"))?;
-        seed_paper_initial_cash(&mut pipeline, &worker, runtime_timestamp_ms())?;
+        seed_paper_initial_cash_from_config(
+            &mut pipeline,
+            &runtime_config,
+            &worker,
+            runtime_timestamp_ms(),
+        )?;
         metrics.absorb(&pipeline);
         drop(pipeline);
         let mut algo_page_cursor = None::<String>;

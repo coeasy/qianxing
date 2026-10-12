@@ -59,6 +59,15 @@ pub(crate) fn settlement_currency_for_log(
     config: &RuntimeConfig,
     log_name: &str,
 ) -> Result<String, String> {
+    if let Some(currency) = config.workers.iter().find_map(|worker| {
+        let account_id = worker.account_id.as_deref()?;
+        let venue_id = worker.venue_id.as_deref()?;
+        (account_event_log_name(account_id, venue_id).as_deref() == Some(log_name))
+            .then(|| config.account(account_id)?.settlement_currency.clone())
+            .flatten()
+    }) {
+        return Ok(currency.to_ascii_uppercase());
+    }
     settlement_currency_among_workers(&config.workers, log_name)
 }
 
@@ -88,6 +97,14 @@ pub(crate) fn account_worker_settlement_currency(
     config: &RuntimeConfig,
     worker: &WorkerConfig,
 ) -> Result<String, String> {
+    if let Some(account_id) = worker.account_id.as_deref() {
+        if let Some(currency) = config
+            .account(account_id)
+            .and_then(|account| account.settlement_currency.as_deref())
+        {
+            return Ok(currency.to_ascii_uppercase());
+        }
+    }
     account_worker_currency_among_workers(&config.workers, worker)
 }
 

@@ -65,5 +65,6 @@ pub(crate) fn config() -> RuntimeConfig {
         scheduler: SchedulerRuntimeConfig::default(),
         strategy: StrategyRuntimeConfig::default(),
         strategies: Vec::new(),
+        accounts: Vec::new(),
     }
 }
