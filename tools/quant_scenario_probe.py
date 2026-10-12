@@ -454,6 +454,14 @@ def risk_parity_observation(output: str) -> str:
     )
 
 
+def depth_portfolio_observation(summary_path: Path) -> str:
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    strategy_fills = summary.get("strategy_fills", {})
+    if len(strategy_fills) < 2 or any(count <= 0 for count in strategy_fills.values()):
+        raise ValueError(f"depth portfolio did not attribute fills to every strategy: {strategy_fills}")
+    return f"strategy_fills={json.dumps(strategy_fills, sort_keys=True)} result_hash={summary['result_hash']}"
+
+
 def main() -> int:
     binary = resolve_binary()
     PROBE_ROOT.mkdir(parents=True, exist_ok=True)
@@ -483,7 +491,7 @@ def main() -> int:
             observed = f"{observed}; {tail}" if observed else tail
         fill_match = re.search(r'(?:"fills"|\bfills=)(\d+)', observed)
         no_trade = fill_match is not None and int(fill_match.group(1)) == 0
-        ok = code == 0 and bool(observed) and not no_trade
+        ok = code == 0 and bool(observed) and not no_trade and not observation_error
         if code != 0 or not observed or observation_error:
             failures += 1
             if code != 0:
@@ -626,6 +634,58 @@ def main() -> int:
             "crates/qx-xingban/src/market_making.rs",
             "crates/qx-app/src/tests/depth_backtest.rs",
             "crates/qx-cli/tests/depth_app_three_entrypoints.rs",
+            "python/tests/test_app_use_cases.py",
+        ],
+    )
+
+    depth_portfolio_run_id = f"probe-depth-portfolio-{time.time_ns()}"
+    depth_portfolio_spec = {
+        "schema_version": 1,
+        "run_id": depth_portfolio_run_id,
+        "depth_path": ".task-tmp/quant-probe/depth-portfolio.json",
+        "tier": "l2",
+        "settlement_currency": "USDT",
+        "initial_cash_raw": 1_000_000_000_000_000,
+        "fee_bps": 0,
+        "latency_snapshots": 0,
+        "queue_position_bps": 0,
+        "market_impact_bps": 0,
+        "output_dir": f".task-tmp/quant-probe/{depth_portfolio_run_id}",
+        "strategy": {
+            "kind": "sma_cross", "strategy_id": "probe-depth-sma",
+            "quantity_raw": 1_000_000_000, "fast_window": 2, "slow_window": 3,
+        },
+        "portfolio": {
+            "primary_priority": 0,
+            "primary_reserved_capital_raw": 500_000_000_000_000,
+            "additional_strategies": [{
+                "priority": 1,
+                "reserved_capital_raw": 500_000_000_000_000,
+                "strategy": {
+                    "kind": "momentum", "strategy_id": "probe-depth-momentum",
+                    "quantity_raw": 1_000_000_000, "fast_window": 2, "slow_window": 3,
+                },
+            }],
+        },
+    }
+    depth_portfolio_frame = PROBE_ROOT / "depth-portfolio.json"
+    write_probe_depth_frame(depth_portfolio_frame)
+    depth_portfolio_spec_path = PROBE_ROOT / "depth-portfolio-spec.json"
+    depth_portfolio_spec_path.write_text(json.dumps(depth_portfolio_spec), encoding="utf-8")
+    executed(
+        "depth_strategy_portfolio",
+        "L2 多策略共享 OMS/撮合/账簿与策略额度归因",
+        "crates/qx-xingban/src/portfolio_orderbook.rs",
+        ["app", "depth-backtest", str(depth_portfolio_spec_path.relative_to(ROOT)).replace("\\", "/")],
+        r'"fills":(\d+)',
+        extra_from_output=lambda _output: depth_portfolio_observation(
+            ROOT / depth_portfolio_spec["output_dir"] / f"{depth_portfolio_run_id}.summary.json"
+        ),
+        evidence=[
+            "crates/qx-xingban/src/portfolio_orderbook.rs",
+            "crates/qx-xingban/src/backtest/portfolio_budget.rs",
+            "crates/qx-app/src/cases/run_depth_backtest.rs",
+            "crates/qx-app/src/tests/depth_backtest.rs",
             "python/tests/test_app_use_cases.py",
         ],
     )

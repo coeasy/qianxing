@@ -193,6 +193,94 @@ fn market_aware_tick_spec_has_the_same_rust_result_through_cli_http_and_python()
 }
 
 #[test]
+fn depth_strategy_portfolio_uses_the_same_shared_result_through_cli_http_and_python() {
+    let root = repo_root();
+    let run_dir = root
+        .join("target")
+        .join(format!("qx-app-depth-portfolio-{}", std::process::id()));
+    std::fs::create_dir_all(&run_dir).expect("create portfolio test output root");
+    let depth_path = run_dir.join("portfolio-ticks.json");
+    std::fs::write(&depth_path, sample_depth()).expect("write portfolio Tick frame");
+    let mut spec: Value = serde_json::from_str(&depth_spec(
+        "depth-portfolio-parity",
+        &depth_path,
+        &run_dir.join("cli-artifacts"),
+    ))
+    .expect("DepthBacktestSpec JSON");
+    spec["portfolio"] = json!({
+        "primary_priority": 0,
+        "primary_reserved_capital_raw": 400_000_000_000_000_i128,
+        "additional_strategies": [{
+            "priority": 1,
+            "reserved_capital_raw": 400_000_000_000_000_i128,
+            "strategy": {
+                "kind": "momentum",
+                "strategy_id": "depth-sdk-momentum",
+                "quantity_raw": 1_000_000_000_i128,
+                "fast_window": 2,
+                "slow_window": 3,
+                "period": 14,
+                "threshold_bps": 100,
+            }
+        }]
+    });
+    let payload = spec.to_string();
+    let spec_path = run_dir.join("portfolio-spec.json");
+    std::fs::write(&spec_path, &payload).expect("write portfolio spec");
+    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["app", "depth-backtest"])
+        .arg(&spec_path)
+        .output()
+        .expect("start CLI depth portfolio");
+    assert_eq!(
+        cli_output.status.code(),
+        Some(0),
+        "CLI depth portfolio failed: {}",
+        String::from_utf8_lossy(&cli_output.stderr)
+    );
+    let cli: Value = serde_json::from_slice(&cli_output.stdout).expect("CLI portfolio JSON");
+
+    std::env::set_var("QX_API_DATA_ROOT", &root);
+    std::env::set_var("QX_API_ARTIFACT_ROOT", run_dir.join("http-artifacts"));
+    let service = qx_api::ApiService::new(qx_api::ApiState::default());
+    let response = service.handle("POST", "/app/depth-backtest", &payload, 0);
+    let http: Value = serde_json::from_str(&response.body).expect("HTTP portfolio JSON");
+    assert_eq!(response.status, 200, "HTTP portfolio failed: {http}");
+
+    let mut python_spec = spec.clone();
+    python_spec["output_dir"] = json!(run_dir.join("python-artifacts"));
+    let python = python_run(&root, &python_spec.to_string(), "run_depth_backtest")
+        .expect("Python native app extension is required for this cross-entrypoint contract");
+    let identities = |value: &Value| {
+        json!({
+            "run_id": value["run_id"],
+            "instrument": value["instrument"],
+            "tier": value["tier"],
+            "result_hash": value["result_hash"],
+            "fills": value["fills"],
+            "equity_points": value["equity_points"],
+        })
+    };
+    assert_eq!(identities(&cli), identities(&http));
+    assert_eq!(identities(&cli), identities(&python));
+    for outcome in [&cli, &http, &python] {
+        let summary_path = outcome["artifacts"]["summary"]
+            .as_str()
+            .expect("summary artifact path");
+        let summary: Value =
+            serde_json::from_slice(&std::fs::read(summary_path).expect("read portfolio summary"))
+                .expect("portfolio summary JSON");
+        let counts = summary["strategy_fills"]
+            .as_object()
+            .expect("strategy fill attribution");
+        assert_eq!(counts.len(), 2);
+        assert!(counts
+            .values()
+            .all(|count| count.as_u64().unwrap_or_default() > 0));
+    }
+}
+
+#[test]
 fn tick_parameter_experiment_is_shared_by_cli_http_python_and_run_lifecycle() {
     let root = repo_root();
     let run_dir = root

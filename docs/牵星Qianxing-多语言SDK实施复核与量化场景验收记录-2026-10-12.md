@@ -114,3 +114,12 @@ Python 十策略证据：
 - 验证：`cargo test --offline -p qx-xingban --lib -- --test-threads=1`（98 passed）；`python tools/check_architecture.py`（1096 项通过）；`python tools/quant_scenario_probe.py`（31 executed、0 missing、0 declared_not_executed，1 个 Live 场景因缺少真实交易所凭据/testnet 被 blocked）；`git diff --check` 通过。
 - 推送后重建 Windows `qianxing-0.1.0-cp310-abi3-win_amd64.whl`，wheel 检查通过，在隔离 Python 3.13 环境离线安装并成功导入 `qianxing`、`qianxing_bridge` 和 Rust 原生扩展。SHA-256：`785be855c1a6b9a779fae15d2e89a0dab50e43085215523849e256ac685ca1c7`。
 - 本轮不证明全能力发布就绪：多账户资金隔离/组合风险与策略归因、Tick/OrderBook/多腿/多市场组合调度接入统一应用 SDK、Paper/Live 组合流程、Web/桌面组合操作、C++ 独立安装消费者、Linux/macOS wheel 矩阵和 Live testnet conformance 仍未完成。
+
+## 11. 2026-10-13 继续实现：Tick/OrderBook 同账户策略组合
+
+- 将 Bar 已有的组合预算账本扩展为 Tick 与 OrderBook 引擎可复用的策略额度账本。L1 Tick 仍适配到共享订单簿撮合器；L2 直接使用共享簿撮合器；两种路径都继续经过同一风控、OMS、账户 Ledger 和 ReplayVerifier，没有增加另一套撮合或记账实现。
+- `DepthBacktestSpec.portfolio` 支持主策略和附属单腿内置策略按优先级运行。共享组合适配器把子策略本地 client ID 映射成组合全局 ID，提供各策略的虚拟持仓与归属成交回调，并在接受挂单时冻结预算、撤单时释放预算、按真实成交价在记账前复核额度。缺失/冲突所有权、超预算与不支持的持仓模式均失败关闭；摘要和 fills.csv 写出策略归属。
+- Rust qx-app 用例验证 L1/L2 均通过共享 Tick/OrderBook 引擎，Rust 内核用例覆盖组合订单隔离、预算超额拒绝和订单归属回调；Python 类型 SDK 新增深度组合规格与产物解码验证。跨入口用例验证 CLI、HTTP、Python 对既有单策略深度回测及参数实验返回一致哈希；该轮也实际发现虚拟环境扩展陈旧造成 20/24 个事件的差异，重建并更新 Windows `cp310-abi3` wheel 后，两条跨入口契约均通过。
+- 验证：`cargo test --offline --workspace -- --test-threads=1` 全部通过（含跨入口、CLI、HTTP、Rust SDK 与 PyO3 native 契约）；`cargo test --offline -p qx-xingban --lib -- --test-threads=1`（100 passed）、`cargo test --offline -p qx-app --lib -- --test-threads=1`（89 passed）、深度 SDK 跨入口契约（3 passed，新增组合规格 CLI/HTTP/Python 同哈希与逐策略成交归因）；Python 全量 125 项通过、1 项环境跳过；策略 crate 27 项通过；`cargo fmt --all --check`、`git diff --check` 通过。架构不变量门禁 1096 项通过。首次 Python 全量测试遇到一次 Windows 临时文件句柄清理竞态，专项重跑与全量重跑均通过。严格 Clippy 尚未全仓通过：存在已有的 `qx-xingban::market_making` 测试模块位置、`qx-runtime::algo_checkpoint` `map_or`、`qx-app::experiment_split` 类型复杂度及组合构建器参数数目告警；本轮没有放宽这些告警门禁。
+- 量化场景探针 32 项已执行、0 missing、0 declared_not_executed；新增 `depth_strategy_portfolio` 场景有 2 个策略分别产生 4 笔归属成交。唯一 blocked 场景仍为 CCXT/Live：环境缺少 CCXT 运行依赖与交易所 testnet 凭据。
+- 本轮支持边界是单账户、单市场、单标的、内置单腿策略的 Bar/L1/L2 组合回测；仍未实现多腿/多市场组合调度、跨账户组合账簿/净额、策略级权益/费用/回撤及聚合组合风控、Paper/Live 多策略工作流、Web/桌面组合配置。真实交易所认证、C++ 构建与 Linux/macOS 消费者安装也未由本轮验证，因此整体方案仍未达到全能力发布门槛。

@@ -41,7 +41,7 @@ impl BuiltinStrategy {
                     .and_then(|value| value.checked_div(price_raw))
                     .filter(|value| *value > 0)
                     .ok_or("波动率预算 sizing 的 ATR/价格比例非法或溢出")?;
-                let risk_notional = available
+                available
                     .checked_mul(i128::from(risk_bps))
                     .and_then(|value| value.checked_div(atr_ratio_bps))
                     .ok_or("target_volatility_bps 名义金额计算溢出")?
@@ -49,8 +49,7 @@ impl BuiltinStrategy {
                     // when the measured range is below the configured risk budget.
                     // Treat available margin as a hard ceiling; leverage must be an
                     // explicit account/risk configuration, never an accidental result.
-                    .min(available);
-                risk_notional
+                    .min(available)
             }
             (None, None, None, Some(fractional_bps)) => {
                 let available = context

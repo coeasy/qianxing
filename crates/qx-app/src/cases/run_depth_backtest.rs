@@ -22,6 +22,9 @@ use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+mod portfolio;
+use portfolio::{attach_portfolio_summary, build_portfolio_strategy};
+
 const DEFAULT_ACCOUNT_ID: &str = "app";
 
 /// Execute a versioned L1/L2 run through the existing Rust engines and persist
@@ -176,6 +179,19 @@ pub(super) fn run_inner(
     };
     let mut depth_strategy = DepthBarStrategy::new(strategy, strategy_context, instrument.clone());
     depth_strategy.initialize().map_err(invalid_input)?;
+    let mut portfolio_strategy = spec
+        .portfolio
+        .as_ref()
+        .map(|_| {
+            build_portfolio_strategy(
+                spec,
+                &instrument,
+                &account_id,
+                &data_fingerprint,
+                frame.snapshots[0].ts,
+            )
+        })
+        .transpose()?;
 
     let report = match spec.tier.as_str() {
         "l1" => {
@@ -190,11 +206,19 @@ pub(super) fn run_inner(
                 risk,
             })
             .with_execution_model(model);
-            match cancellation {
-                Some(cancellation) => engine
+            match (cancellation, portfolio_strategy.as_mut()) {
+                (Some(cancellation), Some(strategy)) => engine
+                    .run_with_cancel(&ticks, strategy, || cancellation.is_cancelled())
+                    .map_err(|error| AppError::from_qx_error(&error))?,
+                (None, Some(strategy)) => Some(
+                    engine
+                        .run(&ticks, strategy)
+                        .map_err(|error| AppError::from_qx_error(&error))?,
+                ),
+                (Some(cancellation), None) => engine
                     .run_with_cancel(&ticks, &mut depth_strategy, || cancellation.is_cancelled())
                     .map_err(|error| AppError::from_qx_error(&error))?,
-                None => Some(
+                (None, None) => Some(
                     engine
                         .run(&ticks, &mut depth_strategy)
                         .map_err(|error| AppError::from_qx_error(&error))?,
@@ -231,6 +255,17 @@ pub(super) fn run_inner(
                     None => Some(
                         engine
                             .run(&frame.snapshots, &mut maker)
+                            .map_err(|error| AppError::from_qx_error(&error))?,
+                    ),
+                }
+            } else if let Some(strategy) = portfolio_strategy.as_mut() {
+                match cancellation {
+                    Some(cancellation) => engine
+                        .run_with_cancel(&frame.snapshots, strategy, || cancellation.is_cancelled())
+                        .map_err(|error| AppError::from_qx_error(&error))?,
+                    None => Some(
+                        engine
+                            .run(&frame.snapshots, strategy)
                             .map_err(|error| AppError::from_qx_error(&error))?,
                     ),
                 }
@@ -343,6 +378,7 @@ pub(super) fn run_inner(
         "model_descriptors": report.model_descriptors,
         "assumptions": report.assumptions,
     });
+    attach_portfolio_summary(&mut summary, spec, &report.fills)?;
     if spec.account_id.is_some() {
         if let Some(object) = summary.as_object_mut() {
             object.insert("account_id".into(), serde_json::json!(account_id));

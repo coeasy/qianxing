@@ -1,6 +1,7 @@
 use crate::{
     run_depth_backtest, verify_depth_run, AppErrorCategory, BuiltinStrategySpec, CallerCapability,
-    DepthBacktestSpec, RunContext, RunStatus, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+    DepthBacktestSpec, PortfolioBacktestConfig, PortfolioStrategySpec, RunContext, RunStatus,
+    DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use qx_core::{
     InstrumentId, MarginMode, OrderPolicy, PositionMode, PositionSide, TradingInstrumentSpec,
@@ -82,6 +83,7 @@ pub(super) fn spec(run_id: &str, root: &Path, tier: &str, levels: usize) -> Dept
         order_policy: None,
         market_making: None,
         account_id: None,
+        portfolio: None,
     }
 }
 
@@ -298,6 +300,75 @@ fn depth_run_handle_uses_the_same_tick_application_workflow() {
         .expect("shared Tick use case");
     assert_eq!(outcome.tier, "l1");
     assert!(outcome.fills > 0);
+}
+
+#[test]
+fn depth_portfolio_runs_multiple_strategies_through_the_shared_tick_and_book_engines() {
+    let root = super::fixtures::scratch("app-depth-portfolio");
+    for tier in ["l1", "l2"] {
+        let run_id = format!("depth-portfolio-{tier}");
+        let mut request = spec(&run_id, &root, tier, if tier == "l1" { 1 } else { 2 });
+        request.portfolio = Some(PortfolioBacktestConfig {
+            primary_priority: 0,
+            primary_reserved_capital_raw: 500_000 * SCALE,
+            additional_strategies: vec![PortfolioStrategySpec {
+                priority: 1,
+                reserved_capital_raw: 500_000 * SCALE,
+                strategy: BuiltinStrategySpec {
+                    kind: BuiltinStrategyKind::Momentum,
+                    strategy_id: "depth-momentum".into(),
+                    quantity_raw: SCALE,
+                    fast_window: 2,
+                    slow_window: 3,
+                    ..request.strategy.clone()
+                },
+            }],
+        });
+        request.initial_cash_raw = 1_000_000 * SCALE;
+        let outcome = run_depth_backtest(
+            &request,
+            &RunContext::new(CallerCapability::Research, &run_id),
+        )
+        .expect("same-account depth portfolio");
+        assert!(outcome.fills > 0, "{tier} portfolio should execute orders");
+        assert_eq!(outcome.equity_points, 48);
+        let fills = std::fs::read_to_string(&outcome.artifacts.fills).expect("fills artifact");
+        assert_eq!(
+            fills.lines().next(),
+            Some("ts,order_id,qty_raw,price_raw,fee_raw,strategy_id")
+        );
+        let owners = fills
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.split(',').nth(5))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(owners.contains("depth-sma"), "{tier} primary attribution");
+        assert!(
+            owners.contains("depth-momentum"),
+            "{tier} child attribution"
+        );
+        let summary = std::fs::read_to_string(&outcome.artifacts.summary)
+            .map(|text| serde_json::from_str::<serde_json::Value>(&text).expect("summary JSON"))
+            .expect("summary artifact");
+        assert_eq!(
+            summary["strategy_ids"],
+            serde_json::json!(["depth-sma", "depth-momentum"])
+        );
+        assert_eq!(
+            summary["strategy_fills"]
+                .as_object()
+                .unwrap()
+                .values()
+                .map(|value| value.as_u64().unwrap())
+                .sum::<u64>(),
+            outcome.fills
+        );
+        verify_depth_run(
+            &outcome,
+            &RunContext::new(CallerCapability::Research, &run_id),
+        )
+        .expect("portfolio report remains verifiable");
+    }
 }
 
 #[test]

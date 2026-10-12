@@ -12,13 +12,27 @@ use qx_strategy::{MarketEvent, Strategy, StrategyContext, StrategyDecision};
 use crate::{
     BookLevel, DataTier, DepthBarStrategy, DepthFrame, OrderBookBacktestConfig,
     OrderBookBacktestEngine, OrderBookBacktestReport, OrderBookExecutionModel, OrderBookSnapshot,
-    OrderBookStrategy,
 };
 use qx_core::Money;
 use qx_zhenlu::RiskGate;
 
+mod adapter;
+use adapter::TickAdapter;
+
 pub trait TickStrategy {
     fn on_tick(&mut self, tick: &QuoteTick, position: i128) -> Result<Vec<Order>, String>;
+
+    fn on_tick_actions(
+        &mut self,
+        tick: &QuoteTick,
+        position: i128,
+        _open_order_ids: &[u64],
+    ) -> Result<crate::OrderBookActions, String> {
+        Ok(crate::OrderBookActions {
+            orders: self.on_tick(tick, position)?,
+            cancel_client_ids: Vec::new(),
+        })
+    }
 }
 
 pub struct NativeTickStrategy<S: Strategy> {
@@ -57,46 +71,6 @@ impl<S: Strategy> TickStrategy for NativeTickStrategy<S> {
         };
         let decision: StrategyDecision = self.strategy.on_event(&self.context, &event)?;
         decision.to_orders(&self.context)
-    }
-}
-
-struct TickAdapter<'a> {
-    strategy: &'a mut dyn TickStrategy,
-    instrument: InstrumentId,
-}
-
-impl TickAdapter<'_> {
-    fn snapshot_to_tick(&self, snapshot: &OrderBookSnapshot) -> Result<QuoteTick, String> {
-        let bid = snapshot
-            .bids
-            .first()
-            .ok_or_else(|| "L1 tick 缺少 bid".to_string())?;
-        let ask = snapshot
-            .asks
-            .first()
-            .ok_or_else(|| "L1 tick 缺少 ask".to_string())?;
-        Ok(QuoteTick::new(
-            snapshot.ts,
-            bid.price,
-            bid.qty,
-            ask.price,
-            ask.qty,
-            snapshot.sequence,
-        ))
-    }
-}
-
-impl OrderBookStrategy for TickAdapter<'_> {
-    fn on_order_book(
-        &mut self,
-        snapshot: &OrderBookSnapshot,
-        position: i128,
-    ) -> Result<Vec<Order>, String> {
-        if snapshot.instrument != self.instrument {
-            return Err("Tick adapter instrument 不一致".into());
-        }
-        self.strategy
-            .on_tick(&self.snapshot_to_tick(snapshot)?, position)
     }
 }
 

@@ -1161,6 +1161,8 @@ class AppUseCaseTests(unittest.TestCase):
             InstrumentId,
             MarketMakingSpec,
             OrderPolicy,
+            PortfolioBacktestConfig,
+            PortfolioStrategySpec,
             TradingInstrumentSpec,
             run_depth_backtest,
             start_depth_backtest,
@@ -1245,6 +1247,60 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(typed_summary["market_spec"]["product"], "perpetual")
         self.assertEqual(typed_summary["order_policy"]["leverage"], 2)
         self.assertTrue(verify_depth_run(typed).verified)
+
+        typed_portfolio = run_depth_backtest(
+            DepthBacktestSpec(
+                run_id="python-depth-portfolio",
+                depth_path=str(depth_path),
+                tier="l2",
+                settlement_currency="USDT",
+                initial_cash_raw=1_000_000_000_000_000,
+                output_dir=str(self.output_dir / "depth-portfolio"),
+                strategy=BuiltinStrategySpec(
+                    kind="sma_cross",
+                    strategy_id="python-depth-sma",
+                    fast_window=2,
+                    slow_window=3,
+                ),
+                portfolio=PortfolioBacktestConfig(
+                    primary_priority=0,
+                    primary_reserved_capital_raw=500_000_000_000_000,
+                    additional_strategies=(
+                        PortfolioStrategySpec(
+                            priority=1,
+                            reserved_capital_raw=500_000_000_000_000,
+                            strategy=BuiltinStrategySpec(
+                                kind="momentum",
+                                strategy_id="python-depth-momentum",
+                                fast_window=2,
+                                slow_window=3,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        )
+        self.assertGreater(typed_portfolio.fills, 0)
+        portfolio_fills = Path(typed_portfolio.artifacts["fills"]).read_text(encoding="utf-8")
+        portfolio_owners = {
+            row.split(",")[5]
+            for row in portfolio_fills.splitlines()[1:]
+            if row.strip()
+        }
+        self.assertIn("python-depth-sma", portfolio_owners)
+        self.assertIn("python-depth-momentum", portfolio_owners)
+        portfolio_summary = json.loads(
+            Path(typed_portfolio.artifacts["summary"]).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            portfolio_summary["strategy_ids"],
+            ["python-depth-sma", "python-depth-momentum"],
+        )
+        self.assertEqual(
+            sum(portfolio_summary["strategy_fills"].values()),
+            typed_portfolio.fills,
+        )
+        self.assertTrue(verify_depth_run(typed_portfolio).verified)
 
         market_maker = run_depth_backtest(
             DepthBacktestSpec(

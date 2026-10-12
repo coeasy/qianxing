@@ -13,15 +13,19 @@ struct PendingExposure {
 }
 
 #[derive(Default)]
-pub(super) struct PortfolioBudgetState {
+pub(crate) struct PortfolioBudgetState {
     positions: BTreeMap<String, i128>,
     pending_orders: BTreeMap<u64, PendingExposure>,
 }
 
 impl PortfolioBudgetState {
-    pub(super) fn order_budget_check(
+    pub(crate) fn position(&self, strategy_id: &str) -> i128 {
+        self.positions.get(strategy_id).copied().unwrap_or_default()
+    }
+
+    pub(crate) fn order_budget_check(
         &self,
-        strategy: &dyn super::BarStrategy,
+        budget_for: impl Fn(&str) -> Option<i128>,
         order: &Order,
         reference_price: i128,
         instrument_spec: Option<&TradingInstrumentSpec>,
@@ -31,7 +35,7 @@ impl PortfolioBudgetState {
         let Some(strategy_id) = strategy_id(order) else {
             return Ok(None);
         };
-        let Some(budget) = strategy.strategy_budget_raw(strategy_id) else {
+        let Some(budget) = budget_for(strategy_id) else {
             return Ok(None);
         };
 
@@ -76,9 +80,9 @@ impl PortfolioBudgetState {
         Ok(Some((budget, maximum_required)))
     }
 
-    pub(super) fn validate_fill_budget(
+    pub(crate) fn validate_fill_budget(
         &self,
-        strategy: &dyn super::BarStrategy,
+        budget_for: impl Fn(&str) -> Option<i128>,
         order: &Order,
         fill: &Fill,
         instrument_spec: Option<&TradingInstrumentSpec>,
@@ -88,7 +92,7 @@ impl PortfolioBudgetState {
         let Some(strategy_id) = strategy_id(order) else {
             return Ok(());
         };
-        let Some(budget) = strategy.strategy_budget_raw(strategy_id) else {
+        let Some(budget) = budget_for(strategy_id) else {
             return Ok(());
         };
 
@@ -145,14 +149,14 @@ impl PortfolioBudgetState {
         Ok(())
     }
 
-    pub(super) fn accept_if_owned(
+    pub(crate) fn accept_if_owned(
         &mut self,
-        strategy: &dyn super::BarStrategy,
+        budget_for: impl Fn(&str) -> Option<i128>,
         order: &Order,
         reference_price: i128,
     ) -> Result<(), QxError> {
-        if let Some(owner) = strategy_id(order)
-            .filter(|strategy_id| strategy.strategy_budget_raw(strategy_id).is_some())
+        if let Some(owner) =
+            strategy_id(order).filter(|strategy_id| budget_for(strategy_id).is_some())
         {
             let owner = owner.to_string();
             if self.pending_orders.contains_key(&order.client_id) {
@@ -171,16 +175,27 @@ impl PortfolioBudgetState {
         Ok(())
     }
 
-    pub(super) fn apply_fill_if_owned(
+    pub(crate) fn apply_fill_if_owned(
         &mut self,
-        strategy: &dyn super::BarStrategy,
+        budget_for: impl Fn(&str) -> Option<i128>,
         order: &Order,
         fill: &Fill,
     ) -> Result<(), QxError> {
-        if strategy_id(order)
-            .is_some_and(|strategy_id| strategy.strategy_budget_raw(strategy_id).is_some())
-        {
+        if strategy_id(order).is_some_and(|strategy_id| budget_for(strategy_id).is_some()) {
             self.apply_fill(order, fill)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn cancel_if_owned(
+        &mut self,
+        budget_for: impl Fn(&str) -> Option<i128>,
+        client_order_id: u64,
+    ) -> Result<(), QxError> {
+        if let Some(pending) = self.pending_orders.get(&client_order_id) {
+            if budget_for(&pending.strategy_id).is_some() {
+                self.pending_orders.remove(&client_order_id);
+            }
         }
         Ok(())
     }

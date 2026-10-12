@@ -23,7 +23,7 @@ pub mod strategy;
 pub use strategy::{BarStrategy, NativeBarStrategy};
 mod portfolio_strategy;
 pub use portfolio_strategy::{PortfolioBarStrategy, PortfolioStrategySlot};
-mod portfolio_budget;
+pub(crate) mod portfolio_budget;
 use portfolio_budget::PortfolioBudgetState;
 mod order_validation;
 use order_validation::reduce_only_order_allowed;
@@ -604,7 +604,7 @@ impl BacktestEngine {
                         let reference_price = order.limit.map(|p| p.raw()).unwrap_or(visible_close);
                         let order_qty = checked_abs(order.qty.raw())?;
                         let strategy_budget_check = portfolio_budget.order_budget_check(
-                            &*strategy,
+                            |strategy_id| strategy.strategy_budget_raw(strategy_id),
                             &order,
                             reference_price,
                             instrument_spec.as_ref(),
@@ -869,7 +869,7 @@ impl BacktestEngine {
                                 );
                             } else {
                                 portfolio_budget.accept_if_owned(
-                                    &*strategy,
+                                    |strategy_id| strategy.strategy_budget_raw(strategy_id),
                                     &order,
                                     reference_price,
                                 )?;
@@ -920,7 +920,7 @@ impl BacktestEngine {
                 }
                 order.trace_fill(&mut fill, None, None);
                 portfolio_budget.validate_fill_budget(
-                    &*strategy,
+                    |strategy_id| strategy.strategy_budget_raw(strategy_id),
                     &order,
                     &fill,
                     instrument_spec.as_ref(),
@@ -948,7 +948,11 @@ impl BacktestEngine {
                 let terms = qx_core::FillTerms::resolve(instrument_spec.as_ref(), multiplier);
                 let entry_ids =
                     qx_core::apply_fill_to_books(&mut ledger, &mut oms, &currency, &fill, terms)?;
-                portfolio_budget.apply_fill_if_owned(&*strategy, &order, &fill)?;
+                portfolio_budget.apply_fill_if_owned(
+                    |strategy_id| strategy.strategy_budget_raw(strategy_id),
+                    &order,
+                    &fill,
+                )?;
                 if ashare_rules.is_some() && order.side == Side::Buy {
                     ashare_state.on_buy(fill.qty.raw());
                 }

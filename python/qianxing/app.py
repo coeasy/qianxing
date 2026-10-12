@@ -274,7 +274,7 @@ class PortfolioStrategySpec:
 
 @dataclass(frozen=True)
 class PortfolioBacktestConfig:
-    """Additional same-account single-leg strategies in a deterministic Bar run."""
+    """Additional same-account single-leg strategies in a deterministic Bar or depth run."""
 
     primary_priority: int
     primary_reserved_capital_raw: int
@@ -727,14 +727,23 @@ class DepthBacktestSpec:
     order_policy: OrderPolicy | dict[str, Any] | None = None
     market_making: MarketMakingSpec | dict[str, int] | None = None
     account_id: str | None = None
+    portfolio: PortfolioBacktestConfig | dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {**asdict(self), "strategy": self.strategy.to_dict()}
         if isinstance(self.market_making, MarketMakingSpec):
             payload["market_making"] = self.market_making.to_dict()
+        if isinstance(self.portfolio, PortfolioBacktestConfig):
+            payload["portfolio"] = self.portfolio.to_dict()
         # Mirror Rust's skip_serializing_if on these optional v1 extensions so
         # legacy requests keep their historical JSON shape across SDKs.
-        for optional_field in ("market_spec", "order_policy", "market_making", "account_id"):
+        for optional_field in (
+            "market_spec",
+            "order_policy",
+            "market_making",
+            "account_id",
+            "portfolio",
+        ):
             if payload[optional_field] is None:
                 del payload[optional_field]
         return payload

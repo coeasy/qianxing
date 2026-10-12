@@ -32,7 +32,7 @@ impl PortfolioBacktestConfig {
         if self.additional_strategies.is_empty() {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
-                "BacktestSpec.portfolio 至少需要一个附属策略；单策略请省略 portfolio",
+                "组合回测规格至少需要一个附属策略；单策略请省略 portfolio",
             ));
         }
         let mut ids = std::collections::BTreeSet::new();

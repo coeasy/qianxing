@@ -2,6 +2,7 @@
 
 use super::{
     is_identity_token, supports_fixed_notional_sizing, BacktestArtifacts, BuiltinStrategySpec,
+    PortfolioBacktestConfig,
 };
 use crate::error::{AppError, AppErrorCategory};
 use qx_core::{OrderPolicy, TradingInstrumentSpec};
@@ -40,6 +41,9 @@ pub struct DepthBacktestSpec {
     /// Ledger/account ownership for this run. Omitted legacy specs use `app`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
+    /// Same-account strategy portfolio over the shared Tick/OrderBook ledger.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portfolio: Option<PortfolioBacktestConfig>,
 }
 
 impl DepthBacktestSpec {
@@ -88,6 +92,12 @@ impl DepthBacktestSpec {
             ));
         }
         if let Some(market_making) = self.market_making {
+            if self.portfolio.is_some() {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "DepthBacktestSpec 暂不允许把 market_making 与策略组合混用",
+                ));
+            }
             if self.tier != "l2" {
                 return Err(AppError::new(
                     AppErrorCategory::InvalidInput,
@@ -138,15 +148,6 @@ impl DepthBacktestSpec {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
                 "queue_position_bps 仅影响限价单；当前内置策略只提交市价单，必须为 0",
-            ));
-        }
-        if self.strategy.target_available_margin_bps.is_some()
-            || self.strategy.target_volatility_bps.is_some()
-            || self.strategy.target_kelly_fraction_bps.is_some()
-        {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "DepthBacktestSpec 尚未接入逐时点波动率预算所需的账户快照",
             ));
         }
         match (&self.market_spec, self.order_policy) {
@@ -200,7 +201,48 @@ impl DepthBacktestSpec {
             }
             (None, None) => {}
         }
-        self.strategy.validate()
+        self.strategy.validate()?;
+        if let Some(portfolio) = &self.portfolio {
+            portfolio.validate(&self.strategy, self.initial_cash_raw)?;
+            if self
+                .order_policy
+                .is_some_and(|policy| policy.position_mode != qx_core::PositionMode::OneWay)
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "Tick/OrderBook 策略组合目前要求 OneWay 持仓模式",
+                ));
+            }
+        }
+        let strategies = std::iter::once(&self.strategy).chain(
+            self.portfolio
+                .iter()
+                .flat_map(|portfolio| portfolio.additional_strategies.iter())
+                .map(|member| &member.strategy),
+        );
+        for strategy in strategies {
+            if strategy.target_available_margin_bps.is_some()
+                || strategy.target_volatility_bps.is_some()
+                || strategy.target_kelly_fraction_bps.is_some()
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "DepthBacktestSpec 策略 sizing 尚未接入逐时点账户风险快照",
+                ));
+            }
+            if strategy.target_notional_raw.is_some()
+                && self
+                    .market_spec
+                    .as_ref()
+                    .is_some_and(|market| !supports_fixed_notional_sizing(market))
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "target_notional_raw 当前只支持现货的一单位线性名义金额；衍生品需先配置合约专用 sizing",
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn from_json(payload: &str) -> Result<Self, AppError> {

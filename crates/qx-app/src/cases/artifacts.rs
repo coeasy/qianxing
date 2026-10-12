@@ -11,7 +11,7 @@
 //! | `<run_id>.run.json` | `qx_core::RunManifest` 的 JSON | `result_hash` / `data_fingerprint` / `config_hash` |
 //! | `<run_id>.summary.json` | [`RunSummary`] | 与 manifest 的同一组哈希逐字相等 |
 //! | `<run_id>.equity.csv` | `ts,equity_raw` | 行数 == `equity_points`；末行 == `final_equity_raw` |
-//! | `<run_id>.fills.csv` | `ts,order_id,qty_raw,price_raw,fee_raw` | 行数 == `fills` |
+//! | `<run_id>.fills.csv` | `ts,order_id,qty_raw,price_raw,fee_raw,strategy_id` | 行数 == `fills` |
 //!
 //! `RunManifest` 直接复用 `qx-core` 的那一份——**不**另造一份同形清单：它是全仓对"这次运行
 //! 是谁、拿什么跑的、结果是什么"的唯一说法，应用层再写一份等于给同一件事发两张身份证。
@@ -169,20 +169,21 @@ pub(super) fn equity_csv(ts: &[u64], equity: &[i128]) -> String {
     out
 }
 
-/// `ts,order_id,qty_raw,price_raw,fee_raw` 五列。
+/// `ts,order_id,qty_raw,price_raw,fee_raw,strategy_id` 六列。
 ///
 /// **刻意没有 side 列**：`qx_core::Fill` 不带方向，方向在订单上；给这一格编一个默认值
 /// 就是"看起来完整的来源未知"，正是本仓明令禁止的形状。
 pub(super) fn fills_csv(fills: &[Fill]) -> String {
-    let mut out = String::from("ts,order_id,qty_raw,price_raw,fee_raw\n");
+    let mut out = String::from("ts,order_id,qty_raw,price_raw,fee_raw,strategy_id\n");
     for fill in fills {
         out.push_str(&format!(
-            "{},{},{},{},{}\n",
+            "{},{},{},{},{},{}\n",
             fill.ts,
             fill.order_id,
             fill.qty.raw(),
             fill.price.raw(),
-            fill.fee.raw()
+            fill.fee.raw(),
+            fill.strategy_id.as_deref().unwrap_or_default()
         ));
     }
     out

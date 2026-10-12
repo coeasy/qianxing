@@ -23,6 +23,43 @@ pub trait OrderBookStrategy {
             cancel_client_ids: Vec::new(),
         })
     }
+
+    /// Strategy portfolios may enforce per-member capital before an order reaches OMS.
+    fn check_order_budget(
+        &self,
+        _order: &Order,
+        _reference_price: i128,
+        _instrument_spec: Option<&qx_core::TradingInstrumentSpec>,
+    ) -> Result<(), qx_core::QxError> {
+        Ok(())
+    }
+
+    /// Validate the actual fill price before the authoritative ledger is updated.
+    fn validate_fill_budget(
+        &self,
+        _order: &Order,
+        _fill: &qx_core::Fill,
+        _instrument_spec: Option<&qx_core::TradingInstrumentSpec>,
+    ) -> Result<(), qx_core::QxError> {
+        Ok(())
+    }
+
+    fn on_order_accepted(
+        &mut self,
+        _order: &Order,
+        _reference_price: Option<i128>,
+    ) -> Result<(), qx_core::QxError> {
+        Ok(())
+    }
+
+    fn on_order_cancelled(&mut self, _order: &Order) -> Result<(), qx_core::QxError> {
+        Ok(())
+    }
+
+    /// Receives fills only after OMS and Ledger accepted the fill.
+    fn on_fill(&mut self, _order: &Order, _fill: &qx_core::Fill) -> Result<(), qx_core::QxError> {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

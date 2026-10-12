@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791832386
+generated_at_unix: 1791835370
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -148,7 +148,7 @@ scenarios:
     anchor: "crates/qx-xingban"
     command: "qx-cli backtest book --fill-tier l2 --root .task-tmp/quant-probe/book sma_cross deploy/qianxing.depth-frame.example.json"
     exit_code: 0
-    observed: "run_id=depth-backtest:l2:sma_cross:BTCUSDT.BINANCE data_fingerprint=depth:example-depth-l2-v1:509c1b9eff771fb8 result_hash=59a57f097dfd3d45"
+    observed: "run_id=depth-backtest:l2:sma_cross:BTCUSDT.BINANCE data_fingerprint=depth:example-depth-l2-v1:509c1b9eff771fb8 result_hash=e896fa89e839a855"
     evidence: ["crates/qx-xingban"]
   - name: market_making
     label: "做市（双边限价报价、库存偏移与撤单）"
@@ -156,8 +156,16 @@ scenarios:
     anchor: "crates/qx-xingban/src/market_making.rs"
     command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
     exit_code: 0
-    observed: "42; result_hash=ea8110a2a0ea90c1"
+    observed: "42; result_hash=460f4db31d89a67e"
     evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
+  - name: depth_strategy_portfolio
+    label: "L2 多策略共享 OMS/撮合/账簿与策略额度归因"
+    status: executed
+    anchor: "crates/qx-xingban/src/portfolio_orderbook.rs"
+    command: "qx-cli app depth-backtest .task-tmp/quant-probe/depth-portfolio-spec.json"
+    exit_code: 0
+    observed: "8; strategy_fills={\"probe-depth-momentum\": 4, \"probe-depth-sma\": 4} result_hash=4a452bd85fe02e25"
+    evidence: ["crates/qx-xingban/src/portfolio_orderbook.rs", "crates/qx-xingban/src/backtest/portfolio_budget.rs", "crates/qx-app/src/cases/run_depth_backtest.rs", "crates/qx-app/src/tests/depth_backtest.rs", "python/tests/test_app_use_cases.py"]
   - name: algo_execution
     label: "算法执行（API 受理 / TWAP 拆单 / Paper 恢复 / EventLog 聚合）"
     status: executed
