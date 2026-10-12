@@ -5,7 +5,10 @@
 //! 端口。Runtime、Storage、Paper、CCXT 和 Binance 通过 adapter 实现这些端口，
 //! 避免应用服务反向依赖某个运行时具体类型。
 
-use qx_core::{Fill, InstrumentId, Order, TradingInstrumentSpec};
+pub use qx_core::{
+    Fill, InstrumentId, Order, OrderPolicy, OrderStatus, OrderTrace, Price, Quantity, Side,
+    TradingInstrumentSpec,
+};
 use qx_guanxing::QuoteTick;
 
 #[derive(Clone, PartialEq, Eq, Debug)]

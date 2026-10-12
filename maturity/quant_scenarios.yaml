@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791790576
+generated_at_unix: 1791792783
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -156,7 +156,7 @@ scenarios:
     anchor: "crates/qx-xingban/src/market_making.rs"
     command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
     exit_code: 0
-    observed: "42; result_hash=8f0f693f15863f8f"
+    observed: "42; result_hash=0fdb89c708b0ce1d"
     evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
   - name: multi_language_strategy
     label: "多语言策略（Rust 内核 + Python worker）"

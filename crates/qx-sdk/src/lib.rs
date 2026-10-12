@@ -17,8 +17,10 @@
 //!
 //! - 门面是 `qx-app` 公开面的**超集**：`qx-app` 重导出的每一项在这里都够得着，
 //!   所以集成方**不需要**再单独依赖 `qx-app`。
-//! - 门面**唯一**多出来的是 [`Client`]（以及把 `qx_strategy::BuiltinStrategyKind` 摆出来，
-//!   因为它是 `qx-app::BuiltinStrategySpec::new` 的参数类型而 `qx-app` 没有重导出它）。
+//! - 门面还公开策略注册表类型与执行扩展端口：它们是构造 `qx-app` 输入、接入共享 Rust
+//!   TWAP/VWAP 状态机所需的稳定边界，不在门面里复制策略、风险或订单逻辑。
+//! - TWAP/VWAP 父单状态可从稳定门面创建、序列化，并通过 `ExecutionGateway` 推进；
+//!   持久化、单飞调度和 Paper/Live worker 仍由嵌入宿主负责，不能把这些原语描述成托管工作流。
 //! - `qx-app` 的 API 变动会**同时**是门面的变动——门面刻意不做版本隔离层，那会变成第二份
 //!   语义。门面的 semver 承诺就是"跟着 `qx-app` 一起动，但**变动必须是有意的**"。
 //!
@@ -51,7 +53,12 @@ pub mod client;
 
 pub use client::Client;
 pub use qx_execution::{
-    plan_twap, plan_vwap, AlgoChildSlice, AlgoExecutionError, VwapVolumeBucket, MAX_ALGO_CHILDREN,
+    plan_twap, plan_vwap, AlgoChildSlice, AlgoExecutionError, AlgoExecutionState,
+    AlgoExecutionStatus, AlgoExecutionStep, AlgoParentOrder, EventAppender, ExecutionEvent,
+    ExecutionEventEnvelope, ExecutionEventPort, ExecutionGateway, Fill, InstrumentId, LedgerProbe,
+    Order, OrderPolicy, OrderStatus, OrderStore, OrderTrace, PortExecutionResult, Price, Quantity,
+    RiskPort, RiskVerdict, Side, TradingInstrumentSpec, VenuePort, VenueRouterPort,
+    VwapVolumeBucket, MAX_ALGO_CHILDREN,
 };
 
 // —— §6.1「统一错误」——
@@ -124,5 +131,4 @@ pub use qx_app::{
 
 // —— §6.1「Provider/Venue extension ports」——
 // 第三方要接自己的数据源或交易所，就实现这两个 trait；实现之后经 `qx-app` 的用例注入。
-pub use qx_execution::VenuePort;
 pub use qx_provider::DataProvider;

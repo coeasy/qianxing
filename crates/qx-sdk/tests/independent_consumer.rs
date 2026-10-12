@@ -11,10 +11,13 @@
 //! 而不是在测试里现造：独立消费者的第一件事本来就是"拿到一份别人的数据"。
 
 use qx_sdk::{
-    AlgoExecutionMethod, AlgoExecutionSpec, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec,
-    CallerCapability, Client, DatasetSpec, ExperimentParameterSpace, ExperimentSplitPlan,
-    RiskParityAssetSpec, RiskParitySpec, RunExperimentSpec, RunStatus, VwapVolumeBucket,
-    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
+    AlgoExecutionMethod, AlgoExecutionSpec, AlgoExecutionState, AlgoExecutionStatus,
+    AlgoParentOrder, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability,
+    Client, DatasetSpec, EventAppender, ExecutionEvent, ExecutionEventEnvelope, ExecutionGateway,
+    ExperimentParameterSpace, ExperimentSplitPlan, InstrumentId, Order, OrderStatus, OrderStore,
+    Price, Quantity, RiskParityAssetSpec, RiskParitySpec, RiskPort, RiskVerdict, RunExperimentSpec,
+    RunStatus, Side, VenuePort, VwapVolumeBucket, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+    BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
 
@@ -248,6 +251,130 @@ fn an_independent_consumer_plans_twap_and_vwap_through_the_stable_facade() {
             .collect::<Vec<_>>(),
         [1, 3, 6]
     );
+}
+
+#[test]
+fn an_independent_consumer_prepares_restartable_algo_state_through_the_facade() {
+    let client = Client::new(CallerCapability::Research, "algo-state");
+    let spec = AlgoExecutionSpec {
+        schema_version: ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+        parent_id: "parent-state".into(),
+        total_quantity_raw: 11,
+        start_ts: 10,
+        end_ts: 40,
+        method: AlgoExecutionMethod::Twap,
+        child_count: Some(4),
+        volume_profile: vec![],
+    };
+    let plan = client.plan_algo_execution(&spec).unwrap();
+    let mut state = AlgoExecutionState::new(AlgoParentOrder {
+        parent_id: spec.parent_id.clone(),
+        plan: plan.children,
+        child_order_id_base: 100,
+        parent_order: Order {
+            client_id: 90,
+            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_raw(11),
+            limit: Some(Price::from_i64(100)),
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+        },
+    })
+    .expect("prepare Rust SDK algo state");
+
+    assert_eq!(state.status, AlgoExecutionStatus::Ready);
+    assert_eq!(state.plan.len(), 4);
+    let checkpoint = state.to_json().unwrap();
+    assert_eq!(
+        qx_sdk::AlgoExecutionState::from_json(&checkpoint).unwrap(),
+        state
+    );
+
+    let mut venue = ConsumerVenue;
+    let mut events = ConsumerEvents::default();
+    let mut source_seq = 0;
+    let risk = ConsumerRisk;
+    let mut gateway = ExecutionGateway::new(
+        &mut venue,
+        &mut events,
+        "independent-consumer",
+        10,
+        &mut source_seq,
+    );
+    let step = state.step(10, &mut gateway, &risk).unwrap();
+    assert!(matches!(step, qx_sdk::AlgoExecutionStep::Submitted { .. }));
+    assert_eq!(state.next_slice_position, 1);
+}
+
+struct ConsumerVenue;
+
+impl VenuePort for ConsumerVenue {
+    fn venue_id(&self) -> &str {
+        "consumer-paper"
+    }
+
+    fn submit_order(&mut self, order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
+        Ok(vec![ExecutionEvent::Accepted {
+            client_order_id: order.client_id,
+            venue_order_id: format!("consumer-{}", order.client_id),
+        }])
+    }
+
+    fn cancel_order(
+        &mut self,
+        client_order_id: u64,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        Ok(vec![ExecutionEvent::Cancelled { client_order_id }])
+    }
+}
+
+#[derive(Default)]
+struct ConsumerEvents(Vec<Order>);
+
+impl OrderStore for ConsumerEvents {
+    fn orders(&self) -> Vec<Order> {
+        self.0.clone()
+    }
+
+    fn register_order(
+        &mut self,
+        order: Order,
+        _ts: u64,
+        _correlation_id: Option<String>,
+    ) -> Result<(), String> {
+        self.0.push(order);
+        Ok(())
+    }
+}
+
+impl EventAppender for ConsumerEvents {
+    fn append_execution_event(&mut self, envelope: ExecutionEventEnvelope) -> Result<(), String> {
+        if let ExecutionEvent::Accepted {
+            client_order_id, ..
+        } = envelope.event
+        {
+            let order = self
+                .0
+                .iter_mut()
+                .find(|order| order.client_id == client_order_id)
+                .ok_or_else(|| "accepted event without order".to_string())?;
+            order.status = OrderStatus::Accepted;
+        }
+        Ok(())
+    }
+}
+
+struct ConsumerRisk;
+
+impl RiskPort for ConsumerRisk {
+    fn evaluate_order(&self, _order: &Order) -> Result<RiskVerdict, String> {
+        Ok(RiskVerdict::Allow)
+    }
 }
 
 #[test]
