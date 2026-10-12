@@ -180,7 +180,7 @@ providers:
     depth: unsupported
     precision: partial
     evidence: [crates/qx-python/src/provider_bridge.rs, python/tests/test_provider_sdk.py]
-    limitations: ["这是 SDK 绑定适配器，不代表某个外部数据源已认证；当前贯通历史 Bar JSON 的 Rust Registry 与回测，实时订阅、分页与外部源 conformance 需逐源实现并验收"]
+    limitations: ["这是 SDK 绑定适配器，不代表某个外部数据源已认证；当前贯通历史 Bar 与 Quote 订单簿快照到 Rust Bar/DepthFrame 及回测；实时订阅、分页、盘口增量合并、限流、修订与外部源 conformance 需逐源实现并验收"]
 
   - name: InMemoryProvider
     impl: crates/qx-provider/src/lib.rs

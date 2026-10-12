@@ -6,10 +6,7 @@
 //! `app_*` 函数与 `qx-cli app` 子命令、`POST /app/*` 路由调的是**同一组 `qx-app`
 //! 用例**。它们的进出都是字符串：传一份 spec/outcome JSON，换回一份结果 JSON；失败时抛
 //! [`QxAppError`]，**异常文本就是 `AppError::to_json()` 的原文**——于是「同一 use case 三入口
-//! 结果哈希相同、错误 code 与 correlation id 相同」在 Python 这一侧也是构造性的。
-//!
-//! 用专门的异常类型而不是 `ValueError`：调用方要能只捕获应用层用例的失败，并按文档里的
-//! `category` 分支（`InvalidInput` 改输入、`DataUnavailable` 去取数据……），而不是去猜字符串。
+//! 结果哈希相同、错误 code 与 correlation id 相同」在 Python 这一侧也是构造性的。专用异常类型而非 `ValueError` 让调用方可按文档中的 `category`（`InvalidInput` 改输入、`DataUnavailable` 去取数据）捕获失败。
 //!
 
 use pyo3::exceptions::{PyException, PyIndexError, PyValueError};

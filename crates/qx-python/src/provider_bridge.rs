@@ -7,6 +7,7 @@ use qx_provider::{
     DataProvider, DataQuery, ProviderCapability, ProviderError, ProviderErrorClass,
     ProviderPayload, ProviderRegistry, ProviderResult,
 };
+use qx_xingban::{DepthFrame, OrderBookSnapshot};
 use serde::Deserialize;
 use std::sync::Mutex;
 
@@ -116,6 +117,78 @@ impl PyProviderRegistry {
             .to_bar_frame(&query)
             .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
         Ok(frame.to_json())
+    }
+
+    fn fetch_depth_frame_json(&self, query_json: &str, tier: &str) -> PyResult<String> {
+        if !matches!(tier, "l1" | "l2") {
+            return Err(PyValueError::new_err("depth tier must be l1 or l2"));
+        }
+        let query = DataQuery::from_json(query_json)
+            .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
+        if query.kind != qx_provider::DataKind::Quote || query.instrument_set.len() != 1 {
+            return Err(PyValueError::new_err(
+                "depth provider query requires Quote data and exactly one instrument",
+            ));
+        }
+        let result = self
+            .inner
+            .fetch_with_failover(&query)
+            .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
+        let instrument = query.instrument_set.iter().next().expect("one instrument");
+        let mut snapshots = result
+            .records
+            .iter()
+            .zip(&result.payloads)
+            .map(|(record, payload)| {
+                if payload.content_type != "application/vnd.qianxing.order-book-snapshot+json;v=1"
+                    || payload.instrument != *instrument
+                {
+                    return Err(PyValueError::new_err(
+                        "depth provider returned a non-snapshot or mismatched instrument payload",
+                    ));
+                }
+                let snapshot: OrderBookSnapshot = serde_json::from_str(&payload.json)
+                    .map_err(|error| PyValueError::new_err(format!("invalid book snapshot: {error}")))?;
+                snapshot
+                    .validate()
+                    .map_err(|error| PyValueError::new_err(format!("invalid book snapshot: {error}")))?;
+                if snapshot.ts != record.event_time || snapshot.instrument.to_string() != *instrument {
+                    return Err(PyValueError::new_err(
+                        "book snapshot instrument or event timestamp does not match provider lineage",
+                    ));
+                }
+                if tier == "l1" && (snapshot.bids.len() != 1 || snapshot.asks.len() != 1) {
+                    return Err(PyValueError::new_err(
+                        "L1 provider snapshots must contain exactly one bid and one ask",
+                    ));
+                }
+                Ok(snapshot)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        snapshots.sort_by_key(|snapshot| (snapshot.ts, snapshot.sequence));
+        if snapshots
+            .windows(2)
+            .any(|pair| pair[0].ts >= pair[1].ts || pair[0].sequence >= pair[1].sequence)
+        {
+            return Err(PyValueError::new_err(
+                "depth snapshots must have strictly increasing timestamps and sequences",
+            ));
+        }
+        let frame = DepthFrame {
+            schema_version: DepthFrame::SUPPORTED_SCHEMA_VERSION,
+            source: format!("{}#query={:016x}", result.provider_id, query.digest()),
+            instrument: snapshots
+                .first()
+                .ok_or_else(|| PyValueError::new_err("depth provider returned no snapshots"))?
+                .instrument
+                .clone(),
+            snapshots,
+        };
+        frame
+            .validate()
+            .map_err(|error| PyValueError::new_err(format!("invalid depth frame: {error}")))?;
+        serde_json::to_string(&frame)
+            .map_err(|error| PyValueError::new_err(format!("depth frame encode failed: {error}")))
     }
 }
 

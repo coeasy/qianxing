@@ -7,9 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from qianxing.app import BacktestSpec, BuiltinStrategySpec
+from qianxing.app import BacktestSpec, BuiltinStrategySpec, DepthBacktestSpec, verify_depth_run
 from qianxing.data import (
     BAR_JSON_CONTENT_TYPE,
+    ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE,
     ProviderCapability,
     ProviderManualInterventionError,
     ProviderPayloadRow,
@@ -183,6 +184,113 @@ class ProviderSdkTest(unittest.TestCase):
                         instrument_set=("BTCUSDT.BINANCE",),
                     ),
                 )
+
+    def test_quote_provider_to_depth_frame_and_shared_rust_tick_backtest(self) -> None:
+        fixture = json.loads(
+            (Path(__file__).resolve().parents[2] / "deploy" / "qianxing.depth-frame.l1.example.json")
+            .read_text(encoding="utf-8")
+        )
+        instrument = f"{fixture['instrument']['symbol']}.{fixture['instrument']['venue']}"
+        rows = tuple(
+            ProviderPayloadRow(
+                event_time=snapshot["ts"],
+                receive_time=snapshot["ts"],
+                instrument=instrument,
+                content_type=ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE,
+                json=json.dumps(snapshot, sort_keys=True, separators=(",", ":")),
+            )
+            for snapshot in fixture["snapshots"]
+        )
+        capability = ProviderCapability(
+            provider_id="quote-fixture",
+            version="v1",
+            data_kinds=("Quote",),
+            asset_classes=("crypto",),
+            frequencies=("tick",),
+            auth_scope="public",
+            rate_limit_per_second=10,
+            freshness_seconds=60,
+            historical_start=rows[0].event_time,
+            historical_end=rows[-1].event_time,
+            realtime=False,
+            priority=0,
+            quality_score=100,
+            cost_score=1,
+        )
+        registry = ProviderRegistry()
+        registry.register(capability, _Bars(capability, rows))
+        query = ProviderQuery(
+            kind="Quote",
+            asset_class="crypto",
+            frequency="tick",
+            start=rows[0].event_time,
+            end=rows[-1].event_time,
+            instrument_set=(instrument,),
+        )
+        frame = registry.fetch_depth_frame(query, "l1")
+        self.assertRegex(frame["source"], r"^quote-fixture#query=[0-9a-f]{16}$")
+        self.assertEqual(len(frame["snapshots"]), len(rows))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = DepthBacktestSpec(
+                run_id="provider-sdk-depth-run",
+                depth_path=str(root / "depth.json"),
+                tier="l1",
+                settlement_currency="USDT",
+                initial_cash_raw=1_000_000_000_000_000,
+                output_dir=str(root / "run"),
+                strategy=BuiltinStrategySpec(
+                    kind="sma_cross",
+                    strategy_id="provider-depth-sdk",
+                    fast_window=2,
+                    slow_window=3,
+                ),
+            )
+            outcome = registry.run_depth_backtest(spec, query, "l1")
+            self.assertTrue(verify_depth_run(outcome).verified)
+
+    def test_depth_provider_rejects_event_time_mismatch(self) -> None:
+        fixture = json.loads(
+            (Path(__file__).resolve().parents[2] / "deploy" / "qianxing.depth-frame.l1.example.json")
+            .read_text(encoding="utf-8")
+        )
+        snapshot = fixture["snapshots"][0]
+        instrument = f"{fixture['instrument']['symbol']}.{fixture['instrument']['venue']}"
+        row = ProviderPayloadRow(
+            event_time=snapshot["ts"] + 1,
+            receive_time=snapshot["ts"] + 1,
+            instrument=instrument,
+            content_type=ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE,
+            json=json.dumps(snapshot, sort_keys=True, separators=(",", ":")),
+        )
+        capability = ProviderCapability(
+            provider_id="bad-quote",
+            version="v1",
+            data_kinds=("Quote",),
+            asset_classes=("crypto",),
+            frequencies=("tick",),
+            auth_scope="public",
+            rate_limit_per_second=10,
+            freshness_seconds=60,
+            historical_start=row.event_time,
+            historical_end=row.event_time,
+            realtime=False,
+            priority=0,
+            quality_score=100,
+            cost_score=1,
+        )
+        registry = ProviderRegistry()
+        registry.register(capability, _Bars(capability, (row,)))
+        query = ProviderQuery(
+            kind="Quote",
+            asset_class="crypto",
+            frequency="tick",
+            start=row.event_time,
+            end=row.event_time,
+            instrument_set=(instrument,),
+        )
+        with self.assertRaisesRegex(ValueError, "event timestamp"):
+            registry.fetch_depth_frame(query, "l1")
 
 
 if __name__ == "__main__":

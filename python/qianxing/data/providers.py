@@ -9,6 +9,7 @@ from typing import Any, Mapping, Protocol
 from qianxing_bridge import native
 
 BAR_JSON_CONTENT_TYPE = "application/vnd.qianxing.bar+json;v=1"
+ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE = "application/vnd.qianxing.order-book-snapshot+json;v=1"
 
 
 class ProviderAdapter(Protocol):
@@ -135,36 +136,55 @@ class ProviderRegistry:
         """Fetch one Bar instrument and return the Rust-validated canonical BarFrame."""
         return json.loads(self._native.fetch_bar_frame_json(query.to_json()))
 
+    def fetch_depth_frame(self, query: ProviderQuery, tier: str) -> dict[str, Any]:
+        """Fetch Quote snapshots and normalize them to the Rust DepthFrame contract."""
+        return json.loads(self._native.fetch_depth_frame_json(query.to_json(), tier))
+
     def run_backtest(self, spec: Any, query: ProviderQuery) -> Any:
         """Freeze provider bars at ``spec.bars_path`` and run the shared Rust backtest use case."""
-        from pathlib import Path
-
         from qianxing.app import BacktestSpec, run_backtest
 
         frame_json = self._native.fetch_bar_frame_json(query.to_json())
-        payload = frame_json.encode("utf-8")
         values = spec.to_dict() if isinstance(spec, BacktestSpec) else dict(spec)
-        path = Path(values["bars_path"])
-        path.parent.mkdir(parents=True, exist_ok=True)
-        created = False
-        try:
-            with path.open("xb") as output:
-                created = True
-                output.write(payload)
-        except FileExistsError:
-            if path.read_bytes() != payload:
-                raise FileExistsError(
-                    f"Refusing to replace different frozen provider data at {path}"
-                )
-        except BaseException:
-            if created:
-                path.unlink(missing_ok=True)
-            raise
+        _freeze_frame(values["bars_path"], frame_json)
         return run_backtest(values)
+
+    def run_depth_backtest(self, spec: Any, query: ProviderQuery, tier: str) -> Any:
+        """Freeze Rust-normalized Quote snapshots and run the shared Rust depth workflow."""
+        from qianxing.app import DepthBacktestSpec, run_depth_backtest
+
+        frame_json = self._native.fetch_depth_frame_json(query.to_json(), tier)
+        values = spec.to_dict() if isinstance(spec, DepthBacktestSpec) else dict(spec)
+        if values["tier"] != tier:
+            raise ValueError("provider depth tier must equal DepthBacktestSpec.tier")
+        _freeze_frame(values["depth_path"], frame_json)
+        return run_depth_backtest(values)
+
+
+def _freeze_frame(path_value: str, frame_json: str) -> None:
+    """Write immutable normalized provider data once; never silently replace a frozen input."""
+    from pathlib import Path
+
+    path = Path(path_value)
+    payload = frame_json.encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    created = False
+    try:
+        with path.open("xb") as output:
+            created = True
+            output.write(payload)
+    except FileExistsError:
+        if path.read_bytes() != payload:
+            raise FileExistsError(f"Refusing to replace different frozen provider data at {path}")
+    except BaseException:
+        if created:
+            path.unlink(missing_ok=True)
+        raise
 
 
 __all__ = [
     "BAR_JSON_CONTENT_TYPE",
+    "ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE",
     "ProviderAdapter",
     "ProviderAdapterError",
     "ProviderCapability",
