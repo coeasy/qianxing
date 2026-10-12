@@ -127,7 +127,7 @@ impl PyProviderRegistry {
             .fetch_request(&request)
             .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
         let frame = result
-            .to_bar_frame(&query)
+            .to_bar_frame(query)
             .map_err(|error| PyValueError::new_err(format!("{error:?}")))?;
         Ok(frame.to_json())
     }
@@ -159,7 +159,7 @@ impl PyProviderRegistry {
             .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
         dataset_manifest::bar_frame_manifest_json(
             result,
-            &query,
+            query,
             dataset_id,
             dataset_version,
             interval_ms,
