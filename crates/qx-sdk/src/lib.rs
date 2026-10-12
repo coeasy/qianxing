@@ -20,7 +20,7 @@
 //! - 门面还公开策略注册表类型与执行扩展端口：它们是构造 `qx-app` 输入、接入共享 Rust
 //!   TWAP/VWAP 状态机所需的稳定边界，不在门面里复制策略、风险或订单逻辑。
 //! - TWAP/VWAP 父单状态可从稳定门面创建、序列化，并通过 `ExecutionGateway` 推进；
-//!   持久化、单飞调度和 Paper/Live worker 仍由嵌入宿主负责，不能把这些原语描述成托管工作流。
+//!   持久化、单飞调度和 Paper/Live worker 由运行时负责；RemoteApiClient 可调用服务端 Paper 生命周期，但不代表 SDK 自托管 worker。
 //! - `qx-app` 的 API 变动会**同时**是门面的变动——门面刻意不做版本隔离层，那会变成第二份
 //!   语义。门面的 semver 承诺就是"跟着 `qx-app` 一起动，但**变动必须是有意的**"。
 //!
@@ -50,6 +50,7 @@
 //! 不是文档里的假想代码）；从"直接用 `qx-app`"迁到本门面见 `docs/qx-sdk-migration.md`。
 
 pub mod client;
+pub mod remote;
 
 pub use client::Client;
 pub use qx_execution::{
@@ -60,6 +61,7 @@ pub use qx_execution::{
     RiskPort, RiskVerdict, Side, TradingInstrumentSpec, VenuePort, VenueRouterPort,
     VwapVolumeBucket, MAX_ALGO_CHILDREN,
 };
+pub use remote::{RemoteApiClient, RemoteApiError, RemoteResponse, RemoteTransport};
 
 // —— §6.1「统一错误」——
 pub use qx_app::{AppAction, AppError, AppErrorCategory, AppRetry};

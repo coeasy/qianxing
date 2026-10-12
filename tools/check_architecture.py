@@ -1537,6 +1537,10 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     # 对外契约：README / deploy 文档 / 跨语言 SDK 把这些名字当成公布的能力。
     "qx-plugin::sign_ed25519": "README 公布 Ed25519 签名能力；validate() 的 ed25519 分支是消费侧",
     "qx-sdk::start_depth_experiment": "qx-sdk 第三方公开 RunHandle 入口；消费者 API 不要求仓内生产调用者",
+    "qx-sdk::start_paper_algo_execution": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
+    "qx-sdk::get_paper_algo_execution": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
+    "qx-sdk::cancel_paper_algo_execution": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
+    "qx-sdk::list_paper_algo_executions": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
     "qx-storage::consume_batch_with_projection": "deploy/README 公布为外部 reducer 的原子投影+checkpoint 入口",
     "qx-data::add_component": (
         "数据集 Bundle 的程序化装配入口（deploy/README 的三步冻结流程）；"
@@ -17759,6 +17763,17 @@ def language_api_contract_check() -> None:
         not (cpp_methods - declared_cpp - lifecycle),
         "C++ `AppClient` 的公开方法都被某个用例认领（或落在显式的 run 生命周期名册里）",
         f"未认领 {sorted(cpp_methods - declared_cpp - lifecycle)}；生命周期名册 {sorted(lifecycle)}",
+    )
+
+    rust_remote = _named_roster("rust_remote_lifecycle_methods")
+    rust_remote_source = _text_or_empty(ROOT / "crates/qx-sdk/src/remote.rs")
+    rust_remote_methods = set(
+        re.findall(r"pub fn ([A-Za-z_][A-Za-z0-9_]*)\s*\(", rust_remote_source)
+    )
+    check(
+        rust_remote <= rust_remote_methods,
+        "Rust 远端生命周期名册中的方法都由 qx-sdk 公开实现",
+        f"缺失 {sorted(rust_remote - rust_remote_methods)}；已实现 {sorted(rust_remote_methods)}",
     )
 
 

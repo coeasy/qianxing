@@ -52,6 +52,16 @@ python_remote_lifecycle_methods:
   - name: list_paper_algo_executions
     note: "Paper TWAP/VWAP 活跃父单分页生命周期入口"
 
+rust_remote_lifecycle_methods:
+  - name: start_paper_algo_execution
+    note: "Rust 远端门面调用服务端 Paper TWAP/VWAP 持久化启动入口"
+  - name: get_paper_algo_execution
+    note: "Rust 远端门面读取 Paper TWAP/VWAP 父单状态"
+  - name: cancel_paper_algo_execution
+    note: "Rust 远端门面调用服务端 Paper TWAP/VWAP 取消入口"
+  - name: list_paper_algo_executions
+    note: "Rust 远端门面分页读取 Paper TWAP/VWAP 父单"
+
 contracts:
   - use_case: validate_dataset
     rust: ["validate_dataset"]

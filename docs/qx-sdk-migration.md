@@ -26,6 +26,21 @@
 + qx-sdk = "0.1"
 ```
 
+仓库外消费者在内部 crate 尚未发布到公开 registry 时，可以直接锁定已推送的 Git 提交；SDK 及其同仓路径依赖都从同一个不可变提交解析：
+
+```toml
+[dependencies]
+qx-sdk = { git = "https://github.com/coeasy/qianxing.git", rev = "393905317567670e7ae462eb91f43e77151dfb69", package = "qx-sdk" }
+```
+
+该 Git 来源示例固定到包含 Paper 算法生命周期和 SDK facade 的提交。新版本发布时应替换为对应的完整提交哈希，并提交 `Cargo.lock`。验证独立消费者可运行：
+
+```powershell
+python tools/check_rust_sdk_git_consumer.py
+```
+
+此检查创建 workspace 外的临时 Cargo 工程，以当前 `HEAD` 的完整 Git SHA 作为依赖，构建后实际调用数据校验、Rust 回测与结果复核。它验证 Git 安装路径，不等同 crates.io 发布；发布到 crates.io 仍需先发布内部 crate 依赖并通过 `cargo package` 与 registry consumer 验收。
+
 `qx-sdk` 的公开面是 `qx-app` 公开面的**超集**，所以迁移期内两个依赖并存也不会冲突；
 但迁完之后应当把 `qx-app` 从 `Cargo.toml` 里删掉——留着它意味着"我还在用内部层"。
 
@@ -96,12 +111,34 @@ let outcome = handle.try_take_result().unwrap()?;
 
 ## 已知缺口（不要在发布文案里说成"已有"）
 
+## Rust 远端 Paper 算法生命周期
+
+`qx_sdk::RemoteApiClient<T>` 提供 Paper TWAP/VWAP 的 start/get/cancel/list 四个方法，
+与 Python 和 C++ 共用 `/app/paper/algo-executions/*` 路由。宿主实现 `RemoteTransport`
+并提供 HTTP、鉴权、TLS、超时与重试策略；客户端只负责请求编码、路由选择和响应解析，
+执行状态与订单行为仍由服务端 Rust runtime 管理。返回值使用 `serde_json::Value`，以便
+SDK 跟随服务端契约扩展而不复制领域模型。错误会保留 transport 错误、HTTP 状态/响应体或 JSON 解析错误。
+
+最小接入形状：
+
+```rust,ignore
+let remote = qx_sdk::RemoteApiClient::new(my_http_transport);
+let snapshot = remote.start_paper_algo_execution(&request_json)?;
+let current = remote.get_paper_algo_execution("parent-1")?;
+```
+
+`RemoteApiClient` 当前只覆盖明确登记的 Paper 算法生命周期；它不是通用 HTTP Client，
+也不替代进程内 `qx_sdk::Client` 的回测/实验用例。Rust Live 下单仍须经过服务端授权与
+Live/testnet 验收，不可据此宣称已发布可实盘 SDK。
+
 1. **events / cursors 未提供。** `qx-app` 里没有事件日志，运行进度只能靠
    `RunHandle::status()` 轮询；远程 Run 的事件游标住在 `qx-api`（HTTP 面），不在 SDK 里。
    门面刻意**不**造一个没有生产端的事件流。缺口登记在 `maturity/capability-matrix.yaml`
    的 `rust_sdk` 行。
-2. **发布验收未做。** `cargo package` 与临时本地 registry 消费、以及把路径依赖转成版本依赖，
-   都还没跑过。当前门面只在 workspace 内被消费。
+2. **Git 安装已做独立消费者验收，crates.io 发布验收仍未做。** `python tools/check_rust_sdk_git_consumer.py`
+   会从 GitHub 拉取当前完整提交哈希，在 workspace 外构建真实消费者并运行数据校验、回测和结果复核。
+   `cargo package -p qx-sdk` 仍因 `qx-app` 等内部 crate 尚未发布至配置的 registry 而失败；
+   crates.io 发布前还需依赖拓扑发布和临时 registry 消费验收。
 3. **能力预检未落地。** 方案 §4.2 要求"启动前对规格做能力匹配，缺少费用表 / tick-lot /
    时间范围 / 身份 / 风险规则 / 订阅权限时 fail closed"——这一层还没有。
 4. **Live 未验收。** 门面不改变实盘授权边界：`CallerCapability::Live` 仍是默认关闭的独立授权，

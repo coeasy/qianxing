@@ -38,10 +38,12 @@ Python 十策略证据：
 - Rust 策略目录：[crates/qx-strategy/src/builtin/config.rs](../crates/qx-strategy/src/builtin/config.rs)
 - Python Rust bridge：[crates/qx-python/src/lib.rs](../crates/qx-python/src/lib.rs)
 - 本机 Python 3.13 Windows `cp310-abi3-win_amd64` wheel 已构建、元数据检查通过，并在独立 target 目录安装后实际运行 Bar 回测（1 笔成交）。此结果只证明当前 Windows wheel，不代表其它 Python 版本/操作系统/架构。
+- Rust Git SDK 消费者固定到已推送提交 `393905317567670e7ae462eb91f43e77151dfb69`，在 workspace 外构建并运行数据校验、回测和结果复核（1 笔成交）；见 `tools/check_rust_sdk_git_consumer.py`。
+- 本轮 Rust 远端门面增加 Paper TWAP/VWAP start/get/cancel/list 四个 API 客户端方法；`cargo test -p qx-sdk --offline` 的 2 个新单元测试和 9 个既有独立消费者测试均通过。仓外 Git 消费者将随本轮提交推送后再次固定新 revision 验收。
 
 ## 3. 本轮场景执行结果
 
-场景登记由 `python tools/quant_scenario_probe.py` 重新生成，覆盖 30 项本地可执行场景：经典策略、套利、盘口撮合、做市、多语言策略、参数网格、仓位 sizing、止损止盈、样本外走查、基准对照、风险平价及算法单执行等。当前全部可本地执行项均有正向数值或专项测试证据，见 [maturity/quant_scenarios.yaml](../maturity/quant_scenarios.yaml)。
+场景登记由 `python tools/quant_scenario_probe.py` 重新生成，覆盖 31 项本地可执行场景：经典策略、套利、盘口撮合、做市、多语言策略、参数网格、仓位 sizing、止损止盈、样本外走查、基准对照、风险平价、算法单执行和 Rust Git SDK 仓外消费者等。当前全部可本地执行项均有正向数值或专项测试证据，见 [maturity/quant_scenarios.yaml](../maturity/quant_scenarios.yaml)。
 
 算法单闭环专项验证：
 
@@ -56,11 +58,11 @@ Python 十策略证据：
 |---|---|---|
 | Rust 确定性 Bar/深度/多腿回测与参数实验 | 本地代码和场景证据通过 | 全平台安装后外部消费者验证仍需 CI 产物 |
 | Python 原生 SDK 十大经典策略 | 本地 Rust 扩展测试通过；Windows abi3 wheel 安装后 smoke 通过 | CPython/操作系统/架构完整 wheel 矩阵 |
-| Python/C++ 远端 Paper 算法单操作 | 路由和方法声明已接入；Python 测试通过 | C++ 编译与真实服务端消费者 E2E；取消/分页端到端场景还需补充 |
+| Python/Rust/C++ 远端 Paper 算法单操作 | 三种语言均声明 start/get/cancel/list 入口；Rust 方法和序列化/错误映射通过本地 SDK 测试 | C++ 编译与真实服务端消费者 E2E；取消/分页端到端场景还需补充 |
 | 多交易所、多数据源 | 仓内有 Provider/Venue 接口与多条已执行研究场景 | 每个交易所、市场、数据源的能力仍须独立验证；CCXT 覆盖不能代表所有交易所 |
 | 多账户与多策略并行交易 | 有账户日志隔离及多策略运行机制 | 组合级风险聚合、竞争资金调度及完整 Web 操作流程仍未形成统一 E2E 证据 |
 | Live 下单、查询、撤单与对账 | 适配器实现存在，但未认证 | 当前无 CCXT 运行依赖和交易所 testnet 凭据；不得标记为已通过或 GA |
 | C++ SDK 发布 | 远端契约与 smoke 源码已更新 | 本机没有 C++ 工具链；CMake 安装包及独立消费者尚未构建验证 |
-| Rust SDK 发布 | `qx-sdk` facade 与 workspace 独立消费者测试存在 | 内部 crate registry/发布顺序及干净消费者安装验证未完成 |
+| Rust SDK 发布 | `qx-sdk` 进程内门面、Paper HTTP 生命周期 facade 与 workspace 独立消费者测试存在；Git 固定提交仓外消费已验收 | 本轮更新后的 Git 固定提交仓外消费待推送后复验；内部 crate registry/发布顺序和 crates.io 消费验收未完成 |
 
 因此本轮完成了共享 Paper 算法单链路、Python 十策略验证和场景证据修复，但目前证据不足以将整套多语言 SDK 或 Live 交易宣布为发布就绪。应继续保留上述阻塞项及 capability matrix 的限制状态。

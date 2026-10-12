@@ -17,8 +17,6 @@ qx-app = { version = "0.1.0", path = "../qx-app" }
 qx-execution = { version = "0.1.0", path = "../qx-execution" }
 qx-provider = { version = "0.1.0", path = "../qx-provider" }
 qx-strategy = { version = "0.1.0", path = "../qx-strategy" }
+serde_json = { workspace = true }
 
 [dev-dependencies]
-# 独立消费者解析错误文档（`AppError::to_json()` 的产物）用得到。
-# 只在 `tests/` 里出现，所以是 dev 边——不进门面的生产依赖集。
-serde_json = { workspace = true }
