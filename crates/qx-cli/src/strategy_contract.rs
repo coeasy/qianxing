@@ -6,6 +6,7 @@
 use super::*;
 mod account_context;
 mod execution_spec;
+mod signal_merge;
 pub(crate) use account_context::strategy_account_context;
 pub(crate) use execution_spec::{
     normalize_strategy_order_quantity, strategy_execution_market_spec,
@@ -428,7 +429,7 @@ pub(crate) fn build_strategy_order_from_contract_intent(
     signal_id: u64,
     round_scope: &str,
     intent: &StrategyContractIntent,
-    now: u64,
+    _now: u64,
     current_qty: i128,
     market_spec: Option<&TradingInstrumentSpec>,
 ) -> Result<Order, String> {
@@ -537,7 +538,6 @@ pub(crate) fn build_strategy_order_from_contract_intent(
     let risk = strategy_risk_gate(config.strategy.risk_rules.as_ref(), allow_short);
     risk.check(&order, &OrderRiskPosition::new(current_qty, 0))
         .map_err(|error| format!("Strategy API v1 RiskGate 拒绝 OrderIntent: {error:?}"))?;
-    let _ = now;
     Ok(order)
 }
 
@@ -607,7 +607,7 @@ pub(crate) fn build_strategy_order_with_signal(
             })
             .unwrap_or(now),
     };
-    let targets = SignalMerger.merge(vec![signal], now);
+    let targets = signal_merge::merge_strategy_signals(vec![signal], now)?;
     let target = targets
         .first()
         .ok_or_else(|| "Strategy Signal 已过期或为空".to_string())?;

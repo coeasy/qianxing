@@ -188,7 +188,9 @@ pub struct Signal {
 pub struct SignalMerger;
 
 impl SignalMerger {
-    pub fn merge(&self, mut signals: Vec<Signal>, now: u64) -> Vec<TargetPosition> {
+    /// Net strategy targets deterministically. Quantity overflow is rejected instead of
+    /// silently changing the requested portfolio exposure through integer saturation.
+    pub fn merge(&self, mut signals: Vec<Signal>, now: u64) -> QxResult<Vec<TargetPosition>> {
         signals.retain(|s| s.expires_at == 0 || s.expires_at >= now);
         signals.sort_by(|a, b| {
             b.priority
@@ -207,10 +209,15 @@ impl SignalMerger {
                     target_qty: 0,
                     source_signals: Vec::new(),
                 });
-            entry.target_qty = entry.target_qty.saturating_add(s.target_qty);
+            entry.target_qty = entry.target_qty.checked_add(s.target_qty).ok_or_else(|| {
+                QxError::BusinessViolation(format!(
+                    "策略信号目标仓位溢出: instrument={}, strategy={}, signal_id={}",
+                    s.instrument, s.strategy_id, s.signal_id
+                ))
+            })?;
             entry.source_signals.push(s.signal_id);
         }
-        merged.into_values().collect()
+        Ok(merged.into_values().collect())
     }
 }
 
@@ -1988,54 +1995,6 @@ mod tests {
             .all_orders()
             .iter()
             .all(|order| order.status.is_terminal()));
-    }
-
-    #[test]
-    fn opposing_signals_are_netted_deterministically() {
-        let instrument = InstrumentId::parse("T.V").unwrap();
-        let merger = SignalMerger;
-        let targets = merger.merge(
-            vec![
-                Signal {
-                    strategy_id: "b".into(),
-                    signal_id: 2,
-                    instrument: instrument.clone(),
-                    target_qty: -3,
-                    confidence: 1,
-                    priority: 1,
-                    expires_at: 0,
-                },
-                Signal {
-                    strategy_id: "a".into(),
-                    signal_id: 1,
-                    instrument: instrument.clone(),
-                    target_qty: 10,
-                    confidence: 1,
-                    priority: 1,
-                    expires_at: 0,
-                },
-            ],
-            1,
-        );
-        assert_eq!(targets[0].target_qty, 7);
-        assert_eq!(targets[0].source_signals, vec![1, 2]);
-    }
-
-    #[test]
-    fn duplicate_signal_replay_does_not_change_target() {
-        let instrument = InstrumentId::parse("T.V").unwrap();
-        let signal = Signal {
-            strategy_id: "s1".into(),
-            signal_id: 7,
-            instrument: instrument.clone(),
-            target_qty: 10,
-            confidence: 1,
-            priority: 1,
-            expires_at: 100,
-        };
-        let targets = SignalMerger.merge(vec![signal.clone(), signal], 10);
-        assert_eq!(targets[0].target_qty, 10);
-        assert_eq!(targets[0].source_signals, vec![7]);
     }
 
     #[test]

@@ -32,13 +32,15 @@ fn zhenlu_reuses_the_kernel_target_position_type() {
 #[test]
 fn merged_targets_feed_the_intent_builder_and_keep_provenance() {
     let instrument = InstrumentId::parse("BTCUSDT-PERP.BINANCE").unwrap();
-    let merged = SignalMerger.merge(
-        vec![
-            signal("BTCUSDT-PERP.BINANCE", 11, 4, 5),
-            signal("BTCUSDT-PERP.BINANCE", 12, -1, 5),
-        ],
-        100,
-    );
+    let merged = SignalMerger
+        .merge(
+            vec![
+                signal("BTCUSDT-PERP.BINANCE", 11, 4, 5),
+                signal("BTCUSDT-PERP.BINANCE", 12, -1, 5),
+            ],
+            100,
+        )
+        .expect("信号目标和应在整数范围内");
     assert_eq!(merged.len(), 1);
     assert_eq!(merged[0].target_qty, 3);
     assert_eq!(merged[0].source_signals, vec![11, 12]);
@@ -49,4 +51,33 @@ fn merged_targets_feed_the_intent_builder_and_keep_provenance() {
     assert_eq!(intent.instrument, instrument);
     assert_eq!(intent.signal_id, Some(11));
     assert_eq!(intent.rule_version, "default");
+}
+
+#[test]
+fn opposing_signals_are_netted_deterministically() {
+    let targets = SignalMerger
+        .merge(vec![signal("T.V", 2, -3, 1), signal("T.V", 1, 10, 1)], 1)
+        .unwrap();
+    assert_eq!(targets[0].target_qty, 7);
+    assert_eq!(targets[0].source_signals, vec![1, 2]);
+}
+
+#[test]
+fn duplicate_signal_replay_does_not_change_target() {
+    let value = signal("T.V", 7, 10, 1);
+    let targets = SignalMerger.merge(vec![value.clone(), value], 1).unwrap();
+    assert_eq!(targets[0].target_qty, 10);
+    assert_eq!(targets[0].source_signals, vec![7]);
+}
+
+#[test]
+fn signal_target_overflow_is_rejected_instead_of_saturated() {
+    let error = SignalMerger
+        .merge(
+            vec![signal("T.V", 1, i128::MAX, 1), signal("T.V", 2, 1, 0)],
+            1,
+        )
+        .unwrap_err();
+    assert!(matches!(error, qx_core::QxError::BusinessViolation(_)));
+    assert!(error.message().contains("目标仓位溢出"));
 }
