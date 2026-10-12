@@ -73,14 +73,14 @@ Python 十策略证据：
 - 选择器支持不带数值参数维度的策略快速比较，并与现有参数维度组合；候选总数受 256 上限约束。重复 kind、双腿策略和当前尚无明确 OOS 语义的 `strategy_kinds + split_plan` 输入会显式拒绝，不会悄悄退化到单策略回测。
 - Rust SDK 独立消费者与 API `/app/run-experiment` 路由有覆盖；Python 类型化 SDK、原生 Rust 扩展、远端 AppClient 都序列化相同字段；C++ HTTP 客户端以既有通用 JSON 载荷转发同一契约。Python 全量单元测试 124 项通过（1 项因环境跳过）；专项验证十种经典策略均返回成功候选并进入统一比较。
 - `cargo fmt --all -- --check`、`git diff --check` 通过；Rust `qx-app`/`qx-sdk`/`qx-api` 本地套件和 Python 全量 124 项（1 项跳过）通过。推送后固定到新提交的 Rust Git 仓外消费者实际构建并运行成功（1 笔成交，数据复核成功，Paper 远端 start/get/cancel/list 及事件游标均调用通过）。量化场景探针 31 项 executed、0 项缺失、0 项未执行；真实交易所 Live 场景仍因没有 `ccxt` 与 testnet 凭据 blocked。
-- Windows `cp310-abi3-win_amd64` wheel 已通过 `tools/check_python_wheel.py`，并在隔离 Python 3.13 环境离线安装；安装后从 SDK 调用共享 Rust 内核完成十种经典策略比较，10 个候选全部成功。wheel SHA-256：`c9a39c691686fcdbc33d6e54586b26a45730995441bef93bf4ef9c9cb4c345a5`。
+- 最终提交 `ee6e038` 的 Windows `cp310-abi3-win_amd64` wheel 已通过 `tools/check_python_wheel.py`，并在隔离 Python 3.13 环境离线安装；安装后从 SDK 调用共享 Rust 内核完成十种经典策略比较，10 个候选全部成功。wheel SHA-256：`a1b09eda3af487bd0887e187d5b13f9719c23f129af93123a089ff002b7742a7`。
 - 该选择器解决的是同一数据集上的独立研究候选批量运行，不代表多策略共享资金下的组合调度，也不构成 Python/Rust/C++ 同时具备本地原生 API 的证明。多账户统一资金竞争、组合风险/账簿、组合回测与 Paper/Live 工作流、真实交易所认证仍未整体贯通；本机没有 C++ 编译器，C++ 尚无编译验收证据。
 
 ## 7. 2026-10-13 继续改造：Python wheel 使用稳定 ABI 构建器
 
 - 将 Python 发布工程切换到 PEP 517 Maturin mixed-project 后端，明确 Rust manifest、Python 源目录、原生模块名和需打包的 Python namespace；构建时由同一后端编译 Rust 扩展并产出 PyO3 `abi3-py310` wheel，避免 setuptools 将 `.pyd` 当成普通资源后标为 `py3-none-any`，也避免复用工作区中的过期扩展文件。
 - 简化 Windows/POSIX wheel 构建脚本为构建前端检查与 PEP 517 构建；CI 和 Release 工作流显式安装 maturin。架构审计与 Rust 文档用例覆盖两个脚本的 pip/maturin 前置检查、后端及模块契约。
-- 标准 Windows 构建脚本产出 `qianxing-0.1.0-cp310-abi3-win_amd64.whl`，稳定 ABI 标签/原生 `.pyd` 检查通过；隔离 Python 3.13 环境离线安装后执行十策略快速比较，10/10 成功。SHA-256：`c9a39c691686fcdbc33d6e54586b26a45730995441bef93bf4ef9c9cb4c345a5`。
+- 标准 Windows 构建脚本产出 `qianxing-0.1.0-cp310-abi3-win_amd64.whl`，稳定 ABI 标签/原生 `.pyd` 检查通过；隔离 Python 3.13 环境离线安装后执行十策略快速比较，10/10 成功。最终推送提交 `ee6e038` 对应 SHA-256：`a1b09eda3af487bd0887e187d5b13f9719c23f129af93123a089ff002b7742a7`。
 - 该证据只覆盖当前 Windows x64 wheel。Linux/macOS 构建依赖 CI，C++ 本地编译仍缺工具链；多策略共享账户/组合风险账簿、前端工作流和真实交易所 testnet 依旧未形成完整发布验收。
 
 ## 5. 2026-10-13 继续复核：门禁与核心 SDK 用例
