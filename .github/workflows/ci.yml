@@ -355,6 +355,7 @@ jobs:
           }
           {
             echo "smoke=$(find_binary qianxing_ring_smoke)"
+            echo "app_client=$(find_binary qianxing_app_client_smoke)"
             echo "strategy=$(find_binary qianxing_strategy_jsonl)"
             echo "plugin=$(find_plugin)"
           } >> "${GITHUB_OUTPUT}"
@@ -363,6 +364,11 @@ jobs:
         env:
           SMOKE: ${{ steps.binaries.outputs.smoke }}
         run: '"${SMOKE}"'
+      - name: Run C++ application client smoke
+        shell: bash
+        env:
+          APP_CLIENT: ${{ steps.binaries.outputs.app_client }}
+        run: '"${APP_CLIENT}"'
       - name: Load C++ strategy in the Rust C ABI host
         shell: bash
         env:

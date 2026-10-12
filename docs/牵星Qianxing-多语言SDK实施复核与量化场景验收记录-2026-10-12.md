@@ -144,6 +144,6 @@ Python 十策略证据：
 ## 14. 2026-10-13 继续复核：C++ Run 路径段隔离
 
 - 检查 C++ HTTP façade 时发现 `fill_run_id` 将调用方字符串直接拼到 URL 路径中。合法 Run ID 虽受服务端格式校验，但非法值中的 `/`、`?`、`#` 会先改变客户端请求路径，可能触发错误端点或查询参数注入，给跨语言 SDK 留下不一致的失败行为。
-- C++ 路径构造现按 RFC 3986 对非 unreserved 字节做百分号编码；合法 ID 字符保持原样。新增 smoke 源码断言，覆盖 `../other?admin=true#fragment` 被限制为单一路径段的情况。
-- 本机没有可用的 C++ 编译器或 CMake，因此只能确认源代码和测试断言，不能声称该修复已编译/执行。需由 C++ CI 工具链运行 `qianxing_app_client_smoke` 后才算该修复经运行验证。
+- C++ 路径构造现按 RFC 3986 对非 unreserved 字节做百分号编码；合法 ID 字符保持原样。新增 smoke 断言，覆盖 `../other?admin=true#fragment` 被限制为单一路径段的情况。
+- 首次发现新增断言虽在 smoke 源文件中，CI 只构建未执行该二进制，属于孤儿测试。本轮已把 `qianxing_app_client_smoke` 加入 Linux/Windows/macOS C++ CI 执行矩阵。本机没有可用的 C++ 编译器或 CMake，远端 CI 尚未完成前不声称修复已编译/运行通过。
 - 本修复不改变总体能力状态：跨账户/多市场组合账簿与聚合风险、Paper/Live 多策略流程、Web/桌面 E2E、独立 C++ 安装消费者、Linux/macOS Python wheel 以及真实交易所 testnet conformance 仍未通过验收；全量发布门槛仍未达到。
