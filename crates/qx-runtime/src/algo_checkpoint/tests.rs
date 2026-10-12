@@ -84,8 +84,7 @@ fn root(label: &str) -> PathBuf {
     ))
 }
 
-fn initial_state() -> AlgoExecutionState {
-    let parent_id = "parent-恢复/with unsafe path chars";
+fn initial_state(parent_id: &str) -> AlgoExecutionState {
     let plan = qx_execution::plan_twap(parent_id, 11, 10, 50, 4).unwrap();
     AlgoExecutionState::new(AlgoParentOrder {
         parent_id: parent_id.into(),
@@ -133,7 +132,7 @@ fn advance_once(store: AlgoExecutionCheckpointStore) -> AlgoExecutionStep {
 fn checkpoint_create_step_restart_and_cancel_are_durable() {
     let root = root("restart");
     let store = AlgoExecutionCheckpointStore::new(&root);
-    let state = initial_state();
+    let state = initial_state("parent-恢复/with unsafe path chars");
     store.create(&state).unwrap();
     assert!(store.create(&state).is_err(), "parent IDs cannot be reused");
 
@@ -162,10 +161,27 @@ fn checkpoint_create_step_restart_and_cancel_are_durable() {
 }
 
 #[test]
+fn optional_checkpoint_load_distinguishes_missing_from_corrupt_state() {
+    let root = root("optional-load");
+    let store = AlgoExecutionCheckpointStore::new(&root);
+    assert_eq!(store.load_optional("absent").unwrap(), None);
+    let state = initial_state("present");
+    store.create(&state).unwrap();
+    assert_eq!(store.load_optional("present").unwrap(), Some(state));
+    let corrupt = root.join(checkpoint_path("corrupt").unwrap());
+    std::fs::create_dir_all(corrupt.parent().unwrap()).unwrap();
+    std::fs::write(&corrupt, "not-json").unwrap();
+    assert!(store.load_optional("corrupt").is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn two_workers_cannot_advance_the_same_parent_checkpoint_twice() {
     let root = root("single-flight");
     let store = AlgoExecutionCheckpointStore::new(&root);
-    store.create(&initial_state()).unwrap();
+    store
+        .create(&initial_state("parent-恢复/with unsafe path chars"))
+        .unwrap();
     let barrier = Arc::new(Barrier::new(3));
     let workers = (0..2)
         .map(|_| {
@@ -199,5 +215,40 @@ fn two_workers_cannot_advance_the_same_parent_checkpoint_twice() {
     let state = store.load("parent-恢复/with unsafe path chars").unwrap();
     assert_eq!(state.next_slice_position, 1);
     assert_eq!(state.child_order_ids, [100]);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn active_discovery_is_sorted_bounded_and_resumable() {
+    let root = root("discovery");
+    let store = AlgoExecutionCheckpointStore::new(&root);
+    for parent_id in ["parent-c", "parent-a", "parent-b"] {
+        store.create(&initial_state(parent_id)).unwrap();
+    }
+    assert_eq!(
+        store
+            .list_active(None, 2)
+            .unwrap()
+            .into_iter()
+            .map(|state| state.parent_id)
+            .collect::<Vec<_>>(),
+        ["parent-a", "parent-b"]
+    );
+    assert_eq!(
+        store
+            .list_active(Some("parent-b"), 2)
+            .unwrap()
+            .into_iter()
+            .map(|state| state.parent_id)
+            .collect::<Vec<_>>(),
+        ["parent-c"]
+    );
+    assert!(store.list_active(None, 0).is_err());
+    assert!(store
+        .list_active(
+            None,
+            AlgoExecutionCheckpointStore::MAX_DISCOVERY_ENTRIES + 1
+        )
+        .is_err());
     std::fs::remove_dir_all(root).unwrap();
 }

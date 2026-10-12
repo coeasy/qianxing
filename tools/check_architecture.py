@@ -8433,6 +8433,7 @@ VENUE_FAMILY_DEFINITION = "crates/qx-core/src/venue.rs"
 VENUE_ID_DEFINITION = "crates/qx-core/src/identity.rs"
 # 允许读取家族判定的消费者文件集合：少一个 = 有人把判定搬回本地，多一个 = 另起第二份。
 VENUE_FAMILY_CONSUMERS = (
+    "crates/qx-cli/src/api_algo_execution.rs",
     "crates/qx-cli/src/live_check.rs",
     "crates/qx-cli/src/market_bridges.rs",
     "crates/qx-cli/src/strategy_contract/account_context.rs",
@@ -17744,10 +17745,12 @@ def language_api_contract_check() -> None:
     )
 
     declared_remote = {entry for row in rows for entry in row.get("python_remote", [])}
+    remote_lifecycle = _named_roster("python_remote_lifecycle_methods")
     check(
-        not (remote_methods - declared_remote),
-        "Python 远端门面的公开方法都被某个用例认领（方法体在盘却无人认领 = 孤儿入口）",
-        f"未认领 {sorted(remote_methods - declared_remote)}；映射表 {sorted(declared_remote)}",
+        not (remote_methods - declared_remote - remote_lifecycle),
+        "Python 远端门面的公开方法都被用例或显式生命周期名册认领",
+        f"未认领 {sorted(remote_methods - declared_remote - remote_lifecycle)}；"
+        f"映射表 {sorted(declared_remote)}；生命周期名册 {sorted(remote_lifecycle)}",
     )
 
     declared_cpp = {entry for row in rows for entry in row.get("cpp_remote", [])}

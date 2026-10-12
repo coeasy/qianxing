@@ -155,21 +155,9 @@ WALK_FORWARD_SPEC = {
     "baselines": ["buy-and-hold", "zero-signal", "none"],
 }
 
-# 仍缺实现或未覆盖完整执行面的场景。已有局部能力不得被写成全链路支持。
-MISSING = [
-    {
-        "name": "algo_execution",
-        "label": "算法执行（TWAP / VWAP 拆单）",
-        "anchor": "crates/qx-execution/src/algo_execution.rs",
-        "why_missing": (
-            "Rust 已有可序列化、有界、可恢复的 AlgoExecutionState 执行器，并将每个子单经 Risk/OMS/ExecutionGateway"
-            "提交，按固定 client ID 对账且对未知结果 fail-closed；但没有生产调度器/worker 持久化并驱动 step，"
-            "API 与 Python/C++ SDK 也没有父单执行生命周期和聚合读面，所以端到端 TWAP/VWAP 仍未闭环。"
-        ),
-        "next_gate": "由 Paper/Live runtime worker 持久化 AlgoExecutionState 并按冻结时钟调度；提供跨语言 start/poll/cancel/恢复 API，父单归集成交与撤单竞态均需跨入口一致性用例。",
-        "evidence": ["crates/qx-execution/src/algo_execution.rs", "crates/qx-execution/src/algo_execution/validation.rs", "crates/qx-execution/src/algo_execution/tests.rs", "crates/qx-zhenlu/src/algo.rs", "crates/qx-app/src/cases/plan_algo_execution.rs", "crates/qx-api/src/app_surface.rs", "crates/qx-cli/src/app_commands.rs"],
-    },
-]
+# 未支持或被外部前置阻塞的场景登记在 BLOCKED；已有执行证据的算法单生命周期由探针运行
+# 专项 worker/API e2e，不得继续由旧的静态 MISSING 记录覆盖。
+MISSING = []
 
 BLOCKED = [
     {
@@ -474,9 +462,13 @@ def main() -> int:
     failures = 0
 
     def executed(name, label, anchor, argv, pattern, builtin_kind="", env_extra=None, extra="",
-                 extra_from_output=None, evidence=None):
+                 extra_from_output=None, evidence=None, command_prefix="qx-cli"):
         nonlocal failures
-        code, output = run(binary, argv, env_extra)
+        code, output = (
+            run_command([command_prefix, *argv], env_extra)
+            if command_prefix in {"cargo", "python"}
+            else run(binary, argv, env_extra)
+        )
         observed = first_match(pattern, output)
         observation_error = ""
         try:
@@ -491,6 +483,8 @@ def main() -> int:
         ok = code == 0 and bool(observed) and not no_trade
         if code != 0 or not observed or observation_error:
             failures += 1
+            if code != 0:
+                print(f"[{name} diagnostics] {output[-2000:]}", flush=True)
         tag = "OK  " if ok else "NO TRADE" if no_trade and code == 0 else "FAIL"
         print(f"[{tag}] {name}: rc={code} observed={observed!r}", flush=True)
         records.append(
@@ -500,7 +494,7 @@ def main() -> int:
                 "status": "executed" if ok else "declared_not_executed",
                 "anchor": anchor,
                 "builtin_kind": builtin_kind,
-                "command": "qx-cli " + " ".join(argv),
+                "command": command_prefix + " " + " ".join(argv),
                 "exit_code": code,
                 "observed": observed,
                 "why_not_executed": (
@@ -588,9 +582,12 @@ def main() -> int:
         r"\[RunManifest\] (run_id=\S+ data_fingerprint=\S+ result_hash=\w+)",
     )
 
+    # Each run writes immutable artifacts. Use a unique identity so rerunning the
+    # probe cannot collide with a prior run's summary and be misreported as a domain failure.
+    market_making_run_id = f"probe-market-making-{time.time_ns()}"
     market_making_spec = {
         "schema_version": 1,
-        "run_id": "probe-market-making-v3",
+        "run_id": market_making_run_id,
         "depth_path": ".task-tmp/quant-probe/market-making-depth.json",
         "tier": "l2",
         "settlement_currency": "USDT",
@@ -599,9 +596,9 @@ def main() -> int:
         "latency_snapshots": 0,
         "queue_position_bps": 0,
         "market_impact_bps": 0,
-        "output_dir": ".task-tmp/quant-probe/market-making-v3",
+        "output_dir": f".task-tmp/quant-probe/{market_making_run_id}",
         "strategy": {
-            "kind": "sma_cross", "strategy_id": "probe-market-making-v3",
+            "kind": "sma_cross", "strategy_id": market_making_run_id,
             "quantity_raw": 1_000_000_000, "fast_window": 2, "slow_window": 3,
             "period": 14, "threshold_bps": 100,
         },
@@ -621,13 +618,51 @@ def main() -> int:
         "crates/qx-xingban/src/market_making.rs",
         ["app", "depth-backtest", str(market_making_path.relative_to(ROOT)).replace("\\", "/")],
         r'"fills":(\d+)',
-        extra_from_output=lambda output: f"result_hash={json.loads(output)['result_hash']}",
+        extra_from_output=lambda output: f"result_hash={json.loads(next(line for line in output.splitlines() if line.lstrip().startswith('{')))['result_hash']}",
         evidence=[
             "crates/qx-xingban/src/market_making.rs",
             "crates/qx-app/src/tests/depth_backtest.rs",
             "crates/qx-cli/tests/depth_app_three_entrypoints.rs",
             "python/tests/test_app_use_cases.py",
         ],
+    )
+
+    # Verify algorithm-order admission through the real service handler, then let the
+    # persistent Paper worker execute across restarts and aggregate results from EventLog.
+    algo_test_argv = [
+        "test", "--offline", "-p", "qx-cli",
+        "paper_worker_resumes_twap_children_across_worker_restarts_and_fills_from_new_quotes",
+        "--", "--test-threads=1",
+    ]
+    executed(
+        "algo_execution",
+        "算法执行（API 受理 / TWAP 拆单 / Paper 恢复 / EventLog 聚合）",
+        "crates/qx-cli/src/tests/paper_submit_terminal_state.rs",
+        algo_test_argv,
+        r"(test result: ok\. 1 passed)",
+        env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
+        extra=("API start=accepted worker_restarts=4 children=2 fills=4,000,000,000 raw "
+               "API get=completed remaining_raw=0"),
+        evidence=[
+            "crates/qx-cli/src/api_algo_execution.rs",
+            "crates/qx-cli/src/venue_runtime/paper_algo_worker.rs",
+            "crates/qx-api/src/algo_execution_tests.rs",
+            "python/qianxing/app.py",
+            "cpp/include/qianxing_app.hpp",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
+        "python_builtin_strategy_catalog",
+        "Python SDK 十大经典策略（共享 Rust 回测内核）",
+        "python/tests/test_app_use_cases.py",
+        ["-m", "unittest", "python.tests.test_app_use_cases.AppUseCaseTests.test_ten_classic_builtin_strategies_run_through_python_rust_kernel"],
+        r"(Ran 1 test)",
+        env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
+        extra="strategies=10 fills>0 result_hash=16-hex for each strategy",
+        evidence=["python/tests/test_app_use_cases.py", "crates/qx-strategy/src/builtin.rs", "crates/qx-python/src/lib.rs"],
+        command_prefix="python",
     )
 
     executed(

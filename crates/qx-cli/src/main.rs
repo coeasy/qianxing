@@ -101,6 +101,7 @@ use qx_zhenlu::{
     SignalMerger, SpreadOrderGroup, SpreadOrderGroupStatus, SpreadOrderGroupStore, SpreadOrderLeg,
     StrategyRuntime, Venue, VenueEvent,
 };
+mod api_algo_execution;
 mod api_service;
 mod app_args;
 mod app_commands;

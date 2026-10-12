@@ -35,6 +35,10 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "compare_runs": "/app/compare-runs",
     "plan_risk_parity": "/app/plan-risk-parity",
     "plan_algo_execution": "/app/plan-algo-execution",
+    "paper_algo_start": "/app/paper/algo-executions/start",
+    "paper_algo_get": "/app/paper/algo-executions/get",
+    "paper_algo_cancel": "/app/paper/algo-executions/cancel",
+    "paper_algo_list": "/app/paper/algo-executions/list",
     "run_experiment": "/app/run-experiment",
     "run_experiment_start": "/app/run-experiment/start",
     "depth_backtest": "/app/depth-backtest",
@@ -1317,6 +1321,24 @@ class AppClient(_HttpJsonClient):
 
     def plan_algo_execution(self, spec: dict[str, Any]) -> dict[str, Any]:
         return self._post(APP_ROUTE_TEMPLATES["plan_algo_execution"], spec)
+
+    def start_paper_algo_execution(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Persist a shared Rust TWAP/VWAP parent for the configured Paper worker."""
+        return self._post(APP_ROUTE_TEMPLATES["paper_algo_start"], request)
+
+    def get_paper_algo_execution(self, parent_id: str) -> dict[str, Any]:
+        return self._post(APP_ROUTE_TEMPLATES["paper_algo_get"], {"parent_id": parent_id})
+
+    def cancel_paper_algo_execution(self, parent_id: str) -> dict[str, Any]:
+        return self._post(APP_ROUTE_TEMPLATES["paper_algo_cancel"], {"parent_id": parent_id})
+
+    def list_paper_algo_executions(
+        self, *, after_parent_id: str | None = None, limit: int = 100
+    ) -> dict[str, Any]:
+        return self._post(
+            APP_ROUTE_TEMPLATES["paper_algo_list"],
+            {"after_parent_id": after_parent_id, "limit": limit},
+        )
 
     def run_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentResult:
         return RunExperimentResult.from_dict(

@@ -351,6 +351,38 @@ class AppUseCaseTests(unittest.TestCase):
                 handle.result()
         self.assertEqual(caught.exception.correlation_id, "remote-failed")
 
+    def test_python_remote_paper_algo_lifecycle_routes(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import AppClient
+
+        client = AppClient("https://localhost")
+        observed = []
+
+        def request_json(route, *, method, payload=None):
+            observed.append((route, method, payload))
+            return {"accepted": True}
+
+        client._request_json = request_json
+        parent = {"parent_id": "parent-1"}
+        self.assertTrue(client.start_paper_algo_execution({"spec": {}})["accepted"])
+        self.assertEqual(client.get_paper_algo_execution("parent-1"), {"accepted": True})
+        self.assertEqual(client.cancel_paper_algo_execution("parent-1"), {"accepted": True})
+        self.assertEqual(
+            client.list_paper_algo_executions(after_parent_id="parent-0", limit=7),
+            {"accepted": True},
+        )
+        self.assertEqual(
+            [entry[0] for entry in observed],
+            [
+                "/app/paper/algo-executions/start",
+                "/app/paper/algo-executions/get",
+                "/app/paper/algo-executions/cancel",
+                "/app/paper/algo-executions/list",
+            ],
+        )
+        self.assertEqual(observed[1][2], parent)
+        self.assertEqual(observed[3][2]["limit"], 7)
+
     def test_python_http_app_client_covers_every_registered_rust_use_case_route(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import AppClient, RemoteRunHandle
@@ -536,6 +568,66 @@ class AppUseCaseTests(unittest.TestCase):
                 "slow_window": 3,
             },
         }
+
+    def test_ten_classic_builtin_strategies_run_through_python_rust_kernel(self):
+        self._require()
+        scale = 1_000_000_000
+        timestamps, opens, highs, lows, closes, volumes = [], [], [], [], [], []
+        for index in range(1, 91):
+            up = (index // 5) % 7 < 4
+            spike = 3 if index % 9 == 0 else 1
+            body = spike * (2 + index % 13) * scale
+            drift = (40 + index // 3) * scale
+            open_raw = drift if up else drift + body
+            close_raw = drift + body if up else drift
+            upper_wick = 0 if index % 6 == 0 else (1 + index % 4) * scale
+            lower_wick = 0 if index % 7 == 0 else (1 + index % 5) * scale
+            timestamps.append(1_000 + (index - 1) * 1_000)
+            opens.append(open_raw)
+            highs.append(max(open_raw, close_raw) + upper_wick)
+            lows.append(min(open_raw, close_raw) - lower_wick)
+            closes.append(close_raw)
+            volumes.append((100 + index % 7 * 13) * scale)
+        # Drive a lower-band entry and a later upper-band exit for the conservative spot model.
+        bollinger_closes = list(closes)
+        bollinger_closes[14] = 50 * scale
+        bollinger_closes[45] = 180 * scale
+
+        builtin_names = (
+            "sma_cross", "ema_cross", "macd", "rsi", "bollinger",
+            "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend",
+        )
+        for kind in builtin_names:
+            with self.subTest(strategy=kind):
+                selected_closes = bollinger_closes if kind == "bollinger" else closes
+                selected_opens = selected_closes if kind == "bollinger" else opens
+                selected_highs = selected_closes if kind == "bollinger" else highs
+                selected_lows = selected_closes if kind == "bollinger" else lows
+                bars_path = self.output_dir / f"{kind}-bars.json"
+                bars_path.write_text(json.dumps({
+                    "schema_version": 1,
+                    "instrument": "BTCUSDT.BINANCE",
+                    "source": f"python-{kind}-conformance-v1",
+                    "ts": timestamps,
+                    "open_raw": selected_opens,
+                    "high_raw": selected_highs,
+                    "low_raw": selected_lows,
+                    "close_raw": selected_closes,
+                    "volume_raw": volumes,
+                }), encoding="utf-8")
+                spec = self._spec(f"py-{kind}", self.output_dir / kind, str(bars_path))
+                spec["strategy"].update({
+                    "kind": kind,
+                    "strategy_id": f"python-{kind}",
+                    "fast_window": 5,
+                    "slow_window": 20,
+                    "period": 14,
+                    "threshold_bps": 100,
+                })
+                outcome = self.bridge.run_backtest(spec)
+                self.assertEqual(outcome["run_id"], f"py-{kind}")
+                self.assertGreater(outcome["fills"], 0, kind)
+                self.assertEqual(len(outcome["result_hash"]), 16)
 
     def test_the_shared_use_cases_run_end_to_end_from_python(self):
         self._require()

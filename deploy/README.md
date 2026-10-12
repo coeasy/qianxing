@@ -290,6 +290,10 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/compare-runs` | 应用层用例 `qx_app::compare_runs` 的确定性排序结果（请求体为 `CompareRunsSpec` JSON） | 只比较相同标的、相同数据指纹的已完成运行；收益降序、回撤升序、run_id 升序 |
 | `POST /app/plan-risk-parity` | 应用层用例 `qx_app::plan_risk_parity` 的确定性组合调仓计划（请求体为 `RiskParitySpec` JSON） | 使用冻结的对齐收益序列求 long-only 等风险贡献权重；校验资金与换手预算，只返回计划，不提交订单 |
 | `POST /app/plan-algo-execution` | 应用层用例 `qx_app::plan_algo_execution` 的确定性 TWAP/VWAP 子单计划（请求体为 `AlgoExecutionSpec` JSON） | TWAP 均分数量；VWAP 使用冻结成交量 profile；返回 parent-linked 子单计划，不提交订单 |
+| `POST /app/paper/algo-executions/start` | 持久化 Paper TWAP/VWAP 父单并交给匹配账户的 Execution worker 推进 | 请求体含 `spec`、待提交 `parent_order` 与 `child_order_id_base`；需要 Trading/Admin；worker 经 `AlgoExecutionCheckpointStore::step` 推进状态，子单进入 `RiskExecutionContext`、`PaperVenue::on_quote` 与 EventLog 链 |
+| `POST /app/paper/algo-executions/get` | 读取算法父单 checkpoint | 请求体 `{ "parent_id": "..." }`；读取共享持久状态 |
+| `POST /app/paper/algo-executions/cancel` | 持久化算法父单取消意图 | 请求体 `{ "parent_id": "..." }`；需要 Trading/Admin；worker 在下一步按共享内核语义撤销未完成子单 |
+| `POST /app/paper/algo-executions/list` | 有界读取活跃 Paper 算法父单 | 请求体可含 `after_parent_id` 与 `limit`（1..=1000）；返回 `items`、`has_more`、`next_after_parent_id` |
 | `POST /app/run-experiment` | 应用层用例 `qx_app::run_experiment` 的有界参数实验结果（请求体为 `RunExperimentSpec` JSON） | 最多 256 个 Bar 候选；候选复用 Rust `run_backtest`，成功结果复用 `compare_runs`，每候选错误隔离记录；HTTP 将输入限制在数据根目录，产物写入服务端 artifact 根目录 |
 | `POST /app/run-depth-experiment` | 应用层用例 `qx_app::run_depth_experiment` 的有界 Tick/OrderBook 参数实验结果（请求体为 `RunDepthExperimentSpec` JSON） | 最多 256 个候选；每个候选复用 Rust Tick 或 OrderBook 回测内核，错误隔离；收益降序、回撤升序稳定排名；输入限制在数据根目录，产物写入服务端 artifact 根目录 |
 | `POST /app/depth-backtest` | 应用层用例 `qx_app::run_depth_backtest` 的 L1 Tick 或 L2/L3 OrderBook 回测结果（请求体为 `DepthBacktestSpec` JSON） | L1 必须恰有买卖一档并复用 Rust Tick 内核，L2 使用 Rust 逐档订单簿内核；回放校验通过后才发布 manifest 与摘要、权益、成交四份产物；HTTP 输入限制在数据根目录，产物写到服务端 artifact 根目录 |
@@ -401,6 +405,10 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `POST /app/compare-runs` | 对同一标的与数据指纹的已完成 Bar 运行作确定性排序 | 400 输入不合法、422 比较集合不满足约束；不访问服务端文件；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/plan-risk-parity` | 依据冻结的对齐收益率与标记价生成确定性 long-only 风险平价计划 | 400 非法输入、422 缺历史或求解未收敛；纯研究规划，不提交订单；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/plan-algo-execution` | 依据 parent 数量与 TWAP/VWAP profile 生成确定性拆单计划 | 400 非法 schema/范围/profile；纯研究规划，不提交订单；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/paper/algo-executions/start` | 持久化确定性算法父单，由 Paper Execution worker 恢复推进 | 400 请求或订单形状无效；403 非 Trading/Admin；409 无匹配 Paper worker、重复父单或父单状态冲突；503 checkpoint 不可用；成功返回持久状态；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/paper/algo-executions/get` | 按父单 ID 读取 checkpoint | 400 请求无效；404 找不到父单；503 checkpoint 无法读取；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/paper/algo-executions/cancel` | 写入取消意图 | 400 请求无效；403 非 Trading/Admin；409 父单已终结或状态冲突；成功返回更新后的状态；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/paper/algo-executions/list` | 有界分页列出活跃父单 | 400 limit 无效；503 checkpoint 扫描失败；成功返回分页包络；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/run-experiment` | 复用共享 Bar 回测与 compare-runs 执行有界参数网格 | 输入帧限于数据根目录，工件写到服务端 artifact 根目录；候选错误隔离记录；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 
 `POST /control/commands` 那一格的 409 是控制面按 `ControlError` 的 Debug 形态回报，四个会变 409 的

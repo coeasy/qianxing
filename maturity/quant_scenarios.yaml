@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791792783
+generated_at_unix: 1791799699
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -156,8 +156,24 @@ scenarios:
     anchor: "crates/qx-xingban/src/market_making.rs"
     command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
     exit_code: 0
-    observed: "42; result_hash=0fdb89c708b0ce1d"
+    observed: "42; result_hash=d6bca1277728809f"
     evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
+  - name: algo_execution
+    label: "算法执行（API 受理 / TWAP 拆单 / Paper 恢复 / EventLog 聚合）"
+    status: executed
+    anchor: "crates/qx-cli/src/tests/paper_submit_terminal_state.rs"
+    command: "cargo test --offline -p qx-cli paper_worker_resumes_twap_children_across_worker_restarts_and_fills_from_new_quotes -- --test-threads=1"
+    exit_code: 0
+    observed: "test result: ok. 1 passed; API start=accepted worker_restarts=4 children=2 fills=4,000,000,000 raw API get=completed remaining_raw=0"
+    evidence: ["crates/qx-cli/src/api_algo_execution.rs", "crates/qx-cli/src/venue_runtime/paper_algo_worker.rs", "crates/qx-api/src/algo_execution_tests.rs", "python/qianxing/app.py", "cpp/include/qianxing_app.hpp"]
+  - name: python_builtin_strategy_catalog
+    label: "Python SDK 十大经典策略（共享 Rust 回测内核）"
+    status: executed
+    anchor: "python/tests/test_app_use_cases.py"
+    command: "python -m unittest python.tests.test_app_use_cases.AppUseCaseTests.test_ten_classic_builtin_strategies_run_through_python_rust_kernel"
+    exit_code: 0
+    observed: "Ran 1 test; strategies=10 fills>0 result_hash=16-hex for each strategy"
+    evidence: ["python/tests/test_app_use_cases.py", "crates/qx-strategy/src/builtin.rs", "crates/qx-python/src/lib.rs"]
   - name: multi_language_strategy
     label: "多语言策略（Rust 内核 + Python worker）"
     status: executed
@@ -254,13 +270,6 @@ scenarios:
     exit_code: 0
     observed: "8b1ca1782ec646d9; assets=2 weight_bps=10000 turnover_bps=9999"
     evidence: ["crates/qx-zhenlu/src/portfolio/risk_parity.rs"]
-  - name: algo_execution
-    label: "算法执行（TWAP / VWAP 拆单）"
-    status: missing
-    anchor: "crates/qx-execution/src/algo_execution.rs"
-    why_missing: "Rust 已有可序列化、有界、可恢复的 AlgoExecutionState 执行器；qx-runtime 现有持久化 checkpoint store，在文件事务锁内推进一次 step 并持久化 cancel。仍没有由冻结时钟驱动的监督 worker、API start/poll/cancel/恢复端点和父单聚合读面；Python/C++ 也只暴露拆单计划，因此完整 TWAP/VWAP 交易工作流仍未闭环。"
-    next_gate: "将 AlgoExecutionCheckpointStore 接入 Paper runtime worker 与 API 命令生命周期，再接 Python/C++ 远端客户端；覆盖重启、并发、多子单成交、部分成交、撤单竞态、未知结果对账及父单归集。"
-    evidence: ["crates/qx-execution/src/algo_execution.rs", "crates/qx-execution/src/algo_execution/validation.rs", "crates/qx-execution/src/algo_execution/tests.rs", "crates/qx-runtime/src/algo_checkpoint.rs", "crates/qx-runtime/src/algo_checkpoint/tests.rs", "crates/qx-zhenlu/src/algo.rs", "crates/qx-app/src/cases/plan_algo_execution.rs", "crates/qx-api/src/app_surface.rs"]
   - name: live_exchange_trading
     label: "实盘交易所交易"
     status: blocked

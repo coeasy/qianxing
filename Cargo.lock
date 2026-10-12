@@ -1335,6 +1335,7 @@ dependencies = [
  "qx-strategy",
  "qx-xingban",
  "qx-zhenlu",
+ "serde",
  "serde_json",
 ]
 

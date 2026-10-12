@@ -47,7 +47,7 @@ fn event_log_read_and_write_faces_are_declared_at_every_open_site() {
     // 写面：提交与 worker 仍然显式要求补投影 —— 本轮不是把恢复能力删了换性能。
     for (path, want) in [
         ("crates/qx-cli/src/venue_runtime/paper_submit.rs", 2_usize),
-        ("crates/qx-cli/src/venue_runtime/paper_worker.rs", 6),
+        ("crates/qx-cli/src/venue_runtime/paper_worker.rs", 7),
     ] {
         let source = workspace_source(path);
         assert_eq!(

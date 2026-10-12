@@ -33,6 +33,24 @@ cpp_lifecycle_methods:
     note: "运行状态读取（GET /app/runs/{run_id}）；不是用例，是 run 生命周期的读面"
   - name: cancel_run
     note: "运行取消（POST /app/runs/{run_id}/cancel）；不是用例，是 run 生命周期的写面"
+  - name: start_paper_algo_execution
+    note: "Paper TWAP/VWAP 父单持久化启动生命周期入口"
+  - name: get_paper_algo_execution
+    note: "Paper TWAP/VWAP 父单状态读取生命周期入口"
+  - name: cancel_paper_algo_execution
+    note: "Paper TWAP/VWAP 父单取消生命周期入口"
+  - name: list_paper_algo_executions
+    note: "Paper TWAP/VWAP 活跃父单分页生命周期入口"
+
+python_remote_lifecycle_methods:
+  - name: start_paper_algo_execution
+    note: "Paper TWAP/VWAP 父单持久化启动生命周期入口"
+  - name: get_paper_algo_execution
+    note: "Paper TWAP/VWAP 父单状态读取生命周期入口"
+  - name: cancel_paper_algo_execution
+    note: "Paper TWAP/VWAP 父单取消生命周期入口"
+  - name: list_paper_algo_executions
+    note: "Paper TWAP/VWAP 活跃父单分页生命周期入口"
 
 contracts:
   - use_case: validate_dataset

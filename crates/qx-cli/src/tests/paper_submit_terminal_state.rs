@@ -238,3 +238,130 @@ fn paper_execution_worker_terminates_a_quote_less_command_and_keeps_running() {
     );
     let _ = std::fs::remove_dir_all(&case.dir);
 }
+
+#[test]
+fn paper_worker_resumes_twap_children_across_worker_restarts_and_fills_from_new_quotes() {
+    let case = paper_submit_case("paper-algo-restart", 8004, true);
+    let parent_id = "paper-algo-parent-8004";
+    let now = runtime_timestamp_ms();
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let total_quantity_raw = Quantity::from_i64(4).raw();
+    let mut parent_order = mk_order(8004, &instrument, Side::Buy, 4);
+    parent_order.status = OrderStatus::PendingSubmit;
+    let config = read_runtime_config(&case.config_path).unwrap();
+    let start_request = serde_json::json!({
+        "spec": {
+            "schema_version": qx_app::ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+            "parent_id": parent_id,
+            "total_quantity_raw": total_quantity_raw,
+            "start_ts": now.saturating_sub(10_000),
+            "end_ts": now,
+            "method": "twap",
+            "child_count": 2,
+            "volume_profile": []
+        },
+        "parent_order": parent_order,
+        "child_order_id_base": 8100
+    });
+    let started = super::super::api_algo_execution::handle_algo_execution_request(
+        &config,
+        "start",
+        &start_request.to_string(),
+    )
+    .expect("API 算法单受理必须创建 worker 可恢复的 checkpoint");
+    let started: qx_execution::AlgoExecutionState = serde_json::from_str(&started).unwrap();
+    assert_eq!(started.parent_id, parent_id);
+    assert!(started.child_order_ids.is_empty());
+
+    // First one-shot starts one child and persists it; restart must recover its OMS state.
+    run_paper_execution_worker(&case.config_path, "paper-execution", true).unwrap();
+    let checkpoints = qx_runtime::AlgoExecutionCheckpointStore::new(&case.data_dir);
+    let after_first = checkpoints.load(parent_id).unwrap();
+    assert_eq!(after_first.next_slice_position, 1);
+    assert_eq!(after_first.child_order_ids, [8100]);
+
+    let append_quote = |source_seq: u64, correlation: &str| {
+        let ts = runtime_timestamp_ms();
+        LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT")
+            .unwrap()
+            .ingest(RuntimeEventEnvelope::market_quote(
+                instrument.clone(),
+                QuoteTick::new(
+                    ts,
+                    Price::from_i64(99),
+                    Quantity::from_i64(100),
+                    Price::from_i64(100),
+                    Quantity::from_i64(100),
+                    source_seq,
+                ),
+                ts,
+                ts,
+                correlation,
+            ))
+            .unwrap();
+    };
+
+    append_quote(9001, "paper-algo-quote-1");
+    run_paper_execution_worker(&case.config_path, "paper-execution", true).unwrap();
+    let after_second = checkpoints.load(parent_id).unwrap();
+    assert_eq!(after_second.next_slice_position, 2);
+    assert_eq!(after_second.child_order_ids, [8100, 8101]);
+
+    // A repeated worker pass without a new quote must not apply the previous partial-fill quote again.
+    run_paper_execution_worker(&case.config_path, "paper-execution", true).unwrap();
+    let waiting = checkpoints.load(parent_id).unwrap();
+    assert_eq!(waiting.status, qx_execution::AlgoExecutionStatus::Running);
+
+    append_quote(9002, "paper-algo-quote-2");
+    run_paper_execution_worker(&case.config_path, "paper-execution", true).unwrap();
+    let completed = checkpoints.load(parent_id).unwrap();
+    assert_eq!(
+        completed.status,
+        qx_execution::AlgoExecutionStatus::Completed
+    );
+    let pipeline = LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT").unwrap();
+    let children = pipeline
+        .orders()
+        .into_iter()
+        .filter(|order| [8100, 8101].contains(&order.client_id))
+        .collect::<Vec<_>>();
+    assert_eq!(children.len(), 2);
+    assert!(children
+        .iter()
+        .all(|order| order.status == OrderStatus::Filled));
+    assert_eq!(
+        children
+            .iter()
+            .map(|order| order.filled.raw())
+            .sum::<i128>(),
+        Quantity::from_i64(4).raw()
+    );
+    assert_eq!(
+        pipeline
+            .log()
+            .events()
+            .iter()
+            .filter(|event| matches!(
+                &event.kind,
+                EventKind::Accepted { client_order_id, .. } if [8100, 8101].contains(client_order_id)
+            ))
+            .count(),
+        2,
+        "进程重启后 child client/venue order identity must not be duplicated"
+    );
+    let snapshot = super::super::api_algo_execution::handle_algo_execution_request(
+        &config,
+        "get",
+        &serde_json::json!({ "parent_id": parent_id }).to_string(),
+    )
+    .expect("API 查询必须能从 checkpoint 与 EventLog 聚合执行结果");
+    let snapshot: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
+    assert_eq!(snapshot["state"]["status"], "completed");
+    assert_eq!(
+        snapshot["filled_raw"].as_i64(),
+        Some(Quantity::from_i64(4).raw() as i64)
+    );
+    assert_eq!(snapshot["remaining_raw"], 0);
+    assert_eq!(snapshot["child_orders"].as_array().unwrap().len(), 2);
+    let _ = std::fs::remove_dir_all(&case.dir);
+}

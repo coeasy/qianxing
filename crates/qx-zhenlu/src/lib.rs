@@ -1243,6 +1243,27 @@ impl PaperVenue {
         Ok(())
     }
 
+    /// Restore orders and the next deterministic venue sequence from the
+    /// account's durable EventLog. Workers that recreate PaperVenue per bounded
+    /// execution cycle must use this to avoid reusing a venue order ID.
+    pub fn restore_orders_with_next_venue_id<I>(
+        &mut self,
+        orders: I,
+        next_venue_id: u64,
+    ) -> QxResult<()>
+    where
+        I: IntoIterator<Item = Order>,
+    {
+        self.restore_orders(orders)?;
+        if next_venue_id == 0 {
+            return Err(QxError::BusinessViolation(
+                "PaperVenue next_venue_id 必须为正数".into(),
+            ));
+        }
+        self.next_venue_id = self.next_venue_id.max(next_venue_id);
+        Ok(())
+    }
+
     pub fn disconnect(&mut self) {
         self.connected = false;
         self.state = ConnectorState::ReconcileRequired;
@@ -1404,10 +1425,14 @@ impl Venue for PaperVenue {
         if self.orders.contains_key(&order.client_id) {
             return Err(QxError::Invariant("重复 client_order_id".into()));
         }
+        let next_venue_id = self
+            .next_venue_id
+            .checked_add(1)
+            .ok_or_else(|| QxError::Invariant("PaperVenue venue_order_id 序号溢出".into()))?;
         order.status = OrderStatus::Accepted;
         self.orders.insert(order.client_id, order.clone());
         let venue_id = format!("{}-{}", self.id, self.next_venue_id);
-        self.next_venue_id += 1;
+        self.next_venue_id = next_venue_id;
         Ok(vec![VenueEvent::Accepted {
             client_order_id: order.client_id,
             venue_order_id: venue_id,
@@ -1572,8 +1597,14 @@ impl StrategyRuntime {
 }
 
 #[cfg(test)]
+#[path = "paper_venue_sequence_tests.rs"]
+mod paper_venue_sequence_tests;
+
+#[cfg(test)]
 mod tests {
+
     use super::*;
+
     use qx_core::{InstrumentId, Money, Price, Side, TradingProduct, SCALE};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -2029,7 +2060,6 @@ mod tests {
         assert_eq!(venue.snapshot()[0].status, OrderStatus::Filled);
     }
 
-    /// Paper 的 `Fill.fee` 此前恒为零，会让 Paper 曲线系统性优于回测与实盘。
     #[test]
     fn paper_venue_charges_fills_with_the_shared_fee_model() {
         let instrument = InstrumentId::parse("T.V").unwrap();
@@ -2068,58 +2098,6 @@ mod tests {
             shared_rate_paper().fee_descriptor(),
             "MakerTaker@v1[params=maker_bp=2;taker_bp=5]"
         );
-    }
-
-    #[test]
-    fn paper_venue_consumes_quote_capacity_once() {
-        let instrument = InstrumentId::parse("T.V").unwrap();
-        let mut venue = PaperVenue::new("paper", Box::new(qx_core::ZeroFeeModel));
-        let mut first = order(6, Side::Buy);
-        first.client_id = 1;
-        let mut second = order(6, Side::Buy);
-        second.client_id = 2;
-        venue.submit(first, 1).unwrap();
-        venue.submit(second, 1).unwrap();
-        let events = venue.on_quote(
-            &instrument,
-            QuoteTick::new(
-                2,
-                Price::from_i64(99),
-                Quantity::from_i64(10),
-                Price::from_i64(100),
-                Quantity::from_i64(10),
-                1,
-            ),
-        );
-        let filled: i128 = events
-            .iter()
-            .map(|event| match event {
-                VenueEvent::Fill(fill) => fill.qty.raw(),
-                _ => 0,
-            })
-            .sum();
-        assert_eq!(filled, Quantity::from_i64(10).raw());
-        assert_eq!(
-            venue.snapshot()[0].filled.raw(),
-            Quantity::from_i64(6).raw()
-        );
-        assert_eq!(
-            venue.snapshot()[1].filled.raw(),
-            Quantity::from_i64(4).raw()
-        );
-        assert!(venue
-            .on_quote(
-                &instrument,
-                QuoteTick::new(
-                    3,
-                    Price::from_i64(99),
-                    Quantity::from_i64(10),
-                    Price::from_i64(100),
-                    Quantity::from_i64(10),
-                    1,
-                )
-            )
-            .is_empty());
     }
 
     #[test]

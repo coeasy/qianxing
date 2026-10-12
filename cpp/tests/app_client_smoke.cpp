@@ -35,6 +35,20 @@ int main() {
     assert(observed_path == "/app/run-depth-experiment");
     assert(observed_body == spec);
 
+    const auto algo_start = client.start_paper_algo_execution(spec);
+    assert(algo_start.ok());
+    assert(observed_path == "/app/paper/algo-executions/start");
+    assert(observed_body == spec);
+    const auto algo_get = client.get_paper_algo_execution(spec);
+    assert(algo_get.ok());
+    assert(observed_path == "/app/paper/algo-executions/get");
+    const auto algo_cancel = client.cancel_paper_algo_execution(spec);
+    assert(algo_cancel.ok());
+    assert(observed_path == "/app/paper/algo-executions/cancel");
+    const auto algo_list = client.list_paper_algo_executions(spec);
+    assert(algo_list.ok());
+    assert(observed_path == "/app/paper/algo-executions/list");
+
     const auto risk_parity = client.plan_risk_parity(spec);
     assert(risk_parity.ok());
     assert(observed_path == "/app/plan-risk-parity");

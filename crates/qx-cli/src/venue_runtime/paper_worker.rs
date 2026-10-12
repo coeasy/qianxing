@@ -128,6 +128,7 @@ pub(crate) fn run_paper_execution_worker(
     let log_name = required_account_event_log(&worker)?;
     let runtime_config = config.clone();
     let dedicated_spread_recovery = dedicated_spread_recovery_configured(&config, &worker);
+    let algo_checkpoints = qx_runtime::AlgoExecutionCheckpointStore::new(&root);
     let supervisor = RuntimeSupervisor::new(config)?;
     let registered_id = worker.id.clone();
     let runtime_config_path = path.to_path_buf();
@@ -143,6 +144,7 @@ pub(crate) fn run_paper_execution_worker(
         seed_paper_initial_cash(&mut pipeline, &worker, runtime_timestamp_ms())?;
         metrics.absorb(&pipeline);
         drop(pipeline);
+        let mut algo_page_cursor = None::<String>;
         context.mark(
             qx_runtime::ServiceStatus::Ready,
             "paper execution queue polling",
@@ -253,6 +255,27 @@ pub(crate) fn run_paper_execution_worker(
                     Some(now),
                 )?;
             }
+            let mut algo_pipeline = open_account_pipeline(
+                &runtime_config,
+                &root,
+                &log_name,
+                OutboxRecovery::ReprojectOnOpen,
+            )
+            .map_err(|error| format!("打开 Paper 算法订单 EventLog 失败: {error}"))?;
+            let (algo_advanced, next_page_cursor) = run_paper_algo_execution_cycle(
+                &runtime_config,
+                &runtime_config_path,
+                &worker,
+                &root,
+                &log_name,
+                &mut algo_pipeline,
+                &algo_checkpoints,
+                algo_page_cursor.as_deref(),
+                now,
+            )?;
+            processed += algo_advanced;
+            algo_page_cursor = next_page_cursor;
+            metrics.absorb(&algo_pipeline);
             if !dedicated_spread_recovery {
                 let mut recovery_pipeline = open_account_pipeline(
                     &runtime_config,

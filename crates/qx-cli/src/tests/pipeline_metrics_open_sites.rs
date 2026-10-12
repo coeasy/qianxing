@@ -16,19 +16,24 @@ use super::*;
 /// 并账次数必须与站点数**逐函数相等**：多一次是双计，少一次是漏计，两边都不会让正文报错。
 const COUNTED_OPEN_SITES: [(&str, usize); 2] = [
     ("run_paper_spread_recovery_worker", 1),
-    ("run_paper_execution_worker", 3),
+    ("run_paper_execution_worker", 4),
 ];
 
 /// 不并账的函数：函数名 -> 站点数与"为什么不该出现在按 worker 进程累计的量纲里"。
 ///
 /// 这里的每一项都必须在 `pipeline_metrics_report.rs` 的模块文档里点名，反过来也一样。
-const EXEMPT_OPEN_SITES: [(&str, usize, &str); 9] = [
+const EXEMPT_OPEN_SITES: [(&str, usize, &str); 10] = [
     (
         "open_account_pipeline",
         1,
         "统一入口向 open_runtime_pipeline 的委托",
     ),
     ("build_configured_api_service", 1, "只读"),
+    (
+        "handle_algo_execution_request",
+        2,
+        "Paper 算法单受理与父单聚合读面",
+    ),
     ("load_api_query_models", 1, "只读"),
     ("load_api_account_snapshot_for_worker", 1, "只读"),
     ("strategy_current_qty_for", 1, "只读"),

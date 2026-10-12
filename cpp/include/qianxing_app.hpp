@@ -44,6 +44,10 @@ inline constexpr std::string_view kVerifyDepth = "/app/verify-depth";
 inline constexpr std::string_view kCompareRuns = "/app/compare-runs";
 inline constexpr std::string_view kPlanRiskParity = "/app/plan-risk-parity";
 inline constexpr std::string_view kPlanAlgoExecution = "/app/plan-algo-execution";
+inline constexpr std::string_view kPaperAlgoStart = "/app/paper/algo-executions/start";
+inline constexpr std::string_view kPaperAlgoGet = "/app/paper/algo-executions/get";
+inline constexpr std::string_view kPaperAlgoCancel = "/app/paper/algo-executions/cancel";
+inline constexpr std::string_view kPaperAlgoList = "/app/paper/algo-executions/list";
 inline constexpr std::string_view kRunExperiment = "/app/run-experiment";
 inline constexpr std::string_view kRunExperimentStart = "/app/run-experiment/start";
 inline constexpr std::string_view kDepthBacktest = "/app/depth-backtest";
@@ -63,12 +67,14 @@ inline constexpr std::string_view kRunCancelTemplate = "/app/runs/{run_id}/cance
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 21> kDeclaredRoutes = {
+inline constexpr std::array<std::string_view, 26> kDeclaredRoutes = {
     kValidateDataset,       kBacktest,
     kBacktestStart,         kVerify,
     kVerifyDepth,           kCompareRuns,
     kPlanRiskParity,
     kPlanAlgoExecution,
+    kPaperAlgoStart,        kPaperAlgoGet,
+    kPaperAlgoCancel,       kPaperAlgoList,
     kRunExperiment,         kRunExperimentStart,
     kDepthBacktest,         kDepthBacktestStart,
     kDepthExperiment,       kDepthExperimentStart,
@@ -125,6 +131,22 @@ public:
 
     AppResponse plan_algo_execution(std::string_view spec_json) const {
         return post(routes::kPlanAlgoExecution, spec_json);
+    }
+
+    AppResponse start_paper_algo_execution(std::string_view request_json) const {
+        return post(routes::kPaperAlgoStart, request_json);
+    }
+
+    AppResponse get_paper_algo_execution(std::string_view request_json) const {
+        return post(routes::kPaperAlgoGet, request_json);
+    }
+
+    AppResponse cancel_paper_algo_execution(std::string_view request_json) const {
+        return post(routes::kPaperAlgoCancel, request_json);
+    }
+
+    AppResponse list_paper_algo_executions(std::string_view request_json) const {
+        return post(routes::kPaperAlgoList, request_json);
     }
 
     AppResponse run_experiment(std::string_view spec_json) const {

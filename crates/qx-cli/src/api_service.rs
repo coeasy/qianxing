@@ -66,6 +66,7 @@ pub(crate) fn build_configured_api_service(
     let readiness_config = config.clone();
     // 三个只读运维端点的现读出口：与 boot 用同一份配置、同一个读点，差别只在"每次请求都读"。
     let query_models_config = config.clone();
+    let algo_execution_config = config.clone();
     let readiness_runtime_config_path = runtime_config_path.to_path_buf();
     let readiness_metrics_dir = metrics_dir.clone();
     let service = if config.api.operators.is_empty() {
@@ -91,6 +92,13 @@ pub(crate) fn build_configured_api_service(
         )
     })
     .with_query_models_provider(move || load_api_query_models(&query_models_config))
+    .with_algo_execution_provider(move |operation, body| {
+        super::api_algo_execution::handle_algo_execution_request(
+            &algo_execution_config,
+            operation,
+            body,
+        )
+    })
     .with_control_plane_provider({
         let store = control_store.clone();
         move || store.load()

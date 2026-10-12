@@ -13,7 +13,7 @@
 //! 不在这个出口里计的站点逐名登记在 `tests/pipeline_metrics_open_sites.rs` 的豁免名单里，并由那条
 //! 判据与本段双向核对 —— 名单改了文档不改、或者反过来，都会红：
 //! `open_account_pipeline`（统一入口向 `open_runtime_pipeline` 的委托，不是新的打开点）、
-//! `build_configured_api_service`、`load_api_query_models`、`load_api_account_snapshot_for_worker`、
+//! `build_configured_api_service`、`handle_algo_execution_request`、`load_api_query_models`、`load_api_account_snapshot_for_worker`、
 //! `strategy_current_qty_for`、`strategy_account_context`（服务与读模型按请求各开一个只读 pipeline，
 //! 存活期与「按 worker 进程累计」不符，接它要另立一份跨请求的身份），以及
 //! `run_paper_pipeline_once`、`run_paper_submit_order` 与它拆出的 `paper_submit_action`

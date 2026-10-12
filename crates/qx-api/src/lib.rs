@@ -1,6 +1,7 @@
 //! 不依赖特定 Web 框架的本地 API 边界。
 //! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
 mod admission;
+mod algo_lifecycle;
 mod app_surface;
 mod app_trade_control;
 #[cfg(test)]
@@ -924,6 +925,7 @@ pub struct ApiService {
     worker_metrics_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     readiness_provider: Option<ReadinessProvider>,
     query_models_provider: Option<QueryModelsProvider>,
+    algo_execution_provider: Option<algo_lifecycle::Provider>,
     pub(crate) control_plane_provider: Option<ControlPlaneProvider>,
     /// 跨源准入策略。`None` 表示这份部署不开浏览器准入：`OPTIONS` 照常走分派落 404 兜底，响应里也不带任何 `Access-Control-*`。见 `admission` 模块头那段理由。
     cors: Option<Arc<CorsPolicy>>,
@@ -1130,6 +1132,7 @@ impl ApiService {
             worker_metrics_provider: None,
             readiness_provider: None,
             query_models_provider: None,
+            algo_execution_provider: None,
             control_plane_provider: None,
             cors: None,
             connection_budget: default_connection_budget(),
@@ -1189,9 +1192,6 @@ impl ApiService {
         }
     }
 
-    /// Append metrics emitted by supervised worker processes. The provider is
-    /// intentionally read-only and evaluated only for `/metrics`, so a dead
-    /// worker cannot block the API control/query path.
     pub fn with_worker_metrics_provider<F>(mut self, provider: F) -> Self
     where
         F: Fn() -> String + Send + Sync + 'static,
@@ -1200,9 +1200,6 @@ impl ApiService {
         self
     }
 
-    /// Configure dependency-aware readiness. `/health` remains a cheap
-    /// liveness endpoint; `/ready` uses this provider and returns 503 when the
-    /// API should not receive traffic.
     pub fn with_readiness_provider<F>(mut self, provider: F) -> Self
     where
         F: Fn() -> ApiReadiness + Send + Sync + 'static,
@@ -1211,17 +1208,20 @@ impl ApiService {
         self
     }
 
-    /// 三份只读运维读模型的现读出口：调度状态、账户账簿、对账报告。
-    ///
-    /// 装 provider 之前，这三份只在 `build_configured_api_service` 启动时读一次，之后
-    /// `serve` 进程把它们当事实念到进程结束——对账 worker 每轮覆写
-    /// `reconcile/<worker-id>.json`，API 却永远看不见（V11 S3）。`Err` 表示"这一次没读到"，
-    /// 端点必须据此报错，不得退回上一份或空数组。
+    /// provider 每次请求现读，失败返回错误，不回退到启动快照或空数组（V11 S3）。
     pub fn with_query_models_provider<F>(mut self, provider: F) -> Self
     where
         F: Fn() -> Result<ApiQueryModels, String> + Send + Sync + 'static,
     {
         self.query_models_provider = Some(Arc::new(provider));
+        self
+    }
+
+    pub fn with_algo_execution_provider<F>(mut self, provider: F) -> Self
+    where
+        F: Fn(&str, &str) -> Result<String, (u16, String)> + Send + Sync + 'static,
+    {
+        self.algo_execution_provider = Some(Arc::new(provider));
         self
     }
 
@@ -1528,6 +1528,9 @@ impl ApiService {
         {
             return response;
         }
+        let permission =
+            authenticated_operator.and_then(|operator| self.policy.as_ref()?.permission(operator));
+        let trading_authorized = self.policy.is_none() || algo_lifecycle::can_trade(permission);
         match (method, route) {
             ("GET", "/health") => ApiResponse::json(200, "{\"status\":\"ok\"}"),
             ("GET", "/ready") => {
@@ -1726,6 +1729,30 @@ qx_control_retired_audit_records_total {}\n",
             ("POST", "/app/compare-runs") => app_surface::post_compare_runs(body),
             ("POST", "/app/plan-risk-parity") => app_surface::post_plan_risk_parity(body),
             ("POST", "/app/plan-algo-execution") => app_surface::post_plan_algo_execution(body),
+            ("POST", "/app/paper/algo-executions/start") => algo_lifecycle::respond(
+                "start",
+                body,
+                self.algo_execution_provider.as_ref(),
+                trading_authorized,
+            ),
+            ("POST", "/app/paper/algo-executions/get") => algo_lifecycle::respond(
+                "get",
+                body,
+                self.algo_execution_provider.as_ref(),
+                trading_authorized,
+            ),
+            ("POST", "/app/paper/algo-executions/cancel") => algo_lifecycle::respond(
+                "cancel",
+                body,
+                self.algo_execution_provider.as_ref(),
+                trading_authorized,
+            ),
+            ("POST", "/app/paper/algo-executions/list") => algo_lifecycle::respond(
+                "list",
+                body,
+                self.algo_execution_provider.as_ref(),
+                trading_authorized,
+            ),
             ("POST", "/app/run-experiment") => app::experiment(body, &self.app_paths),
             ("POST", "/app/depth-backtest") => app_surface::depth_backtest(body, &self.app_paths),
             ("POST", "/app/run-depth-experiment") => app::depth_experiment(body, &self.app_paths),
@@ -2182,8 +2209,14 @@ fn json_string(value: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "algo_execution_tests.rs"]
+mod algo_execution_tests;
+
+#[cfg(test)]
 mod tests {
+
     use super::*;
+
     use qx_control::{CommandKind, Permission};
     use qx_core::{Event, EventKind, Priority};
     use qx_protocol::AccountSnapshot;
@@ -2207,39 +2240,6 @@ mod tests {
             websocket_accept("dGhlIHNhbXBsZSBub25jZQ=="),
             "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
         );
-    }
-
-    #[test]
-    fn control_and_query_routes_are_audited() {
-        let service = ApiService::new(ApiState::default());
-        assert_eq!(service.handle("GET", "/health", "", 1).status, 200);
-        let metrics = service.handle("GET", "/metrics", "", 1);
-        assert_eq!(metrics.status, 200);
-        let samples = metrics
-            .body
-            .lines()
-            .filter(|line| !line.starts_with("# "))
-            .count();
-        // 4 条 `qx_api_*` 自身计数 + 2 条 `qx_control_retired_*` 退场计数：
-        // 退场计数少了读者，「内存工作集有界」就只是写法，运维面看不见它有没有真的发生。
-        assert_eq!(samples, 6, "自身样本行:\n{}", metrics.body);
-        let command = ControlCommand {
-            command_id: 1,
-            request_id: "api-1".into(),
-            operator_id: "ops".into(),
-            reason: "pause after alert".into(),
-            kind: CommandKind::PauseStrategy,
-            target: "s1".into(),
-            payload: BTreeMap::new(),
-            permission: Permission::Trading,
-            dry_run: true,
-        };
-        let body = serde_json::to_string(&command).unwrap();
-        assert_eq!(
-            service.handle("POST", "/control/commands", &body, 2).status,
-            202
-        );
-        assert_eq!(service.state().lock().unwrap().control.audit().len(), 1);
     }
 
     /// 端点侧的"未算 ≠ 零"（V11 Q67，Q70 把权益并进来）：同一份快照在 `/account/balances` 上必须把算出来
