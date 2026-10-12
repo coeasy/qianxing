@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791837657
+generated_at_unix: 1791838905
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -115,6 +115,14 @@ scenarios:
     exit_code: 0
     observed: "paper_e2e_test=passed fills=1 order_filled=1 ledger_entries_positive=1"
     evidence: ["crates/qx-cli/src/tests/strategy_order_identity_round_scope.rs", "crates/qx-cli/src/strategy_contract.rs", "crates/qx-cli/src/workers.rs"]
+  - name: paper_multi_strategy
+    label: "同账户多策略 Paper 调度、执行与账簿归属"
+    status: executed
+    anchor: "crates/qx-cli/src/venue_runtime/paper_worker.rs"
+    command: "cargo test --offline -p qx-cli paper_e2e_entrypoint_runs_every_strategy_worker_and_ledger -- --nocapture --test-threads=1"
+    exit_code: 0
+    observed: "scheduler=scheduler-paper strategy=strategy-paper,strategy-paper-2 execution=paper-execution orders=2 (+2 本轮新增) ledger_entries=7 (+7 本轮新增) "
+    evidence: ["crates/qx-cli/src/venue_runtime/paper_worker.rs", "crates/qx-cli/src/tests/paper_multi_strategy.rs", "crates/qx-cli/src/workers.rs"]
   - name: pairs_arbitrage
     label: "配对统计套利"
     status: executed
@@ -164,7 +172,7 @@ scenarios:
     anchor: "crates/qx-xingban/src/market_making.rs"
     command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
     exit_code: 0
-    observed: "42; result_hash=7be40db4c5c40f4e"
+    observed: "42; result_hash=fb1c893548c582e8"
     evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
   - name: depth_strategy_portfolio
     label: "L2 多策略共享 OMS/撮合/账簿与策略额度归因"

@@ -222,63 +222,6 @@ fn paper_worker_cleans_stale_queue_after_terminal_commit() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-#[test]
-fn paper_e2e_entrypoint_runs_scheduler_strategy_execution_and_ledger() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-cli-paper-e2e-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let data_dir = root.join("data");
-    std::fs::create_dir_all(&root).unwrap();
-    let template = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("deploy")
-        .join("qianxing.runtime.paper-strategy.example.json");
-    let mut config = read_runtime_config(&template).unwrap();
-    config.storage.data_dir = data_dir.to_string_lossy().into_owned();
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
-    config.scheduler.jobs_path = workspace_root
-        .join("deploy")
-        .join("qianxing.scheduler.paper-order-smoke.json")
-        .to_string_lossy()
-        .into_owned();
-    config.strategy.target_snapshot_path = Some(
-        workspace_root
-            .join("deploy")
-            .join("qianxing.strategy-target.paper.json")
-            .to_string_lossy()
-            .into_owned(),
-    );
-    for worker in config.workers.iter_mut() {
-        if worker.instrument_spec_path.is_some() {
-            worker.instrument_spec_path = Some(
-                workspace_root
-                    .join("deploy")
-                    .join("qianxing.binance.spot.spec.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            );
-        }
-    }
-    config.strategy.target_qty = 0;
-    let config_path = root.join("runtime.json");
-    std::fs::write(&config_path, config.to_json().unwrap()).unwrap();
-
-    run_paper_pipeline_once(&config_path).unwrap();
-    run_paper_pipeline_once(&config_path).unwrap();
-    let pipeline = LiveEventPipeline::open(&data_dir, paper_account_log(), "USDT").unwrap();
-    assert_eq!(pipeline.orders().len(), 1);
-    assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
-    // Q0a 起 Paper 成交按共享费率计费：买入多出 1 条 Fee 分录（名义额、持仓、费用）。
-    assert_eq!(pipeline.ledger().entries().len(), 4);
-    let _ = std::fs::remove_dir_all(root);
-}
-
 /// 单机 SQLite backend 的 Paper 主链路验收：调度→策略→执行→Ledger
 /// 全部事实必须落在同一个事务数据库里，重启打开后可完整回放。
 #[cfg(feature = "sqlite")]

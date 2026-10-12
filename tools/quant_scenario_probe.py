@@ -559,6 +559,46 @@ def main() -> int:
             }
         )
 
+    def executed_paper_multi_strategy_test():
+        nonlocal failures
+        test_name = "paper_e2e_entrypoint_runs_every_strategy_worker_and_ledger"
+        argv = [
+            "cargo", "test", "--offline", "-p", "qx-cli", test_name,
+            "--", "--nocapture", "--test-threads=1",
+        ]
+        code, output = run_command(argv)
+        summary_passed = re.search(r"test result: ok\. 1 passed; 0 failed", output) is not None
+        e2e = first_match(r"\[Paper · E2E\] ([^\r\n]+)", output).replace("✓", "")
+        observed = e2e or "paper_multistrategy_e2e=missing"
+        ok = (
+            code == 0
+            and summary_passed
+            and "strategy-paper,strategy-paper-2" in e2e
+            and "orders=2 (+2 " in e2e
+            and "ledger_entries=7 (+7 " in e2e
+        )
+        if not ok:
+            failures += 1
+        print(f"[{'OK  ' if ok else 'FAIL'}] paper_multi_strategy: rc={code} observed={observed!r}", flush=True)
+        records.append(
+            {
+                "name": "paper_multi_strategy",
+                "label": "同账户多策略 Paper 调度、执行与账簿归属",
+                "status": "executed" if ok else "declared_not_executed",
+                "anchor": "crates/qx-cli/src/venue_runtime/paper_worker.rs",
+                "command": " ".join(argv),
+                "exit_code": code,
+                "observed": observed,
+                "why_not_executed": "多策略 Paper E2E 未证明每个 worker 的意图均到达 Paper Venue 与共享 Ledger。",
+                "next_gate": "修复所有策略 worker 的调度、成交与审计归属链后重新生成场景证据。",
+                "evidence": [
+                    "crates/qx-cli/src/venue_runtime/paper_worker.rs",
+                    "crates/qx-cli/src/tests/paper_multi_strategy.rs",
+                    "crates/qx-cli/src/workers.rs",
+                ],
+            }
+        )
+
     for name, label, kind, _why in BUILTIN_SCENARIOS:
         frame = BOLLINGER_PROBE_BARS if kind == "bollinger" else BUILTIN_PROBE_BARS
         executed(
@@ -571,6 +611,7 @@ def main() -> int:
         )
 
     executed_paper_kelly_test()
+    executed_paper_multi_strategy_test()
 
     for name, label, kind in MULTI_LEG_SCENARIOS:
         executed(

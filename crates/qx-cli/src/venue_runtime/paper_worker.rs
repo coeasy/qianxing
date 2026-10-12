@@ -340,12 +340,15 @@ pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
         .find(|worker| worker.enabled && worker.role == WorkerRole::Scheduler)
         .map(|worker| worker.id.clone())
         .ok_or_else(|| "Paper 主链路缺少启用的 Scheduler worker".to_string())?;
-    let strategy_id = config
+    let strategy_ids: Vec<String> = config
         .workers
         .iter()
-        .find(|worker| worker.enabled && worker.role == WorkerRole::Strategy)
+        .filter(|worker| worker.enabled && worker.role == WorkerRole::Strategy)
         .map(|worker| worker.id.clone())
-        .ok_or_else(|| "Paper 主链路缺少启用的 Strategy worker".to_string())?;
+        .collect();
+    if strategy_ids.is_empty() {
+        return Err("Paper 主链路缺少启用的 Strategy worker".to_string());
+    }
     let execution_id = config
         .workers
         .iter()
@@ -358,7 +361,12 @@ pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
         .ok_or_else(|| "Paper 主链路缺少启用的 Paper Execution worker".to_string())?;
 
     run_scheduler_worker(path, &scheduler_id, true)?;
-    run_strategy_worker(path, &strategy_id, true)?;
+    // Each Strategy worker owns its own strategy instance and job lease. Running
+    // only the first configured worker made this E2E helper falsely certify a
+    // multi-strategy Paper topology after exercising just one strategy.
+    for strategy_id in &strategy_ids {
+        run_strategy_worker(path, strategy_id, true)?;
+    }
 
     // Paper 执行必须消费已经进入 EventLog 的市场事实。验收 fixture 不连接
     // 网络，因此在执行 worker 前显式注入一条可审计 L1 报价；真实部署由
@@ -437,12 +445,22 @@ pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
         return Err("Paper 主链路验收结束后仍有未确认命令".into());
     }
     let control = configured_control_store(&config)?.load()?;
-    let executed = control.audit().iter().any(|record| {
-        record.status == qx_control::CommandStatus::Executed
-            && record.command_id == pipeline.orders()[0].client_id
-    });
-    if !executed {
-        return Err("Paper 主链路验收缺少 SubmitOrder Executed 审计记录".into());
+    let missing_execution_audit: Vec<u64> = pipeline
+        .orders()
+        .iter()
+        .skip(orders_before)
+        .filter(|order| {
+            !control.audit().iter().any(|record| {
+                record.status == qx_control::CommandStatus::Executed
+                    && record.command_id == order.client_id
+            })
+        })
+        .map(|order| order.client_id)
+        .collect();
+    if !missing_execution_audit.is_empty() {
+        return Err(format!(
+            "Paper 主链路验收缺少 SubmitOrder Executed 审计记录: {missing_execution_audit:?}"
+        ));
     }
     // 末行按"本轮新增"而不是事实流的累计量给结论：同日重跑时上一轮的成交还躺在这本
     // EventLog 里，`orders()` 非空、`orders()[0]` 的 Executed 审计也还在，上面的闸门
@@ -455,12 +473,22 @@ pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
     if new_orders > 0 {
         println!(
             "[Paper · E2E] scheduler={} strategy={} execution={} orders={} (+{} 本轮新增) ledger_entries={} (+{} 本轮新增) ✓",
-            scheduler_id, strategy_id, execution_id, orders_now, new_orders, ledger_now, new_ledger
+            scheduler_id,
+            strategy_ids.join(","),
+            execution_id,
+            orders_now,
+            new_orders,
+            ledger_now,
+            new_ledger
         );
     } else {
         println!(
             "[Paper · E2E] scheduler={} strategy={} execution={} orders={} (+0 本轮新增) ledger_entries={} 本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑",
-            scheduler_id, strategy_id, execution_id, orders_now, ledger_now
+            scheduler_id,
+            strategy_ids.join(","),
+            execution_id,
+            orders_now,
+            ledger_now
         );
     }
     Ok(())

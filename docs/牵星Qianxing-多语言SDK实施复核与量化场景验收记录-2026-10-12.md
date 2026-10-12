@@ -147,3 +147,10 @@ Python 十策略证据：
 - C++ 路径构造现按 RFC 3986 对非 unreserved 字节做百分号编码；合法 ID 字符保持原样。新增 smoke 断言，覆盖 `../other?admin=true#fragment` 被限制为单一路径段的情况。
 - 首次发现新增断言虽在 smoke 源文件中，CI 只构建未执行该二进制，属于孤儿测试。本轮已把 `qianxing_app_client_smoke` 加入 Linux/Windows/macOS C++ CI 执行矩阵。本机没有可用的 C++ 编译器或 CMake，远端 CI 尚未完成前不声称修复已编译/运行通过。
 - 本修复不改变总体能力状态：跨账户/多市场组合账簿与聚合风险、Paper/Live 多策略流程、Web/桌面 E2E、独立 C++ 安装消费者、Linux/macOS Python wheel 以及真实交易所 testnet conformance 仍未通过验收；全量发布门槛仍未达到。
+
+## 15. 2026-10-13 继续实现：Paper 多策略验收跑全 worker
+
+- 复核 `run_paper_pipeline_once` 时发现它只执行配置中的第一个 Strategy worker，因此同账户多策略拓扑可能只运行一个策略，却被这个端到端入口报告为通过。现已改为执行每一个启用的 Strategy worker；每个本轮新增订单都必须有对应 `SubmitOrder Executed` 审计记录，避免只检查第一张订单导致漏验。
+- Paper E2E 测试拆成独立测试模块，并改成两个 strategy worker 和两个 scheduler job，共享同一 Paper Execution 与账户 Ledger。实际结果为两条策略均有成交（orders=2）、共享账簿有 7 条新增分录；同日重复运行新增订单为 0，且每笔成交保留自己的策略归属。
+- `tools/quant_scenario_probe.py` 新增 `paper_multi_strategy`，本地完整探针现记录 35 项 executed、0 项 declared_not_executed、0 项 missing、1 项 blocked（Live 缺真实 testnet 前置）。这只验证同一账户、同一市场的 CLI Paper 多策略主链；它不证明多账户/多市场组合，也不替代 SDK/API/Web 的多策略操作验收。
+- 本轮专项测试和 `cargo test --offline -p qx-cli -- --test-threads=1` 全套通过；架构不变量门禁 1096 项通过；场景探针 35 executed、0 declared_not_executed、0 missing、1 blocked；`cargo fmt --all -- --check`、Python 探针语法、能力/场景 YAML 解析及 `git diff --check` 通过。后续仍须对 Rust/Python/C++ SDK 和 HTTP/Web 使用同一多策略 Paper 规格完成跨入口相同账簿/事件核对，再扩展多市场/跨账户组合风险与归因。
