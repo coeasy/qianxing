@@ -44,8 +44,9 @@ fn repo_root() -> PathBuf {
 fn scratch(label: &str) -> PathBuf {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let serial = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let root =
-        std::env::temp_dir().join(format!("qx-app-g1/{label}-{}-{serial}", std::process::id()));
+    let root = repo_root()
+        .join("target")
+        .join(format!("qx-app-g1/{label}-{}-{serial}", std::process::id()));
     std::fs::create_dir_all(&root).expect("建临时目录");
     root
 }
@@ -203,7 +204,9 @@ fn via_http(route: &str, body: &str) -> (u16, Value) {
         std::env::set_var("QX_API_DATA_ROOT", repo_root());
         std::env::set_var(
             "QX_API_ARTIFACT_ROOT",
-            std::env::temp_dir().join(format!("qx-app-g1-api-{}", std::process::id())),
+            repo_root()
+                .join("target")
+                .join(format!("qx-app-g1-api-{}", std::process::id())),
         );
     });
     let service = qx_api::ApiService::new(qx_api::ApiState::default());
@@ -243,7 +246,9 @@ fn the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python() 
     assert_eq!(cli["fills"], http["fills"]);
     assert!(
         Path::new(http["artifacts"]["run_manifest"].as_str().unwrap()).starts_with(
-            std::env::temp_dir().join(format!("qx-app-g1-api-{}", std::process::id())),
+            repo_root()
+                .join("target")
+                .join(format!("qx-app-g1-api-{}", std::process::id())),
         ),
         "HTTP request must not control the server-side artifact path"
     );
