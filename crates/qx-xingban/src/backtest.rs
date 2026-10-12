@@ -21,10 +21,14 @@ use crate::venue::BarMatchingEngine;
 use std::collections::BTreeMap;
 pub mod strategy;
 pub use strategy::{BarStrategy, NativeBarStrategy};
+mod portfolio_strategy;
+pub use portfolio_strategy::{PortfolioBarStrategy, PortfolioStrategySlot};
 mod protective_exit;
+mod virtual_validation;
 pub use protective_exit::{
     ProtectiveExitFill, ProtectiveExitPolicy, ProtectiveExitReason, ProtectiveExitSignal,
 };
+use virtual_validation::validate_virtual_events;
 
 /// 回测中可重放的账户业务事件。事件时间必须使用与 Bar 相同的时间单位，
 /// 费率使用基点；所有现金变化最终都要进入 Ledger，而不是直接改报告。
@@ -537,10 +541,29 @@ impl BacktestEngine {
                         available_margin_raw,
                     )?;
                 }
+                // All decisions at this timestamp share one account. Reserve funding
+                // in deterministic strategy order before the orders reach the matcher,
+                // otherwise siblings can each pass against the same stale cash balance.
+                let mut reserved_funding_raw = 0_i128;
+                let mut accepted_orders = Vec::new();
                 for mut order in orders {
-                    if order.client_id == 0 {
+                    // Strategy intent IDs are local to a strategy. Once several
+                    // strategies share one OMS, remap zero or colliding IDs into
+                    // the engine's deterministic account-wide order namespace.
+                    if order.client_id == 0 || oms.get(order.client_id).is_some() {
+                        while next_id == 0 || oms.get(next_id).is_some() {
+                            next_id = next_id.checked_add(1).ok_or_else(|| {
+                                qx_core::QxError::Invariant("回测订单序号溢出".into())
+                            })?;
+                        }
                         order.client_id = next_id;
-                        next_id += 1;
+                        next_id = next_id.checked_add(1).ok_or_else(|| {
+                            qx_core::QxError::Invariant("回测订单序号溢出".into())
+                        })?;
+                    } else if order.client_id >= next_id {
+                        next_id = order.client_id.checked_add(1).ok_or_else(|| {
+                            qx_core::QxError::Invariant("回测订单序号溢出".into())
+                        })?;
                     }
                     if order.account_id.is_empty() {
                         order.account_id = account_id.clone();
@@ -710,6 +733,9 @@ impl BacktestEngine {
                         } else {
                             equity
                         };
+                        let unreserved_funding = available_funding
+                            .checked_sub(reserved_funding_raw)
+                            .unwrap_or(i128::MIN);
                         if !reduce_only_allowed {
                             append_rejection(
                                 &mut log,
@@ -717,7 +743,7 @@ impl BacktestEngine {
                                 order.client_id,
                                 "reduce-only order would open or exceed the existing position",
                             );
-                        } else if required_funding > available_funding {
+                        } else if required_funding > unreserved_funding {
                             append_rejection(
                                 &mut log,
                                 bar.ts,
@@ -820,6 +846,13 @@ impl BacktestEngine {
                                     &error.to_string(),
                                 );
                             } else {
+                                reserved_funding_raw = reserved_funding_raw
+                                    .checked_add(required_funding)
+                                    .ok_or_else(|| {
+                                        qx_core::QxError::Invariant(
+                                            "同 Bar 组合资金预留溢出".into(),
+                                        )
+                                    })?;
                                 let submit_seq = log.alloc_seq();
                                 log.append(Event::new(
                                     submit_seq,
@@ -829,20 +862,25 @@ impl BacktestEngine {
                                         client_order_id: order.client_id,
                                     },
                                 ));
-                                let accepted_seq = log.alloc_seq();
-                                log.append(Event::new(
-                                    accepted_seq,
-                                    bar.ts,
-                                    qx_core::Priority::MATCH,
-                                    EventKind::Accepted {
-                                        client_order_id: order.client_id,
-                                        venue_order_id: None,
-                                    },
-                                ));
-                                matcher.submit_at(order, bar.ts);
+                                accepted_orders.push(order);
                             }
                         }
                     }
+                }
+                // EventLog enforces timestamp/priority ordering. Emit all command
+                // decisions above before any matcher acceptance at MATCH priority.
+                for order in accepted_orders {
+                    let accepted_seq = log.alloc_seq();
+                    log.append(Event::new(
+                        accepted_seq,
+                        bar.ts,
+                        qx_core::Priority::MATCH,
+                        EventKind::Accepted {
+                            client_order_id: order.client_id,
+                            venue_order_id: None,
+                        },
+                    ));
+                    matcher.submit_at(order, bar.ts);
                 }
             }
             for mut fill in matcher.on_bar(bar, bar.ts) {
@@ -1166,66 +1204,6 @@ fn equity_for(
         .with_multiplier(multiplier)
         .with_fx(fx_rates);
     Ok(ledger.valuate(&context)?.equity.raw())
-}
-
-fn validate_virtual_events(config: &VirtualTradingConfig) -> Result<(), qx_core::QxError> {
-    if config.liquidation_fee_bp < 0 {
-        return Err(qx_core::QxError::BusinessViolation(
-            "强平费用基点不能为负".into(),
-        ));
-    }
-    if config
-        .delivery
-        .iter()
-        .any(|event| event.settlement_price.raw() <= 0)
-    {
-        return Err(qx_core::QxError::BusinessViolation(
-            "交割结算价必须为正".into(),
-        ));
-    }
-    if config
-        .fx_rates
-        .iter()
-        .any(|(currency, rate)| currency.trim().is_empty() || rate.raw() <= 0)
-    {
-        return Err(qx_core::QxError::BusinessViolation(
-            "跨币种抵押品汇率必须有非空币种且为正".into(),
-        ));
-    }
-    if config.collateral.values().any(|amount| amount.raw() < 0)
-        || config
-            .collateral
-            .keys()
-            .any(|currency| currency.trim().is_empty())
-    {
-        return Err(qx_core::QxError::BusinessViolation(
-            "初始抵押品币种不能为空且金额不能为负".into(),
-        ));
-    }
-    for events in [
-        config
-            .funding
-            .iter()
-            .map(|event| event.ts)
-            .collect::<Vec<_>>(),
-        config
-            .interest
-            .iter()
-            .map(|event| event.ts)
-            .collect::<Vec<_>>(),
-        config
-            .delivery
-            .iter()
-            .map(|event| event.ts)
-            .collect::<Vec<_>>(),
-    ] {
-        if events.windows(2).any(|window| window[0] > window[1]) {
-            return Err(qx_core::QxError::BusinessViolation(
-                "虚拟交易事件必须按 ts 非递减配置".into(),
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn append_ledger_entry(

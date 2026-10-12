@@ -14,6 +14,8 @@ mod experiment_split;
 mod fixtures;
 mod multi_leg_backtest;
 mod multi_leg_experiment;
+mod portfolio_backtest;
+mod portfolio_spec;
 mod run_handles;
 mod sizing;
 mod spec_contract;

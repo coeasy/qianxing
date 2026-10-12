@@ -33,18 +33,8 @@ pub const BACKTEST_SPEC_SCHEMA_VERSION: u32 = 1;
 /// [`AppErrorCategory::FidelityInsufficient`]，不是给一个看起来像结论的数。
 pub const MIN_BACKTEST_BARS: usize = 2;
 
-/// 身份串的合法字符集：ASCII 字母、数字、`.`、`-`、`_`。
-///
-/// 私有：这是一条**校验规则**，不是公共 API——放出去就等于承诺这个集合不变，
-/// 而它随时可能因为多一个入口的路径约定而调整。
-fn is_identity_token(value: &str) -> bool {
-    !value.is_empty()
-        && !matches!(value, "." | "..")
-        && value.len() <= 128
-        && value
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
-}
+mod validation;
+use validation::is_identity_token;
 
 /// Fixed quote-notional sizing currently assumes one linear base unit per quantity unit.
 /// Derivative contracts need product-specific notional math and must not fall through to it.
@@ -314,6 +304,10 @@ pub struct BacktestSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fee_schedule: Option<MakerTakerFeeSchedule>,
     pub strategy: BuiltinStrategySpec,
+    /// Optional deterministic same-account strategy basket. Omitted specs keep
+    /// their historical single-strategy behavior and JSON shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portfolio: Option<PortfolioBacktestConfig>,
     /// Optional position-level protective exits, evaluated on completed bars
     /// and routed through the same OMS/risk/matching path as strategy orders.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -346,6 +340,7 @@ impl BacktestSpec {
             market_spec: None,
             fee_schedule: None,
             strategy,
+            portfolio: None,
             protective_exit: None,
         }
     }
@@ -441,7 +436,17 @@ impl BacktestSpec {
         if let Some(policy) = self.protective_exit {
             policy.validate()?;
         }
-        self.strategy.validate()
+        self.strategy.validate()?;
+        if let Some(portfolio) = &self.portfolio {
+            if self.protective_exit.is_some() {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "策略组合暂不支持账户净持仓级 protective_exit，避免退出成交无法归属到策略持仓",
+                ));
+            }
+            portfolio.validate(&self.strategy, self.initial_cash_raw)?;
+        }
+        Ok(())
     }
 
     /// 从 JSON 读入（严格：多余键即拒）。
@@ -486,6 +491,8 @@ pub use algo_execution::{
 };
 mod protective_exit;
 pub use protective_exit::ProtectiveExitSpec;
+mod portfolio;
+pub use portfolio::{PortfolioBacktestConfig, PortfolioStrategySpec};
 mod capital_allocation;
 pub use capital_allocation::{
     CapitalAllocationAccount, CapitalAllocationRequest, CapitalAllocationResult,

@@ -73,11 +73,21 @@ pub trait BarStrategy {
 pub struct NativeBarStrategy<S: Strategy> {
     pub strategy: S,
     pub context: StrategyContext,
+    virtual_position: bool,
 }
 
 impl<S: Strategy> NativeBarStrategy<S> {
     pub fn new(strategy: S, context: StrategyContext) -> Self {
-        Self { strategy, context }
+        Self {
+            strategy,
+            context,
+            virtual_position: false,
+        }
+    }
+
+    pub(super) fn with_virtual_position(mut self) -> Self {
+        self.virtual_position = true;
+        self
     }
 
     pub fn initialize(&mut self) -> Result<(), qx_core::QxError> {
@@ -87,7 +97,68 @@ impl<S: Strategy> NativeBarStrategy<S> {
     }
 }
 
+impl<S: Strategy> NativeBarStrategy<S> {
+    fn apply_strategy_fill(&mut self, order: &Order, fill: &Fill) -> Result<(), qx_core::QxError> {
+        if !self.virtual_position {
+            return Ok(());
+        }
+        let Some(owner) = order
+            .trace
+            .as_ref()
+            .and_then(|trace| trace.strategy_id.as_deref())
+        else {
+            return Err(qx_core::QxError::Invariant(
+                "组合策略成交缺少 strategy_id trace".into(),
+            ));
+        };
+        if owner != self.context.strategy_id {
+            return Ok(());
+        }
+        if order.account_id != self.context.account_id
+            || fill.account_id != order.account_id
+            || fill.order_id != order.client_id
+            || fill.qty.raw() <= 0
+            || fill.qty.raw()
+                > order
+                    .qty
+                    .raw()
+                    .checked_abs()
+                    .ok_or_else(|| qx_core::QxError::Invariant("组合策略订单数量溢出".into()))?
+        {
+            return Err(qx_core::QxError::Invariant(
+                "组合策略成交账户、订单或数量与原订单不匹配".into(),
+            ));
+        }
+        if order.policy.unwrap_or_default().position_mode != qx_core::PositionMode::OneWay {
+            return Err(qx_core::QxError::BusinessViolation(
+                "组合策略虚拟持仓暂不支持 Hedge position mode".into(),
+            ));
+        }
+        let delta = match order.side {
+            qx_core::Side::Buy => fill.qty.raw(),
+            qx_core::Side::Sell => fill
+                .qty
+                .raw()
+                .checked_neg()
+                .ok_or_else(|| qx_core::QxError::Invariant("组合策略成交数量溢出".into()))?,
+        };
+        let position = self
+            .context
+            .positions
+            .entry(order.instrument.to_string())
+            .or_default();
+        *position = position
+            .checked_add(delta)
+            .ok_or_else(|| qx_core::QxError::Invariant("组合策略虚拟持仓溢出".into()))?;
+        Ok(())
+    }
+}
+
 impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
+    fn on_fill(&mut self, order: &Order, fill: &Fill) -> Result<(), qx_core::QxError> {
+        self.apply_strategy_fill(order, fill)
+    }
+
     fn on_bar_orders_checked(
         &mut self,
         history: &[Bar],
@@ -104,9 +175,11 @@ impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
             ));
         }
         self.context.as_of = visible.ts;
-        self.context
-            .positions
-            .insert(instrument.to_string(), position);
+        if !self.virtual_position {
+            self.context
+                .positions
+                .insert(instrument.to_string(), position);
+        }
         let event = MarketEvent::Bar {
             instrument: instrument.clone(),
             ts: visible.ts,

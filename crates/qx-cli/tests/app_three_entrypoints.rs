@@ -18,6 +18,8 @@ mod classic_strategy_entrypoints;
 mod market_spec_entrypoints;
 #[path = "app_three_entrypoints/multi_leg_experiment.rs"]
 mod multi_leg_experiment_entrypoints;
+#[path = "app_three_entrypoints/portfolio.rs"]
+mod portfolio_entrypoints;
 #[path = "app_three_entrypoints/protective_exit.rs"]
 mod protective_exit_entrypoints;
 #[path = "app_three_entrypoints/python_native.rs"]

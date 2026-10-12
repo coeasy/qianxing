@@ -2,13 +2,18 @@ use super::*;
 #[cfg(test)]
 mod test_cases {
     use super::*;
+    #[path = "../tests/config.rs"]
+    mod config;
     #[path = "../tests/fill_callback.rs"]
     mod fill_callback;
+    #[path = "../tests/portfolio_strategy.rs"]
+    mod portfolio_strategy;
     use crate::ashare::AshareCorporateActionEvent;
     use crate::{
         MarginTier, NextBarOpenFillModel, NoMargin, TieredMargin, VolumeSensitiveFillModel,
         ZeroLatency,
     };
+    use config::simple_config;
     use qx_core::{MakerTakerFeeModel, OrderStatus, Quantity, Side, SCALE};
     /// Q62：报告必须能被事实重新驱动，且逐条账簿条目都对得上。
     /// 旧的 `result_hash() == replay_hash()` 把同一段事件切片哈希两遍，恒等且不可能失败。
@@ -524,28 +529,6 @@ mod test_cases {
                     Vec::new()
                 },
             })
-        }
-    }
-
-    fn simple_config() -> BacktestConfig {
-        BacktestConfig {
-            instrument: InstrumentId::parse("T.SIM").unwrap(),
-            instrument_spec: None,
-            account_id: "main".into(),
-            currency: "USD".into(),
-            initial_cash: Money::from_i64(1000),
-            multiplier: 1,
-            fill: Box::new(NextBarOpenFillModel),
-            fee: Box::new(MakerTakerFeeModel {
-                maker_bp: 0,
-                taker_bp: 0,
-            }),
-            data_tier: DataTier::Bar,
-            latency: Box::new(ZeroLatency),
-            margin: Box::new(NoMargin),
-            seed: 1,
-            risk: RiskGate::conservative_default(),
-            virtual_trading: VirtualTradingConfig::default(),
         }
     }
 

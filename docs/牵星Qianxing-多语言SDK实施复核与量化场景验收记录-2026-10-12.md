@@ -98,3 +98,11 @@ Python 十策略证据：
 此前策略 kind 快速选择无法与 `split_plan` 组合，导致十种策略无法在训练窗中统一选优并进入样本外评估。本轮删除该互斥限制：候选策略/参数都由共享 Rust 执行，按每折训练窗收益挑选，再报告测试窗收益和所选策略 kind。Python 旧报告缺少可选字段时仍可解析。
 
 验证覆盖 Rust qx-app、Rust SDK、HTTP API、Python 原生扩展与 Python 类型解码；API/Python 用例均检查折报告 kind 与候选 ordinal 关联。Rust/Python 追加 walk-forward 逐折验证：90 根 Bar 的 Rust 用例产生 7 折，Python 十策略样例产生 2 折，逐折选择 kind 均与候选序号相符。该修复只补研究实验选择与 OOS 接线，不代表多策略共享资本、组合级风险/账簿或 Paper/Live 多策略闭环已经完成；总体发布门槛仍未满足。
+
+## 9. 2026-10-13 继续实现：组合成交归属路由
+
+- `PortfolioBarStrategy` 之前把每笔成交广播给全部子策略，要求每个自定义策略自行过滤 `strategy_id`。这会让无关策略观察或处理别人的成交，并把归属一致性分散到插件实现中。本轮将成交回调改为按订单 `strategy_id` 精确路由；缺失或未知归属转为对账错误。提交时由组合调度器补齐缺失策略 ID，并拒绝与当前调度槽冲突的 ID。
+- 单策略回测也复用组合适配器。首次全量三入口回归发现，该适配器会把单策略保护性退出的合成 ID 当作未知策略。本轮为唯一子策略保留专用回调路由；真正多策略的账户净持仓保护退出仍在规格校验阶段拒绝，避免把未能归属的退出成交写进某个策略虚拟持仓。
+- 新增组合回调隔离、自动归属和错配拒绝用例。`cargo test --offline --workspace -- --test-threads=1` 全部通过；`cargo test --offline -p qx-cli --test app_three_entrypoints -- --test-threads=1` 的 16 项 CLI/HTTP/Python 契约均通过；`python -m unittest python.tests.test_sdk_layering python.tests.test_app_use_cases` 37 项通过；架构门禁 1096 项通过。
+- 使用 Maturin 重新构建 `cp310-abi3-win_amd64` wheel，稳定 ABI/扩展检查通过，并在隔离虚拟环境离线安装、导入 Python SDK 与 Rust 原生扩展成功；SHA-256：`b197d2b17a64570241774db40d0a8f45614964c06bc3ab4b08062e1959523c9a`。该 wheel 仅证明当前 Windows x64 包；没有据此推断其他平台或 C++ 包已验证。
+- 当前组合预算仍只是策略 sizing 上下文上限，固定数量单仍由账户级资金/风险门控；Tick/OrderBook、多腿/多市场、多账户组合账簿与风险归因、Paper/Live 多策略流程和 Web/桌面组合配置仍未闭环。Live 仍缺外部 testnet 认证，C++ 本机缺编译工具链。本轮不满足整体发布门槛。

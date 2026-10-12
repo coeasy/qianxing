@@ -155,6 +155,49 @@ class LayerSemanticsTest(unittest.TestCase):
         exported = set(_layer("data").__all__)
         self.assertEqual(sorted(exported & set(OPTIONAL_MODULES)), [])
 
+    def test_portfolio_spec_is_available_in_local_and_remote_shared_contract(self):
+        from qianxing import (
+            BacktestSpec,
+            BuiltinStrategySpec,
+            PortfolioBacktestConfig,
+            PortfolioStrategySpec,
+        )
+        from qianxing.core import PortfolioBacktestConfig as CorePortfolioConfig
+
+        self.assertIs(CorePortfolioConfig, PortfolioBacktestConfig)
+        basket = PortfolioBacktestConfig(
+            primary_priority=0,
+            primary_reserved_capital_raw=40_000_000_000,
+            additional_strategies=(
+                PortfolioStrategySpec(
+                    priority=1,
+                    reserved_capital_raw=50_000_000_000,
+                    strategy=BuiltinStrategySpec(kind="momentum", strategy_id="mom"),
+                ),
+            ),
+        )
+        spec = BacktestSpec(
+            run_id="portfolio-contract",
+            instrument="BTCUSDT.BINANCE",
+            bars_path="bars.json",
+            settlement_currency="USDT",
+            initial_cash_raw=100_000_000_000,
+            output_dir="runs",
+            strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="sma"),
+            portfolio=basket,
+        )
+        payload = spec.to_dict()
+        self.assertEqual(payload["portfolio"]["additional_strategies"][0]["strategy"]["strategy_id"], "mom")
+        self.assertNotIn("portfolio", BacktestSpec(
+            run_id="legacy-single",
+            instrument="BTCUSDT.BINANCE",
+            bars_path="bars.json",
+            settlement_currency="USDT",
+            initial_cash_raw=100_000_000_000,
+            output_dir="runs",
+            strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id="sma"),
+        ).to_dict())
+
 
 class TopLevelStabilityTest(unittest.TestCase):
     def test_top_level_all_equals_the_app_public_surface(self):

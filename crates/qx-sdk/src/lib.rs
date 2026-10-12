@@ -81,9 +81,10 @@ pub use qx_app::{
     AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, BacktestSpec, BuiltinStrategySpec,
     CapitalAllocationAccount, CapitalAllocationRequest, CapitalAllocationResult,
     CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestSpec, MakerTakerFeeSchedule,
-    MultiLegBacktestSpec, MultiLegFillModel, RiskParityAssetSpec, RiskParityResult, RiskParitySpec,
-    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec, TradeControlSpec,
-    TradeWorkflow, ALGO_EXECUTION_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
+    MultiLegBacktestSpec, MultiLegFillModel, PortfolioBacktestConfig, PortfolioStrategySpec,
+    RiskParityAssetSpec, RiskParityResult, RiskParitySpec, RunDepthExperimentSpec,
+    RunExperimentSpec, RunMultiLegExperimentSpec, TradeControlSpec, TradeWorkflow,
+    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
     RISK_PARITY_SPEC_SCHEMA_VERSION,
 };
 pub use qx_strategy::BuiltinStrategyKind;

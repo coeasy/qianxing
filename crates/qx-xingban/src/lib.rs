@@ -27,8 +27,9 @@ pub use self::ashare::{
 };
 pub use self::backtest::{
     BacktestConfig, BacktestEngine, BacktestReport, BarStrategy, DeliveryEvent, FundingEvent,
-    InterestEvent, NativeBarStrategy, ProtectiveExitFill, ProtectiveExitPolicy,
-    ProtectiveExitReason, ProtectiveExitSignal, RunManifestIdentity, VirtualTradingConfig,
+    InterestEvent, NativeBarStrategy, PortfolioBarStrategy, PortfolioStrategySlot,
+    ProtectiveExitFill, ProtectiveExitPolicy, ProtectiveExitReason, ProtectiveExitSignal,
+    RunManifestIdentity, VirtualTradingConfig,
 };
 pub use self::cost::{
     FixedRateMargin, LatencyModel, LeverageMargin, MarginRule, MarginTier, NoMargin, StaticLatency,

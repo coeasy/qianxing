@@ -29,16 +29,18 @@ use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
 use crate::run_handle::CancellationToken;
 use crate::spec::{BacktestOutcome, BacktestSpec, MIN_BACKTEST_BARS};
-use qx_core::{Fnv1a, InstrumentId, Money, Quantity, ReplayVerifier, RunManifest};
+use qx_core::{Fnv1a, InstrumentId, Money, ReplayVerifier, RunManifest};
 use qx_datastruct::BarFrame;
-use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, StrategyContext};
 use qx_xingban::{
     BacktestConfig, BacktestEngine, DataTier, FeeModel, FillModel, LeverageMargin,
-    MakerTakerFeeModel, NativeBarStrategy, NextBarOpenFillModel, NoMargin, ProtectiveExitPolicy,
+    MakerTakerFeeModel, NextBarOpenFillModel, NoMargin, PortfolioBarStrategy, ProtectiveExitPolicy,
     ProtectiveExitReason, RunManifestIdentity, VirtualTradingConfig, ZeroLatency,
 };
 use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
+
+mod strategy_slot;
+use strategy_slot::{build_strategy_slot, strategy_version};
 
 /// Historical default retained for callers whose spec predates explicit account ownership.
 const DEFAULT_ACCOUNT_ID: &str = "app";
@@ -177,59 +179,53 @@ pub(super) fn run_backtest_inner(
         risk,
         virtual_trading: VirtualTradingConfig::default(),
     };
-    let mut strategy_config = BuiltinStrategyConfig::new(
-        spec.strategy.kind,
-        spec.strategy.strategy_id.clone(),
-        instrument.clone(),
-        Quantity::from_raw(spec.strategy.quantity_raw),
-    )
-    .map_err(invalid_strategy)?;
-    strategy_config.fast_window = spec.strategy.fast_window;
-    strategy_config.slow_window = spec.strategy.slow_window;
-    strategy_config.period = spec.strategy.period;
-    strategy_config.threshold_bps = spec.strategy.threshold_bps;
-    strategy_config.target_notional_raw = spec.strategy.target_notional_raw;
-    strategy_config.target_available_margin_bps = spec.strategy.target_available_margin_bps;
-    strategy_config.target_volatility_bps = spec.strategy.target_volatility_bps;
-    strategy_config.target_kelly_fraction_bps = spec.strategy.target_kelly_fraction_bps;
-    strategy_config.kelly_lookback_bars = spec.strategy.kelly_lookback_bars;
-    // A sizing estimator is part of the reproducible strategy model. Encode its
-    // algorithm version in the run manifest; legacy runs without sizing retain
-    // their original `builtin-<kind>-v1` identity and fingerprints.
-    strategy_config.strategy_version = if spec.strategy.target_kelly_fraction_bps.is_some() {
-        format!("builtin-{}-kelly-v1", spec.strategy.kind.name())
-    } else if spec.strategy.target_volatility_bps.is_some() {
-        format!("builtin-{}-atr-budget-v1", spec.strategy.kind.name())
-    } else if spec.strategy.target_available_margin_bps.is_some() {
-        format!("builtin-{}-cash-fraction-v1", spec.strategy.kind.name())
-    } else if spec.strategy.target_notional_raw.is_some() {
-        format!("builtin-{}-notional-v1", spec.strategy.kind.name())
-    } else {
-        strategy_config.strategy_version.clone()
-    };
-    strategy_config.validate().map_err(invalid_strategy)?;
-    let strategy_id = strategy_config.strategy_id.clone();
-    let strategy_version = strategy_config.strategy_version.clone();
-
     let as_of = bars.first().map(|bar| bar.ts).unwrap_or(1);
-    let strategy_context = StrategyContext {
-        strategy_id: strategy_id.clone(),
-        strategy_version: strategy_version.clone(),
-        account_id: account_id.clone(),
-        venue_id: instrument.venue.to_string(),
-        data_fingerprint: data_fingerprint.clone(),
+    let mut strategy_slots = Vec::new();
+    let primary_allocation = spec
+        .portfolio
+        .as_ref()
+        .map(|portfolio| portfolio.primary_reserved_capital_raw)
+        .unwrap_or(spec.initial_cash_raw);
+    let primary_priority = spec
+        .portfolio
+        .as_ref()
+        .map(|portfolio| portfolio.primary_priority)
+        .unwrap_or(0);
+    strategy_slots.push(build_strategy_slot(
+        &spec.strategy,
+        primary_priority,
+        primary_allocation,
+        &instrument,
+        &account_id,
+        &config.currency,
+        &data_fingerprint,
         as_of,
-        positions: BTreeMap::new(),
-        cash: BTreeMap::from([(config.currency.clone(), config.initial_cash.raw())]),
-        available_margin_raw: Some(config.initial_cash.raw()),
-        risk_state: "backtest".into(),
+    )?);
+    if let Some(portfolio) = &spec.portfolio {
+        for member in &portfolio.additional_strategies {
+            strategy_slots.push(build_strategy_slot(
+                &member.strategy,
+                member.priority,
+                member.reserved_capital_raw,
+                &instrument,
+                &account_id,
+                &config.currency,
+                &data_fingerprint,
+                as_of,
+            )?);
+        }
+    }
+    let strategy_id = if spec.portfolio.is_some() {
+        "portfolio".to_string()
+    } else {
+        spec.strategy.strategy_id.clone()
     };
-    let mut strategy = NativeBarStrategy::new(
-        BuiltinStrategy::new(strategy_config).map_err(invalid_strategy)?,
-        strategy_context,
-    );
-    strategy
-        .initialize()
+    let strategy_version = if spec.portfolio.is_some() {
+        "portfolio-bar-v1".to_string()
+    } else {
+        strategy_version(&spec.strategy)
+    };
+    let mut strategy = PortfolioBarStrategy::new(strategy_slots)
         .map_err(|error| AppError::from_qx_error(&error))?;
     let engine = match spec.protective_exit {
         Some(policy) => BacktestEngine::new(config)

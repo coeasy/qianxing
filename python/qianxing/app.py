@@ -257,6 +257,40 @@ class MakerTakerFeeSchedule:
 
 
 @dataclass(frozen=True)
+class PortfolioStrategySpec:
+    """One strategy's deterministic priority and reserved account capital."""
+
+    priority: int
+    reserved_capital_raw: int
+    strategy: BuiltinStrategySpec
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "priority": self.priority,
+            "reserved_capital_raw": self.reserved_capital_raw,
+            "strategy": self.strategy.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class PortfolioBacktestConfig:
+    """Additional same-account single-leg strategies in a deterministic Bar run."""
+
+    primary_priority: int
+    primary_reserved_capital_raw: int
+    additional_strategies: tuple[PortfolioStrategySpec, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "primary_priority": self.primary_priority,
+            "primary_reserved_capital_raw": self.primary_reserved_capital_raw,
+            "additional_strategies": [
+                member.to_dict() for member in self.additional_strategies
+            ],
+        }
+
+
+@dataclass(frozen=True)
 class BacktestSpec:
     run_id: str
     instrument: str
@@ -271,6 +305,7 @@ class BacktestSpec:
     account_id: str | None = None
     market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
     fee_schedule: MakerTakerFeeSchedule | dict[str, int] | None = None
+    portfolio: PortfolioBacktestConfig | dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -291,6 +326,10 @@ class BacktestSpec:
             value.pop("fee_schedule")
         elif isinstance(self.fee_schedule, MakerTakerFeeSchedule):
             value["fee_schedule"] = self.fee_schedule.to_dict()
+        if self.portfolio is None:
+            value.pop("portfolio")
+        elif isinstance(self.portfolio, PortfolioBacktestConfig):
+            value["portfolio"] = self.portfolio.to_dict()
         return value
 
 
