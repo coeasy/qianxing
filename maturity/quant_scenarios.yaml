@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791801824
+generated_at_unix: 1791820993
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -156,7 +156,7 @@ scenarios:
     anchor: "crates/qx-xingban/src/market_making.rs"
     command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
     exit_code: 0
-    observed: "42; result_hash=84d254157a358f0b"
+    observed: "42; result_hash=7bfbc38e08640109"
     evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
   - name: algo_execution
     label: "算法执行（API 受理 / TWAP 拆单 / Paper 恢复 / EventLog 聚合）"
@@ -174,22 +174,6 @@ scenarios:
     exit_code: 0
     observed: "Ran 1 test; strategies=10 fills>0 result_hash=16-hex for each strategy"
     evidence: ["python/tests/test_app_use_cases.py", "crates/qx-strategy/src/builtin.rs", "crates/qx-python/src/lib.rs"]
-  - name: python_quote_provider_depth_backtest
-    label: "Python Quote Provider → Rust DepthFrame → Tick 回测与复核"
-    status: executed
-    anchor: "python/tests/test_provider_sdk.py"
-    command: "python -m unittest tests.test_provider_sdk.ProviderSdkTest.test_quote_provider_to_depth_frame_and_shared_rust_tick_backtest"
-    exit_code: 0
-    observed: "Quote snapshots normalized by Rust; L1 DepthFrame lineage retained; shared Rust depth backtest verified"
-    evidence: ["python/tests/test_provider_sdk.py", "crates/qx-python/src/provider_bridge.rs", "python/qianxing/data/providers.py"]
-  - name: python_provider_dataset_manifest
-    label: "Python Bar Provider → DatasetManifestV2/DatasetSpec → Rust 回测"
-    status: executed
-    anchor: "python/tests/test_provider_sdk.py"
-    command: "python -m unittest tests.test_provider_sdk.ProviderSdkTest.test_provider_builds_and_validates_dataset_manifest_before_rust_backtest"
-    exit_code: 0
-    observed: "manifest_version=1 rows=6 missing_intervals=0; Rust generated canonical fingerprint, frozen DatasetSpec validation passed, shared backtest verified=true"
-    evidence: ["python/tests/test_provider_sdk.py", "crates/qx-python/src/provider_bridge/dataset_manifest.rs", "python/qianxing/data/providers.py"]
   - name: rust_sdk_git_consumer
     label: "Rust SDK 固定提交 Git 安装与仓外消费者运行"
     status: executed

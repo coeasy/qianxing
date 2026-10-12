@@ -66,3 +66,12 @@ Python 十策略证据：
 | Rust SDK 发布 | `qx-sdk` 进程内门面、Paper HTTP 生命周期 facade 与 workspace 独立消费者测试存在；Git 固定提交仓外消费已验收 | crates.io 内部 crate registry/发布顺序及安装验收未完成 |
 
 因此本轮完成了共享 Paper 算法单链路、Python 十策略验证和场景证据修复，但目前证据不足以将整套多语言 SDK 或 Live 交易宣布为发布就绪。应继续保留上述阻塞项及 capability matrix 的限制状态。
+
+## 5. 2026-10-13 继续复核：门禁与核心 SDK 用例
+
+- 重新运行 `python tools/quant_scenario_probe.py`：31 项本地场景全部执行通过，0 项缺失；1 项多交易所 Live 场景因 `ccxt` 运行依赖与 testnet 凭据缺失保持 blocked。结果更新到 `maturity/quant_scenarios.yaml`。场景包括十种经典策略、多语言策略、Bar/深度/双腿回测、参数对比、Paper 算法执行、风险平价与资金规划等。
+- `python tools/check_architecture.py`：1096 项全部通过。
+- `cargo test --offline -p qx-app -p qx-sdk`：qx-app 83 项单元测试、2 项外部消费者测试；Rust SDK 5 项单元测试、1 项资金规划消费者、10 项独立消费者、2 项 Provider 消费者测试全部通过。
+- `cargo test --offline -p qx-api`：58 项单元测试及 API 集成测试全部通过。首次未设置临时目录时，4 项依赖文件系统的测试受 Windows 默认 Temp 目录拒绝访问影响；将 `TEMP`/`TMP` 指到仓库 `target/test-temp` 后全量重跑通过。该限制属于本机测试环境，未伪报为产品行为缺陷。
+- 本轮重新核对确认一个未闭环的主链：仓内 Runtime/CLI 能运行多策略配置，但 Rust/Python/C++ SDK 与 HTTP/Web 稳定应用契约没有同一多策略组合回测用例；现有 `qx-app` Bar `BacktestSpec` 仍是单策略运行。组合资金分配也尚未与策略调度、共享组合风险、组合账簿、Paper/Live 订单执行连接。因此“SDK 多策略组合实盘/回测全部贯通”仍为未完成。
+- 本轮没有引入第二套撮合/账簿算法，也没有将 Runtime/CLI 的场景执行误记成 SDK 接入。下一阶段应先把组合调度与共享账簿能力收敛成有明确所有权的 Rust 应用用例/领域端口，再逐一接入各语言和 API，并以跨语言相同输入、相同结果与事件/账簿核对作为退出门。
