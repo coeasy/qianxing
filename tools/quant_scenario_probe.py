@@ -198,7 +198,10 @@ def run_command(command: list[str], env_extra: dict | None = None) -> tuple[int,
     tmp.mkdir(parents=True, exist_ok=True)
     env["TEMP"] = env["TMP"] = str(tmp)
     for key, value in (env_extra or {}).items():
-        env[key] = str(ROOT / value) if not Path(value).is_absolute() else value
+        # Environment values are already values, not implicitly repository
+        # paths. The old path coercion turned booleans like "true" into an
+        # invalid CARGO_NET_GIT_FETCH_WITH_CLI path on Windows.
+        env[key] = str(value)
     proc = subprocess.run(
         command,
         cwd=ROOT,

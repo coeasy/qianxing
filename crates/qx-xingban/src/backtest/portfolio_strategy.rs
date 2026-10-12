@@ -80,6 +80,13 @@ impl PortfolioBarStrategy {
 }
 
 impl BarStrategy for PortfolioBarStrategy {
+    fn strategy_budget_raw(&self, strategy_id: &str) -> Option<i128> {
+        self.slots
+            .iter()
+            .find(|slot| slot.strategy_id == strategy_id)
+            .map(|slot| slot.reserved_capital_raw)
+    }
+
     fn on_fill(&mut self, order: &Order, fill: &Fill) -> Result<(), qx_core::QxError> {
         let owner = order
             .trace
@@ -157,6 +164,11 @@ impl BarStrategy for PortfolioBarStrategy {
                     )));
                 }
                 trace.strategy_id = Some(slot.strategy_id.clone());
+                if order.policy.unwrap_or_default().position_mode != qx_core::PositionMode::OneWay {
+                    return Err(qx_core::QxError::BusinessViolation(
+                        "组合策略预算目前要求 OneWay 持仓，Hedge 必须使用独立腿级预算".into(),
+                    ));
+                }
             }
             orders.extend(child_orders);
         }

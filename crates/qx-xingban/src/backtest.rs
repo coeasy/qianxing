@@ -23,6 +23,10 @@ pub mod strategy;
 pub use strategy::{BarStrategy, NativeBarStrategy};
 mod portfolio_strategy;
 pub use portfolio_strategy::{PortfolioBarStrategy, PortfolioStrategySlot};
+mod portfolio_budget;
+use portfolio_budget::PortfolioBudgetState;
+mod order_validation;
+use order_validation::reduce_only_order_allowed;
 mod protective_exit;
 mod virtual_validation;
 pub use protective_exit::{
@@ -352,6 +356,7 @@ impl BacktestEngine {
         let mut log = EventLog::new();
         let mut fills = Vec::new();
         let mut protective_exit_fills = Vec::new();
+        let mut portfolio_budget = PortfolioBudgetState::default();
         let mut position_policies = BTreeMap::<qx_core::PositionSide, qx_core::OrderPolicy>::new();
         let mut favorable_extremes = BTreeMap::<qx_core::PositionSide, i128>::new();
         let mut protective_order_meta = BTreeMap::<u64, (ProtectiveExitReason, u64)>::new();
@@ -598,6 +603,14 @@ impl BacktestEngine {
                         let visible_close = bars[i - 1].close;
                         let reference_price = order.limit.map(|p| p.raw()).unwrap_or(visible_close);
                         let order_qty = checked_abs(order.qty.raw())?;
+                        let strategy_budget_check = portfolio_budget.order_budget_check(
+                            &*strategy,
+                            &order,
+                            reference_price,
+                            instrument_spec.as_ref(),
+                            multiplier,
+                            margin.as_ref(),
+                        )?;
                         let reduce_only_allowed = !product_policy.reduce_only
                             || reduce_only_order_allowed(
                                 &ledger,
@@ -743,6 +756,15 @@ impl BacktestEngine {
                                 order.client_id,
                                 "reduce-only order would open or exceed the existing position",
                             );
+                        } else if strategy_budget_check
+                            .is_some_and(|(budget, required)| required > budget)
+                        {
+                            append_rejection(
+                                &mut log,
+                                bar.ts,
+                                order.client_id,
+                                "订单会使策略持仓需求超过 reserved_capital_raw",
+                            );
                         } else if required_funding > unreserved_funding {
                             append_rejection(
                                 &mut log,
@@ -846,6 +868,11 @@ impl BacktestEngine {
                                     &error.to_string(),
                                 );
                             } else {
+                                portfolio_budget.accept_if_owned(
+                                    &*strategy,
+                                    &order,
+                                    reference_price,
+                                )?;
                                 reserved_funding_raw = reserved_funding_raw
                                     .checked_add(required_funding)
                                     .ok_or_else(|| {
@@ -892,6 +919,14 @@ impl BacktestEngine {
                     spec.validate_fill(fill.qty.raw(), fill.price.raw())?;
                 }
                 order.trace_fill(&mut fill, None, None);
+                portfolio_budget.validate_fill_budget(
+                    &*strategy,
+                    &order,
+                    &fill,
+                    instrument_spec.as_ref(),
+                    multiplier,
+                    margin.as_ref(),
+                )?;
                 if let Some((reason, trigger_ts)) =
                     protective_order_meta.get(&fill.order_id).copied()
                 {
@@ -913,6 +948,7 @@ impl BacktestEngine {
                 let terms = qx_core::FillTerms::resolve(instrument_spec.as_ref(), multiplier);
                 let entry_ids =
                     qx_core::apply_fill_to_books(&mut ledger, &mut oms, &currency, &fill, terms)?;
+                portfolio_budget.apply_fill_if_owned(&*strategy, &order, &fill)?;
                 if ashare_rules.is_some() && order.side == Side::Buy {
                     ashare_state.on_buy(fill.qty.raw());
                 }
@@ -1160,32 +1196,6 @@ fn notional_for(
     } else {
         Ok(qx_core::notional(qty, price).saturating_mul(multiplier))
     }
-}
-
-fn reduce_only_order_allowed(
-    ledger: &Ledger,
-    account_id: &str,
-    instrument: &InstrumentId,
-    order: &Order,
-    order_qty: i128,
-) -> bool {
-    let policy = order.policy.unwrap_or_default();
-    let current = if policy.position_mode == qx_core::PositionMode::Hedge {
-        ledger
-            .position_for_side(account_id, instrument, policy.position_side)
-            .quantity
-            .raw()
-    } else {
-        ledger.position_for(account_id, instrument).quantity.raw()
-    };
-    if current == 0 || order_qty <= 0 {
-        return false;
-    }
-    let delta = match order.side {
-        Side::Buy => order_qty,
-        Side::Sell => -order_qty,
-    };
-    current.signum() != delta.signum() && order_qty <= current.saturating_abs()
 }
 
 fn equity_for(

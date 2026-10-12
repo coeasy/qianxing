@@ -6,6 +6,8 @@ mod test_cases {
     mod config;
     #[path = "../tests/fill_callback.rs"]
     mod fill_callback;
+    #[path = "../tests/portfolio_budget.rs"]
+    mod portfolio_budget;
     #[path = "../tests/portfolio_strategy.rs"]
     mod portfolio_strategy;
     use crate::ashare::AshareCorporateActionEvent;

@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791822486
+generated_at_unix: 1791832386
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -156,7 +156,7 @@ scenarios:
     anchor: "crates/qx-xingban/src/market_making.rs"
     command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
     exit_code: 0
-    observed: "42; result_hash=cd8feb45e8e257b3"
+    observed: "42; result_hash=ea8110a2a0ea90c1"
     evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
   - name: algo_execution
     label: "算法执行（API 受理 / TWAP 拆单 / Paper 恢复 / EventLog 聚合）"
@@ -236,7 +236,7 @@ scenarios:
     anchor: "crates/qx-xingban/src/backtest.rs"
     command: "qx-cli app backtest .task-tmp/quant-probe/protective-exit.json"
     exit_code: 0
-    observed: "\"fills\":2,\"equity_points\":8; fills=2 protective_stop_fills=1 first_trigger_ts=7000 first_fill_ts=8000"
+    observed: "\"fills\":3,\"equity_points\":8; fills=3 protective_stop_fills=1 first_trigger_ts=6000 first_fill_ts=7000"
     evidence: ["crates/qx-xingban/src/backtest.rs"]
   - name: multi_data_source_batch
     label: "多数据源 / 多市场批量对比"

@@ -5,6 +5,11 @@ use qx_guanxing::Bar;
 use qx_strategy::{MarketEvent, Strategy, StrategyContext};
 
 pub trait BarStrategy {
+    /// Per-strategy capital limit, when this adapter owns a strategy portfolio.
+    fn strategy_budget_raw(&self, _strategy_id: &str) -> Option<i128> {
+        None
+    }
+
     /// Receive a fill only after the shared ledger and replay event log have accepted it.
     /// Portfolio adapters use this to reconcile strategy-owned virtual positions with
     /// the authoritative account fills before the next decision boundary.

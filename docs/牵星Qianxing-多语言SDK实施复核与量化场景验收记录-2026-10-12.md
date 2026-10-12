@@ -104,5 +104,6 @@ Python 十策略证据：
 - `PortfolioBarStrategy` 之前把每笔成交广播给全部子策略，要求每个自定义策略自行过滤 `strategy_id`。这会让无关策略观察或处理别人的成交，并把归属一致性分散到插件实现中。本轮将成交回调改为按订单 `strategy_id` 精确路由；缺失或未知归属转为对账错误。提交时由组合调度器补齐缺失策略 ID，并拒绝与当前调度槽冲突的 ID。
 - 单策略回测也复用组合适配器。首次全量三入口回归发现，该适配器会把单策略保护性退出的合成 ID 当作未知策略。本轮为唯一子策略保留专用回调路由；真正多策略的账户净持仓保护退出仍在规格校验阶段拒绝，避免把未能归属的退出成交写进某个策略虚拟持仓。
 - 新增组合回调隔离、自动归属和错配拒绝用例。`cargo test --offline --workspace -- --test-threads=1` 全部通过；`cargo test --offline -p qx-cli --test app_three_entrypoints -- --test-threads=1` 的 16 项 CLI/HTTP/Python 契约均通过；`python -m unittest python.tests.test_sdk_layering python.tests.test_app_use_cases` 37 项通过；架构门禁 1096 项通过。
-- 使用 Maturin 重新构建 `cp310-abi3-win_amd64` wheel，稳定 ABI/扩展检查通过，并在隔离虚拟环境离线安装、导入 Python SDK 与 Rust 原生扩展成功；SHA-256：`b197d2b17a64570241774db40d0a8f45614964c06bc3ab4b08062e1959523c9a`。该 wheel 仅证明当前 Windows x64 包；没有据此推断其他平台或 C++ 包已验证。
-- 当前组合预算仍只是策略 sizing 上下文上限，固定数量单仍由账户级资金/风险门控；Tick/OrderBook、多腿/多市场、多账户组合账簿与风险归因、Paper/Live 多策略流程和 Web/桌面组合配置仍未闭环。Live 仍缺外部 testnet 认证，C++ 本机缺编译工具链。本轮不满足整体发布门槛。
+- 使用 Maturin 重新构建 `cp310-abi3-win_amd64` wheel，稳定 ABI/扩展检查通过，并在隔离虚拟环境离线安装、导入 Python SDK 与 Rust 原生扩展成功；当前构建 SHA-256：`7aeb0e011c0d811df45945aa41d95483452b4bbf552027f6d80d21a812ac21ea`。该 wheel 仅证明当前 Windows x64 包；没有据此推断其他平台或 C++ 包已验证。
+- `reserved_capital_raw` 已升级为实际策略额度：按策略已成交持仓和未成交挂单的确定性顺序计算峰值单向暴露，现货以可见价格名义额、衍生品以产品初始保证金核算；单笔意图超额会拒绝，跳空后成交价使额度超限则在账簿入账前失败关闭。策略组合拒绝 Hedge 持仓模式；手续费与总账户现金仍由共享账户资金闸门约束。
+- 新增固定数量订单超预算拒绝、未成交限价单持续占用预算、成交跳空超预算失败关闭用例。每笔待成交订单独立保存参考价和杠杆，预算校验按确定性接受顺序逐笔计算，避免用后一笔低限价低估前面高限价挂单的需求。现有 Tick/OrderBook、多腿/多市场、多账户组合账簿与策略级 PnL/费用/回撤归因、Paper/Live 多策略流程和 Web/桌面组合配置仍未闭环。Live 仍缺外部 testnet 认证，C++ 本机缺编译工具链。本轮不满足整体发布门槛。
