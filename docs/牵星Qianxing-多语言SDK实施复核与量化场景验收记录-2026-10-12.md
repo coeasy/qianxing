@@ -38,8 +38,8 @@ Python 十策略证据：
 - Rust 策略目录：[crates/qx-strategy/src/builtin/config.rs](../crates/qx-strategy/src/builtin/config.rs)
 - Python Rust bridge：[crates/qx-python/src/lib.rs](../crates/qx-python/src/lib.rs)
 - 本机 Python 3.13 Windows `cp310-abi3-win_amd64` wheel 已构建、元数据检查通过，并在独立 target 目录安装后实际运行 Bar 回测（1 笔成交）。此结果只证明当前 Windows wheel，不代表其它 Python 版本/操作系统/架构。
-- Rust Git SDK 消费者固定到已推送提交 `393905317567670e7ae462eb91f43e77151dfb69`，在 workspace 外构建并运行数据校验、回测和结果复核（1 笔成交）；见 `tools/check_rust_sdk_git_consumer.py`。
-- 本轮 Rust 远端门面增加 Paper TWAP/VWAP start/get/cancel/list 四个 API 客户端方法；`cargo test -p qx-sdk --offline` 的 2 个新单元测试和 9 个既有独立消费者测试均通过。仓外 Git 消费者将随本轮提交推送后再次固定新 revision 验收。
+- Rust Git SDK 消费者固定到已推送提交 `ffbc8bace1260367179040a671b05a5a3a399632`，在 workspace 外构建并运行数据校验、回测和结果复核（1 笔成交），并编译调用 Paper start/get/cancel/list 四个公开方法；见 `tools/check_rust_sdk_git_consumer.py`。
+- 本轮 `cargo test -p qx-sdk --offline` 的 3 个新增单元测试和 9 个独立消费者测试全部通过；仓外消费者固定提交运行通过。
 
 ## 3. 本轮场景执行结果
 
@@ -63,6 +63,6 @@ Python 十策略证据：
 | 多账户与多策略并行交易 | 有账户日志隔离及多策略运行机制 | 组合级风险聚合、竞争资金调度及完整 Web 操作流程仍未形成统一 E2E 证据 |
 | Live 下单、查询、撤单与对账 | 适配器实现存在，但未认证 | 当前无 CCXT 运行依赖和交易所 testnet 凭据；不得标记为已通过或 GA |
 | C++ SDK 发布 | 远端契约与 smoke 源码已更新 | 本机没有 C++ 工具链；CMake 安装包及独立消费者尚未构建验证 |
-| Rust SDK 发布 | `qx-sdk` 进程内门面、Paper HTTP 生命周期 facade 与 workspace 独立消费者测试存在；Git 固定提交仓外消费已验收 | 本轮更新后的 Git 固定提交仓外消费待推送后复验；内部 crate registry/发布顺序和 crates.io 消费验收未完成 |
+| Rust SDK 发布 | `qx-sdk` 进程内门面、Paper HTTP 生命周期 facade 与 workspace 独立消费者测试存在；Git 固定提交仓外消费已验收 | crates.io 内部 crate registry/发布顺序及安装验收未完成 |
 
 因此本轮完成了共享 Paper 算法单链路、Python 十策略验证和场景证据修复，但目前证据不足以将整套多语言 SDK 或 Live 交易宣布为发布就绪。应继续保留上述阻塞项及 capability matrix 的限制状态。
