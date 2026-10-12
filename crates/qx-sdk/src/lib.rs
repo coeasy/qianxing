@@ -17,7 +17,8 @@
 //!
 //! - 门面是 `qx-app` 公开面的**超集**：`qx-app` 重导出的每一项在这里都够得着，
 //!   所以集成方**不需要**再单独依赖 `qx-app`。
-//! - 门面还公开策略注册表类型与执行扩展端口：它们是构造 `qx-app` 输入、接入共享 Rust
+//! - 门面公开多源 Provider 注册/查询/结果类型与原始血缘类型，也公开策略注册表类型与执行
+//!   扩展端口：它们是构造 `qx-app` 输入、进行确定性 Provider failover、接入共享 Rust
 //!   TWAP/VWAP 状态机所需的稳定边界，不在门面里复制策略、风险或订单逻辑。
 //! - TWAP/VWAP 父单状态可从稳定门面创建、序列化，并通过 `ExecutionGateway` 推进；
 //!   持久化、单飞调度和 Paper/Live worker 由运行时负责；RemoteApiClient 可调用服务端 Paper 生命周期，但不代表 SDK 自托管 worker。
@@ -64,8 +65,13 @@ pub use remote::{RemoteApiClient, RemoteApiError, RemoteResponse, RemoteTranspor
 // —— §6.1「统一错误」——
 pub use qx_app::{AppAction, AppError, AppErrorCategory, AppRetry};
 
-// —— §6.1「capabilities」——
-pub use qx_provider::ProviderCapability;
+// —— §6.1「capabilities」与多源数据 Provider 端口 ——
+// DataProvider 的公开签名直接使用 RawRecord，因此同时重导出来源身份和记录类型；
+// 独立消费者只依赖 qx-sdk 即可注册数据源、做确定性主备选择并保留血缘。
+pub use qx_provider::{
+    DataKind, DataProvider, DataQuery, DataSourceId, ProviderCapability, ProviderError,
+    ProviderErrorClass, ProviderRegistry, ProviderResult, RawRecord, RegistryError,
+};
 
 // —— §6.1「spec 构造校验」——
 // `BuiltinStrategyKind` 来自 qx-strategy：它是 `BuiltinStrategySpec::new` 的参数类型，
@@ -130,5 +136,4 @@ pub use qx_app::{
 };
 
 // —— §6.1「Provider/Venue extension ports」——
-// 第三方要接自己的数据源或交易所，就实现这两个 trait；实现之后经 `qx-app` 的用例注入。
-pub use qx_provider::DataProvider;
+// 第三方 venue 通过 VenuePort 接入；数据源则经 ProviderRegistry 选择、获取和校验。

@@ -67,7 +67,7 @@ domains:
     level: implemented-unverified
     evidence: [python/qianxing, python/tests/test_sdk_layering.py, maturity/language_api_contract.yaml, maturity/quant_scenarios.yaml, crates/qx-cli/src/tests/strategy_order_identity_round_scope.rs]
     limitations: ["Bar、Tick/OrderBook 与多腿回测现支持显式账户归属，但仍按 leg/run 独立账簿；组合级资金竞争/风险聚合与多策略调度未闭环。统一 Provider 导入、多交易所费率与撮合、用户策略选择与完整 Paper/Live 执行验收也未闭环", "Kelly fraction 已在 Rust Bar 单腿回测和 Paper worker→Risk→OMS→Paper Venue→Ledger 路径验证；Tick/OrderBook、多腿 sizing 未接入，Live sizing 未经 testnet 验收", "Rust 风险平价用例已提供确定性研究规划，并经 Python native/remote、C++ remote 和 Rust SDK 接入；它要求调用方提供冻结对齐收益与标记价，不自动读取 Provider 数据，也不提交 Paper/Live 订单", "接口分层已落（方案 §6.2：core/client/data/strategy/paper/live/experiments/reports 八个子层；顶层稳定名单与 qianxing.app 的公开面逐一双向相等；本地 AsyncCoreClient/AsyncRunHandle 与远端 AppClient/RemoteRunHandle 均以同步实现为唯一契约源，Paper/Live 提交亦有 asyncio 委托）；本地 RunHandle.events 来自 Rust worker 的内存事件序列；HTTP /app/runs/{run_id}/events 将生命周期事件并入运行快照并支持 after_seq，Python/Rust/C++ 远端可按 Run 读取。它仍是快照持久化而非逐事件事务日志，未提供 occurred_at/订单成交事实、跨进程强一致追加或游标过期恢复语义", "CPython 3.10+ 乘操作系统与架构的支持矩阵未建立", "不带 Rust 工具链的干净环境安装冒烟未建立：发布验收目前只在带仓库源码的环境里跑过"]
-    next_gate: "打通持久化的按 Run 事件/订单流与游标恢复；建立 CPython 3.10+ 乘操作系统与架构的支持矩阵，并在不带 Rust 工具链的干净环境完成安装冒烟"
+    next_gate: "统一外部语言策略与 SDK backtest/experiment 的版本化 spec 和执行入口；打通持久化的按 Run 事件/订单流与游标恢复；建立 CPython 3.10+ 乘操作系统与架构的支持矩阵，并在不带 Rust 工具链的干净环境完成安装冒烟"
 
   - name: cpp_sdk
     level: partial
@@ -79,7 +79,7 @@ domains:
     level: implemented-unverified
     evidence: [crates/qx-sdk, crates/qx-sdk/tests/independent_consumer.rs, crates/qx-execution/src/algo_execution.rs, docs/qx-sdk-migration.md]
     limitations: ["门面 crate qx-sdk 已落（方案 §6.1）：Client/Engine、capabilities、spec 构造校验、同步与句柄式异步 Run、RunHandle、取消等待取结果、report/verify、Provider/Venue 扩展端口与统一错误都在公开面上；Bar 回测 Kelly sizing 通过 BuiltinStrategySpec 可用；Rust SDK 已暴露可序列化 AlgoExecutionState 与共享 ExecutionGateway 端口，qx-runtime 提供原子父单 checkpoint 与单飞 step/cancel 存储；qx-cli 已接 Paper worker、API start/get/list/cancel 与父单成交聚合，Python/C++ 已接远端生命周期方法；qx-sdk RemoteApiClient 已接入服务端 Paper 生命周期、/events/live 序号游标和按 Run 读取生命周期快照事件，宿主需实现 RemoteTransport；本地 RunHandle.events 来自 Rust worker 内存事件序列。按 Run 快照仍非逐事件事务日志，不含订单/成交事实及跨进程强一致游标恢复", "Kelly fraction 已在 Rust Bar 单腿回测和 Paper worker→Risk→OMS→Paper Venue→Ledger 路径验证；深度/多腿 sizing 未接入，Live sizing 未经 testnet 验收", "门面的『异步』是句柄式不是 Future 式：qx-app 的引擎是线程加通道，没有 executor，硬套 Future 只会让 poll 里出现阻塞等待", "Git 固定提交的 workspace 外消费者已构建并执行数据校验、回测、结果复核；crates.io 发布仍未通过：`cargo package -p qx-sdk --allow-dirty --offline` 因内部 `qx-app` 尚未发布至配置 registry 而失败，临时 registry consumer 未建立", "通用 §4.2 能力预检仍未闭环；market-aware Bar 已要求显式费用/tick/lot 和时间有效期，但 Provider/Venue、Tick/OrderBook 与实盘订阅/身份/风险权限的启动前统一匹配尚未落地"]
-    next_gate: "若要求 crates.io 发布，先按依赖拓扑发布内部 crate 并完成临时 registry 消费；补齐持久化按 Run 事件/订单流与游标恢复；补 §4.2 启动前能力预检 fail-closed；Live 仍需 testnet conformance 才能谈 GA"
+    next_gate: "把已进入 qx-sdk 的 ProviderRegistry/ProviderResult 接入 DatasetSpec→质量校验→标准化→回测冻结数据链；若要求 crates.io 发布，先按依赖拓扑发布内部 crate 并完成临时 registry 消费；补齐持久化按 Run 事件/订单流与游标恢复；补 §4.2 启动前能力预检 fail-closed；Live 仍需 testnet conformance 才能谈 GA"
 
   - name: data_and_venues
     level: implemented-unverified
@@ -91,7 +91,7 @@ domains:
     level: partial
     evidence: [crates/qx-runtime/src/runtime_config/schema.rs, crates/qx-runtime/src/runtime_config/topology_validation.rs, crates/qx-cli/src/backtests/account_base.rs, crates/qx-cli/src/venue_runtime/paper_submit.rs, crates/qx-app, crates/qx-zhenlu, maturity/app_use_cases.yaml]
     limitations: ["RuntimeConfig.accounts 已统一账户身份、结算币种与初始本金来源；多策略 Bar 回测和 Paper 账户入账可按 account_id 选择独立本金，旧配置无 accounts 时仍保持兼容", "Bar、Tick/OrderBook 和多腿回测均可显式指定账户，账户身份进入策略上下文、summary/归因事实和复核；多腿两侧仍分别开账，目前未有组合规格", "多账户资金竞争、组合限额聚合、多策略调度和退出语义未端到端验证"]
-    next_gate: "落方案 §5.3 的组合/策略/Run 所有权、跨账户限额聚合与确定性资金分配"
+    next_gate: "落方案 §5.3 的组合/策略/Run 所有权、跨账户限额聚合与确定性资金分配；与统一的多策略回测 spec 对接并覆盖退出语义"
 
   - name: web_api
     level: implemented-unverified

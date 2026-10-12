@@ -4,7 +4,7 @@
 //! 或策略缓存。ProviderRegistry 的选择顺序固定，保证主备切换可解释、可重放。
 
 use qx_core::Fnv1a;
-use qx_guanxing::RawRecord;
+pub use qx_guanxing::{DataSourceId, RawRecord};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
