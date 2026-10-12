@@ -509,7 +509,7 @@ capabilities:
       - crates/qx-provider/src/lib.rs
       - crates/qx-cli/src/ecosystem_smoke.rs
     limitations:
-      - provider_capability_declares_four_fields_nobody_acts_on：`ProviderCapability`（`crates/qx-provider/src/lib.rs`）14 格里 5 格进 `matches()`（data_kinds/asset_classes/frequencies/historical_start/historical_end）、3 格进 `candidates()` 的排序（priority/quality_score/cost_score）、2 格做身份（provider_id/version）；剩下的 `rate_limit_per_second` 只有「非零」这一条校验而没有任何节流者，`auth_scope` 只有「非空」这一条校验而 `matches()` 从不比较它，`freshness_seconds` 与 `realtime` 连校验都没有、全仓零读者。这一整套选择面今天也只有自检命令走过——`ProviderRegistry` 的生产构造点只有 `crates/qx-cli/src/ecosystem_smoke.rs`，回测与实盘取数不经过这份能力表，所以模块自述那句「主备切换可解释、可重放」只在自检那一次成立 (V13 R7 扫描B)
+      - provider_rate_limit_is_enforced_but_capability_selection_is_not_end_to_end：`rate_limit_per_second` 已由 `crates/qx-provider/src/registry.rs` 的逐 Provider 请求闸门执行，并由 `cargo test -p qx-provider --offline` 覆盖并发槽位与纳秒取整；但 `auth_scope` 没有对应的查询授权上下文，`freshness_seconds` 与 `realtime` 也没有定义一致的查询/数据时钟语义，当前不能安全地拿它们过滤候选或拒绝历史行情。更重要的是，`ProviderRegistry` 的生产构造点仍只有 `crates/qx-cli/src/ecosystem_smoke.rs`，回测与实盘取数尚未经过这份能力表，provider 主备链仍未端到端接入产品工作流（V13 R7 扫描B，2026-10-13 复核）
 
   ashare_corporate_action_ledger:
     implementation: true

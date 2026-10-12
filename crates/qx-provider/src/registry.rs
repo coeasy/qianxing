@@ -1,5 +1,7 @@
 use super::{DataProvider, DataQuery, ProviderError, ProviderErrorClass, ProviderResult};
 use std::collections::BTreeMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RegistryError {
@@ -9,7 +11,60 @@ pub enum RegistryError {
 }
 
 pub struct ProviderRegistry {
-    providers: BTreeMap<String, Box<dyn DataProvider>>,
+    providers: BTreeMap<String, RegisteredProvider>,
+}
+
+struct RegisteredProvider {
+    provider: Box<dyn DataProvider>,
+    rate_gate: RateGate,
+}
+
+/// Spaces calls to one provider port according to its advertised requests-per-second limit.
+/// This gate lives at the external-I/O boundary; it does not affect event ordering or replay.
+struct RateGate {
+    interval: Duration,
+    next_allowed: Mutex<Option<Instant>>,
+}
+
+impl RateGate {
+    fn new(requests_per_second: u32) -> Self {
+        let rate = u64::from(requests_per_second);
+        let nanos_per_second = 1_000_000_000_u64;
+        let interval_nanos = nanos_per_second.div_ceil(rate).max(1);
+        Self {
+            interval: Duration::from_nanos(interval_nanos),
+            next_allowed: Mutex::new(None),
+        }
+    }
+
+    fn reserve_turn(&self, now: Instant) -> Result<Duration, super::ProviderError> {
+        let mut next_allowed = self.next_allowed.lock().map_err(|_| {
+            super::ProviderError::new(
+                super::ProviderErrorClass::Permanent,
+                "Provider rate gate lock poisoned",
+            )
+        })?;
+        let (delay, next) = reserve_at(now, *next_allowed, self.interval);
+        *next_allowed = Some(next);
+        Ok(delay)
+    }
+
+    fn wait_turn(&self) -> Result<(), super::ProviderError> {
+        let delay = self.reserve_turn(Instant::now())?;
+        if !delay.is_zero() {
+            std::thread::sleep(delay);
+        }
+        Ok(())
+    }
+}
+
+fn reserve_at(
+    now: Instant,
+    next_allowed: Option<Instant>,
+    interval: Duration,
+) -> (Duration, Instant) {
+    let start = next_allowed.filter(|next| *next > now).unwrap_or(now);
+    (start.saturating_duration_since(now), start + interval)
 }
 
 impl Default for ProviderRegistry {
@@ -37,7 +92,14 @@ impl ProviderRegistry {
         if self.providers.contains_key(&id) {
             return Err(RegistryError::Duplicate(id));
         }
-        self.providers.insert(id, provider);
+        let rate_gate = RateGate::new(provider.capability().rate_limit_per_second);
+        self.providers.insert(
+            id,
+            RegisteredProvider {
+                provider,
+                rate_gate,
+            },
+        );
         Ok(())
     }
 
@@ -46,8 +108,8 @@ impl ProviderRegistry {
         let mut candidates: Vec<_> = self
             .providers
             .values()
-            .filter(|provider| provider.capability().matches(query))
-            .map(|provider| provider.capability().clone())
+            .filter(|registered| registered.provider.capability().matches(query))
+            .map(|registered| registered.provider.capability().clone())
             .collect();
         candidates.sort_by(|a, b| {
             a.priority
@@ -68,10 +130,14 @@ impl ProviderRegistry {
         let mut last_error = None;
         for id in candidates {
             retry_chain.push(id.clone());
-            let provider = self.providers.get(&id).expect("candidate is registered");
-            match provider.fetch(query) {
+            let registered = self.providers.get(&id).expect("candidate is registered");
+            if let Err(error) = registered.rate_gate.wait_turn() {
+                last_error = Some(error);
+                continue;
+            }
+            match registered.provider.fetch(query) {
                 Ok(mut result) => {
-                    let capability = provider.capability();
+                    let capability = registered.provider.capability();
                     if result.provider_id != capability.provider_id
                         || result.provider_version != capability.version
                     {
@@ -118,5 +184,77 @@ impl ProviderRegistry {
         Err(last_error
             .map(RegistryError::Provider)
             .unwrap_or(RegistryError::NoProvider))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{reserve_at, RateGate};
+    use std::sync::{Arc, Barrier};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn provider_rate_gate_reserves_non_overlapping_slots() {
+        let now = Instant::now();
+        let interval = Duration::from_millis(100);
+        let (first_delay, first_next) = reserve_at(now, None, interval);
+        let (second_delay, second_next) = reserve_at(now, Some(first_next), interval);
+        let (third_delay, third_next) = reserve_at(first_next, Some(second_next), interval);
+
+        assert_eq!(first_delay, Duration::ZERO);
+        assert_eq!(second_delay, interval);
+        assert_eq!(third_delay, interval);
+        assert_eq!(third_next.duration_since(now), interval * 3);
+    }
+
+    #[test]
+    fn provider_rate_gate_does_not_wait_after_slot_has_elapsed() {
+        let now = Instant::now();
+        let previous = now - Duration::from_millis(1);
+        let (delay, next) = reserve_at(now, Some(previous), Duration::from_secs(1));
+
+        assert_eq!(delay, Duration::ZERO);
+        assert_eq!(next, now + Duration::from_secs(1));
+    }
+
+    #[test]
+    fn provider_rate_gate_rounds_up_subsecond_intervals() {
+        assert_eq!(RateGate::new(1).interval, Duration::from_secs(1));
+        assert_eq!(RateGate::new(3).interval, Duration::from_nanos(333_333_334));
+        assert_eq!(RateGate::new(u32::MAX).interval, Duration::from_nanos(1));
+    }
+
+    #[test]
+    fn concurrent_provider_calls_reserve_distinct_rate_slots() {
+        let gate = Arc::new(RateGate::new(10));
+        let start = Instant::now();
+        let barrier = Arc::new(Barrier::new(5));
+        let threads = (0..4)
+            .map(|_| {
+                let gate = Arc::clone(&gate);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    gate.reserve_turn(start).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+
+        let mut delays = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect::<Vec<_>>();
+        delays.sort();
+
+        assert_eq!(
+            delays,
+            [
+                Duration::ZERO,
+                Duration::from_millis(100),
+                Duration::from_millis(200),
+                Duration::from_millis(300),
+            ]
+        );
     }
 }
