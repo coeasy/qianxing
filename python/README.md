@@ -14,6 +14,39 @@ The public `qianxing` namespace exposes the shared Rust application use cases fo
 
 The application SDK accepts normalized `TradingInstrumentSpec` documents for multi-leg Bar and Tick/OrderBook runs; depth runs check the contract identity and validity interval against the input and require an explicit `OrderPolicy` for derivatives. A Bar `BacktestSpec` with a market spec must also include an explicit `MakerTakerFeeSchedule`, which is consumed by the shared Rust fee model and recorded in run identity and summary. CCXT market snapshots are not imported automatically, and time-tiered/rebate/tax schedules are not modeled. `one_tick_slippage` requires a real `price_tick` in both multi-leg market specs. The L2 market-making strategy checks its configured tick size against the market spec when present. Queue-position simulation is rejected by the current built-in strategy facade, as are reduce-only and post-only policies; post-only fill behavior is not yet modeled by the shared order-book matcher.
 
+## Rust-backed Python data providers
+
+`qianxing.data.ProviderRegistry` accepts Python adapters while Rust retains deterministic provider selection, failover, result lineage hashing, and Bar quality validation. An adapter implements `fetch(query_json: str) -> result_json: str`; `ProviderResponse.to_json()` asks the Rust extension to build the raw-record and result fingerprints, so adapters do not implement the hashing algorithm. Raise `ProviderAdapterError` for retryable source failures, `ProviderManualInterventionError` for failures that must stop failover, and `ProviderPermanentError` for invalid or unsupported requests.
+
+For a single-instrument strict Bar query, `registry.fetch_bar_frame(query)` returns the shared Rust BarFrame as a dictionary. `registry.run_backtest(spec, query)` freezes that canonical frame at `spec.bars_path` and executes the existing Rust backtest use case. It will reuse an identical frozen file and reject a different file at that path. This adapter surface does not certify an external source and does not yet provide automatic DatasetManifest creation, streaming subscriptions, paging, or Tick/OrderBook frame normalization.
+
+```python
+from qianxing.data import (
+    BAR_JSON_CONTENT_TYPE,
+    ProviderCapability,
+    ProviderPayloadRow,
+    ProviderQuery,
+    ProviderRegistry,
+    ProviderResponse,
+)
+
+class LocalBars:
+    def fetch(self, query_json: str) -> str:
+        # Decode query_json and retrieve the requested rows from your data source.
+        rows = (ProviderPayloadRow(1, 1, "BTCUSDT.BINANCE", BAR_JSON_CONTENT_TYPE,
+                                  '{"ts":1,"open":100,"high":101,"low":99,"close":100,"volume":5}'),)
+        return ProviderResponse("local-bars", "v1", "request-1", 1, rows).to_json()
+
+registry = ProviderRegistry()
+registry.register(ProviderCapability(
+    provider_id="local-bars", version="v1", data_kinds=("Bar",),
+    asset_classes=("crypto",), frequencies=("1m",), auth_scope="local",
+    rate_limit_per_second=10, freshness_seconds=60, historical_start=0,
+    historical_end=2**63, realtime=False, priority=0, quality_score=100,
+    cost_score=0,
+), LocalBars())
+```
+
 For deterministic L2 market-making research, add a `MarketMakingSpec` to `DepthBacktestSpec`; all parameters are fixed-point raw values and are included in the run configuration hash:
 
 ```python

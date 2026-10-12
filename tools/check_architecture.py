@@ -19049,7 +19049,19 @@ PY_LAYER_SUB_NAMESPACE_ONLY = {
         "StrategyInput",
         "StrategyIntent",
         "StrategyOutput",
-    )
+    ),
+    "data": (
+        "BAR_JSON_CONTENT_TYPE",
+        "ProviderAdapter",
+        "ProviderAdapterError",
+        "ProviderCapability",
+        "ProviderManualInterventionError",
+        "ProviderPayloadRow",
+        "ProviderPermanentError",
+        "ProviderQuery",
+        "ProviderRegistry",
+        "ProviderResponse",
+    ),
 }
 # 远端面与服务端执行面：只有 `client` / `paper` / `live` 能出现。
 PY_LAYER_REMOTE_NAMES = ("AppClient", "RemoteRunHandle", "PaperClient", "LiveClient", "TradeWorkflowClient")

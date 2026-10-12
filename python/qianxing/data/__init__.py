@@ -13,10 +13,32 @@
 """
 
 from qianxing.app import DatasetSpec, DatasetVerdict, InstrumentId, TradingInstrumentSpec
+from qianxing.data.providers import (
+    BAR_JSON_CONTENT_TYPE,
+    ProviderAdapter,
+    ProviderAdapterError,
+    ProviderCapability,
+    ProviderManualInterventionError,
+    ProviderPayloadRow,
+    ProviderPermanentError,
+    ProviderQuery,
+    ProviderRegistry,
+    ProviderResponse,
+)
 
 __all__ = [
     "DatasetSpec",
     "DatasetVerdict",
     "InstrumentId",
     "TradingInstrumentSpec",
+    "BAR_JSON_CONTENT_TYPE",
+    "ProviderAdapter",
+    "ProviderAdapterError",
+    "ProviderCapability",
+    "ProviderManualInterventionError",
+    "ProviderPayloadRow",
+    "ProviderPermanentError",
+    "ProviderQuery",
+    "ProviderRegistry",
+    "ProviderResponse",
 ]

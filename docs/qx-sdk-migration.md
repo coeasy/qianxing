@@ -120,8 +120,9 @@ Bar 查询可调用 `ProviderResult::to_bar_frame`：仅接收单标的、strict
 其来源标识绑定查询摘要与 Provider 结果摘要。仓外消费者验收覆盖 Provider→BarFrame→共享 Rust 回测→产物复核，
 见 `crates/qx-sdk/tests/provider_consumer.rs`。
 
-此版本仍要求调用方将 BarFrame JSON 冻结到 `BacktestSpec.bars_path` 后调用 `Client::run_backtest`；
-自动生成 `DatasetManifest`/`DatasetSpec` 的 App 工作流和 Python Provider adapter 尚未接入，不能把它们写成已完成。
+Rust 与 Python SDK 均已有 Provider 到共享回测内核的路径。Python adapter 只提供原始行，Rust 注册器负责选择、failover、来源/载荷摘要和 Bar 质量门；`ProviderRegistry.run_backtest` 将经过验证的 BarFrame 冻结至 `BacktestSpec.bars_path` 并调用同一 `qx-app` 用例。Python 端到端用例见 `python/tests/test_provider_sdk.py`。
+
+自动生成 `DatasetManifest`/`DatasetSpec` 的 App 工作流、C++ Provider 载荷绑定、Tick/OrderBook 的 Provider 标准化，以及各真实数据源的分页/实时订阅 conformance 尚未闭环，不能把它们写成已完成。
 
 ## 已知缺口（不要在发布文案里说成"已有"）
 

@@ -78,6 +78,26 @@ def frame_to_json(payload: str) -> str:
     return str(_extension().frame_to_json(payload))
 
 
+def provider_registry() -> Any:
+    """Create the Rust-owned deterministic provider registry for Python adapters."""
+    return _extension().ProviderRegistry()
+
+
+def provider_result_json(
+    provider_id: str,
+    provider_version: str,
+    request_id: str,
+    received_at: int,
+    payload_rows_json: str,
+) -> str:
+    """Build lineage hashes in Rust for rows returned by a Python provider adapter."""
+    return str(
+        _extension().provider_result_json(
+            provider_id, provider_version, request_id, received_at, payload_rows_json
+        )
+    )
+
+
 def app_validate_dataset(spec_json: str) -> str:
     """应用层用例 ``ValidateDataset``：传 ``DatasetSpec`` JSON，换回 ``DatasetVerdict`` JSON。
 

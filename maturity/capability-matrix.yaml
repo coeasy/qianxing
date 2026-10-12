@@ -66,7 +66,7 @@ domains:
   - name: python_sdk
     level: implemented-unverified
     evidence: [python/qianxing, python/tests/test_sdk_layering.py, maturity/language_api_contract.yaml, maturity/quant_scenarios.yaml, crates/qx-cli/src/tests/strategy_order_identity_round_scope.rs]
-    limitations: ["Rust SDK ProviderResult v1 现携带经摘要校验的行情 JSON 载荷，独立消费者已走通确定性 failover→BarFrame 质量校验/标准化→共享 qx-app 回测→重放复核；仍未自动生成 DatasetManifest/DatasetSpec，Python/C++ Provider 载荷适配未接入。Bar、Tick/OrderBook 与多腿回测仍按 leg/run 独立账簿；组合级资金竞争/风险聚合与多策略调度未闭环。统一多交易所费率与撮合、用户策略选择与完整 Paper/Live 执行验收也未闭环", "Kelly fraction 已在 Rust Bar 单腿回测和 Paper worker→Risk→OMS→Paper Venue→Ledger 路径验证；Tick/OrderBook、多腿 sizing 未接入，Live sizing 未经 testnet 验收", "Rust 风险平价用例已提供确定性研究规划，并经 Python native/remote、C++ remote 和 Rust SDK 接入；它要求调用方提供冻结对齐收益与标记价，不自动读取 Provider 数据，也不提交 Paper/Live 订单", "接口分层已落（方案 §6.2：core/client/data/strategy/paper/live/experiments/reports 八个子层；顶层稳定名单与 qianxing.app 的公开面逐一双向相等；本地 AsyncCoreClient/AsyncRunHandle 与远端 AppClient/RemoteRunHandle 均以同步实现为唯一契约源，Paper/Live 提交亦有 asyncio 委托）；本地 RunHandle.events 来自 Rust worker 的内存事件序列；HTTP /app/runs/{run_id}/events 将生命周期事件并入运行快照并支持 after_seq，Python/Rust/C++ 远端可按 Run 读取。它仍是快照持久化而非逐事件事务日志，未提供 occurred_at/订单成交事实、跨进程强一致追加或游标过期恢复语义", "CPython 3.10+ 乘操作系统与架构的支持矩阵未建立", "不带 Rust 工具链的干净环境安装冒烟未建立：发布验收目前只在带仓库源码的环境里跑过"]
+    limitations: ["Rust SDK 与 Python SDK 已验证 ProviderResult v1 确定性 failover→血缘校验→strict BarFrame 质量门/标准化→共享 qx-app 回测；Python adapter 的数据选择与校验由 Rust 注册器执行。仍未自动生成 DatasetManifest/DatasetSpec，C++ Provider 载荷适配未接入。Provider 的历史分页/实时订阅/限流/修订恢复与各数据源 conformance 尚未全覆盖。Bar、Tick/OrderBook 与多腿回测仍按 leg/run 独立账簿；组合级资金竞争/风险聚合与多策略调度未闭环。统一多交易所费率与撮合、用户策略选择与完整 Paper/Live 执行验收也未闭环", "Kelly fraction 已在 Rust Bar 单腿回测和 Paper worker→Risk→OMS→Paper Venue→Ledger 路径验证；Tick/OrderBook、多腿 sizing 未接入，Live sizing 未经 testnet 验收", "Rust 风险平价用例已提供确定性研究规划，并经 Python native/remote、C++ remote 和 Rust SDK 接入；它要求调用方提供冻结对齐收益与标记价，不自动读取 Provider 数据，也不提交 Paper/Live 订单", "接口分层已落（方案 §6.2：core/client/data/strategy/paper/live/experiments/reports 八个子层；顶层稳定名单与 qianxing.app 的公开面逐一双向相等；本地 AsyncCoreClient/AsyncRunHandle 与远端 AppClient/RemoteRunHandle 均以同步实现为唯一契约源，Paper/Live 提交亦有 asyncio 委托）；本地 RunHandle.events 来自 Rust worker 的内存事件序列；HTTP /app/runs/{run_id}/events 将生命周期事件并入运行快照并支持 after_seq，Python/Rust/C++ 远端可按 Run 读取。它仍是快照持久化而非逐事件事务日志，未提供 occurred_at/订单成交事实、跨进程强一致追加或游标过期恢复语义", "CPython 3.10+ 乘操作系统与架构的支持矩阵未建立", "不带 Rust 工具链的干净环境安装冒烟未建立：发布验收目前只在带仓库源码的环境里跑过"]
     next_gate: "统一外部语言策略与 SDK backtest/experiment 的版本化 spec 和执行入口；打通持久化的按 Run 事件/订单流与游标恢复；建立 CPython 3.10+ 乘操作系统与架构的支持矩阵，并在不带 Rust 工具链的干净环境完成安装冒烟"
 
   - name: cpp_sdk
@@ -170,6 +170,18 @@ venues:
     limitations: ["进程隔离 RPC 客户端：交易所覆盖面取决于外部 ccxt 进程与其凭据，本仓不为其作保", "「支持 CCXT」不等同所有交易所功能可用——每个交易所须各自验收"]
 
 providers:
+  - name: PythonDataProvider
+    impl: crates/qx-python/src/provider_bridge.rs
+    verified_version: "0.1.0"
+    market: partial
+    history: implemented-and-verified
+    realtime: unsupported
+    frequency: partial
+    depth: unsupported
+    precision: partial
+    evidence: [crates/qx-python/src/provider_bridge.rs, python/tests/test_provider_sdk.py]
+    limitations: ["这是 SDK 绑定适配器，不代表某个外部数据源已认证；当前贯通历史 Bar JSON 的 Rust Registry 与回测，实时订阅、分页与外部源 conformance 需逐源实现并验收"]
+
   - name: InMemoryProvider
     impl: crates/qx-provider/src/lib.rs
     verified_version: "0.1.0"

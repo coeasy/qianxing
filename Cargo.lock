@@ -1461,6 +1461,9 @@ dependencies = [
  "pyo3-build-config",
  "qx-app",
  "qx-datastruct",
+ "qx-provider",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

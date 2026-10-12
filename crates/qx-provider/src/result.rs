@@ -96,6 +96,54 @@ pub struct ProviderResult {
 }
 
 impl ProviderResult {
+    /// Build a correctly hashed result from provider payload rows. Language bindings can use
+    /// this constructor instead of reimplementing the Rust provenance fingerprint algorithm.
+    pub fn from_payloads(
+        provider_id: impl Into<String>,
+        provider_version: impl Into<String>,
+        request_id: impl Into<String>,
+        received_at: u64,
+        payloads: Vec<(u64, u64, ProviderPayload)>,
+    ) -> Result<Self, ProviderError> {
+        let provider_id = provider_id.into();
+        let provider_version = provider_version.into();
+        let request_id = request_id.into();
+        let mut rows = payloads
+            .into_iter()
+            .map(|(event_time, receive_time, payload)| {
+                let payload_hash = payload.digest();
+                (event_time, receive_time, payload_hash, payload)
+            })
+            .collect::<Vec<_>>();
+        rows.sort_by_key(|(event_time, receive_time, payload_hash, _)| {
+            (*event_time, *receive_time, *payload_hash)
+        });
+        let result = Self {
+            schema_version: PROVIDER_RESULT_SCHEMA_VERSION,
+            records: rows
+                .iter()
+                .map(|(event_time, receive_time, payload_hash, _)| RawRecord {
+                    source: DataSourceId::new(provider_id.clone()),
+                    event_time: *event_time,
+                    receive_time: *receive_time,
+                    payload_hash: *payload_hash,
+                    schema_version: PROVIDER_RESULT_SCHEMA_VERSION,
+                })
+                .collect(),
+            payloads: rows.into_iter().map(|(_, _, _, payload)| payload).collect(),
+            provider_id,
+            provider_version,
+            request_id,
+            retry_chain: Vec::new(),
+            received_at,
+            source_hash: 0,
+        };
+        let mut result = result;
+        result.source_hash = result.compute_source_hash();
+        result.validate()?;
+        Ok(result)
+    }
+
     pub fn validate(&self) -> Result<(), ProviderError> {
         if self.schema_version != PROVIDER_RESULT_SCHEMA_VERSION {
             return Err(ProviderError::new(

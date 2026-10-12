@@ -717,6 +717,7 @@ capabilities:
       - python/qianxing/__init__.py typed public namespace
       - python/qianxing/app.py typed qx-app backed Bar, Tick/OrderBook and multi-leg workflows, Bar and multi-leg experiments, run handles, and authenticated Paper/Live clients
       - crates/qx-python/src/lib.rs app_* exports call the same qx-app use cases for dataset, Bar, Tick/OrderBook, multi-leg, both experiment workflows, verification, and run lifecycle
+      - python/qianxing/data/providers.py plus crates/qx-python/src/lib.rs route Python data adapters through Rust ProviderRegistry selection, failover, lineage hashing, and BarFrame quality validation; python/tests/test_provider_sdk.py runs the frozen result through the shared Rust backtest
       - python/tests/test_app_use_cases.py exercises native Tick product specifications, multi-leg market-aware runs and experiments, handles, and Paper/Live client requests
       - crates/qx-cli/tests/app_three_entrypoints.rs compares CLI/HTTP/Python outcomes and result hashes for shared Bar, multi-leg, parameter experiment, comparison, verification, and error contracts
       - crates/qx-cli/tests/app_depth_entrypoints.rs compares market-aware L1 Tick product/order-policy outcomes across CLI, HTTP, and the built Python SDK

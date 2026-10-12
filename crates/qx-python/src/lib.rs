@@ -1,8 +1,6 @@
 //! Python 原生边界。
 //!
-//! Python 只获得不可变 JSON 结果或 Arrow C Data Interface capsule；Rust
-//! `BarFrame` 的所有权和校验仍留在 `qx-datastruct`，不会把可变 Python 对象
-//! 引入 Kernel 热路径。
+//! JSON/Arrow 边界、应用用例与 Provider 都委托给共享 Rust crates。
 //! ## `app_*`：应用层用例的 Python 门面（T2-2 / 退出门 G1）
 //!
 //! `app_*` 函数与 `qx-cli app` 子命令、`POST /app/*` 路由调的是**同一组 `qx-app`
@@ -30,6 +28,7 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::time::{Duration, Instant};
 
+mod provider_bridge;
 mod run_handle_helpers;
 
 fn frame_error(error: FrameError) -> PyErr {
@@ -509,6 +508,7 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_start_multi_leg_experiment, module)?)?;
     module.add_class::<PyRunHandle>()?;
     module.add_function(wrap_pyfunction!(app_verify_depth_run, module)?)?;
+    provider_bridge::register(module)?;
     module.add("QxAppError", module.py().get_type::<QxAppError>())?;
     Ok(())
 }

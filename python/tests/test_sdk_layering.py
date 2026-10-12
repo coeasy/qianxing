@@ -50,6 +50,18 @@ LAYERS = (
 SUB_NAMESPACE_ONLY = {
     "strategy": ("SCHEMA_VERSION", "StrategyBars", "StrategyInput", "StrategyIntent", "StrategyOutput"),
     "core": ("AsyncCoreClient", "AsyncRunHandle"),
+    "data": (
+        "BAR_JSON_CONTENT_TYPE",
+        "ProviderAdapter",
+        "ProviderAdapterError",
+        "ProviderCapability",
+        "ProviderManualInterventionError",
+        "ProviderPayloadRow",
+        "ProviderPermanentError",
+        "ProviderQuery",
+        "ProviderRegistry",
+        "ProviderResponse",
+    ),
 }
 
 #: 远端面：只有 `qianxing.client` 与服务端执行层能出现。
