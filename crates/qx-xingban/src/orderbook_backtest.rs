@@ -592,18 +592,9 @@ impl OrderBookBacktestEngine {
                         order: order.clone(),
                     },
                 );
-                append_event(
-                    &mut log,
-                    snapshot.ts,
-                    Priority::COMMAND,
-                    EventKind::OrderSubmitted {
-                        order: order.clone(),
-                    },
-                );
                 accepted_client_ids.push(order.client_id);
             }
-            // Preserve canonical event priority when a strategy submits both sides:
-            // every command is recorded before any acceptance fact at this timestamp.
+            // Preserve canonical priority: record every command before acceptance facts.
             for client_order_id in accepted_client_ids {
                 append_event(
                     &mut log,
@@ -680,7 +671,7 @@ impl OrderBookBacktestEngine {
             ],
             model_descriptors,
         };
-        // 与 Bar 链同一条纪律：事实源必须能重新驱动账户，否则报告出不去（V11 Q62）。
+        // Facts must replay into the same ledger before this report is returned (V11 Q62).
         ReplayVerifier::verify(report.event_log.events(), &report.ledger)?;
         Ok(Some(report))
     }
@@ -831,6 +822,15 @@ mod tests {
             .unwrap();
         assert_eq!(report.fills.len(), 1);
         assert_eq!(report.fills[0].ts, 2);
+        assert_eq!(
+            report
+                .event_log
+                .events()
+                .iter()
+                .filter(|event| matches!(&event.kind, EventKind::OrderSubmitted { .. }))
+                .count(),
+            1
+        );
         // 深度链同一条纪律（V11 Q62）：事实源要被重新接受一遍并逐条还原出同一本账簿，
         // 而不是把同一段事件切片再哈希一遍。
         let (log, replayed) = ReplayVerifier::replay(report.event_log.events()).unwrap();
