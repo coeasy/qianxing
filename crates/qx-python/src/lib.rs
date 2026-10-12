@@ -30,6 +30,8 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::time::{Duration, Instant};
 
+mod run_handle_helpers;
+
 fn frame_error(error: FrameError) -> PyErr {
     PyValueError::new_err(format!("BarFrame error: {error:?}"))
 }
@@ -225,7 +227,7 @@ impl PyRunHandle {
 
     #[getter]
     fn status(&mut self) -> &'static str {
-        status_name(match &mut self.inner {
+        run_handle_helpers::status_name(match &mut self.inner {
             NativeRun::Bar(handle) => handle.status(),
             NativeRun::Depth(handle) => handle.status(),
             NativeRun::DepthExperiment(handle) => handle.status(),
@@ -246,6 +248,10 @@ impl PyRunHandle {
         }
     }
 
+    fn events_json(&self, after_seq: u64) -> PyResult<String> {
+        run_handle_helpers::events_json(&self.inner, after_seq).map_err(app_error)
+    }
+
     /// Wait for completion while releasing the Python GIL. A timeout returns
     /// the current status; it does not cancel the worker.
     #[pyo3(signature = (timeout_ms=None))]
@@ -264,10 +270,10 @@ impl PyRunHandle {
                 status,
                 RunStatus::Succeeded | RunStatus::Cancelled | RunStatus::Failed
             ) {
-                return status_name(status);
+                return run_handle_helpers::status_name(status);
             }
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                return status_name(status);
+                return run_handle_helpers::status_name(status);
             }
             py.detach(|| std::thread::sleep(Duration::from_millis(5)));
         }
@@ -326,16 +332,6 @@ impl PyRunHandle {
                 .transpose()
                 .map_err(app_error),
         }
-    }
-}
-
-fn status_name(status: RunStatus) -> &'static str {
-    match status {
-        RunStatus::Running => "running",
-        RunStatus::Cancelling => "cancelling",
-        RunStatus::Succeeded => "succeeded",
-        RunStatus::Cancelled => "cancelled",
-        RunStatus::Failed => "failed",
     }
 }
 

@@ -16,7 +16,7 @@ use qx_sdk::{
     Client, DatasetSpec, EventAppender, ExecutionEvent, ExecutionEventEnvelope, ExecutionGateway,
     ExperimentParameterSpace, ExperimentSplitPlan, InstrumentId, MakerTakerFeeSchedule, Order,
     OrderStatus, OrderStore, Price, Quantity, RiskParityAssetSpec, RiskParitySpec, RiskPort,
-    RiskVerdict, RunExperimentSpec, RunStatus, Side, VenuePort, VwapVolumeBucket,
+    RiskVerdict, RunEventKind, RunExperimentSpec, RunStatus, Side, VenuePort, VwapVolumeBucket,
     ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
@@ -115,6 +115,14 @@ fn an_independent_consumer_drives_the_async_handle_and_sees_the_same_hash() {
         .try_take_result()
         .expect("终态必须能取到结果")
         .expect("成功的运行必须是 Ok");
+    assert_eq!(
+        handle
+            .events_after(0)
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        vec![RunEventKind::Started, RunEventKind::Succeeded]
+    );
     // 一次性读取：再取一次就是 None（结果不会被执行两次）。
     assert!(handle.try_take_result().is_none());
 

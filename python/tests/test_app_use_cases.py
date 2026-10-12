@@ -860,6 +860,13 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertIsNotNone(outcome)
         self.assertGreater(outcome.fills, 0)
         self.assertIsNone(handle.result(), "outcome is delivered only once")
+        events = handle.events()
+        self.assertEqual([event.kind for event in events], ["started", "succeeded"])
+        self.assertEqual([event.seq for event in events], [1, 2])
+        self.assertEqual(events[1].run_id, handle.run_id)
+        self.assertEqual([event.kind for event in handle.events(after_seq=1)], ["succeeded"])
+        with self.assertRaises(ValueError):
+            handle.events(after_seq=-1)
 
     def test_parameter_grid_runs_and_compares_candidates_through_rust(self):
         self._require()

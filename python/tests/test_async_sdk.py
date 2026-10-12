@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from qianxing.app import AsyncCoreClient, AsyncRunHandle, AppClient, PaperClient, RemoteRunHandle
+from qianxing.app import AsyncCoreClient, AsyncRunHandle, AppClient, PaperClient, RemoteRunHandle, RunEvent
 
 
 class AsyncSdkTests(unittest.TestCase):
@@ -54,6 +54,9 @@ class AsyncSdkTests(unittest.TestCase):
             def result(self):
                 return {"value": 11}
 
+            def events(self, after_seq):
+                return [RunEvent(2, self.run_id, "succeeded", "succeeded")] if after_seq == 1 else []
+
         native_handle = FakeHandle()
         client = AsyncCoreClient()
         with patch("qianxing.app.start_backtest", return_value=native_handle):
@@ -63,6 +66,7 @@ class AsyncSdkTests(unittest.TestCase):
         self.assertEqual(asyncio.run(handle.async_status()), "running")
         self.assertEqual(asyncio.run(handle.async_wait(timeout=0)), "succeeded")
         self.assertEqual(asyncio.run(handle.async_result()), {"value": 11})
+        self.assertEqual(asyncio.run(handle.async_events(after_seq=1))[0].seq, 2)
         asyncio.run(handle.async_cancel())
         self.assertTrue(native_handle.cancelled)
 

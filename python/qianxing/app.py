@@ -1098,6 +1098,18 @@ class RunHandle(Generic[_ResultT]):
             raise ValueError("timeout_ms must be non-negative")
         return str(self._native.wait(timeout_ms))
 
+    def events(self, after_seq: int = 0) -> list["RunEvent"]:
+        """Read lifecycle events from the Rust run worker after an exclusive cursor."""
+        if isinstance(after_seq, bool) or not isinstance(after_seq, int) or after_seq < 0:
+            raise ValueError("after_seq must be a non-negative integer")
+        try:
+            return [
+                RunEvent.from_dict(item)
+                for item in json.loads(self._native.events_json(after_seq))
+            ]
+        except Exception as exc:
+            raise _translate_native_error(exc) from exc
+
     def result(self) -> _ResultT | None:
         """Take the outcome once. Return None while running or after cancellation."""
         try:
@@ -1107,6 +1119,18 @@ class RunHandle(Generic[_ResultT]):
         if encoded is None:
             return None
         return self._result_type.from_dict(json.loads(encoded))
+
+
+@dataclass(frozen=True)
+class RunEvent:
+    seq: int
+    run_id: str
+    kind: Literal["started", "cancellation_requested", "succeeded", "cancelled", "failed"]
+    status: Literal["running", "cancelling", "succeeded", "cancelled", "failed"]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "RunEvent":
+        return cls(**value)
 
 
 class AsyncRunHandle(Generic[_ResultT]):
@@ -1133,6 +1157,9 @@ class AsyncRunHandle(Generic[_ResultT]):
 
     async def async_result(self) -> _ResultT | None:
         return await asyncio.to_thread(self._handle.result)
+
+    async def async_events(self, after_seq: int = 0) -> list[RunEvent]:
+        return await asyncio.to_thread(self._handle.events, after_seq)
 
 
 class AsyncCoreClient:

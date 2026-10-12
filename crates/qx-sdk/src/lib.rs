@@ -35,8 +35,8 @@
 //! 统一错误（[`AppError`] 一族）。
 //!
 //! **事件读面**：[`RemoteApiClient::get_live_events`] 按服务端序号游标读取 `qx-api` 的实时事件，
-//! 过旧或超前游标会保留服务端的 snapshot-recovery HTTP 错误；进程内 [`RunHandle`] 仍通过
-//! [`RunHandle::status`] 轮询，`qx-app` 尚无本地事件日志。两个运行形态不伪装成同一事件源。
+//! 远端游标沿用服务端 snapshot-recovery；本地 [`RunHandle::events_after`] 从拥有运行的 Rust
+//! worker 读取有序生命周期事件。它目前不等同于持久化的订单/成交事件日志。
 //!
 //! 另外两点如实记下，免得被读成"已经有了"：
 //! - **"异步"是句柄式不是 `Future` 式**：`qx-app` 的引擎是线程 + 通道，没有 executor。
@@ -93,7 +93,7 @@ pub use qx_app::{verify_depth_run, verify_run};
 // —— §6.1「RunHandle / cancel / wait / result」——
 // `DEFAULT_WAIT_TIMEOUT` 是 `wait()` 的有限缺省（方案 §9）：门面把它摆出来，
 // 调用方才能判断"等多久算正常"。
-pub use qx_app::{RunHandle, RunStatus, DEFAULT_WAIT_TIMEOUT};
+pub use qx_app::{RunEvent, RunEventKind, RunHandle, RunStatus, DEFAULT_WAIT_TIMEOUT};
 
 // —— 调用上下文与能力档 ——
 pub use qx_app::{CallerCapability, RunContext};

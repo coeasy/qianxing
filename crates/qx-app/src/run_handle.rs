@@ -1,6 +1,7 @@
 //! Cooperative lifecycle handle for long application runs.
 
 use crate::{AppError, AppErrorCategory};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -23,13 +24,45 @@ const FAILED: u8 = 4;
 pub const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Stable state view for SDKs polling a long-running application operation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RunStatus {
     Running,
     Cancelling,
     Succeeded,
     Cancelled,
     Failed,
+}
+
+/// Lifecycle event emitted by the Rust worker that owns a run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunEventKind {
+    Started,
+    CancellationRequested,
+    Succeeded,
+    Cancelled,
+    Failed,
+}
+
+/// Sequenced local run event. Cursors are exclusive: `events_after(n)` returns
+/// events whose sequence is strictly greater than `n`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunEvent {
+    pub seq: u64,
+    pub run_id: String,
+    pub kind: RunEventKind,
+    pub status: RunStatus,
+}
+
+fn push_event(events: &mut Vec<RunEvent>, run_id: &str, kind: RunEventKind, status: RunStatus) {
+    events.push(RunEvent {
+        seq: events.len() as u64 + 1,
+        run_id: run_id.to_string(),
+        kind,
+        status,
+    });
 }
 
 /// A clonable cancellation signal passed into the Rust engine loop.
@@ -52,6 +85,7 @@ pub struct RunHandle<T> {
     run_id: String,
     cancellation: CancellationToken,
     state: Arc<AtomicU8>,
+    events: Arc<Mutex<Vec<RunEvent>>>,
     receiver: Mutex<Receiver<Result<Option<T>, AppError>>>,
     result: Option<Result<T, AppError>>,
 }
@@ -66,20 +100,54 @@ impl<T: Send + 'static> RunHandle<T> {
         let worker_cancellation = cancellation.clone();
         let state = Arc::new(AtomicU8::new(RUNNING));
         let worker_state = Arc::clone(&state);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        push_event(
+            &mut events.lock().unwrap_or_else(|error| error.into_inner()),
+            &run_id,
+            RunEventKind::Started,
+            RunStatus::Running,
+        );
+        let worker_events = Arc::clone(&events);
+        let worker_run_id = run_id.clone();
         let (sender, receiver) = mpsc::channel();
         let worker_sender = sender.clone();
         let spawn_result = thread::Builder::new().spawn(move || {
-            let result = work(worker_cancellation.clone());
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                work(worker_cancellation.clone())
+            }))
+            .unwrap_or_else(|payload| {
+                let message = payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("non-string panic payload");
+                Err(AppError::new(
+                    AppErrorCategory::InternalInvariant,
+                    format!("RunHandle worker panicked: {message}"),
+                ))
+            });
             let terminal = match &result {
                 Ok(Some(_)) => SUCCEEDED,
                 Ok(None) => CANCELLED,
                 Err(_) => FAILED,
             };
-            let _ = worker_sender.send(result);
+            let status = status_from_code(terminal);
+            let kind = event_kind_for_status(status);
+            let mut events = worker_events
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             worker_state.store(terminal, Ordering::Release);
+            push_event(&mut events, &worker_run_id, kind, status);
+            let _ = worker_sender.send(result);
         });
         if let Err(error) = spawn_result {
             state.store(FAILED, Ordering::Release);
+            push_event(
+                &mut events.lock().unwrap_or_else(|poison| poison.into_inner()),
+                &run_id,
+                RunEventKind::Failed,
+                RunStatus::Failed,
+            );
             let _ = sender.send(Err(AppError::new(
                 AppErrorCategory::InternalInvariant,
                 format!("启动回测 worker 失败: {error}"),
@@ -89,6 +157,7 @@ impl<T: Send + 'static> RunHandle<T> {
             run_id,
             cancellation,
             state,
+            events,
             receiver: Mutex::new(receiver),
             result: None,
         }
@@ -99,10 +168,39 @@ impl<T: Send + 'static> RunHandle<T> {
     }
 
     pub fn cancel(&self) {
+        let mut events = self
+            .events
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if self.state.load(Ordering::Acquire) == RUNNING {
             self.cancellation.cancel();
             self.state.store(CANCELLING, Ordering::Release);
+            push_event(
+                &mut events,
+                &self.run_id,
+                RunEventKind::CancellationRequested,
+                RunStatus::Cancelling,
+            );
         }
+    }
+
+    pub fn events_after(&self, cursor: u64) -> Vec<RunEvent> {
+        self.events
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .filter(|event| event.seq > cursor)
+            .cloned()
+            .collect()
+    }
+
+    pub fn events_json_after(&self, cursor: u64) -> Result<String, AppError> {
+        serde_json::to_string(&self.events_after(cursor)).map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                format!("RunEvent 序列化失败: {error}"),
+            )
+        })
     }
 
     pub fn status(&mut self) -> RunStatus {
@@ -122,13 +220,7 @@ impl<T: Send + 'static> RunHandle<T> {
                 Ok(Err(TryRecvError::Empty | TryRecvError::Disconnected)) => {}
             }
         }
-        match self.state.load(Ordering::Acquire) {
-            CANCELLING => RunStatus::Cancelling,
-            SUCCEEDED => RunStatus::Succeeded,
-            CANCELLED => RunStatus::Cancelled,
-            FAILED => RunStatus::Failed,
-            _ => RunStatus::Running,
-        }
+        status_from_code(self.state.load(Ordering::Acquire))
     }
 
     /// Block until the operation reaches a terminal state, or until
@@ -181,10 +273,42 @@ impl<T: Send + 'static> RunHandle<T> {
     }
 }
 
+fn status_from_code(code: u8) -> RunStatus {
+    match code {
+        CANCELLING => RunStatus::Cancelling,
+        SUCCEEDED => RunStatus::Succeeded,
+        CANCELLED => RunStatus::Cancelled,
+        FAILED => RunStatus::Failed,
+        _ => RunStatus::Running,
+    }
+}
+
+fn event_kind_for_status(status: RunStatus) -> RunEventKind {
+    match status {
+        RunStatus::Succeeded => RunEventKind::Succeeded,
+        RunStatus::Cancelled => RunEventKind::Cancelled,
+        RunStatus::Failed => RunEventKind::Failed,
+        RunStatus::Running | RunStatus::Cancelling => {
+            unreachable!("worker terminal state must be terminal")
+        }
+    }
+}
+
 impl<T> Drop for RunHandle<T> {
     fn drop(&mut self) {
-        if matches!(self.state.load(Ordering::Acquire), RUNNING | CANCELLING) {
+        let mut events = self
+            .events
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if self.state.load(Ordering::Acquire) == RUNNING {
             self.cancellation.cancel();
+            self.state.store(CANCELLING, Ordering::Release);
+            push_event(
+                &mut events,
+                &self.run_id,
+                RunEventKind::CancellationRequested,
+                RunStatus::Cancelling,
+            );
         }
     }
 }
@@ -199,6 +323,13 @@ mod tests {
         assert_eq!(handle.wait(), RunStatus::Succeeded);
         assert_eq!(handle.try_take_result().unwrap().unwrap(), 17);
         assert!(handle.try_take_result().is_none());
+        let events = handle.events_after(0);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].kind, RunEventKind::Started);
+        assert_eq!(events[1].kind, RunEventKind::Succeeded);
+        assert_eq!(events[1].seq, 2);
+        assert_eq!(handle.events_after(1), vec![events[1].clone()]);
+        assert!(handle.events_after(2).is_empty());
     }
 
     #[test]
@@ -212,6 +343,15 @@ mod tests {
         handle.cancel();
         assert_eq!(handle.wait(), RunStatus::Cancelled);
         assert!(handle.try_take_result().is_none());
+        let events = handle.events_after(0);
+        assert_eq!(
+            events.iter().map(|event| event.kind).collect::<Vec<_>>(),
+            vec![
+                RunEventKind::Started,
+                RunEventKind::CancellationRequested,
+                RunEventKind::Cancelled
+            ]
+        );
     }
 
     #[test]
@@ -222,6 +362,20 @@ mod tests {
         assert_eq!(handle.wait(), RunStatus::Failed);
         let error = handle.try_take_result().unwrap().unwrap_err();
         assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    }
+
+    #[test]
+    fn worker_panics_become_terminal_errors_and_emit_failed_event() {
+        let mut handle = RunHandle::<u32>::spawn("run-panic", |_| -> Result<_, AppError> {
+            panic!("panic payload preserved")
+        });
+        assert_eq!(handle.wait(), RunStatus::Failed);
+        let error = handle.try_take_result().unwrap().unwrap_err();
+        assert!(error.message().contains("panic payload preserved"));
+        assert_eq!(
+            handle.events_after(0).last().unwrap().kind,
+            RunEventKind::Failed
+        );
     }
 
     #[test]

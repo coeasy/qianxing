@@ -19001,13 +19001,15 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("AppAction", "qx-app::AppAction"),
         ("AppRetry", "qx-app::AppRetry"),
     ),
-    # §6.1 点名了 events/cursors，但 `qx-app` 里**没有**事件日志——远程 Run 的事件游标住在
-    # `qx-api`（HTTP 面）。门面刻意不造一个没有生产端的事件流，缺口如实登记。
-    "events_cursors": (),
+    # 本地 RunEvent 来自 qx-app worker；远端全局事件流继续由 RemoteApiClient 提供。
+    "events_cursors": (
+        ("RunEvent", "qx-app::RunEvent"),
+        ("RunEventKind", "qx-app::RunEventKind"),
+    ),
 }
 # 空名册的能力必须在这里写明理由；理由里的**令牌**还要在 `capability-matrix.yaml` 的
 # `rust_sdk` 行 limitations 里出现（两张登记面不许各说各话）。
-SDK_FACADE_CAPABILITY_GAPS = {"events_cursors": "events/cursors"}
+SDK_FACADE_CAPABILITY_GAPS: dict[str, str] = {}
 # §6.1「sync/async run」里 async 那一半的实物：qx-app 的六个 `*Spec::start`。
 SDK_FACADE_ASYNC_ENTRY_PATTERN = re.compile(
     r"pub fn start\(self, context: RunContext\) -> (?:crate::)?RunHandle<"

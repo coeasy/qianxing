@@ -77,7 +77,7 @@ pub use multi_leg::{
     MULTI_LEG_FUNDING_INTERVAL_MS,
 };
 pub use qx_core::MakerTakerFeeSchedule;
-pub use run_handle::{RunHandle, RunStatus, DEFAULT_WAIT_TIMEOUT};
+pub use run_handle::{RunEvent, RunEventKind, RunHandle, RunStatus, DEFAULT_WAIT_TIMEOUT};
 pub use spec::{
     AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, BacktestArtifacts, BacktestOutcome,
     BacktestSpec, BuiltinStrategySpec, DatasetSpec, DatasetVerdict, DepthBacktestOutcome,
