@@ -51,13 +51,13 @@ steps:
   - name: provider_selection
     chain: data_to_research_backtest
     order: 2
-    anchor: crates/qx-provider/src/lib.rs fetch_with_failover
+    anchor: crates/qx-provider/src/registry.rs fetch_with_failover
     case: crates/qx-provider/src/lib.rs failover_keeps_retry_chain
     note: "多源 failover 只认三档错误分类；换源必须留 retry_chain 痕迹，不许无记录地混拼数据源。"
   - name: sdk_provider_registry
     chain: data_to_research_backtest
     order: 3
-    anchor: crates/qx-provider/src/lib.rs ProviderRegistry
+    anchor: crates/qx-provider/src/registry.rs ProviderRegistry
     case: crates/qx-sdk/tests/provider_consumer.rs sdk_provider_registry_fails_over_in_stable_order_and_preserves_lineage
     note: "第三方 Rust SDK 通过稳定 facade 注册多个 Provider，按能力/优先级确定性选择并验证 source_hash 与来源身份；当前仍需后续标准化/冻结步骤才能成为 app 回测输入。"
   - name: data_fetch

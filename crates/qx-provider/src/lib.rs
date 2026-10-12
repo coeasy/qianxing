@@ -6,7 +6,10 @@
 use qx_core::Fnv1a;
 pub use qx_guanxing::{DataSourceId, RawRecord};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+
+mod registry;
+pub use registry::{ProviderRegistry, RegistryError};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub enum DataKind {
@@ -377,104 +380,6 @@ impl ProviderError {
             class,
             message: message.into(),
         }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum RegistryError {
-    Duplicate(String),
-    NoProvider,
-    Provider(ProviderError),
-}
-
-pub struct ProviderRegistry {
-    providers: BTreeMap<String, Box<dyn DataProvider>>,
-}
-
-impl Default for ProviderRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ProviderRegistry {
-    pub fn new() -> Self {
-        Self {
-            providers: BTreeMap::new(),
-        }
-    }
-
-    pub fn register(&mut self, provider: Box<dyn DataProvider>) -> Result<(), RegistryError> {
-        let id = provider.capability().provider_id.clone();
-        provider
-            .capability()
-            .validate()
-            .map_err(RegistryError::Provider)?;
-        if id.trim().is_empty() {
-            return Err(RegistryError::NoProvider);
-        }
-        if self.providers.contains_key(&id) {
-            return Err(RegistryError::Duplicate(id));
-        }
-        self.providers.insert(id, provider);
-        Ok(())
-    }
-
-    pub fn candidates(&self, query: &DataQuery) -> Result<Vec<String>, RegistryError> {
-        query.validate().map_err(RegistryError::Provider)?;
-        let mut candidates: Vec<_> = self
-            .providers
-            .values()
-            .filter(|provider| provider.capability().matches(query))
-            .map(|provider| provider.capability().clone())
-            .collect();
-        candidates.sort_by(|a, b| {
-            a.priority
-                .cmp(&b.priority)
-                .then_with(|| b.quality_score.cmp(&a.quality_score))
-                .then_with(|| a.cost_score.cmp(&b.cost_score))
-                .then_with(|| a.provider_id.cmp(&b.provider_id))
-        });
-        Ok(candidates.into_iter().map(|c| c.provider_id).collect())
-    }
-
-    pub fn fetch_with_failover(&self, query: &DataQuery) -> Result<ProviderResult, RegistryError> {
-        let candidates = self.candidates(query)?;
-        if candidates.is_empty() {
-            return Err(RegistryError::NoProvider);
-        }
-        let mut retry_chain = Vec::new();
-        let mut last_error = None;
-        for id in candidates {
-            retry_chain.push(id.clone());
-            let provider = self.providers.get(&id).expect("candidate is registered");
-            match provider.fetch(query) {
-                Ok(mut result) => {
-                    result.retry_chain = retry_chain.clone();
-                    match result.validate_for(query) {
-                        Ok(()) => return Ok(result),
-                        Err(error) => {
-                            // 供应商返回了不可接受的事实，必须切换到下一候选，
-                            // 不能把非法结果当成“查询成功”。
-                            last_error = Some(error);
-                        }
-                    }
-                }
-                Err(error) => {
-                    let terminal = matches!(
-                        error.class,
-                        ProviderErrorClass::ManualIntervention | ProviderErrorClass::Permanent
-                    );
-                    last_error = Some(error.clone());
-                    if terminal {
-                        return Err(RegistryError::Provider(error));
-                    }
-                }
-            }
-        }
-        Err(last_error
-            .map(RegistryError::Provider)
-            .unwrap_or(RegistryError::NoProvider))
     }
 }
 
