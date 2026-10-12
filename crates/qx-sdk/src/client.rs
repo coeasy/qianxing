@@ -9,14 +9,14 @@
 
 use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, run_backtest, run_depth_backtest,
-    run_depth_experiment, run_experiment, run_multi_leg_backtest, run_multi_leg_experiment,
-    validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome,
-    BacktestSpec, CallerCapability, CapitalAllocationResult, CapitalAllocationSpec,
-    CompareRunsResult, CompareRunsSpec, DatasetSpec, DatasetVerdict, DepthBacktestOutcome,
-    DepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec, RiskParityResult,
-    RiskParitySpec, RunContext, RunDepthExperimentResult, RunDepthExperimentSpec,
-    RunExperimentResult, RunExperimentSpec, RunHandle, RunMultiLegExperimentResult,
-    RunMultiLegExperimentSpec, VerificationResult,
+    run_depth_experiment, run_experiment, run_multi_account_backtest, run_multi_leg_backtest,
+    run_multi_leg_experiment, validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec,
+    AppError, BacktestOutcome, BacktestSpec, CallerCapability, CapitalAllocationResult,
+    CapitalAllocationSpec, CompareRunsResult, CompareRunsSpec, DatasetSpec, DatasetVerdict,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestResult, MultiAccountBacktestSpec,
+    MultiLegBacktestOutcome, MultiLegBacktestSpec, RiskParityResult, RiskParitySpec, RunContext,
+    RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec,
+    RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec, VerificationResult,
 };
 
 /// 一次 SDK 会话的调用身份。
@@ -121,6 +121,23 @@ impl Client {
         &self,
         spec: MultiLegBacktestSpec,
     ) -> RunHandle<MultiLegBacktestOutcome> {
+        spec.start(self.context.clone())
+    }
+
+    /// Run independent account Bar backtests through the shared Rust app use case.
+    pub fn run_multi_account_backtest(
+        &self,
+        spec: &MultiAccountBacktestSpec,
+    ) -> Result<MultiAccountBacktestResult, AppError> {
+        run_multi_account_backtest(spec, &self.context)
+    }
+
+    /// Start a batch with cooperative cancellation between accounts and inside
+    /// the currently active Rust Bar engine run.
+    pub fn start_multi_account_backtest(
+        &self,
+        spec: MultiAccountBacktestSpec,
+    ) -> RunHandle<MultiAccountBacktestResult> {
         spec.start(self.context.clone())
     }
 

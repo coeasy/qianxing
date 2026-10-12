@@ -44,7 +44,8 @@ def _load_native():
     for path in sorted(candidates, key=lambda item: item.stat().st_mtime_ns, reverse=True):
         import_dir = path.parent
         if path.suffix.lower() == ".dll":
-            import_dir = root / "target" / "python-test-native"
+            # Keep concurrent test runners from overwriting a loaded extension.
+            import_dir = root / "target" / f"python-test-native-{os.getpid()}"
             import_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, import_dir / "_qianxing_native.pyd")
         sys.path.insert(0, str(import_dir))
@@ -58,6 +59,8 @@ def _load_native():
             for name in (
                 "app_validate_dataset",
                 "app_run_backtest",
+                "app_run_multi_account_backtest",
+                "app_start_multi_account_backtest",
                 "app_start_backtest",
                 "app_verify_run",
                 "app_compare_runs",
@@ -108,6 +111,7 @@ class AppUseCaseTests(unittest.TestCase):
         handle = object()
         for wrapper, entrypoint in (
             ("start_backtest", "app_start_backtest"),
+            ("start_multi_account_backtest", "app_start_multi_account_backtest"),
             ("start_experiment", "app_start_experiment"),
             ("start_depth_backtest", "app_start_depth_backtest"),
             ("start_depth_experiment", "app_start_depth_experiment"),
@@ -463,6 +467,7 @@ class AppUseCaseTests(unittest.TestCase):
             ("validate_dataset", "/app/validate-dataset", False),
             ("run_backtest", "/app/backtest", False),
             ("run_multi_account_backtest", "/app/multi-account-backtest", False),
+            ("start_multi_account_backtest", "/app/multi-account-backtest/start", True),
             ("start_backtest", "/app/backtest/start", True),
             ("verify_run", "/app/verify", False),
             ("compare_runs", "/app/compare-runs", False),
@@ -516,6 +521,7 @@ class AppUseCaseTests(unittest.TestCase):
                     "complete": True,
                 },
             },
+            "start_multi_account_backtest": {"run_id": "batch", "status": "starting"},
             "plan_risk_parity": {
                 "schema_version": 1,
                 "portfolio_id": "portfolio",
@@ -1459,6 +1465,78 @@ class AppUseCaseTests(unittest.TestCase):
         with redirect_stdout(stdout):
             self.assertEqual(python_cli(["verify-depth", str(outcome_file)]), 0)
         self.assertTrue(json.loads(stdout.getvalue())["verified"])
+
+    def test_multi_account_backtest_uses_the_shared_rust_run_handle(self):
+        self._require()
+        from qianxing_bridge.native import app_available
+
+        self.assertTrue(app_available(), "multi-account lifecycle must pass the generation probe")
+        bars = self.root / "deploy" / "qianxing.bar-frame.example.json"
+        member = lambda account, run: {
+            "schema_version": 1,
+            "run_id": run,
+            "account_id": account,
+            "instrument": "BTCUSDT.BINANCE",
+            "bars_path": str(bars),
+            "settlement_currency": "USDT",
+            "initial_cash_raw": 100_000_000_000_000,
+            "seed": 7,
+            "output_dir": str(self.output_dir / account),
+            "strategy": {
+                "kind": "sma_cross",
+                "strategy_id": f"{account}-sma",
+                "quantity_raw": 1_000_000_000,
+                "fast_window": 2,
+                "slow_window": 3,
+            },
+        }
+        payload = {
+            "schema_version": 1,
+            "batch_id": "python-multi-account-handle",
+            "runs": [member("account-a", "python-account-a"), member("account-b", "python-account-b")],
+        }
+        handle = self.bridge.start_multi_account_backtest(payload)
+        self.assertEqual(handle.run_id, payload["batch_id"])
+        self.assertEqual(handle.wait(10_000), "succeeded")
+        result = json.loads(handle.result_json())
+        self.assertEqual(result["summary"]["accounts_succeeded"], 2)
+        self.assertGreater(result["summary"]["successful_fills"], 0)
+        self.assertIsNone(handle.result_json(), "batch result is delivered once")
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import (
+            BacktestSpec,
+            BuiltinStrategySpec,
+            MultiAccountBacktestSpec,
+            start_multi_account_backtest,
+        )
+
+        typed_run = lambda account, run: BacktestSpec(
+            run_id=run,
+            account_id=account,
+            instrument="BTCUSDT.BINANCE",
+            bars_path=str(bars),
+            settlement_currency="USDT",
+            initial_cash_raw=100_000_000_000_000,
+            seed=7,
+            output_dir=str(self.output_dir / f"typed-{account}"),
+            strategy=BuiltinStrategySpec(
+                kind="sma_cross",
+                strategy_id=f"{account}-typed-sma",
+                quantity_raw=1_000_000_000,
+                fast_window=2,
+                slow_window=3,
+            ),
+        )
+        typed_spec = MultiAccountBacktestSpec(
+            batch_id="python-typed-multi-account",
+            runs=(typed_run("typed-a", "typed-run-a"), typed_run("typed-b", "typed-run-b")),
+        )
+        typed_handle = start_multi_account_backtest(typed_spec)
+        self.assertEqual(typed_handle.wait(10_000), "succeeded")
+        typed_result = typed_handle.result()
+        self.assertEqual(typed_result.summary["accounts_succeeded"], 2)
+        self.assertIsNone(typed_handle.result(), "typed batch result is delivered once")
 
     def test_multi_leg_backtest_uses_the_shared_rust_application_flow_and_handle(self):
         self._require()

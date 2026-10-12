@@ -1,13 +1,5 @@
-//! Python 原生边界。
-//!
-//! JSON/Arrow 边界、应用用例与 Provider 都委托给共享 Rust crates。
-//! ## `app_*`：应用层用例的 Python 门面（T2-2 / 退出门 G1）
-//!
-//! `app_*` 函数与 `qx-cli app` 子命令、`POST /app/*` 路由调的是**同一组 `qx-app`
-//! 用例**。它们的进出都是字符串：传一份 spec/outcome JSON，换回一份结果 JSON；失败时抛
-//! [`QxAppError`]，**异常文本就是 `AppError::to_json()` 的原文**——于是「同一 use case 三入口
-//! 结果哈希相同、错误 code 与 correlation id 相同」在 Python 这一侧也是构造性的。专用异常类型而非 `ValueError` 让调用方可按文档中的 `category`（`InvalidInput` 改输入、`DataUnavailable` 去取数据）捕获失败。
-//!
+//! Python native boundary; JSON/Arrow, application cases, and providers delegate to shared Rust crates.
+//! The `app_*` functions keep the same serialized results and error documents as CLI and HTTP.
 
 use pyo3::exceptions::{PyException, PyIndexError, PyValueError};
 use pyo3::prelude::*;
@@ -17,9 +9,9 @@ use qx_app::{
     run_experiment, run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset,
     verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
     CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec,
-    MultiLegBacktestOutcome, MultiLegBacktestSpec, RunContext, RunDepthExperimentResult,
-    RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec, RunHandle,
-    RunMultiLegExperimentResult, RunMultiLegExperimentSpec, RunStatus,
+    MultiAccountBacktestResult, MultiLegBacktestOutcome, MultiLegBacktestSpec, RunContext,
+    RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec,
+    RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec, RunStatus,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
@@ -47,9 +39,7 @@ pub(crate) fn app_error(error: AppError) -> PyErr {
 }
 
 /// 调用上下文：与 CLI/HTTP 两侧同形（R 档 + 身份串当 correlation id）。
-///
-/// 刻意**不**带 `with_code_commit`：Python 侧拿不到 CLI 的 `QX_GIT_COMMIT`，写一个看起来像
-/// 提交号的字符串只会让产物里那一格撒谎（落点仍是 `qx-app` 的包版本）。
+/// Python cannot truthfully provide the CLI-only `QX_GIT_COMMIT` identity.
 fn research_context(correlation_id: &str) -> RunContext {
     RunContext::new(CallerCapability::Research, correlation_id)
 }
@@ -195,6 +185,7 @@ enum NativeRun {
     Experiment(RunHandle<RunExperimentResult>),
     MultiLeg(RunHandle<MultiLegBacktestOutcome>),
     MultiLegExperiment(RunHandle<RunMultiLegExperimentResult>),
+    MultiAccount(RunHandle<MultiAccountBacktestResult>),
 }
 
 #[pyclass(name = "RunHandle")]
@@ -213,6 +204,7 @@ impl PyRunHandle {
             NativeRun::Experiment(handle) => handle.run_id(),
             NativeRun::MultiLeg(handle) => handle.run_id(),
             NativeRun::MultiLegExperiment(handle) => handle.run_id(),
+            NativeRun::MultiAccount(handle) => handle.run_id(),
         }
     }
 
@@ -225,6 +217,7 @@ impl PyRunHandle {
             NativeRun::Experiment(handle) => handle.status(),
             NativeRun::MultiLeg(handle) => handle.status(),
             NativeRun::MultiLegExperiment(handle) => handle.status(),
+            NativeRun::MultiAccount(handle) => handle.status(),
         })
     }
 
@@ -236,6 +229,7 @@ impl PyRunHandle {
             NativeRun::Experiment(handle) => handle.cancel(),
             NativeRun::MultiLeg(handle) => handle.cancel(),
             NativeRun::MultiLegExperiment(handle) => handle.cancel(),
+            NativeRun::MultiAccount(handle) => handle.cancel(),
         }
     }
 
@@ -256,6 +250,7 @@ impl PyRunHandle {
                 NativeRun::Experiment(handle) => handle.status(),
                 NativeRun::MultiLeg(handle) => handle.status(),
                 NativeRun::MultiLegExperiment(handle) => handle.status(),
+                NativeRun::MultiAccount(handle) => handle.status(),
             };
             if matches!(
                 status,
@@ -318,6 +313,11 @@ impl PyRunHandle {
                 .transpose()
                 .map_err(app_error),
             NativeRun::MultiLegExperiment(handle) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|outcome| outcome.to_json()))
+                .transpose()
+                .map_err(app_error),
+            NativeRun::MultiAccount(handle) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|outcome| outcome.to_json()))
                 .transpose()

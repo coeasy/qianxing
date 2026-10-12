@@ -38,6 +38,7 @@ APP_ENTRYPOINTS = (
     "app_validate_dataset",
     "app_run_backtest",
     "app_run_multi_account_backtest",
+    "app_start_multi_account_backtest",
     "app_start_backtest",
     "app_verify_run",
     "app_compare_runs",
@@ -142,6 +143,11 @@ def app_run_backtest(spec_json: str) -> str:
 def app_run_multi_account_backtest(spec_json: str) -> str:
     """Run isolated account Bar backtests with the shared Rust use case."""
     return str(_extension().app_run_multi_account_backtest(spec_json))
+
+
+def app_start_multi_account_backtest(spec_json: str) -> Any:
+    """Start a multi-account Bar backtest in the shared Rust run lifecycle."""
+    return _extension().app_start_multi_account_backtest(spec_json)
 
 
 def app_start_backtest(spec_json: str) -> Any:

@@ -162,8 +162,8 @@ contracts:
     cpp_remote: ["run_multi_leg_backtest", "start_multi_leg_backtest"]
     http: ["/app/multi-leg-backtest", "/app/multi-leg-backtest/start"]
   - use_case: run_multi_account_backtest
-    rust: ["run_multi_account_backtest"]
-    python_native: ["run_multi_account_backtest"]
-    python_remote: ["run_multi_account_backtest"]
-    cpp_remote: ["run_multi_account_backtest"]
-    http: ["/app/multi-account-backtest"]
+    rust: ["Client.run_multi_account_backtest", "Client.start_multi_account_backtest", "run_multi_account_backtest"]
+    python_native: ["run_multi_account_backtest", "start_multi_account_backtest"]
+    python_remote: ["run_multi_account_backtest", "start_multi_account_backtest"]
+    cpp_remote: ["run_multi_account_backtest", "start_multi_account_backtest"]
+    http: ["/app/multi-account-backtest", "/app/multi-account-backtest/start"]

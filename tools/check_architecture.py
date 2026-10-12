@@ -6215,6 +6215,7 @@ def api_surface_doc_check() -> None:
         ("RUN_START_DEPTH_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_ROUTE", "POST"),
+        ("RUN_START_MULTI_ACCOUNT_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_EXPERIMENT_ROUTE", "POST"),
     )
     dynamic_declared = set()
@@ -6246,6 +6247,7 @@ def api_surface_doc_check() -> None:
             ("POST", "/app/run-depth-experiment/start"),
             ("POST", "/app/run-experiment/start"),
             ("POST", "/app/multi-leg-backtest/start"),
+            ("POST", "/app/multi-account-backtest/start"),
             ("POST", "/app/run-multi-leg-experiment/start"),
         },
         "动态 SDK 运行路由由 app_surface 的两条模板显式登记并进入端点契约",
@@ -17687,8 +17689,13 @@ def language_api_contract_check() -> None:
         f"{row['use_case']}:{entry}"
         for row in rows
         for entry in row.get("rust", [])
-        if f"pub fn {entry}("
-        not in _text_or_empty(ROOT / APP_CASES_DIR / f"{row['use_case']}.rs")
+        if not (
+            f"pub fn {entry}("
+            in _text_or_empty(ROOT / APP_CASES_DIR / f"{row['use_case']}.rs")
+            if not entry.startswith("Client.")
+            else f"pub fn {entry.removeprefix('Client.')}("
+            in _text_or_empty(ROOT / "crates/qx-sdk/src/client.rs")
+        )
     ]
     check(
         not missing_rust,
@@ -19022,7 +19029,7 @@ SDK_FACADE_CAPABILITY_GAPS: dict[str, str] = {}
 SDK_FACADE_ASYNC_ENTRY_PATTERN = re.compile(
     r"pub fn start\(self, context: RunContext\) -> (?:crate::)?RunHandle<"
 )
-SDK_FACADE_ASYNC_ENTRY_COUNT = 6
+SDK_FACADE_ASYNC_ENTRY_COUNT = 7
 # 独立消费者只许说门面那一种语言：出现别的前缀就等于"门面漏了一块，集成方还得自己补"。
 SDK_FACADE_FOREIGN_PREFIXES = ("qx_app::", "qx_cli", "qx_api::", "qx_python", "qx_adapter::")
 
@@ -19248,7 +19255,7 @@ def qx_sdk_facade_check() -> None:
         f"源 crate 里找不到 {sorted(set(invented)) or '无'}",
     )
 
-    # ⑦ §6.1「async run」的实物：qx-app 的六个 `*Spec::start` 一条不少。
+    # ⑦ §6.1「async run」的实物：qx-app 各应用规格的 `*Spec::start` 一条不少。
     async_entries = [
         path.name
         for path in sorted((ROOT / "crates/qx-app/src/cases").glob("*.rs"))

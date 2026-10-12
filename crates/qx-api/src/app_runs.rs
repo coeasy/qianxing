@@ -2,9 +2,10 @@
 
 use super::*;
 use qx_app::{
-    MultiLegBacktestOutcome, MultiLegBacktestSpec, RunDepthExperimentResult,
-    RunDepthExperimentSpec, RunEvent, RunExperimentResult, RunHandle, RunMultiLegExperimentResult,
-    RunMultiLegExperimentSpec, RunStatus,
+    MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiLegBacktestOutcome,
+    MultiLegBacktestSpec, RunDepthExperimentResult, RunDepthExperimentSpec, RunEvent,
+    RunExperimentResult, RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
+    RunStatus,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -36,6 +37,7 @@ pub(crate) const RUN_START_DEPTH_ROUTE: &str = "/app/depth-backtest/start";
 pub(crate) const RUN_START_DEPTH_EXPERIMENT_ROUTE: &str = "/app/run-depth-experiment/start";
 pub(crate) const RUN_START_EXPERIMENT_ROUTE: &str = "/app/run-experiment/start";
 pub(crate) const RUN_START_MULTI_LEG_ROUTE: &str = "/app/multi-leg-backtest/start";
+pub(crate) const RUN_START_MULTI_ACCOUNT_ROUTE: &str = "/app/multi-account-backtest/start";
 pub(crate) const RUN_START_MULTI_LEG_EXPERIMENT_ROUTE: &str = "/app/run-multi-leg-experiment/start";
 
 pub(crate) fn app_run_route(
@@ -65,6 +67,9 @@ pub(crate) fn app_run_route_with_query(
         ("POST", RUN_START_EXPERIMENT_ROUTE) => starts::start_experiment(body, paths, registry),
         ("POST", RUN_START_MULTI_LEG_ROUTE) => {
             starts::start_multi_leg_backtest(body, paths, registry)
+        }
+        ("POST", RUN_START_MULTI_ACCOUNT_ROUTE) => {
+            starts::start_multi_account_backtest(body, paths, registry)
         }
         ("POST", RUN_START_MULTI_LEG_EXPERIMENT_ROUTE) => {
             starts::start_multi_leg_experiment(body, paths, registry)
@@ -103,6 +108,7 @@ enum AppRun {
     Experiment(RunHandle<RunExperimentResult>),
     MultiLeg(RunHandle<MultiLegBacktestOutcome>),
     MultiLegExperiment(RunHandle<RunMultiLegExperimentResult>),
+    MultiAccount(RunHandle<MultiAccountBacktestResult>),
 }
 
 struct AppRunEntry {
@@ -361,6 +367,7 @@ impl AppRunEntry {
             Some(AppRun::Experiment(handle)) => handle.status(),
             Some(AppRun::MultiLeg(handle)) => handle.status(),
             Some(AppRun::MultiLegExperiment(handle)) => handle.status(),
+            Some(AppRun::MultiAccount(handle)) => handle.status(),
         }
     }
 
@@ -376,6 +383,7 @@ impl AppRunEntry {
             Some(AppRun::Experiment(handle)) => handle.cancel(),
             Some(AppRun::MultiLeg(handle)) => handle.cancel(),
             Some(AppRun::MultiLegExperiment(handle)) => handle.cancel(),
+            Some(AppRun::MultiAccount(handle)) => handle.cancel(),
             None => {}
         }
     }
@@ -404,6 +412,9 @@ impl AppRunEntry {
                 .try_take_result()
                 .map(|result| result.and_then(|value| value.to_json())),
             Some(AppRun::MultiLegExperiment(handle)) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|value| value.to_json())),
+            Some(AppRun::MultiAccount(handle)) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|value| value.to_json())),
         };
@@ -451,6 +462,7 @@ impl AppRunEntry {
             AppRun::Experiment(handle) => handle.events_after(0),
             AppRun::MultiLeg(handle) => handle.events_after(0),
             AppRun::MultiLegExperiment(handle) => handle.events_after(0),
+            AppRun::MultiAccount(handle) => handle.events_after(0),
         };
         if latest.len() > self.events.len() {
             self.events = latest;

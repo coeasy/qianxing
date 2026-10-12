@@ -7,7 +7,7 @@
 
 `include/qianxing_app.hpp` 提供共享应用 API 的轻量 C++17 客户端，可调用数据校验、Bar/多腿 Bar/Tick/OrderBook 回测、产物复核、运行对比、Bar 与多腿参数实验，以及 Paper/Live 控制命令。Tick/OrderBook 与多腿 JSON 可携带标准化产品规格和适用的订单策略；客户端把版本化请求交给相同的 `/app/*` Rust 路由，不在 C++ 重做撮合、风险或账簿。HTTP transport 由集成方实现，并负责 TLS、鉴权、超时和连接复用；Live 控制要求服务启用 Operator 授权。
 
-长任务可调用 `start_backtest`、`start_depth_backtest`、`start_depth_experiment`、`start_multi_leg_backtest`、`start_experiment` 或 `start_multi_leg_experiment`，再以 `run_status(run_id)` 轮询结果，并用 `cancel_run(run_id)` 请求协作取消。它们复用 Rust Bar/Tick/OrderBook 内核；终态结果由服务持久化并跨重启保留，重启时仍未完成的任务标记为失败；注册表最多保留 1024 项，同时最多运行 64 个有持久化观察器的任务，满额时服务会在启动前拒绝新任务。run_id 只接受字母、数字、`-`、`_`、`.`。
+长任务可调用 `start_backtest`、`start_depth_backtest`、`start_depth_experiment`、`start_multi_account_backtest`、`start_multi_leg_backtest`、`start_experiment` 或 `start_multi_leg_experiment`，再以 `run_status(run_id)` 轮询结果，并用 `cancel_run(run_id)` 请求协作取消。它们复用 Rust Bar/Tick/OrderBook 内核；终态结果由服务持久化并跨重启保留，重启时仍未完成的任务标记为失败；注册表最多保留 1024 项，同时最多运行 64 个有持久化观察器的任务，满额时服务会在启动前拒绝新任务。run_id 只接受字母、数字、`-`、`_`、`.`。
 
 `run_depth_backtest` / `start_depth_backtest` 接收同一版本化 JSON；L2 请求可包含 `market_making`（`spread_bps`、`quote_qty_raw`、`max_inventory_raw`、`tick_size_raw`、`inventory_skew_bps`），由 Rust 撮合器执行双边报价与撤单。C++ client 只传输该规格，不在本地实现交易规则。
 

@@ -30,6 +30,7 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "validate_dataset": "/app/validate-dataset",
     "backtest": "/app/backtest",
     "multi_account_backtest": "/app/multi-account-backtest",
+    "multi_account_backtest_start": "/app/multi-account-backtest/start",
     "backtest_start": "/app/backtest/start",
     "verify": "/app/verify",
     "verify_depth": "/app/verify-depth",
@@ -1377,6 +1378,11 @@ class AsyncCoreClient:
     ) -> MultiAccountBacktestResult:
         return await asyncio.to_thread(run_multi_account_backtest, spec)
 
+    async def async_start_multi_account_backtest(
+        self, spec: MultiAccountBacktestSpec | dict[str, Any]
+    ) -> AsyncRunHandle[MultiAccountBacktestResult]:
+        return await self._start(start_multi_account_backtest, spec)
+
     async def async_start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> AsyncRunHandle[MultiLegBacktestOutcome]:
         return await self._start(start_multi_leg_backtest, spec)
 
@@ -1639,6 +1645,15 @@ class AppClient(_HttpJsonClient):
             self._post(APP_ROUTE_TEMPLATES["multi_account_backtest"], spec)
         )
 
+    def start_multi_account_backtest(
+        self, spec: MultiAccountBacktestSpec | dict[str, Any]
+    ) -> RemoteRunHandle[MultiAccountBacktestResult]:
+        return self._start(
+            APP_ROUTE_TEMPLATES["multi_account_backtest_start"],
+            spec,
+            MultiAccountBacktestResult,
+        )
+
     def start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> RemoteRunHandle[MultiLegBacktestOutcome]:
         return self._start(
             APP_ROUTE_TEMPLATES["multi_leg_backtest_start"], spec, MultiLegBacktestOutcome
@@ -1704,6 +1719,11 @@ class AppClient(_HttpJsonClient):
         self, spec: MultiAccountBacktestSpec | dict[str, Any]
     ) -> MultiAccountBacktestResult:
         return await asyncio.to_thread(self.run_multi_account_backtest, spec)
+
+    async def async_start_multi_account_backtest(
+        self, spec: MultiAccountBacktestSpec | dict[str, Any]
+    ) -> RemoteRunHandle[MultiAccountBacktestResult]:
+        return await self._async_start(self.start_multi_account_backtest, spec)
 
     async def async_start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> RemoteRunHandle[MultiLegBacktestOutcome]:
         return await self._async_start(self.start_multi_leg_backtest, spec)
@@ -1822,6 +1842,17 @@ def run_multi_account_backtest(
     return MultiAccountBacktestResult.from_dict(
         _invoke(native.app_run_multi_account_backtest, spec)
     )
+
+
+def start_multi_account_backtest(
+    spec: MultiAccountBacktestSpec | dict[str, Any],
+) -> RunHandle[MultiAccountBacktestResult]:
+    """Start a cancellable isolated-account batch in the shared Rust kernel."""
+    try:
+        native_handle = native.app_start_multi_account_backtest(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, MultiAccountBacktestResult)
 
 
 def start_multi_leg_backtest(

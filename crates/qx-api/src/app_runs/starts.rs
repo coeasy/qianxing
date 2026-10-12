@@ -128,6 +128,38 @@ pub(super) fn start_multi_leg_backtest(
     }
 }
 
+pub(super) fn start_multi_account_backtest(
+    body: &str,
+    paths: &AppPaths,
+    registry: &AppRunRegistry,
+) -> ApiResponse {
+    let mut spec = match MultiAccountBacktestSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    for run in &mut spec.runs {
+        if let Err(error) = resolve_input_path(&mut run.bars_path, &paths.data_root) {
+            return respond(Err(error));
+        }
+    }
+    let batch_id = spec.batch_id.clone();
+    for run in &mut spec.runs {
+        run.output_dir = paths
+            .artifact_root
+            .join(&run.run_id)
+            .to_string_lossy()
+            .into_owned();
+    }
+    if let Err(error) = registry.reserve(batch_id.clone()) {
+        return respond(Err(error));
+    }
+    let handle = spec.start(context(&batch_id));
+    match registry.attach(&batch_id, AppRun::MultiAccount(handle)) {
+        Ok(()) => registry.status(&batch_id),
+        Err(error) => respond(Err(error)),
+    }
+}
+
 pub(super) fn start_multi_leg_experiment(
     body: &str,
     paths: &AppPaths,

@@ -41,6 +41,7 @@ namespace routes {
 inline constexpr std::string_view kValidateDataset = "/app/validate-dataset";
 inline constexpr std::string_view kBacktest = "/app/backtest";
 inline constexpr std::string_view kMultiAccountBacktest = "/app/multi-account-backtest";
+inline constexpr std::string_view kMultiAccountBacktestStart = "/app/multi-account-backtest/start";
 inline constexpr std::string_view kBacktestStart = "/app/backtest/start";
 inline constexpr std::string_view kVerify = "/app/verify";
 inline constexpr std::string_view kVerifyDepth = "/app/verify-depth";
@@ -73,9 +74,9 @@ inline constexpr std::string_view kLiveEvents = "/events/live";
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 30> kDeclaredRoutes = {
+inline constexpr std::array<std::string_view, 31> kDeclaredRoutes = {
     kValidateDataset,       kBacktest,
-    kMultiAccountBacktest,
+    kMultiAccountBacktest,  kMultiAccountBacktestStart,
     kBacktestStart,         kVerify,
     kVerifyDepth,           kCompareRuns,
     kPlanRiskParity,
@@ -140,6 +141,10 @@ public:
 
     AppResponse run_multi_account_backtest(std::string_view spec_json) const {
         return post(routes::kMultiAccountBacktest, spec_json);
+    }
+
+    AppResponse start_multi_account_backtest(std::string_view spec_json) const {
+        return post(routes::kMultiAccountBacktestStart, spec_json);
     }
 
     AppResponse start_backtest(std::string_view spec_json) const {

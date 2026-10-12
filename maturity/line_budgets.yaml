@@ -3,6 +3,7 @@
 crates/qx-adapter/src/binance.rs: 2126
 crates/qx-adapter/src/ccxt.rs: 1160
 crates/qx-adapter/src/lib.rs: 728
+crates/qx-api/src/app_runs.rs: 512
 crates/qx-api/src/console.rs: 727
 crates/qx-api/src/lib.rs: 2912
 crates/qx-cli/src/cli.rs: 670
@@ -15,7 +16,6 @@ crates/qx-cli/src/tests/api_endpoint_table_routes.rs: 554
 crates/qx-cli/src/tests/api_read_route_query_contract.rs: 537
 crates/qx-cli/src/tests/api_snapshot_money_fields.rs: 517
 crates/qx-cli/src/tests/deploy_template_coverage.rs: 779
-crates/qx-cli/src/tests/e2e_and_python_contract.rs: 513
 crates/qx-cli/src/worker_entry.rs: 579
 crates/qx-cli/src/workers.rs: 523
 crates/qx-control/src/lib.rs: 699
@@ -40,11 +40,10 @@ crates/qx-strategy/src/c_api.rs: 1165
 crates/qx-strategy/src/lib.rs: 548
 crates/qx-xingban/src/ashare.rs: 1201
 crates/qx-xingban/src/ashare/tests.rs: 764
-crates/qx-xingban/src/backtest.rs: 1973
-crates/qx-xingban/src/backtest/tests.rs: 1503
+crates/qx-xingban/src/backtest.rs: 1965
+crates/qx-xingban/src/backtest/tests.rs: 1488
 crates/qx-xingban/src/orderbook.rs: 671
-crates/qx-xingban/src/orderbook_backtest.rs: 1199
-crates/qx-xingban/src/tick_backtest.rs: 521
+crates/qx-xingban/src/orderbook_backtest.rs: 706
 crates/qx-xingban/src/venue.rs: 573
 crates/qx-zhenlu/src/lib.rs: 2170
 crates/qx-zhenlu/src/portfolio/risk_parity.rs: 543

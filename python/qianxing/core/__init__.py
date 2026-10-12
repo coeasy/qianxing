@@ -56,6 +56,7 @@ from qianxing.app import (
     start_backtest,
     start_depth_backtest,
     start_multi_leg_backtest,
+    start_multi_account_backtest,
     validate_dataset,
 )
 
@@ -93,5 +94,6 @@ __all__ = [
     "start_backtest",
     "start_depth_backtest",
     "start_multi_leg_backtest",
+    "start_multi_account_backtest",
     "validate_dataset",
 ]
