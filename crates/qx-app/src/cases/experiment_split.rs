@@ -130,6 +130,9 @@ pub struct ExperimentFoldReport {
     pub test_range: [u64; 2],
     /// 在训练窗上胜出的候选序号（`ExperimentCandidateResult.ordinal`）。
     pub selected_ordinal: usize,
+    /// Strategy selected from the in-sample window; omitted for legacy single-strategy runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_strategy_kind: Option<String>,
     pub selected_parameters: BTreeMap<String, i128>,
     pub in_sample_return_bps: i32,
     pub out_of_sample_return_bps: i32,
@@ -243,7 +246,7 @@ pub(super) fn evaluate_out_of_sample(
         }
         // 选参只看训练窗。并列时取序号最小的候选——排序必须确定，否则同一份 spec
         // 在两次运行里会选出不同的参数，OOS 分数也就不可复算。
-        let mut best: Option<(usize, BTreeMap<String, i128>, i32)> = None;
+        let mut best: Option<(usize, Option<String>, BTreeMap<String, i128>, i32)> = None;
         for candidate in candidates {
             let Some((_, values)) = series
                 .iter()
@@ -254,15 +257,21 @@ pub(super) fn evaluate_out_of_sample(
             let score = window_return_bps(values, train_start, train_end);
             let better = match &best {
                 None => true,
-                Some((ordinal, _, incumbent)) => {
+                Some((ordinal, _, _, incumbent)) => {
                     score > *incumbent || (score == *incumbent && candidate.ordinal < *ordinal)
                 }
             };
             if better {
-                best = Some((candidate.ordinal, candidate.parameters.clone(), score));
+                best = Some((
+                    candidate.ordinal,
+                    candidate.strategy_kind.clone(),
+                    candidate.parameters.clone(),
+                    score,
+                ));
             }
         }
-        let Some((selected_ordinal, selected_parameters, in_sample)) = best else {
+        let Some((selected_ordinal, selected_strategy_kind, selected_parameters, in_sample)) = best
+        else {
             continue;
         };
         let values = series
@@ -280,6 +289,7 @@ pub(super) fn evaluate_out_of_sample(
             train_range: [train_start as u64, train_end as u64],
             test_range: [test_start as u64, test_end as u64],
             selected_ordinal,
+            selected_strategy_kind,
             selected_parameters,
             in_sample_return_bps: in_sample,
             out_of_sample_return_bps: window_return_bps(values, test_start, test_end),

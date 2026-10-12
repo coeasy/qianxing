@@ -111,12 +111,6 @@ impl RunExperimentSpec {
         // starts. Two-leg kinds belong to RunMultiLegExperimentSpec and must not be silently
         // routed through the single-frame Bar engine.
         let strategy_selection = !self.strategy_kinds.is_empty();
-        if strategy_selection && self.split_plan.is_some() {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "strategy_kinds 与 split_plan 暂不组合使用；需逐策略做独立样本外实验",
-            ));
-        }
         let mut kinds = if strategy_selection {
             self.strategy_kinds.clone()
         } else {

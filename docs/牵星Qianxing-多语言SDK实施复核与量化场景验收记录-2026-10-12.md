@@ -70,7 +70,7 @@ Python 十策略证据：
 ## 6. 2026-10-13 继续实现：SDK 多策略研究候选选择
 
 - `RunExperimentSpec.strategy_kinds` 已进入共享 Rust `qx-app` 应用用例，可在同一份数据和基础策略参数上选择多种单腿内置策略，并由原有 Rust 回测内核执行、汇总和比较；每个候选返回策略 kind，排序和实验指纹按规范化 kind 顺序保持确定性。
-- 选择器支持不带数值参数维度的策略快速比较，并与现有参数维度组合；候选总数受 256 上限约束。重复 kind、双腿策略和当前尚无明确 OOS 语义的 `strategy_kinds + split_plan` 输入会显式拒绝，不会悄悄退化到单策略回测。
+- 选择器支持不带数值参数维度的策略快速比较，并与现有参数维度及 `split_plan` 组合；候选总数受 256 上限约束。OOS 每折仅以训练窗收益选出策略 kind 和数值参数，再在测试窗评估；报告记录 `selected_strategy_kind`。重复 kind、双腿策略仍显式拒绝。
 - Rust SDK 独立消费者与 API `/app/run-experiment` 路由有覆盖；Python 类型化 SDK、原生 Rust 扩展、远端 AppClient 都序列化相同字段；C++ HTTP 客户端以既有通用 JSON 载荷转发同一契约。Python 全量单元测试 124 项通过（1 项因环境跳过）；专项验证十种经典策略均返回成功候选并进入统一比较。
 - `cargo fmt --all -- --check`、`git diff --check` 通过；Rust `qx-app`/`qx-sdk`/`qx-api` 本地套件和 Python 全量 124 项（1 项跳过）通过。推送后固定到新提交的 Rust Git 仓外消费者实际构建并运行成功（1 笔成交，数据复核成功，Paper 远端 start/get/cancel/list 及事件游标均调用通过）。量化场景探针 31 项 executed、0 项缺失、0 项未执行；真实交易所 Live 场景仍因没有 `ccxt` 与 testnet 凭据 blocked。
 - 最终提交 `ee6e038` 的 Windows `cp310-abi3-win_amd64` wheel 已通过 `tools/check_python_wheel.py`，并在隔离 Python 3.13 环境离线安装；安装后从 SDK 调用共享 Rust 内核完成十种经典策略比较，10 个候选全部成功。wheel SHA-256：`a1b09eda3af487bd0887e187d5b13f9719c23f129af93123a089ff002b7742a7`。
@@ -91,3 +91,10 @@ Python 十策略证据：
 - `cargo test --offline -p qx-api`：58 项单元测试及 API 集成测试全部通过。首次未设置临时目录时，4 项依赖文件系统的测试受 Windows 默认 Temp 目录拒绝访问影响；将 `TEMP`/`TMP` 指到仓库 `target/test-temp` 后全量重跑通过。该限制属于本机测试环境，未伪报为产品行为缺陷。
 - 本轮重新核对确认一个未闭环的主链：仓内 Runtime/CLI 能运行多策略配置，但 Rust/Python/C++ SDK 与 HTTP/Web 稳定应用契约没有同一多策略组合回测用例；现有 `qx-app` Bar `BacktestSpec` 仍是单策略运行。组合资金分配也尚未与策略调度、共享组合风险、组合账簿、Paper/Live 订单执行连接。因此“SDK 多策略组合实盘/回测全部贯通”仍为未完成。
 - 本轮没有引入第二套撮合/账簿算法，也没有将 Runtime/CLI 的场景执行误记成 SDK 接入。下一阶段应先把组合调度与共享账簿能力收敛成有明确所有权的 Rust 应用用例/领域端口，再逐一接入各语言和 API，并以跨语言相同输入、相同结果与事件/账簿核对作为退出门。
+
+
+## 8. 2026-10-13 增量复核：策略选择与 OOS
+
+此前策略 kind 快速选择无法与 `split_plan` 组合，导致十种策略无法在训练窗中统一选优并进入样本外评估。本轮删除该互斥限制：候选策略/参数都由共享 Rust 执行，按每折训练窗收益挑选，再报告测试窗收益和所选策略 kind。Python 旧报告缺少可选字段时仍可解析。
+
+验证覆盖 Rust qx-app、Rust SDK、HTTP API、Python 原生扩展与 Python 类型解码；API/Python 用例均检查折报告 kind 与候选 ordinal 关联。该修复只补研究实验选择与 OOS 接线，不代表多策略共享资本、组合级风险/账簿或 Paper/Live 多策略闭环已经完成；总体发布门槛仍未满足。

@@ -53,7 +53,8 @@ fn experiment_http_route_runs_the_multi_strategy_selection_on_the_shared_app_use
         "strategy_kinds": [
             "sma_cross", "ema_cross", "macd", "rsi", "bollinger",
             "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend"
-        ]
+        ],
+        "split_plan": {"train_bars": 20, "test_bars": 10, "walk_forward": false, "step_bars": 0}
     })
     .to_string();
     let paths = app_surface::AppPaths {
@@ -70,4 +71,11 @@ fn experiment_http_route_runs_the_multi_strategy_selection_on_the_shared_app_use
     assert_eq!(result["candidates"].as_array().unwrap().len(), 10);
     assert_eq!(result["candidates"][0]["strategy_kind"], "atr_trend");
     assert_eq!(result["comparison"]["runs"].as_array().unwrap().len(), 10);
+    let fold = &result["out_of_sample"]["folds"][0];
+    assert!(fold["selected_strategy_kind"].is_string());
+    assert_eq!(
+        fold["selected_strategy_kind"],
+        result["candidates"][fold["selected_ordinal"].as_u64().unwrap() as usize - 1]
+            ["strategy_kind"]
+    );
 }

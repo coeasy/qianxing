@@ -90,7 +90,7 @@ domains:
   - name: accounts_and_strategies
     level: partial
     evidence: [crates/qx-runtime/src/runtime_config/schema.rs, crates/qx-runtime/src/runtime_config/topology_validation.rs, crates/qx-cli/src/backtests/account_base.rs, crates/qx-cli/src/venue_runtime/paper_submit.rs, crates/qx-app, crates/qx-zhenlu/src/portfolio/capital_allocation.rs, maturity/app_use_cases.yaml]
-    limitations: ["RuntimeConfig.accounts 已统一账户身份、结算币种与初始本金来源；多策略 Bar 回测和 Paper 账户入账可按 account_id 选择独立本金，旧配置无 accounts 时仍保持兼容", "Bar、Tick/OrderBook 和多腿回测均可显式指定账户，账户身份进入策略上下文、summary/归因事实和复核；多腿两侧仍分别开账，目前未有组合规格", "RunExperimentSpec.strategy_kinds 已支持最多 256 个单腿内置策略/参数候选的确定性快速选择、共享 Rust 回测、稳定排序和比较，并经 Rust SDK、Python 本地/远端、C++ HTTP 透传和 HTTP API；它是独立研究候选，不是共享组合账簿或并发调度", "已新增共享 Rust 组合资金规划用例：按显式优先级、策略 ID 确定性分配组合预算并受账户现金上限约束；它尚未接入组合回测、Paper/Live 下单、组合风险限额与跨账户账簿", "多策略资金竞争的执行调度、组合限额聚合和退出语义未端到端验证"]
+    limitations: ["RuntimeConfig.accounts 已统一账户身份、结算币种与初始本金来源；多策略 Bar 回测和 Paper 账户入账可按 account_id 选择独立本金，旧配置无 accounts 时仍保持兼容", "Bar、Tick/OrderBook 和多腿回测均可显式指定账户，账户身份进入策略上下文、summary/归因事实和复核；多腿两侧仍分别开账，目前未有组合规格", "RunExperimentSpec.strategy_kinds 已支持最多 256 个单腿内置策略/参数候选的确定性快速选择、共享 Rust 回测、稳定排序和比较，支持训练窗策略/参数选择及 OOS/走查，并经 Rust SDK、Python 本地/远端、C++ HTTP 透传和 HTTP API；它是独立研究候选，不是共享组合账簿或并发调度", "已新增共享 Rust 组合资金规划用例：按显式优先级、策略 ID 确定性分配组合预算并受账户现金上限约束；它尚未接入组合回测、Paper/Live 下单、组合风险限额与跨账户账簿", "多策略资金竞争的执行调度、组合限额聚合和退出语义未端到端验证"]
     next_gate: "将组合资金规划接入统一多策略回测/Paper 执行器，落跨账户风险限额聚合、账户/策略/Run 所有权和退出语义；补前端操作入口并完成端到端验收"
 
   - name: web_api

@@ -555,6 +555,7 @@ class ExperimentFoldReport:
     selected_parameters: dict[str, int]
     in_sample_return_bps: int
     out_of_sample_return_bps: int
+    selected_strategy_kind: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExperimentFoldReport":
@@ -566,6 +567,7 @@ class ExperimentFoldReport:
             selected_parameters=value["selected_parameters"],
             in_sample_return_bps=value["in_sample_return_bps"],
             out_of_sample_return_bps=value["out_of_sample_return_bps"],
+            selected_strategy_kind=value.get("selected_strategy_kind"),
         )
 
 

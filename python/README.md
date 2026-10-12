@@ -107,8 +107,9 @@ assert verify_run(outcome).verified
 Run a quick, bounded comparison across the classic single-instrument strategies with the same
 frozen BarFrame. Strategy candidates are canonically ordered by kind and ranking execute in Rust;
 `strategy_kinds` is optional and keeps old experiment JSON unchanged when omitted. Two-leg arbitrage kinds must use the multi-leg
-experiment contract. Strategy-kind selection and walk-forward `split_plan` are currently separate
-experiment modes, so the SDK rejects a request that combines them.
+experiment contract. When a `split_plan` is present, Rust selects both the strategy kind and its
+numeric parameters using only the training window, then reports the selected kind and evaluates it
+on the held-out test window. Walk-forward folds repeat this selection independently.
 
 ```python
 from qianxing import ExperimentParameterSpace, RunExperimentSpec, list_builtin_strategies, run_experiment

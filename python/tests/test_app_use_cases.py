@@ -706,33 +706,33 @@ class AppUseCaseTests(unittest.TestCase):
         from qianxing import (
             BacktestSpec,
             BuiltinStrategySpec,
+            ExperimentSplitPlan,
             RunExperimentSpec,
             run_experiment,
         )
 
-        selected = run_experiment(
-            RunExperimentSpec(
-                experiment_id="py-classic-strategy-selection",
-                base=BacktestSpec(
-                    run_id="unused-classic-selection",
-                    instrument="BTCUSDT.BINANCE",
-                    bars_path=str(bars_path),
-                    settlement_currency="USDT",
-                    initial_cash_raw=100_000_000_000_000,
-                    output_dir=str(self.output_dir / "classic-selection"),
-                    strategy=BuiltinStrategySpec(
-                        kind="sma_cross",
-                        strategy_id="py-classic-selection",
-                        fast_window=5,
-                        slow_window=20,
-                        period=14,
-                        threshold_bps=100,
-                    ),
+        selection_spec = RunExperimentSpec(
+            experiment_id="py-classic-strategy-selection",
+            base=BacktestSpec(
+                run_id="unused-classic-selection",
+                instrument="BTCUSDT.BINANCE",
+                bars_path=str(bars_path),
+                settlement_currency="USDT",
+                initial_cash_raw=100_000_000_000_000,
+                output_dir=str(self.output_dir / "classic-selection"),
+                strategy=BuiltinStrategySpec(
+                    kind="sma_cross",
+                    strategy_id="py-classic-selection",
+                    fast_window=5,
+                    slow_window=20,
+                    period=14,
+                    threshold_bps=100,
                 ),
-                parameter_space=(),
-                strategy_kinds=builtin_names,
-            )
+            ),
+            parameter_space=(),
+            strategy_kinds=builtin_names,
         )
+        selected = run_experiment(selection_spec)
         self.assertEqual(selected.total_candidates, len(builtin_names))
         self.assertEqual(selected.succeeded_candidates, len(builtin_names))
         self.assertEqual(
@@ -740,6 +740,25 @@ class AppUseCaseTests(unittest.TestCase):
             sorted(builtin_names),
         )
         self.assertEqual(len(selected.comparison.runs), len(builtin_names))
+
+        oos = run_experiment(
+            RunExperimentSpec(
+                experiment_id="py-classic-strategy-selection-oos",
+                base=selection_spec.base,
+                parameter_space=(),
+                strategy_kinds=builtin_names,
+                split_plan=ExperimentSplitPlan(
+                    train_bars=40, test_bars=20, walk_forward=False, step_bars=0
+                ),
+            )
+        )
+        self.assertIsNotNone(oos.out_of_sample)
+        fold = oos.out_of_sample.folds[0]
+        self.assertIn(fold.selected_strategy_kind, builtin_names)
+        self.assertEqual(
+            fold.selected_strategy_kind,
+            oos.candidates[fold.selected_ordinal - 1].strategy_kind,
+        )
 
     def test_the_shared_use_cases_run_end_to_end_from_python(self):
         self._require()

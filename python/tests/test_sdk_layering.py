@@ -312,6 +312,7 @@ class TopLevelStabilityTest(unittest.TestCase):
                             "train_range": [0, 20],
                             "test_range": [20, 30],
                             "selected_ordinal": 0,
+                            "selected_strategy_kind": "ema_cross",
                             "selected_parameters": {"fast_window": 2},
                             "in_sample_return_bps": 15,
                             "out_of_sample_return_bps": 7,
@@ -329,6 +330,7 @@ class TopLevelStabilityTest(unittest.TestCase):
         self.assertIsInstance(result.out_of_sample, ExperimentOutOfSampleReport)
         self.assertEqual(result.candidates[0].strategy_kind, "ema_cross")
         self.assertEqual(result.out_of_sample.folds[0].test_range, (20, 30))
+        self.assertEqual(result.out_of_sample.folds[0].selected_strategy_kind, "ema_cross")
         self.assertIsInstance(result.baselines[0], ExperimentBaselineReport)
         self.assertEqual(result.baselines[0].return_bps, 100)
 
