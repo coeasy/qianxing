@@ -52,6 +52,7 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "paper_commands": "/app/paper/commands",
     "live_commands": "/app/live/commands",
     "run_status": "/app/runs/{run_id}",
+    "run_events": "/app/runs/{run_id}/events",
     "run_cancel": "/app/runs/{run_id}/cancel",
     "live_events": "/events/live",
 }
@@ -1255,6 +1256,15 @@ class RemoteRunHandle(Generic[_ResultT]):
     async def async_document(self) -> dict[str, Any]:
         """Read the same Rust run document without blocking the caller's event loop."""
         return await asyncio.to_thread(self.document)
+
+    def events(self, after_seq: int = 0) -> list[dict[str, Any]]:
+        if isinstance(after_seq, bool) or not isinstance(after_seq, int) or after_seq < 0:
+            raise ValueError("after_seq must be a non-negative integer")
+        route = APP_ROUTE_TEMPLATES["run_events"].format(run_id=self.run_id)
+        return self._client._request_json(f"{route}?after_seq={after_seq}", method="GET")
+
+    async def async_events(self, after_seq: int = 0) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self.events, after_seq)
 
     @property
     def status(self) -> str:

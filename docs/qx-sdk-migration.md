@@ -107,7 +107,7 @@ let outcome = handle.try_take_result().unwrap()?;
 | report / verify | `verify_run` / `verify_depth_run` / `compare_runs` |
 | Provider / Venue 扩展端口 | `DataProvider` / `VenuePort` |
 | 统一错误 | `AppError` / `AppErrorCategory` / `AppAction` / `AppRetry` |
-| **events / cursors** | Rust `RunHandle::events_after(cursor)` 与 Python `RunHandle.events(after_seq)` 读取 Rust worker 的有序本地生命周期事件；Rust/Python/C++ `get_live_events(after_seq)` → `GET /events/live` 读取服务端实时流 |
+| **events / cursors** | Rust/Python 本地 `RunHandle.events_after/events` 读取 Rust worker 生命周期事件；Rust/Python/C++ 远端 RunHandle 读取 `GET /app/runs/{run_id}/events?after_seq=N`；`get_live_events` → `GET /events/live` 仍是全局实时流 |
 
 ## 已知缺口（不要在发布文案里说成"已有"）
 
@@ -136,9 +136,15 @@ Rust、Python 与 C++ 远端客户端都提供 `get_live_events(after_seq)`，�
 分别保留为 Rust `RemoteApiError::Http`、Python `QianxingError`、C++ 原始 `AppResponse`。
 Rust transport 需实现 `RemoteTransport::get`；Python/C++ 复用各自已有的 GET transport。
 
-1. **进程内 RunHandle 只提供易失生命周期事件。** Rust/Python 本地句柄从 Rust worker 读取
-   started / cancellation_requested / terminal 事件和序号游标；订单/成交级事件持久化、按 Run 查询、
-   进程重启后游标恢复仍未实现。远端 `/events/live` 是服务端全局流，并非本地 Run 日志。
+异步应用 Run 另提供按身份隔离的事件读取：`GET /app/runs/{run_id}/events?after_seq=N`，游标为
+exclusive（仅返回 `seq > N`）。Rust `RemoteApiClient::get_run_events`、Python
+`RemoteRunHandle.events/async_events` 与 C++ `AppClient::run_events` 共用该路由。事件随现有
+运行快照保存，重启后可读取最近已持久化的生命周期序列；快照由 watcher 周期更新，因此这不是逐事件
+事务日志，也不提供订单/成交事件、强一致 append 或过期游标恢复协议。
+
+1. **RunHandle 的事件仅覆盖生命周期。** Rust/Python 本地句柄从 Rust worker 读取
+   started / cancellation_requested / terminal 事件；远端按 Run 事件随运行快照保存，但不保证逐事件原子落盘。
+   订单/成交级事实事件与账簿变更仍不在此事件列表中；`/events/live` 依然是全局服务端流。
 2. **Git 安装已做独立消费者验收，crates.io 发布验收仍未做。** `python tools/check_rust_sdk_git_consumer.py`
    会从 GitHub 拉取当前完整提交哈希，在 workspace 外构建真实消费者并运行数据校验、回测和结果复核。
    `cargo package -p qx-sdk` 仍因 `qx-app` 等内部 crate 尚未发布至配置的 registry 而失败；

@@ -159,6 +159,20 @@ class AsyncSdkTests(unittest.TestCase):
             self.assertEqual(asyncio.run(handle.async_cancel()), {"status": "cancelling"})
         self.assertEqual(request.call_args.kwargs["method"], "POST")
 
+    def test_remote_run_event_cursor_is_available_in_sync_and_async_facades(self):
+        client = AppClient("http://127.0.0.1:8080")
+        handle = RemoteRunHandle(client, "run-events-1")
+        events = [{"seq": 2, "kind": "succeeded"}]
+        with patch.object(client, "_request_json", return_value=events) as request:
+            self.assertEqual(handle.events(1), events)
+            self.assertEqual(asyncio.run(handle.async_events(1)), events)
+        self.assertEqual(
+            [call.args[0] for call in request.call_args_list],
+            ["/app/runs/run-events-1/events?after_seq=1"] * 2,
+        )
+        with self.assertRaises(ValueError):
+            handle.events(True)
+
     def test_async_run_handle_wait_has_a_finite_positive_bound(self):
         handle = RemoteRunHandle(AppClient("http://127.0.0.1:8080"), "run-async-2")
         with self.assertRaises(ValueError):

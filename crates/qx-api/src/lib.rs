@@ -1505,12 +1505,6 @@ impl ApiService {
                 return ApiResponse::json(403, error_json("authenticated_operator_required"));
             }
         }
-        if route.starts_with("/app/") && !query.is_empty() {
-            return ApiResponse::json(
-                400,
-                error_json("application_routes_do_not_accept_query_parameters"),
-            );
-        }
         // 读面的查询参数按入口点名：#205 那支只盖住无键整体现读端点，带键那七条与按账户过滤那两条各自照收自己名单里的键、
         // 名单外的键当场点名，于是 `?acount_id=` 拼错不会落到"没有收窄键"那一支，把默认账户念成调用方点名的账户（V13 R6 / R31）。
         if let Some(name) = admission::refused_query_param(route, query) {
@@ -1524,7 +1518,7 @@ impl ApiService {
             }
         }
         if let Some(response) =
-            app_surface::app_run_route(method, route, body, &self.app_paths, &self.app_runs)
+            app_surface::route_app_run(method, route, query, body, &self.app_paths, &self.app_runs)
         {
             return response;
         }

@@ -99,6 +99,29 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         self.get_live_events_after(after_seq)
     }
 
+    /// Read one run's persisted Rust worker lifecycle events after an exclusive cursor.
+    pub fn get_run_events(&self, run_id: &str, after_seq: u64) -> Result<Value, RemoteApiError> {
+        self.get_run_events_after(run_id, after_seq)
+    }
+
+    fn get_run_events_after(&self, run_id: &str, after_seq: u64) -> Result<Value, RemoteApiError> {
+        if run_id.is_empty()
+            || !run_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        {
+            return Err(RemoteApiError::InvalidJson(
+                "run_id must use only ASCII letters, digits, '.', '_' or '-'".into(),
+            ));
+        }
+        let path = format!("/app/runs/{run_id}/events?after_seq={after_seq}");
+        let response = self
+            .transport
+            .get(&path)
+            .map_err(RemoteApiError::Transport)?;
+        Self::decode_response(response)
+    }
+
     fn get_live_events_after(&self, after_seq: Option<u64>) -> Result<Value, RemoteApiError> {
         let path = match after_seq {
             Some(sequence) => format!("/events/live?after={sequence}"),
@@ -222,6 +245,31 @@ mod tests {
             *client.transport.0.lock().unwrap(),
             ["/events/live", "/events/live?after=99"]
         );
+    }
+
+    #[test]
+    fn run_event_reads_are_scoped_and_use_an_exclusive_cursor() {
+        struct RunEventsTransport(Mutex<Vec<String>>);
+        impl RemoteTransport for RunEventsTransport {
+            fn post(&self, _: &str, _: &str) -> Result<RemoteResponse, String> {
+                unreachable!()
+            }
+            fn get(&self, path: &str) -> Result<RemoteResponse, String> {
+                self.0.lock().unwrap().push(path.into());
+                Ok(RemoteResponse::new(200, "[]"))
+            }
+        }
+        let transport = RunEventsTransport(Mutex::new(Vec::new()));
+        let client = RemoteApiClient::new(transport);
+        assert_eq!(
+            client.get_run_events("run-1", 7).unwrap(),
+            serde_json::json!([])
+        );
+        assert_eq!(
+            *client.transport.0.lock().unwrap(),
+            ["/app/runs/run-1/events?after_seq=7"]
+        );
+        assert!(client.get_run_events("../secret", 0).is_err());
     }
 
     #[test]

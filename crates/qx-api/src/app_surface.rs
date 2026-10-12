@@ -278,4 +278,27 @@ pub(crate) fn multi_leg_grid(body: &str, paths: &AppPaths) -> ApiResponse {
 #[path = "app_runs.rs"]
 mod app_runs;
 use app_runs::resolve_input_path;
-pub(crate) use app_runs::{app_run_route, AppRunRegistry};
+pub(crate) use app_runs::{
+    accepts_run_event_query, app_run_route, app_run_route_with_query, AppRunRegistry,
+};
+
+pub(crate) fn route_app_run(
+    method: &str,
+    route: &str,
+    query: &str,
+    body: &str,
+    paths: &AppPaths,
+    registry: &AppRunRegistry,
+) -> Option<ApiResponse> {
+    if route.starts_with("/app/") && !query.is_empty() && !accepts_run_event_query(route, query) {
+        return Some(ApiResponse::json(
+            400,
+            crate::error_json("application_routes_do_not_accept_query_parameters"),
+        ));
+    }
+    if query.is_empty() {
+        app_run_route(method, route, body, paths, registry)
+    } else {
+        app_run_route_with_query(method, route, query, body, paths, registry)
+    }
+}

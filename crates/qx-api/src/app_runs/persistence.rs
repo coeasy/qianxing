@@ -5,14 +5,14 @@
 //! failed with an explicit interruption error instead of appearing live forever.
 
 use super::{AppRunEntry, RunStatus};
-use qx_app::{AppError, AppErrorCategory};
+use qx_app::{AppError, AppErrorCategory, RunEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const SNAPSHOT_VERSION: u32 = 1;
+const SNAPSHOT_VERSION: u32 = 2;
 
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,6 +22,8 @@ pub(super) struct RunSnapshot {
     status: String,
     result: Option<String>,
     error: Option<String>,
+    #[serde(default)]
+    events: Vec<RunEvent>,
 }
 
 pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppError> {
@@ -54,13 +56,24 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 format!("运行记录 {} 格式损坏: {error}", path.display()),
             )
         })?;
-        if snapshot.schema_version != SNAPSHOT_VERSION
+        if !matches!(snapshot.schema_version, 1 | SNAPSHOT_VERSION)
             || !super::valid_run_route_id(&snapshot.run_id)
             || path.file_stem().and_then(|name| name.to_str()) != Some(snapshot.run_id.as_str())
         {
             return Err(AppError::new(
                 AppErrorCategory::StorageFailure,
                 format!("运行记录身份或 schema 无效: {}", path.display()),
+            ));
+        }
+        if snapshot
+            .events
+            .iter()
+            .enumerate()
+            .any(|(index, event)| event.run_id != snapshot.run_id || event.seq != index as u64 + 1)
+        {
+            return Err(AppError::new(
+                AppErrorCategory::StorageFailure,
+                format!("运行记录事件身份或序号无效: {}", path.display()),
             ));
         }
         if !matches!(
@@ -72,6 +85,7 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 format!("运行记录状态非法: {}", path.display()),
             ));
         }
+        snapshot.schema_version = SNAPSHOT_VERSION;
         if !matches!(
             snapshot.status.as_str(),
             "succeeded" | "cancelled" | "failed"
@@ -86,6 +100,12 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 .with_correlation_id(run_id.clone())
                 .to_json(),
             );
+            snapshot.events.push(RunEvent {
+                seq: snapshot.events.len() as u64 + 1,
+                run_id: run_id.clone(),
+                kind: qx_app::RunEventKind::Failed,
+                status: RunStatus::Failed,
+            });
             write_snapshot(root, &snapshot, false)?;
         }
         let run_id = snapshot.run_id.clone();
@@ -99,6 +119,7 @@ pub(super) fn load(root: &Path) -> Result<BTreeMap<String, AppRunEntry>, AppErro
                 result: snapshot.result,
                 error: snapshot.error,
                 restored_status: Some(snapshot.status),
+                events: snapshot.events,
             },
         );
     }
@@ -167,6 +188,7 @@ impl Drop for WatcherSlot {
 }
 
 fn snapshot(entry: &mut AppRunEntry) -> RunSnapshot {
+    entry.refresh_events();
     RunSnapshot {
         schema_version: SNAPSHOT_VERSION,
         run_id: entry.run_id.clone(),
@@ -177,6 +199,7 @@ fn snapshot(entry: &mut AppRunEntry) -> RunSnapshot {
         },
         result: entry.result.clone(),
         error: entry.error.clone(),
+        events: entry.events.clone(),
     }
 }
 
@@ -293,6 +316,20 @@ mod tests {
             let entry = entries.get_mut("persisted-success").unwrap();
             entry.restored_status = Some("succeeded".to_string());
             entry.result = Some(r#"{"value":42}"#.to_string());
+            entry.events = vec![
+                RunEvent {
+                    seq: 1,
+                    run_id: "persisted-success".into(),
+                    kind: qx_app::RunEventKind::Started,
+                    status: RunStatus::Running,
+                },
+                RunEvent {
+                    seq: 2,
+                    run_id: "persisted-success".into(),
+                    kind: qx_app::RunEventKind::Succeeded,
+                    status: RunStatus::Succeeded,
+                },
+            ];
             save(&root, entry).unwrap();
         }
         drop(registry);
@@ -304,6 +341,9 @@ mod tests {
         assert_eq!(document["status"], "succeeded");
         assert_eq!(document["result"]["value"], 42);
         assert!(document["error"].is_null());
+        let events = reopened.events("persisted-success", 1);
+        let events: serde_json::Value = serde_json::from_str(&events.body).unwrap();
+        assert_eq!(events[0]["seq"], 2);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -324,6 +364,9 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("进程在运行期间退出"));
+        let events = reopened.events("persisted-active", 0);
+        let events: serde_json::Value = serde_json::from_str(&events.body).unwrap();
+        assert_eq!(events[0]["kind"], "failed");
         std::fs::remove_dir_all(root).unwrap();
     }
 

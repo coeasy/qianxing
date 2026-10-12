@@ -3,7 +3,7 @@
 use super::*;
 use qx_app::{
     MultiLegBacktestOutcome, MultiLegBacktestSpec, RunDepthExperimentResult,
-    RunDepthExperimentSpec, RunExperimentResult, RunHandle, RunMultiLegExperimentResult,
+    RunDepthExperimentSpec, RunEvent, RunExperimentResult, RunHandle, RunMultiLegExperimentResult,
     RunMultiLegExperimentSpec, RunStatus,
 };
 use std::collections::BTreeMap;
@@ -14,12 +14,15 @@ use std::time::Duration;
 
 #[path = "app_runs/depth_experiment.rs"]
 mod depth_experiment;
+#[path = "app_runs/events.rs"]
+mod events;
 #[path = "app_runs/path_resolution.rs"]
 mod path_resolution;
 #[path = "app_runs/persistence.rs"]
 mod persistence;
 #[path = "app_runs/starts.rs"]
 mod starts;
+pub(crate) use events::{accepts_run_event_query, events_route_cursor};
 pub(super) use path_resolution::resolve_input_path;
 
 const APP_RUN_CAPACITY: usize = 1024;
@@ -27,6 +30,7 @@ const APP_RUN_WATCHER_CAPACITY: usize = 64;
 static APP_RUN_WATCHERS: AtomicUsize = AtomicUsize::new(0);
 pub(crate) const RUN_START_BACKTEST_ROUTE: &str = "/app/backtest/start";
 pub(crate) const RUN_STATUS_ROUTE_TEMPLATE: &str = "/app/runs/{run_id}";
+pub(crate) const RUN_EVENTS_ROUTE_TEMPLATE: &str = "/app/runs/{run_id}/events";
 pub(crate) const RUN_CANCEL_ROUTE_TEMPLATE: &str = "/app/runs/{run_id}/cancel";
 pub(crate) const RUN_START_DEPTH_ROUTE: &str = "/app/depth-backtest/start";
 pub(crate) const RUN_START_DEPTH_EXPERIMENT_ROUTE: &str = "/app/run-depth-experiment/start";
@@ -37,6 +41,17 @@ pub(crate) const RUN_START_MULTI_LEG_EXPERIMENT_ROUTE: &str = "/app/run-multi-le
 pub(crate) fn app_run_route(
     method: &str,
     route: &str,
+    body: &str,
+    paths: &AppPaths,
+    registry: &AppRunRegistry,
+) -> Option<ApiResponse> {
+    app_run_route_with_query(method, route, "", body, paths, registry)
+}
+
+pub(crate) fn app_run_route_with_query(
+    method: &str,
+    route: &str,
+    query: &str,
     body: &str,
     paths: &AppPaths,
     registry: &AppRunRegistry,
@@ -54,7 +69,18 @@ pub(crate) fn app_run_route(
         ("POST", RUN_START_MULTI_LEG_EXPERIMENT_ROUTE) => {
             starts::start_multi_leg_experiment(body, paths, registry)
         }
-        ("GET", route) => status_route_id(route).map(|run_id| registry.status(run_id))?,
+        ("GET", route) => {
+            let full_route = if query.is_empty() {
+                route.to_string()
+            } else {
+                format!("{route}?{query}")
+            };
+            if let Some((run_id, cursor)) = events_route_cursor(&full_route) {
+                registry.events(run_id, cursor)
+            } else {
+                status_route_id(route).map(|run_id| registry.status(run_id))?
+            }
+        }
         ("POST", route) => cancel_route_id(route).map(|run_id| registry.cancel(run_id))?,
         _ => return None,
     };
@@ -87,6 +113,7 @@ struct AppRunEntry {
     result: Option<String>,
     error: Option<String>,
     restored_status: Option<String>,
+    events: Vec<RunEvent>,
 }
 
 impl AppRunRegistry {
@@ -170,6 +197,7 @@ impl AppRunRegistry {
                 result: None,
                 error: None,
                 restored_status: None,
+                events: Vec::new(),
             },
         );
         if let Some(root) = &self.persistence_root {
@@ -314,6 +342,13 @@ impl AppRunRegistry {
             Err(error) => respond(Err(error)),
         }
     }
+
+    pub(crate) fn events(&self, run_id: &str, cursor: u64) -> ApiResponse {
+        match self.with_entry(run_id, |entry| entry.events_document(cursor)) {
+            Ok(document) => ApiResponse::json(200, document),
+            Err(error) => respond(Err(error)),
+        }
+    }
 }
 
 impl AppRunEntry {
@@ -346,6 +381,7 @@ impl AppRunEntry {
     }
 
     fn collect_result(&mut self) {
+        self.refresh_events();
         let status = self.status();
         if !is_terminal(status) || self.result.is_some() || self.error.is_some() {
             return;
@@ -380,6 +416,7 @@ impl AppRunEntry {
     }
 
     fn document(&mut self) -> String {
+        self.refresh_events();
         if let Some(status) = &self.restored_status {
             return serde_json::json!({
                 "run_id": self.run_id,
@@ -404,6 +441,33 @@ impl AppRunEntry {
         })
         .to_string()
     }
+
+    fn refresh_events(&mut self) {
+        let Some(run) = &self.run else { return };
+        let latest = match run {
+            AppRun::Bar(handle) => handle.events_after(0),
+            AppRun::Depth(handle) => handle.events_after(0),
+            AppRun::DepthExperiment(handle) => handle.events_after(0),
+            AppRun::Experiment(handle) => handle.events_after(0),
+            AppRun::MultiLeg(handle) => handle.events_after(0),
+            AppRun::MultiLegExperiment(handle) => handle.events_after(0),
+        };
+        if latest.len() > self.events.len() {
+            self.events = latest;
+        }
+    }
+
+    fn events_document(&mut self, cursor: u64) -> String {
+        self.refresh_events();
+        serde_json::to_string(
+            &self
+                .events
+                .iter()
+                .filter(|event| event.seq > cursor)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".to_string())
+    }
 }
 
 fn is_terminal(status: RunStatus) -> bool {
@@ -412,7 +476,6 @@ fn is_terminal(status: RunStatus) -> bool {
         RunStatus::Succeeded | RunStatus::Cancelled | RunStatus::Failed
     )
 }
-
 pub(crate) fn status_route_id(route: &str) -> Option<&str> {
     let prefix = RUN_STATUS_ROUTE_TEMPLATE.strip_suffix("{run_id}")?;
     route

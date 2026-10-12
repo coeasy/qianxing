@@ -18,7 +18,7 @@
 #   `[]` 表示该用例不在这条腿（交易控制只在远端门面上，进程内扩展不暴露它）。
 schema_version: 1
 kind: language-api-contract
-updated_at: "2026-10-11"
+updated_at: "2026-10-12"
 
 # 进程内扩展的模块级公开函数里不属于任何「用例入口」的那些。
 # 写成显式名册而不是「排除 doctor 之外」这类规则：规则会把将来新加的同形状函数一起放行，
@@ -29,6 +29,8 @@ python_native_helpers:
 
 # 客户端公开面里属于 run 生命周期、不属于任何用例的方法。
 cpp_lifecycle_methods:
+  - name: run_events
+    note: "C++ 远端门面按单次 Run 读取持久化的 Rust 生命周期事件"
   - name: get_live_events
     note: "C++ 远端门面按服务端序号游标读取实时事件"
   - name: run_status
@@ -45,6 +47,8 @@ cpp_lifecycle_methods:
     note: "Paper TWAP/VWAP 活跃父单分页生命周期入口"
 
 python_remote_lifecycle_methods:
+  - name: events
+    note: "Python 远端 RunHandle 按单次 Run 读取持久化生命周期事件，支持同步/异步"
   - name: get_live_events
     note: "Python 远端门面按服务端序号游标读取实时事件"
   - name: start_paper_algo_execution
@@ -57,6 +61,8 @@ python_remote_lifecycle_methods:
     note: "Paper TWAP/VWAP 活跃父单分页生命周期入口"
 
 rust_remote_lifecycle_methods:
+  - name: get_run_events
+    note: "Rust 远端门面按单次 Run 读取持久化生命周期事件"
   - name: start_paper_algo_execution
     note: "Rust 远端门面调用服务端 Paper TWAP/VWAP 持久化启动入口"
   - name: get_paper_algo_execution

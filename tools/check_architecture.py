@@ -1542,6 +1542,7 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::cancel_paper_algo_execution": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::list_paper_algo_executions": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::get_live_events": "qx-sdk Rust 远端事件游标公开入口；仅由外部 SDK 消费者调用",
+    "qx-sdk::get_run_events": "qx-sdk Rust 远端单次 Run 事件游标公开入口；仅由外部 SDK 消费者调用",
     "qx-storage::consume_batch_with_projection": "deploy/README 公布为外部 reducer 的原子投影+checkpoint 入口",
     "qx-data::add_component": (
         "数据集 Bundle 的程序化装配入口（deploy/README 的三步冻结流程）；"

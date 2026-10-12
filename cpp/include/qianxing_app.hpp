@@ -64,13 +64,14 @@ inline constexpr std::string_view kMultiLegExperimentStart =
 inline constexpr std::string_view kPaperCommands = "/app/paper/commands";
 inline constexpr std::string_view kLiveCommands = "/app/live/commands";
 inline constexpr std::string_view kRunStatusTemplate = "/app/runs/{run_id}";
+inline constexpr std::string_view kRunEventsTemplate = "/app/runs/{run_id}/events";
 inline constexpr std::string_view kRunCancelTemplate = "/app/runs/{run_id}/cancel";
 inline constexpr std::string_view kLiveEvents = "/events/live";
 
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 27> kDeclaredRoutes = {
+inline constexpr std::array<std::string_view, 28> kDeclaredRoutes = {
     kValidateDataset,       kBacktest,
     kBacktestStart,         kVerify,
     kVerifyDepth,           kCompareRuns,
@@ -84,7 +85,7 @@ inline constexpr std::array<std::string_view, 27> kDeclaredRoutes = {
     kMultiLegBacktest,      kMultiLegBacktestStart,
     kMultiLegExperiment,    kMultiLegExperimentStart,
     kPaperCommands,         kLiveCommands,
-    kRunStatusTemplate,     kRunCancelTemplate,
+    kRunStatusTemplate,     kRunEventsTemplate, kRunCancelTemplate,
     kLiveEvents,
 };
 
@@ -195,6 +196,12 @@ public:
 
     AppResponse run_status(std::string_view run_id) const {
         return get(run_path(run_id));
+    }
+
+    AppResponse run_events(std::string_view run_id,
+                           std::uint64_t after_seq = 0) const {
+        return get(routes::fill_run_id(routes::kRunEventsTemplate, run_id) +
+                   "?after_seq=" + std::to_string(after_seq));
     }
 
     AppResponse get_live_events(std::optional<std::uint64_t> after_seq = std::nullopt) const {

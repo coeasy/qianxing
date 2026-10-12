@@ -103,6 +103,13 @@ int main() {
     assert(status.ok());
     assert(observed_method == "GET");
     assert(observed_path == "/app/runs/run-1");
+    assert(qianxing::routes::fill_run_id(qianxing::routes::kRunEventsTemplate, "run-1") ==
+           "/app/runs/run-1/events");
+
+    const auto run_events = client.run_events("run-1", 9);
+    assert(run_events.ok());
+    assert(observed_method == "GET");
+    assert(observed_path == "/app/runs/run-1/events?after_seq=9");
 
     const auto cancelled = client.cancel_run("run-1");
     assert(cancelled.ok());
