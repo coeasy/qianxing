@@ -1,15 +1,15 @@
 use super::*;
 #[cfg(test)]
 mod test_cases {
-
     use super::*;
+    #[path = "../tests/fill_callback.rs"]
+    mod fill_callback;
     use crate::ashare::AshareCorporateActionEvent;
     use crate::{
         MarginTier, NextBarOpenFillModel, NoMargin, TieredMargin, VolumeSensitiveFillModel,
         ZeroLatency,
     };
     use qx_core::{MakerTakerFeeModel, OrderStatus, Quantity, Side, SCALE};
-
     /// Q62：报告必须能被事实重新驱动，且逐条账簿条目都对得上。
     /// 旧的 `result_hash() == replay_hash()` 把同一段事件切片哈希两遍，恒等且不可能失败。
     fn assert_replay_matches(report: &BacktestReport) {

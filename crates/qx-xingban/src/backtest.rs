@@ -19,7 +19,6 @@ use crate::cost::{LatencyModel, MarginRule};
 use crate::fill::{DataTier, FillModel};
 use crate::venue::BarMatchingEngine;
 use std::collections::BTreeMap;
-
 pub mod strategy;
 pub use strategy::{BarStrategy, NativeBarStrategy};
 mod protective_exit;
@@ -903,6 +902,7 @@ impl BacktestEngine {
                         EventKind::LedgerApplied { entry },
                     ));
                 }
+                strategy.on_fill(&order, &fill)?;
                 fills.push(fill);
             }
             if protective_exits.is_some() {

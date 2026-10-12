@@ -1,10 +1,17 @@
 //! Strategy adapters for the deterministic bar backtest engine.
 
-use qx_core::{InstrumentId, Order};
+use qx_core::{Fill, InstrumentId, Order};
 use qx_guanxing::Bar;
 use qx_strategy::{MarketEvent, Strategy, StrategyContext};
 
 pub trait BarStrategy {
+    /// Receive a fill only after the shared ledger and replay event log have accepted it.
+    /// Portfolio adapters use this to reconcile strategy-owned virtual positions with
+    /// the authoritative account fills before the next decision boundary.
+    fn on_fill(&mut self, _order: &Order, _fill: &Fill) -> Result<(), qx_core::QxError> {
+        Ok(())
+    }
+
     fn on_bar(
         &mut self,
         history: &[Bar],
