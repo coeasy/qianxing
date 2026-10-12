@@ -209,7 +209,6 @@ pub fn build_mtls_server_config(
         .map_err(|error| format!("mTLS 服务端证书配置非法: {error}"))?;
     Ok(Arc::new(config))
 }
-
 /// 从 PEM 文件加载 mTLS 服务端配置。
 ///
 /// 该函数只负责把部署提供的证书链、私钥和客户端 CA 解析成 rustls 配置；
@@ -1754,6 +1753,7 @@ qx_control_retired_audit_records_total {}\n",
             ("POST", "/app/depth-backtest") => app_surface::depth_backtest(body, &self.app_paths),
             ("POST", "/app/run-depth-experiment") => app::depth_experiment(body, &self.app_paths),
             ("POST", "/app/multi-leg-backtest") => app::multi_leg_backtest(body, &self.app_paths),
+            ("POST", "/app/multi-account-backtest") => app::multi_account(body, &self.app_paths),
             ("POST", "/app/run-multi-leg-experiment") => app::multi_leg_grid(body, &self.app_paths),
             _ => ApiResponse::text(404, "not found"),
         }

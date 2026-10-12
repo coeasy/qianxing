@@ -134,6 +134,16 @@ use_cases:
     artifacts: "Rust ControlPlane 审计链、原有 EventLog 与 Ledger"
     error_categories: "AppErrorCategory 八类；无执行者、权限不足、订单载荷非法均在入队前拒绝"
     capability_level: "P/L"
+  - name: run_multi_account_backtest
+    input_schema: "MultiAccountBacktestSpec v1（2..=32 个独立账户 BacktestSpec；Bar 数据可跨市场但须同结算币种；不做跨账户净额）"
+    output_schema: "MultiAccountBacktestResult v1（每账户独立 outcome/error + 成功账户本金加权收益摘要，部分失败显式 complete=false）"
+    capability: "RESEARCH"
+    idempotency_key: "batch_id + 按 account_id 排序的规格指纹（忽略本地数据/产物路径）；数据内容由子结果指纹标识，成员 run_id 唯一"
+    cancellation: "同步顺序执行，最多 32 个成员；账户运行失败逐账户隔离；没有批次级取消句柄"
+    progress: "每账户返回 outcome 或稳定 AppError JSON；无百分比进度"
+    artifacts: "每个成功账户各自的 run.json / summary.json / equity.csv / fills.csv；无跨账户共享账本产物"
+    error_categories: "AppErrorCategory 八类；规格、权限及批次聚合溢出整体失败，账户级回测错误隔离返回"
+    capability_level: "R"
   - name: run_multi_leg_backtest
     input_schema: "MultiLegBacktestSpec v1（两份对齐 BarFrame + 双腿内置策略、可选两侧 TradingInstrumentSpec、共享费率默认值与腿级覆盖、资金费基点与撮合模型）"
     output_schema: "MultiLegBacktestOutcome v1（两腿哈希、组合收益、成交归因产物）"

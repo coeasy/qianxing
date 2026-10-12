@@ -37,6 +37,7 @@ def available() -> bool:
 APP_ENTRYPOINTS = (
     "app_validate_dataset",
     "app_run_backtest",
+    "app_run_multi_account_backtest",
     "app_start_backtest",
     "app_verify_run",
     "app_compare_runs",
@@ -136,6 +137,11 @@ def app_run_backtest(spec_json: str) -> str:
     产物落在 spec 的 ``output_dir`` 下（与 CLI/HTTP 同一份实现、同一份产物形状）。
     """
     return str(_extension().app_run_backtest(spec_json))
+
+
+def app_run_multi_account_backtest(spec_json: str) -> str:
+    """Run isolated account Bar backtests with the shared Rust use case."""
+    return str(_extension().app_run_multi_account_backtest(spec_json))
 
 
 def app_start_backtest(spec_json: str) -> Any:

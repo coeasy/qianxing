@@ -18942,6 +18942,7 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("BuiltinStrategySpec", "qx-app::BuiltinStrategySpec"),
         ("DepthBacktestSpec", "qx-app::DepthBacktestSpec"),
         ("MultiLegBacktestSpec", "qx-app::MultiLegBacktestSpec"),
+        ("MultiAccountBacktestSpec", "qx-app::MultiAccountBacktestSpec"),
         ("RunExperimentSpec", "qx-app::RunExperimentSpec"),
         ("RunDepthExperimentSpec", "qx-app::RunDepthExperimentSpec"),
         ("RunMultiLegExperimentSpec", "qx-app::RunMultiLegExperimentSpec"),
@@ -18954,6 +18955,7 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("run_backtest", "qx-app::run_backtest"),
         ("run_depth_backtest", "qx-app::run_depth_backtest"),
         ("run_multi_leg_backtest", "qx-app::run_multi_leg_backtest"),
+        ("run_multi_account_backtest", "qx-app::run_multi_account_backtest"),
         ("run_experiment", "qx-app::run_experiment"),
         ("run_depth_experiment", "qx-app::run_depth_experiment"),
         ("run_multi_leg_experiment", "qx-app::run_multi_leg_experiment"),
@@ -19075,6 +19077,7 @@ PY_LAYER_LOCAL_FREE_FUNCTIONS = (
     "validate_dataset",
     "run_depth_backtest",
     "run_multi_leg_backtest",
+    "run_multi_account_backtest",
 )
 # 可选适配器：核心层在 import 期不得把它们拉进来（方案 §6.2「optional dependencies 不改变
 # 核心语义」）。只按**真的 import 语句**判，不按散文判——`qianxing/data/__init__.py` 的文档

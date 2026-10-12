@@ -27,15 +27,14 @@ use std::ptr::NonNull;
 use std::time::{Duration, Instant};
 
 mod capital_allocation;
+mod multi_account;
 mod provider_bridge;
 mod risk_parity;
 mod run_handle_helpers;
 mod strategy_catalog;
-
 fn frame_error(error: FrameError) -> PyErr {
     PyValueError::new_err(format!("BarFrame error: {error:?}"))
 }
-
 pyo3::create_exception!(
     _qianxing_native,
     QxAppError,
@@ -43,7 +42,7 @@ pyo3::create_exception!(
     "应用层用例失败。异常文本就是 AppError 的 JSON 文档（category/action/retry/safe_to_retry/correlation_id/source_code/message），与 `qx-cli app` 的 stderr 那行、`POST /app/*` 的响应体逐字节相同。"
 );
 
-fn app_error(error: AppError) -> PyErr {
+pub(crate) fn app_error(error: AppError) -> PyErr {
     QxAppError::new_err(error.to_json())
 }
 
@@ -484,6 +483,7 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     // 应用层用例入口 + 它们专用的异常类型。
     module.add_function(wrap_pyfunction!(app_validate_dataset, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_backtest, module)?)?;
+    multi_account::register(module)?;
     module.add_function(wrap_pyfunction!(app_start_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_verify_run, module)?)?;
     module.add_function(wrap_pyfunction!(app_compare_runs, module)?)?;

@@ -43,6 +43,11 @@ def run_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_run_backtest(_payload(spec)))
 
 
+def run_multi_account_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """Run bounded independent account backtests through the shared Rust use case."""
+    return json.loads(native.app_run_multi_account_backtest(_payload(spec)))
+
+
 def start_backtest(spec: "str | dict[str, Any]") -> Any:
     """Start a cancellable Rust Bar backtest and return its shared run handle."""
     return native.app_start_backtest(_payload(spec))

@@ -19,18 +19,19 @@ use crate::app_args::AppCommand;
 use crate::build_identity::BUILD_REVISION;
 use qx_app::{
     compare_runs, plan_algo_execution, plan_risk_parity, run_backtest, run_depth_backtest,
-    run_depth_experiment, run_experiment, run_multi_leg_backtest, run_multi_leg_experiment,
-    validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome,
-    BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome,
-    DepthBacktestSpec, MultiLegBacktestSpec, RiskParitySpec, RunContext, RunDepthExperimentSpec,
-    RunExperimentSpec, RunMultiLegExperimentSpec,
+    run_depth_experiment, run_experiment, run_multi_account_backtest, run_multi_leg_backtest,
+    run_multi_leg_experiment, validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec,
+    AppError, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec,
+    RiskParitySpec, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
+    RunMultiLegExperimentSpec,
 };
 use std::path::Path;
 
 pub(crate) fn dispatch(action: Option<AppCommand>) {
     let Some(action) = action else {
         eprintln!(
-            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|backtest|verify|compare-runs|plan-risk-parity|plan-algo-execution|run-experiment|run-depth-experiment|run-multi-leg-experiment|depth-backtest|verify-depth|multi-leg-backtest> <spec.json>\n  \
+            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|backtest|verify|compare-runs|plan-risk-parity|plan-algo-execution|run-experiment|run-depth-experiment|run-multi-leg-experiment|depth-backtest|verify-depth|multi-leg-backtest|multi-account-backtest> <spec.json>\n  \
              validate-dataset <DatasetSpec.json>  校验一份数据集能否支撑 Bar 回测\n  \
              backtest <BacktestSpec.json>         跑一次 Bar 回测并落四份产物\n  \
              verify <BacktestOutcome.json>        复核一轮产物（输入取 `app backtest` 的 stdout）\n  \
@@ -42,7 +43,8 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
              run-multi-leg-experiment <RunMultiLegExperimentSpec.json> 执行多腿参数网格\n  \
              depth-backtest <DepthBacktestSpec.json>  执行 L1 Tick 或 L2 订单簿回测\n  \
              verify-depth <DepthBacktestOutcome.json> 复核 L1/L2 产物\n  \
-             multi-leg-backtest <MultiLegBacktestSpec.json> 执行双腿 Bar 套利回测"
+             multi-leg-backtest <MultiLegBacktestSpec.json> 执行双腿 Bar 套利回测\n  \
+             multi-account-backtest <MultiAccountBacktestSpec.json> 执行独立账户 Bar 回测"
         );
         std::process::exit(2);
     };
@@ -59,6 +61,7 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
         AppCommand::DepthBacktest { spec } => depth_backtest(spec),
         AppCommand::VerifyDepth { outcome } => verify_depth(outcome),
         AppCommand::MultiLegBacktest { spec } => multi_leg_backtest(spec),
+        AppCommand::MultiAccountBacktest { spec } => multi_account_backtest(spec),
     };
     match result {
         Ok(payload) => println!("{payload}"),
@@ -109,6 +112,11 @@ fn depth_backtest(spec_path: &Path) -> Result<String, AppError> {
 fn multi_leg_backtest(spec_path: &Path) -> Result<String, AppError> {
     let spec = MultiLegBacktestSpec::from_json(&read_document(spec_path)?)?;
     run_multi_leg_backtest(&spec, &context(&spec.run_id))?.to_json()
+}
+
+fn multi_account_backtest(spec_path: &Path) -> Result<String, AppError> {
+    let spec = MultiAccountBacktestSpec::from_json(&read_document(spec_path)?)?;
+    run_multi_account_backtest(&spec, &context(&spec.batch_id))?.to_json()
 }
 
 fn verify_depth(outcome_path: &Path) -> Result<String, AppError> {

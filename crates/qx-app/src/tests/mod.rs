@@ -12,6 +12,7 @@ mod depth_experiment;
 mod error_contract;
 mod experiment_split;
 mod fixtures;
+mod multi_account_backtest;
 mod multi_leg_backtest;
 mod multi_leg_experiment;
 mod portfolio_backtest;

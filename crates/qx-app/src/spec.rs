@@ -313,7 +313,6 @@ pub struct BacktestSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protective_exit: Option<ProtectiveExitSpec>,
 }
-
 impl BacktestSpec {
     /// 构造一份当前版本的 spec（其余字段按调用方给的填）。
     #[allow(clippy::too_many_arguments)] // 与产物身份逐格对应，合并成参数包会让必答项变成可选。
@@ -344,7 +343,6 @@ impl BacktestSpec {
             protective_exit: None,
         }
     }
-
     /// 形状自检。**只查"这份 spec 自己站不站得住"**，不碰磁盘。
     pub fn validate(&self) -> Result<(), AppError> {
         if self.schema_version != BACKTEST_SPEC_SCHEMA_VERSION {
@@ -477,6 +475,8 @@ pub use multi_leg::{
     MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegFillModel,
     MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
 };
+mod multi_account;
+pub use multi_account::*;
 
 mod results;
 pub use results::{BacktestArtifacts, BacktestOutcome, DatasetVerdict, VerificationResult};

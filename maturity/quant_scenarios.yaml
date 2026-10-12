@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791838905
+generated_at_unix: 1791840221
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -150,6 +150,14 @@ scenarios:
     exit_code: 0
     observed: "strategy=builtin-cross_venue_arbitrage-multi groups=3 turnover_raw=192600000000000 fees_raw=96300000000"
     evidence: ["crates/qx-zhenlu/src/lib.rs"]
+  - name: multi_account_cross_market_backtest
+    label: "多账户跨市场独立回测"
+    status: executed
+    anchor: "crates/qx-app/src/cases/run_multi_account_backtest.rs"
+    command: "qx-cli app multi-account-backtest .task-tmp/quant-probe/multi-account-spec.json"
+    exit_code: 0
+    observed: "16; accounts=2 successful_fills=16"
+    evidence: ["crates/qx-app/src/tests/multi_account_backtest.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs"]
   - name: multi_leg_strategy_selection
     label: "四类双腿套利策略选择与确定性批量比较"
     status: executed
@@ -172,7 +180,7 @@ scenarios:
     anchor: "crates/qx-xingban/src/market_making.rs"
     command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
     exit_code: 0
-    observed: "42; result_hash=fb1c893548c582e8"
+    observed: "42; result_hash=8062f583c2bb306f"
     evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
   - name: depth_strategy_portfolio
     label: "L2 多策略共享 OMS/撮合/账簿与策略额度归因"

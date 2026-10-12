@@ -79,6 +79,11 @@ int main() {
     assert(observed_path == "/app/multi-leg-backtest");
     assert(observed_body == spec);
 
+    const auto multi_account = client.run_multi_account_backtest(spec);
+    assert(multi_account.ok());
+    assert(observed_path == "/app/multi-account-backtest");
+    assert(observed_body == spec);
+
     const auto started_multi_leg = client.start_multi_leg_backtest(spec);
     assert(started_multi_leg.ok());
     assert(observed_path == "/app/multi-leg-backtest/start");

@@ -105,4 +105,10 @@ pub(crate) enum AppCommand {
         /// `MultiLegBacktestSpec` JSON 的路径。
         spec: PathBuf,
     },
+    /// 多账户独立 Bar 回测（每账户拥有各自账本，不进行跨账户净额）。
+    #[command(name = "multi-account-backtest")]
+    MultiAccountBacktest {
+        /// `MultiAccountBacktestSpec` JSON 的路径。
+        spec: PathBuf,
+    },
 }

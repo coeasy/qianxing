@@ -81,10 +81,10 @@ pub use qx_app::{
     AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, BacktestSpec, BuiltinStrategySpec,
     CapitalAllocationAccount, CapitalAllocationRequest, CapitalAllocationResult,
     CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestSpec, MakerTakerFeeSchedule,
-    MultiLegBacktestSpec, MultiLegFillModel, PortfolioBacktestConfig, PortfolioStrategySpec,
-    RiskParityAssetSpec, RiskParityResult, RiskParitySpec, RunDepthExperimentSpec,
-    RunExperimentSpec, RunMultiLegExperimentSpec, TradeControlSpec, TradeWorkflow,
-    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
+    MultiAccountBacktestSpec, MultiLegBacktestSpec, MultiLegFillModel, PortfolioBacktestConfig,
+    PortfolioStrategySpec, RiskParityAssetSpec, RiskParityResult, RiskParitySpec,
+    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec, TradeControlSpec,
+    TradeWorkflow, ALGO_EXECUTION_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
     RISK_PARITY_SPEC_SCHEMA_VERSION,
 };
 pub use qx_strategy::BuiltinStrategyKind;
@@ -92,8 +92,8 @@ pub use qx_strategy::BuiltinStrategyKind;
 // —— §6.1「sync run」——
 pub use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
-    run_depth_backtest, run_depth_experiment, run_experiment, run_multi_leg_backtest,
-    run_multi_leg_experiment, validate_dataset, validate_trade_control,
+    run_depth_backtest, run_depth_experiment, run_experiment, run_multi_account_backtest,
+    run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset, validate_trade_control,
 };
 
 // —— §6.1「report/verify」——
@@ -113,6 +113,7 @@ pub use qx_app::{
     DatasetVerdict, DepthBacktestOutcome, DepthExperimentCandidate, DepthExperimentRankedCandidate,
     ExperimentBaselineReport, ExperimentCandidateResult, ExperimentFoldReport,
     ExperimentOutOfSampleReport, ExperimentParameterSpace, ExperimentSplitPlan,
+    MultiAccountBacktestResult, MultiAccountBacktestSummary, MultiAccountRunResult,
     MultiLegBacktestOutcome, MultiLegExperimentCandidate, MultiLegExperimentRankedCandidate,
     RunDepthExperimentResult, RunExperimentResult, RunMultiLegExperimentResult, VerificationResult,
 };
@@ -132,7 +133,8 @@ pub use qx_app::{rejection_count, rejection_facts, rejection_facts_line, spread_
 // —— 契约版本与硬上限（调用方要按它们做兼容判断）——
 pub use qx_app::{
     BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
-    MAX_EXPERIMENT_CANDIDATES, MIN_BACKTEST_BARS, MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
+    MAX_EXPERIMENT_CANDIDATES, MAX_MULTI_ACCOUNT_RUNS, MIN_BACKTEST_BARS,
+    MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION, MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
     MULTI_LEG_FUNDING_INTERVAL_MS, RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION,
     RUN_EXPERIMENT_SCHEMA_VERSION, RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION,
     TRADE_CONTROL_SCHEMA_VERSION,

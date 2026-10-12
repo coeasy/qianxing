@@ -29,6 +29,7 @@ from qianxing_bridge import native
 APP_ROUTE_TEMPLATES: dict[str, str] = {
     "validate_dataset": "/app/validate-dataset",
     "backtest": "/app/backtest",
+    "multi_account_backtest": "/app/multi-account-backtest",
     "backtest_start": "/app/backtest/start",
     "verify": "/app/verify",
     "verify_depth": "/app/verify-depth",
@@ -331,6 +332,57 @@ class BacktestSpec:
         elif isinstance(self.portfolio, PortfolioBacktestConfig):
             value["portfolio"] = self.portfolio.to_dict()
         return value
+
+
+@dataclass(frozen=True)
+class MultiAccountBacktestSpec:
+    """A bounded batch of isolated account backtests sharing one settlement currency."""
+
+    batch_id: str
+    runs: tuple[BacktestSpec, ...]
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "batch_id": self.batch_id,
+            "runs": [run.to_dict() for run in self.runs],
+        }
+
+
+@dataclass(frozen=True)
+class MultiAccountRunResult:
+    account_id: str
+    outcome: BacktestOutcome | None
+    error_json: str | None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiAccountRunResult":
+        outcome = value.get("outcome")
+        return cls(
+            account_id=value["account_id"],
+            outcome=BacktestOutcome.from_dict(outcome) if outcome else None,
+            error_json=value.get("error_json"),
+        )
+
+
+@dataclass(frozen=True)
+class MultiAccountBacktestResult:
+    batch_id: str
+    settlement_currency: str
+    spec_fingerprint: str
+    runs: tuple[MultiAccountRunResult, ...]
+    summary: dict[str, Any]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiAccountBacktestResult":
+        return cls(
+            batch_id=value["batch_id"],
+            settlement_currency=value["settlement_currency"],
+            spec_fingerprint=value["spec_fingerprint"],
+            runs=tuple(MultiAccountRunResult.from_dict(item) for item in value["runs"]),
+            summary=dict(value["summary"]),
+        )
 
 
 @dataclass(frozen=True)
@@ -1320,6 +1372,11 @@ class AsyncCoreClient:
     async def async_run_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
         return await asyncio.to_thread(run_multi_leg_backtest, spec)
 
+    async def async_run_multi_account_backtest(
+        self, spec: MultiAccountBacktestSpec | dict[str, Any]
+    ) -> MultiAccountBacktestResult:
+        return await asyncio.to_thread(run_multi_account_backtest, spec)
+
     async def async_start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> AsyncRunHandle[MultiLegBacktestOutcome]:
         return await self._start(start_multi_leg_backtest, spec)
 
@@ -1575,6 +1632,13 @@ class AppClient(_HttpJsonClient):
             self._post(APP_ROUTE_TEMPLATES["multi_leg_backtest"], spec)
         )
 
+    def run_multi_account_backtest(
+        self, spec: MultiAccountBacktestSpec | dict[str, Any]
+    ) -> MultiAccountBacktestResult:
+        return MultiAccountBacktestResult.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["multi_account_backtest"], spec)
+        )
+
     def start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> RemoteRunHandle[MultiLegBacktestOutcome]:
         return self._start(
             APP_ROUTE_TEMPLATES["multi_leg_backtest_start"], spec, MultiLegBacktestOutcome
@@ -1635,6 +1699,11 @@ class AppClient(_HttpJsonClient):
 
     async def async_run_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
         return await asyncio.to_thread(self.run_multi_leg_backtest, spec)
+
+    async def async_run_multi_account_backtest(
+        self, spec: MultiAccountBacktestSpec | dict[str, Any]
+    ) -> MultiAccountBacktestResult:
+        return await asyncio.to_thread(self.run_multi_account_backtest, spec)
 
     async def async_start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> RemoteRunHandle[MultiLegBacktestOutcome]:
         return await self._async_start(self.start_multi_leg_backtest, spec)
@@ -1744,6 +1813,15 @@ def start_depth_backtest(spec: DepthBacktestSpec | dict[str, Any]) -> RunHandle[
 def run_multi_leg_backtest(spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
     """Run a two-leg Bar backtest via the shared Rust strategy and matching engines."""
     return MultiLegBacktestOutcome.from_dict(_invoke(native.app_run_multi_leg_backtest, spec))
+
+
+def run_multi_account_backtest(
+    spec: MultiAccountBacktestSpec | dict[str, Any],
+) -> MultiAccountBacktestResult:
+    """Run isolated account Bar backtests through the shared Rust engine."""
+    return MultiAccountBacktestResult.from_dict(
+        _invoke(native.app_run_multi_account_backtest, spec)
+    )
 
 
 def start_multi_leg_backtest(

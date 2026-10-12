@@ -462,6 +462,7 @@ class AppUseCaseTests(unittest.TestCase):
         cases = [
             ("validate_dataset", "/app/validate-dataset", False),
             ("run_backtest", "/app/backtest", False),
+            ("run_multi_account_backtest", "/app/multi-account-backtest", False),
             ("start_backtest", "/app/backtest/start", True),
             ("verify_run", "/app/verify", False),
             ("compare_runs", "/app/compare-runs", False),
@@ -499,6 +500,21 @@ class AppUseCaseTests(unittest.TestCase):
                 "return_bps": 0,
                 "max_drawdown_bps": 0,
                 "artifacts": {},
+            },
+            "run_multi_account_backtest": {
+                "batch_id": "batch",
+                "settlement_currency": "USDT",
+                "spec_fingerprint": "fingerprint",
+                "runs": [],
+                "summary": {
+                    "accounts_total": 0,
+                    "accounts_succeeded": 0,
+                    "accounts_failed": 0,
+                    "successful_initial_cash_raw": 0,
+                    "successful_fills": 0,
+                    "weighted_return_bps": None,
+                    "complete": True,
+                },
             },
             "plan_risk_parity": {
                 "schema_version": 1,
@@ -618,7 +634,10 @@ class AppUseCaseTests(unittest.TestCase):
         for request, (_method, route, _is_start) in zip(requests, cases):
             self.assertEqual(request.method, "POST")
             self.assertEqual(request.full_url, f"https://localhost{route}")
-        for index in (8, 9):
+        for index in (
+            index for index, (method, _route, _is_start) in enumerate(cases)
+            if method in {"run_experiment", "start_experiment"}
+        ):
             payload = json.loads(open_url.call_args_list[index].args[0].data)
             self.assertEqual(payload["strategy_kinds"], ["ema_cross", "sma_cross"])
 

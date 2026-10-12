@@ -626,6 +626,62 @@ def main() -> int:
             builtin_kind=kind,
         )
 
+    multi_account_btc = PROBE_ROOT / "multi-account-btc.json"
+    multi_account_eth = PROBE_ROOT / "multi-account-eth.json"
+    write_probe_bar_frame(multi_account_btc, bars=90, instrument="BTCUSDT.BINANCE")
+    write_probe_bar_frame(multi_account_eth, bars=90, instrument="ETHUSDT.BINANCE")
+    member = lambda account, run, instrument, bars, output: {
+        "schema_version": 1,
+        "run_id": run,
+        "account_id": account,
+        "instrument": instrument,
+        "bars_path": str(bars.relative_to(ROOT)).replace("\\", "/"),
+        "settlement_currency": "USDT",
+        "initial_cash_raw": 100_000_000_000_000,
+        "seed": 7,
+        "output_dir": str(output.relative_to(ROOT)).replace("\\", "/"),
+        "strategy": {
+            "kind": "sma_cross",
+            "strategy_id": f"{account}-sma",
+            "quantity_raw": 100_000_000_000,
+            "fast_window": 3,
+            "slow_window": 10,
+            "period": 14,
+            "threshold_bps": 100,
+        },
+    }
+    multi_account_spec_path = PROBE_ROOT / "multi-account-spec.json"
+    multi_account_spec_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "batch_id": "probe-multi-account",
+                "runs": [
+                    member("probe-account-btc", "probe-run-btc", "BTCUSDT.BINANCE", multi_account_btc, PROBE_ROOT / "multi-account-btc-out"),
+                    member("probe-account-eth", "probe-run-eth", "ETHUSDT.BINANCE", multi_account_eth, PROBE_ROOT / "multi-account-eth-out"),
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    def multi_account_observation(output: str) -> str:
+        fills = first_match(r'"successful_fills":([1-9]\d*)', output)
+        return f"accounts=2 successful_fills={fills}"
+
+    executed(
+        "multi_account_cross_market_backtest",
+        "多账户跨市场独立回测",
+        "crates/qx-app/src/cases/run_multi_account_backtest.rs",
+        ["app", "multi-account-backtest", str(multi_account_spec_path.relative_to(ROOT)).replace("\\", "/")],
+        r'"accounts_succeeded":2,"accounts_failed":0,"successful_initial_cash_raw":\d+,"successful_fills":([1-9]\d*)',
+        extra_from_output=multi_account_observation,
+        evidence=[
+            "crates/qx-app/src/tests/multi_account_backtest.rs",
+            "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs",
+        ],
+    )
+
     multi_leg_selection_id = f"probe-multi-leg-selection-{time.time_ns()}"
     multi_leg_selection_spec = {
         "schema_version": 1,
