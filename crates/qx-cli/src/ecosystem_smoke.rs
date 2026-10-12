@@ -65,14 +65,21 @@ impl DataProvider for DemoProvider {
                 "demo primary unavailable",
             ));
         }
+        let payload = qx_provider::ProviderPayload::new_json(
+            "BTCUSDT.BINANCE",
+            "application/vnd.qianxing.bar+json;v=1",
+            r#"{"ts":1,"open":99,"high":102,"low":98,"close":100,"volume":1000}"#,
+        );
         let mut result = ProviderResult {
+            schema_version: qx_provider::PROVIDER_RESULT_SCHEMA_VERSION,
             records: vec![qx_guanxing::RawRecord {
                 source: DataSourceId::new(self.capability.provider_id.clone()),
                 event_time: 1,
                 receive_time: 2,
-                payload_hash: 3,
+                payload_hash: payload.digest(),
                 schema_version: 1,
             }],
+            payloads: vec![payload],
             provider_id: self.capability.provider_id.clone(),
             provider_version: self.capability.version.clone(),
             request_id: "cli-ecosystem".into(),
@@ -229,24 +236,29 @@ pub(crate) fn run_ecosystem_smoke() {
             fail: false,
         }))
         .unwrap();
-    let result = providers
-        .fetch_with_failover(&DataQuery {
-            kind: DataKind::Bar,
-            asset_class: "crypto".into(),
-            instrument_set: BTreeSet::new(),
-            field_set: BTreeSet::new(),
-            frequency: "1d".into(),
-            adjustment: "none".into(),
-            quality_policy: "strict".into(),
-            start: 1,
-            end: 10,
-            as_of: None,
-        })
-        .unwrap();
+    let provider_query = DataQuery {
+        kind: DataKind::Bar,
+        asset_class: "crypto".into(),
+        instrument_set: BTreeSet::from(["BTCUSDT.BINANCE".into()]),
+        field_set: BTreeSet::new(),
+        frequency: "1d".into(),
+        adjustment: "none".into(),
+        quality_policy: "strict".into(),
+        start: 1,
+        end: 10,
+        as_of: None,
+    };
+    let result = providers.fetch_with_failover(&provider_query).unwrap();
     assert_eq!(result.retry_chain, ["primary", "backup"]);
+    let frame = result.to_bar_frame(&provider_query).unwrap();
+    assert_eq!(frame.instrument.to_string(), "BTCUSDT.BINANCE");
+    assert_eq!(frame.len(), 1);
     println!(
-        "[数据 · ProviderRegistry] provider={} retry_chain={:?} ✓",
-        result.provider_id, result.retry_chain
+        "[数据 · ProviderRegistry] provider={} retry_chain={:?} frame_rows={} fingerprint={:016x} ✓",
+        result.provider_id,
+        result.retry_chain,
+        frame.len(),
+        frame.digest()
     );
 
     let mut scheduler = Scheduler::default();

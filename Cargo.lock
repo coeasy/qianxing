@@ -1447,6 +1447,7 @@ name = "qx-provider"
 version = "0.1.0"
 dependencies = [
  "qx-core",
+ "qx-datastruct",
  "qx-guanxing",
  "serde",
  "serde_json",

@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 mod registry;
+mod result;
 pub use registry::{ProviderRegistry, RegistryError};
+pub use result::{DataProvider, ProviderPayload, ProviderResult, PROVIDER_RESULT_SCHEMA_VERSION};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub enum DataKind {
@@ -130,201 +132,25 @@ pub struct ProviderCapability {
     pub cost_score: u32,
 }
 
-impl ProviderCapability {
-    pub fn validate(&self) -> Result<(), ProviderError> {
-        if self.provider_id.trim().is_empty()
-            || self.version.trim().is_empty()
-            || self.data_kinds.is_empty()
-            || self.asset_classes.is_empty()
-            || self.frequencies.is_empty()
-            || self.auth_scope.trim().is_empty()
-            || self.rate_limit_per_second == 0
-            || self.historical_start > self.historical_end
-        {
-            return Err(ProviderError::new(
-                ProviderErrorClass::Permanent,
-                "ProviderCapability 字段非法",
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn matches(&self, query: &DataQuery) -> bool {
-        self.data_kinds.contains(&query.kind)
-            && self.asset_classes.contains(&query.asset_class)
-            && self.frequencies.contains(&query.frequency)
-            && query.start >= self.historical_start
-            && query.end <= self.historical_end
-    }
-
-    pub fn to_json(&self) -> Result<String, ProviderError> {
-        self.validate()?;
-        serde_json::to_string(self)
-            .map_err(|error| ProviderError::new(ProviderErrorClass::Permanent, error.to_string()))
-    }
-
-    pub fn from_json(input: &str) -> Result<Self, ProviderError> {
-        let capability: Self = serde_json::from_str(input).map_err(|error| {
-            ProviderError::new(
-                ProviderErrorClass::Permanent,
-                format!("ProviderCapability JSON 无法解析: {error}"),
-            )
-        })?;
-        capability.validate()?;
-        Ok(capability)
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct ProviderResult {
-    pub records: Vec<RawRecord>,
-    pub provider_id: String,
-    pub provider_version: String,
-    pub request_id: String,
-    pub retry_chain: Vec<String>,
-    pub received_at: u64,
-    pub source_hash: u64,
-}
-
-impl ProviderResult {
-    pub fn validate(&self) -> Result<(), ProviderError> {
-        if self.provider_id.trim().is_empty()
-            || self.provider_version.trim().is_empty()
-            || self.request_id.trim().is_empty()
-        {
-            return Err(ProviderError::new(
-                ProviderErrorClass::Permanent,
-                "ProviderResult 缺少血缘字段",
-            ));
-        }
-        if self
-            .records
-            .iter()
-            .any(|record| record.source.0 != self.provider_id)
-        {
-            return Err(ProviderError::new(
-                ProviderErrorClass::Permanent,
-                "ProviderResult 记录来源与 provider_id 不一致",
-            ));
-        }
-        if self.records.windows(2).any(|window| {
-            (
-                window[0].event_time,
-                window[0].receive_time,
-                window[0].payload_hash,
-            ) >= (
-                window[1].event_time,
-                window[1].receive_time,
-                window[1].payload_hash,
-            )
-        }) {
-            return Err(ProviderError::new(
-                ProviderErrorClass::Permanent,
-                "ProviderResult 未按事件时间、接收时间和载荷摘要排序",
-            ));
-        }
-        if self.source_hash != self.compute_source_hash() {
-            return Err(ProviderError::new(
-                ProviderErrorClass::Permanent,
-                "ProviderResult source_hash 与记录内容不一致",
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn validate_for(&self, query: &DataQuery) -> Result<(), ProviderError> {
-        query.validate()?;
-        self.validate()?;
-        if self.records.iter().any(|record| {
-            record.source.0 != self.provider_id
-                || record.event_time < query.start
-                || record.event_time > query.end
-                || query.as_of.is_some_and(|as_of| record.receive_time > as_of)
-        }) {
-            return Err(ProviderError::new(
-                ProviderErrorClass::Permanent,
-                "ProviderResult 包含查询范围外或错误来源的数据",
-            ));
-        }
-        if self.records.windows(2).any(|window| {
-            (
-                window[0].event_time,
-                window[0].receive_time,
-                window[0].payload_hash,
-            ) >= (
-                window[1].event_time,
-                window[1].receive_time,
-                window[1].payload_hash,
-            )
-        }) {
-            return Err(ProviderError::new(
-                ProviderErrorClass::Permanent,
-                "ProviderResult 未按事件时间、接收时间和载荷摘要排序",
-            ));
-        }
-        if self.source_hash != self.compute_source_hash() {
-            return Err(ProviderError::new(
-                ProviderErrorClass::Permanent,
-                "ProviderResult source_hash 与记录内容不一致",
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn compute_source_hash(&self) -> u64 {
-        let mut hash = qx_core::Fnv1a::new();
-        hash.write_text(&self.provider_id);
-        hash.write_text(&self.provider_version);
-        for record in &self.records {
-            hash.write_u64(record.event_time);
-            hash.write_u64(record.receive_time);
-            hash.write_u64(record.payload_hash);
-            hash.write_u64(record.schema_version as u64);
-        }
-        hash.finish()
-    }
-
-    pub fn to_json(&self) -> Result<String, ProviderError> {
-        self.validate()?;
-        serde_json::to_string(self)
-            .map_err(|error| ProviderError::new(ProviderErrorClass::Permanent, error.to_string()))
-    }
-
-    pub fn from_json(input: &str) -> Result<Self, ProviderError> {
-        let result: Self = serde_json::from_str(input).map_err(|error| {
-            ProviderError::new(
-                ProviderErrorClass::Permanent,
-                format!("ProviderResult JSON 无法解析: {error}"),
-            )
-        })?;
-        result.validate()?;
-        if result.source_hash != result.compute_source_hash() {
-            return Err(ProviderError::new(
-                ProviderErrorClass::Permanent,
-                "ProviderResult source_hash 与记录内容不一致",
-            ));
-        }
-        Ok(result)
-    }
-}
-
-pub trait DataProvider: Send + Sync {
-    fn capability(&self) -> &ProviderCapability;
-    fn fetch(&self, query: &DataQuery) -> Result<ProviderResult, ProviderError>;
-}
-
+/// A data-bearing row paired by index with one `RawRecord` lineage envelope.
+/// JSON remains the wire representation so provider adapters can preserve the source schema.
 /// 可持久化前的确定性本地 Provider：按事件时间切片并保留原始血缘。
 ///
 /// 它不是把数据“灌入”标准化表的快捷方式；返回值仍然是 RawRecord，调用方必须
 /// 经过质量门和版本化标准化流程后才能进入研究或交易视图。
 pub struct InMemoryProvider {
     capability: ProviderCapability,
-    records: Vec<RawRecord>,
+    records: Vec<(RawRecord, ProviderPayload)>,
 }
 
 impl InMemoryProvider {
-    pub fn new(capability: ProviderCapability, mut records: Vec<RawRecord>) -> Self {
-        records.sort_by_key(|record| (record.event_time, record.receive_time, record.payload_hash));
+    pub fn new(
+        capability: ProviderCapability,
+        mut records: Vec<(RawRecord, ProviderPayload)>,
+    ) -> Self {
+        records.sort_by_key(|(record, _)| {
+            (record.event_time, record.receive_time, record.payload_hash)
+        });
         Self {
             capability,
             records,
@@ -342,12 +168,19 @@ impl DataProvider for InMemoryProvider {
         let records = self
             .records
             .iter()
-            .filter(|record| record.event_time >= query.start && record.event_time <= query.end)
-            .filter(|record| query.as_of.is_none_or(|as_of| record.receive_time <= as_of))
+            .filter(|(record, payload)| {
+                record.event_time >= query.start
+                    && record.event_time <= query.end
+                    && query.as_of.is_none_or(|as_of| record.receive_time <= as_of)
+                    && (query.instrument_set.is_empty()
+                        || query.instrument_set.contains(&payload.instrument))
+            })
             .cloned()
             .collect::<Vec<_>>();
         let mut result = ProviderResult {
-            records,
+            schema_version: PROVIDER_RESULT_SCHEMA_VERSION,
+            records: records.iter().map(|(record, _)| record.clone()).collect(),
+            payloads: records.into_iter().map(|(_, payload)| payload).collect(),
             provider_id: self.capability.provider_id.clone(),
             provider_version: self.capability.version.clone(),
             request_id: format!("{}-{:016x}", self.capability.provider_id, query.digest()),
@@ -402,14 +235,11 @@ mod tests {
             if let Some(class) = self.fail {
                 return Err(ProviderError::new(class, "mock failure"));
             }
+            let (record, payload) = row(&self.capability.provider_id, 1, 2, 10);
             let mut result = ProviderResult {
-                records: vec![RawRecord {
-                    source: DataSourceId::new(self.capability.provider_id.clone()),
-                    event_time: 1,
-                    receive_time: 2,
-                    payload_hash: 3,
-                    schema_version: 1,
-                }],
+                schema_version: PROVIDER_RESULT_SCHEMA_VERSION,
+                records: vec![record],
+                payloads: vec![payload],
                 provider_id: self.capability.provider_id.clone(),
                 provider_version: self.capability.version.clone(),
                 request_id: "req-1".into(),
@@ -454,6 +284,35 @@ mod tests {
             end: 10,
             as_of: None,
         }
+    }
+
+    fn row(
+        source: &str,
+        event_time: u64,
+        receive_time: u64,
+        close: i128,
+    ) -> (RawRecord, ProviderPayload) {
+        let payload = ProviderPayload::new_json(
+            "BTCUSDT.BINANCE",
+            "application/vnd.qianxing.bar+json;v=1",
+            serde_json::to_string(&qx_guanxing::Bar::new(
+                event_time,
+                close - 1,
+                close + 2,
+                close - 2,
+                close,
+                100,
+            ))
+            .unwrap(),
+        );
+        let record = RawRecord {
+            source: DataSourceId::new(source),
+            event_time,
+            receive_time,
+            payload_hash: payload.digest(),
+            schema_version: 1,
+        };
+        (record, payload)
     }
 
     #[test]
@@ -537,50 +396,26 @@ mod tests {
 
     #[test]
     fn in_memory_provider_applies_as_of_cutoff() {
-        let records = vec![
-            RawRecord {
-                source: DataSourceId::new("local"),
-                event_time: 1,
-                receive_time: 10,
-                payload_hash: 11,
-                schema_version: 1,
-            },
-            RawRecord {
-                source: DataSourceId::new("local"),
-                event_time: 2,
-                receive_time: 20,
-                payload_hash: 22,
-                schema_version: 1,
-            },
-        ];
+        let records = vec![row("local", 1, 10, 10), row("local", 2, 20, 11)];
         let provider = InMemoryProvider::new(capability("local", 1, 100), records);
         let mut query = query();
         query.end = 2;
         query.as_of = Some(10);
         let result = provider.fetch(&query).unwrap();
         assert_eq!(result.records.len(), 1);
-        assert_eq!(result.records[0].payload_hash, 11);
+        assert_eq!(result.records.len(), 1);
+        assert_eq!(result.payloads.len(), 1);
+        assert_eq!(result.records[0].payload_hash, result.payloads[0].digest());
     }
 
     #[test]
     fn provider_result_rejects_wrong_source_or_unsorted_records() {
+        let (record_late, payload_late) = row("local", 2, 2, 11);
+        let (record_early, payload_early) = row("local", 1, 1, 10);
         let mut result = ProviderResult {
-            records: vec![
-                RawRecord {
-                    source: DataSourceId::new("local"),
-                    event_time: 2,
-                    receive_time: 2,
-                    payload_hash: 2,
-                    schema_version: 1,
-                },
-                RawRecord {
-                    source: DataSourceId::new("local"),
-                    event_time: 1,
-                    receive_time: 1,
-                    payload_hash: 1,
-                    schema_version: 1,
-                },
-            ],
+            schema_version: PROVIDER_RESULT_SCHEMA_VERSION,
+            records: vec![record_late, record_early],
+            payloads: vec![payload_late, payload_early],
             provider_id: "local".into(),
             provider_version: "v1".into(),
             request_id: "r1".into(),
@@ -596,14 +431,11 @@ mod tests {
 
     #[test]
     fn source_hash_is_verified_before_accepting_provider_result() {
+        let (record, payload) = row("local", 1, 2, 10);
         let mut result = ProviderResult {
-            records: vec![RawRecord {
-                source: DataSourceId::new("local"),
-                event_time: 1,
-                receive_time: 2,
-                payload_hash: 3,
-                schema_version: 1,
-            }],
+            schema_version: PROVIDER_RESULT_SCHEMA_VERSION,
+            records: vec![record],
+            payloads: vec![payload],
             provider_id: "local".into(),
             provider_version: "v1".into(),
             request_id: "req".into(),
@@ -613,7 +445,7 @@ mod tests {
         };
         result.source_hash = result.compute_source_hash();
         assert!(result.validate_for(&query()).is_ok());
-        result.records[0].payload_hash = 4;
+        result.payloads[0].json.push(' ');
         assert!(result.validate_for(&query()).is_err());
     }
 
@@ -623,16 +455,8 @@ mod tests {
         let query_json = query.to_json().unwrap();
         assert_eq!(DataQuery::from_json(&query_json).unwrap(), query);
 
-        let provider = InMemoryProvider::new(
-            capability("local", 1, 100),
-            vec![RawRecord {
-                source: DataSourceId::new("local"),
-                event_time: 1,
-                receive_time: 2,
-                payload_hash: 3,
-                schema_version: 1,
-            }],
-        );
+        let provider =
+            InMemoryProvider::new(capability("local", 1, 100), vec![row("local", 1, 2, 10)]);
         let result = provider.fetch(&query).unwrap();
         let result_json = result.to_json().unwrap();
         assert_eq!(ProviderResult::from_json(&result_json).unwrap(), result);

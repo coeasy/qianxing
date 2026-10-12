@@ -1,7 +1,7 @@
 mod tests {
     use qx_provider::{
         DataKind, DataProvider, DataQuery, DataSourceId, ProviderCapability, ProviderError,
-        ProviderRegistry, ProviderResult, RawRecord,
+        ProviderPayload, ProviderRegistry, ProviderResult, RawRecord,
     };
     use std::collections::BTreeSet;
 
@@ -15,14 +15,21 @@ mod tests {
         }
 
         fn fetch(&self, _query: &DataQuery) -> Result<ProviderResult, ProviderError> {
+            let payload = ProviderPayload::new_json(
+                "BTCUSDT.BINANCE",
+                "application/vnd.qianxing.bar+json;v=1",
+                r#"{"ts":1,"open":9,"high":12,"low":8,"close":10,"volume":100}"#,
+            );
             let mut result = ProviderResult {
+                schema_version: qx_provider::PROVIDER_RESULT_SCHEMA_VERSION,
                 records: vec![RawRecord {
                     source: DataSourceId::new("backup"),
                     event_time: 1,
                     receive_time: 2,
-                    payload_hash: 3,
+                    payload_hash: payload.digest(),
                     schema_version: 1,
                 }],
+                payloads: vec![payload],
                 provider_id: "backup".into(),
                 provider_version: "v1".into(),
                 request_id: "spoofed-primary-request".into(),
@@ -45,14 +52,21 @@ mod tests {
         }
 
         fn fetch(&self, _query: &DataQuery) -> Result<ProviderResult, ProviderError> {
+            let payload = ProviderPayload::new_json(
+                "BTCUSDT.BINANCE",
+                "application/vnd.qianxing.bar+json;v=1",
+                r#"{"ts":1,"open":9,"high":12,"low":8,"close":10,"volume":100}"#,
+            );
             let mut result = ProviderResult {
+                schema_version: qx_provider::PROVIDER_RESULT_SCHEMA_VERSION,
                 records: vec![RawRecord {
                     source: DataSourceId::new(self.capability.provider_id.clone()),
                     event_time: 1,
                     receive_time: 2,
-                    payload_hash: 4,
+                    payload_hash: payload.digest(),
                     schema_version: 1,
                 }],
+                payloads: vec![payload],
                 provider_id: self.capability.provider_id.clone(),
                 provider_version: self.capability.version.clone(),
                 request_id: "backup-request".into(),
@@ -113,6 +127,6 @@ mod tests {
         let result = registry.fetch_with_failover(&query).unwrap();
         assert_eq!(result.provider_id, "backup");
         assert_eq!(result.retry_chain, ["primary", "backup"]);
-        assert_eq!(result.records[0].payload_hash, 4);
+        assert!(result.payloads[0].json.contains("\"close\":10"));
     }
 }

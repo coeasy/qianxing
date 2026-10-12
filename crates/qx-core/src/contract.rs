@@ -64,7 +64,7 @@ pub const CONTRACT_MATRIX: &[ContractConcept] = &[
     ContractConcept { concept: "reconcile_report", canonical_types: "ReconcileReportSnapshot", canonical_source: "crates/qx-api/src/lib.rs", duplicates: &[], adapter: "", note: "对账报告读面，API 单点；刻意不搬进 qx-core" },
     ContractConcept { concept: "market_data_bar", canonical_types: "Bar", canonical_source: "crates/qx-guanxing/src/lib.rs", duplicates: &["Bar@crates/qx-data/src/schema.rs"], adapter: "qx_cli::contract_adapters::ingest_bar_matches_market_bar", note: "市场数据层是规范单点（无 instrument、列式 OHLCV）；数据摄取层的 Bar 多带 instrument 与原始列，adapter 逐列对账两者" },
     ContractConcept { concept: "strategy_context", canonical_types: "StrategyContext", canonical_source: "crates/qx-strategy/src/lib.rs", duplicates: &["StrategyContext@crates/qx-runtime/src/strategy_contract/context.rs"], adapter: "qx_cli::strategy_host::native_strategy_context", note: "原生策略面是规范单点；跨语言契约那一份多带 research 研究快照" },
-    ContractConcept { concept: "data_provider", canonical_types: "DataProvider", canonical_source: "crates/qx-data/src/provider.rs", duplicates: &["DataProvider@crates/qx-provider/src/lib.rs"], adapter: "", note: "同名但刻意不同层：qx-data 的是摄取层按标的+区间取 Bars，qx-provider 的是供应商能力层 fetch(query)->ProviderResult；两者没有桥接也不该有" },
+    ContractConcept { concept: "data_provider", canonical_types: "DataProvider", canonical_source: "crates/qx-data/src/provider.rs", duplicates: &["DataProvider@crates/qx-provider/src/result.rs"], adapter: "", note: "同名但刻意不同层：qx-data 的是摄取层按标的+区间取 Bars，qx-provider 的是供应商能力层 fetch(query)->ProviderResult；两者没有桥接也不该有" },
     ContractConcept { concept: "risk_decision", canonical_types: "RiskDecision", canonical_source: "crates/qx-risk/src/lib.rs", duplicates: &[], adapter: "", note: "风控裁决（Allow/Reject/Reduce），风控层单点" },
 ];
 

@@ -58,14 +58,14 @@ steps:
     chain: data_to_research_backtest
     order: 3
     anchor: crates/qx-provider/src/registry.rs ProviderRegistry
-    case: crates/qx-sdk/tests/provider_consumer.rs sdk_provider_registry_fails_over_in_stable_order_and_preserves_lineage
-    note: "第三方 Rust SDK 通过稳定 facade 注册多个 Provider，按能力/优先级确定性选择并验证 source_hash 与来源身份；当前仍需后续标准化/冻结步骤才能成为 app 回测输入。"
+    case: crates/qx-sdk/tests/provider_consumer.rs third_party_provider_payload_reaches_the_shared_bar_backtest_and_verifier
+    note: "ProviderResult v1 将 RawRecord 与 JSON 载荷一一配对并校验 payload/source 摘要；Rust SDK 消费者已验证确定性 failover→strict Bar 质量门→标准 BarFrame→共享 qx-app 回测→产物重放复核。自动写入 DatasetManifest/DatasetSpec 的服务入口及 Python Provider 绑定仍未闭环。"
   - name: data_fetch
     chain: data_to_research_backtest
     order: 4
     anchor: crates/qx-data/src/provider.rs JsonBarFrameProvider
     case: crates/qx-provider/src/lib.rs in_memory_provider_applies_as_of_cutoff
-    note: "BarFrame JSON 读取按事件时间切片、保留原始来源与契约版本；SDK ProviderRegistry 的结果仍需进入该标准化/质量链后才能冻结为回测输入。"
+    note: "BarFrame JSON 读取按事件时间切片、保留原始来源与契约版本；Rust SDK 的 Provider v1 载荷已能经过 strict Bar 质量门转为同一 BarFrame 并喂给共享回测，但自动冻结 DatasetManifest/DatasetSpec 仍是下一段。"
   - name: dataset_validation
     chain: data_to_research_backtest
     order: 5

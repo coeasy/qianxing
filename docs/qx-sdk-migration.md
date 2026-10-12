@@ -109,6 +109,20 @@ let outcome = handle.try_take_result().unwrap()?;
 | 统一错误 | `AppError` / `AppErrorCategory` / `AppAction` / `AppRetry` |
 | **events / cursors** | Rust/Python 本地 `RunHandle.events_after/events` 读取 Rust worker 生命周期事件；Rust/Python/C++ 远端 RunHandle 读取 `GET /app/runs/{run_id}/events?after_seq=N`；`get_live_events` → `GET /events/live` 仍是全局实时流 |
 
+## Rust SDK Provider 数据载荷 v1
+
+`ProviderResult` v1 将每条 `RawRecord` 与同索引 `ProviderPayload` 配对。载荷声明标的、content type 和 JSON 正文；
+`payload_hash` 必须匹配载荷摘要，结果摘要覆盖请求、接收时间、每行血缘、实际载荷和确定性 failover 链。
+Registry 还会把结果自述的 Provider ID/版本与实际被调用的 Provider capability 比对，不一致就拒绝并继续按序尝试。
+
+Bar 查询可调用 `ProviderResult::to_bar_frame`：仅接收单标的、strict 质量策略与
+`application/vnd.qianxing.bar+json;v=1` 行载荷；校验时间戳、OHLCV 和载荷标的，再生成标准 BarFrame，
+其来源标识绑定查询摘要与 Provider 结果摘要。仓外消费者验收覆盖 Provider→BarFrame→共享 Rust 回测→产物复核，
+见 `crates/qx-sdk/tests/provider_consumer.rs`。
+
+此版本仍要求调用方将 BarFrame JSON 冻结到 `BacktestSpec.bars_path` 后调用 `Client::run_backtest`；
+自动生成 `DatasetManifest`/`DatasetSpec` 的 App 工作流和 Python Provider adapter 尚未接入，不能把它们写成已完成。
+
 ## 已知缺口（不要在发布文案里说成"已有"）
 
 ## Rust 远端 Paper 算法生命周期与事件游标

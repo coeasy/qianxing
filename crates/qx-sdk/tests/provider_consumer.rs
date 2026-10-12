@@ -1,8 +1,9 @@
 //! 外部消费者通过 `qx-sdk` 走 Rust 共享 Provider 注册与确定性 failover。
 
 use qx_sdk::{
-    DataKind, DataProvider, DataQuery, DataSourceId, ProviderCapability, ProviderError,
-    ProviderErrorClass, ProviderRegistry, ProviderResult, RawRecord,
+    BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability, Client, DataKind,
+    DataProvider, DataQuery, DataSourceId, ProviderCapability, ProviderError, ProviderErrorClass,
+    ProviderPayload, ProviderRegistry, ProviderResult, RawRecord,
 };
 use std::collections::BTreeSet;
 
@@ -31,6 +32,7 @@ mod tests {
     struct FixtureProvider {
         capability: ProviderCapability,
         fail: bool,
+        bars: Vec<(u64, i128)>,
     }
 
     impl DataProvider for FixtureProvider {
@@ -45,19 +47,47 @@ mod tests {
                     "fixture failover",
                 ));
             }
-            let mut result = ProviderResult {
-                records: vec![RawRecord {
+            let payloads = self
+                .bars
+                .iter()
+                .map(|(ts, close)| {
+                    ProviderPayload::new_json(
+                        "BTCUSDT.BINANCE",
+                        "application/vnd.qianxing.bar+json;v=1",
+                        format!(
+                            r#"{{"ts":{ts},"open":{},"high":{},"low":{},"close":{close},"volume":1000}}"#,
+                            close - 1_000_000_000,
+                            close + 2_000_000_000,
+                            close - 2_000_000_000,
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let records = self
+                .bars
+                .iter()
+                .zip(&payloads)
+                .map(|((ts, _), payload)| RawRecord {
                     source: DataSourceId::new(self.capability.provider_id.clone()),
-                    event_time: 10,
-                    receive_time: 11,
-                    payload_hash: 12,
+                    event_time: *ts,
+                    receive_time: ts + 1,
+                    payload_hash: payload.digest(),
                     schema_version: 1,
-                }],
+                })
+                .collect::<Vec<_>>();
+            let mut result = ProviderResult {
+                schema_version: qx_sdk::PROVIDER_RESULT_SCHEMA_VERSION,
+                records,
+                payloads,
                 provider_id: self.capability.provider_id.clone(),
                 provider_version: self.capability.version.clone(),
                 request_id: format!("{}-{:016x}", self.capability.provider_id, query.digest()),
                 retry_chain: Vec::new(),
-                received_at: 11,
+                received_at: self
+                    .bars
+                    .last()
+                    .map(|(timestamp, _)| timestamp + 1)
+                    .unwrap_or(11),
                 source_hash: 0,
             };
             result.source_hash = result.compute_source_hash();
@@ -72,12 +102,14 @@ mod tests {
             .register(Box::new(FixtureProvider {
                 capability: capability("backup", 2),
                 fail: false,
+                bars: vec![(10, 100_000_000_000)],
             }))
             .unwrap();
         registry
             .register(Box::new(FixtureProvider {
                 capability: capability("primary", 1),
                 fail: true,
+                bars: vec![(10, 100_000_000_000)],
             }))
             .unwrap();
         let query = DataQuery {
@@ -89,7 +121,7 @@ mod tests {
             adjustment: "none".into(),
             quality_policy: "strict".into(),
             start: 1,
-            end: 20,
+            end: 100,
             as_of: Some(12),
         };
 
@@ -99,5 +131,102 @@ mod tests {
         assert_eq!(result.retry_chain, ["primary", "backup"]);
         assert_eq!(result.records[0].source, DataSourceId::new("backup"));
         result.validate_for(&query).unwrap();
+        let frame = result.to_bar_frame(&query).unwrap();
+        assert_eq!(frame.instrument.to_string(), "BTCUSDT.BINANCE");
+        assert_eq!(
+            frame.source.0,
+            format!(
+                "backup@v1#query={:016x}#source={:016x}",
+                query.digest(),
+                result.source_hash
+            )
+        );
+        assert_eq!(frame.ts, [10]);
+        assert_eq!(frame.close_raw, [100_000_000_000]);
+    }
+    #[test]
+    fn third_party_provider_payload_reaches_the_shared_bar_backtest_and_verifier() {
+        let bars = (1..=90_u64)
+            .map(|ts| {
+                let phase = (ts * 7 % 19) as i128 - 9;
+                (ts, 100_000_000_000 + phase * 1_000_000_000)
+            })
+            .collect::<Vec<_>>();
+        let mut registry = ProviderRegistry::new();
+        registry
+            .register(Box::new(FixtureProvider {
+                capability: capability("fixture-bars", 1),
+                fail: false,
+                bars,
+            }))
+            .unwrap();
+        let query = DataQuery {
+            kind: DataKind::Bar,
+            asset_class: "crypto".into(),
+            instrument_set: BTreeSet::from(["BTCUSDT.BINANCE".into()]),
+            field_set: BTreeSet::from([
+                "open".into(),
+                "high".into(),
+                "low".into(),
+                "close".into(),
+                "volume".into(),
+            ]),
+            frequency: "1m".into(),
+            adjustment: "none".into(),
+            quality_policy: "strict".into(),
+            start: 1,
+            end: 90,
+            as_of: Some(100),
+        };
+        let result = registry.fetch_with_failover(&query).unwrap();
+        let frame = result.to_bar_frame(&query).unwrap();
+        let root =
+            std::env::temp_dir().join(format!("qx-sdk-provider-backtest-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let bars_path = root.join("provider-bars.json");
+        std::fs::write(&bars_path, frame.to_json()).unwrap();
+
+        let mut strategy = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "provider-sma");
+        strategy.fast_window = 2;
+        strategy.slow_window = 3;
+        let output_dir = root.join("run");
+        let spec = BacktestSpec::new(
+            "provider-bars-run",
+            "BTCUSDT.BINANCE",
+            bars_path.to_string_lossy(),
+            "USDT",
+            100_000 * 1_000_000_000,
+            20261012,
+            output_dir.to_string_lossy(),
+            strategy,
+        );
+        let client = Client::new(CallerCapability::Research, "provider-bars-run");
+        let outcome = client.run_backtest(&spec).unwrap();
+        assert_eq!(
+            outcome.data_fingerprint,
+            format!("barframe:{:016x}", frame.digest())
+        );
+        assert!(
+            outcome.fills > 0,
+            "provider data must reach the Rust strategy and matching kernel"
+        );
+        let verified = client.verify_run(&outcome).unwrap();
+        assert!(
+            verified.verified,
+            "provider-sourced backtest artifacts must replay"
+        );
+
+        let mut invalid = result;
+        invalid.payloads[0] = ProviderPayload::new_json(
+            "BTCUSDT.BINANCE",
+            "application/vnd.qianxing.bar+json;v=1",
+            r#"{"ts":1,"open":100000000000,"high":99000000000,"low":100000000000,"close":100000000000,"volume":1000}"#,
+        );
+        invalid.records[0].payload_hash = invalid.payloads[0].digest();
+        invalid.source_hash = invalid.compute_source_hash();
+        assert!(
+            invalid.to_bar_frame(&query).is_err(),
+            "strict provider normalization must reject invalid OHLCV"
+        );
     }
 }

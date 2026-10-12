@@ -71,7 +71,6 @@ impl ProviderRegistry {
             let provider = self.providers.get(&id).expect("candidate is registered");
             match provider.fetch(query) {
                 Ok(mut result) => {
-                    result.retry_chain = retry_chain.clone();
                     let capability = provider.capability();
                     if result.provider_id != capability.provider_id
                         || result.provider_version != capability.version
@@ -91,7 +90,13 @@ impl ProviderRegistry {
                         continue;
                     }
                     match result.validate_for(query) {
-                        Ok(()) => return Ok(result),
+                        Ok(()) => {
+                            // Validate the provider's own digest first, then recompute the
+                            // result fingerprint with the registry's deterministic retry chain.
+                            result.retry_chain = retry_chain.clone();
+                            result.source_hash = result.compute_source_hash();
+                            return Ok(result);
+                        }
                         Err(error) => {
                             // 非法数据不能被当成成功；按既定 failover 顺序继续尝试。
                             last_error = Some(error);
