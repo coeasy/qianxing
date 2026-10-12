@@ -123,6 +123,13 @@ class AsyncSdkTests(unittest.TestCase):
                 self.assertIs(result, marker)
                 sync_method.assert_called_once_with(spec)
 
+    def test_async_live_event_reader_delegates_cursor_to_sync_client_method(self):
+        client = AppClient("http://127.0.0.1:8080")
+        marker = [{"seq": 12}]
+        with patch.object(client, "get_live_events", return_value=marker) as get_events:
+            self.assertIs(asyncio.run(client.async_get_live_events(11)), marker)
+        get_events.assert_called_once_with(11)
+
     def test_async_paper_submit_uses_the_same_trade_command_method(self):
         client = PaperClient("http://127.0.0.1:8080")
         command = {"request_id": "paper-async-1"}

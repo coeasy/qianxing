@@ -53,6 +53,7 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "live_commands": "/app/live/commands",
     "run_status": "/app/runs/{run_id}",
     "run_cancel": "/app/runs/{run_id}/cancel",
+    "live_events": "/events/live",
 }
 
 
@@ -914,6 +915,18 @@ class _HttpJsonClient:
         method: str,
         payload: Any = None,
     ) -> dict[str, Any]:
+        value = self._request_json_value(path, method=method, payload=payload)
+        if not isinstance(value, dict):
+            raise QianxingError("Rust API returned a non-object JSON document")
+        return value
+
+    def _request_json_value(
+        self,
+        path: str,
+        *,
+        method: str,
+        payload: Any = None,
+    ) -> Any:
         data = None if payload is None else _encode_payload(payload).encode("utf-8")
         request = Request(
             f"{self.base_url}{path}",
@@ -929,8 +942,6 @@ class _HttpJsonClient:
             with urlopen(request, timeout=self.timeout, context=self.ssl_context) as response:
                 body = response.read().decode("utf-8")
                 value = json.loads(body) if body else {}
-                if not isinstance(value, dict):
-                    raise QianxingError("Rust API returned a non-object JSON document")
                 return value
         except HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
@@ -1276,6 +1287,22 @@ class AppClient(_HttpJsonClient):
 
     def _post(self, route: str, spec: Any) -> dict[str, Any]:
         return self._request_json(route, method="POST", payload=spec)
+
+    def get_live_events(self, after_seq: int | None = None) -> list[dict[str, Any]]:
+        if after_seq is not None and (
+            isinstance(after_seq, bool) or not isinstance(after_seq, int) or after_seq < 0
+        ):
+            raise ValueError("after_seq must be a non-negative integer or None")
+        route = APP_ROUTE_TEMPLATES["live_events"]
+        if after_seq is not None:
+            route = f"{route}?after={after_seq}"
+        events = self._request_json_value(route, method="GET")
+        if not isinstance(events, list) or any(not isinstance(event, dict) for event in events):
+            raise QianxingError("Rust API returned an invalid live event page")
+        return events
+
+    async def async_get_live_events(self, after_seq: int | None = None) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self.get_live_events, after_seq)
 
     def _start(self, route: str, spec: Any, result_type: type[_ResultT]) -> RemoteRunHandle[_ResultT]:
         document = self._post(route, spec)

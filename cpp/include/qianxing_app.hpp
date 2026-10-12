@@ -10,7 +10,9 @@
  */
 
 #include <array>
+#include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -63,11 +65,12 @@ inline constexpr std::string_view kPaperCommands = "/app/paper/commands";
 inline constexpr std::string_view kLiveCommands = "/app/live/commands";
 inline constexpr std::string_view kRunStatusTemplate = "/app/runs/{run_id}";
 inline constexpr std::string_view kRunCancelTemplate = "/app/runs/{run_id}/cancel";
+inline constexpr std::string_view kLiveEvents = "/events/live";
 
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 26> kDeclaredRoutes = {
+inline constexpr std::array<std::string_view, 27> kDeclaredRoutes = {
     kValidateDataset,       kBacktest,
     kBacktestStart,         kVerify,
     kVerifyDepth,           kCompareRuns,
@@ -82,6 +85,7 @@ inline constexpr std::array<std::string_view, 26> kDeclaredRoutes = {
     kMultiLegExperiment,    kMultiLegExperimentStart,
     kPaperCommands,         kLiveCommands,
     kRunStatusTemplate,     kRunCancelTemplate,
+    kLiveEvents,
 };
 
 // Fill the `{run_id}` placeholder of a declared template. The path the client
@@ -191,6 +195,15 @@ public:
 
     AppResponse run_status(std::string_view run_id) const {
         return get(run_path(run_id));
+    }
+
+    AppResponse get_live_events(std::optional<std::uint64_t> after_seq = std::nullopt) const {
+        if (!after_seq) {
+            return get(routes::kLiveEvents);
+        }
+        const auto path = std::string(routes::kLiveEvents) + "?after=" +
+                          std::to_string(*after_seq);
+        return get(path);
     }
 
     AppResponse cancel_run(std::string_view run_id) const {

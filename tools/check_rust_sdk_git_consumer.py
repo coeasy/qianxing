@@ -28,6 +28,10 @@ impl RemoteTransport for FakeRemote {
         let _: serde_json::Value = serde_json::from_str(body).map_err(|error| error.to_string())?;
         Ok(RemoteResponse::new(200, r#"{"accepted":true}"#))
     }
+    fn get(&self, path: &str) -> Result<RemoteResponse, String> {
+        assert!(path == "/events/live" || path.starts_with("/events/live?after="), "unexpected event route: {path}");
+        Ok(RemoteResponse::new(200, "[]"))
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -61,7 +65,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     remote.get_paper_algo_execution("external-paper")?;
     remote.cancel_paper_algo_execution("external-paper")?;
     remote.list_paper_algo_executions(None, 25)?;
-    println!("rust_sdk_git_consumer=passed fills={} remote_paper_lifecycle=4 result_hash={}", result.fills, result.result_hash);
+    remote.get_live_events(Some(0))?;
+    println!("rust_sdk_git_consumer=passed fills={} remote_paper_lifecycle=4 event_cursor_reads=1 result_hash={}", result.fills, result.result_hash);
     Ok(())
 }
 '''

@@ -34,11 +34,9 @@
 //! [`compare_runs`]）、Provider/Venue 扩展端口（[`DataProvider`] / [`VenuePort`]）、
 //! 统一错误（[`AppError`] 一族）。
 //!
-//! **一项没有**：**events/cursors**。`qx-app` 里没有事件日志，运行进度只能靠
-//! [`RunHandle::status`] 轮询；远程 Run 的事件游标住在 `qx-api`（HTTP 面），不在 SDK 里。
-//! 这一格**不在本 crate 里造**——门面里凭空长出一个没有生产端的事件流，正是本仓
-//! 反复栽过的"声明替不存在的代码作保"。缺口如实登记在 `maturity/capability-matrix.yaml`
-//! 的 `rust_sdk` 行，由 `qx_sdk_facade_check` 逐条核对。
+//! **事件读面**：[`RemoteApiClient::get_live_events`] 按服务端序号游标读取 `qx-api` 的实时事件，
+//! 过旧或超前游标会保留服务端的 snapshot-recovery HTTP 错误；进程内 [`RunHandle`] 仍通过
+//! [`RunHandle::status`] 轮询，`qx-app` 尚无本地事件日志。两个运行形态不伪装成同一事件源。
 //!
 //! 另外两点如实记下，免得被读成"已经有了"：
 //! - **"异步"是句柄式不是 `Future` 式**：`qx-app` 的引擎是线程 + 通道，没有 executor。

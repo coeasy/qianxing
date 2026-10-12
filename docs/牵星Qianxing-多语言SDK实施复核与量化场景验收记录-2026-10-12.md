@@ -39,7 +39,7 @@ Python 十策略证据：
 - Python Rust bridge：[crates/qx-python/src/lib.rs](../crates/qx-python/src/lib.rs)
 - 本机 Python 3.13 Windows `cp310-abi3-win_amd64` wheel 已构建、元数据检查通过，并在独立 target 目录安装后实际运行 Bar 回测（1 笔成交）。此结果只证明当前 Windows wheel，不代表其它 Python 版本/操作系统/架构。
 - Rust Git SDK 消费者固定到已推送提交 `ffbc8bace1260367179040a671b05a5a3a399632`，在 workspace 外构建并运行数据校验、回测和结果复核（1 笔成交），并编译调用 Paper start/get/cancel/list 四个公开方法；见 `tools/check_rust_sdk_git_consumer.py`。
-- 本轮 `cargo test -p qx-sdk --offline` 的 3 个新增单元测试和 9 个独立消费者测试全部通过；仓外消费者固定提交运行通过。
+- Rust SDK `cargo test -p qx-sdk --offline` 的 4 个单元测试和 9 个独立消费者测试全部通过。Rust/Python/C++ 远端客户端已接 `/events/live` 序号游标，Python GET 行为与 Async 委托测试通过；C++ smoke 源码覆盖有/无游标，当前环境无 C++ 编译器。
 
 ## 3. 本轮场景执行结果
 

@@ -107,11 +107,11 @@ let outcome = handle.try_take_result().unwrap()?;
 | report / verify | `verify_run` / `verify_depth_run` / `compare_runs` |
 | Provider / Venue 扩展端口 | `DataProvider` / `VenuePort` |
 | 统一错误 | `AppError` / `AppErrorCategory` / `AppAction` / `AppRetry` |
-| **events / cursors** | **没有**——见下 |
+| **events / cursors** | Rust/Python/C++ `get_live_events(after_seq)` → `GET /events/live`；本地或远端 `RunHandle` 仍只能轮询状态 |
 
 ## 已知缺口（不要在发布文案里说成"已有"）
 
-## Rust 远端 Paper 算法生命周期
+## Rust 远端 Paper 算法生命周期与事件游标
 
 `qx_sdk::RemoteApiClient<T>` 提供 Paper TWAP/VWAP 的 start/get/cancel/list 四个方法，
 与 Python 和 C++ 共用 `/app/paper/algo-executions/*` 路由。宿主实现 `RemoteTransport`
@@ -127,14 +127,19 @@ let snapshot = remote.start_paper_algo_execution(&request_json)?;
 let current = remote.get_paper_algo_execution("parent-1")?;
 ```
 
-`RemoteApiClient` 当前只覆盖明确登记的 Paper 算法生命周期；它不是通用 HTTP Client，
+`RemoteApiClient` 当前覆盖明确登记的 Paper 算法生命周期和实时事件游标读取；它不是通用 HTTP Client，
 也不替代进程内 `qx_sdk::Client` 的回测/实验用例。Rust Live 下单仍须经过服务端授权与
 Live/testnet 验收，不可据此宣称已发布可实盘 SDK。
 
-1. **events / cursors 未提供。** `qx-app` 里没有事件日志，运行进度只能靠
-   `RunHandle::status()` 轮询；远程 Run 的事件游标住在 `qx-api`（HTTP 面），不在 SDK 里。
-   门面刻意**不**造一个没有生产端的事件流。缺口登记在 `maturity/capability-matrix.yaml`
-   的 `rust_sdk` 行。
+Rust、Python 与 C++ 远端客户端都提供 `get_live_events(after_seq)`，对应 `GET /events/live`。
+传入游标时按 `after=<sequence>` 请求；服务器返回的 409（游标过旧或超前，需要重新取快照）
+分别保留为 Rust `RemoteApiError::Http`、Python `QianxingError`、C++ 原始 `AppResponse`。
+Rust transport 需实现 `RemoteTransport::get`；Python/C++ 复用各自已有的 GET transport。
+
+1. **进程内 RunHandle 事件尚未提供。** Rust 远端客户端已接 `/events/live` 序号游标，但
+   `qx-app` 的 `RunHandle` 没有同源事件日志，仍通过 `status()` 轮询。Python `RunHandle.events`
+   也未实现；不能把远端全局事件流说成每个本地 Run 都有事件订阅。缺口登记在
+   `maturity/capability-matrix.yaml` 的 `rust_sdk` 与 `python_sdk` 行。
 2. **Git 安装已做独立消费者验收，crates.io 发布验收仍未做。** `python tools/check_rust_sdk_git_consumer.py`
    会从 GitHub 拉取当前完整提交哈希，在 workspace 外构建真实消费者并运行数据校验、回测和结果复核。
    `cargo package -p qx-sdk` 仍因 `qx-app` 等内部 crate 尚未发布至配置的 registry 而失败；

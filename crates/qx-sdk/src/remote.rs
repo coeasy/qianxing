@@ -11,6 +11,11 @@ use std::fmt;
 /// without interpreting application semantics.
 pub trait RemoteTransport: Send + Sync {
     fn post(&self, path: &str, body: &str) -> Result<RemoteResponse, String>;
+
+    /// Optional read transport. Implement this when the client needs GET based snapshots/events.
+    fn get(&self, _path: &str) -> Result<RemoteResponse, String> {
+        Err("GET is not supported by this transport".into())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,6 +92,25 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         )
     }
 
+    /// Read the server's live event feed after a sequence cursor. A missing cursor asks the
+    /// server for its initial window; stale/ahead cursor errors are returned as HTTP errors so
+    /// the caller can fetch a fresh snapshot before resuming.
+    pub fn get_live_events(&self, after_seq: Option<u64>) -> Result<Value, RemoteApiError> {
+        self.get_live_events_after(after_seq)
+    }
+
+    fn get_live_events_after(&self, after_seq: Option<u64>) -> Result<Value, RemoteApiError> {
+        let path = match after_seq {
+            Some(sequence) => format!("/events/live?after={sequence}"),
+            None => "/events/live".into(),
+        };
+        let response = self
+            .transport
+            .get(&path)
+            .map_err(RemoteApiError::Transport)?;
+        Self::decode_response(response)
+    }
+
     fn post(&self, path: &str, request: &Value) -> Result<Value, RemoteApiError> {
         let body = serde_json::to_string(request)
             .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
@@ -94,6 +118,10 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
             .transport
             .post(path, &body)
             .map_err(RemoteApiError::Transport)?;
+        Self::decode_response(response)
+    }
+
+    fn decode_response(response: RemoteResponse) -> Result<Value, RemoteApiError> {
         if !(200..300).contains(&response.status) {
             return Err(RemoteApiError::Http {
                 status: response.status,
@@ -121,6 +149,14 @@ mod tests {
                 .push((path.to_owned(), body.to_owned()));
             Ok(RemoteResponse::new(200, r#"{"ok":true}"#))
         }
+
+        fn get(&self, path: &str) -> Result<RemoteResponse, String> {
+            self.0
+                .lock()
+                .unwrap()
+                .push((path.to_owned(), String::new()));
+            Ok(RemoteResponse::new(200, "[]"))
+        }
     }
 
     #[test]
@@ -133,6 +169,7 @@ mod tests {
         client.get_paper_algo_execution("p/2").unwrap();
         client.cancel_paper_algo_execution("p-3").unwrap();
         client.list_paper_algo_executions(Some("p-4"), 17).unwrap();
+        client.get_live_events(Some(23)).unwrap();
         let calls = client.transport.0.lock().unwrap();
         assert_eq!(
             calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
@@ -141,6 +178,7 @@ mod tests {
                 "/app/paper/algo-executions/get",
                 "/app/paper/algo-executions/cancel",
                 "/app/paper/algo-executions/list",
+                "/events/live?after=23",
             ]
         );
         assert_eq!(
@@ -150,6 +188,39 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Value>(&calls[3].1).unwrap(),
             serde_json::json!({"after_parent_id":"p-4","limit":17})
+        );
+    }
+
+    #[test]
+    fn event_reads_preserve_optional_cursor_and_server_recovery_errors() {
+        struct CursorTransport(Mutex<Vec<String>>);
+        impl RemoteTransport for CursorTransport {
+            fn post(&self, _: &str, _: &str) -> Result<RemoteResponse, String> {
+                unreachable!()
+            }
+            fn get(&self, path: &str) -> Result<RemoteResponse, String> {
+                self.0.lock().unwrap().push(path.into());
+                let status = if path.contains("after=99") { 409 } else { 200 };
+                Ok(RemoteResponse::new(
+                    status,
+                    if status == 409 {
+                        r#"{"error":"event_cursor_requires_snapshot"}"#
+                    } else {
+                        "[]"
+                    },
+                ))
+            }
+        }
+        let transport = CursorTransport(Mutex::new(Vec::new()));
+        let client = RemoteApiClient::new(transport);
+        assert_eq!(client.get_live_events(None).unwrap(), serde_json::json!([]));
+        assert!(matches!(
+            client.get_live_events(Some(99)),
+            Err(RemoteApiError::Http { status: 409, .. })
+        ));
+        assert_eq!(
+            *client.transport.0.lock().unwrap(),
+            ["/events/live", "/events/live?after=99"]
         );
     }
 

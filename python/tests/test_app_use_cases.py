@@ -294,6 +294,40 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(requests[1].full_url, "https://localhost:8443/api/app/runs/remote-1")
         self.assertEqual(requests[-1].full_url, "https://localhost:8443/api/app/runs/remote-1/cancel")
 
+    def test_python_remote_events_use_rust_cursor_and_validate_page_shape(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import AppClient
+
+        class Response:
+            def __init__(self, body):
+                self.body = json.dumps(body).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return self.body
+
+        page = [{"seq": 8, "cursor": "8:abcd", "event": {"kind": "OrderAccepted"}}]
+        with patch("qianxing.app.urlopen", side_effect=[Response(page), Response([])]) as open_url:
+            client = AppClient("https://localhost")
+            self.assertEqual(client.get_live_events(7), page)
+            self.assertEqual(client.get_live_events(), [])
+
+        requests = [call.args[0] for call in open_url.call_args_list]
+        self.assertEqual([request.method for request in requests], ["GET", "GET"])
+        self.assertEqual(
+            [request.full_url for request in requests],
+            ["https://localhost/events/live?after=7", "https://localhost/events/live"],
+        )
+        with self.assertRaises(ValueError):
+            client.get_live_events(True)
+        with self.assertRaises(ValueError):
+            client.get_live_events(-1)
+
     def test_both_run_handles_default_to_a_finite_wait(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         import inspect

@@ -670,7 +670,7 @@ def main() -> int:
         "Rust SDK 固定提交 Git 安装与仓外消费者运行",
         "tools/check_rust_sdk_git_consumer.py",
         ["tools/check_rust_sdk_git_consumer.py"],
-        r"(rust_sdk_git_consumer=passed fills=\d+ remote_paper_lifecycle=4 result_hash=\w+)",
+        r"(rust_sdk_git_consumer=passed fills=\d+ remote_paper_lifecycle=4 event_cursor_reads=1 result_hash=\w+)",
         env_extra={"QX_CARGO_OFFLINE": "1"},
         evidence=["crates/qx-sdk/Cargo.toml", "docs/qx-sdk-migration.md", "tools/check_rust_sdk_git_consumer.py"],
         command_prefix="python",

@@ -49,6 +49,15 @@ int main() {
     assert(algo_list.ok());
     assert(observed_path == "/app/paper/algo-executions/list");
 
+    const auto live_events = client.get_live_events(42);
+    assert(live_events.ok());
+    assert(observed_method == "GET");
+    assert(observed_path == "/events/live?after=42");
+    const auto initial_events = client.get_live_events();
+    assert(initial_events.ok());
+    assert(observed_method == "GET");
+    assert(observed_path == "/events/live");
+
     const auto risk_parity = client.plan_risk_parity(spec);
     assert(risk_parity.ok());
     assert(observed_path == "/app/plan-risk-parity");

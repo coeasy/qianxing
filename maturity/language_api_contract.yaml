@@ -29,6 +29,8 @@ python_native_helpers:
 
 # 客户端公开面里属于 run 生命周期、不属于任何用例的方法。
 cpp_lifecycle_methods:
+  - name: get_live_events
+    note: "C++ 远端门面按服务端序号游标读取实时事件"
   - name: run_status
     note: "运行状态读取（GET /app/runs/{run_id}）；不是用例，是 run 生命周期的读面"
   - name: cancel_run
@@ -43,6 +45,8 @@ cpp_lifecycle_methods:
     note: "Paper TWAP/VWAP 活跃父单分页生命周期入口"
 
 python_remote_lifecycle_methods:
+  - name: get_live_events
+    note: "Python 远端门面按服务端序号游标读取实时事件"
   - name: start_paper_algo_execution
     note: "Paper TWAP/VWAP 父单持久化启动生命周期入口"
   - name: get_paper_algo_execution
@@ -61,6 +65,8 @@ rust_remote_lifecycle_methods:
     note: "Rust 远端门面调用服务端 Paper TWAP/VWAP 取消入口"
   - name: list_paper_algo_executions
     note: "Rust 远端门面分页读取 Paper TWAP/VWAP 父单"
+  - name: get_live_events
+    note: "Rust 远端门面按服务端序号游标读取实时事件"
 
 contracts:
   - use_case: validate_dataset
