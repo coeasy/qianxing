@@ -1538,11 +1538,6 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-plugin::sign_ed25519": "README 公布 Ed25519 签名能力；validate() 的 ed25519 分支是消费侧",
     "qx-sdk::start_depth_experiment": "qx-sdk 第三方公开 RunHandle 入口；消费者 API 不要求仓内生产调用者",
     "qx-storage::consume_batch_with_projection": "deploy/README 公布为外部 reducer 的原子投影+checkpoint 入口",
-    # 运维契约的受约束读法：写侧 save_json_at 有越界防线，读侧必须是同一套防线的对称入口。
-    "qx-storage::load_json_at": (
-        "file/state.rs:18-20 把 `reconcile/<worker-id>.json` 公布为运维契约；"
-        "生产读面要么固定文件名要么目录扫描，按相对路径读回的契约只有本入口"
-    ),
     "qx-data::add_component": (
         "数据集 Bundle 的程序化装配入口（deploy/README 的三步冻结流程）；"
         "生产侧目前只从盘上 serde 读 Bundle 并过 validate()，故本入口零生产读者"
@@ -1585,8 +1580,6 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-zhenlu::evaluate_order_with_rules": "同上：门面腿，证明 RiskContext 与规范实现逐字段一致",
     "qx-risk::rule_count": "用例取证：配置化的两条规则确实落进同一个闸门（qx-cli/src/tests/backtest_entries.rs）",
     # 跨 crate 用例推进多腿组状态的唯一入口；生产的"同一腿至多提交一次"住在网关 client_id 台账。
-    # 算法父单运行时 worker 接入前保留可撤销状态变更原语，当前仅行为用例消费。
-    "qx-execution::request_cancel": "TWAP/VWAP runtime scheduler persistence and cancel endpoint are not wired yet; keep the state transition testable",
     "qx-zhenlu::begin_submission": (
         "qx-execution/qx-cli 用例用它把 SpreadOrderGroup 推到 Submitting；"
         "生产由 qx-execution/src/lib.rs:434-471 的 client_id 台账 + spread_group_barrier 保证"

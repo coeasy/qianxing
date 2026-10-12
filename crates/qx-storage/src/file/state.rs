@@ -45,10 +45,68 @@ impl JsonStateStore {
         value: &T,
     ) -> Result<PathBuf, StorageError> {
         let path = self.state_path(relative_path)?;
-        std::fs::create_dir_all(&self.root).map_err(|error| StorageError::Io(error.to_string()))?;
-        let _lock = acquire_storage_lock(self.root.join(".json-state.write.lock"))?;
+        std::fs::create_dir_all(&self.root).map_err(|error| {
+            StorageError::Io(format!(
+                "创建 JSON 状态根目录 {} 失败: {error}",
+                self.root.display()
+            ))
+        })?;
+        let _lock = acquire_storage_lock(self.json_lock_path(&path)?)?;
         write_json_file(&self.root, &path, value, true, "JSON 状态")?;
         Ok(path)
+    }
+
+    /// Create a JSON state file once; an existing snapshot is never replaced.
+    ///
+    /// This is the admission primitive for durable workflows whose identity must
+    /// not be reused after a restart (for example an algorithmic parent order).
+    pub fn create_json_at<T: Serialize>(
+        &self,
+        relative_path: impl AsRef<Path>,
+        value: &T,
+    ) -> Result<PathBuf, StorageError> {
+        let path = self.state_path(relative_path)?;
+        std::fs::create_dir_all(&self.root).map_err(|error| {
+            StorageError::Io(format!(
+                "创建 JSON 状态根目录 {} 失败: {error}",
+                self.root.display()
+            ))
+        })?;
+        let _lock = acquire_storage_lock(self.json_lock_path(&path)?)?;
+        if path.exists() {
+            return Err(StorageError::Conflict(format!(
+                "JSON 状态已存在，不允许覆盖: {}",
+                path.display()
+            )));
+        }
+        write_json_file(&self.root, &path, value, false, "JSON 状态")?;
+        Ok(path)
+    }
+
+    /// Read, update, and atomically persist one existing JSON snapshot under the
+    /// same cross-process lock used by `save_json_at`.
+    ///
+    /// A failed update is not written. Callers that perform external side effects
+    /// inside the closure must make retries idempotent and reconcile unknown
+    /// outcomes; this transaction only serializes the local checkpoint.
+    pub fn transact_json_at<T, R, E, F>(
+        &self,
+        relative_path: impl AsRef<Path>,
+        update: F,
+    ) -> Result<(T, Result<R, E>), StorageError>
+    where
+        T: Serialize + DeserializeOwned,
+        F: FnOnce(&mut T) -> Result<R, E>,
+    {
+        let path = self.state_path(relative_path)?;
+        std::fs::create_dir_all(&self.root).map_err(|error| StorageError::Io(error.to_string()))?;
+        let _lock = acquire_storage_lock(self.json_lock_path(&path)?)?;
+        let mut value = read_json_file(&path, "JSON 状态")?;
+        let result = update(&mut value);
+        if result.is_ok() {
+            write_json_file(&self.root, &path, &value, false, "JSON 状态")?;
+        }
+        Ok((value, result))
     }
 
     /// 按 `save_json_at` 的同一套路径约束读回状态文件。
@@ -180,6 +238,17 @@ impl JsonStateStore {
             ));
         }
         Ok(path)
+    }
+
+    fn json_lock_path(&self, path: &Path) -> Result<PathBuf, StorageError> {
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| StorageError::InvalidName("JSON 状态路径越出 data root".into()))?;
+        let mut hash = Fnv1a::new();
+        hash.write_text(&relative.to_string_lossy());
+        Ok(self
+            .root
+            .join(format!(".json-state-{:016x}.write.lock", hash.finish())))
     }
 
     fn save_control_unlocked(&self, plane: &ControlPlane) -> Result<PathBuf, StorageError> {

@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+mod algo_checkpoint;
 mod data_binding;
 mod pipeline;
 mod runtime_config;
@@ -21,6 +22,7 @@ mod strategy_contract;
 mod supervision;
 mod worker_policy;
 
+pub use algo_checkpoint::AlgoExecutionCheckpointStore;
 pub use data_binding::{RuntimeDatasetBinding, RuntimeResearchBinding};
 /// #178：下面这份 `PipelineMetricsSnapshot` 的六个计数每笔 `ingest`/`refresh` 都在加，
 /// 出口在 `qx-cli/src/pipeline_metrics_report.rs`：Paper worker 把本轮用到的每个 pipeline
