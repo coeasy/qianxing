@@ -101,7 +101,23 @@ inline std::string fill_run_id(std::string_view route_template, std::string_view
         return std::string(route_template);
     }
     std::string path(route_template.substr(0, at));
-    path.append(run_id);
+    // Treat the caller-supplied identifier as one path segment. Valid run IDs
+    // (ASCII alphanumeric plus `-_.`) are unchanged; malformed values cannot
+    // inject a slash, query, or fragment into the request path.
+    constexpr char hex[] = "0123456789ABCDEF";
+    for (const unsigned char byte : run_id) {
+        const bool unreserved = (byte >= 'a' && byte <= 'z') ||
+                                (byte >= 'A' && byte <= 'Z') ||
+                                (byte >= '0' && byte <= '9') || byte == '-' ||
+                                byte == '_' || byte == '.' || byte == '~';
+        if (unreserved) {
+            path.push_back(static_cast<char>(byte));
+        } else {
+            path.push_back('%');
+            path.push_back(hex[byte >> 4]);
+            path.push_back(hex[byte & 0x0F]);
+        }
+    }
     path.append(route_template.substr(at + placeholder.size()));
     return path;
 }

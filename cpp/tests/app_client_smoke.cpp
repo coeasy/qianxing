@@ -116,6 +116,9 @@ int main() {
     assert(observed_path == "/app/runs/run-1");
     assert(qianxing::routes::fill_run_id(qianxing::routes::kRunEventsTemplate, "run-1") ==
            "/app/runs/run-1/events");
+    assert(qianxing::routes::fill_run_id(qianxing::routes::kRunStatusTemplate,
+                                         "../other?admin=true#fragment") ==
+           "/app/runs/..%2Fother%3Fadmin%3Dtrue%23fragment");
 
     const auto run_events = client.run_events("run-1", 9);
     assert(run_events.ok());
