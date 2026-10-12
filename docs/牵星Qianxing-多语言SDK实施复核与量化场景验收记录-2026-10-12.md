@@ -154,3 +154,10 @@ Python 十策略证据：
 - Paper E2E 测试拆成独立测试模块，并改成两个 strategy worker 和两个 scheduler job，共享同一 Paper Execution 与账户 Ledger。实际结果为两条策略均有成交（orders=2）、共享账簿有 7 条新增分录；同日重复运行新增订单为 0，且每笔成交保留自己的策略归属。
 - `tools/quant_scenario_probe.py` 新增 `paper_multi_strategy`，本地完整探针现记录 35 项 executed、0 项 declared_not_executed、0 项 missing、1 项 blocked（Live 缺真实 testnet 前置）。这只验证同一账户、同一市场的 CLI Paper 多策略主链；它不证明多账户/多市场组合，也不替代 SDK/API/Web 的多策略操作验收。
 - 本轮专项测试和 `cargo test --offline -p qx-cli -- --test-threads=1` 全套通过；架构不变量门禁 1096 项通过；场景探针 35 executed、0 declared_not_executed、0 missing、1 blocked；`cargo fmt --all -- --check`、Python 探针语法、能力/场景 YAML 解析及 `git diff --check` 通过。后续仍须对 Rust/Python/C++ SDK 和 HTTP/Web 使用同一多策略 Paper 规格完成跨入口相同账簿/事件核对，再扩展多市场/跨账户组合风险与归因。
+
+## 16. 2026-10-13 复核：场景状态与三轮主链验收
+
+- 重跑 `python tools/quant_scenario_probe.py` 后，登记面从 35 项更新为 **36 项 executed、0 项 declared_not_executed、0 项 missing、1 项 blocked**。新增/确认项覆盖 10 种经典单腿策略、多腿套利、跨账户独立回测、Tick/OrderBook、盘口做市、多策略额度、参数搜索、仓位 sizing、止损止盈、OOS/WFA、基准、组合再平衡、Paper 多策略及算法单。探针未联网、未使用凭据、未提交真实订单；唯一 blocked 为需要外部 CCXT/testnet 的 Live 验收。
+- 三轮检查按“场景与架构基线 → 全量行为测试 → 最终静态/质量门禁”执行。架构门禁两次各 1096 项通过；第二轮 `cargo test --workspace --offline -- --test-threads=1` 全工作区与 doc-tests 通过，Python 全量 127 项通过；第三轮 `cargo clippy --workspace --all-targets --offline -- -D warnings` 通过。没有因零失败就把外部验收记成通过。
+- 核心量化研究与 Paper 场景当前有可重跑的执行证据，但**全方案尚未达到发布门槛**：ProviderRegistry 尚未统一驱动所有 CLI/HTTP 和实时 Paper/Live 数据入口；Provider 的 `required_auth_scope` 是声明能力筛选，不能替代真实凭据授权；跨账户/跨市场组合风险、共享资金/账簿归因和多策略 Paper/Live 操作链仍未形成统一跨语言 E2E；真实交易所 Live testnet 与全订单状态/对账认证仍 blocked。C++ 可用 CI 矩阵验证源码/构建，但本机没有编译器，且不能据此宣称所有外部安装消费环境已验证。
+- 本轮只更新由探针生成的 `maturity/quant_scenarios.yaml` 和本复核记录，没有修改交易/回测实现；因此本轮验证证明的是当前提交代码的状态与场景覆盖，不将文档更新包装成新增功能。下一实现应优先收敛 Provider→冻结数据→共享应用回测的统一用例，再接入 Rust/Python/C++、CLI/API/实时 worker，并补跨账户组合风险及账簿主链；每段都必须有同输入的跨入口结果/事件核对。
