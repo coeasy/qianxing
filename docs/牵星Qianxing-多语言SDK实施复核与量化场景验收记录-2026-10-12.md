@@ -97,4 +97,4 @@ Python 十策略证据：
 
 此前策略 kind 快速选择无法与 `split_plan` 组合，导致十种策略无法在训练窗中统一选优并进入样本外评估。本轮删除该互斥限制：候选策略/参数都由共享 Rust 执行，按每折训练窗收益挑选，再报告测试窗收益和所选策略 kind。Python 旧报告缺少可选字段时仍可解析。
 
-验证覆盖 Rust qx-app、Rust SDK、HTTP API、Python 原生扩展与 Python 类型解码；API/Python 用例均检查折报告 kind 与候选 ordinal 关联。该修复只补研究实验选择与 OOS 接线，不代表多策略共享资本、组合级风险/账簿或 Paper/Live 多策略闭环已经完成；总体发布门槛仍未满足。
+验证覆盖 Rust qx-app、Rust SDK、HTTP API、Python 原生扩展与 Python 类型解码；API/Python 用例均检查折报告 kind 与候选 ordinal 关联。Rust/Python 追加 walk-forward 逐折验证：90 根 Bar 的 Rust 用例产生 7 折，Python 十策略样例产生 2 折，逐折选择 kind 均与候选序号相符。该修复只补研究实验选择与 OOS 接线，不代表多策略共享资本、组合级风险/账簿或 Paper/Live 多策略闭环已经完成；总体发布门槛仍未满足。

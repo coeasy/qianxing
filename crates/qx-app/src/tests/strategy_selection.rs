@@ -89,14 +89,17 @@ fn strategy_selection_experiment_runs_classic_strategies_in_the_shared_rust_kern
     oos_selection.split_plan = Some(crate::cases::ExperimentSplitPlan {
         train_bars: 20,
         test_bars: 10,
-        walk_forward: false,
-        step_bars: 0,
+        walk_forward: true,
+        step_bars: 10,
     });
     let oos = run_experiment(&oos_selection, &research("classic-strategy-selection-oos"))
         .expect("策略 kind 应参与同一共享样本外选优路径");
     assert_eq!(oos.succeeded_candidates, 3);
-    let fold = &oos.out_of_sample.expect("requested OOS report").folds[0];
-    let selected = &oos.candidates[fold.selected_ordinal - 1];
-    assert_eq!(fold.selected_strategy_kind, selected.strategy_kind);
-    assert!(fold.selected_strategy_kind.is_some());
+    let folds = &oos.out_of_sample.expect("requested OOS report").folds;
+    assert_eq!(folds.len(), 7);
+    for fold in folds {
+        let selected = &oos.candidates[fold.selected_ordinal - 1];
+        assert_eq!(fold.selected_strategy_kind, selected.strategy_kind);
+        assert!(fold.selected_strategy_kind.is_some());
+    }
 }

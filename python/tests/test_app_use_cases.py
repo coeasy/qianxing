@@ -748,17 +748,18 @@ class AppUseCaseTests(unittest.TestCase):
                 parameter_space=(),
                 strategy_kinds=builtin_names,
                 split_plan=ExperimentSplitPlan(
-                    train_bars=40, test_bars=20, walk_forward=False, step_bars=0
+                    train_bars=40, test_bars=20, walk_forward=True, step_bars=20
                 ),
             )
         )
         self.assertIsNotNone(oos.out_of_sample)
-        fold = oos.out_of_sample.folds[0]
-        self.assertIn(fold.selected_strategy_kind, builtin_names)
-        self.assertEqual(
-            fold.selected_strategy_kind,
-            oos.candidates[fold.selected_ordinal - 1].strategy_kind,
-        )
+        self.assertEqual(len(oos.out_of_sample.folds), 2)
+        for fold in oos.out_of_sample.folds:
+            self.assertIn(fold.selected_strategy_kind, builtin_names)
+            self.assertEqual(
+                fold.selected_strategy_kind,
+                oos.candidates[fold.selected_ordinal - 1].strategy_kind,
+            )
 
     def test_the_shared_use_cases_run_end_to_end_from_python(self):
         self._require()
