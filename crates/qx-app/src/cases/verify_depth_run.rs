@@ -103,6 +103,15 @@ fn verify_inner(outcome: &DepthBacktestOutcome) -> VerificationResult {
         &mut checks,
         &mut mismatches,
     );
+    if let Some(account_id) = outcome.account_id.as_deref() {
+        check_value(
+            &summary,
+            "account_id",
+            account_id,
+            &mut checks,
+            &mut mismatches,
+        );
+    }
     check_value(
         &summary,
         "tier",

@@ -81,6 +81,7 @@ pub(super) fn spec(run_id: &str, root: &Path, tier: &str, levels: usize) -> Dept
         market_spec: None,
         order_policy: None,
         market_making: None,
+        account_id: None,
     }
 }
 
@@ -107,11 +108,17 @@ fn perpetual_market_spec() -> TradingInstrumentSpec {
 #[test]
 fn l1_tick_use_case_runs_the_rust_engine_and_publishes_verifiable_artifacts() {
     let root = super::fixtures::scratch("app-l1-tick");
-    let spec = spec("l1-tick", &root, "l1", 1);
+    let mut spec = spec("l1-tick", &root, "l1", 1);
+    spec.account_id = Some("acct.depth-test".into());
     let context = RunContext::new(CallerCapability::Research, "l1-tick");
     let first = run_depth_backtest(&spec, &context).expect("L1 Tick run");
     let second = run_depth_backtest(&spec, &context).expect("idempotent L1 Tick rerun");
     assert_eq!(first, second);
+    assert_eq!(first.account_id.as_deref(), Some("acct.depth-test"));
+    let summary: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&first.artifacts.summary).expect("summary"))
+            .expect("summary JSON");
+    assert_eq!(summary["account_id"], "acct.depth-test");
     let verified = verify_depth_run(&first, &context).expect("verify L1 artifacts");
     assert!(verified.verified, "{:?}", verified.mismatches);
     std::fs::write(&first.artifacts.summary, "{}").expect("tamper summary");

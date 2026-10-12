@@ -37,6 +37,9 @@ pub struct DepthBacktestSpec {
     /// Optional L2 two-sided quote strategy executed by the shared Rust book engine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub market_making: Option<MarketMakingConfig>,
+    /// Ledger/account ownership for this run. Omitted legacy specs use `app`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
 }
 
 impl DepthBacktestSpec {
@@ -54,6 +57,16 @@ impl DepthBacktestSpec {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
                 "DepthBacktestSpec.run_id 必须是 [A-Za-z0-9._-] 且不超过 128 字符",
+            ));
+        }
+        if self
+            .account_id
+            .as_deref()
+            .is_some_and(|account_id| !is_identity_token(account_id))
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "DepthBacktestSpec.account_id 必须是 [A-Za-z0-9._-] 且不超过 128 字符",
             ));
         }
         for (field, value) in [
@@ -222,6 +235,8 @@ pub struct DepthBacktestOutcome {
     pub return_bps: i32,
     pub max_drawdown_bps: u32,
     pub artifacts: BacktestArtifacts,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
 }
 
 impl DepthBacktestOutcome {

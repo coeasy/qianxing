@@ -1,8 +1,6 @@
-//! 多内置策略（双腿套利）回测链：`run_multi_builtin_backtest`。
-//! CCXT OHLCV 入口交给 `single_strategy.rs::run_builtin_backtest`，与单标的链共用装配。
+//! 多内置策略（双腿套利）回测链：`run_multi_builtin_backtest`。CCXT OHLCV 入口交给 `single_strategy.rs::run_builtin_backtest`，与单标的链共用装配。
 
 use super::*;
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_multi_builtin_backtest(
     strategy_name: &str,
@@ -291,6 +289,7 @@ pub(crate) fn run_multi_builtin_backtest(
     let strategy_id = format!("builtin-{}-multi", kind.name());
     let primary_leg = MultiLegLegFacts {
         label: "primary",
+        account_id: "multi-leg-primary",
         instrument: &primary_frame.instrument,
         targets: &attribution_primary_targets,
         bars: &primary_bars,
@@ -299,6 +298,7 @@ pub(crate) fn run_multi_builtin_backtest(
     };
     let reference_leg = MultiLegLegFacts {
         label: "reference",
+        account_id: "multi-leg-reference",
         instrument: &reference_frame.instrument,
         targets: &attribution_reference_targets,
         bars: &reference_bars,

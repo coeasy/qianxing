@@ -5,22 +5,18 @@ use crate::{
     MultiLegFillModel, RunContext,
 };
 use qx_core::{
-    Fnv1a, InstrumentId, MakerTakerFeeModel, Money, Order, OrderStatus, Quantity, ReplayVerifier,
-    Side, TradingInstrumentSpec,
+    Fnv1a, InstrumentId, Order, OrderStatus, Quantity, ReplayVerifier, Side, TradingInstrumentSpec,
 };
 use qx_datastruct::BarFrame;
 use qx_guanxing::Bar;
 use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, MarketEvent, Strategy, StrategyContext};
-use qx_xingban::{
-    BacktestConfig, BacktestEngine, BarStrategy, BestPriceFillModel, DataTier, FillModel,
-    NextBarOpenFillModel, NoMargin, OneTickSlippageFillModel, VirtualTradingConfig, ZeroLatency,
-};
-use qx_zhenlu::RiskGate;
+use qx_xingban::{BestPriceFillModel, FillModel, NextBarOpenFillModel, OneTickSlippageFillModel};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+mod leg;
 mod targets;
-use targets::ScheduledTargets;
+use leg::{run_leg, LegRunSpec};
 
 const MIN_BARS: usize = 3;
 
@@ -142,7 +138,10 @@ pub(super) fn run_inner(
     let mut strategy_context = StrategyContext {
         strategy_id: strategy_id.clone(),
         strategy_version: strategy_version.clone(),
-        account_id: format!("multi-leg-{}", spec.run_id),
+        account_id: spec
+            .account_id
+            .clone()
+            .unwrap_or_else(|| format!("multi-leg-{}", spec.run_id)),
         venue_id: primary.instrument.venue.to_string(),
         data_fingerprint: data_fingerprint.clone(),
         as_of: primary_bars[0].ts,
@@ -201,11 +200,19 @@ pub(super) fn run_inner(
             }
         }
     }
+    let primary_account_id = spec
+        .account_id
+        .clone()
+        .unwrap_or_else(|| "multi-primary".into());
+    let reference_account_id = spec
+        .account_id
+        .clone()
+        .unwrap_or_else(|| "multi-reference".into());
     let primary_report = run_leg(LegRunSpec {
         instrument: &primary.instrument,
         bars: &primary_bars,
         targets: primary_targets.clone(),
-        label: "primary",
+        account_id: primary_account_id.clone(),
         initial_cash_raw: spec.primary_initial_cash_raw,
         seed: spec.seed,
         currency: &spec.settlement_currency,
@@ -222,7 +229,7 @@ pub(super) fn run_inner(
         instrument: &reference.instrument,
         bars: &reference_bars,
         targets: reference_targets.clone(),
-        label: "reference",
+        account_id: reference_account_id.clone(),
         initial_cash_raw: spec.reference_initial_cash_raw,
         seed: spec.seed,
         currency: &spec.settlement_currency,
@@ -250,6 +257,7 @@ pub(super) fn run_inner(
     }
     let primary_leg = crate::MultiLegLegFacts {
         label: "primary",
+        account_id: &primary_account_id,
         instrument: &primary.instrument,
         targets: &primary_targets,
         bars: &primary_bars,
@@ -258,6 +266,7 @@ pub(super) fn run_inner(
     };
     let reference_leg = crate::MultiLegLegFacts {
         label: "reference",
+        account_id: &reference_account_id,
         instrument: &reference.instrument,
         targets: &reference_targets,
         bars: &reference_bars,
@@ -312,7 +321,7 @@ pub(super) fn run_inner(
         .ok_or_else(|| invalid("多腿组合收益无法表示"))?;
 
     let artifact = PathBuf::from(&spec.output_dir).join(format!("{}.multi-leg.json", spec.run_id));
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "schema_version": 1,
         "run_id": spec.run_id,
         "strategy_id": strategy_id,
@@ -370,6 +379,13 @@ pub(super) fn run_inner(
         "matching": "qx-xingban::BacktestEngine/NextBarOpenFillModel",
         "assumptions": ["each leg uses its own initial cash", "both legs are independently replay-verified", "each venue can declare its own maker/taker rates with shared rates as fallback", "funding is attributed only to derivative legs and is included in combined net return", "market specifications, when provided, are validated against each input and set contract size/margin semantics"],
     });
+    if let Some(account_id) = spec.account_id.as_deref() {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("account_id".into(), serde_json::json!(account_id));
+            object.insert("primary_account_id".into(), serde_json::json!(account_id));
+            object.insert("reference_account_id".into(), serde_json::json!(account_id));
+        }
+    }
     let payload = serde_json::to_string(&payload)
         .map_err(|error| invariant(format!("多腿产物序列化失败: {error}")))?;
     std::fs::create_dir_all(&spec.output_dir)
@@ -398,6 +414,7 @@ pub(super) fn run_inner(
         primary_fills: primary_report.fills.len() as u64,
         reference_fills: reference_report.fills.len() as u64,
         attribution_artifact: artifact_path,
+        account_id: spec.account_id.clone(),
     }))
 }
 
@@ -407,57 +424,6 @@ fn read_frame(path: &str, label: &str) -> Result<BarFrame, AppError> {
     BarFrame::from_json(&payload)
         .map_err(|error| invalid(format!("{label} BarFrame 无效: {error:?}")))
 }
-struct LegRunSpec<'a> {
-    instrument: &'a InstrumentId,
-    bars: &'a [Bar],
-    targets: BTreeMap<u64, i128>,
-    label: &'a str,
-    initial_cash_raw: i128,
-    seed: u64,
-    currency: &'a str,
-    instrument_spec: Option<TradingInstrumentSpec>,
-    maker_fee_bps: i64,
-    taker_fee_bps: i64,
-    fill_model: MultiLegFillModel,
-    cancellation: Option<&'a CancellationToken>,
-}
-fn run_leg(input: LegRunSpec<'_>) -> Result<Option<qx_xingban::BacktestReport>, AppError> {
-    let mut strategy = ScheduledTargets {
-        instrument: input.instrument.clone(),
-        targets: input.targets,
-        account_id: format!("multi-{}", input.label),
-    };
-    let config = BacktestConfig {
-        instrument: input.instrument.clone(),
-        instrument_spec: input.instrument_spec.clone(),
-        account_id: strategy.account_id.clone(),
-        currency: input.currency.into(),
-        initial_cash: Money::from_raw(input.initial_cash_raw),
-        multiplier: 1,
-        fill: fill_model_for(input.fill_model, input.instrument_spec.as_ref())?,
-        fee: Box::new(MakerTakerFeeModel {
-            maker_bp: input.maker_fee_bps,
-            taker_bp: input.taker_fee_bps,
-        }),
-        data_tier: DataTier::Bar,
-        latency: Box::new(ZeroLatency),
-        margin: Box::new(NoMargin),
-        seed: input.seed,
-        risk: RiskGate::conservative_default(),
-        virtual_trading: VirtualTradingConfig::default(),
-    };
-    let engine = BacktestEngine::new(config);
-    match input.cancellation {
-        Some(token) => engine
-            .run_with_cancel(input.bars, &mut strategy, || token.is_cancelled())
-            .map_err(|error| AppError::from_qx_error(&error)),
-        None => engine
-            .run(input.bars, &mut strategy)
-            .map(Some)
-            .map_err(|error| AppError::from_qx_error(&error)),
-    }
-}
-
 fn invalid(message: impl std::fmt::Display) -> AppError {
     AppError::new(
         AppErrorCategory::InvalidInput,

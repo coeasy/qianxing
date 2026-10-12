@@ -30,6 +30,7 @@ pub struct MultiLegSignalBucket {
 /// 单腿归因输入：目标仓位时间序列、Bar、产品规格和该腿的成交报告。
 pub struct MultiLegLegFacts<'a> {
     pub label: &'static str,
+    pub account_id: &'a str,
     pub instrument: &'a InstrumentId,
     pub targets: &'a BTreeMap<u64, i128>,
     pub bars: &'a [Bar],
@@ -378,7 +379,7 @@ pub fn multi_leg_group_attributions(
                 limit: None,
                 status: OrderStatus::PendingSubmit,
                 filled: Quantity::ZERO,
-                account_id: format!("multi-leg-{}", leg.label),
+                account_id: leg.account_id.to_string(),
                 trace: None,
                 policy: None,
             });

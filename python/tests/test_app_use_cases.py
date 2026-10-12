@@ -990,6 +990,7 @@ class AppUseCaseTests(unittest.TestCase):
             "queue_position_bps": 0,
             "market_impact_bps": 0,
             "output_dir": str(self.output_dir / "depth-runs"),
+            "account_id": "acct.python-tick",
             "strategy": {
                 "kind": "sma_cross",
                 "strategy_id": "py-tick-sma",
@@ -1000,9 +1001,12 @@ class AppUseCaseTests(unittest.TestCase):
         }
         outcome = self.bridge.run_depth_backtest(payload)
         self.assertEqual(outcome["tier"], "l1")
+        self.assertEqual(outcome["account_id"], "acct.python-tick")
         self.assertEqual(outcome["equity_points"], 48)
         self.assertGreater(outcome["fills"], 0)
         self.assertTrue(Path(outcome["artifacts"]["run_manifest"]).is_file())
+        depth_summary = json.loads(Path(outcome["artifacts"]["summary"]).read_text(encoding="utf-8"))
+        self.assertEqual(depth_summary["account_id"], "acct.python-tick")
 
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import (
@@ -1061,6 +1065,7 @@ class AppUseCaseTests(unittest.TestCase):
                 settlement_currency="USDT",
                 initial_cash_raw=1_000_000_000_000_000,
                 output_dir=str(self.output_dir / "typed-depth-runs"),
+                account_id="acct.typed-tick",
                 strategy=BuiltinStrategySpec(
                     kind="sma_cross",
                     strategy_id="py-typed-tick-sma",
@@ -1088,6 +1093,7 @@ class AppUseCaseTests(unittest.TestCase):
             )
         )
         self.assertEqual(typed.tier, "l1")
+        self.assertEqual(typed.account_id, "acct.typed-tick")
         self.assertEqual(typed.equity_points, 48)
         typed_summary = json.loads(Path(typed.artifacts["summary"]).read_text(encoding="utf-8"))
         self.assertEqual(typed_summary["market_spec"]["product"], "perpetual")
@@ -1223,6 +1229,7 @@ class AppUseCaseTests(unittest.TestCase):
             "reference_initial_cash_raw": 1_000_000_000_000_000,
             "seed": 7,
             "output_dir": str(self.output_dir / "multi-leg"),
+            "account_id": "acct.multi-python",
             "strategy": {
                 "kind": "pairs_arbitrage",
                 "strategy_id": "py-pairs",
@@ -1236,6 +1243,7 @@ class AppUseCaseTests(unittest.TestCase):
         first = self.bridge.run_multi_leg_backtest(payload)
         second = self.bridge.run_multi_leg_backtest(payload)
         self.assertEqual(first, second)
+        self.assertEqual(first["account_id"], "acct.multi-python")
         self.assertGreater(first["primary_fills"], 0)
         self.assertGreater(first["reference_fills"], 0)
         self.assertTrue(Path(first["attribution_artifact"]).is_file())
@@ -1266,6 +1274,7 @@ class AppUseCaseTests(unittest.TestCase):
             primary_initial_cash_raw=1_000_000_000_000_000,
             reference_initial_cash_raw=1_000_000_000_000_000,
             output_dir=str(self.output_dir / "typed-multi-leg"),
+            account_id="acct.typed-pairs",
             seed=7,
             strategy=BuiltinStrategySpec(
                 kind="pairs_arbitrage",
@@ -1311,6 +1320,7 @@ class AppUseCaseTests(unittest.TestCase):
             fill_model="one_tick_slippage",
         )
         typed_outcome = run_multi_leg_backtest(typed_spec)
+        self.assertEqual(typed_outcome.account_id, "acct.typed-pairs")
         self.assertGreater(typed_outcome.primary_fills, 0)
         typed_handle = start_multi_leg_backtest(
             MultiLegBacktestSpec(

@@ -50,6 +50,9 @@ pub struct MultiLegBacktestSpec {
     pub funding_bps: i64,
     #[serde(default)]
     pub fill_model: MultiLegFillModel,
+    /// Optional shared ownership for both legs. Omitted preserves legacy leg identities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
 }
 
 fn default_maker_fee_bps() -> i64 {
@@ -94,6 +97,7 @@ impl MultiLegBacktestSpec {
             reference_taker_fee_bps: None,
             funding_bps: 0,
             fill_model: MultiLegFillModel::default(),
+            account_id: None,
         }
     }
 
@@ -111,6 +115,16 @@ impl MultiLegBacktestSpec {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
                 "MultiLegBacktestSpec.run_id 必须是 [A-Za-z0-9._-] 且不超过 128 字符",
+            ));
+        }
+        if self
+            .account_id
+            .as_deref()
+            .is_some_and(|account_id| !is_identity_token(account_id))
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "MultiLegBacktestSpec.account_id 必须是 [A-Za-z0-9._-] 且不超过 128 字符",
             ));
         }
         for (field, value) in [
@@ -232,6 +246,8 @@ pub struct MultiLegBacktestOutcome {
     pub primary_fills: u64,
     pub reference_fills: u64,
     pub attribution_artifact: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
 }
 
 impl MultiLegBacktestOutcome {

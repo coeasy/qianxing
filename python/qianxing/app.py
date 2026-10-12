@@ -628,6 +628,7 @@ class DepthBacktestSpec:
     market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
     order_policy: OrderPolicy | dict[str, Any] | None = None
     market_making: MarketMakingSpec | dict[str, int] | None = None
+    account_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {**asdict(self), "strategy": self.strategy.to_dict()}
@@ -635,7 +636,7 @@ class DepthBacktestSpec:
             payload["market_making"] = self.market_making.to_dict()
         # Mirror Rust's skip_serializing_if on these optional v1 extensions so
         # legacy requests keep their historical JSON shape across SDKs.
-        for optional_field in ("market_spec", "order_policy", "market_making"):
+        for optional_field in ("market_spec", "order_policy", "market_making", "account_id"):
             if payload[optional_field] is None:
                 del payload[optional_field]
         return payload
@@ -653,6 +654,7 @@ class DepthBacktestOutcome:
     return_bps: int
     max_drawdown_bps: int
     artifacts: dict[str, str]
+    account_id: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "DepthBacktestOutcome":
@@ -774,9 +776,13 @@ class MultiLegBacktestSpec:
     funding_bps: int = 0
     fill_model: Literal["next_bar_open", "best_price", "one_tick_slippage"] = "next_bar_open"
     schema_version: int = 1
+    account_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {**asdict(self), "strategy": self.strategy.to_dict()}
+        payload = {**asdict(self), "strategy": self.strategy.to_dict()}
+        if self.account_id is None:
+            payload.pop("account_id")
+        return payload
 
 
 @dataclass(frozen=True)
@@ -790,6 +796,7 @@ class MultiLegBacktestOutcome:
     primary_fills: int
     reference_fills: int
     attribution_artifact: str
+    account_id: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MultiLegBacktestOutcome":

@@ -26,7 +26,7 @@ fn multi_leg_backtest_runs_shared_strategy_and_matching_and_is_idempotent() {
         .into_owned();
     let mut strategy = BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "pair-test");
     strategy.quantity_raw = qx_core::SCALE;
-    let spec = MultiLegBacktestSpec::new(
+    let mut spec = MultiLegBacktestSpec::new(
         "pair-run",
         primary,
         reference,
@@ -37,15 +37,18 @@ fn multi_leg_backtest_runs_shared_strategy_and_matching_and_is_idempotent() {
         root.join("out").to_string_lossy(),
         strategy,
     );
+    spec.account_id = Some("acct.pair-test".into());
     let first = run_multi_leg_backtest(&spec, &context("pair-run")).expect("shared multi-leg run");
     let second = run_multi_leg_backtest(&spec, &context("pair-run")).expect("idempotent rerun");
     assert_eq!(first, second);
+    assert_eq!(first.account_id.as_deref(), Some("acct.pair-test"));
     assert_ne!(first.primary_result_hash, first.reference_result_hash);
     assert!(first.primary_fills > 0 && first.reference_fills > 0);
     let artifact =
         std::fs::read_to_string(&first.attribution_artifact).expect("multi-leg artifact");
     assert!(artifact.contains("pending_reconcile"));
     assert!(artifact.contains("replay_ledger_entries"));
+    assert!(artifact.contains("acct.pair-test"));
 }
 
 #[test]

@@ -22,7 +22,7 @@ use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-const ACCOUNT_ID: &str = "app";
+const DEFAULT_ACCOUNT_ID: &str = "app";
 
 /// Execute a versioned L1/L2 run through the existing Rust engines and persist
 /// the same four evidence artifacts used by Bar backtests.
@@ -131,6 +131,11 @@ pub(super) fn run_inner(
         format!("{:016x}", hash.finish())
     };
     let strategy_id = spec.strategy.strategy_id.clone();
+    let account_id = spec
+        .account_id
+        .as_deref()
+        .unwrap_or(DEFAULT_ACCOUNT_ID)
+        .to_string();
     let strategy_version = format!("{}-v1", strategy_id);
     let risk = RiskGate::conservative_default();
     let risk_rule_set_version = risk.rule_set().version().to_string();
@@ -160,7 +165,7 @@ pub(super) fn run_inner(
     let strategy_context = StrategyContext {
         strategy_id: strategy_id.clone(),
         strategy_version: strategy_version.clone(),
-        account_id: ACCOUNT_ID.into(),
+        account_id: account_id.clone(),
         venue_id: instrument.venue.to_string(),
         data_fingerprint: data_fingerprint.clone(),
         as_of: frame.snapshots[0].ts,
@@ -177,7 +182,7 @@ pub(super) fn run_inner(
             let ticks = depth_frame_to_ticks(&frame).map_err(invalid_input)?;
             let engine = TickBacktestEngine::new(TickBacktestConfig {
                 instrument: instrument.clone(),
-                account_id: ACCOUNT_ID.into(),
+                account_id: account_id.clone(),
                 currency: spec.settlement_currency.clone(),
                 initial_cash: Money::from_raw(spec.initial_cash_raw),
                 fee_bps: spec.fee_bps,
@@ -199,7 +204,7 @@ pub(super) fn run_inner(
         "l2" => {
             let engine = OrderBookBacktestEngine::new(OrderBookBacktestConfig {
                 instrument: instrument.clone(),
-                account_id: ACCOUNT_ID.into(),
+                account_id: account_id.clone(),
                 currency: spec.settlement_currency.clone(),
                 initial_cash: Money::from_raw(spec.initial_cash_raw),
                 fee_bps: spec.fee_bps,
@@ -212,7 +217,7 @@ pub(super) fn run_inner(
                 let mut maker = MarketMakingStrategy::new(
                     config,
                     instrument.clone(),
-                    ACCOUNT_ID,
+                    &account_id,
                     strategy_id.clone(),
                     spec.order_policy,
                 )
@@ -310,7 +315,7 @@ pub(super) fn run_inner(
     std::fs::create_dir_all(&spec.output_dir)
         .map_err(|error| AppError::from_io(&format!("创建产物目录 {}", spec.output_dir), &error))?;
 
-    let summary = serde_json::json!({
+    let mut summary = serde_json::json!({
         "schema_version": 1,
         "run_id": spec.run_id,
         "instrument": instrument.to_string(),
@@ -338,6 +343,11 @@ pub(super) fn run_inner(
         "model_descriptors": report.model_descriptors,
         "assumptions": report.assumptions,
     });
+    if spec.account_id.is_some() {
+        if let Some(object) = summary.as_object_mut() {
+            object.insert("account_id".into(), serde_json::json!(account_id));
+        }
+    }
     let summary = serde_json::to_string(&summary).map_err(|error| {
         AppError::new(
             AppErrorCategory::InternalInvariant,
@@ -369,6 +379,7 @@ pub(super) fn run_inner(
         return_bps: report.return_bps,
         max_drawdown_bps: report.max_drawdown_bps,
         artifacts,
+        account_id: spec.account_id.clone(),
     }))
 }
 

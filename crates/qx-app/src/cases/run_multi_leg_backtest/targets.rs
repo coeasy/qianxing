@@ -1,4 +1,5 @@
 use super::*;
+use qx_xingban::BarStrategy;
 
 pub(super) struct ScheduledTargets {
     pub(super) instrument: InstrumentId,
