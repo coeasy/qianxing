@@ -164,6 +164,7 @@ class TopLevelStabilityTest(unittest.TestCase):
             ExperimentParameterSpace,
             ExperimentSplitPlan,
             InstrumentId,
+            MakerTakerFeeSchedule,
             RunExperimentResult,
             RunExperimentSpec,
             TradingInstrumentSpec,
@@ -204,6 +205,21 @@ class TopLevelStabilityTest(unittest.TestCase):
             {"symbol": "BTCUSDT", "venue": "BINANCE"},
         )
         self.assertNotIn("market_spec", base.to_dict())
+        self.assertEqual(
+            MakerTakerFeeSchedule(maker_fee_bps=11, taker_fee_bps=37).to_dict(),
+            {"maker_fee_bps": 11, "taker_fee_bps": 37},
+        )
+        fee_aware = BacktestSpec(
+            **{
+                **base.__dict__,
+                "fee_schedule": MakerTakerFeeSchedule(maker_fee_bps=11, taker_fee_bps=37),
+            }
+        )
+        self.assertEqual(
+            fee_aware.to_dict()["fee_schedule"],
+            {"maker_fee_bps": 11, "taker_fee_bps": 37},
+        )
+        self.assertNotIn("fee_schedule", base.to_dict())
         margin_sized = BuiltinStrategySpec(
             kind="sma_cross", strategy_id="margin-sma", target_available_margin_bps=2_500
         )

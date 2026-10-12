@@ -17,7 +17,7 @@
 //! 而**拒绝**会让调用方当场知道自己的身份串不合法。
 
 use crate::error::{AppError, AppErrorCategory};
-use qx_core::TradingInstrumentSpec;
+use qx_core::{MakerTakerFeeSchedule, TradingInstrumentSpec};
 use qx_strategy::BuiltinStrategyKind;
 use serde::{Deserialize, Serialize};
 
@@ -310,6 +310,9 @@ pub struct BacktestSpec {
     /// Omitted legacy specs keep their historical compatibility semantics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub market_spec: Option<TradingInstrumentSpec>,
+    /// Frozen maker/taker schedule used by the shared Rust matching and accounting path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fee_schedule: Option<MakerTakerFeeSchedule>,
     pub strategy: BuiltinStrategySpec,
     /// Optional position-level protective exits, evaluated on completed bars
     /// and routed through the same OMS/risk/matching path as strategy orders.
@@ -341,6 +344,7 @@ impl BacktestSpec {
             output_dir: output_dir.into(),
             account_id: None,
             market_spec: None,
+            fee_schedule: None,
             strategy,
             protective_exit: None,
         }
@@ -423,6 +427,16 @@ impl BacktestSpec {
                     "BacktestSpec.market_spec.settlement_currency 必须与 settlement_currency 一致",
                 ));
             }
+            if self.fee_schedule.is_none() {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "指定 market_spec 时必须显式提供 fee_schedule，禁止静默套用默认费率",
+                ));
+            }
+        }
+        if let Some(fees) = self.fee_schedule {
+            fees.validate()
+                .map_err(|error| AppError::from_qx_error(&error))?;
         }
         if let Some(policy) = self.protective_exit {
             policy.validate()?;

@@ -11,6 +11,7 @@
 //! `contract_size / price`。
 
 use crate::{Side, SCALE};
+use serde::{Deserialize, Serialize};
 
 /// 名义额 = qty * price / SCALE（两者均为定点原始值）。
 pub fn notional(qty: i128, price: i128) -> i128 {
@@ -72,6 +73,43 @@ pub struct MakerTakerFeeModel {
 /// 都从这里取，否则"同一条成交在两个执行平面上费用不同"只会靠人工审计发现。
 pub const DEFAULT_MAKER_BP: i64 = 2;
 pub const DEFAULT_TAKER_BP: i64 = 5;
+
+/// Serializable maker/taker rates used to build the shared execution fee model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MakerTakerFeeSchedule {
+    pub maker_fee_bps: i64,
+    pub taker_fee_bps: i64,
+}
+
+impl Default for MakerTakerFeeSchedule {
+    fn default() -> Self {
+        Self {
+            maker_fee_bps: DEFAULT_MAKER_BP,
+            taker_fee_bps: DEFAULT_TAKER_BP,
+        }
+    }
+}
+
+impl MakerTakerFeeSchedule {
+    pub fn validate(&self) -> crate::QxResult<()> {
+        if !(0..=10_000).contains(&self.maker_fee_bps)
+            || !(0..=10_000).contains(&self.taker_fee_bps)
+        {
+            return Err(crate::QxError::BusinessViolation(
+                "MakerTakerFeeSchedule 费率必须在 0..=10000 bps".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn model(self) -> MakerTakerFeeModel {
+        MakerTakerFeeModel {
+            maker_bp: self.maker_fee_bps,
+            taker_bp: self.taker_fee_bps,
+        }
+    }
+}
 
 impl MakerTakerFeeModel {
     /// 未给成本配置时的默认费率模型。
@@ -197,5 +235,24 @@ mod tests {
             a.descriptor(),
             "AShareFee@v1[params=commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1]"
         );
+    }
+
+    #[test]
+    fn serializable_fee_schedule_validates_and_builds_the_shared_model() {
+        let schedule = MakerTakerFeeSchedule {
+            maker_fee_bps: 13,
+            taker_fee_bps: 41,
+        };
+        schedule.validate().unwrap();
+        assert_eq!(
+            schedule.model().descriptor(),
+            "MakerTaker@v1[params=maker_bp=13;taker_bp=41]"
+        );
+        assert!(MakerTakerFeeSchedule {
+            maker_fee_bps: 0,
+            taker_fee_bps: 10_001,
+        }
+        .validate()
+        .is_err());
     }
 }

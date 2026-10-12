@@ -14,10 +14,10 @@ use qx_sdk::{
     AlgoExecutionMethod, AlgoExecutionSpec, AlgoExecutionState, AlgoExecutionStatus,
     AlgoParentOrder, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability,
     Client, DatasetSpec, EventAppender, ExecutionEvent, ExecutionEventEnvelope, ExecutionGateway,
-    ExperimentParameterSpace, ExperimentSplitPlan, InstrumentId, Order, OrderStatus, OrderStore,
-    Price, Quantity, RiskParityAssetSpec, RiskParitySpec, RiskPort, RiskVerdict, RunExperimentSpec,
-    RunStatus, Side, VenuePort, VwapVolumeBucket, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
-    BACKTEST_SPEC_SCHEMA_VERSION,
+    ExperimentParameterSpace, ExperimentSplitPlan, InstrumentId, MakerTakerFeeSchedule, Order,
+    OrderStatus, OrderStore, Price, Quantity, RiskParityAssetSpec, RiskParitySpec, RiskPort,
+    RiskVerdict, RunExperimentSpec, RunStatus, Side, VenuePort, VwapVolumeBucket,
+    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
 
@@ -143,6 +143,28 @@ fn an_independent_consumer_uses_shared_fixed_notional_sizing() {
     assert!(quantities
         .iter()
         .all(|quantity| *quantity > 0 && *quantity != 1_000_000_000));
+    assert!(client.verify_run(&outcome).unwrap().verified);
+}
+
+#[test]
+fn an_independent_consumer_configures_fees_through_the_stable_facade() {
+    let output_dir = scratch("fee-schedule");
+    let mut backtest = spec("sdk-fee-schedule", &output_dir);
+    backtest.fee_schedule = Some(MakerTakerFeeSchedule {
+        maker_fee_bps: 13,
+        taker_fee_bps: 41,
+    });
+    let client = Client::new(CallerCapability::Research, "sdk-fee-schedule");
+    let outcome = client
+        .run_backtest(&backtest)
+        .expect("explicit fee schedule");
+    let summary: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&outcome.artifacts.summary).unwrap()).unwrap();
+    assert_eq!(
+        summary["fee_model"],
+        "MakerTaker@v1[params=maker_bp=13;taker_bp=41]"
+    );
+    assert!(summary["fees_raw"].as_i64().unwrap() > 0);
     assert!(client.verify_run(&outcome).unwrap().verified);
 }
 

@@ -215,6 +215,17 @@ class ProtectiveExitSpec:
 
 
 @dataclass(frozen=True)
+class MakerTakerFeeSchedule:
+    """Maker/taker rates, in basis points, consumed by the shared Rust fee model."""
+
+    maker_fee_bps: int
+    taker_fee_bps: int
+
+    def to_dict(self) -> dict[str, int]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class BacktestSpec:
     run_id: str
     instrument: str
@@ -228,6 +239,7 @@ class BacktestSpec:
     protective_exit: ProtectiveExitSpec | dict[str, Any] | None = None
     account_id: str | None = None
     market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
+    fee_schedule: MakerTakerFeeSchedule | dict[str, int] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -244,6 +256,10 @@ class BacktestSpec:
             value.pop("market_spec")
         elif isinstance(self.market_spec, TradingInstrumentSpec):
             value["market_spec"] = self.market_spec.to_dict()
+        if self.fee_schedule is None:
+            value.pop("fee_schedule")
+        elif isinstance(self.fee_schedule, MakerTakerFeeSchedule):
+            value["fee_schedule"] = self.fee_schedule.to_dict()
         return value
 
 

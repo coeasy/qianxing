@@ -38,8 +38,8 @@ pub use self::event::{
     EventKind, EventMetadata, FundingRateSnapshot, Priority, EVENT_METADATA_SCHEMA_VERSION,
 };
 pub use self::fee::{
-    bp_amount, notional, AShareFeeModel, FeeModel, MakerTakerFeeModel, ZeroFeeModel,
-    DEFAULT_MAKER_BP, DEFAULT_TAKER_BP,
+    bp_amount, notional, AShareFeeModel, FeeModel, MakerTakerFeeModel, MakerTakerFeeSchedule,
+    ZeroFeeModel, DEFAULT_MAKER_BP, DEFAULT_TAKER_BP,
 };
 pub use self::file_lock::{
     decide_lock, lock_age, lock_contention_message, FileLock, LockDecision, LockError, LockPolicy,

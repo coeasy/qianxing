@@ -2,10 +2,8 @@
 //!
 //! 这一族守两件事：
 //!
-//! 1. **严格性**——多一个键、schema 版本不对、身份串带路径分隔符，都必须当场拒，
-//!    而不是"尽力而为"地猜。静默忽略一个拼错的字段名，等于让用户以为设上了。
-//! 2. **稳定性**——每份 spec 与裁决的**键集**是三个入口逐字节比对的载体，
-//!    加键删键都要有人同时改三侧，所以键集在这里被钉住。
+//! 1. **严格性**——多一个键、schema 版本不对、身份串带路径分隔符，都必须当场拒；静默忽略拼错字段会误导调用方。
+//! 2. **稳定性**——三个入口逐字节比对 spec 键集；增删字段必须同时改三侧。
 
 use crate::error::AppErrorCategory;
 use crate::spec::{
@@ -130,6 +128,23 @@ fn bar_market_spec_must_match_the_run_instrument_and_settlement_currency() {
         .validate()
         .expect_err("市场规格结算币种不一致必须前置拒绝");
     assert!(error.message().contains("settlement_currency 必须"));
+
+    spec.market_spec = Some(market("BTCUSDT.BINANCE", "USDT"));
+    let error = spec
+        .validate()
+        .expect_err("显式市场规格不得静默套用默认费率");
+    assert!(error.message().contains("必须显式提供 fee_schedule"));
+}
+
+#[test]
+fn bar_fee_schedule_rejects_rates_outside_basis_point_bounds() {
+    let mut spec = backtest_spec("run-invalid-fees", "bars.json", &scratch("invalid-fees"));
+    spec.fee_schedule = Some(qx_core::MakerTakerFeeSchedule {
+        maker_fee_bps: 10_001,
+        taker_fee_bps: 5,
+    });
+    let error = spec.validate().expect_err("超范围费用必须在回测前拒绝");
+    assert!(error.message().contains("0..=10000 bps"));
 }
 
 #[test]

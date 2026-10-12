@@ -30,6 +30,7 @@ fn frozen_market_spec_is_used_by_cli_http_and_python_bar_runs() {
     ))
     .expect("backtest spec json");
     request["market_spec"] = market_spec(1_000);
+    request["fee_schedule"] = json!({"maker_fee_bps": 11, "taker_fee_bps": 37});
     let spec = request.to_string();
     let cli = via_cli(&spec, &root);
     let (status, http) = via_http("/app/backtest", &spec);
@@ -42,6 +43,15 @@ fn frozen_market_spec_is_used_by_cli_http_and_python_bar_runs() {
         .as_str()
         .unwrap()
         .starts_with("inline-market-spec:"));
+    let summary: Value = serde_json::from_slice(
+        &std::fs::read(cli["artifacts"]["summary"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        summary["fee_model"],
+        "MakerTaker@v1[params=maker_bp=11;taker_bp=37]"
+    );
+    assert!(summary["fees_raw"].as_i64().unwrap() > 0);
 
     match python_native::via_python(&repo_root(), "run_backtest", &spec) {
         None => eprintln!("[skip] Python leg: PyO3 extension is not built"),
@@ -61,6 +71,7 @@ fn backtest_refuses_simulated_fills_outside_the_frozen_market_tick() {
     ))
     .expect("backtest spec json");
     request["market_spec"] = market_spec(999_999_937);
+    request["fee_schedule"] = json!({"maker_fee_bps": 2, "taker_fee_bps": 5});
     let spec = request.to_string();
 
     let spec_path = root.join("spec.json");

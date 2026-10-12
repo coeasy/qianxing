@@ -43,8 +43,7 @@ use std::collections::BTreeMap;
 /// Historical default retained for callers whose spec predates explicit account ownership.
 const DEFAULT_ACCOUNT_ID: &str = "app";
 
-/// 本用例**不读** market spec（T2-3 才接入规格与保证金），所以这一格写的是"没有规格"
-/// 这件事本身。写一个像规格名的字符串（`"v1"`）会让读者以为查过规格了。
+/// 只用于未声明 market spec 的历史兼容请求；带规格的运行绑定其规范化内容摘要。
 const NO_INSTRUMENT_SPEC: &str = "instrument-spec:none";
 
 /// 跑一次 Bar 回测并落四份产物。
@@ -143,8 +142,11 @@ pub(super) fn run_backtest_inner(
 
     let risk = RiskGate::conservative_default();
     let risk_rule_set_version = risk.rule_set().version().to_string();
-    let fee = MakerTakerFeeModel::default_maker_taker();
-    let fee_model = fee.name().to_string();
+    let fee = spec
+        .fee_schedule
+        .map(|schedule| schedule.model())
+        .unwrap_or_else(MakerTakerFeeModel::default_maker_taker);
+    let fee_model = fee.descriptor();
     let fill_model = NextBarOpenFillModel.name().to_string();
     let margin: Box<dyn qx_xingban::MarginRule> = match &spec.market_spec {
         Some(market) if market.product.supports_leverage() => Box::new(LeverageMargin {

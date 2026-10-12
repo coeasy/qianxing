@@ -72,10 +72,10 @@ pub use qx_provider::ProviderCapability;
 // 而 qx-app 没有重导出它（见 Cargo.toml 里的说明）。
 pub use qx_app::{
     AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, BacktestSpec, BuiltinStrategySpec,
-    CompareRunsSpec, DatasetSpec, DepthBacktestSpec, MultiLegBacktestSpec, MultiLegFillModel,
-    RiskParityAssetSpec, RiskParityResult, RiskParitySpec, RunDepthExperimentSpec,
-    RunExperimentSpec, RunMultiLegExperimentSpec, TradeControlSpec, TradeWorkflow,
-    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
+    CompareRunsSpec, DatasetSpec, DepthBacktestSpec, MakerTakerFeeSchedule, MultiLegBacktestSpec,
+    MultiLegFillModel, RiskParityAssetSpec, RiskParityResult, RiskParitySpec,
+    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec, TradeControlSpec,
+    TradeWorkflow, ALGO_EXECUTION_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
     RISK_PARITY_SPEC_SCHEMA_VERSION,
 };
 pub use qx_strategy::BuiltinStrategyKind;
