@@ -26,12 +26,13 @@
 
 use crate::ApiResponse;
 use qx_app::{
-    compare_runs, plan_algo_execution, plan_risk_parity, run_backtest, run_depth_backtest,
-    run_depth_experiment, run_experiment, run_multi_leg_backtest, run_multi_leg_experiment,
-    validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec, AppError, AppErrorCategory,
-    BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec,
-    DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestSpec, RiskParitySpec, RunContext,
-    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
+    compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
+    run_depth_backtest, run_depth_experiment, run_experiment, run_multi_leg_backtest,
+    run_multi_leg_experiment, validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec,
+    AppError, AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability,
+    CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec,
+    MultiLegBacktestSpec, RiskParitySpec, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
+    RunMultiLegExperimentSpec,
 };
 use std::path::PathBuf;
 
@@ -169,6 +170,14 @@ pub(crate) fn post_plan_risk_parity(body: &str) -> ApiResponse {
 pub(crate) fn post_plan_algo_execution(body: &str) -> ApiResponse {
     let result = AlgoExecutionSpec::from_json(body).and_then(|spec| {
         plan_algo_execution(&spec, &context(&spec.parent_id)).and_then(|plan| plan.to_json())
+    });
+    respond(result)
+}
+
+pub(crate) fn post_plan_capital_allocation(body: &str) -> ApiResponse {
+    let result = CapitalAllocationSpec::from_json(body).and_then(|spec| {
+        plan_capital_allocation(&spec, &context(&spec.portfolio_id))
+            .and_then(|result| result.to_json())
     });
     respond(result)
 }

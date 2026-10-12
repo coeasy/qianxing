@@ -81,12 +81,13 @@ pub use qx_core::MakerTakerFeeSchedule;
 pub use run_handle::{RunEvent, RunEventKind, RunHandle, RunStatus, DEFAULT_WAIT_TIMEOUT};
 pub use spec::{
     AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, BacktestArtifacts, BacktestOutcome,
-    BacktestSpec, BuiltinStrategySpec, CapitalAllocationResult, CapitalAllocationSpec, DatasetSpec,
-    DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestOutcome,
-    MultiLegBacktestSpec, MultiLegFillModel, ProtectiveExitSpec, RiskParityAssetSpec,
-    RiskParityResult, RiskParitySpec, VerificationResult, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
-    BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
-    MIN_BACKTEST_BARS, MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
+    BacktestSpec, BuiltinStrategySpec, CapitalAllocationAccount, CapitalAllocationRequest,
+    CapitalAllocationResult, CapitalAllocationSpec, DatasetSpec, DatasetVerdict,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec,
+    MultiLegFillModel, ProtectiveExitSpec, RiskParityAssetSpec, RiskParityResult, RiskParitySpec,
+    VerificationResult, ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
+    DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION, MIN_BACKTEST_BARS,
+    MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
     RISK_PARITY_SPEC_SCHEMA_VERSION,
 };
 pub use trade_facts::{rejection_count, rejection_facts, rejection_facts_line, spread_group_id};

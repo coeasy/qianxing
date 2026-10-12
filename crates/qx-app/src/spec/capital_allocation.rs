@@ -1,6 +1,8 @@
 use super::{is_identity_token, AppError, AppErrorCategory};
 use serde::{Deserialize, Serialize};
 
+pub use qx_zhenlu::portfolio::{CapitalAllocationAccount, CapitalAllocationRequest};
+
 pub const CAPITAL_ALLOCATION_SPEC_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -9,8 +11,8 @@ pub struct CapitalAllocationSpec {
     pub schema_version: u32,
     pub portfolio_id: String,
     pub portfolio_budget_raw: i128,
-    pub accounts: Vec<qx_zhenlu::portfolio::CapitalAllocationAccount>,
-    pub requests: Vec<qx_zhenlu::portfolio::CapitalAllocationRequest>,
+    pub accounts: Vec<CapitalAllocationAccount>,
+    pub requests: Vec<CapitalAllocationRequest>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -8,12 +8,13 @@
 //! 就进了 semver 承诺。一个持有 `RunContext` 的普通结构体把承诺面压到最小。
 
 use qx_app::{
-    compare_runs, plan_algo_execution, run_backtest, run_depth_backtest, run_depth_experiment,
-    run_experiment, run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset,
-    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
-    CallerCapability, CompareRunsResult, CompareRunsSpec, DatasetSpec, DatasetVerdict,
-    DepthBacktestOutcome, DepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec,
-    RiskParityResult, RiskParitySpec, RunContext, RunDepthExperimentResult, RunDepthExperimentSpec,
+    compare_runs, plan_algo_execution, plan_capital_allocation, run_backtest, run_depth_backtest,
+    run_depth_experiment, run_experiment, run_multi_leg_backtest, run_multi_leg_experiment,
+    validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome,
+    BacktestSpec, CallerCapability, CapitalAllocationResult, CapitalAllocationSpec,
+    CompareRunsResult, CompareRunsSpec, DatasetSpec, DatasetVerdict, DepthBacktestOutcome,
+    DepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec, RiskParityResult,
+    RiskParitySpec, RunContext, RunDepthExperimentResult, RunDepthExperimentSpec,
     RunExperimentResult, RunExperimentSpec, RunHandle, RunMultiLegExperimentResult,
     RunMultiLegExperimentSpec, VerificationResult,
 };
@@ -61,6 +62,14 @@ impl Client {
         spec: &AlgoExecutionSpec,
     ) -> Result<qx_app::AlgoExecutionPlan, AppError> {
         plan_algo_execution(spec, &self.context)
+    }
+
+    /// Plan deterministic portfolio cash allocations without submitting orders.
+    pub fn plan_capital_allocation(
+        &self,
+        spec: &CapitalAllocationSpec,
+    ) -> Result<CapitalAllocationResult, AppError> {
+        plan_capital_allocation(spec, &self.context)
     }
 
     /// 让门面把自己的构建身份带进来（默认是包版本）。

@@ -63,6 +63,11 @@ int main() {
     assert(observed_path == "/app/plan-risk-parity");
     assert(observed_body == spec);
 
+    const auto capital_allocation = client.plan_capital_allocation(spec);
+    assert(capital_allocation.ok());
+    assert(observed_path == "/app/plan-capital-allocation");
+    assert(observed_body == spec);
+
     const auto multi_leg = client.run_multi_leg_backtest(spec);
     assert(multi_leg.ok());
     assert(observed_path == "/app/multi-leg-backtest");

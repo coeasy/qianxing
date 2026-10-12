@@ -35,6 +35,7 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "compare_runs": "/app/compare-runs",
     "plan_risk_parity": "/app/plan-risk-parity",
     "plan_algo_execution": "/app/plan-algo-execution",
+    "plan_capital_allocation": "/app/plan-capital-allocation",
     "paper_algo_start": "/app/paper/algo-executions/start",
     "paper_algo_get": "/app/paper/algo-executions/get",
     "paper_algo_cancel": "/app/paper/algo-executions/cancel",
@@ -1449,6 +1450,9 @@ class AppClient(_HttpJsonClient):
 
     def plan_algo_execution(self, spec: dict[str, Any]) -> dict[str, Any]:
         return self._post(APP_ROUTE_TEMPLATES["plan_algo_execution"], spec)
+
+    def plan_capital_allocation(self, spec: dict[str, Any]) -> dict[str, Any]:
+        return self._post(APP_ROUTE_TEMPLATES["plan_capital_allocation"], spec)
 
     def start_paper_algo_execution(self, request: dict[str, Any]) -> dict[str, Any]:
         """Persist a shared Rust TWAP/VWAP parent for the configured Paper worker."""

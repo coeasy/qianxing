@@ -290,6 +290,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/compare-runs` | 应用层用例 `qx_app::compare_runs` 的确定性排序结果（请求体为 `CompareRunsSpec` JSON） | 只比较相同标的、相同数据指纹的已完成运行；收益降序、回撤升序、run_id 升序 |
 | `POST /app/plan-risk-parity` | 应用层用例 `qx_app::plan_risk_parity` 的确定性组合调仓计划（请求体为 `RiskParitySpec` JSON） | 使用冻结的对齐收益序列求 long-only 等风险贡献权重；校验资金与换手预算，只返回计划，不提交订单 |
 | `POST /app/plan-algo-execution` | 应用层用例 `qx_app::plan_algo_execution` 的确定性 TWAP/VWAP 子单计划（请求体为 `AlgoExecutionSpec` JSON） | TWAP 均分数量；VWAP 使用冻结成交量 profile；返回 parent-linked 子单计划，不提交订单 |
+| `POST /app/plan-capital-allocation` | 应用层用例 `qx_app::plan_capital_allocation` 的组合资金计划（请求体为 `CapitalAllocationSpec` JSON） | 按明确优先级和策略 ID 稳定分配；受组合预算与账户现金上限约束；仅规划、不提交订单 |
 | `POST /app/paper/algo-executions/start` | 持久化 Paper TWAP/VWAP 父单并交给匹配账户的 Execution worker 推进 | 请求体含 `spec`、待提交 `parent_order` 与 `child_order_id_base`；需要 Trading/Admin；worker 经 `AlgoExecutionCheckpointStore::step` 推进状态，子单进入 `RiskExecutionContext`、`PaperVenue::on_quote` 与 EventLog 链 |
 | `POST /app/paper/algo-executions/get` | 读取算法父单 checkpoint | 请求体 `{ "parent_id": "..." }`；读取共享持久状态 |
 | `POST /app/paper/algo-executions/cancel` | 持久化算法父单取消意图 | 请求体 `{ "parent_id": "..." }`；需要 Trading/Admin；worker 在下一步按共享内核语义撤销未完成子单 |
@@ -405,6 +406,7 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `POST /app/compare-runs` | 对同一标的与数据指纹的已完成 Bar 运行作确定性排序 | 400 输入不合法、422 比较集合不满足约束；不访问服务端文件；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/plan-risk-parity` | 依据冻结的对齐收益率与标记价生成确定性 long-only 风险平价计划 | 400 非法输入、422 缺历史或求解未收敛；纯研究规划，不提交订单；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/plan-algo-execution` | 依据 parent 数量与 TWAP/VWAP profile 生成确定性拆单计划 | 400 非法 schema/范围/profile；纯研究规划，不提交订单；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/plan-capital-allocation` | 依据组合预算、账户现金与策略优先级生成确定性资金计划 | 400 非法 schema/身份/额度/账户引用；纯研究规划，不提交订单；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/paper/algo-executions/start` | 持久化确定性算法父单，由 Paper Execution worker 恢复推进 | 400 请求或订单形状无效；403 非 Trading/Admin；409 无匹配 Paper worker、重复父单或父单状态冲突；503 checkpoint 不可用；成功返回持久状态；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/paper/algo-executions/get` | 按父单 ID 读取 checkpoint | 400 请求无效；404 找不到父单；503 checkpoint 无法读取；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/paper/algo-executions/cancel` | 写入取消意图 | 400 请求无效；403 非 Trading/Admin；409 父单已终结或状态冲突；成功返回更新后的状态；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |

@@ -1723,6 +1723,9 @@ qx_control_retired_audit_records_total {}\n",
             ("POST", "/app/compare-runs") => app_surface::post_compare_runs(body),
             ("POST", "/app/plan-risk-parity") => app_surface::post_plan_risk_parity(body),
             ("POST", "/app/plan-algo-execution") => app_surface::post_plan_algo_execution(body),
+            ("POST", "/app/plan-capital-allocation") => {
+                app_surface::post_plan_capital_allocation(body)
+            }
             ("POST", "/app/paper/algo-executions/start") => algo_lifecycle::respond(
                 "start",
                 body,
@@ -2208,9 +2211,7 @@ mod algo_execution_tests;
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-
     use qx_control::{CommandKind, Permission};
     use qx_core::{Event, EventKind, Priority};
     use qx_protocol::AccountSnapshot;
@@ -2218,7 +2219,6 @@ mod tests {
     use rustls::sign::CertifiedKey;
     use std::collections::BTreeMap;
     use std::net::{Shutdown, TcpStream};
-
     #[derive(Debug)]
     struct NoCertificateResolver;
 

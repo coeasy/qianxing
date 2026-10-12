@@ -46,6 +46,7 @@ inline constexpr std::string_view kVerifyDepth = "/app/verify-depth";
 inline constexpr std::string_view kCompareRuns = "/app/compare-runs";
 inline constexpr std::string_view kPlanRiskParity = "/app/plan-risk-parity";
 inline constexpr std::string_view kPlanAlgoExecution = "/app/plan-algo-execution";
+inline constexpr std::string_view kPlanCapitalAllocation = "/app/plan-capital-allocation";
 inline constexpr std::string_view kPaperAlgoStart = "/app/paper/algo-executions/start";
 inline constexpr std::string_view kPaperAlgoGet = "/app/paper/algo-executions/get";
 inline constexpr std::string_view kPaperAlgoCancel = "/app/paper/algo-executions/cancel";
@@ -71,12 +72,13 @@ inline constexpr std::string_view kLiveEvents = "/events/live";
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 28> kDeclaredRoutes = {
+inline constexpr std::array<std::string_view, 29> kDeclaredRoutes = {
     kValidateDataset,       kBacktest,
     kBacktestStart,         kVerify,
     kVerifyDepth,           kCompareRuns,
     kPlanRiskParity,
     kPlanAlgoExecution,
+    kPlanCapitalAllocation,
     kPaperAlgoStart,        kPaperAlgoGet,
     kPaperAlgoCancel,       kPaperAlgoList,
     kRunExperiment,         kRunExperimentStart,
@@ -136,6 +138,10 @@ public:
 
     AppResponse plan_algo_execution(std::string_view spec_json) const {
         return post(routes::kPlanAlgoExecution, spec_json);
+    }
+
+    AppResponse plan_capital_allocation(std::string_view spec_json) const {
+        return post(routes::kPlanCapitalAllocation, spec_json);
     }
 
     AppResponse start_paper_algo_execution(std::string_view request_json) const {

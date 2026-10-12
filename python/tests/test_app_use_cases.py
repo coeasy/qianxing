@@ -467,6 +467,7 @@ class AppUseCaseTests(unittest.TestCase):
             ("compare_runs", "/app/compare-runs", False),
             ("plan_risk_parity", "/app/plan-risk-parity", False),
             ("plan_algo_execution", "/app/plan-algo-execution", False),
+            ("plan_capital_allocation", "/app/plan-capital-allocation", False),
             ("run_experiment", "/app/run-experiment", False),
             ("start_experiment", "/app/run-experiment/start", True),
             ("run_depth_backtest", "/app/depth-backtest", False),
@@ -506,6 +507,7 @@ class AppUseCaseTests(unittest.TestCase):
                 "plan": {"allocations": [], "orders": []},
             },
             "plan_algo_execution": {"schema_version": 1, "method": "twap", "parent_id": "p", "children": []},
+            "plan_capital_allocation": {"schema_version": 1, "portfolio_id": "p", "allocations": []},
             "verify_run": {
                 "run_id": "run",
                 "result_hash": "result",

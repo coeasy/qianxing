@@ -116,9 +116,9 @@ contracts:
   - use_case: plan_capital_allocation
     rust: ["plan_capital_allocation"]
     python_native: ["plan_capital_allocation"]
-    python_remote: []
-    cpp_remote: []
-    http: []
+    python_remote: ["plan_capital_allocation"]
+    cpp_remote: ["plan_capital_allocation"]
+    http: ["/app/plan-capital-allocation"]
   - use_case: run_experiment
     rust: ["run_experiment"]
     python_native: ["run_experiment", "start_experiment"]

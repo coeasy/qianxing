@@ -488,5 +488,6 @@ mod protective_exit;
 pub use protective_exit::ProtectiveExitSpec;
 mod capital_allocation;
 pub use capital_allocation::{
-    CapitalAllocationResult, CapitalAllocationSpec, CAPITAL_ALLOCATION_SPEC_SCHEMA_VERSION,
+    CapitalAllocationAccount, CapitalAllocationRequest, CapitalAllocationResult,
+    CapitalAllocationSpec, CAPITAL_ALLOCATION_SPEC_SCHEMA_VERSION,
 };
