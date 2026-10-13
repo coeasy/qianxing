@@ -1292,7 +1292,7 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(callback.updates[0][2]["event"], "fill")
         self.assertTrue(self.bridge.verify_depth_run(outcome)["verified"])
 
-    def test_ten_classic_builtin_strategies_run_through_python_rust_kernel(self):
+    def test_thirteen_classic_builtin_strategies_run_through_python_rust_kernel(self):
         self._require()
         scale = 1_000_000_000
         timestamps, opens, highs, lows, closes, volumes = [], [], [], [], [], []
@@ -1319,6 +1319,7 @@ class AppUseCaseTests(unittest.TestCase):
         builtin_names = (
             "sma_cross", "ema_cross", "macd", "rsi", "bollinger",
             "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend",
+            "keltner_trend", "vwap_reversion", "volatility_breakout",
         )
         for kind in builtin_names:
             with self.subTest(strategy=kind):
@@ -1755,6 +1756,7 @@ class AppUseCaseTests(unittest.TestCase):
         kinds = (
             "sma_cross", "ema_cross", "macd", "rsi", "bollinger",
             "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend",
+            "keltner_trend", "vwap_reversion", "volatility_breakout",
         )
         result = run_experiment(
             RunExperimentSpec(

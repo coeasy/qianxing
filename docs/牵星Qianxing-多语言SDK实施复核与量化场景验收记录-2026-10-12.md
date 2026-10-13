@@ -323,3 +323,8 @@ Python 十策略证据：
 - 多腿应用入口改为消费这条核心时间线；新增内核用例验证非对齐事件交错、同刻稳定排序、重复标的/乱序帧拒绝，应用用例验证时间戳错位仍能完成既有双腿报告。`qx-xingban` 单元测试 106 项、`qx-app` 单元测试 122 项通过；相关 crate 严格 Clippy 与格式检查通过；量化场景探针 44 executed、0 declared_not_executed、1 missing、1 blocked。
 - 这是联合执行的行情调度基础，不是共享资金/OMS/撮合内核：策略仍在完整时间线预扫描中按 intent 乐观更新目标仓位，之后 `run_leg` 继续独立执行并在事后合并账簿。仍需实现同一个多标的状态机，使每个市场事件后的 Risk/OMS/Fill/Ledger 回报驱动下一次策略决策；完成该内核前，`shared_multileg_execution` 保持 missing，整体发布门仍关闭。
 - 架构不变量复跑 1096 项全部通过；复核先后捕获 `run_multi_leg_backtest.rs` 超过 500 行门槛，以及拆分后错位时间线测试文件仍为 507 行。目标调度逻辑已拆至 `strategy_targets.rs`，错位用例移至独立测试模块；未放宽门槛。最终 `qx-xingban` 106 项、`qx-app` 122 项单测及严格 Clippy 均通过，`git diff --check` 通过。
+
+## 40. 2026-10-14 扩展：Python 快速选择覆盖 13 种单腿经典策略
+
+- Python SDK 原先的经典策略逐项回测与参数/Walk-forward 选择覆盖 10 种。本轮把 Rust 已有的 `keltner_trend`、`vwap_reversion`、`volatility_breakout` 纳入相同链路；13 种策略各自通过 Python bridge 进入 Rust 回测并产生有效成交，整组选择/比较和两折 walk-forward 也由 Rust 实验用例验证，Python 仅负责提交规格和读取结果。
+- 专项 Python 用例 2 项通过；量化场景探针复跑结果仍是 44 executed、0 declared_not_executed、1 missing、1 blocked，策略场景观测现为 13 个候选成功。此扩展不改变多腿执行成熟度：`shared_multileg_execution` 仍缺失，`live_exchange_trading` 仍受外部 CCXT/testnet 凭据阻塞。
