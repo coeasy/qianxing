@@ -1544,10 +1544,6 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::list_paper_algo_executions": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::get_live_events": "qx-sdk Rust 远端事件游标公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::get_run_events": "qx-sdk Rust 远端单次 Run 事件游标公开入口；仅由外部 SDK 消费者调用",
-    "qx-api::with_provider_registry": (
-        "deploy/README.md 公布的 API 宿主装配入口；外部受信宿主注入其持有的 ProviderRegistry，"
-        "应用层 HTTP 路由从 ApiService 读取并执行该注册表"
-    ),
     "qx-storage::consume_batch_with_projection": "deploy/README 公布为外部 reducer 的原子投影+checkpoint 入口",
     "qx-data::add_component": (
         "数据集 Bundle 的程序化装配入口（deploy/README 的三步冻结流程）；"
@@ -8789,6 +8785,7 @@ CONFIG_STRUCTS = (
     "TlsPaths",
     "OperatorConfig",
     "ApiRuntimeConfig",
+    "ApiDataProviderRuntimeConfig",
     # `api.console` 段（同源 BFF 控制台）与 API 面同属部署配置，同样 `deny_unknown_fields`。
     "ConsoleRuntimeConfig",
     "StorageRuntimeConfig",

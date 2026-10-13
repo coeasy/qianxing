@@ -25,6 +25,59 @@ fn runtime_config_round_trips_and_rejects_production_plaintext() {
     assert!(mtls.validate().is_err());
 }
 
+#[test]
+fn api_data_provider_configuration_is_explicit_and_fail_closed() {
+    let mut configured = config();
+    configured
+        .api
+        .data_providers
+        .push(ApiDataProviderRuntimeConfig {
+            provider_id: "ccxt:binance:1m".into(),
+            version: "v1".into(),
+            adapter: ApiDataProviderAdapterConfig::Ccxt {
+                config_path: "exchange.json".into(),
+            },
+            data_kinds: vec!["Bar".into()],
+            asset_classes: vec!["crypto".into()],
+            frequencies: vec!["1m".into()],
+            auth_scope: "public".into(),
+            rate_limit_per_second: 5,
+            freshness_seconds: 60,
+            historical_start: 0,
+            historical_end: u64::MAX,
+            realtime: false,
+            priority: 0,
+            quality_score: 80,
+            cost_score: 1,
+        });
+    let encoded = configured.to_json().unwrap();
+    assert_eq!(RuntimeConfig::from_json(&encoded).unwrap(), configured);
+
+    let mut realtime = configured.clone();
+    realtime.api.data_providers[0].realtime = true;
+    assert!(realtime
+        .validate()
+        .unwrap_err()
+        .contains("不支持的 realtime"));
+
+    let mut duplicate = configured.clone();
+    duplicate
+        .api
+        .data_providers
+        .push(duplicate.api.data_providers[0].clone());
+    assert!(duplicate
+        .validate()
+        .unwrap_err()
+        .contains("provider_id 重复"));
+
+    let mut unsupported_kind = configured;
+    unsupported_kind.api.data_providers[0].data_kinds = vec!["Quote".into()];
+    assert!(unsupported_kind
+        .validate()
+        .unwrap_err()
+        .contains("必须声明 Bar"));
+}
+
 /// 明文 API 的边界是**地址**，不是 `environment` 的措辞：明文面拿不到 operator 身份，
 /// `qx-api` 在没有装访问策略时直接把请求体里的 `permission` 当授予档位，所以
 /// `environment` 写成 paper/sandbox/testnet（仓库模板正在用的值）都不该等于"可以对外"。

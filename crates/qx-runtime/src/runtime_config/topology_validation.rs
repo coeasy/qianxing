@@ -63,6 +63,7 @@ impl RuntimeConfig {
                 return Err("Operator 配置必须包含 id 和 certificate".into());
             }
         }
+        super::api_provider_validation::validate_api_data_providers(&self.api.data_providers)?;
         if let Some(tls) = &self.api.tls {
             if [
                 tls.certificate_chain.as_str(),

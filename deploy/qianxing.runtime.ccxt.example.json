@@ -5,7 +5,29 @@
     "bind": "127.0.0.1:8080",
     "transport": "plaintext",
     "tls": null,
-    "operators": {}
+    "operators": {},
+    "data_providers": [
+      {
+        "provider_id": "ccxt-okx-1m",
+        "version": "ccxt-history-v1",
+        "adapter": {
+          "kind": "ccxt",
+          "config_path": "qianxing.ccxt.exchange.example.json"
+        },
+        "data_kinds": ["Bar"],
+        "asset_classes": ["crypto"],
+        "frequencies": ["1m"],
+        "auth_scope": "public",
+        "rate_limit_per_second": 5,
+        "freshness_seconds": 60,
+        "historical_start": 0,
+        "historical_end": 18446744073709551615,
+        "realtime": false,
+        "priority": 0,
+        "quality_score": 80,
+        "cost_score": 1
+      }
+    ]
   },
   "storage": {
     "backend": "files",

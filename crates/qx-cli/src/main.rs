@@ -8,8 +8,8 @@
 use qx_adapter::{
     AdapterReconcileIssue, BinanceQuotePoll, BinanceSpotAuth, BinanceSpotCredentials,
     BinanceSpotMarketData, BinanceSpotMarketStream, BinanceSpotVenue, BinanceStreamRetryPolicy,
-    BinanceUserStreamRunConfig, CcxtProcessClient, CcxtProcessVenue, CcxtRpc, HttpTransport,
-    TlsHttpTransport,
+    BinanceUserStreamRunConfig, CcxtBarDataProvider, CcxtProcessClient, CcxtProcessVenue, CcxtRpc,
+    HttpTransport, TlsHttpTransport,
 };
 use qx_api::{
     load_mtls_server_config_from_pem, ApiPolicy, ApiQueryModels, ApiReadiness, ApiService,
@@ -47,11 +47,12 @@ use qx_provider::{
 };
 use qx_risk::{MaxNotionalRule, MaxQtyRule, NoShortRule, OrderRiskPosition, RuleSet};
 use qx_runtime::{
-    encode_strategy_columnar_input, load_control_state, ApiTransport, LiveEventPipeline,
-    OutboxRecovery, RuntimeBalanceDiscrepancy, RuntimeConfig, RuntimeEventEnvelope,
-    RuntimeExternalEvent, RuntimeSupervisor, StorageBackend, StorageConsistency, StrategyContext,
-    StrategyContractBars, StrategyContractInput, StrategyContractIntent, StrategyContractOutput,
-    StrategyRuntimeConfig, StrategyTargetSnapshot, StrategyTransport, WorkerConfig, WorkerRole,
+    encode_strategy_columnar_input, load_control_state, ApiDataProviderAdapterConfig,
+    ApiDataProviderRuntimeConfig, ApiTransport, LiveEventPipeline, OutboxRecovery,
+    RuntimeBalanceDiscrepancy, RuntimeConfig, RuntimeEventEnvelope, RuntimeExternalEvent,
+    RuntimeSupervisor, StorageBackend, StorageConsistency, StrategyContext, StrategyContractBars,
+    StrategyContractInput, StrategyContractIntent, StrategyContractOutput, StrategyRuntimeConfig,
+    StrategyTargetSnapshot, StrategyTransport, WorkerConfig, WorkerRole,
 };
 #[cfg(feature = "nats")]
 use qx_runtime::{MessagingRuntimeConfig, WorkerContext};

@@ -5,6 +5,8 @@
 
 use super::*;
 
+mod provider_registry;
+
 pub(crate) fn build_configured_api_service(
     config: &RuntimeConfig,
     runtime_config_path: &Path,
@@ -132,6 +134,10 @@ pub(crate) fn build_configured_api_service(
                 .map_err(|error| format!("写入控制命令队列失败: {error:?}"))
         }
     });
+    let service = match provider_registry::from_runtime_config(config, runtime_config_path)? {
+        Some(registry) => service.with_provider_registry(registry),
+        None => service,
+    };
     // 浏览器准入与并发连接预算都由配置驱动，且都是"配错了 `serve` 就起不来"的硬错误，
     // 不是跳过坏的那一条继续跑：一份被静默削减的源 allowlist 在生产上的表现是某个前端
     // 跨源失败，而配置侧看不出是哪一条被丢了（口径与理由写在 `ApiRuntimeConfig` 那两格）。

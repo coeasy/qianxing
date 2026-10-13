@@ -283,7 +283,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/live/commands` | Live `TradeControlSpec` 经 `qx-app` 校验后的 `Accepted` 审计回执 | 必须配置 Operator 权限策略并通过客户端认证；复用现有 ControlPlane、队列与 venue worker，不绕过风险/执行路径 |
 | `POST /app/validate-dataset` | 应用层用例 `qx_app::validate_dataset` 的裁决文档（请求体是 `DatasetSpec` JSON） | 数据集**不足**是成功返回（裁决里 `usable` 为假且 `gaps` 非空，仍 200），不是非 200；只有"在盘但读不出来"才失败（T2-2） |
 | `POST /app/backtest` | 应用层用例 `qx_app::run_backtest` 的结果文档（请求体是 `BacktestSpec` JSON） | 四份产物落在 spec 的 `output_dir` 下；与 `qx-cli app backtest`、Python 的 `app.run_backtest` 是**同一份结果文档**（同一 use case、同一 `result_hash`，退出门 G1） |
-| `POST /app/provider-backtest` | 应用层 Provider Bar 回测（请求体为 `ProviderBacktestSpec` JSON） | 受信宿主通过 `ApiService::with_provider_registry` 注入注册表；服务端固定数据/manifest/产物路径于 artifact root；同步等待 Provider 响应，需配置上游 deadline |
+| `POST /app/provider-backtest` | 应用层 Provider Bar 回测（请求体为 `ProviderBacktestSpec` JSON） | `qx-cli serve` 从 `api.data_providers` 构造 ProviderRegistry；第三方宿主也可用 `ApiService::with_provider_registry` 注入；服务端固定数据/manifest/产物路径于 artifact root；同步等待 Provider 响应，需配置上游 deadline |
 | `POST /app/backtest/start` | 应用层 `BacktestSpec::start` 的运行句柄（请求体仍为 `BacktestSpec` JSON） | 立即返回 `run_id/status`，结果通过 `GET /app/runs/{run_id}` 读取；取消通过对应 cancel 路由协作传入 Rust Bar 撮合循环 |
 | `GET /app/runs/{run_id}` | 运行状态以及完成后的原始 outcome/error 文档 | 有界保留 1024 项；最多 64 个异步任务并行持有终态持久化观察器，满额时启动请求以可重试错误拒绝；终态结果保存在 artifact 根目录 `.app-runs`，服务重启后仍可读取，未完成任务恢复为带中断原因的 `failed`；容量淘汰只移除终态项；未知 ID 为 404 |
 | `POST /app/runs/{run_id}/cancel` | 请求协作取消并返回当前状态 | 取消在 Rust 撮合边界生效，不返回部分报告；取消可能与成功完成竞态，客户端以随后状态查询为准；未知 ID 为 404 |
@@ -964,6 +964,8 @@ cargo run --release -p qx-cli -- supervise deploy/qianxing.runtime.ccxt.example.
 多交易所现货/期货套利可直接参考 `qianxing.runtime.multi-venue-arbitrage.example.json`：Binance Spot 和 OKX Swap 各自运行独立 REST MarketData、Execution、Reconcile worker，分别维护两条 BarFrame 快照；`spot_futures_arbitrage` 等待两腿闭合时间一致后生成双腿订单。现货腿使用 Cash/1x policy，期货腿使用 Cross/3x policy，订单按 InstrumentId 的 venue 自动路由到对应 CCXT Execution worker。
 
 CCXT 数据进入回测的推荐流程：
+
+`deploy/qianxing.runtime.ccxt.example.json` 的 `api.data_providers` 展示了将 CCXT 历史 OHLCV Provider 装配进 `qx-cli serve` 的配置形状。每个来源显式声明 `provider_id`、版本、市场/周期/历史范围、授权范围、限流、新鲜度、优先级和 `qianxing.ccxt.exchange.example.json` 路径；多个来源按 ProviderRegistry 的确定性规则选择并 failover。凭据只通过该 CCXT 端点的环境变量引用读取。当前该服务配置仅接入历史 Bar，`realtime` 必须为 `false`；行情历史记录本机拉取时间，不提供历史点时可见性证据，也不代表真实交易所已认证。
 
 ```powershell
 cargo run --release -p qx-cli -- ccxt-fetch-ohlcv `

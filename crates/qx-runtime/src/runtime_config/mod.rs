@@ -67,6 +67,7 @@ fn default_risk_rules_version() -> String {
 }
 
 mod account_validation;
+mod api_provider_validation;
 mod console_validation;
 mod schema;
 #[cfg(test)]

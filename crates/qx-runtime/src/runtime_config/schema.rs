@@ -86,6 +86,9 @@ pub struct ApiRuntimeConfig {
     pub tls: Option<TlsPaths>,
     #[serde(default)]
     pub operators: BTreeMap<String, OperatorConfig>,
+    /// 本 API 服务拥有的历史行情 Provider。空数组保持旧配置行为；每个源必须显式声明能力与适配器配置。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data_providers: Vec<ApiDataProviderRuntimeConfig>,
     /// 允许跨源读本面的浏览器源，逐条必须是精确的 `http(s)://host[:port]`。
     ///
     /// 缺省（空）表示这份部署不开浏览器准入：响应里不带任何 `Access-Control-*`，
@@ -104,6 +107,36 @@ pub struct ApiRuntimeConfig {
     /// 本机回环上的同源 BFF 控制台；`None` 表示这份部署不开控制台面（`qx-cli console` 拒绝启动）。
     #[serde(default)]
     pub console: Option<ConsoleRuntimeConfig>,
+}
+
+/// 配置化 API Provider 的能力声明和适配器来源。
+///
+/// 能力字段在运行时转换为 `qx-provider::ProviderCapability`；配置层不依赖 Provider crate，
+/// 避免运行时配置 schema 反向拥有数据接入逻辑。
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiDataProviderRuntimeConfig {
+    pub provider_id: String,
+    pub version: String,
+    pub adapter: ApiDataProviderAdapterConfig,
+    pub data_kinds: Vec<String>,
+    pub asset_classes: Vec<String>,
+    pub frequencies: Vec<String>,
+    pub auth_scope: String,
+    pub rate_limit_per_second: u32,
+    pub freshness_seconds: u64,
+    pub historical_start: u64,
+    pub historical_end: u64,
+    pub realtime: bool,
+    pub priority: u32,
+    pub quality_score: u32,
+    pub cost_score: u32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ApiDataProviderAdapterConfig {
+    Ccxt { config_path: String },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
