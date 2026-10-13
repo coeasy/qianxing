@@ -152,6 +152,16 @@ impl MultiLegBacktestSpec {
                 "多腿两侧 initial_cash_raw 都必须为正数",
             ));
         }
+        if self
+            .primary_initial_cash_raw
+            .checked_add(self.reference_initial_cash_raw)
+            .is_none()
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "多腿初始现金合计溢出 i128",
+            ));
+        }
         let fee_rates = [
             self.maker_fee_bps,
             self.taker_fee_bps,

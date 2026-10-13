@@ -206,3 +206,11 @@ Python 十策略证据：
 - 验证：`cargo test --offline -p qx-app -p qx-sdk -p qx-python -- --test-threads=1` 通过；Python 全量 131 项通过；`cargo clippy --offline -p qx-app -p qx-sdk -p qx-python --all-targets -- -D warnings` 通过；格式、编译和 diff whitespace 检查通过；架构不变量 1096 项通过；量化场景 37 项 executed、0 missing、0 declared_not_executed，1 项 Live 因外部 CCXT/testnet 凭据 blocked。
 - Windows x64 通用 `cp310-abi3` wheel 已构建并隔离离线安装；wheel 导入检查确认 `run_depth_backtest_with_strategy_slots`、`start_depth_backtest_with_strategy_slots` 和 Rust 原生扩展可用。SHA-256：`5faa1b447b18870dd8b85df3f60c0f1abdc33bcb0fbbe5f98d4100c99b93b2f6`。首次链接因系统 Temp 目录写入错误失败，改用仓库构建临时目录后构建成功。
 - 更新了能力矩阵中过时的 Tick/OrderBook“仅内置策略”描述。当前仍不满足整体发布门槛：远端 callback、可恢复逐事件/订单日志、跨账户/跨市场共享组合账簿与风险归因、多腿组合调度、Paper/Live callback 工作流、C++ callback 本地入口、Linux/macOS 安装矩阵及真实 venue testnet 认证仍未完成。已验证的 Windows wheel 安装仅证明该平台的打包入口，不代表全平台或 Live 可发布。
+
+## 23. 2026-10-13 多腿 callback 账户上下文校正
+
+- 复核 Rust/Python 多腿 callback 时发现 `StrategyContext.cash` 与 `available_margin_raw` 对所有事件都固定使用主腿本金，导致处理参考腿行情时策略读取到错误的账户快照。现在每次事件按事件所属标的装载该腿的初始现金和可用保证金；现有多腿撮合仍使用逐腿独立本金和账簿，未冒称跨腿共享资金池。
+- `MultiLegBacktestSpec` 启动前增加两腿初始现金合计的 checked-add 校验，拒绝超出 `i128` 的账户总额；避免把溢出延迟到报告汇总阶段。
+- 新增行为用例验证主/参考腿事件分别读到各自的现金快照，并验证本金合计溢出在规格校验阶段失败。`cargo test --offline -p qx-app --lib -- --test-threads=1` 113 项通过，`cargo clippy --offline -p qx-app --all-targets -- -D warnings`、Python 全量 131 项、格式与 diff whitespace 检查通过；架构门禁 1096 项通过，量化场景 37 项 executed、1 项真实 Live 前置 blocked。
+- 基于此 Rust 核心重建 Windows x64 `cp310-abi3` wheel，并隔离离线安装、导入多腿 callback/深度 callback API 与原生扩展。wheel SHA-256：`a54fb261d7921d06f3b7ff27b0e623ebfda085f21913c85f1b82aa22a7a3d7e9`。
+- 这修复了多腿策略上下文的一致性问题，但没有实现共享多腿账簿、资金竞争、跨腿净额或成交回报驱动的策略回调；这些仍是多语言核心发布门槛中的未完成项。

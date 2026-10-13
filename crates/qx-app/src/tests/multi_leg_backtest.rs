@@ -48,6 +48,40 @@ impl Strategy for BuyEachLeg {
     }
 }
 
+struct ObserveLegCash(std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, i128>>>);
+
+impl Strategy for ObserveLegCash {
+    fn on_event(
+        &mut self,
+        context: &StrategyContext,
+        event: &MarketEvent,
+    ) -> Result<StrategyDecision, String> {
+        let instrument = event
+            .instrument()
+            .ok_or("event instrument missing")?
+            .to_string();
+        let cash = context
+            .cash
+            .get("USDT")
+            .copied()
+            .ok_or("settlement cash missing")?;
+        self.0
+            .lock()
+            .map_err(|_| "cash observer poisoned")?
+            .insert(instrument, cash);
+        Ok(StrategyDecision {
+            schema_version: STRATEGY_API_VERSION,
+            request_id: format!("{}:{}", context.strategy_id, event.ts()),
+            strategy_id: context.strategy_id.clone(),
+            signal_id: event.ts(),
+            confidence: 10_000,
+            priority: 0,
+            expires_at: 0,
+            intents: Vec::new(),
+        })
+    }
+}
+
 fn context(id: &str) -> RunContext {
     RunContext::new(CallerCapability::Research, id)
 }
@@ -127,6 +161,66 @@ fn caller_strategy_runs_both_legs_and_cancellable_sdk_surface_can_be_shared() {
         .expect("result available")
         .expect("successful run");
     assert!(result.primary_fills > 0 && result.reference_fills > 0);
+}
+
+#[test]
+fn multi_leg_strategy_context_cash_follows_the_event_leg() {
+    let root = super::fixtures::scratch("multi-leg-context-cash");
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy");
+    let primary = fixtures.join("qianxing.bar-frame.pairs-primary.example.json");
+    let reference = fixtures.join("qianxing.bar-frame.pairs-reference.example.json");
+    let primary_cash = 1_000_000 * SCALE;
+    let reference_cash = 2_000_000 * SCALE;
+    let spec = MultiLegBacktestSpec::new(
+        "multi-leg-cash-context",
+        primary.to_string_lossy(),
+        reference.to_string_lossy(),
+        "USDT",
+        primary_cash,
+        reference_cash,
+        7,
+        root.join("out").to_string_lossy(),
+        BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "cash-context"),
+    );
+    let seen_cash = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let identity = crate::StrategyArtifactIdentity {
+        strategy_id: "cash-context".into(),
+        strategy_version: "test-v1".into(),
+        source_sha256: "f".repeat(64),
+    };
+    crate::run_multi_leg_backtest_with_strategy(
+        &spec,
+        &identity,
+        Box::new(ObserveLegCash(seen_cash.clone())),
+        &context("multi-leg-cash-context"),
+    )
+    .expect("context observer run");
+    let seen_cash = seen_cash.lock().unwrap();
+    assert_eq!(seen_cash.get("BTCUSDT.BINANCE"), Some(&primary_cash));
+    assert_eq!(seen_cash.get("ETHUSDT.BINANCE"), Some(&reference_cash));
+}
+
+#[test]
+fn multi_leg_spec_rejects_unrepresentable_combined_initial_cash() {
+    let spec = MultiLegBacktestSpec::new(
+        "multi-leg-cash-overflow",
+        "primary.json",
+        "reference.json",
+        "USDT",
+        i128::MAX,
+        1,
+        7,
+        "out",
+        BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "cash-overflow"),
+    );
+    let error = spec
+        .validate()
+        .expect_err("combined cash must fit the signed ledger representation");
+    assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    assert!(error.to_string().contains("初始现金合计溢出"));
 }
 
 #[test]

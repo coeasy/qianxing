@@ -191,6 +191,15 @@ pub(super) fn run_inner(
             (&reference.instrument, reference_bar),
             (&primary.instrument, primary_bar),
         ] {
+            let leg_initial_cash = if instrument == &primary.instrument {
+                spec.primary_initial_cash_raw
+            } else {
+                spec.reference_initial_cash_raw
+            };
+            strategy_context
+                .cash
+                .insert(spec.settlement_currency.clone(), leg_initial_cash);
+            strategy_context.available_margin_raw = Some(leg_initial_cash);
             let event = MarketEvent::Bar {
                 instrument: instrument.clone(),
                 ts: bar.ts,
