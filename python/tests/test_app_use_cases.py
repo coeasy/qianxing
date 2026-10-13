@@ -1799,19 +1799,24 @@ class AppUseCaseTests(unittest.TestCase):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import (
             BuiltinStrategySpec,
+            ExperimentParameterSpace,
             InstrumentId,
             MultiLegBacktestSpec,
+            RunMultiLegExperimentSpec,
             TradingInstrumentSpec,
+            run_multi_leg_experiment_with_strategy,
             run_multi_leg_backtest_with_strategy,
+            start_multi_leg_experiment_with_strategy,
             start_multi_leg_backtest_with_strategy,
             run_multi_leg_backtest,
             start_multi_leg_backtest,
         )
 
         class CustomPairStrategy:
-            def __init__(self):
+            def __init__(self, quantity=1_000_000_000):
                 self.seen = set()
                 self.events = []
+                self.quantity = quantity
 
             def on_event(self, context, event):
                 name, item = next(iter(event.items()))
@@ -1825,7 +1830,7 @@ class AppUseCaseTests(unittest.TestCase):
                         "intent_id": len(self.seen),
                         "instrument": instrument,
                         "side": "Buy",
-                        "qty": 1_000_000_000,
+                        "qty": self.quantity,
                         "limit": None,
                         "policy": None,
                         "reduce_only": False,
@@ -1880,6 +1885,62 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertEqual(callback_handle.wait(10_000), "succeeded")
         self.assertGreater(callback_handle.result().primary_fills, 0)
+
+        experiment_spec = RunMultiLegExperimentSpec(
+            experiment_id="python-custom-pair-grid",
+            base=MultiLegBacktestSpec(
+                **{
+                    **callback_spec.__dict__,
+                    "run_id": "python-custom-pair-grid-base",
+                    "output_dir": str(self.output_dir / "custom-pair-grid"),
+                }
+            ),
+            parameter_space=(ExperimentParameterSpace(
+                name="quantity_raw", values=(500_000_000, 1_000_000_000),
+            ),),
+        )
+        factory_quantities = []
+
+        def strategy_factory(candidate):
+            quantity = candidate["strategy"]["quantity_raw"]
+            factory_quantities.append(quantity)
+            return CustomPairStrategy(quantity)
+
+        experiment = run_multi_leg_experiment_with_strategy(
+            experiment_spec,
+            strategy_factory,
+            strategy_id="python-custom-pair",
+            strategy_version="python-pair-v1",
+            source_sha256="e" * 64,
+        )
+        self.assertEqual(factory_quantities, [500_000_000, 1_000_000_000])
+        self.assertEqual(experiment.completed_candidates, 2)
+        self.assertEqual(experiment.succeeded_candidates, 2)
+        self.assertTrue(all(
+            candidate.outcome.primary_fills > 0 and candidate.outcome.reference_fills > 0
+            for candidate in experiment.candidates
+        ))
+        experiment_handle_spec = RunMultiLegExperimentSpec(
+            **{
+                **experiment_spec.__dict__,
+                "experiment_id": "python-custom-pair-grid-handle",
+                "base": MultiLegBacktestSpec(
+                    **{
+                        **experiment_spec.base.__dict__,
+                        "output_dir": str(self.output_dir / "custom-pair-grid-handle"),
+                    }
+                ),
+            }
+        )
+        experiment_handle = start_multi_leg_experiment_with_strategy(
+            experiment_handle_spec,
+            lambda candidate: CustomPairStrategy(candidate["strategy"]["quantity_raw"]),
+            strategy_id="python-custom-pair",
+            strategy_version="python-pair-v1",
+            source_sha256="e" * 64,
+        )
+        self.assertEqual(experiment_handle.wait(10_000), "succeeded")
+        self.assertEqual(experiment_handle.result().succeeded_candidates, 2)
 
         typed_spec = MultiLegBacktestSpec(
             run_id="python-typed-multi-leg",

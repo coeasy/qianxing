@@ -6,7 +6,7 @@ use pyo3::types::{PyAny, PyModule};
 use qx_app::{
     run_depth_backtest_with_strategy, run_multi_leg_backtest_with_strategy,
     start_depth_backtest_with_strategy, BacktestSpec, DepthBacktestSpec, MultiLegBacktestSpec,
-    StrategyArtifactIdentity,
+    RunMultiLegExperimentSpec, StrategyArtifactIdentity,
 };
 use qx_strategy::{MarketEvent, Strategy, StrategyContext, StrategyDecision};
 
@@ -180,6 +180,69 @@ fn app_start_multi_leg_backtest_with_strategy(
     })
 }
 
+fn python_strategy_factory(
+    factory: Py<PyAny>,
+) -> impl FnMut(&MultiLegBacktestSpec) -> Result<Box<dyn Strategy>, String> + Send {
+    move |candidate| {
+        let candidate_json = candidate.to_json().map_err(|error| error.to_string())?;
+        let callback = Python::attach(|py| {
+            factory
+                .bind(py)
+                .call1((candidate_json,))
+                .map(|value| value.unbind())
+                .map_err(|error| format!("Python strategy factory failed: {error}"))
+        })?;
+        Ok(Box::new(PythonBacktestStrategy { callback }) as Box<dyn Strategy>)
+    }
+}
+
+#[pyfunction]
+fn app_run_multi_leg_experiment_with_strategy(
+    spec_json: &str,
+    strategy_id: &str,
+    strategy_version: &str,
+    source_sha256: &str,
+    factory: Py<PyAny>,
+) -> PyResult<String> {
+    let spec = RunMultiLegExperimentSpec::from_json(spec_json).map_err(app_error)?;
+    let identity = StrategyArtifactIdentity {
+        strategy_id: strategy_id.to_string(),
+        strategy_version: strategy_version.to_string(),
+        source_sha256: source_sha256.to_string(),
+    };
+    let mut factory = python_strategy_factory(factory);
+    spec.run_with_strategy_factory(
+        &identity,
+        &mut factory,
+        &research_context(&spec.experiment_id),
+    )
+    .and_then(|result| result.to_json())
+    .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_start_multi_leg_experiment_with_strategy(
+    spec_json: &str,
+    strategy_id: &str,
+    strategy_version: &str,
+    source_sha256: &str,
+    factory: Py<PyAny>,
+) -> PyResult<PyRunHandle> {
+    let spec = RunMultiLegExperimentSpec::from_json(spec_json).map_err(app_error)?;
+    let context = research_context(&spec.experiment_id);
+    let identity = StrategyArtifactIdentity {
+        strategy_id: strategy_id.to_string(),
+        strategy_version: strategy_version.to_string(),
+        source_sha256: source_sha256.to_string(),
+    };
+    let handle = spec
+        .start_with_strategy_factory(identity, python_strategy_factory(factory), context)
+        .map_err(app_error)?;
+    Ok(PyRunHandle {
+        inner: NativeRun::MultiLegExperiment(handle),
+    })
+}
+
 pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_run_backtest_with_strategy, module)?)?;
     module.add_function(wrap_pyfunction!(app_start_backtest_with_strategy, module)?)?;
@@ -197,6 +260,14 @@ pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     module.add_function(wrap_pyfunction!(
         app_start_multi_leg_backtest_with_strategy,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_run_multi_leg_experiment_with_strategy,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_start_multi_leg_experiment_with_strategy,
         module
     )?)
 }

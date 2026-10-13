@@ -13,26 +13,21 @@ from typing import Any
 
 
 def _extension() -> Any:
-    errors: list[ImportError] = []
-    candidates: list[Any] = []
     # A top-level `_qianxing_native` may belong to another installed Qianxing
-    # version (or an unrelated package). Prefer the extension bundled alongside
-    # this `qianxing_bridge` package; keep the top-level name only for developer
-    # builds that place the cdylib directly on `sys.path`.
-    for module_name in ("qianxing_bridge._qianxing_native", "_qianxing_native"):
+    # version (or an unrelated package). Never search past an importable bundled
+    # extension merely because it is an older generation: doing so can silently
+    # mix Python sources from one install with a native binary from another.
+    try:
+        return import_module("qianxing_bridge._qianxing_native")
+    except ImportError:
+        # The top-level name is retained only for developer builds that put the
+        # cdylib directly on sys.path while the bundled module is absent.
         try:
-            module = import_module(module_name)
-        except ImportError as error:
-            errors.append(error)
-            continue
-        candidates.append(module)
-        if all(hasattr(module, name) for name in APP_ENTRYPOINTS):
-            return module
-    if candidates:
-        return candidates[0]
-    raise RuntimeError(
-        "_qianxing_native is not installed; build the qx-python wheel first"
-    ) from errors[-1]
+            return import_module("_qianxing_native")
+        except ImportError as developer_error:
+            raise RuntimeError(
+                "_qianxing_native is not installed; build the qx-python wheel first"
+            ) from developer_error
 
 
 def available() -> bool:
@@ -73,6 +68,8 @@ APP_ENTRYPOINTS = (
     "app_start_multi_leg_backtest",
     "app_run_multi_leg_experiment",
     "app_start_multi_leg_experiment",
+    "app_run_multi_leg_experiment_with_strategy",
+    "app_start_multi_leg_experiment_with_strategy",
 )
 
 
@@ -236,6 +233,32 @@ def app_start_multi_leg_backtest_with_strategy(
     """Start a cancellable Python strategy on Rust's two-leg Bar workflow."""
     return _extension().app_start_multi_leg_backtest_with_strategy(
         spec_json, strategy_id, strategy_version, source_sha256, callback
+    )
+
+
+def app_run_multi_leg_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> str:
+    """Run a bounded parameter grid with a fresh Python strategy for each Rust candidate."""
+    return str(_extension().app_run_multi_leg_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
+    ))
+
+
+def app_start_multi_leg_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> Any:
+    """Start a cancellable parameter grid with a fresh strategy for each candidate."""
+    return _extension().app_start_multi_leg_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
     )
 
 

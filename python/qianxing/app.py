@@ -1431,6 +1431,27 @@ class AsyncCoreClient:
             source_sha256=source_sha256,
         )
 
+    async def async_run_multi_leg_experiment_with_strategy(
+        self, spec: RunMultiLegExperimentSpec | dict[str, Any], strategy_factory: Any, *,
+        strategy_id: str, strategy_version: str, source_sha256: str,
+    ) -> RunMultiLegExperimentResult:
+        return await asyncio.to_thread(
+            run_multi_leg_experiment_with_strategy, spec, strategy_factory,
+            strategy_id=strategy_id, strategy_version=strategy_version,
+            source_sha256=source_sha256,
+        )
+
+    async def async_start_multi_leg_experiment_with_strategy(
+        self, spec: RunMultiLegExperimentSpec | dict[str, Any], strategy_factory: Any, *,
+        strategy_id: str, strategy_version: str, source_sha256: str,
+    ) -> AsyncRunHandle[RunMultiLegExperimentResult]:
+        def start(value: Any) -> RunHandle[RunMultiLegExperimentResult]:
+            return start_multi_leg_experiment_with_strategy(
+                value, strategy_factory, strategy_id=strategy_id,
+                strategy_version=strategy_version, source_sha256=source_sha256,
+            )
+        return await self._start(start, spec)
+
     async def async_start_multi_leg_backtest_with_strategy(
         self, spec: MultiLegBacktestSpec | dict[str, Any], strategy: Any, *,
         strategy_id: str, strategy_version: str, source_sha256: str,
@@ -1942,6 +1963,28 @@ def run_multi_leg_experiment(
     )
 
 
+def run_multi_leg_experiment_with_strategy(
+    spec: RunMultiLegExperimentSpec | dict[str, Any],
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> RunMultiLegExperimentResult:
+    """Run each bounded grid candidate with a fresh Python strategy on the Rust engine.
+
+    ``strategy_factory(candidate_spec_dict)`` is called once per candidate. Its returned object
+    implements ``on_event(context, event)`` and must not be shared between candidate runs.
+    """
+    from qianxing_bridge.app import (
+        run_multi_leg_experiment_with_strategy as _run_strategy_experiment,
+    )
+    return RunMultiLegExperimentResult.from_dict(_run_strategy_experiment(
+        _encode_payload(spec), strategy_factory, strategy_id=strategy_id,
+        strategy_version=strategy_version, source_sha256=source_sha256,
+    ))
+
+
 def run_depth_experiment(
     spec: RunDepthExperimentSpec | dict[str, Any],
 ) -> RunDepthExperimentResult:
@@ -2113,6 +2156,25 @@ def start_multi_leg_experiment(
         native_handle = native.app_start_multi_leg_experiment(_encode_payload(spec))
     except Exception as exc:
         raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, RunMultiLegExperimentResult)
+
+
+def start_multi_leg_experiment_with_strategy(
+    spec: RunMultiLegExperimentSpec | dict[str, Any],
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> RunHandle[RunMultiLegExperimentResult]:
+    """Start a cancellable Rust experiment with one fresh Python strategy per candidate."""
+    from qianxing_bridge.app import (
+        start_multi_leg_experiment_with_strategy as _start_strategy_experiment,
+    )
+    native_handle = _start_strategy_experiment(
+        _encode_payload(spec), strategy_factory, strategy_id=strategy_id,
+        strategy_version=strategy_version, source_sha256=source_sha256,
+    )
     return RunHandle(native_handle, RunMultiLegExperimentResult)
 
 

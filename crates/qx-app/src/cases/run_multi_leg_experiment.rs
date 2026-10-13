@@ -5,20 +5,24 @@ use super::experiment_grid::{
     apply_parameters, expand_grid, normalized_strategy, validate_experiment_id, validate_grid,
 };
 use super::guard::guard_panics;
+use super::run_multi_leg_backtest::custom_strategy::{self, InjectedMultiLegStrategy};
 use super::run_multi_leg_backtest::run_inner;
 use super::{attach, ExperimentParameterSpace};
 use crate::run_handle::CancellationToken;
 use crate::{
     AppError, AppErrorCategory, CallerCapability, MultiLegBacktestOutcome, MultiLegBacktestSpec,
-    RunContext, RunHandle,
+    RunContext, RunHandle, StrategyArtifactIdentity,
 };
 use qx_core::Fnv1a;
-use qx_strategy::BuiltinStrategyKind;
+use qx_strategy::{BuiltinStrategyKind, Strategy};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub const RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION: u32 = 1;
+
+type StrategyFactory<'a> =
+    dyn FnMut(&MultiLegBacktestSpec) -> Result<Box<dyn Strategy>, String> + 'a;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -103,10 +107,39 @@ impl RunMultiLegExperimentSpec {
             context.require(CallerCapability::Research, "多腿参数回测实验")?;
             let correlation_id = context.correlation_id().to_string();
             guard_panics(&correlation_id, || {
-                run_inner_experiment(&self, &context, Some(&cancellation))
+                run_inner_experiment(&self, &context, Some(&cancellation), None, None)
             })
             .map_err(|error| attach(error, &correlation_id))
         })
+    }
+
+    /// Start a parameter experiment whose each candidate receives a fresh caller-authored strategy.
+    pub fn start_with_strategy_factory<F>(
+        self,
+        identity: StrategyArtifactIdentity,
+        mut factory: F,
+        context: RunContext,
+    ) -> Result<RunHandle<RunMultiLegExperimentResult>, AppError>
+    where
+        F: FnMut(&MultiLegBacktestSpec) -> Result<Box<dyn Strategy>, String> + Send + 'static,
+    {
+        context.require(CallerCapability::Research, "多语言策略多腿参数回测实验")?;
+        self.validate()?;
+        custom_strategy::validate_experiment_identity(&self, &identity)?;
+        let run_id = context.correlation_id().to_string();
+        Ok(RunHandle::spawn(run_id, move |cancellation| {
+            let correlation_id = context.correlation_id().to_string();
+            guard_panics(&correlation_id, || {
+                run_inner_experiment(
+                    &self,
+                    &context,
+                    Some(&cancellation),
+                    Some(&identity),
+                    Some(&mut factory),
+                )
+            })
+            .map_err(|error| attach(error, &correlation_id))
+        }))
     }
 }
 
@@ -166,21 +199,56 @@ pub fn run_multi_leg_experiment(
     let correlation_id = context.correlation_id().to_string();
     context.require(CallerCapability::Research, "多腿参数回测实验")?;
     guard_panics(&correlation_id, || {
-        run_inner_experiment(spec, context, None)
+        run_inner_experiment(spec, context, None, None, None)
     })
     .map_err(|error| attach(error, &correlation_id))?
     .ok_or_else(|| attach(invariant("同步多腿参数实验未产生报告"), &correlation_id))
+}
+
+impl RunMultiLegExperimentSpec {
+    /// Execute a parameter grid with a fresh caller-authored strategy per candidate.
+    pub fn run_with_strategy_factory<F>(
+        &self,
+        identity: &StrategyArtifactIdentity,
+        factory: &mut F,
+        context: &RunContext,
+    ) -> Result<RunMultiLegExperimentResult, AppError>
+    where
+        F: FnMut(&MultiLegBacktestSpec) -> Result<Box<dyn Strategy>, String>,
+    {
+        let correlation_id = context.correlation_id().to_string();
+        context.require(CallerCapability::Research, "多语言策略多腿参数回测实验")?;
+        self.validate()?;
+        custom_strategy::validate_experiment_identity(self, identity)?;
+        guard_panics(&correlation_id, || {
+            run_inner_experiment(self, context, None, Some(identity), Some(factory))
+        })
+        .map_err(|error| attach(error, &correlation_id))?
+        .ok_or_else(|| {
+            attach(
+                invariant("同步多语言策略多腿实验未产生报告"),
+                &correlation_id,
+            )
+        })
+    }
 }
 
 fn run_inner_experiment(
     spec: &RunMultiLegExperimentSpec,
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
+    identity: Option<&StrategyArtifactIdentity>,
+    mut factory: Option<&mut StrategyFactory<'_>>,
 ) -> Result<Option<RunMultiLegExperimentResult>, AppError> {
     let total = spec.validate()?;
     let spec_json = spec.to_json()?;
     let mut fingerprint = Fnv1a::new();
     fingerprint.write_text(&spec_json);
+    if let Some(identity) = identity {
+        fingerprint.write_text(&identity.strategy_id);
+        fingerprint.write_text(&identity.strategy_version);
+        fingerprint.write_text(&identity.source_sha256);
+    }
     let spec_fingerprint = format!("{:016x}", fingerprint.finish());
     let root = PathBuf::from(&spec.base.output_dir).join(&spec.experiment_id);
     let artifact_path = root
@@ -230,11 +298,35 @@ fn run_inner_experiment(
             .to_string_lossy()
             .into_owned();
         let outcome = match apply_parameters(&mut candidate.strategy, &parameters) {
-            Ok(()) => match run_inner(&candidate, context, cancellation, None) {
-                Ok(Some(outcome)) => Ok(outcome),
-                Ok(None) => return Ok(None),
-                Err(error) => Err(error),
-            },
+            Ok(()) => {
+                let injected = match (identity, factory.as_deref_mut()) {
+                    (Some(identity), Some(factory)) => match factory(&candidate) {
+                        Ok(strategy) => Some(InjectedMultiLegStrategy {
+                            identity: identity.clone(),
+                            strategy,
+                        }),
+                        Err(error) => {
+                            candidates.push(MultiLegExperimentCandidate {
+                                ordinal,
+                                strategy_kind: None,
+                                parameters,
+                                outcome: None,
+                                error: Some(
+                                    AppError::new(AppErrorCategory::InvalidInput, error).to_json(),
+                                ),
+                            });
+                            continue;
+                        }
+                    },
+                    (None, None) => None,
+                    _ => return Err(invariant("多腿实验策略工厂和身份必须同时提供")),
+                };
+                match run_inner(&candidate, context, cancellation, injected) {
+                    Ok(Some(outcome)) => Ok(outcome),
+                    Ok(None) => return Ok(None),
+                    Err(error) => Err(error),
+                }
+            }
             Err(error) => Err(error),
         };
         candidates.push(match outcome {

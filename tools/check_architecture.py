@@ -1547,6 +1547,8 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::run_backtest_with_strategy": "qx-sdk Rust 策略扩展公开入口；由外部 SDK 消费者实现 Strategy 并调用",
     "qx-sdk::start_backtest_with_strategy": "qx-sdk Rust 可取消策略运行公开入口；由外部 SDK 消费者调用",
     "qx-sdk::start_multi_leg_backtest_with_strategy": "qx-sdk Rust 可取消双腿策略运行公开入口；由外部 SDK 消费者实现 Strategy 并调用",
+    "qx-sdk::start_multi_leg_experiment_with_strategy_factory": "qx-sdk Rust 可取消多腿策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
+    "qx-sdk::run_multi_leg_experiment_with_strategy_factory": "qx-sdk Rust 同步多腿策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-storage::consume_batch_with_projection": "deploy/README 公布为外部 reducer 的原子投影+checkpoint 入口",
     "qx-data::add_component": (
         "数据集 Bundle 的程序化装配入口（deploy/README 的三步冻结流程）；"

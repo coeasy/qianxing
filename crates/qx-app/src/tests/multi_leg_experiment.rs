@@ -1,10 +1,13 @@
 use crate::{
     run_multi_leg_experiment, AppErrorCategory, BuiltinStrategySpec, CallerCapability,
     ExperimentParameterSpace, MultiLegBacktestSpec, RunContext, RunMultiLegExperimentSpec,
-    RunStatus,
+    RunStatus, StrategyArtifactIdentity,
 };
-use qx_core::SCALE;
-use qx_strategy::BuiltinStrategyKind;
+use qx_core::{Quantity, Side, SCALE};
+use qx_strategy::{
+    BuiltinStrategyKind, MarketEvent, Strategy, StrategyContext, StrategyDecision,
+    StrategyOrderIntent, STRATEGY_API_VERSION,
+};
 use std::path::Path;
 
 fn base(root: &Path) -> MultiLegBacktestSpec {
@@ -27,6 +30,48 @@ fn base(root: &Path) -> MultiLegBacktestSpec {
         root.join("out").to_string_lossy(),
         BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "pair-grid"),
     )
+}
+
+struct BuyEachLeg {
+    quantity: i128,
+    seen: std::collections::BTreeSet<String>,
+}
+
+impl Strategy for BuyEachLeg {
+    fn on_event(
+        &mut self,
+        context: &StrategyContext,
+        event: &MarketEvent,
+    ) -> Result<StrategyDecision, String> {
+        let instrument = event
+            .instrument()
+            .cloned()
+            .ok_or("event instrument missing")?;
+        let intents = if self.seen.insert(instrument.to_string()) {
+            vec![StrategyOrderIntent {
+                intent_id: self.seen.len() as u64,
+                instrument,
+                side: Side::Buy,
+                qty: Quantity::from_raw(self.quantity),
+                limit: None,
+                policy: None,
+                reduce_only: false,
+                post_only: false,
+            }]
+        } else {
+            Vec::new()
+        };
+        Ok(StrategyDecision {
+            schema_version: STRATEGY_API_VERSION,
+            request_id: format!("{}:{}", context.strategy_id, event.ts()),
+            strategy_id: context.strategy_id.clone(),
+            signal_id: event.ts(),
+            confidence: 10_000,
+            priority: 0,
+            expires_at: 0,
+            intents,
+        })
+    }
 }
 
 #[test]
@@ -211,5 +256,91 @@ fn multi_leg_strategy_selection_forms_a_bounded_parameter_product() {
             ("pairs_arbitrage", SCALE),
             ("pairs_arbitrage", SCALE * 2),
         ]
+    );
+}
+
+#[test]
+fn caller_strategy_factory_runs_fresh_parameterized_candidates_and_binds_source_identity() {
+    let root = super::fixtures::scratch("multi-leg-custom-strategy-experiment");
+    let mut base = base(&root);
+    base.strategy.strategy_id = "custom-pair-grid".into();
+    let spec = RunMultiLegExperimentSpec {
+        schema_version: 1,
+        experiment_id: "custom-pair-grid".into(),
+        base,
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "quantity_raw".into(),
+            values: vec![SCALE, SCALE * 2],
+        }],
+        strategy_kinds: Vec::new(),
+    };
+    let identity = StrategyArtifactIdentity {
+        strategy_id: "custom-pair-grid".into(),
+        strategy_version: "user-v1".into(),
+        source_sha256: "a".repeat(64),
+    };
+    let mut factory_calls = Vec::new();
+    let mut factory = |candidate: &MultiLegBacktestSpec| {
+        factory_calls.push((candidate.run_id.clone(), candidate.strategy.quantity_raw));
+        Ok(Box::new(BuyEachLeg {
+            quantity: candidate.strategy.quantity_raw,
+            seen: Default::default(),
+        }) as Box<dyn Strategy>)
+    };
+    let context = RunContext::new(CallerCapability::Research, "custom-pair-grid");
+    let result = spec
+        .run_with_strategy_factory(&identity, &mut factory, &context)
+        .expect("custom strategy factory uses the shared Rust experiment runner");
+    assert_eq!(factory_calls.len(), 2);
+    assert_eq!(factory_calls[0].1, SCALE);
+    assert_eq!(factory_calls[1].1, SCALE * 2);
+    assert_eq!(result.completed_candidates, 2);
+    assert_eq!(result.succeeded_candidates, 2);
+    assert!(result.candidates.iter().all(|candidate| {
+        let outcome = candidate.outcome.as_ref().expect("candidate outcome");
+        outcome.primary_fills > 0 && outcome.reference_fills > 0
+    }));
+    assert_ne!(
+        result.candidates[0]
+            .outcome
+            .as_ref()
+            .unwrap()
+            .primary_result_hash,
+        result.candidates[1]
+            .outcome
+            .as_ref()
+            .unwrap()
+            .primary_result_hash,
+        "candidate parameters must affect the strategy-generated result"
+    );
+    assert_eq!(
+        spec.run_with_strategy_factory(
+            &identity,
+            &mut |candidate| Ok(Box::new(BuyEachLeg {
+                quantity: candidate.strategy.quantity_raw,
+                seen: Default::default(),
+            }) as Box<dyn Strategy>),
+            &context,
+        )
+        .unwrap(),
+        result,
+        "identical spec and source identity reuses deterministic evidence"
+    );
+
+    let mut changed_identity = identity;
+    changed_identity.source_sha256 = "b".repeat(64);
+    assert_eq!(
+        spec.run_with_strategy_factory(
+            &changed_identity,
+            &mut |candidate| Ok(Box::new(BuyEachLeg {
+                quantity: candidate.strategy.quantity_raw,
+                seen: Default::default(),
+            }) as Box<dyn Strategy>),
+            &context,
+        )
+        .unwrap_err()
+        .category(),
+        AppErrorCategory::Conflict,
+        "changed strategy source cannot reuse an experiment artifact"
     );
 }

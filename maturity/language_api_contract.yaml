@@ -144,8 +144,8 @@ contracts:
     cpp_remote: ["run_depth_experiment", "start_depth_experiment"]
     http: ["/app/run-depth-experiment", "/app/run-depth-experiment/start"]
   - use_case: run_multi_leg_experiment
-    rust: ["run_multi_leg_experiment"]
-    python_native: ["run_multi_leg_experiment", "start_multi_leg_experiment"]
+    rust: ["run_multi_leg_experiment", "Client.run_multi_leg_experiment_with_strategy_factory", "Client.start_multi_leg_experiment_with_strategy_factory"]
+    python_native: ["run_multi_leg_experiment", "start_multi_leg_experiment", "run_multi_leg_experiment_with_strategy", "start_multi_leg_experiment_with_strategy"]
     python_remote: ["run_multi_leg_experiment", "start_multi_leg_experiment"]
     cpp_remote: ["run_multi_leg_experiment", "start_multi_leg_experiment"]
     http: ["/app/run-multi-leg-experiment", "/app/run-multi-leg-experiment/start"]

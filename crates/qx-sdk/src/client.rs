@@ -262,6 +262,19 @@ impl Client {
         run_multi_leg_experiment(spec, &self.context)
     }
 
+    /// Execute each experiment candidate with a freshly constructed caller strategy.
+    pub fn run_multi_leg_experiment_with_strategy_factory<F>(
+        &self,
+        spec: &RunMultiLegExperimentSpec,
+        identity: &StrategyArtifactIdentity,
+        factory: &mut F,
+    ) -> Result<RunMultiLegExperimentResult, AppError>
+    where
+        F: FnMut(&MultiLegBacktestSpec) -> Result<Box<dyn Strategy>, String>,
+    {
+        spec.run_with_strategy_factory(identity, factory, &self.context)
+    }
+
     /// Deterministic long-only risk-parity rebalance planning on frozen aligned returns.
     pub fn plan_risk_parity(&self, spec: &RiskParitySpec) -> Result<RiskParityResult, AppError> {
         qx_app::plan_risk_parity(spec, &self.context)
@@ -272,6 +285,19 @@ impl Client {
         spec: RunMultiLegExperimentSpec,
     ) -> RunHandle<RunMultiLegExperimentResult> {
         spec.start(self.context.clone())
+    }
+
+    /// Start a cancellable experiment with a freshly constructed strategy per candidate.
+    pub fn start_multi_leg_experiment_with_strategy_factory<F>(
+        &self,
+        spec: RunMultiLegExperimentSpec,
+        identity: StrategyArtifactIdentity,
+        factory: F,
+    ) -> Result<RunHandle<RunMultiLegExperimentResult>, AppError>
+    where
+        F: FnMut(&MultiLegBacktestSpec) -> Result<Box<dyn Strategy>, String> + Send + 'static,
+    {
+        spec.start_with_strategy_factory(identity, factory, self.context.clone())
     }
 
     /// 对已完成产物做跨运行可比性检查和稳定排名。

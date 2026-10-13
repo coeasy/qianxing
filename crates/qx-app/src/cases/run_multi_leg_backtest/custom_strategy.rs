@@ -43,3 +43,37 @@ pub(in crate::cases) fn validate_identity(
     }
     Ok(())
 }
+
+pub(in crate::cases) fn validate_experiment_identity(
+    spec: &crate::RunMultiLegExperimentSpec,
+    identity: &StrategyArtifactIdentity,
+) -> Result<(), AppError> {
+    let valid_token = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 128
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    };
+    if !valid_token(&identity.strategy_id)
+        || identity.strategy_id != spec.base.strategy.strategy_id
+        || !valid_token(&identity.strategy_version)
+        || identity.source_sha256.len() != 64
+        || !identity
+            .source_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            "StrategyArtifactIdentity requires the base strategy_id, a valid strategy_version, and a lowercase SHA-256 digest",
+        ));
+    }
+    if !spec.strategy_kinds.is_empty() {
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            "caller-authored multi-leg experiments cannot mix a custom strategy factory with built-in strategy_kinds",
+        ));
+    }
+    Ok(())
+}

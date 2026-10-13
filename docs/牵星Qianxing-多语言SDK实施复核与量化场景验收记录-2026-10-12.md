@@ -168,3 +168,11 @@ Python 十策略证据：
 - 策略 ID、版本与源码 SHA-256 校验并纳入 run 配置指纹及归因产物；同一 run_id 用不同源码身份重跑会返回 Conflict。策略决策按 Rust StrategyDecision 契约校验；意图标的超出两腿或携带当前目标仓位模拟器不能表达的订单限制时 fail-closed；取消调用 on_stop。
 - 新增 qx-app 行为测试、Rust SDK 独立消费者测试和 Python 原生扩展端到端用例，覆盖双腿都产生成交、可取消句柄、身份改动冲突与安装形态扩展入口；语言能力映射、用例登记、README 已同步。
 - 已知边界：此接口先按两个标的的 Bar 事件产生目标仓位，再交由两条独立 Rust 账簿撮合；策略回调暂不接收真实成交/订单更新，跨腿组合资金、保证金净额和实时风控仍未合并成单一组合账簿。C++ 本地回调、HTTP/Web 的用户策略上传/执行也未接通。因此这项接入不等于多腿策略实盘闭环或全部多语言 SDK 达到发布门槛。
+
+## 18. 2026-10-13 继续实现：自定义策略进入双腿参数实验
+
+- 为 Rust `qx-app` 与 `qx-sdk::Client` 增加双腿参数实验策略工厂入口；同步和 RunHandle 路径都复用同一实验展开、Rust 双腿回测、结果排名和报告产物。
+- 每个候选均将已应用参数的 `MultiLegBacktestSpec` 传给 factory，要求调用方为该候选创建新策略实例。策略 ID/version/source SHA-256 加入实验指纹，并沿用到每个候选 run 身份；同一 experiment_id 改源码会在候选重跑前 Conflict。自定义 factory 与内置 `strategy_kinds` 互斥，候选总数仍受 256 上限约束。
+- Python 原生扩展与高层 `qianxing` 增加同步及可取消句柄入口；factory 收到每个候选的 JSON 规格字典。测试验证数量参数分别作用于候选、每个候选双腿都有成交、Rust/Python RunHandle 成功、源码变更冲突及既有内置策略选择回归。
+- 验证：Rust qx-app 多腿实验 5 项通过；Rust SDK workspace 外 consumer factory 用例通过；Python 原生扩展多腿同步/RunHandle 回归通过；`cargo check -p qx-app -p qx-sdk -p qx-python --offline`、Rust 格式、Python 语法和 diff whitespace 检查通过。首次 Rust 测试使用系统 TEMP 遇 Windows 目录权限失败；将 TEMP/TMP 指向 `target/test-temp` 后专项用例全通过。
+- 边界：策略 factory 仅在本地 Rust/Python SDK 运行，不能序列化为 HTTP/C++ 远端策略；仍不支持策略组合 callback。双腿回测仍按各腿独立账簿执行，策略回调不接收成交回报；跨腿净额资金、实时风控、Paper/Live 多策略交易和真实 venue testnet 仍未闭环。

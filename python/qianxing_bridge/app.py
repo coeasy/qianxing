@@ -31,6 +31,20 @@ def _payload(value: "str | dict[str, Any]") -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
+class _PythonStrategyFactory:
+    """Decode each Rust candidate spec and adapt its fresh strategy to the callback contract."""
+
+    def __init__(self, factory: Any) -> None:
+        self.factory = factory
+
+    def __call__(self, candidate_json: str) -> _PythonBacktestCallback:
+        candidate = json.loads(candidate_json)
+        strategy = self.factory(candidate)
+        if strategy is None:
+            raise TypeError("Python strategy factory must return a strategy object")
+        return _PythonBacktestCallback(strategy)
+
+
 def validate_dataset(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """校验一份数据集能否支撑 Bar 回测，返回 ``DatasetVerdict``。
 
@@ -172,6 +186,36 @@ def start_multi_leg_backtest_with_strategy(
     return native.app_start_multi_leg_backtest_with_strategy(
         _payload(spec), strategy_id, strategy_version, source_sha256,
         _PythonBacktestCallback(strategy),
+    )
+
+
+def run_multi_leg_experiment_with_strategy(
+    spec: "str | dict[str, Any]",
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> dict[str, Any]:
+    """Run every multi-leg parameter candidate through a fresh Python strategy instance."""
+    return json.loads(native.app_run_multi_leg_experiment_with_strategy(
+        _payload(spec), strategy_id, strategy_version, source_sha256,
+        _PythonStrategyFactory(strategy_factory),
+    ))
+
+
+def start_multi_leg_experiment_with_strategy(
+    spec: "str | dict[str, Any]",
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> Any:
+    """Start a cancellable experiment; Rust requests a fresh strategy per candidate."""
+    return native.app_start_multi_leg_experiment_with_strategy(
+        _payload(spec), strategy_id, strategy_version, source_sha256,
+        _PythonStrategyFactory(strategy_factory),
     )
 
 
