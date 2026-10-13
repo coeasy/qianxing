@@ -306,11 +306,33 @@ def write_builtin_catalog_frame(path: Path, bars: int = 90) -> None:
 
 def write_probe_depth_frame(path: Path, snapshots: int = 48) -> None:
     """L2 oscillation that crosses resting quotes so fills and replacements are visible."""
+    _write_probe_depth_frame(
+        path,
+        snapshots=snapshots,
+        source="quant-scenario-probe-market-making-v1",
+        mid_at=lambda index: 100 + (
+            (index % 20) * 2
+            if index % 20 < 10
+            else (20 - index % 20) * 2
+        ),
+    )
+
+
+def write_probe_kelly_depth_frame(path: Path, snapshots: int = 48) -> None:
+    """Mixed positive returns let the depth Kelly sizing path prove a nonzero edge."""
+    _write_probe_depth_frame(
+        path,
+        snapshots=snapshots,
+        source="quant-scenario-kelly-depth-v1",
+        mid_at=lambda index: 100 + index * 2 + (5 if index % 2 else 0),
+    )
+
+
+def _write_probe_depth_frame(path: Path, *, snapshots: int, source: str, mid_at) -> None:
     rows = []
     scale = 1_000_000_000
     for index in range(snapshots):
-        phase = index % 20
-        mid = 100 + (phase * 2 if phase < 10 else (20 - phase) * 2)
+        mid = mid_at(index)
         rows.append({
             "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
             "ts": 1_000 + index * 1_000,
@@ -326,7 +348,7 @@ def write_probe_depth_frame(path: Path, snapshots: int = 48) -> None:
         })
     path.write_text(json.dumps({
         "schema_version": 1,
-        "source": "quant-scenario-probe-market-making-v1",
+        "source": source,
         "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
         "snapshots": rows,
     }), encoding="utf-8")
@@ -858,6 +880,62 @@ def main() -> int:
             "crates/qx-xingban/src/portfolio_orderbook.rs",
             "crates/qx-xingban/src/backtest/portfolio_budget.rs",
             "crates/qx-app/src/cases/run_depth_backtest.rs",
+            "crates/qx-app/src/tests/depth_backtest.rs",
+            "python/tests/test_app_use_cases.py",
+        ],
+    )
+
+    depth_sizing_run_id = f"probe-depth-sizing-{time.time_ns()}"
+    depth_sizing_spec = {
+        "schema_version": 1,
+        "run_id": depth_sizing_run_id,
+        "depth_path": ".task-tmp/quant-probe/depth-sizing.json",
+        "tier": "l2",
+        "settlement_currency": "USDT",
+        "initial_cash_raw": 1_000_000_000_000_000,
+        "fee_bps": 0,
+        "latency_snapshots": 0,
+        "queue_position_bps": 0,
+        "market_impact_bps": 0,
+        "output_dir": f".task-tmp/quant-probe/{depth_sizing_run_id}",
+        "strategy": {
+            "kind": "momentum", "strategy_id": "probe-depth-cash-sizing",
+            "quantity_raw": 1_000_000_000, "fast_window": 2, "slow_window": 3,
+            "period": 2, "threshold_bps": 1,
+            "target_available_margin_bps": 2_500,
+        },
+        "portfolio": {
+            "primary_priority": 0,
+            "primary_reserved_capital_raw": 500_000_000_000_000,
+            "additional_strategies": [{
+                "priority": 1,
+                "reserved_capital_raw": 500_000_000_000_000,
+                "strategy": {
+                    "kind": "momentum", "strategy_id": "probe-depth-kelly",
+                    "quantity_raw": 1_000_000_000, "fast_window": 2, "slow_window": 3,
+                    "period": 2, "threshold_bps": 1,
+                    "target_kelly_fraction_bps": 5_000, "kelly_lookback_bars": 30,
+                },
+            }],
+        },
+    }
+    depth_sizing_frame = PROBE_ROOT / "depth-sizing.json"
+    write_probe_kelly_depth_frame(depth_sizing_frame)
+    depth_sizing_spec_path = PROBE_ROOT / "depth-sizing-spec.json"
+    depth_sizing_spec_path.write_text(json.dumps(depth_sizing_spec), encoding="utf-8")
+    executed(
+        "depth_spot_dynamic_sizing",
+        "L2 现货现金比例与 Kelly sizing（逐快照现金、组合额度、Rust 共享内核）",
+        "crates/qx-app/src/cases/run_depth_backtest/workflow.rs",
+        ["app", "depth-backtest", str(depth_sizing_spec_path.relative_to(ROOT)).replace("\\", "/")],
+        r'"fills":([1-9]\d*)',
+        extra_from_output=lambda output: (
+            f"kelly_fraction_bps=5000 cash_fraction_bps=2500 "
+            f"result_hash={json.loads(next(line for line in output.splitlines() if line.lstrip().startswith('{')))['result_hash']}"
+        ),
+        evidence=[
+            "crates/qx-xingban/src/orderbook_backtest.rs",
+            "crates/qx-xingban/src/portfolio_orderbook.rs",
             "crates/qx-app/src/tests/depth_backtest.rs",
             "python/tests/test_app_use_cases.py",
         ],

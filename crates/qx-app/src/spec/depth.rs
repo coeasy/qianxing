@@ -117,10 +117,10 @@ impl DepthBacktestSpec {
                     "market_making.tick_size_raw 必须与 market_spec.price_tick 一致",
                 ));
             }
-            if self.strategy.target_notional_raw.is_some() {
+            if strategy_has_sizing(&self.strategy) {
                 return Err(AppError::new(
                     AppErrorCategory::InvalidInput,
-                    "market_making 使用 quote_qty_raw 控制报价数量，不接受 BuiltinStrategySpec.target_notional_raw",
+                    "market_making 使用 quote_qty_raw 控制报价数量，不接受策略仓位 sizing 参数",
                 ));
             }
         }
@@ -221,13 +221,17 @@ impl DepthBacktestSpec {
                 .map(|member| &member.strategy),
         );
         for strategy in strategies {
-            if strategy.target_available_margin_bps.is_some()
-                || strategy.target_volatility_bps.is_some()
-                || strategy.target_kelly_fraction_bps.is_some()
+            if self
+                .market_spec
+                .as_ref()
+                .is_some_and(|market| market.product.supports_leverage())
+                && (strategy.target_available_margin_bps.is_some()
+                    || strategy.target_volatility_bps.is_some()
+                    || strategy.target_kelly_fraction_bps.is_some())
             {
                 return Err(AppError::new(
                     AppErrorCategory::InvalidInput,
-                    "DepthBacktestSpec 策略 sizing 尚未接入逐时点账户风险快照",
+                    "Tick/OrderBook 保证金 sizing 需要已认证的衍生品 free-margin 快照；当前仅现货现金 sizing 可用",
                 ));
             }
             if strategy.target_notional_raw.is_some()
@@ -262,6 +266,13 @@ impl DepthBacktestSpec {
             )
         })
     }
+}
+
+fn strategy_has_sizing(strategy: &BuiltinStrategySpec) -> bool {
+    strategy.target_notional_raw.is_some()
+        || strategy.target_available_margin_bps.is_some()
+        || strategy.target_volatility_bps.is_some()
+        || strategy.target_kelly_fraction_bps.is_some()
 }
 
 /// Stable result for an L1 Tick or L2 order-book run.

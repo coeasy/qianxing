@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn zero_available_cash_and_neutral_signal_produce_no_exposure_without_failing() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let mut config = BuiltinStrategyConfig::new(
+        BuiltinStrategyKind::Momentum,
+        "momentum-empty-cash",
+        instrument,
+        Quantity::from_i64(1),
+    )
+    .unwrap();
+    config.target_available_margin_bps = Some(2_500);
+    let strategy = BuiltinStrategy::new(config).unwrap();
+    let mut context = context(&strategy.config.instrument);
+    context.available_margin_raw = Some(0);
+    assert_eq!(strategy.target_quantity_raw(100, 1, &context).unwrap(), 0);
+    context.available_margin_raw = Some(qx_core::SCALE);
+    assert_eq!(strategy.target_quantity_raw(100, 0, &context).unwrap(), 0);
+}
+
+#[test]
 fn fractional_kelly_uses_only_visible_returns_and_caps_to_available_margin() {
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     let mut config = BuiltinStrategyConfig::new(

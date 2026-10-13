@@ -46,6 +46,15 @@ pub(in crate::cases) fn run_inner_with_strategy(
         } else {
             custom.identity.validate_for_depth(spec)?;
         }
+        if strategy_specs(spec)
+            .find(|strategy| strategy.strategy_id == custom.identity.strategy_id)
+            .is_some_and(has_builtin_sizing)
+        {
+            return Err(invalid_input(format!(
+                "自定义 Tick/OrderBook 策略 {} 不能同时声明仅适用于内置策略的 sizing 参数",
+                custom.identity.strategy_id
+            )));
+        }
     }
     if spec.portfolio.is_none() && injected.len() > 1 {
         return Err(invalid_input(
@@ -157,6 +166,8 @@ pub(in crate::cases) fn run_inner_with_strategy(
         target_notional_raw: spec.strategy.target_notional_raw,
         target_available_margin_bps: spec.strategy.target_available_margin_bps,
         target_volatility_bps: spec.strategy.target_volatility_bps,
+        target_kelly_fraction_bps: spec.strategy.target_kelly_fraction_bps,
+        kelly_lookback_bars: spec.strategy.kelly_lookback_bars,
         primary_policy: spec.order_policy,
         ..BuiltinStrategyConfig::new(
             spec.strategy.kind,
@@ -470,4 +481,20 @@ pub(in crate::cases) fn run_inner_with_strategy(
         artifacts,
         account_id: spec.account_id.clone(),
     }))
+}
+
+fn strategy_specs(spec: &DepthBacktestSpec) -> impl Iterator<Item = &crate::BuiltinStrategySpec> {
+    std::iter::once(&spec.strategy).chain(
+        spec.portfolio
+            .iter()
+            .flat_map(|portfolio| portfolio.additional_strategies.iter())
+            .map(|member| &member.strategy),
+    )
+}
+
+fn has_builtin_sizing(strategy: &crate::BuiltinStrategySpec) -> bool {
+    strategy.target_notional_raw.is_some()
+        || strategy.target_available_margin_bps.is_some()
+        || strategy.target_volatility_bps.is_some()
+        || strategy.target_kelly_fraction_bps.is_some()
 }

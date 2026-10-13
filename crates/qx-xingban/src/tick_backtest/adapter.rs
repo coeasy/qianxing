@@ -48,4 +48,22 @@ impl OrderBookStrategy for TickAdapter<'_> {
         self.strategy
             .on_tick_actions(&self.snapshot_to_tick(snapshot)?, position, open_order_ids)
     }
+
+    fn on_order_book_actions_with_margin(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        position: i128,
+        open_order_ids: &[u64],
+        available_margin_raw: Option<i128>,
+    ) -> Result<OrderBookActions, String> {
+        if snapshot.instrument != self.instrument {
+            return Err("Tick adapter instrument 不一致".into());
+        }
+        self.strategy.on_tick_actions_with_margin(
+            &self.snapshot_to_tick(snapshot)?,
+            position,
+            open_order_ids,
+            available_margin_raw,
+        )
+    }
 }

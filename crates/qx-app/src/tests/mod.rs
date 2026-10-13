@@ -11,6 +11,7 @@ mod custom_depth_strategy;
 mod custom_strategy;
 mod depth_backtest;
 mod depth_experiment;
+mod depth_sizing;
 mod error_contract;
 mod experiment_split;
 mod fixtures;

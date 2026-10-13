@@ -1682,6 +1682,75 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(typed_summary["order_policy"]["leverage"], 2)
         self.assertTrue(verify_depth_run(typed).verified)
 
+        kelly_snapshots = []
+        for index in range(48):
+            mid = 100 + index * 2 + (5 if index % 2 else 0)
+            kelly_snapshots.append(
+                {
+                    "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+                    "ts": 1000 + index * 1000,
+                    "sequence": index + 1,
+                    "bids": [{"price": (mid - 1) * scale, "qty": 100 * scale}],
+                    "asks": [{"price": (mid + 1) * scale, "qty": 100 * scale}],
+                }
+            )
+        kelly_depth_path = self.output_dir / "kelly-depth.json"
+        kelly_depth_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "source": "python-sdk-kelly-depth-contract",
+                    "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+                    "snapshots": kelly_snapshots,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        kelly_depth_spec = DepthBacktestSpec(
+            run_id="python-depth-kelly-sizing",
+            depth_path=str(kelly_depth_path),
+            tier="l2",
+            settlement_currency="USDT",
+            initial_cash_raw=1_000_000_000_000_000,
+            output_dir=str(self.output_dir / "depth-kelly-sizing"),
+            strategy=BuiltinStrategySpec(
+                kind="momentum",
+                strategy_id="py-depth-kelly",
+                fast_window=2,
+                slow_window=3,
+                period=2,
+                threshold_bps=1,
+                target_kelly_fraction_bps=5_000,
+                kelly_lookback_bars=30,
+            ),
+        )
+        kelly_depth = run_depth_backtest(kelly_depth_spec)
+        self.assertGreater(kelly_depth.fills, 0)
+        self.assertTrue(verify_depth_run(kelly_depth).verified)
+        kelly_handle = start_depth_backtest(
+            DepthBacktestSpec(
+                run_id="python-depth-kelly-handle",
+                depth_path=str(kelly_depth_path),
+                tier="l1",
+                settlement_currency="USDT",
+                initial_cash_raw=1_000_000_000_000_000,
+                output_dir=str(self.output_dir / "depth-kelly-handle"),
+                strategy=BuiltinStrategySpec(
+                    kind="momentum",
+                    strategy_id="py-depth-kelly-handle",
+                    fast_window=2,
+                    slow_window=3,
+                    period=2,
+                    threshold_bps=1,
+                    target_kelly_fraction_bps=5_000,
+                    kelly_lookback_bars=30,
+                ),
+            )
+        )
+        self.assertEqual(kelly_handle.wait(timeout_ms=30_000), "succeeded")
+        self.assertGreater(kelly_handle.result().fills, 0)
+
         typed_portfolio = run_depth_backtest(
             DepthBacktestSpec(
                 run_id="python-depth-portfolio",

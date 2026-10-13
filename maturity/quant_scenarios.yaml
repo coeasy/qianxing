@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791882445
+generated_at_unix: 1791886531
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -151,13 +151,13 @@ scenarios:
     observed: "strategy=builtin-cross_venue_arbitrage-multi groups=3 turnover_raw=192600000000000 fees_raw=96300000000"
     evidence: ["crates/qx-zhenlu/src/lib.rs"]
   - name: multi_account_cross_market_backtest
-    label: "多账户跨市场 Bar 与 Tick/OrderBook 回测"
+    label: "多账户跨市场独立回测"
     status: executed
     anchor: "crates/qx-app/src/cases/run_multi_account_backtest.rs"
     command: "qx-cli app multi-account-backtest .task-tmp/quant-probe/multi-account-spec.json"
     exit_code: 0
-    observed: "Bar: accounts=2 successful_fills=16; Tick/OrderBook: accounts=2 stable_markets=BTCUSDT.BINANCE,ETHUSDT.OKX"
-    evidence: ["crates/qx-app/src/tests/multi_account_backtest.rs", "crates/qx-app/src/tests/multi_account_depth_backtest.rs", "crates/qx-sdk/tests/multi_account_client.rs", "python/tests/test_app_use_cases.py", "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs"]
+    observed: "16; accounts=2 successful_fills=16"
+    evidence: ["crates/qx-app/src/tests/multi_account_backtest.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs"]
   - name: multi_leg_strategy_selection
     label: "四类双腿套利策略选择与确定性批量比较"
     status: executed
@@ -190,6 +190,14 @@ scenarios:
     exit_code: 0
     observed: "8; strategy_fills={\"probe-depth-momentum\": 4, \"probe-depth-sma\": 4} result_hash=4a452bd85fe02e25"
     evidence: ["crates/qx-xingban/src/portfolio_orderbook.rs", "crates/qx-xingban/src/backtest/portfolio_budget.rs", "crates/qx-app/src/cases/run_depth_backtest.rs", "crates/qx-app/src/tests/depth_backtest.rs", "python/tests/test_app_use_cases.py"]
+  - name: depth_spot_dynamic_sizing
+    label: "L2 现货现金比例与 Kelly sizing（逐快照现金、组合额度、Rust 共享内核）"
+    status: executed
+    anchor: "crates/qx-app/src/cases/run_depth_backtest/workflow.rs"
+    command: "qx-cli app depth-backtest .task-tmp/quant-probe/depth-sizing-spec.json"
+    exit_code: 0
+    observed: "141; kelly_fraction_bps=5000 cash_fraction_bps=2500 result_hash=fabde25a5b8ad754"
+    evidence: ["crates/qx-xingban/src/orderbook_backtest.rs", "crates/qx-xingban/src/portfolio_orderbook.rs", "crates/qx-app/src/tests/depth_backtest.rs", "python/tests/test_app_use_cases.py"]
   - name: depth_strategy_selection
     label: "L2 十种经典策略快速选择与确定性批量比较（共享 Rust 订单簿内核）"
     status: executed

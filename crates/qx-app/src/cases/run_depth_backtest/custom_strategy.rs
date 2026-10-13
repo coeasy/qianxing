@@ -102,6 +102,20 @@ impl OrderBookStrategy for CallbackOrderBookStrategy {
             .to_orders(&self.context)
             .map_err(|error| error.to_string())
     }
+
+    fn on_order_book_actions_with_margin(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        position: i128,
+        _open_order_ids: &[u64],
+        available_margin_raw: Option<i128>,
+    ) -> Result<qx_xingban::OrderBookActions, String> {
+        self.context.available_margin_raw = available_margin_raw;
+        Ok(qx_xingban::OrderBookActions {
+            orders: self.on_order_book(snapshot, position)?,
+            cancel_client_ids: Vec::new(),
+        })
+    }
 }
 
 impl Strategy for CallbackStrategy {

@@ -24,6 +24,19 @@ pub trait OrderBookStrategy {
         })
     }
 
+    /// Decision-time buying power for spot sizing. The engine supplies a value
+    /// only when it can derive a supported spot cash snapshot; derivative
+    /// margin remains unavailable until a certified free-margin model exists.
+    fn on_order_book_actions_with_margin(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        position: i128,
+        open_order_ids: &[u64],
+        _available_margin_raw: Option<i128>,
+    ) -> Result<OrderBookActions, String> {
+        self.on_order_book_actions(snapshot, position, open_order_ids)
+    }
+
     /// Strategy portfolios may enforce per-member capital before an order reaches OMS.
     fn check_order_budget(
         &self,
@@ -114,6 +127,21 @@ impl<S: qx_strategy::Strategy> OrderBookStrategy for NativeOrderBookStrategy<S> 
         let decision = self.strategy.on_event(&self.context, &event)?;
         decision.to_orders(&self.context)
     }
+
+    fn on_order_book_actions_with_margin(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        position: i128,
+        open_order_ids: &[u64],
+        available_margin_raw: Option<i128>,
+    ) -> Result<OrderBookActions, String> {
+        self.context.available_margin_raw = available_margin_raw;
+        let _ = open_order_ids;
+        Ok(OrderBookActions {
+            orders: self.on_order_book(snapshot, position)?,
+            cancel_client_ids: Vec::new(),
+        })
+    }
 }
 
 /// Folds L1/L2 snapshots into deterministic Bar events for bar-only strategies.
@@ -147,8 +175,10 @@ impl<S: qx_strategy::Strategy> DepthBarStrategy<S> {
         position: i128,
         mid: Price,
         volume_raw: i128,
+        available_margin_raw: Option<i128>,
     ) -> Result<Vec<Order>, String> {
         self.context.as_of = ts;
+        self.context.available_margin_raw = available_margin_raw;
         self.context
             .positions
             .insert(instrument.to_string(), position);
@@ -182,6 +212,42 @@ impl<S: qx_strategy::Strategy> OrderBookStrategy for DepthBarStrategy<S> {
             .iter()
             .chain(snapshot.asks.iter())
             .fold(0_i128, |total, level| total.saturating_add(level.qty.raw()));
-        self.on_mid(&snapshot.instrument, snapshot.ts, position, mid, volume_raw)
+        self.on_mid(
+            &snapshot.instrument,
+            snapshot.ts,
+            position,
+            mid,
+            volume_raw,
+            None,
+        )
+    }
+
+    fn on_order_book_actions_with_margin(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        position: i128,
+        _open_order_ids: &[u64],
+        available_margin_raw: Option<i128>,
+    ) -> Result<OrderBookActions, String> {
+        let (Some(bid), Some(ask)) = (snapshot.bids.first(), snapshot.asks.first()) else {
+            return Ok(OrderBookActions::default());
+        };
+        let mid = Price::from_raw(bid.price.raw().saturating_add(ask.price.raw()) / 2);
+        let volume_raw = snapshot
+            .bids
+            .iter()
+            .chain(snapshot.asks.iter())
+            .fold(0_i128, |total, level| total.saturating_add(level.qty.raw()));
+        Ok(OrderBookActions {
+            orders: self.on_mid(
+                &snapshot.instrument,
+                snapshot.ts,
+                position,
+                mid,
+                volume_raw,
+                available_margin_raw,
+            )?,
+            cancel_client_ids: Vec::new(),
+        })
     }
 }

@@ -3,10 +3,7 @@ use crate::{
     DepthBacktestSpec, PortfolioBacktestConfig, PortfolioStrategySpec, RunContext, RunStatus,
     DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
 };
-use qx_core::{
-    InstrumentId, MarginMode, OrderPolicy, PositionMode, PositionSide, TradingInstrumentSpec,
-    TradingProduct,
-};
+use qx_core::{MarginMode, OrderPolicy, PositionMode, PositionSide};
 use qx_strategy::BuiltinStrategyKind;
 use std::path::Path;
 
@@ -84,26 +81,6 @@ pub(super) fn spec(run_id: &str, root: &Path, tier: &str, levels: usize) -> Dept
         market_making: None,
         account_id: None,
         portfolio: None,
-    }
-}
-
-fn perpetual_market_spec() -> TradingInstrumentSpec {
-    TradingInstrumentSpec {
-        instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
-        product: TradingProduct::Perpetual,
-        base_currency: "BTC".into(),
-        quote_currency: "USDT".into(),
-        settlement_currency: "USDT".into(),
-        contract_size: SCALE,
-        linear: true,
-        inverse: false,
-        price_tick: 1,
-        qty_step: 1,
-        min_qty: 1,
-        max_leverage: 100,
-        maintenance_margin_bps: 500,
-        valid_from: 1_000,
-        valid_to: Some(49_000),
     }
 }
 
@@ -202,7 +179,7 @@ fn l2_market_making_replaces_quotes_through_shared_matching_risk_oms_and_replay(
 fn depth_use_case_uses_market_product_and_explicit_derivative_order_policy() {
     let root = super::fixtures::scratch("app-depth-product-spec");
     let mut request = spec("depth-perpetual", &root, "l1", 1);
-    request.market_spec = Some(perpetual_market_spec());
+    request.market_spec = Some(super::depth_sizing::perpetual_market_spec());
     request.order_policy = Some(OrderPolicy {
         reduce_only: false,
         position_side: PositionSide::Net,
@@ -239,47 +216,6 @@ fn depth_use_case_uses_market_product_and_explicit_derivative_order_policy() {
         )
         .unwrap()
         .verified
-    );
-}
-
-#[test]
-fn depth_market_spec_and_order_policy_fail_closed_on_missing_or_out_of_range_contracts() {
-    let root = super::fixtures::scratch("app-depth-product-guards");
-    let mut request = spec("depth-perpetual-guards", &root, "l1", 1);
-    request.market_spec = Some(perpetual_market_spec());
-    request.strategy.target_notional_raw = Some(100 * SCALE);
-    assert_eq!(
-        request
-            .validate()
-            .expect_err("spot notional sizing must not be applied to derivative contracts")
-            .category(),
-        AppErrorCategory::InvalidInput
-    );
-    request.strategy.target_notional_raw = None;
-    assert_eq!(
-        request
-            .validate()
-            .expect_err("derivative contract must require explicit order policy")
-            .category(),
-        AppErrorCategory::InvalidInput
-    );
-    request.order_policy = Some(OrderPolicy {
-        reduce_only: false,
-        position_side: PositionSide::Net,
-        margin_mode: MarginMode::Cross,
-        position_mode: PositionMode::OneWay,
-        leverage: 2,
-        post_only: false,
-    });
-    request.market_spec.as_mut().unwrap().valid_to = Some(47_000);
-    assert_eq!(
-        run_depth_backtest(
-            &request,
-            &RunContext::new(CallerCapability::Research, "depth-perpetual-guards"),
-        )
-        .expect_err("market spec must cover every input timestamp")
-        .category(),
-        AppErrorCategory::InvalidInput
     );
 }
 
@@ -433,7 +369,7 @@ fn market_making_contract_requires_l2_and_market_tick_alignment() {
 
     let mut mismatched = spec("market-making-tick", &root, "l2", 2);
     mismatched.market_making = Some(maker);
-    mismatched.market_spec = Some(perpetual_market_spec());
+    mismatched.market_spec = Some(super::depth_sizing::perpetual_market_spec());
     mismatched.order_policy = Some(OrderPolicy {
         reduce_only: false,
         position_side: PositionSide::Net,

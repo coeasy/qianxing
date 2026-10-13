@@ -1,5 +1,5 @@
 use super::*;
-use crate::{DepthBarStrategy, NativeOrderBookStrategy};
+use crate::{DepthBarStrategy, NativeOrderBookStrategy, OrderBookActions, RunManifestIdentity};
 use qx_core::{
     InstrumentId, MarginMode, Money, Order, OrderPolicy, OrderStatus, PositionMode, PositionSide,
     Quantity, Side, TradingInstrumentSpec, TradingProduct, SCALE,
@@ -7,9 +7,12 @@ use qx_core::{
 use qx_strategy::{
     Strategy, StrategyContext, StrategyDecision, StrategyOrderIntent, STRATEGY_API_VERSION,
 };
+use std::sync::{Arc, Mutex};
 
 #[path = "tests/depth_bar_adapter.rs"]
 mod depth_bar_adapter;
+#[path = "tests/margin.rs"]
+mod margin;
 #[path = "tests/tier.rs"]
 mod tier;
 

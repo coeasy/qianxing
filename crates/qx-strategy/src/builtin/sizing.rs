@@ -9,6 +9,12 @@ impl BuiltinStrategy {
         direction: i128,
         context: &StrategyContext,
     ) -> Result<i128, String> {
+        // Neutral/exit signals target a flat position; they do not need a
+        // directional estimate. In particular, Kelly only accepts +/-1 for
+        // an exposure direction and must not reject a valid zero signal.
+        if direction == 0 {
+            return Ok(0);
+        }
         let notional_raw = match (
             self.config.target_notional_raw,
             self.config.target_available_margin_bps,
@@ -16,18 +22,20 @@ impl BuiltinStrategy {
             self.config.target_kelly_fraction_bps,
         ) {
             (Some(notional), None, None, None) => notional,
-            (None, Some(bps), None, None) => context
-                .available_margin_raw
-                .filter(|value| *value > 0)
-                .ok_or("可用资金比例 sizing 缺少有效的实时 available_margin_raw")?
-                .checked_mul(i128::from(bps))
-                .and_then(|value| value.checked_div(BPS_SCALE))
-                .ok_or("target_available_margin_bps 名义金额计算溢出")?,
+            (None, Some(bps), None, None) => {
+                let Some(available) = available_margin(context, "可用资金比例 sizing")?
+                else {
+                    return Ok(0);
+                };
+                available
+                    .checked_mul(i128::from(bps))
+                    .and_then(|value| value.checked_div(BPS_SCALE))
+                    .ok_or("target_available_margin_bps 名义金额计算溢出")?
+            }
             (None, None, Some(risk_bps), None) => {
-                let available = context
-                    .available_margin_raw
-                    .filter(|value| *value > 0)
-                    .ok_or("波动率预算 sizing 缺少有效的实时 available_margin_raw")?;
+                let Some(available) = available_margin(context, "波动率预算 sizing")? else {
+                    return Ok(0);
+                };
                 if price_raw <= 0 {
                     return Err("波动率预算 sizing 的可见价格必须为正".into());
                 }
@@ -52,10 +60,9 @@ impl BuiltinStrategy {
                     .min(available)
             }
             (None, None, None, Some(fractional_bps)) => {
-                let available = context
-                    .available_margin_raw
-                    .filter(|value| *value > 0)
-                    .ok_or("Kelly sizing 缺少有效的实时 available_margin_raw")?;
+                let Some(available) = available_margin(context, "Kelly sizing")? else {
+                    return Ok(0);
+                };
                 let lookback = self
                     .config
                     .kelly_lookback_bars
@@ -177,5 +184,14 @@ impl BuiltinStrategy {
                 .saturating_sub(loss_term_bps)
                 .clamp(0, BPS_SCALE),
         ))
+    }
+}
+
+fn available_margin(context: &StrategyContext, sizing_name: &str) -> Result<Option<i128>, String> {
+    match context.available_margin_raw {
+        Some(value) if value > 0 => Ok(Some(value)),
+        Some(0) => Ok(None),
+        Some(_) => Err(format!("{sizing_name} 收到负的 available_margin_raw")),
+        None => Err(format!("{sizing_name} 缺少实时 available_margin_raw")),
     }
 }

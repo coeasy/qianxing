@@ -7,7 +7,7 @@
 
 use qx_core::{InstrumentId, Order, TradingInstrumentSpec};
 use qx_guanxing::QuoteTick;
-use qx_strategy::{MarketEvent, Strategy, StrategyContext, StrategyDecision};
+use qx_strategy::{Strategy, StrategyContext};
 
 use crate::{
     BookLevel, DataTier, DepthBarStrategy, DepthFrame, OrderBookBacktestConfig,
@@ -16,7 +16,11 @@ use crate::{
 use qx_core::Money;
 use qx_zhenlu::RiskGate;
 
+#[cfg(test)]
+use qx_strategy::{MarketEvent, StrategyDecision};
+
 mod adapter;
+mod strategies;
 use adapter::TickAdapter;
 
 pub trait TickStrategy {
@@ -32,6 +36,16 @@ pub trait TickStrategy {
             orders: self.on_tick(tick, position)?,
             cancel_client_ids: Vec::new(),
         })
+    }
+
+    fn on_tick_actions_with_margin(
+        &mut self,
+        tick: &QuoteTick,
+        position: i128,
+        open_order_ids: &[u64],
+        _available_margin_raw: Option<i128>,
+    ) -> Result<crate::OrderBookActions, String> {
+        self.on_tick_actions(tick, position, open_order_ids)
     }
 }
 
@@ -52,41 +66,6 @@ impl<S: Strategy> NativeTickStrategy<S> {
 
     pub fn initialize(&mut self) -> Result<(), String> {
         self.strategy.on_init(&self.context)
-    }
-}
-
-impl<S: Strategy> TickStrategy for NativeTickStrategy<S> {
-    fn on_tick(&mut self, tick: &QuoteTick, position: i128) -> Result<Vec<Order>, String> {
-        self.context.as_of = tick.ts;
-        self.context
-            .positions
-            .insert(self.instrument.to_string(), position);
-        let event = MarketEvent::Tick {
-            instrument: self.instrument.clone(),
-            ts: tick.ts,
-            bid_raw: tick.bid.raw(),
-            ask_raw: tick.ask.raw(),
-            last_raw: tick.mid().map(|price| price.raw()),
-            volume_raw: Some(tick.bid_qty.raw().saturating_add(tick.ask_qty.raw())),
-        };
-        let decision: StrategyDecision = self.strategy.on_event(&self.context, &event)?;
-        decision.to_orders(&self.context)
-    }
-}
-
-impl<S: Strategy> TickStrategy for DepthBarStrategy<S> {
-    fn on_tick(&mut self, tick: &QuoteTick, position: i128) -> Result<Vec<Order>, String> {
-        let Some(mid) = tick.mid() else {
-            return Ok(Vec::new());
-        };
-        let instrument = self.instrument.clone();
-        self.on_mid(
-            &instrument,
-            tick.ts,
-            position,
-            mid,
-            tick.bid_qty.raw().saturating_add(tick.ask_qty.raw()),
-        )
     }
 }
 

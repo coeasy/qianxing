@@ -180,6 +180,10 @@ fn build_member(
         period: member.period,
         threshold_bps: member.threshold_bps,
         target_notional_raw: member.target_notional_raw,
+        target_available_margin_bps: member.target_available_margin_bps,
+        target_volatility_bps: member.target_volatility_bps,
+        target_kelly_fraction_bps: member.target_kelly_fraction_bps,
+        kelly_lookback_bars: member.kelly_lookback_bars,
         primary_policy: build.spec.order_policy,
         ..BuiltinStrategyConfig::new(
             member.kind,

@@ -160,6 +160,34 @@ impl TickStrategy for PortfolioOrderBookStrategy {
         };
         self.on_order_book_actions(&snapshot, account_position, open_order_ids)
     }
+
+    fn on_tick_actions_with_margin(
+        &mut self,
+        tick: &QuoteTick,
+        account_position: i128,
+        open_order_ids: &[u64],
+        available_margin_raw: Option<i128>,
+    ) -> Result<OrderBookActions, String> {
+        let snapshot = OrderBookSnapshot {
+            instrument: self.instrument.clone(),
+            ts: tick.ts,
+            sequence: tick.source_seq,
+            bids: vec![BookLevel {
+                price: tick.bid,
+                qty: tick.bid_qty,
+            }],
+            asks: vec![BookLevel {
+                price: tick.ask,
+                qty: tick.ask_qty,
+            }],
+        };
+        self.on_order_book_actions_with_margin(
+            &snapshot,
+            account_position,
+            open_order_ids,
+            available_margin_raw,
+        )
+    }
 }
 
 impl OrderBookStrategy for PortfolioOrderBookStrategy {
@@ -178,6 +206,16 @@ impl OrderBookStrategy for PortfolioOrderBookStrategy {
         _account_position: i128,
         open_order_ids: &[u64],
     ) -> Result<OrderBookActions, String> {
+        self.on_order_book_actions_with_margin(snapshot, _account_position, open_order_ids, None)
+    }
+
+    fn on_order_book_actions_with_margin(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        _account_position: i128,
+        open_order_ids: &[u64],
+        available_margin_raw: Option<i128>,
+    ) -> Result<OrderBookActions, String> {
         let open = open_order_ids.iter().copied().collect::<BTreeSet<_>>();
         self.order_owners
             .retain(|client_id, _| open.contains(client_id));
@@ -186,11 +224,16 @@ impl OrderBookStrategy for PortfolioOrderBookStrategy {
             let strategy_id = self.slots[index].strategy_id.clone();
             let position = self.budgets.position(&strategy_id);
             let member_open_orders = self.member_orders(&strategy_id, open_order_ids);
-            let member_actions = self.slots[index].strategy.on_order_book_actions(
-                snapshot,
-                position,
-                &member_open_orders,
-            )?;
+            let member_budget = available_margin_raw
+                .map(|available| available.min(self.slots[index].reserved_capital_raw));
+            let member_actions = self.slots[index]
+                .strategy
+                .on_order_book_actions_with_margin(
+                    snapshot,
+                    position,
+                    &member_open_orders,
+                    member_budget,
+                )?;
             let mut cancellations = BTreeSet::new();
             for local_id in member_actions.cancel_client_ids {
                 if !cancellations.insert(local_id) {

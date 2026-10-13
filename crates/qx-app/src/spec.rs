@@ -105,8 +105,8 @@ impl DatasetSpec {
     }
 }
 
-/// 内置 Bar 策略的声明（应用层面）。刻意只暴露**确定会改结果**的那几格：
-/// 窗口、数量与身份。费用/撮合/保证金是回测口径，由 spec 的其余段决定。
+/// 内置策略的声明（应用层面）。Bar 与 Tick/OrderBook 入口共用同一套策略旋钮；
+/// 深度入口把每个可见盘口快照折成一个价格观测。费用/撮合/保证金口径由回测 spec 决定。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BuiltinStrategySpec {
@@ -126,7 +126,7 @@ pub struct BuiltinStrategySpec {
     /// Fractional Kelly multiplier in basis points, applied to the prior-return estimate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_kelly_fraction_bps: Option<u32>,
-    /// Number of prior close-to-close returns used by Kelly sizing (30..=1000).
+    /// Prior close observations for Kelly sizing (30..=1000); each Tick/OrderBook snapshot adds one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kelly_lookback_bars: Option<usize>,
     pub fast_window: usize,

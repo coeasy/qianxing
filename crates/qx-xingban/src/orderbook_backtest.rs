@@ -5,17 +5,17 @@
 
 use qx_core::{
     Event, EventKind, EventLog, Fill, Fnv1a, Ledger, OrderStatus, Price, Priority, ReplayVerifier,
-    RunManifest, TradingInstrumentSpec, ValuationContext,
+    TradingInstrumentSpec, ValuationContext,
 };
 use qx_risk::OrderRiskPosition;
 use qx_zhenlu::{Oms, RiskGate};
 
 use crate::orderbook_strategies::OrderBookStrategy;
-use crate::{
-    DataTier, OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot,
-    RunManifestIdentity,
-};
+use crate::{DataTier, OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot};
 use std::collections::BTreeMap;
+
+mod margin;
+mod report;
 
 fn append_event(log: &mut EventLog, ts: u64, priority: u8, kind: EventKind) {
     let seq = log.alloc_seq();
@@ -57,51 +57,6 @@ pub struct OrderBookBacktestReport {
     pub risk_rule_set_version: String,
     pub model_descriptors: Vec<String>,
     pub assumptions: Vec<String>,
-}
-
-impl OrderBookBacktestReport {
-    pub fn result_hash(&self) -> u64 {
-        self.event_log.digest()
-    }
-
-    pub fn final_equity(&self) -> i128 {
-        *self.equity.last().unwrap_or(&self.initial_equity_raw)
-    }
-
-    /// 用报告事实生成与 Bar 回测同构的运行指纹，保证两条链路共享 RunManifest 契约。
-    pub fn run_manifest(
-        &self,
-        identity: RunManifestIdentity<'_>,
-        data_fingerprint: &str,
-    ) -> Result<RunManifest, String> {
-        if data_fingerprint.trim().is_empty() {
-            return Err("RunManifest data_fingerprint 不能为空".into());
-        }
-        let mut model_hash = Fnv1a::new();
-        for descriptor in &self.model_descriptors {
-            model_hash.write_text(descriptor);
-        }
-        let manifest = RunManifest {
-            run_id: identity.run_id.into(),
-            code_commit: identity.code_commit.into(),
-            config_hash: identity.config_hash.into(),
-            data_fingerprint: data_fingerprint.into(),
-            input_components: BTreeMap::new(),
-            clock_start: self.clock_start,
-            clock_end: self.clock_end,
-            global_seed: 0,
-            determinism_mode: true,
-            result_hash: format!("{:016x}", self.result_hash()),
-            strategy_version: identity.strategy_version.into(),
-            instrument_spec_version: identity.instrument_spec_version.into(),
-            model_fingerprint: format!("{:016x}", model_hash.finish()),
-            input_event_hash: format!("{:016x}", self.input_data_hash),
-            output_event_hash: format!("{:016x}", self.result_hash()),
-            runtime_version: identity.runtime_version.into(),
-        };
-        manifest.validate()?;
-        Ok(manifest)
-    }
 }
 
 fn book_notional(
@@ -375,6 +330,12 @@ impl OrderBookBacktestEngine {
             }
 
             let position = ledger.position_for(&account_id, &instrument).quantity.raw();
+            let available_margin_raw = margin::settled_cash_margin(
+                instrument_spec
+                    .as_ref()
+                    .is_some_and(|spec| spec.product.supports_leverage()),
+                ledger.cash_for(&account_id, &currency),
+            );
             let reference_price = match (
                 snapshot.bids.first().map(|level| level.price),
                 snapshot.asks.first().map(|level| level.price),
@@ -392,7 +353,12 @@ impl OrderBookBacktestEngine {
                 .copied()
                 .collect::<std::collections::BTreeSet<_>>();
             let actions = strategy
-                .on_order_book_actions(snapshot, position, &open_order_ids)
+                .on_order_book_actions_with_margin(
+                    snapshot,
+                    position,
+                    &open_order_ids,
+                    available_margin_raw,
+                )
                 .map_err(qx_core::QxError::BusinessViolation)?;
             let mut unique_cancellations = std::collections::BTreeSet::new();
             for client_order_id in actions.cancel_client_ids {
