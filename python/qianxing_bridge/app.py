@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from . import native
@@ -76,6 +76,28 @@ class _PythonBacktestCallback:
         return json.dumps(dict(decision), separators=(",", ":"), ensure_ascii=False)
 
 
+def _strategy_slot_payload(
+    strategies: Sequence[Mapping[str, Any]],
+) -> tuple[str, list[_PythonBacktestCallback]]:
+    if isinstance(strategies, (str, bytes)) or not strategies:
+        raise ValueError("strategies must be a non-empty sequence of named callback slots")
+    identities: list[dict[str, str]] = []
+    callbacks: list[_PythonBacktestCallback] = []
+    required = {"strategy_id", "strategy_version", "source_sha256", "strategy"}
+    for index, binding in enumerate(strategies):
+        if not isinstance(binding, Mapping) or set(binding) != required:
+            raise ValueError(
+                f"strategies[{index}] must contain exactly {sorted(required)}"
+            )
+        identities.append({
+            "strategy_id": binding["strategy_id"],
+            "strategy_version": binding["strategy_version"],
+            "source_sha256": binding["source_sha256"],
+        })
+        callbacks.append(_PythonBacktestCallback(binding["strategy"]))
+    return json.dumps(identities, separators=(",", ":")), callbacks
+
+
 def run_backtest_with_strategy(
     spec: "str | dict[str, Any]",
     strategy: Any,
@@ -118,6 +140,28 @@ def start_backtest_with_strategy(
         strategy_version,
         source_sha256,
         _PythonBacktestCallback(strategy),
+    )
+
+
+def run_backtest_with_strategy_slots(
+    spec: "str | dict[str, Any]", strategies: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Run multiple Python callbacks in declared slots of one shared Rust portfolio."""
+    identities_json, callbacks = _strategy_slot_payload(strategies)
+    return json.loads(
+        native.app_run_backtest_with_strategy_slots(
+            _payload(spec), identities_json, callbacks
+        )
+    )
+
+
+def start_backtest_with_strategy_slots(
+    spec: "str | dict[str, Any]", strategies: Sequence[Mapping[str, Any]]
+) -> Any:
+    """Start multiple Python callbacks in one cancellable Rust portfolio run."""
+    identities_json, callbacks = _strategy_slot_payload(strategies)
+    return native.app_start_backtest_with_strategy_slots(
+        _payload(spec), identities_json, callbacks
     )
 
 

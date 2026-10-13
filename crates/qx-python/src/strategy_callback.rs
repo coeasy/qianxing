@@ -1,6 +1,7 @@
 //! Python authored decisions adapted to the shared Rust Strategy contract.
 
 use super::{app_error, research_context, NativeRun, PyRunHandle};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 use qx_app::{
@@ -9,6 +10,44 @@ use qx_app::{
     RunMultiLegExperimentSpec, StrategyArtifactIdentity,
 };
 use qx_strategy::{MarketEvent, Strategy, StrategyContext, StrategyDecision};
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrategyIdentityDocument {
+    strategy_id: String,
+    strategy_version: String,
+    source_sha256: String,
+}
+
+fn strategy_slots(
+    identities_json: &str,
+    callbacks: Vec<Py<PyAny>>,
+) -> PyResult<Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>> {
+    let identities = serde_json::from_str::<Vec<StrategyIdentityDocument>>(identities_json)
+        .map_err(|error| PyValueError::new_err(format!("invalid strategy identities: {error}")))?;
+    if identities.len() != callbacks.len() {
+        return Err(PyValueError::new_err(format!(
+            "strategy identity count {} does not match callback count {}",
+            identities.len(),
+            callbacks.len()
+        )));
+    }
+    Ok(identities
+        .into_iter()
+        .zip(callbacks)
+        .map(|(identity, callback)| {
+            (
+                StrategyArtifactIdentity {
+                    strategy_id: identity.strategy_id,
+                    strategy_version: identity.strategy_version,
+                    source_sha256: identity.source_sha256,
+                },
+                Box::new(PythonBacktestStrategy { callback }) as Box<dyn Strategy>,
+            )
+        })
+        .collect())
+}
 
 struct PythonBacktestStrategy {
     callback: Py<PyAny>,
@@ -76,6 +115,36 @@ fn app_start_backtest_with_strategy(
     };
     let handle = spec
         .start_with_strategy(identity, PythonBacktestStrategy { callback }, context)
+        .map_err(app_error)?;
+    Ok(PyRunHandle {
+        inner: NativeRun::Bar(handle),
+    })
+}
+
+#[pyfunction]
+fn app_run_backtest_with_strategy_slots(
+    spec_json: &str,
+    identities_json: &str,
+    callbacks: Vec<Py<PyAny>>,
+) -> PyResult<String> {
+    let spec = BacktestSpec::from_json(spec_json).map_err(app_error)?;
+    let strategies = strategy_slots(identities_json, callbacks)?;
+    spec.run_with_strategy_slots(strategies, &research_context(&spec.run_id))
+        .and_then(|outcome| outcome.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_start_backtest_with_strategy_slots(
+    spec_json: &str,
+    identities_json: &str,
+    callbacks: Vec<Py<PyAny>>,
+) -> PyResult<PyRunHandle> {
+    let spec = BacktestSpec::from_json(spec_json).map_err(app_error)?;
+    let context = research_context(&spec.run_id);
+    let strategies = strategy_slots(identities_json, callbacks)?;
+    let handle = spec
+        .start_with_strategy_slots(strategies, context)
         .map_err(app_error)?;
     Ok(PyRunHandle {
         inner: NativeRun::Bar(handle),
@@ -246,6 +315,14 @@ fn app_start_multi_leg_experiment_with_strategy(
 pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_run_backtest_with_strategy, module)?)?;
     module.add_function(wrap_pyfunction!(app_start_backtest_with_strategy, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        app_run_backtest_with_strategy_slots,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        app_start_backtest_with_strategy_slots,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(
         app_run_depth_backtest_with_strategy,
         module

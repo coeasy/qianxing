@@ -11,7 +11,7 @@ import asyncio
 import json
 import math
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass
 from importlib.metadata import PackageNotFoundError, version
 from ssl import SSLContext
@@ -1365,6 +1365,23 @@ class AsyncCoreClient:
 
         return await self._start(start, spec)
 
+    async def async_run_backtest_with_strategy_slots(
+        self,
+        spec: BacktestSpec | dict[str, Any],
+        strategies: Sequence[Mapping[str, Any]],
+    ) -> BacktestOutcome:
+        return await asyncio.to_thread(run_backtest_with_strategy_slots, spec, strategies)
+
+    async def async_start_backtest_with_strategy_slots(
+        self,
+        spec: BacktestSpec | dict[str, Any],
+        strategies: Sequence[Mapping[str, Any]],
+    ) -> AsyncRunHandle[BacktestOutcome]:
+        def start(value: Any) -> RunHandle[BacktestOutcome]:
+            return start_backtest_with_strategy_slots(value, strategies)
+
+        return await self._start(start, spec)
+
     async def async_verify_run(self, outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
         return await asyncio.to_thread(verify_run, outcome)
 
@@ -1905,6 +1922,38 @@ def start_backtest_with_strategy(
             strategy_version=strategy_version,
             source_sha256=source_sha256,
         )
+        return RunHandle(native_handle, BacktestOutcome)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
+def run_backtest_with_strategy_slots(
+    spec: BacktestSpec | dict[str, Any],
+    strategies: Sequence[Mapping[str, Any]],
+) -> BacktestOutcome:
+    """Run several identified Python callbacks in the strategy slots of a Bar portfolio.
+
+    Each item contains ``strategy_id``, ``strategy_version``, ``source_sha256``, and
+    ``strategy``. The Rust scheduler executes the callbacks in portfolio priority order;
+    risk, OMS, matching, account ledger and replay verification remain shared Rust behavior.
+    """
+    try:
+        from qianxing_bridge.app import run_backtest_with_strategy_slots as _run_slots
+
+        return BacktestOutcome.from_dict(_run_slots(_encode_payload(spec), strategies))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
+def start_backtest_with_strategy_slots(
+    spec: BacktestSpec | dict[str, Any],
+    strategies: Sequence[Mapping[str, Any]],
+) -> RunHandle[BacktestOutcome]:
+    """Start multiple identified Python callbacks on a cancellable Rust Bar portfolio."""
+    try:
+        from qianxing_bridge.app import start_backtest_with_strategy_slots as _start_slots
+
+        native_handle = _start_slots(_encode_payload(spec), strategies)
         return RunHandle(native_handle, BacktestOutcome)
     except Exception as exc:
         raise _translate_native_error(exc) from exc

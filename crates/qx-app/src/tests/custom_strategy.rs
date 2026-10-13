@@ -134,6 +134,74 @@ fn injected_strategy_can_share_a_portfolio_ledger_with_builtin_strategies() {
 }
 
 #[test]
+fn multiple_injected_strategies_share_portfolio_and_bind_all_artifact_identities() {
+    let root = scratch("custom-strategy-composition");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 90);
+    let mut spec = backtest_spec("custom-strategy-composition", &bars, &root.join("out"));
+    spec.strategy = crate::spec::BuiltinStrategySpec::new(spec.strategy.kind, "custom-primary");
+    let cash = spec.initial_cash_raw;
+    spec.portfolio = Some(PortfolioBacktestConfig {
+        primary_priority: 0,
+        primary_reserved_capital_raw: cash / 2,
+        additional_strategies: vec![PortfolioStrategySpec {
+            priority: 1,
+            reserved_capital_raw: cash / 2,
+            strategy: crate::spec::BuiltinStrategySpec::new(
+                qx_strategy::BuiltinStrategyKind::Momentum,
+                "custom-secondary",
+            ),
+        }],
+    });
+    let context = RunContext::new(CallerCapability::Research, "custom-strategy-composition");
+    let strategies = || {
+        vec![
+            (
+                StrategyArtifactIdentity {
+                    strategy_id: "custom-primary".into(),
+                    strategy_version: "primary-v1".into(),
+                    source_sha256: "b".repeat(64),
+                },
+                Box::new(BuyOnce { emitted: false }) as Box<dyn Strategy>,
+            ),
+            (
+                StrategyArtifactIdentity {
+                    strategy_id: "custom-secondary".into(),
+                    strategy_version: "secondary-v1".into(),
+                    source_sha256: "c".repeat(64),
+                },
+                Box::new(BuyOnce { emitted: false }) as Box<dyn Strategy>,
+            ),
+        ]
+    };
+    let outcome = spec
+        .run_with_strategy_slots(strategies(), &context)
+        .expect("two caller strategies share the Rust portfolio engine");
+    assert!(outcome.fills >= 2);
+    let fills = std::fs::read_to_string(&outcome.artifacts.fills).expect("fills with owners");
+    assert!(fills.contains("custom-primary"));
+    assert!(fills.contains("custom-secondary"));
+    assert!(
+        verify_run(&outcome, &context)
+            .expect("replay verification")
+            .verified
+    );
+
+    let mut reordered = strategies();
+    reordered.reverse();
+    let repeated = spec
+        .run_with_strategy_slots(reordered, &context)
+        .expect("binding order cannot change deterministic strategy identity");
+    assert_eq!(outcome.result_hash, repeated.result_hash);
+
+    let mut changed = strategies();
+    changed[1].0.source_sha256 = "d".repeat(64);
+    let conflict = spec
+        .run_with_strategy_slots(changed, &context)
+        .expect_err("every custom source digest must be part of the run identity");
+    assert_eq!(conflict.category(), AppErrorCategory::Conflict);
+}
+
+#[test]
 fn injected_strategy_source_digest_is_part_of_run_identity() {
     let root = scratch("custom-strategy-identity");
     let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);

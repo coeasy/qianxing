@@ -42,7 +42,7 @@ use std::collections::BTreeMap;
 mod custom_strategy;
 mod strategy_slot;
 pub use custom_strategy::StrategyArtifactIdentity;
-use custom_strategy::{strategy_config_hash, InjectedStrategy};
+use custom_strategy::{strategy_slots_config_hash, InjectedStrategy};
 use strategy_slot::{build_strategy_slot, strategy_version, StrategySlotContext};
 
 /// Historical default retained for callers whose spec predates explicit account ownership.
@@ -96,19 +96,29 @@ pub(super) fn run_backtest_inner(
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
 ) -> Result<Option<BacktestOutcome>, AppError> {
-    run_backtest_inner_with_strategy(spec, context, cancellation, None)
+    run_backtest_inner_with_strategies(spec, context, cancellation, Vec::new())
 }
 
-fn run_backtest_inner_with_strategy(
+fn run_backtest_inner_with_strategies(
     spec: &BacktestSpec,
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
-    injected: Option<InjectedStrategy>,
+    injected: Vec<InjectedStrategy>,
 ) -> Result<Option<BacktestOutcome>, AppError> {
     spec.validate()?;
-    if let Some(injected) = &injected {
-        injected.identity.validate_for(spec)?;
-    }
+    let identities = injected
+        .iter()
+        .map(|strategy| strategy.identity.clone())
+        .collect::<Vec<_>>();
+    let config_hash = if identities.is_empty() {
+        spec_config_hash(spec)?
+    } else {
+        strategy_slots_config_hash(spec, &identities)?
+    };
+    let mut injected = injected
+        .into_iter()
+        .map(|strategy| (strategy.identity.strategy_id.clone(), strategy))
+        .collect::<BTreeMap<_, _>>();
     let instrument = InstrumentId::parse(&spec.instrument).ok_or_else(|| {
         AppError::new(
             AppErrorCategory::InvalidInput,
@@ -155,11 +165,6 @@ fn run_backtest_inner_with_strategy(
         ));
     }
     let data_fingerprint = format!("barframe:{:016x}", frame.digest());
-    let config_hash = match injected.as_ref() {
-        Some(injected) => strategy_config_hash(spec, &injected.identity)?,
-        None => spec_config_hash(spec)?,
-    };
-
     let risk = RiskGate::conservative_default();
     let risk_rule_set_version = risk.rule_set().version().to_string();
     let fee = spec
@@ -210,9 +215,11 @@ fn run_backtest_inner_with_strategy(
         .map(|portfolio| portfolio.primary_priority)
         .unwrap_or(0);
     let injected_version = injected
-        .as_ref()
+        .get(&spec.strategy.strategy_id)
         .map(|injected| injected.identity.strategy_version.clone());
-    let injected_strategy = injected.map(|injected| injected.strategy);
+    let injected_strategy = injected
+        .remove(&spec.strategy.strategy_id)
+        .map(|injected| injected.strategy);
     strategy_slots.push(build_strategy_slot(
         &spec.strategy,
         StrategySlotContext {
@@ -241,7 +248,9 @@ fn run_backtest_inner_with_strategy(
                     as_of,
                     strategy_version: None,
                 },
-                None,
+                injected
+                    .remove(&member.strategy.strategy_id)
+                    .map(|injected| injected.strategy),
             )?);
         }
     }

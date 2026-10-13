@@ -45,6 +45,8 @@ APP_ENTRYPOINTS = (
     "app_run_backtest",
     "app_run_backtest_with_strategy",
     "app_start_backtest_with_strategy",
+    "app_run_backtest_with_strategy_slots",
+    "app_start_backtest_with_strategy_slots",
     "app_run_depth_backtest_with_strategy",
     "app_start_depth_backtest_with_strategy",
     "app_run_multi_leg_backtest_with_strategy",
@@ -179,6 +181,26 @@ def app_start_backtest_with_strategy(
     """Start a cancellable Python strategy run in the Rust RunHandle lifecycle."""
     return _extension().app_start_backtest_with_strategy(
         spec_json, strategy_id, strategy_version, source_sha256, callback
+    )
+
+
+def app_run_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> str:
+    """Run several named Python strategies in one Rust Bar portfolio."""
+    return str(
+        _extension().app_run_backtest_with_strategy_slots(
+            spec_json, identities_json, callbacks
+        )
+    )
+
+
+def app_start_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> Any:
+    """Start several named Python strategies in one cancellable Rust Bar portfolio."""
+    return _extension().app_start_backtest_with_strategy_slots(
+        spec_json, identities_json, callbacks
     )
 
 

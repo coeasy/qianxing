@@ -85,7 +85,7 @@ contracts:
     http: ["/app/validate-dataset"]
   - use_case: run_backtest
     rust: ["run_backtest"]
-    python_native: ["run_backtest", "run_backtest_with_strategy", "start_backtest", "start_backtest_with_strategy"]
+    python_native: ["run_backtest", "run_backtest_with_strategy", "run_backtest_with_strategy_slots", "start_backtest", "start_backtest_with_strategy", "start_backtest_with_strategy_slots"]
     python_remote: ["run_backtest", "start_backtest"]
     cpp_remote: ["run_backtest", "start_backtest"]
     http: ["/app/backtest", "/app/backtest/start"]

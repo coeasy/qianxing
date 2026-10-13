@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import os
 import shutil
 import tempfile
@@ -61,6 +62,8 @@ def _load_native():
                 "app_run_backtest",
                 "app_run_backtest_with_strategy",
                 "app_start_backtest_with_strategy",
+                "app_run_backtest_with_strategy_slots",
+                "app_start_backtest_with_strategy_slots",
                 "app_run_depth_backtest_with_strategy",
                 "app_start_depth_backtest_with_strategy",
                 "app_run_multi_account_backtest",
@@ -744,8 +747,12 @@ class AppUseCaseTests(unittest.TestCase):
                 }
 
         from qianxing.app import (
+            AsyncCoreClient,
+            ConflictError,
             run_backtest_with_strategy,
+            run_backtest_with_strategy_slots,
             start_backtest_with_strategy,
+            start_backtest_with_strategy_slots,
             verify_run,
         )
 
@@ -808,6 +815,87 @@ class AppUseCaseTests(unittest.TestCase):
         portfolio_async_outcome = portfolio_handle.result()
         self.assertIsNotNone(portfolio_async_outcome)
         self.assertTrue(verify_run(portfolio_async_outcome).verified)
+
+        callback_portfolio = {
+            **portfolio_spec,
+            "run_id": "python-callback-portfolio",
+            "output_dir": str(self.output_dir / "callback-portfolio"),
+            "strategy": dict(portfolio_spec["strategy"]),
+        }
+        callback_portfolio["strategy"]["strategy_id"] = "python-custom-primary"
+        callback_secondary = dict(secondary)
+        callback_secondary["strategy_id"] = "python-custom-secondary"
+        callback_portfolio["portfolio"] = {
+            "primary_priority": 0,
+            "primary_reserved_capital_raw": 50_000_000_000_000,
+            "additional_strategies": [{
+                "priority": 1,
+                "reserved_capital_raw": 50_000_000_000_000,
+                "strategy": callback_secondary,
+            }],
+        }
+        bindings = [
+            {
+                "strategy_id": "python-custom-primary",
+                "strategy_version": "callback-v1",
+                "source_sha256": "b" * 64,
+                "strategy": BuyOnce(),
+            },
+            {
+                "strategy_id": "python-custom-secondary",
+                "strategy_version": "callback-v2",
+                "source_sha256": "c" * 64,
+                "strategy": BuyOnce(),
+            },
+        ]
+        callback_portfolio_outcome = run_backtest_with_strategy_slots(
+            callback_portfolio, bindings
+        )
+        callback_fills = Path(callback_portfolio_outcome.artifacts["fills"]).read_text(encoding="utf-8")
+        self.assertTrue(any("python-custom-primary" in line for line in callback_fills.splitlines()[1:]))
+        self.assertTrue(any("python-custom-secondary" in line for line in callback_fills.splitlines()[1:]))
+        self.assertTrue(verify_run(callback_portfolio_outcome).verified)
+        changed_bindings = [dict(binding) for binding in bindings]
+        changed_bindings[1]["source_sha256"] = "d" * 64
+        with self.assertRaises(ConflictError):
+            run_backtest_with_strategy_slots(callback_portfolio, changed_bindings)
+
+        callback_handle_spec = {
+            **callback_portfolio,
+            "run_id": "python-callback-portfolio-handle",
+            "output_dir": str(self.output_dir / "callback-portfolio-handle"),
+        }
+        callback_handle = start_backtest_with_strategy_slots(
+            callback_handle_spec,
+            [dict(binding, strategy=BuyOnce()) for binding in bindings],
+        )
+        self.assertEqual(callback_handle.wait(timeout_ms=30_000), "succeeded")
+        self.assertTrue(verify_run(callback_handle.result()).verified)
+
+        async def check_async_facade():
+            client = AsyncCoreClient()
+            async_spec = {
+                **callback_portfolio,
+                "run_id": "python-callback-portfolio-async",
+                "output_dir": str(self.output_dir / "callback-portfolio-async"),
+            }
+            async_result = await client.async_run_backtest_with_strategy_slots(
+                async_spec, [dict(binding, strategy=BuyOnce()) for binding in bindings]
+            )
+            self.assertTrue(verify_run(async_result).verified)
+            handle_spec = {
+                **callback_portfolio,
+                "run_id": "python-callback-portfolio-async-handle",
+                "output_dir": str(self.output_dir / "callback-portfolio-async-handle"),
+            }
+            async_handle = await client.async_start_backtest_with_strategy_slots(
+                handle_spec, [dict(binding, strategy=BuyOnce()) for binding in bindings]
+            )
+            self.assertEqual(await async_handle.async_wait(timeout=30), "succeeded")
+            async_handle_result = await async_handle.async_result()
+            self.assertTrue(verify_run(async_handle_result).verified)
+
+        asyncio.run(check_async_facade())
 
         async_spec = dict(spec)
         async_spec["run_id"] = "python-custom-strategy-handle"

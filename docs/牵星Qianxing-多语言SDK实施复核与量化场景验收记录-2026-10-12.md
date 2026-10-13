@@ -184,3 +184,10 @@ Python 十策略证据：
 - 新增 Rust qx-app 与 Python 测试：自定义主策略和内置附属策略都产生带 owner 的成交；同步与 RunHandle 路径均通过；成交产物可复核且共享事件/账簿重放通过。场景探针新增 `python_custom_strategy_portfolio` 并实际执行，登记现为 37 项 executed、0 declared_not_executed、0 missing、1 blocked（Live 需真实 CCXT/testnet 前置）。
 - 验证：Rust `qx-app`/`qx-sdk`/`qx-python` 测试通过；Python 全量 131 项通过；严格 Clippy 通过；格式检查通过；架构不变量门禁 1096 项通过；完整量化场景探针通过 37 个场景。构建测试扩展时发现源码目录内原有忽略的 `.pyd` 遮蔽新 DLL，已用本轮构建的扩展覆盖本地测试产物后复跑通过；该二进制未纳入提交。
 - 方案仍未达到全量发布门槛：组合内尚不支持多个 caller callback、跨市场/跨账户共享资金和组合净额/风险归因；Paper/Live 组合及 Web/桌面 E2E、C++ 默认 transport/独立消费者、持久化订单事件游标恢复、跨平台 wheel 与真实交易所 testnet conformance 仍待实现或验证。缺少外部凭据的 Live 能力保持 blocked/unverified。
+
+## 20. 2026-10-13 继续实现：Rust/Python 多自定义策略组合回测
+
+- 在既有 Bar 同账户组合调度/账簿上增加 caller-defined callback 槽路由。Rust 应用层、Rust SDK、PyO3 原生扩展与 Python 高层 SDK 均可在一个 portfolio 里运行多个自定义策略回调；Rust 仍负责统一的策略优先级、预算与风控、OMS、撮合、账簿、成交归属和回放校验。
+- 每个注入槽使用独立 `strategy_id`、版本与源码 SHA-256；身份集合以稳定顺序纳入运行指纹，拒绝重复槽与无组合时注入多个回调。同一 run_id 的策略源码/版本变更产生冲突，绑定列表顺序不影响确定性结果。同步、RunHandle 与 AsyncCoreClient 路径共享同一 Rust 执行实现。
+- 测试覆盖 Rust 应用、外部 Rust SDK consumer、Python 同步/句柄/AsyncCoreClient、两个自定义 callback 的策略成交归属、ReplayVerifier、绑定顺序稳定性与源码身份冲突。Python 全量 131 项通过；Rust qx-app/qx-sdk/qx-python 全量测试与严格 Clippy 通过；格式和 diff whitespace 检查通过；架构不变量门禁 1096 项全部通过。量化场景探针为 37 executed、0 declared_not_executed、0 missing、1 blocked（Live 需外部 CCXT/testnet 前置）。
+- 能力范围仍限于同一账户、同一市场的 Bar 回测。Tick/OrderBook 与多腿策略回调组合、跨市场/跨账户共享资本和风险净额、组合级 PnL/费用/回撤归因、Paper/Live 多回调工作流、HTTP/Web callback 托管、C++ 等价绑定和独立安装消费、断线后的持久订单/事件游标恢复及真实 venue testnet conformance 未由本轮实现或验证。总体全能力发布门槛仍未满足。

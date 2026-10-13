@@ -108,6 +108,17 @@ impl Client {
         spec.run_with_strategy(identity, strategy, &self.context)
     }
 
+    /// Run several caller-authored strategies as slots in a declared shared Bar portfolio.
+    /// Each identity must reference a portfolio slot; omitted slots remain built-in Rust
+    /// strategies. The shared account engine retains ownership of risk and accounting.
+    pub fn run_backtest_with_strategy_slots(
+        &self,
+        spec: &BacktestSpec,
+        strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+    ) -> Result<BacktestOutcome, AppError> {
+        spec.run_with_strategy_slots(strategies, &self.context)
+    }
+
     /// Start a cancellable caller-authored strategy run on the shared Rust Bar engine.
     pub fn start_backtest_with_strategy<S: Strategy + 'static>(
         &self,
@@ -116,6 +127,15 @@ impl Client {
         strategy: S,
     ) -> Result<RunHandle<BacktestOutcome>, AppError> {
         spec.start_with_strategy(identity, strategy, self.context.clone())
+    }
+
+    /// Start a cancellable Bar portfolio run with caller-authored strategy slots.
+    pub fn start_backtest_with_strategy_slots(
+        &self,
+        spec: BacktestSpec,
+        strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+    ) -> Result<RunHandle<BacktestOutcome>, AppError> {
+        spec.start_with_strategy_slots(strategies, self.context.clone())
     }
 
     /// Freeze a Provider BarFrame and its shared manifest, validate it, then run the same app use case.

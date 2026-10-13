@@ -974,12 +974,12 @@ def main() -> int:
 
     executed(
         "python_custom_strategy_portfolio",
-        "Python 自定义策略与内置策略共享单账户组合回测",
+        "Python 多自定义策略与内置策略共享单账户组合回测",
         "python/tests/test_app_use_cases.py",
         ["-m", "unittest", "python.tests.test_app_use_cases.AppUseCaseTests.test_python_strategy_callback_runs_shared_kernel_and_replay_verifier"],
         r"(Ran 1 test)",
         env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
-        extra="custom_primary=true builtin_secondary=true shared_ledger=true sync=true run_handle=true replay_verified=true",
+        extra="custom_primary_builtin_secondary=true callback_slots=2 shared_ledger=true sync=true run_handle=true replay_verified=true all_source_digests_bound=true",
         evidence=[
             "python/tests/test_app_use_cases.py",
             "crates/qx-app/src/tests/custom_strategy.rs",
