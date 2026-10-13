@@ -27,6 +27,7 @@
 只跑不需要凭据、不访问网络的路径。产物落在 `.task-tmp/quant-probe/`（gitignored）。
 
 跑法：`python tools/quant_scenario_probe.py`（需先 `cargo build --offline -p qx-cli`）。
+如需保留默认探针目录，可设置 `QX_QUANT_PROBE_ROOT` 到仓库内的另一个目录；脚本会把输入、输出和记录的命令统一迁到该根目录。
 """
 
 from __future__ import annotations
@@ -41,13 +42,27 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "maturity" / "quant_scenarios.yaml"
-PROBE_ROOT = ROOT / ".task-tmp" / "quant-probe"
+_probe_root = os.environ.get("QX_QUANT_PROBE_ROOT")
+PROBE_ROOT = (
+    Path(_probe_root) if _probe_root else ROOT / ".task-tmp" / "quant-probe"
+)
+if not PROBE_ROOT.is_absolute():
+    PROBE_ROOT = ROOT / PROBE_ROOT
+PROBE_ROOT = PROBE_ROOT.resolve()
+try:
+    PROBE_REL = PROBE_ROOT.relative_to(ROOT).as_posix()
+except ValueError as error:
+    raise SystemExit("QX_QUANT_PROBE_ROOT must stay inside the repository") from error
+
+
+def probe_path(name: str) -> str:
+    return f"{PROBE_REL}/{name}"
 
 BAR_PRIMARY = "deploy/qianxing.bar-frame.pairs-primary.example.json"
 BAR_REFERENCE = "deploy/qianxing.bar-frame.pairs-reference.example.json"
 BAR_DEFAULT = "deploy/qianxing.bar-frame.example.json"
-BUILTIN_PROBE_BARS = ".task-tmp/quant-probe/builtin-strategies.json"
-BOLLINGER_PROBE_BARS = ".task-tmp/quant-probe/bollinger-long-only.json"
+BUILTIN_PROBE_BARS = probe_path("builtin-strategies.json")
+BOLLINGER_PROBE_BARS = probe_path("bollinger-long-only.json")
 DEPTH_FRAME = "deploy/qianxing.depth-frame.example.json"
 RUNTIME_MULTI = "deploy/qianxing.runtime.strategy-multi-backtest.example.json"
 FAST_MANIFEST = "deploy/qianxing.fast-backtest.example.json"
@@ -97,7 +112,7 @@ PARAMETER_SWEEP_SPEC = {
         "settlement_currency": "USDT",
         "initial_cash_raw": 100000000000000,
         "seed": 7,
-        "output_dir": ".task-tmp/quant-probe/parameter-sweep",
+        "output_dir": probe_path("parameter-sweep"),
         "strategy": {
             "kind": "sma_cross",
             "strategy_id": "probe-sma",
@@ -121,7 +136,7 @@ PARAMETER_SWEEP_SPEC = {
 # 数据用探针**自己合成的振荡行情**，不用 `deploy/` 里那几份样例：样例的价格段太平，
 # 均线交叉只在尾部成交一次，四个折的样本内/样本外收益**全是 0**——记录读起来像"跑过了"，
 # 其实一个数都没观测到（第一版就是这么写的，`observed` 里三个 0 当场暴露）。
-WALK_FORWARD_BARS = ".task-tmp/quant-probe/wfa-bars.json"
+WALK_FORWARD_BARS = probe_path("wfa-bars.json")
 WALK_FORWARD_SPEC = {
     "schema_version": 1,
     "experiment_id": "probe-walk-forward",
@@ -133,7 +148,7 @@ WALK_FORWARD_SPEC = {
         "settlement_currency": "USDT",
         "initial_cash_raw": 100000000000000,
         "seed": 7,
-        "output_dir": ".task-tmp/quant-probe/walk-forward",
+        "output_dir": probe_path("walk-forward"),
         "strategy": {
             "kind": "sma_cross",
             "strategy_id": "probe-wfa",
@@ -642,7 +657,7 @@ def main() -> int:
             "crates/qx-zhenlu/src/lib.rs",
             [
                 "backtest", "multi-builtin", kind, BAR_PRIMARY, BAR_REFERENCE,
-                "--root", f".task-tmp/quant-probe/{name}",
+                "--root", probe_path(name),
             ],
             MULTI_LEG_OBSERVE,
             builtin_kind=kind,
@@ -717,7 +732,7 @@ def main() -> int:
             "primary_initial_cash_raw": 100_000_000_000_000,
             "reference_initial_cash_raw": 100_000_000_000_000,
             "seed": 7,
-            "output_dir": f".task-tmp/quant-probe/{multi_leg_selection_id}",
+            "output_dir": probe_path(multi_leg_selection_id),
             "strategy": {
                 "kind": "pairs_arbitrage", "strategy_id": "probe-multi-leg-selection",
                 "quantity_raw": 1_000_000_000, "fast_window": 5, "slow_window": 20,
@@ -782,7 +797,7 @@ def main() -> int:
         "order_book_execution",
         "盘口撮合 / 日内高频",
         "crates/qx-xingban",
-        ["backtest", "book", "--fill-tier", "l2", "--root", ".task-tmp/quant-probe/book", "sma_cross", DEPTH_FRAME],
+        ["backtest", "book", "--fill-tier", "l2", "--root", probe_path("book"), "sma_cross", DEPTH_FRAME],
         r"\[RunManifest\] (run_id=\S+ data_fingerprint=\S+ result_hash=\w+)",
     )
 
@@ -794,7 +809,7 @@ def main() -> int:
     market_making_spec = {
         "schema_version": 1,
         "run_id": market_making_run_id,
-        "depth_path": ".task-tmp/quant-probe/market-making-depth.json",
+        "depth_path": probe_path("market-making-depth.json"),
         "tier": "l2",
         "settlement_currency": "USDT",
         "initial_cash_raw": 1_000_000_000_000_000,
@@ -802,7 +817,7 @@ def main() -> int:
         "latency_snapshots": 0,
         "queue_position_bps": 0,
         "market_impact_bps": 0,
-        "output_dir": f".task-tmp/quant-probe/market-making-{time.time_ns()}",
+        "output_dir": probe_path(f"market-making-{time.time_ns()}"),
         "strategy": {
             "kind": "sma_cross", "strategy_id": "probe-market-making-strategy",
             "quantity_raw": 1_000_000_000, "fast_window": 2, "slow_window": 3,
@@ -837,7 +852,7 @@ def main() -> int:
     depth_portfolio_spec = {
         "schema_version": 1,
         "run_id": depth_portfolio_run_id,
-        "depth_path": ".task-tmp/quant-probe/depth-portfolio.json",
+        "depth_path": probe_path("depth-portfolio.json"),
         "tier": "l2",
         "settlement_currency": "USDT",
         "initial_cash_raw": 1_000_000_000_000_000,
@@ -845,7 +860,7 @@ def main() -> int:
         "latency_snapshots": 0,
         "queue_position_bps": 0,
         "market_impact_bps": 0,
-        "output_dir": f".task-tmp/quant-probe/{depth_portfolio_run_id}",
+        "output_dir": probe_path(depth_portfolio_run_id),
         "strategy": {
             "kind": "sma_cross", "strategy_id": "probe-depth-sma",
             "quantity_raw": 1_000_000_000, "fast_window": 2, "slow_window": 3,
@@ -889,7 +904,7 @@ def main() -> int:
     depth_sizing_spec = {
         "schema_version": 1,
         "run_id": depth_sizing_run_id,
-        "depth_path": ".task-tmp/quant-probe/depth-sizing.json",
+        "depth_path": probe_path("depth-sizing.json"),
         "tier": "l2",
         "settlement_currency": "USDT",
         "initial_cash_raw": 1_000_000_000_000_000,
@@ -897,7 +912,7 @@ def main() -> int:
         "latency_snapshots": 0,
         "queue_position_bps": 0,
         "market_impact_bps": 0,
-        "output_dir": f".task-tmp/quant-probe/{depth_sizing_run_id}",
+        "output_dir": probe_path(depth_sizing_run_id),
         "strategy": {
             "kind": "momentum", "strategy_id": "probe-depth-cash-sizing",
             "quantity_raw": 1_000_000_000, "fast_window": 2, "slow_window": 3,
@@ -948,7 +963,7 @@ def main() -> int:
         "base": {
             "schema_version": 1,
             "run_id": "unused-depth-strategy-selection",
-            "depth_path": ".task-tmp/quant-probe/depth-strategy-selection.json",
+            "depth_path": probe_path("depth-strategy-selection.json"),
             "tier": "l2",
             "settlement_currency": "USDT",
             "initial_cash_raw": 1_000_000_000_000_000,
@@ -956,7 +971,7 @@ def main() -> int:
             "latency_snapshots": 0,
             "queue_position_bps": 0,
             "market_impact_bps": 0,
-            "output_dir": f".task-tmp/quant-probe/{depth_selection_id}",
+            "output_dir": probe_path(depth_selection_id),
             "strategy": {
                 "kind": "sma_cross", "strategy_id": "probe-depth-strategy-selection",
                 "quantity_raw": 1_000_000_000, "fast_window": 2, "slow_window": 3,
@@ -1127,7 +1142,7 @@ def main() -> int:
     notional_spec = {
         **PARAMETER_SWEEP_SPEC["base"],
         "run_id": "probe-position-sizing",
-        "output_dir": ".task-tmp/quant-probe/position-sizing",
+        "output_dir": probe_path("position-sizing"),
         "strategy": {
             **PARAMETER_SWEEP_SPEC["base"]["strategy"],
             "strategy_id": "probe-notional-sizing",
@@ -1168,7 +1183,7 @@ def main() -> int:
     margin_spec = {
         **PARAMETER_SWEEP_SPEC["base"],
         "run_id": "probe-margin-sizing",
-        "output_dir": ".task-tmp/quant-probe/margin-sizing",
+        "output_dir": probe_path("margin-sizing"),
         "strategy": {
             **PARAMETER_SWEEP_SPEC["base"]["strategy"],
             "strategy_id": "probe-margin-sizing",
@@ -1192,7 +1207,7 @@ def main() -> int:
     volatility_spec = {
         **PARAMETER_SWEEP_SPEC["base"],
         "run_id": "probe-volatility-sizing",
-        "output_dir": ".task-tmp/quant-probe/volatility-sizing",
+        "output_dir": probe_path("volatility-sizing"),
         "strategy": {
             **PARAMETER_SWEEP_SPEC["base"]["strategy"],
             "strategy_id": "probe-volatility-sizing",
@@ -1219,7 +1234,7 @@ def main() -> int:
         **PARAMETER_SWEEP_SPEC["base"],
         "run_id": "probe-kelly-sizing",
         "bars_path": str(kelly_bars.relative_to(ROOT)).replace("\\", "/"),
-        "output_dir": ".task-tmp/quant-probe/kelly-sizing",
+        "output_dir": probe_path("kelly-sizing"),
         "strategy": {
             "kind": "momentum",
             "strategy_id": "probe-kelly-sizing",
@@ -1265,7 +1280,7 @@ def main() -> int:
         **PARAMETER_SWEEP_SPEC["base"],
         "run_id": "probe-protective-exit",
         "bars_path": str(protective_bars.relative_to(ROOT)).replace("\\", "/"),
-        "output_dir": ".task-tmp/quant-probe/protective-exit",
+        "output_dir": probe_path("protective-exit"),
         "strategy": {
             **PARAMETER_SWEEP_SPEC["base"]["strategy"],
             "kind": "momentum",
