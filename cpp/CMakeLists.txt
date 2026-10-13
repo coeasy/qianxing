@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(qianxing_strategy_sdk VERSION 0.1.0 LANGUAGES CXX)
 
+include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
@@ -11,10 +12,21 @@ endif()
 add_executable(qianxing_ring_smoke tests/ring_smoke.cpp)
 target_include_directories(qianxing_ring_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(qianxing_ring_smoke PRIVATE cxx_std_17)
+add_test(NAME qianxing_ring_smoke COMMAND qianxing_ring_smoke)
 
 add_executable(qianxing_app_client_smoke tests/app_client_smoke.cpp)
 target_include_directories(qianxing_app_client_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(qianxing_app_client_smoke PRIVATE cxx_std_17)
+add_test(NAME qianxing_app_client_smoke COMMAND qianxing_app_client_smoke)
+
+# These contract checks use assert(); keep the checks active in optimized builds.
+if(MSVC)
+    target_compile_options(qianxing_ring_smoke PRIVATE /UNDEBUG)
+    target_compile_options(qianxing_app_client_smoke PRIVATE /UNDEBUG)
+else()
+    target_compile_options(qianxing_ring_smoke PRIVATE -UNDEBUG)
+    target_compile_options(qianxing_app_client_smoke PRIVATE -UNDEBUG)
+endif()
 
 add_library(qianxing_strategy_example SHARED examples/momentum_strategy.cpp)
 target_include_directories(qianxing_strategy_example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -220,6 +220,7 @@ jobs:
         run: |
           cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release -DQX_BUILD_JSONL_EXAMPLE=ON
           cmake --build build/cpp --config Release --parallel
+          ctest --test-dir build/cpp -C Release --output-on-failure
       - name: Install SDK CMake package and archive it
         shell: bash
         run: |
@@ -228,6 +229,7 @@ jobs:
           cmake -S cpp/tests/consumer -B build/cpp-consumer \
             -DCMAKE_PREFIX_PATH="$PWD/dist/sdk"
           cmake --build build/cpp-consumer --config Release --parallel
+          ctest --test-dir build/cpp-consumer -C Release --output-on-failure
           tar -czf "dist/qianxing-cpp-sdk-${GITHUB_REF_NAME}.tar.gz" -C dist sdk
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist && sha256sum qianxing-cpp-sdk-*.tar.gz > cpp-sdk.sha256)

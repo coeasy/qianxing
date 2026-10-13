@@ -214,3 +214,10 @@ Python 十策略证据：
 - 新增行为用例验证主/参考腿事件分别读到各自的现金快照，并验证本金合计溢出在规格校验阶段失败。`cargo test --offline -p qx-app --lib -- --test-threads=1` 113 项通过，`cargo clippy --offline -p qx-app --all-targets -- -D warnings`、Python 全量 131 项、格式与 diff whitespace 检查通过；架构门禁 1096 项通过，量化场景 37 项 executed、1 项真实 Live 前置 blocked。
 - 基于此 Rust 核心重建 Windows x64 `cp310-abi3` wheel，并隔离离线安装、导入多腿 callback/深度 callback API 与原生扩展。wheel SHA-256：`a54fb261d7921d06f3b7ff27b0e623ebfda085f21913c85f1b82aa22a7a3d7e9`。
 - 这修复了多腿策略上下文的一致性问题，但没有实现共享多腿账簿、资金竞争、跨腿净额或成交回报驱动的策略回调；这些仍是多语言核心发布门槛中的未完成项。
+
+## 24. 2026-10-13 Windows C++ SDK 安装与测试链路
+
+- 发现 `cpp/CMakeLists.txt` 构建了两个 C++ smoke 程序但未注册 CTest；首次 `ctest` 结果为 `No tests were found!`，且 Release 的 `NDEBUG` 会使程序内 `assert` 检查失效。现已启用 CTest、注册 `qianxing_ring_smoke` / `qianxing_app_client_smoke`，并仅对这两个测试目标在 Release 下显式启用断言。
+- 使用 MSVC 19.44 / Visual Studio 2022、Windows SDK 10.0.26100 实际构建 C++ SDK 与策略 DLL，Release 下 CTest 2/2 通过；安装到 staging 后，独立 `cpp/tests/consumer` 通过 `find_package(QianxingStrategySDK 0.1 CONFIG REQUIRED)` 编译并运行成功。
+- 下游 consumer 也注册为 CTest，`.github/workflows/ci.yml` 的 Windows/Linux/macOS C++ job 与 release workflow 都会运行 SDK smoke 和安装 consumer 测试，避免只编译不执行。
+- 能力矩阵修正为 Windows x64 CMake 包安装消费者已经通过本机验证，同时保留其它平台构建和 Rust 宿主加载 C++ 插件 ABI 兼容验证缺口。C++ 默认 HTTP transport（TLS/连接复用/deadline/重试/事件流/取消）仍未实现，远端 SDK 功能不等于本地交易运行时。

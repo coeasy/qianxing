@@ -322,6 +322,8 @@ jobs:
         run: cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release -DQX_BUILD_JSONL_EXAMPLE=ON
       - name: Build C++ SDK smoke
         run: cmake --build build/cpp --config Release --parallel
+      - name: Run C++ SDK contract tests
+        run: ctest --test-dir build/cpp -C Release --output-on-failure
       - name: Install and consume the exported CMake package
         shell: bash
         run: |
@@ -330,6 +332,7 @@ jobs:
           cmake -S cpp/tests/consumer -B build/cpp-consumer \
             -DCMAKE_PREFIX_PATH="$PWD/build/cpp-sdk-install"
           cmake --build build/cpp-consumer --config Release --parallel
+          ctest --test-dir build/cpp-consumer -C Release --output-on-failure
       - name: Locate built binaries
         id: binaries
         shell: bash
