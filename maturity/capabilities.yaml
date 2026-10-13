@@ -734,9 +734,8 @@ capabilities:
       - python/pyproject.toml formal qianxing distribution, optional integration extras, and console entry point
       - .github/workflows/release.yml Python wheel matrix and opt-in PyPI Trusted Publishing job
       - locally built release wheel installed outside the source tree and validated with native doctor plus validate/backtest/verify smoke
+      - '2026-10-13 Windows x64 ABI3 release proof: `maturin build --release` produced `qianxing-0.1.0-cp310-abi3-win_amd64.whl`; `tools/check_python_wheel.py` verified the native extension tag; offline `pip install --no-deps --target` into a fresh target succeeded; importing from that installed target reported `native_extension_available=true`, and a typed `BacktestSpec` ran 1 fill and passed `verify_run`'
     limitations:
-      - depth_app_builtin_strategy_surface: DepthBacktestSpec currently accepts Rust built-in strategies; custom TickStrategy/OrderBookStrategy registration is not part of the shared app contract
-      - experiment_grid_does_not_cover_depth: Bar and multi-leg parameter grids are available; Tick/OrderBook parameter sweeps are not yet part of the shared experiment contract
       - paper_live_clients_require_running_api_and_deployment_auth: Paper/Live SDK clients submit to qx-api; they do not embed workers or execution credentials, and Live requires TLS plus authenticated Operator authorization
 
   cpp_strategy_package:
