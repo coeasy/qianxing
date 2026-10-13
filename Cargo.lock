@@ -1284,6 +1284,8 @@ dependencies = [
  "qx-app",
  "qx-control",
  "qx-core",
+ "qx-data",
+ "qx-guanxing",
  "qx-protocol",
  "qx-provider",
  "qx-scheduler",

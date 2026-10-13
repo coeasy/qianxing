@@ -11,6 +11,8 @@ mod connections;
 mod console;
 mod control_reads;
 mod event_cursor;
+#[cfg(test)]
+mod provider_backtest_tests;
 mod provider_registry;
 mod read_scope;
 mod snapshot_history;

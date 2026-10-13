@@ -23,4 +23,6 @@ serde_json = { workspace = true }
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
 
 [dev-dependencies]
+qx-data = { path = "../qx-data" }
+qx-guanxing = { path = "../qx-guanxing" }
 qx-strategy = { path = "../qx-strategy" }
