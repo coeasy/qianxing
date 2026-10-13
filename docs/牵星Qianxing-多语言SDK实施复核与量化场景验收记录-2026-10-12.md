@@ -263,3 +263,9 @@ Python 十策略证据：
 - 新增 EUR 报价现货成交与 EUR/USDT FX 标价的 Paper 回归，断言现金账簿币种、市场估值和风险可用权益；增加规格币种大小写归一化回归。
 - 验证：`cargo test --offline -p qx-core` 通过；`cargo test --offline -p qx-cli` 全量 396 个单元测试及应用集成测试通过；`cargo test --offline -p qx-app -p qx-sdk` 通过（122 个应用单元、22 个独立 SDK 消费者及 Provider/多账户消费者）；`cargo test --offline -p qx-api` 通过（65 个单元及全部集成测试）；Python `unittest discover` 通过 136 项、跳过 1 项。跨币种 Paper 专项回归在币种大小写规范化后再次通过。
 - 本修复不关闭全局发布缺口：共享账户下跨市场 Bar 同步回测与统一撮合/风险/账簿仍未形成 SDK 主用例；多腿入口仍是各腿独立模拟，不可描述成同步组合撮合。C++ 本地没有可用 CMake/C++ 编译器，安装包/独立消费者缺少本机验收；Live 真实交易所仍缺 CCXT 运行环境与 testnet 凭据。故整套方案仍未达到全能力发布门槛。
+
+## 31. 2026-10-13 补登记：Paper 跨币种现货估值场景
+
+- 将 §30 修复接入 `tools/quant_scenario_probe.py`，探针通过实际运行 `paper_cross_currency_spot_uses_quote_cash_and_configured_fx_market` 回归测试，核对 EUR 报价现货现金腿、ETH/EUR 持仓和 EUR/USDT 兑换后的账户权益。
+- 重跑探针结果：40 项 executed、0 declared_not_executed、0 missing、1 项 blocked。新增场景观测为 11,122 USDT；唯一 blocked 仍是缺少 CCXT 运行依赖和交易所 testnet 凭据的 Live 验收，不将本地测试冒充实盘认证。
+- 这是验收矩阵补证，不关闭同步多市场共享账簿/撮合、多腿联合执行、远端回调托管、跨平台安装矩阵等既有缺口；整体方案仍未达到全能力发布条件。

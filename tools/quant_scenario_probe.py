@@ -636,6 +636,49 @@ def main() -> int:
             }
         )
 
+    def executed_paper_cross_currency_fx_test():
+        nonlocal failures
+        argv = [
+            "cargo",
+            "test",
+            "--offline",
+            "-p",
+            "qx-cli",
+            "paper_cross_currency_spot_uses_quote_cash_and_configured_fx_market",
+        ]
+        code, output = run_command(argv)
+        observed = first_match(r"(test result: ok\. 1 passed; 0 failed)", output)
+        if code == 0 and observed:
+            observed = (
+                "EUR spot cash booked in EUR; risk equity converts EUR cash and ETH/EUR position "
+                "through configured EUR/USDT mark (11,122 USDT)"
+            )
+        else:
+            failures += 1
+            print(f"[paper_cross_currency_spot_fx_valuation diagnostics] {output[-2000:]}", flush=True)
+        ok = code == 0 and bool(observed)
+        print(
+            f"[{'OK  ' if ok else 'FAIL'}] paper_cross_currency_spot_fx_valuation: "
+            f"rc={code} observed={observed!r}",
+            flush=True,
+        )
+        records.append(
+            {
+                "name": "paper_cross_currency_spot_fx_valuation",
+                "label": "Paper 跨币种现货报价币记账与 FX 风控估值",
+                "status": "executed" if ok else "declared_not_executed",
+                "anchor": "crates/qx-cli/src/venue_runtime/paper_valuation.rs",
+                "command": " ".join(argv),
+                "exit_code": code,
+                "observed": observed,
+                "evidence": [
+                    "crates/qx-cli/src/venue_runtime/paper_valuation.rs",
+                    "crates/qx-cli/src/tests/paper_margin_valuation.rs",
+                    "crates/qx-core/src/ledger/fill.rs",
+                ],
+            }
+        )
+
     for name, label, kind, _why in BUILTIN_SCENARIOS:
         frame = BOLLINGER_PROBE_BARS if kind == "bollinger" else BUILTIN_PROBE_BARS
         executed(
@@ -649,6 +692,7 @@ def main() -> int:
 
     executed_paper_kelly_test()
     executed_paper_multi_strategy_test()
+    executed_paper_cross_currency_fx_test()
 
     for name, label, kind in MULTI_LEG_SCENARIOS:
         executed(
