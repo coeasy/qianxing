@@ -220,4 +220,10 @@ Python 十策略证据：
 - 发现 `cpp/CMakeLists.txt` 构建了两个 C++ smoke 程序但未注册 CTest；首次 `ctest` 结果为 `No tests were found!`，且 Release 的 `NDEBUG` 会使程序内 `assert` 检查失效。现已启用 CTest、注册 `qianxing_ring_smoke` / `qianxing_app_client_smoke`，并仅对这两个测试目标在 Release 下显式启用断言。
 - 使用 MSVC 19.44 / Visual Studio 2022、Windows SDK 10.0.26100 实际构建 C++ SDK 与策略 DLL，Release 下 CTest 2/2 通过；安装到 staging 后，独立 `cpp/tests/consumer` 通过 `find_package(QianxingStrategySDK 0.1 CONFIG REQUIRED)` 编译并运行成功。
 - 下游 consumer 也注册为 CTest，`.github/workflows/ci.yml` 的 Windows/Linux/macOS C++ job 与 release workflow 都会运行 SDK smoke 和安装 consumer 测试，避免只编译不执行。
-- 能力矩阵修正为 Windows x64 CMake 包安装消费者已经通过本机验证，同时保留其它平台构建和 Rust 宿主加载 C++ 插件 ABI 兼容验证缺口。C++ 默认 HTTP transport（TLS/连接复用/deadline/重试/事件流/取消）仍未实现，远端 SDK 功能不等于本地交易运行时。
+- 能力矩阵先记录 Windows x64 本机安装消费者证据；三平台 CI 后续结果见 §25。C++ 默认 HTTP transport（TLS/连接复用/deadline/重试/事件流/取消）仍未实现，远端 SDK 功能不等于本地交易运行时。
+
+## 25. 2026-10-13 C++ SDK 三平台 CI 复核
+
+- GitHub Actions CI run `38363403100`（commit `4f85cd9e`）的 C++ SDK job 已在 `ubuntu-latest`、`macos-latest`、`windows-latest` 全部 `completed/success`。三平台均完成 SDK build、Release CTest、CMake 安装 consumer、ring/app-client smoke、Rust 宿主真实加载 C ABI 插件、JSONL worker 与 shared-memory JSON/columnar worker 验收。随后该 run 的 25 个 job 全部 `completed/success`，失败 job 为 0。
+- 据此将 C++ 能力矩阵更新为三平台 x64 CI 有验证证据；未推断其它 CPU 架构通过。全仓 CI 已通过该提交门禁，但这不代表尚未覆盖的组合交易、事件持久化、其它 wheel 架构及外部 testnet 发布门槛整体通过。
+- 仍待完成：C++ 默认 HTTP transport、其它架构支持；以及多腿共享账簿、跨市场/账户风险聚合、Paper/Live 多策略链、持久事件日志等全局缺口。

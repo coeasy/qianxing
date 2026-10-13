@@ -72,7 +72,7 @@ domains:
   - name: cpp_sdk
     level: partial
     evidence: [cpp/include/qianxing_app.hpp, cpp/tests/consumer, maturity/language_api_contract.yaml]
-    limitations: ["C++ 客户端依赖集成方自带 HTTP transport：默认传输（TLS 认证、keep-alive、截止时间、重试、SSE/WS、取消）未落地", "尚不是独立交易运行时——header-only client 不得被描述成本地交易引擎", "CMake 安装包、Windows x64 下游 find_package consumer 与 Release smoke 已在本机验证；Windows/Linux/macOS 持续构建矩阵及 Rust 宿主真实加载插件的跨工具链 ABI 验证仍未完成"]
+    limitations: ["C++ 客户端依赖集成方自带 HTTP transport：默认传输（TLS 认证、keep-alive、截止时间、重试、SSE/WS、取消）未落地", "尚不是独立交易运行时——header-only client 不得被描述成本地交易引擎", "Windows/Linux/macOS x64 CI 已构建 C++ SDK、执行 Release CTest、安装并运行 find_package consumer，且在 Rust 宿主加载 C ABI 插件与验证 JSONL/shared-memory worker；其它 CPU 架构尚未认证"]
     next_gate: "落方案 §6.3 的默认 HTTP transport 与异步生命周期，并补安装后全链路测试与 ABI 版本检查"
 
   - name: rust_sdk
