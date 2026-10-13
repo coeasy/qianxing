@@ -2217,6 +2217,13 @@ class AppUseCaseTests(unittest.TestCase):
         ))
         self.assertEqual(asyncio.run(async_handle.async_wait(30)), "succeeded")
         self.assertEqual(asyncio.run(async_handle.async_result()).succeeded_candidates, 2)
+        fills = sum(candidate.outcome.fills for candidate in result.candidates)
+        self.assertGreater(fills, 0)
+        print(
+            f"custom_depth_grid=candidates={result.completed_candidates} "
+            f"succeeded={result.succeeded_candidates} fills={fills} "
+            "factory_instances_per_candidate=true run_handle=true asyncio=true"
+        )
 
     def test_multi_account_backtest_uses_the_shared_rust_run_handle(self):
         self._require()

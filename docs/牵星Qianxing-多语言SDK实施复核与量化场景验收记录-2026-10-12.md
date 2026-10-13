@@ -249,3 +249,9 @@ Python 十策略证据：
 - 验证：Rust `qx-app`、`qx-sdk` 独立消费者（含新工厂用例）和 `qx-python` 共 147 项通过；严格 Clippy 通过；Python 全量 133 项通过；`tools/check_architecture.py` 1096 项通过；wheel 检查、隔离环境安装与 native API 导入通过。Windows x64 `cp310-abi3` wheel 大小 1,817,054 字节，SHA-256 `8ca9fedbe370093fab5c69e7ce6e257977a4d5e9f5b770c206a4fbcaae17b1b3`。量化场景探针 37 项通过、0 项缺失、1 项 Live 外部前置 blocked。Windows 系统 TEMP 对 Rust 用例目录有拒绝访问，重定向至 `target/test-tmp` 后全套测试通过。
 - wheel 发行配置排除本地 `.venv`；构建时还将仓库忽略的虚拟环境临时移出源码目录并在 finally 路径恢复，避免发行包扫描开发环境。该临时动作已恢复，`python/.venv` 仍在。
 - 本轮补通的是本地 Rust/Python SDK 的 Tick/OrderBook 多参数回调实验；HTTP/C++ callback 托管、跨市场/跨账户统一资本与风险、组合级多腿调度、Paper/Live callback 策略工作流、Web/桌面 E2E、Linux/macOS wheel 与真实 venue testnet 仍未通过验收。因此整体方案仍未达到全能力发布门槛。
+
+## 29. 2026-10-13 补登记：Python 自定义深度参数实验场景证据
+
+- 对照 §28 的已测功能与场景探针后发现，量化场景矩阵未单独执行 Python 自定义 Tick/OrderBook 参数工厂；只记录 Rust 内置深度策略选择会漏掉 Python callback 和 async/RunHandle 链路。现为 `tools/quant_scenario_probe.py` 新增 `python_custom_depth_parameter_experiment` 场景，复用同一 Python 原生 SDK 行为测试并从测试输出提取实际观测。
+- 全量 `python tools/quant_scenario_probe.py` 重跑结果：38 项 executed、0 declared_not_executed、0 missing、1 项 blocked。新增场景实测 2 个候选均成功、总成交 2 笔，覆盖每候选新建 factory、RunHandle 与 asyncio 入口。Live testnet 场景继续保持 blocked，不因本地 Paper/回测通过而升级状态。
+- 该更新补足验收登记与可重复执行证据，不新增交易能力；远端 C++/HTTP callback、多市场/跨账户组合风险、完整 Paper/Live 策略工作流、跨平台 Python wheel 和 testnet 认证仍是全量发布的未完成项。

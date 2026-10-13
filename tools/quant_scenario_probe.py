@@ -990,6 +990,28 @@ def main() -> int:
     )
 
     executed(
+        "python_custom_depth_parameter_experiment",
+        "Python 自定义 Tick/OrderBook 策略多参数实验（每候选新建策略，Rust 深度内核）",
+        "crates/qx-app/src/cases/run_depth_experiment.rs",
+        [
+            "-m", "unittest",
+            "python.tests.test_app_use_cases.AppUseCaseTests.test_python_depth_parameter_experiment_uses_fresh_strategies_in_rust",
+        ],
+        r"(custom_depth_grid=candidates=\d+ succeeded=\d+ fills=[1-9]\d* "
+        r"factory_instances_per_candidate=true run_handle=true asyncio=true)",
+        env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
+        evidence=[
+            "crates/qx-app/src/cases/run_depth_experiment.rs",
+            "crates/qx-app/src/tests/depth_experiment.rs",
+            "crates/qx-sdk/tests/consumer/strategy_selection.rs",
+            "crates/qx-python/src/strategy_callback.rs",
+            "python/qianxing/app.py",
+            "python/tests/test_app_use_cases.py",
+        ],
+        command_prefix="python",
+    )
+
+    executed(
         "rust_sdk_git_consumer",
         "Rust SDK 固定提交 Git 安装与仓外消费者运行",
         "tools/check_rust_sdk_git_consumer.py",
