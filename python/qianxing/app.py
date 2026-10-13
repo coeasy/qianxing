@@ -542,7 +542,19 @@ class CompareRunsResult:
 
 @dataclass(frozen=True)
 class ExperimentParameterSpace:
-    name: Literal["fast_window", "slow_window", "period", "threshold_bps", "quantity_raw"]
+    name: Literal[
+        "fast_window",
+        "slow_window",
+        "period",
+        "threshold_bps",
+        "quantity_raw",
+        "target_kelly_fraction_bps",
+        "market_making_spread_bps",
+        "market_making_quote_qty_raw",
+        "market_making_max_inventory_raw",
+        "market_making_tick_size_raw",
+        "market_making_inventory_skew_bps",
+    ]
     values: tuple[int, ...]
 
     def to_dict(self) -> dict[str, Any]:
