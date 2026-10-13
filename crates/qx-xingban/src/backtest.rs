@@ -9,7 +9,6 @@ use qx_core::{
     TradingInstrumentSpec, ValuationContext, SCALE,
 };
 use qx_guanxing::{Bar, DataSourceId, DataView, QualityGate, Verdict};
-use qx_risk::OrderRiskPosition;
 use qx_zhenlu::{Oms, RiskGate};
 
 use crate::ashare::{
@@ -29,6 +28,8 @@ pub(crate) mod portfolio_budget;
 use portfolio_budget::PortfolioBudgetState;
 mod fill_application;
 use fill_application::FillApplicationInput;
+mod order_admission;
+use order_admission::OrderAdmissionInput;
 mod order_validation;
 use order_validation::reduce_only_order_allowed;
 mod portfolio_timeline;
@@ -545,354 +546,30 @@ impl BacktestEngine {
                         available_margin_raw,
                     )?;
                 }
-                // All decisions at this timestamp share one account. Reserve funding
-                // in deterministic strategy order before the orders reach the matcher,
-                // otherwise siblings can each pass against the same stale cash balance.
-                let mut reserved_funding_raw = 0_i128;
-                let mut accepted_orders = Vec::new();
-                for mut order in orders {
-                    // Strategy intent IDs are local to a strategy. Once several
-                    // strategies share one OMS, remap zero or colliding IDs into
-                    // the engine's deterministic account-wide order namespace.
-                    if order.client_id == 0 || oms.get(order.client_id).is_some() {
-                        while next_id == 0 || oms.get(next_id).is_some() {
-                            next_id = next_id.checked_add(1).ok_or_else(|| {
-                                qx_core::QxError::Invariant("回测订单序号溢出".into())
-                            })?;
-                        }
-                        order.client_id = next_id;
-                        next_id = next_id.checked_add(1).ok_or_else(|| {
-                            qx_core::QxError::Invariant("回测订单序号溢出".into())
-                        })?;
-                    } else if order.client_id >= next_id {
-                        next_id = order.client_id.checked_add(1).ok_or_else(|| {
-                            qx_core::QxError::Invariant("回测订单序号溢出".into())
-                        })?;
-                    }
-                    if order.account_id.is_empty() {
-                        order.account_id = account_id.clone();
-                    }
-                    let invalid_reason = if order.account_id != account_id {
-                        Some("订单账户与回测账户不一致")
-                    } else if order.instrument != instrument {
-                        Some("订单标的与回测标的不一致")
-                    } else {
-                        None
-                    };
-                    let ashare_reason = ashare_rules.and_then(|rules| {
-                        rules
-                            .validate_order(&order, position, ashare_state.bought_today(), bar.ts)
-                            .err()
-                    });
-                    if let Some(reason) = invalid_reason {
-                        append_rejection(&mut log, bar.ts, order.client_id, reason);
-                    } else if let Some(reason) = ashare_reason {
-                        append_rejection(&mut log, bar.ts, order.client_id, &reason);
-                    } else {
-                        let product_policy = order.policy.unwrap_or_default();
-                        let leverage = if let Some(spec) = derivative_spec {
-                            product_policy.validate_for(spec)?;
-                            product_policy.leverage
-                        } else {
-                            1
-                        };
-                        // Strategy decisions at Bar(t) only observe data through Bar(t-1).
-                        // Pre-trade risk and margin therefore use the last visible mark,
-                        // never the current bar close, which is future information here.
-                        let visible_close = bars[i - 1].close;
-                        let reference_price = order.limit.map(|p| p.raw()).unwrap_or(visible_close);
-                        let order_qty = checked_abs(order.qty.raw())?;
-                        let strategy_budget_check = portfolio_budget.order_budget_check(
-                            |strategy_id| strategy.strategy_budget_raw(strategy_id),
-                            &order,
-                            reference_price,
-                            instrument_spec.as_ref(),
-                            multiplier,
-                            margin.as_ref(),
-                        )?;
-                        let reduce_only_allowed = !product_policy.reduce_only
-                            || reduce_only_order_allowed(
-                                &ledger,
-                                &account_id,
-                                &instrument,
-                                &order,
-                                order_qty,
-                            );
-                        let required_margin = if let Some(spec) = derivative_spec {
-                            let signed_delta = match order.side {
-                                Side::Buy => order_qty,
-                                Side::Sell => -order_qty,
-                            };
-                            let projected_position =
-                                if product_policy.position_mode == qx_core::PositionMode::Hedge {
-                                    ledger
-                                        .position_for_side(
-                                            &account_id,
-                                            &instrument,
-                                            product_policy.position_side,
-                                        )
-                                        .quantity
-                                        .raw()
-                                        .checked_add(signed_delta)
-                                        .ok_or_else(|| {
-                                            qx_core::QxError::Invariant(
-                                                "回测 projected hedge position 溢出".into(),
-                                            )
-                                        })?
-                                } else {
-                                    position.checked_add(signed_delta).ok_or_else(|| {
-                                        qx_core::QxError::Invariant(
-                                            "回测 projected position 溢出".into(),
-                                        )
-                                    })?
-                                };
-                            let margin_qty =
-                                if product_policy.position_mode == qx_core::PositionMode::Hedge {
-                                    let current_long = ledger
-                                        .position_for_side(
-                                            &account_id,
-                                            &instrument,
-                                            qx_core::PositionSide::Long,
-                                        )
-                                        .quantity
-                                        .raw();
-                                    let current_short = ledger
-                                        .position_for_side(
-                                            &account_id,
-                                            &instrument,
-                                            qx_core::PositionSide::Short,
-                                        )
-                                        .quantity
-                                        .raw();
-                                    let long = if product_policy.position_side
-                                        == qx_core::PositionSide::Long
-                                    {
-                                        projected_position
-                                    } else {
-                                        current_long
-                                    };
-                                    let short = if product_policy.position_side
-                                        == qx_core::PositionSide::Short
-                                    {
-                                        projected_position
-                                    } else {
-                                        current_short
-                                    };
-                                    checked_abs(long)?.saturating_add(checked_abs(short)?)
-                                } else {
-                                    checked_abs(projected_position)?
-                                };
-                            margin.instrument_initial_margin(
-                                spec,
-                                margin_qty,
-                                checked_abs(reference_price)?,
-                                leverage,
-                            )?
-                        } else {
-                            margin.initial_margin(notional_for(
-                                derivative_spec,
-                                order_qty,
-                                checked_abs(reference_price)?,
-                                multiplier,
-                            )?)
-                        };
-                        let marks = std::collections::BTreeMap::from([(
-                            instrument.clone(),
-                            Price::from_raw(visible_close),
-                        )]);
-                        let equity = equity_for(
-                            &ledger,
-                            &account_id,
-                            &marks,
-                            &currency,
-                            multiplier,
-                            derivative_spec,
-                            &virtual_trading.fx_rates,
-                        )?;
-                        // 现货买入的资金下限只能是**可用现金**：权益含持仓未实现盈亏，
-                        // 用它放行等于让策略拿已有持仓当现金继续买，Ledger 会静默透支成
-                        // 负现金。衍生品/保证金交易仍按权益判定，与订单簿回测同一分支规则。
-                        //
-                        // 现货买入的资金需求是**全额名义额**，与 `MarginRule` 无关：
-                        // 保证金模型描述的是衍生品分级，`NoMargin` 让需求归零等于给现货
-                        // 账户免费杠杆。手续费同理由前置门禁承担，避免"校验时以为免费、
-                        // 成交时才扣款"。
-                        let cash_funded_spot_buy = derivative_spec.is_none()
-                            && order.side == Side::Buy
-                            && !product_policy.reduce_only;
-                        let required_funding = if cash_funded_spot_buy {
-                            let notional = notional_for(
-                                derivative_spec,
-                                order_qty,
-                                checked_abs(reference_price)?,
-                                multiplier,
-                            )?;
-                            notional
-                                .checked_add(matcher.estimate_fee(
-                                    order_qty,
-                                    checked_abs(reference_price)?,
-                                    &order,
-                                ))
-                                .ok_or_else(|| {
-                                    qx_core::QxError::Invariant("买入所需现金溢出".into())
-                                })?
-                                .max(required_margin)
-                        } else {
-                            required_margin
-                        };
-                        let available_funding = if cash_funded_spot_buy {
-                            ledger.cash_for(&account_id, &currency)
-                        } else {
-                            equity
-                        };
-                        let unreserved_funding = available_funding
-                            .checked_sub(reserved_funding_raw)
-                            .unwrap_or(i128::MIN);
-                        if !reduce_only_allowed {
-                            append_rejection(
-                                &mut log,
-                                bar.ts,
-                                order.client_id,
-                                "reduce-only order would open or exceed the existing position",
-                            );
-                        } else if strategy_budget_check
-                            .is_some_and(|(budget, required)| required > budget)
-                        {
-                            append_rejection(
-                                &mut log,
-                                bar.ts,
-                                order.client_id,
-                                "订单会使策略持仓需求超过 reserved_capital_raw",
-                            );
-                        } else if required_funding > unreserved_funding {
-                            append_rejection(
-                                &mut log,
-                                bar.ts,
-                                order.client_id,
-                                if cash_funded_spot_buy {
-                                    "买入成本（含预估手续费）超过账户可用现金"
-                                } else {
-                                    "initial margin exceeds equity"
-                                },
-                            );
-                        } else {
-                            let long_qty = ledger
-                                .position_for_side(
-                                    &account_id,
-                                    &instrument,
-                                    qx_core::PositionSide::Long,
-                                )
-                                .quantity
-                                .raw();
-                            let short_qty = ledger
-                                .position_for_side(
-                                    &account_id,
-                                    &instrument,
-                                    qx_core::PositionSide::Short,
-                                )
-                                .quantity
-                                .raw();
-                            let one_way_qty = position
-                                .checked_sub(long_qty)
-                                .and_then(|value| value.checked_sub(short_qty))
-                                .ok_or_else(|| {
-                                    qx_core::QxError::Invariant(
-                                        "拆分回测 one-way/hedge 持仓数量溢出".into(),
-                                    )
-                                })?;
-                            let mark_abs = checked_abs(visible_close)?;
-                            let one_way_notional = notional_for(
-                                derivative_spec,
-                                checked_abs(one_way_qty)?,
-                                mark_abs,
-                                multiplier,
-                            )?;
-                            let long_notional = notional_for(
-                                derivative_spec,
-                                checked_abs(long_qty)?,
-                                mark_abs,
-                                multiplier,
-                            )?;
-                            let short_notional = notional_for(
-                                derivative_spec,
-                                checked_abs(short_qty)?,
-                                mark_abs,
-                                multiplier,
-                            )?;
-                            let gross_notional = one_way_notional
-                                .checked_add(long_notional)
-                                .and_then(|value| value.checked_add(short_notional))
-                                .ok_or_else(|| {
-                                    qx_core::QxError::Invariant(
-                                        "回测 hedge gross notional 溢出".into(),
-                                    )
-                                })?;
-                            if matches!(order.status, OrderStatus::PendingSubmit) {
-                                order.status = OrderStatus::Submitted;
-                            }
-                            let risk_position = OrderRiskPosition::new_with_multiplier(
-                                one_way_qty,
-                                gross_notional,
-                                // `OrderRiskPosition::multiplier` 沿用 `BacktestConfig::multiplier`
-                                // 的**普通整数**口径（上游 `PositionSnapshot` 的定点口径不适用），
-                                // 名义额折算只走 `TradingInstrumentSpec::notional` 一份公式。
-                                multiplier,
-                            )
-                            .with_hedge_legs(long_qty, short_qty);
-                            let risk_result = risk.check_with_spec(
-                                &order,
-                                &risk_position,
-                                Some(Price::from_raw(reference_price)),
-                                instrument_spec.as_ref(),
-                            );
-                            if let Err(error) = risk_result {
-                                append_rejection(
-                                    &mut log,
-                                    bar.ts,
-                                    order.client_id,
-                                    &error.to_string(),
-                                );
-                            } else if let Err(error) = oms.submit(order.clone()) {
-                                append_rejection(
-                                    &mut log,
-                                    bar.ts,
-                                    order.client_id,
-                                    &error.to_string(),
-                                );
-                            } else if let Err(error) = oms.accept(order.client_id) {
-                                append_rejection(
-                                    &mut log,
-                                    bar.ts,
-                                    order.client_id,
-                                    &error.to_string(),
-                                );
-                            } else {
-                                portfolio_budget.accept_if_owned(
-                                    |strategy_id| strategy.strategy_budget_raw(strategy_id),
-                                    &order,
-                                    reference_price,
-                                )?;
-                                reserved_funding_raw = reserved_funding_raw
-                                    .checked_add(required_funding)
-                                    .ok_or_else(|| {
-                                        qx_core::QxError::Invariant(
-                                            "同 Bar 组合资金预留溢出".into(),
-                                        )
-                                    })?;
-                                let submit_seq = log.alloc_seq();
-                                log.append(Event::new(
-                                    submit_seq,
-                                    bar.ts,
-                                    qx_core::Priority::COMMAND,
-                                    EventKind::Submit {
-                                        client_order_id: order.client_id,
-                                    },
-                                ));
-                                accepted_orders.push(order);
-                            }
-                        }
-                    }
-                }
+                let accepted_orders = order_admission::admit_orders(OrderAdmissionInput {
+                    orders,
+                    account_id: &account_id,
+                    instrument: &instrument,
+                    currency: &currency,
+                    ts: bar.ts,
+                    position,
+                    visible_close: bars[i - 1].close,
+                    instrument_spec: instrument_spec.as_ref(),
+                    derivative_spec,
+                    multiplier,
+                    strategy,
+                    ledger: &ledger,
+                    oms: &mut oms,
+                    portfolio_budget: &mut portfolio_budget,
+                    margin: margin.as_ref(),
+                    matcher: &matcher,
+                    risk: &risk,
+                    fx_rates: &virtual_trading.fx_rates,
+                    ashare_rules,
+                    ashare_bought_today: ashare_state.bought_today(),
+                    next_id: &mut next_id,
+                    log: &mut log,
+                })?;
                 // EventLog enforces timestamp/priority ordering. Emit all command
                 // decisions above before any matcher acceptance at MATCH priority.
                 for order in accepted_orders {

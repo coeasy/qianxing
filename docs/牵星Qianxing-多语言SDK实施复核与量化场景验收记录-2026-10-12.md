@@ -334,3 +334,9 @@ Python 十策略证据：
 - `BacktestEngine` 的成交后处理已抽至 `qx-xingban::backtest::fill_application`：市场规格精度校验、策略预算校验、OMS/Ledger 应用、回放事件追加、资金/持仓刷新及 `on_fill` 回调按原因果顺序统一归约。现有单标的 Bar 引擎改为调用该路径，为后续共享多市场执行复用同一成交事实处理提供了落点；没有新增第二份账簿或成交规则。
 - `qx-xingban` 单测 106 项、`qx-app` 单测 122 项、严格 Clippy 与架构门禁 1096 项通过。应用层测试需将 `TEMP/TMP` 指向仓库 `target/test-tmp`，默认系统临时路径在当前运行环境拒绝创建夹具目录。量化场景探针现为 45 executed、0 declared_not_executed、1 missing、1 blocked；新增 `rust_bar_fill_reduction_kernel` 专项场景通过，证实成交应用后策略观察到更新状态、后续订单再次过风控且账簿回放一致。
 - 这一步仍未实现共享多市场 session：每个 `BacktestEngine` 仍持有自己的 Ledger/OMS/撮合器，多腿应用仍分别运行两腿后合并；`shared_multileg_execution` 缺口保持打开。
+
+## 42. 2026-10-14 重构：Bar 订单准入抽为可复用 Rust 路径
+
+- 将单腿 Bar 回测在撮合前的订单准入从 `BacktestEngine` 抽至 `backtest::order_admission`。该路径统一处理账户/标的校验、A 股规则、订单 ID 确定性分配、策略资本预算、reduce-only、现货现金/衍生品保证金预留、RiskGate、OMS 提交与 Submit 事件记录；引擎仍按既有 Accepted → matcher 流程处理已接纳订单。
+- 验证：`qx-xingban` 单测 106 项通过；`qx-app` 单测 122 项通过（`TEMP/TMP` 指向 `target/test-tmp`）；相关 crate 严格 Clippy 通过；架构不变量门禁 1096 项通过；量化场景探针 45 项执行通过、0 项声明但未执行、1 项缺失、1 项外部前置阻塞。格式与 diff 检查通过。
+- 该抽取为未来统一多市场 session 复用准入规则提供了内核落点，但调用方仍是单腿 `BacktestEngine`。多腿应用的两腿仍独立持有 Ledger/OMS/撮合器，之后才合并账簿；因此共享资金竞争、统一撮合以及拒单/部分成交实时反馈仍未实现，`shared_multileg_execution` 继续缺失，整体方案尚未达到全能力发布门槛。

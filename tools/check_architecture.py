@@ -13373,11 +13373,15 @@ def risk_spec_fail_closed_check() -> None:
     )
     bar = production_text(case_source(BAR_BACKTEST_FILE))
     book = production_text(case_source(BOOK_BACKTEST_FILE))
+    admission = production_text(
+        case_source("crates/qx-xingban/src/backtest/order_admission.rs")
+    )
     check(
         "pub fn check_with_spec(" in case_source(ZHENLU_LIB_FILE)
-        and "check_with_spec(" in bar
+        and "check_with_spec(" in admission
         and "check_with_spec(" in book
         and "check_with_price(" not in bar
+        and "check_with_price(" not in admission
         and "check_with_price(" not in book,
         "RiskGate::check_with_spec 在盘，两条回测生产路径都传规格（不再走无规格的 check_with_price）",
         "缺 check_with_spec，或回测仍在调用无规格的 check_with_price",
