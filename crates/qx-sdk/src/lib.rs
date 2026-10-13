@@ -49,9 +49,11 @@
 //! 不是文档里的假想代码）；从"直接用 `qx-app`"迁到本门面见 `docs/qx-sdk-migration.md`。
 
 pub mod client;
+mod provider_workflow;
 pub mod remote;
 
 pub use client::Client;
+pub use provider_workflow::{ProviderBacktestOutcome, ProviderBacktestRequest};
 pub use qx_execution::{
     plan_twap, plan_vwap, AlgoChildSlice, AlgoExecutionError, AlgoExecutionState,
     AlgoExecutionStatus, AlgoExecutionStep, AlgoParentOrder, EventAppender, ExecutionEvent,
@@ -70,8 +72,9 @@ pub use qx_app::{AppAction, AppError, AppErrorCategory, AppRetry};
 // 独立消费者只依赖 qx-sdk 即可注册数据源、做确定性主备选择并保留血缘。
 pub use qx_provider::{
     DataKind, DataProvider, DataQuery, DataRequest, DataRequirements, DataSourceId,
-    ProviderBarFrame, ProviderCapability, ProviderError, ProviderErrorClass, ProviderPayload,
-    ProviderRegistry, ProviderResult, RawRecord, RegistryError, PROVIDER_RESULT_SCHEMA_VERSION,
+    DatasetManifestV2, ProviderBarFrame, ProviderCapability, ProviderError, ProviderErrorClass,
+    ProviderPayload, ProviderRegistry, ProviderResult, RawRecord, RegistryError,
+    PROVIDER_RESULT_SCHEMA_VERSION,
 };
 
 // —— §6.1「spec 构造校验」——

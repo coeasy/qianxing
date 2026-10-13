@@ -154,6 +154,40 @@ fn required_auth_scope_and_realtime_capability_filter_candidates() {
 }
 
 #[test]
+fn python_flat_provider_request_filters_auth_realtime_and_freshness_metadata() {
+    let payload = r#"{"adjustment":"none","as_of":6,"asset_class":"crypto","end":10,"field_set":["close"],"frequency":"1m","instrument_set":["BTCUSDT.BINANCE"],"kind":"Bar","max_staleness_ms":2,"quality_policy":"strict","require_realtime":true,"required_auth_scope":"account:read","start":1}"#;
+    let request = DataRequest::from_json(payload).unwrap();
+    assert_eq!(
+        request.requirements.required_auth_scope.as_deref(),
+        Some("account:read")
+    );
+    assert!(request.requirements.require_realtime);
+    assert_eq!(request.requirements.max_staleness_ms, Some(2));
+
+    let mut registry = ProviderRegistry::new();
+    for (id, scope, realtime, priority) in [
+        ("public", "public", false, 0),
+        ("private-history", "account:read", false, 1),
+        ("private-live", "account:read", true, 2),
+    ] {
+        let mut capability = capability(id, priority, 100);
+        capability.frequencies = ["1m".into()].into_iter().collect();
+        capability.auth_scope = scope.into();
+        capability.realtime = realtime;
+        registry
+            .register(Box::new(MockProvider {
+                capability,
+                fail: None,
+            }))
+            .unwrap();
+    }
+    assert_eq!(
+        registry.candidates_for_request(&request).unwrap(),
+        ["private-live"]
+    );
+}
+
+#[test]
 fn realtime_provider_results_obey_requested_and_declared_freshness() {
     let mut source_capability = capability("realtime", 1, 100);
     source_capability.realtime = true;

@@ -14,7 +14,11 @@ from typing import Any
 
 def _extension() -> Any:
     errors: list[ImportError] = []
-    for module_name in ("_qianxing_native", "qianxing_bridge._qianxing_native"):
+    # A top-level `_qianxing_native` may belong to another installed Qianxing
+    # version (or an unrelated package). Prefer the extension bundled alongside
+    # this `qianxing_bridge` package; keep the top-level name only for developer
+    # builds that place the cdylib directly on `sys.path`.
+    for module_name in ("qianxing_bridge._qianxing_native", "_qianxing_native"):
         try:
             return import_module(module_name)
         except ImportError as error:

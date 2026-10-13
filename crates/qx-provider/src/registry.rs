@@ -26,8 +26,37 @@ struct RegisteredProvider {
 /// Keeping both values prevents callers from rebuilding the lineage or parsing
 /// the same provider payload a second time before freezing the dataset.
 pub struct ProviderBarFrame {
+    pub query: DataQuery,
     pub result: ProviderResult,
     pub frame: qx_datastruct::BarFrame,
+}
+
+impl ProviderBarFrame {
+    /// Build the shared v2 dataset identity from this validated frame and its actual source.
+    pub fn dataset_manifest(
+        &self,
+        dataset_id: &str,
+        dataset_version: &str,
+        interval_ms: u64,
+        timezone: &str,
+    ) -> Result<qx_data::DatasetManifestV2, String> {
+        let instrument = self.frame.instrument.to_string();
+        if self.query.kind != super::DataKind::Bar
+            || self.query.instrument_set.len() != 1
+            || self.query.instrument_set.iter().next() != Some(&instrument)
+        {
+            return Err("dataset manifest requires one matching Bar instrument".into());
+        }
+        qx_data::manifest_from_bar_frame(
+            &self.frame,
+            dataset_id,
+            dataset_version,
+            interval_ms,
+            timezone,
+            &self.result.provider_version,
+            &self.result.provider_id,
+        )
+    }
 }
 
 /// Spaces calls to one provider port according to its advertised requests-per-second limit.
@@ -229,7 +258,11 @@ impl ProviderRegistry {
         let frame = result
             .to_bar_frame(&request.query)
             .map_err(RegistryError::Provider)?;
-        Ok(ProviderBarFrame { result, frame })
+        Ok(ProviderBarFrame {
+            query: request.query.clone(),
+            result,
+            frame,
+        })
     }
 }
 

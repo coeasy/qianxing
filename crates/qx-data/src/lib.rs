@@ -3,6 +3,7 @@
 //! Data providers are kept outside the runtime kernel. All external sources
 //! must be converted into canonical schemas before entering research/runtime.
 
+pub mod bar_manifest;
 pub mod batch;
 pub mod catalog;
 pub mod catalog_v2;
@@ -18,6 +19,7 @@ pub mod schema;
 pub mod storage;
 pub mod validation;
 
+pub use bar_manifest::manifest_from_bar_frame;
 pub use batch::{load_bar_batch, BarBatchItem, BarRequest};
 pub use catalog::{
     ArrowDatasetManifest, ArrowFieldManifest, DatasetBundleManifest, DatasetComponentFormat,

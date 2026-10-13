@@ -1361,6 +1361,8 @@ name = "qx-data"
 version = "0.1.0"
 dependencies = [
  "qx-core",
+ "qx-datastruct",
+ "ring",
  "serde",
  "serde_json",
 ]
@@ -1447,6 +1449,7 @@ name = "qx-provider"
 version = "0.1.0"
 dependencies = [
  "qx-core",
+ "qx-data",
  "qx-datastruct",
  "qx-guanxing",
  "serde",

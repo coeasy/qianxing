@@ -218,11 +218,15 @@ mod tests {
                 DataRequirements::default(),
             ))
             .unwrap();
-        let result = fetched.result;
-        let frame = fetched.frame;
+        let manifest = fetched
+            .dataset_manifest("provider-bars", "snapshot-1", 1, "UTC")
+            .unwrap();
+        assert_eq!(manifest.source_lineage.primary_source, "fixture-bars");
+        assert_eq!(manifest.provider_version, "v1");
+        let result = fetched.result.clone();
+        let frame = fetched.frame.clone();
         let root = TestDirectory::new("qx-sdk-provider-backtest");
         let bars_path = root.0.join("provider-bars.json");
-        std::fs::write(&bars_path, frame.to_json()).unwrap();
 
         let mut strategy = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "provider-sma");
         strategy.fast_window = 2;
@@ -239,7 +243,22 @@ mod tests {
             strategy,
         );
         let client = Client::new(CallerCapability::Research, "provider-bars-run");
-        let outcome = client.run_backtest(&spec).unwrap();
+        let provider_run = client
+            .run_provider_backtest_with_manifest(&qx_sdk::ProviderBacktestRequest {
+                fetched: &fetched,
+                spec: &spec,
+                dataset_id: "provider-bars",
+                dataset_version: "snapshot-1",
+                interval_ms: 1,
+                timezone: "UTC",
+            })
+            .unwrap();
+        assert!(provider_run.dataset_verdict.usable);
+        assert_eq!(provider_run.manifest, manifest);
+        let frozen_manifest: qx_sdk::DatasetManifestV2 =
+            serde_json::from_slice(&std::fs::read(provider_run.manifest_path).unwrap()).unwrap();
+        assert_eq!(frozen_manifest, manifest);
+        let outcome = provider_run.outcome;
         assert_eq!(
             outcome.data_fingerprint,
             format!("barframe:{:016x}", frame.digest())

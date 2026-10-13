@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 
 mod registry;
 mod result;
+pub use qx_data::DatasetManifestV2;
 pub use registry::{ProviderBarFrame, ProviderRegistry, RegistryError};
 pub use result::{DataProvider, ProviderPayload, ProviderResult, PROVIDER_RESULT_SCHEMA_VERSION};
 
