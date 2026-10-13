@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791933078
+generated_at_unix: 1791933511
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -220,7 +220,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=95458cf5ee736bed/c6c0896c2df6dccb,8201f103dbe6b927/681583bb528031d7,85a35bf84b199d7a/044327bd9ac1c2fe,bb8fcaf2285b3cbc/4c7d94e2485880c2"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=7e13f08b5157d5cb/969222180ccd14c5,d9b1d70bb5b33abd/2f5a4850f1aa275d,6a4dc3278e3c7b60/437b612c144b506c,b92693cda2477522/ee587898084533e4"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -270,6 +270,14 @@ scenarios:
     exit_code: 0
     observed: "test result: ok. 1 passed; 0 failed; variable_signed_rates=true distinct_utc_settlements=true shared_ledger=true replay_verified=true"
     evidence: ["crates/qx-xingban/src/backtest/portfolio_session/funding.rs", "crates/qx-xingban/src/backtest/portfolio_session_tests.rs", "crates/qx-app/src/spec/multi_leg.rs", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
+  - name: bar_normalization_failover
+    label: "ProviderRegistry 在 Bar 规范化失败时继续主备切换并保留来源链"
+    status: executed
+    anchor: "crates/qx-provider/src/registry.rs"
+    command: "cargo test --offline -p qx-provider --lib bar_normalization_failure_fails_over_and_binds_the_full_retry_chain -- --nocapture"
+    exit_code: 0
+    observed: "test result: ok. 1 passed; 0 failed; malformed_primary_rejected=true backup_normalized=true retry_chain_bound=true source_hash_bound=true"
+    evidence: ["crates/qx-provider/src/registry.rs", "crates/qx-provider/src/result.rs", "crates/qx-provider/src/tests/bar_failover.rs"]
   - name: provider_adjustment_quality_preflight
     label: "ProviderRegistry 对未实现的复权与质量语义在数据源调用前 fail closed"
     status: executed

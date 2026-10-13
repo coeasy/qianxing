@@ -184,6 +184,15 @@ impl ProviderRegistry {
     }
 
     pub fn fetch_request(&self, request: &DataRequest) -> Result<ProviderResult, RegistryError> {
+        self.fetch_request_with(request, |_| Ok(()))
+            .map(|(result, ())| result)
+    }
+
+    fn fetch_request_with<T>(
+        &self,
+        request: &DataRequest,
+        validate: impl Fn(&ProviderResult) -> Result<T, ProviderError>,
+    ) -> Result<(ProviderResult, T), RegistryError> {
         let candidates = self.candidates_for_request(request)?;
         if candidates.is_empty() {
             return Err(RegistryError::NoProvider);
@@ -223,7 +232,10 @@ impl ProviderRegistry {
                             // result fingerprint with the registry's deterministic retry chain.
                             result.retry_chain = retry_chain.clone();
                             result.source_hash = result.compute_source_hash();
-                            return Ok(result);
+                            match validate(&result) {
+                                Ok(value) => return Ok((result, value)),
+                                Err(error) => last_error = Some(error),
+                            }
                         }
                         Err(error) => {
                             // 非法数据不能被当成成功；按既定 failover 顺序继续尝试。
@@ -254,10 +266,8 @@ impl ProviderRegistry {
         &self,
         request: &DataRequest,
     ) -> Result<ProviderBarFrame, RegistryError> {
-        let result = self.fetch_request(request)?;
-        let frame = result
-            .to_bar_frame(&request.query)
-            .map_err(RegistryError::Provider)?;
+        let (result, frame) =
+            self.fetch_request_with(request, |result| result.to_bar_frame(&request.query))?;
         Ok(ProviderBarFrame {
             query: request.query.clone(),
             result,

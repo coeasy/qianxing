@@ -1191,6 +1191,25 @@ def main() -> int:
     )
 
     executed(
+        "bar_normalization_failover",
+        "ProviderRegistry 在 Bar 规范化失败时继续主备切换并保留来源链",
+        "crates/qx-provider/src/registry.rs",
+        [
+            "test", "--offline", "-p", "qx-provider", "--lib",
+            "bar_normalization_failure_fails_over_and_binds_the_full_retry_chain",
+            "--", "--nocapture",
+        ],
+        r"(test result: ok\. 1 passed; 0 failed)",
+        extra="malformed_primary_rejected=true backup_normalized=true retry_chain_bound=true source_hash_bound=true",
+        evidence=[
+            "crates/qx-provider/src/registry.rs",
+            "crates/qx-provider/src/result.rs",
+            "crates/qx-provider/src/tests/bar_failover.rs",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
         "provider_adjustment_quality_preflight",
         "ProviderRegistry 对未实现的复权与质量语义在数据源调用前 fail closed",
         "crates/qx-provider/src/result.rs",

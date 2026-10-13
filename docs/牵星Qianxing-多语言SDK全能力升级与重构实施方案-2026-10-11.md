@@ -12,6 +12,7 @@
 > 本轮增量（2026-10-14）：审计 Tick/OrderBook 资金准入与成交费用时发现手续费以名义额乘基点再除以 10000，极大但有效的固定点名义额可能在中间乘法溢出。qx-core 新增保持 floor 语义的无溢出 checked basis-point helper；共享手续费函数、订单簿实际撮合和下单资金预检统一调用，非法费率明确拒绝。最大 i128 金额边界、订单簿 118 个单元用例及量化场景探针均复验。该修复不改变外部交易所认证状态。
 > 同轮继续审计发现公开 FeeModel 可直接用负数或越界费率构造，绕过 JSON 成本配置校验。现有统一 `FeeModel::validate` 在单腿/共享 Bar 引擎与 Paper Venue 接受订单前执行；MakerTaker、A股模型均校验费率，A股最低佣金和累计费率也设边界。对应模型、Bar 和 Paper fail-closed 用例纳入场景探针。
 > 本轮增量（2026-10-14）：内置策略目录统一下沉至 `qx-app`，本地 Python 原生查询与 HTTP `/app/strategies` 均消费该结果；Rust RemoteApiClient、Python AppClient 同步/async 与 C++ AppClient 提供发现入口，目录含 17 个策略名称、说明、信号旋钮及多腿限制。API/客户端路由、deploy 端点表和远端方法归属均纳入门禁，避免某语言策略目录缺失或名单漂移。C++ 在当前 Windows 环境因缺少 CMake/编译器未执行编译测试。
+> 本轮增量（2026-10-14）：Provider 语义复核为不支持的复权/质量请求加入 I/O 前 fail-closed；并将 Bar payload 解析、质量门和 BarFrame 校验纳入主备候选验证，主源规范化失败时按确定顺序继续切换，最终来源指纹绑定完整 retry chain。Provider、Adapter、SDK 与 Python Provider 专项验证及 66 项量化场景探针通过。该修复提升现有历史 Bar Provider 的 failover 正确性，不代表实时订阅、所有数据源 conformance 或任何 venue 已完成认证。
 > 方案仍未全部落地：跨市场 Tick/OrderBook、交易日历/跨时区/货币换算、多账户跨账户组合风险、venue/provider 全矩阵与实盘 testnet 未完成认证；Web/桌面端到端验收、C++ 默认 transport 与全平台发布门仍未完成。逐轮复核、量化场景状态与证据见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)和 `maturity/quant_scenarios.yaml`。
 
 ## 1. 目标与完成定义

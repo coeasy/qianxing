@@ -1,6 +1,9 @@
 use super::*;
 use qx_guanxing::DataSourceId;
 
+#[path = "tests/bar_failover.rs"]
+mod bar_failover;
+
 struct MockProvider {
     capability: ProviderCapability,
     fail: Option<ProviderErrorClass>,
