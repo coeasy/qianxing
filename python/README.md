@@ -47,6 +47,19 @@ registry.register(ProviderCapability(
 ), LocalBars())
 ```
 
+The optional `qianxing_ccxt` package can register a configured CCXT historical client directly into this same Rust registry. It adapts OHLCV into versioned Bar payloads; provider choice, failover, lineage, frame validation, manifest generation, and backtesting remain on the shared Rust path:
+
+```python
+from qianxing_ccxt import register_ccxt_provider
+
+# `client` is an already configured qianxing_ccxt.CcxtExchangeClient;
+# `query` is the ProviderQuery requested by the backtest.
+register_ccxt_provider(registry, binance_capability, client)
+bars = registry.fetch_bar_frame(query)
+```
+
+This adapter is historical only: it rejects realtime queries and limits each response to 100,000 bars. CCXT OHLCV history does not provide original receive-time evidence, so the adapter records the local fetch time; Rust's `as_of` validation consequently prevents old point-in-time requests from being represented as if the exchange had delivered the history then. Configure one capability and client per exchange to use Rust's deterministic provider ordering and failover. This does not certify live market data or execution against a real venue.
+
 `ProviderQuery` 也可声明来源授权范围与实时数据要求。`as_of`、Provider 行情时间戳和 `max_staleness_ms` 使用同一毫秒时钟；Rust 注册表会按 `auth_scope` 过滤候选、拒绝不支持实时流的来源，并将请求新鲜度上限与 Provider 的 `freshness_seconds` 取更严格值。旧查询默认保持历史数据语义：
 
 ```python

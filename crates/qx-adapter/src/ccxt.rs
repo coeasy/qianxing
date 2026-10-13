@@ -4,6 +4,7 @@
 //! JSONL 协议接入既有 `Venue` 事实边界。提交结果未知时返回 ReconcileRequired，
 //! 不自动重试或补单；订单回报通过 `sync_order` 显式进入统一 VenueEvent。
 
+pub use crate::ccxt_provider::CcxtBarDataProvider;
 use crate::io_budget::write_all_within;
 use crate::venue_cache::evict_stale_terminal_orders;
 use qx_core::{
@@ -20,7 +21,6 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
-
 pub trait CcxtRpc: Send {
     fn call(&mut self, request: Value) -> Result<Value, String>;
 }

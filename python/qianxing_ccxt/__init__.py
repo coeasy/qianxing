@@ -1294,3 +1294,7 @@ __all__ = [
     "watch_stream",
     "watch_ohlcv",
 ]
+
+from .provider import CcxtProviderAdapter, MAX_PROVIDER_BAR_ROWS, register_ccxt_provider
+
+__all__ += ["CcxtProviderAdapter", "MAX_PROVIDER_BAR_ROWS", "register_ccxt_provider"]

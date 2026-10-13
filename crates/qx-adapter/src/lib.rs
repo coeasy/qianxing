@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 mod binance;
 mod ccxt;
+mod ccxt_provider;
 mod io_budget;
 mod reconcile;
 mod venue_cache;
@@ -24,9 +25,10 @@ pub use binance::{
     BinanceSpotUserStream, BinanceSpotVenue, BinanceStreamPoll, BinanceStreamRetryPolicy,
     BinanceStreamRunReport, BinanceUserStreamRunConfig, BinanceUserStreamSession,
 };
-pub use ccxt::{ccxt_idle_window_ms, CcxtProcessClient, CcxtProcessVenue, CcxtRpc};
+pub use ccxt::{
+    ccxt_idle_window_ms, CcxtBarDataProvider, CcxtProcessClient, CcxtProcessVenue, CcxtRpc,
+};
 pub use io_budget::write_all_within;
-
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct HttpRequest {
     pub method: String,
@@ -42,7 +44,6 @@ pub struct HttpResponse {
     pub status: u16,
     pub body: String,
 }
-
 pub trait HttpTransport: Send + Sync {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, String>;
 }
@@ -52,7 +53,6 @@ pub struct WebSocketMessage {
     pub opcode: u8,
     pub payload: Vec<u8>,
 }
-
 /// 一次 `recv_message` 窗口的结局。`Idle` 与 `Closed` 分开是必需的：把"这一窗没有帧"
 /// 当成链路故障，会让一个连着但长时间没有事件的账户按重连预算被判死。
 #[derive(Clone, PartialEq, Eq, Debug)]
