@@ -11,6 +11,71 @@
 
 use std::process::Command;
 
+#[test]
+fn provider_backtest_without_configured_sources_fails_closed() {
+    use qx_app::{BacktestSpec, BuiltinStrategySpec, ProviderBacktestSpec};
+    use qx_provider::{DataKind, DataQuery, DataRequest, DataRequirements};
+    use std::collections::BTreeSet;
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("qx-cli package lives under the workspace root");
+    let spec_path = root.join("target").join(format!(
+        "qx-cli-provider-backtest-no-source-{}.json",
+        std::process::id()
+    ));
+    let spec = ProviderBacktestSpec {
+        data_request: DataRequest::new(
+            DataQuery {
+                kind: DataKind::Bar,
+                asset_class: "crypto".into(),
+                instrument_set: BTreeSet::from(["BTCUSDT.BINANCE".into()]),
+                field_set: BTreeSet::from(["close".into()]),
+                frequency: "1m".into(),
+                adjustment: "none".into(),
+                quality_policy: "strict".into(),
+                start: 60_000,
+                end: 3_840_000,
+                as_of: None,
+            },
+            DataRequirements::default(),
+        ),
+        backtest: BacktestSpec::new(
+            "cli-provider-no-source",
+            "BTCUSDT.BINANCE",
+            "target/provider-backtest/bars.json",
+            "USDT",
+            100_000_000_000_000,
+            20261013,
+            "target/provider-backtest/run",
+            BuiltinStrategySpec::new(qx_strategy::BuiltinStrategyKind::SmaCross, "cli-sma"),
+        ),
+        dataset_id: "cli-provider-bars".into(),
+        dataset_version: "v1".into(),
+        interval_ms: 60_000,
+        timezone: "UTC".into(),
+        manifest_path: None,
+    };
+    std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap())
+        .expect("write valid provider-backtest spec");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(root)
+        .args([
+            "app",
+            "provider-backtest",
+            "deploy/qianxing.runtime.example.json",
+        ])
+        .arg(&spec_path)
+        .output()
+        .expect("run provider-backtest without configured sources");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("DATA_UNAVAILABLE"), "{stderr}");
+    assert!(stderr.contains("没有 api.data_providers"), "{stderr}");
+}
+
 /// 顶层命令表（与 `cli_args.rs` 的 clap 派生逐一相等，由门禁核对）。
 const CLI_COMMANDS: [&str; 47] = [
     "all",
@@ -90,7 +155,7 @@ fn every_command_renders_its_own_help() {
 /// **二级入口**此前一颗用例都没点过名（旧判据 `cli_command_test_evidence_check` 报出的正是
 /// 这两条）——它一敲就崩、或自己的用法渲染不出来时没人红。这里把 21 条二级入口逐条实跑
 /// `--help`，与顶层那条同一口径（退 0 + 用法里带叶子名）。
-const NESTED_COMMANDS: [&str; 31] = [
+const NESTED_COMMANDS: [&str; 32] = [
     "config explain",
     "config validate",
     "config fingerprint",
@@ -111,6 +176,7 @@ const NESTED_COMMANDS: [&str; 31] = [
     "backtest book",
     "app validate-dataset",
     "app backtest",
+    "app provider-backtest",
     "app verify",
     "app compare-runs",
     "app plan-risk-parity",

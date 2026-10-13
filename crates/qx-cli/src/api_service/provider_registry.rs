@@ -4,7 +4,7 @@ use super::super::*;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-pub(super) fn from_runtime_config(
+pub(crate) fn from_runtime_config(
     config: &RuntimeConfig,
     runtime_config_path: &Path,
 ) -> Result<Option<Arc<ProviderRegistry>>, String> {

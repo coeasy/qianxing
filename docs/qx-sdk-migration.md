@@ -126,7 +126,7 @@ Rust 与 Python SDK 均已有 Provider 到共享回测内核的路径。Python a
 
 Bar Provider 的 `ProviderBarFrame::dataset_manifest(...)` 与 Python `fetch_bar_dataset(...)` 现在共用 `qx-data::manifest_from_bar_frame`，生成相同 `DatasetManifestV2` 指纹、内容 SHA256、质量缺口和来源血缘。Rust 与 Python SDK 都有一步式冻结→DatasetSpec 校验→共享回测入口；Rust 仓外消费者还验证 sidecar 清单、回测结果和 ReplayVerifier。Quote Provider 也可归一为 Rust `DepthFrame` 并运行 Tick/OrderBook 回测。
 
-受信 API 宿主可通过 `ApiService::with_provider_registry(Arc<ProviderRegistry>)` 注入部署管理的注册表，随后调用 `POST /app/provider-backtest`；请求体是 `ProviderBacktestSpec`，响应序列化同一 `ProviderBacktestOutcome`。服务端把数据和产物路径固定在 API artifact root，远程请求不能自行指定文件位置。注册表未配置时返回 `DataUnavailable`；API 不会自行构造凭据或 Provider。该路由同步等待数据源响应，宿主应部署在受保护且设有请求时限的服务边界。它只把 Provider Bar 回测接入 HTTP，不代表 CLI、C++ typed Provider 或 Paper/Live 实时行情已贯通。分页/实时订阅、盘口增量合并与各真实数据源 conformance 仍未闭环，不能把它们写成已完成。
+受信 API 宿主可通过 `ApiService::with_provider_registry(Arc<ProviderRegistry>)` 注入部署管理的注册表，随后调用 `POST /app/provider-backtest`；请求体是 `ProviderBacktestSpec`，响应序列化同一 `ProviderBacktestOutcome`。`qx-cli app provider-backtest <RuntimeConfig.json> <ProviderBacktestSpec.json>` 也从 `api.data_providers` 构造同一 Rust 注册表并直接调用 `qx-app::run_provider_backtest_with_manifest`，输出同一 outcome 文档；不会在 CLI 或 Python 侧复制数据选择、清单或回测逻辑。API 服务把数据和产物路径固定在 artifact root，远程请求不能自行指定文件位置。注册表未配置时两入口均失败关闭；API 返回 `DataUnavailable`。当前配置适配器为 CCXT 历史 Bar，实时声明会被拒绝。分页/实时订阅、盘口增量合并与各真实数据源 conformance 仍未闭环，不能把它们写成已完成。
 
 ## 已知缺口（不要在发布文案里说成"已有"）
 

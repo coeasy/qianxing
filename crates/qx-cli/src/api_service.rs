@@ -6,6 +6,7 @@
 use super::*;
 
 mod provider_registry;
+pub(crate) use provider_registry::from_runtime_config as configured_provider_registry;
 
 pub(crate) fn build_configured_api_service(
     config: &RuntimeConfig,

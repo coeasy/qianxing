@@ -77,13 +77,13 @@ domains:
 
   - name: rust_sdk
     level: implemented-unverified
-    evidence: [crates/qx-sdk, crates/qx-sdk/tests/independent_consumer.rs, crates/qx-execution/src/algo_execution.rs, docs/qx-sdk-migration.md]
+    evidence: [crates/qx-sdk, crates/qx-sdk/tests/independent_consumer.rs, crates/qx-cli/src/app_commands.rs, crates/qx-cli/tests/command_surface.rs, crates/qx-execution/src/algo_execution.rs, docs/qx-sdk-migration.md]
     limitations: ["门面 crate qx-sdk 已落（方案 §6.1）：Client/Engine、capabilities、spec 构造校验、同步与句柄式异步 Run、RunHandle、取消等待取结果、report/verify、Provider/Venue 扩展端口与统一错误都在公开面上；Bar 回测 Kelly sizing 通过 BuiltinStrategySpec 可用；Rust SDK 已暴露可序列化 AlgoExecutionState 与共享 ExecutionGateway 端口，qx-runtime 提供原子父单 checkpoint 与单飞 step/cancel 存储；qx-cli 已接 Paper worker、API start/get/list/cancel 与父单成交聚合，Python/C++ 已接远端生命周期方法；qx-sdk RemoteApiClient 已接入服务端 Paper 生命周期、/events/live 序号游标和按 Run 读取生命周期快照事件，宿主需实现 RemoteTransport；本地 RunHandle.events 来自 Rust worker 内存事件序列。按 Run 快照仍非逐事件事务日志，不含订单/成交事实及跨进程强一致游标恢复", "Kelly fraction 已在 Rust Bar 单腿回测和 Paper worker→Risk→OMS→Paper Venue→Ledger 路径验证；深度/多腿 sizing 未接入，Live sizing 未经 testnet 验收", "门面的『异步』是句柄式不是 Future 式：qx-app 的引擎是线程加通道，没有 executor，硬套 Future 只会让 poll 里出现阻塞等待", "Git 固定提交的 workspace 外消费者已构建并执行数据校验、回测、结果复核；crates.io 发布仍未通过：`cargo package -p qx-sdk --allow-dirty --offline` 因内部 `qx-app` 尚未发布至配置 registry 而失败，临时 registry consumer 未建立", "通用 §4.2 能力预检仍未闭环；market-aware Bar 已要求显式费用/tick/lot 和时间有效期，但 Provider/Venue、Tick/OrderBook 与实盘订阅/身份/风险权限的启动前统一匹配尚未落地"]
-    next_gate: "把 qx-app 的 Provider→manifest→校验→回测用例装配到受支持的 CLI 入口和 Paper/Live 实时订阅链；若要求 crates.io 发布，先按依赖拓扑发布内部 crate 并完成临时 registry 消费；补齐持久化按 Run 事件/订单流与游标恢复；补 §4.2 启动前能力预检 fail-closed；Live 仍需 testnet conformance 才能谈 GA"
+    next_gate: "将 CLI Provider 回测继续接入 Paper/Live 实时订阅链；若要求 crates.io 发布，先按依赖拓扑发布内部 crate 并完成临时 registry 消费；补齐持久化按 Run 事件/订单流与游标恢复；补 §4.2 启动前能力预检 fail-closed；Live 仍需 testnet conformance 才能谈 GA"
 
   - name: data_and_venues
     level: implemented-unverified
-    evidence: [crates/qx-provider, crates/qx-adapter, maturity/capabilities.yaml]
+    evidence: [crates/qx-provider, crates/qx-adapter, crates/qx-cli/src/api_service/provider_registry.rs, crates/qx-cli/src/app_commands.rs, crates/qx-cli/tests/command_surface.rs, maturity/capabilities.yaml]
     limitations: ["Rust/Python 高层 Bar BacktestSpec 现要求冻结 TradingInstrumentSpec 同时显式提供固定 MakerTakerFeeSchedule，并校验标的/结算币种/有效期及成交 tick/lot；费用尚不由 Provider/Venue 自动解析，不含分层费率、返佣、税费或按时间生效的规则", "统一接入流程（能力探测、下载或订阅、质量校验、数据冻结、下单、回报、账簿、复核）未端到端证明", "数据源与 venue 是两种能力，不得互相顶替；无 testnet 记录的 venue 一律 unsupported 或 implemented-unverified"]
     next_gate: "落方案 §4.2 的能力预检 fail-closed 与 §5.x 的 Provider/Venue 一致性套件"
 

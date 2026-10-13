@@ -45,6 +45,14 @@ pub(crate) enum AppCommand {
         /// `BacktestSpec` JSON 的路径。
         spec: PathBuf,
     },
+    /// 从运行时配置的 Provider 获取 Bar、冻结 manifest 并执行共享 Rust 回测。
+    #[command(name = "provider-backtest")]
+    ProviderBacktest {
+        /// 含 `api.data_providers` 的 RuntimeConfig JSON。
+        runtime: PathBuf,
+        /// `ProviderBacktestSpec` JSON。
+        spec: PathBuf,
+    },
     /// 产物复核（`qx_app::verify_run`）。
     #[command(name = "verify")]
     Verify {

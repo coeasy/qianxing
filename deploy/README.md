@@ -967,6 +967,14 @@ CCXT 数据进入回测的推荐流程：
 
 `deploy/qianxing.runtime.ccxt.example.json` 的 `api.data_providers` 展示了将 CCXT 历史 OHLCV Provider 装配进 `qx-cli serve` 的配置形状。每个来源显式声明 `provider_id`、版本、市场/周期/历史范围、授权范围、限流、新鲜度、优先级和 `qianxing.ccxt.exchange.example.json` 路径；多个来源按 ProviderRegistry 的确定性规则选择并 failover。凭据只通过该 CCXT 端点的环境变量引用读取。当前该服务配置仅接入历史 Bar，`realtime` 必须为 `false`；行情历史记录本机拉取时间，不提供历史点时可见性证据，也不代表真实交易所已认证。
 
+本地 CLI 回测可直接复用这份 RuntimeConfig 中的 `api.data_providers`，不必先启动 API 服务：
+
+```powershell
+qx-cli app provider-backtest <RuntimeConfig.json> <ProviderBacktestSpec.json>
+```
+
+该命令与 API 路由、Rust SDK 和 Python 本地 SDK 调用同一 `qx-app` Provider 回测用例；请求规格需包含 `DataRequest`、`BacktestSpec`、数据集身份和清单间隔/时区。CLI 输出 `ProviderBacktestOutcome` JSON。历史 CCXT 数据不具备真实历史点时可见性证明。
+
 ```powershell
 cargo run --release -p qx-cli -- ccxt-fetch-ohlcv `
   deploy/qianxing.ccxt.exchange.example.json `
