@@ -1145,6 +1145,22 @@ def main() -> int:
     )
 
     executed(
+        "orderbook_fill_feedback_loop",
+        "Rust OrderBook 策略成交回报与下一快照决策闭环",
+        "crates/qx-xingban/src/orderbook_strategies.rs",
+        ["test", "--offline", "-p", "qx-xingban", "--lib", "native_order_book_fill_update_queues_a_risk_checked_next_snapshot_order"],
+        r"(test result: ok\. 1 passed; 0 failed)",
+        env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
+        extra="callback_fills=2 observed_position_and_cash=true next_snapshot_order_risk_checked=true replay_verified=true",
+        evidence=[
+            "crates/qx-xingban/src/orderbook_strategies.rs",
+            "crates/qx-xingban/src/orderbook_backtest.rs",
+            "crates/qx-xingban/src/orderbook_backtest/tests/fill_feedback.rs",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
         "python_custom_depth_parameter_experiment",
         "Python 自定义 Tick/OrderBook 策略多参数实验（每候选新建策略，Rust 深度内核）",
         "crates/qx-app/src/cases/run_depth_experiment.rs",

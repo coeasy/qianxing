@@ -191,6 +191,18 @@ impl TickStrategy for PortfolioOrderBookStrategy {
 }
 
 impl OrderBookStrategy for PortfolioOrderBookStrategy {
+    fn update_account_state(
+        &mut self,
+        cash: &std::collections::BTreeMap<String, i128>,
+        available_margin_raw: Option<i128>,
+    ) {
+        for slot in &mut self.slots {
+            let budget =
+                available_margin_raw.map(|available| available.min(slot.reserved_capital_raw));
+            slot.strategy.update_account_state(cash, budget);
+        }
+    }
+
     fn on_order_book(
         &mut self,
         snapshot: &OrderBookSnapshot,

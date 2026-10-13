@@ -4,6 +4,12 @@ use crate::OrderBookSnapshot;
 use qx_core::{Order, Price};
 
 pub trait OrderBookStrategy {
+    fn update_account_state(
+        &mut self,
+        _cash: &std::collections::BTreeMap<String, i128>,
+        _available_margin_raw: Option<i128>,
+    ) {
+    }
     fn on_order_book(
         &mut self,
         snapshot: &OrderBookSnapshot,
@@ -85,15 +91,29 @@ pub struct OrderBookActions {
 pub struct NativeOrderBookStrategy<S: qx_strategy::Strategy> {
     pub strategy: S,
     pub context: qx_strategy::StrategyContext,
+    pending_order_updates: Vec<Order>,
 }
 
 impl<S: qx_strategy::Strategy> NativeOrderBookStrategy<S> {
     pub fn new(strategy: S, context: qx_strategy::StrategyContext) -> Self {
-        Self { strategy, context }
+        Self {
+            strategy,
+            context,
+            pending_order_updates: Vec::new(),
+        }
     }
 }
 
 impl<S: qx_strategy::Strategy> OrderBookStrategy for NativeOrderBookStrategy<S> {
+    fn update_account_state(
+        &mut self,
+        cash: &std::collections::BTreeMap<String, i128>,
+        available_margin_raw: Option<i128>,
+    ) {
+        self.context.cash.clone_from(cash);
+        self.context.available_margin_raw = available_margin_raw;
+    }
+
     fn on_order_book(
         &mut self,
         snapshot: &OrderBookSnapshot,
@@ -137,10 +157,22 @@ impl<S: qx_strategy::Strategy> OrderBookStrategy for NativeOrderBookStrategy<S> 
     ) -> Result<OrderBookActions, String> {
         self.context.available_margin_raw = available_margin_raw;
         let _ = open_order_ids;
+        let mut orders = std::mem::take(&mut self.pending_order_updates);
+        orders.extend(self.on_order_book(snapshot, position)?);
         Ok(OrderBookActions {
-            orders: self.on_order_book(snapshot, position)?,
+            orders,
             cancel_client_ids: Vec::new(),
         })
+    }
+
+    fn on_fill(&mut self, order: &Order, fill: &qx_core::Fill) -> Result<(), qx_core::QxError> {
+        deliver_order_update(
+            &mut self.strategy,
+            &mut self.context,
+            &mut self.pending_order_updates,
+            order,
+            fill,
+        )
     }
 }
 
@@ -149,6 +181,7 @@ pub struct DepthBarStrategy<S: qx_strategy::Strategy> {
     pub strategy: S,
     pub context: qx_strategy::StrategyContext,
     pub instrument: qx_core::InstrumentId,
+    pending_order_updates: Vec<Order>,
 }
 
 impl<S: qx_strategy::Strategy> DepthBarStrategy<S> {
@@ -161,6 +194,7 @@ impl<S: qx_strategy::Strategy> DepthBarStrategy<S> {
             strategy,
             context,
             instrument,
+            pending_order_updates: Vec::new(),
         }
     }
 
@@ -198,6 +232,15 @@ impl<S: qx_strategy::Strategy> DepthBarStrategy<S> {
 }
 
 impl<S: qx_strategy::Strategy> OrderBookStrategy for DepthBarStrategy<S> {
+    fn update_account_state(
+        &mut self,
+        cash: &std::collections::BTreeMap<String, i128>,
+        available_margin_raw: Option<i128>,
+    ) {
+        self.context.cash.clone_from(cash);
+        self.context.available_margin_raw = available_margin_raw;
+    }
+
     fn on_order_book(
         &mut self,
         snapshot: &OrderBookSnapshot,
@@ -212,14 +255,16 @@ impl<S: qx_strategy::Strategy> OrderBookStrategy for DepthBarStrategy<S> {
             .iter()
             .chain(snapshot.asks.iter())
             .fold(0_i128, |total, level| total.saturating_add(level.qty.raw()));
-        self.on_mid(
+        let mut orders = std::mem::take(&mut self.pending_order_updates);
+        orders.extend(self.on_mid(
             &snapshot.instrument,
             snapshot.ts,
             position,
             mid,
             volume_raw,
             None,
-        )
+        )?);
+        Ok(orders)
     }
 
     fn on_order_book_actions_with_margin(
@@ -230,7 +275,10 @@ impl<S: qx_strategy::Strategy> OrderBookStrategy for DepthBarStrategy<S> {
         available_margin_raw: Option<i128>,
     ) -> Result<OrderBookActions, String> {
         let (Some(bid), Some(ask)) = (snapshot.bids.first(), snapshot.asks.first()) else {
-            return Ok(OrderBookActions::default());
+            return Ok(OrderBookActions {
+                orders: std::mem::take(&mut self.pending_order_updates),
+                cancel_client_ids: Vec::new(),
+            });
         };
         let mid = Price::from_raw(bid.price.raw().saturating_add(ask.price.raw()) / 2);
         let volume_raw = snapshot
@@ -238,16 +286,74 @@ impl<S: qx_strategy::Strategy> OrderBookStrategy for DepthBarStrategy<S> {
             .iter()
             .chain(snapshot.asks.iter())
             .fold(0_i128, |total, level| total.saturating_add(level.qty.raw()));
+        let mut orders = std::mem::take(&mut self.pending_order_updates);
+        orders.extend(self.on_mid(
+            &snapshot.instrument,
+            snapshot.ts,
+            position,
+            mid,
+            volume_raw,
+            available_margin_raw,
+        )?);
         Ok(OrderBookActions {
-            orders: self.on_mid(
-                &snapshot.instrument,
-                snapshot.ts,
-                position,
-                mid,
-                volume_raw,
-                available_margin_raw,
-            )?,
+            orders,
             cancel_client_ids: Vec::new(),
         })
     }
+
+    fn on_fill(&mut self, order: &Order, fill: &qx_core::Fill) -> Result<(), qx_core::QxError> {
+        deliver_order_update(
+            &mut self.strategy,
+            &mut self.context,
+            &mut self.pending_order_updates,
+            order,
+            fill,
+        )
+    }
+}
+
+fn deliver_order_update<S: qx_strategy::Strategy>(
+    strategy: &mut S,
+    context: &mut qx_strategy::StrategyContext,
+    pending: &mut Vec<Order>,
+    order: &Order,
+    fill: &qx_core::Fill,
+) -> Result<(), qx_core::QxError> {
+    let owned = order
+        .trace
+        .as_ref()
+        .and_then(|trace| trace.strategy_id.as_deref())
+        == Some(context.strategy_id.as_str());
+    if !owned {
+        return Ok(());
+    }
+    context.as_of = context.as_of.max(fill.ts);
+    let key = order.instrument.to_string();
+    let current = context.positions.get(&key).copied().unwrap_or_default();
+    let delta = if order.side == qx_core::Side::Buy {
+        fill.qty.raw()
+    } else {
+        -fill.qty.raw()
+    };
+    context.positions.insert(key, current.saturating_add(delta));
+    let update = serde_json::json!({
+        "schema_version": qx_strategy::ORDER_UPDATE_SCHEMA_VERSION,
+        "event": "fill",
+        "order": { "order_id": order.client_id, "account_id": order.account_id,
+            "instrument": order.instrument.to_string(), "side": order.side,
+            "qty_raw": order.qty.raw(), "filled_raw": order.filled.raw(),
+            "strategy_id": context.strategy_id },
+        "fill": fill,
+    });
+    if let Some(decision) = strategy
+        .on_order_update(context, &update.to_string())
+        .map_err(qx_core::QxError::BusinessViolation)?
+    {
+        pending.extend(
+            decision
+                .to_orders(context)
+                .map_err(qx_core::QxError::BusinessViolation)?,
+        );
+    }
+    Ok(())
 }

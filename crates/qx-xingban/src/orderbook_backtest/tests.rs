@@ -11,6 +11,39 @@ use std::sync::{Arc, Mutex};
 
 #[path = "tests/depth_bar_adapter.rs"]
 mod depth_bar_adapter;
+#[path = "tests/fill_feedback.rs"]
+mod fill_feedback;
+
+struct NativeBuy;
+
+impl Strategy for NativeBuy {
+    fn on_event(
+        &mut self,
+        context: &StrategyContext,
+        event: &qx_strategy::MarketEvent,
+    ) -> Result<StrategyDecision, String> {
+        let instrument = event.instrument().cloned().ok_or("missing instrument")?;
+        Ok(StrategyDecision {
+            schema_version: STRATEGY_API_VERSION,
+            request_id: format!("native:{}", event.ts()),
+            strategy_id: context.strategy_id.clone(),
+            signal_id: event.ts(),
+            confidence: 1,
+            priority: 0,
+            expires_at: event.ts(),
+            intents: vec![StrategyOrderIntent {
+                intent_id: event.ts(),
+                instrument,
+                side: Side::Buy,
+                qty: Quantity::from_i64(1),
+                limit: None,
+                policy: None,
+                reduce_only: false,
+                post_only: false,
+            }],
+        })
+    }
+}
 #[path = "tests/margin.rs"]
 mod margin;
 #[path = "tests/tier.rs"]
@@ -42,40 +75,6 @@ impl OrderBookStrategy for BuyOnce {
             trace: None,
             policy: None,
         }])
-    }
-}
-
-struct NativeBuy;
-
-impl Strategy for NativeBuy {
-    fn on_event(
-        &mut self,
-        context: &StrategyContext,
-        event: &qx_strategy::MarketEvent,
-    ) -> Result<StrategyDecision, String> {
-        let instrument = event
-            .instrument()
-            .cloned()
-            .ok_or_else(|| "订单簿事件缺少标的".to_string())?;
-        Ok(StrategyDecision {
-            schema_version: STRATEGY_API_VERSION,
-            request_id: format!("native:{}", event.ts()),
-            strategy_id: context.strategy_id.clone(),
-            signal_id: event.ts(),
-            confidence: 1,
-            priority: 0,
-            expires_at: event.ts(),
-            intents: vec![StrategyOrderIntent {
-                intent_id: event.ts(),
-                instrument,
-                side: Side::Buy,
-                qty: Quantity::from_i64(1),
-                limit: None,
-                policy: None,
-                reduce_only: false,
-                post_only: false,
-            }],
-        })
     }
 }
 
@@ -134,7 +133,7 @@ fn snapshot(ts: u64, ask: i64) -> OrderBookSnapshot {
 fn order_book_backtest_is_causal_and_replays_fill() {
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     let config = OrderBookBacktestConfig {
-        instrument,
+        instrument: instrument.clone(),
         account_id: "main".into(),
         currency: "USDT".into(),
         initial_cash: Money::from_i64(10_000),
@@ -244,39 +243,6 @@ fn specless_spot_buy_beyond_available_cash_is_rejected_not_overdrawn() {
         vec!["买入成本（含预估手续费）超过订单簿回测可用现金".to_string()],
         "拒单事实没有进入事件日志"
     );
-}
-
-#[test]
-fn native_strategy_adapter_uses_the_same_order_book_causal_path() {
-    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
-    let config = OrderBookBacktestConfig {
-        instrument: instrument.clone(),
-        account_id: "main".into(),
-        currency: "USDT".into(),
-        initial_cash: Money::from_i64(10_000),
-        fee_bps: 0,
-        instrument_spec: None,
-        risk: RiskGate::conservative_default(),
-        data_tier: DataTier::L2L3,
-    };
-    let context = StrategyContext {
-        strategy_id: "native-book".into(),
-        strategy_version: "v1".into(),
-        account_id: "main".into(),
-        venue_id: "paper".into(),
-        data_fingerprint: "book-1".into(),
-        as_of: 1,
-        positions: std::collections::BTreeMap::new(),
-        cash: std::collections::BTreeMap::new(),
-        available_margin_raw: Some(10_000),
-        risk_state: "ready".into(),
-    };
-    let mut strategy = NativeOrderBookStrategy::new(NativeBuy, context);
-    let report = OrderBookBacktestEngine::new(config)
-        .run(&[snapshot(1, 100), snapshot(2, 101)], &mut strategy)
-        .unwrap();
-    assert_eq!(report.fills.len(), 1);
-    assert_eq!(report.fills[0].order_id, 1);
 }
 
 #[test]

@@ -297,3 +297,10 @@ Python 十策略证据：
 - 新增 Rust 行为用例验证成交回调看到已更新持仓、返回的平仓意图在下一 Bar 成交且报告 replay 可验证；新增 Python bridge 序列化用例及真实 PyO3 扩展端到端用例，确认 Python callback 的成交决策经过 Rust 风控/OMS 并最终完成平仓。能力探针新增 `python_fill_feedback_loop`。
 - 验证：全工作区 `cargo test --offline --workspace` 在将 Windows 临时目录重定向到仓库 `target/test-tmp` 后通过；回调实现拆模块后 `cargo test --offline -p qx-xingban --lib` 103/103 通过、`cargo build --offline -p qx-python` 成功；Python 全量 139 项通过；回调 Python→Rust 专项 E2E 通过；最终架构不变量门禁 1096 项通过；量化场景探针 41 executed、0 declared_not_executed、0 missing、1 blocked；`cargo fmt --all -- --check` 与 `git diff --check` 通过。成交反馈前会刷新账簿确认后的现金与现货可用资金，供策略下一次决策读取。
 - 本修复只关闭统一 Bar 策略的 fill callback 断链。Tick/OrderBook adapter 尚未统一透传 `on_order_update`；拒单/撤单等非成交状态也尚未形成通用回调；多腿执行仍是先生成意图、后分腿模拟和账簿投影，没有共享资本竞争、统一时间线或拒单/部分成交反馈；Paper/Live 的 Python callback 策略与真实交易所 testnet 仍未端到端认证。整体多语言 SDK 方案仍未达到全能力发布门槛。
+
+## 36. 2026-10-13 修复：OrderBook Python/Rust 策略成交回报闭环
+
+- 继续处理上一节标出的 Tick/OrderBook 成交回报断链：L2 `NativeOrderBookStrategy` 与由 Tick/OrderBook 折叠来的 `DepthBarStrategy` 在订单已写入 Ledger 和规范事件日志后，调用共享 `Strategy::on_order_update`。上下文更新成交时间、策略净持仓、账本现金及现货可用资金；返回意图排队到下一快照，再由原有 spec 校验、资金检查、RiskGate、OMS 和撮合路径处理。
+- 新增 OrderBook Rust 行为测试，验证买入成交回调看见成交后的持仓/现金、返回的平仓决策在下一快照经原管线成交、仓位归零并通过 ReplayVerifier。量化场景探针增加 `orderbook_fill_feedback_loop`，最终矩阵为 42 executed、0 declared_not_executed、0 missing、1 blocked；被阻塞项仍是需要外部 CCXT 与交易所 testnet 凭据的实盘验收。
+- 验证：`cargo test --offline -p qx-xingban --lib` 104/104 通过；`cargo build --offline -p qx-python` 成功；Python 全量 139 项通过；场景探针 42 个执行场景通过；格式检查、`git diff --check` 与最终架构不变量门禁 1096 项通过。
+- 目前该回调闭环覆盖 Bar、Tick 的 L1 事件折叠以及 L2 OrderBook 策略适配器的已确认成交。拒单/撤单等通用非成交状态通知仍未覆盖；多腿执行仍没有统一共享资本时间线；Paper/Live Python callback 和真实交易所 testnet 仍未端到端认证，因此整体方案未达到全能力发布门槛。

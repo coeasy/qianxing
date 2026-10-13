@@ -324,6 +324,14 @@ impl OrderBookBacktestEngine {
                         EventKind::LedgerApplied { entry },
                     );
                 }
+                let cash = ledger.cash_balances_for(&account_id);
+                let margin = margin::settled_cash_margin(
+                    instrument_spec
+                        .as_ref()
+                        .is_some_and(|spec| spec.product.supports_leverage()),
+                    ledger.cash_for(&account_id, &currency),
+                );
+                strategy.update_account_state(&cash, margin);
                 strategy.on_fill(&order, &fill)?;
                 fills.push(fill);
             }
@@ -345,6 +353,8 @@ impl OrderBookBacktestEngine {
                     .is_some_and(|spec| spec.product.supports_leverage()),
                 ledger.cash_for(&account_id, &currency),
             );
+            strategy
+                .update_account_state(&ledger.cash_balances_for(&account_id), available_margin_raw);
             let reference_price = match (
                 snapshot.bids.first().map(|level| level.price),
                 snapshot.asks.first().map(|level| level.price),
