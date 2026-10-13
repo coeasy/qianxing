@@ -32,8 +32,8 @@ use qx_app::{
     verify_run, AlgoExecutionSpec, AppError, AppErrorCategory, BacktestOutcome, BacktestSpec,
     CallerCapability, CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome,
     DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec, ProviderBacktestSpec,
-    RiskParitySpec, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
-    RunMultiLegExperimentSpec,
+    ProviderDepthBacktestSpec, RiskParitySpec, RunContext, RunDepthExperimentSpec,
+    RunExperimentSpec, RunMultiLegExperimentSpec,
 };
 use qx_provider::ProviderRegistry;
 use std::path::PathBuf;
@@ -168,6 +168,49 @@ pub(crate) fn provider_backtest(
                 )
             })
         });
+    respond(result)
+}
+
+pub(crate) fn provider_depth_backtest(
+    body: &str,
+    paths: &AppPaths,
+    registry: Option<&ProviderRegistry>,
+) -> ApiResponse {
+    let Some(registry) = registry else {
+        return respond(Err(AppError::new(
+            AppErrorCategory::DataUnavailable,
+            "Provider registry is not configured for this API service",
+        )));
+    };
+    let mut spec: ProviderDepthBacktestSpec = match serde_json::from_str(body) {
+        Ok(spec) => spec,
+        Err(error) => {
+            return respond(Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("ProviderDepthBacktestSpec JSON invalid: {error}"),
+            )))
+        }
+    };
+    if let Err(error) = spec.validate() {
+        return respond(Err(error));
+    }
+    let run_id = spec.backtest.run_id.clone();
+    let run_root = paths.artifact_root.join(&run_id);
+    spec.backtest.depth_path = run_root
+        .join("provider-depth.json")
+        .to_string_lossy()
+        .into_owned();
+    spec.backtest.output_dir = run_root.join("artifacts").to_string_lossy().into_owned();
+    let result = qx_app::run_provider_depth_backtest(registry, &spec, &context(&run_id)).and_then(
+        |outcome| {
+            serde_json::to_string(&outcome).map_err(|error| {
+                AppError::new(
+                    AppErrorCategory::InternalInvariant,
+                    format!("ProviderDepthBacktestOutcome serialization failed: {error}"),
+                )
+            })
+        },
+    );
     respond(result)
 }
 

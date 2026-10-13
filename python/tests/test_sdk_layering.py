@@ -57,6 +57,7 @@ SUB_NAMESPACE_ONLY = {
         "ProviderAdapterError",
         "ProviderCapability",
         "ProviderDatasetBacktestOutcome",
+        "ProviderDepthBacktestOutcome",
         "ProviderManualInterventionError",
         "ProviderPayloadRow",
         "ProviderPermanentError",

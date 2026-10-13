@@ -467,6 +467,7 @@ class AppUseCaseTests(unittest.TestCase):
             ("validate_dataset", "/app/validate-dataset", False),
             ("run_backtest", "/app/backtest", False),
             ("run_provider_backtest_with_manifest", "/app/provider-backtest", False),
+            ("run_provider_depth_backtest", "/app/provider-depth-backtest", False),
             ("run_multi_account_backtest", "/app/multi-account-backtest", False),
             ("start_multi_account_backtest", "/app/multi-account-backtest/start", True),
             ("start_backtest", "/app/backtest/start", True),
@@ -512,6 +513,15 @@ class AppUseCaseTests(unittest.TestCase):
                 "dataset_verdict": {},
                 "manifest": {},
                 "manifest_path": "manifest.json",
+            },
+            "run_provider_depth_backtest": {
+                "outcome": {},
+                "provider_id": "provider",
+                "provider_version": "v1",
+                "request_id": "request",
+                "retry_chain": ["provider"],
+                "source_hash": "0123456789abcdef",
+                "depth_path": "depth.json",
             },
             "run_multi_account_backtest": {
                 "batch_id": "batch",

@@ -130,6 +130,19 @@ class ProviderDatasetBacktestOutcome:
     manifest_path: str
 
 
+@dataclass(frozen=True)
+class ProviderDepthBacktestOutcome:
+    """Depth result plus the selected Provider provenance and frozen input path."""
+
+    outcome: Any
+    provider_id: str
+    provider_version: str
+    request_id: str
+    retry_chain: tuple[str, ...]
+    source_hash: str
+    depth_path: str
+
+
 class ProviderRegistry:
     """Python adapter registry backed by Rust's deterministic selection/failover engine."""
 
@@ -186,6 +199,29 @@ class ProviderRegistry:
     def fetch_depth_frame(self, query: ProviderQuery, tier: str) -> dict[str, Any]:
         """Fetch Quote snapshots and normalize them to the Rust DepthFrame contract."""
         return json.loads(self._native.fetch_depth_frame_json(query.to_json(), tier))
+
+    def run_depth_backtest(
+        self, spec: Any, query: ProviderQuery
+    ) -> ProviderDepthBacktestOutcome:
+        """Freeze Provider Quote data and run the shared Rust Tick/OrderBook backtest."""
+        from qianxing.app import DepthBacktestOutcome, DepthBacktestSpec
+
+        values = spec.to_dict() if isinstance(spec, DepthBacktestSpec) else dict(spec)
+        payload = json.loads(
+            self._native.run_depth_backtest_with_provider_json(
+                query.to_json(),
+                json.dumps(values, sort_keys=True, separators=(",", ":")),
+            )
+        )
+        return ProviderDepthBacktestOutcome(
+            outcome=DepthBacktestOutcome.from_dict(payload["outcome"]),
+            provider_id=payload["provider_id"],
+            provider_version=payload["provider_version"],
+            request_id=payload["request_id"],
+            retry_chain=tuple(payload["retry_chain"]),
+            source_hash=payload["source_hash"],
+            depth_path=payload["depth_path"],
+        )
 
     def run_backtest(self, spec: Any, query: ProviderQuery) -> Any:
         """Freeze provider bars at ``spec.bars_path`` and run the shared Rust backtest use case."""

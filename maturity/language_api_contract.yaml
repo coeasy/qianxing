@@ -95,6 +95,12 @@ contracts:
     python_remote: ["run_provider_backtest_with_manifest"]
     cpp_remote: ["run_provider_backtest_with_manifest"]
     http: ["/app/provider-backtest"]
+  - use_case: run_provider_depth_backtest
+    rust: ["run_provider_depth_backtest"]
+    python_native: ["ProviderRegistry.run_depth_backtest"]
+    python_remote: ["run_provider_depth_backtest"]
+    cpp_remote: ["run_provider_depth_backtest"]
+    http: ["/app/provider-depth-backtest"]
   - use_case: verify_run
     rust: ["verify_run"]
     python_native: ["verify_run"]

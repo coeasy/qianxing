@@ -53,6 +53,14 @@ pub(crate) enum AppCommand {
         /// `ProviderBacktestSpec` JSON。
         spec: PathBuf,
     },
+    /// 从运行时配置的 Provider 获取 Quote 快照并执行共享 Rust 深度回测。
+    #[command(name = "provider-depth-backtest")]
+    ProviderDepthBacktest {
+        /// 含 `api.data_providers` 的 RuntimeConfig JSON。
+        runtime: PathBuf,
+        /// `ProviderDepthBacktestSpec` JSON。
+        spec: PathBuf,
+    },
     /// 产物复核（`qx_app::verify_run`）。
     #[command(name = "verify")]
     Verify {

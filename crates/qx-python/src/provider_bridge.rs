@@ -212,6 +212,31 @@ impl PyProviderRegistry {
         .map_err(|error| PyValueError::new_err(format!("Provider workflow serialization failed: {error}")))
     }
 
+    fn run_depth_backtest_with_provider_json(
+        &self,
+        query_json: &str,
+        spec_json: &str,
+    ) -> PyResult<String> {
+        let data_request = DataRequest::from_json(query_json)
+            .map_err(|error| PyValueError::new_err(format!("Provider query invalid: {error:?}")))?;
+        let backtest = qx_app::DepthBacktestSpec::from_json(spec_json).map_err(crate::app_error)?;
+        let context = crate::research_context(&backtest.run_id);
+        let result = qx_app::run_provider_depth_backtest(
+            &self.inner,
+            &qx_app::ProviderDepthBacktestSpec {
+                data_request,
+                backtest,
+            },
+            &context,
+        )
+        .map_err(crate::app_error)?;
+        serde_json::to_string(&result).map_err(|error| {
+            PyValueError::new_err(format!(
+                "Provider depth outcome serialization failed: {error}"
+            ))
+        })
+    }
+
     fn fetch_depth_frame_json(&self, query_json: &str, tier: &str) -> PyResult<String> {
         if !matches!(tier, "l1" | "l2") {
             return Err(PyValueError::new_err("depth tier must be l1 or l2"));

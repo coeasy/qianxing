@@ -20,12 +20,12 @@ use crate::build_identity::BUILD_REVISION;
 use qx_app::{
     compare_runs, plan_algo_execution, plan_risk_parity, run_backtest, run_depth_backtest,
     run_depth_experiment, run_experiment, run_multi_account_backtest, run_multi_leg_backtest,
-    run_multi_leg_experiment, run_provider_backtest_with_manifest, validate_dataset,
-    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, AppErrorCategory, BacktestOutcome,
-    BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome,
-    DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec, ProviderBacktestSpec,
-    RiskParitySpec, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
-    RunMultiLegExperimentSpec,
+    run_multi_leg_experiment, run_provider_backtest_with_manifest, run_provider_depth_backtest,
+    validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec, AppError, AppErrorCategory,
+    BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec,
+    ProviderBacktestSpec, ProviderDepthBacktestSpec, RiskParitySpec, RunContext,
+    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
 };
 use qx_runtime::RuntimeConfig;
 use std::path::Path;
@@ -33,10 +33,11 @@ use std::path::Path;
 pub(crate) fn dispatch(action: Option<AppCommand>) {
     let Some(action) = action else {
         eprintln!(
-            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|backtest|provider-backtest|verify|compare-runs|plan-risk-parity|plan-algo-execution|run-experiment|run-depth-experiment|run-multi-leg-experiment|depth-backtest|verify-depth|multi-leg-backtest|multi-account-backtest> <spec.json>\n  \
+            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|backtest|provider-backtest|provider-depth-backtest|verify|compare-runs|plan-risk-parity|plan-algo-execution|run-experiment|run-depth-experiment|run-multi-leg-experiment|depth-backtest|verify-depth|multi-leg-backtest|multi-account-backtest> <spec.json>\n  \
              validate-dataset <DatasetSpec.json>  校验一份数据集能否支撑 Bar 回测\n  \
              backtest <BacktestSpec.json>         跑一次 Bar 回测并落四份产物\n  \
              provider-backtest <RuntimeConfig.json> <ProviderBacktestSpec.json>  Run a shared Rust Provider backtest\n  \
+             provider-depth-backtest <RuntimeConfig.json> <ProviderDepthBacktestSpec.json>  Run a shared Rust Provider depth backtest\n  \
              verify <BacktestOutcome.json>        复核一轮产物（输入取 `app backtest` 的 stdout）\n  \
              compare-runs <CompareRunsSpec.json>  确定性比较多组回测结果\n  \
              plan-risk-parity <RiskParitySpec.json>  生成风险平价组合调仓计划\n  \
@@ -55,6 +56,9 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
         AppCommand::ValidateDataset { spec } => validate(spec),
         AppCommand::Backtest { spec } => backtest(spec),
         AppCommand::ProviderBacktest { runtime, spec } => provider_backtest(runtime, spec),
+        AppCommand::ProviderDepthBacktest { runtime, spec } => {
+            provider_depth_backtest(runtime, spec)
+        }
         AppCommand::Verify { outcome } => verify(outcome),
         AppCommand::CompareRuns { spec } => compare(spec),
         AppCommand::PlanRiskParity { spec } => risk_parity(spec),
@@ -183,6 +187,43 @@ fn provider_backtest(runtime_path: &Path, spec_path: &Path) -> Result<String, Ap
         AppError::new(
             AppErrorCategory::InternalInvariant,
             format!("ProviderBacktestOutcome 序列化失败: {error}"),
+        )
+    })
+}
+
+fn provider_depth_backtest(runtime_path: &Path, spec_path: &Path) -> Result<String, AppError> {
+    let runtime = RuntimeConfig::from_json(&read_document(runtime_path)?).map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InvalidInput,
+            format!("运行时 Provider 配置无效: {error}"),
+        )
+    })?;
+    let spec: ProviderDepthBacktestSpec = serde_json::from_str(&read_document(spec_path)?)
+        .map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("ProviderDepthBacktestSpec JSON 无效: {error}"),
+            )
+        })?;
+    spec.validate()?;
+    let registry = crate::api_service::configured_provider_registry(&runtime, runtime_path)
+        .map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                format!("装配 ProviderRegistry 失败: {error}"),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::new(
+                AppErrorCategory::DataUnavailable,
+                "运行时配置没有 api.data_providers，无法执行 Provider 深度回测",
+            )
+        })?;
+    let outcome = run_provider_depth_backtest(&registry, &spec, &context(&spec.backtest.run_id))?;
+    serde_json::to_string(&outcome).map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("ProviderDepthBacktestOutcome 序列化失败: {error}"),
         )
     })
 }

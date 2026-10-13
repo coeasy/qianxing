@@ -145,6 +145,20 @@ fn provider_backtest_http_route_requires_and_uses_injected_registry() {
 }
 
 #[test]
+fn provider_depth_backtest_route_is_registered_and_requires_configured_registry() {
+    let response = ApiService::new(ApiState::default()).handle(
+        "POST",
+        "/app/provider-depth-backtest",
+        "{}",
+        1,
+    );
+    assert_eq!(response.status, 404, "{}", response.body);
+    assert!(response
+        .body
+        .contains("Provider registry is not configured"));
+}
+
+#[test]
 fn provider_backtest_http_route_runs_freezes_and_returns_artifacts() {
     let directory = TestDirectory::new();
     let mut service =

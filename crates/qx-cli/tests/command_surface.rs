@@ -76,6 +76,82 @@ fn provider_backtest_without_configured_sources_fails_closed() {
     assert!(stderr.contains("没有 api.data_providers"), "{stderr}");
 }
 
+#[test]
+fn provider_depth_backtest_without_configured_sources_fails_closed() {
+    use qx_app::{
+        BuiltinStrategySpec, DepthBacktestSpec, ProviderDepthBacktestSpec,
+        DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+    };
+    use qx_core::SCALE;
+    use qx_provider::{DataKind, DataQuery, DataRequest, DataRequirements};
+    use std::collections::BTreeSet;
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("qx-cli package lives under the workspace root");
+    let spec_path = root.join("target").join(format!(
+        "qx-cli-provider-depth-backtest-no-source-{}.json",
+        std::process::id()
+    ));
+    let spec = ProviderDepthBacktestSpec {
+        data_request: DataRequest::new(
+            DataQuery {
+                kind: DataKind::Quote,
+                asset_class: "crypto".into(),
+                instrument_set: BTreeSet::from(["BTCUSDT.BINANCE".into()]),
+                field_set: BTreeSet::new(),
+                frequency: "tick".into(),
+                adjustment: "none".into(),
+                quality_policy: "strict".into(),
+                start: 1,
+                end: 3,
+                as_of: None,
+            },
+            DataRequirements::default(),
+        ),
+        backtest: DepthBacktestSpec {
+            schema_version: DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+            run_id: "cli-provider-depth-no-source".into(),
+            depth_path: "target/provider-depth/depth.json".into(),
+            tier: "l1".into(),
+            settlement_currency: "USDT".into(),
+            initial_cash_raw: 10_000 * SCALE,
+            fee_bps: 0,
+            latency_snapshots: 0,
+            queue_position_bps: 0,
+            market_impact_bps: 0,
+            output_dir: "target/provider-depth/run".into(),
+            strategy: BuiltinStrategySpec::new(
+                qx_strategy::BuiltinStrategyKind::SmaCross,
+                "cli-provider-depth-sma",
+            ),
+            market_spec: None,
+            order_policy: None,
+            market_making: None,
+            account_id: None,
+            portfolio: None,
+        },
+    };
+    std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap())
+        .expect("write valid ProviderDepthBacktestSpec");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(root)
+        .args([
+            "app",
+            "provider-depth-backtest",
+            "deploy/qianxing.runtime.example.json",
+        ])
+        .arg(&spec_path)
+        .output()
+        .expect("run provider-depth-backtest without configured sources");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("DATA_UNAVAILABLE"), "{stderr}");
+    assert!(stderr.contains("没有 api.data_providers"), "{stderr}");
+}
+
 /// 顶层命令表（与 `cli_args.rs` 的 clap 派生逐一相等，由门禁核对）。
 const CLI_COMMANDS: [&str; 47] = [
     "all",
@@ -155,7 +231,7 @@ fn every_command_renders_its_own_help() {
 /// **二级入口**此前一颗用例都没点过名（旧判据 `cli_command_test_evidence_check` 报出的正是
 /// 这两条）——它一敲就崩、或自己的用法渲染不出来时没人红。这里把 21 条二级入口逐条实跑
 /// `--help`，与顶层那条同一口径（退 0 + 用法里带叶子名）。
-const NESTED_COMMANDS: [&str; 32] = [
+const NESTED_COMMANDS: [&str; 33] = [
     "config explain",
     "config validate",
     "config fingerprint",
@@ -177,6 +253,7 @@ const NESTED_COMMANDS: [&str; 32] = [
     "app validate-dataset",
     "app backtest",
     "app provider-backtest",
+    "app provider-depth-backtest",
     "app verify",
     "app compare-runs",
     "app plan-risk-parity",

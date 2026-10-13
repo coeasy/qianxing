@@ -73,6 +73,16 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         self.post("/app/provider-backtest", &request)
     }
 
+    /// Run Provider Quote selection, immutable depth freezing and the shared Rust depth engine.
+    pub fn run_provider_depth_backtest(
+        &self,
+        spec: &qx_app::ProviderDepthBacktestSpec,
+    ) -> Result<Value, RemoteApiError> {
+        let request = serde_json::to_value(spec)
+            .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
+        self.post("/app/provider-depth-backtest", &request)
+    }
+
     pub fn start_paper_algo_execution(&self, request: &Value) -> Result<Value, RemoteApiError> {
         self.post("/app/paper/algo-executions/start", request)
     }

@@ -30,6 +30,7 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "validate_dataset": "/app/validate-dataset",
     "backtest": "/app/backtest",
     "provider_backtest": "/app/provider-backtest",
+    "provider_depth_backtest": "/app/provider-depth-backtest",
     "multi_account_backtest": "/app/multi-account-backtest",
     "multi_account_backtest_start": "/app/multi-account-backtest/start",
     "backtest_start": "/app/backtest/start",
@@ -1570,6 +1571,10 @@ class AppClient(_HttpJsonClient):
     ) -> dict[str, Any]:
         """Run the shared Rust Provider selection, freeze and backtest workflow remotely."""
         return self._post(APP_ROUTE_TEMPLATES["provider_backtest"], spec)
+
+    def run_provider_depth_backtest(self, spec: Mapping[str, Any]) -> dict[str, Any]:
+        """Fetch Provider Quote snapshots and run the shared Rust depth backtest."""
+        return self._post(APP_ROUTE_TEMPLATES["provider_depth_backtest"], spec)
 
     def start_backtest(self, spec: BacktestSpec | dict[str, Any]) -> RemoteRunHandle[BacktestOutcome]:
         return self._start(APP_ROUTE_TEMPLATES["backtest_start"], spec, BacktestOutcome)

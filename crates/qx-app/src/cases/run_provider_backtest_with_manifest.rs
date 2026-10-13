@@ -182,7 +182,7 @@ fn run_provider_backtest_inner(
     })
 }
 
-fn freeze(path: &Path, payload: &[u8]) -> Result<(), AppError> {
+pub(super) fn freeze(path: &Path, payload: &[u8]) -> Result<(), AppError> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

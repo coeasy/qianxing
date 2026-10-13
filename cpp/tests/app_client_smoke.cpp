@@ -172,6 +172,10 @@ int main() {
     const auto provider_backtest = client.run_provider_backtest_with_manifest(sized_backtest_spec);
     assert(provider_backtest.ok());
     assert(observed_path == "/app/provider-backtest");
+
+    const auto provider_depth_backtest = client.run_provider_depth_backtest(sized_backtest_spec);
+    assert(provider_depth_backtest.ok());
+    assert(observed_path == "/app/provider-depth-backtest");
     assert(observed_body == sized_backtest_spec);
 
     const auto verified = client.verify_run(spec);

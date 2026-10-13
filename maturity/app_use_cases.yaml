@@ -194,3 +194,13 @@ use_cases:
     artifacts: "不可变 BarFrame JSON + DatasetManifestV2 sidecar + BacktestSpec 既定四份产物"
     error_categories: "AppErrorCategory 八类；数据、冻结冲突、校验及回测沿用共享用例错误"
     capability_level: "R"
+  - name: run_provider_depth_backtest
+    input_schema: "ProviderDepthBacktestSpec v1（Quote DataRequest + DepthBacktestSpec；单标的盘口快照与原始 Provider 来源摘要）"
+    output_schema: "ProviderDepthBacktestOutcome v1（DepthBacktestOutcome + provider/request/retry/source_hash + 冻结 DepthFrame 路径）"
+    capability: "RESEARCH"
+    idempotency_key: "run_id + DepthBacktestSpec + 查询摘要 + Provider source_hash；同路径异内容 Conflict"
+    cancellation: "同步 Provider 获取与深度内核无取消点；Provider adapter deadline 负责外部调用上限"
+    progress: "无；输出保留 Provider 身份、请求 id、重试链与来源摘要"
+    artifacts: "不可变 DepthFrame JSON（source 内嵌 Provider lineage）+ 标准深度回测产物"
+    error_categories: "AppErrorCategory 八类；Provider、数据档位与产物冲突沿用共享用例错误"
+    capability_level: "R"

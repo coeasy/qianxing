@@ -17624,11 +17624,11 @@ def _python_native_functions() -> list[str]:
     ]
     provider_text = _text_or_empty(ROOT / "python/qianxing/data/providers.py")
     provider_block = provider_text.partition("class ProviderRegistry:")[2].split("\nclass ", 1)[0]
-    provider_methods = (
-        ["ProviderRegistry.run_backtest_with_manifest"]
-        if re.search(r"^    def run_backtest_with_manifest\(", provider_block, re.MULTILINE)
-        else []
-    )
+    provider_methods = [
+        f"ProviderRegistry.{method}"
+        for method in ("run_backtest_with_manifest", "run_depth_backtest")
+        if re.search(rf"^    def {method}\(", provider_block, re.MULTILINE)
+    ]
     return app_functions + provider_methods
 
 
@@ -19103,6 +19103,7 @@ PY_LAYER_SUB_NAMESPACE_ONLY = {
         "ProviderAdapterError",
         "ProviderCapability",
         "ProviderDatasetBacktestOutcome",
+        "ProviderDepthBacktestOutcome",
         "ProviderManualInterventionError",
         "ProviderPayloadRow",
         "ProviderPermanentError",
