@@ -48,6 +48,11 @@ pub fn bp_amount_checked(amount: i128, bps: i128) -> Result<i128, QxError> {
 
 pub trait FeeModel {
     fn name(&self) -> &'static str;
+    /// Validate model parameters before an order or backtest can use it.
+    /// Custom models remain source-compatible through the permissive default.
+    fn validate(&self) -> crate::QxResult<()> {
+        Ok(())
+    }
     fn version(&self) -> &'static str {
         "v1"
     }
@@ -142,11 +147,22 @@ impl MakerTakerFeeModel {
             taker_bp: DEFAULT_TAKER_BP,
         }
     }
+
+    pub fn validate(&self) -> crate::QxResult<()> {
+        MakerTakerFeeSchedule {
+            maker_fee_bps: self.maker_bp,
+            taker_fee_bps: self.taker_bp,
+        }
+        .validate()
+    }
 }
 
 impl FeeModel for MakerTakerFeeModel {
     fn name(&self) -> &'static str {
         "MakerTaker"
+    }
+    fn validate(&self) -> crate::QxResult<()> {
+        MakerTakerFeeModel::validate(self)
     }
     fn commission(&self, qty: i128, price: i128, is_maker: bool) -> i128 {
         let n = notional(qty, price);
@@ -177,15 +193,33 @@ impl FeeModel for AShareFeeModel {
     fn name(&self) -> &'static str {
         "AShareFee"
     }
+    fn validate(&self) -> crate::QxResult<()> {
+        let total_bps = self
+            .commission_bp
+            .checked_add(self.stamp_duty_bp)
+            .and_then(|value| value.checked_add(self.transfer_fee_bp));
+        if self.min_commission < 0
+            || !(0..=10_000).contains(&self.commission_bp)
+            || !(0..=10_000).contains(&self.stamp_duty_bp)
+            || !(0..=10_000).contains(&self.transfer_fee_bp)
+            || !total_bps.is_some_and(|value| value <= 10_000)
+        {
+            return Err(crate::QxError::BusinessViolation(
+                "AShareFeeModel 要求各费率非负、合计不超过 10000 bps 且最低佣金非负".into(),
+            ));
+        }
+        Ok(())
+    }
     fn commission(&self, qty: i128, price: i128, is_maker: bool) -> i128 {
         self.commission_for_side(qty, price, Side::Buy, is_maker)
     }
     fn commission_for_side(&self, qty: i128, price: i128, side: Side, _is_maker: bool) -> i128 {
         let n = notional(qty, price);
-        let mut fee = bp_amount(n, self.commission_bp).max(self.min_commission);
-        fee += bp_amount(n, self.transfer_fee_bp);
+        let mut fee = bp_amount(n, self.commission_bp)
+            .max(self.min_commission)
+            .saturating_add(bp_amount(n, self.transfer_fee_bp));
         if side == Side::Sell {
-            fee += bp_amount(n, self.stamp_duty_bp);
+            fee = fee.saturating_add(bp_amount(n, self.stamp_duty_bp));
         }
         fee
     }
@@ -210,6 +244,61 @@ mod tests {
         let qty = 1_000_000_000i128; // 1.0
         let px = 100_000_000_000i128; // 100.0
         assert!(m.commission(qty, px, true) < m.commission(qty, px, false));
+    }
+
+    #[test]
+    fn maker_taker_model_rejects_negative_or_out_of_range_rates() {
+        assert!(MakerTakerFeeModel {
+            maker_bp: -1,
+            taker_bp: 5,
+        }
+        .validate()
+        .is_err());
+        assert!(MakerTakerFeeModel {
+            maker_bp: 2,
+            taker_bp: 10_001,
+        }
+        .validate()
+        .is_err());
+        MakerTakerFeeModel {
+            maker_bp: 0,
+            taker_bp: 10_000,
+        }
+        .validate()
+        .unwrap();
+    }
+
+    #[test]
+    fn ashare_model_rejects_negative_and_unbounded_costs() {
+        let base = AShareFeeModel {
+            commission_bp: 3,
+            min_commission: 0,
+            stamp_duty_bp: 5,
+            transfer_fee_bp: 1,
+        };
+        base.validate().unwrap();
+        assert!(AShareFeeModel {
+            commission_bp: -1,
+            min_commission: 0,
+            stamp_duty_bp: 5,
+            transfer_fee_bp: 1,
+        }
+        .validate()
+        .is_err());
+        assert!(AShareFeeModel {
+            commission_bp: 8_000,
+            min_commission: 0,
+            stamp_duty_bp: 2_001,
+            transfer_fee_bp: 0,
+        }
+        .validate()
+        .is_err());
+        assert!(AShareFeeModel {
+            min_commission: -1,
+            ..base
+        }
+        .validate()
+        .is_err());
     }
 
     #[test]

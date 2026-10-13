@@ -235,7 +235,6 @@ pub struct BacktestEngine {
     config: BacktestConfig,
     protective_exits: Option<ProtectiveExitPolicy>,
 }
-
 impl BacktestEngine {
     pub fn new(config: BacktestConfig) -> Self {
         Self {
@@ -301,6 +300,7 @@ impl BacktestEngine {
             risk,
             virtual_trading,
         } = config;
+        fee.validate()?;
         let currency =
             currency::normalize_and_validate(currency, &instrument, instrument_spec.as_ref())?;
         if multiplier <= 0 {

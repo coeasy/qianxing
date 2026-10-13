@@ -1416,9 +1416,9 @@ impl Venue for PaperVenue {
     fn id(&self) -> &str {
         &self.id
     }
-
     fn submit(&mut self, mut order: Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
         order.validate().map_err(QxError::BusinessViolation)?;
+        self.fee_model.validate()?;
         if !self.connected {
             return Err(QxError::Ambiguous(
                 "PaperVenue 连接中断，订单结果未知".into(),

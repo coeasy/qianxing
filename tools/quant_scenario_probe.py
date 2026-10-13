@@ -1464,20 +1464,58 @@ def main() -> int:
 
     executed(
         "checked_fee_basis_point_arithmetic",
-        "极大名义金额的手续费基点计算无中间乘法溢出",
+        "费用模型费率范围与极大金额基点计算校验",
         "crates/qx-core/src/fee.rs",
         [
             "test", "--offline", "-p", "qx-core", "--lib",
-            "checked_basis_point_amount_preserves_floor_without_product_overflow",
+            "fee::tests",
             "--", "--nocapture",
         ],
-        r"(test result: ok\. 1 passed; 0 failed)",
+        r"(test result: ok\. \d+ passed; 0 failed)",
         env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
-        extra="i128_max_fee_exact=true floor_semantics=true invalid_rate_rejected=true orderbook_match_and_admission_share_helper=true",
+        extra="i128_max_fee_exact=true floor_semantics=true maker_taker_bounds=true ashare_bounds=true",
         evidence=[
             "crates/qx-core/src/fee.rs",
             "crates/qx-xingban/src/orderbook.rs",
             "crates/qx-xingban/src/orderbook_backtest.rs",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
+        "bar_backtest_fee_model_fails_closed",
+        "Bar 回测拒绝直接构造的负费率模型",
+        "crates/qx-xingban/src/backtest.rs",
+        [
+            "test", "--offline", "-p", "qx-xingban", "--lib",
+            "backtest_rejects_invalid_fee_model_before_trading",
+            "--", "--nocapture",
+        ],
+        r"(test result: ok\. 1 passed; 0 failed)",
+        env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+        evidence=[
+            "crates/qx-xingban/src/backtest.rs",
+            "crates/qx-xingban/src/backtest/tests.rs",
+            "crates/qx-core/src/fee.rs",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
+        "paper_venue_fee_model_fails_closed",
+        "Paper Venue 在受理订单前拒绝直接构造的负费率模型",
+        "crates/qx-zhenlu/src/lib.rs",
+        [
+            "test", "--offline", "-p", "qx-zhenlu", "--lib",
+            "paper_venue_rejects_invalid_fee_model_before_accepting_orders",
+            "--", "--nocapture",
+        ],
+        r"(test result: ok\. 1 passed; 0 failed)",
+        env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+        evidence=[
+            "crates/qx-zhenlu/src/lib.rs",
+            "crates/qx-zhenlu/src/paper_venue_sequence_tests.rs",
+            "crates/qx-core/src/fee.rs",
         ],
         command_prefix="cargo",
     )

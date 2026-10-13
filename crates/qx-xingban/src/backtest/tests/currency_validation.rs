@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn backtest_rejects_invalid_fee_model_before_trading() {
+    let bars = vec![
+        Bar::new(1, 100, 101, 99, 100, 10),
+        Bar::new(2, 102, 103, 101, 102, 10),
+    ];
+    let mut config = simple_config();
+    config.fee = Box::new(qx_core::MakerTakerFeeModel {
+        maker_bp: -1,
+        taker_bp: 5,
+    });
+    let error = match BacktestEngine::new(config).run(&bars, &mut BuyOnce { done: false }) {
+        Err(error) => error,
+        Ok(_) => panic!("invalid fee rates must fail closed"),
+    };
+    assert!(error.to_string().contains("费率必须在 0..=10000"));
+}
+
+#[test]
 fn derivative_backtest_uses_spec_pnl_instead_of_full_notional_cashflow() {
     let instrument = InstrumentId::parse("BTC/USDT:USDT.SIM").unwrap();
     let mut config = simple_config();

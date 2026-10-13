@@ -123,6 +123,7 @@ impl<'a> PortfolioBarEngine<'a> {
                 ));
             }
             market.spec.validate()?;
+            market.fee.validate()?;
             if market.spec.product == qx_core::TradingProduct::Option {
                 return Err(qx_core::QxError::BusinessViolation(
                     "共享 Bar session 不支持期权：期权合约身份与估值语义尚未建模".into(),

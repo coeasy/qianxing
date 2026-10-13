@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791928847
+generated_at_unix: 1791930043
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -220,7 +220,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=dca60ed2c61e2a9e/3290465ec5848f20,4d57587c77c7178c/bd3537a317c9d980,62bdc3a017a951ad/466c16b50188137d,49749190dc340b8f/4d02eb0013a493b9"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=7fa22627525584a6/82eb08f579b5ba3c,24719d9b9742fbcc/f00c4b4bbc35979c,5b4604b41c462995/c9d3f5d652f74a29,afd764b69e60f917/ba4d5c06afec17bd"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -335,13 +335,29 @@ scenarios:
     observed: "test result: ok. 1 passed; partial_fill_reservation_release=proportional overflow_releases_zero=true"
     evidence: ["crates/qx-xingban/src/venue/tests.rs", "crates/qx-xingban/src/venue.rs"]
   - name: checked_fee_basis_point_arithmetic
-    label: "极大名义金额的手续费基点计算无中间乘法溢出"
+    label: "费用模型费率范围与极大金额基点计算校验"
     status: executed
     anchor: "crates/qx-core/src/fee.rs"
-    command: "cargo test --offline -p qx-core --lib checked_basis_point_amount_preserves_floor_without_product_overflow -- --nocapture"
+    command: "cargo test --offline -p qx-core --lib fee::tests -- --nocapture"
     exit_code: 0
-    observed: "test result: ok. 1 passed; 0 failed; i128_max_fee_exact=true floor_semantics=true invalid_rate_rejected=true orderbook_match_and_admission_share_helper=true"
+    observed: "test result: ok. 8 passed; 0 failed; i128_max_fee_exact=true floor_semantics=true maker_taker_bounds=true ashare_bounds=true"
     evidence: ["crates/qx-core/src/fee.rs", "crates/qx-xingban/src/orderbook.rs", "crates/qx-xingban/src/orderbook_backtest.rs"]
+  - name: bar_backtest_fee_model_fails_closed
+    label: "Bar 回测拒绝直接构造的负费率模型"
+    status: executed
+    anchor: "crates/qx-xingban/src/backtest.rs"
+    command: "cargo test --offline -p qx-xingban --lib backtest_rejects_invalid_fee_model_before_trading -- --nocapture"
+    exit_code: 0
+    observed: "test result: ok. 1 passed; 0 failed"
+    evidence: ["crates/qx-xingban/src/backtest.rs", "crates/qx-xingban/src/backtest/tests.rs", "crates/qx-core/src/fee.rs"]
+  - name: paper_venue_fee_model_fails_closed
+    label: "Paper Venue 在受理订单前拒绝直接构造的负费率模型"
+    status: executed
+    anchor: "crates/qx-zhenlu/src/lib.rs"
+    command: "cargo test --offline -p qx-zhenlu --lib paper_venue_rejects_invalid_fee_model_before_accepting_orders -- --nocapture"
+    exit_code: 0
+    observed: "test result: ok. 1 passed; 0 failed"
+    evidence: ["crates/qx-zhenlu/src/lib.rs", "crates/qx-zhenlu/src/paper_venue_sequence_tests.rs", "crates/qx-core/src/fee.rs"]
   - name: algo_execution
     label: "算法执行（API 受理 / TWAP 拆单 / Paper 恢复 / EventLog 聚合）"
     status: executed

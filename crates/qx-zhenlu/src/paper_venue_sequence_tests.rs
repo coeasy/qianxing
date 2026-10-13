@@ -41,6 +41,19 @@ fn paper_venue_sequence_exhaustion_fails_before_registering_order() {
 }
 
 #[test]
+fn paper_venue_rejects_invalid_fee_model_before_accepting_orders() {
+    let mut venue = PaperVenue::new(
+        "paper",
+        Box::new(qx_core::MakerTakerFeeModel {
+            maker_bp: -1,
+            taker_bp: 5,
+        }),
+    );
+    assert!(venue.submit(order(1, Side::Buy), 1).is_err());
+    assert!(venue.snapshot().is_empty());
+}
+
+#[test]
 fn paper_venue_consumes_quote_capacity_once() {
     let instrument = InstrumentId::parse("T.V").unwrap();
     let mut venue = PaperVenue::new("paper", Box::new(qx_core::ZeroFeeModel));
