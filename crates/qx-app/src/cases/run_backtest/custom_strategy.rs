@@ -40,12 +40,6 @@ impl StrategyArtifactIdentity {
                 "StrategyArtifactIdentity requires a matching strategy_id, a valid strategy_version, and a lowercase SHA-256 digest",
             ));
         }
-        if spec.portfolio.is_some() {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "caller-supplied strategies cannot be combined with the built-in portfolio field",
-            ));
-        }
         let default_strategy = crate::spec::BuiltinStrategySpec::new(
             spec.strategy.kind,
             spec.strategy.strategy_id.clone(),

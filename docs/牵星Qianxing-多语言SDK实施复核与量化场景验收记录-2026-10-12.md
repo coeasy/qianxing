@@ -176,3 +176,11 @@ Python 十策略证据：
 - Python 原生扩展与高层 `qianxing` 增加同步及可取消句柄入口；factory 收到每个候选的 JSON 规格字典。测试验证数量参数分别作用于候选、每个候选双腿都有成交、Rust/Python RunHandle 成功、源码变更冲突及既有内置策略选择回归。
 - 验证：Rust qx-app 多腿实验 5 项通过；Rust SDK workspace 外 consumer factory 用例通过；Python 原生扩展多腿同步/RunHandle 回归通过；`cargo check -p qx-app -p qx-sdk -p qx-python --offline`、Rust 格式、Python 语法和 diff whitespace 检查通过。首次 Rust 测试使用系统 TEMP 遇 Windows 目录权限失败；将 TEMP/TMP 指向 `target/test-temp` 后专项用例全通过。
 - 边界：策略 factory 仅在本地 Rust/Python SDK 运行，不能序列化为 HTTP/C++ 远端策略；仍不支持策略组合 callback。双腿回测仍按各腿独立账簿执行，策略回调不接收成交回报；跨腿净额资金、实时风控、Paper/Live 多策略交易和真实 venue testnet 仍未闭环。
+
+## 19. 2026-10-13 继续实现：自定义主策略进入同账户策略组合
+
+- 解除 `StrategyArtifactIdentity` 对 Bar `portfolio` 的无差别拒绝。Rust/Python 自定义 callback 可作为组合主策略；附属槽继续由内置 Rust 策略实现。组合预算、优先级调度、风险、OMS、撮合、共享账户账簿、策略成交归属与 ReplayVerifier 均沿用既有 Rust 实现，绑定层不复制交易逻辑。策略源码身份仍进入 Run 配置摘要。
+- 不允许 callback 使用非默认内置信号/仓位参数，避免这些参数看似配置成功、实际由 callback 忽略。该路径支持一个自定义主策略加内置附属策略；callback-to-callback 组合、远程 callback 序列化和 Tick/OrderBook 自定义组合暂未实现。
+- 新增 Rust qx-app 与 Python 测试：自定义主策略和内置附属策略都产生带 owner 的成交；同步与 RunHandle 路径均通过；成交产物可复核且共享事件/账簿重放通过。场景探针新增 `python_custom_strategy_portfolio` 并实际执行，登记现为 37 项 executed、0 declared_not_executed、0 missing、1 blocked（Live 需真实 CCXT/testnet 前置）。
+- 验证：Rust `qx-app`/`qx-sdk`/`qx-python` 测试通过；Python 全量 131 项通过；严格 Clippy 通过；格式检查通过；架构不变量门禁 1096 项通过；完整量化场景探针通过 37 个场景。构建测试扩展时发现源码目录内原有忽略的 `.pyd` 遮蔽新 DLL，已用本轮构建的扩展覆盖本地测试产物后复跑通过；该二进制未纳入提交。
+- 方案仍未达到全量发布门槛：组合内尚不支持多个 caller callback、跨市场/跨账户共享资金和组合净额/风险归因；Paper/Live 组合及 Web/桌面 E2E、C++ 默认 transport/独立消费者、持久化订单事件游标恢复、跨平台 wheel 与真实交易所 testnet conformance 仍待实现或验证。缺少外部凭据的 Live 能力保持 blocked/unverified。

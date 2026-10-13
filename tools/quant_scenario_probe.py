@@ -973,6 +973,23 @@ def main() -> int:
     )
 
     executed(
+        "python_custom_strategy_portfolio",
+        "Python 自定义策略与内置策略共享单账户组合回测",
+        "python/tests/test_app_use_cases.py",
+        ["-m", "unittest", "python.tests.test_app_use_cases.AppUseCaseTests.test_python_strategy_callback_runs_shared_kernel_and_replay_verifier"],
+        r"(Ran 1 test)",
+        env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
+        extra="custom_primary=true builtin_secondary=true shared_ledger=true sync=true run_handle=true replay_verified=true",
+        evidence=[
+            "python/tests/test_app_use_cases.py",
+            "crates/qx-app/src/tests/custom_strategy.rs",
+            "crates/qx-app/src/cases/run_backtest/strategy_slot.rs",
+            "crates/qx-xingban/src/backtest/portfolio_strategy.rs",
+        ],
+        command_prefix="python",
+    )
+
+    executed(
         "rust_sdk_git_consumer",
         "Rust SDK 固定提交 Git 安装与仓外消费者运行",
         "tools/check_rust_sdk_git_consumer.py",

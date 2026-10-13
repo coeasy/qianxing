@@ -762,6 +762,53 @@ class AppUseCaseTests(unittest.TestCase):
         summary = json.loads(Path(outcome.artifacts["summary"]).read_text(encoding="utf-8"))
         self.assertEqual(summary["strategy_version"], "python-test-v1")
 
+        portfolio_spec = {
+            **spec,
+            "run_id": "python-custom-strategy-portfolio",
+            "output_dir": str(self.output_dir / "custom-portfolio"),
+            "strategy": dict(spec["strategy"]),
+        }
+        secondary = dict(spec["strategy"])
+        secondary.update({"kind": "momentum", "strategy_id": "python-builtin-secondary"})
+        portfolio_spec["portfolio"] = {
+            "primary_priority": 0,
+            "primary_reserved_capital_raw": 50_000_000_000_000,
+            "additional_strategies": [{
+                "priority": 1,
+                "reserved_capital_raw": 50_000_000_000_000,
+                "strategy": secondary,
+            }],
+        }
+        portfolio_outcome = run_backtest_with_strategy(
+            portfolio_spec,
+            BuyOnce(),
+            strategy_id="python-custom-strategy",
+            strategy_version="python-test-v1",
+            source_sha256="a" * 64,
+        )
+        self.assertGreater(portfolio_outcome.fills, 0)
+        portfolio_fills = Path(portfolio_outcome.artifacts["fills"]).read_text(encoding="utf-8")
+        self.assertTrue(any("python-custom-strategy" in line for line in portfolio_fills.splitlines()[1:]))
+        self.assertTrue(any("python-builtin-secondary" in line for line in portfolio_fills.splitlines()[1:]))
+        self.assertTrue(verify_run(portfolio_outcome).verified)
+
+        portfolio_handle_spec = {
+            **portfolio_spec,
+            "run_id": "python-custom-strategy-portfolio-handle",
+            "output_dir": str(self.output_dir / "custom-portfolio-handle"),
+        }
+        portfolio_handle = start_backtest_with_strategy(
+            portfolio_handle_spec,
+            BuyOnce(),
+            strategy_id="python-custom-strategy",
+            strategy_version="python-test-v1",
+            source_sha256="a" * 64,
+        )
+        self.assertEqual(portfolio_handle.wait(timeout_ms=30_000), "succeeded")
+        portfolio_async_outcome = portfolio_handle.result()
+        self.assertIsNotNone(portfolio_async_outcome)
+        self.assertTrue(verify_run(portfolio_async_outcome).verified)
+
         async_spec = dict(spec)
         async_spec["run_id"] = "python-custom-strategy-handle"
         async_spec["output_dir"] = str(self.output_dir / "custom-handle")

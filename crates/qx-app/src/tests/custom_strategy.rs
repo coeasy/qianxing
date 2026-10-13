@@ -3,6 +3,7 @@
 use crate::cases::{verify_run, StrategyArtifactIdentity};
 use crate::context::{CallerCapability, RunContext};
 use crate::error::AppErrorCategory;
+use crate::spec::{PortfolioBacktestConfig, PortfolioStrategySpec};
 use crate::tests::fixtures::{backtest_spec, scratch, write_frame};
 use qx_core::{Quantity, Side};
 use qx_strategy::{
@@ -85,6 +86,51 @@ fn injected_strategy_runs_through_shared_replay_and_artifact_chain() {
         serde_json::from_str(&std::fs::read_to_string(&outcome.artifacts.summary).unwrap())
             .unwrap();
     assert_eq!(summary["strategy_version"], "python-example-1.0.0");
+}
+
+#[test]
+fn injected_strategy_can_share_a_portfolio_ledger_with_builtin_strategies() {
+    let root = scratch("custom-strategy-portfolio");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 90);
+    let mut spec = backtest_spec("custom-strategy-portfolio", &bars, &root.join("out"));
+    spec.strategy = crate::spec::BuiltinStrategySpec::new(
+        spec.strategy.kind,
+        spec.strategy.strategy_id.clone(),
+    );
+    let cash = spec.initial_cash_raw;
+    spec.portfolio = Some(PortfolioBacktestConfig {
+        primary_priority: 0,
+        primary_reserved_capital_raw: cash / 2,
+        additional_strategies: vec![PortfolioStrategySpec {
+            priority: 1,
+            reserved_capital_raw: cash / 2,
+            strategy: crate::spec::BuiltinStrategySpec {
+                kind: qx_strategy::BuiltinStrategyKind::Momentum,
+                strategy_id: "builtin-secondary".into(),
+                ..spec.strategy.clone()
+            },
+        }],
+    });
+    let context = RunContext::new(CallerCapability::Research, "custom-strategy-portfolio");
+    let outcome = spec
+        .run_with_strategy(
+            &identity(&"c".repeat(64)),
+            BuyOnce { emitted: false },
+            &context,
+        )
+        .expect("自定义策略与内置策略共享组合账簿");
+
+    assert!(outcome.fills > 0);
+    let fills = std::fs::read_to_string(&outcome.artifacts.fills).expect("成交归因产物");
+    assert!(
+        fills.lines().any(|line| line.contains("app-sma")),
+        "主策略成交归因"
+    );
+    assert!(
+        fills.lines().any(|line| line.contains("builtin-secondary")),
+        "附属内置策略成交归因"
+    );
+    assert!(verify_run(&outcome, &context).expect("重放复核").verified);
 }
 
 #[test]

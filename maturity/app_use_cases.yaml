@@ -45,7 +45,7 @@ use_cases:
     error_categories: "AppErrorCategory 八类；领域码→类别走 category_of_domain_code"
     capability_level: "R"
   - name: run_backtest
-    input_schema: "BacktestSpec v1（可选冻结 TradingInstrumentSpec；声明 market_spec 时必须显式给出 MakerTakerFeeSchedule，禁止静默默认费用；四类信号旋钮 fast_window/slow_window/period/threshold_bps；省略 period/threshold 时取兼容默认值 14/100；可选同账户单标的单腿内置策略组合 portfolio，按优先级共享资金并要求预算合计不超过 initial_cash_raw；组合不接受账户净持仓 protective_exit）"
+    input_schema: "BacktestSpec v1（可选冻结 TradingInstrumentSpec；声明 market_spec 时必须显式给出 MakerTakerFeeSchedule，禁止静默默认费用；四类信号旋钮 fast_window/slow_window/period/threshold_bps；省略 period/threshold 时取兼容默认值 14/100；可选同账户单标的单腿策略组合 portfolio（自定义 Rust/Python 主策略可与内置附属策略组合），按优先级共享资金并要求预算合计不超过 initial_cash_raw；组合不接受账户净持仓 protective_exit）"
     output_schema: "BacktestOutcome（crates/qx-app/src/spec.rs）"
     capability: "RESEARCH"
     idempotency_key: "run_id + config_hash + data_fingerprint（三者全同才允许重写；任一不同即 Conflict）"

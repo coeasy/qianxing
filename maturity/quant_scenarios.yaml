@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791858909
+generated_at_unix: 1791871871
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -214,6 +214,14 @@ scenarios:
     exit_code: 0
     observed: "Ran 1 test; single_leg_strategy_kinds=10 candidates=10 stable_order=true shared_comparison=true oos_selected_kind=true walk_forward_folds=2"
     evidence: ["python/tests/test_app_use_cases.py", "crates/qx-app/src/tests/strategy_selection.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "crates/qx-api/src/app_strategy_selection_tests.rs", "cpp/tests/app_client_smoke.cpp", "crates/qx-strategy/src/builtin.rs", "crates/qx-python/src/lib.rs"]
+  - name: python_custom_strategy_portfolio
+    label: "Python 自定义策略与内置策略共享单账户组合回测"
+    status: executed
+    anchor: "python/tests/test_app_use_cases.py"
+    command: "python -m unittest python.tests.test_app_use_cases.AppUseCaseTests.test_python_strategy_callback_runs_shared_kernel_and_replay_verifier"
+    exit_code: 0
+    observed: "Ran 1 test; custom_primary=true builtin_secondary=true shared_ledger=true sync=true run_handle=true replay_verified=true"
+    evidence: ["python/tests/test_app_use_cases.py", "crates/qx-app/src/tests/custom_strategy.rs", "crates/qx-app/src/cases/run_backtest/strategy_slot.rs", "crates/qx-xingban/src/backtest/portfolio_strategy.rs"]
   - name: rust_sdk_git_consumer
     label: "Rust SDK 固定提交 Git 安装与仓外消费者运行"
     status: executed
