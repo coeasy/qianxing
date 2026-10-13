@@ -92,17 +92,25 @@ fn multi_market_sync_and_run_handle_routes_use_the_shared_rust_workflow() {
     .unwrap();
     assert_eq!(started.status, 200, "{}", started.body);
     let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
+    let async_observed = loop {
         let status = registry.status("api-multi-market-async");
         let document: Value = serde_json::from_str(&status.body).unwrap();
         if document["status"] == "succeeded" {
             assert_eq!(document["result"]["markets_total"], 3);
-            break;
+            break document["result"]["successful_fills"]
+                .as_u64()
+                .expect("successful fills are reported");
         }
         assert!(
             Instant::now() < deadline,
             "multi-market RunHandle timed out: {document}"
         );
         std::thread::sleep(Duration::from_millis(10));
-    }
+    };
+    println!(
+        "MULTI_MARKET_HTTP_OBSERVED sync_markets={} sync_fills={} async_fills={} run_handle=succeeded",
+        outcome["markets_total"].as_u64().unwrap(),
+        outcome["successful_fills"].as_u64().unwrap(),
+        async_observed
+    );
 }

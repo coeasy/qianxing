@@ -760,6 +760,47 @@ def main() -> int:
             ],
         })
 
+    def executed_multi_market_http_routes_test():
+        nonlocal failures
+        argv = [
+            "cargo", "test", "--offline", "-p", "qx-api",
+            "multi_market_sync_and_run_handle_routes_use_the_shared_rust_workflow",
+            "--", "--nocapture",
+        ]
+        code, output = run_command(argv)
+        observed = first_match(
+            r"(MULTI_MARKET_HTTP_OBSERVED sync_markets=3 sync_fills=[1-9]\d* "
+            r"async_fills=[1-9]\d* run_handle=succeeded)",
+            output,
+        )
+        if code != 0 or not observed:
+            failures += 1
+            print(f"[multi_market_http_routes diagnostics] {output[-2000:]}", flush=True)
+        ok = code == 0 and bool(observed)
+        print(
+            f"[{'OK  ' if ok else 'FAIL'}] multi_market_http_routes: "
+            f"rc={code} observed={observed!r}", flush=True,
+        )
+        records.append({
+            "name": "multi_market_http_routes",
+            "label": "HTTP 同步与 RunHandle 多市场 Bar 回测共用 Rust 执行链",
+            "status": "executed" if ok else "declared_not_executed",
+            "anchor": "crates/qx-api/src/app_surface.rs",
+            "command": "cargo test --offline -p qx-api multi_market_sync_and_run_handle_routes_use_the_shared_rust_workflow -- --nocapture",
+            "exit_code": code,
+            "observed": observed,
+            "why_not_executed": "多市场 HTTP 同步或可取消任务没有走到共享 Rust 内核并返回回放产物。",
+            "next_gate": "修复 qx-api 数据路径约束、共享回测调用或 RunHandle 生命周期后重跑探针。",
+            "evidence": [
+                "crates/qx-api/src/app_surface.rs",
+                "crates/qx-api/src/app_runs/starts.rs",
+                "crates/qx-api/src/app_runs/entry.rs",
+                "crates/qx-api/src/app_multi_market_tests.rs",
+                "python/qianxing/app.py",
+                "cpp/include/qianxing_app.hpp",
+            ],
+        })
+
     def executed_paper_cross_currency_fx_test():
         nonlocal failures
         argv = [
@@ -820,6 +861,7 @@ def main() -> int:
     executed_multi_market_shared_account_test()
     executed_multi_market_python_strategy_slots_test()
     executed_multi_market_rust_strategy_slots_test()
+    executed_multi_market_http_routes_test()
 
     for name, label, kind in MULTI_LEG_SCENARIOS:
         executed(
