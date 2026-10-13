@@ -1,5 +1,4 @@
 //! 两张端点表各自的路由集合，都必须与 `handle_inner` 真的分派的那一组逐一相等（V13 R2 第八遍）。
-//!
 //! 立案的是门禁 `api_surface_doc_check` 的取数口径：它把 `deploy/README.md` 全文里所有
 //! `` | `GET /x` `` 形态的行收成一个**并集**，再与实现侧的路由集合比相等。文档里有两张端点表
 //! （一张写 200 响应体形状，一张写语义/非 200 口径），两条都进并集，所以从任一张里整行删掉
@@ -177,6 +176,7 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
             .unwrap_or_else(|| panic!("app_surface 缺少动态端点模板 {constant}"));
         pairs.insert((method.to_string(), template.to_string()));
     }
+    super::api_app_surface_routes::insert_strategy_catalog(&mut pairs);
     assert!(
         pairs.len() >= 25,
         "分派区间里只数出 {} 条 (方法, 路由)，比端点表声称的 25 条还少——取数区间被改窄了",
