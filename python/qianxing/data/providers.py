@@ -207,28 +207,32 @@ class ProviderRegistry:
         manifest_path: str | None = None,
     ) -> ProviderDatasetBacktestOutcome:
         """Freeze and validate a DatasetManifestV2 before invoking the Rust Bar backtest."""
-        from pathlib import Path
+        from qianxing.app import BacktestOutcome, BacktestSpec, DatasetVerdict
 
-        from qianxing.app import BacktestSpec, DatasetSpec, run_backtest, validate_dataset
-
-        frame_json, manifest_json = self._fetch_bar_dataset_json(
-            query, dataset_id, dataset_version, interval_ms, timezone
-        )
-        manifest = json.loads(manifest_json)
         values = spec.to_dict() if isinstance(spec, BacktestSpec) else dict(spec)
-        _freeze_frame(values["bars_path"], frame_json)
         manifest_file = manifest_path or f"{values['bars_path']}.manifest.json"
-        _freeze_frame(
-            manifest_file,
-            json.dumps(manifest, sort_keys=True, separators=(",", ":")),
+        payload = json.loads(
+            self._native.run_bar_backtest_with_manifest_json(
+                query.to_json(),
+                json.dumps(values, sort_keys=True, separators=(",", ":")),
+                json.dumps(
+                    {
+                        "dataset_id": dataset_id,
+                        "dataset_version": dataset_version,
+                        "interval_ms": interval_ms,
+                        "timezone": timezone,
+                        "manifest_path": manifest_file,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
         )
-        verdict = validate_dataset(DatasetSpec(dataset_id=dataset_id, bars_path=values["bars_path"]))
-        outcome = run_backtest(values)
         return ProviderDatasetBacktestOutcome(
-            outcome=outcome,
-            manifest=manifest,
-            dataset_verdict=verdict,
-            manifest_path=str(Path(manifest_file)),
+            outcome=BacktestOutcome.from_dict(payload["outcome"]),
+            manifest=payload["manifest"],
+            dataset_verdict=DatasetVerdict.from_dict(payload["dataset_verdict"]),
+            manifest_path=payload["manifest_path"],
         )
 
     def run_depth_backtest(self, spec: Any, query: ProviderQuery, tier: str) -> Any:

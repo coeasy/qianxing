@@ -251,6 +251,7 @@ mod tests {
                 dataset_version: "snapshot-1",
                 interval_ms: 1,
                 timezone: "UTC",
+                manifest_path: None,
             })
             .unwrap();
         assert!(provider_run.dataset_verdict.usable);

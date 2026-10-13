@@ -13,6 +13,15 @@ use std::sync::Mutex;
 
 mod dataset_manifest;
 
+#[derive(Deserialize)]
+struct ProviderBacktestOptions {
+    dataset_id: String,
+    dataset_version: String,
+    interval_ms: u64,
+    timezone: String,
+    manifest_path: String,
+}
+
 /// Python adapters provide bytes only; ordering, failover, provenance checks and
 /// Bar quality validation stay inside the shared Rust provider boundary.
 struct PythonDataProvider {
@@ -162,6 +171,46 @@ impl PyProviderRegistry {
             interval_ms,
             timezone,
         )
+    }
+
+    fn run_bar_backtest_with_manifest_json(
+        &self,
+        query_json: &str,
+        spec_json: &str,
+        options_json: &str,
+    ) -> PyResult<String> {
+        let request = DataRequest::from_json(query_json)
+            .map_err(|error| PyValueError::new_err(format!("Provider query invalid: {error:?}")))?;
+        let spec = qx_app::BacktestSpec::from_json(spec_json).map_err(crate::app_error)?;
+        let options: ProviderBacktestOptions =
+            serde_json::from_str(options_json).map_err(|error| {
+                PyValueError::new_err(format!("Provider workflow options invalid: {error}"))
+            })?;
+        let fetched = self
+            .inner
+            .fetch_bar_frame(&request)
+            .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
+        let client = qx_sdk::Client::new(qx_sdk::CallerCapability::Research, &spec.run_id);
+        let result = client
+            .run_provider_backtest_with_manifest(&qx_sdk::ProviderBacktestRequest {
+                fetched: &fetched,
+                spec: &spec,
+                dataset_id: &options.dataset_id,
+                dataset_version: &options.dataset_version,
+                interval_ms: options.interval_ms,
+                timezone: &options.timezone,
+                manifest_path: Some(&options.manifest_path),
+            })
+            .map_err(crate::app_error)?;
+        let outcome = result.outcome.to_json().map_err(crate::app_error)?;
+        serde_json::to_string(&serde_json::json!({
+            "outcome": serde_json::from_str::<serde_json::Value>(&outcome)
+                .map_err(|error| PyValueError::new_err(format!("Backtest outcome serialization failed: {error}")))?,
+            "manifest": result.manifest,
+            "dataset_verdict": result.dataset_verdict,
+            "manifest_path": result.manifest_path,
+        }))
+        .map_err(|error| PyValueError::new_err(format!("Provider workflow serialization failed: {error}")))
     }
 
     fn fetch_depth_frame_json(&self, query_json: &str, tier: &str) -> PyResult<String> {

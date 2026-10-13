@@ -15,6 +15,7 @@ qx-datastruct = { path = "../qx-datastruct" }
 qx-app = { path = "../qx-app" }
 qx-data = { path = "../qx-data" }
 qx-provider = { path = "../qx-provider" }
+qx-sdk = { path = "../qx-sdk" }
 qx-strategy = { path = "../qx-strategy" }
 qx-xingban = { path = "../qx-xingban" }
 serde = { workspace = true }

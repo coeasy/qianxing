@@ -23,6 +23,8 @@ pub struct ProviderBacktestRequest<'a> {
     pub dataset_version: &'a str,
     pub interval_ms: u64,
     pub timezone: &'a str,
+    /// Optional caller-selected sidecar path. The manifest remains immutable once written.
+    pub manifest_path: Option<&'a str>,
 }
 
 pub(crate) fn run_provider_backtest_with_manifest(
@@ -51,7 +53,10 @@ pub(crate) fn run_provider_backtest_with_manifest(
         )
     })?;
     let bars_path = PathBuf::from(&request.spec.bars_path);
-    let manifest_path = PathBuf::from(format!("{}.manifest.json", request.spec.bars_path));
+    let manifest_path = request
+        .manifest_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("{}.manifest.json", request.spec.bars_path)));
     freeze(&bars_path, frame_json.as_bytes())?;
     freeze(&manifest_path, manifest_json.as_bytes())?;
     let dataset_verdict = client.validate_dataset(&DatasetSpec::new(
