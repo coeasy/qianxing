@@ -227,3 +227,10 @@ Python 十策略证据：
 - GitHub Actions CI run `38363403100`（commit `4f85cd9e`）的 C++ SDK job 已在 `ubuntu-latest`、`macos-latest`、`windows-latest` 全部 `completed/success`。三平台均完成 SDK build、Release CTest、CMake 安装 consumer、ring/app-client smoke、Rust 宿主真实加载 C ABI 插件、JSONL worker 与 shared-memory JSON/columnar worker 验收。随后该 run 的 25 个 job 全部 `completed/success`，失败 job 为 0。
 - 据此将 C++ 能力矩阵更新为三平台 x64 CI 有验证证据；未推断其它 CPU 架构通过。全仓 CI 已通过该提交门禁，但这不代表尚未覆盖的组合交易、事件持久化、其它 wheel 架构及外部 testnet 发布门槛整体通过。
 - 仍待完成：C++ 默认 HTTP transport、其它架构支持；以及多腿共享账簿、跨市场/账户风险聚合、Paper/Live 多策略链、持久事件日志等全局缺口。
+
+## 26. 2026-10-13 多腿回测账户账簿合并投影
+
+- 为带 `account_id` 的应用层多腿 Bar 回测增加确定性账户账簿投影：按事件时间、源账簿 entry 序号及主/参考腿稳定次序合并源账簿事实，重编号后通过 `qx_core::Ledger::apply_entry` 完整重放；核对合并前后的各币种现金、各腿持仓数量与已实现盈亏，并在归因产物输出初始资金、腿级资金预留、账户现金、持仓、已实现盈亏、entry 数和回放校验标志。
+- 产物显式标注 `allocation_policy=fixed_per_leg_reservation`、`cross_leg_buying_power=false`。这补上了可审计的单账户合并账簿视图，不能解释成撮合期动态共用资金池：两腿仍由独立 BacktestEngine 按固定初始本金撮合，不具备跨腿资金竞争、净额保证金或组合级实时风险。
+- 回归用例验证同账户合并报告包含两腿持仓、初始现金合计正确且策略回放幂等；`cargo test --offline -p qx-app --lib -- --test-threads=1` 113/113 通过，严格 Clippy、格式检查、`git diff --check` 和架构不变量 1096 项均通过。架构门禁首轮捕获主用例文件超出行数预算 9 行；将账户账簿装配抽到 `portfolio_ledger.rs` 后复跑全部通过。
+- 由最终 Rust 源码重建 Windows x64 `cp310-abi3` wheel；`tools/check_python_wheel.py` 通过，隔离虚拟环境离线重装后 `qianxing` 与 `qianxing_bridge._qianxing_native` 均导入成功。SHA-256：`992dc39f11d7169c060764d0cdea91c4c749fb5ee97496c56496a68a381a92b6`。这只证明当前 Windows x64 wheel。

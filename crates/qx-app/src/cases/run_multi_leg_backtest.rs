@@ -15,6 +15,7 @@ pub(super) mod custom_strategy;
 mod leg;
 mod market_spec;
 mod models;
+mod portfolio_ledger;
 mod targets;
 pub(super) use custom_strategy::InjectedMultiLegStrategy;
 use leg::{run_leg, LegRunSpec};
@@ -350,6 +351,13 @@ pub(super) fn run_inner(
         .collect::<Vec<_>>();
     let pending_reconcile_json =
         crate::multi_leg_pending_reconcile_json(&attribution.pending_reconcile);
+    let account_ledger = portfolio_ledger::for_spec(
+        spec,
+        &primary.instrument,
+        &reference.instrument,
+        &primary_report.ledger,
+        &reference_report.ledger,
+    )?;
 
     let funding_raw = totals.2;
     let pnl = primary_report
@@ -429,6 +437,7 @@ pub(super) fn run_inner(
         "legs": leg_integrity_json,
         "groups": attribution.groups,
         "pending_reconcile": pending_reconcile_json,
+        "account_ledger": account_ledger,
         "replay_events": primary_replay.events + reference_replay.events,
         "replay_ledger_entries": primary_replay.ledger_entries + reference_replay.ledger_entries,
         "matching": "qx-xingban::BacktestEngine/NextBarOpenFillModel",

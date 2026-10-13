@@ -263,6 +263,31 @@ fn multi_leg_backtest_runs_shared_strategy_and_matching_and_is_idempotent() {
     assert!(artifact.contains("pending_reconcile"));
     assert!(artifact.contains("replay_ledger_entries"));
     assert!(artifact.contains("acct.pair-test"));
+    let artifact: serde_json::Value = serde_json::from_str(&artifact).expect("valid artifact");
+    assert_eq!(artifact["account_ledger"]["account_id"], "acct.pair-test");
+    assert_eq!(
+        artifact["account_ledger"]["allocation_policy"],
+        "fixed_per_leg_reservation"
+    );
+    assert_eq!(artifact["account_ledger"]["cross_leg_buying_power"], false);
+    assert_eq!(artifact["account_ledger"]["replay_verified"], true);
+    assert_eq!(
+        artifact["account_ledger"]["initial_cash_raw"],
+        (2_000_000_i128 * qx_core::SCALE).to_string()
+    );
+    assert_eq!(
+        artifact["account_ledger"]["positions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        artifact["account_ledger"]["ledger_entry_count"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
 }
 
 #[test]

@@ -602,6 +602,7 @@ capabilities:
       - crates/qx-app/src/trade_facts.rs
       - crates/qx-app/src/spec/multi_leg.rs
       - crates/qx-app/src/cases/run_multi_leg_backtest.rs
+      - crates/qx-app/src/cases/run_multi_leg_backtest/portfolio_ledger.rs 的 account_id 多腿回测归一化账簿投影与逐事件重放一致性校验；该投影明确标记 fixed_per_leg_reservation，不代表撮合期资金互借
       - crates/qx-app/src/tests/multi_leg_backtest.rs
       - crates/qx-api/src/app_surface.rs
       - crates/qx-api/src/app_runs.rs
@@ -634,6 +635,7 @@ capabilities:
       - backtest_multi_leg_fees_share_one_cost_binding_because_market_spec_has_no_tier_fields
       - multi_leg_combined_return_has_no_summary_json_and_its_leg_weights_come_from_the_funding_rule
       - multi_leg_group_margin_peak_aggregates_with_max_across_groups_without_a_sum_versus_max_case
+      - qx-app 两腿 Bar 回测仍由独立 BacktestEngine 以固定腿级本金完成撮合；account_ledger 仅在两条腿运行后确定性合并、重放并核对现金/持仓/已实现盈亏，不能提供跨腿资金竞争、净额保证金或组合级实时风险
       - no_production_failure_matrix
 
   postgres:
