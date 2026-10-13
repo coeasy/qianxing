@@ -7,7 +7,10 @@ use crate::error::{AppError, AppErrorCategory};
 use crate::{
     run_backtest, validate_dataset, BacktestOutcome, BacktestSpec, DatasetSpec, DatasetVerdict,
 };
-use qx_provider::{DatasetManifestV2, ProviderBarFrame};
+use qx_provider::{
+    DataRequest, DatasetManifestV2, ProviderBarFrame, ProviderErrorClass, ProviderRegistry,
+    RegistryError,
+};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -20,8 +23,8 @@ pub struct ProviderBacktestOutcome {
     pub manifest_path: String,
 }
 
-/// Inputs for the one-step Provider freeze, validate, backtest and replay workflow.
-pub struct ProviderBacktestRequest<'a> {
+/// Inputs after Provider selection for the shared freeze/validate/backtest core.
+struct FetchedProviderBacktest<'a> {
     pub fetched: &'a ProviderBarFrame,
     pub spec: &'a BacktestSpec,
     pub dataset_id: &'a str,
@@ -32,21 +35,108 @@ pub struct ProviderBacktestRequest<'a> {
     pub manifest_path: Option<&'a str>,
 }
 
-/// Freeze Provider data and execute validation and backtest through the shared app cases.
+/// Complete Provider-to-backtest input. The application layer owns source selection and failover.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderBacktestSpec {
+    pub data_request: DataRequest,
+    pub backtest: BacktestSpec,
+    pub dataset_id: String,
+    pub dataset_version: String,
+    pub interval_ms: u64,
+    pub timezone: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_path: Option<String>,
+}
+
+impl ProviderBacktestSpec {
+    pub fn validate(&self) -> Result<(), AppError> {
+        self.data_request
+            .query
+            .validate()
+            .and_then(|()| {
+                self.data_request
+                    .requirements
+                    .validate_for(&self.data_request.query)
+            })
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error.message))?;
+        self.backtest.validate()?;
+        if self.data_request.query.kind != qx_provider::DataKind::Bar
+            || self.data_request.query.instrument_set.len() != 1
+            || self.data_request.query.instrument_set.iter().next()
+                != Some(&self.backtest.instrument)
+            || self.dataset_id.trim().is_empty()
+            || self.dataset_version.trim().is_empty()
+            || self.interval_ms == 0
+            || self.timezone.trim().is_empty()
+            || self
+                .manifest_path
+                .as_deref()
+                .is_some_and(|path| path.trim().is_empty())
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "Provider backtest requires matching single-instrument Bar data, dataset identity, positive interval, timezone, and a non-empty optional manifest path",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Select/fail over a Provider, freeze its validated BarFrame and manifest, validate the dataset,
+/// then execute the shared deterministic Rust backtest.
 pub fn run_provider_backtest_with_manifest(
-    request: &ProviderBacktestRequest<'_>,
+    registry: &ProviderRegistry,
+    spec: &ProviderBacktestSpec,
     context: &RunContext,
 ) -> Result<ProviderBacktestOutcome, AppError> {
     context.require(CallerCapability::Research, "Provider Bar 回测")?;
     let correlation_id = context.correlation_id().to_string();
     guard_panics(&correlation_id, || {
-        run_provider_backtest_inner(request, context)
+        spec.validate()?;
+        let fetched = registry
+            .fetch_bar_frame(&spec.data_request)
+            .map_err(|error| {
+                let (category, message) = match error {
+                    RegistryError::NoProvider => (
+                        AppErrorCategory::DataUnavailable,
+                        "no Provider satisfies the backtest data request".to_string(),
+                    ),
+                    RegistryError::Duplicate(id) => (
+                        AppErrorCategory::InvalidInput,
+                        format!("duplicate Provider registration: {id}"),
+                    ),
+                    RegistryError::Provider(error) => {
+                        let category = match error.class {
+                            ProviderErrorClass::SwitchProvider => AppErrorCategory::DataUnavailable,
+                            ProviderErrorClass::ManualIntervention => {
+                                AppErrorCategory::PermissionDenied
+                            }
+                            ProviderErrorClass::Permanent => AppErrorCategory::InvalidInput,
+                        };
+                        (category, error.message)
+                    }
+                };
+                AppError::new(category, format!("Provider fetch failed: {message}"))
+            })?;
+        run_provider_backtest_inner(
+            &FetchedProviderBacktest {
+                fetched: &fetched,
+                spec: &spec.backtest,
+                dataset_id: &spec.dataset_id,
+                dataset_version: &spec.dataset_version,
+                interval_ms: spec.interval_ms,
+                timezone: &spec.timezone,
+                manifest_path: spec.manifest_path.as_deref(),
+            },
+            context,
+        )
     })
     .map_err(|error| attach(error, &correlation_id))
 }
 
 fn run_provider_backtest_inner(
-    request: &ProviderBacktestRequest<'_>,
+    request: &FetchedProviderBacktest<'_>,
     context: &RunContext,
 ) -> Result<ProviderBacktestOutcome, AppError> {
     let manifest = request

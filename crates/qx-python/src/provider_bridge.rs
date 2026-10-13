@@ -186,20 +186,17 @@ impl PyProviderRegistry {
             serde_json::from_str(options_json).map_err(|error| {
                 PyValueError::new_err(format!("Provider workflow options invalid: {error}"))
             })?;
-        let fetched = self
-            .inner
-            .fetch_bar_frame(&request)
-            .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
         let context = crate::research_context(&spec.run_id);
         let result = qx_app::run_provider_backtest_with_manifest(
-            &qx_app::ProviderBacktestRequest {
-                fetched: &fetched,
-                spec: &spec,
-                dataset_id: &options.dataset_id,
-                dataset_version: &options.dataset_version,
+            &self.inner,
+            &qx_app::ProviderBacktestSpec {
+                data_request: request,
+                backtest: spec,
+                dataset_id: options.dataset_id,
+                dataset_version: options.dataset_version,
                 interval_ms: options.interval_ms,
-                timezone: &options.timezone,
-                manifest_path: Some(&options.manifest_path),
+                timezone: options.timezone,
+                manifest_path: Some(options.manifest_path),
             },
             &context,
         )

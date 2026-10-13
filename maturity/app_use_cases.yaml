@@ -185,7 +185,7 @@ use_cases:
     error_categories: "AppErrorCategory 八类；非法身份、重复策略/账户、未知账户、负预算或算术异常为 InvalidInput"
     capability_level: "R"
   - name: run_provider_backtest_with_manifest
-    input_schema: "ProviderBacktestRequest（已通过 ProviderRegistry 校验的 BarFrame + BacktestSpec + 数据集身份）"
+    input_schema: "ProviderBacktestSpec（DataRequest + BacktestSpec + dataset identity；qx-app 负责注册表选源与 failover）"
     output_schema: "ProviderBacktestOutcome（DatasetManifestV2 + DatasetVerdict + BacktestOutcome）"
     capability: "RESEARCH"
     idempotency_key: "BarFrame 与 manifest 内容逐字节相同允许重跑；同路径异内容返回 Conflict"

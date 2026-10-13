@@ -58,7 +58,7 @@ pub use cases::{
     CompareRunsSpec, ComparedRun, ComparedRunResult, DepthExperimentCandidate,
     DepthExperimentRankedCandidate, ExperimentCandidateResult, ExperimentParameterSpace,
     MultiLegExperimentCandidate, MultiLegExperimentRankedCandidate, ProviderBacktestOutcome,
-    ProviderBacktestRequest, RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult,
+    ProviderBacktestSpec, RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult,
     RunExperimentSpec, RunMultiLegExperimentResult, RunMultiLegExperimentSpec, TradeControlSpec,
     TradeWorkflow, EXPERIMENT_BASELINE_NAMES, MAX_EXPERIMENT_CANDIDATES,
     RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION, RUN_EXPERIMENT_SCHEMA_VERSION,

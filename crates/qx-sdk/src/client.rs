@@ -7,7 +7,7 @@
 //! 为什么不把 `Client` 做成 trait 或者泛型 `Engine`：门面是**稳定边界**，泛型参数一旦公开
 //! 就进了 semver 承诺。一个持有 `RunContext` 的普通结构体把承诺面压到最小。
 
-use crate::{ProviderBacktestOutcome, ProviderBacktestRequest};
+use crate::{ProviderBacktestOutcome, ProviderBacktestSpec, ProviderRegistry};
 use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, run_backtest, run_depth_backtest,
     run_depth_experiment, run_experiment, run_multi_account_backtest, run_multi_leg_backtest,
@@ -92,9 +92,10 @@ impl Client {
     /// Freeze a Provider BarFrame and its shared manifest, validate it, then run the same app use case.
     pub fn run_provider_backtest_with_manifest(
         &self,
-        request: &ProviderBacktestRequest<'_>,
+        registry: &ProviderRegistry,
+        spec: &ProviderBacktestSpec,
     ) -> Result<ProviderBacktestOutcome, AppError> {
-        qx_app::run_provider_backtest_with_manifest(request, &self.context)
+        qx_app::run_provider_backtest_with_manifest(registry, spec, &self.context)
     }
 
     /// 异步回测：立刻返回可协作取消的 [`RunHandle`]，由调用方决定等多久。

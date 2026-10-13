@@ -244,15 +244,18 @@ mod tests {
         );
         let client = Client::new(CallerCapability::Research, "provider-bars-run");
         let provider_run = client
-            .run_provider_backtest_with_manifest(&qx_sdk::ProviderBacktestRequest {
-                fetched: &fetched,
-                spec: &spec,
-                dataset_id: "provider-bars",
-                dataset_version: "snapshot-1",
-                interval_ms: 1,
-                timezone: "UTC",
-                manifest_path: None,
-            })
+            .run_provider_backtest_with_manifest(
+                &registry,
+                &qx_sdk::ProviderBacktestSpec {
+                    data_request: DataRequest::new(query.clone(), DataRequirements::default()),
+                    backtest: spec,
+                    dataset_id: "provider-bars".into(),
+                    dataset_version: "snapshot-1".into(),
+                    interval_ms: 1,
+                    timezone: "UTC".into(),
+                    manifest_path: None,
+                },
+            )
             .unwrap();
         assert!(provider_run.dataset_verdict.usable);
         assert_eq!(provider_run.manifest, manifest);
