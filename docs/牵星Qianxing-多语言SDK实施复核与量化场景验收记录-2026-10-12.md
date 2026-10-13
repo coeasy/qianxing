@@ -283,3 +283,9 @@ Python 十策略证据：
 - 扩展异步多腿 Run 的持久化重启回归：注册表重开后，`after_seq=1` 仍取得终态事件，`after_seq=3`（最新序号为 2）被拒绝；正常游标和现有 HTTP 读取契约保持不变。
 - 验证：`cargo test --offline -p qx-api` 全部单元、集成和文档测试通过（65 项单元测试）；`cargo fmt --all -- --check` 通过；架构不变量门禁 1096 项通过。
 - 这补齐的是超前游标校验，不是计划 §6.4 的完整事件日志：尚无逐事件/订单成交持久追加、发生时间与因果 ID；当前生命周期事件不做裁剪，因此尚未实现“游标过期→要求取快照”的恢复协议。整体方案仍未达到全能力发布条件。
+
+## 34. 2026-10-13 复核：多腿回测不是成交反馈驱动的联合组合引擎
+
+- 顺着 Python/Rust 自定义策略入口复核 `run_multi_leg_backtest`：当前先按完整 Bar 历史依次调用策略，并在发出 intent 时立即改写 `StrategyContext.positions`；随后才用 `run_leg` 分别执行主腿和参考腿。两条腿的结果账簿最后才按时间合并用于归因。`portfolio_ledger::merge_account_ledger` 明确记载这只是投影，撮合期间仍是固定腿级资金预留且没有跨腿 buying power。
+- 因而当前入口能证明双腿数据输入、策略 callback、双腿各自回测、确定性归因和可重放账簿；它不能证明“成交/拒单/部分成交 → 策略回报 → 更新组合状态 → 下一腿决策”的联动，也不能提供组合级资金竞争/风险净额。若一笔意图在后续腿级引擎被风控拒绝，之前预扫描中的策略状态已经按意图乐观更新；现状没有一个统一的时间顺序引擎来向策略回传该拒单。
+- 这不是本轮通过改文案即可关闭的能力。下一实现切片需在 Rust kernel 增加按 `(timestamp, deterministic instrument priority, event priority)` 驱动的多标的 Bar session，把各腿的 market event、策略决策、风险/订单状态、成交回报、共享账户 Ledger 和下一次 callback 置于同一个有序循环；Rust/Python SDK 再调用该用例，并用拒单/部分成交、资金竞争、同刻双市场事件、确定性重跑和 replay 对账证明闭环。完成前，既有 multi-leg callbacks 只标为本地研究能力，不能等同同步组合交易或组合共享账簿。
