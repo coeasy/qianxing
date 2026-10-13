@@ -21,22 +21,25 @@ use super::experiment_split::{
     ExperimentOutOfSampleReport, ExperimentSplitPlan,
 };
 use super::guard::guard_panics;
-use super::run_backtest::run_backtest_inner;
+use super::run_backtest::{run_backtest_inner, run_backtest_inner_with_experiment_strategy};
 use super::{attach, compare_runs};
 use crate::run_handle::CancellationToken;
 use crate::{
     AppError, AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsResult,
-    CompareRunsSpec, ComparedRun, RunContext, RunHandle,
+    CompareRunsSpec, ComparedRun, RunContext, RunHandle, StrategyArtifactIdentity,
 };
 use qx_core::Fnv1a;
 use qx_datastruct::BarFrame;
 use qx_strategy::BuiltinStrategyKind;
+use qx_strategy::Strategy;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub const RUN_EXPERIMENT_SCHEMA_VERSION: u32 = 1;
 pub const MAX_EXPERIMENT_CANDIDATES: usize = 256;
+
+type StrategyFactory<'a> = dyn FnMut(&BacktestSpec) -> Result<Box<dyn Strategy>, String> + 'a;
 
 /// 基准对照的取值域。与 `qx_spec::EXPERIMENT_BASELINES` **逐值相等**——两份声明并存是
 /// 因为 `qx-app` 的依赖表是精确且被门禁逐项核过的，为三个字符串把 spec crate 拉进来会让
@@ -76,6 +79,34 @@ pub struct RunExperimentSpec {
 }
 
 impl RunExperimentSpec {
+    /// Run a bounded parameter experiment with a fresh caller-authored strategy per candidate.
+    pub fn run_with_strategy_factory<F>(
+        &self,
+        identity: &StrategyArtifactIdentity,
+        factory: &mut F,
+        context: &RunContext,
+    ) -> Result<RunExperimentResult, AppError>
+    where
+        F: FnMut(&BacktestSpec) -> Result<Box<dyn Strategy>, String>,
+    {
+        let correlation_id = context.correlation_id().to_string();
+        context.require(CallerCapability::Research, "多语言策略参数回测实验")?;
+        validate_strategy_experiment(self, identity)?;
+        guard_panics(&correlation_id, || {
+            run_experiment_inner(self, context, None, Some(identity), Some(factory))
+        })
+        .map_err(|error| attach(error, &correlation_id))?
+        .ok_or_else(|| {
+            attach(
+                AppError::new(
+                    AppErrorCategory::InternalInvariant,
+                    "同步多语言策略参数实验未产生报告",
+                ),
+                &correlation_id,
+            )
+        })
+    }
+
     pub fn from_json(payload: &str) -> Result<Self, AppError> {
         serde_json::from_str(payload).map_err(|error| {
             AppError::new(
@@ -242,7 +273,7 @@ pub fn run_experiment(
     let correlation_id = context.correlation_id().to_string();
     context.require(CallerCapability::Research, "参数回测实验")?;
     guard_panics(&correlation_id, || {
-        run_experiment_inner(spec, context, None)
+        run_experiment_inner(spec, context, None, None, None)
     })
     .map_err(|error| attach(error, &correlation_id))?
     .ok_or_else(|| {
@@ -265,22 +296,72 @@ impl RunExperimentSpec {
             context.require(CallerCapability::Research, "参数回测实验")?;
             let correlation_id = context.correlation_id().to_string();
             guard_panics(&correlation_id, || {
-                run_experiment_inner(&self, &context, Some(&cancellation))
+                run_experiment_inner(&self, &context, Some(&cancellation), None, None)
             })
             .map_err(|error| attach(error, &correlation_id))
         })
     }
+
+    /// Start a bounded parameter experiment with a fresh caller-authored strategy per candidate.
+    pub fn start_with_strategy_factory<F>(
+        self,
+        identity: StrategyArtifactIdentity,
+        mut factory: F,
+        context: RunContext,
+    ) -> Result<RunHandle<RunExperimentResult>, AppError>
+    where
+        F: FnMut(&BacktestSpec) -> Result<Box<dyn Strategy>, String> + Send + 'static,
+    {
+        context.require(CallerCapability::Research, "多语言策略参数回测实验")?;
+        validate_strategy_experiment(&self, &identity)?;
+        let run_id = context.correlation_id().to_string();
+        Ok(RunHandle::spawn(run_id, move |cancellation| {
+            let correlation_id = context.correlation_id().to_string();
+            guard_panics(&correlation_id, || {
+                run_experiment_inner(
+                    &self,
+                    &context,
+                    Some(&cancellation),
+                    Some(&identity),
+                    Some(&mut factory),
+                )
+            })
+            .map_err(|error| attach(error, &correlation_id))
+        }))
+    }
+}
+
+fn validate_strategy_experiment(
+    spec: &RunExperimentSpec,
+    identity: &StrategyArtifactIdentity,
+) -> Result<(), AppError> {
+    spec.validate()?;
+    identity.validate_for_experiment(&spec.base)?;
+    if !spec.strategy_kinds.is_empty() {
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            "caller strategy factory cannot be combined with built-in strategy_kinds selection",
+        ));
+    }
+    Ok(())
 }
 
 fn run_experiment_inner(
     spec: &RunExperimentSpec,
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
+    identity: Option<&StrategyArtifactIdentity>,
+    mut factory: Option<&mut StrategyFactory<'_>>,
 ) -> Result<Option<RunExperimentResult>, AppError> {
     let total = spec.validate()?;
     let spec_json = spec.to_json()?;
     let mut fingerprint = Fnv1a::new();
     fingerprint.write_text(&spec_json);
+    if let Some(identity) = identity {
+        fingerprint.write_text(&identity.strategy_id);
+        fingerprint.write_text(&identity.strategy_version);
+        fingerprint.write_text(&identity.source_sha256);
+    }
     let spec_fingerprint = format!("{:016x}", fingerprint.finish());
     let root = PathBuf::from(&spec.base.output_dir).join(&spec.experiment_id);
     let artifact_path = root
@@ -348,11 +429,36 @@ fn run_experiment_inner(
             .to_string_lossy()
             .into();
         let outcome = match apply_parameters(&mut candidate.strategy, &parameters) {
-            Ok(()) => match run_backtest_inner(&candidate, context, cancellation) {
-                Ok(Some(outcome)) => Ok(outcome),
-                Ok(None) => return Ok(None),
-                Err(error) => Err(error),
-            },
+            Ok(()) => {
+                let run = match (identity, factory.as_deref_mut()) {
+                    (Some(identity), Some(factory)) => factory(&candidate)
+                        .map_err(|error| {
+                            AppError::new(
+                                AppErrorCategory::InvalidInput,
+                                format!("候选 {ordinal} 自定义策略 factory 失败: {error}"),
+                            )
+                        })
+                        .and_then(|strategy| {
+                            run_backtest_inner_with_experiment_strategy(
+                                &candidate,
+                                context,
+                                cancellation,
+                                identity.clone(),
+                                strategy,
+                            )
+                        }),
+                    (None, None) => run_backtest_inner(&candidate, context, cancellation),
+                    _ => Err(AppError::new(
+                        AppErrorCategory::InternalInvariant,
+                        "自定义策略实验身份与 factory 状态不一致",
+                    )),
+                };
+                match run {
+                    Ok(Some(outcome)) => Ok(outcome),
+                    Ok(None) => return Ok(None),
+                    Err(error) => Err(error),
+                }
+            }
             Err(error) => Err(error),
         };
         candidates.push(match outcome {

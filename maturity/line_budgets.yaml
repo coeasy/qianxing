@@ -6,6 +6,8 @@ crates/qx-adapter/src/lib.rs: 728
 crates/qx-api/src/app_runs.rs: 512
 crates/qx-api/src/console.rs: 727
 crates/qx-api/src/lib.rs: 2912
+crates/qx-app/src/cases/run_backtest.rs: 521
+crates/qx-app/src/cases/run_experiment.rs: 574
 crates/qx-cli/src/cli.rs: 670
 crates/qx-cli/src/cli_args.rs: 511
 crates/qx-cli/src/event_pipeline.rs: 787

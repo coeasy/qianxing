@@ -78,6 +78,8 @@ def _load_native():
                 "app_plan_algo_execution",
                 "app_run_experiment",
                 "app_start_experiment",
+                "app_run_experiment_with_strategy",
+                "app_start_experiment_with_strategy",
                 "app_run_depth_backtest",
                 "app_start_depth_backtest",
                 "app_run_depth_backtest_with_strategy",
@@ -136,6 +138,30 @@ class AppUseCaseTests(unittest.TestCase):
             ) as invoke:
                 self.assertIs(getattr(app, wrapper)(spec), handle)
                 invoke.assert_called_once_with(json.dumps(spec, ensure_ascii=False))
+
+    def test_strategy_experiment_bridge_connects_sync_and_async_native_entries(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing_bridge import app, native
+
+        spec = {"schema_version": 1, "experiment_id": "strategy-grid"}
+        callback = lambda candidate: candidate
+        identity = {
+            "strategy_id": "custom",
+            "strategy_version": "v1",
+            "source_sha256": "a" * 64,
+        }
+        expected_payload = json.dumps(spec, ensure_ascii=False)
+        with patch.object(
+            native, "app_run_experiment_with_strategy", return_value='{"ok":true}'
+        ) as run:
+            self.assertEqual(
+                app.run_experiment_with_strategy(spec, callback, **identity), {"ok": True}
+            )
+            run.assert_called_once_with(expected_payload, "custom", "v1", "a" * 64, unittest.mock.ANY)
+        handle = object()
+        with patch.object(native, "app_start_experiment_with_strategy", return_value=handle) as start:
+            self.assertIs(app.start_experiment_with_strategy(spec, callback, **identity), handle)
+            start.assert_called_once_with(expected_payload, "custom", "v1", "a" * 64, unittest.mock.ANY)
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -819,6 +845,132 @@ class AppUseCaseTests(unittest.TestCase):
         portfolio_async_outcome = portfolio_handle.result()
         self.assertIsNotNone(portfolio_async_outcome)
         self.assertTrue(verify_run(portfolio_async_outcome).verified)
+
+        # Python authored candidates enter the same Rust-owned experiment loop. The factory is
+        # invoked once per candidate and the cancellable handle uses the same callback path.
+        from qianxing import (
+            BacktestSpec,
+            BuiltinStrategySpec,
+            ExperimentParameterSpace,
+            RunExperimentSpec,
+            run_experiment_with_strategy,
+            start_experiment_with_strategy,
+        )
+
+        experiment_spec = RunExperimentSpec(
+            experiment_id="python-custom-strategy-grid",
+            base=BacktestSpec(
+                **{
+                    **spec,
+                    "strategy": BuiltinStrategySpec(**spec["strategy"]),
+                }
+            ),
+            parameter_space=(ExperimentParameterSpace("quantity_raw", (500_000, 1_000_000)),),
+        )
+        candidate_quantities = []
+
+        def candidate_factory(candidate):
+            quantity = candidate["strategy"]["quantity_raw"]
+            candidate_quantities.append(quantity)
+
+            class BuyOnceWithQuantity:
+                def __init__(self):
+                    self.emitted = False
+
+                def on_event(self, context, event):
+                    bar = event["Bar"]
+                    intents = []
+                    if not self.emitted:
+                        self.emitted = True
+                        intents.append({
+                            "intent_id": 1,
+                            "instrument": bar["instrument"],
+                            "side": "Buy",
+                            "qty": quantity,
+                            "limit": None,
+                            "policy": None,
+                            "reduce_only": False,
+                            "post_only": False,
+                        })
+                    return {
+                        "schema_version": 1,
+                        "request_id": f"{context['strategy_id']}:{bar['ts']}",
+                        "strategy_id": context["strategy_id"],
+                        "signal_id": bar["ts"],
+                        "confidence": 10_000,
+                        "priority": 0,
+                        "expires_at": 0,
+                        "intents": intents,
+                    }
+
+            return BuyOnceWithQuantity()
+
+        identity = {
+            "strategy_id": "python-custom-strategy",
+            "strategy_version": "python-grid-v1",
+            "source_sha256": "c" * 64,
+        }
+        experiment = run_experiment_with_strategy(
+            experiment_spec,
+            candidate_factory,
+            **identity,
+        )
+        self.assertEqual(candidate_quantities, [500_000, 1_000_000])
+        self.assertEqual(experiment.completed_candidates, 2)
+        self.assertEqual(experiment.succeeded_candidates, 2)
+        self.assertTrue(all(candidate.outcome.fills > 0 for candidate in experiment.candidates))
+
+        handle_spec = RunExperimentSpec(
+            **{
+                **experiment_spec.__dict__,
+                "experiment_id": "python-custom-strategy-grid-handle",
+                "base": BacktestSpec(
+                    **{
+                        **experiment_spec.base.__dict__,
+                        "output_dir": str(self.output_dir / "custom-strategy-grid-handle"),
+                    }
+                ),
+            }
+        )
+        handle = start_experiment_with_strategy(
+            handle_spec,
+            lambda candidate: candidate_factory(candidate),
+            **identity,
+        )
+        self.assertEqual(handle.wait(timeout_ms=30_000), "succeeded")
+        self.assertEqual(handle.result().succeeded_candidates, 2)
+
+        async_spec = RunExperimentSpec(
+            experiment_id="python-custom-strategy-grid-async",
+            base=BacktestSpec(
+                **{
+                    **experiment_spec.base.__dict__,
+                    "output_dir": str(self.output_dir / "custom-strategy-grid-async"),
+                }
+            ),
+            parameter_space=experiment_spec.parameter_space,
+        )
+        async_client = AsyncCoreClient()
+        async_result = asyncio.run(async_client.async_run_experiment_with_strategy(
+            async_spec, candidate_factory, **identity
+        ))
+        self.assertEqual(async_result.succeeded_candidates, 2)
+        async_handle = asyncio.run(async_client.async_start_experiment_with_strategy(
+            RunExperimentSpec(
+                experiment_id="python-custom-strategy-grid-async-handle",
+                base=BacktestSpec(
+                    **{
+                        **experiment_spec.base.__dict__,
+                        "output_dir": str(self.output_dir / "custom-strategy-grid-async-handle"),
+                    }
+                ),
+                parameter_space=experiment_spec.parameter_space,
+            ),
+            candidate_factory,
+            **identity,
+        ))
+        self.assertEqual(asyncio.run(async_handle.async_wait(30)), "succeeded")
+        self.assertEqual((asyncio.run(async_handle.async_result())).succeeded_candidates, 2)
 
         callback_portfolio = {
             **portfolio_spec,

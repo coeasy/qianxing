@@ -234,3 +234,10 @@ Python 十策略证据：
 - 产物显式标注 `allocation_policy=fixed_per_leg_reservation`、`cross_leg_buying_power=false`。这补上了可审计的单账户合并账簿视图，不能解释成撮合期动态共用资金池：两腿仍由独立 BacktestEngine 按固定初始本金撮合，不具备跨腿资金竞争、净额保证金或组合级实时风险。
 - 回归用例验证同账户合并报告包含两腿持仓、初始现金合计正确且策略回放幂等；`cargo test --offline -p qx-app --lib -- --test-threads=1` 113/113 通过，严格 Clippy、格式检查、`git diff --check` 和架构不变量 1096 项均通过。架构门禁首轮捕获主用例文件超出行数预算 9 行；将账户账簿装配抽到 `portfolio_ledger.rs` 后复跑全部通过。
 - 由最终 Rust 源码重建 Windows x64 `cp310-abi3` wheel；`tools/check_python_wheel.py` 通过，隔离虚拟环境离线重装后 `qianxing` 与 `qianxing_bridge._qianxing_native` 均导入成功。SHA-256：`992dc39f11d7169c060764d0cdea91c4c749fb5ee97496c56496a68a381a92b6`。这只证明当前 Windows x64 wheel。
+
+## 27. 2026-10-13 单腿 Bar 自定义策略参数实验接通 Rust/Python SDK
+
+- 复核发现内置策略的 Bar 参数网格和 Python 单次 callback 回测都已接入 Rust，但两者之间缺少“每个参数候选创建一份 Python/Rust 自定义策略”的入口。本轮将同步执行收为 `RunExperimentSpec::run_with_strategy_factory`，保留 `start_with_strategy_factory` 可取消句柄；factory 收到 Rust 已应用参数的候选 `BacktestSpec`，每个候选仍经同一 Rust Bar 引擎、风险/OMS/撮合/账簿、回放和结果比较，不在 Python 侧复制回测逻辑。
+- Python PyO3、bridge、`qianxing` 高层、`experiments`/`core` 导出和 `AsyncCoreClient` 接入同步、RunHandle、async run/start。每个候选的自定义策略由 factory 新建；Rust 校验主策略身份、版本与小写 SHA-256，把策略身份加入实验指纹，来源身份变化时同一 `experiment_id` 返回 Conflict；自定义 factory 与 `strategy_kinds` 互斥。修复测试过程中发现的 native.py 转发缺失，并把入口纳入跨语言接口登记和能力矩阵。
+- Rust `qx-app`/`qx-sdk`/`qx-python` 单元及消费者测试共 146 项通过；Rust 严格 Clippy 通过；Python 全量 132 项通过；架构不变量门禁 1096 项通过；Python wheel 格式检查通过。Windows x64 `cp310-abi3` wheel 在隔离虚拟环境强制重装后，实测自定义策略参数候选均成交、同步结果成功、可取消句柄成功。wheel SHA-256：`1be28f290a7da5f5051f61aad3f1f7f9c97c30e81737544c4ed9f0249763056c`。
+- 本地 Rust/Python SDK 的 Bar 参数实验链本轮已补通，但远端 HTTP/C++ callback 托管仍不支持；此实现不证明跨市场/跨账户共享资金与组合级风险、多腿同一组合调度、Paper/Live callback 策略运行、Web/桌面端到端、Linux/macOS wheel，亦不等于真实交易所 testnet 认证。整体方案仍未达到全能力发布条件。

@@ -332,9 +332,39 @@ def run_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_run_experiment(_payload(spec)))
 
 
+def run_experiment_with_strategy(
+    spec: "str | dict[str, Any]",
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> dict[str, Any]:
+    """用 Rust 参数实验执行器为每个候选创建一个新的 Python 策略实例。"""
+    return json.loads(native.app_run_experiment_with_strategy(
+        _payload(spec), strategy_id, strategy_version, source_sha256,
+        _PythonStrategyFactory(strategy_factory),
+    ))
+
+
 def start_experiment(spec: "str | dict[str, Any]") -> Any:
     """Start a cancellable Rust parameter experiment and return its run handle."""
     return native.app_start_experiment(_payload(spec))
+
+
+def start_experiment_with_strategy(
+    spec: "str | dict[str, Any]",
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> Any:
+    """启动可取消的共享 Rust 参数实验，每个候选都新建 Python 策略实例。"""
+    return native.app_start_experiment_with_strategy(
+        _payload(spec), strategy_id, strategy_version, source_sha256,
+        _PythonStrategyFactory(strategy_factory),
+    )
 
 
 def run_multi_leg_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:

@@ -99,7 +99,32 @@ pub(super) fn run_backtest_inner(
     run_backtest_inner_with_strategies(spec, context, cancellation, Vec::new())
 }
 
+pub(super) fn run_backtest_inner_with_experiment_strategy(
+    spec: &BacktestSpec,
+    context: &RunContext,
+    cancellation: Option<&CancellationToken>,
+    identity: StrategyArtifactIdentity,
+    strategy: Box<dyn qx_strategy::Strategy>,
+) -> Result<Option<BacktestOutcome>, AppError> {
+    identity.validate_for_experiment(spec)?;
+    run_backtest_inner_unchecked(
+        spec,
+        context,
+        cancellation,
+        vec![InjectedStrategy { identity, strategy }],
+    )
+}
+
 fn run_backtest_inner_with_strategies(
+    spec: &BacktestSpec,
+    context: &RunContext,
+    cancellation: Option<&CancellationToken>,
+    injected: Vec<InjectedStrategy>,
+) -> Result<Option<BacktestOutcome>, AppError> {
+    run_backtest_inner_unchecked(spec, context, cancellation, injected)
+}
+
+fn run_backtest_inner_unchecked(
     spec: &BacktestSpec,
     context: &RunContext,
     cancellation: Option<&CancellationToken>,

@@ -28,9 +28,11 @@ from qianxing.app import (
     RunMultiLegExperimentSpec,
     run_depth_experiment,
     run_experiment,
+    run_experiment_with_strategy,
     run_multi_leg_experiment,
     start_depth_experiment,
     start_experiment,
+    start_experiment_with_strategy,
     start_multi_leg_experiment,
 )
 
@@ -53,8 +55,10 @@ __all__ = [
     "RunMultiLegExperimentSpec",
     "run_depth_experiment",
     "run_experiment",
+    "run_experiment_with_strategy",
     "run_multi_leg_experiment",
     "start_depth_experiment",
     "start_experiment",
+    "start_experiment_with_strategy",
     "start_multi_leg_experiment",
 ]

@@ -1391,8 +1391,46 @@ class AsyncCoreClient:
     async def async_run_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentResult:
         return await asyncio.to_thread(run_experiment, spec)
 
+    async def async_run_experiment_with_strategy(
+        self,
+        spec: RunExperimentSpec | dict[str, Any],
+        strategy_factory: Any,
+        *,
+        strategy_id: str,
+        strategy_version: str,
+        source_sha256: str,
+    ) -> RunExperimentResult:
+        return await asyncio.to_thread(
+            run_experiment_with_strategy,
+            spec,
+            strategy_factory,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            source_sha256=source_sha256,
+        )
+
     async def async_start_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> AsyncRunHandle[RunExperimentResult]:
         return await self._start(start_experiment, spec)
+
+    async def async_start_experiment_with_strategy(
+        self,
+        spec: RunExperimentSpec | dict[str, Any],
+        strategy_factory: Any,
+        *,
+        strategy_id: str,
+        strategy_version: str,
+        source_sha256: str,
+    ) -> AsyncRunHandle[RunExperimentResult]:
+        def start(value: Any) -> RunHandle[RunExperimentResult]:
+            return start_experiment_with_strategy(
+                value,
+                strategy_factory,
+                strategy_id=strategy_id,
+                strategy_version=strategy_version,
+                source_sha256=source_sha256,
+            )
+
+        return await self._start(start, spec)
 
     async def async_run_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> DepthBacktestOutcome:
         return await asyncio.to_thread(run_depth_backtest, spec)
@@ -2020,6 +2058,31 @@ def run_experiment(spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentRes
     return RunExperimentResult.from_dict(_invoke(native.app_run_experiment, spec))
 
 
+def run_experiment_with_strategy(
+    spec: RunExperimentSpec | dict[str, Any],
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> RunExperimentResult:
+    """Run each Bar parameter candidate with a fresh Python strategy on the shared Rust engine.
+
+    ``strategy_factory(candidate_spec_dict)`` creates one strategy instance per candidate.
+    Its ``on_event(context, event)`` output still passes through Rust validation, risk, OMS,
+    matching, accounting and replay. Strategy source identity binds the experiment fingerprint.
+    """
+    from qianxing_bridge.app import run_experiment_with_strategy as _run_strategy_experiment
+
+    return RunExperimentResult.from_dict(_run_strategy_experiment(
+        _encode_payload(spec),
+        strategy_factory,
+        strategy_id=strategy_id,
+        strategy_version=strategy_version,
+        source_sha256=source_sha256,
+    ))
+
+
 def run_multi_leg_experiment(
     spec: RunMultiLegExperimentSpec | dict[str, Any],
 ) -> RunMultiLegExperimentResult:
@@ -2237,6 +2300,30 @@ def start_experiment(spec: RunExperimentSpec | dict[str, Any]) -> RunHandle[RunE
     """Start a Rust parameter experiment with candidate and Bar-loop cancellation."""
     try:
         native_handle = native.app_start_experiment(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, RunExperimentResult)
+
+
+def start_experiment_with_strategy(
+    spec: RunExperimentSpec | dict[str, Any],
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> RunHandle[RunExperimentResult]:
+    """Start a cancellable experiment with a fresh Python strategy per Rust candidate."""
+    from qianxing_bridge.app import start_experiment_with_strategy as _start_strategy_experiment
+
+    try:
+        native_handle = _start_strategy_experiment(
+            _encode_payload(spec),
+            strategy_factory,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            source_sha256=source_sha256,
+        )
     except Exception as exc:
         raise _translate_native_error(exc) from exc
     return RunHandle(native_handle, RunExperimentResult)

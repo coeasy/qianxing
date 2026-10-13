@@ -18,6 +18,37 @@ pub struct StrategyArtifactIdentity {
 }
 
 impl StrategyArtifactIdentity {
+    pub(crate) fn validate_for_experiment(&self, spec: &BacktestSpec) -> Result<(), AppError> {
+        let valid_token = |value: &str| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        };
+        if self.strategy_id != spec.strategy.strategy_id
+            || !valid_token(&self.strategy_id)
+            || !valid_token(&self.strategy_version)
+            || self.source_sha256.len() != 64
+            || !self
+                .source_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "experiment strategy identity must match the primary strategy slot and carry a valid version and lowercase SHA-256 digest",
+            ));
+        }
+        if spec.strategy.kind.needs_reference_leg() {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "single-frame strategy experiments cannot use a two-leg strategy kind",
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_for_slot(
         &self,
         expected_id: &str,

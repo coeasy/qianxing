@@ -63,6 +63,8 @@ APP_ENTRYPOINTS = (
     "app_plan_algo_execution",
     "app_run_experiment",
     "app_start_experiment",
+    "app_run_experiment_with_strategy",
+    "app_start_experiment_with_strategy",
     "app_run_depth_backtest",
     "app_start_depth_backtest",
     "app_run_depth_experiment",
@@ -357,6 +359,32 @@ def app_run_experiment(spec_json: str) -> str:
 def app_start_experiment(spec_json: str) -> Any:
     """Start a bounded parameter grid in the Rust application worker."""
     return _extension().app_start_experiment(spec_json)
+
+
+def app_run_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> str:
+    """Run Python-authored parameter candidates through the shared Rust Bar engine."""
+    return str(_extension().app_run_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
+    ))
+
+
+def app_start_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> Any:
+    """Start cancellable Python-authored candidates on the shared Rust experiment worker."""
+    return _extension().app_start_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
+    )
 
 
 def app_run_depth_backtest(spec_json: str) -> str:

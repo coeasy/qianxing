@@ -133,7 +133,7 @@ contracts:
     http: ["/app/plan-capital-allocation"]
   - use_case: run_experiment
     rust: ["run_experiment"]
-    python_native: ["run_experiment", "start_experiment"]
+    python_native: ["run_experiment", "start_experiment", "run_experiment_with_strategy", "start_experiment_with_strategy"]
     python_remote: ["run_experiment", "start_experiment"]
     cpp_remote: ["run_experiment", "start_experiment"]
     http: ["/app/run-experiment", "/app/run-experiment/start"]
