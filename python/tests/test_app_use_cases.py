@@ -61,6 +61,8 @@ def _load_native():
                 "app_run_backtest",
                 "app_run_backtest_with_strategy",
                 "app_start_backtest_with_strategy",
+                "app_run_depth_backtest_with_strategy",
+                "app_start_depth_backtest_with_strategy",
                 "app_run_multi_account_backtest",
                 "app_start_multi_account_backtest",
                 "app_start_backtest",
@@ -73,6 +75,8 @@ def _load_native():
                 "app_start_experiment",
                 "app_run_depth_backtest",
                 "app_start_depth_backtest",
+                "app_run_depth_backtest_with_strategy",
+                "app_start_depth_backtest_with_strategy",
                 "app_run_depth_experiment",
                 "app_start_depth_experiment",
                 "app_run_multi_leg_backtest",
@@ -1232,6 +1236,7 @@ class AppUseCaseTests(unittest.TestCase):
 
     def test_l1_tick_and_typed_sdk_use_the_shared_rust_application_kernel(self):
         self._require()
+        scale = 1_000_000_000
         snapshots = []
         for index in range(48):
             phase = index % 20
@@ -1498,7 +1503,9 @@ class AppUseCaseTests(unittest.TestCase):
         from qianxing import (
             ExperimentParameterSpace,
             RunDepthExperimentSpec,
+            run_depth_backtest_with_strategy,
             run_depth_experiment,
+            start_depth_backtest_with_strategy,
             start_depth_experiment,
         )
 
@@ -1545,6 +1552,106 @@ class AppUseCaseTests(unittest.TestCase):
             [candidate.strategy_kind for candidate in selection_result.candidates],
             sorted(selected_depth_strategies),
         )
+
+        class CustomDepthStrategy:
+            def __init__(self):
+                self.emitted = False
+                self.events = []
+
+            def on_event(self, context, event):
+                name, item = next(iter(event.items()))
+                self.events.append(name)
+                intents = []
+                if not self.emitted:
+                    self.emitted = True
+                    intents.append({
+                        "intent_id": 1,
+                        "instrument": item["instrument"],
+                        "side": "Buy",
+                        "qty": 1_000_000_000,
+                        "limit": None,
+                        "policy": None,
+                        "reduce_only": False,
+                        "post_only": False,
+                    })
+                return {
+                    "schema_version": 1,
+                    "request_id": f"{context['strategy_id']}:{item['ts']}",
+                    "strategy_id": context["strategy_id"],
+                    "signal_id": item["ts"],
+                    "confidence": 10_000,
+                    "priority": 0,
+                    "expires_at": 0,
+                    "intents": intents,
+                }
+
+        for tier, levels, expected_event in (("l1", 1, "Tick"), ("l2", 2, "OrderBook")):
+            custom_spec = DepthBacktestSpec(
+                run_id=f"python-custom-depth-{tier}",
+                depth_path=str(depth_path),
+                tier=tier,
+                settlement_currency="USDT",
+                initial_cash_raw=1_000_000_000_000_000,
+                output_dir=str(self.output_dir / f"custom-depth-{tier}"),
+                strategy=BuiltinStrategySpec(
+                    kind="sma_cross", strategy_id=f"python-custom-{tier}"
+                ),
+            )
+            if levels == 2:
+                l2_snapshots = []
+                for index in range(48):
+                    mid = 100 + index % 9
+                    l2_snapshots.append({
+                        "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+                        "ts": 1_000 + index * 1_000,
+                        "sequence": index + 1,
+                        "bids": [
+                            {"price": (mid - 1 - level) * scale, "qty": 100 * scale}
+                            for level in range(2)
+                        ],
+                        "asks": [
+                            {"price": (mid + 1 + level) * scale, "qty": 100 * scale}
+                            for level in range(2)
+                        ],
+                    })
+                l2_path = self.output_dir / "custom-depth-l2.json"
+                l2_path.write_text(json.dumps({
+                    "schema_version": 1,
+                    "source": "python-custom-depth-strategy",
+                    "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+                    "snapshots": l2_snapshots,
+                }), encoding="utf-8")
+                custom_spec = DepthBacktestSpec(
+                    **{**custom_spec.__dict__, "depth_path": str(l2_path)}
+                )
+            callback = CustomDepthStrategy()
+            custom_outcome = run_depth_backtest_with_strategy(
+                custom_spec,
+                callback,
+                strategy_id=f"python-custom-{tier}",
+                strategy_version="python-depth-v1",
+                source_sha256="d" * 64,
+            )
+            self.assertGreater(custom_outcome.fills, 0)
+            self.assertIn(expected_event, callback.events)
+            self.assertTrue(verify_depth_run(custom_outcome).verified)
+            if tier == "l1":
+                handle_spec = DepthBacktestSpec(
+                    **{
+                        **custom_spec.__dict__,
+                        "run_id": "python-custom-depth-l1-handle",
+                        "output_dir": str(self.output_dir / "custom-depth-l1-handle"),
+                    }
+                )
+                handle = start_depth_backtest_with_strategy(
+                    handle_spec,
+                    CustomDepthStrategy(),
+                    strategy_id="python-custom-l1",
+                    strategy_version="python-depth-v1",
+                    source_sha256="e" * 64,
+                )
+                self.assertEqual(handle.wait(timeout_ms=30_000), "succeeded")
+                self.assertGreater(handle.result().fills, 0)
         typed_handle = start_depth_experiment(
             RunDepthExperimentSpec(
                 experiment_id="python-typed-tick-grid-handle",

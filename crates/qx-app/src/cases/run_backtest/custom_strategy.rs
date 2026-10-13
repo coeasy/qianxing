@@ -58,6 +58,50 @@ impl StrategyArtifactIdentity {
         }
         Ok(())
     }
+
+    pub(crate) fn validate_for_depth(
+        &self,
+        spec: &crate::spec::DepthBacktestSpec,
+    ) -> Result<(), AppError> {
+        let valid_token = |value: &str| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        };
+        if !valid_token(&self.strategy_id)
+            || self.strategy_id != spec.strategy.strategy_id
+            || !valid_token(&self.strategy_version)
+            || self.source_sha256.len() != 64
+            || !self
+                .source_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "StrategyArtifactIdentity requires a matching strategy_id, a valid strategy_version, and a lowercase SHA-256 digest",
+            ));
+        }
+        if spec.portfolio.is_some() || spec.market_making.is_some() {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "caller-supplied depth strategies cannot be combined with built-in portfolio or market-making strategies",
+            ));
+        }
+        let default_strategy = crate::spec::BuiltinStrategySpec::new(
+            spec.strategy.kind,
+            spec.strategy.strategy_id.clone(),
+        );
+        if spec.strategy != default_strategy {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "caller-supplied strategies must use default BuiltinStrategySpec parameters; built-in signal and sizing knobs do not apply to external callbacks",
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub(super) struct InjectedStrategy {

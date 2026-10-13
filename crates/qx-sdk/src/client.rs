@@ -13,14 +13,16 @@ use crate::{
 };
 use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, run_backtest, run_depth_backtest,
-    run_depth_experiment, run_experiment, run_multi_account_backtest, run_multi_leg_backtest,
-    run_multi_leg_experiment, validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec,
-    AppError, BacktestOutcome, BacktestSpec, CallerCapability, CapitalAllocationResult,
-    CapitalAllocationSpec, CompareRunsResult, CompareRunsSpec, DatasetSpec, DatasetVerdict,
-    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestResult, MultiAccountBacktestSpec,
-    MultiLegBacktestOutcome, MultiLegBacktestSpec, RiskParityResult, RiskParitySpec, RunContext,
-    RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec,
-    RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec, StrategyArtifactIdentity,
+    run_depth_backtest_with_strategy, run_depth_experiment, run_experiment,
+    run_multi_account_backtest, run_multi_leg_backtest, run_multi_leg_experiment,
+    start_depth_backtest_with_strategy, validate_dataset, verify_depth_run, verify_run,
+    AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec, CallerCapability,
+    CapitalAllocationResult, CapitalAllocationSpec, CompareRunsResult, CompareRunsSpec,
+    DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
+    MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiLegBacktestOutcome,
+    MultiLegBacktestSpec, RiskParityResult, RiskParitySpec, RunContext, RunDepthExperimentResult,
+    RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec, RunHandle,
+    RunMultiLegExperimentResult, RunMultiLegExperimentSpec, StrategyArtifactIdentity,
     VerificationResult,
 };
 use qx_strategy::Strategy;
@@ -149,6 +151,26 @@ impl Client {
         spec: &DepthBacktestSpec,
     ) -> Result<DepthBacktestOutcome, AppError> {
         run_depth_backtest(spec, &self.context)
+    }
+
+    /// Run caller-authored strategy logic on shared Rust Tick or OrderBook matching.
+    pub fn run_depth_backtest_with_strategy<S: Strategy + 'static>(
+        &self,
+        spec: &DepthBacktestSpec,
+        identity: &StrategyArtifactIdentity,
+        strategy: S,
+    ) -> Result<DepthBacktestOutcome, AppError> {
+        run_depth_backtest_with_strategy(spec, identity, Box::new(strategy), &self.context)
+    }
+
+    /// Start a cancellable custom strategy on the shared Tick or OrderBook engine.
+    pub fn start_depth_backtest_with_strategy<S: Strategy + 'static>(
+        &self,
+        spec: DepthBacktestSpec,
+        identity: StrategyArtifactIdentity,
+        strategy: S,
+    ) -> Result<RunHandle<DepthBacktestOutcome>, AppError> {
+        start_depth_backtest_with_strategy(spec, identity, Box::new(strategy), self.context.clone())
     }
 
     pub fn start_depth_backtest(&self, spec: DepthBacktestSpec) -> RunHandle<DepthBacktestOutcome> {

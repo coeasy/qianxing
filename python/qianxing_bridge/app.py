@@ -107,6 +107,44 @@ def start_backtest_with_strategy(
     )
 
 
+def run_depth_backtest_with_strategy(
+    spec: "str | dict[str, Any]",
+    strategy: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> dict[str, Any]:
+    """Run caller-authored decisions through shared Rust Tick/OrderBook engines."""
+    return json.loads(
+        native.app_run_depth_backtest_with_strategy(
+            _payload(spec),
+            strategy_id,
+            strategy_version,
+            source_sha256,
+            _PythonBacktestCallback(strategy),
+        )
+    )
+
+
+def start_depth_backtest_with_strategy(
+    spec: "str | dict[str, Any]",
+    strategy: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> Any:
+    """Start a cancellable Python strategy run on the Rust depth RunHandle."""
+    return native.app_start_depth_backtest_with_strategy(
+        _payload(spec),
+        strategy_id,
+        strategy_version,
+        source_sha256,
+        _PythonBacktestCallback(strategy),
+    )
+
+
 def run_multi_account_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """Run bounded independent account backtests through the shared Rust use case."""
     return json.loads(native.app_run_multi_account_backtest(_payload(spec)))

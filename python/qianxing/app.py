@@ -1383,6 +1383,44 @@ class AsyncCoreClient:
     async def async_start_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> AsyncRunHandle[DepthBacktestOutcome]:
         return await self._start(start_depth_backtest, spec)
 
+    async def async_run_depth_backtest_with_strategy(
+        self,
+        spec: DepthBacktestSpec | dict[str, Any],
+        strategy: Any,
+        *,
+        strategy_id: str,
+        strategy_version: str,
+        source_sha256: str,
+    ) -> DepthBacktestOutcome:
+        return await asyncio.to_thread(
+            run_depth_backtest_with_strategy,
+            spec,
+            strategy,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            source_sha256=source_sha256,
+        )
+
+    async def async_start_depth_backtest_with_strategy(
+        self,
+        spec: DepthBacktestSpec | dict[str, Any],
+        strategy: Any,
+        *,
+        strategy_id: str,
+        strategy_version: str,
+        source_sha256: str,
+    ) -> AsyncRunHandle[DepthBacktestOutcome]:
+        def start(value: Any) -> RunHandle[DepthBacktestOutcome]:
+            return start_depth_backtest_with_strategy(
+                value,
+                strategy,
+                strategy_id=strategy_id,
+                strategy_version=strategy_version,
+                source_sha256=source_sha256,
+            )
+
+        return await self._start(start, spec)
+
     async def async_verify_depth_run(self, outcome: DepthBacktestOutcome | dict[str, Any]) -> VerificationResult:
         return await asyncio.to_thread(verify_depth_run, outcome)
 
@@ -1913,6 +1951,54 @@ def start_depth_backtest(spec: DepthBacktestSpec | dict[str, Any]) -> RunHandle[
     except Exception as exc:
         raise _translate_native_error(exc) from exc
     return RunHandle(native_handle, DepthBacktestOutcome)
+
+
+def run_depth_backtest_with_strategy(
+    spec: DepthBacktestSpec | dict[str, Any],
+    strategy: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> DepthBacktestOutcome:
+    """Run a Python Strategy callback on the shared Rust Tick/OrderBook engines."""
+    try:
+        from qianxing_bridge.app import run_depth_backtest_with_strategy as _run_strategy
+
+        value = _run_strategy(
+            _encode_payload(spec),
+            strategy,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            source_sha256=source_sha256,
+        )
+        return DepthBacktestOutcome.from_dict(value)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
+def start_depth_backtest_with_strategy(
+    spec: DepthBacktestSpec | dict[str, Any],
+    strategy: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> RunHandle[DepthBacktestOutcome]:
+    """Start a cancellable Python Strategy callback on the Rust depth RunHandle."""
+    try:
+        from qianxing_bridge.app import start_depth_backtest_with_strategy as _start_strategy
+
+        native_handle = _start_strategy(
+            _encode_payload(spec),
+            strategy,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            source_sha256=source_sha256,
+        )
+        return RunHandle(native_handle, DepthBacktestOutcome)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
 
 
 def run_multi_leg_backtest(spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:

@@ -7,6 +7,7 @@
 
 mod account_ownership;
 mod algo_execution;
+mod custom_depth_strategy;
 mod custom_strategy;
 mod depth_backtest;
 mod depth_experiment;

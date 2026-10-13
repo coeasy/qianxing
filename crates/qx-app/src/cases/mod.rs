@@ -59,6 +59,9 @@ pub use plan_risk_parity::plan_risk_parity;
 pub use run_backtest::run_backtest;
 pub use run_backtest::StrategyArtifactIdentity;
 pub use run_depth_backtest::run_depth_backtest;
+pub use run_depth_backtest::{
+    run_depth_backtest_with_strategy, start_depth_backtest_with_strategy,
+};
 pub use run_depth_experiment::run_depth_experiment;
 pub use run_depth_experiment::{
     DepthExperimentCandidate, DepthExperimentRankedCandidate, RunDepthExperimentResult,
