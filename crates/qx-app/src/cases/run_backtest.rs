@@ -40,7 +40,7 @@ use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
 
 mod custom_strategy;
-mod strategy_slot;
+pub(in crate::cases) mod strategy_slot;
 pub use custom_strategy::StrategyArtifactIdentity;
 use custom_strategy::{strategy_slots_config_hash, InjectedStrategy};
 use strategy_slot::{build_strategy_slot, strategy_version, StrategySlotContext};

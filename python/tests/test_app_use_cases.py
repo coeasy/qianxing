@@ -99,6 +99,8 @@ def _load_native():
                 "app_start_depth_experiment_with_strategy",
                 "app_run_multi_leg_backtest",
                 "app_start_multi_leg_backtest",
+                "app_run_multi_market_backtest",
+                "app_start_multi_market_backtest",
                 "app_run_multi_leg_experiment",
                 "app_start_multi_leg_experiment",
                 "app_verify_depth_run",
@@ -2743,7 +2745,6 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertIsNotNone(handle.result_json())
         self.assertIsNone(handle.result_json(), "multi-leg result is delivered once")
 
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import (
             BuiltinStrategySpec,
             ExperimentParameterSpace,
@@ -3137,6 +3138,111 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertIsNotNone(typed_experiment_handle.result())
         self.assertIsNone(typed_experiment_handle.result())
 
+    def test_multi_market_sdk_runs_one_shared_rust_ledger_and_run_handle(self):
+        self._require()
+        from qianxing_bridge.native import app_available
+
+        self.assertTrue(app_available(), "N-market functions must pass generation probe")
+        markets = []
+        for index, instrument in enumerate(
+            ("BTCUSDT.BINANCE", "ETHUSDT.KRAKEN", "SOLUSDT.BYBIT")
+        ):
+            bars_path = self.output_dir / f"multi-market-{index}.json"
+            closes = [
+                (100 + ((bar % 20) if bar % 20 < 10 else (20 - bar % 20)) * 2)
+                * 1_000_000_000
+                for bar in range(80)
+            ]
+            bars_path.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "instrument": instrument,
+                    "source": "python-multi-market-test-v1",
+                    "ts": [1_000 + bar * 1_000 for bar in range(80)],
+                    "open_raw": closes,
+                    "high_raw": [value + 1_000_000_000 for value in closes],
+                    "low_raw": [value - 1_000_000_000 for value in closes],
+                    "close_raw": closes,
+                    "volume_raw": [1_000_000_000] * 80,
+                }),
+                encoding="utf-8",
+            )
+            markets.append({
+                "instrument": instrument,
+                "bars_path": str(bars_path),
+                "priority": index,
+                "strategies": [{
+                    "priority": 0,
+                    "reserved_capital_raw": 20_000_000_000_000,
+                    "strategy": {
+                        "kind": "sma_cross",
+                        "strategy_id": f"py-sma-{index}",
+                        "quantity_raw": 1_000_000_000,
+                        "fast_window": 2,
+                        "slow_window": 3,
+                    },
+                }],
+            })
+        payload = {
+            "schema_version": 1,
+            "run_id": "python-multi-market",
+            "account_id": "acct.multi-python",
+            "settlement_currency": "USDT",
+            "initial_cash_raw": 100_000_000_000_000,
+            "seed": 7,
+            "output_dir": str(self.output_dir / "multi-market-out"),
+            "markets": markets,
+        }
+        result = self.bridge.run_multi_market_backtest(payload)
+        self.assertEqual(result["markets_total"], 3)
+        self.assertEqual(result["strategies_total"], 3)
+        self.assertGreater(result["successful_fills"], 0)
+        artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+        self.assertTrue(artifact["replay_verified"])
+        self.assertEqual(len(artifact["market_data"]), 3)
+
+        handle = self.bridge.start_multi_market_backtest(
+            {**payload, "run_id": "python-multi-market-handle",
+             "output_dir": str(self.output_dir / "multi-market-handle")}
+        )
+        self.assertEqual(handle.wait(10_000), "succeeded")
+        self.assertEqual(json.loads(handle.result_json())["markets_total"], 3)
+        self.assertIsNone(handle.result_json(), "N-market result is delivered once")
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import (
+            BuiltinStrategySpec,
+            MultiMarketBacktestMarket,
+            MultiMarketBacktestSpec,
+            PortfolioStrategySpec,
+            run_multi_market_backtest,
+        )
+        typed = MultiMarketBacktestSpec(
+            run_id="python-multi-market-typed",
+            account_id="acct.multi-python",
+            settlement_currency="USDT",
+            initial_cash_raw=100_000_000_000_000,
+            output_dir=str(self.output_dir / "multi-market-typed"),
+            markets=tuple(
+                MultiMarketBacktestMarket(
+                    instrument=item["instrument"],
+                    bars_path=item["bars_path"],
+                    priority=item["priority"],
+                    strategies=(PortfolioStrategySpec(
+                        priority=0,
+                        reserved_capital_raw=20_000_000_000_000,
+                        strategy=BuiltinStrategySpec(
+                            kind="sma_cross", strategy_id=f"typed-{item['priority']}",
+                            fast_window=2, slow_window=3,
+                        ),
+                    ),),
+                ) for item in markets
+            ),
+        )
+        typed_result = run_multi_market_backtest(typed)
+        self.assertEqual(typed_result.markets_total, 3)
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     def test_a_failure_raises_the_same_document_the_other_entrypoints_print(self):
         self._require()
         spec = self._spec("py-missing", self.output_dir, "nope.json")

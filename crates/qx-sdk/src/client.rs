@@ -16,15 +16,17 @@ use qx_app::{
     run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots, run_depth_experiment,
     run_experiment, run_multi_account_backtest, run_multi_account_depth_backtest,
     run_multi_leg_backtest, run_multi_leg_backtest_with_strategy, run_multi_leg_experiment,
-    start_depth_backtest_with_strategy, start_depth_backtest_with_strategy_slots, validate_dataset,
-    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
-    CallerCapability, CapitalAllocationResult, CapitalAllocationSpec, CompareRunsResult,
-    CompareRunsSpec, DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
+    run_multi_market_backtest, start_depth_backtest_with_strategy,
+    start_depth_backtest_with_strategy_slots, validate_dataset, verify_depth_run, verify_run,
+    AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec, CallerCapability,
+    CapitalAllocationResult, CapitalAllocationSpec, CompareRunsResult, CompareRunsSpec,
+    DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
     MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiAccountDepthBacktestResult,
-    MultiAccountDepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec, RiskParityResult,
-    RiskParitySpec, RunContext, RunDepthExperimentResult, RunDepthExperimentSpec,
-    RunExperimentResult, RunExperimentSpec, RunHandle, RunMultiLegExperimentResult,
-    RunMultiLegExperimentSpec, StrategyArtifactIdentity, VerificationResult,
+    MultiAccountDepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec,
+    MultiMarketBacktestOutcome, MultiMarketBacktestSpec, RiskParityResult, RiskParitySpec,
+    RunContext, RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult,
+    RunExperimentSpec, RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
+    StrategyArtifactIdentity, VerificationResult,
 };
 use qx_strategy::Strategy;
 
@@ -62,6 +64,14 @@ impl Client {
     /// 本会话的上下文。想直接调被重导出的自由函数时，把它传进去。
     pub fn context(&self) -> &RunContext {
         &self.context
+    }
+
+    /// Run several markets through one shared Rust portfolio ledger.
+    pub fn run_multi_market_backtest(
+        &self,
+        spec: &MultiMarketBacktestSpec,
+    ) -> Result<MultiMarketBacktestOutcome, AppError> {
+        run_multi_market_backtest(spec, &self.context)
     }
 
     /// Plan deterministic TWAP/VWAP child orders through the shared app use case.

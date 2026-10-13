@@ -84,19 +84,25 @@ steps:
     anchor: crates/qx-app/src/cases/run_backtest.rs run_backtest
     case: crates/qx-app/src/tests/use_cases.rs a_backtest_run_writes_four_artifacts_and_verifies
     note: "唯一的事件引擎入口：同一身份重跑必须逐字节同结果，写满四份产物。"
-  - name: artifact_manifest
+  - name: multi_market_shared_ledger
     chain: data_to_research_backtest
     order: 8
+    anchor: crates/qx-app/src/cases/run_multi_market_backtest.rs run_multi_market_backtest
+    case: crates/qx-app/src/tests/multi_market_backtest.rs three_market_run_shares_ledger_replays_and_is_idempotent
+    note: "3..=32 个异步 Bar 市场走同一个 PortfolioBarEngine、账户 Ledger、事件顺序与 replay；Rust/Python 本地 SDK 已实测三市场成交，HTTP/C++ 远端入口仍未接入。"
+
+  - name: artifact_manifest
+    chain: data_to_research_backtest
+    order: 9
     anchor: crates/qx-app/src/cases/artifacts.rs RunSummary
     case: crates/qx-app/src/tests/use_cases.rs a_repeated_run_with_the_same_identity_is_idempotent
     note: "身份（RunManifest）与读数（RunSummary）是两张脸：身份不得随读数漂移，否则离线复算没有锚点。"
   - name: evidence_verify
     chain: data_to_research_backtest
-    order: 9
+    order: 10
     anchor: crates/qx-app/src/cases/verify_run.rs verify_run
     case: crates/qx-app/src/tests/use_cases.rs a_tampered_summary_makes_verification_fail_without_erroring
     note: "读回侧独立复核：被篡改的读数必须判失败而不是报错——失败是结论，报错是没得出结论。"
-
   - name: command_intake
     chain: paper_live_order_loop
     order: 1

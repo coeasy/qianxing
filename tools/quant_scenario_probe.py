@@ -636,6 +636,55 @@ def main() -> int:
             }
         )
 
+    def executed_multi_market_shared_account_test():
+        nonlocal failures
+        argv = [
+            "cargo",
+            "test",
+            "--offline",
+            "-p",
+            "qx-app",
+            "three_market_run_shares_ledger_replays_and_is_idempotent",
+            "--",
+            "--nocapture",
+        ]
+        code, output = run_command(argv)
+        observed = first_match(
+            r"(MULTI_MARKET_OBSERVED markets=\d+ strategies=\d+ fills=[1-9]\d* "
+            r"equity_points=\d+ return_bps=-?\d+ replay_verified=true)",
+            output,
+        )
+        if code != 0 or not observed:
+            failures += 1
+            print(f"[multi_market_shared_account diagnostics] {output[-2000:]}", flush=True)
+        ok = code == 0 and bool(observed)
+        print(
+            f"[{'OK  ' if ok else 'FAIL'}] multi_market_shared_account: "
+            f"rc={code} observed={observed!r}",
+            flush=True,
+        )
+        records.append(
+            {
+                "name": "multi_market_shared_account",
+                "label": "多市场同账户确定性 Bar 组合回测",
+                "status": "executed" if ok else "declared_not_executed",
+                "anchor": "crates/qx-app/src/cases/run_multi_market_backtest.rs",
+                "command": " ".join(argv),
+                "exit_code": code,
+                "observed": observed,
+                "why_not_executed": "三市场共享账簿 E2E 未产生可观测成交和 replay 证据。",
+                "next_gate": "修复多市场共享账户运行、成交归属或事件回放后重跑场景探针。",
+                "evidence": [
+                    "crates/qx-app/src/cases/run_multi_market_backtest.rs",
+                    "crates/qx-app/src/tests/multi_market_backtest.rs",
+                    "crates/qx-xingban/src/backtest/market_router.rs",
+                    "crates/qx-sdk/src/client.rs",
+                    "crates/qx-python/src/lib.rs",
+                    "python/tests/test_app_use_cases.py",
+                ],
+            }
+        )
+
     def executed_paper_cross_currency_fx_test():
         nonlocal failures
         argv = [
@@ -693,6 +742,7 @@ def main() -> int:
     executed_paper_kelly_test()
     executed_paper_multi_strategy_test()
     executed_paper_cross_currency_fx_test()
+    executed_multi_market_shared_account_test()
 
     for name, label, kind in MULTI_LEG_SCENARIOS:
         executed(

@@ -5,18 +5,15 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyCapsule, PyModule, PyTuple};
 use qx_app::{
     compare_runs, plan_algo_execution, run_backtest, run_depth_backtest, run_depth_experiment,
-    run_experiment, run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset,
-    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
-    CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec,
-    MultiAccountBacktestResult, MultiAccountDepthBacktestResult, MultiLegBacktestOutcome,
-    MultiLegBacktestSpec, RunContext, RunDepthExperimentResult, RunDepthExperimentSpec,
-    RunExperimentResult, RunExperimentSpec, RunHandle, RunMultiLegExperimentResult,
-    RunMultiLegExperimentSpec, RunStatus,
+    run_experiment, run_multi_leg_backtest, run_multi_leg_experiment, run_multi_market_backtest,
+    validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome,
+    BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestSpec,
+    MultiLegBacktestSpec, MultiMarketBacktestSpec, RunContext, RunDepthExperimentSpec,
+    RunExperimentSpec, RunMultiLegExperimentSpec,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::time::{Duration, Instant};
 
 mod capital_allocation;
 mod multi_account;
@@ -163,6 +160,23 @@ fn app_start_multi_leg_backtest(spec_json: &str) -> PyResult<PyRunHandle> {
 }
 
 #[pyfunction]
+fn app_run_multi_market_backtest(spec_json: &str) -> PyResult<String> {
+    let spec = MultiMarketBacktestSpec::from_json(spec_json).map_err(app_error)?;
+    run_multi_market_backtest(&spec, &research_context(&spec.run_id))
+        .and_then(|outcome| outcome.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_start_multi_market_backtest(spec_json: &str) -> PyResult<PyRunHandle> {
+    let spec = MultiMarketBacktestSpec::from_json(spec_json).map_err(app_error)?;
+    let context = research_context(&spec.run_id);
+    Ok(PyRunHandle {
+        inner: NativeRun::MultiMarket(spec.start(context)),
+    })
+}
+
+#[pyfunction]
 fn app_run_multi_leg_experiment(spec_json: &str) -> PyResult<String> {
     let spec = RunMultiLegExperimentSpec::from_json(spec_json).map_err(app_error)?;
     run_multi_leg_experiment(&spec, &research_context(&spec.experiment_id))
@@ -179,145 +193,7 @@ fn app_start_multi_leg_experiment(spec_json: &str) -> PyResult<PyRunHandle> {
     })
 }
 
-enum NativeRun {
-    Bar(RunHandle<BacktestOutcome>),
-    Depth(RunHandle<DepthBacktestOutcome>),
-    DepthExperiment(RunHandle<RunDepthExperimentResult>),
-    Experiment(RunHandle<RunExperimentResult>),
-    MultiLeg(RunHandle<MultiLegBacktestOutcome>),
-    MultiLegExperiment(RunHandle<RunMultiLegExperimentResult>),
-    MultiAccount(RunHandle<MultiAccountBacktestResult>),
-    MultiAccountDepth(RunHandle<MultiAccountDepthBacktestResult>),
-}
-
-#[pyclass(name = "RunHandle")]
-struct PyRunHandle {
-    inner: NativeRun,
-}
-
-#[pymethods]
-impl PyRunHandle {
-    #[getter]
-    fn run_id(&self) -> &str {
-        match &self.inner {
-            NativeRun::Bar(handle) => handle.run_id(),
-            NativeRun::Depth(handle) => handle.run_id(),
-            NativeRun::DepthExperiment(handle) => handle.run_id(),
-            NativeRun::Experiment(handle) => handle.run_id(),
-            NativeRun::MultiLeg(handle) => handle.run_id(),
-            NativeRun::MultiLegExperiment(handle) => handle.run_id(),
-            NativeRun::MultiAccount(handle) => handle.run_id(),
-            NativeRun::MultiAccountDepth(handle) => handle.run_id(),
-        }
-    }
-
-    #[getter]
-    fn status(&mut self) -> &'static str {
-        run_handle_helpers::status_name(match &mut self.inner {
-            NativeRun::Bar(handle) => handle.status(),
-            NativeRun::Depth(handle) => handle.status(),
-            NativeRun::DepthExperiment(handle) => handle.status(),
-            NativeRun::Experiment(handle) => handle.status(),
-            NativeRun::MultiLeg(handle) => handle.status(),
-            NativeRun::MultiLegExperiment(handle) => handle.status(),
-            NativeRun::MultiAccount(handle) => handle.status(),
-            NativeRun::MultiAccountDepth(handle) => handle.status(),
-        })
-    }
-
-    fn cancel(&self) {
-        match &self.inner {
-            NativeRun::Bar(handle) => handle.cancel(),
-            NativeRun::Depth(handle) => handle.cancel(),
-            NativeRun::DepthExperiment(handle) => handle.cancel(),
-            NativeRun::Experiment(handle) => handle.cancel(),
-            NativeRun::MultiLeg(handle) => handle.cancel(),
-            NativeRun::MultiLegExperiment(handle) => handle.cancel(),
-            NativeRun::MultiAccount(handle) => handle.cancel(),
-            NativeRun::MultiAccountDepth(handle) => handle.cancel(),
-        }
-    }
-
-    fn events_json(&self, after_seq: u64) -> PyResult<String> {
-        run_handle_helpers::events_json(&self.inner, after_seq).map_err(app_error)
-    }
-
-    /// Wait for completion while releasing the Python GIL. A timeout returns
-    /// the current status; it does not cancel the worker.
-    #[pyo3(signature = (timeout_ms=None))]
-    fn wait(&mut self, py: Python<'_>, timeout_ms: Option<u64>) -> &'static str {
-        let deadline = timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms));
-        loop {
-            let status = match &mut self.inner {
-                NativeRun::Bar(handle) => handle.status(),
-                NativeRun::Depth(handle) => handle.status(),
-                NativeRun::DepthExperiment(handle) => handle.status(),
-                NativeRun::Experiment(handle) => handle.status(),
-                NativeRun::MultiLeg(handle) => handle.status(),
-                NativeRun::MultiLegExperiment(handle) => handle.status(),
-                NativeRun::MultiAccount(handle) => handle.status(),
-                NativeRun::MultiAccountDepth(handle) => handle.status(),
-            };
-            if matches!(
-                status,
-                RunStatus::Succeeded | RunStatus::Cancelled | RunStatus::Failed
-            ) {
-                return run_handle_helpers::status_name(status);
-            }
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                return run_handle_helpers::status_name(status);
-            }
-            py.detach(|| std::thread::sleep(Duration::from_millis(5)));
-        }
-    }
-
-    /// Return the completed outcome JSON exactly once. `None` means the run
-    /// has not finished or was cancelled; inspect `status` to distinguish.
-    fn result_json(&mut self) -> PyResult<Option<String>> {
-        match &mut self.inner {
-            NativeRun::Bar(handle) => handle
-                .try_take_result()
-                .map(|result| result.and_then(|outcome| outcome.to_json()))
-                .transpose()
-                .map_err(app_error),
-            NativeRun::Depth(handle) => handle
-                .try_take_result()
-                .map(|result| result.and_then(|outcome| outcome.to_json()))
-                .transpose()
-                .map_err(app_error),
-            NativeRun::DepthExperiment(handle) => handle
-                .try_take_result()
-                .map(|result| result.and_then(|outcome| outcome.to_json()))
-                .transpose()
-                .map_err(app_error),
-            NativeRun::Experiment(handle) => handle
-                .try_take_result()
-                .map(|result| result.and_then(|outcome| outcome.to_json()))
-                .transpose()
-                .map_err(app_error),
-            NativeRun::MultiLeg(handle) => handle
-                .try_take_result()
-                .map(|result| result.and_then(|outcome| outcome.to_json()))
-                .transpose()
-                .map_err(app_error),
-            NativeRun::MultiLegExperiment(handle) => handle
-                .try_take_result()
-                .map(|result| result.and_then(|outcome| outcome.to_json()))
-                .transpose()
-                .map_err(app_error),
-            NativeRun::MultiAccount(handle) => handle
-                .try_take_result()
-                .map(|result| result.and_then(|outcome| outcome.to_json()))
-                .transpose()
-                .map_err(app_error),
-            NativeRun::MultiAccountDepth(handle) => handle
-                .try_take_result()
-                .map(|result| result.and_then(|outcome| outcome.to_json()))
-                .transpose()
-                .map_err(app_error),
-        }
-    }
-}
+use run_handle_helpers::{NativeRun, PyRunHandle};
 
 #[pyfunction]
 fn app_verify_depth_run(outcome_json: &str) -> PyResult<String> {
@@ -491,6 +367,8 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_start_depth_experiment, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_multi_leg_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_start_multi_leg_backtest, module)?)?;
+    module.add_function(wrap_pyfunction!(app_run_multi_market_backtest, module)?)?;
+    module.add_function(wrap_pyfunction!(app_start_multi_market_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_multi_leg_experiment, module)?)?;
     module.add_function(wrap_pyfunction!(app_start_multi_leg_experiment, module)?)?;
     module.add_class::<PyRunHandle>()?;

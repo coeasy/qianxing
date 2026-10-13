@@ -19,6 +19,7 @@ mod multi_account_backtest;
 mod multi_account_depth_backtest;
 mod multi_leg_backtest;
 mod multi_leg_experiment;
+mod multi_market_backtest;
 mod portfolio_backtest;
 mod portfolio_spec;
 mod run_handles;

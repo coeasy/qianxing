@@ -224,3 +224,13 @@ use_cases:
     artifacts: "<run_id>.multi-leg.json（策略 ID/版本、数据与配置身份、两腿结果哈希、归因与裸腿待对账事实）"
     error_categories: "AppErrorCategory 八类；身份/规格/回调意图非法为 InvalidInput，异身份覆盖为 Conflict"
     capability_level: "R"
+  - name: run_multi_market_backtest
+    input_schema: "MultiMarketBacktestSpec v1（3..=32 个异步 Bar 市场；同一账户/结算币种/共享 Ledger；每市场 1..=16 个 Rust 内置单腿策略槽；显式优先级/预算；禁止期权和双腿策略）"
+    output_schema: "MultiMarketBacktestOutcome v1（共享账簿哈希、聚合收益/回撤、市场/策略/成交计数）"
+    capability: "RESEARCH"
+    idempotency_key: "run_id + 规格指纹 + 排序市场 BarFrame 指纹；产物字节相同才允许重跑，否则 Conflict"
+    cancellation: "同步入口不取消；MultiMarketBacktestSpec::start 在市场准备阶段与共享 Rust session 每个事件批次协作取消，不写部分产物"
+    progress: "RunHandle 提供状态、取消、等待和一次性结果；无百分比进度"
+    artifacts: "<run_id>.multi-market.json（各市场数据身份、每市场成交、共享权益/事件/账簿与 replay_verified）"
+    error_categories: "AppErrorCategory 八类；无效标的/预算/数据或跨市场规格不匹配为 InvalidInput，异身份产物为 Conflict"
+    capability_level: "R"

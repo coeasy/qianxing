@@ -277,6 +277,53 @@ class PortfolioStrategySpec:
 
 
 @dataclass(frozen=True)
+class MultiMarketBacktestMarket:
+    instrument: str
+    bars_path: str
+    priority: int
+    strategies: tuple[PortfolioStrategySpec, ...]
+    market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
+    fee_schedule: MakerTakerFeeSchedule | dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        value: dict[str, Any] = {
+            "instrument": self.instrument,
+            "bars_path": self.bars_path,
+            "priority": self.priority,
+            "strategies": [strategy.to_dict() for strategy in self.strategies],
+        }
+        for key in ("market_spec", "fee_schedule"):
+            item = getattr(self, key)
+            if item is not None:
+                value[key] = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+        return value
+
+
+@dataclass(frozen=True)
+class MultiMarketBacktestSpec:
+    run_id: str
+    account_id: str
+    settlement_currency: str
+    initial_cash_raw: int
+    output_dir: str
+    markets: tuple[MultiMarketBacktestMarket, ...]
+    seed: int = 0
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "account_id": self.account_id,
+            "settlement_currency": self.settlement_currency,
+            "initial_cash_raw": self.initial_cash_raw,
+            "seed": self.seed,
+            "output_dir": self.output_dir,
+            "markets": [market.to_dict() for market in self.markets],
+        }
+
+
+@dataclass(frozen=True)
 class PortfolioBacktestConfig:
     """Additional same-account single-leg strategies in a deterministic Bar or depth run."""
 
@@ -1671,6 +1718,16 @@ class AsyncCoreClient:
     async def async_run_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
         return await asyncio.to_thread(run_multi_leg_backtest, spec)
 
+    async def async_run_multi_market_backtest(
+        self, spec: MultiMarketBacktestSpec | dict[str, Any]
+    ) -> MultiMarketBacktestOutcome:
+        return await asyncio.to_thread(run_multi_market_backtest, spec)
+
+    async def async_start_multi_market_backtest(
+        self, spec: MultiMarketBacktestSpec | dict[str, Any]
+    ) -> AsyncRunHandle[MultiMarketBacktestOutcome]:
+        return await self._start(start_multi_market_backtest, spec)
+
     async def async_run_multi_account_backtest(
         self, spec: MultiAccountBacktestSpec | dict[str, Any]
     ) -> MultiAccountBacktestResult:
@@ -2437,6 +2494,47 @@ def start_depth_backtest_with_strategy_slots(
 def run_multi_leg_backtest(spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
     """Run a two-leg Bar backtest via the shared Rust strategy and matching engines."""
     return MultiLegBacktestOutcome.from_dict(_invoke(native.app_run_multi_leg_backtest, spec))
+
+
+@dataclass(frozen=True)
+class MultiMarketBacktestOutcome:
+    run_id: str
+    account_id: str
+    spec_fingerprint: str
+    data_fingerprint: str
+    shared_result_hash: str
+    markets_total: int
+    strategies_total: int
+    successful_fills: int
+    equity_points: int
+    final_equity_raw: int
+    return_bps: int
+    max_drawdown_bps: int
+    artifact_path: str
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiMarketBacktestOutcome":
+        return cls(**value)
+
+
+def run_multi_market_backtest(
+    spec: MultiMarketBacktestSpec | dict[str, Any],
+) -> MultiMarketBacktestOutcome:
+    """Run 3..32 markets through one deterministic Rust account ledger and event engine."""
+    return MultiMarketBacktestOutcome.from_dict(
+        _invoke(native.app_run_multi_market_backtest, spec)
+    )
+
+
+def start_multi_market_backtest(
+    spec: MultiMarketBacktestSpec | dict[str, Any],
+) -> RunHandle[MultiMarketBacktestOutcome]:
+    """Start a cancellable N-market run owned by the shared Rust application layer."""
+    try:
+        native_handle = native.app_start_multi_market_backtest(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, MultiMarketBacktestOutcome)
 
 
 def run_multi_account_backtest(

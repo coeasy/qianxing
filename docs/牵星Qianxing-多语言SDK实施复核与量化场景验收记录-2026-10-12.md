@@ -4,6 +4,14 @@
 > 对照方案：[牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11.md](牵星Qianxing-多语言SDK全能力升级与重构实施方案-2026-10-11.md)
 > 说明：本记录区分仓内可重复验证的能力、尚未完成的产品链路和依赖外部环境的实盘认证；本记录不将 Paper、mock 或本地测试等同于实盘认证。
 
+## 0. 2026-10-14 增量复核：多市场共享账户 Bar 回测
+
+- 新增 `MultiMarketBacktestSpec`，支持 3..=32 个异步 Bar 市场共用一个 Rust `PortfolioBarEngine`、账户 Ledger、风险闸、事件日志与重放；每个市场 1..=16 个 Rust 内置单腿策略槽，共享现金按确定性市场优先级和标的排序处理。规格限制期权与双腿策略，显式市场合约必须提供费用表。
+- 新增 Rust 应用用例、同步 SDK `Client`、Python typed spec/native bridge、Python 同步函数和 RunHandle 接口。Python 远程、HTTP API、Web/C++、多市场自定义策略/多参数实验与 Tick/OrderBook 尚未接入；这是一段已验证的本地链路，不是全多语言产品链路。
+- 行为验证：`cargo test --offline -p qx-app multi_market_backtest` 两条通过；Python `test_multi_market_sdk_runs_one_shared_rust_ledger_and_run_handle` 通过。量化场景实测 3 市场、3 策略、21 笔成交、240 个权益点、收益 17 bps，`replay_verified=true`。
+- Rust `qx-app`/`qx-xingban`/`qx-sdk` 联合测试与 `qx-app`/`qx-xingban`/`qx-sdk`/`qx-python` 严格 Clippy 通过；Python 应用层 33 项测试通过；架构门禁 1,096 项通过。量化场景重生成结果为 53 executed、0 declared_not_executed、0 missing、1 blocked。
+- 发布状态仍为未达全能力门槛：真实 venue/testnet 认证、HTTP/Web/C++ 的 N 市场入口、N 市场多语言策略和多参数链仍缺；不能将本地确定性回测证据解释为实盘可用。
+
 ## 1. 本轮改进
 
 - Paper 算法父单现在由 API 受理并写入共享 checkpoint；现有 Paper Execution worker 分页发现父单，恢复 OMS/Paper Venue 状态后继续按新行情推进子单。父单查询从 checkpoint 和账户 EventLog 汇总状态、子单、成交量与剩余量。

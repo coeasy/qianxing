@@ -173,6 +173,12 @@ contracts:
     python_remote: ["run_multi_leg_backtest", "start_multi_leg_backtest"]
     cpp_remote: ["run_multi_leg_backtest", "start_multi_leg_backtest"]
     http: ["/app/multi-leg-backtest", "/app/multi-leg-backtest/start"]
+  - use_case: run_multi_market_backtest
+    rust: ["run_multi_market_backtest"]
+    python_native: ["run_multi_market_backtest", "start_multi_market_backtest"]
+    python_remote: []
+    cpp_remote: []
+    http: []
   - use_case: run_multi_leg_backtest_with_strategy
     rust: ["Client.run_multi_leg_backtest_with_strategy", "Client.start_multi_leg_backtest_with_strategy", "run_multi_leg_backtest_with_strategy"]
     python_native: ["run_multi_leg_backtest_with_strategy", "start_multi_leg_backtest_with_strategy"]

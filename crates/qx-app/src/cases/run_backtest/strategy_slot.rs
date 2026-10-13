@@ -8,7 +8,7 @@ use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, Strategy, StrategyCont
 use qx_xingban::{NativeBarStrategy, PortfolioStrategySlot};
 use std::collections::BTreeMap;
 
-pub(super) struct StrategySlotContext<'a> {
+pub(in crate::cases) struct StrategySlotContext<'a> {
     pub priority: i32,
     pub reserved_capital_raw: i128,
     pub instrument: &'a InstrumentId,
@@ -47,7 +47,7 @@ impl Strategy for BoxedStrategy {
     }
 }
 
-pub(super) fn build_strategy_slot(
+pub(in crate::cases) fn build_strategy_slot(
     spec: &BuiltinStrategySpec,
     context: StrategySlotContext<'_>,
     external: Option<Box<dyn Strategy>>,
@@ -107,7 +107,7 @@ pub(super) fn build_strategy_slot(
     ))
 }
 
-pub(super) fn strategy_version(spec: &BuiltinStrategySpec) -> String {
+pub(in crate::cases) fn strategy_version(spec: &BuiltinStrategySpec) -> String {
     if spec.target_kelly_fraction_bps.is_some() {
         format!("builtin-{}-kelly-v1", spec.kind.name())
     } else if spec.target_volatility_bps.is_some() {

@@ -464,6 +464,16 @@ def start_multi_leg_backtest(spec: "str | dict[str, Any]") -> Any:
     return native.app_start_multi_leg_backtest(_payload(spec))
 
 
+def run_multi_market_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """Run a shared-account N-market Bar portfolio in the Rust application layer."""
+    return json.loads(native.app_run_multi_market_backtest(_payload(spec)))
+
+
+def start_multi_market_backtest(spec: "str | dict[str, Any]") -> Any:
+    """Start a cancellable Rust N-market run."""
+    return native.app_start_multi_market_backtest(_payload(spec))
+
+
 def verify_depth_run(outcome: "str | dict[str, Any]") -> dict[str, Any]:
     """Verify the manifest, summary, equity, and fills of a depth run."""
     return json.loads(native.app_verify_depth_run(_payload(outcome)))

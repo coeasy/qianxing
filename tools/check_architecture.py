@@ -19084,11 +19084,11 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
 # 空名册的能力必须在这里写明理由；理由里的**令牌**还要在 `capability-matrix.yaml` 的
 # `rust_sdk` 行 limitations 里出现（两张登记面不许各说各话）。
 SDK_FACADE_CAPABILITY_GAPS: dict[str, str] = {}
-# §6.1「sync/async run」里 async 那一半的实物：qx-app 的六个 `*Spec::start`。
+# §6.1「sync/async run」里 async 那一半的实物：qx-app 的九个 `*Spec::start`。
 SDK_FACADE_ASYNC_ENTRY_PATTERN = re.compile(
     r"pub fn start\(self, context: RunContext\) -> (?:crate::)?RunHandle<"
 )
-SDK_FACADE_ASYNC_ENTRY_COUNT = 8
+SDK_FACADE_ASYNC_ENTRY_COUNT = 9
 # 独立消费者只许说门面那一种语言：出现别的前缀就等于"门面漏了一块，集成方还得自己补"。
 SDK_FACADE_FOREIGN_PREFIXES = ("qx_app::", "qx_cli", "qx_api::", "qx_python", "qx_adapter::")
 

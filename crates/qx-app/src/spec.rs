@@ -477,6 +477,7 @@ pub use multi_leg::{
 };
 mod multi_account;
 pub use multi_account::*;
+pub mod multi_market;
 
 mod results;
 pub use results::{BacktestArtifacts, BacktestOutcome, DatasetVerdict, VerificationResult};

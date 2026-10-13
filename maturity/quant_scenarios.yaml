@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791919545
+generated_at_unix: 1791921410
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -131,6 +131,14 @@ scenarios:
     exit_code: 0
     observed: "EUR spot cash booked in EUR; risk equity converts EUR cash and ETH/EUR position through configured EUR/USDT mark (11,122 USDT)"
     evidence: ["crates/qx-cli/src/venue_runtime/paper_valuation.rs", "crates/qx-cli/src/tests/paper_margin_valuation.rs", "crates/qx-core/src/ledger/fill.rs"]
+  - name: multi_market_shared_account
+    label: "多市场同账户确定性 Bar 组合回测"
+    status: executed
+    anchor: "crates/qx-app/src/cases/run_multi_market_backtest.rs"
+    command: "cargo test --offline -p qx-app three_market_run_shares_ledger_replays_and_is_idempotent -- --nocapture"
+    exit_code: 0
+    observed: "MULTI_MARKET_OBSERVED markets=3 strategies=3 fills=21 equity_points=240 return_bps=17 replay_verified=true"
+    evidence: ["crates/qx-app/src/cases/run_multi_market_backtest.rs", "crates/qx-app/src/tests/multi_market_backtest.rs", "crates/qx-xingban/src/backtest/market_router.rs", "crates/qx-sdk/src/client.rs", "crates/qx-python/src/lib.rs", "python/tests/test_app_use_cases.py"]
   - name: pairs_arbitrage
     label: "配对统计套利"
     status: executed
@@ -172,7 +180,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=de79a4d45e5ae7eb/033bcba5b3766055,3562402e575821bd/5d596cd469837e7d,315cf046200eebb8/ba935c142ca6626c,7752dd7acc03c742/59aab7a66734dd34"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=39889fc8006bbf8c/11c4020b404b0182,df01650e9d992326/e3385df21658fcca,638f9d5f40aa0fc7/67bd9def4325757f,a24901d723663d7d/094a234fb83d2f8b"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"

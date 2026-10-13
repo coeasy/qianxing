@@ -24,6 +24,8 @@ pub mod strategy;
 pub use strategy::{BarStrategy, NativeBarStrategy};
 mod portfolio_strategy;
 pub use portfolio_strategy::{PortfolioBarStrategy, PortfolioStrategySlot};
+mod market_router;
+pub use market_router::MarketRoutedBarStrategy;
 mod portfolio_session;
 pub use portfolio_session::{
     PortfolioBarEngine, PortfolioBarMarket, PortfolioBarSessionConfig, PortfolioBarSessionReport,

@@ -87,11 +87,11 @@ pub use qx_app::{
     CapitalAllocationAccount, CapitalAllocationRequest, CapitalAllocationResult,
     CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestSpec, MakerTakerFeeSchedule,
     MultiAccountBacktestSpec, MultiAccountDepthBacktestSpec, MultiLegBacktestSpec,
-    MultiLegFillModel, PortfolioBacktestConfig, PortfolioStrategySpec, RiskParityAssetSpec,
-    RiskParityResult, RiskParitySpec, RunDepthExperimentSpec, RunExperimentSpec,
-    RunMultiLegExperimentSpec, StrategyArtifactIdentity, TradeControlSpec, TradeWorkflow,
-    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
-    RISK_PARITY_SPEC_SCHEMA_VERSION,
+    MultiLegFillModel, MultiMarketBacktestMarket, MultiMarketBacktestSpec, PortfolioBacktestConfig,
+    PortfolioStrategySpec, RiskParityAssetSpec, RiskParityResult, RiskParitySpec,
+    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec, StrategyArtifactIdentity,
+    TradeControlSpec, TradeWorkflow, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+    RISK_PARITY_RESULT_SCHEMA_VERSION, RISK_PARITY_SPEC_SCHEMA_VERSION,
 };
 pub use qx_strategy::{
     BuiltinStrategyKind, MarketEvent, Strategy, StrategyContext, StrategyDecision,
@@ -103,7 +103,7 @@ pub use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
     run_depth_backtest, run_depth_experiment, run_experiment, run_multi_account_backtest,
     run_multi_account_depth_backtest, run_multi_leg_backtest, run_multi_leg_backtest_with_strategy,
-    run_multi_leg_experiment, validate_dataset, validate_trade_control,
+    run_multi_leg_experiment, run_multi_market_backtest, validate_dataset, validate_trade_control,
 };
 
 // —— §6.1「report/verify」——
@@ -126,7 +126,8 @@ pub use qx_app::{
     MultiAccountBacktestResult, MultiAccountBacktestSummary, MultiAccountDepthBacktestResult,
     MultiAccountDepthBacktestSummary, MultiAccountDepthRunResult, MultiAccountRunResult,
     MultiLegBacktestOutcome, MultiLegExperimentCandidate, MultiLegExperimentRankedCandidate,
-    RunDepthExperimentResult, RunExperimentResult, RunMultiLegExperimentResult, VerificationResult,
+    MultiMarketBacktestOutcome, RunDepthExperimentResult, RunExperimentResult,
+    RunMultiLegExperimentResult, VerificationResult,
 };
 
 // —— 多腿归因/完整性读数（qx-app 的公开读面）——
