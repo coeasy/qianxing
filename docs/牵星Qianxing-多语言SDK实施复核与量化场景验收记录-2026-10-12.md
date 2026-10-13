@@ -276,3 +276,10 @@ Python 十策略证据：
 - 修正衍生品测试配置为 USDT，并保留一条小写币种回归，确认归一化后盈亏更新权益但不会错误改写初始现金；新增错误币种回归确认策略 callback 尚未运行即失败。为遵守单文件行数棘轮，将验证逻辑与用例移入模块文件。
 - 验证：`cargo test --offline -p qx-xingban --lib` 103 项通过；最终版 `cargo test --offline --workspace` 全部通过；`cargo fmt --all -- --check` 通过；`python tools/check_architecture.py` 1096 项通过；全量量化场景探针 40 项 executed、0 项未执行、0 missing、1 项 Live testnet blocked；`git diff --check` 通过。
 - 该修复强化已有单市场回测账簿一致性，不实现跨市场共享账户资金/统一撮合风险、多腿联合组合调度、远端 callback、Web/桌面 E2E、跨平台 wheel 矩阵或真实 venue testnet 认证；全能力发布条件仍未满足。
+
+## 33. 2026-10-13 修复：异步 Run 事件拒绝超前游标
+
+- 复核发现 `/app/runs/{run_id}/events?after_seq=N` 对大于最新事件序号的 N 静默返回空数组，客户端无法区分“暂无新事件”和错误/失效游标。Run 事件读取现在按已恢复的最新序号校验，超前游标返回 400 `InvalidInput`；事件 JSON 序列化错误也不再伪装成空数组。
+- 扩展异步多腿 Run 的持久化重启回归：注册表重开后，`after_seq=1` 仍取得终态事件，`after_seq=3`（最新序号为 2）被拒绝；正常游标和现有 HTTP 读取契约保持不变。
+- 验证：`cargo test --offline -p qx-api` 全部单元、集成和文档测试通过（65 项单元测试）；`cargo fmt --all -- --check` 通过；架构不变量门禁 1096 项通过。
+- 这补齐的是超前游标校验，不是计划 §6.4 的完整事件日志：尚无逐事件/订单成交持久追加、发生时间与因果 ID；当前生命周期事件不做裁剪，因此尚未实现“游标过期→要求取快照”的恢复协议。整体方案仍未达到全能力发布条件。

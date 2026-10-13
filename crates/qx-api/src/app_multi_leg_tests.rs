@@ -221,12 +221,22 @@ fn multi_leg_async_route_runs_to_a_terminal_result_through_the_shared_registry()
     assert_eq!(tail_json.as_array().unwrap().len(), 1);
     assert_eq!(tail_json[0]["seq"], 2);
     let mut service = ApiService::new(ApiState::default());
-    service.app_paths = paths;
-    service.app_runs = reopened;
+    service.app_paths = paths.clone();
+    service.app_runs = reopened.clone();
     let through_http = service.handle("GET", "/app/runs/api-multi-leg/events?after_seq=1", "", 1);
     assert_eq!(through_http.status, 200, "{}", through_http.body);
     let through_http: serde_json::Value = serde_json::from_str(&through_http.body).unwrap();
     assert_eq!(through_http[0]["kind"], "succeeded");
+
+    let ahead = app_surface::app_run_route(
+        "GET",
+        "/app/runs/api-multi-leg/events?after_seq=3",
+        "",
+        &paths,
+        &reopened,
+    )
+    .unwrap();
+    assert_eq!(ahead.status, 400, "{}", ahead.body);
 }
 
 #[test]

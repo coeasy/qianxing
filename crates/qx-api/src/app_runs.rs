@@ -351,8 +351,8 @@ impl AppRunRegistry {
 
     pub(crate) fn events(&self, run_id: &str, cursor: u64) -> ApiResponse {
         match self.with_entry(run_id, |entry| entry.events_document(cursor)) {
-            Ok(document) => ApiResponse::json(200, document),
-            Err(error) => respond(Err(error)),
+            Ok(Ok(document)) => ApiResponse::json(200, document),
+            Ok(Err(error)) | Err(error) => respond(Err(error)),
         }
     }
 }
@@ -469,16 +469,9 @@ impl AppRunEntry {
         }
     }
 
-    fn events_document(&mut self, cursor: u64) -> String {
+    fn events_document(&mut self, cursor: u64) -> Result<String, AppError> {
         self.refresh_events();
-        serde_json::to_string(
-            &self
-                .events
-                .iter()
-                .filter(|event| event.seq > cursor)
-                .collect::<Vec<_>>(),
-        )
-        .unwrap_or_else(|_| "[]".to_string())
+        events::document(&self.events, cursor)
     }
 }
 
