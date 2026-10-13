@@ -17,7 +17,7 @@ import inspect
 import json
 import time
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation, ROUND_DOWN
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any, Mapping, Sequence
 
@@ -673,19 +673,33 @@ class CcxtExchangeClient:
             if not batch:
                 break
             previous = since
+            reached_end = False
             for row in batch:
                 if not isinstance(row, Sequence) or len(row) < 6:
                     raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "CCXT OHLCV 行格式非法")
                 timestamp = int(row[0])
-                if timestamp < start_ms or timestamp > end_ms:
+                if timestamp > end_ms:
+                    reached_end = True
+                    continue
+                if timestamp < start_ms:
                     continue
                 rows[timestamp] = row
                 previous = max(previous, timestamp)
-            if len(batch) < limit or previous <= since:
+            if len(batch) < limit or reached_end:
                 break
+            if previous <= since:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.EXCHANGE,
+                    "CCXT OHLCV pagination made no progress; refusing partial history",
+                )
             since = previous + 1
             if since > end_ms:
                 break
+        else:
+            raise CcxtConnectorError(
+                CcxtErrorClass.EXCHANGE,
+                f"CCXT OHLCV pagination reached max_pages={max_pages}; refusing partial history",
+            )
         ordered = [rows[timestamp] for timestamp in sorted(rows)]
         if not ordered:
             raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "CCXT OHLCV 查询为空")

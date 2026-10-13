@@ -1885,6 +1885,22 @@ def main() -> int:
         r"\[Fast Backtest\] (manifest=\S+ jobs=\d+ completed=\d+)",
     )
 
+    executed(
+        "ccxt_pagination_fails_closed",
+        "CCXT 历史行情分页达到上限或游标停滞时拒绝返回不完整数据",
+        "python/qianxing_ccxt/__init__.py",
+        [
+            "-m",
+            "unittest",
+            "python.tests.test_ccxt.CcxtTest.test_ohlcv_page_limit_exhaustion_fails_closed_instead_of_returning_partial_history",
+            "python.tests.test_ccxt.CcxtTest.test_ohlcv_full_page_that_repeats_the_cursor_fails_closed",
+        ],
+        r"(Ran 2 tests)",
+        extra="page_cap_exhaustion_rejected=true nonprogress_cursor_rejected=true partial_dataset_never_accepted=true",
+        evidence=["python/tests/test_ccxt.py", "python/qianxing_ccxt/__init__.py"],
+        command_prefix="python",
+    )
+
     # 样本外 / 走查与基准对照走同一条实验命令：一份 spec 上同时打开切分计划与基准列。
     write_probe_bar_frame(ROOT / WALK_FORWARD_BARS)
     walk_forward_path = PROBE_ROOT / "walk-forward.json"

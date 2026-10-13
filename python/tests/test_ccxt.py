@@ -265,6 +265,48 @@ class CcxtTest(unittest.TestCase):
         self.assertEqual(frame.close_raw[0], 100_500_000_000)
         self.assertEqual(frame.source, "ccxt:binance:BTC/USDT:1m")
 
+    def test_ohlcv_page_limit_exhaustion_fails_closed_instead_of_returning_partial_history(self):
+        class FullPageExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                return [
+                    [since, 100, 101, 99, 100, 1],
+                    [since + 1, 100, 101, 99, 100, 1],
+                ]
+
+        exchange = FullPageExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        with self.assertRaises(CcxtConnectorError) as raised:
+            client.fetch_ohlcv(
+                "BTCUSDT.BINANCE",
+                start_ms=1000,
+                end_ms=5000,
+                limit=2,
+                max_pages=2,
+            )
+
+        self.assertEqual(raised.exception.error_class, CcxtErrorClass.EXCHANGE)
+        self.assertIn("refusing partial history", str(raised.exception))
+        fetch_calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
+        self.assertEqual(len(fetch_calls), 2)
+
+    def test_ohlcv_full_page_that_repeats_the_cursor_fails_closed(self):
+        class RepeatingExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                return [[since, 100, 101, 99, 100, 1]] * limit
+
+        exchange = RepeatingExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        with self.assertRaisesRegex(CcxtConnectorError, "pagination made no progress"):
+            client.fetch_ohlcv(
+                "BTCUSDT.BINANCE",
+                start_ms=1000,
+                end_ms=5000,
+                limit=2,
+                max_pages=3,
+            )
+
     def test_ticker_and_order_use_normalized_values(self):
         ticker = self.client.fetch_ticker("BTCUSDT.BINANCE")
         self.assertEqual(ticker.bid_raw, 100_100_000_000)

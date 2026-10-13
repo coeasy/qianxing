@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791931923
+generated_at_unix: 1791932258
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -220,7 +220,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=954ef895c9b2ec6c/864aabf1a8ac60ba,efad9ad47f5d3aae/b050a2bcd7b6539a,e04cbd5417486047/936623f2ef755bdf,928cd3355e5634dd/19bc6ed6aa63fd63"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=c40323087a5641e7/029550a99deb0f05,612b2014ebf4f079/0c46211596e19d4d,badd0671c6a9e3b0/e4c1186eec83dfb8,22f0b0eff6024376/59cc6dde2c9d6b24"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -494,6 +494,14 @@ scenarios:
     exit_code: 0
     observed: "manifest=deploy\\qianxing.fast-backtest.example.json jobs=2 completed=2"
     evidence: ["deploy/qianxing.fast-backtest.example.json"]
+  - name: ccxt_pagination_fails_closed
+    label: "CCXT 历史行情分页达到上限或游标停滞时拒绝返回不完整数据"
+    status: executed
+    anchor: "python/qianxing_ccxt/__init__.py"
+    command: "python -m unittest python.tests.test_ccxt.CcxtTest.test_ohlcv_page_limit_exhaustion_fails_closed_instead_of_returning_partial_history python.tests.test_ccxt.CcxtTest.test_ohlcv_full_page_that_repeats_the_cursor_fails_closed"
+    exit_code: 0
+    observed: "Ran 2 tests; page_cap_exhaustion_rejected=true nonprogress_cursor_rejected=true partial_dataset_never_accepted=true"
+    evidence: ["python/tests/test_ccxt.py", "python/qianxing_ccxt/__init__.py"]
   - name: oos_walk_forward
     label: "样本外 / 走查（OOS / WFA）"
     status: executed
