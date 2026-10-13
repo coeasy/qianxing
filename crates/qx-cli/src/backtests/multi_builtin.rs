@@ -45,25 +45,12 @@ pub(crate) fn run_multi_builtin_backtest(
     let primary_cash = multi_leg_leg_cash(quantity, &primary_bars, costs.rules.taker_bp, "主")?;
     let reference_cash =
         multi_leg_leg_cash(quantity, &reference_bars, costs.rules.taker_bp, "对冲")?;
-    let mut strategy_config = BuiltinStrategyConfig {
+    let mut strategy_config = multi_leg_builtin_strategy_config(
         kind,
-        strategy_id: format!("builtin-{}-multi", kind.name()),
-        strategy_version: format!("builtin-{}-v1", kind.name()),
-        instrument: primary_frame.instrument.clone(),
-        quantity: Quantity::from_i64(quantity),
-        target_notional_raw: None,
-        target_available_margin_bps: None,
-        target_volatility_bps: None,
-        target_kelly_fraction_bps: None,
-        kelly_lookback_bars: None,
-        fast_window: 5,
-        slow_window: 20,
-        period: 14,
-        threshold_bps: 100,
-        reference_instrument: Some(reference_frame.instrument.clone()),
-        primary_policy: None,
-        reference_policy: None,
-    };
+        primary_frame.instrument.clone(),
+        reference_frame.instrument.clone(),
+        Quantity::from_i64(quantity),
+    );
     // 与单标的链同一条读法：多腿入口也收 `--config`（风控、撮合、成本都读它），
     // 信号参数却不能只在这条链上失效（V11 Q64）。
     let signal_provenance =

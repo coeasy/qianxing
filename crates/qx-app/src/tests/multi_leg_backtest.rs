@@ -9,6 +9,8 @@ use qx_strategy::{
     StrategyOrderIntent, STRATEGY_API_VERSION,
 };
 
+mod sizing_rejection;
+
 struct BuyEachLeg(std::collections::BTreeSet<String>);
 
 impl Strategy for BuyEachLeg {
@@ -224,7 +226,7 @@ fn multi_leg_spec_rejects_unrepresentable_combined_initial_cash() {
 }
 
 #[test]
-fn multi_leg_sizing_fails_closed_during_spec_validation() {
+fn multi_leg_sizing_validates_market_semantics_before_run() {
     let mut fixed_notional = MultiLegBacktestSpec::new(
         "multi-leg-fixed-notional",
         "primary.json",
@@ -239,11 +241,31 @@ fn multi_leg_sizing_fails_closed_during_spec_validation() {
     fixed_notional.strategy.target_notional_raw = Some(100 * SCALE);
     let error = fixed_notional
         .validate()
-        .expect_err("multi-leg quote sizing needs per-product short and contract semantics");
+        .expect_err("fixed notional sizing needs product specs for both legs");
     assert_eq!(error.category(), AppErrorCategory::InvalidInput);
-    assert!(error.to_string().contains("固定名义金额 sizing 尚未支持"));
+    assert!(error
+        .to_string()
+        .contains("必须配置两腿永续/交割 market spec"));
+
+    fixed_notional.primary_market_spec = Some(derivative_spec("BTCUSDT.BINANCE"));
+    fixed_notional.reference_market_spec = Some(derivative_spec("ETHUSDT.BINANCE"));
+    fixed_notional
+        .validate()
+        .expect("linear derivatives have enough frozen terms for quote sizing");
+
+    let mut spot = derivative_spec("BTCUSDT.BINANCE");
+    spot.product = TradingProduct::Spot;
+    spot.max_leverage = 1;
+    spot.maintenance_margin_bps = 0;
+    fixed_notional.primary_market_spec = Some(spot);
+    let error = fixed_notional
+        .validate()
+        .expect_err("spot short leg needs borrow and inventory semantics");
+    assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    assert!(error.to_string().contains("仅支持永续/交割合约"));
 
     let mut dynamic_sizing = fixed_notional;
+    dynamic_sizing.primary_market_spec = Some(derivative_spec("BTCUSDT.BINANCE"));
     dynamic_sizing.strategy.target_notional_raw = None;
     dynamic_sizing.strategy.target_available_margin_bps = Some(2_500);
     let error = dynamic_sizing
@@ -368,6 +390,28 @@ fn derivative_spec(instrument: &str) -> TradingInstrumentSpec {
     }
 }
 
+fn inverse_btc_spec(instrument: &str) -> TradingInstrumentSpec {
+    let mut spec = derivative_spec(instrument);
+    spec.base_currency = "BTC".into();
+    spec.quote_currency = "USD".into();
+    spec.settlement_currency = "BTC".into();
+    spec.contract_size = 1_000 * SCALE;
+    spec.qty_step = 10_000_000;
+    spec.min_qty = 10_000_000;
+    spec.linear = false;
+    spec.inverse = true;
+    spec
+}
+
+fn retag_bar_frame(source: &std::path::Path, output: &std::path::Path, instrument: &str) {
+    let mut frame: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(source).expect("read source BarFrame"))
+            .expect("valid source BarFrame");
+    frame["instrument"] = serde_json::json!(instrument);
+    frame["source"] = serde_json::json!(format!("retagged-{instrument}"));
+    std::fs::write(output, frame.to_string()).expect("write retagged BarFrame");
+}
+
 #[test]
 fn multi_leg_spec_applies_market_specs_fees_funding_and_shared_fill_choice() {
     let root = super::fixtures::scratch("multi-leg-configured");
@@ -375,29 +419,34 @@ fn multi_leg_spec_applies_market_specs_fees_funding_and_shared_fill_choice() {
         .join("..")
         .join("..")
         .join("deploy");
-    let primary = fixtures
-        .join("qianxing.bar-frame.pairs-primary.example.json")
-        .to_string_lossy()
-        .into_owned();
-    let reference = fixtures
-        .join("qianxing.bar-frame.pairs-reference.example.json")
-        .to_string_lossy()
-        .into_owned();
+    let primary_path = root.join("primary.json");
+    retag_bar_frame(
+        &fixtures.join("qianxing.bar-frame.pairs-primary.example.json"),
+        &primary_path,
+        "BTCUSD.BINANCE",
+    );
+    let reference_path = root.join("reference.json");
+    retag_bar_frame(
+        &fixtures.join("qianxing.bar-frame.pairs-reference.example.json"),
+        &reference_path,
+        "BTCUSD.OKX",
+    );
     let mut strategy = BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "pair-costs");
     strategy.quantity_raw = SCALE;
+    strategy.target_notional_raw = Some(100 * SCALE);
     let mut spec = MultiLegBacktestSpec::new(
         "pair-configured",
-        primary,
-        reference,
-        "USDT",
-        1_000_000 * SCALE,
-        1_000_000 * SCALE,
+        primary_path.to_string_lossy(),
+        reference_path.to_string_lossy(),
+        "BTC",
+        10 * SCALE,
+        10 * SCALE,
         7,
         root.join("out").to_string_lossy(),
         strategy,
     );
-    spec.primary_market_spec = Some(derivative_spec("BTCUSDT.BINANCE"));
-    spec.reference_market_spec = Some(derivative_spec("ETHUSDT.BINANCE"));
+    spec.primary_market_spec = Some(inverse_btc_spec("BTCUSD.BINANCE"));
+    spec.reference_market_spec = Some(inverse_btc_spec("BTCUSD.OKX"));
     spec.maker_fee_bps = 3;
     spec.taker_fee_bps = 10;
     spec.primary_taker_fee_bps = Some(12);
@@ -405,7 +454,7 @@ fn multi_leg_spec_applies_market_specs_fees_funding_and_shared_fill_choice() {
     spec.fill_model = crate::MultiLegFillModel::OneTickSlippage;
 
     let outcome = run_multi_leg_backtest(&spec, &context("pair-configured"))
-        .expect("configured derivative multi-leg run");
+        .expect("fixed quote notional converts through both derivative market specs");
     let artifact: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&outcome.attribution_artifact).unwrap())
             .unwrap();
@@ -415,6 +464,7 @@ fn multi_leg_spec_applies_market_specs_fees_funding_and_shared_fill_choice() {
     assert_eq!(artifact["fee_model"]["primary"]["maker_fee_bps"], 3);
     assert_eq!(artifact["fee_model"]["primary"]["taker_fee_bps"], 12);
     assert_eq!(artifact["fee_model"]["reference"]["taker_fee_bps"], 10);
+    assert!(outcome.primary_fills > 0 && outcome.reference_fills > 0);
 }
 
 #[test]

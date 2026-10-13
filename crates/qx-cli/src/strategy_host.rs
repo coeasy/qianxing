@@ -740,11 +740,7 @@ pub(crate) fn builtin_strategy_config_from_runtime(
         return Err("builtin_quantity 必须为正整数".into());
     }
     let mut config = BuiltinStrategyConfig {
-        kind,
-        strategy_id,
         strategy_version: strategy.version.clone(),
-        instrument: instrument.clone(),
-        quantity: Quantity::from_raw(quantity_raw),
         target_notional_raw: strategy.builtin_target_notional_raw,
         target_available_margin_bps: strategy.builtin_target_available_margin_bps,
         target_volatility_bps: strategy.builtin_target_volatility_bps,
@@ -754,9 +750,12 @@ pub(crate) fn builtin_strategy_config_from_runtime(
         slow_window: 20,
         period: 14,
         threshold_bps: 100,
-        reference_instrument: None,
-        primary_policy: None,
-        reference_policy: None,
+        ..BuiltinStrategyConfig::new(
+            kind,
+            strategy_id,
+            instrument.clone(),
+            Quantity::from_raw(quantity_raw),
+        )?
     };
     apply_builtin_signal_overrides(&mut config, strategy);
     if let Some(reference) = strategy.builtin_reference_instrument.as_deref() {

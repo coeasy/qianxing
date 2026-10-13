@@ -7,7 +7,7 @@
 
 pub use qx_core::{
     Fill, InstrumentId, Order, OrderPolicy, OrderStatus, OrderTrace, Price, Quantity, Side,
-    TradingInstrumentSpec,
+    TradingInstrumentSpec, TradingProduct,
 };
 use qx_guanxing::QuoteTick;
 

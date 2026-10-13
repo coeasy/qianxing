@@ -99,6 +99,10 @@ def _load_native():
                 "app_verify_depth_run",
             )
         ):
+            # The bridge imports its bundled extension by the qualified package name.
+            # Alias the freshly probed developer build to that name so an older .pyd
+            # left in python/qianxing_bridge cannot shadow the current target binary.
+            sys.modules["qianxing_bridge._qianxing_native"] = _qianxing_native
             return _qianxing_native
     return None
 
@@ -2496,6 +2500,50 @@ class AppUseCaseTests(unittest.TestCase):
             run_multi_leg_backtest,
             start_multi_leg_backtest,
         )
+
+        def derivative_spec(instrument: str, inverse: bool, contract_size: int):
+            symbol, venue = instrument.split(".")
+            return TradingInstrumentSpec(
+                instrument=InstrumentId(symbol=symbol, venue=venue),
+                product="perpetual",
+                base_currency=symbol[:3],
+                quote_currency=symbol[3:],
+                settlement_currency="USDT",
+                contract_size=contract_size,
+                linear=not inverse,
+                inverse=inverse,
+                price_tick=1_000,
+                qty_step=1,
+                min_qty=1,
+                max_leverage=20,
+                maintenance_margin_bps=500,
+                valid_from=0,
+            )
+
+        fixed_notional = MultiLegBacktestSpec(
+            run_id="python-fixed-notional-pair",
+            primary_bars_path=str(fixture_root / "qianxing.bar-frame.pairs-primary.example.json"),
+            reference_bars_path=str(fixture_root / "qianxing.bar-frame.pairs-reference.example.json"),
+            settlement_currency="USDT",
+            primary_initial_cash_raw=10_000 * 1_000_000_000,
+            reference_initial_cash_raw=10_000 * 1_000_000_000,
+            output_dir=str(self.output_dir / "fixed-notional-pair"),
+            seed=7,
+            strategy=BuiltinStrategySpec(
+                kind="pairs_arbitrage",
+                strategy_id="python-fixed-notional-pair",
+                target_notional_raw=100 * 1_000_000_000,
+            ),
+            primary_market_spec=derivative_spec(
+                "BTCUSDT.BINANCE", False, 1_000_000_000
+            ),
+            reference_market_spec=derivative_spec(
+                "ETHUSDT.BINANCE", False, 1_000_000_000
+            ),
+        )
+        sized = run_multi_leg_backtest(fixed_notional)
+        self.assertGreater(sized.primary_fills, 0)
+        self.assertGreater(sized.reference_fills, 0)
 
         class CustomPairStrategy:
             def __init__(self, quantity=1_000_000_000):

@@ -5,6 +5,35 @@
 
 use super::*;
 
+pub(crate) fn multi_leg_builtin_strategy_config(
+    kind: BuiltinStrategyKind,
+    primary_instrument: InstrumentId,
+    reference_instrument: InstrumentId,
+    quantity: Quantity,
+) -> BuiltinStrategyConfig {
+    BuiltinStrategyConfig {
+        kind,
+        strategy_id: format!("builtin-{}-multi", kind.name()),
+        strategy_version: format!("builtin-{}-v1", kind.name()),
+        instrument: primary_instrument,
+        quantity,
+        target_notional_raw: None,
+        primary_market_spec: None,
+        reference_market_spec: None,
+        target_available_margin_bps: None,
+        target_volatility_bps: None,
+        target_kelly_fraction_bps: None,
+        kelly_lookback_bars: None,
+        fast_window: 5,
+        slow_window: 20,
+        period: 14,
+        threshold_bps: 100,
+        reference_instrument: Some(reference_instrument),
+        primary_policy: None,
+        reference_policy: None,
+    }
+}
+
 /// `--config` 里的 `strategy.builtin_*` 信号参数，逐项覆盖到内置策略配置上（V11 Q64）。
 ///
 /// 覆盖本身住在 [`apply_builtin_signal_overrides`]，与 `strategy backtest` 同一处读法；这里只

@@ -99,7 +99,7 @@ let outcome = handle.try_take_result().unwrap()?;
 |---|---|
 | `Client/Engine` | `qx_sdk::Client` |
 | capabilities | `qx_sdk::ProviderCapability` |
-| spec 构造校验 | `DatasetSpec` / `BacktestSpec` / `DepthBacktestSpec` / `MultiLegBacktestSpec` / `RunExperimentSpec` / `RunDepthExperimentSpec` / `RunMultiLegExperimentSpec` / `CompareRunsSpec` / `TradeControlSpec` / `BuiltinStrategySpec`（+ `BuiltinStrategyKind`） |
+| spec 构造校验 | `DatasetSpec` / `BacktestSpec` / `DepthBacktestSpec` / `MultiLegBacktestSpec` / `RunExperimentSpec` / `RunDepthExperimentSpec` / `RunMultiLegExperimentSpec` / `CompareRunsSpec` / `TradeControlSpec` / `BuiltinStrategySpec`（+ `BuiltinStrategyKind`、`TradingProduct`、`TradingInstrumentSpec`） |
 | sync run | `run_backtest` / `run_depth_backtest` / `run_multi_leg_backtest` / `run_experiment` / `run_depth_experiment` / `run_multi_leg_experiment` / `validate_dataset` / `validate_trade_control` |
 | async run | 各 `*Spec::start` → `RunHandle`；门面侧 `Client::start_backtest` |
 | `RunHandle` | `RunHandle` / `RunStatus` / `RunEvent` / `RunEventKind` / `DEFAULT_WAIT_TIMEOUT` |
@@ -191,3 +191,11 @@ exclusive（仅返回 `seq > N`）。Rust `RemoteApiClient::get_run_events`、Py
 当前账户 EventLog 按账户与交易所拆分，因此同一账户注册项配置初始本金并绑定多个交易所账簿会
 被拒绝，避免把全部本金重复注入多个独立账本。账户本金隔离已接通；组合级资金竞争、风险聚合、
 调度分配和跨交易所账户统一账本仍未实现，不能按完整组合账户能力发布。
+
+## 多腿固定名义金额 sizing
+
+多腿策略使用 `BuiltinStrategyConfig::target_notional_raw` 时，必须为两腿各自提供冻结的
+`TradingInstrumentSpec`（`primary_market_spec`、`reference_market_spec`）。目前只允许永续/交割合约，
+两腿必须使用相同报价币与结算币；线性合约以报价币结算，反向合约以基础币结算。数量按合约面值、
+可见价格和 `qty_step` 向下取整，并校验最小数量与各腿未杠杆预算。现货做空借币、动态保证金/波动率/
+Kelly sizing、跨币种资金换算和组合保证金仍未实现，缺少前置规格时会失败关闭。

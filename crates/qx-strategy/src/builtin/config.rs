@@ -1,5 +1,5 @@
 use crate::builtin_signal::BuiltinSignalKnob;
-use qx_core::{InstrumentId, OrderPolicy, Quantity};
+use qx_core::{InstrumentId, OrderPolicy, Quantity, TradingInstrumentSpec, TradingProduct};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -130,6 +130,10 @@ pub struct BuiltinStrategyConfig {
     /// converts it to a quantity at the visible close; order/risk rules still
     /// validate the resulting quantity before execution.
     pub target_notional_raw: Option<i128>,
+    /// Frozen leg specs required to convert fixed quote notional into contract
+    /// quantities for two-leg derivative strategies.
+    pub primary_market_spec: Option<TradingInstrumentSpec>,
+    pub reference_market_spec: Option<TradingInstrumentSpec>,
     /// Optional fraction of the current available margin to target (basis points).
     /// The runtime must provide a fresh, as-of buying-power snapshot.
     pub target_available_margin_bps: Option<u32>,
@@ -164,6 +168,8 @@ impl BuiltinStrategyConfig {
             instrument,
             quantity,
             target_notional_raw: None,
+            primary_market_spec: None,
+            reference_market_spec: None,
             target_available_margin_bps: None,
             target_volatility_bps: None,
             target_kelly_fraction_bps: None,
@@ -241,8 +247,64 @@ impl BuiltinStrategyConfig {
                     .into(),
             );
         }
-        if sizing_modes.into_iter().any(|enabled| enabled) && self.kind.needs_reference_leg() {
-            return Err("双腿策略暂不支持单账户 sizing；请分别配置两腿资金预算".into());
+        if self.kind.needs_reference_leg()
+            && (self.target_available_margin_bps.is_some()
+                || self.target_volatility_bps.is_some()
+                || self.target_kelly_fraction_bps.is_some())
+        {
+            return Err("双腿动态 sizing 需要逐腿实时可用资金账本，当前不支持".into());
+        }
+        if self.kind.needs_reference_leg() && self.target_notional_raw.is_some() {
+            let Some(reference_instrument) = self.reference_instrument.as_ref() else {
+                return Err("双腿套利必须配置 reference_instrument".into());
+            };
+            let (Some(primary), Some(reference)) = (
+                self.primary_market_spec.as_ref(),
+                self.reference_market_spec.as_ref(),
+            ) else {
+                return Err("双腿固定名义金额 sizing 必须配置两腿 market spec".into());
+            };
+            for (label, market, instrument) in [
+                ("primary", primary, &self.instrument),
+                ("reference", reference, reference_instrument),
+            ] {
+                market
+                    .validate()
+                    .map_err(|error| format!("{label} market spec 非法: {error}"))?;
+                if market.instrument != *instrument {
+                    return Err(format!("{label} market spec instrument 不匹配"));
+                }
+                if !matches!(
+                    market.product,
+                    TradingProduct::Perpetual | TradingProduct::Future
+                ) {
+                    return Err("双腿固定名义金额 sizing 当前仅支持永续/交割合约".into());
+                }
+            }
+            if primary.settlement_currency != reference.settlement_currency {
+                return Err("双腿固定名义金额 sizing 要求两腿结算币种一致".into());
+            }
+            if primary.quote_currency != reference.quote_currency {
+                return Err("双腿固定名义金额 sizing 要求两腿报价币种一致".into());
+            }
+            for market in [primary, reference] {
+                let expected_settlement = if market.inverse {
+                    &market.base_currency
+                } else {
+                    &market.quote_currency
+                };
+                if &market.settlement_currency != expected_settlement {
+                    return Err(
+                        "双腿固定名义金额 sizing 要求线性合约以报价币结算、反向合约以基础币结算"
+                            .into(),
+                    );
+                }
+            }
+        }
+        if !self.kind.needs_reference_leg()
+            && (self.primary_market_spec.is_some() || self.reference_market_spec.is_some())
+        {
+            return Err("单腿策略不能配置双腿 market spec".into());
         }
         if (uses(BuiltinSignalKnob::FastWindow) || uses(BuiltinSignalKnob::SlowWindow))
             && (self.fast_window == 0

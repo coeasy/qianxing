@@ -19063,6 +19063,7 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("OrderTrace", "qx-execution::OrderTrace"),
         ("Fill", "qx-execution::Fill"),
         ("TradingInstrumentSpec", "qx-execution::TradingInstrumentSpec"),
+        ("TradingProduct", "qx-execution::TradingProduct"),
     ),
     "unified_errors": (
         ("AppError", "qx-app::AppError"),

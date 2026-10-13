@@ -6,7 +6,7 @@ fn zero_available_cash_and_neutral_signal_produce_no_exposure_without_failing() 
     let mut config = BuiltinStrategyConfig::new(
         BuiltinStrategyKind::Momentum,
         "momentum-empty-cash",
-        instrument,
+        instrument.clone(),
         Quantity::from_i64(1),
     )
     .unwrap();
@@ -14,9 +14,19 @@ fn zero_available_cash_and_neutral_signal_produce_no_exposure_without_failing() 
     let strategy = BuiltinStrategy::new(config).unwrap();
     let mut context = context(&strategy.config.instrument);
     context.available_margin_raw = Some(0);
-    assert_eq!(strategy.target_quantity_raw(100, 1, &context).unwrap(), 0);
+    assert_eq!(
+        strategy
+            .target_quantity_raw(&instrument, 100, 1, &context)
+            .unwrap(),
+        0
+    );
     context.available_margin_raw = Some(qx_core::SCALE);
-    assert_eq!(strategy.target_quantity_raw(100, 0, &context).unwrap(), 0);
+    assert_eq!(
+        strategy
+            .target_quantity_raw(&instrument, 100, 0, &context)
+            .unwrap(),
+        0
+    );
 }
 
 #[test]

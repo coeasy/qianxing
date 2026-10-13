@@ -553,7 +553,7 @@ impl Strategy for BuiltinStrategy {
                     .ok_or("双腿名义金额 sizing 缺少参考腿价格")?
             };
             let target = self
-                .target_quantity_raw(leg_price, leg_signal, context)?
+                .target_quantity_raw(&leg_instrument, leg_price, leg_signal, context)?
                 .checked_mul(leg_signal)
                 .ok_or("内置策略目标仓位溢出")?;
             let delta = target.checked_sub(current).ok_or("内置策略订单数量溢出")?;

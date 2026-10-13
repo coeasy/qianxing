@@ -602,7 +602,7 @@ capabilities:
       - crates/qx-app/src/trade_facts.rs
       - crates/qx-app/src/spec/multi_leg.rs
       - crates/qx-app/src/cases/run_multi_leg_backtest.rs
-      - crates/qx-app/src/tests/multi_leg_backtest.rs 的 multi_leg_sizing_fails_closed_during_spec_validation：固定名义金额和动态资金 sizing 都在 MultiLegBacktestSpec 校验期拒绝，避免规格通过后才在策略构造/撮合阶段断链
+      - crates/qx-app/src/tests/multi_leg_backtest.rs 的 multi_leg_sizing_validates_market_semantics_before_run：双腿固定名义金额支持显式永续/交割规格并按合约类型/lot 换算；缺规格、现货空腿和动态资金 sizing 在运行前拒绝
       - crates/qx-app/src/cases/run_multi_leg_backtest/portfolio_ledger.rs 的 account_id 多腿回测归一化账簿投影与逐事件重放一致性校验；该投影明确标记 fixed_per_leg_reservation，不代表撮合期资金互借
       - crates/qx-app/src/tests/multi_leg_backtest.rs
       - crates/qx-api/src/app_surface.rs
@@ -637,7 +637,7 @@ capabilities:
       - multi_leg_combined_return_has_no_summary_json_and_its_leg_weights_come_from_the_funding_rule
       - multi_leg_group_margin_peak_aggregates_with_max_across_groups_without_a_sum_versus_max_case
       - qx-app 两腿 Bar 回测仍由独立 BacktestEngine 以固定腿级本金完成撮合；account_ledger 仅在两条腿运行后确定性合并、重放并核对现金/持仓/已实现盈亏，不能提供跨腿资金竞争、净额保证金或组合级实时风险
-      - 多腿策略 sizing 仍未实现：固定名义金额缺现货空腿借币/库存与衍生品合约名义额换算语义，动态 sizing 缺共享或逐腿实时可用资金账本；应用规格在校验阶段 fail closed，调用方须显式提供 quantity_raw
+      - 双腿固定名义金额只支持两腿永续/交割合约，按冻结合约规格换算数量并限制在每腿未杠杆现金预算内；现货空腿缺少借币/库存模型，动态 sizing 缺共享或逐腿实时可用资金账本，应用规格在校验阶段 fail closed，调用方须显式提供 quantity_raw
       - no_production_failure_matrix
 
   postgres:

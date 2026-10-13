@@ -17,10 +17,12 @@ mod market_spec;
 mod models;
 mod portfolio_ledger;
 mod targets;
+mod validation;
 pub(super) use custom_strategy::InjectedMultiLegStrategy;
 use leg::{run_leg, LegRunSpec};
 pub(super) use market_spec::validate_leg_spec;
 pub(super) use models::{fill_model_for, fill_model_name};
+use validation::{read_frame, validate_custom_sizing};
 
 const MIN_BARS: usize = 3;
 
@@ -64,6 +66,7 @@ pub(super) fn run_inner(
     injected: Option<InjectedMultiLegStrategy>,
 ) -> Result<Option<MultiLegBacktestOutcome>, AppError> {
     spec.validate()?;
+    validate_custom_sizing(spec, injected.is_some())?;
     let primary = read_frame(&spec.primary_bars_path, "主腿")?;
     let reference = read_frame(&spec.reference_bars_path, "对冲腿")?;
     if primary.instrument == reference.instrument {
@@ -140,6 +143,8 @@ pub(super) fn run_inner(
         instrument: primary.instrument.clone(),
         quantity: Quantity::from_raw(spec.strategy.quantity_raw),
         target_notional_raw: spec.strategy.target_notional_raw,
+        primary_market_spec: primary_spec.cloned(),
+        reference_market_spec: reference_spec.cloned(),
         target_available_margin_bps: spec.strategy.target_available_margin_bps,
         target_volatility_bps: spec.strategy.target_volatility_bps,
         target_kelly_fraction_bps: spec.strategy.target_kelly_fraction_bps,
@@ -482,12 +487,6 @@ pub(super) fn run_inner(
     }))
 }
 
-fn read_frame(path: &str, label: &str) -> Result<BarFrame, AppError> {
-    let payload = std::fs::read_to_string(path)
-        .map_err(|error| AppError::from_io(&format!("读取{label} BarFrame {path}"), &error))?;
-    BarFrame::from_json(&payload)
-        .map_err(|error| invalid(format!("{label} BarFrame 无效: {error:?}")))
-}
 pub(super) fn invalid(message: impl std::fmt::Display) -> AppError {
     AppError::new(
         AppErrorCategory::InvalidInput,

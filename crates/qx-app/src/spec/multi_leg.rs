@@ -192,10 +192,54 @@ impl MultiLegBacktestSpec {
             ));
         }
         if self.strategy.target_notional_raw.is_some() {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "多腿固定名义金额 sizing 尚未支持：现货空腿缺少借币/库存模型，衍生品名义额需按合约规格换算；请显式设置 quantity_raw",
-            ));
+            let (Some(primary), Some(reference)) = (
+                self.primary_market_spec.as_ref(),
+                self.reference_market_spec.as_ref(),
+            ) else {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "多腿固定名义金额 sizing 必须配置两腿永续/交割 market spec",
+                ));
+            };
+            if !matches!(
+                primary.product,
+                qx_core::TradingProduct::Perpetual | qx_core::TradingProduct::Future
+            ) || !matches!(
+                reference.product,
+                qx_core::TradingProduct::Perpetual | qx_core::TradingProduct::Future
+            ) {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "多腿固定名义金额 sizing 当前仅支持永续/交割合约；现货空腿缺少借币/库存模型",
+                ));
+            }
+            if primary.settlement_currency != self.settlement_currency
+                || reference.settlement_currency != self.settlement_currency
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "多腿固定名义金额 sizing 要求两腿结算币种都等于 settlement_currency",
+                ));
+            }
+            if primary.quote_currency != reference.quote_currency {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "多腿固定名义金额 sizing 要求两腿报价币种一致",
+                ));
+            }
+            for market in [primary, reference] {
+                let expected_settlement = if market.inverse {
+                    &market.base_currency
+                } else {
+                    &market.quote_currency
+                };
+                if &market.settlement_currency != expected_settlement {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "多腿固定名义金额 sizing 要求线性合约以报价币结算、反向合约以基础币结算",
+                    ));
+                }
+            }
         }
         for (label, spec) in [
             ("primary_market_spec", &self.primary_market_spec),

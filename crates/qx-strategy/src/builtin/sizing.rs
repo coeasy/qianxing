@@ -5,6 +5,7 @@ use crate::StrategyContext;
 impl BuiltinStrategy {
     pub(super) fn target_quantity_raw(
         &self,
+        instrument: &qx_core::InstrumentId,
         price_raw: i128,
         direction: i128,
         context: &StrategyContext,
@@ -21,6 +22,61 @@ impl BuiltinStrategy {
             self.config.target_volatility_bps,
             self.config.target_kelly_fraction_bps,
         ) {
+            (Some(notional), None, None, None) if self.config.kind.needs_reference_leg() => {
+                let market = if instrument == &self.config.instrument {
+                    self.config.primary_market_spec.as_ref()
+                } else if self
+                    .config
+                    .reference_instrument
+                    .as_ref()
+                    .is_some_and(|reference| reference == instrument)
+                {
+                    self.config.reference_market_spec.as_ref()
+                } else {
+                    return Err("固定名义金额 sizing 收到未知的套利腿".into());
+                }
+                .ok_or("双腿固定名义金额 sizing 缺少 market spec")?;
+                if price_raw <= 0 {
+                    return Err("双腿固定名义金额 sizing 的可见价格必须为正".into());
+                }
+                let available = available_margin(context, "双腿固定名义金额 sizing")?
+                    .ok_or("双腿固定名义金额 sizing 的每腿资金不足")?;
+                let available_quote_raw = if market.inverse {
+                    available
+                        .checked_mul(price_raw)
+                        .and_then(|value| value.checked_div(qx_core::SCALE))
+                        .ok_or("反向合约逐腿现金预算折算报价币溢出")?
+                } else {
+                    available
+                };
+                if notional > available_quote_raw {
+                    return Err("双腿固定名义金额超过该腿未杠杆资金预算".into());
+                }
+                let raw = if market.inverse {
+                    notional
+                        .checked_mul(qx_core::SCALE)
+                        .and_then(|value| value.checked_div(market.contract_size))
+                } else {
+                    notional
+                        .checked_mul(qx_core::SCALE)
+                        .and_then(|value| value.checked_mul(qx_core::SCALE))
+                        .and_then(|value| {
+                            market
+                                .contract_size
+                                .checked_mul(price_raw)
+                                .and_then(|denominator| value.checked_div(denominator))
+                        })
+                }
+                .ok_or("双腿 target_notional_raw 转合约数量溢出")?;
+                let lot_aligned = raw
+                    .checked_div(market.qty_step)
+                    .and_then(|steps| steps.checked_mul(market.qty_step))
+                    .ok_or("双腿固定名义金额数量步长换算溢出")?;
+                if lot_aligned < market.min_qty {
+                    return Err("双腿固定名义金额低于 market spec 最小下单数量".into());
+                }
+                return Ok(lot_aligned);
+            }
             (Some(notional), None, None, None) => notional,
             (None, Some(bps), None, None) => {
                 let Some(available) = available_margin(context, "可用资金比例 sizing")?

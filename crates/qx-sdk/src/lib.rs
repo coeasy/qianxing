@@ -57,7 +57,7 @@ pub use qx_execution::{
     AlgoExecutionStatus, AlgoExecutionStep, AlgoParentOrder, EventAppender, ExecutionEvent,
     ExecutionEventEnvelope, ExecutionEventPort, ExecutionGateway, Fill, InstrumentId, LedgerProbe,
     Order, OrderPolicy, OrderStatus, OrderStore, OrderTrace, PortExecutionResult, Price, Quantity,
-    RiskPort, RiskVerdict, Side, TradingInstrumentSpec, VenuePort, VenueRouterPort,
+    RiskPort, RiskVerdict, Side, TradingInstrumentSpec, TradingProduct, VenuePort, VenueRouterPort,
     VwapVolumeBucket, MAX_ALGO_CHILDREN,
 };
 pub use remote::{RemoteApiClient, RemoteApiError, RemoteResponse, RemoteTransport};
