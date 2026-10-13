@@ -16,7 +16,8 @@ pub enum MultiLegFillModel {
     OneTickSlippage,
 }
 
-/// Both input BarFrames must have identical timestamps and distinct instruments.
+/// Input BarFrames must be valid and use distinct instruments. Their timestamps may be unaligned;
+/// callbacks are ordered by timestamp, declared leg priority, then canonical instrument id.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MultiLegBacktestSpec {

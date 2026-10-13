@@ -35,6 +35,7 @@ pub(super) fn build_target_schedules(
         let instrument = market_event.instrument;
         let bar = market_event.bar;
         context.as_of = bar.ts;
+        context.venue_id = instrument.venue.to_string();
         let leg_initial_cash = if instrument == primary {
             primary_initial_cash_raw
         } else {

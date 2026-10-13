@@ -59,10 +59,11 @@ impl Strategy for ObserveLegCash {
         context: &StrategyContext,
         event: &MarketEvent,
     ) -> Result<StrategyDecision, String> {
-        let instrument = event
-            .instrument()
-            .ok_or("event instrument missing")?
-            .to_string();
+        let instrument = event.instrument().ok_or("event instrument missing")?;
+        if context.venue_id != instrument.venue.to_string() {
+            return Err("strategy context venue differs from event instrument".into());
+        }
+        let instrument = instrument.to_string();
         let cash = context
             .cash
             .get("USDT")
@@ -174,7 +175,12 @@ fn multi_leg_strategy_context_cash_follows_the_event_leg() {
         .join("..")
         .join("deploy");
     let primary = fixtures.join("qianxing.bar-frame.pairs-primary.example.json");
-    let reference = fixtures.join("qianxing.bar-frame.pairs-reference.example.json");
+    let reference_fixture = fixtures.join("qianxing.bar-frame.pairs-reference.example.json");
+    let reference_content = std::fs::read_to_string(&reference_fixture)
+        .expect("reference fixture is readable")
+        .replace("ETHUSDT.BINANCE", "ETHUSDT.KRAKEN");
+    let reference = root.join("reference-kraken.json");
+    std::fs::write(&reference, reference_content).expect("cross-venue fixture is writable");
     let primary_cash = 1_000_000 * SCALE;
     let reference_cash = 2_000_000 * SCALE;
     let spec = MultiLegBacktestSpec::new(
@@ -203,7 +209,7 @@ fn multi_leg_strategy_context_cash_follows_the_event_leg() {
     .expect("context observer run");
     let seen_cash = seen_cash.lock().unwrap();
     assert_eq!(seen_cash.get("BTCUSDT.BINANCE"), Some(&primary_cash));
-    assert_eq!(seen_cash.get("ETHUSDT.BINANCE"), Some(&reference_cash));
+    assert_eq!(seen_cash.get("ETHUSDT.KRAKEN"), Some(&reference_cash));
 }
 
 #[test]
