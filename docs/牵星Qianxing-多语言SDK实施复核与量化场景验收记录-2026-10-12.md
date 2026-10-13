@@ -198,3 +198,11 @@ Python 十策略证据：
 - 保持事件契约：L1 callback 收到 `Tick`，L2 callback 收到 `OrderBook`。每个 callback identity 的 strategy ID、版本、SHA-256 绑定配置指纹；输入顺序不影响摘要，同一 `run_id` 改源码返回 Conflict。重复、未声明槽与无 portfolio 的多 callback 请求拒绝执行。
 - 新增应用层、Rust 外部 consumer 与 Python 原生 SDK 行为测试，覆盖 L1/L2 的两个自定义 callback 都产生归属成交、共享账簿重放、身份顺序确定性、源码变化冲突、同步/RunHandle 与 async RunHandle。该轮 Rust `qx-app` 111 项及 Rust SDK 独立消费者 20 项通过；Python 全量 131 项通过；严格 Clippy、格式、Python 语法和 diff whitespace 检查通过；架构不变量门禁 1096 项通过。量化场景探针最终结果为 37 项 executed、0 declared_not_executed、0 missing、1 blocked；唯一 blocked 为需要真实 CCXT/testnet 前置的 Live 验收。
 - 已知边界：多回调深度组合只在本地 Rust/Python SDK 接通；远端 callback 执行、C++ callback 槽与 HTTP/Web 配置/操作暂未支持。仍不实现跨市场/跨账户统一资本净额与组合级策略归因，也不代表 Paper/Live 多回调订单工作流或真实交易所 testnet 已认证。总体多语言全能力发布门槛仍未满足。
+
+## 22. 2026-10-13 Tick/OrderBook SDK callback 提交与安装验证
+
+- 提交 `d71750f3` 已推送到 `origin/main`。将同账户 Tick/OrderBook 组合中的自定义策略 callback 从单槽扩展到多槽，Rust/Python callback 可与内置策略组合；L1 保持 Tick 事件语义、L2 保持 OrderBook 事件语义，所有策略继续走原共享 Rust 风控、OMS、撮合、账簿与 ReplayVerifier。callback source identity 按稳定顺序绑定到运行指纹。
+- 入口覆盖 Rust `qx-app` / `qx-sdk` 同步与可取消 RunHandle、PyO3、`qianxing` 高层 API、`core` 导出及 `AsyncCoreClient` 的 run/start。新增应用用例、独立 Rust SDK 消费者和 Python 同步/异步测试覆盖成交归属、事件类型、回放、确定性身份排序和源码变更冲突。
+- 验证：`cargo test --offline -p qx-app -p qx-sdk -p qx-python -- --test-threads=1` 通过；Python 全量 131 项通过；`cargo clippy --offline -p qx-app -p qx-sdk -p qx-python --all-targets -- -D warnings` 通过；格式、编译和 diff whitespace 检查通过；架构不变量 1096 项通过；量化场景 37 项 executed、0 missing、0 declared_not_executed，1 项 Live 因外部 CCXT/testnet 凭据 blocked。
+- Windows x64 通用 `cp310-abi3` wheel 已构建并隔离离线安装；wheel 导入检查确认 `run_depth_backtest_with_strategy_slots`、`start_depth_backtest_with_strategy_slots` 和 Rust 原生扩展可用。SHA-256：`5faa1b447b18870dd8b85df3f60c0f1abdc33bcb0fbbe5f98d4100c99b93b2f6`。首次链接因系统 Temp 目录写入错误失败，改用仓库构建临时目录后构建成功。
+- 更新了能力矩阵中过时的 Tick/OrderBook“仅内置策略”描述。当前仍不满足整体发布门槛：远端 callback、可恢复逐事件/订单日志、跨账户/跨市场共享组合账簿与风险归因、多腿组合调度、Paper/Live callback 工作流、C++ callback 本地入口、Linux/macOS 安装矩阵及真实 venue testnet 认证仍未完成。已验证的 Windows wheel 安装仅证明该平台的打包入口，不代表全平台或 Live 可发布。
