@@ -172,7 +172,30 @@ WALK_FORWARD_SPEC = {
 
 # 未支持或被外部前置阻塞的场景登记在 BLOCKED；已有执行证据的算法单生命周期由探针运行
 # 专项 worker/API e2e，不得继续由旧的静态 MISSING 记录覆盖。
-MISSING = []
+MISSING = [
+    {
+        "name": "shared_multileg_execution",
+        "label": "多标的多腿共享时间线、资金与成交反馈",
+        "anchor": "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
+        "why_missing": (
+            "当前双腿用例先按完整历史生成目标，再分别运行两个 BacktestEngine；"
+            "账户账簿仅在撮合后合并为投影，不能在执行期竞争共享资金，也不会将拒单/部分成交"
+            "反馈到另一腿策略。缺少统一多标的事件循环与共享账户账簿。"
+        ),
+        "next_gate": (
+            "在 Rust 回测内核实现按时间戳与稳定标的优先级调度的多标的 session，"
+            "让每腿行情、策略决策、Risk/OMS、撮合、成交回报和共享 Ledger 位于同一事件循环；"
+            "以资金竞争、拒单/部分成交回调、同刻行情、确定性重跑和 replay 对账验收，"
+            "再接入 Rust/Python/C++/API 入口。"
+        ),
+        "evidence": [
+            "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
+            "crates/qx-app/src/cases/run_multi_leg_backtest/leg.rs",
+            "crates/qx-app/src/cases/run_multi_leg_backtest/portfolio_ledger.rs",
+            "docs/牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md",
+        ],
+    },
+]
 
 BLOCKED = [
     {
