@@ -1182,6 +1182,116 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(strategy.updates[0][3]["event"], "fill")
         self.assertTrue(verify_run(outcome).verified)
 
+    def test_python_orderbook_order_update_decision_returns_to_the_rust_fill_loop(self):
+        self._require()
+        from qianxing import BuiltinStrategySpec, DepthBacktestSpec
+
+        scale = 1_000_000_000
+        snapshots = []
+        for index, mid in enumerate((100, 101, 102), start=1):
+            snapshots.append({
+                "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+                "ts": index * 1_000,
+                "sequence": index,
+                "bids": [{"price": (mid - 1) * scale, "qty": 10 * scale}],
+                "asks": [{"price": (mid + 1) * scale, "qty": 10 * scale}],
+            })
+        depth_path = self.output_dir / "python-orderbook-order-update.json"
+        depth_path.write_text(json.dumps({
+            "schema_version": 1,
+            "source": "python-orderbook-order-update-v1",
+            "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+            "snapshots": snapshots,
+        }), encoding="utf-8")
+        strategy_id = "python-orderbook-order-update"
+        spec = DepthBacktestSpec(
+            run_id="python-orderbook-order-update",
+            depth_path=str(depth_path),
+            tier="l2",
+            settlement_currency="USDT",
+            initial_cash_raw=10_000 * scale,
+            fee_bps=10,
+            latency_snapshots=0,
+            queue_position_bps=0,
+            market_impact_bps=0,
+            output_dir=str(self.output_dir / "orderbook-order-update"),
+            strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id=strategy_id),
+        )
+
+        class FillResponsiveBook:
+            def __init__(self):
+                self.submitted = False
+                self.updates = []
+                self.instrument = None
+
+            def on_event(self, context, event):
+                _, item = next(iter(event.items()))
+                self.instrument = item["instrument"]
+                intents = []
+                if not self.submitted:
+                    self.submitted = True
+                    intents.append({
+                        "intent_id": 1,
+                        "instrument": item["instrument"],
+                        "side": "Buy",
+                        "qty": scale,
+                        "limit": None,
+                        "policy": None,
+                        "reduce_only": False,
+                        "post_only": False,
+                    })
+                return {
+                    "schema_version": 1,
+                    "request_id": f"{context['strategy_id']}:{item['ts']}",
+                    "strategy_id": context["strategy_id"],
+                    "signal_id": item["ts"],
+                    "confidence": 10_000,
+                    "priority": 0,
+                    "expires_at": 0,
+                    "intents": intents,
+                }
+
+            def on_order_update(self, context, update):
+                position = context["positions"].get("BTCUSDT.BINANCE", 0)
+                cash = context["cash"].get("USDT", 0)
+                self.updates.append((position, cash, update))
+                if position == 0:
+                    return None
+                return {
+                    "schema_version": 1,
+                    "request_id": "close-orderbook-fill",
+                    "strategy_id": context["strategy_id"],
+                    "signal_id": 2,
+                    "confidence": 10_000,
+                    "priority": 0,
+                    "expires_at": 0,
+                    "intents": [{
+                        "intent_id": 2,
+                        "instrument": self.instrument,
+                        "side": "Sell",
+                        "qty": scale,
+                        "limit": None,
+                        "policy": None,
+                        "reduce_only": True,
+                        "post_only": False,
+                    }],
+                }
+
+        callback = FillResponsiveBook()
+        outcome = self.bridge.run_depth_backtest_with_strategy(
+            spec.to_dict(), callback,
+            strategy_id=strategy_id,
+            strategy_version="python-depth-fill-v1",
+            source_sha256="c" * 64,
+        )
+        self.assertEqual(outcome["fills"], 2)
+        self.assertEqual([event[0] for event in callback.updates], [scale, 0])
+        self.assertGreater(callback.updates[0][1], 0)
+        self.assertLess(callback.updates[0][1], spec.initial_cash_raw)
+        self.assertEqual(callback.updates[0][2]["schema_version"], 1)
+        self.assertEqual(callback.updates[0][2]["event"], "fill")
+        self.assertTrue(self.bridge.verify_depth_run(outcome)["verified"])
+
     def test_ten_classic_builtin_strategies_run_through_python_rust_kernel(self):
         self._require()
         scale = 1_000_000_000

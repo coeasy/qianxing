@@ -302,5 +302,10 @@ Python 十策略证据：
 
 - 继续处理上一节标出的 Tick/OrderBook 成交回报断链：L2 `NativeOrderBookStrategy` 与由 Tick/OrderBook 折叠来的 `DepthBarStrategy` 在订单已写入 Ledger 和规范事件日志后，调用共享 `Strategy::on_order_update`。上下文更新成交时间、策略净持仓、账本现金及现货可用资金；返回意图排队到下一快照，再由原有 spec 校验、资金检查、RiskGate、OMS 和撮合路径处理。
 - 新增 OrderBook Rust 行为测试，验证买入成交回调看见成交后的持仓/现金、返回的平仓决策在下一快照经原管线成交、仓位归零并通过 ReplayVerifier。量化场景探针增加 `orderbook_fill_feedback_loop`，最终矩阵为 42 executed、0 declared_not_executed、0 missing、1 blocked；被阻塞项仍是需要外部 CCXT 与交易所 testnet 凭据的实盘验收。
-- 验证：`cargo test --offline -p qx-xingban --lib` 104/104 通过；`cargo build --offline -p qx-python` 成功；Python 全量 139 项通过；场景探针 42 个执行场景通过；格式检查、`git diff --check` 与最终架构不变量门禁 1096 项通过。
+- 验证：`cargo test --offline -p qx-xingban --lib` 104/104 通过；`cargo build --offline -p qx-python` 成功；Python 全量 140 项通过；场景探针 43 个执行场景通过；格式检查、`git diff --check` 与最终架构不变量门禁 1096 项通过。
 - 目前该回调闭环覆盖 Bar、Tick 的 L1 事件折叠以及 L2 OrderBook 策略适配器的已确认成交。拒单/撤单等通用非成交状态通知仍未覆盖；多腿执行仍没有统一共享资本时间线；Paper/Live Python callback 和真实交易所 testnet 仍未端到端认证，因此整体方案未达到全能力发布门槛。
+
+## 37. 2026-10-13 验收补齐：Python OrderBook 成交回报跨语言端到端
+
+- 新增 Python 自定义 L2 策略用例，实际经过 Python bridge、PyO3 原生扩展、Rust `NativeOrderBookStrategy`、共享账本和 OrderBook matcher：首笔买入成交后 Python `on_order_update` 观察更新后的净持仓和现金，返回的 reduce-only 平仓决策在下一快照通过相同的资金/风控/OMS/撮合链路成交；最终两笔成交、持仓归零，深度报告 replay 验证通过。
+- Python 全量 140 项通过；场景矩阵更新为 43 executed、0 declared_not_executed、0 missing、1 blocked（外部 CCXT/testnet 凭据）。这一证据只证明 Python 自定义策略在本地 L2 研究回测的成交回调；不证明 Paper/Live 交易路径、不证明交易所 testnet，也不关闭多腿共享资金执行缺口。
