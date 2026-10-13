@@ -25,6 +25,7 @@ from qianxing_bridge import BarFrame
 
 
 SCALE = 1_000_000_000
+MAX_OHLCV_ROWS = 100_000
 
 
 class CcxtErrorClass(str, Enum):
@@ -672,6 +673,11 @@ class CcxtExchangeClient:
             )
             if not batch:
                 break
+            if len(batch) > limit:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.EXCHANGE,
+                    "CCXT OHLCV exchange returned more rows than the requested page limit",
+                )
             previous = since
             reached_end = False
             for row in batch:
@@ -683,6 +689,11 @@ class CcxtExchangeClient:
                     continue
                 if timestamp < start_ms:
                     continue
+                if timestamp not in rows and len(rows) >= MAX_OHLCV_ROWS:
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.INVALID,
+                        f"OHLCV query exceeds the {MAX_OHLCV_ROWS}-row safety limit",
+                    )
                 rows[timestamp] = row
                 previous = max(previous, timestamp)
             if len(batch) < limit or reached_end:

@@ -1894,9 +1894,11 @@ def main() -> int:
             "unittest",
             "python.tests.test_ccxt.CcxtTest.test_ohlcv_page_limit_exhaustion_fails_closed_instead_of_returning_partial_history",
             "python.tests.test_ccxt.CcxtTest.test_ohlcv_full_page_that_repeats_the_cursor_fails_closed",
+            "python.tests.test_ccxt.CcxtTest.test_ohlcv_query_has_a_hard_row_limit",
+            "python.tests.test_ccxt.CcxtTest.test_ohlcv_rejects_an_exchange_page_larger_than_requested",
         ],
-        r"(Ran 2 tests)",
-        extra="page_cap_exhaustion_rejected=true nonprogress_cursor_rejected=true partial_dataset_never_accepted=true",
+        r"(Ran 4 tests)",
+        extra="page_cap_exhaustion_rejected=true nonprogress_cursor_rejected=true hard_row_limit=100000 oversized_page_rejected=true partial_dataset_never_accepted=true",
         evidence=["python/tests/test_ccxt.py", "python/qianxing_ccxt/__init__.py"],
         command_prefix="python",
     )

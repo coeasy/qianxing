@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791932258
+generated_at_unix: 1791932562
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -220,7 +220,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=c40323087a5641e7/029550a99deb0f05,612b2014ebf4f079/0c46211596e19d4d,badd0671c6a9e3b0/e4c1186eec83dfb8,22f0b0eff6024376/59cc6dde2c9d6b24"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=3a1f91410beb059d/2c26c8c8370ccb5b,fb3f0f2966a2d03b/690c407087e6887b,ec674608df26364a/9fb46b7b2a27b42e,796c022eac51c12c/646ee81543df1d12"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -498,9 +498,9 @@ scenarios:
     label: "CCXT 历史行情分页达到上限或游标停滞时拒绝返回不完整数据"
     status: executed
     anchor: "python/qianxing_ccxt/__init__.py"
-    command: "python -m unittest python.tests.test_ccxt.CcxtTest.test_ohlcv_page_limit_exhaustion_fails_closed_instead_of_returning_partial_history python.tests.test_ccxt.CcxtTest.test_ohlcv_full_page_that_repeats_the_cursor_fails_closed"
+    command: "python -m unittest python.tests.test_ccxt.CcxtTest.test_ohlcv_page_limit_exhaustion_fails_closed_instead_of_returning_partial_history python.tests.test_ccxt.CcxtTest.test_ohlcv_full_page_that_repeats_the_cursor_fails_closed python.tests.test_ccxt.CcxtTest.test_ohlcv_query_has_a_hard_row_limit python.tests.test_ccxt.CcxtTest.test_ohlcv_rejects_an_exchange_page_larger_than_requested"
     exit_code: 0
-    observed: "Ran 2 tests; page_cap_exhaustion_rejected=true nonprogress_cursor_rejected=true partial_dataset_never_accepted=true"
+    observed: "Ran 4 tests; page_cap_exhaustion_rejected=true nonprogress_cursor_rejected=true hard_row_limit=100000 oversized_page_rejected=true partial_dataset_never_accepted=true"
     evidence: ["python/tests/test_ccxt.py", "python/qianxing_ccxt/__init__.py"]
   - name: oos_walk_forward
     label: "样本外 / 走查（OOS / WFA）"

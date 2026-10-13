@@ -307,6 +307,44 @@ class CcxtTest(unittest.TestCase):
                 max_pages=3,
             )
 
+    def test_ohlcv_query_has_a_hard_row_limit(self):
+        class OversizedExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                return [
+                    [since + index, 100, 101, 99, 100, 1]
+                    for index in range(limit)
+                ]
+
+        exchange = OversizedExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        with self.assertRaisesRegex(CcxtConnectorError, "100000-row safety limit") as raised:
+            client.fetch_ohlcv(
+                "BTCUSDT.BINANCE",
+                start_ms=1000,
+                end_ms=200_000,
+                limit=100_001,
+                max_pages=1,
+            )
+        self.assertEqual(raised.exception.error_class, CcxtErrorClass.INVALID)
+
+    def test_ohlcv_rejects_an_exchange_page_larger_than_requested(self):
+        class OversizedPageExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                return [[since, 100, 101, 99, 100, 1]] * (limit + 1)
+
+        exchange = OversizedPageExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="binance"), exchange=exchange)
+        with self.assertRaisesRegex(CcxtConnectorError, "more rows than the requested"):
+            client.fetch_ohlcv(
+                "BTCUSDT.BINANCE",
+                start_ms=1000,
+                end_ms=5000,
+                limit=2,
+                max_pages=1,
+            )
+
     def test_ticker_and_order_use_normalized_values(self):
         ticker = self.client.fetch_ticker("BTCUSDT.BINANCE")
         self.assertEqual(ticker.bid_raw, 100_100_000_000)
