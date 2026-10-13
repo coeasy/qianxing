@@ -976,6 +976,23 @@ def main() -> int:
         command_prefix="cargo",
     )
 
+    executed(
+        "python_multileg_funding_artifact",
+        "Python 多腿回测产物保留历史 funding 输入、结算事实与费率来源",
+        "python/tests/test_app_use_cases.py",
+        ["-m", "unittest", "python.tests.test_app_use_cases.AppUseCaseTests.test_multi_leg_backtest_uses_the_shared_rust_application_flow_and_handle"],
+        r"(Ran 1 test)",
+        env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
+        extra="caller_supplied_historical_events=true signed_rates=true event_input_preserved=true execution_settlements_present=true shared_rust_app=true",
+        evidence=[
+            "python/tests/test_app_use_cases.py",
+            "python/qianxing/app.py",
+            "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
+            "crates/qx-xingban/src/backtest/portfolio_session/funding.rs",
+        ],
+        command_prefix="python",
+    )
+
     depth_portfolio_run_id = f"probe-depth-portfolio-{time.time_ns()}"
     depth_portfolio_spec = {
         "schema_version": 1,

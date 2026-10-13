@@ -1,8 +1,31 @@
 use super::{invalid, invariant, AppError};
-use crate::MultiLegSignalBucket;
+use crate::{MultiLegBacktestSpec, MultiLegSignalBucket};
 use qx_core::{InstrumentId, TradingInstrumentSpec};
 use qx_xingban::PortfolioBarSessionReport;
 use std::collections::BTreeMap;
+
+pub(super) fn input_kind(spec: &MultiLegBacktestSpec) -> &'static str {
+    if !spec.funding_events.is_empty() {
+        "caller_supplied_historical_events"
+    } else if spec.funding_bps != 0 {
+        "constant_bps"
+    } else {
+        "none"
+    }
+}
+
+pub(super) fn input_events(spec: &MultiLegBacktestSpec) -> Vec<serde_json::Value> {
+    spec.funding_events
+        .iter()
+        .map(|event| {
+            serde_json::json!({
+                "instrument": event.instrument.to_string(),
+                "settlement_ts": event.settlement_ts,
+                "rate_bps": event.rate_bps,
+            })
+        })
+        .collect()
+}
 
 pub(super) fn rates_for_legs(
     rate_bps: i64,

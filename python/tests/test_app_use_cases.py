@@ -2884,6 +2884,24 @@ class AppUseCaseTests(unittest.TestCase):
                 {event["ts"] for event in callback_artifact["execution_funding_events"]}
             )
         )
+        self.assertEqual(
+            callback_artifact["funding_rate_input"], "caller_supplied_historical_events"
+        )
+        self.assertEqual(
+            callback_artifact["funding_rate_events"],
+            [
+                {
+                    "instrument": "BTCUSDT.BINANCE",
+                    "settlement_ts": 8 * 60 * 60 * 1_000,
+                    "rate_bps": 100,
+                },
+                {
+                    "instrument": "BTCUSDT.BINANCE",
+                    "settlement_ts": 16 * 60 * 60 * 1_000,
+                    "rate_bps": -50,
+                },
+            ],
+        )
         expected_callbacks = sum(
             len(json.loads(Path(path).read_text(encoding="utf-8"))["ts"]) - 1
             for path in (payload["primary_bars_path"], payload["reference_bars_path"])

@@ -406,6 +406,8 @@ pub(super) fn run_inner(
         },
         "fill_model": fill_model_name(spec.fill_model),
         "funding_bps": spec.funding_bps,
+        "funding_rate_input": funding::input_kind(spec),
+        "funding_rate_events": funding::input_events(spec),
         "data_fingerprint": data_fingerprint,
         "config_hash": config_hash,
         "shared_result_hash": format!("{:016x}", portfolio_report.result_hash()),
@@ -442,7 +444,7 @@ pub(super) fn run_inner(
         "execution_funding_events": portfolio_report.funding_events_by_instrument.iter().flat_map(|(instrument, events)| events.iter().map(|(ts, amount)| serde_json::json!({"instrument": instrument.to_string(), "ts": ts, "amount_raw": amount.to_string()}))).collect::<Vec<_>>(),
         "matching": "qx-xingban::PortfolioBarEngine/NextBarOpenFillModel",
         "leg_return_basis": "leg pnl divided by declared leg initial cash; execution uses the shared account and does not enforce leg capital reservations",
-        "assumptions": ["both legs share one account Ledger, OMS, EventLog, and buying-power pool", "same-timestamp callbacks are deterministic and market orders compete by declared priority then instrument id", "all market events are replay-verified together", "each venue can declare its own maker/taker rates with shared rates as fallback", "signed funding settles at UTC 8-hour boundaries on the last observed mark using the open derivative position and is applied to the shared Ledger before callbacks at that timestamp", "funding settlement fails closed if its latest mark is more than one funding interval old", "funding debit or receipt is included exactly once in ending equity and each settlement is present in replay facts", "this is a constant-rate funding scenario, not an exchange-specific funding history", "missing market specs retain the legacy spot assumption and are represented by a normalized execution spec"],
+        "assumptions": ["both legs share one account Ledger, OMS, EventLog, and buying-power pool", "same-timestamp callbacks are deterministic and market orders compete by declared priority then instrument id", "all market events are replay-verified together", "each venue can declare its own maker/taker rates with shared rates as fallback", "signed funding settles at UTC 8-hour boundaries on the last observed mark using the open derivative position and is applied to the shared Ledger before callbacks at that timestamp", "funding settlement fails closed if its latest mark is more than one funding interval old", "funding debit or receipt is included exactly once in ending equity and each settlement is present in replay facts", "funding input is caller-supplied constant bps or timestamped historical events; event inputs are recorded in this artifact and do not imply an exchange history provider", "missing market specs retain the legacy spot assumption and are represented by a normalized execution spec"],
     });
     if let Some(account_id) = spec.account_id.as_deref() {
         if let Some(object) = payload.as_object_mut() {

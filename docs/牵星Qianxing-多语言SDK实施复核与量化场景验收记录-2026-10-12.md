@@ -370,6 +370,7 @@ Python 十策略证据：
 - 第一轮扩展检查发现常量资金费率无法表达交易所历史 funding rate 的逐次正负变化。`qx-core::FundingRateEvent` 现在统一携带标的、UTC 8 小时结算时间与 bps 费率；共享 Bar session 可按实际事件率调度、用结算前最后可见标记价计算，并将现金流记入同一 Ledger/EventLog 和多腿腿级归因。
 - 第二轮输入安全检查补上重复 `(instrument, settlement_ts)`、非结算边界、超范围 bps、未知标的、现货非零费率、常量与历史费率混用及超过 100,000 条事件的拒绝；事件序列按稳定时间线执行，未落在当前回测区间的历史事件不产生现金流。
 - 第三轮多语言检查将 `funding_events` 作为向后兼容的可选字段加入 `MultiLegBacktestSpec` 和 Python typed `FundingRateEvent`，Rust/Python 都调用相同 `qx-app` 与 `PortfolioBarEngine`；Python callback fixture 实测两个结算点使用不同符号费率，产物中事件时间戳与 EventLog LedgerApplied 项可核对。
-- 场景探针已执行 50 项：50 executed、0 declared_not_executed、0 missing、1 blocked；新增场景通过命令实际运行 Rust session 测试，确认两个不同结算点的正负费率进入共享账簿并可重放。唯一 blocked 是外部 CCXT/testnet 交易所订单生命周期验收。
-- 验证：`cargo test --offline -p qx-xingban` 116 单测及集成通过；`cargo test --offline -p qx-app --lib` 123/123；`cargo test --offline -p qx-sdk` 6 单测及 27 独立消费者/集成用例通过；Python 全量 `python -m pytest python/tests -q` 140/140；Python typed 多腿回归与 13 项 SDK 分层测试通过；`cargo build --offline -p qx-python`、严格 Clippy、格式检查和 `git diff --check` 通过。
+- 后续产物审计发现报告虽列出执行结算，但没有保留调用方输入的费率及费率来源，且旧假设文案仍称“常量费率”。现新增 `funding_rate_input`、完整 `funding_rate_events` 输入明细，并将假设改为注明常量或事件来源及“不是交易所 provider 数据”；Python 回归会逐字段核对两条输入、结算事实与来源标记。
+- 场景探针增加一条 Python→Rust 应用用例报告链路；最新探针实际执行 51 项：51 executed、0 declared_not_executed、0 missing、1 blocked。唯一 blocked 是外部 CCXT/testnet 交易所订单生命周期验收。
+- 验证：`cargo test --offline -p qx-xingban` 116 单测及集成通过；`cargo test --offline -p qx-app --lib` 123/123；`cargo test --offline -p qx-sdk` 6 单测及 27 独立消费者/集成用例通过；Python 全量 `python -m pytest python/tests -q` 140/140；本轮 Python typed 多腿回归、重建 `qx-python` 扩展、`qx-app` 123/123、严格 Clippy、格式检查、差异检查、1096 项架构门禁与 51 项量化探针通过。
 - 当前能力支持调用方提供历史费率事件，但尚未从交易所 funding-history Provider 自动取数，也没有 venue 专属结算时间表、跨币种 funding 或外部账单对账；常量 `funding_bps` 继续兼容旧 spec。实盘 testnet、跨账户组合风险、Paper/Live 多市场工作流、远端策略回调、C++ 默认 transport、Web/桌面端到端与全平台安装认证仍未完成。
