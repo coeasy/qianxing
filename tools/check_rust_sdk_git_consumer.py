@@ -18,6 +18,7 @@ GIT_URL = "https://github.com/coeasy/qianxing.git"
 MAIN_RS = r'''use qx_sdk::{
     BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability, Client,
     DatasetSpec, RemoteApiClient, RemoteResponse, RemoteTransport,
+    RunMultiMarketExperimentSpec,
 };
 use std::path::PathBuf;
 
@@ -59,6 +60,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(result.fills > 0, "external consumer backtest must trade");
     let checked = client.verify_run(&result)?;
     assert!(checked.verified, "external consumer verification failed: {:?}", checked.mismatches);
+
+    // Exercise the multi-market parameter grid through the published SDK surface.
+    let source: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&spec.bars_path)?)?;
+    let mut markets = Vec::new();
+    for (index, instrument) in ["BTCUSDT.BINANCE", "ETHUSDT.KRAKEN", "SOLUSDT.BYBIT"].iter().enumerate() {
+        let mut frame = source.clone();
+        frame["instrument"] = serde_json::json!(instrument);
+        let path = output.join(format!("market-{index}.json"));
+        std::fs::write(&path, serde_json::to_vec(&frame)?)?;
+        markets.push(serde_json::json!({
+            "instrument": instrument,
+            "bars_path": path,
+            "priority": index,
+            "strategies": [{
+                "priority": 0,
+                "reserved_capital_raw": 20_000_000_000_000_i128,
+                "strategy": {
+                    "kind": "sma_cross",
+                    "strategy_id": format!("external-market-slot-{index}"),
+                    "quantity_raw": 1_000_000_000_i128,
+                    "fast_window": 1,
+                    "slow_window": 3,
+                }
+            }]
+        }));
+    }
+    let experiment_json = serde_json::json!({
+        "schema_version": 1,
+        "experiment_id": "external-git-multi-market-grid",
+        "target_strategy_id": "external-market-slot-0",
+        "base": {
+            "schema_version": 1,
+            "run_id": "unused-external-multi-market-base",
+            "account_id": "external-shared-account",
+            "settlement_currency": "USDT",
+            "initial_cash_raw": 100_000_000_000_000_i128,
+            "seed": 7,
+            "output_dir": output.join("multi-market-output"),
+            "markets": markets,
+        },
+        "parameter_space": [{ "name": "fast_window", "values": [1, 2] }],
+        "strategy_kinds": ["sma_cross", "ema_cross"],
+    });
+    let experiment_spec = RunMultiMarketExperimentSpec::from_json(&experiment_json.to_string())?;
+    let experiment = client.run_multi_market_experiment(&experiment_spec)?;
+    assert_eq!(experiment.total_candidates, 4);
+    assert_eq!(experiment.succeeded_candidates, 4);
+    assert_eq!(experiment.failed_candidates, 0);
+
     let remote = RemoteApiClient::new(FakeRemote);
     let started = remote.start_paper_algo_execution(&serde_json::json!({"parent_id":"external-paper"}))?;
     assert_eq!(started["accepted"], true);
@@ -66,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     remote.cancel_paper_algo_execution("external-paper")?;
     remote.list_paper_algo_executions(None, 25)?;
     remote.get_live_events(Some(0))?;
-    println!("rust_sdk_git_consumer=passed fills={} remote_paper_lifecycle=4 event_cursor_reads=1 result_hash={}", result.fills, result.result_hash);
+    println!("rust_sdk_git_consumer=passed fills={} multi_market_candidates={} remote_paper_lifecycle=4 event_cursor_reads=1 result_hash={}", result.fills, experiment.succeeded_candidates, result.result_hash);
     Ok(())
 }
 '''

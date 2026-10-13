@@ -39,7 +39,7 @@ qx-sdk = { git = "https://github.com/coeasy/qianxing.git", rev = "e9fa6ab23aa3f7
 python tools/check_rust_sdk_git_consumer.py
 ```
 
-此检查创建 workspace 外的临时 Cargo 工程，以当前 `HEAD` 的完整 Git SHA 作为依赖，构建后实际调用数据校验、Rust 回测与结果复核。它验证 Git 安装路径，不等同 crates.io 发布；发布到 crates.io 仍需先发布内部 crate 依赖并通过 `cargo package` 与 registry consumer 验收。
+此检查创建 workspace 外的临时 Cargo 工程，以当前 `HEAD` 的完整 Git SHA 作为依赖，构建后实际调用数据校验、Rust 单市场回测与结果复核、多市场多策略参数实验（3 个市场、4 个候选），以及远端 Paper 生命周期和事件游标。它验证 Git 安装路径，不等同 crates.io 发布；发布到 crates.io 仍需先发布内部 crate 依赖并通过 `cargo package` 与 registry consumer 验收。
 
 `qx-sdk` 的公开面是 `qx-app` 公开面的**超集**，所以迁移期内两个依赖并存也不会冲突；
 但迁完之后应当把 `qx-app` 从 `Cargo.toml` 里删掉——留着它意味着"我还在用内部层"。

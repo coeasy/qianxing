@@ -396,7 +396,7 @@ scenarios:
     anchor: "tools/check_rust_sdk_git_consumer.py"
     command: "python tools/check_rust_sdk_git_consumer.py"
     exit_code: 0
-    observed: "rust_sdk_git_consumer=passed fills=1 remote_paper_lifecycle=4 event_cursor_reads=1 result_hash=c5927beae40d1768"
+    observed: "rust_sdk_git_consumer=passed fills=1 multi_market_candidates=4 remote_paper_lifecycle=4 event_cursor_reads=1 result_hash=c5927beae40d1768"
     evidence: ["crates/qx-sdk/Cargo.toml", "docs/qx-sdk-migration.md", "tools/check_rust_sdk_git_consumer.py"]
   - name: multi_language_strategy
     label: "多语言策略（Rust 内核 + Python worker）"
