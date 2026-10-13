@@ -2854,7 +2854,15 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertGreater(callback_outcome.primary_fills, 0)
         self.assertGreater(callback_outcome.reference_fills, 0)
-        self.assertEqual(callback.events.count("Bar"), 120)
+        expected_callbacks = sum(
+            len(json.loads(Path(path).read_text(encoding="utf-8"))["ts"]) - 1
+            for path in (payload["primary_bars_path"], payload["reference_bars_path"])
+        )
+        self.assertEqual(
+            callback.events.count("Bar"),
+            expected_callbacks,
+            "each market's first Bar is warmup-only and is not sent to the strategy",
+        )
         callback_handle_spec = MultiLegBacktestSpec(
             **{
                 **callback_spec.__dict__,

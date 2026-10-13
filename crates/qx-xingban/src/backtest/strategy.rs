@@ -114,7 +114,9 @@ impl<S: Strategy> NativeBarStrategy<S> {
         }
     }
 
-    pub(super) fn with_virtual_position(mut self) -> Self {
+    /// Use fill-confirmed positions for a strategy that can trade across instruments.
+    /// Position state is updated only after the shared Ledger accepts a fill.
+    pub fn with_virtual_position(mut self) -> Self {
         self.virtual_position = true;
         self
     }
@@ -249,7 +251,10 @@ impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
                 "NativeBarStrategy 收到不可见的当前或未来 Bar".into(),
             ));
         }
-        self.context.as_of = visible.ts;
+        // Markets may be sampled at different cadences. A callback for a slower
+        // market must not move the shared strategy clock behind data already seen.
+        self.context.as_of = self.context.as_of.max(visible.ts);
+        self.context.venue_id = instrument.venue.to_string();
         if !self.virtual_position {
             self.context
                 .positions
@@ -294,5 +299,61 @@ impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
     ) -> Result<Vec<Order>, qx_core::QxError> {
         self.context.available_margin_raw = available_margin_raw;
         self.on_bar_orders_checked(history, instrument, ts, position)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qx_strategy::{MarketEvent, Strategy, StrategyContext, StrategyDecision};
+
+    struct NoopStrategy;
+
+    impl Strategy for NoopStrategy {
+        fn on_event(
+            &mut self,
+            _context: &StrategyContext,
+            _event: &MarketEvent,
+        ) -> Result<StrategyDecision, String> {
+            Ok(StrategyDecision {
+                schema_version: qx_strategy::STRATEGY_API_VERSION,
+                request_id: "as-of-test".into(),
+                strategy_id: "as-of-test".into(),
+                signal_id: 1,
+                confidence: 10_000,
+                priority: 0,
+                expires_at: 0,
+                intents: Vec::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn native_strategy_context_clock_never_regresses_across_unaligned_markets() {
+        let mut adapter = NativeBarStrategy::new(
+            NoopStrategy,
+            StrategyContext {
+                strategy_id: "as-of-test".into(),
+                strategy_version: "test-v1".into(),
+                account_id: "account".into(),
+                venue_id: "SIM".into(),
+                data_fingerprint: "as-of-test".into(),
+                as_of: 1,
+                positions: BTreeMap::new(),
+                cash: BTreeMap::new(),
+                available_margin_raw: None,
+                risk_state: "backtest".into(),
+            },
+        );
+        let fast = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let slow = InstrumentId::parse("ETHUSDT.KRAKEN").unwrap();
+        adapter
+            .on_bar_orders_checked(&[Bar::new(100, 1, 1, 1, 1, 1)], &fast, 110, 0)
+            .unwrap();
+        assert_eq!(adapter.context.as_of, 100);
+        adapter
+            .on_bar_orders_checked(&[Bar::new(80, 1, 1, 1, 1, 1)], &slow, 120, 0)
+            .unwrap();
+        assert_eq!(adapter.context.as_of, 100);
     }
 }

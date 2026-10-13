@@ -9,10 +9,11 @@ use qx_strategy::{
     StrategyOrderIntent, STRATEGY_API_VERSION,
 };
 
+mod shared_execution;
 mod sizing_rejection;
 mod unaligned_timestamps;
 
-struct BuyEachLeg(std::collections::BTreeSet<String>);
+struct BuyEachLeg(std::collections::BTreeSet<String>, i128);
 
 impl Strategy for BuyEachLeg {
     fn on_event(
@@ -29,7 +30,7 @@ impl Strategy for BuyEachLeg {
                 intent_id: self.0.len() as u64,
                 instrument,
                 side: Side::Buy,
-                qty: Quantity::from_raw(SCALE),
+                qty: Quantity::from_raw(self.1),
                 limit: None,
                 policy: None,
                 reduce_only: false,
@@ -119,7 +120,7 @@ fn caller_strategy_runs_both_legs_and_cancellable_sdk_surface_can_be_shared() {
     let outcome = crate::run_multi_leg_backtest_with_strategy(
         &spec,
         &identity,
-        Box::new(BuyEachLeg(Default::default())),
+        Box::new(BuyEachLeg(Default::default(), SCALE)),
         &context("custom-pair-run"),
     )
     .expect("caller strategy goes through both shared leg engines");
@@ -135,7 +136,7 @@ fn caller_strategy_runs_both_legs_and_cancellable_sdk_surface_can_be_shared() {
     let conflict = crate::run_multi_leg_backtest_with_strategy(
         &spec,
         &changed_identity,
-        Box::new(BuyEachLeg(Default::default())),
+        Box::new(BuyEachLeg(Default::default(), SCALE)),
         &context("custom-pair-run"),
     )
     .expect_err("changed callback code cannot overwrite the same run identity");
@@ -155,7 +156,7 @@ fn caller_strategy_runs_both_legs_and_cancellable_sdk_surface_can_be_shared() {
     let mut handle = handle_spec
         .start_with_strategy(
             identity,
-            BuyEachLeg(Default::default()),
+            BuyEachLeg(Default::default(), SCALE),
             context("custom-pair-handle"),
         )
         .expect("cancellable callback run starts");
@@ -168,7 +169,7 @@ fn caller_strategy_runs_both_legs_and_cancellable_sdk_surface_can_be_shared() {
 }
 
 #[test]
-fn multi_leg_strategy_context_cash_follows_the_event_leg() {
+fn multi_leg_strategy_context_uses_shared_cash_and_market_venue() {
     let root = super::fixtures::scratch("multi-leg-context-cash");
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -208,8 +209,9 @@ fn multi_leg_strategy_context_cash_follows_the_event_leg() {
     )
     .expect("context observer run");
     let seen_cash = seen_cash.lock().unwrap();
-    assert_eq!(seen_cash.get("BTCUSDT.BINANCE"), Some(&primary_cash));
-    assert_eq!(seen_cash.get("ETHUSDT.KRAKEN"), Some(&reference_cash));
+    let shared_cash = primary_cash + reference_cash;
+    assert_eq!(seen_cash.get("BTCUSDT.BINANCE"), Some(&shared_cash));
+    assert_eq!(seen_cash.get("ETHUSDT.KRAKEN"), Some(&shared_cash));
 }
 
 #[test]
@@ -326,9 +328,9 @@ fn multi_leg_backtest_runs_shared_strategy_and_matching_and_is_idempotent() {
     assert_eq!(artifact["account_ledger"]["account_id"], "acct.pair-test");
     assert_eq!(
         artifact["account_ledger"]["allocation_policy"],
-        "fixed_per_leg_reservation"
+        "shared_buying_power_deterministic_market_priority"
     );
-    assert_eq!(artifact["account_ledger"]["cross_leg_buying_power"], false);
+    assert_eq!(artifact["account_ledger"]["cross_leg_buying_power"], true);
     assert_eq!(artifact["account_ledger"]["replay_verified"], true);
     assert_eq!(
         artifact["account_ledger"]["initial_cash_raw"],

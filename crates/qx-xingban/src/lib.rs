@@ -28,7 +28,8 @@ pub use self::ashare::{
 };
 pub use self::backtest::{
     BacktestConfig, BacktestEngine, BacktestReport, BarStrategy, DeliveryEvent, FundingEvent,
-    InterestEvent, NativeBarStrategy, PortfolioBarEvent, PortfolioBarSeries, PortfolioBarStrategy,
+    InterestEvent, NativeBarStrategy, PortfolioBarEngine, PortfolioBarEvent, PortfolioBarMarket,
+    PortfolioBarSeries, PortfolioBarSessionConfig, PortfolioBarSessionReport, PortfolioBarStrategy,
     PortfolioBarTimeline, PortfolioStrategySlot, ProtectiveExitFill, ProtectiveExitPolicy,
     ProtectiveExitReason, ProtectiveExitSignal, RunManifestIdentity, VirtualTradingConfig,
 };

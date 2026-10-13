@@ -281,7 +281,9 @@ pub(crate) fn run_multi_builtin_backtest(
         targets: &attribution_primary_targets,
         bars: &primary_bars,
         spec: attribution_primary_spec.as_ref(),
-        report: &primary_report,
+        fills: &primary_report.fills,
+        event_log: &primary_report.event_log,
+        clock_end: primary_report.clock_end,
     };
     let reference_leg = MultiLegLegFacts {
         label: "reference",
@@ -290,7 +292,9 @@ pub(crate) fn run_multi_builtin_backtest(
         targets: &attribution_reference_targets,
         bars: &reference_bars,
         spec: attribution_reference_spec.as_ref(),
-        report: &reference_report,
+        fills: &reference_report.fills,
+        event_log: &reference_report.event_log,
+        clock_end: reference_report.clock_end,
     };
     let primary_buckets = multi_leg_leg_buckets(&primary_leg, funding_bps)?;
     let reference_buckets = multi_leg_leg_buckets(&reference_leg, funding_bps)?;

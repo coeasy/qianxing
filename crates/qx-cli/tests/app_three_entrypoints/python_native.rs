@@ -59,6 +59,8 @@ pub(super) fn via_python(
          sys.path.insert(0, {python_dir:?})\n\
          sys.path.insert(0, {native_dir:?})\n\
          try:\n\
+         \x20   import _qianxing_native\n\
+         \x20   sys.modules['qianxing_bridge._qianxing_native'] = _qianxing_native\n\
          \x20   from qianxing_bridge import app, native\n\
          except Exception as error:\n\
          \x20   print('QX_APP_PYTHON_UNAVAILABLE: ' + str(error), file=sys.stderr)\n\

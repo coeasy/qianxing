@@ -24,7 +24,14 @@ pub mod strategy;
 pub use strategy::{BarStrategy, NativeBarStrategy};
 mod portfolio_strategy;
 pub use portfolio_strategy::{PortfolioBarStrategy, PortfolioStrategySlot};
+mod portfolio_session;
+pub use portfolio_session::{
+    PortfolioBarEngine, PortfolioBarMarket, PortfolioBarSessionConfig, PortfolioBarSessionReport,
+};
 pub(crate) mod portfolio_budget;
+#[cfg(test)]
+#[path = "backtest/portfolio_session_tests.rs"]
+mod portfolio_session_tests;
 use portfolio_budget::PortfolioBudgetState;
 mod fill_application;
 use fill_application::FillApplicationInput;
@@ -563,6 +570,10 @@ impl BacktestEngine {
                     portfolio_budget: &mut portfolio_budget,
                     margin: margin.as_ref(),
                     matcher: &matcher,
+                    other_pending_funding_raw: 0,
+                    other_market_margin_raw: 0,
+                    portfolio_marks: None,
+                    portfolio_specs: None,
                     risk: &risk,
                     fx_rates: &virtual_trading.fx_rates,
                     ashare_rules,

@@ -1,4 +1,4 @@
-//! Versioned two-leg Bar backtest contract. Input streams may have different timestamps; execution still uses fixed per-leg cash reservations and does not share buying power.
+//! Versioned two-leg Bar backtest contract. Input streams may have different timestamps; both legs execute through one shared account buying-power pool.
 
 use super::{is_identity_token, BuiltinStrategySpec};
 use crate::error::{AppError, AppErrorCategory};
@@ -51,7 +51,7 @@ pub struct MultiLegBacktestSpec {
     pub funding_bps: i64,
     #[serde(default)]
     pub fill_model: MultiLegFillModel,
-    /// Optional shared ownership for both legs. Omitted preserves legacy leg identities.
+    /// Shared owner for both legs. Omitted derives one stable account identity from `run_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
 }

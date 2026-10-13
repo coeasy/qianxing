@@ -347,3 +347,11 @@ Python 十策略证据：
 - 新增跨 Bar 现金竞争用例：1000 账户现金先允许 3 笔各需 300 的挂单，拒绝第 4、5 笔；限价到达后 3 笔成交，共 3 笔成交且未透支。另以逐次半成的模型验证预留从 100 降到 50、再降到 25。新场景已进入量化探针。
 - 验证：`qx-xingban` 全量 109 项、`qx-app` 全量 122 项通过；相关 crate 严格 Clippy、Python 全量 140 项通过；架构门禁 1096 项通过；场景探针 47 executed、0 declared_not_executed、1 missing、1 blocked；Windows x64 `cp310-abi3` wheel 构建后隔离解包导入及 Python 全量用例通过，SHA-256 `40cc9eb005cbb5cf1af616b858be1daca97f9c5b5a010bdf7d4e215711c4ecb8`。
 - 资金预留修复作用于单腿 Bar matcher；它不会把多腿执行变成共享账户内核。两腿独立 matcher/OMS/Ledger 的既有形状仍在，故跨市场共享余额竞争、统一撮合、拒单/部分成交跨腿反馈继续是 `shared_multileg_execution` 的缺口。Live 仍需外部 CCXT 与 testnet 凭据；C++ 和 Linux/macOS 安装产物未在本机验收。
+
+## 44. 2026-10-14 实现：双腿 Bar 回测共享执行账簿
+
+- 第一轮链路复核确认原多腿入口仍是两套独立引擎，遂将统一事件调度扩展为 `qx-xingban::PortfolioBarEngine`：同一时间戳先收齐各市场策略决策，再按稳定 priority/InstrumentId 做账户级资金准入，使用各自 matcher，成交统一经过既有 `fill_application` 写入同一 OMS、Ledger、EventLog 与策略回报。多腿应用现在从该 session 产出单一账簿/回放摘要；旧的预扫描目标逻辑及孤立模块已删除。现货规格可回退为明确记录的兼容假设；Option 因合约身份/估值语义尚未建模而明确拒绝。
+- 第二轮语言消费者复核确认 Rust SDK 与 Python 高层入口复用同一 `qx-app` 用例；新增跨 venue 上下文校验和共享现金竞争应用用例，验证优先市场成交、另一市场因余额不足被拒、拒单归属和全局回放校验。CLI/HTTP/Python 同输入一致性复测还发现测试辅助器复制了新 DLL，却被 Python 包目录内旧 `.pyd` 抢先加载；现在测试显式绑定新构建模块，三入口同规格哈希用例通过。Rust `as_of` 时钟在第三轮非对齐时间回调审查中发现可能倒退，已改为单调不回退并添加专门回归用例。
+- 第三轮场景/发布复核发现旧场景清单会在新实现后继续生成静态 `missing`，探针已改为真实运行共享购买力竞争测试并据结果生成状态。探针结果：48 项 executed、0 项 declared_not_executed、1 项 missing、1 项 blocked。唯一量化场景 missing 是多腿 funding 尚未作为执行期现金流写入共享 Ledger/购买力；唯一 blocked 是缺少外部 CCXT/testnet 环境和凭据的实盘交易所验收。
+- 验证：`cargo test --offline -p qx-xingban`（112 单测及集成测试）通过；`cargo test --offline -p qx-app --lib` 123/123；`cargo test --offline -p qx-sdk`（6 单测与 27 独立消费者/集成用例）通过；`cargo test --offline -p qx-cli`（396 单测和所有集成二进制）通过；Python 全量 `python -m pytest python/tests -q` 140/140；`cargo build --offline -p qx-python`、`cargo check --offline -p qx-cli`、`cargo clippy --offline -p qx-xingban -p qx-app --all-targets -- -D warnings`、格式检查、1096 项架构门禁及 `git diff --check` 通过。系统临时目录在本环境不可写时，测试 `TEMP/TMP` 定向到仓库隔离临时目录。
+- 本节只关闭本机可验证的双腿 Bar 研究回测缺口，不代表多腿 funding、跨账户组合、所有交易所/数据源 conformance、远端策略回调、完整 Web/桌面操作、C++ 独立运行时或生产实盘认证完成；整体 SDK 发布门仍未关闭。

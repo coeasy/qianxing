@@ -30,6 +30,12 @@ pub(crate) struct OrderAdmissionInput<'a> {
     pub(crate) portfolio_budget: &'a mut PortfolioBudgetState,
     pub(crate) margin: &'a dyn MarginRule,
     pub(crate) matcher: &'a BarMatchingEngine,
+    /// Reservations held by other market matchers in a shared account.
+    pub(crate) other_pending_funding_raw: i128,
+    pub(crate) other_market_margin_raw: i128,
+    /// Complete mark/spec snapshots for cross-market account risk valuation.
+    pub(crate) portfolio_marks: Option<&'a BTreeMap<InstrumentId, Price>>,
+    pub(crate) portfolio_specs: Option<&'a BTreeMap<InstrumentId, TradingInstrumentSpec>>,
     pub(crate) risk: &'a RiskGate,
     pub(crate) fx_rates: &'a BTreeMap<String, Price>,
     pub(crate) ashare_rules: Option<&'a AshareRuleConfig>,
@@ -63,6 +69,10 @@ pub(crate) fn admit_orders(
         portfolio_budget,
         margin,
         matcher,
+        other_pending_funding_raw,
+        other_market_margin_raw,
+        portfolio_marks,
+        portfolio_specs,
         risk,
         fx_rates,
         ashare_rules,
@@ -195,15 +205,30 @@ pub(crate) fn admit_orders(
             )?)
         };
         let marks = BTreeMap::from([(instrument.clone(), Price::from_raw(visible_close))]);
-        let equity = equity_for(
-            ledger,
-            account_id,
-            &marks,
-            currency,
-            multiplier,
-            derivative_spec,
-            fx_rates,
-        )?;
+        let equity = match (portfolio_marks, portfolio_specs) {
+            (Some(marks), Some(specs)) => ledger
+                .valuate(
+                    &qx_core::ValuationContext::spot(account_id, marks, currency)
+                        .with_market_specs(specs)
+                        .with_fx(fx_rates),
+                )?
+                .equity
+                .raw(),
+            (None, None) => equity_for(
+                ledger,
+                account_id,
+                &marks,
+                currency,
+                multiplier,
+                derivative_spec,
+                fx_rates,
+            )?,
+            _ => {
+                return Err(qx_core::QxError::Invariant(
+                    "共享账户风控估值必须同时提供 market marks 与 specs".into(),
+                ));
+            }
+        };
         let cash_funded_spot_buy =
             derivative_spec.is_none() && order.side == Side::Buy && !product_policy.reduce_only;
         let required_funding = if cash_funded_spot_buy {
@@ -224,9 +249,12 @@ pub(crate) fn admit_orders(
             ledger.cash_for(account_id, currency)
         } else {
             equity
+                .checked_sub(other_market_margin_raw)
+                .unwrap_or(i128::MIN)
         };
         let total_reserved_funding = reserved_funding_raw
             .checked_add(matcher.pending_funding_reservation_raw())
+            .and_then(|value| value.checked_add(other_pending_funding_raw))
             .unwrap_or(i128::MAX);
         let unreserved_funding = available_funding
             .checked_sub(total_reserved_funding)

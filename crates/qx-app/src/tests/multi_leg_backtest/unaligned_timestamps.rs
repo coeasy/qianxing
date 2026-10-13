@@ -29,7 +29,7 @@ fn multi_leg_backtest_accepts_unaligned_market_timestamps() {
     let outcome = crate::run_multi_leg_backtest_with_strategy(
         &spec,
         &identity,
-        Box::new(BuyEachLeg(Default::default())),
+        Box::new(BuyEachLeg(Default::default(), SCALE)),
         &context("pair-align"),
     )
     .expect("independently sampled markets use the merged deterministic timeline");

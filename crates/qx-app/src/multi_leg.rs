@@ -27,6 +27,12 @@ pub struct MultiLegSignalBucket {
     realized_standing_after_raw: i128,
 }
 
+impl MultiLegSignalBucket {
+    pub fn funding_raw(&self) -> i128 {
+        self.funding_raw
+    }
+}
+
 /// 单腿归因输入：目标仓位时间序列、Bar、产品规格和该腿的成交报告。
 pub struct MultiLegLegFacts<'a> {
     pub label: &'static str,
@@ -35,7 +41,9 @@ pub struct MultiLegLegFacts<'a> {
     pub targets: &'a BTreeMap<u64, i128>,
     pub bars: &'a [Bar],
     pub spec: Option<&'a TradingInstrumentSpec>,
-    pub report: &'a qx_xingban::BacktestReport,
+    pub fills: &'a [qx_core::Fill],
+    pub event_log: &'a qx_core::EventLog,
+    pub clock_end: u64,
 }
 
 /// 资金费结算周期（8 小时）；持仓不足一个周期时按持有毫秒数比例计提。
@@ -142,7 +150,7 @@ pub fn multi_leg_leg_buckets(
         .iter()
         .map(|bucket| bucket.planned_qty_raw)
         .collect::<Vec<_>>();
-    for fill in &leg.report.fills {
+    for fill in leg.fills {
         if fill.fee.raw() < 0 {
             return Err(format!(
                 "{} 腿存在负费用成交，多腿归因要求费用非负",
@@ -208,7 +216,7 @@ pub fn multi_leg_leg_buckets(
                 let hold_end = buckets
                     .get(index + 1)
                     .map(|later| later.ts)
-                    .unwrap_or(leg.report.clock_end);
+                    .unwrap_or(leg.clock_end);
                 if hold_end <= start_ts {
                     continue;
                 }
@@ -314,7 +322,7 @@ pub fn multi_leg_leg_integrity(
         .iter()
         .map(|bucket| bucket.filled_qty_raw)
         .sum::<i128>();
-    let rejections = rejection_facts(&leg.report.event_log);
+    let rejections = rejection_facts(leg.event_log);
     MultiLegLegIntegrity {
         label: leg.label,
         instrument: leg.instrument.to_string(),

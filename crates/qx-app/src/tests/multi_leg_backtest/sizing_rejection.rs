@@ -31,7 +31,7 @@ fn custom_multi_leg_callbacks_reject_builtin_sizing_parameters() {
     let error = crate::run_multi_leg_backtest_with_strategy(
         &spec,
         &identity,
-        Box::new(BuyEachLeg(Default::default())),
+        Box::new(BuyEachLeg(Default::default(), SCALE)),
         &context("custom-sizing-run"),
     )
     .expect_err("custom callbacks own their own position sizing");

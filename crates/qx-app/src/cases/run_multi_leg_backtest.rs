@@ -4,26 +4,28 @@ use crate::{
     AppError, AppErrorCategory, CallerCapability, MultiLegBacktestOutcome, MultiLegBacktestSpec,
     MultiLegFillModel, RunContext,
 };
-use qx_core::{Fnv1a, Quantity, ReplayVerifier};
+use qx_core::{Fnv1a, MakerTakerFeeModel, Money, Quantity};
 use qx_datastruct::BarFrame;
 use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, Strategy, StrategyContext};
-use qx_xingban::{PortfolioBarSeries, PortfolioBarTimeline};
+use qx_xingban::{
+    NativeBarStrategy, NoMargin, PortfolioBarEngine, PortfolioBarMarket, PortfolioBarSessionConfig,
+    ZeroLatency,
+};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub(super) mod custom_strategy;
-mod leg;
 mod market_spec;
 mod models;
 mod portfolio_ledger;
+mod report_metrics;
 mod strategy_targets;
-mod targets;
 mod validation;
 pub(super) use custom_strategy::InjectedMultiLegStrategy;
-use leg::{run_leg, LegRunSpec};
-pub(super) use market_spec::validate_leg_spec;
+pub(super) use market_spec::{execution_market_spec, validate_leg_spec};
 pub(super) use models::{fill_model_for, fill_model_name};
-use strategy_targets::build_target_schedules;
+use report_metrics::{fill_result_hash, leg_return_bps, LegReturnInput};
+use strategy_targets::{RecordingMultiLegStrategy, TargetSchedules};
 use validation::{read_frame, validate_custom_sizing};
 
 const MIN_BARS: usize = 3;
@@ -82,19 +84,6 @@ pub(super) fn run_inner(
             format!("多腿回测每条腿至少需要 {MIN_BARS} 根 Bar"),
         ));
     }
-    let timeline = PortfolioBarTimeline::new(&[
-        PortfolioBarSeries {
-            instrument: &primary.instrument,
-            priority: 1,
-            bars: &primary_bars,
-        },
-        PortfolioBarSeries {
-            instrument: &reference.instrument,
-            priority: 0,
-            bars: &reference_bars,
-        },
-    ])
-    .map_err(invalid)?;
     let primary_spec = validate_leg_spec(
         "主腿",
         spec.primary_market_spec.as_ref(),
@@ -171,17 +160,22 @@ pub(super) fn run_inner(
     };
     strategy_config.validate().map_err(invalid)?;
     let caller_strategy = injected.is_some();
-    let mut strategy: Box<dyn Strategy> = match injected {
+    let strategy: Box<dyn Strategy> = match injected {
         Some(custom) => custom.strategy,
         None => Box::new(BuiltinStrategy::new(strategy_config).map_err(invalid)?),
     };
-    let mut strategy_context = StrategyContext {
+    let shared_account_id = spec
+        .account_id
+        .clone()
+        .unwrap_or_else(|| format!("multi-leg-{}", spec.run_id));
+    let initial_cash_raw = spec
+        .primary_initial_cash_raw
+        .checked_add(spec.reference_initial_cash_raw)
+        .ok_or_else(|| invalid("多腿共享账户初始本金溢出"))?;
+    let strategy_context = StrategyContext {
         strategy_id: strategy_id.clone(),
         strategy_version: strategy_version.clone(),
-        account_id: spec
-            .account_id
-            .clone()
-            .unwrap_or_else(|| format!("multi-leg-{}", spec.run_id)),
+        account_id: shared_account_id.clone(),
         venue_id: primary.instrument.venue.to_string(),
         data_fingerprint: data_fingerprint.clone(),
         as_of: primary_bars[0].ts,
@@ -189,101 +183,109 @@ pub(super) fn run_inner(
             (primary.instrument.to_string(), 0),
             (reference.instrument.to_string(), 0),
         ]),
-        cash: BTreeMap::from([(
-            spec.settlement_currency.clone(),
-            spec.primary_initial_cash_raw,
-        )]),
-        available_margin_raw: Some(spec.primary_initial_cash_raw),
+        cash: BTreeMap::from([(spec.settlement_currency.clone(), initial_cash_raw)]),
+        available_margin_raw: Some(initial_cash_raw),
         risk_state: "multi-leg-backtest".into(),
     };
-    strategy.on_init(&strategy_context).map_err(invalid)?;
-    let Some(targets) = build_target_schedules(
-        strategy.as_mut(),
-        &mut strategy_context,
-        &timeline,
-        &primary.instrument,
+    let target_schedules = std::sync::Arc::new(std::sync::Mutex::new(TargetSchedules {
+        primary: BTreeMap::new(),
+        reference: BTreeMap::new(),
+    }));
+    let recording_strategy = RecordingMultiLegStrategy::new(
+        strategy,
+        primary.instrument.clone(),
+        reference.instrument.clone(),
+        target_schedules.clone(),
+        caller_strategy,
+    );
+    let mut strategy_adapter =
+        NativeBarStrategy::new(recording_strategy, strategy_context).with_virtual_position();
+    strategy_adapter.initialize().map_err(invalid)?;
+    let primary_execution_spec =
+        execution_market_spec(primary_spec, &primary.instrument, &spec.settlement_currency);
+    let reference_execution_spec = execution_market_spec(
+        reference_spec,
         &reference.instrument,
         &spec.settlement_currency,
-        spec.primary_initial_cash_raw,
-        spec.reference_initial_cash_raw,
-        caller_strategy,
-        cancellation,
-    )?
-    else {
-        return Ok(None);
-    };
-    let primary_account_id = spec
-        .account_id
-        .clone()
-        .unwrap_or_else(|| "multi-primary".into());
-    let reference_account_id = spec
-        .account_id
-        .clone()
-        .unwrap_or_else(|| "multi-reference".into());
-    let primary_report = run_leg(LegRunSpec {
-        instrument: &primary.instrument,
-        bars: &primary_bars,
-        targets: targets.primary.clone(),
-        account_id: primary_account_id.clone(),
-        initial_cash_raw: spec.primary_initial_cash_raw,
-        seed: spec.seed,
-        currency: &spec.settlement_currency,
-        instrument_spec: primary_spec.cloned(),
-        maker_fee_bps: spec.primary_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
-        taker_fee_bps: spec.primary_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
-        fill_model: spec.fill_model,
-        cancellation,
-    })?;
-    let Some(primary_report) = primary_report else {
-        return Ok(None);
-    };
-    let reference_report = run_leg(LegRunSpec {
-        instrument: &reference.instrument,
-        bars: &reference_bars,
-        targets: targets.reference.clone(),
-        account_id: reference_account_id.clone(),
-        initial_cash_raw: spec.reference_initial_cash_raw,
-        seed: spec.seed,
-        currency: &spec.settlement_currency,
-        instrument_spec: reference_spec.cloned(),
-        maker_fee_bps: spec.reference_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
-        taker_fee_bps: spec.reference_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
-        fill_model: spec.fill_model,
-        cancellation,
-    })?;
-    let Some(reference_report) = reference_report else {
-        return Ok(None);
-    };
-    let primary_replay =
-        ReplayVerifier::verify(primary_report.event_log.events(), &primary_report.ledger)
-            .map_err(|error| invariant(format!("主腿事件重放失败: {error}")))?;
-    let reference_replay = ReplayVerifier::verify(
-        reference_report.event_log.events(),
-        &reference_report.ledger,
+    );
+    let markets = vec![
+        PortfolioBarMarket {
+            instrument: primary.instrument.clone(),
+            priority: 1,
+            bars: &primary_bars,
+            spec: primary_execution_spec.clone(),
+            fill: fill_model_for(spec.fill_model, primary_spec)?,
+            fee: Box::new(MakerTakerFeeModel {
+                maker_bp: spec.primary_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
+                taker_bp: spec.primary_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
+            }),
+            latency: Box::new(ZeroLatency),
+            margin: Box::new(NoMargin),
+            seed: spec.seed,
+        },
+        PortfolioBarMarket {
+            instrument: reference.instrument.clone(),
+            priority: 0,
+            bars: &reference_bars,
+            spec: reference_execution_spec.clone(),
+            fill: fill_model_for(spec.fill_model, reference_spec)?,
+            fee: Box::new(MakerTakerFeeModel {
+                maker_bp: spec.reference_maker_fee_bps.unwrap_or(spec.maker_fee_bps),
+                taker_bp: spec.reference_taker_fee_bps.unwrap_or(spec.taker_fee_bps),
+            }),
+            latency: Box::new(ZeroLatency),
+            margin: Box::new(NoMargin),
+            seed: spec.seed,
+        },
+    ];
+    let engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: shared_account_id.clone(),
+            currency: spec.settlement_currency.clone(),
+            initial_cash: Money::from_raw(initial_cash_raw),
+            risk: qx_zhenlu::RiskGate::conservative_default(),
+        },
+        markets,
     )
-    .map_err(|error| invariant(format!("对冲腿事件重放失败: {error}")))?;
-    if primary_replay.log_digest != primary_report.result_hash()
-        || reference_replay.log_digest != reference_report.result_hash()
-    {
-        return Err(invariant("多腿结果哈希与事件重放哈希不一致"));
+    .map_err(|error| AppError::from_qx_error(&error))?;
+    let portfolio_report = match cancellation {
+        Some(token) => engine.run_with_cancel(&mut strategy_adapter, || token.is_cancelled()),
+        None => engine.run(&mut strategy_adapter).map(Some),
     }
+    .map_err(|error| AppError::from_qx_error(&error))?;
+    let Some(portfolio_report) = portfolio_report else {
+        return Ok(None);
+    };
+    strategy_adapter.strategy.on_stop().map_err(invalid)?;
+    let targets = target_schedules
+        .lock()
+        .map_err(|_| invariant("多腿目标记录锁已中毒"))?
+        .clone();
+    let primary_fills = &portfolio_report.fills_by_instrument[&primary.instrument];
+    let reference_fills = &portfolio_report.fills_by_instrument[&reference.instrument];
+    let primary_rejections = &portfolio_report.rejections_by_instrument[&primary.instrument];
+    let reference_rejections = &portfolio_report.rejections_by_instrument[&reference.instrument];
     let primary_leg = crate::MultiLegLegFacts {
         label: "primary",
-        account_id: &primary_account_id,
+        account_id: &shared_account_id,
         instrument: &primary.instrument,
         targets: &targets.primary,
         bars: &primary_bars,
         spec: primary_spec,
-        report: &primary_report,
+        fills: primary_fills,
+        event_log: primary_rejections,
+        clock_end: portfolio_report.clock_end,
     };
     let reference_leg = crate::MultiLegLegFacts {
         label: "reference",
-        account_id: &reference_account_id,
+        account_id: &shared_account_id,
         instrument: &reference.instrument,
         targets: &targets.reference,
         bars: &reference_bars,
         spec: reference_spec,
-        report: &reference_report,
+        fills: reference_fills,
+        event_log: reference_rejections,
+        clock_end: portfolio_report.clock_end,
     };
     let primary_buckets =
         crate::multi_leg_leg_buckets(&primary_leg, spec.funding_bps).map_err(invalid)?;
@@ -308,40 +310,63 @@ pub(super) fn run_inner(
         .collect::<Vec<_>>();
     let pending_reconcile_json =
         crate::multi_leg_pending_reconcile_json(&attribution.pending_reconcile);
-    let account_ledger = portfolio_ledger::for_spec(
-        spec,
-        &primary.instrument,
-        &reference.instrument,
-        &primary_report.ledger,
-        &reference_report.ledger,
+    let account_ledger = portfolio_ledger::shared_account_ledger(
+        &shared_account_id,
+        initial_cash_raw,
+        &[primary.instrument.clone(), reference.instrument.clone()],
+        &portfolio_report.ledger,
     )?;
 
     let funding_raw = totals.2;
-    let pnl = primary_report
-        .final_equity()
-        .checked_sub(spec.primary_initial_cash_raw)
-        .and_then(|x| {
-            x.checked_add(
-                reference_report
-                    .final_equity()
-                    .checked_sub(spec.reference_initial_cash_raw)?,
-            )
-        })
+    let final_equity = portfolio_report
+        .equity
+        .last()
+        .map(|(_, equity)| *equity)
+        .unwrap_or(initial_cash_raw);
+    let pnl = final_equity
+        .checked_sub(initial_cash_raw)
         .and_then(|x| x.checked_sub(funding_raw))
         .ok_or_else(|| invalid("多腿组合净盈亏（含资金费）溢出"))?;
-    let funded = spec
-        .primary_initial_cash_raw
-        .checked_add(spec.reference_initial_cash_raw)
-        .ok_or_else(|| invalid("多腿组合本金溢出"))?;
+    let funded = initial_cash_raw;
     let combined = pnl
         .checked_mul(10_000)
         .and_then(|x| x.checked_div(funded))
         .and_then(|x| i32::try_from(x).ok())
         .ok_or_else(|| invalid("多腿组合收益无法表示"))?;
+    let primary_funding = primary_buckets
+        .iter()
+        .try_fold(0_i128, |sum, bucket| sum.checked_add(bucket.funding_raw()))
+        .ok_or_else(|| invalid("主腿资金费累计溢出"))?;
+    let reference_funding = reference_buckets
+        .iter()
+        .try_fold(0_i128, |sum, bucket| sum.checked_add(bucket.funding_raw()))
+        .ok_or_else(|| invalid("对冲腿资金费累计溢出"))?;
+    let primary_return = leg_return_bps(LegReturnInput {
+        ledger: &portfolio_report.ledger,
+        account_id: &shared_account_id,
+        instrument: &primary.instrument,
+        spec: &primary_execution_spec,
+        bars: &primary_bars,
+        fills: primary_fills,
+        funding_raw: primary_funding,
+        initial_cash_raw: spec.primary_initial_cash_raw,
+    })?;
+    let reference_return = leg_return_bps(LegReturnInput {
+        ledger: &portfolio_report.ledger,
+        account_id: &shared_account_id,
+        instrument: &reference.instrument,
+        spec: &reference_execution_spec,
+        bars: &reference_bars,
+        fills: reference_fills,
+        funding_raw: reference_funding,
+        initial_cash_raw: spec.reference_initial_cash_raw,
+    })?;
+    let primary_result_hash = fill_result_hash(&primary.instrument, primary_fills)?;
+    let reference_result_hash = fill_result_hash(&reference.instrument, reference_fills)?;
 
     let artifact = PathBuf::from(&spec.output_dir).join(format!("{}.multi-leg.json", spec.run_id));
     let mut payload = serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": spec.run_id,
         "strategy_id": strategy_id,
         "strategy_version": strategy_version,
@@ -351,6 +376,10 @@ pub(super) fn run_inner(
         "market_specs": {
             "primary": primary_spec,
             "reference": reference_spec,
+        },
+        "effective_market_specs": {
+            "primary": primary_execution_spec,
+            "reference": reference_execution_spec,
         },
         "fee_model": {
             "name": "MakerTaker",
@@ -371,13 +400,15 @@ pub(super) fn run_inner(
         "funding_bps": spec.funding_bps,
         "data_fingerprint": data_fingerprint,
         "config_hash": config_hash,
-        "primary_result_hash": format!("{:016x}", primary_report.result_hash()),
-        "reference_result_hash": format!("{:016x}", reference_report.result_hash()),
-        "primary_return_bps": primary_report.return_bps,
-        "reference_return_bps": reference_report.return_bps,
+        "shared_result_hash": format!("{:016x}", portfolio_report.result_hash()),
+        "shared_event_log": portfolio_report.event_log.events(),
+        "primary_result_hash": primary_result_hash.clone(),
+        "reference_result_hash": reference_result_hash.clone(),
+        "primary_return_bps": primary_return,
+        "reference_return_bps": reference_return,
         "combined_return_bps": combined,
-        "primary_fills": primary_report.fills.len(),
-        "reference_fills": reference_report.fills.len(),
+        "primary_fills": primary_fills.len(),
+        "reference_fills": reference_fills.len(),
         "attribution_totals": {
             "fees_raw": totals.0.to_string(),
             "turnover_raw": totals.1.to_string(),
@@ -395,10 +426,11 @@ pub(super) fn run_inner(
         "groups": attribution.groups,
         "pending_reconcile": pending_reconcile_json,
         "account_ledger": account_ledger,
-        "replay_events": primary_replay.events + reference_replay.events,
-        "replay_ledger_entries": primary_replay.ledger_entries + reference_replay.ledger_entries,
-        "matching": "qx-xingban::BacktestEngine/NextBarOpenFillModel",
-        "assumptions": ["each leg uses its own initial cash", "both legs are independently replay-verified", "each venue can declare its own maker/taker rates with shared rates as fallback", "funding is attributed only to derivative legs and is included in combined net return", "market specifications, when provided, are validated against each input and set contract size/margin semantics"],
+        "replay_events": portfolio_report.event_log.events().len(),
+        "replay_ledger_entries": portfolio_report.ledger.entries().len(),
+        "matching": "qx-xingban::PortfolioBarEngine/NextBarOpenFillModel",
+        "leg_return_basis": "leg pnl divided by declared leg initial cash; execution uses the shared account and does not enforce leg capital reservations",
+        "assumptions": ["both legs share one account Ledger, OMS, EventLog, and buying-power pool", "same-timestamp callbacks are deterministic and market orders compete by declared priority then instrument id", "all market events are replay-verified together", "each venue can declare its own maker/taker rates with shared rates as fallback", "funding is attributed only to derivative legs and is included in net return", "missing market specs retain the legacy spot assumption and are represented by a normalized execution spec"],
     });
     if let Some(account_id) = spec.account_id.as_deref() {
         if let Some(object) = payload.as_object_mut() {
@@ -429,11 +461,11 @@ pub(super) fn run_inner(
         run_id: spec.run_id.clone(),
         primary_instrument: primary.instrument.to_string(),
         reference_instrument: reference.instrument.to_string(),
-        primary_result_hash: format!("{:016x}", primary_report.result_hash()),
-        reference_result_hash: format!("{:016x}", reference_report.result_hash()),
+        primary_result_hash,
+        reference_result_hash,
         combined_return_bps: combined,
-        primary_fills: primary_report.fills.len() as u64,
-        reference_fills: reference_report.fills.len() as u64,
+        primary_fills: primary_fills.len() as u64,
+        reference_fills: reference_fills.len() as u64,
         attribution_artifact: artifact_path,
         account_id: spec.account_id.clone(),
     }))
