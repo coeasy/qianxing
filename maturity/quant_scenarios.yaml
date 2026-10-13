@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791908252
+generated_at_unix: 1791909139
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -222,6 +222,14 @@ scenarios:
     exit_code: 0
     observed: "\"total_candidates\":10; strategies=10 candidates=10 succeeded=10 fills=40 stable_order=true result_hashes=b8646edf8be77ad8,b8646edf8be77ad8,a657a3669e229d7e,d5942e883a2bab5d,89e4549059be3f70,33ce129659812eee,4a1adfff96f17f9b,7bd76acd142fafd2,b89601f343724831,d5942e883a2bab5d"
     evidence: ["crates/qx-app/src/cases/run_depth_experiment.rs", "crates/qx-app/src/tests/depth_experiment.rs", "crates/qx-cli/tests/app_depth_entrypoints.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
+  - name: rust_bar_fill_reduction_kernel
+    label: "Bar 成交沿统一精度/预算/OMS/Ledger/事件日志/策略回报归约"
+    status: executed
+    anchor: "crates/qx-xingban/src/backtest/fill_application.rs"
+    command: "cargo test --offline -p qx-xingban native_strategy_order_update_decision_is_risk_checked_and_filled_on_next_bar --lib -- --test-threads=1"
+    exit_code: 0
+    observed: "test result: ok. 1 passed; shared_fill_reducer=true ledger_before_callback=true next_decision_rechecked=true replay_verified=true"
+    evidence: ["crates/qx-xingban/src/backtest/fill_application.rs", "crates/qx-xingban/src/backtest.rs", "crates/qx-xingban/src/backtest/test_cases/fill_callback.rs"]
   - name: algo_execution
     label: "算法执行（API 受理 / TWAP 拆单 / Paper 恢复 / EventLog 聚合）"
     status: executed

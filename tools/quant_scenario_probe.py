@@ -1113,6 +1113,26 @@ def main() -> int:
         ],
     )
 
+    executed(
+        "rust_bar_fill_reduction_kernel",
+        "Bar 成交沿统一精度/预算/OMS/Ledger/事件日志/策略回报归约",
+        "crates/qx-xingban/src/backtest/fill_application.rs",
+        [
+            "test", "--offline", "-p", "qx-xingban",
+            "native_strategy_order_update_decision_is_risk_checked_and_filled_on_next_bar",
+            "--lib", "--", "--test-threads=1",
+        ],
+        r"(test result: ok\. 1 passed)",
+        env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+        extra="shared_fill_reducer=true ledger_before_callback=true next_decision_rechecked=true replay_verified=true",
+        evidence=[
+            "crates/qx-xingban/src/backtest/fill_application.rs",
+            "crates/qx-xingban/src/backtest.rs",
+            "crates/qx-xingban/src/backtest/test_cases/fill_callback.rs",
+        ],
+        command_prefix="cargo",
+    )
+
     # Verify algorithm-order admission through the real service handler, then let the
     # persistent Paper worker execute across restarts and aggregate results from EventLog.
     algo_test_argv = [

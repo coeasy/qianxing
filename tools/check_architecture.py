@@ -8273,7 +8273,7 @@ def venue_report_contract_check() -> None:
         if path.relative_to(ROOT).as_posix() not in (REPORT_FUNNEL_FILE, SPEC_FUNNEL_DEFINITION)
         and "validate_fill(" in path.read_text(encoding="utf-8")
     }
-    expected_shared_consumers = {"crates/qx-xingban/src/backtest.rs": 1}
+    expected_shared_consumers = {"crates/qx-xingban/src/backtest/fill_application.rs": 1}
     check(
         predicates == 1 and copies == expected_shared_consumers,
         "成交 tick/step 只有一个共享谓词；实盘回报与模拟撮合共用，不在 Ledger 复制规则",

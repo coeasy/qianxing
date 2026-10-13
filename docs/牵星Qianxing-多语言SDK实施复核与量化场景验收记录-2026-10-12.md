@@ -328,3 +328,9 @@ Python 十策略证据：
 
 - Python SDK 原先的经典策略逐项回测与参数/Walk-forward 选择覆盖 10 种。本轮把 Rust 已有的 `keltner_trend`、`vwap_reversion`、`volatility_breakout` 纳入相同链路；13 种策略各自通过 Python bridge 进入 Rust 回测并产生有效成交，整组选择/比较和两折 walk-forward 也由 Rust 实验用例验证，Python 仅负责提交规格和读取结果。
 - 专项 Python 用例 2 项通过；量化场景探针复跑结果仍是 44 executed、0 declared_not_executed、1 missing、1 blocked，策略场景观测现为 13 个候选成功。此扩展不改变多腿执行成熟度：`shared_multileg_execution` 仍缺失，`live_exchange_trading` 仍受外部 CCXT/testnet 凭据阻塞。
+
+## 41. 2026-10-14 重构：Bar 成交归约进入单一 Rust 路径
+
+- `BacktestEngine` 的成交后处理已抽至 `qx-xingban::backtest::fill_application`：市场规格精度校验、策略预算校验、OMS/Ledger 应用、回放事件追加、资金/持仓刷新及 `on_fill` 回调按原因果顺序统一归约。现有单标的 Bar 引擎改为调用该路径，为后续共享多市场执行复用同一成交事实处理提供了落点；没有新增第二份账簿或成交规则。
+- `qx-xingban` 单测 106 项、`qx-app` 单测 122 项、严格 Clippy 与架构门禁 1096 项通过。应用层测试需将 `TEMP/TMP` 指向仓库 `target/test-tmp`，默认系统临时路径在当前运行环境拒绝创建夹具目录。量化场景探针现为 45 executed、0 declared_not_executed、1 missing、1 blocked；新增 `rust_bar_fill_reduction_kernel` 专项场景通过，证实成交应用后策略观察到更新状态、后续订单再次过风控且账簿回放一致。
+- 这一步仍未实现共享多市场 session：每个 `BacktestEngine` 仍持有自己的 Ledger/OMS/撮合器，多腿应用仍分别运行两腿后合并；`shared_multileg_execution` 缺口保持打开。

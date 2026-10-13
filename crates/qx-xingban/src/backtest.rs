@@ -27,6 +27,8 @@ mod portfolio_strategy;
 pub use portfolio_strategy::{PortfolioBarStrategy, PortfolioStrategySlot};
 pub(crate) mod portfolio_budget;
 use portfolio_budget::PortfolioBudgetState;
+mod fill_application;
+use fill_application::FillApplicationInput;
 mod order_validation;
 use order_validation::reduce_only_order_allowed;
 mod portfolio_timeline;
@@ -907,23 +909,22 @@ impl BacktestEngine {
                     matcher.submit_at(order, bar.ts);
                 }
             }
-            for mut fill in matcher.on_bar(bar, bar.ts) {
-                let order = oms
-                    .get(fill.order_id)
-                    .cloned()
-                    .ok_or_else(|| qx_core::QxError::ReconcileRequired("成交找不到订单".into()))?;
-                if let Some(spec) = instrument_spec.as_ref() {
-                    spec.validate_fill(fill.qty.raw(), fill.price.raw())?;
-                }
-                order.trace_fill(&mut fill, None, None);
-                portfolio_budget.validate_fill_budget(
-                    |strategy_id| strategy.strategy_budget_raw(strategy_id),
-                    &order,
-                    &fill,
-                    instrument_spec.as_ref(),
+            for fill in matcher.on_bar(bar, bar.ts) {
+                let (order, fill) = fill_application::apply(FillApplicationInput {
+                    fill,
+                    instrument_spec: instrument_spec.as_ref(),
+                    cash_account: derivative_spec.is_none(),
                     multiplier,
-                    margin.as_ref(),
-                )?;
+                    strategy,
+                    account_id: &account_id,
+                    currency: &currency,
+                    ledger: &mut ledger,
+                    oms: &mut oms,
+                    portfolio_budget: &mut portfolio_budget,
+                    margin: margin.as_ref(),
+                    log: &mut log,
+                    fills: &mut fills,
+                })?;
                 if let Some((reason, trigger_ts)) =
                     protective_order_meta.get(&fill.order_id).copied()
                 {
@@ -942,45 +943,9 @@ impl BacktestEngine {
                     position_policies
                         .insert(qx_core::PositionSide::Net, qx_core::OrderPolicy::default());
                 }
-                let terms = qx_core::FillTerms::resolve(instrument_spec.as_ref(), multiplier);
-                let entry_ids =
-                    qx_core::apply_fill_to_books(&mut ledger, &mut oms, &currency, &fill, terms)?;
-                portfolio_budget.apply_fill_if_owned(
-                    |strategy_id| strategy.strategy_budget_raw(strategy_id),
-                    &order,
-                    &fill,
-                )?;
                 if ashare_rules.is_some() && order.side == Side::Buy {
                     ashare_state.on_buy(fill.qty.raw());
                 }
-                let fill_seq = log.alloc_seq();
-                log.append(Event::new(
-                    fill_seq,
-                    fill.ts,
-                    Priority::APPLY,
-                    EventKind::Filled { fill: fill.clone() },
-                ));
-                for entry_id in entry_ids {
-                    let entry_seq = log.alloc_seq();
-                    let entry = ledger
-                        .entries()
-                        .iter()
-                        .find(|entry| entry.id == entry_id)
-                        .cloned()
-                        .ok_or_else(|| {
-                            qx_core::QxError::Invariant("找不到已应用账簿 entry".into())
-                        })?;
-                    log.append(Event::new(
-                        entry_seq,
-                        fill.ts,
-                        Priority::APPLY,
-                        EventKind::LedgerApplied { entry },
-                    ));
-                }
-                let _ =
-                    strategy.refresh(&ledger, &account_id, &currency, derivative_spec.is_none());
-                strategy.on_fill(&order, &fill)?;
-                fills.push(fill);
             }
             if protective_exits.is_some() {
                 let sides = position_policies.keys().copied().collect::<Vec<_>>();
