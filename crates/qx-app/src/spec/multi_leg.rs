@@ -1,4 +1,4 @@
-//! Versioned contract for a deterministic two-leg Bar backtest.
+//! Versioned two-leg Bar backtest contract. Input streams may have different timestamps; execution still uses fixed per-leg cash reservations and does not share buying power.
 
 use super::{is_identity_token, BuiltinStrategySpec};
 use crate::error::{AppError, AppErrorCategory};
