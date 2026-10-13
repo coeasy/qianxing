@@ -766,7 +766,9 @@ def main() -> int:
 
     # Each run writes immutable artifacts. Use a unique identity so rerunning the
     # probe cannot collide with a prior run's summary and be misreported as a domain failure.
-    market_making_run_id = f"probe-market-making-{time.time_ns()}"
+    # Keep immutable output isolated per execution while using a stable semantic
+    # run identity so the engine's result hash can be compared across probe runs.
+    market_making_run_id = "probe-market-making-v1"
     market_making_spec = {
         "schema_version": 1,
         "run_id": market_making_run_id,
@@ -778,9 +780,9 @@ def main() -> int:
         "latency_snapshots": 0,
         "queue_position_bps": 0,
         "market_impact_bps": 0,
-        "output_dir": f".task-tmp/quant-probe/{market_making_run_id}",
+        "output_dir": f".task-tmp/quant-probe/market-making-{time.time_ns()}",
         "strategy": {
-            "kind": "sma_cross", "strategy_id": market_making_run_id,
+            "kind": "sma_cross", "strategy_id": "probe-market-making-strategy",
             "quantity_raw": 1_000_000_000, "fast_window": 2, "slow_window": 3,
             "period": 14, "threshold_bps": 100,
         },
