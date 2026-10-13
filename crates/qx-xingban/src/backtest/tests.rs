@@ -4,6 +4,8 @@ mod test_cases {
     use super::*;
     #[path = "config.rs"]
     mod config;
+    #[path = "../tests/currency_validation.rs"]
+    mod currency_validation;
     #[path = "fill_callback.rs"]
     mod fill_callback;
     #[path = "portfolio_budget.rs"]
@@ -803,6 +805,7 @@ mod test_cases {
         let instrument = InstrumentId::parse("BTC/USDT:USDT.SIM").unwrap();
         let mut derivative = simple_config();
         derivative.instrument = instrument.clone();
+        derivative.currency = "USDT".into();
         derivative.initial_cash = Money::from_i64(1_000_000);
         derivative.fee = Box::new(MakerTakerFeeModel {
             maker_bp: 2,
@@ -938,65 +941,11 @@ mod test_cases {
     }
 
     #[test]
-    fn derivative_backtest_uses_spec_pnl_instead_of_full_notional_cashflow() {
-        let instrument = InstrumentId::parse("BTC/USDT:USDT.SIM").unwrap();
-        let mut config = simple_config();
-        config.instrument = instrument.clone();
-        config.instrument_spec = Some(TradingInstrumentSpec {
-            instrument: instrument.clone(),
-            product: qx_core::TradingProduct::Perpetual,
-            base_currency: "BTC".into(),
-            quote_currency: "USDT".into(),
-            settlement_currency: "USDT".into(),
-            contract_size: qx_core::SCALE,
-            linear: true,
-            inverse: false,
-            price_tick: 1,
-            qty_step: 1,
-            min_qty: 1,
-            max_leverage: 100,
-            maintenance_margin_bps: 500,
-            valid_from: 1,
-            valid_to: None,
-        });
-        let bars = vec![
-            Bar::new(
-                1,
-                100 * qx_core::SCALE,
-                101 * qx_core::SCALE,
-                99 * qx_core::SCALE,
-                100 * qx_core::SCALE,
-                10 * qx_core::SCALE,
-            ),
-            Bar::new(
-                2,
-                102 * qx_core::SCALE,
-                103 * qx_core::SCALE,
-                101 * qx_core::SCALE,
-                102 * qx_core::SCALE,
-                10 * qx_core::SCALE,
-            ),
-            Bar::new(
-                3,
-                110 * qx_core::SCALE,
-                111 * qx_core::SCALE,
-                109 * qx_core::SCALE,
-                110 * qx_core::SCALE,
-                10 * qx_core::SCALE,
-            ),
-        ];
-        let report = BacktestEngine::new(config)
-            .run(&bars, &mut BuyOnce { done: false })
-            .unwrap();
-        assert_eq!(report.fills.len(), 1);
-        assert_eq!(report.final_equity(), Money::from_i64(1008).raw());
-    }
-
-    #[test]
     fn derivative_backtest_preserves_hedge_legs_and_replays_them() {
         let instrument = InstrumentId::parse("BTC/USDT:USDT.SIM").unwrap();
         let mut config = simple_config();
         config.instrument = instrument.clone();
+        config.currency = "USDT".into();
         config.instrument_spec = Some(TradingInstrumentSpec {
             instrument: instrument.clone(),
             product: qx_core::TradingProduct::Perpetual,
@@ -1119,6 +1068,7 @@ mod test_cases {
         ];
         let mut accepted = simple_config();
         accepted.instrument = instrument.clone();
+        accepted.currency = "USDT".into();
         accepted.initial_cash = Money::from_i64(10);
         accepted.instrument_spec = Some(spec.clone());
         let accepted_report = BacktestEngine::new(accepted)
@@ -1134,6 +1084,7 @@ mod test_cases {
 
         let mut rejected = simple_config();
         rejected.instrument = instrument;
+        rejected.currency = "USDT".into();
         rejected.initial_cash = Money::from_i64(9);
         rejected.instrument_spec = Some(spec);
         let rejected_report = BacktestEngine::new(rejected)
@@ -1188,6 +1139,7 @@ mod test_cases {
         ];
         let mut config = simple_config();
         config.instrument = instrument;
+        config.currency = "USDT".into();
         config.initial_cash = Money::from_i64(15);
         config.instrument_spec = Some(spec);
         config.margin = Box::new(TieredMargin {
@@ -1220,6 +1172,7 @@ mod test_cases {
             })
             .unwrap_or_else(|| InstrumentId::parse("BTC/USDT:USDT.TIERED").unwrap());
         accepted.initial_cash = Money::from_i64(25);
+        accepted.currency = "USDT".into();
         accepted.instrument_spec = Some(TradingInstrumentSpec {
             instrument: accepted.instrument.clone(),
             product: qx_core::TradingProduct::Perpetual,
@@ -1290,6 +1243,7 @@ mod test_cases {
         let config = |taker_bp: i64| {
             let mut cfg = simple_config();
             cfg.instrument = instrument.clone();
+            cfg.currency = "USDT".into();
             cfg.initial_cash = Money::from_i64(25);
             cfg.instrument_spec = Some(spec.clone());
             cfg.fee = Box::new(MakerTakerFeeModel {
@@ -1358,6 +1312,7 @@ mod test_cases {
             Bar::new(2, 100, 100, 100, 100, 10),
         ];
         let mut config = simple_config();
+        config.currency = "USDT".into();
         config.instrument_spec = Some(TradingInstrumentSpec {
             instrument: config.instrument.clone(),
             product: qx_core::TradingProduct::Perpetual,

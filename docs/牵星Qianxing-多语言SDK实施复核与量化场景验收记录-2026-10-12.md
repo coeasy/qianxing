@@ -269,3 +269,10 @@ Python 十策略证据：
 - 将 §30 修复接入 `tools/quant_scenario_probe.py`，探针通过实际运行 `paper_cross_currency_spot_uses_quote_cash_and_configured_fx_market` 回归测试，核对 EUR 报价现货现金腿、ETH/EUR 持仓和 EUR/USDT 兑换后的账户权益。
 - 重跑探针结果：40 项 executed、0 declared_not_executed、0 missing、1 项 blocked。新增场景观测为 11,122 USDT；唯一 blocked 仍是缺少 CCXT 运行依赖和交易所 testnet 凭据的 Live 验收，不将本地测试冒充实盘认证。
 - 这是验收矩阵补证，不关闭同步多市场共享账簿/撮合、多腿联合执行、远端回调托管、跨平台安装矩阵等既有缺口；整体方案仍未达到全能力发布条件。
+
+## 32. 2026-10-13 修复：回测账户币种与市场现金币种前置校验
+
+- 工作区全量回归发现六个衍生品测试使用默认 USD 账户，却交易 USDT 结算合约；共享账簿在首次成交时才因币种不符拒绝，配置错误出现得过晚。将 Bar 与 OrderBook 回测入口统一为先规范化账户币种，再按产品校验现金币种（现货报价币、衍生品结算币），并在调用策略前拒绝不匹配；Bar 路径同时把产品规格标的校验与规格验证收敛到同一前置闸门。
+- 修正衍生品测试配置为 USDT，并保留一条小写币种回归，确认归一化后盈亏更新权益但不会错误改写初始现金；新增错误币种回归确认策略 callback 尚未运行即失败。为遵守单文件行数棘轮，将验证逻辑与用例移入模块文件。
+- 验证：`cargo test --offline -p qx-xingban --lib` 103 项通过；最终版 `cargo test --offline --workspace` 全部通过；`cargo fmt --all -- --check` 通过；`python tools/check_architecture.py` 1096 项通过；全量量化场景探针 40 项 executed、0 项未执行、0 missing、1 项 Live testnet blocked；`git diff --check` 通过。
+- 该修复强化已有单市场回测账簿一致性，不实现跨市场共享账户资金/统一撮合风险、多腿联合组合调度、远端 callback、Web/桌面 E2E、跨平台 wheel 矩阵或真实 venue testnet 认证；全能力发布条件仍未满足。

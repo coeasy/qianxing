@@ -19,6 +19,8 @@ use crate::cost::{LatencyModel, MarginRule};
 use crate::fill::{DataTier, FillModel};
 use crate::venue::BarMatchingEngine;
 use std::collections::BTreeMap;
+#[path = "backtest/currency.rs"]
+mod currency;
 pub mod strategy;
 pub use strategy::{BarStrategy, NativeBarStrategy};
 mod portfolio_strategy;
@@ -285,18 +287,12 @@ impl BacktestEngine {
             risk,
             virtual_trading,
         } = config;
+        let currency =
+            currency::normalize_and_validate(currency, &instrument, instrument_spec.as_ref())?;
         if multiplier <= 0 {
             return Err(qx_core::QxError::BusinessViolation(
                 "回测合约乘数必须为正".into(),
             ));
-        }
-        if let Some(spec) = &instrument_spec {
-            if spec.instrument != instrument {
-                return Err(qx_core::QxError::BusinessViolation(
-                    "回测产品规格 instrument 与配置不一致".into(),
-                ));
-            }
-            spec.validate()?;
         }
         // 已指定规格时只认其中的 `contract_size`，拒绝叠加历史乘数以保持回测与实盘现金一致。
         if instrument_spec.is_some() && multiplier != 1 {

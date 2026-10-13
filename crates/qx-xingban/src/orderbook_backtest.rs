@@ -123,8 +123,9 @@ impl OrderBookBacktestEngine {
             risk,
             data_tier,
         } = config;
+        let currency = currency.trim().to_ascii_uppercase();
         let risk_rule_set_version = risk.rule_set().version().to_string();
-        if account_id.trim().is_empty() || currency.trim().is_empty() {
+        if account_id.trim().is_empty() || currency.is_empty() {
             return Err(qx_core::QxError::BusinessViolation(
                 "订单簿回测账户和结算币不能为空".into(),
             ));
@@ -136,9 +137,17 @@ impl OrderBookBacktestEngine {
                     "订单簿回测产品规格 instrument 与配置不一致".into(),
                 ));
             }
-            if spec.settlement_currency != currency {
+            let cash_currency = if spec.product == qx_core::TradingProduct::Spot {
+                &spec.quote_currency
+            } else {
+                &spec.settlement_currency
+            };
+            if !cash_currency.eq_ignore_ascii_case(&currency) {
                 return Err(qx_core::QxError::BusinessViolation(
-                    "订单簿回测产品规格结算币种与配置不一致".into(),
+                    format!(
+                        "订单簿回测账户币种 {currency} 与 {:?} 市场现金/结算币种 {cash_currency} 不一致",
+                        spec.product,
+                    ),
                 ));
             }
         }

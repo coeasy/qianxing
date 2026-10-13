@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791897935
+generated_at_unix: 1791899033
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
