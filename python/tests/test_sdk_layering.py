@@ -52,6 +52,7 @@ SUB_NAMESPACE_ONLY = {
     "core": ("AsyncCoreClient", "AsyncRunHandle"),
     "data": (
         "BAR_JSON_CONTENT_TYPE",
+        "FUNDING_RATE_JSON_CONTENT_TYPE",
         "ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE",
         "ProviderAdapter",
         "ProviderAdapterError",

@@ -10,6 +10,7 @@ from qianxing_bridge import native
 
 BAR_JSON_CONTENT_TYPE = "application/vnd.qianxing.bar+json;v=1"
 ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE = "application/vnd.qianxing.order-book-snapshot+json;v=1"
+FUNDING_RATE_JSON_CONTENT_TYPE = "application/vnd.qianxing.funding-rate+json;v=1"
 
 
 class ProviderAdapter(Protocol):
@@ -223,6 +224,17 @@ class ProviderRegistry:
             depth_path=payload["depth_path"],
         )
 
+    def run_multi_leg_backtest_with_funding(self, spec: Any, query: ProviderQuery) -> Any:
+        """Fetch historical funding with Rust failover/provenance checks and run Rust multi-leg."""
+        from qianxing.app import MultiLegBacktestOutcome, MultiLegBacktestSpec
+
+        values = spec.to_dict() if isinstance(spec, MultiLegBacktestSpec) else dict(spec)
+        payload = self._native.run_multi_leg_backtest_with_funding_provider_json(
+            query.to_json(),
+            json.dumps(values, sort_keys=True, separators=(",", ":")),
+        )
+        return MultiLegBacktestOutcome.from_dict(json.loads(payload))
+
     def run_backtest(self, spec: Any, query: ProviderQuery) -> Any:
         """Freeze provider bars at ``spec.bars_path`` and run the shared Rust backtest use case."""
         from qianxing.app import BacktestSpec, run_backtest
@@ -306,6 +318,7 @@ def _freeze_frame(path_value: str, frame_json: str) -> None:
 
 __all__ = [
     "BAR_JSON_CONTENT_TYPE",
+    "FUNDING_RATE_JSON_CONTENT_TYPE",
     "ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE",
     "ProviderAdapter",
     "ProviderAdapterError",

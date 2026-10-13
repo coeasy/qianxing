@@ -29,6 +29,7 @@ pub fn run_multi_leg_backtest_with_strategy(
                 identity: identity.clone(),
                 strategy,
             }),
+            None,
         )
     })
     .map_err(|error| attach(error, &correlation_id))?
@@ -74,6 +75,7 @@ fn start(
                 &context,
                 Some(&cancellation),
                 Some(InjectedMultiLegStrategy { identity, strategy }),
+                None,
             )
         })
         .map_err(|error| attach(error, &correlation_id))

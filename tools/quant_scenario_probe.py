@@ -993,6 +993,23 @@ def main() -> int:
         command_prefix="python",
     )
 
+    executed(
+        "python_provider_multileg_funding_history",
+        "Python Financial Provider 主备获取历史 funding 并进入共享 Rust 多腿回测",
+        "python/tests/test_provider_sdk.py",
+        ["-m", "unittest", "python.tests.test_provider_sdk.ProviderSdkTest.test_financial_provider_funding_flows_into_multi_leg_rust_backtest"],
+        r"(Ran 1 test)",
+        env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
+        extra="provider_failover=true two_signed_settlements=true provider_lineage_bound=true shared_rust_ledger=true",
+        evidence=[
+            "python/tests/test_provider_sdk.py",
+            "python/qianxing/data/providers.py",
+            "crates/qx-app/src/cases/run_multi_leg_backtest_with_funding_provider.rs",
+            "crates/qx-xingban/src/backtest/portfolio_session/funding.rs",
+        ],
+        command_prefix="python",
+    )
+
     depth_portfolio_run_id = f"probe-depth-portfolio-{time.time_ns()}"
     depth_portfolio_spec = {
         "schema_version": 1,

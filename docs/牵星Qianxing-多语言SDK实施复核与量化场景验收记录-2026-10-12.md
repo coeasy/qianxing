@@ -370,7 +370,16 @@ Python 十策略证据：
 - 第一轮扩展检查发现常量资金费率无法表达交易所历史 funding rate 的逐次正负变化。`qx-core::FundingRateEvent` 现在统一携带标的、UTC 8 小时结算时间与 bps 费率；共享 Bar session 可按实际事件率调度、用结算前最后可见标记价计算，并将现金流记入同一 Ledger/EventLog 和多腿腿级归因。
 - 第二轮输入安全检查补上重复 `(instrument, settlement_ts)`、非结算边界、超范围 bps、未知标的、现货非零费率、常量与历史费率混用及超过 100,000 条事件的拒绝；事件序列按稳定时间线执行，未落在当前回测区间的历史事件不产生现金流。
 - 第三轮多语言检查将 `funding_events` 作为向后兼容的可选字段加入 `MultiLegBacktestSpec` 和 Python typed `FundingRateEvent`，Rust/Python 都调用相同 `qx-app` 与 `PortfolioBarEngine`；Python callback fixture 实测两个结算点使用不同符号费率，产物中事件时间戳与 EventLog LedgerApplied 项可核对。
-- 后续产物审计发现报告虽列出执行结算，但没有保留调用方输入的费率及费率来源，且旧假设文案仍称“常量费率”。现新增 `funding_rate_input`、完整 `funding_rate_events` 输入明细，并将假设改为注明常量或事件来源及“不是交易所 provider 数据”；Python 回归会逐字段核对两条输入、结算事实与来源标记。
+- 后续产物审计发现报告虽列出执行结算，但没有保留调用方输入的费率及费率来源，且旧假设文案仍称“常量费率”。现新增 `funding_rate_input`、完整 `funding_rate_events` 输入明细，并将假设改为注明常量或事件来源及“不是 venue 已认证数据”；Python 回归逐字段核对两条输入、结算事实与来源标记。
 - 场景探针增加一条 Python→Rust 应用用例报告链路；最新探针实际执行 51 项：51 executed、0 declared_not_executed、0 missing、1 blocked。唯一 blocked 是外部 CCXT/testnet 交易所订单生命周期验收。
 - 验证：`cargo test --offline -p qx-xingban` 116 单测及集成通过；`cargo test --offline -p qx-app --lib` 123/123；`cargo test --offline -p qx-sdk` 6 单测及 27 独立消费者/集成用例通过；Python 全量 `python -m pytest python/tests -q` 140/140；本轮 Python typed 多腿回归、重建 `qx-python` 扩展、`qx-app` 123/123、严格 Clippy、格式检查、差异检查、1096 项架构门禁与 51 项量化探针通过。
-- 当前能力支持调用方提供历史费率事件，但尚未从交易所 funding-history Provider 自动取数，也没有 venue 专属结算时间表、跨币种 funding 或外部账单对账；常量 `funding_bps` 继续兼容旧 spec。实盘 testnet、跨账户组合风险、Paper/Live 多市场工作流、远端策略回调、C++ 默认 transport、Web/桌面端到端与全平台安装认证仍未完成。
+- 当前能力支持调用方提供历史费率事件，但通用 Financial/funding_8h ProviderRegistry 历史取数已接入 Rust/Python 多腿回测并绑定来源指纹；尚无 venue 专用 funding adapter/conformance，也没有 venue 专属结算时间表、跨币种 funding 或外部账单对账；常量 `funding_bps` 继续兼容旧 spec。实盘 testnet、跨账户组合风险、Paper/Live 多市场工作流、远端策略回调、C++ 默认 transport、Web/桌面端到端与全平台安装认证仍未完成。
+
+## 47. 2026-10-14 实现：Provider 历史资金费率接入 Rust/Python 多腿回测
+
+- Provider 入口复用既有 Rust `ProviderRegistry` 主备选择与 `ProviderResult` 血缘验证，不在 Python 重写抓取编排或回测计算。规范请求固定为 `DataKind::Financial`、`funding_8h` 频率和 `funding_rate_bps` 字段；载荷使用版本化 funding content type，行事件时间作为 UTC 结算时间，JSON 只接受 `rate_bps`。
+- 每条数据先经 Provider 请求范围/标的/来源/结果摘要校验，再在 qx-app 严格解析规范 `InstrumentId`、费率结构和事件时间，最终交给原 `MultiLegBacktestSpec` 验证及 `PortfolioBarEngine` 结算。空结果、混用 inline 与 Provider funding、未知标的、错误内容类型/载荷、重复结算及非 UTC 8 小时边界都 fail closed。
+- `MultiLegBacktestSpec::run_with_funding_provider` 是现有多腿 use case 的 Provider 输入变体；Rust SDK `Client` 与 Python `ProviderRegistry` 都调用同一 qx-app 实现。报告记录 provider/version/request、retry chain、query/source 指纹和事件数量；source/query 哈希采用 16 进制字符串，避免 JSON 下游把 u64 舍入。provider 来源数据随配置指纹绑定，数据源或请求变化会触发同 run_id 冲突，而不会覆盖旧报告。
+- Rust qx-app fixture 验证两条不同符号费率经 Provider 进入共享账簿和可核对来源产物；Python 端到端 fixture 验证 Provider 主备切换、provider 血缘与两次结算事实。场景探针增加 `python_provider_multileg_funding_history`；最新结果由探针重生成后记录。
+- 本轮验收：场景探针 52 executed、0 declared_not_executed、0 missing、1 blocked；`cargo test --offline -p qx-app --lib` 125/125、`cargo test --offline -p qx-sdk`（6 单测、22 独立消费者、2 多账户消费者、2 Provider 消费者）通过、Python 全量 141/141、`cargo check --offline -p qx-app -p qx-sdk -p qx-python`、严格 Clippy、格式检查、1096 项架构门禁及 `git diff --check` 通过。Python 全量测试复核还修复了 Windows 在同一 pytest 进程里重复复制已加载 native DLL 的 WinError 32；后续测试复用已验证并绑定的桥接模块。
+- 当前接入的是通用 Provider 协议，不代表任何交易所 funding adapter、时间表或账单已认证；venue 专用 adapter/conformance、跨币种 funding、外部账单核对仍未实现。实盘 testnet、跨账户组合风险、多市场 Paper/Live、远端策略 callback、C++ 默认 transport 和 Web/桌面验收仍未闭环。

@@ -12,11 +12,15 @@ from qianxing.app import (
     BacktestSpec,
     BuiltinStrategySpec,
     DepthBacktestSpec,
+    InstrumentId,
+    MultiLegBacktestSpec,
+    TradingInstrumentSpec,
     verify_depth_run,
     verify_run,
 )
 from qianxing.data import (
     BAR_JSON_CONTENT_TYPE,
+    FUNDING_RATE_JSON_CONTENT_TYPE,
     ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE,
     ProviderCapability,
     ProviderManualInterventionError,
@@ -93,6 +97,9 @@ def _rows() -> tuple[ProviderPayloadRow, ...]:
 class ProviderSdkTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        from python.tests.test_app_use_cases import _load_native
+
+        _load_native()
         if not native.available():
             raise unittest.SkipTest("build qx-python native extension to run provider SDK tests")
 
@@ -227,6 +234,122 @@ class ProviderSdkTest(unittest.TestCase):
                         instrument_set=("BTCUSDT.BINANCE",),
                     ),
                 )
+
+    def test_financial_provider_funding_flows_into_multi_leg_rust_backtest(self) -> None:
+        primary = "BTCUSDT.BINANCE"
+        rows = (
+            ProviderPayloadRow(
+                event_time=144_000_000,
+                receive_time=172_800_000,
+                instrument=primary,
+                content_type=FUNDING_RATE_JSON_CONTENT_TYPE,
+                json='{"rate_bps":100}',
+            ),
+            ProviderPayloadRow(
+                event_time=172_800_000,
+                receive_time=172_800_000,
+                instrument=primary,
+                content_type=FUNDING_RATE_JSON_CONTENT_TYPE,
+                json='{"rate_bps":-50}',
+            ),
+        )
+        capability = ProviderCapability(
+            provider_id="funding-history",
+            version="v1",
+            data_kinds=("Financial",),
+            asset_classes=("crypto",),
+            frequencies=("funding_8h",),
+            auth_scope="public",
+            rate_limit_per_second=10,
+            freshness_seconds=60,
+            historical_start=1,
+            historical_end=200_000_000,
+            realtime=False,
+            priority=1,
+            quality_score=100,
+            cost_score=1,
+        )
+        registry = ProviderRegistry()
+        primary_capability = replace(capability, provider_id="funding-primary", priority=0)
+
+        class UnavailableFunding:
+            def fetch(self, _query_json: str) -> str:
+                raise RuntimeError("funding source temporarily unavailable")
+
+        registry.register(primary_capability, UnavailableFunding())
+        registry.register(capability, _Bars(capability, rows))
+        query = ProviderQuery(
+            kind="Financial",
+            asset_class="crypto",
+            frequency="funding_8h",
+            start=144_000_000,
+            end=172_800_000,
+            instrument_set=(primary,),
+            field_set=("funding_rate_bps",),
+        )
+
+        def derivative(instrument: str) -> TradingInstrumentSpec:
+            symbol, venue = instrument.split(".")
+            return TradingInstrumentSpec(
+                instrument=InstrumentId(symbol=symbol, venue=venue),
+                product="perpetual",
+                base_currency=symbol[:3],
+                quote_currency=symbol[3:],
+                settlement_currency="USDT",
+                contract_size=1_000_000_000,
+                linear=True,
+                inverse=False,
+                price_tick=1_000,
+                qty_step=1,
+                min_qty=1,
+                max_leverage=20,
+                maintenance_margin_bps=500,
+                valid_from=0,
+            )
+
+        fixture = Path(__file__).resolve().parents[2] / "deploy"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = MultiLegBacktestSpec(
+                run_id="provider-funding-python",
+                primary_bars_path=str(fixture / "qianxing.bar-frame.pairs-primary.example.json"),
+                reference_bars_path=str(fixture / "qianxing.bar-frame.pairs-reference.example.json"),
+                settlement_currency="USDT",
+                primary_initial_cash_raw=1_000_000_000_000_000,
+                reference_initial_cash_raw=1_000_000_000_000_000,
+                output_dir=str(root / "run"),
+                seed=7,
+                strategy=BuiltinStrategySpec(
+                    kind="pairs_arbitrage",
+                    strategy_id="provider-funding-python",
+                    quantity_raw=1_000_000_000,
+                    fast_window=5,
+                    slow_window=20,
+                    period=14,
+                    threshold_bps=100,
+                ),
+                primary_market_spec=derivative(primary),
+                reference_market_spec=derivative("ETHUSDT.BINANCE"),
+            )
+            outcome = registry.run_multi_leg_backtest_with_funding(spec, query)
+            artifact = json.loads(
+                Path(outcome.attribution_artifact).read_text(encoding="utf-8")
+            )
+            self.assertEqual(outcome.run_id, spec.run_id)
+            self.assertEqual(artifact["funding_rate_input"], "caller_supplied_historical_events")
+            self.assertEqual(
+                [event["rate_bps"] for event in artifact["funding_rate_events"]],
+                [100, -50],
+            )
+            self.assertEqual(
+                artifact["funding_provider_provenance"]["provider_id"], "funding-history"
+            )
+            self.assertEqual(
+                artifact["funding_provider_provenance"]["retry_chain"],
+                ["funding-primary", "funding-history"],
+            )
+            self.assertEqual(artifact["funding_provider_provenance"]["record_count"], 2)
+            self.assertEqual(len(artifact["execution_funding_events"]), 2)
 
     def test_provider_builds_and_validates_dataset_manifest_before_rust_backtest(self) -> None:
         capability = _capability("manifest-provider", 0)

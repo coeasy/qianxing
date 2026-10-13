@@ -64,7 +64,7 @@ pub use cases::{
     ProviderDepthBacktestOutcome, ProviderDepthBacktestSpec, RunDepthExperimentResult,
     RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec, RunMultiLegExperimentResult,
     RunMultiLegExperimentSpec, StrategyArtifactIdentity, TradeControlSpec, TradeWorkflow,
-    EXPERIMENT_BASELINE_NAMES, MAX_EXPERIMENT_CANDIDATES,
+    EXPERIMENT_BASELINE_NAMES, FUNDING_RATE_JSON_CONTENT_TYPE, MAX_EXPERIMENT_CANDIDATES,
     PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION, RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION,
     RUN_EXPERIMENT_SCHEMA_VERSION, RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION,
     TRADE_CONTROL_SCHEMA_VERSION,

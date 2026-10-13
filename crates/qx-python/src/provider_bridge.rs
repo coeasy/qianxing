@@ -238,6 +238,21 @@ impl PyProviderRegistry {
         })
     }
 
+    fn run_multi_leg_backtest_with_funding_provider_json(
+        &self,
+        query_json: &str,
+        spec_json: &str,
+    ) -> PyResult<String> {
+        let request = DataRequest::from_json(query_json)
+            .map_err(|error| PyValueError::new_err(format!("Provider query invalid: {error:?}")))?;
+        let spec = qx_app::MultiLegBacktestSpec::from_json(spec_json).map_err(crate::app_error)?;
+        let context = crate::research_context(&spec.run_id);
+        let outcome = spec
+            .run_with_funding_provider(&self.inner, &request, &context)
+            .map_err(crate::app_error)?;
+        outcome.to_json().map_err(crate::app_error)
+    }
+
     fn fetch_depth_frame_json(&self, query_json: &str, tier: &str) -> PyResult<String> {
         if !matches!(tier, "l1" | "l2") {
             return Err(PyValueError::new_err("depth tier must be l1 or l2"));

@@ -8,7 +8,7 @@
 //! 就进了 semver 承诺。一个持有 `RunContext` 的普通结构体把承诺面压到最小。
 
 use crate::{
-    ProviderBacktestOutcome, ProviderBacktestSpec, ProviderDepthBacktestOutcome,
+    DataRequest, ProviderBacktestOutcome, ProviderBacktestSpec, ProviderDepthBacktestOutcome,
     ProviderDepthBacktestSpec, ProviderRegistry,
 };
 use qx_app::{
@@ -155,6 +155,16 @@ impl Client {
         spec: &ProviderDepthBacktestSpec,
     ) -> Result<ProviderDepthBacktestOutcome, AppError> {
         qx_app::run_provider_depth_backtest(registry, spec, &self.context)
+    }
+
+    /// Fetch Provider funding history through Rust validation, then run the shared multi-leg core.
+    pub fn run_multi_leg_backtest_with_funding_provider(
+        &self,
+        registry: &ProviderRegistry,
+        request: &DataRequest,
+        spec: &MultiLegBacktestSpec,
+    ) -> Result<MultiLegBacktestOutcome, AppError> {
+        spec.run_with_funding_provider(registry, request, &self.context)
     }
 
     /// 异步回测：立刻返回可协作取消的 [`RunHandle`]，由调用方决定等多久。

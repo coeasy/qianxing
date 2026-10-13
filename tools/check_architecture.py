@@ -19121,6 +19121,7 @@ PY_LAYER_SUB_NAMESPACE_ONLY = {
     ),
     "data": (
         "BAR_JSON_CONTENT_TYPE",
+        "FUNDING_RATE_JSON_CONTENT_TYPE",
         "ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE",
         "ProviderAdapter",
         "ProviderAdapterError",

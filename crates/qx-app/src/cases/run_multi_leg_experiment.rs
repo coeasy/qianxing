@@ -321,7 +321,7 @@ fn run_inner_experiment(
                     (None, None) => None,
                     _ => return Err(invariant("多腿实验策略工厂和身份必须同时提供")),
                 };
-                match run_inner(&candidate, context, cancellation, injected) {
+                match run_inner(&candidate, context, cancellation, injected, None) {
                     Ok(Some(outcome)) => Ok(outcome),
                     Ok(None) => return Ok(None),
                     Err(error) => Err(error),

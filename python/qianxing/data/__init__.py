@@ -15,6 +15,7 @@
 from qianxing.app import DatasetSpec, DatasetVerdict, InstrumentId, TradingInstrumentSpec
 from qianxing.data.providers import (
     BAR_JSON_CONTENT_TYPE,
+    FUNDING_RATE_JSON_CONTENT_TYPE,
     ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE,
     ProviderAdapter,
     ProviderAdapterError,
@@ -35,6 +36,7 @@ __all__ = [
     "InstrumentId",
     "TradingInstrumentSpec",
     "BAR_JSON_CONTENT_TYPE",
+    "FUNDING_RATE_JSON_CONTENT_TYPE",
     "ORDER_BOOK_SNAPSHOT_JSON_CONTENT_TYPE",
     "ProviderAdapter",
     "ProviderAdapterError",

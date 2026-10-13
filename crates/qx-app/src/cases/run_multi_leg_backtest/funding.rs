@@ -1,6 +1,7 @@
+use super::super::run_multi_leg_backtest_with_funding_provider::FundingRateProviderProvenance;
 use super::{invalid, invariant, AppError};
 use crate::{MultiLegBacktestSpec, MultiLegSignalBucket};
-use qx_core::{InstrumentId, TradingInstrumentSpec};
+use qx_core::{Fnv1a, InstrumentId, TradingInstrumentSpec};
 use qx_xingban::PortfolioBarSessionReport;
 use std::collections::BTreeMap;
 
@@ -25,6 +26,53 @@ pub(super) fn input_events(spec: &MultiLegBacktestSpec) -> Vec<serde_json::Value
             })
         })
         .collect()
+}
+
+pub(super) fn hash_provider_source(
+    hasher: &mut Fnv1a,
+    source: Option<&FundingRateProviderProvenance>,
+) {
+    if let Some(source) = source {
+        hasher.write_text(&source.provider_id);
+        hasher.write_text(&source.provider_version);
+        hasher.write_text(&source.request_id);
+        hasher.write_text(&source.source_hash);
+        hasher.write_text(&source.query_hash);
+        for provider in &source.retry_chain {
+            hasher.write_text(provider);
+        }
+    }
+}
+
+pub(super) fn apply_artifact_metadata(
+    payload: &mut serde_json::Value,
+    spec: &MultiLegBacktestSpec,
+    source: Option<&FundingRateProviderProvenance>,
+) -> Result<(), AppError> {
+    let object = payload
+        .as_object_mut()
+        .ok_or_else(|| invariant("多腿回测产物根节点不是 JSON object"))?;
+    if let Some(account_id) = spec.account_id.as_deref() {
+        object.insert("account_id".into(), serde_json::json!(account_id));
+        object.insert("primary_account_id".into(), serde_json::json!(account_id));
+        object.insert("reference_account_id".into(), serde_json::json!(account_id));
+    }
+    object.insert(
+        "funding_rate_input".into(),
+        serde_json::Value::String(input_kind(spec).to_string()),
+    );
+    object.insert(
+        "funding_rate_events".into(),
+        serde_json::to_value(input_events(spec))
+            .map_err(|error| invariant(format!("资金费事件序列化失败: {error}")))?,
+    );
+    let provenance = source
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| invariant(format!("资金费 Provider 来源序列化失败: {error}")))?
+        .unwrap_or(serde_json::Value::Null);
+    object.insert("funding_provider_provenance".into(), provenance);
+    Ok(())
 }
 
 pub(super) fn rates_for_legs(

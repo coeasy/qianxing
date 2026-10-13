@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791917918
+generated_at_unix: 1791919545
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -172,7 +172,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=04cf7d61a40c2093/7ccb1b342c9d2b75,db4f7cad62df00a5/bf455d78c5c309fd,9d1f5ac9e723bf18/8bf31c2285b16c74,d44a4c591c13660a/39057f642ab37454"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=de79a4d45e5ae7eb/033bcba5b3766055,3562402e575821bd/5d596cd469837e7d,315cf046200eebb8/ba935c142ca6626c,7752dd7acc03c742/59aab7a66734dd34"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -230,6 +230,14 @@ scenarios:
     exit_code: 0
     observed: "Ran 1 test; caller_supplied_historical_events=true signed_rates=true event_input_preserved=true execution_settlements_present=true shared_rust_app=true"
     evidence: ["python/tests/test_app_use_cases.py", "python/qianxing/app.py", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "crates/qx-xingban/src/backtest/portfolio_session/funding.rs"]
+  - name: python_provider_multileg_funding_history
+    label: "Python Financial Provider 主备获取历史 funding 并进入共享 Rust 多腿回测"
+    status: executed
+    anchor: "python/tests/test_provider_sdk.py"
+    command: "python -m unittest python.tests.test_provider_sdk.ProviderSdkTest.test_financial_provider_funding_flows_into_multi_leg_rust_backtest"
+    exit_code: 0
+    observed: "Ran 1 test; provider_failover=true two_signed_settlements=true provider_lineage_bound=true shared_rust_ledger=true"
+    evidence: ["python/tests/test_provider_sdk.py", "python/qianxing/data/providers.py", "crates/qx-app/src/cases/run_multi_leg_backtest_with_funding_provider.rs", "crates/qx-xingban/src/backtest/portfolio_session/funding.rs"]
   - name: depth_strategy_portfolio
     label: "L2 多策略共享 OMS/撮合/账簿与策略额度归因"
     status: executed

@@ -30,6 +30,11 @@ def _load_native():
     按它判断会把"扩展是旧世代"读成"扩展可用"）。
     """
     root = Path(__file__).resolve().parents[2]
+    loaded = sys.modules.get("qianxing_bridge._qianxing_native")
+    if loaded is not None:
+        # Reuse the already imported build. On Windows the loaded DLL is locked, so copying
+        # the same source into another per-process directory fails with WinError 32.
+        return loaded
     directories = []
     for profile in ("release", "debug"):
         for base in (os.environ.get("CARGO_TARGET_DIR"), str(root / "target")):

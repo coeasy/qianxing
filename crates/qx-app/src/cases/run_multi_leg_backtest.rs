@@ -38,17 +38,19 @@ pub fn run_multi_leg_backtest(
 ) -> Result<MultiLegBacktestOutcome, AppError> {
     context.require(CallerCapability::Research, "多腿 Bar 回测")?;
     let correlation_id = context.correlation_id().to_string();
-    guard_panics(&correlation_id, || run_inner(spec, context, None, None))
-        .map_err(|error| attach(error, &correlation_id))?
-        .ok_or_else(|| {
-            attach(
-                AppError::new(
-                    AppErrorCategory::InternalInvariant,
-                    "同步多腿回测未产生报告",
-                ),
-                &correlation_id,
-            )
-        })
+    guard_panics(&correlation_id, || {
+        run_inner(spec, context, None, None, None)
+    })
+    .map_err(|error| attach(error, &correlation_id))?
+    .ok_or_else(|| {
+        attach(
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                "同步多腿回测未产生报告",
+            ),
+            &correlation_id,
+        )
+    })
 }
 
 impl MultiLegBacktestSpec {
@@ -58,7 +60,7 @@ impl MultiLegBacktestSpec {
             context.require(CallerCapability::Research, "多腿 Bar 回测")?;
             let correlation_id = context.correlation_id().to_string();
             guard_panics(&correlation_id, || {
-                run_inner(&self, &context, Some(&cancellation), None)
+                run_inner(&self, &context, Some(&cancellation), None, None)
             })
             .map_err(|error| attach(error, &correlation_id))
         })
@@ -70,6 +72,9 @@ pub(super) fn run_inner(
     _context: &RunContext,
     cancellation: Option<&CancellationToken>,
     injected: Option<InjectedMultiLegStrategy>,
+    funding_provider: Option<
+        &super::run_multi_leg_backtest_with_funding_provider::FundingRateProviderProvenance,
+    >,
 ) -> Result<Option<MultiLegBacktestOutcome>, AppError> {
     spec.validate()?;
     validate_custom_sizing(spec, injected.is_some())?;
@@ -130,6 +135,7 @@ pub(super) fn run_inner(
         config_hasher.write_text(&custom.identity.strategy_version);
         config_hasher.write_text(&custom.identity.source_sha256);
     }
+    funding::hash_provider_source(&mut config_hasher, funding_provider);
     let config_hash = format!("{:016x}", config_hasher.finish());
     let strategy_id = injected.as_ref().map_or_else(
         || spec.strategy.strategy_id.clone(),
@@ -406,8 +412,6 @@ pub(super) fn run_inner(
         },
         "fill_model": fill_model_name(spec.fill_model),
         "funding_bps": spec.funding_bps,
-        "funding_rate_input": funding::input_kind(spec),
-        "funding_rate_events": funding::input_events(spec),
         "data_fingerprint": data_fingerprint,
         "config_hash": config_hash,
         "shared_result_hash": format!("{:016x}", portfolio_report.result_hash()),
@@ -446,13 +450,7 @@ pub(super) fn run_inner(
         "leg_return_basis": "leg pnl divided by declared leg initial cash; execution uses the shared account and does not enforce leg capital reservations",
         "assumptions": ["both legs share one account Ledger, OMS, EventLog, and buying-power pool", "same-timestamp callbacks are deterministic and market orders compete by declared priority then instrument id", "all market events are replay-verified together", "each venue can declare its own maker/taker rates with shared rates as fallback", "signed funding settles at UTC 8-hour boundaries on the last observed mark using the open derivative position and is applied to the shared Ledger before callbacks at that timestamp", "funding settlement fails closed if its latest mark is more than one funding interval old", "funding debit or receipt is included exactly once in ending equity and each settlement is present in replay facts", "funding input is caller-supplied constant bps or timestamped historical events; event inputs are recorded in this artifact and do not imply an exchange history provider", "missing market specs retain the legacy spot assumption and are represented by a normalized execution spec"],
     });
-    if let Some(account_id) = spec.account_id.as_deref() {
-        if let Some(object) = payload.as_object_mut() {
-            object.insert("account_id".into(), serde_json::json!(account_id));
-            object.insert("primary_account_id".into(), serde_json::json!(account_id));
-            object.insert("reference_account_id".into(), serde_json::json!(account_id));
-        }
-    }
+    funding::apply_artifact_metadata(&mut payload, spec, funding_provider)?;
     let payload = serde_json::to_string(&payload)
         .map_err(|error| invariant(format!("多腿产物序列化失败: {error}")))?;
     std::fs::create_dir_all(&spec.output_dir)
