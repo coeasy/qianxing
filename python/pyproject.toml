@@ -71,7 +71,7 @@ manifest-path = "../crates/qx-python/Cargo.toml"
 python-source = "."
 module-name = "qianxing_bridge._qianxing_native"
 python-packages = ["qianxing", "qianxing_ashare", "qianxing_ccxt", "qianxing_strategy"]
-exclude = ["**/__pycache__/**", "**/*.pyc"]
+exclude = ["**/__pycache__/**", "**/*.pyc", "**/.venv/**"]
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"

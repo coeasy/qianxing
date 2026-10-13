@@ -15,11 +15,11 @@ use std::path::PathBuf;
 
 mod custom_strategy;
 mod portfolio;
+use custom_strategy::CallbackStrategy;
+pub(super) use custom_strategy::InjectedDepthStrategy;
 use custom_strategy::{run_custom_strategies, start_custom_strategies};
-use custom_strategy::{CallbackStrategy, InjectedDepthStrategy};
 mod workflow;
-pub(super) use workflow::run_inner;
-use workflow::run_inner_with_strategy;
+pub(super) use workflow::{run_inner, run_inner_with_strategy};
 
 const DEFAULT_ACCOUNT_ID: &str = "app";
 
@@ -61,6 +61,25 @@ pub fn run_depth_backtest_with_strategy_slots(
     context: &RunContext,
 ) -> Result<DepthBacktestOutcome, AppError> {
     run_custom_strategies(spec, strategies, context)
+}
+
+pub(super) fn run_inner_with_experiment_strategy(
+    spec: &DepthBacktestSpec,
+    context: &RunContext,
+    cancellation: Option<&crate::run_handle::CancellationToken>,
+    identity: super::StrategyArtifactIdentity,
+    strategy: Box<dyn Strategy>,
+) -> Result<Option<DepthBacktestOutcome>, AppError> {
+    run_inner_with_strategy(
+        spec,
+        context,
+        cancellation,
+        vec![InjectedDepthStrategy {
+            identity,
+            strategy,
+            experiment_parameters: true,
+        }],
+    )
 }
 
 /// Start a cancellable custom strategy on the shared Tick/OrderBook lifecycle.

@@ -69,6 +69,8 @@ APP_ENTRYPOINTS = (
     "app_start_depth_backtest",
     "app_run_depth_experiment",
     "app_start_depth_experiment",
+    "app_run_depth_experiment_with_strategy",
+    "app_start_depth_experiment_with_strategy",
     "app_verify_depth_run",
     "app_run_multi_leg_backtest",
     "app_start_multi_leg_backtest",
@@ -405,6 +407,32 @@ def app_run_depth_experiment(spec_json: str) -> str:
 def app_start_depth_experiment(spec_json: str) -> Any:
     """Start a cancellable Rust Tick/OrderBook parameter experiment."""
     return _extension().app_start_depth_experiment(spec_json)
+
+
+def app_run_depth_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> str:
+    """Run caller-authored Tick/OrderBook candidates through the shared Rust engines."""
+    return str(_extension().app_run_depth_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
+    ))
+
+
+def app_start_depth_experiment_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    factory: Any,
+) -> Any:
+    """Start a cancellable Tick/OrderBook grid with a new Python callback per candidate."""
+    return _extension().app_start_depth_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory
+    )
 
 
 def app_verify_depth_run(outcome_json: str) -> str:

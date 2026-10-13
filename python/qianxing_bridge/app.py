@@ -397,6 +397,36 @@ def start_depth_experiment(spec: "str | dict[str, Any]") -> Any:
     return native.app_start_depth_experiment(_payload(spec))
 
 
+def run_depth_experiment_with_strategy(
+    spec: "str | dict[str, Any]",
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> dict[str, Any]:
+    """Run every Tick/OrderBook candidate through a fresh caller-authored Python strategy."""
+    return json.loads(native.app_run_depth_experiment_with_strategy(
+        _payload(spec), strategy_id, strategy_version, source_sha256,
+        _PythonStrategyFactory(strategy_factory),
+    ))
+
+
+def start_depth_experiment_with_strategy(
+    spec: "str | dict[str, Any]",
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> Any:
+    """Start a cancellable depth grid with one fresh Python callback per candidate."""
+    return native.app_start_depth_experiment_with_strategy(
+        _payload(spec), strategy_id, strategy_version, source_sha256,
+        _PythonStrategyFactory(strategy_factory),
+    )
+
+
 def run_multi_leg_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """Run a Rust application-layer multi-leg Bar backtest."""
     return json.loads(native.app_run_multi_leg_backtest(_payload(spec)))

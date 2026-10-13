@@ -14,6 +14,7 @@ use qx_xingban::{OrderBookSnapshot, OrderBookStrategy};
 pub(in crate::cases) struct InjectedDepthStrategy {
     pub(super) identity: StrategyArtifactIdentity,
     pub(super) strategy: Box<dyn Strategy>,
+    pub(super) experiment_parameters: bool,
 }
 
 pub(super) struct CallbackStrategy(pub(super) Box<dyn Strategy>);
@@ -196,7 +197,11 @@ fn prepare_injected(
                 ));
             }
             identity.validate_for_depth(spec)?;
-            Ok(InjectedDepthStrategy { identity, strategy })
+            Ok(InjectedDepthStrategy {
+                identity,
+                strategy,
+                experiment_parameters: false,
+            })
         })
         .collect()
 }

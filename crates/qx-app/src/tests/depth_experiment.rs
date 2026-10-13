@@ -1,8 +1,9 @@
 use crate::{
     run_depth_experiment, AppErrorCategory, CallerCapability, ExperimentParameterSpace, RunContext,
-    RunDepthExperimentSpec, RunStatus,
+    RunDepthExperimentSpec, RunStatus, StrategyArtifactIdentity,
 };
-use qx_core::SCALE;
+use qx_core::{Quantity, Side, SCALE};
+use qx_strategy::{MarketEvent, Strategy, StrategyContext, StrategyDecision, StrategyOrderIntent};
 use std::path::Path;
 
 #[test]
@@ -37,6 +38,111 @@ fn tick_parameter_experiment_is_deterministic_and_isolates_bad_candidates() {
             .category(),
         AppErrorCategory::Conflict
     );
+}
+
+struct BuyOnFirstDepthEvent {
+    quantity_raw: i128,
+    sent: bool,
+}
+
+impl Strategy for BuyOnFirstDepthEvent {
+    fn on_event(
+        &mut self,
+        context: &StrategyContext,
+        event: &MarketEvent,
+    ) -> Result<StrategyDecision, String> {
+        let intent = if self.sent {
+            Vec::new()
+        } else {
+            self.sent = true;
+            vec![StrategyOrderIntent {
+                intent_id: 1,
+                instrument: event.instrument().cloned().expect("depth instrument"),
+                side: Side::Buy,
+                qty: Quantity::from_raw(self.quantity_raw),
+                limit: None,
+                policy: None,
+                reduce_only: false,
+                post_only: false,
+            }]
+        };
+        Ok(StrategyDecision {
+            schema_version: qx_strategy::STRATEGY_API_VERSION,
+            request_id: format!("{}:{}", context.strategy_id, event.ts()),
+            strategy_id: context.strategy_id.clone(),
+            signal_id: event.ts(),
+            confidence: 10_000,
+            priority: 0,
+            expires_at: 0,
+            intents: intent,
+        })
+    }
+}
+
+#[test]
+fn caller_strategy_factory_runs_fresh_tick_candidates_and_cancellable_handle() {
+    let root = super::fixtures::scratch("tick-custom-strategy-experiment");
+    let spec = RunDepthExperimentSpec {
+        schema_version: 1,
+        experiment_id: "tick-custom-strategy-grid".into(),
+        base: super::depth_backtest::spec("unused-custom-tick-grid", &root, "l1", 1),
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "quantity_raw".into(),
+            values: vec![SCALE, 2 * SCALE],
+        }],
+        strategy_kinds: Vec::new(),
+    };
+    let identity = StrategyArtifactIdentity {
+        strategy_id: spec.base.strategy.strategy_id.clone(),
+        strategy_version: "rust-depth-grid-v1".into(),
+        source_sha256: "c".repeat(64),
+    };
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut factory = {
+        let seen = seen.clone();
+        move |candidate: &crate::DepthBacktestSpec| {
+            let quantity_raw = candidate.strategy.quantity_raw;
+            seen.lock().unwrap().push(quantity_raw);
+            Ok(Box::new(BuyOnFirstDepthEvent {
+                quantity_raw,
+                sent: false,
+            }) as Box<dyn Strategy>)
+        }
+    };
+    let context = RunContext::new(CallerCapability::Research, "tick-custom-strategy-grid");
+    let result = spec
+        .run_with_strategy_factory(&identity, &mut factory, &context)
+        .expect("custom Tick strategy candidates use the shared Rust depth engine");
+    assert_eq!(*seen.lock().unwrap(), vec![SCALE, 2 * SCALE]);
+    assert_eq!(result.succeeded_candidates, 2);
+    assert!(result.candidates.iter().all(|candidate| candidate
+        .outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.fills > 0)));
+
+    let mut handle_spec = spec;
+    handle_spec.experiment_id = "tick-custom-strategy-grid-handle".into();
+    let mut handle = handle_spec
+        .start_with_strategy_factory(
+            identity,
+            |candidate: &crate::DepthBacktestSpec| {
+                Ok(Box::new(BuyOnFirstDepthEvent {
+                    quantity_raw: candidate.strategy.quantity_raw,
+                    sent: false,
+                }) as Box<dyn Strategy>)
+            },
+            RunContext::new(
+                CallerCapability::Research,
+                "tick-custom-strategy-grid-handle",
+            ),
+        )
+        .expect("factory validates before worker starts");
+    assert_eq!(handle.wait(), RunStatus::Succeeded);
+    let result = handle
+        .try_take_result()
+        .expect("completed depth experiment result")
+        .expect("custom depth grid report");
+    assert_eq!(result.succeeded_candidates, 2);
 }
 
 #[test]

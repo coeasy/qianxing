@@ -6,20 +6,22 @@ use super::experiment_grid::{
     validate_experiment_id,
 };
 use super::guard::guard_panics;
-use super::run_depth_backtest::run_inner;
+use super::run_depth_backtest::{run_inner, run_inner_with_experiment_strategy};
 use super::{attach, ExperimentParameterSpace};
 use crate::run_handle::CancellationToken;
 use crate::{
     AppError, AppErrorCategory, CallerCapability, DepthBacktestOutcome, DepthBacktestSpec,
-    RunContext, RunHandle,
+    RunContext, RunHandle, StrategyArtifactIdentity,
 };
 use qx_core::Fnv1a;
-use qx_strategy::BuiltinStrategyKind;
+use qx_strategy::{BuiltinStrategyKind, Strategy};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub const RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION: u32 = 1;
+
+type StrategyFactory<'a> = dyn FnMut(&DepthBacktestSpec) -> Result<Box<dyn Strategy>, String> + 'a;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -106,6 +108,34 @@ impl RunDepthExperimentSpec {
             .ok_or_else(|| invalid("实验最多接受 256 个候选组合"))
     }
 
+    /// Run a parameter grid with a fresh caller-authored strategy for every depth candidate.
+    pub fn run_with_strategy_factory<F>(
+        &self,
+        identity: &StrategyArtifactIdentity,
+        factory: &mut F,
+        context: &RunContext,
+    ) -> Result<RunDepthExperimentResult, AppError>
+    where
+        F: FnMut(&DepthBacktestSpec) -> Result<Box<dyn Strategy>, String>,
+    {
+        context.require(
+            CallerCapability::Research,
+            "多语言 Tick/OrderBook 策略参数实验",
+        )?;
+        validate_strategy_experiment(self, identity)?;
+        let correlation_id = context.correlation_id().to_string();
+        guard_panics(&correlation_id, || {
+            run_depth_experiment_inner(self, context, None, Some(identity), Some(factory))
+        })
+        .map_err(|error| attach(error, &correlation_id))?
+        .ok_or_else(|| {
+            attach(
+                invariant("同步多语言深度参数实验未产生报告"),
+                &correlation_id,
+            )
+        })
+    }
+
     /// Run the grid through the cancellable Rust Tick/OrderBook backtest path.
     pub fn start(self, context: RunContext) -> RunHandle<RunDepthExperimentResult> {
         let run_id = context.correlation_id().to_string();
@@ -113,10 +143,41 @@ impl RunDepthExperimentSpec {
             context.require(CallerCapability::Research, "Tick/OrderBook 参数实验")?;
             let correlation_id = context.correlation_id().to_string();
             guard_panics(&correlation_id, || {
-                run_depth_experiment_inner(&self, &context, Some(&cancellation))
+                run_depth_experiment_inner(&self, &context, Some(&cancellation), None, None)
             })
             .map_err(|error| attach(error, &correlation_id))
         })
+    }
+
+    /// Start a cancellable parameter grid with a fresh caller-authored depth strategy per candidate.
+    pub fn start_with_strategy_factory<F>(
+        self,
+        identity: StrategyArtifactIdentity,
+        mut factory: F,
+        context: RunContext,
+    ) -> Result<RunHandle<RunDepthExperimentResult>, AppError>
+    where
+        F: FnMut(&DepthBacktestSpec) -> Result<Box<dyn Strategy>, String> + Send + 'static,
+    {
+        context.require(
+            CallerCapability::Research,
+            "多语言 Tick/OrderBook 策略参数实验",
+        )?;
+        validate_strategy_experiment(&self, &identity)?;
+        let run_id = context.correlation_id().to_string();
+        Ok(RunHandle::spawn(run_id, move |cancellation| {
+            let correlation_id = context.correlation_id().to_string();
+            guard_panics(&correlation_id, || {
+                run_depth_experiment_inner(
+                    &self,
+                    &context,
+                    Some(&cancellation),
+                    Some(&identity),
+                    Some(&mut factory),
+                )
+            })
+            .map_err(|error| attach(error, &correlation_id))
+        }))
     }
 }
 
@@ -179,7 +240,7 @@ pub fn run_depth_experiment(
     context.require(CallerCapability::Research, "Tick/OrderBook 参数实验")?;
     let correlation_id = context.correlation_id().to_string();
     guard_panics(&correlation_id, || {
-        run_depth_experiment_inner(spec, context, None)
+        run_depth_experiment_inner(spec, context, None, None, None)
     })
     .map_err(|error| attach(error, &correlation_id))?
     .ok_or_else(|| {
@@ -190,14 +251,40 @@ pub fn run_depth_experiment(
     })
 }
 
+fn validate_strategy_experiment(
+    spec: &RunDepthExperimentSpec,
+    identity: &StrategyArtifactIdentity,
+) -> Result<(), AppError> {
+    spec.validate()?;
+    if identity.strategy_id != spec.base.strategy.strategy_id {
+        return Err(invalid(
+            "caller strategy identity must match the primary depth strategy slot",
+        ));
+    }
+    if !spec.strategy_kinds.is_empty() {
+        return Err(invalid(
+            "caller strategy factory cannot be combined with built-in strategy_kinds selection",
+        ));
+    }
+    identity.validate_for_depth_experiment(&spec.base)?;
+    Ok(())
+}
+
 fn run_depth_experiment_inner(
     spec: &RunDepthExperimentSpec,
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
+    identity: Option<&StrategyArtifactIdentity>,
+    mut factory: Option<&mut StrategyFactory<'_>>,
 ) -> Result<Option<RunDepthExperimentResult>, AppError> {
     let total = spec.validate()?;
     let mut fingerprint = Fnv1a::new();
     fingerprint.write_text(&spec.to_json()?);
+    if let Some(identity) = identity {
+        fingerprint.write_text(&identity.strategy_id);
+        fingerprint.write_text(&identity.strategy_version);
+        fingerprint.write_text(&identity.source_sha256);
+    }
     let spec_fingerprint = format!("{:016x}", fingerprint.finish());
     let root = PathBuf::from(&spec.base.output_dir).join(&spec.experiment_id);
     let artifact_path = root
@@ -251,11 +338,30 @@ fn run_depth_experiment_inner(
             &mut candidate.market_making,
             &parameters,
         ) {
-            Ok(()) => match run_inner(&candidate, context, cancellation) {
-                Ok(Some(outcome)) => Ok(outcome),
-                Ok(None) => return Ok(None),
-                Err(error) => Err(error),
-            },
+            Ok(()) => {
+                let run = match (identity, factory.as_deref_mut()) {
+                    (Some(identity), Some(factory)) => factory(&candidate)
+                        .map_err(|error| {
+                            invalid(format!("候选 {ordinal} 自定义策略 factory 失败: {error}"))
+                        })
+                        .and_then(|strategy| {
+                            run_inner_with_experiment_strategy(
+                                &candidate,
+                                context,
+                                cancellation,
+                                identity.clone(),
+                                strategy,
+                            )
+                        }),
+                    (None, None) => run_inner(&candidate, context, cancellation),
+                    _ => Err(invariant("自定义深度实验身份与 factory 状态不一致")),
+                };
+                match run {
+                    Ok(Some(outcome)) => Ok(outcome),
+                    Ok(None) => return Ok(None),
+                    Err(error) => Err(error),
+                }
+            }
             Err(error) => Err(error),
         };
         candidates.push(match outcome {

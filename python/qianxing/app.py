@@ -1544,6 +1544,44 @@ class AsyncCoreClient:
     async def async_start_depth_experiment(self, spec: RunDepthExperimentSpec | dict[str, Any]) -> AsyncRunHandle[RunDepthExperimentResult]:
         return await self._start(start_depth_experiment, spec)
 
+    async def async_run_depth_experiment_with_strategy(
+        self,
+        spec: RunDepthExperimentSpec | dict[str, Any],
+        strategy_factory: Any,
+        *,
+        strategy_id: str,
+        strategy_version: str,
+        source_sha256: str,
+    ) -> RunDepthExperimentResult:
+        return await asyncio.to_thread(
+            run_depth_experiment_with_strategy,
+            spec,
+            strategy_factory,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            source_sha256=source_sha256,
+        )
+
+    async def async_start_depth_experiment_with_strategy(
+        self,
+        spec: RunDepthExperimentSpec | dict[str, Any],
+        strategy_factory: Any,
+        *,
+        strategy_id: str,
+        strategy_version: str,
+        source_sha256: str,
+    ) -> AsyncRunHandle[RunDepthExperimentResult]:
+        def start(value: Any) -> RunHandle[RunDepthExperimentResult]:
+            return start_depth_experiment_with_strategy(
+                value,
+                strategy_factory,
+                strategy_id=strategy_id,
+                strategy_version=strategy_version,
+                source_sha256=source_sha256,
+            )
+
+        return await self._start(start, spec)
+
     async def async_run_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
         return await asyncio.to_thread(run_multi_leg_backtest, spec)
 
@@ -2121,12 +2159,58 @@ def run_depth_experiment(
     return RunDepthExperimentResult.from_dict(_invoke(native.app_run_depth_experiment, spec))
 
 
+def run_depth_experiment_with_strategy(
+    spec: RunDepthExperimentSpec | dict[str, Any],
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> RunDepthExperimentResult:
+    """Run each Tick/OrderBook parameter candidate with a fresh Python strategy.
+
+    The candidate spec is supplied to the factory after Rust applies its parameter values.
+    Callback decisions still pass through the shared Rust depth matching and accounting path.
+    """
+    from qianxing_bridge.app import (
+        run_depth_experiment_with_strategy as _run_strategy_experiment,
+    )
+
+    return RunDepthExperimentResult.from_dict(_run_strategy_experiment(
+        _encode_payload(spec), strategy_factory, strategy_id=strategy_id,
+        strategy_version=strategy_version, source_sha256=source_sha256,
+    ))
+
+
 def start_depth_experiment(
     spec: RunDepthExperimentSpec | dict[str, Any],
 ) -> RunHandle[RunDepthExperimentResult]:
     """Start a cancellable Tick/OrderBook experiment in the Rust run lifecycle."""
     try:
         native_handle = native.app_start_depth_experiment(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, RunDepthExperimentResult)
+
+
+def start_depth_experiment_with_strategy(
+    spec: RunDepthExperimentSpec | dict[str, Any],
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> RunHandle[RunDepthExperimentResult]:
+    """Start a cancellable Rust depth parameter experiment with custom strategy callbacks."""
+    from qianxing_bridge.app import (
+        start_depth_experiment_with_strategy as _start_strategy_experiment,
+    )
+
+    try:
+        native_handle = _start_strategy_experiment(
+            _encode_payload(spec), strategy_factory, strategy_id=strategy_id,
+            strategy_version=strategy_version, source_sha256=source_sha256,
+        )
     except Exception as exc:
         raise _translate_native_error(exc) from exc
     return RunHandle(native_handle, RunDepthExperimentResult)

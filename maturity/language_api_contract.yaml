@@ -139,7 +139,7 @@ contracts:
     http: ["/app/run-experiment", "/app/run-experiment/start"]
   - use_case: run_depth_experiment
     rust: ["run_depth_experiment"]
-    python_native: ["run_depth_experiment", "start_depth_experiment"]
+    python_native: ["run_depth_experiment", "start_depth_experiment", "run_depth_experiment_with_strategy", "start_depth_experiment_with_strategy"]
     python_remote: ["run_depth_experiment", "start_depth_experiment"]
     cpp_remote: ["run_depth_experiment", "start_depth_experiment"]
     http: ["/app/run-depth-experiment", "/app/run-depth-experiment/start"]

@@ -26,7 +26,7 @@ pub(in crate::cases) fn run_inner(
     run_inner_with_strategy(spec, context, cancellation, Vec::new())
 }
 
-pub(super) fn run_inner_with_strategy(
+pub(in crate::cases) fn run_inner_with_strategy(
     spec: &DepthBacktestSpec,
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
@@ -41,7 +41,11 @@ pub(super) fn run_inner_with_strategy(
                 custom.identity.strategy_id
             )));
         }
-        custom.identity.validate_for_depth(spec)?;
+        if custom.experiment_parameters {
+            custom.identity.validate_for_depth_experiment(spec)?;
+        } else {
+            custom.identity.validate_for_depth(spec)?;
+        }
     }
     if spec.portfolio.is_none() && injected.len() > 1 {
         return Err(invalid_input(

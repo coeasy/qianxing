@@ -112,32 +112,7 @@ impl StrategyArtifactIdentity {
         &self,
         spec: &crate::spec::DepthBacktestSpec,
     ) -> Result<(), AppError> {
-        let valid_token = |value: &str| {
-            !value.is_empty()
-                && value.len() <= 128
-                && value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
-        };
-        if !valid_token(&self.strategy_id)
-            || !valid_token(&self.strategy_version)
-            || self.source_sha256.len() != 64
-            || !self
-                .source_sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "StrategyArtifactIdentity requires a matching strategy_id, a valid strategy_version, and a lowercase SHA-256 digest",
-            ));
-        }
-        if spec.market_making.is_some() {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "caller-supplied depth strategies cannot be combined with market-making strategies",
-            ));
-        }
+        self.validate_depth_identity(spec)?;
         let slot = if self.strategy_id == spec.strategy.strategy_id {
             &spec.strategy
         } else {
@@ -166,6 +141,54 @@ impl StrategyArtifactIdentity {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
                 "caller-supplied strategies must use default BuiltinStrategySpec parameters; built-in signal and sizing knobs do not apply to external callbacks",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_for_depth_experiment(
+        &self,
+        spec: &crate::spec::DepthBacktestSpec,
+    ) -> Result<(), AppError> {
+        if self.strategy_id != spec.strategy.strategy_id {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "depth experiment strategy identity must match the primary strategy slot",
+            ));
+        }
+        // The numeric strategy fields are parameter carriers for the caller factory in this
+        // experiment-only path; unlike a normal custom callback run, the factory consumes them.
+        self.validate_depth_identity(spec)
+    }
+
+    fn validate_depth_identity(
+        &self,
+        spec: &crate::spec::DepthBacktestSpec,
+    ) -> Result<(), AppError> {
+        let valid_token = |value: &str| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        };
+        if !valid_token(&self.strategy_id)
+            || !valid_token(&self.strategy_version)
+            || self.source_sha256.len() != 64
+            || !self
+                .source_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "StrategyArtifactIdentity requires a matching strategy_id, a valid strategy_version, and a lowercase SHA-256 digest",
+            ));
+        }
+        if spec.market_making.is_some() {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "caller-supplied depth strategies cannot be combined with market-making strategies",
             ));
         }
         Ok(())

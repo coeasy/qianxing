@@ -88,6 +88,8 @@ def _load_native():
                 "app_start_depth_backtest_with_strategy_slots",
                 "app_run_depth_experiment",
                 "app_start_depth_experiment",
+                "app_run_depth_experiment_with_strategy",
+                "app_start_depth_experiment_with_strategy",
                 "app_run_multi_leg_backtest",
                 "app_start_multi_leg_backtest",
                 "app_run_multi_leg_experiment",
@@ -2098,6 +2100,123 @@ class AppUseCaseTests(unittest.TestCase):
         with redirect_stdout(stdout):
             self.assertEqual(python_cli(["verify-depth", str(outcome_file)]), 0)
         self.assertTrue(json.loads(stdout.getvalue())["verified"])
+
+    def test_python_depth_parameter_experiment_uses_fresh_strategies_in_rust(self):
+        self._require()
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import (
+            AsyncCoreClient,
+            BuiltinStrategySpec,
+            DepthBacktestSpec,
+            ExperimentParameterSpace,
+            RunDepthExperimentSpec,
+            run_depth_experiment_with_strategy,
+            start_depth_experiment_with_strategy,
+        )
+
+        scale = 1_000_000_000
+        snapshots = []
+        for index in range(48):
+            phase = index % 20
+            mid = 100 + (phase * 2 if phase < 10 else (20 - phase) * 2)
+            snapshots.append({
+                "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+                "ts": 1000 + index * 1000,
+                "sequence": index + 1,
+                "bids": [{"price": (mid - 1) * scale, "qty": 100 * scale}],
+                "asks": [{"price": (mid + 1) * scale, "qty": 100 * scale}],
+            })
+        depth_path = self.output_dir / "custom-depth-grid.json"
+        depth_path.write_text(json.dumps({
+            "schema_version": 1,
+            "source": "python-depth-grid-factory",
+            "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+            "snapshots": snapshots,
+        }), encoding="utf-8")
+
+        def experiment(experiment_id):
+            return RunDepthExperimentSpec(
+                experiment_id=experiment_id,
+                base=DepthBacktestSpec(
+                    run_id="unused-depth-grid",
+                    depth_path=str(depth_path),
+                    tier="l1",
+                    settlement_currency="USDT",
+                    initial_cash_raw=1_000_000_000_000_000,
+                    output_dir=str(self.output_dir / experiment_id),
+                    strategy=BuiltinStrategySpec(
+                        kind="sma_cross", strategy_id="python-depth-grid",
+                        quantity_raw=scale, fast_window=2, slow_window=3,
+                    ),
+                ),
+                parameter_space=(ExperimentParameterSpace("quantity_raw", (scale, 2 * scale)),),
+            )
+
+        produced = []
+
+        def factory(candidate):
+            quantity = candidate["strategy"]["quantity_raw"]
+            produced.append(quantity)
+
+            class BuyFirstTick:
+                def __init__(self):
+                    self.sent = False
+
+                def on_event(self, context, event):
+                    _, tick = next(iter(event.items()))
+                    intents = []
+                    if not self.sent:
+                        self.sent = True
+                        intents.append({
+                            "intent_id": 1,
+                            "instrument": tick["instrument"],
+                            "side": "Buy",
+                            "qty": quantity,
+                            "limit": None,
+                            "policy": None,
+                            "reduce_only": False,
+                            "post_only": False,
+                        })
+                    return {
+                        "schema_version": 1,
+                        "request_id": f"{context['strategy_id']}:{tick['ts']}",
+                        "strategy_id": context["strategy_id"],
+                        "signal_id": tick["ts"],
+                        "confidence": 10_000,
+                        "priority": 0,
+                        "expires_at": 0,
+                        "intents": intents,
+                    }
+
+            return BuyFirstTick()
+
+        identity = {
+            "strategy_id": "python-depth-grid",
+            "strategy_version": "depth-grid-v1",
+            "source_sha256": "f" * 64,
+        }
+        result = run_depth_experiment_with_strategy(experiment("python-depth-grid"), factory, **identity)
+        self.assertEqual(produced, [scale, 2 * scale])
+        self.assertEqual(result.completed_candidates, 2)
+        self.assertEqual(result.succeeded_candidates, 2)
+        self.assertTrue(all(candidate.outcome.fills > 0 for candidate in result.candidates))
+
+        handle = start_depth_experiment_with_strategy(
+            experiment("python-depth-grid-handle"), factory, **identity
+        )
+        self.assertEqual(handle.wait(timeout_ms=30_000), "succeeded")
+        self.assertEqual(handle.result().succeeded_candidates, 2)
+
+        async_client = AsyncCoreClient()
+        async_result = asyncio.run(async_client.async_run_depth_experiment_with_strategy(
+            experiment("python-depth-grid-async"), factory, **identity
+        ))
+        self.assertEqual(async_result.succeeded_candidates, 2)
+        async_handle = asyncio.run(async_client.async_start_depth_experiment_with_strategy(
+            experiment("python-depth-grid-async-handle"), factory, **identity
+        ))
+        self.assertEqual(asyncio.run(async_handle.async_wait(30)), "succeeded")
+        self.assertEqual(asyncio.run(async_handle.async_result()).succeeded_candidates, 2)
 
     def test_multi_account_backtest_uses_the_shared_rust_run_handle(self):
         self._require()

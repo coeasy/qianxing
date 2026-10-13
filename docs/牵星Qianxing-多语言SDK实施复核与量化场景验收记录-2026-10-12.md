@@ -241,3 +241,11 @@ Python 十策略证据：
 - Python PyO3、bridge、`qianxing` 高层、`experiments`/`core` 导出和 `AsyncCoreClient` 接入同步、RunHandle、async run/start。每个候选的自定义策略由 factory 新建；Rust 校验主策略身份、版本与小写 SHA-256，把策略身份加入实验指纹，来源身份变化时同一 `experiment_id` 返回 Conflict；自定义 factory 与 `strategy_kinds` 互斥。修复测试过程中发现的 native.py 转发缺失，并把入口纳入跨语言接口登记和能力矩阵。
 - Rust `qx-app`/`qx-sdk`/`qx-python` 单元及消费者测试共 146 项通过；Rust 严格 Clippy 通过；Python 全量 132 项通过；架构不变量门禁 1096 项通过；Python wheel 格式检查通过。Windows x64 `cp310-abi3` wheel 在隔离虚拟环境强制重装后，实测自定义策略参数候选均成交、同步结果成功、可取消句柄成功。wheel SHA-256：`1be28f290a7da5f5051f61aad3f1f7f9c97c30e81737544c4ed9f0249763056c`。
 - 本地 Rust/Python SDK 的 Bar 参数实验链本轮已补通，但远端 HTTP/C++ callback 托管仍不支持；此实现不证明跨市场/跨账户共享资金与组合级风险、多腿同一组合调度、Paper/Live callback 策略运行、Web/桌面端到端、Linux/macOS wheel，亦不等于真实交易所 testnet 认证。整体方案仍未达到全能力发布条件。
+
+## 28. 2026-10-13 Tick/OrderBook 自定义策略参数实验接通 Rust/Python SDK
+
+- 新增 `RunDepthExperimentSpec::run_with_strategy_factory` 与 `start_with_strategy_factory`。每个参数候选将已应用参数的 `DepthBacktestSpec` 交给调用方工厂，并创建全新策略实例；候选继续使用同一 Rust Tick/OrderBook 回测、风险/OMS/撮合/账簿、回放与排名链路。策略 ID/version/SHA-256 绑定实验指纹，同一 experiment_id 换源码会冲突；自定义工厂与内置 `strategy_kinds` 互斥。RunHandle 仍支持候选间和引擎内协作取消，不输出部分报告。
+- Python PyO3、bridge、`qianxing`、`experiments`/`core` 导出及 `AsyncCoreClient` 增加同步、句柄和 asyncio run/start 入口。新用例实测两个不同 quantity 候选各自通过 factory 创建策略并成交；同步、RunHandle、AsyncCoreClient 均得到两个成功候选。
+- 验证：Rust `qx-app`、`qx-sdk` 独立消费者（含新工厂用例）和 `qx-python` 共 147 项通过；严格 Clippy 通过；Python 全量 133 项通过；`tools/check_architecture.py` 1096 项通过；wheel 检查、隔离环境安装与 native API 导入通过。Windows x64 `cp310-abi3` wheel 大小 1,817,054 字节，SHA-256 `8ca9fedbe370093fab5c69e7ce6e257977a4d5e9f5b770c206a4fbcaae17b1b3`。量化场景探针 37 项通过、0 项缺失、1 项 Live 外部前置 blocked。Windows 系统 TEMP 对 Rust 用例目录有拒绝访问，重定向至 `target/test-tmp` 后全套测试通过。
+- wheel 发行配置排除本地 `.venv`；构建时还将仓库忽略的虚拟环境临时移出源码目录并在 finally 路径恢复，避免发行包扫描开发环境。该临时动作已恢复，`python/.venv` 仍在。
+- 本轮补通的是本地 Rust/Python SDK 的 Tick/OrderBook 多参数回调实验；HTTP/C++ callback 托管、跨市场/跨账户统一资本与风险、组合级多腿调度、Paper/Live callback 策略工作流、Web/桌面 E2E、Linux/macOS wheel 与真实 venue testnet 仍未通过验收。因此整体方案仍未达到全能力发布门槛。
