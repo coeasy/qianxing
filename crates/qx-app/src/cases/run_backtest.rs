@@ -39,7 +39,10 @@ use qx_xingban::{
 use qx_zhenlu::RiskGate;
 use std::collections::BTreeMap;
 
+mod custom_strategy;
 mod strategy_slot;
+pub use custom_strategy::StrategyArtifactIdentity;
+use custom_strategy::{strategy_config_hash, InjectedStrategy};
 use strategy_slot::{build_strategy_slot, strategy_version, StrategySlotContext};
 
 /// Historical default retained for callers whose spec predates explicit account ownership.
@@ -93,7 +96,19 @@ pub(super) fn run_backtest_inner(
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
 ) -> Result<Option<BacktestOutcome>, AppError> {
+    run_backtest_inner_with_strategy(spec, context, cancellation, None)
+}
+
+fn run_backtest_inner_with_strategy(
+    spec: &BacktestSpec,
+    context: &RunContext,
+    cancellation: Option<&CancellationToken>,
+    injected: Option<InjectedStrategy>,
+) -> Result<Option<BacktestOutcome>, AppError> {
     spec.validate()?;
+    if let Some(injected) = &injected {
+        injected.identity.validate_for(spec)?;
+    }
     let instrument = InstrumentId::parse(&spec.instrument).ok_or_else(|| {
         AppError::new(
             AppErrorCategory::InvalidInput,
@@ -140,7 +155,10 @@ pub(super) fn run_backtest_inner(
         ));
     }
     let data_fingerprint = format!("barframe:{:016x}", frame.digest());
-    let config_hash = spec_config_hash(spec)?;
+    let config_hash = match injected.as_ref() {
+        Some(injected) => strategy_config_hash(spec, &injected.identity)?,
+        None => spec_config_hash(spec)?,
+    };
 
     let risk = RiskGate::conservative_default();
     let risk_rule_set_version = risk.rule_set().version().to_string();
@@ -191,6 +209,10 @@ pub(super) fn run_backtest_inner(
         .as_ref()
         .map(|portfolio| portfolio.primary_priority)
         .unwrap_or(0);
+    let injected_version = injected
+        .as_ref()
+        .map(|injected| injected.identity.strategy_version.clone());
+    let injected_strategy = injected.map(|injected| injected.strategy);
     strategy_slots.push(build_strategy_slot(
         &spec.strategy,
         StrategySlotContext {
@@ -201,7 +223,9 @@ pub(super) fn run_backtest_inner(
             currency: &config.currency,
             data_fingerprint: &data_fingerprint,
             as_of,
+            strategy_version: injected_version.as_deref(),
         },
+        injected_strategy,
     )?);
     if let Some(portfolio) = &spec.portfolio {
         for member in &portfolio.additional_strategies {
@@ -215,7 +239,9 @@ pub(super) fn run_backtest_inner(
                     currency: &config.currency,
                     data_fingerprint: &data_fingerprint,
                     as_of,
+                    strategy_version: None,
                 },
+                None,
             )?);
         }
     }
@@ -226,6 +252,8 @@ pub(super) fn run_backtest_inner(
     };
     let strategy_version = if spec.portfolio.is_some() {
         "portfolio-bar-v1".to_string()
+    } else if let Some(version) = &injected_version {
+        version.clone()
     } else {
         strategy_version(&spec.strategy)
     };

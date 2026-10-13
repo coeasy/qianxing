@@ -14,15 +14,22 @@ from typing import Any
 
 def _extension() -> Any:
     errors: list[ImportError] = []
+    candidates: list[Any] = []
     # A top-level `_qianxing_native` may belong to another installed Qianxing
     # version (or an unrelated package). Prefer the extension bundled alongside
     # this `qianxing_bridge` package; keep the top-level name only for developer
     # builds that place the cdylib directly on `sys.path`.
     for module_name in ("qianxing_bridge._qianxing_native", "_qianxing_native"):
         try:
-            return import_module(module_name)
+            module = import_module(module_name)
         except ImportError as error:
             errors.append(error)
+            continue
+        candidates.append(module)
+        if all(hasattr(module, name) for name in APP_ENTRYPOINTS):
+            return module
+    if candidates:
+        return candidates[0]
     raise RuntimeError(
         "_qianxing_native is not installed; build the qx-python wheel first"
     ) from errors[-1]
@@ -41,6 +48,7 @@ def available() -> bool:
 APP_ENTRYPOINTS = (
     "app_validate_dataset",
     "app_run_backtest",
+    "app_run_backtest_with_strategy",
     "app_run_multi_account_backtest",
     "app_start_multi_account_backtest",
     "app_start_backtest",
@@ -142,6 +150,21 @@ def app_run_backtest(spec_json: str) -> str:
     产物落在 spec 的 ``output_dir`` 下（与 CLI/HTTP 同一份实现、同一份产物形状）。
     """
     return str(_extension().app_run_backtest(spec_json))
+
+
+def app_run_backtest_with_strategy(
+    spec_json: str,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+    callback: Any,
+) -> str:
+    """Run a Python strategy callback through the shared Rust Bar engine."""
+    return str(
+        _extension().app_run_backtest_with_strategy(
+            spec_json, strategy_id, strategy_version, source_sha256, callback
+        )
+    )
 
 
 def app_run_multi_account_backtest(spec_json: str) -> str:

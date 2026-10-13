@@ -1,5 +1,4 @@
-//! Python native boundary; JSON/Arrow, application cases, and providers delegate to shared Rust crates.
-//! The `app_*` functions keep the same serialized results and error documents as CLI and HTTP.
+//! Python native boundary; JSON/Arrow, application cases, and providers delegate to shared Rust crates, preserving CLI/HTTP documents.
 
 use pyo3::exceptions::{PyException, PyIndexError, PyValueError};
 use pyo3::prelude::*;
@@ -23,6 +22,7 @@ mod multi_account;
 mod provider_bridge;
 mod risk_parity;
 mod run_handle_helpers;
+mod strategy_callback;
 mod strategy_catalog;
 fn frame_error(error: FrameError) -> PyErr {
     PyValueError::new_err(format!("BarFrame error: {error:?}"))
@@ -480,9 +480,9 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(owned_arrow_capsules, module)?)?;
     module.add_class::<OwnedArrowArray>()?;
     module.add_function(wrap_pyfunction!(owned_arrow_array, module)?)?;
-    // 应用层用例入口 + 它们专用的异常类型。
     module.add_function(wrap_pyfunction!(app_validate_dataset, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_backtest, module)?)?;
+    strategy_callback::register(module)?;
     multi_account::register(module)?;
     module.add_function(wrap_pyfunction!(app_start_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_verify_run, module)?)?;

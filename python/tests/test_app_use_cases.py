@@ -59,6 +59,7 @@ def _load_native():
             for name in (
                 "app_validate_dataset",
                 "app_run_backtest",
+                "app_run_backtest_with_strategy",
                 "app_run_multi_account_backtest",
                 "app_start_multi_account_backtest",
                 "app_start_backtest",
@@ -682,6 +683,75 @@ class AppUseCaseTests(unittest.TestCase):
                 "slow_window": 3,
             },
         }
+
+    def test_python_strategy_callback_runs_shared_kernel_and_replay_verifier(self):
+        self._require()
+        scale = 1_000_000_000
+        timestamps, prices = [], []
+        for index in range(60):
+            phase = index % 20
+            prices.append((100 + phase * 2 if phase < 10 else 100 + (20 - phase) * 2) * scale)
+            timestamps.append(1_000 + index * 1_000)
+        bars_path = self.output_dir / "python-strategy-bars.json"
+        bars_path.write_text(json.dumps({
+            "schema_version": 1,
+            "instrument": "BTCUSDT.BINANCE",
+            "source": "python-custom-strategy-v1",
+            "ts": timestamps,
+            "open_raw": prices,
+            "high_raw": [price + scale for price in prices],
+            "low_raw": [price - scale for price in prices],
+            "close_raw": prices,
+            "volume_raw": [scale] * len(prices),
+        }), encoding="utf-8")
+        spec = self._spec("python-custom-strategy", self.output_dir / "custom", str(bars_path))
+        spec["strategy"]["strategy_id"] = "python-custom-strategy"
+        spec["strategy"]["fast_window"] = 5
+        spec["strategy"]["slow_window"] = 20
+
+        class BuyOnce:
+            emitted = False
+
+            def on_event(self, context, event):
+                bar = event["Bar"]
+                intents = []
+                if not self.emitted:
+                    self.emitted = True
+                    intents.append({
+                        "intent_id": 1,
+                        "instrument": bar["instrument"],
+                        "side": "Buy",
+                        "qty": 1_000_000,
+                        "limit": None,
+                        "policy": None,
+                        "reduce_only": False,
+                        "post_only": False,
+                    })
+                return {
+                    "schema_version": 1,
+                    "request_id": f"{context['strategy_id']}:{bar['ts']}",
+                    "strategy_id": context["strategy_id"],
+                    "signal_id": bar["ts"],
+                    "confidence": 10_000,
+                    "priority": 0,
+                    "expires_at": 0,
+                    "intents": intents,
+                }
+
+        from qianxing.app import run_backtest_with_strategy, verify_run
+
+        outcome = run_backtest_with_strategy(
+            spec,
+            BuyOnce(),
+            strategy_id="python-custom-strategy",
+            strategy_version="python-test-v1",
+            source_sha256="a" * 64,
+        )
+        self.assertGreater(outcome.fills, 0)
+        verification = verify_run(outcome)
+        self.assertTrue(verification.verified, verification.mismatches)
+        summary = json.loads(Path(outcome.artifacts["summary"]).read_text(encoding="utf-8"))
+        self.assertEqual(summary["strategy_version"], "python-test-v1")
 
     def test_ten_classic_builtin_strategies_run_through_python_rust_kernel(self):
         self._require()

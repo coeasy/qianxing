@@ -22,6 +22,8 @@ use qx_sdk::{
 };
 use std::path::{Path, PathBuf};
 
+#[path = "consumer/custom_strategy.rs"]
+mod custom_strategy_consumer;
 #[path = "consumer/strategy_selection.rs"]
 mod strategy_selection_consumer;
 

@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from . import native
@@ -41,6 +42,51 @@ def validate_dataset(spec: "str | dict[str, Any]") -> dict[str, Any]:
 def run_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """跑一次 Bar 回测并落四份产物，返回 ``BacktestOutcome``。"""
     return json.loads(native.app_run_backtest(_payload(spec)))
+
+
+class _PythonBacktestCallback:
+    """Serialize the Python callback boundary; decisions are validated by qx-strategy."""
+
+    def __init__(self, strategy: Any) -> None:
+        self.strategy = strategy
+
+    def _qx_on_event(self, context_json: str, event_json: str) -> str:
+        context = json.loads(context_json)
+        event = json.loads(event_json)
+        handler = getattr(self.strategy, "on_event", self.strategy)
+        decision = handler(context, event)
+        if isinstance(decision, str):
+            return decision
+        if not isinstance(decision, Mapping):
+            raise TypeError("Python Strategy.on_event must return a decision mapping or JSON string")
+        return json.dumps(dict(decision), separators=(",", ":"), ensure_ascii=False)
+
+
+def run_backtest_with_strategy(
+    spec: "str | dict[str, Any]",
+    strategy: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> dict[str, Any]:
+    """Run Python-authored decisions inside the same Rust Bar engine.
+
+    ``strategy.on_event(context, market_event)`` receives JSON-shaped dictionaries. Return
+    a Rust ``StrategyDecision`` mapping (``side`` uses ``Buy``/``Sell`` and quantity/price
+    fields are raw fixed-point integers); risk, OMS, fills, accounting and replay stay in Rust.
+    ``source_sha256`` participates in the run identity so changed strategy source cannot reuse
+    an existing ``run_id``.
+    """
+    return json.loads(
+        native.app_run_backtest_with_strategy(
+            _payload(spec),
+            strategy_id,
+            strategy_version,
+            source_sha256,
+            _PythonBacktestCallback(strategy),
+        )
+    )
 
 
 def run_multi_account_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:

@@ -20,8 +20,10 @@ use qx_app::{
     DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestResult, MultiAccountBacktestSpec,
     MultiLegBacktestOutcome, MultiLegBacktestSpec, RiskParityResult, RiskParitySpec, RunContext,
     RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec,
-    RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec, VerificationResult,
+    RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec, StrategyArtifactIdentity,
+    VerificationResult,
 };
+use qx_strategy::Strategy;
 
 /// 一次 SDK 会话的调用身份。
 ///
@@ -90,6 +92,18 @@ impl Client {
     /// 同步回测：阻塞到终态，返回四份产物与读数。
     pub fn run_backtest(&self, spec: &BacktestSpec) -> Result<BacktestOutcome, AppError> {
         run_backtest(spec, &self.context)
+    }
+
+    /// Run caller-authored strategy logic inside the shared deterministic Bar engine.
+    /// Risk, OMS, matching, accounting, artifacts and replay verification use the same
+    /// qx-app path as built-in strategies.
+    pub fn run_backtest_with_strategy<S: Strategy + 'static>(
+        &self,
+        spec: &BacktestSpec,
+        identity: &StrategyArtifactIdentity,
+        strategy: S,
+    ) -> Result<BacktestOutcome, AppError> {
+        spec.run_with_strategy(identity, strategy, &self.context)
     }
 
     /// Freeze a Provider BarFrame and its shared manifest, validate it, then run the same app use case.

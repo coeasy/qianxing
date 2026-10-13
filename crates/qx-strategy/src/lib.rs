@@ -208,6 +208,7 @@ impl OrderBookLevel {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StrategyOrderIntent {
     pub intent_id: u64,
     pub instrument: InstrumentId,
@@ -235,6 +236,7 @@ impl StrategyOrderIntent {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StrategyDecision {
     pub schema_version: u32,
     pub request_id: String,
@@ -304,8 +306,7 @@ impl StrategyDecision {
     }
 }
 
-/// 原生 Rust 策略接口。策略生命周期与交易执行解耦，所有订单意图必须经过
-/// Runtime 的 RiskGate、OMS 和 ExecutionPort。
+/// 原生 Rust 策略接口；所有订单意图必须经过 Runtime 的 RiskGate、OMS 和 ExecutionPort。
 pub trait Strategy: Send {
     fn on_init(&mut self, _context: &StrategyContext) -> Result<(), String> {
         Ok(())
@@ -330,8 +331,7 @@ pub trait Strategy: Send {
     }
 }
 
-/// 一个不依赖浮点的内置 Rust 策略示例，证明原生策略可以直接输出统一
-/// `StrategyDecision`，并可被回测/Paper/实盘适配器复用。
+/// 一个不依赖浮点的内置 Rust 策略示例，可被回测/Paper/实盘适配器复用。
 pub struct SmaCrossStrategy {
     pub strategy_id: String,
     pub instrument: InstrumentId,

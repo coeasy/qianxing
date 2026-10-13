@@ -1757,6 +1757,35 @@ def run_backtest(spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
     return BacktestOutcome.from_dict(_invoke(native.app_run_backtest, spec))
 
 
+def run_backtest_with_strategy(
+    spec: BacktestSpec | dict[str, Any],
+    strategy: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> BacktestOutcome:
+    """Run Python strategy decisions inside the shared Rust Bar engine.
+
+    Python supplies only a decision callback. Rust owns risk, OMS, matching, accounting,
+    artifacts and replay verification. The source digest is part of the deterministic run
+    identity; provide the SHA-256 of the exact strategy artifact being executed.
+    """
+    try:
+        from qianxing_bridge.app import run_backtest_with_strategy as _run_strategy
+
+        result = _run_strategy(
+            _encode_payload(spec),
+            strategy,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            source_sha256=source_sha256,
+        )
+        return BacktestOutcome.from_dict(result)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
 def start_backtest(spec: BacktestSpec | dict[str, Any]) -> RunHandle[BacktestOutcome]:
     """Start a Bar backtest; matching and cancellation remain in the Rust engine."""
     try:

@@ -18,7 +18,7 @@
 #   `[]` 表示该用例不在这条腿（交易控制只在远端门面上，进程内扩展不暴露它）。
 schema_version: 1
 kind: language-api-contract
-updated_at: "2026-10-12"
+updated_at: "2026-10-13"
 
 # 进程内扩展的模块级公开函数里不属于任何「用例入口」的那些。
 # 写成显式名册而不是「排除 doctor 之外」这类规则：规则会把将来新加的同形状函数一起放行，
@@ -85,7 +85,7 @@ contracts:
     http: ["/app/validate-dataset"]
   - use_case: run_backtest
     rust: ["run_backtest"]
-    python_native: ["run_backtest", "start_backtest"]
+    python_native: ["run_backtest", "run_backtest_with_strategy", "start_backtest"]
     python_remote: ["run_backtest", "start_backtest"]
     cpp_remote: ["run_backtest", "start_backtest"]
     http: ["/app/backtest", "/app/backtest/start"]

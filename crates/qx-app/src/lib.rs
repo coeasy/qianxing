@@ -61,10 +61,10 @@ pub use cases::{
     ProviderBacktestOutcome, ProviderBacktestSpec, ProviderDepthBacktestOutcome,
     ProviderDepthBacktestSpec, RunDepthExperimentResult, RunDepthExperimentSpec,
     RunExperimentResult, RunExperimentSpec, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
-    TradeControlSpec, TradeWorkflow, EXPERIMENT_BASELINE_NAMES, MAX_EXPERIMENT_CANDIDATES,
-    PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION, RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION,
-    RUN_EXPERIMENT_SCHEMA_VERSION, RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION,
-    TRADE_CONTROL_SCHEMA_VERSION,
+    StrategyArtifactIdentity, TradeControlSpec, TradeWorkflow, EXPERIMENT_BASELINE_NAMES,
+    MAX_EXPERIMENT_CANDIDATES, PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+    RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION, RUN_EXPERIMENT_SCHEMA_VERSION,
+    RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION, TRADE_CONTROL_SCHEMA_VERSION,
 };
 pub use cases::{
     ExperimentBaselineReport, ExperimentFoldReport, ExperimentOutOfSampleReport,

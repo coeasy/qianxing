@@ -4,7 +4,7 @@ use super::invalid_strategy;
 use crate::error::AppError;
 use crate::spec::BuiltinStrategySpec;
 use qx_core::{InstrumentId, Quantity};
-use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, StrategyContext};
+use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, Strategy, StrategyContext};
 use qx_xingban::{NativeBarStrategy, PortfolioStrategySlot};
 use std::collections::BTreeMap;
 
@@ -16,11 +16,41 @@ pub(super) struct StrategySlotContext<'a> {
     pub currency: &'a str,
     pub data_fingerprint: &'a str,
     pub as_of: u64,
+    pub strategy_version: Option<&'a str>,
+}
+
+struct BoxedStrategy(Box<dyn Strategy>);
+
+impl Strategy for BoxedStrategy {
+    fn on_init(&mut self, context: &StrategyContext) -> Result<(), String> {
+        self.0.on_init(context)
+    }
+
+    fn on_event(
+        &mut self,
+        context: &StrategyContext,
+        event: &qx_strategy::MarketEvent,
+    ) -> Result<qx_strategy::StrategyDecision, String> {
+        self.0.on_event(context, event)
+    }
+
+    fn on_order_update(
+        &mut self,
+        context: &StrategyContext,
+        update: &str,
+    ) -> Result<Option<qx_strategy::StrategyDecision>, String> {
+        self.0.on_order_update(context, update)
+    }
+
+    fn on_stop(&mut self) -> Result<(), String> {
+        self.0.on_stop()
+    }
 }
 
 pub(super) fn build_strategy_slot(
     spec: &BuiltinStrategySpec,
     context: StrategySlotContext<'_>,
+    external: Option<Box<dyn Strategy>>,
 ) -> Result<PortfolioStrategySlot, AppError> {
     let strategy_config = BuiltinStrategyConfig::new(
         spec.kind,
@@ -41,7 +71,10 @@ pub(super) fn build_strategy_slot(
     strategy_config.target_volatility_bps = spec.target_volatility_bps;
     strategy_config.target_kelly_fraction_bps = spec.target_kelly_fraction_bps;
     strategy_config.kelly_lookback_bars = spec.kelly_lookback_bars;
-    strategy_config.strategy_version = strategy_version(spec);
+    strategy_config.strategy_version = context
+        .strategy_version
+        .map(str::to_string)
+        .unwrap_or_else(|| strategy_version(spec));
     strategy_config.validate().map_err(invalid_strategy)?;
     let strategy_context = StrategyContext {
         strategy_id: strategy_config.strategy_id.clone(),
@@ -56,10 +89,13 @@ pub(super) fn build_strategy_slot(
         risk_state: "backtest".into(),
     };
     let strategy_id = strategy_config.strategy_id.clone();
-    let mut native = NativeBarStrategy::new(
-        BuiltinStrategy::new(strategy_config).map_err(invalid_strategy)?,
-        strategy_context,
-    );
+    let strategy = match external {
+        Some(strategy) => BoxedStrategy(strategy),
+        None => BoxedStrategy(Box::new(
+            BuiltinStrategy::new(strategy_config).map_err(invalid_strategy)?,
+        )),
+    };
+    let mut native = NativeBarStrategy::new(strategy, strategy_context);
     native
         .initialize()
         .map_err(|error| AppError::from_qx_error(&error))?;
