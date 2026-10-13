@@ -239,6 +239,12 @@ impl DataProvider for InMemoryProvider {
 
     fn fetch(&self, query: &DataQuery) -> Result<ProviderResult, ProviderError> {
         query.validate()?;
+        if query.adjustment != "none" || query.quality_policy != "strict" {
+            return Err(ProviderError::new(
+                ProviderErrorClass::Permanent,
+                "InMemoryProvider 只支持 adjustment=none 与 quality_policy=strict",
+            ));
+        }
         let records = self
             .records
             .iter()

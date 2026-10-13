@@ -68,6 +68,11 @@ impl CcxtBarDataProvider {
         if query.kind != DataKind::Bar || query.instrument_set.len() != 1 {
             return Err(permanent("CCXT Bar Provider 只接受单标的历史 Bar 查询"));
         }
+        if query.adjustment != "none" || query.quality_policy != "strict" {
+            return Err(permanent(
+                "CCXT Bar Provider 只支持 adjustment=none 与 quality_policy=strict",
+            ));
+        }
         let instrument = query.instrument_set.iter().next().expect("one instrument");
         let request = json!({
             "op": "fetch_ohlcv",
@@ -337,6 +342,31 @@ mod tests {
                 "ProviderResult 包含查询范围外或错误来源的数据",
             ))
         );
+    }
+
+    #[test]
+    fn ccxt_provider_refuses_unimplemented_adjustment_and_quality_before_rpc() {
+        let (provider, captured_request) = make_provider(Ok(json!({
+            "frame": frame_json("BTCUSDT.BINANCE", &[1_000, 2_000])
+        })));
+        let mut adjusted = request().query;
+        adjusted.adjustment = "split_adjusted".into();
+        assert_eq!(
+            provider.fetch(&adjusted).unwrap_err().class,
+            ProviderErrorClass::Permanent
+        );
+        assert!(captured_request.lock().unwrap().is_none());
+
+        let (provider, captured_request) = make_provider(Ok(json!({
+            "frame": frame_json("BTCUSDT.BINANCE", &[1_000, 2_000])
+        })));
+        let mut relaxed = request().query;
+        relaxed.quality_policy = "best_effort".into();
+        assert_eq!(
+            provider.fetch(&relaxed).unwrap_err().class,
+            ProviderErrorClass::Permanent
+        );
+        assert!(captured_request.lock().unwrap().is_none());
     }
 
     #[test]

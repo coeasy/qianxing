@@ -344,6 +344,12 @@ impl ProviderResult {
         query: &DataQuery,
     ) -> Result<qx_datastruct::BarFrame, ProviderError> {
         self.validate_for(query)?;
+        if query.adjustment != "none" {
+            return Err(ProviderError::new(
+                ProviderErrorClass::Permanent,
+                "BarFrame 标准化不支持未应用的非 none 复权语义",
+            ));
+        }
         if query.kind != DataKind::Bar || query.instrument_set.len() != 1 {
             return Err(ProviderError::new(
                 ProviderErrorClass::Permanent,
@@ -449,6 +455,17 @@ pub const PROVIDER_RESULT_SCHEMA_VERSION: u32 = 1;
 pub trait DataProvider: Send + Sync {
     fn capability(&self) -> &ProviderCapability;
     fn fetch(&self, query: &DataQuery) -> Result<ProviderResult, ProviderError>;
+
+    /// Whether this provider can honor the complete request before any I/O is attempted.
+    ///
+    /// The legacy descriptor only covers market, frequency, dates, auth and realtime. Until a
+    /// provider explicitly overrides this method, non-default adjustment and quality semantics
+    /// are rejected rather than being passed through as if they had been applied.
+    fn supports_request(&self, request: &DataRequest) -> bool {
+        self.capability().matches_request(request)
+            && request.query.adjustment == "none"
+            && request.query.quality_policy == "strict"
+    }
 
     fn fetch_request(&self, request: &DataRequest) -> Result<ProviderResult, ProviderError> {
         self.fetch(&request.query)

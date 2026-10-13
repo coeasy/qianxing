@@ -154,6 +154,43 @@ fn required_auth_scope_and_realtime_capability_filter_candidates() {
 }
 
 #[test]
+fn unsupported_adjustment_and_quality_semantics_are_rejected_before_provider_io() {
+    let mut registry = ProviderRegistry::new();
+    registry
+        .register(Box::new(MockProvider {
+            capability: capability("raw-bars", 1, 100),
+            fail: None,
+        }))
+        .unwrap();
+
+    for unsupported in [
+        DataRequest::new(
+            DataQuery {
+                adjustment: "split_adjusted".into(),
+                ..query()
+            },
+            DataRequirements::default(),
+        ),
+        DataRequest::new(
+            DataQuery {
+                quality_policy: "best_effort".into(),
+                ..query()
+            },
+            DataRequirements::default(),
+        ),
+    ] {
+        assert!(registry
+            .candidates_for_request(&unsupported)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            registry.fetch_request(&unsupported).unwrap_err(),
+            RegistryError::NoProvider
+        );
+    }
+}
+
+#[test]
 fn python_flat_provider_request_filters_auth_realtime_and_freshness_metadata() {
     let payload = r#"{"adjustment":"none","as_of":6,"asset_class":"crypto","end":10,"field_set":["close"],"frequency":"1m","instrument_set":["BTCUSDT.BINANCE"],"kind":"Bar","max_staleness_ms":2,"quality_policy":"strict","require_realtime":true,"required_auth_scope":"account:read","start":1}"#;
     let request = DataRequest::from_json(payload).unwrap();
@@ -291,9 +328,26 @@ fn in_memory_provider_applies_as_of_cutoff() {
     query.as_of = Some(10);
     let result = provider.fetch(&query).unwrap();
     assert_eq!(result.records.len(), 1);
-    assert_eq!(result.records.len(), 1);
     assert_eq!(result.payloads.len(), 1);
     assert_eq!(result.records[0].payload_hash, result.payloads[0].digest());
+}
+
+#[test]
+fn in_memory_provider_refuses_adjustment_and_quality_modes_it_cannot_apply() {
+    let provider = InMemoryProvider::new(capability("local", 1, 100), vec![row("local", 1, 2, 10)]);
+    let mut adjusted = query();
+    adjusted.adjustment = "split_adjusted".into();
+    assert_eq!(
+        provider.fetch(&adjusted).unwrap_err().class,
+        ProviderErrorClass::Permanent
+    );
+
+    let mut relaxed = query();
+    relaxed.quality_policy = "best_effort".into();
+    assert_eq!(
+        provider.fetch(&relaxed).unwrap_err().class,
+        ProviderErrorClass::Permanent
+    );
 }
 
 #[test]

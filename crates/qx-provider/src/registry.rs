@@ -163,7 +163,7 @@ impl ProviderRegistry {
         let mut candidates: Vec<_> = self
             .providers
             .values()
-            .filter(|registered| registered.provider.capability().matches_request(request))
+            .filter(|registered| registered.provider.supports_request(request))
             .map(|registered| registered.provider.capability().clone())
             .collect();
         candidates.sort_by(|a, b| {

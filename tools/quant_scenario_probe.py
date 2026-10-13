@@ -1191,6 +1191,39 @@ def main() -> int:
     )
 
     executed(
+        "provider_adjustment_quality_preflight",
+        "ProviderRegistry 对未实现的复权与质量语义在数据源调用前 fail closed",
+        "crates/qx-provider/src/result.rs",
+        [
+            "test", "--offline", "-p", "qx-provider", "--lib",
+            "unsupported_adjustment_and_quality_semantics_are_rejected_before_provider_io",
+            "--", "--nocapture",
+        ],
+        r"(test result: ok\. 1 passed; 0 failed)",
+        extra="nondefault_adjustment_filtered=true nonstrict_quality_filtered=true provider_io_not_reached=true",
+        evidence=[
+            "crates/qx-provider/src/result.rs",
+            "crates/qx-provider/src/registry.rs",
+            "crates/qx-provider/src/tests.rs",
+        ],
+        command_prefix="cargo",
+    )
+    executed(
+        "ccxt_query_semantics_fail_closed",
+        "CCXT Provider 拒绝未支持的复权/质量请求且不发起交易所 RPC",
+        "crates/qx-adapter/src/ccxt_provider.rs",
+        [
+            "test", "--offline", "-p", "qx-adapter",
+            "ccxt_provider_refuses_unimplemented_adjustment_and_quality_before_rpc",
+            "--", "--nocapture",
+        ],
+        r"(test result: ok\. 1 passed; 0 failed)",
+        extra="adjustment_rejected_before_rpc=true quality_policy_rejected_before_rpc=true",
+        evidence=["crates/qx-adapter/src/ccxt_provider.rs"],
+        command_prefix="cargo",
+    )
+
+    executed(
         "python_multileg_funding_artifact",
         "Python 多腿回测产物保留历史 funding 输入、结算事实与费率来源",
         "python/tests/test_app_use_cases.py",
