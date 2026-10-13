@@ -1127,6 +1127,24 @@ def main() -> int:
     )
 
     executed(
+        "python_fill_feedback_loop",
+        "Python 策略成交回报与下一 Bar 决策闭环（Rust OMS/账簿/撮合）",
+        "python/tests/test_app_use_cases.py",
+        ["-m", "unittest", "python.tests.test_app_use_cases.AppUseCaseTests.test_python_order_update_decision_returns_to_the_rust_fill_loop"],
+        r"(Ran 1 test)",
+        env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
+        extra="callback_fills=2 observed_position_after_fill=true next_bar_order_risk_checked=true replay_verified=true",
+        evidence=[
+            "python/tests/test_app_use_cases.py",
+            "python/qianxing_bridge/app.py",
+            "crates/qx-python/src/strategy_callback/strategy_impl.rs",
+            "crates/qx-xingban/src/backtest/strategy.rs",
+            "crates/qx-xingban/src/backtest/test_cases/fill_callback.rs",
+        ],
+        command_prefix="python",
+    )
+
+    executed(
         "python_custom_depth_parameter_experiment",
         "Python 自定义 Tick/OrderBook 策略多参数实验（每候选新建策略，Rust 深度内核）",
         "crates/qx-app/src/cases/run_depth_experiment.rs",

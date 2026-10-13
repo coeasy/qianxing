@@ -1078,6 +1078,110 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertGreater(async_outcome.fills, 0)
         self.assertTrue(verify_run(async_outcome).verified)
 
+    def test_python_order_update_decision_returns_to_the_rust_fill_loop(self):
+        self._require()
+        scale = 1_000_000_000
+        bars_path = self.output_dir / "python-order-update-bars.json"
+        prices = [100 * scale] * 4
+        bars_path.write_text(json.dumps({
+            "schema_version": 1,
+            "instrument": "BTCUSDT.BINANCE",
+            "source": "python-order-update-v1",
+            "ts": [1_000, 2_000, 3_000, 4_000],
+            "open_raw": prices,
+            "high_raw": prices,
+            "low_raw": prices,
+            "close_raw": prices,
+            "volume_raw": [10 * scale] * len(prices),
+        }), encoding="utf-8")
+        spec = self._spec(
+            "python-order-update-roundtrip", self.output_dir / "order-update", str(bars_path)
+        )
+        spec["strategy"]["strategy_id"] = "python-order-update"
+        spec["strategy"]["fast_window"] = 5
+        spec["strategy"]["slow_window"] = 20
+
+        class FillResponsive:
+            def __init__(self):
+                self.emitted = False
+                self.updates = []
+                self.instrument = None
+
+            def on_event(self, context, event):
+                bar = event["Bar"]
+                self.instrument = bar["instrument"]
+                intents = []
+                if not self.emitted:
+                    self.emitted = True
+                    intents.append({
+                        "intent_id": 1,
+                        "instrument": bar["instrument"],
+                        "side": "Buy",
+                        "qty": scale,
+                        "limit": None,
+                        "policy": None,
+                        "reduce_only": False,
+                        "post_only": False,
+                    })
+                return {
+                    "schema_version": 1,
+                    "request_id": f"{context['strategy_id']}:{bar['ts']}",
+                    "strategy_id": context["strategy_id"],
+                    "signal_id": bar["ts"],
+                    "confidence": 10_000,
+                    "priority": 0,
+                    "expires_at": 0,
+                    "intents": intents,
+                }
+
+            def on_order_update(self, context, update):
+                self.updates.append((
+                    context["positions"].get("BTCUSDT.BINANCE", 0),
+                    context["cash"].get("USDT", 0),
+                    context["available_margin_raw"],
+                    update,
+                ))
+                if len(self.updates) > 1:
+                    return None
+                return {
+                    "schema_version": 1,
+                    "request_id": "close-after-fill",
+                    "strategy_id": context["strategy_id"],
+                    "signal_id": 2,
+                    "confidence": 10_000,
+                    "priority": 0,
+                    "expires_at": 0,
+                    "intents": [{
+                        "intent_id": 2,
+                        "instrument": self.instrument,
+                        "side": "Sell",
+                        "qty": scale,
+                        "limit": None,
+                        "policy": None,
+                        "reduce_only": True,
+                        "post_only": False,
+                    }],
+                }
+
+        from qianxing import run_backtest_with_strategy, verify_run
+
+        strategy = FillResponsive()
+        outcome = run_backtest_with_strategy(
+            spec,
+            strategy,
+            strategy_id="python-order-update",
+            strategy_version="python-test-v1",
+            source_sha256="b" * 64,
+        )
+        self.assertEqual(outcome.fills, 2)
+        self.assertEqual(len(strategy.updates), 2)
+        self.assertEqual(strategy.updates[0][0], scale)
+        self.assertLess(strategy.updates[0][1], spec["initial_cash_raw"])
+        self.assertEqual(strategy.updates[0][2], strategy.updates[0][1])
+        self.assertEqual(strategy.updates[0][3]["schema_version"], 1)
+        self.assertEqual(strategy.updates[0][3]["event"], "fill")
+        self.assertTrue(verify_run(outcome).verified)
+
     def test_ten_classic_builtin_strategies_run_through_python_rust_kernel(self):
         self._require()
         scale = 1_000_000_000

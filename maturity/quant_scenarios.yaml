@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791899033
+generated_at_unix: 1791903089
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -238,6 +238,14 @@ scenarios:
     exit_code: 0
     observed: "Ran 1 test; custom_primary_builtin_secondary=true callback_slots=2 bar_shared_ledger=true depth_l1_l2_shared_ledger=true tick_orderbook_event_semantics=true sync=true run_handle=true replay_verified=true all_source_digests_bound=true"
     evidence: ["python/tests/test_app_use_cases.py", "crates/qx-app/src/tests/custom_strategy.rs", "crates/qx-app/src/cases/run_backtest/strategy_slot.rs", "crates/qx-xingban/src/backtest/portfolio_strategy.rs"]
+  - name: python_fill_feedback_loop
+    label: "Python 策略成交回报与下一 Bar 决策闭环（Rust OMS/账簿/撮合）"
+    status: executed
+    anchor: "python/tests/test_app_use_cases.py"
+    command: "python -m unittest python.tests.test_app_use_cases.AppUseCaseTests.test_python_order_update_decision_returns_to_the_rust_fill_loop"
+    exit_code: 0
+    observed: "Ran 1 test; callback_fills=2 observed_position_after_fill=true next_bar_order_risk_checked=true replay_verified=true"
+    evidence: ["python/tests/test_app_use_cases.py", "python/qianxing_bridge/app.py", "crates/qx-python/src/strategy_callback/strategy_impl.rs", "crates/qx-xingban/src/backtest/strategy.rs", "crates/qx-xingban/src/backtest/test_cases/fill_callback.rs"]
   - name: python_custom_depth_parameter_experiment
     label: "Python 自定义 Tick/OrderBook 策略多参数实验（每候选新建策略，Rust 深度内核）"
     status: executed

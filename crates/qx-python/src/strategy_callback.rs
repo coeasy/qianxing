@@ -1,5 +1,8 @@
 //! Python authored decisions adapted to the shared Rust Strategy contract.
 
+#[path = "strategy_callback/strategy_impl.rs"]
+mod strategy_impl;
+
 use super::{app_error, research_context, NativeRun, PyRunHandle};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -51,30 +54,8 @@ fn strategy_slots(
         .collect())
 }
 
-struct PythonBacktestStrategy {
+pub(super) struct PythonBacktestStrategy {
     callback: Py<PyAny>,
-}
-
-impl Strategy for PythonBacktestStrategy {
-    fn on_event(
-        &mut self,
-        context: &StrategyContext,
-        event: &MarketEvent,
-    ) -> Result<StrategyDecision, String> {
-        let context_json = serde_json::to_string(context).map_err(|error| error.to_string())?;
-        let event_json = serde_json::to_string(event).map_err(|error| error.to_string())?;
-        Python::attach(|py| {
-            let response = self
-                .callback
-                .bind(py)
-                .call_method1("_qx_on_event", (context_json, event_json))
-                .and_then(|value| value.extract::<String>())
-                .map_err(|error| format!("Python strategy callback failed: {error}"))?;
-            serde_json::from_str(&response).map_err(|error| {
-                format!("Python strategy returned invalid StrategyDecision JSON: {error}")
-            })
-        })
-    }
 }
 
 #[pyfunction]

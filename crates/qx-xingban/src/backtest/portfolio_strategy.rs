@@ -80,6 +80,18 @@ impl PortfolioBarStrategy {
 }
 
 impl BarStrategy for PortfolioBarStrategy {
+    fn update_account_state(
+        &mut self,
+        cash: &std::collections::BTreeMap<String, i128>,
+        available_margin_raw: Option<i128>,
+    ) {
+        for slot in &mut self.slots {
+            let child_margin =
+                available_margin_raw.map(|available| available.min(slot.reserved_capital_raw));
+            slot.strategy.update_account_state(cash, child_margin);
+        }
+    }
+
     fn strategy_budget_raw(&self, strategy_id: &str) -> Option<i128> {
         self.slots
             .iter()

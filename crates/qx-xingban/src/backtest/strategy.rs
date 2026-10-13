@@ -3,8 +3,30 @@
 use qx_core::{Fill, InstrumentId, Order};
 use qx_guanxing::Bar;
 use qx_strategy::{MarketEvent, Strategy, StrategyContext};
+use std::collections::BTreeMap;
 
 pub trait BarStrategy {
+    /// Refresh account state from the authoritative ledger before strategy callbacks.
+    fn update_account_state(
+        &mut self,
+        _cash: &BTreeMap<String, i128>,
+        _available_margin_raw: Option<i128>,
+    ) {
+    }
+
+    fn refresh(
+        &mut self,
+        ledger: &qx_core::Ledger,
+        account_id: &str,
+        currency: &str,
+        cash_account: bool,
+    ) -> Option<i128> {
+        let cash = ledger.cash_balances_for(account_id);
+        let margin = cash_account.then(|| ledger.cash_for(account_id, currency).max(0));
+        self.update_account_state(&cash, margin);
+        margin
+    }
+
     /// Per-strategy capital limit, when this adapter owns a strategy portfolio.
     fn strategy_budget_raw(&self, _strategy_id: &str) -> Option<i128> {
         None
@@ -79,6 +101,7 @@ pub struct NativeBarStrategy<S: Strategy> {
     pub strategy: S,
     pub context: StrategyContext,
     virtual_position: bool,
+    pending_order_updates: Vec<qx_strategy::StrategyDecision>,
 }
 
 impl<S: Strategy> NativeBarStrategy<S> {
@@ -87,6 +110,7 @@ impl<S: Strategy> NativeBarStrategy<S> {
             strategy,
             context,
             virtual_position: false,
+            pending_order_updates: Vec::new(),
         }
     }
 
@@ -104,17 +128,17 @@ impl<S: Strategy> NativeBarStrategy<S> {
 
 impl<S: Strategy> NativeBarStrategy<S> {
     fn apply_strategy_fill(&mut self, order: &Order, fill: &Fill) -> Result<(), qx_core::QxError> {
-        if !self.virtual_position {
-            return Ok(());
-        }
         let Some(owner) = order
             .trace
             .as_ref()
             .and_then(|trace| trace.strategy_id.as_deref())
         else {
-            return Err(qx_core::QxError::Invariant(
-                "组合策略成交缺少 strategy_id trace".into(),
-            ));
+            if self.virtual_position {
+                return Err(qx_core::QxError::Invariant(
+                    "组合策略成交缺少 strategy_id trace".into(),
+                ));
+            }
+            return Ok(());
         };
         if owner != self.context.strategy_id {
             return Ok(());
@@ -134,7 +158,9 @@ impl<S: Strategy> NativeBarStrategy<S> {
                 "组合策略成交账户、订单或数量与原订单不匹配".into(),
             ));
         }
-        if order.policy.unwrap_or_default().position_mode != qx_core::PositionMode::OneWay {
+        if self.virtual_position
+            && order.policy.unwrap_or_default().position_mode != qx_core::PositionMode::OneWay
+        {
             return Err(qx_core::QxError::BusinessViolation(
                 "组合策略虚拟持仓暂不支持 Hedge position mode".into(),
             ));
@@ -160,8 +186,52 @@ impl<S: Strategy> NativeBarStrategy<S> {
 }
 
 impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
+    fn update_account_state(
+        &mut self,
+        cash: &BTreeMap<String, i128>,
+        available_margin_raw: Option<i128>,
+    ) {
+        self.context.cash.clone_from(cash);
+        self.context.available_margin_raw = available_margin_raw;
+    }
+
     fn on_fill(&mut self, order: &Order, fill: &Fill) -> Result<(), qx_core::QxError> {
-        self.apply_strategy_fill(order, fill)
+        self.apply_strategy_fill(order, fill)?;
+        let is_owned = order
+            .trace
+            .as_ref()
+            .and_then(|trace| trace.strategy_id.as_deref())
+            == Some(self.context.strategy_id.as_str());
+        if !is_owned {
+            return Ok(());
+        }
+
+        // `on_fill` is called only after OMS, the authoritative ledger and replay
+        // log have accepted the fill. Keep the wire event explicit and versioned
+        // so native and language-bridge strategies see the same lifecycle fact.
+        self.context.as_of = self.context.as_of.max(fill.ts);
+        let update = serde_json::json!({
+            "schema_version": qx_strategy::ORDER_UPDATE_SCHEMA_VERSION,
+            "event": "fill",
+            "order": {
+                "order_id": order.client_id,
+                "account_id": order.account_id.as_str(),
+                "instrument": order.instrument.to_string(),
+                "side": order.side,
+                "qty_raw": order.qty.raw(),
+                "filled_raw": order.filled.raw(),
+                "strategy_id": self.context.strategy_id.as_str(),
+            },
+            "fill": fill,
+        });
+        if let Some(decision) = self
+            .strategy
+            .on_order_update(&self.context, &update.to_string())
+            .map_err(qx_core::QxError::BusinessViolation)?
+        {
+            self.pending_order_updates.push(decision);
+        }
+        Ok(())
     }
 
     fn on_bar_orders_checked(
@@ -198,9 +268,20 @@ impl<S: Strategy> BarStrategy for NativeBarStrategy<S> {
             .strategy
             .on_event(&self.context, &event)
             .map_err(qx_core::QxError::BusinessViolation)?;
-        decision
-            .to_orders(&self.context)
-            .map_err(qx_core::QxError::BusinessViolation)
+        let mut orders = Vec::new();
+        for update_decision in self.pending_order_updates.drain(..) {
+            orders.extend(
+                update_decision
+                    .to_orders(&self.context)
+                    .map_err(qx_core::QxError::BusinessViolation)?,
+            );
+        }
+        orders.extend(
+            decision
+                .to_orders(&self.context)
+                .map_err(qx_core::QxError::BusinessViolation)?,
+        );
+        Ok(orders)
     }
 
     fn on_bar_orders_with_margin_checked(

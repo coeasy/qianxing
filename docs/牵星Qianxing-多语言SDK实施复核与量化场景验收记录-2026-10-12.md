@@ -289,3 +289,11 @@ Python 十策略证据：
 - 顺着 Python/Rust 自定义策略入口复核 `run_multi_leg_backtest`：当前先按完整 Bar 历史依次调用策略，并在发出 intent 时立即改写 `StrategyContext.positions`；随后才用 `run_leg` 分别执行主腿和参考腿。两条腿的结果账簿最后才按时间合并用于归因。`portfolio_ledger::merge_account_ledger` 明确记载这只是投影，撮合期间仍是固定腿级资金预留且没有跨腿 buying power。
 - 因而当前入口能证明双腿数据输入、策略 callback、双腿各自回测、确定性归因和可重放账簿；它不能证明“成交/拒单/部分成交 → 策略回报 → 更新组合状态 → 下一腿决策”的联动，也不能提供组合级资金竞争/风险净额。若一笔意图在后续腿级引擎被风控拒绝，之前预扫描中的策略状态已经按意图乐观更新；现状没有一个统一的时间顺序引擎来向策略回传该拒单。
 - 这不是本轮通过改文案即可关闭的能力。下一实现切片需在 Rust kernel 增加按 `(timestamp, deterministic instrument priority, event priority)` 驱动的多标的 Bar session，把各腿的 market event、策略决策、风险/订单状态、成交回报、共享账户 Ledger 和下一次 callback 置于同一个有序循环；Rust/Python SDK 再调用该用例，并用拒单/部分成交、资金竞争、同刻双市场事件、确定性重跑和 replay 对账证明闭环。完成前，既有 multi-leg callbacks 只标为本地研究能力，不能等同同步组合交易或组合共享账簿。
+
+## 35. 2026-10-13 修复：Python/Rust Bar 策略成交回报闭环
+
+- 复核统一 `qx_strategy::Strategy::on_order_update` 后确认：接口可返回 `StrategyDecision`，C ABI 与应用策略槽都能透传，但 Bar 回测成交完成后没有调用点；Python `_PythonBacktestCallback` 也没有订单更新 handler。因此回测策略只能在行情事件上决策，成交/部分成交不能影响其下一次状态决策。
+- Bar `NativeBarStrategy` 现在只在已归属的策略订单完成账簿及 replay 写入后发送 `{schema_version, event:"fill", order, fill}` JSON 事实，并先更新策略持仓、时间、现金和可用保证金快照。回调返回的决策暂存至下一决策边界，再走原订单数量/账户/市场校验、RiskGate、OMS、撮合和账簿；不在成交回调内旁路执行。Python bridge 新增可选 `on_order_update(context, update)`，缺少该方法的旧策略仍保持兼容。
+- 新增 Rust 行为用例验证成交回调看到已更新持仓、返回的平仓意图在下一 Bar 成交且报告 replay 可验证；新增 Python bridge 序列化用例及真实 PyO3 扩展端到端用例，确认 Python callback 的成交决策经过 Rust 风控/OMS 并最终完成平仓。能力探针新增 `python_fill_feedback_loop`。
+- 验证：全工作区 `cargo test --offline --workspace` 在将 Windows 临时目录重定向到仓库 `target/test-tmp` 后通过；回调实现拆模块后 `cargo test --offline -p qx-xingban --lib` 103/103 通过、`cargo build --offline -p qx-python` 成功；Python 全量 139 项通过；回调 Python→Rust 专项 E2E 通过；最终架构不变量门禁 1096 项通过；量化场景探针 41 executed、0 declared_not_executed、0 missing、1 blocked；`cargo fmt --all -- --check` 与 `git diff --check` 通过。成交反馈前会刷新账簿确认后的现金与现货可用资金，供策略下一次决策读取。
+- 本修复只关闭统一 Bar 策略的 fill callback 断链。Tick/OrderBook adapter 尚未统一透传 `on_order_update`；拒单/撤单等非成交状态也尚未形成通用回调；多腿执行仍是先生成意图、后分腿模拟和账簿投影，没有共享资本竞争、统一时间线或拒单/部分成交反馈；Paper/Live 的 Python callback 策略与真实交易所 testnet 仍未端到端认证。整体多语言 SDK 方案仍未达到全能力发布门槛。

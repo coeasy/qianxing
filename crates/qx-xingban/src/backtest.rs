@@ -461,9 +461,8 @@ impl BacktestEngine {
                 // value is visible at the decision boundary; derivative margin
                 // remains unavailable until the configured margin model can
                 // expose a certified free-margin snapshot.
-                let available_margin_raw = derivative_spec
-                    .is_none()
-                    .then(|| ledger.cash_for(&account_id, &currency).max(0));
+                let available_margin_raw =
+                    strategy.refresh(&ledger, &account_id, &currency, derivative_spec.is_none());
                 // A protective exit evaluates the last completed bar and submits
                 // a market close for the current bar. It never sees the current
                 // bar's OHLC while deciding, preventing same-bar lookahead.
@@ -976,6 +975,8 @@ impl BacktestEngine {
                         EventKind::LedgerApplied { entry },
                     ));
                 }
+                let _ =
+                    strategy.refresh(&ledger, &account_id, &currency, derivative_spec.is_none());
                 strategy.on_fill(&order, &fill)?;
                 fills.push(fill);
             }

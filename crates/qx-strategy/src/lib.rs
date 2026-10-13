@@ -1,8 +1,4 @@
-//! 牵星统一策略 SDK。
-//!
-//! 该 crate 是 Rust 策略、C ABI 策略和 Python 策略共同遵守的领域边界：
-//! 策略只消费不可变上下文和市场事件，只产生 `StrategyDecision`，不得直接
-//! 访问 Venue、EventLog、Ledger 或凭证。运行时仍会对每个 intent 执行 Risk/OMS。
+//! 牵星统一策略 SDK：Rust/C ABI/Python 策略共享同一不可变输入与 `StrategyDecision` 契约，执行权仍归 Rust Risk/OMS。
 
 use qx_core::{InstrumentId, Order, OrderPolicy, OrderStatus, OrderTrace, Price, Quantity, Side};
 use serde::{Deserialize, Serialize};
@@ -29,6 +25,8 @@ pub use ring::{
 };
 
 pub const STRATEGY_API_VERSION: u32 = 1;
+/// JSON wire version for lifecycle facts delivered to `Strategy::on_order_update`.
+pub const ORDER_UPDATE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct StrategyContext {
@@ -318,6 +316,7 @@ pub trait Strategy: Send {
         event: &MarketEvent,
     ) -> Result<StrategyDecision, String>;
 
+    /// Receive a JSON fact after execution accepts it; Bar emits a versioned fill fact after OMS/ledger/replay commit. Returned decisions queue for the next boundary and still pass risk/OMS.
     fn on_order_update(
         &mut self,
         _context: &StrategyContext,

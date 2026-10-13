@@ -75,6 +75,23 @@ class _PythonBacktestCallback:
             raise TypeError("Python Strategy.on_event must return a decision mapping or JSON string")
         return json.dumps(dict(decision), separators=(",", ":"), ensure_ascii=False)
 
+    def _qx_on_order_update(self, context_json: str, update_json: str) -> str:
+        context = json.loads(context_json)
+        update = json.loads(update_json)
+        handler = getattr(self.strategy, "on_order_update", None)
+        if handler is None:
+            return "null"
+        decision = handler(context, update)
+        if decision is None:
+            return "null"
+        if isinstance(decision, str):
+            return decision
+        if not isinstance(decision, Mapping):
+            raise TypeError(
+                "Python Strategy.on_order_update must return a decision mapping, JSON string, or None"
+            )
+        return json.dumps(dict(decision), separators=(",", ":"), ensure_ascii=False)
+
 
 def _strategy_slot_payload(
     strategies: Sequence[Mapping[str, Any]],
