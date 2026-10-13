@@ -1,7 +1,12 @@
-//! Provider data freezing is SDK orchestration; all manifest and backtest semantics
-//! remain owned by `qx-data` and `qx-app` respectively.
+//! Provider-backed Bar research use case. Provider selection/normalization remains in
+//! `qx-provider`; immutable dataset freezing and the shared backtest live at this layer.
 
-use crate::{AppError, AppErrorCategory, BacktestOutcome, BacktestSpec, Client, DatasetSpec};
+use crate::cases::{attach, guard::guard_panics};
+use crate::context::{CallerCapability, RunContext};
+use crate::error::{AppError, AppErrorCategory};
+use crate::{
+    run_backtest, validate_dataset, BacktestOutcome, BacktestSpec, DatasetSpec, DatasetVerdict,
+};
 use qx_provider::{DatasetManifestV2, ProviderBarFrame};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -10,7 +15,7 @@ use std::path::{Path, PathBuf};
 /// Result of freezing validated Provider data, checking it, and running the shared Bar use case.
 pub struct ProviderBacktestOutcome {
     pub outcome: BacktestOutcome,
-    pub dataset_verdict: crate::DatasetVerdict,
+    pub dataset_verdict: DatasetVerdict,
     pub manifest: DatasetManifestV2,
     pub manifest_path: String,
 }
@@ -27,9 +32,22 @@ pub struct ProviderBacktestRequest<'a> {
     pub manifest_path: Option<&'a str>,
 }
 
-pub(crate) fn run_provider_backtest_with_manifest(
-    client: &Client,
+/// Freeze Provider data and execute validation and backtest through the shared app cases.
+pub fn run_provider_backtest_with_manifest(
     request: &ProviderBacktestRequest<'_>,
+    context: &RunContext,
+) -> Result<ProviderBacktestOutcome, AppError> {
+    context.require(CallerCapability::Research, "Provider Bar 回测")?;
+    let correlation_id = context.correlation_id().to_string();
+    guard_panics(&correlation_id, || {
+        run_provider_backtest_inner(request, context)
+    })
+    .map_err(|error| attach(error, &correlation_id))
+}
+
+fn run_provider_backtest_inner(
+    request: &ProviderBacktestRequest<'_>,
+    context: &RunContext,
 ) -> Result<ProviderBacktestOutcome, AppError> {
     let manifest = request
         .fetched
@@ -59,11 +77,11 @@ pub(crate) fn run_provider_backtest_with_manifest(
         .unwrap_or_else(|| PathBuf::from(format!("{}.manifest.json", request.spec.bars_path)));
     freeze(&bars_path, frame_json.as_bytes())?;
     freeze(&manifest_path, manifest_json.as_bytes())?;
-    let dataset_verdict = client.validate_dataset(&DatasetSpec::new(
-        request.dataset_id,
-        request.spec.bars_path.clone(),
-    ))?;
-    let outcome = client.run_backtest(request.spec)?;
+    let dataset_verdict = validate_dataset(
+        &DatasetSpec::new(request.dataset_id, request.spec.bars_path.clone()),
+        context,
+    )?;
+    let outcome = run_backtest(request.spec, context)?;
     Ok(ProviderBacktestOutcome {
         outcome,
         dataset_verdict,
@@ -140,7 +158,7 @@ mod tests {
         let root = std::env::current_dir()
             .unwrap()
             .join("target")
-            .join(format!("qx-sdk-freeze-{}", std::process::id()));
+            .join(format!("qx-app-provider-freeze-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let path = root.join("bars.json");
@@ -150,7 +168,5 @@ mod tests {
         let error = freeze(&path, b"different-frame").unwrap_err();
         assert_eq!(error.category(), AppErrorCategory::Conflict);
         assert_eq!(fs::read(&path).unwrap(), b"canonical-frame");
-
-        fs::remove_dir_all(root).unwrap();
     }
 }

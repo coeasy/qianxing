@@ -94,7 +94,7 @@ impl Client {
         &self,
         request: &ProviderBacktestRequest<'_>,
     ) -> Result<ProviderBacktestOutcome, AppError> {
-        crate::provider_workflow::run_provider_backtest_with_manifest(self, request)
+        qx_app::run_provider_backtest_with_manifest(request, &self.context)
     }
 
     /// 异步回测：立刻返回可协作取消的 [`RunHandle`]，由调用方决定等多久。

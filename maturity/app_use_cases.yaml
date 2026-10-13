@@ -184,3 +184,13 @@ use_cases:
     artifacts: "无；仅返回计划，不提交订单或执行回测"
     error_categories: "AppErrorCategory 八类；非法身份、重复策略/账户、未知账户、负预算或算术异常为 InvalidInput"
     capability_level: "R"
+  - name: run_provider_backtest_with_manifest
+    input_schema: "ProviderBacktestRequest（已通过 ProviderRegistry 校验的 BarFrame + BacktestSpec + 数据集身份）"
+    output_schema: "ProviderBacktestOutcome（DatasetManifestV2 + DatasetVerdict + BacktestOutcome）"
+    capability: "RESEARCH"
+    idempotency_key: "BarFrame 与 manifest 内容逐字节相同允许重跑；同路径异内容返回 Conflict"
+    cancellation: "同步 Provider 取数由 Provider adapter 定义 deadline；冻结/校验/回测同步无取消点"
+    progress: "无；结果包含同一 Rust 回测产物与 Provider provenance"
+    artifacts: "不可变 BarFrame JSON + DatasetManifestV2 sidecar + BacktestSpec 既定四份产物"
+    error_categories: "AppErrorCategory 八类；数据、冻结冲突、校验及回测沿用共享用例错误"
+    capability_level: "R"

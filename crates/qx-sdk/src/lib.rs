@@ -49,11 +49,9 @@
 //! 不是文档里的假想代码）；从"直接用 `qx-app`"迁到本门面见 `docs/qx-sdk-migration.md`。
 
 pub mod client;
-mod provider_workflow;
 pub mod remote;
 
 pub use client::Client;
-pub use provider_workflow::{ProviderBacktestOutcome, ProviderBacktestRequest};
 pub use qx_execution::{
     plan_twap, plan_vwap, AlgoChildSlice, AlgoExecutionError, AlgoExecutionState,
     AlgoExecutionStatus, AlgoExecutionStep, AlgoParentOrder, EventAppender, ExecutionEvent,
@@ -70,6 +68,7 @@ pub use qx_app::{AppAction, AppError, AppErrorCategory, AppRetry};
 // —— §6.1「capabilities」与多源数据 Provider 端口 ——
 // DataProvider 的公开签名直接使用 RawRecord，因此同时重导出来源身份和记录类型；
 // 独立消费者只依赖 qx-sdk 即可注册数据源、做确定性主备选择并保留血缘。
+pub use qx_app::{ProviderBacktestOutcome, ProviderBacktestRequest};
 pub use qx_provider::{
     DataKind, DataProvider, DataQuery, DataRequest, DataRequirements, DataSourceId,
     DatasetManifestV2, ProviderBarFrame, ProviderCapability, ProviderError, ProviderErrorClass,

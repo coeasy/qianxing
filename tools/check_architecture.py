@@ -16946,7 +16946,7 @@ APP_USE_CASE_ITEMS = (
     ("能力等级", "capability_level"),
 )
 APP_ALLOWED_INTERNAL_DEPS = frozenset(
-    {"qx-control", "qx-core", "qx-datastruct", "qx-guanxing", "qx-strategy", "qx-xingban", "qx-zhenlu"}
+    {"qx-control", "qx-core", "qx-datastruct", "qx-guanxing", "qx-provider", "qx-strategy", "qx-xingban", "qx-zhenlu"}
 )
 APP_ALLOWED_EXTERNAL_DEPS = frozenset({"serde", "serde_json"})
 # 登记面写的是能力档的稳定串（路线图 §5 的 R/P/O/L），代码里写的是枚举变体名——两处口径不同形，
@@ -17048,7 +17048,7 @@ def qx_app_check() -> None:
     internal, external = _app_dependency_names()
     check(
         internal == set(APP_ALLOWED_INTERNAL_DEPS) and external == set(APP_ALLOWED_EXTERNAL_DEPS),
-        "qx-app 的依赖集是精确的（7 个领域件 + serde/serde_json，共 9 名，无门面/适配/执行/存储）",
+        "qx-app 的依赖集是精确的（8 个领域件 + serde/serde_json，共 10 名，无门面/适配/执行/存储）",
         f"内部 {sorted(internal)}（应为 {sorted(APP_ALLOWED_INTERNAL_DEPS)}）；"
         f"外部 {sorted(external)}（应为 {sorted(APP_ALLOWED_EXTERNAL_DEPS)}）",
     )
@@ -17613,14 +17613,22 @@ def _named_roster(section: str) -> set[str]:
 
 
 def _python_native_functions() -> list[str]:
-    """`python/qianxing/app.py` 的模块级公开函数（进程内 Rust 扩展的入口面）。"""
-    return [
+    """进程内 Rust 门面公开入口：app 自由函数与已登记的本地 ProviderRegistry 用例。"""
+    app_functions = [
         name
         for name in re.findall(
             r"^def ([A-Za-z_][A-Za-z0-9_]*)\(", _text_or_empty(ROOT / PYTHON_APP_MODULE), re.MULTILINE
         )
         if not name.startswith("_")
     ]
+    provider_text = _text_or_empty(ROOT / "python/qianxing/data/providers.py")
+    provider_block = provider_text.partition("class ProviderRegistry:")[2].split("\nclass ", 1)[0]
+    provider_methods = (
+        ["ProviderRegistry.run_backtest_with_manifest"]
+        if re.search(r"^    def run_backtest_with_manifest\(", provider_block, re.MULTILINE)
+        else []
+    )
+    return app_functions + provider_methods
 
 
 def _python_class_lines(class_name: str) -> list[str]:
@@ -17668,7 +17676,7 @@ def language_api_contract_check() -> None:
     九颗：① 映射表在盘、自述 kind 正确、每个用例五种语言面齐格且用例名不重复；② 用例集合 ==
     `maturity/app_use_cases.yaml` 的用例集合（两张登记面不得各说各话）；③ 每格点名的 Rust
     `pub fn` 真的在 `cases/<use_case>.rs` 里；④ 每格点名的 Python 入口在盘（`python_native` 看
-    模块级 `def`，`python_remote` 看 `AppClient` / `TradeWorkflowClient` 的公开方法）；⑤ 每格点名的
+    模块级 `def` 或显式登记的 ProviderRegistry 用例，`python_remote` 看 `AppClient` / `TradeWorkflowClient` 的公开方法）；⑤ 每格点名的
     C++ 方法在 `AppClient` 的公开面里；⑥ 每格点名的 `http` 路由都在两张客户端路由声明面里
     （用例 → 路由 → 声明面，三段接得上）；⑦⑧⑨ 反向普查三条腿——客户端公开面里没有未被任何用例
     认领的入口（除了显式名册里的生命周期 / 自检 helper）。刻意不早退：这一族恒发九条。

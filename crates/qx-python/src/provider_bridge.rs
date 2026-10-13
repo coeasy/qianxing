@@ -190,9 +190,9 @@ impl PyProviderRegistry {
             .inner
             .fetch_bar_frame(&request)
             .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
-        let client = qx_sdk::Client::new(qx_sdk::CallerCapability::Research, &spec.run_id);
-        let result = client
-            .run_provider_backtest_with_manifest(&qx_sdk::ProviderBacktestRequest {
+        let context = crate::research_context(&spec.run_id);
+        let result = qx_app::run_provider_backtest_with_manifest(
+            &qx_app::ProviderBacktestRequest {
                 fetched: &fetched,
                 spec: &spec,
                 dataset_id: &options.dataset_id,
@@ -200,8 +200,10 @@ impl PyProviderRegistry {
                 interval_ms: options.interval_ms,
                 timezone: &options.timezone,
                 manifest_path: Some(&options.manifest_path),
-            })
-            .map_err(crate::app_error)?;
+            },
+            &context,
+        )
+        .map_err(crate::app_error)?;
         let outcome = result.outcome.to_json().map_err(crate::app_error)?;
         serde_json::to_string(&serde_json::json!({
             "outcome": serde_json::from_str::<serde_json::Value>(&outcome)
