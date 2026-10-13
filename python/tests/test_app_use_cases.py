@@ -1279,6 +1279,43 @@ class AppUseCaseTests(unittest.TestCase):
             f"名义金额应按价格换算数量，而非使用固定 quantity_raw: {quantities}",
         )
 
+    def test_typed_experiment_rejects_quantity_grid_shadowed_by_rust_sizing(self):
+        self._require()
+        from qianxing import (
+            BacktestSpec,
+            BuiltinStrategySpec,
+            ExperimentParameterSpace,
+            InvalidInputError,
+            RunExperimentSpec,
+            run_experiment,
+        )
+
+        spec = RunExperimentSpec(
+            experiment_id="py-quantity-sizing-conflict",
+            base=BacktestSpec(
+                run_id="unused-py-quantity-sizing-conflict",
+                instrument="BTCUSDT.BINANCE",
+                bars_path=str(self.root / "deploy" / "qianxing.bar-frame.example.json"),
+                settlement_currency="USDT",
+                initial_cash_raw=100_000_000_000_000,
+                output_dir=str(self.output_dir / "quantity-sizing-conflict"),
+                strategy=BuiltinStrategySpec(
+                    kind="sma_cross",
+                    strategy_id="py-quantity-sizing-conflict",
+                    target_notional_raw=10_000_000_000,
+                    fast_window=2,
+                    slow_window=3,
+                ),
+            ),
+            parameter_space=(
+                ExperimentParameterSpace("quantity_raw", (500_000_000, 1_000_000_000)),
+            ),
+        )
+        with self.assertRaises(InvalidInputError) as raised:
+            run_experiment(spec)
+        self.assertEqual(raised.exception.category, "INVALID_INPUT")
+        self.assertIn("quantity_raw 参数维度与策略 sizing 模式冲突", str(raised.exception))
+
     def test_available_margin_sizing_uses_the_live_spot_cash_snapshot(self):
         self._require()
         spec = self._spec("py-margin-sizing", self.output_dir / "margin")
