@@ -189,6 +189,47 @@ class BuiltinStrategyInfo:
     requires_reference_leg: bool
 
 
+_BUILTIN_STRATEGY_INFO_KEYS = frozenset(
+    {"name", "description", "signal_knobs", "requires_reference_leg"}
+)
+
+
+def _parse_builtin_strategy_catalog(value: Any) -> tuple[BuiltinStrategyInfo, ...]:
+    if not isinstance(value, list):
+        raise TypeError("strategy catalog must be a JSON array")
+    result: list[BuiltinStrategyInfo] = []
+    names: set[str] = set()
+    for index, entry in enumerate(value):
+        if not isinstance(entry, dict) or set(entry) != _BUILTIN_STRATEGY_INFO_KEYS:
+            raise ValueError(f"strategy catalog entry {index} has an invalid field set")
+        name = entry["name"]
+        description = entry["description"]
+        signal_knobs = entry["signal_knobs"]
+        requires_reference_leg = entry["requires_reference_leg"]
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(description, str)
+            or not description
+            or not isinstance(signal_knobs, list)
+            or any(not isinstance(knob, str) or not knob for knob in signal_knobs)
+            or len(set(signal_knobs)) != len(signal_knobs)
+            or type(requires_reference_leg) is not bool
+            or name in names
+        ):
+            raise ValueError(f"strategy catalog entry {index} has invalid field values")
+        names.add(name)
+        result.append(
+            BuiltinStrategyInfo(
+                name=name,
+                description=description,
+                signal_knobs=tuple(signal_knobs),
+                requires_reference_leg=requires_reference_leg,
+            )
+        )
+    return tuple(result)
+
+
 @dataclass(frozen=True)
 class BuiltinStrategySpec:
     kind: Literal[
@@ -229,17 +270,7 @@ def list_builtin_strategies() -> tuple[BuiltinStrategyInfo, ...]:
     """List the authoritative Rust built-in strategies and their signal inputs."""
     try:
         value = json.loads(native.app_list_builtin_strategies())
-        if not isinstance(value, list):
-            raise ValueError("Rust strategy catalog must be a JSON array")
-        return tuple(
-            BuiltinStrategyInfo(
-                name=str(entry["name"]),
-                description=str(entry["description"]),
-                signal_knobs=tuple(str(item) for item in entry["signal_knobs"]),
-                requires_reference_leg=bool(entry["requires_reference_leg"]),
-            )
-            for entry in value
-        )
+        return _parse_builtin_strategy_catalog(value)
     except Exception as exc:
         raise _translate_native_error(exc) from exc
 
@@ -2002,17 +2033,13 @@ class AppClient(_HttpJsonClient):
         value = self._request_json_value(
             APP_ROUTE_TEMPLATES["builtin_strategy_catalog"], method="GET"
         )
-        if not isinstance(value, list) or any(not isinstance(entry, dict) for entry in value):
-            raise QianxingError("Rust API returned an invalid built-in strategy catalog")
-        return tuple(
-            BuiltinStrategyInfo(
-                name=str(entry["name"]),
-                description=str(entry["description"]),
-                signal_knobs=tuple(str(item) for item in entry["signal_knobs"]),
-                requires_reference_leg=bool(entry["requires_reference_leg"]),
-            )
-            for entry in value
-        )
+        try:
+            return _parse_builtin_strategy_catalog(value)
+        except (TypeError, ValueError) as exc:
+            raise QianxingError(
+                "Rust API returned an invalid built-in strategy catalog",
+                payload={"category": "INTERNAL_INVARIANT"},
+            ) from exc
 
     async def async_list_builtin_strategies(self) -> tuple[BuiltinStrategyInfo, ...]:
         return await asyncio.to_thread(self.list_builtin_strategies)

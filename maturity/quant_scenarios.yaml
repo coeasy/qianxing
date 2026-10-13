@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791931655
+generated_at_unix: 1791931923
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -220,7 +220,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=4df07e99c2592f2a/6b1541d9131cf4e8,e3e1a0d699051574/e68d117db8e1abec,aea59f08041e70d9/feee613c8a2e718d,4549478563181833/6579a0f50c1df021"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=954ef895c9b2ec6c/864aabf1a8ac60ba,efad9ad47f5d3aae/b050a2bcd7b6539a,e04cbd5417486047/936623f2ef755bdf,928cd3355e5634dd/19bc6ed6aa63fd63"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -380,7 +380,7 @@ scenarios:
     anchor: "python/tests/test_remote_strategy_catalog.py"
     command: "python -m unittest python.tests.test_remote_strategy_catalog"
     exit_code: 0
-    observed: "Ran 3 tests; typed_catalog=true async_delegate=true stable_discovery_route=/app/strategies malformed_shape_rejected=true"
+    observed: "Ran 4 tests; typed_catalog=true async_delegate=true stable_discovery_route=/app/strategies malformed_envelopes_and_fields_rejected=true"
     evidence: ["python/tests/test_remote_strategy_catalog.py", "python/qianxing/app.py", "crates/qx-api/src/app_strategy_selection_tests.rs"]
   - name: python_custom_strategy_portfolio
     label: "Python 多自定义策略与内置策略共享 Bar、L1 Tick、L2 OrderBook 单账户组合回测"

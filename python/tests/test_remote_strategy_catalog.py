@@ -6,7 +6,12 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
-from qianxing.app import APP_ROUTE_TEMPLATES, AppClient, BuiltinStrategyInfo, QianxingError
+from qianxing.app import (
+    APP_ROUTE_TEMPLATES,
+    AppClient,
+    BuiltinStrategyInfo,
+    QianxingError,
+)
 
 
 class RemoteStrategyCatalogTest(unittest.TestCase):
@@ -52,8 +57,39 @@ class RemoteStrategyCatalogTest(unittest.TestCase):
 
     def test_remote_catalog_rejects_non_array_response(self) -> None:
         client = AppClient("https://localhost")
-        with patch.object(client, "_request_json_value", return_value={"items": []}):
-            with self.assertRaisesRegex(QianxingError, "invalid built-in strategy catalog"):
+        with (
+            patch.object(client, "_request_json_value", return_value={"items": []}),
+            self.assertRaisesRegex(QianxingError, "invalid built-in strategy catalog"),
+        ):
+            client.list_builtin_strategies()
+
+    def test_remote_catalog_rejects_malformed_entries_without_leaking_python_errors(self) -> None:
+        valid = {
+            "name": "ema_cross",
+            "description": "EMA",
+            "signal_knobs": ["fast_window", "slow_window"],
+            "requires_reference_leg": False,
+        }
+        malformed = (
+            {key: value for key, value in valid.items() if key != "name"},
+            {**valid, "name": 42},
+            {**valid, "signal_knobs": "fast_window"},
+            {**valid, "signal_knobs": ["fast_window", 1]},
+            {**valid, "requires_reference_leg": "false"},
+            {**valid, "unexpected": True},
+            [valid, valid],
+        )
+        client = AppClient("https://localhost")
+        for value in malformed:
+            with (
+                self.subTest(value=value),
+                patch.object(
+                    client,
+                    "_request_json_value",
+                    return_value=[value] if isinstance(value, dict) else value,
+                ),
+                self.assertRaisesRegex(QianxingError, "invalid built-in strategy catalog"),
+            ):
                 client.list_builtin_strategies()
 
     def test_async_remote_catalog_delegates_to_the_same_typed_entrypoint(self) -> None:

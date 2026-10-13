@@ -1563,8 +1563,8 @@ def main() -> int:
         "Python HTTP SDK 通过 Rust 服务端读取内置策略目录",
         "python/tests/test_remote_strategy_catalog.py",
         ["-m", "unittest", "python.tests.test_remote_strategy_catalog"],
-        r"(Ran 3 tests)",
-        extra="typed_catalog=true async_delegate=true stable_discovery_route=/app/strategies malformed_shape_rejected=true",
+        r"(Ran 4 tests)",
+        extra="typed_catalog=true async_delegate=true stable_discovery_route=/app/strategies malformed_envelopes_and_fields_rejected=true",
         evidence=[
             "python/tests/test_remote_strategy_catalog.py",
             "python/qianxing/app.py",
