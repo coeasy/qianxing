@@ -130,14 +130,19 @@ pub(crate) fn run_paper_algo_execution_cycle(
         {
             continue;
         }
-        let (risk, position) =
-            worker_risk_context(worker, &state.parent_order, pipeline, Some(config_path))?
-                .ok_or_else(|| {
-                    format!(
-                        "FAIL_CLOSED: Paper algo worker {} 缺少冻结风控配置",
-                        worker.id
-                    )
-                })?;
+        let (risk, position) = worker_risk_context_with_config(
+            worker,
+            &state.parent_order,
+            pipeline,
+            config,
+            Some(config_path),
+        )?
+        .ok_or_else(|| {
+            format!(
+                "FAIL_CLOSED: Paper algo worker {} 缺少冻结风控配置",
+                worker.id
+            )
+        })?;
         let instrument_spec = risk
             .instrument_spec
             .clone()

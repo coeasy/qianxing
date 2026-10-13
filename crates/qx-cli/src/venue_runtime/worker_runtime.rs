@@ -198,7 +198,7 @@ pub(crate) fn check_account_log_settlement(
 /// 现货买入付出现金，持仓按全额名义额计入权益才是账户价值；保证金产品开仓不动现金，
 /// 账上属于这笔持仓的只有已实现/未实现 PnL，再按名义额累加等于凭空多出整笔可用保证金
 /// （10k USDT 开 1 张 50k 名义的永续会把权益算成 60k，10 倍杠杆规则形同虚设，且每成交
-/// 一次就更宽松）。缺少标记价格时退回纯现金，宁可保守也不放松闸门。
+/// 一次就更宽松）。缺少任一持仓规格、标记价格或币种汇率时失败关闭，不以现金余额代替估值。
 pub(crate) fn paper_available_margin(
     ledger: &Ledger,
     account_id: &str,
@@ -207,12 +207,22 @@ pub(crate) fn paper_available_margin(
     spec: &TradingInstrumentSpec,
 ) -> Result<i128, String> {
     let market_specs = BTreeMap::from([(spec.instrument.clone(), spec.clone())]);
+    paper_available_margin_with_market_specs(ledger, account_id, marks, settlement, &market_specs)
+}
+
+pub(crate) fn paper_available_margin_with_market_specs(
+    ledger: &Ledger,
+    account_id: &str,
+    marks: &BTreeMap<InstrumentId, Price>,
+    settlement: &str,
+    market_specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
+) -> Result<i128, String> {
     ledger
         .valuate(
-            &ValuationContext::spot(account_id, marks, settlement).with_market_specs(&market_specs),
+            &ValuationContext::spot(account_id, marks, settlement).with_market_specs(market_specs),
         )
         .map(|result| result.equity.raw())
-        .map_err(|error| format!("Paper 账户可用保证金计算失败: {error:?}"))
+        .map_err(|error| format!("Paper 账户多市场可用保证金计算失败: {error:?}"))
 }
 
 /// 从执行 worker 的冻结 market spec 和同一 EventLog 构造账户级风险快照。
@@ -226,6 +236,32 @@ pub(crate) fn worker_risk_context(
     order: &Order,
     pipeline: &LiveEventPipeline,
     runtime_config_path: Option<&Path>,
+) -> Result<Option<(RiskContext, OrderRiskPosition)>, String> {
+    worker_risk_context_inner(worker, order, pipeline, runtime_config_path, None)
+}
+
+pub(crate) fn worker_risk_context_with_config(
+    worker: &WorkerConfig,
+    order: &Order,
+    pipeline: &LiveEventPipeline,
+    runtime_config: &RuntimeConfig,
+    runtime_config_path: Option<&Path>,
+) -> Result<Option<(RiskContext, OrderRiskPosition)>, String> {
+    worker_risk_context_inner(
+        worker,
+        order,
+        pipeline,
+        runtime_config_path,
+        Some(runtime_config),
+    )
+}
+
+fn worker_risk_context_inner(
+    worker: &WorkerConfig,
+    order: &Order,
+    pipeline: &LiveEventPipeline,
+    runtime_config_path: Option<&Path>,
+    runtime_config: Option<&RuntimeConfig>,
 ) -> Result<Option<(RiskContext, OrderRiskPosition)>, String> {
     let Some(spec) = load_worker_instrument_spec(worker, order, runtime_config_path)? else {
         return Ok(None);
@@ -259,12 +295,22 @@ pub(crate) fn worker_risk_context(
     let available_margin_raw = if let Some(available) = observed_available {
         available
     } else if VenueFamily::parse_option(worker.venue_id.as_deref()) == Some(VenueFamily::Paper) {
-        paper_available_margin(
+        let market_specs = match runtime_config {
+            Some(config) => account_position_market_specs(
+                config,
+                account_id,
+                pipeline,
+                &spec,
+                runtime_config_path,
+            )?,
+            None => BTreeMap::from([(spec.instrument.clone(), spec.clone())]),
+        };
+        paper_available_margin_with_market_specs(
             pipeline.ledger(),
             account_id,
             pipeline.marks(),
             &settlement,
-            &spec,
+            &market_specs,
         )?
     } else {
         return Err(format!(
@@ -317,6 +363,97 @@ pub(crate) fn worker_risk_context(
         },
         position,
     )))
+}
+
+/// Resolve frozen specifications for every non-zero position in a Paper account.
+/// A worker must not estimate account buying power from only its own market when
+/// another enabled execution worker owns a position in the same account.
+fn account_position_market_specs(
+    config: &RuntimeConfig,
+    account_id: &str,
+    pipeline: &LiveEventPipeline,
+    current_spec: &TradingInstrumentSpec,
+    runtime_config_path: Option<&Path>,
+) -> Result<BTreeMap<InstrumentId, TradingInstrumentSpec>, String> {
+    let mut specs = BTreeMap::from([(current_spec.instrument.clone(), current_spec.clone())]);
+    let held_instruments = pipeline
+        .ledger()
+        .entries()
+        .iter()
+        .filter(|entry| entry.account_id == account_id)
+        .filter_map(|entry| entry.instrument.clone())
+        .collect::<BTreeSet<_>>();
+
+    for instrument in held_instruments {
+        let aggregate = pipeline.ledger().position_for(account_id, &instrument);
+        let long = pipeline
+            .ledger()
+            .position_for_side(account_id, &instrument, qx_core::PositionSide::Long)
+            .quantity
+            .raw();
+        let short = pipeline
+            .ledger()
+            .position_for_side(account_id, &instrument, qx_core::PositionSide::Short)
+            .quantity
+            .raw();
+        let one_way = aggregate
+            .quantity
+            .raw()
+            .checked_sub(long)
+            .and_then(|quantity| quantity.checked_sub(short))
+            .ok_or_else(|| format!("{instrument} 持仓模式拆分溢出"))?;
+        if one_way == 0 && long == 0 && short == 0 {
+            continue;
+        }
+        if specs.contains_key(&instrument) {
+            continue;
+        }
+
+        let instrument_label = instrument.to_string();
+        let candidates = config
+            .workers
+            .iter()
+            .filter(|candidate| {
+                candidate.enabled
+                    && candidate.account_id.as_deref() == Some(account_id)
+                    && candidate.instrument_spec_path.is_some()
+                    && candidate.symbols.iter().any(|symbol| {
+                        symbol == &instrument_label
+                            || InstrumentId::parse(symbol).as_ref() == Some(&instrument)
+                    })
+            })
+            .collect::<Vec<_>>();
+        let mut resolved: Option<TradingInstrumentSpec> = None;
+        for candidate in candidates {
+            let candidate_spec = load_worker_market_spec_for_instrument(
+                candidate,
+                &instrument,
+                runtime_config_path,
+            )?
+            .ok_or_else(|| {
+                format!(
+                    "FAIL_CLOSED: worker {} 为持仓市场 {instrument} 声明了规格路径但未能解析规格",
+                    candidate.id
+                )
+            })?;
+            match &resolved {
+                None => resolved = Some(candidate_spec),
+                Some(existing) if existing == &candidate_spec => {}
+                Some(_) => {
+                    return Err(format!(
+                        "FAIL_CLOSED: Paper 账户 {account_id} 对 {instrument} 配置了冲突的冻结规格"
+                    ))
+                }
+            }
+        }
+        let resolved = resolved.ok_or_else(|| {
+            format!(
+                "FAIL_CLOSED: Paper 账户 {account_id} 的非零持仓 {instrument} 没有匹配的启用 worker market spec"
+            )
+        })?;
+        specs.insert(instrument, resolved);
+    }
+    Ok(specs)
 }
 
 pub(crate) fn load_worker_instrument_spec(

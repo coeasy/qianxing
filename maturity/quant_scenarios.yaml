@@ -123,6 +123,14 @@ scenarios:
     exit_code: 0
     observed: "scheduler=scheduler-paper strategy=strategy-paper,strategy-paper-2 execution=paper-execution orders=2 (+2 本轮新增) ledger_entries=7 (+7 本轮新增) "
     evidence: ["crates/qx-cli/src/venue_runtime/paper_worker.rs", "crates/qx-cli/src/tests/paper_multi_strategy.rs", "crates/qx-cli/src/workers.rs"]
+  - name: paper_shared_multimarket_margin_valuation
+    label: "Paper 同账户多市场冻结规格与权益估值"
+    status: executed
+    anchor: "crates/qx-cli/src/venue_runtime/worker_runtime.rs"
+    command: "cargo test --offline -p qx-cli paper_shared_account_margin_marks_positions_from_all_configured_markets"
+    exit_code: 0
+    observed: "同一 Paper 账户持有 BTC/USDT 与 ETH/USDT 永续；按两份冻结规格及两市场标记价计入权益；两腿未实现盈亏都进入后续订单风控；单规格遗漏、缺规格或缺标价失败关闭"
+    evidence: ["crates/qx-cli/src/venue_runtime/worker_runtime.rs", "crates/qx-cli/src/tests/paper_margin_valuation.rs", "crates/qx-core/src/ledger/query.rs"]
   - name: pairs_arbitrage
     label: "配对统计套利"
     status: executed

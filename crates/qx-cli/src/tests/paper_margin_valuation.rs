@@ -184,3 +184,120 @@ fn paper_margin_budget_values_derivative_positions_without_their_notional() {
     assert!(paper_available_margin(&spot, "main", &both_marks, "USDT", &spot_spec).is_err());
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn paper_shared_account_margin_marks_positions_from_all_configured_markets() {
+    let root = temp_cli_case_dir("paper-multi-market-margin");
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth = InstrumentId::parse("ETHUSDT.BINANCE").unwrap();
+    let btc_spec = margin_valuation_spec(&btc, TradingProduct::Perpetual);
+    let mut eth_spec = margin_valuation_spec(&eth, TradingProduct::Perpetual);
+    eth_spec.base_currency = "ETH".into();
+    let btc_path = root.join("btc.spec.json");
+    let eth_path = root.join("eth.spec.json");
+    std::fs::write(&btc_path, serde_json::to_vec(&btc_spec).unwrap()).unwrap();
+    std::fs::write(&eth_path, serde_json::to_vec(&eth_spec).unwrap()).unwrap();
+    let mut btc_worker = mk_worker(
+        "paper-btc",
+        WorkerRole::Execution,
+        "paper",
+        Some(&btc_path.to_string_lossy()),
+    );
+    btc_worker.symbols = vec![btc.to_string()];
+    let mut eth_worker = mk_worker(
+        "paper-eth",
+        WorkerRole::Execution,
+        "paper",
+        Some(&eth_path.to_string_lossy()),
+    );
+    eth_worker.symbols = vec![eth.to_string()];
+    let mut config = paper_runtime_config(&root);
+    config.workers = vec![btc_worker.clone(), eth_worker];
+
+    let mut pipeline = LiveEventPipeline::open(&root, paper_account_log(), "USDT").unwrap();
+    pipeline
+        .ingest(RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::AccountCashflow {
+                cashflow: AccountCashflow {
+                    account_id: "main".into(),
+                    venue_id: "paper".into(),
+                    currency: "USDT".into(),
+                    kind: CashflowKind::Transfer,
+                    amount: Money::from_i64(10_000),
+                    external_id: "multi-market:transfer".into(),
+                },
+            },
+            1,
+            1,
+            1,
+            "multi-market:transfer",
+        ))
+        .unwrap();
+    for (client_id, instrument, spec, mark) in [
+        (9511, btc.clone(), btc_spec.clone(), 110),
+        (9512, eth.clone(), eth_spec, 120),
+    ] {
+        let order = mk_order(client_id, &instrument, Side::Buy, 1);
+        pipeline.register_order(order.clone(), 2).unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: client_id,
+                    venue_order_id: Some(format!("paper-{client_id}")),
+                },
+                2,
+                2,
+                client_id,
+                format!("multi-market:accepted:{client_id}"),
+            ))
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::FillWithSpec {
+                    fill: Box::new(qx_core::Fill {
+                        order_id: client_id,
+                        qty: Quantity::from_i64(1),
+                        price: Price::from_i64(100),
+                        ts: 3,
+                        account_id: "main".into(),
+                        ..qx_core::Fill::default()
+                    }),
+                    spec: Box::new(spec),
+                },
+                3,
+                3,
+                client_id,
+                format!("multi-market:fill:{client_id}"),
+            ))
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::market_quote(
+                instrument,
+                QuoteTick::new(
+                    4,
+                    Price::from_i64(mark),
+                    Quantity::from_i64(10),
+                    Price::from_i64(mark),
+                    Quantity::from_i64(10),
+                    client_id,
+                ),
+                4,
+                client_id,
+                format!("multi-market:quote:{client_id}"),
+            ))
+            .unwrap();
+    }
+
+    let next_order = mk_order(9513, &btc, Side::Buy, 1);
+    let (risk, _) =
+        worker_risk_context_with_config(&btc_worker, &next_order, &pipeline, &config, None)
+            .unwrap()
+            .expect("configured Paper worker must produce risk context");
+    assert_eq!(
+        risk.available_margin_raw,
+        Some(10_030 * SCALE),
+        "available equity must include PnL on every same-account market position"
+    );
+    drop(pipeline);
+    let _ = std::fs::remove_dir_all(root);
+}

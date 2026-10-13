@@ -221,14 +221,20 @@ pub(crate) fn paper_submit_match_attempt(
 ) -> Result<String, String> {
     let order = order_from_submit_command(command)
         .map_err(|error| terminal_submit_rejection(format!("Paper 订单载荷非法: {error:?}")))?;
-    let (risk, position) = worker_risk_context(worker, &order, pipeline, Some(runtime_config_path))
-        .map_err(|error| terminal_submit_rejection(format!("Paper 风控快照构造失败: {error}")))?
-        .ok_or_else(|| {
-            terminal_submit_rejection(
-                "FAIL_CLOSED: Paper worker 缺少风控配置（instrument_spec_path），拒绝提交订单"
-                    .to_string(),
-            )
-        })?;
+    let (risk, position) = worker_risk_context_with_config(
+        worker,
+        &order,
+        pipeline,
+        config,
+        Some(runtime_config_path),
+    )
+    .map_err(|error| terminal_submit_rejection(format!("Paper 风控快照构造失败: {error}")))?
+    .ok_or_else(|| {
+        terminal_submit_rejection(
+            "FAIL_CLOSED: Paper worker 缺少风控配置（instrument_spec_path），拒绝提交订单"
+                .to_string(),
+        )
+    })?;
     // fail-closed：撮合行情必须来自同一 EventLog 的行情事实，缺行情拒绝执行。
     let market_quote = pipeline
         .latest_quote_with_depth(&order.instrument)
