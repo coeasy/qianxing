@@ -234,3 +234,13 @@ use_cases:
     artifacts: "<run_id>.multi-market.json（各市场数据身份、自定义策略身份、每市场成交、共享权益/事件/账簿与 replay_verified）"
     error_categories: "AppErrorCategory 八类；无效标的/预算/数据或跨市场规格不匹配为 InvalidInput，异身份产物为 Conflict"
     capability_level: "R"
+  - name: run_multi_market_experiment
+    input_schema: "RunMultiMarketExperimentSpec v1（共享账户多市场 Bar 规格 + 目标策略槽 + 有界参数/内置策略种类网格；最多 256 个候选）"
+    output_schema: "RunMultiMarketExperimentResult v1（候选逐项结果/错误、共享账簿哈希、按收益与回撤确定性排序的榜单）"
+    capability: "RESEARCH"
+    idempotency_key: "experiment_id + 规格/排序市场 BarFrame 指纹 + 目标槽/网格；产物字节相同才允许重跑，否则 Conflict"
+    cancellation: "同步入口不取消；RunMultiMarketExperimentSpec::start 在候选之间及共享 Rust 市场内核事件批次协作取消，不发布部分实验报告"
+    progress: "RunHandle 提供状态、取消、等待和一次性结果；每候选错误隔离，取消整个批次"
+    artifacts: "不可变 <experiment_id>.multi-market-experiment.json 与每个候选的共享多市场回测产物"
+    error_categories: "AppErrorCategory 八类；无效网格/目标槽/数据为 InvalidInput，异身份产物为 Conflict"
+    capability_level: "R"

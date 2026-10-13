@@ -126,3 +126,105 @@ fn rust_sdk_runs_custom_multi_market_slots_through_shared_engine_and_run_handle(
     assert_eq!(handle.wait(), RunStatus::Succeeded);
     assert_eq!(handle.try_take_result().unwrap().unwrap().markets_total, 3);
 }
+
+#[test]
+fn rust_sdk_runs_multi_market_parameter_grids_and_custom_strategy_factories() {
+    let root = scratch("sdk-multi-market-experiment");
+    let source: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(sample_bars()).expect("sample BarFrame"))
+            .expect("sample JSON");
+    let instruments = ["BTCUSDT.BINANCE", "ETHUSDT.KRAKEN", "SOLUSDT.BYBIT"];
+    let markets = instruments
+        .iter()
+        .enumerate()
+        .map(|(index, instrument)| {
+            let path = root.join(format!("market-{index}.json"));
+            let mut frame = source.clone();
+            frame["instrument"] = serde_json::Value::String((*instrument).into());
+            std::fs::write(&path, serde_json::to_vec(&frame).unwrap()).unwrap();
+            MultiMarketBacktestMarket {
+                instrument: (*instrument).into(),
+                bars_path: path.to_string_lossy().into_owned(),
+                priority: index as u32,
+                market_spec: None,
+                fee_schedule: None,
+                strategies: vec![PortfolioStrategySpec {
+                    priority: 0,
+                    reserved_capital_raw: 20_000 * 1_000_000_000,
+                    strategy: BuiltinStrategySpec::new(
+                        BuiltinStrategyKind::SmaCross,
+                        format!("experiment-slot-{index}"),
+                    ),
+                }],
+            }
+        })
+        .collect::<Vec<_>>();
+    let base = MultiMarketBacktestSpec {
+        schema_version: 1,
+        run_id: "unused-sdk-market-grid-base".into(),
+        account_id: "sdk-market-grid-account".into(),
+        settlement_currency: "USDT".into(),
+        initial_cash_raw: 100_000 * 1_000_000_000,
+        seed: 7,
+        output_dir: root.to_string_lossy().into_owned(),
+        markets,
+    };
+    let client = Client::new(CallerCapability::Research, "sdk-market-grid");
+    let selected = RunMultiMarketExperimentSpec {
+        schema_version: 1,
+        experiment_id: "sdk-market-grid-selected".into(),
+        target_strategy_id: "experiment-slot-0".into(),
+        base: base.clone(),
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "fast_window".into(),
+            values: vec![1, 2],
+        }],
+        strategy_kinds: vec![BuiltinStrategyKind::SmaCross, BuiltinStrategyKind::EmaCross],
+    };
+    let result = client.run_multi_market_experiment(&selected).unwrap();
+    assert_eq!(result.total_candidates, 4);
+    assert_eq!(result.succeeded_candidates, 4);
+    assert!(result.candidates.iter().all(|candidate| candidate
+        .outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.markets_total == 3)));
+    let mut handle = client.start_multi_market_experiment(RunMultiMarketExperimentSpec {
+        experiment_id: "sdk-market-grid-async".into(),
+        ..selected.clone()
+    });
+    assert_eq!(handle.wait(), RunStatus::Succeeded);
+    assert_eq!(
+        handle
+            .try_take_result()
+            .unwrap()
+            .unwrap()
+            .succeeded_candidates,
+        4
+    );
+
+    let custom = RunMultiMarketExperimentSpec {
+        schema_version: 1,
+        experiment_id: "sdk-market-grid-custom".into(),
+        target_strategy_id: "experiment-slot-0".into(),
+        base,
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "fast_window".into(),
+            values: vec![1, 2],
+        }],
+        strategy_kinds: Vec::new(),
+    };
+    let identity = StrategyArtifactIdentity {
+        strategy_id: "experiment-slot-0".into(),
+        strategy_version: "sdk-grid-v1".into(),
+        source_sha256: "e".repeat(64),
+    };
+    let mut observed = Vec::new();
+    let custom_result = client
+        .run_multi_market_experiment_with_strategy_factory(&custom, &identity, &mut |candidate| {
+            observed.push(candidate.markets[0].strategies[0].strategy.fast_window);
+            Ok(Box::new(BuyEachInstrument(Default::default())) as Box<dyn Strategy>)
+        })
+        .unwrap();
+    assert_eq!(custom_result.succeeded_candidates, 2);
+    assert_eq!(observed, [1, 2]);
+}

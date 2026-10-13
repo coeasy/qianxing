@@ -105,6 +105,10 @@ def _load_native():
                 "app_start_multi_market_backtest_with_strategy_slots",
                 "app_run_multi_leg_experiment",
                 "app_start_multi_leg_experiment",
+                "app_run_multi_market_experiment",
+                "app_start_multi_market_experiment",
+                "app_run_multi_market_experiment_with_strategy",
+                "app_start_multi_market_experiment_with_strategy",
                 "app_verify_depth_run",
             )
         ):
@@ -225,6 +229,11 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertEqual(multi_leg_experiment.command, "run-multi-leg-experiment")
         self.assertEqual(multi_leg_experiment.input, "multi-leg-experiment.json")
+        multi_market_experiment = _parser().parse_args(
+            ["run-multi-market-experiment", "multi-market-experiment.json"]
+        )
+        self.assertEqual(multi_market_experiment.command, "run-multi-market-experiment")
+        self.assertEqual(multi_market_experiment.input, "multi-market-experiment.json")
         depth_experiment = _parser().parse_args(
             ["run-depth-experiment", "depth-experiment.json"]
         )
@@ -544,6 +553,8 @@ class AppUseCaseTests(unittest.TestCase):
             ("start_multi_leg_backtest", "/app/multi-leg-backtest/start", True),
             ("run_multi_market_backtest", "/app/multi-market-backtest", False),
             ("start_multi_market_backtest", "/app/multi-market-backtest/start", True),
+            ("run_multi_market_experiment", "/app/run-multi-market-experiment", False),
+            ("start_multi_market_experiment", "/app/run-multi-market-experiment/start", True),
             ("run_multi_leg_experiment", "/app/run-multi-leg-experiment", False),
             ("start_multi_leg_experiment", "/app/run-multi-leg-experiment/start", True),
         ]
@@ -690,6 +701,20 @@ class AppUseCaseTests(unittest.TestCase):
                 "max_drawdown_bps": 0,
                 "artifact_path": "portfolio.json",
             },
+            "run_multi_market_experiment": {
+                "schema_version": 1,
+                "experiment_id": "experiment",
+                "target_strategy_id": "slot-a",
+                "spec_fingerprint": "fingerprint",
+                "total_candidates": 1,
+                "completed_candidates": 1,
+                "succeeded_candidates": 1,
+                "failed_candidates": 0,
+                "candidates": [],
+                "ranking": [],
+                "artifact_path": "report.json",
+            },
+            "start_multi_market_experiment": {"run_id": "experiment", "status": "starting"},
             "run_multi_leg_experiment": {
                 "schema_version": 1,
                 "experiment_id": "experiment",
@@ -3265,6 +3290,33 @@ class AppUseCaseTests(unittest.TestCase):
         typed_result = run_multi_market_backtest(typed)
         self.assertEqual(typed_result.markets_total, 3)
 
+        from qianxing import (
+            ExperimentParameterSpace,
+            RunMultiMarketExperimentSpec,
+            run_multi_market_experiment,
+            start_multi_market_experiment,
+        )
+        experiment_spec = RunMultiMarketExperimentSpec(
+            experiment_id="python-multi-market-parameter-grid",
+            target_strategy_id="typed-0",
+            base=typed,
+            parameter_space=(ExperimentParameterSpace("fast_window", (1, 2)),),
+            strategy_kinds=("sma_cross", "ema_cross"),
+        )
+        experiment_result = run_multi_market_experiment(experiment_spec)
+        self.assertEqual(experiment_result.total_candidates, 4)
+        self.assertEqual(experiment_result.succeeded_candidates, 4)
+        self.assertTrue(all(
+            candidate.outcome.markets_total == 3
+            for candidate in experiment_result.candidates
+            if candidate.outcome is not None
+        ))
+        async_handle = start_multi_market_experiment(
+            {**experiment_spec.to_dict(), "experiment_id": "python-multi-market-grid-handle"}
+        )
+        self.assertEqual(async_handle.wait(10_000), "succeeded")
+        self.assertEqual(async_handle.result().total_candidates, 4)
+
         class NoopStrategy:
             def on_event(self, context, event):
                 event_body = next(iter(event.values()))
@@ -3311,6 +3363,26 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertEqual(handle.wait(10_000), "succeeded")
         self.assertEqual(json.loads(handle.result_json())["markets_total"], 3)
+
+        custom_experiment = RunMultiMarketExperimentSpec(
+            experiment_id="python-multi-market-custom-grid",
+            target_strategy_id="typed-0",
+            base=typed,
+            parameter_space=(ExperimentParameterSpace("fast_window", (1, 2)),),
+        )
+        from qianxing import run_multi_market_experiment_with_strategy
+        custom_grid = run_multi_market_experiment_with_strategy(
+            custom_experiment,
+            lambda _candidate_json: NoopStrategy(),
+            strategy_id="typed-0",
+            strategy_version="python-grid-v1",
+            source_sha256="b" * 64,
+        )
+        self.assertEqual(custom_grid.succeeded_candidates, 2, custom_grid.candidates)
+        custom_grid_artifact = json.loads(Path(
+            custom_grid.candidates[0].outcome.artifact_path
+        ).read_text(encoding="utf-8"))
+        self.assertEqual(custom_grid_artifact["strategy_identities"][0]["strategy_version"], "python-grid-v1")
 
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     def test_a_failure_raises_the_same_document_the_other_entrypoints_print(self):

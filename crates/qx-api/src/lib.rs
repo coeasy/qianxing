@@ -20,12 +20,9 @@ mod state_lock;
 mod tls_config;
 mod transport;
 mod ws;
-
 pub use console::*;
 pub use control_reads::*;
 // 锁中毒的收口（§6.D3）：`pub(crate)` 让 `control_reads` / `ws` 的 `use crate::*` 也拿到它。
-pub(crate) use state_lock::{lock_state, read_error_response};
-
 pub use admission::validate_admission_config;
 use admission::{
     is_websocket_upgrade, preflight, query_param, ConnectionBudget, CorsPolicy, Preflight,
@@ -51,6 +48,7 @@ use rustls::pki_types::CertificateDer;
 use rustls::ServerConfig;
 use serde::{Deserialize, Serialize};
 use snapshot_history::SnapshotHistory;
+pub(crate) use state_lock::{lock_state, read_error_response};
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -1466,6 +1464,7 @@ impl ApiService {
         let permission =
             authenticated_operator.and_then(|operator| self.policy.as_ref()?.permission(operator));
         let trading_authorized = self.policy.is_none() || algo_lifecycle::can_trade(permission);
+        let app_paths = &self.app_paths;
         match (method, route) {
             ("GET", "/health") => ApiResponse::json(200, "{\"status\":\"ok\"}"),
             ("GET", "/ready") => {
@@ -1708,6 +1707,7 @@ qx_control_retired_audit_records_total {}\n",
             ("POST", "/app/multi-market-backtest") => app::multi_market(body, &self.app_paths),
             ("POST", "/app/multi-account-backtest") => app::multi_account(body, &self.app_paths),
             ("POST", "/app/run-multi-leg-experiment") => app::multi_leg_grid(body, &self.app_paths),
+            ("POST", "/app/run-multi-market-experiment") => app::multi_market_grid(body, app_paths),
             _ => ApiResponse::text(404, "not found"),
         }
     }
@@ -2075,7 +2075,6 @@ fn event_projection_envelope(event: Event, source_digest: &str) -> ProjectionEnv
         data: event,
     }
 }
-
 fn non_empty_or_system(value: String) -> String {
     if value.trim().is_empty() {
         "system".into()

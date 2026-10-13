@@ -4,7 +4,7 @@ use qx_app::{
     AppError, BacktestOutcome, DepthBacktestOutcome, MultiAccountBacktestResult,
     MultiAccountDepthBacktestResult, MultiLegBacktestOutcome, MultiMarketBacktestOutcome,
     RunDepthExperimentResult, RunExperimentResult, RunHandle, RunMultiLegExperimentResult,
-    RunStatus,
+    RunMultiMarketExperimentResult, RunStatus,
 };
 use std::time::{Duration, Instant};
 
@@ -17,6 +17,7 @@ pub(super) fn events_json(run: &NativeRun, after_seq: u64) -> Result<String, App
         NativeRun::MultiLeg(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiMarket(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiLegExperiment(handle) => handle.events_json_after(after_seq),
+        NativeRun::MultiMarketExperiment(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiAccount(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiAccountDepth(handle) => handle.events_json_after(after_seq),
     }
@@ -40,6 +41,7 @@ pub(super) enum NativeRun {
     MultiLeg(RunHandle<MultiLegBacktestOutcome>),
     MultiMarket(RunHandle<MultiMarketBacktestOutcome>),
     MultiLegExperiment(RunHandle<RunMultiLegExperimentResult>),
+    MultiMarketExperiment(RunHandle<RunMultiMarketExperimentResult>),
     MultiAccount(RunHandle<MultiAccountBacktestResult>),
     MultiAccountDepth(RunHandle<MultiAccountDepthBacktestResult>),
 }
@@ -61,6 +63,7 @@ impl PyRunHandle {
             NativeRun::MultiLeg(handle) => handle.run_id(),
             NativeRun::MultiMarket(handle) => handle.run_id(),
             NativeRun::MultiLegExperiment(handle) => handle.run_id(),
+            NativeRun::MultiMarketExperiment(handle) => handle.run_id(),
             NativeRun::MultiAccount(handle) => handle.run_id(),
             NativeRun::MultiAccountDepth(handle) => handle.run_id(),
         }
@@ -76,6 +79,7 @@ impl PyRunHandle {
             NativeRun::MultiLeg(handle) => handle.status(),
             NativeRun::MultiMarket(handle) => handle.status(),
             NativeRun::MultiLegExperiment(handle) => handle.status(),
+            NativeRun::MultiMarketExperiment(handle) => handle.status(),
             NativeRun::MultiAccount(handle) => handle.status(),
             NativeRun::MultiAccountDepth(handle) => handle.status(),
         })
@@ -90,6 +94,7 @@ impl PyRunHandle {
             NativeRun::MultiLeg(handle) => handle.cancel(),
             NativeRun::MultiMarket(handle) => handle.cancel(),
             NativeRun::MultiLegExperiment(handle) => handle.cancel(),
+            NativeRun::MultiMarketExperiment(handle) => handle.cancel(),
             NativeRun::MultiAccount(handle) => handle.cancel(),
             NativeRun::MultiAccountDepth(handle) => handle.cancel(),
         }
@@ -113,6 +118,7 @@ impl PyRunHandle {
                 NativeRun::MultiLeg(handle) => handle.status(),
                 NativeRun::MultiMarket(handle) => handle.status(),
                 NativeRun::MultiLegExperiment(handle) => handle.status(),
+                NativeRun::MultiMarketExperiment(handle) => handle.status(),
                 NativeRun::MultiAccount(handle) => handle.status(),
                 NativeRun::MultiAccountDepth(handle) => handle.status(),
             };
@@ -164,6 +170,11 @@ impl PyRunHandle {
                 .transpose()
                 .map_err(app_error),
             NativeRun::MultiLegExperiment(handle) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|outcome| outcome.to_json()))
+                .transpose()
+                .map_err(app_error),
+            NativeRun::MultiMarketExperiment(handle) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|outcome| outcome.to_json()))
                 .transpose()

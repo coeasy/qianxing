@@ -8,7 +8,8 @@ use qx_app::{
     MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiLegBacktestOutcome,
     MultiLegBacktestSpec, MultiMarketBacktestOutcome, MultiMarketBacktestSpec,
     RunDepthExperimentResult, RunDepthExperimentSpec, RunEvent, RunExperimentResult, RunHandle,
-    RunMultiLegExperimentResult, RunMultiLegExperimentSpec, RunStatus,
+    RunMultiLegExperimentResult, RunMultiLegExperimentSpec, RunMultiMarketExperimentResult,
+    RunMultiMarketExperimentSpec, RunStatus,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -43,6 +44,7 @@ pub(crate) const RUN_START_MULTI_LEG_ROUTE: &str = "/app/multi-leg-backtest/star
 pub(crate) const RUN_START_MULTI_ACCOUNT_ROUTE: &str = "/app/multi-account-backtest/start";
 pub(crate) const RUN_START_MULTI_MARKET_ROUTE: &str = "/app/multi-market-backtest/start";
 pub(crate) const RUN_START_MULTI_LEG_EXPERIMENT_ROUTE: &str = "/app/run-multi-leg-experiment/start";
+pub(crate) const RUN_START_MARKET_EXPERIMENT_ROUTE: &str = "/app/run-multi-market-experiment/start";
 
 pub(crate) fn app_run_route(
     method: &str,
@@ -81,6 +83,9 @@ pub(crate) fn app_run_route_with_query(
         ("POST", RUN_START_MULTI_LEG_EXPERIMENT_ROUTE) => {
             starts::start_multi_leg_experiment(body, paths, registry)
         }
+        ("POST", RUN_START_MARKET_EXPERIMENT_ROUTE) => {
+            starts::start_multi_market_experiment(body, paths, registry)
+        }
         ("GET", route) => {
             let full_route = if query.is_empty() {
                 route.to_string()
@@ -115,6 +120,7 @@ enum AppRun {
     Experiment(RunHandle<RunExperimentResult>),
     MultiLeg(RunHandle<MultiLegBacktestOutcome>),
     MultiLegExperiment(RunHandle<RunMultiLegExperimentResult>),
+    MultiMarketExperiment(RunHandle<RunMultiMarketExperimentResult>),
     MultiAccount(RunHandle<MultiAccountBacktestResult>),
     MultiMarket(RunHandle<MultiMarketBacktestOutcome>),
 }

@@ -16,7 +16,7 @@ use qx_app::{
     run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots, run_depth_experiment,
     run_experiment, run_multi_account_backtest, run_multi_account_depth_backtest,
     run_multi_leg_backtest, run_multi_leg_backtest_with_strategy, run_multi_leg_experiment,
-    run_multi_market_backtest, start_depth_backtest_with_strategy,
+    run_multi_market_backtest, run_multi_market_experiment, start_depth_backtest_with_strategy,
     start_depth_backtest_with_strategy_slots, validate_dataset, verify_depth_run, verify_run,
     AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec, CallerCapability,
     CapitalAllocationResult, CapitalAllocationSpec, CompareRunsResult, CompareRunsSpec,
@@ -26,7 +26,8 @@ use qx_app::{
     MultiMarketBacktestOutcome, MultiMarketBacktestSpec, RiskParityResult, RiskParitySpec,
     RunContext, RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult,
     RunExperimentSpec, RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
-    StrategyArtifactIdentity, VerificationResult,
+    RunMultiMarketExperimentResult, RunMultiMarketExperimentSpec, StrategyArtifactIdentity,
+    VerificationResult,
 };
 use qx_strategy::Strategy;
 
@@ -378,6 +379,46 @@ impl Client {
         spec: RunMultiLegExperimentSpec,
     ) -> RunHandle<RunMultiLegExperimentResult> {
         spec.start(self.context.clone())
+    }
+
+    pub fn run_multi_market_experiment(
+        &self,
+        spec: &RunMultiMarketExperimentSpec,
+    ) -> Result<RunMultiMarketExperimentResult, AppError> {
+        run_multi_market_experiment(spec, &self.context)
+    }
+
+    pub fn start_multi_market_experiment(
+        &self,
+        spec: RunMultiMarketExperimentSpec,
+    ) -> RunHandle<RunMultiMarketExperimentResult> {
+        spec.start(self.context.clone())
+    }
+
+    pub fn run_multi_market_experiment_with_strategy_factory<F>(
+        &self,
+        spec: &RunMultiMarketExperimentSpec,
+        identity: &StrategyArtifactIdentity,
+        factory: &mut F,
+    ) -> Result<RunMultiMarketExperimentResult, AppError>
+    where
+        F: FnMut(&qx_app::MultiMarketBacktestSpec) -> Result<Box<dyn Strategy>, String>,
+    {
+        spec.run_with_strategy_factory(identity, factory, &self.context)
+    }
+
+    pub fn start_multi_market_experiment_with_strategy_factory<F>(
+        &self,
+        spec: RunMultiMarketExperimentSpec,
+        identity: StrategyArtifactIdentity,
+        factory: F,
+    ) -> Result<RunHandle<RunMultiMarketExperimentResult>, AppError>
+    where
+        F: FnMut(&qx_app::MultiMarketBacktestSpec) -> Result<Box<dyn Strategy>, String>
+            + Send
+            + 'static,
+    {
+        spec.start_with_strategy_factory(identity, factory, self.context.clone())
     }
 
     /// Start a cancellable experiment with a freshly constructed strategy per candidate.

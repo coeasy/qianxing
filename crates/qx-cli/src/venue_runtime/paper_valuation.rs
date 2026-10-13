@@ -186,6 +186,11 @@ fn worker_risk_context_inner(
 /// Resolve frozen specifications for every non-zero position in a Paper account.
 /// A worker must not estimate account buying power from only its own market when
 /// another enabled execution worker owns a position in the same account.
+type AccountMarketValuationInputs = (
+    BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    BTreeMap<String, Price>,
+);
+
 fn account_market_specs_and_fx(
     config: &RuntimeConfig,
     account_id: &str,
@@ -193,13 +198,7 @@ fn account_market_specs_and_fx(
     current_spec: &TradingInstrumentSpec,
     reporting_currency: &str,
     runtime_config_path: Option<&Path>,
-) -> Result<
-    (
-        BTreeMap<InstrumentId, TradingInstrumentSpec>,
-        BTreeMap<String, Price>,
-    ),
-    String,
-> {
+) -> Result<AccountMarketValuationInputs, String> {
     let mut specs = BTreeMap::from([(current_spec.instrument.clone(), current_spec.clone())]);
     let held_instruments = pipeline
         .ledger()

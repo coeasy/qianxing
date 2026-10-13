@@ -20,6 +20,8 @@ mod market_spec_entrypoints;
 mod multi_account_entrypoints;
 #[path = "app_three_entrypoints/multi_leg_experiment.rs"]
 mod multi_leg_experiment_entrypoints;
+#[path = "app_three_entrypoints/multi_market_experiment.rs"]
+mod multi_market_experiment_entrypoints;
 #[path = "app_three_entrypoints/portfolio.rs"]
 mod portfolio_entrypoints;
 #[path = "app_three_entrypoints/protective_exit.rs"]

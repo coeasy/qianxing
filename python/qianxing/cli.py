@@ -20,6 +20,7 @@ from .app import (
     run_depth_experiment,
     run_experiment,
     run_multi_leg_experiment,
+    run_multi_market_experiment,
     validate_dataset,
     verify_run,
     verify_depth_run,
@@ -60,6 +61,7 @@ def _parser() -> argparse.ArgumentParser:
         ("run-experiment", "run and compare a bounded Rust parameter grid"),
         ("run-depth-experiment", "run a bounded Rust Tick/OrderBook parameter grid"),
         ("run-multi-leg-experiment", "run a bounded Rust multi-leg parameter grid"),
+        ("run-multi-market-experiment", "run a bounded shared-account multi-market grid"),
         ("depth-backtest", "run an L1 Tick or L2 order-book backtest"),
         ("verify-depth", "verify artifacts from an L1 Tick or L2 order-book run"),
     ):
@@ -87,6 +89,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = run_depth_experiment(payload)
             elif args.command == "run-multi-leg-experiment":
                 result = run_multi_leg_experiment(payload)
+            elif args.command == "run-multi-market-experiment":
+                result = run_multi_market_experiment(payload)
             elif args.command == "depth-backtest":
                 result = run_depth_backtest(payload)
             elif args.command == "verify-depth":

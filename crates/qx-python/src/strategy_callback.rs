@@ -13,7 +13,7 @@ use qx_app::{
     run_multi_leg_backtest_with_strategy, start_depth_backtest_with_strategy,
     start_depth_backtest_with_strategy_slots, BacktestSpec, DepthBacktestSpec,
     MultiLegBacktestSpec, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
-    StrategyArtifactIdentity,
+    RunMultiMarketExperimentSpec, StrategyArtifactIdentity,
 };
 use qx_strategy::{MarketEvent, Strategy, StrategyContext, StrategyDecision};
 use strategy_slots::strategy_slots;

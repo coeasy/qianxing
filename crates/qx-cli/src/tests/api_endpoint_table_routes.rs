@@ -4,20 +4,17 @@
 //! `` | `GET /x` `` 形态的行收成一个**并集**，再与实现侧的路由集合比相等。文档里有两张端点表
 //! （一张写 200 响应体形状，一张写语义/非 200 口径），两条都进并集，所以从任一张里整行删掉
 //! 一条路由，并集不变、门禁照印绿——第六遍把它登记为 #176（只钉住了第一张），本轮补第二张。
-//!
 //! 这一盲区不是推测：第六遍实测删掉 `/events/live` 那一行时门禁仍然 `[PASS]`（`logs/s128_*.txt`）。
 //! 读面少一行不等于少一条能力，但运维照着一张表配抓取与告警、另一张表说这条路存在，两边就会
 //! 各自缺一块。所以这里逐表比，不比并集。
 //! 本文件后半还有一条 #182：同一张表第三格（「非 200 口径」）里点名的**错误码名与状态码**，
 //! 与读面实现之间两向都要平——路由名对上而错误体说错话，是同一类腐坏的下一层。
-//!
 //! 最后一条 #183 钉的是这三样东西**住在文档的哪一章**：两张表与「### 端点表按张核对」必须一起
 //! 住在 `## Paper API` 与下一个一级标题之间。上面那两条判据都按整篇文档搜表头取数，所以第八遍
 //! 立案时那一段其实挂在 `## Outbox 与 NATS JetStream` 下，搬家也不会让它们红 —— 位置需要专门一条。
 
 use super::*;
 use std::collections::BTreeSet;
-
 /// 读面的**全部**源码，而不是 crate 根那一个文件。
 ///
 /// 立案现场：下面两条取数原先都写死 `crates/qx-api/src/lib.rs`，而读面已经拆成
@@ -168,6 +165,8 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
         ("RUN_START_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_MULTI_ACCOUNT_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_ROUTE", "POST"),
+        ("RUN_START_MULTI_MARKET_ROUTE", "POST"),
+        ("RUN_START_MARKET_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_EXPERIMENT_ROUTE", "POST"),
     ] {
         let marker = format!("const {constant}: &str = \"");

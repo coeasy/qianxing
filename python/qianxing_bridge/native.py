@@ -78,6 +78,10 @@ APP_ENTRYPOINTS = (
     "app_start_multi_leg_backtest",
     "app_run_multi_market_backtest",
     "app_start_multi_market_backtest",
+    "app_run_multi_market_experiment",
+    "app_start_multi_market_experiment",
+    "app_run_multi_market_experiment_with_strategy",
+    "app_start_multi_market_experiment_with_strategy",
     "app_run_multi_market_backtest_with_strategy_slots",
     "app_start_multi_market_backtest_with_strategy_slots",
     "app_run_multi_leg_experiment",
@@ -500,6 +504,32 @@ def app_run_multi_leg_experiment(spec_json: str) -> str:
 def app_start_multi_leg_experiment(spec_json: str) -> Any:
     """Start a cancellable multi-leg parameter grid in Rust."""
     return _extension().app_start_multi_leg_experiment(spec_json)
+
+
+def app_run_multi_market_experiment(spec_json: str) -> str:
+    """Run a bounded candidate grid through the shared Rust multi-market engine."""
+    return str(_extension().app_run_multi_market_experiment(spec_json))
+
+
+def app_start_multi_market_experiment(spec_json: str) -> Any:
+    """Start a cancellable shared-account multi-market candidate grid."""
+    return _extension().app_start_multi_market_experiment(spec_json)
+
+
+def app_run_multi_market_experiment_with_strategy(
+    spec_json: str, strategy_id: str, strategy_version: str, source_sha256: str, factory: Any,
+) -> str:
+    return str(_extension().app_run_multi_market_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory,
+    ))
+
+
+def app_start_multi_market_experiment_with_strategy(
+    spec_json: str, strategy_id: str, strategy_version: str, source_sha256: str, factory: Any,
+) -> Any:
+    return _extension().app_start_multi_market_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory,
+    )
 
 
 def to_pyarrow_columns(payload: str) -> tuple[Any, ...]:

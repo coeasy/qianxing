@@ -103,6 +103,26 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         self.post("/app/multi-market-backtest/start", &request)
     }
 
+    /// Run a bounded strategy/parameter grid on the shared multi-market Rust engine.
+    pub fn run_multi_market_experiment(
+        &self,
+        spec: &qx_app::RunMultiMarketExperimentSpec,
+    ) -> Result<Value, RemoteApiError> {
+        let request = serde_json::to_value(spec)
+            .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
+        self.post("/app/run-multi-market-experiment", &request)
+    }
+
+    /// Start a cancellable multi-market candidate grid on the shared Rust server.
+    pub fn start_multi_market_experiment(
+        &self,
+        spec: &qx_app::RunMultiMarketExperimentSpec,
+    ) -> Result<Value, RemoteApiError> {
+        let request = serde_json::to_value(spec)
+            .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
+        self.post("/app/run-multi-market-experiment/start", &request)
+    }
+
     pub fn start_paper_algo_execution(&self, request: &Value) -> Result<Value, RemoteApiError> {
         self.post("/app/paper/algo-executions/start", request)
     }
@@ -328,6 +348,41 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Value>(&calls[0].1).unwrap()["run_id"],
             "remote-portfolio"
+        );
+    }
+
+    #[test]
+    fn multi_market_experiment_uses_sync_and_start_server_routes() {
+        let transport = FakeTransport::default();
+        let client = RemoteApiClient::new(transport);
+        let spec: qx_app::RunMultiMarketExperimentSpec =
+            serde_json::from_value(serde_json::json!({
+                "schema_version": 1,
+                "experiment_id": "remote-grid",
+                "target_strategy_id": "slot-0",
+                "base": {
+                    "schema_version": 1,
+                    "run_id": "unused",
+                    "account_id": "shared",
+                    "settlement_currency": "USDT",
+                    "initial_cash_raw": 100,
+                    "seed": 7,
+                    "output_dir": "runs",
+                    "markets": []
+                },
+                "parameter_space": [],
+                "strategy_kinds": []
+            }))
+            .expect("spec schema deserializes before engine validation");
+        client.run_multi_market_experiment(&spec).unwrap();
+        client.start_multi_market_experiment(&spec).unwrap();
+        let calls = client.transport.0.lock().unwrap();
+        assert_eq!(
+            calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
+            [
+                "/app/run-multi-market-experiment",
+                "/app/run-multi-market-experiment/start"
+            ]
         );
     }
 

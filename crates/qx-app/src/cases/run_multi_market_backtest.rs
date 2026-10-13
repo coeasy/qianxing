@@ -127,12 +127,12 @@ impl MultiMarketBacktestSpec {
     }
 }
 
-struct InjectedMarketStrategy {
-    identity: StrategyArtifactIdentity,
-    strategy: Box<dyn Strategy>,
+pub(super) struct InjectedMarketStrategy {
+    pub(super) identity: StrategyArtifactIdentity,
+    pub(super) strategy: Box<dyn Strategy>,
 }
 
-fn validate_injected(
+pub(super) fn validate_injected(
     spec: &MultiMarketBacktestSpec,
     strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
 ) -> Result<BTreeMap<String, InjectedMarketStrategy>, AppError> {
@@ -164,7 +164,7 @@ fn validate_injected(
     Ok(injected)
 }
 
-fn run_inner(
+pub(super) fn run_inner(
     spec: &MultiMarketBacktestSpec,
     _context: &RunContext,
     cancellation: Option<&crate::run_handle::CancellationToken>,

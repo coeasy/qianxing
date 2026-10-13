@@ -89,9 +89,10 @@ pub use qx_app::{
     MultiAccountBacktestSpec, MultiAccountDepthBacktestSpec, MultiLegBacktestSpec,
     MultiLegFillModel, MultiMarketBacktestMarket, MultiMarketBacktestSpec, PortfolioBacktestConfig,
     PortfolioStrategySpec, RiskParityAssetSpec, RiskParityResult, RiskParitySpec,
-    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec, StrategyArtifactIdentity,
-    TradeControlSpec, TradeWorkflow, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
-    RISK_PARITY_RESULT_SCHEMA_VERSION, RISK_PARITY_SPEC_SCHEMA_VERSION,
+    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
+    RunMultiMarketExperimentSpec, StrategyArtifactIdentity, TradeControlSpec, TradeWorkflow,
+    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
+    RISK_PARITY_SPEC_SCHEMA_VERSION,
 };
 pub use qx_strategy::{
     BuiltinStrategyKind, MarketEvent, Strategy, StrategyContext, StrategyDecision,
@@ -103,7 +104,8 @@ pub use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
     run_depth_backtest, run_depth_experiment, run_experiment, run_multi_account_backtest,
     run_multi_account_depth_backtest, run_multi_leg_backtest, run_multi_leg_backtest_with_strategy,
-    run_multi_leg_experiment, run_multi_market_backtest, validate_dataset, validate_trade_control,
+    run_multi_leg_experiment, run_multi_market_backtest, run_multi_market_experiment,
+    validate_dataset, validate_trade_control,
 };
 
 // —— §6.1「report/verify」——
@@ -126,8 +128,9 @@ pub use qx_app::{
     MultiAccountBacktestResult, MultiAccountBacktestSummary, MultiAccountDepthBacktestResult,
     MultiAccountDepthBacktestSummary, MultiAccountDepthRunResult, MultiAccountRunResult,
     MultiLegBacktestOutcome, MultiLegExperimentCandidate, MultiLegExperimentRankedCandidate,
-    MultiMarketBacktestOutcome, RunDepthExperimentResult, RunExperimentResult,
-    RunMultiLegExperimentResult, VerificationResult,
+    MultiMarketBacktestOutcome, MultiMarketExperimentCandidate,
+    MultiMarketExperimentRankedCandidate, RunDepthExperimentResult, RunExperimentResult,
+    RunMultiLegExperimentResult, RunMultiMarketExperimentResult, VerificationResult,
 };
 
 // —— 多腿归因/完整性读数（qx-app 的公开读面）——
@@ -145,10 +148,11 @@ pub use qx_app::{rejection_count, rejection_facts, rejection_facts_line, spread_
 // —— 契约版本与硬上限（调用方要按它们做兼容判断）——
 pub use qx_app::{
     BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
-    MAX_EXPERIMENT_CANDIDATES, MAX_MULTI_ACCOUNT_RUNS, MIN_BACKTEST_BARS,
-    MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION, MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
-    MULTI_LEG_FUNDING_INTERVAL_MS, RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION,
-    RUN_EXPERIMENT_SCHEMA_VERSION, RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION,
+    MAX_EXPERIMENT_CANDIDATES, MAX_MULTI_ACCOUNT_RUNS, MAX_MULTI_MARKET_EXPERIMENT_CANDIDATES,
+    MIN_BACKTEST_BARS, MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION,
+    MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION, MULTI_LEG_FUNDING_INTERVAL_MS,
+    RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION, RUN_EXPERIMENT_SCHEMA_VERSION,
+    RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION, RUN_MULTI_MARKET_EXPERIMENT_SCHEMA_VERSION,
     TRADE_CONTROL_SCHEMA_VERSION,
 };
 

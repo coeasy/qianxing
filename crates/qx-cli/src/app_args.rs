@@ -103,6 +103,12 @@ pub(crate) enum AppCommand {
         /// `RunMultiLegExperimentSpec` JSON 的路径。
         spec: PathBuf,
     },
+    /// 通过共享 Rust 多市场账户账本执行策略/参数网格。
+    #[command(name = "run-multi-market-experiment")]
+    RunMultiMarketExperiment {
+        /// `RunMultiMarketExperimentSpec` JSON 的路径。
+        spec: PathBuf,
+    },
     /// L1 Tick 或 L2/L3 订单簿回测（复用 Rust 深度撮合内核）。
     #[command(name = "depth-backtest")]
     DepthBacktest {

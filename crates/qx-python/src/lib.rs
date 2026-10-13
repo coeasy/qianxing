@@ -9,7 +9,7 @@ use qx_app::{
     validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome,
     BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestSpec,
     MultiLegBacktestSpec, MultiMarketBacktestSpec, RunContext, RunDepthExperimentSpec,
-    RunExperimentSpec, RunMultiLegExperimentSpec,
+    RunExperimentSpec, RunMultiLegExperimentSpec, RunMultiMarketExperimentSpec,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
@@ -193,6 +193,23 @@ fn app_start_multi_leg_experiment(spec_json: &str) -> PyResult<PyRunHandle> {
     })
 }
 
+#[pyfunction]
+fn app_run_multi_market_experiment(spec_json: &str) -> PyResult<String> {
+    let spec = RunMultiMarketExperimentSpec::from_json(spec_json).map_err(app_error)?;
+    qx_app::run_multi_market_experiment(&spec, &research_context(&spec.experiment_id))
+        .and_then(|result| result.to_json())
+        .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_start_multi_market_experiment(spec_json: &str) -> PyResult<PyRunHandle> {
+    let spec = RunMultiMarketExperimentSpec::from_json(spec_json).map_err(app_error)?;
+    let context = research_context(&spec.experiment_id);
+    Ok(PyRunHandle {
+        inner: NativeRun::MultiMarketExperiment(spec.start(context)),
+    })
+}
+
 use run_handle_helpers::{NativeRun, PyRunHandle};
 
 #[pyfunction]
@@ -371,6 +388,8 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_start_multi_market_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_run_multi_leg_experiment, module)?)?;
     module.add_function(wrap_pyfunction!(app_start_multi_leg_experiment, module)?)?;
+    module.add_function(wrap_pyfunction!(app_run_multi_market_experiment, module)?)?;
+    module.add_function(wrap_pyfunction!(app_start_multi_market_experiment, module)?)?;
     module.add_class::<PyRunHandle>()?;
     module.add_function(wrap_pyfunction!(app_verify_depth_run, module)?)?;
     provider_bridge::register(module)?;

@@ -28,12 +28,13 @@ use crate::ApiResponse;
 use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
     run_depth_backtest, run_depth_experiment, run_experiment, run_multi_account_backtest,
-    run_multi_leg_backtest, run_multi_leg_experiment, run_multi_market_backtest, validate_dataset,
-    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, AppErrorCategory, BacktestOutcome,
-    BacktestSpec, CallerCapability, CapitalAllocationSpec, CompareRunsSpec, DatasetSpec,
-    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec,
-    MultiMarketBacktestSpec, ProviderBacktestSpec, ProviderDepthBacktestSpec, RiskParitySpec,
-    RunContext, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
+    run_multi_leg_backtest, run_multi_leg_experiment, run_multi_market_backtest,
+    run_multi_market_experiment, validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec,
+    AppError, AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability,
+    CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec,
+    MultiAccountBacktestSpec, MultiLegBacktestSpec, MultiMarketBacktestSpec, ProviderBacktestSpec,
+    ProviderDepthBacktestSpec, RiskParitySpec, RunContext, RunDepthExperimentSpec,
+    RunExperimentSpec, RunMultiLegExperimentSpec, RunMultiMarketExperimentSpec,
 };
 use qx_provider::ProviderRegistry;
 use std::path::PathBuf;
@@ -415,6 +416,28 @@ pub(crate) fn multi_leg_grid(body: &str, paths: &AppPaths) -> ApiResponse {
         .into_owned();
     respond(
         run_multi_leg_experiment(&spec, &context(&experiment_id))
+            .and_then(|result| result.to_json()),
+    )
+}
+
+pub(crate) fn multi_market_grid(body: &str, paths: &AppPaths) -> ApiResponse {
+    let mut spec = match RunMultiMarketExperimentSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    for market in &mut spec.base.markets {
+        if let Err(error) = resolve_input_path(&mut market.bars_path, &paths.data_root) {
+            return respond(Err(error));
+        }
+    }
+    let experiment_id = spec.experiment_id.clone();
+    spec.base.output_dir = paths
+        .artifact_root
+        .join(&experiment_id)
+        .to_string_lossy()
+        .into_owned();
+    respond(
+        run_multi_market_experiment(&spec, &context(&experiment_id))
             .and_then(|result| result.to_json()),
     )
 }
