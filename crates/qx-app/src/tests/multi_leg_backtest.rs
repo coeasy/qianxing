@@ -224,6 +224,36 @@ fn multi_leg_spec_rejects_unrepresentable_combined_initial_cash() {
 }
 
 #[test]
+fn multi_leg_sizing_fails_closed_during_spec_validation() {
+    let mut fixed_notional = MultiLegBacktestSpec::new(
+        "multi-leg-fixed-notional",
+        "primary.json",
+        "reference.json",
+        "USDT",
+        1_000_000,
+        1_000_000,
+        7,
+        "out",
+        BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "pair-sizing"),
+    );
+    fixed_notional.strategy.target_notional_raw = Some(100 * SCALE);
+    let error = fixed_notional
+        .validate()
+        .expect_err("multi-leg quote sizing needs per-product short and contract semantics");
+    assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    assert!(error.to_string().contains("固定名义金额 sizing 尚未支持"));
+
+    let mut dynamic_sizing = fixed_notional;
+    dynamic_sizing.strategy.target_notional_raw = None;
+    dynamic_sizing.strategy.target_available_margin_bps = Some(2_500);
+    let error = dynamic_sizing
+        .validate()
+        .expect_err("dynamic sizing requires independent, event-current buying power per leg");
+    assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    assert!(error.to_string().contains("暂不支持共享账户 sizing"));
+}
+
+#[test]
 fn multi_leg_backtest_runs_shared_strategy_and_matching_and_is_idempotent() {
     let root = super::fixtures::scratch("multi-leg-app");
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

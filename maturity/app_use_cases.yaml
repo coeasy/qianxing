@@ -155,7 +155,7 @@ use_cases:
     error_categories: "AppErrorCategory 八类；规格、权限及批次聚合溢出整体失败，账户级深度回测错误隔离返回"
     capability_level: "R"
   - name: run_multi_leg_backtest
-    input_schema: "MultiLegBacktestSpec v1（两份对齐 BarFrame + 双腿内置策略、可选两侧 TradingInstrumentSpec、共享费率默认值与腿级覆盖、资金费基点与撮合模型）"
+    input_schema: "MultiLegBacktestSpec v1（两份对齐 BarFrame + 双腿内置策略、可选两侧 TradingInstrumentSpec、共享费率默认值与腿级覆盖、资金费基点与撮合模型；固定名义金额与动态资金 sizing 在规格校验期拒绝，调用方须显式设置 quantity_raw）"
     output_schema: "MultiLegBacktestOutcome v1（两腿哈希、组合收益、成交归因产物）"
     capability: "RESEARCH"
     idempotency_key: "run_id + 规格指纹 + 双 BarFrame 内容指纹；异内容拒绝覆盖"

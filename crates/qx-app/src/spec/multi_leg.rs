@@ -1,6 +1,6 @@
 //! Versioned contract for a deterministic two-leg Bar backtest.
 
-use super::{is_identity_token, supports_fixed_notional_sizing, BuiltinStrategySpec};
+use super::{is_identity_token, BuiltinStrategySpec};
 use crate::error::{AppError, AppErrorCategory};
 use qx_core::TradingInstrumentSpec;
 use serde::{Deserialize, Serialize};
@@ -191,6 +191,12 @@ impl MultiLegBacktestSpec {
                 "多腿策略须为每条腿分别提供可用资金与波动率快照，暂不支持共享账户 sizing",
             ));
         }
+        if self.strategy.target_notional_raw.is_some() {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "多腿固定名义金额 sizing 尚未支持：现货空腿缺少借币/库存模型，衍生品名义额需按合约规格换算；请显式设置 quantity_raw",
+            ));
+        }
         for (label, spec) in [
             ("primary_market_spec", &self.primary_market_spec),
             ("reference_market_spec", &self.reference_market_spec),
@@ -202,16 +208,6 @@ impl MultiLegBacktestSpec {
                         format!("MultiLegBacktestSpec.{label} 非法: {error:?}"),
                     )
                 })?;
-                if self.strategy.target_notional_raw.is_some()
-                    && !supports_fixed_notional_sizing(spec)
-                {
-                    return Err(AppError::new(
-                        AppErrorCategory::InvalidInput,
-                        format!(
-                            "target_notional_raw 当前只支持现货的一单位线性名义金额；{label} 需先配置合约专用 sizing"
-                        ),
-                    ));
-                }
             }
         }
         if !self.strategy.kind.needs_reference_leg() {
