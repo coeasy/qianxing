@@ -861,6 +861,25 @@ def main() -> int:
     )
 
     executed(
+        "multi_leg_unaligned_market_timeline",
+        "不同交易时点的双腿 Bar 按统一稳定时间线调度",
+        "crates/qx-xingban/src/backtest/portfolio_timeline.rs",
+        [
+            "test", "--offline", "-p", "qx-app", "multi_leg_backtest_accepts_unaligned_market_timestamps",
+            "--lib", "--", "--test-threads=1",
+        ],
+        r"(test result: ok\. 1 passed; 0 failed)",
+        env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+        extra="unaligned_market_timeline=true deterministic_timestamp_priority_and_instrument_order=true",
+        evidence=[
+            "crates/qx-xingban/src/backtest/portfolio_timeline.rs",
+            "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
+            "crates/qx-app/src/tests/multi_leg_backtest/unaligned_timestamps.rs",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
         "order_book_execution",
         "盘口撮合 / 日内高频",
         "crates/qx-xingban",

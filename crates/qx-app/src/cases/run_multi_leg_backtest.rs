@@ -4,10 +4,10 @@ use crate::{
     AppError, AppErrorCategory, CallerCapability, MultiLegBacktestOutcome, MultiLegBacktestSpec,
     MultiLegFillModel, RunContext,
 };
-use qx_core::{Fnv1a, InstrumentId, Order, OrderStatus, Quantity, ReplayVerifier, Side};
+use qx_core::{Fnv1a, Quantity, ReplayVerifier};
 use qx_datastruct::BarFrame;
-use qx_guanxing::Bar;
-use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, MarketEvent, Strategy, StrategyContext};
+use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, Strategy, StrategyContext};
+use qx_xingban::{PortfolioBarSeries, PortfolioBarTimeline};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -16,12 +16,14 @@ mod leg;
 mod market_spec;
 mod models;
 mod portfolio_ledger;
+mod strategy_targets;
 mod targets;
 mod validation;
 pub(super) use custom_strategy::InjectedMultiLegStrategy;
 use leg::{run_leg, LegRunSpec};
 pub(super) use market_spec::validate_leg_spec;
 pub(super) use models::{fill_model_for, fill_model_name};
+use strategy_targets::build_target_schedules;
 use validation::{read_frame, validate_custom_sizing};
 
 const MIN_BARS: usize = 3;
@@ -72,17 +74,27 @@ pub(super) fn run_inner(
     if primary.instrument == reference.instrument {
         return Err(invalid("多腿回测要求两条腿使用不同标的"));
     }
-    if primary.ts != reference.ts {
-        return Err(invalid("多腿回测要求两条 BarFrame 时间戳完全对齐"));
-    }
-    let primary_bars: Vec<Bar> = (&primary).into();
-    let reference_bars: Vec<Bar> = (&reference).into();
-    if primary_bars.len() < MIN_BARS {
+    let primary_bars: Vec<qx_guanxing::Bar> = (&primary).into();
+    let reference_bars: Vec<qx_guanxing::Bar> = (&reference).into();
+    if primary_bars.len() < MIN_BARS || reference_bars.len() < MIN_BARS {
         return Err(AppError::new(
             AppErrorCategory::FidelityInsufficient,
-            format!("多腿回测至少需要 {MIN_BARS} 根对齐 Bar"),
+            format!("多腿回测每条腿至少需要 {MIN_BARS} 根 Bar"),
         ));
     }
+    let timeline = PortfolioBarTimeline::new(&[
+        PortfolioBarSeries {
+            instrument: &primary.instrument,
+            priority: 1,
+            bars: &primary_bars,
+        },
+        PortfolioBarSeries {
+            instrument: &reference.instrument,
+            priority: 0,
+            bars: &reference_bars,
+        },
+    ])
+    .map_err(invalid)?;
     let primary_spec = validate_leg_spec(
         "主腿",
         spec.primary_market_spec.as_ref(),
@@ -185,81 +197,21 @@ pub(super) fn run_inner(
         risk_state: "multi-leg-backtest".into(),
     };
     strategy.on_init(&strategy_context).map_err(invalid)?;
-    let mut primary_targets = BTreeMap::new();
-    let mut reference_targets = BTreeMap::new();
-    for (primary_bar, reference_bar) in primary_bars.iter().zip(&reference_bars) {
-        if cancellation.is_some_and(CancellationToken::is_cancelled) {
-            strategy.on_stop().map_err(invalid)?;
-            return Ok(None);
-        }
-        strategy_context.as_of = primary_bar.ts;
-        for (instrument, bar) in [
-            (&reference.instrument, reference_bar),
-            (&primary.instrument, primary_bar),
-        ] {
-            let leg_initial_cash = if instrument == &primary.instrument {
-                spec.primary_initial_cash_raw
-            } else {
-                spec.reference_initial_cash_raw
-            };
-            strategy_context
-                .cash
-                .insert(spec.settlement_currency.clone(), leg_initial_cash);
-            strategy_context.available_margin_raw = Some(leg_initial_cash);
-            let event = MarketEvent::Bar {
-                instrument: instrument.clone(),
-                ts: bar.ts,
-                open_raw: bar.open,
-                high_raw: bar.high,
-                low_raw: bar.low,
-                close_raw: bar.close,
-                volume_raw: bar.volume,
-            };
-            let decision = strategy
-                .on_event(&strategy_context, &event)
-                .map_err(invalid)?;
-            decision
-                .validate_for(&strategy_context, bar.ts)
-                .map_err(invalid)?;
-            for intent in decision.intents {
-                if intent.instrument != primary.instrument
-                    && intent.instrument != reference.instrument
-                {
-                    return Err(invalid(format!(
-                        "多腿策略意图标的 {} 不属于本次双腿",
-                        intent.instrument
-                    )));
-                }
-                if caller_strategy
-                    && (intent.limit.is_some()
-                        || intent.policy.is_some()
-                        || intent.reduce_only
-                        || intent.post_only)
-                {
-                    return Err(invalid(
-                        "双腿目标仓位调度只支持无限价、无额外订单策略的市价意图",
-                    ));
-                }
-                let key = intent.instrument.to_string();
-                let current = strategy_context.positions.get(&key).copied().unwrap_or(0);
-                let delta = if intent.side == Side::Buy {
-                    intent.qty.raw()
-                } else {
-                    -intent.qty.raw()
-                };
-                let target = current
-                    .checked_add(delta)
-                    .ok_or_else(|| invalid("策略目标仓位溢出"))?;
-                strategy_context.positions.insert(key, target);
-                if intent.instrument == primary.instrument {
-                    primary_targets.insert(primary_bar.ts, target);
-                } else if intent.instrument == reference.instrument {
-                    reference_targets.insert(reference_bar.ts, target);
-                }
-            }
-        }
-    }
-    strategy.on_stop().map_err(invalid)?;
+    let Some(targets) = build_target_schedules(
+        strategy.as_mut(),
+        &mut strategy_context,
+        &timeline,
+        &primary.instrument,
+        &reference.instrument,
+        &spec.settlement_currency,
+        spec.primary_initial_cash_raw,
+        spec.reference_initial_cash_raw,
+        caller_strategy,
+        cancellation,
+    )?
+    else {
+        return Ok(None);
+    };
     let primary_account_id = spec
         .account_id
         .clone()
@@ -271,7 +223,7 @@ pub(super) fn run_inner(
     let primary_report = run_leg(LegRunSpec {
         instrument: &primary.instrument,
         bars: &primary_bars,
-        targets: primary_targets.clone(),
+        targets: targets.primary.clone(),
         account_id: primary_account_id.clone(),
         initial_cash_raw: spec.primary_initial_cash_raw,
         seed: spec.seed,
@@ -288,7 +240,7 @@ pub(super) fn run_inner(
     let reference_report = run_leg(LegRunSpec {
         instrument: &reference.instrument,
         bars: &reference_bars,
-        targets: reference_targets.clone(),
+        targets: targets.reference.clone(),
         account_id: reference_account_id.clone(),
         initial_cash_raw: spec.reference_initial_cash_raw,
         seed: spec.seed,
@@ -319,7 +271,7 @@ pub(super) fn run_inner(
         label: "primary",
         account_id: &primary_account_id,
         instrument: &primary.instrument,
-        targets: &primary_targets,
+        targets: &targets.primary,
         bars: &primary_bars,
         spec: primary_spec,
         report: &primary_report,
@@ -328,7 +280,7 @@ pub(super) fn run_inner(
         label: "reference",
         account_id: &reference_account_id,
         instrument: &reference.instrument,
-        targets: &reference_targets,
+        targets: &targets.reference,
         bars: &reference_bars,
         spec: reference_spec,
         report: &reference_report,

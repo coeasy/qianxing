@@ -316,3 +316,10 @@ Python 十策略证据：
 - 架构门禁 1096 项全部通过。该门禁证明登记的不变量成立，不代表所有产品目标已经实现；多腿共享内核作为明示缺口保留。
 - 当前实现事实仍是：应用层先扫描完整 Bar 历史并按策略意图更新虚拟目标仓位，之后两次独立调用腿级 `BacktestEngine`；账户账簿在成交后合并成可审计投影。它不能让两腿在撮合时争用同一购买力，也不能把一腿的拒单/部分成交实时反馈到下一腿决策。因此本方案 §1/§5/§7 的全能力完成定义尚未满足，不能将多语言 SDK 宣布为全能力发布。
 - 下一实现闸门：Rust 核心实现单一多标的 session，按时间戳与稳定标的优先级处理行情、决策、风险、OMS、撮合、成交回报和共享 Ledger；用共享资金竞争、拒单与部分成交反馈、同刻事件、确定性重跑及事件/账簿 replay 验收后，才逐一接入 Rust/Python/C++/HTTP。另需分别关闭远端策略 callback、持久订单事件日志、Python 全平台安装矩阵、Paper/Live 组合工作流和 testnet conformance，不能由本次场景登记替代。
+
+## 39. 2026-10-13 实现：多腿输入进入确定性多市场时间线
+
+- `qx-xingban::PortfolioBarTimeline` 现合并独立标的 Bar 流，逐流执行与单腿回测相同的 `QualityGate`，拒绝重复标的和无效时间序列；全局事件按 `(timestamp, declared instrument priority, InstrumentId)` 排序，同刻排序不依赖调用方传入 leg 的顺序。多腿应用显式设参考腿优先级先于主腿，保证同刻参考价格先进入配对策略。不同市场不再要求 Bar 时间戳逐根对齐。
+- 多腿应用入口改为消费这条核心时间线；新增内核用例验证非对齐事件交错、同刻稳定排序、重复标的/乱序帧拒绝，应用用例验证时间戳错位仍能完成既有双腿报告。`qx-xingban` 单元测试 106 项、`qx-app` 单元测试 122 项通过；相关 crate 严格 Clippy 与格式检查通过；量化场景探针 44 executed、0 declared_not_executed、1 missing、1 blocked。
+- 这是联合执行的行情调度基础，不是共享资金/OMS/撮合内核：策略仍在完整时间线预扫描中按 intent 乐观更新目标仓位，之后 `run_leg` 继续独立执行并在事后合并账簿。仍需实现同一个多标的状态机，使每个市场事件后的 Risk/OMS/Fill/Ledger 回报驱动下一次策略决策；完成该内核前，`shared_multileg_execution` 保持 missing，整体发布门仍关闭。
+- 架构不变量复跑 1096 项全部通过；复核先后捕获 `run_multi_leg_backtest.rs` 超过 500 行门槛，以及拆分后错位时间线测试文件仍为 507 行。目标调度逻辑已拆至 `strategy_targets.rs`，错位用例移至独立测试模块；未放宽门槛。最终 `qx-xingban` 106 项、`qx-app` 122 项单测及严格 Clippy 均通过，`git diff --check` 通过。

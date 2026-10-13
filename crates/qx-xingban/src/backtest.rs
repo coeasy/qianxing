@@ -29,8 +29,10 @@ pub(crate) mod portfolio_budget;
 use portfolio_budget::PortfolioBudgetState;
 mod order_validation;
 use order_validation::reduce_only_order_allowed;
+mod portfolio_timeline;
 mod protective_exit;
 mod virtual_validation;
+pub use portfolio_timeline::{PortfolioBarEvent, PortfolioBarSeries, PortfolioBarTimeline};
 pub use protective_exit::{
     ProtectiveExitFill, ProtectiveExitPolicy, ProtectiveExitReason, ProtectiveExitSignal,
 };
