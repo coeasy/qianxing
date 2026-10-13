@@ -17734,6 +17734,14 @@ def language_api_contract_check() -> None:
         for class_name in PYTHON_REMOTE_CLASSES
         for method in _python_public_methods(class_name)
     }
+    provider_text = _text_or_empty(ROOT / "python/qianxing/data/providers.py")
+    provider_block = provider_text.partition("class ProviderRegistry:")[2].split("\nclass ", 1)[0]
+    provider_method_names = re.findall(
+        r"^    def ([A-Za-z_][A-Za-z0-9_]*)\(", provider_block, re.MULTILINE
+    )
+    duplicate_provider_methods = sorted(
+        name for name in set(provider_method_names) if provider_method_names.count(name) > 1
+    )
     missing_python = [
         f"{row['use_case']}:native:{entry}"
         for row in rows
@@ -17746,9 +17754,9 @@ def language_api_contract_check() -> None:
         if entry not in remote_methods
     ]
     check(
-        not missing_python,
+        not missing_python and not duplicate_provider_methods,
         "映射表点名的每个 Python 入口都在盘（进程内扩展看模块级 `def`，远端门面看公开方法）",
-        f"落空 {missing_python}",
+        f"入口落空 {missing_python}；ProviderRegistry 重复定义 {duplicate_provider_methods}",
     )
 
     cpp_methods = set(_cpp_public_methods())
