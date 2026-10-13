@@ -338,5 +338,5 @@ Python 十策略证据：
 ## 42. 2026-10-14 重构：Bar 订单准入抽为可复用 Rust 路径
 
 - 将单腿 Bar 回测在撮合前的订单准入从 `BacktestEngine` 抽至 `backtest::order_admission`。该路径统一处理账户/标的校验、A 股规则、订单 ID 确定性分配、策略资本预算、reduce-only、现货现金/衍生品保证金预留、RiskGate、OMS 提交与 Submit 事件记录；引擎仍按既有 Accepted → matcher 流程处理已接纳订单。
-- 验证：`qx-xingban` 单测 106 项通过；`qx-app` 单测 122 项通过（`TEMP/TMP` 指向 `target/test-tmp`）；相关 crate 严格 Clippy 通过；架构不变量门禁 1096 项通过；量化场景探针 45 项执行通过、0 项声明但未执行、1 项缺失、1 项外部前置阻塞。格式与 diff 检查通过。
+- 验证：`qx-xingban` 单测 106 项、`qx-app` 单测 122 项通过（`TEMP/TMP` 指向 `target/test-tmp`）；相关 crate 严格 Clippy、Python 全量 140 项及 `cargo build --offline -p qx-python` 通过；架构不变量门禁 1096 项通过；量化场景探针 45 项执行通过、0 项声明但未执行、1 项缺失、1 项外部前置阻塞；格式与 diff 检查通过。依项目 `pyproject.toml` 构建的 Windows x64 `cp310-abi3` wheel 已检查包成员并解包导入 `qianxing` 与原生 bridge：`qianxing-0.1.0-cp310-abi3-win_amd64.whl`，SHA-256 `7ae7f3563803dd14d7508c0f60e1237357be869c1ae8bcc7080bc3a1bae620d5`。
 - 该抽取为未来统一多市场 session 复用准入规则提供了内核落点，但调用方仍是单腿 `BacktestEngine`。多腿应用的两腿仍独立持有 Ledger/OMS/撮合器，之后才合并账簿；因此共享资金竞争、统一撮合以及拒单/部分成交实时反馈仍未实现，`shared_multileg_execution` 继续缺失，整体方案尚未达到全能力发布门槛。
