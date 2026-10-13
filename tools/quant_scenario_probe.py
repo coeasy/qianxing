@@ -1462,6 +1462,26 @@ def main() -> int:
         command_prefix="cargo",
     )
 
+    executed(
+        "checked_fee_basis_point_arithmetic",
+        "极大名义金额的手续费基点计算无中间乘法溢出",
+        "crates/qx-core/src/fee.rs",
+        [
+            "test", "--offline", "-p", "qx-core", "--lib",
+            "checked_basis_point_amount_preserves_floor_without_product_overflow",
+            "--", "--nocapture",
+        ],
+        r"(test result: ok\. 1 passed; 0 failed)",
+        env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+        extra="i128_max_fee_exact=true floor_semantics=true invalid_rate_rejected=true orderbook_match_and_admission_share_helper=true",
+        evidence=[
+            "crates/qx-core/src/fee.rs",
+            "crates/qx-xingban/src/orderbook.rs",
+            "crates/qx-xingban/src/orderbook_backtest.rs",
+        ],
+        command_prefix="cargo",
+    )
+
     # Verify algorithm-order admission through the real service handler, then let the
     # persistent Paper worker execute across restarts and aggregate results from EventLog.
     algo_test_argv = [

@@ -223,6 +223,7 @@ impl OrderBookBacktestEngine {
         let mut matcher = OrderBookMatchingEngine::with_model(effective_model)
             .map_err(qx_core::QxError::BusinessViolation)?
             .with_fee_spec(instrument_spec.clone());
+        let estimate_fee = |notional| qx_core::bp_amount_checked(notional, fee_bps);
         let mut ledger = Ledger::new();
         let mut log = EventLog::new();
         let mut oms = Oms::new();
@@ -457,13 +458,12 @@ impl OrderBookBacktestEngine {
                         };
                         let required =
                             spec.initial_margin(order.qty.raw(), price.raw(), policy.leverage)?;
-                        // 手续费按成交名义额双边收取，与 OrderBookMatchingEngine 同源；
-                        // 漏掉它会让"刚好花光现金"的买单在成交后才透支。
+                        // Use the matcher fee helper so admission cannot overdraw a fully funded buy.
                         let required_funding = if order.side == qx_core::Side::Buy {
                             required
-                                .checked_add(
-                                    spec.notional(order.qty.raw(), price.raw())? * fee_bps / 10_000,
-                                )
+                                .checked_add(estimate_fee(
+                                    spec.notional(order.qty.raw(), price.raw())?,
+                                )?)
                                 .ok_or_else(|| {
                                     qx_core::QxError::Invariant("买入所需现金溢出".into())
                                 })?
@@ -498,7 +498,7 @@ impl OrderBookBacktestEngine {
                     })?;
                     let notional = book_notional(None, order.qty.raw(), price.raw())?;
                     let required_funding = notional
-                        .checked_add(notional * fee_bps / 10_000)
+                        .checked_add(estimate_fee(notional)?)
                         .ok_or_else(|| qx_core::QxError::Invariant("买入所需现金溢出".into()))?;
                     if required_funding > ledger.cash_for(&account_id, &currency) {
                         append_event(

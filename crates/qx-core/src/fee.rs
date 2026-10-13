@@ -10,7 +10,7 @@
 //! 反向合约都能用同一签名：线性折算为 `price × contract_size`，反向折算为
 //! `contract_size / price`。
 
-use crate::{Side, SCALE};
+use crate::{QxError, Side, SCALE};
 use serde::{Deserialize, Serialize};
 
 /// 名义额 = qty * price / SCALE（两者均为定点原始值）。
@@ -20,7 +20,30 @@ pub fn notional(qty: i128, price: i128) -> i128 {
 
 /// 按基点取金额（1 bp = 万分之一）。
 pub fn bp_amount(x: i128, bp: i64) -> i128 {
-    x.saturating_mul(bp as i128) / 10_000
+    bp_amount_checked(x, i128::from(bp))
+        .unwrap_or_else(|_| x.saturating_mul(i128::from(bp)) / 10_000)
+}
+
+/// Compute a non-negative basis-point amount without overflowing the
+/// intermediate `amount * bps` product. The supported fee/risk range is
+/// 0..=10000 bps, so splitting into quotient and remainder preserves the
+/// exact integer-floor semantics while keeping intermediates representable.
+pub fn bp_amount_checked(amount: i128, bps: i128) -> Result<i128, QxError> {
+    if amount < 0 || !(0..=10_000).contains(&bps) {
+        return Err(QxError::BusinessViolation(
+            "基点金额要求 amount 非负且 bps 在 0..=10000".into(),
+        ));
+    }
+    let quotient = amount / 10_000;
+    let remainder = amount % 10_000;
+    quotient
+        .checked_mul(bps)
+        .and_then(|whole| {
+            remainder
+                .checked_mul(bps)
+                .and_then(|partial| whole.checked_add(partial / 10_000))
+        })
+        .ok_or_else(|| QxError::Invariant("基点金额计算溢出".into()))
 }
 
 pub trait FeeModel {
@@ -187,6 +210,17 @@ mod tests {
         let qty = 1_000_000_000i128; // 1.0
         let px = 100_000_000_000i128; // 100.0
         assert!(m.commission(qty, px, true) < m.commission(qty, px, false));
+    }
+
+    #[test]
+    fn checked_basis_point_amount_preserves_floor_without_product_overflow() {
+        let amount = i128::MAX;
+        assert_eq!(bp_amount_checked(amount, 10_000).unwrap(), amount);
+        assert_eq!(bp_amount_checked(amount, 5_000).unwrap(), amount / 2);
+        assert_eq!(bp_amount(amount, 5_000), amount / 2);
+        assert_eq!(bp_amount_checked(19_999, 1).unwrap(), 1);
+        assert!(bp_amount_checked(-1, 1).is_err());
+        assert!(bp_amount_checked(1, 10_001).is_err());
     }
 
     #[test]

@@ -358,10 +358,8 @@ impl OrderBookMatchingEngine {
                         .and_then(|value| value.checked_div(SCALE))
                         .ok_or_else(|| "订单簿成交名义额溢出".to_string())?,
                 };
-                let fee_raw = notional_raw
-                    .checked_mul(self.model.fee_bps)
-                    .and_then(|value| value.checked_div(10_000))
-                    .ok_or_else(|| "订单簿成交手续费溢出".to_string())?;
+                let fee_raw = qx_core::bp_amount_checked(notional_raw, self.model.fee_bps)
+                    .map_err(|error| format!("订单簿成交手续费计算失败: {error}"))?;
                 fills.push(Fill {
                     order_id: order.client_id,
                     qty: Quantity::from_raw(fill_qty),
