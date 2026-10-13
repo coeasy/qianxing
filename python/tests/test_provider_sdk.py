@@ -328,8 +328,19 @@ class ProviderSdkTest(unittest.TestCase):
                     slow_window=3,
                 ),
             )
-            outcome = registry.run_depth_backtest(spec, query, "l1")
+            outcome = registry.run_depth_backtest_from_frame(spec, query, "l1")
             self.assertTrue(verify_depth_run(outcome).verified)
+
+            provider_spec = replace(
+                spec,
+                run_id="provider-sdk-depth-provider-run",
+                depth_path=str(root / "provider-depth.json"),
+                output_dir=str(root / "provider-run"),
+            )
+            provider_outcome = registry.run_depth_backtest(provider_spec, query)
+            self.assertEqual(provider_outcome.provider_id, "quote-fixture")
+            self.assertEqual(provider_outcome.retry_chain, ("quote-fixture",))
+            self.assertTrue(verify_depth_run(provider_outcome.outcome).verified)
 
     def test_depth_provider_rejects_event_time_mismatch(self) -> None:
         fixture = json.loads(

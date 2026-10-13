@@ -78,7 +78,10 @@ pub use run_multi_leg_experiment::{
 pub use run_provider_backtest_with_manifest::run_provider_backtest_with_manifest;
 pub use run_provider_backtest_with_manifest::{ProviderBacktestOutcome, ProviderBacktestSpec};
 pub use run_provider_depth_backtest::run_provider_depth_backtest;
-pub use run_provider_depth_backtest::{ProviderDepthBacktestOutcome, ProviderDepthBacktestSpec};
+pub use run_provider_depth_backtest::{
+    ProviderDepthBacktestOutcome, ProviderDepthBacktestSpec,
+    PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+};
 pub use validate_dataset::validate_dataset;
 pub use validate_trade_control::validate_trade_control;
 pub use validate_trade_control::{TradeControlSpec, TradeWorkflow, TRADE_CONTROL_SCHEMA_VERSION};

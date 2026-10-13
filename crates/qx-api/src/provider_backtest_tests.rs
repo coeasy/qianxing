@@ -163,6 +163,7 @@ fn provider_depth_spec(root: &std::path::Path) -> qx_app::ProviderDepthBacktestS
     let start = snapshots.first().unwrap()["ts"].as_u64().unwrap();
     let end = snapshots.last().unwrap()["ts"].as_u64().unwrap();
     qx_app::ProviderDepthBacktestSpec {
+        schema_version: qx_app::PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
         data_request: DataRequest::new(
             DataQuery {
                 kind: DataKind::Quote,
@@ -271,6 +272,29 @@ fn provider_depth_backtest_route_is_registered_and_requires_configured_registry(
     assert!(response
         .body
         .contains("Provider registry is not configured"));
+}
+
+#[test]
+fn provider_depth_backtest_http_route_rejects_unknown_schema_before_provider_access() {
+    let path = workspace_root().join("target").join(format!(
+        "qx-api-provider-depth-schema-{}",
+        std::process::id()
+    ));
+    let mut spec = provider_depth_spec(&path);
+    spec.schema_version += 1;
+    let service = ApiService::new(ApiState::default())
+        .with_provider_registry(Arc::new(ProviderRegistry::new()));
+
+    let response = service.handle(
+        "POST",
+        "/app/provider-depth-backtest",
+        &serde_json::to_string(&spec).unwrap(),
+        1,
+    );
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert!(response.body.contains("schema_version"));
+    assert!(response.body.contains("expected 1"));
+    assert!(!response.body.contains("no Provider satisfies"));
 }
 
 #[test]

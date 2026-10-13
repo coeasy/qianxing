@@ -95,6 +95,7 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
         std::process::id()
     ));
     let spec = ProviderDepthBacktestSpec {
+        schema_version: qx_app::PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
         data_request: DataRequest::new(
             DataQuery {
                 kind: DataKind::Quote,

@@ -224,6 +224,7 @@ impl PyProviderRegistry {
         let result = qx_app::run_provider_depth_backtest(
             &self.inner,
             &qx_app::ProviderDepthBacktestSpec {
+                schema_version: qx_app::PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
                 data_request,
                 backtest,
             },

@@ -203,7 +203,7 @@ class ProviderRegistry:
     def run_depth_backtest(
         self, spec: Any, query: ProviderQuery
     ) -> ProviderDepthBacktestOutcome:
-        """Freeze Provider Quote data and run the shared Rust Tick/OrderBook backtest."""
+        """Fetch Quote data through Rust Provider selection and run the shared Rust depth use case."""
         from qianxing.app import DepthBacktestOutcome, DepthBacktestSpec
 
         values = spec.to_dict() if isinstance(spec, DepthBacktestSpec) else dict(spec)
@@ -271,8 +271,8 @@ class ProviderRegistry:
             manifest_path=payload["manifest_path"],
         )
 
-    def run_depth_backtest(self, spec: Any, query: ProviderQuery, tier: str) -> Any:
-        """Freeze Rust-normalized Quote snapshots and run the shared Rust depth workflow."""
+    def run_depth_backtest_from_frame(self, spec: Any, query: ProviderQuery, tier: str) -> Any:
+        """Normalize Provider Quote snapshots, then run the shared Rust depth workflow."""
         from qianxing.app import DepthBacktestSpec, run_depth_backtest
 
         frame_json = self._native.fetch_depth_frame_json(query.to_json(), tier)

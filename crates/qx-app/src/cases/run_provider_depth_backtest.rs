@@ -15,10 +15,12 @@ use std::path::PathBuf;
 
 const ORDER_BOOK_SNAPSHOT_CONTENT_TYPE: &str =
     "application/vnd.qianxing.order-book-snapshot+json;v=1";
+pub const PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderDepthBacktestSpec {
+    pub schema_version: u32,
     pub data_request: DataRequest,
     pub backtest: DepthBacktestSpec,
 }
@@ -37,6 +39,15 @@ pub struct ProviderDepthBacktestOutcome {
 
 impl ProviderDepthBacktestSpec {
     pub fn validate(&self) -> Result<(), AppError> {
+        if self.schema_version != PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!(
+                    "unsupported ProviderDepthBacktestSpec schema_version {}; expected {}",
+                    self.schema_version, PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION
+                ),
+            ));
+        }
         self.data_request
             .query
             .validate()
@@ -344,6 +355,7 @@ mod tests {
         let outcome = run_provider_depth_backtest(
             &registry,
             &ProviderDepthBacktestSpec {
+                schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
                 data_request,
                 backtest,
             },
@@ -364,6 +376,7 @@ mod tests {
         let (registry, mut request) = registry();
         request.query.kind = DataKind::Bar;
         let spec = ProviderDepthBacktestSpec {
+            schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
             data_request: request,
             backtest: DepthBacktestSpec {
                 schema_version: crate::spec::DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
@@ -392,5 +405,42 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    }
+
+    #[test]
+    fn provider_depth_spec_rejects_unknown_schema_before_provider_access() {
+        let (registry, data_request) = registry();
+        let spec = ProviderDepthBacktestSpec {
+            schema_version: PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION + 1,
+            data_request,
+            backtest: DepthBacktestSpec {
+                schema_version: crate::spec::DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+                run_id: "future-provider-depth".into(),
+                depth_path: "target/future-depth.json".into(),
+                tier: "l1".into(),
+                settlement_currency: "USDT".into(),
+                initial_cash_raw: 10_000 * SCALE,
+                fee_bps: 0,
+                latency_snapshots: 0,
+                queue_position_bps: 0,
+                market_impact_bps: 0,
+                output_dir: "target/future-provider-depth".into(),
+                strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "future"),
+                market_spec: None,
+                order_policy: None,
+                market_making: None,
+                account_id: None,
+                portfolio: None,
+            },
+        };
+        let error = run_provider_depth_backtest(
+            &registry,
+            &spec,
+            &RunContext::new(CallerCapability::Research, "future-provider-depth"),
+        )
+        .unwrap_err();
+        assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+        assert!(error.message().contains("schema_version"));
+        assert!(error.message().contains("expected 1"));
     }
 }

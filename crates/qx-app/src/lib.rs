@@ -62,8 +62,9 @@ pub use cases::{
     ProviderDepthBacktestSpec, RunDepthExperimentResult, RunDepthExperimentSpec,
     RunExperimentResult, RunExperimentSpec, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
     TradeControlSpec, TradeWorkflow, EXPERIMENT_BASELINE_NAMES, MAX_EXPERIMENT_CANDIDATES,
-    RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION, RUN_EXPERIMENT_SCHEMA_VERSION,
-    RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION, TRADE_CONTROL_SCHEMA_VERSION,
+    PROVIDER_DEPTH_BACKTEST_SPEC_SCHEMA_VERSION, RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION,
+    RUN_EXPERIMENT_SCHEMA_VERSION, RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION,
+    TRADE_CONTROL_SCHEMA_VERSION,
 };
 pub use cases::{
     ExperimentBaselineReport, ExperimentFoldReport, ExperimentOutOfSampleReport,
