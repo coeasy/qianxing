@@ -74,6 +74,24 @@ impl Client {
         run_multi_market_backtest(spec, &self.context)
     }
 
+    /// Run caller-authored strategies in selected N-market slots using the Rust portfolio engine.
+    pub fn run_multi_market_backtest_with_strategy_slots(
+        &self,
+        spec: &MultiMarketBacktestSpec,
+        strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+    ) -> Result<MultiMarketBacktestOutcome, AppError> {
+        spec.run_with_strategy_slots(strategies, &self.context)
+    }
+
+    /// Start a cancellable N-market shared-ledger run with caller-authored slots.
+    pub fn start_multi_market_backtest_with_strategy_slots(
+        &self,
+        spec: MultiMarketBacktestSpec,
+        strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+    ) -> Result<RunHandle<MultiMarketBacktestOutcome>, AppError> {
+        spec.start_with_strategy_slots(strategies, self.context.clone())
+    }
+
     /// Plan deterministic TWAP/VWAP child orders through the shared app use case.
     /// The returned plan does not submit orders or bypass Risk/OMS.
     pub fn plan_algo_execution(

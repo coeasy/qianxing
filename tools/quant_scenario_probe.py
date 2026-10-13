@@ -685,6 +685,81 @@ def main() -> int:
             }
         )
 
+    def executed_multi_market_python_strategy_slots_test():
+        nonlocal failures
+        argv = [
+            sys.executable, "-m", "unittest",
+            "python.tests.test_app_use_cases.AppUseCaseTests.test_multi_market_sdk_runs_one_shared_rust_ledger_and_run_handle",
+        ]
+        code, output = run_command(argv)
+        observed = first_match(
+            r"(MULTI_MARKET_CUSTOM_OBSERVED markets=3 custom_slots=1 "
+            r"callback_version=python-test-v1 replay_verified=true run_handle=succeeded)",
+            output,
+        )
+        if code != 0 or not observed:
+            failures += 1
+            print(f"[multi_market_python_strategy_slots diagnostics] {output[-2000:]}", flush=True)
+        ok = code == 0 and bool(observed)
+        print(
+            f"[{'OK  ' if ok else 'FAIL'}] multi_market_python_strategy_slots: "
+            f"rc={code} observed={observed!r}", flush=True,
+        )
+        records.append({
+            "name": "multi_market_python_strategy_slots",
+            "label": "Python 自定义策略进入多市场共享账簿",
+            "status": "executed" if ok else "declared_not_executed",
+            "anchor": "crates/qx-app/src/cases/run_multi_market_backtest.rs",
+            "command": "python -m unittest python.tests.test_app_use_cases.AppUseCaseTests.test_multi_market_sdk_runs_one_shared_rust_ledger_and_run_handle",
+            "exit_code": code,
+            "observed": observed,
+            "why_not_executed": "Python 自定义槽未在 Rust 多市场组合中完成同步/RunHandle 回放校验。",
+            "next_gate": "修复 Python StrategyArtifactIdentity 到 Rust PortfolioStrategySlot 的桥接后重跑场景探针。",
+            "evidence": [
+                "crates/qx-app/src/cases/run_multi_market_backtest.rs",
+                "crates/qx-python/src/strategy_callback/multi_market.rs",
+                "python/qianxing_bridge/app.py",
+                "python/tests/test_app_use_cases.py",
+            ],
+        })
+
+    def executed_multi_market_rust_strategy_slots_test():
+        nonlocal failures
+        argv = [
+            "cargo", "test", "--offline", "-p", "qx-sdk",
+            "rust_sdk_runs_custom_multi_market_slots_through_shared_engine_and_run_handle",
+            "--", "--nocapture",
+        ]
+        code, output = run_command(argv)
+        observed = first_match(
+            r"(MULTI_MARKET_RUST_CUSTOM_OBSERVED markets=3 fills=[1-9]\d* "
+            r"callback_version=consumer-v1 replay_verified=true)", output,
+        )
+        if code != 0 or not observed:
+            failures += 1
+            print(f"[multi_market_rust_strategy_slots diagnostics] {output[-2000:]}", flush=True)
+        ok = code == 0 and bool(observed)
+        print(
+            f"[{'OK  ' if ok else 'FAIL'}] multi_market_rust_strategy_slots: "
+            f"rc={code} observed={observed!r}", flush=True,
+        )
+        records.append({
+            "name": "multi_market_rust_strategy_slots",
+            "label": "Rust SDK 自定义策略进入多市场共享账簿",
+            "status": "executed" if ok else "declared_not_executed",
+            "anchor": "crates/qx-app/src/cases/run_multi_market_backtest.rs",
+            "command": "cargo test --offline -p qx-sdk rust_sdk_runs_custom_multi_market_slots_through_shared_engine_and_run_handle -- --nocapture",
+            "exit_code": code,
+            "observed": observed,
+            "why_not_executed": "Rust SDK 自定义槽未在共享账户组合中完成同步/RunHandle 回放校验。",
+            "next_gate": "修复 Rust StrategyArtifactIdentity 到共享 PortfolioBarEngine 的桥接后重跑场景探针。",
+            "evidence": [
+                "crates/qx-app/src/cases/run_multi_market_backtest.rs",
+                "crates/qx-sdk/src/client.rs",
+                "crates/qx-sdk/tests/consumer/strategy_selection.rs",
+            ],
+        })
+
     def executed_paper_cross_currency_fx_test():
         nonlocal failures
         argv = [
@@ -743,6 +818,8 @@ def main() -> int:
     executed_paper_multi_strategy_test()
     executed_paper_cross_currency_fx_test()
     executed_multi_market_shared_account_test()
+    executed_multi_market_python_strategy_slots_test()
+    executed_multi_market_rust_strategy_slots_test()
 
     for name, label, kind in MULTI_LEG_SCENARIOS:
         executed(

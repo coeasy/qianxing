@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791921410
+generated_at_unix: 1791924085
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -139,6 +139,22 @@ scenarios:
     exit_code: 0
     observed: "MULTI_MARKET_OBSERVED markets=3 strategies=3 fills=21 equity_points=240 return_bps=17 replay_verified=true"
     evidence: ["crates/qx-app/src/cases/run_multi_market_backtest.rs", "crates/qx-app/src/tests/multi_market_backtest.rs", "crates/qx-xingban/src/backtest/market_router.rs", "crates/qx-sdk/src/client.rs", "crates/qx-python/src/lib.rs", "python/tests/test_app_use_cases.py"]
+  - name: multi_market_python_strategy_slots
+    label: "Python 自定义策略进入多市场共享账簿"
+    status: executed
+    anchor: "crates/qx-app/src/cases/run_multi_market_backtest.rs"
+    command: "python -m unittest python.tests.test_app_use_cases.AppUseCaseTests.test_multi_market_sdk_runs_one_shared_rust_ledger_and_run_handle"
+    exit_code: 0
+    observed: "MULTI_MARKET_CUSTOM_OBSERVED markets=3 custom_slots=1 callback_version=python-test-v1 replay_verified=true run_handle=succeeded"
+    evidence: ["crates/qx-app/src/cases/run_multi_market_backtest.rs", "crates/qx-python/src/strategy_callback/multi_market.rs", "python/qianxing_bridge/app.py", "python/tests/test_app_use_cases.py"]
+  - name: multi_market_rust_strategy_slots
+    label: "Rust SDK 自定义策略进入多市场共享账簿"
+    status: executed
+    anchor: "crates/qx-app/src/cases/run_multi_market_backtest.rs"
+    command: "cargo test --offline -p qx-sdk rust_sdk_runs_custom_multi_market_slots_through_shared_engine_and_run_handle -- --nocapture"
+    exit_code: 0
+    observed: "MULTI_MARKET_RUST_CUSTOM_OBSERVED markets=3 fills=3 callback_version=consumer-v1 replay_verified=true"
+    evidence: ["crates/qx-app/src/cases/run_multi_market_backtest.rs", "crates/qx-sdk/src/client.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs"]
   - name: pairs_arbitrage
     label: "配对统计套利"
     status: executed
@@ -180,7 +196,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=39889fc8006bbf8c/11c4020b404b0182,df01650e9d992326/e3385df21658fcca,638f9d5f40aa0fc7/67bd9def4325757f,a24901d723663d7d/094a234fb83d2f8b"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=60a83de255fc6713/3a3c12b007e070f5,0edd71ca5859f515/328662fd1a399b4d,67069605f62f24e8/e1166fb56553d804,30230cd9ce03ac8a/f67676e005f6b9d4"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"

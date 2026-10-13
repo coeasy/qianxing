@@ -8,9 +8,10 @@ use crate::error::{AppError, AppErrorCategory};
 use crate::spec::BacktestOutcome;
 use qx_core::Fnv1a;
 use qx_strategy::Strategy;
+use serde::{Deserialize, Serialize};
 
 /// Immutable identity for a caller-supplied strategy implementation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StrategyArtifactIdentity {
     pub strategy_id: String,
     pub strategy_version: String,
@@ -49,7 +50,7 @@ impl StrategyArtifactIdentity {
         Ok(())
     }
 
-    fn validate_for_slot(
+    pub(crate) fn validate_for_slot(
         &self,
         expected_id: &str,
         slot: &crate::spec::BuiltinStrategySpec,

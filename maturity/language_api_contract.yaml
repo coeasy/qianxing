@@ -75,6 +75,10 @@ rust_remote_lifecycle_methods:
     note: "Rust 远端门面分页读取 Paper TWAP/VWAP 父单"
   - name: get_live_events
     note: "Rust 远端门面按服务端序号游标读取实时事件"
+  - name: run_multi_market_backtest
+    note: "Rust 远端门面调用共享账户多市场 Bar 回测"
+  - name: start_multi_market_backtest
+    note: "Rust 远端门面启动共享账户多市场 Bar 回测"
 
 contracts:
   - use_case: validate_dataset
@@ -174,11 +178,11 @@ contracts:
     cpp_remote: ["run_multi_leg_backtest", "start_multi_leg_backtest"]
     http: ["/app/multi-leg-backtest", "/app/multi-leg-backtest/start"]
   - use_case: run_multi_market_backtest
-    rust: ["run_multi_market_backtest"]
-    python_native: ["run_multi_market_backtest", "start_multi_market_backtest"]
-    python_remote: []
-    cpp_remote: []
-    http: []
+    rust: ["run_multi_market_backtest", "Client.run_multi_market_backtest_with_strategy_slots", "Client.start_multi_market_backtest_with_strategy_slots"]
+    python_native: ["run_multi_market_backtest", "start_multi_market_backtest", "run_multi_market_backtest_with_strategy_slots", "start_multi_market_backtest_with_strategy_slots"]
+    python_remote: ["run_multi_market_backtest", "start_multi_market_backtest"]
+    cpp_remote: ["run_multi_market_backtest", "start_multi_market_backtest"]
+    http: ["/app/multi-market-backtest", "/app/multi-market-backtest/start"]
   - use_case: run_multi_leg_backtest_with_strategy
     rust: ["Client.run_multi_leg_backtest_with_strategy", "Client.start_multi_leg_backtest_with_strategy", "run_multi_leg_backtest_with_strategy"]
     python_native: ["run_multi_leg_backtest_with_strategy", "start_multi_leg_backtest_with_strategy"]

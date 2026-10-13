@@ -15,9 +15,10 @@ use qx_sdk::{
     AlgoParentOrder, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability,
     Client, DatasetSpec, DepthBacktestSpec, EventAppender, ExecutionEvent, ExecutionEventEnvelope,
     ExecutionGateway, ExperimentParameterSpace, ExperimentSplitPlan, InstrumentId,
-    MakerTakerFeeSchedule, MultiLegBacktestSpec, Order, OrderStatus, OrderStore,
-    PortfolioBacktestConfig, PortfolioStrategySpec, Price, Quantity, RiskParityAssetSpec,
-    RiskParitySpec, RiskPort, RiskVerdict, RunDepthExperimentSpec, RunEventKind, RunExperimentSpec,
+    MakerTakerFeeSchedule, MultiLegBacktestSpec, MultiMarketBacktestMarket,
+    MultiMarketBacktestSpec, Order, OrderStatus, OrderStore, PortfolioBacktestConfig,
+    PortfolioStrategySpec, Price, Quantity, RiskParityAssetSpec, RiskParitySpec, RiskPort,
+    RiskVerdict, RunDepthExperimentSpec, RunEventKind, RunExperimentSpec,
     RunMultiLegExperimentSpec, RunStatus, Side, VenuePort, VwapVolumeBucket,
     ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION,
 };

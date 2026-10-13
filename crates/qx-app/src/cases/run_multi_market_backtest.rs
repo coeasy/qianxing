@@ -9,10 +9,11 @@ use super::run_backtest::strategy_slot::{
 use super::run_multi_leg_backtest::execution_market_spec;
 use crate::{
     AppError, AppErrorCategory, CallerCapability, MultiMarketBacktestOutcome,
-    MultiMarketBacktestSpec, RunContext,
+    MultiMarketBacktestSpec, RunContext, StrategyArtifactIdentity,
 };
 use qx_core::{Fnv1a, InstrumentId, MakerTakerFeeModel, Money};
 use qx_datastruct::BarFrame;
+use qx_strategy::Strategy;
 use qx_xingban::{
     LeverageMargin, MarketRoutedBarStrategy, NextBarOpenFillModel, NoMargin, PortfolioBarEngine,
     PortfolioBarMarket, PortfolioBarSessionConfig, PortfolioBarStrategy, ZeroLatency,
@@ -46,17 +47,19 @@ pub fn run_multi_market_backtest(
 ) -> Result<MultiMarketBacktestOutcome, AppError> {
     context.require(CallerCapability::Research, "多市场共享账户 Bar 回测")?;
     let correlation_id = context.correlation_id().to_string();
-    guard_panics(&correlation_id, || run_inner(spec, context, None))
-        .map_err(|error| attach(error, &correlation_id))?
-        .ok_or_else(|| {
-            attach(
-                AppError::new(
-                    AppErrorCategory::InternalInvariant,
-                    "同步多市场回测意外返回取消状态",
-                ),
-                &correlation_id,
-            )
-        })
+    guard_panics(&correlation_id, || {
+        run_inner(spec, context, None, BTreeMap::new())
+    })
+    .map_err(|error| attach(error, &correlation_id))?
+    .ok_or_else(|| {
+        attach(
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                "同步多市场回测意外返回取消状态",
+            ),
+            &correlation_id,
+        )
+    })
 }
 
 impl MultiMarketBacktestSpec {
@@ -66,17 +69,106 @@ impl MultiMarketBacktestSpec {
             context.require(CallerCapability::Research, "多市场共享账户 Bar 回测")?;
             let correlation_id = context.correlation_id().to_string();
             guard_panics(&correlation_id, || {
-                run_inner(&self, &context, Some(&cancellation))
+                run_inner(&self, &context, Some(&cancellation), BTreeMap::new())
             })
             .map_err(|error| attach(error, &correlation_id))
         })
     }
+
+    /// Run selected market slots with caller-authored strategies on the same Rust engine.
+    pub fn run_with_strategy_slots(
+        &self,
+        strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+        context: &RunContext,
+    ) -> Result<MultiMarketBacktestOutcome, AppError> {
+        let correlation_id = context.correlation_id().to_string();
+        context
+            .require(CallerCapability::Research, "多市场多语言策略 Bar 回测")
+            .map_err(|error| attach(error, &correlation_id))?;
+        self.validate()
+            .map_err(|error| attach(error, &correlation_id))?;
+        let injected =
+            validate_injected(self, strategies).map_err(|error| attach(error, &correlation_id))?;
+        guard_panics(&correlation_id, || run_inner(self, context, None, injected))
+            .map_err(|error| attach(error, &correlation_id))?
+            .ok_or_else(|| {
+                attach(
+                    AppError::new(
+                        AppErrorCategory::InternalInvariant,
+                        "同步多市场自定义策略回测未产生报告",
+                    ),
+                    &correlation_id,
+                )
+            })
+    }
+
+    /// Start a cancellable multi-market run with caller-authored strategy slots.
+    pub fn start_with_strategy_slots(
+        self,
+        strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+        context: RunContext,
+    ) -> Result<crate::RunHandle<MultiMarketBacktestOutcome>, AppError> {
+        let correlation_id = context.correlation_id().to_string();
+        context
+            .require(CallerCapability::Research, "多市场多语言策略 Bar 回测")
+            .map_err(|error| attach(error, &correlation_id))?;
+        self.validate()
+            .map_err(|error| attach(error, &correlation_id))?;
+        let injected =
+            validate_injected(&self, strategies).map_err(|error| attach(error, &correlation_id))?;
+        let run_id = self.run_id.clone();
+        Ok(crate::RunHandle::spawn(run_id, move |cancellation| {
+            let correlation_id = context.correlation_id().to_string();
+            guard_panics(&correlation_id, || {
+                run_inner(&self, &context, Some(&cancellation), injected)
+            })
+            .map_err(|error| attach(error, &correlation_id))
+        }))
+    }
+}
+
+struct InjectedMarketStrategy {
+    identity: StrategyArtifactIdentity,
+    strategy: Box<dyn Strategy>,
+}
+
+fn validate_injected(
+    spec: &MultiMarketBacktestSpec,
+    strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+) -> Result<BTreeMap<String, InjectedMarketStrategy>, AppError> {
+    if strategies.is_empty() {
+        return Err(invalid("多市场自定义策略组合至少需要一个回调槽"));
+    }
+    let mut injected = BTreeMap::new();
+    for (identity, strategy) in strategies {
+        let slot = spec
+            .markets
+            .iter()
+            .flat_map(|market| &market.strategies)
+            .find(|member| member.strategy.strategy_id == identity.strategy_id)
+            .ok_or_else(|| {
+                invalid(format!(
+                    "自定义策略身份不属于多市场组合: {}",
+                    identity.strategy_id
+                ))
+            })?;
+        identity.validate_for_slot(&slot.strategy.strategy_id, &slot.strategy)?;
+        let id = identity.strategy_id.clone();
+        if injected
+            .insert(id.clone(), InjectedMarketStrategy { identity, strategy })
+            .is_some()
+        {
+            return Err(invalid(format!("多市场自定义策略身份重复: {id}")));
+        }
+    }
+    Ok(injected)
 }
 
 fn run_inner(
     spec: &MultiMarketBacktestSpec,
     _context: &RunContext,
     cancellation: Option<&crate::run_handle::CancellationToken>,
+    mut injected: BTreeMap<String, InjectedMarketStrategy>,
 ) -> Result<Option<MultiMarketBacktestOutcome>, AppError> {
     if cancellation.is_some_and(|token| token.is_cancelled()) {
         return Ok(None);
@@ -85,13 +177,14 @@ fn run_inner(
     let spec_json = spec.to_json()?;
     let mut spec_hasher = Fnv1a::new();
     spec_hasher.write_text(&spec_json);
-    let spec_fingerprint = format!("{:016x}", spec_hasher.finish());
+    let spec_fingerprint_base = spec_hasher.finish();
 
     let mut prepared = Vec::with_capacity(spec.markets.len());
     let mut data_hasher = Fnv1a::new();
     let mut runtime_markets = Vec::with_capacity(spec.markets.len());
     let mut routed_strategies = Vec::with_capacity(spec.markets.len());
     let mut strategy_count = 0_usize;
+    let mut strategy_identities = Vec::new();
     for market in &spec.markets {
         if cancellation.is_some_and(|token| token.is_cancelled()) {
             return Ok(None);
@@ -140,6 +233,14 @@ fn run_inner(
             .unwrap_or_else(MakerTakerFeeModel::default_maker_taker);
         let mut strategy_slots = Vec::with_capacity(market.strategies.len());
         for member in &market.strategies {
+            let external = injected.remove(&member.strategy.strategy_id);
+            let version = external
+                .as_ref()
+                .map(|item| item.identity.strategy_version.clone())
+                .unwrap_or_else(|| strategy_version(&member.strategy));
+            if let Some(item) = &external {
+                strategy_identities.push(item.identity.clone());
+            }
             let slot = build_strategy_slot(
                 &member.strategy,
                 StrategySlotContext {
@@ -150,9 +251,9 @@ fn run_inner(
                     currency: &spec.settlement_currency,
                     data_fingerprint: &market_data_fingerprint,
                     as_of: bars.first().map(|bar| bar.ts).unwrap_or(1),
-                    strategy_version: Some(&strategy_version(&member.strategy)),
+                    strategy_version: Some(&version),
                 },
-                None,
+                external.map(|item| item.strategy),
             )?;
             strategy_slots.push(slot);
             strategy_count += 1;
@@ -179,6 +280,22 @@ fn run_inner(
             },
         });
     }
+    if !injected.is_empty() {
+        return Err(invalid("多市场自定义策略存在未消费的孤儿策略槽"));
+    }
+    strategy_identities.sort_by(|left, right| left.strategy_id.cmp(&right.strategy_id));
+    let spec_fingerprint = if strategy_identities.is_empty() {
+        format!("{spec_fingerprint_base:016x}")
+    } else {
+        let mut fingerprint = Fnv1a::new();
+        fingerprint.write_u64(spec_fingerprint_base);
+        for identity in &strategy_identities {
+            fingerprint.write_text(&identity.strategy_id);
+            fingerprint.write_text(&identity.strategy_version);
+            fingerprint.write_text(&identity.source_sha256);
+        }
+        format!("{:016x}", fingerprint.finish())
+    };
     let data_identities = prepared
         .iter()
         .map(|market| DataIdentity {
@@ -269,6 +386,7 @@ fn run_inner(
         "spec": spec,
         "outcome": outcome,
         "market_data": data_identities,
+        "strategy_identities": strategy_identities,
         "per_market_fills": per_market_fills,
         "equity": report.equity,
         "event_log": report.event_log.events(),

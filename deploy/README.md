@@ -307,6 +307,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/depth-backtest/start` | `DepthBacktestSpec::start` 的 Tick/OrderBook 运行句柄（请求体仍为 `DepthBacktestSpec` JSON） | 立即返回 `run_id/status`，复用 Rust Tick 或订单簿协作取消循环；状态、结果和取消走 `/app/runs/{run_id}` 路由 |
 | `POST /app/run-depth-experiment/start` | `RunDepthExperimentSpec::start` 的后台 Tick/OrderBook 参数实验句柄 | 立即返回 `run_id/status`；候选之间和 Rust Tick/快照撮合循环协作取消；状态、结果和取消走 `/app/runs/{run_id}` 路由 |
 | `POST /app/multi-leg-backtest/start` | `MultiLegBacktestSpec::start` 的双腿运行句柄 | 立即返回 `run_id/status`；两条 Rust 撮合循环协作取消；结果/状态/取消复用 `/app/runs/{run_id}` |
+| `POST /app/multi-market-backtest/start` | `MultiMarketBacktestSpec::start` 的共享账户多市场回测句柄 | 立即返回 `run_id/status`；市场与 Bar 循环协作取消；状态、结果、事件和取消复用 `/app/runs/{run_id}` 生命周期 |
 | `POST /app/run-experiment/start` | `RunExperimentSpec::start` 的后台参数实验句柄 | 立即返回 `run_id/status`，候选和 Bar 循环复用 Rust 协作取消；状态与取消走 `/app/runs/{run_id}` 路由 |
 | `POST /app/run-multi-leg-experiment/start` | `RunMultiLegExperimentSpec::start` 的后台多腿参数实验句柄 | 立即返回 `run_id/status`；候选之间及双腿 Rust 撮合循环协作取消；状态与取消走 `/app/runs/{run_id}` 路由 |
 | `POST /app/verify-depth` | 用例 `qx_app::verify_depth_run` 复核 L1/L2 产物（请求体取 depth-backtest 响应） | 重新读取并核对 manifest、summary、权益/成交计数与重放账簿条数；不一致为 200 + verified=false |
@@ -402,6 +403,8 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `POST /app/run-depth-experiment` | 应用层用例 RunDepthExperiment：参数候选数上限为二百五十六，复用 Rust Tick/OrderBook 回测，并按收益、回撤确定性排序 | 输入帧限制在服务端数据根目录；候选四份产物和实验报告写入服务端 artifact 根目录；候选错误隔离；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-leg-backtest` | 应用层用例 RunMultiLegBacktest：两腿信号、Rust Bar 撮合、独立重放校验与成交归因 | 两份输入限制在服务端数据根目录；结果产物由服务端指定路径；market spec 与输入标的/结算币一致校验；资金费只允许声明了衍生品的腿；不对齐返回 400、样本不足返回 422、同 run_id 异内容返回 409；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-account-backtest` | 多账户独立 Rust Bar 回测（不同账户及市场、逐账户校验、成功结果加权摘要） | 每账户输入路径限制在服务端数据根目录并写入各自产物路径；最多 32 个成员；要求相同 settlement_currency；成员失败隔离为部分结果；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/multi-market-backtest` | 同账户多市场 Rust Bar 组合回测（3..=32 市场，共享 PortfolioBarEngine、账簿、Risk/OMS、EventLog 与 Replay） | 每份输入限制在服务端数据根目录；结果由服务端指定产物目录；单/多策略槽按确定性优先级执行；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/multi-market-backtest/start` | 创建同账户多市场 Rust Bar 后台回测任务 | 市场间与 Bar 循环协作取消；状态、结果、事件与取消复用 `/app/runs/{run_id}` 生命周期；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-account-backtest/start` | 创建多账户 Rust Bar 回测后台任务 | 成员之间及当前账户的 Bar 循环协作取消；状态、结果与取消走 `/app/runs/{run_id}`，事件通过 `/events` 读取；账户失败隔离并在完成后返回批次结果；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/run-multi-leg-experiment` | 应用层用例 RunMultiLegExperiment：参数候选数上限为二百五十六，复用 Rust 双腿回测，逐项隔离错误并按组合收益稳定排名 | 输入帧限制在服务端数据根目录；候选产物和实验报告写入服务端 artifact 根目录；候选数上限为二百五十六；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/depth-backtest/start` | 创建 Rust Tick/OrderBook 后台回测任务 | 400/404/409/422/500/503 复用应用层错误类别映射；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |

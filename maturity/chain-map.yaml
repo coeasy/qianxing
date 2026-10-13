@@ -89,7 +89,7 @@ steps:
     order: 8
     anchor: crates/qx-app/src/cases/run_multi_market_backtest.rs run_multi_market_backtest
     case: crates/qx-app/src/tests/multi_market_backtest.rs three_market_run_shares_ledger_replays_and_is_idempotent
-    note: "3..=32 个异步 Bar 市场走同一个 PortfolioBarEngine、账户 Ledger、事件顺序与 replay；Rust/Python 本地 SDK 已实测三市场成交，HTTP/C++ 远端入口仍未接入。"
+    note: "3..=32 个异步 Bar 市场走同一个 PortfolioBarEngine、账户 Ledger、事件顺序与 replay；HTTP 同步/RunHandle、Rust/Python/C++ 远端内置策略入口及 Rust/Python 本地身份绑定回调槽已接入；远端任意代码 callback、多市场参数实验与跨市场 Tick/OrderBook 仍未接入。"
 
   - name: artifact_manifest
     chain: data_to_research_backtest

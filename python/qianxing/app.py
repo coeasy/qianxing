@@ -33,6 +33,8 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "provider_depth_backtest": "/app/provider-depth-backtest",
     "multi_account_backtest": "/app/multi-account-backtest",
     "multi_account_backtest_start": "/app/multi-account-backtest/start",
+    "multi_market_backtest": "/app/multi-market-backtest",
+    "multi_market_backtest_start": "/app/multi-market-backtest/start",
     "backtest_start": "/app/backtest/start",
     "verify": "/app/verify",
     "verify_depth": "/app/verify-depth",
@@ -2013,6 +2015,20 @@ class AppClient(_HttpJsonClient):
             self._post(APP_ROUTE_TEMPLATES["multi_leg_backtest"], spec)
         )
 
+    def run_multi_market_backtest(
+        self, spec: MultiMarketBacktestSpec | dict[str, Any]
+    ) -> MultiMarketBacktestOutcome:
+        return MultiMarketBacktestOutcome.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["multi_market_backtest"], spec)
+        )
+
+    def start_multi_market_backtest(
+        self, spec: MultiMarketBacktestSpec | dict[str, Any]
+    ) -> RemoteRunHandle[MultiMarketBacktestOutcome]:
+        return self._start(
+            APP_ROUTE_TEMPLATES["multi_market_backtest_start"], spec, MultiMarketBacktestOutcome
+        )
+
     def run_multi_account_backtest(
         self, spec: MultiAccountBacktestSpec | dict[str, Any]
     ) -> MultiAccountBacktestResult:
@@ -2089,6 +2105,16 @@ class AppClient(_HttpJsonClient):
 
     async def async_run_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
         return await asyncio.to_thread(self.run_multi_leg_backtest, spec)
+
+    async def async_run_multi_market_backtest(
+        self, spec: MultiMarketBacktestSpec | dict[str, Any]
+    ) -> MultiMarketBacktestOutcome:
+        return await asyncio.to_thread(self.run_multi_market_backtest, spec)
+
+    async def async_start_multi_market_backtest(
+        self, spec: MultiMarketBacktestSpec | dict[str, Any]
+    ) -> RemoteRunHandle[MultiMarketBacktestOutcome]:
+        return await self._async_start(self.start_multi_market_backtest, spec)
 
     async def async_run_multi_account_backtest(
         self, spec: MultiAccountBacktestSpec | dict[str, Any]
@@ -2535,6 +2561,30 @@ def start_multi_market_backtest(
     except Exception as exc:
         raise _translate_native_error(exc) from exc
     return RunHandle(native_handle, MultiMarketBacktestOutcome)
+
+
+def run_multi_market_backtest_with_strategy_slots(
+    spec: MultiMarketBacktestSpec | dict[str, Any],
+    strategies: Sequence[Mapping[str, Any]],
+) -> MultiMarketBacktestOutcome:
+    """Run identified Python callbacks in declared market slots through the same Rust portfolio engine."""
+    try:
+        from qianxing_bridge.app import run_multi_market_backtest_with_strategy_slots as _run
+        return MultiMarketBacktestOutcome.from_dict(_run(_encode_payload(spec), strategies))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
+def start_multi_market_backtest_with_strategy_slots(
+    spec: MultiMarketBacktestSpec | dict[str, Any],
+    strategies: Sequence[Mapping[str, Any]],
+) -> RunHandle[MultiMarketBacktestOutcome]:
+    """Start a cancellable Rust shared-ledger N-market run with Python callback slots."""
+    try:
+        from qianxing_bridge.app import start_multi_market_backtest_with_strategy_slots as _start
+        return RunHandle(_start(_encode_payload(spec), strategies), MultiMarketBacktestOutcome)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
 
 
 def run_multi_account_backtest(

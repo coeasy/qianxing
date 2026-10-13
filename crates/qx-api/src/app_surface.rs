@@ -28,12 +28,12 @@ use crate::ApiResponse;
 use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
     run_depth_backtest, run_depth_experiment, run_experiment, run_multi_account_backtest,
-    run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset, verify_depth_run,
-    verify_run, AlgoExecutionSpec, AppError, AppErrorCategory, BacktestOutcome, BacktestSpec,
-    CallerCapability, CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome,
-    DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec, ProviderBacktestSpec,
-    ProviderDepthBacktestSpec, RiskParitySpec, RunContext, RunDepthExperimentSpec,
-    RunExperimentSpec, RunMultiLegExperimentSpec,
+    run_multi_leg_backtest, run_multi_leg_experiment, run_multi_market_backtest, validate_dataset,
+    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, AppErrorCategory, BacktestOutcome,
+    BacktestSpec, CallerCapability, CapitalAllocationSpec, CompareRunsSpec, DatasetSpec,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec,
+    MultiMarketBacktestSpec, ProviderBacktestSpec, ProviderDepthBacktestSpec, RiskParitySpec,
+    RunContext, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
 };
 use qx_provider::ProviderRegistry;
 use std::path::PathBuf;
@@ -350,6 +350,27 @@ pub(crate) fn multi_leg_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
         .to_string_lossy()
         .into_owned();
     respond(run_multi_leg_backtest(&spec, &context(&run_id)).and_then(|outcome| outcome.to_json()))
+}
+
+pub(crate) fn multi_market(body: &str, paths: &AppPaths) -> ApiResponse {
+    let mut spec = match MultiMarketBacktestSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    for market in &mut spec.markets {
+        if let Err(error) = resolve_input_path(&mut market.bars_path, &paths.data_root) {
+            return respond(Err(error));
+        }
+    }
+    let run_id = spec.run_id.clone();
+    spec.output_dir = paths
+        .artifact_root
+        .join(&run_id)
+        .to_string_lossy()
+        .into_owned();
+    respond(
+        run_multi_market_backtest(&spec, &context(&run_id)).and_then(|outcome| outcome.to_json()),
+    )
 }
 
 pub(crate) fn multi_account(body: &str, paths: &AppPaths) -> ApiResponse {

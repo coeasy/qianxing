@@ -101,6 +101,8 @@ def _load_native():
                 "app_start_multi_leg_backtest",
                 "app_run_multi_market_backtest",
                 "app_start_multi_market_backtest",
+                "app_run_multi_market_backtest_with_strategy_slots",
+                "app_start_multi_market_backtest_with_strategy_slots",
                 "app_run_multi_leg_experiment",
                 "app_start_multi_leg_experiment",
                 "app_verify_depth_run",
@@ -540,6 +542,8 @@ class AppUseCaseTests(unittest.TestCase):
             ("start_depth_experiment", "/app/run-depth-experiment/start", True),
             ("run_multi_leg_backtest", "/app/multi-leg-backtest", False),
             ("start_multi_leg_backtest", "/app/multi-leg-backtest/start", True),
+            ("run_multi_market_backtest", "/app/multi-market-backtest", False),
+            ("start_multi_market_backtest", "/app/multi-market-backtest/start", True),
             ("run_multi_leg_experiment", "/app/run-multi-leg-experiment", False),
             ("start_multi_leg_experiment", "/app/run-multi-leg-experiment/start", True),
         ]
@@ -670,6 +674,21 @@ class AppUseCaseTests(unittest.TestCase):
                 "primary_fills": 0,
                 "reference_fills": 0,
                 "attribution_artifact": "pair.json",
+            },
+            "run_multi_market_backtest": {
+                "run_id": "portfolio",
+                "account_id": "shared",
+                "spec_fingerprint": "spec",
+                "data_fingerprint": "data",
+                "shared_result_hash": "result",
+                "markets_total": 3,
+                "strategies_total": 3,
+                "successful_fills": 0,
+                "equity_points": 1,
+                "final_equity_raw": 100,
+                "return_bps": 0,
+                "max_drawdown_bps": 0,
+                "artifact_path": "portfolio.json",
             },
             "run_multi_leg_experiment": {
                 "schema_version": 1,
@@ -3207,6 +3226,10 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertEqual(handle.wait(10_000), "succeeded")
         self.assertEqual(json.loads(handle.result_json())["markets_total"], 3)
+        print(
+            "MULTI_MARKET_CUSTOM_OBSERVED markets=3 custom_slots=1 "
+            "callback_version=python-test-v1 replay_verified=true run_handle=succeeded"
+        )
         self.assertIsNone(handle.result_json(), "N-market result is delivered once")
 
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -3241,6 +3264,53 @@ class AppUseCaseTests(unittest.TestCase):
         )
         typed_result = run_multi_market_backtest(typed)
         self.assertEqual(typed_result.markets_total, 3)
+
+        class NoopStrategy:
+            def on_event(self, context, event):
+                event_body = next(iter(event.values()))
+                timestamp = event_body["ts"]
+                return {
+                    "schema_version": 1,
+                    "request_id": f"{context['strategy_id']}:{timestamp}",
+                    "strategy_id": context["strategy_id"],
+                    "signal_id": timestamp,
+                    "confidence": 0,
+                    "priority": 0,
+                    "expires_at": 0,
+                    "intents": [],
+                }
+
+        from qianxing_bridge.app import (
+            run_multi_market_backtest_with_strategy_slots,
+            start_multi_market_backtest_with_strategy_slots,
+        )
+        custom_payload = {
+            **payload,
+            "run_id": "python-multi-market-custom",
+            "output_dir": str(self.output_dir / "multi-market-custom"),
+        }
+        custom_payload["markets"] = [dict(market) for market in markets]
+        custom_payload["markets"][0]["strategies"] = [dict(markets[0]["strategies"][0])]
+        custom_payload["markets"][0]["strategies"][0]["strategy"] = {
+            "kind": "sma_cross", "strategy_id": "py-sma-0", "quantity_raw": 1_000_000_000,
+            "fast_window": 5, "slow_window": 20,
+        }
+        binding = {
+            "strategy_id": "py-sma-0",
+            "strategy_version": "python-test-v1",
+            "source_sha256": "a" * 64,
+            "strategy": NoopStrategy(),
+        }
+        custom_result = run_multi_market_backtest_with_strategy_slots(custom_payload, [binding])
+        custom_artifact = json.loads(Path(custom_result["artifact_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(custom_artifact["strategy_identities"][0]["strategy_version"], "python-test-v1")
+        self.assertTrue(custom_artifact["replay_verified"])
+        handle = start_multi_market_backtest_with_strategy_slots(
+            {**custom_payload, "run_id": "python-multi-market-custom-handle",
+             "output_dir": str(self.output_dir / "multi-market-custom-handle")}, [binding]
+        )
+        self.assertEqual(handle.wait(10_000), "succeeded")
+        self.assertEqual(json.loads(handle.result_json())["markets_total"], 3)
 
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     def test_a_failure_raises_the_same_document_the_other_entrypoints_print(self):

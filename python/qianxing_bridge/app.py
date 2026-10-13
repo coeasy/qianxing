@@ -474,6 +474,26 @@ def start_multi_market_backtest(spec: "str | dict[str, Any]") -> Any:
     return native.app_start_multi_market_backtest(_payload(spec))
 
 
+def run_multi_market_backtest_with_strategy_slots(
+    spec: "str | dict[str, Any]", strategies: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Run identified Python callbacks in declared market slots on the shared Rust engine."""
+    identities_json, callbacks = _strategy_slot_payload(strategies)
+    return json.loads(native.app_run_multi_market_backtest_with_strategy_slots(
+        _payload(spec), identities_json, callbacks
+    ))
+
+
+def start_multi_market_backtest_with_strategy_slots(
+    spec: "str | dict[str, Any]", strategies: Sequence[Mapping[str, Any]]
+) -> Any:
+    """Start a cancellable N-market run with Python callbacks on the Rust RunHandle."""
+    identities_json, callbacks = _strategy_slot_payload(strategies)
+    return native.app_start_multi_market_backtest_with_strategy_slots(
+        _payload(spec), identities_json, callbacks
+    )
+
+
 def verify_depth_run(outcome: "str | dict[str, Any]") -> dict[str, Any]:
     """Verify the manifest, summary, equity, and fills of a depth run."""
     return json.loads(native.app_verify_depth_run(_payload(outcome)))

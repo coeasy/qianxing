@@ -1548,6 +1548,8 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::start_backtest_with_strategy": "qx-sdk Rust 可取消策略运行公开入口；由外部 SDK 消费者调用",
     "qx-sdk::run_backtest_with_strategy_slots": "qx-sdk Rust 多 callback 组合回测入口；由外部 SDK 消费者提供具名策略槽",
     "qx-sdk::start_backtest_with_strategy_slots": "qx-sdk Rust 多 callback 可取消组合回测入口；由外部 SDK 消费者提供具名策略槽",
+    "qx-sdk::start_multi_market_backtest_with_strategy_slots": "qx-sdk Rust 多市场可取消自定义策略入口；仅由外部 SDK 消费者提供多语言策略槽",
+    "qx-sdk::run_multi_market_backtest_with_strategy_slots": "qx-sdk Rust 多市场同步自定义策略入口；仅由外部 SDK 消费者提供多语言策略槽",
     "qx-sdk::start_multi_leg_backtest_with_strategy": "qx-sdk Rust 可取消双腿策略运行公开入口；由外部 SDK 消费者实现 Strategy 并调用",
     "qx-sdk::start_multi_leg_experiment_with_strategy_factory": "qx-sdk Rust 可取消多腿策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-sdk::start_multi_account_depth_backtest": "qx-sdk Rust 可取消多账户 Tick/OrderBook 批量入口；由外部 SDK 消费者调用",
@@ -6224,6 +6226,7 @@ def api_surface_doc_check() -> None:
         ("RUN_START_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_ROUTE", "POST"),
         ("RUN_START_MULTI_ACCOUNT_ROUTE", "POST"),
+        ("RUN_START_MULTI_MARKET_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_EXPERIMENT_ROUTE", "POST"),
     )
     dynamic_declared = set()
@@ -6256,6 +6259,7 @@ def api_surface_doc_check() -> None:
             ("POST", "/app/run-experiment/start"),
             ("POST", "/app/multi-leg-backtest/start"),
             ("POST", "/app/multi-account-backtest/start"),
+            ("POST", "/app/multi-market-backtest/start"),
             ("POST", "/app/run-multi-leg-experiment/start"),
         },
         "动态 SDK 运行路由由 app_surface 的两条模板显式登记并进入端点契约",

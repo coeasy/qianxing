@@ -7,7 +7,7 @@
 > 状态：实施计划；本文中的目标能力不代表当前已经实现或通过实盘认证。
 
 > 实施跟踪（2026-10-14）：本方案仍在实施中，尚未达到全能力发布门槛。Rust 共享多市场 Bar session 现支持常量 funding 与调用方提供的逐标的历史费率事件，按 UTC 8 小时结算边界将衍生品 funding 作为 Ledger 现金流写入 EventLog/Replay，并在后续策略回调前更新共享账户现金；多腿腿级归因消费同一结算事实。单腿快速选择覆盖 13 个内置策略，Rust 内核当前有 17 个内置策略类型。venue 专用 funding provider/conformance、实盘 testnet 认证、跨账户组合风险、C++ 默认 transport 及 Web/桌面端到端验收仍未完成。逐轮复核、测试证据与限制见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)和 `maturity/quant_scenarios.yaml`。
-> 本轮增量（2026-10-14）：新增 3..=32 市场同账户 Bar 组合应用用例，沿用唯一 PortfolioBarEngine、Risk/OMS/Ledger/EventLog/Replay，提供 Rust SDK 与 Python 本地同步/RunHandle 接口；三市场回测、共享产物、重放标记、幂等重跑和取消句柄已在本机验证。该能力尚未接入 HTTP/Web/C++ 远端、多市场自定义语言策略与参数实验；不能据此宣称方案全部落地。
+> 本轮增量（2026-10-14）：新增 3..=32 市场同账户 Bar 组合应用用例，沿用唯一 PortfolioBarEngine、Risk/OMS/Ledger/EventLog/Replay；Rust SDK 与 Python 本地同步/RunHandle 接口可将 Rust/Python 自定义策略绑定到具体市场槽，未绑定槽继续使用内置策略；回调身份 ID/version/source SHA-256 进入运行指纹与产物。HTTP 同步/RunHandle 路由及 Rust/Python/C++ 远端客户端已接入同一共享 Rust 用例，远端执行使用请求中的内置策略配置；Rust/Python 自定义 callback 仍只在进程内 SDK，不能把任意代码经 HTTP 上传。新增路由与自定义槽测试通过。该增量没有实现多市场参数实验、跨市场 Tick/OrderBook、交易日历/跨时区/货币换算，也未证明多账户跨账户组合风险、venue/provider 全矩阵和实盘 testnet；Web/桌面端到端验收、C++ 默认 transport 与全平台发布门仍未完成，因此方案整体未全部落地。
 
 ## 1. 目标与完成定义
 

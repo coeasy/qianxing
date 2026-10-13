@@ -1705,6 +1705,7 @@ qx_control_retired_audit_records_total {}\n",
             ("POST", "/app/depth-backtest") => app_surface::depth_backtest(body, &self.app_paths),
             ("POST", "/app/run-depth-experiment") => app::depth_experiment(body, &self.app_paths),
             ("POST", "/app/multi-leg-backtest") => app::multi_leg_backtest(body, &self.app_paths),
+            ("POST", "/app/multi-market-backtest") => app::multi_market(body, &self.app_paths),
             ("POST", "/app/multi-account-backtest") => app::multi_account(body, &self.app_paths),
             ("POST", "/app/run-multi-leg-experiment") => app::multi_leg_grid(body, &self.app_paths),
             _ => ApiResponse::text(404, "not found"),
@@ -1751,7 +1752,6 @@ qx_control_retired_audit_records_total {}\n",
             Err(error) => ApiResponse::json(500, error_json(&format!("{error:?}"))),
         }
     }
-
     fn snapshot_diff(&self, query: &str) -> ApiResponse {
         let base_hash = match query_param(query, "base_hash") {
             Ok(Some(base_hash)) => base_hash,

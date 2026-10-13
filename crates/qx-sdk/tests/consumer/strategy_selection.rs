@@ -1,4 +1,6 @@
 use super::*;
+#[path = "strategy_selection/multi_market.rs"]
+mod multi_market;
 use qx_sdk::{
     MarketEvent, RunContext, Strategy, StrategyArtifactIdentity, StrategyContext, StrategyDecision,
     StrategyOrderIntent, STRATEGY_API_VERSION,
@@ -38,56 +40,6 @@ impl Strategy for BuyEachInstrument {
             intents,
         })
     }
-}
-
-#[test]
-fn rust_sdk_composes_multiple_external_strategies_in_one_shared_portfolio() {
-    let output_dir = scratch("sdk-callback-portfolio");
-    let mut backtest = spec("sdk-callback-portfolio", &output_dir);
-    backtest.strategy = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "custom-primary");
-    backtest.portfolio = Some(PortfolioBacktestConfig {
-        primary_priority: 0,
-        primary_reserved_capital_raw: backtest.initial_cash_raw / 2,
-        additional_strategies: vec![PortfolioStrategySpec {
-            priority: 1,
-            reserved_capital_raw: backtest.initial_cash_raw / 2,
-            strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::Momentum, "custom-secondary"),
-        }],
-    });
-    let client = Client::new(CallerCapability::Research, "sdk-callback-portfolio");
-    let result = client
-        .run_backtest_with_strategy_slots(
-            &backtest,
-            vec![
-                (
-                    StrategyArtifactIdentity {
-                        strategy_id: "custom-primary".into(),
-                        strategy_version: "primary-v1".into(),
-                        source_sha256: "b".repeat(64),
-                    },
-                    Box::new(BuyEachInstrument(Default::default())) as Box<dyn Strategy>,
-                ),
-                (
-                    StrategyArtifactIdentity {
-                        strategy_id: "custom-secondary".into(),
-                        strategy_version: "secondary-v1".into(),
-                        source_sha256: "c".repeat(64),
-                    },
-                    Box::new(BuyEachInstrument(Default::default())) as Box<dyn Strategy>,
-                ),
-            ],
-        )
-        .expect("Rust facade routes custom slots through the shared account engine");
-    assert!(result.fills >= 2);
-    let fills = std::fs::read_to_string(&result.artifacts.fills).expect("attributed fills");
-    assert!(fills.contains("custom-primary"));
-    assert!(fills.contains("custom-secondary"));
-    assert!(
-        client
-            .verify_run(&result)
-            .expect("shared replay verifier")
-            .verified
-    );
 }
 
 #[test]

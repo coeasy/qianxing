@@ -1,10 +1,11 @@
 //! Python authored decisions adapted to the shared Rust Strategy contract.
 
+mod multi_market;
 #[path = "strategy_callback/strategy_impl.rs"]
 mod strategy_impl;
+mod strategy_slots;
 
 use super::{app_error, research_context, NativeRun, PyRunHandle};
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 use qx_app::{
@@ -15,44 +16,7 @@ use qx_app::{
     StrategyArtifactIdentity,
 };
 use qx_strategy::{MarketEvent, Strategy, StrategyContext, StrategyDecision};
-use serde::Deserialize;
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StrategyIdentityDocument {
-    strategy_id: String,
-    strategy_version: String,
-    source_sha256: String,
-}
-
-fn strategy_slots(
-    identities_json: &str,
-    callbacks: Vec<Py<PyAny>>,
-) -> PyResult<Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>> {
-    let identities = serde_json::from_str::<Vec<StrategyIdentityDocument>>(identities_json)
-        .map_err(|error| PyValueError::new_err(format!("invalid strategy identities: {error}")))?;
-    if identities.len() != callbacks.len() {
-        return Err(PyValueError::new_err(format!(
-            "strategy identity count {} does not match callback count {}",
-            identities.len(),
-            callbacks.len()
-        )));
-    }
-    Ok(identities
-        .into_iter()
-        .zip(callbacks)
-        .map(|(identity, callback)| {
-            (
-                StrategyArtifactIdentity {
-                    strategy_id: identity.strategy_id,
-                    strategy_version: identity.strategy_version,
-                    source_sha256: identity.source_sha256,
-                },
-                Box::new(PythonBacktestStrategy { callback }) as Box<dyn Strategy>,
-            )
-        })
-        .collect())
-}
+use strategy_slots::strategy_slots;
 
 pub(super) struct PythonBacktestStrategy {
     callback: Py<PyAny>,
@@ -474,6 +438,7 @@ pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
         app_start_backtest_with_strategy_slots,
         module
     )?)?;
+    multi_market::register(module)?;
     module.add_function(wrap_pyfunction!(
         app_run_depth_backtest_with_strategy,
         module

@@ -78,6 +78,8 @@ APP_ENTRYPOINTS = (
     "app_start_multi_leg_backtest",
     "app_run_multi_market_backtest",
     "app_start_multi_market_backtest",
+    "app_run_multi_market_backtest_with_strategy_slots",
+    "app_start_multi_market_backtest_with_strategy_slots",
     "app_run_multi_leg_experiment",
     "app_start_multi_leg_experiment",
     "app_run_multi_leg_experiment_with_strategy",
@@ -472,6 +474,22 @@ def app_run_multi_market_backtest(spec_json: str) -> str:
 def app_start_multi_market_backtest(spec_json: str) -> Any:
     """Start a cancellable N-market run in the shared Rust application layer."""
     return _extension().app_start_multi_market_backtest(spec_json)
+
+
+def app_run_multi_market_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> str:
+    return str(_extension().app_run_multi_market_backtest_with_strategy_slots(
+        spec_json, identities_json, callbacks
+    ))
+
+
+def app_start_multi_market_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> Any:
+    return _extension().app_start_multi_market_backtest_with_strategy_slots(
+        spec_json, identities_json, callbacks
+    )
 
 
 def app_run_multi_leg_experiment(spec_json: str) -> str:

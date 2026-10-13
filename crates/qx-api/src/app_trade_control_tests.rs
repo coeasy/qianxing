@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 #[path = "app_multi_leg_tests.rs"]
 mod app_multi_leg_tests;
+#[path = "app_multi_market_tests.rs"]
+mod app_multi_market_tests;
 
 #[path = "app_strategy_selection_tests.rs"]
 mod app_strategy_selection_tests;
