@@ -15,8 +15,8 @@ use crate::{
     fill::{DataTier, FillModel},
 };
 use qx_core::{
-    Event, EventKind, EventLog, FeeModel, Fill, InstrumentId, Ledger, Money, Price, ReplayVerifier,
-    TradingInstrumentSpec, ValuationContext,
+    Event, EventKind, EventLog, FeeModel, Fill, FundingRateEvent, InstrumentId, Ledger, Money,
+    Price, ReplayVerifier, TradingInstrumentSpec, ValuationContext,
 };
 use qx_guanxing::{Bar, QualityGate, Verdict};
 use qx_zhenlu::{Oms, RiskGate};
@@ -25,9 +25,9 @@ use std::collections::BTreeMap;
 mod funding;
 mod margin;
 mod runtime;
-use funding::{apply_settlements, prepare_timeline};
+use funding::{apply_settlements, prepare_timeline, PreparedTimeline};
 use margin::other_market_margin;
-use runtime::build_runtime;
+use runtime::{build_runtime, initialize_ledger};
 
 pub struct PortfolioBarMarket<'a> {
     pub instrument: InstrumentId,
@@ -48,6 +48,8 @@ pub struct PortfolioBarSessionConfig {
     pub risk: RiskGate,
     /// Constant funding rate in basis points per UTC 8-hour settlement, keyed by derivative.
     pub funding_bps: BTreeMap<InstrumentId, i64>,
+    /// Optional variable historical funding rates at explicit UTC 8-hour settlements.
+    pub funding_events: Vec<FundingRateEvent>,
 }
 
 pub struct PortfolioBarSessionReport {
@@ -172,36 +174,25 @@ impl<'a> PortfolioBarEngine<'a> {
             .iter()
             .map(|market| (market.instrument.clone(), market.spec.clone()))
             .collect::<BTreeMap<_, _>>();
-        let prepared = prepare_timeline(&markets, &config.funding_bps, &specs)?;
-        let start = prepared.start;
-        let end = prepared.end;
-        let events = prepared.events;
-        let settlements = prepared.settlements;
-        let timestamps = prepared.timestamps;
+        let PreparedTimeline {
+            start,
+            end,
+            events,
+            settlements,
+            timestamps,
+        } = prepare_timeline(
+            &markets,
+            &config.funding_bps,
+            &config.funding_events,
+            &specs,
+        )?;
         let mut runtime = build_runtime(markets);
-        let mut ledger = Ledger::new();
-        let deposit_id = ledger.deposit(
+        let (mut ledger, mut log) = initialize_ledger(
             &config.account_id,
             &config.currency,
             config.initial_cash,
             start,
         )?;
-        let deposit_entry = ledger
-            .entries()
-            .iter()
-            .find(|entry| entry.id == deposit_id)
-            .cloned()
-            .ok_or_else(|| qx_core::QxError::Invariant("共享 Bar session 缺少初始入金".into()))?;
-        let mut log = EventLog::new();
-        let seq = log.alloc_seq();
-        log.append(Event::new(
-            seq,
-            start,
-            qx_core::Priority::APPLY,
-            EventKind::LedgerApplied {
-                entry: deposit_entry,
-            },
-        ));
         let mut oms = Oms::new();
         let mut budget = PortfolioBudgetState::default();
         let mut next_id = 1_u64;

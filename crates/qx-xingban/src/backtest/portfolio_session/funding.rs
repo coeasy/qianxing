@@ -1,6 +1,7 @@
 use super::*;
 
-const FUNDING_INTERVAL_MS: u64 = 8 * 60 * 60 * 1_000;
+use qx_core::FUNDING_INTERVAL_MS;
+
 const MAX_FUNDING_SETTLEMENTS: u64 = 100_000;
 
 pub(super) struct PreparedTimeline {
@@ -14,6 +15,7 @@ pub(super) struct PreparedTimeline {
 pub(super) fn prepare_timeline(
     markets: &[PortfolioBarMarket<'_>],
     rates: &BTreeMap<InstrumentId, i64>,
+    funding_events: &[FundingRateEvent],
     specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
 ) -> Result<PreparedTimeline, qx_core::QxError> {
     let series = markets
@@ -41,7 +43,7 @@ pub(super) fn prepare_timeline(
             bar: *event.bar,
         })
         .collect::<Vec<_>>();
-    let settlements = scheduled_settlements(start, end, rates, specs)?;
+    let settlements = scheduled_settlements(start, end, rates, funding_events, specs)?;
     let timestamps = events
         .iter()
         .map(|event| event.bar.ts)
@@ -62,10 +64,14 @@ pub(super) fn scheduled_settlements(
     start: u64,
     end: u64,
     rates: &BTreeMap<InstrumentId, i64>,
+    funding_events: &[FundingRateEvent],
     specs: &BTreeMap<InstrumentId, TradingInstrumentSpec>,
 ) -> Result<BTreeMap<u64, BTreeMap<InstrumentId, i64>>, qx_core::QxError> {
-    if rates.is_empty() {
-        return Ok(BTreeMap::new());
+    if funding_events.len() > MAX_FUNDING_SETTLEMENTS as usize {
+        return Err(qx_core::QxError::BusinessViolation(format!(
+            "历史资金费事件数 {} 超过上限 {MAX_FUNDING_SETTLEMENTS}",
+            funding_events.len()
+        )));
     }
     for (instrument, rate) in rates {
         let Some(spec) = specs.get(instrument) else {
@@ -79,38 +85,89 @@ pub(super) fn scheduled_settlements(
             )));
         }
     }
-    if rates.values().all(|rate| *rate == 0) {
-        return Ok(BTreeMap::new());
-    }
-    let first = start
-        .checked_div(FUNDING_INTERVAL_MS)
-        .and_then(|period| period.checked_add(1))
-        .and_then(|period| period.checked_mul(FUNDING_INTERVAL_MS))
-        .ok_or_else(|| qx_core::QxError::BusinessViolation("资金费结算时间溢出".into()))?;
-    if first > end {
-        return Ok(BTreeMap::new());
-    }
-    let count = (end - first) / FUNDING_INTERVAL_MS + 1;
-    if count > MAX_FUNDING_SETTLEMENTS {
-        return Err(qx_core::QxError::BusinessViolation(format!(
-            "资金费结算次数 {count} 超过上限 {MAX_FUNDING_SETTLEMENTS}"
-        )));
-    }
-    let mut events = BTreeMap::new();
-    let mut ts = first;
-    while ts <= end {
-        events.insert(
-            ts,
-            rates
-                .iter()
-                .filter(|(_, rate)| **rate != 0)
-                .map(|(instrument, rate)| (instrument.clone(), *rate))
-                .collect(),
-        );
-        let Some(next) = ts.checked_add(FUNDING_INTERVAL_MS) else {
-            break;
+    let mut event_instruments = std::collections::BTreeSet::new();
+    let mut event_keys = std::collections::BTreeSet::new();
+    for event in funding_events {
+        let Some(spec) = specs.get(&event.instrument) else {
+            return Err(qx_core::QxError::BusinessViolation(format!(
+                "历史资金费标的 {} 不属于共享 session",
+                event.instrument
+            )));
         };
-        ts = next;
+        if !(-10_000..=10_000).contains(&event.rate_bps)
+            || (event.rate_bps != 0 && !spec.product.is_derivative())
+            || event.settlement_ts % FUNDING_INTERVAL_MS != 0
+        {
+            return Err(qx_core::QxError::BusinessViolation(format!(
+                "历史资金费事件无效: instrument={}, settlement_ts={}, rate_bps={}",
+                event.instrument, event.settlement_ts, event.rate_bps
+            )));
+        }
+        if !event_keys.insert((event.instrument.clone(), event.settlement_ts)) {
+            return Err(qx_core::QxError::BusinessViolation(format!(
+                "历史资金费事件重复: instrument={}, settlement_ts={}",
+                event.instrument, event.settlement_ts
+            )));
+        }
+        event_instruments.insert(event.instrument.clone());
+    }
+    if rates
+        .iter()
+        .any(|(instrument, rate)| *rate != 0 && event_instruments.contains(instrument))
+    {
+        return Err(qx_core::QxError::BusinessViolation(
+            "同一标的不能混用常量资金费率与历史资金费事件".into(),
+        ));
+    }
+    let mut events = BTreeMap::<u64, BTreeMap<InstrumentId, i64>>::new();
+    if rates.values().any(|rate| *rate != 0) {
+        let first = start
+            .checked_div(FUNDING_INTERVAL_MS)
+            .and_then(|period| period.checked_add(1))
+            .and_then(|period| period.checked_mul(FUNDING_INTERVAL_MS))
+            .ok_or_else(|| qx_core::QxError::BusinessViolation("资金费结算时间溢出".into()))?;
+        if first <= end {
+            let count = (end - first) / FUNDING_INTERVAL_MS + 1;
+            if count > MAX_FUNDING_SETTLEMENTS {
+                return Err(qx_core::QxError::BusinessViolation(format!(
+                    "资金费结算次数 {count} 超过上限 {MAX_FUNDING_SETTLEMENTS}"
+                )));
+            }
+            let mut ts = first;
+            while ts <= end {
+                events.insert(
+                    ts,
+                    rates
+                        .iter()
+                        .filter(|(_, rate)| **rate != 0)
+                        .map(|(instrument, rate)| (instrument.clone(), *rate))
+                        .collect(),
+                );
+                let Some(next) = ts.checked_add(FUNDING_INTERVAL_MS) else {
+                    break;
+                };
+                ts = next;
+            }
+        }
+    }
+    for event in funding_events
+        .iter()
+        .filter(|event| event.settlement_ts > start && event.settlement_ts <= end)
+    {
+        let settlements = events.entry(event.settlement_ts).or_default();
+        if settlements.contains_key(&event.instrument) {
+            return Err(qx_core::QxError::BusinessViolation(format!(
+                "资金费事件与常量资金费率在同一结算点冲突: instrument={}, settlement_ts={}",
+                event.instrument, event.settlement_ts
+            )));
+        }
+        settlements.insert(event.instrument.clone(), event.rate_bps);
+    }
+    if events.len() as u64 > MAX_FUNDING_SETTLEMENTS {
+        return Err(qx_core::QxError::BusinessViolation(format!(
+            "资金费结算次数 {} 超过上限 {MAX_FUNDING_SETTLEMENTS}",
+            events.len()
+        )));
     }
     Ok(events)
 }

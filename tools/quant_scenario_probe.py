@@ -954,6 +954,28 @@ def main() -> int:
         ],
     )
 
+    executed(
+        "multileg_historical_funding_rates",
+        "多腿执行期应用逐标的历史资金费率事件并校验不同正负费率的回放",
+        "crates/qx-xingban/src/backtest/portfolio_session/funding.rs",
+        [
+            "test", "--offline", "-p", "qx-xingban",
+            "historical_funding_events_apply_each_signed_rate_at_its_own_settlement",
+            "--", "--test-threads=1",
+        ],
+        r"(test result: ok\. 1 passed; 0 failed)",
+        extra="variable_signed_rates=true distinct_utc_settlements=true shared_ledger=true replay_verified=true",
+        evidence=[
+            "crates/qx-xingban/src/backtest/portfolio_session/funding.rs",
+            "crates/qx-xingban/src/backtest/portfolio_session_tests.rs",
+            "crates/qx-app/src/spec/multi_leg.rs",
+            "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
+            "python/qianxing/app.py",
+            "python/tests/test_app_use_cases.py",
+        ],
+        command_prefix="cargo",
+    )
+
     depth_portfolio_run_id = f"probe-depth-portfolio-{time.time_ns()}"
     depth_portfolio_spec = {
         "schema_version": 1,

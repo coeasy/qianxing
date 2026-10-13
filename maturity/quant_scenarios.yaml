@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791915743
+generated_at_unix: 1791917163
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -172,7 +172,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=e45a847f6babd3e0/5f8882e2698427d2,081aa46125ed4ade/5e8e6d3f55c4e026,b3d38135903a3153/332be3ec7e56da67,b20109a5fdd1c809/95ce7ffea7c45c1b"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=7c159303bc157805/e231b019ce971797,5431bfe31d485f43/865a0093e4f12c17,15b08994f09d8f7e/40308e3c7d631ff6,60994e5b09cdf694/1f336dfe3928e856"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -214,6 +214,14 @@ scenarios:
     exit_code: 0
     observed: "42; result_hash=481f9732e9e794ab"
     evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
+  - name: multileg_historical_funding_rates
+    label: "多腿执行期应用逐标的历史资金费率事件并校验不同正负费率的回放"
+    status: executed
+    anchor: "crates/qx-xingban/src/backtest/portfolio_session/funding.rs"
+    command: "cargo test --offline -p qx-xingban historical_funding_events_apply_each_signed_rate_at_its_own_settlement -- --test-threads=1"
+    exit_code: 0
+    observed: "test result: ok. 1 passed; 0 failed; variable_signed_rates=true distinct_utc_settlements=true shared_ledger=true replay_verified=true"
+    evidence: ["crates/qx-xingban/src/backtest/portfolio_session/funding.rs", "crates/qx-xingban/src/backtest/portfolio_session_tests.rs", "crates/qx-app/src/spec/multi_leg.rs", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: depth_strategy_portfolio
     label: "L2 多策略共享 OMS/撮合/账簿与策略额度归因"
     status: executed

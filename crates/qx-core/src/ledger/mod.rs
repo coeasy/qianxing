@@ -10,6 +10,9 @@ use crate::trading::PositionSide;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// UTC funding settlement cadence used by the normalized perpetual market contract.
+pub const FUNDING_INTERVAL_MS: u64 = 8 * 60 * 60 * 1_000;
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum LedgerEntryKind {
     TradeCash,
@@ -44,6 +47,14 @@ pub struct LedgerEntry {
     /// Hedge 模式下记录 Long/Short 分仓；None 表示传统 OneWay 净仓。
     #[serde(default)]
     pub position_side: Option<PositionSide>,
+}
+
+/// A timestamped funding rate declared by a historical market-data source.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FundingRateEvent {
+    pub instrument: InstrumentId,
+    pub settlement_ts: u64,
+    pub rate_bps: i64,
 }
 
 /// Funding cashflow together with the derivative exposure and mark that produced it.

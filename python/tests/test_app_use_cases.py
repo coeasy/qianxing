@@ -2742,6 +2742,7 @@ class AppUseCaseTests(unittest.TestCase):
         from qianxing import (
             BuiltinStrategySpec,
             ExperimentParameterSpace,
+            FundingRateEvent,
             InstrumentId,
             MultiLegBacktestSpec,
             RunMultiLegExperimentSpec,
@@ -2850,6 +2851,20 @@ class AppUseCaseTests(unittest.TestCase):
             output_dir=str(self.output_dir / "custom-pair"),
             seed=7,
             strategy=BuiltinStrategySpec(kind="pairs_arbitrage", strategy_id="python-custom-pair"),
+            primary_market_spec=derivative_spec("BTCUSDT.BINANCE", False, 1_000_000_000),
+            reference_market_spec=derivative_spec("ETHUSDT.BINANCE", False, 1_000_000_000),
+            funding_events=(
+                FundingRateEvent(
+                    instrument=InstrumentId(symbol="BTCUSDT", venue="BINANCE"),
+                    settlement_ts=8 * 60 * 60 * 1_000,
+                    rate_bps=100,
+                ),
+                FundingRateEvent(
+                    instrument=InstrumentId(symbol="BTCUSDT", venue="BINANCE"),
+                    settlement_ts=16 * 60 * 60 * 1_000,
+                    rate_bps=-50,
+                ),
+            ),
         )
         callback = CustomPairStrategy()
         callback_outcome = run_multi_leg_backtest_with_strategy(
@@ -2861,6 +2876,14 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertGreater(callback_outcome.primary_fills, 0)
         self.assertGreater(callback_outcome.reference_fills, 0)
+        callback_artifact = json.loads(
+            Path(callback_outcome.attribution_artifact).read_text(encoding="utf-8")
+        )
+        self.assertTrue(
+            {8 * 60 * 60 * 1_000, 16 * 60 * 60 * 1_000}.issubset(
+                {event["ts"] for event in callback_artifact["execution_funding_events"]}
+            )
+        )
         expected_callbacks = sum(
             len(json.loads(Path(path).read_text(encoding="utf-8"))["ts"]) - 1
             for path in (payload["primary_bars_path"], payload["reference_bars_path"])

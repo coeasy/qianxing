@@ -363,4 +363,13 @@ Python 十策略证据：
 - 第三轮跨语言与同刻事件检查发现 funding 若使用 APPLY 优先级，遇到同刻 Bar 决策命令会导致 EventLog 优先级回退；改为 TIMER 后，Python typed SDK 对真实双腿 fixture 的负费率请求也通过同一 Rust 应用用例。测试同时检查资金费进入事件日志与产物，不依赖单纯类型/字段存在。
 - 量化场景探针已执行 49 项：49 executed、0 declared_not_executed、0 missing、1 blocked；没有网络访问或发送订单。Classic strategy 场景仍观察到单腿 13 个 Python 快速选择候选、L2 10 个经典策略候选。唯一 blocked 仍是需要外部 CCXT、真实 testnet 凭据与订单生命周期的交易所实盘认证。
 - 验证：`cargo test --offline -p qx-core` 通过；`cargo test --offline -p qx-xingban` 113 单测及集成测试通过，另有显式 0 bps 现货边界测试通过；`cargo test --offline -p qx-app --lib` 123/123；`cargo test --offline -p qx-cli multi_leg` 中 CLI 单测与 CLI/HTTP/Python 多腿入口回归通过；`cargo test --offline -p qx-sdk` 6 单测及 27 独立消费者/集成用例通过；Python 全量 140/140；`cargo build --offline -p qx-python` 通过；严格 Clippy 与格式检查通过。资金费专用场景证实正费率扣减、负费率收取、策略读到结算后的现金和 ReplayVerifier 重放。
-- 资金模型仍是调用方提供的常量 bps，不含逐时 funding 历史、交易所特定 funding 时间表、跨币种 funding 或真实 venue 账单核对；共享 Bar 多腿仍仅限同一账户双腿。跨账户组合风险、完整 Paper/Live 多市场工作流、远端策略 callback、C++ 默认 transport、Web/桌面端到端与全平台安装认证未完成。整体发布门继续关闭，外部 testnet 能力保持未认证。
+- 本节当时的资金模型是调用方提供的常量 bps；后续历史事件能力见 §46。共享 Bar 多腿仍仅限同一账户双腿。跨账户组合风险、完整 Paper/Live 多市场工作流、远端策略 callback、C++ 默认 transport、Web/桌面端到端与全平台安装认证未完成。整体发布门继续关闭，外部 testnet 能力保持未认证。
+
+## 46. 2026-10-14 实现：逐标的历史资金费率事件
+
+- 第一轮扩展检查发现常量资金费率无法表达交易所历史 funding rate 的逐次正负变化。`qx-core::FundingRateEvent` 现在统一携带标的、UTC 8 小时结算时间与 bps 费率；共享 Bar session 可按实际事件率调度、用结算前最后可见标记价计算，并将现金流记入同一 Ledger/EventLog 和多腿腿级归因。
+- 第二轮输入安全检查补上重复 `(instrument, settlement_ts)`、非结算边界、超范围 bps、未知标的、现货非零费率、常量与历史费率混用及超过 100,000 条事件的拒绝；事件序列按稳定时间线执行，未落在当前回测区间的历史事件不产生现金流。
+- 第三轮多语言检查将 `funding_events` 作为向后兼容的可选字段加入 `MultiLegBacktestSpec` 和 Python typed `FundingRateEvent`，Rust/Python 都调用相同 `qx-app` 与 `PortfolioBarEngine`；Python callback fixture 实测两个结算点使用不同符号费率，产物中事件时间戳与 EventLog LedgerApplied 项可核对。
+- 场景探针已执行 50 项：50 executed、0 declared_not_executed、0 missing、1 blocked；新增场景通过命令实际运行 Rust session 测试，确认两个不同结算点的正负费率进入共享账簿并可重放。唯一 blocked 是外部 CCXT/testnet 交易所订单生命周期验收。
+- 验证：`cargo test --offline -p qx-xingban` 116 单测及集成通过；`cargo test --offline -p qx-app --lib` 123/123；`cargo test --offline -p qx-sdk` 6 单测及 27 独立消费者/集成用例通过；Python 全量 `python -m pytest python/tests -q` 140/140；Python typed 多腿回归与 13 项 SDK 分层测试通过；`cargo build --offline -p qx-python`、严格 Clippy、格式检查和 `git diff --check` 通过。
+- 当前能力支持调用方提供历史费率事件，但尚未从交易所 funding-history Provider 自动取数，也没有 venue 专属结算时间表、跨币种 funding 或外部账单对账；常量 `funding_bps` 继续兼容旧 spec。实盘 testnet、跨账户组合风险、Paper/Live 多市场工作流、远端策略回调、C++ 默认 transport、Web/桌面端到端与全平台安装认证仍未完成。

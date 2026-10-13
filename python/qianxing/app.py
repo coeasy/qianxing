@@ -990,6 +990,21 @@ class TradingInstrumentSpec:
 
 
 @dataclass(frozen=True)
+class FundingRateEvent:
+    """Historical derivative funding rate applied at its UTC 8-hour settlement."""
+
+    instrument: InstrumentId | dict[str, str]
+    settlement_ts: int
+    rate_bps: int
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        if isinstance(self.instrument, InstrumentId):
+            value["instrument"] = self.instrument.to_dict()
+        return value
+
+
+@dataclass(frozen=True)
 class MultiLegBacktestSpec:
     run_id: str
     primary_bars_path: str
@@ -1009,12 +1024,20 @@ class MultiLegBacktestSpec:
     reference_maker_fee_bps: int | None = None
     reference_taker_fee_bps: int | None = None
     funding_bps: int = 0
+    funding_events: tuple[FundingRateEvent | dict[str, Any], ...] = ()
     fill_model: Literal["next_bar_open", "best_price", "one_tick_slippage"] = "next_bar_open"
     schema_version: int = 1
     account_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {**asdict(self), "strategy": self.strategy.to_dict()}
+        if self.funding_events:
+            payload["funding_events"] = [
+                event.to_dict() if isinstance(event, FundingRateEvent) else dict(event)
+                for event in self.funding_events
+            ]
+        else:
+            payload.pop("funding_events", None)
         if self.account_id is None:
             payload.pop("account_id")
         return payload

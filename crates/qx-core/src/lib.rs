@@ -50,8 +50,8 @@ pub use self::identity::{
     CanonicalProduct, InstrumentId, MarketId, VenueId, DEFAULT_SETTLEMENT_CURRENCY,
 };
 pub use self::ledger::{
-    ConvertibleBondConversion, CorporateAction, InstrumentFunding, Ledger, LedgerEntry,
-    LedgerEntryKind, PositionState, RightsIssueEvent,
+    ConvertibleBondConversion, CorporateAction, FundingRateEvent, InstrumentFunding, Ledger,
+    LedgerEntry, LedgerEntryKind, PositionState, RightsIssueEvent, FUNDING_INTERVAL_MS,
 };
 pub use self::numeric::{Fixed, Money, Price, Quantity, SCALE};
 pub use self::order::{Fill, Order, OrderStatus, OrderTrace, Side};

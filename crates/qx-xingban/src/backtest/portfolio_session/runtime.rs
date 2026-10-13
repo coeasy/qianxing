@@ -44,3 +44,30 @@ pub(super) fn build_runtime<'a>(
     }
     runtime
 }
+
+pub(super) fn initialize_ledger(
+    account_id: &str,
+    currency: &str,
+    initial_cash: Money,
+    start: u64,
+) -> Result<(Ledger, EventLog), qx_core::QxError> {
+    let mut ledger = Ledger::new();
+    let deposit_id = ledger.deposit(account_id, currency, initial_cash, start)?;
+    let deposit_entry = ledger
+        .entries()
+        .iter()
+        .find(|entry| entry.id == deposit_id)
+        .cloned()
+        .ok_or_else(|| qx_core::QxError::Invariant("共享 Bar session 缺少初始入金".into()))?;
+    let mut log = EventLog::new();
+    let seq = log.alloc_seq();
+    log.append(Event::new(
+        seq,
+        start,
+        qx_core::Priority::APPLY,
+        EventKind::LedgerApplied {
+            entry: deposit_entry,
+        },
+    ));
+    Ok((ledger, log))
+}

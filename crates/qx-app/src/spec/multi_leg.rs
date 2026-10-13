@@ -2,7 +2,7 @@
 
 use super::{is_identity_token, BuiltinStrategySpec};
 use crate::error::{AppError, AppErrorCategory};
-use qx_core::TradingInstrumentSpec;
+use qx_core::{FundingRateEvent, TradingInstrumentSpec};
 use serde::{Deserialize, Serialize};
 
 pub const MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION: u32 = 1;
@@ -51,6 +51,9 @@ pub struct MultiLegBacktestSpec {
     /// Signed derivative funding rate in bps per UTC 8-hour settlement.
     /// Settlements affect the shared Rust Ledger and replay before callbacks at that time.
     pub funding_bps: i64,
+    /// Timestamped historical funding rates. A market cannot mix this series with nonzero `funding_bps`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub funding_events: Vec<FundingRateEvent>,
     #[serde(default)]
     pub fill_model: MultiLegFillModel,
     /// Shared owner for both legs. Omitted derives one stable account identity from `run_id`.
@@ -99,6 +102,7 @@ impl MultiLegBacktestSpec {
             reference_maker_fee_bps: None,
             reference_taker_fee_bps: None,
             funding_bps: 0,
+            funding_events: Vec::new(),
             fill_model: MultiLegFillModel::default(),
             account_id: None,
         }
@@ -184,6 +188,24 @@ impl MultiLegBacktestSpec {
                 AppErrorCategory::InvalidInput,
                 "多腿 funding_bps 必须在 -10000..=10000",
             ));
+        }
+        if self.funding_events.len() > 100_000 {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "多腿 funding_events 数量不得超过 100000",
+            ));
+        }
+        let mut funding_event_ids = std::collections::BTreeSet::new();
+        for event in &self.funding_events {
+            if !(-10_000..=10_000).contains(&event.rate_bps)
+                || event.settlement_ts % qx_core::FUNDING_INTERVAL_MS != 0
+                || !funding_event_ids.insert((event.instrument.clone(), event.settlement_ts))
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "多腿 funding_events 费率、UTC 8 小时结算时间或唯一性无效",
+                ));
+            }
         }
         if self.strategy.target_available_margin_bps.is_some()
             || self.strategy.target_volatility_bps.is_some()

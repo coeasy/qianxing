@@ -254,6 +254,7 @@ pub(super) fn run_inner(
             initial_cash: Money::from_raw(initial_cash_raw),
             risk: qx_zhenlu::RiskGate::conservative_default(),
             funding_bps: funding_rates,
+            funding_events: spec.funding_events.clone(),
         },
         markets,
     )

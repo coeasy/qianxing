@@ -122,6 +122,7 @@ fn run_with_priorities(btc_priority: u32, eth_priority: u32) -> PortfolioBarSess
             initial_cash: Money::from_raw(1_000 * SCALE),
             risk: RiskGate::conservative_default(),
             funding_bps: BTreeMap::new(),
+            funding_events: Vec::new(),
         },
         vec![
             market(btc.clone(), btc_priority, &btc_bars, "BTC"),
@@ -201,6 +202,7 @@ fn explicit_zero_funding_rate_is_valid_for_a_spot_market() {
             initial_cash: Money::from_raw(1_000 * SCALE),
             risk: RiskGate::conservative_default(),
             funding_bps: [(btc.clone(), 0)].into_iter().collect(),
+            funding_events: Vec::new(),
         },
         vec![market(btc, 0, &bars, "BTC"), market(eth, 1, &bars, "ETH")],
     )
@@ -298,6 +300,7 @@ fn derivative_funding_is_applied_to_shared_ledger_before_later_callbacks_and_rep
             initial_cash: Money::from_raw(1_000 * SCALE),
             risk: RiskGate::conservative_default(),
             funding_bps: BTreeMap::from([(instrument.clone(), 100)]),
+            funding_events: Vec::new(),
         },
         vec![
             derivative,
@@ -348,6 +351,7 @@ fn derivative_funding_is_applied_to_shared_ledger_before_later_callbacks_and_rep
             initial_cash: Money::from_raw(1_000 * SCALE),
             risk: RiskGate::conservative_default(),
             funding_bps: BTreeMap::from([(instrument.clone(), -100)]),
+            funding_events: Vec::new(),
         },
         vec![
             derivative,
@@ -370,4 +374,122 @@ fn derivative_funding_is_applied_to_shared_ledger_before_later_callbacks_and_rep
         1_001 * SCALE
     );
     negative_report.verify().unwrap();
+}
+
+#[test]
+fn historical_funding_events_apply_each_signed_rate_at_its_own_settlement() {
+    let first_settlement = qx_core::FUNDING_INTERVAL_MS;
+    let second_settlement = 2 * qx_core::FUNDING_INTERVAL_MS;
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let bars = [
+        Bar::new(1, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, SCALE),
+        Bar::new(2, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, SCALE),
+        Bar::new(
+            first_settlement,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            SCALE,
+        ),
+        Bar::new(
+            second_settlement + 1,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            SCALE,
+        ),
+    ];
+    let mut derivative = market(instrument.clone(), 0, &bars, "BTC");
+    derivative.spec.product = TradingProduct::Perpetual;
+    derivative.spec.linear = true;
+    derivative.spec.max_leverage = 10;
+    derivative.spec.maintenance_margin_bps = 500;
+    let second_instrument = InstrumentId::parse("ETHUSDT.KRAKEN").unwrap();
+    let second_bars = bars;
+    let engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: "shared-account".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_raw(1_000 * SCALE),
+            risk: RiskGate::conservative_default(),
+            funding_bps: BTreeMap::new(),
+            funding_events: vec![
+                qx_core::FundingRateEvent {
+                    instrument: instrument.clone(),
+                    settlement_ts: first_settlement,
+                    rate_bps: 100,
+                },
+                qx_core::FundingRateEvent {
+                    instrument: instrument.clone(),
+                    settlement_ts: second_settlement,
+                    rate_bps: -50,
+                },
+            ],
+        },
+        vec![
+            derivative,
+            market(second_instrument, 1, &second_bars, "ETH"),
+        ],
+    )
+    .unwrap();
+    let mut strategy = BuyDerivativeOnce {
+        instrument: instrument.clone(),
+        submitted: false,
+        observed_cash: Vec::new(),
+    };
+    let report = engine.run(&mut strategy).unwrap();
+    assert_eq!(
+        report.funding_events_by_instrument[&instrument],
+        vec![(first_settlement, -SCALE), (second_settlement, SCALE / 2)]
+    );
+    assert_eq!(report.funding_by_instrument_raw[&instrument], -SCALE / 2);
+    assert!(strategy.observed_cash.contains(&(999 * SCALE)));
+    assert!(strategy.observed_cash.contains(&(999 * SCALE + SCALE / 2)));
+    report.verify().unwrap();
+}
+
+#[test]
+fn historical_funding_events_reject_nonzero_spot_rates_before_execution() {
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth = InstrumentId::parse("ETHUSDT.KRAKEN").unwrap();
+    let bars = [Bar::new(
+        1,
+        100 * SCALE,
+        101 * SCALE,
+        99 * SCALE,
+        100 * SCALE,
+        SCALE,
+    )];
+    let engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: "shared-account".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_raw(1_000 * SCALE),
+            risk: RiskGate::conservative_default(),
+            funding_bps: BTreeMap::new(),
+            funding_events: vec![qx_core::FundingRateEvent {
+                instrument: btc.clone(),
+                settlement_ts: qx_core::FUNDING_INTERVAL_MS,
+                rate_bps: 1,
+            }],
+        },
+        vec![
+            market(btc.clone(), 0, &bars, "BTC"),
+            market(eth, 1, &bars, "ETH"),
+        ],
+    )
+    .unwrap();
+    let mut strategy = SubmitBoth {
+        first: btc,
+        second: InstrumentId::parse("ETHUSDT.KRAKEN").unwrap(),
+        emitted: false,
+        fills: Vec::new(),
+    };
+    let error = match engine.run(&mut strategy) {
+        Ok(_) => panic!("nonzero funding cannot be posted to a spot instrument"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, qx_core::QxError::BusinessViolation(_)));
 }
