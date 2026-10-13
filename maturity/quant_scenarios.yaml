@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791924527
+generated_at_unix: 1791928304
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -169,7 +169,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_market_experiment.rs"
     command: "cargo test --offline -p qx-app --lib multi_market_parameter_grid_runs_shared_engine_ranks_and_reuses_identity -- --nocapture"
     exit_code: 0
-    observed: "4 个参数/策略候选共用多市场 Rust 引擎；报告排序稳定、相同身份幂等复用、同步与 RunHandle 结果均成功"
+    observed: "test result: ok. 1 passed; 0 failed; candidates=4 shared_engine=true stable_ranking=true idempotent=true sync=true run_handle=true"
     evidence: ["crates/qx-app/src/cases/run_multi_market_experiment.rs", "crates/qx-app/src/tests/multi_market_experiment.rs", "crates/qx-app/src/cases/run_multi_market_backtest.rs"]
   - name: multi_market_experiment_language_parity
     label: "CLI/HTTP/Python 本地多市场参数实验同用例语义一致"
@@ -177,7 +177,7 @@ scenarios:
     anchor: "crates/qx-cli/tests/app_three_entrypoints/multi_market_experiment.rs"
     command: "cargo test --offline -p qx-cli --test app_three_entrypoints multi_market_parameter_experiment_is_shared_by_cli_http_and_python -- --nocapture"
     exit_code: 0
-    observed: "CLI、HTTP、Python 本地扩展同规格语义一致：succeeded_candidates=4、ranking_rows=4、哈希一致；异步 HTTP RunHandle 返回终态报告"
+    observed: "test result: ok. 1 passed; 0 failed; CLI_HTTP_Python parity=true candidates=4 ranking_hashes_equal=true async_http_run_handle=true"
     evidence: ["crates/qx-cli/tests/app_three_entrypoints/multi_market_experiment.rs", "crates/qx-api/src/app_surface.rs", "python/qianxing_bridge/app.py", "cpp/include/qianxing_app.hpp"]
   - name: pairs_arbitrage
     label: "配对统计套利"
@@ -220,7 +220,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=045bf50f186ac19c/72bd658df3ba2f9a,e2a8f4f97d3997ae/bdbfb501dfb6249a,98213c7cd124b4c3/acf3ea2d231bc2e3,c8617276f5b8f3cd/4a11c1c797452643"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=86244fde05b4fe64/4ed05e2b1afd8ebe,99e92a9fcc722212/2ef78703dbfcc762,20570a2405e10adb/c0993570c88e21a7,9c4e48ebadba30d5/a224f9df089cc63f"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"

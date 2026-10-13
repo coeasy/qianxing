@@ -801,6 +801,49 @@ def main() -> int:
             ],
         })
 
+    def executed_multi_market_parameter_experiment_test():
+        executed(
+            "multi_market_parameter_experiment",
+            "共享账簿多市场参数/策略网格实验及 RunHandle",
+            "crates/qx-app/src/cases/run_multi_market_experiment.rs",
+            [
+                "test", "--offline", "-p", "qx-app", "--lib",
+                "multi_market_parameter_grid_runs_shared_engine_ranks_and_reuses_identity",
+                "--", "--nocapture",
+            ],
+            r"(test result: ok\. 1 passed; 0 failed)",
+            env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+            extra="candidates=4 shared_engine=true stable_ranking=true idempotent=true sync=true run_handle=true",
+            evidence=[
+                "crates/qx-app/src/cases/run_multi_market_experiment.rs",
+                "crates/qx-app/src/tests/multi_market_experiment.rs",
+                "crates/qx-app/src/cases/run_multi_market_backtest.rs",
+            ],
+            command_prefix="cargo",
+        )
+
+    def executed_multi_market_experiment_language_parity_test():
+        executed(
+            "multi_market_experiment_language_parity",
+            "CLI/HTTP/Python 本地多市场参数实验同用例语义一致",
+            "crates/qx-cli/tests/app_three_entrypoints/multi_market_experiment.rs",
+            [
+                "test", "--offline", "-p", "qx-cli", "--test", "app_three_entrypoints",
+                "multi_market_parameter_experiment_is_shared_by_cli_http_and_python",
+                "--", "--nocapture",
+            ],
+            r"(test result: ok\. 1 passed; 0 failed)",
+            env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+            extra="CLI_HTTP_Python parity=true candidates=4 ranking_hashes_equal=true async_http_run_handle=true",
+            evidence=[
+                "crates/qx-cli/tests/app_three_entrypoints/multi_market_experiment.rs",
+                "crates/qx-api/src/app_surface.rs",
+                "python/qianxing_bridge/app.py",
+                "cpp/include/qianxing_app.hpp",
+            ],
+            command_prefix="cargo",
+        )
+
     def executed_paper_cross_currency_fx_test():
         nonlocal failures
         argv = [
@@ -862,6 +905,8 @@ def main() -> int:
     executed_multi_market_python_strategy_slots_test()
     executed_multi_market_rust_strategy_slots_test()
     executed_multi_market_http_routes_test()
+    executed_multi_market_parameter_experiment_test()
+    executed_multi_market_experiment_language_parity_test()
 
     for name, label, kind in MULTI_LEG_SCENARIOS:
         executed(
@@ -1551,7 +1596,7 @@ def main() -> int:
         "Rust SDK 固定提交 Git 安装与仓外消费者运行",
         "tools/check_rust_sdk_git_consumer.py",
         ["tools/check_rust_sdk_git_consumer.py"],
-        r"(rust_sdk_git_consumer=passed fills=\d+ remote_paper_lifecycle=4 event_cursor_reads=1 result_hash=\w+)",
+        r"(rust_sdk_git_consumer=passed fills=\d+ multi_market_candidates=\d+ remote_paper_lifecycle=4 event_cursor_reads=1 result_hash=\w+)",
         # Cargo's embedded Git fetch can fail to create pack temp files on Windows;
         # the CLI Git backend uses the same pinned revision without that cache issue.
         env_extra={"CARGO_NET_GIT_FETCH_WITH_CLI": "true"},
