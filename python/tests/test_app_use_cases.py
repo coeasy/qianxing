@@ -70,6 +70,8 @@ def _load_native():
                 "app_start_depth_backtest_with_strategy_slots",
                 "app_run_multi_account_backtest",
                 "app_start_multi_account_backtest",
+                "app_run_multi_account_depth_backtest",
+                "app_start_multi_account_depth_backtest",
                 "app_start_backtest",
                 "app_verify_run",
                 "app_compare_runs",
@@ -129,6 +131,7 @@ class AppUseCaseTests(unittest.TestCase):
         for wrapper, entrypoint in (
             ("start_backtest", "app_start_backtest"),
             ("start_multi_account_backtest", "app_start_multi_account_backtest"),
+            ("start_multi_account_depth_backtest", "app_start_multi_account_depth_backtest"),
             ("start_experiment", "app_start_experiment"),
             ("start_depth_backtest", "app_start_depth_backtest"),
             ("start_depth_experiment", "app_start_depth_experiment"),
@@ -2296,6 +2299,75 @@ class AppUseCaseTests(unittest.TestCase):
         typed_result = typed_handle.result()
         self.assertEqual(typed_result.summary["accounts_succeeded"], 2)
         self.assertIsNone(typed_handle.result(), "typed batch result is delivered once")
+
+    def test_multi_account_depth_batch_uses_shared_rust_kernel_and_typed_sdk(self):
+        self._require()
+        from qianxing_bridge.native import app_available
+
+        self.assertTrue(app_available(), "depth batch functions must pass the generation probe")
+        depth = self.root / "deploy" / "qianxing.depth-frame.l1.example.json"
+        depth_b = self.output_dir / "eth-okx-depth.json"
+        depth_b.write_text(
+            depth.read_text(encoding="utf-8").replace("BTCUSDT", "ETHUSDT").replace("BINANCE", "OKX"),
+            encoding="utf-8",
+        )
+        def member(account: str, run_id: str, data_path: Path = depth) -> dict[str, Any]:
+            return {
+                "schema_version": 1,
+                "run_id": run_id,
+                "account_id": account,
+                "depth_path": str(data_path),
+                "tier": "l1",
+                "settlement_currency": "USDT",
+                "initial_cash_raw": 1_000_000_000_000_000,
+                "fee_bps": 0,
+                "latency_snapshots": 0,
+                "queue_position_bps": 0,
+                "market_impact_bps": 0,
+                "output_dir": str(self.output_dir / account),
+                "strategy": {
+                    "kind": "sma_cross",
+                    "strategy_id": f"{account}-depth-sma",
+                    "quantity_raw": 1_000_000_000,
+                    "fast_window": 2,
+                    "slow_window": 3,
+                },
+            }
+        payload = {
+            "schema_version": 1,
+            "batch_id": "python-depth-multi-account",
+            "runs": [member("account-b", "depth-account-b", depth_b), member("account-a", "depth-account-a")],
+        }
+        result = self.bridge.run_multi_account_depth_backtest(payload)
+        self.assertEqual([run["account_id"] for run in result["runs"]], ["account-a", "account-b"])
+        self.assertEqual(result["summary"]["accounts_succeeded"], 2)
+        self.assertGreater(result["summary"]["successful_fills"], 0)
+        self.assertEqual(result["runs"][0]["outcome"]["instrument"], "BTCUSDT.BINANCE")
+        self.assertEqual(result["runs"][1]["outcome"]["instrument"], "ETHUSDT.OKX")
+
+        handle = self.bridge.start_multi_account_depth_backtest(payload)
+        self.assertEqual(handle.wait(10_000), "succeeded")
+        self.assertEqual(json.loads(handle.result_json())["summary"]["accounts_succeeded"], 2)
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import (
+            BuiltinStrategySpec, DepthBacktestSpec, MultiAccountDepthBacktestSpec,
+            start_multi_account_depth_backtest,
+        )
+        typed_run = lambda account, run_id: DepthBacktestSpec(
+            run_id=run_id, account_id=account, depth_path=str(depth), tier="l1",
+            settlement_currency="USDT", initial_cash_raw=1_000_000_000_000_000,
+            output_dir=str(self.output_dir / f"typed-{account}"),
+            strategy=BuiltinStrategySpec(kind="sma_cross", strategy_id=f"{account}-typed",
+                quantity_raw=1_000_000_000, fast_window=2, slow_window=3),
+        )
+        typed_spec = MultiAccountDepthBacktestSpec(
+            batch_id="python-typed-depth-multi-account",
+            runs=(typed_run("typed-a", "typed-depth-a"), typed_run("typed-b", "typed-depth-b")),
+        )
+        typed_handle = start_multi_account_depth_backtest(typed_spec)
+        self.assertEqual(typed_handle.wait(10_000), "succeeded")
+        self.assertEqual(typed_handle.result().summary["accounts_succeeded"], 2)
 
     def test_multi_leg_backtest_uses_the_shared_rust_application_flow_and_handle(self):
         self._require()

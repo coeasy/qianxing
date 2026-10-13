@@ -14,17 +14,17 @@ use crate::{
 use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, run_backtest, run_depth_backtest,
     run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots, run_depth_experiment,
-    run_experiment, run_multi_account_backtest, run_multi_leg_backtest,
-    run_multi_leg_backtest_with_strategy, run_multi_leg_experiment,
+    run_experiment, run_multi_account_backtest, run_multi_account_depth_backtest,
+    run_multi_leg_backtest, run_multi_leg_backtest_with_strategy, run_multi_leg_experiment,
     start_depth_backtest_with_strategy, start_depth_backtest_with_strategy_slots, validate_dataset,
     verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
     CallerCapability, CapitalAllocationResult, CapitalAllocationSpec, CompareRunsResult,
     CompareRunsSpec, DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
-    MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiLegBacktestOutcome,
-    MultiLegBacktestSpec, RiskParityResult, RiskParitySpec, RunContext, RunDepthExperimentResult,
-    RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec, RunHandle,
-    RunMultiLegExperimentResult, RunMultiLegExperimentSpec, StrategyArtifactIdentity,
-    VerificationResult,
+    MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiAccountDepthBacktestResult,
+    MultiAccountDepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec, RiskParityResult,
+    RiskParitySpec, RunContext, RunDepthExperimentResult, RunDepthExperimentSpec,
+    RunExperimentResult, RunExperimentSpec, RunHandle, RunMultiLegExperimentResult,
+    RunMultiLegExperimentSpec, StrategyArtifactIdentity, VerificationResult,
 };
 use qx_strategy::Strategy;
 
@@ -265,6 +265,22 @@ impl Client {
         &self,
         spec: MultiAccountBacktestSpec,
     ) -> RunHandle<MultiAccountBacktestResult> {
+        spec.start(self.context.clone())
+    }
+
+    /// Run isolated Tick/OrderBook account backtests through the same Rust depth kernel.
+    pub fn run_multi_account_depth_backtest(
+        &self,
+        spec: &MultiAccountDepthBacktestSpec,
+    ) -> Result<MultiAccountDepthBacktestResult, AppError> {
+        run_multi_account_depth_backtest(spec, &self.context)
+    }
+
+    /// Start a cancellable independent-account Tick/OrderBook batch.
+    pub fn start_multi_account_depth_backtest(
+        &self,
+        spec: MultiAccountDepthBacktestSpec,
+    ) -> RunHandle<MultiAccountDepthBacktestResult> {
         spec.start(self.context.clone())
     }
 

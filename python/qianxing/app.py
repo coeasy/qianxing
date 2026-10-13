@@ -389,6 +389,57 @@ class MultiAccountBacktestResult:
 
 
 @dataclass(frozen=True)
+class MultiAccountDepthBacktestSpec:
+    """Bounded independent Tick/OrderBook runs using the shared Rust depth kernel."""
+
+    batch_id: str
+    runs: tuple[DepthBacktestSpec, ...]
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "batch_id": self.batch_id,
+            "runs": [run.to_dict() for run in self.runs],
+        }
+
+
+@dataclass(frozen=True)
+class MultiAccountDepthRunResult:
+    account_id: str
+    outcome: "DepthBacktestOutcome | None"
+    error_json: str | None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiAccountDepthRunResult":
+        outcome = value.get("outcome")
+        return cls(
+            account_id=value["account_id"],
+            outcome=DepthBacktestOutcome.from_dict(outcome) if outcome else None,
+            error_json=value.get("error_json"),
+        )
+
+
+@dataclass(frozen=True)
+class MultiAccountDepthBacktestResult:
+    batch_id: str
+    settlement_currency: str
+    spec_fingerprint: str
+    runs: tuple[MultiAccountDepthRunResult, ...]
+    summary: dict[str, Any]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiAccountDepthBacktestResult":
+        return cls(
+            batch_id=value["batch_id"],
+            settlement_currency=value["settlement_currency"],
+            spec_fingerprint=value["spec_fingerprint"],
+            runs=tuple(MultiAccountDepthRunResult.from_dict(item) for item in value["runs"]),
+            summary=dict(value["summary"]),
+        )
+
+
+@dataclass(frozen=True)
 class DatasetVerdict:
     dataset_id: str
     instrument: str
@@ -1595,6 +1646,16 @@ class AsyncCoreClient:
     ) -> AsyncRunHandle[MultiAccountBacktestResult]:
         return await self._start(start_multi_account_backtest, spec)
 
+    async def async_run_multi_account_depth_backtest(
+        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
+    ) -> MultiAccountDepthBacktestResult:
+        return await asyncio.to_thread(run_multi_account_depth_backtest, spec)
+
+    async def async_start_multi_account_depth_backtest(
+        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
+    ) -> AsyncRunHandle[MultiAccountDepthBacktestResult]:
+        return await self._start(start_multi_account_depth_backtest, spec)
+
     async def async_start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> AsyncRunHandle[MultiLegBacktestOutcome]:
         return await self._start(start_multi_leg_backtest, spec)
 
@@ -2361,6 +2422,28 @@ def start_multi_account_backtest(
     except Exception as exc:
         raise _translate_native_error(exc) from exc
     return RunHandle(native_handle, MultiAccountBacktestResult)
+
+
+def run_multi_account_depth_backtest(
+    spec: MultiAccountDepthBacktestSpec | dict[str, Any],
+) -> MultiAccountDepthBacktestResult:
+    from qianxing_bridge import native
+
+    return MultiAccountDepthBacktestResult.from_dict(
+        json.loads(native.app_run_multi_account_depth_backtest(_encode_payload(spec)))
+    )
+
+
+def start_multi_account_depth_backtest(
+    spec: MultiAccountDepthBacktestSpec | dict[str, Any],
+) -> RunHandle[MultiAccountDepthBacktestResult]:
+    from qianxing_bridge import native
+
+    try:
+        native_handle = native.app_start_multi_account_depth_backtest(_encode_payload(spec))
+    except Exception as exc:
+        _raise_native_error(exc)
+    return RunHandle(native_handle, MultiAccountDepthBacktestResult)
 
 
 def start_multi_leg_backtest(

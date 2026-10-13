@@ -55,6 +55,8 @@ APP_ENTRYPOINTS = (
     "app_start_multi_leg_backtest_with_strategy",
     "app_run_multi_account_backtest",
     "app_start_multi_account_backtest",
+    "app_run_multi_account_depth_backtest",
+    "app_start_multi_account_depth_backtest",
     "app_start_backtest",
     "app_verify_run",
     "app_compare_runs",
@@ -318,6 +320,16 @@ def app_run_multi_account_backtest(spec_json: str) -> str:
 def app_start_multi_account_backtest(spec_json: str) -> Any:
     """Start a multi-account Bar backtest in the shared Rust run lifecycle."""
     return _extension().app_start_multi_account_backtest(spec_json)
+
+
+def app_run_multi_account_depth_backtest(spec_json: str) -> str:
+    """Run isolated Tick/OrderBook accounts through the shared Rust depth kernel."""
+    return str(_extension().app_run_multi_account_depth_backtest(spec_json))
+
+
+def app_start_multi_account_depth_backtest(spec_json: str) -> Any:
+    """Start a cancellable multi-account Tick/OrderBook batch in Rust."""
+    return _extension().app_start_multi_account_depth_backtest(spec_json)
 
 
 def app_start_backtest(spec_json: str) -> Any:

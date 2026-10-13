@@ -151,13 +151,13 @@ scenarios:
     observed: "strategy=builtin-cross_venue_arbitrage-multi groups=3 turnover_raw=192600000000000 fees_raw=96300000000"
     evidence: ["crates/qx-zhenlu/src/lib.rs"]
   - name: multi_account_cross_market_backtest
-    label: "多账户跨市场独立回测"
+    label: "多账户跨市场 Bar 与 Tick/OrderBook 回测"
     status: executed
     anchor: "crates/qx-app/src/cases/run_multi_account_backtest.rs"
     command: "qx-cli app multi-account-backtest .task-tmp/quant-probe/multi-account-spec.json"
     exit_code: 0
-    observed: "16; accounts=2 successful_fills=16"
-    evidence: ["crates/qx-app/src/tests/multi_account_backtest.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs"]
+    observed: "Bar: accounts=2 successful_fills=16; Tick/OrderBook: accounts=2 stable_markets=BTCUSDT.BINANCE,ETHUSDT.OKX"
+    evidence: ["crates/qx-app/src/tests/multi_account_backtest.rs", "crates/qx-app/src/tests/multi_account_depth_backtest.rs", "crates/qx-sdk/tests/multi_account_client.rs", "python/tests/test_app_use_cases.py", "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs"]
   - name: multi_leg_strategy_selection
     label: "四类双腿套利策略选择与确定性批量比较"
     status: executed

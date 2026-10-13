@@ -1,6 +1,8 @@
 //! Deterministic batch backtests over isolated accounts.
 
-use super::{BacktestOutcome, BacktestSpec};
+use super::{
+    is_identity_token, BacktestOutcome, BacktestSpec, DepthBacktestOutcome, DepthBacktestSpec,
+};
 use crate::error::{AppError, AppErrorCategory};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -143,3 +145,6 @@ impl MultiAccountBacktestResult {
         })
     }
 }
+
+mod depth;
+pub use depth::*;

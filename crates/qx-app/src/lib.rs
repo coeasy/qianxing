@@ -27,7 +27,7 @@
 //!
 //! ## 公共面
 //!
-//! - 用例：[`validate_dataset`]、[`run_backtest`]、[`run_multi_account_backtest`]、[`run_depth_backtest`]、[`run_multi_leg_backtest`]、[`run_experiment`]、[`run_multi_leg_experiment`]、[`plan_risk_parity`]、[`verify_run`]、[`verify_depth_run`]、[`compare_runs`]、[`validate_trade_control`]
+//! - 用例：[`validate_dataset`]、[`run_backtest`]、[`run_multi_account_backtest`]、[`run_multi_account_depth_backtest`]、[`run_depth_backtest`]、[`run_multi_leg_backtest`]、[`run_experiment`]、[`run_multi_leg_experiment`]、[`plan_risk_parity`]、[`verify_run`]、[`verify_depth_run`]、[`compare_runs`]、[`validate_trade_control`]
 //! - 输入/输出：[`DatasetSpec`]、[`DatasetVerdict`]、[`BacktestSpec`]、[`BacktestOutcome`]、
 //!   [`VerificationResult`]、[`CompareRunsSpec`]、[`CompareRunsResult`]
 //! - 调用上下文与能力档：[`RunContext`]、[`CallerCapability`]
@@ -53,9 +53,9 @@ mod tests;
 pub use cases::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
     run_depth_backtest, run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots,
-    run_depth_experiment, run_experiment, run_multi_account_backtest, run_multi_leg_backtest,
-    run_multi_leg_backtest_with_strategy, run_multi_leg_experiment,
-    run_provider_backtest_with_manifest, run_provider_depth_backtest,
+    run_depth_experiment, run_experiment, run_multi_account_backtest,
+    run_multi_account_depth_backtest, run_multi_leg_backtest, run_multi_leg_backtest_with_strategy,
+    run_multi_leg_experiment, run_provider_backtest_with_manifest, run_provider_depth_backtest,
     start_depth_backtest_with_strategy, start_depth_backtest_with_strategy_slots, validate_dataset,
     validate_trade_control, verify_depth_run, verify_run, CompareRunsResult, CompareRunsSpec,
     ComparedRun, ComparedRunResult, DepthExperimentCandidate, DepthExperimentRankedCandidate,
@@ -90,12 +90,14 @@ pub use spec::{
     BacktestSpec, BuiltinStrategySpec, CapitalAllocationAccount, CapitalAllocationRequest,
     CapitalAllocationResult, CapitalAllocationSpec, DatasetSpec, DatasetVerdict,
     DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestResult, MultiAccountBacktestSpec,
-    MultiAccountBacktestSummary, MultiAccountRunResult, MultiLegBacktestOutcome,
-    MultiLegBacktestSpec, MultiLegFillModel, PortfolioBacktestConfig, PortfolioStrategySpec,
-    ProtectiveExitSpec, RiskParityAssetSpec, RiskParityResult, RiskParitySpec, VerificationResult,
-    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION,
-    DEPTH_BACKTEST_SPEC_SCHEMA_VERSION, MAX_MULTI_ACCOUNT_RUNS, MIN_BACKTEST_BARS,
-    MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION, MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
-    RISK_PARITY_RESULT_SCHEMA_VERSION, RISK_PARITY_SPEC_SCHEMA_VERSION,
+    MultiAccountBacktestSummary, MultiAccountDepthBacktestResult, MultiAccountDepthBacktestSpec,
+    MultiAccountDepthBacktestSummary, MultiAccountDepthRunResult, MultiAccountRunResult,
+    MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegFillModel, PortfolioBacktestConfig,
+    PortfolioStrategySpec, ProtectiveExitSpec, RiskParityAssetSpec, RiskParityResult,
+    RiskParitySpec, VerificationResult, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+    BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+    MAX_MULTI_ACCOUNT_RUNS, MIN_BACKTEST_BARS, MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION,
+    MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
+    RISK_PARITY_SPEC_SCHEMA_VERSION,
 };
 pub use trade_facts::{rejection_count, rejection_facts, rejection_facts_line, spread_group_id};

@@ -8,9 +8,10 @@ use qx_app::{
     run_experiment, run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset,
     verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
     CallerCapability, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec,
-    MultiAccountBacktestResult, MultiLegBacktestOutcome, MultiLegBacktestSpec, RunContext,
-    RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec,
-    RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec, RunStatus,
+    MultiAccountBacktestResult, MultiAccountDepthBacktestResult, MultiLegBacktestOutcome,
+    MultiLegBacktestSpec, RunContext, RunDepthExperimentResult, RunDepthExperimentSpec,
+    RunExperimentResult, RunExperimentSpec, RunHandle, RunMultiLegExperimentResult,
+    RunMultiLegExperimentSpec, RunStatus,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
@@ -186,6 +187,7 @@ enum NativeRun {
     MultiLeg(RunHandle<MultiLegBacktestOutcome>),
     MultiLegExperiment(RunHandle<RunMultiLegExperimentResult>),
     MultiAccount(RunHandle<MultiAccountBacktestResult>),
+    MultiAccountDepth(RunHandle<MultiAccountDepthBacktestResult>),
 }
 
 #[pyclass(name = "RunHandle")]
@@ -205,6 +207,7 @@ impl PyRunHandle {
             NativeRun::MultiLeg(handle) => handle.run_id(),
             NativeRun::MultiLegExperiment(handle) => handle.run_id(),
             NativeRun::MultiAccount(handle) => handle.run_id(),
+            NativeRun::MultiAccountDepth(handle) => handle.run_id(),
         }
     }
 
@@ -218,6 +221,7 @@ impl PyRunHandle {
             NativeRun::MultiLeg(handle) => handle.status(),
             NativeRun::MultiLegExperiment(handle) => handle.status(),
             NativeRun::MultiAccount(handle) => handle.status(),
+            NativeRun::MultiAccountDepth(handle) => handle.status(),
         })
     }
 
@@ -230,6 +234,7 @@ impl PyRunHandle {
             NativeRun::MultiLeg(handle) => handle.cancel(),
             NativeRun::MultiLegExperiment(handle) => handle.cancel(),
             NativeRun::MultiAccount(handle) => handle.cancel(),
+            NativeRun::MultiAccountDepth(handle) => handle.cancel(),
         }
     }
 
@@ -251,6 +256,7 @@ impl PyRunHandle {
                 NativeRun::MultiLeg(handle) => handle.status(),
                 NativeRun::MultiLegExperiment(handle) => handle.status(),
                 NativeRun::MultiAccount(handle) => handle.status(),
+                NativeRun::MultiAccountDepth(handle) => handle.status(),
             };
             if matches!(
                 status,
@@ -271,30 +277,12 @@ impl PyRunHandle {
         match &mut self.inner {
             NativeRun::Bar(handle) => handle
                 .try_take_result()
-                .map(|result| {
-                    result.and_then(|outcome| {
-                        outcome.to_json().map_err(|e| {
-                            AppError::new(
-                                qx_app::AppErrorCategory::InternalInvariant,
-                                e.to_string(),
-                            )
-                        })
-                    })
-                })
+                .map(|result| result.and_then(|outcome| outcome.to_json()))
                 .transpose()
                 .map_err(app_error),
             NativeRun::Depth(handle) => handle
                 .try_take_result()
-                .map(|result| {
-                    result.and_then(|outcome| {
-                        outcome.to_json().map_err(|e| {
-                            AppError::new(
-                                qx_app::AppErrorCategory::InternalInvariant,
-                                e.to_string(),
-                            )
-                        })
-                    })
-                })
+                .map(|result| result.and_then(|outcome| outcome.to_json()))
                 .transpose()
                 .map_err(app_error),
             NativeRun::DepthExperiment(handle) => handle
@@ -318,6 +306,11 @@ impl PyRunHandle {
                 .transpose()
                 .map_err(app_error),
             NativeRun::MultiAccount(handle) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|outcome| outcome.to_json()))
+                .transpose()
+                .map_err(app_error),
+            NativeRun::MultiAccountDepth(handle) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|outcome| outcome.to_json()))
                 .transpose()

@@ -1550,6 +1550,7 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::start_backtest_with_strategy_slots": "qx-sdk Rust 多 callback 可取消组合回测入口；由外部 SDK 消费者提供具名策略槽",
     "qx-sdk::start_multi_leg_backtest_with_strategy": "qx-sdk Rust 可取消双腿策略运行公开入口；由外部 SDK 消费者实现 Strategy 并调用",
     "qx-sdk::start_multi_leg_experiment_with_strategy_factory": "qx-sdk Rust 可取消多腿策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
+    "qx-sdk::start_multi_account_depth_backtest": "qx-sdk Rust 可取消多账户 Tick/OrderBook 批量入口；由外部 SDK 消费者调用",
     "qx-sdk::run_multi_leg_experiment_with_strategy_factory": "qx-sdk Rust 同步多腿策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-storage::consume_batch_with_projection": "deploy/README 公布为外部 reducer 的原子投影+checkpoint 入口",
     "qx-data::add_component": (
@@ -19082,7 +19083,7 @@ SDK_FACADE_CAPABILITY_GAPS: dict[str, str] = {}
 SDK_FACADE_ASYNC_ENTRY_PATTERN = re.compile(
     r"pub fn start\(self, context: RunContext\) -> (?:crate::)?RunHandle<"
 )
-SDK_FACADE_ASYNC_ENTRY_COUNT = 7
+SDK_FACADE_ASYNC_ENTRY_COUNT = 8
 # 独立消费者只许说门面那一种语言：出现别的前缀就等于"门面漏了一块，集成方还得自己补"。
 SDK_FACADE_FOREIGN_PREFIXES = ("qx_app::", "qx_cli", "qx_api::", "qx_python", "qx_adapter::")
 

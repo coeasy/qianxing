@@ -10,6 +10,7 @@ pub(super) fn events_json(run: &NativeRun, after_seq: u64) -> Result<String, App
         NativeRun::MultiLeg(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiLegExperiment(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiAccount(handle) => handle.events_json_after(after_seq),
+        NativeRun::MultiAccountDepth(handle) => handle.events_json_after(after_seq),
     }
 }
 
