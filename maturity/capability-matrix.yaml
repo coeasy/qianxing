@@ -179,8 +179,8 @@ providers:
     frequency: partial
     depth: unsupported
     precision: implemented-and-verified
-    evidence: [crates/qx-adapter/src/ccxt_provider.rs, python/tests/test_ccxt_provider_adapter.py]
-    limitations: ["历史 Bar 经过 fixture 与 Rust 共享回测验证，真实交易所各自认证仍未完成", "只保留本机接收时间，不能证明历史点时可见性；不提供 realtime、Quote、深度或逐源频率保真认证"]
+    evidence: [crates/qx-adapter/src/ccxt_provider.rs, crates/qx-provider/src/registry.rs, crates/qx-provider/src/tests/bar_failover.rs, python/tests/test_ccxt_provider_adapter.py]
+    limitations: ["历史 Bar 经过 fixture 与 Rust 共享回测验证；Registry 在标准化/质量校验失败时会尝试下一候选并绑定实际 retry_chain，但真实交易所各自认证仍未完成", "不支持的复权与非严格质量语义会在 Provider I/O 前拒绝；只保留本机接收时间，不能证明历史点时可见性；不提供 realtime、Quote、深度或逐源频率保真认证"]
 
   - name: PythonDataProvider
     impl: crates/qx-python/src/provider_bridge.rs
