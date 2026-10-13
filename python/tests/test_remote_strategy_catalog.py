@@ -71,6 +71,7 @@ class RemoteStrategyCatalogTest(unittest.TestCase):
             "requires_reference_leg": False,
         }
         malformed = (
+            [],
             {key: value for key, value in valid.items() if key != "name"},
             {**valid, "name": 42},
             {**valid, "signal_knobs": "fast_window"},

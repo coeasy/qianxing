@@ -197,6 +197,8 @@ _BUILTIN_STRATEGY_INFO_KEYS = frozenset(
 def _parse_builtin_strategy_catalog(value: Any) -> tuple[BuiltinStrategyInfo, ...]:
     if not isinstance(value, list):
         raise TypeError("strategy catalog must be a JSON array")
+    if not value:
+        raise ValueError("strategy catalog must not be empty")
     result: list[BuiltinStrategyInfo] = []
     names: set[str] = set()
     for index, entry in enumerate(value):
