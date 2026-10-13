@@ -255,3 +255,11 @@ Python 十策略证据：
 - 对照 §28 的已测功能与场景探针后发现，量化场景矩阵未单独执行 Python 自定义 Tick/OrderBook 参数工厂；只记录 Rust 内置深度策略选择会漏掉 Python callback 和 async/RunHandle 链路。现为 `tools/quant_scenario_probe.py` 新增 `python_custom_depth_parameter_experiment` 场景，复用同一 Python 原生 SDK 行为测试并从测试输出提取实际观测。
 - 全量 `python tools/quant_scenario_probe.py` 重跑结果：38 项 executed、0 declared_not_executed、0 missing、1 项 blocked。新增场景实测 2 个候选均成功、总成交 2 笔，覆盖每候选新建 factory、RunHandle 与 asyncio 入口。Live testnet 场景继续保持 blocked，不因本地 Paper/回测通过而升级状态。
 - 该更新补足验收登记与可重复执行证据，不新增交易能力；远端 C++/HTTP callback、多市场/跨账户组合风险、完整 Paper/Live 策略工作流、跨平台 Python wheel 和 testnet 认证仍是全量发布的未完成项。
+
+## 30. 2026-10-13 修复：Paper 跨币种账簿现金腿与账户估值
+
+- 发现规格驱动的现货成交仍沿用账户报告币/worker 账簿币记现金腿，导致 EUR 报价市场的买入被记成 USDT/USDC；跨币种 FX 估值即使有正确报价也无法恢复真实现金余额。现货成交现按规格报价币记账，衍生品仍按结算币记账；报价币代码在规格成交路径规范化为大写。
+- Paper 风控从同账户显式配置的 Spot 市场规格读取直接或反向 FX 标记价，将现金及持仓权益转换到报告币。找不到正标价、规格与标的无法对应、报价冲突或所需 FX 缺失时失败关闭；零额币种不再制造无意义的 FX 依赖。该实现目前只支持唯一直接/反向汇率，不做多跳三角换汇。
+- 新增 EUR 报价现货成交与 EUR/USDT FX 标价的 Paper 回归，断言现金账簿币种、市场估值和风险可用权益；增加规格币种大小写归一化回归。
+- 验证：`cargo test --offline -p qx-core` 通过；`cargo test --offline -p qx-cli` 全量 396 个单元测试及应用集成测试通过；`cargo test --offline -p qx-app -p qx-sdk` 通过（122 个应用单元、22 个独立 SDK 消费者及 Provider/多账户消费者）；`cargo test --offline -p qx-api` 通过（65 个单元及全部集成测试）；Python `unittest discover` 通过 136 项、跳过 1 项。跨币种 Paper 专项回归在币种大小写规范化后再次通过。
+- 本修复不关闭全局发布缺口：共享账户下跨市场 Bar 同步回测与统一撮合/风险/账簿仍未形成 SDK 主用例；多腿入口仍是各腿独立模拟，不可描述成同步组合撮合。C++ 本地没有可用 CMake/C++ 编译器，安装包/独立消费者缺少本机验收；Live 真实交易所仍缺 CCXT 运行环境与 testnet 凭据。故整套方案仍未达到全能力发布门槛。

@@ -133,7 +133,11 @@ impl Ledger {
         // 买入扣款/卖出入账的现金语义处理；只有保证金、永续和期货使用
         // “持仓 + 已实现 PnL”路径。
         if spec.product == crate::TradingProduct::Spot {
-            return self.apply_fill_with_multiplier(order, fill, currency, 1);
+            // Spot cash belongs to the instrument's quote asset. The account's
+            // reporting currency is an equity/risk concern and must not change
+            // the currency in which a market fill is booked.
+            let quote_currency = spec.quote_currency.trim().to_ascii_uppercase();
+            return self.apply_fill_with_multiplier(order, fill, &quote_currency, 1);
         }
         if fill.order_id != order.client_id
             || (!fill.account_id.is_empty() && fill.account_id != order.account_id)
@@ -155,8 +159,17 @@ impl Ledger {
         let mut staged = self.clone();
         // 衍生费用只认结算币种：折成结算币种在这里还要过 `contract_size` 与 inverse 口径，
         // 算错的代价比拒记更高，所以现货之外的折算一律不开。
+        let settlement_currency = spec.settlement_currency.trim();
+        if !settlement_currency.eq_ignore_ascii_case(currency.trim()) {
+            return Err(QxError::BusinessViolation(format!(
+                "衍生成交记账币种 {} 与规格结算币种 {settlement_currency} 不一致",
+                currency.trim()
+            )));
+        }
         let fee_raw = fee_in_settlement_raw(fill, currency, None)?;
-        let ids = staged.apply_derivative_fill_inner(order, fill, currency, spec, fee_raw)?;
+        let ledger_currency = settlement_currency.to_ascii_uppercase();
+        let ids =
+            staged.apply_derivative_fill_inner(order, fill, &ledger_currency, spec, fee_raw)?;
         *self = staged;
         Ok(ids)
     }

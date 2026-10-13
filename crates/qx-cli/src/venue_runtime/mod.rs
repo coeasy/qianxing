@@ -14,6 +14,7 @@ mod ccxt_stream_retry;
 mod ccxt_submit;
 mod paper_algo_worker;
 mod paper_submit;
+mod paper_valuation;
 mod paper_worker;
 mod worker_runtime;
 
@@ -29,5 +30,6 @@ pub(crate) use ccxt_stream_retry::*;
 pub(crate) use ccxt_submit::*;
 pub(crate) use paper_algo_worker::*;
 pub(crate) use paper_submit::*;
+pub(crate) use paper_valuation::*;
 pub(crate) use paper_worker::*;
 pub(crate) use worker_runtime::*;

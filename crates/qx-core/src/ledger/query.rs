@@ -4,11 +4,11 @@
 //! 「该用哪把尺子」的派发单源是 [`Ledger::valuate`]（P1-6 估值单点），它在下面按
 //! 规格/汇率选一把原语并叠上保证金占用——调用方不要再自己判断该调哪个 `equity_*`。
 
-use super::{Ledger, LedgerEntry, PositionState};
+use super::{Ledger, PositionState};
 use crate::error::{QxError, QxResult};
 use crate::identity::InstrumentId;
 use crate::numeric::{Money, Price, Quantity, SCALE};
-use crate::trading::{PositionSide, TradingInstrumentSpec};
+use crate::trading::TradingInstrumentSpec;
 use crate::valuation::{ValuationContext, ValuationResult};
 use std::collections::BTreeMap;
 
@@ -110,70 +110,16 @@ impl Ledger {
                 continue;
             }
             let mark = marks.get(instrument)?;
-            total = total.checked_add(position_pnl(position, mark, multiplier)?)?;
+            total = total.checked_add(Ledger::position_pnl(position, mark, multiplier)?)?;
         }
         for ((account, instrument, _), position) in &self.hedge_positions {
             if account != account_id || position.quantity.is_zero() {
                 continue;
             }
             let mark = marks.get(instrument)?;
-            total = total.checked_add(position_pnl(position, mark, multiplier)?)?;
+            total = total.checked_add(Ledger::position_pnl(position, mark, multiplier)?)?;
         }
         Some(total)
-    }
-
-    /// 返回账户所有币种的现金余额，按币种排序，供跨币种抵押品估值使用。
-    pub fn cash_balances_for(&self, account_id: &str) -> BTreeMap<String, i128> {
-        self.cash
-            .iter()
-            .filter(|((account, _), _)| account == account_id)
-            .map(|((_, currency), amount)| (currency.clone(), *amount))
-            .collect()
-    }
-
-    pub fn position_for(&self, account_id: &str, instrument: &InstrumentId) -> PositionState {
-        let mut out = self
-            .positions
-            .get(&(account_id.to_string(), instrument.clone()))
-            .cloned()
-            .unwrap_or_default();
-        for ((account, id, _), state) in self
-            .hedge_positions
-            .iter()
-            .filter(|((account, id, _), _)| account == account_id && id == instrument)
-        {
-            let _ = (account, id);
-            out.quantity =
-                Quantity::from_raw(out.quantity.raw().saturating_add(state.quantity.raw()));
-            out.realized_pnl = Money::from_raw(
-                out.realized_pnl
-                    .raw()
-                    .saturating_add(state.realized_pnl.raw()),
-            );
-            if out.quantity.raw() != 0 {
-                out.average_entry = state.average_entry;
-            }
-        }
-        out
-    }
-
-    pub fn position_for_side(
-        &self,
-        account_id: &str,
-        instrument: &InstrumentId,
-        side: PositionSide,
-    ) -> PositionState {
-        if side == PositionSide::Net {
-            return self.position_for(account_id, instrument);
-        }
-        self.hedge_positions
-            .get(&(account_id.to_string(), instrument.clone(), side))
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    pub fn entries(&self) -> &[LedgerEntry] {
-        &self.entries
     }
 
     pub fn equity(&self, marks: &BTreeMap<InstrumentId, Price>, currency: &str) -> Option<i128> {
@@ -270,7 +216,7 @@ impl Ledger {
         spec: &TradingInstrumentSpec,
     ) -> QxResult<i128> {
         spec.validate()?;
-        self.ensure_only_instrument_is_valued(account_id, &spec.instrument)?;
+        Ledger::ensure_only_instrument_is_valued(self, account_id, &spec.instrument)?;
         let mut value = self.cash_for(account_id, currency);
         for ((account, instrument), position) in &self.positions {
             if account != account_id
@@ -313,43 +259,21 @@ impl Ledger {
         Ok(value)
     }
 
-    /// 在指定报价币种下计算跨币种保证金权益。
+    /// 在指定报价币种下计算单品种跨币种保证金权益。
     ///
-    /// `fx_rates` 的含义是“1 单位资产币种可兑换多少报价币种”，同币种
-    /// 不需要放入表中。没有可靠汇率时返回错误，禁止把不同币种的原始整数
-    /// 直接相加造成虚假的可用保证金。
+    /// `fx_rates` 的含义是“1 单位资产币种可兑换多少报价币种”。
     pub fn equity_for_with_spec_and_fx(
         &self,
         account_id: &str,
-        marks: &BTreeMap<InstrumentId, Price>,
+        marks: &BTreeMap<crate::InstrumentId, Price>,
         reporting_currency: &str,
         spec: &TradingInstrumentSpec,
         fx_rates: &BTreeMap<String, Price>,
     ) -> QxResult<i128> {
         spec.validate()?;
-        self.ensure_only_instrument_is_valued(account_id, &spec.instrument)?;
-        let convert = |amount: i128, currency: &str| -> QxResult<i128> {
-            let rate = if currency == reporting_currency {
-                SCALE
-            } else {
-                fx_rates
-                    .get(currency)
-                    .ok_or_else(|| {
-                        QxError::ReconcileRequired(format!(
-                            "缺少 {currency}->{reporting_currency} 抵押品汇率"
-                        ))
-                    })?
-                    .raw()
-            };
-            if rate <= 0 {
-                return Err(QxError::ReconcileRequired(format!(
-                    "{currency}->{reporting_currency} 抵押品汇率必须为正"
-                )));
-            }
-            amount
-                .checked_mul(rate)
-                .and_then(|value| value.checked_div(SCALE))
-                .ok_or_else(|| QxError::Invariant("跨币种权益换算溢出".into()))
+        Ledger::ensure_only_instrument_is_valued(self, account_id, &spec.instrument)?;
+        let convert = |amount: i128, currency: &str| {
+            Ledger::convert_equity_currency(amount, currency, reporting_currency, fx_rates)
         };
         let mut value = 0_i128;
         for ((account, currency), amount) in &self.cash {
@@ -420,9 +344,9 @@ impl Ledger {
         }
         let mut equity = 0_i128;
         for ((account, currency), amount) in &self.cash {
-            if account == account_id {
+            if account == account_id && *amount != 0 {
                 equity = equity
-                    .checked_add(convert_equity_currency(
+                    .checked_add(Ledger::convert_equity_currency(
                         *amount,
                         currency,
                         reporting_currency,
@@ -443,9 +367,9 @@ impl Ledger {
                     "多市场估值缺少 instrument 标记价: {instrument}"
                 ))
             })?;
-            let (value, currency) = market_position_value(spec, position, mark)?;
+            let (value, currency) = Ledger::market_position_value(spec, position, mark)?;
             equity = equity
-                .checked_add(convert_equity_currency(
+                .checked_add(Ledger::convert_equity_currency(
                     value,
                     currency,
                     reporting_currency,
@@ -465,9 +389,9 @@ impl Ledger {
                     "多市场估值缺少 instrument 标记价: {instrument}"
                 ))
             })?;
-            let (value, currency) = market_position_value(spec, position, mark)?;
+            let (value, currency) = Ledger::market_position_value(spec, position, mark)?;
             equity = equity
-                .checked_add(convert_equity_currency(
+                .checked_add(Ledger::convert_equity_currency(
                     value,
                     currency,
                     reporting_currency,
@@ -476,37 +400,6 @@ impl Ledger {
                 .ok_or_else(|| QxError::Invariant("多市场对冲持仓权益溢出".into()))?;
         }
         Ok(equity)
-    }
-
-    /// A single-spec valuation must never silently omit another live position in the same account.
-    /// Callers valuing a shared multi-market account must use the market-spec map entry point.
-    fn ensure_only_instrument_is_valued(
-        &self,
-        account_id: &str,
-        instrument: &InstrumentId,
-    ) -> QxResult<()> {
-        let has_uncovered_position =
-            self.positions
-                .iter()
-                .any(|((account, held_instrument), position)| {
-                    account == account_id
-                        && held_instrument != instrument
-                        && !position.quantity.is_zero()
-                })
-                || self
-                    .hedge_positions
-                    .iter()
-                    .any(|((account, held_instrument, _), position)| {
-                        account == account_id
-                            && held_instrument != instrument
-                            && !position.quantity.is_zero()
-                    });
-        if has_uncovered_position {
-            return Err(QxError::ReconcileRequired(
-                "单市场估值发现同账户其他非零持仓；必须提供完整 market_specs 后再估值".into(),
-            ));
-        }
-        Ok(())
     }
 
     /// 估值单点（P1-6）：按上下文派发到正确的权益原语，再叠上保证金占用。
@@ -559,82 +452,4 @@ impl Ledger {
             ctx.reporting_currency,
         )
     }
-}
-
-fn convert_equity_currency(
-    amount: i128,
-    currency: &str,
-    reporting_currency: &str,
-    fx_rates: &BTreeMap<String, Price>,
-) -> QxResult<i128> {
-    let rate = if currency == reporting_currency {
-        SCALE
-    } else {
-        fx_rates
-            .get(currency)
-            .ok_or_else(|| {
-                QxError::ReconcileRequired(format!(
-                    "缺少 {currency}->{reporting_currency} 抵押品汇率"
-                ))
-            })?
-            .raw()
-    };
-    if rate <= 0 {
-        return Err(QxError::ReconcileRequired(format!(
-            "{currency}->{reporting_currency} 抵押品汇率必须为正"
-        )));
-    }
-    amount
-        .checked_mul(rate)
-        .and_then(|value| value.checked_div(SCALE))
-        .ok_or_else(|| QxError::Invariant("跨币种权益换算溢出".into()))
-}
-
-fn market_position_value<'a>(
-    spec: &'a TradingInstrumentSpec,
-    position: &PositionState,
-    mark: &Price,
-) -> QxResult<(i128, &'a str)> {
-    match spec.product {
-        crate::TradingProduct::Spot => {
-            let quantity = position
-                .quantity
-                .raw()
-                .checked_abs()
-                .ok_or_else(|| QxError::Invariant("现货持仓绝对值溢出".into()))?;
-            let notional = spec.notional(quantity, mark.raw())?;
-            Ok((
-                if position.quantity.raw() < 0 {
-                    -notional
-                } else {
-                    notional
-                },
-                &spec.quote_currency,
-            ))
-        }
-        crate::TradingProduct::Margin
-        | crate::TradingProduct::Perpetual
-        | crate::TradingProduct::Future => Ok((
-            spec.unrealized_pnl(
-                position.quantity.raw(),
-                position.average_entry.raw(),
-                mark.raw(),
-            )?,
-            &spec.settlement_currency,
-        )),
-        crate::TradingProduct::Option => Err(QxError::BusinessViolation(
-            "多市场估值暂不支持期权：期权合约身份尚未建模".into(),
-        )),
-    }
-}
-
-/// 单条持仓的未实现盈亏（现货乘数口径）：`(mark − average_entry) × quantity × multiplier`。
-///
-/// 与 `apply_position_state_delta` 的已实现公式同一套定点算子；溢出返回 `None`。
-fn position_pnl(position: &PositionState, mark: &Price, multiplier: i128) -> Option<i128> {
-    mark.raw()
-        .checked_sub(position.average_entry.raw())?
-        .checked_mul(position.quantity.raw())?
-        .checked_div(SCALE)?
-        .checked_mul(multiplier)
 }

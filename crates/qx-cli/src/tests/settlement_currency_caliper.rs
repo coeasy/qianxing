@@ -323,7 +323,7 @@ fn risk_context_refuses_a_spec_currency_that_is_not_the_ledger_book() {
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     let spec = TradingInstrumentSpec {
         instrument: instrument.clone(),
-        product: TradingProduct::Spot,
+        product: TradingProduct::Perpetual,
         base_currency: "BTC".into(),
         quote_currency: "USDT".into(),
         settlement_currency: "USDT".into(),

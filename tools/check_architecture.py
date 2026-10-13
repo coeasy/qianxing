@@ -8463,7 +8463,7 @@ VENUE_FAMILY_CONSUMERS = (
     "crates/qx-cli/src/venue_runtime/ccxt_submit.rs",
     "crates/qx-cli/src/venue_runtime/paper_submit.rs",
     "crates/qx-cli/src/venue_runtime/paper_worker.rs",
-    "crates/qx-cli/src/venue_runtime/worker_runtime.rs",
+    "crates/qx-cli/src/venue_runtime/paper_valuation.rs",
     "crates/qx-cli/src/worker_entry.rs",
     "crates/qx-orchestrator/src/lib.rs",
     "crates/qx-runtime/src/runtime_config/topology_validation.rs",

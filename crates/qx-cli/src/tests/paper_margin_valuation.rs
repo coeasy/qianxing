@@ -301,3 +301,140 @@ fn paper_shared_account_margin_marks_positions_from_all_configured_markets() {
     drop(pipeline);
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn paper_cross_currency_spot_uses_quote_cash_and_configured_fx_market() {
+    let root = temp_cli_case_dir("paper-cross-currency-margin");
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth_eur = InstrumentId::parse("ETH-EUR.BINANCE").unwrap();
+    let eur_usdt = InstrumentId::parse("EURUSDT.BINANCE").unwrap();
+    let btc_spec = margin_valuation_spec(&btc, TradingProduct::Spot);
+    let mut eth_spec = margin_valuation_spec(&eth_eur, TradingProduct::Spot);
+    eth_spec.base_currency = "ETH".into();
+    eth_spec.quote_currency = "eur".into();
+    eth_spec.settlement_currency = "eur".into();
+    let mut fx_spec = margin_valuation_spec(&eur_usdt, TradingProduct::Spot);
+    fx_spec.base_currency = "eur".into();
+    fx_spec.quote_currency = "usdt".into();
+    fx_spec.settlement_currency = "USDT".into();
+    let btc_path = root.join("btc.spec.json");
+    let eth_path = root.join("eth-eur.spec.json");
+    let fx_path = root.join("eur-usdt.spec.json");
+    std::fs::write(&btc_path, serde_json::to_vec(&btc_spec).unwrap()).unwrap();
+    std::fs::write(&eth_path, serde_json::to_vec(&eth_spec).unwrap()).unwrap();
+    std::fs::write(&fx_path, serde_json::to_vec(&fx_spec).unwrap()).unwrap();
+    let mut btc_worker = mk_worker(
+        "paper-btc",
+        WorkerRole::Execution,
+        "paper",
+        Some(&btc_path.to_string_lossy()),
+    );
+    btc_worker.symbols = vec![btc.to_string()];
+    let mut eth_worker = mk_worker(
+        "paper-eth-eur",
+        WorkerRole::Execution,
+        "paper",
+        Some(&eth_path.to_string_lossy()),
+    );
+    eth_worker.symbols = vec![eth_eur.to_string()];
+    let mut fx_worker = mk_worker(
+        "paper-eur-usdt-fx",
+        WorkerRole::MarketData,
+        "paper",
+        Some(&fx_path.to_string_lossy()),
+    );
+    fx_worker.symbols = vec![eur_usdt.to_string()];
+    let mut config = paper_runtime_config(&root);
+    config.workers = vec![btc_worker.clone(), eth_worker, fx_worker];
+
+    let mut pipeline = LiveEventPipeline::open(&root, paper_account_log(), "USDT").unwrap();
+    for (currency, amount) in [("USDT", 10_000), ("EUR", 1_000)] {
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::AccountCashflow {
+                    cashflow: AccountCashflow {
+                        account_id: "main".into(),
+                        venue_id: "paper".into(),
+                        currency: currency.into(),
+                        kind: CashflowKind::Transfer,
+                        amount: Money::from_i64(amount),
+                        external_id: format!("cross-currency:deposit:{currency}"),
+                    },
+                },
+                1,
+                1,
+                1,
+                format!("cross-currency:deposit:{currency}"),
+            ))
+            .unwrap();
+    }
+    let spot_order = mk_order(9521, &eth_eur, Side::Buy, 1);
+    pipeline.register_order(spot_order.clone(), 2).unwrap();
+    pipeline
+        .ingest(RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::Accepted {
+                client_order_id: spot_order.client_id,
+                venue_order_id: Some("paper-9521".into()),
+            },
+            2,
+            2,
+            2,
+            "cross-currency:accepted",
+        ))
+        .unwrap();
+    pipeline
+        .ingest(RuntimeEventEnvelope::venue(
+            RuntimeExternalEvent::FillWithSpec {
+                fill: Box::new(qx_core::Fill {
+                    order_id: spot_order.client_id,
+                    qty: Quantity::from_i64(1),
+                    price: Price::from_i64(100),
+                    ts: 3,
+                    account_id: "main".into(),
+                    ..qx_core::Fill::default()
+                }),
+                spec: Box::new(eth_spec),
+            },
+            3,
+            3,
+            3,
+            "cross-currency:fill",
+        ))
+        .unwrap();
+    for (instrument, mark, seq) in [
+        (&eth_eur, Price::from_i64(120), 4),
+        (&eur_usdt, Price::from_raw(11 * SCALE / 10), 5),
+    ] {
+        pipeline
+            .ingest(RuntimeEventEnvelope::market_quote(
+                instrument.clone(),
+                QuoteTick::new(
+                    seq,
+                    mark,
+                    Quantity::from_i64(100),
+                    mark,
+                    Quantity::from_i64(100),
+                    seq,
+                ),
+                seq,
+                seq,
+                format!("cross-currency:quote:{instrument}"),
+            ))
+            .unwrap();
+    }
+
+    assert_eq!(pipeline.ledger().cash_for("main", "EUR"), 900 * SCALE);
+    assert_eq!(pipeline.ledger().cash_for("main", "USDT"), 10_000 * SCALE);
+    let next_order = mk_order(9522, &btc, Side::Buy, 1);
+    let (risk, _) =
+        worker_risk_context_with_config(&btc_worker, &next_order, &pipeline, &config, None)
+            .unwrap()
+            .expect("configured Paper worker must produce cross-currency risk context");
+    assert_eq!(
+        risk.available_margin_raw,
+        Some(11_122 * SCALE),
+        "EUR cash and ETH spot value must be converted using EUR/USDT mark"
+    );
+    drop(pipeline);
+    let _ = std::fs::remove_dir_all(root);
+}

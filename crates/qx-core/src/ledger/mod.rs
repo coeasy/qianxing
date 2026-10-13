@@ -105,7 +105,9 @@ mod corporate_action;
 mod fill;
 mod query;
 mod rights;
+mod state_query;
 mod subscription;
+mod valuation_fx;
 
 impl Ledger {
     pub fn new() -> Self {

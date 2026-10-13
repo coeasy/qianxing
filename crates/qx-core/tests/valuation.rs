@@ -125,12 +125,53 @@ fn buy_position(
 }
 
 #[test]
+fn spec_driven_spot_fill_books_cash_in_the_market_quote_currency() {
+    let instrument = InstrumentId::parse("ETH-EUR.KRAKEN").unwrap();
+    let mut spec = spot_spec(&instrument, "ETH", "EUR");
+    spec.quote_currency = "eur".into();
+    let order = Order {
+        client_id: 90,
+        instrument: instrument.clone(),
+        side: Side::Buy,
+        qty: Quantity::from_i64(2),
+        limit: None,
+        status: OrderStatus::Accepted,
+        filled: Quantity::ZERO,
+        account_id: "main".into(),
+        trace: None,
+        policy: None,
+    };
+    let mut ledger = Ledger::new();
+    ledger
+        .apply_fill_with_spec(
+            &order,
+            &Fill {
+                order_id: order.client_id,
+                qty: Quantity::from_i64(2),
+                price: Price::from_i64(100),
+                ts: 1,
+                ..Fill::default()
+            },
+            "USDT",
+            &spec,
+        )
+        .unwrap();
+
+    assert_eq!(ledger.cash_for("main", "EUR"), -200 * SCALE);
+    assert_eq!(ledger.cash_for("main", "USDT"), 0);
+}
+
+#[test]
 fn ledger_valuate_marks_spot_positions_and_cash_for_multiple_markets_and_currencies() {
     let eth = InstrumentId::parse("ETH-USDT.BINANCE").unwrap();
     let btc = InstrumentId::parse("BTC-EUR.KRAKEN").unwrap();
     let specs = BTreeMap::from([
         (eth.clone(), spot_spec(&eth, "ETH", "USDT")),
-        (btc.clone(), spot_spec(&btc, "BTC", "EUR")),
+        (btc.clone(), {
+            let mut spec = spot_spec(&btc, "BTC", "EUR");
+            spec.quote_currency = "eur".into();
+            spec
+        }),
     ]);
     let mut ledger = Ledger::new();
     ledger
