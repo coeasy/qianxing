@@ -2,8 +2,9 @@
 
 use super::{scratch, spec};
 use qx_sdk::{
-    CallerCapability, Client, MarketEvent, Quantity, Side, Strategy, StrategyArtifactIdentity,
-    StrategyContext, StrategyDecision, StrategyOrderIntent, STRATEGY_API_VERSION,
+    CallerCapability, Client, MarketEvent, Quantity, RunStatus, Side, Strategy,
+    StrategyArtifactIdentity, StrategyContext, StrategyDecision, StrategyOrderIntent,
+    STRATEGY_API_VERSION,
 };
 
 struct BuyOnce(bool);
@@ -60,6 +61,31 @@ fn sdk_client_runs_custom_strategy_through_the_shared_replay_kernel() {
     let outcome = client
         .run_backtest_with_strategy(&backtest, &identity, BuyOnce(false))
         .expect("custom strategy runs via qx-sdk");
+    assert!(outcome.fills > 0);
+    assert!(client.verify_run(&outcome).expect("verify").verified);
+}
+
+#[test]
+fn sdk_client_starts_and_verifies_custom_strategy_through_run_handle() {
+    let output_dir = scratch("custom-strategy-run-handle");
+    let mut backtest = spec("sdk-custom-strategy-handle", &output_dir);
+    backtest.strategy.fast_window = 5;
+    backtest.strategy.slow_window = 20;
+    let client = Client::new(CallerCapability::Research, "sdk-custom-strategy-handle");
+    let identity = StrategyArtifactIdentity {
+        strategy_id: "sdk-sma".into(),
+        strategy_version: "consumer-test-v1".into(),
+        source_sha256: "b".repeat(64),
+    };
+    let mut handle = client
+        .start_backtest_with_strategy(backtest, identity, BuyOnce(false))
+        .expect("custom strategy RunHandle");
+    assert_eq!(handle.run_id(), "sdk-custom-strategy-handle");
+    assert_eq!(handle.wait(), RunStatus::Succeeded);
+    let outcome = handle
+        .try_take_result()
+        .expect("completed strategy run has a result")
+        .expect("strategy run succeeds");
     assert!(outcome.fills > 0);
     assert!(client.verify_run(&outcome).expect("verify").verified);
 }

@@ -60,6 +60,7 @@ def _load_native():
                 "app_validate_dataset",
                 "app_run_backtest",
                 "app_run_backtest_with_strategy",
+                "app_start_backtest_with_strategy",
                 "app_run_multi_account_backtest",
                 "app_start_multi_account_backtest",
                 "app_start_backtest",
@@ -738,7 +739,11 @@ class AppUseCaseTests(unittest.TestCase):
                     "intents": intents,
                 }
 
-        from qianxing.app import run_backtest_with_strategy, verify_run
+        from qianxing.app import (
+            run_backtest_with_strategy,
+            start_backtest_with_strategy,
+            verify_run,
+        )
 
         outcome = run_backtest_with_strategy(
             spec,
@@ -752,6 +757,22 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertTrue(verification.verified, verification.mismatches)
         summary = json.loads(Path(outcome.artifacts["summary"]).read_text(encoding="utf-8"))
         self.assertEqual(summary["strategy_version"], "python-test-v1")
+
+        async_spec = dict(spec)
+        async_spec["run_id"] = "python-custom-strategy-handle"
+        async_spec["output_dir"] = str(self.output_dir / "custom-handle")
+        handle = start_backtest_with_strategy(
+            async_spec,
+            BuyOnce(),
+            strategy_id="python-custom-strategy",
+            strategy_version="python-test-v1",
+            source_sha256="a" * 64,
+        )
+        self.assertEqual(handle.wait(timeout_ms=30_000), "succeeded")
+        async_outcome = handle.result()
+        self.assertIsNotNone(async_outcome)
+        self.assertGreater(async_outcome.fills, 0)
+        self.assertTrue(verify_run(async_outcome).verified)
 
     def test_ten_classic_builtin_strategies_run_through_python_rust_kernel(self):
         self._require()

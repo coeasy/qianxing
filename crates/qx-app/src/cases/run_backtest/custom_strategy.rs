@@ -96,6 +96,35 @@ impl BacktestSpec {
             )
         })
     }
+
+    /// Start caller-authored strategy logic on the shared cancellable Bar run lifecycle.
+    pub fn start_with_strategy<S: Strategy + 'static>(
+        self,
+        identity: StrategyArtifactIdentity,
+        strategy: S,
+        context: RunContext,
+    ) -> Result<crate::RunHandle<BacktestOutcome>, AppError> {
+        context.require(CallerCapability::Research, "多语言策略 Bar 回测")?;
+        self.validate()?;
+        identity.validate_for(&self)?;
+        let run_id = context.correlation_id().to_string();
+        Ok(crate::RunHandle::spawn(run_id, move |cancellation| {
+            let correlation_id = context.correlation_id().to_string();
+            let injected = InjectedStrategy {
+                identity,
+                strategy: Box::new(strategy),
+            };
+            guard_panics(&correlation_id, || {
+                run_backtest_inner_with_strategy(
+                    &self,
+                    &context,
+                    Some(&cancellation),
+                    Some(injected),
+                )
+            })
+            .map_err(|error| attach(error, &correlation_id))
+        }))
+    }
 }
 
 pub(super) fn strategy_config_hash(

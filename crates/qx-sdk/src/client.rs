@@ -106,6 +106,16 @@ impl Client {
         spec.run_with_strategy(identity, strategy, &self.context)
     }
 
+    /// Start a cancellable caller-authored strategy run on the shared Rust Bar engine.
+    pub fn start_backtest_with_strategy<S: Strategy + 'static>(
+        &self,
+        spec: BacktestSpec,
+        identity: StrategyArtifactIdentity,
+        strategy: S,
+    ) -> Result<RunHandle<BacktestOutcome>, AppError> {
+        spec.start_with_strategy(identity, strategy, self.context.clone())
+    }
+
     /// Freeze a Provider BarFrame and its shared manifest, validate it, then run the same app use case.
     pub fn run_provider_backtest_with_manifest(
         &self,

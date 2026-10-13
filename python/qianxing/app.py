@@ -1345,6 +1345,26 @@ class AsyncCoreClient:
     async def async_start_backtest(self, spec: BacktestSpec | dict[str, Any]) -> AsyncRunHandle[BacktestOutcome]:
         return await self._start(start_backtest, spec)
 
+    async def async_start_backtest_with_strategy(
+        self,
+        spec: BacktestSpec | dict[str, Any],
+        strategy: Any,
+        *,
+        strategy_id: str,
+        strategy_version: str,
+        source_sha256: str,
+    ) -> AsyncRunHandle[BacktestOutcome]:
+        def start(value: Any) -> RunHandle[BacktestOutcome]:
+            return start_backtest_with_strategy(
+                value,
+                strategy,
+                strategy_id=strategy_id,
+                strategy_version=strategy_version,
+                source_sha256=source_sha256,
+            )
+
+        return await self._start(start, spec)
+
     async def async_verify_run(self, outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
         return await asyncio.to_thread(verify_run, outcome)
 
@@ -1782,6 +1802,30 @@ def run_backtest_with_strategy(
             source_sha256=source_sha256,
         )
         return BacktestOutcome.from_dict(result)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
+def start_backtest_with_strategy(
+    spec: BacktestSpec | dict[str, Any],
+    strategy: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> RunHandle[BacktestOutcome]:
+    """Start a caller-authored strategy in the cooperative Rust RunHandle lifecycle."""
+    try:
+        from qianxing_bridge.app import start_backtest_with_strategy as _start_strategy
+
+        native_handle = _start_strategy(
+            _encode_payload(spec),
+            strategy,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            source_sha256=source_sha256,
+        )
+        return RunHandle(native_handle, BacktestOutcome)
     except Exception as exc:
         raise _translate_native_error(exc) from exc
 
