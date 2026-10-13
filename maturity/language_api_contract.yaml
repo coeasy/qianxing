@@ -150,8 +150,8 @@ contracts:
     cpp_remote: ["run_multi_leg_experiment", "start_multi_leg_experiment"]
     http: ["/app/run-multi-leg-experiment", "/app/run-multi-leg-experiment/start"]
   - use_case: run_depth_backtest
-    rust: ["run_depth_backtest", "run_depth_backtest_with_strategy", "start_depth_backtest_with_strategy"]
-    python_native: ["run_depth_backtest", "start_depth_backtest", "run_depth_backtest_with_strategy", "start_depth_backtest_with_strategy"]
+    rust: ["run_depth_backtest", "run_depth_backtest_with_strategy", "start_depth_backtest_with_strategy", "run_depth_backtest_with_strategy_slots", "start_depth_backtest_with_strategy_slots"]
+    python_native: ["run_depth_backtest", "start_depth_backtest", "run_depth_backtest_with_strategy", "start_depth_backtest_with_strategy", "run_depth_backtest_with_strategy_slots", "start_depth_backtest_with_strategy_slots"]
     python_remote: ["run_depth_backtest", "start_depth_backtest"]
     cpp_remote: ["run_depth_backtest", "start_depth_backtest"]
     http: ["/app/depth-backtest", "/app/depth-backtest/start"]

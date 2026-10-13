@@ -191,3 +191,10 @@ Python 十策略证据：
 - 每个注入槽使用独立 `strategy_id`、版本与源码 SHA-256；身份集合以稳定顺序纳入运行指纹，拒绝重复槽与无组合时注入多个回调。同一 run_id 的策略源码/版本变更产生冲突，绑定列表顺序不影响确定性结果。同步、RunHandle 与 AsyncCoreClient 路径共享同一 Rust 执行实现。
 - 测试覆盖 Rust 应用、外部 Rust SDK consumer、Python 同步/句柄/AsyncCoreClient、两个自定义 callback 的策略成交归属、ReplayVerifier、绑定顺序稳定性与源码身份冲突。Python 全量 131 项通过；Rust qx-app/qx-sdk/qx-python 全量测试与严格 Clippy 通过；格式和 diff whitespace 检查通过；架构不变量门禁 1096 项全部通过。量化场景探针为 37 executed、0 declared_not_executed、0 missing、1 blocked（Live 需外部 CCXT/testnet 前置）。
 - 能力范围仍限于同一账户、同一市场的 Bar 回测。Tick/OrderBook 与多腿策略回调组合、跨市场/跨账户共享资本和风险净额、组合级 PnL/费用/回撤归因、Paper/Live 多回调工作流、HTTP/Web callback 托管、C++ 等价绑定和独立安装消费、断线后的持久订单/事件游标恢复及真实 venue testnet conformance 未由本轮实现或验证。总体全能力发布门槛仍未满足。
+
+## 21. 2026-10-13 继续实现：Tick/OrderBook 多自定义策略组合
+
+- 把多个 caller-defined Rust/Python callback 槽接入既有同账户 Tick/OrderBook 组合账簿。Rust `qx-app` 与公开 `qx-sdk::Client` 提供同步/RunHandle 入口；Python PyO3、高层 `qianxing`、`core` 导出与 `AsyncCoreClient` 同步映射到同一用例。槽位可与 Rust 内置策略混用，优先级、预算、风险、OMS、撮合、成交归属和重放仍由原 Rust 组合内核执行。
+- 保持事件契约：L1 callback 收到 `Tick`，L2 callback 收到 `OrderBook`。每个 callback identity 的 strategy ID、版本、SHA-256 绑定配置指纹；输入顺序不影响摘要，同一 `run_id` 改源码返回 Conflict。重复、未声明槽与无 portfolio 的多 callback 请求拒绝执行。
+- 新增应用层、Rust 外部 consumer 与 Python 原生 SDK 行为测试，覆盖 L1/L2 的两个自定义 callback 都产生归属成交、共享账簿重放、身份顺序确定性、源码变化冲突、同步/RunHandle 与 async RunHandle。该轮 Rust `qx-app` 111 项及 Rust SDK 独立消费者 20 项通过；Python 全量 131 项通过；严格 Clippy、格式、Python 语法和 diff whitespace 检查通过；架构不变量门禁 1096 项通过。量化场景探针最终结果为 37 项 executed、0 declared_not_executed、0 missing、1 blocked；唯一 blocked 为需要真实 CCXT/testnet 前置的 Live 验收。
+- 已知边界：多回调深度组合只在本地 Rust/Python SDK 接通；远端 callback 执行、C++ callback 槽与 HTTP/Web 配置/操作暂未支持。仍不实现跨市场/跨账户统一资本净额与组合级策略归因，也不代表 Paper/Live 多回调订单工作流或真实交易所 testnet 已认证。总体多语言全能力发布门槛仍未满足。

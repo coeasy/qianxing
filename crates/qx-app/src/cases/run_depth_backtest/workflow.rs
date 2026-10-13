@@ -23,18 +23,30 @@ pub(in crate::cases) fn run_inner(
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
 ) -> Result<Option<DepthBacktestOutcome>, AppError> {
-    run_inner_with_strategy(spec, context, cancellation, None)
+    run_inner_with_strategy(spec, context, cancellation, Vec::new())
 }
 
 pub(super) fn run_inner_with_strategy(
     spec: &DepthBacktestSpec,
     context: &RunContext,
     cancellation: Option<&CancellationToken>,
-    mut injected: Option<InjectedDepthStrategy>,
+    mut injected: Vec<InjectedDepthStrategy>,
 ) -> Result<Option<DepthBacktestOutcome>, AppError> {
     spec.validate()?;
-    if let Some(custom) = &injected {
+    let mut seen_custom = std::collections::BTreeSet::new();
+    for custom in &injected {
+        if !seen_custom.insert(custom.identity.strategy_id.as_str()) {
+            return Err(invalid_input(format!(
+                "自定义 Tick/OrderBook 策略身份重复: {}",
+                custom.identity.strategy_id
+            )));
+        }
         custom.identity.validate_for_depth(spec)?;
+    }
+    if spec.portfolio.is_none() && injected.len() > 1 {
+        return Err(invalid_input(
+            "多个自定义 Tick/OrderBook 策略必须声明同账户 portfolio 组合规格",
+        ));
     }
     let payload = read_text(&spec.depth_path)?;
     let frame = DepthFrame::from_json(&payload).map_err(|error| {
@@ -98,15 +110,21 @@ pub(super) fn run_inner_with_strategy(
     let config_hash = {
         let mut hash = Fnv1a::new();
         hash.write_text(&spec.to_json()?);
-        if let Some(custom) = &injected {
-            hash.write_text(&custom.identity.strategy_id);
-            hash.write_text(&custom.identity.strategy_version);
-            hash.write_text(&custom.identity.source_sha256);
+        let mut identities = injected
+            .iter()
+            .map(|custom| &custom.identity)
+            .collect::<Vec<_>>();
+        identities.sort_by(|left, right| left.strategy_id.cmp(&right.strategy_id));
+        for identity in identities {
+            hash.write_text(&identity.strategy_id);
+            hash.write_text(&identity.strategy_version);
+            hash.write_text(&identity.source_sha256);
         }
         format!("{:016x}", hash.finish())
     };
     let strategy_id = injected
-        .as_ref()
+        .iter()
+        .find(|custom| custom.identity.strategy_id == spec.strategy.strategy_id)
         .map(|custom| custom.identity.strategy_id.clone())
         .unwrap_or_else(|| spec.strategy.strategy_id.clone());
     let account_id = spec
@@ -115,7 +133,8 @@ pub(super) fn run_inner_with_strategy(
         .unwrap_or(DEFAULT_ACCOUNT_ID)
         .to_string();
     let strategy_version = injected
-        .as_ref()
+        .iter()
+        .find(|custom| custom.identity.strategy_id == spec.strategy.strategy_id)
         .map(|custom| custom.identity.strategy_version.clone())
         .unwrap_or_else(|| format!("{}-v1", strategy_id));
     let risk = RiskGate::conservative_default();
@@ -160,6 +179,11 @@ pub(super) fn run_inner_with_strategy(
     let mut depth_strategy =
         DepthBarStrategy::new(strategy, strategy_context.clone(), instrument.clone());
     depth_strategy.initialize().map_err(invalid_input)?;
+    let standalone_custom = if spec.portfolio.is_none() {
+        injected.pop()
+    } else {
+        None
+    };
     let mut portfolio_strategy = spec
         .portfolio
         .as_ref()
@@ -170,6 +194,7 @@ pub(super) fn run_inner_with_strategy(
                 &account_id,
                 &data_fingerprint,
                 frame.snapshots[0].ts,
+                injected,
             )
         })
         .transpose()?;
@@ -187,7 +212,7 @@ pub(super) fn run_inner_with_strategy(
                 risk,
             })
             .with_execution_model(model);
-            match (cancellation, portfolio_strategy.as_mut(), injected.take()) {
+            match (cancellation, portfolio_strategy.as_mut(), standalone_custom) {
                 (_, _, Some(custom)) => {
                     let mut strategy = NativeTickStrategy::new(
                         CallbackStrategy(custom.strategy),
@@ -261,7 +286,7 @@ pub(super) fn run_inner_with_strategy(
                             .map_err(|error| AppError::from_qx_error(&error))?,
                     ),
                 }
-            } else if let Some(custom) = injected.take() {
+            } else if let Some(custom) = standalone_custom {
                 let mut strategy = NativeOrderBookStrategy::new(
                     CallbackStrategy(custom.strategy),
                     strategy_context.clone(),

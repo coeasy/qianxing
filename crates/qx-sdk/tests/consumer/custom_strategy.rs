@@ -3,9 +3,9 @@
 use super::{scratch, spec};
 use qx_sdk::{
     BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability, Client, DepthBacktestSpec,
-    MarketEvent, Quantity, RunStatus, Side, Strategy, StrategyArtifactIdentity, StrategyContext,
-    StrategyDecision, StrategyOrderIntent, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
-    STRATEGY_API_VERSION,
+    MarketEvent, PortfolioBacktestConfig, PortfolioStrategySpec, Quantity, RunStatus, Side,
+    Strategy, StrategyArtifactIdentity, StrategyContext, StrategyDecision, StrategyOrderIntent,
+    DEPTH_BACKTEST_SPEC_SCHEMA_VERSION, STRATEGY_API_VERSION,
 };
 
 struct BuyOnce(bool);
@@ -184,5 +184,73 @@ fn sdk_client_runs_custom_strategy_on_tick_and_order_book_shared_engines() {
                 .expect("verify")
                 .verified
         );
+    }
+}
+
+#[test]
+fn sdk_client_composes_multiple_custom_callbacks_in_tick_and_order_book_portfolios() {
+    for (tier, use_handle) in [("l1", false), ("l2", true)] {
+        let output_dir = scratch(&format!("custom-depth-portfolio-{tier}"));
+        let run_id = format!("sdk-custom-depth-portfolio-{tier}");
+        let client = Client::new(CallerCapability::Research, &run_id);
+        let mut spec = depth_spec(&run_id, &output_dir, tier);
+        spec.strategy =
+            BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "sdk-depth-primary");
+        spec.portfolio = Some(PortfolioBacktestConfig {
+            primary_priority: 0,
+            primary_reserved_capital_raw: 500_000_000_000_000,
+            additional_strategies: vec![PortfolioStrategySpec {
+                priority: 1,
+                reserved_capital_raw: 500_000_000_000_000,
+                strategy: BuiltinStrategySpec::new(
+                    BuiltinStrategyKind::Momentum,
+                    "sdk-depth-child",
+                ),
+            }],
+        });
+        let callbacks = || {
+            vec![
+                (
+                    StrategyArtifactIdentity {
+                        strategy_id: "sdk-depth-primary".into(),
+                        strategy_version: "consumer-primary-v1".into(),
+                        source_sha256: "1".repeat(64),
+                    },
+                    Box::new(BuyOnce(false)) as Box<dyn Strategy>,
+                ),
+                (
+                    StrategyArtifactIdentity {
+                        strategy_id: "sdk-depth-child".into(),
+                        strategy_version: "consumer-child-v1".into(),
+                        source_sha256: "2".repeat(64),
+                    },
+                    Box::new(BuyOnce(false)) as Box<dyn Strategy>,
+                ),
+            ]
+        };
+        let outcome = if use_handle {
+            let handle_spec = DepthBacktestSpec {
+                run_id: format!("{run_id}-handle"),
+                output_dir: output_dir.join("handle").to_string_lossy().into_owned(),
+                ..spec
+            };
+            let mut handle = client
+                .start_depth_backtest_with_strategy_slots(handle_spec, callbacks())
+                .expect("multi-callback depth RunHandle");
+            assert_eq!(handle.wait(), RunStatus::Succeeded);
+            handle
+                .try_take_result()
+                .expect("depth callback result is ready")
+                .expect("depth callback run succeeds")
+        } else {
+            client
+                .run_depth_backtest_with_strategy_slots(&spec, callbacks())
+                .expect("multi-callback depth sync run")
+        };
+        assert!(outcome.fills >= 2);
+        assert!(client.verify_depth_run(&outcome).expect("replay").verified);
+        let fills = std::fs::read_to_string(&outcome.artifacts.fills).expect("fills artifact");
+        assert!(fills.contains("sdk-depth-primary"));
+        assert!(fills.contains("sdk-depth-child"));
     }
 }

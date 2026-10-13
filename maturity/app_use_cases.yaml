@@ -105,11 +105,11 @@ use_cases:
     error_categories: "AppErrorCategory 八类；候选失败隔离，整体规格/存储错误由用例返回"
     capability_level: "R"
   - name: run_depth_backtest
-    input_schema: "DepthBacktestSpec v1（L1 Tick 或 L2/L3 OrderBook + Rust 内置策略 + 可选 TradingInstrumentSpec；L2 可选双边做市配置；衍生品要求 OrderPolicy）"
+    input_schema: "DepthBacktestSpec v1（L1 Tick 或 L2/L3 OrderBook + Rust 内置策略或本地 Rust/Python 自定义回调；同账户 portfolio 槽位支持多个回调与内置策略混合，回调身份排序进入配置指纹；可选 TradingInstrumentSpec；L2 可选双边做市配置；衍生品要求 OrderPolicy）"
     output_schema: "DepthBacktestOutcome v1（统一回测哈希、权益/成交摘要与四份产物路径）"
     capability: "RESEARCH"
     idempotency_key: "run_id + 规格指纹 + 盘口内容指纹；异身份或不一致产物拒绝覆盖"
-    cancellation: "同步 run_depth_backtest 不取消；DepthBacktestSpec::start 通过 Rust Tick/快照循环协作取消，取消不返回部分报告或产物"
+    cancellation: "同步 run_depth_backtest 不取消；DepthBacktestSpec::start 与 start_depth_backtest_with_strategy_slots 通过 Rust Tick/快照循环协作取消，取消不返回部分报告或产物"
     progress: "RunHandle 提供 run_id、状态、取消、等待和一次性结果读取；无百分比进度；结果绑定 Rust 撮合报告和 ReplayVerifier 重放证据"
     artifacts: "<run_id>.run.json / <run_id>.summary.json / <run_id>.equity.csv / <run_id>.fills.csv"
     error_categories: "AppErrorCategory 八类；档位不匹配为 FidelityInsufficient，产物冲突为 Conflict"

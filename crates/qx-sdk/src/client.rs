@@ -13,9 +13,10 @@ use crate::{
 };
 use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, run_backtest, run_depth_backtest,
-    run_depth_backtest_with_strategy, run_depth_experiment, run_experiment,
-    run_multi_account_backtest, run_multi_leg_backtest, run_multi_leg_backtest_with_strategy,
-    run_multi_leg_experiment, start_depth_backtest_with_strategy, validate_dataset,
+    run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots, run_depth_experiment,
+    run_experiment, run_multi_account_backtest, run_multi_leg_backtest,
+    run_multi_leg_backtest_with_strategy, run_multi_leg_experiment,
+    start_depth_backtest_with_strategy, start_depth_backtest_with_strategy_slots, validate_dataset,
     verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
     CallerCapability, CapitalAllocationResult, CapitalAllocationSpec, CompareRunsResult,
     CompareRunsSpec, DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
@@ -191,6 +192,24 @@ impl Client {
         strategy: S,
     ) -> Result<RunHandle<DepthBacktestOutcome>, AppError> {
         start_depth_backtest_with_strategy(spec, identity, Box::new(strategy), self.context.clone())
+    }
+
+    /// Run multiple caller-authored strategies in declared same-account depth portfolio slots.
+    pub fn run_depth_backtest_with_strategy_slots(
+        &self,
+        spec: &DepthBacktestSpec,
+        strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+    ) -> Result<DepthBacktestOutcome, AppError> {
+        run_depth_backtest_with_strategy_slots(spec, strategies, &self.context)
+    }
+
+    /// Start a cancellable depth portfolio run with multiple caller-authored strategy slots.
+    pub fn start_depth_backtest_with_strategy_slots(
+        &self,
+        spec: DepthBacktestSpec,
+        strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+    ) -> Result<RunHandle<DepthBacktestOutcome>, AppError> {
+        start_depth_backtest_with_strategy_slots(spec, strategies, self.context.clone())
     }
 
     pub fn start_depth_backtest(&self, spec: DepthBacktestSpec) -> RunHandle<DepthBacktestOutcome> {

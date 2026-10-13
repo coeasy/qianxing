@@ -26,11 +26,25 @@ impl OrderBookStrategySlot {
         reserved_capital_raw: i128,
         strategy: impl OrderBookStrategy + 'static,
     ) -> Self {
+        Self::from_box(
+            priority,
+            strategy_id,
+            reserved_capital_raw,
+            Box::new(strategy),
+        )
+    }
+
+    pub fn from_box(
+        priority: i32,
+        strategy_id: impl Into<String>,
+        reserved_capital_raw: i128,
+        strategy: Box<dyn OrderBookStrategy>,
+    ) -> Self {
         Self {
             priority,
             strategy_id: strategy_id.into(),
             reserved_capital_raw,
-            strategy: Box::new(strategy),
+            strategy,
         }
     }
 }

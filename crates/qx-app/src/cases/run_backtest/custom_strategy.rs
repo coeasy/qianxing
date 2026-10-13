@@ -89,7 +89,6 @@ impl StrategyArtifactIdentity {
                     .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
         };
         if !valid_token(&self.strategy_id)
-            || self.strategy_id != spec.strategy.strategy_id
             || !valid_token(&self.strategy_version)
             || self.source_sha256.len() != 64
             || !self
@@ -102,17 +101,37 @@ impl StrategyArtifactIdentity {
                 "StrategyArtifactIdentity requires a matching strategy_id, a valid strategy_version, and a lowercase SHA-256 digest",
             ));
         }
-        if spec.portfolio.is_some() || spec.market_making.is_some() {
+        if spec.market_making.is_some() {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
-                "caller-supplied depth strategies cannot be combined with built-in portfolio or market-making strategies",
+                "caller-supplied depth strategies cannot be combined with market-making strategies",
             ));
         }
-        let default_strategy = crate::spec::BuiltinStrategySpec::new(
-            spec.strategy.kind,
-            spec.strategy.strategy_id.clone(),
-        );
-        if spec.strategy != default_strategy {
+        let slot = if self.strategy_id == spec.strategy.strategy_id {
+            &spec.strategy
+        } else {
+            spec.portfolio
+                .as_ref()
+                .and_then(|portfolio| {
+                    portfolio
+                        .additional_strategies
+                        .iter()
+                        .find(|member| member.strategy.strategy_id == self.strategy_id)
+                })
+                .map(|member| &member.strategy)
+                .ok_or_else(|| {
+                    AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        format!(
+                            "外部策略身份不属于 Tick/OrderBook 组合: {}",
+                            self.strategy_id
+                        ),
+                    )
+                })?
+        };
+        let default_strategy =
+            crate::spec::BuiltinStrategySpec::new(slot.kind, slot.strategy_id.clone());
+        if *slot != default_strategy {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
                 "caller-supplied strategies must use default BuiltinStrategySpec parameters; built-in signal and sizing knobs do not apply to external callbacks",

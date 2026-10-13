@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 mod custom_strategy;
 mod portfolio;
-use custom_strategy::{run_custom_strategy, start_custom_strategy};
+use custom_strategy::{run_custom_strategies, start_custom_strategies};
 use custom_strategy::{CallbackStrategy, InjectedDepthStrategy};
 mod workflow;
 pub(super) use workflow::run_inner;
@@ -51,7 +51,16 @@ pub fn run_depth_backtest_with_strategy(
     strategy: Box<dyn Strategy>,
     context: &RunContext,
 ) -> Result<DepthBacktestOutcome, AppError> {
-    run_custom_strategy(spec, identity, strategy, context)
+    run_depth_backtest_with_strategy_slots(spec, vec![(identity.clone(), strategy)], context)
+}
+
+/// Run caller-authored strategies in declared same-account Tick/OrderBook portfolio slots.
+pub fn run_depth_backtest_with_strategy_slots(
+    spec: &DepthBacktestSpec,
+    strategies: Vec<(super::StrategyArtifactIdentity, Box<dyn Strategy>)>,
+    context: &RunContext,
+) -> Result<DepthBacktestOutcome, AppError> {
+    run_custom_strategies(spec, strategies, context)
 }
 
 /// Start a cancellable custom strategy on the shared Tick/OrderBook lifecycle.
@@ -61,7 +70,16 @@ pub fn start_depth_backtest_with_strategy(
     strategy: Box<dyn Strategy>,
     context: RunContext,
 ) -> Result<crate::RunHandle<DepthBacktestOutcome>, AppError> {
-    start_custom_strategy(spec, identity, strategy, context)
+    start_depth_backtest_with_strategy_slots(spec, vec![(identity, strategy)], context)
+}
+
+/// Start a cancellable Tick/OrderBook run with multiple caller-authored strategy slots.
+pub fn start_depth_backtest_with_strategy_slots(
+    spec: DepthBacktestSpec,
+    strategies: Vec<(super::StrategyArtifactIdentity, Box<dyn Strategy>)>,
+    context: RunContext,
+) -> Result<crate::RunHandle<DepthBacktestOutcome>, AppError> {
+    start_custom_strategies(spec, strategies, context)
 }
 
 impl DepthBacktestSpec {

@@ -66,6 +66,8 @@ def _load_native():
                 "app_start_backtest_with_strategy_slots",
                 "app_run_depth_backtest_with_strategy",
                 "app_start_depth_backtest_with_strategy",
+                "app_run_depth_backtest_with_strategy_slots",
+                "app_start_depth_backtest_with_strategy_slots",
                 "app_run_multi_account_backtest",
                 "app_start_multi_account_backtest",
                 "app_start_backtest",
@@ -80,6 +82,8 @@ def _load_native():
                 "app_start_depth_backtest",
                 "app_run_depth_backtest_with_strategy",
                 "app_start_depth_backtest_with_strategy",
+                "app_run_depth_backtest_with_strategy_slots",
+                "app_start_depth_backtest_with_strategy_slots",
                 "app_run_depth_experiment",
                 "app_start_depth_experiment",
                 "app_run_multi_leg_backtest",
@@ -1636,12 +1640,17 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertIsNone(depth_experiment_handle.result_json())
 
         from qianxing import (
+            AsyncCoreClient,
             ExperimentParameterSpace,
             RunDepthExperimentSpec,
             run_depth_backtest_with_strategy,
+            run_depth_backtest_with_strategy_slots,
             run_depth_experiment,
             start_depth_backtest_with_strategy,
+            start_depth_backtest_with_strategy_slots,
             start_depth_experiment,
+            PortfolioBacktestConfig,
+            PortfolioStrategySpec,
         )
 
         typed_depth_experiment = RunDepthExperimentSpec(
@@ -1787,6 +1796,128 @@ class AppUseCaseTests(unittest.TestCase):
                 )
                 self.assertEqual(handle.wait(timeout_ms=30_000), "succeeded")
                 self.assertGreater(handle.result().fills, 0)
+
+            portfolio_spec = DepthBacktestSpec(
+                **{
+                    **custom_spec.__dict__,
+                    "run_id": f"python-custom-depth-portfolio-{tier}",
+                    "output_dir": str(self.output_dir / f"custom-depth-portfolio-{tier}"),
+                    "portfolio": PortfolioBacktestConfig(
+                        primary_priority=0,
+                        primary_reserved_capital_raw=500_000_000_000_000,
+                        additional_strategies=(
+                            PortfolioStrategySpec(
+                                priority=1,
+                                reserved_capital_raw=500_000_000_000_000,
+                                strategy=BuiltinStrategySpec(
+                                    kind="momentum", strategy_id=f"python-custom-child-{tier}"
+                                ),
+                            ),
+                        ),
+                    ),
+                }
+            )
+            primary_callback = CustomDepthStrategy()
+            child_callback = CustomDepthStrategy()
+            callback_slots = [
+                {
+                    "strategy_id": f"python-custom-{tier}",
+                    "strategy_version": "python-depth-v2",
+                    "source_sha256": "f" * 64,
+                    "strategy": primary_callback,
+                },
+                {
+                    "strategy_id": f"python-custom-child-{tier}",
+                    "strategy_version": "python-depth-v2",
+                    "source_sha256": "a" * 64,
+                    "strategy": child_callback,
+                },
+            ]
+            portfolio_outcome = run_depth_backtest_with_strategy_slots(
+                portfolio_spec, callback_slots
+            )
+            self.assertGreaterEqual(portfolio_outcome.fills, 2)
+            self.assertTrue(verify_depth_run(portfolio_outcome).verified)
+            self.assertTrue(all(event == expected_event for event in primary_callback.events))
+            self.assertTrue(all(event == expected_event for event in child_callback.events))
+            portfolio_summary = json.loads(
+                Path(portfolio_outcome.artifacts["summary"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                set(portfolio_summary["strategy_ids"]),
+                {f"python-custom-{tier}", f"python-custom-child-{tier}"},
+            )
+            if tier == "l1":
+                handle_spec = DepthBacktestSpec(
+                    **{
+                        **portfolio_spec.__dict__,
+                        "run_id": "python-custom-depth-portfolio-handle",
+                        "output_dir": str(self.output_dir / "custom-depth-portfolio-handle"),
+                    }
+                )
+                handle = start_depth_backtest_with_strategy_slots(
+                    handle_spec,
+                    [
+                        {**callback_slots[0], "strategy": CustomDepthStrategy(), "source_sha256": "b" * 64},
+                        {**callback_slots[1], "strategy": CustomDepthStrategy(), "source_sha256": "c" * 64},
+                    ],
+                )
+                self.assertEqual(handle.wait(timeout_ms=30_000), "succeeded")
+                self.assertGreaterEqual(handle.result().fills, 2)
+
+                async def verify_depth_async_facade():
+                    client = AsyncCoreClient()
+                    async_spec = DepthBacktestSpec(
+                        **{
+                            **portfolio_spec.__dict__,
+                            "run_id": "python-custom-depth-portfolio-async",
+                            "output_dir": str(self.output_dir / "custom-depth-portfolio-async"),
+                        }
+                    )
+                    async_bindings = [
+                        {
+                            **callback_slots[0],
+                            "strategy": CustomDepthStrategy(),
+                            "source_sha256": "4" * 64,
+                        },
+                        {
+                            **callback_slots[1],
+                            "strategy": CustomDepthStrategy(),
+                            "source_sha256": "5" * 64,
+                        },
+                    ]
+                    async_outcome = await client.async_run_depth_backtest_with_strategy_slots(
+                        async_spec, async_bindings
+                    )
+                    self.assertTrue(verify_depth_run(async_outcome).verified)
+                    handle_spec = DepthBacktestSpec(
+                        **{
+                            **portfolio_spec.__dict__,
+                            "run_id": "python-custom-depth-portfolio-async-handle",
+                            "output_dir": str(
+                                self.output_dir / "custom-depth-portfolio-async-handle"
+                            ),
+                        }
+                    )
+                    async_handle = await client.async_start_depth_backtest_with_strategy_slots(
+                        handle_spec,
+                        [
+                            {
+                                **async_bindings[0],
+                                "strategy": CustomDepthStrategy(),
+                                "source_sha256": "6" * 64,
+                            },
+                            {
+                                **async_bindings[1],
+                                "strategy": CustomDepthStrategy(),
+                                "source_sha256": "7" * 64,
+                            },
+                        ],
+                    )
+                    self.assertEqual(await async_handle.async_wait(timeout=30), "succeeded")
+                    self.assertTrue(verify_depth_run(await async_handle.async_result()).verified)
+
+                asyncio.run(verify_depth_async_facade())
         typed_handle = start_depth_experiment(
             RunDepthExperimentSpec(
                 experiment_id="python-typed-tick-grid-handle",

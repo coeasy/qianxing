@@ -203,6 +203,26 @@ def start_depth_backtest_with_strategy(
     )
 
 
+def run_depth_backtest_with_strategy_slots(
+    spec: "str | dict[str, Any]", strategies: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Run named Python callbacks in declared Tick/OrderBook portfolio slots."""
+    identities_json, callbacks = _strategy_slot_payload(strategies)
+    return json.loads(native.app_run_depth_backtest_with_strategy_slots(
+        _payload(spec), identities_json, callbacks
+    ))
+
+
+def start_depth_backtest_with_strategy_slots(
+    spec: "str | dict[str, Any]", strategies: Sequence[Mapping[str, Any]]
+) -> Any:
+    """Start a cancellable multi-callback Tick/OrderBook portfolio run."""
+    identities_json, callbacks = _strategy_slot_payload(strategies)
+    return native.app_start_depth_backtest_with_strategy_slots(
+        _payload(spec), identities_json, callbacks
+    )
+
+
 def run_multi_leg_backtest_with_strategy(
     spec: "str | dict[str, Any]",
     strategy: Any,

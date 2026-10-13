@@ -49,6 +49,8 @@ APP_ENTRYPOINTS = (
     "app_start_backtest_with_strategy_slots",
     "app_run_depth_backtest_with_strategy",
     "app_start_depth_backtest_with_strategy",
+    "app_run_depth_backtest_with_strategy_slots",
+    "app_start_depth_backtest_with_strategy_slots",
     "app_run_multi_leg_backtest_with_strategy",
     "app_start_multi_leg_backtest_with_strategy",
     "app_run_multi_account_backtest",
@@ -229,6 +231,26 @@ def app_start_depth_backtest_with_strategy(
     """Start a cancellable Python strategy on the Rust Tick/OrderBook engine."""
     return _extension().app_start_depth_backtest_with_strategy(
         spec_json, strategy_id, strategy_version, source_sha256, callback
+    )
+
+
+def app_run_depth_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> str:
+    """Run multiple Python callbacks in Rust's same-account Tick/OrderBook portfolio."""
+    return str(
+        _extension().app_run_depth_backtest_with_strategy_slots(
+            spec_json, identities_json, callbacks
+        )
+    )
+
+
+def app_start_depth_backtest_with_strategy_slots(
+    spec_json: str, identities_json: str, callbacks: list[Any]
+) -> Any:
+    """Start a cancellable multi-callback Rust Tick/OrderBook portfolio run."""
+    return _extension().app_start_depth_backtest_with_strategy_slots(
+        spec_json, identities_json, callbacks
     )
 
 

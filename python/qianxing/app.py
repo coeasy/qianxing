@@ -1438,6 +1438,23 @@ class AsyncCoreClient:
 
         return await self._start(start, spec)
 
+    async def async_run_depth_backtest_with_strategy_slots(
+        self,
+        spec: DepthBacktestSpec | dict[str, Any],
+        strategies: Sequence[Mapping[str, Any]],
+    ) -> DepthBacktestOutcome:
+        return await asyncio.to_thread(run_depth_backtest_with_strategy_slots, spec, strategies)
+
+    async def async_start_depth_backtest_with_strategy_slots(
+        self,
+        spec: DepthBacktestSpec | dict[str, Any],
+        strategies: Sequence[Mapping[str, Any]],
+    ) -> AsyncRunHandle[DepthBacktestOutcome]:
+        def start(value: Any) -> RunHandle[DepthBacktestOutcome]:
+            return start_depth_backtest_with_strategy_slots(value, strategies)
+
+        return await self._start(start, spec)
+
     async def async_run_multi_leg_backtest_with_strategy(
         self, spec: MultiLegBacktestSpec | dict[str, Any], strategy: Any, *,
         strategy_id: str, strategy_version: str, source_sha256: str,
@@ -2090,6 +2107,20 @@ def run_depth_backtest_with_strategy(
         raise _translate_native_error(exc) from exc
 
 
+def run_depth_backtest_with_strategy_slots(
+    spec: DepthBacktestSpec | dict[str, Any],
+    strategies: Sequence[Mapping[str, Any]],
+) -> DepthBacktestOutcome:
+    """Run multiple Python callbacks inside one Rust Tick/OrderBook portfolio ledger."""
+    try:
+        from qianxing_bridge.app import run_depth_backtest_with_strategy_slots as _run_slots
+
+        value = _run_slots(_encode_payload(spec), strategies)
+        return DepthBacktestOutcome.from_dict(value)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
 def run_multi_leg_backtest_with_strategy(
     spec: MultiLegBacktestSpec | dict[str, Any], strategy: Any, *,
     strategy_id: str, strategy_version: str, source_sha256: str,
@@ -2141,6 +2172,20 @@ def start_depth_backtest_with_strategy(
             strategy_version=strategy_version,
             source_sha256=source_sha256,
         )
+        return RunHandle(native_handle, DepthBacktestOutcome)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
+def start_depth_backtest_with_strategy_slots(
+    spec: DepthBacktestSpec | dict[str, Any],
+    strategies: Sequence[Mapping[str, Any]],
+) -> RunHandle[DepthBacktestOutcome]:
+    """Start a cancellable Rust Tick/OrderBook portfolio with multiple Python callbacks."""
+    try:
+        from qianxing_bridge.app import start_depth_backtest_with_strategy_slots as _start_slots
+
+        native_handle = _start_slots(_encode_payload(spec), strategies)
         return RunHandle(native_handle, DepthBacktestOutcome)
     except Exception as exc:
         raise _translate_native_error(exc) from exc
