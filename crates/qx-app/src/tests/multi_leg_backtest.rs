@@ -441,6 +441,15 @@ fn multi_leg_spec_applies_market_specs_fees_funding_and_shared_fill_choice() {
         serde_json::from_str(&std::fs::read_to_string(&outcome.attribution_artifact).unwrap())
             .unwrap();
     assert!(artifact["attribution_totals"]["funding_raw"] != "0");
+    assert!(!artifact["execution_funding_events"]
+        .as_array()
+        .expect("execution funding is listed as replayable events")
+        .is_empty());
+    assert!(artifact["shared_event_log"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|event| { event["kind"]["LedgerApplied"]["entry"]["kind"] == "Funding" }));
     assert!(artifact["attribution_totals"]["margin_peak_raw"] != "0");
     assert_eq!(artifact["fill_model"], "one_tick_slippage");
     assert_eq!(artifact["fee_model"]["primary"]["maker_fee_bps"], 3);

@@ -48,6 +48,8 @@ pub struct MultiLegBacktestSpec {
     #[serde(default)]
     pub reference_taker_fee_bps: Option<i64>,
     #[serde(default)]
+    /// Signed derivative funding rate in bps per UTC 8-hour settlement.
+    /// Settlements affect the shared Rust Ledger and replay before callbacks at that time.
     pub funding_bps: i64,
     #[serde(default)]
     pub fill_model: MultiLegFillModel,
@@ -177,10 +179,10 @@ impl MultiLegBacktestSpec {
                 "多腿共享费率与腿级 maker/taker 费率必须在 0..=10000",
             ));
         }
-        if !(0..=10_000).contains(&self.funding_bps) {
+        if !(-10_000..=10_000).contains(&self.funding_bps) {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
-                "多腿 funding_bps 必须在 0..=10000",
+                "多腿 funding_bps 必须在 -10000..=10000",
             ));
         }
         if self.strategy.target_available_margin_bps.is_some()

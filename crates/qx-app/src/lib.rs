@@ -76,12 +76,12 @@ pub use cases::{
 pub use context::{CallerCapability, RunContext};
 pub use error::{AppAction, AppError, AppErrorCategory, AppRetry};
 pub use multi_leg::{
-    multi_leg_bar_close_raw, multi_leg_cost_bps, multi_leg_group_attributions,
-    multi_leg_group_totals, multi_leg_integrity_json, multi_leg_integrity_summary,
-    multi_leg_leg_buckets, multi_leg_leg_integrity, multi_leg_leg_margin,
-    multi_leg_pending_reconcile_json, multi_leg_realized_standing_at, MultiLegAttribution,
-    MultiLegLegFacts, MultiLegLegIntegrity, MultiLegPendingReconcile, MultiLegSignalBucket,
-    MULTI_LEG_FUNDING_INTERVAL_MS,
+    multi_leg_apply_funding, multi_leg_bar_close_raw, multi_leg_cost_bps,
+    multi_leg_group_attributions, multi_leg_group_totals, multi_leg_integrity_json,
+    multi_leg_integrity_summary, multi_leg_leg_buckets, multi_leg_leg_integrity,
+    multi_leg_leg_margin, multi_leg_pending_reconcile_json, multi_leg_realized_standing_at,
+    MultiLegAttribution, MultiLegLegFacts, MultiLegLegIntegrity, MultiLegPendingReconcile,
+    MultiLegSignalBucket, MULTI_LEG_FUNDING_INTERVAL_MS,
 };
 pub use qx_core::MakerTakerFeeSchedule;
 pub use run_handle::{RunEvent, RunEventKind, RunHandle, RunStatus, DEFAULT_WAIT_TIMEOUT};

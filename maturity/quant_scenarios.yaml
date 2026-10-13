@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791913096
+generated_at_unix: 1791915743
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -172,7 +172,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=4cee6fdcb8417d98/b648598fc617ec82,d7a8b015a4afb3be/d273413edef9d116,25126d7db13bf36b/41bf82a6852d1897,466570f9d60bff41/adce7ad43e0a1a8b"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=e45a847f6babd3e0/5f8882e2698427d2,081aa46125ed4ade/5e8e6d3f55c4e026,b3d38135903a3153/332be3ec7e56da67,b20109a5fdd1c809/95ce7ffea7c45c1b"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -190,6 +190,14 @@ scenarios:
     exit_code: 0
     observed: "test result: ok. 1 passed; 0 failed; shared_ledger=true cross_market_cash_competition=true rejected_order_attributed=true replay_verified=true"
     evidence: ["crates/qx-xingban/src/backtest/portfolio_session.rs", "crates/qx-xingban/src/backtest/portfolio_session_tests.rs", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "crates/qx-app/src/tests/multi_leg_backtest.rs", "crates/qx-app/src/cases/run_multi_leg_backtest/portfolio_ledger.rs"]
+  - name: multileg_funding_ledger_execution
+    label: "多腿 funding 在 UTC 8 小时结算边界进入共享账簿、策略可用现金与回放"
+    status: executed
+    anchor: "crates/qx-xingban/src/backtest/portfolio_session/funding.rs"
+    command: "cargo test --offline -p qx-xingban derivative_funding_is_applied_to_shared_ledger_before_later_callbacks_and_replays -- --test-threads=1"
+    exit_code: 0
+    observed: "test result: ok. 1 passed; 0 failed; utc_8h_settlement=true derivative_ledger_cashflow=true strategy_sees_settled_cash=true replay_verified=true"
+    evidence: ["crates/qx-xingban/src/backtest/portfolio_session/funding.rs", "crates/qx-xingban/src/backtest/portfolio_session_tests.rs", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "crates/qx-app/src/tests/multi_leg_backtest.rs", "crates/qx-core/src/ledger/cash.rs"]
   - name: order_book_execution
     label: "盘口撮合 / 日内高频"
     status: executed
@@ -421,10 +429,3 @@ scenarios:
     blocked_by: "CCXT 适配器进程依赖的 `ccxt` 未装入 python/.venv，且无交易所凭据（`maturity/evidence/testnet/` 那份 Binance 验收 outcome=skipped）。适配器代码在盘（`BinanceSpotVenue` / `CcxtProcessVenue` 都是真 `impl Venue for`），但本环境执行不了。"
     next_gate: "在装有 ccxt 与 testnet 凭据的环境跑一次完整订单生命周期（提交/查询/撤单/对账），产出 conformance 记录。"
     evidence: ["crates/qx-adapter/src/ccxt.rs", "maturity/evidence/testnet"]
-  - name: multileg_funding_ledger_execution
-    label: "多腿资金费在执行期影响共享账本、购买力与复核"
-    status: missing
-    anchor: "crates/qx-app/src/multi_leg.rs"
-    why_missing: "当前多腿资金费按成交后持仓桶计算并进入结果归因；它没有作为时间线中的 Ledger funding cashflow，因此不能在后续决策前改变共享购买力，也不在 PortfolioBarSession 的原始事件日志/回放账簿内。"
-    next_gate: "将有明确时间戳与结算价格的 FundingEvent 接入共享多市场 session；在确定的时间优先级下更新 Ledger、风控估值、共享购买力、腿级/组合 PnL 与 EventLog，并覆盖费率方向、跨周期、持仓切换、同刻成交、非对齐行情、溢出和 replay 对账。"
-    evidence: ["crates/qx-app/src/multi_leg.rs", "crates/qx-app/src/cases/run_multi_leg_backtest.rs", "crates/qx-xingban/src/backtest/portfolio_session.rs", "crates/qx-core/src/ledger/cash.rs"]

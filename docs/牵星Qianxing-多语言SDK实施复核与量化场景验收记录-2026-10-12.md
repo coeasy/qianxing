@@ -355,3 +355,12 @@ Python 十策略证据：
 - 第三轮场景/发布复核发现旧场景清单会在新实现后继续生成静态 `missing`，探针已改为真实运行共享购买力竞争测试并据结果生成状态。探针结果：48 项 executed、0 项 declared_not_executed、1 项 missing、1 项 blocked。唯一量化场景 missing 是多腿 funding 尚未作为执行期现金流写入共享 Ledger/购买力；唯一 blocked 是缺少外部 CCXT/testnet 环境和凭据的实盘交易所验收。
 - 验证：`cargo test --offline -p qx-xingban`（112 单测及集成测试）通过；`cargo test --offline -p qx-app --lib` 123/123；`cargo test --offline -p qx-sdk`（6 单测与 27 独立消费者/集成用例）通过；`cargo test --offline -p qx-cli`（396 单测和所有集成二进制）通过；Python 全量 `python -m pytest python/tests -q` 140/140；`cargo build --offline -p qx-python`、`cargo check --offline -p qx-cli`、`cargo clippy --offline -p qx-xingban -p qx-app --all-targets -- -D warnings`、格式检查、1096 项架构门禁及 `git diff --check` 通过。系统临时目录在本环境不可写时，测试 `TEMP/TMP` 定向到仓库隔离临时目录。
 - 本节只关闭本机可验证的双腿 Bar 研究回测缺口，不代表多腿 funding、跨账户组合、所有交易所/数据源 conformance、远端策略回调、完整 Web/桌面操作、C++ 独立运行时或生产实盘认证完成；整体 SDK 发布门仍未关闭。
+
+## 45. 2026-10-14 实现：多腿 funding 进入共享账簿与回放
+
+- 第一轮现金流复核确认多腿 funding 仍在撮合结束后按持仓桶估算，未改变策略可见现金。现在 `PortfolioBarSession` 将签名 funding rate 纳入共享 session，在 epoch UTC 的 8 小时结算边界按实际衍生品持仓和最近已观察标记价结算；Funding LedgerEntry 记录标的、签名数量、价格、币种、时间与现金变化，并以 TIMER 优先级先于同刻市场策略命令追加 EventLog。现金余额在后续 callback 更新，session 重放验证从该账簿事实重建。负费率会反转多空资金方向；非衍生品和超范围费率拒绝，标记价超过一个 funding 周期则失败关闭。
+- 第二轮归因检查发现组合组归因可能不包含尚未配对的信号组，不能要求完整组总额等于共享现金流。现将实际 Ledger funding 分配到持仓对应的腿级桶，校验腿级归因合计与共享账簿现金流一致；组合报表区分全部实际 funding、已完成组 funding 和未分组 residual，并以账簿实际资金费计算成本/组合权益，避免双扣或漏记。
+- 第三轮跨语言与同刻事件检查发现 funding 若使用 APPLY 优先级，遇到同刻 Bar 决策命令会导致 EventLog 优先级回退；改为 TIMER 后，Python typed SDK 对真实双腿 fixture 的负费率请求也通过同一 Rust 应用用例。测试同时检查资金费进入事件日志与产物，不依赖单纯类型/字段存在。
+- 量化场景探针已执行 49 项：49 executed、0 declared_not_executed、0 missing、1 blocked；没有网络访问或发送订单。Classic strategy 场景仍观察到单腿 13 个 Python 快速选择候选、L2 10 个经典策略候选。唯一 blocked 仍是需要外部 CCXT、真实 testnet 凭据与订单生命周期的交易所实盘认证。
+- 验证：`cargo test --offline -p qx-core` 通过；`cargo test --offline -p qx-xingban` 113 单测及集成测试通过，另有显式 0 bps 现货边界测试通过；`cargo test --offline -p qx-app --lib` 123/123；`cargo test --offline -p qx-cli multi_leg` 中 CLI 单测与 CLI/HTTP/Python 多腿入口回归通过；`cargo test --offline -p qx-sdk` 6 单测及 27 独立消费者/集成用例通过；Python 全量 140/140；`cargo build --offline -p qx-python` 通过；严格 Clippy 与格式检查通过。资金费专用场景证实正费率扣减、负费率收取、策略读到结算后的现金和 ReplayVerifier 重放。
+- 资金模型仍是调用方提供的常量 bps，不含逐时 funding 历史、交易所特定 funding 时间表、跨币种 funding 或真实 venue 账单核对；共享 Bar 多腿仍仅限同一账户双腿。跨账户组合风险、完整 Paper/Live 多市场工作流、远端策略 callback、C++ 默认 transport、Web/桌面端到端与全平台安装认证未完成。整体发布门继续关闭，外部 testnet 能力保持未认证。

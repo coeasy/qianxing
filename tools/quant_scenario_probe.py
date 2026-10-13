@@ -188,28 +188,7 @@ BLOCKED = [
     },
 ]
 
-MISSING = [
-    {
-        "name": "multileg_funding_ledger_execution",
-        "label": "多腿资金费在执行期影响共享账本、购买力与复核",
-        "anchor": "crates/qx-app/src/multi_leg.rs",
-        "why_missing": (
-            "当前多腿资金费按成交后持仓桶计算并进入结果归因；它没有作为时间线中的 Ledger funding cashflow，"
-            "因此不能在后续决策前改变共享购买力，也不在 PortfolioBarSession 的原始事件日志/回放账簿内。"
-        ),
-        "next_gate": (
-            "将有明确时间戳与结算价格的 FundingEvent 接入共享多市场 session；在确定的时间优先级下更新 Ledger、"
-            "风控估值、共享购买力、腿级/组合 PnL 与 EventLog，并覆盖费率方向、跨周期、持仓切换、同刻成交、"
-            "非对齐行情、溢出和 replay 对账。"
-        ),
-        "evidence": [
-            "crates/qx-app/src/multi_leg.rs",
-            "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
-            "crates/qx-xingban/src/backtest/portfolio_session.rs",
-            "crates/qx-core/src/ledger/cash.rs",
-        ],
-    },
-]
+MISSING = []
 
 STATUSES = ("executed", "declared_not_executed", "missing", "blocked")
 
@@ -895,6 +874,27 @@ def main() -> int:
             "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
             "crates/qx-app/src/tests/multi_leg_backtest.rs",
             "crates/qx-app/src/cases/run_multi_leg_backtest/portfolio_ledger.rs",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
+        "multileg_funding_ledger_execution",
+        "多腿 funding 在 UTC 8 小时结算边界进入共享账簿、策略可用现金与回放",
+        "crates/qx-xingban/src/backtest/portfolio_session/funding.rs",
+        [
+            "test", "--offline", "-p", "qx-xingban",
+            "derivative_funding_is_applied_to_shared_ledger_before_later_callbacks_and_replays",
+            "--", "--test-threads=1",
+        ],
+        r"(test result: ok\. 1 passed; 0 failed)",
+        extra="utc_8h_settlement=true derivative_ledger_cashflow=true strategy_sees_settled_cash=true replay_verified=true",
+        evidence=[
+            "crates/qx-xingban/src/backtest/portfolio_session/funding.rs",
+            "crates/qx-xingban/src/backtest/portfolio_session_tests.rs",
+            "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
+            "crates/qx-app/src/tests/multi_leg_backtest.rs",
+            "crates/qx-core/src/ledger/cash.rs",
         ],
         command_prefix="cargo",
     )

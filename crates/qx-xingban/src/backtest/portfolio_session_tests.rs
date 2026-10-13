@@ -121,6 +121,7 @@ fn run_with_priorities(btc_priority: u32, eth_priority: u32) -> PortfolioBarSess
             currency: "USDT".into(),
             initial_cash: Money::from_raw(1_000 * SCALE),
             risk: RiskGate::conservative_default(),
+            funding_bps: BTreeMap::new(),
         },
         vec![
             market(btc.clone(), btc_priority, &btc_bars, "BTC"),
@@ -179,4 +180,194 @@ fn shared_session_market_priority_is_deterministic_and_controls_funding_competit
         1
     );
     assert_ne!(first.result_hash(), reversed.result_hash());
+}
+
+#[test]
+fn explicit_zero_funding_rate_is_valid_for_a_spot_market() {
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth = InstrumentId::parse("ETHUSDT.KRAKEN").unwrap();
+    let bars = [Bar::new(
+        1,
+        100 * SCALE,
+        101 * SCALE,
+        99 * SCALE,
+        100 * SCALE,
+        100 * SCALE,
+    )];
+    let engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: "shared-account".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_raw(1_000 * SCALE),
+            risk: RiskGate::conservative_default(),
+            funding_bps: [(btc.clone(), 0)].into_iter().collect(),
+        },
+        vec![market(btc, 0, &bars, "BTC"), market(eth, 1, &bars, "ETH")],
+    )
+    .unwrap();
+    let mut strategy = SubmitBoth {
+        first: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+        second: InstrumentId::parse("ETHUSDT.KRAKEN").unwrap(),
+        emitted: false,
+        fills: Vec::new(),
+    };
+    let report = engine.run(&mut strategy).unwrap();
+    assert!(report.funding_by_instrument_raw.is_empty());
+}
+
+struct BuyDerivativeOnce {
+    instrument: InstrumentId,
+    submitted: bool,
+    observed_cash: Vec<i128>,
+}
+
+impl BarStrategy for BuyDerivativeOnce {
+    fn update_account_state(
+        &mut self,
+        cash: &BTreeMap<String, i128>,
+        _available_margin_raw: Option<i128>,
+    ) {
+        self.observed_cash
+            .push(cash.get("USDT").copied().unwrap_or_default());
+    }
+
+    fn on_bar_orders(
+        &mut self,
+        _history: &[Bar],
+        _instrument: &InstrumentId,
+        _ts: u64,
+        _position: i128,
+    ) -> Vec<Order> {
+        if self.submitted {
+            return Vec::new();
+        }
+        self.submitted = true;
+        vec![Order {
+            client_id: 91,
+            instrument: self.instrument.clone(),
+            side: Side::Buy,
+            qty: Quantity::from_raw(SCALE),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "shared-account".into(),
+            trace: None,
+            policy: None,
+        }]
+    }
+}
+
+#[test]
+fn derivative_funding_is_applied_to_shared_ledger_before_later_callbacks_and_replays() {
+    const EIGHT_HOURS_MS: u64 = 8 * 60 * 60 * 1_000;
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let bars = [
+        Bar::new(1, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, SCALE),
+        Bar::new(2, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, SCALE),
+        Bar::new(
+            EIGHT_HOURS_MS + 1,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            SCALE,
+        ),
+    ];
+    let mut derivative = market(instrument.clone(), 0, &bars, "BTC");
+    derivative.spec.product = TradingProduct::Perpetual;
+    derivative.spec.linear = true;
+    derivative.spec.max_leverage = 10;
+    derivative.spec.maintenance_margin_bps = 500;
+    let second_instrument = InstrumentId::parse("ETHUSDT.KRAKEN").unwrap();
+    let second_bars = [
+        Bar::new(1, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, SCALE),
+        Bar::new(2, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, SCALE),
+        Bar::new(
+            EIGHT_HOURS_MS + 1,
+            100 * SCALE,
+            101 * SCALE,
+            99 * SCALE,
+            100 * SCALE,
+            SCALE,
+        ),
+    ];
+    let engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: "shared-account".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_raw(1_000 * SCALE),
+            risk: RiskGate::conservative_default(),
+            funding_bps: BTreeMap::from([(instrument.clone(), 100)]),
+        },
+        vec![
+            derivative,
+            market(second_instrument.clone(), 1, &second_bars, "ETH"),
+        ],
+    )
+    .unwrap();
+    let mut strategy = BuyDerivativeOnce {
+        instrument: instrument.clone(),
+        submitted: false,
+        observed_cash: Vec::new(),
+    };
+    let report = engine.run(&mut strategy).unwrap();
+    assert_eq!(report.fills.len(), 1);
+    assert_eq!(
+        report.ledger.cash_for("shared-account", "USDT"),
+        999 * SCALE
+    );
+    assert_eq!(report.funding_by_instrument_raw[&instrument], -SCALE);
+    assert!(strategy.observed_cash.contains(&(999 * SCALE)));
+    assert_eq!(
+        report.funding_events_by_instrument[&instrument],
+        vec![(EIGHT_HOURS_MS, -SCALE)]
+    );
+    assert!(report.event_log.events().iter().any(|event| {
+        event.ts == EIGHT_HOURS_MS
+            && matches!(
+                &event.kind,
+                EventKind::LedgerApplied { entry }
+                    if entry.kind == qx_core::LedgerEntryKind::Funding
+                        && entry.amount.raw() == -SCALE
+                        && entry.instrument.as_ref() == Some(&instrument)
+                        && entry.quantity.raw() == SCALE
+                        && entry.price.map(|price| price.raw()) == Some(100 * SCALE)
+            )
+    }));
+    report.verify().unwrap();
+
+    let mut derivative = market(instrument.clone(), 0, &bars, "BTC");
+    derivative.spec.product = TradingProduct::Perpetual;
+    derivative.spec.linear = true;
+    derivative.spec.max_leverage = 10;
+    derivative.spec.maintenance_margin_bps = 500;
+    let negative_engine = PortfolioBarEngine::new(
+        PortfolioBarSessionConfig {
+            account_id: "shared-account".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_raw(1_000 * SCALE),
+            risk: RiskGate::conservative_default(),
+            funding_bps: BTreeMap::from([(instrument.clone(), -100)]),
+        },
+        vec![
+            derivative,
+            market(second_instrument, 1, &second_bars, "ETH"),
+        ],
+    )
+    .unwrap();
+    let mut negative_strategy = BuyDerivativeOnce {
+        instrument: instrument.clone(),
+        submitted: false,
+        observed_cash: Vec::new(),
+    };
+    let negative_report = negative_engine.run(&mut negative_strategy).unwrap();
+    assert_eq!(
+        negative_report.funding_by_instrument_raw[&instrument],
+        SCALE
+    );
+    assert_eq!(
+        negative_report.ledger.cash_for("shared-account", "USDT"),
+        1_001 * SCALE
+    );
+    negative_report.verify().unwrap();
 }

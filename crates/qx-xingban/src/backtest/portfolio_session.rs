@@ -22,8 +22,10 @@ use qx_guanxing::{Bar, QualityGate, Verdict};
 use qx_zhenlu::{Oms, RiskGate};
 use std::collections::BTreeMap;
 
+mod funding;
 mod margin;
 mod runtime;
+use funding::{apply_settlements, prepare_timeline};
 use margin::other_market_margin;
 use runtime::build_runtime;
 
@@ -44,6 +46,8 @@ pub struct PortfolioBarSessionConfig {
     pub currency: String,
     pub initial_cash: Money,
     pub risk: RiskGate,
+    /// Constant funding rate in basis points per UTC 8-hour settlement, keyed by derivative.
+    pub funding_bps: BTreeMap<InstrumentId, i64>,
 }
 
 pub struct PortfolioBarSessionReport {
@@ -54,6 +58,8 @@ pub struct PortfolioBarSessionReport {
     pub ledger: Ledger,
     pub event_log: EventLog,
     pub market_specs: BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    pub funding_by_instrument_raw: BTreeMap<InstrumentId, i128>,
+    pub funding_events_by_instrument: BTreeMap<InstrumentId, Vec<(u64, i128)>>,
     pub clock_start: u64,
     pub clock_end: u64,
 }
@@ -166,33 +172,12 @@ impl<'a> PortfolioBarEngine<'a> {
             .iter()
             .map(|market| (market.instrument.clone(), market.spec.clone()))
             .collect::<BTreeMap<_, _>>();
-        let series = markets
-            .iter()
-            .map(|market| PortfolioBarSeries {
-                instrument: &market.instrument,
-                priority: market.priority,
-                bars: market.bars,
-            })
-            .collect::<Vec<_>>();
-        let timeline =
-            PortfolioBarTimeline::new(&series).map_err(qx_core::QxError::BusinessViolation)?;
-        if timeline.events().is_empty() {
-            return Err(qx_core::QxError::BusinessViolation(
-                "共享 Bar session 至少需要一条行情".into(),
-            ));
-        }
-        let start = timeline.clock_start().unwrap_or(0);
-        let end = timeline.clock_end().unwrap_or(0);
-        let events = timeline
-            .events()
-            .iter()
-            .map(|event| OwnedTimelineEvent {
-                instrument: event.instrument.clone(),
-                bar: *event.bar,
-            })
-            .collect::<Vec<_>>();
-        drop(timeline);
-        drop(series);
+        let prepared = prepare_timeline(&markets, &config.funding_bps, &specs)?;
+        let start = prepared.start;
+        let end = prepared.end;
+        let events = prepared.events;
+        let settlements = prepared.settlements;
+        let timestamps = prepared.timestamps;
         let mut runtime = build_runtime(markets);
         let mut ledger = Ledger::new();
         let deposit_id = ledger.deposit(
@@ -222,6 +207,7 @@ impl<'a> PortfolioBarEngine<'a> {
         let mut next_id = 1_u64;
         let mut processed = BTreeMap::<InstrumentId, usize>::new();
         let mut marks = BTreeMap::<InstrumentId, Price>::new();
+        let mut mark_timestamps = BTreeMap::<InstrumentId, u64>::new();
         let mut fills = Vec::new();
         let mut fills_by_instrument = runtime
             .keys()
@@ -234,18 +220,45 @@ impl<'a> PortfolioBarEngine<'a> {
             .map(|instrument| (instrument, EventLog::new()))
             .collect::<BTreeMap<_, _>>();
         let mut equity = Vec::new();
+        let mut funding_by_instrument_raw = BTreeMap::<InstrumentId, i128>::new();
+        let mut funding_events_by_instrument = BTreeMap::<InstrumentId, Vec<(u64, i128)>>::new();
 
         let mut event_cursor = 0;
-        while event_cursor < events.len() {
+        for ts in timestamps {
             if is_cancelled() {
                 return Ok(None);
             }
-            let ts = events[event_cursor].bar.ts;
             let batch_start = event_cursor;
             while event_cursor < events.len() && events[event_cursor].bar.ts == ts {
                 event_cursor += 1;
             }
             let timestamp_events = &events[batch_start..event_cursor];
+            if let Some(scheduled) = settlements.get(&ts) {
+                apply_settlements(
+                    ts,
+                    scheduled,
+                    &config.account_id,
+                    &config.currency,
+                    &specs,
+                    &marks,
+                    &mark_timestamps,
+                    &mut ledger,
+                    &mut log,
+                    &mut funding_by_instrument_raw,
+                    &mut funding_events_by_instrument,
+                )?;
+            }
+            if timestamp_events.is_empty() {
+                let marked_equity = ledger
+                    .valuate(
+                        &ValuationContext::spot(&config.account_id, &marks, &config.currency)
+                            .with_market_specs(&specs),
+                    )?
+                    .equity
+                    .raw();
+                equity.push((ts, marked_equity));
+                continue;
+            }
             let mut pending_by_market = BTreeMap::<(InstrumentId, u64), Vec<qx_core::Order>>::new();
             for event in timestamp_events {
                 let instrument = event.instrument.clone();
@@ -451,6 +464,7 @@ impl<'a> PortfolioBarEngine<'a> {
                 let previous_count = processed.get(&instrument).copied().unwrap_or_default();
                 processed.insert(instrument.clone(), previous_count + 1);
                 marks.insert(instrument, Price::from_raw(event.bar.close));
+                mark_timestamps.insert(event.instrument.clone(), event.bar.ts);
                 let marked_equity = ledger
                     .valuate(
                         &ValuationContext::spot(&config.account_id, &marks, &config.currency)
@@ -470,6 +484,8 @@ impl<'a> PortfolioBarEngine<'a> {
             ledger,
             event_log: log,
             market_specs: specs,
+            funding_by_instrument_raw,
+            funding_events_by_instrument,
             clock_start: start,
             clock_end: end,
         };

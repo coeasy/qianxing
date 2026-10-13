@@ -1,6 +1,6 @@
 //! 现金事实归约：入金、资金费、利息、交割、调整与强平。
 
-use super::{Ledger, LedgerEntry, LedgerEntryKind};
+use super::{InstrumentFunding, Ledger, LedgerEntry, LedgerEntryKind};
 use crate::error::{QxError, QxResult};
 use crate::numeric::{Money, Quantity};
 
@@ -39,6 +39,35 @@ impl Ledger {
         ts: u64,
     ) -> QxResult<u64> {
         self.apply_cash_entry(account_id, currency, LedgerEntryKind::Funding, amount, ts)
+    }
+
+    /// Apply a funding cashflow with the derivative exposure and mark that
+    /// produced it, so replay and audit can trace the cash movement to a market.
+    pub fn apply_instrument_funding(
+        &mut self,
+        account_id: &str,
+        currency: &str,
+        funding: InstrumentFunding<'_>,
+    ) -> QxResult<u64> {
+        if funding.quantity.raw() == 0 || funding.mark_price.raw() <= 0 {
+            return Err(QxError::BusinessViolation(
+                "标的资金费必须包含非零持仓和正标记价".into(),
+            ));
+        }
+        self.append(LedgerEntry {
+            id: 0,
+            account_id: account_id.into(),
+            currency: currency.into(),
+            kind: LedgerEntryKind::Funding,
+            amount: funding.amount,
+            instrument: Some(funding.instrument.clone()),
+            quantity: funding.quantity,
+            price: Some(funding.mark_price),
+            order_id: None,
+            ts: funding.ts,
+            multiplier: 1,
+            position_side: None,
+        })
     }
 
     pub fn apply_interest(

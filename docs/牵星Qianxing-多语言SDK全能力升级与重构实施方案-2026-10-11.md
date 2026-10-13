@@ -6,7 +6,7 @@
 > 范围：Rust 共享内核与 Rust SDK、Python SDK、C++ SDK、HTTP/Web 调用链、跨语言策略运行时、构建与发布  
 > 状态：实施计划；本文中的目标能力不代表当前已经实现或通过实盘认证。
 
-> 实施跟踪（2026-10-14）：本方案仍在实施中，尚未达到全能力发布门槛。Rust/Python 本地多腿 Bar 回测现已接入共享多市场执行账簿；多腿 funding 仍未进入执行期 Ledger/购买力，实盘 testnet 认证、跨账户组合、C++ 默认 transport 及 Web/桌面端到端验收也未完成。逐轮复核、测试证据与限制见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)和 `maturity/quant_scenarios.yaml`。
+> 实施跟踪（2026-10-14）：本方案仍在实施中，尚未达到全能力发布门槛。Rust 共享多市场 Bar session 现按 UTC 8 小时结算边界，将衍生品 funding 作为 Ledger 现金流写入 EventLog/Replay，并在后续策略回调前更新共享账户现金；多腿腿级归因消费同一结算事实。单腿快速选择覆盖 13 个内置策略，Rust 内核当前有 17 个内置策略类型。实盘 testnet 认证、跨账户组合风险、C++ 默认 transport 及 Web/桌面端到端验收仍未完成。逐轮复核、测试证据与限制见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)和 `maturity/quant_scenarios.yaml`。
 
 ## 1. 目标与完成定义
 

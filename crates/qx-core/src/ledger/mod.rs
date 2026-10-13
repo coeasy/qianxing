@@ -46,6 +46,16 @@ pub struct LedgerEntry {
     pub position_side: Option<PositionSide>,
 }
 
+/// Funding cashflow together with the derivative exposure and mark that produced it.
+#[derive(Clone, Copy, Debug)]
+pub struct InstrumentFunding<'a> {
+    pub instrument: &'a InstrumentId,
+    pub quantity: Quantity,
+    pub mark_price: Price,
+    pub amount: Money,
+    pub ts: u64,
+}
+
 fn default_multiplier() -> i128 {
     1
 }

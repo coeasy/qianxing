@@ -2793,10 +2793,17 @@ class AppUseCaseTests(unittest.TestCase):
             reference_market_spec=derivative_spec(
                 "ETHUSDT.BINANCE", False, 1_000_000_000
             ),
+            funding_bps=-100,
         )
         sized = run_multi_leg_backtest(fixed_notional)
         self.assertGreater(sized.primary_fills, 0)
         self.assertGreater(sized.reference_fills, 0)
+        sized_artifact = json.loads(Path(sized.attribution_artifact).read_text(encoding="utf-8"))
+        self.assertTrue(sized_artifact["execution_funding_events"])
+        self.assertTrue(any(
+            event.get("kind", {}).get("LedgerApplied", {}).get("entry", {}).get("kind") == "Funding"
+            for event in sized_artifact["shared_event_log"]
+        ))
 
         class CustomPairStrategy:
             def __init__(self, quantity=1_000_000_000):

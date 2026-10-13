@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub(super) mod custom_strategy;
+mod funding;
 mod market_spec;
 mod models;
 mod portfolio_ledger;
@@ -22,6 +23,7 @@ mod report_metrics;
 mod strategy_targets;
 mod validation;
 pub(super) use custom_strategy::InjectedMultiLegStrategy;
+use funding::{attribute_execution_funding, rates_for_legs};
 pub(super) use market_spec::{execution_market_spec, validate_leg_spec};
 pub(super) use models::{fill_model_for, fill_model_name};
 use report_metrics::{fill_result_hash, leg_return_bps, LegReturnInput};
@@ -238,12 +240,20 @@ pub(super) fn run_inner(
             seed: spec.seed,
         },
     ];
+    let funding_rates = rates_for_legs(
+        spec.funding_bps,
+        &primary.instrument,
+        primary_spec,
+        &reference.instrument,
+        reference_spec,
+    );
     let engine = PortfolioBarEngine::new(
         PortfolioBarSessionConfig {
             account_id: shared_account_id.clone(),
             currency: spec.settlement_currency.clone(),
             initial_cash: Money::from_raw(initial_cash_raw),
             risk: qx_zhenlu::RiskGate::conservative_default(),
+            funding_bps: funding_rates,
         },
         markets,
     )
@@ -287,10 +297,8 @@ pub(super) fn run_inner(
         event_log: reference_rejections,
         clock_end: portfolio_report.clock_end,
     };
-    let primary_buckets =
-        crate::multi_leg_leg_buckets(&primary_leg, spec.funding_bps).map_err(invalid)?;
-    let reference_buckets =
-        crate::multi_leg_leg_buckets(&reference_leg, spec.funding_bps).map_err(invalid)?;
+    let mut primary_buckets = crate::multi_leg_leg_buckets(&primary_leg, 0).map_err(invalid)?;
+    let mut reference_buckets = crate::multi_leg_leg_buckets(&reference_leg, 0).map_err(invalid)?;
     let attribution = crate::multi_leg_group_attributions(
         &strategy_id,
         &primary_leg,
@@ -317,7 +325,6 @@ pub(super) fn run_inner(
         &portfolio_report.ledger,
     )?;
 
-    let funding_raw = totals.2;
     let final_equity = portfolio_report
         .equity
         .last()
@@ -325,22 +332,22 @@ pub(super) fn run_inner(
         .unwrap_or(initial_cash_raw);
     let pnl = final_equity
         .checked_sub(initial_cash_raw)
-        .and_then(|x| x.checked_sub(funding_raw))
-        .ok_or_else(|| invalid("多腿组合净盈亏（含资金费）溢出"))?;
+        .ok_or_else(|| invalid("多腿组合净盈亏溢出"))?;
     let funded = initial_cash_raw;
     let combined = pnl
         .checked_mul(10_000)
         .and_then(|x| x.checked_div(funded))
         .and_then(|x| i32::try_from(x).ok())
         .ok_or_else(|| invalid("多腿组合收益无法表示"))?;
-    let primary_funding = primary_buckets
-        .iter()
-        .try_fold(0_i128, |sum, bucket| sum.checked_add(bucket.funding_raw()))
-        .ok_or_else(|| invalid("主腿资金费累计溢出"))?;
-    let reference_funding = reference_buckets
-        .iter()
-        .try_fold(0_i128, |sum, bucket| sum.checked_add(bucket.funding_raw()))
-        .ok_or_else(|| invalid("对冲腿资金费累计溢出"))?;
+    let (funding_raw, primary_funding, reference_funding, ungrouped_funding_raw) =
+        attribute_execution_funding(
+            &portfolio_report,
+            &primary.instrument,
+            &mut primary_buckets,
+            &reference.instrument,
+            &mut reference_buckets,
+            totals.2,
+        )?;
     let primary_return = leg_return_bps(LegReturnInput {
         ledger: &portfolio_report.ledger,
         account_id: &shared_account_id,
@@ -412,11 +419,13 @@ pub(super) fn run_inner(
         "attribution_totals": {
             "fees_raw": totals.0.to_string(),
             "turnover_raw": totals.1.to_string(),
-            "funding_raw": totals.2.to_string(),
+            "funding_raw": funding_raw.to_string(),
+            "completed_groups_funding_raw": totals.2.to_string(),
+            "ungrouped_funding_raw": ungrouped_funding_raw.to_string(),
             "filled_qty_raw": totals.3.to_string(),
             "margin_peak_raw": totals.4.to_string(),
             "cost_bps": crate::multi_leg_cost_bps(
-                totals.0.checked_add(totals.2).ok_or_else(|| invalid("多腿净成本溢出"))?,
+                totals.0.checked_add(funding_raw).ok_or_else(|| invalid("多腿净成本溢出"))?,
                 totals.1,
             ).map_err(invalid)?,
             "residual_fees_raw": attribution.residual_fees_raw.to_string(),
@@ -428,9 +437,11 @@ pub(super) fn run_inner(
         "account_ledger": account_ledger,
         "replay_events": portfolio_report.event_log.events().len(),
         "replay_ledger_entries": portfolio_report.ledger.entries().len(),
+        "execution_funding_by_instrument_raw": portfolio_report.funding_by_instrument_raw.iter().map(|(instrument, amount)| (instrument.to_string(), amount.to_string())).collect::<BTreeMap<_, _>>(),
+        "execution_funding_events": portfolio_report.funding_events_by_instrument.iter().flat_map(|(instrument, events)| events.iter().map(|(ts, amount)| serde_json::json!({"instrument": instrument.to_string(), "ts": ts, "amount_raw": amount.to_string()}))).collect::<Vec<_>>(),
         "matching": "qx-xingban::PortfolioBarEngine/NextBarOpenFillModel",
         "leg_return_basis": "leg pnl divided by declared leg initial cash; execution uses the shared account and does not enforce leg capital reservations",
-        "assumptions": ["both legs share one account Ledger, OMS, EventLog, and buying-power pool", "same-timestamp callbacks are deterministic and market orders compete by declared priority then instrument id", "all market events are replay-verified together", "each venue can declare its own maker/taker rates with shared rates as fallback", "funding is attributed only to derivative legs and is included in net return", "missing market specs retain the legacy spot assumption and are represented by a normalized execution spec"],
+        "assumptions": ["both legs share one account Ledger, OMS, EventLog, and buying-power pool", "same-timestamp callbacks are deterministic and market orders compete by declared priority then instrument id", "all market events are replay-verified together", "each venue can declare its own maker/taker rates with shared rates as fallback", "signed funding settles at UTC 8-hour boundaries on the last observed mark using the open derivative position and is applied to the shared Ledger before callbacks at that timestamp", "funding settlement fails closed if its latest mark is more than one funding interval old", "funding debit or receipt is included exactly once in ending equity and each settlement is present in replay facts", "this is a constant-rate funding scenario, not an exchange-specific funding history", "missing market specs retain the legacy spot assumption and are represented by a normalized execution spec"],
     });
     if let Some(account_id) = spec.account_id.as_deref() {
         if let Some(object) = payload.as_object_mut() {

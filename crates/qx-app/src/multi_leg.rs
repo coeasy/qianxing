@@ -9,6 +9,9 @@ use qx_guanxing::Bar;
 use qx_zhenlu::{SpreadGroupAttribution, SpreadLegAttribution, SpreadOrderGroup, SpreadOrderLeg};
 use std::collections::BTreeMap;
 
+mod funding;
+pub use funding::multi_leg_apply_funding;
+
 use crate::trade_facts::{rejection_count, rejection_facts, rejection_facts_line, spread_group_id};
 /// 多腿回测中由单个信号时点触发的腿变化；成交按 FIFO 落入这些时点，
 /// 从而把成交额/费用归属到真正触发它的信号组。
@@ -21,15 +24,14 @@ pub struct MultiLegSignalBucket {
     filled_qty_raw: i128,
     turnover_raw: i128,
     fees_raw: i128,
-    funding_raw: i128,
-    /// 按实际成交（而非信号计划）累计出来的持仓，用于保证金与资金费归因。
-    /// 被风控或资金约束挡掉的信号成交为 0，不能按目标仓位收保证金。
+    funding_cost_raw: i128,
+    /// 实际持仓，用于保证金与资金费归因；未成交信号不增加持仓。
     realized_standing_after_raw: i128,
 }
 
 impl MultiLegSignalBucket {
     pub fn funding_raw(&self) -> i128 {
-        self.funding_raw
+        self.funding_cost_raw
     }
 }
 
@@ -137,7 +139,7 @@ pub fn multi_leg_leg_buckets(
                 filled_qty_raw: 0,
                 turnover_raw: 0,
                 fees_raw: 0,
-                funding_raw: 0,
+                funding_cost_raw: 0,
                 realized_standing_after_raw: 0,
             });
         }
@@ -189,8 +191,7 @@ pub fn multi_leg_leg_buckets(
             bucket.fees_raw += share;
         }
     }
-    // 实际持仓序列：保证金与资金费只能对真正成交的仓位计费，被风控或资金
-    // 约束挡掉的信号成交为 0，不能按目标仓位计费。
+    // 归因只采用实际成交量。
     let mut realized = 0_i128;
     for bucket in &mut buckets {
         realized += match bucket.side {
@@ -200,12 +201,7 @@ pub fn multi_leg_leg_buckets(
         bucket.realized_standing_after_raw = realized;
     }
     if funding_bps != 0 {
-        // 资金费按实际持仓分段计提：持有到下一个信号或回测结束，按持有时长折算
-        // 8 小时周期；多头支付为正，空头收取为负。
-        //
-        // 只向衍生品腿计提：现货没有资金费，给它挂一笔等于造一个不存在的成本。缺 spec
-        // 的腿按现货口径跳过 —— 而"声称要资金费却缺 spec"已由 `multi_leg_spec_guard`
-        // 在跑之前就拒掉，所以这里不会把一条衍生品腿的钱静默记成 0（V11 Q58）。
+        // 兼容独立单腿结果的按持仓时长资金费估算；共享账本工作流使用执行事件归因。
         if let Some(spec) = leg.spec.filter(|spec| spec.product.is_derivative()) {
             for index in 0..buckets.len() {
                 let standing_raw = buckets[index].realized_standing_after_raw;
@@ -228,7 +224,7 @@ pub fn multi_leg_leg_buckets(
                     .saturating_mul(i128::from(funding_bps))
                     .saturating_mul(i128::from(duration_ms))
                     / (10_000 * i128::from(MULTI_LEG_FUNDING_INTERVAL_MS));
-                buckets[index].funding_raw = if standing_raw > 0 { funding } else { -funding };
+                buckets[index].funding_cost_raw = if standing_raw > 0 { funding } else { -funding };
             }
         }
     }
@@ -397,7 +393,7 @@ pub fn multi_leg_group_attributions(
                 turnover_raw: bucket.map(|bucket| bucket.turnover_raw).unwrap_or(0),
                 fees_raw: bucket.map(|bucket| bucket.fees_raw).unwrap_or(0),
                 margin_raw: multi_leg_leg_margin(leg, buckets, ts)?,
-                funding_raw: bucket.map(|bucket| bucket.funding_raw).unwrap_or(0),
+                funding_raw: bucket.map(|bucket| bucket.funding_cost_raw).unwrap_or(0),
             });
         }
         if !paired || orders.len() != 2 {
