@@ -572,18 +572,22 @@ impl BacktestEngine {
                 })?;
                 // EventLog enforces timestamp/priority ordering. Emit all command
                 // decisions above before any matcher acceptance at MATCH priority.
-                for order in accepted_orders {
+                for accepted in accepted_orders {
                     let accepted_seq = log.alloc_seq();
                     log.append(Event::new(
                         accepted_seq,
                         bar.ts,
                         qx_core::Priority::MATCH,
                         EventKind::Accepted {
-                            client_order_id: order.client_id,
+                            client_order_id: accepted.order.client_id,
                             venue_order_id: None,
                         },
                     ));
-                    matcher.submit_at(order, bar.ts);
+                    matcher.submit_with_funding_reservation_at(
+                        accepted.order,
+                        bar.ts,
+                        accepted.funding_reservation_raw,
+                    );
                 }
             }
             for fill in matcher.on_bar(bar, bar.ts) {

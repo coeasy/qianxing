@@ -38,7 +38,14 @@ pub(crate) struct OrderAdmissionInput<'a> {
     pub(crate) log: &'a mut EventLog,
 }
 
-pub(crate) fn admit_orders(input: OrderAdmissionInput<'_>) -> Result<Vec<Order>, qx_core::QxError> {
+pub(crate) struct AdmittedOrder {
+    pub(crate) order: Order,
+    pub(crate) funding_reservation_raw: i128,
+}
+
+pub(crate) fn admit_orders(
+    input: OrderAdmissionInput<'_>,
+) -> Result<Vec<AdmittedOrder>, qx_core::QxError> {
     let OrderAdmissionInput {
         orders,
         account_id,
@@ -218,8 +225,11 @@ pub(crate) fn admit_orders(input: OrderAdmissionInput<'_>) -> Result<Vec<Order>,
         } else {
             equity
         };
+        let total_reserved_funding = reserved_funding_raw
+            .checked_add(matcher.pending_funding_reservation_raw())
+            .unwrap_or(i128::MAX);
         let unreserved_funding = available_funding
-            .checked_sub(reserved_funding_raw)
+            .checked_sub(total_reserved_funding)
             .unwrap_or(i128::MIN);
         if !reduce_only_allowed {
             append_rejection(
@@ -330,7 +340,10 @@ pub(crate) fn admit_orders(input: OrderAdmissionInput<'_>) -> Result<Vec<Order>,
                 client_order_id: order.client_id,
             },
         ));
-        accepted_orders.push(order);
+        accepted_orders.push(AdmittedOrder {
+            order,
+            funding_reservation_raw: required_funding,
+        });
     }
     Ok(accepted_orders)
 }

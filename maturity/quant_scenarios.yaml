@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791909139
+generated_at_unix: 1791911137
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -230,6 +230,22 @@ scenarios:
     exit_code: 0
     observed: "test result: ok. 1 passed; shared_fill_reducer=true ledger_before_callback=true next_decision_rechecked=true replay_verified=true"
     evidence: ["crates/qx-xingban/src/backtest/fill_application.rs", "crates/qx-xingban/src/backtest.rs", "crates/qx-xingban/src/backtest/test_cases/fill_callback.rs"]
+  - name: rust_pending_order_cash_reservation
+    label: "跨 Bar 现货挂单持续占用账户现金并在资金释放后成交"
+    status: executed
+    anchor: "crates/qx-xingban/src/backtest/test_cases/portfolio_budget.rs"
+    command: "cargo test --offline -p qx-xingban resting_spot_orders_reserve_account_cash_across_bars_before_filling --lib -- --test-threads=1"
+    exit_code: 0
+    observed: "test result: ok. 1 passed; pending_buy_orders=3 cash_rejections=2 fills=3 account_cash_reserved_across_bars=true"
+    evidence: ["crates/qx-xingban/src/backtest/test_cases/portfolio_budget.rs", "crates/qx-xingban/src/backtest/order_admission.rs", "crates/qx-xingban/src/venue.rs"]
+  - name: rust_partial_fill_funding_release
+    label: "部分成交仅按成交比例释放挂单资金预留"
+    status: executed
+    anchor: "crates/qx-xingban/src/venue/tests.rs"
+    command: "cargo test --offline -p qx-xingban venue::tests::partial_fills_release_only_the_filled_share_of_funding --lib -- --test-threads=1"
+    exit_code: 0
+    observed: "test result: ok. 1 passed; partial_fill_reservation_release=proportional overflow_releases_zero=true"
+    evidence: ["crates/qx-xingban/src/venue/tests.rs", "crates/qx-xingban/src/venue.rs"]
   - name: algo_execution
     label: "算法执行（API 受理 / TWAP 拆单 / Paper 恢复 / EventLog 聚合）"
     status: executed

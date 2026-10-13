@@ -202,3 +202,68 @@ fn unfilled_resting_orders_consume_their_strategy_budget() {
     assert_eq!(rejected, 1);
     assert!(report.fills.is_empty());
 }
+
+struct RestingCashBuyer;
+
+impl BarStrategy for RestingCashBuyer {
+    fn on_bar_orders_checked(
+        &mut self,
+        _history: &[Bar],
+        instrument: &InstrumentId,
+        _ts: u64,
+        _position: i128,
+    ) -> Result<Vec<Order>, qx_core::QxError> {
+        Ok(vec![Order {
+            client_id: 0,
+            instrument: instrument.clone(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(6),
+            limit: Some(qx_core::Price::from_raw(50 * SCALE)),
+            status: OrderStatus::Submitted,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+        }])
+    }
+}
+
+#[test]
+fn resting_spot_orders_reserve_account_cash_across_bars_before_filling() {
+    let mut strategy = RestingCashBuyer;
+    let bars = (1..=6)
+        .map(|ts| {
+            let open = if ts >= 5 { 50 * SCALE } else { 100 * SCALE };
+            Bar::new(ts, open, open + SCALE, open - SCALE, open, 10 * SCALE)
+        })
+        .collect::<Vec<_>>();
+    let report = BacktestEngine::new(simple_config())
+        .run(&bars, &mut strategy)
+        .unwrap();
+
+    let accepted = report
+        .event_log
+        .events()
+        .iter()
+        .filter(|event| matches!(event.kind, qx_core::EventKind::Accepted { .. }))
+        .count();
+    let cash_rejections = report
+        .event_log
+        .events()
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                qx_core::EventKind::Rejected { ref reason, .. }
+                    if reason.contains("账户可用现金")
+            )
+        })
+        .count();
+
+    assert_eq!(
+        accepted, 3,
+        "three resting orders reserve the 1,000 cash budget"
+    );
+    assert_eq!(cash_rejections, 2);
+    assert_eq!(report.fills.len(), 3);
+}

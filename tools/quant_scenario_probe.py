@@ -1133,6 +1133,45 @@ def main() -> int:
         command_prefix="cargo",
     )
 
+    executed(
+        "rust_pending_order_cash_reservation",
+        "跨 Bar 现货挂单持续占用账户现金并在资金释放后成交",
+        "crates/qx-xingban/src/backtest/test_cases/portfolio_budget.rs",
+        [
+            "test", "--offline", "-p", "qx-xingban",
+            "resting_spot_orders_reserve_account_cash_across_bars_before_filling",
+            "--lib", "--", "--test-threads=1",
+        ],
+        r"(test result: ok\. 1 passed)",
+        env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+        extra="pending_buy_orders=3 cash_rejections=2 fills=3 account_cash_reserved_across_bars=true",
+        evidence=[
+            "crates/qx-xingban/src/backtest/test_cases/portfolio_budget.rs",
+            "crates/qx-xingban/src/backtest/order_admission.rs",
+            "crates/qx-xingban/src/venue.rs",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
+        "rust_partial_fill_funding_release",
+        "部分成交仅按成交比例释放挂单资金预留",
+        "crates/qx-xingban/src/venue/tests.rs",
+        [
+            "test", "--offline", "-p", "qx-xingban",
+            "venue::tests::partial_fills_release_only_the_filled_share_of_funding",
+            "--lib", "--", "--test-threads=1",
+        ],
+        r"(test result: ok\. 1 passed)",
+        env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+        extra="partial_fill_reservation_release=proportional overflow_releases_zero=true",
+        evidence=[
+            "crates/qx-xingban/src/venue/tests.rs",
+            "crates/qx-xingban/src/venue.rs",
+        ],
+        command_prefix="cargo",
+    )
+
     # Verify algorithm-order admission through the real service handler, then let the
     # persistent Paper worker execute across restarts and aggregate results from EventLog.
     algo_test_argv = [

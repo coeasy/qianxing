@@ -340,3 +340,10 @@ Python 十策略证据：
 - 将单腿 Bar 回测在撮合前的订单准入从 `BacktestEngine` 抽至 `backtest::order_admission`。该路径统一处理账户/标的校验、A 股规则、订单 ID 确定性分配、策略资本预算、reduce-only、现货现金/衍生品保证金预留、RiskGate、OMS 提交与 Submit 事件记录；引擎仍按既有 Accepted → matcher 流程处理已接纳订单。
 - 验证：`qx-xingban` 单测 106 项、`qx-app` 单测 122 项通过（`TEMP/TMP` 指向 `target/test-tmp`）；相关 crate 严格 Clippy、Python 全量 140 项及 `cargo build --offline -p qx-python` 通过；架构不变量门禁 1096 项通过；量化场景探针 45 项执行通过、0 项声明但未执行、1 项缺失、1 项外部前置阻塞；格式与 diff 检查通过。依项目 `pyproject.toml` 构建的 Windows x64 `cp310-abi3` wheel 已检查包成员并解包导入 `qianxing` 与原生 bridge：`qianxing-0.1.0-cp310-abi3-win_amd64.whl`，SHA-256 `7ae7f3563803dd14d7508c0f60e1237357be869c1ae8bcc7080bc3a1bae620d5`。
 - 该抽取为未来统一多市场 session 复用准入规则提供了内核落点，但调用方仍是单腿 `BacktestEngine`。多腿应用的两腿仍独立持有 Ledger/OMS/撮合器，之后才合并账簿；因此共享资金竞争、统一撮合以及拒单/部分成交实时反馈仍未实现，`shared_multileg_execution` 继续缺失，整体方案尚未达到全能力发布门槛。
+
+## 43. 2026-10-14 修复：Bar 挂单跨周期持续占用资金
+
+- 深查订单准入后发现，账户现金/保证金预留只覆盖同一次策略回调生成的订单；未成交订单进入 matcher 后，下一根 Bar 又能把同一笔余额拿来接受新单。现在准入读取 matcher 中既有挂单预留并扣除本轮新单预留，订单提交时将核准金额保存在 pending order；完整成交释放预留，部分成交按剩余数量比例释放，极值乘法溢出时不释放（保持保守）。撮合器原有直接提交接口仍兼容，其调用方默认预留为零。
+- 新增跨 Bar 现金竞争用例：1000 账户现金先允许 3 笔各需 300 的挂单，拒绝第 4、5 笔；限价到达后 3 笔成交，共 3 笔成交且未透支。另以逐次半成的模型验证预留从 100 降到 50、再降到 25。新场景已进入量化探针。
+- 验证：`qx-xingban` 全量 109 项、`qx-app` 全量 122 项通过；相关 crate 严格 Clippy、Python 全量 140 项通过；架构门禁 1096 项通过；场景探针 47 executed、0 declared_not_executed、1 missing、1 blocked；Windows x64 `cp310-abi3` wheel 构建后隔离解包导入及 Python 全量用例通过，SHA-256 `40cc9eb005cbb5cf1af616b858be1daca97f9c5b5a010bdf7d4e215711c4ecb8`。
+- 资金预留修复作用于单腿 Bar matcher；它不会把多腿执行变成共享账户内核。两腿独立 matcher/OMS/Ledger 的既有形状仍在，故跨市场共享余额竞争、统一撮合、拒单/部分成交跨腿反馈继续是 `shared_multileg_execution` 的缺口。Live 仍需外部 CCXT 与 testnet 凭据；C++ 和 Linux/macOS 安装产物未在本机验收。
