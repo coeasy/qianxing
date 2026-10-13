@@ -1,4 +1,94 @@
 use super::*;
+use qx_sdk::{
+    MarketEvent, Strategy, StrategyArtifactIdentity, StrategyContext, StrategyDecision,
+    StrategyOrderIntent, STRATEGY_API_VERSION,
+};
+
+struct BuyEachInstrument(std::collections::BTreeSet<String>);
+
+impl Strategy for BuyEachInstrument {
+    fn on_event(
+        &mut self,
+        context: &StrategyContext,
+        event: &MarketEvent,
+    ) -> Result<StrategyDecision, String> {
+        let instrument = event.instrument().cloned().ok_or("instrument missing")?;
+        let intents = if self.0.insert(instrument.to_string()) {
+            vec![StrategyOrderIntent {
+                intent_id: self.0.len() as u64,
+                instrument,
+                side: Side::Buy,
+                qty: Quantity::from_raw(1_000_000_000),
+                limit: None,
+                policy: None,
+                reduce_only: false,
+                post_only: false,
+            }]
+        } else {
+            Vec::new()
+        };
+        Ok(StrategyDecision {
+            schema_version: STRATEGY_API_VERSION,
+            request_id: format!("{}:{}", context.strategy_id, event.ts()),
+            strategy_id: context.strategy_id.clone(),
+            signal_id: event.ts(),
+            confidence: 10_000,
+            priority: 0,
+            expires_at: 0,
+            intents,
+        })
+    }
+}
+
+#[test]
+fn independent_rust_sdk_consumer_runs_a_custom_strategy_on_both_pair_legs() {
+    let output_dir = scratch("custom-multi-leg-strategy");
+    let root = super::repo_root().join("deploy");
+    let spec = MultiLegBacktestSpec::new(
+        "sdk-custom-multi-leg",
+        root.join("qianxing.bar-frame.pairs-primary.example.json")
+            .to_string_lossy(),
+        root.join("qianxing.bar-frame.pairs-reference.example.json")
+            .to_string_lossy(),
+        "USDT",
+        1_000_000 * 1_000_000_000,
+        1_000_000 * 1_000_000_000,
+        7,
+        output_dir.to_string_lossy(),
+        BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "sdk-custom-pair"),
+    );
+    let identity = StrategyArtifactIdentity {
+        strategy_id: "sdk-custom-pair".into(),
+        strategy_version: "consumer-v1".into(),
+        source_sha256: "a".repeat(64),
+    };
+    let client = Client::new(CallerCapability::Research, "sdk-custom-multi-leg");
+    let result = client
+        .run_multi_leg_backtest_with_strategy(
+            &spec,
+            &identity,
+            BuyEachInstrument(Default::default()),
+        )
+        .expect("public SDK routes custom pair signals through Rust shared engines");
+    assert!(result.primary_fills > 0 && result.reference_fills > 0);
+    let mut handle = client
+        .start_multi_leg_backtest_with_strategy(
+            MultiLegBacktestSpec {
+                run_id: "sdk-custom-multi-leg-handle".into(),
+                output_dir: output_dir.join("handle").to_string_lossy().into_owned(),
+                ..spec
+            },
+            identity,
+            BuyEachInstrument(Default::default()),
+        )
+        .expect("public SDK starts cancellable custom pair run");
+    assert_eq!(handle.wait(), RunStatus::Succeeded);
+    let result = handle
+        .try_take_result()
+        .expect("run result")
+        .expect("success");
+    assert!(result.primary_fills > 0 && result.reference_fills > 0);
+}
 
 #[test]
 fn the_rust_sdk_facade_quick_selects_multiple_single_leg_strategy_kinds() {

@@ -4,19 +4,22 @@ use crate::{
     AppError, AppErrorCategory, CallerCapability, MultiLegBacktestOutcome, MultiLegBacktestSpec,
     MultiLegFillModel, RunContext,
 };
-use qx_core::{
-    Fnv1a, InstrumentId, Order, OrderStatus, Quantity, ReplayVerifier, Side, TradingInstrumentSpec,
-};
+use qx_core::{Fnv1a, InstrumentId, Order, OrderStatus, Quantity, ReplayVerifier, Side};
 use qx_datastruct::BarFrame;
 use qx_guanxing::Bar;
 use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, MarketEvent, Strategy, StrategyContext};
-use qx_xingban::{BestPriceFillModel, FillModel, NextBarOpenFillModel, OneTickSlippageFillModel};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+pub(super) mod custom_strategy;
 mod leg;
+mod market_spec;
+mod models;
 mod targets;
+pub(super) use custom_strategy::InjectedMultiLegStrategy;
 use leg::{run_leg, LegRunSpec};
+pub(super) use market_spec::validate_leg_spec;
+pub(super) use models::{fill_model_for, fill_model_name};
 
 const MIN_BARS: usize = 3;
 
@@ -26,7 +29,7 @@ pub fn run_multi_leg_backtest(
 ) -> Result<MultiLegBacktestOutcome, AppError> {
     context.require(CallerCapability::Research, "多腿 Bar 回测")?;
     let correlation_id = context.correlation_id().to_string();
-    guard_panics(&correlation_id, || run_inner(spec, context, None))
+    guard_panics(&correlation_id, || run_inner(spec, context, None, None))
         .map_err(|error| attach(error, &correlation_id))?
         .ok_or_else(|| {
             attach(
@@ -46,7 +49,7 @@ impl MultiLegBacktestSpec {
             context.require(CallerCapability::Research, "多腿 Bar 回测")?;
             let correlation_id = context.correlation_id().to_string();
             guard_panics(&correlation_id, || {
-                run_inner(&self, &context, Some(&cancellation))
+                run_inner(&self, &context, Some(&cancellation), None)
             })
             .map_err(|error| attach(error, &correlation_id))
         })
@@ -57,6 +60,7 @@ pub(super) fn run_inner(
     spec: &MultiLegBacktestSpec,
     _context: &RunContext,
     cancellation: Option<&CancellationToken>,
+    injected: Option<InjectedMultiLegStrategy>,
 ) -> Result<Option<MultiLegBacktestOutcome>, AppError> {
     spec.validate()?;
     let primary = read_frame(&spec.primary_bars_path, "主腿")?;
@@ -111,9 +115,23 @@ pub(super) fn run_inner(
     let config_json = spec.to_json()?;
     let mut config_hasher = Fnv1a::new();
     config_hasher.write_text(&config_json);
+    let strategy_source_sha256 = injected
+        .as_ref()
+        .map(|custom| custom.identity.source_sha256.clone());
+    if let Some(custom) = injected.as_ref() {
+        config_hasher.write_text(&custom.identity.strategy_id);
+        config_hasher.write_text(&custom.identity.strategy_version);
+        config_hasher.write_text(&custom.identity.source_sha256);
+    }
     let config_hash = format!("{:016x}", config_hasher.finish());
-    let strategy_id = spec.strategy.strategy_id.clone();
-    let strategy_version = format!("{}-v1", strategy_id);
+    let strategy_id = injected.as_ref().map_or_else(
+        || spec.strategy.strategy_id.clone(),
+        |custom| custom.identity.strategy_id.clone(),
+    );
+    let strategy_version = injected.as_ref().map_or_else(
+        || format!("{}-v1", strategy_id),
+        |custom| custom.identity.strategy_version.clone(),
+    );
     let strategy_config = BuiltinStrategyConfig {
         kind: spec.strategy.kind,
         strategy_id: strategy_id.clone(),
@@ -134,7 +152,11 @@ pub(super) fn run_inner(
         reference_policy: None,
     };
     strategy_config.validate().map_err(invalid)?;
-    let mut strategy = BuiltinStrategy::new(strategy_config.clone()).map_err(invalid)?;
+    let caller_strategy = injected.is_some();
+    let mut strategy: Box<dyn Strategy> = match injected {
+        Some(custom) => custom.strategy,
+        None => Box::new(BuiltinStrategy::new(strategy_config).map_err(invalid)?),
+    };
     let mut strategy_context = StrategyContext {
         strategy_id: strategy_id.clone(),
         strategy_version: strategy_version.clone(),
@@ -161,6 +183,7 @@ pub(super) fn run_inner(
     let mut reference_targets = BTreeMap::new();
     for (primary_bar, reference_bar) in primary_bars.iter().zip(&reference_bars) {
         if cancellation.is_some_and(CancellationToken::is_cancelled) {
+            strategy.on_stop().map_err(invalid)?;
             return Ok(None);
         }
         strategy_context.as_of = primary_bar.ts;
@@ -180,7 +203,28 @@ pub(super) fn run_inner(
             let decision = strategy
                 .on_event(&strategy_context, &event)
                 .map_err(invalid)?;
+            decision
+                .validate_for(&strategy_context, bar.ts)
+                .map_err(invalid)?;
             for intent in decision.intents {
+                if intent.instrument != primary.instrument
+                    && intent.instrument != reference.instrument
+                {
+                    return Err(invalid(format!(
+                        "多腿策略意图标的 {} 不属于本次双腿",
+                        intent.instrument
+                    )));
+                }
+                if caller_strategy
+                    && (intent.limit.is_some()
+                        || intent.policy.is_some()
+                        || intent.reduce_only
+                        || intent.post_only)
+                {
+                    return Err(invalid(
+                        "双腿目标仓位调度只支持无限价、无额外订单策略的市价意图",
+                    ));
+                }
                 let key = intent.instrument.to_string();
                 let current = strategy_context.positions.get(&key).copied().unwrap_or(0);
                 let delta = if intent.side == Side::Buy {
@@ -200,6 +244,7 @@ pub(super) fn run_inner(
             }
         }
     }
+    strategy.on_stop().map_err(invalid)?;
     let primary_account_id = spec
         .account_id
         .clone()
@@ -326,6 +371,7 @@ pub(super) fn run_inner(
         "run_id": spec.run_id,
         "strategy_id": strategy_id,
         "strategy_version": strategy_version,
+        "strategy_source_sha256": strategy_source_sha256,
         "primary_instrument": primary.instrument.to_string(),
         "reference_instrument": reference.instrument.to_string(),
         "market_specs": {
@@ -424,61 +470,11 @@ fn read_frame(path: &str, label: &str) -> Result<BarFrame, AppError> {
     BarFrame::from_json(&payload)
         .map_err(|error| invalid(format!("{label} BarFrame 无效: {error:?}")))
 }
-fn invalid(message: impl std::fmt::Display) -> AppError {
+pub(super) fn invalid(message: impl std::fmt::Display) -> AppError {
     AppError::new(
         AppErrorCategory::InvalidInput,
         format!("多腿回测输入或策略非法: {message}"),
     )
-}
-
-fn validate_leg_spec<'a>(
-    label: &str,
-    market_spec: Option<&'a TradingInstrumentSpec>,
-    instrument: &InstrumentId,
-    settlement_currency: &str,
-) -> Result<Option<&'a TradingInstrumentSpec>, AppError> {
-    let Some(market) = market_spec else {
-        return Ok(None);
-    };
-    if market.instrument != *instrument {
-        return Err(invalid(format!(
-            "{label} market spec instrument {} 与 BarFrame 标的 {instrument} 不一致",
-            market.instrument
-        )));
-    }
-    if market.settlement_currency != settlement_currency {
-        return Err(invalid(format!(
-            "{label} market spec 结算币 {} 与 spec settlement_currency {settlement_currency} 不一致",
-            market.settlement_currency
-        )));
-    }
-    Ok(Some(market))
-}
-
-fn fill_model_for(
-    kind: MultiLegFillModel,
-    market_spec: Option<&TradingInstrumentSpec>,
-) -> Result<Box<dyn FillModel>, AppError> {
-    Ok(match kind {
-        MultiLegFillModel::NextBarOpen => Box::new(NextBarOpenFillModel),
-        MultiLegFillModel::BestPrice => Box::new(BestPriceFillModel),
-        MultiLegFillModel::OneTickSlippage => {
-            let spec = market_spec.ok_or_else(|| {
-                invalid("one_tick_slippage 要求两条腿都提供含真实 price_tick 的 market spec")
-            })?;
-            Box::new(OneTickSlippageFillModel {
-                tick: spec.price_tick,
-            })
-        }
-    })
-}
-
-fn fill_model_name(kind: MultiLegFillModel) -> &'static str {
-    match kind {
-        MultiLegFillModel::NextBarOpen => "next_bar_open",
-        MultiLegFillModel::BestPrice => "best_price",
-        MultiLegFillModel::OneTickSlippage => "one_tick_slippage",
-    }
 }
 
 fn invariant(message: impl Into<String>) -> AppError {

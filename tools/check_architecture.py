@@ -1546,6 +1546,7 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::get_run_events": "qx-sdk Rust 远端单次 Run 事件游标公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::run_backtest_with_strategy": "qx-sdk Rust 策略扩展公开入口；由外部 SDK 消费者实现 Strategy 并调用",
     "qx-sdk::start_backtest_with_strategy": "qx-sdk Rust 可取消策略运行公开入口；由外部 SDK 消费者调用",
+    "qx-sdk::start_multi_leg_backtest_with_strategy": "qx-sdk Rust 可取消双腿策略运行公开入口；由外部 SDK 消费者实现 Strategy 并调用",
     "qx-storage::consume_batch_with_projection": "deploy/README 公布为外部 reducer 的原子投影+checkpoint 入口",
     "qx-data::add_component": (
         "数据集 Bundle 的程序化装配入口（deploy/README 的三步冻结流程）；"
@@ -17720,8 +17721,10 @@ def language_api_contract_check() -> None:
             f"pub fn {entry}("
             in _text_or_empty(ROOT / APP_CASES_DIR / f"{row['use_case']}.rs")
             if not entry.startswith("Client.")
-            else f"pub fn {entry.removeprefix('Client.')}("
-            in _text_or_empty(ROOT / "crates/qx-sdk/src/client.rs")
+            else (
+                f"pub fn {entry.removeprefix('Client.')}(" in _text_or_empty(ROOT / "crates/qx-sdk/src/client.rs")
+                or f"pub fn {entry.removeprefix('Client.')}<" in _text_or_empty(ROOT / "crates/qx-sdk/src/client.rs")
+            )
         )
     ]
     check(

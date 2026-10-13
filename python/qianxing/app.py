@@ -1421,6 +1421,27 @@ class AsyncCoreClient:
 
         return await self._start(start, spec)
 
+    async def async_run_multi_leg_backtest_with_strategy(
+        self, spec: MultiLegBacktestSpec | dict[str, Any], strategy: Any, *,
+        strategy_id: str, strategy_version: str, source_sha256: str,
+    ) -> MultiLegBacktestOutcome:
+        return await asyncio.to_thread(
+            run_multi_leg_backtest_with_strategy, spec, strategy,
+            strategy_id=strategy_id, strategy_version=strategy_version,
+            source_sha256=source_sha256,
+        )
+
+    async def async_start_multi_leg_backtest_with_strategy(
+        self, spec: MultiLegBacktestSpec | dict[str, Any], strategy: Any, *,
+        strategy_id: str, strategy_version: str, source_sha256: str,
+    ) -> AsyncRunHandle[MultiLegBacktestOutcome]:
+        def start(value: Any) -> RunHandle[MultiLegBacktestOutcome]:
+            return start_multi_leg_backtest_with_strategy(
+                value, strategy, strategy_id=strategy_id,
+                strategy_version=strategy_version, source_sha256=source_sha256,
+            )
+        return await self._start(start, spec)
+
     async def async_verify_depth_run(self, outcome: DepthBacktestOutcome | dict[str, Any]) -> VerificationResult:
         return await asyncio.to_thread(verify_depth_run, outcome)
 
@@ -1973,6 +1994,38 @@ def run_depth_backtest_with_strategy(
             source_sha256=source_sha256,
         )
         return DepthBacktestOutcome.from_dict(value)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
+def run_multi_leg_backtest_with_strategy(
+    spec: MultiLegBacktestSpec | dict[str, Any], strategy: Any, *,
+    strategy_id: str, strategy_version: str, source_sha256: str,
+) -> MultiLegBacktestOutcome:
+    """Run Python-authored signal decisions through shared Rust two-leg engines."""
+    try:
+        from qianxing_bridge.app import run_multi_leg_backtest_with_strategy as _run_strategy
+        value = _run_strategy(
+            _encode_payload(spec), strategy, strategy_id=strategy_id,
+            strategy_version=strategy_version, source_sha256=source_sha256,
+        )
+        return MultiLegBacktestOutcome.from_dict(value)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
+def start_multi_leg_backtest_with_strategy(
+    spec: MultiLegBacktestSpec | dict[str, Any], strategy: Any, *,
+    strategy_id: str, strategy_version: str, source_sha256: str,
+) -> RunHandle[MultiLegBacktestOutcome]:
+    """Start a cancellable Python strategy run on Rust's two-leg lifecycle."""
+    try:
+        from qianxing_bridge.app import start_multi_leg_backtest_with_strategy as _start_strategy
+        native_handle = _start_strategy(
+            _encode_payload(spec), strategy, strategy_id=strategy_id,
+            strategy_version=strategy_version, source_sha256=source_sha256,
+        )
+        return RunHandle(native_handle, MultiLegBacktestOutcome)
     except Exception as exc:
         raise _translate_native_error(exc) from exc
 

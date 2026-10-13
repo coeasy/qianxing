@@ -53,8 +53,8 @@ mod tests;
 pub use cases::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
     run_depth_backtest, run_depth_backtest_with_strategy, run_depth_experiment, run_experiment,
-    run_multi_account_backtest, run_multi_leg_backtest, run_multi_leg_experiment,
-    run_provider_backtest_with_manifest, run_provider_depth_backtest,
+    run_multi_account_backtest, run_multi_leg_backtest, run_multi_leg_backtest_with_strategy,
+    run_multi_leg_experiment, run_provider_backtest_with_manifest, run_provider_depth_backtest,
     start_depth_backtest_with_strategy, validate_dataset, validate_trade_control, verify_depth_run,
     verify_run, CompareRunsResult, CompareRunsSpec, ComparedRun, ComparedRunResult,
     DepthExperimentCandidate, DepthExperimentRankedCandidate, ExperimentCandidateResult,

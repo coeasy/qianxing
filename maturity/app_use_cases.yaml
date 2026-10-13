@@ -204,3 +204,13 @@ use_cases:
     artifacts: "不可变 DepthFrame JSON（source 内嵌 Provider lineage）+ 标准深度回测产物"
     error_categories: "AppErrorCategory 八类；Provider、数据档位与产物冲突沿用共享用例错误"
     capability_level: "R"
+  - name: run_multi_leg_backtest_with_strategy
+    input_schema: "MultiLegBacktestSpec v1 + StrategyArtifactIdentity（与双腿 strategy_id 一致的 ID、版本和源码 SHA-256）+ Rust/Python Strategy 回调；回调只生成决策，撮合、风控、账簿和回放由 Rust 双腿内核完成"
+    output_schema: "MultiLegBacktestOutcome v1（两腿哈希、组合收益、成交归因产物）"
+    capability: "RESEARCH"
+    idempotency_key: "run_id + 规格/双 BarFrame 指纹 + strategy_id/version/source_sha256；身份或内容变化拒绝覆盖"
+    cancellation: "同步入口不取消；start_* RunHandle 在信号与双腿 Rust 撮合边界协作取消，不发布部分归因产物"
+    progress: "RunHandle 提供 run_id、状态、取消、等待和一次性结果读取；两腿各自通过 Rust ReplayVerifier"
+    artifacts: "<run_id>.multi-leg.json（策略 ID/版本、数据与配置身份、两腿结果哈希、归因与裸腿待对账事实）"
+    error_categories: "AppErrorCategory 八类；身份/规格/回调意图非法为 InvalidInput，异身份覆盖为 Conflict"
+    capability_level: "R"

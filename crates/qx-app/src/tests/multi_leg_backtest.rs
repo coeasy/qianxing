@@ -3,10 +3,130 @@ use crate::{
     MultiLegBacktestSpec, RunContext,
 };
 use qx_core::{InstrumentId, TradingInstrumentSpec, TradingProduct, SCALE};
-use qx_strategy::BuiltinStrategyKind;
+use qx_core::{Quantity, Side};
+use qx_strategy::{
+    BuiltinStrategyKind, MarketEvent, Strategy, StrategyContext, StrategyDecision,
+    StrategyOrderIntent, STRATEGY_API_VERSION,
+};
+
+struct BuyEachLeg(std::collections::BTreeSet<String>);
+
+impl Strategy for BuyEachLeg {
+    fn on_event(
+        &mut self,
+        context: &StrategyContext,
+        event: &MarketEvent,
+    ) -> Result<StrategyDecision, String> {
+        let instrument = event
+            .instrument()
+            .cloned()
+            .ok_or("event instrument missing")?;
+        let intents = if self.0.insert(instrument.to_string()) {
+            vec![StrategyOrderIntent {
+                intent_id: self.0.len() as u64,
+                instrument,
+                side: Side::Buy,
+                qty: Quantity::from_raw(SCALE),
+                limit: None,
+                policy: None,
+                reduce_only: false,
+                post_only: false,
+            }]
+        } else {
+            Vec::new()
+        };
+        Ok(StrategyDecision {
+            schema_version: STRATEGY_API_VERSION,
+            request_id: format!("{}:{}", context.strategy_id, event.ts()),
+            strategy_id: context.strategy_id.clone(),
+            signal_id: event.ts(),
+            confidence: 10_000,
+            priority: 0,
+            expires_at: 0,
+            intents,
+        })
+    }
+}
 
 fn context(id: &str) -> RunContext {
     RunContext::new(CallerCapability::Research, id)
+}
+
+#[test]
+fn caller_strategy_runs_both_legs_and_cancellable_sdk_surface_can_be_shared() {
+    let root = super::fixtures::scratch("multi-leg-custom-strategy");
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("deploy");
+    let primary = fixtures.join("qianxing.bar-frame.pairs-primary.example.json");
+    let reference = fixtures.join("qianxing.bar-frame.pairs-reference.example.json");
+    let strategy = BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "custom-pair");
+    let spec = MultiLegBacktestSpec::new(
+        "custom-pair-run",
+        primary.to_string_lossy(),
+        reference.to_string_lossy(),
+        "USDT",
+        1_000_000 * SCALE,
+        1_000_000 * SCALE,
+        7,
+        root.join("out").to_string_lossy(),
+        strategy,
+    );
+    let identity = crate::StrategyArtifactIdentity {
+        strategy_id: "custom-pair".into(),
+        strategy_version: "user-v1".into(),
+        source_sha256: "d".repeat(64),
+    };
+    let outcome = crate::run_multi_leg_backtest_with_strategy(
+        &spec,
+        &identity,
+        Box::new(BuyEachLeg(Default::default())),
+        &context("custom-pair-run"),
+    )
+    .expect("caller strategy goes through both shared leg engines");
+    assert!(outcome.primary_fills > 0 && outcome.reference_fills > 0);
+    let artifact = std::fs::read_to_string(outcome.attribution_artifact).expect("artifact");
+    assert!(artifact.contains("\"strategy_version\":\"user-v1\""));
+    assert!(artifact.contains(&format!(
+        "\"strategy_source_sha256\":\"{}\"",
+        "d".repeat(64)
+    )));
+    let mut changed_identity = identity.clone();
+    changed_identity.source_sha256 = "e".repeat(64);
+    let conflict = crate::run_multi_leg_backtest_with_strategy(
+        &spec,
+        &changed_identity,
+        Box::new(BuyEachLeg(Default::default())),
+        &context("custom-pair-run"),
+    )
+    .expect_err("changed callback code cannot overwrite the same run identity");
+    assert_eq!(conflict.category(), AppErrorCategory::Conflict);
+
+    let handle_spec = MultiLegBacktestSpec::new(
+        "custom-pair-handle",
+        primary.to_string_lossy(),
+        reference.to_string_lossy(),
+        "USDT",
+        1_000_000 * SCALE,
+        1_000_000 * SCALE,
+        7,
+        root.join("handle").to_string_lossy(),
+        BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "custom-pair"),
+    );
+    let mut handle = handle_spec
+        .start_with_strategy(
+            identity,
+            BuyEachLeg(Default::default()),
+            context("custom-pair-handle"),
+        )
+        .expect("cancellable callback run starts");
+    assert_eq!(handle.wait(), crate::RunStatus::Succeeded);
+    let result = handle
+        .try_take_result()
+        .expect("result available")
+        .expect("successful run");
+    assert!(result.primary_fills > 0 && result.reference_fills > 0);
 }
 
 #[test]

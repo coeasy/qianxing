@@ -161,3 +161,10 @@ Python 十策略证据：
 - 三轮检查按“场景与架构基线 → 全量行为测试 → 最终静态/质量门禁”执行。架构门禁两次各 1096 项通过；第二轮 `cargo test --workspace --offline -- --test-threads=1` 全工作区与 doc-tests 通过，Python 全量 127 项通过；第三轮 `cargo clippy --workspace --all-targets --offline -- -D warnings` 通过。没有因零失败就把外部验收记成通过。
 - 核心量化研究与 Paper 场景当前有可重跑的执行证据，但**全方案尚未达到发布门槛**：ProviderRegistry 尚未统一驱动所有 CLI/HTTP 和实时 Paper/Live 数据入口；Provider 的 `required_auth_scope` 是声明能力筛选，不能替代真实凭据授权；跨账户/跨市场组合风险、共享资金/账簿归因和多策略 Paper/Live 操作链仍未形成统一跨语言 E2E；真实交易所 Live testnet 与全订单状态/对账认证仍 blocked。C++ 可用 CI 矩阵验证源码/构建，但本机没有编译器，且不能据此宣称所有外部安装消费环境已验证。
 - 本轮只更新由探针生成的 `maturity/quant_scenarios.yaml` 和本复核记录，没有修改交易/回测实现；因此本轮验证证明的是当前提交代码的状态与场景覆盖，不将文档更新包装成新增功能。下一实现应优先收敛 Provider→冻结数据→共享应用回测的统一用例，再接入 Rust/Python/C++、CLI/API/实时 worker，并补跨账户组合风险及账簿主链；每段都必须有同输入的跨入口结果/事件核对。
+
+## 17. 2026-10-13 继续实现：双腿回测接入 Rust/Python 策略回调
+
+- 新增 Rust 应用层和 `qx-sdk::Client` 同步自定义策略入口；`MultiLegBacktestSpec::start_with_strategy` 提供可取消 RunHandle。Python 原生 SDK 增加本地同步及句柄式异步回调入口；调用仍进入既有两腿 Bar 撮合、回放与归因，不在绑定层复制撮合。
+- 策略 ID、版本与源码 SHA-256 校验并纳入 run 配置指纹及归因产物；同一 run_id 用不同源码身份重跑会返回 Conflict。策略决策按 Rust StrategyDecision 契约校验；意图标的超出两腿或携带当前目标仓位模拟器不能表达的订单限制时 fail-closed；取消调用 on_stop。
+- 新增 qx-app 行为测试、Rust SDK 独立消费者测试和 Python 原生扩展端到端用例，覆盖双腿都产生成交、可取消句柄、身份改动冲突与安装形态扩展入口；语言能力映射、用例登记、README 已同步。
+- 已知边界：此接口先按两个标的的 Bar 事件产生目标仓位，再交由两条独立 Rust 账簿撮合；策略回调暂不接收真实成交/订单更新，跨腿组合资金、保证金净额和实时风控仍未合并成单一组合账簿。C++ 本地回调、HTTP/Web 的用户策略上传/执行也未接通。因此这项接入不等于多腿策略实盘闭环或全部多语言 SDK 达到发布门槛。

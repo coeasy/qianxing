@@ -14,11 +14,11 @@ use crate::{
 use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, run_backtest, run_depth_backtest,
     run_depth_backtest_with_strategy, run_depth_experiment, run_experiment,
-    run_multi_account_backtest, run_multi_leg_backtest, run_multi_leg_experiment,
-    start_depth_backtest_with_strategy, validate_dataset, verify_depth_run, verify_run,
-    AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec, CallerCapability,
-    CapitalAllocationResult, CapitalAllocationSpec, CompareRunsResult, CompareRunsSpec,
-    DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
+    run_multi_account_backtest, run_multi_leg_backtest, run_multi_leg_backtest_with_strategy,
+    run_multi_leg_experiment, start_depth_backtest_with_strategy, validate_dataset,
+    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
+    CallerCapability, CapitalAllocationResult, CapitalAllocationSpec, CompareRunsResult,
+    CompareRunsSpec, DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
     MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiLegBacktestOutcome,
     MultiLegBacktestSpec, RiskParityResult, RiskParitySpec, RunContext, RunDepthExperimentResult,
     RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec, RunHandle,
@@ -190,6 +190,26 @@ impl Client {
         spec: MultiLegBacktestSpec,
     ) -> RunHandle<MultiLegBacktestOutcome> {
         spec.start(self.context.clone())
+    }
+
+    /// Run caller-authored signals through the shared two-leg Bar matching and attribution path.
+    pub fn run_multi_leg_backtest_with_strategy<S: Strategy + 'static>(
+        &self,
+        spec: &MultiLegBacktestSpec,
+        identity: &StrategyArtifactIdentity,
+        strategy: S,
+    ) -> Result<MultiLegBacktestOutcome, AppError> {
+        run_multi_leg_backtest_with_strategy(spec, identity, Box::new(strategy), &self.context)
+    }
+
+    /// Start a cancellable caller-authored two-leg Bar run.
+    pub fn start_multi_leg_backtest_with_strategy<S: Strategy + 'static>(
+        &self,
+        spec: MultiLegBacktestSpec,
+        identity: StrategyArtifactIdentity,
+        strategy: S,
+    ) -> Result<RunHandle<MultiLegBacktestOutcome>, AppError> {
+        spec.start_with_strategy(identity, strategy, self.context.clone())
     }
 
     /// Run independent account Bar backtests through the shared Rust app use case.

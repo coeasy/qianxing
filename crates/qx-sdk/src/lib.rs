@@ -101,7 +101,8 @@ pub use qx_strategy::{
 pub use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
     run_depth_backtest, run_depth_experiment, run_experiment, run_multi_account_backtest,
-    run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset, validate_trade_control,
+    run_multi_leg_backtest, run_multi_leg_backtest_with_strategy, run_multi_leg_experiment,
+    validate_dataset, validate_trade_control,
 };
 
 // —— §6.1「report/verify」——

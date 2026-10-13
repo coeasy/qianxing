@@ -1802,9 +1802,84 @@ class AppUseCaseTests(unittest.TestCase):
             InstrumentId,
             MultiLegBacktestSpec,
             TradingInstrumentSpec,
+            run_multi_leg_backtest_with_strategy,
+            start_multi_leg_backtest_with_strategy,
             run_multi_leg_backtest,
             start_multi_leg_backtest,
         )
+
+        class CustomPairStrategy:
+            def __init__(self):
+                self.seen = set()
+                self.events = []
+
+            def on_event(self, context, event):
+                name, item = next(iter(event.items()))
+                self.events.append(name)
+                instrument = item["instrument"]
+                key = f"{instrument['symbol']}.{instrument['venue']}"
+                intents = []
+                if key not in self.seen:
+                    self.seen.add(key)
+                    intents.append({
+                        "intent_id": len(self.seen),
+                        "instrument": instrument,
+                        "side": "Buy",
+                        "qty": 1_000_000_000,
+                        "limit": None,
+                        "policy": None,
+                        "reduce_only": False,
+                        "post_only": False,
+                    })
+                return {
+                    "schema_version": 1,
+                    "request_id": f"{context['strategy_id']}:{item['ts']}",
+                    "strategy_id": context["strategy_id"],
+                    "signal_id": item["ts"],
+                    "confidence": 10_000,
+                    "priority": 0,
+                    "expires_at": 0,
+                    "intents": intents,
+                }
+
+        callback_spec = MultiLegBacktestSpec(
+            run_id="python-custom-pair",
+            primary_bars_path=payload["primary_bars_path"],
+            reference_bars_path=payload["reference_bars_path"],
+            settlement_currency="USDT",
+            primary_initial_cash_raw=1_000_000_000_000_000,
+            reference_initial_cash_raw=1_000_000_000_000_000,
+            output_dir=str(self.output_dir / "custom-pair"),
+            seed=7,
+            strategy=BuiltinStrategySpec(kind="pairs_arbitrage", strategy_id="python-custom-pair"),
+        )
+        callback = CustomPairStrategy()
+        callback_outcome = run_multi_leg_backtest_with_strategy(
+            callback_spec,
+            callback,
+            strategy_id="python-custom-pair",
+            strategy_version="python-pair-v1",
+            source_sha256="e" * 64,
+        )
+        self.assertGreater(callback_outcome.primary_fills, 0)
+        self.assertGreater(callback_outcome.reference_fills, 0)
+        self.assertEqual(callback.events.count("Bar"), 120)
+        callback_handle_spec = MultiLegBacktestSpec(
+            **{
+                **callback_spec.__dict__,
+                "run_id": "python-custom-pair-handle",
+                "output_dir": str(self.output_dir / "custom-pair-handle"),
+            }
+        )
+        callback_handle = start_multi_leg_backtest_with_strategy(
+            callback_handle_spec,
+            CustomPairStrategy(),
+            strategy_id="python-custom-pair",
+            strategy_version="python-pair-v1",
+            source_sha256="e" * 64,
+        )
+        self.assertEqual(callback_handle.wait(10_000), "succeeded")
+        self.assertGreater(callback_handle.result().primary_fills, 0)
 
         typed_spec = MultiLegBacktestSpec(
             run_id="python-typed-multi-leg",

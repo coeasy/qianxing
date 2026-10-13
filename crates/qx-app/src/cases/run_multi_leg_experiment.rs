@@ -230,7 +230,7 @@ fn run_inner_experiment(
             .to_string_lossy()
             .into_owned();
         let outcome = match apply_parameters(&mut candidate.strategy, &parameters) {
-            Ok(()) => match run_inner(&candidate, context, cancellation) {
+            Ok(()) => match run_inner(&candidate, context, cancellation, None) {
                 Ok(Some(outcome)) => Ok(outcome),
                 Ok(None) => return Ok(None),
                 Err(error) => Err(error),
