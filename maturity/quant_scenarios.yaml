@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791930043
+generated_at_unix: 1791931655
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -220,7 +220,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=7fa22627525584a6/82eb08f579b5ba3c,24719d9b9742fbcc/f00c4b4bbc35979c,5b4604b41c462995/c9d3f5d652f74a29,afd764b69e60f917/ba4d5c06afec17bd"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=4df07e99c2592f2a/6b1541d9131cf4e8,e3e1a0d699051574/e68d117db8e1abec,aea59f08041e70d9/feee613c8a2e718d,4549478563181833/6579a0f50c1df021"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -374,6 +374,14 @@ scenarios:
     exit_code: 0
     observed: "Ran 1 test; single_leg_strategy_kinds=13 candidates=13 stable_order=true shared_comparison=true oos_selected_kind=true walk_forward_folds=2"
     evidence: ["python/tests/test_app_use_cases.py", "crates/qx-app/src/tests/strategy_selection.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "crates/qx-api/src/app_strategy_selection_tests.rs", "cpp/tests/app_client_smoke.cpp", "crates/qx-strategy/src/builtin.rs", "crates/qx-python/src/lib.rs"]
+  - name: python_remote_strategy_catalog
+    label: "Python HTTP SDK 通过 Rust 服务端读取内置策略目录"
+    status: executed
+    anchor: "python/tests/test_remote_strategy_catalog.py"
+    command: "python -m unittest python.tests.test_remote_strategy_catalog"
+    exit_code: 0
+    observed: "Ran 3 tests; typed_catalog=true async_delegate=true stable_discovery_route=/app/strategies malformed_shape_rejected=true"
+    evidence: ["python/tests/test_remote_strategy_catalog.py", "python/qianxing/app.py", "crates/qx-api/src/app_strategy_selection_tests.rs"]
   - name: python_custom_strategy_portfolio
     label: "Python 多自定义策略与内置策略共享 Bar、L1 Tick、L2 OrderBook 单账户组合回测"
     status: executed

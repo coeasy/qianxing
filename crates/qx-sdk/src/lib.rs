@@ -63,6 +63,7 @@ pub use qx_execution::{
 pub use remote::{RemoteApiClient, RemoteApiError, RemoteResponse, RemoteTransport};
 
 // —— §6.1「统一错误」——
+pub use qx_app::{builtin_strategy_catalog, BuiltinStrategyInfo};
 pub use qx_app::{AppAction, AppError, AppErrorCategory, AppRetry};
 
 // —— §6.1「capabilities」与多源数据 Provider 端口 ——

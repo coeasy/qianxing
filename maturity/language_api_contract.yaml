@@ -18,7 +18,7 @@
 #   `[]` 表示该用例不在这条腿（交易控制只在远端门面上，进程内扩展不暴露它）。
 schema_version: 1
 kind: language-api-contract
-updated_at: "2026-10-13"
+updated_at: "2026-10-14"
 
 # 进程内扩展的模块级公开函数里不属于任何「用例入口」的那些。
 # 写成显式名册而不是「排除 doctor 之外」这类规则：规则会把将来新加的同形状函数一起放行，
@@ -61,6 +61,16 @@ python_remote_lifecycle_methods:
     note: "Paper TWAP/VWAP 父单取消生命周期入口"
   - name: list_paper_algo_executions
     note: "Paper TWAP/VWAP 活跃父单分页生命周期入口"
+
+python_remote_helpers:
+  - name: list_builtin_strategies
+    note: "Python 远端策略发现入口，读取 Rust 维护的目录；不是交易或回测用例"
+  - name: async_list_builtin_strategies
+    note: "Python 远端策略发现的 asyncio 委托入口"
+
+cpp_remote_helpers:
+  - name: builtin_strategy_catalog
+    note: "C++ 远端策略发现入口，读取 Rust 维护的目录；不是交易或回测用例"
 
 rust_remote_lifecycle_methods:
   - name: get_run_events

@@ -27,6 +27,7 @@ from qianxing_bridge import native
 # 路径，会在门禁当场变红，而不是等用户跑到那一步才拿到 404。`{run_id}` 是路径模板占位符，
 # 调用侧用 `.format(run_id=...)` 填。
 APP_ROUTE_TEMPLATES: dict[str, str] = {
+    "builtin_strategy_catalog": "/app/strategies",
     "validate_dataset": "/app/validate-dataset",
     "backtest": "/app/backtest",
     "provider_backtest": "/app/provider-backtest",
@@ -1995,6 +1996,26 @@ class AppClient(_HttpJsonClient):
 
     def _post(self, route: str, spec: Any) -> dict[str, Any]:
         return self._request_json(route, method="POST", payload=spec)
+
+    def list_builtin_strategies(self) -> tuple[BuiltinStrategyInfo, ...]:
+        """Fetch the same Rust-owned strategy catalog used by local SDK calls."""
+        value = self._request_json_value(
+            APP_ROUTE_TEMPLATES["builtin_strategy_catalog"], method="GET"
+        )
+        if not isinstance(value, list) or any(not isinstance(entry, dict) for entry in value):
+            raise QianxingError("Rust API returned an invalid built-in strategy catalog")
+        return tuple(
+            BuiltinStrategyInfo(
+                name=str(entry["name"]),
+                description=str(entry["description"]),
+                signal_knobs=tuple(str(item) for item in entry["signal_knobs"]),
+                requires_reference_leg=bool(entry["requires_reference_leg"]),
+            )
+            for entry in value
+        )
+
+    async def async_list_builtin_strategies(self) -> tuple[BuiltinStrategyInfo, ...]:
+        return await asyncio.to_thread(self.list_builtin_strategies)
 
     def get_live_events(self, after_seq: int | None = None) -> list[dict[str, Any]]:
         if after_seq is not None and (

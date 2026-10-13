@@ -1559,6 +1559,21 @@ def main() -> int:
     )
 
     executed(
+        "python_remote_strategy_catalog",
+        "Python HTTP SDK 通过 Rust 服务端读取内置策略目录",
+        "python/tests/test_remote_strategy_catalog.py",
+        ["-m", "unittest", "python.tests.test_remote_strategy_catalog"],
+        r"(Ran 3 tests)",
+        extra="typed_catalog=true async_delegate=true stable_discovery_route=/app/strategies malformed_shape_rejected=true",
+        evidence=[
+            "python/tests/test_remote_strategy_catalog.py",
+            "python/qianxing/app.py",
+            "crates/qx-api/src/app_strategy_selection_tests.rs",
+        ],
+        command_prefix="python",
+    )
+
+    executed(
         "python_custom_strategy_portfolio",
         "Python 多自定义策略与内置策略共享 Bar、L1 Tick、L2 OrderBook 单账户组合回测",
         "python/tests/test_app_use_cases.py",

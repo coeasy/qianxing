@@ -28,6 +28,8 @@ use std::path::{Path, PathBuf};
 mod custom_strategy_consumer;
 #[path = "consumer/multi_leg_sizing.rs"]
 mod multi_leg_sizing_consumer;
+#[path = "consumer/strategy_catalog.rs"]
+mod strategy_catalog_consumer;
 #[path = "consumer/strategy_selection.rs"]
 mod strategy_selection_consumer;
 

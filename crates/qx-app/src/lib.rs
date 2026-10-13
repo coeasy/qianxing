@@ -45,6 +45,7 @@ pub mod error;
 pub mod multi_leg;
 mod run_handle;
 pub mod spec;
+pub mod strategy_catalog;
 pub mod trade_facts;
 
 #[cfg(test)]
@@ -109,4 +110,5 @@ pub use spec::{
     MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
     RISK_PARITY_SPEC_SCHEMA_VERSION,
 };
+pub use strategy_catalog::{builtin_strategy_catalog, BuiltinStrategyInfo};
 pub use trade_facts::{rejection_count, rejection_facts, rejection_facts_line, spread_group_id};

@@ -4,6 +4,34 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
+fn http_strategy_discovery_matches_the_shared_rust_catalog() {
+    let response = ApiService::new(ApiState::default()).handle("GET", "/app/strategies", "", 0);
+    assert_eq!(response.status, 200, "{}", response.body);
+    let catalog: Value = serde_json::from_str(&response.body).unwrap();
+    let names = catalog
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        qx_strategy::BuiltinStrategyKind::ALL
+            .iter()
+            .map(|kind| kind.name())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(catalog.as_array().unwrap().len(), 17);
+    assert!(catalog.as_array().unwrap().iter().all(|entry| {
+        entry["description"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+            && entry["signal_knobs"].is_array()
+            && entry["requires_reference_leg"].is_boolean()
+    }));
+}
+
+#[test]
 fn experiment_http_route_runs_the_multi_strategy_selection_on_the_shared_app_use_case() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

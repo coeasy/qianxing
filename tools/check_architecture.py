@@ -6215,7 +6215,15 @@ def api_surface_doc_check() -> None:
     是同一类断链的两个方向，所以把对齐关系写成门禁而不是靠人记得改 README。
     """
     api = production_text((ROOT / "crates/qx-api/src/lib.rs").read_text(encoding="utf-8"))
-    declared = set(re.findall(r'\("(GET|POST|PUT|DELETE)", "(/[^"]*)"\)', api))
+    api_sources = sorted((ROOT / "crates/qx-api/src").rglob("*.rs"))
+    declared = {
+        route
+        for path in api_sources
+        for route in re.findall(
+            r'\("(GET|POST|PUT|DELETE)", "(/[^"]*)"\)',
+            production_text(path.read_text(encoding="utf-8")),
+        )
+    }
     app_surface = production_text(
         (ROOT / "crates/qx-api/src/app_runs.rs").read_text(encoding="utf-8")
     )
@@ -17231,10 +17239,10 @@ def _declared_client_routes(path: str, declaration: str, language: str) -> list[
 
 
 def _api_declared_routes() -> set[str]:
-    """qx-api 声称会分派的路由集合（`lib.rs` 的 match 臂 + `app_runs.rs` 的路径模板常量）。"""
+    """qx-api 声称会分派的路由集合（所有 API module 的 match 臂和路径模板常量）。"""
     routes: set[str] = set()
-    for source in ("crates/qx-api/src/lib.rs", "crates/qx-api/src/app_runs.rs"):
-        text = production_text((ROOT / source).read_text(encoding="utf-8"))
+    for path in sorted((ROOT / "crates/qx-api/src").rglob("*.rs")):
+        text = production_text(path.read_text(encoding="utf-8"))
         routes.update(re.findall(r'\("(?:GET|POST|PUT|DELETE)", "(/[^"]*)"\)', text))
         routes.update(
             re.findall(r'const [A-Z_]*ROUTE[A-Z_]*: &str = "(/[^"]*)"', text)
@@ -17820,8 +17828,9 @@ def language_api_contract_check() -> None:
 
     declared_remote = {entry for row in rows for entry in row.get("python_remote", [])}
     remote_lifecycle = _named_roster("python_remote_lifecycle_methods")
+    remote_helpers = _named_roster("python_remote_helpers")
     check(
-        not (remote_methods - declared_remote - remote_lifecycle),
+        not (remote_methods - declared_remote - remote_lifecycle - remote_helpers),
         "Python 远端门面的公开方法都被用例或显式生命周期名册认领",
         f"未认领 {sorted(remote_methods - declared_remote - remote_lifecycle)}；"
         f"映射表 {sorted(declared_remote)}；生命周期名册 {sorted(remote_lifecycle)}",
@@ -17829,8 +17838,9 @@ def language_api_contract_check() -> None:
 
     declared_cpp = {entry for row in rows for entry in row.get("cpp_remote", [])}
     lifecycle = _named_roster("cpp_lifecycle_methods")
+    cpp_helpers = _named_roster("cpp_remote_helpers")
     check(
-        not (cpp_methods - declared_cpp - lifecycle),
+        not (cpp_methods - declared_cpp - lifecycle - cpp_helpers),
         "C++ `AppClient` 的公开方法都被某个用例认领（或落在显式的 run 生命周期名册里）",
         f"未认领 {sorted(cpp_methods - declared_cpp - lifecycle)}；生命周期名册 {sorted(lifecycle)}",
     )

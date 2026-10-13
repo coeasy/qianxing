@@ -11,6 +11,7 @@
 > 本轮增量（2026-10-14）：新增共享 Rust 多市场参数/策略种类实验用例，复用同一 PortfolioBarEngine 与账簿，候选上限 256、候选结果/失败隔离、稳定排序、同步/RunHandle 执行；Rust/Python 本地 SDK 可注入策略工厂，Python/Rust/C++ 远端门面与 CLI 通过同一 HTTP/应用用例执行 Rust 内置策略候选，HTTP RunHandle 生命周期纳入注册、取消、状态、结果和事件流。跨入口结果一致、Python 自定义策略工厂、Rust SDK 独立消费者及远端路由用例已验证。独立仓外 Git consumer 现也从固定提交构建并调用 3 市场、4 候选实验，确认公开安装面可达。该能力目前限于 Bar 市场网格，不能据此推断 Tick/OrderBook、多腿、多账户实验已支持同等网格。
 > 本轮增量（2026-10-14）：审计 Tick/OrderBook 资金准入与成交费用时发现手续费以名义额乘基点再除以 10000，极大但有效的固定点名义额可能在中间乘法溢出。qx-core 新增保持 floor 语义的无溢出 checked basis-point helper；共享手续费函数、订单簿实际撮合和下单资金预检统一调用，非法费率明确拒绝。最大 i128 金额边界、订单簿 118 个单元用例及量化场景探针均复验。该修复不改变外部交易所认证状态。
 > 同轮继续审计发现公开 FeeModel 可直接用负数或越界费率构造，绕过 JSON 成本配置校验。现有统一 `FeeModel::validate` 在单腿/共享 Bar 引擎与 Paper Venue 接受订单前执行；MakerTaker、A股模型均校验费率，A股最低佣金和累计费率也设边界。对应模型、Bar 和 Paper fail-closed 用例纳入场景探针。
+> 本轮增量（2026-10-14）：内置策略目录统一下沉至 `qx-app`，本地 Python 原生查询与 HTTP `/app/strategies` 均消费该结果；Rust RemoteApiClient、Python AppClient 同步/async 与 C++ AppClient 提供发现入口，目录含 17 个策略名称、说明、信号旋钮及多腿限制。API/客户端路由、deploy 端点表和远端方法归属均纳入门禁，避免某语言策略目录缺失或名单漂移。C++ 在当前 Windows 环境因缺少 CMake/编译器未执行编译测试。
 > 方案仍未全部落地：跨市场 Tick/OrderBook、交易日历/跨时区/货币换算、多账户跨账户组合风险、venue/provider 全矩阵与实盘 testnet 未完成认证；Web/桌面端到端验收、C++ 默认 transport 与全平台发布门仍未完成。逐轮复核、量化场景状态与证据见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)和 `maturity/quant_scenarios.yaml`。
 
 ## 1. 目标与完成定义

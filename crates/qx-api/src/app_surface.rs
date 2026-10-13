@@ -463,9 +463,19 @@ pub(crate) fn route_app_run(
             crate::error_json("application_routes_do_not_accept_query_parameters"),
         ));
     }
+    if let ("GET", "/app/strategies") = (method, route) {
+        return Some(builtin_strategy_catalog());
+    }
     if query.is_empty() {
         app_run_route(method, route, body, paths, registry)
     } else {
         app_run_route_with_query(method, route, query, body, paths, registry)
+    }
+}
+
+fn builtin_strategy_catalog() -> ApiResponse {
+    match serde_json::to_string(&qx_app::builtin_strategy_catalog()) {
+        Ok(body) => ApiResponse::json(200, body),
+        Err(error) => ApiResponse::json(500, crate::error_json(&error.to_string())),
     }
 }
