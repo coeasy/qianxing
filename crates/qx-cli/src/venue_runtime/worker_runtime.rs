@@ -206,21 +206,13 @@ pub(crate) fn paper_available_margin(
     settlement: &str,
     spec: &TradingInstrumentSpec,
 ) -> Result<i128, String> {
-    let cash_only = ledger.cash_for(account_id, settlement);
-    if !spec.product.is_derivative() {
-        return Ok(ledger
-            .valuate(&ValuationContext::spot(account_id, marks, settlement))
-            .map(|result| result.equity.raw())
-            .unwrap_or(cash_only));
-    }
-    if marks.contains_key(&spec.instrument) {
-        ledger
-            .valuate(&ValuationContext::spot(account_id, marks, settlement).with_spec(Some(spec)))
-            .map(|result| result.equity.raw())
-            .map_err(|error| format!("Paper 衍生品可用保证金计算失败: {error:?}"))
-    } else {
-        Ok(cash_only)
-    }
+    let market_specs = BTreeMap::from([(spec.instrument.clone(), spec.clone())]);
+    ledger
+        .valuate(
+            &ValuationContext::spot(account_id, marks, settlement).with_market_specs(&market_specs),
+        )
+        .map(|result| result.equity.raw())
+        .map_err(|error| format!("Paper 账户可用保证金计算失败: {error:?}"))
 }
 
 /// 从执行 worker 的冻结 market spec 和同一 EventLog 构造账户级风险快照。

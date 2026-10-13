@@ -157,5 +157,30 @@ fn paper_margin_budget_values_derivative_positions_without_their_notional() {
         (10_000 - 100 + 110) * SCALE,
         "现货权益口径不得随保证金修复一起改变"
     );
+    assert!(paper_available_margin(&spot, "main", &BTreeMap::new(), "USDT", &spot_spec).is_err());
+
+    let other_instrument = InstrumentId::parse("ETHUSDT.BINANCE").unwrap();
+    let other_spec = margin_valuation_spec(&other_instrument, TradingProduct::Spot);
+    let other_order = mk_order(9503, &other_instrument, Side::Buy, 1);
+    qx_core::apply_ledger_fill(
+        &mut spot,
+        &other_order,
+        "USDT",
+        &qx_core::Fill {
+            order_id: other_order.client_id,
+            qty: Quantity::from_i64(1),
+            price: Price::from_i64(100),
+            ts: 3,
+            account_id: "main".into(),
+            ..qx_core::Fill::default()
+        },
+        qx_core::FillTerms::Instrument(&other_spec),
+    )
+    .unwrap();
+    let both_marks = BTreeMap::from([
+        (instrument.clone(), Price::from_i64(110)),
+        (other_instrument, Price::from_i64(120)),
+    ]);
+    assert!(paper_available_margin(&spot, "main", &both_marks, "USDT", &spot_spec).is_err());
     let _ = std::fs::remove_dir_all(root);
 }

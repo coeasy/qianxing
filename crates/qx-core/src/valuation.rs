@@ -43,6 +43,8 @@ pub struct ValuationContext<'a> {
     pub reporting_currency: &'a str,
     /// 合约规格；`None` 表示现货，按 `multiplier` 折算。
     pub spec: Option<&'a TradingInstrumentSpec>,
+    /// 同一共享账户内按 instrument 冻结的多市场规格。设置后每个非零持仓都必须有规格。
+    pub market_specs: Option<&'a BTreeMap<InstrumentId, TradingInstrumentSpec>>,
     /// 现货乘数（`spec` 为 `None` 或非杠杆时使用）。
     pub multiplier: i128,
     /// 跨币种抵押品汇率（「1 单位资产币种 = 多少报价币种」）；空表表示不做 FX 换算。
@@ -72,6 +74,7 @@ impl<'a> ValuationContext<'a> {
             marks,
             reporting_currency,
             spec: None,
+            market_specs: None,
             multiplier: 1,
             fx_rates: empty_fx_rates(),
             margin_required: Money::ZERO,
@@ -82,6 +85,17 @@ impl<'a> ValuationContext<'a> {
     /// 覆盖合约规格（链式）。
     pub fn with_spec(mut self, spec: Option<&'a TradingInstrumentSpec>) -> Self {
         self.spec = spec;
+        self.market_specs = None;
+        self
+    }
+
+    /// 使用每个 instrument 独立的冻结规格估值共享多市场账户。
+    pub fn with_market_specs(
+        mut self,
+        specs: &'a BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    ) -> Self {
+        self.spec = None;
+        self.market_specs = Some(specs);
         self
     }
 

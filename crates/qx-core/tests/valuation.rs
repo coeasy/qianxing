@@ -67,6 +67,208 @@ fn spot_ledger() -> (Ledger, InstrumentId) {
     (ledger, instrument)
 }
 
+fn spot_spec(instrument: &InstrumentId, base: &str, quote: &str) -> TradingInstrumentSpec {
+    TradingInstrumentSpec {
+        instrument: instrument.clone(),
+        product: TradingProduct::Spot,
+        base_currency: base.into(),
+        quote_currency: quote.into(),
+        settlement_currency: quote.into(),
+        contract_size: SCALE,
+        linear: false,
+        inverse: false,
+        price_tick: 1,
+        qty_step: 1,
+        min_qty: 1,
+        max_leverage: 1,
+        maintenance_margin_bps: 0,
+        valid_from: 1,
+        valid_to: None,
+    }
+}
+
+fn buy_position(
+    ledger: &mut Ledger,
+    instrument: &InstrumentId,
+    client_id: u64,
+    qty_raw: i128,
+    price_raw: i128,
+    fee_raw: i128,
+    currency: &str,
+) {
+    let order = Order {
+        client_id,
+        instrument: instrument.clone(),
+        side: Side::Buy,
+        qty: Quantity::from_raw(qty_raw),
+        limit: None,
+        status: OrderStatus::Accepted,
+        filled: Quantity::ZERO,
+        account_id: "main".into(),
+        trace: None,
+        policy: None,
+    };
+    ledger
+        .apply_fill(
+            &order,
+            &Fill {
+                order_id: client_id,
+                qty: Quantity::from_raw(qty_raw),
+                price: Price::from_raw(price_raw),
+                fee: Money::from_raw(fee_raw),
+                ts: client_id,
+                ..Fill::default()
+            },
+            currency,
+        )
+        .unwrap();
+}
+
+#[test]
+fn ledger_valuate_marks_spot_positions_and_cash_for_multiple_markets_and_currencies() {
+    let eth = InstrumentId::parse("ETH-USDT.BINANCE").unwrap();
+    let btc = InstrumentId::parse("BTC-EUR.KRAKEN").unwrap();
+    let specs = BTreeMap::from([
+        (eth.clone(), spot_spec(&eth, "ETH", "USDT")),
+        (btc.clone(), spot_spec(&btc, "BTC", "EUR")),
+    ]);
+    let mut ledger = Ledger::new();
+    ledger
+        .deposit("main", "USDT", Money::from_raw(1_000 * SCALE), 1)
+        .unwrap();
+    ledger
+        .deposit("main", "EUR", Money::from_raw(1_000 * SCALE), 1)
+        .unwrap();
+    buy_position(&mut ledger, &eth, 1, 2 * SCALE, 100 * SCALE, SCALE, "USDT");
+    buy_position(
+        &mut ledger,
+        &btc,
+        2,
+        3 * SCALE,
+        100 * SCALE,
+        2 * SCALE,
+        "EUR",
+    );
+    let marks = BTreeMap::from([
+        (eth, Price::from_raw(110 * SCALE)),
+        (btc, Price::from_raw(120 * SCALE)),
+    ]);
+    let fx = BTreeMap::from([(String::from("EUR"), Price::from_raw(11 * SCALE / 10))]);
+
+    let equity = ledger
+        .equity_for_with_market_specs_and_fx("main", &marks, "USDT", &specs, &fx)
+        .unwrap();
+    assert_eq!(equity, 2_182_800_000_000);
+    let context = ValuationContext::spot("main", &marks, "USDT")
+        .with_market_specs(&specs)
+        .with_fx(&fx);
+    assert_eq!(ledger.valuate(&context).unwrap().equity.raw(), equity);
+    assert!(ledger
+        .equity_for_with_market_specs_and_fx("main", &marks, "USDT", &specs, &BTreeMap::new())
+        .is_err());
+}
+
+#[test]
+fn multi_market_valuation_fails_closed_on_missing_position_spec_or_mark() {
+    let eth = InstrumentId::parse("ETH-USDT.BINANCE").unwrap();
+    let btc = InstrumentId::parse("BTC-EUR.KRAKEN").unwrap();
+    let specs = BTreeMap::from([
+        (eth.clone(), spot_spec(&eth, "ETH", "USDT")),
+        (btc.clone(), spot_spec(&btc, "BTC", "EUR")),
+    ]);
+    let mut ledger = Ledger::new();
+    ledger
+        .deposit("main", "USDT", Money::from_raw(1_000 * SCALE), 1)
+        .unwrap();
+    ledger
+        .deposit("main", "EUR", Money::from_raw(1_000 * SCALE), 1)
+        .unwrap();
+    buy_position(&mut ledger, &eth, 1, SCALE, 100 * SCALE, 0, "USDT");
+    buy_position(&mut ledger, &btc, 2, SCALE, 100 * SCALE, 0, "EUR");
+
+    let complete_marks = BTreeMap::from([
+        (eth.clone(), Price::from_raw(110 * SCALE)),
+        (btc.clone(), Price::from_raw(120 * SCALE)),
+    ]);
+    let fx = BTreeMap::from([(String::from("EUR"), Price::from_raw(11 * SCALE / 10))]);
+    let without_btc_spec = BTreeMap::from([(eth.clone(), specs[&eth].clone())]);
+    assert!(ledger
+        .equity_for_with_market_specs_and_fx(
+            "main",
+            &complete_marks,
+            "USDT",
+            &without_btc_spec,
+            &fx,
+        )
+        .is_err());
+
+    let without_btc_mark = BTreeMap::from([(eth, Price::from_raw(110 * SCALE))]);
+    assert!(ledger
+        .equity_for_with_market_specs_and_fx("main", &without_btc_mark, "USDT", &specs, &fx,)
+        .is_err());
+}
+
+#[test]
+fn single_market_derivative_valuation_refuses_to_omit_other_account_positions() {
+    let btc = InstrumentId::parse("BTC/USDT:USDT.SIM").unwrap();
+    let eth = InstrumentId::parse("ETH/USDT:USDT.SIM").unwrap();
+    let btc_spec = perpetual_spec(&btc);
+    let mut eth_spec = perpetual_spec(&eth);
+    eth_spec.product = TradingProduct::Margin;
+    eth_spec.base_currency = "ETH".into();
+    let mut ledger = Ledger::new();
+    ledger
+        .deposit("main", "USDT", Money::from_i64(1_000), 1)
+        .unwrap();
+    for (client_id, instrument, spec) in [
+        (1, btc.clone(), btc_spec.clone()),
+        (2, eth.clone(), eth_spec.clone()),
+    ] {
+        let order = Order {
+            client_id,
+            instrument,
+            side: Side::Buy,
+            qty: Quantity::from_i64(1),
+            limit: None,
+            status: OrderStatus::Accepted,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+        };
+        ledger
+            .apply_fill_with_spec(
+                &order,
+                &Fill {
+                    order_id: client_id,
+                    qty: Quantity::from_i64(1),
+                    price: Price::from_i64(100),
+                    ts: 2,
+                    ..Fill::default()
+                },
+                "USDT",
+                &spec,
+            )
+            .unwrap();
+    }
+    let marks = BTreeMap::from([
+        (btc.clone(), Price::from_i64(110)),
+        (eth.clone(), Price::from_i64(120)),
+    ]);
+    assert!(ledger
+        .equity_for_with_spec("main", &marks, "USDT", &btc_spec)
+        .is_err());
+
+    let specs = BTreeMap::from([(btc.clone(), btc_spec), (eth.clone(), eth_spec)]);
+    assert_eq!(
+        ledger
+            .equity_for_with_market_specs_and_fx("main", &marks, "USDT", &specs, &BTreeMap::new())
+            .unwrap(),
+        1_030 * SCALE,
+        "多规格估值必须把保证金产品按未实现盈亏估值"
+    );
+}
+
 /// 现货：`valuate` 必须等于乘数尺子（`multiplier = 1` 时就是 `equity_for`）。
 #[test]
 fn ledger_valuate_equals_the_multiplier_ruler_for_spot() {
