@@ -6,6 +6,54 @@ fn research(id: &str) -> RunContext {
 }
 
 #[test]
+fn quantity_grid_rejects_sizing_modes_that_make_the_dimension_ineffective() {
+    const SCALE: i128 = 1_000_000_000;
+    let root = scratch("quantity-grid-sizing-conflict");
+    let bars_path = root.join("bars.json");
+    std::fs::write(&bars_path, "{}").expect("write placeholder bars path");
+    for (field, value) in [
+        ("target_notional_raw", 10 * SCALE),
+        ("target_available_margin_bps", 5_000),
+        ("target_volatility_bps", 500),
+        ("target_kelly_fraction_bps", 5_000),
+    ] {
+        let mut base = backtest_spec(
+            "quantity-grid-sizing-conflict",
+            &bars_path.to_string_lossy(),
+            &root.join("out"),
+        );
+        match field {
+            "target_notional_raw" => base.strategy.target_notional_raw = Some(value),
+            "target_available_margin_bps" => {
+                base.strategy.target_available_margin_bps = Some(value as u32)
+            }
+            "target_volatility_bps" => base.strategy.target_volatility_bps = Some(value as u32),
+            "target_kelly_fraction_bps" => {
+                base.strategy.target_kelly_fraction_bps = Some(value as u32)
+            }
+            _ => unreachable!(),
+        }
+        let spec = RunExperimentSpec {
+            schema_version: 1,
+            experiment_id: format!("quantity-grid-{field}"),
+            base,
+            parameter_space: vec![ExperimentParameterSpace {
+                name: "quantity_raw".into(),
+                values: vec![SCALE, 2 * SCALE],
+            }],
+            strategy_kinds: Vec::new(),
+            split_plan: None,
+            baselines: Vec::new(),
+        };
+        let error = spec.validate().expect_err("quantity is shadowed by sizing");
+        assert_eq!(error.category(), crate::AppErrorCategory::InvalidInput);
+        assert!(error
+            .to_string()
+            .contains("quantity_raw 参数维度与策略 sizing 模式冲突"));
+    }
+}
+
+#[test]
 fn parameter_experiment_sweeps_kelly_fraction_with_versioned_sizing_identity() {
     const SCALE: i128 = 1_000_000_000;
     let root = scratch("kelly-grid");

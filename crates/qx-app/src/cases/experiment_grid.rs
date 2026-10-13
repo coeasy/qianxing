@@ -61,6 +61,16 @@ pub(super) fn validate_grid(
     let mut names = BTreeSet::new();
     let mut total = 1_usize;
     for dimension in dimensions {
+        if dimension.name == "quantity_raw"
+            && (strategy.target_notional_raw.is_some()
+                || strategy.target_available_margin_bps.is_some()
+                || strategy.target_volatility_bps.is_some()
+                || strategy.target_kelly_fraction_bps.is_some())
+        {
+            return Err(invalid(
+                "quantity_raw 参数维度与策略 sizing 模式冲突：该策略的下单数量由 sizing 模式计算；请移除此维度或改用兼容的 sizing 参数",
+            ));
+        }
         if !supported.contains(&dimension.name.as_str()) {
             return Err(invalid(format!("不支持的策略参数维度: {}", dimension.name)));
         }
