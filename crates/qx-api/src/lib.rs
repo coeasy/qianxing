@@ -11,9 +11,11 @@ mod connections;
 mod console;
 mod control_reads;
 mod event_cursor;
+mod provider_registry;
 mod read_scope;
 mod snapshot_history;
 mod state_lock;
+mod tls_config;
 mod transport;
 mod ws;
 
@@ -43,10 +45,8 @@ use read_scope::{
     projection_key_from_query, scope_keeps_account, scope_keeps_venue, ScopeFilter,
     PROJECTION_SCOPED_ROUTES,
 };
-use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::server::WebPkiClientVerifier;
-use rustls::{RootCertStore, ServerConfig};
+use rustls::pki_types::CertificateDer;
+use rustls::ServerConfig;
 use serde::{Deserialize, Serialize};
 use snapshot_history::SnapshotHistory;
 use std::collections::{BTreeMap, VecDeque};
@@ -56,6 +56,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
+pub use tls_config::{
+    build_mtls_server_config, load_certificate_chain_from_pem, load_mtls_server_config_from_pem,
+};
 pub(crate) use transport::websocket_accept;
 use transport::{
     configure_connection, parse_http_request, read_request, tls_stream, write_http_response,
@@ -192,71 +195,6 @@ impl TlsConfigStore {
             .write()
             .expect("TLS config store lock poisoned") = config;
     }
-}
-
-/// 构造要求客户端证书的 TLS 服务端配置；证书解析、私钥加载和信任根管理由部署边界负责。
-pub fn build_mtls_server_config(
-    client_roots: RootCertStore,
-    certificate_chain: Vec<CertificateDer<'static>>,
-    private_key: PrivateKeyDer<'static>,
-) -> Result<Arc<ServerConfig>, String> {
-    let verifier = WebPkiClientVerifier::builder(Arc::new(client_roots))
-        .build()
-        .map_err(|error| format!("mTLS 客户端证书校验器构造失败: {error}"))?;
-    let config = ServerConfig::builder()
-        .with_client_cert_verifier(verifier)
-        .with_single_cert(certificate_chain, private_key)
-        .map_err(|error| format!("mTLS 服务端证书配置非法: {error}"))?;
-    Ok(Arc::new(config))
-}
-/// 从 PEM 文件加载 mTLS 服务端配置。
-///
-/// 该函数只负责把部署提供的证书链、私钥和客户端 CA 解析成 rustls 配置；
-/// 私钥权限、秘密管理和证书签发仍由部署系统负责。解析失败会在替换配置前返回，
-/// 因而不会破坏 `TlsConfigStore` 中当前仍可用的配置。
-pub fn load_mtls_server_config_from_pem(
-    certificate_chain_path: impl AsRef<Path>,
-    private_key_path: impl AsRef<Path>,
-    client_ca_path: impl AsRef<Path>,
-) -> Result<Arc<ServerConfig>, String> {
-    let certificate_chain = CertificateDer::pem_file_iter(certificate_chain_path.as_ref())
-        .map_err(|error| format!("读取 mTLS 服务端证书链失败: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("解析 mTLS 服务端证书链失败: {error}"))?;
-    if certificate_chain.is_empty() {
-        return Err("mTLS 服务端证书链不能为空".into());
-    }
-
-    let private_key = PrivateKeyDer::from_pem_file(private_key_path.as_ref())
-        .map_err(|error| format!("解析 mTLS 服务端私钥失败: {error}"))?;
-    let mut client_roots = RootCertStore::empty();
-    for certificate in CertificateDer::pem_file_iter(client_ca_path.as_ref())
-        .map_err(|error| format!("读取 mTLS 客户端 CA 失败: {error}"))?
-    {
-        let certificate =
-            certificate.map_err(|error| format!("解析 mTLS 客户端 CA 失败: {error}"))?;
-        client_roots
-            .add(certificate)
-            .map_err(|error| format!("加入 mTLS 客户端 CA 失败: {error}"))?;
-    }
-    if client_roots.is_empty() {
-        return Err("mTLS 客户端 CA 不能为空".into());
-    }
-    build_mtls_server_config(client_roots, certificate_chain, private_key)
-}
-
-/// 加载一个 PEM 文件中的证书链；主要用于构造 mTLS 证书到 Operator 的显式映射。
-pub fn load_certificate_chain_from_pem(
-    certificate_chain_path: impl AsRef<Path>,
-) -> Result<Vec<CertificateDer<'static>>, String> {
-    let certificates = CertificateDer::pem_file_iter(certificate_chain_path.as_ref())
-        .map_err(|error| format!("读取 PEM 证书链失败: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("解析 PEM 证书链失败: {error}"))?;
-    if certificates.is_empty() {
-        return Err("PEM 证书链不能为空".into());
-    }
-    Ok(certificates)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -932,6 +870,7 @@ pub struct ApiService {
     connection_budget: Arc<ConnectionBudget>,
     app_paths: app_surface::AppPaths,
     app_runs: app_surface::AppRunRegistry,
+    provider_registry: Option<Arc<qx_provider::ProviderRegistry>>,
 }
 
 #[derive(Default)]
@@ -1137,6 +1076,7 @@ impl ApiService {
             connection_budget: default_connection_budget(),
             app_paths: app_surface::AppPaths::from_environment(),
             app_runs: app_surface::AppRunRegistry::from_environment(),
+            provider_registry: None,
         }
     }
 
@@ -1717,6 +1657,11 @@ qx_control_retired_audit_records_total {}\n",
             }
             ("POST", "/app/validate-dataset") => app::dataset(body, &self.app_paths),
             ("POST", "/app/backtest") => app_surface::post_run_backtest(body, &self.app_paths),
+            ("POST", "/app/provider-backtest") => app_surface::provider_backtest(
+                body,
+                &self.app_paths,
+                self.provider_registry.as_deref(),
+            ),
             ("POST", "/app/verify") => app_surface::post_verify_run(body),
             ("POST", "/app/verify-depth") => app::post_verify_depth_run(body, &self.app_paths),
             ("POST", "/app/compare-runs") => app_surface::post_compare_runs(body),

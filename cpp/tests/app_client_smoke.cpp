@@ -169,6 +169,11 @@ int main() {
     assert(observed_body.find("\"target_volatility_bps\":250") != std::string::npos);
     assert(observed_body.find("\"account_id\":\"acct.cpp-sdk\"") != std::string::npos);
 
+    const auto provider_backtest = client.run_provider_backtest_with_manifest(sized_backtest_spec);
+    assert(provider_backtest.ok());
+    assert(observed_path == "/app/provider-backtest");
+    assert(observed_body == sized_backtest_spec);
+
     const auto verified = client.verify_run(spec);
     assert(verified.ok());
     assert(observed_path == "/app/verify");

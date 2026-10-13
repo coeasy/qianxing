@@ -124,7 +124,9 @@ Bar 查询应优先调用 `ProviderRegistry::fetch_bar_frame`：它在同一入�
 
 Rust 与 Python SDK 均已有 Provider 到共享回测内核的路径。Python adapter 只提供原始行，Rust 注册器负责选择、failover、来源/载荷摘要和 Bar 质量门。`DataRequest`/`DataRequirements` 在不改变既有 `DataQuery` 结构与 JSON 的前提下，为新调用增加授权范围、实时来源和毫秒新鲜度要求；注册表执行候选筛选与结果校验。`ProviderRegistry.run_backtest` 将经过验证的 BarFrame 冻结至 `BacktestSpec.bars_path` 并调用同一 `qx-app` 用例。Python 端到端用例见 `python/tests/test_provider_sdk.py`。
 
-Bar Provider 的 `ProviderBarFrame::dataset_manifest(...)` 与 Python `fetch_bar_dataset(...)` 现在共用 `qx-data::manifest_from_bar_frame`，生成相同 `DatasetManifestV2` 指纹、内容 SHA256、质量缺口和来源血缘。Rust 与 Python SDK 都有一步式冻结→DatasetSpec 校验→共享回测入口；Rust 仓外消费者还验证 sidecar 清单、回测结果和 ReplayVerifier。Quote Provider 也可归一为 Rust `DepthFrame` 并运行 Tick/OrderBook 回测。C++ Provider 载荷绑定未实现；Provider 尚未统一进入所有 CLI/HTTP 与 Paper/Live 行情入口；分页/实时订阅、盘口增量合并与各真实数据源 conformance 仍未闭环，不能把它们写成已完成。
+Bar Provider 的 `ProviderBarFrame::dataset_manifest(...)` 与 Python `fetch_bar_dataset(...)` 现在共用 `qx-data::manifest_from_bar_frame`，生成相同 `DatasetManifestV2` 指纹、内容 SHA256、质量缺口和来源血缘。Rust 与 Python SDK 都有一步式冻结→DatasetSpec 校验→共享回测入口；Rust 仓外消费者还验证 sidecar 清单、回测结果和 ReplayVerifier。Quote Provider 也可归一为 Rust `DepthFrame` 并运行 Tick/OrderBook 回测。
+
+受信 API 宿主可通过 `ApiService::with_provider_registry(Arc<ProviderRegistry>)` 注入部署管理的注册表，随后调用 `POST /app/provider-backtest`；请求体是 `ProviderBacktestSpec`，响应序列化同一 `ProviderBacktestOutcome`。服务端把数据和产物路径固定在 API artifact root，远程请求不能自行指定文件位置。注册表未配置时返回 `DataUnavailable`；API 不会自行构造凭据或 Provider。该路由同步等待数据源响应，宿主应部署在受保护且设有请求时限的服务边界。它只把 Provider Bar 回测接入 HTTP，不代表 CLI、C++ typed Provider 或 Paper/Live 实时行情已贯通。分页/实时订阅、盘口增量合并与各真实数据源 conformance 仍未闭环，不能把它们写成已完成。
 
 ## 已知缺口（不要在发布文案里说成"已有"）
 

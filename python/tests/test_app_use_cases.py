@@ -466,6 +466,7 @@ class AppUseCaseTests(unittest.TestCase):
         cases = [
             ("validate_dataset", "/app/validate-dataset", False),
             ("run_backtest", "/app/backtest", False),
+            ("run_provider_backtest_with_manifest", "/app/provider-backtest", False),
             ("run_multi_account_backtest", "/app/multi-account-backtest", False),
             ("start_multi_account_backtest", "/app/multi-account-backtest/start", True),
             ("start_backtest", "/app/backtest/start", True),
@@ -505,6 +506,12 @@ class AppUseCaseTests(unittest.TestCase):
                 "return_bps": 0,
                 "max_drawdown_bps": 0,
                 "artifacts": {},
+            },
+            "run_provider_backtest_with_manifest": {
+                "outcome": {},
+                "dataset_verdict": {},
+                "manifest": {},
+                "manifest_path": "manifest.json",
             },
             "run_multi_account_backtest": {
                 "batch_id": "batch",

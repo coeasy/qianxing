@@ -92,9 +92,9 @@ contracts:
   - use_case: run_provider_backtest_with_manifest
     rust: ["run_provider_backtest_with_manifest"]
     python_native: ["ProviderRegistry.run_backtest_with_manifest"]
-    python_remote: []
-    cpp_remote: []
-    http: []
+    python_remote: ["run_provider_backtest_with_manifest"]
+    cpp_remote: ["run_provider_backtest_with_manifest"]
+    http: ["/app/provider-backtest"]
   - use_case: verify_run
     rust: ["verify_run"]
     python_native: ["verify_run"]

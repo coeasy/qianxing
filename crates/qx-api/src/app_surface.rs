@@ -31,9 +31,11 @@ use qx_app::{
     run_multi_leg_backtest, run_multi_leg_experiment, validate_dataset, verify_depth_run,
     verify_run, AlgoExecutionSpec, AppError, AppErrorCategory, BacktestOutcome, BacktestSpec,
     CallerCapability, CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome,
-    DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec, RiskParitySpec, RunContext,
-    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
+    DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec, ProviderBacktestSpec,
+    RiskParitySpec, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
+    RunMultiLegExperimentSpec,
 };
+use qx_provider::ProviderRegistry;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -119,6 +121,54 @@ pub(crate) fn post_run_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
         .to_string_lossy()
         .into_owned();
     respond(run_backtest(&spec, &context(&spec.run_id)).and_then(|outcome| outcome.to_json()))
+}
+
+pub(crate) fn provider_backtest(
+    body: &str,
+    paths: &AppPaths,
+    registry: Option<&ProviderRegistry>,
+) -> ApiResponse {
+    let Some(registry) = registry else {
+        return respond(Err(AppError::new(
+            AppErrorCategory::DataUnavailable,
+            "Provider registry is not configured for this API service",
+        )));
+    };
+    let mut spec: ProviderBacktestSpec = match serde_json::from_str(body) {
+        Ok(spec) => spec,
+        Err(error) => {
+            return respond(Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("ProviderBacktestSpec JSON invalid: {error}"),
+            )))
+        }
+    };
+    if let Err(error) = spec.validate() {
+        return respond(Err(error));
+    }
+    let run_id = spec.backtest.run_id.clone();
+    let run_root = paths.artifact_root.join(&run_id);
+    spec.backtest.bars_path = run_root
+        .join("provider-bars.json")
+        .to_string_lossy()
+        .into_owned();
+    spec.backtest.output_dir = run_root.join("artifacts").to_string_lossy().into_owned();
+    spec.manifest_path = Some(
+        run_root
+            .join("dataset-manifest.json")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let result = qx_app::run_provider_backtest_with_manifest(registry, &spec, &context(&run_id))
+        .and_then(|outcome| {
+            serde_json::to_string(&outcome).map_err(|error| {
+                AppError::new(
+                    AppErrorCategory::InternalInvariant,
+                    format!("ProviderBacktestOutcome serialization failed: {error}"),
+                )
+            })
+        });
+    respond(result)
 }
 
 pub(crate) fn post_verify_run(body: &str) -> ApiResponse {

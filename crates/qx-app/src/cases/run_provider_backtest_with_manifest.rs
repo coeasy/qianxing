@@ -16,6 +16,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Result of freezing validated Provider data, checking it, and running the shared Bar use case.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderBacktestOutcome {
     pub outcome: BacktestOutcome,
     pub dataset_verdict: DatasetVerdict,

@@ -63,6 +63,16 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         Self { transport }
     }
 
+    /// Run Provider selection, immutable dataset freezing and Bar backtest on the shared Rust API.
+    pub fn run_provider_backtest_with_manifest(
+        &self,
+        spec: &qx_app::ProviderBacktestSpec,
+    ) -> Result<Value, RemoteApiError> {
+        let request = serde_json::to_value(spec)
+            .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
+        self.post("/app/provider-backtest", &request)
+    }
+
     pub fn start_paper_algo_execution(&self, request: &Value) -> Result<Value, RemoteApiError> {
         self.post("/app/paper/algo-executions/start", request)
     }
@@ -211,6 +221,52 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Value>(&calls[3].1).unwrap(),
             serde_json::json!({"after_parent_id":"p-4","limit":17})
+        );
+    }
+
+    #[test]
+    fn provider_backtest_uses_shared_server_route_and_preserves_spec_json() {
+        let client = RemoteApiClient::new(FakeTransport::default());
+        let query = crate::DataQuery {
+            kind: crate::DataKind::Bar,
+            asset_class: "crypto".into(),
+            instrument_set: std::collections::BTreeSet::from(["BTCUSDT.BINANCE".into()]),
+            field_set: std::collections::BTreeSet::from(["close".into()]),
+            frequency: "1m".into(),
+            adjustment: "none".into(),
+            quality_policy: "strict".into(),
+            start: 1,
+            end: 10,
+            as_of: Some(10),
+        };
+        let spec = crate::ProviderBacktestSpec {
+            data_request: crate::DataRequest::new(query, crate::DataRequirements::default()),
+            backtest: crate::BacktestSpec::new(
+                "provider-run",
+                "BTCUSDT.BINANCE",
+                "bars.json",
+                "USDT",
+                100_000_000_000_000,
+                20261013,
+                "out",
+                crate::BuiltinStrategySpec::new(
+                    crate::BuiltinStrategyKind::SmaCross,
+                    "provider-sma",
+                ),
+            ),
+            dataset_id: "bars".into(),
+            dataset_version: "v1".into(),
+            interval_ms: 60_000,
+            timezone: "UTC".into(),
+            manifest_path: None,
+        };
+        let _ = client.run_provider_backtest_with_manifest(&spec).unwrap();
+        let calls = client.transport.0.lock().unwrap();
+        assert_eq!(calls[0].0, "/app/provider-backtest");
+        let expected = serde_json::to_value(spec).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&calls[0].1).unwrap(),
+            expected
         );
     }
 
