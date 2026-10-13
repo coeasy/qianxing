@@ -1,5 +1,8 @@
 use super::{ApiService, ApiState};
-use qx_app::{BacktestSpec, BuiltinStrategySpec, ProviderBacktestOutcome, ProviderBacktestSpec};
+use qx_app::{
+    BacktestSpec, BuiltinStrategySpec, DepthBacktestSpec, ProviderBacktestOutcome,
+    ProviderBacktestSpec, ProviderDepthBacktestOutcome, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+};
 use qx_provider::{
     DataKind, DataProvider, DataQuery, DataRequest, DataRequirements, ProviderCapability,
     ProviderError, ProviderRegistry, ProviderResult,
@@ -23,6 +26,10 @@ impl DataProvider for FixtureProvider {
 }
 
 struct TestDirectory(PathBuf);
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
 
 impl TestDirectory {
     fn new() -> Self {
@@ -91,6 +98,114 @@ fn provider_registry() -> ProviderRegistry {
     registry
 }
 
+fn quote_provider_registry() -> ProviderRegistry {
+    let fixture_path = workspace_root()
+        .join("deploy")
+        .join("qianxing.depth-frame.l1.example.json");
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture_path).unwrap()).unwrap();
+    let snapshots = fixture["snapshots"].as_array().unwrap();
+    let received_at = snapshots.last().unwrap()["ts"].as_u64().unwrap() + 1;
+    let instrument = "BTCUSDT.BINANCE";
+    let records = snapshots
+        .iter()
+        .map(|snapshot| {
+            let ts = snapshot["ts"].as_u64().unwrap();
+            (
+                ts,
+                ts,
+                qx_provider::ProviderPayload::new_json(
+                    instrument,
+                    "application/vnd.qianxing.order-book-snapshot+json;v=1",
+                    serde_json::to_string(snapshot).unwrap(),
+                ),
+            )
+        })
+        .collect();
+    let result = ProviderResult::from_payloads(
+        "quote-fixture",
+        "v1",
+        "quote-request-1",
+        received_at,
+        records,
+    )
+    .unwrap();
+    let capability = ProviderCapability {
+        provider_id: "quote-fixture".into(),
+        version: "v1".into(),
+        data_kinds: [DataKind::Quote].into_iter().collect(),
+        asset_classes: ["crypto".into()].into_iter().collect(),
+        frequencies: ["tick".into()].into_iter().collect(),
+        auth_scope: "public".into(),
+        rate_limit_per_second: 100,
+        freshness_seconds: 60,
+        historical_start: 0,
+        historical_end: received_at,
+        realtime: false,
+        priority: 1,
+        quality_score: 100,
+        cost_score: 1,
+    };
+    let mut registry = ProviderRegistry::new();
+    registry
+        .register(Box::new(FixtureProvider { capability, result }))
+        .unwrap();
+    registry
+}
+
+fn provider_depth_spec(root: &std::path::Path) -> qx_app::ProviderDepthBacktestSpec {
+    let fixture_path = workspace_root()
+        .join("deploy")
+        .join("qianxing.depth-frame.l1.example.json");
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture_path).unwrap()).unwrap();
+    let snapshots = fixture["snapshots"].as_array().unwrap();
+    let start = snapshots.first().unwrap()["ts"].as_u64().unwrap();
+    let end = snapshots.last().unwrap()["ts"].as_u64().unwrap();
+    qx_app::ProviderDepthBacktestSpec {
+        data_request: DataRequest::new(
+            DataQuery {
+                kind: DataKind::Quote,
+                asset_class: "crypto".into(),
+                instrument_set: BTreeSet::from(["BTCUSDT.BINANCE".into()]),
+                field_set: BTreeSet::from(["bid".into(), "ask".into()]),
+                frequency: "tick".into(),
+                adjustment: "none".into(),
+                quality_policy: "strict".into(),
+                start,
+                end,
+                as_of: Some(end + 1),
+            },
+            DataRequirements::default(),
+        ),
+        backtest: DepthBacktestSpec {
+            schema_version: DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+            run_id: "api-provider-depth-run".into(),
+            depth_path: root
+                .join("provider-depth.json")
+                .to_string_lossy()
+                .into_owned(),
+            tier: "l1".into(),
+            settlement_currency: "USDT".into(),
+            initial_cash_raw: 100_000_000_000_000,
+            fee_bps: 0,
+            latency_snapshots: 0,
+            queue_position_bps: 0,
+            market_impact_bps: 0,
+            output_dir: root
+                .join("provider-depth-run")
+                .to_string_lossy()
+                .into_owned(),
+            strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "api-provider-depth"),
+            market_spec: None,
+            order_policy: None,
+            market_making: None,
+            account_id: None,
+            portfolio: None,
+        },
+    }
+}
+
 fn provider_spec() -> ProviderBacktestSpec {
     ProviderBacktestSpec {
         data_request: DataRequest::new(
@@ -156,6 +271,36 @@ fn provider_depth_backtest_route_is_registered_and_requires_configured_registry(
     assert!(response
         .body
         .contains("Provider registry is not configured"));
+}
+
+#[test]
+fn provider_depth_backtest_http_route_runs_freezes_and_returns_artifacts() {
+    let path = workspace_root().join("target").join(format!(
+        "qx-api-provider-depth-route-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).unwrap();
+    let mut service = ApiService::new(ApiState::default())
+        .with_provider_registry(Arc::new(quote_provider_registry()));
+    service.app_paths.artifact_root = path.clone();
+
+    let response = service.handle(
+        "POST",
+        "/app/provider-depth-backtest",
+        &serde_json::to_string(&provider_depth_spec(&path)).unwrap(),
+        1,
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+    let outcome: ProviderDepthBacktestOutcome = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(outcome.provider_id, "quote-fixture");
+    assert_eq!(outcome.provider_version, "v1");
+    assert!(PathBuf::from(outcome.depth_path).is_file());
+    assert!(PathBuf::from(outcome.outcome.artifacts.run_manifest).is_file());
+    assert!(PathBuf::from(outcome.outcome.artifacts.summary).is_file());
+    assert!(PathBuf::from(outcome.outcome.artifacts.equity).is_file());
+    assert!(PathBuf::from(outcome.outcome.artifacts.fills).is_file());
+    let _ = fs::remove_dir_all(path);
 }
 
 #[test]
