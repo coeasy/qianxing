@@ -225,21 +225,6 @@ fn write_snapshot(root: &Path, snapshot: &RunSnapshot, create_only: bool) -> Res
             format!("序列化运行记录失败: {error}"),
         )
     })?;
-    if create_only {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&destination)
-            .map_err(|error| {
-                AppError::from_io(&format!("保留运行记录 {}", destination.display()), &error)
-            })?;
-        file.write_all(&body)
-            .and_then(|()| file.sync_all())
-            .map_err(|error| {
-                AppError::from_io(&format!("持久化运行记录 {}", destination.display()), &error)
-            })?;
-        return Ok(());
-    }
     let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let temporary = PathBuf::from(format!(
         "{}.tmp-{}-{serial}",
@@ -266,13 +251,21 @@ fn write_snapshot(root: &Path, snapshot: &RunSnapshot, create_only: bool) -> Res
                 )
             })?;
         drop(file);
-        std::fs::rename(&temporary, &destination).map_err(|error| {
-            AppError::from_io(&format!("发布运行记录 {}", destination.display()), &error)
-        })
+        if create_only {
+            // A hard link publishes the already-synced complete file atomically
+            // and fails if another run already owns this identity. Creating the
+            // destination first and writing into it could leave truncated JSON
+            // behind after a disk-full or interrupted write.
+            std::fs::hard_link(&temporary, &destination).map_err(|error| {
+                AppError::from_io(&format!("保留运行记录 {}", destination.display()), &error)
+            })
+        } else {
+            std::fs::rename(&temporary, &destination).map_err(|error| {
+                AppError::from_io(&format!("发布运行记录 {}", destination.display()), &error)
+            })
+        }
     })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
+    let _ = std::fs::remove_file(&temporary);
     result
 }
 
@@ -344,6 +337,30 @@ mod tests {
         let events = reopened.events("persisted-success", 1);
         let events: serde_json::Value = serde_json::from_str(&events.body).unwrap();
         assert_eq!(events[0]["seq"], 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reservation_publishes_only_complete_json_and_never_replaces_an_existing_run() {
+        let root = root("atomic-reserve");
+        let registry = AppRunRegistry::open(root.clone());
+        registry.reserve("atomic-run".to_string()).unwrap();
+        let destination = root.join("atomic-run.json");
+        let first = std::fs::read(&destination).expect("read reserved snapshot");
+        let parsed: RunSnapshot = serde_json::from_slice(&first).expect("complete snapshot JSON");
+        assert_eq!(parsed.run_id, "atomic-run");
+        assert_eq!(parsed.status, "running");
+        assert_eq!(
+            write_snapshot(&root, &parsed, true).unwrap_err().category(),
+            AppErrorCategory::Conflict
+        );
+        assert_eq!(std::fs::read(&destination).unwrap(), first);
+        assert!(std::fs::read_dir(&root).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".tmp-")));
+        drop(registry);
         std::fs::remove_dir_all(root).unwrap();
     }
 
