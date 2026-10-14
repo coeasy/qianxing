@@ -39,6 +39,9 @@ use qx_app::{
 use qx_provider::ProviderRegistry;
 use std::path::PathBuf;
 
+#[path = "app_surface/capabilities.rs"]
+mod capabilities;
+
 #[derive(Clone, Debug)]
 pub(crate) struct AppPaths {
     pub data_root: PathBuf,
@@ -465,6 +468,9 @@ pub(crate) fn route_app_run(
     }
     if let ("GET", "/app/strategies") = (method, route) {
         return Some(builtin_strategy_catalog());
+    }
+    if let ("GET", "/app/capabilities") = (method, route) {
+        return Some(capabilities::application_capabilities());
     }
     if query.is_empty() {
         app_run_route(method, route, body, paths, registry)

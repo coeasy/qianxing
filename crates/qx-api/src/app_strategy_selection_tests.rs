@@ -32,6 +32,38 @@ fn http_strategy_discovery_matches_the_shared_rust_catalog() {
 }
 
 #[test]
+fn http_capability_discovery_is_versioned_and_does_not_claim_runtime_readiness() {
+    let response = ApiService::new(ApiState::default()).handle("GET", "/app/capabilities", "", 0);
+    assert_eq!(response.status, 200, "{}", response.body);
+    let catalog: Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(catalog["schema_version"], 1);
+    assert_eq!(catalog["execution_backend"], "shared-rust");
+    assert_eq!(catalog["runtime_preflight_required"], true);
+    let capabilities = catalog["capabilities"].as_array().unwrap();
+    for id in [
+        "backtest.bar",
+        "backtest.tick_orderbook",
+        "backtest.multi_leg",
+        "backtest.multi_market",
+        "backtest.multi_account",
+        "experiments.parameter_grid",
+        "paper.commands",
+        "live.commands",
+        "run.lifecycle_events",
+    ] {
+        assert!(
+            capabilities.iter().any(|capability| capability["id"] == id),
+            "missing {id}"
+        );
+    }
+    assert!(catalog["limitations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| { item.as_str().is_some_and(|text| text.contains("runtime")) }));
+}
+
+#[test]
 fn experiment_http_route_runs_the_multi_strategy_selection_on_the_shared_app_use_case() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

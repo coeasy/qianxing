@@ -36,6 +36,11 @@ int main() {
     assert(observed_method == "GET");
     assert(observed_path == "/app/strategies");
 
+    const auto capabilities = client.application_capabilities();
+    assert(capabilities.ok());
+    assert(observed_method == "GET");
+    assert(observed_path == "/app/capabilities");
+
     const auto multi_market = client.run_multi_market_backtest(spec);
     assert(multi_market.ok());
     assert(observed_path == "/app/multi-market-backtest");

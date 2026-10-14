@@ -70,6 +70,20 @@ fn builtin_strategy_catalog_uses_the_shared_discovery_route() {
 }
 
 #[test]
+fn application_capabilities_use_the_shared_runtime_discovery_route() {
+    let client = RemoteApiClient::new(FakeTransport::default());
+    assert_eq!(
+        client.application_capabilities().unwrap(),
+        serde_json::json!([])
+    );
+    let calls = client.transport.0.lock().unwrap();
+    assert_eq!(
+        calls.as_slice(),
+        &[("/app/capabilities".into(), String::new())]
+    );
+}
+
+#[test]
 fn provider_backtest_uses_shared_server_route_and_preserves_spec_json() {
     let client = RemoteApiClient::new(FakeTransport::default());
     let query = crate::DataQuery {

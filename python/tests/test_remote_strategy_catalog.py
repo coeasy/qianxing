@@ -15,6 +15,43 @@ from qianxing.app import (
 
 
 class RemoteStrategyCatalogTest(unittest.TestCase):
+    def test_application_capabilities_validate_the_versioned_server_contract(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "execution_backend": "shared-rust",
+            "runtime_preflight_required": True,
+            "capabilities": [{"id": "backtest.bar", "routes": ["/app/backtest"]}],
+            "limitations": ["runtime checks apply"],
+        }
+        client = AppClient("https://localhost")
+        with patch.object(client, "_request_json_value", return_value=payload) as request:
+            self.assertEqual(client.application_capabilities(), payload)
+        self.assertEqual(
+            request.call_args.args[0], APP_ROUTE_TEMPLATES["application_capabilities"]
+        )
+        self.assertEqual(request.call_args.kwargs["method"], "GET")
+
+    def test_application_capabilities_reject_malformed_contract(self) -> None:
+        client = AppClient("https://localhost")
+        with (
+            patch.object(client, "_request_json_value", return_value={"capabilities": []}),
+            self.assertRaisesRegex(QianxingError, "invalid application capability catalog"),
+        ):
+            client.application_capabilities()
+
+    def test_async_application_capabilities_delegates_to_sync_contract(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "execution_backend": "shared-rust",
+            "runtime_preflight_required": True,
+            "capabilities": [],
+            "limitations": [],
+        }
+        client = AppClient("https://localhost")
+        with patch.object(client, "application_capabilities", return_value=payload) as call:
+            self.assertEqual(asyncio.run(client.async_application_capabilities()), payload)
+        call.assert_called_once_with()
+
     def test_remote_catalog_is_typed_and_uses_the_canonical_route(self) -> None:
         payload = [
             {

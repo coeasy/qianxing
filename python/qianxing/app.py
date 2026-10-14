@@ -27,6 +27,7 @@ from qianxing_bridge import native
 # 路径，会在门禁当场变红，而不是等用户跑到那一步才拿到 404。`{run_id}` 是路径模板占位符，
 # 调用侧用 `.format(run_id=...)` 填。
 APP_ROUTE_TEMPLATES: dict[str, str] = {
+    "application_capabilities": "/app/capabilities",
     "builtin_strategy_catalog": "/app/strategies",
     "validate_dataset": "/app/validate-dataset",
     "backtest": "/app/backtest",
@@ -2029,6 +2030,28 @@ class AppClient(_HttpJsonClient):
 
     def _post(self, route: str, spec: Any) -> dict[str, Any]:
         return self._request_json(route, method="POST", payload=spec)
+
+    def application_capabilities(self) -> dict[str, Any]:
+        """Discover Rust use cases; venue/provider readiness remains runtime-specific."""
+        value = self._request_json_value(
+            APP_ROUTE_TEMPLATES["application_capabilities"], method="GET"
+        )
+        if (
+            not isinstance(value, dict)
+            or value.get("schema_version") != 1
+            or value.get("execution_backend") != "shared-rust"
+            or value.get("runtime_preflight_required") is not True
+            or not isinstance(value.get("capabilities"), list)
+            or not isinstance(value.get("limitations"), list)
+        ):
+            raise QianxingError(
+                "Rust API returned an invalid application capability catalog",
+                payload={"category": "INTERNAL_INVARIANT"},
+            )
+        return value
+
+    async def async_application_capabilities(self) -> dict[str, Any]:
+        return await asyncio.to_thread(self.application_capabilities)
 
     def list_builtin_strategies(self) -> tuple[BuiltinStrategyInfo, ...]:
         """Fetch the same Rust-owned strategy catalog used by local SDK calls."""
