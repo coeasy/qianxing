@@ -3,11 +3,48 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 from pathlib import Path
 
 import qianxing as qx
+
+
+def write_builtin_catalog_frame(path: Path, bars: int = 90) -> None:
+    scale = 1_000_000_000
+    ts_values, opens, highs, lows, closes, volumes = [], [], [], [], [], []
+    for ts in range(1, bars + 1):
+        up = (ts // 5) % 7 < 4
+        spike = 3 if ts % 9 == 0 else 1
+        body = spike * (2 + ts % 13) * scale
+        drift = (40 + ts // 3) * scale
+        open_raw = drift if up else drift + body
+        close_raw = drift + body if up else drift
+        upper_wick = 0 if ts % 6 == 0 else (1 + ts % 4) * scale
+        lower_wick = 0 if ts % 7 == 0 else (1 + ts % 5) * scale
+        ts_values.append(1_000 + (ts - 1) * 1_000)
+        opens.append(open_raw)
+        highs.append(max(open_raw, close_raw) + upper_wick)
+        lows.append(min(open_raw, close_raw) - lower_wick)
+        closes.append(close_raw)
+        volumes.append((100 + ts % 7 * 13) * scale)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "instrument": "BTCUSDT.BINANCE",
+                "source": "python-wheel-smoke-builtin-catalog-v1",
+                "ts": ts_values,
+                "open_raw": opens,
+                "high_raw": highs,
+                "low_raw": lows,
+                "close_raw": closes,
+                "volume_raw": volumes,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def main() -> int:
@@ -23,18 +60,24 @@ def main() -> int:
     assert "backtest.bar.v1" in implemented
     strategies = qx.list_builtin_strategies()
     assert len(strategies) == 17, len(strategies)
+    single_leg_kinds = tuple(
+        item.name for item in strategies if not item.requires_reference_leg
+    )
+    assert len(single_leg_kinds) == 13, single_leg_kinds
     verdict = qx.validate_dataset(qx.DatasetSpec("wheel-smoke-data", str(bars)))
     assert verdict.usable and verdict.rows == 70, verdict
 
     with tempfile.TemporaryDirectory(prefix="qianxing-wheel-smoke-") as temporary:
         output = Path(temporary)
+        classic_bars = output / "classic-strategy-bars.json"
+        write_builtin_catalog_frame(classic_bars)
         base_strategy = qx.BuiltinStrategySpec(
             kind="sma_cross", strategy_id="wheel-smoke-sma", fast_window=2, slow_window=4
         )
         base = qx.BacktestSpec(
             run_id="wheel-smoke-backtest",
             instrument="BTCUSDT.BINANCE",
-            bars_path=str(bars),
+            bars_path=str(classic_bars),
             settlement_currency="USDT",
             initial_cash_raw=100_000_000_000_000,
             output_dir=str(output / "base"),
@@ -46,13 +89,30 @@ def main() -> int:
 
         experiment = qx.run_experiment(
             qx.RunExperimentSpec(
-                experiment_id="wheel-smoke-selection",
+                experiment_id="wheel-smoke-parameter-grid",
                 base=base,
                 parameter_space=(qx.ExperimentParameterSpace("fast_window", (2, 3)),),
                 strategy_kinds=("ema_cross", "sma_cross"),
             )
         )
         assert experiment.total_candidates == experiment.succeeded_candidates == 4
+        classic_selection = qx.run_experiment(
+            qx.RunExperimentSpec(
+                experiment_id="wheel-smoke-classic-selection",
+                base=base,
+                parameter_space=(),
+                strategy_kinds=single_leg_kinds,
+            )
+        )
+        assert (
+            classic_selection.total_candidates
+            == classic_selection.succeeded_candidates
+            == len(single_leg_kinds)
+        )
+        assert all(
+            candidate.outcome is not None and candidate.outcome.fills > 0
+            for candidate in classic_selection.candidates
+        ), classic_selection.candidates
 
         accounts = qx.run_multi_account_backtest(
             qx.MultiAccountBacktestSpec(
@@ -179,7 +239,8 @@ def main() -> int:
         print(
             "wheel e2e "
             f"strategies={len(strategies)} rows={verdict.rows} fills={outcome.fills} "
-            f"selection={experiment.succeeded_candidates}/{experiment.total_candidates} "
+            f"classic_selection={classic_selection.succeeded_candidates}/{classic_selection.total_candidates} "
+            f"parameter_grid={experiment.succeeded_candidates}/{experiment.total_candidates} "
             f"accounts={accounts.summary['accounts_succeeded']} "
             f"multileg={multileg.primary_fills}/{multileg.reference_fills} "
             f"depth_fills={depth_result.fills} custom_fills={custom.fills} "

@@ -15,6 +15,7 @@ smoke:
   dataset_rows: 70
   backtest_fills: 1
   replay_verified: true
+  single_leg_strategy_selection: "13/13 candidates succeeded with nonzero fills"
   strategy_parameter_selection: "4/4 candidates succeeded"
   independent_accounts: 2
   multi_leg_fills: "3/3"
