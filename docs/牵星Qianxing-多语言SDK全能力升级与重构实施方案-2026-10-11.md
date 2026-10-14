@@ -17,6 +17,7 @@
 > 本轮增量（2026-10-14）：补齐 Provider 侧运行时预检：`POST /app/capabilities/providers/preflight` 接收 `DataRequest`，复用 Rust `ProviderRegistry::candidates_for_request` 无 I/O 排序匹配，并返回请求指纹、匹配状态和能力声明；无注册表回 503、非法请求回 400、无候选回 200 且 `matched=false`。Rust/Python（含 asyncio）/C++ 远端客户端与 API 行为用例已接通。该预检不验证凭据、远端连通性，也不覆盖 Venue/费用/账户权限/sandbox/testnet，完整 §4.2 能力描述符仍未完成。
 > 本轮增量（2026-10-14）：多账户 Bar 与 Tick/OrderBook 批次规格校验新增初始资金总和的 checked-add 前置校验；若汇总超过 i128 表示范围，则在任何成员运行及产物写入前返回 InvalidInput，避免执行完部分账户后才因汇总溢出失败。此约束保证现有独立账户批次摘要可表示，不构成跨账户共享资金、净额或组合风险控制。
 > 本轮增量（2026-10-14）：新 wheel 隔离 smoke 验证多账户深度批次溢出时，发现 Python 同步深度批次入口漏过稳定错误映射，原生异常越过 SDK。现改为复用统一 `_invoke` 边界，并增加映射单测与 Bar/深度两类 wheel 预检断言。
+> 本轮增量（2026-10-14）：全 workspace CI 复核发现共享 app_surface 新增的能力目录与 Provider 预检路由虽已出现在第一张部署路由表，但遗漏于非 200 语义表，且 qx-cli 的静态路由取数夹具只登记策略目录，造成 `cargo test --workspace` 失败。现将三条静态 app 路由统一登记并逐项校验 handler，同时补齐两张文档表和错误语义。
 > 同轮 Python 深查修复多账户深度异步启动的错误翻译断链：原异常分支调用不存在的 `_raise_native_error`，现在委托统一 `_translate_native_error` 并以无效输入回归用例验证；重建的 Windows abi3 wheel 已隔离安装并再次跑过包级回测/实验/多账户/盘口/回放 smoke。
 > 方案仍未全部落地：跨市场 Tick/OrderBook、交易日历/跨时区/货币换算、多账户跨账户组合风险、venue/provider 全矩阵与实盘 testnet 未完成认证；Web/桌面端到端验收、C++ 默认 transport 与全平台发布门仍未完成。逐轮复核、量化场景状态与证据见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)和 `maturity/quant_scenarios.yaml`。
 

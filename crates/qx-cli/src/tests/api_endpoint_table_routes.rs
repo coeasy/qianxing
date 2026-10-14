@@ -176,7 +176,7 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
             .unwrap_or_else(|| panic!("app_surface 缺少动态端点模板 {constant}"));
         pairs.insert((method.to_string(), template.to_string()));
     }
-    super::api_app_surface_routes::insert_strategy_catalog(&mut pairs);
+    super::api_app_surface_routes::insert_static_app_routes(&mut pairs);
     assert!(
         pairs.len() >= 25,
         "分派区间里只数出 {} 条 (方法, 路由)，比端点表声称的 25 条还少——取数区间被改窄了",

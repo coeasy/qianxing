@@ -408,6 +408,13 @@ Python 十策略证据：
 - 验收：`cargo fmt --check` 通过；`cargo test --offline -p qx-app --lib multi_account` 8/8 通过，涵盖 Bar 与深度批次的溢出输入、独立账户运行、失败隔离及取消边界。默认 Windows 临时目录权限导致首轮测试夹具建目录失败；将临时目录指向仓库内可写测试目录后重跑通过，未改变生产逻辑。
 - 其余发布限制仍在：跨账户组合风险与净额、Venue/Testnet 凭据认证、逐事件持久化恢复、远端 callback、C++ 默认 transport 及三平台 SDK 发布矩阵仍未闭环。
 
+## 51. 2026-10-14 修复：共享能力路由的文档与路由契约表同步
+
+- GitHub Actions 对提交 `2ecd1218` 的运行未成功完成；本地复现显示 Rust workspace 失败点不是新执行逻辑，而是 `api_endpoint_table_routes::each_endpoint_table_lists_exactly_the_dispatch_routes`：它只把 `/app/strategies` 纳入静态 app_surface 路由集合，漏了新接入的 `GET /app/capabilities` 与 `POST /app/capabilities/providers/preflight`。
+- 该盲区还伴随部署文档的第二张「非 200 口径」表缺失两条路由。现在测试夹具把三条 app_surface 静态入口集中核验方法、路径与 handler；两张端点表均包含完整路由，Provider 预检记明 400/503 行为及无候选的 200 语义。
+- 验收：改动前 `cargo test --workspace --offline` 复现 395 项通过、1 项失败；修复后全 workspace 测试通过（qx-cli 396 项、CLI/HTTP/Python 三入口应用集成 20 项包含十经典策略一致性）；端点表专项 10 项通过；workspace 严格 Clippy、格式检查及 1096 项架构门禁通过。
+- 本地目前已证明完整 workspace 通过；GitHub Actions 还需要在本次修复提交上完成一次未被并发 push 取消的全量运行。跨账户共享风险、外部 testnet/venue 认证、事件日志游标恢复及跨平台安装外部证明仍需分别闭环。
+
 ## 50. 2026-10-14 修复：Python 深度多账户同步错误边界
 
 - 上一轮新 wheel 中对多账户 Tick/OrderBook 汇总溢出的验证意外暴露：`run_multi_account_depth_backtest` 直接解析原生返回值，原生抛出的 `QxAppError` 不经过 SDK `_translate_native_error`；同步调用者因此收到非稳定底层异常，而同系列其它入口会映射为公开 `InvalidInputError`。
