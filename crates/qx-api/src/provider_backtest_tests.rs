@@ -351,3 +351,28 @@ fn provider_backtest_http_route_runs_freezes_and_returns_artifacts() {
     assert!(PathBuf::from(outcome.outcome.artifacts.equity).is_file());
     assert!(PathBuf::from(outcome.outcome.artifacts.fills).is_file());
 }
+
+#[test]
+fn capabilities_route_includes_configured_provider_declarations() {
+    let without_registry =
+        ApiService::new(ApiState::default()).handle("GET", "/app/capabilities", "", 1);
+    assert_eq!(without_registry.status, 200, "{}", without_registry.body);
+    let empty: serde_json::Value = serde_json::from_str(&without_registry.body).unwrap();
+    assert_eq!(empty["provider_capabilities"], serde_json::json!([]));
+
+    let service =
+        ApiService::new(ApiState::default()).with_provider_registry(Arc::new(provider_registry()));
+    let response = service.handle("GET", "/app/capabilities", "", 2);
+    assert_eq!(response.status, 200, "{}", response.body);
+    let document: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(document["schema_version"], 1);
+    assert_eq!(
+        document["provider_capabilities"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        document["provider_capabilities"][0]["provider_id"],
+        "fixture"
+    );
+    assert_eq!(document["provider_capabilities"][0]["version"], "v1");
+}

@@ -19,6 +19,7 @@ import sys
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from typing import Any
 
 
 def _load_native():

@@ -3,6 +3,7 @@
 mod admission;
 mod algo_lifecycle;
 mod app_surface;
+mod app_surface_route;
 mod app_trade_control;
 #[cfg(test)]
 mod app_trade_control_tests;
@@ -868,9 +869,9 @@ pub struct ApiService {
     cors: Option<Arc<CorsPolicy>>,
     /// 并发连接预算。一份连接一个线程，所以上限同时是线程数上限；超限当场 503。
     connection_budget: Arc<ConnectionBudget>,
-    app_paths: app_surface::AppPaths,
-    app_runs: app_surface::AppRunRegistry,
-    provider_registry: Option<Arc<qx_provider::ProviderRegistry>>,
+    pub(crate) app_paths: app_surface::AppPaths,
+    pub(crate) app_runs: app_surface::AppRunRegistry,
+    pub(crate) provider_registry: Option<Arc<qx_provider::ProviderRegistry>>,
 }
 
 #[derive(Default)]
@@ -1456,9 +1457,7 @@ impl ApiService {
                 return response;
             }
         }
-        if let Some(response) =
-            app_surface::route_app_run(method, route, query, body, &self.app_paths, &self.app_runs)
-        {
+        if let Some(response) = self.route_app_surface(method, route, query, body) {
             return response;
         }
         let permission =

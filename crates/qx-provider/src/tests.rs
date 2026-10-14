@@ -120,6 +120,37 @@ fn selection_is_stable_and_explainable() {
 }
 
 #[test]
+fn capability_discovery_is_stable_and_returns_registered_declarations() {
+    let mut registry = ProviderRegistry::new();
+    registry
+        .register(Box::new(MockProvider {
+            capability: capability("zeta", 2, 90),
+            fail: None,
+        }))
+        .unwrap();
+    registry
+        .register(Box::new(MockProvider {
+            capability: capability("alpha", 1, 100),
+            fail: None,
+        }))
+        .unwrap();
+
+    let declarations = registry.capabilities();
+    assert_eq!(
+        declarations
+            .iter()
+            .map(|declaration| declaration.provider_id.as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "zeta"]
+    );
+    assert_eq!(declarations[0].version, "v1");
+    assert_eq!(
+        declarations[0].data_kinds,
+        [DataKind::Bar].into_iter().collect()
+    );
+}
+
+#[test]
 fn required_auth_scope_and_realtime_capability_filter_candidates() {
     let mut registry = ProviderRegistry::new();
     let mut public_realtime = capability("public-realtime", 1, 100);

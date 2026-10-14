@@ -88,6 +88,7 @@ fn multi_market_sync_and_run_handle_routes_use_the_shared_rust_workflow() {
         &asynchronous.to_string(),
         &paths,
         &registry,
+        None,
     )
     .unwrap();
     assert_eq!(started.status, 200, "{}", started.body);

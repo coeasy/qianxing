@@ -1,8 +1,11 @@
 use super::ApiResponse;
+use qx_provider::ProviderRegistry;
 
 /// Runtime discovery of shared Rust use cases. This describes server routes,
 /// not venue/provider deployment readiness; those are request-time checks.
-pub(super) fn application_capabilities() -> ApiResponse {
+pub(super) fn application_capabilities(
+    provider_registry: Option<&ProviderRegistry>,
+) -> ApiResponse {
     const BODY: &str = r#"{
       "schema_version": 1,
       "execution_backend": "shared-rust",
@@ -24,5 +27,22 @@ pub(super) fn application_capabilities() -> ApiResponse {
         "Multi-account backtests keep each account isolated; they do not net cross-account risk."
       ]
     }"#;
-    ApiResponse::json(200, BODY)
+    let mut document: serde_json::Value = match serde_json::from_str(BODY) {
+        Ok(document) => document,
+        Err(error) => {
+            return ApiResponse::json(500, crate::error_json(&error.to_string()));
+        }
+    };
+    let providers = provider_registry
+        .map(ProviderRegistry::capabilities)
+        .unwrap_or_default();
+    let providers = match serde_json::to_value(providers) {
+        Ok(providers) => providers,
+        Err(error) => return ApiResponse::json(500, crate::error_json(&error.to_string())),
+    };
+    document["provider_capabilities"] = providers;
+    match serde_json::to_string(&document) {
+        Ok(body) => ApiResponse::json(200, body),
+        Err(error) => ApiResponse::json(500, crate::error_json(&error.to_string())),
+    }
 }

@@ -143,6 +143,15 @@ impl ProviderRegistry {
         Ok(())
     }
 
+    /// Return registered Provider capability declarations in stable provider-id order.
+    /// This is discovery metadata only; it does not prove credentials or upstream reachability.
+    pub fn capabilities(&self) -> Vec<super::ProviderCapability> {
+        self.providers
+            .values()
+            .map(|registered| registered.provider.capability().clone())
+            .collect()
+    }
+
     pub fn candidates(&self, query: &DataQuery) -> Result<Vec<String>, RegistryError> {
         query.validate().map_err(RegistryError::Provider)?;
         self.candidates_for_request(&DataRequest::new(

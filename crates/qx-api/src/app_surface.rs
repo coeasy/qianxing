@@ -459,6 +459,7 @@ pub(crate) fn route_app_run(
     body: &str,
     paths: &AppPaths,
     registry: &AppRunRegistry,
+    provider_registry: Option<&ProviderRegistry>,
 ) -> Option<ApiResponse> {
     if route.starts_with("/app/") && !query.is_empty() && !accepts_run_event_query(route, query) {
         return Some(ApiResponse::json(
@@ -470,7 +471,7 @@ pub(crate) fn route_app_run(
         return Some(builtin_strategy_catalog());
     }
     if let ("GET", "/app/capabilities") = (method, route) {
-        return Some(capabilities::application_capabilities());
+        return Some(capabilities::application_capabilities(provider_registry));
     }
     if query.is_empty() {
         app_run_route(method, route, body, paths, registry)
