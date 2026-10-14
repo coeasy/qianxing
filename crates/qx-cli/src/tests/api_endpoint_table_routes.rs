@@ -1,6 +1,5 @@
 //! 两张端点表各自的路由集合，都必须与 `handle_inner` 真的分派的那一组逐一相等（V13 R2 第八遍）。
-//! 立案的是门禁 `api_surface_doc_check` 的取数口径：它把 `deploy/README.md` 全文里所有
-//! `` | `GET /x` `` 形态的行收成一个**并集**，再与实现侧的路由集合比相等。文档里有两张端点表
+//! 立案的是门禁 `api_surface_doc_check` 的取数口径：它把 `deploy/README.md` 全文里所有 `` | `GET /x` `` 形态的行收成一个**并集**，再与实现侧的路由集合比相等。文档里有两张端点表
 //! （一张写 200 响应体形状，一张写语义/非 200 口径），两条都进并集，所以从任一张里整行删掉
 //! 一条路由，并集不变、门禁照印绿——第六遍把它登记为 #176（只钉住了第一张），本轮补第二张。
 //! 这一盲区不是推测：第六遍实测删掉 `/events/live` 那一行时门禁仍然 `[PASS]`（`logs/s128_*.txt`）。
@@ -165,14 +164,15 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
         ("RUN_START_MULTI_ACCOUNT_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_ROUTE", "POST"),
         ("RUN_START_MULTI_MARKET_ROUTE", "POST"),
+        ("RUN_START_MARKET_DEPTH_ROUTE", "POST"),
         ("RUN_START_MARKET_EXPERIMENT_ROUTE", "POST"),
+        ("RUN_START_MARKET_DEPTH_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_EXPERIMENT_ROUTE", "POST"),
     ] {
-        let marker = format!("const {constant}: &str = \"");
+        let marker = format!("const {constant}: &str =");
         let template = app_surface
             .split_once(&marker)
-            .and_then(|(_, rest)| rest.split_once('\"'))
-            .map(|(template, _)| template)
+            .and_then(|(_, rest)| rest.split('\"').nth(1))
             .unwrap_or_else(|| panic!("app_surface 缺少动态端点模板 {constant}"));
         pairs.insert((method.to_string(), template.to_string()));
     }

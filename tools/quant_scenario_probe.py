@@ -947,6 +947,26 @@ def main() -> int:
             command_prefix="cargo",
         )
 
+    def executed_multi_account_capital_isolation_test():
+        executed(
+            "multi_account_capital_isolation",
+            "多账户购买力隔离与单账户结果一致性",
+            "crates/qx-app/src/cases/run_multi_account_backtest.rs",
+            [
+                "test", "--offline", "-p", "qx-app", "--lib",
+                "changing_another_accounts_capital_does_not_change_this_accounts_run",
+                "--", "--nocapture",
+            ],
+            r"(MULTI_ACCOUNT_ISOLATION_OBSERVED account=account-btc "
+            r"other_account_capital_multiplier=100 fills=\d+ result_hash=\w+ isolated_from_solo=true)",
+            env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+            evidence=[
+                "crates/qx-app/src/tests/multi_account_backtest.rs",
+                "crates/qx-app/src/cases/run_multi_account_backtest.rs",
+            ],
+            command_prefix="cargo",
+        )
+
     def executed_multi_market_experiment_language_parity_test():
         executed(
             "multi_market_experiment_language_parity",
@@ -1037,6 +1057,7 @@ def main() -> int:
     executed_multi_market_depth_builtin_strategy_bridge_test()
     executed_multi_market_mixed_tick_orderbook_test()
     executed_multi_market_parameter_experiment_test()
+    executed_multi_account_capital_isolation_test()
     executed_multi_market_experiment_language_parity_test()
 
     for name, label, kind in MULTI_LEG_SCENARIOS:

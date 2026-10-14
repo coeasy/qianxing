@@ -37,7 +37,7 @@ struct PreparedMarket {
 }
 
 enum MarketStrategy {
-    Builtin(BuiltinStrategy),
+    Builtin(Box<BuiltinStrategy>),
     Callback(Box<dyn Strategy>),
 }
 
@@ -166,7 +166,9 @@ pub(super) fn run_inner_with_strategies(
                 (
                     request.strategy.strategy_id.clone(),
                     format!("{}-v1", request.strategy.strategy_id),
-                    MarketStrategy::Builtin(BuiltinStrategy::new(config).map_err(invalid)?),
+                    MarketStrategy::Builtin(Box::new(
+                        BuiltinStrategy::new(config).map_err(invalid)?,
+                    )),
                 )
             }
         };
@@ -190,7 +192,7 @@ pub(super) fn run_inner_with_strategies(
         let strategy: Box<dyn OrderBookStrategy> = match strategy {
             MarketStrategy::Builtin(strategy) => {
                 let mut adapter =
-                    DepthBarStrategy::new(strategy, strategy_context, frame.instrument.clone());
+                    DepthBarStrategy::new(*strategy, strategy_context, frame.instrument.clone());
                 adapter.initialize().map_err(invalid)?;
                 Box::new(adapter)
             }

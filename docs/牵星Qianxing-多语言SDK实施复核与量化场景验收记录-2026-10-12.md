@@ -450,3 +450,11 @@ Python 十策略证据：
 - 现将每个快照的 bid/ask 档位数量写入 `DepthFrame::input_hash` 与核心回测报告 `input_data_hash`，再哈希逐档价格与数量；两条输入身份路径均有回归用例验证上述两种合法快照得到不同哈希。此修改只修复数据身份编码，不改变撮合语义。
 - 验收：`cargo test -p qx-xingban --offline -- --test-threads=1` 通过（123 个单测及全部集成/文档测试），两个 `depth_frame_hash` 集成回归通过；严格 Clippy、格式检查通过；架构门禁 1096 项全部通过；量化场景探针重生成后为 68 executed、0 declared_not_executed、0 missing、1 blocked；能力执行探针在显式指定当前 `target/debug/qx-cli.exe` 后 8 项 executed、2 项 delegated、2 项 blocked，盘口数据指纹为 `bb98a3580a92ee38`。探针首次误选 `.cargo-target` 中 2026-10-12 的旧 CLI，出现两条失败和旧指纹；改用本轮构建的二进制重跑后通过，生成记录未保留旧结果。
 - 本项不关闭多市场 Tick/OrderBook、跨账户组合风险、多市场 Paper/Live、远端策略 callback、C++ 默认 transport、完整事件事实日志、真实 venue testnet 或全平台包认证等开放门槛；整体发布条件仍未满足。
+
+## 56. 2026-10-14 验收补齐：多账户资金隔离不变量
+
+- 多账户 Bar 批次此前验证了独立账户执行、稳定排序、失败隔离和逐账户回放，但没有直接证明另一个账户的本金不会影响目标账户的交易语义。本轮增加属性回归：将 ETH 账户初始资金扩大 100 倍后，BTC 账户的结果哈希、成交数、收益和回撤保持一致；同时与相同 correlation ID 下的单独 BTC 回测比较，结果哈希和成交数相同。
+- 场景探针已加入 `multi_account_capital_isolation`，执行整套本地量化场景后共 75 executed、0 declared_not_executed、0 missing、1 blocked；唯一阻塞仍为缺少 CCXT 运行依赖与交易所 testnet 凭据的实盘订单生命周期认证。
+- 该证据加强的是“账户相互隔离”的当前契约，不代表跨账户净额、组合风险、共享购买力或统一多账户订单执行已经实现。多市场 Paper/Live、外部 venue/provider conformance、HTTP 持久事件恢复、C++ 默认 transport、Web/桌面 E2E 和完整发布平台矩阵仍未关闭，不能据此宣称方案达到全部发布门槛。
+- 同轮对 `qx-app` 执行严格 Clippy 时发现多市场深度工作流的 `MarketStrategy` 大枚举（内置策略约 832 字节）；已将内置策略变体装箱。修正后 `cargo clippy --offline -p qx-app --all-targets -- -D warnings` 通过，深度多市场相关单测 4/4 通过。
+- workspace 首轮全量 Rust 测试 393 项通过、3 项暴露部署文档/静态路由核对不一致：两条 Run 启动路由常量未被门禁解析，深度参数实验第二张端点表漏写限流出口。现更新常量扫描以兼容换行赋值、补齐 `deploy/README.md` 的候选上限/错误与限流语义；三项端点表测试和限流语义测试通过，`cargo test --offline --workspace` 复跑全部通过。

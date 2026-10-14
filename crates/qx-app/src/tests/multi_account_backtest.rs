@@ -1,4 +1,4 @@
-use crate::cases::{run_multi_account_backtest, verify_run};
+use crate::cases::{run_backtest, run_multi_account_backtest, verify_run};
 use crate::context::{CallerCapability, RunContext};
 use crate::error::AppErrorCategory;
 use crate::spec::MultiAccountBacktestSpec;
@@ -61,6 +61,64 @@ fn independent_accounts_run_different_markets_and_keep_verifiable_ledgers() {
     let repeated = run_multi_account_backtest(&spec, &research("batch-two-markets"))
         .expect("idempotent batch repeat");
     assert_eq!(result, repeated);
+}
+
+#[test]
+fn changing_another_accounts_capital_does_not_change_this_accounts_run() {
+    let root = scratch("multi-account-capital-isolation");
+    let mut batch = two_account_spec(&root);
+    // Keep account-b safely representable while changing its buying power by
+    // two orders of magnitude. Account-a's execution must remain identical.
+    let account_a = batch
+        .runs
+        .iter()
+        .find(|run| run.account_id.as_deref() == Some("account-btc"))
+        .unwrap()
+        .clone();
+    let context = research("capital-isolation");
+    let baseline = run_multi_account_backtest(&batch, &context).unwrap();
+    let baseline_a = baseline
+        .runs
+        .iter()
+        .find(|run| run.account_id == "account-btc")
+        .unwrap()
+        .outcome
+        .as_ref()
+        .unwrap();
+
+    let other = batch
+        .runs
+        .iter_mut()
+        .find(|run| run.account_id.as_deref() == Some("account-eth"))
+        .unwrap();
+    other.initial_cash_raw = other.initial_cash_raw.checked_mul(100).unwrap();
+    let changed = run_multi_account_backtest(&batch, &context).unwrap();
+    let changed_a = changed
+        .runs
+        .iter()
+        .find(|run| run.account_id == "account-btc")
+        .unwrap()
+        .outcome
+        .as_ref()
+        .unwrap();
+
+    // Compare the account execution identity and metrics, excluding artifact
+    // paths, which are deployment details and are not financial semantics.
+    assert_eq!(baseline_a.result_hash, changed_a.result_hash);
+    assert_eq!(baseline_a.fills, changed_a.fills);
+    assert_eq!(baseline_a.return_bps, changed_a.return_bps);
+    assert_eq!(baseline_a.max_drawdown_bps, changed_a.max_drawdown_bps);
+
+    let mut solo = account_a;
+    solo.output_dir = root.join("solo-account-a").to_string_lossy().into_owned();
+    let solo_context = research("capital-isolation-account-btc");
+    let solo_outcome = run_backtest(&solo, &solo_context).unwrap();
+    assert_eq!(baseline_a.result_hash, solo_outcome.result_hash);
+    assert_eq!(baseline_a.fills, solo_outcome.fills);
+    println!(
+        "MULTI_ACCOUNT_ISOLATION_OBSERVED account=account-btc other_account_capital_multiplier=100 fills={} result_hash={} isolated_from_solo=true",
+        baseline_a.fills, baseline_a.result_hash
+    );
 }
 
 #[test]
