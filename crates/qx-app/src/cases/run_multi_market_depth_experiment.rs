@@ -1,4 +1,4 @@
-//! Bounded strategy/parameter experiments over the shared multi-market L2 portfolio engine.
+//! Bounded strategy/parameter experiments over the shared multi-market L1/L2 portfolio engine.
 
 use super::artifacts::write_text;
 use super::attach;

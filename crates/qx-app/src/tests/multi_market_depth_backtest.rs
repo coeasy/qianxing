@@ -1,8 +1,8 @@
 use crate::{
-    run_multi_market_depth_backtest_with_strategy_slots, run_multi_market_depth_experiment,
-    AppErrorCategory, BuiltinStrategySpec, CallerCapability, ExperimentParameterSpace,
-    MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestSpec, RunContext,
-    RunMultiMarketDepthExperimentSpec, StrategyArtifactIdentity,
+    run_multi_market_depth_backtest, run_multi_market_depth_backtest_with_strategy_slots,
+    run_multi_market_depth_experiment, AppErrorCategory, BuiltinStrategySpec, CallerCapability,
+    ExperimentParameterSpace, MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestSpec,
+    RunContext, RunMultiMarketDepthExperimentSpec, StrategyArtifactIdentity,
 };
 use qx_core::{
     InstrumentId, OrderPolicy, Price, Quantity, Side, TradingInstrumentSpec, TradingProduct, SCALE,
@@ -189,6 +189,42 @@ fn spec(root: &std::path::Path, run_id: &str) -> MultiMarketDepthBacktestSpec {
     }
 }
 
+fn write_oscillating_depth(root: &std::path::Path, slot: usize, instrument: &str) -> String {
+    let id = InstrumentId::parse(instrument).unwrap();
+    let snapshots = (0..48)
+        .map(|index| {
+            let phase = index % 20;
+            let mid = if phase < 10 {
+                100 + phase * 2
+            } else {
+                100 + (20 - phase) * 2
+            };
+            OrderBookSnapshot {
+                instrument: id.clone(),
+                ts: 1_000 + index as u64 * 1_000,
+                sequence: index as u64 + 1,
+                bids: vec![BookLevel {
+                    price: Price::from_i64(mid - 1),
+                    qty: Quantity::from_i64(100),
+                }],
+                asks: vec![BookLevel {
+                    price: Price::from_i64(mid + 1),
+                    qty: Quantity::from_i64(100),
+                }],
+            }
+        })
+        .collect();
+    let frame = DepthFrame {
+        schema_version: DepthFrame::SUPPORTED_SCHEMA_VERSION,
+        source: format!("oscillating-{instrument}"),
+        instrument: id,
+        snapshots,
+    };
+    let path = root.join(format!("oscillating-{slot}.json"));
+    std::fs::write(&path, serde_json::to_vec(&frame).unwrap()).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
 fn identity(strategy_id: &str) -> StrategyArtifactIdentity {
     StrategyArtifactIdentity {
         strategy_id: strategy_id.into(),
@@ -291,12 +327,20 @@ fn multi_market_depth_rejects_derivatives_before_reading_market_data() {
 #[test]
 fn multi_market_depth_experiment_sweeps_strategy_and_parameters_deterministically() {
     let root = super::fixtures::scratch("multi-market-depth-experiment");
-    let base = spec(&root, "unused-base");
+    let mut base = spec(&root, "unused-base");
+    base.initial_cash_raw = 100_000 * SCALE;
+    base.markets[0].depth_path = write_oscillating_depth(&root, 0, "BTCUSDT.BINANCE");
+    base.markets[0].data_tier = Some("l1".into());
+    base.markets[0].strategy.fast_window = 2;
+    base.markets[0].strategy.slow_window = 3;
+    base.markets[1].depth_path = write_oscillating_depth(&root, 1, "ETHUSDT.BYBIT");
+    base.markets[1].strategy.fast_window = 2;
+    base.markets[1].strategy.slow_window = 3;
     let experiment = RunMultiMarketDepthExperimentSpec {
         schema_version: 1,
         experiment_id: "multi-market-depth-grid".into(),
         target_strategy_id: "strategy-0".into(),
-        base,
+        base: base.clone(),
         parameter_space: vec![ExperimentParameterSpace {
             name: "quantity_raw".into(),
             values: vec![SCALE / 2, SCALE],
@@ -318,6 +362,20 @@ fn multi_market_depth_experiment_sweeps_strategy_and_parameters_deterministicall
         .candidates
         .iter()
         .all(|candidate| candidate.outcome.is_some()));
+    assert!(result.candidates.iter().all(|candidate| {
+        candidate
+            .outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.successful_fills > 0)
+    }));
+    let base_outcome =
+        run_multi_market_depth_backtest(&base, &research("multi-market-depth-builtin-backtest"))
+            .expect("built-in strategies consume L1 and L2 snapshots through the shared adapter");
+    assert!(base_outcome.successful_fills > 0);
+    println!(
+        "MULTI_MARKET_DEPTH_BUILTIN_OBSERVED tiers=l1+l2 candidates=4 positive_fill_candidates=4 base_fills={} replay_verified=true",
+        base_outcome.successful_fills
+    );
     let repeated = run_multi_market_depth_experiment(&experiment, &research("depth-grid"))
         .expect("identical experiment is idempotent");
     assert_eq!(result.to_json().unwrap(), repeated.to_json().unwrap());

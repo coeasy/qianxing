@@ -1,4 +1,4 @@
-//! Same-account multi-market L2 application use case.
+//! Same-account multi-market L1/L2 application use case.
 
 use super::{attach, guard::guard_panics};
 use crate::{
@@ -34,7 +34,7 @@ pub(crate) fn run_multi_market_depth_backtest_with_strategy_slots(
     strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
     context: &RunContext,
 ) -> Result<MultiMarketDepthBacktestOutcome, AppError> {
-    context.require(CallerCapability::Research, "多市场共享账户 L2 盘口回测")?;
+    context.require(CallerCapability::Research, "多市场共享账户 L1/L2 盘口回测")?;
     let correlation_id = context.correlation_id().to_string();
     guard_panics(&correlation_id, || {
         let injected = validate_injected(spec, strategies)?;
@@ -56,7 +56,7 @@ impl MultiMarketDepthBacktestSpec {
     pub fn start(self, context: RunContext) -> crate::RunHandle<MultiMarketDepthBacktestOutcome> {
         let run_id = self.run_id.clone();
         crate::RunHandle::spawn(run_id, move |cancellation| {
-            context.require(CallerCapability::Research, "多市场共享账户 L2 盘口回测")?;
+            context.require(CallerCapability::Research, "多市场共享账户 L1/L2 盘口回测")?;
             let correlation_id = context.correlation_id().to_string();
             guard_panics(&correlation_id, || {
                 run_inner(&self, &context, Some(&cancellation))
@@ -70,7 +70,7 @@ impl MultiMarketDepthBacktestSpec {
         strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
         context: RunContext,
     ) -> Result<crate::RunHandle<MultiMarketDepthBacktestOutcome>, AppError> {
-        context.require(CallerCapability::Research, "多市场多语言策略 L2 回测")?;
+        context.require(CallerCapability::Research, "多市场多语言策略 L1/L2 回测")?;
         self.validate()?;
         let injected = validate_injected(&self, strategies)?;
         let run_id = self.run_id.clone();

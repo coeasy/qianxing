@@ -6,8 +6,8 @@ use crate::{
 use qx_core::{Fnv1a, Money, Quantity, ReplayVerifier};
 use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, Strategy, StrategyContext};
 use qx_xingban::{
-    DepthFrame, NativeOrderBookStrategy, OrderBookExecutionModel, OrderBookPortfolioBacktestEngine,
-    OrderBookPortfolioMarket, OrderBookStrategy,
+    DepthBarStrategy, DepthFrame, NativeOrderBookStrategy, OrderBookExecutionModel,
+    OrderBookPortfolioBacktestEngine, OrderBookPortfolioMarket, OrderBookStrategy,
 };
 use qx_zhenlu::RiskGate;
 use serde::Serialize;
@@ -34,6 +34,11 @@ struct PreparedMarket {
     data_identity: DataIdentity,
     execution_model: OrderBookExecutionModel,
     strategy: Box<dyn OrderBookStrategy>,
+}
+
+enum MarketStrategy {
+    Builtin(BuiltinStrategy),
+    Callback(Box<dyn Strategy>),
 }
 
 pub(super) fn run_inner(
@@ -134,7 +139,7 @@ pub(super) fn run_inner_with_strategies(
                 (
                     value.identity.strategy_id.clone(),
                     value.identity.strategy_version.clone(),
-                    value.strategy,
+                    MarketStrategy::Callback(value.strategy),
                 )
             }
             None => {
@@ -161,7 +166,7 @@ pub(super) fn run_inner_with_strategies(
                 (
                     request.strategy.strategy_id.clone(),
                     format!("{}-v1", request.strategy.strategy_id),
-                    Box::new(BuiltinStrategy::new(config).map_err(invalid)?) as Box<dyn Strategy>,
+                    MarketStrategy::Builtin(BuiltinStrategy::new(config).map_err(invalid)?),
                 )
             }
         };
@@ -182,13 +187,24 @@ pub(super) fn run_inner_with_strategies(
         } else {
             qx_xingban::DataTier::L2L3
         };
-        let mut strategy =
-            NativeOrderBookStrategy::new(CallbackStrategy(strategy), strategy_context)
-                .with_data_tier(tier);
-        strategy
-            .strategy
-            .on_init(&strategy.context)
-            .map_err(invalid)?;
+        let strategy: Box<dyn OrderBookStrategy> = match strategy {
+            MarketStrategy::Builtin(strategy) => {
+                let mut adapter =
+                    DepthBarStrategy::new(strategy, strategy_context, frame.instrument.clone());
+                adapter.initialize().map_err(invalid)?;
+                Box::new(adapter)
+            }
+            MarketStrategy::Callback(strategy) => {
+                let mut adapter =
+                    NativeOrderBookStrategy::new(CallbackStrategy(strategy), strategy_context)
+                        .with_data_tier(tier);
+                adapter
+                    .strategy
+                    .on_init(&adapter.context)
+                    .map_err(invalid)?;
+                Box::new(adapter)
+            }
+        };
         let mut model = OrderBookExecutionModel::new(request.fee_bps).map_err(invalid)?;
         model.latency_snapshots = request.latency_snapshots;
         model.queue_position_bps = request.queue_position_bps;
@@ -206,7 +222,7 @@ pub(super) fn run_inner_with_strategies(
             frame,
             data_identity,
             execution_model: model,
-            strategy: Box::new(strategy),
+            strategy,
         });
     }
     if !injected.is_empty() {

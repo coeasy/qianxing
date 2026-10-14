@@ -3507,24 +3507,27 @@ class AppUseCaseTests(unittest.TestCase):
 
         scale = 1_000_000_000
         markets = []
-        for index, (symbol, venue, base, ask) in enumerate((
+        for market_index, (symbol, venue, base, ask) in enumerate((
             ("BTCUSDT", "BINANCE", "BTC", 80),
             ("ETHUSDT", "BYBIT", "ETH", 60),
         )):
             instrument = InstrumentId(symbol, venue)
             snapshots = []
-            for ts in (1_000, 2_000):
+            for snapshot_index in range(48):
+                phase = snapshot_index % 20
+                mid = ask + (phase * 2 if phase < 10 else (20 - phase) * 2)
+                ts = 1_000 + snapshot_index * 1_000
                 snapshots.append({
                     "instrument": instrument.to_dict(),
                     "ts": ts,
-                    "sequence": ts,
-                    "bids": [{"price": ask * scale, "qty": 2 * scale}],
-                    "asks": [{"price": ask * scale, "qty": 2 * scale}],
+                    "sequence": snapshot_index + 1,
+                    "bids": [{"price": (mid - 1) * scale, "qty": 2 * scale}],
+                    "asks": [{"price": (mid + 1) * scale, "qty": 2 * scale}],
                 })
-            depth_path = self.output_dir / f"multi-market-depth-{index}.json"
+            depth_path = self.output_dir / f"multi-market-depth-{market_index}.json"
             depth_path.write_text(json.dumps({
                 "schema_version": 1,
-                "source": f"python-multi-market-depth-{index}",
+                "source": f"python-multi-market-depth-{market_index}",
                 "instrument": instrument.to_dict(),
                 "snapshots": snapshots,
             }), encoding="utf-8")
@@ -3547,12 +3550,12 @@ class AppUseCaseTests(unittest.TestCase):
             markets.append(MultiMarketDepthBacktestMarket(
                 instrument=f"{symbol}.{venue}",
                 depth_path=str(depth_path),
-                priority=1 - index,
+                priority=1 - market_index,
                 market_spec=market_spec,
-                data_tier="l1" if index == 0 else None,
+                data_tier="l1" if market_index == 0 else None,
                 strategy=BuiltinStrategySpec(
                     kind="sma_cross",
-                    strategy_id=f"python-l2-{index}",
+                    strategy_id=f"python-l2-{market_index}",
                 ),
             ))
         spec = MultiMarketDepthBacktestSpec(
@@ -3609,7 +3612,8 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertTrue(artifact["replay_verified"])
         self.assertEqual(artifact["market_data"][0]["data_tier"], "l1")
         self.assertEqual(artifact["market_data"][1]["data_tier"], "l2")
-        self.assertEqual(bindings[0]["strategy"].event_kinds, ["Tick", "Tick"])
+        self.assertEqual(len(bindings[0]["strategy"].event_kinds), 48)
+        self.assertEqual(set(bindings[0]["strategy"].event_kinds), {"Tick"})
         self.assertEqual(artifact["per_market_fills"]["ETHUSDT.BYBIT"], 1)
         self.assertEqual(artifact["per_market_fills"]["BTCUSDT.BINANCE"], 0)
 
@@ -3619,7 +3623,9 @@ class AppUseCaseTests(unittest.TestCase):
         )
         handle = start_multi_market_depth_backtest(builtin_spec)
         self.assertEqual(handle.wait(10_000), "succeeded")
-        self.assertEqual(handle.result().markets_total, 2)
+        builtin_outcome = handle.result()
+        self.assertEqual(builtin_outcome.markets_total, 2)
+        self.assertGreater(builtin_outcome.successful_fills, 0)
         self.assertIsNone(handle.result(), "multi-market depth result is delivered once")
 
         custom_handle_spec = MultiMarketDepthBacktestSpec(
@@ -3665,7 +3671,7 @@ class AppUseCaseTests(unittest.TestCase):
             "MULTI_MARKET_DEPTH_PYTHON_OBSERVED markets=2 fills=1 "
             "callback_slots=2 replay_verified=true custom_run_handle=succeeded "
             "parameter_candidates=2 strategy_factory=true experiment_run_handle=succeeded "
-            "builtin_run_handle=succeeded"
+            "builtin_run_handle=succeeded builtin_fills=true"
         )
 
     def test_a_failure_raises_the_same_document_the_other_entrypoints_print(self):
