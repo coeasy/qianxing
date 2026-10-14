@@ -11,6 +11,17 @@ use std::collections::BTreeMap;
 mod workflow;
 use workflow::{run_inner, run_inner_with_strategies, InjectedStrategy};
 
+pub(super) fn run_candidate(
+    spec: &MultiMarketDepthBacktestSpec,
+    context: &RunContext,
+    cancellation: Option<&crate::run_handle::CancellationToken>,
+    strategy: Option<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+) -> Result<Option<MultiMarketDepthBacktestOutcome>, AppError> {
+    let strategies = strategy.into_iter().collect();
+    let injected = validate_injected(spec, strategies)?;
+    run_inner_with_strategies(spec, context, cancellation, injected)
+}
+
 pub fn run_multi_market_depth_backtest(
     spec: &MultiMarketDepthBacktestSpec,
     context: &RunContext,

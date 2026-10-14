@@ -29,12 +29,13 @@ use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
     run_depth_backtest, run_depth_experiment, run_experiment, run_multi_account_backtest,
     run_multi_leg_backtest, run_multi_leg_experiment, run_multi_market_backtest,
-    run_multi_market_experiment, validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec,
-    AppError, AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability,
-    CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec,
-    MultiAccountBacktestSpec, MultiLegBacktestSpec, MultiMarketBacktestSpec, ProviderBacktestSpec,
-    ProviderDepthBacktestSpec, RiskParitySpec, RunContext, RunDepthExperimentSpec,
-    RunExperimentSpec, RunMultiLegExperimentSpec, RunMultiMarketExperimentSpec,
+    run_multi_market_depth_experiment, run_multi_market_experiment, validate_dataset,
+    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, AppErrorCategory, BacktestOutcome,
+    BacktestSpec, CallerCapability, CapitalAllocationSpec, CompareRunsSpec, DatasetSpec,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec,
+    MultiMarketBacktestSpec, ProviderBacktestSpec, ProviderDepthBacktestSpec, RiskParitySpec,
+    RunContext, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
+    RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentSpec,
 };
 use qx_provider::ProviderRegistry;
 use std::path::PathBuf;
@@ -44,6 +45,9 @@ mod capabilities;
 #[path = "app_surface/multi_market_depth.rs"]
 mod multi_market_depth;
 pub(crate) use multi_market_depth::multi_market_depth;
+#[path = "app_surface/multi_market_depth_experiment.rs"]
+mod multi_market_depth_experiment;
+pub(crate) use multi_market_depth_experiment::multi_market_depth_experiment;
 
 #[derive(Clone, Debug)]
 pub(crate) struct AppPaths {

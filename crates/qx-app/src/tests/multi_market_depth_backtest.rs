@@ -1,7 +1,8 @@
 use crate::{
-    run_multi_market_depth_backtest_with_strategy_slots, AppErrorCategory, BuiltinStrategySpec,
-    CallerCapability, MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestSpec, RunContext,
-    StrategyArtifactIdentity,
+    run_multi_market_depth_backtest_with_strategy_slots, run_multi_market_depth_experiment,
+    AppErrorCategory, BuiltinStrategySpec, CallerCapability, ExperimentParameterSpace,
+    MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestSpec, RunContext,
+    RunMultiMarketDepthExperimentSpec, StrategyArtifactIdentity,
 };
 use qx_core::{
     InstrumentId, OrderPolicy, Price, Quantity, Side, TradingInstrumentSpec, TradingProduct, SCALE,
@@ -204,4 +205,74 @@ fn multi_market_depth_rejects_derivatives_before_reading_market_data() {
         .try_take_result()
         .expect("finished result")
         .expect("run succeeds");
+}
+
+#[test]
+fn multi_market_depth_experiment_sweeps_strategy_and_parameters_deterministically() {
+    let root = super::fixtures::scratch("multi-market-depth-experiment");
+    let base = spec(&root, "unused-base");
+    let experiment = RunMultiMarketDepthExperimentSpec {
+        schema_version: 1,
+        experiment_id: "multi-market-depth-grid".into(),
+        target_strategy_id: "strategy-0".into(),
+        base,
+        parameter_space: vec![ExperimentParameterSpace {
+            name: "quantity_raw".into(),
+            values: vec![SCALE / 2, SCALE],
+        }],
+        callback_parameter_space: vec![],
+        strategy_kinds: vec![
+            qx_strategy::BuiltinStrategyKind::SmaCross,
+            qx_strategy::BuiltinStrategyKind::Momentum,
+        ],
+    };
+    assert_eq!(experiment.validate().unwrap(), 4);
+    let result = run_multi_market_depth_experiment(&experiment, &research("depth-grid"))
+        .expect("all grid candidates run through the portfolio use case");
+    assert_eq!(result.total_candidates, 4);
+    assert_eq!(result.completed_candidates, 4);
+    assert_eq!(result.failed_candidates, 0);
+    assert_eq!(result.ranking.len(), 4);
+    assert!(result
+        .candidates
+        .iter()
+        .all(|candidate| candidate.outcome.is_some()));
+    let repeated = run_multi_market_depth_experiment(&experiment, &research("depth-grid"))
+        .expect("identical experiment is idempotent");
+    assert_eq!(result.to_json().unwrap(), repeated.to_json().unwrap());
+}
+
+#[test]
+fn multi_market_depth_experiment_isolates_callback_panics_per_candidate() {
+    let root = super::fixtures::scratch("multi-market-depth-experiment-callback-panic");
+    let experiment = RunMultiMarketDepthExperimentSpec {
+        schema_version: 1,
+        experiment_id: "multi-market-depth-callback-panic".into(),
+        target_strategy_id: "strategy-0".into(),
+        base: spec(&root, "unused-base"),
+        parameter_space: vec![],
+        callback_parameter_space: vec![ExperimentParameterSpace {
+            name: "mode".into(),
+            values: vec![1, 2],
+        }],
+        strategy_kinds: vec![],
+    };
+    let result = experiment
+        .run_with_strategy_factory(
+            &identity("strategy-0"),
+            &mut |_candidate, parameters| {
+                if parameters["mode"] == 1 {
+                    panic!("intentional candidate factory panic");
+                }
+                Ok(Box::new(BuyOnce(false)))
+            },
+            &research("depth-callback-panic"),
+        )
+        .expect("candidate panic should not abort the experiment");
+
+    assert_eq!(result.completed_candidates, 2);
+    assert_eq!(result.failed_candidates, 1);
+    assert_eq!(result.succeeded_candidates, 1);
+    assert!(result.candidates[0].error.is_some());
+    assert!(result.candidates[1].outcome.is_some());
 }

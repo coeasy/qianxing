@@ -37,9 +37,12 @@ class _PythonStrategyFactory:
     def __init__(self, factory: Any) -> None:
         self.factory = factory
 
-    def __call__(self, candidate_json: str) -> _PythonBacktestCallback:
+    def __call__(self, candidate_json: str, parameters_json: str | None = None) -> _PythonBacktestCallback:
         candidate = json.loads(candidate_json)
-        strategy = self.factory(candidate)
+        if parameters_json is None:
+            strategy = self.factory(candidate)
+        else:
+            strategy = self.factory(candidate, json.loads(parameters_json))
         if strategy is None:
             raise TypeError("Python strategy factory must return a strategy object")
         return _PythonBacktestCallback(strategy)
@@ -481,6 +484,26 @@ def run_multi_market_depth_backtest(spec: "str | dict[str, Any]") -> dict[str, A
 
 def start_multi_market_depth_backtest(spec: "str | dict[str, Any]") -> Any:
     return native.app_start_multi_market_depth_backtest(_payload(spec))
+
+
+def run_multi_market_depth_experiment_with_strategy(
+    spec: "str | dict[str, Any]", *, strategy_id: str, strategy_version: str,
+    source_sha256: str, factory: Any,
+) -> dict[str, Any]:
+    adapted_factory = _PythonStrategyFactory(factory)
+    return json.loads(native.app_run_multi_market_depth_experiment_with_strategy(
+        _payload(spec), strategy_id, strategy_version, source_sha256, adapted_factory,
+    ))
+
+
+def start_multi_market_depth_experiment_with_strategy(
+    spec: "str | dict[str, Any]", *, strategy_id: str, strategy_version: str,
+    source_sha256: str, factory: Any,
+) -> Any:
+    adapted_factory = _PythonStrategyFactory(factory)
+    return native.app_start_multi_market_depth_experiment_with_strategy(
+        _payload(spec), strategy_id, strategy_version, source_sha256, adapted_factory,
+    )
 
 
 def run_multi_market_depth_backtest_with_strategy_slots(

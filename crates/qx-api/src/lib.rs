@@ -122,7 +122,6 @@ impl ApiEventBus {
         wake.notify_all();
         Ok(())
     }
-
     pub fn next_seq(&self) -> u64 {
         self.inner
             .0
@@ -130,12 +129,10 @@ impl ApiEventBus {
             .expect("event bus mutex poisoned")
             .next_seq
     }
-
     pub fn read_after(&self, after: Option<u64>) -> Result<Vec<Event>, EventBusError> {
         let state = self.inner.0.lock().expect("event bus mutex poisoned");
         read_bus_events(&state, after)
     }
-
     /// 等待新事件；超时返回空批次，游标越界/超前始终显式报错。
     pub fn wait_after(
         &self,
@@ -1703,6 +1700,9 @@ qx_control_retired_audit_records_total {}\n",
             ("POST", "/app/multi-market-backtest") => app::multi_market(body, &self.app_paths),
             ("POST", "/app/multi-market-depth-backtest") => {
                 app::multi_market_depth(body, &self.app_paths)
+            }
+            ("POST", "/app/run-multi-market-depth-experiment") => {
+                app::multi_market_depth_experiment(body, &self.app_paths)
             }
             ("POST", "/app/multi-account-backtest") => app::multi_account(body, &self.app_paths),
             ("POST", "/app/run-multi-leg-experiment") => app::multi_leg_grid(body, &self.app_paths),

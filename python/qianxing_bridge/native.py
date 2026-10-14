@@ -82,6 +82,10 @@ APP_ENTRYPOINTS = (
     "app_start_multi_market_experiment",
     "app_run_multi_market_experiment_with_strategy",
     "app_start_multi_market_experiment_with_strategy",
+    "app_run_multi_market_depth_experiment",
+    "app_start_multi_market_depth_experiment",
+    "app_run_multi_market_depth_experiment_with_strategy",
+    "app_start_multi_market_depth_experiment_with_strategy",
     "app_run_multi_market_backtest_with_strategy_slots",
     "app_start_multi_market_backtest_with_strategy_slots",
     "app_run_multi_market_depth_backtest",
@@ -556,6 +560,30 @@ def app_start_multi_market_experiment_with_strategy(
     spec_json: str, strategy_id: str, strategy_version: str, source_sha256: str, factory: Any,
 ) -> Any:
     return _extension().app_start_multi_market_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory,
+    )
+
+
+def app_run_multi_market_depth_experiment(spec_json: str) -> str:
+    return str(_extension().app_run_multi_market_depth_experiment(spec_json))
+
+
+def app_start_multi_market_depth_experiment(spec_json: str) -> Any:
+    return _extension().app_start_multi_market_depth_experiment(spec_json)
+
+
+def app_run_multi_market_depth_experiment_with_strategy(
+    spec_json: str, strategy_id: str, strategy_version: str, source_sha256: str, factory: Any,
+) -> str:
+    return str(_extension().app_run_multi_market_depth_experiment_with_strategy(
+        spec_json, strategy_id, strategy_version, source_sha256, factory,
+    ))
+
+
+def app_start_multi_market_depth_experiment_with_strategy(
+    spec_json: str, strategy_id: str, strategy_version: str, source_sha256: str, factory: Any,
+) -> Any:
+    return _extension().app_start_multi_market_depth_experiment_with_strategy(
         spec_json, strategy_id, strategy_version, source_sha256, factory,
     )
 

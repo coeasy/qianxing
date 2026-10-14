@@ -810,7 +810,7 @@ def main() -> int:
                 "-m", "unittest",
                 "python.tests.test_app_use_cases.AppUseCaseTests.test_multi_market_depth_typed_sdk_shares_cash_across_python_strategy_slots",
             ],
-            r"(MULTI_MARKET_DEPTH_PYTHON_OBSERVED markets=2 fills=[1-9]\d* callback_slots=2 replay_verified=true custom_run_handle=succeeded builtin_run_handle=succeeded)",
+            r"(MULTI_MARKET_DEPTH_PYTHON_OBSERVED markets=2 fills=[1-9]\d* callback_slots=2 replay_verified=true custom_run_handle=succeeded parameter_candidates=2 strategy_factory=true experiment_run_handle=succeeded builtin_run_handle=succeeded)",
             command_prefix="python",
             evidence=[
                 "crates/qx-app/src/cases/run_multi_market_depth_backtest.rs",
@@ -855,6 +855,31 @@ def main() -> int:
                 "crates/qx-api/src/app_surface/multi_market_depth.rs",
                 "crates/qx-api/src/app_runs/starts.rs",
                 "crates/qx-api/src/app_multi_market_tests.rs",
+                "python/qianxing/app.py",
+                "cpp/include/qianxing_app.hpp",
+            ],
+        )
+
+    def executed_multi_market_depth_parameter_experiment_test():
+        executed(
+            "multi_market_depth_parameter_experiment",
+            "共享账簿多市场 L2 参数/策略实验及 HTTP RunHandle",
+            "crates/qx-api/src/app_surface/multi_market_depth_experiment.rs",
+            [
+                "test", "--offline", "-p", "qx-api",
+                "multi_market_depth_experiment_sync_and_run_handle_share_candidate_engine",
+                "--", "--nocapture",
+            ],
+            r"(MULTI_MARKET_DEPTH_EXPERIMENT_OBSERVED sync_candidates=4 async_candidates=4 rankings=4 shared_engine=true)",
+            command_prefix="cargo",
+            env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+            evidence=[
+                "crates/qx-app/src/cases/run_multi_market_depth_experiment.rs",
+                "crates/qx-app/src/tests/multi_market_depth_backtest.rs",
+                "crates/qx-api/src/app_surface/multi_market_depth_experiment.rs",
+                "crates/qx-api/src/app_runs/starts.rs",
+                "crates/qx-api/src/app_multi_market_tests.rs",
+                "crates/qx-python/src/strategy_callback/multi_market_depth.rs",
                 "python/qianxing/app.py",
                 "cpp/include/qianxing_app.hpp",
             ],
@@ -967,6 +992,7 @@ def main() -> int:
     executed_multi_market_depth_python_test()
     executed_multi_market_depth_rust_sdk_test()
     executed_multi_market_depth_http_test()
+    executed_multi_market_depth_parameter_experiment_test()
     executed_multi_market_parameter_experiment_test()
     executed_multi_market_experiment_language_parity_test()
 

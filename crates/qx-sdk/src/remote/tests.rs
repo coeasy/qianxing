@@ -252,6 +252,39 @@ fn multi_market_experiment_uses_sync_and_start_server_routes() {
 }
 
 #[test]
+fn multi_market_depth_experiment_uses_sync_and_start_server_routes() {
+    let client = RemoteApiClient::new(FakeTransport::default());
+    let spec: qx_app::RunMultiMarketDepthExperimentSpec =
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "experiment_id": "remote-depth-grid",
+            "target_strategy_id": "slot-0",
+            "base": {
+                "schema_version": 1,
+                "run_id": "unused",
+                "account_id": "shared",
+                "settlement_currency": "USDT",
+                "initial_cash_raw": 100,
+                "output_dir": "runs",
+                "markets": []
+            },
+            "parameter_space": [],
+            "strategy_kinds": []
+        }))
+        .expect("spec schema deserializes before engine validation");
+    client.run_multi_market_depth_experiment(&spec).unwrap();
+    client.start_multi_market_depth_experiment(&spec).unwrap();
+    let calls = client.transport.0.lock().unwrap();
+    assert_eq!(
+        calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
+        [
+            "/app/run-multi-market-depth-experiment",
+            "/app/run-multi-market-depth-experiment/start"
+        ]
+    );
+}
+
+#[test]
 fn event_reads_preserve_optional_cursor_and_server_recovery_errors() {
     struct CursorTransport(Mutex<Vec<String>>);
     impl RemoteTransport for CursorTransport {

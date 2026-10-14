@@ -1553,6 +1553,8 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::run_multi_market_backtest_with_strategy_slots": "qx-sdk Rust 多市场同步自定义策略入口；仅由外部 SDK 消费者提供多语言策略槽",
     "qx-sdk::run_multi_market_experiment_with_strategy_factory": "qx-sdk Rust 多市场同步策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-sdk::start_multi_market_experiment_with_strategy_factory": "qx-sdk Rust 可取消多市场策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
+    "qx-sdk::run_multi_market_depth_experiment_with_strategy_factory": "qx-sdk Rust 同步多市场 L2 策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
+    "qx-sdk::start_multi_market_depth_experiment_with_strategy_factory": "qx-sdk Rust 可取消多市场 L2 策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-sdk::start_multi_leg_backtest_with_strategy": "qx-sdk Rust 可取消双腿策略运行公开入口；由外部 SDK 消费者实现 Strategy 并调用",
     "qx-sdk::start_multi_leg_experiment_with_strategy_factory": "qx-sdk Rust 可取消多腿策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-sdk::start_multi_account_depth_backtest": "qx-sdk Rust 可取消多账户 Tick/OrderBook 批量入口；由外部 SDK 消费者调用",
@@ -6241,11 +6243,12 @@ def api_surface_doc_check() -> None:
         ("RUN_START_MARKET_DEPTH_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_MARKET_EXPERIMENT_ROUTE", "POST"),
+        ("RUN_START_MARKET_DEPTH_EXPERIMENT_ROUTE", "POST"),
     )
     dynamic_declared = set()
     for constant, method in dynamic_templates:
         match = re.search(
-            rf'pub\(crate\) const {constant}: &str = "(/[^\"]+)";', app_surface
+            rf'pub\(crate\) const {constant}: &str\s*=\s*"(/[^\"]+)";', app_surface
         )
         if match:
             dynamic_declared.add((method, match.group(1)))
@@ -6276,6 +6279,7 @@ def api_surface_doc_check() -> None:
             ("POST", "/app/multi-market-depth-backtest/start"),
             ("POST", "/app/run-multi-leg-experiment/start"),
             ("POST", "/app/run-multi-market-experiment/start"),
+            ("POST", "/app/run-multi-market-depth-experiment/start"),
         },
         "动态 SDK 运行路由在 app_runs 集中登记并进入端点契约",
         f"登记到 {sorted(dynamic_declared)}",
@@ -17248,7 +17252,7 @@ def _api_declared_routes() -> set[str]:
         text = production_text(path.read_text(encoding="utf-8"))
         routes.update(re.findall(r'\("(?:GET|POST|PUT|DELETE)", "(/[^"]*)"\)', text))
         routes.update(
-            re.findall(r'const [A-Z_]*ROUTE[A-Z_]*: &str = "(/[^"]*)"', text)
+            re.findall(r'const\s+[A-Z_]*ROUTE[A-Z_]*:\s*&str\s*=\s*"(/[^"]*)"', text)
         )
     return routes
 
@@ -17741,6 +17745,10 @@ def language_api_contract_check() -> None:
         f"用例登记面独有 {sorted(set(registered) - set(names))}",
     )
 
+    rust_client_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "crates/qx-sdk/src/client").rglob("*.rs"))
+    ) + "\n" + _text_or_empty(ROOT / "crates/qx-sdk/src/client.rs")
     missing_rust = [
         f"{row['use_case']}:{entry}"
         for row in rows
@@ -17750,8 +17758,8 @@ def language_api_contract_check() -> None:
             in _text_or_empty(ROOT / APP_CASES_DIR / f"{row['use_case']}.rs")
             if not entry.startswith("Client.")
             else (
-                f"pub fn {entry.removeprefix('Client.')}(" in _text_or_empty(ROOT / "crates/qx-sdk/src/client.rs")
-                or f"pub fn {entry.removeprefix('Client.')}<" in _text_or_empty(ROOT / "crates/qx-sdk/src/client.rs")
+                f"pub fn {entry.removeprefix('Client.')}(" in rust_client_source
+                or f"pub fn {entry.removeprefix('Client.')}<" in rust_client_source
             )
         )
     ]
@@ -19109,7 +19117,7 @@ SDK_FACADE_CAPABILITY_GAPS: dict[str, str] = {}
 SDK_FACADE_ASYNC_ENTRY_PATTERN = re.compile(
     r"pub fn start\(self, context: RunContext\) -> (?:crate::)?RunHandle<"
 )
-SDK_FACADE_ASYNC_ENTRY_COUNT = 11
+SDK_FACADE_ASYNC_ENTRY_COUNT = 12
 # 独立消费者只许说门面那一种语言：出现别的前缀就等于"门面漏了一块，集成方还得自己补"。
 SDK_FACADE_FOREIGN_PREFIXES = ("qx_app::", "qx_cli", "qx_api::", "qx_python", "qx_adapter::")
 

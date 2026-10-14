@@ -42,6 +42,8 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "multi_market_depth_backtest_start": "/app/multi-market-depth-backtest/start",
     "multi_market_experiment": "/app/run-multi-market-experiment",
     "multi_market_experiment_start": "/app/run-multi-market-experiment/start",
+    "multi_market_depth_experiment": "/app/run-multi-market-depth-experiment",
+    "multi_market_depth_experiment_start": "/app/run-multi-market-depth-experiment/start",
     "backtest_start": "/app/backtest/start",
     "verify": "/app/verify",
     "verify_depth": "/app/verify-depth",
@@ -812,6 +814,33 @@ class RunMultiMarketExperimentSpec:
 
 
 @dataclass(frozen=True)
+class RunMultiMarketDepthExperimentSpec:
+    experiment_id: str
+    target_strategy_id: str
+    base: MultiMarketDepthBacktestSpec
+    parameter_space: tuple[ExperimentParameterSpace, ...]
+    schema_version: int = 1
+    strategy_kinds: tuple[str, ...] = ()
+    callback_parameter_space: tuple[ExperimentParameterSpace, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        value = {
+            "schema_version": self.schema_version,
+            "experiment_id": self.experiment_id,
+            "target_strategy_id": self.target_strategy_id,
+            "base": self.base.to_dict(),
+            "parameter_space": [dimension.to_dict() for dimension in self.parameter_space],
+        }
+        if self.strategy_kinds:
+            value["strategy_kinds"] = sorted(self.strategy_kinds)
+        if self.callback_parameter_space:
+            value["callback_parameter_space"] = [
+                dimension.to_dict() for dimension in self.callback_parameter_space
+            ]
+        return value
+
+
+@dataclass(frozen=True)
 class RiskParityAssetSpec:
     instrument: str
     mark_price_raw: int
@@ -1364,6 +1393,67 @@ class RunMultiMarketExperimentResult:
             failed_candidates=value["failed_candidates"],
             candidates=tuple(MultiMarketExperimentCandidateResult.from_dict(item) for item in value["candidates"]),
             ranking=tuple(MultiMarketExperimentRankedCandidate(**item) for item in value["ranking"]),
+            artifact_path=value["artifact_path"],
+        )
+
+
+@dataclass(frozen=True)
+class MultiMarketDepthExperimentCandidateResult:
+    ordinal: int
+    parameters: dict[str, int]
+    outcome: MultiMarketDepthBacktestOutcome | None
+    error: str | None
+    strategy_kind: str | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiMarketDepthExperimentCandidateResult":
+        raw_outcome = value.get("outcome")
+        return cls(
+            ordinal=value["ordinal"],
+            parameters=value["parameters"],
+            outcome=MultiMarketDepthBacktestOutcome.from_dict(raw_outcome) if raw_outcome else None,
+            error=value.get("error"),
+            strategy_kind=value.get("strategy_kind"),
+        )
+
+
+@dataclass(frozen=True)
+class MultiMarketDepthExperimentRankedCandidate:
+    rank: int
+    ordinal: int
+    run_id: str
+    return_bps: int
+    max_drawdown_bps: int
+    shared_result_hash: str
+
+
+@dataclass(frozen=True)
+class RunMultiMarketDepthExperimentResult:
+    schema_version: int
+    experiment_id: str
+    target_strategy_id: str
+    spec_fingerprint: str
+    total_candidates: int
+    completed_candidates: int
+    succeeded_candidates: int
+    failed_candidates: int
+    candidates: tuple[MultiMarketDepthExperimentCandidateResult, ...]
+    ranking: tuple[MultiMarketDepthExperimentRankedCandidate, ...]
+    artifact_path: str
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "RunMultiMarketDepthExperimentResult":
+        return cls(
+            schema_version=value["schema_version"],
+            experiment_id=value["experiment_id"],
+            target_strategy_id=value["target_strategy_id"],
+            spec_fingerprint=value["spec_fingerprint"],
+            total_candidates=value["total_candidates"],
+            completed_candidates=value["completed_candidates"],
+            succeeded_candidates=value["succeeded_candidates"],
+            failed_candidates=value["failed_candidates"],
+            candidates=tuple(MultiMarketDepthExperimentCandidateResult.from_dict(item) for item in value["candidates"]),
+            ranking=tuple(MultiMarketDepthExperimentRankedCandidate(**item) for item in value["ranking"]),
             artifact_path=value["artifact_path"],
         )
 
@@ -1960,6 +2050,37 @@ class AsyncCoreClient:
     async def async_start_multi_market_experiment(self, spec: RunMultiMarketExperimentSpec | dict[str, Any]) -> AsyncRunHandle[RunMultiMarketExperimentResult]:
         return await self._start(start_multi_market_experiment, spec)
 
+    async def async_run_multi_market_depth_experiment(
+        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
+    ) -> RunMultiMarketDepthExperimentResult:
+        return await asyncio.to_thread(run_multi_market_depth_experiment, spec)
+
+    async def async_start_multi_market_depth_experiment(
+        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
+    ) -> AsyncRunHandle[RunMultiMarketDepthExperimentResult]:
+        return await self._start(start_multi_market_depth_experiment, spec)
+
+    async def async_run_multi_market_depth_experiment_with_strategy(
+        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any], strategy_factory: Any, *,
+        strategy_id: str, strategy_version: str, source_sha256: str,
+    ) -> RunMultiMarketDepthExperimentResult:
+        return await asyncio.to_thread(
+            run_multi_market_depth_experiment_with_strategy, spec, strategy_factory,
+            strategy_id=strategy_id, strategy_version=strategy_version,
+            source_sha256=source_sha256,
+        )
+
+    async def async_start_multi_market_depth_experiment_with_strategy(
+        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any], strategy_factory: Any, *,
+        strategy_id: str, strategy_version: str, source_sha256: str,
+    ) -> AsyncRunHandle[RunMultiMarketDepthExperimentResult]:
+        def start(value: Any) -> RunHandle[RunMultiMarketDepthExperimentResult]:
+            return start_multi_market_depth_experiment_with_strategy(
+                value, strategy_factory, strategy_id=strategy_id,
+                strategy_version=strategy_version, source_sha256=source_sha256,
+            )
+        return await self._start(start, spec)
+
     async def async_run_multi_market_experiment_with_strategy(
         self, spec: RunMultiMarketExperimentSpec | dict[str, Any], strategy_factory: Any, *,
         strategy_id: str, strategy_version: str, source_sha256: str,
@@ -2351,6 +2472,22 @@ class AppClient(_HttpJsonClient):
             APP_ROUTE_TEMPLATES["multi_market_experiment_start"], spec, RunMultiMarketExperimentResult
         )
 
+    def run_multi_market_depth_experiment(
+        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
+    ) -> RunMultiMarketDepthExperimentResult:
+        return RunMultiMarketDepthExperimentResult.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["multi_market_depth_experiment"], spec)
+        )
+
+    def start_multi_market_depth_experiment(
+        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
+    ) -> RemoteRunHandle[RunMultiMarketDepthExperimentResult]:
+        return self._start(
+            APP_ROUTE_TEMPLATES["multi_market_depth_experiment_start"],
+            spec,
+            RunMultiMarketDepthExperimentResult,
+        )
+
     def run_multi_account_backtest(
         self, spec: MultiAccountBacktestSpec | dict[str, Any]
     ) -> MultiAccountBacktestResult:
@@ -2453,6 +2590,16 @@ class AppClient(_HttpJsonClient):
 
     async def async_start_multi_market_experiment(self, spec: RunMultiMarketExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunMultiMarketExperimentResult]:
         return await self._async_start(self.start_multi_market_experiment, spec)
+
+    async def async_run_multi_market_depth_experiment(
+        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
+    ) -> RunMultiMarketDepthExperimentResult:
+        return await asyncio.to_thread(self.run_multi_market_depth_experiment, spec)
+
+    async def async_start_multi_market_depth_experiment(
+        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
+    ) -> RemoteRunHandle[RunMultiMarketDepthExperimentResult]:
+        return await self._async_start(self.start_multi_market_depth_experiment, spec)
 
     async def async_run_multi_account_backtest(
         self, spec: MultiAccountBacktestSpec | dict[str, Any]
@@ -2957,6 +3104,63 @@ def start_multi_market_experiment(
     except Exception as exc:
         raise _translate_native_error(exc) from exc
     return RunHandle(native_handle, RunMultiMarketExperimentResult)
+
+
+def run_multi_market_depth_experiment(
+    spec: RunMultiMarketDepthExperimentSpec | dict[str, Any],
+) -> RunMultiMarketDepthExperimentResult:
+    return RunMultiMarketDepthExperimentResult.from_dict(
+        _invoke(native.app_run_multi_market_depth_experiment, spec)
+    )
+
+
+def start_multi_market_depth_experiment(
+    spec: RunMultiMarketDepthExperimentSpec | dict[str, Any],
+) -> RunHandle[RunMultiMarketDepthExperimentResult]:
+    try:
+        native_handle = native.app_start_multi_market_depth_experiment(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, RunMultiMarketDepthExperimentResult)
+
+
+def run_multi_market_depth_experiment_with_strategy(
+    spec: RunMultiMarketDepthExperimentSpec | dict[str, Any],
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> RunMultiMarketDepthExperimentResult:
+    try:
+        from qianxing_bridge.app import run_multi_market_depth_experiment_with_strategy as _run
+        return RunMultiMarketDepthExperimentResult.from_dict(_run(
+            _encode_payload(spec), strategy_id=strategy_id,
+            strategy_version=strategy_version, source_sha256=source_sha256,
+            factory=strategy_factory,
+        ))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
+def start_multi_market_depth_experiment_with_strategy(
+    spec: RunMultiMarketDepthExperimentSpec | dict[str, Any],
+    strategy_factory: Any,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    source_sha256: str,
+) -> RunHandle[RunMultiMarketDepthExperimentResult]:
+    try:
+        from qianxing_bridge.app import start_multi_market_depth_experiment_with_strategy as _start
+        native_handle = _start(
+            _encode_payload(spec), strategy_id=strategy_id,
+            strategy_version=strategy_version, source_sha256=source_sha256,
+            factory=strategy_factory,
+        )
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, RunMultiMarketDepthExperimentResult)
 
 
 def run_multi_market_experiment_with_strategy(

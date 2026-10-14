@@ -563,6 +563,8 @@ class AppUseCaseTests(unittest.TestCase):
             ("start_multi_market_depth_backtest", "/app/multi-market-depth-backtest/start", True),
             ("run_multi_market_experiment", "/app/run-multi-market-experiment", False),
             ("start_multi_market_experiment", "/app/run-multi-market-experiment/start", True),
+            ("run_multi_market_depth_experiment", "/app/run-multi-market-depth-experiment", False),
+            ("start_multi_market_depth_experiment", "/app/run-multi-market-depth-experiment/start", True),
             ("run_multi_leg_experiment", "/app/run-multi-leg-experiment", False),
             ("start_multi_leg_experiment", "/app/run-multi-leg-experiment/start", True),
         ]
@@ -744,6 +746,20 @@ class AppUseCaseTests(unittest.TestCase):
                 "artifact_path": "report.json",
             },
             "start_multi_market_experiment": {"run_id": "experiment", "status": "starting"},
+            "run_multi_market_depth_experiment": {
+                "schema_version": 1,
+                "experiment_id": "experiment",
+                "target_strategy_id": "slot-a",
+                "spec_fingerprint": "fingerprint",
+                "total_candidates": 1,
+                "completed_candidates": 1,
+                "succeeded_candidates": 1,
+                "failed_candidates": 0,
+                "candidates": [],
+                "ranking": [],
+                "artifact_path": "report.json",
+            },
+            "start_multi_market_depth_experiment": {"run_id": "experiment", "status": "starting"},
             "run_multi_leg_experiment": {
                 "schema_version": 1,
                 "experiment_id": "experiment",
@@ -1039,7 +1055,7 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertEqual(candidate_quantities, [500_000, 1_000_000])
         self.assertEqual(experiment.completed_candidates, 2)
-        self.assertEqual(experiment.succeeded_candidates, 2)
+        self.assertEqual(experiment.succeeded_candidates, 2, repr(experiment.candidates))
         self.assertTrue(all(candidate.outcome.fills > 0 for candidate in experiment.candidates))
 
         handle_spec = RunExperimentSpec(
@@ -3479,10 +3495,14 @@ class AppUseCaseTests(unittest.TestCase):
             InstrumentId,
             MultiMarketDepthBacktestMarket,
             MultiMarketDepthBacktestSpec,
+            ExperimentParameterSpace,
+            RunMultiMarketDepthExperimentSpec,
             TradingInstrumentSpec,
             run_multi_market_depth_backtest_with_strategy_slots,
             start_multi_market_depth_backtest,
             start_multi_market_depth_backtest_with_strategy_slots,
+            run_multi_market_depth_experiment_with_strategy,
+            start_multi_market_depth_experiment_with_strategy,
         )
 
         scale = 1_000_000_000
@@ -3606,9 +3626,39 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertEqual(custom_handle.wait(10_000), "succeeded")
         self.assertEqual(custom_handle.result().successful_fills, 1)
+        experiment_spec = RunMultiMarketDepthExperimentSpec(
+            experiment_id="python-multi-market-depth-experiment",
+            target_strategy_id="python-l2-0",
+            base=spec,
+            parameter_space=(),
+            callback_parameter_space=(
+                ExperimentParameterSpace("risk_scale", (1, 2)),
+            ),
+        )
+        run_args = {
+            "strategy_id": "python-l2-0",
+            "strategy_version": "python-l2-experiment-v1",
+            "source_sha256": "a" * 64,
+        }
+        experiment = run_multi_market_depth_experiment_with_strategy(
+            experiment_spec, lambda _candidate, parameters: BuyOnce(), **run_args
+        )
+        self.assertEqual(experiment.completed_candidates, 2)
+        self.assertEqual(experiment.succeeded_candidates, 2, repr(experiment.candidates))
+        experiment_handle = start_multi_market_depth_experiment_with_strategy(
+            RunMultiMarketDepthExperimentSpec(
+                **{**experiment_spec.__dict__,
+                   "experiment_id": "python-multi-market-depth-experiment-handle"}
+            ),
+            lambda _candidate, parameters: BuyOnce(),
+            **run_args,
+        )
+        self.assertEqual(experiment_handle.wait(10_000), "succeeded")
+        self.assertEqual(experiment_handle.result().succeeded_candidates, 2)
         print(
             "MULTI_MARKET_DEPTH_PYTHON_OBSERVED markets=2 fills=1 "
             "callback_slots=2 replay_verified=true custom_run_handle=succeeded "
+            "parameter_candidates=2 strategy_factory=true experiment_run_handle=succeeded "
             "builtin_run_handle=succeeded"
         )
 

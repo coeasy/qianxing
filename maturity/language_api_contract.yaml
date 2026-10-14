@@ -219,6 +219,12 @@ contracts:
     python_remote: ["run_multi_market_experiment", "start_multi_market_experiment"]
     cpp_remote: ["run_multi_market_experiment", "start_multi_market_experiment"]
     http: ["/app/run-multi-market-experiment", "/app/run-multi-market-experiment/start"]
+  - use_case: run_multi_market_depth_experiment
+    rust: ["run_multi_market_depth_experiment", "Client.run_multi_market_depth_experiment", "Client.start_multi_market_depth_experiment", "Client.run_multi_market_depth_experiment_with_strategy_factory", "Client.start_multi_market_depth_experiment_with_strategy_factory"]
+    python_native: ["run_multi_market_depth_experiment", "start_multi_market_depth_experiment", "run_multi_market_depth_experiment_with_strategy", "start_multi_market_depth_experiment_with_strategy"]
+    python_remote: ["run_multi_market_depth_experiment", "start_multi_market_depth_experiment"]
+    cpp_remote: ["run_multi_market_depth_experiment", "start_multi_market_depth_experiment"]
+    http: ["/app/run-multi-market-depth-experiment", "/app/run-multi-market-depth-experiment/start"]
   - use_case: run_multi_leg_backtest_with_strategy
     rust: ["Client.run_multi_leg_backtest_with_strategy", "Client.start_multi_leg_backtest_with_strategy", "run_multi_leg_backtest_with_strategy"]
     python_native: ["run_multi_leg_backtest_with_strategy", "start_multi_leg_backtest_with_strategy"]

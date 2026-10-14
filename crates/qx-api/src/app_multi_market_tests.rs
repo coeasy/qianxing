@@ -244,3 +244,61 @@ fn multi_market_depth_sync_and_run_handle_routes_use_shared_account_l2_engine() 
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+
+#[test]
+fn multi_market_depth_experiment_sync_and_run_handle_share_candidate_engine() {
+    let (paths, base) = depth_fixture();
+    let target_strategy_id = base["markets"][0]["strategy"]["strategy_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut spec = json!({
+        "schema_version": 1,
+        "experiment_id": "api-multi-market-depth-grid",
+        "target_strategy_id": target_strategy_id,
+        "base": base,
+        "parameter_space": [{"name":"quantity_raw","values":[500_000_000_i64,1_000_000_000_i64]}],
+        "strategy_kinds": ["sma_cross", "momentum"]
+    });
+    let response = app_surface::multi_market_depth_experiment(&spec.to_string(), &paths);
+    assert_eq!(response.status, 200, "{}", response.body);
+    let result: Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(result["total_candidates"], 4);
+    assert_eq!(result["completed_candidates"], 4);
+    assert_eq!(result["ranking"].as_array().unwrap().len(), 4);
+
+    spec["experiment_id"] = json!("api-multi-market-depth-grid-async");
+    let registry = AppRunRegistry::default();
+    let started = app_surface::route_app_run(
+        "POST",
+        "/app/run-multi-market-depth-experiment/start",
+        "",
+        &spec.to_string(),
+        &paths,
+        &registry,
+        None,
+    )
+    .unwrap();
+    assert_eq!(started.status, 200, "{}", started.body);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let async_candidates;
+    loop {
+        let status = registry.status("api-multi-market-depth-grid-async");
+        let document: Value = serde_json::from_str(&status.body).unwrap();
+        if document["status"] == "succeeded" {
+            assert_eq!(document["result"]["total_candidates"], 4);
+            assert_eq!(document["result"]["ranking"].as_array().unwrap().len(), 4);
+            async_candidates = document["result"]["completed_candidates"].as_u64().unwrap();
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "multi-market L2 experiment timed out: {document}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    println!(
+        "MULTI_MARKET_DEPTH_EXPERIMENT_OBSERVED sync_candidates={} async_candidates={} rankings=4 shared_engine=true",
+        result["completed_candidates"].as_u64().unwrap(), async_candidates
+    );
+}

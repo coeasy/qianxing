@@ -79,6 +79,16 @@ int main() {
     assert(observed_path == "/app/run-multi-market-experiment/start");
     assert(observed_body == spec);
 
+    const auto market_depth_experiment = client.run_multi_market_depth_experiment(spec);
+    assert(market_depth_experiment.ok());
+    assert(observed_path == "/app/run-multi-market-depth-experiment");
+    assert(observed_body == spec);
+
+    const auto started_market_depth_experiment = client.start_multi_market_depth_experiment(spec);
+    assert(started_market_depth_experiment.ok());
+    assert(observed_path == "/app/run-multi-market-depth-experiment/start");
+    assert(observed_body == spec);
+
     const auto depth = client.run_depth_backtest(depth_spec);
     assert(depth.ok());
     assert(observed_path == "/app/depth-backtest");

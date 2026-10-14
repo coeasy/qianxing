@@ -152,6 +152,24 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         self.post("/app/run-multi-market-experiment/start", &request)
     }
 
+    pub fn run_multi_market_depth_experiment(
+        &self,
+        spec: &qx_app::RunMultiMarketDepthExperimentSpec,
+    ) -> Result<Value, RemoteApiError> {
+        let request = serde_json::to_value(spec)
+            .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
+        self.post("/app/run-multi-market-depth-experiment", &request)
+    }
+
+    pub fn start_multi_market_depth_experiment(
+        &self,
+        spec: &qx_app::RunMultiMarketDepthExperimentSpec,
+    ) -> Result<Value, RemoteApiError> {
+        let request = serde_json::to_value(spec)
+            .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
+        self.post("/app/run-multi-market-depth-experiment/start", &request)
+    }
+
     pub fn start_paper_algo_execution(&self, request: &Value) -> Result<Value, RemoteApiError> {
         self.post("/app/paper/algo-executions/start", request)
     }

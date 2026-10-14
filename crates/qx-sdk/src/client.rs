@@ -32,6 +32,9 @@ use qx_app::{
 };
 use qx_strategy::Strategy;
 
+#[path = "client/multi_market_depth_experiment.rs"]
+mod multi_market_depth_experiment;
+
 /// 一次 SDK 会话的调用身份。
 ///
 /// 最小上手见 `examples/quickstart.rs`：
