@@ -1,15 +1,47 @@
 use super::super::funding::SpotCashReservations;
 use crate::orderbook_strategies::OrderBookStrategy;
-use crate::{OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot};
+use crate::{DataTier, OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot};
 use qx_core::{EventLog, Fill, Ledger, Money, Price, TradingInstrumentSpec};
 use std::collections::BTreeMap;
 
 pub struct OrderBookPortfolioMarket<'a> {
     pub instrument_spec: TradingInstrumentSpec,
+    pub data_tier: DataTier,
     pub priority: u32,
     pub snapshots: &'a [OrderBookSnapshot],
     pub execution_model: OrderBookExecutionModel,
     pub strategy: &'a mut dyn OrderBookStrategy,
+}
+
+pub(super) fn validate_market_data_tier(
+    market: &OrderBookPortfolioMarket<'_>,
+) -> Result<(), qx_core::QxError> {
+    match market.data_tier {
+        DataTier::L1
+            if market
+                .snapshots
+                .iter()
+                .any(|snapshot| snapshot.bids.len() != 1 || snapshot.asks.len() != 1) =>
+        {
+            Err(qx_core::QxError::BusinessViolation(format!(
+                "共享 L1 Tick 市场 {} 必须在每份快照中恰有一档 bid/ask",
+                market.instrument_spec.instrument
+            )))
+        }
+        DataTier::L1 | DataTier::L2L3 => Ok(()),
+        DataTier::Bar => Err(qx_core::QxError::BusinessViolation(
+            "订单簿组合不能声明 Bar 数据档位".into(),
+        )),
+    }?;
+    if market.execution_model.fee_bps < 0 {
+        return Err(qx_core::QxError::BusinessViolation(
+            "共享订单簿手续费不能为负".into(),
+        ));
+    }
+    market
+        .execution_model
+        .validate()
+        .map_err(qx_core::QxError::BusinessViolation)
 }
 
 pub struct OrderBookPortfolioBacktestEngine<'a> {

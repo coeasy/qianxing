@@ -245,7 +245,7 @@ use_cases:
     error_categories: "AppErrorCategory 八类；无效网格/目标槽/数据为 InvalidInput，异身份产物为 Conflict"
     capability_level: "R"
   - name: run_multi_market_depth_backtest
-    input_schema: "MultiMarketDepthBacktestSpec v1（2..=32 个同账户 L2 OrderBook 现货市场；每市场一个策略槽，支持 Rust 内置与 Rust/Python 本地回调；统一结算币种/账本；衍生品跨市场保证金暂不支持）"
+    input_schema: "MultiMarketDepthBacktestSpec v1（2..=32 个同账户 L1 Tick/L2 OrderBook 现货市场；每市场声明 data_tier，L1 每时间点恰有一档 bid/ask 并向策略发送 Tick，L2 发送完整 OrderBook；每市场一个策略槽，支持 Rust 内置与 Rust/Python 本地回调；统一结算币种/账本；衍生品跨市场保证金暂不支持）"
     output_schema: "MultiMarketDepthBacktestOutcome v1（共享账簿结果哈希、逐市场成交/权益摘要、重放验证产物）"
     capability: "RESEARCH"
     idempotency_key: "run_id + 规范规格/排序市场 DepthFrame 指纹 + 策略 ID/version/source SHA-256；同身份重跑产物须逐字节相同，异内容返回 Conflict"

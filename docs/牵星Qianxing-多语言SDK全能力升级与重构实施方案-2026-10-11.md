@@ -23,7 +23,8 @@
 > 本轮增量（2026-10-14）：新增同账户多市场 L2 OrderBook 现货组合回测，2..=32 个市场使用唯一 `OrderBookPortfolioBacktestEngine`、共享账户现金/Risk/OMS/Ledger/EventLog 与 ReplayVerifier；Rust SDK 与 Python 本地 SDK 可同步、启动 RunHandle 并将自定义策略绑定市场槽。HTTP 同步/RunHandle 入口和 Rust/Python/C++ 远端客户端已接入同一应用用例。Rust/Python SDK 的共享现金竞争、策略回调、结果产物、回放哈希、RunHandle 与 HTTP 同步/异步路由用例通过。当前版本明确拒绝跨市场衍生品保证金；远端只接受 Rust 内置策略配置，不上传任意语言回调；Tick/OrderBook 多市场参数实验、跨币种折算、Paper/Live 多市场执行和 Web/桌面操作页仍未贯通。
 > 本轮继续复核发现 service 层仍把原子 `status()` 与独立 `events_after()` 分开读取，组合成持久化快照时仍可能跨过终态切换。现公开 `RunHandle::observe()` 一次返回同一锁下的状态与事件，qx-api 的详情、事件缓存和注册表快照统一消费该观测值；新增 128 次并发终态观测回归和 HTTP 生命周期终态/末事件一致性断言。`cargo test --workspace --offline` 全部通过；`qx-app` 133 项、`qx-api` 70 项及集成测试、生命周期回归、qx-app/qx-api/qx-cli 严格 Clippy、1096 项架构门禁和 Markdown 链接检查均通过。该修复只保证进程内状态/事件快照的一致性，不补齐 HTTP 持久事件的事务化写入、重启后的运行时恢复或完整游标续读。
 > 本轮持久化故障复核发现新 Run 的 create-only 快照曾直接写入正式 JSON 路径，磁盘满/中断可能留下半截记录并令下一次启动 fail-closed。现先完整写入并 `sync_all` 同目录临时文件，再通过不覆盖目标的原子硬链接发布，所有出口清理临时路径；重复身份仍保留冲突语义。新增完整快照/重复身份/临时文件清理回归，qx-api 持久化用例与严格 Clippy通过。硬链接若被部署文件系统禁用会明确拒绝创建，不回退到非原子写入。
-> 方案仍未全部落地：跨市场 Tick/OrderBook、交易日历/跨时区/货币换算、多账户跨账户组合风险、venue/provider 全矩阵与实盘 testnet 未完成认证；Web/桌面端到端验收、C++ 默认 transport 与全平台发布门仍未完成。逐轮复核、量化场景状态与证据见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)和 `maturity/quant_scenarios.yaml`。
+> 本轮增量（2026-10-14）：多市场盘口组合现可逐市场选择 L1 Tick 或 L2 OrderBook，同一 Rust OrderBookPortfolioBacktestEngine 共享现金、风险、OMS、Ledger、EventLog 与 Replay；L1 强制每个快照恰有一档 bid/ask，策略接收 Tick 事件，L2 继续接收完整 OrderBook 事件。Rust 与 Python 自定义策略跨档组合用例确认 Tick 回调、共享资金竞争和 replay_verified。该扩展仍限 2..=32 个同结算币现货市场，不覆盖多市场衍生品保证金、跨币种折算、Paper/Live 组合或 Web/桌面端到端操作。
+> 方案仍未全部落地：交易日历/跨时区/货币换算、多账户跨账户组合风险、venue/provider 全矩阵与实盘 testnet 未完成认证；Web/桌面端到端验收、C++ 默认 transport 与全平台发布门仍未完成。逐轮复核、量化场景状态与证据见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)和 `maturity/quant_scenarios.yaml`。
 
 ## 1. 目标与完成定义
 

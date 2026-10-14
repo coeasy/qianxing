@@ -3549,6 +3549,7 @@ class AppUseCaseTests(unittest.TestCase):
                 depth_path=str(depth_path),
                 priority=1 - index,
                 market_spec=market_spec,
+                data_tier="l1" if index == 0 else None,
                 strategy=BuiltinStrategySpec(
                     kind="sma_cross",
                     strategy_id=f"python-l2-{index}",
@@ -3566,8 +3567,10 @@ class AppUseCaseTests(unittest.TestCase):
         class BuyOnce:
             def __init__(self):
                 self.submitted = False
+                self.event_kinds = []
 
             def on_event(self, context, event):
+                self.event_kinds.append(next(iter(event)))
                 item = next(iter(event.values()))
                 intents = []
                 if not self.submitted:
@@ -3604,6 +3607,9 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(outcome.successful_fills, 1)
         artifact = json.loads(Path(outcome.artifact_path).read_text(encoding="utf-8"))
         self.assertTrue(artifact["replay_verified"])
+        self.assertEqual(artifact["market_data"][0]["data_tier"], "l1")
+        self.assertEqual(artifact["market_data"][1]["data_tier"], "l2")
+        self.assertEqual(bindings[0]["strategy"].event_kinds, ["Tick", "Tick"])
         self.assertEqual(artifact["per_market_fills"]["ETHUSDT.BYBIT"], 1)
         self.assertEqual(artifact["per_market_fills"]["BTCUSDT.BINANCE"], 0)
 

@@ -379,6 +379,7 @@ class MultiMarketDepthBacktestMarket:
     market_impact_bps: int = 0
     strategy: BuiltinStrategySpec = field(default_factory=lambda: BuiltinStrategySpec("sma_cross", "strategy"))
     order_policy: OrderPolicy | dict[str, Any] | None = None
+    data_tier: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value: dict[str, Any] = {
@@ -394,6 +395,8 @@ class MultiMarketDepthBacktestMarket:
         }
         if self.order_policy is not None:
             value["order_policy"] = self.order_policy.to_dict() if hasattr(self.order_policy, "to_dict") else dict(self.order_policy)
+        if self.data_tier is not None:
+            value["data_tier"] = self.data_tier
         return value
 
 

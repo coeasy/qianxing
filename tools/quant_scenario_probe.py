@@ -804,7 +804,7 @@ def main() -> int:
     def executed_multi_market_depth_python_test():
         executed(
             "multi_market_depth_python_sdk",
-            "Python 多市场 L2 共享资金、策略槽和 RunHandle",
+            "Python 多市场 L1 Tick/L2 OrderBook 共享资金、策略槽和 RunHandle",
             "crates/qx-app/src/cases/run_multi_market_depth_backtest.rs",
             [
                 "-m", "unittest",
@@ -817,6 +817,26 @@ def main() -> int:
                 "crates/qx-python/src/strategy_callback/multi_market_depth.rs",
                 "python/qianxing/app.py",
                 "python/tests/test_app_use_cases.py",
+            ],
+        )
+
+    def executed_multi_market_mixed_tick_orderbook_test():
+        executed(
+            "multi_market_mixed_l1_tick_l2_orderbook",
+            "Rust 多市场 L1 Tick 与 L2 OrderBook 混合共享组合账簿",
+            "crates/qx-app/src/cases/run_multi_market_depth_backtest/workflow.rs",
+            [
+                "test", "--offline", "-p", "qx-app",
+                "multi_market_orderbook_application_shares_cash_and_accepts_language_callbacks",
+                "--", "--nocapture",
+            ],
+            r"(MULTI_MARKET_TICK_ORDERBOOK_OBSERVED markets=2 tick_events=2 shared_fills=1 replay_verified=true)",
+            command_prefix="cargo",
+            evidence=[
+                "crates/qx-xingban/src/orderbook_strategies.rs",
+                "crates/qx-xingban/src/orderbook_backtest/portfolio.rs",
+                "crates/qx-app/src/cases/run_multi_market_depth_backtest/workflow.rs",
+                "crates/qx-app/src/tests/multi_market_depth_backtest.rs",
             ],
         )
 
@@ -993,6 +1013,7 @@ def main() -> int:
     executed_multi_market_depth_rust_sdk_test()
     executed_multi_market_depth_http_test()
     executed_multi_market_depth_parameter_experiment_test()
+    executed_multi_market_mixed_tick_orderbook_test()
     executed_multi_market_parameter_experiment_test()
     executed_multi_market_experiment_language_parity_test()
 

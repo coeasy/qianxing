@@ -194,6 +194,7 @@ fn multi_market_orderbook_shares_cash_oms_and_replay() {
     let markets = vec![
         OrderBookPortfolioMarket {
             instrument_spec: spec(btc.clone(), "BTC"),
+            data_tier: DataTier::L2L3,
             priority: 1,
             snapshots: &btc_books,
             execution_model: OrderBookExecutionModel::new(0).unwrap(),
@@ -201,6 +202,7 @@ fn multi_market_orderbook_shares_cash_oms_and_replay() {
         },
         OrderBookPortfolioMarket {
             instrument_spec: spec(eth.clone(), "ETH"),
+            data_tier: DataTier::L2L3,
             priority: 0,
             snapshots: &eth_books,
             execution_model: OrderBookExecutionModel::new(0).unwrap(),
@@ -283,6 +285,7 @@ fn multi_market_orderbook_restores_strategy_local_fill_ids() {
     let markets = vec![
         OrderBookPortfolioMarket {
             instrument_spec: spec(btc.clone(), "BTC"),
+            data_tier: DataTier::L2L3,
             priority: 1,
             snapshots: &btc_books,
             execution_model: OrderBookExecutionModel::new(0).unwrap(),
@@ -290,6 +293,7 @@ fn multi_market_orderbook_restores_strategy_local_fill_ids() {
         },
         OrderBookPortfolioMarket {
             instrument_spec: spec(eth.clone(), "ETH"),
+            data_tier: DataTier::L2L3,
             priority: 0,
             snapshots: &eth_books,
             execution_model: OrderBookExecutionModel::new(0).unwrap(),

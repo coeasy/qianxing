@@ -15,6 +15,10 @@ pub const MAX_MULTI_MARKET_DEPTH_MARKETS: usize = 32;
 pub struct MultiMarketDepthBacktestMarket {
     pub instrument: String,
     pub depth_path: String,
+    /// Optional market-data tier: `l1` emits Tick events and requires one bid/ask level;
+    /// `l2` (the backward-compatible default) emits full OrderBook events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_tier: Option<String>,
     /// Lower values are processed first when market timestamps match.
     pub priority: u32,
     pub market_spec: TradingInstrumentSpec,
@@ -114,6 +118,15 @@ impl MultiMarketDepthBacktestSpec {
             }
             if market.depth_path.trim().is_empty() {
                 return Err(invalid(format!("市场 {instrument} depth_path 不能为空")));
+            }
+            if market
+                .data_tier
+                .as_deref()
+                .is_some_and(|tier| !matches!(tier, "l1" | "l2"))
+            {
+                return Err(invalid(format!(
+                    "市场 {instrument} data_tier 仅支持 l1 或 l2"
+                )));
             }
             market
                 .market_spec

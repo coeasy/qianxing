@@ -22,6 +22,7 @@ pub(super) struct InjectedStrategy {
 #[derive(Serialize)]
 struct DataIdentity {
     instrument: String,
+    data_tier: String,
     source: String,
     content_hash: String,
     snapshot_count: usize,
@@ -77,6 +78,18 @@ pub(super) fn run_inner_with_strategies(
                 request.instrument, frame.instrument
             )));
         }
+        let data_tier = request.data_tier.as_deref().unwrap_or("l2");
+        if data_tier == "l1"
+            && frame
+                .snapshots
+                .iter()
+                .any(|snapshot| snapshot.bids.len() != 1 || snapshot.asks.len() != 1)
+        {
+            return Err(invalid(format!(
+                "市场 {} 声明 l1，但至少一份快照不是单档 bid/ask",
+                request.instrument
+            )));
+        }
         if frame.snapshots.len() < 2 {
             return Err(AppError::new(
                 AppErrorCategory::FidelityInsufficient,
@@ -108,8 +121,9 @@ pub(super) fn run_inner_with_strategies(
             )));
         }
         let frame_hash = frame.input_hash();
-        let data_fingerprint = format!("depth:{}:{frame_hash:016x}", frame.source);
+        let data_fingerprint = format!("depth:{data_tier}:{}:{frame_hash:016x}", frame.source);
         data_hasher.write_text(&request.instrument);
+        data_hasher.write_text(data_tier);
         data_hasher.write_text(&frame.source);
         data_hasher.write_u64(frame_hash);
 
@@ -163,8 +177,14 @@ pub(super) fn run_inner_with_strategies(
             available_margin_raw: Some(spec.initial_cash_raw),
             risk_state: "backtest".into(),
         };
+        let tier = if data_tier == "l1" {
+            qx_xingban::DataTier::L1
+        } else {
+            qx_xingban::DataTier::L2L3
+        };
         let mut strategy =
-            NativeOrderBookStrategy::new(CallbackStrategy(strategy), strategy_context);
+            NativeOrderBookStrategy::new(CallbackStrategy(strategy), strategy_context)
+                .with_data_tier(tier);
         strategy
             .strategy
             .on_init(&strategy.context)
@@ -176,6 +196,7 @@ pub(super) fn run_inner_with_strategies(
         model.validate().map_err(invalid)?;
         let data_identity = DataIdentity {
             instrument: request.instrument.clone(),
+            data_tier: data_tier.into(),
             source: frame.source.clone(),
             content_hash: format!("{frame_hash:016x}"),
             snapshot_count: frame.snapshots.len(),
@@ -203,6 +224,11 @@ pub(super) fn run_inner_with_strategies(
         .iter_mut()
         .map(|market| OrderBookPortfolioMarket {
             instrument_spec: market.request.market_spec.clone(),
+            data_tier: if market.request.data_tier.as_deref() == Some("l1") {
+                qx_xingban::DataTier::L1
+            } else {
+                qx_xingban::DataTier::L2L3
+            },
             priority: market.request.priority,
             snapshots: &market.frame.snapshots,
             execution_model: market.execution_model,

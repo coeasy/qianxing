@@ -2,7 +2,7 @@
 
 mod model;
 
-use model::{reference_price, total_reserved_cash, MarketRuntime};
+use model::{reference_price, total_reserved_cash, validate_market_data_tier, MarketRuntime};
 pub use model::{
     OrderBookPortfolioBacktestEngine, OrderBookPortfolioBacktestReport, OrderBookPortfolioMarket,
 };
@@ -68,15 +68,7 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                     spec.instrument
                 )));
             }
-            if market.execution_model.fee_bps < 0 {
-                return Err(qx_core::QxError::BusinessViolation(
-                    "共享订单簿手续费不能为负".into(),
-                ));
-            }
-            market
-                .execution_model
-                .validate()
-                .map_err(qx_core::QxError::BusinessViolation)?;
+            validate_market_data_tier(market)?;
         }
         Ok(Self {
             account_id,
@@ -130,6 +122,11 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
         for (index, market) in markets.into_iter().enumerate() {
             let instrument = market.instrument_spec.instrument.clone();
             input_hash.write_text(&instrument.to_string());
+            input_hash.write_text(match market.data_tier {
+                crate::DataTier::L1 => "l1",
+                crate::DataTier::L2L3 => "l2",
+                crate::DataTier::Bar => "bar",
+            });
             input_hash.write_u64(market.priority as u64);
             input_hash.write_text(&serde_json::to_string(&market.instrument_spec).map_err(
                 |error| {

@@ -161,6 +161,7 @@ fn rust_sdk_starts_custom_multi_market_depth_slots_through_shared_engine() {
             MultiMarketDepthBacktestMarket {
                 instrument: instrument.into(),
                 depth_path: path.to_string_lossy().into_owned(),
+                data_tier: None,
                 priority: index as u32,
                 market_spec: TradingInstrumentSpec {
                     instrument: id,

@@ -57,6 +57,61 @@ impl Strategy for BuyOnce {
     }
 }
 
+struct BuyOnceOnTick {
+    emitted: bool,
+    observed: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Strategy for BuyOnceOnTick {
+    fn on_event(
+        &mut self,
+        context: &StrategyContext,
+        event: &MarketEvent,
+    ) -> Result<StrategyDecision, String> {
+        let MarketEvent::Tick {
+            instrument,
+            ts,
+            bid_raw,
+            ask_raw,
+            last_raw,
+            volume_raw,
+        } = event
+        else {
+            return Err("L1 market must reach the strategy as Tick".into());
+        };
+        assert_eq!((*bid_raw, *ask_raw), (80 * SCALE, 80 * SCALE));
+        assert_eq!(*last_raw, Some(80 * SCALE));
+        assert_eq!(*volume_raw, Some(4 * SCALE));
+        self.observed
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let intents = if self.emitted {
+            Vec::new()
+        } else {
+            self.emitted = true;
+            vec![StrategyOrderIntent {
+                intent_id: 1,
+                instrument: instrument.clone(),
+                side: Side::Buy,
+                qty: Quantity::from_i64(1),
+                limit: None,
+                policy: None,
+                reduce_only: false,
+                post_only: false,
+            }]
+        };
+        Ok(StrategyDecision {
+            schema_version: 1,
+            request_id: format!("{}-{ts}", context.strategy_id),
+            strategy_id: context.strategy_id.clone(),
+            signal_id: *ts,
+            confidence: 10_000,
+            priority: 0,
+            expires_at: 0,
+            intents,
+        })
+    }
+}
+
 fn product(instrument: &str, base: &str) -> TradingInstrumentSpec {
     TradingInstrumentSpec {
         instrument: InstrumentId::parse(instrument).unwrap(),
@@ -111,6 +166,7 @@ fn spec(root: &std::path::Path, run_id: &str) -> MultiMarketDepthBacktestSpec {
             MultiMarketDepthBacktestMarket {
                 instrument: instrument.into(),
                 depth_path: path.to_string_lossy().into_owned(),
+                data_tier: None,
                 priority: if index == 0 { 1 } else { 0 },
                 market_spec: product(instrument, base),
                 fee_bps: 0,
@@ -148,11 +204,16 @@ fn research(id: &str) -> RunContext {
 #[test]
 fn multi_market_orderbook_application_shares_cash_and_accepts_language_callbacks() {
     let root = super::fixtures::scratch("multi-market-depth-e2e");
-    let spec = spec(&root, "multi-market-depth-e2e");
+    let mut spec = spec(&root, "multi-market-depth-e2e");
+    spec.markets[0].data_tier = Some("l1".into());
+    let observed_ticks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let strategies = vec![
         (
             identity("strategy-0"),
-            Box::new(BuyOnce(false)) as Box<dyn Strategy>,
+            Box::new(BuyOnceOnTick {
+                emitted: false,
+                observed: observed_ticks.clone(),
+            }) as Box<dyn Strategy>,
         ),
         (
             identity("strategy-1"),
@@ -168,20 +229,34 @@ fn multi_market_orderbook_application_shares_cash_and_accepts_language_callbacks
     assert_eq!(outcome.markets_total, 2);
     assert_eq!(outcome.successful_fills, 1);
     assert_eq!(outcome.final_equity_raw, 100 * SCALE);
+    assert_eq!(observed_ticks.load(std::sync::atomic::Ordering::SeqCst), 2);
 
     let artifact: Value =
         serde_json::from_slice(&std::fs::read(&outcome.artifact_path).expect("artifact exists"))
             .expect("artifact JSON");
     assert_eq!(artifact["replay_verified"], true);
     assert_eq!(artifact["market_data"].as_array().unwrap().len(), 2);
+    assert_eq!(artifact["market_data"][0]["data_tier"], "l1");
+    assert_eq!(artifact["market_data"][1]["data_tier"], "l2");
     assert_eq!(artifact["strategy_identities"].as_array().unwrap().len(), 2);
     assert_eq!(artifact["per_market_fills"]["ETHUSDT.BYBIT"], 1);
     assert_eq!(artifact["per_market_fills"]["BTCUSDT.BINANCE"], 0);
+    println!(
+        "MULTI_MARKET_TICK_ORDERBOOK_OBSERVED markets=2 tick_events={} shared_fills={} replay_verified=true",
+        observed_ticks.load(std::sync::atomic::Ordering::SeqCst),
+        outcome.successful_fills
+    );
 
     let repeated = run_multi_market_depth_backtest_with_strategy_slots(
         &spec,
         vec![
-            (identity("strategy-0"), Box::new(BuyOnce(false))),
+            (
+                identity("strategy-0"),
+                Box::new(BuyOnceOnTick {
+                    emitted: false,
+                    observed: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                }),
+            ),
             (identity("strategy-1"), Box::new(BuyOnce(false))),
         ],
         &research("multi-market-depth-e2e"),
@@ -197,6 +272,12 @@ fn multi_market_depth_rejects_derivatives_before_reading_market_data() {
     invalid.markets[0].market_spec.product = TradingProduct::Perpetual;
     assert_eq!(
         invalid.validate().unwrap_err().category(),
+        AppErrorCategory::InvalidInput
+    );
+    let mut invalid_tier = spec(&root, "multi-market-depth-invalid-tier");
+    invalid_tier.markets[0].data_tier = Some("l3-only".into());
+    assert_eq!(
+        invalid_tier.validate().unwrap_err().category(),
         AppErrorCategory::InvalidInput
     );
     let mut handle = spec(&root, "multi-market-depth-handle").start(research("depth-handle"));

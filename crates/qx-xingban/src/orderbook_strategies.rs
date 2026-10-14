@@ -91,6 +91,7 @@ pub struct OrderBookActions {
 pub struct NativeOrderBookStrategy<S: qx_strategy::Strategy> {
     pub strategy: S,
     pub context: qx_strategy::StrategyContext,
+    data_tier: crate::DataTier,
     pending_order_updates: Vec<Order>,
 }
 
@@ -99,8 +100,16 @@ impl<S: qx_strategy::Strategy> NativeOrderBookStrategy<S> {
         Self {
             strategy,
             context,
+            data_tier: crate::DataTier::L2L3,
             pending_order_updates: Vec::new(),
         }
+    }
+
+    /// Emit the L1 quote contract while retaining the shared order-book matcher.
+    /// L1 callers must supply exactly one bid and one ask on every snapshot.
+    pub fn with_data_tier(mut self, data_tier: crate::DataTier) -> Self {
+        self.data_tier = data_tier;
+        self
     }
 }
 
@@ -123,26 +132,46 @@ impl<S: qx_strategy::Strategy> OrderBookStrategy for NativeOrderBookStrategy<S> 
         self.context
             .positions
             .insert(snapshot.instrument.to_string(), position);
-        let event = qx_strategy::MarketEvent::OrderBook {
-            instrument: snapshot.instrument.clone(),
-            ts: snapshot.ts,
-            sequence: snapshot.sequence,
-            bids: snapshot
-                .bids
-                .iter()
-                .map(|level| qx_strategy::OrderBookLevel {
-                    price_raw: level.price.raw(),
-                    qty_raw: level.qty.raw(),
-                })
-                .collect(),
-            asks: snapshot
-                .asks
-                .iter()
-                .map(|level| qx_strategy::OrderBookLevel {
-                    price_raw: level.price.raw(),
-                    qty_raw: level.qty.raw(),
-                })
-                .collect(),
+        let event = match self.data_tier {
+            crate::DataTier::L1 => {
+                let ([bid], [ask]) = (snapshot.bids.as_slice(), snapshot.asks.as_slice()) else {
+                    return Err(format!(
+                        "L1 Tick 事件只接受一档 bid/ask，实际 bid={} ask={}",
+                        snapshot.bids.len(),
+                        snapshot.asks.len()
+                    ));
+                };
+                qx_strategy::MarketEvent::Tick {
+                    instrument: snapshot.instrument.clone(),
+                    ts: snapshot.ts,
+                    bid_raw: bid.price.raw(),
+                    ask_raw: ask.price.raw(),
+                    last_raw: Some(bid.price.raw().saturating_add(ask.price.raw()) / 2),
+                    volume_raw: Some(bid.qty.raw().saturating_add(ask.qty.raw())),
+                }
+            }
+            crate::DataTier::Bar => return Err("订单簿策略不能消费 Bar 数据档位".into()),
+            crate::DataTier::L2L3 => qx_strategy::MarketEvent::OrderBook {
+                instrument: snapshot.instrument.clone(),
+                ts: snapshot.ts,
+                sequence: snapshot.sequence,
+                bids: snapshot
+                    .bids
+                    .iter()
+                    .map(|level| qx_strategy::OrderBookLevel {
+                        price_raw: level.price.raw(),
+                        qty_raw: level.qty.raw(),
+                    })
+                    .collect(),
+                asks: snapshot
+                    .asks
+                    .iter()
+                    .map(|level| qx_strategy::OrderBookLevel {
+                        price_raw: level.price.raw(),
+                        qty_raw: level.qty.raw(),
+                    })
+                    .collect(),
+            },
         };
         let decision = self.strategy.on_event(&self.context, &event)?;
         decision.to_orders(&self.context)
