@@ -443,3 +443,10 @@ Python 十策略证据：
 - 验收：`orderbook_backtest::tests::funding` 4/4 通过；全 workspace 测试在隔离 TEMP/TMP 下通过；workspace 严格 Clippy 通过；架构门禁 1096/1096 通过；量化探针 68 executed、0 declared_not_executed、0 missing、1 blocked。Windows 全局临时目录的拒绝访问会影响共享 Paper 测试夹具，隔离到仓库临时目录后同组测试通过。
 - 该修复仍限定于单账户、单标的 Tick/OrderBook 回测的现货订单预留；跨账户组合购买力、衍生品自由保证金/组合风险仍须单独建模和验收，不能把本项描述扩大为完整多市场保证金系统。
 - Python 3.12 隔离 wheel 安装后全量测试 156 passed、1 skipped；wheel 检查通过，Windows x64 `cp310-abi3` 产物 2,215,792 bytes，SHA-256 `1fd798c2e1b67d474898ae28ad2085f3454248017b8e3f12fb296dc63dd0e186`。该产物为本机验证构建，不等同已发布的 GitHub Release。
+
+## 55. 2026-10-14 修复：深度帧输入指纹编码盘口侧边界
+
+- Tick/OrderBook 输入身份审计发现，`DepthFrame::input_hash` 原先只顺序哈希 bid、ask 档位，没有编码两侧档位数；在允许单边盘口的场景中，“一档 bid + 一档 ask”和“两个 ask”会把相同档位序列写入同一输入哈希，导致不同市场状态无法从数据指纹区分。
+- 现将每个快照的 bid/ask 档位数量写入哈希，再哈希逐档价格与数量；新增回归用例验证上述两种合法快照得到不同输入哈希。此修改只修复数据身份编码，不改变撮合语义。
+- 验收：`cargo test -p qx-xingban --offline -- --test-threads=1` 通过（124 个单测及全部集成/文档测试），新增 `depth_frame_hash` 集成回归通过；`cargo fmt --all -- --check` 通过；架构门禁 1096 项全部通过；量化场景探针重生成后为 68 executed、0 declared_not_executed、0 missing、1 blocked；能力执行探针在显式指定当前 `target/debug/qx-cli.exe` 后 8 项 executed、2 项 delegated、2 项 blocked，盘口数据指纹为 `bb98a3580a92ee38`。探针首次误选 `.cargo-target` 中 2026-10-12 的旧 CLI，出现两条失败和旧指纹；改用本轮构建的二进制重跑后通过，生成记录未保留旧结果。
+- 本项不关闭多市场 Tick/OrderBook、跨账户组合风险、多市场 Paper/Live、远端策略 callback、C++ 默认 transport、完整事件事实日志、真实 venue testnet 或全平台包认证等开放门槛；整体发布条件仍未满足。

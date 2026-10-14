@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791949591
+generated_at_unix: 1791950269
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -220,7 +220,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=5482078734ab254c/548ee9ca4d76b556,1d423543b4f15552/c61fd5ce4458f36a,0daf71da19c84e67/a5f81ef934602433,7beef88c7468923d/178d2be5e2e4e497"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=c0e7b8111e02d04a/23897bef3ba57690,ab10df7202c6beb0/759ea958ebc09ce0,4774b499cedc4fd9/d71790ddb2bc898d,439a4837ba9a80d3/289318062d2e2d29"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -252,7 +252,7 @@ scenarios:
     anchor: "crates/qx-xingban"
     command: "qx-cli backtest book --fill-tier l2 --root .task-tmp/quant-probe/book sma_cross deploy/qianxing.depth-frame.example.json"
     exit_code: 0
-    observed: "run_id=depth-backtest:l2:sma_cross:BTCUSDT.BINANCE data_fingerprint=depth:example-depth-l2-v1:509c1b9eff771fb8 result_hash=e896fa89e839a855"
+    observed: "run_id=depth-backtest:l2:sma_cross:BTCUSDT.BINANCE data_fingerprint=depth:example-depth-l2-v1:bb98a3580a92ee38 result_hash=e896fa89e839a855"
     evidence: ["crates/qx-xingban"]
   - name: market_making
     label: "做市（双边限价报价、库存偏移与撤单）"

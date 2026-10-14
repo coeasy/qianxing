@@ -7,7 +7,7 @@
 schema_version: 1
 kind: capability-execution
 generated_by: "tools/capability_execution_probe.py"
-generated_at_unix: 1791811716
+generated_at_unix: 1791950308
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -36,7 +36,7 @@ capabilities:
     anchor: "crates/qx-xingban"
     command: "qx-cli backtest book --fill-tier l2 --root .task-tmp/exec-probe/book sma_cross deploy/qianxing.depth-frame.example.json"
     exit_code: 0
-    observed: "run_id=depth-backtest:l2:sma_cross:BTCUSDT.BINANCE data_fingerprint=depth:example-depth-l2-v1:509c1b9eff771fb8 result_hash=59a57f097dfd3d45"
+    observed: "run_id=depth-backtest:l2:sma_cross:BTCUSDT.BINANCE data_fingerprint=depth:example-depth-l2-v1:bb98a3580a92ee38 result_hash=e896fa89e839a855"
     evidence: ["crates/qx-xingban"]
   - name: cross_language_multi_strategy_backtest
     verdict: executed

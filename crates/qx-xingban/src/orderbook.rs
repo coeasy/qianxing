@@ -128,6 +128,8 @@ impl DepthFrame {
         for snapshot in &self.snapshots {
             hash.write_u64(snapshot.ts);
             hash.write_u64(snapshot.sequence);
+            hash.write_u64(snapshot.bids.len() as u64); // Preserve the flattened book's bid/ask boundary.
+            hash.write_u64(snapshot.asks.len() as u64);
             for level in snapshot.bids.iter().chain(snapshot.asks.iter()) {
                 hash.write_i128(level.price.raw());
                 hash.write_i128(level.qty.raw());
