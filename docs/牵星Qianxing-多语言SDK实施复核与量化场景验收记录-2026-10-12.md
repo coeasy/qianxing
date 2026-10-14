@@ -412,4 +412,4 @@ Python 十策略证据：
 
 - 上一轮新 wheel 中对多账户 Tick/OrderBook 汇总溢出的验证意外暴露：`run_multi_account_depth_backtest` 直接解析原生返回值，原生抛出的 `QxAppError` 不经过 SDK `_translate_native_error`；同步调用者因此收到非稳定底层异常，而同系列其它入口会映射为公开 `InvalidInputError`。
 - 同步深度批次入口现统一走 `_invoke`；新增 mock 原生异常的映射回归用例。隔离 wheel smoke 同时对 Bar 与 Tick/OrderBook 两种极值资金批次验证公开 `InvalidInputError`，避免触碰数据读取/回测副作用。
-- wheel 版本首测通过 Bar 溢出断言并在深度溢出处发现上述缺口；修复尚需重新构建最终 wheel 后再登记产物证据。完整 Python 测试与最终 wheel 隔离 smoke 结果将在构建后补录。
+- wheel 版本首测通过 Bar 溢出断言并在深度溢出处发现上述缺口；同步修复后全量 Python 测试 156/156 通过。基于提交 `2ecd1218e24c9775c10d7a59af10312bd9809863` 重新构建 Windows x64 `cp310-abi3` wheel，元数据检查及独立 target 安装通过；Python 3.13.13 isolated smoke 验证 17 策略、13/13 快速选择、4/4 参数候选、2 个独立账户、Bar 与深度溢出 fail-closed、双腿 3/3、OrderBook、callback、RunHandle 与 replay 均通过。产物 2,202,890 bytes，SHA-256 `e4d5fd847a55fa288959fbfefae1a4559f1fa60347658fff6ffb95e8ff8e7319`，证据见 `maturity/evidence/python_sdk/windows-cp310-abi3-20261014-2ecd1218.yaml`。

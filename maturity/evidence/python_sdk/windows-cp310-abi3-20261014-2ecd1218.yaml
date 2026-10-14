@@ -1,0 +1,36 @@
+schema_version: 1
+kind: python-wheel-smoke
+source_commit: 2ecd1218e24c9775c10d7a59af10312bd9809863
+python_runtime: 3.13.13
+platform: windows-x64
+wheel: qianxing-0.1.0-cp310-abi3-win_amd64.whl
+wheel_size_bytes: 2202890
+wheel_sha256: e4d5fd847a55fa288959fbfefae1a4559f1fa60347658fff6ffb95e8ff8e7319
+build_command: "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_python_wheel.ps1 -Python python -OutputDirectory dist/python-final-2ecd1218"
+wheel_check: "python tools/check_python_wheel.py dist/python-final-2ecd1218"
+install_command: "python -m pip install --no-deps --target target/python-final-2ecd1218 dist/python-final-2ecd1218/qianxing-0.1.0-cp310-abi3-win_amd64.whl"
+install_isolated_from_repository: true
+smoke:
+  builtin_strategy_count: 17
+  dataset_rows: 70
+  backtest_fills: 18
+  replay_verified: true
+  single_leg_strategy_selection: "13/13 candidates succeeded with nonzero fills"
+  strategy_parameter_selection: "4/4 candidates succeeded"
+  independent_accounts: 2
+  multi_account_bar_cash_overflow_fails_as_invalid_input: true
+  multi_account_depth_cash_overflow_fails_as_invalid_input: true
+  multi_leg_fills: "3/3"
+  orderbook_depth_fills: 2
+  python_custom_callback_fills: 1
+  run_handle_terminal_state: succeeded
+  run_handle_terminal_event_seen: true
+  remote_provider_preflight_methods_importable: true
+smoke_harness: tools/python_wheel_smoke.py
+evidence_scope:
+  - "Windows x64 stable-ABI wheel installed into an isolated target directory and imported with Python isolated mode."
+  - "Installed SDK discovery, dataset validation, parameter selection, independent account Bar and depth overflow preflight, multi-leg backtest, OrderBook backtest, a Python callback, RunHandle lifecycle/events, and replay verification succeeded outside the source package path."
+not_proven:
+  - "CPython 3.10 runtime execution; only the cp310-abi3 artifact tag and Python 3.13 runtime were exercised locally."
+  - "Linux/macOS or non-x64 wheel execution."
+  - "Live exchange or testnet authentication/conformance."
