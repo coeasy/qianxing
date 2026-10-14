@@ -400,3 +400,10 @@ Python 十策略证据：
 - 验收：`cargo test -p qx-api --lib` 70/70，`cargo test -p qx-sdk --lib` 11/11，`python -m pytest python/tests -q` 155/155，Python F821 扫描、`cargo clippy -p qx-api -p qx-sdk --all-targets -- -D warnings`、格式检查、差异空白检查通过；`python tools/quant_scenario_probe.py` 实测 67 executed、0 declared_not_executed、0 missing、1 blocked，十种经典策略快速选择与 Provider 预检均有数值/专项证据；`python tools/check_architecture.py` 1096 项通过。探针复核还修正了 Python 远端策略目录测试从 4 项增长到 7 项后的旧断言/无数值观察，现必须匹配实际 7 项并记录 2 个目录 fixture。C++ smoke 已更新为逐项检查新路由，但本机无 CMake/C++ 编译器，尚未获得本地编译证据。
 - 发布产物：提交 `752e095ba1f593c3739cbd4b88022a4d286206f6` 构建 Windows x64 `cp310-abi3` wheel，大小 2,199,924 bytes，SHA-256 `6443813f1b36ccab8abfba7e00e52ba079ae0b3529434b2d1fe7d9dfd292f303`；元数据检查通过，安装至独立 target 后用 Python isolated mode 执行 package smoke，17 策略、70 行数据、18 笔成交、13/13 快速选择、4/4 参数候选、2 账户、双腿 3/3、OrderBook 2 笔、自定义回调 1 笔及 RunHandle/replay 均通过。完整产物身份见 `maturity/evidence/python_sdk/windows-cp310-abi3-20261014-752e095b.yaml`；不代表 CPython 3.10、Linux/macOS 或 Live/testnet 已验证。
 - 发布限制：本次只完成 Provider 数据请求匹配，不能证明凭据有效、数据源在线或实时新鲜度当前满足；Venue 的市场/订单/费用/权限/sandbox/testnet 预检、跨账户组合风险、交易所 testnet 生命周期认证、持久化逐事件日志与 cursor 恢复、远端策略回调及跨平台发布矩阵仍未完成。
+
+## 49. 2026-10-14 修复：多账户批次资金汇总溢出前置拒绝
+
+- 多账户 Bar 与 Tick/OrderBook 批次摘要都会累计成功账户的初始本金。此前单个账户本金虽然各自合法，但批次总和可能超过 `i128`；这种输入要等成员已经运行并写出产物后才会在汇总阶段失败，造成部分副作用后整批报错。
+- 两种批次规格现于 `validate()` 中按输入成员顺序使用 `checked_add` 预先验证初始本金总和；溢出统一作为 `InvalidInput` 在执行前拒绝。该保护仅保证摘要字段可表示，不代表多账户共享 Ledger/净额/组合风险已经实现。
+- 验收：`cargo fmt --check` 通过；`cargo test --offline -p qx-app --lib multi_account` 8/8 通过，涵盖 Bar 与深度批次的溢出输入、独立账户运行、失败隔离及取消边界。默认 Windows 临时目录权限导致首轮测试夹具建目录失败；将临时目录指向仓库内可写测试目录后重跑通过，未改变生产逻辑。
+- 其余发布限制仍在：跨账户组合风险与净额、Venue/Testnet 凭据认证、逐事件持久化恢复、远端 callback、C++ 默认 transport 及三平台 SDK 发布矩阵仍未闭环。

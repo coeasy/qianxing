@@ -96,3 +96,14 @@ fn multi_account_spec_rejects_duplicate_accounts_and_mixed_settlement_currencies
         AppErrorCategory::InvalidInput
     );
 }
+
+#[test]
+fn multi_account_spec_rejects_unrepresentable_total_initial_cash_before_execution() {
+    let root = scratch("multi-account-cash-overflow");
+    let mut spec = two_account_spec(&root);
+    spec.runs[0].initial_cash_raw = i128::MAX;
+    assert_eq!(
+        spec.validate().unwrap_err().category(),
+        AppErrorCategory::InvalidInput
+    );
+}

@@ -80,3 +80,14 @@ fn depth_batch_rejects_duplicate_accounts_and_mixed_settlement_currency() {
         AppErrorCategory::InvalidInput
     );
 }
+
+#[test]
+fn depth_batch_rejects_unrepresentable_total_initial_cash_before_execution() {
+    let root = super::fixtures::scratch("multi-account-depth-cash-overflow");
+    let mut batch = spec(&root);
+    batch.runs[0].initial_cash_raw = i128::MAX;
+    assert_eq!(
+        batch.validate().unwrap_err().category(),
+        AppErrorCategory::InvalidInput
+    );
+}

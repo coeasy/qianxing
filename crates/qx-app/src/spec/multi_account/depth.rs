@@ -37,8 +37,12 @@ impl MultiAccountDepthBacktestSpec {
         let mut accounts = BTreeSet::new();
         let mut run_ids = BTreeSet::new();
         let mut settlement_currency: Option<&str> = None;
+        let mut initial_cash_total_raw = 0_i128;
         for run in &self.runs {
             run.validate()?;
+            initial_cash_total_raw = initial_cash_total_raw
+                .checked_add(run.initial_cash_raw)
+                .ok_or_else(|| invalid("多账户深度回测初始资金合计超出 i128 范围"))?;
             let account_id = run.account_id.as_deref().ok_or_else(|| {
                 invalid("多账户深度回测的每个 DepthBacktestSpec 都必须显式声明 account_id")
             })?;
