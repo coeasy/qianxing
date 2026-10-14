@@ -415,6 +415,13 @@ Python 十策略证据：
 - 验收：改动前 `cargo test --workspace --offline` 复现 395 项通过、1 项失败；修复后全 workspace 测试通过（qx-cli 396 项、CLI/HTTP/Python 三入口应用集成 20 项包含十经典策略一致性）；端点表专项 10 项通过；workspace 严格 Clippy、格式检查及 1096 项架构门禁通过。
 - 本地目前已证明完整 workspace 通过；GitHub Actions 还需要在本次修复提交上完成一次未被并发 push 取消的全量运行。跨账户共享风险、外部 testnet/venue 认证、事件日志游标恢复及跨平台安装外部证明仍需分别闭环。
 
+## 52. 2026-10-14 修复：RunHandle 终态事件发布竞态
+
+- 轮询路径审计发现，Rust `RunHandle` 工作线程此前先发送结果并发布终态状态，再追加 `Succeeded`、`Failed` 或 `Cancelled` 事件。`status()` 可以直接消费结果并返回终态，因此客户端可能观察到终态却在同一时刻的事件游标查询里看不到终态事件，形成状态/事件短暂不一致。
+- 现将终态事件追加移到结果发送和终态状态发布之前。事件锁保护追加顺序，之后再公开结果；所有三种终态共用此路径。扩充并发轮询回归，在每次观察到 `Succeeded` 时同步断言事件游标已包含该终态事件。
+- 验收：`cargo test --offline -p qx-app --lib` 132/132、`cargo clippy --offline -p qx-app --all-targets -- -D warnings`、`cargo fmt --all -- --check` 与 `git diff --check` 通过。
+- 该修复只关闭进程内 Rust RunHandle 的短暂可见性竞态。HTTP 持久化运行注册表的逐事件日志、游标恢复，以及多语言/HTTP/Web E2E、跨账户组合风险、C++ 默认 transport 和外部交易所 testnet 认证仍是开放发布项。
+
 ## 50. 2026-10-14 修复：Python 深度多账户同步错误边界
 
 - 上一轮新 wheel 中对多账户 Tick/OrderBook 汇总溢出的验证意外暴露：`run_multi_account_depth_backtest` 直接解析原生返回值，原生抛出的 `QxAppError` 不经过 SDK `_translate_native_error`；同步调用者因此收到非稳定底层异常，而同系列其它入口会映射为公开 `InvalidInputError`。

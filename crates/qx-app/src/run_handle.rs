@@ -136,13 +136,12 @@ impl<T: Send + 'static> RunHandle<T> {
             let mut events = worker_events
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            // Publish the payload before the terminal state. Pollers use the
-            // state as their readiness signal and may immediately take the
-            // result once it becomes terminal; reversing these operations
-            // exposes a brief terminal-without-result window.
+            // Publish the terminal event before the result or terminal state.
+            // Pollers may observe either one as soon as it becomes visible;
+            // publishing them first exposes a terminal-without-event window.
+            push_event(&mut events, &worker_run_id, kind, status);
             let _ = worker_sender.send(result);
             worker_state.store(terminal, Ordering::Release);
-            push_event(&mut events, &worker_run_id, kind, status);
         });
         if let Err(error) = spawn_result {
             state.store(FAILED, Ordering::Release);
@@ -345,6 +344,8 @@ mod tests {
                 thread::yield_now();
             }
             assert_eq!(handle.status(), RunStatus::Succeeded);
+            let events = handle.events_after(0);
+            assert_eq!(events.last().unwrap().kind, RunEventKind::Succeeded);
             assert_eq!(handle.try_take_result().unwrap().unwrap(), ordinal);
         }
     }
