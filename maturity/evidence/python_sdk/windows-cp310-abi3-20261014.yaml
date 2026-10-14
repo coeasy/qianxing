@@ -1,14 +1,14 @@
 schema_version: 1
 kind: python-wheel-smoke
-source_commit: 73af8d625825b9cff24d9396557252cf747f7520
+source_commit: b4096d33a2316200c7762d8e0aacf56e1321607f
 python_runtime: 3.13.13
 platform: windows-x64
 wheel: qianxing-0.1.0-cp310-abi3-win_amd64.whl
-wheel_size_bytes: 2199544
-wheel_sha256: 137c92acb51cf992b66c64d3a1cbc6a437b096f4e4ff7093d45bc8cb9463a2f7
-build_command: "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_python_wheel.ps1 -Python python -OutputDirectory target/sdk-wheels-73af8d62"
-wheel_check: "python tools/check_python_wheel.py target/sdk-wheels-73af8d62"
-install_command: "python -m venv target/wheel-smoke-73af8d62; target/wheel-smoke-73af8d62/Scripts/python.exe -m pip install --no-index --no-deps target/sdk-wheels-73af8d62/qianxing-0.1.0-cp310-abi3-win_amd64.whl"
+wheel_size_bytes: 2199539
+wheel_sha256: b0812d0f2ecb59e63c8b957dd27b3c18e4e180774c236498af697910362bf285
+build_command: "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_python_wheel.ps1 -Python python -OutputDirectory target/sdk-wheels-b4096d33"
+wheel_check: "python tools/check_python_wheel.py target/sdk-wheels-b4096d33"
+install_command: "python -m venv target/wheel-smoke-b4096d33; target/wheel-smoke-b4096d33/Scripts/python.exe -m pip install --no-index --no-deps target/sdk-wheels-b4096d33/qianxing-0.1.0-cp310-abi3-win_amd64.whl"
 install_isolated_from_repository: true
 smoke:
   builtin_strategy_count: 17
