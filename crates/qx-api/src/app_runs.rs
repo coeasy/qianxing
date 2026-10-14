@@ -7,9 +7,10 @@ pub(super) use entry::{cancel_route_id, is_terminal, status_route_id, valid_run_
 use qx_app::{
     MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiLegBacktestOutcome,
     MultiLegBacktestSpec, MultiMarketBacktestOutcome, MultiMarketBacktestSpec,
-    RunDepthExperimentResult, RunDepthExperimentSpec, RunEvent, RunExperimentResult, RunHandle,
-    RunMultiLegExperimentResult, RunMultiLegExperimentSpec, RunMultiMarketExperimentResult,
-    RunMultiMarketExperimentSpec, RunStatus,
+    MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec, RunDepthExperimentResult,
+    RunDepthExperimentSpec, RunEvent, RunExperimentResult, RunHandle, RunMultiLegExperimentResult,
+    RunMultiLegExperimentSpec, RunMultiMarketExperimentResult, RunMultiMarketExperimentSpec,
+    RunStatus,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -43,6 +44,7 @@ pub(crate) const RUN_START_EXPERIMENT_ROUTE: &str = "/app/run-experiment/start";
 pub(crate) const RUN_START_MULTI_LEG_ROUTE: &str = "/app/multi-leg-backtest/start";
 pub(crate) const RUN_START_MULTI_ACCOUNT_ROUTE: &str = "/app/multi-account-backtest/start";
 pub(crate) const RUN_START_MULTI_MARKET_ROUTE: &str = "/app/multi-market-backtest/start";
+pub(crate) const RUN_START_MARKET_DEPTH_ROUTE: &str = "/app/multi-market-depth-backtest/start";
 pub(crate) const RUN_START_MULTI_LEG_EXPERIMENT_ROUTE: &str = "/app/run-multi-leg-experiment/start";
 pub(crate) const RUN_START_MARKET_EXPERIMENT_ROUTE: &str = "/app/run-multi-market-experiment/start";
 
@@ -79,6 +81,9 @@ pub(crate) fn app_run_route_with_query(
         }
         ("POST", RUN_START_MULTI_MARKET_ROUTE) => {
             starts::start_multi_market_backtest(body, paths, registry)
+        }
+        ("POST", RUN_START_MARKET_DEPTH_ROUTE) => {
+            starts::start_multi_market_depth_backtest(body, paths, registry)
         }
         ("POST", RUN_START_MULTI_LEG_EXPERIMENT_ROUTE) => {
             starts::start_multi_leg_experiment(body, paths, registry)
@@ -123,6 +128,7 @@ enum AppRun {
     MultiMarketExperiment(RunHandle<RunMultiMarketExperimentResult>),
     MultiAccount(RunHandle<MultiAccountBacktestResult>),
     MultiMarket(RunHandle<MultiMarketBacktestOutcome>),
+    MultiMarketDepth(RunHandle<MultiMarketDepthBacktestOutcome>),
 }
 
 struct AppRunEntry {

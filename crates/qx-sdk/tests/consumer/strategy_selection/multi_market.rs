@@ -1,4 +1,8 @@
 use super::*;
+use qx_sdk::{
+    MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestSpec, TradingInstrumentSpec,
+    TradingProduct,
+};
 
 #[test]
 fn rust_sdk_composes_multiple_external_strategies_in_one_shared_portfolio() {
@@ -125,6 +129,103 @@ fn rust_sdk_runs_custom_multi_market_slots_through_shared_engine_and_run_handle(
         .expect("async multi-market callback handle");
     assert_eq!(handle.wait(), RunStatus::Succeeded);
     assert_eq!(handle.try_take_result().unwrap().unwrap().markets_total, 3);
+}
+
+#[test]
+fn rust_sdk_starts_custom_multi_market_depth_slots_through_shared_engine() {
+    let root = scratch("sdk-multi-market-depth-custom");
+    let source: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            super::super::repo_root()
+                .join("deploy")
+                .join("qianxing.depth-frame.example.json"),
+        )
+        .expect("sample depth frame"),
+    )
+    .expect("sample depth JSON");
+    let markets = [("BTCUSDT.BINANCE", "BTC"), ("ETHUSDT.KRAKEN", "ETH")]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (instrument, base))| {
+            let (symbol, venue) = instrument.split_once('.').unwrap();
+            let id = InstrumentId::parse(instrument).unwrap();
+            let path = root.join(format!("depth-{index}.json"));
+            let mut frame = source.clone();
+            frame["source"] = serde_json::json!(format!("sdk-depth-{index}"));
+            let instrument_value = serde_json::json!({"symbol":symbol,"venue":venue});
+            frame["instrument"] = instrument_value.clone();
+            for snapshot in frame["snapshots"].as_array_mut().unwrap() {
+                snapshot["instrument"] = instrument_value.clone();
+            }
+            std::fs::write(&path, serde_json::to_vec(&frame).unwrap()).unwrap();
+            MultiMarketDepthBacktestMarket {
+                instrument: instrument.into(),
+                depth_path: path.to_string_lossy().into_owned(),
+                priority: index as u32,
+                market_spec: TradingInstrumentSpec {
+                    instrument: id,
+                    product: TradingProduct::Spot,
+                    base_currency: base.into(),
+                    quote_currency: "USDT".into(),
+                    settlement_currency: "USDT".into(),
+                    contract_size: 1_000_000_000,
+                    linear: false,
+                    inverse: false,
+                    price_tick: 1,
+                    qty_step: 1,
+                    min_qty: 1,
+                    max_leverage: 1,
+                    maintenance_margin_bps: 0,
+                    valid_from: 1,
+                    valid_to: None,
+                },
+                fee_bps: 0,
+                latency_snapshots: 0,
+                queue_position_bps: 0,
+                market_impact_bps: 0,
+                strategy: BuiltinStrategySpec::new(
+                    BuiltinStrategyKind::SmaCross,
+                    format!("sdk-depth-market-{index}"),
+                ),
+                order_policy: None,
+            }
+        })
+        .collect();
+    let spec = MultiMarketDepthBacktestSpec {
+        schema_version: 1,
+        run_id: "sdk-depth-market-custom-handle".into(),
+        account_id: "sdk-depth-shared".into(),
+        settlement_currency: "USDT".into(),
+        initial_cash_raw: 10_000_000_000_000_000,
+        output_dir: root.join("out").to_string_lossy().into_owned(),
+        markets,
+    };
+    let identities = spec
+        .markets
+        .iter()
+        .map(|market| {
+            (
+                StrategyArtifactIdentity {
+                    strategy_id: market.strategy.strategy_id.clone(),
+                    strategy_version: "consumer-l2-v1".into(),
+                    source_sha256: "e".repeat(64),
+                },
+                Box::new(BuyEachInstrument(Default::default())) as Box<dyn Strategy>,
+            )
+        })
+        .collect();
+    let client = Client::new(CallerCapability::Research, "sdk-multi-market-depth-custom");
+    let mut handle = client
+        .start_multi_market_depth_backtest_with_strategy_slots(spec, identities)
+        .expect("public SDK starts cancellable custom L2 portfolio run");
+    assert_eq!(handle.wait(), RunStatus::Succeeded);
+    let result = handle.try_take_result().unwrap().unwrap();
+    assert_eq!(result.markets_total, 2);
+    assert!(result.successful_fills > 0);
+    println!(
+        "MULTI_MARKET_DEPTH_RUST_OBSERVED markets={} fills={} callback_slots=2 run_handle=succeeded",
+        result.markets_total, result.successful_fills
+    );
 }
 
 #[test]

@@ -1,6 +1,7 @@
 //! Python authored decisions adapted to the shared Rust Strategy contract.
 
 mod multi_market;
+mod multi_market_depth;
 #[path = "strategy_callback/strategy_impl.rs"]
 mod strategy_impl;
 mod strategy_slots;
@@ -439,6 +440,7 @@ pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     multi_market::register(module)?;
+    multi_market_depth::register(module)?;
     module.add_function(wrap_pyfunction!(
         app_run_depth_backtest_with_strategy,
         module

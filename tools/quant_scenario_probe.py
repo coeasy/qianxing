@@ -801,6 +801,65 @@ def main() -> int:
             ],
         })
 
+    def executed_multi_market_depth_python_test():
+        executed(
+            "multi_market_depth_python_sdk",
+            "Python 多市场 L2 共享资金、策略槽和 RunHandle",
+            "crates/qx-app/src/cases/run_multi_market_depth_backtest.rs",
+            [
+                "-m", "unittest",
+                "python.tests.test_app_use_cases.AppUseCaseTests.test_multi_market_depth_typed_sdk_shares_cash_across_python_strategy_slots",
+            ],
+            r"(MULTI_MARKET_DEPTH_PYTHON_OBSERVED markets=2 fills=[1-9]\d* callback_slots=2 replay_verified=true custom_run_handle=succeeded builtin_run_handle=succeeded)",
+            command_prefix="python",
+            evidence=[
+                "crates/qx-app/src/cases/run_multi_market_depth_backtest.rs",
+                "crates/qx-python/src/strategy_callback/multi_market_depth.rs",
+                "python/qianxing/app.py",
+                "python/tests/test_app_use_cases.py",
+            ],
+        )
+
+    def executed_multi_market_depth_rust_sdk_test():
+        executed(
+            "multi_market_depth_rust_sdk",
+            "Rust SDK 多市场 L2 自定义策略 RunHandle",
+            "crates/qx-app/src/cases/run_multi_market_depth_backtest.rs",
+            [
+                "test", "--offline", "-p", "qx-sdk",
+                "rust_sdk_starts_custom_multi_market_depth_slots_through_shared_engine",
+                "--", "--nocapture",
+            ],
+            r"(MULTI_MARKET_DEPTH_RUST_OBSERVED markets=2 fills=[1-9]\d* callback_slots=2 run_handle=succeeded)",
+            command_prefix="cargo",
+            evidence=[
+                "crates/qx-app/src/cases/run_multi_market_depth_backtest.rs",
+                "crates/qx-sdk/src/client.rs",
+                "crates/qx-sdk/tests/consumer/strategy_selection/multi_market.rs",
+            ],
+        )
+
+    def executed_multi_market_depth_http_test():
+        executed(
+            "multi_market_depth_http_routes",
+            "HTTP 多市场 L2 同步和 RunHandle 路由",
+            "crates/qx-api/src/app_surface/multi_market_depth.rs",
+            [
+                "test", "--offline", "-p", "qx-api",
+                "multi_market_depth_sync_and_run_handle_routes_use_shared_account_l2_engine",
+                "--", "--nocapture",
+            ],
+            r"(MULTI_MARKET_DEPTH_HTTP_OBSERVED sync_markets=2 equity_points=2 async_run_handle=succeeded)",
+            command_prefix="cargo",
+            evidence=[
+                "crates/qx-api/src/app_surface/multi_market_depth.rs",
+                "crates/qx-api/src/app_runs/starts.rs",
+                "crates/qx-api/src/app_multi_market_tests.rs",
+                "python/qianxing/app.py",
+                "cpp/include/qianxing_app.hpp",
+            ],
+        )
+
     def executed_multi_market_parameter_experiment_test():
         executed(
             "multi_market_parameter_experiment",
@@ -905,6 +964,9 @@ def main() -> int:
     executed_multi_market_python_strategy_slots_test()
     executed_multi_market_rust_strategy_slots_test()
     executed_multi_market_http_routes_test()
+    executed_multi_market_depth_python_test()
+    executed_multi_market_depth_rust_sdk_test()
+    executed_multi_market_depth_http_test()
     executed_multi_market_parameter_experiment_test()
     executed_multi_market_experiment_language_parity_test()
 

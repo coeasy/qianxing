@@ -16,6 +16,7 @@ pub(super) fn application_capabilities(
         {"id":"backtest.tick_orderbook","routes":["/app/depth-backtest","/app/depth-backtest/start"]},
         {"id":"backtest.multi_leg","routes":["/app/multi-leg-backtest","/app/multi-leg-backtest/start"]},
         {"id":"backtest.multi_market","routes":["/app/multi-market-backtest","/app/multi-market-backtest/start"]},
+        {"id":"backtest.multi_market_tick_orderbook","routes":["/app/multi-market-depth-backtest","/app/multi-market-depth-backtest/start"]},
         {"id":"backtest.multi_account","routes":["/app/multi-account-backtest","/app/multi-account-backtest/start"]},
         {"id":"data.provider_preflight","routes":["/app/capabilities/providers/preflight"]},
         {"id":"experiments.parameter_grid","routes":["/app/run-experiment","/app/run-depth-experiment","/app/run-multi-leg-experiment","/app/run-multi-market-experiment"]},

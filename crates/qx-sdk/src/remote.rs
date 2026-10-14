@@ -112,6 +112,26 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         self.post("/app/multi-market-backtest/start", &request)
     }
 
+    /// Run a shared-account multi-market L2 backtest on the Rust application server.
+    pub fn run_multi_market_depth_backtest(
+        &self,
+        spec: &qx_app::MultiMarketDepthBacktestSpec,
+    ) -> Result<Value, RemoteApiError> {
+        let request = serde_json::to_value(spec)
+            .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
+        self.post("/app/multi-market-depth-backtest", &request)
+    }
+
+    /// Start a cancellable shared-account multi-market L2 backtest.
+    pub fn start_multi_market_depth_backtest(
+        &self,
+        spec: &qx_app::MultiMarketDepthBacktestSpec,
+    ) -> Result<Value, RemoteApiError> {
+        let request = serde_json::to_value(spec)
+            .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))?;
+        self.post("/app/multi-market-depth-backtest/start", &request)
+    }
+
     /// Run a bounded strategy/parameter grid on the shared multi-market Rust engine.
     pub fn run_multi_market_experiment(
         &self,

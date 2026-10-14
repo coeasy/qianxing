@@ -38,6 +38,8 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "multi_account_backtest_start": "/app/multi-account-backtest/start",
     "multi_market_backtest": "/app/multi-market-backtest",
     "multi_market_backtest_start": "/app/multi-market-backtest/start",
+    "multi_market_depth_backtest": "/app/multi-market-depth-backtest",
+    "multi_market_depth_backtest_start": "/app/multi-market-depth-backtest/start",
     "multi_market_experiment": "/app/run-multi-market-experiment",
     "multi_market_experiment_start": "/app/run-multi-market-experiment/start",
     "backtest_start": "/app/backtest/start",
@@ -361,6 +363,79 @@ class MultiMarketBacktestSpec:
             "output_dir": self.output_dir,
             "markets": [market.to_dict() for market in self.markets],
         }
+
+
+@dataclass(frozen=True)
+class MultiMarketDepthBacktestMarket:
+    instrument: str
+    depth_path: str
+    priority: int
+    market_spec: TradingInstrumentSpec | dict[str, Any]
+    fee_bps: int = 0
+    latency_snapshots: int = 0
+    queue_position_bps: int = 0
+    market_impact_bps: int = 0
+    strategy: BuiltinStrategySpec = field(default_factory=lambda: BuiltinStrategySpec("sma_cross", "strategy"))
+    order_policy: OrderPolicy | dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        value: dict[str, Any] = {
+            "instrument": self.instrument,
+            "depth_path": self.depth_path,
+            "priority": self.priority,
+            "market_spec": self.market_spec.to_dict() if hasattr(self.market_spec, "to_dict") else dict(self.market_spec),
+            "fee_bps": self.fee_bps,
+            "latency_snapshots": self.latency_snapshots,
+            "queue_position_bps": self.queue_position_bps,
+            "market_impact_bps": self.market_impact_bps,
+            "strategy": self.strategy.to_dict(),
+        }
+        if self.order_policy is not None:
+            value["order_policy"] = self.order_policy.to_dict() if hasattr(self.order_policy, "to_dict") else dict(self.order_policy)
+        return value
+
+
+@dataclass(frozen=True)
+class MultiMarketDepthBacktestSpec:
+    run_id: str
+    account_id: str
+    settlement_currency: str
+    initial_cash_raw: int
+    output_dir: str
+    markets: tuple[MultiMarketDepthBacktestMarket, ...]
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "account_id": self.account_id,
+            "settlement_currency": self.settlement_currency,
+            "initial_cash_raw": self.initial_cash_raw,
+            "output_dir": self.output_dir,
+            "markets": [market.to_dict() for market in self.markets],
+        }
+
+
+@dataclass(frozen=True)
+class MultiMarketDepthBacktestOutcome:
+    run_id: str
+    account_id: str
+    spec_fingerprint: str
+    data_fingerprint: str
+    shared_result_hash: str
+    markets_total: int
+    successful_fills: int
+    pending_orders: int
+    equity_points: int
+    final_equity_raw: int
+    return_bps: int
+    max_drawdown_bps: int
+    artifact_path: str
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiMarketDepthBacktestOutcome":
+        return cls(**value)
 
 
 @dataclass(frozen=True)
@@ -1851,6 +1926,34 @@ class AsyncCoreClient:
     ) -> AsyncRunHandle[MultiMarketBacktestOutcome]:
         return await self._start(start_multi_market_backtest, spec)
 
+    async def async_run_multi_market_depth_backtest(
+        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
+    ) -> MultiMarketDepthBacktestOutcome:
+        return await asyncio.to_thread(run_multi_market_depth_backtest, spec)
+
+    async def async_start_multi_market_depth_backtest(
+        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
+    ) -> AsyncRunHandle[MultiMarketDepthBacktestOutcome]:
+        return await self._start(start_multi_market_depth_backtest, spec)
+
+    async def async_run_multi_market_depth_backtest_with_strategy_slots(
+        self,
+        spec: MultiMarketDepthBacktestSpec | dict[str, Any],
+        strategies: Sequence[Mapping[str, Any]],
+    ) -> MultiMarketDepthBacktestOutcome:
+        return await asyncio.to_thread(
+            run_multi_market_depth_backtest_with_strategy_slots, spec, strategies
+        )
+
+    async def async_start_multi_market_depth_backtest_with_strategy_slots(
+        self,
+        spec: MultiMarketDepthBacktestSpec | dict[str, Any],
+        strategies: Sequence[Mapping[str, Any]],
+    ) -> AsyncRunHandle[MultiMarketDepthBacktestOutcome]:
+        def start(value: Any) -> RunHandle[MultiMarketDepthBacktestOutcome]:
+            return start_multi_market_depth_backtest_with_strategy_slots(value, strategies)
+        return await self._start(start, spec)
+
     async def async_run_multi_market_experiment(self, spec: RunMultiMarketExperimentSpec | dict[str, Any]) -> RunMultiMarketExperimentResult:
         return await asyncio.to_thread(run_multi_market_experiment, spec)
 
@@ -2222,6 +2325,22 @@ class AppClient(_HttpJsonClient):
             APP_ROUTE_TEMPLATES["multi_market_backtest_start"], spec, MultiMarketBacktestOutcome
         )
 
+    def run_multi_market_depth_backtest(
+        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
+    ) -> MultiMarketDepthBacktestOutcome:
+        return MultiMarketDepthBacktestOutcome.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["multi_market_depth_backtest"], spec)
+        )
+
+    def start_multi_market_depth_backtest(
+        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
+    ) -> RemoteRunHandle[MultiMarketDepthBacktestOutcome]:
+        return self._start(
+            APP_ROUTE_TEMPLATES["multi_market_depth_backtest_start"],
+            spec,
+            MultiMarketDepthBacktestOutcome,
+        )
+
     def run_multi_market_experiment(self, spec: RunMultiMarketExperimentSpec | dict[str, Any]) -> RunMultiMarketExperimentResult:
         return RunMultiMarketExperimentResult.from_dict(
             self._post(APP_ROUTE_TEMPLATES["multi_market_experiment"], spec)
@@ -2318,6 +2437,16 @@ class AppClient(_HttpJsonClient):
         self, spec: MultiMarketBacktestSpec | dict[str, Any]
     ) -> RemoteRunHandle[MultiMarketBacktestOutcome]:
         return await self._async_start(self.start_multi_market_backtest, spec)
+
+    async def async_run_multi_market_depth_backtest(
+        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
+    ) -> MultiMarketDepthBacktestOutcome:
+        return await asyncio.to_thread(self.run_multi_market_depth_backtest, spec)
+
+    async def async_start_multi_market_depth_backtest(
+        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
+    ) -> RemoteRunHandle[MultiMarketDepthBacktestOutcome]:
+        return await self._async_start(self.start_multi_market_depth_backtest, spec)
 
     async def async_run_multi_market_experiment(self, spec: RunMultiMarketExperimentSpec | dict[str, Any]) -> RunMultiMarketExperimentResult:
         return await asyncio.to_thread(self.run_multi_market_experiment, spec)
@@ -2759,6 +2888,46 @@ def run_multi_market_backtest(
     return MultiMarketBacktestOutcome.from_dict(
         _invoke(native.app_run_multi_market_backtest, spec)
     )
+
+
+def run_multi_market_depth_backtest(
+    spec: MultiMarketDepthBacktestSpec | dict[str, Any],
+) -> MultiMarketDepthBacktestOutcome:
+    return MultiMarketDepthBacktestOutcome.from_dict(
+        _invoke(native.app_run_multi_market_depth_backtest, spec)
+    )
+
+
+def start_multi_market_depth_backtest(
+    spec: MultiMarketDepthBacktestSpec | dict[str, Any],
+) -> RunHandle[MultiMarketDepthBacktestOutcome]:
+    try:
+        native_handle = native.app_start_multi_market_depth_backtest(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, MultiMarketDepthBacktestOutcome)
+
+
+def run_multi_market_depth_backtest_with_strategy_slots(
+    spec: MultiMarketDepthBacktestSpec | dict[str, Any],
+    strategies: Sequence[Mapping[str, Any]],
+) -> MultiMarketDepthBacktestOutcome:
+    try:
+        from qianxing_bridge.app import run_multi_market_depth_backtest_with_strategy_slots as _run
+        return MultiMarketDepthBacktestOutcome.from_dict(_run(_encode_payload(spec), strategies))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
+def start_multi_market_depth_backtest_with_strategy_slots(
+    spec: MultiMarketDepthBacktestSpec | dict[str, Any],
+    strategies: Sequence[Mapping[str, Any]],
+) -> RunHandle[MultiMarketDepthBacktestOutcome]:
+    try:
+        from qianxing_bridge.app import start_multi_market_depth_backtest_with_strategy_slots as _start
+        return RunHandle(_start(_encode_payload(spec), strategies), MultiMarketDepthBacktestOutcome)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
 
 
 def start_multi_market_backtest(

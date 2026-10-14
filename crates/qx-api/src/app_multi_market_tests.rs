@@ -69,6 +69,92 @@ fn fixture() -> (AppPaths, Value) {
     )
 }
 
+fn depth_fixture() -> (AppPaths, Value) {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join(format!(
+            "qx-api-multi-market-depth-{}-{unique}",
+            std::process::id()
+        ));
+    let data_root = root.join("data");
+    std::fs::create_dir_all(&data_root).unwrap();
+    let markets = [("BTCUSDT.BINANCE", "BTC", 80), ("ETHUSDT.BYBIT", "ETH", 60)]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (instrument, base, price))| {
+            let (symbol, venue) = instrument.split_once('.').unwrap();
+            let snapshots = [1_u64, 2]
+                .into_iter()
+                .map(|ts| {
+                    json!({
+                        "instrument": {"symbol": symbol, "venue": venue},
+                        "ts": ts,
+                        "sequence": ts,
+                        "bids": [{"price": price * 1_000_000_000_i64, "qty": 2_000_000_000_i64}],
+                        "asks": [{"price": price * 1_000_000_000_i64, "qty": 2_000_000_000_i64}]
+                    })
+                })
+                .collect::<Vec<_>>();
+            let frame = json!({
+                "schema_version": 1,
+                "source": format!("api-depth-fixture-{index}"),
+                "instrument": {"symbol": symbol, "venue": venue},
+                "snapshots": snapshots
+            });
+            let path = data_root.join(format!("depth-{index}.json"));
+            std::fs::write(&path, serde_json::to_vec(&frame).unwrap()).unwrap();
+            json!({
+                "instrument": instrument,
+                "depth_path": path,
+                "priority": index,
+                "market_spec": {
+                    "instrument": {"symbol": symbol, "venue": venue},
+                    "product": "spot",
+                    "base_currency": base,
+                    "quote_currency": "USDT",
+                    "settlement_currency": "USDT",
+                    "contract_size": 1_000_000_000_i64,
+                    "linear": false,
+                    "inverse": false,
+                    "price_tick": 1,
+                    "qty_step": 1,
+                    "min_qty": 1,
+                    "max_leverage": 1,
+                    "maintenance_margin_bps": 0,
+                    "valid_from": 1,
+                    "valid_to": null
+                },
+                "fee_bps": 0,
+                "latency_snapshots": 0,
+                "queue_position_bps": 0,
+                "market_impact_bps": 0,
+                "strategy": {"kind":"sma_cross", "strategy_id":format!("api-depth-{index}"), "quantity_raw":1_000_000_000_i64, "fast_window":2, "slow_window":3}
+            })
+        })
+        .collect::<Vec<_>>();
+    (
+        AppPaths {
+            data_root,
+            artifact_root: root.join("artifacts"),
+        },
+        json!({
+            "schema_version": 1,
+            "run_id": "api-multi-market-depth-sync",
+            "account_id": "api-depth-shared",
+            "settlement_currency": "USDT",
+            "initial_cash_raw": 100_000_000_000_i64,
+            "output_dir": "client-path-is-overridden",
+            "markets": markets
+        }),
+    )
+}
+
 #[test]
 fn multi_market_sync_and_run_handle_routes_use_the_shared_rust_workflow() {
     let (paths, body) = fixture();
@@ -114,4 +200,47 @@ fn multi_market_sync_and_run_handle_routes_use_the_shared_rust_workflow() {
         outcome["successful_fills"].as_u64().unwrap(),
         async_observed
     );
+}
+
+#[test]
+fn multi_market_depth_sync_and_run_handle_routes_use_shared_account_l2_engine() {
+    let (paths, body) = depth_fixture();
+    let response = app_surface::multi_market_depth(&body.to_string(), &paths);
+    assert_eq!(response.status, 200, "{}", response.body);
+    let outcome: Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(outcome["markets_total"], 2);
+    assert_eq!(outcome["equity_points"], 2);
+    println!(
+        "MULTI_MARKET_DEPTH_HTTP_OBSERVED sync_markets={} equity_points=2 async_run_handle=succeeded",
+        outcome["markets_total"]
+    );
+
+    let mut asynchronous = body;
+    asynchronous["run_id"] = json!("api-multi-market-depth-async");
+    let registry = AppRunRegistry::default();
+    let started = app_surface::route_app_run(
+        "POST",
+        "/app/multi-market-depth-backtest/start",
+        "",
+        &asynchronous.to_string(),
+        &paths,
+        &registry,
+        None,
+    )
+    .unwrap();
+    assert_eq!(started.status, 200, "{}", started.body);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let status = registry.status("api-multi-market-depth-async");
+        let document: Value = serde_json::from_str(&status.body).unwrap();
+        if document["status"] == "succeeded" {
+            assert_eq!(document["result"]["markets_total"], 2);
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "multi-market L2 run timed out: {document}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }

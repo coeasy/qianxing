@@ -23,9 +23,10 @@ use qx_app::{
     DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
     MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiAccountDepthBacktestResult,
     MultiAccountDepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec,
-    MultiMarketBacktestOutcome, MultiMarketBacktestSpec, RiskParityResult, RiskParitySpec,
-    RunContext, RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult,
-    RunExperimentSpec, RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
+    MultiMarketBacktestOutcome, MultiMarketBacktestSpec, MultiMarketDepthBacktestOutcome,
+    MultiMarketDepthBacktestSpec, RiskParityResult, RiskParitySpec, RunContext,
+    RunDepthExperimentResult, RunDepthExperimentSpec, RunExperimentResult, RunExperimentSpec,
+    RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
     RunMultiMarketExperimentResult, RunMultiMarketExperimentSpec, StrategyArtifactIdentity,
     VerificationResult,
 };
@@ -90,6 +91,40 @@ impl Client {
         spec: MultiMarketBacktestSpec,
         strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
     ) -> Result<RunHandle<MultiMarketBacktestOutcome>, AppError> {
+        spec.start_with_strategy_slots(strategies, self.context.clone())
+    }
+
+    /// Run several L2 markets on one shared cash account and Rust order-book engine.
+    pub fn run_multi_market_depth_backtest(
+        &self,
+        spec: &MultiMarketDepthBacktestSpec,
+    ) -> Result<MultiMarketDepthBacktestOutcome, AppError> {
+        qx_app::run_multi_market_depth_backtest(spec, &self.context)
+    }
+
+    /// Run a multi-market L2 portfolio with Rust/Python caller-authored strategy slots.
+    pub fn run_multi_market_depth_backtest_with_strategy_slots(
+        &self,
+        spec: &MultiMarketDepthBacktestSpec,
+        strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+    ) -> Result<MultiMarketDepthBacktestOutcome, AppError> {
+        qx_app::run_multi_market_depth_backtest_with_strategy_slots(spec, strategies, &self.context)
+    }
+
+    /// Start a cancellable multi-market L2 run through the shared Rust core.
+    pub fn start_multi_market_depth_backtest(
+        &self,
+        spec: MultiMarketDepthBacktestSpec,
+    ) -> RunHandle<MultiMarketDepthBacktestOutcome> {
+        spec.start(self.context.clone())
+    }
+
+    /// Start a cancellable multi-market L2 run with caller-authored strategy slots.
+    pub fn start_multi_market_depth_backtest_with_strategy_slots(
+        &self,
+        spec: MultiMarketDepthBacktestSpec,
+        strategies: Vec<(StrategyArtifactIdentity, Box<dyn Strategy>)>,
+    ) -> Result<RunHandle<MultiMarketDepthBacktestOutcome>, AppError> {
         spec.start_with_strategy_slots(strategies, self.context.clone())
     }
 

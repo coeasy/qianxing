@@ -307,12 +307,14 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/multi-account-backtest` | 应用层用例 `qx_app::run_multi_account_backtest` 的独立账户批次（请求体为 `MultiAccountBacktestSpec` JSON） | 每账户使用自己的 Bar 输入、账本与产物；支持最多 32 个账户与不同市场；结算币种必须一致，不跨账户净额；账户失败隔离返回 |
 | `POST /app/multi-account-backtest/start` | `MultiAccountBacktestSpec::start` 的多账户后台运行句柄 | 立即返回 `run_id/status`；成员与账户 Bar 循环协作取消；结果、状态、事件和取消使用现有运行句柄与事件读面 |
 | `POST /app/multi-market-backtest` | 应用层用例 `qx_app::run_multi_market_backtest` 的共享账户多市场 Bar 组合回测（请求体为 `MultiMarketBacktestSpec` JSON） | 3..=32 市场；共用账户账本、风控、OMS、事件与重放校验；输入限制在服务端数据根目录，产物写入服务端 artifact 根目录 |
+| `POST /app/multi-market-depth-backtest` | `MultiMarketDepthBacktestSpec` 的共享账户多市场 L2 OrderBook 组合回测 | 2..=32 个现货市场；共用 Rust OrderBookPortfolioBacktestEngine、账本、风控、OMS、EventLog 与 Replay；输入限制在服务端数据根目录；目前不支持跨市场衍生品保证金 |
 | `POST /app/run-multi-market-experiment` | 应用层用例 `qx_app::run_multi_market_experiment` 的多市场策略/参数网格（请求体为 `RunMultiMarketExperimentSpec` JSON） | 最多 256 个候选；每个候选复用多市场共享账户 Rust 内核，候选失败隔离、收益/回撤稳定排序；输入和产物限制在服务端配置根目录 |
 | `POST /app/run-multi-leg-experiment` | 应用层用例 `qx_app::run_multi_leg_experiment` 的有界双腿参数实验结果（请求体为 `RunMultiLegExperimentSpec` JSON） | 最多 256 个候选；每个候选复用 Rust 多腿回测并独立落归因产物，失败隔离；按组合收益稳定排名；输入限制在服务端数据根目录，产物写入服务端 artifact 根目录 |
 | `POST /app/depth-backtest/start` | `DepthBacktestSpec::start` 的 Tick/OrderBook 运行句柄（请求体仍为 `DepthBacktestSpec` JSON） | 立即返回 `run_id/status`，复用 Rust Tick 或订单簿协作取消循环；状态、结果和取消走 `/app/runs/{run_id}` 路由 |
 | `POST /app/run-depth-experiment/start` | `RunDepthExperimentSpec::start` 的后台 Tick/OrderBook 参数实验句柄 | 立即返回 `run_id/status`；候选之间和 Rust Tick/快照撮合循环协作取消；状态、结果和取消走 `/app/runs/{run_id}` 路由 |
 | `POST /app/multi-leg-backtest/start` | `MultiLegBacktestSpec::start` 的双腿运行句柄 | 立即返回 `run_id/status`；两条 Rust 撮合循环协作取消；结果/状态/取消复用 `/app/runs/{run_id}` |
 | `POST /app/multi-market-backtest/start` | `MultiMarketBacktestSpec::start` 的共享账户多市场回测句柄 | 立即返回 `run_id/status`；市场与 Bar 循环协作取消；状态、结果、事件和取消复用 `/app/runs/{run_id}` 生命周期 |
+| `POST /app/multi-market-depth-backtest/start` | `MultiMarketDepthBacktestSpec::start` 的多市场 L2 回测句柄 | 立即返回 `run_id/status`；市场与快照循环协作取消；状态、结果、事件和取消复用 `/app/runs/{run_id}` 生命周期 |
 | `POST /app/run-multi-market-experiment/start` | `RunMultiMarketExperimentSpec::start` 的后台共享账户多市场实验句柄 | 候选间与 Rust Bar 循环协作取消；状态、结果、事件和取消复用 `/app/runs/{run_id}` 生命周期 |
 | `POST /app/run-experiment/start` | `RunExperimentSpec::start` 的后台参数实验句柄 | 立即返回 `run_id/status`，候选和 Bar 循环复用 Rust 协作取消；状态与取消走 `/app/runs/{run_id}` 路由 |
 | `POST /app/run-multi-leg-experiment/start` | `RunMultiLegExperimentSpec::start` 的后台多腿参数实验句柄 | 立即返回 `run_id/status`；候选之间及双腿 Rust 撮合循环协作取消；状态与取消走 `/app/runs/{run_id}` 路由 |
@@ -413,7 +415,9 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `POST /app/multi-leg-backtest` | 应用层用例 RunMultiLegBacktest：两腿信号、Rust Bar 撮合、独立重放校验与成交归因 | 两份输入限制在服务端数据根目录；结果产物由服务端指定路径；market spec 与输入标的/结算币一致校验；资金费只允许声明了衍生品的腿；不对齐返回 400、样本不足返回 422、同 run_id 异内容返回 409；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-account-backtest` | 多账户独立 Rust Bar 回测（不同账户及市场、逐账户校验、成功结果加权摘要） | 每账户输入路径限制在服务端数据根目录并写入各自产物路径；最多 32 个成员；要求相同 settlement_currency；成员失败隔离为部分结果；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-market-backtest` | 同账户多市场 Rust Bar 组合回测（3..=32 市场，共享 PortfolioBarEngine、账簿、Risk/OMS、EventLog 与 Replay） | 每份输入限制在服务端数据根目录；结果由服务端指定产物目录；单/多策略槽按确定性优先级执行；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/multi-market-depth-backtest` | 同账户多市场 Rust L2 现货回测（2..=32 市场，共享 OrderBookPortfolioBacktestEngine、账簿、Risk/OMS、EventLog 与 Replay） | 输入限制在服务端数据根目录，产物路径由服务端覆盖；跨市场衍生品保证金尚未支持；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-market-backtest/start` | 创建同账户多市场 Rust Bar 后台回测任务 | 市场间与 Bar 循环协作取消；状态、结果、事件与取消复用 `/app/runs/{run_id}` 生命周期；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/multi-market-depth-backtest/start` | 创建同账户多市场 Rust L2 现货后台回测任务 | 市场间与盘口快照循环协作取消；状态、结果、事件与取消复用 `/app/runs/{run_id}` 生命周期；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/run-multi-market-experiment` | 多市场共享账户参数/策略实验，候选复用 Rust 回测内核并稳定排名 | 400 非法规格/候选；输入帧限制在服务端数据根目录，产物写入 artifact 根目录；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/run-multi-market-experiment/start` | 创建 Rust 多市场参数实验后台任务 | 候选之间协作取消；状态走 GET 查询，取消走 POST 请求；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/multi-account-backtest/start` | 创建多账户 Rust Bar 回测后台任务 | 成员之间及当前账户的 Bar 循环协作取消；状态、结果与取消走 `/app/runs/{run_id}`，事件通过 `/events` 读取；账户失败隔离并在完成后返回批次结果；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |

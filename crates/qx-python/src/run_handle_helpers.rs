@@ -3,8 +3,8 @@ use pyo3::prelude::*;
 use qx_app::{
     AppError, BacktestOutcome, DepthBacktestOutcome, MultiAccountBacktestResult,
     MultiAccountDepthBacktestResult, MultiLegBacktestOutcome, MultiMarketBacktestOutcome,
-    RunDepthExperimentResult, RunExperimentResult, RunHandle, RunMultiLegExperimentResult,
-    RunMultiMarketExperimentResult, RunStatus,
+    MultiMarketDepthBacktestOutcome, RunDepthExperimentResult, RunExperimentResult, RunHandle,
+    RunMultiLegExperimentResult, RunMultiMarketExperimentResult, RunStatus,
 };
 use std::time::{Duration, Instant};
 
@@ -16,6 +16,7 @@ pub(super) fn events_json(run: &NativeRun, after_seq: u64) -> Result<String, App
         NativeRun::Experiment(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiLeg(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiMarket(handle) => handle.events_json_after(after_seq),
+        NativeRun::MultiMarketDepth(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiLegExperiment(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiMarketExperiment(handle) => handle.events_json_after(after_seq),
         NativeRun::MultiAccount(handle) => handle.events_json_after(after_seq),
@@ -40,6 +41,7 @@ pub(super) enum NativeRun {
     Experiment(RunHandle<RunExperimentResult>),
     MultiLeg(RunHandle<MultiLegBacktestOutcome>),
     MultiMarket(RunHandle<MultiMarketBacktestOutcome>),
+    MultiMarketDepth(RunHandle<MultiMarketDepthBacktestOutcome>),
     MultiLegExperiment(RunHandle<RunMultiLegExperimentResult>),
     MultiMarketExperiment(RunHandle<RunMultiMarketExperimentResult>),
     MultiAccount(RunHandle<MultiAccountBacktestResult>),
@@ -62,6 +64,7 @@ impl PyRunHandle {
             NativeRun::Experiment(handle) => handle.run_id(),
             NativeRun::MultiLeg(handle) => handle.run_id(),
             NativeRun::MultiMarket(handle) => handle.run_id(),
+            NativeRun::MultiMarketDepth(handle) => handle.run_id(),
             NativeRun::MultiLegExperiment(handle) => handle.run_id(),
             NativeRun::MultiMarketExperiment(handle) => handle.run_id(),
             NativeRun::MultiAccount(handle) => handle.run_id(),
@@ -78,6 +81,7 @@ impl PyRunHandle {
             NativeRun::Experiment(handle) => handle.status(),
             NativeRun::MultiLeg(handle) => handle.status(),
             NativeRun::MultiMarket(handle) => handle.status(),
+            NativeRun::MultiMarketDepth(handle) => handle.status(),
             NativeRun::MultiLegExperiment(handle) => handle.status(),
             NativeRun::MultiMarketExperiment(handle) => handle.status(),
             NativeRun::MultiAccount(handle) => handle.status(),
@@ -93,6 +97,7 @@ impl PyRunHandle {
             NativeRun::Experiment(handle) => handle.cancel(),
             NativeRun::MultiLeg(handle) => handle.cancel(),
             NativeRun::MultiMarket(handle) => handle.cancel(),
+            NativeRun::MultiMarketDepth(handle) => handle.cancel(),
             NativeRun::MultiLegExperiment(handle) => handle.cancel(),
             NativeRun::MultiMarketExperiment(handle) => handle.cancel(),
             NativeRun::MultiAccount(handle) => handle.cancel(),
@@ -117,6 +122,7 @@ impl PyRunHandle {
                 NativeRun::Experiment(handle) => handle.status(),
                 NativeRun::MultiLeg(handle) => handle.status(),
                 NativeRun::MultiMarket(handle) => handle.status(),
+                NativeRun::MultiMarketDepth(handle) => handle.status(),
                 NativeRun::MultiLegExperiment(handle) => handle.status(),
                 NativeRun::MultiMarketExperiment(handle) => handle.status(),
                 NativeRun::MultiAccount(handle) => handle.status(),
@@ -165,6 +171,11 @@ impl PyRunHandle {
                 .transpose()
                 .map_err(app_error),
             NativeRun::MultiMarket(handle) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|outcome| outcome.to_json()))
+                .transpose()
+                .map_err(app_error),
+            NativeRun::MultiMarketDepth(handle) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|outcome| outcome.to_json()))
                 .transpose()

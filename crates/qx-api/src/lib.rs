@@ -64,7 +64,6 @@ pub(crate) use transport::websocket_accept;
 use transport::{
     configure_connection, parse_http_request, read_request, tls_stream, write_http_response,
 };
-
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum EventBusError {
     CapacityMustBePositive,
@@ -72,12 +71,10 @@ pub enum EventBusError {
     CursorTooOld { requested: u64, oldest: u64 },
     CursorAhead { requested: u64, next_seq: u64 },
 }
-
 #[derive(Clone)]
 pub struct ApiEventBus {
     inner: Arc<(Mutex<EventBusState>, Condvar)>,
 }
-
 struct EventBusState {
     capacity: usize,
     next_seq: u64,
@@ -1704,6 +1701,9 @@ qx_control_retired_audit_records_total {}\n",
             ("POST", "/app/run-depth-experiment") => app::depth_experiment(body, &self.app_paths),
             ("POST", "/app/multi-leg-backtest") => app::multi_leg_backtest(body, &self.app_paths),
             ("POST", "/app/multi-market-backtest") => app::multi_market(body, &self.app_paths),
+            ("POST", "/app/multi-market-depth-backtest") => {
+                app::multi_market_depth(body, &self.app_paths)
+            }
             ("POST", "/app/multi-account-backtest") => app::multi_account(body, &self.app_paths),
             ("POST", "/app/run-multi-leg-experiment") => app::multi_leg_grid(body, &self.app_paths),
             ("POST", "/app/run-multi-market-experiment") => app::multi_market_grid(body, app_paths),

@@ -190,6 +190,36 @@ pub(super) fn start_multi_market_backtest(
     }
 }
 
+pub(super) fn start_multi_market_depth_backtest(
+    body: &str,
+    paths: &AppPaths,
+    registry: &AppRunRegistry,
+) -> ApiResponse {
+    let mut spec = match MultiMarketDepthBacktestSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    for market in &mut spec.markets {
+        if let Err(error) = resolve_input_path(&mut market.depth_path, &paths.data_root) {
+            return respond(Err(error));
+        }
+    }
+    let run_id = spec.run_id.clone();
+    spec.output_dir = paths
+        .artifact_root
+        .join(&run_id)
+        .to_string_lossy()
+        .into_owned();
+    if let Err(error) = registry.reserve(run_id.clone()) {
+        return respond(Err(error));
+    }
+    let handle = spec.start(context(&run_id));
+    match registry.attach(&run_id, AppRun::MultiMarketDepth(handle)) {
+        Ok(()) => registry.status(&run_id),
+        Err(error) => respond(Err(error)),
+    }
+}
+
 pub(super) fn start_multi_leg_experiment(
     body: &str,
     paths: &AppPaths,

@@ -56,8 +56,8 @@ pub use cases::{
     run_depth_backtest, run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots,
     run_depth_experiment, run_experiment, run_multi_account_backtest,
     run_multi_account_depth_backtest, run_multi_leg_backtest, run_multi_leg_backtest_with_strategy,
-    run_multi_leg_experiment, run_multi_market_backtest, run_multi_market_experiment,
-    run_provider_backtest_with_manifest, run_provider_depth_backtest,
+    run_multi_leg_experiment, run_multi_market_backtest, run_multi_market_depth_backtest,
+    run_multi_market_experiment, run_provider_backtest_with_manifest, run_provider_depth_backtest,
     start_depth_backtest_with_strategy, start_depth_backtest_with_strategy_slots, validate_dataset,
     validate_trade_control, verify_depth_run, verify_run, CompareRunsResult, CompareRunsSpec,
     ComparedRun, ComparedRunResult, DepthExperimentCandidate, DepthExperimentRankedCandidate,
@@ -104,13 +104,24 @@ pub use spec::{
     DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestResult, MultiAccountBacktestSpec,
     MultiAccountBacktestSummary, MultiAccountDepthBacktestResult, MultiAccountDepthBacktestSpec,
     MultiAccountDepthBacktestSummary, MultiAccountDepthRunResult, MultiAccountRunResult,
-    MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegFillModel, PortfolioBacktestConfig,
-    PortfolioStrategySpec, ProtectiveExitSpec, RiskParityAssetSpec, RiskParityResult,
-    RiskParitySpec, VerificationResult, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
+    MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegFillModel,
+    MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec,
+    PortfolioBacktestConfig, PortfolioStrategySpec, ProtectiveExitSpec, RiskParityAssetSpec,
+    RiskParityResult, RiskParitySpec, VerificationResult, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
     BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
-    MAX_MULTI_ACCOUNT_RUNS, MIN_BACKTEST_BARS, MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION,
-    MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
-    RISK_PARITY_SPEC_SCHEMA_VERSION,
+    MAX_MULTI_ACCOUNT_RUNS, MAX_MULTI_MARKET_DEPTH_MARKETS, MIN_BACKTEST_BARS,
+    MIN_MULTI_MARKET_DEPTH_MARKETS, MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION,
+    MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION, MULTI_MARKET_DEPTH_BACKTEST_SCHEMA_VERSION,
+    RISK_PARITY_RESULT_SCHEMA_VERSION, RISK_PARITY_SPEC_SCHEMA_VERSION,
 };
 pub use strategy_catalog::{builtin_strategy_catalog, BuiltinStrategyInfo};
 pub use trade_facts::{rejection_count, rejection_facts, rejection_facts_line, spread_group_id};
+
+/// Run an L2 multi-market portfolio with caller-authored strategies in selected slots.
+pub fn run_multi_market_depth_backtest_with_strategy_slots(
+    spec: &MultiMarketDepthBacktestSpec,
+    strategies: Vec<(StrategyArtifactIdentity, Box<dyn qx_strategy::Strategy>)>,
+    context: &RunContext,
+) -> Result<MultiMarketDepthBacktestOutcome, AppError> {
+    cases::run_multi_market_depth_backtest_with_strategy_slots(spec, strategies, context)
+}

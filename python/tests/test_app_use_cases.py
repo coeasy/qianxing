@@ -104,6 +104,10 @@ def _load_native():
                 "app_start_multi_market_backtest",
                 "app_run_multi_market_backtest_with_strategy_slots",
                 "app_start_multi_market_backtest_with_strategy_slots",
+                "app_run_multi_market_depth_backtest",
+                "app_start_multi_market_depth_backtest",
+                "app_run_multi_market_depth_backtest_with_strategy_slots",
+                "app_start_multi_market_depth_backtest_with_strategy_slots",
                 "app_run_multi_leg_experiment",
                 "app_start_multi_leg_experiment",
                 "app_run_multi_market_experiment",
@@ -555,6 +559,8 @@ class AppUseCaseTests(unittest.TestCase):
             ("start_multi_leg_backtest", "/app/multi-leg-backtest/start", True),
             ("run_multi_market_backtest", "/app/multi-market-backtest", False),
             ("start_multi_market_backtest", "/app/multi-market-backtest/start", True),
+            ("run_multi_market_depth_backtest", "/app/multi-market-depth-backtest", False),
+            ("start_multi_market_depth_backtest", "/app/multi-market-depth-backtest/start", True),
             ("run_multi_market_experiment", "/app/run-multi-market-experiment", False),
             ("start_multi_market_experiment", "/app/run-multi-market-experiment/start", True),
             ("run_multi_leg_experiment", "/app/run-multi-leg-experiment", False),
@@ -708,6 +714,21 @@ class AppUseCaseTests(unittest.TestCase):
                 "return_bps": 0,
                 "max_drawdown_bps": 0,
                 "artifact_path": "portfolio.json",
+            },
+            "run_multi_market_depth_backtest": {
+                "run_id": "portfolio-depth",
+                "account_id": "shared",
+                "spec_fingerprint": "spec",
+                "data_fingerprint": "data",
+                "shared_result_hash": "result",
+                "markets_total": 2,
+                "successful_fills": 0,
+                "pending_orders": 0,
+                "equity_points": 2,
+                "final_equity_raw": 100,
+                "return_bps": 0,
+                "max_drawdown_bps": 0,
+                "artifact_path": "portfolio-depth.json",
             },
             "run_multi_market_experiment": {
                 "schema_version": 1,
@@ -3450,6 +3471,147 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(custom_grid_artifact["strategy_identities"][0]["strategy_version"], "python-grid-v1")
 
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    def test_multi_market_depth_typed_sdk_shares_cash_across_python_strategy_slots(self):
+        self._require()
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import (
+            BuiltinStrategySpec,
+            InstrumentId,
+            MultiMarketDepthBacktestMarket,
+            MultiMarketDepthBacktestSpec,
+            TradingInstrumentSpec,
+            run_multi_market_depth_backtest_with_strategy_slots,
+            start_multi_market_depth_backtest,
+            start_multi_market_depth_backtest_with_strategy_slots,
+        )
+
+        scale = 1_000_000_000
+        markets = []
+        for index, (symbol, venue, base, ask) in enumerate((
+            ("BTCUSDT", "BINANCE", "BTC", 80),
+            ("ETHUSDT", "BYBIT", "ETH", 60),
+        )):
+            instrument = InstrumentId(symbol, venue)
+            snapshots = []
+            for ts in (1_000, 2_000):
+                snapshots.append({
+                    "instrument": instrument.to_dict(),
+                    "ts": ts,
+                    "sequence": ts,
+                    "bids": [{"price": ask * scale, "qty": 2 * scale}],
+                    "asks": [{"price": ask * scale, "qty": 2 * scale}],
+                })
+            depth_path = self.output_dir / f"multi-market-depth-{index}.json"
+            depth_path.write_text(json.dumps({
+                "schema_version": 1,
+                "source": f"python-multi-market-depth-{index}",
+                "instrument": instrument.to_dict(),
+                "snapshots": snapshots,
+            }), encoding="utf-8")
+            market_spec = TradingInstrumentSpec(
+                instrument=instrument,
+                product="spot",
+                base_currency=base,
+                quote_currency="USDT",
+                settlement_currency="USDT",
+                contract_size=scale,
+                linear=False,
+                inverse=False,
+                price_tick=1,
+                qty_step=1,
+                min_qty=1,
+                max_leverage=1,
+                maintenance_margin_bps=0,
+                valid_from=1,
+            )
+            markets.append(MultiMarketDepthBacktestMarket(
+                instrument=f"{symbol}.{venue}",
+                depth_path=str(depth_path),
+                priority=1 - index,
+                market_spec=market_spec,
+                strategy=BuiltinStrategySpec(
+                    kind="sma_cross",
+                    strategy_id=f"python-l2-{index}",
+                ),
+            ))
+        spec = MultiMarketDepthBacktestSpec(
+            run_id="python-multi-market-depth-slots",
+            account_id="acct.python-multi-market-depth",
+            settlement_currency="USDT",
+            initial_cash_raw=100 * scale,
+            output_dir=str(self.output_dir / "multi-market-depth-out"),
+            markets=tuple(markets),
+        )
+
+        class BuyOnce:
+            def __init__(self):
+                self.submitted = False
+
+            def on_event(self, context, event):
+                item = next(iter(event.values()))
+                intents = []
+                if not self.submitted:
+                    self.submitted = True
+                    intents.append({
+                        "intent_id": 1,
+                        "instrument": item["instrument"],
+                        "side": "Buy",
+                        "qty": scale,
+                        "limit": None,
+                        "policy": None,
+                        "reduce_only": False,
+                        "post_only": False,
+                    })
+                return {
+                    "schema_version": 1,
+                    "request_id": f"{context['strategy_id']}:{item['ts']}",
+                    "strategy_id": context["strategy_id"],
+                    "signal_id": item["ts"],
+                    "confidence": 10_000,
+                    "priority": 0,
+                    "expires_at": 0,
+                    "intents": intents,
+                }
+
+        bindings = [{
+            "strategy_id": f"python-l2-{index}",
+            "strategy_version": "python-l2-test-v1",
+            "source_sha256": str(index + 1) * 64,
+            "strategy": BuyOnce(),
+        } for index in range(2)]
+        outcome = run_multi_market_depth_backtest_with_strategy_slots(spec, bindings)
+        self.assertEqual(outcome.markets_total, 2)
+        self.assertEqual(outcome.successful_fills, 1)
+        artifact = json.loads(Path(outcome.artifact_path).read_text(encoding="utf-8"))
+        self.assertTrue(artifact["replay_verified"])
+        self.assertEqual(artifact["per_market_fills"]["ETHUSDT.BYBIT"], 1)
+        self.assertEqual(artifact["per_market_fills"]["BTCUSDT.BINANCE"], 0)
+
+        builtin_spec = MultiMarketDepthBacktestSpec(
+            **{**spec.__dict__, "run_id": "python-multi-market-depth-handle",
+               "output_dir": str(self.output_dir / "multi-market-depth-handle")}
+        )
+        handle = start_multi_market_depth_backtest(builtin_spec)
+        self.assertEqual(handle.wait(10_000), "succeeded")
+        self.assertEqual(handle.result().markets_total, 2)
+        self.assertIsNone(handle.result(), "multi-market depth result is delivered once")
+
+        custom_handle_spec = MultiMarketDepthBacktestSpec(
+            **{**spec.__dict__, "run_id": "python-multi-market-depth-custom-handle",
+               "output_dir": str(self.output_dir / "multi-market-depth-custom-handle")}
+        )
+        custom_handle = start_multi_market_depth_backtest_with_strategy_slots(
+            custom_handle_spec,
+            [{**binding, "strategy": BuyOnce()} for binding in bindings],
+        )
+        self.assertEqual(custom_handle.wait(10_000), "succeeded")
+        self.assertEqual(custom_handle.result().successful_fills, 1)
+        print(
+            "MULTI_MARKET_DEPTH_PYTHON_OBSERVED markets=2 fills=1 "
+            "callback_slots=2 replay_verified=true custom_run_handle=succeeded "
+            "builtin_run_handle=succeeded"
+        )
+
     def test_a_failure_raises_the_same_document_the_other_entrypoints_print(self):
         self._require()
         spec = self._spec("py-missing", self.output_dir, "nope.json")

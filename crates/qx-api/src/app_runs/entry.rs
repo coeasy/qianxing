@@ -19,6 +19,7 @@ impl AppRunEntry {
             AppRun::MultiMarketExperiment(handle) => handle.observe(),
             AppRun::MultiAccount(handle) => handle.observe(),
             AppRun::MultiMarket(handle) => handle.observe(),
+            AppRun::MultiMarketDepth(handle) => handle.observe(),
         };
         if observation.events.len() > self.events.len() {
             self.events = observation.events;
@@ -41,6 +42,7 @@ impl AppRunEntry {
             Some(AppRun::MultiMarketExperiment(handle)) => handle.cancel(),
             Some(AppRun::MultiAccount(handle)) => handle.cancel(),
             Some(AppRun::MultiMarket(handle)) => handle.cancel(),
+            Some(AppRun::MultiMarketDepth(handle)) => handle.cancel(),
             None => {}
         }
     }
@@ -77,6 +79,9 @@ impl AppRunEntry {
                 .try_take_result()
                 .map(|result| result.and_then(|value| value.to_json())),
             Some(AppRun::MultiMarket(handle)) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|value| value.to_json())),
+            Some(AppRun::MultiMarketDepth(handle)) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|value| value.to_json())),
         };

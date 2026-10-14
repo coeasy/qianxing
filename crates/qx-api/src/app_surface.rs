@@ -41,6 +41,9 @@ use std::path::PathBuf;
 
 #[path = "app_surface/capabilities.rs"]
 mod capabilities;
+#[path = "app_surface/multi_market_depth.rs"]
+mod multi_market_depth;
+pub(crate) use multi_market_depth::multi_market_depth;
 
 #[derive(Clone, Debug)]
 pub(crate) struct AppPaths {

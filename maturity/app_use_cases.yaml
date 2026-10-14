@@ -244,3 +244,13 @@ use_cases:
     artifacts: "不可变 <experiment_id>.multi-market-experiment.json 与每个候选的共享多市场回测产物"
     error_categories: "AppErrorCategory 八类；无效网格/目标槽/数据为 InvalidInput，异身份产物为 Conflict"
     capability_level: "R"
+  - name: run_multi_market_depth_backtest
+    input_schema: "MultiMarketDepthBacktestSpec v1（2..=32 个同账户 L2 OrderBook 现货市场；每市场一个策略槽，支持 Rust 内置与 Rust/Python 本地回调；统一结算币种/账本；衍生品跨市场保证金暂不支持）"
+    output_schema: "MultiMarketDepthBacktestOutcome v1（共享账簿结果哈希、逐市场成交/权益摘要、重放验证产物）"
+    capability: "RESEARCH"
+    idempotency_key: "run_id + 规范规格/排序市场 DepthFrame 指纹 + 策略 ID/version/source SHA-256；同身份重跑产物须逐字节相同，异内容返回 Conflict"
+    cancellation: "同步入口不取消；MultiMarketDepthBacktestSpec::start 与 start_with_strategy_slots 在数据准备和共享 Rust 快照循环协作取消，不发布部分结果"
+    progress: "RunHandle 提供状态、事件、取消、等待和一次性结果；无百分比进度"
+    artifacts: "<run_id>.multi-market-depth.json（市场数据身份、策略身份、逐市场成交、共享账簿/权益/事件与 replay_verified）"
+    error_categories: "AppErrorCategory 八类；非法市场/资金/数据为 InvalidInput，衍生品跨市场保证金明确拒绝，异身份产物为 Conflict"
+    capability_level: "R"

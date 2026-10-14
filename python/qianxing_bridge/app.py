@@ -474,6 +474,33 @@ def start_multi_market_backtest(spec: "str | dict[str, Any]") -> Any:
     return native.app_start_multi_market_backtest(_payload(spec))
 
 
+def run_multi_market_depth_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """Run same-account multi-market L2 execution in the shared Rust kernel."""
+    return json.loads(native.app_run_multi_market_depth_backtest(_payload(spec)))
+
+
+def start_multi_market_depth_backtest(spec: "str | dict[str, Any]") -> Any:
+    return native.app_start_multi_market_depth_backtest(_payload(spec))
+
+
+def run_multi_market_depth_backtest_with_strategy_slots(
+    spec: "str | dict[str, Any]", strategies: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    identities_json, callbacks = _strategy_slot_payload(strategies)
+    return json.loads(native.app_run_multi_market_depth_backtest_with_strategy_slots(
+        _payload(spec), identities_json, callbacks
+    ))
+
+
+def start_multi_market_depth_backtest_with_strategy_slots(
+    spec: "str | dict[str, Any]", strategies: Sequence[Mapping[str, Any]]
+) -> Any:
+    identities_json, callbacks = _strategy_slot_payload(strategies)
+    return native.app_start_multi_market_depth_backtest_with_strategy_slots(
+        _payload(spec), identities_json, callbacks
+    )
+
+
 def run_multi_market_experiment(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_run_multi_market_experiment(_payload(spec)))
 

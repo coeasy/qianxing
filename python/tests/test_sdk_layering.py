@@ -78,6 +78,7 @@ LOCAL_FREE_FUNCTIONS = (
     "validate_dataset",
     "run_depth_backtest",
     "run_multi_leg_backtest",
+    "run_multi_market_depth_backtest",
 )
 
 #: 可选适配器：核心层不得在 import 期把它们拉进来。

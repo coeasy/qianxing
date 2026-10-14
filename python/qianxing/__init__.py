@@ -9,7 +9,7 @@ metrics in Python. Install the ``qianxing`` wheel to use this namespace.
 ===================  ==============================================  ==================
 子层                 放什么                                           要不要服务
 ===================  ==============================================  ==================
-``qianxing.core``    本地用例：校验、Bar/Tick/多腿回测、协作式句柄      不要
+``qianxing.core``    本地用例：校验、Bar/Tick/多市场盘口/多腿回测、协作式句柄      不要
 ``qianxing.client``  远端 API：提交/状态/取消/等待/取结果                要一台 qx-api
 ``qianxing.data``    数据集与合约身份（provider-neutral）                不要
 ``qianxing.strategy``策略 contract 与 worker 的输入输出类型              不要
@@ -59,6 +59,9 @@ from .app import (
     MultiMarketBacktestMarket,
     MultiMarketBacktestOutcome,
     MultiMarketBacktestSpec,
+    MultiMarketDepthBacktestMarket,
+    MultiMarketDepthBacktestOutcome,
+    MultiMarketDepthBacktestSpec,
     MultiAccountBacktestResult,
     MultiAccountBacktestSpec,
     MultiAccountRunResult,
@@ -141,6 +144,8 @@ from .app import (
     start_multi_market_experiment,
     start_multi_market_experiment_with_strategy,
     start_multi_market_backtest_with_strategy_slots,
+    start_multi_market_depth_backtest,
+    start_multi_market_depth_backtest_with_strategy_slots,
     start_multi_leg_backtest_with_strategy,
     run_depth_backtest,
     run_depth_backtest_with_strategy,
@@ -150,6 +155,8 @@ from .app import (
     run_multi_market_experiment,
     run_multi_market_experiment_with_strategy,
     run_multi_market_backtest_with_strategy_slots,
+    run_multi_market_depth_backtest,
+    run_multi_market_depth_backtest_with_strategy_slots,
     run_multi_leg_backtest_with_strategy,
     run_multi_account_backtest,
     run_multi_account_depth_backtest,
@@ -187,6 +194,9 @@ __all__ = [
     "MultiMarketBacktestMarket",
     "MultiMarketBacktestOutcome",
     "MultiMarketBacktestSpec",
+    "MultiMarketDepthBacktestMarket",
+    "MultiMarketDepthBacktestOutcome",
+    "MultiMarketDepthBacktestSpec",
     "MultiAccountBacktestResult",
     "MultiAccountBacktestSpec",
     "MultiAccountRunResult",
@@ -269,6 +279,8 @@ __all__ = [
     "start_multi_market_experiment",
     "start_multi_market_experiment_with_strategy",
     "start_multi_market_backtest_with_strategy_slots",
+    "start_multi_market_depth_backtest",
+    "start_multi_market_depth_backtest_with_strategy_slots",
     "start_multi_leg_backtest_with_strategy",
     "run_depth_backtest",
     "run_depth_backtest_with_strategy",
@@ -278,6 +290,8 @@ __all__ = [
     "run_multi_market_experiment",
     "run_multi_market_experiment_with_strategy",
     "run_multi_market_backtest_with_strategy_slots",
+    "run_multi_market_depth_backtest",
+    "run_multi_market_depth_backtest_with_strategy_slots",
     "run_multi_leg_backtest_with_strategy",
     "run_multi_account_backtest",
     "run_multi_account_depth_backtest",

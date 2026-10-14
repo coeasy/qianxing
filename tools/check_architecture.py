@@ -1549,6 +1549,7 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::run_backtest_with_strategy_slots": "qx-sdk Rust 多 callback 组合回测入口；由外部 SDK 消费者提供具名策略槽",
     "qx-sdk::start_backtest_with_strategy_slots": "qx-sdk Rust 多 callback 可取消组合回测入口；由外部 SDK 消费者提供具名策略槽",
     "qx-sdk::start_multi_market_backtest_with_strategy_slots": "qx-sdk Rust 多市场可取消自定义策略入口；仅由外部 SDK 消费者提供多语言策略槽",
+    "qx-sdk::start_multi_market_depth_backtest_with_strategy_slots": "qx-sdk Rust 多市场 L2 可取消自定义策略入口；由独立 SDK 消费者测试实际调用，生产读取者由外部应用提供",
     "qx-sdk::run_multi_market_backtest_with_strategy_slots": "qx-sdk Rust 多市场同步自定义策略入口；仅由外部 SDK 消费者提供多语言策略槽",
     "qx-sdk::run_multi_market_experiment_with_strategy_factory": "qx-sdk Rust 多市场同步策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-sdk::start_multi_market_experiment_with_strategy_factory": "qx-sdk Rust 可取消多市场策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
@@ -6237,6 +6238,7 @@ def api_surface_doc_check() -> None:
         ("RUN_START_MULTI_LEG_ROUTE", "POST"),
         ("RUN_START_MULTI_ACCOUNT_ROUTE", "POST"),
         ("RUN_START_MULTI_MARKET_ROUTE", "POST"),
+        ("RUN_START_MARKET_DEPTH_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_MARKET_EXPERIMENT_ROUTE", "POST"),
     )
@@ -6271,6 +6273,7 @@ def api_surface_doc_check() -> None:
             ("POST", "/app/multi-leg-backtest/start"),
             ("POST", "/app/multi-account-backtest/start"),
             ("POST", "/app/multi-market-backtest/start"),
+            ("POST", "/app/multi-market-depth-backtest/start"),
             ("POST", "/app/run-multi-leg-experiment/start"),
             ("POST", "/app/run-multi-market-experiment/start"),
         },
@@ -19102,11 +19105,11 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
 # 空名册的能力必须在这里写明理由；理由里的**令牌**还要在 `capability-matrix.yaml` 的
 # `rust_sdk` 行 limitations 里出现（两张登记面不许各说各话）。
 SDK_FACADE_CAPABILITY_GAPS: dict[str, str] = {}
-# §6.1「sync/async run」里 async 那一半的实物：qx-app 的十个 `*Spec::start`。
+# §6.1「sync/async run」里 async 那一半的实物：qx-app 的十一个 `*Spec::start`。
 SDK_FACADE_ASYNC_ENTRY_PATTERN = re.compile(
     r"pub fn start\(self, context: RunContext\) -> (?:crate::)?RunHandle<"
 )
-SDK_FACADE_ASYNC_ENTRY_COUNT = 10
+SDK_FACADE_ASYNC_ENTRY_COUNT = 11
 # 独立消费者只许说门面那一种语言：出现别的前缀就等于"门面漏了一块，集成方还得自己补"。
 SDK_FACADE_FOREIGN_PREFIXES = ("qx_app::", "qx_cli", "qx_api::", "qx_python", "qx_adapter::")
 

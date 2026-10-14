@@ -49,6 +49,8 @@ inline constexpr std::string_view kMultiAccountBacktest = "/app/multi-account-ba
 inline constexpr std::string_view kMultiAccountBacktestStart = "/app/multi-account-backtest/start";
 inline constexpr std::string_view kMultiMarketBacktest = "/app/multi-market-backtest";
 inline constexpr std::string_view kMultiMarketBacktestStart = "/app/multi-market-backtest/start";
+inline constexpr std::string_view kMultiMarketDepthBacktest = "/app/multi-market-depth-backtest";
+inline constexpr std::string_view kMultiMarketDepthBacktestStart = "/app/multi-market-depth-backtest/start";
 inline constexpr std::string_view kBacktestStart = "/app/backtest/start";
 inline constexpr std::string_view kVerify = "/app/verify";
 inline constexpr std::string_view kVerifyDepth = "/app/verify-depth";
@@ -84,10 +86,11 @@ inline constexpr std::string_view kLiveEvents = "/events/live";
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 40> kDeclaredRoutes = {
+inline constexpr std::array<std::string_view, 42> kDeclaredRoutes = {
     kValidateDataset,       kBacktest, kProviderBacktest, kProviderDepthBacktest,
     kMultiAccountBacktest,  kMultiAccountBacktestStart,
     kMultiMarketBacktest,   kMultiMarketBacktestStart, kBuiltinStrategyCatalog,
+    kMultiMarketDepthBacktest, kMultiMarketDepthBacktestStart,
     kApplicationCapabilities,
     kProviderPreflight,
     kMultiMarketExperiment, kMultiMarketExperimentStart,
@@ -187,6 +190,14 @@ public:
 
     AppResponse start_multi_market_backtest(std::string_view spec_json) const {
         return post(routes::kMultiMarketBacktestStart, spec_json);
+    }
+
+    AppResponse run_multi_market_depth_backtest(std::string_view spec_json) const {
+        return post(routes::kMultiMarketDepthBacktest, spec_json);
+    }
+
+    AppResponse start_multi_market_depth_backtest(std::string_view spec_json) const {
+        return post(routes::kMultiMarketDepthBacktestStart, spec_json);
     }
 
     AppResponse run_multi_market_experiment(std::string_view spec_json) const {

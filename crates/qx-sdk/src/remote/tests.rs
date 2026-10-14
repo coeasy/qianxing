@@ -188,6 +188,36 @@ fn multi_market_backtest_uses_sync_and_start_server_routes() {
 }
 
 #[test]
+fn multi_market_depth_backtest_uses_sync_and_start_server_routes() {
+    let transport = FakeTransport::default();
+    let client = RemoteApiClient::new(transport);
+    let spec: qx_app::MultiMarketDepthBacktestSpec = serde_json::from_value(serde_json::json!({
+        "schema_version": 1,
+        "run_id": "remote-depth-portfolio",
+        "account_id": "shared",
+        "settlement_currency": "USDT",
+        "initial_cash_raw": 100,
+        "output_dir": "runs",
+        "markets": []
+    }))
+    .expect("spec schema deserializes before engine validation");
+    client.run_multi_market_depth_backtest(&spec).unwrap();
+    client.start_multi_market_depth_backtest(&spec).unwrap();
+    let calls = client.transport.0.lock().unwrap();
+    assert_eq!(
+        calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
+        [
+            "/app/multi-market-depth-backtest",
+            "/app/multi-market-depth-backtest/start"
+        ]
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&calls[0].1).unwrap()["run_id"],
+        "remote-depth-portfolio"
+    );
+}
+
+#[test]
 fn multi_market_experiment_uses_sync_and_start_server_routes() {
     let transport = FakeTransport::default();
     let client = RemoteApiClient::new(transport);

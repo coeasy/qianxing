@@ -28,7 +28,6 @@ pub const DATASET_SPEC_SCHEMA_VERSION: u32 = 1;
 pub const BACKTEST_SPEC_SCHEMA_VERSION: u32 = 1;
 
 /// Bar 回测对样本量的下限：少于这个数，"指标"不是指标而是噪声。
-///
 /// 它是一道**档位闸**而不是礼貌检查：样本不足时正确行为是
 /// [`AppErrorCategory::FidelityInsufficient`]，不是给一个看起来像结论的数。
 pub const MIN_BACKTEST_BARS: usize = 2;
@@ -478,7 +477,8 @@ pub use multi_leg::{
 mod multi_account;
 pub use multi_account::*;
 pub mod multi_market;
-
+mod multi_market_depth;
+pub use multi_market_depth::*;
 mod results;
 pub use results::{BacktestArtifacts, BacktestOutcome, DatasetVerdict, VerificationResult};
 mod risk_parity;

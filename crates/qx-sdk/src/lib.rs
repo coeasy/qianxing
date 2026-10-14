@@ -88,9 +88,10 @@ pub use qx_app::{
     CapitalAllocationAccount, CapitalAllocationRequest, CapitalAllocationResult,
     CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestSpec, MakerTakerFeeSchedule,
     MultiAccountBacktestSpec, MultiAccountDepthBacktestSpec, MultiLegBacktestSpec,
-    MultiLegFillModel, MultiMarketBacktestMarket, MultiMarketBacktestSpec, PortfolioBacktestConfig,
-    PortfolioStrategySpec, RiskParityAssetSpec, RiskParityResult, RiskParitySpec,
-    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
+    MultiLegFillModel, MultiMarketBacktestMarket, MultiMarketBacktestSpec,
+    MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec,
+    PortfolioBacktestConfig, PortfolioStrategySpec, RiskParityAssetSpec, RiskParityResult,
+    RiskParitySpec, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
     RunMultiMarketExperimentSpec, StrategyArtifactIdentity, TradeControlSpec, TradeWorkflow,
     ALGO_EXECUTION_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
     RISK_PARITY_SPEC_SCHEMA_VERSION,
@@ -105,7 +106,8 @@ pub use qx_app::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
     run_depth_backtest, run_depth_experiment, run_experiment, run_multi_account_backtest,
     run_multi_account_depth_backtest, run_multi_leg_backtest, run_multi_leg_backtest_with_strategy,
-    run_multi_leg_experiment, run_multi_market_backtest, run_multi_market_experiment,
+    run_multi_leg_experiment, run_multi_market_backtest, run_multi_market_depth_backtest,
+    run_multi_market_depth_backtest_with_strategy_slots, run_multi_market_experiment,
     validate_dataset, validate_trade_control,
 };
 
