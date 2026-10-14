@@ -141,6 +141,30 @@ def main() -> int:
         )
         assert accounts.summary["accounts_succeeded"] == 2, accounts.summary
 
+        overflow_runs = tuple(
+            qx.BacktestSpec(
+                run_id=f"wheel-smoke-overflow-{index}",
+                instrument="BTCUSDT.BINANCE",
+                bars_path=str(classic_bars),
+                settlement_currency="USDT",
+                initial_cash_raw=(1 << 127) - 1 if index == 0 else 1,
+                output_dir=str(output / f"overflow-{index}"),
+                strategy=base_strategy,
+                account_id=f"wheel-smoke-overflow-account-{index}",
+            )
+            for index in range(2)
+        )
+        try:
+            qx.run_multi_account_backtest(
+                qx.MultiAccountBacktestSpec(
+                    batch_id="wheel-smoke-overflow-preflight", runs=overflow_runs
+                )
+            )
+        except qx.InvalidInputError as error:
+            assert error.payload["category"] == "INVALID_INPUT", error.payload
+        else:
+            raise AssertionError("multi-account cash overflow must fail before execution")
+
         multileg = qx.run_multi_leg_backtest(
             qx.MultiLegBacktestSpec(
                 run_id="wheel-smoke-multileg",
@@ -169,6 +193,30 @@ def main() -> int:
             )
         )
         assert len(depth_result.result_hash) == 16
+        overflow_depth_runs = tuple(
+            qx.DepthBacktestSpec(
+                run_id=f"wheel-smoke-depth-overflow-{index}",
+                depth_path=str(depth),
+                tier="l2",
+                settlement_currency="USDT",
+                initial_cash_raw=(1 << 127) - 1 if index == 0 else 1,
+                output_dir=str(output / f"depth-overflow-{index}"),
+                strategy=base_strategy,
+                account_id=f"wheel-smoke-depth-overflow-account-{index}",
+            )
+            for index in range(2)
+        )
+        try:
+            qx.run_multi_account_depth_backtest(
+                qx.MultiAccountDepthBacktestSpec(
+                    batch_id="wheel-smoke-depth-overflow-preflight",
+                    runs=overflow_depth_runs,
+                )
+            )
+        except qx.InvalidInputError as error:
+            assert error.payload["category"] == "INVALID_INPUT", error.payload
+        else:
+            raise AssertionError("multi-account depth cash overflow must fail before execution")
 
         class BuyOnce:
             emitted = False
@@ -244,6 +292,7 @@ def main() -> int:
             f"classic_selection={classic_selection.succeeded_candidates}/{classic_selection.total_candidates} "
             f"parameter_grid={experiment.succeeded_candidates}/{experiment.total_candidates} "
             f"accounts={accounts.summary['accounts_succeeded']} "
+            "account_overflow_preflight=True depth_account_overflow_preflight=True "
             f"multileg={multileg.primary_fills}/{multileg.reference_fills} "
             f"depth_fills={depth_result.fills} custom_fills={custom.fills} "
             f"run_handle={events[-1].status} verified={verification.verified}"

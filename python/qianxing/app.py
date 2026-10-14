@@ -2876,10 +2876,8 @@ def start_multi_account_backtest(
 def run_multi_account_depth_backtest(
     spec: MultiAccountDepthBacktestSpec | dict[str, Any],
 ) -> MultiAccountDepthBacktestResult:
-    from qianxing_bridge import native
-
     return MultiAccountDepthBacktestResult.from_dict(
-        json.loads(native.app_run_multi_account_depth_backtest(_encode_payload(spec)))
+        _invoke(native.app_run_multi_account_depth_backtest, spec)
     )
 
 

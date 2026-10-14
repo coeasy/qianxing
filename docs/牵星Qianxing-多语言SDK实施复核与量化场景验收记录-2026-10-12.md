@@ -407,3 +407,9 @@ Python 十策略证据：
 - 两种批次规格现于 `validate()` 中按输入成员顺序使用 `checked_add` 预先验证初始本金总和；溢出统一作为 `InvalidInput` 在执行前拒绝。该保护仅保证摘要字段可表示，不代表多账户共享 Ledger/净额/组合风险已经实现。
 - 验收：`cargo fmt --check` 通过；`cargo test --offline -p qx-app --lib multi_account` 8/8 通过，涵盖 Bar 与深度批次的溢出输入、独立账户运行、失败隔离及取消边界。默认 Windows 临时目录权限导致首轮测试夹具建目录失败；将临时目录指向仓库内可写测试目录后重跑通过，未改变生产逻辑。
 - 其余发布限制仍在：跨账户组合风险与净额、Venue/Testnet 凭据认证、逐事件持久化恢复、远端 callback、C++ 默认 transport 及三平台 SDK 发布矩阵仍未闭环。
+
+## 50. 2026-10-14 修复：Python 深度多账户同步错误边界
+
+- 上一轮新 wheel 中对多账户 Tick/OrderBook 汇总溢出的验证意外暴露：`run_multi_account_depth_backtest` 直接解析原生返回值，原生抛出的 `QxAppError` 不经过 SDK `_translate_native_error`；同步调用者因此收到非稳定底层异常，而同系列其它入口会映射为公开 `InvalidInputError`。
+- 同步深度批次入口现统一走 `_invoke`；新增 mock 原生异常的映射回归用例。隔离 wheel smoke 同时对 Bar 与 Tick/OrderBook 两种极值资金批次验证公开 `InvalidInputError`，避免触碰数据读取/回测副作用。
+- wheel 版本首测通过 Bar 溢出断言并在深度溢出处发现上述缺口；修复尚需重新构建最终 wheel 后再登记产物证据。完整 Python 测试与最终 wheel 隔离 smoke 结果将在构建后补录。
