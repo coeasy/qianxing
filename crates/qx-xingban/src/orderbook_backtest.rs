@@ -14,8 +14,10 @@ use crate::orderbook_strategies::OrderBookStrategy;
 use crate::{DataTier, OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot};
 use std::collections::BTreeMap;
 
+mod funding;
 mod margin;
 mod report;
+use funding::{FundingContext, FundingDecision, SpotCashReservations};
 
 fn append_event(log: &mut EventLog, ts: u64, priority: u8, kind: EventKind) {
     let seq = log.alloc_seq();
@@ -223,7 +225,7 @@ impl OrderBookBacktestEngine {
         let mut matcher = OrderBookMatchingEngine::with_model(effective_model)
             .map_err(qx_core::QxError::BusinessViolation)?
             .with_fee_spec(instrument_spec.clone());
-        let estimate_fee = |notional| qx_core::bp_amount_checked(notional, fee_bps);
+        let mut spot_cash_reservations = SpotCashReservations::default();
         let mut ledger = Ledger::new();
         let mut log = EventLog::new();
         let mut oms = Oms::new();
@@ -272,6 +274,7 @@ impl OrderBookBacktestEngine {
                     )));
                 }
                 oms.cancel(*client_order_id)?;
+                spot_cash_reservations.release(order.client_id);
                 strategy.on_order_cancelled(&order)?;
                 cancelled_this_snapshot.push(*client_order_id);
             }
@@ -284,6 +287,13 @@ impl OrderBookBacktestEngine {
                     qx_core::QxError::ReconcileRequired("订单簿成交找不到 OMS 订单".into())
                 })?;
                 order.trace_fill(&mut fill, None, None);
+                let reservation_update = spot_cash_reservations.plan_fill(
+                    &order,
+                    &fill,
+                    instrument_spec.as_ref(),
+                    ledger.cash_for(&account_id, &currency),
+                    spot_cash_reservations.total()?,
+                )?;
                 strategy.validate_fill_budget(&order, &fill, instrument_spec.as_ref())?;
                 let entry_ids = qx_core::apply_fill_to_books(
                     &mut ledger,
@@ -292,6 +302,7 @@ impl OrderBookBacktestEngine {
                     &fill,
                     qx_core::FillTerms::resolve(instrument_spec.as_ref(), 1),
                 )?;
+                spot_cash_reservations.commit_fill(reservation_update);
                 fees_raw = fees_raw.saturating_add(fill.fee.raw());
                 turnover_raw = turnover_raw.saturating_add(book_notional(
                     instrument_spec.as_ref(),
@@ -441,78 +452,37 @@ impl OrderBookBacktestEngine {
                         );
                         continue;
                     }
-                    if !policy.reduce_only {
-                        let price = order.limit.or(reference_price).ok_or_else(|| {
-                            qx_core::QxError::BusinessViolation("订单簿订单缺少保证金参考价".into())
-                        })?;
-                        // 现货买入只能用可用现金：权益含持仓市值，用它放行会让 Ledger
-                        // 现金被静默透支成负数。衍生品按权益 + 初始保证金判定。
-                        let leveraged = spec.product.supports_leverage();
-                        let available_funding = if leveraged {
-                            let marks = BTreeMap::from([(instrument.clone(), price)]);
-                            let context = ValuationContext::spot(&account_id, &marks, &currency)
-                                .with_spec(Some(spec));
-                            ledger.valuate(&context)?.equity.raw()
-                        } else {
-                            ledger.cash_for(&account_id, &currency)
-                        };
-                        let required =
-                            spec.initial_margin(order.qty.raw(), price.raw(), policy.leverage)?;
-                        // Use the matcher fee helper so admission cannot overdraw a fully funded buy.
-                        let required_funding = if order.side == qx_core::Side::Buy {
-                            required
-                                .checked_add(estimate_fee(
-                                    spec.notional(order.qty.raw(), price.raw())?,
-                                )?)
-                                .ok_or_else(|| {
-                                    qx_core::QxError::Invariant("买入所需现金溢出".into())
-                                })?
-                        } else {
-                            required
-                        };
-                        if required_funding > available_funding {
-                            append_event(
-                                &mut log,
-                                snapshot.ts,
-                                Priority::COMMAND,
-                                EventKind::Rejected {
-                                    client_order_id: order.client_id,
-                                    reason: if leveraged {
-                                        "订单初始保证金超过订单簿回测权益".into()
-                                    } else {
-                                        "买入成本（含预估手续费）超过订单簿回测可用现金".into()
-                                    },
-                                },
-                            );
-                            continue;
-                        }
-                    }
-                } else if order.side == qx_core::Side::Buy
-                    && !order.policy.unwrap_or_default().reduce_only
-                {
-                    // 没有 market spec 的现货买入同样只能用可用现金。Bar 链在
-                    // `backtest.rs` 的 `cash_funded_spot_buy` 分支里就是这么挡的；缺了这一步，
-                    // 深度回测会把账簿现金静默透支成负数，同一份信号在两条链上给出两种结论。
-                    let price = order.limit.or(reference_price).ok_or_else(|| {
-                        qx_core::QxError::BusinessViolation("订单簿现货买入缺少参考价".into())
-                    })?;
-                    let notional = book_notional(None, order.qty.raw(), price.raw())?;
-                    let required_funding = notional
-                        .checked_add(estimate_fee(notional)?)
-                        .ok_or_else(|| qx_core::QxError::Invariant("买入所需现金溢出".into()))?;
-                    if required_funding > ledger.cash_for(&account_id, &currency) {
+                }
+                let policy = order.policy.unwrap_or_default();
+                let accepted_cash_reservation = match funding::preflight_order(
+                    &order,
+                    policy,
+                    instrument_spec.as_ref(),
+                    FundingContext {
+                        snapshot,
+                        reference_price,
+                        ledger: &ledger,
+                        account_id: &account_id,
+                        currency: &currency,
+                        fee_bps,
+                        reservations: &spot_cash_reservations,
+                    },
+                )? {
+                    FundingDecision::Accept { reserve_cash_raw } => reserve_cash_raw,
+                    FundingDecision::NotRequired => 0,
+                    FundingDecision::Reject(reason) => {
                         append_event(
                             &mut log,
                             snapshot.ts,
                             Priority::COMMAND,
                             EventKind::Rejected {
                                 client_order_id: order.client_id,
-                                reason: "买入成本（含预估手续费）超过订单簿回测可用现金".into(),
+                                reason,
                             },
                         );
                         continue;
                     }
-                }
+                };
                 let long_qty = ledger
                     .position_for_side(&account_id, &instrument, qx_core::PositionSide::Long)
                     .quantity
@@ -593,6 +563,13 @@ impl OrderBookBacktestEngine {
                 oms.submit(order.clone())?;
                 oms.accept(order.client_id)?;
                 strategy.on_order_accepted(&order, budget_price.map(|price| price.raw()))?;
+                if accepted_cash_reservation > 0 {
+                    spot_cash_reservations.reserve(
+                        order.client_id,
+                        order.qty.raw(),
+                        accepted_cash_reservation,
+                    )?;
+                }
                 append_event(
                     &mut log,
                     snapshot.ts,

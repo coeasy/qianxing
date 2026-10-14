@@ -1518,6 +1518,26 @@ def main() -> int:
     )
 
     executed(
+        "rust_orderbook_pending_cash_reservation",
+        "盘口现货挂单占用共享现金、按部分成交释放并防止价格跳空透支",
+        "crates/qx-xingban/src/orderbook_backtest/funding.rs",
+        [
+            "test", "--offline", "-p", "qx-xingban",
+            "orderbook_backtest::tests::funding",
+            "--lib", "--", "--test-threads=1",
+        ],
+        r"(test result: ok\. 3 passed; 0 failed)",
+        env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+        extra="pending_spot_buys=1 partial_fill_reservation=proportional cash_rejections=1 price_gap=fail_closed",
+        evidence=[
+            "crates/qx-xingban/src/orderbook_backtest/funding.rs",
+            "crates/qx-xingban/src/orderbook_backtest/tests/funding.rs",
+            "crates/qx-xingban/src/orderbook_backtest.rs",
+        ],
+        command_prefix="cargo",
+    )
+
+    executed(
         "rust_partial_fill_funding_release",
         "部分成交仅按成交比例释放挂单资金预留",
         "crates/qx-xingban/src/venue/tests.rs",

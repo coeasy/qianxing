@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 mod depth_bar_adapter;
 #[path = "tests/fill_feedback.rs"]
 mod fill_feedback;
+#[path = "tests/funding.rs"]
+mod funding;
 
 struct NativeBuy;
 

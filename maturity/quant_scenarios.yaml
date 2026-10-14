@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791939503
+generated_at_unix: 1791946993
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -220,7 +220,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=c7ff50c1c0eed4ab/28df330abc565f79,8f58096e315f0e55/065d3b5d4ccc3ca9,a7bf21bec41e4fc0/1e36622340498608,319dd66b88d8f002/aad625dcce0d9fe0"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=52bdef6d222cd8cd/eddaa84f74c81d3b,fdef0131dd4e69df/060bb5a9befae077,3c19102dd380b3a2/9ec8abcc5c1e5a26,8eb8720544dea69c/bf87f3d2f6a531f2"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -358,6 +358,14 @@ scenarios:
     exit_code: 0
     observed: "test result: ok. 1 passed; pending_buy_orders=3 cash_rejections=2 fills=3 account_cash_reserved_across_bars=true"
     evidence: ["crates/qx-xingban/src/backtest/test_cases/portfolio_budget.rs", "crates/qx-xingban/src/backtest/order_admission.rs", "crates/qx-xingban/src/venue.rs"]
+  - name: rust_orderbook_pending_cash_reservation
+    label: "盘口现货挂单占用共享现金、按部分成交释放并防止价格跳空透支"
+    status: executed
+    anchor: "crates/qx-xingban/src/orderbook_backtest/funding.rs"
+    command: "cargo test --offline -p qx-xingban orderbook_backtest::tests::funding --lib -- --test-threads=1"
+    exit_code: 0
+    observed: "test result: ok. 3 passed; 0 failed; pending_spot_buys=1 partial_fill_reservation=proportional cash_rejections=1 price_gap=fail_closed"
+    evidence: ["crates/qx-xingban/src/orderbook_backtest/funding.rs", "crates/qx-xingban/src/orderbook_backtest/tests/funding.rs", "crates/qx-xingban/src/orderbook_backtest.rs"]
   - name: rust_partial_fill_funding_release
     label: "部分成交仅按成交比例释放挂单资金预留"
     status: executed

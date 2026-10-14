@@ -144,6 +144,9 @@ serde_json = "1"
 
     env = dict(os.environ)
     env["CARGO_TARGET_DIR"] = str(TARGET)
+    # Keep Git checkouts and Cargo's FETCH_HEAD under the repo-owned validation
+    # root: some Windows profiles deny writes to the default user-level cache.
+    env["CARGO_HOME"] = str(TARGET / "sdk-validation" / "cargo-home")
     # Avoid a known MSVC debug-info invocation failure in this host image; this
     # is a consumer build configuration, not a source-code workaround.
     env["CARGO_PROFILE_DEV_DEBUG"] = "0"

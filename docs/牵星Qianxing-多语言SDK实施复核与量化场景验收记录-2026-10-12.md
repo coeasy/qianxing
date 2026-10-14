@@ -427,3 +427,11 @@ Python 十策略证据：
 - 上一轮新 wheel 中对多账户 Tick/OrderBook 汇总溢出的验证意外暴露：`run_multi_account_depth_backtest` 直接解析原生返回值，原生抛出的 `QxAppError` 不经过 SDK `_translate_native_error`；同步调用者因此收到非稳定底层异常，而同系列其它入口会映射为公开 `InvalidInputError`。
 - 同步深度批次入口现统一走 `_invoke`；新增 mock 原生异常的映射回归用例。隔离 wheel smoke 同时对 Bar 与 Tick/OrderBook 两种极值资金批次验证公开 `InvalidInputError`，避免触碰数据读取/回测副作用。
 - wheel 版本首测通过 Bar 溢出断言并在深度溢出处发现上述缺口；同步修复后全量 Python 测试 156/156 通过。基于提交 `2ecd1218e24c9775c10d7a59af10312bd9809863` 重新构建 Windows x64 `cp310-abi3` wheel，元数据检查及独立 target 安装通过；Python 3.13.13 isolated smoke 验证 17 策略、13/13 快速选择、4/4 参数候选、2 个独立账户、Bar 与深度溢出 fail-closed、双腿 3/3、OrderBook、callback、RunHandle 与 replay 均通过。产物 2,202,890 bytes，SHA-256 `e4d5fd847a55fa288959fbfefae1a4559f1fa60347658fff6ffb95e8ff8e7319`，证据见 `maturity/evidence/python_sdk/windows-cp310-abi3-20261014-2ecd1218.yaml`。
+
+## 53. 2026-10-14 修复：OrderBook 现货挂单预留与成交资金校验
+
+- 深审 Tick/OrderBook 回测资金链时发现：待成交现货买单在后续快照仍占用撮合器，但新单准入只比较账面现金；多个挂单因此可以重复使用同一余额。遇到价格跳空时，成交成本也可能高于成交前余额，形成负现金。
+- 新增订单簿现货现金预留台账：新买单准入时从可用现金扣除已有及本轮预留；撤单释放预留；部分成交按剩余数量比例保留本单预留；完全成交释放。成交入账前先校验成交后现金仍能覆盖其它挂单和本单剩余预留，价格跳空导致资金不足时 fail closed。买入市价单按当前卖一、卖出市价单按当前买一估算；衍生品仍由既有保证金路径处理。
+- 将资金决策/预留算法拆至 `orderbook_backtest/funding.rs`，回归测试拆至 `orderbook_backtest/tests/funding.rs`，避免订单簿主文件超过架构行数预算。新增三项测试覆盖并发挂单超额准入、部分成交预留递减、跳空成交拒绝。
+- 本轮验收：`cargo test --workspace --offline` 全量通过；`cargo clippy --offline -p qx-xingban --all-targets -- -D warnings` 通过；架构不变量门禁 1096/1096 通过；量化场景探针 68 executed、0 declared_not_executed、0 missing、1 blocked（真实 Live/testnet 外部凭据仍不可用）。Python 3.12 隔离安装 wheel 后全量 156 passed、1 skipped；Windows x64 `cp310-abi3` wheel 元数据/打包检查通过，SHA-256 `F641F2008D82E0E1A1FAA25204F9F8524795F1D912C21670D66EC7A415FD29F5`。Rust SDK 独立 Git 消费者构建与运行通过；复跑多市场 HTTP 路由测试通过。
+- 本修复闭合订单簿单账户现货挂单资金链，不代表跨账户组合风险、HTTP/Web E2E、C++ 默认 transport、其他平台安装包或真实交易所认证已完成。发布门槛仍需逐项核验这些开放项与远端 CI。
