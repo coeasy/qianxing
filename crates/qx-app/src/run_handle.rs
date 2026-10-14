@@ -136,12 +136,12 @@ impl<T: Send + 'static> RunHandle<T> {
             let mut events = worker_events
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            // Publish the terminal event before the result or terminal state.
-            // Pollers may observe either one as soon as it becomes visible;
-            // publishing them first exposes a terminal-without-event window.
-            push_event(&mut events, &worker_run_id, kind, status);
+            // State and events share this lock with status()/events_after().
+            // Publish both before releasing it so pollers cannot observe a
+            // terminal state/event without its matching counterpart.
             let _ = worker_sender.send(result);
             worker_state.store(terminal, Ordering::Release);
+            push_event(&mut events, &worker_run_id, kind, status);
         });
         if let Err(error) = spawn_result {
             state.store(FAILED, Ordering::Release);
@@ -207,6 +207,13 @@ impl<T: Send + 'static> RunHandle<T> {
     }
 
     pub fn status(&mut self) -> RunStatus {
+        // Worker terminal publication and cancellation both use the event
+        // lock. Taking it before polling the result prevents observing the
+        // state half of a terminal transition before its event is appended.
+        let _events = self
+            .events
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if self.result.is_none() {
             let received = self.receiver.lock().map(|receiver| receiver.try_recv());
             match received {
@@ -340,12 +347,22 @@ mod tests {
         for ordinal in 0..128 {
             let mut handle =
                 RunHandle::spawn(format!("run-poll-{ordinal}"), move |_| Ok(Some(ordinal)));
-            while handle.status() == RunStatus::Running {
+            loop {
+                let status = handle.status();
+                let events = handle.events_after(0);
+                let terminal_event = events
+                    .last()
+                    .is_some_and(|event| event.kind == RunEventKind::Succeeded);
+                if status == RunStatus::Succeeded || terminal_event {
+                    assert_eq!(handle.status(), RunStatus::Succeeded);
+                    assert_eq!(
+                        handle.events_after(0).last().unwrap().kind,
+                        RunEventKind::Succeeded
+                    );
+                    break;
+                }
                 thread::yield_now();
             }
-            assert_eq!(handle.status(), RunStatus::Succeeded);
-            let events = handle.events_after(0);
-            assert_eq!(events.last().unwrap().kind, RunEventKind::Succeeded);
             assert_eq!(handle.try_take_result().unwrap().unwrap(), ordinal);
         }
     }

@@ -417,10 +417,10 @@ Python 十策略证据：
 
 ## 52. 2026-10-14 修复：RunHandle 终态事件发布竞态
 
-- 轮询路径审计发现，Rust `RunHandle` 工作线程此前先发送结果并发布终态状态，再追加 `Succeeded`、`Failed` 或 `Cancelled` 事件。`status()` 可以直接消费结果并返回终态，因此客户端可能观察到终态却在同一时刻的事件游标查询里看不到终态事件，形成状态/事件短暂不一致。
-- 现将终态事件追加移到结果发送和终态状态发布之前。事件锁保护追加顺序，之后再公开结果；所有三种终态共用此路径。扩充并发轮询回归，在每次观察到 `Succeeded` 时同步断言事件游标已包含该终态事件。
-- 验收：`cargo test --offline -p qx-app --lib` 132/132、`cargo clippy --offline -p qx-app --all-targets -- -D warnings`、`cargo fmt --all -- --check` 与 `git diff --check` 通过。
-- 该修复只关闭进程内 Rust RunHandle 的短暂可见性竞态。HTTP 持久化运行注册表的逐事件日志、游标恢复，以及多语言/HTTP/Web E2E、跨账户组合风险、C++ 默认 transport 和外部交易所 testnet 认证仍是开放发布项。远端 CI #366（[Actions run](https://github.com/coeasy/qianxing/actions/runs/38496814346)）以 Success 完成；本次代码提交为 `c49cbbc`。
+- 第一轮轮询审计发现，Rust `RunHandle` 先发布终态状态、再追加 `Succeeded`/`Failed`/`Cancelled` 事件，可能出现“终态但缺事件”。`c49cbbc` 的单纯顺序调整避免了该方向，却引入对称的“终态事件先于状态”可见窗口，因此不能作为最终并发语义。
+- 第二轮将 `status()`、`events_after()` 与 worker 终态发布纳入同一事件锁：worker 在锁内依次发结果、写终态状态、追加终态事件；状态读取在相同锁保护下消费结果并观察状态，事件读取也需取得该锁。这样状态或事件查询不会进入终态转换中间。回归对 128 个快速完成运行轮询，发现任一终态事件后立即要求状态同为终态，发现终态状态后立即要求终态事件已存在。
+- 验收：`cargo test --offline -p qx-app run_handle::tests --lib` 7/7、`cargo test --workspace --offline` 全部通过；RunHandle 所在的 qx-app 严格 Clippy、`cargo fmt --all -- --check`、1096 项架构门禁、44 tracked Markdown 链接检查及 `git diff --check` 通过。`c49cbbc` 的远端 CI #366 曾以 Success 完成，但本轮互斥可见性修正尚未推送/远端验证。
+- 此修复只涉及进程内 Rust RunHandle 状态/生命周期事件的原子可见性。HTTP 持久化运行注册表的逐事件事务日志、游标恢复，以及多语言/HTTP/Web E2E、跨账户组合风险、C++ 默认 transport 和真实交易所 testnet 认证仍是开放发布项。
 
 ## 50. 2026-10-14 修复：Python 深度多账户同步错误边界
 
