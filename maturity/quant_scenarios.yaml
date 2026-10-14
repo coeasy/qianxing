@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791968245
+generated_at_unix: 1791970434
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -139,6 +139,14 @@ scenarios:
     exit_code: 0
     observed: "bar_pending_order_rejected=true orderbook_pending_order_rejected=true one_fill_per_150_notional_cap=true replay_verified=true"
     evidence: ["crates/qx-risk/src/pending_exposure.rs", "crates/qx-xingban/src/backtest/order_admission.rs", "crates/qx-xingban/src/orderbook_backtest.rs", "crates/qx-xingban/src/backtest/test_cases/portfolio_pending_risk.rs", "crates/qx-xingban/src/orderbook_backtest/tests/pending_risk.rs"]
+  - name: pending_order_reference_price
+    label: "限价订单按限价与市场标记价中的较高名义额预留风控敞口"
+    status: executed
+    anchor: "crates/qx-risk/src/pending_exposure.rs"
+    command: "cargo test --offline -p qx-risk pending_limit_reservation_uses_the_larger_limit_or_mark_notional --lib -- --nocapture --test-threads=1"
+    exit_code: 0
+    observed: "sell_limit_below_mark=true reserved_at_mark=true reserved_notional_raw=20000000000"
+    evidence: ["crates/qx-risk/src/pending_exposure.rs"]
   - name: paper_cross_currency_spot_fx_valuation
     label: "Paper 跨币种现货报价币记账与 FX 风控估值"
     status: executed
@@ -292,7 +300,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=59b1bc4ab3080c06/a1a96f2d3545f5e0,489655e1a8fb2cb0/f0835565e05e9ab4,ea054e8b9359c8c5/fce211262aa117dd,802bda089c33e477/1fb27c5b238eb579"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=b69789f06b006f18/afe4ad924b6e89a2,d78cc9da331fa8e6/e9748f69d4e5b5b6,0c50c372704728e7/495b96de7666a3bb,b00e8b0d88caf0c1/8216d20ef205832b"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"

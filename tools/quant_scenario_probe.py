@@ -209,7 +209,10 @@ def resolve_binary() -> Path:
 
 def run_command(command: list[str], env_extra: dict | None = None) -> tuple[int, str]:
     env = dict(os.environ)
-    tmp = PROBE_ROOT / "tmp"
+    # The workspace task-temp root has the ACL required by Rust integration
+    # tests on Windows; nested probe directories may inherit a deny-ACL that
+    # breaks tempfile creation inside unit tests.
+    tmp = ROOT / ".task-tmp"
     tmp.mkdir(parents=True, exist_ok=True)
     env["TEMP"] = env["TMP"] = str(tmp)
     for key, value in (env_extra or {}).items():
@@ -217,16 +220,37 @@ def run_command(command: list[str], env_extra: dict | None = None) -> tuple[int,
         # paths. The old path coercion turned booleans like "true" into an
         # invalid CARGO_NET_GIT_FETCH_WITH_CLI path on Windows.
         env[key] = str(value)
-    proc = subprocess.run(
-        command,
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    return proc.returncode, proc.stdout + proc.stderr
+    for attempt in range(2):
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        output = proc.stdout + proc.stderr
+        resource_failure = any(
+            marker in output.lower()
+            for marker in (
+                "out of memory",
+                "no memory",
+                "memory allocation",
+                "status_stack_buffer_overrun",
+                "os error 1455",
+                "lnk1102",
+            )
+        )
+        if attempt == 0 and proc.returncode != 0 and resource_failure:
+            print(
+                "[RETRY] 子进程报告宿主内存/页面文件耗尽；释放失败进程后重跑同一命令一次",
+                flush=True,
+            )
+            time.sleep(1)
+            continue
+        return proc.returncode, output
+    raise AssertionError("unreachable resource retry state")
 
 
 def run(binary: Path, argv: list[str], env_extra: dict | None = None) -> tuple[int, str]:
@@ -720,6 +744,42 @@ def main() -> int:
             }
         )
 
+    def executed_pending_order_reference_price_test():
+        nonlocal failures
+        argv = [
+            "cargo", "test", "--offline", "-p", "qx-risk",
+            "pending_limit_reservation_uses_the_larger_limit_or_mark_notional",
+            "--lib", "--", "--nocapture", "--test-threads=1",
+        ]
+        code, output = run_command(argv)
+        passed = re.search(r"test result: ok\. 1 passed; 0 failed", output) is not None
+        ok = code == 0 and passed
+        if not ok:
+            failures += 1
+        observed = (
+            "sell_limit_below_mark=true reserved_at_mark=true reserved_notional_raw=20000000000"
+            if ok
+            else "pending_order_reference_price=failed"
+        )
+        print(
+            f"[{'OK  ' if ok else 'FAIL'}] pending_order_reference_price: rc={code} observed={observed!r}",
+            flush=True,
+        )
+        records.append(
+            {
+                "name": "pending_order_reference_price",
+                "label": "限价订单按限价与市场标记价中的较高名义额预留风控敞口",
+                "status": "executed" if ok else "declared_not_executed",
+                "anchor": "crates/qx-risk/src/pending_exposure.rs",
+                "command": " ".join(argv),
+                "exit_code": code,
+                "observed": observed,
+                "why_not_executed": "限价单预留没有比较限价与可用标记价的名义额。",
+                "next_gate": "对限价和标记价都计算品种名义额并取较大值，同时保留无参考市价单拒绝行为。",
+                "evidence": ["crates/qx-risk/src/pending_exposure.rs"],
+            }
+        )
+
     def executed_multi_market_shared_account_test():
         nonlocal failures
         argv = [
@@ -1131,6 +1191,7 @@ def main() -> int:
     executed_paper_multi_strategy_test()
     executed_paper_pending_order_risk_test()
     executed_backtest_pending_order_risk_test()
+    executed_pending_order_reference_price_test()
     executed_paper_cross_currency_fx_test()
     executed_multi_market_shared_account_test()
     executed_multi_market_python_strategy_slots_test()

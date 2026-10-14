@@ -29,6 +29,7 @@
 > 本轮增量（2026-10-14）：多账户验收新增资金隔离属性：将另一个账户初始资金扩大 100 倍后，目标账户的结果哈希、成交数、收益和回撤保持不变，并与相同上下文的单账户运行哈希/成交数一致。全量量化场景探针复验为 75 executed、0 declared_not_executed、0 missing、1 blocked。它证明的是现有独立账户批次契约，不是跨账户净额或组合风险；后者仍未实现。详细结果见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)及 `maturity/quant_scenarios.yaml`。
 > 同轮静态质量门禁发现多市场深度应用在 `BuiltinStrategy` 与 callback enum 中造成 832-byte 大枚举；现将内置策略分支改为 Box，降低每个候选策略槽的栈内存占用。`qx-app` 严格 Clippy 与多市场深度专项回归通过。
 > 本轮增量（2026-10-14）：能力发现目录审计发现多市场 Tick/OrderBook 参数实验的同步与 RunHandle 路由已在 HTTP、Rust、Python、C++ 客户端存在，但 `GET /app/capabilities` 遗漏该能力路径，导致按能力目录发现的集成方会漏掉已接通功能。现共享 Rust 能力项补列 `/app/run-multi-market-depth-experiment` 与 `/start` 路由，并在 API 用例中逐项校验所有参数网格路由；部署 API 文档仍声明目录只代表应用面存在，不代表 venue/provider 实时就绪。
+> 本轮增量（2026-10-14）：Paper、Bar 与 OrderBook 的同账户同标的在途订单统一复用 `qx-risk::pending_order_gross_notional`，未成交剩余量与已成交敞口共同参与 `MaxNotional` 检查；限价和可用市场标记分别计算名义额并取较高值，市价单无参考价、规格错配及算术溢出均拒绝放行。新增三条链行为证据及限价/标记价保守选择反例；量化场景探针验证 Bar/OrderBook 批次只成交限额允许的订单。该项不扩展为跨标的或跨账户组合风险，也不证明多市场 Paper/Live。
 > 方案仍在分阶段实施：跨账户组合风险、完整交易日历/跨时区/货币换算、Provider/Venue 全矩阵、C++ 默认 transport、Web/桌面 E2E 及多平台安装矩阵尚有缺口。外部交易所凭据、sandbox/testnet 与真实 Live conformance 按当前实施范围留待后续认证；不得把本地模拟证据写成实盘认证。复核与量化场景证据见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)和 `maturity/quant_scenarios.yaml`。
 
 ## 1. 目标与完成定义

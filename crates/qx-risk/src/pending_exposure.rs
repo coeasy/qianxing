@@ -28,16 +28,26 @@ pub fn pending_order_gross_notional(
                 && order.remaining().raw() > 0
         })
         .try_fold(0_i128, |total, order| {
-            let price = order
+            let quantity = order.remaining().raw();
+            let limit_notional = order
                 .limit
-                .or_else(|| marks.get(instrument).copied())
-                .ok_or_else(|| {
-                    QxError::BusinessViolation(format!(
+                .map(|price| spec.notional(quantity, price.raw()))
+                .transpose()?;
+            let mark_notional = marks
+                .get(instrument)
+                .map(|price| spec.notional(quantity, price.raw()))
+                .transpose()?;
+            let notional = match (limit_notional, mark_notional) {
+                (Some(limit), Some(mark)) => limit.max(mark),
+                (Some(limit), None) => limit,
+                (None, Some(mark)) => mark,
+                (None, None) => {
+                    return Err(QxError::BusinessViolation(format!(
                         "在途市价订单 {} 缺少名义额风控参考价",
                         order.client_id
-                    ))
-                })?;
-            let notional = spec.notional(order.remaining().raw(), price.raw())?;
+                    )))
+                }
+            };
             total
                 .checked_add(notional)
                 .ok_or_else(|| QxError::Invariant("在途订单名义额合计溢出".into()))
@@ -169,5 +179,26 @@ mod tests {
             &BTreeMap::new(),
         )
         .is_err());
+    }
+
+    #[test]
+    fn pending_limit_reservation_uses_the_larger_limit_or_mark_notional() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let sell_limit_below_mark =
+            order(1, &instrument, "main", OrderStatus::Accepted, 2, 0, Some(9));
+        let marks = BTreeMap::from([(instrument.clone(), Price::from_i64(10))]);
+
+        assert_eq!(
+            pending_order_gross_notional(
+                &[sell_limit_below_mark],
+                2,
+                "main",
+                &instrument,
+                &spec(&instrument),
+                &marks,
+            )
+            .unwrap(),
+            20 * SCALE
+        );
     }
 }
