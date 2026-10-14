@@ -14,6 +14,7 @@
 > 本轮增量（2026-10-14）：内置策略目录统一下沉至 `qx-app`，本地 Python 原生查询与 HTTP `/app/strategies` 均消费该结果；Rust RemoteApiClient、Python AppClient 同步/async 与 C++ AppClient 提供发现入口，目录含 17 个策略名称、说明、信号旋钮及多腿限制。API/客户端路由、deploy 端点表和远端方法归属均纳入门禁，避免某语言策略目录缺失或名单漂移。C++ 在当前 Windows 环境因缺少 CMake/编译器未执行编译测试。
 > 本轮增量（2026-10-14）：Provider 语义复核为不支持的复权/质量请求加入 I/O 前 fail-closed；并将 Bar payload 解析、质量门和 BarFrame 校验纳入主备候选验证，主源规范化失败时按确定顺序继续切换，最终来源指纹绑定完整 retry chain。Provider、Adapter、SDK 与 Python Provider 专项验证及 66 项量化场景探针通过。该修复提升现有历史 Bar Provider 的 failover 正确性，不代表实时订阅、所有数据源 conformance 或任何 venue 已完成认证。
 > 本轮增量（2026-10-14）：新增版本化 `GET /app/capabilities`，Rust RemoteApiClient、Python AppClient 同步/async 与 C++ AppClient 可读取共享 Rust 的 Bar、Tick/OrderBook、多腿、多市场、多账户回测、参数实验、Paper/Live 命令及 Run 生命周期路由目录。响应明确要求运行时预检，并声明 venue/provider 配置、实盘认证与跨账户净额的限制；它不是方案 §4.2 所要求的 provider/venue 动态 CapabilityDescriptor，也不代表实时配置已就绪。API/三语言远端路由、deploy 端点表与门面归属已核对，架构门禁 1096 项通过；当前环境没有 CMake 或 C++ 编译器，C++ 编译仍需 CI 复核。
+> 同轮 Python 深查修复多账户深度异步启动的错误翻译断链：原异常分支调用不存在的 `_raise_native_error`，现在委托统一 `_translate_native_error` 并以无效输入回归用例验证；重建的 Windows abi3 wheel 已隔离安装并再次跑过包级回测/实验/多账户/盘口/回放 smoke。
 > 方案仍未全部落地：跨市场 Tick/OrderBook、交易日历/跨时区/货币换算、多账户跨账户组合风险、venue/provider 全矩阵与实盘 testnet 未完成认证；Web/桌面端到端验收、C++ 默认 transport 与全平台发布门仍未完成。逐轮复核、量化场景状态与证据见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)和 `maturity/quant_scenarios.yaml`。
 
 ## 1. 目标与完成定义

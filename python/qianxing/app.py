@@ -2883,7 +2883,7 @@ def start_multi_account_depth_backtest(
     try:
         native_handle = native.app_start_multi_account_depth_backtest(_encode_payload(spec))
     except Exception as exc:
-        _raise_native_error(exc)
+        raise _translate_native_error(exc) from exc
     return RunHandle(native_handle, MultiAccountDepthBacktestResult)
 
 

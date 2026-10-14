@@ -2677,6 +2677,18 @@ class AppUseCaseTests(unittest.TestCase):
         self.assertEqual(typed_result.summary["accounts_succeeded"], 2)
         self.assertIsNone(typed_handle.result(), "typed batch result is delivered once")
 
+    def test_multi_account_depth_start_translates_native_errors(self):
+        from qianxing.app import InvalidInputError, start_multi_account_depth_backtest
+
+        payload = json.dumps({"category": "INVALID_INPUT", "message": "invalid depth batch"})
+        with patch(
+            "qianxing.app.native.app_start_multi_account_depth_backtest",
+            side_effect=RuntimeError(payload),
+        ):
+            with self.assertRaises(InvalidInputError) as raised:
+                start_multi_account_depth_backtest({})
+        self.assertEqual(raised.exception.payload["message"], "invalid depth batch")
+
     def test_multi_account_depth_batch_uses_shared_rust_kernel_and_typed_sdk(self):
         self._require()
         from qianxing_bridge.native import app_available
