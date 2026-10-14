@@ -477,4 +477,5 @@ Python 十策略证据：
 - 复核 Paper 多 worker 并行下单链路时发现，`worker_risk_context` 只从已成交 Ledger 持仓计算 `gross_notional`。在订单成交并更新账簿前，后续 worker 仍看到旧敞口，可能分别通过同一个 `max_position_notional` 限额。
 - 风控上下文现在仅在配置持仓名义额上限时，累计同账户、同标的所有非终态订单的剩余名义额；限价单采用限价，市价单采用市场标记价。缺少市价参考价及固定点累加/估值溢出均 fail-closed，并排除当前订单 ID 避免重试时重复预留。其他账户订单不计入该账户敞口。
 - 新增 `paper_pending_order_risk` 场景，证明账户已有 100、候选订单为 100、限额 150 时被拒绝，另一账户的 500 不串入；无在途订单时该候选单通过。目标测试、原 Paper 衍生品估值回归、`qx-cli` 全量单元与集成测试（397 + 99）、严格 Clippy、格式检查、架构门禁 1096 项及量化场景探针均通过；探针为 76 executed、0 declared_not_executed、0 missing、1 blocked。
+- 推送提交后执行 `cargo test --offline --workspace -- --test-threads=1`。首次运行在 Windows 系统用户临时目录触发 3 项 Paper 合约测试 `os error 5`；同一测试改用仓库隔离临时目录通过，随后 workspace 全量复跑成功。该环境差异已作为复验条件记录，不据首次运行宣称代码失败或忽略该现象。
 - 本修复只覆盖 Paper 同账户同标的限额预留，不代表跨标的/跨账户组合风险、组合保证金、多市场 Paper/Live、真实 venue testnet 或全平台 SDK 发布验收已完成；唯一场景探针阻塞仍涉及 CCXT 运行依赖和外部交易所凭据。
