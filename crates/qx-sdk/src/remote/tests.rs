@@ -84,6 +84,36 @@ fn application_capabilities_use_the_shared_runtime_discovery_route() {
 }
 
 #[test]
+fn provider_preflight_uses_shared_route_and_canonical_data_request() {
+    let client = RemoteApiClient::new(FakeTransport::default());
+    let request = crate::DataRequest::new(
+        crate::DataQuery {
+            kind: crate::DataKind::Bar,
+            asset_class: "crypto".into(),
+            instrument_set: std::collections::BTreeSet::from(["BTCUSDT.BINANCE".into()]),
+            field_set: std::collections::BTreeSet::from(["close".into()]),
+            frequency: "1m".into(),
+            adjustment: "none".into(),
+            quality_policy: "strict".into(),
+            start: 1,
+            end: 10,
+            as_of: Some(10),
+        },
+        crate::DataRequirements::default(),
+    );
+    assert_eq!(
+        client.provider_preflight(&request).unwrap(),
+        serde_json::json!({"ok":true})
+    );
+    let calls = client.transport.0.lock().unwrap();
+    assert_eq!(calls[0].0, "/app/capabilities/providers/preflight");
+    assert_eq!(
+        serde_json::from_str::<Value>(&calls[0].1).unwrap(),
+        serde_json::from_str::<Value>(&request.to_json().unwrap()).unwrap()
+    );
+}
+
+#[test]
 fn provider_backtest_uses_shared_server_route_and_preserves_spec_json() {
     let client = RemoteApiClient::new(FakeTransport::default());
     let query = crate::DataQuery {

@@ -1,5 +1,6 @@
 use super::ApiResponse;
-use qx_provider::ProviderRegistry;
+use qx_core::Fnv1a;
+use qx_provider::{DataRequest, ProviderRegistry};
 
 /// Runtime discovery of shared Rust use cases. This describes server routes,
 /// not venue/provider deployment readiness; those are request-time checks.
@@ -16,6 +17,7 @@ pub(super) fn application_capabilities(
         {"id":"backtest.multi_leg","routes":["/app/multi-leg-backtest","/app/multi-leg-backtest/start"]},
         {"id":"backtest.multi_market","routes":["/app/multi-market-backtest","/app/multi-market-backtest/start"]},
         {"id":"backtest.multi_account","routes":["/app/multi-account-backtest","/app/multi-account-backtest/start"]},
+        {"id":"data.provider_preflight","routes":["/app/capabilities/providers/preflight"]},
         {"id":"experiments.parameter_grid","routes":["/app/run-experiment","/app/run-depth-experiment","/app/run-multi-leg-experiment","/app/run-multi-market-experiment"]},
         {"id":"paper.commands","routes":["/app/paper/commands","/app/paper/algo-executions/start","/app/paper/algo-executions/get","/app/paper/algo-executions/cancel","/app/paper/algo-executions/list"]},
         {"id":"live.commands","routes":["/app/live/commands"]},
@@ -45,4 +47,50 @@ pub(super) fn application_capabilities(
         Ok(body) => ApiResponse::json(200, body),
         Err(error) => ApiResponse::json(500, crate::error_json(&error.to_string())),
     }
+}
+
+/// Match a concrete data request against configured Provider declarations without I/O.
+pub(super) fn provider_preflight(
+    body: &str,
+    provider_registry: Option<&ProviderRegistry>,
+) -> ApiResponse {
+    let Some(provider_registry) = provider_registry else {
+        return ApiResponse::json(503, crate::error_json("provider_registry_unavailable"));
+    };
+    let request = match DataRequest::from_json(body) {
+        Ok(request) => request,
+        Err(error) => return ApiResponse::json(400, crate::error_json(&error.message)),
+    };
+    let canonical = match request.to_json() {
+        Ok(canonical) => canonical,
+        Err(error) => return ApiResponse::json(400, crate::error_json(&error.message)),
+    };
+    let mut hasher = Fnv1a::new();
+    hasher.write_text(&canonical);
+    let request_fingerprint = format!("{:016x}", hasher.finish());
+    let provider_ids = match provider_registry.candidates_for_request(&request) {
+        Ok(provider_ids) => provider_ids,
+        Err(error) => return ApiResponse::json(400, crate::error_json(&format!("{error:?}"))),
+    };
+    let declarations = provider_registry.capabilities();
+    let mut candidates = Vec::with_capacity(provider_ids.len());
+    for provider_id in provider_ids {
+        let Some(declaration) = declarations
+            .iter()
+            .find(|declaration| declaration.provider_id == provider_id)
+        else {
+            return ApiResponse::json(500, crate::error_json("provider_registry_inconsistent"));
+        };
+        candidates.push(declaration.clone());
+    }
+    ApiResponse::json(
+        200,
+        serde_json::json!({
+            "schema_version": 1,
+            "request_fingerprint": request_fingerprint,
+            "matched": !candidates.is_empty(),
+            "candidates": candidates,
+        })
+        .to_string(),
+    )
 }

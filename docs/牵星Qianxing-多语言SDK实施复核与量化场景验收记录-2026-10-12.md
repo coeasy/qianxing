@@ -392,3 +392,10 @@ Python 十策略证据：
 - 本轮验收：场景探针 52 executed、0 declared_not_executed、0 missing、1 blocked；`cargo test --offline -p qx-app --lib` 125/125、`cargo test --offline -p qx-sdk`（6 单测、22 独立消费者、2 多账户消费者、2 Provider 消费者）通过、Python 全量 141/141、`cargo check --offline -p qx-app -p qx-sdk -p qx-python`、严格 Clippy、格式检查、1096 项架构门禁及 `git diff --check` 通过。Python 全量测试复核还修复了 Windows 在同一 pytest 进程里重复复制已加载 native DLL 的 WinError 32；后续测试复用已验证并绑定的桥接模块。
 - 安装后验证：构建并隔离安装 `qianxing-0.1.0-cp310-abi3-win_amd64.whl`（SHA-256 `95dd55269b1afb1055fbf56e3daaf208cc76d23748c4112e8d3f3880f35c5e5d`），从 wheel 自带 Rust 扩展读取 17 项策略目录，筛选 13 个单腿策略，经公开 `RunExperimentSpec` 一次快速选择运行，13/13 成功并返回 13 条共享比较结果。该证据只覆盖 Windows x64 wheel。
 - 当前接入的是通用 Provider 协议，不代表任何交易所 funding adapter、时间表或账单已认证；venue 专用 adapter/conformance、跨币种 funding、外部账单核对仍未实现。实盘 testnet、跨账户组合风险、多市场 Paper/Live、远端策略 callback、C++ 默认 transport 和 Web/桌面验收仍未闭环。
+
+## 48. 2026-10-14 实现：三语言 Provider 请求预检接入共享注册表
+
+- 新增 `POST /app/capabilities/providers/preflight`，输入使用现有 `DataRequest` wire shape；服务端以 `ProviderRegistry::candidates_for_request` 做无 I/O 校验和确定性排序，返回 canonical request fingerprint、`matched` 与候选 Provider 声明。未配置 registry 返回 503，非法请求返回 400，无候选正常返回 200 / `matched=false`。这一步不会探测上游，也不发送数据请求。
+- Rust `RemoteApiClient` 使用强类型 `DataRequest`，Python `AppClient` 提供同步及 asyncio 委托，C++ `AppClient` 接收 DataRequest JSON；三边均调用同一个 Rust API route。`GET /app/capabilities` 同时把预检路由列入数据能力目录。
+- 验收：`cargo test -p qx-api --lib` 70/70，`cargo test -p qx-sdk --lib` 11/11，`python -m pytest python/tests -q` 155/155，Python F821 扫描、`cargo clippy -p qx-api -p qx-sdk --all-targets -- -D warnings`、格式检查、差异空白检查通过；`python tools/quant_scenario_probe.py` 实测 67 executed、0 declared_not_executed、0 missing、1 blocked，十种经典策略快速选择与 Provider 预检均有数值/专项证据；`python tools/check_architecture.py` 1096 项通过。探针复核还修正了 Python 远端策略目录测试从 4 项增长到 7 项后的旧断言/无数值观察，现必须匹配实际 7 项并记录 2 个目录 fixture。C++ smoke 已更新为逐项检查新路由，但本机无 CMake/C++ 编译器，尚未获得本地编译证据。
+- 发布限制：本次只完成 Provider 数据请求匹配，不能证明凭据有效、数据源在线或实时新鲜度当前满足；Venue 的市场/订单/费用/权限/sandbox/testnet 预检、跨账户组合风险、交易所 testnet 生命周期认证、持久化逐事件日志与 cursor 恢复、远端策略回调及跨平台发布矩阵仍未完成。

@@ -67,6 +67,10 @@ python_remote_helpers:
     note: "Python 远端读取共享 Rust 应用用例目录；venue/provider readiness 仍需运行时预检"
   - name: async_application_capabilities
     note: "Python 远端能力目录查询的 asyncio 委托入口"
+  - name: provider_preflight
+    note: "Python 远端按 DataRequest 调用 Rust ProviderRegistry 做无 I/O 能力匹配"
+  - name: async_provider_preflight
+    note: "Python Provider 预检的 asyncio 委托入口"
   - name: list_builtin_strategies
     note: "Python 远端策略发现入口，读取 Rust 维护的目录；不是交易或回测用例"
   - name: async_list_builtin_strategies
@@ -75,12 +79,16 @@ python_remote_helpers:
 cpp_remote_helpers:
   - name: application_capabilities
     note: "C++ 远端读取共享 Rust 应用用例目录；venue/provider readiness 仍需运行时预检"
+  - name: provider_preflight
+    note: "C++ 远端按 DataRequest JSON 调用 Rust ProviderRegistry 做无 I/O 能力匹配"
   - name: builtin_strategy_catalog
     note: "C++ 远端策略发现入口，读取 Rust 维护的目录；不是交易或回测用例"
 
 rust_remote_lifecycle_methods:
   - name: get_run_events
     note: "Rust 远端门面按单次 Run 读取持久化生命周期事件"
+  - name: provider_preflight
+    note: "Rust 远端按 DataRequest 调用 Rust ProviderRegistry 做无 I/O 能力匹配"
   - name: start_paper_algo_execution
     note: "Rust 远端门面调用服务端 Paper TWAP/VWAP 持久化启动入口"
   - name: get_paper_algo_execution

@@ -63,6 +63,15 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         Self { transport }
     }
 
+    /// Match a concrete data request against configured Rust Providers without fetching data.
+    pub fn provider_preflight(
+        &self,
+        request: &crate::DataRequest,
+    ) -> Result<Value, RemoteApiError> {
+        let request_value = provider_request_value(request)?;
+        self.post("/app/capabilities/providers/preflight", &request_value)
+    }
+
     /// Run Provider selection, immutable dataset freezing and Bar backtest on the shared Rust API.
     pub fn run_provider_backtest_with_manifest(
         &self,
@@ -214,6 +223,13 @@ impl<T: RemoteTransport> RemoteApiClient<T> {
         serde_json::from_str(&response.body)
             .map_err(|error| RemoteApiError::InvalidJson(error.to_string()))
     }
+}
+
+fn provider_request_value(request: &crate::DataRequest) -> Result<Value, RemoteApiError> {
+    let json = request
+        .to_json()
+        .map_err(|error| RemoteApiError::InvalidJson(error.message))?;
+    serde_json::from_str(&json).map_err(|error| RemoteApiError::InvalidJson(error.to_string()))
 }
 
 #[path = "remote/strategy_catalog.rs"]

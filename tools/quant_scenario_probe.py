@@ -1227,6 +1227,28 @@ def main() -> int:
         ],
         command_prefix="cargo",
     )
+
+    executed(
+        "provider_request_capability_preflight",
+        "Provider DataRequest 启动前能力匹配（无 I/O）",
+        "crates/qx-api/src/app_surface/capabilities.rs",
+        [
+            "test", "-p", "qx-api", "--lib",
+            "provider_preflight_matches_requests_without_fetching_data", "--", "--exact",
+        ],
+        r"(test result: ok\. 1 passed; 0 failed)",
+        extra="verified_cases=4 configured_candidate=true unsupported_empty=true malformed_400=true missing_registry_503=true upstream_io=false",
+        evidence=[
+            "crates/qx-api/src/app_surface/capabilities.rs",
+            "crates/qx-provider/src/registry.rs",
+            "crates/qx-api/src/provider_backtest_tests.rs",
+            "crates/qx-sdk/src/remote.rs",
+            "python/qianxing/app.py",
+            "cpp/include/qianxing_app.hpp",
+        ],
+        command_prefix="cargo",
+    )
+
     executed(
         "ccxt_query_semantics_fail_closed",
         "CCXT Provider 拒绝未支持的复权/质量请求且不发起交易所 RPC",
@@ -1615,8 +1637,8 @@ def main() -> int:
         "Python HTTP SDK 通过 Rust 服务端读取内置策略目录",
         "python/tests/test_remote_strategy_catalog.py",
         ["-m", "unittest", "python.tests.test_remote_strategy_catalog"],
-        r"(Ran 4 tests)",
-        extra="typed_catalog=true async_delegate=true stable_discovery_route=/app/strategies malformed_envelopes_and_fields_rejected=true",
+        r"(Ran 7 tests)",
+        extra="test_cases=7 fixture_catalog_entries=2 typed_catalog=true async_delegate=true stable_discovery_route=/app/strategies malformed_envelopes_and_fields_rejected=true",
         evidence=[
             "python/tests/test_remote_strategy_catalog.py",
             "python/qianxing/app.py",

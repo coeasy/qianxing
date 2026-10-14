@@ -270,6 +270,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `GET /schema/contract-matrix` | JSON 数组 | 稳定契约的**命名转换矩阵**（`qx_core::contract::CONTRACT_MATRIX`）：每行 `{concept, canonical_types, canonical_source, duplicates, adapter, note}`，登记同名概念谁是规范单点、哪些是同名兄弟、由哪个显式 adapter 桥接；与真实代码逐条对账由门禁 `contract_matrix_check` 看守 |
 | `GET /app/strategies` | JSON 数组 | 由 `qx-app` 投影的稳定顺序内置策略目录；每项包含 `name`、`description`、`signal_knobs` 与 `requires_reference_leg`，供 Rust/Python/C++ 客户端发现策略 |
 | `GET /app/capabilities` | 版本化应用能力目录 | 声明共享 Rust 核心用例及路由，并明确提示必须执行运行时预检；不承诺交易所/数据源配置可用、实盘已获认证，或跨账户净额风险 |
+| `POST /app/capabilities/providers/preflight` | Provider 请求预检 | 仅按 `DataRequest` 与已配置 Provider 声明做无 I/O 匹配；不验证外部凭据、实时连通性或 Venue 交易能力 |
 | `GET /account/snapshot` | 快照 JSON / `404 snapshot_not_found` / `404 account_projection_not_found` | 单账户投影快照；八个汇总钱字段里未算的那几格是 `null` 而不是 0，名单见下 |
 | `GET /account/snapshot/envelope` | 投影信封 / `404` | `data` 满足上面那份 schema（V12 R4-h） |
 | `GET /account/snapshot/diff?base_hash=<u64>` | `{schema_version, base_state_hash, target_state_hash, target_header, cash, positions, orders, fills, transfers, replacement}` | `base_hash` 缺失或非无符号整数 → `400`；基准不存在 → `409 snapshot_base_not_found`；`cash`/`positions`/`orders`/`fills`/`transfers` 五条是 `Change` 数组（`{"Upsert":{"key":…,"value":…}}` 或 `{"Remove":{"key":…}}`），八个汇总钱标量不走差分数组，只由 `replacement` 整格搬运，见下 |

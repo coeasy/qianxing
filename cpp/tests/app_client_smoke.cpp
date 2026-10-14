@@ -41,6 +41,14 @@ int main() {
     assert(observed_method == "GET");
     assert(observed_path == "/app/capabilities");
 
+    const std::string provider_request =
+        R"({"kind":"Bar","asset_class":"crypto","instrument_set":["BTCUSDT.BINANCE"],"field_set":["close"],"frequency":"1m","adjustment":"none","quality_policy":"strict","start":1,"end":10,"as_of":10})";
+    const auto provider_preflight = client.provider_preflight(provider_request);
+    assert(provider_preflight.ok());
+    assert(observed_method == "POST");
+    assert(observed_path == "/app/capabilities/providers/preflight");
+    assert(observed_body == provider_request);
+
     const auto multi_market = client.run_multi_market_backtest(spec);
     assert(multi_market.ok());
     assert(observed_path == "/app/multi-market-backtest");

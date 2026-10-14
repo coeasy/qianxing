@@ -366,6 +366,17 @@ fn capabilities_route_includes_configured_provider_declarations() {
     assert_eq!(response.status, 200, "{}", response.body);
     let document: serde_json::Value = serde_json::from_str(&response.body).unwrap();
     assert_eq!(document["schema_version"], 1);
+    assert!(document["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| {
+            entry["id"] == "data.provider_preflight"
+                && entry["routes"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("/app/capabilities/providers/preflight"))
+        }));
     assert_eq!(
         document["provider_capabilities"].as_array().unwrap().len(),
         1
@@ -375,4 +386,50 @@ fn capabilities_route_includes_configured_provider_declarations() {
         "fixture"
     );
     assert_eq!(document["provider_capabilities"][0]["version"], "v1");
+}
+
+#[test]
+fn provider_preflight_matches_requests_without_fetching_data() {
+    let request = provider_spec().data_request.to_json().unwrap();
+    let unconfigured = ApiService::new(ApiState::default()).handle(
+        "POST",
+        "/app/capabilities/providers/preflight",
+        &request,
+        1,
+    );
+    assert_eq!(unconfigured.status, 503, "{}", unconfigured.body);
+
+    let service =
+        ApiService::new(ApiState::default()).with_provider_registry(Arc::new(provider_registry()));
+    let response = service.handle("POST", "/app/capabilities/providers/preflight", &request, 2);
+    assert_eq!(response.status, 200, "{}", response.body);
+    let matched: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(matched["schema_version"], 1);
+    assert_eq!(matched["matched"], true);
+    assert_eq!(matched["candidates"][0]["provider_id"], "fixture");
+    assert_eq!(matched["request_fingerprint"].as_str().unwrap().len(), 16);
+
+    let unsupported_request = DataRequest::new(
+        DataQuery {
+            kind: DataKind::Quote,
+            frequency: "tick".into(),
+            ..provider_spec().data_request.query
+        },
+        DataRequirements::default(),
+    )
+    .to_json()
+    .unwrap();
+    let unsupported = service.handle(
+        "POST",
+        "/app/capabilities/providers/preflight",
+        &unsupported_request,
+        3,
+    );
+    assert_eq!(unsupported.status, 200, "{}", unsupported.body);
+    let unsupported: serde_json::Value = serde_json::from_str(&unsupported.body).unwrap();
+    assert_eq!(unsupported["matched"], false);
+    assert_eq!(unsupported["candidates"], serde_json::json!([]));
+
+    let invalid = service.handle("POST", "/app/capabilities/providers/preflight", "{}", 4);
+    assert_eq!(invalid.status, 400, "{}", invalid.body);
 }

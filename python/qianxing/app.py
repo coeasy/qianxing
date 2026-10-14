@@ -28,6 +28,7 @@ from qianxing_bridge import native
 # 调用侧用 `.format(run_id=...)` 填。
 APP_ROUTE_TEMPLATES: dict[str, str] = {
     "application_capabilities": "/app/capabilities",
+    "provider_preflight": "/app/capabilities/providers/preflight",
     "builtin_strategy_catalog": "/app/strategies",
     "validate_dataset": "/app/validate-dataset",
     "backtest": "/app/backtest",
@@ -2052,6 +2053,13 @@ class AppClient(_HttpJsonClient):
 
     async def async_application_capabilities(self) -> dict[str, Any]:
         return await asyncio.to_thread(self.application_capabilities)
+
+    def provider_preflight(self, data_request: Mapping[str, Any]) -> dict[str, Any]:
+        """Check a data request against configured Rust Providers without I/O."""
+        return self._post(APP_ROUTE_TEMPLATES["provider_preflight"], data_request)
+
+    async def async_provider_preflight(self, data_request: Mapping[str, Any]) -> dict[str, Any]:
+        return await asyncio.to_thread(self.provider_preflight, data_request)
 
     def list_builtin_strategies(self) -> tuple[BuiltinStrategyInfo, ...]:
         """Fetch the same Rust-owned strategy catalog used by local SDK calls."""

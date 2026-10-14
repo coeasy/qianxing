@@ -535,6 +535,7 @@ class AppUseCaseTests(unittest.TestCase):
             ("run_backtest", "/app/backtest", False),
             ("run_provider_backtest_with_manifest", "/app/provider-backtest", False),
             ("run_provider_depth_backtest", "/app/provider-depth-backtest", False),
+            ("provider_preflight", "/app/capabilities/providers/preflight", False),
             ("run_multi_account_backtest", "/app/multi-account-backtest", False),
             ("start_multi_account_backtest", "/app/multi-account-backtest/start", True),
             ("start_backtest", "/app/backtest/start", True),
@@ -593,6 +594,12 @@ class AppUseCaseTests(unittest.TestCase):
                 "retry_chain": ["provider"],
                 "source_hash": "0123456789abcdef",
                 "depth_path": "depth.json",
+            },
+            "provider_preflight": {
+                "schema_version": 1,
+                "request_fingerprint": "0123456789abcdef",
+                "matched": True,
+                "candidates": [],
             },
             "run_multi_account_backtest": {
                 "batch_id": "batch",
@@ -763,6 +770,39 @@ class AppUseCaseTests(unittest.TestCase):
         ):
             payload = json.loads(open_url.call_args_list[index].args[0].data)
             self.assertEqual(payload["strategy_kinds"], ["ema_cross", "sma_cross"])
+
+    def test_async_provider_preflight_delegates_to_the_same_remote_route(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qianxing import AppClient
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"schema_version":1,"request_fingerprint":"0123456789abcdef","matched":false,"candidates":[]}'
+
+        request = {
+            "kind": "Bar",
+            "asset_class": "crypto",
+            "instrument_set": ["BTCUSDT.BINANCE"],
+            "field_set": ["close"],
+            "frequency": "1m",
+            "start": 1,
+            "end": 10,
+            "as_of": 10,
+        }
+        with patch("qianxing.app.urlopen", return_value=Response()) as open_url:
+            client = AppClient("https://localhost")
+            response = asyncio.run(client.async_provider_preflight(request))
+        self.assertFalse(response["matched"])
+        sent = open_url.call_args.args[0]
+        self.assertEqual(sent.full_url, "https://localhost/app/capabilities/providers/preflight")
+        self.assertEqual(sent.method, "POST")
+        self.assertEqual(json.loads(sent.data), request)
 
     def _spec(self, run_id: str, output_dir: Path, bars: str | None = None) -> dict:
         return {

@@ -473,6 +473,9 @@ pub(crate) fn route_app_run(
     if let ("GET", "/app/capabilities") = (method, route) {
         return Some(capabilities::application_capabilities(provider_registry));
     }
+    if let ("POST", "/app/capabilities/providers/preflight") = (method, route) {
+        return Some(capabilities::provider_preflight(body, provider_registry));
+    }
     if query.is_empty() {
         app_run_route(method, route, body, paths, registry)
     } else {

@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791936559
+generated_at_unix: 1791939503
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -220,7 +220,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=afbcd1d40a898a72/d206d3eb39151c54,9d80a90e3c947a74/a7a88788e4e214b8,bbc31c04f9030581/999c18b3b8ec6fd9,b22232d0e4d6f05b/15cc6fbb3afed375"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=c7ff50c1c0eed4ab/28df330abc565f79,8f58096e315f0e55/065d3b5d4ccc3ca9,a7bf21bec41e4fc0/1e36622340498608,319dd66b88d8f002/aad625dcce0d9fe0"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -286,6 +286,14 @@ scenarios:
     exit_code: 0
     observed: "test result: ok. 1 passed; 0 failed; nondefault_adjustment_filtered=true nonstrict_quality_filtered=true provider_io_not_reached=true"
     evidence: ["crates/qx-provider/src/result.rs", "crates/qx-provider/src/registry.rs", "crates/qx-provider/src/tests.rs"]
+  - name: provider_request_capability_preflight
+    label: "Provider DataRequest 启动前能力匹配（无 I/O）"
+    status: executed
+    anchor: "crates/qx-api/src/app_surface/capabilities.rs"
+    command: "cargo test -p qx-api --lib provider_preflight_matches_requests_without_fetching_data -- --exact"
+    exit_code: 0
+    observed: "verified_cases=4 configured_candidate=true unsupported_empty=true malformed_400=true missing_registry_503=true upstream_io=false"
+    evidence: ["crates/qx-api/src/app_surface/capabilities.rs", "crates/qx-provider/src/registry.rs", "crates/qx-api/src/provider_backtest_tests.rs", "crates/qx-sdk/src/remote.rs", "python/qianxing/app.py", "cpp/include/qianxing_app.hpp"]
   - name: ccxt_query_semantics_fail_closed
     label: "CCXT Provider 拒绝未支持的复权/质量请求且不发起交易所 RPC"
     status: executed
@@ -404,7 +412,7 @@ scenarios:
     anchor: "python/tests/test_remote_strategy_catalog.py"
     command: "python -m unittest python.tests.test_remote_strategy_catalog"
     exit_code: 0
-    observed: "Ran 4 tests; typed_catalog=true async_delegate=true stable_discovery_route=/app/strategies malformed_envelopes_and_fields_rejected=true"
+    observed: "Ran 7 tests; test_cases=7 fixture_catalog_entries=2 typed_catalog=true async_delegate=true stable_discovery_route=/app/strategies malformed_envelopes_and_fields_rejected=true"
     evidence: ["python/tests/test_remote_strategy_catalog.py", "python/qianxing/app.py", "crates/qx-api/src/app_strategy_selection_tests.rs"]
   - name: python_custom_strategy_portfolio
     label: "Python 多自定义策略与内置策略共享 Bar、L1 Tick、L2 OrderBook 单账户组合回测"
