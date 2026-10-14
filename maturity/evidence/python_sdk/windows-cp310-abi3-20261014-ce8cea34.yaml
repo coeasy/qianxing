@@ -1,0 +1,35 @@
+schema_version: 1
+kind: python-wheel-smoke
+source_commit: ce8cea341d48b2510ff0789d16327661b5084dea
+python_runtime: 3.13.13
+platform: windows-x64
+wheel: qianxing-0.1.0-cp310-abi3-win_amd64.whl
+wheel_size_bytes: 2381062
+wheel_sha256: 7199d28ecb7af13cf94fd72ca01024c23a30c84ccfe7766ff984e6f179bc5962
+build_command: "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_python_wheel.ps1 -Python python -OutputDirectory target/sdk-wheels-ce8cea34"
+wheel_check: "python tools/check_python_wheel.py target/sdk-wheels-ce8cea34"
+install_command: "python -m venv target/wheel-smoke-ce8cea34; target/wheel-smoke-ce8cea34/Scripts/python.exe -m pip install --no-index --no-deps target/sdk-wheels-ce8cea34/qianxing-0.1.0-cp310-abi3-win_amd64.whl"
+install_isolated_from_repository: true
+smoke_command: "target/wheel-smoke-ce8cea34/Scripts/python.exe tools/python_wheel_smoke.py ."
+smoke:
+  builtin_strategy_count: 17
+  dataset_rows: 70
+  backtest_fills: 18
+  replay_verified: true
+  single_leg_strategy_selection: "13/13 candidates succeeded with nonzero fills"
+  strategy_parameter_selection: "4/4 candidates succeeded"
+  independent_accounts: 2
+  account_overflow_preflight: true
+  depth_account_overflow_preflight: true
+  multi_leg_fills: "3/3"
+  orderbook_depth_fills: 1
+  python_custom_callback_fills: 1
+  run_handle_terminal_state: succeeded
+evidence_scope:
+  - "Windows x64 stable-ABI wheel imports the Rust extension from an isolated install and passes the repository wheel E2E harness."
+  - "Rust SDK release profile built from the same source commit with cargo build --offline --release -p qx-sdk."
+not_proven:
+  - "CPython 3.10 execution; only the cp310-abi3 tag and Python 3.13.13 runtime were exercised locally."
+  - "Linux/macOS or non-x64 wheel execution."
+  - "Live exchange/testnet conformance."
+  - "C++ SDK build; this Windows environment has no C++ compiler or CMake."

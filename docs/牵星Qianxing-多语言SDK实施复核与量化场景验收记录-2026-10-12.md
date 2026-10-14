@@ -464,3 +464,10 @@ Python 十策略证据：
 - 对照 `qx-api` 实际 dispatch、Rust/Python/C++ 远端 SDK 与 `GET /app/capabilities` 声明时发现：`/app/run-multi-market-depth-experiment` 及其 `/start` RunHandle 路由都已实现并接入客户端，但目录的 `experiments.parameter_grid` 少列这两项。使用目录自动发现的集成因此会把已实现功能视为不存在。
 - 共享 Rust 能力目录已补齐两个路由；`http_capability_discovery_is_versioned_and_does_not_claim_runtime_readiness` 增加参数网格路由逐项断言；部署 API 文档明确目录包含这些同步/RunHandle 路由，同时保持“路由存在不代表 Provider/Venue 当前就绪”的边界。
 - 验收：`cargo test --offline -p qx-api http_capability_discovery_is_versioned_and_does_not_claim_runtime_readiness -- --test-threads=1` 通过；Python 远端目录/客户端专项 7/7 通过；格式检查与 `git diff --check` 通过。第一次无并行限制编译遇到 Windows 链接器内存不足，设 `CARGO_BUILD_JOBS=1` 后同一目标测试通过；这属于构建资源限制，不是测试失败。
+
+## 58. 2026-10-14 验收补齐：当前提交的 Rust SDK 与 Python wheel
+
+- 对当前提交 `ce8cea341d48b2510ff0789d16327661b5084dea` 执行 `cargo build --offline --release -p qx-sdk`，完成；随后构建 Windows x64 `cp310-abi3` wheel，stable-ABI 元数据检查通过。wheel 安装到仓库之外的隔离虚拟环境并离线运行包级 smoke：17 策略目录、70 行数据、18 笔回测成交、13/13 单腿策略候选、4/4 参数候选、2 个独立账户、多腿 3/3、OrderBook、Python callback、RunHandle 终态与 replay 均通过。
+- 产物大小 2,381,062 bytes，SHA-256 `7199d28ecb7af13cf94fd72ca01024c23a30c84ccfe7766ff984e6f179bc5962`；完整命令、运行时和范围限制见 `maturity/evidence/python_sdk/windows-cp310-abi3-20261014-ce8cea34.yaml`。
+- 本轮量化场景探针复验为 75 executed、0 declared_not_executed、0 missing、1 blocked；架构不变量门禁 1096 项通过。唯一探针阻塞为需要 CCXT 运行依赖及交易所凭据的外部实盘订单生命周期验收。
+- 本证据仅覆盖 Windows x64、Python 3.13.13、当前公开 wheel 消费链；不证明 CPython 3.10 实际运行、Linux/macOS/其他架构、C++ 本地构建、跨账户聚合风险、多市场 Paper/Live 或真实 venue/testnet conformance。整体发布门槛仍未关闭。
