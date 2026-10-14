@@ -4,7 +4,7 @@
 use super::*;
 
 /// 估值用例用的最小合法规格：现货只允许 1 倍杠杆，衍生品必须唯一指定 linear/inverse。
-fn margin_valuation_spec(
+pub(super) fn margin_valuation_spec(
     instrument: &InstrumentId,
     product: TradingProduct,
 ) -> TradingInstrumentSpec {

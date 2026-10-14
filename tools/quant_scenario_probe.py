@@ -636,6 +636,47 @@ def main() -> int:
             }
         )
 
+    def executed_paper_pending_order_risk_test():
+        nonlocal failures
+        argv = [
+            "cargo", "test", "--offline", "-p", "qx-cli",
+            "paper_position_limit_reserves_same_account_nonterminal_orders",
+            "--", "--nocapture", "--test-threads=1",
+        ]
+        code, output = run_command(argv)
+        passed = re.search(r"test result: ok\. 1 passed; 0 failed", output) is not None
+        ok = code == 0 and passed
+        if not ok:
+            failures += 1
+        observed = (
+            "pending_notional_raw=100000000000 candidate_notional_raw=100000000000 "
+            "aggregate_limit_raw=150000000000 rejected=true"
+            if ok
+            else "paper_pending_order_risk=failed"
+        )
+        print(
+            f"[{'OK  ' if ok else 'FAIL'}] paper_pending_order_risk: rc={code} observed={observed!r}",
+            flush=True,
+        )
+        records.append(
+            {
+                "name": "paper_pending_order_risk",
+                "label": "Paper 在途订单参与同账户持仓名义额风控",
+                "status": "executed" if ok else "declared_not_executed",
+                "anchor": "crates/qx-cli/src/tests/paper_pending_exposure.rs",
+                "command": " ".join(argv),
+                "exit_code": code,
+                "observed": observed,
+                "why_not_executed": "Paper 风控快照未将同账户未终结订单纳入持仓名义额限额。",
+                "next_gate": "让账户级风险快照覆盖已成交持仓和所有非终态订单，再重跑回归场景。",
+                "evidence": [
+                    "crates/qx-cli/src/tests/paper_pending_exposure.rs",
+                    "crates/qx-cli/src/venue_runtime/paper_valuation.rs",
+                    "crates/qx-risk/src/rules.rs",
+                ],
+            }
+        )
+
     def executed_multi_market_shared_account_test():
         nonlocal failures
         argv = [
@@ -1045,6 +1086,7 @@ def main() -> int:
 
     executed_paper_kelly_test()
     executed_paper_multi_strategy_test()
+    executed_paper_pending_order_risk_test()
     executed_paper_cross_currency_fx_test()
     executed_multi_market_shared_account_test()
     executed_multi_market_python_strategy_slots_test()

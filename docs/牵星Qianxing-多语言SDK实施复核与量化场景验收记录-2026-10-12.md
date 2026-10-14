@@ -471,3 +471,10 @@ Python 十策略证据：
 - 产物大小 2,381,062 bytes，SHA-256 `7199d28ecb7af13cf94fd72ca01024c23a30c84ccfe7766ff984e6f179bc5962`；完整命令、运行时和范围限制见 `maturity/evidence/python_sdk/windows-cp310-abi3-20261014-ce8cea34.yaml`。
 - 本轮量化场景探针复验为 75 executed、0 declared_not_executed、0 missing、1 blocked；架构不变量门禁 1096 项通过。唯一探针阻塞为需要 CCXT 运行依赖及交易所凭据的外部实盘订单生命周期验收。
 - 本证据仅覆盖 Windows x64、Python 3.13.13、当前公开 wheel 消费链；不证明 CPython 3.10 实际运行、Linux/macOS/其他架构、C++ 本地构建、跨账户聚合风险、多市场 Paper/Live 或真实 venue/testnet conformance。整体发布门槛仍未关闭。
+
+## 59. 2026-10-14 修复：Paper 在途订单进入持仓限额
+
+- 复核 Paper 多 worker 并行下单链路时发现，`worker_risk_context` 只从已成交 Ledger 持仓计算 `gross_notional`。在订单成交并更新账簿前，后续 worker 仍看到旧敞口，可能分别通过同一个 `max_position_notional` 限额。
+- 风控上下文现在仅在配置持仓名义额上限时，累计同账户、同标的所有非终态订单的剩余名义额；限价单采用限价，市价单采用市场标记价。缺少市价参考价及固定点累加/估值溢出均 fail-closed，并排除当前订单 ID 避免重试时重复预留。其他账户订单不计入该账户敞口。
+- 新增 `paper_pending_order_risk` 场景，证明账户已有 100、候选订单为 100、限额 150 时被拒绝，另一账户的 500 不串入；无在途订单时该候选单通过。目标测试、原 Paper 衍生品估值回归、`qx-cli` 全量单元与集成测试（397 + 99）、严格 Clippy、格式检查、架构门禁 1096 项及量化场景探针均通过；探针为 76 executed、0 declared_not_executed、0 missing、1 blocked。
+- 本修复只覆盖 Paper 同账户同标的限额预留，不代表跨标的/跨账户组合风险、组合保证金、多市场 Paper/Live、真实 venue testnet 或全平台 SDK 发布验收已完成；唯一场景探针阻塞仍涉及 CCXT 运行依赖和外部交易所凭据。

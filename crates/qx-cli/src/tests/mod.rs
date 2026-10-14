@@ -419,6 +419,7 @@ mod paper_bridge_and_bundles;
 mod paper_hedge_recovery;
 mod paper_margin_valuation;
 mod paper_multi_strategy;
+mod paper_pending_exposure;
 mod paper_settlement_currency;
 mod paper_submit_terminal_state;
 mod parallel_run_isolation;

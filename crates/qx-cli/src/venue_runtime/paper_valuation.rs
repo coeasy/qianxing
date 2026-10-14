@@ -1,6 +1,9 @@
 use super::worker_runtime::load_worker_market_spec_for_instrument;
 use crate::*;
 
+mod pending_exposure;
+use pending_exposure::pending_order_gross_notional;
+
 pub(crate) fn paper_available_margin_with_market_specs(
     ledger: &Ledger,
     account_id: &str,
@@ -155,7 +158,7 @@ fn worker_risk_context_inner(
         .checked_sub(long_qty)
         .and_then(|value| value.checked_sub(short_qty))
         .ok_or_else(|| "拆分 one-way/hedge 持仓数量溢出".to_string())?;
-    let gross_notional = reference_price
+    let filled_gross_notional = reference_price
         .map(|price| {
             let one_way = spec.notional(one_way_qty.saturating_abs(), price.raw())?;
             let long = spec.notional(long_qty.saturating_abs(), price.raw())?;
@@ -168,6 +171,24 @@ fn worker_risk_context_inner(
         .transpose()
         .map_err(|error| format!("计算当前持仓名义额失败: {error:?}"))?
         .unwrap_or(0);
+    // An accepted order is a potential position until it is filled or reaches a
+    // terminal state. Include the rest of this account's open orders in the
+    // projected gross exposure so separate workers cannot each pass the same
+    // max-position limit against an unchanged Ledger snapshot.
+    let pending_gross_notional = if worker.max_position_notional_raw.is_some() {
+        pending_order_gross_notional(
+            &pipeline.orders(),
+            order,
+            account_id,
+            &spec,
+            pipeline.marks(),
+        )?
+    } else {
+        0
+    };
+    let gross_notional = filled_gross_notional
+        .checked_add(pending_gross_notional)
+        .ok_or_else(|| "当前持仓与在途订单名义额合计溢出".to_string())?;
     let position =
         OrderRiskPosition::new_with_multiplier(one_way_qty, gross_notional, spec.contract_size)
             .with_hedge_legs(long_qty, short_qty);
