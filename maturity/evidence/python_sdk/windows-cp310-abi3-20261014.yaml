@@ -15,9 +15,17 @@ smoke:
   dataset_rows: 70
   backtest_fills: 1
   replay_verified: true
+  strategy_parameter_selection: "4/4 candidates succeeded"
+  independent_accounts: 2
+  multi_leg_fills: "3/3"
+  orderbook_depth_fills: 2
+  python_custom_callback_fills: 1
+  run_handle_terminal_state: succeeded
+  run_handle_terminal_event_seen: true
+smoke_harness: tools/python_wheel_smoke.py
 evidence_scope:
   - "Windows x64 wheel installs without runtime dependencies and imports its Rust extension."
-  - "Installed SDK discovery, dataset validation, deterministic Rust backtest, and replay verification succeeded outside the source package path."
+  - "Installed SDK discovery, dataset validation, parameter selection, isolated multi-account and multi-leg backtests, OrderBook depth backtest, a Python callback, RunHandle lifecycle/events, and replay verification succeeded outside the source package path."
 not_proven:
   - "CPython 3.10 runtime execution; only the cp310-abi3 artifact tag and Python 3.13 runtime were exercised locally."
   - "Linux/macOS or non-x64 wheel execution."

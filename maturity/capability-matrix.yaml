@@ -101,7 +101,7 @@ domains:
 
   - name: release
     level: partial
-    evidence: [.github/workflows, maturity/gate_snapshot.json]
+    evidence: [.github/workflows, tools/python_wheel_smoke.py, maturity/evidence/python_sdk/windows-cp310-abi3-20261014.yaml, maturity/gate_snapshot.json]
     limitations: ["当前 Windows 本地包不能代表全平台：跨平台消费者安装验证、实盘认证矩阵与产品能力清单需要补足", "SBOM、构建来源证明与三操作系统支持矩阵未建立"]
     next_gate: "落方案 §7 的发布工程（SBOM、来源证明、支持矩阵、三操作系统）"
 

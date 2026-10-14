@@ -150,28 +150,7 @@ jobs:
           set -euo pipefail
           python -m pip install --no-deps dist/*.whl
           cd "${RUNNER_TEMP}"
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          import qianxing
-
-          bars = Path(os.environ["GITHUB_WORKSPACE"]) / "deploy" / "qianxing.bar-frame.example.json"
-          assert "backtest.bar.v1" in qianxing.doctor()["implemented_use_cases"]
-          verdict = qianxing.validate_dataset(qianxing.DatasetSpec("release-smoke-data", str(bars)))
-          assert verdict.usable and verdict.rows == 70
-          outcome = qianxing.run_backtest(qianxing.BacktestSpec(
-              run_id="release-smoke-run",
-              instrument="BTCUSDT.BINANCE",
-              bars_path=str(bars),
-              settlement_currency="USDT",
-              initial_cash_raw=100_000_000_000_000,
-              output_dir=str(Path.cwd() / "runs"),
-              strategy=qianxing.BuiltinStrategySpec(kind="sma_cross", strategy_id="release-smoke-sma", fast_window=2, slow_window=3),
-          ))
-          verification = qianxing.verify_run(outcome)
-          assert verification.verified, verification.mismatches
-          print(f"wheel e2e rows={verdict.rows} fills={outcome.fills} verified={verification.verified}")
-          PY
+          python "${GITHUB_WORKSPACE}/tools/python_wheel_smoke.py" "${GITHUB_WORKSPACE}"
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
