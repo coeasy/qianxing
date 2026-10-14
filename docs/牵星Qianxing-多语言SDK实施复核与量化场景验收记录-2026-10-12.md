@@ -413,14 +413,14 @@ Python 十策略证据：
 - GitHub Actions 对提交 `2ecd1218` 的运行未成功完成；本地复现显示 Rust workspace 失败点不是新执行逻辑，而是 `api_endpoint_table_routes::each_endpoint_table_lists_exactly_the_dispatch_routes`：它只把 `/app/strategies` 纳入静态 app_surface 路由集合，漏了新接入的 `GET /app/capabilities` 与 `POST /app/capabilities/providers/preflight`。
 - 该盲区还伴随部署文档的第二张「非 200 口径」表缺失两条路由。现在测试夹具把三条 app_surface 静态入口集中核验方法、路径与 handler；两张端点表均包含完整路由，Provider 预检记明 400/503 行为及无候选的 200 语义。
 - 验收：改动前 `cargo test --workspace --offline` 复现 395 项通过、1 项失败；修复后全 workspace 测试通过（qx-cli 396 项、CLI/HTTP/Python 三入口应用集成 20 项包含十经典策略一致性）；端点表专项 10 项通过；workspace 严格 Clippy、格式检查及 1096 项架构门禁通过。
-- 本地目前已证明完整 workspace 通过；GitHub Actions 还需要在本次修复提交上完成一次未被并发 push 取消的全量运行。跨账户共享风险、外部 testnet/venue 认证、事件日志游标恢复及跨平台安装外部证明仍需分别闭环。
+- 本地完整 workspace 测试通过；后续 `c49cbbc` 的 GitHub Actions CI #366 也以 Success 完成（Rust/feature 矩阵、3 平台 C++、12 组 Python wheel、Runtime/Paper 与 venue acceptance job 均完成）。venue acceptance job 的成功只表示工作流步骤通过；无 testnet 凭据时仍按配置跳过真实订单验收，不能作为交易所实盘认证证据。跨账户共享风险与事件日志游标恢复仍需分别闭环。
 
 ## 52. 2026-10-14 修复：RunHandle 终态事件发布竞态
 
 - 轮询路径审计发现，Rust `RunHandle` 工作线程此前先发送结果并发布终态状态，再追加 `Succeeded`、`Failed` 或 `Cancelled` 事件。`status()` 可以直接消费结果并返回终态，因此客户端可能观察到终态却在同一时刻的事件游标查询里看不到终态事件，形成状态/事件短暂不一致。
 - 现将终态事件追加移到结果发送和终态状态发布之前。事件锁保护追加顺序，之后再公开结果；所有三种终态共用此路径。扩充并发轮询回归，在每次观察到 `Succeeded` 时同步断言事件游标已包含该终态事件。
 - 验收：`cargo test --offline -p qx-app --lib` 132/132、`cargo clippy --offline -p qx-app --all-targets -- -D warnings`、`cargo fmt --all -- --check` 与 `git diff --check` 通过。
-- 该修复只关闭进程内 Rust RunHandle 的短暂可见性竞态。HTTP 持久化运行注册表的逐事件日志、游标恢复，以及多语言/HTTP/Web E2E、跨账户组合风险、C++ 默认 transport 和外部交易所 testnet 认证仍是开放发布项。
+- 该修复只关闭进程内 Rust RunHandle 的短暂可见性竞态。HTTP 持久化运行注册表的逐事件日志、游标恢复，以及多语言/HTTP/Web E2E、跨账户组合风险、C++ 默认 transport 和外部交易所 testnet 认证仍是开放发布项。远端 CI #366（[Actions run](https://github.com/coeasy/qianxing/actions/runs/38496814346)）以 Success 完成；本次代码提交为 `c49cbbc`。
 
 ## 50. 2026-10-14 修复：Python 深度多账户同步错误边界
 
