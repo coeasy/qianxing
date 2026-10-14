@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791973270
+generated_at_unix: 1791974615
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -308,7 +308,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=aba5a9bec295abf5/a7bb02259d1889cb,ce2d937a8570b9c3/1bc2dacf0df1eb7b,b5dfbed70eb3beca/4453480057c53bae,78d5c522bde86304/2d780d9bb77a2dc2"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=ee9d48305d2d08de/ebdc8aae80b274a4,7e83885c6a0d72e4/9dd9734a94a66234,d87de131e4cb47dd/7f1c36c4062cb3f1,18c79283d4a2fecf/94a56d79f2001885"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -495,7 +495,7 @@ scenarios:
     observed: "test result: ok. 1 passed; API start=accepted worker_restarts=4 children=2 fills=4,000,000,000 raw API get=completed remaining_raw=0"
     evidence: ["crates/qx-cli/src/api_algo_execution.rs", "crates/qx-cli/src/venue_runtime/paper_algo_worker.rs", "crates/qx-api/src/algo_execution_tests.rs", "python/qianxing/app.py", "cpp/include/qianxing_app.hpp"]
   - name: python_builtin_strategy_catalog
-    label: "Python SDK 十种经典策略快速选择与批量对比（共享 Rust 回测内核）"
+    label: "Python SDK 13 种单腿策略快速选择与批量对比（覆盖原定十大经典策略，共享 Rust 内核）"
     status: executed
     anchor: "python/tests/test_app_use_cases.py"
     command: "python -m unittest python.tests.test_app_use_cases.AppUseCaseTests.test_thirteen_classic_builtin_strategies_run_through_python_rust_kernel"

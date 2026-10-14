@@ -215,6 +215,16 @@ def run_command(command: list[str], env_extra: dict | None = None) -> tuple[int,
     tmp = ROOT / ".task-tmp"
     tmp.mkdir(parents=True, exist_ok=True)
     env["TEMP"] = env["TMP"] = str(tmp)
+    if command and Path(command[0]).name.lower() in {"python", "python.exe"}:
+        # Use the same interpreter that runs this probe and expose the repository's
+        # Python package root. A bare `python` can resolve to a system interpreter
+        # without qianxing installed, falsely downgrading valid SDK scenarios.
+        command = [sys.executable, *command[1:]]
+        package_root = str(ROOT / "python")
+        current_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (package_root, current_pythonpath) if part
+        )
     for key, value in (env_extra or {}).items():
         # Environment values are already values, not implicitly repository
         # paths. The old path coercion turned booleans like "true" into an
@@ -1966,7 +1976,7 @@ def main() -> int:
 
     executed(
         "python_builtin_strategy_catalog",
-        "Python SDK 十种经典策略快速选择与批量对比（共享 Rust 回测内核）",
+        "Python SDK 13 种单腿策略快速选择与批量对比（覆盖原定十大经典策略，共享 Rust 内核）",
         "python/tests/test_app_use_cases.py",
         ["-m", "unittest", "python.tests.test_app_use_cases.AppUseCaseTests.test_thirteen_classic_builtin_strategies_run_through_python_rust_kernel"],
         r"(Ran 1 test)",

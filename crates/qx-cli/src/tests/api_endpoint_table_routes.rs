@@ -103,7 +103,6 @@ pub(crate) fn backticked_routes(cell: &str) -> Vec<String> {
     }
     routes
 }
-
 /// 表头之后那一段表格的第一列里出现的全部路由（按文档顺序，不去重到集合以外）。
 ///
 /// 表格按"下一行不再是 `| ` 开头"截断，而不是按下一处标题截断：第二张表夹在正文中间，
@@ -162,6 +161,7 @@ pub(crate) fn dispatch_method_routes() -> BTreeSet<(String, String)> {
         ("RUN_START_DEPTH_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_MULTI_ACCOUNT_ROUTE", "POST"),
+        ("RUN_START_MULTI_ACCOUNT_DEPTH_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_ROUTE", "POST"),
         ("RUN_START_MULTI_MARKET_ROUTE", "POST"),
         ("RUN_START_MARKET_DEPTH_ROUTE", "POST"),

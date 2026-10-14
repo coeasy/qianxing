@@ -306,6 +306,8 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/multi-leg-backtest` | 应用层用例 `qx_app::run_multi_leg_backtest` 的双腿 Bar 回测结果（请求体为 `MultiLegBacktestSpec` JSON） | 两份输入必须在数据根目录下且时间戳严格对齐；两侧可分别提供 TradingInstrumentSpec 与费率覆盖；资金费、共享费率默认值和撮合模型由版本化请求声明；策略、撮合与事件回放复用 Rust；写出双腿成交归因与裸腿待对账事实 |
 | `POST /app/multi-account-backtest` | 应用层用例 `qx_app::run_multi_account_backtest` 的独立账户批次（请求体为 `MultiAccountBacktestSpec` JSON） | 每账户使用自己的 Bar 输入、账本与产物；支持最多 32 个账户与不同市场；结算币种必须一致，不跨账户净额；账户失败隔离返回 |
 | `POST /app/multi-account-backtest/start` | `MultiAccountBacktestSpec::start` 的多账户后台运行句柄 | 立即返回 `run_id/status`；成员与账户 Bar 循环协作取消；结果、状态、事件和取消使用现有运行句柄与事件读面 |
+| `POST /app/multi-account-depth-backtest` | 多账户独立 Tick/OrderBook 批次（请求体为 `MultiAccountDepthBacktestSpec` JSON） | 每账户使用独立账本并复用 Rust 深度回测用例；最多 32 个成员、结算币种须一致；成员失败隔离，不做跨账户净额；输入与产物路径由服务端约束 |
+| `POST /app/multi-account-depth-backtest/start` | `MultiAccountDepthBacktestSpec::start` 的多账户 Tick/OrderBook 后台运行句柄 | 返回批次 `run_id/status`；成员与盘口循环协作取消，状态、结果、生命周期事件和取消复用 `/app/runs/{run_id}` |
 | `POST /app/multi-market-backtest` | 应用层用例 `qx_app::run_multi_market_backtest` 的共享账户多市场 Bar 组合回测（请求体为 `MultiMarketBacktestSpec` JSON） | 3..=32 市场；共用账户账本、风控、OMS、事件与重放校验；输入限制在服务端数据根目录，产物写入服务端 artifact 根目录 |
 | `POST /app/multi-market-depth-backtest` | `MultiMarketDepthBacktestSpec` 的共享账户多市场 L1 Tick/L2 OrderBook 组合回测 | 2..=32 个现货市场；每市场声明 `data_tier=l1/l2`，L1 每个时间点恰有一档 bid/ask 并向策略发 Tick 事件；共用 Rust OrderBookPortfolioBacktestEngine、账本、风控、OMS、EventLog 与 Replay；输入限制在服务端数据根目录；目前不支持跨市场衍生品保证金 |
 | `POST /app/run-multi-market-experiment` | 应用层用例 `qx_app::run_multi_market_experiment` 的多市场策略/参数网格（请求体为 `RunMultiMarketExperimentSpec` JSON） | 最多 256 个候选；每个候选复用多市场共享账户 Rust 内核，候选失败隔离、收益/回撤稳定排序；输入和产物限制在服务端配置根目录 |
