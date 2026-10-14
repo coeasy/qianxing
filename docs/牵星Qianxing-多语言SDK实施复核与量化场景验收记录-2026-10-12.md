@@ -458,3 +458,9 @@ Python 十策略证据：
 - 该证据加强的是“账户相互隔离”的当前契约，不代表跨账户净额、组合风险、共享购买力或统一多账户订单执行已经实现。多市场 Paper/Live、外部 venue/provider conformance、HTTP 持久事件恢复、C++ 默认 transport、Web/桌面 E2E 和完整发布平台矩阵仍未关闭，不能据此宣称方案达到全部发布门槛。
 - 同轮对 `qx-app` 执行严格 Clippy 时发现多市场深度工作流的 `MarketStrategy` 大枚举（内置策略约 832 字节）；已将内置策略变体装箱。修正后 `cargo clippy --offline -p qx-app --all-targets -- -D warnings` 通过，深度多市场相关单测 4/4 通过。
 - workspace 首轮全量 Rust 测试 393 项通过、3 项暴露部署文档/静态路由核对不一致：两条 Run 启动路由常量未被门禁解析，深度参数实验第二张端点表漏写限流出口。现更新常量扫描以兼容换行赋值、补齐 `deploy/README.md` 的候选上限/错误与限流语义；三项端点表测试和限流语义测试通过，`cargo test --offline --workspace` 复跑全部通过。
+
+## 57. 2026-10-14 修复：能力发现目录漏报多市场深度参数实验
+
+- 对照 `qx-api` 实际 dispatch、Rust/Python/C++ 远端 SDK 与 `GET /app/capabilities` 声明时发现：`/app/run-multi-market-depth-experiment` 及其 `/start` RunHandle 路由都已实现并接入客户端，但目录的 `experiments.parameter_grid` 少列这两项。使用目录自动发现的集成因此会把已实现功能视为不存在。
+- 共享 Rust 能力目录已补齐两个路由；`http_capability_discovery_is_versioned_and_does_not_claim_runtime_readiness` 增加参数网格路由逐项断言；部署 API 文档明确目录包含这些同步/RunHandle 路由，同时保持“路由存在不代表 Provider/Venue 当前就绪”的边界。
+- 验收：`cargo test --offline -p qx-api http_capability_discovery_is_versioned_and_does_not_claim_runtime_readiness -- --test-threads=1` 通过；Python 远端目录/客户端专项 7/7 通过；格式检查与 `git diff --check` 通过。第一次无并行限制编译遇到 Windows 链接器内存不足，设 `CARGO_BUILD_JOBS=1` 后同一目标测试通过；这属于构建资源限制，不是测试失败。

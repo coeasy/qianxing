@@ -56,6 +56,24 @@ fn http_capability_discovery_is_versioned_and_does_not_claim_runtime_readiness()
             "missing {id}"
         );
     }
+    let parameter_grid = capabilities
+        .iter()
+        .find(|capability| capability["id"] == "experiments.parameter_grid")
+        .expect("parameter-grid capability is discoverable");
+    let routes = parameter_grid["routes"].as_array().unwrap();
+    for route in [
+        "/app/run-experiment",
+        "/app/run-depth-experiment",
+        "/app/run-multi-leg-experiment",
+        "/app/run-multi-market-experiment",
+        "/app/run-multi-market-depth-experiment",
+        "/app/run-multi-market-depth-experiment/start",
+    ] {
+        assert!(
+            routes.iter().any(|candidate| candidate == route),
+            "parameter-grid capability omits implemented route {route}"
+        );
+    }
     assert!(catalog["limitations"]
         .as_array()
         .unwrap()
