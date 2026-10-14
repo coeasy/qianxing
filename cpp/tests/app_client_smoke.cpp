@@ -147,6 +147,17 @@ int main() {
     assert(observed_path == "/app/multi-account-backtest/start");
     assert(observed_body == spec);
 
+    const auto multi_account_depth = client.run_multi_account_depth_backtest(depth_spec);
+    assert(multi_account_depth.ok());
+    assert(observed_path == "/app/multi-account-depth-backtest");
+    assert(observed_body == depth_spec);
+
+    const auto started_multi_account_depth =
+        client.start_multi_account_depth_backtest(depth_spec);
+    assert(started_multi_account_depth.ok());
+    assert(observed_path == "/app/multi-account-depth-backtest/start");
+    assert(observed_body == depth_spec);
+
     const auto started_multi_leg = client.start_multi_leg_backtest(spec);
     assert(started_multi_leg.ok());
     assert(observed_path == "/app/multi-leg-backtest/start");

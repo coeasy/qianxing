@@ -5,11 +5,12 @@ use super::*;
 mod entry;
 pub(super) use entry::{cancel_route_id, is_terminal, status_route_id, valid_run_route_id};
 use qx_app::{
-    MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiLegBacktestOutcome,
-    MultiLegBacktestSpec, MultiMarketBacktestOutcome, MultiMarketBacktestSpec,
-    MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec, RunDepthExperimentResult,
-    RunDepthExperimentSpec, RunEvent, RunExperimentResult, RunHandle, RunMultiLegExperimentResult,
-    RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentResult, RunMultiMarketExperimentResult,
+    MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiAccountDepthBacktestResult,
+    MultiAccountDepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec,
+    MultiMarketBacktestOutcome, MultiMarketBacktestSpec, MultiMarketDepthBacktestOutcome,
+    MultiMarketDepthBacktestSpec, RunDepthExperimentResult, RunDepthExperimentSpec, RunEvent,
+    RunExperimentResult, RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
+    RunMultiMarketDepthExperimentResult, RunMultiMarketExperimentResult,
     RunMultiMarketExperimentSpec, RunStatus,
 };
 use std::collections::BTreeMap;
@@ -43,6 +44,8 @@ pub(crate) const RUN_START_DEPTH_EXPERIMENT_ROUTE: &str = "/app/run-depth-experi
 pub(crate) const RUN_START_EXPERIMENT_ROUTE: &str = "/app/run-experiment/start";
 pub(crate) const RUN_START_MULTI_LEG_ROUTE: &str = "/app/multi-leg-backtest/start";
 pub(crate) const RUN_START_MULTI_ACCOUNT_ROUTE: &str = "/app/multi-account-backtest/start";
+pub(crate) const RUN_START_MULTI_ACCOUNT_DEPTH_ROUTE: &str =
+    "/app/multi-account-depth-backtest/start";
 pub(crate) const RUN_START_MULTI_MARKET_ROUTE: &str = "/app/multi-market-backtest/start";
 pub(crate) const RUN_START_MARKET_DEPTH_ROUTE: &str = "/app/multi-market-depth-backtest/start";
 pub(crate) const RUN_START_MULTI_LEG_EXPERIMENT_ROUTE: &str = "/app/run-multi-leg-experiment/start";
@@ -80,6 +83,9 @@ pub(crate) fn app_run_route_with_query(
         }
         ("POST", RUN_START_MULTI_ACCOUNT_ROUTE) => {
             starts::start_multi_account_backtest(body, paths, registry)
+        }
+        ("POST", RUN_START_MULTI_ACCOUNT_DEPTH_ROUTE) => {
+            starts::start_multi_account_depth_backtest(body, paths, registry)
         }
         ("POST", RUN_START_MULTI_MARKET_ROUTE) => {
             starts::start_multi_market_backtest(body, paths, registry)
@@ -132,6 +138,7 @@ enum AppRun {
     MultiLegExperiment(RunHandle<RunMultiLegExperimentResult>),
     MultiMarketExperiment(RunHandle<RunMultiMarketExperimentResult>),
     MultiAccount(RunHandle<MultiAccountBacktestResult>),
+    MultiAccountDepth(RunHandle<MultiAccountDepthBacktestResult>),
     MultiMarket(RunHandle<MultiMarketBacktestOutcome>),
     MultiMarketDepth(RunHandle<MultiMarketDepthBacktestOutcome>),
     MultiMarketDepthExperiment(RunHandle<RunMultiMarketDepthExperimentResult>),

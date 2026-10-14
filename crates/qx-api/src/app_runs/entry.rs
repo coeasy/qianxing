@@ -18,6 +18,7 @@ impl AppRunEntry {
             AppRun::MultiLegExperiment(handle) => handle.observe(),
             AppRun::MultiMarketExperiment(handle) => handle.observe(),
             AppRun::MultiAccount(handle) => handle.observe(),
+            AppRun::MultiAccountDepth(handle) => handle.observe(),
             AppRun::MultiMarket(handle) => handle.observe(),
             AppRun::MultiMarketDepth(handle) => handle.observe(),
             AppRun::MultiMarketDepthExperiment(handle) => handle.observe(),
@@ -42,6 +43,7 @@ impl AppRunEntry {
             Some(AppRun::MultiLegExperiment(handle)) => handle.cancel(),
             Some(AppRun::MultiMarketExperiment(handle)) => handle.cancel(),
             Some(AppRun::MultiAccount(handle)) => handle.cancel(),
+            Some(AppRun::MultiAccountDepth(handle)) => handle.cancel(),
             Some(AppRun::MultiMarket(handle)) => handle.cancel(),
             Some(AppRun::MultiMarketDepth(handle)) => handle.cancel(),
             Some(AppRun::MultiMarketDepthExperiment(handle)) => handle.cancel(),
@@ -78,6 +80,9 @@ impl AppRunEntry {
                 .try_take_result()
                 .map(|result| result.and_then(|value| value.to_json())),
             Some(AppRun::MultiAccount(handle)) => handle
+                .try_take_result()
+                .map(|result| result.and_then(|value| value.to_json())),
+            Some(AppRun::MultiAccountDepth(handle)) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|value| value.to_json())),
             Some(AppRun::MultiMarket(handle)) => handle

@@ -1557,7 +1557,6 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::start_multi_market_depth_experiment_with_strategy_factory": "qx-sdk Rust 可取消多市场 L2 策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-sdk::start_multi_leg_backtest_with_strategy": "qx-sdk Rust 可取消双腿策略运行公开入口；由外部 SDK 消费者实现 Strategy 并调用",
     "qx-sdk::start_multi_leg_experiment_with_strategy_factory": "qx-sdk Rust 可取消多腿策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
-    "qx-sdk::start_multi_account_depth_backtest": "qx-sdk Rust 可取消多账户 Tick/OrderBook 批量入口；由外部 SDK 消费者调用",
     "qx-sdk::run_multi_leg_experiment_with_strategy_factory": "qx-sdk Rust 同步多腿策略参数实验公开入口；外部 SDK 消费者提供逐候选 Strategy factory",
     "qx-storage::consume_batch_with_projection": "deploy/README 公布为外部 reducer 的原子投影+checkpoint 入口",
     "qx-data::add_component": (
@@ -6239,6 +6238,7 @@ def api_surface_doc_check() -> None:
         ("RUN_START_EXPERIMENT_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_ROUTE", "POST"),
         ("RUN_START_MULTI_ACCOUNT_ROUTE", "POST"),
+        ("RUN_START_MULTI_ACCOUNT_DEPTH_ROUTE", "POST"),
         ("RUN_START_MULTI_MARKET_ROUTE", "POST"),
         ("RUN_START_MARKET_DEPTH_ROUTE", "POST"),
         ("RUN_START_MULTI_LEG_EXPERIMENT_ROUTE", "POST"),
@@ -6275,6 +6275,7 @@ def api_surface_doc_check() -> None:
             ("POST", "/app/run-experiment/start"),
             ("POST", "/app/multi-leg-backtest/start"),
             ("POST", "/app/multi-account-backtest/start"),
+            ("POST", "/app/multi-account-depth-backtest/start"),
             ("POST", "/app/multi-market-backtest/start"),
             ("POST", "/app/multi-market-depth-backtest/start"),
             ("POST", "/app/run-multi-leg-experiment/start"),

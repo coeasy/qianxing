@@ -542,6 +542,8 @@ class AppUseCaseTests(unittest.TestCase):
             ("provider_preflight", "/app/capabilities/providers/preflight", False),
             ("run_multi_account_backtest", "/app/multi-account-backtest", False),
             ("start_multi_account_backtest", "/app/multi-account-backtest/start", True),
+            ("run_multi_account_depth_backtest", "/app/multi-account-depth-backtest", False),
+            ("start_multi_account_depth_backtest", "/app/multi-account-depth-backtest/start", True),
             ("start_backtest", "/app/backtest/start", True),
             ("verify_run", "/app/verify", False),
             ("compare_runs", "/app/compare-runs", False),
@@ -625,6 +627,14 @@ class AppUseCaseTests(unittest.TestCase):
                 },
             },
             "start_multi_account_backtest": {"run_id": "batch", "status": "starting"},
+            "run_multi_account_depth_backtest": {
+                "batch_id": "depth-batch",
+                "settlement_currency": "USDT",
+                "spec_fingerprint": "fingerprint",
+                "runs": [],
+                "summary": {},
+            },
+            "start_multi_account_depth_backtest": {"run_id": "depth-batch", "status": "starting"},
             "plan_risk_parity": {
                 "schema_version": 1,
                 "portfolio_id": "portfolio",

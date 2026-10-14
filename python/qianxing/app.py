@@ -36,6 +36,8 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "provider_depth_backtest": "/app/provider-depth-backtest",
     "multi_account_backtest": "/app/multi-account-backtest",
     "multi_account_backtest_start": "/app/multi-account-backtest/start",
+    "multi_account_depth_backtest": "/app/multi-account-depth-backtest",
+    "multi_account_depth_backtest_start": "/app/multi-account-depth-backtest/start",
     "multi_market_backtest": "/app/multi-market-backtest",
     "multi_market_backtest_start": "/app/multi-market-backtest/start",
     "multi_market_depth_backtest": "/app/multi-market-depth-backtest",
@@ -2507,6 +2509,22 @@ class AppClient(_HttpJsonClient):
             MultiAccountBacktestResult,
         )
 
+    def run_multi_account_depth_backtest(
+        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
+    ) -> MultiAccountDepthBacktestResult:
+        return MultiAccountDepthBacktestResult.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["multi_account_depth_backtest"], spec)
+        )
+
+    def start_multi_account_depth_backtest(
+        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
+    ) -> RemoteRunHandle[MultiAccountDepthBacktestResult]:
+        return self._start(
+            APP_ROUTE_TEMPLATES["multi_account_depth_backtest_start"],
+            spec,
+            MultiAccountDepthBacktestResult,
+        )
+
     def start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> RemoteRunHandle[MultiLegBacktestOutcome]:
         return self._start(
             APP_ROUTE_TEMPLATES["multi_leg_backtest_start"], spec, MultiLegBacktestOutcome
@@ -2613,6 +2631,16 @@ class AppClient(_HttpJsonClient):
         self, spec: MultiAccountBacktestSpec | dict[str, Any]
     ) -> RemoteRunHandle[MultiAccountBacktestResult]:
         return await self._async_start(self.start_multi_account_backtest, spec)
+
+    async def async_run_multi_account_depth_backtest(
+        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
+    ) -> MultiAccountDepthBacktestResult:
+        return await asyncio.to_thread(self.run_multi_account_depth_backtest, spec)
+
+    async def async_start_multi_account_depth_backtest(
+        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
+    ) -> RemoteRunHandle[MultiAccountDepthBacktestResult]:
+        return await self._async_start(self.start_multi_account_depth_backtest, spec)
 
     async def async_start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> RemoteRunHandle[MultiLegBacktestOutcome]:
         return await self._async_start(self.start_multi_leg_backtest, spec)

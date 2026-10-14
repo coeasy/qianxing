@@ -1,5 +1,4 @@
-//! 不依赖特定 Web 框架的本地 API 边界。
-//! 该层只做协议解析、权限入口和事件/快照查询，不直接修改 Ledger；写操作必须进入 `ControlPlane`，由上层执行器完成实际动作并回写审计。
+//! 不依赖 Web 框架的本地 API 边界；只处理协议、权限、事件与快照，写入必须经 `ControlPlane` 并回写审计。
 mod admission;
 mod algo_lifecycle;
 mod app_surface;
@@ -1705,6 +1704,7 @@ qx_control_retired_audit_records_total {}\n",
                 app::multi_market_depth_experiment(body, &self.app_paths)
             }
             ("POST", "/app/multi-account-backtest") => app::multi_account(body, &self.app_paths),
+            ("POST", "/app/multi-account-depth-backtest") => app::depth_batch(body, app_paths),
             ("POST", "/app/run-multi-leg-experiment") => app::multi_leg_grid(body, &self.app_paths),
             ("POST", "/app/run-multi-market-experiment") => app::multi_market_grid(body, app_paths),
             _ => ApiResponse::text(404, "not found"),

@@ -240,6 +240,6 @@ contracts:
   - use_case: run_multi_account_depth_backtest
     rust: ["Client.run_multi_account_depth_backtest", "Client.start_multi_account_depth_backtest", "run_multi_account_depth_backtest"]
     python_native: ["run_multi_account_depth_backtest", "start_multi_account_depth_backtest"]
-    python_remote: []
-    cpp_remote: []
-    http: []
+    python_remote: ["run_multi_account_depth_backtest", "start_multi_account_depth_backtest"]
+    cpp_remote: ["run_multi_account_depth_backtest", "start_multi_account_depth_backtest"]
+    http: ["/app/multi-account-depth-backtest", "/app/multi-account-depth-backtest/start"]

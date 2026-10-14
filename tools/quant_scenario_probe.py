@@ -1111,6 +1111,30 @@ def main() -> int:
             command_prefix="cargo",
         )
 
+    def executed_multi_account_depth_sdk_http_test():
+        executed(
+            "multi_account_depth_sdk_http",
+            "多账户 Tick/OrderBook 批量回测的 Rust HTTP、Python 远端与 C++ 远端契约",
+            "crates/qx-api/src/app_multi_leg_tests.rs",
+            [
+                "test", "--offline", "-p", "qx-api",
+                "multi_account_depth_http_sync_and_async_routes_share_rust_kernel",
+                "--", "--nocapture",
+            ],
+            r"(test result: ok\. 1 passed; 0 failed)",
+            env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
+            extra="accounts=2 shared_rust_kernel=true sync=true async_run_handle=true python_remote=true cpp_remote=true",
+            evidence=[
+                "crates/qx-api/src/app_multi_leg_tests.rs",
+                "python/qianxing/app.py",
+                "python/tests/test_app_use_cases.py",
+                "cpp/include/qianxing_app.hpp",
+                "cpp/tests/app_client_smoke.cpp",
+                "maturity/language_api_contract.yaml",
+            ],
+            command_prefix="cargo",
+        )
+
     def executed_multi_market_experiment_language_parity_test():
         executed(
             "multi_market_experiment_language_parity",
@@ -1205,6 +1229,7 @@ def main() -> int:
     executed_multi_market_mixed_tick_orderbook_test()
     executed_multi_market_parameter_experiment_test()
     executed_multi_account_capital_isolation_test()
+    executed_multi_account_depth_sdk_http_test()
     executed_multi_market_experiment_language_parity_test()
 
     for name, label, kind in MULTI_LEG_SCENARIOS:

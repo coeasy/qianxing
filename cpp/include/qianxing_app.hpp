@@ -47,6 +47,9 @@ inline constexpr std::string_view kApplicationCapabilities = "/app/capabilities"
 inline constexpr std::string_view kProviderPreflight = "/app/capabilities/providers/preflight";
 inline constexpr std::string_view kMultiAccountBacktest = "/app/multi-account-backtest";
 inline constexpr std::string_view kMultiAccountBacktestStart = "/app/multi-account-backtest/start";
+inline constexpr std::string_view kMultiAccountDepthBacktest = "/app/multi-account-depth-backtest";
+inline constexpr std::string_view kMultiAccountDepthBacktestStart =
+    "/app/multi-account-depth-backtest/start";
 inline constexpr std::string_view kMultiMarketBacktest = "/app/multi-market-backtest";
 inline constexpr std::string_view kMultiMarketBacktestStart = "/app/multi-market-backtest/start";
 inline constexpr std::string_view kMultiMarketDepthBacktest = "/app/multi-market-depth-backtest";
@@ -89,9 +92,10 @@ inline constexpr std::string_view kLiveEvents = "/events/live";
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 44> kDeclaredRoutes = {
+inline constexpr std::array<std::string_view, 46> kDeclaredRoutes = {
     kValidateDataset,       kBacktest, kProviderBacktest, kProviderDepthBacktest,
     kMultiAccountBacktest,  kMultiAccountBacktestStart,
+    kMultiAccountDepthBacktest, kMultiAccountDepthBacktestStart,
     kMultiMarketBacktest,   kMultiMarketBacktestStart, kBuiltinStrategyCatalog,
     kMultiMarketDepthBacktest, kMultiMarketDepthBacktestStart,
     kApplicationCapabilities,
@@ -186,6 +190,14 @@ public:
 
     AppResponse start_multi_account_backtest(std::string_view spec_json) const {
         return post(routes::kMultiAccountBacktestStart, spec_json);
+    }
+
+    AppResponse run_multi_account_depth_backtest(std::string_view spec_json) const {
+        return post(routes::kMultiAccountDepthBacktest, spec_json);
+    }
+
+    AppResponse start_multi_account_depth_backtest(std::string_view spec_json) const {
+        return post(routes::kMultiAccountDepthBacktestStart, spec_json);
     }
 
     AppResponse run_multi_market_backtest(std::string_view spec_json) const {
