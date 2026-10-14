@@ -58,6 +58,8 @@ def main() -> int:
 
     implemented = qx.doctor()["implemented_use_cases"]
     assert "backtest.bar.v1" in implemented
+    assert callable(qx.AppClient.provider_preflight)
+    assert callable(qx.AppClient.async_provider_preflight)
     strategies = qx.list_builtin_strategies()
     assert len(strategies) == 17, len(strategies)
     single_leg_kinds = tuple(

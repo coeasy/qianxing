@@ -1,0 +1,35 @@
+schema_version: 1
+kind: python-wheel-smoke
+source_commit: 752e095ba1f593c3739cbd4b88022a4d286206f6
+python_runtime: 3.13.13
+platform: windows-x64
+wheel: qianxing-0.1.0-cp310-abi3-win_amd64.whl
+wheel_size_bytes: 2199924
+wheel_sha256: 6443813f1b36ccab8abfba7e00e52ba079ae0b3529434b2d1fe7d9dfd292f303
+build_command: "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_python_wheel.ps1 -Python python -OutputDirectory dist/python-preflight"
+wheel_check: "python tools/check_python_wheel.py dist/python-preflight"
+install_command: "python -m pip install --no-deps --target target/python-preflight-wheel dist/python-preflight/qianxing-0.1.0-cp310-abi3-win_amd64.whl"
+install_isolated_from_repository: true
+smoke:
+  builtin_strategy_count: 17
+  dataset_rows: 70
+  backtest_fills: 18
+  replay_verified: true
+  single_leg_strategy_selection: "13/13 candidates succeeded with nonzero fills"
+  strategy_parameter_selection: "4/4 candidates succeeded"
+  independent_accounts: 2
+  multi_leg_fills: "3/3"
+  orderbook_depth_fills: 2
+  python_custom_callback_fills: 1
+  run_handle_terminal_state: succeeded
+  run_handle_terminal_event_seen: true
+  remote_provider_preflight_methods_importable: true
+smoke_harness: tools/python_wheel_smoke.py
+evidence_scope:
+  - "Windows x64 stable-ABI wheel installed into an isolated target directory and imported with Python isolated mode."
+  - "Installed SDK discovery, dataset validation, parameter selection, isolated multi-account and multi-leg backtests, OrderBook depth backtest, a Python callback, RunHandle lifecycle/events, and replay verification succeeded outside the source package path."
+  - "The wheel exposes synchronous and asyncio remote Provider preflight methods; API behavior is exercised by Python/Rust cross-boundary tests."
+not_proven:
+  - "CPython 3.10 runtime execution; only the cp310-abi3 artifact tag and Python 3.13 runtime were exercised locally."
+  - "Linux/macOS or non-x64 wheel execution."
+  - "Live exchange or testnet authentication/conformance."
