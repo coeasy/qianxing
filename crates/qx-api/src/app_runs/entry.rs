@@ -2,18 +2,28 @@ use super::*;
 
 impl AppRunEntry {
     pub(super) fn status(&mut self) -> RunStatus {
-        match &mut self.run {
-            None => RunStatus::Running,
-            Some(AppRun::Bar(handle)) => handle.status(),
-            Some(AppRun::Depth(handle)) => handle.status(),
-            Some(AppRun::DepthExperiment(handle)) => handle.status(),
-            Some(AppRun::Experiment(handle)) => handle.status(),
-            Some(AppRun::MultiLeg(handle)) => handle.status(),
-            Some(AppRun::MultiLegExperiment(handle)) => handle.status(),
-            Some(AppRun::MultiMarketExperiment(handle)) => handle.status(),
-            Some(AppRun::MultiAccount(handle)) => handle.status(),
-            Some(AppRun::MultiMarket(handle)) => handle.status(),
+        self.observe()
+    }
+
+    pub(super) fn observe(&mut self) -> RunStatus {
+        let Some(run) = &mut self.run else {
+            return RunStatus::Running;
+        };
+        let observation = match run {
+            AppRun::Bar(handle) => handle.observe(),
+            AppRun::Depth(handle) => handle.observe(),
+            AppRun::DepthExperiment(handle) => handle.observe(),
+            AppRun::Experiment(handle) => handle.observe(),
+            AppRun::MultiLeg(handle) => handle.observe(),
+            AppRun::MultiLegExperiment(handle) => handle.observe(),
+            AppRun::MultiMarketExperiment(handle) => handle.observe(),
+            AppRun::MultiAccount(handle) => handle.observe(),
+            AppRun::MultiMarket(handle) => handle.observe(),
+        };
+        if observation.events.len() > self.events.len() {
+            self.events = observation.events;
         }
+        observation.status
     }
 
     pub(super) fn cancel(&mut self) {
@@ -35,14 +45,13 @@ impl AppRunEntry {
         }
     }
 
-    pub(super) fn collect_result(&mut self) {
-        self.refresh_events();
-        let status = self.status();
+    pub(super) fn collect_result(&mut self) -> RunStatus {
+        let status = self.observe();
         if !is_terminal(status) || self.result.is_some() || self.error.is_some() {
-            return;
+            return status;
         }
         let outcome = match &mut self.run {
-            None => return,
+            None => return status,
             Some(AppRun::Bar(handle)) => handle
                 .try_take_result()
                 .map(|result| result.and_then(|value| value.to_json())),
@@ -77,10 +86,10 @@ impl AppRunEntry {
                 Err(error) => self.error = Some(error.to_json()),
             }
         }
+        status
     }
 
     pub(super) fn document(&mut self) -> String {
-        self.refresh_events();
         if let Some(status) = &self.restored_status {
             return serde_json::json!({
                 "run_id": self.run_id,
@@ -89,8 +98,8 @@ impl AppRunEntry {
                 "error": self.error.as_ref().and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok()),
             }).to_string();
         }
-        self.collect_result();
-        let status = match self.status() {
+        let observed_status = self.collect_result();
+        let status = match observed_status {
             RunStatus::Running => "running",
             RunStatus::Cancelling => "cancelling",
             RunStatus::Succeeded => "succeeded",
@@ -107,21 +116,7 @@ impl AppRunEntry {
     }
 
     pub(super) fn refresh_events(&mut self) {
-        let Some(run) = &self.run else { return };
-        let latest = match run {
-            AppRun::Bar(handle) => handle.events_after(0),
-            AppRun::Depth(handle) => handle.events_after(0),
-            AppRun::DepthExperiment(handle) => handle.events_after(0),
-            AppRun::Experiment(handle) => handle.events_after(0),
-            AppRun::MultiLeg(handle) => handle.events_after(0),
-            AppRun::MultiLegExperiment(handle) => handle.events_after(0),
-            AppRun::MultiMarketExperiment(handle) => handle.events_after(0),
-            AppRun::MultiAccount(handle) => handle.events_after(0),
-            AppRun::MultiMarket(handle) => handle.events_after(0),
-        };
-        if latest.len() > self.events.len() {
-            self.events = latest;
-        }
+        self.observe();
     }
 
     pub(super) fn events_document(&mut self, cursor: u64) -> Result<String, AppError> {

@@ -89,7 +89,9 @@ pub use multi_leg::{
     MultiLegSignalBucket, MULTI_LEG_FUNDING_INTERVAL_MS,
 };
 pub use qx_core::MakerTakerFeeSchedule;
-pub use run_handle::{RunEvent, RunEventKind, RunHandle, RunStatus, DEFAULT_WAIT_TIMEOUT};
+pub use run_handle::{
+    RunEvent, RunEventKind, RunHandle, RunObservation, RunStatus, DEFAULT_WAIT_TIMEOUT,
+};
 pub use spec::multi_market::{
     MultiMarketBacktestMarket, MultiMarketBacktestOutcome, MultiMarketBacktestSpec,
     MAX_MULTI_MARKETS, MAX_STRATEGIES_PER_MARKET, MIN_MULTI_MARKETS,

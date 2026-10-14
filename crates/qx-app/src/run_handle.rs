@@ -56,6 +56,16 @@ pub struct RunEvent {
     pub status: RunStatus,
 }
 
+/// A point-in-time view of a run's lifecycle state and event sequence.
+///
+/// Unlike separate `status()` and `events_after()` calls, this snapshot is
+/// collected under one lock so service layers can persist consistent pairs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunObservation {
+    pub status: RunStatus,
+    pub events: Vec<RunEvent>,
+}
+
 fn push_event(events: &mut Vec<RunEvent>, run_id: &str, kind: RunEventKind, status: RunStatus) {
     events.push(RunEvent {
         seq: events.len() as u64 + 1,
@@ -210,10 +220,23 @@ impl<T: Send + 'static> RunHandle<T> {
         // Worker terminal publication and cancellation both use the event
         // lock. Taking it before polling the result prevents observing the
         // state half of a terminal transition before its event is appended.
-        let _events = self
-            .events
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let events = Arc::clone(&self.events);
+        let _events = events.lock().unwrap_or_else(|error| error.into_inner());
+        self.poll_status_locked()
+    }
+
+    /// Observe status and lifecycle events from the same publication point.
+    pub fn observe(&mut self) -> RunObservation {
+        let events = Arc::clone(&self.events);
+        let events_guard = events.lock().unwrap_or_else(|error| error.into_inner());
+        let status = self.poll_status_locked();
+        RunObservation {
+            status,
+            events: events_guard.clone(),
+        }
+    }
+
+    fn poll_status_locked(&mut self) -> RunStatus {
         if self.result.is_none() {
             let received = self.receiver.lock().map(|receiver| receiver.try_recv());
             match received {
@@ -364,6 +387,30 @@ mod tests {
                 thread::yield_now();
             }
             assert_eq!(handle.try_take_result().unwrap().unwrap(), ordinal);
+        }
+    }
+
+    #[test]
+    fn observation_keeps_terminal_status_and_event_from_one_publication() {
+        for ordinal in 0..128 {
+            let mut handle =
+                RunHandle::spawn(format!("run-observe-{ordinal}"), move |_| Ok(Some(ordinal)));
+            loop {
+                let observation = handle.observe();
+                if observation.status == RunStatus::Succeeded {
+                    assert_eq!(
+                        observation
+                            .events
+                            .last()
+                            .map(|event| (event.kind, event.status)),
+                        Some((RunEventKind::Succeeded, RunStatus::Succeeded))
+                    );
+                    break;
+                }
+                assert_ne!(observation.status, RunStatus::Failed);
+                assert_ne!(observation.status, RunStatus::Cancelled);
+                thread::yield_now();
+            }
         }
     }
 

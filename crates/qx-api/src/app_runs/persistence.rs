@@ -188,14 +188,14 @@ impl Drop for WatcherSlot {
 }
 
 fn snapshot(entry: &mut AppRunEntry) -> RunSnapshot {
-    entry.refresh_events();
+    let observed_status = entry.observe();
     RunSnapshot {
         schema_version: SNAPSHOT_VERSION,
         run_id: entry.run_id.clone(),
         status: if let Some(status) = &entry.restored_status {
             status.clone()
         } else {
-            status_name(entry.status()).to_string()
+            status_name(observed_status).to_string()
         },
         result: entry.result.clone(),
         error: entry.error.clone(),

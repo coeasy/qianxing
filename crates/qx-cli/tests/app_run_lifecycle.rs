@@ -26,6 +26,22 @@ fn terminal_result(api: &qx_api::ApiService, run_id: &str) -> Value {
             document["status"].as_str(),
             Some("succeeded" | "failed" | "cancelled")
         ) {
+            let events = api.handle(
+                "GET",
+                &format!("/app/runs/{run_id}/events?after_seq=0"),
+                "",
+                0,
+            );
+            assert_eq!(events.status, 200, "event route failed: {}", events.body);
+            let events: Value = serde_json::from_str(&events.body).expect("run events JSON");
+            assert_eq!(
+                events
+                    .as_array()
+                    .and_then(|events| events.last())
+                    .map(|event| { (event["status"].as_str(), event["kind"].as_str(),) }),
+                Some((document["status"].as_str(), document["status"].as_str(),)),
+                "terminal status and final event must come from one lifecycle publication"
+            );
             return document;
         }
         assert!(Instant::now() < deadline, "run did not finish: {document}");

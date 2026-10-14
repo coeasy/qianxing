@@ -20,6 +20,7 @@
 > 本轮增量（2026-10-14）：全 workspace CI 复核发现共享 app_surface 新增的能力目录与 Provider 预检路由虽已出现在第一张部署路由表，但遗漏于非 200 语义表，且 qx-cli 的静态路由取数夹具只登记策略目录，造成 `cargo test --workspace` 失败。现将三条静态 app 路由统一登记并逐项校验 handler，同时补齐两张文档表和错误语义。
 > 同轮 Python 深查修复多账户深度异步启动的错误翻译断链：原异常分支调用不存在的 `_raise_native_error`，现在委托统一 `_translate_native_error` 并以无效输入回归用例验证；重建的 Windows abi3 wheel 已隔离安装并再次跑过包级回测/实验/多账户/盘口/回放 smoke。
 > 本轮 RunHandle 轮询审计发现终态发布双向竞态：仅调整状态/事件写入顺序会把“终态但缺事件”变成“终态事件先于状态”。现在状态读取、事件读取和 worker 终态发布共用事件锁；终态状态与事件在释放锁前一起发布，避免任一查询看到中间态。`qx-app` RunHandle 专项回归通过；持久化 HTTP Run 事件与 cursor 恢复等全局发布缺口仍未关闭。
+> 本轮继续复核发现 service 层仍把原子 `status()` 与独立 `events_after()` 分开读取，组合成持久化快照时仍可能跨过终态切换。现公开 `RunHandle::observe()` 一次返回同一锁下的状态与事件，qx-api 的详情、事件缓存和注册表快照统一消费该观测值；新增 128 次并发终态观测回归和 HTTP 生命周期终态/末事件一致性断言。`cargo test --workspace --offline` 全部通过；`qx-app` 133 项、`qx-api` 70 项及集成测试、生命周期回归、qx-app/qx-api/qx-cli 严格 Clippy、1096 项架构门禁和 Markdown 链接检查均通过。该修复只保证进程内状态/事件快照的一致性，不补齐 HTTP 持久事件的事务化写入、重启后的运行时恢复或完整游标续读。
 > 方案仍未全部落地：跨市场 Tick/OrderBook、交易日历/跨时区/货币换算、多账户跨账户组合风险、venue/provider 全矩阵与实盘 testnet 未完成认证；Web/桌面端到端验收、C++ 默认 transport 与全平台发布门仍未完成。逐轮复核、量化场景状态与证据见[实施复核与量化场景验收记录](牵星Qianxing-多语言SDK实施复核与量化场景验收记录-2026-10-12.md)和 `maturity/quant_scenarios.yaml`。
 
 ## 1. 目标与完成定义
