@@ -10,6 +10,8 @@ mod test_cases {
     mod fill_callback;
     #[path = "portfolio_budget.rs"]
     mod portfolio_budget;
+    #[path = "portfolio_pending_risk.rs"]
+    mod portfolio_pending_risk;
     #[path = "portfolio_strategy.rs"]
     mod portfolio_strategy;
     use crate::ashare::AshareCorporateActionEvent;
@@ -63,11 +65,9 @@ mod test_cases {
             })
         }
     }
-
     struct OpenHedgeLegs {
         stage: u8,
     }
-
     impl BarStrategy for OpenHedgeLegs {
         fn on_bar(
             &mut self,

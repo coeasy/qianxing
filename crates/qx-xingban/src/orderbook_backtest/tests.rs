@@ -15,6 +15,8 @@ mod depth_bar_adapter;
 mod fill_feedback;
 #[path = "tests/funding.rs"]
 mod funding;
+#[path = "tests/pending_risk.rs"]
+mod pending_risk;
 
 struct NativeBuy;
 

@@ -677,6 +677,49 @@ def main() -> int:
             }
         )
 
+    def executed_backtest_pending_order_risk_test():
+        nonlocal failures
+        argv = [
+            "cargo", "test", "--offline", "-p", "qx-xingban",
+            "orders_count_toward_max_notional_before_fill",
+            "--lib", "--", "--nocapture", "--test-threads=1",
+        ]
+        code, output = run_command(argv)
+        passed = re.search(r"test result: ok\. 2 passed; 0 failed", output) is not None
+        ok = code == 0 and passed
+        if not ok:
+            failures += 1
+        observed = (
+            "bar_pending_order_rejected=true orderbook_pending_order_rejected=true "
+            "one_fill_per_150_notional_cap=true replay_verified=true"
+            if ok
+            else "backtest_pending_order_risk=failed"
+        )
+        print(
+            f"[{'OK  ' if ok else 'FAIL'}] backtest_pending_order_risk: rc={code} observed={observed!r}",
+            flush=True,
+        )
+        records.append(
+            {
+                "name": "backtest_pending_order_risk",
+                "label": "Bar 与 OrderBook 回测在途订单共同受持仓名义额限额约束",
+                "status": "executed" if ok else "declared_not_executed",
+                "anchor": "crates/qx-risk/src/pending_exposure.rs",
+                "command": " ".join(argv),
+                "exit_code": code,
+                "observed": observed,
+                "why_not_executed": "Bar 或 OrderBook 回测的风险快照可能漏计同账户未终结订单。",
+                "next_gate": "在共享风险 crate 统一剩余订单名义额预留，并验证两种撮合内核及 replay。",
+                "evidence": [
+                    "crates/qx-risk/src/pending_exposure.rs",
+                    "crates/qx-xingban/src/backtest/order_admission.rs",
+                    "crates/qx-xingban/src/orderbook_backtest.rs",
+                    "crates/qx-xingban/src/backtest/test_cases/portfolio_pending_risk.rs",
+                    "crates/qx-xingban/src/orderbook_backtest/tests/pending_risk.rs",
+                ],
+            }
+        )
+
     def executed_multi_market_shared_account_test():
         nonlocal failures
         argv = [
@@ -1087,6 +1130,7 @@ def main() -> int:
     executed_paper_kelly_test()
     executed_paper_multi_strategy_test()
     executed_paper_pending_order_risk_test()
+    executed_backtest_pending_order_risk_test()
     executed_paper_cross_currency_fx_test()
     executed_multi_market_shared_account_test()
     executed_multi_market_python_strategy_slots_test()

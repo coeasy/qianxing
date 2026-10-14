@@ -1,9 +1,6 @@
 use super::worker_runtime::load_worker_market_spec_for_instrument;
 use crate::*;
 
-mod pending_exposure;
-use pending_exposure::pending_order_gross_notional;
-
 pub(crate) fn paper_available_margin_with_market_specs(
     ledger: &Ledger,
     account_id: &str,
@@ -176,13 +173,15 @@ fn worker_risk_context_inner(
     // projected gross exposure so separate workers cannot each pass the same
     // max-position limit against an unchanged Ledger snapshot.
     let pending_gross_notional = if worker.max_position_notional_raw.is_some() {
-        pending_order_gross_notional(
+        qx_risk::pending_order_gross_notional(
             &pipeline.orders(),
-            order,
+            order.client_id,
             account_id,
+            &order.instrument,
             &spec,
             pipeline.marks(),
-        )?
+        )
+        .map_err(|error| format!("在途订单名义额风控计算失败: {error:?}"))?
     } else {
         0
     };

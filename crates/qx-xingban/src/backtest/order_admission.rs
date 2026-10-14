@@ -324,10 +324,31 @@ pub(crate) fn admit_orders(
             mark_abs,
             multiplier,
         )?;
-        let gross_notional = one_way_notional
+        let filled_gross_notional = one_way_notional
             .checked_add(long_notional)
             .and_then(|value| value.checked_add(short_notional))
             .ok_or_else(|| qx_core::QxError::Invariant("回测 hedge gross notional 溢出".into()))?;
+        let pending_gross_notional = if risk.rule_set().has_rule("MaxNotional") {
+            if let Some(spec) = instrument_spec {
+                qx_risk::pending_order_gross_notional(
+                    &oms.all_orders(),
+                    order.client_id,
+                    account_id,
+                    instrument,
+                    spec,
+                    &marks,
+                )?
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        let gross_notional = filled_gross_notional
+            .checked_add(pending_gross_notional)
+            .ok_or_else(|| {
+                qx_core::QxError::Invariant("回测持仓与在途订单名义额合计溢出".into())
+            })?;
         if matches!(order.status, OrderStatus::PendingSubmit) {
             order.status = OrderStatus::Submitted;
         }

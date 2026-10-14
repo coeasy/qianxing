@@ -160,6 +160,11 @@ impl RuleSet {
         self.rules.len()
     }
 
+    /// Whether a named rule participates in this configuration.
+    pub fn has_rule(&self, name: &str) -> bool {
+        self.rules.iter().any(|rule| rule.name() == name)
+    }
+
     /// 统一判定入口：账户级唯一实现（含 reduce-only、规格、保证金、投影限额）
     /// 叠加静态规则链。空规则集时与 [`crate::RiskEngine::evaluate_order`] 完全等价。
     pub fn evaluate(&self, context: &OrderRiskContext, order: &Order) -> OrderRiskDecision {

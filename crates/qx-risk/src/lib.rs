@@ -4,7 +4,10 @@ use qx_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod pending_exposure;
 pub mod rules;
+
+pub use pending_exposure::pending_order_gross_notional;
 
 pub use rules::{
     MaxNotionalRule, MaxQtyRule, NoShortRule, RiskRule, RuleSet,
