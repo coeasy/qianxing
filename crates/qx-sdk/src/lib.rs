@@ -84,14 +84,15 @@ pub use qx_provider::{
 // `BuiltinStrategyKind` 来自 qx-strategy：它是 `BuiltinStrategySpec::new` 的参数类型，
 // 而 qx-app 没有重导出它（见 Cargo.toml 里的说明）。
 pub use qx_app::{
-    AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, BacktestSpec, BuiltinStrategySpec,
-    CapitalAllocationAccount, CapitalAllocationRequest, CapitalAllocationResult,
-    CapitalAllocationSpec, CompareRunsSpec, DatasetSpec, DepthBacktestSpec, MakerTakerFeeSchedule,
-    MultiAccountBacktestSpec, MultiAccountDepthBacktestSpec, MultiLegBacktestSpec,
-    MultiLegFillModel, MultiMarketBacktestMarket, MultiMarketBacktestSpec,
-    MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec,
-    PortfolioBacktestConfig, PortfolioStrategySpec, RiskParityAssetSpec, RiskParityResult,
-    RiskParitySpec, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
+    screen_bar_frames, AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, BacktestSpec,
+    BuiltinStrategySpec, CapitalAllocationAccount, CapitalAllocationRequest,
+    CapitalAllocationResult, CapitalAllocationSpec, CompareRunsSpec, DatasetSpec,
+    DepthBacktestSpec, MakerTakerFeeSchedule, MultiAccountBacktestSpec,
+    MultiAccountDepthBacktestSpec, MultiLegBacktestSpec, MultiLegFillModel,
+    MultiMarketBacktestMarket, MultiMarketBacktestSpec, MultiMarketDepthBacktestMarket,
+    MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec, PortfolioBacktestConfig,
+    PortfolioStrategySpec, RiskParityAssetSpec, RiskParityResult, RiskParitySpec,
+    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
     RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentSpec, StrategyArtifactIdentity,
     TradeControlSpec, TradeWorkflow, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
     RISK_PARITY_RESULT_SCHEMA_VERSION, RISK_PARITY_SPEC_SCHEMA_VERSION,

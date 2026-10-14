@@ -2,6 +2,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfoNotFoundError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -273,7 +274,7 @@ class AshareTest(unittest.TestCase):
         self.assertEqual(call.settlement_price_raw, 106 * 1_000_000_000)
         self.assertEqual(AshareCorporateAction.from_json(call.to_json()), call)
 
-    def test_screening_returns_ranked_candidates(self):
+    def test_screening_delegates_calculation_to_rust(self):
         first = normalize_bar_rows(
             [{"date": "2024-01-01", "open": 1, "high": 1, "low": 1, "close": 1, "volume": 10},
              {"date": "2024-01-02", "open": 1, "high": 1.2, "low": 1, "close": 1.2, "volume": 20}],
@@ -284,9 +285,20 @@ class AshareTest(unittest.TestCase):
              {"date": "2024-01-02", "open": 1, "high": 1.1, "low": 1, "close": 1.1, "volume": 20}],
             code="600000", source="test",
         )
-        rows = screen_bar_frames([first, second], min_return_bps=500, limit=1)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["instrument"], "000001.SZSE")
+        rust_rows = [{"instrument": "000001.SZSE", "total_return_bps": 2000}]
+        with patch(
+            "qianxing_bridge.native.app_screen_ashare_bars",
+            return_value=json.dumps(rust_rows),
+        ) as rust_screen:
+            rows = screen_bar_frames([first, second], min_return_bps=500, limit=1)
+        self.assertEqual(rows, rust_rows)
+        request = json.loads(rust_screen.call_args.args[0])
+        self.assertEqual(request["min_return_bps"], 500)
+        self.assertEqual(request["limit"], 1)
+        self.assertEqual(
+            [json.loads(item["bars_json"])["instrument"] for item in request["frames"]],
+            ["000001.SZSE", "600000.SSE"],
+        )
         self.assertEqual(json.loads(first.to_json())["instrument"], "000001.SZSE")
 
     def test_calendar_corporate_action_and_pit_are_as_of_bounded(self):

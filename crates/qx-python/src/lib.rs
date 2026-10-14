@@ -16,6 +16,7 @@ use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
+mod ashare_screen;
 mod capital_allocation;
 mod multi_account;
 mod provider_bridge;
@@ -398,6 +399,7 @@ unsafe extern "C" fn drop_schema_capsule(capsule: *mut pyo3::ffi::PyObject) {
 fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(frame_digest, module)?)?;
     module.add_function(wrap_pyfunction!(frame_to_json, module)?)?;
+    ashare_screen::register(module)?;
     module.add_function(wrap_pyfunction!(owned_arrow_capsules, module)?)?;
     module.add_class::<OwnedArrowArray>()?;
     module.add_function(wrap_pyfunction!(owned_arrow_array, module)?)?;

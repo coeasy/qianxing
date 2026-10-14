@@ -1,8 +1,8 @@
 """A 股数据源适配与标准化边界。
 
 这个模块只负责三件事：把不同数据源的字段统一为 :class:`BarFrame`，保留
-可审计的来源清单，以及对已经落盘的 BarFrame 做快速筛选。数据源依赖均为
-可选依赖，核心包和离线测试不需要安装 AkShare、Baostock 或 easy_tdx。
+可审计的来源清单，以及把已标准化 BarFrame 交给共享 Rust 核心进行快速筛选。
+数据源依赖均为可选依赖，核心包和离线测试不需要安装 AkShare、Baostock 或 easy_tdx。
 """
 
 from __future__ import annotations
@@ -1420,40 +1420,28 @@ def screen_bar_frames(
     min_avg_volume_raw: int = 0,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    """基于已落盘 BarFrame 做无未来数据的轻量初筛，结果可直接生成回测任务。"""
+    """将标准化 BarFrame 交给共享 Rust 核心计算并排序，结果可用于生成回测任务。"""
 
     if limit is not None and limit <= 0:
         raise ValueError("limit must be positive")
-    result: list[dict[str, Any]] = []
+    inputs: list[dict[str, Any]] = []
     for item in frames:
         source_path = None if isinstance(item, BarFrame) else str(Path(item))
         frame = item if isinstance(item, BarFrame) else BarFrame.from_json(Path(item).read_text(encoding="utf-8"))
-        first = frame.close_raw[0]
-        last = frame.close_raw[-1]
-        total_return_bps = (last - first) * 10_000 // first
-        average_volume = sum(frame.volume_raw) // len(frame.volume_raw)
-        peak = frame.close_raw[0]
-        max_drawdown_bps = 0
-        for close in frame.close_raw:
-            peak = max(peak, close)
-            max_drawdown_bps = min(max_drawdown_bps, (close - peak) * 10_000 // peak)
-        if total_return_bps < min_return_bps or average_volume < min_avg_volume_raw:
-            continue
-        result.append({
-            "instrument": frame.instrument,
-            "source": frame.source,
-            "bars": len(frame.ts),
-            "start_ts": frame.ts[0],
-            "end_ts": frame.ts[-1],
-            "total_return_bps": total_return_bps,
-            "max_drawdown_bps": max_drawdown_bps,
-            "average_volume_raw": average_volume,
-            "source_hash": f"{frame.digest():016x}",
-        })
-        if source_path is not None:
-            result[-1]["bars_path"] = source_path
-    result.sort(key=lambda row: (row["total_return_bps"], row["average_volume_raw"]), reverse=True)
-    return result[:limit] if limit else result
+        inputs.append({"bars_json": frame.to_json(), "bars_path": source_path})
+    from qianxing_bridge.native import app_screen_ashare_bars
+
+    payload = json.dumps(
+        {
+            "frames": inputs,
+            "min_return_bps": min_return_bps,
+            "min_avg_volume_raw": min_avg_volume_raw,
+            "limit": limit,
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return json.loads(app_screen_ashare_bars(payload))
 
 
 @dataclass(frozen=True)

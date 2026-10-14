@@ -41,6 +41,7 @@ def available() -> bool:
 #: 应用层用例入口。扩展是构建产物，旧世代没有它们——所以"扩展能 import"
 #: 与"这个世代有应用层入口"是两件事，探针必须按名字问，不能按 import 成功推断。
 APP_ENTRYPOINTS = (
+    "app_screen_ashare_bars",
     "app_validate_dataset",
     "app_run_backtest",
     "app_run_backtest_with_strategy",
@@ -119,6 +120,11 @@ def frame_digest(payload: str) -> int:
 
 def frame_to_json(payload: str) -> str:
     return str(_extension().frame_to_json(payload))
+
+
+def app_screen_ashare_bars(payload: str) -> str:
+    """Run A-share screening metrics and ranking in the shared Rust application layer."""
+    return str(_extension().app_screen_ashare_bars(payload))
 
 
 def provider_registry() -> Any:

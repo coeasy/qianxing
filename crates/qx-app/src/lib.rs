@@ -27,7 +27,7 @@
 //!
 //! ## 公共面
 //!
-//! - 用例：[`validate_dataset`]、[`run_backtest`]、[`run_multi_account_backtest`]、[`run_multi_account_depth_backtest`]、[`run_depth_backtest`]、[`run_multi_leg_backtest`]、[`run_experiment`]、[`run_multi_leg_experiment`]、[`plan_risk_parity`]、[`verify_run`]、[`verify_depth_run`]、[`compare_runs`]、[`validate_trade_control`]
+//! - 用例：[`validate_dataset`]、[`run_backtest`]、[`run_multi_account_backtest`]、[`run_multi_account_depth_backtest`]、[`run_depth_backtest`]、[`run_multi_leg_backtest`]、[`run_experiment`]、[`run_multi_leg_experiment`]、[`plan_risk_parity`]、[`screen_bar_frames`]、[`verify_run`]、[`verify_depth_run`]、[`compare_runs`]、[`validate_trade_control`]
 //! - 输入/输出：[`DatasetSpec`]、[`DatasetVerdict`]、[`BacktestSpec`]、[`BacktestOutcome`]、
 //!   [`VerificationResult`]、[`CompareRunsSpec`]、[`CompareRunsResult`]
 //! - 调用上下文与能力档：[`RunContext`]、[`CallerCapability`]
@@ -39,6 +39,7 @@
 //! Bar、Tick/OrderBook、多腿回测以及 Bar/深度/多腿参数实验的 `start` 入口返回可协作取消的
 //! [`RunHandle`]；候选运行复用对应的 Rust 回测用例与内核。
 
+pub mod ashare_screen;
 pub mod cases;
 pub mod context;
 pub mod error;
@@ -51,6 +52,7 @@ pub mod trade_facts;
 #[cfg(test)]
 mod tests;
 
+pub use ashare_screen::screen_bar_frames;
 pub use cases::{
     compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
     run_depth_backtest, run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots,
