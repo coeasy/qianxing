@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 mod funding;
 mod margin;
 mod report;
-use funding::{FundingContext, FundingDecision, SpotCashReservations};
+use funding::{FillFundingContext, FundingContext, FundingDecision, SpotCashReservations};
 
 fn append_event(log: &mut EventLog, ts: u64, priority: u8, kind: EventKind) {
     let seq = log.alloc_seq();
@@ -290,9 +290,17 @@ impl OrderBookBacktestEngine {
                 let reservation_update = spot_cash_reservations.plan_fill(
                     &order,
                     &fill,
-                    instrument_spec.as_ref(),
-                    ledger.cash_for(&account_id, &currency),
-                    spot_cash_reservations.total()?,
+                    FillFundingContext {
+                        spec: instrument_spec.as_ref(),
+                        cash_before_fill: ledger.cash_for(&account_id, &currency),
+                        total_reserved_before_fill: spot_cash_reservations.total()?,
+                        inventory_before_fill: ledger
+                            .position_for(&account_id, &instrument)
+                            .quantity
+                            .raw(),
+                        total_inventory_reserved_before_fill: spot_cash_reservations
+                            .total_inventory()?,
+                    },
                 )?;
                 strategy.validate_fill_budget(&order, &fill, instrument_spec.as_ref())?;
                 let entry_ids = qx_core::apply_fill_to_books(
@@ -454,35 +462,6 @@ impl OrderBookBacktestEngine {
                     }
                 }
                 let policy = order.policy.unwrap_or_default();
-                let accepted_cash_reservation = match funding::preflight_order(
-                    &order,
-                    policy,
-                    instrument_spec.as_ref(),
-                    FundingContext {
-                        snapshot,
-                        reference_price,
-                        ledger: &ledger,
-                        account_id: &account_id,
-                        currency: &currency,
-                        fee_bps,
-                        reservations: &spot_cash_reservations,
-                    },
-                )? {
-                    FundingDecision::Accept { reserve_cash_raw } => reserve_cash_raw,
-                    FundingDecision::NotRequired => 0,
-                    FundingDecision::Reject(reason) => {
-                        append_event(
-                            &mut log,
-                            snapshot.ts,
-                            Priority::COMMAND,
-                            EventKind::Rejected {
-                                client_order_id: order.client_id,
-                                reason,
-                            },
-                        );
-                        continue;
-                    }
-                };
                 let long_qty = ledger
                     .position_for_side(&account_id, &instrument, qx_core::PositionSide::Long)
                     .quantity
@@ -539,6 +518,38 @@ impl OrderBookBacktestEngine {
                     );
                     continue;
                 }
+                let accepted_reservation = match funding::preflight_order(
+                    &order,
+                    policy,
+                    instrument_spec.as_ref(),
+                    FundingContext {
+                        snapshot,
+                        reference_price,
+                        ledger: &ledger,
+                        account_id: &account_id,
+                        currency: &currency,
+                        fee_bps,
+                        reservations: &spot_cash_reservations,
+                    },
+                )? {
+                    FundingDecision::Accept {
+                        reserve_cash_raw,
+                        reserve_inventory_raw,
+                    } => (reserve_cash_raw, reserve_inventory_raw),
+                    FundingDecision::NotRequired => (0, 0),
+                    FundingDecision::Reject(reason) => {
+                        append_event(
+                            &mut log,
+                            snapshot.ts,
+                            Priority::COMMAND,
+                            EventKind::Rejected {
+                                client_order_id: order.client_id,
+                                reason,
+                            },
+                        );
+                        continue;
+                    }
+                };
                 let budget_price = order.limit.or(reference_price);
                 if let Some(price) = budget_price {
                     if let Err(error) =
@@ -563,11 +574,12 @@ impl OrderBookBacktestEngine {
                 oms.submit(order.clone())?;
                 oms.accept(order.client_id)?;
                 strategy.on_order_accepted(&order, budget_price.map(|price| price.raw()))?;
-                if accepted_cash_reservation > 0 {
+                if accepted_reservation.0 > 0 || accepted_reservation.1 > 0 {
                     spot_cash_reservations.reserve(
                         order.client_id,
                         order.qty.raw(),
-                        accepted_cash_reservation,
+                        accepted_reservation.0,
+                        accepted_reservation.1,
                     )?;
                 }
                 append_event(

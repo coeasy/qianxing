@@ -6,7 +6,7 @@
 schema_version: 1
 kind: quant-scenarios
 generated_by: "tools/quant_scenario_probe.py"
-generated_at_unix: 1791946993
+generated_at_unix: 1791949591
 cli_binary: "target/debug/qx-cli.exe"
 credentials_required: false
 network_accessed: false
@@ -220,7 +220,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_multi_leg_experiment.rs"
     command: "qx-cli app run-multi-leg-experiment .task-tmp/quant-probe/multi-leg-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=52bdef6d222cd8cd/eddaa84f74c81d3b,fdef0131dd4e69df/060bb5a9befae077,3c19102dd380b3a2/9ec8abcc5c1e5a26,8eb8720544dea69c/bf87f3d2f6a531f2"
+    observed: "\"total_candidates\":4; strategies=4 candidates=4 succeeded=4 fills=16 stable_order=true result_hashes=5482078734ab254c/548ee9ca4d76b556,1d423543b4f15552/c61fd5ce4458f36a,0daf71da19c84e67/a5f81ef934602433,7beef88c7468923d/178d2be5e2e4e497"
     evidence: ["crates/qx-app/src/cases/run_multi_leg_experiment.rs", "crates/qx-app/src/tests/multi_leg_experiment.rs", "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: multi_leg_unaligned_market_timeline
     label: "不同交易时点的双腿 Bar 按统一稳定时间线调度"
@@ -260,7 +260,7 @@ scenarios:
     anchor: "crates/qx-xingban/src/market_making.rs"
     command: "qx-cli app depth-backtest .task-tmp/quant-probe/market-making.json"
     exit_code: 0
-    observed: "42; result_hash=481f9732e9e794ab"
+    observed: "20; result_hash=b7d604ba91dc2a8a"
     evidence: ["crates/qx-xingban/src/market_making.rs", "crates/qx-app/src/tests/depth_backtest.rs", "crates/qx-cli/tests/depth_app_three_entrypoints.rs", "python/tests/test_app_use_cases.py"]
   - name: multileg_historical_funding_rates
     label: "多腿执行期应用逐标的历史资金费率事件并校验不同正负费率的回放"
@@ -324,7 +324,7 @@ scenarios:
     anchor: "crates/qx-xingban/src/portfolio_orderbook.rs"
     command: "qx-cli app depth-backtest .task-tmp/quant-probe/depth-portfolio-spec.json"
     exit_code: 0
-    observed: "8; strategy_fills={\"probe-depth-momentum\": 4, \"probe-depth-sma\": 4} result_hash=4a452bd85fe02e25"
+    observed: "8; strategy_fills={\"probe-depth-momentum\": 5, \"probe-depth-sma\": 3} result_hash=0df8834b680337f3"
     evidence: ["crates/qx-xingban/src/portfolio_orderbook.rs", "crates/qx-xingban/src/backtest/portfolio_budget.rs", "crates/qx-app/src/cases/run_depth_backtest.rs", "crates/qx-app/src/tests/depth_backtest.rs", "python/tests/test_app_use_cases.py"]
   - name: depth_spot_dynamic_sizing
     label: "L2 现货现金比例与 Kelly sizing（逐快照现金、组合额度、Rust 共享内核）"
@@ -340,7 +340,7 @@ scenarios:
     anchor: "crates/qx-app/src/cases/run_depth_experiment.rs"
     command: "qx-cli app run-depth-experiment .task-tmp/quant-probe/depth-strategy-selection-spec.json"
     exit_code: 0
-    observed: "\"total_candidates\":10; strategies=10 candidates=10 succeeded=10 fills=40 stable_order=true result_hashes=b8646edf8be77ad8,b8646edf8be77ad8,a657a3669e229d7e,d5942e883a2bab5d,89e4549059be3f70,33ce129659812eee,4a1adfff96f17f9b,7bd76acd142fafd2,b89601f343724831,d5942e883a2bab5d"
+    observed: "\"total_candidates\":10; strategies=10 candidates=10 succeeded=10 fills=17 stable_order=true result_hashes=b8646edf8be77ad8,b8646edf8be77ad8,829540e78e7dbc3f,7284bed3fa9fc7c6,7461b2df6033bf55,8997a00027811f05,151593ddda835eb2,7f1de7d18a1e3478,a14a9e347cccf26d,7284bed3fa9fc7c6"
     evidence: ["crates/qx-app/src/cases/run_depth_experiment.rs", "crates/qx-app/src/tests/depth_experiment.rs", "crates/qx-cli/tests/app_depth_entrypoints.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "python/qianxing/app.py", "python/tests/test_app_use_cases.py"]
   - name: rust_bar_fill_reduction_kernel
     label: "Bar 成交沿统一精度/预算/OMS/Ledger/事件日志/策略回报归约"
@@ -359,12 +359,12 @@ scenarios:
     observed: "test result: ok. 1 passed; pending_buy_orders=3 cash_rejections=2 fills=3 account_cash_reserved_across_bars=true"
     evidence: ["crates/qx-xingban/src/backtest/test_cases/portfolio_budget.rs", "crates/qx-xingban/src/backtest/order_admission.rs", "crates/qx-xingban/src/venue.rs"]
   - name: rust_orderbook_pending_cash_reservation
-    label: "盘口现货挂单占用共享现金、按部分成交释放并防止价格跳空透支"
+    label: "盘口现货挂单分别预留现金与库存、按部分成交释放并防止超卖和透支"
     status: executed
     anchor: "crates/qx-xingban/src/orderbook_backtest/funding.rs"
     command: "cargo test --offline -p qx-xingban orderbook_backtest::tests::funding --lib -- --test-threads=1"
     exit_code: 0
-    observed: "test result: ok. 3 passed; 0 failed; pending_spot_buys=1 partial_fill_reservation=proportional cash_rejections=1 price_gap=fail_closed"
+    observed: "test result: ok. 4 passed; 0 failed; pending_spot_buys=1 pending_spot_sells=1 partial_fill_reservation=proportional cash_rejections=1 inventory_rejections=1 price_gap=fail_closed"
     evidence: ["crates/qx-xingban/src/orderbook_backtest/funding.rs", "crates/qx-xingban/src/orderbook_backtest/tests/funding.rs", "crates/qx-xingban/src/orderbook_backtest.rs"]
   - name: rust_partial_fill_funding_release
     label: "部分成交仅按成交比例释放挂单资金预留"

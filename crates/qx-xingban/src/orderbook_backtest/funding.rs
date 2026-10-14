@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 struct Reservation {
     remaining_qty_raw: i128,
     remaining_cash_raw: i128,
+    remaining_inventory_raw: i128,
 }
 
 #[derive(Clone, Copy)]
@@ -20,7 +21,10 @@ pub(super) struct SpotCashReservations {
 
 pub(super) enum FundingDecision {
     NotRequired,
-    Accept { reserve_cash_raw: i128 },
+    Accept {
+        reserve_cash_raw: i128,
+        reserve_inventory_raw: i128,
+    },
     Reject(String),
 }
 
@@ -34,6 +38,14 @@ pub(super) struct FundingContext<'a> {
     pub(super) reservations: &'a SpotCashReservations,
 }
 
+pub(super) struct FillFundingContext<'a> {
+    pub(super) spec: Option<&'a TradingInstrumentSpec>,
+    pub(super) cash_before_fill: i128,
+    pub(super) total_reserved_before_fill: i128,
+    pub(super) inventory_before_fill: i128,
+    pub(super) total_inventory_reserved_before_fill: i128,
+}
+
 pub(super) fn preflight_order(
     order: &Order,
     policy: OrderPolicy,
@@ -41,10 +53,23 @@ pub(super) fn preflight_order(
     context: FundingContext<'_>,
 ) -> Result<FundingDecision, qx_core::QxError> {
     if let Some(spec) = spec {
-        let spot_buy =
-            spec.product == qx_core::TradingProduct::Spot && order.side == qx_core::Side::Buy;
-        if policy.reduce_only && !spot_buy {
+        let spot = spec.product == qx_core::TradingProduct::Spot;
+        let spot_buy = spot && order.side == qx_core::Side::Buy;
+        let spot_sell = spot && order.side == qx_core::Side::Sell;
+        if policy.reduce_only && !spot {
             return Ok(FundingDecision::NotRequired);
+        }
+        if spot_sell {
+            let inventory = context
+                .ledger
+                .position_for(context.account_id, &order.instrument)
+                .quantity
+                .raw();
+            if order.qty.raw() > unreserved_inventory(inventory, context.reservations)? {
+                return Ok(FundingDecision::Reject(
+                    "现货卖出数量超过扣除待成交卖单后的可用持仓".into(),
+                ));
+            }
         }
         let side_price = match order.side {
             qx_core::Side::Buy => context.snapshot.asks.first().map(|level| level.price),
@@ -91,11 +116,25 @@ pub(super) fn preflight_order(
         }
         return Ok(FundingDecision::Accept {
             reserve_cash_raw: if spot_buy { required_funding } else { 0 },
+            reserve_inventory_raw: if spot_sell { order.qty.raw() } else { 0 },
         });
     }
 
-    if order.side != qx_core::Side::Buy {
-        return Ok(FundingDecision::NotRequired);
+    if order.side == qx_core::Side::Sell {
+        let inventory = context
+            .ledger
+            .position_for(context.account_id, &order.instrument)
+            .quantity
+            .raw();
+        if order.qty.raw() > unreserved_inventory(inventory, context.reservations)? {
+            return Ok(FundingDecision::Reject(
+                "现货卖出数量超过扣除待成交卖单后的可用持仓".into(),
+            ));
+        }
+        return Ok(FundingDecision::Accept {
+            reserve_cash_raw: 0,
+            reserve_inventory_raw: order.qty.raw(),
+        });
     }
     let price = order
         .limit
@@ -120,6 +159,7 @@ pub(super) fn preflight_order(
     }
     Ok(FundingDecision::Accept {
         reserve_cash_raw: required,
+        reserve_inventory_raw: 0,
     })
 }
 
@@ -130,6 +170,16 @@ fn unreserved_cash(
     cash_raw
         .checked_sub(reservations.total()?)
         .ok_or_else(|| qx_core::QxError::Invariant("现货挂单资金预留超过账户现金".into()))
+}
+
+fn unreserved_inventory(
+    inventory_raw: i128,
+    reservations: &SpotCashReservations,
+) -> Result<i128, qx_core::QxError> {
+    inventory_raw
+        .checked_sub(reservations.total_inventory()?)
+        .map(|available| available.max(0))
+        .ok_or_else(|| qx_core::QxError::Invariant("现货挂单库存预留超过账面持仓".into()))
 }
 
 impl SpotCashReservations {
@@ -143,13 +193,29 @@ impl SpotCashReservations {
             })
     }
 
+    pub(super) fn total_inventory(&self) -> Result<i128, qx_core::QxError> {
+        self.by_order
+            .values()
+            .try_fold(0_i128, |total, reservation| {
+                total
+                    .checked_add(reservation.remaining_inventory_raw)
+                    .ok_or_else(|| qx_core::QxError::Invariant("现货挂单库存预留求和溢出".into()))
+            })
+    }
+
     pub(super) fn reserve(
         &mut self,
         client_id: u64,
         qty_raw: i128,
         cash_raw: i128,
+        inventory_raw: i128,
     ) -> Result<(), qx_core::QxError> {
-        if qty_raw <= 0 || cash_raw <= 0 || self.by_order.contains_key(&client_id) {
+        if qty_raw <= 0
+            || cash_raw < 0
+            || inventory_raw < 0
+            || (cash_raw == 0 && inventory_raw == 0)
+            || self.by_order.contains_key(&client_id)
+        {
             return Err(qx_core::QxError::Invariant(format!(
                 "现货挂单资金预留身份或金额非法: client_id={client_id}"
             )));
@@ -159,6 +225,7 @@ impl SpotCashReservations {
             Reservation {
                 remaining_qty_raw: qty_raw,
                 remaining_cash_raw: cash_raw,
+                remaining_inventory_raw: inventory_raw,
             },
         );
         Ok(())
@@ -172,9 +239,7 @@ impl SpotCashReservations {
         &self,
         order: &Order,
         fill: &Fill,
-        spec: Option<&TradingInstrumentSpec>,
-        cash_before_fill: i128,
-        total_reserved_before_fill: i128,
+        context: FillFundingContext<'_>,
     ) -> Result<Option<ReservationUpdate>, qx_core::QxError> {
         let Some(reservation) = self.by_order.get(&order.client_id).copied() else {
             return Ok(None);
@@ -195,35 +260,68 @@ impl SpotCashReservations {
                 reservation.remaining_qty_raw,
             )?
         };
-        let notional = match spec {
-            Some(spec) => spec.notional(fill.qty.raw(), fill.price.raw())?,
-            None => qx_core::fee::notional(fill.qty.raw(), fill.price.raw()),
+        let remaining_inventory = if reservation.remaining_inventory_raw == 0 {
+            0
+        } else {
+            remaining_qty
         };
-        let actual_cost = notional
-            .checked_add(fill.fee.raw().max(0))
-            .ok_or_else(|| qx_core::QxError::Invariant("现货成交成本溢出".into()))?;
-        let other_orders_reserved = total_reserved_before_fill
-            .checked_sub(reservation.remaining_cash_raw)
+        let other_inventory_reserved = context
+            .total_inventory_reserved_before_fill
+            .checked_sub(reservation.remaining_inventory_raw)
             .ok_or_else(|| {
-                qx_core::QxError::Invariant("现货订单资金预留总额小于单笔预留".into())
+                qx_core::QxError::Invariant("现货订单库存预留总额小于单笔预留".into())
             })?;
-        let cash_after_fill = cash_before_fill.checked_sub(actual_cost).ok_or_else(|| {
-            qx_core::QxError::BusinessViolation("现货成交成本超过账户可用现金".into())
-        })?;
-        let remaining_reserved = other_orders_reserved
-            .checked_add(remaining_cash)
-            .ok_or_else(|| qx_core::QxError::Invariant("现货剩余资金预留溢出".into()))?;
-        if cash_after_fill < remaining_reserved {
-            return Err(qx_core::QxError::BusinessViolation(format!(
+        if reservation.remaining_inventory_raw > 0 {
+            let inventory_after_fill = context
+                .inventory_before_fill
+                .checked_sub(fill.qty.raw())
+                .ok_or_else(|| qx_core::QxError::Invariant("现货成交后持仓计算溢出".into()))?;
+            let remaining_reserved = other_inventory_reserved
+                .checked_add(remaining_inventory)
+                .ok_or_else(|| qx_core::QxError::Invariant("现货剩余库存预留溢出".into()))?;
+            if inventory_after_fill < remaining_reserved {
+                return Err(qx_core::QxError::BusinessViolation(format!(
+                    "现货卖出成交后持仓不足以覆盖其他待成交卖单: client_id={}, inventory_after={inventory_after_fill}, reserved_after={remaining_reserved}",
+                    order.client_id,
+                )));
+            }
+        }
+        if reservation.remaining_cash_raw > 0 {
+            let notional = match context.spec {
+                Some(spec) => spec.notional(fill.qty.raw(), fill.price.raw())?,
+                None => qx_core::fee::notional(fill.qty.raw(), fill.price.raw()),
+            };
+            let actual_cost = notional
+                .checked_add(fill.fee.raw().max(0))
+                .ok_or_else(|| qx_core::QxError::Invariant("现货成交成本溢出".into()))?;
+            let other_orders_reserved = context
+                .total_reserved_before_fill
+                .checked_sub(reservation.remaining_cash_raw)
+                .ok_or_else(|| {
+                    qx_core::QxError::Invariant("现货订单资金预留总额小于单笔预留".into())
+                })?;
+            let cash_after_fill = context
+                .cash_before_fill
+                .checked_sub(actual_cost)
+                .ok_or_else(|| {
+                    qx_core::QxError::BusinessViolation("现货成交成本超过账户可用现金".into())
+                })?;
+            let remaining_reserved = other_orders_reserved
+                .checked_add(remaining_cash)
+                .ok_or_else(|| qx_core::QxError::Invariant("现货剩余资金预留溢出".into()))?;
+            if cash_after_fill < remaining_reserved {
+                return Err(qx_core::QxError::BusinessViolation(format!(
                 "现货成交后账户现金不足以覆盖其他挂单与本单剩余预留: client_id={}, cash_after={cash_after_fill}, reserved_after={remaining_reserved}",
                 order.client_id,
             )));
+            }
         }
         Ok(Some(ReservationUpdate {
             client_id: order.client_id,
             reservation: (remaining_qty > 0).then_some(Reservation {
                 remaining_qty_raw: remaining_qty,
                 remaining_cash_raw: remaining_cash,
+                remaining_inventory_raw: remaining_inventory,
             }),
         }))
     }

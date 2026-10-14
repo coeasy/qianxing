@@ -3,7 +3,10 @@ use super::super::{
     OrderBookSnapshot,
 };
 use crate::{BookLevel, OrderBookStrategy};
-use qx_core::{InstrumentId, Money, Order, OrderStatus, Price, Quantity, Side};
+use qx_core::{
+    InstrumentId, Money, Order, OrderStatus, Price, Quantity, Side, TradingInstrumentSpec,
+    TradingProduct,
+};
 use qx_zhenlu::RiskGate;
 
 struct TwoPendingSpotBuys;
@@ -67,6 +70,40 @@ struct OneMarketBuy {
     submitted: bool,
 }
 
+struct BuyThenCompetingSpotSells {
+    calls: u8,
+}
+
+impl OrderBookStrategy for BuyThenCompetingSpotSells {
+    fn on_order_book(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        _position: i128,
+    ) -> Result<Vec<Order>, String> {
+        self.calls += 1;
+        let orders = match self.calls {
+            1 => vec![(1, Side::Buy)],
+            2 => vec![(2, Side::Sell), (3, Side::Sell)],
+            _ => Vec::new(),
+        };
+        Ok(orders
+            .into_iter()
+            .map(|(client_id, side)| Order {
+                client_id,
+                instrument: snapshot.instrument.clone(),
+                side,
+                qty: Quantity::from_i64(1),
+                limit: None,
+                status: OrderStatus::PendingSubmit,
+                filled: Quantity::ZERO,
+                account_id: "main".into(),
+                trace: None,
+                policy: None,
+            })
+            .collect())
+    }
+}
+
 impl OrderBookStrategy for OneMarketBuy {
     fn on_order_book(
         &mut self,
@@ -128,6 +165,90 @@ fn market_buy_price_gap_fails_closed_before_cash_can_be_overdrawn() {
         error.to_string().contains("现货成交后账户现金不足"),
         "unexpected error: {error}"
     );
+}
+
+#[test]
+fn pending_spot_sell_orders_reserve_inventory_before_acceptance() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let make_snapshot = |ts| OrderBookSnapshot {
+        instrument: instrument.clone(),
+        ts,
+        sequence: ts,
+        bids: vec![BookLevel {
+            price: Price::from_i64(99),
+            qty: Quantity::from_i64(10),
+        }],
+        asks: vec![BookLevel {
+            price: Price::from_i64(100),
+            qty: Quantity::from_i64(10),
+        }],
+    };
+    for instrument_spec in [None, Some(spot_spec(instrument.clone()))] {
+        let config = OrderBookBacktestConfig {
+            instrument: instrument.clone(),
+            account_id: "main".into(),
+            currency: "USDT".into(),
+            initial_cash: Money::from_i64(1_000),
+            fee_bps: 0,
+            instrument_spec,
+            risk: RiskGate::conservative_default(),
+            data_tier: DataTier::L2L3,
+        };
+        let report = OrderBookBacktestEngine::new(config)
+            .run(
+                &[make_snapshot(1), make_snapshot(2), make_snapshot(3)],
+                &mut BuyThenCompetingSpotSells { calls: 0 },
+            )
+            .unwrap();
+
+        assert_eq!(report.fills.len(), 2, "只能买入并卖出同一份现货库存");
+        assert_eq!(
+            report
+                .ledger
+                .position_for("main", &instrument)
+                .quantity
+                .raw(),
+            0,
+            "现货卖单不得把持仓卖成负数"
+        );
+        assert_eq!(report.pending_orders, 0);
+        assert_eq!(
+            report
+                .event_log
+                .events()
+                .iter()
+                .filter(|event| matches!(
+                    &event.kind,
+                    qx_core::EventKind::Rejected {
+                        client_order_id: 3,
+                        ..
+                    }
+                ))
+                .count(),
+            1,
+            "第二笔争用同一库存的卖单必须拒绝"
+        );
+    }
+}
+
+fn spot_spec(instrument: InstrumentId) -> TradingInstrumentSpec {
+    TradingInstrumentSpec {
+        instrument,
+        product: TradingProduct::Spot,
+        base_currency: "BTC".into(),
+        quote_currency: "USDT".into(),
+        settlement_currency: "USDT".into(),
+        contract_size: qx_core::SCALE,
+        linear: true,
+        inverse: false,
+        price_tick: 1,
+        qty_step: 1,
+        min_qty: 1,
+        max_leverage: 1,
+        maintenance_margin_bps: 0,
+        valid_from: 1,
+        valid_to: None,
+    }
 }
 
 #[test]

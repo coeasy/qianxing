@@ -435,3 +435,11 @@ Python 十策略证据：
 - 将资金决策/预留算法拆至 `orderbook_backtest/funding.rs`，回归测试拆至 `orderbook_backtest/tests/funding.rs`，避免订单簿主文件超过架构行数预算。新增三项测试覆盖并发挂单超额准入、部分成交预留递减、跳空成交拒绝。
 - 本轮验收：`cargo test --workspace --offline` 全量通过；`cargo clippy --offline -p qx-xingban --all-targets -- -D warnings` 通过；架构不变量门禁 1096/1096 通过；量化场景探针 68 executed、0 declared_not_executed、0 missing、1 blocked（真实 Live/testnet 外部凭据仍不可用）。Python 3.12 隔离安装 wheel 后全量 156 passed、1 skipped；Windows x64 `cp310-abi3` wheel 元数据/打包检查通过，SHA-256 `F641F2008D82E0E1A1FAA25204F9F8524795F1D912C21670D66EC7A415FD29F5`。Rust SDK 独立 Git 消费者构建与运行通过；复跑多市场 HTTP 路由测试通过。
 - 本修复闭合订单簿单账户现货挂单资金链，不代表跨账户组合风险、HTTP/Web E2E、C++ 默认 transport、其他平台安装包或真实交易所认证已完成。发布门槛仍需逐项核验这些开放项与远端 CI。
+
+## 54. 2026-10-14 修复：OrderBook 现货挂单同时预留现金与库存
+
+- 延续 §53 的资金链审计时发现，现货卖单仍只校验已成交持仓；两笔未成交卖单可以同时引用同一份库存，之后把现货持仓卖成负数。现将订单预留统一记账：现货买单保留现金与费用额度，现货卖单保留可售数量；后续订单准入扣除已接受的待单预留，撤单释放，部分成交只释放已成交部分。成交入账前校验剩余持仓覆盖其余待单；标准风控先于资金/库存预检，保持 NoShort 等既有拒单归因稳定。
+- 新增端到端回归：先买入 1 单位，策略随后提交两笔各 1 单位的卖单；执行链只接受首笔卖单，第二笔以库存不足拒绝，最终买卖各成交 1 单位、库存为零。原有挂单现金竞争、部分成交和价格跳空保护继续通过。
+- 验收：`orderbook_backtest::tests::funding` 4/4 通过；全 workspace 测试在隔离 TEMP/TMP 下通过；workspace 严格 Clippy 通过；架构门禁 1096/1096 通过；量化探针 68 executed、0 declared_not_executed、0 missing、1 blocked。Windows 全局临时目录的拒绝访问会影响共享 Paper 测试夹具，隔离到仓库临时目录后同组测试通过。
+- 该修复仍限定于单账户、单标的 Tick/OrderBook 回测的现货订单预留；跨账户组合购买力、衍生品自由保证金/组合风险仍须单独建模和验收，不能把本项描述扩大为完整多市场保证金系统。
+- Python 3.12 隔离 wheel 安装后全量测试 156 passed、1 skipped；wheel 检查通过，Windows x64 `cp310-abi3` 产物 2,215,792 bytes，SHA-256 `1fd798c2e1b67d474898ae28ad2085f3454248017b8e3f12fb296dc63dd0e186`。该产物为本机验证构建，不等同已发布的 GitHub Release。
