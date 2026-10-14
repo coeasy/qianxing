@@ -447,6 +447,6 @@ Python 十策略证据：
 ## 55. 2026-10-14 修复：深度帧输入指纹编码盘口侧边界
 
 - Tick/OrderBook 输入身份审计发现，`DepthFrame::input_hash` 原先只顺序哈希 bid、ask 档位，没有编码两侧档位数；在允许单边盘口的场景中，“一档 bid + 一档 ask”和“两个 ask”会把相同档位序列写入同一输入哈希，导致不同市场状态无法从数据指纹区分。
-- 现将每个快照的 bid/ask 档位数量写入哈希，再哈希逐档价格与数量；新增回归用例验证上述两种合法快照得到不同输入哈希。此修改只修复数据身份编码，不改变撮合语义。
-- 验收：`cargo test -p qx-xingban --offline -- --test-threads=1` 通过（124 个单测及全部集成/文档测试），新增 `depth_frame_hash` 集成回归通过；`cargo fmt --all -- --check` 通过；架构门禁 1096 项全部通过；量化场景探针重生成后为 68 executed、0 declared_not_executed、0 missing、1 blocked；能力执行探针在显式指定当前 `target/debug/qx-cli.exe` 后 8 项 executed、2 项 delegated、2 项 blocked，盘口数据指纹为 `bb98a3580a92ee38`。探针首次误选 `.cargo-target` 中 2026-10-12 的旧 CLI，出现两条失败和旧指纹；改用本轮构建的二进制重跑后通过，生成记录未保留旧结果。
+- 现将每个快照的 bid/ask 档位数量写入 `DepthFrame::input_hash` 与核心回测报告 `input_data_hash`，再哈希逐档价格与数量；两条输入身份路径均有回归用例验证上述两种合法快照得到不同哈希。此修改只修复数据身份编码，不改变撮合语义。
+- 验收：`cargo test -p qx-xingban --offline -- --test-threads=1` 通过（123 个单测及全部集成/文档测试），两个 `depth_frame_hash` 集成回归通过；严格 Clippy、格式检查通过；架构门禁 1096 项全部通过；量化场景探针重生成后为 68 executed、0 declared_not_executed、0 missing、1 blocked；能力执行探针在显式指定当前 `target/debug/qx-cli.exe` 后 8 项 executed、2 项 delegated、2 项 blocked，盘口数据指纹为 `bb98a3580a92ee38`。探针首次误选 `.cargo-target` 中 2026-10-12 的旧 CLI，出现两条失败和旧指纹；改用本轮构建的二进制重跑后通过，生成记录未保留旧结果。
 - 本项不关闭多市场 Tick/OrderBook、跨账户组合风险、多市场 Paper/Live、远端策略 callback、C++ 默认 transport、完整事件事实日志、真实 venue testnet 或全平台包认证等开放门槛；整体发布条件仍未满足。

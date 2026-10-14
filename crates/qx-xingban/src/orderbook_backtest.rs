@@ -194,6 +194,8 @@ impl OrderBookBacktestEngine {
         for snapshot in snapshots {
             input_hash.write_u64(snapshot.ts);
             input_hash.write_u64(snapshot.sequence);
+            input_hash.write_u64(snapshot.bids.len() as u64);
+            input_hash.write_u64(snapshot.asks.len() as u64);
             for level in snapshot.bids.iter().chain(snapshot.asks.iter()) {
                 input_hash.write_i128(level.price.raw());
                 input_hash.write_i128(level.qty.raw());
