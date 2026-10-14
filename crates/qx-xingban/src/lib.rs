@@ -16,6 +16,7 @@ pub mod market_making;
 pub mod orderbook;
 pub mod orderbook_backtest;
 mod orderbook_strategies;
+mod portfolio_depth_timeline;
 mod portfolio_orderbook;
 pub mod rng;
 pub mod tick_backtest;
@@ -49,6 +50,7 @@ pub use self::orderbook::{
 };
 pub use self::orderbook_backtest::{
     OrderBookBacktestConfig, OrderBookBacktestEngine, OrderBookBacktestReport,
+    OrderBookPortfolioBacktestEngine, OrderBookPortfolioBacktestReport, OrderBookPortfolioMarket,
 };
 pub use self::orderbook_strategies::{
     DepthBarStrategy, NativeOrderBookStrategy, OrderBookActions, OrderBookStrategy,

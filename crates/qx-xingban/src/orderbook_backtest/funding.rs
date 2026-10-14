@@ -36,6 +36,7 @@ pub(super) struct FundingContext<'a> {
     pub(super) currency: &'a str,
     pub(super) fee_bps: i128,
     pub(super) reservations: &'a SpotCashReservations,
+    pub(super) total_reserved_cash_raw: Option<i128>,
 }
 
 pub(super) struct FillFundingContext<'a> {
@@ -94,6 +95,7 @@ pub(super) fn preflight_order(
                     .ledger
                     .cash_for(context.account_id, context.currency),
                 context.reservations,
+                context.total_reserved_cash_raw,
             )?
         };
         let required = spec.initial_margin(order.qty.raw(), price.raw(), policy.leverage)?;
@@ -151,6 +153,7 @@ pub(super) fn preflight_order(
                 .ledger
                 .cash_for(context.account_id, context.currency),
             context.reservations,
+            context.total_reserved_cash_raw,
         )?
     {
         return Ok(FundingDecision::Reject(
@@ -166,9 +169,13 @@ pub(super) fn preflight_order(
 fn unreserved_cash(
     cash_raw: i128,
     reservations: &SpotCashReservations,
+    total_reserved_cash_raw: Option<i128>,
 ) -> Result<i128, qx_core::QxError> {
     cash_raw
-        .checked_sub(reservations.total()?)
+        .checked_sub(match total_reserved_cash_raw {
+            Some(total) => total,
+            None => reservations.total()?,
+        })
         .ok_or_else(|| qx_core::QxError::Invariant("现货挂单资金预留超过账户现金".into()))
 }
 

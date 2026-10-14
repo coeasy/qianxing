@@ -16,8 +16,12 @@ use std::collections::BTreeMap;
 
 mod funding;
 mod margin;
+mod portfolio;
 mod report;
 use funding::{FillFundingContext, FundingContext, FundingDecision, SpotCashReservations};
+pub use portfolio::{
+    OrderBookPortfolioBacktestEngine, OrderBookPortfolioBacktestReport, OrderBookPortfolioMarket,
+};
 
 fn append_event(log: &mut EventLog, ts: u64, priority: u8, kind: EventKind) {
     let seq = log.alloc_seq();
@@ -532,6 +536,7 @@ impl OrderBookBacktestEngine {
                         currency: &currency,
                         fee_bps,
                         reservations: &spot_cash_reservations,
+                        total_reserved_cash_raw: None,
                     },
                 )? {
                     FundingDecision::Accept {

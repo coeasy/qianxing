@@ -1,6 +1,10 @@
-use qx_core::{InstrumentId, Money, Price, Quantity};
+use qx_core::{
+    InstrumentId, Money, Order, OrderStatus, Price, Quantity, Side, TradingInstrumentSpec,
+    TradingProduct, SCALE,
+};
 use qx_xingban::{
     BookLevel, DataTier, DepthFrame, OrderBookBacktestConfig, OrderBookBacktestEngine,
+    OrderBookExecutionModel, OrderBookPortfolioBacktestEngine, OrderBookPortfolioMarket,
     OrderBookSnapshot, OrderBookStrategy,
 };
 use qx_zhenlu::RiskGate;
@@ -14,6 +18,70 @@ impl OrderBookStrategy for NoopStrategy {
         _position: i128,
     ) -> Result<Vec<qx_core::Order>, String> {
         Ok(Vec::new())
+    }
+}
+
+struct BuyOnce {
+    emitted: bool,
+}
+
+impl OrderBookStrategy for BuyOnce {
+    fn on_order_book(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        _position: i128,
+    ) -> Result<Vec<Order>, String> {
+        if self.emitted {
+            return Ok(Vec::new());
+        }
+        self.emitted = true;
+        Ok(vec![Order {
+            client_id: 1,
+            instrument: snapshot.instrument.clone(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(1),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+        }])
+    }
+}
+
+struct FillIdStrategy {
+    emitted: bool,
+    fill_ids: Vec<(u64, u64)>,
+}
+
+impl OrderBookStrategy for FillIdStrategy {
+    fn on_order_book(
+        &mut self,
+        snapshot: &OrderBookSnapshot,
+        _position: i128,
+    ) -> Result<Vec<Order>, String> {
+        if self.emitted {
+            return Ok(Vec::new());
+        }
+        self.emitted = true;
+        Ok(vec![Order {
+            client_id: 1,
+            instrument: snapshot.instrument.clone(),
+            side: Side::Buy,
+            qty: Quantity::from_i64(1),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+        }])
+    }
+
+    fn on_fill(&mut self, order: &Order, fill: &qx_core::Fill) -> Result<(), qx_core::QxError> {
+        self.fill_ids.push((order.client_id, fill.order_id));
+        Ok(())
     }
 }
 
@@ -81,4 +149,173 @@ fn order_book_report_hash_includes_bid_ask_boundaries() {
     let ask_only = report(book(vec![], vec![level(99), level(100)]));
 
     assert_ne!(bid_ask.input_data_hash, ask_only.input_data_hash);
+}
+
+#[test]
+fn multi_market_orderbook_shares_cash_oms_and_replay() {
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth = InstrumentId::parse("ETHUSDT.BYBIT").unwrap();
+    let spec = |instrument: InstrumentId, base: &str| TradingInstrumentSpec {
+        instrument,
+        product: TradingProduct::Spot,
+        base_currency: base.into(),
+        quote_currency: "USDT".into(),
+        settlement_currency: "USDT".into(),
+        contract_size: SCALE,
+        linear: false,
+        inverse: false,
+        price_tick: 1,
+        qty_step: 1,
+        min_qty: 1,
+        max_leverage: 1,
+        maintenance_margin_bps: 0,
+        valid_from: 1,
+        valid_to: None,
+    };
+    let books = |instrument: &InstrumentId, ask: i64| {
+        [1, 2].map(|ts| OrderBookSnapshot {
+            instrument: instrument.clone(),
+            ts,
+            sequence: ts,
+            bids: vec![BookLevel {
+                price: Price::from_i64(ask - 1),
+                qty: Quantity::from_i64(2),
+            }],
+            asks: vec![BookLevel {
+                price: Price::from_i64(ask),
+                qty: Quantity::from_i64(2),
+            }],
+        })
+    };
+    let btc_books = books(&btc, 80);
+    let eth_books = books(&eth, 60);
+    let mut btc_strategy = BuyOnce { emitted: false };
+    let mut eth_strategy = BuyOnce { emitted: false };
+    let markets = vec![
+        OrderBookPortfolioMarket {
+            instrument_spec: spec(btc.clone(), "BTC"),
+            priority: 1,
+            snapshots: &btc_books,
+            execution_model: OrderBookExecutionModel::new(0).unwrap(),
+            strategy: &mut btc_strategy,
+        },
+        OrderBookPortfolioMarket {
+            instrument_spec: spec(eth.clone(), "ETH"),
+            priority: 0,
+            snapshots: &eth_books,
+            execution_model: OrderBookExecutionModel::new(0).unwrap(),
+            strategy: &mut eth_strategy,
+        },
+    ];
+    let report = OrderBookPortfolioBacktestEngine::new(
+        "main",
+        "USDT",
+        Money::from_i64(100),
+        RiskGate::conservative_default(),
+        markets,
+    )
+    .unwrap()
+    .run()
+    .unwrap();
+
+    assert_eq!(report.fills.len(), 1);
+    assert_eq!(report.fills_by_instrument[&eth].len(), 1);
+    assert!(report.fills_by_instrument[&btc].is_empty());
+    assert_eq!(
+        report.ledger.cash_for("main", "USDT"),
+        Money::from_i64(40).raw()
+    );
+    assert_eq!(report.pending_orders, 0);
+    assert!(report.event_log.events().iter().any(|event| matches!(
+        &event.kind,
+        qx_core::EventKind::Rejected { reason, .. }
+            if reason.contains("可用现金")
+    )));
+    report.verify().unwrap();
+}
+
+#[test]
+fn multi_market_orderbook_restores_strategy_local_fill_ids() {
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth = InstrumentId::parse("ETHUSDT.BYBIT").unwrap();
+    let spec = |instrument: InstrumentId, base: &str| TradingInstrumentSpec {
+        instrument,
+        product: TradingProduct::Spot,
+        base_currency: base.into(),
+        quote_currency: "USDT".into(),
+        settlement_currency: "USDT".into(),
+        contract_size: SCALE,
+        linear: false,
+        inverse: false,
+        price_tick: 1,
+        qty_step: 1,
+        min_qty: 1,
+        max_leverage: 1,
+        maintenance_margin_bps: 0,
+        valid_from: 1,
+        valid_to: None,
+    };
+    let books = |instrument: &InstrumentId, ask: i64| {
+        [1, 2].map(|ts| OrderBookSnapshot {
+            instrument: instrument.clone(),
+            ts,
+            sequence: ts,
+            bids: vec![BookLevel {
+                price: Price::from_i64(ask - 1),
+                qty: Quantity::from_i64(2),
+            }],
+            asks: vec![BookLevel {
+                price: Price::from_i64(ask),
+                qty: Quantity::from_i64(2),
+            }],
+        })
+    };
+    let btc_books = books(&btc, 80);
+    let eth_books = books(&eth, 60);
+    let mut btc_strategy = FillIdStrategy {
+        emitted: false,
+        fill_ids: Vec::new(),
+    };
+    let mut eth_strategy = FillIdStrategy {
+        emitted: false,
+        fill_ids: Vec::new(),
+    };
+    let markets = vec![
+        OrderBookPortfolioMarket {
+            instrument_spec: spec(btc.clone(), "BTC"),
+            priority: 1,
+            snapshots: &btc_books,
+            execution_model: OrderBookExecutionModel::new(0).unwrap(),
+            strategy: &mut btc_strategy,
+        },
+        OrderBookPortfolioMarket {
+            instrument_spec: spec(eth.clone(), "ETH"),
+            priority: 0,
+            snapshots: &eth_books,
+            execution_model: OrderBookExecutionModel::new(0).unwrap(),
+            strategy: &mut eth_strategy,
+        },
+    ];
+    let report = OrderBookPortfolioBacktestEngine::new(
+        "main",
+        "USDT",
+        Money::from_i64(200),
+        RiskGate::conservative_default(),
+        markets,
+    )
+    .unwrap()
+    .run()
+    .unwrap();
+
+    assert_eq!(
+        report
+            .fills
+            .iter()
+            .map(|fill| fill.order_id)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(btc_strategy.fill_ids, vec![(1, 1)]);
+    assert_eq!(eth_strategy.fill_ids, vec![(1, 1)]);
+    report.verify().unwrap();
 }
