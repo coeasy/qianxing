@@ -191,8 +191,12 @@ pub(crate) fn write_benchmark_csv(analysis: &serde_json::Value, path: &Path) -> 
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("创建基准 CSV 目录失败 {}: {error}", parent.display()))?;
     }
-    std::fs::write(path, csv)
-        .map_err(|error| format!("写入基准分析 CSV 失败 {}: {error}", path.display()))
+    qx_app::artifact_store::sink::publish(
+        path,
+        &csv,
+        qx_app::artifact_store::sink::PublishMode::Overwrite,
+    )
+    .map_err(|error| format!("发布基准分析 CSV 失败 {}: {error}", path.display()))
 }
 
 fn csv_text(value: &str) -> String {

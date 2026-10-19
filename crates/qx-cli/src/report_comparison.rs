@@ -189,8 +189,12 @@ pub(crate) fn write_comparison_html(
         html.push_str("</code></td></tr>");
     }
     html.push_str("</tbody></table></div><footer>牵星 Qianxing · 离线报告 · 不连接真实交易所 · 历史回测结果不构成投资建议</footer></main></body></html>\n");
-    std::fs::write(&output_path, html)
-        .map_err(|error| format!("写入比较报告失败 {}: {error}", output_path.display()))?;
+    qx_app::artifact_store::sink::publish(
+        &output_path,
+        &html,
+        qx_app::artifact_store::sink::PublishMode::Overwrite,
+    )
+    .map_err(|error| format!("发布比较报告失败 {}: {error}", output_path.display()))?;
     Ok(output_path)
 }
 

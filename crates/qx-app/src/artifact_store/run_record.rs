@@ -1,7 +1,11 @@
 //! Build and verify completed-run records over already-persisted backtest artifacts.
 
+use super::sink;
 use qx_spec::{ArtifactRef, FoundationDocument, ReplayVerdict, RunRecord, RunStatus};
 use std::path::{Path, PathBuf};
+
+/// `RunRecord` 产物的人类可读名，只用于错误文案。
+const LABEL: &str = "RunRecord";
 
 /// Persist a completed RunRecord after the summary, equity and fills artifacts exist.
 pub fn persist_verified_run_record(
@@ -153,36 +157,11 @@ fn artifact_digest(path: &Path) -> Result<String, String> {
     qx_strategy::file_digest::sha256_file_hex(path)
 }
 
+/// RunRecord 的落盘走全仓唯一发布出口（`artifact_store::sink`）：
+/// 内容相同幂等、不同即冲突、崩溃不留半份。⚠️ 只写语义，不在这里重复临时文件逻辑。
 fn write_run_record(path: &Path, payload: &str) -> Result<(), String> {
-    const LABEL: &str = "RunRecord";
-    if path.exists() {
-        let existing = std::fs::read_to_string(path)
-            .map_err(|error| format!("读取已有{LABEL}失败 {}: {error}", path.display()))?;
-        if existing == payload {
-            return Ok(());
-        }
-        return Err(format!(
-            "同一回测{LABEL}路径已存在不同内容: {}",
-            path.display()
-        ));
-    }
-    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
-    std::fs::write(&temporary, payload)
-        .map_err(|error| format!("写入{LABEL}失败 {}: {error}", temporary.display()))?;
-    if let Err(error) = std::fs::rename(&temporary, path) {
-        if path.exists() {
-            let existing = std::fs::read_to_string(path).map_err(|read_error| {
-                format!("读取并发生成的{LABEL}失败 {}: {read_error}", path.display())
-            })?;
-            let _ = std::fs::remove_file(&temporary);
-            if existing == payload {
-                return Ok(());
-            }
-        }
-        let _ = std::fs::remove_file(&temporary);
-        return Err(format!("提交{LABEL}失败 {}: {error}", path.display()));
-    }
-    Ok(())
+    sink::publish(path, payload, sink::PublishMode::Idempotent)
+        .map_err(|error| format!("{LABEL}落盘失败: {error}"))
 }
 
 fn sibling_summary_from_record(record_path: &Path) -> Result<PathBuf, String> {

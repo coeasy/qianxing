@@ -1,6 +1,7 @@
 //! Provider-backed Bar research use case. Provider selection/normalization remains in
 //! `qx-provider`; immutable dataset freezing and the shared backtest live at this layer.
 
+use crate::artifact_store::sink;
 use crate::cases::{attach, guard::guard_panics};
 use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
@@ -11,8 +12,7 @@ use qx_provider::{
     DataRequest, DatasetManifestV2, ProviderBarFrame, ProviderErrorClass, ProviderRegistry,
     RegistryError,
 };
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Result of freezing validated Provider data, checking it, and running the shared Bar use case.
@@ -200,48 +200,21 @@ pub(super) fn freeze(path: &Path, payload: &[u8]) -> Result<(), AppError> {
             )
         })?;
     }
-    match OpenOptions::new().write(true).create_new(true).open(path) {
-        Ok(mut file) => {
-            if let Err(error) = file.write_all(payload).and_then(|()| file.sync_all()) {
-                drop(file);
-                let _ = fs::remove_file(path);
-                return Err(AppError::new(
-                    AppErrorCategory::StorageFailure,
-                    format!("cannot freeze dataset file {}: {error}", path.display()),
-                ));
-            }
-            Ok(())
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let existing = fs::read(path).map_err(|read_error| {
-                AppError::new(
-                    AppErrorCategory::StorageFailure,
-                    format!(
-                        "cannot read existing frozen dataset {}: {read_error}",
-                        path.display()
-                    ),
-                )
-            })?;
-            if existing == payload {
-                Ok(())
-            } else {
-                Err(AppError::new(
-                    AppErrorCategory::Conflict,
-                    format!(
-                        "refusing to replace different frozen dataset file {}",
-                        path.display()
-                    ),
-                ))
-            }
-        }
-        Err(error) => Err(AppError::new(
-            AppErrorCategory::StorageFailure,
+    // 冻结数据集也是产物：走发布出口的 Idempotent 档（内容相同幂等、不同即冲突），
+    // 语义与原先的「create_new → 失败后比对」完全一致，但临时文件与清理只有一处。
+    sink::publish_bytes(path, payload, sink::PublishMode::Idempotent).map_err(|error| match error {
+        sink::PublishError::Conflict(_) => AppError::new(
+            AppErrorCategory::Conflict,
             format!(
-                "cannot create frozen dataset file {}: {error}",
+                "refusing to replace different frozen dataset file {}",
                 path.display()
             ),
-        )),
-    }
+        ),
+        sink::PublishError::Io(message) => AppError::new(
+            AppErrorCategory::StorageFailure,
+            format!("cannot freeze dataset file {}: {message}", path.display()),
+        ),
+    })
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@
 //! 同一个函数）就用它；脏到算不出时退化为文件内容 sha256 并当场告警（规划 §7 P3 / §6.2）。
 
 use super::{attach, guard::guard_panics};
+use crate::artifact_store::sink;
 use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
 use crate::spec::DatasetManifestValidationSpec;
@@ -331,12 +332,18 @@ fn run_data_validate(
     if verified {
         verify_existing_manifest(output_path, &manifest)?;
     } else {
-        std::fs::write(output_path, &manifest_json).map_err(|error| {
-            AppError::from_io(
-                &format!("写入数据集清单失败 {}", output_path.display()),
-                &error,
-            )
-        })?;
+        sink::publish(output_path, &manifest_json, sink::PublishMode::Overwrite).map_err(
+            |error| match error {
+                sink::PublishError::Io(error) => AppError::from_io(
+                    &format!("发布数据集清单失败 {}", output_path.display()),
+                    &error,
+                ),
+                // Overwrite 档不冲突；真出现就是原语被改坏，按冲突报比按存储故障报诚实。
+                sink::PublishError::Conflict(message) => {
+                    AppError::new(AppErrorCategory::Conflict, message)
+                }
+            },
+        )?;
     }
     Ok(DatasetManifestValidationResult {
         manifest,

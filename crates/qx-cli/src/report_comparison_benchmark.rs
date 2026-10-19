@@ -103,8 +103,12 @@ pub(crate) fn write_csv(
             csv.push('\n');
         }
     }
-    std::fs::write(output, csv)
-        .map_err(|error| format!("写入基准比较 CSV 失败 {}: {error}", output.display()))
+    qx_app::artifact_store::sink::publish(
+        output,
+        &csv,
+        qx_app::artifact_store::sink::PublishMode::Overwrite,
+    )
+    .map_err(|error| format!("发布基准比较 CSV 失败 {}: {error}", output.display()))
 }
 
 fn text(value: &Value, pointer: &str) -> Result<String, String> {

@@ -100,12 +100,20 @@ pub(crate) fn write_report_html(
         (&artifacts.fills_svg, fills_svg(&fill_values)),
         (&artifacts.monthly_svg, monthly_svg(&monthly)),
     ] {
-        std::fs::write(path, content)
-            .map_err(|error| format!("写入 SVG 报告失败 {}: {error}", path.display()))?;
+        qx_app::artifact_store::sink::publish(
+            path,
+            &content,
+            qx_app::artifact_store::sink::PublishMode::Overwrite,
+        )
+        .map_err(|error| format!("发布 SVG 报告失败 {}: {error}", path.display()))?;
     }
     let html = render_report_html(summary, &equity, &fills, &monthly);
-    std::fs::write(&artifacts.html, html)
-        .map_err(|error| format!("写入 HTML 报告失败 {}: {error}", artifacts.html.display()))?;
+    qx_app::artifact_store::sink::publish(
+        &artifacts.html,
+        &html,
+        qx_app::artifact_store::sink::PublishMode::Overwrite,
+    )
+    .map_err(|error| format!("发布 HTML 报告失败 {}: {error}", artifacts.html.display()))?;
     Ok(artifacts)
 }
 

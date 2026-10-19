@@ -16,6 +16,7 @@ mod run_evidence_files;
 mod run_evidence_readout;
 mod run_manifest;
 mod run_record;
+pub mod sink;
 
 pub use backtest_summary::{
     persist_backtest_artifacts, write_backtest_artifact, BacktestAccountBase, BacktestArtifacts,

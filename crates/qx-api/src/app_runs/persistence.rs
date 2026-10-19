@@ -5,12 +5,11 @@
 //! failed with an explicit interruption error instead of appearing live forever.
 
 use super::{AppRunEntry, RunStatus};
+use qx_app::artifact_store::sink;
 use qx_app::{AppError, AppErrorCategory, RunEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 const SNAPSHOT_VERSION: u32 = 2;
 
@@ -213,8 +212,10 @@ fn status_name(status: RunStatus) -> &'static str {
     }
 }
 
+/// 运行记录落盘与 RunRecord 产物同口径：一次发布、崩溃不留半份——`sink` 是全仓唯一
+/// 发布出口。首次登记走 `CreateNew`：同名 run 已在册就是冲突，绝不顶掉别人；状态流转走
+/// `Overwrite`：running → 终态是同一份运行记录的演进，不是另一件要幂等保护的事实。
 fn write_snapshot(root: &Path, snapshot: &RunSnapshot, create_only: bool) -> Result<(), AppError> {
-    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
     std::fs::create_dir_all(root).map_err(|error| {
         AppError::from_io(&format!("创建运行注册表目录 {}", root.display()), &error)
     })?;
@@ -225,48 +226,25 @@ fn write_snapshot(root: &Path, snapshot: &RunSnapshot, create_only: bool) -> Res
             format!("序列化运行记录失败: {error}"),
         )
     })?;
-    let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let temporary = PathBuf::from(format!(
-        "{}.tmp-{}-{serial}",
-        destination.display(),
-        std::process::id()
-    ));
-    let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|error| {
-                AppError::from_io(
-                    &format!("创建运行记录临时文件 {}", temporary.display()),
-                    &error,
-                )
-            })?;
-        file.write_all(&body)
-            .and_then(|()| file.sync_all())
-            .map_err(|error| {
-                AppError::from_io(
-                    &format!("写入运行记录临时文件 {}", temporary.display()),
-                    &error,
-                )
-            })?;
-        drop(file);
-        if create_only {
-            // A hard link publishes the already-synced complete file atomically
-            // and fails if another run already owns this identity. Creating the
-            // destination first and writing into it could leave truncated JSON
-            // behind after a disk-full or interrupted write.
-            std::fs::hard_link(&temporary, &destination).map_err(|error| {
-                AppError::from_io(&format!("保留运行记录 {}", destination.display()), &error)
-            })
-        } else {
-            std::fs::rename(&temporary, &destination).map_err(|error| {
-                AppError::from_io(&format!("发布运行记录 {}", destination.display()), &error)
-            })
+    let mode = if create_only {
+        sink::PublishMode::CreateNew
+    } else {
+        sink::PublishMode::Overwrite
+    };
+    sink::publish_bytes(&destination, &body, mode).map_err(|error| {
+        let verb = if create_only { "保留" } else { "发布" };
+        match error {
+            // 首次登记撞上已在册的 run：冲突（先解决，重发只会再撞一次）。
+            sink::PublishError::Conflict(message) => AppError::new(
+                AppErrorCategory::Conflict,
+                format!("{verb}运行记录 {} 失败: {message}", destination.display()),
+            ),
+            // 盘面失败按 from_io 的四类落点归类——kind 在 PublishError::Io 里没丢。
+            sink::PublishError::Io(error) => {
+                AppError::from_io(&format!("{verb}运行记录 {}", destination.display()), &error)
+            }
         }
-    })();
-    let _ = std::fs::remove_file(&temporary);
-    result
+    })
 }
 
 fn path_for(root: &Path, run_id: &str) -> PathBuf {

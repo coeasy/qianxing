@@ -1,5 +1,6 @@
 //! Construct and persist the canonical rich summary for a completed backtest.
 
+use super::sink;
 use crate::artifact_store::persist_verified_run_record;
 use qx_core::{InstrumentId, Money};
 use std::fmt::Write as _;
@@ -162,35 +163,14 @@ fn rejection_count(rejections: &[(String, usize)]) -> usize {
     crate::trade_facts::rejection_count(rejections)
 }
 
+/// 摘要类产物落盘：委托全仓唯一发布出口（`artifact_store::sink`）。
+///
+/// 此前这里与 `run_record.rs::write_run_record` 是两份逐字相同的临时文件逻辑；
+/// 语义（内容相同幂等 / 不同即冲突 / 崩溃不留半份）现在由 sink 单点持有，
+/// 调用方只提供标签用于错误文案。
 pub fn write_backtest_artifact(path: &Path, payload: &str, label: &str) -> Result<(), String> {
-    if path.exists() {
-        let existing = std::fs::read_to_string(path)
-            .map_err(|error| format!("读取已有{label}失败 {}: {error}", path.display()))?;
-        if existing == payload {
-            return Ok(());
-        }
-        return Err(format!(
-            "同一回测{label}路径已存在不同内容: {}",
-            path.display()
-        ));
-    }
-    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
-    std::fs::write(&temporary, payload)
-        .map_err(|error| format!("写入{label}失败 {}: {error}", temporary.display()))?;
-    if let Err(error) = std::fs::rename(&temporary, path) {
-        if path.exists() {
-            let existing = std::fs::read_to_string(path).map_err(|read_error| {
-                format!("读取并发生成的{label}失败 {}: {read_error}", path.display())
-            })?;
-            let _ = std::fs::remove_file(&temporary);
-            if existing == payload {
-                return Ok(());
-            }
-        }
-        let _ = std::fs::remove_file(&temporary);
-        return Err(format!("提交{label}失败 {}: {error}", path.display()));
-    }
-    Ok(())
+    sink::publish(path, payload, sink::PublishMode::Idempotent)
+        .map_err(|error| format!("{label}落盘失败: {error}"))
 }
 
 pub fn persist_backtest_artifacts(

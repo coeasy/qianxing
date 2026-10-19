@@ -1,6 +1,7 @@
 //! `data-validate-depth`: diagnose depth snapshot cadence and publish a DatasetManifestV2.
 
 use super::{attach, guard::guard_panics};
+use crate::artifact_store::sink;
 use crate::context::{CallerCapability, RunContext};
 use crate::error::{AppError, AppErrorCategory};
 use crate::spec::DepthDatasetManifestValidationSpec;
@@ -121,11 +122,17 @@ fn run(
             ));
         }
     } else {
-        std::fs::write(output, &manifest_json).map_err(|error| {
-            AppError::from_io(
-                &format!("写入深度数据清单 {} 失败", output.display()),
-                &error,
-            )
+        sink::publish(output, &manifest_json, sink::PublishMode::Overwrite).map_err(|error| {
+            match error {
+                sink::PublishError::Io(error) => AppError::from_io(
+                    &format!("发布深度数据清单 {} 失败", output.display()),
+                    &error,
+                ),
+                // Overwrite 档不冲突；真出现就是原语被改坏，按冲突报比按存储故障报诚实。
+                sink::PublishError::Conflict(message) => {
+                    AppError::new(AppErrorCategory::Conflict, message)
+                }
+            }
         })?;
     }
     Ok(DepthDatasetManifestValidationResult {

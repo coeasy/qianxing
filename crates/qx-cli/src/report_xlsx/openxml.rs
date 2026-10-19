@@ -1,41 +1,45 @@
 //! Minimal offline OpenXML workbook serialization.
 
 use super::{Cell, Sheet};
-use std::io::Write;
+use qx_app::artifact_store::sink::{self, PublishError};
+use std::io::{self, Write};
 use std::path::Path;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 pub(super) fn write_workbook(output: &Path, sheets: &[Sheet]) -> Result<(), String> {
-    let file = std::fs::File::create(output)
-        .map_err(|error| format!("创建 XLSX 报告失败 {}: {error}", output.display()))?;
-    let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-    add_entry(
-        &mut zip,
-        "[Content_Types].xml",
-        &content_types(sheets.len()),
-        options,
-    )?;
-    add_entry(&mut zip, "_rels/.rels", ROOT_RELS, options)?;
-    add_entry(&mut zip, "xl/workbook.xml", &workbook_xml(sheets), options)?;
-    add_entry(
-        &mut zip,
-        "xl/_rels/workbook.xml.rels",
-        &workbook_rels(sheets.len()),
-        options,
-    )?;
-    for (index, (_, rows)) in sheets.iter().enumerate() {
+    // XLSX 是 zip 流：走发布出口的流式档——fill 写完 fsync 一次、再原子发布，崩溃不留半份。
+    sink::publish_stream(output, sink::PublishMode::Overwrite, |file| {
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         add_entry(
             &mut zip,
-            &format!("xl/worksheets/sheet{}.xml", index + 1),
-            &worksheet_xml(rows),
+            "[Content_Types].xml",
+            &content_types(sheets.len()),
             options,
         )?;
-    }
-    zip.finish()
-        .map_err(|error| format!("完成 XLSX 工作簿失败: {error}"))?;
-    Ok(())
+        add_entry(&mut zip, "_rels/.rels", ROOT_RELS, options)?;
+        add_entry(&mut zip, "xl/workbook.xml", &workbook_xml(sheets), options)?;
+        add_entry(
+            &mut zip,
+            "xl/_rels/workbook.xml.rels",
+            &workbook_rels(sheets.len()),
+            options,
+        )?;
+        for (index, (_, rows)) in sheets.iter().enumerate() {
+            add_entry(
+                &mut zip,
+                &format!("xl/worksheets/sheet{}.xml", index + 1),
+                &worksheet_xml(rows),
+                options,
+            )?;
+        }
+        zip.finish().map_err(|error| {
+            PublishError::Io(io::Error::other(format!("完成 XLSX 工作簿失败: {error}")))
+        })?;
+        Ok(())
+    })
+    .map_err(|error| format!("发布 XLSX 报告失败 {}: {error}", output.display()))
 }
 
 fn add_entry<W: Write + std::io::Seek>(
@@ -43,11 +47,17 @@ fn add_entry<W: Write + std::io::Seek>(
     name: &str,
     content: &str,
     options: SimpleFileOptions,
-) -> Result<(), String> {
-    zip.start_file(name, options)
-        .map_err(|error| format!("创建 XLSX 条目 {name} 失败: {error}"))?;
-    zip.write_all(content.as_bytes())
-        .map_err(|error| format!("写入 XLSX 条目 {name} 失败: {error}"))
+) -> Result<(), PublishError> {
+    zip.start_file(name, options).map_err(|error| {
+        PublishError::Io(io::Error::other(format!(
+            "创建 XLSX 条目 {name} 失败: {error}"
+        )))
+    })?;
+    zip.write_all(content.as_bytes()).map_err(|error| {
+        PublishError::Io(io::Error::other(format!(
+            "写入 XLSX 条目 {name} 失败: {error}"
+        )))
+    })
 }
 
 const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#;

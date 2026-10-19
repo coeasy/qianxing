@@ -86,16 +86,15 @@ fn copy_to(source: &Path, root: &Path, relative: &str) -> Result<BundleFile, Str
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("创建实验包目录失败 {}: {error}", parent.display()))?;
     }
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&target)
-        .and_then(|mut output| {
-            let mut input = std::fs::File::open(source)?;
-            std::io::copy(&mut input, &mut output)?;
-            output.sync_all()
-        })
-        .map_err(|error| format!("复制实验包文件失败 {}: {error}", target.display()))?;
+    // 实验包每个文件只写一次（CreateNew）：走发布出口，临时文件与清理同源。
+    let payload = std::fs::read(source)
+        .map_err(|error| format!("读取实验包源文件失败 {}: {error}", source.display()))?;
+    qx_app::artifact_store::sink::publish_bytes(
+        &target,
+        &payload,
+        qx_app::artifact_store::sink::PublishMode::CreateNew,
+    )
+    .map_err(|error| format!("复制实验包文件失败 {}: {error}", target.display()))?;
     Ok(BundleFile {
         role: relative.to_string(),
         path: relative.replace('\\', "/"),
@@ -105,16 +104,12 @@ fn copy_to(source: &Path, root: &Path, relative: &str) -> Result<BundleFile, Str
 
 fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let payload = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .and_then(|mut file| {
-            use std::io::Write;
-            file.write_all(&payload)?;
-            file.sync_all()
-        })
-        .map_err(|error| format!("写入实验包文件失败 {}: {error}", path.display()))
+    qx_app::artifact_store::sink::publish_bytes(
+        path,
+        &payload,
+        qx_app::artifact_store::sink::PublishMode::CreateNew,
+    )
+    .map_err(|error| format!("写入实验包文件失败 {}: {error}", path.display()))
 }
 
 fn read_and_verify_bundle(root: &Path) -> Result<ExperimentEvidenceBundleManifest, String> {

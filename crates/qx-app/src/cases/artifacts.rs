@@ -29,13 +29,12 @@
 //! 判据（`event_backtest_evidence_check` 的 `self_hash_fallback == 0`）正面冲突——那条判据守的
 //! 正是"引擎自哈希不得冒充输入身份"。少抄一份，两件事同时解决。
 
+use crate::artifact_store::sink;
 use crate::error::{AppError, AppErrorCategory};
 use crate::spec::{BacktestArtifacts, BacktestSpec};
 use qx_core::{Fill, RunManifest};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// `summary` 的 schema 版本。改字段必须抬它——读回侧按它判断"这份产物是哪个世代"。
 pub(super) const SUMMARY_SCHEMA_VERSION: u32 = 1;
@@ -175,49 +174,34 @@ pub(crate) fn persist_run_manifest(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(AppError::from_io("读取已有回测 RunManifest", &error)),
     }
-    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let (temporary, mut file) = loop {
-        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let temporary =
-            path.with_extension(format!("run.json.tmp-{}-{serial}", std::process::id()));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-        {
-            Ok(file) => break (temporary, file),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(AppError::from_io("创建临时回测 RunManifest", &error)),
-        }
-    };
-    let publish = (|| {
-        file.write_all(payload.as_bytes())
-            .map_err(|error| AppError::from_io("写入临时回测 RunManifest", &error))?;
-        file.sync_all()
-            .map_err(|error| AppError::from_io("同步临时回测 RunManifest", &error))?;
-        drop(file);
-        // A hard link publishes the fully synced file atomically without replacing a concurrent
-        // writer's manifest. Both paths share the same directory/filesystem.
-        std::fs::hard_link(&temporary, &path)
-            .map_err(|error| AppError::from_io("发布回测 RunManifest", &error))?;
-        Ok::<(), AppError>(())
-    })();
-    let _ = std::fs::remove_file(&temporary);
-    if let Err(write_error) = publish {
-        match std::fs::read_to_string(&path) {
-            Ok(existing) => {
-                let restored = RunManifest::from_json(&existing).map_err(|error| {
-                    AppError::new(
-                        AppErrorCategory::InvalidInput,
-                        format!(
-                            "并发生成的回测 RunManifest 无效 {}: {error}",
-                            path.display()
-                        ),
-                    )
-                })?;
-                if restored == *manifest {
-                    return Ok(path);
-                }
+    // 落盘委托全仓唯一发布出口（`artifact_store::sink`）：此前这里是
+    // 「读判等 → 自造临时文件 → sync → hard_link」的三十行长逻辑。sink 对
+    // Idempotent 已含「内容相同即幂等、不同即冲突」，此处只多一层**语义级**
+    // 比对：字节不同但 `RunManifest` 解析相等时仍算同一事实（format 漂移不算冲突）。
+    match sink::publish(&path, &payload, sink::PublishMode::Idempotent) {
+        Ok(()) => {}
+        // sink 已按字节判过等；此处补一层**语义级**比对：字节不同但
+        // `RunManifest` 解析相等（format 漂移）时仍算同一事实。
+        Err(sink::PublishError::Conflict(_)) => {
+            let existing = std::fs::read_to_string(&path).map_err(|_| {
+                AppError::new(
+                    AppErrorCategory::Conflict,
+                    format!(
+                        "同一回测 RunManifest 路径已存在不同内容: {}",
+                        path.display()
+                    ),
+                )
+            })?;
+            let restored = RunManifest::from_json(&existing).map_err(|parse_error| {
+                AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!(
+                        "并发生成的回测 RunManifest 无效 {}: {parse_error}",
+                        path.display()
+                    ),
+                )
+            })?;
+            if restored != *manifest {
                 return Err(AppError::new(
                     AppErrorCategory::Conflict,
                     format!(
@@ -226,35 +210,25 @@ pub(crate) fn persist_run_manifest(
                     ),
                 ));
             }
-            Err(_) => return Err(write_error),
+        }
+        Err(sink::PublishError::Io(error)) => {
+            return Err(AppError::from_io("发布回测 RunManifest", &error));
         }
     }
     Ok(path)
 }
 
 /// 写一份文本产物。四份产物共用它，所以"写失败怎么归类"只有一处口径。
+///
+/// 委托全仓唯一发布出口（`artifact_store::sink`，`Overwrite` 档：这些是每跑一次
+/// 就整份重写的可再生展示件，语义与原先的「临时文件 + rename」完全一致）。
 pub(super) fn write_text(path: &str, body: &str) -> Result<(), AppError> {
-    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let temporary = format!("{path}.tmp-{}-{serial}", std::process::id());
-    let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|error| AppError::from_io(&format!("创建临时产物 {temporary}"), &error))?;
-        file.write_all(body.as_bytes())
-            .map_err(|error| AppError::from_io(&format!("写入临时产物 {temporary}"), &error))?;
-        file.sync_all()
-            .map_err(|error| AppError::from_io(&format!("同步临时产物 {temporary}"), &error))?;
-        drop(file);
-        std::fs::rename(&temporary, path)
-            .map_err(|error| AppError::from_io(&format!("发布产物 {path}"), &error))
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result
+    let path = Path::new(path);
+    sink::publish(path, body, sink::PublishMode::Overwrite).map_err(|error| match error {
+        sink::PublishError::Io(error) => AppError::from_io("发布产物", &error),
+        // Overwrite 档不冲突；真出现就是原语被改坏，按冲突报比按存储故障报诚实。
+        sink::PublishError::Conflict(message) => AppError::new(AppErrorCategory::Conflict, message),
+    })
 }
 
 /// 读一份文本产物。读不到时由 [`AppError::from_io`] 归类（不在盘 → `DataUnavailable`）。

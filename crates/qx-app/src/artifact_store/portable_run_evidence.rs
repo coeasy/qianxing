@@ -3,6 +3,7 @@
 use super::portable_build_attestation::{
     verify_portable_build_attestation_artifact_refs, StrategyBuildAttestation,
 };
+use super::sink;
 use qx_spec::{ArtifactRef, EvidenceBundle, EvidenceGeneration, FoundationDocument};
 use std::collections::HashSet;
 use std::io;
@@ -265,24 +266,23 @@ pub fn copy_portable_run_evidence_file(source: &Path, target: &Path) -> Result<(
             & 0o111
             != 0
     };
-    let mut output = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(target)
+    // 导出件走发布出口：临时文件 + fsync + 原子发布，失败不留半份。权限位在写内容之前
+    // 落到临时文件上（同一次 inode，先后无关），发布即随件带走。
+    let (session, mut output) = sink::TempPublish::begin(target, sink::PublishMode::CreateNew)
         .map_err(|error| format!("创建导出文件失败 {}: {error}", target.display()))?;
+    #[cfg(unix)]
+    session
+        .set_unix_mode(if executable { 0o755 } else { 0o644 })
+        .map_err(|error| format!("设置导出文件权限失败 {}: {error}", target.display()))?;
     io::copy(&mut input, &mut output)
         .map_err(|error| format!("复制导出文件失败 {}: {error}", target.display()))?;
     output
         .sync_all()
         .map_err(|error| format!("同步导出文件失败 {}: {error}", target.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        drop(output);
-        let mode = if executable { 0o755 } else { 0o644 };
-        std::fs::set_permissions(target, std::fs::Permissions::from_mode(mode))
-            .map_err(|error| format!("设置导出文件权限失败 {}: {error}", target.display()))?;
-    }
+    drop(output);
+    session
+        .commit()
+        .map_err(|error| format!("发布导出文件失败 {}: {error}", target.display()))?;
     Ok(())
 }
 

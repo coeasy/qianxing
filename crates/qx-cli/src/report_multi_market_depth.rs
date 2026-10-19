@@ -149,8 +149,12 @@ pub(crate) fn maybe_run(
             std::fs::create_dir_all(parent)
                 .map_err(|error| format!("创建报告目录失败: {error}"))?;
         }
-        std::fs::write(&target, rendered)
-            .map_err(|error| format!("写入多市场深度 HTML 失败: {error}"))?;
+        qx_app::artifact_store::sink::publish(
+            &target,
+            &rendered,
+            qx_app::artifact_store::sink::PublishMode::Overwrite,
+        )
+        .map_err(|error| format!("发布多市场深度 HTML 失败: {error}"))?;
         Some(target)
     } else {
         None
