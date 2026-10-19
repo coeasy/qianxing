@@ -495,7 +495,7 @@ EXECUTION_TEST_FIXTURES = (
 # `#[tokio::test]` 同配方实测 0 条，故这个计数器没有整族漏计。
 # 1065 -> 1069：V13 R1-H 控制面终态退场那轮的四条用例（qx-control 5 -> 9），其余 crate 逐名同数。
 # 1069 -> 1070：V13 R4-C1 给两条 HTTP 读链补总量字节界那颗用例（qx-adapter 48 -> 49），其余 crate 逐名同数。
-WORKSPACE_TEST_FLOOR = 1304  # 1233 -> 1304：2026-10-10 QX-DEV-PLAN-2026-10-10 阶段 2（T2-0 panic 边界与错误类别 / T2-1 `qx-app` 骨架 / T2-2 三个用例）按磁盘重测（同一配方：`^[ \t]*#\[test\]$` + read_text 归一 CRLF，`crates/*/src` 与 `crates/*/tests` 递归）。新 crate `qx-app` 带来 32 条（`src/tests/` 目录式 30 条：错误契约 11 / 规格契约 8 / 用例契约 11；`tests/independent_consumer.rs` 2 条 = 退出门 G2 的「独立 consumer 不启 qx-cli 也能跑完一次回测并复核」），`qx-cli` 449 -> 467（其中 3 条是 G1 的三入口等价性：CLI 真 spawn 二进制 / HTTP 走 `qx_api::ApiService::handle` / Python 真起解释器）。地板自 V13 R25 后一直停在 1233，实测已到 1304——余量 71 条（5.4%）可以整族消失而门禁照印全绿，正是这颗地板立起来要抓的那种失效。分 crate 实测：qx-cli=467 qx-core=101 qx-runtime=94 qx-xingban=94 qx-api=83 qx-storage=79 qx-adapter=58 qx-zhenlu=38 qx-app=32 qx-spec=32 qx-data=31 qx-protocol=28 qx-orchestrator=25 qx-strategy=24 qx-factor=20 qx-scheduler=18 qx-execution=17 contract-tests=15 qx-control=9 qx-guanxing=8 qx-provider=8 qx-genglu=7 qx-plugin=7 qx-datastruct=5 qx-risk=4。上一轮 1233 是 1083 -> 1233：V13 R25 按磁盘重测（本文件同一配方 `^[ \t]*#\[test\]$` + read_text 归一 CRLF，`crates/*/src` 与 `crates/*/tests` 递归）。地板自 R12/R13 后一直停在 1083，实测已到 1233 —— 余量 150 条＝12.2% 可以整族消失而门禁照印全绿，正是这颗地板立起来要抓的那种失效（§16 那一轮就是 39 条用例随死码删除一起消失）。分 crate 实测：qx-cli=449 qx-core=101 qx-xingban=94 qx-runtime=92 qx-api=81（含本轮新增的 `tests/console_operator_identity.rs`）qx-storage=79 qx-adapter=58 qx-zhenlu=38 qx-data=30 qx-protocol=28 qx-orchestrator=25 qx-strategy=24 qx-factor=20 qx-scheduler=18 qx-execution=17 qx-spec=17 contract-tests=15 qx-control=9 qx-guanxing=8 qx-provider=8 qx-genglu=7 qx-plugin=7 qx-datastruct=5 qx-risk=3。1082 -> 1083：V13 R12/R13 补一条 PostgreSQL 池容量为 1 的控制面事务回归用例（挂 #[ignore]，靠 CI 的 --ignored 或手工挂 QX_TEST_POSTGRES_DSN 来跑：不先 drop(client) 就是当场自死锁，事务已提交却永远回不了调用方）。1081 -> 1082：V13 R11 收口时补一条（WebSocket Close 扫描器的累积缓冲越界 fail-closed：跨读累积是新引入的内存面，客户端故意不完成帧头就能把缓冲无限拖大）。1073 -> 1081：V13 R11 补七条（C ABI 非法 side 拒绝 1 条、WebSocket Close 帧扫描器 5 条、托管子进程退出码携带原始码 1 条）。1071 -> 1073：V13 R10 补两条（Binance 缺 trade_id 转对账、恢复 worker 缺 venue_id 拒启动）。1070 -> 1071：V13 R7-a #284 把「版本号由宿主解码入口裁决」这颗判定钉进解码入口自己的用例（qx-runtime 83 -> 84），其余 crate 逐名同数。
+WORKSPACE_TEST_FLOOR = 1834  # 1304 -> 1834：2026-10-19 工作树检查点 52af7dae 后按磁盘重测（同一配方 `^[ \t]*#\[test\]$` + read_text 归一 CRLF，`crates/*/src` 与 `crates/*/tests` 递归）。上一轮 1304 的余量是 530 条（29%）——三成用例可以整族消失而门禁照印全绿；10-15..19 的应用层深挖（qx-app artifact_store / run_handle / trade_facts / strategy_engine / report_analysis / dataset_bundle、撮合队列位置模型、多市场深度链路、criterion 29 组基准）与 qx-cli 测试整体迁出 src/tests → tests/ 使实测涨到 1834，本轮把余量压到 0：这颗地板要抓的正是「随死码/搬家一起静默消失」，没有余量就没有失效窗口。分 crate 实测：qx-cli=552 qx-app=167 qx-xingban=159 qx-core=123 qx-api=119 qx-storage=110 qx-runtime=105 qx-adapter=75 qx-zhenlu=55 qx-sdk=44 qx-strategy=36 qx-spec=36 qx-data=36 qx-orchestrator=31 qx-protocol=28 qx-execution=26 qx-provider=25 qx-scheduler=24 qx-factor=20 contract-tests=15 qx-control=9 qx-guanxing=8 qx-risk=7 qx-plugin=7 qx-genglu=7 qx-python=5 qx-datastruct=5。
 # 门禁自身的判据数地板（V12 §17），取本回合实测的总条数。为什么要给量具本身再设一把尺：
 # 本回合编辑 `TEST_MODULES` 时误删了 qx-cli 那一项元组，门禁当场少跑 4 条判据，却依旧打印
 # "架构不变量自检全部通过 ✓" —— 判据可以整段消失而没人变红。这与 §16 抓到的"用例静默删除"
@@ -528,7 +528,7 @@ WORKSPACE_TEST_FLOOR = 1304  # 1233 -> 1304：2026-10-10 QX-DEV-PLAN-2026-10-10 
 # 1035 -> 1039：WP-1.2 为 CLI 主进程 panic 边界新增四条常驻判据。
 # 601 → 602：V13 R1-H 重落 V11 R6-1——删掉零构造者的 `CommandStatus::Rejected`，
 # 终态词表收回到 `is_final` 体内一处（控制面 + CLI 幂等入口两个平面各一颗判据）。
-GATE_CHECK_FLOOR = 1060  # WP-5.2 gates run export/recompute, credential isolation, and real venue evidence.
+GATE_CHECK_FLOOR = 1268  # 1215 -> 1268：WP-1 产物发布单点判据族 66 颗（登记表 15 调用方 45 颗 + 豁免表双向 14 颗 + 定义点 6 颗 + 漏登记 1 颗）落地后重取。注意这颗尺自己的位置：收尾的「快照逐值相等」判据排在它后面，所以本条执行时 `checks + 1` 的投影 = 本轮打印总条数 − 1（实测打印 1269）。地板按投影取才有真零余量：删掉任意一颗判据都会把投影压到地板下面，删整族更不在话下。
 # V12 §21 / #138：合流类判据的三个参数（455 → 457 就是本轮新增的两条，仍按"当轮实测总条数"取值）。窗口取 10 行是实测拐点 —— W=8 在 `tools` 之外命中 1,180
 # 处、到 W=10 仍有 781 处合法的并列实现（三条 venue 提交链、几家存储后端），所以逐字重复零容忍
 # 只对 `tools/*.py` 生效（本轮实测该目录 5 份脚本 0 命中），Rust 那一侧交给编译器与整树用例。
@@ -15906,7 +15906,7 @@ def run_evidence_check() -> None:
         and "input\n            .metadata()" in portable_file
         and ".mode()" in portable_file
         and "0o111" in portable_file
-        and "Permissions::from_mode(mode)" in portable_file
+        and "set_unix_mode(if executable { 0o755 } else { 0o644 })" in portable_file
         and "copy_portable_run_evidence_file(&source.source, &target)?" in portable_file
         and "commit_portable_run_evidence_export(" in exporter
         and "无法导出自包含运行证据包" in exporter
@@ -23176,6 +23176,131 @@ def too_many_arguments_allowance_check() -> None:
     )
 
 
+# ---- WP-1 产物发布单点（docs/...-2026-10-19.md §5.3）----
+# 审计前全仓有 5 处「自造临时文件 + 发布」的实现（rename / hard_link / create_new 三种
+# 语义各不相同）、外加 6 处裸 `fs::write`：同一次运行的两份产物在「并发重跑时是报冲突
+# 还是静默覆盖」上行为不一致。收敛后，产物发布只走 `qx_app::artifact_store::sink` 一个原语，
+# 三种语义（Idempotent / CreateNew / Overwrite）枚举齐全并写入注释。
+ARTIFACT_SINK_FILE = "crates/qx-app/src/artifact_store/sink.rs"
+ARTIFACT_SINK_DEFS = (
+    re.compile(r"^pub enum PublishMode \{"),
+    re.compile(r"^pub enum PublishError \{"),
+    re.compile(r"^pub struct TempPublish \{"),
+    re.compile(r"^pub fn publish\("),
+    re.compile(r"^pub fn publish_bytes\("),
+    re.compile(r"^pub fn publish_stream[<(]"),
+)
+# 登记表：写产物的生产文件。改这个集合必须同轮改判据（否则「实际 vs 登记」立刻分叉）。
+ARTIFACT_PUBLISH_CALLERS = (
+    "crates/qx-app/src/artifact_store/backtest_summary.rs",
+    "crates/qx-app/src/artifact_store/run_record.rs",
+    "crates/qx-app/src/artifact_store/portable_run_evidence.rs",
+    "crates/qx-app/src/cases/artifacts.rs",
+    "crates/qx-app/src/cases/run_provider_backtest_with_manifest.rs",
+    "crates/qx-app/src/cases/validate_dataset_manifest.rs",
+    "crates/qx-app/src/cases/validate_depth_dataset_manifest.rs",
+    # WP-1 收网时指纹扫描抓到的第六处（审计漏项）：app 运行注册表的 RunSnapshot 落盘，
+    # 与 run_record.rs 是同一类事实件（一份运行的权威状态记录），一并收编到 sink。
+    "crates/qx-api/src/app_runs/persistence.rs",
+    "crates/qx-cli/src/report_html.rs",
+    "crates/qx-cli/src/report_xlsx/openxml.rs",
+    "crates/qx-cli/src/report_comparison.rs",
+    "crates/qx-cli/src/report_benchmark.rs",
+    "crates/qx-cli/src/report_comparison_benchmark.rs",
+    "crates/qx-cli/src/report_multi_market_depth.rs",
+    "crates/qx-cli/src/run_evidence_experiment_recompute/portable_bundle.rs",
+)
+# 「自造临时文件 + 发布」的指纹：hard_link 发布、或 with_extension 造临时名后 rename/write。
+SELF_ROLLED_PUBLISH = (
+    re.compile(r"fs::hard_link\("),
+    re.compile(r"with_extension\(format!"),
+    re.compile(r"\.tmp-"),
+)
+# 豁免登记表：带自搓发布形状、但**不是**产物落盘的运行期/数据层写点，每项一条理由。
+# 转走 sink 的那天把条目移出去——(d) 盯着「已无指纹还赖在表里」。qx-data 三处与
+# qx-zhenlu 还有结构性理由：sink 住在 qx-app，而这些 crate 在依赖序上位于 qx-app
+# 下游（qx-app 的依赖清单里有它们，反向不成立），发布原语下沉是独立议题。
+ARTIFACT_PUBLISH_EXEMPT = {
+    "crates/qx-cli/src/venue_runtime/ccxt_live_bars.rs": "实时 BarFrame 快照：行情运行期断点，每轮整份覆写，不是一次运行的产物",
+    "crates/qx-cli/src/strategy_live_state.rs": "实时策略 digest 断点：运行期状态，非产物",
+    "crates/qx-cli/src/runtime_wiring.rs": "worker Prometheus .prom 边车文件：运维指标出口，非产物",
+    "crates/qx-data/src/catalog.rs": "数据集目录登记：数据层存储，sink 在 qx-app、qx-data 位于其下游",
+    "crates/qx-data/src/registry.rs": "数据集注册表：数据层存储，同上",
+    "crates/qx-data/src/storage.rs": "Bar 存储落盘：数据层存储，同上",
+    "crates/qx-zhenlu/src/lib.rs": "多腿组合单状态：FileLock 保护的活单运行期状态，非产物",
+}
+
+
+def artifact_publish_single_exit_check() -> None:
+    """产物发布只有一个出口：`qx_app::artifact_store::sink`（WP-1）。
+
+    这一族判的不是「现在写坏了没有」，而是**下一次新写一处产物落盘时会不会又被放过去**：
+    定义点唯一、调用方全部登记、且任何生产文件都不许再用手搓的临时文件发布。
+    """
+    production = {
+        rel: text
+        for rel, text in _production_sources().items()
+    }
+    # (a) 每个发布原语只有一个定义点，且都住在 sink。
+    for pattern in ARTIFACT_SINK_DEFS:
+        definitions = sorted(rel for rel, lines in production.items() if any(pattern.match(line) for line in lines))
+        check(
+            definitions == [ARTIFACT_SINK_FILE],
+            f"产物发布原语 {pattern.pattern} 只定义于 {ARTIFACT_SINK_FILE}",
+            f"定义于 {definitions}",
+        )
+    # (b) 登记表里的每个文件都真的经 sink 发布（同轮改登记会立刻分叉）。
+    for rel in ARTIFACT_PUBLISH_CALLERS:
+        text = production.get(rel)
+        check(
+            text is not None,
+            f"产物发布调用方登记表条目在盘：{rel}",
+            f"缺失 {rel}",
+        )
+        if text is None:
+            continue
+        joined = "\n".join(text)
+        check(
+            "sink::" in joined,
+            f"{rel} 的产物落盘走 sink 出口",
+            f"{rel} 未引用 sink",
+        )
+        rolled = [pattern.pattern for pattern in SELF_ROLLED_PUBLISH if pattern.search(joined)]
+        check(
+            not rolled,
+            f"{rel} 不再自造临时文件发布（手搓发布已收编）",
+            f"{rel} 仍有自搓发布指纹 {rolled}",
+        )
+    # (c) 全仓任何生产文件都不许出现新的自搓发布形状：要么走 sink（登记在 CALLERS），
+    # 要么进豁免登记表写明「为什么它不是产物落盘」。两条都沾不上即失败——这就是
+    # 「下一次新写一处产物落盘会不会又被放过去」那颗牙。
+    offenders = sorted(
+        rel
+        for rel, lines in production.items()
+        if rel != ARTIFACT_SINK_FILE
+        and rel not in ARTIFACT_PUBLISH_CALLERS
+        and rel not in ARTIFACT_PUBLISH_EXEMPT
+        and any(pattern.search("\n".join(lines)) for pattern in SELF_ROLLED_PUBLISH)
+    )
+    check(
+        not offenders,
+        "未登记的自搓发布形状为空（新写一处落盘必须走 sink 或进豁免登记表）",
+        f"未登记的自搓发布 {offenders}",
+    )
+    # (d) 豁免登记表两向咬合：条目在盘；且条目仍带指纹（转走 sink 后不许赖在表里）。
+    # 没有这一颗，「临时豁免」会悄悄长成永久例外。
+    for rel, reason in ARTIFACT_PUBLISH_EXEMPT.items():
+        text = production.get(rel)
+        check(text is not None, f"豁免登记表条目在盘：{rel}", f"缺失 {rel}")
+        if text is None:
+            continue
+        check(
+            any(pattern.search("\n".join(text)) for pattern in SELF_ROLLED_PUBLISH),
+            f"豁免条目仍带自搓指纹（转走 sink 后请移出登记表）：{rel}",
+            f"{rel} 已无自搓指纹，请移出 ARTIFACT_PUBLISH_EXEMPT（原由：{reason}）",
+        )
+
+
 def main() -> int:
     if "--snapshot" in sys.argv:
         # `--snapshot` 刷新两份机读快照：先写行数棘轮，再跑一遍完整门禁、收尾写门禁读数快照。
@@ -23383,6 +23508,7 @@ def main() -> int:
     qx_sdk_facade_check()
     python_sdk_layering_check()
     too_many_arguments_allowance_check()
+    artifact_publish_single_exit_check()
     # 含本条自身：+1 才是本轮真正会打印的总条数，所以地板常量按"含这一条"取值。
     check(
         checks + 1 >= GATE_CHECK_FLOOR,
