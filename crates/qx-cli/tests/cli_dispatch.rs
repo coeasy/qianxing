@@ -34,16 +34,31 @@ fn verify_runs_the_deterministic_kernel_only() {
 /// `all` 在 verify 的基础上继续走完插件装配与 Paper 主链路冒烟。
 #[test]
 fn all_extends_verify_with_plugin_and_paper_stages() {
-    let (code, stdout, stderr) = run(&["all"]);
-    assert_eq!(code, 0, "all 失败: {stderr}");
-    assert!(
-        stdout.contains("卯眼 · 插件装配") && stdout.contains("全部自校验通过 ✓"),
-        "all 必须执行插件装配并给出总校验结论:\n{stdout}"
+    let (code, stdout, stderr) = run(&["all", "--json"]);
+    assert_eq!(
+        code, 1,
+        "示例部署未配置生产资产时全量就绪应被阻断: {stderr}"
     );
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|error| panic!("all --json 必须输出结构化报告: {error}; {stdout}"));
     assert!(
-        stdout.contains("针路 · PaperVenue"),
-        "all 必须包含 Paper 主链路冒烟:\n{stdout}"
+        report["reports"]["selfcheck"]["ok"] == true,
+        "all 必须完成内核、插件与 Paper 合成链路自检: {stdout}"
     );
+    for name in [
+        "selfcheck",
+        "doctor",
+        "runtime_check",
+        "paper_check",
+        "live_check",
+    ] {
+        assert!(
+            report["checks"].as_array().is_some_and(|checks| checks
+                .iter()
+                .any(|check| { check["name"] == name && check["ok"].is_boolean() })),
+            "all 必须汇总 {name} 组件报告: {stdout}"
+        );
+    }
 }
 
 /// 未知命令不得静默成功。

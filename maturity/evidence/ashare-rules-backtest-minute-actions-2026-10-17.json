@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "ashare_rules_on_cli_backtest_throughput",
+  "generated_at_utc": "2026-10-16T16:58:48Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "5f85302988990587a85912aa5a704d0b5abb68100631f25b4e430e9a6935fcf6",
+  "scenario": "qx-cli backtest builtin ema_cross with A-share rules, fee model, CN weekday calendar, and PIT-visible corporate action",
+  "profile_coverage_claim": false,
+  "profile_target_status_updated": false,
+  "limitations": [
+    "synthetic deterministic minute bars; not market-data quality evidence",
+    "weekday-only synthetic trading calendar does not model exchange holidays or ad-hoc closures",
+    "throughput measurement does not prove every T+1, lot, limit, suspension, or corporate-action behavior branch",
+    "does not exercise Paper worker lifecycle or broker integration"
+  ],
+  "workloads": [
+    {
+      "bars": 1000,
+      "corporate_actions": 1,
+      "repeats": 5,
+      "instrument": "000001.SZSE",
+      "result_hash": "5935bfc09ba8525f",
+      "p50_ms": 267.862,
+      "p95_ms": 268.145,
+      "bars_per_second_at_p50": 3733.27,
+      "rejected_orders_last_repeat": 32,
+      "rules_binding_observed": true,
+      "cost_binding_observed": true,
+      "calendar_fixture": "synthetic weekday sessions 09:30-11:30 / 13:00-15:00",
+      "input_sha256": {
+        "bar_frame": "3216b69851d4099d384f617b6723bf0de03f1495e9fe9ecc0959cab5092892d2",
+        "calendar": "bacca3b8a8bd248335bb383278e5645f83ca544782847b8802a1d4b903187a02",
+        "corporate_actions": "5f20162f05b6b7c35eaaca38758200d2d6672df1bc4bed8742a26e84c602b22e",
+        "runtime_config": "9079756daff4c8353c2277553c77c384e2134a8c0d3bba2c99341b35d856d987",
+        "rules": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb",
+        "market_spec": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+      },
+      "corporate_action": {
+        "count": 1,
+        "type": "cash_dividend",
+        "ex_date": "2024-01-08",
+        "published_at": "2024-01-01T00:00:00+08:00",
+        "pit_visible_before_ex_date": true
+      },
+      "deterministic_across_repeats": true
+    },
+    {
+      "bars": 8000,
+      "corporate_actions": 1,
+      "repeats": 5,
+      "instrument": "000001.SZSE",
+      "result_hash": "282d24f9db15a846",
+      "p50_ms": 293.345,
+      "p95_ms": 302.528,
+      "bars_per_second_at_p50": 27271.67,
+      "rejected_orders_last_repeat": 258,
+      "rules_binding_observed": true,
+      "cost_binding_observed": true,
+      "calendar_fixture": "synthetic weekday sessions 09:30-11:30 / 13:00-15:00",
+      "input_sha256": {
+        "bar_frame": "3eb7130f3f8e5c54a131e98cb07d0de51bc60be93618d71cbbcebe829b7fd77d",
+        "calendar": "59e4fb3e89b1fc7d9c4fcf003deafdbbe0afaaee37e6c29b57afb469c3c1e063",
+        "corporate_actions": "c3d7e0b5d002467c94f331d8e4619528f2f305557dad7feb603eb55bff34ac35",
+        "runtime_config": "9079756daff4c8353c2277553c77c384e2134a8c0d3bba2c99341b35d856d987",
+        "rules": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb",
+        "market_spec": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+      },
+      "corporate_action": {
+        "count": 1,
+        "type": "cash_dividend",
+        "ex_date": "2024-02-16",
+        "published_at": "2024-01-01T00:00:00+08:00",
+        "pit_visible_before_ex_date": true
+      },
+      "deterministic_across_repeats": true
+    },
+    {
+      "bars": 64000,
+      "corporate_actions": 1,
+      "repeats": 5,
+      "instrument": "000001.SZSE",
+      "result_hash": "bcffae2215c24521",
+      "p50_ms": 574.929,
+      "p95_ms": 631.454,
+      "bars_per_second_at_p50": 111318.04,
+      "rejected_orders_last_repeat": 2064,
+      "rules_binding_observed": true,
+      "cost_binding_observed": true,
+      "calendar_fixture": "synthetic weekday sessions 09:30-11:30 / 13:00-15:00",
+      "input_sha256": {
+        "bar_frame": "7043c8f591c926c10a8ff78655e51cd1810ca321723d096ce2cedd56178c5e61",
+        "calendar": "ac1b095f2cab29da54881749160690c2ec9ecf25eb595472b446432d43c99bb7",
+        "corporate_actions": "2626d6a6699f41695771f1ccd11568f08a6e3f65a75faca68149dcce579b1dfc",
+        "runtime_config": "9079756daff4c8353c2277553c77c384e2134a8c0d3bba2c99341b35d856d987",
+        "rules": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb",
+        "market_spec": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+      },
+      "corporate_action": {
+        "count": 1,
+        "type": "cash_dividend",
+        "ex_date": "2024-05-21",
+        "published_at": "2024-01-01T00:00:00+08:00",
+        "pit_visible_before_ex_date": true
+      },
+      "deterministic_across_repeats": true
+    }
+  ]
+}

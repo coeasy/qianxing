@@ -1,0 +1,82 @@
+{
+  "account": {
+    "initial_cash_raw": "100000000000000",
+    "source": "builtin-default"
+  },
+  "assumptions": [
+    "data_tier=L1",
+    "benchmark=flat-cash",
+    "metrics=raw-fixed-point",
+    "causality=match-previous-submit-current",
+    "pending_orders=0"
+  ],
+  "bars": 80,
+  "clock_end": 80000,
+  "clock_start": 1000,
+  "execution_costs": {
+    "source": "runtime-config-default"
+  },
+  "fills": 1,
+  "input": {
+    "dataset_id": "depth-bars:BTCUSDT.BINANCE",
+    "dataset_version": "depth-frame-v1",
+    "fingerprint": "4cb7ea2895f7cbbd",
+    "kind": "depth-frame",
+    "path": "D:\\aex_work\\qianxing\\deploy\\qianxing.depth-frame.l1.example.json"
+  },
+  "input_data_hash": "35c002e1f9a9d8bc",
+  "instrument": "BTCUSDT.BINANCE",
+  "matching_kernel": "qx-xingban::TickBacktestEngine(l1-top-of-book)",
+  "metrics": {
+    "calmar": 0.20408163265306123,
+    "fees_raw": 32491000000,
+    "final_equity_raw": 100105509000000,
+    "max_drawdown_bps": 49,
+    "profit_factor": 1.118292660557256,
+    "return_bps": 10,
+    "sharpe": 0.05530276464218574,
+    "sortino": 0.08186551842602509,
+    "turnover_raw": 64982000000000,
+    "win_rate": 0.5063291139240507
+  },
+  "model_descriptors": [
+    "data_tier=L1",
+    "orderbook-matching@v1 fee_bps=5 latency_snapshots=0 queue_position_bps=0 market_impact_bps=0",
+    "risk_rule_set=conservative-default-v1+implicit-no-short",
+    "ledger=cash-spot"
+  ],
+  "rejected_orders": 42,
+  "rejection_reasons": [
+    {
+      "count": 42,
+      "reason": "[BUSINESS_VIOLATION] NoShort: [BUSINESS_VIOLATION] 禁止卖空"
+    }
+  ],
+  "replay": {
+    "events": 49,
+    "ledger_entries": 4,
+    "log_digest": "2f7810344eb7475c",
+    "run_ledger_entries": 4
+  },
+  "result_hash": "2f7810344eb7475c",
+  "risk_rules": {
+    "rule_set_version": "conservative-default-v1+implicit-no-short",
+    "source": "runtime-config"
+  },
+  "run_manifest": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-builtin-signal-depth-42372-1791767389745323200\\book\\runs\\depth-backtest_l1_grid_BTCUSDT.BINANCE-9209fdecde95cc99.run.json",
+  "run_record": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-builtin-signal-depth-42372-1791767389745323200\\book\\runs\\depth-backtest_l1_grid_BTCUSDT.BINANCE-9209fdecde95cc99.record.json",
+  "sample_unit": "depth_snapshot",
+  "schema_version": 5,
+  "signal": {
+    "declared_unused": "builtin_fast_window,builtin_slow_window,builtin_period",
+    "fast_window": 2,
+    "kind": "grid",
+    "knobs": "threshold_bps",
+    "period": 14,
+    "quantity_raw": "1000000000",
+    "slow_window": 3,
+    "source": "config",
+    "threshold_bps": "0"
+  },
+  "strategy_id": "builtin-grid"
+}

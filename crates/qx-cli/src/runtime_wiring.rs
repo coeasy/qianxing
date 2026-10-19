@@ -3,11 +3,28 @@
 //! 由 `main.rs` 的 crate 根职责簇拆出（Phase 4p），条目经根部的
 //! `pub(crate) use runtime_wiring::*;` 再导出，行为与拆分前逐字相同。
 
-use super::*;
+#[cfg(feature = "postgres")]
+use crate::postgres_dsn;
+use crate::{
+    read_example_json, reject_ashare_rules_config, resolve_runtime_relative_path,
+    settlement_currency_for_log,
+};
+use qx_core::{MarginMode, TradingProduct, SCALE};
+use qx_risk::{MaxNotionalRule, MaxQtyRule, NoShortRule, RuleSet};
+use qx_runtime::{
+    LiveEventPipeline, OutboxRecovery, RuntimeConfig, StorageBackend, WorkerConfig, WorkerRole,
+};
+#[cfg(feature = "postgres")]
+use qx_storage::PostgresEventLogStore;
+use qx_xingban::ExecutionCostRules;
+use qx_zhenlu::RiskGate;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 mod pipeline_storage;
 
 pub(crate) use pipeline_storage::PipelineStorage;
+pub(crate) use qx_app::ExecutionCostBinding;
 
 pub(crate) fn read_runtime_config(path: &Path) -> Result<RuntimeConfig, String> {
     let payload = read_example_json(path, "运行时配置")?;
@@ -87,43 +104,15 @@ pub(crate) fn strategy_risk_gate(
 /// Q0a 让两条链取到**同一个**模型，Q0c 才让它**来自配置**：`strategy.cost_rules_path`
 /// 指向的文件只在这里被读取。缺文件、坏 JSON、bp 越界一律失败并带上路径；静默退回
 /// 内置 2/5bp 就是 §4 P0 第 2 项里 `--config` 被吞掉的那类形状（"宣称能配、实际不生效"）。
-#[derive(Debug)]
-pub(crate) struct ExecutionCostBinding {
-    pub(crate) rules: ExecutionCostRules,
-    /// 实际读取的成本规则文件；`None` 表示本次用的是内核默认费率。
-    pub(crate) loaded_from: Option<PathBuf>,
-    /// 给了运行时配置（无论其中有没有 `cost_rules_path`），与"根本没给配置"要能区分。
-    pub(crate) from_runtime_config: bool,
-}
-
-impl ExecutionCostBinding {
-    pub(crate) fn fee_model(&self) -> Box<dyn FeeModel + Send> {
-        self.rules.fee_model()
-    }
-
-    pub(crate) fn latency_model(&self) -> Box<dyn LatencyModel + Send> {
-        self.rules.latency_model()
-    }
-
-    /// 产物与打印行里的成本来源。费率数字本身已经进了 `model_descriptors`，
-    /// 这里只回答"这组数字从哪来"，避免同一个事实出现第二份记录。
-    pub(crate) fn source(&self) -> String {
-        match &self.loaded_from {
-            Some(path) => format!("cost-rules-file:{}", path.display()),
-            None if self.from_runtime_config => "runtime-config-default".to_string(),
-            None => "builtin-default".to_string(),
-        }
-    }
-}
-
 pub(crate) fn execution_cost_binding_from_config(
     config: &RuntimeConfig,
     runtime_config_path: Option<&Path>,
 ) -> Result<ExecutionCostBinding, String> {
     let Some(configured) = config.strategy.cost_rules_path.as_deref() else {
-        return Ok(ExecutionCostBinding {
-            from_runtime_config: runtime_config_path.is_some(),
-            ..default_execution_cost_binding()
+        return Ok(if runtime_config_path.is_some() {
+            ExecutionCostBinding::runtime_config_default()
+        } else {
+            ExecutionCostBinding::builtin_default()
         });
     };
     // 这里就是该字段的唯一解析点：策略链的绝对化预处理不含 cost_rules_path，
@@ -134,11 +123,10 @@ pub(crate) fn execution_cost_binding_from_config(
     };
     let rules = ExecutionCostRules::load(&rules_path)
         .map_err(|error| format!("读取执行成本规则失败 {}: {error}", rules_path.display()))?;
-    Ok(ExecutionCostBinding {
+    Ok(ExecutionCostBinding::from_rules_file(
         rules,
-        loaded_from: Some(rules_path),
-        from_runtime_config: true,
-    })
+        rules_path.to_string_lossy().into_owned(),
+    ))
 }
 
 /// `config validate` 用的成本规则体检：把"文件缺失"和"内容非法"翻译成一行结论。
@@ -160,11 +148,7 @@ pub(crate) fn cost_rules_problem(runtime_config_path: &Path, configured: &str) -
 
 /// 完全没有运行时配置时的内核默认口径（CLI 自检与单测用）。
 pub(crate) fn default_execution_cost_binding() -> ExecutionCostBinding {
-    ExecutionCostBinding {
-        rules: ExecutionCostRules::default(),
-        loaded_from: None,
-        from_runtime_config: false,
-    }
+    ExecutionCostBinding::builtin_default()
 }
 
 /// 手上只有运行时配置路径、没有内存里配置对象的入口（内置策略、深度档）用的薄壳。
@@ -183,27 +167,14 @@ pub(crate) fn execution_cost_binding(
 /// 与 Strategy worker 完全一致的做空许可判定：现金保证金一律禁止，
 /// 其余场景由 `strategy.allow_short` 决定，缺省按产品是否为衍生品。
 pub(crate) fn strategy_allows_short(config: &RuntimeConfig, margin_mode: MarginMode) -> bool {
-    if margin_mode == MarginMode::Cash {
-        return false;
-    }
     let product = config.strategy.product.unwrap_or(TradingProduct::Spot);
-    config
-        .strategy
-        .allow_short
-        .unwrap_or(product.is_derivative())
+    qx_core::short_selling_enabled(product, margin_mode, config.strategy.allow_short)
 }
 
 /// 回测入口使用的保证金模式，与 Strategy worker 的推导保持一致。
 pub(crate) fn config_margin_mode(config: &RuntimeConfig) -> MarginMode {
     let product = config.strategy.product.unwrap_or(TradingProduct::Spot);
-    config
-        .strategy
-        .margin_mode
-        .unwrap_or(if product == TradingProduct::Spot {
-            MarginMode::Cash
-        } else {
-            MarginMode::Cross
-        })
+    qx_core::margin_mode_for_product(product, config.strategy.margin_mode)
 }
 
 pub(crate) fn open_runtime_pipeline(
@@ -298,7 +269,7 @@ pub(crate) fn runtime_timestamp_ms() -> u64 {
 /// 直接喂毫秒会让 30 秒租约在 30 毫秒后"过期"，作业还在跑就被别的 worker 抢走、收尾 `ack_at` 变
 /// `LeaseExpired`、`deadline_ts` 在启动瞬间就已超时。跨进租约域的调用点只在这里换算一次。
 pub(crate) fn lease_clock(timestamp_ms: u64) -> u64 {
-    timestamp_ms / 1_000
+    qx_runtime::lease_clock(timestamp_ms)
 }
 
 pub(crate) fn worker_metrics_dir(config: &RuntimeConfig) -> PathBuf {

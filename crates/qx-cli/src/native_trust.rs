@@ -6,7 +6,7 @@
 //! 开启。本模块是这条判定在生产代码里的唯一落点：`load_c_abi_strategy` 在 `dlopen` 之前先问它，
 //! 三样缺任何一样都当场拒，而不是留到原生代码已经在宿主里跑起来之后。
 
-use super::*;
+use qx_runtime::StrategyRuntimeConfig;
 
 /// 宿主的目标三元组（`arch-os`，如 `x86_64-windows`），供 `c_abi_target_triple` 比对。
 ///

@@ -80,6 +80,148 @@ fn port_execution_service_rejects_before_registration_or_venue_side_effect() {
     assert_eq!(source_seq, 0);
 }
 
+#[test]
+fn undeclared_order_type_is_rejected_before_registration_or_venue_side_effect() {
+    struct MarketOnlyVenue {
+        submits: usize,
+    }
+    impl VenuePort for MarketOnlyVenue {
+        fn venue_id(&self) -> &str {
+            "market-only"
+        }
+        fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+            use qx_zhenlu::venue_capabilities::{
+                VenueCapabilities, VenueMarketScope, VenueOrderType,
+            };
+            VenueCapabilities {
+                market_scope: VenueMarketScope::InstrumentVenue,
+                order_types: &[VenueOrderType::Market],
+                data_tiers: &[],
+                cancel: false,
+                query: false,
+                reconciliation: false,
+                idempotent_client_order_id: false,
+            }
+        }
+        fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
+            self.submits += 1;
+            Ok(Vec::new())
+        }
+        fn cancel_order(
+            &mut self,
+            _client_order_id: u64,
+            _ts: u64,
+        ) -> Result<Vec<ExecutionEvent>, String> {
+            panic!("undeclared cancel must be rejected before venue call")
+        }
+    }
+
+    let mut state = PortState::default();
+    let mut venue = MarketOnlyVenue { submits: 0 };
+    let mut source_seq = 0;
+    let error = PortExecutionService::new(
+        &mut venue,
+        &mut state,
+        "capability-worker",
+        10,
+        &mut source_seq,
+    )
+    .submit(port_order(13))
+    .unwrap_err();
+
+    assert!(error.contains("未声明 Limit 订单能力"), "{error}");
+    assert!(state.orders.is_empty());
+    assert!(state.events.is_empty());
+    assert_eq!(venue.submits, 0);
+    assert_eq!(source_seq, 0);
+    let cancel_error = PortExecutionService::new(
+        &mut venue,
+        &mut state,
+        "capability-worker",
+        10,
+        &mut source_seq,
+    )
+    .cancel(13)
+    .unwrap_err();
+    assert!(cancel_error.contains("未声明撤单能力"), "{cancel_error}");
+}
+
+#[test]
+fn venue_market_query_and_reconciliation_capabilities_are_enforced() {
+    use qx_zhenlu::venue_capabilities::{
+        VenueCapabilities, BINANCE_SPOT_VENUE_CAPABILITIES, CCXT_PROCESS_VENUE_CAPABILITIES,
+    };
+
+    let mut ashare = port_order(14);
+    ashare.instrument = InstrumentId::parse("600000.XSHG").unwrap();
+    assert!(BINANCE_SPOT_VENUE_CAPABILITIES
+        .validate_submit(&ashare, "binance")
+        .unwrap_err()
+        .contains("market 不在 Venue 声明范围内"));
+
+    struct BinanceScopeVenue;
+    impl VenuePort for BinanceScopeVenue {
+        fn venue_id(&self) -> &str {
+            "binance"
+        }
+        fn capabilities(&self) -> VenueCapabilities {
+            BINANCE_SPOT_VENUE_CAPABILITIES
+        }
+        fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
+            panic!("out-of-scope market must be rejected before submission")
+        }
+        fn cancel_order(
+            &mut self,
+            _client_order_id: u64,
+            _ts: u64,
+        ) -> Result<Vec<ExecutionEvent>, String> {
+            panic!("this test must not call cancel")
+        }
+    }
+    let mut state = PortState::default();
+    let mut venue = BinanceScopeVenue;
+    let mut source_seq = 0;
+    let error = PortExecutionService::new(
+        &mut venue,
+        &mut state,
+        "market-scope-worker",
+        10,
+        &mut source_seq,
+    )
+    .submit(ashare.clone())
+    .unwrap_err();
+    assert!(error.contains("market 不在 Venue 声明范围内"), "{error}");
+    assert!(state.orders.is_empty() && state.events.is_empty());
+    assert_eq!(source_seq, 0);
+
+    let mut derivative = port_order(15);
+    derivative.instrument = InstrumentId::parse("BTCUSDT-PERP.BINANCE").unwrap();
+    assert!(BINANCE_SPOT_VENUE_CAPABILITIES
+        .validate_submit(&derivative, "binance")
+        .unwrap_err()
+        .contains("market 不在 Venue 声明范围内"));
+
+    let spot = port_order(16);
+    assert!(CCXT_PROCESS_VENUE_CAPABILITIES
+        .validate_submit(&spot, "okx")
+        .unwrap_err()
+        .contains("market 不在 Venue 声明范围内"));
+
+    let no_reads = VenueCapabilities {
+        query: false,
+        reconciliation: false,
+        ..qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
+    };
+    assert!(no_reads
+        .validate_query()
+        .unwrap_err()
+        .contains("未声明查询能力"));
+    assert!(no_reads
+        .validate_reconciliation()
+        .unwrap_err()
+        .contains("未声明对账能力"));
+}
+
 /// 风控端口的两条通道必须各说各话（V13 §9.12 #172）。
 ///
 /// 改前：两个生产 `RiskPort` 实现只在通过时写 `accepted: true`，拒绝改走 `Err`，

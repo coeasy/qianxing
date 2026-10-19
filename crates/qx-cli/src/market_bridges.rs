@@ -1,6 +1,24 @@
 //! 行情桥：账户事件日志命名、API 投影桥与 Paper 行情桥。
 
-use super::*;
+use crate::runtime_wiring::PipelineStorage;
+use crate::{
+    account_worker_settlement_currency, default_account_event_log, owns_account_event_log,
+    settlement_currency_for_log, PipelineMetricsReporter,
+};
+use qx_api::ApiService;
+use qx_core::{InstrumentId, Price, Quantity, VenueFamily};
+use qx_guanxing::QuoteTick;
+use qx_runtime::{
+    LiveEventPipeline, RuntimeConfig, RuntimeEventEnvelope, WorkerConfig, WorkerRole,
+};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::thread;
+use std::time::Duration;
 
 /// 账户级事实身份的唯一构造点。
 ///
@@ -363,4 +381,17 @@ pub(crate) fn bridge_market_quote_to_paper(
         mirrored += 1;
     }
     Ok(mirrored)
+}
+
+/// Include the worker-owned Paper mirror pipelines in the same worker metrics total.
+pub(crate) fn observe_paper_market_bridges(
+    bridges: &[PaperMarketBridge],
+    metrics: &mut PipelineMetricsReporter,
+) {
+    for bridge in bridges {
+        metrics.observe_named(
+            &format!("paper-bridge:{}", bridge.log_name),
+            &bridge.pipeline,
+        );
+    }
 }

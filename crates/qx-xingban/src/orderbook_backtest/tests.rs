@@ -17,6 +17,8 @@ mod fill_feedback;
 mod funding;
 #[path = "tests/pending_risk.rs"]
 mod pending_risk;
+#[path = "tests/queue_position.rs"]
+mod queue_position;
 
 struct NativeBuy;
 
@@ -169,6 +171,15 @@ fn order_book_backtest_is_causal_and_replays_fill() {
     let facts = ReplayVerifier::verify(report.event_log.events(), &report.ledger).unwrap();
     assert_eq!(facts.events, report.event_log.events().len());
     assert_eq!(facts.ledger_entries, report.ledger.entries().len());
+    let mut explicit_default_strategy = BuyOnce { emitted: false };
+    let explicit_default = OrderBookBacktestEngine::new(l2_config(1))
+        .with_execution_model(OrderBookExecutionModel::new(1).unwrap())
+        .run(
+            &[snapshot(1, 100), snapshot(2, 101)],
+            &mut explicit_default_strategy,
+        )
+        .unwrap();
+    assert_eq!(report.result_hash(), explicit_default.result_hash());
 }
 
 /// 名义额远超可用现金的现货买单：用来验证深度链不会把账簿现金透支成负数。
@@ -422,18 +433,19 @@ fn order_book_report_is_deterministic_and_carries_unified_metrics() {
     // 缺省口径要逐字写进描述子，非缺省口径要同时改变描述子与结果哈希：命令面那条
     // 断言挡住"配了却不生效"，这一条挡住"生效了却没写进产物"。
     assert!(first.model_descriptors.iter().any(|descriptor| descriptor
-        == "orderbook-matching@v1 fee_bps=1 latency_snapshots=0 queue_position_bps=0 market_impact_bps=0"));
+        .starts_with("orderbook-matching@v2 fee_bps=1 latency_snapshots=0 queue_position_bps=0 queue_position=disabled market_impact_bps=0")));
     let modeled = OrderBookBacktestEngine::new(l2_config(1))
         .with_execution_model(OrderBookExecutionModel {
             fee_bps: 1,
             latency_snapshots: 2,
             queue_position_bps: 500,
+            queue_position_model: crate::QueuePositionModel::Disabled,
             market_impact_bps: 10,
         })
         .run(&snapshots, &mut BuyOnce { emitted: false })
         .unwrap();
     assert!(modeled.model_descriptors.iter().any(|descriptor| descriptor
-        == "orderbook-matching@v1 fee_bps=1 latency_snapshots=2 queue_position_bps=500 market_impact_bps=10"));
+        .starts_with("orderbook-matching@v2 fee_bps=1 latency_snapshots=2 queue_position_bps=500 queue_position=disabled market_impact_bps=10")));
     assert_ne!(
         modeled.result_hash(),
         first.result_hash(),

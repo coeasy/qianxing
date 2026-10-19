@@ -114,17 +114,20 @@ fn builtin_args(frame: &Path, quantity: &str, config: Option<&Path>) -> Vec<Stri
 /// 没声明也要把用的数印出来：这条链不落摘要，stdout 是本金唯一的出口。
 #[test]
 fn builtin_entry_prints_the_default_it_booked_with() {
-    let (_, stdout, stderr) = run(&builtin_args(
+    let root = temp_dir("builtin-default");
+    let config = runtime_with(&root, "default", |_| {});
+    let (code, stdout, stderr) = run(&builtin_args(
         &deploy("qianxing.bar-frame.pairs-primary.example.json"),
         "1",
-        None,
+        Some(&config),
     ));
+    assert_eq!(code, 0, "默认本金回测应成功: {stderr}");
     assert_eq!(
-        line_with(&stdout, "[Builtin · Account]"),
-        format!("[Builtin · Account] initial_cash_raw={DEFAULT_RAW} account_base_source=builtin-default"),
+        line_with(&stdout, "[Strategy · Account]"),
+        format!("[Strategy · Account] initial_cash_raw={DEFAULT_RAW} account_base_source=builtin-default"),
         "默认本金必须原样印出来，缺了这行等于回到「没人知道自己跑在多少钱上」: {stderr}"
     );
-    assert_eq!(field(&stdout, "[Builtin · Backtest]", "fills"), "1");
+    assert_eq!(field(&stdout, "[Strategy · Backtest]", "fills"), "1");
 }
 
 /// 同一份配置、同一份夹具、同一个下单量：只有那一格本金不同，结果就必须不同。
@@ -139,41 +142,41 @@ fn a_declared_account_base_is_what_makes_the_second_unit_fillable() {
 
     let (code, plain, plain_err) = run(&builtin_args(&frame, "2", Some(&undeclared)));
     assert_eq!(code, 0, "不声明本金的基线要能跑完: {plain_err}");
-    assert_eq!(field(&plain, "[Builtin · Backtest]", "fills"), "0");
-    assert_eq!(field(&plain, "[Builtin · Backtest]", "return_bps"), "0");
+    assert_eq!(field(&plain, "[Strategy · Backtest]", "fills"), "0");
+    assert_eq!(field(&plain, "[Strategy · Backtest]", "return_bps"), "0");
     assert!(
-        line_with(&plain, "[Builtin · Integrity]").contains("超过账户可用现金"),
+        line_with(&plain, "[Strategy · Integrity]").contains("超过账户可用现金"),
         "零成交的理由要说清是钱不够: {}",
-        line_with(&plain, "[Builtin · Integrity]")
+        line_with(&plain, "[Strategy · Integrity]")
     );
     assert!(
-        line_with(&plain, "[Builtin · Account]").contains("account_base_source=builtin-default"),
+        line_with(&plain, "[Strategy · Account]").contains("account_base_source=builtin-default"),
         "没声明时来源得写成默认，不能与「配了同样的数」混: {}",
-        line_with(&plain, "[Builtin · Account]")
+        line_with(&plain, "[Strategy · Account]")
     );
 
     let (code, funded, funded_err) = run(&builtin_args(&frame, "2", Some(&declared)));
     assert_eq!(code, 0, "声明本金后同一条命令要能跑完: {funded_err}");
     assert_eq!(
-        field(&funded, "[Builtin · Backtest]", "fills"),
+        field(&funded, "[Strategy · Backtest]", "fills"),
         "1",
         "声明的本金必须真的进到引擎账户"
     );
     assert!(
-        line_with(&funded, "[Builtin · Account]")
+        line_with(&funded, "[Strategy · Account]")
             .contains("account_base_source=strategy-initial-cash"),
         "配置来源与默认来源必须可区分: {}",
-        line_with(&funded, "[Builtin · Account]")
+        line_with(&funded, "[Strategy · Account]")
     );
     assert!(
-        line_with(&funded, "[Builtin · Account]")
+        line_with(&funded, "[Strategy · Account]")
             .contains(&format!("initial_cash_raw={TWO_UNIT_RAW}")),
         "印出来的必须是生效的那个数: {}",
-        line_with(&funded, "[Builtin · Account]")
+        line_with(&funded, "[Strategy · Account]")
     );
     assert_ne!(
-        field(&plain, "[Builtin · Backtest]", "result_hash"),
-        field(&funded, "[Builtin · Backtest]", "result_hash"),
+        field(&plain, "[Strategy · Backtest]", "result_hash"),
+        field(&funded, "[Strategy · Backtest]", "result_hash"),
         "两腿之差全在本金上，结果哈希却是同一个说明声明没生效"
     );
 }
@@ -232,8 +235,8 @@ fn summary_chains_land_the_account_base_they_actually_used() {
     );
     assert_eq!(
         summary["schema_version"],
-        serde_json::json!(5),
-        "摘要世代随结构变化上行：v4 加每期本金键、v5 加 RunRecord 指针"
+        serde_json::json!(7),
+        "摘要世代包含当前 RunRecord 与回测分析字段"
     );
 
     let book_root = temp_dir("summaries-book");

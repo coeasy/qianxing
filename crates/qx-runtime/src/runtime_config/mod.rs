@@ -68,6 +68,8 @@ fn default_risk_rules_version() -> String {
 
 mod account_validation;
 mod api_provider_validation;
+mod builtin_signal;
+mod builtin_strategy;
 mod console_validation;
 mod schema;
 #[cfg(test)]
@@ -83,6 +85,8 @@ mod topology_tests;
 mod topology_validation;
 mod validate;
 
+pub use builtin_signal::*;
+pub use builtin_strategy::*;
 pub(crate) use console_validation::*;
 pub use schema::*;
 pub use strategy_schema::*;

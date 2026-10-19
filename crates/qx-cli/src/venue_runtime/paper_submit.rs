@@ -244,20 +244,20 @@ pub(crate) fn paper_submit_match_attempt(
                 order.instrument
             ))
         })?;
-    execute_paper_submit_effect(
-        command,
-        pipeline,
-        now,
-        Some(risk),
-        Some(position),
-        Some(market_quote),
-        // 与回测装配同一份成本口径：费率只从运行时配置的 `cost_rules_path` 来。
+    execute_paper_submit_effect(qx_execution::PaperSubmitRequest {
+            command,
+            pipeline,
+            now,
+            risk: Some(risk),
+            position: Some(position),
+            market_quote: Some(market_quote),
+            fee_model: // 与回测装配同一份成本口径：费率只从运行时配置的 `cost_rules_path` 来。
         execution_cost_binding_from_config(config, Some(runtime_config_path))
             .map_err(|error| terminal_submit_rejection(format!("读取执行成本规则失败: {error}")))?
             .fee_model(),
-        false,
-        Some(spread_store),
-    )
+            allow_synthetic_quote: false,
+            spread_store: Some(spread_store)
+        })
 }
 
 /// 终态拒绝的文案：命令出不了 `Accepted`，所以必须把运营者真正能走的下一步说清楚。

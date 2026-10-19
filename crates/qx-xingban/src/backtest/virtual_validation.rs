@@ -1,5 +1,14 @@
 use super::VirtualTradingConfig;
 
+/// Virtual event schedules are validated as non-decreasing by timestamp before the engine
+/// starts. Find only the matching run with two binary searches instead of rescanning the full
+/// schedule for every bar. Repeated events at one timestamp retain their input order.
+pub(super) fn events_at<T>(events: &[T], ts: u64, timestamp: impl Fn(&T) -> u64) -> &[T] {
+    let start = events.partition_point(|event| timestamp(event) < ts);
+    let end = start + events[start..].partition_point(|event| timestamp(event) == ts);
+    &events[start..end]
+}
+
 pub(super) fn validate_virtual_events(
     config: &VirtualTradingConfig,
 ) -> Result<(), qx_core::QxError> {

@@ -3,68 +3,22 @@
 //! 三种策略传输在这里收敛为同一份 `StrategyContractInput/Output`，
 //! 使回测、Paper 与 Live worker 共享同一套指纹与超时约束。
 
-use super::*;
-mod ring_arguments;
-pub(crate) use ring_arguments::shared_ring_arguments;
+mod imports;
+use imports::*;
+#[cfg(test)]
+pub(crate) use qx_orchestrator::shared_ring_arguments;
 mod strategy_client;
 pub(crate) use strategy_client::ContractStrategyClient;
 // Production reads strategy.python_timeout_ms; this constant only pins the test default.
 #[cfg(test)]
 pub(crate) const PYTHON_STRATEGY_TIMEOUT_MS: u64 = 2_000;
 
-pub(crate) enum StrategyWireResponse {
-    JsonLine(String),
-    Frame(StrategyFrame),
-}
-
 pub(crate) struct PythonStrategyClient {
-    child: std::process::Child,
-    stdin: Option<std::process::ChildStdin>,
-    responses: Option<Receiver<Result<StrategyWireResponse, String>>>,
-    shared_input: Option<SharedRingWriter>,
-    shared_output: Option<SharedRingReader>,
-    ring_paths: Option<(PathBuf, PathBuf)>,
-    timeout_ms: u64,
-    stderr_tail: Arc<Mutex<VecDeque<String>>>,
-    label: String,
-    diagnostic_program: String,
+    worker: qx_orchestrator::StrategyWorkerProcess,
     transport: StrategyTransport,
-    next_sequence: u64,
 }
 
 pub(crate) type StrategyProcessClient = PythonStrategyClient;
-
-/// 共享环临时文件的清理守卫。
-///
-/// `.input`/`.output` 是 `memmap2` 打开的 mmap 文件（默认 64 MiB × 2），正常路径由
-/// `PythonStrategyClient` 的 `Drop` 回收。但在 `SharedRingWriter::create` 与
-/// `SharedRingReader::open` 任意一步失败时，`ring_paths` 还没被赋值，那条 `Drop` 不会
-/// 触发，`%TEMP%` 里就永久留下一对几十 MiB 的孤儿文件。守卫从路径生成那一刻接管，
-/// 无论成功还是中途返回都清一遍；成功时 `disown()` 把清理责任交还给客户端。
-struct RingFileGuard(Vec<PathBuf>);
-
-impl RingFileGuard {
-    fn new() -> Self {
-        Self(Vec::new())
-    }
-
-    fn register(&mut self, path: PathBuf) {
-        self.0.push(path);
-    }
-
-    /// 所有权移交给 `PythonStrategyClient`：从此刻起由它的 `Drop` 负责清理。
-    fn disown(&mut self) {
-        self.0.clear();
-    }
-}
-
-impl Drop for RingFileGuard {
-    fn drop(&mut self) {
-        for path in self.0.drain(..) {
-            let _ = std::fs::remove_file(path);
-        }
-    }
-}
 
 impl PythonStrategyClient {
     fn start(module: &str, timeout_ms: u64) -> Result<Self, String> {
@@ -92,6 +46,43 @@ impl PythonStrategyClient {
         ring_config: SharedRingConfig,
         artifact_sha256: Option<&str>,
     ) -> Result<Self, String> {
+        Self::start_with_transport_config_and_ring_directory(
+            module,
+            timeout_ms,
+            transport,
+            ring_config,
+            artifact_sha256,
+            None,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn start_with_transport_config_in(
+        module: &str,
+        timeout_ms: u64,
+        transport: StrategyTransport,
+        ring_config: SharedRingConfig,
+        artifact_sha256: Option<&str>,
+        ring_directory: &Path,
+    ) -> Result<Self, String> {
+        Self::start_with_transport_config_and_ring_directory(
+            module,
+            timeout_ms,
+            transport,
+            ring_config,
+            artifact_sha256,
+            Some(ring_directory),
+        )
+    }
+
+    fn start_with_transport_config_and_ring_directory(
+        module: &str,
+        timeout_ms: u64,
+        transport: StrategyTransport,
+        ring_config: SharedRingConfig,
+        artifact_sha256: Option<&str>,
+        ring_directory: Option<&Path>,
+    ) -> Result<Self, String> {
         let (python, interpreter_origin) = python_interpreter_origin();
         let python_path = python_module_search_path()?;
         let mut env = BTreeMap::new();
@@ -115,7 +106,7 @@ impl PythonStrategyClient {
             args.push("--protocol".into());
             args.push("framed_json".into());
         }
-        Self::start_process_with_transport_config(
+        Self::start_process_with_ring_directory(
             &python,
             &args,
             &env,
@@ -124,13 +115,12 @@ impl PythonStrategyClient {
             transport,
             ring_config,
             Some(interpreter_origin),
+            ring_directory,
         )
     }
 
-    // 进程启动参数天然就是"可执行 + 实参 + 环境 + 协议 + 诊断"五组，拆结构体只会把一次
-    // spawn 的字段散到两处；与仓库其余 4 处同类启动函数保持同一约定。
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn start_process_with_transport_config(
+    pub(crate) fn start_process_with_ring_directory(
         executable: &str,
         args: &[String],
         env: &BTreeMap<String, String>,
@@ -139,6 +129,7 @@ impl PythonStrategyClient {
         transport: StrategyTransport,
         ring_config: SharedRingConfig,
         interpreter_origin: Option<&str>,
+        ring_directory: Option<&Path>,
     ) -> Result<Self, String> {
         // 失败信息里的程序名：Python 路径还要带上解释器来源，因为"PATH 上的 python 是占位桩"
         // 与"策略代码报错"在协议层看起来一模一样（子进程一个字都没输出就退出）。
@@ -146,224 +137,20 @@ impl PythonStrategyClient {
             Some(origin) => format!("{executable}（{origin}）"),
             None => executable.to_string(),
         };
-        if matches!(
-            transport,
-            StrategyTransport::SharedMemoryJson | StrategyTransport::SharedMemoryColumnar
-        ) {
-            ring_config
-                .validate()
-                .map_err(|error| format!("{label} 共享 ring 配置非法: {error}"))?;
-        }
-        let mut actual_args = args.to_vec();
-        let mut shared_input = None;
-        let mut shared_output = None;
-        let mut ring_paths = None;
-        let mut ring_guard = RingFileGuard::new();
-        if matches!(
-            transport,
-            StrategyTransport::SharedMemoryJson | StrategyTransport::SharedMemoryColumnar
-        ) {
-            let ring_id = NEXT_STRATEGY_RING_ID.fetch_add(1, Ordering::Relaxed);
-            let base = std::env::temp_dir().join(format!(
-                "qianxing-strategy-ring-{}-{ring_id}",
-                std::process::id()
-            ));
-            let input_path = base.with_extension("input");
-            let output_path = base.with_extension("output");
-            ring_guard.register(input_path.clone());
-            ring_guard.register(output_path.clone());
-            let input = SharedRingWriter::create(&input_path, ring_config)
-                .map_err(|error| format!("创建 {label} 输入 ring 失败: {error}"))?;
-            let output = SharedRingWriter::create(&output_path, ring_config)
-                .map_err(|error| format!("创建 {label} 输出 ring 失败: {error}"))?;
-            drop(output);
-            let reader = SharedRingReader::open(&output_path, ring_config)
-                .map_err(|error| format!("打开 {label} 输出 ring 失败: {error}"))?;
-            actual_args.extend(shared_ring_arguments(
+        let worker = qx_orchestrator::StrategyWorkerProcess::spawn(
+            qx_orchestrator::StrategyWorkerSpawnConfig {
+                executable,
+                args,
+                env,
+                timeout_ms,
+                label,
+                diagnostic_program: &diagnostic_program,
                 transport,
-                &input_path,
-                &output_path,
                 ring_config,
-                std::process::id(),
-            ));
-            shared_input = Some(input);
-            shared_output = Some(reader);
-            ring_paths = Some((input_path, output_path));
-            ring_guard.disown();
-        }
-        let child_env = strategy_child_environment(env)?;
-        let mut command = Command::new(executable);
-        command
-            .args(&actual_args)
-            // 策略进程只能获得最小运行时环境，不能继承 API secret 等父进程变量。
-            .env_clear()
-            .envs(child_env);
-        let shared = matches!(
-            transport,
-            StrategyTransport::SharedMemoryJson | StrategyTransport::SharedMemoryColumnar
-        );
-        let mut child = command
-            .stdin(if shared {
-                Stdio::null()
-            } else {
-                Stdio::piped()
-            })
-            .stdout(if shared {
-                Stdio::null()
-            } else {
-                Stdio::piped()
-            })
-            // Strategy stdout is the protocol; user diagnostics must use stderr.
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| {
-                format!("启动 {label} worker 失败: {diagnostic_program} 无法执行: {error}")
-            })?;
-        let stdin = if shared { None } else { child.stdin.take() };
-        let stdout = if shared { None } else { child.stdout.take() };
-        if !shared && (stdin.is_none() || stdout.is_none()) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("{label} worker stdin/stdout 不可用"));
-        }
-        let stderr = match child.stderr.take() {
-            Some(stderr) => stderr,
-            None => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("{label} worker stderr 不可用"));
-            }
-        };
-        let stderr_tail = Arc::new(Mutex::new(VecDeque::new()));
-        let stderr_tail_reader = Arc::clone(&stderr_tail);
-        thread::spawn(move || {
-            let mut reader = BufReader::new(stderr);
-            loop {
-                // 读管道断了也要记账：静默丢掉只会让诊断说成"worker 无 stderr 输出"（#203）。
-                // 行长同样有闸：一行读不完时中止这条泵并留下一行事实，而不是让缓冲一路涨。
-                let line = match read_capped_worker_line(&mut reader, DEFAULT_MAX_FRAME_BYTES) {
-                    Ok(Some(line)) => Ok(line),
-                    Ok(None) => return,
-                    Err(error) => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
-                };
-                let broken = line.is_err();
-                if let Ok(mut tail) = stderr_tail_reader.lock() {
-                    if let Some(note) = stderr_tail_note(line) {
-                        record_stderr_tail(&mut tail, note);
-                    }
-                }
-                if broken {
-                    return;
-                }
-            }
-        });
-        let responses = if shared {
-            None
-        } else {
-            let stdout = stdout.expect("non-shared worker stdout checked above");
-            let (sender, responses) = mpsc::sync_channel(1); // 有界泵：写满即背压回子进程 stdout（V13 R2，与 CCXT 泵同族）
-            thread::spawn(move || match transport {
-                StrategyTransport::Jsonl => {
-                    let mut reader = BufReader::new(stdout);
-                    loop {
-                        // 与 `FramedJson` 那一臂共用同一把字节闸：同一份 worker 的两种传输，
-                        // 一种受帧长约束、一种不受约束，等于没有约束（V13 R5）。
-                        let line =
-                            match read_capped_worker_line(&mut reader, DEFAULT_MAX_FRAME_BYTES) {
-                                Ok(Some(line)) => line,
-                                Ok(None) => break,
-                                Err(error) => {
-                                    let _ = sender.send(Err(format!(
-                                        "读取 Strategy worker 响应失败: {error}"
-                                    )));
-                                    return;
-                                }
-                            };
-                        if sender
-                            .send(Ok(StrategyWireResponse::JsonLine(line)))
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    let _ = sender.send(Err("Strategy worker 已关闭输出".into()));
-                }
-                StrategyTransport::FramedJson => {
-                    let mut reader = stdout;
-                    loop {
-                        match StrategyFrame::read_from(&mut reader, DEFAULT_MAX_FRAME_BYTES) {
-                            Ok(frame) => {
-                                if sender.send(Ok(StrategyWireResponse::Frame(frame))).is_err() {
-                                    return;
-                                }
-                            }
-                            Err(error) => {
-                                let _ = sender.send(Err(format!(
-                                    "读取 Strategy worker 分帧响应失败: {error}"
-                                )));
-                                return;
-                            }
-                        }
-                    }
-                }
-                StrategyTransport::SharedMemoryJson | StrategyTransport::SharedMemoryColumnar => {
-                    unreachable!("shared transport has no pipe")
-                }
-            });
-            Some(responses)
-        };
-        Ok(Self {
-            child,
-            stdin,
-            responses,
-            shared_input,
-            shared_output,
-            ring_paths,
-            timeout_ms,
-            stderr_tail,
-            label: label.to_string(),
-            diagnostic_program,
-            transport,
-            next_sequence: 1,
-        })
-    }
-
-    fn diagnostics(&self) -> String {
-        let Ok(tail) = self.stderr_tail.lock() else {
-            // 泵线程若在持锁期间 panic，锁会中毒。此时真实原因是"stderr 泵挂了"，
-            // 静默返回空等于让 `death_note()` 报"worker 无 stderr 输出"，运维会去看
-            // 一个根本没坏的方向。留一条证据让诊断面自己交代自己坏了。
-            return "; stderr=（stderr 泵锁中毒，尾部不可读）".to_string();
-        };
-        if tail.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "; stderr={}",
-                tail.iter().cloned().collect::<Vec<_>>().join(" | ")
-            )
-        }
-    }
-
-    /// 子进程"一个字都没输出就结束"时的可判定信息：程序名与解释器来源、退出码、stderr 尾部。
-    /// 少了这些，"PATH 上的 python 是 WindowsApps 占位桩"与"策略代码抛异常"在协议层是同一句话。
-    fn death_note(&mut self) -> String {
-        let exit = match self.child.try_wait() {
-            Ok(Some(status)) => match status.code() {
-                Some(code) => format!("退出码 {code}"),
-                None => "无退出码（信号终止）".to_string(),
+                ring_directory,
             },
-            Ok(None) => "进程未退出".to_string(),
-            Err(error) => format!("退出码不可读: {error}"),
-        };
-        let program = self.diagnostic_program.clone();
-        let tail = self.diagnostics();
-        if tail.is_empty() {
-            return format!(
-                "（程序={program}，{exit}，worker 无 stderr 输出；若该程序是 WindowsApps 的 python 占位桩，请把 QX_PYTHON 指向可用解释器）"
-            );
-        }
-        format!("（程序={program}，{exit}{tail}）")
+        )?;
+        Ok(Self { worker, transport })
     }
 
     pub(crate) fn request(
@@ -371,200 +158,17 @@ impl PythonStrategyClient {
         input: &StrategyContractInput,
     ) -> Result<StrategyContractOutput, String> {
         let payload = input.to_json()?;
-        let sequence = self.next_sequence;
-        self.next_sequence = self.next_sequence.saturating_add(1);
-        let response = match self.transport {
-            StrategyTransport::SharedMemoryJson | StrategyTransport::SharedMemoryColumnar => {
-                let request_payload = if self.transport == StrategyTransport::SharedMemoryColumnar {
-                    encode_strategy_columnar_input(input)?
-                } else {
-                    payload.into_bytes()
-                };
-                let frame = StrategyFrame::request(sequence, request_payload)
-                    .encode(DEFAULT_MAX_FRAME_BYTES)
-                    .map_err(|error| format!("编码 {} 共享分帧输入失败: {error}", self.label))?;
-                let deadline = Instant::now() + Duration::from_millis(self.timeout_ms);
-                let input_ring = self
-                    .shared_input
-                    .as_mut()
-                    .ok_or_else(|| format!("{} 共享输入 ring 不可用", self.label))?;
-                loop {
-                    match input_ring.try_push(&frame) {
-                        Ok(()) => break,
-                        Err(SharedRingError::Full) if Instant::now() < deadline => {
-                            thread::sleep(Duration::from_millis(1));
-                        }
-                        // 到点仍是 `Full` 就是超时，不是 ring 损坏：共享输入 ring 有界，
-                        // 写满意味着 worker 停止消费输入——和输出侧的 `Empty` 超时是同一种
-                        // 死法。报成"写入失败"会把运维引向共享内存实现本身。
-                        Err(SharedRingError::Full) => {
-                            let note = self.death_note();
-                            let _ = self.child.kill();
-                            return Err(format!(
-                                "{} worker 输入写入超时 timeout_ms={}：共享输入 ring 满，worker 已停止消费{}",
-                                self.label, self.timeout_ms, note
-                            ));
-                        }
-                        Err(error) => {
-                            return Err(format!("写入 {} 共享 ring 失败: {error}", self.label));
-                        }
-                    }
-                }
-                let output_ring = self
-                    .shared_output
-                    .as_mut()
-                    .ok_or_else(|| format!("{} 共享输出 ring 不可用", self.label))?;
-                loop {
-                    match output_ring.try_pop_frame() {
-                        Ok(frame) => break StrategyWireResponse::Frame(frame),
-                        Err(SharedRingError::Empty) if Instant::now() < deadline => {
-                            thread::sleep(Duration::from_millis(1));
-                        }
-                        Err(SharedRingError::Empty) => {
-                            let note = self.death_note();
-                            let _ = self.child.kill();
-                            return Err(format!(
-                                "{} worker 响应超时 timeout_ms={}{}",
-                                self.label, self.timeout_ms, note
-                            ));
-                        }
-                        Err(error) => {
-                            return Err(format!("读取 {} 共享 ring 失败: {error}", self.label));
-                        }
-                    }
-                }
-            }
-            StrategyTransport::Jsonl | StrategyTransport::FramedJson => {
-                // 写入必须与读取同受 timeout_ms 约束：管道读端由子进程持有，它一旦"活着但不再
-                // 接收输入"，超出 OS 管道缓冲（~64KB）的那段 write_all 会永久阻塞，而原 timeout_ms
-                // 只守着读侧 recv——本进程就此卡死，连关停令牌都读不到（V13 R2 #281）。故把
-                // write_all+flush 交给独立线程，主路径按预算 recv_timeout 收口，超时即杀 worker。
-                let bytes = if self.transport == StrategyTransport::Jsonl {
-                    format!("{payload}\n").into_bytes()
-                } else {
-                    StrategyFrame::request(sequence, payload.into_bytes())
-                        .encode(DEFAULT_MAX_FRAME_BYTES)
-                        .map_err(|error| format!("编码 {} 分帧输入失败: {error}", self.label))?
-                };
-                let stdin = self
-                    .stdin
-                    .take()
-                    .ok_or_else(|| format!("{} worker stdin 不可用", self.label))?;
-                // 写也要进预算（V11 N8）：worker 卡在别处不读 stdin 时，管道写满后这条
-                // `write_all` 再也不返回，而下面那圈"响应超时"排在它后面，压根没机会开始。
-                // 超时即按"这条管道已不归我们掌控"处理：杀掉子进程，句柄不回置。
-                let written = qx_adapter::write_all_within(
-                    stdin,
-                    bytes,
-                    Duration::from_millis(self.timeout_ms),
-                    || {
-                        let _ = self.child.kill();
-                    },
-                );
-                match written {
-                    Ok(stdin) => self.stdin = Some(stdin),
-                    // 断管道（os error 232/32）与"worker 一个字都没输出就退出"是同一次死亡的两面，
-                    // 故写侧失败连同 death_note 一起报出去。
-                    Err(error) => {
-                        let note = self.death_note();
-                        return Err(format!("写入 {} 输入失败: {error}{}", self.label, note));
-                    }
-                }
-                let received = self
-                    .responses
-                    .as_ref()
-                    .ok_or_else(|| format!("{} worker 响应通道不可用", self.label))?
-                    .recv_timeout(Duration::from_millis(self.timeout_ms));
-                match received {
-                    Ok(Ok(response)) => response,
-                    // 读线程送来的协议错误（典型场景是 worker 一个字都没输出就退出）此前被裸
-                    // 解包冒泡，丢掉了已抓到的 stderr 与子进程状态，只剩一句"已关闭输出"。
-                    Ok(Err(error)) => return Err(format!("{error}{}", self.death_note())),
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        let note = self.death_note();
-                        let _ = self.child.kill();
-                        return Err(format!(
-                            "{} worker 响应超时 timeout_ms={}{}",
-                            self.label, self.timeout_ms, note
-                        ));
-                    }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        let note = self.death_note();
-                        return Err(format!("{} worker 响应通道已断开{}", self.label, note));
-                    }
-                }
-            }
+        let columnar_payload = if self.transport == StrategyTransport::SharedMemoryColumnar {
+            Some(encode_strategy_columnar_input(input)?)
+        } else {
+            None
         };
-        let line = match response {
-            StrategyWireResponse::JsonLine(line) => line,
-            StrategyWireResponse::Frame(frame) => {
-                if frame.sequence != sequence {
-                    return Err(format!(
-                        "{} worker 响应序号不匹配: expected={} actual={}",
-                        self.label, sequence, frame.sequence
-                    ));
-                }
-                if !matches!(
-                    frame.kind,
-                    StrategyFrameKind::Response | StrategyFrameKind::Error
-                ) {
-                    return Err(format!(
-                        "{} worker 返回非响应分帧: {:?}",
-                        self.label, frame.kind
-                    ));
-                }
-                String::from_utf8(frame.payload)
-                    .map_err(|error| format!("{} worker 响应不是 UTF-8: {error}", self.label))?
-            }
-        };
-        decode_python_strategy_response(&line, input)
-            .map_err(|error| format!("{error}{}", self.diagnostics()))
-    }
-}
-
-pub(crate) fn strategy_child_environment(
-    configured: &BTreeMap<String, String>,
-) -> Result<BTreeMap<String, String>, String> {
-    let mut environment = BTreeMap::new();
-    // These variables are needed for executable lookup and the Windows/Python
-    // runtime, but do not carry account credentials.
-    for key in ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP"] {
-        if let Ok(value) = std::env::var(key) {
-            environment.insert(key.to_string(), value);
-        }
-    }
-    for (key, value) in configured {
-        let upper = key.to_ascii_uppercase();
-        if [
-            "SECRET",
-            "TOKEN",
-            "PASSWORD",
-            "API_KEY",
-            "PRIVATE_KEY",
-            "CREDENTIAL",
-        ]
-        .iter()
-        .any(|marker| upper.contains(marker))
-        {
-            return Err(format!(
-                "策略 worker 环境变量 {key} 可能包含交易凭证，已拒绝"
-            ));
-        }
-        environment.insert(key.clone(), value.clone());
-    }
-    Ok(environment)
-}
-
-impl Drop for PythonStrategyClient {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        self.shared_input.take();
-        self.shared_output.take();
-        if let Some((input, output)) = self.ring_paths.take() {
-            let _ = std::fs::remove_file(input);
-            let _ = std::fs::remove_file(output);
-        }
+        let line = self
+            .worker
+            .request(payload, columnar_payload)
+            .map_err(|error| format!("{error}{}", self.worker.diagnostics()))?;
+        StrategyContractOutput::from_python_response(&line, input)
+            .map_err(|error| format!("{error}{}", self.worker.diagnostics()))
     }
 }
 
@@ -583,30 +187,6 @@ pub(crate) fn python_module_search_path() -> Result<std::ffi::OsString, String> 
         std::env::join_paths(paths)
             .map_err(|error| format!("构造 Python 模块搜索路径失败: {error}"))
     }
-}
-
-pub(crate) fn decode_python_strategy_response(
-    line: &str,
-    input: &StrategyContractInput,
-) -> Result<StrategyContractOutput, String> {
-    let response: serde_json::Value = serde_json::from_str(line)
-        .map_err(|error| format!("Python Strategy 响应 JSON 无效: {error}"))?;
-    if response.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
-        return Err(format!(
-            "Python Strategy 拒绝请求: {}",
-            response
-                .get("error")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown")
-        ));
-    }
-    let encoded = serde_json::to_string(
-        response
-            .get("output")
-            .ok_or_else(|| "Python Strategy 响应缺少 output".to_string())?,
-    )
-    .map_err(|error| format!("编码 Python Strategy output 失败: {error}"))?;
-    StrategyContractOutput::from_json_for(&encoded, input)
 }
 
 /// 冷启动一次 Python 策略 worker 并立即回收。`timeout_ms` 必须走配置
@@ -656,11 +236,12 @@ pub(crate) fn load_c_abi_strategy(
         .map_err(|error| format!("加载 C ABI 策略失败: {error}"))
 }
 
+/// Adapt resolved runtime fields to the application-owned native strategy context.
 pub(crate) fn native_strategy_context(
     strategy: &StrategyRuntimeConfig,
     input: &StrategyContractInput,
-) -> qx_strategy::StrategyContext {
-    qx_strategy::StrategyContext {
+) -> Result<qx_strategy::StrategyContext, String> {
+    qx_app::build_strategy_context(qx_app::StrategyContextBindings {
         strategy_id: input.strategy_id.clone(),
         strategy_version: input.strategy_version.clone(),
         account_id: strategy
@@ -677,28 +258,8 @@ pub(crate) fn native_strategy_context(
         cash: input.cash.clone(),
         available_margin_raw: input.available_margin_raw,
         risk_state: input.risk_state.clone(),
-    }
-}
-
-pub(crate) fn strategy_contract_output_from_native_decision(
-    decision: &qx_strategy::StrategyDecision,
-    input: &StrategyContractInput,
-) -> Result<StrategyContractOutput, String> {
-    let mut output = StrategyContractOutput::from_native_decision(decision)?;
-    output.request_id = input.request_id.clone();
-    output.strategy_id = input.strategy_id.clone();
-    if output.instrument.is_empty() {
-        output.instrument = input.instrument.clone();
-    }
-    if output.intents.is_empty() {
-        output.target_qty = input
-            .positions
-            .get(&input.instrument)
-            .copied()
-            .unwrap_or_default();
-    }
-    output.validate_for(input)?;
-    Ok(output)
+    })
+    .map_err(|error| error.to_string())
 }
 
 pub(crate) fn invoke_c_abi_strategy(
@@ -715,91 +276,7 @@ pub(crate) fn invoke_c_abi_strategy(
         *initialized = true;
     }
     let decision = strategy.on_event(context, event)?;
-    strategy_contract_output_from_native_decision(&decision, input)
-}
-
-pub(crate) fn builtin_strategy_config_from_runtime(
-    strategy: &StrategyRuntimeConfig,
-    instrument: &InstrumentId,
-) -> Result<BuiltinStrategyConfig, String> {
-    let name = strategy
-        .builtin_strategy
-        .as_deref()
-        .ok_or_else(|| "Strategy 未配置 builtin_strategy".to_string())?;
-    let kind = BuiltinStrategyKind::parse(name)?;
-    let strategy_id = strategy
-        .id
-        .clone()
-        .unwrap_or_else(|| format!("builtin-{}", kind.name()));
-    let quantity_raw = strategy
-        .builtin_quantity
-        .map(i128::from)
-        .or_else(|| (strategy.target_qty != 0).then_some(strategy.target_qty.abs()))
-        .unwrap_or(1);
-    if quantity_raw <= 0 {
-        return Err("builtin_quantity 必须为正整数".into());
-    }
-    let mut config = BuiltinStrategyConfig {
-        strategy_version: strategy.version.clone(),
-        target_notional_raw: strategy.builtin_target_notional_raw,
-        target_available_margin_bps: strategy.builtin_target_available_margin_bps,
-        target_volatility_bps: strategy.builtin_target_volatility_bps,
-        target_kelly_fraction_bps: strategy.builtin_target_kelly_fraction_bps,
-        kelly_lookback_bars: strategy.builtin_kelly_lookback_bars,
-        fast_window: 5,
-        slow_window: 20,
-        period: 14,
-        threshold_bps: 100,
-        ..BuiltinStrategyConfig::new(
-            kind,
-            strategy_id,
-            instrument.clone(),
-            Quantity::from_raw(quantity_raw),
-        )?
-    };
-    apply_builtin_signal_overrides(&mut config, strategy);
-    if let Some(reference) = strategy.builtin_reference_instrument.as_deref() {
-        config.reference_instrument = Some(
-            InstrumentId::parse(reference)
-                .ok_or_else(|| format!("builtin_reference_instrument 非法: {reference}"))?,
-        );
-    }
-    if config.reference_instrument.is_some() {
-        let primary_product = strategy.product.unwrap_or(TradingProduct::Spot);
-        let primary_margin =
-            strategy
-                .margin_mode
-                .unwrap_or(if primary_product == TradingProduct::Spot {
-                    MarginMode::Cash
-                } else {
-                    MarginMode::Cross
-                });
-        let primary_position = strategy.position_mode.unwrap_or(PositionMode::OneWay);
-        config.primary_policy = Some(OrderPolicy {
-            reduce_only: false,
-            position_side: PositionSide::Net,
-            margin_mode: primary_margin,
-            position_mode: primary_position,
-            leverage: strategy.leverage.unwrap_or(1),
-            post_only: false,
-        });
-        let reference_margin = strategy
-            .builtin_reference_margin_mode
-            .unwrap_or(MarginMode::Cash);
-        let reference_position = strategy
-            .builtin_reference_position_mode
-            .unwrap_or(PositionMode::OneWay);
-        config.reference_policy = Some(OrderPolicy {
-            reduce_only: false,
-            position_side: PositionSide::Net,
-            margin_mode: reference_margin,
-            position_mode: reference_position,
-            leverage: strategy.builtin_reference_leverage.unwrap_or(1),
-            post_only: false,
-        });
-    }
-    config.validate()?;
-    Ok(config)
+    native_decision_to_contract_output(&decision, input)
 }
 
 pub(crate) fn invoke_builtin_strategy(
@@ -813,8 +290,8 @@ pub(crate) fn invoke_builtin_strategy(
     let bars = input.bars.as_ref().ok_or_else(|| {
         "builtin_strategy 运行时需要 bars_snapshot_path 提供 K 线历史".to_string()
     })?;
-    let context = native_strategy_context(&config.strategy, &input);
-    let mut strategy = BuiltinStrategy::new(builtin_strategy_config_from_runtime(
+    let context = native_strategy_context(&config.strategy, &input)?;
+    let mut strategy = BuiltinStrategy::new(qx_runtime::builtin_strategy_config_from_runtime(
         &config.strategy,
         instrument,
     )?)?;
@@ -872,5 +349,5 @@ pub(crate) fn invoke_builtin_strategy(
         decision = Some(strategy.on_event(&context, &event)?);
     }
     let decision = decision.ok_or_else(|| "builtin_strategy 可见 K 线为空".to_string())?;
-    strategy_contract_output_from_native_decision(&decision, &input)
+    native_decision_to_contract_output(&decision, &input)
 }

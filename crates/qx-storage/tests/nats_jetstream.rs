@@ -26,11 +26,13 @@ fn now_nanos() -> u128 {
 }
 
 fn temp_root(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-nats-{label}-{}-{}",
-        std::process::id(),
-        now_nanos()
-    ));
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!(
+            "qianxing-nats-{label}-{}-{}",
+            std::process::id(),
+            now_nanos()
+        ));
     std::fs::create_dir_all(&root).expect("创建 NATS 契约测试目录失败");
     root
 }

@@ -199,3 +199,10 @@ exclusive（仅返回 `seq > N`）。Rust `RemoteApiClient::get_run_events`、Py
 两腿必须使用相同报价币与结算币；线性合约以报价币结算，反向合约以基础币结算。数量按合约面值、
 可见价格和 `qty_step` 向下取整，并校验最小数量与各腿未杠杆预算。现货做空借币、动态保证金/波动率/
 Kelly sizing、跨币种资金换算和组合保证金仍未实现，缺少前置规格时会失败关闭。
+
+## Provider market-data tiers
+
+`ProviderCapability` must declare `data_tiers` for market payloads: `MarketDataTier::Bar` for Bar,
+`L1` or `L2` for Quote. A `DataRequest` may set `DataRequirements.required_data_tier`; the registry filters
+providers by that declaration before I/O. Bar/Quote tier declarations inconsistent with their `DataKind` are
+rejected at registration. Provider depth backtests require `l1`/`l2` requests to match the backtest tier exactly.

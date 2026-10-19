@@ -16,9 +16,12 @@ use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
+mod ashare_corporate_actions;
 mod ashare_screen;
 mod capital_allocation;
+mod error_classification;
 mod multi_account;
+mod numeric_bridge;
 mod provider_bridge;
 mod risk_parity;
 mod run_handle_helpers;
@@ -262,6 +265,23 @@ fn frame_digest(payload: &str) -> PyResult<u64> {
 }
 
 #[pyfunction]
+fn fingerprint_bars(payload: &str) -> PyResult<String> {
+    let frame = BarFrame::from_json(payload).map_err(frame_error)?;
+    let bars = (0..frame.ts.len())
+        .map(|index| qx_data::Bar {
+            instrument: frame.instrument.to_string(),
+            timestamp: frame.ts[index],
+            open_raw: frame.open_raw[index],
+            high_raw: frame.high_raw[index],
+            low_raw: frame.low_raw[index],
+            close_raw: frame.close_raw[index],
+            volume_raw: frame.volume_raw[index],
+        })
+        .collect::<Vec<_>>();
+    qx_data::fingerprint_bars(&bars).map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
 fn frame_to_json(payload: &str) -> PyResult<String> {
     BarFrame::from_json(payload)
         .map_err(frame_error)
@@ -337,8 +357,7 @@ fn make_arrow_capsules<'py>(
 }
 
 fn capsule_for_array<'py>(py: Python<'py>, array: ArrowArray) -> PyResult<Bound<'py, PyCapsule>> {
-    let pointer = NonNull::new(Box::into_raw(Box::new(array)).cast::<c_void>())
-        .expect("Box pointer must not be null");
+    let pointer = NonNull::from(Box::leak(Box::new(array))).cast::<c_void>();
     // SAFETY: pointer owns a valid ArrowArray and the destructor releases and
     // deallocates it exactly once.
     unsafe {
@@ -355,8 +374,7 @@ fn capsule_for_schema<'py>(
     py: Python<'py>,
     schema: ArrowSchema,
 ) -> PyResult<Bound<'py, PyCapsule>> {
-    let pointer = NonNull::new(Box::into_raw(Box::new(schema)).cast::<c_void>())
-        .expect("Box pointer must not be null");
+    let pointer = NonNull::from(Box::leak(Box::new(schema))).cast::<c_void>();
     // SAFETY: pointer owns a valid ArrowSchema and the destructor releases and
     // deallocates it exactly once.
     unsafe {
@@ -397,7 +415,11 @@ unsafe extern "C" fn drop_schema_capsule(capsule: *mut pyo3::ffi::PyObject) {
 
 #[pymodule]
 fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    ashare_corporate_actions::register(module)?;
+    error_classification::register(module)?;
+    numeric_bridge::register(module)?;
     module.add_function(wrap_pyfunction!(frame_digest, module)?)?;
+    module.add_function(wrap_pyfunction!(fingerprint_bars, module)?)?;
     module.add_function(wrap_pyfunction!(frame_to_json, module)?)?;
     ashare_screen::register(module)?;
     module.add_function(wrap_pyfunction!(owned_arrow_capsules, module)?)?;

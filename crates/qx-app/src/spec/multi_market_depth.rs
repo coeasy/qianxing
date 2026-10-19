@@ -3,8 +3,9 @@
 use super::{is_identity_token, BuiltinStrategySpec};
 use crate::error::{AppError, AppErrorCategory};
 use qx_core::{InstrumentId, OrderPolicy, TradingInstrumentSpec, TradingProduct};
+use qx_xingban::{OrderBookExecutionDescriptor, OrderBookExecutionModel, QueuePositionModel};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const MULTI_MARKET_DEPTH_BACKTEST_SCHEMA_VERSION: u32 = 1;
 pub const MIN_MULTI_MARKET_DEPTH_MARKETS: usize = 2;
@@ -15,6 +16,9 @@ pub const MAX_MULTI_MARKET_DEPTH_MARKETS: usize = 32;
 pub struct MultiMarketDepthBacktestMarket {
     pub instrument: String,
     pub depth_path: String,
+    /// Optional DatasetManifestV2 quality evidence for this DepthFrame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset_manifest_path: Option<String>,
     /// Optional market-data tier: `l1` emits Tick events and requires one bid/ask level;
     /// `l2` (the backward-compatible default) emits full OrderBook events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -25,6 +29,8 @@ pub struct MultiMarketDepthBacktestMarket {
     pub fee_bps: i128,
     pub latency_snapshots: u64,
     pub queue_position_bps: i128,
+    #[serde(default, skip_serializing_if = "is_queue_position_model_disabled")]
+    pub queue_position_model: QueuePositionModel,
     pub market_impact_bps: i128,
     pub strategy: BuiltinStrategySpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,6 +63,9 @@ pub struct MultiMarketDepthBacktestOutcome {
     pub final_equity_raw: i128,
     pub return_bps: i32,
     pub max_drawdown_bps: u32,
+    /// Effective per-market matching parameters and assumptions; absent when reading legacy v1 artifacts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub execution_models: BTreeMap<String, OrderBookExecutionDescriptor>,
     pub artifact_path: String,
 }
 
@@ -155,6 +164,14 @@ impl MultiMarketDepthBacktestSpec {
                     "市场 {instrument} fee/queue/impact bps 必须在 0..=10000"
                 )));
             }
+            market.queue_position_model.validate().map_err(invalid)?;
+            if market.queue_position_model != QueuePositionModel::Disabled
+                && market.data_tier.as_deref().is_some_and(|tier| tier != "l2")
+            {
+                return Err(invalid(format!(
+                    "市场 {instrument} QueuePositionModel 仅支持 L2"
+                )));
+            }
             market
                 .strategy
                 .validate()
@@ -190,6 +207,23 @@ impl MultiMarketDepthBacktestSpec {
             )
         })
     }
+}
+
+impl MultiMarketDepthBacktestMarket {
+    /// Resolve the market's declared execution settings into the exact kernel model used by the backtest.
+    pub fn execution_model(&self) -> Result<OrderBookExecutionModel, AppError> {
+        let mut model = OrderBookExecutionModel::new(self.fee_bps).map_err(invalid)?;
+        model.latency_snapshots = self.latency_snapshots;
+        model.queue_position_bps = self.queue_position_bps;
+        model.queue_position_model = self.queue_position_model;
+        model.market_impact_bps = self.market_impact_bps;
+        model.validate().map_err(invalid)?;
+        Ok(model)
+    }
+}
+
+fn is_queue_position_model_disabled(model: &QueuePositionModel) -> bool {
+    *model == QueuePositionModel::Disabled
 }
 
 fn invalid(message: impl Into<String>) -> AppError {

@@ -25,7 +25,8 @@ pub(crate) fn timestamp_text_to_ms(text: &str) -> Result<u64, String> {
         }
         rest = &rest[1..];
     }
-    let mut offset_ms: i64 = i64::try_from(SHANGHAI_OFFSET_MS).expect("上海偏移可表示为 i64");
+    let mut offset_ms: i64 =
+        i64::try_from(SHANGHAI_OFFSET_MS).map_err(|_| "上海时区偏移超出可表示范围".to_string())?;
     // 时区后缀：时间部分自身不含 Z/+/-，因此首个出现处即偏移起点。
     let clock_text = match rest.find(['Z', 'z', '+', '-']) {
         Some(index) => {
@@ -53,7 +54,7 @@ pub(crate) fn timestamp_text_to_ms(text: &str) -> Result<u64, String> {
                     return Err("时区偏移超出范围".into());
                 }
                 let mut value = i64::try_from(hour * 3_600 + minute * 60)
-                    .expect("合法时区偏移可表示为 i64")
+                    .map_err(|_| "时区偏移超出范围".to_string())?
                     * 1_000;
                 if sign == b'-' {
                     value = -value;
@@ -88,7 +89,7 @@ pub(crate) fn timestamp_text_to_ms(text: &str) -> Result<u64, String> {
         .map_err(|_| "日期超出范围".to_string())?
         .checked_add(SHANGHAI_OFFSET_MS as i64)
         .ok_or_else(|| "日期时间戳溢出".to_string())?;
-    let clock_ms = i64::try_from(clock_ms).expect("一天的毫秒数可表示为 i64");
+    let clock_ms = i64::try_from(clock_ms).map_err(|_| "时间超出范围".to_string())?;
     let timestamp = days_ms
         .checked_add(clock_ms)
         .and_then(|value| value.checked_sub(offset_ms))

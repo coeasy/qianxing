@@ -10,10 +10,14 @@
 //! `qx_core::apply_fill_to_books` 与 `Ledger`。把 paper 改接到本内核是 V11 §9 登记的 Q1d；
 //! 在那之前，涉及 paper 撮合的表述必须写明"首档 touch"。
 
-use qx_core::{
-    Fill, Money, Order, OrderStatus, Price, Quantity, Side, TradingInstrumentSpec, SCALE,
-};
+use crate::{ExecutionAttempt, ExecutionAttemptReason, ExecutionLiquidityEvidence};
+use qx_core::{Fill, Order, OrderStatus, Price, Quantity, Side, TradingInstrumentSpec, SCALE};
 use serde::{Deserialize, Serialize};
+
+mod audit;
+mod level_lookup;
+mod matching;
+pub use audit::{OrderBookExecutionDescriptor, QueuePositionDescriptor};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct BookLevel {
@@ -69,6 +73,28 @@ impl OrderBookSnapshot {
             }
         }
         Ok(())
+    }
+}
+
+/// Whether a snapshot's shape matches the declared best-bid/best-ask-only tier.
+/// Keep this predicate shared by single- and multi-market backtests so a route cannot
+/// silently accept L2 depth under an L1 declaration.
+pub(crate) fn has_l1_shape(snapshot: &OrderBookSnapshot) -> bool {
+    snapshot.bids.len() == 1 && snapshot.asks.len() == 1
+}
+
+pub(crate) fn validate_backtest_data_tier(
+    data_tier: crate::DataTier,
+    snapshots: &[OrderBookSnapshot],
+) -> Result<(), String> {
+    match data_tier {
+        crate::DataTier::Bar => {
+            Err("订单簿回测需要盘口快照档位（L1 或 L2/L3），不能声明为 Bar".into())
+        }
+        crate::DataTier::L1 if snapshots.iter().any(|snapshot| !has_l1_shape(snapshot)) => {
+            Err("订单簿回测声明 L1 时每份快照必须恰有一档 bid/ask".into())
+        }
+        crate::DataTier::L1 | crate::DataTier::L2L3 => Ok(()),
     }
 }
 
@@ -143,6 +169,50 @@ impl DepthFrame {
 struct PendingBookOrder {
     order: Order,
     ready_at_snapshot: u64,
+    queue_state: Option<PendingQueueState>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct PendingQueueState {
+    price_raw: i128,
+    queue_ahead_raw: i128,
+    displayed_qty_raw: i128,
+}
+
+/// Explicit L2 queue-position assumption. Depth reductions are only a proxy for traded volume:
+/// cancellations and new hidden liquidity cannot be distinguished without trade prints. With
+/// finite-depth snapshots, an absent limit-price level is insufficient evidence and cannot
+/// establish or advance a queue baseline.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum QueuePositionModel {
+    #[default]
+    Disabled,
+    FifoVolumeEstimate {
+        volume_advance_bps: u32,
+    },
+}
+
+impl QueuePositionModel {
+    pub fn validate(self) -> Result<(), String> {
+        if let Self::FifoVolumeEstimate { volume_advance_bps } = self {
+            if volume_advance_bps > 10_000 {
+                return Err("FIFO 队列成交量前推比例必须在 0..=10000 bp 内".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn descriptor(self, initial_queue_bps: i128) -> String {
+        match self {
+            Self::Disabled => "queue_position=disabled".into(),
+            Self::FifoVolumeEstimate {
+                volume_advance_bps,
+            } => format!(
+                "queue_position=fifo_volume_estimate@v2[initial_queue_bps={initial_queue_bps};volume_advance_bps={volume_advance_bps};assumption=displayed_depth_reduction_estimates_traded_volume;limits=hidden_liquidity_and_cancellations_are_unobserved,missing_limit_level_has_no_baseline_and_cannot_advance_queue]"
+            ),
+        }
+    }
 }
 
 /// 订单簿回测的确定性执行假设。
@@ -156,6 +226,7 @@ pub struct OrderBookExecutionModel {
     pub fee_bps: i128,
     pub latency_snapshots: u64,
     pub queue_position_bps: i128,
+    pub queue_position_model: QueuePositionModel,
     pub market_impact_bps: i128,
 }
 
@@ -165,6 +236,7 @@ impl OrderBookExecutionModel {
             fee_bps,
             latency_snapshots: 0,
             queue_position_bps: 0,
+            queue_position_model: QueuePositionModel::Disabled,
             market_impact_bps: 0,
         };
         model.validate()?;
@@ -178,6 +250,7 @@ impl OrderBookExecutionModel {
         {
             return Err("订单簿执行模型 bps 必须在 0..=10000 内".into());
         }
+        self.queue_position_model.validate()?;
         Ok(())
     }
 }
@@ -185,6 +258,14 @@ impl OrderBookExecutionModel {
 /// 逐档吃单撮合器。它只负责产生 Fill，不直接修改 Ledger。
 pub struct OrderBookMatchingEngine {
     pending: Vec<PendingBookOrder>,
+    /// Per-snapshot work buffers retain capacity across the long-lived matcher loop.
+    scratch_pending: Vec<PendingBookOrder>,
+    scratch_remaining_bids: Vec<i128>,
+    scratch_remaining_asks: Vec<i128>,
+    scratch_queue_bids: Vec<i128>,
+    scratch_queue_asks: Vec<i128>,
+    scratch_estimated_volume_budget: std::collections::HashMap<(bool, i128), i128>,
+    execution_attempts: Vec<ExecutionAttempt>,
     model: OrderBookExecutionModel,
     snapshot_index: u64,
     last_snapshot_sequence: Option<u64>,
@@ -204,6 +285,13 @@ impl OrderBookMatchingEngine {
         model.validate()?;
         Ok(Self {
             pending: Vec::new(),
+            scratch_pending: Vec::new(),
+            scratch_remaining_bids: Vec::new(),
+            scratch_remaining_asks: Vec::new(),
+            scratch_queue_bids: Vec::new(),
+            scratch_queue_asks: Vec::new(),
+            scratch_estimated_volume_budget: std::collections::HashMap::new(),
+            execution_attempts: Vec::new(),
             model,
             snapshot_index: 0,
             last_snapshot_sequence: None,
@@ -237,6 +325,7 @@ impl OrderBookMatchingEngine {
         self.pending.push(PendingBookOrder {
             order,
             ready_at_snapshot,
+            queue_state: None,
         });
         Ok(())
     }
@@ -263,164 +352,43 @@ impl OrderBookMatchingEngine {
         self.pending.len()
     }
 
+    pub fn execution_attempts(&self) -> &[ExecutionAttempt] {
+        &self.execution_attempts
+    }
+
     pub fn on_snapshot(&mut self, snapshot: &OrderBookSnapshot) -> Result<Vec<Fill>, String> {
         self.on_snapshot_with_cancellations(snapshot, &[])
     }
 
     /// 应用一组在该盘口快照撮合前生效的撤单，再按快照撮合。
-    pub fn on_snapshot_with_cancellations(
+
+    fn record_attempt(
         &mut self,
-        snapshot: &OrderBookSnapshot,
-        cancelled_client_ids: &[u64],
-    ) -> Result<Vec<Fill>, String> {
-        snapshot.validate()?;
-        if self
-            .last_snapshot_sequence
-            .is_some_and(|sequence| snapshot.sequence <= sequence)
-            || self.last_snapshot_ts.is_some_and(|ts| snapshot.ts <= ts)
-        {
-            return Err("订单簿快照 sequence/ts 必须严格递增".into());
-        }
-        self.last_snapshot_sequence = Some(snapshot.sequence);
-        self.last_snapshot_ts = Some(snapshot.ts);
-        self.cancel_many(cancelled_client_ids);
-        self.snapshot_index = self.snapshot_index.saturating_add(1);
-        let pending = std::mem::take(&mut self.pending);
-        // 单遍按提交顺序处理挂单：到期即撮合、未到期或仍存活者原位留在队列末尾。
-        // 先分组再拼接（未到期 + 部分成交）会把早提交、已部分成交的订单排到晚提交、
-        // 延迟更长的订单之后，在 latency_snapshots > 0 且发生部分成交时颠倒
-        // 价格-时间优先级，让后单抢走前单本应先吃到的流动性。
-        let mut next = Vec::with_capacity(pending.len());
-        let mut fills = Vec::new();
-        let mut remaining_bids: Vec<i128> =
-            snapshot.bids.iter().map(|level| level.qty.raw()).collect();
-        let mut remaining_asks: Vec<i128> =
-            snapshot.asks.iter().map(|level| level.qty.raw()).collect();
-        let mut queue_bids: Vec<i128> = snapshot
-            .bids
-            .iter()
-            .map(|level| self.queue_ahead(level.qty.raw()))
-            .collect();
-        let mut queue_asks: Vec<i128> = snapshot
-            .asks
-            .iter()
-            .map(|level| self.queue_ahead(level.qty.raw()))
-            .collect();
-        for pending_order in pending {
-            if pending_order.ready_at_snapshot > self.snapshot_index {
-                next.push(pending_order);
-                continue;
-            }
-            let ready_at_snapshot = pending_order.ready_at_snapshot;
-            let mut order = pending_order.order;
-            if order.instrument != snapshot.instrument {
-                return Err("订单簿订单 instrument 与快照不一致".into());
-            }
-            let levels = if order.side == Side::Buy {
-                &snapshot.asks
-            } else {
-                &snapshot.bids
-            };
-            let mut remaining_qty = order.remaining().raw();
-            for (level_index, level) in levels.iter().enumerate() {
-                if remaining_qty <= 0 || !Self::limit_ok(&order, level.price) {
-                    break;
-                }
-                let raw_available = if order.side == Side::Buy {
-                    &mut remaining_asks[level_index]
-                } else {
-                    &mut remaining_bids[level_index]
-                };
-                let queue_ahead = if order.limit.is_some() {
-                    if order.side == Side::Buy {
-                        queue_asks[level_index]
-                    } else {
-                        queue_bids[level_index]
-                    }
-                } else {
-                    0
-                };
-                let available_qty = (*raw_available).saturating_sub(queue_ahead);
-                let fill_qty = remaining_qty.min(available_qty);
-                if fill_qty <= 0 {
-                    continue;
-                }
-                let execution_price_raw = self
-                    .execution_price(order.side, level.price.raw())
-                    .ok_or_else(|| "订单簿冲击价格计算溢出或非正".to_string())?;
-                if !Self::limit_ok(&order, Price::from_raw(execution_price_raw)) {
-                    break;
-                }
-                let notional_raw = match self.fee_spec.as_ref() {
-                    Some(spec) => spec
-                        .notional(fill_qty, execution_price_raw)
-                        .map_err(|error| format!("订单簿成交名义额计算失败: {error}"))?,
-                    None => fill_qty
-                        .checked_mul(execution_price_raw)
-                        .and_then(|value| value.checked_div(SCALE))
-                        .ok_or_else(|| "订单簿成交名义额溢出".to_string())?,
-                };
-                let fee_raw = qx_core::bp_amount_checked(notional_raw, self.model.fee_bps)
-                    .map_err(|error| format!("订单簿成交手续费计算失败: {error}"))?;
-                fills.push(Fill {
-                    order_id: order.client_id,
-                    qty: Quantity::from_raw(fill_qty),
-                    price: Price::from_raw(execution_price_raw),
-                    fee: Money::from_raw(fee_raw),
-                    ts: snapshot.ts,
-                    account_id: order.account_id.clone(),
-                    strategy_id: order
-                        .trace
-                        .as_ref()
-                        .and_then(|trace| trace.strategy_id.clone()),
-                    signal_id: order.trace.as_ref().and_then(|trace| trace.signal_id),
-                    intent_id: order.trace.as_ref().and_then(|trace| trace.intent_id),
-                    venue_id: None,
-                    venue_order_id: None,
-                    rule_version: order
-                        .trace
-                        .as_ref()
-                        .and_then(|trace| trace.rule_version.clone()),
-                    fee_currency: None,
-                });
-                remaining_qty -= fill_qty;
-                *raw_available -= fill_qty;
-                if order.limit.is_some() {
-                    // 前置队列只能被消耗到 0：不夹住的话 `available = raw - queue` 会因为
-                    // 负的 queue 重新变大，把本快照已吃掉的流动性按成交数量凭空复制给
-                    // 后续限价单——`queue_position_bps = 0` 时同样成立，因为扣减照样执行。
-                    if order.side == Side::Buy {
-                        queue_asks[level_index] =
-                            queue_asks[level_index].saturating_sub(fill_qty).max(0);
-                    } else {
-                        queue_bids[level_index] =
-                            queue_bids[level_index].saturating_sub(fill_qty).max(0);
-                    }
-                }
-                order.filled = Quantity::from_raw(
-                    order
-                        .filled
-                        .raw()
-                        .checked_add(fill_qty)
-                        .ok_or_else(|| "订单簿订单成交数量溢出".to_string())?,
-                );
-            }
-            order.status = if order.filled.raw() >= order.qty.raw() {
-                OrderStatus::Filled
-            } else if order.filled.raw() > 0 {
-                OrderStatus::PartiallyFilled
-            } else {
-                order.status
-            };
-            if order.status != OrderStatus::Filled {
-                next.push(PendingBookOrder {
-                    order,
-                    ready_at_snapshot,
-                });
-            }
-        }
-        self.pending = next;
-        Ok(fills)
+        order: &Order,
+        ts: u64,
+        requested_qty_raw: i128,
+        filled_qty_raw: i128,
+        price_raw: Option<i128>,
+        reason: ExecutionAttemptReason,
+        liquidity: ExecutionLiquidityEvidence,
+    ) {
+        self.execution_attempts.push(ExecutionAttempt {
+            ts,
+            order_id: order.client_id,
+            instrument: order.instrument.to_string(),
+            side: order.side,
+            requested_qty_raw,
+            filled_qty_raw,
+            remaining_qty_raw: requested_qty_raw.saturating_sub(filled_qty_raw),
+            price_raw,
+            reason,
+            displayed_qty_raw: liquidity.displayed_qty_raw,
+            queue_ahead_before_raw: liquidity.queue_ahead_before_raw,
+            queue_ahead_after_raw: liquidity.queue_ahead_after_raw,
+            estimated_volume_raw: liquidity.estimated_volume_raw,
+            displayed_reduction_raw: liquidity.displayed_reduction_raw,
+            queue_consumed_raw: liquidity.queue_consumed_raw,
+        });
     }
 
     fn queue_ahead(&self, level_qty: i128) -> i128 {
@@ -453,219 +421,5 @@ impl OrderBookMatchingEngine {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use qx_core::{InstrumentId, OrderTrace};
-
-    fn order(side: Side, qty: i128, limit: Option<i128>) -> Order {
-        Order {
-            client_id: 1,
-            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
-            side,
-            qty: Quantity::from_raw(qty),
-            limit: limit.map(Price::from_raw),
-            status: OrderStatus::PendingSubmit,
-            filled: Quantity::ZERO,
-            account_id: "main".into(),
-            trace: Some(OrderTrace {
-                strategy_id: Some("book-test".into()),
-                signal_id: Some(1),
-                intent_id: Some(1),
-                rule_version: Some("v1".into()),
-            }),
-            policy: None,
-        }
-    }
-
-    fn book() -> OrderBookSnapshot {
-        OrderBookSnapshot {
-            instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
-            ts: 10,
-            sequence: 1,
-            bids: vec![BookLevel {
-                price: Price::from_i64(99),
-                qty: Quantity::from_i64(2),
-            }],
-            asks: vec![
-                BookLevel {
-                    price: Price::from_i64(100),
-                    qty: Quantity::from_i64(1),
-                },
-                BookLevel {
-                    price: Price::from_i64(101),
-                    qty: Quantity::from_i64(2),
-                },
-            ],
-        }
-    }
-
-    #[test]
-    fn market_buy_consumes_multiple_ask_levels_and_keeps_partial_order() {
-        let mut engine = OrderBookMatchingEngine::new(10).unwrap();
-        engine
-            .submit(order(Side::Buy, Quantity::from_i64(2).raw(), None))
-            .unwrap();
-        let fills = engine.on_snapshot(&book()).unwrap();
-        assert_eq!(fills.len(), 2);
-        assert_eq!(fills[0].price.raw(), Price::from_i64(100).raw());
-        assert_eq!(fills[1].price.raw(), Price::from_i64(101).raw());
-        assert_eq!(engine.pending_count(), 0);
-    }
-
-    #[test]
-    fn limit_order_waits_when_best_price_is_not_executable() {
-        let mut engine = OrderBookMatchingEngine::new(0).unwrap();
-        engine
-            .submit(order(Side::Buy, Quantity::from_i64(1).raw(), Some(99)))
-            .unwrap();
-        let fills = engine.on_snapshot(&book()).unwrap();
-        assert!(fills.is_empty());
-        assert_eq!(engine.pending_count(), 1);
-    }
-
-    #[test]
-    fn one_snapshot_liquidity_is_not_reused_by_multiple_orders() {
-        let mut engine = OrderBookMatchingEngine::new(0).unwrap();
-        let mut first = order(Side::Buy, Quantity::from_i64(2).raw(), None);
-        first.client_id = 1;
-        let mut second = order(Side::Buy, Quantity::from_i64(2).raw(), None);
-        second.client_id = 2;
-        engine.submit(first).unwrap();
-        engine.submit(second).unwrap();
-        let fills = engine.on_snapshot(&book()).unwrap();
-        assert_eq!(
-            fills.iter().map(|fill| fill.qty.raw()).sum::<i128>(),
-            Quantity::from_i64(3).raw()
-        );
-        assert_eq!(engine.pending_count(), 1);
-    }
-
-    #[test]
-    fn execution_model_applies_latency_queue_and_market_impact() {
-        let model = OrderBookExecutionModel {
-            fee_bps: 0,
-            latency_snapshots: 1,
-            queue_position_bps: 5_000,
-            market_impact_bps: 100,
-        };
-        let mut engine = OrderBookMatchingEngine::with_model(model).unwrap();
-        engine
-            .submit(order(Side::Buy, Quantity::from_i64(1).raw(), None))
-            .unwrap();
-        let first = book();
-        assert!(engine.on_snapshot(&first).unwrap().is_empty());
-        let second = OrderBookSnapshot {
-            ts: 11,
-            sequence: 2,
-            ..first
-        };
-        let fills = engine.on_snapshot(&second).unwrap();
-        assert_eq!(fills.len(), 1);
-        assert_eq!(fills[0].price, Price::from_i64(101));
-        assert_eq!(fills[0].qty, Quantity::from_i64(1));
-    }
-
-    /// 队列优先级不能因为"部分成交"与"尚未到期"两组拼接而颠倒：早提交且已部分
-    /// 成交的订单，必须继续排在场次更晚、延迟更长的订单之前。
-    #[test]
-    fn partially_filled_order_keeps_queue_priority_over_later_order() {
-        let model = OrderBookExecutionModel {
-            fee_bps: 0,
-            latency_snapshots: 1,
-            queue_position_bps: 0,
-            market_impact_bps: 0,
-        };
-        let mut engine = OrderBookMatchingEngine::with_model(model).unwrap();
-        let limit = Some(Price::from_i64(100).raw());
-        let mut first = order(Side::Buy, Quantity::from_i64(2).raw(), limit);
-        first.client_id = 1;
-        let mut second = order(Side::Buy, Quantity::from_i64(2).raw(), limit);
-        second.client_id = 2;
-        engine.submit(first).unwrap();
-        // 快照 1：first 的第 2 个快照才到期，本轮无成交。
-        assert!(engine.on_snapshot(&book()).unwrap().is_empty());
-        // 此后提交的 second 要到第 3 个快照才到期。
-        engine.submit(second).unwrap();
-        let second_snapshot = OrderBookSnapshot {
-            ts: 11,
-            sequence: 2,
-            ..book()
-        };
-        let fills = engine.on_snapshot(&second_snapshot).unwrap();
-        // 买一只挂 1 单位，first 吃到 1 单位后仍是挂单；second 仍在等待到期。
-        assert_eq!(
-            fills.iter().map(|fill| fill.order_id).collect::<Vec<_>>(),
-            vec![1]
-        );
-        assert_eq!(engine.pending_count(), 2);
-        // 买一的最后流动性应回到先提交的 first，而不是后提交、先轮到执行的 second。
-        let third_snapshot = OrderBookSnapshot {
-            ts: 12,
-            sequence: 3,
-            ..book()
-        };
-        let fills = engine.on_snapshot(&third_snapshot).unwrap();
-        assert_eq!(
-            fills.iter().map(|fill| fill.order_id).collect::<Vec<_>>(),
-            vec![1]
-        );
-        assert_eq!(engine.pending_count(), 1);
-    }
-
-    /// 同一快照的流动性不能被第二张限价单重复吃掉：扣减前置队列时不夹到 0，
-    /// 第一单的成交量就会以"负队列"的形式重新变成可吃数量。
-    #[test]
-    fn limit_orders_do_not_resell_the_same_snapshot_liquidity() {
-        let limit = Some(Price::from_i64(100).raw());
-        let mut first = order(Side::Buy, Quantity::from_i64(1).raw(), limit);
-        first.client_id = 1;
-        let mut second = order(Side::Buy, Quantity::from_i64(1).raw(), limit);
-        second.client_id = 2;
-        let mut engine = OrderBookMatchingEngine::new(0).unwrap();
-        engine.submit(first).unwrap();
-        engine.submit(second).unwrap();
-        let fills = engine.on_snapshot(&book()).unwrap();
-        assert_eq!(
-            fills.iter().map(|fill| fill.order_id).collect::<Vec<_>>(),
-            vec![1],
-            "买一只有 1 单位，second 不该拿到同一份流动性"
-        );
-        assert_eq!(
-            fills.iter().map(|fill| fill.qty.raw()).sum::<i128>(),
-            Quantity::from_i64(1).raw()
-        );
-    }
-
-    #[test]
-    fn cancellation_before_snapshot_prevents_fill_and_preserves_event_order() {
-        let mut engine = OrderBookMatchingEngine::new(0).unwrap();
-        engine
-            .submit(order(Side::Buy, Quantity::from_i64(1).raw(), None))
-            .unwrap();
-        let fills = engine
-            .on_snapshot_with_cancellations(&book(), &[1])
-            .unwrap();
-        assert!(fills.is_empty());
-        assert_eq!(engine.pending_count(), 0);
-        assert!(engine
-            .on_snapshot(&OrderBookSnapshot {
-                ts: 9,
-                sequence: 2,
-                ..book()
-            })
-            .is_err());
-    }
-
-    #[test]
-    fn duplicate_order_and_non_monotonic_snapshot_are_rejected() {
-        let mut engine = OrderBookMatchingEngine::new(0).unwrap();
-        engine
-            .submit(order(Side::Buy, Quantity::from_i64(1).raw(), None))
-            .unwrap();
-        assert!(engine
-            .submit(order(Side::Buy, Quantity::from_i64(1).raw(), None))
-            .is_err());
-        engine.on_snapshot(&book()).unwrap();
-        assert!(engine.on_snapshot(&book()).is_err());
-    }
-}
+#[path = "orderbook/tests.rs"]
+mod tests;

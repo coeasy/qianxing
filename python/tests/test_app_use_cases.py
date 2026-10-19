@@ -1452,8 +1452,8 @@ class AppUseCaseTests(unittest.TestCase):
             volumes.append((100 + index % 7 * 13) * scale)
         # Drive a lower-band entry and a later upper-band exit for the conservative spot model.
         bollinger_closes = list(closes)
-        bollinger_closes[14] = 50 * scale
-        bollinger_closes[45] = 180 * scale
+        bollinger_closes[14] = 5 * scale
+        bollinger_closes[45] = 250 * scale
 
         builtin_names = (
             "sma_cross", "ema_cross", "macd", "rsi", "bollinger",

@@ -13,6 +13,14 @@ impl RuntimeConfig {
         if strategy.version.trim().is_empty() || strategy.max_orders == 0 {
             return Err(format!("{label} version 不能为空且 max_orders 必须大于 0"));
         }
+        if strategy
+            .max_bar_volume_participation_bps
+            .is_some_and(|bps| bps == 0 || bps > 10_000)
+        {
+            return Err(format!(
+                "{label} max_bar_volume_participation_bps 必须在 1..=10000 内"
+            ));
+        }
         let product = strategy.product.unwrap_or(TradingProduct::Spot);
         let allow_short = strategy.allow_short.unwrap_or(product.is_derivative());
         if strategy.target_qty < 0 && !allow_short {
@@ -336,25 +344,7 @@ impl RuntimeConfig {
         {
             return Err(format!("{label} external_args 不能包含换行"));
         }
-        if strategy.external_env.iter().any(|(key, value)| {
-            key.trim().is_empty()
-                || key.contains('=')
-                || value.contains('\n')
-                || value.contains('\r')
-                || {
-                    let upper = key.to_ascii_uppercase();
-                    [
-                        "SECRET",
-                        "TOKEN",
-                        "PASSWORD",
-                        "API_KEY",
-                        "PRIVATE_KEY",
-                        "CREDENTIAL",
-                    ]
-                    .iter()
-                    .any(|marker| upper.contains(marker))
-                }
-        }) {
+        if validate_strategy_external_env(&strategy.external_env).is_err() {
             return Err(format!(
                 "{label} external_env 含敏感凭证或非法键值；策略进程不得接收交易凭证"
             ));

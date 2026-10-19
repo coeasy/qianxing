@@ -1,8 +1,8 @@
-//! 多腿价差订单组：信号组标识、持久化、终态判定与断线恢复。
-//!
-//! 订单组状态机本身来自 qx-zhenlu，这里只负责 CLI 侧的存储根解析与恢复编排。
+//! 多腿价差订单组的持久化、终态判定与断线恢复；状态机由 qx-zhenlu 提供。
 
-use super::*;
+mod imports;
+use imports::*;
+
 /// 在多腿命令进入队列前持久化完整订单组。组快照不是成交事实，事实仍由
 /// 各 Venue EventLog 写入；它只提供跨 worker 的腿身份、路由和重启恢复索引。
 pub(crate) fn persist_strategy_spread_group(

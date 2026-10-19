@@ -1,5 +1,8 @@
 use crate::*;
 
+mod paper_check;
+pub(crate) use paper_check::collect_paper_check_report;
+
 /// 独立的 Paper 多腿恢复 worker。它只扫描并推进 `HedgeRequired` 快照，
 /// 不消费普通 SubmitOrder 队列，使恢复任务可以单独扩缩容、重启和观测。
 pub(crate) fn run_paper_spread_recovery_worker(
@@ -93,6 +96,15 @@ pub(crate) fn run_paper_execution_worker(
     worker_id: &str,
     once: bool,
 ) -> Result<(), String> {
+    run_paper_execution_worker_with_output(path, worker_id, once, false)
+}
+
+fn run_paper_execution_worker_with_output(
+    path: &Path,
+    worker_id: &str,
+    once: bool,
+    quiet: bool,
+) -> Result<(), String> {
     let config = read_runtime_config(path)?;
     let worker = config
         .workers
@@ -116,7 +128,7 @@ pub(crate) fn run_paper_execution_worker(
     // 这个 worker 起来后第一件事就是按 `paper_initial_cash_raw` 入账：先确认这一格没有和
     // 回测侧那一格各说一套，并且把"两处共用同一个本金"说出来（V12 R3）。
     reject_split_account_principal(&config)?;
-    if let Some(note) = account_principal_note(&config) {
+    if let Some(note) = account_principal_note(&config).filter(|_| !quiet) {
         println!("{note}");
     }
     if worker.role == WorkerRole::SpreadRecovery {
@@ -182,7 +194,7 @@ pub(crate) fn run_paper_execution_worker(
                         Ok(lease) => lease,
                         Err(StorageError::LeaseHeld { .. }) => continue,
                         Err(error) => {
-                            return Err(format!("领取 Paper SubmitOrder 租约失败: {error:?}"))
+                            return Err(format!("领取 Paper SubmitOrder 租约失败: {error:?}"));
                         }
                     };
                 if command_is_final(&control, command.command_id) {
@@ -313,11 +325,13 @@ pub(crate) fn run_paper_execution_worker(
             metrics.publish(true, now);
             context.heartbeat(now)?;
             if once {
-                println!(
-                    "[Paper · Execution] worker={} processed={}",
-                    context.id(),
-                    processed
-                );
+                if !quiet {
+                    println!(
+                        "[Paper · Execution] worker={} processed={}",
+                        context.id(),
+                        processed
+                    );
+                }
                 break;
             }
             thread::sleep(Duration::from_millis(100));
@@ -333,6 +347,23 @@ pub(crate) fn run_paper_execution_worker(
 /// 该入口不是新的业务分支，而是把 Scheduler、Strategy 和 Execution 的
 /// `--once` 验收顺序固定下来，便于 CI、部署检查和故障恢复测试复用。
 pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
+    run_paper_pipeline_once_with_report(path, true).map(|_| ())
+}
+
+pub(crate) struct PaperPipelineOutcome {
+    pub(crate) scheduler_id: String,
+    pub(crate) strategy_ids: Vec<String>,
+    pub(crate) execution_id: String,
+    pub(crate) orders_total: usize,
+    pub(crate) new_orders: usize,
+    pub(crate) ledger_entries_total: usize,
+    pub(crate) new_ledger_entries: usize,
+}
+
+pub(crate) fn run_paper_pipeline_once_with_report(
+    path: &Path,
+    print_summary: bool,
+) -> Result<PaperPipelineOutcome, String> {
     let config = read_runtime_config(path)?;
     let scheduler_id = config
         .workers
@@ -360,12 +391,13 @@ pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
         .map(|worker| worker.id.clone())
         .ok_or_else(|| "Paper 主链路缺少启用的 Paper Execution worker".to_string())?;
 
-    run_scheduler_worker(path, &scheduler_id, true)?;
+    let quiet_workers = !print_summary;
+    run_scheduler_worker(path, &scheduler_id, true, quiet_workers)?;
     // Each Strategy worker owns its own strategy instance and job lease. Running
     // only the first configured worker made this E2E helper falsely certify a
     // multi-strategy Paper topology after exercising just one strategy.
     for strategy_id in &strategy_ids {
-        run_strategy_worker(path, strategy_id, true)?;
+        run_strategy_worker(path, strategy_id, true, quiet_workers)?;
     }
 
     // Paper 执行必须消费已经进入 EventLog 的市场事实。验收 fixture 不连接
@@ -410,7 +442,7 @@ pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
             format!("{log_name}:paper-check-market:{market_ts}"),
         ))
         .map_err(|error| format!("注入 Paper 验收行情失败: {error:?}"))?;
-    run_paper_execution_worker(path, &execution_id, true)?;
+    run_paper_execution_worker_with_output(path, &execution_id, true, quiet_workers)?;
 
     let root = Path::new(&config.storage.data_dir);
     let worker = config
@@ -470,26 +502,57 @@ pub(crate) fn run_paper_pipeline_once(path: &Path) -> Result<(), String> {
     let ledger_now = pipeline.ledger().entries().len();
     let new_orders = orders_now.saturating_sub(orders_before);
     let new_ledger = ledger_now.saturating_sub(ledger_before);
-    if new_orders > 0 {
-        println!(
-            "[Paper · E2E] scheduler={} strategy={} execution={} orders={} (+{} 本轮新增) ledger_entries={} (+{} 本轮新增) ✓",
-            scheduler_id,
-            strategy_ids.join(","),
-            execution_id,
-            orders_now,
-            new_orders,
-            ledger_now,
-            new_ledger
-        );
-    } else {
-        println!(
-            "[Paper · E2E] scheduler={} strategy={} execution={} orders={} (+0 本轮新增) ledger_entries={} 本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑",
-            scheduler_id,
-            strategy_ids.join(","),
-            execution_id,
-            orders_now,
-            ledger_now
-        );
+    if print_summary {
+        if new_orders > 0 {
+            println!(
+                "[Paper · E2E] scheduler={} strategy={} execution={} orders={} (+{} 本轮新增) ledger_entries={} (+{} 本轮新增) ✓",
+                scheduler_id,
+                strategy_ids.join(","),
+                execution_id,
+                orders_now,
+                new_orders,
+                ledger_now,
+                new_ledger
+            );
+        } else {
+            println!(
+                "[Paper · E2E] scheduler={} strategy={} execution={} orders={} (+0 本轮新增) ledger_entries={} 本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑",
+                scheduler_id,
+                strategy_ids.join(","),
+                execution_id,
+                orders_now,
+                ledger_now
+            );
+        }
     }
-    Ok(())
+    Ok(PaperPipelineOutcome {
+        scheduler_id,
+        strategy_ids,
+        execution_id,
+        orders_total: orders_now,
+        new_orders,
+        ledger_entries_total: ledger_now,
+        new_ledger_entries: new_ledger,
+    })
+}
+
+pub(crate) fn run_paper_check(path: &Path, as_json: bool) -> Result<(), String> {
+    if !as_json {
+        return run_paper_pipeline_once(path);
+    }
+
+    let report = collect_paper_check_report(path)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report)
+            .map_err(|error| format!("编码 Paper 检查 JSON 失败: {error}"))?
+    );
+    if report.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        Ok(())
+    } else {
+        Err(report["paper_check"]["error"]
+            .as_str()
+            .unwrap_or("Paper 主链路验收未通过")
+            .to_string())
+    }
 }

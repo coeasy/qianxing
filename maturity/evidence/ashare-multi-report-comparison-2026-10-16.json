@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "acceptance": "ashare-multi-report-portable-evidence-and-offline-recompute",
+  "observed_at": "2026-10-16",
+  "binary_sha256": "b9e7b0c668bfe79e11f312bba730d4677a0a00b762e89cedb4f83b362ca5a1c8",
+  "input": {
+    "instrument": "000001.SZSE",
+    "barframe_fingerprint": "5e59cfcf3adca434",
+    "strategy_parameters": [
+      "ema_cross fast=2 slow=3",
+      "ema_cross fast=3 slow=5"
+    ]
+  },
+  "comparison": {
+    "kind": "same_input_backtest_runs",
+    "run_count": 2,
+    "ranked_result_hashes": [
+      "6be034a4cb0760fa",
+      "e98061eab5a9a414"
+    ],
+    "ranks": [
+      1,
+      2
+    ],
+    "run_ids_unique": true
+  },
+  "portable_recompute": {
+    "runs": [
+      {
+        "variant": "baseline",
+        "run_id": "strategy-backtest:strategy-ashare:000001.SZSE:a63d034abd7c710378a3c19f8edf43097749617c02435c5ce988ac6c406a2c7e",
+        "result_hash": "6be034a4cb0760fa",
+        "portable_run_id": "strategy-backtest:strategy-ashare:000001.SZSE:a63d034abd7c710378a3c19f8edf43097749617c02435c5ce988ac6c406a2c7e",
+        "portable_result_hash": "6be034a4cb0760fa",
+        "portable_recompute_passed": true,
+        "run_id_stable_after_relocation": true,
+        "run_evidence_path": "target/ashare-report-acceptance/baseline-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_a63d034abd7c710378a3c19f8edf43097749617c02435c5ce988ac6c406a2c7e-8e439771fb517a33.evidence.json",
+        "portable_evidence_path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/evidence.json"
+      },
+      {
+        "variant": "candidate",
+        "run_id": "strategy-backtest:strategy-ashare:000001.SZSE:0a883bc144b1760d9944ac1abaeb583f84ae0e216297075e703e608fab85f829",
+        "result_hash": "e98061eab5a9a414",
+        "portable_run_id": "strategy-backtest:strategy-ashare:000001.SZSE:0a883bc144b1760d9944ac1abaeb583f84ae0e216297075e703e608fab85f829",
+        "portable_result_hash": "e98061eab5a9a414",
+        "portable_recompute_passed": true,
+        "run_id_stable_after_relocation": true,
+        "run_evidence_path": "target/ashare-report-acceptance/candidate-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_0a883bc144b1760d9944ac1abaeb583f84ae0e216297075e703e608fab85f829-aee2134618a994ef.evidence.json",
+        "portable_evidence_path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/evidence.json"
+      }
+    ],
+    "all_portable_result_hashes_recomputed": true,
+    "all_run_ids_stable_after_relocation": true,
+    "method": "qx-cli evidence export-run followed by evidence verify-run --recompute",
+    "exported_dependencies_per_run": 14
+  },
+  "generated_artifacts": [
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_a63d034abd7c710378a3c19f8edf43097749617c02435c5ce988ac6c406a2c7e-8e439771fb517a33.equity.svg",
+      "sha256": "1aec2b60be01213733741bdeee45233f86a6be698d40023e724ef9ad13380bfb"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_a63d034abd7c710378a3c19f8edf43097749617c02435c5ce988ac6c406a2c7e-8e439771fb517a33.evidence.json",
+      "sha256": "8d3bfd2139242d48301e9eaa9fb8cfaf055b5de172b8ce4603f3734a6321a32b"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_a63d034abd7c710378a3c19f8edf43097749617c02435c5ce988ac6c406a2c7e-8e439771fb517a33.fills.svg",
+      "sha256": "2a3b9714fb04d4377968fd79a23045e6b4c8a94f39e11c2d13ffcebfdf9cf7a9"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_a63d034abd7c710378a3c19f8edf43097749617c02435c5ce988ac6c406a2c7e-8e439771fb517a33.monthly.svg",
+      "sha256": "d8787e65aaac7811889920334185756f51078bd5edb822c6e9694e86b9e9ac53"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_a63d034abd7c710378a3c19f8edf43097749617c02435c5ce988ac6c406a2c7e-8e439771fb517a33.report.html",
+      "sha256": "ca8f820b1eb444d306f65f413a195171416eb3fa1bd18811fd135f238d8b3e80"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/evidence.json",
+      "sha256": "52850478cc54d401d7e34250f73de30a4873f942cc6d17cc5ec6909f4ea04bf3"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/artifacts/equity.csv",
+      "sha256": "998e821ead1a21bbcef6ba1341582ecd1b252d3deb3bfac1c3675c4962dc974a"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/artifacts/fills.csv",
+      "sha256": "409a57018185b0b595127bde93d287bb25821ad6883ad57591710f79b5f72a2e"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/artifacts/market_spec.json",
+      "sha256": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/artifacts/run_manifest.json",
+      "sha256": "9743b4a88c9d6bc4f649f95b20112f9eafd7e1ffb26b028034d3c2333bf5aedc"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/artifacts/runtime_config.json",
+      "sha256": "29952b7c5ddbdc40e3c7e2f761032cc77bdad103e43da4afc506c63da889f845"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/artifacts/summary.json",
+      "sha256": "671ad6769c3b081a0923b17157fef5ca84ea8060b8f21a135955bae7bab365a2"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/inputs/dataset.json",
+      "sha256": "07aca52393be3010c85ad7c9be9019bf9e64503a27c35bef595e125eb1a77082"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/runtime/market-spec.json",
+      "sha256": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/runtime/qianxing.ashare.actions.example.json",
+      "sha256": "f86d73758e3776654945e73d71d57d3032a9bd0deacd86b16f1d42d4f3423f58"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/runtime/qianxing.ashare.bar-frame.example.json",
+      "sha256": "07aca52393be3010c85ad7c9be9019bf9e64503a27c35bef595e125eb1a77082"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/runtime/qianxing.ashare.calendar.example.json",
+      "sha256": "65331d6e3aae3e110ff8090370b9a7a8ab5a76c4e01abe99ee51bc1e74d6ed3e"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/runtime/qianxing.ashare.rules.json",
+      "sha256": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/runtime/qianxing.dataset-bundle.ashare.example.json",
+      "sha256": "12550e2ad7235c36860d331148bbbecab9b249dce4f7a6fcab296edc2c87e6b2"
+    },
+    {
+      "path": "target/ashare-report-acceptance/baseline-portable-bundle-v2/runtime/runtime.json",
+      "sha256": "29952b7c5ddbdc40e3c7e2f761032cc77bdad103e43da4afc506c63da889f845"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_0a883bc144b1760d9944ac1abaeb583f84ae0e216297075e703e608fab85f829-aee2134618a994ef.equity.svg",
+      "sha256": "52b221f05a25c4e6a2ceb7dbc5630e723cb181aff7f2853fa0ecd28cbf9a3b24"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_0a883bc144b1760d9944ac1abaeb583f84ae0e216297075e703e608fab85f829-aee2134618a994ef.evidence.json",
+      "sha256": "60972d0c441c9833ef14ec1714235142743fbceae908eed2f0886617f0020192"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_0a883bc144b1760d9944ac1abaeb583f84ae0e216297075e703e608fab85f829-aee2134618a994ef.fills.svg",
+      "sha256": "c6cf94843f25d914766dd7e48b1d57eca66697d525034768ca284f213529e3ba"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_0a883bc144b1760d9944ac1abaeb583f84ae0e216297075e703e608fab85f829-aee2134618a994ef.monthly.svg",
+      "sha256": "9fcad038064d351b431ac9907476c5ce203fc7a1e3af5264177c912501b55301"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-v2/runs/strategy-backtest_strategy-ashare_000001.SZSE_0a883bc144b1760d9944ac1abaeb583f84ae0e216297075e703e608fab85f829-aee2134618a994ef.report.html",
+      "sha256": "b9dc59dc224648476f4eee7c84318eb9f9fdb53bf7a629d1197eb299f4a88971"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/evidence.json",
+      "sha256": "d703922026942d7ca927b71759572999b87b30f52217f5c70d7d7f9d85e329b2"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/artifacts/equity.csv",
+      "sha256": "eee8df7ef8f476b52aede1d9686c5871a96316536ad79fa91d3d21e10f2532b7"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/artifacts/fills.csv",
+      "sha256": "f742ab2213d64288df43f9de4e541ab43a27c950dce246a66843f49dac2edcaf"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/artifacts/market_spec.json",
+      "sha256": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/artifacts/run_manifest.json",
+      "sha256": "5468e11b77ad0b9706bf6ae242189738e78a9668672ba516dbff9a6ebac5610e"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/artifacts/runtime_config.json",
+      "sha256": "f1ee00a2626b8b7d0420f61ed474fc0b26ea89e4c67f821f4e47fe716c7c4b4a"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/artifacts/summary.json",
+      "sha256": "09006173c19c959522a64fdbf7264b545116ed356658db0cb22162d854398376"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/inputs/dataset.json",
+      "sha256": "07aca52393be3010c85ad7c9be9019bf9e64503a27c35bef595e125eb1a77082"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/runtime/market-spec.json",
+      "sha256": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/runtime/qianxing.ashare.actions.example.json",
+      "sha256": "f86d73758e3776654945e73d71d57d3032a9bd0deacd86b16f1d42d4f3423f58"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/runtime/qianxing.ashare.bar-frame.example.json",
+      "sha256": "07aca52393be3010c85ad7c9be9019bf9e64503a27c35bef595e125eb1a77082"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/runtime/qianxing.ashare.calendar.example.json",
+      "sha256": "65331d6e3aae3e110ff8090370b9a7a8ab5a76c4e01abe99ee51bc1e74d6ed3e"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/runtime/qianxing.ashare.rules.json",
+      "sha256": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/runtime/qianxing.dataset-bundle.ashare.example.json",
+      "sha256": "12550e2ad7235c36860d331148bbbecab9b249dce4f7a6fcab296edc2c87e6b2"
+    },
+    {
+      "path": "target/ashare-report-acceptance/candidate-portable-bundle-v2/runtime/runtime.json",
+      "sha256": "f1ee00a2626b8b7d0420f61ed474fc0b26ea89e4c67f821f4e47fe716c7c4b4a"
+    },
+    {
+      "path": "target/ashare-report-acceptance/reports/ashare-comparison.html",
+      "sha256": "115ad1536da920c3082807507605a079c30d1784f13015dc2543f0ded8e18e8b"
+    },
+    {
+      "path": "target/ashare-report-acceptance/reports/ashare-comparison.json",
+      "sha256": "fc08cf290b4e053cbae575a0eb7c1ece2adf26b8870e6a0b5218c462d1e2bff9"
+    }
+  ],
+  "verified": {
+    "single_run_json_html_svgs_and_evidence_bundles": true,
+    "comparison_json_and_offline_html": true,
+    "portable_evidence_packages_self_contained": true,
+    "portable_result_hashes_recomputed": true,
+    "test_suites_run": false,
+    "production_data_claim": false
+  }
+}

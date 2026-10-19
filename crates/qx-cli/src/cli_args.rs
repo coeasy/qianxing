@@ -1,9 +1,14 @@
-//! clap 参数框架（V10 P2b）：命令表由本文件 `Command` 枚举派生，`cli.rs` 只保留对 `Command` 的一次显式 `match`；门禁以「clap 命令表 ≡ `cli.rs` 派发 ≡ `cli_help.rs` 印出」三方集合相等，使"文案宣称支持某入口而派发没有分支"不可表达。`help`/`--help`/`-h` 进 clap 前同一条预检分支（按规范名 `help` 计一条）；`<worker>` 等必填位置参数前必须显式给 runtime 路径（带 `default_value` 的会被 Clap 判为可选）。
+//! clap 参数框架（V10 P2b）：命令表由本文件 `Command` 枚举派生，`cli.rs` 只保留对 `Command` 的一次显式 `match`；生成清单与显式派发逐项对账，帮助用例逐项运行真实子进程。`help`/`--help`/`-h` 进 clap 前同一条预检分支（按规范名 `help` 计一条）；`<worker>` 等必填位置参数前必须显式给 runtime 路径（带 `default_value` 的会被 Clap 判为可选）。
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
+use super::cli_value_parsers::{parse_bps, parse_quantity, parse_relay_limit};
 use super::console_args::ConsoleArgs;
+use super::data_validate_args::DepthDatasetValidateArgs;
+use super::evidence_signature_args::EvidenceArgs;
+use super::report_args::ReportArgs;
+use super::storage_adopt_args::PostgresSchemaAdoptArgs;
 use super::{
     app_args::AppArgs, data_validate_args::DatasetValidateArgs, parse_deploy_path,
     plan_args::PlanArgs,
@@ -19,31 +24,7 @@ pub(crate) struct Cli {
     pub(crate) command: Option<Command>,
 }
 
-fn parse_quantity(value: &str) -> Result<i64, String> {
-    value
-        .parse::<i64>()
-        .map_err(|error| format!("quantity 非法: {value}（{error}）"))
-}
-
-/// 基点类旗标共用 `0..=10000` 取值域，越界在 clap 层挡住。
-fn parse_bps(value: &str) -> Result<i64, String> {
-    match value.parse::<i64>() {
-        Ok(parsed) if (0..=10_000).contains(&parsed) => Ok(parsed),
-        _ => Err("必须在 0..=10000 内".to_string()),
-    }
-}
-
-/// relay 的位置参 `limit` 与 `relay_batch_size` 同域；拒绝零值，避免空转却报成功（V13 R4）。
-fn parse_relay_limit(value: &str) -> Result<usize, String> {
-    match value.parse::<usize>() {
-        Ok(parsed) if (1..=10_000).contains(&parsed) => Ok(parsed),
-        _ => Err("relay limit 必须在 1..=10000 内".to_string()),
-    }
-}
-
-/// 顶层命令表：每个变体一个 `#[command(name = "…")]`，与 `cli_help.rs` 的入口一一对应。
 #[derive(Subcommand)]
-// clap 要求每个子命令把旗标平铺在自己的变体里，最大的 `Backtest` 变体 392 字节；装箱能让 clippy 闭嘴，但会让 `cli.rs` 每条派发分支多一次解构，而这张表整个进程只构造一次。
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Command {
     #[command(name = "init")]
@@ -62,6 +43,8 @@ pub(crate) enum Command {
         #[arg(long)]
         force: bool,
     },
+    #[command(name = "guide")]
+    Guide(super::guide_args::GuideArgs),
     #[command(name = "doctor")]
     Doctor {
         path: Option<PathBuf>,
@@ -85,18 +68,7 @@ pub(crate) enum Command {
         json: bool,
     },
     #[command(name = "report")]
-    Report {
-        path: Option<PathBuf>,
-        #[arg(long)]
-        json: bool,
-        #[arg(long)]
-        html: bool,
-        /// T1-1：复核通过后再聚一份 `<stem>.evidence.json`（opt-in，默认面产物集合不变）。
-        #[arg(long)]
-        evidence: bool,
-        #[arg(short = 'o', long = "output", value_name = "PATH")]
-        out: Option<PathBuf>,
-    },
+    Report(ReportArgs),
     #[command(name = "live-check")]
     LiveCheck {
         #[arg(default_value = "deploy/qianxing.runtime.production.example.json", value_parser = parse_deploy_path)]
@@ -128,7 +100,6 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<BacktestCommand>,
     },
-    // T2-2/G1：应用层用例入口；参数结构在 `app_args.rs`（cli_args.rs 顶格在行数棘轮上，而它是本仓第一个自带子命令的外部参数结构）。
     #[command(name = "app")]
     App(AppArgs),
     #[command(name = "builtin-strategies")]
@@ -150,6 +121,8 @@ pub(crate) enum Command {
     },
     #[command(name = "data-validate")]
     DataValidate(DatasetValidateArgs),
+    #[command(name = "data-validate-depth")]
+    DataValidateDepth(DepthDatasetValidateArgs),
     #[command(name = "plan")]
     Plan(PlanArgs),
     #[command(name = "ccxt-market-spec")]
@@ -298,6 +271,8 @@ pub(crate) enum Command {
     PaperCheck {
         #[arg(default_value = "deploy/qianxing.runtime.paper-strategy.example.json", value_parser = parse_deploy_path)]
         path: PathBuf,
+        #[arg(long)]
+        json: bool,
     },
     #[command(name = "reconcile")]
     Reconcile {
@@ -306,15 +281,25 @@ pub(crate) enum Command {
         worker_id: Option<String>,
     },
     #[command(name = "ecosystem")]
-    Ecosystem,
+    Ecosystem(SmokeReportArgs),
     #[command(name = "paper")]
     Paper,
     #[command(name = "all")]
-    All,
+    All(SmokeReportArgs),
     #[command(name = "verify")]
-    Verify,
+    Verify(SmokeReportArgs),
     #[command(name = "version")]
     Version,
+    /// Adopt an unversioned PostgreSQL schema only when it matches a known migration exactly.
+    #[command(name = "storage-adopt-postgres")]
+    StorageAdoptPostgres(PostgresSchemaAdoptArgs),
+    #[command(name = "evidence")]
+    Evidence(EvidenceArgs),
+}
+#[derive(Args)]
+pub(crate) struct SmokeReportArgs {
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 impl Command {
@@ -323,19 +308,23 @@ impl Command {
         match self {
             Self::Doctor { json, .. }
             | Self::Status { json, .. }
-            | Self::Report { json, .. }
             | Self::LiveCheck { json, .. }
-            | Self::RuntimeCheck { json, .. } => *json,
+            | Self::RuntimeCheck { json, .. }
+            | Self::PaperCheck { json, .. } => *json,
+            Self::DataValidate(args) => args.json,
+            Self::Report(args) => args.json,
+            Self::Plan(args) => args.json,
+            Self::Ecosystem(args) | Self::All(args) | Self::Verify(args) => args.json,
             Self::Config { action } => action.as_ref().is_some_and(ConfigCommand::machine_output),
             Self::Run { action } => action.as_ref().is_some_and(RunCommand::machine_output),
-            // version 只打一行构建身份，与 --json 同口径抑制横幅，便于脚本直接取值（U1）；
-            // `app` 的 stdout 本来就只有一份 JSON，没有可切换的人读正文，所以同样一律抑制。
-            Self::Version | Self::App(_) => true,
+            // version 与 app 只有机读正文，和 --json 一样抑制横幅（U1）。
+            Self::Version | Self::App(_) | Self::StorageAdoptPostgres(_) | Self::Evidence(_) => {
+                true
+            }
             _ => false,
         }
     }
 }
-
 #[derive(Subcommand)]
 pub(crate) enum ConfigCommand {
     #[command(name = "explain")]
@@ -356,19 +345,16 @@ pub(crate) enum ConfigCommand {
         force: bool,
     },
 }
-
 impl ConfigCommand {
     fn machine_output(&self) -> bool {
-        // V12 R4-f：`config validate|fingerprint|lock` 曾收下 `--json` 却不产机读输出（只有
-        // `config explain --json` 真的产 JSON）。旗标按“说谎即删”摘掉，现传 --json 由 clap 报未知参数。
+        // V12 R4-f：只有 explain 产 JSON，其余子命令传 `--json` 由 clap 拒绝。
         match self {
             Self::Explain { json, .. } => *json,
             Self::Validate { .. } | Self::Fingerprint { .. } | Self::Lock { .. } => false,
         }
     }
 }
-
-/// `run` 的子命令表与 `RUN_ENTRY_POINTS`（错误文案的来源）由门禁做集合相等校验；参数向量按迁移前的宽容语义原样交给 `run_unified_command`（它是处理器，不是分派器）。
+/// `run` 子命令由生成清单供帮助测试与错误文案消费；参数向量按迁移前的宽容语义原样交给 `run_unified_command`（它是处理器，不是分派器）。
 #[derive(Subcommand)]
 pub(crate) enum RunCommand {
     #[command(name = "backtest")]
@@ -407,20 +393,21 @@ pub(crate) enum RunCommand {
         arguments: Vec<String>,
     },
 }
-
 impl RunCommand {
     fn machine_output(&self) -> bool {
-        // 迁移前口径：仅这四个子入口吃 --json，backtest/paper/paper-check 不吃。
+        // 迁移前口径：诊断/报告子入口吃 --json；backtest/paper 不吃。
         match self {
             Self::Doctor { arguments }
             | Self::LiveCheck { arguments }
             | Self::RuntimeCheck { arguments }
-            | Self::Report { arguments } => arguments.iter().any(|argument| argument == "--json"),
-            Self::Backtest { .. } | Self::Paper { .. } | Self::PaperCheck { .. } => false,
+            | Self::Report { arguments }
+            | Self::PaperCheck { arguments } => {
+                arguments.iter().any(|argument| argument == "--json")
+            }
+            Self::Backtest { .. } | Self::Paper { .. } => false,
         }
     }
 }
-
 #[derive(Subcommand)]
 pub(crate) enum StrategyCommand {
     #[command(name = "list")]
@@ -438,6 +425,8 @@ pub(crate) enum StrategyCommand {
         runtime: PathBuf,
         bars: PathBuf,
         spec: Option<PathBuf>,
+        #[arg(long = "dataset-manifest", value_name = "DATASET_MANIFEST_V2")]
+        dataset_manifest: Option<PathBuf>,
     },
 }
 
@@ -452,6 +441,8 @@ pub(crate) enum BacktestCommand {
         quantity: Option<i64>,
         #[arg(long)]
         config: Option<PathBuf>,
+        #[arg(long)]
+        dataset_manifest: Option<PathBuf>,
     },
     #[command(name = "multi-builtin")]
     MultiBuiltin {
@@ -470,6 +461,10 @@ pub(crate) enum BacktestCommand {
         root: Option<PathBuf>,
         #[arg(long)]
         config: Option<PathBuf>,
+        #[arg(long)]
+        primary_dataset_manifest: Option<PathBuf>,
+        #[arg(long)]
+        reference_dataset_manifest: Option<PathBuf>,
     },
     #[command(name = "ccxt-builtin")]
     CcxtBuiltin {
@@ -499,13 +494,14 @@ pub(crate) enum BacktestCommand {
         quantity: Option<i64>,
         #[arg(long = "fee-bps")]
         fee_bps: Option<i64>,
-        // 只放"内置策略这条路真能生效"的撮合参数：内核的 `queue_position_bps` 只作用于限价单所在
-        // 档位，而 17 个内置策略发的全是市价单，配上也不改结果——声明换不动结果的旗标就是 Q0b 的"假风控"。
+        // 内置策略仅发市价单；queue_position_bps 只作用于限价，因此不提供无效旗标。
         #[arg(long = "market-impact-bps", value_parser = parse_bps)]
         market_impact_bps: Option<i64>,
         #[arg(long = "latency-snapshots")]
         latency_snapshots: Option<u64>,
         #[arg(long)]
         config: Option<PathBuf>,
+        #[arg(long = "dataset-manifest", value_name = "DATASET_MANIFEST_V2")]
+        dataset_manifest: Option<PathBuf>,
     },
 }

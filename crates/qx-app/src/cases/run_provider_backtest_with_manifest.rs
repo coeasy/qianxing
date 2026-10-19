@@ -108,6 +108,9 @@ pub fn run_provider_backtest_with_manifest(
                         AppErrorCategory::InvalidInput,
                         format!("duplicate Provider registration: {id}"),
                     ),
+                    RegistryError::Invariant(message) => {
+                        (AppErrorCategory::InternalInvariant, message)
+                    }
                     RegistryError::Provider(error) => {
                         let category = match error.class {
                             ProviderErrorClass::SwitchProvider => AppErrorCategory::DataUnavailable,

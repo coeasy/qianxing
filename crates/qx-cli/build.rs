@@ -7,6 +7,7 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::{error::Error, io};
 
 fn git(args: &[&str]) -> Option<String> {
     let output = Command::new("git").args(args).output().ok()?;
@@ -47,15 +48,13 @@ fn watch(path: Option<String>) {
 /// 二进制走；清单为空时构建直接失败，发布物不该带着"模板缺失"这件事悄悄出门。
 /// 清单同时给出内容签名（FNV-1a 覆盖每个名字与正文），运行期用它给落盘目录分桶，
 /// 因此"同一目录名、不同内容"的陈旧副本不可能被读到。
-fn embed_deploy_templates() {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("build script 由 cargo 驱动");
+fn embed_deploy_templates() -> Result<(), Box<dyn Error>> {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR")?;
     let deploy = Path::new(&manifest).join("..").join("..").join("deploy");
     println!("cargo:rerun-if-changed={}", deploy.display());
     let mut names: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(&deploy)
-        .unwrap_or_else(|error| panic!("读取 deploy 目录失败 {}: {error}", deploy.display()))
-        .flatten()
-    {
+    for entry in std::fs::read_dir(&deploy)? {
+        let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
@@ -67,23 +66,28 @@ fn embed_deploy_templates() {
         names.push(name.to_string());
     }
     names.sort();
-    assert!(
-        !names.is_empty(),
-        "deploy/ 顶层没有 JSON 模板，构建产物不该缺这一层"
-    );
+    if names.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "deploy/ 顶层没有 JSON 模板，构建产物不该缺这一层",
+        )
+        .into());
+    }
     let mut table =
         String::from("// 由 build.rs 生成，勿手改：仓库 deploy/ 顶层 JSON 的构建期快照。\n");
     table.push_str("pub(crate) const DEPLOY_TEMPLATES: &[(&str, &str)] = &[\n");
     let mut signature: u64 = 0xcbf2_9ce4_8422_2325;
     for name in &names {
         let path = deploy.join(name);
-        let body = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("读取模板失败 {}: {error}", path.display()));
+        let body = std::fs::read_to_string(&path)?;
         let location = path.display().to_string();
-        assert!(
-            !location.contains('"') && !name.contains('"'),
-            "路径里的引号会毁掉 include_str!: {location}"
-        );
+        if location.contains('"') || name.contains('"') {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("路径里的引号会毁掉 include_str!: {location}"),
+            )
+            .into());
+        }
         for byte in name.as_bytes().iter().chain(body.as_bytes()) {
             signature ^= u64::from(*byte);
             signature = signature.wrapping_mul(0x0000_0100_0000_01b3);
@@ -97,14 +101,14 @@ fn embed_deploy_templates() {
         "pub(crate) const DEPLOY_EMBED_SIGNATURE: &str = \"{:016x}\";\n",
         signature
     ));
-    let out_dir = std::env::var("OUT_DIR").expect("cargo 会交 OUT_DIR");
-    std::fs::write(Path::new(&out_dir).join("deploy_templates.rs"), table)
-        .expect("写入内置模板清单失败");
+    let out_dir = std::env::var("OUT_DIR")?;
+    std::fs::write(Path::new(&out_dir).join("deploy_templates.rs"), table)?;
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     watch_head_and_branch();
-    embed_deploy_templates();
+    embed_deploy_templates()?;
     let commit = git(&["rev-parse", "HEAD"]).filter(|value| {
         value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
     });
@@ -131,4 +135,5 @@ fn main() {
         let value = std::env::var(variable).unwrap_or_else(|_| fallback.to_string());
         println!("cargo:rustc-env=QX_{directive}={value}");
     }
+    Ok(())
 }

@@ -17,6 +17,7 @@ mod binance;
 mod ccxt;
 mod ccxt_provider;
 mod io_budget;
+mod order_lifecycle;
 mod reconcile;
 mod venue_cache;
 pub use binance::{
@@ -225,17 +226,13 @@ pub struct TlsHttpTransport {
 
 impl Default for TlsHttpTransport {
     fn default() -> Self {
-        Self::new(Duration::from_secs(10)).expect("默认 TLS 配置必须可构造")
+        Self::with_config(Duration::from_secs(10), default_client_config())
     }
 }
 
 impl TlsHttpTransport {
     pub fn new(timeout: Duration) -> Result<Self, String> {
-        let root_store = RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let config = ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-        Ok(Self::with_config(timeout, config))
+        Ok(Self::with_config(timeout, default_client_config()))
     }
 
     pub fn with_config(timeout: Duration, config: ClientConfig) -> Self {
@@ -447,13 +444,13 @@ fn poll_websocket_message<R: Read + Write>(reader: &mut R) -> Result<WebSocketPo
             0x1 | 0x2 if message.is_none() => {
                 message = Some(WebSocketMessage { opcode, payload });
                 if fin {
-                    return Ok(WebSocketPoll::Message(
-                        message.take().expect("message just set"),
-                    ));
+                    return take_websocket_message(&mut message);
                 }
             }
             0x0 if message.is_some() => {
-                let current = message.as_mut().expect("message checked");
+                let current = message
+                    .as_mut()
+                    .ok_or_else(|| "WebSocket 延续帧缺少消息状态".to_string())?;
                 if current.payload.len().saturating_add(payload.len()) > MAX_WEBSOCKET_MESSAGE_BYTES
                 {
                     return Err(format!(
@@ -463,14 +460,18 @@ fn poll_websocket_message<R: Read + Write>(reader: &mut R) -> Result<WebSocketPo
                 }
                 current.payload.extend_from_slice(&payload);
                 if fin {
-                    return Ok(WebSocketPoll::Message(
-                        message.take().expect("message checked"),
-                    ));
+                    return take_websocket_message(&mut message);
                 }
             }
             _ => return Err("WebSocket 分片 opcode 或控制帧非法".into()),
         }
     }
+}
+
+fn take_websocket_message(message: &mut Option<WebSocketMessage>) -> Result<WebSocketPoll, String> {
+    Ok(WebSocketPoll::Message(
+        message.take().ok_or_else(|| "消息状态缺失".to_string())?,
+    ))
 }
 
 fn poll_server_frame<R: Read>(reader: &mut R) -> Result<FramePoll, String> {

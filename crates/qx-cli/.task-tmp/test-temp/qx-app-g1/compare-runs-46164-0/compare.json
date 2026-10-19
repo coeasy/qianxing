@@ -1,0 +1,1 @@
+{"runs":[{"data_fingerprint":"barframe:1ac9ec96c1154b1f","instrument":"BTCUSDT.BINANCE","max_drawdown_bps":0,"result_hash":"d4b7badd27829625","return_bps":1,"run_id":"g1-compare-a"},{"data_fingerprint":"barframe:1ac9ec96c1154b1f","instrument":"BTCUSDT.BINANCE","max_drawdown_bps":0,"result_hash":"b7529485146f0dac","return_bps":1,"run_id":"g1-compare-b"}],"schema_version":1}

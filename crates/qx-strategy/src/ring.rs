@@ -222,14 +222,17 @@ impl SharedRingReader {
                 read + 1
             )));
         }
-        let length = read_u32(&self.mmap, slot + SLOT_LEN_OFFSET) as usize;
+        let length = read_u32(&self.mmap, slot + SLOT_LEN_OFFSET)
+            .ok_or_else(|| SharedRingError::Corrupt("slot length 字段越界".into()))?
+            as usize;
         if length > self.config.max_payload_bytes() {
             return Err(SharedRingError::Corrupt(format!(
                 "slot length 超限: bytes={length} max={}",
                 self.config.max_payload_bytes()
             )));
         }
-        let expected_crc = read_u32(&self.mmap, slot + SLOT_CRC_OFFSET);
+        let expected_crc = read_u32(&self.mmap, slot + SLOT_CRC_OFFSET)
+            .ok_or_else(|| SharedRingError::Corrupt("slot CRC 字段越界".into()))?;
         let payload =
             self.mmap[slot + SLOT_HEADER_BYTES..slot + SLOT_HEADER_BYTES + length].to_vec();
         if crc32(&payload) != expected_crc {
@@ -258,10 +261,13 @@ fn initialize_header(mmap: &mut MmapMut, config: SharedRingConfig) -> Result<(),
 }
 
 fn validate_header(mmap: &MmapMut, config: SharedRingConfig) -> Result<(), SharedRingError> {
-    if mmap[..4] != MAGIC
-        || read_u32(mmap, 4) != VERSION
-        || read_u32(mmap, 8) != config.slot_bytes
-        || read_u32(mmap, 12) != config.capacity
+    let version = read_u32(mmap, 4);
+    let slot_bytes = read_u32(mmap, 8);
+    let capacity = read_u32(mmap, 12);
+    if mmap.get(..4) != Some(MAGIC.as_slice())
+        || version != Some(VERSION)
+        || slot_bytes != Some(config.slot_bytes)
+        || capacity != Some(config.capacity)
     {
         return Err(SharedRingError::Invalid("ring header 不匹配".into()));
     }
@@ -293,8 +299,10 @@ fn write_u32(mmap: &mut MmapMut, offset: usize, value: u32) {
     mmap[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
 
-fn read_u32(mmap: &MmapMut, offset: usize) -> u32 {
-    u32::from_le_bytes(mmap[offset..offset + 4].try_into().expect("fixed u32"))
+fn read_u32(mmap: &MmapMut, offset: usize) -> Option<u32> {
+    let end = offset.checked_add(4)?;
+    let bytes = mmap.get(offset..end)?.try_into().ok()?;
+    Some(u32::from_le_bytes(bytes))
 }
 
 fn crc32(bytes: &[u8]) -> u32 {

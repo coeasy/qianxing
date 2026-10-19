@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "local_worker_metrics_scrape",
+  "captured_at_utc": "2026-10-17T00:13:02Z",
+  "runtime_config_template": "deploy/qianxing.runtime.paper-strategy.example.json",
+  "runtime_data_directory": "isolated temporary directory under target/",
+  "worker": {
+    "id": "paper-execution",
+    "role": "execution",
+    "venue_id": "paper",
+    "command": "qx-cli paper-worker <isolated-runtime-config> paper-execution --once",
+    "process_exit_code": 0,
+    "worker_output": "processed=0"
+  },
+  "scrape": {
+    "url": "http://127.0.0.1:18081/metrics",
+    "http_status": 200,
+    "prometheus_text_file": "paper-worker-metrics-scrape-2026-10-17.prom"
+  },
+  "observations": {
+    "qx_worker_up": 0,
+    "qx_worker_metrics_stale": 1,
+    "qx_pipeline_ingest_attempts_total": 1,
+    "qx_pipeline_ingested_events_total": 1,
+    "qx_pipeline_refreshes_total": 1,
+    "qx_pipeline_failures_total": 0,
+    "qx_pipeline_ingest_duration_seconds_total": 0.007114,
+    "qx_pipeline_ingest_duration_seconds_max": 0.007114,
+    "qx_pipeline_ingest_warning_budget_seconds": 0.1,
+    "qx_pipeline_ingest_budget_exceeded": 0
+  },
+  "scope": {
+    "event_log_kinds": ["AccountCashflow", "LedgerApplied"],
+    "external_venue_used": false,
+    "credentials_used": false,
+    "orders_submitted": 0
+  },
+  "limitations": [
+    "This is a single Paper Execution worker --once run, not a sustained uptime measurement.",
+    "It validates aggregation through the local /metrics endpoint but does not measure Binance or CCXT worker behavior.",
+    "It does not establish a p99 latency or a full A-share backtest performance profile."
+  ]
+}

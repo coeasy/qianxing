@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "benchmark": "l2_queue_position_depth_lookup",
+  "date": "2026-10-17",
+  "generated_at_utc": "2026-10-16T23:10:20Z",
+  "command": "cargo bench -p qx-cli --bench criterion_performance --offline -j1 -- l2_queue_position_depth_lookup",
+  "host": {
+    "cpu": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "target": "x86_64-pc-windows-msvc",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "profile": "bench (optimized)",
+    "benchmark_binary_sha256": "3f3a11a5eb97e2de093dba5d4626717ae3dfc62ed73b25ec638255a488726225"
+  },
+  "workload": {
+    "depth_levels_per_side": [16, 128, 512],
+    "passive_limit_orders_per_snapshot": [16, 128, 512],
+    "queue_position_model": "fifo_volume_estimate with 0 bp volume advance; lookup remains active and no fills are produced",
+    "setup_outside_timed_region": true,
+    "timed_operation": "OrderBookMatchingEngine::on_snapshot with validated strict price ordering and binary price-level lookup",
+    "criterion_samples": 10
+  },
+  "results": [
+    {
+      "depth_levels": 16,
+      "passive_orders": 16,
+      "median_us": 2.166,
+      "median_ci95_us": [2.118, 2.273],
+      "mean_us": 2.187,
+      "mean_ci95_us": [2.121, 2.260]
+    },
+    {
+      "depth_levels": 128,
+      "passive_orders": 128,
+      "median_us": 16.269,
+      "median_ci95_us": [15.859, 16.755],
+      "mean_us": 16.331,
+      "mean_ci95_us": [15.987, 16.707]
+    },
+    {
+      "depth_levels": 512,
+      "passive_orders": 512,
+      "median_us": 66.011,
+      "median_ci95_us": [64.127, 66.649],
+      "mean_us": 65.539,
+      "mean_ci95_us": [64.450, 66.561]
+    }
+  ],
+  "limitations": [
+    "Synthetic strictly ordered books and passive orders; depth/order count grow together.",
+    "This run measures the current production matcher path and does not include a prior linear-search binary for strict A/B attribution.",
+    "Microbenchmark does not establish whole backtest or production venue throughput.",
+    "Does not represent the nine product profiles or production data quality."
+  ]
+}

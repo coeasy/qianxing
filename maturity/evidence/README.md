@@ -1,14 +1,16 @@
 # 证据目录与导入格式（M0）
 
-本目录承载**外部证据**——本地测试证明不了的档位（`sandbox_tested` / `production_approved`）。
-`maturity/capabilities.yaml` 的四档状态里，前两档由 `tools/check_architecture.py` 与 `cargo test`
-自证；后两档**只能**由本目录下的证据记录翻真。
+本目录保存可持久复核的**本地性能/运行证据**与**外部交易所验收证据**。仓库根目录的 JSON/Prometheus
+记录用于复核本机基准和 Paper/worker 观测；只有 `testnet/`、`production/` 下经核验的外部验收记录
+才能翻转 `sandbox_tested` / `production_approved`。
 
-> **两条轨，别混读（P0-1）**：本目录只管**实盘轨**——需要真实交易所凭据的那条路。
-> 本仓的**主用法是回测与 Paper 闭环**，它一条交易所凭据都不用，它的验收边界**不在本目录**，
-> 而在 `maturity/backtest_acceptance.yaml`（由 `tools/backtest_acceptance.py` 生成）。
-> 对那条轨而言，`sandbox_tested` / `production_approved` 是**不适用**，不是「待补」。
-> 把两条轨混在一张表里读，会让「实盘还差外部证据」被误读成「整个仓未落地」。
+`maturity/capabilities.yaml` 的 `implementation` / `code_tested` 由源码、门禁和本地执行证据支撑；
+外部两档必须由对应验收流程产生的证据支撑，本地 Paper 或基准数据不得替代。
+
+> **两条轨，别混读（P0-1）**：`testnet/` 与 `production/` 只保存需要真实交易所凭据的验收证据；
+> 本仓的主用法仍是无需交易所凭据的回测与 Paper 闭环，验收结论在 `maturity/backtest_acceptance.yaml`
+>（由 `tools/backtest_acceptance.py` 生成）。根目录的 Paper worker scrape 可以证明本地指标路径可读，
+> 但不能翻转 `sandbox_tested` / `production_approved`，也不代表持续运行或生产行情质量。
 
 ## 四档证据
 
@@ -85,8 +87,34 @@ maturity/evidence/
 - 本目录 `maturity/evidence/README.md` 与 `testnet/20260920T005856Z-dryrun/` 下那两份记录
   **是仓库资产（已跟踪）**——`git ls-files maturity/` 列得到它们。写在这里以免下一位读者
   按「证据目录不进版本控制」的老口径去找 `.gitignore`。
-- **本轮（T0-3）改正了一处口径漂移**：验收脚本写进 `result.json` 的规则原文是
-  「全部阶段退出码为 0」，而方案 §4 与脚本的**代码**（`tools/binance_testnet_acceptance.py`
-  在 `outcome` 判定前先断言「非 `live-check` 阶段一律为 0」）都是
-  「除 `live-check` 之外全部阶段退出码为 0」。已把脚本那句**文字**改成与代码、方案一致；
-  `testnet/20260920T005856Z-dryrun/result.json` 是**历史产物**，保留原文字不改。
+- **规则口径后续修正**：历史记录 `testnet/20260920T005856Z-dryrun/result.json` 保留当时的规则原文。
+  2026-10-16 复核成功路径发现重复 `request_id` 本来就必须以非零退出码被拒，旧的总阶段判定却要求
+  它退出码为 0，导致完整验收无法通过。当前登记规则允许的唯一非零阶段是带明确幂等拒绝事实的重复
+  提交；`live-check` 需证明 `network_accessed=false` 与 `orders_sent=false`，其它必需阶段须成功。
+
+## Venue EvidenceBundle 生产（WP-5.2，2026-10-16）
+
+仓内 `qx-cli evidence pack-venue-acceptance <验收目录> --operator <操作人>` 可将一份真实验收
+窗口聚合为 `venue.evidence.json`。它只接受 Binance testnet / OKX sandbox 的
+`outcome=pass`、`credentials_present=true`、`send_orders=true` 结果，并核对运行检查、提交及
+幂等重复提交、worker 恢复、对账和终态状态阶段。普通 dry-run、`skipped`、失败、Paper 与本地
+回测均不能生成 L3 bundle。验收产物记录窗口 epoch 毫秒起止时间；bundle 只保存配置脱敏摘要、
+来源文件摘要与相对日志文件名，不复制可能包含敏感诊断的阶段输出。
+
+`pack-venue-acceptance` 负责从本仓验收产物生产候选 bundle；之后仍需由受信操作人执行
+`qx-cli evidence sign`，接收方使用独立可信公钥执行 `verify`。签名证明内容完整性，不替代对
+真实订单、交易所账户记录和验收环境的人工/外部核验。没有实际通过的 testnet/sandbox 窗口与签名
+记录时，能力登记仍保持 `sandbox_tested: false`；L4 mainnet producer 仍未实现。
+
+## 第三方策略构建材料（WP-5.2，2026-10-16）
+
+`evidence export-run` 可用 `--build-attestation <PATH>` 附加第三方策略的构建材料。必须同时提供
+`--runtime-config`；证明中的 `strategy_id` 与目标 RunManifest 策略一致，`artifact_sha256` 与运行时配置
+声明的策略工件摘要一致。`schema_version=1` 证明至少列出 `source`、`dependency_lock`、
+`build_recipe`、`toolchain` 四类材料；每项以证明文件所在目录为根，使用目录内相对路径和 SHA-256。
+源码修订字段必须是 40 或 64 位十六进制提交标识。导出时逐件核对并搬运材料，包内的
+`build/attestation.json` 和每个材料文件都进入 EvidenceBundle 工件摘要；`verify-run` 会再次核对
+材料名册与配置中的策略身份/工件摘要。
+
+此 attestation 记录并绑定第三方提供的构建声明，不会自行重建其二进制，也不证明源码能产生该二进制。
+完整的第三方可复现构建、OS 级断网复算和 L4 mainnet 证据仍未完成。

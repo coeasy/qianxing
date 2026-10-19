@@ -3,14 +3,13 @@
 """
 牵星 Qianxing — 核心语义验证原型（Python）
 
-用途有二：
-  1. 在与 Rust 实现**相同的算法语义**下独立复算，交叉验证设计正确性
-     （因果队列排序、确定性重放、point-in-time 可见性、撮合模型）。
-  2. 作为未来 Python 控制面（PyO3 绑定之上）的语义骨架。
+用途：保留为设计期 Python 参考模型，帮助阅读和讨论因果队列、确定性重放、point-in-time
+可见性与撮合模型。它不是 Rust 正确性的对拍证据，也不作为 CI 门禁；生产语义以 Rust
+实现及其常驻行为用例为准。
 
 注意：本文件只验证**语义**，不代表性能。性能必须以 Rust 实测为准。
 
-运行： python3 tools/validate_core.py
+手动运行： python3 tools/validate_core.py
 """
 
 from __future__ import annotations

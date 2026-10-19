@@ -1,0 +1,1 @@
+{"allow_odd_lot_sell":true,"board":"main","commission_bp":3,"corporate_actions":[],"enabled":false,"halted_timestamps":[],"limit_down_bp":1000,"limit_up_bp":1000,"lot_size":100000000000,"min_commission":5000000000,"previous_close_raw":{},"price_tick":10000000,"session_windows":[],"stamp_duty_bp":5,"t_plus_one":true,"trading_timestamps":[],"transfer_fee_bp":1}

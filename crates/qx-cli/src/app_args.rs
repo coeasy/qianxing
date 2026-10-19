@@ -109,6 +109,18 @@ pub(crate) enum AppCommand {
         /// `RunMultiMarketExperimentSpec` JSON 的路径。
         spec: PathBuf,
     },
+    /// 同一账户共享 Rust Bar 引擎执行多市场策略组合。
+    #[command(name = "multi-market-backtest")]
+    MultiMarketBacktest {
+        /// `MultiMarketBacktestSpec` JSON 的路径。
+        spec: PathBuf,
+    },
+    /// 同一账户共享 Rust 订单簿引擎执行多市场深度策略组合。
+    #[command(name = "multi-market-depth-backtest")]
+    MultiMarketDepthBacktest {
+        /// `MultiMarketDepthBacktestSpec` JSON 的路径。
+        spec: PathBuf,
+    },
     /// L1 Tick 或 L2/L3 订单簿回测（复用 Rust 深度撮合内核）。
     #[command(name = "depth-backtest")]
     DepthBacktest {

@@ -71,8 +71,8 @@ fn artifacts(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
         .to_string();
     (
         manifest,
-        runs.join(format!("{stem}.summary.json")),
-        runs.join(format!("{stem}.equity.csv")),
+        runs.join(format!("{stem}.v7.summary.json")),
+        runs.join(format!("{stem}.v7.equity.csv")),
     )
 }
 
@@ -250,7 +250,7 @@ fn depth_execution_model_flags_change_results_and_are_recorded() {
     assert!(
         has_descriptor(
             &baseline,
-            "latency_snapshots=0 queue_position_bps=0 market_impact_bps=0"
+            "latency_snapshots=0 queue_position_bps=0 queue_position=disabled market_impact_bps=0"
         ),
         "摘要没有写出实际撮合模型参数: {:?}",
         baseline["model_descriptors"]

@@ -27,20 +27,20 @@ impl ApiService {
                     return app::respond(Err(qx_app::AppError::new(
                         qx_app::AppErrorCategory::PermissionDenied,
                         "认证主体未被授予控制权限",
-                    )))
+                    )));
                 }
             },
             (Some(_), None) => {
                 return app::respond(Err(qx_app::AppError::new(
                     qx_app::AppErrorCategory::PermissionDenied,
                     "Paper/Live 控制命令需要认证 Operator",
-                )))
+                )));
             }
             (None, _) if workflow == TradeWorkflow::Live => {
                 return app::respond(Err(qx_app::AppError::new(
                     qx_app::AppErrorCategory::PermissionDenied,
                     "Live 控制命令要求配置 Operator 权限策略和客户端认证",
-                )))
+                )));
             }
             (None, _) => spec.command.permission,
         };
@@ -59,7 +59,7 @@ impl ApiService {
                 return app::respond(Err(qx_app::AppError::new(
                     qx_app::AppErrorCategory::InternalInvariant,
                     format!("编码已验证控制命令失败: {error}"),
-                )))
+                )));
             }
         };
         self.submit_command(&command_json, ts, authenticated)
@@ -105,10 +105,7 @@ impl ApiService {
                     eprintln!("[qx-api] 控制命令入队失败，等 worker 补入: {error}");
                 }
             }
-            return ApiResponse::json(
-                202,
-                serde_json::to_string(&audit).expect("audit is serializable"),
-            );
+            return serialized_json_response(202, &audit);
         }
         let mut state = match lock_state(&self.state) {
             Ok(state) => state,
@@ -116,10 +113,7 @@ impl ApiService {
         };
         let result = state.control.submit_as(command, granted, ts);
         match result {
-            Ok(audit) => ApiResponse::json(
-                202,
-                serde_json::to_string(&audit).expect("audit is serializable"),
-            ),
+            Ok(audit) => serialized_json_response(202, &audit),
             Err(error) => {
                 let status = match error {
                     ControlError::Forbidden => 403,

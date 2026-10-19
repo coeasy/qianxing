@@ -4,7 +4,9 @@
 //! 错误退出，而 14 处 `context.should_stop()` 读的令牌没有任何生产者。这里补上生产者，
 //! 并给汇合设 `shutdown_timeout_ms` 上限，让"优雅停机"这句话在命令面上真的成立。
 
-use super::*;
+use std::{thread, time::Duration};
+
+use qx_runtime::RuntimeSupervisor;
 
 /// 等 worker 线程结束；期间收到终止请求就转成停机请求，并等它按预算退出。
 ///
@@ -32,7 +34,7 @@ pub(crate) fn join_worker_handle(
         qx_runtime::WorkerLadder::StopTimedOut { waited_ms } => {
             return Err(format!(
                 "{label} 收到停机请求后 {waited_ms}ms 仍未退出，超过 shutdown_timeout_ms"
-            ))
+            ));
         }
     }
     handle.join().map_err(|error| {

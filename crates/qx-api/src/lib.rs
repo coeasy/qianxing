@@ -26,12 +26,11 @@ pub use control_reads::*;
 pub use admission::validate_admission_config;
 use admission::{
     is_websocket_upgrade, preflight, query_param, ConnectionBudget, CorsPolicy, Preflight,
-    DEFAULT_MAX_CONCURRENT_CONNECTIONS,
 };
 use event_cursor::{events_after_cursor, parse_after_cursor};
 use qx_app::TradeWorkflow;
 use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
-use qx_core::{contract::contract_matrix_json, Event, EventKind, EventLog, Fnv1a, LedgerEntry};
+use qx_core::{Event, EventKind, EventLog, Fnv1a, LedgerEntry};
 use qx_protocol::{
     AccountSnapshot, ProjectionEnvelope, ProjectionLineage, ACCOUNT_SNAPSHOT_JSON_SCHEMA,
     PROJECTION_ENVELOPE_SCHEMA_VERSION,
@@ -44,8 +43,7 @@ use read_scope::{
     projection_key_from_query, scope_keeps_account, scope_keeps_venue, ScopeFilter,
     PROJECTION_SCOPED_ROUTES,
 };
-use rustls::pki_types::CertificateDer;
-use rustls::ServerConfig;
+use rustls::{pki_types::CertificateDer, ServerConfig};
 use serde::{Deserialize, Serialize};
 use snapshot_history::SnapshotHistory;
 pub(crate) use state_lock::{lock_state, read_error_response};
@@ -66,6 +64,8 @@ use transport::{
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum EventBusError {
     CapacityMustBePositive,
+    MutexPoisoned,
+    CondvarPoisoned,
     SequenceGap { expected: u64, actual: u64 },
     CursorTooOld { requested: u64, oldest: u64 },
     CursorAhead { requested: u64, next_seq: u64 },
@@ -82,7 +82,7 @@ struct EventBusState {
 
 impl Default for ApiEventBus {
     fn default() -> Self {
-        Self::new(4096).expect("default API event bus capacity must be valid")
+        Self::with_valid_capacity(4096)
     }
 }
 
@@ -91,7 +91,11 @@ impl ApiEventBus {
         if capacity == 0 {
             return Err(EventBusError::CapacityMustBePositive);
         }
-        Ok(Self {
+        Ok(Self::with_valid_capacity(capacity))
+    }
+
+    fn with_valid_capacity(capacity: usize) -> Self {
+        Self {
             inner: Arc::new((
                 Mutex::new(EventBusState {
                     capacity,
@@ -100,13 +104,13 @@ impl ApiEventBus {
                 }),
                 Condvar::new(),
             )),
-        })
+        }
     }
 
     /// 发布不可变事件；事件序号必须是连续的，避免订阅者把丢序误当成当前状态。
     pub fn publish(&self, event: Event) -> Result<(), EventBusError> {
         let (lock, wake) = &*self.inner;
-        let mut state = lock.lock().expect("event bus mutex poisoned");
+        let mut state = lock.lock().map_err(|_| EventBusError::MutexPoisoned)?;
         if event.seq != state.next_seq {
             return Err(EventBusError::SequenceGap {
                 expected: state.next_seq,
@@ -121,15 +125,19 @@ impl ApiEventBus {
         wake.notify_all();
         Ok(())
     }
-    pub fn next_seq(&self) -> u64 {
+    pub fn next_seq(&self) -> Result<u64, EventBusError> {
         self.inner
             .0
             .lock()
-            .expect("event bus mutex poisoned")
-            .next_seq
+            .map(|state| state.next_seq)
+            .map_err(|_| EventBusError::MutexPoisoned)
     }
     pub fn read_after(&self, after: Option<u64>) -> Result<Vec<Event>, EventBusError> {
-        let state = self.inner.0.lock().expect("event bus mutex poisoned");
+        let state = self
+            .inner
+            .0
+            .lock()
+            .map_err(|_| EventBusError::MutexPoisoned)?;
         read_bus_events(&state, after)
     }
     /// 等待新事件；超时返回空批次，游标越界/超前始终显式报错。
@@ -139,7 +147,7 @@ impl ApiEventBus {
         timeout: Duration,
     ) -> Result<Vec<Event>, EventBusError> {
         let (lock, wake) = &*self.inner;
-        let mut state = lock.lock().expect("event bus mutex poisoned");
+        let mut state = lock.lock().map_err(|_| EventBusError::MutexPoisoned)?;
         let deadline = Instant::now() + timeout;
         loop {
             let events = read_bus_events(&state, after)?;
@@ -152,7 +160,7 @@ impl ApiEventBus {
             }
             let (next, result) = wake
                 .wait_timeout(state, remaining)
-                .expect("event bus condvar poisoned");
+                .map_err(|_| EventBusError::CondvarPoisoned)?;
             state = next;
             if result.timed_out() {
                 return Ok(Vec::new());
@@ -179,15 +187,19 @@ impl TlsConfigStore {
         }
     }
 
-    pub fn current(&self) -> Arc<ServerConfig> {
-        Arc::clone(&self.current.read().expect("TLS config store lock poisoned"))
+    pub fn current(&self) -> Result<Arc<ServerConfig>, String> {
+        self.current
+            .read()
+            .map(|config| Arc::clone(&config))
+            .map_err(|_| "TLS config store lock poisoned".to_string())
     }
 
-    pub fn replace(&self, config: Arc<ServerConfig>) {
+    pub fn replace(&self, config: Arc<ServerConfig>) -> Result<(), String> {
         *self
             .current
             .write()
-            .expect("TLS config store lock poisoned") = config;
+            .map_err(|_| "TLS config store lock poisoned".to_string())? = config;
+        Ok(())
     }
 }
 
@@ -253,17 +265,17 @@ impl TlsPemReloader {
             let last = self
                 .last_stamp
                 .lock()
-                .expect("TLS PEM reloader lock poisoned");
+                .map_err(|_| "TLS PEM reloader lock poisoned".to_string())?;
             if last.as_ref() == Some(&stamp) {
                 return Ok(false);
             }
         }
         let config = self.load()?;
-        store.replace(config);
+        store.replace(config)?;
         *self
             .last_stamp
             .lock()
-            .expect("TLS PEM reloader lock poisoned") = Some(stamp);
+            .map_err(|_| "TLS PEM reloader lock poisoned".to_string())? = Some(stamp);
         Ok(true)
     }
 }
@@ -320,19 +332,20 @@ impl MtlsIdentityStore {
         }
     }
 
-    pub fn current(&self) -> Arc<MtlsIdentityPolicy> {
+    pub fn current(&self) -> Result<Arc<MtlsIdentityPolicy>, String> {
         let current = self
             .current
             .read()
-            .expect("mTLS identity store lock poisoned");
-        Arc::clone(&current)
+            .map_err(|_| "mTLS identity store lock poisoned".to_string())?;
+        Ok(Arc::clone(&current))
     }
 
-    pub fn replace(&self, policy: MtlsIdentityPolicy) {
+    pub fn replace(&self, policy: MtlsIdentityPolicy) -> Result<(), String> {
         *self
             .current
             .write()
-            .expect("mTLS identity store lock poisoned") = Arc::new(policy);
+            .map_err(|_| "mTLS identity store lock poisoned".to_string())? = Arc::new(policy);
+        Ok(())
     }
 }
 
@@ -386,17 +399,17 @@ impl MtlsIdentityPemReloader {
             let last = self
                 .last_stamps
                 .lock()
-                .expect("mTLS identity reloader lock poisoned");
+                .map_err(|_| "mTLS identity reloader lock poisoned".to_string())?;
             if last.as_ref() == Some(&stamps) {
                 return Ok(false);
             }
         }
         let policy = self.load()?;
-        store.replace(policy);
+        store.replace(policy)?;
         *self
             .last_stamps
             .lock()
-            .expect("mTLS identity reloader lock poisoned") = Some(stamps);
+            .map_err(|_| "mTLS identity reloader lock poisoned".to_string())? = Some(stamps);
         Ok(true)
     }
 }
@@ -456,7 +469,10 @@ pub struct ApiAccountProjection {
 impl ApiAccountProjection {
     fn append_projected_event(&mut self, event: Event) -> Result<(), String> {
         let expected = self.events.next_seq();
-        let bus_expected = self.event_bus.next_seq();
+        let bus_expected = self
+            .event_bus
+            .next_seq()
+            .map_err(|error| format!("读取账户投影事件总线序号失败: {error:?}"))?;
         if event.seq != expected || event.seq != bus_expected {
             return Err(format!(
                 "账户投影事件游标不连续: event_seq={} event_log_next={} event_bus_next={}",
@@ -636,11 +652,11 @@ impl ApiState {
         let hash = snapshot.state_hash();
         self.snapshot_history.insert(hash, snapshot.clone());
         self.snapshot = Some(snapshot);
-        if !self.snapshot.as_ref().is_some_and(|snapshot| {
-            snapshot.header.account_id.trim().is_empty()
-                || snapshot.header.venue_id.trim().is_empty()
+        if let Some(snapshot) = self.snapshot.as_ref().filter(|snapshot| {
+            !snapshot.header.account_id.trim().is_empty()
+                && !snapshot.header.venue_id.trim().is_empty()
         }) {
-            let snapshot = self.snapshot.clone().expect("snapshot was just stored");
+            let snapshot = snapshot.clone();
             let key = ApiProjectionKey::new(
                 snapshot.header.account_id.clone(),
                 snapshot.header.venue_id.clone(),
@@ -692,7 +708,10 @@ impl ApiState {
 
     fn append_projected_event(&mut self, event: Event) -> Result<(), String> {
         let expected = self.events.next_seq();
-        let bus_expected = self.event_bus.next_seq();
+        let bus_expected = self
+            .event_bus
+            .next_seq()
+            .map_err(|error| format!("读取 API 投影事件总线序号失败: {error:?}"))?;
         if event.seq != expected || event.seq != bus_expected {
             return Err(format!(
                 "API 投影事件游标不连续: event_seq={} event_log_next={} event_bus_next={}",
@@ -712,7 +731,10 @@ impl ApiState {
     /// 读模型，不应被当作交易事实源。该入口保留 `EventLog::alloc_seq` 后再
     /// 发布的历史调用方式，但仍要求 EventBus 序号连续。
     pub fn publish_event(&mut self, event: Event) -> Result<(), String> {
-        let bus_expected = self.event_bus.next_seq();
+        let bus_expected = self
+            .event_bus
+            .next_seq()
+            .map_err(|error| format!("读取 API 内部事件总线序号失败: {error:?}"))?;
         if event.seq != bus_expected {
             return Err(format!(
                 "API 内部事件总线游标不连续: event_seq={} event_bus_next={}",
@@ -941,10 +963,55 @@ pub struct ApiResponse {
     pub content_type: String,
     pub body: String,
 }
+pub const API_READINESS_SCHEMA_VERSION: u32 = 2;
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct ApiReadiness {
+    pub schema_version: u32,
     pub ready: bool,
     pub detail: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub readiness_layers: BTreeMap<String, serde_json::Value>,
+}
+
+fn unconfigured_readiness_layers() -> BTreeMap<String, serde_json::Value> {
+    BTreeMap::from([
+        (
+            "R".into(),
+            serde_json::json!({
+                "status": "not_assessed",
+                "scope": "research",
+                "evidence": [],
+                "detail": "没有配置 readiness provider",
+            }),
+        ),
+        (
+            "P".into(),
+            serde_json::json!({
+                "status": "not_assessed",
+                "scope": "paper_execution",
+                "evidence": [],
+                "detail": "没有配置 readiness provider",
+            }),
+        ),
+        (
+            "O".into(),
+            serde_json::json!({
+                "status": "pass",
+                "scope": "api_process",
+                "evidence": ["api_service"],
+                "detail": "进程内 API 未配置外部 readiness provider",
+            }),
+        ),
+        (
+            "L".into(),
+            serde_json::json!({
+                "status": "not_assessed",
+                "scope": "live_account",
+                "evidence": [],
+                "detail": "没有配置 production readiness provider",
+            }),
+        ),
+    ])
 }
 /// 对账读模型。订单差异和余额差异保留为 JSON 事实，避免 API 层依赖某个
 /// Venue 适配器的枚举；写入前由 Reconcile worker 生成并校验 schema_version。
@@ -1323,35 +1390,11 @@ impl ApiService {
             }
             None => (state.snapshot.clone(), state.events.digest()),
         };
-        Ok(snapshot.map(|snapshot| {
-            let event_seq = snapshot.header.event_seq;
-            let state_hash = snapshot.state_hash();
-            ProjectionEnvelope {
-                schema_version: PROJECTION_ENVELOPE_SCHEMA_VERSION,
-                kind: "account_snapshot".into(),
-                tenant_id: snapshot.header.account_id.clone(),
-                run_id: format!(
-                    "account:{}:{}",
-                    snapshot.header.account_id, snapshot.header.venue_id
-                ),
-                account_id: snapshot.header.account_id.clone(),
-                portfolio_id: snapshot.header.portfolio_id.clone(),
-                venue_id: snapshot.header.venue_id.clone(),
-                as_of: snapshot.header.as_of,
-                event_seq,
-                cursor: format!("{event_seq}:{state_hash:016x}"),
-                state_hash,
-                source: "eventlog".into(),
-                lineage: ProjectionLineage {
-                    source_digest: format!("{source_digest:016x}"),
-                    ..ProjectionLineage::default()
-                },
-                // `data` 只认 `to_json` 这一份线格式（V12 R4-h）：`/schema/account-snapshot-v1`
-                // 公布的就是它。`AccountSnapshot` 的 serde 派生形状没有 `protocol`/顶层
-                // `schema_version`，照 schema 校验必失败——同一端点家族不能发两种契约。
-                data: serde_json::from_str(&snapshot.to_json()).expect("账户快照线格式必须可解析"),
-            }
-        }))
+        let Some(snapshot) = snapshot else {
+            return Ok(None);
+        };
+        let envelope = app_surface_route::account_snapshot_envelope(snapshot, source_digest)?;
+        Ok(Some(envelope))
     }
 
     #[cfg(test)]
@@ -1465,19 +1508,45 @@ impl ApiService {
                     .as_ref()
                     .map(|provider| provider())
                     .unwrap_or(ApiReadiness {
+                        schema_version: API_READINESS_SCHEMA_VERSION,
                         ready: true,
                         detail: "api_ready".into(),
+                        readiness_layers: unconfigured_readiness_layers(),
                     });
                 if let Some(detail) = self.projection_readiness() {
                     readiness.ready = false;
-                    readiness.detail = detail;
+                    readiness.detail = detail.clone();
+                    if let Some(layer) = readiness.readiness_layers.get_mut("O") {
+                        layer["status"] = serde_json::json!("blocked");
+                        layer["detail"] = serde_json::json!(detail);
+                        if let Some(evidence) = layer
+                            .get_mut("evidence")
+                            .and_then(serde_json::Value::as_array_mut)
+                        {
+                            if !evidence.iter().any(|item| item == "projection_health") {
+                                evidence.push(serde_json::json!("projection_health"));
+                            }
+                        }
+                    }
+                    if let Some(layer) = readiness.readiness_layers.get_mut("L") {
+                        let was_pass =
+                            layer.get("status").and_then(serde_json::Value::as_str) == Some("pass");
+                        if was_pass {
+                            layer["status"] = serde_json::json!("blocked");
+                            layer["detail"] = serde_json::json!(detail);
+                            if let Some(evidence) = layer
+                                .get_mut("evidence")
+                                .and_then(serde_json::Value::as_array_mut)
+                            {
+                                if !evidence.iter().any(|item| item == "projection_health") {
+                                    evidence.push(serde_json::json!("projection_health"));
+                                }
+                            }
+                        }
+                    }
                 }
                 let status = if readiness.ready { 200 } else { 503 };
-                ApiResponse::json(
-                    status,
-                    serde_json::to_string(&readiness)
-                        .expect("API readiness snapshot is serializable"),
-                )
+                serialized_json_response(status, &readiness)
             }
             ("GET", "/metrics") => {
                 let mut body = self.metrics().to_prometheus();
@@ -1503,21 +1572,17 @@ qx_control_retired_audit_records_total {}\n",
             ("GET", "/schema/account-snapshot-v1") => {
                 ApiResponse::json(200, ACCOUNT_SNAPSHOT_JSON_SCHEMA)
             }
-            ("GET", "/schema/contract-matrix") => ApiResponse::json(200, contract_matrix_json()),
+            ("GET", "/schema/contract-matrix") => app_surface_route::contract_matrix_response(),
             ("GET", "/account/snapshot/envelope") => {
                 match self.snapshot_envelope_for_query(query) {
                     Err(error) => read_error_response(&error),
-                    Ok(Some(envelope)) => ApiResponse::json(
-                        200,
-                        serde_json::to_string(&envelope)
-                            .expect("projection envelope is serializable"),
-                    ),
+                    Ok(Some(envelope)) => serialized_json_response(200, &envelope),
                     Ok(None) => ApiResponse::json(404, "{\"error\":\"snapshot_not_found\"}"),
                 }
             }
             ("GET", "/account/snapshot") => match self.snapshot_for_query(query) {
                 Err(error) => read_error_response(&error),
-                Ok(Some(snapshot)) => ApiResponse::json(200, snapshot.to_json()),
+                Ok(Some(snapshot)) => app_surface_route::account_snapshot_response(snapshot),
                 Ok(None) => ApiResponse::json(404, "{\"error\":\"snapshot_not_found\"}"),
             },
             ("GET", "/account/orders") => {
@@ -1528,10 +1593,7 @@ qx_control_retired_audit_records_total {}\n",
                 let orders = snapshot
                     .map(|snapshot| snapshot.orders.into_values().collect::<Vec<_>>())
                     .unwrap_or_default();
-                ApiResponse::json(
-                    200,
-                    serde_json::to_string(&orders).expect("order snapshots are serializable"),
-                )
+                serialized_json_response(200, &orders)
             }
             ("GET", "/account/positions") => {
                 let snapshot = match self.snapshot_for_query(query) {
@@ -1541,10 +1603,7 @@ qx_control_retired_audit_records_total {}\n",
                 let positions = snapshot
                     .map(|snapshot| snapshot.positions.into_values().collect::<Vec<_>>())
                     .unwrap_or_default();
-                ApiResponse::json(
-                    200,
-                    serde_json::to_string(&positions).expect("position snapshots are serializable"),
-                )
+                serialized_json_response(200, &positions)
             }
             ("GET", "/account/balances") => {
                 let snapshot = match self.snapshot_for_query(query) {
@@ -1560,17 +1619,11 @@ qx_control_retired_audit_records_total {}\n",
                 ApiResponse::json(200, body.to_string())
             }
             ("GET", "/control/audit") => match self.control_plane_live() {
-                Ok(plane) => ApiResponse::json(
-                    200,
-                    serde_json::to_string(&plane.audit()).expect("audit is serializable"),
-                ),
+                Ok(plane) => serialized_json_response(200, &plane.audit()),
                 Err(error) => ApiResponse::json(503, error_json(&error)),
             },
             ("GET", "/scheduler/runs") => match self.query_models() {
-                Ok(models) => ApiResponse::json(
-                    200,
-                    serde_json::to_string(&models.job_runs).expect("job runs are serializable"),
-                ),
+                Ok(models) => serialized_json_response(200, &models.job_runs),
                 Err(error) => ApiResponse::json(503, error_json(&error)),
             },
             ("GET", "/account/ledger") => match ScopeFilter::from_query(query) {
@@ -1582,11 +1635,7 @@ qx_control_retired_audit_records_total {}\n",
                             .into_iter()
                             .filter(|entry| scope_keeps_account(scope.as_ref(), &entry.account_id))
                             .collect();
-                        ApiResponse::json(
-                            200,
-                            serde_json::to_string(&entries)
-                                .expect("ledger entries are serializable"),
-                        )
+                        serialized_json_response(200, &entries)
                     }
                     Err(error) => ApiResponse::json(503, error_json(&error)),
                 },
@@ -1603,11 +1652,7 @@ qx_control_retired_audit_records_total {}\n",
                                     && scope_keeps_venue(scope.as_ref(), &report.venue_id)
                             })
                             .collect();
-                        ApiResponse::json(
-                            200,
-                            serde_json::to_string(&reports)
-                                .expect("reconcile reports are serializable"),
-                        )
+                        serialized_json_response(200, &reports)
                     }
                     Err(error) => ApiResponse::json(503, error_json(&error)),
                 },
@@ -1739,11 +1784,7 @@ qx_control_retired_audit_records_total {}\n",
                     .into_iter()
                     .map(|event| event_projection_envelope(event, "api-event-bus"))
                     .collect::<Vec<_>>();
-                ApiResponse::json(
-                    200,
-                    serde_json::to_string(&envelopes)
-                        .expect("projection event envelopes are serializable"),
-                )
+                serialized_json_response(200, &envelopes)
             }
             Err(EventBusError::CursorTooOld { .. } | EventBusError::CursorAhead { .. }) => {
                 ApiResponse::json(409, error_json("event_cursor_requires_snapshot"))
@@ -1784,10 +1825,7 @@ qx_control_retired_audit_records_total {}\n",
             return ApiResponse::json(409, error_json("snapshot_base_not_found"));
         };
         match base.diff(target) {
-            Ok(diff) => ApiResponse::json(
-                200,
-                serde_json::to_string(&diff).expect("snapshot diff is serializable"),
-            ),
+            Ok(diff) => serialized_json_response(200, &diff),
             Err(error) => ApiResponse::json(409, error_json(&format!("{error:?}"))),
         }
     }
@@ -1955,7 +1993,16 @@ qx_control_retired_audit_records_total {}\n",
                 self.refuse_over_budget(&stream);
                 continue;
             };
-            let secured = match tls_stream(stream, configs.current()) {
+            let config = match configs.current() {
+                Ok(config) => config,
+                Err(error) => {
+                    break Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("读取 TLS 配置失败: {error}"),
+                    ));
+                }
+            };
+            let secured = match tls_stream(stream, config) {
                 Ok(stream) => stream,
                 // 一次握手失败只是这一条连接的失败：探活脚本往 mTLS 端口发一条明文，
                 // 或客户端只支持一套我们没配的密码，都不该把整个监听循环带走
@@ -1966,7 +2013,15 @@ qx_control_retired_audit_records_total {}\n",
                     continue;
                 }
             };
-            let policy = identities.current();
+            let policy = match identities.current() {
+                Ok(policy) => policy,
+                Err(error) => {
+                    break Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("读取 mTLS 身份策略失败: {error}"),
+                    ));
+                }
+            };
             let operator_id = policy
                 .operator_for(secured.conn.peer_certificates())
                 .map(str::to_string);
@@ -2046,7 +2101,7 @@ qx_control_retired_audit_records_total {}\n",
 /// 默认并发连接预算。256 是常量而不是 `expect` 里的一句字面量，这样
 /// `deploy/README.md` 与 `admission` 模块头提到的那个数只有这一个定义点。
 fn default_connection_budget() -> Arc<ConnectionBudget> {
-    ConnectionBudget::new(DEFAULT_MAX_CONCURRENT_CONNECTIONS).expect("默认并发连接预算必须是正数")
+    ConnectionBudget::default_budget()
 }
 
 fn event_projection_envelope(event: Event, source_digest: &str) -> ProjectionEnvelope<Event> {
@@ -2148,11 +2203,17 @@ impl QueryPort for ApiService {
 }
 
 pub(crate) fn error_json(message: &str) -> String {
-    format!("{{\"error\":{}}}", json_string(message))
+    serde_json::json!({ "error": message }).to_string()
 }
 
-fn json_string(value: &str) -> String {
-    serde_json::to_string(value).expect("string serialization cannot fail")
+pub(crate) fn serialized_json_response<T: Serialize>(status: u16, value: &T) -> ApiResponse {
+    match serde_json::to_string(value) {
+        Ok(body) => ApiResponse::json(status, body),
+        Err(error) => ApiResponse::json(
+            500,
+            error_json(&format!("API JSON serialization failed: {error}")),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -2226,8 +2287,10 @@ mod tests {
     fn readiness_separates_liveness_from_dependency_health() {
         let service =
             ApiService::new(ApiState::default()).with_readiness_provider(|| ApiReadiness {
+                schema_version: API_READINESS_SCHEMA_VERSION,
                 ready: false,
                 detail: "control_store_unavailable".into(),
+                readiness_layers: BTreeMap::new(),
             });
         assert_eq!(service.handle("GET", "/health", "", 1).status, 200);
         let ready = service.handle("GET", "/ready", "", 2);
@@ -2700,11 +2763,14 @@ mod tests {
         assert_eq!(
             store
                 .current()
+                .expect("identity store lock is healthy")
                 .operator_for(Some(std::slice::from_ref(&first_certificate))),
             Some("ops-old")
         );
-        store.replace(second);
-        let current = store.current();
+        store
+            .replace(second)
+            .expect("identity store lock is healthy");
+        let current = store.current().expect("identity store lock is healthy");
         assert_eq!(
             current.operator_for(Some(std::slice::from_ref(&second_certificate))),
             Some("ops-new")
@@ -2728,9 +2794,17 @@ mod tests {
                 .with_cert_resolver(Arc::new(NoCertificateResolver)),
         );
         let store = TlsConfigStore::new(Arc::clone(&first));
-        assert!(Arc::ptr_eq(&store.current(), &first));
-        store.replace(Arc::clone(&second));
-        assert!(Arc::ptr_eq(&store.current(), &second));
+        assert!(Arc::ptr_eq(
+            &store.current().expect("TLS config lock is healthy"),
+            &first
+        ));
+        store
+            .replace(Arc::clone(&second))
+            .expect("TLS config lock is healthy");
+        assert!(Arc::ptr_eq(
+            &store.current().expect("TLS config lock is healthy"),
+            &second
+        ));
     }
 
     #[test]

@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "benchmark": "borrowed_vs_owned_replay_with_ledger_facts",
+  "date": "2026-10-17",
+  "host": {
+    "os": "Windows",
+    "target": "x86_64-pc-windows-msvc",
+    "cpu": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "profile": "bench (optimized)",
+    "benchmark_binary_sha256": "40dd870f5371dc8e2ec5be1460ba4b9c4c8519e2bbecfd55ba7791f1dbdf1792"
+  },
+  "command": "cargo bench --offline -p qx-cli --bench criterion_performance -- ledger_replay --warm-up-time 2 --measurement-time 3 --sample-size 20",
+  "source_sha256": {
+    "crates/qx-core/src/sourcing.rs": "c718183134215d5b29fe677e7da690f466e4cdbe57d3c4a10d0ae393a057d272",
+    "crates/qx-cli/benches/criterion_performance.rs": "38b1899a53d7d9aec2a85e5a64063da4fa8ad282525d99de62012c2b11fac567",
+    "crates/qx-cli/src/run_evidence_multi_market_pack.rs": "ab577c991f9221a5812e8bb1cd44a8a10c52ab93fb062615bd90c2146beed132",
+    "crates/qx-cli/src/run_evidence_multi_market_depth.rs": "4c79a142893bf050bbf6b1894439306d419603f65f1167e2c981a7fac378a007",
+    "crates/qx-cli/src/run_evidence_experiment_recompute.rs": "c9e9476d5e637d4f60b3744871ce1c0c13526b5791c2575147dcc7464f096dc1"
+  },
+  "workload": {
+    "events": "One LedgerApplied Adjustment event per sequential ledger entry, all under one account and currency.",
+    "operation": "ReplayVerifier::replay(&[Event]) compared with ReplayVerifier::replay_owned(Vec<Event>), including EventLog append/validation/digest and Ledger projection.",
+    "criterion_samples": 20,
+    "warmup_seconds": 2,
+    "measurement_seconds": 3,
+    "timing_boundary": "Input fixture cloning for replay_owned uses Criterion iter_batched setup and is outside the measured routine; event cloning performed by the borrowed replay routine remains inside its measured routine.",
+    "pre_timing_checks": [
+      "Borrowed and owned paths produce identical EventLog event sequences.",
+      "Borrowed and owned paths produce identical Ledger entries and cash projection.",
+      "Replayed event and ledger entry counts equal the input count."
+    ]
+  },
+  "results": [
+    {
+      "events": 1000,
+      "borrowed": {"median_us": 1287.8, "estimate_range_us": [1279.6, 1297.4]},
+      "owned": {"median_us": 1198.4, "estimate_range_us": [1191.7, 1205.9]},
+      "speedup": 1.0746
+    },
+    {
+      "events": 8000,
+      "borrowed": {"median_us": 11959, "estimate_range_us": [11790, 12094]},
+      "owned": {"median_us": 10623, "estimate_range_us": [10585, 10676]},
+      "speedup": 1.1258
+    },
+    {
+      "events": 64000,
+      "borrowed": {"median_us": 104250, "estimate_range_us": [103810, 104720]},
+      "owned": {"median_us": 95546, "estimate_range_us": [95327, 95797]},
+      "speedup": 1.0911
+    }
+  ],
+  "limitations": [
+    "Synthetic Adjustment entries, one account and one currency; no representative multi-position market workload.",
+    "Same-source borrowed-versus-owned API comparison, not a historical binary A/B.",
+    "No allocator counts, disk I/O, strategy execution, market-data processing, or end-to-end A-share profile measurement."
+  ]
+}

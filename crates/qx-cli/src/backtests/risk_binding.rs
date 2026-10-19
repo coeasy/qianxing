@@ -1,6 +1,8 @@
 //! 命令行回测入口的风控绑定与 `--config` 旗标（V10 §4.2 的收口落点）。
 
-use super::*;
+use crate::{config_margin_mode, read_runtime_config, strategy_allows_short, strategy_risk_gate};
+use qx_zhenlu::RiskGate;
+use std::path::Path;
 
 /// 命令行回测入口（`backtest builtin` / `multi-builtin` / `book`）读取风控规则的单一落点。
 ///
@@ -29,6 +31,18 @@ impl BacktestRiskBinding {
             "conservative-default"
         }
     }
+}
+
+/// Convert the runtime-owned risk schema once at the CLI/app boundary.
+pub(crate) fn app_backtest_risk_rules(
+    rules: Option<&qx_runtime::RiskRulesConfig>,
+) -> Option<qx_app::BacktestRiskRules> {
+    rules.map(|rules| qx_app::BacktestRiskRules {
+        version: rules.version.clone(),
+        max_qty_raw: rules.max_qty_raw,
+        max_notional_raw: rules.max_notional_raw,
+        no_short: rules.no_short,
+    })
 }
 
 pub(crate) fn backtest_risk_binding(

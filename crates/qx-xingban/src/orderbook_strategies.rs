@@ -134,13 +134,15 @@ impl<S: qx_strategy::Strategy> OrderBookStrategy for NativeOrderBookStrategy<S> 
             .insert(snapshot.instrument.to_string(), position);
         let event = match self.data_tier {
             crate::DataTier::L1 => {
-                let ([bid], [ask]) = (snapshot.bids.as_slice(), snapshot.asks.as_slice()) else {
+                if !crate::orderbook::has_l1_shape(snapshot) {
                     return Err(format!(
                         "L1 Tick 事件只接受一档 bid/ask，实际 bid={} ask={}",
                         snapshot.bids.len(),
                         snapshot.asks.len()
                     ));
-                };
+                }
+                let bid = &snapshot.bids[0];
+                let ask = &snapshot.asks[0];
                 qx_strategy::MarketEvent::Tick {
                     instrument: snapshot.instrument.clone(),
                     ts: snapshot.ts,

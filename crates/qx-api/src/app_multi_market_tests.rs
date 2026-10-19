@@ -299,6 +299,7 @@ fn multi_market_depth_experiment_sync_and_run_handle_share_candidate_engine() {
     }
     println!(
         "MULTI_MARKET_DEPTH_EXPERIMENT_OBSERVED sync_candidates={} async_candidates={} rankings=4 shared_engine=true",
-        result["completed_candidates"].as_u64().unwrap(), async_candidates
+        result["completed_candidates"].as_u64().unwrap(),
+        async_candidates
     );
 }

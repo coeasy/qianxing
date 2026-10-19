@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "rust_micro_portfolio_bar_timeline_capacity_reservation",
+  "generated_at_utc": "2026-10-18",
+  "profile": "release",
+  "command": [
+    "cargo",
+    "bench",
+    "--offline",
+    "-p",
+    "qx-cli",
+    "--bench",
+    "criterion_performance",
+    "--",
+    "portfolio_bar_timeline_64k_bars",
+    "--noplot"
+  ],
+  "criterion_version": "0.8.2",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "benchmark_executable_sha256": "9B1224366D329C424F787ABA61C5D393C0D1567EE326116B646C3D9FCC34C76E",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "system_model": "MS-7E27",
+    "physical_core_count": 8,
+    "logical_cpu_count": 16,
+    "total_ram_bytes": 65911173120
+  },
+  "method": {
+    "total_bars_per_case": 64000,
+    "market_counts": [2, 8, 32],
+    "samples_per_case": 10,
+    "warm_up_seconds": 1,
+    "measurement_seconds": 2,
+    "baseline": "PortfolioBarEvent flattening and stable sort, per-stream extension without an exact total-capacity reservation",
+    "candidate": "Same validation, event representation and stable sort, with checked total bar count and one exact Vec capacity reservation",
+    "parity": "All variants use the same sorted synthetic inputs and timestamp/priority/instrument ordering"
+  },
+  "results": [
+    {
+      "market_count": 2,
+      "baseline_mean_ns": 753535.5694444444,
+      "baseline_mean_ci95_ns": [749641.7486979167, 758111.9710937499],
+      "candidate_mean_ns": 734828.6353968254,
+      "candidate_mean_ci95_ns": [728082.4833333334, 743277.2677777777],
+      "candidate_median_ns": 728193.75,
+      "candidate_speedup_pct": 2.4837
+    },
+    {
+      "market_count": 8,
+      "baseline_mean_ns": 1297460.456486043,
+      "baseline_mean_ci95_ns": [1283316.5566502465, 1313234.0518472905],
+      "candidate_mean_ns": 1258395.1557197594,
+      "candidate_mean_ci95_ns": [1252459.1509168036, 1264168.0503557746],
+      "candidate_median_ns": 1261982.0689655172,
+      "candidate_speedup_pct": 3.0103
+    },
+    {
+      "market_count": 32,
+      "baseline_mean_ns": 2027085.1420217208,
+      "baseline_mean_ci95_ns": [2001468.5051065162, 2056969.8162071847],
+      "candidate_mean_ns": 2012073.963844797,
+      "candidate_mean_ci95_ns": [1959964.1798941798, 2077678.0],
+      "candidate_median_ns": 1963618.0555555555,
+      "candidate_speedup_pct": 0.7405,
+      "material_improvement_established": false
+    }
+  ],
+  "limitations": [
+    "Synthetic timeline construction microbenchmark only; it does not establish end-to-end backtest speedup.",
+    "The 32-market confidence intervals overlap, so a material improvement at that width is not established.",
+    "Does not change any of the nine product profile measurement statuses."
+  ]
+}

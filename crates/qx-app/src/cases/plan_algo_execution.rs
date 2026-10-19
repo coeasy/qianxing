@@ -21,7 +21,12 @@ pub fn plan_algo_execution(
                 spec.total_quantity_raw,
                 spec.start_ts,
                 spec.end_ts,
-                spec.child_count.expect("validated TWAP child_count"),
+                spec.child_count.ok_or_else(|| {
+                    AppError::new(
+                        AppErrorCategory::InternalInvariant,
+                        "validated TWAP spec is missing child_count",
+                    )
+                })?,
             ),
             AlgoExecutionMethod::Vwap => qx_zhenlu::plan_vwap(
                 &spec.parent_id,

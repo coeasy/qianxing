@@ -16,8 +16,9 @@ use super::compare_runs::COMPARE_RUNS_SCHEMA_VERSION;
 use super::experiment_grid::{
     apply_parameters, expand_grid, normalized_strategy, validate_experiment_id, validate_grid,
 };
+pub use super::experiment_split::EXPERIMENT_BASELINE_NAMES;
 use super::experiment_split::{
-    evaluate_baselines, evaluate_out_of_sample, ExperimentBaselineReport,
+    evaluate_baselines, evaluate_out_of_sample, experiment_folds, ExperimentBaselineReport,
     ExperimentOutOfSampleReport, ExperimentSplitPlan,
 };
 use super::guard::guard_panics;
@@ -40,11 +41,6 @@ pub const RUN_EXPERIMENT_SCHEMA_VERSION: u32 = 1;
 pub const MAX_EXPERIMENT_CANDIDATES: usize = 256;
 
 type StrategyFactory<'a> = dyn FnMut(&BacktestSpec) -> Result<Box<dyn Strategy>, String> + 'a;
-
-/// 基准对照的取值域。与 `qx_spec::EXPERIMENT_BASELINES` **逐值相等**——两份声明并存是
-/// 因为 `qx-app` 的依赖表是精确且被门禁逐项核过的，为三个字符串把 spec crate 拉进来会让
-/// 依赖面变宽。相等这件事由 `experiment_split_plan_check` 钉住，不靠人记得同步。
-pub const EXPERIMENT_BASELINE_NAMES: [&str; 3] = ["buy-and-hold", "zero-signal", "none"];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -183,13 +179,13 @@ impl RunExperimentSpec {
                 format!("实验最多接受 {MAX_EXPERIMENT_CANDIDATES} 个候选组合"),
             ));
         }
-        // Validate stable base fields without rejecting candidate-specific values.
         let mut base = self.base.clone();
         base.strategy.kind = kinds[0];
         base.strategy = normalized_strategy(&base.strategy, &self.parameter_space);
         base.validate()?;
         if let Some(plan) = &self.split_plan {
-            plan.validate()?;
+            plan.validate()
+                .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error))?;
         }
         let mut seen_baselines = BTreeSet::new();
         for baseline in &self.baselines {
@@ -387,7 +383,7 @@ fn run_experiment_inner(
         })?;
         let bars: Vec<_> = (&frame).into();
         if let Some(plan) = &spec.split_plan {
-            plan.folds(bars.len())?;
+            experiment_folds(plan, bars.len())?;
         }
         Some(bars)
     } else {

@@ -70,7 +70,7 @@ pub fn claimable_by(owner: &str, worker_id: &str) -> bool {
 /// 按仓库先例（#118/#170/#171）与 2026-10-06 方案 §13.2 的裁定，这三格**保留不删**
 /// （删面等于把缺口藏起来），改为在 `maturity/capabilities.yaml` 逐条登记
 /// （`job_spec_declaration_fields_have_no_production_reader`），并由
-/// `crates/qx-cli/src/tests/zero_reader_fields.rs` 的
+/// `crates/qx-cli/tests/unit/zero_reader_fields.rs` 的
 /// `zero_reader_struct_fields_stay_registered_in_capabilities` 双向钉住：
 /// 接上真读者就必须摘掉登记，偷偷删登记同样判红。
 ///

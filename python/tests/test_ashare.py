@@ -1,6 +1,8 @@
+import hashlib
 import json
 import sys
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfoNotFoundError
@@ -27,8 +29,9 @@ from qianxing_ashare import (  # noqa: E402
     SCALE,
 )
 import qianxing_ashare  # noqa: E402  只有用例替换模块属性时才需要包对象。
+from qianxing_bridge import native  # noqa: E402
 
-#: 与 Rust `crates/qx-cli/src/tests/calendar_component_fingerprint.rs` 共用的那一对夹具。
+#: 与 Rust `crates/qx-cli/tests/unit/calendar_component_fingerprint.rs` 共用的那一对夹具。
 CALENDAR_FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
@@ -60,6 +63,55 @@ class _FakeAkShare:
 
 
 class AshareTest(unittest.TestCase):
+    def test_corporate_action_business_validation_delegates_to_rust(self):
+        valid = AshareCorporateAction(
+            "000001.SZSE",
+            "2024-06-03",
+            "2024-06-01T00:00:00+08:00",
+            action_type="rights_issue",
+            rights_instrument="000001.SZSE-R",
+            rights_issue_price_raw=500_000_000,
+            rights_issue_ratio_num=1,
+        )
+        valid.validate()
+        invalid = AshareCorporateAction(
+            "000001.SZSE",
+            "2024-06-03",
+            "2024-06-01T00:00:00+08:00",
+            action_type="cash_dividend",
+            cash_dividend_raw=-1,
+        )
+        with self.assertRaises(ValueError):
+            invalid.validate()
+
+    def test_raw_integer_and_ratio_fields_reject_fractional_values(self):
+        self.assertEqual(native.decimal_to_integer_exact("1e3"), 1_000)
+        with self.assertRaises(AshareProviderError):
+            normalize_corporate_action_rows(
+                [
+                    {
+                        "除权除息日": "2024-06-03",
+                        "action_type": "dividend",
+                        "cash_dividend_raw": "100000000.5",
+                    }
+                ],
+                code="000001",
+                source="test",
+            )
+        with self.assertRaises(AshareProviderError):
+            normalize_corporate_action_rows(
+                [
+                    {
+                        "除权除息日": "2024-06-03",
+                        "action_type": "dividend",
+                        "share_ratio_num": "1.5",
+                        "share_ratio_den": "1",
+                    }
+                ],
+                code="000001",
+                source="test",
+            )
+
     def test_instrument_normalization(self):
         self.assertEqual(normalize_instrument("sh.600000"), "600000.SSE")
         self.assertEqual(normalize_instrument("000001"), "000001.SZSE")
@@ -96,18 +148,67 @@ class AshareTest(unittest.TestCase):
         frame, manifest = AkShareProvider(_FakeAkShare()).fetch(query)
         self.assertEqual(frame.instrument, "000001.SZSE")
         self.assertEqual(manifest.provider, "akshare")
+        self.assertEqual(
+            manifest.source_hash,
+            native.fingerprint_bars(frame.to_json()),
+            "A 股清单必须复用 Rust qx-data 的规范 BarFrame 指纹",
+        )
         restored = AshareManifest.from_json(manifest.to_json())
         self.assertEqual(restored.source_hash, manifest.source_hash)
 
     def test_corporate_action_normalization_and_akshare_provider(self):
+        query = AshareActionQuery("000001", "20240101", "20241231", "2024-05-31T23:59:59+08:00")
         actions, manifest = AkShareProvider(_FakeAkShare()).fetch_corporate_actions(
-            AshareActionQuery("000001", "20240101", "20241231", "2024-05-31T23:59:59+08:00")
+            query
         )
         self.assertEqual(len(actions), 1)
         self.assertEqual(actions[0].action_type, "cash_dividend")
         self.assertEqual(actions[0].cash_dividend_raw, 100_000_000)
         self.assertEqual(actions[0].record_date, "2024-05-31")
+        payload = json.dumps(
+            [asdict(action) for action in actions],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        self.assertEqual(manifest.source_hash, hashlib.sha256(payload).hexdigest())
         self.assertIsInstance(AshareActionManifest.from_json(manifest.to_json()), AshareActionManifest)
+
+    def test_bonus_and_transfer_share_ratio_composition_uses_rust_core(self):
+        action = normalize_corporate_action_rows(
+            [
+                {
+                    "除权除息日": "2024-06-03",
+                    "送股比例": "0.1",
+                    "转增比例": "0.2",
+                }
+            ],
+            code="000001",
+            source="test",
+        )[0]
+        self.assertEqual(action.share_ratio_num, 1_320_000_000)
+        self.assertEqual(action.share_ratio_den, SCALE)
+
+    def test_corporate_action_ratio_precedence_uses_rust_core(self):
+        action = normalize_corporate_action_rows(
+            [
+                {
+                    "除权除息日": "2024-06-03",
+                    "action_type": "cash_dividend",
+                    "share_ratio_num": "3",
+                    "share_ratio_den": "2",
+                    "rights_issue_ratio_num": "4",
+                    "rights_issue_ratio_den": "7",
+                    "conversion_ratio_num": "5",
+                    "conversion_ratio_den": "9",
+                }
+            ],
+            code="000001",
+            source="test",
+        )[0]
+        self.assertEqual((action.share_ratio_num, action.share_ratio_den), (3, 2))
+        self.assertEqual((action.rights_issue_ratio_num, action.rights_issue_ratio_den), (4, 7))
+        self.assertEqual((action.conversion_ratio_num, action.conversion_ratio_den), (5, 9))
 
     def test_corporate_action_pit_filter_does_not_leak_future_event(self):
         actions, _ = AkShareProvider(_FakeAkShare()).fetch_corporate_actions(
@@ -338,6 +439,19 @@ class AshareTest(unittest.TestCase):
             text,
             "夹具必须由写侧原样产出：改了编码就重新产出夹具，不要手抄一份近似形状",
         )
+
+    def test_calendar_model_validation_delegates_to_rust(self):
+        AshareTradingCalendar(
+            "cn-shanghai",
+            ("2024-01-02", "2024-01-03"),
+            (("09:30", "11:30"), ("13:00", "15:00")),
+        ).validate()
+        with self.assertRaisesRegex(ValueError, "trading_days must be strictly sorted"):
+            AshareTradingCalendar("cn", ("2024-01-03", "2024-01-02")).validate()
+        with self.assertRaisesRegex(ValueError, "trading_days must be strictly sorted"):
+            AshareTradingCalendar("cn", ("2024-01-02", "2024-01-02")).validate()
+        with self.assertRaisesRegex(ValueError, "calendar session start must be before end"):
+            AshareTradingCalendar("cn", ("2024-01-02",), (("15:00", "09:30"),)).validate()
 
     def test_calendar_component_fingerprint_moves_only_with_canonical_fields(self):
         text = (CALENDAR_FIXTURES / "calendar-component-v1.json").read_text(encoding="utf-8")

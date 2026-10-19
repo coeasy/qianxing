@@ -103,6 +103,69 @@ fn backtest(project: &Path, root: &Path) -> Vec<PathBuf> {
     paths
 }
 
+/// The checked-in builtin runtime must run through the public CLI process and publish one
+/// replayable v6 summary beside its RunManifest.
+#[test]
+fn builtin_runtime_backtest_publishes_a_current_summary() {
+    let root = temp_base("builtin-runtime");
+    let deploy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy");
+    let runtime = deploy
+        .join("qianxing.runtime.builtin-strategy.example.json")
+        .to_string_lossy()
+        .into_owned();
+    let frame = deploy
+        .join("qianxing.bar-frame.example.json")
+        .to_string_lossy()
+        .into_owned();
+    let (code, output) = run(&root, &["backtest", &runtime, &frame]);
+    assert_eq!(code, 0, "builtin runtime 回测失败：\n{output}");
+
+    let summary = output
+        .lines()
+        .find_map(|line| line.strip_prefix("[Artifacts] "))
+        .and_then(|line| {
+            line.split_whitespace()
+                .find_map(|field| field.strip_prefix("summary="))
+        })
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                root.join(path)
+            }
+        })
+        .expect("CLI 必须点名 summary 产物路径");
+    assert!(summary.is_file(), "摘要未落盘：{}", summary.display());
+    let payload: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&summary).expect("读取 summary"))
+            .expect("summary JSON 有效");
+    assert_eq!(payload["schema_version"], 7);
+    assert_eq!(payload["result_hash"], payload["replay"]["log_digest"]);
+    let manifest = payload["run_manifest"]
+        .as_str()
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                root.join(path)
+            }
+        })
+        .expect("summary 必须引用 RunManifest");
+    assert!(
+        manifest.is_file(),
+        "RunManifest 未落盘：{}",
+        manifest.display()
+    );
+    assert_eq!(
+        manifest.parent(),
+        summary.parent(),
+        "summary 与 RunManifest 必须位于同一 runs 目录"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 从摘要里取 `result_hash`（不引入 JSON 依赖，按键值对切）。
 fn result_hash(project: &Path) -> String {
     let summaries: Vec<PathBuf> = std::fs::read_dir(project.join("data/qianxing/runs"))

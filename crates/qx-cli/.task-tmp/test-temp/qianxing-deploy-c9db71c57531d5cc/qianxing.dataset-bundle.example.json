@@ -1,0 +1,41 @@
+{
+  "bundle_id": "ashare.example",
+  "version": "snapshot-v1",
+  "source": "akshare+calendar",
+  "schema_version": 1,
+  "components": {
+    "bars": {
+      "kind": "bars",
+      "dataset_id": "ashare.example.bars",
+      "version": "snapshot-v1",
+      "source": "akshare",
+      "fingerprint": "replace-with-bars-fingerprint",
+      "schema_version": 1,
+      "start_timestamp": 1704067200000,
+      "end_timestamp": 1735603200000,
+      "row_count": 1
+    },
+    "corporate_actions": {
+      "kind": "corporate_actions",
+      "dataset_id": "ashare.example.actions",
+      "version": "snapshot-v1",
+      "source": "akshare",
+      "fingerprint": "replace-with-actions-fingerprint",
+      "schema_version": 1,
+      "start_timestamp": 1704067200000,
+      "end_timestamp": 1735603200000,
+      "row_count": 1
+    },
+    "calendar": {
+      "kind": "calendar",
+      "dataset_id": "cn.calendar",
+      "version": "2026-v1",
+      "source": "exchange-calendar",
+      "fingerprint": "replace-with-calendar-fingerprint",
+      "schema_version": 1,
+      "start_timestamp": 1704067200000,
+      "end_timestamp": 1735603200000,
+      "row_count": 1
+    }
+  }
+}

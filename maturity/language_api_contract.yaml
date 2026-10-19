@@ -201,6 +201,12 @@ contracts:
     python_remote: ["run_multi_leg_backtest", "start_multi_leg_backtest"]
     cpp_remote: ["run_multi_leg_backtest", "start_multi_leg_backtest"]
     http: ["/app/multi-leg-backtest", "/app/multi-leg-backtest/start"]
+  - use_case: run_multi_builtin_backtest
+    rust: ["run_multi_builtin_backtest"]
+    python_native: []
+    python_remote: []
+    cpp_remote: []
+    http: []
   - use_case: run_multi_market_backtest
     rust: ["run_multi_market_backtest", "Client.run_multi_market_backtest_with_strategy_slots", "Client.start_multi_market_backtest_with_strategy_slots"]
     python_native: ["run_multi_market_backtest", "start_multi_market_backtest", "run_multi_market_backtest_with_strategy_slots", "start_multi_market_backtest_with_strategy_slots"]
@@ -243,3 +249,15 @@ contracts:
     python_remote: ["run_multi_account_depth_backtest", "start_multi_account_depth_backtest"]
     cpp_remote: ["run_multi_account_depth_backtest", "start_multi_account_depth_backtest"]
     http: ["/app/multi-account-depth-backtest", "/app/multi-account-depth-backtest/start"]
+  - use_case: validate_dataset_manifest
+    rust: ["validate_dataset_manifest"]
+    python_native: []
+    python_remote: []
+    cpp_remote: []
+    http: []
+  - use_case: paper_available_margin_raw
+    rust: ["paper_available_margin_raw"]
+    python_native: []
+    python_remote: []
+    cpp_remote: []
+    http: []

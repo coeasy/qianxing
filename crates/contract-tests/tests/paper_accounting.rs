@@ -91,17 +91,17 @@ fn paper_derivative_fill_uses_spec_pnl_accounting_instead_of_spot_cash() {
     // 离线 smoke fixture：本用例没有行情事实，显式允许合成盘口；
     // 生产 Paper 路径必须传 EventLog 的最新行情并关闭该开关。
     let mut pipeline = LiveEventPipeline::open(&root, "events", "USDT").unwrap();
-    let result = execute_paper_submit_effect(
-        &command,
-        &mut pipeline,
-        1,
-        Some(risk),
-        Some(OrderRiskPosition::default()),
-        None,
-        zero_fee(),
-        true,
-        None,
-    )
+    let result = execute_paper_submit_effect(qx_execution::PaperSubmitRequest {
+        command: &command,
+        pipeline: &mut pipeline,
+        now: 1,
+        risk: Some(risk),
+        position: Some(OrderRiskPosition::default()),
+        market_quote: None,
+        fee_model: zero_fee(),
+        allow_synthetic_quote: true,
+        spread_store: None,
+    })
     .unwrap();
     assert!(result.contains("fills=1"));
     assert_eq!(
@@ -160,45 +160,45 @@ fn paper_submit_fails_closed_without_risk_context_or_market_quote() {
         ..RiskContext::default()
     };
     let mut pipeline = LiveEventPipeline::open(&root, "events", "USDT").unwrap();
-    let missing_risk = execute_paper_submit_effect(
-        &command,
-        &mut pipeline,
-        1,
-        None,
-        None,
-        None,
-        zero_fee(),
-        false,
-        None,
-    )
+    let missing_risk = execute_paper_submit_effect(qx_execution::PaperSubmitRequest {
+        command: &command,
+        pipeline: &mut pipeline,
+        now: 1,
+        risk: None,
+        position: None,
+        market_quote: None,
+        fee_model: zero_fee(),
+        allow_synthetic_quote: false,
+        spread_store: None,
+    })
     .unwrap_err();
     assert!(missing_risk.contains("FAIL_CLOSED: risk context missing"));
     // 只提供 RiskContext、缺持仓快照同样拒绝执行。
-    let missing_position = execute_paper_submit_effect(
-        &command,
-        &mut pipeline,
-        1,
-        Some(risk.clone()),
-        None,
-        None,
-        zero_fee(),
-        false,
-        None,
-    )
+    let missing_position = execute_paper_submit_effect(qx_execution::PaperSubmitRequest {
+        command: &command,
+        pipeline: &mut pipeline,
+        now: 1,
+        risk: Some(risk.clone()),
+        position: None,
+        market_quote: None,
+        fee_model: zero_fee(),
+        allow_synthetic_quote: false,
+        spread_store: None,
+    })
     .unwrap_err();
     assert!(missing_position.contains("FAIL_CLOSED: risk context missing"));
     // 风控快照齐备但缺行情事实时仍然拒绝撮合，不再伪造盘口价。
-    let missing_quote = execute_paper_submit_effect(
-        &command,
-        &mut pipeline,
-        1,
-        Some(risk),
-        Some(OrderRiskPosition::default()),
-        None,
-        zero_fee(),
-        false,
-        None,
-    )
+    let missing_quote = execute_paper_submit_effect(qx_execution::PaperSubmitRequest {
+        command: &command,
+        pipeline: &mut pipeline,
+        now: 1,
+        risk: Some(risk),
+        position: Some(OrderRiskPosition::default()),
+        market_quote: None,
+        fee_model: zero_fee(),
+        allow_synthetic_quote: false,
+        spread_store: None,
+    })
     .unwrap_err();
     assert!(missing_quote.contains("FAIL_CLOSED: market quote missing"));
     // fail-closed 必须发生在写入任何事实之前：EventLog 仍为空。
@@ -276,32 +276,32 @@ fn paper_submit_reuses_gateway_idempotency_without_new_facts() {
         7,
     );
     let mut pipeline = LiveEventPipeline::open(&root, "events", "USDT").unwrap();
-    let executed = execute_paper_submit_effect(
-        &command,
-        &mut pipeline,
-        1,
-        Some(risk.clone()),
-        Some(OrderRiskPosition::default()),
-        Some(quote),
-        shared_fee(),
-        false,
-        None,
-    )
+    let executed = execute_paper_submit_effect(qx_execution::PaperSubmitRequest {
+        command: &command,
+        pipeline: &mut pipeline,
+        now: 1,
+        risk: Some(risk.clone()),
+        position: Some(OrderRiskPosition::default()),
+        market_quote: Some(quote),
+        fee_model: shared_fee(),
+        allow_synthetic_quote: false,
+        spread_store: None,
+    })
     .unwrap();
     assert!(executed.starts_with("PAPER_EXECUTED fills=1"), "{executed}");
     let orders = pipeline.orders().len();
     let entries = pipeline.ledger().entries().len();
-    let replayed = execute_paper_submit_effect(
-        &command,
-        &mut pipeline,
-        1,
-        Some(risk),
-        Some(OrderRiskPosition::default()),
-        Some(quote),
-        shared_fee(),
-        false,
-        None,
-    )
+    let replayed = execute_paper_submit_effect(qx_execution::PaperSubmitRequest {
+        command: &command,
+        pipeline: &mut pipeline,
+        now: 1,
+        risk: Some(risk),
+        position: Some(OrderRiskPosition::default()),
+        market_quote: Some(quote),
+        fee_model: shared_fee(),
+        allow_synthetic_quote: false,
+        spread_store: None,
+    })
     .unwrap();
     assert!(
         replayed.starts_with("ALREADY_APPLIED_FROM_EVENT_LOG"),
@@ -382,17 +382,17 @@ fn paper_spot_fill_charges_the_shared_fee_model_into_the_ledger() {
         7,
     );
     let mut pipeline = LiveEventPipeline::open(&root, "events", "USDT").unwrap();
-    let executed = execute_paper_submit_effect(
-        &command,
-        &mut pipeline,
-        1,
-        Some(risk),
-        Some(OrderRiskPosition::default()),
-        Some(quote),
-        shared_fee(),
-        false,
-        None,
-    )
+    let executed = execute_paper_submit_effect(qx_execution::PaperSubmitRequest {
+        command: &command,
+        pipeline: &mut pipeline,
+        now: 1,
+        risk: Some(risk),
+        position: Some(OrderRiskPosition::default()),
+        market_quote: Some(quote),
+        fee_model: shared_fee(),
+        allow_synthetic_quote: false,
+        spread_store: None,
+    })
     .unwrap();
     assert!(executed.starts_with("PAPER_EXECUTED fills=1"), "{executed}");
     // 吃单：名义 1 * 100 = 100 USDT，默认吃单费率 DEFAULT_TAKER_BP。

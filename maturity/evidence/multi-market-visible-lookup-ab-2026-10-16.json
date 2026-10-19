@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "multi_market_visible_bar_lookup_release_ab",
+  "generated_at_utc": "2026-10-16T12:36:17Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "before_binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli-before-visible-index.exe",
+  "before_binary_sha256": "b9e7b0c668bfe79e11f312bba730d4677a0a00b762e89cedb4f83b362ca5a1c8",
+  "after_binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "after_binary_sha256": "b105f86c8e8122a731d45bf09d6f375862ebca2cbeb9dc222b3736113063616e",
+  "workload": {
+    "markets": 3,
+    "bars_per_market": 8000,
+    "timeline_layout": "three disjoint consecutive time ranges; the first market emits signals while the other markets contain only future bars",
+    "strategy": "sma_cross fast_window=2 slow_window=4",
+    "repeats": 5,
+    "result_hash": "cb99e0efb4f617e2",
+    "frame_sha256": [
+      "5bba965e6c6dc8b53d296c277b7f4ca118696faabf1b2e11044a02532b9fb976",
+      "f9bd884b64fb21840ce6c79f5403e6efb9bf1f2b69c6838407d86ede9f06cd15",
+      "f620fff37e87a7df1381c2123ddb5250498228f5fff9d540debd7bbe6ba85b72"
+    ],
+    "timing_ms": {
+      "before": {
+        "samples": [
+          4561.723,
+          4476.644,
+          4546.782,
+          4434.23,
+          4560.522
+        ],
+        "p50": 4546.782,
+        "p95": 4561.723
+      },
+      "after": {
+        "samples": [
+          4767.293,
+          4601.394,
+          4376.975,
+          4566.779,
+          4474.739
+        ],
+        "p50": 4566.779,
+        "p95": 4767.293
+      }
+    },
+    "p50_change_percent": 0.44
+  },
+  "result_hash_equal": true,
+  "profile_coverage_claim": false,
+  "limitations": [
+    "synthetic deterministic bars with separated market timelines",
+    "measures the full CLI experiment path, not only the lookup function",
+    "does not establish production multi-market profile performance"
+  ]
+}

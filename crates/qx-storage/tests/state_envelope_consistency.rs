@@ -15,14 +15,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use qx_storage::SqliteOutboxStore;
 
 fn temp_root(label: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "qianxing-p1c-envelope-{label}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock must be after unix epoch")
-            .as_nanos()
-    ))
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!(
+            "qianxing-p1c-envelope-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock must be after unix epoch")
+                .as_nanos()
+        ))
 }
 
 fn event(event_id: &str) -> OutboxEvent {
@@ -40,7 +42,7 @@ fn event(event_id: &str) -> OutboxEvent {
 }
 
 /// 跨后端共享的 Outbox 语义序列：返回每次 `available` 观察到的 attempts 轨迹。
-fn drive_outbox_semantics(store: &dyn OutboxStore) -> Vec<u32> {
+fn drive_outbox_semantics<S: OutboxStore>(store: &S) -> Vec<u32> {
     // 版本为 0 / 未来的事件在所有后端一律被拒绝（Conflict），语义单点在 validate。
     let zero = OutboxEvent {
         schema_version: 0,

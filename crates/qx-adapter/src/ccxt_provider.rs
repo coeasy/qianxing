@@ -73,7 +73,11 @@ impl CcxtBarDataProvider {
                 "CCXT Bar Provider 只支持 adjustment=none 与 quality_policy=strict",
             ));
         }
-        let instrument = query.instrument_set.iter().next().expect("one instrument");
+        let instrument = query
+            .instrument_set
+            .iter()
+            .next()
+            .ok_or_else(|| permanent("CCXT Bar Provider 查询缺少 instrument"))?;
         let request = json!({
             "op": "fetch_ohlcv",
             "instrument": instrument,
@@ -151,17 +155,18 @@ impl DataProvider for CcxtBarDataProvider {
             .zip(frame.volume_raw)
             .map(|(((((timestamp, open), high), low), close), volume)| {
                 let bar = Bar::new(timestamp, open, high, low, close, volume);
-                (
+                Ok((
                     timestamp,
                     received_at,
                     ProviderPayload::new_json(
                         frame.instrument.clone(),
                         BAR_CONTENT_TYPE,
-                        serde_json::to_string(&bar).expect("Bar serialization is infallible"),
+                        serde_json::to_string(&bar)
+                            .map_err(|error| permanent(format!("Bar JSON 序列化失败: {error}")))?,
                     ),
-                )
+                ))
             })
-            .collect();
+            .collect::<Result<Vec<_>, ProviderError>>()?;
         ProviderResult::from_payloads(
             self.capability.provider_id.clone(),
             self.capability.version.clone(),
@@ -187,7 +192,8 @@ fn classify_ccxt_error(message: String) -> ProviderError {
         .and_then(|message| message.split_once(']'))
         .map(|(class, _)| class)
         .unwrap_or("unknown");
-    let category = match class {
+    let classification = qx_core::classify_ccxt_category(class);
+    let category = match classification.category {
         "authentication" => ProviderErrorClass::ManualIntervention,
         "invalid" | "unsupported" => ProviderErrorClass::Permanent,
         "retryable" | "rate_limited" | "exchange" | "unknown" => ProviderErrorClass::SwitchProvider,
@@ -225,6 +231,7 @@ mod tests {
             provider_id: id.into(),
             version: "ccxt-1".into(),
             data_kinds: [DataKind::Bar].into_iter().collect(),
+            data_tiers: [qx_provider::MarketDataTier::Bar].into_iter().collect(),
             asset_classes: ["crypto".into()].into_iter().collect(),
             frequencies: ["1m".into()].into_iter().collect(),
             auth_scope: "public".into(),

@@ -14,10 +14,26 @@ const ERROR_PREFIX: &str = "未知命令或未知参数";
 
 /// 打印分级回显并以退出码 2 fail closed（与迁移前的退出码一致）。
 pub(crate) fn report(error: &clap::Error) -> ! {
-    eprintln!("{ERROR_PREFIX}: {error}");
+    eprintln!("[阶段: 命令解析]");
+    eprintln!("原因: {ERROR_PREFIX}: {error}");
     eprintln!("下一步: 全部入口看 `qx-cli help`，单条用法看 `qx-cli <命令> --help`");
-    eprintln!("自证构建: `qx-cli version`（等价 `--version` 与 `-V`）");
+    eprintln!(
+        "证据路径: 上方 clap `Usage:` 行；构建身份用 `qx-cli version`（等价 `--version` 与 `-V`）"
+    );
     std::process::exit(2);
+}
+
+/// Keep clap help exits out of the dispatch module while preserving usage-error exit behavior.
+pub(crate) fn fail_usage(error: clap::Error) -> ! {
+    if matches!(
+        error.kind(),
+        clap::error::ErrorKind::DisplayHelp
+            | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+    ) {
+        let _ = error.print();
+        std::process::exit(0);
+    }
+    report(&error)
 }
 
 /// 业务处理器失败的统一出口：一行原因 + 退出码 2。与各派发臂此前的

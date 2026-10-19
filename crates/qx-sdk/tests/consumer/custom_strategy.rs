@@ -91,6 +91,7 @@ fn depth_spec(run_id: &str, output_dir: &std::path::Path, tier: &str) -> DepthBa
         fee_bps: 0,
         latency_snapshots: 0,
         queue_position_bps: 0,
+        queue_position_model: Default::default(),
         market_impact_bps: 0,
         output_dir: output_dir.join("runs").to_string_lossy().into_owned(),
         strategy: BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "sdk-depth-custom"),

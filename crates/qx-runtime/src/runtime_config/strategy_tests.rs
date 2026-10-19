@@ -299,6 +299,7 @@ fn multi_strategy_instances_are_bound_to_workers_and_jobs_can_select_them() {
         risk_rules: None,
         cost_rules_path: None,
         fill_model: None,
+        max_bar_volume_participation_bps: None,
         account_id: Some("main".into()),
         initial_cash_raw: None,
         venue_id: Some("okx".into()),

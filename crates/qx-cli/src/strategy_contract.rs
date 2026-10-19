@@ -1,16 +1,13 @@
 //! 策略契约装配：Bar 窗口加载、账户上下文、意图到订单的转换。
 //!
-//! Python / C ABI / 内置三种策略宿主共用这一份契约，使回测、Paper 与 Live
-//! 走同一条 target→intent→order 路径。
+//! Python / C ABI / 内置策略宿主共用契约，将 target→intent→order 收敛为回测、Paper 与 Live 的共享路径。
+mod imports;
+use imports::*;
 
-use super::*;
 mod account_context;
 mod execution_spec;
-mod signal_merge;
 pub(crate) use account_context::strategy_account_context;
-pub(crate) use execution_spec::{
-    normalize_strategy_order_quantity, strategy_execution_market_spec,
-};
+pub(crate) use execution_spec::strategy_execution_market_spec;
 
 /// 把持久化 Python/C++ JSONL 策略和受信任 C ABI 策略接入与 Rust
 /// 原生策略相同的 Bar 回测循环。
@@ -63,7 +60,7 @@ impl ContractBarStrategy {
             ))
         } else if let Some(executable) = config.strategy.external_executable.as_deref() {
             ContractStrategyClient::Process(Box::new(
-                StrategyProcessClient::start_process_with_transport_config(
+                StrategyProcessClient::start_process_with_ring_directory(
                     executable,
                     &config.strategy.external_args,
                     &config.strategy.external_env,
@@ -74,6 +71,7 @@ impl ContractBarStrategy {
                         capacity: config.strategy.shared_memory_capacity,
                         slot_bytes: config.strategy.shared_memory_slot_bytes,
                     },
+                    None,
                     None,
                 )?,
             ))
@@ -156,7 +154,8 @@ impl BarStrategy for ContractBarStrategy {
                 .request(&input)
                 .map_err(qx_core::QxError::BusinessViolation)?,
             ContractStrategyClient::Native(strategy) => {
-                let context = native_strategy_context(&self.config.strategy, &input);
+                let context = native_strategy_context(&self.config.strategy, &input)
+                    .map_err(qx_core::QxError::BusinessViolation)?;
                 let event = NativeMarketEvent::Bar {
                     instrument: instrument.clone(),
                     ts: visible.ts,
@@ -404,18 +403,6 @@ pub(crate) fn build_strategy_order(
     )
 }
 
-/// 一次输出的 `intent_id` 只是**轮内局部序号**（`schemas/strategy_api_v1.md`：uniqueness
-/// per decision），而订单身份在控制面（`command_id`）与执行面（`client_order_id`）都是全店
-/// 唯一键。所以身份必须由"哪一轮 + 轮内第几条"折出来：同一轮重放仍落回同一身份（幂等），
-/// 换一轮则得到新身份。`trace.intent_id` 保留策略侧原值，归因不受影响。
-fn strategy_order_identity(round_scope: &str, intent_id: u64) -> u64 {
-    let mut hash = qx_core::Fnv1a::new();
-    hash.write_text(round_scope);
-    hash.write_u64(intent_id);
-    // client_order_id 必须为正（`Order::validate`），摘要取到 0 的概率与一次哈希碰撞同级。
-    hash.finish().max(1)
-}
-
 /// 将跨语言 Strategy API v1 的单笔 intent 转为统一核心订单。
 /// 该转换只负责语义翻译，订单仍必须经过 RiskExecutionContext、OMS 和 Venue。
 /// `round_scope` 是这一轮的标识：worker 链与回测链都传 `output.request_id`（即调度器的
@@ -433,112 +420,39 @@ pub(crate) fn build_strategy_order_from_contract_intent(
     current_qty: i128,
     market_spec: Option<&TradingInstrumentSpec>,
 ) -> Result<Order, String> {
-    let account_id = config
-        .strategy
-        .account_id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Strategy 产生订单必须配置 account_id".to_string())?;
-    let instrument = InstrumentId::parse(&intent.instrument)
-        .ok_or_else(|| format!("Strategy intent instrument 非法: {}", intent.instrument))?;
-    let side = match intent.side.to_ascii_lowercase().as_str() {
-        "buy" => Side::Buy,
-        "sell" => Side::Sell,
-        other => return Err(format!("Strategy intent side 非法: {other}")),
-    };
-    let product = config.strategy.product.unwrap_or(TradingProduct::Spot);
-    let position_mode = match intent.position_mode.as_deref() {
-        None => config
-            .strategy
-            .position_mode
-            .unwrap_or(PositionMode::OneWay),
-        Some("one_way") => PositionMode::OneWay,
-        Some("hedge") => PositionMode::Hedge,
-        Some(other) => return Err(format!("Strategy intent position_mode 非法: {other}")),
-    };
-    let margin_mode = match intent.margin_mode.as_deref() {
-        None => config
-            .strategy
-            .margin_mode
-            .unwrap_or(if product == TradingProduct::Spot {
-                MarginMode::Cash
-            } else {
-                MarginMode::Cross
-            }),
-        Some("cash") => MarginMode::Cash,
-        Some("cross") => MarginMode::Cross,
-        Some("isolated") => MarginMode::Isolated,
-        Some(other) => return Err(format!("Strategy intent margin_mode 非法: {other}")),
-    };
-    let leverage = intent
-        .leverage
-        .unwrap_or(config.strategy.leverage.unwrap_or(1));
-    let allow_short = strategy_allows_short(config, margin_mode);
-    let position_side = match intent
-        .position_side
-        .as_deref()
-        .map(|value| value.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("long") => PositionSide::Long,
-        Some("short") => PositionSide::Short,
-        Some("net") | None if position_mode == PositionMode::OneWay => PositionSide::Net,
-        Some("net") | None => {
-            if side == Side::Buy {
-                PositionSide::Long
-            } else {
-                PositionSide::Short
-            }
-        }
-        Some(other) => return Err(format!("Strategy intent position_side 非法: {other}")),
-    };
-    let policy = OrderPolicy {
-        reduce_only: intent.reduce_only,
-        position_side,
-        margin_mode,
-        position_mode,
-        leverage,
-        post_only: intent.post_only,
-    };
-    let qty_raw = normalize_strategy_order_quantity(intent.qty_raw, market_spec)?;
-    let mut order = Order {
-        client_id: strategy_order_identity(round_scope, intent.intent_id),
-        instrument,
-        side,
-        qty: qx_core::Quantity::from_raw(qty_raw),
-        limit: intent.limit_price_raw.map(Price::from_raw),
-        status: OrderStatus::PendingSubmit,
-        filled: qx_core::Quantity::ZERO,
-        account_id: account_id.into(),
-        trace: Some(qx_core::OrderTrace {
-            strategy_id: Some(strategy_id.into()),
-            signal_id: Some(signal_id),
-            intent_id: Some(intent.intent_id),
-            rule_version: Some(config.strategy.version.clone()),
-        }),
-        policy: None,
-    };
-    if product != TradingProduct::Spot
-        || config.strategy.product.is_some()
-        || config.strategy.margin_mode.is_some()
-        || config.strategy.position_mode.is_some()
-        || config.strategy.leverage.is_some()
-        || intent.margin_mode.is_some()
-        || intent.position_mode.is_some()
-        || intent.leverage.is_some()
-        || intent.reduce_only
-        || intent.post_only
-        || intent.position_side.is_some()
-    {
-        order.policy = Some(policy);
-    }
-    order
-        .validate()
-        .map_err(|error| format!("Strategy API v1 OrderIntent 转订单失败: {error}"))?;
+    let built = qx_app::build_strategy_order_from_intent(
+        &qx_app::StrategyOrderInput {
+            intent_id: intent.intent_id,
+            instrument: intent.instrument.clone(),
+            side: intent.side.clone(),
+            qty_raw: intent.qty_raw,
+            limit_price_raw: intent.limit_price_raw,
+            reduce_only: intent.reduce_only,
+            post_only: intent.post_only,
+            position_side: intent.position_side.clone(),
+            margin_mode: intent.margin_mode.clone(),
+            position_mode: intent.position_mode.clone(),
+            leverage: intent.leverage,
+        },
+        &qx_app::StrategyOrderBindings {
+            account_id: config.strategy.account_id.as_deref().unwrap_or_default(),
+            strategy_id,
+            signal_id,
+            round_scope,
+            rule_version: &config.strategy.version,
+            product: config.strategy.product,
+            position_mode: config.strategy.position_mode,
+            margin_mode: config.strategy.margin_mode,
+            leverage: config.strategy.leverage,
+            market_spec,
+        },
+    )
+    .map_err(|error| error.message().to_string())?;
+    let allow_short = strategy_allows_short(config, built.margin_mode);
     let risk = strategy_risk_gate(config.strategy.risk_rules.as_ref(), allow_short);
-    risk.check(&order, &OrderRiskPosition::new(current_qty, 0))
+    risk.check(&built.order, &OrderRiskPosition::new(current_qty, 0))
         .map_err(|error| format!("Strategy API v1 RiskGate 拒绝 OrderIntent: {error:?}"))?;
-    Ok(order)
+    Ok(built.order)
 }
 
 #[allow(clippy::too_many_arguments)] // Signal identity, target, and frozen market context remain individually auditable.
@@ -558,42 +472,20 @@ pub(crate) fn build_strategy_order_with_signal(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "Strategy 产生订单必须配置 instrument".to_string())?;
-    let current = qx_zhenlu::portfolio::PortfolioState {
-        portfolio_id: strategy_id.into(),
-        timestamp: now,
-        cash: 0,
-        positions: BTreeMap::from([(instrument_text.to_string(), current_qty)]),
-    };
-    let rebalance = qx_zhenlu::portfolio::rebalance(
-        &current,
-        &[qx_zhenlu::portfolio::TargetPosition::single(
-            InstrumentId::parse(instrument_text)
-                .ok_or_else(|| format!("Strategy instrument 非法: {instrument_text}"))?,
-            target_qty,
-        )],
-        &qx_zhenlu::portfolio::PortfolioConstraint {
-            max_turnover_bps: 10_000,
-            min_trade_size: 1,
-        },
-    )?;
-    if rebalance.positions.is_empty() {
-        return Ok(None);
-    }
-    let account_id = config
-        .strategy
-        .account_id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Strategy 产生订单必须配置 account_id".to_string())?;
-    let instrument = InstrumentId::parse(instrument_text)
-        .ok_or_else(|| format!("Strategy instrument 非法: {instrument_text}"))?;
-    let signal = Signal {
-        strategy_id: strategy_id.into(),
+    let account_id = config.strategy.account_id.as_deref().unwrap_or_default();
+    let margin_mode = config_margin_mode(config);
+    let allow_short = strategy_allows_short(config, margin_mode);
+    let order = qx_app::build_strategy_target_order(&qx_app::StrategyTargetOrderInput {
+        instrument: instrument_text,
+        account_id,
+        strategy_id,
+        run_id,
+        now,
+        current_qty,
+        target_qty,
         signal_id: contract_output
             .map(|output| output.signal_id)
             .unwrap_or_else(|| run_id.max(1)),
-        instrument: instrument.clone(),
-        target_qty,
         confidence: contract_output
             .map(|output| output.confidence)
             .unwrap_or(1_000),
@@ -607,58 +499,20 @@ pub(crate) fn build_strategy_order_with_signal(
                 }
             })
             .unwrap_or(now),
-    };
-    let targets = signal_merge::merge_strategy_signals(vec![signal], now)?;
-    let target = targets
-        .first()
-        .ok_or_else(|| "Strategy Signal 已过期或为空".to_string())?;
-    let Some(intent) = rebalance_intent(
-        target,
-        current_qty,
-        strategy_id,
-        account_id,
-        run_id.max(1),
-        now,
-    ) else {
+        product: config.strategy.product,
+        position_mode: config.strategy.position_mode,
+        margin_mode,
+        leverage: config.strategy.leverage,
+        has_explicit_policy: config.strategy.product.is_some()
+            || config.strategy.margin_mode.is_some()
+            || config.strategy.position_mode.is_some()
+            || config.strategy.leverage.is_some(),
+        market_spec,
+    })
+    .map_err(|error| error.message().to_string())?;
+    let Some(order) = order else {
         return Ok(None);
     };
-    let mut order = intent.into_order();
-    order.qty = qx_core::Quantity::from_raw(normalize_strategy_order_quantity(
-        order.qty.raw(),
-        market_spec,
-    )?);
-    let product = config.strategy.product.unwrap_or(TradingProduct::Spot);
-    let position_mode = config
-        .strategy
-        .position_mode
-        .unwrap_or(PositionMode::OneWay);
-    let margin_mode = config_margin_mode(config);
-    let allow_short = strategy_allows_short(config, margin_mode);
-    let leverage = config.strategy.leverage.unwrap_or(1);
-    if product != TradingProduct::Spot
-        || config.strategy.product.is_some()
-        || config.strategy.margin_mode.is_some()
-        || config.strategy.position_mode.is_some()
-        || config.strategy.leverage.is_some()
-    {
-        order.policy = Some(OrderPolicy {
-            reduce_only: false,
-            position_side: if position_mode == PositionMode::OneWay {
-                PositionSide::Net
-            } else if target_qty >= 0 {
-                PositionSide::Long
-            } else {
-                PositionSide::Short
-            },
-            margin_mode,
-            position_mode,
-            leverage,
-            post_only: false,
-        });
-    }
-    order
-        .validate()
-        .map_err(|error| format!("Strategy OrderIntent 转订单失败: {error}"))?;
     let risk = strategy_risk_gate(config.strategy.risk_rules.as_ref(), allow_short);
     risk.check(&order, &OrderRiskPosition::new(current_qty, 0))
         .map_err(|error| format!("Strategy RiskGate 拒绝 OrderIntent: {error:?}"))?;

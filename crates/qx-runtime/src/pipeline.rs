@@ -9,7 +9,7 @@
 //! [`backend_switch`] 是打开时的 EventLog 后端切换闸门，[`fact_context`] 是
 //! 事实进入日志前的元数据与归因上下文补全，[`commit`] 是事实提交与失败回滚。
 //!
-//! # EventLog 的保留 / 归档策略（P0-2）
+//! # EventLog 的保留 / 归档策略（P0-2；与 Scheduler 共见 `maturity/retention_policy.yaml`）
 //!
 //! 这本日志是账簿与全部内存索引的**重放源**，所以保留策略定成"只增长 + 按段归档"：
 //! 1. **册内保留被禁止**：`EventLog` 不提供、也不得新增任何截断 / 淘汰 / 压缩入口——把一条活
@@ -26,8 +26,10 @@
 
 mod backend_switch;
 mod commit;
+mod event_identity;
 mod fact_context;
 
+use event_identity::RuntimeEventIdentityIndex;
 use fact_context::{enrich_runtime_event_context, runtime_event_metadata};
 
 pub use qx_control::order_from_submit_command;
@@ -48,9 +50,14 @@ use qx_storage::{
 };
 use qx_zhenlu::Oms;
 use serde::{Deserialize, Serialize};
+#[path = "pipeline_metrics.rs"]
+mod pipeline_metrics;
+use pipeline_metrics::PipelineMetrics;
+pub use pipeline_metrics::{PipelineMetricsSnapshot, PIPELINE_INGEST_WARNING_BUDGET_NS};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Instant;
 
 /// 供应商适配器输出的最小标准事实集合。
 ///
@@ -184,49 +191,9 @@ pub struct RuntimeIngestReceipt {
     pub deduplicated: bool,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct PipelineMetricsSnapshot {
-    pub ingest_attempts: u64,
-    pub ingested_events: u64,
-    pub deduplicated_events: u64,
-    pub transient_retries: u64,
-    pub refreshes: u64,
-    pub failures: u64,
-}
-
 struct EventFact {
     metadata: EventMetadata,
     kind: EventKind,
-}
-
-#[derive(Default)]
-struct PipelineMetrics {
-    ingest_attempts: AtomicU64,
-    ingested_events: AtomicU64,
-    deduplicated_events: AtomicU64,
-    transient_retries: AtomicU64,
-    refreshes: AtomicU64,
-    failures: AtomicU64,
-    // 下面两格是 P1-2 游标增量的**回归证明面**：`tail_appends` 记「本地是 store 前缀、只把尾部
-    // 接进来」的次数，`rebuilds` 记「退回整份重放重建」的次数。两者都不进
-    // [`PipelineMetricsSnapshot`]（那是给运维看的），只由本 crate 的用例读——与
-    // `RuntimeIngestReceipt::derived_seqs`/`engine_ts` 同一口径：没有生产读者但被回归用例钉住，
-    // 按仓库约定保留。没有它们就无法区分「增量生效」与「每次都在重建」，而两条路径终态一样。
-    tail_appends: AtomicU64,
-    rebuilds: AtomicU64,
-}
-
-impl PipelineMetrics {
-    fn snapshot(&self) -> PipelineMetricsSnapshot {
-        PipelineMetricsSnapshot {
-            ingest_attempts: self.ingest_attempts.load(Ordering::Relaxed),
-            ingested_events: self.ingested_events.load(Ordering::Relaxed),
-            deduplicated_events: self.deduplicated_events.load(Ordering::Relaxed),
-            transient_retries: self.transient_retries.load(Ordering::Relaxed),
-            refreshes: self.refreshes.load(Ordering::Relaxed),
-            failures: self.failures.load(Ordering::Relaxed),
-        }
-    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -360,6 +327,7 @@ pub struct LiveEventPipeline {
     account_balances: BTreeMap<(String, String), Vec<AccountBalance>>,
     account_positions: BTreeMap<(String, String), Vec<AccountPositionSnapshot>>,
     funding_rates: BTreeMap<InstrumentId, FundingRateSnapshot>,
+    event_identities: RuntimeEventIdentityIndex,
     // 下面这一格**只增不减的成交幂等台账**共用同一个上界：进程一生 ingest 过的成交数。
     // user stream、reconcile 与 Outbox 补投影三条路径都会把同一笔 fill 重投，`fill_key` 挡
     // 住第二次 `oms.apply_fill`。淘汰任何一条已见键就等于允许同一笔成交被记两次账，这是本
@@ -609,6 +577,7 @@ impl LiveEventPipeline {
             account_balances: BTreeMap::new(),
             account_positions: BTreeMap::new(),
             funding_rates: BTreeMap::new(),
+            event_identities: RuntimeEventIdentityIndex::default(),
             seen_fills: BTreeSet::new(),
             store,
             log_name,
@@ -786,6 +755,14 @@ impl LiveEventPipeline {
     /// 多个账户 worker 共享同一 EventLog 时，写冲突会重新载入最新事实并重放
     /// 当前输入；同一 correlation/source 只会落一次，避免重复成交或重复余额快照。
     pub fn ingest(&mut self, envelope: RuntimeEventEnvelope) -> QxResult<RuntimeIngestReceipt> {
+        let started = Instant::now();
+        let result = self.ingest_inner(envelope);
+        let elapsed_ns = started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+        self.metrics.record_ingest_duration(elapsed_ns);
+        result
+    }
+
+    fn ingest_inner(&mut self, envelope: RuntimeEventEnvelope) -> QxResult<RuntimeIngestReceipt> {
         self.metrics.ingest_attempts.fetch_add(1, Ordering::Relaxed);
         for _ in 0..3 {
             self.metrics.refreshes.fetch_add(1, Ordering::Relaxed);
@@ -826,6 +803,7 @@ impl LiveEventPipeline {
     fn rebuild_runtime_indexes(&mut self) -> QxResult<()> {
         let events = self.log.events().to_vec();
         for event in &events {
+            self.event_identities.remember(event);
             self.apply_index_event(event)?;
         }
         Ok(())
@@ -987,6 +965,7 @@ impl LiveEventPipeline {
             .correlated(correlation_id)
             .with_metadata(fact.metadata);
         self.log.append_checked(event.clone())?;
+        self.event_identities.remember(&event);
         self.last_engine_ts = self.last_engine_ts.max(effective_ts);
         Ok(event)
     }
@@ -1190,6 +1169,7 @@ impl LiveEventPipeline {
             account_balances: BTreeMap::new(),
             account_positions: BTreeMap::new(),
             funding_rates: BTreeMap::new(),
+            event_identities: RuntimeEventIdentityIndex::default(),
             seen_fills: BTreeSet::new(),
             store: self.store.clone(),
             log_name: self.log_name.clone(),
@@ -1207,6 +1187,7 @@ impl LiveEventPipeline {
     fn apply_tail(&mut self, tail: &[Event]) -> QxResult<()> {
         self.log.append_batch(tail)?;
         for event in tail {
+            self.event_identities.remember(event);
             self.apply_index_event(event)?;
             if let EventKind::LedgerApplied { entry } = &event.kind {
                 self.ledger.apply_entry(entry.clone())?;

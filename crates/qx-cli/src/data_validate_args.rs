@@ -15,3 +15,14 @@ pub(crate) struct DatasetValidateArgs {
     #[arg(long)]
     pub(crate) json: bool,
 }
+
+#[derive(Args)]
+pub(crate) struct DepthDatasetValidateArgs {
+    pub(crate) frame: PathBuf,
+    #[arg(long, value_parser = ["l1", "l2"])]
+    pub(crate) tier: String,
+    pub(crate) interval_ms: u64,
+    #[arg(long, default_value = "UTC")]
+    pub(crate) timezone: String,
+    pub(crate) output: PathBuf,
+}

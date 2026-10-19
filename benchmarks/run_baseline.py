@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import statistics
 import subprocess
 import sys
@@ -26,11 +25,14 @@ import tempfile
 import time
 from pathlib import Path
 
+from hardware import hardware_fingerprint
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SIZES = (1000, 8000, 32000)
+DEFAULT_SIZES = (1000, 8000, 64000)
 DEFAULT_REPEATS = 7
 BAR_INTERVAL_MS = 60_000
 SCALE = 1_000_000_000  # 与内核一致：定点 1e9
+MARGINAL_KNEE_THRESHOLD_PCT = 20.0
 
 
 def find_binary(explicit: str | None) -> Path:
@@ -103,7 +105,67 @@ def percentile(samples: list[float], fraction: float) -> float:
     return ordered[index]
 
 
+def scaling_curve(rows: list[dict]) -> dict:
+    """按相邻 N 的 p50 差分输出端到端边际每 Bar 成本。"""
+    ordered = sorted(rows, key=lambda row: row["bars"])
+    points = [
+        {
+            "bars": row["bars"],
+            "p50_ms": row["p50_ms"],
+            "amortized_p50_ms_per_bar": round(row["p50_ms"] / row["bars"], 9),
+        }
+        for row in ordered
+    ]
+    segments = []
+    candidate_positive_knee = None
+    previous_slope = None
+    for previous, current in zip(ordered, ordered[1:]):
+        bars_delta = current["bars"] - previous["bars"]
+        if bars_delta <= 0:
+            raise ValueError("scaling curve bars must be unique and increasing")
+        slope = (current["p50_ms"] - previous["p50_ms"]) / bars_delta
+        slope_change_pct = (
+            None
+            if previous_slope is None or previous_slope == 0
+            else round((slope - previous_slope) / abs(previous_slope) * 100.0, 3)
+        )
+        segment = {
+            "from_bars": previous["bars"],
+            "to_bars": current["bars"],
+            "delta_p50_ms": round(current["p50_ms"] - previous["p50_ms"], 3),
+            "marginal_p50_ms_per_bar": round(slope, 9),
+            "marginal_p50_us_per_bar": round(slope * 1_000.0, 3),
+            "slope_change_pct_vs_previous_segment": slope_change_pct,
+        }
+        segments.append(segment)
+        if (
+            candidate_positive_knee is None
+            and slope_change_pct is not None
+            and previous_slope is not None
+            and slope > previous_slope
+            and slope > 0
+            and slope_change_pct > MARGINAL_KNEE_THRESHOLD_PCT
+        ):
+            candidate_positive_knee = current["bars"]
+        previous_slope = slope
+    return {
+        "method": "adjacent p50 wall-time differences; includes process startup and JSON parsing",
+        "candidate_knee_threshold_pct": MARGINAL_KNEE_THRESHOLD_PCT,
+        "candidate_positive_knee_at_bars": candidate_positive_knee,
+        "candidate_positive_knee_is_not_a_statistical_claim": True,
+        "interpretation": (
+            "positive knee means marginal wall-time per Bar increased beyond the threshold; "
+            "a decreasing slope is reported as economies of scale, not a knee"
+        ),
+        "points": points,
+        "segments": segments,
+    }
+
+
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="牵星性能基线驱动器")
     parser.add_argument("--binary", default=None, help="qx-cli 路径（缺省自动探测 target/）")
     parser.add_argument("--sizes", default=",".join(str(s) for s in DEFAULT_SIZES))
@@ -114,7 +176,15 @@ def main() -> int:
 
     binary = find_binary(args.binary)
     sizes = [int(token) for token in args.sizes.split(",") if token.strip()]
+    if not sizes or any(size <= 0 for size in sizes):
+        parser.error("--sizes 必须是一个或多个正整数")
+    if len(set(sizes)) != len(sizes):
+        parser.error("--sizes 中的规模不能重复")
+    if args.repeats < 2:
+        parser.error("--repeats 至少为 2，才能报告重复稳定性")
     report = {
+        "schema_version": 1,
+        "hardware": hardware_fingerprint(),
         "binary": str(binary),
         "sizes": sizes,
         "repeats": args.repeats,
@@ -123,7 +193,7 @@ def main() -> int:
         "not_measured": ["kernel append/refresh/replay/read-model/recovery per-stage p50/p95"],
         "rows": [],
     }
-    with tempfile.TemporaryDirectory(prefix="qx-baseline-") as workdir:
+    with tempfile.TemporaryDirectory(prefix="qx-baseline-", dir=REPO_ROOT / "target") as workdir:
         for size in sizes:
             frame = Path(workdir) / f"frame-{size}.json"
             generate_frame(size, frame)
@@ -154,6 +224,11 @@ def main() -> int:
                     "deterministic_across_repeats": deterministic,
                 }
             )
+            if not deterministic or not hashes[0]:
+                print(f"[FAIL] N={size} 的 result_hash 缺失或重复运行不稳定", file=sys.stderr)
+                return 1
+
+    report["linear_scaling_curve"] = scaling_curve(report["rows"])
 
     output_path = Path(args.out)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -174,10 +249,28 @@ def main() -> int:
         print(
             f"| {row['bars']} | {row['p50_ms']} | {row['p95_ms']} | {row['min_ms']} | "
             f"{row['max_ms']} | `{row['result_hash']}` | "
-            f"{'✔' if row['deterministic_across_repeats'] else '✘'} |"
+            f"{'PASS' if row['deterministic_across_repeats'] else 'FAIL'} |"
         )
+    curve = report["linear_scaling_curve"]
     print()
-    print(f"written: {output_path.relative_to(REPO_ROOT).as_posix()}")
+    print("相邻规模边际成本（端到端墙钟，含进程启动与 JSON 解析）")
+    print("| bars | p50 delta (ms) | marginal (us/Bar) | slope change |")
+    print("| ---: | ---: | ---: | ---: |")
+    for segment in curve["segments"]:
+        change = segment["slope_change_pct_vs_previous_segment"]
+        change_label = "n/a" if change is None else f"{change:+.1f}%"
+        print(
+            f"| {segment['from_bars']} → {segment['to_bars']} | {segment['delta_p50_ms']} | "
+            f"{segment['marginal_p50_us_per_bar']} | {change_label} |"
+        )
+    candidate = curve["candidate_positive_knee_at_bars"]
+    print(f"candidate positive knee: {candidate if candidate is not None else 'none observed'}")
+    print()
+    try:
+        shown_path = output_path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        shown_path = str(output_path.resolve())
+    print(f"written: {shown_path}")
     return 0
 
 

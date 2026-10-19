@@ -439,6 +439,7 @@ class MultiMarketDepthBacktestOutcome:
     return_bps: int
     max_drawdown_bps: int
     artifact_path: str
+    execution_models: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MultiMarketDepthBacktestOutcome":

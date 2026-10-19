@@ -235,12 +235,16 @@ pub(crate) fn run_binance_execution_worker(
     once: bool,
 ) -> Result<(), String> {
     let owner = worker.id.clone();
-    let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
+    let runtime_config = read_runtime_config(&runtime_config_path)?;
+    let settlement_currency = account_worker_settlement_currency(&runtime_config, &worker)?;
+    let log_name = binance_event_log_name(&worker)?;
+    let mut metrics = PipelineMetricsReporter::new(&runtime_config, context.id(), &log_name);
     context.mark(
         qx_runtime::ServiceStatus::Ready,
         "execution queue polling",
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish_if_due(true, runtime_timestamp_ms());
     // 内联恢复扫描按共享节律自节流：循环仍每 100ms 扫一次队列，但两次恢复扫描之间的
     // 间隔走 `spread_recovery_poll_delay`，分组原地不动时不会每秒起灭 10 次 venue 重建。
     let mut recovery_stalls = 0_u32;
@@ -292,6 +296,7 @@ pub(crate) fn run_binance_execution_worker(
                 for message in diagnostics {
                     eprintln!("[HedgeRecovery] {message}");
                 }
+                metrics.absorb(&recovery_pipeline);
                 let pending_after =
                     pending_spread_recovery_groups(&pipeline_storage.root, venue_id)?;
                 recovery_stalls = if pending_after >= pending_before {
@@ -406,6 +411,7 @@ pub(crate) fn run_binance_execution_worker(
                     }
                     drop(venue);
                 }
+                metrics.absorb(&pipeline);
                 result
             };
             let (_, record_result) = control_store
@@ -429,10 +435,12 @@ pub(crate) fn run_binance_execution_worker(
             )?;
         }
         context.heartbeat(now)?;
+        metrics.publish_if_due(true, now);
         if once {
             break;
         }
         thread::sleep(Duration::from_millis(100));
     }
+    metrics.publish(false, runtime_timestamp_ms());
     Ok(())
 }

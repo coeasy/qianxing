@@ -65,15 +65,77 @@ impl FileConsumerStateStore {
     fn lock_for(
         &self,
         group_id: &str,
-        topic: &str,
-        partition_key: &str,
+        _topic: &str,
+        _partition_key: &str,
     ) -> Result<PathBuf, StorageError> {
-        let key = self.state_key(group_id, topic, partition_key)?;
-        Ok(self.root.join("consumers").join(format!("{key}.lock")))
+        validate_outbox_name(group_id, "group_id")?;
+        let key = outbox_file_key(group_id);
+        Ok(self
+            .root
+            .join("consumers")
+            .join(format!("{key}.group.lock")))
     }
 
     fn read_state(&self, path: &Path) -> Result<FileConsumerState, StorageError> {
         read_state_json_or_default(path)
+    }
+
+    /// SQL stores key processed events by `(group_id, event_id)`, independent
+    /// of topic/partition. The file backend keeps partition snapshots separate,
+    /// so commits must inspect sibling snapshots while holding the group lock.
+    fn is_processed_in_group(
+        &self,
+        state: &FileConsumerState,
+        state_path: &Path,
+        group_id: &str,
+        event_id: &str,
+    ) -> Result<bool, StorageError> {
+        if state.processed_event_ids.contains(event_id) {
+            return Ok(true);
+        }
+        for path in self.list_records()? {
+            if path == state_path {
+                continue;
+            }
+            let other = self.read_state(&path)?;
+            if other.processed_event_ids.contains(event_id)
+                && other
+                    .checkpoint
+                    .as_ref()
+                    .is_some_and(|checkpoint| checkpoint.group_id == group_id)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// SQL stores dead letters by `(group_id, event_id, attempts)` across every
+    /// topic and partition. File snapshots are partition-scoped, so inspect
+    /// sibling snapshots while `transact_state` holds the group lock.
+    fn has_dead_letter_in_group(
+        &self,
+        state: &FileConsumerState,
+        state_path: &Path,
+        record: &DeadLetterRecord,
+    ) -> Result<bool, StorageError> {
+        let matches = |candidate: &DeadLetterRecord| {
+            candidate.group_id == record.group_id
+                && candidate.event_id == record.event_id
+                && candidate.attempts == record.attempts
+        };
+        if state.dead_letters.iter().any(matches) {
+            return Ok(true);
+        }
+        for path in self.list_records()? {
+            if path == state_path {
+                continue;
+            }
+            if self.read_state(&path)?.dead_letters.iter().any(matches) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// 信封事务：确保 consumers 目录 → 取锁 → 读改写（幂等早退不落盘）。
@@ -103,13 +165,13 @@ impl ConsumerStateStore for FileConsumerStateStore {
         topic: &str,
         partition_key: &str,
     ) -> Result<Option<ConsumerCheckpoint>, StorageError> {
+        self.validate_load_checkpoint_request(group_id, topic, partition_key)?;
         let path = self.path_for(group_id, topic, partition_key)?;
         Ok(self.read_state(&path)?.checkpoint)
     }
 
     fn is_processed(&self, group_id: &str, event_id: &str) -> Result<bool, StorageError> {
-        validate_outbox_name(group_id, "group_id")?;
-        validate_outbox_name(event_id, "event_id")?;
+        self.validate_is_processed_request(group_id, event_id)?;
         for path in self.list_records()? {
             let state = self.read_state(&path)?;
             if state.processed_event_ids.contains(event_id)
@@ -125,26 +187,34 @@ impl ConsumerStateStore for FileConsumerStateStore {
     }
 
     fn commit_processed(&self, checkpoint: ConsumerCheckpoint) -> Result<(), StorageError> {
-        checkpoint.validate()?;
+        self.validate_commit_processed_request(&checkpoint)?;
+        let state_path = self.path_for(
+            &checkpoint.group_id,
+            &checkpoint.topic,
+            &checkpoint.partition_key,
+        )?;
         self.transact_state(
             &checkpoint.group_id,
             &checkpoint.topic,
             &checkpoint.partition_key,
             |state| {
-                if state.processed_event_ids.contains(&checkpoint.event_id) {
+                if self.is_processed_in_group(
+                    state,
+                    &state_path,
+                    &checkpoint.group_id,
+                    &checkpoint.event_id,
+                )? {
                     return Ok(Commit::Keep(()));
                 }
                 if let Some(previous) = state.checkpoint.as_ref() {
-                    if previous.offset > checkpoint.offset {
-                        return Err(StorageError::Conflict("consumer checkpoint 回退".into()));
-                    }
-                    if previous.offset == checkpoint.offset
-                        && previous.event_id != checkpoint.event_id
-                    {
-                        return Err(StorageError::Conflict(
-                            "consumer 相同 offset 对应不同 event_id".into(),
-                        ));
-                    }
+                    super::super::validate_consumer_cursor_advance(
+                        previous.offset,
+                        &previous.event_id,
+                        checkpoint.offset,
+                        &checkpoint.event_id,
+                        "consumer checkpoint 回退",
+                        "consumer 相同 offset 对应不同 event_id",
+                    )?;
                 }
                 state
                     .processed_event_ids
@@ -156,15 +226,14 @@ impl ConsumerStateStore for FileConsumerStateStore {
     }
 
     fn append_dead_letter(&self, record: DeadLetterRecord) -> Result<(), StorageError> {
-        record.validate()?;
+        self.validate_append_dead_letter_request(&record)?;
+        let state_path = self.path_for(&record.group_id, &record.topic, &record.partition_key)?;
         self.transact_state(
             &record.group_id,
             &record.topic,
             &record.partition_key,
             |state| {
-                if !state.dead_letters.iter().any(|existing| {
-                    existing.event_id == record.event_id && existing.attempts == record.attempts
-                }) {
+                if !self.has_dead_letter_in_group(state, &state_path, &record)? {
                     state.dead_letters.push(record.clone());
                     return Ok(Commit::Write(()));
                 }
@@ -178,7 +247,7 @@ impl ConsumerStateStore for FileConsumerStateStore {
         group_id: &str,
         limit: usize,
     ) -> Result<Vec<DeadLetterRecord>, StorageError> {
-        validate_outbox_name(group_id, "group_id")?;
+        self.validate_dead_letters_request(group_id)?;
         let mut result = Vec::new();
         for path in self.list_records()? {
             let state = self.read_state(&path)?;
@@ -189,7 +258,7 @@ impl ConsumerStateStore for FileConsumerStateStore {
                     .filter(|record| record.group_id == group_id),
             );
         }
-        result.sort_by_key(|record| (record.failed_ts, record.event_id.clone()));
+        result.sort_by(crate::consumer_state_store::compare_dead_letter_order);
         result.truncate(limit);
         Ok(result)
     }
@@ -201,36 +270,44 @@ impl TransactionalConsumerStateStore for FileConsumerStateStore {
         checkpoint: ConsumerCheckpoint,
         projection: ConsumerProjection,
     ) -> Result<(), StorageError> {
-        projection.validate_for(&checkpoint)?;
+        self.validate_commit_processed_with_projection_request(&checkpoint, &projection)?;
+        let state_path = self.path_for(
+            &checkpoint.group_id,
+            &checkpoint.topic,
+            &checkpoint.partition_key,
+        )?;
         self.transact_state(
             &checkpoint.group_id,
             &checkpoint.topic,
             &checkpoint.partition_key,
             |state| {
-                if state.processed_event_ids.contains(&checkpoint.event_id) {
+                if self.is_processed_in_group(
+                    state,
+                    &state_path,
+                    &checkpoint.group_id,
+                    &checkpoint.event_id,
+                )? {
                     return Ok(Commit::Keep(()));
                 }
                 if let Some(previous) = state.checkpoint.as_ref() {
-                    if previous.offset > checkpoint.offset {
-                        return Err(StorageError::Conflict("consumer checkpoint 回退".into()));
-                    }
-                    if previous.offset == checkpoint.offset
-                        && previous.event_id != checkpoint.event_id
-                    {
-                        return Err(StorageError::Conflict(
-                            "consumer 相同 offset 对应不同 event_id".into(),
-                        ));
-                    }
+                    super::super::validate_consumer_cursor_advance(
+                        previous.offset,
+                        &previous.event_id,
+                        checkpoint.offset,
+                        &checkpoint.event_id,
+                        "consumer checkpoint 回退",
+                        "consumer 相同 offset 对应不同 event_id",
+                    )?;
                 }
                 if let Some(previous) = state.projections.get(&projection.projection_key) {
-                    if previous.offset > projection.offset
-                        || (previous.offset == projection.offset
-                            && previous.event_id != projection.event_id)
-                    {
-                        return Err(StorageError::Conflict(
-                            "consumer projection 顺序或 event_id 非法".into(),
-                        ));
-                    }
+                    super::super::validate_consumer_cursor_advance(
+                        previous.offset,
+                        &previous.event_id,
+                        projection.offset,
+                        &projection.event_id,
+                        "consumer projection 顺序或 event_id 非法",
+                        "consumer projection 顺序或 event_id 非法",
+                    )?;
                 }
                 state
                     .processed_event_ids
@@ -249,30 +326,36 @@ impl TransactionalConsumerStateStore for FileConsumerStateStore {
         record: DeadLetterRecord,
         checkpoint: ConsumerCheckpoint,
     ) -> Result<(), StorageError> {
-        record.validate_for(&checkpoint)?;
+        self.validate_append_dead_letter_and_commit_request(&record, &checkpoint)?;
+        let state_path = self.path_for(
+            &checkpoint.group_id,
+            &checkpoint.topic,
+            &checkpoint.partition_key,
+        )?;
         self.transact_state(
             &checkpoint.group_id,
             &checkpoint.topic,
             &checkpoint.partition_key,
             |state| {
-                if state.processed_event_ids.contains(&checkpoint.event_id) {
+                if self.is_processed_in_group(
+                    state,
+                    &state_path,
+                    &checkpoint.group_id,
+                    &checkpoint.event_id,
+                )? {
                     return Ok(Commit::Keep(()));
                 }
                 if let Some(previous) = state.checkpoint.as_ref() {
-                    if previous.offset > checkpoint.offset {
-                        return Err(StorageError::Conflict("consumer checkpoint 回退".into()));
-                    }
-                    if previous.offset == checkpoint.offset
-                        && previous.event_id != checkpoint.event_id
-                    {
-                        return Err(StorageError::Conflict(
-                            "consumer 相同 offset 对应不同 event_id".into(),
-                        ));
-                    }
+                    super::super::validate_consumer_cursor_advance(
+                        previous.offset,
+                        &previous.event_id,
+                        checkpoint.offset,
+                        &checkpoint.event_id,
+                        "consumer checkpoint 回退",
+                        "consumer 相同 offset 对应不同 event_id",
+                    )?;
                 }
-                if !state.dead_letters.iter().any(|existing| {
-                    existing.event_id == record.event_id && existing.attempts == record.attempts
-                }) {
+                if !self.has_dead_letter_in_group(state, &state_path, &record)? {
                     state.dead_letters.push(record.clone());
                 }
                 state
@@ -289,8 +372,7 @@ impl TransactionalConsumerStateStore for FileConsumerStateStore {
         group_id: &str,
         projection_key: &str,
     ) -> Result<Option<ConsumerProjection>, StorageError> {
-        validate_outbox_name(group_id, "group_id")?;
-        validate_outbox_name(projection_key, "projection_key")?;
+        self.validate_load_projection_request(group_id, projection_key)?;
         for path in self.list_records()? {
             if let Some(projection) = self.read_state(&path)?.projections.get(projection_key) {
                 if projection.group_id == group_id {

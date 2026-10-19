@@ -11,9 +11,12 @@ license.workspace = true
 # "没有偷偷把门面拉进来"这条纪律的载体，含糊的清单守不住它。
 qx-core = { path = "../qx-core" }
 qx-control = { path = "../qx-control" }
+qx-data = { path = "../qx-data" }
 qx-datastruct = { path = "../qx-datastruct" }
 qx-guanxing = { path = "../qx-guanxing" }
 qx-provider = { path = "../qx-provider" }
+qx-risk = { path = "../qx-risk" }
+qx-spec = { path = "../qx-spec" }
 qx-strategy = { path = "../qx-strategy" }
 qx-xingban = { path = "../qx-xingban" }
 qx-zhenlu = { path = "../qx-zhenlu" }

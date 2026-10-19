@@ -113,7 +113,12 @@ pub fn allocate_portfolio_capital(
     for request in ordered {
         let account_remaining = remaining_by_account
             .get_mut(request.account_id.as_str())
-            .expect("account references validated above");
+            .ok_or_else(|| {
+                CapitalAllocationError::InvalidInput(format!(
+                    "strategy {} references unknown account {}",
+                    request.strategy_id, request.account_id
+                ))
+            })?;
         let allocated = request
             .requested_cash_raw
             .min(*account_remaining)

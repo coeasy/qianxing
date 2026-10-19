@@ -6,7 +6,8 @@
 //! 用法：`cargo run -p qx-sdk --example quickstart -- <bars.json> <输出目录>`
 
 use qx_sdk::{
-    BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability, Client, DatasetSpec,
+    BacktestDatasetInput, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability,
+    Client, DatasetSpec,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,9 +31,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     strategy.fast_window = 2;
     strategy.slow_window = 3;
     let spec = BacktestSpec::new(
-        "quickstart-1",
-        "BTCUSDT.BINANCE",
-        bars,
+        BacktestDatasetInput {
+            run_id: "quickstart-1".into(),
+            instrument: "BTCUSDT.BINANCE".into(),
+            bars_path: bars,
+        },
         "USDT",
         100_000 * 1_000_000_000,
         20261010,

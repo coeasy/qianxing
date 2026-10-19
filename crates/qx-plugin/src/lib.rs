@@ -64,6 +64,7 @@ pub enum PluginError {
     InvalidManifest(String),
     Conflict(String),
     MissingDependency { plugin: String, dep: String },
+    Invariant(String),
     Cycle,
 }
 
@@ -75,6 +76,7 @@ impl std::fmt::Display for PluginError {
             PluginError::MissingDependency { plugin, dep } => {
                 write!(f, "插件 {} 缺少依赖 {}", plugin, dep)
             }
+            PluginError::Invariant(message) => write!(f, "插件依赖图不变量失效: {message}"),
             PluginError::Cycle => write!(f, "依赖图存在环"),
         }
     }
@@ -122,14 +124,12 @@ impl Manifest {
                 }
             } else if let Some(value) = signature.strip_prefix("ed25519:") {
                 let mut parts = value.split(':');
-                let public_key = decode_hex(parts.next().unwrap_or_default())?;
-                let signature = decode_hex(parts.next().unwrap_or_default())?;
-                if parts.next().is_some() || public_key.len() != 32 || signature.len() != 64 {
+                let public_key = parts.next().unwrap_or_default();
+                let signature = parts.next().unwrap_or_default();
+                if parts.next().is_some() {
                     return Err(PluginError::InvalidManifest("Ed25519 签名格式非法".into()));
                 }
-                UnparsedPublicKey::new(&ED25519, public_key)
-                    .verify(signature_message(self).as_bytes(), &signature)
-                    .map_err(|_| PluginError::InvalidManifest("Ed25519 签名校验失败".into()))?;
+                verify_detached_ed25519(signature_message(self).as_bytes(), public_key, signature)?;
             } else {
                 return Err(PluginError::InvalidManifest("不支持的插件签名类型".into()));
             }
@@ -191,12 +191,10 @@ impl Manifest {
     /// 私钥只接受调用方传入的 32 字节种子，不会写入 manifest。
     pub fn sign_ed25519(mut self, seed: &[u8; 32]) -> Result<Self, PluginError> {
         self.manifest_hash = self.canonical_hash();
-        let key_pair = Ed25519KeyPair::from_seed_unchecked(seed)
-            .map_err(|_| PluginError::InvalidManifest("Ed25519 私钥种子非法".into()))?;
+        let signature = sign_detached_ed25519(signature_message(&self).as_bytes(), seed)?;
         self.signature = Some(format!(
             "ed25519:{}:{}",
-            encode_hex(key_pair.public_key().as_ref()),
-            encode_hex(key_pair.sign(signature_message(&self).as_bytes()).as_ref())
+            signature.public_key_hex, signature.signature_hex
         ));
         Ok(self)
     }
@@ -236,6 +234,46 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, PluginError> {
                 .map_err(|_| PluginError::InvalidManifest("签名不是合法十六进制".into()))
         })
         .collect()
+}
+
+/// Ed25519 material for signing a detached canonical document. The private seed is never stored
+/// in this value or returned from the signing helper.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct DetachedEd25519Signature {
+    pub public_key_hex: String,
+    pub signature_hex: String,
+}
+
+/// Sign an arbitrary caller-owned message with the same Ed25519 and hex encoding stack used by
+/// plugin manifests. Callers remain responsible for canonicalizing the message before signing.
+pub fn sign_detached_ed25519(
+    message: &[u8],
+    seed: &[u8; 32],
+) -> Result<DetachedEd25519Signature, PluginError> {
+    let key_pair = Ed25519KeyPair::from_seed_unchecked(seed)
+        .map_err(|_| PluginError::InvalidManifest("Ed25519 私钥种子非法".into()))?;
+    Ok(DetachedEd25519Signature {
+        public_key_hex: encode_hex(key_pair.public_key().as_ref()),
+        signature_hex: encode_hex(key_pair.sign(message).as_ref()),
+    })
+}
+
+/// Verify a detached signature against an independently trusted public key.
+pub fn verify_detached_ed25519(
+    message: &[u8],
+    public_key_hex: &str,
+    signature_hex: &str,
+) -> Result<(), PluginError> {
+    let public_key = decode_hex(public_key_hex)?;
+    let signature = decode_hex(signature_hex)?;
+    if public_key.len() != 32 || signature.len() != 64 {
+        return Err(PluginError::InvalidManifest(
+            "Ed25519 公钥或签名长度非法".into(),
+        ));
+    }
+    UnparsedPublicKey::new(&ED25519, public_key)
+        .verify(message, &signature)
+        .map_err(|_| PluginError::InvalidManifest("Ed25519 签名校验失败".into()))
 }
 
 #[derive(Default)]
@@ -319,8 +357,12 @@ impl Registry {
                         dep: dep.clone(),
                     });
                 }
-                adj.get_mut(dep).unwrap().push(id.clone());
-                *indeg.get_mut(id).unwrap() += 1;
+                adj.get_mut(dep)
+                    .ok_or_else(|| PluginError::Invariant(format!("依赖节点 {dep} 不存在")))?
+                    .push(id.clone());
+                *indeg
+                    .get_mut(id)
+                    .ok_or_else(|| PluginError::Invariant(format!("插件节点 {id} 不存在")))? += 1;
             }
         }
 
@@ -336,7 +378,9 @@ impl Registry {
             out.push(n.clone());
             if let Some(nexts) = adj.get(&n) {
                 for nx in nexts {
-                    let d = indeg.get_mut(nx).unwrap();
+                    let d = indeg
+                        .get_mut(nx)
+                        .ok_or_else(|| PluginError::Invariant(format!("依赖节点 {nx} 不存在")))?;
                     *d -= 1;
                     if *d == 0 {
                         ready.insert(nx.clone());

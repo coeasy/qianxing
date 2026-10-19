@@ -3,7 +3,8 @@
 //! 由 `main.rs` 的 crate 根职责簇拆出（Phase 4p），条目经根部的
 //! `pub(crate) use readiness::*;` 再导出，行为与拆分前逐字相同。
 
-use super::*;
+mod imports;
+use imports::*;
 
 pub(crate) fn validate_research_snapshot_binding(
     root: &Path,
@@ -122,26 +123,108 @@ pub(crate) fn verify_event_backtest_evidence(
     Ok(())
 }
 
+fn api_readiness_result(
+    config: &RuntimeConfig,
+    static_report: &serde_json::Value,
+    ready: bool,
+    detail: &str,
+    evidence: &[&str],
+) -> ApiReadiness {
+    let mut readiness_layers = static_report
+        .get("readiness_layers")
+        .and_then(serde_json::Value::as_object)
+        .map(|layers| {
+            layers
+                .iter()
+                .map(|(level, value)| (level.clone(), value.clone()))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let status = if ready { "pass" } else { "blocked" };
+    readiness_layers.insert(
+        "O".into(),
+        serde_json::json!({
+            "status": status,
+            "scope": "api_service_dependencies",
+            "evidence": evidence,
+            "detail": if ready { "API 依赖检查通过" } else { detail },
+        }),
+    );
+    readiness_layers.insert(
+        "L".into(),
+        if config.is_production() {
+            serde_json::json!({
+                "status": status,
+                "scope": "production_api_dependencies",
+                "evidence": evidence,
+                "detail": if ready {
+                    "production API 依赖检查通过；不代表已连接 Venue 或提交过订单"
+                } else {
+                    detail
+                },
+            })
+        } else {
+            serde_json::json!({
+                "status": "not_assessed",
+                "scope": "live_account",
+                "evidence": [],
+                "detail": "当前运行配置不是 production",
+            })
+        },
+    );
+    ApiReadiness {
+        schema_version: qx_api::API_READINESS_SCHEMA_VERSION,
+        ready,
+        detail: detail.into(),
+        readiness_layers,
+    }
+}
+
 pub(crate) fn configured_api_readiness(
     config: &RuntimeConfig,
     runtime_config_path: &Path,
+    static_report: &serde_json::Value,
     control_store: &ControlStateBackend,
     metrics_dir: &Path,
     now_ms: u64,
     stale_after_ms: u64,
 ) -> ApiReadiness {
+    if static_report.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+        return api_readiness_result(
+            config,
+            static_report,
+            false,
+            "runtime_diagnostics_unavailable",
+            &["static_diagnostics"],
+        );
+    }
+
     if control_store.load().is_err() {
-        return ApiReadiness {
-            ready: false,
-            detail: "control_store_unavailable".into(),
-        };
+        return api_readiness_result(
+            config,
+            static_report,
+            false,
+            "control_store_unavailable",
+            &["static_diagnostics", "control_store"],
+        );
     }
 
     if config.is_production() && !production_trading_assets_ready(config, runtime_config_path) {
-        return ApiReadiness {
-            ready: false,
-            detail: "trading_safety_assets_unavailable".into(),
-        };
+        return api_readiness_result(
+            config,
+            static_report,
+            false,
+            "trading_safety_assets_unavailable",
+            &[
+                "static_diagnostics",
+                "control_store",
+                "trading_safety_assets",
+            ],
+        );
+    }
+    let mut dependency_evidence = vec!["static_diagnostics", "control_store"];
+    if config.is_production() {
+        dependency_evidence.push("trading_safety_assets");
     }
 
     let strategies = if config.strategies.is_empty() {
@@ -150,39 +233,56 @@ pub(crate) fn configured_api_readiness(
         config.strategies.as_slice()
     };
     let root = Path::new(&config.storage.data_dir);
+    let research_required = strategies
+        .iter()
+        .any(|strategy| strategy.research_snapshot_required);
     for strategy in strategies {
         if !strategy.research_snapshot_required {
             continue;
         }
+        let mut research_evidence = dependency_evidence.clone();
+        research_evidence.push("research_snapshot");
         let Some(configured) = strategy.research_snapshot_path.as_deref() else {
-            return ApiReadiness {
-                ready: false,
-                detail: "research_snapshot_unavailable".into(),
-            };
+            return api_readiness_result(
+                config,
+                static_report,
+                false,
+                "research_snapshot_unavailable",
+                &research_evidence,
+            );
         };
         let path = resolve_runtime_asset_path(runtime_config_path, root, configured);
         if !path.is_file() {
-            return ApiReadiness {
-                ready: false,
-                detail: "research_snapshot_unavailable".into(),
-            };
+            return api_readiness_result(
+                config,
+                static_report,
+                false,
+                "research_snapshot_unavailable",
+                &research_evidence,
+            );
         }
         let payload = match std::fs::read_to_string(&path) {
             Ok(payload) => payload,
             Err(_) => {
-                return ApiReadiness {
-                    ready: false,
-                    detail: "research_snapshot_unreadable".into(),
-                }
+                return api_readiness_result(
+                    config,
+                    static_report,
+                    false,
+                    "research_snapshot_unreadable",
+                    &research_evidence,
+                );
             }
         };
         let research = match StrategyResearchSnapshot::from_json(&payload) {
             Ok(research) => research,
             Err(_) => {
-                return ApiReadiness {
-                    ready: false,
-                    detail: "research_snapshot_invalid".into(),
-                }
+                return api_readiness_result(
+                    config,
+                    static_report,
+                    false,
+                    "research_snapshot_invalid",
+                    &research_evidence,
+                );
             }
         };
         if validate_research_snapshot_binding(root, strategy, &research).is_err()
@@ -198,10 +298,13 @@ pub(crate) fn configured_api_readiness(
                 )
                 .is_err()
         {
-            return ApiReadiness {
-                ready: false,
-                detail: "research_snapshot_invalid".into(),
-            };
+            return api_readiness_result(
+                config,
+                static_report,
+                false,
+                "research_snapshot_invalid",
+                &research_evidence,
+            );
         }
     }
 
@@ -219,16 +322,20 @@ pub(crate) fn configured_api_readiness(
     if let Some(detail) =
         worker_metrics_readiness(published_metrics.len(), unhealthy, workers_expected)
     {
-        return ApiReadiness {
-            ready: false,
-            detail: detail.into(),
-        };
+        let mut evidence = dependency_evidence.clone();
+        if research_required {
+            evidence.push("research_snapshot");
+        }
+        evidence.push("worker_metrics");
+        return api_readiness_result(config, static_report, false, detail, &evidence);
     }
 
-    ApiReadiness {
-        ready: true,
-        detail: "dependencies_ready".into(),
+    let mut evidence = dependency_evidence;
+    if research_required {
+        evidence.push("research_snapshot");
     }
+    evidence.push("worker_metrics");
+    api_readiness_result(config, static_report, true, "dependencies_ready", &evidence)
 }
 
 /// 指标侧的就绪结论（`Some` = 不就绪的原因）：一份 `.prom` 都没扫到不等于依赖健康。

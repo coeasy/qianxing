@@ -14,6 +14,8 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
+from qianxing_bridge import native
+
 from . import (
     CcxtConfig,
     CcxtConnectorError,
@@ -220,10 +222,7 @@ class CcxtJsonWorker:
                     params=dict(request.get("params", {})),
                 )
             except CcxtConnectorError as error:
-                retryable = error.error_class in {
-                    CcxtErrorClass.RETRYABLE,
-                    CcxtErrorClass.RATE_LIMITED,
-                }
+                retryable = native.ccxt_error_may_retry(error.error_class.value)
                 if not retryable or attempts >= self.client.config.ws_max_retries:
                     raise
                 await self._close_pro_async()

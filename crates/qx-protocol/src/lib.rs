@@ -369,7 +369,7 @@ impl AccountSnapshot {
     }
 
     /// 稳定 JSON 线格式：字段顺序固定、定点数传 raw integer，避免跨语言浮点漂移。
-    pub fn to_json(&self) -> String {
+    pub fn to_json(&self) -> Result<String, ProtocolError> {
         let cash = self
             .cash_raw
             .iter()
@@ -380,11 +380,10 @@ impl AccountSnapshot {
         let orders = json_table_entries(&self.orders);
         let fills = json_table_entries(&self.fills);
         let transfers = json_table_entries(&self.transfers);
-        // 七个汇总钱字段与上面的 {} 一一对应：equity / available / margin / frozen /
-        // realized_pnl / unrealized_pnl / fees / funding（未算过印 null，不印 0）。
+        // 汇总钱字段按顺序对应模板占位，未计算值编码为 null。
         let scalars = self.scalar_json_values();
         let reconcile = self.reconcile.json_values();
-        format!(
+        Ok(format!(
             "{{\"protocol\":\"QIANXING_ACCOUNT\",\"schema_version\":{},\"header\":{{\"snapshot_id\":{},\"account_id\":{},\"portfolio_id\":{},\"venue_id\":{},\"trading_day\":{},\"as_of\":{},\"event_seq\":{},\"state_hash\":{}}},\"cash_raw\":{{{}}},\"equity_raw\":{},\"available_raw\":{},\"margin_raw\":{},\"frozen_raw\":{},\"realized_pnl_raw\":{},\"unrealized_pnl_raw\":{},\"fees_raw\":{},\"funding_raw\":{},\"positions\":{{{}}},\"orders\":{{{}}},\"fills\":{{{}}},\"transfers\":{{{}}},\"reconcile\":{{\"last_reconcile_ts\":{},\"discrepancy_count\":{},\"recovery_state\":{}}}}}",
             self.header.schema_version,
             self.header.snapshot_id,
@@ -404,14 +403,14 @@ impl AccountSnapshot {
             scalars[5],
             scalars[6],
             scalars[7],
-            positions,
-            orders,
-            fills,
-            transfers,
+            positions?,
+            orders?,
+            fills?,
+            transfers?,
             reconcile[0],
             reconcile[1],
             json_string(&self.reconcile.recovery_state),
-        )
+        ))
     }
 
     /// 解析稳定账户 JSON，并校验协议头、schema 版本、字段一致性和 state hash。
@@ -507,19 +506,20 @@ impl AccountSnapshot {
     }
 }
 
-/// 稳定 JSON 里的四张键表（持仓/订单/成交/划转）整份交给 serde 写，只剥掉最外层大括号。
-/// 它们此前是手抄的 `format!`：键是裸数字（`{77:{...}}` 不是合法 JSON），枚举印 `side_code`
-/// /`order_status_code` 的数字码、`instrument` 印字符串、持仓行少印一个字段，而读侧 `from_json`
-/// 走 serde，认的是字符串键、变体名与对象形态的标的——两份编码分叉到产物要么谁也解不回（R14），
-/// 要么新字段被写侧静默丢掉（R15）。
-fn json_table_entries<K: Serialize, V: Serialize>(table: &BTreeMap<K, V>) -> String {
-    let rendered = serde_json::to_string(table).expect("账户快照的键表可以序列化");
-    rendered[1..rendered.len() - 1].to_string()
+/// 四张稳定 JSON 键表整份交给 serde 写，避免手抄格式与读侧分叉。
+fn json_table_entries<K: Serialize, V: Serialize>(
+    table: &BTreeMap<K, V>,
+) -> Result<String, ProtocolError> {
+    let rendered = serde_json::to_string(table)
+        .map_err(|error| ProtocolError::Serialization(error.to_string()))?;
+    Ok(rendered[1..rendered.len() - 1].to_string())
 }
 
 /// `positions` 的键是 `InstrumentId` 而 JSON 的键必须是字符串，所以先把键换成 `instrument_key`
 /// 那一份写法（与 `to_wire_json` 的 `instrument_map` 同一个口径），值整份交给同一个渲染点。
-fn json_position_entries(positions: &BTreeMap<InstrumentId, PositionSnapshot>) -> String {
+fn json_position_entries(
+    positions: &BTreeMap<InstrumentId, PositionSnapshot>,
+) -> Result<String, ProtocolError> {
     let keyed = positions
         .iter()
         .map(|(instrument, value)| (instrument_key(instrument), value))
@@ -624,8 +624,8 @@ pub struct QifiEnvelope {
 }
 
 impl QifiEnvelope {
-    pub fn to_json(&self) -> String {
-        serde_json::to_string(self).expect("QIFI envelope is serializable")
+    pub fn to_json(&self) -> Result<String, ProtocolError> {
+        serde_json::to_string(self).map_err(|error| ProtocolError::Serialization(error.to_string()))
     }
 
     pub fn validate(&self) -> Result<(), ProtocolError> {
@@ -668,7 +668,7 @@ impl SnapshotStore for FileSnapshotStore {
         snapshot.validate()?;
         std::fs::create_dir_all(&self.root)
             .map_err(|error| ProtocolError::Io(error.to_string()))?;
-        let content = snapshot.to_json();
+        let content = snapshot.to_json()?;
         let filename = format!(
             "account-{}-{:016x}.json",
             snapshot.header.snapshot_id,

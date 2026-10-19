@@ -4,7 +4,9 @@
 //! 要判断"这份配置里有没有承不了的字段"，只看前者就等于留一条"写进列表就绕过闸门"的路径；
 //! 两个入口（A 股规则、撮合模型）各自扫一遍就会扫出两套覆盖范围，所以这里只留一份。
 
-use super::*;
+use crate::read_runtime_config;
+use qx_runtime::StrategyRuntimeConfig;
+use std::path::Path;
 
 /// 哪一个策略块声明了这个字段：标签沿用 `runtime_check` 的口径（`strategy` /
 /// `strategy[{id}]`），让体检与拒绝指认的是同一条声明。

@@ -14,10 +14,14 @@ use std::sync::OnceLock;
 mod algo_execution_entrypoints;
 #[path = "app_three_entrypoints/classic_strategies.rs"]
 mod classic_strategy_entrypoints;
+#[path = "app_three_entrypoints/legacy_builtin_parity.rs"]
+mod legacy_builtin_parity;
 #[path = "app_three_entrypoints/market_spec.rs"]
 mod market_spec_entrypoints;
 #[path = "app_three_entrypoints/multi_account.rs"]
 mod multi_account_entrypoints;
+#[path = "app_three_entrypoints/multi_builtin_parity.rs"]
+mod multi_builtin_parity;
 #[path = "app_three_entrypoints/multi_leg_experiment.rs"]
 mod multi_leg_experiment_entrypoints;
 #[path = "app_three_entrypoints/multi_market_experiment.rs"]
@@ -338,17 +342,63 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
     assert_eq!(http["result_hash"], outcome["result_hash"]);
     assert!(http["checks"].as_array().map(Vec::len).unwrap_or(0) > 0);
 
+    // The CLI facade must accept the exact outcome document returned by `app backtest`,
+    // and verify the same artifacts as the HTTP use-case route.
+    let outcome_path = root.join("outcome.json");
+    std::fs::write(&outcome_path, &outcome_document).expect("write BacktestOutcome document");
+    let cli_verification = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(repo_root())
+        .args(["app", "verify"])
+        .arg(&outcome_path)
+        .output()
+        .expect("run CLI app verify");
+    assert_eq!(
+        cli_verification.status.code(),
+        Some(0),
+        "CLI verify must succeed: {}",
+        String::from_utf8_lossy(&cli_verification.stderr)
+    );
+    let cli_verification: Value =
+        serde_json::from_slice(&cli_verification.stdout).expect("CLI verify JSON");
+    assert_eq!(
+        cli_verification, http,
+        "CLI and HTTP verify use-case result"
+    );
+
     // 数据集校验同样三入口一致。
     let dataset = json!({
         "schema_version": 1,
         "dataset_id": "g1-dataset",
         "bars_path": sample_bars(),
-    })
-    .to_string();
-    let (status, http_verdict) = via_http("/app/validate-dataset", &dataset);
+    });
+    let dataset_json = dataset.to_string();
+    let dataset_spec_path = root.join("dataset-spec.json");
+    std::fs::write(&dataset_spec_path, &dataset_json).expect("write DatasetSpec");
+    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(repo_root())
+        .args(["app", "validate-dataset"])
+        .arg(&dataset_spec_path)
+        .output()
+        .expect("run CLI validate-dataset");
+    assert_eq!(
+        cli_output.status.code(),
+        Some(0),
+        "CLI validate-dataset must succeed: {}",
+        String::from_utf8_lossy(&cli_output.stderr)
+    );
+    let cli_verdict: Value =
+        serde_json::from_slice(&cli_output.stdout).expect("CLI validate-dataset JSON");
+
+    let (status, http_verdict) = via_http("/app/validate-dataset", &dataset_json);
     assert_eq!(status, 200);
     assert_eq!(http_verdict["usable"], true);
     assert_eq!(http_verdict["rows"], 70);
+    assert_eq!(cli_verdict, http_verdict, "CLI and HTTP use-case results");
+    match python_native::via_python(&repo_root(), "validate_dataset", &dataset_json) {
+        None => eprintln!("[skip] Python validation leg: the PyO3 extension is not built"),
+        Some(Ok(python)) => assert_eq!(python, cli_verdict, "CLI and Python use-case results"),
+        Some(Err(payload)) => panic!("Python validate-dataset should succeed: {payload}"),
+    }
 
     let traversal = json!({
         "schema_version": 1,

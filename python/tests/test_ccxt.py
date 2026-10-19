@@ -10,10 +10,16 @@ from qianxing_ccxt import (
     CcxtConnectorError,
     CcxtErrorClass,
     CcxtExchangeClient,
+    SCALE,
+    classify_ccxt_error,
     normalize_stream_event,
+    _decimal_from_raw,
+    _raw_decimal,
+    _signed_raw_decimal,
     watch_stream,
     watch_ohlcv,
 )
+from qianxing_bridge import native
 
 
 class FakeExchange:
@@ -245,11 +251,45 @@ class FakeProExchange:
 
 
 class CcxtTest(unittest.TestCase):
+    def test_scale_is_reexported_from_native_rust(self):
+        self.assertEqual(SCALE, native.raw_scale())
+
+    def test_decimal_to_raw_and_formatting_delegate_to_native_rust(self):
+        self.assertEqual(_raw_decimal("1.25e-2", field="price"), 12_500_000)
+        self.assertEqual(_signed_raw_decimal("-2.25", field="fee"), -2_250_000_000)
+        self.assertEqual(_decimal_from_raw(1_000_000_001, field="price"), "1.000000001")
+        with self.assertRaisesRegex(CcxtConnectorError, "定点精度 1e-9"):
+            _raw_decimal("0.0000000001", field="price")
+        with self.assertRaisesRegex(CcxtConnectorError, "非负有限数字"):
+            _raw_decimal("-1", field="amount")
+        with self.assertRaisesRegex(CcxtConnectorError, "不能为负"):
+            _decimal_from_raw(-1, field="amount")
+
     def setUp(self):
         self.exchange = FakeExchange()
         self.client = CcxtExchangeClient(
             CcxtConfig(exchange_id="binance"), exchange=self.exchange
         )
+
+    def test_error_classification_and_retryability_delegate_to_rust(self):
+        examples = {
+            "DDoSProtection": CcxtErrorClass.RATE_LIMITED,
+            "RequestTimeout": CcxtErrorClass.RETRYABLE,
+            "AuthenticationError": CcxtErrorClass.AUTHENTICATION,
+            "BadSymbol": CcxtErrorClass.INVALID,
+            "NotSupported": CcxtErrorClass.UNSUPPORTED,
+            "ExchangeError": CcxtErrorClass.EXCHANGE,
+            "ValueError": CcxtErrorClass.UNKNOWN,
+        }
+        for name, expected in examples.items():
+            with self.subTest(name=name):
+                error = type(name, (Exception,), {})()
+                self.assertEqual(classify_ccxt_error(error), expected)
+
+        self.assertTrue(native.ccxt_error_may_retry("retryable"))
+        self.assertTrue(native.ccxt_error_may_retry("rate_limited"))
+        self.assertFalse(native.ccxt_error_may_retry("exchange"))
+        self.assertFalse(native.ccxt_error_may_retry("unknown"))
 
     def test_spot_market_allows_explicit_null_contract_size(self):
         self.exchange.markets["BTC/USDT"]["contractSize"] = None
@@ -431,6 +471,11 @@ class CcxtTest(unittest.TestCase):
         self.assertEqual(position.leverage, 5)
         funding = self.client.fetch_funding_rate(instrument)
         self.assertEqual(funding.funding_rate_bps, 1)
+
+    def test_margin_and_funding_rates_use_exact_native_basis_point_conversion(self):
+        self.assertEqual(CcxtExchangeClient._maintenance_margin_bps({"maintenanceMarginRate": "0.005"}), 50)
+        self.assertEqual(CcxtExchangeClient._maintenance_margin_bps({"maintenanceMarginPercent": "0.5"}), 50)
+        self.assertIsNone(CcxtExchangeClient._maintenance_margin_bps({"maintenanceMarginRate": "0.00001"}))
 
     def test_cashflow_ledger_and_funding_history_preserve_signed_amounts(self):
         ledger = self.client.fetch_ledger(code="USDT", since_ms=1, limit=10)

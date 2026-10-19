@@ -18,7 +18,8 @@
 
 use crate::error::{AppError, AppErrorCategory};
 use qx_core::{MakerTakerFeeSchedule, TradingInstrumentSpec};
-use qx_strategy::BuiltinStrategyKind;
+use qx_strategy::{BuiltinStrategyConfig, BuiltinStrategyKind};
+use qx_xingban::{AshareRuleConfig, ExecutionCostRules};
 use serde::{Deserialize, Serialize};
 
 /// `DatasetSpec` 的 schema 版本。改形状必须抬它，否则旧调用方会静默按新语义读。
@@ -32,6 +33,7 @@ pub const BACKTEST_SPEC_SCHEMA_VERSION: u32 = 1;
 /// [`AppErrorCategory::FidelityInsufficient`]，不是给一个看起来像结论的数。
 pub const MIN_BACKTEST_BARS: usize = 2;
 
+mod backtest_validation;
 mod validation;
 use validation::is_identity_token;
 
@@ -64,7 +66,7 @@ impl DatasetSpec {
         }
     }
 
-    /// 形状自检。**只查"这份 spec 自己站不站得住"**，不碰磁盘。
+    /// 形状自检。**只查 spec 自己是否完整**，不碰磁盘。
     pub fn validate(&self) -> Result<(), AppError> {
         if self.schema_version != DATASET_SPEC_SCHEMA_VERSION {
             return Err(AppError::new(
@@ -162,6 +164,44 @@ impl BuiltinStrategySpec {
             period: default_strategy_period(),
             threshold_bps: default_strategy_threshold_bps(),
         }
+    }
+
+    /// Convert the domain strategy config used by Rust, Python, and native hosts into the stable
+    /// single-instrument application request. Pair-specific bindings cannot be represented by a
+    /// `BacktestSpec` and are rejected instead of being silently dropped.
+    pub fn from_strategy_config(strategy: &BuiltinStrategyConfig) -> Result<Self, AppError> {
+        if strategy.kind.needs_reference_leg()
+            || strategy.reference_instrument.is_some()
+            || strategy.primary_market_spec.is_some()
+            || strategy.reference_market_spec.is_some()
+            || strategy.primary_policy.is_some()
+            || strategy.reference_policy.is_some()
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "双腿策略配置不能转换为单标的 BuiltinStrategySpec",
+            ));
+        }
+        strategy.validate().map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("内置策略配置无效: {error}"),
+            )
+        })?;
+        Ok(Self {
+            kind: strategy.kind,
+            strategy_id: strategy.strategy_id.clone(),
+            quantity_raw: strategy.quantity.raw(),
+            target_notional_raw: strategy.target_notional_raw,
+            target_available_margin_bps: strategy.target_available_margin_bps,
+            target_volatility_bps: strategy.target_volatility_bps,
+            target_kelly_fraction_bps: strategy.target_kelly_fraction_bps,
+            kelly_lookback_bars: strategy.kelly_lookback_bars,
+            fast_window: strategy.fast_window,
+            slow_window: strategy.slow_window,
+            period: strategy.period,
+            threshold_bps: strategy.threshold_bps,
+        })
     }
 
     /// 形状自检与领域策略旋钮清单保持一致；不生效的旋钮不阻断本次运行。
@@ -299,9 +339,31 @@ pub struct BacktestSpec {
     /// Omitted legacy specs keep their historical compatibility semantics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub market_spec: Option<TradingInstrumentSpec>,
+    /// Explicit margin semantics supplied by a venue snapshot; omitted specs keep app defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub margin_model: Option<BacktestMarginConfig>,
     /// Frozen maker/taker schedule used by the shared Rust matching and accounting path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fee_schedule: Option<MakerTakerFeeSchedule>,
+    /// Validated execution cost rules, including latency. Omitted legacy specs keep zero latency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_cost_rules: Option<ExecutionCostRules>,
+    /// Optional preloaded A-share rule snapshot; paths and external data loading stay at the facade.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ashare_rules: Option<AshareRuleConfig>,
+    /// Optional OHLCV-compatible fill model; unsupported book-only models are not representable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_model: Option<BacktestFillModel>,
+    /// Maximum cumulative market-volume participation for all fills on each Bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bar_volume_participation_bps: Option<u16>,
+    /// Optional static order risk rules; product-derived constraints remain implicit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_rules: Option<BacktestRiskRules>,
+    /// Optional short-selling permission override from a runtime product/margin policy.
+    /// Omitted specs derive it from `market_spec`; missing specs retain conservative spot behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_short: Option<bool>,
     pub strategy: BuiltinStrategySpec,
     /// Optional deterministic same-account strategy basket. Omitted specs keep
     /// their historical single-strategy behavior and JSON shape.
@@ -314,11 +376,8 @@ pub struct BacktestSpec {
 }
 impl BacktestSpec {
     /// 构造一份当前版本的 spec（其余字段按调用方给的填）。
-    #[allow(clippy::too_many_arguments)] // 与产物身份逐格对应，合并成参数包会让必答项变成可选。
     pub fn new(
-        run_id: impl Into<String>,
-        instrument: impl Into<String>,
-        bars_path: impl Into<String>,
+        dataset: BacktestDatasetInput,
         settlement_currency: impl Into<String>,
         initial_cash_raw: i128,
         seed: u64,
@@ -327,16 +386,23 @@ impl BacktestSpec {
     ) -> Self {
         Self {
             schema_version: BACKTEST_SPEC_SCHEMA_VERSION,
-            run_id: run_id.into(),
-            instrument: instrument.into(),
-            bars_path: bars_path.into(),
+            run_id: dataset.run_id,
+            instrument: dataset.instrument,
+            bars_path: dataset.bars_path,
             settlement_currency: settlement_currency.into(),
             initial_cash_raw,
             seed,
             output_dir: output_dir.into(),
             account_id: None,
             market_spec: None,
+            margin_model: None,
             fee_schedule: None,
+            execution_cost_rules: None,
+            ashare_rules: None,
+            fill_model: None,
+            max_bar_volume_participation_bps: None,
+            risk_rules: None,
+            allow_short: None,
             strategy,
             portfolio: None,
             protective_exit: None,
@@ -344,106 +410,7 @@ impl BacktestSpec {
     }
     /// 形状自检。**只查"这份 spec 自己站不站得住"**，不碰磁盘。
     pub fn validate(&self) -> Result<(), AppError> {
-        if self.schema_version != BACKTEST_SPEC_SCHEMA_VERSION {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!(
-                    "BacktestSpec schema_version={} 本版本只认 {}",
-                    self.schema_version, BACKTEST_SPEC_SCHEMA_VERSION
-                ),
-            ));
-        }
-        for (field, value) in [
-            ("instrument", &self.instrument),
-            ("bars_path", &self.bars_path),
-            ("settlement_currency", &self.settlement_currency),
-            ("output_dir", &self.output_dir),
-        ] {
-            if value.trim().is_empty() {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    format!("BacktestSpec.{field} 不能为空"),
-                ));
-            }
-        }
-        if !is_identity_token(&self.run_id) {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!(
-                    "BacktestSpec.run_id 必须是 [A-Za-z0-9._-] 且不超过 128 字符（它会变成产物文件名），实际 {:?}",
-                    self.run_id
-                ),
-            ));
-        }
-        if self
-            .account_id
-            .as_deref()
-            .is_some_and(|account_id| !is_identity_token(account_id))
-        {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "BacktestSpec.account_id 必须是 [A-Za-z0-9._-] 且不超过 128 字符",
-            ));
-        }
-        if qx_core::InstrumentId::parse(&self.instrument).is_none() {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("BacktestSpec.instrument 非法: {}", self.instrument),
-            ));
-        }
-        if self.initial_cash_raw <= 0 {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "BacktestSpec.initial_cash_raw 必须为正",
-            ));
-        }
-        if let Some(market) = &self.market_spec {
-            market
-                .validate()
-                .map_err(|error| AppError::from_qx_error(&error))?;
-            if market.product == qx_core::TradingProduct::Option {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    "Bar 回测暂不接收期权规格：行权价、到期日与认购/认沽身份尚未建模",
-                ));
-            }
-            if qx_core::InstrumentId::parse(&self.instrument).as_ref() != Some(&market.instrument) {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    "BacktestSpec.market_spec.instrument 必须与 BacktestSpec.instrument 一致",
-                ));
-            }
-            if market.settlement_currency != self.settlement_currency {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    "BacktestSpec.market_spec.settlement_currency 必须与 settlement_currency 一致",
-                ));
-            }
-            if self.fee_schedule.is_none() {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    "指定 market_spec 时必须显式提供 fee_schedule，禁止静默套用默认费率",
-                ));
-            }
-        }
-        if let Some(fees) = self.fee_schedule {
-            fees.validate()
-                .map_err(|error| AppError::from_qx_error(&error))?;
-        }
-        if let Some(policy) = self.protective_exit {
-            policy.validate()?;
-        }
-        self.strategy.validate()?;
-        if let Some(portfolio) = &self.portfolio {
-            if self.protective_exit.is_some() {
-                return Err(AppError::new(
-                    AppErrorCategory::InvalidInput,
-                    "策略组合暂不支持账户净持仓级 protective_exit，避免退出成交无法归属到策略持仓",
-                ));
-            }
-            portfolio.validate(&self.strategy, self.initial_cash_raw)?;
-        }
-        Ok(())
+        backtest_validation::validate(self)
     }
 
     /// 从 JSON 读入（严格：多余键即拒）。
@@ -467,15 +434,60 @@ impl BacktestSpec {
     }
 }
 
+/// Declarative static risk rules for a shared Bar backtest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BacktestRiskRules {
+    #[serde(default = "default_backtest_risk_version")]
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_qty_raw: Option<i128>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_notional_raw: Option<i128>,
+    #[serde(default)]
+    pub no_short: bool,
+}
+
+fn default_backtest_risk_version() -> String {
+    "runtime-risk-v1".into()
+}
+
+/// Fill models whose assumptions can be expressed with OHLCV Bars.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BacktestFillModel {
+    NextBarOpen,
+    BestPrice,
+    OneTickSlippage,
+}
+
+/// Identity and input paths for one Bar backtest. Kept together because each field names the same
+/// dataset/run boundary and must travel consistently into manifests and replay verification.
+pub struct BacktestDatasetInput {
+    pub run_id: String,
+    pub instrument: String,
+    pub bars_path: String,
+}
+
+mod margin;
+pub use margin::{BacktestMarginConfig, BacktestMarginTier};
 mod depth;
 pub use depth::{DepthBacktestOutcome, DepthBacktestSpec, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION};
 mod multi_leg;
 pub use multi_leg::{
-    MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegFillModel,
+    MultiLegBacktestOutcome, MultiLegBacktestSpec, MultiLegDatasetInput, MultiLegFillModel,
     MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
 };
+mod multi_builtin;
+pub use multi_builtin::{
+    MultiBuiltinAttribution, MultiBuiltinBacktestRun, MultiBuiltinBacktestSpec, MultiBuiltinLegRun,
+    MULTI_BUILTIN_BACKTEST_SCHEMA_VERSION,
+};
+mod dataset_manifest;
+pub use dataset_manifest::*;
 mod multi_account;
 pub use multi_account::*;
+pub mod market_spec;
 pub mod multi_market;
 mod multi_market_depth;
 pub use multi_market_depth::*;

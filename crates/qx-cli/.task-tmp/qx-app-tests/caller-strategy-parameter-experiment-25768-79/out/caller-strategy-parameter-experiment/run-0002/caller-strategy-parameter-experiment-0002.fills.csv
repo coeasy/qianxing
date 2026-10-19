@@ -1,0 +1,2 @@
+ts,order_id,qty_raw,price_raw,fee_raw,strategy_id
+2000,1,2000000000,102000000000,102000000,app-sma

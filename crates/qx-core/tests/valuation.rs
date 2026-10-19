@@ -204,8 +204,24 @@ fn ledger_valuate_marks_spot_positions_and_cash_for_multiple_markets_and_currenc
         .with_market_specs(&specs)
         .with_fx(&fx);
     assert_eq!(ledger.valuate(&context).unwrap().equity.raw(), equity);
+    let paper = ledger
+        .valuate_paper(&PaperValuationContext::new(
+            "main", &marks, "USDT", &specs, &fx,
+        ))
+        .unwrap();
+    assert_eq!(paper.equity.raw(), equity);
+    assert_eq!(paper.available.raw(), equity);
     assert!(ledger
         .equity_for_with_market_specs_and_fx("main", &marks, "USDT", &specs, &BTreeMap::new())
+        .is_err());
+    assert!(ledger
+        .valuate_paper(&PaperValuationContext::new(
+            "main",
+            &marks,
+            "USDT",
+            &specs,
+            &BTreeMap::new(),
+        ))
         .is_err());
 }
 

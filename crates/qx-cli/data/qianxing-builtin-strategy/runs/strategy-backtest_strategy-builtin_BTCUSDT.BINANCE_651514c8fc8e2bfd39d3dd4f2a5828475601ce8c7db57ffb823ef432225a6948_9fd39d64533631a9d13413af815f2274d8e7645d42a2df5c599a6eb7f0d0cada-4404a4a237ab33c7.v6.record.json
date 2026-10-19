@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "run_id": "strategy-backtest:strategy-builtin:BTCUSDT.BINANCE:651514c8fc8e2bfd39d3dd4f2a5828475601ce8c7db57ffb823ef432225a6948:9fd39d64533631a9d13413af815f2274d8e7645d42a2df5c599a6eb7f0d0cada",
+  "status": "completed",
+  "input_digest": "barframe:613fdc1dc0b779e7",
+  "code_identity": "30d8bf82c128bc35f257c59bf70aaee45f4c73b8-dirty:runtime-schema-1",
+  "config_fingerprint": "651514c8fc8e2bfd39d3dd4f2a5828475601ce8c7db57ffb823ef432225a6948",
+  "started_at_ms": 1000,
+  "finished_at_ms": 70000,
+  "artifact_refs": [
+    {
+      "name": "summary",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE_651514c8fc8e2bfd39d3dd4f2a5828475601ce8c7db57ffb823ef432225a6948_9fd39d64533631a9d13413af815f2274d8e7645d42a2df5c599a6eb7f0d0cada-4404a4a237ab33c7.v6.summary.json",
+      "digest": "71585610a0709a2271dd1ae6e50116a2dc16a19c73505e423871591489151cac"
+    },
+    {
+      "name": "equity",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE_651514c8fc8e2bfd39d3dd4f2a5828475601ce8c7db57ffb823ef432225a6948_9fd39d64533631a9d13413af815f2274d8e7645d42a2df5c599a6eb7f0d0cada-4404a4a237ab33c7.v6.equity.csv",
+      "digest": "4a3364cc160c94cf7927ea923841307bb26517efa98ec56c18152f8aaa96e1b7"
+    },
+    {
+      "name": "fills",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE_651514c8fc8e2bfd39d3dd4f2a5828475601ce8c7db57ffb823ef432225a6948_9fd39d64533631a9d13413af815f2274d8e7645d42a2df5c599a6eb7f0d0cada-4404a4a237ab33c7.v6.fills.csv",
+      "digest": "dfaee8f55320a7962d78b9e9998f8104e749258d0a50e15ea2d4d5238b884a95"
+    },
+    {
+      "name": "run_manifest",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE_651514c8fc8e2bfd39d3dd4f2a5828475601ce8c7db57ffb823ef432225a6948_9fd39d64533631a9d13413af815f2274d8e7645d42a2df5c599a6eb7f0d0cada-4404a4a237ab33c7.run.json",
+      "digest": "9f284158802a8415ececb6561de376a234ddcf791b1118f27923bfc47de74d03"
+    }
+  ],
+  "replay_verdict": "verified",
+  "capability_level": "L1"
+}

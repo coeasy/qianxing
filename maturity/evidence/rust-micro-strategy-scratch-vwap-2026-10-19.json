@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-10-18T22:22:55Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "commands": [
+    "cargo bench --offline -p qx-cli --bench criterion_performance -j 1 -- strategy_close_scratch_reuse --noplot",
+    "cargo bench --offline -p qx-cli --bench criterion_performance -j 1 -- strategy_vwap_window_allocation --noplot"
+  ],
+  "criterion": {
+    "sample_size": 10,
+    "warm_up_seconds": 1,
+    "measurement_seconds": 2,
+    "interval": "Criterion estimated time interval printed as lower/point/upper estimate",
+    "runs_interleaved": false
+  },
+  "workloads": {
+    "close_scratch": {
+      "bars": [32, 128, 512, 1024],
+      "records": [
+        {"bars": 32, "allocate_each_signal_ns": {"estimate": 31.579, "interval": [30.911, 32.273]}, "reuse_strategy_buffer_ns": {"estimate": 7.0260, "interval": [6.9543, 7.0814]}, "lower_median_pct": 77.75},
+        {"bars": 128, "allocate_each_signal_ns": {"estimate": 48.706, "interval": [48.194, 49.465]}, "reuse_strategy_buffer_ns": {"estimate": 27.060, "interval": [26.896, 27.287]}, "lower_median_pct": 44.45},
+        {"bars": 512, "allocate_each_signal_ns": {"estimate": 306.19, "interval": [305.24, 307.17]}, "reuse_strategy_buffer_ns": {"estimate": 266.83, "interval": [266.05, 267.50]}, "lower_median_pct": 12.85},
+        {"bars": 1024, "allocate_each_signal_ns": {"estimate": 569.80, "interval": [568.52, 571.13]}, "reuse_strategy_buffer_ns": {"estimate": 529.36, "interval": [526.81, 534.17]}, "lower_median_pct": 7.10}
+      ]
+    },
+    "vwap_window": {
+      "periods": [16, 64, 256],
+      "records": [
+        {"period": 16, "collect_then_reduce_ns": {"estimate": 72.769, "interval": [70.484, 74.216]}, "direct_reduce_ns": {"estimate": 40.742, "interval": [40.524, 41.184]}, "lower_median_pct": 44.00},
+        {"period": 64, "collect_then_reduce_ns": {"estimate": 211.46, "interval": [210.26, 213.42]}, "direct_reduce_ns": {"estimate": 163.33, "interval": [159.50, 168.40]}, "lower_median_pct": 22.76},
+        {"period": 256, "collect_then_reduce_ns": {"estimate": 671.57, "interval": [666.52, 677.14]}, "direct_reduce_ns": {"estimate": 664.73, "interval": [655.19, 678.23]}, "lower_median_pct": 1.02}
+      ]
+    }
+  },
+  "correctness_guard": {
+    "close_sequence_equal": true,
+    "vwap_weighted_and_volume_equal": true,
+    "allocation_counting": false,
+    "full_strategy_decision_comparison": false
+  },
+  "interpretation": "The close-buffer microkernel is faster in these synthetic sizes, with the advantage shrinking at larger buffers. Direct VWAP reduction improves the 16- and 64-bar synthetic windows; the 256-bar intervals overlap, so no meaningful speedup is established there. The benchmark guards the exact close sequence and VWAP weighted-volume accumulator, but does not compare full strategy decisions, count allocator calls, interleave cases, or establish end-to-end A-share backtest speedup."
+}

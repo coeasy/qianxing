@@ -1,4 +1,5 @@
 use crate::*;
+use std::sync::{Arc, Mutex};
 
 pub(crate) fn run_binance_market_worker(
     context: qx_runtime::WorkerContext,
@@ -15,12 +16,11 @@ pub(crate) fn run_binance_market_worker(
     let instrument = InstrumentId::parse(&worker.symbols[0])
         .ok_or_else(|| format!("worker {} instrument 非法", worker.id))?;
     let (host, port) = configured_ws_endpoint(&worker)?;
+    let log_name = binance_event_log_name(&worker)?;
     let mut pipeline = pipeline_storage
-        .open(
-            binance_event_log_name(&worker)?,
-            worker_settlement_currency(&worker),
-        )
+        .open(log_name.clone(), worker_settlement_currency(&worker))
         .map_err(|error| format!("创建行情事件管线失败: {error}"))?;
+    let mut metrics = PipelineMetricsReporter::new(&config, context.id(), "");
     let mut paper_bridges = open_paper_market_bridges(&pipeline_storage, &config)?;
     let mut stream = BinanceSpotMarketStream::connect_with_endpoint(
         instrument.clone(),
@@ -33,6 +33,7 @@ pub(crate) fn run_binance_market_worker(
         "market stream connected",
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish_if_due(true, runtime_timestamp_ms());
     let mut quotes = 0_u64;
     let mut idle_windows = 0_u64;
     while !context.should_stop() {
@@ -49,6 +50,8 @@ pub(crate) fn run_binance_market_worker(
                         format!("{}:quote:{}", worker.id, quote.source_seq),
                     ))
                     .map_err(|error| format!("行情事实归约失败: {error:?}"))?;
+                metrics.observe(&pipeline);
+                metrics.publish_if_due(true, received_ts);
                 bridge_market_quote_to_paper(
                     &mut paper_bridges,
                     PaperMarketQuote {
@@ -63,6 +66,7 @@ pub(crate) fn run_binance_market_worker(
                         source_seq: quote.source_seq,
                     },
                 )?;
+                observe_paper_market_bridges(&paper_bridges, &mut metrics);
                 quotes = quotes.saturating_add(1);
                 context.heartbeat(received_ts)?;
             }
@@ -85,6 +89,7 @@ pub(crate) fn run_binance_market_worker(
         format!("market stream stopped quotes={quotes} idle_windows={idle_windows}"),
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish(false, runtime_timestamp_ms());
     Ok(())
 }
 
@@ -99,12 +104,18 @@ pub(crate) fn run_binance_user_worker(
     let initial_auth = load_binance_worker_auth(&worker)?;
     let mut venue = new_binance_venue(&worker, initial_auth)?;
     let runtime_config = read_runtime_config(&runtime_config_path)?;
+    let log_name = binance_event_log_name(&worker)?;
     let mut pipeline = pipeline_storage
         .open(
-            binance_event_log_name(&worker)?,
+            log_name.clone(),
             account_worker_settlement_currency(&runtime_config, &worker)?,
         )
         .map_err(|error| format!("创建用户流事件管线失败: {error}"))?;
+    let metrics = Arc::new(Mutex::new(PipelineMetricsReporter::new(
+        &runtime_config,
+        context.id(),
+        &log_name,
+    )));
     venue
         .restore_orders(pipeline.orders())
         .map_err(|error| format!("恢复用户流订单状态失败: {error:?}"))?;
@@ -113,6 +124,7 @@ pub(crate) fn run_binance_user_worker(
     let event_context = context.clone();
     let request_prefix = worker.id.clone();
     let worker_id = worker.id.clone();
+    let event_metrics = Arc::clone(&metrics);
     let spec_worker = worker.clone();
     let spec_config_path = runtime_config_path.clone();
     let (host, port) = configured_ws_endpoint(&worker)?;
@@ -160,6 +172,10 @@ pub(crate) fn run_binance_user_worker(
             )?,
         };
         event_context.heartbeat(received_ts)?;
+        if let Ok(mut metrics) = event_metrics.lock() {
+            metrics.observe(&pipeline);
+            metrics.publish_if_due(true, received_ts);
+        }
         if event_count != 0 {
             event_context.mark(
                 qx_runtime::ServiceStatus::Ready,
@@ -182,7 +198,12 @@ pub(crate) fn run_binance_user_worker(
         &mut should_stop,
         &mut sleep,
         &mut on_event,
-    )?;
+    );
+    drop(on_event);
+    if let Ok(metrics) = metrics.lock() {
+        metrics.publish(false, runtime_timestamp_ms());
+    }
+    let report = report?;
     context.mark(
         qx_runtime::ServiceStatus::Stopped,
         format!("user stream stopped events={}", report.events),

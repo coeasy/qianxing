@@ -5,7 +5,11 @@
 //! 不碰队列、账本或 Venue，因此可以独立于 worker 测试。
 //! （V12 R1 从 `workers.rs` 原样搬家，行为逐字相同。）
 
-use super::*;
+use crate::{live_frame_is_fresh, timeframe_to_ms};
+use qx_core::InstrumentId;
+use qx_datastruct::BarFrame;
+use qx_runtime::StrategyRuntimeConfig;
+use std::path::{Path, PathBuf};
 
 /// 取当前实时策略可用的闭合 Bar 指纹。
 ///
@@ -66,7 +70,7 @@ pub(crate) fn live_strategy_snapshot_digest(
                 return Err(format!(
                     "读取实时策略对冲腿 BarFrame 失败 {}: {error}",
                     reference_path
-                ))
+                ));
             }
         };
         let reference_frame = BarFrame::from_json(&reference_payload).map_err(|error| {

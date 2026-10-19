@@ -8,7 +8,9 @@ pub(crate) fn reconcile_issue_json(issue: &AdapterReconcileIssue) -> serde_json:
         "action": issue.action().reason_code(),
         "client_order_id": issue.client_order_id(),
     });
-    let object = value.as_object_mut().expect("json object");
+    let Some(object) = value.as_object_mut() else {
+        return value;
+    };
     match issue {
         AdapterReconcileIssue::MissingLocally { .. }
         | AdapterReconcileIssue::MissingAtVenue { .. } => {}
@@ -57,8 +59,9 @@ pub(crate) fn persist_reconcile_report(input: ReconcileReportInput<'_>) -> Resul
         balance_discrepancies: input
             .balance_discrepancies
             .iter()
-            .map(|value| serde_json::to_value(value).expect("balance discrepancy is serializable"))
-            .collect(),
+            .map(serde_json::to_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("序列化余额差异失败: {error}"))?,
         position_snapshots_count: input.position_snapshots_count,
         funding_rate_snapshots_count: input.funding_rate_snapshots_count,
         cashflow_count: input.cashflow_count,
@@ -88,17 +91,21 @@ pub(crate) fn run_binance_reconcile_worker(
                 .ok_or_else(|| format!("worker {} 对账 symbol 非法: {symbol}", worker.id))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let runtime_config = read_runtime_config(runtime_config_path)?;
+    let log_name = binance_event_log_name(&worker)?;
     let mut pipeline = pipeline_storage
         .open(
-            binance_event_log_name(&worker)?,
-            account_worker_currency_from_path(runtime_config_path, &worker)?,
+            log_name.clone(),
+            account_worker_settlement_currency(&runtime_config, &worker)?,
         )
         .map_err(|error| format!("创建对账事件管线失败: {error}"))?;
+    let mut metrics = PipelineMetricsReporter::new(&runtime_config, context.id(), &log_name);
     context.mark(
         qx_runtime::ServiceStatus::Ready,
         "reconciler starting",
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish_if_due(true, runtime_timestamp_ms());
     while !context.should_stop() {
         // 每一轮重新读取凭据并创建连接器，使 Secret Manager 对投影文件的
         // 原子替换在下一轮对账生效；本轮请求仍使用同一认证上下文。
@@ -221,6 +228,8 @@ pub(crate) fn run_binance_reconcile_worker(
             ),
             Some(runtime_timestamp_ms()),
         )?;
+        metrics.observe(&pipeline);
+        metrics.publish_if_due(true, received_ts);
         if once {
             break;
         }
@@ -231,5 +240,6 @@ pub(crate) fn run_binance_reconcile_worker(
             thread::sleep(Duration::from_millis(100));
         }
     }
+    metrics.publish(false, runtime_timestamp_ms());
     Ok(())
 }

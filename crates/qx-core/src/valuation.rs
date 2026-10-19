@@ -112,6 +112,35 @@ impl<'a> ValuationContext<'a> {
     }
 }
 
+/// Paper account valuation input. Paper callers always value one shared ledger using the
+/// frozen specification for every held market, with optional FX conversion into ledger currency.
+#[derive(Clone, Copy, Debug)]
+pub struct PaperValuationContext<'a> {
+    pub account_id: &'a str,
+    pub marks: &'a BTreeMap<InstrumentId, Price>,
+    pub reporting_currency: &'a str,
+    pub market_specs: &'a BTreeMap<InstrumentId, TradingInstrumentSpec>,
+    pub fx_rates: &'a BTreeMap<String, Price>,
+}
+
+impl<'a> PaperValuationContext<'a> {
+    pub fn new(
+        account_id: &'a str,
+        marks: &'a BTreeMap<InstrumentId, Price>,
+        reporting_currency: &'a str,
+        market_specs: &'a BTreeMap<InstrumentId, TradingInstrumentSpec>,
+        fx_rates: &'a BTreeMap<String, Price>,
+    ) -> Self {
+        Self {
+            account_id,
+            marks,
+            reporting_currency,
+            market_specs,
+            fx_rates,
+        }
+    }
+}
+
 /// 空汇率表：`ValuationContext::spot` 需要一个 `'static` 的借用，这里给一份进程级共享的空表。
 fn empty_fx_rates() -> &'static BTreeMap<String, Price> {
     static EMPTY: std::sync::OnceLock<BTreeMap<String, Price>> = std::sync::OnceLock::new();

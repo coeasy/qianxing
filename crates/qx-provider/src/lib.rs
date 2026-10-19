@@ -23,6 +23,16 @@ pub enum DataKind {
     Instrument,
 }
 
+/// Canonical market-data depth requested from a Provider. This is separate from
+/// `DataKind`: Quote identifies the payload family, while the tier states its shape.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarketDataTier {
+    Bar,
+    L1,
+    L2,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct DataQuery {
     pub kind: DataKind,
@@ -118,6 +128,9 @@ impl DataQuery {
 /// Optional caller requirements layered over the stable historical `DataQuery` contract.
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub struct DataRequirements {
+    /// Require a Provider to return a declared market-data tier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_data_tier: Option<MarketDataTier>,
     /// Require a provider that declares this exact credential scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required_auth_scope: Option<String>,
@@ -141,10 +154,16 @@ impl DataRequirements {
             .is_some_and(|scope| scope.trim().is_empty())
             || (self.require_realtime && query.as_of.is_none())
             || (self.max_staleness_ms.is_some() && !self.require_realtime)
+            || self.required_data_tier.is_some_and(|tier| match tier {
+                MarketDataTier::Bar => query.kind != DataKind::Bar,
+                MarketDataTier::L1 | MarketDataTier::L2 => {
+                    query.kind != DataKind::Quote || query.frequency != "tick"
+                }
+            })
         {
             return Err(ProviderError::new(
                 ProviderErrorClass::Permanent,
-                "数据查询能力要求非法：实时请求需有 as_of，且新鲜度限制只能用于实时请求",
+                "数据查询能力要求非法：实时请求需有 as_of，新鲜度限制仅用于实时请求，数据档位必须匹配数据类型与频率",
             ));
         }
         Ok(())
@@ -193,6 +212,9 @@ pub struct ProviderCapability {
     pub provider_id: String,
     pub version: String,
     pub data_kinds: BTreeSet<DataKind>,
+    /// Explicit data-depth declarations; an empty set means no tier is certified.
+    #[serde(default)]
+    pub data_tiers: BTreeSet<MarketDataTier>,
     pub asset_classes: BTreeSet<String>,
     pub frequencies: BTreeSet<String>,
     pub auth_scope: String,

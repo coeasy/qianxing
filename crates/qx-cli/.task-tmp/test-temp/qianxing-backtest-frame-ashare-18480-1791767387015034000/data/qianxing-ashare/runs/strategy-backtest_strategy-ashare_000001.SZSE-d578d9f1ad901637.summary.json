@@ -1,0 +1,81 @@
+{
+  "account": {
+    "initial_cash_raw": "100000000000000",
+    "source": "builtin-default"
+  },
+  "assumptions": [
+    "data_tier=Bar",
+    "benchmark=flat-cash",
+    "metrics=raw-fixed-point",
+    "virtual_trading=funding:0 interest:0 delivery:0 liquidation:false"
+  ],
+  "bars": 6,
+  "clock_end": 1717466400000,
+  "clock_start": 1717378200000,
+  "execution_costs": {
+    "source": "ashare-rules:D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-backtest-frame-ashare-18480-1791767387015034000\\qianxing.ashare.rules.json"
+  },
+  "fill_model": {
+    "name": "next_bar_open",
+    "source": "builtin-default"
+  },
+  "fills": 1,
+  "input": {
+    "dataset_id": "strategy-bars:000001.SZSE",
+    "dataset_version": "barframe-json-v1",
+    "fingerprint": "5e59cfcf3adca434",
+    "kind": "barframe",
+    "path": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-backtest-frame-ashare-18480-1791767387015034000\\qianxing.ashare.bar-frame.example.json"
+  },
+  "input_data_hash": "982df19cca407443",
+  "instrument": "000001.SZSE",
+  "matching_kernel": "qx-xingban::BacktestEngine(bar)",
+  "metrics": {
+    "calmar": null,
+    "fees_raw": 5104500000,
+    "final_equity_raw": 100019895500000,
+    "max_drawdown_bps": 0,
+    "profit_factor": null,
+    "return_bps": 1,
+    "sharpe": 0.4472135954999579,
+    "sortino": null,
+    "turnover_raw": 1045000000000,
+    "win_rate": 0.2
+  },
+  "model_descriptors": [
+    "NextBarOpen@v1[tier=Bar;params=;assumption=假设下一根bar开盘可全部成交；不建模排队与容量]",
+    "AShareFee@v1[params=commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1]",
+    "ZeroLatency@v1[delay_ns=0]",
+    "NoMargin@v1",
+    "AshareRules@v2[board=Main;t_plus_one=true;lot_size=100000000000;limit_up_bp=1000;limit_down_bp=1000;price_tick=10000000;commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1;calendar=0;trading_days=2;sessions=4;halted=0;actions=1;actions_hash=3ccac4992760a857]"
+  ],
+  "rejected_orders": 0,
+  "rejection_reasons": [],
+  "replay": {
+    "events": 7,
+    "ledger_entries": 4,
+    "log_digest": "90bc285b7033074e",
+    "run_ledger_entries": 4
+  },
+  "result_hash": "90bc285b7033074e",
+  "risk_rules": {
+    "rule_set_version": "conservative-default-v1+implicit-no-short",
+    "source": "runtime-config"
+  },
+  "run_manifest": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-backtest-frame-ashare-18480-1791767387015034000\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE-d578d9f1ad901637.run.json",
+  "run_record": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-backtest-frame-ashare-18480-1791767387015034000\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE-d578d9f1ad901637.record.json",
+  "sample_unit": "bar",
+  "schema_version": 5,
+  "signal": {
+    "declared_unused": "builtin_period,builtin_threshold_bps",
+    "fast_window": 2,
+    "kind": "ema_cross",
+    "knobs": "fast_window,slow_window",
+    "period": 14,
+    "quantity_raw": "100000000000",
+    "slow_window": 3,
+    "source": "config",
+    "threshold_bps": "0"
+  },
+  "strategy_id": "strategy-ashare"
+}

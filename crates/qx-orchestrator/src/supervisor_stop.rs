@@ -69,13 +69,13 @@ pub(crate) fn wait_for_children<P: ManagedProcess>(
             }
         }
         if signalled() {
-            if requested_at.is_none() {
-                requested_at = Some(now_ms());
+            let first_request = requested_at.is_none();
+            let at = *requested_at.get_or_insert_with(&now_ms);
+            if first_request {
                 for child in children.iter_mut() {
                     child.request_stop()?;
                 }
             }
-            let at = requested_at.expect("shutdown request timestamp was just set");
             let waited_ms = now_ms().saturating_sub(at);
             if running == 0 {
                 return Ok(SupervisorStop::StoppedWithinBudget { waited_ms });

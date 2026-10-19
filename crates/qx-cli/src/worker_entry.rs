@@ -3,7 +3,23 @@
 //! `ccxt-worker` 与 `binance-worker` 两条入口在此共用同一张 `WorkerRole` 分派表，
 //! 新增角色只需要在本处登记一次，避免出现两套角色语义。
 
-use super::*;
+use std::path::{Path, PathBuf};
+use std::thread;
+
+use qx_adapter::{CcxtProcessClient, CcxtProcessVenue, CcxtRpc};
+use qx_core::VenueFamily;
+use qx_orchestrator::supervise_workers;
+use qx_runtime::{RuntimeConfig, WorkerConfig, WorkerRole};
+
+use crate::worker_runtime::{run_binance_worker_inner, run_ccxt_worker_inner};
+use crate::{
+    account_worker_settlement_currency, binance_event_log_name, catch_panic,
+    ccxt_error_is_optional_derivatives_capability, load_binance_worker_auth, new_binance_venue,
+    pending_spread_recovery_groups, python_interpreter, read_runtime_config,
+    recover_spread_groups_for_venue, recovery_order_validator, required_account_event_log,
+    runtime_timestamp_ms, spread_recovery_poll_delay, PipelineMetricsReporter, PipelineStorage,
+    SpreadRecoveryContext,
+};
 
 /// 多腿恢复 worker 的 venue_id 必须显式配置。
 ///
@@ -65,7 +81,7 @@ impl VenueEntry {
 }
 
 /// 按登记表加载并校验 worker：存在性 → 启用 → 角色白名单 → Venue 绑定。
-fn venue_worker(
+pub(crate) fn venue_worker(
     config: &RuntimeConfig,
     worker_id: &str,
     entry: &VenueEntry,
@@ -150,22 +166,23 @@ pub(crate) fn run_binance_spread_recovery_worker(
     once: bool,
 ) -> Result<(), String> {
     let venue_id = recovery_worker_venue_id(&worker)?;
-    let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
+    let runtime_config = read_runtime_config(&runtime_config_path)?;
+    let settlement_currency = account_worker_settlement_currency(&runtime_config, &worker)?;
+    let log_name = binance_event_log_name(&worker)?;
+    let mut metrics = PipelineMetricsReporter::new(&runtime_config, context.id(), &log_name);
     context.mark(
         qx_runtime::ServiceStatus::Ready,
         format!("binance spread recovery scanning venue={venue_id}"),
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish_if_due(true, runtime_timestamp_ms());
     let mut recovery_stalls = 0_u32;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
         let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
         if pending_before > 0 {
             let mut pipeline = pipeline_storage
-                .open(
-                    binance_event_log_name(&worker)?,
-                    settlement_currency.clone(),
-                )
+                .open(log_name.clone(), settlement_currency.clone())
                 .map_err(|error| format!("打开 Binance 多腿恢复 EventLog 失败: {error}"))?;
             let auth = load_binance_worker_auth(&worker)?;
             let mut venue = new_binance_venue(&worker, auth)?;
@@ -196,6 +213,7 @@ pub(crate) fn run_binance_spread_recovery_worker(
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
             }
+            metrics.absorb(&pipeline);
             // 扫描后仍停在原处才计一次原地不动：分组数少了说明这一轮真的在推进。
             let pending_after = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
             recovery_stalls = if pending_after >= pending_before {
@@ -207,76 +225,20 @@ pub(crate) fn run_binance_spread_recovery_worker(
             recovery_stalls = 0;
         }
         context.heartbeat(now)?;
+        metrics.publish_if_due(true, now);
         if once {
             break;
         }
         thread::sleep(spread_recovery_poll_delay(recovery_stalls));
     }
+    metrics.publish(false, runtime_timestamp_ms());
     Ok(())
 }
 
 pub(crate) fn run_binance_worker(path: &Path, worker_id: &str, once: bool) -> Result<(), String> {
-    let config = read_runtime_config(path)?;
-    let mut worker = venue_worker(&config, worker_id, &VenueEntry::BINANCE)?;
-    // 提交路径不认 A 股段：配了就当场拒，而不是收下配置再按无交易制度下单（V11 Q65）。
-    reject_ashare_rules_on_submit_path(path, Some(&worker), "binance-worker")?;
-    resolve_worker_runtime_paths(&mut worker, path);
-    if once && matches!(worker.role, WorkerRole::MarketData | WorkerRole::UserStream) {
-        return Err("binance-worker --once 只支持 execution 或 reconciler worker".into());
-    }
-    let pipeline_root = Path::new(&config.storage.data_dir).to_path_buf();
-    let pipeline_storage = PipelineStorage::from_config(&config)?;
-    // Paper 行情桥要按账户身份判定记账币种，所以这里带全量 worker；桥自身再按角色过滤。
-    let bridge_config = config.clone();
-    let runtime_config_path = path.to_path_buf();
-    let control_store = configured_control_store(&config)?;
-    let command_queue = configured_command_queue(&config, &pipeline_root)?;
-    let dedicated_spread_recovery = dedicated_spread_recovery_configured(&config, &worker);
-    let supervisor = RuntimeSupervisor::new(config)?;
-    let worker_role = worker.role;
-    let registered_id = worker.id.clone();
-    let worker_for_run = worker.clone();
-    let handle = supervisor.spawn_worker(&registered_id, move |context| match worker_role {
-        WorkerRole::MarketData => run_binance_market_worker(
-            context,
-            worker_for_run.clone(),
-            pipeline_storage.clone(),
-            bridge_config,
-        ),
-        WorkerRole::UserStream => run_binance_user_worker(
-            context,
-            worker_for_run.clone(),
-            pipeline_storage.clone(),
-            runtime_config_path,
-        ),
-        WorkerRole::Execution => run_binance_execution_worker(
-            context,
-            worker_for_run,
-            pipeline_storage.clone(),
-            control_store,
-            command_queue,
-            runtime_config_path,
-            dedicated_spread_recovery,
-            once,
-        ),
-        WorkerRole::SpreadRecovery => run_binance_spread_recovery_worker(
-            context,
-            worker_for_run,
-            pipeline_storage,
-            runtime_config_path,
-            once,
-        ),
-        WorkerRole::Reconciler => run_binance_reconcile_worker(
-            context,
-            worker_for_run,
-            &pipeline_root,
-            pipeline_storage,
-            &runtime_config_path,
-            once,
-        ),
-        _ => Err("unsupported Binance worker role".into()),
-    })?;
-    join_worker_handle(&supervisor, handle, "Binance", worker_id)
+    catch_panic("worker-entry", || {
+        run_binance_worker_inner(path, worker_id, once)
+    })
 }
 
 #[cfg(test)]
@@ -313,68 +275,9 @@ pub(crate) fn run_ccxt_worker(
     ccxt_config_path: &Path,
     once: bool,
 ) -> Result<(), String> {
-    let config = read_runtime_config(path)?;
-    let worker = venue_worker(&config, worker_id, &VenueEntry::CCXT)?;
-    reject_ashare_rules_on_submit_path(path, Some(&worker), "ccxt-worker")?;
-    let dedicated_spread_recovery = dedicated_spread_recovery_configured(&config, &worker);
-    let root = Path::new(&config.storage.data_dir).to_path_buf();
-    let pipeline_storage = PipelineStorage::from_config(&config)?;
-    let runtime_config_path = path.to_path_buf();
-    let control_store = configured_control_store(&config)?;
-    let queue = configured_command_queue(&config, &root)?;
-    let ccxt_config_path = resolve_ccxt_config_path(path, &ccxt_config_path.to_string_lossy());
-    validate_ccxt_worker_binding(&worker, Path::new(&ccxt_config_path))?;
-    let supervisor = RuntimeSupervisor::new(config)?;
-    let registered_id = worker.id.clone();
-    let worker_role = worker.role;
-    let handle = supervisor.spawn_worker(&registered_id, move |context| match worker_role {
-        WorkerRole::MarketData => run_ccxt_market_worker(
-            context,
-            worker,
-            pipeline_storage.clone(),
-            ccxt_config_path,
-            runtime_config_path.clone(),
-            once,
-        ),
-        WorkerRole::UserStream => run_ccxt_user_stream_worker(
-            context,
-            worker,
-            pipeline_storage.clone(),
-            ccxt_config_path,
-            runtime_config_path.clone(),
-            once,
-        ),
-        WorkerRole::Reconciler => run_ccxt_reconcile_worker(
-            context,
-            worker,
-            &root,
-            pipeline_storage.clone(),
-            ccxt_config_path,
-            runtime_config_path.clone(),
-            once,
-        ),
-        WorkerRole::SpreadRecovery => run_ccxt_spread_recovery_worker(
-            context,
-            worker,
-            pipeline_storage,
-            ccxt_config_path,
-            runtime_config_path,
-            once,
-        ),
-        WorkerRole::Execution => run_ccxt_execution_worker(
-            context,
-            worker,
-            pipeline_storage,
-            control_store,
-            queue,
-            ccxt_config_path,
-            runtime_config_path,
-            dedicated_spread_recovery,
-            once,
-        ),
-        _ => Err("unsupported CCXT worker role".into()),
-    })?;
-    join_worker_handle(&supervisor, handle, "CCXT", worker_id)
+    catch_panic("worker-entry", || {
+        run_ccxt_worker_inner(path, worker_id, ccxt_config_path, once)
+    })
 }
 
 pub(crate) fn run_ccxt_spread_recovery_worker(
@@ -387,22 +290,23 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
 ) -> Result<(), String> {
     let python = python_interpreter();
     let venue_id = recovery_worker_venue_id(&worker)?;
-    let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
+    let runtime_config = read_runtime_config(&runtime_config_path)?;
+    let settlement_currency = account_worker_settlement_currency(&runtime_config, &worker)?;
+    let log_name = required_account_event_log(&worker)?;
+    let mut metrics = PipelineMetricsReporter::new(&runtime_config, context.id(), &log_name);
     context.mark(
         qx_runtime::ServiceStatus::Ready,
         format!("ccxt spread recovery scanning venue={venue_id}"),
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish_if_due(true, runtime_timestamp_ms());
     let mut recovery_stalls = 0_u32;
     while !context.should_stop() {
         let now = runtime_timestamp_ms();
         let pending_before = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
         if pending_before > 0 {
             let mut pipeline = pipeline_storage
-                .open(
-                    required_account_event_log(&worker)?,
-                    settlement_currency.clone(),
-                )
+                .open(log_name.clone(), settlement_currency.clone())
                 .map_err(|error| format!("打开 CCXT 多腿恢复 EventLog 失败: {error}"))?;
             // 每轮扫描起一个 Python 子进程：只有过预算的重生才是有界的（V13 R2 #168c）。
             let client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
@@ -432,6 +336,7 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
             for message in diagnostics {
                 eprintln!("[HedgeRecovery] {message}");
             }
+            metrics.absorb(&pipeline);
             let pending_after = pending_spread_recovery_groups(&pipeline_storage.root, &venue_id)?;
             recovery_stalls = if pending_after >= pending_before {
                 recovery_stalls.saturating_add(1)
@@ -442,11 +347,13 @@ pub(crate) fn run_ccxt_spread_recovery_worker(
             recovery_stalls = 0;
         }
         context.heartbeat(now)?;
+        metrics.publish_if_due(true, now);
         if once {
             break;
         }
         thread::sleep(spread_recovery_poll_delay(recovery_stalls));
     }
+    metrics.publish(false, runtime_timestamp_ms());
     Ok(())
 }
 

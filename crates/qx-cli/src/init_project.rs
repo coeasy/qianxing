@@ -3,7 +3,18 @@
 //! 只负责挑模板、复制样例资产、生成 README 与首屏下一步，不改变运行时语义；
 //! 真正读取运行时配置和回测的入口仍复用 crate 根上的同一批辅助函数。
 
-use super::*;
+use crate::cli_args;
+use crate::deploy_lookup::{
+    current_deploy_roots, deploy_miss_note, locate_deploy_file, DEPLOY_DIR_NAME,
+};
+use crate::init_guidance;
+use crate::path_resolution::anchor_init_data_dir;
+use crate::project_manifest::write_init_project_manifest;
+use crate::runtime_wiring::read_runtime_config;
+use qx_runtime::RuntimeConfig;
+use qx_strategy::BuiltinStrategyKind;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 /// 默认示例配置的取数入口（链路入口符号，定义点由架构门禁点名本文件）。
 ///
 /// 查找链本身在 `deploy_lookup.rs`；全缺时回落到「当前目录的 `deploy/`」这一写法，

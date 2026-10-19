@@ -47,11 +47,17 @@ fn independent_rust_sdk_consumer_runs_a_custom_strategy_on_both_pair_legs() {
     let output_dir = scratch("custom-multi-leg-strategy");
     let root = super::repo_root().join("deploy");
     let spec = MultiLegBacktestSpec::new(
-        "sdk-custom-multi-leg",
-        root.join("qianxing.bar-frame.pairs-primary.example.json")
-            .to_string_lossy(),
-        root.join("qianxing.bar-frame.pairs-reference.example.json")
-            .to_string_lossy(),
+        qx_sdk::MultiLegDatasetInput {
+            run_id: ("sdk-custom-multi-leg").into(),
+            primary_bars_path: (root
+                .join("qianxing.bar-frame.pairs-primary.example.json")
+                .to_string_lossy())
+            .into(),
+            reference_bars_path: (root
+                .join("qianxing.bar-frame.pairs-reference.example.json")
+                .to_string_lossy())
+            .into(),
+        },
         "USDT",
         1_000_000 * 1_000_000_000,
         1_000_000 * 1_000_000_000,
@@ -181,6 +187,7 @@ fn the_rust_sdk_facade_selects_classic_strategies_over_order_book_data() {
                 fee_bps: 0,
                 latency_snapshots: 0,
                 queue_position_bps: 0,
+                queue_position_model: Default::default(),
                 market_impact_bps: 0,
                 output_dir: output_dir.to_string_lossy().into_owned(),
                 strategy: base_strategy,
@@ -222,7 +229,6 @@ fn the_rust_sdk_facade_selects_classic_strategies_over_order_book_data() {
         ]
     );
 }
-
 struct BuyDepthQuantity {
     quantity_raw: i128,
     sent: bool,
@@ -313,6 +319,7 @@ fn rust_sdk_depth_experiment_factory_runs_parameterized_custom_strategies() {
             fee_bps: 0,
             latency_snapshots: 0,
             queue_position_bps: 0,
+            queue_position_model: Default::default(),
             market_impact_bps: 0,
             output_dir: output_dir.to_string_lossy().into_owned(),
             strategy,
@@ -351,7 +358,6 @@ fn rust_sdk_depth_experiment_factory_runs_parameterized_custom_strategies() {
         .outcome
         .as_ref()
         .is_some_and(|outcome| outcome.fills > 0)));
-
     let mut handle_spec = spec;
     handle_spec.experiment_id = "sdk-custom-depth-grid-handle".into();
     let mut handle = handle_spec
@@ -387,11 +393,17 @@ fn the_rust_sdk_facade_selects_multi_leg_arbitrage_strategies() {
     );
     strategy.quantity_raw = 1_000_000_000;
     let base = MultiLegBacktestSpec::new(
-        "unused-sdk-multi-leg-selection",
-        root.join("qianxing.bar-frame.pairs-primary.example.json")
-            .to_string_lossy(),
-        root.join("qianxing.bar-frame.pairs-reference.example.json")
-            .to_string_lossy(),
+        qx_sdk::MultiLegDatasetInput {
+            run_id: ("unused-sdk-multi-leg-selection").into(),
+            primary_bars_path: (root
+                .join("qianxing.bar-frame.pairs-primary.example.json")
+                .to_string_lossy())
+            .into(),
+            reference_bars_path: (root
+                .join("qianxing.bar-frame.pairs-reference.example.json")
+                .to_string_lossy())
+            .into(),
+        },
         "USDT",
         1_000_000 * 1_000_000_000,
         1_000_000 * 1_000_000_000,
@@ -439,11 +451,17 @@ fn rust_sdk_runs_caller_strategy_factories_across_multi_leg_parameter_candidates
         BuiltinStrategySpec::new(BuiltinStrategyKind::PairsArbitrage, "sdk-custom-pair-grid");
     strategy.quantity_raw = 1_000_000_000;
     let base = MultiLegBacktestSpec::new(
-        "unused-custom-pair-grid",
-        root.join("qianxing.bar-frame.pairs-primary.example.json")
-            .to_string_lossy(),
-        root.join("qianxing.bar-frame.pairs-reference.example.json")
-            .to_string_lossy(),
+        qx_sdk::MultiLegDatasetInput {
+            run_id: ("unused-custom-pair-grid").into(),
+            primary_bars_path: (root
+                .join("qianxing.bar-frame.pairs-primary.example.json")
+                .to_string_lossy())
+            .into(),
+            reference_bars_path: (root
+                .join("qianxing.bar-frame.pairs-reference.example.json")
+                .to_string_lossy())
+            .into(),
+        },
         "USDT",
         1_000_000 * 1_000_000_000,
         1_000_000 * 1_000_000_000,

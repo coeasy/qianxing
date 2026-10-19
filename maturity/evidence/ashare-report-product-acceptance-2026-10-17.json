@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "ashare_multi_report_comparison_cli_acceptance",
+  "generated_at_utc": "2026-10-16T22:35:47Z",
+  "binary": "target/release/qx-cli.exe",
+  "binary_sha256": "77befa2b69f46f9eac854d00dda691dca66dd66f7a075abe09b35f51840cabcf",
+  "scenario": "A-share EMA cross, same BarFrame/rules/calendar/actions/market-spec, two signal parameter sets",
+  "profile_coverage_claim": false,
+  "input_fingerprint": "5e59cfcf3adca434",
+  "inputs": [
+    {
+      "path": "target/ashare-report-demo-20261017/bars.json",
+      "sha256": "07aca52393be3010c85ad7c9be9019bf9e64503a27c35bef595e125eb1a77082"
+    },
+    {
+      "path": "target/ashare-report-demo-20261017/qianxing.ashare.rules.json",
+      "sha256": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb"
+    },
+    {
+      "path": "target/ashare-report-demo-20261017/actions.json",
+      "sha256": "f86d73758e3776654945e73d71d57d3032a9bd0deacd86b16f1d42d4f3423f58"
+    },
+    {
+      "path": "target/ashare-report-demo-20261017/calendar.json",
+      "sha256": "65331d6e3aae3e110ff8090370b9a7a8ab5a76c4e01abe99ee51bc1e74d6ed3e"
+    },
+    {
+      "path": "target/ashare-report-demo-20261017/spot.json",
+      "sha256": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+    },
+    {
+      "path": "target/ashare-report-demo-20261017/baseline.runtime.json",
+      "sha256": "f471f35ba120d72e9d724366931641218a635139a40169c516b9fa094236c20d"
+    },
+    {
+      "path": "target/ashare-report-demo-20261017/candidate.runtime.json",
+      "sha256": "6307d067cda56c235f970857f230dc77ac9d1fe7eb24cdc2fb1f16bccac0ae9a"
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "strategy-backtest:strategy-ashare:000001.SZSE:9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672",
+      "strategy": "strategy-ashare",
+      "instrument": "000001.SZSE",
+      "input_fingerprint": "5e59cfcf3adca434",
+      "result_hash": "6be034a4cb0760fa",
+      "return_bps": 1,
+      "fills": 1,
+      "outputs": [
+        {
+          "path": "target/ashare-report-demo-20261017/baseline-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672-8d0f69ed88f33c0c.equity.csv",
+          "sha256": "998e821ead1a21bbcef6ba1341582ecd1b252d3deb3bfac1c3675c4962dc974a",
+          "bytes": 248
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/baseline-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672-8d0f69ed88f33c0c.equity.svg",
+          "sha256": "1aec2b60be01213733741bdeee45233f86a6be698d40023e724ef9ad13380bfb",
+          "bytes": 770
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/baseline-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672-8d0f69ed88f33c0c.evidence.json",
+          "sha256": "cc2f0a62da0d2b30b12180e8d4d12dc396b423a4b124b3a00cd2468be063235f",
+          "bytes": 9307
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/baseline-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672-8d0f69ed88f33c0c.fills.csv",
+          "sha256": "409a57018185b0b595127bde93d287bb25821ad6883ad57591710f79b5f72a2e",
+          "bytes": 192
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/baseline-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672-8d0f69ed88f33c0c.fills.svg",
+          "sha256": "2a3b9714fb04d4377968fd79a23045e6b4c8a94f39e11c2d13ffcebfdf9cf7a9",
+          "bytes": 404
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/baseline-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672-8d0f69ed88f33c0c.monthly.svg",
+          "sha256": "d8787e65aaac7811889920334185756f51078bd5edb822c6e9694e86b9e9ac53",
+          "bytes": 2175
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/baseline-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672-8d0f69ed88f33c0c.record.json",
+          "sha256": "30702aebc4ea61aec2edcf346f575dfe75d01bfc4234a42c83d22bb5b6c90a4a",
+          "bytes": 1992
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/baseline-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672-8d0f69ed88f33c0c.report.html",
+          "sha256": "eb09ac5ed5824e840bd4ff445e754457100eaa5e688198db8e99a7350762baf4",
+          "bytes": 14122
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/baseline-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672-8d0f69ed88f33c0c.report.json",
+          "sha256": "c8aa1be924830b15918ab870b9e73237fe95178218008d8bccac1ad7180705df",
+          "bytes": 6669
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/baseline-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672-8d0f69ed88f33c0c.run.json",
+          "sha256": "52f8b70abefac24897d2d12fc6f11ab3aec27fd2979e391de3614c7f40a78f11",
+          "bytes": 720
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/baseline-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672-8d0f69ed88f33c0c.summary.json",
+          "sha256": "de6432d239d6e6a3f1df5451b4335dc5ea7552c32dd782fa56672e8eb776f545",
+          "bytes": 3446
+        }
+      ]
+    },
+    {
+      "run_id": "strategy-backtest:strategy-ashare:000001.SZSE:d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216",
+      "strategy": "strategy-ashare",
+      "instrument": "000001.SZSE",
+      "input_fingerprint": "5e59cfcf3adca434",
+      "result_hash": "e98061eab5a9a414",
+      "return_bps": 0,
+      "fills": 0,
+      "outputs": [
+        {
+          "path": "target/ashare-report-demo-20261017/candidate-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216-77d7490e0e0814c8.equity.csv",
+          "sha256": "eee8df7ef8f476b52aede1d9686c5871a96316536ad79fa91d3d21e10f2532b7",
+          "bytes": 237
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/candidate-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216-77d7490e0e0814c8.equity.svg",
+          "sha256": "52b221f05a25c4e6a2ceb7dbc5630e723cb181aff7f2853fa0ecd28cbf9a3b24",
+          "bytes": 772
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/candidate-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216-77d7490e0e0814c8.evidence.json",
+          "sha256": "36b028c96cbaa2ef41116d7c7bf852d193ec4da7b1f38c0c5f54ac88bf8dfba2",
+          "bytes": 9319
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/candidate-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216-77d7490e0e0814c8.fills.csv",
+          "sha256": "f742ab2213d64288df43f9de4e541ab43a27c950dce246a66843f49dac2edcaf",
+          "bytes": 105
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/candidate-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216-77d7490e0e0814c8.fills.svg",
+          "sha256": "c6cf94843f25d914766dd7e48b1d57eca66697d525034768ca284f213529e3ba",
+          "bytes": 218
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/candidate-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216-77d7490e0e0814c8.monthly.svg",
+          "sha256": "9fcad038064d351b431ac9907476c5ce203fc7a1e3af5264177c912501b55301",
+          "bytes": 2175
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/candidate-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216-77d7490e0e0814c8.record.json",
+          "sha256": "3912c37e8ee78e949a876157e15b09b25760c06e1f4a07d0bb16d33f1049c569",
+          "bytes": 1996
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/candidate-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216-77d7490e0e0814c8.report.html",
+          "sha256": "9b177b86492f7d9ee44c2f40e6feca36e313cfd26fba45e3423bd50bf3aa6fb9",
+          "bytes": 13950
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/candidate-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216-77d7490e0e0814c8.report.json",
+          "sha256": "91a566a507ae37092c0e31b6ee4423eb37c23bae910620a9450f88f3dbeb12d2",
+          "bytes": 6643
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/candidate-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216-77d7490e0e0814c8.run.json",
+          "sha256": "0bcda1814e05b0026b67b2555142aa7c4a6f838e20bc6e510759019f93a365e7",
+          "bytes": 720
+        },
+        {
+          "path": "target/ashare-report-demo-20261017/candidate-data/runs/strategy-backtest_strategy-ashare_000001.SZSE_d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216-77d7490e0e0814c8.summary.json",
+          "sha256": "c6db0271c50e6fdf19e982a17561bda94ef932ba3598943f54ec8ba35528de7c",
+          "bytes": 3414
+        }
+      ]
+    }
+  ],
+  "comparison": {
+    "kind": "same_input_backtest_runs",
+    "instrument": "000001.SZSE",
+    "input_fingerprint": "5e59cfcf3adca434",
+    "ranking": "return_bps_desc,max_drawdown_bps_asc,run_id_asc",
+    "ranked_runs": [
+      {
+        "rank": 1,
+        "run_id": "strategy-backtest:strategy-ashare:000001.SZSE:9c6f4d96773354f0329c3a585081d95cc4aa1e194176261071888f9512090672",
+        "result_hash": "6be034a4cb0760fa",
+        "return_bps": 1
+      },
+      {
+        "rank": 2,
+        "run_id": "strategy-backtest:strategy-ashare:000001.SZSE:d7db8de07d27439f49fc522c1ace42e03b0a231920471502b41a5de86c9cf216",
+        "result_hash": "e98061eab5a9a414",
+        "return_bps": 0
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "target/ashare-report-demo-20261017/comparison.html",
+        "sha256": "9aed15ecc901ee1c6f46476a17230bb4034a906c66e18f26ade3f24df2aceaf9",
+        "bytes": 7496
+      },
+      {
+        "path": "target/ashare-report-demo-20261017/comparison.json",
+        "sha256": "bbd7c1bdf4620e5afe4e8c56b08db447b690240aae437da5055fe205d4ec302e",
+        "bytes": 7191
+      }
+    ]
+  },
+  "limitations": [
+    "Six-bar checked-in example fixture; validates output-chain integration only.",
+    "Not production market data or strategy-performance evidence.",
+    "Does not measure a full A-share research profile.",
+    "The report command first failed on empty fill-model parameters before the Rust fix; final run used rebuilt Release CLI."
+  ]
+}

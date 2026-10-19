@@ -38,7 +38,7 @@ pub struct PositionSnapshot {
 impl Default for PositionSnapshot {
     fn default() -> Self {
         Self {
-            instrument: InstrumentId::parse("UNKNOWN.UNKNOWN").expect("valid sentinel instrument"),
+            instrument: InstrumentId::new("UNKNOWN", qx_core::VenueId::new("UNKNOWN")),
             quantity_raw: 0,
             today_quantity_raw: 0,
             average_price_raw: 0,

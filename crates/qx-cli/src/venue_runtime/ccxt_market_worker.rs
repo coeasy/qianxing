@@ -42,16 +42,15 @@ pub(crate) fn run_ccxt_market_worker(
         return Err(format!("worker {} 至少需要一个 CCXT instrument", worker.id));
     }
     let runtime_config = read_runtime_config(&runtime_config_path)?;
+    let log_name = ccxt_market_event_log_name(&worker);
     let live_specs = live_strategy_bar_specs(&runtime_config, &runtime_config_path, &worker)?;
     let python = python_interpreter();
     let mut client = CcxtProcessClient::spawn(&python, &ccxt_config_path, None)
         .map_err(|error| format!("启动公共 CCXT MarketData Worker 失败: {error}"))?;
     let mut pipeline = pipeline_storage
-        .open(
-            ccxt_market_event_log_name(&worker),
-            worker_settlement_currency(&worker),
-        )
+        .open(log_name.clone(), worker_settlement_currency(&worker))
         .map_err(|error| format!("创建 CCXT 行情事件管线失败: {error}"))?;
+    let mut metrics = PipelineMetricsReporter::new(&runtime_config, context.id(), "");
     let mut paper_bridges = open_paper_market_bridges(&pipeline_storage, &runtime_config)?;
     let instruments = worker
         .symbols
@@ -70,6 +69,7 @@ pub(crate) fn run_ccxt_market_worker(
         ),
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish_if_due(true, runtime_timestamp_ms());
     let mut source_seq = 0_u64;
     let mut quotes = 0_u64;
     let mut bars_written = 0_u64;
@@ -160,6 +160,7 @@ pub(crate) fn run_ccxt_market_worker(
                     source_seq,
                 },
             )?;
+            observe_paper_market_bridges(&paper_bridges, &mut metrics);
             quotes = quotes.saturating_add(1);
             context.heartbeat(received_ts)?;
         }
@@ -215,6 +216,8 @@ pub(crate) fn run_ccxt_market_worker(
         }
         let (status, detail) =
             ccxt_market_cycle_health(cycle_failures, attempted_calls, quotes, bars_written);
+        metrics.observe(&pipeline);
+        metrics.publish_if_due(true, cycle_now);
         context.mark(status, detail, Some(cycle_now))?;
         if once {
             break;
@@ -226,5 +229,6 @@ pub(crate) fn run_ccxt_market_worker(
         format!("ccxt market worker stopped quotes={quotes} bar_snapshots={bars_written}"),
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish(false, runtime_timestamp_ms());
     Ok(())
 }

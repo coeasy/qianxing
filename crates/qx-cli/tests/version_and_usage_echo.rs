@@ -4,11 +4,17 @@
 //! 改前实测两者都是 162 行 / 12 KB 的墙，且 `--version` 退 2。这里的用例逐条钉住改后的形状，
 //! 任一退化（把摘要加回来、把某个别名摘掉、doctor 不再报身份）都会让本文件的某条用例变红。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn run(args: &[&str]) -> (i32, String, String) {
+    run_from(Path::new(env!("CARGO_MANIFEST_DIR")), args)
+}
+
+fn run_from(cwd: &Path, args: &[&str]) -> (i32, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(cwd)
         .args(args)
         .output()
         .expect("启动 qx-cli 失败");
@@ -109,8 +115,17 @@ fn usage_error_echoes_graded_lines_instead_of_the_entry_summary() {
         "回显必须压在 10 行内，实际 {echoed} 行:\n{stderr}"
     );
     assert!(stderr.contains("未知命令或未知参数"), "{stderr}");
+    assert!(
+        stderr.contains("[阶段: 命令解析]"),
+        "缺少失败阶段: {stderr}"
+    );
+    assert!(stderr.contains("原因:"), "缺少失败原因: {stderr}");
     assert!(stderr.contains("下一步"), "必须给出下一步指路: {stderr}");
-    assert!(stderr.contains("自证构建"), "必须指到版本出口: {stderr}");
+    assert!(stderr.contains("证据路径:"), "缺少可核对证据指针: {stderr}");
+    assert!(
+        stderr.contains("qx-cli version"),
+        "必须指到版本出口: {stderr}"
+    );
     assert!(
         !stderr.contains("配置与运维入口"),
         "不得再打印整篇摘要: {stderr}"
@@ -155,18 +170,31 @@ fn json_surfaces_carry_the_same_runtime_version_as_version_entry() {
         "status JSON 未带 {needle}:\n{stdout}"
     );
 
-    // 报告侧只需一份最小摘要：没有 input 块时按"未作声明"如实回显，不影响身份格。
-    let summary = std::env::temp_dir().join("qx-pass28-identity.summary.json");
-    std::fs::write(&summary, "{}\n").expect("写入临时回测摘要失败");
-    let (code, stdout, stderr) = run(&["report", "--json", &summary.display().to_string()]);
-    let _ = std::fs::remove_file(&summary);
+    // 通过真实回测生成 v6 摘要，避免用旧世代手工夹具验证当前 report 读面。
+    let root = std::env::temp_dir().join(format!(
+        "qx-report-identity-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("创建临时回测目录失败");
+    let (code, backtest_stdout, stderr) = run_from(&root, &["run", "backtest"]);
+    assert_eq!(code, 0, "生成 v5 报告夹具失败: {stderr}");
+    assert!(
+        backtest_stdout.contains("result_hash="),
+        "{backtest_stdout}"
+    );
+    let (code, stdout, stderr) = run_from(&root, &["run", "report", "--json"]);
+    let _ = std::fs::remove_dir_all(&root);
     assert_eq!(code, 0, "report --json 失败: {stderr}");
     assert!(
         stdout.contains(&needle),
         "report JSON 未带 {needle}:\n{stdout}"
     );
     assert!(
-        stdout.contains("\"not_declared\""),
-        "无 input 块的摘要必须回显未声明:\n{stdout}"
+        stdout.contains("\"verified\"") || stdout.contains("\"not_declared\""),
+        "v6 摘要必须回显输入复核结论:\n{stdout}"
     );
 }

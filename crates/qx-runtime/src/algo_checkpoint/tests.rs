@@ -13,6 +13,10 @@ impl VenuePort for TestVenue {
         "paper-test"
     }
 
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
+    }
+
     fn submit_order(&mut self, order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
         Ok(vec![ExecutionEvent::Accepted {
             client_order_id: order.client_id,

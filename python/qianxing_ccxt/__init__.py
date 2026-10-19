@@ -17,15 +17,19 @@ import inspect
 import json
 import time
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any, Mapping, Sequence
 
-from qianxing_bridge import BarFrame
+from qianxing_bridge import BarFrame, native
 
 
-SCALE = 1_000_000_000
 MAX_OHLCV_ROWS = 100_000
+
+
+def __getattr__(name: str) -> Any:
+    if name == "SCALE":
+        return native.raw_scale()
+    raise AttributeError(name)
 
 
 class CcxtErrorClass(str, Enum):
@@ -47,60 +51,46 @@ class CcxtConnectorError(RuntimeError):
 
 def classify_ccxt_error(error: Exception) -> CcxtErrorClass:
     """把 CCXT 异常映射到运行时稳定的错误类别。"""
-
-    name = type(error).__name__.lower()
-    if any(token in name for token in ("ratelimit", "ddos", "throttle")):
-        return CcxtErrorClass.RATE_LIMITED
-    if any(token in name for token in ("timeout", "network", "connection", "unavailable")):
-        return CcxtErrorClass.RETRYABLE
-    if any(token in name for token in ("authentication", "permission", "credential", "nonce")):
-        return CcxtErrorClass.AUTHENTICATION
-    if any(token in name for token in ("badrequest", "invalidorder", "arguments", "symbol")):
-        return CcxtErrorClass.INVALID
-    if "notupported" in name or "notimplemented" in name:
-        return CcxtErrorClass.UNSUPPORTED
-    if "exchange" in name or "order" in name:
-        return CcxtErrorClass.EXCHANGE
-    return CcxtErrorClass.UNKNOWN
+    return CcxtErrorClass(native.classify_ccxt_error(type(error).__name__))
 
 
 def _raw_decimal(value: Any, *, field: str) -> int:
     try:
-        decimal = Decimal(str(value))
-    except (InvalidOperation, ValueError) as error:
-        raise CcxtConnectorError(CcxtErrorClass.INVALID, f"{field} 不是有效数字: {value}") from error
-    if not decimal.is_finite() or decimal < 0:
-        raise CcxtConnectorError(CcxtErrorClass.INVALID, f"{field} 必须是非负有限数字: {value}")
-    scaled = decimal * SCALE
-    if scaled != scaled.to_integral_value():
-        raise CcxtConnectorError(
-            CcxtErrorClass.INVALID,
-            f"{field} 超过牵星定点精度 1e-9: {value}",
-        )
-    return int(scaled)
+        return int(native.decimal_to_raw_exact(str(value), False))
+    except (ValueError, OverflowError) as error:
+        if "precision" in str(error):
+            message = f"{field} 超过牵星定点精度 1e-9: {value}"
+        elif "non-negative" in str(error):
+            message = f"{field} 必须是非负有限数字: {value}"
+        else:
+            message = f"{field} 不是有效数字: {value}"
+        raise CcxtConnectorError(CcxtErrorClass.INVALID, message) from error
 
 
 def _signed_raw_decimal(value: Any, *, field: str) -> int:
     """把允许正负号的账单金额转成定点整数。"""
     try:
-        decimal = Decimal(str(value))
-    except (InvalidOperation, ValueError) as error:
-        raise CcxtConnectorError(CcxtErrorClass.INVALID, f"{field} 不是有效数字: {value}") from error
-    if not decimal.is_finite():
-        raise CcxtConnectorError(CcxtErrorClass.INVALID, f"{field} 必须是有限数字: {value}")
-    scaled = decimal * SCALE
-    if scaled != scaled.to_integral_value():
-        raise CcxtConnectorError(
-            CcxtErrorClass.INVALID,
-            f"{field} 超过牵星定点精度 1e-9: {value}",
-        )
-    return int(scaled)
+        return int(native.decimal_to_raw_exact(str(value), True))
+    except (ValueError, OverflowError) as error:
+        if "precision" in str(error):
+            message = f"{field} 超过牵星定点精度 1e-9: {value}"
+        else:
+            message = f"{field} 不是有效有限数字: {value}"
+        raise CcxtConnectorError(CcxtErrorClass.INVALID, message) from error
 
 
 def _decimal_from_raw(value: int, *, field: str) -> str:
-    if value < 0:
-        raise CcxtConnectorError(CcxtErrorClass.INVALID, f"{field} 不能为负: {value}")
-    return format(Decimal(value) / SCALE, "f")
+    try:
+        return native.raw_to_decimal(str(value), False)
+    except (ValueError, OverflowError) as error:
+        raise CcxtConnectorError(CcxtErrorClass.INVALID, f"{field} 不能为负或超出范围: {value}") from error
+
+
+def _decimal_to_integer(value: Any, multiplier: int, *, field: str) -> int:
+    try:
+        return native.decimal_to_scaled_integer(str(value), multiplier)
+    except (ValueError, OverflowError) as error:
+        raise CcxtConnectorError(CcxtErrorClass.INVALID, f"{field} 不是可精确转换的数字: {value}") from error
 
 
 @dataclass(frozen=True)
@@ -579,10 +569,10 @@ class CcxtExchangeClient:
         max_leverage = None
         if max_leverage_value is not None:
             try:
-                leverage_decimal = Decimal(str(max_leverage_value))
-                if leverage_decimal.is_finite() and leverage_decimal >= 1 and leverage_decimal == leverage_decimal.to_integral_value():
-                    max_leverage = int(leverage_decimal)
-            except (InvalidOperation, ValueError):
+                parsed_leverage = _decimal_to_integer(max_leverage_value, 1, field="maxLeverage")
+                if parsed_leverage >= 1:
+                    max_leverage = parsed_leverage
+            except CcxtConnectorError:
                 max_leverage = None
         maintenance_margin_bps = self._maintenance_margin_bps(market)
         return CcxtMarket(
@@ -631,18 +621,18 @@ class CcxtExchangeClient:
         rate = market.get("maintenanceMarginRate")
         if rate is not None:
             try:
-                decimal = Decimal(str(rate)) * Decimal(10_000)
-                if decimal.is_finite() and decimal >= 0 and decimal == decimal.to_integral_value():
-                    return int(decimal)
-            except (InvalidOperation, ValueError):
+                parsed = _decimal_to_integer(rate, 10_000, field="maintenanceMarginRate")
+                if parsed >= 0:
+                    return parsed
+            except CcxtConnectorError:
                 return None
         percent = market.get("maintenanceMarginPercent")
         if percent is not None:
             try:
-                decimal = Decimal(str(percent)) * Decimal(100)
-                if decimal.is_finite() and decimal >= 0 and decimal == decimal.to_integral_value():
-                    return int(decimal)
-            except (InvalidOperation, ValueError):
+                parsed = _decimal_to_integer(percent, 100, field="maintenanceMarginPercent")
+                if parsed >= 0:
+                    return parsed
+            except CcxtConnectorError:
                 return None
         return None
 
@@ -913,9 +903,7 @@ class CcxtExchangeClient:
         value = self._call("fetch_funding_rate", market.symbol, dict(params or {}))
         if not isinstance(value, Mapping):
             raise CcxtConnectorError(CcxtErrorClass.EXCHANGE, "CCXT funding rate 返回类型非法")
-        rate = Decimal(str(value.get("fundingRate", 0))) * 10_000
-        if rate != rate.to_integral_value():
-            raise CcxtConnectorError(CcxtErrorClass.INVALID, "fundingRate 超过基点精度")
+        rate = _decimal_to_integer(value.get("fundingRate", 0), 10_000, field="fundingRate")
         return CcxtFundingRate(
             exchange_id=self.config.exchange_id,
             symbol=market.symbol,
@@ -1025,23 +1013,25 @@ class CcxtExchangeClient:
             max_leverage_int = None
             if max_leverage is not None:
                 try:
-                    parsed = Decimal(str(max_leverage))
-                    if parsed.is_finite() and parsed >= 1 and parsed == parsed.to_integral_value():
-                        max_leverage_int = int(parsed)
-                except (InvalidOperation, ValueError):
+                    parsed_leverage = _decimal_to_integer(max_leverage, 1, field="maxLeverage")
+                    if parsed_leverage >= 1:
+                        max_leverage_int = parsed_leverage
+                except CcxtConnectorError:
                     max_leverage_int = None
             maintenance = value.get("maintenanceMarginRate", value.get("maintenanceMarginPercent", 0))
-            maintenance_decimal = Decimal(str(maintenance))
-            maintenance_bps = int(
-                maintenance_decimal * (Decimal(10_000) if "maintenanceMarginRate" in value else Decimal(100))
+            maintenance_bps = _decimal_to_integer(
+                maintenance,
+                10_000 if "maintenanceMarginRate" in value else 100,
+                field="maintenanceMarginRate",
             )
             initial = value.get("initialMarginRate", value.get("initialMarginPercent"))
             if initial is None:
                 initial_bps = 0 if max_leverage_int is None else (10_000 + max_leverage_int - 1) // max_leverage_int
             else:
-                initial_decimal = Decimal(str(initial))
-                initial_bps = int(
-                    initial_decimal * (Decimal(10_000) if "initialMarginRate" in value else Decimal(100))
+                initial_bps = _decimal_to_integer(
+                    initial,
+                    10_000 if "initialMarginRate" in value else 100,
+                    field="initialMarginRate",
                 )
             if maintenance_bps < 0 or initial_bps < 0:
                 raise CcxtConnectorError(CcxtErrorClass.INVALID, "CCXT leverage tier 保证金率不能为负")
@@ -1314,6 +1304,7 @@ __all__ = [
     "CcxtTrade",
     "CcxtTicker",
     "classify_ccxt_error",
+    "SCALE",
     "create_ccxt_pro_exchange",
     "normalize_stream_event",
     "watch_stream",

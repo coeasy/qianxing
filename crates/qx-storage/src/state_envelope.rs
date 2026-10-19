@@ -214,10 +214,35 @@ pub(crate) fn sync_file(path: &Path) -> Result<(), StorageError> {
     }
     #[cfg(windows)]
     {
-        // Windows antivirus/indexer hooks can reject fsync on a freshly created
-        // temp file; rename still provides the crash-safe visibility boundary.
-        let _ = path;
+        // FlushFileBuffers requires a write-capable handle on Windows. If the platform
+        // or a filesystem filter refuses the flush, fail before replacement instead of
+        // silently claiming the pre-rename bytes are durable.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| StorageError::Io(format!("刷新临时存储文件失败: {error}")))?;
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(path: &Path) -> Result<(), StorageError> {
+    std::fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| StorageError::Io(format!("刷新存储目录失败: {error}")))
+}
+
+#[cfg(windows)]
+fn sync_parent_directory(_path: &Path) -> Result<(), StorageError> {
+    // atomic_replace uses MoveFileExW with MOVEFILE_WRITE_THROUGH. Windows does not
+    // expose a portable directory fsync through std; the move operation is the namespace
+    // durability barrier for this platform.
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn sync_parent_directory(_path: &Path) -> Result<(), StorageError> {
     Ok(())
 }
 
@@ -225,6 +250,23 @@ pub(crate) fn write_atomic_path(
     path: &Path,
     root: &Path,
     content: &str,
+) -> Result<(), StorageError> {
+    write_atomic_path_with_hook(path, root, content, sync_file, |_| Ok(()))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AtomicWriteStage {
+    TempWritten,
+    FlushStepReturned,
+    Replaced,
+}
+
+fn write_atomic_path_with_hook(
+    path: &Path,
+    root: &Path,
+    content: &str,
+    flush: impl FnOnce(&Path) -> Result<(), StorageError>,
+    mut after_stage: impl FnMut(AtomicWriteStage) -> Result<(), StorageError>,
 ) -> Result<(), StorageError> {
     let parent = path
         .parent()
@@ -243,18 +285,31 @@ pub(crate) fn write_atomic_path(
         ".{name}.tmp.{}",
         TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&temp, content).map_err(|error| {
-        StorageError::Io(format!("写入临时存储文件 {} 失败: {error}", temp.display()))
-    })?;
-    sync_file(&temp)?;
-    atomic_replace(&temp, path).map_err(|error| {
-        StorageError::Io(format!(
-            "替换存储文件 {} -> {} 失败: {error}",
-            temp.display(),
-            path.display()
-        ))
-    })?;
-    Ok(())
+    let result = (|| {
+        std::fs::write(&temp, content).map_err(|error| {
+            StorageError::Io(format!("写入临时存储文件 {} 失败: {error}", temp.display()))
+        })?;
+        after_stage(AtomicWriteStage::TempWritten)?;
+        flush(&temp)?;
+        after_stage(AtomicWriteStage::FlushStepReturned)?;
+        atomic_replace(&temp, path).map_err(|error| {
+            StorageError::Io(format!(
+                "替换存储文件 {} -> {} 失败: {error}",
+                temp.display(),
+                path.display()
+            ))
+        })?;
+        sync_parent_directory(parent)?;
+        after_stage(AtomicWriteStage::Replaced)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        // A failed write/flush/rename may leave a temporary file behind. Once replaced,
+        // this path no longer exists; after-stage failure then correctly reports an
+        // uncertain commit while preserving the newly visible destination.
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 #[cfg(not(windows))]
@@ -296,6 +351,10 @@ fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "state_envelope/atomic_write_tests.rs"]
+mod atomic_write_tests;
 
 #[cfg(test)]
 mod tests {
@@ -341,7 +400,7 @@ mod tests {
 
     #[test]
     fn atomic_file_write_replaces_existing_destination() {
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::test_temp_dir().join(format!(
             "qx-atomic-replace-{}-{}",
             std::process::id(),
             TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
@@ -358,7 +417,7 @@ mod tests {
     /// 的用例钉住，这里只钉住映射。
     #[test]
     fn an_unusable_lock_path_is_reported_as_io_not_as_contention() {
-        let dir = std::env::temp_dir().join(format!(
+        let dir = crate::test_temp_dir().join(format!(
             "qianxing-storage-lock-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()

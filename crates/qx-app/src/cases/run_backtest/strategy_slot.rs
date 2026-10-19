@@ -1,6 +1,7 @@
 //! Assemble native built-ins as deterministic portfolio slots.
 
 use super::invalid_strategy;
+use crate::cases::strategy_available_margin_raw;
 use crate::error::AppError;
 use crate::spec::BuiltinStrategySpec;
 use qx_core::{InstrumentId, Quantity};
@@ -8,6 +9,7 @@ use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig, Strategy, StrategyCont
 use qx_xingban::{NativeBarStrategy, PortfolioStrategySlot};
 use std::collections::BTreeMap;
 
+#[derive(Clone, Copy)]
 pub(in crate::cases) struct StrategySlotContext<'a> {
     pub priority: i32,
     pub reserved_capital_raw: i128,
@@ -19,7 +21,7 @@ pub(in crate::cases) struct StrategySlotContext<'a> {
     pub strategy_version: Option<&'a str>,
 }
 
-struct BoxedStrategy(Box<dyn Strategy>);
+pub(in crate::cases) struct BoxedStrategy(Box<dyn Strategy>);
 
 impl Strategy for BoxedStrategy {
     fn on_init(&mut self, context: &StrategyContext) -> Result<(), String> {
@@ -52,6 +54,27 @@ pub(in crate::cases) fn build_strategy_slot(
     context: StrategySlotContext<'_>,
     external: Option<Box<dyn Strategy>>,
 ) -> Result<PortfolioStrategySlot, AppError> {
+    let (strategy_id, native) = build_native_strategy(spec, context, external)?;
+    Ok(PortfolioStrategySlot::native(
+        context.priority,
+        strategy_id,
+        context.reserved_capital_raw,
+        native,
+    ))
+}
+
+pub(in crate::cases) fn build_single_native_strategy(
+    spec: &BuiltinStrategySpec,
+    context: StrategySlotContext<'_>,
+) -> Result<NativeBarStrategy<BoxedStrategy>, AppError> {
+    build_native_strategy(spec, context, None).map(|(_, native)| native)
+}
+
+fn build_native_strategy(
+    spec: &BuiltinStrategySpec,
+    context: StrategySlotContext<'_>,
+    external: Option<Box<dyn Strategy>>,
+) -> Result<(String, NativeBarStrategy<BoxedStrategy>), AppError> {
     let strategy_config = BuiltinStrategyConfig::new(
         spec.kind,
         spec.strategy_id.clone(),
@@ -76,6 +99,7 @@ pub(in crate::cases) fn build_strategy_slot(
         .map(str::to_string)
         .unwrap_or_else(|| strategy_version(spec));
     strategy_config.validate().map_err(invalid_strategy)?;
+    let cash = BTreeMap::from([(context.currency.to_string(), context.reserved_capital_raw)]);
     let strategy_context = StrategyContext {
         strategy_id: strategy_config.strategy_id.clone(),
         strategy_version: strategy_config.strategy_version.clone(),
@@ -84,8 +108,8 @@ pub(in crate::cases) fn build_strategy_slot(
         data_fingerprint: context.data_fingerprint.to_string(),
         as_of: context.as_of,
         positions: BTreeMap::new(),
-        cash: BTreeMap::from([(context.currency.to_string(), context.reserved_capital_raw)]),
-        available_margin_raw: Some(context.reserved_capital_raw),
+        available_margin_raw: strategy_available_margin_raw(&cash, context.currency),
+        cash,
         risk_state: "backtest".into(),
     };
     let strategy_id = strategy_config.strategy_id.clone();
@@ -99,12 +123,7 @@ pub(in crate::cases) fn build_strategy_slot(
     native
         .initialize()
         .map_err(|error| AppError::from_qx_error(&error))?;
-    Ok(PortfolioStrategySlot::native(
-        context.priority,
-        strategy_id,
-        context.reserved_capital_raw,
-        native,
-    ))
+    Ok((strategy_id, native))
 }
 
 pub(in crate::cases) fn strategy_version(spec: &BuiltinStrategySpec) -> String {

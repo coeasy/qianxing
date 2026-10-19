@@ -21,7 +21,7 @@
 * `declared_not_executed`：命令有执行者，但当前冻结样本没有产生非零成交，或没有有效数值观测；
   这不能记成已跑通。
 * `missing`：仓内根本没有对应物。
-* `blocked`：有实现但缺外部前置（凭据 / 依赖）。
+* `blocked`：有实现但缺外部前置（凭据 / 依赖），或本次探针被内部构建/运行错误阻断；`blocked_by` 保留原因。
 * 非 `executed` 的三档**必须**写 `next_gate`——缺口不许被藏起来。
 
 只跑不需要凭据、不访问网络的路径。产物落在 `.task-tmp/quant-probe/`（gitignored）。
@@ -72,7 +72,7 @@ FAST_MANIFEST = "deploy/qianxing.fast-backtest.example.json"
 VENV_PYTHON = "python/.venv/Scripts/python.exe"
 
 BACKTEST_OBSERVE = (
-    r"\[Builtin · Backtest\] (strategy=\S+ instrument=\S+ bars=\d+ fills=\d+ "
+    r"\[Strategy · Backtest\] (strategy=\S+ instrument=\S+ bars=\d+ fills=\d+ "
     r"return_bps=-?\d+ max_drawdown_bps=\d+ result_hash=\w+)"
 )
 MULTI_LEG_OBSERVE = (
@@ -473,7 +473,7 @@ def emit(records: list[dict]) -> str:
         "#",
         "# 这一份回答的是「使用者嘴里的量化场景，本仓哪几个真能跑、跑出来什么数、还有哪几个没落地」。",
         "# `executed` 真跑过且观测到数字；`declared_not_executed` 是 schema 写了但**没有执行者**；",
-        "# `missing` 是仓内没有对应物；`blocked` 是缺外部前置。非 executed 三档必须写 next_gate。",
+        "# `missing` 是仓内没有对应物；`blocked` 是缺外部前置或探针被内部错误阻断。非 executed 三档必须写 next_gate。",
         "schema_version: 1",
         "kind: quant-scenarios",
         f"generated_by: {quote('tools/quant_scenario_probe.py')}",
@@ -540,6 +540,22 @@ def main() -> int:
     write_builtin_catalog_frame(builtin_bars_path)
     bollinger_bars_path = ROOT / BOLLINGER_PROBE_BARS
     write_bollinger_probe_frame(bollinger_bars_path)
+    # Keep the dataset registry paired with this probe's frozen inputs. The CLI's default
+    # runtime points at data/qianxing, which may contain an older manifest for the same
+    # instrument/version and correctly rejects the newly generated frame as a conflict.
+    builtin_runtime_paths = {}
+    for dataset_name in ("builtin", "bollinger"):
+        runtime_path = ROOT / probe_path(f"{dataset_name}-runtime.json")
+        runtime_config = json.loads(
+            (ROOT / "deploy" / "qianxing.runtime.example.json").read_text(encoding="utf-8")
+        )
+        runtime_config["storage"]["data_dir"] = str(
+            (PROBE_ROOT / f"{dataset_name}-data").resolve()
+        )
+        runtime_path.write_text(
+            json.dumps(runtime_config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        builtin_runtime_paths[dataset_name] = probe_path(f"{dataset_name}-runtime.json")
     records: list[dict] = []
     failures = 0
 
@@ -573,7 +589,7 @@ def main() -> int:
             {
                 "name": name,
                 "label": label,
-                "status": "executed" if ok else "declared_not_executed",
+                "status": "executed" if ok else ("declared_not_executed" if no_trade else "blocked"),
                 "anchor": anchor,
                 "builtin_kind": builtin_kind,
                 "command": command_prefix + " " + " ".join(argv),
@@ -583,6 +599,11 @@ def main() -> int:
                     observation_error
                     or ("命令成功但本次样本未触发成交（fills=0）。" if no_trade else "")
                     or f"命令退出码 {code}，未得到有效数值观测。"
+                ),
+                "blocked_by": (
+                    f"探针命令失败（退出码 {code}）或观测提取失败：{observation_error or output[-500:]}"
+                    if not ok and not no_trade
+                    else ""
                 ),
                 "next_gate": (
                     "为该策略提供能触发信号的冻结样本与参数，再记录非零成交的可复核结果。"
@@ -616,14 +637,14 @@ def main() -> int:
                 "name": "kelly_paper_sizing",
                 "label": "Kelly sizing 的 Paper 实盘模拟执行",
                 "status": "executed" if ok else "declared_not_executed",
-                "anchor": "crates/qx-cli/src/tests/strategy_order_identity_round_scope.rs",
+                "anchor": "crates/qx-cli/tests/unit/strategy_order_identity_round_scope.rs",
                 "command": " ".join(argv),
                 "exit_code": code,
                 "observed": observed,
                 "why_not_executed": "Paper E2E 断言未通过；必须修复真实策略→market spec→Risk→OMS→Paper Venue→Ledger 链路。",
                 "next_gate": "修复 Paper Kelly E2E 用例并重新生成验收证据。",
                 "evidence": [
-                    "crates/qx-cli/src/tests/strategy_order_identity_round_scope.rs",
+                    "crates/qx-cli/tests/unit/strategy_order_identity_round_scope.rs",
                     "crates/qx-cli/src/strategy_contract.rs",
                     "crates/qx-cli/src/workers.rs",
                 ],
@@ -664,7 +685,7 @@ def main() -> int:
                 "next_gate": "修复所有策略 worker 的调度、成交与审计归属链后重新生成场景证据。",
                 "evidence": [
                     "crates/qx-cli/src/venue_runtime/paper_worker.rs",
-                    "crates/qx-cli/src/tests/paper_multi_strategy.rs",
+                    "crates/qx-cli/tests/unit/paper_multi_strategy.rs",
                     "crates/qx-cli/src/workers.rs",
                 ],
             }
@@ -697,15 +718,15 @@ def main() -> int:
                 "name": "paper_pending_order_risk",
                 "label": "Paper 在途订单参与同账户持仓名义额风控",
                 "status": "executed" if ok else "declared_not_executed",
-                "anchor": "crates/qx-cli/src/tests/paper_pending_exposure.rs",
+                "anchor": "crates/qx-cli/tests/unit/paper_pending_exposure.rs",
                 "command": " ".join(argv),
                 "exit_code": code,
                 "observed": observed,
                 "why_not_executed": "Paper 风控快照未将同账户未终结订单纳入持仓名义额限额。",
                 "next_gate": "让账户级风险快照覆盖已成交持仓和所有非终态订单，再重跑回归场景。",
                 "evidence": [
-                    "crates/qx-cli/src/tests/paper_pending_exposure.rs",
-                    "crates/qx-cli/src/venue_runtime/paper_valuation.rs",
+                    "crates/qx-cli/tests/unit/paper_pending_exposure.rs",
+                    "crates/qx-cli/src/venue_runtime/worker_risk.rs",
                     "crates/qx-risk/src/rules.rs",
                 ],
             }
@@ -830,7 +851,7 @@ def main() -> int:
                 "next_gate": "修复多市场共享账户运行、成交归属或事件回放后重跑场景探针。",
                 "evidence": [
                     "crates/qx-app/src/cases/run_multi_market_backtest.rs",
-                    "crates/qx-app/src/tests/multi_market_backtest.rs",
+                    "crates/qx-app/tests/multi_market_backtest.rs",
                     "crates/qx-xingban/src/backtest/market_router.rs",
                     "crates/qx-sdk/src/client.rs",
                     "crates/qx-python/src/lib.rs",
@@ -990,7 +1011,7 @@ def main() -> int:
                 "crates/qx-xingban/src/orderbook_strategies.rs",
                 "crates/qx-xingban/src/orderbook_backtest/portfolio.rs",
                 "crates/qx-app/src/cases/run_multi_market_depth_backtest/workflow.rs",
-                "crates/qx-app/src/tests/multi_market_depth_backtest.rs",
+                "crates/qx-app/tests/multi_market_depth_backtest.rs",
             ],
         )
 
@@ -1049,7 +1070,7 @@ def main() -> int:
             env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
             evidence=[
                 "crates/qx-app/src/cases/run_multi_market_depth_experiment.rs",
-                "crates/qx-app/src/tests/multi_market_depth_backtest.rs",
+                "crates/qx-app/tests/multi_market_depth_backtest.rs",
                 "crates/qx-api/src/app_surface/multi_market_depth_experiment.rs",
                 "crates/qx-api/src/app_runs/starts.rs",
                 "crates/qx-api/src/app_multi_market_tests.rs",
@@ -1074,7 +1095,7 @@ def main() -> int:
             env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
             evidence=[
                 "crates/qx-app/src/cases/run_multi_market_depth_backtest/workflow.rs",
-                "crates/qx-app/src/tests/multi_market_depth_backtest.rs",
+                "crates/qx-app/tests/multi_market_depth_backtest.rs",
                 "crates/qx-xingban/src/orderbook_strategies.rs",
                 "crates/qx-xingban/src/orderbook_backtest/portfolio.rs",
             ],
@@ -1095,7 +1116,7 @@ def main() -> int:
             extra="candidates=4 shared_engine=true stable_ranking=true idempotent=true sync=true run_handle=true",
             evidence=[
                 "crates/qx-app/src/cases/run_multi_market_experiment.rs",
-                "crates/qx-app/src/tests/multi_market_experiment.rs",
+                "crates/qx-app/tests/multi_market_experiment.rs",
                 "crates/qx-app/src/cases/run_multi_market_backtest.rs",
             ],
             command_prefix="cargo",
@@ -1107,7 +1128,7 @@ def main() -> int:
             "多账户购买力隔离与单账户结果一致性",
             "crates/qx-app/src/cases/run_multi_account_backtest.rs",
             [
-                "test", "--offline", "-p", "qx-app", "--lib",
+                "test", "--offline", "-p", "qx-app", "--test", "multi_account_backtest",
                 "changing_another_accounts_capital_does_not_change_this_accounts_run",
                 "--", "--nocapture",
             ],
@@ -1115,7 +1136,7 @@ def main() -> int:
             r"other_account_capital_multiplier=100 fills=\d+ result_hash=\w+ isolated_from_solo=true)",
             env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
             evidence=[
-                "crates/qx-app/src/tests/multi_account_backtest.rs",
+                "crates/qx-app/tests/multi_account_backtest.rs",
                 "crates/qx-app/src/cases/run_multi_account_backtest.rs",
             ],
             command_prefix="cargo",
@@ -1198,13 +1219,13 @@ def main() -> int:
                 "name": "paper_cross_currency_spot_fx_valuation",
                 "label": "Paper 跨币种现货报价币记账与 FX 风控估值",
                 "status": "executed" if ok else "declared_not_executed",
-                "anchor": "crates/qx-cli/src/venue_runtime/paper_valuation.rs",
+                "anchor": "crates/qx-cli/src/venue_runtime/worker_risk.rs",
                 "command": " ".join(argv),
                 "exit_code": code,
                 "observed": observed,
                 "evidence": [
-                    "crates/qx-cli/src/venue_runtime/paper_valuation.rs",
-                    "crates/qx-cli/src/tests/paper_margin_valuation.rs",
+                    "crates/qx-cli/src/venue_runtime/worker_risk.rs",
+                    "crates/qx-cli/tests/unit/paper_margin_valuation.rs",
                     "crates/qx-core/src/ledger/fill.rs",
                 ],
             }
@@ -1216,7 +1237,10 @@ def main() -> int:
             name,
             label,
             "crates/qx-strategy/src/builtin.rs",
-            ["backtest", "builtin", kind, frame],
+            [
+                "backtest", "builtin", kind, frame, "--config",
+                builtin_runtime_paths["bollinger" if kind == "bollinger" else "builtin"],
+            ],
             BACKTEST_OBSERVE,
             builtin_kind=kind,
         )
@@ -1306,7 +1330,7 @@ def main() -> int:
         r'"accounts_succeeded":2,"accounts_failed":0,"successful_initial_cash_raw":\d+,"successful_fills":([1-9]\d*)',
         extra_from_output=multi_account_observation,
         evidence=[
-            "crates/qx-app/src/tests/multi_account_backtest.rs",
+            "crates/qx-app/tests/multi_account_backtest.rs",
             "crates/qx-cli/tests/app_three_entrypoints/multi_account.rs",
         ],
     )
@@ -1377,7 +1401,7 @@ def main() -> int:
         extra_from_output=multi_leg_selection_observation,
         evidence=[
             "crates/qx-app/src/cases/run_multi_leg_experiment.rs",
-            "crates/qx-app/src/tests/multi_leg_experiment.rs",
+            "crates/qx-app/tests/multi_leg_experiment.rs",
             "crates/qx-cli/tests/app_three_entrypoints/multi_leg_experiment.rs",
             "crates/qx-sdk/tests/consumer/strategy_selection.rs",
             "python/qianxing/app.py",
@@ -1391,15 +1415,15 @@ def main() -> int:
         "crates/qx-xingban/src/backtest/portfolio_timeline.rs",
         [
             "test", "--offline", "-p", "qx-app", "multi_leg_backtest_accepts_unaligned_market_timestamps",
-            "--lib", "--", "--test-threads=1",
+            "--test", "multi_leg_backtest", "--", "--test-threads=1", "--nocapture",
         ],
-        r"(test result: ok\. 1 passed; 0 failed)",
+        r"(UNALIGNED_TIMELINE_OBSERVED markets=\d+ positive_fill_legs=\d+ primary_fills=\d+ reference_fills=\d+)",
         env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
-        extra="unaligned_market_timeline=true deterministic_timestamp_priority_and_instrument_order=true",
+        extra="deterministic_timestamp_priority_and_instrument_order=true",
         evidence=[
             "crates/qx-xingban/src/backtest/portfolio_timeline.rs",
             "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
-            "crates/qx-app/src/tests/multi_leg_backtest/unaligned_timestamps.rs",
+            "crates/qx-app/tests/multi_leg_backtest/unaligned_timestamps.rs",
         ],
         command_prefix="cargo",
     )
@@ -1411,16 +1435,16 @@ def main() -> int:
         [
             "test", "--offline", "-p", "qx-app",
             "multi_leg_backtest_competing_orders_share_one_deterministic_cash_pool",
-            "--lib", "--", "--test-threads=1",
+            "--test", "multi_leg_backtest", "--", "--test-threads=1", "--nocapture",
         ],
-        r"(test result: ok\. 1 passed; 0 failed)",
+        r"(SHARED_MULTILEG_OBSERVED legs=\d+ primary_fills=\d+ reference_fills=\d+ rejected_orders=\d+ replay_verified=true)",
         env_extra={"TEMP": str(ROOT / "target/test-tmp"), "TMP": str(ROOT / "target/test-tmp")},
-        extra="shared_ledger=true cross_market_cash_competition=true rejected_order_attributed=true replay_verified=true",
+        extra="shared_ledger=true cross_market_cash_competition=true rejected_order_attributed=true",
         evidence=[
             "crates/qx-xingban/src/backtest/portfolio_session.rs",
             "crates/qx-xingban/src/backtest/portfolio_session_tests.rs",
             "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
-            "crates/qx-app/src/tests/multi_leg_backtest.rs",
+            "crates/qx-app/tests/multi_leg_backtest.rs",
             "crates/qx-app/src/cases/run_multi_leg_backtest/portfolio_ledger.rs",
         ],
         command_prefix="cargo",
@@ -1441,7 +1465,7 @@ def main() -> int:
             "crates/qx-xingban/src/backtest/portfolio_session/funding.rs",
             "crates/qx-xingban/src/backtest/portfolio_session_tests.rs",
             "crates/qx-app/src/cases/run_multi_leg_backtest.rs",
-            "crates/qx-app/src/tests/multi_leg_backtest.rs",
+            "crates/qx-app/tests/multi_leg_backtest.rs",
             "crates/qx-core/src/ledger/cash.rs",
         ],
         command_prefix="cargo",
@@ -1496,7 +1520,7 @@ def main() -> int:
         extra_from_output=lambda output: f"result_hash={json.loads(next(line for line in output.splitlines() if line.lstrip().startswith('{')))['result_hash']}",
         evidence=[
             "crates/qx-xingban/src/market_making.rs",
-            "crates/qx-app/src/tests/depth_backtest.rs",
+            "crates/qx-app/tests/depth_backtest.rs",
             "crates/qx-cli/tests/depth_app_three_entrypoints.rs",
             "python/tests/test_app_use_cases.py",
         ],
@@ -1679,7 +1703,7 @@ def main() -> int:
             "crates/qx-xingban/src/portfolio_orderbook.rs",
             "crates/qx-xingban/src/backtest/portfolio_budget.rs",
             "crates/qx-app/src/cases/run_depth_backtest.rs",
-            "crates/qx-app/src/tests/depth_backtest.rs",
+            "crates/qx-app/tests/depth_backtest.rs",
             "python/tests/test_app_use_cases.py",
         ],
     )
@@ -1735,7 +1759,7 @@ def main() -> int:
         evidence=[
             "crates/qx-xingban/src/orderbook_backtest.rs",
             "crates/qx-xingban/src/portfolio_orderbook.rs",
-            "crates/qx-app/src/tests/depth_backtest.rs",
+            "crates/qx-app/tests/depth_backtest.rs",
             "python/tests/test_app_use_cases.py",
         ],
     )
@@ -1765,6 +1789,7 @@ def main() -> int:
         "strategy_kinds": [
             "sma_cross", "ema_cross", "macd", "rsi", "bollinger",
             "donchian_breakout", "momentum", "mean_reversion", "grid", "atr_trend",
+            "keltner_trend", "vwap_reversion", "volatility_breakout",
         ],
     }
     write_probe_depth_frame(PROBE_ROOT / "depth-strategy-selection.json")
@@ -1796,14 +1821,14 @@ def main() -> int:
 
     executed(
         "depth_strategy_selection",
-        "L2 十种经典策略快速选择与确定性批量比较（共享 Rust 订单簿内核）",
+        "L2 十三种经典策略快速选择与确定性批量比较（共享 Rust 订单簿内核）",
         "crates/qx-app/src/cases/run_depth_experiment.rs",
         ["app", "run-depth-experiment", str(depth_selection_path.relative_to(ROOT)).replace("\\", "/")],
-        r'("total_candidates":\s*10)',
+        r'("total_candidates":\s*13)',
         extra_from_output=depth_selection_observation,
         evidence=[
             "crates/qx-app/src/cases/run_depth_experiment.rs",
-            "crates/qx-app/src/tests/depth_experiment.rs",
+            "crates/qx-app/tests/depth_experiment.rs",
             "crates/qx-cli/tests/app_depth_entrypoints.rs",
             "crates/qx-sdk/tests/consumer/strategy_selection.rs",
             "python/qianxing/app.py",
@@ -1958,7 +1983,7 @@ def main() -> int:
     executed(
         "algo_execution",
         "算法执行（API 受理 / TWAP 拆单 / Paper 恢复 / EventLog 聚合）",
-        "crates/qx-cli/src/tests/paper_submit_terminal_state.rs",
+        "crates/qx-cli/tests/unit/paper_submit_terminal_state.rs",
         algo_test_argv,
         r"(test result: ok\. 1 passed)",
         env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
@@ -1982,7 +2007,7 @@ def main() -> int:
         r"(Ran 1 test)",
         env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
         extra="single_leg_strategy_kinds=13 candidates=13 stable_order=true shared_comparison=true oos_selected_kind=true walk_forward_folds=2",
-        evidence=["python/tests/test_app_use_cases.py", "crates/qx-app/src/tests/strategy_selection.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "crates/qx-api/src/app_strategy_selection_tests.rs", "cpp/tests/app_client_smoke.cpp", "crates/qx-strategy/src/builtin.rs", "crates/qx-python/src/lib.rs"],
+        evidence=["python/tests/test_app_use_cases.py", "crates/qx-app/tests/strategy_selection.rs", "crates/qx-sdk/tests/consumer/strategy_selection.rs", "crates/qx-api/src/app_strategy_selection_tests.rs", "cpp/tests/app_client_smoke.cpp", "crates/qx-strategy/src/builtin.rs", "crates/qx-python/src/lib.rs"],
         command_prefix="python",
     )
 
@@ -2011,7 +2036,7 @@ def main() -> int:
         extra="custom_primary_builtin_secondary=true callback_slots=2 bar_shared_ledger=true depth_l1_l2_shared_ledger=true tick_orderbook_event_semantics=true sync=true run_handle=true replay_verified=true all_source_digests_bound=true",
         evidence=[
             "python/tests/test_app_use_cases.py",
-            "crates/qx-app/src/tests/custom_strategy.rs",
+            "crates/qx-app/tests/custom_strategy.rs",
             "crates/qx-app/src/cases/run_backtest/strategy_slot.rs",
             "crates/qx-xingban/src/backtest/portfolio_strategy.rs",
         ],
@@ -2083,7 +2108,7 @@ def main() -> int:
         env_extra={"TEMP": str(ROOT / "target"), "TMP": str(ROOT / "target")},
         evidence=[
             "crates/qx-app/src/cases/run_depth_experiment.rs",
-            "crates/qx-app/src/tests/depth_experiment.rs",
+            "crates/qx-app/tests/depth_experiment.rs",
             "crates/qx-sdk/tests/consumer/strategy_selection.rs",
             "crates/qx-python/src/strategy_callback.rs",
             "python/qianxing/app.py",
@@ -2249,7 +2274,7 @@ def main() -> int:
     )
 
     protective_bars = PROBE_ROOT / "protective-exit-bars.json"
-    protective_closes = [100_000, 99_000, 98_000, 97_000, 96_000, 150_000, 150_000, 150_000]
+    protective_closes = [100_000, 99_000, 98_000, 97_000, 96_000, 150_000, 140_000, 130_000, 120_000]
     protective_bars.write_text(
         json.dumps({
             "schema_version": 1,

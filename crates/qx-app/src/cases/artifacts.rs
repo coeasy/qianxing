@@ -31,10 +31,10 @@
 
 use crate::error::{AppError, AppErrorCategory};
 use crate::spec::{BacktestArtifacts, BacktestSpec};
-use qx_core::Fill;
+use qx_core::{Fill, RunManifest};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// `summary` 的 schema 版本。改字段必须抬它——读回侧按它判断"这份产物是哪个世代"。
@@ -81,7 +81,13 @@ pub(super) struct RunSummary {
     pub risk_rule_set_version: String,
     pub fee_model: String,
     pub fill_model: String,
+    /// Optional structured audit details; absent when reading legacy v1 artifacts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_model_details: Option<qx_xingban::FillModelDescriptor>,
     pub data_tier: String,
+    /// Optional grouped order rejections; absent in old v1 summaries with no integrity block.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rejection_facts: Vec<(String, u64)>,
     /// Absent for runs without protective exits (preserves the v1 wire shape).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub protective_exit_fills: Vec<ProtectiveExitSummary>,
@@ -117,6 +123,113 @@ pub(super) fn artifact_paths(spec: &BacktestSpec) -> BacktestArtifacts {
 pub(super) fn ensure_output_dir(spec: &BacktestSpec) -> Result<(), AppError> {
     std::fs::create_dir_all(&spec.output_dir)
         .map_err(|error| AppError::from_io(&format!("创建产物目录 {}", spec.output_dir), &error))
+}
+
+/// Persist a content-addressed run manifest under `<root>/runs`.
+/// Existing identical manifests are idempotent; a conflicting manifest at the same identity is
+/// rejected. The path and digest convention are shared by CLI, HTTP and SDK callers.
+pub(crate) fn persist_run_manifest(
+    root: &Path,
+    manifest: &RunManifest,
+) -> Result<PathBuf, AppError> {
+    let runs_root = root.join("runs");
+    std::fs::create_dir_all(&runs_root)
+        .map_err(|error| AppError::from_io("创建回测 RunManifest 目录", &error))?;
+    let safe_run_id = manifest
+        .run_id
+        .chars()
+        .map(|value| {
+            if value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.') {
+                value
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let path = runs_root.join(format!("{safe_run_id}-{:016x}.run.json", manifest.digest()));
+    let payload = manifest.to_json().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("RunManifest 序列化失败: {error}"),
+        )
+    })?;
+    match std::fs::read_to_string(&path) {
+        Ok(existing) => {
+            let restored = RunManifest::from_json(&existing).map_err(|error| {
+                AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!("已有回测 RunManifest 无效 {}: {error}", path.display()),
+                )
+            })?;
+            if restored != *manifest {
+                return Err(AppError::new(
+                    AppErrorCategory::Conflict,
+                    format!(
+                        "同一回测 RunManifest 路径已存在不同内容: {}",
+                        path.display()
+                    ),
+                ));
+            }
+            return Ok(path);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(AppError::from_io("读取已有回测 RunManifest", &error)),
+    }
+    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let (temporary, mut file) = loop {
+        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temporary =
+            path.with_extension(format!("run.json.tmp-{}-{serial}", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => break (temporary, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(AppError::from_io("创建临时回测 RunManifest", &error)),
+        }
+    };
+    let publish = (|| {
+        file.write_all(payload.as_bytes())
+            .map_err(|error| AppError::from_io("写入临时回测 RunManifest", &error))?;
+        file.sync_all()
+            .map_err(|error| AppError::from_io("同步临时回测 RunManifest", &error))?;
+        drop(file);
+        // A hard link publishes the fully synced file atomically without replacing a concurrent
+        // writer's manifest. Both paths share the same directory/filesystem.
+        std::fs::hard_link(&temporary, &path)
+            .map_err(|error| AppError::from_io("发布回测 RunManifest", &error))?;
+        Ok::<(), AppError>(())
+    })();
+    let _ = std::fs::remove_file(&temporary);
+    if let Err(write_error) = publish {
+        match std::fs::read_to_string(&path) {
+            Ok(existing) => {
+                let restored = RunManifest::from_json(&existing).map_err(|error| {
+                    AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        format!(
+                            "并发生成的回测 RunManifest 无效 {}: {error}",
+                            path.display()
+                        ),
+                    )
+                })?;
+                if restored == *manifest {
+                    return Ok(path);
+                }
+                return Err(AppError::new(
+                    AppErrorCategory::Conflict,
+                    format!(
+                        "同一回测 RunManifest 路径已存在不同内容: {}",
+                        path.display()
+                    ),
+                ));
+            }
+            Err(_) => return Err(write_error),
+        }
+    }
+    Ok(path)
 }
 
 /// 写一份文本产物。四份产物共用它，所以"写失败怎么归类"只有一处口径。

@@ -57,8 +57,9 @@ pub use qx_execution::{
     AlgoExecutionStatus, AlgoExecutionStep, AlgoParentOrder, EventAppender, ExecutionEvent,
     ExecutionEventEnvelope, ExecutionEventPort, ExecutionGateway, Fill, InstrumentId, LedgerProbe,
     Order, OrderPolicy, OrderStatus, OrderStore, OrderTrace, PortExecutionResult, Price, Quantity,
-    RiskPort, RiskVerdict, Side, TradingInstrumentSpec, TradingProduct, VenuePort, VenueRouterPort,
-    VwapVolumeBucket, MAX_ALGO_CHILDREN,
+    RiskPort, RiskVerdict, Side, TradingInstrumentSpec, TradingProduct, VenueCapabilities,
+    VenueMarketScope, VenueOrderType, VenuePort, VenueRouterPort, VwapVolumeBucket,
+    MAX_ALGO_CHILDREN, PAPER_VENUE_CAPABILITIES,
 };
 pub use remote::{RemoteApiClient, RemoteApiError, RemoteResponse, RemoteTransport};
 
@@ -75,20 +76,20 @@ pub use qx_app::{
 };
 pub use qx_provider::{
     DataKind, DataProvider, DataQuery, DataRequest, DataRequirements, DataSourceId,
-    DatasetManifestV2, ProviderBarFrame, ProviderCapability, ProviderError, ProviderErrorClass,
-    ProviderPayload, ProviderRegistry, ProviderResult, RawRecord, RegistryError,
-    PROVIDER_RESULT_SCHEMA_VERSION,
+    DatasetManifestV2, MarketDataTier, ProviderBarFrame, ProviderCapability, ProviderError,
+    ProviderErrorClass, ProviderPayload, ProviderRegistry, ProviderResult, RawRecord,
+    RegistryError, PROVIDER_RESULT_SCHEMA_VERSION,
 };
 
 // —— §6.1「spec 构造校验」——
 // `BuiltinStrategyKind` 来自 qx-strategy：它是 `BuiltinStrategySpec::new` 的参数类型，
 // 而 qx-app 没有重导出它（见 Cargo.toml 里的说明）。
 pub use qx_app::{
-    screen_bar_frames, AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec, BacktestSpec,
-    BuiltinStrategySpec, CapitalAllocationAccount, CapitalAllocationRequest,
-    CapitalAllocationResult, CapitalAllocationSpec, CompareRunsSpec, DatasetSpec,
-    DepthBacktestSpec, MakerTakerFeeSchedule, MultiAccountBacktestSpec,
-    MultiAccountDepthBacktestSpec, MultiLegBacktestSpec, MultiLegFillModel,
+    screen_bar_frames, AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec,
+    BacktestDatasetInput, BacktestSpec, BuiltinStrategySpec, CapitalAllocationAccount,
+    CapitalAllocationRequest, CapitalAllocationResult, CapitalAllocationSpec, CompareRunsSpec,
+    DatasetSpec, DepthBacktestSpec, MakerTakerFeeSchedule, MultiAccountBacktestSpec,
+    MultiAccountDepthBacktestSpec, MultiLegBacktestSpec, MultiLegDatasetInput, MultiLegFillModel,
     MultiMarketBacktestMarket, MultiMarketBacktestSpec, MultiMarketDepthBacktestMarket,
     MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec, PortfolioBacktestConfig,
     PortfolioStrategySpec, RiskParityAssetSpec, RiskParityResult, RiskParitySpec,

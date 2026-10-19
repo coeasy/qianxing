@@ -149,8 +149,8 @@ fn schema_keeps_uncomputed_money_nullable() {
         *slot = Some(0);
     }
     computed.seal();
-    let uncomputed_text = uncomputed.to_json();
-    let computed_text = computed.to_json();
+    let uncomputed_text = uncomputed.to_json().expect("protocol JSON serializes");
+    let computed_text = computed.to_json().expect("protocol JSON serializes");
     let uncomputed_doc: Value =
         serde_json::from_str(&uncomputed_text).expect("写侧产物必须是合法 JSON");
     let computed_doc: Value =
@@ -279,7 +279,7 @@ fn reader_refuses_a_self_consistent_document_from_another_version() {
     document.equity_raw = Some(1000);
     document.header.schema_version = foreign;
     document.seal();
-    let encoded = document.to_json();
+    let encoded = document.to_json().expect("protocol JSON serializes");
     assert!(
         encoded.contains(&format!("\"schema_version\":{foreign}")),
         "夹具必须真的带着另一个版本号，否则这条用例什么都没测: {encoded}"

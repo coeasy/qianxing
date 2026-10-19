@@ -6,7 +6,12 @@
 //! `backtest book`），既不声明也不可见：把仓库自带夹具的 `quantity` 从 1 抬到 2 就零成交，
 //! 而读者拿到的 `return_bps=0` 看起来像"这策略不赚不赔"。
 
-use super::*;
+pub(crate) use qx_app::artifact_store::BacktestAccountBase;
+
+use crate::read_runtime_config;
+use qx_core::Money;
+use qx_runtime::RuntimeConfig;
+use std::path::Path;
 
 /// 没人声明本金时，单腿回测按多少记账。**这一份常数是仓库里唯一一处**。
 pub(crate) const DEFAULT_BACKTEST_INITIAL_CASH: i64 = 100_000;
@@ -25,11 +30,6 @@ pub(crate) const BACKTEST_ACCOUNT_BASE_BOTH_DECLARED_SOURCE: &str =
 const STRATEGY_PRINCIPAL_SITE: &str = "strategy.initial_cash_raw";
 
 /// 一条回测链实际使用的账户本金，连同"这个数从哪来"。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct BacktestAccountBase {
-    pub(crate) cash: Money,
-    pub(crate) source: &'static str,
-}
 
 /// 把 `strategy.initial_cash_raw` 折成回测用的本金，并交代来源。
 ///

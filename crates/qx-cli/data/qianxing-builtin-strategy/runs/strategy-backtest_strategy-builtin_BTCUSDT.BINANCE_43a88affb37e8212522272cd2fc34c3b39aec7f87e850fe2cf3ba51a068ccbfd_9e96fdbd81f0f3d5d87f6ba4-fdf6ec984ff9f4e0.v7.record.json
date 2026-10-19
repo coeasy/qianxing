@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "run_id": "strategy-backtest:strategy-builtin:BTCUSDT.BINANCE:43a88affb37e8212522272cd2fc34c3b39aec7f87e850fe2cf3ba51a068ccbfd:9e96fdbd81f0f3d5d87f6ba4",
+  "status": "completed",
+  "input_digest": "barframe:613fdc1dc0b779e7",
+  "code_identity": "30d8bf82c128bc35f257c59bf70aaee45f4c73b8-dirty:runtime-schema-1",
+  "config_fingerprint": "43a88affb37e8212522272cd2fc34c3b39aec7f87e850fe2cf3ba51a068ccbfd",
+  "started_at_ms": 1000,
+  "finished_at_ms": 70000,
+  "artifact_refs": [
+    {
+      "name": "summary",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE_43a88affb37e8212522272cd2fc34c3b39aec7f87e850fe2cf3ba51a068ccbfd_9e96fdbd81f0f3d5d87f6ba4-fdf6ec984ff9f4e0.v7.summary.json",
+      "digest": "08b1adc9eaa2e31c6a09753ce6d7fd684f1bb3efc5627f9dbe8e3430065d2cc8"
+    },
+    {
+      "name": "equity",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE_43a88affb37e8212522272cd2fc34c3b39aec7f87e850fe2cf3ba51a068ccbfd_9e96fdbd81f0f3d5d87f6ba4-fdf6ec984ff9f4e0.v7.equity.csv",
+      "digest": "62f1c19eb58648e04ab54ed3271a64ca51f77c098c47c264e7a6bc3a0dba9638"
+    },
+    {
+      "name": "fills",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE_43a88affb37e8212522272cd2fc34c3b39aec7f87e850fe2cf3ba51a068ccbfd_9e96fdbd81f0f3d5d87f6ba4-fdf6ec984ff9f4e0.v7.fills.csv",
+      "digest": "e9e7f6e627795a4355c876fb65e439bdcec212d2bbc474337e5af551289d482c"
+    },
+    {
+      "name": "run_manifest",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_BTCUSDT.BINANCE_43a88affb37e8212522272cd2fc34c3b39aec7f87e850fe2cf3ba51a068ccbfd_9e96fdbd81f0f3d5d87f6ba4-fdf6ec984ff9f4e0.run.json",
+      "digest": "0f3d046a39c7269032c3e44c031b0288ecc53945d0f8ebd7754dee1d59120714"
+    }
+  ],
+  "replay_verdict": "verified",
+  "capability_level": "L1"
+}

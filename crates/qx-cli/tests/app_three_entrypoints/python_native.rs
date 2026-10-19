@@ -1,6 +1,7 @@
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Run the Python leg against the newest native extension, not a stale venv copy.
 pub(super) fn via_python(
@@ -45,8 +46,14 @@ pub(super) fn via_python(
             .unwrap_or(std::time::UNIX_EPOCH)
     });
     let newest = candidates.pop()?;
-    let import_dir = std::env::temp_dir().join(format!("qx-app-g1-native-{}", std::process::id()));
+    static IMPORT_DIR_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+    let sequence = IMPORT_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let import_dir = root.join("target").join(format!(
+        "qx-app-g1-native-{}-{sequence}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&import_dir).ok()?;
+    let import_dir_cleanup = ImportDirCleanup(import_dir.clone());
     let suffix = if cfg!(windows) { "pyd" } else { "so" };
     std::fs::copy(
         newest,
@@ -84,12 +91,23 @@ pub(super) fn via_python(
         .current_dir(root.join("python"))
         .output()
         .expect("启动解释器失败");
+    drop(import_dir_cleanup);
+    assert!(
+        !import_dir.exists(),
+        "Python native extension scratch directory must be removed before returning"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     match output.status.code() {
         Some(0) => Some(Ok(
             serde_json::from_str(stdout.trim()).expect("Python stdout JSON")
         )),
-        Some(3) => None,
+        Some(3) => {
+            eprintln!(
+                "[skip] Python native app facade unavailable: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+            None
+        }
         Some(4) => {
             let value: Value = serde_json::from_str(stdout.trim()).expect("Python error JSON");
             Some(Err(value["qx_app_error"].to_string()))
@@ -98,5 +116,13 @@ pub(super) fn via_python(
             "Python 腿异常退出 {other:?}：stderr={}",
             String::from_utf8_lossy(&output.stderr)
         ),
+    }
+}
+
+struct ImportDirCleanup(PathBuf);
+
+impl Drop for ImportDirCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }

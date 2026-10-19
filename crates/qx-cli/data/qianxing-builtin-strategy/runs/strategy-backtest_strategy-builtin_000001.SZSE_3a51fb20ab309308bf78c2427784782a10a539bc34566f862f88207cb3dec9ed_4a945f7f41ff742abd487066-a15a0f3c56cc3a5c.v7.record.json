@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "run_id": "strategy-backtest:strategy-builtin:000001.SZSE:3a51fb20ab309308bf78c2427784782a10a539bc34566f862f88207cb3dec9ed:4a945f7f41ff742abd487066",
+  "status": "completed",
+  "input_digest": "barframe:5e59cfcf3adca434",
+  "code_identity": "30d8bf82c128bc35f257c59bf70aaee45f4c73b8-dirty:runtime-schema-1",
+  "config_fingerprint": "3a51fb20ab309308bf78c2427784782a10a539bc34566f862f88207cb3dec9ed",
+  "started_at_ms": 1717378200000,
+  "finished_at_ms": 1717466400000,
+  "artifact_refs": [
+    {
+      "name": "summary",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_000001.SZSE_3a51fb20ab309308bf78c2427784782a10a539bc34566f862f88207cb3dec9ed_4a945f7f41ff742abd487066-a15a0f3c56cc3a5c.v7.summary.json",
+      "digest": "5bfe66f709502915c92bec8f452d2bfa728b8fb44d41a8b2e7db14a85bd58d32"
+    },
+    {
+      "name": "equity",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_000001.SZSE_3a51fb20ab309308bf78c2427784782a10a539bc34566f862f88207cb3dec9ed_4a945f7f41ff742abd487066-a15a0f3c56cc3a5c.v7.equity.csv",
+      "digest": "281596e6147aabe15d22962225da09330e9d6770660796ceed967b1b955538a7"
+    },
+    {
+      "name": "fills",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_000001.SZSE_3a51fb20ab309308bf78c2427784782a10a539bc34566f862f88207cb3dec9ed_4a945f7f41ff742abd487066-a15a0f3c56cc3a5c.v7.fills.csv",
+      "digest": "487f3a5321f1a3d70567e57ab3d13d1e384998f46f98d4354f94bd084f036592"
+    },
+    {
+      "name": "run_manifest",
+      "path": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_000001.SZSE_3a51fb20ab309308bf78c2427784782a10a539bc34566f862f88207cb3dec9ed_4a945f7f41ff742abd487066-a15a0f3c56cc3a5c.run.json",
+      "digest": "8041a5c46d4ce254bb2584dd81342460be9cdf7ecb00cc0c29a583630ee70903"
+    }
+  ],
+  "replay_verdict": "verified",
+  "capability_level": "L1"
+}

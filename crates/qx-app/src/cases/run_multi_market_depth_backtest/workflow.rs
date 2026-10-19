@@ -14,6 +14,9 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+mod execution_models;
+use execution_models::from_report as execution_model_descriptors;
+
 pub(super) struct InjectedStrategy {
     pub(super) identity: StrategyArtifactIdentity,
     pub(super) strategy: Box<dyn Strategy>,
@@ -22,16 +25,20 @@ pub(super) struct InjectedStrategy {
 #[derive(Serialize)]
 struct DataIdentity {
     instrument: String,
+    path: String,
     data_tier: String,
     source: String,
     content_hash: String,
     snapshot_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dataset_quality: Option<serde_json::Value>,
 }
 
 struct PreparedMarket {
     request: MultiMarketDepthBacktestMarket,
     frame: DepthFrame,
     data_identity: DataIdentity,
+    quality_manifest_fingerprint: Option<String>,
     execution_model: OrderBookExecutionModel,
     strategy: Box<dyn OrderBookStrategy>,
 }
@@ -51,7 +58,7 @@ pub(super) fn run_inner(
 
 pub(super) fn run_inner_with_strategies(
     spec: &MultiMarketDepthBacktestSpec,
-    _context: &RunContext,
+    context: &RunContext,
     cancellation: Option<&crate::run_handle::CancellationToken>,
     mut injected: BTreeMap<String, InjectedStrategy>,
 ) -> Result<Option<MultiMarketDepthBacktestOutcome>, AppError> {
@@ -59,7 +66,13 @@ pub(super) fn run_inner_with_strategies(
         return Ok(None);
     }
     spec.validate()?;
-    let spec_json = spec.to_json()?;
+    let mut identity_spec = spec.clone();
+    identity_spec.output_dir.clear();
+    for market in &mut identity_spec.markets {
+        market.depth_path.clear();
+        market.dataset_manifest_path = None;
+    }
+    let spec_json = identity_spec.to_json()?;
     let mut spec_hasher = Fnv1a::new();
     spec_hasher.write_text(&spec_json);
     let mut data_hasher = Fnv1a::new();
@@ -95,12 +108,6 @@ pub(super) fn run_inner_with_strategies(
                 request.instrument
             )));
         }
-        if frame.snapshots.len() < 2 {
-            return Err(AppError::new(
-                AppErrorCategory::FidelityInsufficient,
-                format!("市场 {} 至少需要两份盘口快照", request.instrument),
-            ));
-        }
         if request.latency_snapshots > 0
             && request.latency_snapshots >= (frame.snapshots.len() as u64).saturating_sub(1)
         {
@@ -112,13 +119,17 @@ pub(super) fn run_inner_with_strategies(
                 ),
             ));
         }
-        let first_ts = frame.snapshots.first().expect("at least two snapshots").ts;
-        let last_ts = frame.snapshots.last().expect("at least two snapshots").ts;
-        if first_ts < request.market_spec.valid_from
+        let (Some(first), Some(last)) = (frame.snapshots.first(), frame.snapshots.last()) else {
+            return Err(AppError::new(
+                AppErrorCategory::FidelityInsufficient,
+                format!("市场 {} 至少需要两份盘口快照", request.instrument),
+            ));
+        };
+        if first.ts < request.market_spec.valid_from
             || request
                 .market_spec
                 .valid_to
-                .is_some_and(|valid_to| last_ts >= valid_to)
+                .is_some_and(|valid_to| last.ts >= valid_to)
         {
             return Err(invalid(format!(
                 "市场 {} 的产品规格有效区间未覆盖深度帧时间范围",
@@ -131,6 +142,21 @@ pub(super) fn run_inner_with_strategies(
         data_hasher.write_text(data_tier);
         data_hasher.write_text(&frame.source);
         data_hasher.write_u64(frame_hash);
+        let dataset_quality = request
+            .dataset_manifest_path
+            .as_deref()
+            .map(|manifest_path| {
+                verify_depth_dataset_quality(manifest_path, &request.depth_path, &frame, data_tier)
+            })
+            .transpose()?;
+        let quality_manifest_fingerprint = dataset_quality
+            .as_ref()
+            .and_then(|quality| quality.get("manifest_fingerprint"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        if let Some(fingerprint) = &quality_manifest_fingerprint {
+            data_hasher.write_text(fingerprint);
+        }
 
         let external = injected.remove(&request.strategy.strategy_id);
         let (strategy_id, strategy_version, strategy) = match external {
@@ -172,16 +198,20 @@ pub(super) fn run_inner_with_strategies(
                 )
             }
         };
+        let cash = BTreeMap::from([(spec.settlement_currency.clone(), spec.initial_cash_raw)]);
         let strategy_context = StrategyContext {
             strategy_id,
             strategy_version,
             account_id: spec.account_id.clone(),
             venue_id: frame.instrument.venue.to_string(),
             data_fingerprint,
-            as_of: first_ts,
+            as_of: first.ts,
             positions: BTreeMap::new(),
-            cash: BTreeMap::from([(spec.settlement_currency.clone(), spec.initial_cash_raw)]),
-            available_margin_raw: Some(spec.initial_cash_raw),
+            available_margin_raw: crate::cases::strategy_available_margin_raw(
+                &cash,
+                &spec.settlement_currency,
+            ),
+            cash,
             risk_state: "backtest".into(),
         };
         let tier = if data_tier == "l1" {
@@ -207,22 +237,25 @@ pub(super) fn run_inner_with_strategies(
                 Box::new(adapter)
             }
         };
-        let mut model = OrderBookExecutionModel::new(request.fee_bps).map_err(invalid)?;
-        model.latency_snapshots = request.latency_snapshots;
-        model.queue_position_bps = request.queue_position_bps;
-        model.market_impact_bps = request.market_impact_bps;
-        model.validate().map_err(invalid)?;
+        let model = request.execution_model()?;
         let data_identity = DataIdentity {
             instrument: request.instrument.clone(),
+            path: std::path::Path::new(&request.depth_path)
+                .canonicalize()
+                .map_err(|error| AppError::from_io("解析多市场盘口输入路径", &error))?
+                .to_string_lossy()
+                .to_string(),
             data_tier: data_tier.into(),
             source: frame.source.clone(),
             content_hash: format!("{frame_hash:016x}"),
             snapshot_count: frame.snapshots.len(),
+            dataset_quality,
         };
         prepared.push(PreparedMarket {
             request: request.clone(),
             frame,
             data_identity,
+            quality_manifest_fingerprint,
             execution_model: model,
             strategy,
         });
@@ -266,6 +299,7 @@ pub(super) fn run_inner_with_strategies(
     let Some(report) = report else {
         return Ok(None);
     };
+    let execution_models = execution_model_descriptors(&report);
     report
         .event_log
         .validate()
@@ -289,14 +323,21 @@ pub(super) fn run_inner_with_strategies(
         .and_then(|value| value.checked_div(spec.initial_cash_raw))
         .and_then(|value| i32::try_from(value).ok())
         .ok_or_else(|| invalid("多市场盘口收益无法表示"))?;
-    let outcome_path =
-        PathBuf::from(&spec.output_dir).join(format!("{}.multi-market-depth.json", spec.run_id));
+    std::fs::create_dir_all(&spec.output_dir)
+        .map_err(|error| AppError::from_io("创建多市场盘口产物目录", &error))?;
+    let output_root = PathBuf::from(&spec.output_dir)
+        .canonicalize()
+        .map_err(|error| AppError::from_io("解析多市场盘口产物目录", &error))?;
+    let outcome_path = output_root.join(format!("{}.multi-market-depth.json", spec.run_id));
+    let manifest_path = output_root.join(format!("{}.multi-market-depth.run.json", spec.run_id));
+    let equity_path = output_root.join(format!("{}.multi-market-depth.equity.json", spec.run_id));
+    let fills_path = output_root.join(format!("{}.multi-market-depth.fills.json", spec.run_id));
     let artifact_path = outcome_path.to_string_lossy().into_owned();
     let outcome = MultiMarketDepthBacktestOutcome {
         run_id: spec.run_id.clone(),
         account_id: spec.account_id.clone(),
-        spec_fingerprint,
-        data_fingerprint,
+        spec_fingerprint: spec_fingerprint.clone(),
+        data_fingerprint: data_fingerprint.clone(),
         shared_result_hash: format!("{:016x}", report.result_hash()),
         markets_total: spec.markets.len(),
         successful_fills: u64::try_from(report.fills.len())
@@ -307,6 +348,7 @@ pub(super) fn run_inner_with_strategies(
         final_equity_raw,
         return_bps,
         max_drawdown_bps: report.max_drawdown_bps,
+        execution_models,
         artifact_path: artifact_path.clone(),
     };
     let per_market_fills = report
@@ -318,6 +360,67 @@ pub(super) fn run_inner_with_strategies(
         .iter()
         .map(|market| &market.data_identity)
         .collect::<Vec<_>>();
+    let mut identity_spec = spec.clone();
+    identity_spec.output_dir.clear();
+    for market in &mut identity_spec.markets {
+        market.depth_path.clear();
+        market.dataset_manifest_path = None;
+    }
+    let config_bytes = serde_json::to_vec(&identity_spec)
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
+    let input_components: BTreeMap<String, String> = prepared
+        .iter()
+        .map(|market| {
+            (
+                format!("depthframe:{}", market.data_identity.instrument),
+                format!(
+                    "depth:{}:{}:{}",
+                    market.data_identity.data_tier,
+                    market.data_identity.source,
+                    market.data_identity.content_hash
+                ),
+            )
+        })
+        .collect();
+    let mut input_components = input_components;
+    for market in &prepared {
+        if let Some(fingerprint) = &market.quality_manifest_fingerprint {
+            input_components.insert(
+                format!("dataset-quality:{}", market.data_identity.instrument),
+                fingerprint.clone(),
+            );
+        }
+    }
+    let manifest = qx_core::RunManifest {
+        run_id: spec.run_id.clone(),
+        code_commit: context.code_commit().to_string(),
+        config_hash: qx_strategy::sha256_hex(&config_bytes),
+        data_fingerprint: data_fingerprint.clone(),
+        input_components,
+        clock_start: report.clock_start,
+        clock_end: report.clock_end,
+        global_seed: 0,
+        determinism_mode: true,
+        result_hash: format!("{:016x}", report.result_hash()),
+        strategy_version: format!("multi-market-depth:{}", spec_fingerprint),
+        instrument_spec_version: "multi-market-depth-spec-v1".into(),
+        model_fingerprint: qx_strategy::sha256_hex(
+            b"OrderBookPortfolioBacktestEngine/OrderBookExecutionModel/v1",
+        ),
+        input_event_hash: data_fingerprint.clone(),
+        output_event_hash: format!("{:016x}", report.event_log.digest()),
+        runtime_version: format!("qx-app-{}", env!("CARGO_PKG_VERSION")),
+    };
+    let manifest_json = manifest
+        .to_json()
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error))?;
+    let equity_json = serde_json::to_string(&report.equity)
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
+    let fills_json = serde_json::to_string(&report.fills)
+        .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
+    let manifest_artifact_path = manifest_path.to_string_lossy().into_owned();
+    let equity_artifact_path = equity_path.to_string_lossy().into_owned();
+    let fills_artifact_path = fills_path.to_string_lossy().into_owned();
     let artifact_json = serde_json::to_string(&serde_json::json!({
         "schema_version": 1,
         "spec": spec,
@@ -329,12 +432,39 @@ pub(super) fn run_inner_with_strategies(
         "event_log": report.event_log.events(),
         "ledger_entries": report.ledger.entries(),
         "replay_verified": true,
+        "run_manifest_path": manifest_artifact_path,
+        "equity_path": equity_artifact_path,
+        "fills_path": fills_artifact_path,
     }))
     .map_err(|error| AppError::new(AppErrorCategory::InternalInvariant, error.to_string()))?;
-    std::fs::create_dir_all(&spec.output_dir)
-        .map_err(|error| AppError::from_io("创建多市场盘口产物目录", &error))?;
+    let manifest_exists = super::super::run_multi_market_manifest::existing_identical(
+        &manifest_path,
+        &manifest_json,
+        "RunManifest",
+    )?;
+    let equity_exists = super::super::run_multi_market_manifest::existing_identical(
+        &equity_path,
+        &equity_json,
+        "权益曲线",
+    )?;
+    let fills_exists = super::super::run_multi_market_manifest::existing_identical(
+        &fills_path,
+        &fills_json,
+        "成交明细",
+    )?;
     match std::fs::read_to_string(&outcome_path) {
-        Ok(existing) if existing == artifact_json => return Ok(Some(outcome)),
+        Ok(existing) if existing == artifact_json => {
+            if !manifest_exists {
+                write_text(&manifest_artifact_path, &manifest_json)?;
+            }
+            if !equity_exists {
+                write_text(&equity_artifact_path, &equity_json)?;
+            }
+            if !fills_exists {
+                write_text(&fills_artifact_path, &fills_json)?;
+            }
+            return Ok(Some(outcome));
+        }
         Ok(_) => {
             return Err(AppError::new(
                 AppErrorCategory::Conflict,
@@ -344,8 +474,124 @@ pub(super) fn run_inner_with_strategies(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(AppError::from_io("读取多市场盘口回测产物", &error)),
     }
+    if !manifest_exists {
+        write_text(&manifest_artifact_path, &manifest_json)?;
+    }
+    if !equity_exists {
+        write_text(&equity_artifact_path, &equity_json)?;
+    }
+    if !fills_exists {
+        write_text(&fills_artifact_path, &fills_json)?;
+    }
     write_text(&artifact_path, &artifact_json)?;
     Ok(Some(outcome))
+}
+
+fn verify_depth_dataset_quality(
+    manifest_path: &str,
+    frame_path: &str,
+    frame: &DepthFrame,
+    data_tier: &str,
+) -> Result<serde_json::Value, AppError> {
+    let path = std::path::Path::new(manifest_path);
+    let manifest_bytes = std::fs::read(path)
+        .map_err(|error| AppError::from_io("读取多市场深度数据质量清单", &error))?;
+    let payload = std::str::from_utf8(&manifest_bytes).map_err(|error| {
+        invalid(format!(
+            "多市场深度数据质量清单不是 UTF-8 {}: {error}",
+            path.display()
+        ))
+    })?;
+    let manifest = qx_data::DatasetManifestV2::from_json(payload).map_err(invalid)?;
+    let frame_bytes = std::fs::read(frame_path)
+        .map_err(|error| AppError::from_io("读取多市场 DepthFrame 内容摘要", &error))?;
+    let frame_sha256 = qx_data::sha256_hex_bytes(&frame_bytes);
+    let rows =
+        u64::try_from(frame.snapshots.len()).map_err(|_| invalid("DepthFrame 快照数超出 u64"))?;
+    let first_ts = frame
+        .snapshots
+        .first()
+        .ok_or_else(|| invalid("DepthFrame 不能为空"))?
+        .ts;
+    let last_ts = frame
+        .snapshots
+        .last()
+        .ok_or_else(|| invalid("DepthFrame 不能为空"))?
+        .ts;
+    let expected_tier = if data_tier == "l1" {
+        qx_data::DatasetTier::L1
+    } else {
+        qx_data::DatasetTier::L2
+    };
+    let fingerprint = format!("{:016x}", frame.input_hash());
+    if manifest.instrument != frame.instrument.to_string()
+        || manifest.tier != expected_tier
+        || manifest.provider_version != qx_data::DEPTHFRAME_DATASET_VERSION
+        || manifest.dataset.dataset_id != format!("depth-bars:{}", frame.instrument)
+        || manifest.dataset.version != qx_data::DEPTHFRAME_DATASET_VERSION
+        || manifest.dataset.source != frame.source
+        || manifest.dataset.schema_version != frame.schema_version
+        || manifest.source_lineage.primary_source != frame.source
+        || manifest.content_hash != frame_sha256
+        || manifest.dataset.fingerprint != fingerprint
+        || manifest.dataset.start_timestamp != first_ts
+        || manifest.dataset.end_timestamp != last_ts
+        || manifest.quality_report.row_count != rows
+        || manifest.quality_report.usable_tiers != [data_tier]
+    {
+        return Err(invalid(format!(
+            "多市场深度数据质量清单与输入不一致: {}",
+            path.display()
+        )));
+    }
+    let interval = manifest
+        .quality_report
+        .interval_ms
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            invalid(format!(
+                "多市场深度数据质量清单缺少正 interval_ms: {}",
+                path.display()
+            ))
+        })?;
+    let (duplicates, out_of_order, missing) = frame
+        .snapshots
+        .windows(2)
+        .try_fold(
+            (0_u64, 0_u64, 0_u64),
+            |(duplicates, out_of_order, missing), pair| {
+                if pair[1].ts < pair[0].ts {
+                    Some((duplicates, out_of_order.checked_add(1)?, missing))
+                } else if pair[1].ts == pair[0].ts {
+                    Some((duplicates.checked_add(1)?, out_of_order, missing))
+                } else {
+                    Some((
+                        duplicates,
+                        out_of_order,
+                        missing.checked_add((pair[1].ts - pair[0].ts).div_ceil(interval) - 1)?,
+                    ))
+                }
+            },
+        )
+        .ok_or_else(|| invalid("多市场深度质量报告复算溢出"))?;
+    if manifest.quality_report.duplicate_rows != duplicates
+        || manifest.quality_report.out_of_order_rows != out_of_order
+        || manifest.quality_report.missing_intervals != missing
+    {
+        return Err(invalid(format!(
+            "多市场深度质量报告与 DepthFrame 实况不一致: {}",
+            path.display()
+        )));
+    }
+    let manifest_fingerprint = manifest.fingerprint().map_err(invalid)?;
+    Ok(serde_json::json!({
+        "manifest_path": path.to_string_lossy(),
+        "manifest_sha256": qx_data::sha256_hex_bytes(&manifest_bytes),
+        "manifest_fingerprint": manifest_fingerprint,
+        "content_hash": manifest.content_hash,
+        "quality_report": manifest.quality_report,
+        "manifest": manifest,
+    }))
 }
 
 struct CallbackStrategy(Box<dyn Strategy>);

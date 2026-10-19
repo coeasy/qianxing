@@ -21,7 +21,7 @@
 #   capability_level              —— 该用例自身的能力等级（R/P/O/L）。
 schema_version: 1
 kind: app-use-case-registry
-updated_at: "2026-10-10"
+updated_at: "2026-10-15"
 
 error_categories:
   - InvalidInput
@@ -45,7 +45,7 @@ use_cases:
     error_categories: "AppErrorCategory 八类；领域码→类别走 category_of_domain_code"
     capability_level: "R"
   - name: run_backtest
-    input_schema: "BacktestSpec v1（可选冻结 TradingInstrumentSpec；声明 market_spec 时必须显式给出 MakerTakerFeeSchedule，禁止静默默认费用；四类信号旋钮 fast_window/slow_window/period/threshold_bps；省略 period/threshold 时取兼容默认值 14/100；可选同账户单标的单腿策略组合 portfolio（多个 Rust/Python 自定义 callback 可占策略槽，剩余槽使用内置策略），按优先级共享资金并要求预算合计不超过 initial_cash_raw；组合不接受账户净持仓 protective_exit）"
+    input_schema: "BacktestSpec v1（可选冻结 TradingInstrumentSpec；可选 margin_model 显式绑定 NoMargin/Leverage/交易所 TieredMargin；market_spec 需显式声明费用来源（MakerTakerFeeSchedule、ExecutionCostRules 或启用的 AShareRuleConfig）；可选 ExecutionCostRules 同时绑定费用与延迟，可选预加载 AshareRuleConfig 绑定 A 股制度并由其费率覆盖 maker/taker；可选 OHLCV 撮合模型 next_bar_open/best_price/one_tick_slippage（one_tick_slippage 要求 price_tick）；可选 BacktestRiskRules 静态规则集（max_qty_raw/max_notional_raw/no_short，产品派生禁空规则仍自动应用）；四类信号旋钮 fast_window/slow_window/period/threshold_bps；省略 period/threshold 时取兼容默认值 14/100；可选同账户单标的单腿策略组合 portfolio（多个 Rust/Python 自定义 callback 可占策略槽，剩余槽使用内置策略），按优先级共享资金并要求预算合计不超过 initial_cash_raw；组合不接受账户净持仓 protective_exit）"
     output_schema: "BacktestOutcome（crates/qx-app/src/spec.rs）"
     capability: "RESEARCH"
     idempotency_key: "run_id + config_hash + data_fingerprint（三者全同才允许重写；任一不同即 Conflict）"
@@ -164,6 +164,16 @@ use_cases:
     artifacts: "<run_id>.multi-leg.json（策略、数据与配置身份、共享 EventLog/账簿回放、两腿成交哈希与归因、裸腿待对账事实）"
     error_categories: "AppErrorCategory 八类；重复标的或非法时间序列为 InvalidInput，样本不足为 FidelityInsufficient，异身份覆盖为 Conflict"
     capability_level: "R"
+  - name: run_multi_builtin_backtest
+    input_schema: "MultiBuiltinBacktestSpec v1（两份对齐 BarFrame、双腿内置策略参数、两份独立 BacktestSpec；逐腿显式账户/本金/market spec/保证金/成本/撮合/风控）"
+    output_schema: "MultiBuiltinBacktestRun（两腿 BacktestOutcome + 已验证 BacktestReport + 虚拟仓位目标时间表 + 组合收益/分组归因/费用闭合/裸腿与逐腿成交完整性/成本和保证金口径）"
+    capability: "RESEARCH"
+    idempotency_key: "每腿 run_id + config_hash + data_fingerprint；信号目标由双帧内容与策略规格确定性推导"
+    cancellation: "同步用例，无取消点；信号预计算后逐腿复用标准 BacktestEngine 与 ReplayVerifier"
+    progress: "无"
+    artifacts: "每条腿各自的 run.json / summary.json / equity.csv / fills.csv；qx-app 返回组合归因事实，CLI 兼容适配层生成历史组合摘要与证据文件"
+    error_categories: "AppErrorCategory 八类；两帧标的/时间戳不对齐为 InvalidInput，样本不足为 FidelityInsufficient，子回测错误按标准用例返回"
+    capability_level: "R"
   - name: plan_risk_parity
     input_schema: "RiskParitySpec v1（冻结的对齐收益率序列、标记价、资金和换手预算）"
     output_schema: "RiskParityResult v1（确定性等风险贡献权重、目标名义金额、调仓增量和计划指纹）"
@@ -246,7 +256,7 @@ use_cases:
     capability_level: "R"
   - name: run_multi_market_depth_backtest
     input_schema: "MultiMarketDepthBacktestSpec v1（2..=32 个同账户 L1 Tick/L2 OrderBook 现货市场；每市场声明 data_tier，L1 每时间点恰有一档 bid/ask，L2 提供完整 OrderBook；Rust 内置 Bar 策略复用 DepthBarStrategy 将盘口中间价/数量折成 Bar 事件，本地 Rust/Python 回调按档位接收 Tick 或 OrderBook；统一结算币种/账本；衍生品跨市场保证金暂不支持）"
-    output_schema: "MultiMarketDepthBacktestOutcome v1（共享账簿结果哈希、逐市场成交/权益摘要、重放验证产物）"
+    output_schema: "MultiMarketDepthBacktestOutcome v1（共享账簿结果哈希、逐市场成交/权益摘要、逐市场实际执行模型/假设、重放验证产物）"
     capability: "RESEARCH"
     idempotency_key: "run_id + 规范规格/排序市场 DepthFrame 指纹 + 策略 ID/version/source SHA-256；同身份重跑产物须逐字节相同，异内容返回 Conflict"
     cancellation: "同步入口不取消；MultiMarketDepthBacktestSpec::start 与 start_with_strategy_slots 在数据准备和共享 Rust 快照循环协作取消，不发布部分结果"
@@ -264,3 +274,23 @@ use_cases:
     artifacts: "不可变 <experiment_id>.multi-market-depth-experiment.json 与每个候选的共享多市场 L1/L2 回测产物"
     error_categories: "AppErrorCategory 八类；无效网格/目标槽/数据为 InvalidInput，衍生品跨市场保证金明确拒绝，异身份产物为 Conflict"
     capability_level: "R"
+  - name: validate_dataset_manifest
+    input_schema: "DatasetManifestValidationSpec v1（BarFrame 路径、数据集身份、采样间隔、时区与清单产物路径；允许诊断重复/乱序 Bar）"
+    output_schema: "DatasetManifestValidationResult v1（DatasetManifestV2、稳定 JSON、幂等复核标志与退化指纹原因）"
+    capability: "RESEARCH"
+    idempotency_key: "dataset_id + version + 内容指纹 + 输出路径；同内容可复核，异内容或非清单占位返回 Conflict"
+    cancellation: "同步文件读写，无取消点；失败不覆盖既有清单"
+    progress: "无"
+    artifacts: "指定 output_path 的 DatasetManifestV2；既有相同清单只读复核"
+    error_categories: "AppErrorCategory 八类；输入/列/间隔错误为 InvalidInput，输入缺失走 DataUnavailable，写入走 StorageFailure，清单占位/漂移为 Conflict"
+    capability_level: "R"
+  - name: paper_available_margin_raw
+    input_schema: "Ledger + account_id + marks + reporting_currency + 冻结 TradingInstrumentSpec 集合 + FX rates"
+    output_schema: "i128（qx-core PaperValuationContext 的可用保证金 raw 值）"
+    capability: "PAPER"
+    idempotency_key: "账簿与估值输入纯读；相同输入返回相同结果"
+    cancellation: "同步纯读，无取消点"
+    progress: "无"
+    artifacts: "无"
+    error_categories: "AppErrorCategory 八类；能力拒绝为 PermissionDenied，账簿估值沿用领域码映射"
+    capability_level: "P"

@@ -1,4 +1,8 @@
-use super::super::*;
+use crate::load_worker_market_spec_for_instrument;
+use qx_core::{InstrumentId, TradingInstrumentSpec};
+use qx_runtime::{RuntimeConfig, WorkerRole};
+use std::collections::BTreeSet;
+use std::path::Path;
 
 pub(crate) fn strategy_execution_market_spec(
     config: &RuntimeConfig,
@@ -40,25 +44,4 @@ pub(crate) fn strategy_execution_market_spec(
         return Ok(None);
     };
     load_worker_market_spec_for_instrument(worker, instrument, runtime_config_path)
-}
-
-pub(crate) fn normalize_strategy_order_quantity(
-    quantity_raw: i128,
-    market_spec: Option<&TradingInstrumentSpec>,
-) -> Result<i128, String> {
-    let Some(spec) = market_spec else {
-        return Ok(quantity_raw);
-    };
-    let step = spec.qty_step;
-    if step <= 0 || quantity_raw <= 0 {
-        return Err("Strategy intent 数量或 market spec 数量步长非法".into());
-    }
-    let stepped = (quantity_raw / step) * step;
-    if stepped < spec.min_qty {
-        return Err(format!(
-            "Strategy intent 数量 {} 按 market spec 步长 {} 向下对齐后小于最小数量 {}",
-            quantity_raw, step, spec.min_qty
-        ));
-    }
-    Ok(stepped)
 }

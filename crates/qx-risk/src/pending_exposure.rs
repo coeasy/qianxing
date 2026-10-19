@@ -13,13 +13,35 @@ pub fn pending_order_gross_notional(
     spec: &TradingInstrumentSpec,
     marks: &BTreeMap<InstrumentId, Price>,
 ) -> QxResult<i128> {
+    pending_order_gross_notional_at_reference_mark(
+        orders,
+        candidate_order_id,
+        account_id,
+        instrument,
+        spec,
+        marks.get(instrument).copied(),
+    )
+}
+
+/// Sum remaining notional using a caller-provided reference mark.
+///
+/// This avoids allocating a one-entry mark map when a caller already has the
+/// candidate instrument's visible price.
+pub fn pending_order_gross_notional_at_reference_mark<'a>(
+    orders: impl IntoIterator<Item = &'a Order>,
+    candidate_order_id: u64,
+    account_id: &str,
+    instrument: &InstrumentId,
+    spec: &TradingInstrumentSpec,
+    reference_mark: Option<Price>,
+) -> QxResult<i128> {
     if spec.instrument != *instrument {
         return Err(QxError::BusinessViolation(
             "在途订单名义额规格与目标标的不一致".into(),
         ));
     }
     orders
-        .iter()
+        .into_iter()
         .filter(|order| {
             order.client_id != candidate_order_id
                 && order.account_id == account_id
@@ -33,8 +55,7 @@ pub fn pending_order_gross_notional(
                 .limit
                 .map(|price| spec.notional(quantity, price.raw()))
                 .transpose()?;
-            let mark_notional = marks
-                .get(instrument)
+            let mark_notional = reference_mark
                 .map(|price| spec.notional(quantity, price.raw()))
                 .transpose()?;
             let notional = match (limit_notional, mark_notional) {

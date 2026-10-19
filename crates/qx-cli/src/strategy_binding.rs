@@ -1,6 +1,22 @@
-//! 策略绑定：策略当前持仓读取、跨语言契约输入装配，以及内置策略信号参数的唯一读点。
+//! 策略绑定：策略当前持仓读取与跨语言契约输入装配。
 
-use super::*;
+use crate::{
+    account_event_log_name, event_log_exists, invoke_builtin_strategy, invoke_c_abi_strategy,
+    invoke_python_strategy, invoke_python_strategy_with_client, load_strategy_contract_bars,
+    native_strategy_context, open_account_pipeline, runtime_path, strategy_account_context,
+    strategy_target_qty, validate_research_snapshot_binding, PythonStrategyClient,
+    StrategyProcessClient,
+};
+use qx_core::InstrumentId;
+use qx_factor::StrategyResearchSnapshot;
+use qx_runtime::{
+    OutboxRecovery, RuntimeConfig, StrategyContext, StrategyContractInput, StrategyContractOutput,
+    WorkerConfig,
+};
+pub(crate) use qx_strategy::builtin_signal::BuiltinSignalProvenance;
+use qx_strategy::DynamicCAbiStrategy;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 /// 这套信号口径从哪来：四项全缺 = 写死默认，任一项给了 = 配置。
 ///
@@ -13,93 +29,10 @@ use super::*;
 /// 声明与生效是两件事：`builtin_fast_window` 对 MACD 而言从没上过场（V12 #102），
 /// 而"配了哪几项"只有配置本身知道。播报把两份都印出来，读者才分得清
 /// "没人提这一项"、"提了但这一轮不上场"与"提了并且改了信号"。
-pub(crate) fn builtin_signal_declared(
-    strategy: &StrategyRuntimeConfig,
-) -> Vec<qx_strategy::builtin_signal::BuiltinSignalKnob> {
-    use qx_strategy::builtin_signal::BuiltinSignalKnob;
-    BuiltinSignalKnob::ALL
-        .into_iter()
-        .filter(|knob| match knob {
-            BuiltinSignalKnob::FastWindow => strategy.builtin_fast_window.is_some(),
-            BuiltinSignalKnob::SlowWindow => strategy.builtin_slow_window.is_some(),
-            BuiltinSignalKnob::Period => strategy.builtin_period.is_some(),
-            BuiltinSignalKnob::ThresholdBps => strategy.builtin_threshold_bps.is_some(),
-        })
-        .collect()
-}
-
 /// 一次运行的信号声明面：来源判词，加上"这个 kind 上场的清单"与"配置提了却没上场的键"。
 ///
 /// 三项一次算清，播报那行与摘要那块才不会各渲染一套（V12 #102）。此前 `source=config`
 /// 只回答"配置提过这一项"，读者据此以为印出来的四项都在改动信号。
-#[derive(Clone, Debug)]
-pub(crate) struct BuiltinSignalProvenance {
-    pub(crate) source: &'static str,
-    /// 这个 kind 的信号真正读的几项，逗号分隔；内核常数策略（MACD）为 `none`。
-    pub(crate) knobs: String,
-    /// 配置里声明了、这一轮却没有上场的键名；`none` 表示声明的几项全在场。
-    pub(crate) declared_unused: String,
-}
-
-impl BuiltinSignalProvenance {
-    /// 没给 `--config` 的那一侧：声明面是空的，但"哪些项本来就该上场"仍然要说清。
-    pub(crate) fn defaults(kind: qx_strategy::BuiltinStrategyKind) -> BuiltinSignalProvenance {
-        BuiltinSignalProvenance {
-            source: "builtin-default",
-            knobs: kind.signal_knob_list(),
-            declared_unused: "none".to_string(),
-        }
-    }
-
-    pub(crate) fn render(
-        kind: qx_strategy::BuiltinStrategyKind,
-        strategy: &StrategyRuntimeConfig,
-    ) -> Self {
-        let declared = builtin_signal_declared(strategy);
-        let unused = declared
-            .iter()
-            .filter(|knob| !kind.uses_signal_knob(**knob))
-            .map(|knob| knob.config_key())
-            .collect::<Vec<_>>();
-        Self {
-            source: if declared.is_empty() {
-                "builtin-default"
-            } else {
-                "config"
-            },
-            knobs: kind.signal_knob_list(),
-            declared_unused: if unused.is_empty() {
-                "none".to_string()
-            } else {
-                unused.join(",")
-            },
-        }
-    }
-}
-
-/// `strategy.builtin_*` 四个信号参数的唯一读点（V11 Q64）。
-///
-/// 逐项可省：给了哪项换哪项，缺项留 `BuiltinStrategyConfig` 的默认。四条 Bar 回测链都走这里，
-/// 于是同一份 `--config` 不会在各入口得到两套窗口。这里不做体检：双腿 kind 的
-/// `reference_instrument` 在调用方才补齐，先验证会误报。
-pub(crate) fn apply_builtin_signal_overrides(
-    config: &mut BuiltinStrategyConfig,
-    strategy: &StrategyRuntimeConfig,
-) {
-    if let Some(window) = strategy.builtin_fast_window {
-        config.fast_window = window;
-    }
-    if let Some(window) = strategy.builtin_slow_window {
-        config.slow_window = window;
-    }
-    if let Some(period) = strategy.builtin_period {
-        config.period = period;
-    }
-    if let Some(threshold) = strategy.builtin_threshold_bps {
-        config.threshold_bps = threshold;
-    }
-}
-
 pub(crate) fn validate_ccxt_worker_binding(
     worker: &WorkerConfig,
     ccxt_config_path: &Path,
@@ -312,18 +245,27 @@ pub(crate) fn build_strategy_contract_input(
 /// 顺序就是生效顺序：`builtin_strategy` > `python_module`（常驻子进程优先，没有就冷启动一次）>
 /// 外部可执行 > C ABI 动态库 > 配置直给目标仓位。worker 侧新增一档只能加在这里，
 /// 不允许在调用点再写一份 if-else 链（V13 R2 第十二遍 #190 抽出，纯搬运不改判定）。
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct StrategyContractClients<'a> {
+    pub(crate) python_client: &'a mut Option<PythonStrategyClient>,
+    pub(crate) external_client: &'a mut Option<StrategyProcessClient>,
+    pub(crate) native_client: &'a mut Option<DynamicCAbiStrategy>,
+    pub(crate) native_initialized: &'a mut bool,
+}
+
 pub(crate) fn evaluate_strategy_contract(
     root: &Path,
     config: &RuntimeConfig,
     instrument: &InstrumentId,
     run_id: u64,
     now: u64,
-    python_client: &mut Option<PythonStrategyClient>,
-    external_client: &mut Option<StrategyProcessClient>,
-    native_client: &mut Option<DynamicCAbiStrategy>,
-    native_initialized: &mut bool,
+    clients: StrategyContractClients<'_>,
 ) -> Result<(i128, Option<StrategyContractOutput>), String> {
+    let StrategyContractClients {
+        python_client,
+        external_client,
+        native_client,
+        native_initialized,
+    } = clients;
     let request_id = run_id.to_string();
     Ok(if config.strategy.builtin_strategy.is_some() {
         let output = invoke_builtin_strategy(root, config, instrument, &request_id, now)?;
@@ -342,7 +284,7 @@ pub(crate) fn evaluate_strategy_contract(
         (output.target_qty, Some(output))
     } else if let Some(client) = native_client.as_mut() {
         let input = build_strategy_contract_input(root, config, instrument, &request_id, now)?;
-        let context = native_strategy_context(&config.strategy, &input);
+        let context = native_strategy_context(&config.strategy, &input)?;
         let event = qx_strategy::MarketEvent::Timer {
             name: format!("job:{run_id}"),
             ts: now,

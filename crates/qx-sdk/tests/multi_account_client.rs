@@ -1,6 +1,6 @@
 use qx_sdk::{
-    BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability, Client,
-    DepthBacktestSpec, MultiAccountBacktestSpec, MultiAccountDepthBacktestSpec, RunStatus,
+    BacktestDatasetInput, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability,
+    Client, DepthBacktestSpec, MultiAccountBacktestSpec, MultiAccountDepthBacktestSpec, RunStatus,
 };
 use std::path::{Path, PathBuf};
 
@@ -18,9 +18,11 @@ fn multi_account_spec(run_id: &str, account_id: &str, output: &Path) -> Backtest
     strategy.slow_window = 3;
     let bars = repo_root().join("deploy/qianxing.bar-frame.example.json");
     let mut spec = BacktestSpec::new(
-        run_id,
-        "BTCUSDT.BINANCE",
-        bars.to_string_lossy(),
+        BacktestDatasetInput {
+            run_id: run_id.into(),
+            instrument: "BTCUSDT.BINANCE".into(),
+            bars_path: bars.to_string_lossy().into_owned(),
+        },
         "USDT",
         100_000 * 1_000_000_000,
         20261010,
@@ -92,6 +94,7 @@ fn independent_consumer_runs_sync_and_async_multi_account_depth_batches() {
         fee_bps: 0,
         latency_snapshots: 0,
         queue_position_bps: 0,
+        queue_position_model: Default::default(),
         market_impact_bps: 0,
         output_dir: root.join("account-a").to_string_lossy().into_owned(),
         strategy: depth_strategy,

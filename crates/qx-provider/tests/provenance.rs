@@ -84,6 +84,7 @@ mod tests {
             provider_id: id.into(),
             version: "v1".into(),
             data_kinds: [DataKind::Bar].into_iter().collect(),
+            data_tiers: [qx_provider::MarketDataTier::Bar].into_iter().collect(),
             asset_classes: ["crypto".into()].into_iter().collect(),
             frequencies: ["1d".into()].into_iter().collect(),
             auth_scope: "public".into(),

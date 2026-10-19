@@ -8,6 +8,24 @@ use qx_xingban::{
 };
 use std::collections::BTreeMap;
 
+pub(super) fn strategy_specs(
+    spec: &DepthBacktestSpec,
+) -> impl Iterator<Item = &crate::BuiltinStrategySpec> {
+    std::iter::once(&spec.strategy).chain(
+        spec.portfolio
+            .iter()
+            .flat_map(|portfolio| portfolio.additional_strategies.iter())
+            .map(|member| &member.strategy),
+    )
+}
+
+pub(super) fn has_builtin_sizing(strategy: &crate::BuiltinStrategySpec) -> bool {
+    strategy.target_notional_raw.is_some()
+        || strategy.target_available_margin_bps.is_some()
+        || strategy.target_volatility_bps.is_some()
+        || strategy.target_kelly_fraction_bps.is_some()
+}
+
 struct DepthPortfolioBuildContext<'a> {
     spec: &'a DepthBacktestSpec,
     instrument: &'a InstrumentId,
@@ -149,6 +167,7 @@ fn build_member(
     reserved_capital_raw: i128,
     injected: Option<InjectedDepthStrategy>,
 ) -> Result<Box<dyn OrderBookStrategy>, AppError> {
+    let cash = BTreeMap::from([(build.spec.settlement_currency.clone(), reserved_capital_raw)]);
     let context = StrategyContext {
         strategy_id: member.strategy_id.clone(),
         strategy_version: injected
@@ -160,8 +179,11 @@ fn build_member(
         data_fingerprint: build.data_fingerprint.to_string(),
         as_of: build.as_of,
         positions: BTreeMap::new(),
-        cash: BTreeMap::from([(build.spec.settlement_currency.clone(), reserved_capital_raw)]),
-        available_margin_raw: Some(reserved_capital_raw),
+        available_margin_raw: crate::cases::strategy_available_margin_raw(
+            &cash,
+            &build.spec.settlement_currency,
+        ),
+        cash,
         risk_state: "backtest".into(),
     };
     if let Some(injected) = injected {

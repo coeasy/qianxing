@@ -2,15 +2,7 @@
 
 use super::*;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StrategyTransport {
-    #[default]
-    Jsonl,
-    FramedJson,
-    SharedMemoryJson,
-    SharedMemoryColumnar,
-}
+pub use qx_strategy::transport::StrategyTransport;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct StrategyTargetSnapshot {
@@ -150,6 +142,8 @@ pub struct StrategyRuntimeConfig {
     /// 三者都是"只有 OHLCV 也能诚实撮合"的模型，换它们会换成交价，因而换成交额、费用与
     /// 结果哈希；`one_tick_slippage` 的一档只取自 market spec 的 `price_tick`——没有 spec 就
     /// 拒绝，因为替某个产品猜一档滑点等于把猜测写进结果。
+    /// 可独立配置 `max_bar_volume_participation_bps`，限制每根 Bar 所有订单的累计成交量占 Bar
+    /// OHLCV 成交量的比例；这只是容量上限，不表示重建盘口深度或队列位置。
     ///
     /// 内核另有 `probabilistic`（要 L1 一档）与 `volume_sensitive`（要 L2/L3 深度）两个更高保真
     /// 的模型，本字段**不接受**它们：Bar 链的输入只有 OHLCV，装进去就是"声称还原了并不存在的
@@ -160,6 +154,10 @@ pub struct StrategyRuntimeConfig {
     /// 哈希会因为一个没有改变行为的字段而集体失真。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill_model: Option<String>,
+    /// Optional OHLCV Bar-wide cap shared across all fills in one Bar. This is a
+    /// participation constraint, not a depth or queue reconstruction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bar_volume_participation_bps: Option<u16>,
     #[serde(default)]
     pub venue_id: Option<String>,
     #[serde(default)]
@@ -335,6 +333,7 @@ impl Default for StrategyRuntimeConfig {
             risk_rules: None,
             cost_rules_path: None,
             fill_model: None,
+            max_bar_volume_participation_bps: None,
             account_id: None,
             initial_cash_raw: None,
             venue_id: None,

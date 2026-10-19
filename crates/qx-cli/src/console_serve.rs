@@ -10,7 +10,16 @@
 //! 一枚一次性令牌并明确打印，让"忘了 export"不再是一道启动失败的门槛；这枚令牌随进程生灭、不落盘，
 //! 因此它只服务本机回环控制台，不能替代运维显式配置的长期秘密。
 
-use super::*;
+use crate::{
+    build_configured_api_service, catch_panic, configured_api_worker_id, join_worker_handle,
+    read_runtime_config, runtime_timestamp_ms, spawn_api_projection_bridge,
+    stop_api_projection_bridge, ConsoleArgs,
+};
+use qx_runtime::RuntimeSupervisor;
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 /// `--init` 写出的运行时模板：与 `deploy/qianxing.runtime.console.example.json` **同形**
 /// （回环 bind、令牌只给环境变量名、正文无令牌字面量字段、写明 static_dir 与 operator）。
@@ -53,6 +62,10 @@ const CONSOLE_RUNTIME_TEMPLATE: &str = r#"{
 "#;
 
 pub(crate) fn serve_console(args: &ConsoleArgs) -> Result<(), String> {
+    catch_panic("console-serve", || serve_console_inner(args))
+}
+
+fn serve_console_inner(args: &ConsoleArgs) -> Result<(), String> {
     // 两条易用性入口放在读配置之前：它们各自不需要一份"能跑"的配置，也不该因为配置缺失而失败。
     if let Some(target) = &args.init {
         return scaffold_console_runtime(target);
@@ -187,7 +200,9 @@ fn scaffold_console_runtime(target: &Path) -> Result<(), String> {
     let env_name = "QX_CONSOLE_BOOTSTRAP_TOKEN";
     println!("[控制台 · Console] 已写出运行时模板 {}", target.display());
     println!("[控制台 · Console] 下一步（引导令牌只走环境变量，不进命令行 / 配置文件）：");
-    println!("  export {env_name}=\"<至少16字符的秘密>\"   # 或用 `qx-cli console --generate-token` 生成一行");
+    println!(
+        "  export {env_name}=\"<至少16字符的秘密>\"   # 或用 `qx-cli console --generate-token` 生成一行"
+    );
     println!("  qx-cli console {}", target.display());
     println!("[控制台 · Console] 若跳过 export，启动时会自动临时生成一次性令牌并打印入口 URL。");
     Ok(())

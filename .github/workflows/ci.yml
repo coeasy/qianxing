@@ -39,6 +39,10 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Production unwrap and expect lint
+        run: |
+          cargo clippy --workspace --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used
+          ! rg -n '\.(unwrap|expect)[[:space:]]*\(' crates/qx-app/build.rs crates/qx-cli/build.rs crates/qx-python/build.rs
       # 显式钉住解释器：`e2e_and_python_contract` 的两条 worker 契约用例在缺 QX_PYTHON 时
       # 回落 PATH 上的 `python`，于是「Python 链在 CI 绿」可能只是碰巧有个能跑的解释器，
       # 而不是真的跑在 CI 声明的那一版上（V13 R26）。
@@ -46,10 +50,10 @@ jobs:
         env:
           QX_PYTHON: python3
         run: cargo test --workspace
-      - name: Independent deterministic semantics
-        run: python3 tools/validate_core.py
       - name: Architecture invariants and capability evidence
         run: python3 tools/check_architecture.py
+      - name: Capability unverified register
+        run: python3 tools/generate_unverified.py --check
       - name: Python adapters and strategy contracts
         run: python3 -m unittest discover -s python/tests -q
       - uses: actions/setup-node@v4
@@ -57,6 +61,80 @@ jobs:
           node-version: "22"
       - name: Web console syntax contract
         run: node --check web/console/app.js
+
+  performance-trend:
+    name: Non-blocking performance trend
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: performance-${{ runner.os }}-${{ runner.arch }}
+      - name: Build release CLI
+        run: cargo build --release -p qx-cli
+      - name: Measure end-to-end and kernel performance
+        run: |
+          python3 benchmarks/run_baseline.py \
+            --binary target/release/qx-cli \
+            --out benchmarks/results/end-to-end.json --json
+          python3 benchmarks/run_rust_bench.py \
+            --out benchmarks/results/rust-micro.json
+          python3 benchmarks/run_ashare_profile_backtest.py \
+            --binary target/release/qx-cli \
+            --out benchmarks/results/ashare-rules-on.json
+      - name: Find the latest successful main benchmark artifact
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh run list --branch main --workflow ci.yml --limit 20 \
+            --json databaseId,conclusion \
+            --jq '[.[] | select(.conclusion == "success")][0].databaseId // empty')
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+      - name: Download the previous benchmark artifact
+        if: steps.previous.outputs.run_id != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ steps.previous.outputs.run_id }}" \
+            --name performance-baseline --dir benchmarks/results/previous
+      - name: Compare trends (warnings only)
+        run: |
+          if [[ -f benchmarks/results/previous/end-to-end.json ]]; then
+            python3 benchmarks/compare_baseline.py \
+              benchmarks/results/previous/end-to-end.json \
+              benchmarks/results/end-to-end.json
+          else
+            echo "No previous compatible end-to-end baseline; recording first sample."
+          fi
+          if [[ -f benchmarks/results/previous/rust-micro.json ]]; then
+            python3 benchmarks/compare_baseline.py \
+              benchmarks/results/previous/rust-micro.json \
+              benchmarks/results/rust-micro.json
+          else
+            echo "No previous compatible Rust microbenchmark baseline; recording first sample."
+          fi
+          if [[ -f benchmarks/results/previous/ashare-rules-on.json ]]; then
+            python3 benchmarks/compare_baseline.py \
+              benchmarks/results/previous/ashare-rules-on.json \
+              benchmarks/results/ashare-rules-on.json
+          else
+            echo "No previous compatible A-share rules-on baseline; recording first sample."
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: performance-baseline
+          path: |
+            benchmarks/results/end-to-end.json
+            benchmarks/results/rust-micro.json
+            benchmarks/results/ashare-rules-on.json
+          if-no-files-found: error
+          retention-days: 30
 
   python-wheel:
     name: Python wheel (${{ matrix.os }}, Python ${{ matrix.python }})

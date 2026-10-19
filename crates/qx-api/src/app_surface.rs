@@ -20,7 +20,7 @@
 //! 的提示，两处不会各说各话。
 //!
 //! 那一张 `match` 刻意写成 `ApiResponse::json(<字面量>, …)` 而不是"先算一个 u16 再传进去"：
-//! `crates/qx-cli/src/tests/api_endpoint_table_routes.rs` 的 `emitted_statuses()` 就是按
+//! `crates/qx-cli/tests/unit/api_endpoint_table_routes.rs` 的 `emitted_statuses()` 就是按
 //! 那个形态取数的，写成变量会让接口文档里承诺的状态码在判据眼里**不存在**——于是"文档说会回
 //! 422"与"实现真的回 422"之间就没有东西守着了。
 
@@ -96,8 +96,8 @@ pub(crate) fn respond(result: Result<String, AppError>) -> ApiResponse {
 
 /// 调用上下文：与 CLI/Python 两侧同形（R 档 + 身份串当 correlation id）。
 ///
-/// `code_commit` 用 `qx-app` 自己的包版本而不是服务的构建身份：这一层拿不到 CLI 的
-/// `QX_GIT_COMMIT`，写一个看起来像提交号的字符串只会让产物里那一格撒谎。
+/// `qx-app` 构建时已嵌入源码提交身份，因此 API 与同一工作树构建的 CLI/Python 入口写入
+/// 相同的 `code_commit`，不依赖 CLI 的环境变量。
 fn context(correlation_id: &str) -> RunContext {
     RunContext::new(CallerCapability::Research, correlation_id)
 }
@@ -153,7 +153,7 @@ pub(crate) fn provider_backtest(
             return respond(Err(AppError::new(
                 AppErrorCategory::InvalidInput,
                 format!("ProviderBacktestSpec JSON invalid: {error}"),
-            )))
+            )));
         }
     };
     if let Err(error) = spec.validate() {
@@ -201,7 +201,7 @@ pub(crate) fn provider_depth_backtest(
             return respond(Err(AppError::new(
                 AppErrorCategory::InvalidInput,
                 format!("ProviderDepthBacktestSpec JSON invalid: {error}"),
-            )))
+            )));
         }
     };
     if let Err(error) = spec.validate() {

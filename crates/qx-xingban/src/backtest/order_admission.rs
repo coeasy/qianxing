@@ -14,7 +14,7 @@ use qx_zhenlu::{Oms, RiskGate};
 use std::collections::BTreeMap;
 
 pub(crate) struct OrderAdmissionInput<'a> {
-    pub(crate) orders: Vec<Order>,
+    pub(crate) orders: &'a mut Vec<Order>,
     pub(crate) account_id: &'a str,
     pub(crate) instrument: &'a InstrumentId,
     pub(crate) currency: &'a str,
@@ -82,7 +82,7 @@ pub(crate) fn admit_orders(
     } = input;
     let mut reserved_funding_raw = 0_i128;
     let mut accepted_orders = Vec::new();
-    for mut order in orders {
+    for mut order in orders.drain(..) {
         if order.client_id == 0 || oms.get(order.client_id).is_some() {
             while *next_id == 0 || oms.get(*next_id).is_some() {
                 *next_id = next_id
@@ -204,7 +204,6 @@ pub(crate) fn admit_orders(
                 multiplier,
             )?)
         };
-        let marks = BTreeMap::from([(instrument.clone(), Price::from_raw(visible_close))]);
         let equity = match (portfolio_marks, portfolio_specs) {
             (Some(marks), Some(specs)) => ledger
                 .valuate(
@@ -214,15 +213,18 @@ pub(crate) fn admit_orders(
                 )?
                 .equity
                 .raw(),
-            (None, None) => equity_for(
-                ledger,
-                account_id,
-                &marks,
-                currency,
-                multiplier,
-                derivative_spec,
-                fx_rates,
-            )?,
+            (None, None) => {
+                let marks = BTreeMap::from([(instrument.clone(), Price::from_raw(visible_close))]);
+                equity_for(
+                    ledger,
+                    account_id,
+                    &marks,
+                    currency,
+                    multiplier,
+                    derivative_spec,
+                    fx_rates,
+                )?
+            }
             _ => {
                 return Err(qx_core::QxError::Invariant(
                     "共享账户风控估值必须同时提供 market marks 与 specs".into(),
@@ -330,13 +332,13 @@ pub(crate) fn admit_orders(
             .ok_or_else(|| qx_core::QxError::Invariant("回测 hedge gross notional 溢出".into()))?;
         let pending_gross_notional = if risk.rule_set().has_rule("MaxNotional") {
             if let Some(spec) = instrument_spec {
-                qx_risk::pending_order_gross_notional(
-                    &oms.all_orders(),
+                qx_risk::pending_order_gross_notional_at_reference_mark(
+                    oms.all_orders_ref(),
                     order.client_id,
                     account_id,
                     instrument,
                     spec,
-                    &marks,
+                    Some(Price::from_raw(visible_close)),
                 )?
             } else {
                 0

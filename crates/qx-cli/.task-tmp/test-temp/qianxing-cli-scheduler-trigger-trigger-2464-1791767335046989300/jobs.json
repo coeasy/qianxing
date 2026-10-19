@@ -1,0 +1,28 @@
+[
+  {
+    "audit_reason": "owner routing case",
+    "concurrency_key": "shape",
+    "depends_on": [],
+    "dry_run": true,
+    "enabled": true,
+    "idempotency_key": "shape-v1",
+    "input_refs": [
+      "dataset:owner-routing"
+    ],
+    "job_id": "shape",
+    "job_version": "v1",
+    "output_refs": [
+      "owner-routing-report"
+    ],
+    "owner": "strategy-paper",
+    "permission_scope": "strategy",
+    "retry_policy": {
+      "backoff_seconds": 0,
+      "max_attempts": 1,
+      "retryable_codes": []
+    },
+    "timeout_seconds": 60,
+    "trigger": "Manual",
+    "window": "Any"
+  }
+]

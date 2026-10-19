@@ -1,0 +1,28 @@
+[
+  {
+    "audit_reason": "owner routing case",
+    "concurrency_key": "retired",
+    "depends_on": [],
+    "dry_run": true,
+    "enabled": false,
+    "idempotency_key": "retired-v1",
+    "input_refs": [
+      "dataset:owner-routing"
+    ],
+    "job_id": "retired",
+    "job_version": "v1",
+    "output_refs": [
+      "owner-routing-report"
+    ],
+    "owner": "strategy-retired",
+    "permission_scope": "strategy",
+    "retry_policy": {
+      "backoff_seconds": 0,
+      "max_attempts": 1,
+      "retryable_codes": []
+    },
+    "timeout_seconds": 60,
+    "trigger": "Manual",
+    "window": "Any"
+  }
+]

@@ -1,6 +1,7 @@
 //! `fast-backtest` manifest 驱动的离线快回测入口。
 
-use super::*;
+use crate::{read_example_json, relocate_deploy_path, run_strategy_backtest_with_quality_manifest};
+use std::path::{Path, PathBuf};
 
 /// 一条已解析的作业：序号、runtime 配置、bars 文件，以及可选的 market spec。
 pub(crate) struct FastBacktestJob {
@@ -8,6 +9,7 @@ pub(crate) struct FastBacktestJob {
     pub(crate) runtime: PathBuf,
     pub(crate) bars: PathBuf,
     pub(crate) market_spec: Option<PathBuf>,
+    pub(crate) dataset_manifest: Option<PathBuf>,
 }
 
 /// manifest 的**解析段**：只做读文件与形状判定，不起线程、不落产物。
@@ -56,11 +58,28 @@ pub(crate) fn parse_fast_backtest_manifest(
             .and_then(serde_json::Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .map(resolve);
+        let dataset_manifest = match object.get("dataset_manifest") {
+            None => None,
+            Some(serde_json::Value::String(value)) if !value.trim().is_empty() => {
+                Some(resolve(value))
+            }
+            Some(serde_json::Value::String(_)) => {
+                return Err(format!(
+                    "快速回测 jobs[{index}] dataset_manifest 若在场必须是非空路径"
+                ));
+            }
+            Some(_) => {
+                return Err(format!(
+                    "快速回测 jobs[{index}] dataset_manifest 必须是字符串路径"
+                ));
+            }
+        };
         parsed.push(FastBacktestJob {
             index,
             runtime: resolve(runtime),
             bars: resolve(bars),
             market_spec: spec,
+            dataset_manifest,
         });
     }
     Ok(parsed)
@@ -79,12 +98,18 @@ pub(crate) fn run_fast_backtest_manifest(manifest_path: &Path) -> Result<(), Str
             runtime,
             bars,
             market_spec,
+            dataset_manifest,
         } in parsed
         {
             handles.push(scope.spawn(move || {
-                run_strategy_backtest(&runtime, &bars, market_spec.as_deref())
-                    .map(|_| index)
-                    .map_err(|error| format!("jobs[{index}] {error}"))
+                run_strategy_backtest_with_quality_manifest(
+                    &runtime,
+                    &bars,
+                    market_spec.as_deref(),
+                    dataset_manifest.as_deref(),
+                )
+                .map(|_| index)
+                .map_err(|error| format!("jobs[{index}] {error}"))
             }));
         }
         handles

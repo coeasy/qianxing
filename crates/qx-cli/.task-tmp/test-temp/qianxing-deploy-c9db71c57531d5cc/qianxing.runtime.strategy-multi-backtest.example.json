@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "environment": "paper",
+  "api": {
+    "bind": "127.0.0.1:18088",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {}
+  },
+  "storage": {
+    "backend": "files",
+    "data_dir": "data/qianxing-strategy-multi-backtest",
+    "sqlite_path": null
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "strategy-momentum",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "momentum",
+      "venue_id": "paper",
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": null
+    },
+    {
+      "id": "strategy-mean-reversion",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "mean-reversion",
+      "venue_id": "paper",
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": null
+    }
+  ],
+  "shutdown_timeout_ms": 30000,
+  "strategy": {
+    "version": "multi-backtest-compat-v1",
+    "max_orders": 100
+  },
+  "strategies": [
+    {
+      "id": "strategy-momentum",
+      "version": "python-momentum-v1",
+      "max_orders": 100,
+      "account_id": "momentum",
+      "venue_id": "paper",
+      "instrument": "BTCUSDT.BINANCE",
+      "target_qty": 0,
+      "python_module": "examples.backtest_momentum",
+      "python_timeout_ms": 2000
+    },
+    {
+      "id": "strategy-mean-reversion",
+      "version": "python-mean-reversion-v1",
+      "max_orders": 100,
+      "account_id": "mean-reversion",
+      "venue_id": "paper",
+      "instrument": "BTCUSDT.BINANCE",
+      "target_qty": 0,
+      "python_module": "examples.backtest_momentum",
+      "python_timeout_ms": 2000
+    }
+  ]
+}

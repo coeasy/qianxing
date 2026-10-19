@@ -4,6 +4,21 @@
 //!
 //! 该模块只产出归因事实，不改变撮合结果，供多标的回测与实时投影复用。
 
+mod buckets;
+mod combined_equity;
+mod combined_return;
+mod metrics;
+mod multi_builtin_summary;
+mod quality;
+pub use buckets::{multi_leg_leg_buckets, multi_leg_realized_standing_at};
+pub use combined_equity::{multi_leg_combined_equity_metrics, MultiLegCombinedEquity};
+pub use combined_return::multi_leg_combined_return_bps;
+pub use metrics::{multi_leg_cost_bps, multi_leg_group_totals, multi_leg_leg_integrity};
+pub use multi_builtin_summary::{
+    multi_builtin_composition_summary_json, MultiBuiltinCompositionSummary,
+};
+pub use quality::{aggregate_multi_leg_quality_report, multi_leg_quality_fingerprint};
+
 use qx_core::{InstrumentId, Order, OrderStatus, Quantity, Side, TradingInstrumentSpec};
 use qx_guanxing::Bar;
 use qx_zhenlu::{SpreadGroupAttribution, SpreadLegAttribution, SpreadOrderGroup, SpreadOrderLeg};
@@ -118,131 +133,6 @@ pub fn multi_leg_bar_close_raw(bars: &[Bar], ts: u64) -> Option<i128> {
         .map(|bar| bar.close)
 }
 
-pub fn multi_leg_leg_buckets(
-    leg: &MultiLegLegFacts<'_>,
-    funding_bps: i64,
-) -> Result<Vec<MultiLegSignalBucket>, String> {
-    let mut buckets: Vec<MultiLegSignalBucket> = Vec::new();
-    let mut standing = 0_i128;
-    for (ts, target) in leg.targets {
-        let delta = target
-            .checked_sub(standing)
-            .ok_or_else(|| format!("{} 腿目标仓位溢出", leg.label))?;
-        if delta != 0 {
-            let price_raw = multi_leg_bar_close_raw(leg.bars, *ts)
-                .ok_or_else(|| format!("{} 腿在 ts={ts} 之前没有可见 Bar", leg.label))?;
-            buckets.push(MultiLegSignalBucket {
-                ts: *ts,
-                side: if delta > 0 { Side::Buy } else { Side::Sell },
-                planned_qty_raw: delta.abs(),
-                price_raw,
-                filled_qty_raw: 0,
-                turnover_raw: 0,
-                fees_raw: 0,
-                funding_cost_raw: 0,
-                realized_standing_after_raw: 0,
-            });
-        }
-        standing = *target;
-    }
-    // FIFO 分配成交数量与费用；费用余数归入该笔成交覆盖的最后一个桶，
-    // 保证组级合计与腿级 `fees_raw` 严格相等。
-    let mut cursor = 0usize;
-    let mut remaining = buckets
-        .iter()
-        .map(|bucket| bucket.planned_qty_raw)
-        .collect::<Vec<_>>();
-    for fill in leg.fills {
-        if fill.fee.raw() < 0 {
-            return Err(format!(
-                "{} 腿存在负费用成交，多腿归因要求费用非负",
-                leg.label
-            ));
-        }
-        let mut qty = fill.qty.raw();
-        let mut qty_left = qty;
-        let mut fee_left = fill.fee.raw();
-        while qty > 0 {
-            while cursor < buckets.len() && remaining[cursor] == 0 {
-                cursor += 1;
-            }
-            if cursor >= buckets.len() {
-                return Err(format!("{} 腿成交数量超出信号计划，无法归因", leg.label));
-            }
-            let alloc = remaining[cursor].min(qty);
-            remaining[cursor] -= alloc;
-            qty -= alloc;
-            let share = if alloc == qty_left {
-                fee_left
-            } else {
-                fee_left.saturating_mul(alloc) / qty_left
-            };
-            fee_left -= share;
-            qty_left -= alloc;
-            let bucket = &mut buckets[cursor];
-            bucket.filled_qty_raw += alloc;
-            // 成交额与 Bar 引擎同口径：现货按 qty*price/SCALE，衍生品按合约名义额。
-            bucket.turnover_raw += match leg.spec {
-                Some(spec) => spec
-                    .notional(alloc, fill.price.raw())
-                    .map_err(|error| format!("{} 腿成交额名义额非法: {error:?}", leg.label))?,
-                None => qx_core::fee::notional(alloc, fill.price.raw()),
-            };
-            bucket.fees_raw += share;
-        }
-    }
-    // 归因只采用实际成交量。
-    let mut realized = 0_i128;
-    for bucket in &mut buckets {
-        realized += match bucket.side {
-            Side::Buy => bucket.filled_qty_raw,
-            Side::Sell => -bucket.filled_qty_raw,
-        };
-        bucket.realized_standing_after_raw = realized;
-    }
-    if funding_bps != 0 {
-        // 兼容独立单腿结果的按持仓时长资金费估算；共享账本工作流使用执行事件归因。
-        if let Some(spec) = leg.spec.filter(|spec| spec.product.is_derivative()) {
-            for index in 0..buckets.len() {
-                let standing_raw = buckets[index].realized_standing_after_raw;
-                if standing_raw == 0 {
-                    continue;
-                }
-                let start_ts = buckets[index].ts;
-                let hold_end = buckets
-                    .get(index + 1)
-                    .map(|later| later.ts)
-                    .unwrap_or(leg.clock_end);
-                if hold_end <= start_ts {
-                    continue;
-                }
-                let duration_ms = hold_end - start_ts;
-                let notional = spec
-                    .notional(standing_raw.abs(), buckets[index].price_raw)
-                    .map_err(|error| format!("{} 腿资金费名义额非法: {error:?}", leg.label))?;
-                let funding = notional
-                    .saturating_mul(i128::from(funding_bps))
-                    .saturating_mul(i128::from(duration_ms))
-                    / (10_000 * i128::from(MULTI_LEG_FUNDING_INTERVAL_MS));
-                buckets[index].funding_cost_raw = if standing_raw > 0 { funding } else { -funding };
-            }
-        }
-    }
-    Ok(buckets)
-}
-
-/// 某个时点上该腿按实际成交累计的持仓（信号计划不等于已成交）。
-pub fn multi_leg_realized_standing_at(buckets: &[MultiLegSignalBucket], ts: u64) -> i128 {
-    buckets
-        .iter()
-        .filter(|bucket| bucket.ts <= ts)
-        .map(|bucket| match bucket.side {
-            Side::Buy => bucket.filled_qty_raw,
-            Side::Sell => -bucket.filled_qty_raw,
-        })
-        .sum()
-}
-
 pub fn multi_leg_leg_margin(
     leg: &MultiLegLegFacts<'_>,
     buckets: &[MultiLegSignalBucket],
@@ -253,7 +143,9 @@ pub fn multi_leg_leg_margin(
     let Some(spec) = leg.spec.filter(|spec| spec.product.is_derivative()) else {
         return Ok(0);
     };
-    let standing_raw = multi_leg_realized_standing_at(buckets, ts).abs();
+    let standing_raw = multi_leg_realized_standing_at(buckets, ts)?
+        .checked_abs()
+        .ok_or_else(|| format!("{} 腿实际持仓绝对值溢出", leg.label))?;
     if standing_raw == 0 {
         return Ok(0);
     }
@@ -305,36 +197,6 @@ pub struct MultiLegLegIntegrity {
     pub rejection_reasons: Vec<(String, usize)>,
 }
 
-/// 汇总一条腿"计划 vs 实际成交"的差距，并把引擎写进事件日志的拒单原因归并出来。
-pub fn multi_leg_leg_integrity(
-    leg: &MultiLegLegFacts<'_>,
-    buckets: &[MultiLegSignalBucket],
-) -> MultiLegLegIntegrity {
-    let planned_qty_raw = buckets
-        .iter()
-        .map(|bucket| bucket.planned_qty_raw)
-        .sum::<i128>();
-    let filled_qty_raw = buckets
-        .iter()
-        .map(|bucket| bucket.filled_qty_raw)
-        .sum::<i128>();
-    let rejections = rejection_facts(leg.event_log);
-    MultiLegLegIntegrity {
-        label: leg.label,
-        instrument: leg.instrument.to_string(),
-        rejected_orders: rejection_count(&rejections),
-        rejection_reasons: rejections,
-        vetoed_signal_ts: buckets
-            .iter()
-            .filter(|bucket| bucket.filled_qty_raw == 0)
-            .map(|bucket| bucket.ts)
-            .collect(),
-        unfilled_planned_qty_raw: (planned_qty_raw - filled_qty_raw).to_string(),
-        planned_qty_raw: planned_qty_raw.to_string(),
-        filled_qty_raw: filled_qty_raw.to_string(),
-    }
-}
-
 /// 把两条腿的信号桶按时间戳配成 `SpreadOrderGroup` 并汇总组级归因。只有两腿
 /// 都能给出**非零实际成交量**的时点才成组；否则该腿的成本计入 `residual_*`，不静默丢弃。
 ///
@@ -376,7 +238,8 @@ pub fn multi_leg_group_attributions(
             }
             let side = bucket.map(|bucket| bucket.side).unwrap_or(Side::Buy);
             orders.push(Order {
-                client_id: u64::try_from(index + 1).expect("usize 与 u64 同宽"),
+                client_id: u64::try_from(index + 1)
+                    .map_err(|_| "多腿订单编号超出 u64 范围".to_string())?,
                 instrument: leg.instrument.clone(),
                 side,
                 qty: Quantity::from_raw(qty_raw),
@@ -401,8 +264,12 @@ pub fn multi_leg_group_attributions(
                 let Some(bucket) = buckets.iter().find(|bucket| bucket.ts == ts) else {
                     continue;
                 };
-                residual_fees_raw += bucket.fees_raw;
-                residual_filled_qty_raw += bucket.filled_qty_raw;
+                residual_fees_raw = residual_fees_raw
+                    .checked_add(bucket.fees_raw)
+                    .ok_or_else(|| "多腿残余费用合计溢出".to_string())?;
+                residual_filled_qty_raw = residual_filled_qty_raw
+                    .checked_add(bucket.filled_qty_raw)
+                    .ok_or_else(|| "多腿残余成交量合计溢出".to_string())?;
                 // 该腿有成交而组没成 → 裸腿；对手腿的成交量一并写出来，便于
                 // 人读产物时立刻看出"谁被挡了"。
                 if bucket.filled_qty_raw > 0 {
@@ -456,41 +323,5 @@ pub fn multi_leg_group_attributions(
         residual_fees_raw,
         residual_filled_qty_raw,
         pending_reconcile,
-    })
-}
-
-/// 把组级归因合计成多腿链唯一的一份组合数字，依次为费用、成交额、资金费、成交量与保证金
-/// 峰值。保证金取的是各组里的峰值而非求和（同一账户上的两条腿共享那份保证金，加总等于
-/// 把它算两遍）。合计只在这里做一次：产物 `totals`、费用闭合守卫与 `cost_bps` 读的都是
-/// 这一份，各自再折一遍 loop 就会出现"两个 totals 都对不上"的那类失真。
-pub fn multi_leg_group_totals(groups: &[SpreadGroupAttribution]) -> (i128, i128, i128, i128, i128) {
-    groups.iter().fold(
-        (0_i128, 0_i128, 0_i128, 0_i128, 0_i128),
-        |mut acc, group| {
-            acc.0 += group.total_fees_raw;
-            acc.1 += group.total_turnover_raw;
-            acc.2 += group.total_funding_raw;
-            acc.3 += group.total_filled_qty_raw;
-            acc.4 = acc.4.max(group.total_margin_raw);
-            acc
-        },
-    )
-}
-
-/// 多腿链的单位成本（万分比）= 净成本 × 10000 ÷ 成交额。
-///
-/// 两条边界都不许印成看起来合法的数字：成交额为 0 时这个比值没有分母，那是**算不出**
-/// 而不是"成本为零"（返回 `None`，由读侧印 `absent`）；比值超出 i64 时不能夹到 `i64::MAX`，
-/// 因为读者会把那个最大值当成一次真实测得的成本（V12 R1，与 Q70 同一套词）。
-pub fn multi_leg_cost_bps(net_cost_raw: i128, turnover_raw: i128) -> Result<Option<i64>, String> {
-    if turnover_raw <= 0 {
-        return Ok(None);
-    }
-    let ratio = net_cost_raw.saturating_mul(10_000) / turnover_raw;
-    i64::try_from(ratio).map(Some).map_err(|_| {
-        format!(
-            "多腿单位成本超出 i64 可印范围，拒绝输出该值: \
-             net_cost_raw={net_cost_raw} turnover_raw={turnover_raw} ratio_raw={ratio}"
-        )
     })
 }

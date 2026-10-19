@@ -1,6 +1,8 @@
 //! Shared Rust execution and evidence orchestration for depth runs.
 
-use super::portfolio::{attach_portfolio_summary, build_portfolio_strategy};
+use super::portfolio::{
+    attach_portfolio_summary, build_portfolio_strategy, has_builtin_sizing, strategy_specs,
+};
 use super::{
     artifact_paths, invalid_input, publish, CallbackStrategy, InjectedDepthStrategy,
     DEFAULT_ACCOUNT_ID,
@@ -106,8 +108,16 @@ pub(in crate::cases) fn run_inner_with_strategy(
                 "market_spec.instrument 与 Tick/OrderBook 输入标的不一致",
             ));
         }
-        let first_ts = frame.snapshots.first().expect("at least two snapshots").ts;
-        let last_ts = frame.snapshots.last().expect("at least two snapshots").ts;
+        let first_ts = frame
+            .snapshots
+            .first()
+            .map(|snapshot| snapshot.ts)
+            .ok_or_else(|| invalid_input("Tick/OrderBook DepthFrame has no snapshots"))?;
+        let last_ts = frame
+            .snapshots
+            .last()
+            .map(|snapshot| snapshot.ts)
+            .ok_or_else(|| invalid_input("Tick/OrderBook DepthFrame has no snapshots"))?;
         if first_ts < market_spec.valid_from
             || market_spec
                 .valid_to
@@ -155,9 +165,9 @@ pub(in crate::cases) fn run_inner_with_strategy(
     let mut model = OrderBookExecutionModel::new(spec.fee_bps).map_err(invalid_input)?;
     model.latency_snapshots = spec.latency_snapshots;
     model.queue_position_bps = spec.queue_position_bps;
+    model.queue_position_model = spec.queue_position_model;
     model.market_impact_bps = spec.market_impact_bps;
     model.validate().map_err(invalid_input)?;
-
     let strategy_config = BuiltinStrategyConfig {
         fast_window: spec.strategy.fast_window,
         slow_window: spec.strategy.slow_window,
@@ -179,6 +189,7 @@ pub(in crate::cases) fn run_inner_with_strategy(
     };
     strategy_config.validate().map_err(invalid_input)?;
     let strategy = BuiltinStrategy::new(strategy_config).map_err(invalid_input)?;
+    let cash = BTreeMap::from([(spec.settlement_currency.clone(), spec.initial_cash_raw)]);
     let strategy_context = StrategyContext {
         strategy_id: strategy_id.clone(),
         strategy_version: strategy_version.clone(),
@@ -187,8 +198,11 @@ pub(in crate::cases) fn run_inner_with_strategy(
         data_fingerprint: data_fingerprint.clone(),
         as_of: frame.snapshots[0].ts,
         positions: BTreeMap::new(),
-        cash: BTreeMap::from([(spec.settlement_currency.clone(), spec.initial_cash_raw)]),
-        available_margin_raw: Some(spec.initial_cash_raw),
+        available_margin_raw: crate::cases::strategy_available_margin_raw(
+            &cash,
+            &spec.settlement_currency,
+        ),
+        cash,
         risk_state: "backtest".into(),
     };
     let mut depth_strategy =
@@ -439,6 +453,7 @@ pub(in crate::cases) fn run_inner_with_strategy(
         "replay_ledger_entries": replay.ledger_entries,
         "ledger_entries": report.ledger.entries().len(),
         "risk_rule_set_version": risk_rule_set_version,
+        "execution_model": report.execution_model_descriptor,
         "model_descriptors": report.model_descriptors,
         "assumptions": report.assumptions,
     });
@@ -481,20 +496,4 @@ pub(in crate::cases) fn run_inner_with_strategy(
         artifacts,
         account_id: spec.account_id.clone(),
     }))
-}
-
-fn strategy_specs(spec: &DepthBacktestSpec) -> impl Iterator<Item = &crate::BuiltinStrategySpec> {
-    std::iter::once(&spec.strategy).chain(
-        spec.portfolio
-            .iter()
-            .flat_map(|portfolio| portfolio.additional_strategies.iter())
-            .map(|member| &member.strategy),
-    )
-}
-
-fn has_builtin_sizing(strategy: &crate::BuiltinStrategySpec) -> bool {
-    strategy.target_notional_raw.is_some()
-        || strategy.target_available_margin_bps.is_some()
-        || strategy.target_volatility_bps.is_some()
-        || strategy.target_kelly_fraction_bps.is_some()
 }

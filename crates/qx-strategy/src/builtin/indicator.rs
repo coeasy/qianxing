@@ -25,21 +25,42 @@ pub(super) fn ema(values: &[i128], window: usize) -> Option<i128> {
         .iter()
         .try_fold(0_i128, |sum, value| sum.checked_add(*value))?
         .checked_div(window as i128)?;
-    let denominator = window as i128 + 1;
     for value in &values[window..] {
-        // α = 2/(window+1)，因此旧值权重是 1-α = (window-1)/(window+1)。写成
-        // `window` 会让两个权重之和变成 (window+2)/(window+1)，常数序列收敛到
-        // 2×该常数，快慢线的相对位置随窗口大小漂移，交叉判定就废了。
-        result = value
-            .checked_mul(2)
-            .and_then(|next| {
-                result
-                    .checked_mul(window as i128 - 1)
-                    .and_then(|old| next.checked_add(old))
-            })
-            .and_then(|next| next.checked_div(denominator))?;
+        result = ema_step(result, *value, window)?;
     }
     Some(result)
+}
+
+/// Compute the previous and current EMA values in one pass. Both values use the exact
+/// recurrence and truncation order of separate `ema(values[..len - 1])` / `ema(values)` calls.
+pub(super) fn ema_previous_current(values: &[i128], window: usize) -> Option<(i128, i128)> {
+    if window == 0 || values.len() <= window {
+        return None;
+    }
+    let mut current = values[..window]
+        .iter()
+        .try_fold(0_i128, |sum, value| sum.checked_add(*value))?
+        .checked_div(window as i128)?;
+    let mut previous = None;
+    for value in &values[window..] {
+        previous = Some(current);
+        current = ema_step(current, *value, window)?;
+    }
+    Some((previous?, current))
+}
+
+fn ema_step(previous: i128, value: i128, window: usize) -> Option<i128> {
+    // α = 2/(window+1)，因此旧值权重是 1-α = (window-1)/(window+1)。写成
+    // `window` 会让两个权重之和变成 (window+2)/(window+1)，常数序列收敛到
+    // 2×该常数，快慢线的相对位置随窗口大小漂移，交叉判定就废了。
+    value
+        .checked_mul(2)
+        .and_then(|next| {
+            previous
+                .checked_mul(window as i128 - 1)
+                .and_then(|old| next.checked_add(old))
+        })
+        .and_then(|next| next.checked_div(window as i128 + 1))
 }
 
 pub(super) fn macd_series(
@@ -86,15 +107,12 @@ pub(super) fn stddev(values: &[i128], mean: i128) -> Result<i128, String> {
     }
     let variance = values
         .iter()
-        .map(|value| {
+        .try_fold(0_i128, |sum, value| {
             value
                 .checked_sub(mean)
                 .and_then(|difference| difference.checked_mul(difference))
+                .and_then(|square| sum.checked_add(square))
         })
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| "stddev 计算溢出".to_string())?
-        .into_iter()
-        .try_fold(0_i128, |sum, value| sum.checked_add(value))
         .and_then(|sum| sum.checked_div(values.len() as i128))
         .ok_or_else(|| "stddev 方差计算溢出".to_string())?;
     Ok(integer_sqrt(variance))

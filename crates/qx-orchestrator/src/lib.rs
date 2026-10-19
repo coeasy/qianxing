@@ -4,6 +4,9 @@
 //! worker 子进程的日志、退出传播和停止顺序；不执行策略、下单、对账或账簿副作用。
 
 mod reap;
+mod strategy_pipes;
+mod strategy_rings;
+mod strategy_worker;
 mod supervisor_stop;
 
 use qx_core::VenueFamily;
@@ -14,7 +17,95 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
+pub use qx_process_io::write_all_within;
+pub use strategy_pipes::{pump_strategy_process, StrategyWorkerPipes, StrategyWorkerResponse};
+pub use strategy_rings::StrategySharedRings;
+pub use strategy_worker::{
+    shared_ring_arguments, StrategyWorkerProcess, StrategyWorkerSpawnConfig,
+};
 use supervisor_stop::{wait_for_children, ManagedProcess, ProcessExit, SupervisorStop};
+
+/// Standard process handles for a strategy worker launched under the restricted strategy
+/// environment. The caller owns the child and decides how to pump protocol and diagnostics.
+pub struct StrategyProcessPipes {
+    pub child: std::process::Child,
+    pub stdin: Option<std::process::ChildStdin>,
+    pub stdout: Option<std::process::ChildStdout>,
+    pub stderr: std::process::ChildStderr,
+}
+
+/// Spawn an external strategy worker with only the explicitly admitted environment variables.
+/// Shared-memory transports have no protocol stdin/stdout; stderr remains available for logs.
+pub fn spawn_strategy_process(
+    executable: &str,
+    args: &[String],
+    env: &std::collections::BTreeMap<String, String>,
+    transport: qx_strategy::transport::StrategyTransport,
+) -> Result<StrategyProcessPipes, String> {
+    use qx_strategy::transport::StrategyTransport;
+
+    let child_env = qx_runtime::strategy_child_environment(env)?;
+    let shared = matches!(
+        transport,
+        StrategyTransport::SharedMemoryJson | StrategyTransport::SharedMemoryColumnar
+    );
+    let mut command = Command::new(executable);
+    command
+        .args(args)
+        .env_clear()
+        .envs(child_env)
+        .stdin(if shared {
+            Stdio::null()
+        } else {
+            Stdio::piped()
+        })
+        .stdout(if shared {
+            Stdio::null()
+        } else {
+            Stdio::piped()
+        })
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("无法执行 {executable}: {error}"))?;
+    let stdin = if shared { None } else { child.stdin.take() };
+    let stdout = if shared { None } else { child.stdout.take() };
+    let stderr = child.stderr.take();
+    if (!shared && (stdin.is_none() || stdout.is_none())) || stderr.is_none() {
+        let mut failed_child = [ManagedChild {
+            id: format!("strategy:{executable}"),
+            child,
+            stop_channel: stdin,
+        }];
+        let reap = stop_managed_children(&mut failed_child, Duration::from_secs(1));
+        return Err(match reap {
+            Ok(()) => "Strategy worker 标准管道不可用".into(),
+            Err(detail) => format!("Strategy worker 标准管道不可用；回收失败: {detail}"),
+        });
+    }
+    let stderr = stderr.ok_or_else(|| "Strategy worker stderr pipe disappeared".to_string())?;
+    Ok(StrategyProcessPipes {
+        child,
+        stdin,
+        stdout,
+        stderr,
+    })
+}
+
+/// Kill and reap one strategy worker through the same bounded `try_wait` loop as managed workers.
+pub fn stop_strategy_process(
+    child: std::process::Child,
+    id: impl Into<String>,
+    stop_channel: Option<std::process::ChildStdin>,
+    budget: Duration,
+) -> Result<(), String> {
+    let mut child = [ManagedChild {
+        id: id.into(),
+        child,
+        stop_channel,
+    }];
+    stop_managed_children(&mut child, budget)
+}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct WorkerLaunch {
@@ -353,7 +444,7 @@ pub fn supervise_workers(
                     detail: format!(
                         "managed worker {id} exited ({label}); stopping remaining workers"
                     ),
-                })
+                });
             }
             SupervisorStop::StoppedWithinBudget { waited_ms } => {
                 println!("[监督器 · Shutdown] 全部 worker 按停机请求退出 waited_ms={waited_ms}")
@@ -364,7 +455,7 @@ pub fn supervise_workers(
             } => {
                 return Err(SuperviseFailure::Usage(format!(
                     "{remaining} 个 worker 收到停机请求后 {waited_ms}ms 仍未退出，超过 shutdown_timeout_ms"
-                )))
+                )));
             }
         }
         Ok(())

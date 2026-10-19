@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "benchmark": "ledger_entry_commit_affected_state_vs_full_ledger_clone",
+  "date": "2026-10-17",
+  "host": {
+    "os": "Windows",
+    "target": "x86_64-pc-windows-msvc",
+    "cpu": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "profile": "bench (optimized)"
+  },
+  "command": "cargo bench --offline -p qx-cli --bench criterion_performance -- ledger_entry_commit --warm-up-time 1 --measurement-time 1 --sample-size 10",
+  "source_sha256": {
+    "crates/qx-core/src/ledger/mod.rs": "c20c583bd70180e6559f6e4a9266353ace7f0b80077e438fc8260c02eb34e163",
+    "crates/qx-cli/benches/criterion_performance.rs": "5f1285f9962a8a4469307f87527d2de8d6c915dd9bbd509c1acD17773a2b34c4"
+  },
+  "workload": {
+    "entry_kind": "Adjustment",
+    "accounts": 1,
+    "currencies": 1,
+    "criterion_samples": 10,
+    "warmup_seconds": 1,
+    "measurement_seconds": 1,
+    "pre_timing_equivalence": "For sizes 64, 256 and 1024, the full-ledger-clone wrapper and direct path produced equal ledger entries and cash balances.",
+    "legacy_path": "For every entry, clone the entire existing Ledger, apply the entry to the clone, then replace the prior Ledger.",
+    "current_path": "Validate and stage only affected cash, entitlement and position state, then commit the entry."
+  },
+  "results": [
+    {
+      "entries": 64,
+      "legacy_full_clone": {"median_us": 201.36, "ci95_us": [198.04, 205.54]},
+      "affected_state_commit": {"median_us": 10.525, "ci95_us": [10.335, 10.755]},
+      "speedup": 19.13
+    },
+    {
+      "entries": 256,
+      "legacy_full_clone": {"median_us": 2812.6, "ci95_us": [2690.1, 3043.8]},
+      "affected_state_commit": {"median_us": 41.583, "ci95_us": [41.509, 41.679]},
+      "speedup": 67.64
+    },
+    {
+      "entries": 1024,
+      "legacy_full_clone": {"median_us": 35368, "ci95_us": [35036, 35958]},
+      "affected_state_commit": {"median_us": 157.28, "ci95_us": [156.5, 158.36]},
+      "speedup": 224.98
+    },
+    {
+      "entries": 8000,
+      "affected_state_commit": {"median_us": 1517.2, "ci95_us": [1512.8, 1523.1]}
+    },
+    {
+      "entries": 64000,
+      "affected_state_commit": {"median_us": 14793, "ci95_us": [14630, 14980]}
+    }
+  ],
+  "limitations": [
+    "Synthetic Adjustment entries, one account and one currency; this is a scoped ledger microbenchmark, not end-to-end backtest throughput.",
+    "The old path is an in-benchmark reproduction of the prior clone-per-entry boundary around the current apply_entry implementation, not a separately compiled historical revision.",
+    "No allocator counts, representative multi-position workload, or full A-share profile measurement is included."
+  ]
+}

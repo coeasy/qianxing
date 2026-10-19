@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "environment": "paper",
+  "api": {
+    "bind": "127.0.0.1:18083",
+    "transport": "plaintext",
+    "tls": null,
+    "operators": {}
+  },
+  "storage": {
+    "backend": "files",
+    "data_dir": "data/qianxing-strategy-framed-backtest",
+    "sqlite_path": null
+  },
+  "workers": [
+    {
+      "id": "api",
+      "role": "api",
+      "enabled": true,
+      "account_id": null,
+      "venue_id": null,
+      "endpoint": null,
+      "symbols": [],
+      "credential_env": null
+    },
+    {
+      "id": "strategy-backtest",
+      "role": "strategy",
+      "enabled": true,
+      "account_id": "main",
+      "venue_id": "paper",
+      "endpoint": null,
+      "symbols": ["BTCUSDT.BINANCE"],
+      "credential_env": null
+    }
+  ],
+  "shutdown_timeout_ms": 30000,
+  "strategy": {
+    "id": "strategy-backtest",
+    "version": "python-momentum-framed-v1",
+    "max_orders": 100,
+    "account_id": "main",
+    "venue_id": "paper",
+    "instrument": "BTCUSDT.BINANCE",
+    "target_qty": 0,
+    "python_module": "examples.backtest_momentum",
+    "transport": "framed_json",
+    "python_timeout_ms": 2000
+  }
+}

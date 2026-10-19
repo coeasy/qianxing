@@ -1,8 +1,9 @@
 //! 地基规格对象（qx-spec）的进程内冒烟：八类声明式文档在本构建里必须既能读入、又能拒绝坏载荷。
 //!
 //! 规划（docs/qianxing-项目结构与GitHub竞品对比及优化方案-2026-10-06.md §6.2 / §7）把
-//! ProjectManifest / DatasetManifest v2 / ExperimentSpec / RunRecord / RunEvidenceBundle /
-//! CapabilityManifest / EvidenceBundle / SchemaRegistry 定为「统一身份」地基。这里用一份最小合法夹具与
+//! ProjectManifest / DatasetManifest v2 / ExperimentSpec / RunRecord / CapabilityManifest /
+//! EvidenceBundle / SchemaRegistry 定为「统一身份」地基。EvidenceBundle 的 generation 区分
+//! venue 与 run 两代字段。这里用最小合法夹具与
 //! 一份坏夹具，证明 `qx_spec::describe` 这个唯一读入漏斗在**随包发布的二进制里**真的接上了：合法夹具
 //! 必须过，坏夹具必须被拒——否则地基对象只是躺在源码里的类型。由 `ecosystem` / `all` 自检驱动。
 
@@ -16,7 +17,7 @@ pub(crate) fn verify_foundation_specs() -> Result<String, String> {
         let good = fixture(kind).ok_or_else(|| format!("{} 缺合法夹具", kind.as_str()))?;
         let readout = describe(kind.as_str(), &good)
             .map_err(|error| format!("{} 合法夹具被拒: {error}", kind.as_str()))?;
-        let bad = corrupt(kind, &good);
+        let bad = corrupt(kind, &good)?;
         if describe(kind.as_str(), &bad).is_ok() {
             return Err(format!(
                 "{} 的坏夹具竟然通过校验（缺版本号必须当场拒绝）",
@@ -55,19 +56,21 @@ pub(crate) fn plan_readout(args: &PlanArgs) -> Result<(), String> {
 }
 
 /// 把一份合法夹具破坏成必须被拒的载荷：删掉版本号键，让严格解析当场报缺字段。
-fn corrupt(kind: FoundationKind, payload: &str) -> String {
+fn corrupt(kind: FoundationKind, payload: &str) -> Result<String, String> {
     let mut value: serde_json::Value =
-        serde_json::from_str(payload).expect("夹具必须是合法 JSON 对象");
+        serde_json::from_str(payload).map_err(|error| format!("解析合法规格夹具失败: {error}"))?;
     let key = if kind == FoundationKind::Dataset {
         "manifest_version"
     } else {
         "schema_version"
     };
-    value
+    let object = value
         .as_object_mut()
-        .expect("夹具必须是 JSON 对象")
-        .remove(key);
-    value.to_string()
+        .ok_or_else(|| "合法规格夹具顶层必须为 JSON 对象".to_string())?;
+    if object.remove(key).is_none() {
+        return Err(format!("合法规格夹具缺少待移除字段 {key}"));
+    }
+    Ok(value.to_string())
 }
 
 /// 八类对象各一份最小合法夹具。
@@ -137,7 +140,8 @@ fn fixture(kind: FoundationKind) -> Option<String> {
             "capability_level": "L1"
         }),
         FoundationKind::RunEvidence => serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
+            "generation": {"run": {
             "run": {
                 "run_id": "smoke-run",
                 "code_commit": "0000000",
@@ -200,6 +204,7 @@ fn fixture(kind: FoundationKind) -> Option<String> {
                 "expected_result_hash": "res"
             },
             "operator": "smoke"
+            }}
         }),
         FoundationKind::Capability => serde_json::json!({
             "schema_version": 1,
@@ -218,7 +223,8 @@ fn fixture(kind: FoundationKind) -> Option<String> {
             "account_snapshot_version": 1
         }),
         FoundationKind::Evidence => serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
+            "generation": {"venue": {
             "claim": {"summary": "smoke", "capability_level": "L3"},
             "venue_id": "demo",
             "window": {"start_ms": 1, "end_ms": 2},
@@ -228,6 +234,7 @@ fn fixture(kind: FoundationKind) -> Option<String> {
             "fact_count": 1,
             "result_digest": "res-digest",
             "operator": "ci-bot"
+            }}
         }),
         FoundationKind::SchemaRegistry => serde_json::json!({
             "schema_version": 1,

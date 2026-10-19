@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "run_id": "strategy-backtest:strategy-ashare:000001.SZSE",
+  "status": "completed",
+  "input_digest": "dataset-bundle:0796529b56c9ea6b",
+  "code_identity": "3dc3f5b49300685f6b07f5f89046ed0980c8bce8-dirty:runtime-schema-1",
+  "config_fingerprint": "391904e7737b81e996e9f7937f2809f14678452fc65bafe466611a045e690684",
+  "started_at_ms": 1717378200000,
+  "finished_at_ms": 1717466400000,
+  "artifact_refs": [
+    {
+      "name": "summary",
+      "path": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-backtest-frame-ashare-18480-1791767387015034000\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE-d578d9f1ad901637.summary.json",
+      "digest": "11d30d4a0ff46d5d0b126190e3bc0e4c79b6a72b2905fdc35c2ce732cc7b2d20"
+    },
+    {
+      "name": "equity",
+      "path": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-backtest-frame-ashare-18480-1791767387015034000\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE-d578d9f1ad901637.equity.csv",
+      "digest": "998e821ead1a21bbcef6ba1341582ecd1b252d3deb3bfac1c3675c4962dc974a"
+    },
+    {
+      "name": "fills",
+      "path": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-backtest-frame-ashare-18480-1791767387015034000\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE-d578d9f1ad901637.fills.csv",
+      "digest": "409a57018185b0b595127bde93d287bb25821ad6883ad57591710f79b5f72a2e"
+    },
+    {
+      "name": "run_manifest",
+      "path": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-backtest-frame-ashare-18480-1791767387015034000\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE-d578d9f1ad901637.run.json",
+      "digest": "9a1035ee8d07bfe6383c4ee63c2a68305ee9b316605ad004886b00b130853238"
+    }
+  ],
+  "replay_verdict": "verified",
+  "capability_level": "L1"
+}

@@ -15,20 +15,25 @@ pub mod evidence;
 pub mod experiment;
 pub mod project;
 pub mod run_evidence;
+pub mod run_evidence_fidelity;
 pub mod run_record;
 pub mod schema_registry;
 
 pub use capability::{CapabilityLevel, CapabilityManifest, CAPABILITY_MANIFEST_SCHEMA_VERSION};
 pub use evidence::{
-    EvidenceBundle, EvidenceClaim, EvidenceEnvironment, EvidenceWindow,
-    EVIDENCE_BUNDLE_SCHEMA_VERSION,
+    EvidenceBundle, EvidenceClaim, EvidenceEnvironment, EvidenceGeneration, EvidenceWindow,
+    VenueEvidencePayload, EVIDENCE_BUNDLE_SCHEMA_VERSION, LEGACY_EVIDENCE_BUNDLE_SCHEMA_VERSION,
+    LEGACY_RUN_EVIDENCE_SCHEMA_VERSION, PREVIOUS_EVIDENCE_BUNDLE_SCHEMA_VERSION,
 };
-pub use experiment::{ExperimentSpec, ParameterSpace, SplitPlan, EXPERIMENT_SPEC_SCHEMA_VERSION};
+pub use experiment::{
+    ExperimentSpec, ParameterSpace, SplitPlan, EXPERIMENT_BASELINES, EXPERIMENT_SPEC_SCHEMA_VERSION,
+};
 pub use project::{DatasetRef, ProjectManifest, StrategyRef, PROJECT_MANIFEST_SCHEMA_VERSION};
 pub use run_evidence::{
-    RunEvidenceAssumption, RunEvidenceBuild, RunEvidenceBundle, RunEvidenceDataset,
-    RunEvidenceIdentity, RunEvidenceRecompute, RunEvidenceRun, RunEvidenceVerification,
-    RUN_EVIDENCE_REQUIRED_ARTIFACTS, RUN_EVIDENCE_SCHEMA_VERSION,
+    RunEvidenceAssumption, RunEvidenceBuild, RunEvidenceDataset, RunEvidenceDatasetComponent,
+    RunEvidenceFidelity, RunEvidenceIdentity, RunEvidencePayload, RunEvidenceQualityReport,
+    RunEvidenceRecompute, RunEvidenceReportAnalysis, RunEvidenceRun, RunEvidenceVerification,
+    RUN_EVIDENCE_REQUIRED_ARTIFACTS,
 };
 pub use run_record::{ArtifactRef, ReplayVerdict, RunRecord, RunStatus, RUN_RECORD_SCHEMA_VERSION};
 pub use schema_registry::{
@@ -128,7 +133,7 @@ pub fn describe(kind: &str, payload: &str) -> Result<DocumentReadout, String> {
         FoundationKind::Dataset => dataset_readout(payload),
         FoundationKind::Experiment => readout::<ExperimentSpec>(kind, payload),
         FoundationKind::RunRecord => readout::<RunRecord>(kind, payload),
-        FoundationKind::RunEvidence => readout::<RunEvidenceBundle>(kind, payload),
+        FoundationKind::RunEvidence => readout::<EvidenceBundle>(kind, payload),
         FoundationKind::Capability => readout::<CapabilityManifest>(kind, payload),
         FoundationKind::Evidence => readout::<EvidenceBundle>(kind, payload),
         FoundationKind::SchemaRegistry => readout::<SchemaRegistry>(kind, payload),

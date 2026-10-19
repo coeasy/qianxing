@@ -1,0 +1,28 @@
+schema_version: 1
+updated_at: "2026-10-15"
+decision: keep_qx_guanxing_and_qx_data_separate
+scope: WP-4.2
+merge_assessment:
+  qx_guanxing:
+    responsibility: "canonical market-data value types, quality gates, lineage identity, and point-in-time views"
+    source: crates/qx-guanxing/src/lib.rs
+    direct_consumers: 20
+  qx_data:
+    responsibility: "provider adapters, ingestion, dataset catalogs, storage, and incremental pipelines"
+    source: crates/qx-data/src
+    canonical_input_contract: "Bar includes instrument identity and raw OHLCV fields"
+reasons:
+  - "The crates own different lifecycle boundaries: market-data semantics versus ingestion and dataset operations."
+  - "qx-guanxing::Bar is a compact market value consumed throughout execution and research; qx_data::Bar is an instrument-bearing ingestion record. They are not interchangeable duplicate schemas."
+  - "qx-guanxing is used directly by adapters, datastruct, execution, runtime, strategies, backtests, and API/CLI surfaces. Moving it would create broad API churn without reducing a demonstrated dependency cycle or runtime duplication."
+benefits_of_merging:
+  - "One fewer workspace crate and one fewer package boundary to document."
+  - "Potentially one canonical package for market data and ingestion concepts."
+costs_and_risks:
+  - "Would couple ingestion/catalog/storage dependencies to the compact semantic types used by execution and strategies."
+  - "Would force a package-wide migration across at least 20 direct consumers while preserving two intentionally different Bar contracts."
+  - "Could blur the boundary between source records and validated market data without eliminating the required conversion."
+revisit_when:
+  - "The two Bar contracts are replaced by an explicit shared schema with a compatibility and migration plan."
+  - "A concrete dependency cycle or repeated implementation is identified that this merge removes."
+  - "A consumer audit shows the package migration can preserve the ingestion/execution boundary without broad API churn."

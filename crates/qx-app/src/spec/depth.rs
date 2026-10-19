@@ -6,7 +6,7 @@ use super::{
 };
 use crate::error::{AppError, AppErrorCategory};
 use qx_core::{OrderPolicy, TradingInstrumentSpec};
-use qx_xingban::MarketMakingConfig;
+use qx_xingban::{MarketMakingConfig, QueuePositionModel};
 use serde::{Deserialize, Serialize};
 
 /// Schema for deterministic L1/L2 market-data backtests.
@@ -26,6 +26,9 @@ pub struct DepthBacktestSpec {
     pub fee_bps: i128,
     pub latency_snapshots: u64,
     pub queue_position_bps: i128,
+    /// Optional L2 passive-order queue estimate; defaults to legacy execution behavior.
+    #[serde(default, skip_serializing_if = "is_queue_position_model_disabled")]
+    pub queue_position_model: QueuePositionModel,
     pub market_impact_bps: i128,
     pub output_dir: String,
     pub strategy: BuiltinStrategySpec,
@@ -142,14 +145,25 @@ impl DepthBacktestSpec {
                 ));
             }
         }
-        // The current facade accepts built-ins, which submit market orders.
-        // Queue position only affects limit fills; rejecting it avoids a silent no-op.
-        if self.queue_position_bps != 0 {
+        // Only the optional L2 market-making strategy submits passive limit orders.
+        if (self.queue_position_bps != 0
+            || self.queue_position_model != QueuePositionModel::Disabled)
+            && self.market_making.is_none()
+        {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
-                "queue_position_bps 仅影响限价单；当前内置策略只提交市价单，必须为 0",
+                "队列位置参数仅影响 L2 market_making 限价单；当前策略只提交市价单",
             ));
         }
+        if self.queue_position_model != QueuePositionModel::Disabled && self.tier != "l2" {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "QueuePositionModel 仅支持 L2 订单簿回测",
+            ));
+        }
+        self.queue_position_model
+            .validate()
+            .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error))?;
         match (&self.market_spec, self.order_policy) {
             (Some(market), policy) => {
                 market.validate().map_err(|error| {
@@ -266,6 +280,10 @@ impl DepthBacktestSpec {
             )
         })
     }
+}
+
+fn is_queue_position_model_disabled(model: &QueuePositionModel) -> bool {
+    *model == QueuePositionModel::Disabled
 }
 
 fn strategy_has_sizing(strategy: &BuiltinStrategySpec) -> bool {

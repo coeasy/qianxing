@@ -1,16 +1,32 @@
 //! 任务调度契约。
 //!
-//! Scheduler 只决定“何时、以什么幂等键触发哪个 Job”，不持有交易所客户端，
-//! 也不能绕过 Risk/OMS/Ledger。真实执行器可以在控制面或外部 Worker 中实现。
+//! Scheduler 只决定“何时、以什么幂等键触发哪个 Job”，不持有交易所客户端，也不能绕过 Risk/OMS/Ledger；真实执行器由控制面或外部 Worker 实现。
+//!
+//! 终态运行明细最多保留 [`TERMINAL_RUN_RETENTION`] 条；被驱逐明细由按作业维护的
+//! 日期水位与摘要锚点承接。EventLog 的事实保留策略与本策略统一登记在 `maturity/retention_policy.yaml`。
 
 use qx_core::RunManifest;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
+#[path = "active_run_tests.rs"]
+mod active_run_tests;
 mod job_spec;
+mod retention;
 mod retry_policy;
+mod run_state;
+mod runtime_support;
+mod validation;
 pub use job_spec::{claimable_by, JobSpec, JobWindow, Trigger, JOB_OWNER_ANY};
+use retention::is_canonical_trading_day;
+pub use retention::{SchedulerRunRetentionAnchor, TERMINAL_RUN_RETENTION};
 pub use retry_policy::RetryPolicy;
+pub use runtime_support::{
+    civil_from_days, declared_jobs, live_strategy_job, reject_job_set_drift, scheduler_manifest,
+    unsupported_dispatch_shape, utc_schedule_tick, validate_job_owners, LiveStrategyJobInput,
+    LIVE_STRATEGY_TIMEOUT_SECONDS,
+};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ScheduleTick {
@@ -193,11 +209,15 @@ pub enum SchedulerError {
     UnknownRun(u64),
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Serialize)]
 pub struct Scheduler {
     jobs: BTreeMap<String, JobSpec>,
     runs: BTreeMap<u64, JobRun>,
+    #[serde(default)]
+    retention_anchors: BTreeMap<String, SchedulerRunRetentionAnchor>,
     active_keys: BTreeSet<String>,
+    #[serde(skip)]
+    active_run_ids: BTreeSet<u64>,
     completed: BTreeSet<String>,
 }
 
@@ -611,9 +631,23 @@ impl Scheduler {
         if !job.enabled || !job.depends_on.iter().all(|id| self.completed.contains(id)) {
             return Err(SchedulerError::NotReady(job_id.into()));
         }
+        if !is_canonical_trading_day(trading_day) {
+            return Err(SchedulerError::Invalid(
+                "trading_day 必须是有效的 YYYYMMDD 日期".into(),
+            ));
+        }
         let run_id = job.stable_key(trading_day);
         if let Some(existing) = self.runs.get(&run_id) {
             return Ok(existing.clone());
+        }
+        if self
+            .retention_anchors
+            .get(job_id)
+            .is_some_and(|anchor| trading_day <= anchor.through_trading_day.as_str())
+        {
+            return Err(SchedulerError::NotReady(format!(
+                "run {job_id}/{trading_day} is behind its retention watermark"
+            )));
         }
         if !self.active_keys.insert(job.concurrency_key.clone()) {
             return Err(SchedulerError::NotReady(format!(
@@ -634,6 +668,7 @@ impl Scheduler {
             deadline_ts: started_ts.saturating_add(job.timeout_seconds),
         };
         self.runs.insert(run_id, run.clone());
+        self.active_run_ids.insert(run_id);
         Ok(run)
     }
 
@@ -663,7 +698,9 @@ impl Scheduler {
         run.error_code = Some("TIMEOUT".into());
         run.next_retry_ts = None;
         self.active_keys.remove(&job.concurrency_key);
+        self.active_run_ids.remove(&run_id);
         self.runs.insert(run_id, run.clone());
+        self.prune_terminal_runs();
         Ok(run)
     }
 
@@ -723,10 +760,12 @@ impl Scheduler {
                     .is_some_and(|code| job.retry_policy.retryable_codes.contains(code))))
         .then(|| job.retry_policy.retry_deadline(finished_ts));
         self.active_keys.remove(&job.concurrency_key);
+        self.active_run_ids.remove(&run_id);
         if success {
             self.completed.insert(run.job_id.clone());
         }
         self.runs.insert(run_id, run.clone());
+        self.prune_terminal_runs();
         Ok(run)
     }
 
@@ -764,6 +803,7 @@ impl Scheduler {
         run.error_code = None;
         run.next_retry_ts = None;
         self.runs.insert(run_id, run.clone());
+        self.active_run_ids.insert(run_id);
         Ok(run)
     }
 
@@ -771,12 +811,9 @@ impl Scheduler {
         self.runs.get(&run_id)
     }
 
-    /// 返回可供 QueryPort/运维读模型使用的确定性 JobRun 列表。
-    ///
-    /// Scheduler 仍然是唯一的运行状态拥有者；调用方拿到的是克隆快照，
-    /// 不能通过查询接口修改调度状态。
-    pub fn runs(&self) -> Vec<JobRun> {
-        self.runs.values().cloned().collect()
+    /// 每个有历史被驱逐的作业保留一个紧凑水位与摘要锚点。
+    pub fn retention_anchors(&self) -> &BTreeMap<String, SchedulerRunRetentionAnchor> {
+        &self.retention_anchors
     }
 
     pub fn to_json(&self) -> Result<String, String> {
@@ -784,7 +821,7 @@ impl Scheduler {
     }
 
     pub fn from_json(input: &str) -> Result<Self, String> {
-        let scheduler: Self = serde_json::from_str(input).map_err(|error| error.to_string())?;
+        let mut scheduler: Self = serde_json::from_str(input).map_err(|error| error.to_string())?;
         for job in scheduler.jobs.values() {
             job.validate()
                 .map_err(|error| format!("非法 JobSpec: {error:?}"))?;
@@ -792,90 +829,12 @@ impl Scheduler {
         scheduler
             .validate_dependencies()
             .map_err(|error| format!("非法调度状态: {error:?}"))?;
+        // 兼容旧版只增长状态文件：恢复时先按新水位裁剪并生成锚点，再验证新形态。
+        scheduler.prune_terminal_runs();
         scheduler
             .validate_state()
             .map_err(|error| format!("非法调度运行状态: {error:?}"))?;
         Ok(scheduler)
-    }
-
-    fn validate_state(&self) -> Result<(), SchedulerError> {
-        let mut expected_active = BTreeSet::new();
-        let mut expected_completed = BTreeSet::new();
-        for (run_id, run) in &self.runs {
-            let job = self
-                .jobs
-                .get(&run.job_id)
-                .ok_or_else(|| SchedulerError::MissingDependency(run.job_id.clone()))?;
-            if *run_id != run.run_id
-                || run.run_id != job.stable_key(&run.trading_day)
-                || run.attempt == 0
-                || run.started_ts > run.deadline_ts
-            {
-                return Err(SchedulerError::Invalid(format!(
-                    "run {} 身份、尝试次数或截止时间非法",
-                    run.run_id
-                )));
-            }
-            match run.status {
-                JobStatus::Running => {
-                    if !expected_active.insert(job.concurrency_key.clone()) {
-                        return Err(SchedulerError::Invalid("运行中的并发键重复".into()));
-                    }
-                }
-                JobStatus::Succeeded => {
-                    expected_completed.insert(run.job_id.clone());
-                }
-                JobStatus::Failed | JobStatus::NeedsIntervention => {}
-            }
-            if run.status != JobStatus::Failed && run.next_retry_ts.is_some() {
-                return Err(SchedulerError::Invalid(
-                    "非 Failed 运行不能带重试时间".into(),
-                ));
-            }
-        }
-        if self.active_keys != expected_active || self.completed != expected_completed {
-            return Err(SchedulerError::Invalid(
-                "active_keys/completed 与 runs 不一致".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    fn validate_dependencies(&self) -> Result<(), SchedulerError> {
-        for job in self.jobs.values() {
-            for dependency in &job.depends_on {
-                if !self.jobs.contains_key(dependency) {
-                    return Err(SchedulerError::MissingDependency(dependency.clone()));
-                }
-            }
-        }
-        let mut visiting = BTreeSet::new();
-        let mut visited = BTreeSet::new();
-        for id in self.jobs.keys() {
-            self.visit(id, &mut visiting, &mut visited)?;
-        }
-        Ok(())
-    }
-
-    fn visit(
-        &self,
-        id: &str,
-        visiting: &mut BTreeSet<String>,
-        visited: &mut BTreeSet<String>,
-    ) -> Result<(), SchedulerError> {
-        if visited.contains(id) {
-            return Ok(());
-        }
-        if !visiting.insert(id.to_string()) {
-            return Err(SchedulerError::Cycle(id.into()));
-        }
-        let job = self.jobs.get(id).expect("dependency validated");
-        for dependency in &job.depends_on {
-            self.visit(dependency, visiting, visited)?;
-        }
-        visiting.remove(id);
-        visited.insert(id.into());
-        Ok(())
     }
 }
 
@@ -1170,23 +1129,6 @@ mod tests {
             scheduler.retry_run_at(second.run_id, 110).unwrap().attempt,
             2
         );
-    }
-
-    #[test]
-    fn run_records_deadline_for_timeout_monitoring() {
-        let mut scheduler = Scheduler::default();
-        let mut timed = job("timed", vec![]);
-        timed.timeout_seconds = 30;
-        scheduler.register(timed).unwrap();
-        let run = scheduler.start_run_at("timed", "20260910", 1, 100).unwrap();
-        assert_eq!(run.started_ts, 100);
-        assert_eq!(run.deadline_ts, 130);
-        assert!(!scheduler.is_timed_out(run.run_id, 129).unwrap());
-        assert!(scheduler.is_timed_out(run.run_id, 130).unwrap());
-        let timeout = scheduler.mark_timed_out(run.run_id, 130).unwrap();
-        assert_eq!(timeout.status, JobStatus::NeedsIntervention);
-        assert_eq!(timeout.error_code.as_deref(), Some("TIMEOUT"));
-        assert!(!scheduler.is_timed_out(run.run_id, 999).unwrap());
     }
 
     #[test]

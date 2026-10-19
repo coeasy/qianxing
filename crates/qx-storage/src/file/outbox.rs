@@ -26,29 +26,22 @@ impl FileOutboxStore {
     }
 
     pub fn append(&self, event: OutboxEvent) -> Result<(), StorageError> {
-        event.validate()?;
+        self.validate_append_request(&event)?;
         self.ensure_dirs()?;
         let path = self.event_path(&event.event_id)?;
         let _lock = acquire_storage_lock(self.root.join("outbox.append.lock"))?;
         if path.exists() {
             let existing: OutboxEvent = read_state_json(&path)?;
-            if existing.same_fact(&event) {
-                return Ok(());
-            }
-            return Err(StorageError::Conflict(format!(
-                "event_id {} 已被不同 Outbox 事件占用",
-                event.event_id
-            )));
+            Self::validate_existing_event(&existing, &event)?;
+            return Ok(());
         }
         write_state_json(&self.root, &path, &event)
     }
 
     pub fn available(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
         self.ensure_dirs()?;
-        // 两组各自按三元组数字序，用尽预算的那组排在后面再截页：它们仍留在候选集里等人工
-        // claim/ack（K2 的出口），只是不再占住页首把投得出去的事件挤出一页（V11 R7-d）。
-        let mut deliverable = Vec::new();
-        let mut parked = Vec::new();
+        // 共用排序先把可投递事件排前，再将停摆事件留在页尾供人工 claim/ack（V11 R7-d）。
+        let mut candidates = Vec::new();
         for path in self.list_records()? {
             let event: OutboxEvent = read_state_json(&path)?;
             let lease_path = self.lease_path(&event.event_id)?;
@@ -56,18 +49,11 @@ impl FileOutboxStore {
             {
                 continue;
             }
-            if crate::outbox_exhausted(event.attempts) {
-                parked.push(event);
-            } else {
-                deliverable.push(event);
-            }
+            candidates.push(event);
         }
-        for group in [&mut deliverable, &mut parked] {
-            group.sort_by_key(|event| (event.created_ts, event.sequence, event.event_id.clone()));
-        }
-        deliverable.extend(parked);
-        deliverable.truncate(limit);
-        Ok(deliverable)
+        candidates.sort_by(crate::outbox_page::compare_outbox_page_order);
+        candidates.truncate(limit);
+        Ok(candidates)
     }
 
     /// 不问 `limit` 的停摆条数：`available` 截页后逐行数只是这一页的观察值（V11 R7-d）。
@@ -92,12 +78,7 @@ impl FileOutboxStore {
         now: u64,
         lease_seconds: u64,
     ) -> Result<OutboxLease, StorageError> {
-        validate_outbox_name(event_id, "event_id")?;
-        if owner.trim().is_empty() || lease_seconds == 0 {
-            return Err(StorageError::Conflict(
-                "Outbox worker 和租约时长不能为空".into(),
-            ));
-        }
+        self.validate_claim_request(event_id, owner, lease_seconds)?;
         self.ensure_dirs()?;
         let _lock = acquire_storage_lock(self.lock_path(event_id)?)?;
         if !self.event_path(event_id)?.exists() {
@@ -106,22 +87,21 @@ impl FileOutboxStore {
             )));
         }
         let lease_path = self.lease_path(event_id)?;
-        let mut fencing_token = 1;
-        if lease_path.exists() {
+        let current = if lease_path.exists() {
             let current: OutboxLease = read_state_json(&lease_path)?;
-            if current.expires_ts > now && current.owner != owner {
-                return Err(StorageError::LeaseHeld {
-                    run_id: 0,
-                    owner: current.owner,
-                });
-            }
             if current.expires_ts <= now {
-                fencing_token = current.fencing_token.saturating_add(1).max(1);
                 self.delete_record(&lease_path)?;
-            } else {
-                fencing_token = current.fencing_token.max(1);
             }
-        }
+            Some(crate::lease_rules::LeaseSnapshot {
+                owner: current.owner,
+                expires_ts: current.expires_ts,
+                fencing_token: current.fencing_token,
+            })
+        } else {
+            None
+        };
+        let fencing_token =
+            crate::lease_rules::claim_fencing_token(current.as_ref(), owner, now, 0)?;
         let lease = OutboxLease {
             event_id: event_id.into(),
             owner: owner.into(),
@@ -139,6 +119,7 @@ impl FileOutboxStore {
         fencing_token: u64,
         now: u64,
     ) -> Result<(), StorageError> {
+        self.validate_finish_request(event_id)?;
         let _lock = acquire_storage_lock(self.lock_path(event_id)?)?;
         let lease = read_state_json::<OutboxLease>(&self.lease_path(event_id)?)?;
         validate_outbox_lease(&lease, event_id, owner, fencing_token, now)?;
@@ -154,6 +135,7 @@ impl FileOutboxStore {
         fencing_token: u64,
         now: u64,
     ) -> Result<(), StorageError> {
+        self.validate_finish_request(event_id)?;
         let _lock = acquire_storage_lock(self.lock_path(event_id)?)?;
         let lease = read_state_json::<OutboxLease>(&self.lease_path(event_id)?)?;
         validate_outbox_lease(&lease, event_id, owner, fencing_token, now)?;

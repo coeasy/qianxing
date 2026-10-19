@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "benchmark": "segmented_event_log_encoding",
+  "generated_at_utc": "2026-10-18T14:21:29.607311+00:00",
+  "command": [
+    "cargo",
+    "run",
+    "-p",
+    "qx-storage",
+    "--example",
+    "segmented_event_log_encoding_bench",
+    "--release",
+    "--offline",
+    "-j1"
+  ],
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "profile": "release",
+  "methods": {
+    "legacy": "serde_json::to_string per event, format JSON plus LF, collect Strings",
+    "buffered": "serde_json::to_writer into one byte buffer, append LF, convert once to UTF-8 String"
+  },
+  "results": [
+    {
+      "benchmark": "segmented_event_log_encoding",
+      "buffered_median_ns_per_segment": 513,
+      "byte_equal": true,
+      "encoded_bytes": 345,
+      "events_per_segment": 1,
+      "iterations_per_sample": 20000,
+      "legacy_median_ns_per_segment": 461,
+      "repeats": 9,
+      "speedup_ratio": 0.898635477582846
+    },
+    {
+      "benchmark": "segmented_event_log_encoding",
+      "buffered_median_ns_per_segment": 17811,
+      "byte_equal": true,
+      "encoded_bytes": 22353,
+      "events_per_segment": 64,
+      "iterations_per_sample": 312,
+      "legacy_median_ns_per_segment": 31664,
+      "repeats": 9,
+      "speedup_ratio": 1.7777777777777777
+    },
+    {
+      "benchmark": "segmented_event_log_encoding",
+      "buffered_median_ns_per_segment": 263550,
+      "byte_equal": true,
+      "encoded_bytes": 363099,
+      "events_per_segment": 1024,
+      "iterations_per_sample": 20,
+      "legacy_median_ns_per_segment": 484625,
+      "repeats": 9,
+      "speedup_ratio": 1.8388351356478847
+    }
+  ],
+  "limitations": [
+    "This microbenchmark isolates in-memory segment encoding; it excludes file I/O, manifest work, and EventLog prefix hashing.",
+    "Synthetic EventKind::Settle events do not represent the production event mix or the nine product profiles.",
+    "The legacy method is reconstructed from the prior compact JSONL format; matching bytes are verified before timing."
+  ]
+}

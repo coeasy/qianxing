@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "rust_micro_portfolio_funding_reservation_cache",
+  "generated_at_utc": "2026-10-18",
+  "profile": "release",
+  "command": [
+    "cargo",
+    "bench",
+    "--offline",
+    "-p",
+    "qx-cli",
+    "--bench",
+    "criterion_performance",
+    "-j",
+    "1",
+    "--",
+    "portfolio_funding_reservation_decision_reads"
+  ],
+  "criterion_version": "0.8.2",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "benchmark_executable_sha256": "AE00BB194446737F319053AAACB0F0FA19A41A129851618C9B2291476FBB8533",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "system_model": "MS-7E27",
+    "physical_core_count": 8,
+    "logical_cpu_count": 16,
+    "total_ram_bytes": 65911173120
+  },
+  "method": {
+    "market_counts": [2, 8, 32, 64],
+    "pending_orders_per_market": [16, 256],
+    "decision_count_per_iteration": "one decision per market",
+    "samples_per_case": 10,
+    "warm_up_seconds": 1,
+    "measurement_seconds": 2,
+    "reservation_input_raw": "positive deterministic integer units: (market_index + 1) * (order_index + 3) * 1000",
+    "parity": "Before timing, compare old saturating i128 portfolio totals and per-market-excluded totals against the cached u128 portfolio and market totals clamped to i128.",
+    "baseline": "For each market decision, scan all markets and all pending orders to compute the portfolio total, then scan all other markets and pending orders to compute other-market reservations.",
+    "candidate": "Read the precomputed global u128 total and per-market u128 total, clamp to the existing i128 contract, and subtract the current market total to obtain other-market reservations.",
+    "timing_scope": "Decision-read aggregation only. Excludes cache maintenance on submissions/fills, Bar matching, ledger, strategy, marks, admission validation, and complete backtest orchestration."
+  },
+  "results": [
+    {
+      "market_count": 2,
+      "pending_orders_per_market": 16,
+      "baseline_mean_ns": 99.62,
+      "baseline_ci95_ns": [98.96, 100.38],
+      "cached_mean_ns": 6.18,
+      "cached_ci95_ns": [6.13, 6.23],
+      "cached_path_speedup_pct": 93.80
+    },
+    {
+      "market_count": 2,
+      "pending_orders_per_market": 256,
+      "baseline_mean_ns": 1575.44,
+      "baseline_ci95_ns": [1566.50, 1585.64],
+      "cached_mean_ns": 6.16,
+      "cached_ci95_ns": [6.10, 6.21],
+      "cached_path_speedup_pct": 99.61
+    },
+    {
+      "market_count": 8,
+      "pending_orders_per_market": 16,
+      "baseline_mean_ns": 1960.41,
+      "baseline_ci95_ns": [1949.18, 1970.96],
+      "cached_mean_ns": 11.52,
+      "cached_ci95_ns": [11.08, 12.11],
+      "cached_path_speedup_pct": 99.41
+    },
+    {
+      "market_count": 8,
+      "pending_orders_per_market": 256,
+      "baseline_mean_ns": 31161.33,
+      "baseline_ci95_ns": [31034.61, 31284.93],
+      "cached_mean_ns": 11.32,
+      "cached_ci95_ns": [11.13, 11.55],
+      "cached_path_speedup_pct": 99.96
+    },
+    {
+      "market_count": 32,
+      "pending_orders_per_market": 16,
+      "baseline_mean_ns": 32815.33,
+      "baseline_ci95_ns": [32659.22, 32961.99],
+      "cached_mean_ns": 43.05,
+      "cached_ci95_ns": [42.59, 43.60],
+      "cached_path_speedup_pct": 99.87
+    },
+    {
+      "market_count": 32,
+      "pending_orders_per_market": 256,
+      "baseline_mean_ns": 531777.27,
+      "baseline_ci95_ns": [529086.11, 534246.98],
+      "cached_mean_ns": 46.03,
+      "cached_ci95_ns": [44.18, 48.52],
+      "cached_path_speedup_pct": 99.99
+    },
+    {
+      "market_count": 64,
+      "pending_orders_per_market": 16,
+      "baseline_mean_ns": 133720.94,
+      "baseline_ci95_ns": [132834.15, 134712.42],
+      "cached_mean_ns": 89.70,
+      "cached_ci95_ns": [87.43, 92.16],
+      "cached_path_speedup_pct": 99.93
+    },
+    {
+      "market_count": 64,
+      "pending_orders_per_market": 256,
+      "baseline_mean_ns": 2135924.38,
+      "baseline_ci95_ns": [2122483.50, 2148861.77],
+      "cached_mean_ns": 87.57,
+      "cached_ci95_ns": [86.09, 89.02],
+      "cached_path_speedup_pct": 100.00
+    }
+  ],
+  "limitations": [
+    "This synthetic decision-read microbenchmark does not measure the cost of incrementally updating the totals during order submission or fills.",
+    "It excludes the rest of PortfolioBarEngine and does not establish end-to-end multi-market or A-share backtest speedup.",
+    "No allocator counter was enabled, and the nine product profile measurement statuses are unchanged."
+  ]
+}

@@ -9,6 +9,7 @@ use qx_guanxing::Bar;
 use crate::cost::{LatencyModel, ZeroLatency};
 use crate::fill::{FillContext, FillModel};
 use crate::rng::DeterministicRng;
+use crate::{ExecutionAttempt, ExecutionAttemptReason};
 
 pub struct MatchingConfig {
     pub fill: Box<dyn FillModel>,
@@ -24,6 +25,7 @@ struct PendingOrder {
 
 pub struct BarMatchingEngine {
     pending: Vec<PendingOrder>,
+    pending_funding_reservation_sum_raw: Option<u128>,
     fill_model: Box<dyn FillModel>,
     fee_model: Box<dyn FeeModel>,
     latency_model: Box<dyn LatencyModel>,
@@ -40,15 +42,19 @@ pub struct BarMatchingEngine {
     inverse_fee_basis: bool,
     rng: DeterministicRng,
     all_fills: Vec<Fill>,
+    execution_attempts: Vec<ExecutionAttempt>,
     halted: bool,
     block_buy: bool,
     block_sell: bool,
+    volume_limit_bar_ts: Option<u64>,
+    volume_used_raw: i128,
 }
 
 impl BarMatchingEngine {
     pub fn new(fill: Box<dyn FillModel>, fee: Box<dyn FeeModel>, seed: u64) -> Self {
         Self {
             pending: Vec::new(),
+            pending_funding_reservation_sum_raw: Some(0),
             fill_model: fill,
             fee_model: fee,
             latency_model: Box::new(ZeroLatency),
@@ -56,9 +62,12 @@ impl BarMatchingEngine {
             inverse_fee_basis: false,
             rng: DeterministicRng::new(seed),
             all_fills: Vec::new(),
+            execution_attempts: Vec::new(),
             halted: false,
             block_buy: false,
             block_sell: false,
+            volume_limit_bar_ts: None,
+            volume_used_raw: 0,
         }
     }
 
@@ -84,10 +93,14 @@ impl BarMatchingEngine {
         funding_reservation_raw: i128,
     ) {
         let eligible_ts = submitted_ts.saturating_add(self.latency_model.delay_ms());
+        let funding_reservation_raw = funding_reservation_raw.max(0);
+        self.pending_funding_reservation_sum_raw = self
+            .pending_funding_reservation_sum_raw
+            .and_then(|total| total.checked_add(funding_reservation_raw as u128));
         self.pending.push(PendingOrder {
             order: o,
             eligible_ts,
-            funding_reservation_raw: funding_reservation_raw.max(0),
+            funding_reservation_raw,
         });
     }
 
@@ -98,13 +111,39 @@ impl BarMatchingEngine {
     /// Aggregate reservations conservatively; overflow must never create buying
     /// power that the pending orders already consumed.
     pub(crate) fn pending_funding_reservation_raw(&self) -> i128 {
+        if let Some(total) = self.pending_funding_reservation_sum_raw {
+            return total.min(i128::MAX as u128) as i128;
+        }
         self.pending.iter().fold(0_i128, |total, order| {
             total.saturating_add(order.funding_reservation_raw)
         })
     }
 
+    pub(crate) fn pending_funding_reservation_sum_raw_exact(&self) -> Option<u128> {
+        self.pending_funding_reservation_sum_raw
+    }
+
+    fn adjust_pending_funding_reservation(&mut self, removed_raw: i128, added_raw: i128) {
+        let removed = removed_raw.max(0) as u128;
+        let added = added_raw.max(0) as u128;
+        self.pending_funding_reservation_sum_raw = self
+            .pending_funding_reservation_sum_raw
+            .and_then(|total| total.checked_sub(removed))
+            .and_then(|total| total.checked_add(added));
+    }
+
+    fn recompute_pending_funding_reservation_sum(&self) -> Option<u128> {
+        self.pending.iter().try_fold(0_u128, |total, order| {
+            total.checked_add(order.funding_reservation_raw.max(0) as u128)
+        })
+    }
+
     pub fn fills(&self) -> &[Fill] {
         &self.all_fills
+    }
+
+    pub fn execution_attempts(&self) -> &[ExecutionAttempt] {
+        &self.execution_attempts
     }
 
     pub fn set_halted(&mut self, halted: bool) {
@@ -119,11 +158,28 @@ impl BarMatchingEngine {
     /// 用本根 bar 撮合上一根 bar 提交的挂单，返回本轮成交。
     pub fn on_bar(&mut self, bar: &Bar, ts: u64) -> Vec<Fill> {
         let pending = std::mem::take(&mut self.pending);
+        if self.volume_limit_bar_ts != Some(ts) {
+            self.volume_limit_bar_ts = Some(ts);
+            self.volume_used_raw = 0;
+        }
         // 停牌/非交易时段的闸门在引擎里，而不在各 FillModel 里：`FillModel` 是
         // 公开 trait，第三方实现忽略 `ctx.halted` 也不能获得成交。整段挂单原序
         // 退回，既不产生成交也不推进随机数流。
         if self.halted {
-            self.pending = pending;
+            let mut still_pending = Vec::with_capacity(pending.len());
+            for pending_order in pending {
+                if pending_order.eligible_ts <= ts {
+                    self.record_attempt(
+                        &pending_order.order,
+                        ts,
+                        0,
+                        None,
+                        ExecutionAttemptReason::MarketHalted,
+                    );
+                }
+                still_pending.push(pending_order);
+            }
+            self.pending = still_pending;
             return Vec::new();
         }
         let mut out = Vec::new();
@@ -139,6 +195,7 @@ impl BarMatchingEngine {
             if (o.side == qx_core::Side::Buy && self.block_buy)
                 || (o.side == qx_core::Side::Sell && self.block_sell)
             {
+                self.record_attempt(&o, ts, 0, None, ExecutionAttemptReason::SideBlocked);
                 self.pending.push(PendingOrder {
                     order: o,
                     eligible_ts,
@@ -154,13 +211,47 @@ impl BarMatchingEngine {
                 halted: self.halted,
             };
 
-            match self.fill_model.fill(&ctx, &mut self.rng) {
+            let remaining_bar_volume =
+                self.fill_model
+                    .bar_volume_participation_bps()
+                    .map(|participation_bps| {
+                        let capacity = bar_volume_capacity(bar.volume, participation_bps);
+                        capacity.saturating_sub(self.volume_used_raw).max(0)
+                    });
+            if remaining_bar_volume == Some(0) {
+                self.record_attempt(
+                    &o,
+                    ts,
+                    0,
+                    None,
+                    ExecutionAttemptReason::ParticipationLimitExhausted,
+                );
+                self.pending.push(PendingOrder {
+                    order: o,
+                    eligible_ts,
+                    funding_reservation_raw,
+                });
+                continue;
+            }
+
+            let requested_qty = o.remaining().raw();
+            let evaluation = self.fill_model.evaluate(&ctx, &mut self.rng);
+            match evaluation.fill {
                 Some((px, q)) => {
                     // 成交量以订单剩余量为上限、成交价必须为正：`FillModel` 是公开
                     // trait，而现货记账路径（`apply_fill_with_multiplier`）既不校验
                     // 超额成交也不校验负价，滑点模型在低价标的上就能报出负的成交价。
-                    let q = q.min(o.remaining().raw());
+                    let q = remaining_bar_volume
+                        .map_or(q, |remaining| q.min(remaining))
+                        .min(requested_qty);
                     if q <= 0 || px <= 0 {
+                        self.record_attempt(
+                            &o,
+                            ts,
+                            0,
+                            Some(px),
+                            ExecutionAttemptReason::InvalidModelOutput,
+                        );
                         self.pending.push(PendingOrder {
                             order: o,
                             eligible_ts,
@@ -168,7 +259,20 @@ impl BarMatchingEngine {
                         });
                         continue;
                     }
+                    if self.fill_model.bar_volume_participation_bps().is_some() {
+                        self.volume_used_raw = self.volume_used_raw.saturating_add(q);
+                    }
                     let remaining_before_fill = o.remaining().raw();
+                    let attempt_reason = if q < requested_qty {
+                        if remaining_bar_volume.is_some_and(|remaining| remaining < requested_qty) {
+                            ExecutionAttemptReason::BarParticipationPartial
+                        } else {
+                            ExecutionAttemptReason::ModelPartialFill
+                        }
+                    } else {
+                        ExecutionAttemptReason::Filled
+                    };
+                    self.record_attempt(&o, ts, q, Some(px), attempt_reason);
                     // maker/taker 由订单意图决定，而非是否有限价：本引擎的 FillModel
                     // 只在成交价已可成交（limit_ok 通过）时返回成交，即限价单此刻是吃单方。
                     // 只有显式 post_only 的挂单才是 maker。
@@ -202,16 +306,24 @@ impl BarMatchingEngine {
                             .and_then(|value| value.checked_div(remaining_before_fill))
                             .unwrap_or(0)
                             .clamp(0, funding_reservation_raw);
+                        let remaining_reservation =
+                            funding_reservation_raw.saturating_sub(consumed_reservation);
+                        self.adjust_pending_funding_reservation(
+                            funding_reservation_raw,
+                            remaining_reservation,
+                        );
                         self.pending.push(PendingOrder {
                             order: o,
                             eligible_ts,
-                            funding_reservation_raw: funding_reservation_raw
-                                .saturating_sub(consumed_reservation),
+                            funding_reservation_raw: remaining_reservation,
                         });
+                    } else {
+                        self.adjust_pending_funding_reservation(funding_reservation_raw, 0);
                     }
                 }
                 None => {
                     // 未成交：继续挂单（真实排队语义）
+                    self.record_attempt(&o, ts, 0, None, evaluation.no_fill_reason);
                     self.pending.push(PendingOrder {
                         order: o,
                         eligible_ts,
@@ -221,7 +333,39 @@ impl BarMatchingEngine {
             }
         }
 
+        if self.pending_funding_reservation_sum_raw.is_none() {
+            self.pending_funding_reservation_sum_raw =
+                self.recompute_pending_funding_reservation_sum();
+        }
         out
+    }
+
+    fn record_attempt(
+        &mut self,
+        order: &Order,
+        ts: u64,
+        filled_qty_raw: i128,
+        price_raw: Option<i128>,
+        reason: ExecutionAttemptReason,
+    ) {
+        let requested_qty_raw = order.remaining().raw();
+        self.execution_attempts.push(ExecutionAttempt {
+            ts,
+            order_id: order.client_id,
+            instrument: order.instrument.to_string(),
+            side: order.side,
+            requested_qty_raw,
+            filled_qty_raw,
+            remaining_qty_raw: requested_qty_raw.saturating_sub(filled_qty_raw),
+            price_raw,
+            reason,
+            displayed_qty_raw: None,
+            queue_ahead_before_raw: None,
+            queue_ahead_after_raw: None,
+            estimated_volume_raw: None,
+            displayed_reduction_raw: None,
+            queue_consumed_raw: None,
+        });
     }
 
     /// 用本引擎自己的费率模型、合约乘数折算和 maker/taker 判定估计一笔成交的费用。
@@ -281,6 +425,16 @@ impl BarMatchingEngine {
         engine.fee_price_multiplier = fee_price_multiplier.max(1);
         engine
     }
+}
+
+/// Compute a fixed-point volume allowance without multiplying the full raw volume by bps.
+/// The quotient/remainder form cannot overflow for a validated 0..=10,000 bps input.
+fn bar_volume_capacity(volume_raw: i128, participation_bps: u16) -> i128 {
+    if volume_raw <= 0 || participation_bps == 0 {
+        return 0;
+    }
+    let bps = i128::from(participation_bps.min(10_000));
+    (volume_raw / 10_000) * bps + ((volume_raw % 10_000) * bps) / 10_000
 }
 
 #[cfg(test)]

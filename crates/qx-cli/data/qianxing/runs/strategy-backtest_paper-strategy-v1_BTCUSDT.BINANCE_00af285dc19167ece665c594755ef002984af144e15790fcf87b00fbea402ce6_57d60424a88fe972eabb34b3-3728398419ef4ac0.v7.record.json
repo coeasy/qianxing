@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "run_id": "strategy-backtest:paper-strategy-v1:BTCUSDT.BINANCE:00af285dc19167ece665c594755ef002984af144e15790fcf87b00fbea402ce6:57d60424a88fe972eabb34b3",
+  "status": "completed",
+  "input_digest": "barframe:613fdc1dc0b779e7",
+  "code_identity": "30d8bf82c128bc35f257c59bf70aaee45f4c73b8-dirty:runtime-schema-1",
+  "config_fingerprint": "00af285dc19167ece665c594755ef002984af144e15790fcf87b00fbea402ce6",
+  "started_at_ms": 1000,
+  "finished_at_ms": 70000,
+  "artifact_refs": [
+    {
+      "name": "summary",
+      "path": "data/qianxing\\runs\\strategy-backtest_paper-strategy-v1_BTCUSDT.BINANCE_00af285dc19167ece665c594755ef002984af144e15790fcf87b00fbea402ce6_57d60424a88fe972eabb34b3-3728398419ef4ac0.v7.summary.json",
+      "digest": "12b6f4c6a89c6c3d192f8e1a49b4626852798932ec64e29042702260dbf60dbf"
+    },
+    {
+      "name": "equity",
+      "path": "data/qianxing\\runs\\strategy-backtest_paper-strategy-v1_BTCUSDT.BINANCE_00af285dc19167ece665c594755ef002984af144e15790fcf87b00fbea402ce6_57d60424a88fe972eabb34b3-3728398419ef4ac0.v7.equity.csv",
+      "digest": "0ce582bfe9d39284a76dfffbea9ce271613d6cefd92a8f064462157d81950139"
+    },
+    {
+      "name": "fills",
+      "path": "data/qianxing\\runs\\strategy-backtest_paper-strategy-v1_BTCUSDT.BINANCE_00af285dc19167ece665c594755ef002984af144e15790fcf87b00fbea402ce6_57d60424a88fe972eabb34b3-3728398419ef4ac0.v7.fills.csv",
+      "digest": "8a4d22dc4cb8db98e38dd4693521ebaf6300b99a5cc2a9cfe7e7889413ec2bd6"
+    },
+    {
+      "name": "run_manifest",
+      "path": "data/qianxing\\runs\\strategy-backtest_paper-strategy-v1_BTCUSDT.BINANCE_00af285dc19167ece665c594755ef002984af144e15790fcf87b00fbea402ce6_57d60424a88fe972eabb34b3-3728398419ef4ac0.run.json",
+      "digest": "3f0f3f795785739f7c6dcfc56b2f52eb222b04a6d50a0d7ebb74e6679aa2243e"
+    }
+  ],
+  "replay_verdict": "verified",
+  "capability_level": "L1"
+}

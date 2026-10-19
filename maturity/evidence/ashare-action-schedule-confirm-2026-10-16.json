@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "ashare_corporate_action_schedule_ab",
+  "generated_at_utc": "2026-10-16T09:50:34Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "before_binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli-before-action-index.exe",
+  "before_binary_sha256": "06ee6b4f83c47bd5cbeeafca74489276b611d53ed84f2ef0eccb85295efe39e4",
+  "after_binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "after_binary_sha256": "d8721cb270f552f942ae14bdefcd443fabbda616a9c8d0c567edb0ff12b8aae6",
+  "workload": {
+    "bars": 64000,
+    "corporate_actions": 512,
+    "repeats": 9,
+    "result_hash": "71edd838dc772436",
+    "identical_input_sha256": {
+      "bar_frame": "7043c8f591c926c10a8ff78655e51cd1810ca321723d096ce2cedd56178c5e61",
+      "calendar": "ac1b095f2cab29da54881749160690c2ec9ecf25eb595472b446432d43c99bb7",
+      "corporate_actions": "bd2858a2f1904e2e03cb3d2935f8d205e4d2f9896c968994c15cdabe2e9ac649",
+      "runtime_config": "45a308da2ae395042ad5b9bdda97946df6e2a349350af1ef487f93ddc5c2c0c3",
+      "rules": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb",
+      "market_spec": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+    },
+    "timing_ms": {
+      "before": {
+        "samples": [
+          784.691,
+          870.037,
+          748.535,
+          762.938,
+          771.298,
+          781.401,
+          807.16,
+          844.019,
+          795.493
+        ],
+        "p50": 784.691,
+        "p95": 870.037
+      },
+      "after": {
+        "samples": [
+          610.012,
+          605.525,
+          597.094,
+          589.417,
+          597.296,
+          606.668,
+          671.768,
+          678.303,
+          641.734
+        ],
+        "p50": 606.668,
+        "p95": 678.303
+      }
+    },
+    "p50_change_percent": -22.69
+  },
+  "result_hash_equal": true,
+  "profile_coverage_claim": false,
+  "limitations": [
+    "synthetic deterministic minute bars and weekday-only calendar",
+    "corporate actions are sparse and do not represent exchange-wide production distributions",
+    "timing compares complete CLI invocations, not an isolated kernel microbenchmark",
+    "does not establish ashare-research profile completion"
+  ]
+}

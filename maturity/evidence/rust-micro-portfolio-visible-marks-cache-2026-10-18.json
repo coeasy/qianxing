@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "rust_micro_portfolio_visible_marks_cache",
+  "generated_at_utc": "2026-10-18",
+  "profile": "release",
+  "command": [
+    "cargo",
+    "bench",
+    "--offline",
+    "-p",
+    "qx-cli",
+    "--bench",
+    "criterion_performance",
+    "-j",
+    "1",
+    "--",
+    "portfolio_visible_marks_aligned"
+  ],
+  "criterion_version": "0.8.2",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "benchmark_executable_sha256": "EBC9D6E17975A3E097DE1D797BC81120227F90022FCC344B2DFEA4DF2B423FFE",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "system_model": "MS-7E27",
+    "physical_core_count": 8,
+    "logical_cpu_count": 16,
+    "total_ram_bytes": 65911173120
+  },
+  "method": {
+    "bars_per_market": 128,
+    "visible_bar_index": 63,
+    "market_counts_and_admission_batches": [2, 8, 32, 64],
+    "samples_per_case": 10,
+    "warm_up_seconds": 1,
+    "measurement_seconds": 2,
+    "input": "All markets have timestamps 0..127 and every admission batch uses visible_ts=63; each batch reads one distinct instrument mark from the shared snapshot.",
+    "parity": "Before timing, repeated snapshot construction is checked for equality across all batches; both timed paths use the same partition_point-based snapshot builder and consume the same mark for each market.",
+    "baseline": "Rebuild the full BTreeMap<InstrumentId, Price> for every admission batch, matching the pre-cache repeated assembly path.",
+    "candidate": "Check the cached visible_ts for each batch and build the snapshot once, then reuse the same map for subsequent batches with that timestamp, matching the production cache behavior.",
+    "timing_scope": "Snapshot preparation and mark lookup only; excludes strategy, admission checks, ledger valuation, matching, I/O, and complete backtest orchestration."
+  },
+  "results": [
+    {
+      "market_count": 2,
+      "baseline_mean_ns": 489.01,
+      "baseline_ci95_ns": [469.91, 511.94],
+      "cached_mean_ns": 248.31,
+      "cached_ci95_ns": [243.63, 254.31],
+      "cached_path_speedup_pct": 49.22
+    },
+    {
+      "market_count": 8,
+      "baseline_mean_ns": 5991.76,
+      "baseline_ci95_ns": [5891.37, 6151.43],
+      "cached_mean_ns": 860.48,
+      "cached_ci95_ns": [836.40, 885.47],
+      "cached_path_speedup_pct": 85.64
+    },
+    {
+      "market_count": 32,
+      "baseline_mean_ns": 111772.49,
+      "baseline_ci95_ns": [108411.34, 115282.80],
+      "cached_mean_ns": 4116.45,
+      "cached_ci95_ns": [4002.16, 4244.51],
+      "cached_path_speedup_pct": 96.32
+    },
+    {
+      "market_count": 64,
+      "baseline_mean_ns": 436061.33,
+      "baseline_ci95_ns": [426450.62, 448076.05],
+      "cached_mean_ns": 8420.32,
+      "cached_ci95_ns": [8280.07, 8624.18],
+      "cached_path_speedup_pct": 98.07
+    }
+  ],
+  "limitations": [
+    "This is a synthetic component microbenchmark for aligned markets; it does not establish end-to-end multi-market or A-share backtest speedup.",
+    "The benchmark exercises a high-reuse case where every admission batch has the same visible timestamp; irregular visible timestamps may reuse less often.",
+    "No allocator counter was enabled, and the nine product profile measurement statuses are unchanged."
+  ]
+}

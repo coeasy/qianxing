@@ -6,14 +6,26 @@
 //! `--help`：它真的走一遍 clap 解析 + 该命令自己的用法渲染，任一条命令没接上、或渲染失败，都会让
 //! 本用例当场变红。
 //!
-//! 命令名清单必须与 clap 表**逐一相等**——由门禁 `cli_surface_coverage_check` 看守：清单里少了
-//! 命令、或新增命令没进清单，都会红。所以这张表是「逐颗用例」的事实来源，不是装饰。
+//! 命令名清单由 clap 参数源生成到 maturity/cli_command_manifest.json；架构门禁要求生成物逐字节
+//! 新鲜，且这里从该文件逐条启动 binary。因此新增或改名路由后必须重生成，才能同时刷新逐颗用例。
 
 use std::process::Command;
 
+fn assert_same_process_replay(first: &std::process::Output, second: &std::process::Output) {
+    assert_eq!(first.status.code(), second.status.code());
+    assert_eq!(
+        first.stdout, second.stdout,
+        "stdout changed across CLI replays"
+    );
+    assert_eq!(
+        first.stderr, second.stderr,
+        "stderr changed across CLI replays"
+    );
+}
+
 #[test]
 fn provider_backtest_without_configured_sources_fails_closed() {
-    use qx_app::{BacktestSpec, BuiltinStrategySpec, ProviderBacktestSpec};
+    use qx_app::{BacktestDatasetInput, BacktestSpec, BuiltinStrategySpec, ProviderBacktestSpec};
     use qx_provider::{DataKind, DataQuery, DataRequest, DataRequirements};
     use std::collections::BTreeSet;
 
@@ -42,9 +54,11 @@ fn provider_backtest_without_configured_sources_fails_closed() {
             DataRequirements::default(),
         ),
         backtest: BacktestSpec::new(
-            "cli-provider-no-source",
-            "BTCUSDT.BINANCE",
-            "target/provider-backtest/bars.json",
+            BacktestDatasetInput {
+                run_id: "cli-provider-no-source".into(),
+                instrument: "BTCUSDT.BINANCE".into(),
+                bars_path: "target/provider-backtest/bars.json".into(),
+            },
             "USDT",
             100_000_000_000_000,
             20261013,
@@ -60,16 +74,22 @@ fn provider_backtest_without_configured_sources_fails_closed() {
     std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap())
         .expect("write valid provider-backtest spec");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
-        .current_dir(root)
-        .args([
-            "app",
-            "provider-backtest",
-            "deploy/qianxing.runtime.example.json",
-        ])
-        .arg(&spec_path)
-        .output()
-        .expect("run provider-backtest without configured sources");
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+            .current_dir(root)
+            .args([
+                "app",
+                "provider-backtest",
+                "deploy/qianxing.runtime.example.json",
+            ])
+            .arg(&spec_path)
+            .output()
+            .expect("run provider-backtest without configured sources")
+    };
+    let first = run();
+    let second = run();
+    assert_same_process_replay(&first, &second);
+    let output = first;
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("DATA_UNAVAILABLE"), "{stderr}");
@@ -83,7 +103,7 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
         DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
     };
     use qx_core::SCALE;
-    use qx_provider::{DataKind, DataQuery, DataRequest, DataRequirements};
+    use qx_provider::{DataKind, DataQuery, DataRequest, DataRequirements, MarketDataTier};
     use std::collections::BTreeSet;
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -109,7 +129,10 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
                 end: 3,
                 as_of: None,
             },
-            DataRequirements::default(),
+            DataRequirements {
+                required_data_tier: Some(MarketDataTier::L1),
+                ..DataRequirements::default()
+            },
         ),
         backtest: DepthBacktestSpec {
             schema_version: DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
@@ -121,6 +144,7 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
             fee_bps: 0,
             latency_snapshots: 0,
             queue_position_bps: 0,
+            queue_position_model: Default::default(),
             market_impact_bps: 0,
             output_dir: "target/provider-depth/run".into(),
             strategy: BuiltinStrategySpec::new(
@@ -137,16 +161,22 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
     std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap())
         .expect("write valid ProviderDepthBacktestSpec");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
-        .current_dir(root)
-        .args([
-            "app",
-            "provider-depth-backtest",
-            "deploy/qianxing.runtime.example.json",
-        ])
-        .arg(&spec_path)
-        .output()
-        .expect("run provider-depth-backtest without configured sources");
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+            .current_dir(root)
+            .args([
+                "app",
+                "provider-depth-backtest",
+                "deploy/qianxing.runtime.example.json",
+            ])
+            .arg(&spec_path)
+            .output()
+            .expect("run provider-depth-backtest without configured sources")
+    };
+    let first = run();
+    let second = run();
+    assert_same_process_replay(&first, &second);
+    let output = first;
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("DATA_UNAVAILABLE"), "{stderr}");
@@ -154,62 +184,50 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
 }
 
 /// 顶层命令表（与 `cli_args.rs` 的 clap 派生逐一相等，由门禁核对）。
-const CLI_COMMANDS: [&str; 47] = [
-    "all",
-    "app",
-    "backtest",
-    "binance-private-probe",
-    "binance-public-probe",
-    "binance-submit-order",
-    "binance-worker",
-    "builtin-strategies",
-    "ccxt-fetch-ohlcv",
-    "ccxt-market-spec",
-    "ccxt-submit-order",
-    "ccxt-worker",
-    "config",
-    "console",
-    "consumer-dlq-replay",
-    "data-validate",
-    "dataset-bundle",
-    "dataset-ingest",
-    "doctor",
-    "ecosystem",
-    "event-consumer-worker",
-    "fast-backtest",
-    "init",
-    "live-check",
-    "outbox-relay",
-    "outbox-relay-postgres",
-    "outbox-relay-worker",
-    "paper",
-    "paper-check",
-    "paper-e2e",
-    "paper-submit-order",
-    "paper-worker",
-    "plan",
-    "quickstart",
-    "reconcile",
-    "recovery-child",
-    "report",
-    "run",
-    "runtime-check",
-    "scheduler-worker",
-    "serve",
-    "status",
-    "strategy",
-    "strategy-worker",
-    "supervise",
-    "verify",
-    "version",
-];
+const COMMAND_MANIFEST: &str = include_str!("../src/cli_command_manifest.json");
+
+fn generated_routes() -> Vec<serde_json::Value> {
+    let manifest: serde_json::Value = serde_json::from_str(COMMAND_MANIFEST)
+        .expect("generated CLI command manifest is valid JSON");
+    manifest["commands"]
+        .as_array()
+        .expect("manifest commands is an array")
+        .clone()
+}
+
+fn generated_top_level_commands() -> Vec<String> {
+    generated_routes()
+        .into_iter()
+        .filter(|route| route["parent"].is_null() && route["name"] != "help")
+        .map(|route| {
+            route["name"]
+                .as_str()
+                .expect("route name is a string")
+                .to_owned()
+        })
+        .collect()
+}
+
+fn generated_nested_commands() -> Vec<String> {
+    generated_routes()
+        .into_iter()
+        .filter(|route| route["parent"].is_string())
+        .map(|route| {
+            format!(
+                "{} {}",
+                route["parent"].as_str().expect("nested route has a parent"),
+                route["name"].as_str().expect("route name is a string")
+            )
+        })
+        .collect()
+}
 
 /// 逐颗命令实跑 `--help`：clap 必须认这个入口（退 0），且印出的用法里带该命令名。
 #[test]
 fn every_command_renders_its_own_help() {
-    for name in CLI_COMMANDS {
+    for name in generated_top_level_commands() {
         let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
-            .args([name, "--help"])
+            .args([name.as_str(), "--help"])
             .output()
             .expect("启动 qx-cli 失败");
         let code = output.status.code().unwrap_or(-1);
@@ -220,7 +238,7 @@ fn every_command_renders_its_own_help() {
             "`qx-cli {name} --help` 必须退 0（clap 认不出这条入口？），stderr: {stderr}"
         );
         assert!(
-            stdout.contains(name),
+            stdout.contains(name.as_str()),
             "`qx-cli {name} --help` 的用法必须点名该命令:\n{stdout}"
         );
     }
@@ -230,49 +248,12 @@ fn every_command_renders_its_own_help() {
 ///
 /// 顶层表只保证每条入口能渲染自己的用法；`backtest ccxt-builtin`、`strategy list` 这类
 /// **二级入口**此前一颗用例都没点过名（旧判据 `cli_command_test_evidence_check` 报出的正是
-/// 这两条）——它一敲就崩、或自己的用法渲染不出来时没人红。这里把 21 条二级入口逐条实跑
+/// 这两条）——它一敲就崩、或自己的用法渲染不出来时没人红。这里将生成清单里的二级入口逐条实跑
 /// `--help`，与顶层那条同一口径（退 0 + 用法里带叶子名）。
-const NESTED_COMMANDS: [&str; 34] = [
-    "config explain",
-    "config validate",
-    "config fingerprint",
-    "config lock",
-    "run backtest",
-    "run paper",
-    "run paper-check",
-    "run doctor",
-    "run live-check",
-    "run runtime-check",
-    "run report",
-    "strategy list",
-    "strategy init",
-    "strategy backtest",
-    "backtest builtin",
-    "backtest multi-builtin",
-    "backtest ccxt-builtin",
-    "backtest book",
-    "app validate-dataset",
-    "app backtest",
-    "app provider-backtest",
-    "app provider-depth-backtest",
-    "app verify",
-    "app compare-runs",
-    "app plan-risk-parity",
-    "app plan-algo-execution",
-    "app run-experiment",
-    "app run-depth-experiment",
-    "app run-multi-leg-experiment",
-    "app run-multi-market-experiment",
-    "app depth-backtest",
-    "app verify-depth",
-    "app multi-leg-backtest",
-    "app multi-account-backtest",
-];
-
 /// 逐条二级入口实跑 `--help`：clap 必须认它（退 0），且用法里带子命令名。
 #[test]
 fn every_nested_command_renders_its_own_help() {
-    for spec in NESTED_COMMANDS {
+    for spec in generated_nested_commands() {
         let args = spec.split(' ').chain(["--help"]).collect::<Vec<_>>();
         let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
             .args(&args)
@@ -289,6 +270,82 @@ fn every_nested_command_renders_its_own_help() {
         assert!(
             stdout.contains(leaf),
             "`qx-cli {spec} --help` 的用法必须点名 `{leaf}`:\n{stdout}"
+        );
+    }
+}
+
+/// Pure local validation failures for command families that otherwise need a venue or a
+/// feature-gated backend. These cases pin the process boundary without contacting a venue or DB.
+#[test]
+fn venue_and_optional_backend_commands_fail_closed_before_external_io() {
+    let cases: [(&[&str], &str); 7] = [
+        (
+            &["binance-public-probe", "unsupported-network"],
+            "network 必须是 testnet 或 mainnet",
+        ),
+        (
+            &["storage-adopt-postgres", "--schema", "qx_test"],
+            "需要使用 --features postgres 构建 qx-cli",
+        ),
+        (
+            &[
+                "outbox-relay",
+                "target/outbox",
+                "nats://127.0.0.1:4222",
+                "qx",
+            ],
+            "需要使用 --features nats 构建 qx-cli",
+        ),
+        (
+            &[
+                "outbox-relay-postgres",
+                "deploy/runtime.json",
+                "nats://127.0.0.1:4222",
+                "qx",
+            ],
+            "需要使用 --features 'nats postgres' 构建 qx-cli",
+        ),
+        (
+            &["outbox-relay-worker", "deploy/runtime.json", "relay-1"],
+            "需要使用 --features nats 构建 qx-cli",
+        ),
+        (
+            &["event-consumer-worker", "deploy/runtime.json", "consumer-1"],
+            "需要使用 --features nats 构建 qx-cli",
+        ),
+        (
+            &[
+                "consumer-dlq-replay",
+                "deploy/runtime.json",
+                "group-1",
+                "event-1",
+            ],
+            "需要使用 --features nats 构建 qx-cli",
+        ),
+    ];
+
+    for (args, expected_error) in cases {
+        let run = || {
+            Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+                .args(args)
+                .output()
+                .expect("启动 qx-cli 失败")
+        };
+        let first = run();
+        let second = run();
+        assert_same_process_replay(&first, &second);
+        let output = first;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "`qx-cli {}` 必须以确定性错误拒绝输入：\n{stderr}",
+            args.join(" ")
+        );
+        assert!(
+            stderr.contains(expected_error),
+            "`qx-cli {}` 的错误应包含 `{expected_error}`：\n{stderr}",
+            args.join(" ")
         );
     }
 }

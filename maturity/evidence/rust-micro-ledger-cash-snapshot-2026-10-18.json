@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "rust_micro_ledger_cash_balances_snapshot",
+  "generated_at_utc": "2026-10-18",
+  "profile": "release",
+  "benchmark": "ledger_cash_balances_snapshot",
+  "criterion_version": "0.8.2",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "benchmark_executable_sha256": "A11F50259557653041D434BEDD6B95880AE857A545D06579BD2640968E2E771B",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics",
+    "system_model": "MS-7E27",
+    "physical_core_count": 8,
+    "logical_cpu_count": 16,
+    "total_ram_bytes": 65911173120
+  },
+  "method": {
+    "currency_counts": [1, 8, 64],
+    "samples_per_case": 10,
+    "warm_up_seconds": 1,
+    "measurement_seconds": 2,
+    "correctness_check": "owned BTreeMap exactly equals borrowed account snapshot before timing",
+    "owned_path": "Ledger::cash_balances_for clones the account's currency map",
+    "borrowed_path": "Ledger::cash_balances_for_ref returns the account map by shared reference",
+    "allocation_counter_enabled": false
+  },
+  "results": [
+    {
+      "currency_count": 1,
+      "owned_estimate_ns": 65.598,
+      "owned_interval_ns": [64.695, 66.564],
+      "borrowed_estimate_ns": 4.9686,
+      "borrowed_interval_ns": [4.8515, 5.1904],
+      "owned_to_borrowed_ratio": 13.20
+    },
+    {
+      "currency_count": 8,
+      "owned_estimate_ns": 287.26,
+      "owned_interval_ns": [276.87, 299.57],
+      "borrowed_estimate_ns": 5.2082,
+      "borrowed_interval_ns": [5.1374, 5.3144],
+      "owned_to_borrowed_ratio": 55.14
+    },
+    {
+      "currency_count": 64,
+      "owned_estimate_ns": 2849.8,
+      "owned_interval_ns": [2769.2, 2960.8],
+      "borrowed_estimate_ns": 5.3163,
+      "borrowed_interval_ns": [5.0672, 5.6036],
+      "owned_to_borrowed_ratio": 536.00
+    }
+  ],
+  "claim": "The borrowed lookup avoids constructing the owned account snapshot; internal read-only strategy refresh paths now use it.",
+  "limitations": [
+    "This microbenchmark measures the snapshot lookup only, not the full Bar or order-book backtest.",
+    "StrategyContext keeps an owned cash map and still copies snapshot contents when updating that state.",
+    "No allocator counter was enabled, so allocation removal is established by the implementation path rather than a measured allocation count.",
+    "Does not change any of the nine product profile measurement statuses."
+  ]
+}

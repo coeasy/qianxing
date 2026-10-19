@@ -5,6 +5,7 @@
 
 pub mod bar_manifest;
 pub mod batch;
+pub mod calendar_fingerprint;
 pub mod catalog;
 pub mod catalog_v2;
 pub mod corporate_action;
@@ -19,8 +20,23 @@ pub mod schema;
 pub mod storage;
 pub mod validation;
 
+/// Stable provider version used for JSON BarFrame datasets across ingest, validation and replay.
+pub const BARFRAME_DATASET_VERSION: &str = "barframe-json-v1";
+pub const DEPTHFRAME_DATASET_VERSION: &str = "depth-frame-v1";
+
+/// SHA-256 for exact source bytes, shared by manifest writers and independent readers.
+pub fn sha256_hex_bytes(bytes: &[u8]) -> String {
+    use ring::digest::{digest, SHA256};
+    digest(&SHA256, bytes)
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 pub use bar_manifest::manifest_from_bar_frame;
 pub use batch::{load_bar_batch, BarBatchItem, BarRequest};
+pub use calendar_fingerprint::calendar_component_fingerprint_from_json;
 pub use catalog::{
     ArrowDatasetManifest, ArrowFieldManifest, DatasetBundleManifest, DatasetComponentFormat,
     DatasetComponentManifest, DatasetManifest, JsonDatasetBundleStore,
@@ -30,7 +46,7 @@ pub use catalog_v2::{
     DATASET_MANIFEST_V2_SCHEMA_VERSION,
 };
 pub use corporate_action::{CorporateAction, CorporateActionType};
-pub use fingerprint::fingerprint_bars;
+pub use fingerprint::{fingerprint_bar_frame, fingerprint_bars};
 pub use incremental::{merge_bars, IncrementalMergeReport};
 pub use ingestion::{ingest_bars, IngestionReport, IngestionRequest};
 pub use pipeline::{process_bars, DataPipelineReport};

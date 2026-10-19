@@ -21,15 +21,19 @@ pub(crate) fn run_ccxt_reconcile_worker(
         .clone()
         .ok_or_else(|| format!("worker {} 缺少 venue_id", worker.id))?;
     let python = python_interpreter();
-    let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
+    let runtime_config = read_runtime_config(&runtime_config_path)?;
+    let log_name = required_account_event_log(&worker)?;
+    let settlement_currency = account_worker_settlement_currency(&runtime_config, &worker)?;
     let mut pipeline = pipeline_storage
-        .open(required_account_event_log(&worker)?, settlement_currency)
+        .open(log_name.clone(), settlement_currency)
         .map_err(|error| format!("打开 CCXT 对账 EventLog 失败: {error}"))?;
+    let mut metrics = PipelineMetricsReporter::new(&runtime_config, context.id(), &log_name);
     context.mark(
         qx_runtime::ServiceStatus::Ready,
         format!("ccxt reconcile polling venue={venue_id}"),
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish_if_due(true, runtime_timestamp_ms());
     while !context.should_stop() {
         pipeline
             .refresh()
@@ -347,6 +351,8 @@ pub(crate) fn run_ccxt_reconcile_worker(
             ),
             Some(received_ts),
         )?;
+        metrics.observe(&pipeline);
+        metrics.publish_if_due(true, received_ts);
         if once {
             break;
         }
@@ -357,6 +363,7 @@ pub(crate) fn run_ccxt_reconcile_worker(
         "ccxt reconciler stopped",
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish(false, runtime_timestamp_ms());
     Ok(())
 }
 /// 一条对账发现落到事实流所需的最小信息。

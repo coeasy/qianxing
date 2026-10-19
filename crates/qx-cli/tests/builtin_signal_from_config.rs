@@ -131,26 +131,27 @@ fn declared_windows_change_the_builtin_result() {
     let config = signal_config(&root, |_| {});
     let (_, plain, plain_err) = builtin("ema_cross", "100", None);
     assert!(
-        line_with(&plain, "[Builtin · Signal]").contains("source=builtin-default"),
-        "不读配置时必须报出用的是默认口径: {plain_err}"
+        line_with(&plain, "[Strategy · Signal]")
+            .contains("source=config fast_window=5 slow_window=20"),
+        "省略 --config 时仍读取统一默认运行时配置: {plain_err}"
     );
-    assert_eq!(field(&plain, "[Builtin · Backtest]", "fills"), "0");
+    assert_eq!(field(&plain, "[Strategy · Backtest]", "fills"), "0");
     let (code, bound, bound_err) = builtin("ema_cross", "100", Some(&config));
     assert_eq!(code, 0, "配置里的信号参数必须被接受: {bound_err}");
     assert_eq!(
-        field(&bound, "[Builtin · Backtest]", "fills"),
+        field(&bound, "[Strategy · Backtest]", "fills"),
         "1",
         "窗口换了却没换成交，说明参数没进策略"
     );
     assert!(
-        line_with(&bound, "[Builtin · Signal]")
+        line_with(&bound, "[Strategy · Signal]")
             .contains("source=config fast_window=2 slow_window=3"),
         "用了哪套信号口径要印出来: {}",
-        line_with(&bound, "[Builtin · Signal]")
+        line_with(&bound, "[Strategy · Signal]")
     );
     assert_ne!(
-        field(&plain, "[Builtin · Backtest]", "result_hash"),
-        field(&bound, "[Builtin · Backtest]", "result_hash")
+        field(&plain, "[Strategy · Backtest]", "result_hash"),
+        field(&bound, "[Strategy · Backtest]", "result_hash")
     );
 }
 
@@ -163,14 +164,14 @@ fn declared_period_and_threshold_each_move_the_result() {
     });
     let (_, rsi_default, err) = builtin("rsi", "100", None);
     assert_eq!(
-        field(&rsi_default, "[Builtin · Backtest]", "fills"),
+        field(&rsi_default, "[Strategy · Backtest]", "fills"),
         "0",
         "默认周期 14 在这 6 根 Bar 上算不出指标: {err}"
     );
     let (code, rsi_short, err) = builtin("rsi", "100", Some(&short_rsi));
     assert_eq!(code, 0, "合法周期必须跑通: {err}");
-    assert_eq!(field(&rsi_short, "[Builtin · Backtest]", "fills"), "1");
-    assert!(line_with(&rsi_short, "[Builtin · Signal]").contains("period=2"));
+    assert_eq!(field(&rsi_short, "[Strategy · Backtest]", "fills"), "1");
+    assert!(line_with(&rsi_short, "[Strategy · Signal]").contains("period=2"));
 
     let loose_grid = signal_config(&root, |value| {
         set(&mut value["strategy"], "builtin_threshold_bps", 0)
@@ -180,7 +181,7 @@ fn declared_period_and_threshold_each_move_the_result() {
     });
     let (_, grid_default, grid_default_err) = builtin("grid", "100", None);
     assert_eq!(
-        field(&grid_default, "[Builtin · Backtest]", "fills"),
+        field(&grid_default, "[Strategy · Backtest]", "fills"),
         "2",
         "默认阈值下 grid 的基线成交数要固定，否则下面的三值对比无意义: {grid_default_err}"
     );
@@ -189,12 +190,12 @@ fn declared_period_and_threshold_each_move_the_result() {
     let (code, grid_tight, err) = builtin("grid", "100", Some(&tight_grid));
     assert_eq!(code, 0, "阈值 500 必须跑通: {err}");
     let hashes = [
-        field(&grid_default, "[Builtin · Backtest]", "result_hash"),
-        field(&grid_loose, "[Builtin · Backtest]", "result_hash"),
-        field(&grid_tight, "[Builtin · Backtest]", "result_hash"),
+        field(&grid_default, "[Strategy · Backtest]", "result_hash"),
+        field(&grid_loose, "[Strategy · Backtest]", "result_hash"),
+        field(&grid_tight, "[Strategy · Backtest]", "result_hash"),
     ];
-    assert_eq!(field(&grid_loose, "[Builtin · Backtest]", "fills"), "1");
-    assert_eq!(field(&grid_tight, "[Builtin · Backtest]", "fills"), "0");
+    assert_eq!(field(&grid_loose, "[Strategy · Backtest]", "fills"), "1");
+    assert_eq!(field(&grid_tight, "[Strategy · Backtest]", "fills"), "0");
     assert_eq!(
         hashes
             .iter()
@@ -242,7 +243,7 @@ fn single_sided_override_is_rechecked_before_the_provenance_line() {
         "报错要给覆盖后的生效值，只说\"参数非法\"没法定位是哪个键: {stderr}"
     );
     assert!(
-        !stdout.contains("[Builtin · Signal]"),
+        !stdout.contains("[Strategy · Signal]"),
         "口径行只能在参数体检通过后才准印，否则等于宣告了一套没跑过的参数:\n{stdout}"
     );
     let (code, stdout, stderr) = run(&[
@@ -299,7 +300,7 @@ fn both_bar_chains_read_the_same_declared_signal() {
     assert_eq!(code, 0, "策略链基线必须跑通: {err}");
     let (code, builtin_chain, err) = builtin("ema_cross", "100", Some(&config));
     assert_eq!(code, 0, "内置链同一份配置必须跑通: {err}");
-    let marker = "[Builtin · Backtest]".to_string();
+    let marker = "[Strategy · Backtest]".to_string();
     // 两条链都得真的成交：零成交下"逐项相等"可以永远成立，那就不是在核对同一套信号。
     assert_ne!(
         field(&strategy_chain, "[Strategy · Backtest]", "fills"),
@@ -313,7 +314,7 @@ fn both_bar_chains_read_the_same_declared_signal() {
             "同一份配置在两条 Bar 链上的 {key} 不同，说明信号口径又分叉了"
         );
     }
-    assert!(line_with(&builtin_chain, "[Builtin · Signal]").contains("source=config"));
+    assert!(line_with(&builtin_chain, "[Strategy · Signal]").contains("source=config"));
     assert!(
         line_with(&strategy_chain, "[Strategy · Signal]").contains("source=config"),
         "策略链也要印出生效口径，否则读者无从判断配置是否被认账: {}",
@@ -325,7 +326,7 @@ fn both_bar_chains_read_the_same_declared_signal() {
             .unwrap_or_default()
     };
     assert_eq!(
-        params(&line_with(&builtin_chain, "[Builtin · Signal]")),
+        params(&line_with(&builtin_chain, "[Strategy · Signal]")),
         params(&line_with(&strategy_chain, "[Strategy · Signal]")),
         "两条链印出来的来源判词与四项参数必须逐项相同"
     );

@@ -1,0 +1,26 @@
+[
+  {
+    "job_id": "paper-strategy-order",
+    "job_version": "v1",
+    "owner": "strategy-paper",
+    "enabled": true,
+    "trigger": {
+      "Cron": "* * * * *"
+    },
+    "window": "Any",
+    "depends_on": [],
+    "input_refs": ["market:BTCUSDT.BINANCE"],
+    "output_refs": ["strategy:order-intent"],
+    "timeout_seconds": 60,
+    "retry_policy": {
+      "max_attempts": 1,
+      "backoff_seconds": 0,
+      "retryable_codes": []
+    },
+    "concurrency_key": "paper-strategy-order",
+    "idempotency_key": "paper-strategy-order-v1",
+    "permission_scope": "strategy",
+    "audit_reason": "paper strategy order smoke",
+    "dry_run": false
+  }
+]

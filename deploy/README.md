@@ -43,11 +43,16 @@ cargo run --release -p qx-cli -- binance-private-probe deploy/qianxing.runtime.p
 
 `live-check` 是不连接交易所、不发送订单的生产发布前静态门禁。它会额外检查 production 环境、配置指纹锁、TLS 文件、凭据来源、Execution 品种规格与名义额上限、研究快照文件；模板中的占位路径或 `config_fingerprint: null` 会按预期失败，必须替换为部署机上的真实发布配置后再通过。
 
-`runtime-check --json` 输出版本化运行时诊断（健康快照、配置指纹、引用 warnings/failures 和安全边界字段），
-适合 CI、启动脚本和部署平台采集；它不会连接交易所或发送订单。`run runtime-check --json` 是等价的统一入口。
+`runtime-check --json` 输出 `schema_version: 3` 运行时诊断：复用 `doctor` 的配置、路径、拓扑检查清单，
+并附加健康快照、配置指纹、安全边界字段及 R/P/O/L `readiness_layers`。O 层只在健康快照为 `Ready` 时通过；
+`Starting`/`Degraded`/`Stopped` 明确为 `not_assessed`。消费者应按 `schema_version` 分支，并忽略不识别的新增检查项。
+它不会连接交易所或发送订单；`run runtime-check --json` 是等价的统一入口。
 
-`live-check --json` 输出实盘发布前的逐项环境、TLS、凭据、产品规格、风险限额和研究快照检查，
-同样不会连接交易所或发送订单；`run live-check --json` 是等价的统一入口。
+`live-check --json` 输出 `schema_version: 3` 发布前报告，先包含同一份基础检查，再附加环境、TLS、
+凭据、产品规格、风险限额和研究快照闸门。L 层通过只表示静态 production 预检通过，不表示账户已连接或订单已验证；
+R/P/O/L 结果在 `readiness_layers` 中，消费者应按 `schema_version` 分支并忽略不识别的新增检查项。
+它不会连接交易所或发送订单；
+`run live-check --json` 是等价的统一入口。
 
 公共 CCXT 的私有 worker 可以只在 `endpoint` 指向的 CCXT JSON 中配置
 `credential_env.api_key`、`credential_env.secret`（以及交易所需要的 `password`），
@@ -69,7 +74,7 @@ cargo run --release -p qx-cli -- config fingerprint qianxing.runtime.json
 cargo run --release -p qx-cli -- config lock qianxing.runtime.json qianxing.runtime.locked.json
 cargo run --release -p qx-cli -- backtest
 cargo run --release -p qx-cli -- run paper
-cargo run --release -p qx-cli -- paper-check deploy/qianxing.runtime.paper-strategy.example.json
+cargo run --release -p qx-cli -- paper-check --json deploy/qianxing.runtime.paper-strategy.example.json
 ```
 
 `quickstart` 是上面那一串的一条命令版首跑路径（V13 R2 #255）：依次执行 `init --strategy macd` → `doctor` →
@@ -80,7 +85,7 @@ cargo run --release -p qx-cli -- paper-check deploy/qianxing.runtime.paper-strat
 `init --profile ashare`）；`paper-check` 不在其中——它只对 paper profile 那份带启用 Scheduler worker 的运行时成立
 （#261），文档把它写成带前提的一句话而不是待敲命令。
 
-`paper-check` 是端到端的一次性验收（调度 → 策略 → 注入一条合成行情 → 执行 worker 撮合），末行按「本轮新增」而不是事实流的累计量给结论（V13 第三十一遍 ② #275）：真跑出成交的那一遍印 `orders=N (+N 本轮新增) … ✓`；同一目录当日重敲第二遍时调度把当天那轮判为 `skipped`、策略与执行各 `processed=0`，端到端一手没跑，末行于是如实写「本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑」且不带 ✓。两遍都退 0——空转是幂等复用而不是失败。判据在 `tools/check_architecture.py` 的 `paper_check_delta_honesty_check`。
+`paper-check` 是端到端的一次性验收（调度 → 策略 → 注入一条合成行情 → 执行 worker 撮合），末行按「本轮新增」而不是事实流的累计量给结论（V13 第三十一遍 ② #275）：真跑出成交的那一遍印 `orders=N (+N 本轮新增) … ✓`；同一目录当日重敲第二遍时调度把当天那轮判为 `skipped`、策略与执行各 `processed=0`，端到端一手没跑，末行于是如实写「本轮零新增：当日调度已跳过、复用上一轮既有事实，未端到端重跑」且不带 ✓。文本模式两遍都退 0——空转是幂等复用而不是执行错误；`paper-check --json` 返回共享诊断报告，只有本轮确实新增订单时 P 层才是 `pass`，同日空转记为 `not_assessed`，主链路错误记为 `blocked` 并以 2 退出。判据在 `tools/check_architecture.py` 的 `paper_check_delta_honesty_check`。
 
 `doctor` 的第一格是 `build_identity`（与 `qx-cli version` 逐字相同的一行），之后才是一次检查运行时配置、策略输入、数据 Bundle、公司行为/日历文件、存储目录和运行拓扑；
 它不会连接交易所或发送订单。`config explain --json` 输出经过校验的有效配置，只有凭据引用名称/路径，
@@ -100,7 +105,7 @@ spread-recovery / reconciler）若声明了不同的 `settlement_currency`，判
 （生产代码里再出现第二处写死的 `"USDT"`，架构门禁的 `settlement_currency_check` 会红）。
 它是缺省值而不是合法币种白名单，配置里仍按上面那条规则要求同一账户日志的写入方声明一致。
 记账币种会随事实永久落进产物：只换 `settlement_currency` 而其余输入不动，回测摘要的 `result_hash`
-必须随之改变，这一格由 `crates/qx-cli/src/tests/settlement_currency_single_source.rs` 走真实回测入口
+必须随之改变，这一格由 `crates/qx-cli/tests/unit/settlement_currency_single_source.rs` 走真实回测入口
 比对两份产物（V13 R1-A4）——产物里的收益数字因此能说清自己是哪种币的收益。
 
 `init` 会将运行时配置所需的调度样例、BarFrame、DatasetBundle、品种规格和 Paper 目标复制到同一目录，
@@ -127,7 +132,7 @@ DatasetBundle 的非行情组件默认使用 JSON；Arrow 组件需要在 Bundle
 ## 模板契约面：本目录每份模板都有人真读
 
 本目录顶层的 **53 份** JSON 模板不是"给人看的示例"，而是契约的另一半：每份都在
-`crates/qx-cli/src/tests/deploy_template_coverage.rs` 的登记表里点名了**一类生产读法**，
+`crates/qx-cli/tests/unit/deploy_template_coverage.rs` 的登记表里点名了**一类生产读法**，
 用例真的调用那个读点，并把读出来的身份印进日志。跑这一族用例：
 
 ```powershell
@@ -195,7 +200,7 @@ market spec、A 股规则三件、策略 `dataset_bundle_path` 指的那份 Data
 默认输入的落点就是临时目录里按签名分桶的那一份，`result_hash=1189853a7c12447d` 与同一份输入在仓库树里跑出的
 逐字符相同（`logs/s744_pass31_standalone_exe_probe.txt`）；两条排队入口 `fast-backtest` 在同一棵无 `deploy/`
 的树上也各退 0，A 股那条 `jobs=1`、BTC 那条 `jobs=2`（`logs/s752_pass31_standalone_fast_backtest.txt`）。
-内置层的机制与"报错路径不写盘"由 `crates/qx-cli/src/tests/deploy_lookup.rs` 的 10 条单元用例与
+内置层的机制与"报错路径不写盘"由 `crates/qx-cli/tests/unit/deploy_lookup.rs` 的 10 条单元用例与
 `crates/qx-cli/tests/default_example_paths.rs` 的 7 条集成用例钉住。变异反向验证分三份看才完整：
 `logs/s743_pass31_builtin_layer_mutation.txt`（内置层）、`logs/s753_pass31_funnel_mutation.txt` 与
 `logs/s755_pass31_funnel_mutation.txt`（同一个"内置层只落被点名的那一份"的破坏在第一遍**当场假绿**——桶按内容
@@ -224,7 +229,7 @@ API 的认证边界只由 `transport` 与 `api.operators` 决定，不由 `envir
 - `transport: "plaintext"`：拿不到对端身份，`api.operators` 必须为空，于是**不装**权限策略 —— `POST /control/commands` 的档位直接取请求体里的 `permission` 字段，等于调用方自报。明文面因此只能绑回环地址：`config validate`、`doctor`、`serve` 共用同一个 `RuntimeConfig::validate()`，`api.bind` 的 IP 不是 loopback 即以「明文 API 只能绑定回环地址」拒绝（`production` 环境本来就禁止明文 API）。
 - 「内网可信」不是这条闸门的例外：要跨主机调用就换成 `transport: "mtls"` 并登记 Operator 证书。仓库里 18 份明文 runtime 模板全部绑 `127.0.0.1`，与这条闸门天然兼容 —— 这个份数与"每份明文模板的 bind 都是回环"两件事都由用例钉住，不靠人工点数。
 
-这三条不是散文承诺：`crates/qx-cli/src/tests/api_transport_auth_boundary_doc.rs` 按 `config validate` 的同一读法装载 `deploy/qianxing.runtime.example.json`，只把 `api.bind` 换成可路由地址后要求 `validate()` 报出上面那句原文，并在同一进程里对比"装了策略"与"没装策略"两种 `ApiService` 对同一条自报 `permission` 的下单请求各自的出口（没装策略那条拿到的是 202，装了策略而无证书身份的那条拿到 403）。源码侧的判定式住在 `crates/qx-runtime/src/runtime_config/topology_validation.rs`。
+这三条不是散文承诺：`crates/qx-cli/tests/unit/api_transport_auth_boundary_doc.rs` 按 `config validate` 的同一读法装载 `deploy/qianxing.runtime.example.json`，只把 `api.bind` 换成可路由地址后要求 `validate()` 报出上面那句原文，并在同一进程里对比"装了策略"与"没装策略"两种 `ApiService` 对同一条自报 `permission` 的下单请求各自的出口（没装策略那条拿到的是 202，装了策略而无证书身份的那条拿到 403）。源码侧的判定式住在 `crates/qx-runtime/src/runtime_config/topology_validation.rs`。
 
 ### environment 只有四种写法
 
@@ -246,7 +251,7 @@ API 的认证边界只由 `transport` 与 `api.operators` 决定，不由 `envir
 
 名单与提交臂的对应关系有判据两处：`crates/qx-runtime/src/runtime_config/topology_tests.rs` 的
 `environment_outside_the_closed_vocab_is_rejected_not_silently_branched` 钉装载面（名单外必须拒、报错必须回吐同一份名单），
-`crates/qx-cli/src/tests/environment_submit_arm_table.rs` 的
+`crates/qx-cli/tests/unit/environment_submit_arm_table.rs` 的
 `every_admitted_environment_spelling_declares_its_submit_arm` 要求那张"四种写法各自走模拟还是真实提交"的表与
 `ENVIRONMENT_VOCAB` **集合相等**，再逐写法驱动真实的策略作业装配核对 `dry_run`，并钉住混排写法（`"Paper"`）不得换臂。
 名单每加一个写法而不同轮为它声明提交臂，判据先红。仓库里 19 份带 `environment` 的 runtime 模板实测分布为 paper 15 份、
@@ -257,14 +262,14 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 下表是 `qx-api` 当前实现的全部 HTTP 与 WebSocket 入口。静态路由来自
 `crates/qx-api/src/lib.rs` 的 `handle_inner`，带 `{run_id}` 的动态路由由 `app_surface.rs` 的路由模板登记。除 `/health`、`/ready`、`/schema/account-snapshot-v1`、`/schema/contract-matrix`
 之外，只要运行时配置里装了操作员权限策略（`transport: "mtls"` 必然装），未通过证书识别的
-请求一律 `403 {"error":"authenticated_operator_required"}`。「返回」那一格里写成 `{…}` 的键集不是示意：`crates/qx-cli/src/tests/api_response_field_doc.rs` 会在同一进程里驱动 `ApiService`，把每条入口真的序列化出来的键集与这一格逐条比相等（V13 R2 第六遍）。
-路由名这一层的相等由 `crates/qx-cli/src/tests/api_endpoint_table_routes.rs` **逐张表**核对，
+请求一律 `403 {"error":"authenticated_operator_required"}`。「返回」那一格里写成 `{…}` 的键集不是示意：`crates/qx-cli/tests/unit/api_response_field_doc.rs` 会在同一进程里驱动 `ApiService`，把每条入口真的序列化出来的键集与这一格逐条比相等（V13 R2 第六遍）。
+路由名这一层的相等由 `crates/qx-cli/tests/unit/api_endpoint_table_routes.rs` **逐张表**核对，
 口径与盲区见下「端点表按张核对」。
 
 | 入口 | 返回 | 说明 |
 | --- | --- | --- |
 | `GET /health` | `{"status":"ok"}` | 只表示进程存活，不表示可放行交易流量 |
-| `GET /ready` | `{"ready":<bool>,"detail":<string>}` | 就绪检查 + 投影健康；未就绪时状态码 `503` |
+| `GET /ready` | `{schema_version, ready, detail, readiness_layers}`（`readiness_layers` 为空时省略） | 就绪检查 + 投影健康；R/P/O/L 从同一静态诊断起步，O/L 再并入控制存储、研究证据、交易安全资产与 worker 指标结果；未就绪时状态码 `503`。L 通过表示 production API 依赖就绪，不表示已连接 Venue 或提交过订单 |
 | `GET /metrics` | Prometheus 文本 | 见下「指标出口」：API 自身四条指标逐行印出，并追加 `worker-metrics/<worker_id>.prom` 聚合 |
 | `GET /schema/account-snapshot-v1` | JSON Schema | 公布的就是仓库里的 `schemas/account-snapshot-v1.json`（编译期 `include_str!` 取用，不存在第二份），供读者自证 |
 | `GET /schema/contract-matrix` | JSON 数组 | 稳定契约的**命名转换矩阵**（`qx_core::contract::CONTRACT_MATRIX`）：每行 `{concept, canonical_types, canonical_source, duplicates, adapter, note}`，登记同名概念谁是规范单点、哪些是同名兄弟、由哪个显式 adapter 桥接；与真实代码逐条对账由门禁 `contract_matrix_check` 看守 |
@@ -278,7 +283,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `GET /account/balances` | `{cash_raw, equity_raw, available_raw, margin_raw}` | `cash_raw` 是按币种聚合的 map（没有快照时是 `{}`），另三格是标量；未算出的钱保持 `null`，不印成 `0`（V11 Q70） |
 | `GET /account/ledger[?account_id=]` | 数组 | 读模型来自 `storage.data_dir`，非实时推送；`?account_id=` 在结果集上按账户过滤，过滤不出条目时是空数组而不是 `404`（V13 R31） |
 | `GET /reconcile/reports[?account_id=&venue_id=]` | 数组 | 同上，`ReconcileReportSnapshot` 还带 `venue_id`，所以这把键也认；两把都认时是 AND（V13 R31） |
-| `GET /scheduler/runs`、`/control/audit` | 数组 | 读模型同上，非实时推送；这两条读的是整份现读模型（默认账户那一份），**没有收窄键**，带任何查询串一律 `400`（V13 R2 #205） |
+| `GET /scheduler/runs`、`/control/audit` | 数组 | 读模型同上，非实时推送；Scheduler 返回活动运行与最多 4,096 条终态保留窗口，`/control/audit` 返回整份现读模型；两条都**没有收窄键**，带任何查询串一律 `400`（V13 R2 #205） |
 | `GET /events?after=<seq>` | `Event` 数组，每格 `{seq, ts, prio, kind, receive_time, engine_time, source_seq, correlation_id, metadata}` | 快照式读取；游标越界 → `409 event_cursor_requires_snapshot` |
 | `GET /events/live?after=<seq>` | `ProjectionEnvelope` 数组，每格 `{schema_version, kind, tenant_id, run_id, account_id, portfolio_id, venue_id, as_of, event_seq, cursor, state_hash, source, lineage, data}` | 一次性 read-after，不是长连接；每条事件外面套一层投影信封、事件本体在 `data` 里，与 `/events` 的裸 `Event` **不同形**；游标语义与 `/events` 同口径（V12 R4-g） |
 | `POST /control/commands` | 受理结果 | 载荷非法 → `400`；未识别操作员 → `403`；先持久化再入队，入队失败不回滚受理、计入 `qx_api_command_enqueue_failures_total`（见下「指标出口」） |
@@ -386,7 +391,7 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | 端点 | 语义 | 非 200 口径 |
 | --- | --- | --- |
 | `GET /health` | 进程存活 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /ready` | 依赖就绪：控制面存储、已声明研究快照、生产凭据/冻结规格、worker 指标 down/stale、投影缺口 | 503 未就绪（第二格那些条件）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /ready` | schema v2 的依赖就绪响应：ready、detail 和 R/P/O/L readiness_layers；检查共享静态诊断、控制面存储、已声明研究快照、生产凭据/冻结规格、worker 指标 down/stale、投影缺口 | 503 未就绪（第二格那些条件；共享静态诊断失败时响应的 detail 字段为 runtime_diagnostics_unavailable）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /metrics` | Prometheus 文本，按 LF 逐行（见下「指标出口是逐行的」），追加 worker 指标 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /schema/account-snapshot-v1` | 账户快照 v1 JSON Schema，就是 `schemas/account-snapshot-v1.json` 那一份（编译期内嵌，不是第二份手抄） | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /schema/contract-matrix` | 稳定契约的命名转换矩阵，公布的就是 `qx_core::contract::CONTRACT_MATRIX` 那一份（编译期取用，不是第二份手抄）；与真实代码逐条对账由门禁 `contract_matrix_check` 看守 | 429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
@@ -397,7 +402,7 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `GET /account/balances[?…]` | 四个钱字段原样，未计算的是 `null` 而不是 0 | 400 键形状非法或名单外的查询键；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /account/ledger[?account_id=]` | 每次请求现读账户日志，启动之后落盘的读得到；`?account_id=` 在结果集上按账户过滤 | 400 带了这条入口不认的查询键（`LedgerEntry` 没有 venue_id 字段，`?venue_id=` 就落在这支，正文点名被拒的那把键）或空串键；过滤不出条目时是 200 空数组，不是 404（V13 R31）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /reconcile/reports[?account_id=&venue_id=]` | 每次请求现读对账报告，启动之后落盘的读得到；两把收窄键都认时是 AND | 400 带了这条入口不认的查询键或空串键；过滤不出条目时是 200 空数组，不是 404（V13 R31）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /scheduler/runs` | 每次请求现读调度记录，启动之后落盘的读得到；整份现读模型 | 400 带任何查询串——这条入口没有收窄键（`JobRun` 没有账户列），正文点名被拒的那把键（V13 R2 第十三遍 / R6）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /scheduler/runs` | 每次请求现读调度记录，返回所有活动运行与最多 4,096 条终态运行；更早终态以 `scheduler.state_path` 中的作业级 retention anchor 留下日期水位与摘要 | 400 带任何查询串——这条入口没有收窄键（`JobRun` 没有账户列），正文点名被拒的那把键（V13 R2 第十三遍 / R6）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /events[?after=&account_id=&venue_id=]` | 投影事件全量，或 `after` 游标之后的增量 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /events/live[?after=&…]` | 事件总线现读增量，游标口径与上一行同一条实现 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`（游标过旧/超前，含空日志）；404 `account_projection_not_found`；500；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /control/audit` | 控制面审计流水 | 400 带任何查询串——这条入口同样没有收窄键（`AuditRecord` 没有账户列），与上一行同属整体现读面，正文点名被拒的那把键（V13 R2 第十三遍 / R6）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
@@ -490,7 +495,7 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
 的分派集合比相等，任一张表整行删一条路由都红在那张表的名字上。第八遍那两发变异各红一次、逐字节还原；
 第九遍起这条按张核对住在三个用例文件里（`api_endpoint_table_routes.rs` 3 条、`api_response_field_doc.rs` 3 条、`api_doc_cross_references.rs` 1 条），共 7 条用例，本轮定向实跑 `running 7 tests`、`test result: ok. 7 passed`（`logs/s190_*.txt`）；核对发布物载荷口径的另两组在 `artifact_identity_doc.rs`（2 条，含 #181 的 wheel staging 先后顺序）。
 同一张表第三格（「非 200 口径」）里点名的**错误码名与三位状态码**也由
-`crates/qx-cli/src/tests/api_endpoint_table_routes.rs` 的
+`crates/qx-cli/tests/unit/api_endpoint_table_routes.rs` 的
 `non_200_column_names_match_the_read_face_implementation` 双向核对：读面写进 error 字段的码名
 必须在文档里有名字，文档那一格承诺的码名与状态码也必须实现真产得出。第八遍立案时这一格是
 纯手抄（#182）：读面 8 个错误码名里 `forbidden`（已认证但策略给不出权限的 403）与
@@ -509,7 +514,7 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
 `directional_cross_references_point_the_right_side`：文档里每一处按「」点名的小节，被点名的标题
 必须真的落在方向词声明的那一侧，且不能上下各有一份；点名点到不存在的小节同样红。
 
-表格之外还有散文句子里的路由字面量。门禁 `api_surface_doc_check` 与本节上面两条判据都只吃表格行（每行以竖线开头），所以正文里写歪的一条入口不会被任何一侧抓到。第二十二遍实测（`logs/s523_pass22_probe_doc_routes.txt`；改后同口径复测见 `logs/s531_pass22_doc_routes_after.txt`）：本文 44 条 `METHOD 路径` 字面量里有 14 条写在两张表之外，其中「事件日志的读面与写面」那一节把按账户刷新快照的入口写成了一条带路径参数的复数形态，而这条路径从来没有被分派过，真形状是 `GET /account/snapshot?account_id=&venue_id=`。读者照那句话写客户端只会拿到 404 兜底，而这份文档是这套框架对外唯一的读面说明。现在由 `crates/qx-cli/src/tests/api_doc_prose_routes.rs` 的 `prose_route_literals_outside_the_tables_are_served_too` 把两张表之外的每一处反引号路由字面量都拿去与 `handle_inner` 的分派集合核对，并要求全文不再出现那种复数形态；它按本轮实测的 15 条表外字面量钉取数地板，防止扫描口径失灵后整条判据空转。
+表格之外还有散文句子里的路由字面量。门禁 `api_surface_doc_check` 与本节上面两条判据都只吃表格行（每行以竖线开头），所以正文里写歪的一条入口不会被任何一侧抓到。第二十二遍实测（`logs/s523_pass22_probe_doc_routes.txt`；改后同口径复测见 `logs/s531_pass22_doc_routes_after.txt`）：本文 44 条 `METHOD 路径` 字面量里有 14 条写在两张表之外，其中「事件日志的读面与写面」那一节把按账户刷新快照的入口写成了一条带路径参数的复数形态，而这条路径从来没有被分派过，真形状是 `GET /account/snapshot?account_id=&venue_id=`。读者照那句话写客户端只会拿到 404 兜底，而这份文档是这套框架对外唯一的读面说明。现在由 `crates/qx-cli/tests/unit/api_doc_prose_routes.rs` 的 `prose_route_literals_outside_the_tables_are_served_too` 把两张表之外的每一处反引号路由字面量都拿去与 `handle_inner` 的分派集合核对，并要求全文不再出现那种复数形态；它按本轮实测的 15 条表外字面量钉取数地板，防止扫描口径失灵后整条判据空转。
 
 ### 请求时间戳的三个时钟域
 
@@ -532,7 +537,7 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
 `ts` 是否随连接前进；`the_limiter_clock_domain_is_bucket_seconds_and_the_bucket_refills_across_one`
 用共享文件桶核"同一格内见底、跨过一格回血"。装配侧由 `qx-cli` 的
 `both_serve_branches_pass_a_live_clock_to_the_api_worker` 按源码点名两条分支传的是那只钟本身、不是
-它取出来的结果；租约域本身由 `crates/qx-cli/src/tests/lease_clock_domain.rs` 钉。
+它取出来的结果；租约域本身由 `crates/qx-cli/tests/unit/lease_clock_domain.rs` 钉。
 
 已知边界（如实写出）：`now` 的粒度是**每条连接一次**，不是每条请求一次。本构建的每个响应都带
 `Connection: close`，一条连接只服务一个请求，所以这里读不到差异；把 HTTP 层改成 keep-alive 复用
@@ -573,6 +578,10 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
   qx_pipeline_transient_retries_total{worker="<worker_id>",account="<account_log>"} <计数>
   qx_pipeline_refreshes_total{worker="<worker_id>",account="<account_log>"} <计数>
   qx_pipeline_failures_total{worker="<worker_id>",account="<account_log>"} <计数>
+  qx_pipeline_ingest_duration_seconds_total{worker="<worker_id>",account="<account_log>"} <秒>
+  qx_pipeline_ingest_duration_seconds_max{worker="<worker_id>",account="<account_log>"} <秒>
+  qx_pipeline_ingest_warning_budget_seconds{worker="<worker_id>",account="<account_log>"} <秒>
+  qx_pipeline_ingest_budget_exceeded{worker="<worker_id>",account="<account_log>"} <计数>
   ```
 
 - 两个边界要说清：`--once` 跑完后那份 `.prom` 的 `qx_worker_up` 是 0，计数仍在正文里，抓取端会把它
@@ -582,7 +591,7 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
   `pipeline_metrics_publish_per_worker_process_only`。这条登记、`crates/qx-runtime/src/lib.rs` 的
   公开面说明与上面那份带标签的样本形态，由判据 `pipeline_metrics_publication_and_docs_move_together`
   与生产读者清单双向钉住（V13 §9.15 #178 立案 → §9.27 接线）。
-- 哪些入口的写入**不在**这族样本里，现在是机器清点而不是手工名单：`crates/qx-cli/src/tests/pipeline_metrics_open_sites.rs` 扫生产源码里每一处 `open_account_pipeline(` 与 `open_runtime_pipeline(` 站点（本轮实测 14 处），按函数分两类点名：paper 的两条 worker 循环（1 + 3 处站点，并账次数必须与站点数**逐函数相等**——少一次是漏计、多一次是双计）与 8 项豁免（1 处统一入口向下一层的内部委托、5 处按请求或装配期打开的只读站点、`run_paper_pipeline_once` 与 `run_paper_submit_order` 这两个一次性验收入口）。豁免项必须在 `pipeline_metrics_report.rs` 的模块文档里逐名点名，新增站点不登记就红。因此 `paper-submit-order` 的口径要说清：它写入的事实照旧进 EventLog，但**不在这族计数里**——它以 `paper-execution` 的名义领取租约，把计数并进 worker 只会让那份按进程累计的量更假（V13 §9.28）。
+- 哪些入口的写入**不在**这族样本里，现在是机器清点而不是手工名单：`crates/qx-cli/tests/unit/pipeline_metrics_open_sites.rs` 扫生产源码里每一处 `open_account_pipeline(` 与 `open_runtime_pipeline(` 站点（本轮实测 14 处），按函数分两类点名：paper 的两条 worker 循环（1 + 3 处站点，并账次数必须与站点数**逐函数相等**——少一次是漏计、多一次是双计）与 8 项豁免（1 处统一入口向下一层的内部委托、5 处按请求或装配期打开的只读站点、`run_paper_pipeline_once` 与 `run_paper_submit_order` 这两个一次性验收入口）。豁免项必须在 `pipeline_metrics_report.rs` 的模块文档里逐名点名，新增站点不登记就红。因此 `paper-submit-order` 的口径要说清：它写入的事实照旧进 EventLog，但**不在这族计数里**——它以 `paper-execution` 的名义领取租约，把计数并进 worker 只会让那份按进程累计的量更假（V13 §9.28）。
 - 逐行这条口径由判据 `prometheus_exposition_is_line_separated_at_both_ends` 两头各扫一次：真驱动一次
   `/metrics` 按行解析，再把生产源码里"看起来是样本模板"的行扫一遍。变异验证见 `logs/s151_*.txt`
   （当时两处出口各改坏一次，红/绿成对）。第二十遍接线时 `crates/qx-runtime/src/pipeline.rs` 的
@@ -905,7 +914,7 @@ Paper Execution worker 可以配置 `paper_initial_cash_raw`，启动时通过�
 
 该样例同时展示 `strategies[]` 多策略配置。每个策略实例的 `id` 必须等于对应 Strategy worker id；调度任务的 `owner` 必须填写该策略实例，多个策略共用 JobQueue 时不会互相领取任务。
 
-双腿套利可使用 `backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity]`。两条 BarFrame 必须时间戳对齐；信号由同一个套利策略生成，再分别通过统一撮合、手续费、风控和 Ledger 回测，适用于跨交易所价差与现货/期货基差策略。示例输入为 `qianxing.bar-frame.pairs-primary.example.json` 与 `qianxing.bar-frame.pairs-reference.example.json`：套利信号要等两腿累计收益差越过 `builtin_threshold_bps`（默认 100 bps）才发单，`qianxing.bar-frame.example.json` 与 `qianxing.bar-frame.okx.example.json` 只差约 9 bps，用它们跑双腿示例会得到两腿都 `fills=0`。
+双腿套利可使用 `backtest multi-builtin <strategy> <primary-bar.json> <reference-bar.json> [primary-spec.json] [reference-spec.json] [quantity]`。两条 BarFrame 必须时间戳对齐；信号由同一个套利策略生成，再分别通过统一撮合、手续费、风控和 Ledger 回测，适用于跨交易所价差与现货/期货基差策略。可分别用 `data-validate` 为主腿、对冲腿生成清单，再通过 `--primary-dataset-manifest` 和 `--reference-dataset-manifest` 同时绑定；回测前逐腿核对文件摘要、数据身份、样本区间和质量字段。`--root` 会落盘腿级与组合级摘要、RunManifest、权益/成交 CSV 和 EvidenceBundle，可交给 `report` 导出 JSON/HTML/XLSX，并对同一组输入下的多个运行输出排名比较。示例输入为 `qianxing.bar-frame.pairs-primary.example.json` 与 `qianxing.bar-frame.pairs-reference.example.json`：套利信号要等两腿累计收益差越过 `builtin_threshold_bps`（默认 100 bps）才发单，`qianxing.bar-frame.example.json` 与 `qianxing.bar-frame.okx.example.json` 只差约 9 bps，用它们跑双腿示例会得到两腿都 `fills=0`。
 
 多标的、多币种批量回测使用 `fast-backtest manifest.json`。manifest 的 `jobs[]` 每项配置一个独立 `runtime`、`bars` 和可选 `market_spec`，CLI 会并行运行多个隔离账户/标的任务，适合同时比较 BTC、ETH、SOL，现货、永续、期货以及不同策略参数。示例见 `qianxing.fast-backtest.example.json`；每个 runtime 可以继续使用 `strategies[]` 配置多策略实例。
 
@@ -913,7 +922,7 @@ Paper Execution worker 可以配置 `paper_initial_cash_raw`，启动时通过�
 
 策略开发同时支持 Rust `qx-strategy`、Python `on_event`/持久 worker 和 C++ `cpp/include/qianxing_strategy.h` C ABI；三者统一返回 `StrategyDecision.intents[]`，旧 `target_qty` 仍兼容。
 
-Rust/C++ 也可以编译成独立策略进程，通过 `strategy.external_executable`、`external_args` 和 `external_env` 接入。独立进程每行读取一个 `StrategyContractInput`，每行输出一个 `{"ok":true,"output":...}` JSON；标准输出只允许协议内容，日志写标准错误。该入口与 Python 共用超时、崩溃隔离、RiskGate、OMS、执行队列和审计链路，示例见 `cpp/examples/jsonl_strategy.cpp`。**每一行都有字节上限**：`crates/qx-cli/src/strategy_host.rs:235` 与 `crates/qx-cli/src/strategy_host.rs:263` 两处泵都走 `read_capped_worker_line(&mut reader, DEFAULT_MAX_FRAME_BYTES)`，上限是 16 MiB（`crates/qx-strategy/src/frame.rs:13`）；CCXT worker 的 stdout 泵同族，落在 `crates/qx-adapter/src/ccxt.rs:77` 的 `read_capped_line(&mut reader, crate::MAX_WORKER_LINE_BYTES)`，同一格数量级（`crates/qx-adapter/src/lib.rs:663`，与 HTTP 响应总量界同值）。越界不是截断也不是丢行：这一行判为超限、整条泵中止并把「单行超过 N 字节上限」回给调用侧，比让子进程少写一个换行符就把本进程的缓冲一路吃到内存耗尽便宜得多。三处形状由门禁按调用点钉住（`read_capped_line` 一处、`read_capped_worker_line` 两处、裸 `.read_line(` 零处），越界与 EOF 两条臂各有用例（`crates/qx-cli/src/tests/worker_pipe_failure_diagnostics.rs`、`crates/qx-adapter/src/tests.rs`）。
+Rust/C++ 也可以编译成独立策略进程，通过 `strategy.external_executable`、`external_args` 和 `external_env` 接入。独立进程每行读取一个 `StrategyContractInput`，每行输出一个 `{"ok":true,"output":...}` JSON；标准输出只允许协议内容，日志写标准错误。该入口与 Python 共用超时、崩溃隔离、RiskGate、OMS、执行队列和审计链路，示例见 `cpp/examples/jsonl_strategy.cpp`。**每一行都有字节上限**：`crates/qx-cli/src/strategy_host.rs:235` 与 `crates/qx-cli/src/strategy_host.rs:263` 两处泵都走 `read_capped_worker_line(&mut reader, DEFAULT_MAX_FRAME_BYTES)`，上限是 16 MiB（`crates/qx-strategy/src/frame.rs:13`）；CCXT worker 的 stdout 泵同族，落在 `crates/qx-adapter/src/ccxt.rs:77` 的 `read_capped_line(&mut reader, crate::MAX_WORKER_LINE_BYTES)`，同一格数量级（`crates/qx-adapter/src/lib.rs:663`，与 HTTP 响应总量界同值）。越界不是截断也不是丢行：这一行判为超限、整条泵中止并把「单行超过 N 字节上限」回给调用侧，比让子进程少写一个换行符就把本进程的缓冲一路吃到内存耗尽便宜得多。三处形状由门禁按调用点钉住（`read_capped_line` 一处、`read_capped_worker_line` 两处、裸 `.read_line(` 零处），越界与 EOF 两条臂各有用例（`crates/qx-cli/tests/unit/worker_pipe_failure_diagnostics.rs`、`crates/qx-adapter/src/tests.rs`）。
 
 策略子进程不会继承父进程的交易凭证环境；`external_env` 仅允许非敏感业务参数，包含 `SECRET`、`TOKEN`、`PASSWORD`、`API_KEY`、`PRIVATE_KEY` 或 `CREDENTIAL` 的变量名会被拒绝。
 
@@ -1419,8 +1428,8 @@ MQ 集群治理器。
 
 SQLite 现在承载控制面、SubmitOrder 队列、审计、快照和限流的单机事务语义；跨节点队列、PostgreSQL 高可用、NATS stream/consumer 治理和消息链路灾备仍需部署层验收，不能把 SQLite 配置误当成集群一致性保证。
 
-API 探针语义固定为：`GET /health` 只表示进程存活；`GET /ready` 检查控制面存储、已声明的研究快照、生产凭据/冻结规格，以及
-已产生的 Relay/Consumer worker 指标中的 down/stale 状态，依赖不可用时返回 HTTP 503。生产编排仍应把
+API 探针语义固定为：`GET /health` 只表示进程存活；`GET /ready` 输出 `schema_version: 2`，先读取服务启动时生成的共享静态诊断（与 `doctor`、`runtime-check`、`live-check` 使用同一配置/路径/拓扑检查），再检查控制面存储、已声明的研究快照、生产凭据/冻结规格，以及
+已产生的 Relay/Consumer worker 指标中的 down/stale 状态，依赖不可用时返回 HTTP 503。R/P/O/L 层沿用静态报告证据，O/L 合并 API 依赖与投影状态；L 通过只代表 production API 依赖就绪，不代表 Venue 连通或真实订单验证。生产编排仍应把
 MQ、用户流、对账和交易安全状态继续接入同一 readiness provider，不能只依据 `/health` 放行交易流量。
 
 "心跳多久算陈旧"在全仓库只有一个窗口：`messaging.worker_stale_after_ms`（缺省值见

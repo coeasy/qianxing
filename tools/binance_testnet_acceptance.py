@@ -56,6 +56,7 @@ EXIT_SKIPPED = 3
 # 而被测进程链上挂着若干"连得上但不回话"的形状（NATS ack、WS 帧滴答、DB 持锁）——没有这颗
 # 预算时验收会一直阻塞而不是失败，那正是验收门禁最坏的失效：它替挂死作保。
 LEG_BUDGET_SECONDS = 180
+FLIP_RULE = "outcome=pass 且全部必需阶段成功；live-check 必须满足只读安全断言；唯一允许的非零阶段是带幂等拒绝证据的重复提交"
 
 # V10 §6 P3：每段验收都必须留下**带时间戳的结果包**，否则 `sandbox_tested` 永远
 # 没有可核对的证据来源。默认落在仓库内的证据目录，而不是跑完就删的临时目录。
@@ -89,6 +90,8 @@ def write_result_package(
         "outcome": outcome,
         "started_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at)),
         "finished_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "started_at_unix_ms": int(started_at * 1000),
+        "finished_at_unix_ms": int(time.time() * 1000),
         "duration_ms": int((time.time() - started_at) * 1000),
         "binary": str(binary),
         "instrument": instrument,
@@ -98,9 +101,8 @@ def write_result_package(
         "detail": detail,
         "sandbox_tested_flip": {
             "allowed": outcome == "pass",
-            "rule": "只有 outcome=pass 且除 live-check 之外全部阶段退出码为 0 才允许把"
-            " capabilities.yaml 的 sandbox_tested 置 true；skipped/fail 一律保持 false，"
-            "且必须连同本包一起归档",
+            "rule": FLIP_RULE,
+            "archive_required": True,
         },
     }
     path = workdir / "result.json"
@@ -459,6 +461,10 @@ def main() -> int:
                 "重复提交同一 request_id 必须被控制面拒绝（未知结果不得二次发单）："
                 f"退出码 {duplicate.returncode} 输出 {combined.strip()}"
             )
+        # 这一个非零退出码是预期事实：控制面拒绝了重复 request_id。
+        # 将其显式分类，后续 pass 判定不会把预期拒单与失败阶段混为一谈。
+        STAGE_RECORDS[-1]["expected_idempotent_rejection"] = True
+        STAGE_RECORDS[-1]["idempotency_rejection_confirmed"] = True
         log("重复 request_id 被控制面拒绝：未知结果不会自动重发")
 
         if spec["kind"] == "ccxt":
@@ -476,10 +482,21 @@ def main() -> int:
             fail("reconcile 对账", reconcile)
         status = json_step(binary, "status", ["status", str(config), "--json"])
         (workdir / "status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
-        if any(
-            record["stage"] != "live-check" and record["exit_code"] != 0
-            for record in STAGE_RECORDS
-        ):
+        invalid_stages = []
+        for record in STAGE_RECORDS:
+            if record["stage"] == "live-check":
+                continue
+            if record.get("expected_idempotent_rejection") is True:
+                if (
+                    record["stage"] not in {"binance-submit-order", "ccxt-submit-order"}
+                    or record["exit_code"] in (None, 0)
+                    or record.get("idempotency_rejection_confirmed") is not True
+                ):
+                    invalid_stages.append(record["stage"])
+                continue
+            if record["exit_code"] != 0:
+                invalid_stages.append(record["stage"])
+        if invalid_stages:
             raise SystemExit("存在非零退出码阶段，不能判定为验收通过")
         outcome, detail = "pass", ""
         log(f"验收通过：产物见 {workdir}")

@@ -59,6 +59,14 @@ pub fn manifest_from_bar_frame(
             total.checked_add((pair[1] - pair[0]).div_ceil(interval_ms) - 1)
         })
         .ok_or_else(|| "dataset missing interval count overflow".to_owned())?;
+    let start_timestamp = *frame
+        .ts
+        .first()
+        .ok_or_else(|| "validated BarFrame is empty".to_owned())?;
+    let end_timestamp = *frame
+        .ts
+        .last()
+        .ok_or_else(|| "validated BarFrame is empty".to_owned())?;
     let source = frame.source.0.clone();
     let manifest = DatasetManifestV2 {
         manifest_version: DATASET_MANIFEST_V2_SCHEMA_VERSION,
@@ -68,8 +76,8 @@ pub fn manifest_from_bar_frame(
             source,
             fingerprint,
             schema_version: BAR_FRAME_SCHEMA_VERSION,
-            start_timestamp: *frame.ts.first().expect("validated BarFrame is non-empty"),
-            end_timestamp: *frame.ts.last().expect("validated BarFrame is non-empty"),
+            start_timestamp,
+            end_timestamp,
         },
         instrument: frame.instrument.to_string(),
         timezone: timezone.to_owned(),
@@ -81,6 +89,7 @@ pub fn manifest_from_bar_frame(
             duplicate_rows: 0,
             out_of_order_rows: 0,
             missing_intervals,
+            interval_ms: Some(interval_ms),
             timezone: timezone.to_owned(),
             corporate_action_coverage: false,
             usable_tiers: vec![DatasetTier::Bar.as_str().to_owned()],

@@ -88,6 +88,10 @@ impl VenuePort for TestVenue {
         "algo-test"
     }
 
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
+    }
+
     fn submit_order(&mut self, order: Order, ts: u64) -> Result<Vec<ExecutionEvent>, String> {
         self.submits += 1;
         if matches!(self.mode, VenueMode::Unknown) {

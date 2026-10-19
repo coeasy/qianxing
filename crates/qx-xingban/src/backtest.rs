@@ -1,23 +1,24 @@
-//! 可复用的 Bar 事件回测驱动器。
-//!
-//! CLI 只是入口；真正的回测闭环在这里固定为：as_of → 风控 → OMS →
-//! 下一根 bar 撮合 → Fill → Ledger → EventLog。
+//! 可复用的 Bar 事件回测驱动器；CLI 只是入口，闭环固定为 as_of → 风控 → OMS → 下一根 bar 撮合 → Fill → Ledger → EventLog。
 
 use qx_core::{
     Event, EventKind, EventLog, FeeModel, Fill, Fnv1a, InstrumentId, Ledger, Money, Order,
-    OrderStatus, Price, Priority, Quantity, ReplayVerifier, RunManifest, Side,
+    OrderStatus, Price, Priority, Quantity, QxError, ReplayVerifier, RunManifest, Side,
     TradingInstrumentSpec, ValuationContext, SCALE,
 };
-use qx_guanxing::{Bar, DataSourceId, DataView, QualityGate, Verdict};
+use qx_guanxing::{Bar, DataSourceId, DataView};
 use qx_zhenlu::{Oms, RiskGate};
 
 use crate::ashare::{
-    AshareCorporateActionType, AshareIssuerCapitalSnapshot, AshareRuleConfig, AshareSettlementState,
+    trading::{AshareCorporateActionSchedule, AshareSessionIndex},
+    AshareCorporateActionType, AshareIssuerCapitalSnapshot, AshareRuleConfig,
+    AshareSettlementState,
 };
 use crate::cost::{LatencyModel, MarginRule};
 use crate::fill::{DataTier, FillModel};
 use crate::venue::BarMatchingEngine;
 use std::collections::BTreeMap;
+mod report;
+pub use report::BacktestReport;
 #[path = "backtest/currency.rs"]
 mod currency;
 pub mod strategy;
@@ -48,7 +49,9 @@ pub use portfolio_timeline::{PortfolioBarEvent, PortfolioBarSeries, PortfolioBar
 pub use protective_exit::{
     ProtectiveExitFill, ProtectiveExitPolicy, ProtectiveExitReason, ProtectiveExitSignal,
 };
-use virtual_validation::validate_virtual_events;
+mod virtual_events;
+use virtual_events::apply_virtual_events;
+use virtual_validation::{events_at, validate_virtual_events};
 
 /// 回测中可重放的账户业务事件。事件时间必须使用与 Bar 相同的时间单位，
 /// 费率使用基点；所有现金变化最终都要进入 Ledger，而不是直接改报告。
@@ -108,31 +111,6 @@ pub struct BacktestConfig {
     pub virtual_trading: VirtualTradingConfig,
 }
 
-pub struct BacktestReport {
-    pub fills: Vec<qx_core::Fill>,
-    pub equity: Vec<i128>,
-    /// 现金基准曲线；没有外部基准序列时显式标记为 flat-cash。
-    pub benchmark_equity: Vec<i128>,
-    pub positions: Vec<i128>,
-    /// Protective exits are keyed to their completed-bar trigger and actual next-bar fills.
-    pub protective_exit_fills: Vec<ProtectiveExitFill>,
-    /// 回测期间生效的发行人股本事实；它不属于账户 Ledger。
-    pub issuer_capital_snapshots: Vec<AshareIssuerCapitalSnapshot>,
-    pub fees_raw: i128,
-    pub turnover_raw: i128,
-    pub max_drawdown_raw: i128, // max_drawdown_bps 的定点原值伴生格；仓库内零生产读者，见 capabilities.yaml local_backtest limitation
-    pub return_bps: i32,
-    pub max_drawdown_bps: u32,
-    pub assumptions: Vec<String>,
-    pub event_log: EventLog,
-    pub ledger: Ledger,
-    pub model_descriptors: Vec<String>,
-    pub seed: u64,
-    pub input_data_hash: u64,
-    pub clock_start: u64,
-    pub clock_end: u64,
-}
-
 pub struct RunManifestIdentity<'a> {
     pub run_id: &'a str,
     pub code_commit: &'a str,
@@ -153,10 +131,12 @@ impl BacktestReport {
 
     /// 返回不晚于指定时间的最新发行人股本快照。
     pub fn issuer_capital_at(&self, ts: u64) -> Option<&AshareIssuerCapitalSnapshot> {
-        self.issuer_capital_snapshots
-            .iter()
-            .filter(|snapshot| snapshot.effective_ts <= ts)
-            .max_by_key(|snapshot| snapshot.effective_ts)
+        // Snapshots preserve the validated, timestamp-sorted corporate-action order.
+        let end = self
+            .issuer_capital_snapshots
+            .partition_point(|snapshot| snapshot.effective_ts <= ts);
+        end.checked_sub(1)
+            .and_then(|index| self.issuer_capital_snapshots.get(index))
     }
 
     /// 用报告事实生成完整运行指纹；代码提交、策略版本和配置摘要由编排层注入。
@@ -273,13 +253,11 @@ impl BacktestEngine {
     where
         F: FnMut() -> bool,
     {
-        let quality = QualityGate::check(bars);
-        if matches!(quality.verdict(), Verdict::Fail | Verdict::Quarantine) {
-            return Err(qx_core::QxError::Permanent(format!(
-                "回测输入未通过质量门: {:?}",
-                quality.issues
-            )));
-        }
+        let input_data_hash = DataView::metadata_for_borrowed(bars, &DataSourceId::new("backtest"))
+            .map_err(|report| {
+                qx_core::QxError::Permanent(format!("回测输入未通过质量门: {:?}", report.issues))
+            })?
+            .data_hash;
         let BacktestEngine {
             config,
             protective_exits,
@@ -300,6 +278,7 @@ impl BacktestEngine {
             risk,
             virtual_trading,
         } = config;
+        let fill_model_descriptor = fill.audit_descriptor();
         fee.validate()?;
         let currency =
             currency::normalize_and_validate(currency, &instrument, instrument_spec.as_ref())?;
@@ -337,11 +316,6 @@ impl BacktestEngine {
                 policy.stop_loss_bps, policy.take_profit_bps, policy.trailing_stop_bps
             ));
         }
-        let view =
-            DataView::try_new(bars.to_vec(), DataSourceId::new("backtest")).map_err(|report| {
-                qx_core::QxError::Permanent(format!("回测视图未通过质量门: {:?}", report.issues))
-            })?;
-        let input_data_hash = view.metadata().data_hash;
         // 将兼容路径的整数 multiplier 转为 SCALE 标度，避免小额手续费被截断为 0。
         let fee_price_multiplier = derivative_spec
             .map(|spec| spec.contract_size)
@@ -370,9 +344,9 @@ impl BacktestEngine {
         let mut position_policies = BTreeMap::<qx_core::PositionSide, qx_core::OrderPolicy>::new();
         let mut favorable_extremes = BTreeMap::<qx_core::PositionSide, i128>::new();
         let mut protective_order_meta = BTreeMap::<u64, (ProtectiveExitReason, u64)>::new();
-        let mut equity = Vec::new();
-        let mut benchmark_equity = Vec::new();
-        let mut positions = Vec::new();
+        let [mut equity, mut benchmark_equity, mut positions] =
+            std::array::from_fn(|_| Vec::with_capacity(bars.len()));
+        let mut marks = BTreeMap::from([(instrument.clone(), Price::from_raw(0))]);
         let mut peak_equity = initial_cash.raw();
         let mut max_drawdown_raw = 0_i128;
         let mut next_id = 1_u64;
@@ -386,6 +360,10 @@ impl BacktestEngine {
             .ashare_rules
             .as_ref()
             .filter(|rules| rules.enabled);
+        let ashare_sessions = AshareSessionIndex::new(ashare_rules);
+        let ashare_action_schedule = ashare_rules
+            .map(|rules| AshareCorporateActionSchedule::for_bars(&rules.corporate_actions, bars));
+        let ashare_previous_closes = ashare_rules.map(|rules| rules.previous_close_series(bars));
         let issuer_capital_snapshots = ashare_rules
             .map(|rules| {
                 rules
@@ -402,9 +380,7 @@ impl BacktestEngine {
             model_descriptors.push(rules.descriptor());
         }
         let deposit_entry = ledger
-            .entries()
-            .iter()
-            .find(|entry| entry.id == deposit_id)
+            .entry(deposit_id)
             .cloned()
             .ok_or_else(|| qx_core::QxError::Invariant("找不到初始入金 entry".into()))?;
         let deposit_seq = log.alloc_seq();
@@ -424,9 +400,7 @@ impl BacktestEngine {
                 bars.first().map(|b| b.ts).unwrap_or(0),
             )?;
             let collateral_entry = ledger
-                .entries()
-                .iter()
-                .find(|entry| entry.id == collateral_id)
+                .entry(collateral_id)
                 .cloned()
                 .ok_or_else(|| qx_core::QxError::Invariant("找不到初始抵押品 entry".into()))?;
             let collateral_seq = log.alloc_seq();
@@ -446,12 +420,11 @@ impl BacktestEngine {
             }
             if let Some(rules) = ashare_rules {
                 ashare_state.prepare(bar.ts);
-                let previous_close = rules.previous_close(bars, i);
-                matcher.set_halted(!rules.is_trading(bar.ts));
-                matcher.set_side_blocks(
-                    rules.blocks_fill(Side::Buy, bar, previous_close),
-                    rules.blocks_fill(Side::Sell, bar, previous_close),
-                );
+                let previous_close = ashare_previous_closes.as_ref().and_then(|closes| closes[i]);
+                let (trading, block_buy, block_sell) =
+                    rules.bar_restrictions(&ashare_sessions, bar, previous_close);
+                matcher.set_halted(!trading);
+                matcher.set_side_blocks(block_buy, block_sell);
             } else {
                 matcher.set_halted(false);
                 matcher.set_side_blocks(false, false);
@@ -467,9 +440,16 @@ impl BacktestEngine {
                 fills: &mut fills,
                 fee_engine: None,
             };
-            apply_virtual_events(&virtual_trading, bar, &mut virtual_state)?;
+            apply_virtual_events(
+                &virtual_trading,
+                ashare_action_schedule.as_ref(),
+                bar,
+                &mut virtual_state,
+            )?;
             if i > 0 {
-                let history = view.as_of(bars[i - 1].ts);
+                // 质量门已确认 Bar 时间严格递增，因此历史切片恰为当前 Bar 之前的所有事实；
+                // 直接借用原输入，避免构造拥有整份 Bar 副本的 DataView。
+                let history = &bars[..i];
                 let position = ledger.position_for(&account_id, &instrument).quantity.raw();
                 // Spot buying power is settled cash after prior fills/fees. This
                 // value is visible at the decision boundary; derivative margin
@@ -486,11 +466,9 @@ impl BacktestEngine {
                 });
                 let mut orders = Vec::new();
                 if let (Some(policy), Some(completed_bar)) = (protective_exits, history.last()) {
-                    let mut active_sides = position_policies.keys().copied().collect::<Vec<_>>();
-                    if active_sides.is_empty() && position != 0 {
-                        active_sides.push(qx_core::PositionSide::Net);
-                    }
-                    for position_side in active_sides {
+                    let net_fallback = (position_policies.is_empty() && position != 0)
+                        .then_some(qx_core::PositionSide::Net);
+                    for position_side in position_policies.keys().copied().chain(net_fallback) {
                         if !protective_order_meta.is_empty() {
                             break;
                         }
@@ -556,7 +534,7 @@ impl BacktestEngine {
                     )?;
                 }
                 let accepted_orders = order_admission::admit_orders(OrderAdmissionInput {
-                    orders,
+                    orders: &mut orders,
                     account_id: &account_id,
                     instrument: &instrument,
                     currency: &currency,
@@ -642,21 +620,20 @@ impl BacktestEngine {
                 }
             }
             if protective_exits.is_some() {
-                let sides = position_policies.keys().copied().collect::<Vec<_>>();
-                for position_side in sides {
-                    let state = if position_side == qx_core::PositionSide::Net {
+                position_policies.retain(|position_side, _| {
+                    let state = if *position_side == qx_core::PositionSide::Net {
                         ledger.position_for(&account_id, &instrument)
                     } else {
-                        ledger.position_for_side(&account_id, &instrument, position_side)
+                        ledger.position_for_side(&account_id, &instrument, *position_side)
                     };
                     let qty = state.quantity.raw();
                     if qty == 0 {
-                        position_policies.remove(&position_side);
-                        favorable_extremes.remove(&position_side);
+                        favorable_extremes.remove(position_side);
+                        false
                     } else {
                         let extreme = if qty > 0 { bar.high } else { bar.low };
                         favorable_extremes
-                            .entry(position_side)
+                            .entry(*position_side)
                             .and_modify(|value| {
                                 *value = if qty > 0 {
                                     (*value).max(extreme)
@@ -665,11 +642,13 @@ impl BacktestEngine {
                                 };
                             })
                             .or_insert(extreme);
+                        true
                     }
-                }
+                });
             }
-            let mut marks = std::collections::BTreeMap::new();
-            marks.insert(instrument.clone(), Price::from_raw(bar.close));
+            *marks
+                .get_mut(&instrument)
+                .ok_or_else(|| QxError::Invariant("mark".into()))? = Price::from_raw(bar.close);
             let mut marked_equity = equity_for(
                 &ledger,
                 &account_id,
@@ -771,9 +750,7 @@ impl BacktestEngine {
             positions.push(ledger.position_for(&account_id, &instrument).quantity.raw());
         }
         log.validate()?;
-        // 费用与换手按成交事实汇总，而不是在撮合循环里累加：强平、交割的成交由
-        // 虚拟事件路径直接记账，不经过该循环，循环内累加会让报告统计与账本现金
-        // 对不上。
+        // 费用与换手按成交事实汇总；虚拟事件成交不经过撮合循环，循环累加会让统计与账本不符。
         let mut fees_raw = 0_i128;
         let mut turnover_raw = 0_i128;
         for fill in &fills {
@@ -811,6 +788,7 @@ impl BacktestEngine {
         };
         let report = BacktestReport {
             fills,
+            execution_attempts: matcher.execution_attempts().to_vec(),
             protective_exit_fills,
             equity,
             benchmark_equity,
@@ -835,6 +813,7 @@ impl BacktestEngine {
             ],
             event_log: log,
             ledger,
+            fill_model_descriptor,
             model_descriptors,
             seed,
             input_data_hash,
@@ -885,9 +864,7 @@ fn append_ledger_entry(
     ts: u64,
 ) -> Result<(), qx_core::QxError> {
     let entry = ledger
-        .entries()
-        .iter()
-        .find(|entry| entry.id == entry_id)
+        .entry(entry_id)
         .cloned()
         .ok_or_else(|| qx_core::QxError::Invariant("找不到虚拟交易账簿 entry".into()))?;
     let seq = log.alloc_seq();
@@ -895,6 +872,29 @@ fn append_ledger_entry(
         seq,
         ts,
         Priority::APPLY,
+        EventKind::LedgerApplied { entry },
+    ));
+    Ok(())
+}
+
+fn append_ashare_action_ledger_entry(
+    log: &mut EventLog,
+    ledger: &Ledger,
+    entry_id: u64,
+    ts: u64,
+) -> Result<(), qx_core::QxError> {
+    let entry = ledger
+        .entry(entry_id)
+        .cloned()
+        .ok_or_else(|| qx_core::QxError::Invariant("找不到 A 股公司行为账簿 entry".into()))?;
+    let seq = log.alloc_seq();
+    // Corporate actions are market facts applied before this bar's strategy decisions.
+    // Keeping them at MARKET priority makes date-only events mapped to the first intraday Bar
+    // sort before same-timestamp COMMAND/MATCH/APPLY events in the replay log.
+    log.append(Event::new(
+        seq,
+        ts,
+        Priority::MARKET,
         EventKind::LedgerApplied { entry },
     ));
     Ok(())
@@ -1020,580 +1020,6 @@ fn close_virtual_position(
                 ts,
             )?;
             append_ledger_entry(state.log, state.ledger, entry_id, ts)?;
-        }
-    }
-    Ok(())
-}
-
-fn apply_virtual_events(
-    config: &VirtualTradingConfig,
-    bar: &Bar,
-    state: &mut VirtualExecution<'_>,
-) -> Result<(), qx_core::QxError> {
-    if let Some(rules) = config.ashare_rules.as_ref().filter(|rules| rules.enabled) {
-        // 现金分红按登记日（或没有登记日时的除权日）生成待支付权益，
-        // 不在此处直接增加现金，避免支付日按错误的当前持仓重新计算。
-        for event in rules.corporate_actions.iter().filter(|event| {
-            is_cash_dividend_action(event.action_type)
-                && event.cash_dividend_raw > 0
-                && (event.record_ts == Some(bar.ts)
-                    || (event.record_ts.is_none()
-                        && event.payment_ts.is_some()
-                        && event.ts == bar.ts))
-        }) {
-            if let Some(entry_id) = state.ledger.grant_cash_dividend_entitlement(
-                state.account_id,
-                state.instrument,
-                state.currency,
-                event.cash_dividend_raw,
-                bar.ts,
-            )? {
-                append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
-            }
-        }
-
-        // 可转债利息在登记日锁定债券持仓，支付日只结算已登记的权益。
-        for event in rules.corporate_actions.iter().filter(|event| {
-            is_convertible_bond_interest_action(event.action_type)
-                && event.interest_per_bond_raw > 0
-                && (event.record_ts == Some(bar.ts)
-                    || (event.record_ts.is_none()
-                        && event.payment_ts.is_some()
-                        && event.ts == bar.ts))
-        }) {
-            let bond_instrument = event
-                .convertible_bond_instrument
-                .as_deref()
-                .ok_or_else(|| {
-                    qx_core::QxError::BusinessViolation(
-                        "可转债利息事件缺少 convertible_bond_instrument".into(),
-                    )
-                })
-                .and_then(|value| {
-                    InstrumentId::parse(value).ok_or_else(|| {
-                        qx_core::QxError::BusinessViolation(
-                            "可转债利息 convertible_bond_instrument 格式非法".into(),
-                        )
-                    })
-                })?;
-            if let Some(entry_id) = state.ledger.grant_convertible_bond_interest_entitlement(
-                state.account_id,
-                &bond_instrument,
-                state.currency,
-                event.interest_per_bond_raw,
-                bar.ts,
-            )? {
-                append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
-            }
-        }
-
-        // 登记日只授予独立权利，不能在除权日重新读取持仓推导配额。
-        for event in rules.corporate_actions.iter().filter(|event| {
-            event.action_type == AshareCorporateActionType::RightsIssue
-                && event.record_ts == Some(bar.ts)
-        }) {
-            let rights_instrument = event
-                .rights_instrument
-                .as_deref()
-                .ok_or_else(|| {
-                    qx_core::QxError::BusinessViolation("配股登记事件缺少 rights_instrument".into())
-                })
-                .and_then(|value| {
-                    InstrumentId::parse(value).ok_or_else(|| {
-                        qx_core::QxError::BusinessViolation(
-                            "配股登记 rights_instrument 格式非法".into(),
-                        )
-                    })
-                })?;
-            let current_position = state
-                .ledger
-                .position_for(state.account_id, state.instrument)
-                .quantity
-                .raw();
-            let entitled_qty = current_position
-                .checked_mul(event.rights_issue_ratio_num)
-                .and_then(|value| value.checked_div(event.rights_issue_ratio_den))
-                .ok_or_else(|| qx_core::QxError::Invariant("配股配额计算溢出".into()))?;
-            let entry_id = state.ledger.grant_rights_entitlement(
-                state.account_id,
-                state.instrument,
-                &rights_instrument,
-                state.currency,
-                entitled_qty,
-                bar.ts,
-            )?;
-            append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
-        }
-
-        for event in rules.corporate_actions.iter().filter(|event| {
-            (event.ts == bar.ts
-                && (event.record_ts.is_none()
-                    || event.subscription_start_ts.is_none()
-                    || event.subscription_start_ts == Some(bar.ts))
-                && !(event.action_type == AshareCorporateActionType::ConvertibleBondIssue
-                    && event.subscription_start_ts.is_some())
-                && !is_convertible_bond_interest_action(event.action_type)
-                && !(is_convertible_bond_settlement_action(event.action_type)
-                    && event.payment_ts.is_some()))
-                || (event.action_type == AshareCorporateActionType::RightsIssue
-                    && event.subscription_start_ts == Some(bar.ts))
-                || (event.action_type == AshareCorporateActionType::ConvertibleBondIssue
-                    && event.subscription_start_ts == Some(bar.ts))
-                || (is_convertible_bond_settlement_action(event.action_type)
-                    && event.payment_ts == Some(bar.ts))
-        }) {
-            let entry_ids = match event.action_type {
-                AshareCorporateActionType::CashDividend
-                | AshareCorporateActionType::BonusShare
-                | AshareCorporateActionType::CapitalTransfer
-                | AshareCorporateActionType::Unknown => state.ledger.apply_corporate_action(
-                    state.account_id,
-                    state.instrument,
-                    state.currency,
-                    qx_core::CorporateAction {
-                        cash_dividend_raw: if event.record_ts.is_some()
-                            || event.payment_ts.is_some()
-                        {
-                            0
-                        } else {
-                            event.cash_dividend_raw
-                        },
-                        split_num: event.split_num,
-                        split_den: event.split_den,
-                    },
-                    bar.ts,
-                )?,
-                AshareCorporateActionType::RightsIssue => {
-                    let rights_instrument = event
-                        .rights_instrument
-                        .as_deref()
-                        .ok_or_else(|| {
-                            qx_core::QxError::BusinessViolation(
-                                "配股事件缺少 rights_instrument，不能隐式使用普通股标的".into(),
-                            )
-                        })
-                        .and_then(|value| {
-                            InstrumentId::parse(value).ok_or_else(|| {
-                                qx_core::QxError::BusinessViolation(
-                                    "配股 rights_instrument 格式非法".into(),
-                                )
-                            })
-                        })?;
-                    if event.record_ts.is_some() {
-                        if event.subscription_qty_raw == 0 {
-                            Vec::new()
-                        } else {
-                            state
-                                .ledger
-                                .apply_rights_issue_subscription_from_entitlement(
-                                    state.account_id,
-                                    &rights_instrument,
-                                    state.currency,
-                                    event.subscription_qty_raw,
-                                    event.rights_issue_price_raw,
-                                    bar.ts,
-                                )?
-                        }
-                    } else {
-                        let current_position = state
-                            .ledger
-                            .position_for(state.account_id, state.instrument)
-                            .quantity
-                            .raw();
-                        let entitled_qty = current_position
-                            .checked_mul(event.rights_issue_ratio_num)
-                            .and_then(|value| value.checked_div(event.rights_issue_ratio_den))
-                            .ok_or_else(|| {
-                                qx_core::QxError::Invariant("配股配额计算溢出".into())
-                            })?;
-                        state.ledger.apply_rights_issue_event(
-                            state.account_id,
-                            qx_core::RightsIssueEvent {
-                                source_instrument: state.instrument.clone(),
-                                rights_instrument,
-                                currency: state.currency.to_owned(),
-                                entitled_qty_raw: entitled_qty,
-                                subscription_qty_raw: event.subscription_qty_raw,
-                                subscription_price_raw: event.rights_issue_price_raw,
-                            },
-                            bar.ts,
-                        )?
-                    }
-                }
-                AshareCorporateActionType::RightsIssueExpiry => {
-                    let rights_instrument = event
-                        .rights_instrument
-                        .as_deref()
-                        .ok_or_else(|| {
-                            qx_core::QxError::BusinessViolation(
-                                "配股权利失效事件缺少 rights_instrument".into(),
-                            )
-                        })
-                        .and_then(|value| {
-                            InstrumentId::parse(value).ok_or_else(|| {
-                                qx_core::QxError::BusinessViolation(
-                                    "配股权利失效 rights_instrument 格式非法".into(),
-                                )
-                            })
-                        })?;
-                    vec![state.ledger.expire_rights_entitlement(
-                        state.account_id,
-                        &rights_instrument,
-                        event.rights_expiry_qty_raw,
-                        state.currency,
-                        bar.ts,
-                    )?]
-                }
-                AshareCorporateActionType::NewShareIssue => {
-                    state.ledger.apply_new_share_subscription(
-                        state.account_id,
-                        state.instrument,
-                        state.currency,
-                        event.subscription_qty_raw,
-                        event.issue_price_raw,
-                        bar.ts,
-                    )?
-                }
-                AshareCorporateActionType::ConvertibleBondIssue => {
-                    let bond_instrument = event
-                        .convertible_bond_instrument
-                        .as_deref()
-                        .ok_or_else(|| {
-                            qx_core::QxError::BusinessViolation(
-                                "可转债发行事件缺少 convertible_bond_instrument".into(),
-                            )
-                        })
-                        .and_then(|value| {
-                            InstrumentId::parse(value).ok_or_else(|| {
-                                qx_core::QxError::BusinessViolation(
-                                    "可转债发行 convertible_bond_instrument 格式非法".into(),
-                                )
-                            })
-                        })?;
-                    state.ledger.apply_convertible_bond_issue_subscription(
-                        state.account_id,
-                        &bond_instrument,
-                        state.currency,
-                        event.subscription_qty_raw,
-                        event.issue_price_raw,
-                        bar.ts,
-                    )?
-                }
-                AshareCorporateActionType::ConvertibleBondRedemption
-                | AshareCorporateActionType::ConvertibleBondPut => {
-                    let bond_instrument = event
-                        .convertible_bond_instrument
-                        .as_deref()
-                        .ok_or_else(|| {
-                            qx_core::QxError::BusinessViolation(
-                                "可转债回售/赎回事件缺少 convertible_bond_instrument".into(),
-                            )
-                        })
-                        .and_then(|value| {
-                            InstrumentId::parse(value).ok_or_else(|| {
-                                qx_core::QxError::BusinessViolation(
-                                    "可转债回售/赎回 convertible_bond_instrument 格式非法".into(),
-                                )
-                            })
-                        })?;
-                    state.ledger.apply_convertible_bond_tender(
-                        state.account_id,
-                        &bond_instrument,
-                        state.currency,
-                        event.settlement_qty_raw,
-                        event.settlement_price_raw,
-                        bar.ts,
-                    )?
-                }
-                AshareCorporateActionType::ConvertibleBondCall => {
-                    let bond_instrument = event
-                        .convertible_bond_instrument
-                        .as_deref()
-                        .ok_or_else(|| {
-                            qx_core::QxError::BusinessViolation(
-                                "可转债强赎事件缺少 convertible_bond_instrument".into(),
-                            )
-                        })
-                        .and_then(|value| {
-                            InstrumentId::parse(value).ok_or_else(|| {
-                                qx_core::QxError::BusinessViolation(
-                                    "可转债强赎 convertible_bond_instrument 格式非法".into(),
-                                )
-                            })
-                        })?;
-                    let quantity_raw = if event.settlement_qty_raw > 0 {
-                        event.settlement_qty_raw
-                    } else {
-                        state
-                            .ledger
-                            .position_for(state.account_id, &bond_instrument)
-                            .quantity
-                            .raw()
-                    };
-                    if quantity_raw <= 0 {
-                        Vec::new()
-                    } else {
-                        state.ledger.apply_convertible_bond_tender(
-                            state.account_id,
-                            &bond_instrument,
-                            state.currency,
-                            quantity_raw,
-                            event.settlement_price_raw,
-                            bar.ts,
-                        )?
-                    }
-                }
-                AshareCorporateActionType::Repurchase => state.ledger.apply_repurchase_tender(
-                    state.account_id,
-                    state.instrument,
-                    state.currency,
-                    event.repurchase_qty_raw,
-                    event.repurchase_price_raw,
-                    bar.ts,
-                )?,
-                AshareCorporateActionType::ConvertibleBondConversion => {
-                    let bond_instrument = event
-                        .convertible_bond_instrument
-                        .as_deref()
-                        .ok_or_else(|| {
-                            qx_core::QxError::BusinessViolation(
-                                "可转债转股事件缺少 convertible_bond_instrument".into(),
-                            )
-                        })
-                        .and_then(|value| {
-                            InstrumentId::parse(value).ok_or_else(|| {
-                                qx_core::QxError::BusinessViolation(
-                                    "可转债 convertible_bond_instrument 格式非法".into(),
-                                )
-                            })
-                        })?;
-                    let target_instrument = event
-                        .conversion_target_instrument
-                        .as_deref()
-                        .ok_or_else(|| {
-                            qx_core::QxError::BusinessViolation(
-                                "可转债转股事件缺少 conversion_target_instrument".into(),
-                            )
-                        })
-                        .and_then(|value| {
-                            InstrumentId::parse(value).ok_or_else(|| {
-                                qx_core::QxError::BusinessViolation(
-                                    "可转债 conversion_target_instrument 格式非法".into(),
-                                )
-                            })
-                        })?;
-                    state.ledger.apply_convertible_bond_conversion(
-                        state.account_id,
-                        state.currency,
-                        qx_core::ConvertibleBondConversion {
-                            bond_instrument,
-                            target_instrument,
-                            bond_qty_raw: event.conversion_qty_raw,
-                            target_qty_raw: event.conversion_target_qty_raw,
-                            conversion_price_raw: event.conversion_price_raw,
-                        },
-                        bar.ts,
-                    )?
-                }
-                AshareCorporateActionType::CapitalChange => {
-                    // 发行人股本是显式市场事实，已在 BacktestReport 中保存；
-                    // 这里不能生成账户 Ledger entry，也不能按持仓比例猜测。
-                    Vec::new()
-                }
-                unsupported => {
-                    return Err(qx_core::QxError::BusinessViolation(format!(
-                        "A 股公司行为 {:?} 需要发行人/登记结算事实，当前禁止静默回测",
-                        unsupported
-                    )));
-                }
-            };
-            for entry_id in entry_ids {
-                append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
-            }
-        }
-
-        // 认购截止日自动使剩余权利失效；若数据源另有显式失效事实，
-        // 以显式事件为准，避免同一权利被重复扣减。
-        for event in rules.corporate_actions.iter().filter(|event| {
-            event.action_type == AshareCorporateActionType::RightsIssue
-                && event.subscription_end_ts == Some(bar.ts)
-                && !rules.corporate_actions.iter().any(|expiry| {
-                    expiry.action_type == AshareCorporateActionType::RightsIssueExpiry
-                        && expiry.ts == bar.ts
-                        && expiry.rights_instrument == event.rights_instrument
-                })
-        }) {
-            let rights_instrument = event
-                .rights_instrument
-                .as_deref()
-                .ok_or_else(|| {
-                    qx_core::QxError::BusinessViolation("配股截止事件缺少 rights_instrument".into())
-                })
-                .and_then(|value| {
-                    InstrumentId::parse(value).ok_or_else(|| {
-                        qx_core::QxError::BusinessViolation(
-                            "配股截止 rights_instrument 格式非法".into(),
-                        )
-                    })
-                })?;
-            let remaining = state
-                .ledger
-                .rights_entitlement_for(state.account_id, &rights_instrument)
-                .raw();
-            if remaining > 0 {
-                let entry_id = state.ledger.expire_rights_entitlement(
-                    state.account_id,
-                    &rights_instrument,
-                    remaining,
-                    state.currency,
-                    bar.ts,
-                )?;
-                append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
-            }
-        }
-
-        // 支付日只结算登记日已经锁定的权益；没有 payment_date 但存在
-        // record_date 时，除权日作为兼容的支付时点。
-        for _event in rules.corporate_actions.iter().filter(|event| {
-            is_cash_dividend_action(event.action_type)
-                && (event.record_ts.is_some() || event.payment_ts.is_some())
-                && event.payment_ts.unwrap_or(event.ts) == bar.ts
-        }) {
-            if let Some(entry_id) = state.ledger.settle_cash_dividend_entitlement(
-                state.account_id,
-                state.instrument,
-                state.currency,
-                bar.ts,
-            )? {
-                append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
-            }
-        }
-        for event in rules.corporate_actions.iter().filter(|event| {
-            is_convertible_bond_interest_action(event.action_type)
-                && (event.record_ts.is_some() || event.payment_ts.is_some())
-                && event.payment_ts.unwrap_or(event.ts) == bar.ts
-        }) {
-            let bond_instrument = event
-                .convertible_bond_instrument
-                .as_deref()
-                .ok_or_else(|| {
-                    qx_core::QxError::BusinessViolation(
-                        "可转债利息支付事件缺少 convertible_bond_instrument".into(),
-                    )
-                })
-                .and_then(|value| {
-                    InstrumentId::parse(value).ok_or_else(|| {
-                        qx_core::QxError::BusinessViolation(
-                            "可转债利息支付 convertible_bond_instrument 格式非法".into(),
-                        )
-                    })
-                })?;
-            if let Some(entry_id) = state.ledger.settle_convertible_bond_interest_entitlement(
-                state.account_id,
-                &bond_instrument,
-                state.currency,
-                bar.ts,
-            )? {
-                append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
-            }
-        }
-    }
-    // 公司行为可能改变数量；后续资金费按归约后的最新持仓计算，避免
-    // 在同一根 bar 上继续使用事件前的旧快照。
-    let position = state
-        .ledger
-        .position_for(state.account_id, state.instrument)
-        .quantity
-        .raw();
-    for event in config.funding.iter().filter(|event| event.ts == bar.ts) {
-        if position == 0 {
-            continue;
-        }
-        let amount = if let Some(spec) = state.spec {
-            spec.funding_payment(position, bar.close, event.rate_bp)?
-                .saturating_neg()
-        } else {
-            let notional = notional_for(
-                state.spec,
-                checked_abs(position)?,
-                checked_abs(bar.close)?,
-                state.multiplier,
-            )?;
-            let signed = if position > 0 { -1 } else { 1 };
-            qx_core::bp_amount(notional, event.rate_bp).saturating_mul(signed)
-        };
-        if amount != 0 {
-            let entry_id = state.ledger.apply_funding(
-                state.account_id,
-                state.currency,
-                Money::from_raw(amount),
-                bar.ts,
-            )?;
-            append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
-        }
-    }
-    for event in config.interest.iter().filter(|event| event.ts == bar.ts) {
-        let cash = state.ledger.cash_for(state.account_id, state.currency);
-        let amount = qx_core::bp_amount(cash, event.rate_bp);
-        if amount != 0 {
-            let entry_id = state.ledger.apply_interest(
-                state.account_id,
-                state.currency,
-                Money::from_raw(amount),
-                bar.ts,
-            )?;
-            append_ledger_entry(state.log, state.ledger, entry_id, bar.ts)?;
-        }
-    }
-    for event in config.delivery.iter().filter(|event| event.ts == bar.ts) {
-        let settle_seq = state.log.alloc_seq();
-        state.log.append(Event::new(
-            settle_seq,
-            bar.ts,
-            Priority::APPLY,
-            EventKind::Settle,
-        ));
-        let current = state
-            .ledger
-            .position_for(state.account_id, state.instrument)
-            .quantity
-            .raw();
-        let long_leg = state
-            .ledger
-            .position_for_side(
-                state.account_id,
-                state.instrument,
-                qx_core::PositionSide::Long,
-            )
-            .quantity
-            .raw();
-        let short_leg = state
-            .ledger
-            .position_for_side(
-                state.account_id,
-                state.instrument,
-                qx_core::PositionSide::Short,
-            )
-            .quantity
-            .raw();
-        // 单向（Net）持仓在双向账本里两条腿都是 0，"按腿结算"等于什么都不平；
-        // 与强平路径共用同一分支规则。
-        if state.spec.is_some() && (long_leg != 0 || short_leg != 0) {
-            for (position_side, leg) in [
-                (qx_core::PositionSide::Long, long_leg),
-                (qx_core::PositionSide::Short, short_leg),
-            ] {
-                close_virtual_position(
-                    state,
-                    leg,
-                    event.settlement_price,
-                    bar.ts,
-                    None,
-                    Some(position_side),
-                )?;
-            }
-        } else {
-            close_virtual_position(state, current, event.settlement_price, bar.ts, None, None)?;
         }
     }
     Ok(())

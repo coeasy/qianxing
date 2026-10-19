@@ -35,11 +35,17 @@ fn rust_sdk_sizes_multi_leg_linear_contracts_from_frozen_market_specs() {
     );
     strategy.target_notional_raw = Some(1_000 * 1_000_000_000);
     let mut spec = MultiLegBacktestSpec::new(
-        "sdk-fixed-notional-pair",
-        root.join("qianxing.bar-frame.pairs-primary.example.json")
-            .to_string_lossy(),
-        root.join("qianxing.bar-frame.pairs-reference.example.json")
-            .to_string_lossy(),
+        qx_sdk::MultiLegDatasetInput {
+            run_id: ("sdk-fixed-notional-pair").into(),
+            primary_bars_path: (root
+                .join("qianxing.bar-frame.pairs-primary.example.json")
+                .to_string_lossy())
+            .into(),
+            reference_bars_path: (root
+                .join("qianxing.bar-frame.pairs-reference.example.json")
+                .to_string_lossy())
+            .into(),
+        },
         "USDT",
         10_000 * 1_000_000_000,
         10_000 * 1_000_000_000,

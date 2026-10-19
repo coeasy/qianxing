@@ -1,6 +1,14 @@
 //! 上线体检链：`live-check` 的报告采集与逐项检查出口。
 
-use super::*;
+use std::path::Path;
+
+use qx_core::VenueFamily;
+use qx_runtime::{RuntimeSupervisor, StorageConsistency, WorkerRole};
+
+use crate::{
+    collect_doctor_report_for_config, read_runtime_config, resolve_runtime_relative_path,
+    worker_credentials_ready,
+};
 
 pub(crate) fn push_live_check(
     checks: &mut Vec<serde_json::Value>,
@@ -18,9 +26,35 @@ pub(crate) fn push_live_check(
 pub(crate) fn collect_live_check_report(path: &Path) -> Result<serde_json::Value, String> {
     let config = read_runtime_config(path)?;
     let fingerprint = config.fingerprint()?;
-    let mut failures = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
-    let mut checks = Vec::new();
+    // Reuse the full static checklist produced for `doctor`/`runtime-check`; this command adds
+    // production-only checks to that same report instead of maintaining a second base checklist.
+    let supervisor_build = RuntimeSupervisor::new(config.clone()).map(|_| ());
+    let base = collect_doctor_report_for_config(path, &config, supervisor_build)?;
+    let mut failures = base
+        .get("failures")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut warnings = base
+        .get("warnings")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut checks = base
+        .get("checks")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut readiness_layers = base
+        .get("readiness_layers")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
 
     if !config.is_production() {
         let message = format!(
@@ -270,8 +304,33 @@ pub(crate) fn collect_live_check_report(path: &Path) -> Result<serde_json::Value
     }
 
     let ok = failures.is_empty();
+    let live_evidence = checks
+        .iter()
+        .filter_map(|check| check.get("name").and_then(serde_json::Value::as_str))
+        .filter(|name| {
+            matches!(
+                *name,
+                "environment"
+                    | "config_fingerprint"
+                    | "storage.consistency"
+                    | "api.tls.certificate_chain"
+                    | "api.tls.private_key"
+                    | "api.tls.client_ca"
+            ) || name.starts_with("worker[")
+        })
+        .collect::<Vec<_>>();
+    readiness_layers["L"] = serde_json::json!({
+        "status": if ok { "pass" } else { "blocked" },
+        "scope": "static_production_preflight",
+        "evidence": live_evidence,
+        "detail": if ok {
+            "production 配置静态预检通过；未连接真实账户"
+        } else {
+            "production 配置静态预检未通过"
+        }
+    });
     Ok(serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 3,
         "runtime_path": path.display().to_string(),
         "environment": config.environment,
         "profile": config.profile,
@@ -280,6 +339,7 @@ pub(crate) fn collect_live_check_report(path: &Path) -> Result<serde_json::Value
         "config_fingerprint": fingerprint,
         "config_fingerprint_locked": config.config_fingerprint.is_some(),
         "checks": checks,
+        "readiness_layers": readiness_layers,
         "warnings": warnings,
         "failures": failures,
         "ok": ok,

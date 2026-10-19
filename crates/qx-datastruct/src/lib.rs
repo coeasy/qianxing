@@ -73,7 +73,7 @@ struct OwnedArrowState {
 pub struct OwnedArrowColumn {
     array: ArrowArray,
     schema: ArrowSchema,
-    state: Option<Box<OwnedArrowState>>,
+    state: Box<OwnedArrowState>,
 }
 
 impl<'a> ArrowColumnView<'a> {
@@ -139,11 +139,11 @@ impl OwnedArrowColumn {
                 release: None,
                 private_data: std::ptr::null_mut(),
             },
-            state: Some(Box::new(OwnedArrowState {
+            state: Box::new(OwnedArrowState {
                 releases_remaining: AtomicU8::new(2),
                 storage,
                 buffers,
-            })),
+            }),
         }
     }
 
@@ -162,7 +162,6 @@ impl OwnedArrowColumn {
             mut schema,
             state,
         } = self;
-        let state = state.expect("owned Arrow state must exist");
         let private_data = Box::into_raw(state).cast::<c_void>();
         array.release = Some(release_owned_array);
         array.private_data = private_data;
@@ -501,6 +500,12 @@ impl BarFrame {
         self.close_raw.get(index).copied()
     }
 
+    /// Return the identity of this exact frame, including its source and row order.
+    ///
+    /// This is intentionally distinct from `qx_data::fingerprint_bar_frame`, which produces the
+    /// canonical dataset content fingerprint used in manifests and run evidence. Use this digest
+    /// for frame-local transform identity and stale-snapshot checks; do not publish it as a
+    /// dataset `content_fingerprint`.
     pub fn digest(&self) -> u64 {
         let mut hash = Fnv1a::new();
         write_text(&mut hash, &self.instrument.to_string());

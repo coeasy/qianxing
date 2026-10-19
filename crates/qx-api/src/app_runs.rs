@@ -240,7 +240,16 @@ impl AppRunRegistry {
             },
         );
         if let Some(root) = &self.persistence_root {
-            if let Err(error) = persistence::reserve(root, entries.get_mut(&run_id).unwrap()) {
+            let Some(entry) = entries.get_mut(&run_id) else {
+                if watcher_slot_reserved {
+                    APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
+                }
+                return Err(AppError::new(
+                    AppErrorCategory::InternalInvariant,
+                    format!("新建运行注册表项意外缺失: {run_id}"),
+                ));
+            };
+            if let Err(error) = persistence::reserve(root, entry) {
                 entries.remove(&run_id);
                 if watcher_slot_reserved {
                     APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);

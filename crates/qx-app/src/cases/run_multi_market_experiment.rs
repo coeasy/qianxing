@@ -5,6 +5,9 @@ use super::attach;
 use super::experiment_grid::{
     apply_parameters, expand_grid, normalized_strategy, validate_experiment_id, validate_grid,
 };
+use super::experiment_spec_artifact::{
+    serialize_experiment_input, verify_spec_artifact, write_spec_artifact,
+};
 use super::guard::guard_panics;
 use super::run_multi_market_backtest::{run_inner, validate_injected, InjectedMarketStrategy};
 use crate::run_handle::CancellationToken;
@@ -225,9 +228,17 @@ fn run_inner_experiment(
         ))
         .to_string_lossy()
         .into_owned();
+    let spec_path = artifact_path.replace(
+        ".multi-market-experiment.json",
+        ".multi-market-experiment.spec.json",
+    );
+    let canonical_spec =
+        serialize_experiment_input(&spec.to_json()?, context.code_commit(), identity)?;
     match std::fs::read_to_string(&artifact_path) {
         Ok(existing) => {
-            return existing_result(&existing, &spec_fingerprint, &spec.experiment_id).map(Some)
+            let result = existing_result(&existing, &spec_fingerprint, &spec.experiment_id)?;
+            verify_spec_artifact(&spec_path, &canonical_spec, "多市场实验")?;
+            return Ok(Some(result));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(AppError::from_io("读取既有多市场实验报告", &error)),
@@ -416,6 +427,7 @@ fn run_inner_experiment(
     let report = result.to_json()?;
     std::fs::create_dir_all(&root)
         .map_err(|error| AppError::from_io("创建多市场实验目录", &error))?;
+    write_spec_artifact(&spec_path, &canonical_spec, "多市场实验")?;
     if let Err(error) = write_text(&artifact_path, &report) {
         if let Ok(existing) = std::fs::read_to_string(&artifact_path) {
             return existing_result(&existing, &result.spec_fingerprint, &result.experiment_id)

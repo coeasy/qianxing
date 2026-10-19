@@ -204,7 +204,7 @@ fn advance_market_cursor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::UNIX_EPOCH;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_root() -> PathBuf {
         let stamp = SystemTime::now()

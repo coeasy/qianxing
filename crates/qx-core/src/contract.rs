@@ -74,6 +74,6 @@ pub fn contract_matrix() -> &'static [ContractConcept] {
 }
 
 /// 矩阵的 JSON 形态，即 `GET /schema/contract-matrix` 的响应体。
-pub fn contract_matrix_json() -> String {
-    serde_json::to_string(contract_matrix()).expect("contract matrix serialization cannot fail")
+pub fn contract_matrix_json() -> Result<String, serde_json::Error> {
+    serde_json::to_string(contract_matrix())
 }

@@ -3,7 +3,20 @@
 //! 由 `main.rs` 的 crate 根职责簇拆出（Phase 4p），条目经根部的
 //! `pub(crate) use configured_backends::*;` 再导出，行为与拆分前逐字相同。
 
-use super::*;
+use std::path::Path;
+use std::sync::Arc;
+
+use qx_control::ControlPlane;
+use qx_runtime::{load_control_state, RuntimeConfig, StorageBackend};
+use qx_scheduler::JobSpec;
+use qx_storage::{
+    ControlCommandQueue, ControlCommandQueueBackend, FileJobQueue, JobLease, JsonStateStore,
+    QueuedJob, StorageError,
+};
+#[cfg(feature = "postgres")]
+use qx_storage::{PostgresControlCommandQueue, PostgresControlStore, PostgresJobQueue};
+#[cfg(feature = "sqlite")]
+use qx_storage::{SqliteControlCommandQueue, SqliteControlStore, SqliteJobQueue};
 
 #[derive(Clone)]
 pub(crate) enum ControlStateBackend {

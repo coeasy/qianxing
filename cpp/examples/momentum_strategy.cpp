@@ -44,13 +44,16 @@ int on_event(qx_strategy_handle raw,
         std::string(context->strategy_id) + ":" + std::to_string(event->ts);
     decision->schema_version = QX_STRATEGY_API_VERSION;
     decision->request_id = state->request_id.c_str();
+    decision->request_id_len = state->request_id.size();
     decision->strategy_id = context->strategy_id;
+    decision->strategy_id_len = std::strlen(context->strategy_id);
     decision->signal_id = event->ts;
     decision->confidence = raw128_from_i64(500);
     decision->priority = 0;
     decision->expires_at = event->ts;
     decision->intents = nullptr;
     decision->intents_len = 0;
+    decision->intents_capacity = 0;
 
     /* The example intentionally emits no order. Production code allocates the
        intent array through its plugin allocator and implements free_decision. */
@@ -70,7 +73,7 @@ void destroy_strategy(qx_strategy_handle raw) {
 }
 
 const qx_strategy_vtable VTABLE{
-    QX_STRATEGY_API_VERSION,
+    QX_STRATEGY_ABI_VERSION,
     &create_strategy,
     &on_init,
     &on_event,

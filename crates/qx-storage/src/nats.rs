@@ -5,6 +5,7 @@ use super::{
     NatsWaitBudget, OutboxEvent, OutboxPublisher, TransactionalConsumerStateStore,
 };
 use async_nats::jetstream;
+use async_nats::jetstream::message::PublishMessage;
 use futures_util::StreamExt;
 use std::future::Future;
 use std::sync::Arc;
@@ -15,9 +16,12 @@ use tokio::runtime::Runtime;
 ///
 /// The publisher waits for the JetStream publish acknowledgement before
 /// returning success. The Outbox relay therefore only removes an event after
-/// the broker has acknowledged persistence; consumers still must deduplicate by
-/// `event_id` because a connection failure can happen after broker acceptance
-/// and before the acknowledgement reaches this process.
+/// the broker has acknowledged persistence. The stable Outbox `event_id` is
+/// also sent as JetStream's `Nats-Msg-Id`, allowing the stream's configured
+/// duplicate window to collapse relay retries after an acknowledgement loss.
+/// Consumers still must deduplicate by `event_id`: broker deduplication is
+/// bounded by deployment retention policy and cannot replace durable consumer
+/// idempotency.
 pub struct NatsJetStreamPublisher {
     runtime: Arc<Runtime>,
     context: jetstream::Context,
@@ -93,10 +97,16 @@ impl OutboxPublisher for NatsJetStreamPublisher {
         let subject = self.subject_for(event)?;
         let payload = serde_json::to_vec(event)
             .map_err(|error| format!("NATS Outbox envelope 序列化失败: {error}"))?;
+        let message_id = event.event_id.clone();
         let context = self.context.clone();
         block_on_runtime(&self.runtime, async move {
             let ack = context
-                .publish(subject, payload.into())
+                .send_publish(
+                    subject,
+                    PublishMessage::build()
+                        .message_id(message_id)
+                        .payload(payload.into()),
+                )
                 .await
                 .map_err(|error| format!("JetStream publish 请求失败: {error}"))?;
             ack.await

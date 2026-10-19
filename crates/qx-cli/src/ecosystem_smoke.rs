@@ -6,47 +6,31 @@
 //! 由 `main.rs` 的 crate 根职责簇拆出（Phase 4p），条目经根部的
 //! `pub(crate) use ecosystem_smoke::*;` 再导出。
 
-use super::*;
+use crate::{
+    bar_fill_model, default_execution_cost_binding, run_builtin_strategy_on_bars,
+    BarBacktestAssembly,
+};
+use qx_core::{
+    InstrumentId, Money, Order, OrderStatus, Price, Quantity, Side, DEFAULT_SETTLEMENT_CURRENCY,
+};
+use qx_guanxing::{Bar, DataSourceId, QuoteTick};
+use qx_provider::{
+    DataProvider, DataQuery, ProviderCapability, ProviderError, ProviderErrorClass, ProviderResult,
+};
+use qx_strategy::{
+    BuiltinStrategyConfig, BuiltinStrategyKind, StrategyContext as NativeStrategyContext,
+};
+use qx_xingban::DeterministicRng;
+use qx_zhenlu::{PaperVenue, Venue, VenueEvent};
+use std::collections::BTreeMap;
 
-/// 定点 → f64，仅用于打印。
-pub(crate) fn f(x: i128) -> f64 {
-    x as f64 / 1e9
-}
-
-/// 生成确定性合成行情（同一 seed 必然产生同一序列）。
-pub(crate) fn gen_bars(n: usize, seed: u64) -> Vec<Bar> {
-    let mut rng = DeterministicRng::new(seed);
-    let mut bars = Vec::with_capacity(n);
-    let mut px: i128 = 100_000_000_000; // 100.0
-
-    for i in 0..n {
-        let drift = ((rng.next_u64() % 2001) as i128) - 1000;
-        px = (px + drift * 1_000_000).max(1_000_000_000);
-        let open = px;
-        let close = px + (((rng.next_u64() % 1001) as i128) - 500) * 1_000_000;
-        let high = open.max(close) + ((rng.next_u64() % 501) as i128) * 1_000_000;
-        let low = (open.min(close) - ((rng.next_u64() % 501) as i128) * 1_000_000).max(1_000_000);
-        let volume = 1_000 + (rng.next_u64() % 5_000) as i128;
-        bars.push(Bar::new(
-            (i as u64 + 1) * 1_000_000_000,
-            open,
-            high,
-            low,
-            close,
-            volume,
-        ));
-    }
-    bars
-}
-
-pub(crate) struct Outcome {
-    pub(crate) hash: u64,
-    pub(crate) n_fills: usize,
-    pub(crate) total_fee: i128,
-    pub(crate) return_bps: i32,
-    pub(crate) max_drawdown_bps: u32,
-    pub(crate) final_equity: i128,
-}
+mod chain;
+mod provider_capability;
+pub(crate) use provider_capability::provider_capability;
+mod json_output;
+pub(crate) use json_output::{print_json_report, print_machine_json};
+mod formatting;
+pub(crate) use formatting::f;
 
 pub(crate) struct DemoProvider {
     capability: ProviderCapability,
@@ -92,238 +76,73 @@ impl DataProvider for DemoProvider {
     }
 }
 
-pub(crate) fn provider_capability(id: &str, priority: u32) -> ProviderCapability {
-    ProviderCapability {
-        provider_id: id.into(),
-        version: "v1".into(),
-        data_kinds: [DataKind::Bar].into_iter().collect(),
-        asset_classes: ["crypto".into()].into_iter().collect(),
-        frequencies: ["1d".into()].into_iter().collect(),
-        auth_scope: "public".into(),
-        rate_limit_per_second: 10,
-        freshness_seconds: 60,
-        historical_start: 0,
-        historical_end: u64::MAX,
-        realtime: false,
-        priority,
-        quality_score: 100,
-        cost_score: 1,
+/// 生成确定性合成行情（同一 seed 必然产生同一序列）。
+pub(crate) fn gen_bars(n: usize, seed: u64) -> Vec<Bar> {
+    let mut rng = DeterministicRng::new(seed);
+    let mut bars = Vec::with_capacity(n);
+    let mut px: i128 = 100_000_000_000; // 100.0
+
+    for i in 0..n {
+        let drift = ((rng.next_u64() % 2001) as i128) - 1000;
+        px = (px + drift * 1_000_000).max(1_000_000_000);
+        let open = px;
+        let close = px + (((rng.next_u64() % 1001) as i128) - 500) * 1_000_000;
+        let high = open.max(close) + ((rng.next_u64() % 501) as i128) * 1_000_000;
+        let low = (open.min(close) - ((rng.next_u64() % 501) as i128) * 1_000_000).max(1_000_000);
+        let volume = 1_000 + (rng.next_u64() % 5_000) as i128;
+        bars.push(Bar::new(
+            (i as u64 + 1) * 1_000_000_000,
+            open,
+            high,
+            low,
+            close,
+            volume,
+        ));
     }
+    bars
 }
 
-pub(crate) fn run_ecosystem_smoke() {
-    let instrument = InstrumentId::parse("DEMO.SIM").unwrap();
+pub(crate) struct Outcome {
+    pub(crate) hash: u64,
+    pub(crate) n_fills: usize,
+    pub(crate) total_fee: i128,
+    pub(crate) return_bps: i32,
+    pub(crate) max_drawdown_bps: u32,
+    pub(crate) final_equity: i128,
+}
 
-    let mut factors = FactorCatalog::default();
-    factors
-        .register_definition(FeatureDefinition {
-            name: "momentum".into(),
-            version: "v1".into(),
-            formula: "close / close[-20] - 1".into(),
-            input_fields: vec!["close".into()],
-            dependencies: Vec::new(),
-            point_in_time: true,
-        })
-        .unwrap();
-    factors
-        .publish_artifact(FeatureArtifact {
-            feature_key: "momentum@v1".into(),
-            input_fingerprint: "synthetic-bars".into(),
-            as_of: 20,
-            coverage_bps: 10_000,
-            values: [(instrument.clone(), 123_i128)].into_iter().collect(),
-        })
-        .unwrap();
-    let second_instrument = InstrumentId::parse("DEMO2.SIM").unwrap();
-    let report = analyze_factor(
-        "momentum@v1",
-        &[
-            FactorObservation {
-                timestamp: 1,
-                instrument: instrument.clone(),
-                factor_value: Some(1),
-                forward_returns: [(1, 10)].into_iter().collect(),
-                previous_exposure: Some(0),
-                target_exposure: Some(100),
-                capacity_raw: Some(1_000_000),
-                exposures: BTreeMap::new(),
-                group_labels: BTreeMap::new(),
+pub(crate) fn run_ecosystem_smoke(as_json: bool) -> Result<(), String> {
+    if as_json {
+        let outcome = chain::run_ecosystem_smoke_inner(true);
+        let failure = outcome.as_ref().err().cloned();
+        let succeeded = failure.is_none();
+        let checks = vec![serde_json::json!({
+            "name": "ecosystem_smoke_chain",
+            "status": if succeeded { "pass" } else { "blocked" }
+        })];
+        let report = serde_json::json!({
+            "schema_version": 2,
+            "command": "ecosystem",
+            "ok": succeeded,
+            "readiness_layers": {
+                "R": {"status": if succeeded { "pass" } else { "blocked" }, "scope": "synthetic_ecosystem_smoke", "evidence": if succeeded { vec!["factor_catalog", "qifi_snapshot_roundtrip", "provider_failover", "scheduler_readiness", "control_plane", "query_api_routes", "foundation_specs"] } else { Vec::<&str>::new() }, "detail": "生态组件合成数据冒烟；不代表真实行情或生产部署就绪"},
+                "P": {"status": "not_assessed", "scope": "paper_execution", "evidence": Vec::<&str>::new(), "detail": "ecosystem 不运行 PaperVenue 订单生命周期；使用 all 或 paper-check 执行对应检查"},
+                "O": {"status": "not_assessed", "scope": "operator_runtime", "evidence": Vec::<&str>::new(), "detail": "未启动或检查运行时 worker"},
+                "L": {"status": "not_assessed", "scope": "live_account", "evidence": Vec::<&str>::new(), "detail": "未连接真实账户或提交真实订单"}
             },
-            FactorObservation {
-                timestamp: 1,
-                instrument: second_instrument,
-                factor_value: Some(2),
-                forward_returns: [(1, 20)].into_iter().collect(),
-                previous_exposure: Some(0),
-                target_exposure: Some(200),
-                capacity_raw: Some(900_000),
-                exposures: BTreeMap::new(),
-                group_labels: BTreeMap::new(),
-            },
-        ],
-        &FactorAnalysisConfig {
-            input_fingerprint: "synthetic-bars".into(),
-            ..FactorAnalysisConfig::default()
-        },
-    )
-    .unwrap();
-    factors.publish_report(report).unwrap();
-    let candidate = factors
-        .bind_candidate(CandidateRequest {
-            strategy_version: "sma-cross-v1".into(),
-            universe_version: "demo-universe-v1".into(),
-            parameters: Default::default(),
-            data_fingerprint: "synthetic-bars".into(),
-            factor_keys: vec!["momentum@v1".into()],
-            cost_bps: 8,
-            train_start: 1,
-            train_end: 100,
-            validation_start: 101,
-            validation_end: 200,
-            intended_exposure: BTreeMap::new(),
-            constraints: BTreeMap::new(),
-            execution_model: "event-backtest@v1".into(),
-            risk_model: "default-risk@v1".into(),
-        })
-        .unwrap();
-    assert!(!candidate.event_verified);
-    println!(
-        "[因子 · FactorCatalog] feature={} candidate=VectorOnly ✓",
-        candidate.config.feature_version
-    );
-
-    let mut base = AccountSnapshot::new(1, "main", "default", "SIM", 20);
-    base.cash_raw.insert("USD".into(), 100_000);
-    base.positions.insert(
-        instrument.clone(),
-        PositionSnapshot {
-            instrument,
-            quantity_raw: 10,
-            ..PositionSnapshot::default()
-        },
-    );
-    base.seal();
-    let mut target = base.clone();
-    target.cash_raw.insert("USD".into(), 99_000);
-    target.equity_raw = Some(101_000);
-    target.seal();
-    let diff = base.diff(&target).unwrap();
-    assert_eq!(diff.apply(&base).unwrap(), target);
-    // 这一段的标题是「QIFI」，所以必须真的走一遍 QIFI 信封的构造→校验→往返，
-    // 否则冒烟是在为一份它没碰过的协议作保（V13 R4）。给 `to_qifi`/`QifiEnvelope::{to_json,
-    // from_json,validate}` 一个生产（冒烟）调用者，同时让下面这行 ✓ 名副其实。
-    let qifi = target.to_qifi();
-    qifi.validate().expect("QIFI 信封头非法");
-    assert_eq!(
-        qx_protocol::QifiEnvelope::from_json(&qifi.to_json()).expect("QIFI 信封往返失败"),
-        qifi
-    );
-    println!(
-        "[协议 · QIFI Snapshot] schema=v1 diff_base={:016x} diff_target={:016x} ✓",
-        diff.base_state_hash, diff.target_state_hash
-    );
-
-    let mut providers = ProviderRegistry::new();
-    providers
-        .register(Box::new(DemoProvider {
-            capability: provider_capability("primary", 1),
-            fail: true,
-        }))
-        .unwrap();
-    providers
-        .register(Box::new(DemoProvider {
-            capability: provider_capability("backup", 2),
-            fail: false,
-        }))
-        .unwrap();
-    let provider_query = DataQuery {
-        kind: DataKind::Bar,
-        asset_class: "crypto".into(),
-        instrument_set: BTreeSet::from(["BTCUSDT.BINANCE".into()]),
-        field_set: BTreeSet::new(),
-        frequency: "1d".into(),
-        adjustment: "none".into(),
-        quality_policy: "strict".into(),
-        start: 1,
-        end: 10,
-        as_of: None,
-    };
-    let result = providers.fetch_with_failover(&provider_query).unwrap();
-    assert_eq!(result.retry_chain, ["primary", "backup"]);
-    let frame = result.to_bar_frame(&provider_query).unwrap();
-    assert_eq!(frame.instrument.to_string(), "BTCUSDT.BINANCE");
-    assert_eq!(frame.len(), 1);
-    println!(
-        "[数据 · ProviderRegistry] provider={} retry_chain={:?} frame_rows={} fingerprint={:016x} ✓",
-        result.provider_id,
-        result.retry_chain,
-        frame.len(),
-        frame.digest()
-    );
-
-    let mut scheduler = Scheduler::default();
-    scheduler
-        .register(JobSpec {
-            job_id: "load-bars".into(),
-            job_version: "v1".into(),
-            owner: "research".into(),
-            enabled: true,
-            trigger: Trigger::TradingCalendar {
-                session: "post-close".into(),
-            },
-            window: JobWindow::PostClose,
-            depends_on: vec![],
-            input_refs: vec![],
-            output_refs: vec!["bars".into()],
-            timeout_seconds: 60,
-            retry_policy: RetryPolicy::default(),
-            concurrency_key: "data".into(),
-            idempotency_key: "load-bars-daily".into(),
-            permission_scope: "research".into(),
-            audit_reason: "ecosystem smoke schedule".into(),
-            dry_run: true,
-        })
-        .unwrap();
-    assert_eq!(scheduler.ready_jobs(&BTreeSet::new()).len(), 1);
-    println!(
-        "[调度 · JobSpec] jobs={} ready=1 deterministic ✓",
-        scheduler.len()
-    );
-
-    let mut control = ControlPlane::default();
-    let audit = control
-        .submit(
-            ControlCommand {
-                command_id: 1,
-                request_id: "cli-control-1".into(),
-                operator_id: "cli".into(),
-                reason: "ecosystem smoke".into(),
-                kind: CommandKind::PauseStrategy,
-                target: "sma-cross-v1".into(),
-                payload: BTreeMap::new(),
-                permission: Permission::Trading,
-                dry_run: true,
-            },
-            20,
-        )
-        .unwrap();
-    println!(
-        "[控制 · ControlCommand] status={:?} digest={:016x} ✓",
-        audit.status, audit.command_digest
-    );
-
-    let api = ApiService::new(ApiState::default());
-    assert_eq!(api.handle("GET", "/health", "", 20).status, 200);
-    assert_eq!(
-        api.handle("GET", "/schema/account-snapshot-v1", "", 20)
-            .status,
-        200
-    );
-    println!("[控制 · Query/WebSocket API] health/schema routes ✓");
-
-    // 地基规格对象（qx-spec）：七类声明式文档在本构建里必须既能读入、又能拒绝坏载荷。
-    let foundation = verify_foundation_specs().expect("地基规格对象冒烟必须通过");
-    println!("[规格 · qx-spec] {foundation} ✓");
+            "checks": checks,
+            "warnings": [],
+            "failures": failure.into_iter().collect::<Vec<_>>(),
+            "network_accessed": false,
+            "orders_sent": false
+        });
+        print_json_report(&report)?;
+        if !succeeded {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    chain::run_ecosystem_smoke_inner(false)
 }
 
 pub(crate) fn mk_order(id: u64, instr: &InstrumentId, side: Side, qty: i64) -> Order {
@@ -346,8 +165,14 @@ pub(crate) fn mk_order(id: u64, instr: &InstrumentId, side: Side, qty: i64) -> O
 /// 引擎与 `backtest builtin` 同源：装配走 `BarBacktestAssembly`（含 next-open 成交与
 /// maker/taker 2/5bp 费率），策略走内置 `sma_cross`。本文件不再自带第二套撮合循环
 /// （V10 §4.3 第 3 项）；只有输入序列是合成的。
-pub(crate) fn run_backtest(bars: &[Bar], seed: u64, fast: usize, slow: usize) -> Outcome {
-    let instrument = InstrumentId::parse("DEMO.SIM").unwrap();
+pub(crate) fn run_backtest(
+    bars: &[Bar],
+    seed: u64,
+    fast: usize,
+    slow: usize,
+) -> Result<Outcome, String> {
+    let instrument = InstrumentId::parse("DEMO.SIM")
+        .ok_or_else(|| "自检回测示例标的无效: DEMO.SIM".to_string())?;
     let strategy_config = BuiltinStrategyConfig {
         fast_window: fast,
         slow_window: slow,
@@ -357,7 +182,7 @@ pub(crate) fn run_backtest(bars: &[Bar], seed: u64, fast: usize, slow: usize) ->
             instrument.clone(),
             Quantity::from_i64(10),
         )
-        .expect("内置双均线默认参数必须合法")
+        .map_err(|error| format!("内置双均线参数无效: {error}"))?
     };
     let context = NativeStrategyContext {
         strategy_id: "cli-selfcheck-sma".into(),
@@ -386,30 +211,36 @@ pub(crate) fn run_backtest(bars: &[Bar], seed: u64, fast: usize, slow: usize) ->
             seed,
             &default_execution_cost_binding(),
             // 同上：撮合口径固定为内核默认，自检不替使用者选一个更乐观的成交价。
-            bar_fill_model(None, None).expect("内核默认撮合模型不需要 market spec"),
-        )
+            bar_fill_model(None, None)
+                .map_err(|error| format!("构造默认 Bar 撮合模型失败: {error}"))?,
+        )?
         .into_config(),
         strategy_config,
         context,
         bars,
     )
-    .expect("合成输入的真实内核回测必须跑通");
-    Outcome {
+    .map_err(|error| format!("合成输入的真实内核回测失败: {error}"))?;
+    Ok(Outcome {
         hash: report.result_hash(),
         n_fills: report.fills.len(),
         total_fee: report.fees_raw,
         return_bps: report.return_bps,
         max_drawdown_bps: report.max_drawdown_bps,
         final_equity: report.final_equity(),
-    }
+    })
 }
 
-pub(crate) fn run_paper_smoke() {
-    let instrument = InstrumentId::parse("DEMO.SIM").unwrap();
+pub(crate) fn run_paper_smoke(print_output: bool) -> Result<(), String> {
+    let instrument = InstrumentId::parse("DEMO.SIM")
+        .ok_or_else(|| "Paper 冒烟示例标的无效: DEMO.SIM".to_string())?;
     let mut venue = PaperVenue::new("paper", default_execution_cost_binding().fee_model());
     let order = mk_order(9001, &instrument, Side::Buy, 2);
-    let accepted = venue.submit(order, 1).unwrap();
-    assert!(matches!(accepted.as_slice(), [VenueEvent::Accepted { .. }]));
+    let accepted = venue
+        .submit(order, 1)
+        .map_err(|error| format!("Paper 订单提交失败: {error}"))?;
+    if !matches!(accepted.as_slice(), [VenueEvent::Accepted { .. }]) {
+        return Err(format!("Paper 订单接受事件异常: {accepted:?}"));
+    }
     let events = venue.on_quote(
         &instrument,
         QuoteTick::new(
@@ -421,20 +252,36 @@ pub(crate) fn run_paper_smoke() {
             1,
         ),
     );
-    assert!(matches!(events.as_slice(), [VenueEvent::Fill(_)]));
-    assert_eq!(venue.snapshot()[0].status, OrderStatus::Filled);
+    if !matches!(events.as_slice(), [VenueEvent::Fill(_)]) {
+        return Err(format!("Paper 报价成交事件异常: {events:?}"));
+    }
+    if venue.snapshot().first().map(|order| order.status) != Some(OrderStatus::Filled) {
+        return Err("Paper 成交后订单状态不是 Filled".into());
+    }
 
     let remote_snapshot = venue.snapshot();
     venue.disconnect();
-    assert!(venue
+    if venue
         .submit(mk_order(9002, &instrument, Side::Buy, 1), 3)
-        .is_err());
-    assert_eq!(venue.state(), qx_zhenlu::ConnectorState::ReconcileRequired);
+        .is_ok()
+    {
+        return Err("Paper 断线后仍接受新订单".into());
+    }
+    if venue.state() != qx_zhenlu::ConnectorState::ReconcileRequired {
+        return Err(format!("Paper 断线后状态异常: {:?}", venue.state()));
+    }
     venue.reconnect();
-    assert!(venue.connected());
-    assert!(venue
+    if !venue.connected() {
+        return Err("Paper reconnect 后仍未连接".into());
+    }
+    let reconciliation = venue
         .reconcile_snapshot(&remote_snapshot)
-        .unwrap()
-        .is_empty());
-    println!("[针路 · PaperVenue] 订单接受/报价成交/断线转对账/恢复通过 ✓");
+        .map_err(|error| format!("Paper 快照对账失败: {error}"))?;
+    if !reconciliation.is_empty() {
+        return Err(format!("Paper 快照对账产生差异: {reconciliation:?}"));
+    }
+    if print_output {
+        println!("[针路 · PaperVenue] 订单接受/报价成交/断线转对账/恢复通过 ✓");
+    }
+    Ok(())
 }

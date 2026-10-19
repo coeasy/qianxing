@@ -1,4 +1,4 @@
-//! 运行证据包（RunEvidenceBundle）：把一次**回测/Paper 运行**的全部可复核事实聚成一份文档。
+//! 运行代证据字段：把一次**回测/Paper 运行**的可复核事实聚成统一 EvidenceBundle 的负载。
 //!
 //! 规划口径（QX-DEV-PLAN-2026-10-10 阶段 1 / T1-1，退出门 G1 第一条「同一运行可由 RunManifest
 //! **离线复算**」）：本对象**只聚合与校验，不重算任何指标**。它把散在各产物里的身份搬进同一份
@@ -12,28 +12,27 @@
 //! ② **摘要未核的证据包不成立**：`artifact_digests_verified` 必须为 true。没有重算过产物 SHA-256
 //!    的证据包只是「引用了一堆路径」。
 //! ③ **本地运行证据不得冒充沙盒/生产级**：`capability_level` 只许 L0/L1/L2。L3/L4 是沙盒/生产档，
-//!    必须由带真实 venue 窗口的 `EvidenceBundle` 支撑——两者不是同一种证据，不许互相顶替。
+//!    必须由统一 EvidenceBundle 的 `venue` 世代与真实窗口支撑——两类证据不许互相顶替。
 //!
 //! 四格是**交叉一致性**：`dataset.composed_fingerprint`、`identity.config_digest`、
 //! `identity.strategy_version`、`build.{code_commit,runtime_version}` 都必须与 `run` 块逐字相等。
 //! 「产物身份与数据指纹各说各话」是本仓已经栽过的那类漂移，这里把它变成会拒的判据。
 //!
-//! 两处**刻意分开**的指纹（写这一格之前先看过真产物，不然就会写成一条永远拒的判据）：
-//! `dataset.content_fingerprint` 是「这份输入文件是什么」（摘要 `input.fingerprint`，纯内容哈希），
-//! 而 `run.data_fingerprint` 是「这次运行认哪份数据」（RunManifest 的**合成**身份，形如
-//! `barframe:<内容哈希>` 或 `dataset-bundle:<bundle 指纹>`）。两者不是同一个值，硬写等号会让每一份
-//! 真产物都被拒；这里让 `dataset` 同时登记两者，并把等号立在 `composed_fingerprint` 那一格上。
-//!
-//! 另一处**如实记空**：`dataset.quality_report` 是 `Option`。本仓今天只有 `data-validate` 那条
-//! 只读诊断链会产出 `DatasetQualityReport`（T1-6 才把它铺开），回测链的输入身份是 v1 清单、不带
-//! 质量报告。一份「全 0 的假报告」会被读成「核过了，没有重复、没有缺口」——比 `null` 危险得多。
+//! `dataset.content_fingerprint` 是输入内容哈希，`run.data_fingerprint` 是 RunManifest 合成身份；
+//! 两者分开登记，只有 `dataset.composed_fingerprint` 与 `run.data_fingerprint` 相等。
+//! `dataset.quality_report` 可缺席：strategy/fast backtest 可绑定已校验的 v2 清单；未绑定时保留
+//! `null`，不伪造全零报告，避免把「未核」读成「已核且无缺陷」。
 
+pub use crate::run_evidence_fidelity::RunEvidenceFidelity;
 use crate::run_record::{ArtifactRef, ReplayVerdict};
-use crate::{digest_json, CapabilityLevel, FoundationDocument, FoundationKind};
+use crate::CapabilityLevel;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const RUN_EVIDENCE_SCHEMA_VERSION: u32 = 1;
+#[path = "run_evidence_depth_components.rs"]
+mod run_evidence_depth_components;
+#[path = "run_evidence_quality_manifest.rs"]
+mod run_evidence_quality_manifest;
 
 /// 离线复算至少要能拿到的那几份产物。少一份，「由 RunManifest 离线复算」这句话就落不了地。
 pub const RUN_EVIDENCE_REQUIRED_ARTIFACTS: [&str; 4] =
@@ -68,16 +67,18 @@ pub struct RunEvidenceQualityReport {
     pub duplicate_rows: u64,
     pub out_of_order_rows: u64,
     pub missing_intervals: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval_ms: Option<u64>,
     pub timezone: String,
     pub corporate_action_coverage: bool,
     pub usable_tiers: Vec<String>,
 }
 
 /// 数据适用性：输入形状与身份 + 这一轮实际消费的样本数 + （可能缺席的）质量报告。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunEvidenceDataset {
-    /// 输入形状：`barframe` / `depth-frame`。
+    /// 输入形状：`barframe` / `depth-frame` / `multi-barframe` / 多市场 BarFrame/DepthFrame。
     pub kind: String,
     pub dataset_id: String,
     pub version: String,
@@ -89,8 +90,56 @@ pub struct RunEvidenceDataset {
     pub row_count: u64,
     /// 复核时按它重读同一份输入。
     pub path: String,
+    /// 若回测绑定了 DatasetManifestV2，记录该清单的独立指纹。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_fingerprint: Option<String>,
+    /// 单输入回测绑定的 DatasetManifestV2 文件；导出时搬入便携包并重定位。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_manifest_path: Option<String>,
+    /// 与 quality_manifest_path 成对出现，用于离线复核清单字节。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_manifest_sha256: Option<String>,
     /// 质量报告：这一档输入带一份就原样聚合，没有就如实写 `null`（见模块文档末段）。
     pub quality_report: Option<RunEvidenceQualityReport>,
+    /// 组合数据集的组成输入。普通单输入包省略此字段，以保持既有 JSON 形状。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<RunEvidenceDatasetComponent>,
+}
+
+/// 组合回测的一条有序输入腿/市场。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunEvidenceDatasetComponent {
+    pub role: String,
+    pub dataset_id: String,
+    pub version: String,
+    pub content_fingerprint: String,
+    pub row_count: u64,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_report: Option<RunEvidenceQualityReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_manifest_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_manifest_sha256: Option<String>,
+}
+
+/// 可复核的报告分析输入。它不参与原回测 result_hash，但随证据包一并搬运。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunEvidenceReportAnalysis {
+    pub kind: String,
+    pub input_path: String,
+    pub input_sha256: String,
+    pub input_fingerprint: String,
+    pub instrument: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar_input_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar_input_sha256: Option<String>,
+    pub analysis: String,
 }
 
 /// 配置与策略身份：这份结果到底是「哪套配置跑哪个策略」跑出来的。
@@ -144,16 +193,19 @@ pub struct RunEvidenceRecompute {
     pub expected_result_hash: String,
 }
 
-/// 一份运行证据包。
+/// 运行代的证据负载；外层版本、世代判别与统一读写由 `EvidenceBundle` 承载。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RunEvidenceBundle {
-    pub schema_version: u32,
+pub struct RunEvidencePayload {
     pub run: RunEvidenceRun,
     pub artifacts: Vec<ArtifactRef>,
     pub dataset: RunEvidenceDataset,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_analysis: Option<RunEvidenceReportAnalysis>,
     pub identity: RunEvidenceIdentity,
     pub assumptions: Vec<RunEvidenceAssumption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fidelity: Option<RunEvidenceFidelity>,
     pub build: RunEvidenceBuild,
     pub verification: RunEvidenceVerification,
     pub unverified: Vec<String>,
@@ -171,7 +223,7 @@ fn blank_entries(values: &[String]) -> Vec<usize> {
         .collect()
 }
 
-impl RunEvidenceBundle {
+impl RunEvidencePayload {
     /// 本对象接受的能力档上限：L3/L4 属于沙盒/生产证据，由 `EvidenceBundle` 承担。
     pub const MAX_LOCAL_LEVEL: CapabilityLevel = CapabilityLevel::L2;
 
@@ -256,20 +308,162 @@ impl RunEvidenceBundle {
                 return Err(format!("运行证据包字段不能为空: {field}"));
             }
         }
-        // 质量报告**缺席**是合法状态（这一档输入没有报告），但**带了一份空报告**不合法：
-        // `usable_tiers` 为空等于说「没有任何一档可用」，那是一句该被拒的断言。
-        if let Some(report) = &self.dataset.quality_report {
-            if report.timezone.trim().is_empty() || report.usable_tiers.is_empty() {
+        run_evidence_quality_manifest::validate_dataset(&self.dataset)?;
+        match self.dataset.kind.as_str() {
+            "multi-barframe" => {
+                if self.dataset.components.len() != 2
+                    || self.dataset.components[0].role != "primary"
+                    || self.dataset.components[1].role != "reference"
+                {
+                    return Err(
+                        "multi-barframe 必须按 primary、reference 顺序登记两条输入腿".into(),
+                    );
+                }
+                if self.dataset.row_count != self.dataset.components[0].row_count {
+                    return Err("multi-barframe row_count 必须等于 primary 输入行数".into());
+                }
+                for component in &self.dataset.components {
+                    if component.dataset_id.trim().is_empty()
+                        || component.version.trim().is_empty()
+                        || component.content_fingerprint.trim().is_empty()
+                        || component.path.trim().is_empty()
+                        || component.row_count == 0
+                    {
+                        return Err(format!(
+                            "运行证据包 dataset.components.{} 必须有身份、路径和正行数",
+                            component.role
+                        ));
+                    }
+                    let quality_fields = [
+                        component.manifest_fingerprint.is_some(),
+                        component.quality_report.is_some(),
+                        component.quality_manifest_path.is_some(),
+                        component.quality_manifest_sha256.is_some(),
+                    ];
+                    if quality_fields.iter().any(|present| *present)
+                        && !quality_fields.iter().all(|present| *present)
+                    {
+                        return Err(format!(
+                            "运行证据包 dataset.components.{} 的质量清单字段必须成套出现",
+                            component.role
+                        ));
+                    }
+                }
+                let [primary, reference] = self.dataset.components.as_slice() else {
+                    unreachable!("multi-barframe length checked above")
+                };
+                let primary_has_manifest = primary.manifest_fingerprint.is_some();
+                let reference_has_manifest = reference.manifest_fingerprint.is_some();
+                if primary_has_manifest != reference_has_manifest
+                    || (primary_has_manifest
+                        && (primary.quality_report.is_none() || reference.quality_report.is_none()))
+                {
+                    return Err(
+                        "multi-barframe 清单身份必须同时为两条腿提供 fingerprint 与 quality_report"
+                            .into(),
+                    );
+                }
+                for component in &self.dataset.components {
+                    if let Some(report) = &component.quality_report {
+                        if report.timezone.trim().is_empty()
+                            || report.usable_tiers.is_empty()
+                            || report.interval_ms == Some(0)
+                        {
+                            return Err(format!(
+                                "运行证据包 dataset.components.{}.quality_report 必须声明时区、有效档位与正 interval_ms（若在场）",
+                                component.role
+                            ));
+                        }
+                    }
+                }
+            }
+            "multi-market-barframe" => {
+                if self.dataset.components.len() < 3 {
+                    return Err("multi-market-barframe 至少要登记三个 market 组成输入".into());
+                }
+                let mut roles = std::collections::BTreeSet::new();
+                let mut total_rows = 0_u64;
+                for component in &self.dataset.components {
+                    if !component.role.starts_with("market:")
+                        || component.role["market:".len()..].trim().is_empty()
+                        || !roles.insert(component.role.as_str())
+                    {
+                        return Err(format!(
+                            "multi-market-barframe 组成输入 role 必须是唯一的 market:<instrument>: {}",
+                            component.role
+                        ));
+                    }
+                    if component.dataset_id.trim().is_empty()
+                        || component.version.trim().is_empty()
+                        || component.content_fingerprint.trim().is_empty()
+                        || component.path.trim().is_empty()
+                        || component.row_count == 0
+                    {
+                        return Err(format!(
+                            "运行证据包 dataset.components.{} 必须有身份、路径和正行数",
+                            component.role
+                        ));
+                    }
+                    total_rows = total_rows
+                        .checked_add(component.row_count)
+                        .ok_or("multi-market-barframe row_count 总和溢出")?;
+                }
+                if self.dataset.row_count != total_rows {
+                    return Err(format!(
+                        "multi-market-barframe row_count 必须等于各市场行数总和: 声明={} 实际={total_rows}",
+                        self.dataset.row_count
+                    ));
+                }
+            }
+            "multi-market-depthframe" => {
+                run_evidence_depth_components::validate(&self.dataset)?;
+            }
+            _ if !self.dataset.components.is_empty() => {
                 return Err(
-                    "运行证据包 dataset.quality_report 若在场就必须写明 timezone 与非空 usable_tiers".into(),
+                    "只有 multi-barframe 或多市场 Bar/DepthFrame 可声明 dataset.components".into(),
                 );
             }
+            _ => {}
         }
         Ok(())
     }
 
     /// 交叉一致性：合成数据指纹 / 配置摘要 / 策略版本 / 构建身份都必须与 `run` 块逐字相等。
     fn check_cross_references(&self) -> Result<(), String> {
+        if let Some(analysis) = &self.report_analysis {
+            let document = serde_json::from_str::<serde_json::Value>(&analysis.analysis).ok();
+            let calendar_path = document
+                .as_ref()
+                .and_then(|value| value.pointer("/calendar/path"))
+                .and_then(serde_json::Value::as_str);
+            let calendar_sha256 = document
+                .as_ref()
+                .and_then(|value| value.pointer("/calendar/sha256"))
+                .and_then(serde_json::Value::as_str);
+            if analysis.kind != "benchmark"
+                || analysis.input_path.trim().is_empty()
+                || analysis.input_sha256.trim().is_empty()
+                || analysis.input_fingerprint.trim().is_empty()
+                || analysis.instrument.trim().is_empty()
+                || analysis
+                    .calendar_input_path
+                    .as_ref()
+                    .is_some_and(|path| path.trim().is_empty())
+                || analysis
+                    .calendar_input_sha256
+                    .as_ref()
+                    .is_some_and(|digest| digest.trim().is_empty())
+                || analysis.calendar_input_path.is_some()
+                    != analysis.calendar_input_sha256.is_some()
+                || document.as_ref().is_none_or(|value| !value.is_object())
+                || analysis.calendar_input_path.is_some() != calendar_path.is_some()
+                || analysis.calendar_input_sha256.as_deref() != calendar_sha256
+            {
+                return Err(
+                    "运行证据包 report_analysis 必须包含 benchmark 类型、输入身份和分析对象".into(),
+                );
+            }
+        }
         let pairs = [
             (
                 "dataset.composed_fingerprint",
@@ -385,50 +579,19 @@ impl RunEvidenceBundle {
     }
 }
 
-impl FoundationDocument for RunEvidenceBundle {
-    const KIND: FoundationKind = FoundationKind::RunEvidence;
-    const SCHEMA_VERSION: u32 = RUN_EVIDENCE_SCHEMA_VERSION;
-
-    fn from_json(payload: &str) -> Result<Self, String> {
-        let document: Self = serde_json::from_str(payload)
-            .map_err(|error| format!("运行证据包解析失败: {error}"))?;
-        document.validate()?;
-        Ok(document)
-    }
-
-    fn validate(&self) -> Result<(), String> {
-        if self.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
-            return Err(format!(
-                "运行证据包 schema_version={} 不受支持（本构建只认 {}）",
-                self.schema_version, RUN_EVIDENCE_SCHEMA_VERSION
-            ));
-        }
+impl RunEvidencePayload {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         self.check_run()?;
         self.check_artifacts()?;
         self.check_dataset()?;
         self.check_cross_references()?;
         self.check_assumptions()?;
+        crate::run_evidence_fidelity::validate(self.fidelity.as_ref())?;
         self.check_evidence_honesty()?;
         self.check_recompute()?;
         if self.operator.trim().is_empty() {
             return Err("运行证据包必须写明 operator".into());
         }
         Ok(())
-    }
-
-    fn identity(&self) -> String {
-        format!(
-            "{}@{}",
-            self.run.run_id,
-            self.verification.capability_level.as_str()
-        )
-    }
-
-    fn fingerprint(&self) -> Result<String, String> {
-        digest_json(self)
-    }
-
-    fn to_json(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(self).map_err(|error| format!("运行证据包规范化失败: {error}"))
     }
 }

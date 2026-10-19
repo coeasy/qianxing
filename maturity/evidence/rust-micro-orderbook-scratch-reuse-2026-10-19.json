@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-10-18T21:45:20Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "commands": {
+    "before": [
+      "cargo", "bench", "--offline", "-p", "qx-cli", "--bench",
+      "criterion_performance", "--", "l2_matching", "--sample-size", "10"
+    ],
+    "after": [
+      "cargo", "bench", "--offline", "-p", "qx-cli", "--bench",
+      "criterion_performance", "--", "l2_matching", "--sample-size", "10",
+      "--save-baseline", "scratch-reuse"
+    ]
+  },
+  "criterion": {
+    "sample_size": 10,
+    "warm_up_seconds": 1,
+    "measurement_seconds": 2,
+    "interval": "Criterion estimated time interval printed as lower/point/upper estimate"
+  },
+  "workload": {
+    "snapshots": [1000, 8000, 64000],
+    "orders_per_snapshot": 1,
+    "book_depth_per_side": 1,
+    "allocation_counting": false
+  },
+  "records": [
+    {
+      "snapshots": 1000,
+      "fresh_vectors_and_map": {
+        "median_us": 571.60,
+        "ci95_us": [566.34, 581.68]
+      },
+      "reused_engine_scratch": {
+        "median_us": 517.15,
+        "ci95_us": [503.28, 538.71]
+      },
+      "speedup_pct_by_median": 9.53
+    },
+    {
+      "snapshots": 8000,
+      "fresh_vectors_and_map": {
+        "median_ms": 5.0404,
+        "ci95_ms": [5.0111, 5.0594]
+      },
+      "reused_engine_scratch": {
+        "median_ms": 4.2943,
+        "ci95_ms": [4.2161, 4.3546]
+      },
+      "speedup_pct_by_median": 14.80
+    },
+    {
+      "snapshots": 64000,
+      "fresh_vectors_and_map": {
+        "median_ms": 41.925,
+        "ci95_ms": [41.294, 42.530]
+      },
+      "reused_engine_scratch": {
+        "median_ms": 36.481,
+        "ci95_ms": [35.969, 37.204]
+      },
+      "speedup_pct_by_median": 12.99
+    }
+  ],
+  "correctness_guard": {
+    "semantic_operations_changed": false,
+    "change_scope": "Retain capacity for per-snapshot pending, remaining-depth, queue-depth, and estimated-volume-budget work buffers; scan order, price/quantity arithmetic, and fill construction remain unchanged.",
+    "result_hash_comparison": false
+  },
+  "interpretation": "Sequential same-host measurements of the existing L2 matcher benchmark show 9.53%, 14.80%, and 12.99% lower median runtime at 1k/8k/64k snapshots after scratch-buffer reuse. The runs used the same harness and Criterion sampling settings but were not interleaved, and allocator activity was not counted; treat the result as directional local evidence. This microbenchmark does not imply end-to-end A-share backtest speedup."
+}

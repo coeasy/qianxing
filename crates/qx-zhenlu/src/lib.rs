@@ -9,6 +9,7 @@ pub use algo::{
 };
 pub mod oms;
 pub mod portfolio;
+pub mod venue_capabilities;
 pub use oms::Oms;
 // 目标仓位是全仓唯一概念（定义在 qx-core，V10 §4.8）；此处只做出口别名。
 pub use qx_core::TargetPosition;
@@ -345,6 +346,7 @@ pub enum VenueReconcileIssue {
 /// Venue 适配器的最小执行契约。适配器只返回事实事件，不直接改 OMS 或账簿。
 pub trait Venue {
     fn id(&self) -> &str;
+    fn capabilities(&self) -> &'static venue_capabilities::VenueCapabilities;
     fn submit(&mut self, order: Order, ts: u64) -> QxResult<Vec<VenueEvent>>;
     fn cancel(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>>;
     fn snapshot(&self) -> Vec<VenueOrderSnapshot>;
@@ -1346,17 +1348,16 @@ impl PaperVenue {
         if quote.source_seq != 0 {
             self.last_source_seq = quote.source_seq;
         }
-        let ids: Vec<u64> = self
-            .orders
-            .iter()
-            .filter(|(_, o)| &o.instrument == instrument && !o.status.is_terminal())
-            .map(|(id, _)| *id)
-            .collect();
         let mut out = Vec::new();
         let mut remaining_buy = quote.ask_qty.raw();
         let mut remaining_sell = quote.bid_qty.raw();
-        for id in ids {
-            let o = self.orders.get_mut(&id).unwrap();
+        // BTreeMap iteration already preserves client-order-id order. Mutate the
+        // matching entries in place to avoid allocating an ID snapshot and then
+        // looking every entry up a second time on each quote.
+        for (id, o) in &mut self.orders {
+            if &o.instrument != instrument || o.status.is_terminal() {
+                continue;
+            }
             let px = match o.side {
                 Side::Buy => quote.ask,
                 Side::Sell => quote.bid,
@@ -1397,7 +1398,7 @@ impl PaperVenue {
                 .fee_model
                 .commission_for_side(qty.raw(), px.raw(), o.side, is_maker);
             let mut fill = Fill {
-                order_id: id,
+                order_id: *id,
                 qty,
                 price: px,
                 fee: qx_core::Money::from_raw(fee),
@@ -1416,7 +1417,15 @@ impl Venue for PaperVenue {
     fn id(&self) -> &str {
         &self.id
     }
+
+    fn capabilities(&self) -> &'static venue_capabilities::VenueCapabilities {
+        &venue_capabilities::PAPER_VENUE_CAPABILITIES
+    }
+
     fn submit(&mut self, mut order: Order, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        self.capabilities()
+            .validate_submit(&order, self.id())
+            .map_err(QxError::BusinessViolation)?;
         order.validate().map_err(QxError::BusinessViolation)?;
         self.fee_model.validate()?;
         if !self.connected {
@@ -1448,6 +1457,9 @@ impl Venue for PaperVenue {
     }
 
     fn cancel(&mut self, client_order_id: u64, ts: u64) -> QxResult<Vec<VenueEvent>> {
+        self.capabilities()
+            .validate_cancel()
+            .map_err(QxError::BusinessViolation)?;
         if !self.connected {
             return Err(QxError::Ambiguous("取消结果未知，必须对账".into()));
         }

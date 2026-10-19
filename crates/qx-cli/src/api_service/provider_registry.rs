@@ -78,6 +78,7 @@ fn capability_from_config(
         provider_id: source.provider_id.clone(),
         version: source.version.clone(),
         data_kinds,
+        data_tiers: [qx_provider::MarketDataTier::Bar].into_iter().collect(),
         asset_classes: source.asset_classes.iter().cloned().collect(),
         frequencies: source.frequencies.iter().cloned().collect(),
         auth_scope: source.auth_scope.clone(),
@@ -95,7 +96,9 @@ fn capability_from_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qx_provider::{DataRequest, DataRequirements, ProviderPayload};
+    use qx_provider::{
+        DataQuery, DataRequest, DataRequirements, ProviderError, ProviderPayload, ProviderResult,
+    };
     use serde_json::json;
 
     struct FixtureProvider(ProviderCapability);

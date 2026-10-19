@@ -20,13 +20,14 @@ use crate::build_identity::BUILD_REVISION;
 use qx_app::{
     compare_runs, plan_algo_execution, plan_risk_parity, run_backtest, run_depth_backtest,
     run_depth_experiment, run_experiment, run_multi_account_backtest, run_multi_leg_backtest,
-    run_multi_leg_experiment, run_multi_market_experiment, run_provider_backtest_with_manifest,
-    run_provider_depth_backtest, validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec,
-    AppError, AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec,
-    DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestSpec,
-    MultiLegBacktestSpec, ProviderBacktestSpec, ProviderDepthBacktestSpec, RiskParitySpec,
-    RunContext, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
-    RunMultiMarketExperimentSpec,
+    run_multi_leg_experiment, run_multi_market_backtest, run_multi_market_depth_backtest,
+    run_multi_market_experiment, run_provider_backtest_with_manifest, run_provider_depth_backtest,
+    validate_dataset, verify_depth_run, verify_run, AlgoExecutionSpec, AppError, AppErrorCategory,
+    BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsSpec, DatasetSpec,
+    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountBacktestSpec, MultiLegBacktestSpec,
+    MultiMarketBacktestSpec, MultiMarketDepthBacktestSpec, ProviderBacktestSpec,
+    ProviderDepthBacktestSpec, RiskParitySpec, RunContext, RunDepthExperimentSpec,
+    RunExperimentSpec, RunMultiLegExperimentSpec, RunMultiMarketExperimentSpec,
 };
 use qx_runtime::RuntimeConfig;
 use std::path::Path;
@@ -34,7 +35,7 @@ use std::path::Path;
 pub(crate) fn dispatch(action: Option<AppCommand>) {
     let Some(action) = action else {
         eprintln!(
-            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|backtest|provider-backtest|provider-depth-backtest|verify|compare-runs|plan-risk-parity|plan-algo-execution|run-experiment|run-depth-experiment|run-multi-leg-experiment|run-multi-market-experiment|depth-backtest|verify-depth|multi-leg-backtest|multi-account-backtest> <spec.json>\n  \
+            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|backtest|provider-backtest|provider-depth-backtest|verify|compare-runs|plan-risk-parity|plan-algo-execution|run-experiment|run-depth-experiment|run-multi-leg-experiment|run-multi-market-experiment|depth-backtest|verify-depth|multi-leg-backtest|multi-market-backtest|multi-account-backtest> <spec.json>\n  \
              validate-dataset <DatasetSpec.json>  校验一份数据集能否支撑 Bar 回测\n  \
              backtest <BacktestSpec.json>         跑一次 Bar 回测并落四份产物\n  \
              provider-backtest <RuntimeConfig.json> <ProviderBacktestSpec.json>  Run a shared Rust Provider backtest\n  \
@@ -50,6 +51,8 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
              depth-backtest <DepthBacktestSpec.json>  执行 L1 Tick 或 L2 订单簿回测\n  \
              verify-depth <DepthBacktestOutcome.json> 复核 L1/L2 产物\n  \
              multi-leg-backtest <MultiLegBacktestSpec.json> 执行双腿 Bar 套利回测\n  \
+             multi-market-backtest <MultiMarketBacktestSpec.json> 执行同账户多市场 Bar 回测\n  \
+             multi-market-depth-backtest <MultiMarketDepthBacktestSpec.json> 执行同账户多市场深度回测\n  \\
              multi-account-backtest <MultiAccountBacktestSpec.json> 执行独立账户 Bar 回测"
         );
         std::process::exit(2);
@@ -69,6 +72,8 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
         AppCommand::RunDepthExperiment { spec } => depth_experiment(spec),
         AppCommand::RunMultiLegExperiment { spec } => multi_leg_experiment(spec),
         AppCommand::RunMultiMarketExperiment { spec } => multi_market_experiment(spec),
+        AppCommand::MultiMarketBacktest { spec } => multi_market_backtest(spec),
+        AppCommand::MultiMarketDepthBacktest { spec } => multi_market_depth_backtest(spec),
         AppCommand::DepthBacktest { spec } => depth_backtest(spec),
         AppCommand::VerifyDepth { outcome } => verify_depth(outcome),
         AppCommand::MultiLegBacktest { spec } => multi_leg_backtest(spec),
@@ -133,6 +138,16 @@ fn multi_leg_backtest(spec_path: &Path) -> Result<String, AppError> {
 fn multi_account_backtest(spec_path: &Path) -> Result<String, AppError> {
     let spec = MultiAccountBacktestSpec::from_json(&read_document(spec_path)?)?;
     run_multi_account_backtest(&spec, &context(&spec.batch_id))?.to_json()
+}
+
+fn multi_market_backtest(spec_path: &Path) -> Result<String, AppError> {
+    let spec = MultiMarketBacktestSpec::from_json(&read_document(spec_path)?)?;
+    run_multi_market_backtest(&spec, &context(&spec.run_id))?.to_json()
+}
+
+fn multi_market_depth_backtest(spec_path: &Path) -> Result<String, AppError> {
+    let spec = MultiMarketDepthBacktestSpec::from_json(&read_document(spec_path)?)?;
+    run_multi_market_depth_backtest(&spec, &context(&spec.run_id))?.to_json()
 }
 
 fn verify_depth(outcome_path: &Path) -> Result<String, AppError> {

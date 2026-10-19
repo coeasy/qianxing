@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "run_id": "depth-fifo-queue-example",
+  "depth_path": "deploy/qianxing.depth-frame.example.json",
+  "tier": "l2",
+  "settlement_currency": "USDT",
+  "initial_cash_raw": 1000000000000000,
+  "fee_bps": 0,
+  "latency_snapshots": 0,
+  "queue_position_bps": 5000,
+  "queue_position_model": {
+    "kind": "fifo_volume_estimate",
+    "volume_advance_bps": 10000
+  },
+  "market_impact_bps": 0,
+  "output_dir": "target/depth-backtest-fifo-queue",
+  "strategy": {
+    "kind": "sma_cross",
+    "strategy_id": "fifo-queue-example",
+    "quantity_raw": 1000000000,
+    "fast_window": 5,
+    "slow_window": 20
+  },
+  "market_making": {
+    "spread_bps": 100,
+    "quote_qty_raw": 1000000000,
+    "max_inventory_raw": 5000000000,
+    "tick_size_raw": 10000000,
+    "inventory_skew_bps": 50
+  }
+}

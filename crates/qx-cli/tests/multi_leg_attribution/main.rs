@@ -17,7 +17,11 @@ fn fixture(name: &str) -> String {
 }
 
 fn temp_root(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|crates| crates.parent())
+        .expect("仓库根目录");
+    let root = workspace.join("target").join(format!(
         "qianxing-multi-leg-{label}-{}-{}",
         std::process::id(),
         SystemTime::now()

@@ -80,14 +80,20 @@ ACCOUNT_CASHFLOW = "AccountCashflow"
 
 
 def default_binary() -> Path:
-    for candidate in (
-        WORKSPACE / ".cargo-target" / "debug" / "qx-cli.exe",
-        WORKSPACE / ".cargo-target" / "debug" / "qx-cli",
-        WORKSPACE / "target" / "debug" / "qx-cli.exe",
-        WORKSPACE / "target" / "debug" / "qx-cli",
-    ):
-        if candidate.is_file():
-            return candidate
+    candidates = [
+        WORKSPACE / relative
+        for relative in (
+            ".cargo-target/debug/qx-cli.exe",
+            ".cargo-target/debug/qx-cli",
+            "target/debug/qx-cli.exe",
+            "target/debug/qx-cli",
+        )
+    ]
+    existing = [candidate for candidate in candidates if candidate.is_file()]
+    if existing:
+        # Multiple Cargo target directories may be present; never accept an
+        # older cached executable while a newer source build is available.
+        return max(existing, key=lambda candidate: candidate.stat().st_mtime_ns)
     raise SystemExit("找不到被测 binary：先 `cargo build -p qx-cli`，或用 --binary 指定")
 
 

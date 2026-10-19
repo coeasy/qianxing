@@ -1,7 +1,10 @@
 use super::super::funding::SpotCashReservations;
 use crate::orderbook_strategies::OrderBookStrategy;
-use crate::{DataTier, OrderBookExecutionModel, OrderBookMatchingEngine, OrderBookSnapshot};
-use qx_core::{EventLog, Fill, Ledger, Money, Price, TradingInstrumentSpec};
+use crate::{
+    DataTier, OrderBookExecutionDescriptor, OrderBookExecutionModel, OrderBookMatchingEngine,
+    OrderBookSnapshot,
+};
+use qx_core::{EventLog, Fill, Fnv1a, Ledger, Money, Price, TradingInstrumentSpec};
 use std::collections::BTreeMap;
 
 pub struct OrderBookPortfolioMarket<'a> {
@@ -21,7 +24,7 @@ pub(super) fn validate_market_data_tier(
             if market
                 .snapshots
                 .iter()
-                .any(|snapshot| snapshot.bids.len() != 1 || snapshot.asks.len() != 1) =>
+                .any(|snapshot| !crate::orderbook::has_l1_shape(snapshot)) =>
         {
             Err(qx_core::QxError::BusinessViolation(format!(
                 "共享 L1 Tick 市场 {} 必须在每份快照中恰有一档 bid/ask",
@@ -44,6 +47,36 @@ pub(super) fn validate_market_data_tier(
         .map_err(qx_core::QxError::BusinessViolation)
 }
 
+pub(super) fn write_market_identity(
+    hash: &mut Fnv1a,
+    market: &OrderBookPortfolioMarket<'_>,
+) -> Result<(), qx_core::QxError> {
+    hash.write_text(&market.instrument_spec.instrument.to_string());
+    hash.write_text(match market.data_tier {
+        DataTier::L1 => "l1",
+        DataTier::L2L3 => "l2",
+        DataTier::Bar => "bar",
+    });
+    hash.write_u64(market.priority as u64);
+    hash.write_text(
+        &serde_json::to_string(&market.instrument_spec).map_err(|error| {
+            qx_core::QxError::Invariant(format!("共享订单簿产品规格序列化失败: {error}"))
+        })?,
+    );
+    market.execution_model.write_identity(hash);
+    for snapshot in market.snapshots {
+        hash.write_u64(snapshot.ts);
+        hash.write_u64(snapshot.sequence);
+        hash.write_u64(snapshot.bids.len() as u64);
+        hash.write_u64(snapshot.asks.len() as u64);
+        for level in snapshot.bids.iter().chain(snapshot.asks.iter()) {
+            hash.write_i128(level.price.raw());
+            hash.write_i128(level.qty.raw());
+        }
+    }
+    Ok(())
+}
+
 pub struct OrderBookPortfolioBacktestEngine<'a> {
     pub(super) account_id: String,
     pub(super) currency: String,
@@ -55,6 +88,7 @@ pub struct OrderBookPortfolioBacktestEngine<'a> {
 pub struct OrderBookPortfolioBacktestReport {
     pub fills: Vec<Fill>,
     pub fills_by_instrument: BTreeMap<qx_core::InstrumentId, Vec<Fill>>,
+    pub execution_models: BTreeMap<qx_core::InstrumentId, OrderBookExecutionDescriptor>,
     pub ledger: Ledger,
     pub event_log: EventLog,
     pub equity: Vec<(u64, i128)>,

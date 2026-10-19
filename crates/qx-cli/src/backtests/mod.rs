@@ -2,7 +2,25 @@
 //!
 //! 撮合内核来自 qx-xingban，本模块负责输入解析、风控门同源注入与运行清单/产物持久化。
 
-use super::*;
+pub(crate) use super::{
+    config_margin_mode, execution_cost_binding, execution_cost_binding_from_config,
+    market_spec_from_value, multi_leg_integrity_summary, read_example_json, read_runtime_config,
+    rejection_count, rejection_facts, rejection_facts_line, render_number, strategy_allows_short,
+    strategy_risk_gate, verify_dataset_bundle_binding, verify_dataset_bundle_component_bindings,
+    verify_strategy_artifact, BacktestConfig, BacktestEngine, Bar, BarFrame, BuiltinStrategy,
+    BuiltinStrategyConfig, BuiltinStrategyKind, ContractBarStrategy, DataTier,
+    ExecutionCostBinding, FeeModel, FillModel, InstrumentId, JsonDatasetRegistry, LatencyModel,
+    MarginRule, Money, NativeBarStrategy, NativeStrategyContext, NoMargin, Quantity, RiskGate,
+    RunManifest, RunManifestIdentity, RuntimeConfig, TradingInstrumentSpec, TradingProduct,
+    VirtualTradingConfig, DEFAULT_SETTLEMENT_CURRENCY, MULTI_LEG_KINDS,
+};
+use std::path::Path;
+
+pub(crate) struct MarketSpecLoad {
+    pub(crate) spec: Option<TradingInstrumentSpec>,
+    pub(crate) app_margin_model: Option<qx_app::BacktestMarginConfig>,
+    pub(crate) source: &'static str,
+}
 
 /// Bar 回测内核装配：`backtest builtin`、`backtest multi-builtin` 的腿级回测与
 /// `strategy backtest` 共用同一份乘数、成交、延迟与数据档位口径；
@@ -49,20 +67,20 @@ impl BarBacktestAssembly {
         seed: u64,
         costs: &ExecutionCostBinding,
         fill: BarFillModelBinding,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        Ok(Self {
             instrument: instrument.clone(),
             instrument_spec: None,
             account_id: account_id.into(),
             initial_cash,
             margin: Box::new(NoMargin),
-            fill: fill.fill,
+            fill: fill.into_fill()?,
             fee: costs.fee_model(),
             latency: costs.latency_model(),
             risk: strategy_risk_gate(None, false),
             virtual_trading: VirtualTradingConfig::default(),
             seed,
-        }
+        })
     }
 
     pub(crate) fn into_config(self) -> BacktestConfig {
@@ -85,10 +103,7 @@ impl BarBacktestAssembly {
     }
 }
 
-/// market spec JSON → `MarketSpecLoad`；三条 Bar 回测链读取同一份口径。
-///
-/// 结构体本身住在 `market_spec.rs`（它同时是保证金规则的形状来源），这里只负责"读文件 +
-/// 报错带上是哪条链"，好让 mod.rs 的顶层条目不再长一份。
+/// market spec JSON → `MarketSpecLoad`；CLI 只负责文件读取与错误路径，上层解析由 qx-app 完成。
 pub(crate) fn market_spec_with_margin(
     instrument: &InstrumentId,
     spec_path: Option<&Path>,
@@ -97,8 +112,8 @@ pub(crate) fn market_spec_with_margin(
     let Some(spec_path) = spec_path else {
         return Ok(MarketSpecLoad {
             spec: None,
-            margin: Box::new(NoMargin),
-            source: DEFAULT_INSTRUMENT_SPEC_VERSION,
+            app_margin_model: None,
+            source: crate::DEFAULT_INSTRUMENT_SPEC_VERSION,
         });
     };
     let payload = read_example_json(spec_path, &format!("{label} market spec "))?;
@@ -108,13 +123,13 @@ pub(crate) fn market_spec_with_margin(
             spec_path.display()
         )
     })?;
-    let source = market_spec_source_label(&market);
-    let margin = ccxt_margin_rule_from_market(&market);
+    let source = qx_app::market_spec_source_label(&market);
+    let app_margin_model = Some(qx_app::backtest_margin_model_from_market(&market));
     let spec = market_spec_from_value(instrument, &market)
         .map_err(|error| format!("{label} market spec {}: {error}", spec_path.display()))?;
     Ok(MarketSpecLoad {
         spec: Some(spec),
-        margin,
+        app_margin_model,
         source,
     })
 }
@@ -141,11 +156,16 @@ pub(crate) use account_base::*;
 mod artifacts;
 pub(crate) use artifacts::*;
 
+mod builtin_app;
+pub(crate) use builtin_app::*;
+
 mod ashare_binding;
 pub(crate) use ashare_binding::*;
-
 mod config_declarations;
 pub(crate) use config_declarations::*;
+
+mod ccxt_builtin;
+pub(crate) use ccxt_builtin::*;
 
 mod depth;
 pub(crate) use depth::*;
@@ -165,14 +185,22 @@ pub(crate) use leg_funding::*;
 mod multi_builtin;
 pub(crate) use multi_builtin::*;
 
+mod multi_composition_verify;
+pub(crate) use multi_composition_verify::*;
+
+mod multi_quality;
+pub(crate) use multi_quality::*;
+
+mod multi_artifacts;
+pub(crate) use multi_artifacts::*;
+
 mod risk_binding;
 pub(crate) use risk_binding::*;
 
-mod risk_ratios;
-pub(crate) use risk_ratios::*;
-
 mod run_record;
+mod summary_listing;
 pub(crate) use run_record::*;
+pub(crate) use summary_listing::*;
 
 mod signal_binding;
 pub(crate) use signal_binding::*;
@@ -182,50 +210,6 @@ pub(crate) use single_strategy::*;
 
 mod strategy_backtest;
 pub(crate) use strategy_backtest::*;
-
-pub(crate) struct ScheduledTargetStrategy {
-    instrument: InstrumentId,
-    targets: BTreeMap<u64, i128>,
-    policy: Option<OrderPolicy>,
-    account_id: String,
-}
-
-impl BarStrategy for ScheduledTargetStrategy {
-    fn on_bar(
-        &mut self,
-        history: &[Bar],
-        instrument: &InstrumentId,
-        _ts: u64,
-        position: i128,
-    ) -> Option<Order> {
-        if instrument != &self.instrument {
-            return None;
-        }
-        let visible_ts = history.last()?.ts;
-        let target = self
-            .targets
-            .range(..=visible_ts)
-            .next_back()
-            .map(|(_, target)| *target)
-            .unwrap_or(0);
-        let delta = target.checked_sub(position)?;
-        if delta == 0 {
-            return None;
-        }
-        Some(Order {
-            client_id: 0,
-            instrument: self.instrument.clone(),
-            side: if delta > 0 { Side::Buy } else { Side::Sell },
-            qty: Quantity::from_raw(delta.checked_abs()?),
-            limit: None,
-            status: OrderStatus::Submitted,
-            filled: Quantity::ZERO,
-            account_id: self.account_id.clone(),
-            trace: None,
-            policy: self.policy,
-        })
-    }
-}
 
 pub(crate) fn read_bar_frame_for_multi_backtest(
     path: &Path,

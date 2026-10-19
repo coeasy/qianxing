@@ -1,4 +1,3 @@
-use super::paper_valuation::paper_available_margin_with_market_specs;
 use crate::*;
 
 pub(crate) fn resolve_worker_runtime_paths(worker: &mut WorkerConfig, runtime_path: &Path) {
@@ -117,15 +116,6 @@ pub(crate) fn account_worker_currency_among_workers(
     settlement_currency_among_workers(workers, &required_account_event_log(worker)?)
 }
 
-/// 同上，供只拿得到配置路径的 worker 装配路径使用：在进程启动处解一次，
-/// 循环内复用，避免每条命令重读配置，也不让某一段退回 `worker_settlement_currency`。
-pub(crate) fn account_worker_currency_from_path(
-    runtime_config_path: &Path,
-    worker: &WorkerConfig,
-) -> Result<String, String> {
-    account_worker_settlement_currency(&read_runtime_config(runtime_config_path)?, worker)
-}
-
 /// 该账户身份上每个启用写入方各自会用的记账币种，按 worker id 排序。
 fn account_log_currency_declarations(
     workers: &[WorkerConfig],
@@ -208,7 +198,19 @@ pub(crate) fn paper_available_margin(
     spec: &TradingInstrumentSpec,
 ) -> Result<i128, String> {
     let market_specs = BTreeMap::from([(spec.instrument.clone(), spec.clone())]);
-    paper_available_margin_with_market_specs(ledger, account_id, marks, settlement, &market_specs)
+    qx_app::paper_available_margin_raw(
+        ledger,
+        account_id,
+        marks,
+        settlement,
+        &market_specs,
+        &BTreeMap::new(),
+        &qx_app::RunContext::new(
+            qx_app::CallerCapability::Paper,
+            format!("paper-risk:{account_id}"),
+        ),
+    )
+    .map_err(|error| format!("Paper 账户可用保证金计算失败: {error}"))
 }
 
 pub(crate) fn load_worker_instrument_spec(
@@ -297,7 +299,7 @@ pub(crate) fn worker_report_spec(
                 return Err(format!(
                     "worker {} 的一批回报跨多份产品规格，拒绝归约",
                     worker.id
-                ))
+                ));
             }
         }
     }
@@ -353,14 +355,14 @@ pub(crate) fn execute_submit_order_with_worker_risk<V: Venue>(
         risk: &risk,
         position: &position,
     };
-    execute_submit_order_with_risk(
+    execute_submit_order_with_risk(qx_execution::SubmitOrderWithRiskRequest {
         command,
         venue,
         pipeline,
-        &worker.id,
+        worker_id: &worker.id,
         now,
         source_seq,
-        &context,
+        context: &context,
         spread_store,
-    )
+    })
 }

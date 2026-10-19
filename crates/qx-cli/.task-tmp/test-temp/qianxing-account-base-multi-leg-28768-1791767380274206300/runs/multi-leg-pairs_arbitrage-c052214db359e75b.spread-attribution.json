@@ -1,0 +1,172 @@
+{
+  "accounts": {
+    "account_base_source": "multi-leg-funding-rule",
+    "funding_rule": "2*quantity*leg-own-max-high + same-notional taker fee headroom, floor 100000",
+    "primary_final_equity_raw": "123572200000000",
+    "primary_initial_cash": "126064000000000",
+    "reference_final_equity_raw": "99995500000000",
+    "reference_initial_cash": "100000000000000"
+  },
+  "assumptions": [
+    "fees=per-leg FIFO allocated to signal ts buckets",
+    "margin=spec.initial_margin(|realized fills standing|, bar close, leverage=1), only on legs whose market spec declares a derivative product",
+    "funding=realized-fill notional*funding_bps*holding_ms/(8h*10000), long pays positive, only on derivative legs; a leg without market spec is booked as spot multiplier 1 and is refused when funding_bps!=0",
+    "cost_bps=net_cost*10000/turnover, null when turnover_raw=0 (no denominator: undefined, NOT zero cost)",
+    "groups=paired by ts only when BOTH legs have realized fills; planned-but-unfilled qty is reported per leg, never paired",
+    "pending_reconcile=a leg filled while its counterpart did not; no automatic close is executed",
+    "fees=one explicit cost binding shared by both legs; market spec carries no maker/taker field, so per-venue fee tiers are not applied",
+    "fill_model=one declared model shared by both legs; one_tick_slippage takes each leg's own spec price_tick"
+  ],
+  "execution_costs": {
+    "source": "builtin-default"
+  },
+  "fill_model": {
+    "name": "next_bar_open",
+    "source": "builtin-default"
+  },
+  "funding_bps": 0,
+  "groups": [
+    {
+      "cost_bps": 5,
+      "group_id": "spread-builtin-pairs_arbitrage-multi-0-82800000",
+      "legs": [
+        {
+          "fees_raw": "30300000000",
+          "filled_qty_raw": "1000000000",
+          "funding_raw": "0",
+          "leg_id": "primary",
+          "margin_raw": "0",
+          "turnover_raw": "60600000000000"
+        },
+        {
+          "fees_raw": "1500000000",
+          "filled_qty_raw": "1000000000",
+          "funding_raw": "0",
+          "leg_id": "reference",
+          "margin_raw": "0",
+          "turnover_raw": "3000000000000"
+        }
+      ],
+      "net_cost_raw": "31800000000",
+      "schema_version": 1,
+      "strategy_id": "builtin-pairs_arbitrage-multi",
+      "total_fees_raw": "31800000000",
+      "total_filled_qty_raw": "2000000000",
+      "total_funding_raw": "0",
+      "total_margin_raw": "0",
+      "total_turnover_raw": "63600000000000"
+    },
+    {
+      "cost_bps": 5,
+      "group_id": "spread-builtin-pairs_arbitrage-multi-0-147600000",
+      "legs": [
+        {
+          "fees_raw": "30900000000",
+          "filled_qty_raw": "1000000000",
+          "funding_raw": "0",
+          "leg_id": "primary",
+          "margin_raw": "0",
+          "turnover_raw": "61800000000000"
+        },
+        {
+          "fees_raw": "1500000000",
+          "filled_qty_raw": "1000000000",
+          "funding_raw": "0",
+          "leg_id": "reference",
+          "margin_raw": "0",
+          "turnover_raw": "3000000000000"
+        }
+      ],
+      "net_cost_raw": "32400000000",
+      "schema_version": 1,
+      "strategy_id": "builtin-pairs_arbitrage-multi",
+      "total_fees_raw": "32400000000",
+      "total_filled_qty_raw": "2000000000",
+      "total_funding_raw": "0",
+      "total_margin_raw": "0",
+      "total_turnover_raw": "64800000000000"
+    },
+    {
+      "cost_bps": 5,
+      "group_id": "spread-builtin-pairs_arbitrage-multi-0-158400000",
+      "legs": [
+        {
+          "fees_raw": "30600000000",
+          "filled_qty_raw": "1000000000",
+          "funding_raw": "0",
+          "leg_id": "primary",
+          "margin_raw": "0",
+          "turnover_raw": "61200000000000"
+        },
+        {
+          "fees_raw": "1500000000",
+          "filled_qty_raw": "1000000000",
+          "funding_raw": "0",
+          "leg_id": "reference",
+          "margin_raw": "0",
+          "turnover_raw": "3000000000000"
+        }
+      ],
+      "net_cost_raw": "32100000000",
+      "schema_version": 1,
+      "strategy_id": "builtin-pairs_arbitrage-multi",
+      "total_fees_raw": "32100000000",
+      "total_filled_qty_raw": "2000000000",
+      "total_funding_raw": "0",
+      "total_margin_raw": "0",
+      "total_turnover_raw": "64200000000000"
+    }
+  ],
+  "legs": [
+    {
+      "filled_qty_raw": "3000000000",
+      "instrument": "BTCUSDT.BINANCE",
+      "label": "primary",
+      "planned_qty_raw": "3000000000",
+      "rejected_orders": 0,
+      "rejection_reasons": [],
+      "unfilled_planned_qty_raw": "0",
+      "vetoed_signal_ts": []
+    },
+    {
+      "filled_qty_raw": "3000000000",
+      "instrument": "ETHUSDT.BINANCE",
+      "label": "reference",
+      "planned_qty_raw": "3000000000",
+      "rejected_orders": 0,
+      "rejection_reasons": [],
+      "unfilled_planned_qty_raw": "0",
+      "vetoed_signal_ts": []
+    }
+  ],
+  "margin_model": "none-no-derivative-leg-spec",
+  "market_specs": {
+    "primary": null,
+    "reference": null
+  },
+  "pending_reconcile": {
+    "items": [],
+    "policy": "mark-pending-reconcile-no-auto-close"
+  },
+  "primary_instrument": "BTCUSDT.BINANCE",
+  "reference_instrument": "ETHUSDT.BINANCE",
+  "risk_rules": {
+    "matching_kernel": "qx-xingban::BacktestEngine(bar)",
+    "rule_set_version": "conservative-default-v1",
+    "source": "conservative-default"
+  },
+  "schema_version": 2,
+  "strategy_id": "builtin-pairs_arbitrage-multi",
+  "totals": {
+    "combined_return_bps": -110,
+    "cost_bps": 5,
+    "fees_raw": "96300000000",
+    "filled_qty_raw": "6000000000",
+    "funding_raw": "0",
+    "margin_peak_raw": "0",
+    "net_cost_raw": "96300000000",
+    "residual_fees_raw": "0",
+    "residual_filled_qty_raw": "0",
+    "turnover_raw": "192600000000000"
+  }
+}

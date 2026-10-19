@@ -1,7 +1,26 @@
 //! 深度盘口回测：`run_depth_backtest` 与其 `depth_run_config_hash`。
 
-use super::*;
-use qx_xingban::OrderBookExecutionModel;
+use super::{
+    apply_configured_builtin_signal, backtest_account_base_note, backtest_risk_binding,
+    backtest_settlement_currency, builtin_signal_note, builtin_signal_params,
+    configured_account_base, depth_frame_input_provenance, execution_cost_binding,
+    market_spec_with_margin, persist_backtest_artifacts, persist_backtest_run_manifest,
+    read_depth_frame_for_backtest, reject_ashare_rules_config, reject_fill_model_config,
+    rejection_count, rejection_facts, rejection_facts_line, BacktestArtifacts, BuiltinStrategy,
+    BuiltinStrategyConfig, BuiltinStrategyKind, MarketSpecLoad, NativeStrategyContext,
+    RunManifestIdentity, MULTI_LEG_KINDS, ORDER_BOOK_MATCHING_KERNEL, TICK_MATCHING_KERNEL,
+};
+use crate::build_identity;
+use qx_core::Quantity;
+use qx_xingban::{
+    depth_frame_to_ticks, DataTier, DepthBarStrategy, DepthFrame, OrderBookBacktestConfig,
+    OrderBookBacktestEngine, OrderBookExecutionModel, TickBacktestConfig, TickBacktestEngine,
+};
+use std::collections::BTreeMap;
+use std::path::Path;
+
+mod quality;
+pub(crate) use quality::*;
 
 /// `backtest book` 的两个高保真撮合参数（V11 Q1a）。全 0 就是原有的"逐档吃单"行为；
 /// 只有使用者显式点名时才改变撮合，且两项都会写进产物的 `model_descriptors`，
@@ -33,6 +52,7 @@ impl DepthExecutionModel {
 /// 内核常数；深度内核只吃单一吃单费率，因此成本规则里的延迟与 maker 费率在本链路无处落地，
 /// 非零延迟会直接报错而不是被静默忽略（V11 Q0c）。
 #[allow(clippy::too_many_arguments)] // V10 P0a/P1b：风控与组存储形参由编译器逐个点名，不合并成参数包。
+#[allow(dead_code)] // Kept as the no-quality adapter for unit-level legacy call sites.
 pub(crate) fn run_depth_backtest(
     tier: &str,
     strategy_name: &str,
@@ -43,6 +63,32 @@ pub(crate) fn run_depth_backtest(
     execution: DepthExecutionModel,
     root: &Path,
     runtime_config_path: Option<&Path>,
+) -> Result<(), String> {
+    run_depth_backtest_with_quality_manifest(
+        tier,
+        strategy_name,
+        frame_path,
+        spec_path,
+        quantity,
+        fee_bps,
+        execution,
+        root,
+        runtime_config_path,
+        None,
+    )
+}
+
+pub(crate) fn run_depth_backtest_with_quality_manifest(
+    tier: &str,
+    strategy_name: &str,
+    frame_path: &Path,
+    spec_path: Option<&Path>,
+    quantity: i64,
+    fee_bps: Option<i64>,
+    execution: DepthExecutionModel,
+    root: &Path,
+    runtime_config_path: Option<&Path>,
+    quality_manifest_path: Option<&Path>,
 ) -> Result<(), String> {
     let single_level = match tier {
         "l1" => true,
@@ -77,12 +123,15 @@ pub(crate) fn run_depth_backtest(
     let MarketSpecLoad {
         spec: instrument_spec,
         source: instrument_spec_version,
-        margin: _,
+        ..
     } = market_spec_with_margin(&frame.instrument, spec_path, "深度回测")?;
     let currency = backtest_settlement_currency(instrument_spec.as_ref());
     // 深度档没有数据集注册表条目，但它有自己的内容哈希：那份哈希才是"跑的是哪一份帧"。
     let input = depth_frame_input_provenance(frame_path, &frame);
     let data_fingerprint = format!("depth:{}:{:016x}", frame.source, frame.input_hash());
+    let dataset_quality = quality_manifest_path
+        .map(|path| verified_depth_dataset_quality(path, frame_path, &frame, tier))
+        .transpose()?;
     // 本金与风控、成本同源：本入口一直读 `--config` 取那两项，却把账户尺度写死成常数，
     // 于是同一份配置在四条回测链上有三种本金口径（V11 Q72）。
     let account_base = configured_account_base(runtime_config_path)?;
@@ -205,6 +254,9 @@ pub(crate) fn run_depth_backtest(
                 execution,
                 &risk_rule_set_version,
                 &frame,
+                dataset_quality
+                    .as_ref()
+                    .and_then(|quality| quality["manifest_fingerprint"].as_str()),
             ),
             strategy_version: &format!("builtin-{}-v1", kind.name()),
             instrument_spec_version,
@@ -217,20 +269,27 @@ pub(crate) fn run_depth_backtest(
     let (summary_path, equity_path, fills_path) = persist_backtest_artifacts(
         &run_manifest_path,
         &BacktestArtifacts {
+            runtime_config_path,
+            market_spec_path: spec_path,
             strategy_id: &format!("builtin-{}", kind.name()),
             instrument: &frame.instrument,
             sample_unit: "depth_snapshot",
             samples: frame.snapshots.len(),
-            sample_ts: &report.snapshot_ts,
+            sample_ts: qx_app::artifact_store::BacktestSampleTimestamps::Values(
+                &report.snapshot_ts,
+            ),
             equity: &report.equity,
             positions: &report.positions,
             fills: &report.fills,
+            execution_attempts: &report.execution_attempts,
             clock_start: report.clock_start,
             clock_end: report.clock_end,
             input_data_hash: report.input_data_hash,
             result_hash: report.result_hash(),
             event_log: &report.event_log,
             ledger: &report.ledger,
+            issuer_capital: &[],
+            issuer_capital_at_end: None,
             return_bps: report.return_bps,
             max_drawdown_bps: report.max_drawdown_bps,
             fees_raw: report.fees_raw,
@@ -243,11 +302,14 @@ pub(crate) fn run_depth_backtest(
             cost_source: &cost_source,
             // 深度链不经过 FillModel：撮合口径是四参数描述子，摘要里不该出现 fill_model 键。
             fill_model: None,
+            fill_model_details: None,
+            execution_model_details: Some(&report.execution_model_descriptor),
             account_base,
             matching_kernel,
             rejections: &rejections,
             input,
             signal: Some(signal_params),
+            dataset_quality: dataset_quality.as_ref(),
         },
     )?;
     println!(
@@ -270,6 +332,23 @@ pub(crate) fn run_depth_backtest(
         execution.latency_snapshots, execution.market_impact_bps
     );
     println!("[Depth · Signal] {signal_note}");
+    if let Some(quality) = &dataset_quality {
+        println!(
+            "[Data · Quality] manifest_fingerprint={} rows={} interval_ms={} missing_intervals={}",
+            quality["manifest_fingerprint"]
+                .as_str()
+                .unwrap_or("unknown"),
+            quality["quality_report"]["row_count"]
+                .as_u64()
+                .unwrap_or_default(),
+            quality["quality_report"]["interval_ms"]
+                .as_u64()
+                .unwrap_or_default(),
+            quality["quality_report"]["missing_intervals"]
+                .as_u64()
+                .unwrap_or_default(),
+        );
+    }
     println!(
         "[Depth · Integrity] rejected_orders={} rejection_reasons={}",
         rejection_count(&rejections),
@@ -301,6 +380,7 @@ pub(crate) fn depth_run_config_hash(
     execution: DepthExecutionModel,
     risk_rule_set_version: &str,
     frame: &DepthFrame,
+    quality_manifest_fingerprint: Option<&str>,
 ) -> String {
     let mut hash = qx_core::Fnv1a::new();
     hash.write_text("depth-backtest-v1");
@@ -314,5 +394,8 @@ pub(crate) fn depth_run_config_hash(
     hash.write_i128(i128::from(execution.market_impact_bps));
     hash.write_text(risk_rule_set_version);
     hash.write_u64(frame.input_hash());
+    if let Some(fingerprint) = quality_manifest_fingerprint {
+        hash.write_text(fingerprint);
+    }
     format!("{:016x}", hash.finish())
 }

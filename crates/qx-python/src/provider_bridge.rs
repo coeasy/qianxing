@@ -269,7 +269,11 @@ impl PyProviderRegistry {
             .inner
             .fetch_request(&request)
             .map_err(|error| PyValueError::new_err(format!("Provider fetch failed: {error:?}")))?;
-        let instrument = query.instrument_set.iter().next().expect("one instrument");
+        let instrument = query
+            .instrument_set
+            .iter()
+            .next()
+            .ok_or_else(|| PyValueError::new_err("depth provider query has no instrument"))?;
         let mut snapshots = result
             .records
             .iter()

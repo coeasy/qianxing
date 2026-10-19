@@ -39,7 +39,10 @@ pub(crate) fn run_ccxt_execution_worker(
     if worker.role != WorkerRole::Execution {
         return Err(format!("worker {} 不是 CCXT Execution worker", worker.id));
     }
-    let settlement_currency = account_worker_currency_from_path(&runtime_config_path, &worker)?;
+    let runtime_config = read_runtime_config(&runtime_config_path)?;
+    let settlement_currency = account_worker_settlement_currency(&runtime_config, &worker)?;
+    let log_name = required_account_event_log(&worker)?;
+    let mut metrics = PipelineMetricsReporter::new(&runtime_config, context.id(), &log_name);
     let python = python_interpreter();
     let owner = worker.id.clone();
     context.mark(
@@ -50,6 +53,7 @@ pub(crate) fn run_ccxt_execution_worker(
         ),
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish_if_due(true, runtime_timestamp_ms());
     // 内联恢复扫描按共享节律自节流：队列轮询仍每 100ms 一轮，但原地不动时不会再
     // 每轮起灭一个公共 CCXT 子进程（V13 R2 #168c 的节律，此前只落在另三条循环上）。
     let mut recovery_stalls = 0_u32;
@@ -99,6 +103,7 @@ pub(crate) fn run_ccxt_execution_worker(
                 for message in diagnostics {
                     eprintln!("[HedgeRecovery] {message}");
                 }
+                metrics.absorb(&recovery_pipeline);
                 let pending_after =
                     pending_spread_recovery_groups(&pipeline_storage.root, venue_id)?;
                 recovery_stalls = if pending_after >= pending_before {
@@ -250,6 +255,7 @@ pub(crate) fn run_ccxt_execution_worker(
                     }
                     drop(venue);
                 }
+                metrics.absorb(&pipeline);
                 result
             };
             let (_, record_result) = control_store
@@ -274,11 +280,13 @@ pub(crate) fn run_ccxt_execution_worker(
             )?;
         }
         context.heartbeat(now)?;
+        metrics.publish_if_due(true, now);
         if once {
             break;
         }
         thread::sleep(Duration::from_millis(100));
     }
+    metrics.publish(false, runtime_timestamp_ms());
     Ok(())
 }
 
@@ -298,12 +306,15 @@ pub(crate) fn run_ccxt_user_stream_worker(
     }
     let python = python_interpreter();
     let log_name = required_account_event_log(&worker)?;
+    let runtime_config = read_runtime_config(&runtime_config_path)?;
     let mut pipeline = pipeline_storage
         .open(
-            log_name,
-            account_worker_currency_from_path(&runtime_config_path, &worker)?,
+            log_name.clone(),
+            account_worker_settlement_currency(&runtime_config, &worker)?,
         )
         .map_err(|error| format!("打开 CCXT UserStream EventLog 失败: {error}"))?;
+    let mut metrics = PipelineMetricsReporter::new(&runtime_config, context.id(), &log_name);
+    metrics.publish_if_due(true, runtime_timestamp_ms());
     context.mark(
         qx_runtime::ServiceStatus::Ready,
         format!(
@@ -338,6 +349,8 @@ pub(crate) fn run_ccxt_user_stream_worker(
             .refresh()
             .map_err(|error| format!("刷新 CCXT UserStream EventLog 失败: {error:?}"))?;
         let received_ts = runtime_timestamp_ms();
+        metrics.observe(&pipeline);
+        metrics.publish_if_due(true, received_ts);
         let result = match venue.stream_call(serde_json::json!({
             "op": "watch_orders",
             "instrument": null,
@@ -388,6 +401,8 @@ pub(crate) fn run_ccxt_user_stream_worker(
                 format!("ccxt pro user stream idle consecutive_windows={idle_windows}"),
                 Some(received_ts),
             )?;
+            metrics.observe(&pipeline);
+            metrics.publish_if_due(true, received_ts);
             if once {
                 break;
             }
@@ -478,6 +493,8 @@ pub(crate) fn run_ccxt_user_stream_worker(
             Some(received_ts),
         )?;
         context.heartbeat(received_ts)?;
+        metrics.observe(&pipeline);
+        metrics.publish_if_due(true, received_ts);
         if once {
             break;
         }
@@ -487,5 +504,6 @@ pub(crate) fn run_ccxt_user_stream_worker(
         format!("ccxt pro user stream stopped idle_windows={idle_windows}"),
         Some(runtime_timestamp_ms()),
     )?;
+    metrics.publish(false, runtime_timestamp_ms());
     Ok(())
 }

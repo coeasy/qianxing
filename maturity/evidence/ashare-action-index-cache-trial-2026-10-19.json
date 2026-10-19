@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-10-18T18:18:07.905283+00:00",
+  "evidence_kind": "ashare_action_index_lookup_reuse_trial",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "rust_version": "1.98.1",
+  "workload": {
+    "bars": 64000,
+    "corporate_actions": 512,
+    "repeats_per_binary": 5,
+    "pit_actions_effective": true,
+    "single_action_control_changed_result_hash": true,
+    "rules_and_cost_binding_observed": true
+  },
+  "candidate": "Cache the current-bar action index slice once in apply_ashare_virtual_events and reuse it across seven action phases, avoiding repeated timestamp HashMap lookups.",
+  "comparison": {
+    "before_binary_sha256": "ac76f475b778ee6d02fc323f410b10ed2f4a3e288873dc2bae627eb4544d8ac3",
+    "candidate_binary_sha256": "feb10f7256ab349db7e221665ff6d62ca39253afa2d01d700bd567c335217e60",
+    "before_p50_ms": 600.442,
+    "before_p95_ms": 610.649,
+    "candidate_p50_ms": 603.271,
+    "candidate_p95_ms": 617.469,
+    "p50_change_pct": 0.471,
+    "before_result_hash": "31efa980da154c98",
+    "candidate_result_hash": "31efa980da154c98",
+    "rejected_orders_before": 2064,
+    "rejected_orders_candidate": 2064,
+    "before_input_sha256": {
+      "bar_frame": "3a0d00a871e27e28fd88e678eed2384251afc2f94d06a71bdccc6b1556d29738",
+      "calendar": "ac1b095f2cab29da54881749160690c2ec9ecf25eb595472b446432d43c99bb7",
+      "corporate_actions": "bf42e4306dc0e9b4b798f71c9a68116ebf18e65fdbdc88ae8a2e09ef194d746c",
+      "runtime_config": "1b887121f01a55b12080fb6513bf085097ad3375c7096c63570fd5567f72d27e",
+      "rules": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb",
+      "market_spec": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+    },
+    "candidate_input_sha256": {
+      "bar_frame": "3a0d00a871e27e28fd88e678eed2384251afc2f94d06a71bdccc6b1556d29738",
+      "calendar": "ac1b095f2cab29da54881749160690c2ec9ecf25eb595472b446432d43c99bb7",
+      "corporate_actions": "bf42e4306dc0e9b4b798f71c9a68116ebf18e65fdbdc88ae8a2e09ef194d746c",
+      "runtime_config": "4be89ed5ecf4356673e4329443ed8800d1fbd45f07b18ebae610c799094cd9c0",
+      "rules": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb",
+      "market_spec": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+    }
+  },
+  "limitations": [
+    "The generated runtime_config hashes differ because each benchmark run uses a different isolated temp directory; this is not a strict byte-identical-input A/B.",
+    "Only one 64k workload and five samples per binary were measured; a 0.47% P50 delta is within expected run-to-run noise and does not establish a speedup.",
+    "Both variants produced the same result_hash, rejection count, effective-action control result, and binding observations."
+  ],
+  "decision": "discard_candidate_no_attributable_end_to_end_gain"
+}

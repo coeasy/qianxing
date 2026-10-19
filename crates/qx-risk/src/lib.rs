@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 mod pending_exposure;
 pub mod rules;
 
-pub use pending_exposure::pending_order_gross_notional;
+pub use pending_exposure::{
+    pending_order_gross_notional, pending_order_gross_notional_at_reference_mark,
+};
 
 pub use rules::{
     MaxNotionalRule, MaxQtyRule, NoShortRule, RiskRule, RuleSet,

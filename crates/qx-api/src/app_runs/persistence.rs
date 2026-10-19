@@ -355,11 +355,13 @@ mod tests {
             AppErrorCategory::Conflict
         );
         assert_eq!(std::fs::read(&destination).unwrap(), first);
-        assert!(std::fs::read_dir(&root).unwrap().all(|entry| !entry
-            .unwrap()
-            .file_name()
-            .to_string_lossy()
-            .contains(".tmp-")));
+        assert!(std::fs::read_dir(&root).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp-")
+        }));
         drop(registry);
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::admission::{header_value, parse_request_line, split_target};
-use crate::transport::write_ws_text;
+use crate::transport::{write_ws_pong, write_ws_text};
 
 /// 跨读累积地判定客户端是否发来 Close 帧。
 ///
@@ -23,8 +23,13 @@ use crate::transport::write_ws_text;
 /// 而不是继续攒——fail-closed 比无限增长划算。
 const WS_CLOSE_PENDING_CAP: usize = 1024 * 1024;
 
-struct WsCloseScanner {
+pub(super) struct WsCloseScanner {
     pending: Vec<u8>,
+}
+
+pub(super) struct WsScanResult {
+    pub(super) closed: bool,
+    pub(super) ping_payloads: Vec<Vec<u8>>,
 }
 
 impl WsCloseScanner {
@@ -34,20 +39,40 @@ impl WsCloseScanner {
         }
     }
 
-    /// 并入新读到的字节，返回是否出现**完整**的 Close 帧。
-    fn push(&mut self, fresh: &[u8]) -> bool {
+    /// 并入新读到的字节，抽出完整 Ping，并判断 Close/非法帧。
+    pub(super) fn push(&mut self, fresh: &[u8]) -> WsScanResult {
+        let mut result = WsScanResult {
+            closed: false,
+            ping_payloads: Vec::new(),
+        };
         self.pending.extend_from_slice(fresh);
         // 攒不下就断：一个不完成帧头的客户端不该让这份缓冲无限长。
         if self.pending.len() > WS_CLOSE_PENDING_CAP {
             self.pending.clear();
-            return true;
+            result.closed = true;
+            return result;
         }
         loop {
             if self.pending.len() < 2 {
-                return false;
+                return result;
             }
+            let first = self.pending[0];
             let opcode = self.pending[0] & 0x0f;
+            if self.pending[1] & 0x80 == 0 {
+                // RFC 6455 requires every client-to-server frame to be masked.
+                // This server does not consume client payloads, so fail closed by
+                // ending the session when a frame violates that framing rule.
+                self.pending.clear();
+                result.closed = true;
+                return result;
+            }
             let header_len = self.pending[1] & 0x7f;
+            let control = opcode & 0x08 != 0;
+            if control && (first & 0x80 == 0 || header_len > 125) {
+                self.pending.clear();
+                result.closed = true;
+                return result;
+            }
             let extended = if header_len == 126 {
                 2
             } else if header_len == 127 {
@@ -57,7 +82,7 @@ impl WsCloseScanner {
             };
             let mask_bytes = usize::from((self.pending[1] & 0x80) != 0) * 4;
             if self.pending.len() < 2 + extended {
-                return false;
+                return result;
             }
             let payload_len = if extended == 0 {
                 header_len as usize
@@ -70,15 +95,46 @@ impl WsCloseScanner {
             };
             let total = 2 + extended + mask_bytes;
             if self.pending.len() < total || payload_len > self.pending.len() - total {
-                return false;
+                return result;
             }
             if opcode == 0x8 {
-                return true;
+                self.pending.clear();
+                result.closed = true;
+                return result;
+            }
+            if opcode == 0x9 {
+                let mask_start = 2 + extended;
+                let Some(mask_bytes) = self.pending.get(mask_start..total) else {
+                    self.pending.clear();
+                    result.closed = true;
+                    return result;
+                };
+                let Ok(mask) = <[u8; 4]>::try_from(mask_bytes) else {
+                    self.pending.clear();
+                    result.closed = true;
+                    return result;
+                };
+                let payload = self.pending[total..total + payload_len]
+                    .iter()
+                    .enumerate()
+                    .map(|(index, byte)| byte ^ mask[index % mask.len()])
+                    .collect();
+                result.ping_payloads.push(payload);
             }
             let rest = self.pending.split_off(total + payload_len);
             self.pending = rest;
         }
     }
+}
+
+pub(super) fn respond_to_client_frames<S: std::io::Write>(
+    stream: &mut S,
+    scan: WsScanResult,
+) -> std::io::Result<bool> {
+    for payload in scan.ping_payloads {
+        write_ws_pong(stream, &payload)?;
+    }
+    Ok(scan.closed)
 }
 
 impl ApiService {
@@ -188,7 +244,7 @@ impl ApiService {
                 return Err(ApiResponse::json(
                     409,
                     error_json("event_cursor_requires_snapshot"),
-                ))
+                ));
             }
             Err(error) => return Err(ApiResponse::json(500, error_json(&format!("{error:?}")))),
         };
@@ -213,9 +269,12 @@ impl ApiService {
         stream.write_all(handshake.as_bytes())?;
         write_ws_text(stream, "{\"type\":\"connected\",\"stream\":\"qianxing\"}")?;
         if let Some(snapshot) = &session.snapshot {
+            let snapshot_json = snapshot.to_json().map_err(|error| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{error:?}"))
+            })?;
             write_ws_text(
                 stream,
-                &format!("{{\"type\":\"snapshot\",\"data\":{}}}", snapshot.to_json()),
+                &format!("{{\"type\":\"snapshot\",\"data\":{snapshot_json}}}"),
             )?;
         }
         // 首批不再无条件整份重发：它由 `admit_websocket` 按 `after` 从**作用域**总线取出，
@@ -282,8 +341,14 @@ impl ApiService {
             }
             match stream.read(&mut client_buffer) {
                 Ok(0) => return Ok(()),
-                Ok(size) if close_scanner.push(&client_buffer[..size]) => return Ok(()),
-                Ok(_) => advanced = true,
+                Ok(size) => {
+                    let scan = close_scanner.push(&client_buffer[..size]);
+                    let closed = respond_to_client_frames(stream, scan)?;
+                    if closed {
+                        return Ok(());
+                    }
+                    advanced = true;
+                }
                 Err(error)
                     if matches!(
                         error.kind(),
@@ -328,85 +393,7 @@ pub(crate) struct WsSession {
 const WS_MAX_IDLE_ROUNDS: u32 = 18_000;
 
 #[cfg(test)]
-mod tests {
-    use super::{WsCloseScanner, WS_CLOSE_PENDING_CAP};
+mod tests;
 
-    #[test]
-    fn an_unfinished_frame_cannot_grow_the_buffer_past_the_cap() {
-        // Cross-read accumulation is a new memory surface the old byte scan did not have:
-        // a client that dribbles bytes without ever completing a frame header would
-        // otherwise grow `pending` without bound. Past the cap the connection is
-        // reported as closed instead of accumulating forever.
-        let mut scanner = WsCloseScanner::new();
-        assert!(
-            !scanner.push(&[0x81_u8, 0x7f_u8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
-            "a 10-byte header with an 8-byte length is still incomplete"
-        );
-        assert_eq!(scanner.pending.len(), 10);
-        assert!(
-            scanner.push(&vec![0x18_u8; WS_CLOSE_PENDING_CAP]),
-            "overflowing the cap is treated as a close"
-        );
-        assert!(
-            scanner.pending.is_empty(),
-            "the buffer is drained, not grown"
-        );
-    }
-
-    #[test]
-    fn payload_bytes_matching_close_are_not_a_close_frame() {
-        // Text frame carrying [0x18, 0x00, 0x01]: every one of those bytes satisfies
-        // the old `byte & 0x0f == 0x8` test, so the previous implementation closed
-        // the connection on a perfectly ordinary data frame.
-        let mut scanner = WsCloseScanner::new();
-        assert!(
-            !scanner.push(&[0x81, 0x03, 0x18, 0x00, 0x01]),
-            "a data frame is not a close"
-        );
-        // And the very byte 0x68 ('h') also matches the old test.
-        assert!(!scanner.push(&[0x81, 0x05, b'h', b'e', b'l', b'l', b'o']));
-    }
-
-    #[test]
-    fn a_complete_close_frame_is_detected() {
-        let mut scanner = WsCloseScanner::new();
-        assert!(scanner.push(&[0x88, 0x00]), "an empty close frame closes");
-        assert!(
-            WsCloseScanner::new().push(&[0x88, 0x02, 0x03, 0xe8]),
-            "a close frame with a status payload closes"
-        );
-    }
-
-    #[test]
-    fn a_close_frame_split_across_reads_is_still_detected() {
-        let mut scanner = WsCloseScanner::new();
-        assert!(!scanner.push(&[0x88, 0x02]));
-        assert!(
-            scanner.push(&[0x03, 0xe8]),
-            "the second half completes the frame"
-        );
-    }
-
-    #[test]
-    fn a_data_frame_before_close_in_one_read_still_reaches_the_close() {
-        // One read delivering a text frame then a close frame: the text frame is
-        // skipped whole, the close is found at its own header.
-        let mut scanner = WsCloseScanner::new();
-        assert!(scanner.push(&[0x81, 0x03, 0x18, 0x28, 0x38, 0x88, 0x00]));
-    }
-
-    #[test]
-    fn an_extended_length_frame_is_skipped_whole() {
-        // 128-byte payload: the 2-byte extended length form. The payload bytes all
-        // match the old close test; the frame must be skipped by length, not scanned.
-        let mut payload = vec![0_u8; 128];
-        payload.iter_mut().for_each(|byte| *byte = 0x18);
-        let mut frame = vec![0x81_u8, 0x7e_u8, 0x00_u8, 0x80_u8];
-        frame.extend_from_slice(&payload);
-        let mut scanner = WsCloseScanner::new();
-        assert!(
-            !scanner.push(&frame),
-            "a 128-byte text frame is not a close"
-        );
-    }
-}
+#[cfg(test)]
+mod ping_pong_tests;

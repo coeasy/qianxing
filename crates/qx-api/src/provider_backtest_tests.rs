@@ -1,7 +1,8 @@
 use super::{ApiService, ApiState};
 use qx_app::{
-    BacktestSpec, BuiltinStrategySpec, DepthBacktestSpec, ProviderBacktestOutcome,
-    ProviderBacktestSpec, ProviderDepthBacktestOutcome, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
+    BacktestDatasetInput, BacktestSpec, BuiltinStrategySpec, DepthBacktestSpec,
+    ProviderBacktestOutcome, ProviderBacktestSpec, ProviderDepthBacktestOutcome,
+    DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use qx_provider::{
     DataKind, DataProvider, DataQuery, DataRequest, DataRequirements, ProviderCapability,
@@ -80,6 +81,7 @@ fn provider_registry() -> ProviderRegistry {
         provider_id: "fixture".into(),
         version: "v1".into(),
         data_kinds: [DataKind::Bar].into_iter().collect(),
+        data_tiers: [qx_provider::MarketDataTier::Bar].into_iter().collect(),
         asset_classes: ["crypto".into()].into_iter().collect(),
         frequencies: ["1m".into()].into_iter().collect(),
         auth_scope: "public".into(),
@@ -134,6 +136,7 @@ fn quote_provider_registry() -> ProviderRegistry {
         provider_id: "quote-fixture".into(),
         version: "v1".into(),
         data_kinds: [DataKind::Quote].into_iter().collect(),
+        data_tiers: [qx_provider::MarketDataTier::L1].into_iter().collect(),
         asset_classes: ["crypto".into()].into_iter().collect(),
         frequencies: ["tick".into()].into_iter().collect(),
         auth_scope: "public".into(),
@@ -177,7 +180,10 @@ fn provider_depth_spec(root: &std::path::Path) -> qx_app::ProviderDepthBacktestS
                 end,
                 as_of: Some(end + 1),
             },
-            DataRequirements::default(),
+            DataRequirements {
+                required_data_tier: Some(qx_provider::MarketDataTier::L1),
+                ..DataRequirements::default()
+            },
         ),
         backtest: DepthBacktestSpec {
             schema_version: DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
@@ -192,6 +198,7 @@ fn provider_depth_spec(root: &std::path::Path) -> qx_app::ProviderDepthBacktestS
             fee_bps: 0,
             latency_snapshots: 0,
             queue_position_bps: 0,
+            queue_position_model: Default::default(),
             market_impact_bps: 0,
             output_dir: root
                 .join("provider-depth-run")
@@ -225,9 +232,11 @@ fn provider_spec() -> ProviderBacktestSpec {
             DataRequirements::default(),
         ),
         backtest: BacktestSpec::new(
-            "api-provider-run",
-            "BTCUSDT.BINANCE",
-            "unused.json",
+            BacktestDatasetInput {
+                run_id: "api-provider-run".into(),
+                instrument: "BTCUSDT.BINANCE".into(),
+                bars_path: "unused.json".into(),
+            },
             "USDT",
             100_000_000_000_000,
             20261013,

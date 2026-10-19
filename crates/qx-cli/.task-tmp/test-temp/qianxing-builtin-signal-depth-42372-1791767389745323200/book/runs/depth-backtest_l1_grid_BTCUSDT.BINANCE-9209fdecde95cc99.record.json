@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "run_id": "depth-backtest:l1:grid:BTCUSDT.BINANCE",
+  "status": "completed",
+  "input_digest": "depth:example-depth-l1-v1:4cb7ea2895f7cbbd",
+  "code_identity": "3dc3f5b49300685f6b07f5f89046ed0980c8bce8-dirty:depth-backtest-v1",
+  "config_fingerprint": "b16ee3a25a9b02b8",
+  "started_at_ms": 1000,
+  "finished_at_ms": 80000,
+  "artifact_refs": [
+    {
+      "name": "summary",
+      "path": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-builtin-signal-depth-42372-1791767389745323200\\book\\runs\\depth-backtest_l1_grid_BTCUSDT.BINANCE-9209fdecde95cc99.summary.json",
+      "digest": "042c8d856cacbdb1a327aa348727921342036f2af4696da7b668ee81f5e437f2"
+    },
+    {
+      "name": "equity",
+      "path": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-builtin-signal-depth-42372-1791767389745323200\\book\\runs\\depth-backtest_l1_grid_BTCUSDT.BINANCE-9209fdecde95cc99.equity.csv",
+      "digest": "e6ce42226e82aaf894c97dd193921675a0723a0ac7bb840ff5bada6936f81a28"
+    },
+    {
+      "name": "fills",
+      "path": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-builtin-signal-depth-42372-1791767389745323200\\book\\runs\\depth-backtest_l1_grid_BTCUSDT.BINANCE-9209fdecde95cc99.fills.csv",
+      "digest": "629050993e60fcd8aa8628ce4412d532a9e23ad2087651537123b6e5b94f806c"
+    },
+    {
+      "name": "run_manifest",
+      "path": "D:\\aex_work\\qianxing\\crates\\qx-cli\\.task-tmp\\test-temp\\qianxing-builtin-signal-depth-42372-1791767389745323200\\book\\runs\\depth-backtest_l1_grid_BTCUSDT.BINANCE-9209fdecde95cc99.run.json",
+      "digest": "95afc7f65aa7f9a765ec72e81e1358c11066f369af39c8d3306e89e130e3b877"
+    }
+  ],
+  "replay_verdict": "verified",
+  "capability_level": "L1"
+}

@@ -25,7 +25,11 @@ fn run(args: &[&str]) -> (i32, String, String) {
 }
 
 fn temp_dir(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("qx-cli tests are two levels below the workspace root");
+    let root = workspace.join("target").join(format!(
         "qianxing-fast-backtest-{label}-{}-{}",
         std::process::id(),
         SystemTime::now()
@@ -111,7 +115,7 @@ fn ashare_manifest_carries_recorded_dataset_provenance() {
         "数据集缺少录制来源标记: {stdout}"
     );
     assert!(
-        stdout.contains("[RunManifest] run_id=strategy-backtest:strategy-ashare:000001.SZSE"),
+        stdout.contains("[RunManifest] run_id=strategy-backtest:strategy-ashare:000001.SZSE:"),
         "缺少运行清单: {stdout}"
     );
     let strategy = hashes(&stdout, "[Strategy · Backtest]");

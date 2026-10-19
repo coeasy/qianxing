@@ -1,0 +1,41 @@
+[
+  {
+    "instrument": "000001.SZSE",
+    "ex_date": "2024-05-31",
+    "published_at": "2024-05-20T00:00:00+08:00",
+    "action_type": "capital_change",
+    "issuer_total_shares_raw": 1000000000000,
+    "issuer_free_float_shares_raw": 700000000000,
+    "source": "example-issuer-capital-snapshot"
+  },
+  {
+    "instrument": "000001.SZSE",
+    "ex_date": "2024-06-03",
+    "published_at": "2024-05-20T00:00:00+08:00",
+    "action_type": "rights_issue",
+    "rights_instrument": "000001.SZSE",
+    "rights_issue_price_raw": 5000000000,
+    "rights_issue_ratio_num": 100000000,
+    "rights_issue_ratio_den": 1000000000,
+    "subscription_qty_raw": 10000000000,
+    "source": "example-explicit-account-instruction"
+  },
+  {
+    "instrument": "000001.SZSE",
+    "ex_date": "2024-07-01",
+    "published_at": "2024-06-20T00:00:00+08:00",
+    "action_type": "new_share_issue",
+    "issue_price_raw": 8000000000,
+    "subscription_qty_raw": 10000000000,
+    "source": "example-explicit-account-instruction"
+  },
+  {
+    "instrument": "000001.SZSE",
+    "ex_date": "2024-08-01",
+    "published_at": "2024-07-20T00:00:00+08:00",
+    "action_type": "repurchase",
+    "repurchase_price_raw": 9000000000,
+    "repurchase_qty_raw": 10000000000,
+    "source": "example-explicit-account-instruction"
+  }
+]

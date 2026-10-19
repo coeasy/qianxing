@@ -12,6 +12,7 @@
 //!    内核不提供第二套事件循环——回测（`qx-xingban`）与 paper/live（`qx-runtime` 的
 //!    `pipeline.rs`）的循环各在自己的 crate 里，但都只能通过 `EventLog` 落地事实。
 
+pub mod benchmark;
 pub mod clock;
 pub mod contract;
 pub mod error;
@@ -23,16 +24,24 @@ pub mod identity;
 pub mod ledger;
 pub mod numeric;
 pub mod order;
+pub mod performance;
 pub mod retry;
 pub mod sourcing;
 pub mod target;
 pub mod trading;
+pub mod trading_policy;
 pub mod valuation;
 pub mod venue;
 
+pub use self::benchmark::{
+    benchmark_relative_metrics, benchmark_relative_metrics_from_columns, BenchmarkRelativeMetrics,
+};
 pub use self::clock::Ts;
 pub use self::contract::{ContractConcept, CONTRACT_MATRIX};
-pub use self::error::{ErrorCode, ErrorContract, QxError, QxResult, Retryability};
+pub use self::error::{
+    classify_ccxt_category, classify_ccxt_exception, CcxtErrorClassification, ErrorCode,
+    ErrorContract, QxError, QxResult, Retryability,
+};
 pub use self::event::{
     AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
     EventKind, EventMetadata, FundingRateSnapshot, Priority, EVENT_METADATA_SCHEMA_VERSION,
@@ -53,8 +62,12 @@ pub use self::ledger::{
     ConvertibleBondConversion, CorporateAction, FundingRateEvent, InstrumentFunding, Ledger,
     LedgerEntry, LedgerEntryKind, PositionState, RightsIssueEvent, FUNDING_INTERVAL_MS,
 };
-pub use self::numeric::{Fixed, Money, Price, Quantity, SCALE};
+pub use self::numeric::{
+    parse_decimal_exact, parse_decimal_half_even, parse_decimal_integer_exact,
+    parse_decimal_scaled_integer, Fixed, Money, Price, Quantity, SCALE,
+};
 pub use self::order::{Fill, Order, OrderStatus, OrderTrace, Side};
+pub use self::performance::{backtest_risk_metrics, BacktestRiskMetrics};
 pub use self::retry::{Backoff, RetryPolicy};
 pub use self::sourcing::{EventLog, Fnv1a, ReplayFacts, ReplayVerifier, RunManifest};
 pub use self::target::TargetPosition;
@@ -62,5 +75,6 @@ pub use self::trading::{
     MarginMode, MarginState, OrderPolicy, PositionMode, PositionSide, TradingInstrumentSpec,
     TradingProduct,
 };
-pub use self::valuation::{ValuationContext, ValuationResult};
+pub use self::trading_policy::{margin_mode_for_product, short_selling_enabled};
+pub use self::valuation::{PaperValuationContext, ValuationContext, ValuationResult};
 pub use self::venue::VenueFamily;

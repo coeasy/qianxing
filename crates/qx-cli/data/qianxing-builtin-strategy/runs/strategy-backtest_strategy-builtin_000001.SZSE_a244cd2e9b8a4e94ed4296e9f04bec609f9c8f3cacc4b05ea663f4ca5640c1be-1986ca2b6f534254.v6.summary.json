@@ -1,0 +1,87 @@
+{
+  "account": {
+    "initial_cash_raw": "100000000000000",
+    "source": "builtin-default"
+  },
+  "assumptions": [
+    "data_tier=Bar",
+    "benchmark=flat-cash",
+    "metrics=raw-fixed-point",
+    "virtual_trading=funding:0 interest:0 delivery:0 liquidation:false"
+  ],
+  "bars": 6,
+  "clock_end": 1717466400000,
+  "clock_start": 1717378200000,
+  "execution_costs": {
+    "source": "runtime-config-default"
+  },
+  "fill_model": {
+    "assumption": "假设下一根bar开盘可全部成交；不建模排队与容量",
+    "data_tier": "Bar",
+    "descriptor_schema_version": 1,
+    "name": "next_bar_open",
+    "parameters": "",
+    "source": "builtin-default",
+    "version": "v1"
+  },
+  "fills": 2,
+  "input": {
+    "dataset_id": "strategy-bars:000001.SZSE",
+    "dataset_version": "barframe-json-v1",
+    "fingerprint": "5e59cfcf3adca434",
+    "kind": "barframe",
+    "path": "D:\\aex_work\\qianxing\\deploy\\qianxing.ashare.bar-frame.example.json"
+  },
+  "input_data_hash": "982df19cca407443",
+  "instrument": "000001.SZSE",
+  "market_spec": "D:\\aex_work\\qianxing\\deploy\\qianxing.ashare.spot.spec.json",
+  "matching_kernel": "qx-xingban::BacktestEngine(bar)",
+  "metrics": {
+    "calmar": 1.0,
+    "fees_raw": 1037500000,
+    "final_equity_raw": 100013962500000,
+    "max_drawdown_bps": 1,
+    "profit_factor": 2.265259383536705,
+    "return_bps": 1,
+    "sharpe": 0.21159336972009657,
+    "sortino": 0.5305943960195283,
+    "turnover_raw": 2075000000000,
+    "win_rate": 0.2
+  },
+  "model_descriptors": [
+    "NextBarOpen@v1[tier=Bar;params=;assumption=假设下一根bar开盘可全部成交；不建模排队与容量]",
+    "MakerTaker@v1[params=maker_bp=2;taker_bp=5]",
+    "ZeroLatency@v1[delay_ns=0]",
+    "NoMargin@v1"
+  ],
+  "rejected_orders": 0,
+  "rejection_reasons": [],
+  "replay": {
+    "events": 13,
+    "ledger_entries": 7,
+    "log_digest": "90806fbbba9bd2a2",
+    "run_ledger_entries": 7
+  },
+  "result_hash": "90806fbbba9bd2a2",
+  "risk_rules": {
+    "rule_set_version": "conservative-default-v1+implicit-no-short",
+    "source": "runtime-config"
+  },
+  "run_manifest": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_000001.SZSE_a244cd2e9b8a4e94ed4296e9f04bec609f9c8f3cacc4b05ea663f4ca5640c1be-1986ca2b6f534254.run.json",
+  "run_record": "data/qianxing-builtin-strategy\\runs\\strategy-backtest_strategy-builtin_000001.SZSE_a244cd2e9b8a4e94ed4296e9f04bec609f9c8f3cacc4b05ea663f4ca5640c1be-1986ca2b6f534254.v6.record.json",
+  "runtime_config": "data/qianxing-builtin-strategy\\runtime-snapshots\\builtin-grid-a244cd2e9b8a4e94ed4296e9f04bec609f9c8f3cacc4b05ea663f4ca5640c1be.json",
+  "sample_unit": "bar",
+  "schema_version": 6,
+  "signal": {
+    "declared_unused": "builtin_fast_window,builtin_slow_window,builtin_period",
+    "fast_window": 5,
+    "kind": "grid",
+    "knobs": "threshold_bps",
+    "period": 14,
+    "quantity_raw": "100000000000",
+    "slow_window": 20,
+    "source": "config",
+    "threshold_bps": "100"
+  },
+  "strategy_id": "strategy-builtin"
+}

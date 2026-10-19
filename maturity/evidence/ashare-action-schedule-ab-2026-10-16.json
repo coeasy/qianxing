@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "ashare_corporate_action_schedule_ab",
+  "generated_at_utc": "2026-10-16T09:49:32Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "before_binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli-before-action-index.exe",
+  "after_binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "workload": {
+    "bars": 64000,
+    "corporate_actions": 512,
+    "repeats": 5,
+    "result_hash": "71edd838dc772436",
+    "identical_input_sha256": {
+      "bar_frame": "7043c8f591c926c10a8ff78655e51cd1810ca321723d096ce2cedd56178c5e61",
+      "calendar": "ac1b095f2cab29da54881749160690c2ec9ecf25eb595472b446432d43c99bb7",
+      "corporate_actions": "bd2858a2f1904e2e03cb3d2935f8d205e4d2f9896c968994c15cdabe2e9ac649",
+      "runtime_config": "88e166cc2a21439742125ca6356f12cdb209d479cee7b145f30e5541014663f2",
+      "rules": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb",
+      "market_spec": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+    },
+    "timing_ms": {
+      "before": {
+        "samples": [
+          792.641,
+          815.108,
+          796.392,
+          774.999,
+          783.284
+        ],
+        "p50": 792.641,
+        "p95": 815.108
+      },
+      "after": {
+        "samples": [
+          669.047,
+          657.599,
+          649.668,
+          628.302,
+          593.898
+        ],
+        "p50": 649.668,
+        "p95": 669.047
+      }
+    },
+    "p50_change_percent": -18.04
+  },
+  "result_hash_equal": true,
+  "profile_coverage_claim": false,
+  "limitations": [
+    "synthetic deterministic minute bars and weekday-only calendar",
+    "corporate actions are sparse and do not represent exchange-wide production distributions",
+    "timing compares complete CLI invocations, not an isolated kernel microbenchmark",
+    "does not establish ashare-research profile completion"
+  ]
+}

@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "owned_event_replay_append_optimization",
+  "generated_at_utc": "2026-10-17T13:46:47.1132338Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "benchmark": "Criterion ledger_replay/borrowed_events|owned_events at N=1k/8k/64k",
+  "sample_interval": "The baseline run was immediately before the append_checked implementation change; the optimized run immediately after, on the same machine and build profile.",
+  "result_equivalence_verified": true,
+  "source_change": "append_checked now validates one owned Event and moves it directly into EventLog, avoiding append_batch staging-set allocation and the extra Event clone.",
+  "workloads": [
+    {
+      "mode_size": "borrowed_events/1000",
+      "baseline_interval_ns": [
+        1308700,
+        1314100,
+        1326100
+      ],
+      "optimized_interval_ns": [
+        1160692,
+        1175826,
+        1202894
+      ],
+      "baseline_median_ns": 1314100,
+      "optimized_median_ns": 1175826,
+      "change_pct": -10.522
+    },
+    {
+      "mode_size": "borrowed_events/64000",
+      "baseline_interval_ns": [
+        105120000,
+        105900000,
+        106930000
+      ],
+      "optimized_interval_ns": [
+        99855350,
+        101777400,
+        105274600
+      ],
+      "baseline_median_ns": 105900000,
+      "optimized_median_ns": 101777400,
+      "change_pct": -3.893
+    },
+    {
+      "mode_size": "borrowed_events/8000",
+      "baseline_interval_ns": [
+        12006000,
+        12074000,
+        12141000
+      ],
+      "optimized_interval_ns": [
+        11306805,
+        11709857,
+        11962303
+      ],
+      "baseline_median_ns": 12074000,
+      "optimized_median_ns": 11709857,
+      "change_pct": -3.016
+    },
+    {
+      "mode_size": "owned_events/1000",
+      "baseline_interval_ns": [
+        1193300,
+        1198800,
+        1207300
+      ],
+      "optimized_interval_ns": [
+        1112862,
+        1131864,
+        1176256
+      ],
+      "baseline_median_ns": 1198800,
+      "optimized_median_ns": 1131864,
+      "change_pct": -5.584
+    },
+    {
+      "mode_size": "owned_events/64000",
+      "baseline_interval_ns": [
+        95863000,
+        96612000,
+        97558000
+      ],
+      "optimized_interval_ns": [
+        83889400,
+        87177900,
+        89355950
+      ],
+      "baseline_median_ns": 96612000,
+      "optimized_median_ns": 87177900,
+      "change_pct": -9.765
+    },
+    {
+      "mode_size": "owned_events/8000",
+      "baseline_interval_ns": [
+        10501000,
+        10647000,
+        10802000
+      ],
+      "optimized_interval_ns": [
+        10040198,
+        10121733,
+        10339022
+      ],
+      "baseline_median_ns": 10647000,
+      "optimized_median_ns": 10121733,
+      "change_pct": -4.933
+    }
+  ]
+}

@@ -228,10 +228,10 @@ impl BuiltinStrategyConfig {
             (Some(_), Some(lookback)) if (30..=1_000).contains(&lookback) => {}
             (Some(_), None) => {}
             (Some(_), Some(_)) => {
-                return Err("Kelly sizing 必须配置 30..=1000 根 kelly_lookback_bars".into())
+                return Err("Kelly sizing 必须配置 30..=1000 根 kelly_lookback_bars".into());
             }
             (None, Some(_)) => {
-                return Err("kelly_lookback_bars 只能与 Kelly sizing 一起配置".into())
+                return Err("kelly_lookback_bars 只能与 Kelly sizing 一起配置".into());
             }
             (None, None) => {}
         }

@@ -72,6 +72,7 @@ fn rust_sdk_runs_custom_multi_market_slots_through_shared_engine_and_run_handle(
             MultiMarketBacktestMarket {
                 instrument: (*instrument).into(),
                 bars_path: path.to_string_lossy().into_owned(),
+                dataset_manifest_path: None,
                 priority: index as u32,
                 market_spec: None,
                 fee_schedule: None,
@@ -161,6 +162,7 @@ fn rust_sdk_starts_custom_multi_market_depth_slots_through_shared_engine() {
             MultiMarketDepthBacktestMarket {
                 instrument: instrument.into(),
                 depth_path: path.to_string_lossy().into_owned(),
+                dataset_manifest_path: None,
                 data_tier: None,
                 priority: index as u32,
                 market_spec: TradingInstrumentSpec {
@@ -183,6 +185,7 @@ fn rust_sdk_starts_custom_multi_market_depth_slots_through_shared_engine() {
                 fee_bps: 0,
                 latency_snapshots: 0,
                 queue_position_bps: 0,
+                queue_position_model: Default::default(),
                 market_impact_bps: 0,
                 strategy: BuiltinStrategySpec::new(
                     BuiltinStrategyKind::SmaCross,
@@ -247,6 +250,7 @@ fn rust_sdk_runs_multi_market_parameter_grids_and_custom_strategy_factories() {
             MultiMarketBacktestMarket {
                 instrument: (*instrument).into(),
                 bars_path: path.to_string_lossy().into_owned(),
+                dataset_manifest_path: None,
                 priority: index as u32,
                 market_spec: None,
                 fee_schedule: None,

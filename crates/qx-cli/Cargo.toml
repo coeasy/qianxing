@@ -13,7 +13,7 @@ sqlite = [
     "qx-runtime/sqlite",
 ]
 postgres = ["qx-storage/postgres", "qx-runtime/postgres"]
-nats = ["qx-storage/nats"]
+nats = ["qx-storage/nats", "qx-runtime/nats"]
 
 [dependencies]
 qx-api = { path = "../qx-api" }
@@ -43,4 +43,16 @@ qx-orchestrator = { path = "../qx-orchestrator" }
 qx-storage = { path = "../qx-storage" }
 serde_json = { workspace = true }
 serde = { workspace = true }
+zip = { version = "=2.4.2", default-features = false }
 clap = { version = "4.6.7", features = ["derive"] }
+
+[[bench]]
+name = "performance"
+harness = false
+
+[[bench]]
+name = "criterion_performance"
+harness = false
+
+[dev-dependencies]
+criterion = "0.8.2"

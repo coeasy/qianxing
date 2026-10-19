@@ -7,8 +7,8 @@
 schema_version: 1
 kind: capability-execution
 generated_by: "tools/capability_execution_probe.py"
-generated_at_unix: 1791950308
-cli_binary: "target/debug/qx-cli.exe"
+generated_at_unix: 1791981527
+cli_binary: "target/release/qx-cli.exe"
 credentials_required: false
 network_accessed: false
 orders_sent: false

@@ -8,12 +8,14 @@
 //! connect_with_pool_size 建立固定大小的同步连接池。每个连接仍按事务边界
 //! 串行化，连接池只解决并发连接复用，不等同于读写分离或跨节点 HA。
 
+use super::consumer_cursor::validate_consumer_cursor_advance_with_message;
 use super::{
-    audit_entry_hash, validate_audit_chain, AuditEntry, ConsumerCheckpoint, ConsumerProjection,
-    ConsumerStateStore, ControlCommandLease, ControlCommandQueueBackend, DeadLetterRecord,
-    EventLogStore, JobLease, JobQueueBackend, OutboxEvent, OutboxLease, OutboxStore,
-    QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
+    audit_entry_hash, audit_sync_prefix_len, validate_audit_chain, AuditEntry, ConsumerCheckpoint,
+    ConsumerProjection, ConsumerStateStore, ControlCommandLease, ControlCommandQueueBackend,
+    DeadLetterRecord, EventLogStore, JobLease, JobQueueBackend, OutboxEvent, OutboxLease,
+    OutboxStore, QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
 };
+use super::{validate_event_log, validate_event_log_name};
 use postgres::{Client, GenericClient, Transaction};
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
 use qx_core::{EventLog, QxResult};
@@ -163,6 +165,10 @@ impl PostgresStorage {
     }
 }
 
+#[path = "postgres/schema_adoption.rs"]
+mod schema_adoption;
+pub use schema_adoption::adopt_legacy_postgres_schema;
+
 fn configure_client(client: &mut Client) -> Result<(), StorageError> {
     client
         .batch_execute(
@@ -175,114 +181,55 @@ fn configure_client(client: &mut Client) -> Result<(), StorageError> {
 }
 
 fn migrate_client(client: &mut Client) -> Result<(), StorageError> {
-    client
-        .batch_execute(
-            "CREATE TABLE IF NOT EXISTS qx_schema_migrations (
-                 version TEXT PRIMARY KEY NOT NULL,
-                 applied_ts TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS qx_event_logs (
-                 name TEXT PRIMARY KEY NOT NULL,
-                 content TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS qx_audit_entries (
-                 sequence TEXT PRIMARY KEY NOT NULL,
-                 record_json TEXT NOT NULL,
-                 previous_hash TEXT NOT NULL,
-                 entry_hash TEXT NOT NULL UNIQUE
-             );
-             CREATE TABLE IF NOT EXISTS qx_jobs (
-                 run_id TEXT PRIMARY KEY NOT NULL,
-                 envelope_json TEXT NOT NULL,
-                 done BOOLEAN NOT NULL DEFAULT FALSE
-             );
-             CREATE TABLE IF NOT EXISTS qx_job_leases (
-                 run_id TEXT PRIMARY KEY NOT NULL,
-                 owner TEXT NOT NULL,
-                 expires_ts TEXT NOT NULL,
-                 fencing_token TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS qx_control_state (
-                 state_id INTEGER PRIMARY KEY NOT NULL CHECK (state_id = 1),
-                 content TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS qx_control_commands (
-                 command_id TEXT PRIMARY KEY NOT NULL,
-                 command_json TEXT NOT NULL,
-                 enqueued_ts TEXT NOT NULL,
-                 done BOOLEAN NOT NULL DEFAULT FALSE
-             );
-             CREATE TABLE IF NOT EXISTS qx_control_command_leases (
-                 command_id TEXT PRIMARY KEY NOT NULL,
-                 owner TEXT NOT NULL,
-                 expires_ts TEXT NOT NULL,
-                 fencing_token TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS qx_snapshots (
-                 snapshot_id TEXT NOT NULL,
-                 state_hash TEXT NOT NULL,
-                 content TEXT NOT NULL,
-                 PRIMARY KEY(snapshot_id, state_hash)
-             );
-             CREATE TABLE IF NOT EXISTS qx_outbox_events (
-                 event_id TEXT PRIMARY KEY NOT NULL,
-                 topic TEXT NOT NULL,
-                 partition_key TEXT NOT NULL,
-                 sequence TEXT NOT NULL,
-                 schema_version INTEGER NOT NULL,
-                 trace_id TEXT NOT NULL,
-                 payload TEXT NOT NULL,
-                 created_ts TEXT NOT NULL,
-                 attempts TEXT NOT NULL DEFAULT '0'
-             );
-             CREATE TABLE IF NOT EXISTS qx_outbox_leases (
-                 event_id TEXT PRIMARY KEY NOT NULL,
-                 owner TEXT NOT NULL,
-                 expires_ts TEXT NOT NULL,
-                 fencing_token TEXT NOT NULL
-             );
-             CREATE INDEX IF NOT EXISTS qx_jobs_pending_idx
-                 ON qx_jobs(done, run_id);
-             CREATE INDEX IF NOT EXISTS qx_control_commands_pending_idx
-                 ON qx_control_commands(done, enqueued_ts, command_id);
-             CREATE INDEX IF NOT EXISTS qx_outbox_pending_idx
-                 ON qx_outbox_events(created_ts, sequence, event_id);
-             CREATE TABLE IF NOT EXISTS qx_consumer_checkpoints (
-                 group_id TEXT NOT NULL,
-                 topic TEXT NOT NULL,
-                 partition_key TEXT NOT NULL,
-                 \"offset\" TEXT NOT NULL,
-                 event_id TEXT NOT NULL,
-                 updated_ts TEXT NOT NULL,
-                 PRIMARY KEY(group_id, topic, partition_key)
-             );
-             CREATE TABLE IF NOT EXISTS qx_consumer_processed (
-                 group_id TEXT NOT NULL,
-                 event_id TEXT NOT NULL,
-                 PRIMARY KEY(group_id, event_id)
-             );
-             CREATE TABLE IF NOT EXISTS qx_consumer_dead_letters (
-                 group_id TEXT NOT NULL,
-                 event_id TEXT NOT NULL,
-                 attempts TEXT NOT NULL,
-                 record_json TEXT NOT NULL,
-                 PRIMARY KEY(group_id, event_id, attempts)
-             );
-             CREATE TABLE IF NOT EXISTS qx_consumer_projections (
-                 group_id TEXT NOT NULL,
-                 projection_key TEXT NOT NULL,
-                 topic TEXT NOT NULL,
-                 partition_key TEXT NOT NULL,
-                 \"offset\" TEXT NOT NULL,
-                 event_id TEXT NOT NULL,
-                 payload TEXT NOT NULL,
-                 updated_ts TEXT NOT NULL,
-                 PRIMARY KEY(group_id, projection_key)
-             );
-             INSERT INTO qx_schema_migrations(version, applied_ts)
-                 VALUES ('1', '0') ON CONFLICT(version) DO NOTHING;",
+    let mut transaction = client.transaction().map_err(pg_error)?;
+    let has_existing_schema_tables = transaction
+        .query_one(
+            "SELECT EXISTS (
+                 SELECT 1
+                 FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = current_schema()
+                   AND c.relkind IN ('r', 'p')
+                   AND c.relname <> 'qx_schema_migrations'
+             )",
+            &[],
         )
-        .map_err(pg_error)
+        .map_err(pg_error)?
+        .get::<_, bool>(0);
+    transaction
+        .batch_execute(super::schema_migrations::CREATE_SCHEMA_MIGRATIONS_SQL)
+        .map_err(pg_error)?;
+    let mut versions = transaction
+        .query(
+            "SELECT version FROM qx_schema_migrations ORDER BY version",
+            &[],
+        )
+        .map_err(pg_error)?
+        .into_iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>();
+    let pending =
+        super::schema_migrations::pending_schema_versions(&versions, has_existing_schema_tables)?;
+    for version in pending {
+        match version {
+            "1" => transaction
+                .batch_execute(super::schema_migrations::POSTGRES_V1_SCHEMA)
+                .map_err(pg_error)?,
+            "2" => transaction
+                .batch_execute(super::schema_migrations::POSTGRES_V2_SCHEMA)
+                .map_err(pg_error)?,
+            _ => unreachable!("migration plan only contains known schema versions"),
+        }
+        transaction
+            .execute(
+                "INSERT INTO qx_schema_migrations(version, applied_ts) VALUES ($1, '0')",
+                &[&version],
+            )
+            .map_err(pg_error)?;
+        versions.push(version.into());
+    }
+    super::schema_migrations::validate_schema_versions(&versions)?;
+    transaction.commit().map_err(pg_error)
 }
 
 fn lock_transaction<'a>(transaction: &mut Transaction<'a>, key: i64) -> Result<(), StorageError> {
@@ -320,6 +267,7 @@ impl ConsumerStateStore for PostgresConsumerStateStore {
         topic: &str,
         partition_key: &str,
     ) -> Result<Option<ConsumerCheckpoint>, StorageError> {
+        self.validate_load_checkpoint_request(group_id, topic, partition_key)?;
         let mut client = self.storage.lock_client()?;
         client
             .query_opt(
@@ -342,6 +290,7 @@ impl ConsumerStateStore for PostgresConsumerStateStore {
     }
 
     fn is_processed(&self, group_id: &str, event_id: &str) -> Result<bool, StorageError> {
+        self.validate_is_processed_request(group_id, event_id)?;
         let mut client = self.storage.lock_client()?;
         client
             .query_opt(
@@ -353,7 +302,7 @@ impl ConsumerStateStore for PostgresConsumerStateStore {
     }
 
     fn commit_processed(&self, checkpoint: ConsumerCheckpoint) -> Result<(), StorageError> {
-        checkpoint.validate()?;
+        self.validate_commit_processed_request(&checkpoint)?;
         let mut client = self.storage.lock_client()?;
         let mut transaction = client.transaction().map_err(pg_error)?;
         lock_transaction(&mut transaction, CONSUMER_LOCK_KEY)?;
@@ -382,14 +331,13 @@ impl ConsumerStateStore for PostgresConsumerStateStore {
         if let Some(row) = previous {
             let previous_offset = parse_u64(row.get::<_, String>(0).as_str(), "consumer.offset")?;
             let previous_event_id: String = row.get(1);
-            if previous_offset > checkpoint.offset
-                || (previous_offset == checkpoint.offset
-                    && previous_event_id != checkpoint.event_id)
-            {
-                return Err(StorageError::Conflict(
-                    "consumer checkpoint 顺序或 event_id 非法".into(),
-                ));
-            }
+            validate_consumer_cursor_advance_with_message(
+                previous_offset,
+                &previous_event_id,
+                checkpoint.offset,
+                &checkpoint.event_id,
+                "consumer checkpoint 顺序或 event_id 非法",
+            )?;
         }
         transaction
             .execute(
@@ -413,7 +361,7 @@ impl ConsumerStateStore for PostgresConsumerStateStore {
     }
 
     fn append_dead_letter(&self, record: DeadLetterRecord) -> Result<(), StorageError> {
-        record.validate()?;
+        self.validate_append_dead_letter_request(&record)?;
         let content = serde_json::to_string(&record)
             .map_err(|error| StorageError::Io(format!("死信记录序列化失败: {error}")))?;
         let mut client = self.storage.lock_client()?;
@@ -439,13 +387,15 @@ impl ConsumerStateStore for PostgresConsumerStateStore {
         group_id: &str,
         limit: usize,
     ) -> Result<Vec<DeadLetterRecord>, StorageError> {
+        self.validate_dead_letters_request(group_id)?;
         let mut client = self.storage.lock_client()?;
+        let sql = format!(
+            "SELECT record_json FROM qx_consumer_dead_letters
+             WHERE group_id = $1 ORDER BY {} LIMIT $2",
+            crate::consumer_state_store::DEAD_LETTER_ORDER_BY,
+        );
         let rows = client
-            .query(
-                "SELECT record_json FROM qx_consumer_dead_letters
-                 WHERE group_id = $1 ORDER BY attempts, event_id LIMIT $2",
-                &[&group_id, &(limit as i64)],
-            )
+            .query(&sql, &[&group_id, &(limit as i64)])
             .map_err(pg_error)?;
         rows.into_iter()
             .map(|row| {
@@ -463,7 +413,7 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         checkpoint: ConsumerCheckpoint,
         projection: ConsumerProjection,
     ) -> Result<(), StorageError> {
-        projection.validate_for(&checkpoint)?;
+        self.validate_commit_processed_with_projection_request(&checkpoint, &projection)?;
         let mut client = self.storage.lock_client()?;
         let mut transaction = client.transaction().map_err(pg_error)?;
         lock_transaction(&mut transaction, CONSUMER_LOCK_KEY)?;
@@ -492,14 +442,13 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         if let Some(row) = previous {
             let previous_offset = parse_u64(row.get::<_, String>(0).as_str(), "consumer.offset")?;
             let previous_event_id: String = row.get(1);
-            if previous_offset > checkpoint.offset
-                || (previous_offset == checkpoint.offset
-                    && previous_event_id != checkpoint.event_id)
-            {
-                return Err(StorageError::Conflict(
-                    "consumer checkpoint 顺序或 event_id 非法".into(),
-                ));
-            }
+            validate_consumer_cursor_advance_with_message(
+                previous_offset,
+                &previous_event_id,
+                checkpoint.offset,
+                &checkpoint.event_id,
+                "consumer checkpoint 顺序或 event_id 非法",
+            )?;
         }
         let previous_projection = transaction
             .query_opt(
@@ -514,14 +463,13 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
                 "consumer.projection.offset",
             )?;
             let previous_event_id: String = row.get(1);
-            if previous_offset > projection.offset
-                || (previous_offset == projection.offset
-                    && previous_event_id != projection.event_id)
-            {
-                return Err(StorageError::Conflict(
-                    "consumer projection 顺序或 event_id 非法".into(),
-                ));
-            }
+            validate_consumer_cursor_advance_with_message(
+                previous_offset,
+                &previous_event_id,
+                projection.offset,
+                &projection.event_id,
+                "consumer projection 顺序或 event_id 非法",
+            )?;
         }
         transaction
             .execute(
@@ -570,7 +518,7 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         record: DeadLetterRecord,
         checkpoint: ConsumerCheckpoint,
     ) -> Result<(), StorageError> {
-        record.validate_for(&checkpoint)?;
+        self.validate_append_dead_letter_and_commit_request(&record, &checkpoint)?;
         let content = serde_json::to_string(&record)
             .map_err(|error| StorageError::Io(format!("死信记录序列化失败: {error}")))?;
         let mut client = self.storage.lock_client()?;
@@ -601,14 +549,13 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         if let Some(row) = previous {
             let previous_offset = parse_u64(row.get::<_, String>(0).as_str(), "consumer.offset")?;
             let previous_event_id: String = row.get(1);
-            if previous_offset > checkpoint.offset
-                || (previous_offset == checkpoint.offset
-                    && previous_event_id != checkpoint.event_id)
-            {
-                return Err(StorageError::Conflict(
-                    "consumer checkpoint 顺序或 event_id 非法".into(),
-                ));
-            }
+            validate_consumer_cursor_advance_with_message(
+                previous_offset,
+                &previous_event_id,
+                checkpoint.offset,
+                &checkpoint.event_id,
+                "consumer checkpoint 顺序或 event_id 非法",
+            )?;
         }
         transaction
             .execute(
@@ -650,6 +597,7 @@ impl TransactionalConsumerStateStore for PostgresConsumerStateStore {
         group_id: &str,
         projection_key: &str,
     ) -> Result<Option<ConsumerProjection>, StorageError> {
+        self.validate_load_projection_request(group_id, projection_key)?;
         let mut client = self.storage.lock_client()?;
         client
             .query_opt(
@@ -696,7 +644,7 @@ impl PostgresOutboxStore {
     }
 
     pub fn append(&self, event: OutboxEvent) -> Result<(), StorageError> {
-        event.validate()?;
+        self.validate_append_request(&event)?;
         let mut client = self.storage.lock_client()?;
         let mut transaction = client.transaction().map_err(pg_error)?;
         lock_transaction(&mut transaction, OUTBOX_LOCK_KEY)?;
@@ -723,14 +671,9 @@ impl PostgresOutboxStore {
             })
             .transpose()?;
         if let Some(existing) = existing {
-            if existing.same_fact(&event) {
-                transaction.commit().map_err(pg_error)?;
-                return Ok(());
-            }
-            return Err(StorageError::Conflict(format!(
-                "event_id {} 已被不同 Outbox 事件占用",
-                event.event_id
-            )));
+            <PostgresOutboxStore as OutboxStore>::validate_existing_event(&existing, &event)?;
+            transaction.commit().map_err(pg_error)?;
+            return Ok(());
         }
         transaction
             .execute(
@@ -760,16 +703,19 @@ impl PostgresOutboxStore {
         // 口径与 SQLite/文件后端一致——三元组全部数字序（V11 R7-2）。
         // 用尽投递预算的行排到最后再截页：它们仍留在候选集里等人工确认（K2 的出口），
         // 但不能占住页首把后面投得出去的事件挤出一页。阈值走 `$2` 绑定，SQL 里不写第二个 8。
-        let rows = client
-            .query(
-                "SELECT e.event_id, e.topic, e.partition_key, e.sequence, e.schema_version,
+        let sql = format!(
+            "SELECT e.event_id, e.topic, e.partition_key, e.sequence, e.schema_version,
                         e.trace_id, e.payload, e.created_ts, e.attempts
                  FROM qx_outbox_events e
                  LEFT JOIN qx_outbox_leases l ON l.event_id = e.event_id
                  WHERE l.event_id IS NULL OR l.expires_ts::numeric <= $1::text::numeric
-                 ORDER BY e.attempts::numeric >= $2::text::numeric,
-                          e.created_ts::numeric, e.sequence::numeric, e.event_id
+                 {order_by}
                  LIMIT $3",
+            order_by = crate::outbox_page::POSTGRES_OUTBOX_PAGE_ORDER_BY,
+        );
+        let rows = client
+            .query(
+                &sql,
                 &[
                     &u64_text(now),
                     &u64_text(crate::OUTBOX_MAX_ATTEMPTS as u64),
@@ -818,12 +764,7 @@ impl PostgresOutboxStore {
         now: u64,
         lease_seconds: u64,
     ) -> Result<OutboxLease, StorageError> {
-        validate_outbox_name(event_id)?;
-        if owner.trim().is_empty() || lease_seconds == 0 {
-            return Err(StorageError::Conflict(
-                "Outbox worker 和租约时长不能为空".into(),
-            ));
-        }
+        self.validate_claim_request(event_id, owner, lease_seconds)?;
         let mut client = self.storage.lock_client()?;
         let mut transaction = client.transaction().map_err(pg_error)?;
         lock_transaction(&mut transaction, OUTBOX_LOCK_KEY)?;
@@ -845,24 +786,20 @@ impl PostgresOutboxStore {
                 &[&event_id],
             )
             .map_err(pg_error)?;
-        let mut fencing_token = 1;
-        if let Some(row) = current {
-            let current_owner: String = row.get(0);
-            let expires_ts = parse_u64(row.get::<_, String>(1).as_str(), "outbox.expires_ts")?;
-            let current_token =
-                parse_u64(row.get::<_, String>(2).as_str(), "outbox.fencing_token")?;
-            if expires_ts > now && current_owner != owner {
-                return Err(StorageError::LeaseHeld {
-                    run_id: 0,
-                    owner: current_owner,
-                });
-            }
-            fencing_token = if expires_ts <= now {
-                current_token.saturating_add(1).max(1)
-            } else {
-                current_token.max(1)
-            };
-        }
+        let current = current
+            .map(|row| {
+                Ok(super::lease_rules::LeaseSnapshot {
+                    owner: row.get(0),
+                    expires_ts: parse_u64(row.get::<_, String>(1).as_str(), "outbox.expires_ts")?,
+                    fencing_token: parse_u64(
+                        row.get::<_, String>(2).as_str(),
+                        "outbox.fencing_token",
+                    )?,
+                })
+            })
+            .transpose()?;
+        let fencing_token =
+            super::lease_rules::claim_fencing_token(current.as_ref(), owner, now, 0)?;
         let lease = OutboxLease {
             event_id: event_id.into(),
             owner: owner.into(),
@@ -915,7 +852,7 @@ impl PostgresOutboxStore {
         now: u64,
         retry: bool,
     ) -> Result<(), StorageError> {
-        validate_outbox_name(event_id)?;
+        self.validate_finish_request(event_id)?;
         let mut client = self.storage.lock_client()?;
         let mut transaction = client.transaction().map_err(pg_error)?;
         lock_transaction(&mut transaction, OUTBOX_LOCK_KEY)?;
@@ -964,21 +901,6 @@ impl PostgresOutboxStore {
             .map_err(pg_error)?;
         transaction.commit().map_err(pg_error)
     }
-}
-
-fn validate_outbox_name(event_id: &str) -> Result<(), StorageError> {
-    if event_id.is_empty()
-        || event_id.len() > 240
-        || event_id.contains('/')
-        || event_id.contains('\\')
-        || event_id.contains("..")
-        || !event_id.chars().all(|value| {
-            value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.' | ':' | '@')
-        })
-    {
-        return Err(StorageError::InvalidName("Outbox event_id 非法".into()));
-    }
-    Ok(())
 }
 
 impl OutboxStore for PostgresOutboxStore {
@@ -1054,8 +976,8 @@ impl PostgresEventLogStore {
     }
 
     pub fn write(&self, name: &str, log: &EventLog) -> Result<PathBuf, StorageError> {
-        validate_name(name)?;
-        log.validate().map_err(StorageError::Core)?;
+        validate_event_log_name(name)?;
+        validate_event_log(log)?;
         let content = log.to_json().map_err(StorageError::Core)?;
         let mut client = self.storage.lock_client()?;
         let mut transaction = client.transaction().map_err(pg_error)?;
@@ -1104,8 +1026,8 @@ impl PostgresEventLogStore {
         log: &EventLog,
         outbox_events: &[OutboxEvent],
     ) -> Result<PathBuf, StorageError> {
-        validate_name(name)?;
-        log.validate().map_err(StorageError::Core)?;
+        validate_event_log_name(name)?;
+        validate_event_log(log)?;
         for event in outbox_events {
             event.validate()?;
         }
@@ -1156,7 +1078,7 @@ impl PostgresEventLogStore {
     }
 
     pub fn read(&self, name: &str) -> Result<EventLog, StorageError> {
-        validate_name(name)?;
+        validate_event_log_name(name)?;
         let mut client = self.storage.lock_client()?;
         let content: String = client
             .query_opt(
@@ -1170,7 +1092,7 @@ impl PostgresEventLogStore {
     }
 
     pub fn read_if_exists(&self, name: &str) -> Result<Option<EventLog>, StorageError> {
-        validate_name(name)?;
+        validate_event_log_name(name)?;
         let mut client = self.storage.lock_client()?;
         let content: Option<String> = client
             .query_opt(
@@ -1211,13 +1133,8 @@ fn append_outbox_in_transaction(
         })
         .transpose()?;
     if let Some(existing) = existing {
-        if existing.same_fact(event) {
-            return Ok(());
-        }
-        return Err(StorageError::Conflict(format!(
-            "event_id {} 已被不同 Outbox 事件占用",
-            event.event_id
-        )));
+        <PostgresOutboxStore as OutboxStore>::validate_existing_event(&existing, event)?;
+        return Ok(());
     }
     transaction
         .execute(
@@ -1242,26 +1159,14 @@ fn append_outbox_in_transaction(
 
 impl EventLogStore for PostgresEventLogStore {
     fn save(&self, name: &str, log: &EventLog) -> QxResult<()> {
+        self.validate_save_request(name, log)?;
         self.write(name, log).map(|_| ()).map_err(Into::into)
     }
 
     fn load(&self, name: &str) -> QxResult<EventLog> {
+        self.validate_load_request(name)?;
         self.read(name).map_err(Into::into)
     }
-}
-
-fn validate_name(name: &str) -> Result<(), StorageError> {
-    if name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains("..")
-        || !name
-            .chars()
-            .all(|value| value.is_ascii_alphanumeric() || value == '-' || value == '_')
-    {
-        return Err(StorageError::InvalidName(name.into()));
-    }
-    Ok(())
 }
 
 // ----------------------------- Audit ------------------------------------
@@ -1321,22 +1226,11 @@ impl PostgresAuditStore {
     pub fn sync_control(&self, plane: &ControlPlane) -> Result<usize, StorageError> {
         let existing = self.read()?;
         let records = plane.audit();
-        // 只校验公共前缀，不能拦"链比请求更长"。本方法由 transact_control 在控制面事务
-        // commit 之后调用，两进程并发时 B 的提交会包含 A 的变更，A 随后才调 sync_control，
-        // 此时持久化链已经比 A 本地那份 plane 更长。链更长不是冲突——A 想追加的记录已在
-        // 链上，按幂等空操作收口即可；旧写法把它报成 Conflict，等于"控制面状态已提交
-        // 成功、transact_control 却返回 Err"。真正要拦的是公共前缀本身对不上（链分叉）。
-        let common = existing.len().min(records.len());
-        if existing
-            .iter()
-            .take(common)
-            .zip(records.iter().take(common))
-            .any(|(entry, record)| entry.record != *record)
-        {
-            return Err(StorageError::Conflict(
-                "控制面审计与 PostgreSQL 审计前缀不一致".into(),
-            ));
-        }
+        let common = audit_sync_prefix_len(
+            &existing,
+            &records,
+            "控制面审计与 PostgreSQL 审计前缀不一致",
+        )?;
         let mut appended = 0;
         for record in records.iter().skip(common) {
             self.append(record.clone())?;
@@ -1399,7 +1293,7 @@ impl SnapshotStore for PostgresSnapshotStore {
         snapshot.validate()?;
         let snapshot_id = u64_text(snapshot.header.snapshot_id);
         let state_hash = u64_text(snapshot.state_hash());
-        let content = snapshot.to_json();
+        let content = snapshot.to_json()?;
         let mut client = self.storage.lock_client_protocol()?;
         let mut transaction = client.transaction().map_err(pg_protocol_error)?;
         let existing: Option<String> = transaction
@@ -1559,9 +1453,7 @@ impl PostgresControlCommandQueue {
         command: ControlCommand,
         enqueued_ts: u64,
     ) -> Result<PathBuf, StorageError> {
-        command
-            .validate()
-            .map_err(|error| StorageError::Conflict(format!("控制命令非法: {error:?}")))?;
+        self.validate_enqueue_request(&command)?;
         let command_id = u64_text(command.command_id);
         let json = serde_json::to_string(&command)
             .map_err(|error| StorageError::Io(format!("控制命令序列化失败: {error}")))?;
@@ -1579,14 +1471,9 @@ impl PostgresControlCommandQueue {
         if let Some(existing) = existing {
             let existing_command: ControlCommand = serde_json::from_str(&existing)
                 .map_err(|error| StorageError::Io(format!("控制命令 JSON 非法: {error}")))?;
-            if existing_command == command {
-                transaction.commit().map_err(pg_error)?;
-                return Ok(marker_path("control-commands", command.command_id));
-            }
-            return Err(StorageError::Conflict(format!(
-                "command_id {} 已被不同命令占用",
-                command.command_id
-            )));
+            self.validate_existing_command(&existing_command, &command)?;
+            transaction.commit().map_err(pg_error)?;
+            return Ok(marker_path("control-commands", command.command_id));
         }
         transaction
             .execute(
@@ -1606,8 +1493,7 @@ impl PostgresControlCommandQueue {
                 "SELECT c.command_json, c.enqueued_ts, l.expires_ts
                  FROM qx_control_commands c
                  LEFT JOIN qx_control_command_leases l ON l.command_id = c.command_id
-                 WHERE c.done = FALSE
-                 ORDER BY c.enqueued_ts::numeric, c.command_id::numeric",
+                 WHERE c.done = FALSE",
                 &[],
             )
             .map_err(pg_error)?;
@@ -1632,6 +1518,7 @@ impl PostgresControlCommandQueue {
                 enqueued_ts: parse_u64(row.get(1), "enqueued_ts")?,
             });
         }
+        commands.sort_by(super::control_queue::compare_control_command_order);
         Ok(commands)
     }
 
@@ -1642,11 +1529,7 @@ impl PostgresControlCommandQueue {
         now: u64,
         lease_seconds: u64,
     ) -> Result<ControlCommandLease, StorageError> {
-        if command_id == 0 || owner.trim().is_empty() || lease_seconds == 0 {
-            return Err(StorageError::Conflict(
-                "command_id、worker 和租约时长不能为空".into(),
-            ));
-        }
+        self.validate_claim_request(command_id, owner, lease_seconds)?;
         let command_id_text = u64_text(command_id);
         let mut client = self.storage.lock_client()?;
         let mut transaction = client.transaction().map_err(pg_error)?;
@@ -1670,27 +1553,18 @@ impl PostgresControlCommandQueue {
             )
             .map_err(pg_error)?
             .map(|row| (row.get(0), row.get(1), row.get(2)));
-        let (fencing_token, expires_ts) = match current {
-            Some((current_owner, expires, token)) => {
-                let expires = parse_u64(&expires, "expires_ts")?;
-                let token = parse_u64(&token, "fencing_token")?;
-                if expires > now && current_owner != owner {
-                    return Err(StorageError::LeaseHeld {
-                        run_id: command_id,
-                        owner: current_owner,
-                    });
-                }
-                if expires > now && current_owner == owner {
-                    (token.max(1), now.saturating_add(lease_seconds))
-                } else {
-                    (
-                        token.saturating_add(1).max(1),
-                        now.saturating_add(lease_seconds),
-                    )
-                }
-            }
-            None => (1, now.saturating_add(lease_seconds)),
-        };
+        let current = current
+            .map(|(current_owner, expires, token)| {
+                Ok(super::lease_rules::LeaseSnapshot {
+                    owner: current_owner,
+                    expires_ts: parse_u64(&expires, "expires_ts")?,
+                    fencing_token: parse_u64(&token, "fencing_token")?,
+                })
+            })
+            .transpose()?;
+        let fencing_token =
+            super::lease_rules::claim_fencing_token(current.as_ref(), owner, now, command_id)?;
+        let expires_ts = now.saturating_add(lease_seconds);
         let expires_text = u64_text(expires_ts);
         let token_text = u64_text(fencing_token);
         transaction
@@ -1828,7 +1702,7 @@ impl PostgresJobQueue {
             run,
             enqueued_ts,
         };
-        envelope.validate()?;
+        self.validate_enqueue_job_request(&envelope)?;
         let run_id = u64_text(envelope.run.run_id);
         let json = serde_json::to_string(&envelope)
             .map_err(|error| StorageError::Io(format!("任务序列化失败: {error}")))?;
@@ -1845,14 +1719,9 @@ impl PostgresJobQueue {
         if let Some(existing) = existing {
             let old: QueuedJob = serde_json::from_str(&existing)
                 .map_err(|error| StorageError::Io(format!("任务 JSON 非法: {error}")))?;
-            if old.job == envelope.job && old.run == envelope.run {
-                transaction.commit().map_err(pg_error)?;
-                return Ok(marker_path("jobs", envelope.run.run_id));
-            }
-            return Err(StorageError::Conflict(format!(
-                "run_id {} 已被不同任务占用",
-                envelope.run.run_id
-            )));
+            self.validate_existing_job(&old, &envelope)?;
+            transaction.commit().map_err(pg_error)?;
+            return Ok(marker_path("jobs", envelope.run.run_id));
         }
         transaction
             .execute(
@@ -1890,7 +1759,7 @@ impl PostgresJobQueue {
             job.validate()?;
             jobs.push(job);
         }
-        jobs.sort_by_key(|job| (job.run.trading_day.clone(), job.run.run_id));
+        jobs.sort_by(crate::job_queue::compare_queued_job_order);
         Ok(jobs)
     }
 
@@ -1901,9 +1770,7 @@ impl PostgresJobQueue {
         now: u64,
         lease_seconds: u64,
     ) -> Result<JobLease, StorageError> {
-        if worker.trim().is_empty() || lease_seconds == 0 {
-            return Err(StorageError::Conflict("worker 和租约时长不能为空".into()));
-        }
+        self.validate_claim_job_request(worker, lease_seconds)?;
         let run_id_text = u64_text(run_id);
         let mut client = self.storage.lock_client()?;
         let mut transaction = client.transaction().map_err(pg_error)?;
@@ -1926,27 +1793,18 @@ impl PostgresJobQueue {
             )
             .map_err(pg_error)?
             .map(|row| (row.get(0), row.get(1), row.get(2)));
-        let (fencing_token, expires_ts) = match current {
-            Some((current_owner, expires, token)) => {
-                let expires = parse_u64(&expires, "expires_ts")?;
-                let token = parse_u64(&token, "fencing_token")?;
-                if expires > now && current_owner != worker {
-                    return Err(StorageError::LeaseHeld {
-                        run_id,
-                        owner: current_owner,
-                    });
-                }
-                if expires > now && current_owner == worker {
-                    (token.max(1), now.saturating_add(lease_seconds))
-                } else {
-                    (
-                        token.saturating_add(1).max(1),
-                        now.saturating_add(lease_seconds),
-                    )
-                }
-            }
-            None => (1, now.saturating_add(lease_seconds)),
-        };
+        let current = current
+            .map(|(current_owner, expires, token)| {
+                Ok(super::lease_rules::LeaseSnapshot {
+                    owner: current_owner,
+                    expires_ts: parse_u64(&expires, "expires_ts")?,
+                    fencing_token: parse_u64(&token, "fencing_token")?,
+                })
+            })
+            .transpose()?;
+        let fencing_token =
+            super::lease_rules::claim_fencing_token(current.as_ref(), worker, now, run_id)?;
+        let expires_ts = now.saturating_add(lease_seconds);
         let expires_text = u64_text(expires_ts);
         let token_text = u64_text(fencing_token);
         transaction
@@ -2072,3 +1930,7 @@ impl JobQueueBackend for PostgresJobQueue {
         self.recover_expired(now)
     }
 }
+
+#[cfg(test)]
+#[path = "postgres/schema_migrations.rs"]
+mod schema_migrations;

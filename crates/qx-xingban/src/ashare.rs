@@ -11,13 +11,21 @@ use std::collections::BTreeMap;
 const DAY_MS: u64 = 86_400_000;
 const SHANGHAI_OFFSET_MS: u64 = 8 * 3_600_000;
 
+mod calendar_validation;
 mod json;
+mod ratio;
+mod reconciliation;
 mod timecal;
-mod trading;
+pub(crate) mod trading;
+mod validation;
 
+pub use calendar_validation::validate_ashare_calendar_json;
 pub(crate) use json::*;
+pub use ratio::resolve_corporate_action_ratios_json;
+pub use reconciliation::reconcile_corporate_actions_json;
 pub(crate) use timecal::*;
 pub use trading::*;
+pub use validation::validate_corporate_action_json;
 
 /// Python→Rust A 股数据契约版本。文档缺省 `schema_version` 视为 `0`（旧格式，
 /// 宽松解析），`>= 1` 启用严格模式：顶层必须携带非空 `source`，未知字段直接
@@ -1028,6 +1036,11 @@ impl AshareRuleConfig {
                     || event.conversion_price_raw < 0
                     || event.conversion_ratio_num < 0
                     || event.conversion_ratio_den <= 0
+                    || event.subscription_qty_raw < 0
+                    || event.rights_expiry_qty_raw < 0
+                    || event.repurchase_qty_raw < 0
+                    || event.conversion_qty_raw < 0
+                    || event.conversion_target_qty_raw < 0
                     || event.interest_per_bond_raw < 0
                     || event.settlement_qty_raw < 0
                     || event.settlement_price_raw < 0

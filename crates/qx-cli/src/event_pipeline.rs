@@ -3,8 +3,33 @@
 //! 传输后端（文件 / SQLite / PostgreSQL / NATS）由 crate 根的选择器决定，
 //! 这里的循环对后端保持一致的租约、幂等与 ACK 语义。
 
-#[allow(unused_imports)] // 默认特性下本模块条目全部为 nats/postgres 门控
-use super::*;
+#[cfg(feature = "nats")]
+use crate::{
+    configured_postgres_dsn, join_worker_handle, lease_clock, prometheus_label,
+    read_runtime_config, runtime_timestamp_ms, worker_metrics_path, write_worker_metrics,
+};
+#[cfg(feature = "nats")]
+use qx_runtime::{ConsumerMetricTotals, RelayMetricTotals};
+#[cfg(feature = "nats")]
+use qx_runtime::{MessagingRuntimeConfig, RuntimeSupervisor, StorageBackend, WorkerRole};
+#[cfg(feature = "nats")]
+use qx_storage::{
+    ConsumerStateStore, FileConsumerStateStore, FileOutboxStore, NatsJetStreamConsumer,
+    NatsJetStreamPublisher, NatsWaitBudget, OutboxEvent, OutboxPublisher, OutboxRelay, OutboxStore,
+};
+#[cfg(all(feature = "nats", feature = "postgres"))]
+use qx_storage::{PostgresConsumerStateStore, PostgresOutboxStore};
+#[cfg(all(feature = "nats", feature = "sqlite"))]
+use qx_storage::{SqliteConsumerStateStore, SqliteOutboxStore};
+#[cfg(feature = "nats")]
+use std::path::{Path, PathBuf};
+#[cfg(feature = "nats")]
+use std::process::{Command, Stdio};
+#[cfg(feature = "nats")]
+use std::thread;
+#[cfg(feature = "nats")]
+use std::time::{Duration, Instant};
+#[cfg(feature = "nats")]
 #[cfg(feature = "nats")]
 pub(crate) fn run_file_outbox_relay(
     data_root: &Path,
@@ -98,157 +123,6 @@ impl WorkerMetricsSink {
 }
 
 #[cfg(feature = "nats")]
-#[derive(Default)]
-pub(crate) struct RelayMetricTotals {
-    scanned: u64,
-    published: u64,
-    retried: u64,
-    lease_conflicts: u64,
-    publish_failures: u64,
-    parked: u64,
-}
-
-#[cfg(feature = "nats")]
-impl RelayMetricTotals {
-    fn apply(&mut self, report: &qx_storage::OutboxRelayReport) {
-        self.scanned += report.scanned;
-        self.published += report.published;
-        self.retried += report.retried;
-        self.lease_conflicts += report.lease_conflicts;
-        self.publish_failures += report.publish_failures;
-        // parked 是"当前还有几条停在 outbox 里"的状态量，不是累计量：取最近一轮的观察值。
-        self.parked = report.parked;
-    }
-
-    fn render(&self, sink: &WorkerMetricsSink, up: bool, now_ms: u64) -> String {
-        let worker = prometheus_label(&sink.worker_id);
-        format!(
-            "qx_worker_up{{worker=\"{worker}\"}} {}\n\
-qx_worker_heartbeat_timestamp_seconds{{worker=\"{worker}\"}} {}\n\
-qx_outbox_relay_scanned_total{{worker=\"{worker}\"}} {}\n\
-qx_outbox_relay_published_total{{worker=\"{worker}\"}} {}\n\
-qx_outbox_relay_retried_total{{worker=\"{worker}\"}} {}\n\
-qx_outbox_relay_lease_conflicts_total{{worker=\"{worker}\"}} {}\n\
-qx_outbox_relay_publish_failures_total{{worker=\"{worker}\"}} {}\n\
-qx_outbox_relay_parked{{worker=\"{worker}\"}} {}\n",
-            u8::from(up),
-            now_ms / 1_000,
-            self.scanned,
-            self.published,
-            self.retried,
-            self.lease_conflicts,
-            self.publish_failures,
-            self.parked,
-        )
-    }
-}
-
-#[cfg(feature = "nats")]
-#[derive(Default)]
-pub(crate) struct ConsumerMetricTotals {
-    received: u64,
-    applied: u64,
-    duplicates: u64,
-    retried: u64,
-    dead_lettered: u64,
-    malformed: u64,
-    ack_failures: u64,
-}
-
-#[cfg(feature = "nats")]
-impl ConsumerMetricTotals {
-    fn apply(&mut self, report: &qx_storage::NatsConsumerBatchReport) {
-        self.received += report.received;
-        self.applied += report.applied;
-        self.duplicates += report.duplicates;
-        self.retried += report.retried;
-        self.dead_lettered += report.dead_lettered;
-        self.malformed += report.malformed;
-        self.ack_failures += report.ack_failures;
-    }
-
-    fn render(&self, sink: &WorkerMetricsSink, up: bool, now_ms: u64) -> String {
-        let worker = prometheus_label(&sink.worker_id);
-        format!(
-            "qx_worker_up{{worker=\"{worker}\"}} {}\n\
-qx_worker_heartbeat_timestamp_seconds{{worker=\"{worker}\"}} {}\n\
-qx_event_consumer_received_total{{worker=\"{worker}\"}} {}\n\
-qx_event_consumer_applied_total{{worker=\"{worker}\"}} {}\n\
-qx_event_consumer_duplicates_total{{worker=\"{worker}\"}} {}\n\
-qx_event_consumer_retried_total{{worker=\"{worker}\"}} {}\n\
-qx_event_consumer_dead_lettered_total{{worker=\"{worker}\"}} {}\n\
-qx_event_consumer_malformed_total{{worker=\"{worker}\"}} {}\n\
-qx_event_consumer_ack_failures_total{{worker=\"{worker}\"}} {}\n",
-            u8::from(up),
-            now_ms / 1_000,
-            self.received,
-            self.applied,
-            self.duplicates,
-            self.retried,
-            self.dead_lettered,
-            self.malformed,
-            self.ack_failures,
-        )
-    }
-}
-
-#[cfg(feature = "nats")]
-pub(crate) fn wait_for_worker_interval(context: &WorkerContext, interval_ms: u64) {
-    let deadline = Instant::now() + Duration::from_millis(interval_ms);
-    while !context.should_stop() {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        thread::sleep(remaining.min(Duration::from_millis(50)));
-    }
-}
-
-#[cfg(feature = "nats")]
-pub(crate) fn run_outbox_relay_loop<S>(
-    context: WorkerContext,
-    relay: OutboxRelay<S, NatsJetStreamPublisher>,
-    messaging: MessagingRuntimeConfig,
-    metrics: WorkerMetricsSink,
-    once: bool,
-) -> Result<(), String>
-where
-    S: OutboxStore + 'static,
-{
-    let mut totals = RelayMetricTotals::default();
-    metrics.write(&totals.render(&metrics, true, runtime_timestamp_ms()));
-    loop {
-        if context.should_stop() {
-            break;
-        }
-        let now = runtime_timestamp_ms();
-        let report = relay
-            .pump_once(lease_clock(now), messaging.relay_batch_size)
-            .map_err(|error| format!("Outbox relay 批次失败: {error:?}"))?;
-        totals.apply(&report);
-        metrics.write(&totals.render(&metrics, true, now));
-        context.heartbeat(now)?;
-        println!(
-            "[Outbox relay worker={}] scanned={} published={} retried={} failures={} conflicts={} parked={} last_error={:?}",
-            context.id(),
-            report.scanned,
-            report.published,
-            report.retried,
-            report.publish_failures,
-            report.lease_conflicts,
-            report.parked,
-            report.last_error
-        );
-        if once {
-            break;
-        }
-        wait_for_worker_interval(&context, messaging.relay_interval_ms);
-    }
-    metrics.write(&totals.render(&metrics, false, runtime_timestamp_ms()));
-    Ok(())
-}
-
-#[cfg(feature = "nats")]
 pub(crate) fn run_relay_with_store<S>(
     supervisor: RuntimeSupervisor,
     worker_id: String,
@@ -261,7 +135,13 @@ where
     S: OutboxStore + 'static,
 {
     let handle = supervisor.spawn_worker(&worker_id, move |context| {
-        run_outbox_relay_loop(context, relay, messaging, metrics, once)
+        let mut totals = RelayMetricTotals::default();
+        qx_runtime::run_outbox_relay_loop(context, relay, messaging, once, |report, up, now_ms| {
+            if let Some(report) = report {
+                totals.apply(report);
+            }
+            metrics.write(&totals.render(&prometheus_label(&metrics.worker_id), up, now_ms));
+        })
     })?;
     join_worker_handle(&supervisor, handle, "Outbox relay", &worker_id)
 }
@@ -430,10 +310,6 @@ pub(crate) fn invoke_event_consumer_handler(
         .spawn()
         .map_err(|error| format!("启动事件 consumer handler 失败: {error}"))?;
     if let Some(stdin) = child.stdin.take() {
-        // 写也要进预算（V11 N8）：handler 若不读 stdin，管道写满后 `write_all` 再也不返回，
-        // 而下面那圈 timeout_ms 判定排在它后面，压根没机会开始。跨进程 Outbox 事件里
-        // AccountPositionSnapshot/AccountBalanceSnapshot 把整段 Vec 内联进单条 payload，
-        // 足以越过 OS 匿名管道缓冲（~64KB），所以这不是假设场景。
         let mut envelope = payload;
         envelope.push(b'\n');
         let written = qx_adapter::write_all_within(
@@ -484,57 +360,6 @@ pub(crate) fn invoke_event_consumer_handler(
 }
 
 #[cfg(feature = "nats")]
-pub(crate) fn run_event_consumer_loop<S>(
-    context: WorkerContext,
-    consumer: NatsJetStreamConsumer,
-    store: S,
-    messaging: MessagingRuntimeConfig,
-    handler: EventConsumerHandler,
-    metrics: WorkerMetricsSink,
-    once: bool,
-) -> Result<(), String>
-where
-    S: ConsumerStateStore + Clone + Send + Sync + 'static,
-{
-    let mut totals = ConsumerMetricTotals::default();
-    metrics.write(&totals.render(&metrics, true, runtime_timestamp_ms()));
-    loop {
-        if context.should_stop() {
-            break;
-        }
-        let handler = handler.clone();
-        let report = consumer.consume_batch(
-            store.clone(),
-            NatsJetStreamConsumer::current_timestamp(),
-            messaging.consumer_batch_size,
-            move |event| invoke_event_consumer_handler(&handler, event),
-        )?;
-        let now = runtime_timestamp_ms();
-        totals.apply(&report);
-        metrics.write(&totals.render(&metrics, true, now));
-        context.heartbeat(now)?;
-        println!(
-            "[Event consumer worker={}] received={} applied={} duplicates={} retried={} dead_lettered={} malformed={} ack_failures={} last_error={:?}",
-            context.id(),
-            report.received,
-            report.applied,
-            report.duplicates,
-            report.retried,
-            report.dead_lettered,
-            report.malformed,
-            report.ack_failures,
-            report.last_error
-        );
-        if once {
-            break;
-        }
-        wait_for_worker_interval(&context, messaging.relay_interval_ms);
-    }
-    metrics.write(&totals.render(&metrics, false, runtime_timestamp_ms()));
-    Ok(())
-}
-
-#[cfg(feature = "nats")]
 pub(crate) fn run_consumer_with_store<S>(
     supervisor: RuntimeSupervisor,
     worker_id: String,
@@ -546,14 +371,21 @@ where
     S: ConsumerStateStore + Clone + Send + Sync + 'static,
 {
     let handle = supervisor.spawn_worker(&worker_id, move |context| {
-        run_event_consumer_loop(
+        let mut totals = ConsumerMetricTotals::default();
+        let metrics = runtime.metrics;
+        qx_runtime::run_event_consumer_loop(
             context,
             consumer,
             store,
             runtime.messaging,
-            runtime.handler,
-            runtime.metrics,
+            move |event| invoke_event_consumer_handler(&runtime.handler, event),
             runtime.once,
+            |report, up, now_ms| {
+                if let Some(report) = report {
+                    totals.apply(report);
+                }
+                metrics.write(&totals.render(&prometheus_label(&metrics.worker_id), up, now_ms));
+            },
         )
     })?;
     join_worker_handle(&supervisor, handle, "Event consumer", &worker_id)

@@ -1,20 +1,16 @@
-//! CLI 入口分派：clap 派生的 [`Command`] 变体 → 具体处理器。参数语法与命令表见 `cli_args.rs`（V10 P2b 已移除旧手写解析）；本模块只留一次 `Command` match、横幅机读判定与错误出口。门禁校验命令表、派发分支与 help 三方集合相等；业务实现复用 crate 根函数。
+//! CLI 入口分派：clap 派生的 [`Command`] 变体 → 具体处理器。参数语法见 `cli_args.rs`；机读路由名册由参数源生成并经架构门禁校验。本模块只留一次 `Command` match、横幅机读判定与错误出口；业务实现复用 crate 根函数。
 
 use super::cli_args::{BacktestCommand, Cli, Command, ConfigCommand, RunCommand, StrategyCommand};
-use super::*;
-use clap::Parser;
+mod backtest_builtin;
+mod imports;
+use backtest_builtin::dispatch_builtin_backtest;
+use imports::*;
 
-/// 用法错误走分级回显（U2，旧摘要实测 162 行 / 12 KB）；`DisplayHelp*` 仍由 clap 打印用法并退 0。
-fn fail_usage(error: clap::Error) -> ! {
-    if matches!(
-        error.kind(),
-        clap::error::ErrorKind::DisplayHelp
-            | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-    ) {
-        let _ = error.print();
-        std::process::exit(0);
+fn dispatch_output_result(result: Result<(), String>, command: &str) {
+    if let Err(error) = result {
+        eprintln!("[qx-cli · CLI] {command} 输出失败: {error}");
+        std::process::exit(2);
     }
-    usage_errors::report(&error)
 }
 
 #[cfg(feature = "nats")]
@@ -116,7 +112,6 @@ pub(crate) fn run() {
         print_cli_help();
         return;
     }
-    // `--version` 与 `-V` 是 version 入口的别名，与 help 一样在 clap 之前接住（U1）。
     let alias = argv.get(1).map(String::as_str).unwrap_or_default();
     if alias == "--version" || alias == "-V" {
         build_identity::print_identity();
@@ -124,11 +119,11 @@ pub(crate) fn run() {
     }
     let cli = match Cli::try_parse_from(argv.iter().map(String::as_str)) {
         Ok(cli) => cli,
-        Err(error) => fail_usage(error),
+        Err(error) => usage_errors::fail_usage(error),
     };
     let Some(command) = cli.command else {
-        print_banner(); // 空 argv 与显式 `all` 同义（迁移前的默认 mode）
-        selfcheck::run(selfcheck::Scope::Full);
+        print_banner();
+        dispatch_output_result(selfcheck::run(selfcheck::Scope::Full, false), "自校验");
         return;
     };
     if !command.machine_output() {
@@ -159,6 +154,7 @@ pub(crate) fn run() {
             }
         }
         Command::Quickstart { project, force } => quickstart::run(project, force),
+        Command::Guide(args) => guide::run(args),
         Command::Doctor { path, json } => {
             let path = path.unwrap_or_else(default_runtime_path);
             if let Err(error) = run_doctor(&path, json) {
@@ -247,20 +243,7 @@ pub(crate) fn run() {
                 std::process::exit(2);
             }
         }
-        Command::Report {
-            path,
-            json,
-            html,
-            evidence,
-            out,
-        } => {
-            let path = path.unwrap_or_else(default_runtime_path);
-            if let Err(error) = run_report_with_output(&path, json, html, evidence, out.as_deref())
-            {
-                eprintln!("[qx-cli · CLI] 报告查看失败: {error}");
-                std::process::exit(2);
-            }
-        }
+        Command::Report(arguments) => dispatch_report(arguments),
         Command::LiveCheck { path, json } => {
             if let Err(error) = run_live_check(&path, json) {
                 eprintln!("[qx-cli · CLI] 实盘前置检查失败: {error}");
@@ -292,8 +275,14 @@ pub(crate) fn run() {
                 runtime,
                 bars,
                 spec,
+                dataset_manifest,
             }) => {
-                if let Err(error) = run_strategy_backtest(&runtime, &bars, spec.as_deref()) {
+                if let Err(error) = run_strategy_backtest_with_quality_manifest(
+                    &runtime,
+                    &bars,
+                    spec.as_deref(),
+                    dataset_manifest.as_deref(),
+                ) {
                     eprintln!("[qx-cli · CLI] 策略回测失败: {error}");
                     std::process::exit(2);
                 }
@@ -319,17 +308,9 @@ pub(crate) fn run() {
                 spec,
                 quantity,
                 config,
+                dataset_manifest,
             }) => {
-                if let Err(error) = run_builtin_backtest(
-                    &strategy,
-                    &frame,
-                    spec.as_deref(),
-                    quantity.unwrap_or(1),
-                    config.as_deref(),
-                ) {
-                    eprintln!("[qx-cli · CLI] 内置策略回测失败: {error}");
-                    std::process::exit(2);
-                }
+                dispatch_builtin_backtest(strategy, frame, spec, quantity, config, dataset_manifest)
             }
             Some(BacktestCommand::MultiBuiltin {
                 strategy,
@@ -342,6 +323,8 @@ pub(crate) fn run() {
                 funding_bps,
                 root,
                 config,
+                primary_dataset_manifest,
+                reference_dataset_manifest,
             }) => {
                 let quantity = quantity.or(positional_quantity).unwrap_or(1);
                 if let Err(error) = run_multi_builtin_backtest(
@@ -350,6 +333,8 @@ pub(crate) fn run() {
                     &reference_bar,
                     primary_spec.as_deref(),
                     reference_spec.as_deref(),
+                    primary_dataset_manifest.as_deref(),
+                    reference_dataset_manifest.as_deref(),
                     quantity,
                     funding_bps.unwrap_or(0),
                     root.as_deref(),
@@ -370,17 +355,17 @@ pub(crate) fn run() {
                 quantity,
                 config,
             }) => {
-                if let Err(error) = run_ccxt_builtin_backtest(
-                    &ccxt_config,
-                    &strategy,
-                    &instrument,
-                    &timeframe,
+                if let Err(error) = run_ccxt_builtin_backtest(CcxtBuiltinBacktestInput {
+                    ccxt_config_path: &ccxt_config,
+                    strategy_name: &strategy,
+                    instrument: &instrument,
+                    timeframe: &timeframe,
                     start_ms,
                     end_ms,
-                    spec.as_deref(),
-                    quantity.unwrap_or(1),
-                    config.as_deref(),
-                ) {
+                    spec_path: spec.as_deref(),
+                    quantity: quantity.unwrap_or(1),
+                    runtime_config_path: config.as_deref(),
+                }) {
                     eprintln!("[qx-cli · CLI] CCXT 内置策略回测失败: {error}");
                     std::process::exit(2);
                 }
@@ -396,22 +381,22 @@ pub(crate) fn run() {
                 market_impact_bps,
                 latency_snapshots,
                 config,
+                dataset_manifest,
             }) => {
-                if let Err(error) = run_depth_backtest(
+                if let Err(error) = run_depth_backtest_with_quality_manifest(
                     &fill_tier,
                     &strategy,
                     &frame,
                     spec.as_deref(),
                     quantity.unwrap_or(1),
-                    // 缺省时由深度入口向成本绑定要费率（Q0c）：命令行 > 成本规则文件 > 内核默认。
                     fee_bps,
-                    // 缺省的全 0 与不点名旗标同口径：撮合行为不变，描述子照常写出。
                     DepthExecutionModel {
                         latency_snapshots: latency_snapshots.unwrap_or(0),
                         market_impact_bps: market_impact_bps.unwrap_or(0),
                     },
                     &root,
                     config.as_deref(),
+                    dataset_manifest.as_deref(),
                 ) {
                     eprintln!("[qx-cli · CLI] 深度档位回测失败: {error}");
                     std::process::exit(2);
@@ -445,6 +430,9 @@ pub(crate) fn run() {
         Command::DataValidate(args) => {
             usage_errors::exit_on_failure(validate_dataset(&args), "数据集校验失败");
         }
+        Command::DataValidateDepth(args) => {
+            usage_errors::exit_on_failure(validate_depth_dataset(&args), "深度数据集校验失败");
+        }
         Command::Plan(args) => usage_errors::exit_on_failure(plan_readout(&args), "规格读入失败"),
         Command::CcxtMarketSpec {
             config,
@@ -473,7 +461,6 @@ pub(crate) fn run() {
                 eprintln!("[qx-cli · CLI] 进程监督器停止: {failure}");
                 match failure {
                     qx_orchestrator::SuperviseFailure::Usage(_) => std::process::exit(2),
-                    // 子进程退出码原样上报：panic 101 / OOM 137 / 干净 0 各一格；被信号杀死（None）走 128，与 POSIX 信号退出约定一致。
                     qx_orchestrator::SuperviseFailure::WorkerExit { raw_code, .. } => {
                         std::process::exit(match raw_code {
                             Some(code) if code != 0 => code,
@@ -488,7 +475,7 @@ pub(crate) fn run() {
             worker_id,
             once,
         } => {
-            if let Err(error) = run_scheduler_worker(&path, &worker_id, once) {
+            if let Err(error) = run_scheduler_worker(&path, &worker_id, once, false) {
                 eprintln!("[qx-cli · CLI] scheduler-worker 启动/运行失败: {error}");
                 std::process::exit(2);
             }
@@ -498,7 +485,7 @@ pub(crate) fn run() {
             worker_id,
             once,
         } => {
-            if let Err(error) = run_strategy_worker(&path, &worker_id, once) {
+            if let Err(error) = run_strategy_worker(&path, &worker_id, once, false) {
                 eprintln!("[qx-cli · CLI] strategy-worker 启动/运行失败: {error}");
                 std::process::exit(2);
             }
@@ -638,8 +625,14 @@ pub(crate) fn run() {
             run_ccxt_submit_order(&args),
             "[qx-cli · CLI] CCXT SubmitOrder 执行失败",
         ),
-        Command::PaperE2e { path } | Command::PaperCheck { path } => {
+        Command::PaperE2e { path } => {
             if let Err(error) = run_paper_pipeline_once(&path) {
+                eprintln!("[qx-cli · CLI] Paper 主链路验收失败: {error}");
+                std::process::exit(2);
+            }
+        }
+        Command::PaperCheck { path, json } => {
+            if let Err(error) = run_paper_check(&path, json) {
                 eprintln!("[qx-cli · CLI] Paper 主链路验收失败: {error}");
                 std::process::exit(2);
             }
@@ -651,7 +644,6 @@ pub(crate) fn run() {
                     std::process::exit(2);
                 }
             } else {
-                // V10 §4.3：无参曾打印手写假差异；真实对账必须同时点名本地与远端来源。
                 eprintln!(
                     "reconcile 需要本地与远端两个来源：reconcile <runtime.json> [worker-id]\n  \
                      本地来源 = 运行时配置指向的 EventLog 账本\n  \
@@ -660,11 +652,23 @@ pub(crate) fn run() {
                 std::process::exit(2);
             }
         }
-        Command::Ecosystem => run_ecosystem_smoke(),
-        Command::Paper => run_paper_smoke(),
+        Command::Ecosystem(args) => {
+            dispatch_output_result(run_ecosystem_smoke(args.json), "生态自检")
+        }
+        Command::Paper => dispatch_output_result(run_paper_smoke(true), "Paper 冒烟"),
         Command::App(args) => app_commands::dispatch(args.action), // T2-2/G1：业务交给应用层
-        Command::All => selfcheck::run(selfcheck::Scope::Full),
-        Command::Verify => selfcheck::run(selfcheck::Scope::KernelOnly),
+        Command::All(args) => dispatch_output_result(
+            selfcheck::run(selfcheck::Scope::Full, args.json),
+            "全量自检",
+        ),
+        Command::Verify(args) => dispatch_output_result(
+            selfcheck::run(selfcheck::Scope::KernelOnly, args.json),
+            "内核自检",
+        ),
         Command::Version => build_identity::print_identity(),
+        Command::StorageAdoptPostgres(args) => {
+            storage_adopt::dispatch_postgres_schema_adoption(args)
+        }
+        Command::Evidence(args) => evidence_signature::dispatch(args),
     }
 }

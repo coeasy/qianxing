@@ -21,6 +21,9 @@ use super::artifacts::{equity_series, read_text};
 use super::run_experiment::ExperimentCandidateResult;
 use crate::error::{AppError, AppErrorCategory};
 use qx_guanxing::Bar;
+pub use qx_spec::{
+    SplitPlan as ExperimentSplitPlan, EXPERIMENT_BASELINES as EXPERIMENT_BASELINE_NAMES,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -30,95 +33,59 @@ type RankedTrainingCandidate = (usize, Option<String>, BTreeMap<String, i128>, i
 /// 防止极小步长和巨大数据集制造无界报告、耗尽内存或把取消延迟到分折结束。
 pub const MAX_EXPERIMENT_FOLDS: usize = 10_000;
 
-/// 应用层的数据切分计划。与 `qx_spec::SplitPlan` **同形**，但这一份**有执行者**。
-///
-/// 刻意不与 `qx_spec` 共用类型：`qx-app` 的依赖表是精确且被门禁逐项核过的，为了一格
-/// 结构体把整个 spec crate 拉进来会让依赖面变宽。代价是两份同形声明并存——由
-/// `experiment_split_plan_check` 逐格钉住（字段名、语义与 `qx_spec::SplitPlan` 一致）。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ExperimentSplitPlan {
-    pub train_bars: u64,
-    pub test_bars: u64,
-    pub walk_forward: bool,
-    pub step_bars: u64,
-}
-
-impl ExperimentSplitPlan {
-    /// 形状自检。规则与 `qx_spec::SplitPlan` 的校验**逐条一致**——同一份语义在两处
-    /// 各写一半（这边松一点）就会让"能被读进来的计划"与"能被执行的计划"分裂。
-    pub fn validate(&self) -> Result<(), AppError> {
-        if self.train_bars == 0 || self.test_bars == 0 {
-            return Err(invalid("实验切分计划的 train_bars 与 test_bars 都必须为正"));
-        }
-        if self.walk_forward && self.step_bars == 0 {
-            return Err(invalid(
-                "实验切分计划打开 walk_forward 时 step_bars 必须为正",
-            ));
-        }
-        if !self.walk_forward && self.step_bars != 0 {
-            return Err(invalid(
-                "实验切分计划未打开 walk_forward 时 step_bars 必须为 0",
-            ));
-        }
-        Ok(())
-    }
-
-    /// 切分出来的 `(train_start, train_end, test_start, test_end)` 四元组，按 Bar 序号。
-    ///
-    /// 走查打开时按 `step_bars` 滚动，直到测试窗越过样本尾；关闭时只有一段。样本装不下
-    /// 一段完整的「训练窗 + 测试窗」是 [`AppErrorCategory::FidelityInsufficient`]——
-    /// 那是**样本不够**，不是输入拼错，与 `MIN_BACKTEST_BARS` 同一把尺。
-    pub(super) fn folds(&self, total_bars: usize) -> Result<Vec<[usize; 4]>, AppError> {
-        let train = usize::try_from(self.train_bars)
-            .map_err(|_| invalid("实验训练窗超过当前平台可表示的 Bar 数量"))?;
-        let test = usize::try_from(self.test_bars)
-            .map_err(|_| invalid("实验测试窗超过当前平台可表示的 Bar 数量"))?;
-        let span = train
-            .checked_add(test)
-            .ok_or_else(|| invalid("实验训练窗与测试窗长度溢出"))?;
-        if total_bars < span {
-            return Err(AppError::new(
+/// Split samples by Bar ordinal; only the execution-specific fold algorithm lives in qx-app.
+pub(super) fn experiment_folds(
+    plan: &ExperimentSplitPlan,
+    total_bars: usize,
+) -> Result<Vec<[usize; 4]>, AppError> {
+    let train = usize::try_from(plan.train_bars)
+        .map_err(|_| invalid("实验训练窗超过当前平台可表示的 Bar 数量"))?;
+    let test = usize::try_from(plan.test_bars)
+        .map_err(|_| invalid("实验测试窗超过当前平台可表示的 Bar 数量"))?;
+    let span = train
+        .checked_add(test)
+        .ok_or_else(|| invalid("实验训练窗与测试窗长度溢出"))?;
+    if total_bars < span {
+        return Err(AppError::new(
                 AppErrorCategory::FidelityInsufficient,
                 format!(
                     "实验切分计划需要至少 {span} 根 Bar（训练 {train} + 测试 {test}），实际 {total_bars} 根"
                 ),
             ));
-        }
-        let mut folds = Vec::new();
-        if self.walk_forward {
-            let step = usize::try_from(self.step_bars)
-                .map_err(|_| invalid("实验走查步长超过当前平台可表示的 Bar 数量"))?;
-            let last_start = total_bars - span;
-            let mut start = 0usize;
-            while start <= last_start {
-                let train_end = start + train; // `start <= total_bars - span`，以下加法已界内。
-                let test_end = train_end + test;
-                folds.push([start, train_end, train_end, test_end]);
-                if folds.len() > MAX_EXPERIMENT_FOLDS {
-                    return Err(invalid(format!(
-                        "实验走查折数超过上限 {MAX_EXPERIMENT_FOLDS}；增大 step_bars 或缩小样本区间"
-                    )));
-                }
-                // `checked_add` 保证极端步长不会回绕成负向/零步进，死循环。
-                let Some(next) = start.checked_add(step) else {
-                    break;
-                };
-                start = next;
-            }
-        } else {
-            // 单段切分**只有一段**。第一版在这里也用循环推步长，于是 60 根样本会多切出
-            // 第二段 `[30,50)+[50,60)`——"不打开走查"却滚动了两次，正是这条用例咬出来的。
-            folds.push([0, train, train, train + test]);
-        }
-        if folds.is_empty() {
-            return Err(AppError::new(
-                AppErrorCategory::FidelityInsufficient,
-                format!("实验切分计划在 {total_bars} 根 Bar 上切不出任何一段完整的训练/测试窗"),
-            ));
-        }
-        Ok(folds)
     }
+    let mut folds = Vec::new();
+    if plan.walk_forward {
+        let step = usize::try_from(plan.step_bars)
+            .map_err(|_| invalid("实验走查步长超过当前平台可表示的 Bar 数量"))?;
+        let last_start = total_bars - span;
+        let mut start = 0usize;
+        while start <= last_start {
+            let train_end = start + train; // `start <= total_bars - span`，以下加法已界内。
+            let test_end = train_end + test;
+            folds.push([start, train_end, train_end, test_end]);
+            if folds.len() > MAX_EXPERIMENT_FOLDS {
+                return Err(invalid(format!(
+                    "实验走查折数超过上限 {MAX_EXPERIMENT_FOLDS}；增大 step_bars 或缩小样本区间"
+                )));
+            }
+            // `checked_add` 保证极端步长不会回绕成负向/零步进，死循环。
+            let Some(next) = start.checked_add(step) else {
+                break;
+            };
+            start = next;
+        }
+    } else {
+        // 单段切分**只有一段**。第一版在这里也用循环推步长，于是 60 根样本会多切出
+        // 第二段 `[30,50)+[50,60)`——"不打开走查"却滚动了两次，正是这条用例咬出来的。
+        folds.push([0, train, train, train + test]);
+    }
+    if folds.is_empty() {
+        return Err(AppError::new(
+            AppErrorCategory::FidelityInsufficient,
+            format!("实验切分计划在 {total_bars} 根 Bar 上切不出任何一段完整的训练/测试窗"),
+        ));
+    }
+    Ok(folds)
 }
 
 /// 一段走查窗口的裁决：选中的是哪个候选、样本内多少、样本外多少。
@@ -193,8 +160,8 @@ pub(super) fn evaluate_out_of_sample(
     candidates: &[ExperimentCandidateResult],
     mut is_cancelled: impl FnMut() -> bool,
 ) -> Result<Option<ExperimentOutOfSampleReport>, AppError> {
-    plan.validate()?;
-    let folds = plan.folds(total_bars)?;
+    plan.validate().map_err(invalid)?;
+    let folds = experiment_folds(plan, total_bars)?;
     // 权益序列逐候选读一次，折叠之间复用——折叠数是 O(样本/步长)，逐折重读是平方级放大。
     let mut series: Vec<(usize, Vec<i128>)> = Vec::new();
     for candidate in candidates {
@@ -393,7 +360,7 @@ mod tests {
             walk_forward: false,
             step_bars: 0,
         };
-        let error = plan.folds(usize::MAX).expect_err("窗长加法必须拒绝溢出");
+        let error = experiment_folds(&plan, usize::MAX).expect_err("窗长加法必须拒绝溢出");
         assert_eq!(error.category(), AppErrorCategory::InvalidInput);
     }
 
@@ -405,9 +372,8 @@ mod tests {
             walk_forward: true,
             step_bars: 1,
         };
-        let error = plan
-            .folds(MAX_EXPERIMENT_FOLDS + 2)
-            .expect_err("不得生成无界 OOS 报告");
+        let error =
+            experiment_folds(&plan, MAX_EXPERIMENT_FOLDS + 2).expect_err("不得生成无界 OOS 报告");
         assert_eq!(error.category(), AppErrorCategory::InvalidInput);
     }
 

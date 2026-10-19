@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-10-18T11:24:04+00:00",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "command": [
+    "cargo",
+    "bench",
+    "--offline",
+    "-p",
+    "qx-cli",
+    "--bench",
+    "criterion_performance",
+    "--",
+    "strategy_decision_order_buffer",
+    "--noplot"
+  ],
+  "workload": {
+    "decisions": [1, 4, 16],
+    "orders_per_decision": 1,
+    "equivalent_outputs_checked_before_timing": true,
+    "allocator_counting": false
+  },
+  "criterion_records": [
+    {
+      "benchmark": "per_decision_vec/1",
+      "median_ns": 286.1329055853314,
+      "mean_ns": 286.6585749086305,
+      "slope_ci95_ns": [276.511173103785, 289.299615795874]
+    },
+    {
+      "benchmark": "shared_output_buffer/1",
+      "median_ns": 269.03581881118987,
+      "mean_ns": 270.03746973005894,
+      "slope_ci95_ns": [265.6251882781829, 269.5557953073203]
+    },
+    {
+      "benchmark": "per_decision_vec/4",
+      "median_ns": 975.9881897550363,
+      "mean_ns": 981.9208416694361,
+      "slope_ci95_ns": [972.4955597839128, 994.3195838056338]
+    },
+    {
+      "benchmark": "shared_output_buffer/4",
+      "median_ns": 887.368031358885,
+      "mean_ns": 884.679087176123,
+      "slope_ci95_ns": [882.7024051228123, 890.1025650168782]
+    },
+    {
+      "benchmark": "per_decision_vec/16",
+      "median_ns": 4282.036411411412,
+      "mean_ns": 4314.92260415177,
+      "slope_ci95_ns": [4295.197559764489, 4421.428715147308]
+    },
+    {
+      "benchmark": "shared_output_buffer/16",
+      "median_ns": 3903.7273646939807,
+      "mean_ns": 3900.963005917255,
+      "slope_ci95_ns": [3878.6829604278996, 3933.7978234411894]
+    }
+  ],
+  "pairwise_speedup_pct_by_median": [
+    { "decisions": 1, "speedup_pct": 5.97 },
+    { "decisions": 4, "speedup_pct": 9.08 },
+    { "decisions": 16, "speedup_pct": 8.83 }
+  ],
+  "scope_note": "仅测 StrategyDecision 转换微核；不表示单次 A 股 Bar 决策或整轮回测提速，也未统计 allocator 级分配次数。"
+}
