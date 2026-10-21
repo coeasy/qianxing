@@ -10,7 +10,7 @@ import subprocess
 
 def _windows_hardware_details() -> tuple[int | None, int | None, str | None, str | None]:
     if os.name != "nt":
-        return None, None, None
+        return None, None, None, None
     command = (
         "$c=Get-CimInstance Win32_Processor; "
         "$p=$c | Measure-Object -Property NumberOfCores -Sum; "
