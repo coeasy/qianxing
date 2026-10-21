@@ -265,6 +265,31 @@ jobs:
           )
           assert native.frame_digest(payload) == frame.digest(), "wheel native diverges from pure Python digest"
           PY
+      - name: Expose the installed native module to source contract tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          import importlib.machinery
+          import shutil
+          import sysconfig
+          from pathlib import Path
+
+          installed_roots = {
+              Path(sysconfig.get_paths()[key]) / "qianxing_bridge"
+              for key in ("purelib", "platlib")
+          }
+          suffixes = tuple(importlib.machinery.EXTENSION_SUFFIXES)
+          extensions = [
+              candidate
+              for root in installed_roots
+              if root.is_dir()
+              for candidate in root.glob("_qianxing_native*")
+              if candidate.name.endswith(suffixes)
+          ]
+          if len(extensions) != 1:
+              raise SystemExit(f"expected one installed native extension, found {extensions}")
+          shutil.copy2(extensions[0], Path("python/qianxing_bridge") / extensions[0].name)
+          PY
       - name: Python suite against the built extension
         shell: bash
         run: |
