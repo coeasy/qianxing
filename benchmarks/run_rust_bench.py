@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from hardware import hardware_fingerprint
+from source_fingerprint import measurement_source_fingerprint
 
 ROOT = Path(__file__).resolve().parent.parent
 REQUIRED = {
@@ -279,6 +280,7 @@ def main() -> int:
         "schema_version": 1,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "hardware": hardware_fingerprint(),
+        "measurement_source_fingerprint": measurement_source_fingerprint(ROOT),
         "command": command,
         "criterion_commands": criterion_commands,
         "criterion_records": criterion_records,

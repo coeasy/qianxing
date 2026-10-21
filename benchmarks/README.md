@@ -237,7 +237,9 @@ python benchmarks/compare_multi_market_visible_lookup.py \
 CI 将端到端、A 股规则及 Crypto Paper E2E 提高到 21 次采样，以降低 p50/median 的采样波动。只有
 `maturity/targets.yaml` 登记的性能组参与阻断；回归超过登记阈值会输出 error annotation 并非零退出，
 性能提升不会导致失败。硬件的系统、架构、处理器和逻辑核数必须一致；Linux 容器可用 RAM 读数允许 1% 内波动。
-首次采样、没有匹配 workload 或 runner 形状不同仍明确跳过比较。CI 优先下载主分支最近成功运行的基准，
+比较器还要求报告中的测量源码指纹不同；源码一致时，性能差异属于测量环境噪声，不作为产品回归。
+旧工件缺少指纹、首次采样、没有匹配 workload 或 runner 形状不同都会明确跳过比较并记录基线状态。
+CI 优先下载主分支最近成功运行的基准，
 没有可用工件时回退到当前候选分支；找到工件的运行若下载失败会阻断当前 job。
 
 当前 Rust target 不采集内存峰值、分配次数或逐阶段 p99；这些指标没有测量钩子，不在报告里

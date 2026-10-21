@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import statistics
 import subprocess
@@ -26,6 +27,7 @@ import time
 from pathlib import Path
 
 from hardware import hardware_fingerprint
+from source_fingerprint import measurement_source_fingerprint
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SIZES = (1000, 8000, 64000)
@@ -208,6 +210,8 @@ def main() -> int:
         "schema_version": 1,
         "hardware": hardware_fingerprint(),
         "binary": str(binary),
+        "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+        "measurement_source_fingerprint": measurement_source_fingerprint(REPO_ROOT),
         "sizes": sizes,
         "repeats": args.repeats,
         "scenario": "backtest builtin sma_cross <frame_N>",

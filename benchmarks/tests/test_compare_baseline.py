@@ -15,6 +15,8 @@ class CompareBaselineTests(unittest.TestCase):
     def compare_reports(
         self, old_report: dict, new_report: dict, targets: str
     ) -> subprocess.CompletedProcess[str]:
+        old_report.setdefault("measurement_source_fingerprint", "baseline-source")
+        new_report.setdefault("measurement_source_fingerprint", "current-source")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             baseline = root / "baseline.json"
@@ -160,6 +162,38 @@ class CompareBaselineTests(unittest.TestCase):
             "benchmark_regression_thresholds:\n  end_to_end: 0.10\n",
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_unchanged_measured_source_skips_environment_noise(self) -> None:
+        base = {
+            "schema_version": 1,
+            "hardware": {"cpu": "same"},
+            "measurement_source_fingerprint": "same-source",
+        }
+        result = self.compare_reports(
+            {**base, "rows": [{"bars": 1000, "p50_ms": 10.0, "p95_ms": 20.0}]},
+            {**base, "rows": [{"bars": 1000, "p50_ms": 20.0, "p95_ms": 40.0}]},
+            "benchmark_regression_thresholds:\n  end_to_end: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Measured source is unchanged", result.stdout)
+
+    def test_legacy_baseline_without_source_fingerprint_seeds_current_sample(self) -> None:
+        result = self.compare_reports(
+            {
+                "schema_version": 1,
+                "hardware": {"cpu": "same"},
+                "measurement_source_fingerprint": None,
+                "rows": [{"bars": 1000, "p50_ms": 10.0, "p95_ms": 20.0}],
+            },
+            {
+                "schema_version": 1,
+                "hardware": {"cpu": "same"},
+                "rows": [{"bars": 1000, "p50_ms": 20.0, "p95_ms": 40.0}],
+            },
+            "benchmark_regression_thresholds:\n  end_to_end: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("first source baseline", result.stdout)
 
     def test_unmatched_workload_is_a_first_sample(self) -> None:
         result = self.compare(

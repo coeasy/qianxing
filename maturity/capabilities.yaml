@@ -945,8 +945,8 @@ capabilities:
     production_approved: false
     evidence:
       - maturity/targets.yaml benchmark_regression_thresholds is the single source for the four +10% same-hardware regression limits
-      - benchmarks/compare_baseline.py compares stable runner fingerprints, blocks registered latency and throughput regressions, and keeps low-sample p95 diagnostic-only
-      - benchmarks/tests/test_compare_baseline.py covers regression direction, memory fingerprint jitter, low-sample p95, first sample, and unregistered group behavior
+      - benchmarks/compare_baseline.py compares changed measurement-source fingerprints on compatible runner shapes, blocks registered latency and throughput regressions, and keeps low-sample p95 diagnostic-only
+      - benchmarks/tests/test_compare_baseline.py covers regression direction, source fingerprint skips, memory fingerprint jitter, low-sample p95, first sample, and unregistered group behavior
       - .github/workflows/ci.yml performance-trend uses 21-sample profile runs and a retained main or candidate baseline artifact
       - tools/check_architecture.py performance_baseline_check verifies the ledger limits, comparator behavior, test cases and blocking CI wiring
       - maturity/evidence/ashare-rules-backtest-2026-10-20-local.json records local same-hardware A-share rules-on throughput at 1k/8k/64k synthetic minute Bars, 32 corporate actions, stable five-run result hashes and an action-effect control; report explicitly keeps full profile coverage false

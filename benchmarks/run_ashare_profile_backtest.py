@@ -23,6 +23,7 @@ from datetime import date, datetime, time as day_time, timedelta, timezone
 from pathlib import Path
 
 from hardware import hardware_fingerprint
+from source_fingerprint import measurement_source_fingerprint
 
 ROOT = Path(__file__).resolve().parent.parent
 CALENDAR_PATH = ROOT / "maturity" / "fixtures" / "calendars" / "cn-equity-sse-szse-2024-2025.json"
@@ -202,6 +203,7 @@ def main() -> int:
         "evidence_kind": "ashare_rules_on_cli_backtest_throughput",
         "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "hardware": hardware_fingerprint(),
+        "measurement_source_fingerprint": measurement_source_fingerprint(ROOT),
         "binary": str(binary),
         "binary_sha256": sha256(binary),
         "scenario": "qx-cli backtest builtin ema_cross with A-share rules, fee model, published SSE/SZSE 2024-2025 calendar, and PIT-visible corporate action",

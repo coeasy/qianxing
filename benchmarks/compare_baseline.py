@@ -131,6 +131,14 @@ def main() -> int:
         thresholds = {group: args.threshold for group in thresholds}
 
     baseline, current = load(args.baseline), load(args.current)
+    old_source = baseline.get("measurement_source_fingerprint")
+    new_source = current.get("measurement_source_fingerprint")
+    if old_source is None or new_source is None:
+        print("[SKIP] A compatible source fingerprint is unavailable; recording the first source baseline.")
+        return 0
+    if old_source == new_source:
+        print("[SKIP] Measured source is unchanged; no implementation performance comparison is needed.")
+        return 0
     if not same_benchmark_machine(baseline, current):
         print("[SKIP] Hardware fingerprint differs; cross-machine trend is not comparable.")
         return 0
