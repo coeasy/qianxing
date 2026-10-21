@@ -12,17 +12,17 @@ homepage = "https://github.com/coeasy/qianxing"
 # 领域/端口侧：应用层可以依赖它们（方案 §15.2 的 `facade → application → domain/ports`）。
 # 这份清单是**精确**的：`qx_app_check` 逐项核对它，多一项少一项都会红——依赖集是应用层
 # "没有偷偷把门面拉进来"这条纪律的载体，含糊的清单守不住它。
-qx-core = { version = "0.2.0", path = "../qx-core" }
-qx-control = { version = "0.2.0", path = "../qx-control" }
-qx-data = { version = "0.2.0", path = "../qx-data" }
-qx-datastruct = { version = "0.2.0", path = "../qx-datastruct" }
-qx-guanxing = { version = "0.2.0", path = "../qx-guanxing" }
-qx-provider = { version = "0.2.0", path = "../qx-provider" }
-qx-risk = { version = "0.2.0", path = "../qx-risk" }
-qx-spec = { version = "0.2.0", path = "../qx-spec" }
-qx-strategy = { version = "0.2.0", path = "../qx-strategy" }
-qx-xingban = { version = "0.2.0", path = "../qx-xingban" }
-qx-zhenlu = { version = "0.2.0", path = "../qx-zhenlu" }
+qx-core = { version = "0.2.1", path = "../qx-core" }
+qx-control = { version = "0.2.1", path = "../qx-control" }
+qx-data = { version = "0.2.1", path = "../qx-data" }
+qx-datastruct = { version = "0.2.1", path = "../qx-datastruct" }
+qx-guanxing = { version = "0.2.1", path = "../qx-guanxing" }
+qx-provider = { version = "0.2.1", path = "../qx-provider" }
+qx-risk = { version = "0.2.1", path = "../qx-risk" }
+qx-spec = { version = "0.2.1", path = "../qx-spec" }
+qx-strategy = { version = "0.2.1", path = "../qx-strategy" }
+qx-xingban = { version = "0.2.1", path = "../qx-xingban" }
+qx-zhenlu = { version = "0.2.1", path = "../qx-zhenlu" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

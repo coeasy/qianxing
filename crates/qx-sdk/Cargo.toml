@@ -16,10 +16,10 @@ homepage = "https://github.com/coeasy/qianxing"
 # `qx_strategy::BuiltinStrategyKind`，而 qx-app 没有把它重导出。第三方要构造一份回测规格，
 # 就必须拿得到这个枚举——否则门面等于少了一块，集成方只能自己再加一个 `qx-strategy` 依赖，
 # 那正是门面要消灭的状态。这不是"拼接领域 crate"，是**补全 qx-app 自己的输入类型**。
-qx-app = { version = "0.2.0", path = "../qx-app" }
-qx-execution = { version = "0.2.0", path = "../qx-execution" }
-qx-provider = { version = "0.2.0", path = "../qx-provider" }
-qx-strategy = { version = "0.2.0", path = "../qx-strategy" }
+qx-app = { version = "0.2.1", path = "../qx-app" }
+qx-execution = { version = "0.2.1", path = "../qx-execution" }
+qx-provider = { version = "0.2.1", path = "../qx-provider" }
+qx-strategy = { version = "0.2.1", path = "../qx-strategy" }
 serde_json = { workspace = true }
 
 [dev-dependencies]

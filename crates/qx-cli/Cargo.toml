@@ -18,32 +18,32 @@ postgres = ["qx-storage/postgres", "qx-runtime/postgres", "qx-service/postgres"]
 nats = ["qx-storage/nats", "qx-runtime/nats", "qx-service/nats"]
 
 [dependencies]
-qx-api = { version = "0.2.0", path = "../qx-api" }
-qx-adapter = { version = "0.2.0", path = "../qx-adapter" }
-qx-core = { version = "0.2.0", path = "../qx-core" }
-qx-datastruct = { version = "0.2.0", path = "../qx-datastruct" }
-qx-guanxing = { version = "0.2.0", path = "../qx-guanxing" }
-qx-xingban = { version = "0.2.0", path = "../qx-xingban" }
-qx-zhenlu = { version = "0.2.0", path = "../qx-zhenlu" }
-qx-genglu = { version = "0.2.0", path = "../qx-genglu" }
-qx-plugin = { version = "0.2.0", path = "../qx-plugin" }
-qx-factor = { version = "0.2.0", path = "../qx-factor" }
-qx-protocol = { version = "0.2.0", path = "../qx-protocol" }
-qx-risk = { version = "0.2.0", path = "../qx-risk" }
-qx-provider = { version = "0.2.0", path = "../qx-provider" }
-qx-scheduler = { version = "0.2.0", path = "../qx-scheduler" }
-qx-control = { version = "0.2.0", path = "../qx-control" }
-qx-data = { version = "0.2.0", path = "../qx-data" }
-qx-execution = { version = "0.2.0", path = "../qx-execution" }
-qx-runtime = { version = "0.2.0", path = "../qx-runtime" }
-qx-strategy = { version = "0.2.0", path = "../qx-strategy" }
-qx-spec = { version = "0.2.0", path = "../qx-spec" }
+qx-api = { version = "0.2.1", path = "../qx-api" }
+qx-adapter = { version = "0.2.1", path = "../qx-adapter" }
+qx-core = { version = "0.2.1", path = "../qx-core" }
+qx-datastruct = { version = "0.2.1", path = "../qx-datastruct" }
+qx-guanxing = { version = "0.2.1", path = "../qx-guanxing" }
+qx-xingban = { version = "0.2.1", path = "../qx-xingban" }
+qx-zhenlu = { version = "0.2.1", path = "../qx-zhenlu" }
+qx-genglu = { version = "0.2.1", path = "../qx-genglu" }
+qx-plugin = { version = "0.2.1", path = "../qx-plugin" }
+qx-factor = { version = "0.2.1", path = "../qx-factor" }
+qx-protocol = { version = "0.2.1", path = "../qx-protocol" }
+qx-risk = { version = "0.2.1", path = "../qx-risk" }
+qx-provider = { version = "0.2.1", path = "../qx-provider" }
+qx-scheduler = { version = "0.2.1", path = "../qx-scheduler" }
+qx-control = { version = "0.2.1", path = "../qx-control" }
+qx-data = { version = "0.2.1", path = "../qx-data" }
+qx-execution = { version = "0.2.1", path = "../qx-execution" }
+qx-runtime = { version = "0.2.1", path = "../qx-runtime" }
+qx-strategy = { version = "0.2.1", path = "../qx-strategy" }
+qx-spec = { version = "0.2.1", path = "../qx-spec" }
 # T2-2/G1：`qx-cli app` 是本仓**第一个**把核心研究用例交给应用层的门面入口。
 # 方向是 §15.2 的 facade → application，反向那条由 `layer_dependency_check` 的禁止边守着。
-qx-app = { version = "0.2.0", path = "../qx-app" }
-qx-service = { version = "0.2.0", path = "../qx-service" }
-qx-orchestrator = { version = "0.2.0", path = "../qx-orchestrator" }
-qx-storage = { version = "0.2.0", path = "../qx-storage" }
+qx-app = { version = "0.2.1", path = "../qx-app" }
+qx-service = { version = "0.2.1", path = "../qx-service" }
+qx-orchestrator = { version = "0.2.1", path = "../qx-orchestrator" }
+qx-storage = { version = "0.2.1", path = "../qx-storage" }
 serde_json = { workspace = true }
 serde = { workspace = true }
 zip = { version = "=2.4.2", default-features = false }

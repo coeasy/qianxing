@@ -6,11 +6,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-qx-core = { version = "0.2.0", path = "../qx-core" }
-qx-control = { version = "0.2.0", path = "../qx-control" }
-qx-guanxing = { version = "0.2.0", path = "../qx-guanxing" }
-qx-risk = { version = "0.2.0", path = "../qx-risk" }
-qx-zhenlu = { version = "0.2.0", path = "../qx-zhenlu" }
+qx-core = { version = "0.2.1", path = "../qx-core" }
+qx-control = { version = "0.2.1", path = "../qx-control" }
+qx-guanxing = { version = "0.2.1", path = "../qx-guanxing" }
+qx-risk = { version = "0.2.1", path = "../qx-risk" }
+qx-zhenlu = { version = "0.2.1", path = "../qx-zhenlu" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
@@ -19,4 +19,4 @@ serde_json = { workspace = true }
 # （方案 §5.4 P1-12）。用到它的四份跨 crate 契约用例已迁 `crates/contract-tests/`。
 # `qx-adapter` 留在本地：`src/tests/venue_submit_contract.rs` 需要它的传输端口形状，
 # 而它不构成环（qx-adapter 的正常依赖里没有回到 qx-execution 的路径）。
-qx-adapter = { version = "0.2.0", path = "../qx-adapter" }
+qx-adapter = { version = "0.2.1", path = "../qx-adapter" }

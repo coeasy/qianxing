@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-qx-core = { version = "0.2.0", path = "../qx-core" }
+qx-core = { version = "0.2.1", path = "../qx-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

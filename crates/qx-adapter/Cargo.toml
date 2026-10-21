@@ -6,12 +6,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-qx-core = { version = "0.2.0", path = "../qx-core" }
-qx-genglu = { version = "0.2.0", path = "../qx-genglu" }
-qx-guanxing = { version = "0.2.0", path = "../qx-guanxing" }
-qx-provider = { version = "0.2.0", path = "../qx-provider" }
-qx-zhenlu = { version = "0.2.0", path = "../qx-zhenlu" }
-qx-process-io = { version = "0.2.0", path = "../qx-process-io" }
+qx-core = { version = "0.2.1", path = "../qx-core" }
+qx-genglu = { version = "0.2.1", path = "../qx-genglu" }
+qx-guanxing = { version = "0.2.1", path = "../qx-guanxing" }
+qx-provider = { version = "0.2.1", path = "../qx-provider" }
+qx-zhenlu = { version = "0.2.1", path = "../qx-zhenlu" }
+qx-process-io = { version = "0.2.1", path = "../qx-process-io" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ring = "0.17.14"
@@ -20,4 +20,4 @@ rustls-pki-types = "1.15.1"
 webpki-roots = "1.0.9"
 
 [dev-dependencies]
-qx-runtime = { version = "0.2.0", path = "../qx-runtime" }
+qx-runtime = { version = "0.2.1", path = "../qx-runtime" }
